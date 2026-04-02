@@ -1,0 +1,7 @@
+id: box
+model: models/box.obj
+texture: concrete
+bounding: aabb
+bound_half_x: 0.5
+bound_half_y: 0.5
+bound_half_z: 0.5

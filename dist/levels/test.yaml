@@ -1,0 +1,266 @@
+# ============================================================
+# Foundry Test Level — Rooms-Over-Rooms Demo
+# ============================================================
+# Coordinate convention: YAML point {x, y} maps to world (X, Z).
+# The vertical axis is Y (up). Player starts in the courtyard
+# facing north (+Z), with the building entrance ahead.
+#
+# Layout (top-down):
+#
+#   Z =-48 ..  -36   hilltop     (terrain, floor=2.5)
+#   Z =-36 ..  -20   terrace     (terrain, floor=1.0)
+#   Z =-20 ..    4   courtyard   (terrain, floor=0.0) ← player spawn
+#  ─────────────────────── Z = 4 : building entrance ──────────
+#   Z =  4 ..   20   ground_floor (floor=0.0, ceiling=4.0) ← chunk "building_ground"
+#   Z =  4 ..   20   upper_floor  (floor=4.0, ceiling=8.0) ← chunk "building_upper"
+#                     (SAME XZ footprint, stacked vertically via Y-bounds)
+#
+#   X =  8 ..   14   stairwell (3 sectors: lower landing, ramp, upper landing)
+#   Z =  4 ..   20   connects ground floor ↔ upper floor on the east side
+#
+# The ground and upper floor chunks overlap in XZ but have
+# non-overlapping Y ranges (0–4 vs 4–8). The engine's Y-based
+# chunk disambiguation selects the correct floor based on the
+# player's vertical position — true rooms-over-rooms.
+# ============================================================
+
+chunks:
+
+  # ----------------------------------------------------------------
+  # Chunk "outdoors"
+  # Three open sectors: courtyard → terrace → hilltop.
+  # ----------------------------------------------------------------
+  - id: "outdoors"
+    points:
+      # courtyard  (X:-8..8, Z:-20..4)
+      A:  { x:  -8.0, y: -20.0 }
+      B:  { x:   8.0, y: -20.0 }
+      C:  { x:   8.0, y:   4.0 }
+      D:  { x:  -8.0, y:   4.0 }
+
+      # terrace  (X:-8..8, Z:-36..-20)
+      E:  { x:   8.0, y: -36.0 }
+      F:  { x:   4.0, y: -36.0 }
+      G:  { x:  -4.0, y: -36.0 }
+      H:  { x:  -8.0, y: -36.0 }
+
+      # hilltop  (X:-4..4, Z:-48..-36)
+      I:  { x:   4.0, y: -48.0 }
+      J:  { x:  -4.0, y: -48.0 }
+
+    sectors:
+      - id: "courtyard"
+        floor:   { enabled: true, height: 0.0, texture: grass, terrain: true  }
+        ceiling: { enabled: false, height: 8.0, texture: square }
+        edges:
+          - { from: A, to: B, kind: portal, to_sector: "terrace"      }
+          - { from: B, to: C, kind: wall,   texture: stucco, collision: true  }
+          # Cross-chunk opening into ground floor (Y disambiguation selects correct floor)
+          - { from: C, to: D, kind: wall,   texture: stucco, collision: false, hidden: true }
+          - { from: D, to: A, kind: wall,   texture: stucco, collision: true  }
+
+      - id: "terrace"
+        floor:   { enabled: true, height: 1.0, texture: dirt,  terrain: true  }
+        ceiling: { enabled: false, height: 9.0, texture: square }
+        edges:
+          - { from: H, to: G, kind: wall,   texture: rock,   collision: true  }
+          - { from: G, to: F, kind: portal, to_sector: "hilltop"  }
+          - { from: F, to: E, kind: wall,   texture: rock,   collision: true  }
+          - { from: E, to: B, kind: wall,   texture: stucco, collision: true  }
+          - { from: B, to: A, kind: portal, to_sector: "courtyard" }
+          - { from: A, to: H, kind: wall,   texture: stucco, collision: true  }
+
+      - id: "hilltop"
+        floor:   { enabled: true, height: 2.5, texture: rock,  terrain: true  }
+        ceiling: { enabled: false, height: 10.5, texture: square }
+        edges:
+          - { from: G, to: F, kind: portal, to_sector: "terrace"    }
+          - { from: F, to: I, kind: wall,   texture: rock,   collision: true  }
+          - { from: I, to: J, kind: wall,   texture: rock,   collision: true  }
+          - { from: J, to: G, kind: wall,   texture: rock,   collision: true  }
+
+  # ----------------------------------------------------------------
+  # Chunk "building_ground"
+  # Ground floor: X:-8..8, Z:4..20, Y range 0–4.
+  # East wall is split: southern portion (Z:4..12) is open to the
+  # stairwell lower landing; northern portion (Z:12..20) is solid.
+  # ----------------------------------------------------------------
+  - id: "building_ground"
+    points:
+      GA:  { x:  -8.0, y:   4.0 }   # SW (building entrance from courtyard)
+      GB:  { x:   8.0, y:   4.0 }   # SE
+      GM:  { x:   8.0, y:  12.0 }   # East wall split point
+      GC:  { x:   8.0, y:  20.0 }   # NE
+      GD:  { x:  -8.0, y:  20.0 }   # NW
+
+    sectors:
+      - id: "ground_floor"
+        floor:   { enabled: true, height: 0.0,  texture: stone_floor, terrain: false }
+        ceiling: { enabled: true, height: 4.0,  texture: concrete }
+        edges:
+          # South: cross-chunk opening from courtyard
+          - { from: GA, to: GB, kind: wall,   texture: brick, collision: false, hidden: true }
+          # East (south half): cross-chunk opening to stairwell lower landing
+          - { from: GB, to: GM, kind: wall,   texture: brick, collision: false, hidden: true }
+          # East (north half): solid wall
+          - { from: GM, to: GC, kind: wall,   texture: brick, collision: true  }
+          # North: solid wall
+          - { from: GC, to: GD, kind: wall,   texture: brick, collision: true  }
+          # West: solid wall
+          - { from: GD, to: GA, kind: wall,   texture: brick, collision: true  }
+
+  # ----------------------------------------------------------------
+  # Chunk "building_upper"
+  # Upper floor: X:-8..8, Z:4..20, Y range 4–8.
+  # SAME XZ footprint as building_ground — true rooms-over-rooms.
+  # East wall is split: northern portion (Z:12..20) is open to the
+  # stairwell upper landing; southern portion (Z:4..12) is solid.
+  # ----------------------------------------------------------------
+  - id: "building_upper"
+    points:
+      UA:  { x:  -8.0, y:   4.0 }   # SW
+      UB:  { x:   8.0, y:   4.0 }   # SE
+      UM:  { x:   8.0, y:  12.0 }   # East wall split point
+      UC:  { x:   8.0, y:  20.0 }   # NE
+      UD:  { x:  -8.0, y:  20.0 }   # NW
+
+    sectors:
+      - id: "upper_floor"
+        floor:   { enabled: true, height: 4.0,  texture: wood_floor, terrain: false }
+        ceiling: { enabled: true, height: 8.0,  texture: stucco }
+        edges:
+          # South: solid wall
+          - { from: UA, to: UB, kind: wall,   texture: brick, collision: true  }
+          # East (south half): solid wall
+          - { from: UB, to: UM, kind: wall,   texture: brick, collision: true  }
+          # East (north half): cross-chunk opening to stairwell upper landing
+          - { from: UM, to: UC, kind: wall,   texture: brick, collision: false, hidden: true }
+          # North: solid wall
+          - { from: UC, to: UD, kind: wall,   texture: brick, collision: true  }
+          # West: solid wall
+          - { from: UD, to: UA, kind: wall,   texture: brick, collision: true  }
+
+  # ----------------------------------------------------------------
+  # Chunk "stairwell"
+  # External stairwell on the east side of the building.
+  # X:8..14, Z:4..20. Three sectors:
+  #   stair_lower  (Z:4..12,  floor=0, ceil=4)  — connects to ground floor
+  #   stair_ramp   (Z:12..16, slopes 0→4 / 4→8) — smooth ramp via vertex_offsets
+  #   stair_upper  (Z:16..20, floor=4, ceil=8)  — connects to upper floor
+  # ----------------------------------------------------------------
+  - id: "stairwell"
+    points:
+      SA:  { x:   8.0, y:   4.0 }   # SW (lower landing)
+      SB:  { x:  14.0, y:   4.0 }   # SE (lower landing)
+      SC:  { x:  14.0, y:  12.0 }   # East ramp-bottom
+      SD:  { x:   8.0, y:  12.0 }   # West ramp-bottom
+      SE:  { x:  14.0, y:  16.0 }   # East ramp-top
+      SF:  { x:   8.0, y:  16.0 }   # West ramp-top
+      SG:  { x:  14.0, y:  20.0 }   # NE (upper landing)
+      SH:  { x:   8.0, y:  20.0 }   # NW (upper landing)
+
+    sectors:
+      # Lower landing: flat floor at ground level
+      - id: "stair_lower"
+        floor:   { enabled: true, height: 0.0,  texture: concrete, terrain: false }
+        ceiling: { enabled: true, height: 4.0,  texture: concrete }
+        edges:
+          # West: cross-chunk opening to ground floor
+          - { from: SD, to: SA, kind: wall,   texture: concrete, collision: false, hidden: true }
+          # South: solid wall
+          - { from: SA, to: SB, kind: wall,   texture: concrete, collision: true  }
+          # East: solid wall
+          - { from: SB, to: SC, kind: wall,   texture: concrete, collision: true  }
+          # North: portal to ramp
+          - { from: SC, to: SD, kind: portal, to_sector: "stair_ramp", draw_gap: true, gap_texture: concrete }
+
+      # Sloped ramp: floor slopes 0→4, ceiling slopes 4→8
+      # vertex_offsets order: SD, SC, SE, SF (edge traversal order)
+      - id: "stair_ramp"
+        floor:
+          enabled: true
+          height: 0.0
+          texture: concrete
+          terrain: false
+          vertex_offsets: [0, 0, 4, 4]
+        ceiling:
+          enabled: true
+          height: 4.0
+          texture: concrete
+          vertex_offsets: [0, 0, 4, 4]
+        edges:
+          # South: portal to lower landing
+          - { from: SD, to: SC, kind: portal, to_sector: "stair_lower", draw_gap: true, gap_texture: concrete }
+          # East: solid wall
+          - { from: SC, to: SE, kind: wall,   texture: concrete, collision: true  }
+          # North: portal to upper landing
+          - { from: SE, to: SF, kind: portal, to_sector: "stair_upper", draw_gap: true, gap_texture: concrete }
+          # West: solid wall
+          - { from: SF, to: SD, kind: wall,   texture: concrete, collision: true  }
+
+      # Upper landing: flat floor at upper level
+      - id: "stair_upper"
+        floor:   { enabled: true, height: 4.0,  texture: concrete, terrain: false }
+        ceiling: { enabled: true, height: 8.0,  texture: concrete }
+        edges:
+          # South: portal to ramp
+          - { from: SF, to: SE, kind: portal, to_sector: "stair_ramp", draw_gap: true, gap_texture: concrete }
+          # East: solid wall
+          - { from: SE, to: SG, kind: wall,   texture: concrete, collision: true  }
+          # North: solid wall
+          - { from: SG, to: SH, kind: wall,   texture: concrete, collision: true  }
+          # West: cross-chunk opening to upper floor
+          - { from: SH, to: SF, kind: wall,   texture: concrete, collision: false, hidden: true }
+
+entities:
+  - id: player
+    position: { x: 0.0, y: 0.5, z: -10.0 }
+    model: ""
+    bounding: aabb
+    bound_half_x: 0.3
+    bound_half_y: 0.9
+    bound_half_z: 0.3
+
+# ============================================================
+# Lights
+# ============================================================
+lights:
+  global:
+    color: { r: 1.0, g: 1.0, b: 1.0 }
+    brightness: 0.08
+
+  directional:
+    - direction: { x: -0.4, y: -1.0, z: 0.3 }
+      color:     { r: 1.0, g: 0.95, b: 0.8 }
+      brightness: 0.75
+
+  point:
+    # Courtyard lantern
+    - position:   { x: 0.0, y: 2.5, z: -10.0 }
+      color:      { r: 1.0, g: 0.75, b: 0.3 }
+      brightness: 1.8
+      radius:     14.0
+
+    # Ground-floor interior lamp
+    - position:   { x: 0.0, y: 3.5, z: 12.0 }
+      color:      { r: 1.0, g: 0.9, b: 0.7 }
+      brightness: 1.6
+      radius:     12.0
+
+    # Upper-floor interior lamp (directly above ground floor lamp)
+    - position:   { x: 0.0, y: 7.5, z: 12.0 }
+      color:      { r: 0.7, g: 0.85, b: 1.0 }
+      brightness: 1.6
+      radius:     12.0
+
+    # Stairwell lamp — illuminates the ramp
+    - position:   { x: 11.0, y: 5.0, z: 14.0 }
+      color:      { r: 1.0, g: 0.85, b: 0.6 }
+      brightness: 1.4
+      radius:     10.0
+
+    # Hilltop accent
+    - position:   { x: 0.0, y: 4.0, z: -42.0 }
+      color:      { r: 0.6, g: 0.7, b: 1.0 }
+      brightness: 0.8
+      radius:     10.0

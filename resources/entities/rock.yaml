@@ -1,0 +1,7 @@
+id: rock
+model: models/rock.obj
+texture: rock
+bounding: aabb
+bound_half_x: 0.5
+bound_half_y: 0.3
+bound_half_z: 0.5

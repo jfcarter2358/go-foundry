@@ -1,17 +1,63 @@
 package main
 
 import (
-	"fmt"
+	"math"
 
-	"github.com/go-gl/gl/v3.3-core/gl"
+	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-var MovementSpeed = float32(0.05)
-var RotationSpeed = float32(0.0000005)
+var MovementSpeed = float32(0.1)
+var KeyRotationSpeed = float32(0.025)
+var MouseRotationSpeed = float32(0.003)
+
+// Gravity system globals — read and written by input handling and the main loop.
+var GravityEnabled = true
+var IsOnGround = false
+var JumpRequested = false
+
+const GravityAccel = float32(0.010) // downward acceleration per frame
+const MaxFallSpeed = float32(0.50)  // terminal fall speed per frame
+const JumpVelocity = float32(0.20)  // upward impulse on jump
+
+// maxPitch prevents the camera from crossing vertical (avoids gimbal flip).
+const maxPitch = float32(math.Pi/2 - 0.01)
+
+// RefreshWindowSize updates all engine state that depends on the window
+// dimensions: viewport, projection matrix, half-width/height, and mouse warp.
+func RefreshWindowSize() {
+	WinWidth, WinHeight = Window.GetSize()
+	WinHalfWidth = WinWidth / 2
+	WinHalfHeight = WinHeight / 2
+	gl.Viewport(0, 0, WinWidth, WinHeight)
+	if WinHeight < 1 {
+		WinHeight = 1
+	}
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	gl.UniformMatrix4fv(ProjectionUniform, 1, false, &Projection[0])
+	if Cam.MouseLock {
+		Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
+	}
+}
+
+// ToggleFullscreen switches between windowed and borderless fullscreen.
+func ToggleFullscreen() {
+	if Window.GetFlags()&sdl.WINDOW_FULLSCREEN_DESKTOP != 0 {
+		Window.SetFullscreen(uint32(0))
+	} else {
+		Window.SetFullscreen(uint32(sdl.WINDOW_FULLSCREEN_DESKTOP))
+	}
+	RefreshWindowSize()
+}
 
 func HandleInput(keyStates []uint8) {
+	// Scale movement and rotation by DeltaTime*60 so behavior is frame-rate independent
+	// while preserving the same feel as the original 60 FPS-tuned constants.
+	dtScale := DeltaTime * 60.0
+	moveSpeed := MovementSpeed * dtScale
+	rotSpeed := KeyRotationSpeed * dtScale
+
 	fMove := float32(0.0)
 	uMove := float32(0.0)
 	rMove := float32(0.0)
@@ -20,32 +66,43 @@ func HandleInput(keyStates []uint8) {
 		Running = false
 	}
 	if keyStates[sdl.SCANCODE_W] != 0 {
-		fMove += MovementSpeed
+		fMove += moveSpeed
 	}
-	if keyStates[sdl.SCANCODE_A] == 1 {
-		rMove += MovementSpeed
+	if keyStates[sdl.SCANCODE_A] != 0 {
+		rMove += moveSpeed
 	}
-	if keyStates[sdl.SCANCODE_S] == 1 {
-		fMove -= MovementSpeed
+	if keyStates[sdl.SCANCODE_S] != 0 {
+		fMove -= moveSpeed
 	}
-	if keyStates[sdl.SCANCODE_D] == 1 {
-		rMove -= MovementSpeed
+	if keyStates[sdl.SCANCODE_D] != 0 {
+		rMove -= moveSpeed
 	}
-	if keyStates[sdl.SCANCODE_LEFT] == 1 {
-		Cam.Yaw -= RotationSpeed
+	if keyStates[sdl.SCANCODE_SPACE] != 0 {
+		if !GravityEnabled {
+			uMove += moveSpeed // free-fly up
+		}
+		// jump is handled via KEYDOWN event in HandleEvent
 	}
-	if keyStates[sdl.SCANCODE_RIGHT] == 1 {
-		Cam.Yaw += RotationSpeed
+	if keyStates[sdl.SCANCODE_LSHIFT] != 0 {
+		if !GravityEnabled {
+			uMove -= moveSpeed // free-fly down
+		}
 	}
-	if keyStates[sdl.SCANCODE_UP] == 1 {
-		Cam.Pitch -= RotationSpeed
+	if keyStates[sdl.SCANCODE_LEFT] != 0 {
+		Cam.Yaw -= rotSpeed
 	}
-	if keyStates[sdl.SCANCODE_DOWN] == 1 {
-		Cam.Pitch += RotationSpeed
+	if keyStates[sdl.SCANCODE_RIGHT] != 0 {
+		Cam.Yaw += rotSpeed
+	}
+	if keyStates[sdl.SCANCODE_UP] != 0 {
+		Cam.Pitch += rotSpeed
+	}
+	if keyStates[sdl.SCANCODE_DOWN] != 0 {
+		Cam.Pitch -= rotSpeed
 	}
 
 	MoveCamera(fMove, uMove, rMove)
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), mgl32.Vec3{0.0, 1.0, 0.0})
+	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
 	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
 }
 
@@ -53,56 +110,76 @@ func HandleEvent(event sdl.Event) {
 	switch t := event.(type) {
 	case sdl.QuitEvent:
 		Running = false
+
 	case sdl.MouseMotionEvent:
-		if Cam.MouseLock {
-			xRel, yRel, _ := sdl.GetRelativeMouseState()
-			fmt.Printf("x rel: %d, y rel: %d; ", xRel, yRel)
-			Cam.Yaw += RotationSpeed * float32(xRel)
-			Cam.Pitch += RotationSpeed * float32(yRel)
+		if !Cam.MouseLock {
+			break
+		}
+		// Warp-to-center approach: measure delta from the window centre.
+		// After processing we warp the cursor back to centre; that warp itself
+		// generates another MOUSEMOTION event whose position IS the centre
+		// (dx==0, dy==0), so we skip it here.  This avoids every pitfall of
+		// SDL relative-mouse mode on X11/WSL2.
+		dx := t.X - WinHalfWidth
+		dy := t.Y - WinHalfHeight
+		if dx == 0 && dy == 0 {
+			break
+		}
+		Cam.Yaw += MouseRotationSpeed * float32(dx)
+		Cam.Pitch -= MouseRotationSpeed * float32(dy)
+		if Cam.Pitch > maxPitch {
+			Cam.Pitch = maxPitch
+		}
+		if Cam.Pitch < -maxPitch {
+			Cam.Pitch = -maxPitch
+		}
+		// Recompute direction immediately so movement this frame uses the
+		// correct look direction (no one-frame rotation lag).
+		Cam.Direction = DirectionFromAngles(Cam.Yaw, Cam.Pitch)
+		Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
+		gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+		// Return cursor to centre for next delta measurement.
+		Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
+
+	case sdl.WindowEvent:
+		switch t.Event {
+		case sdl.WINDOWEVENT_FOCUS_LOST:
+			Cam.MouseLock = false
+			sdl.ShowCursor(sdl.ENABLE)
+			Window.SetGrab(false)
+		case sdl.WINDOWEVENT_SIZE_CHANGED:
+			RefreshWindowSize()
+		case sdl.WINDOWEVENT_FOCUS_GAINED:
+			Cam.MouseLock = true
+			sdl.ShowCursor(sdl.DISABLE)
+			Window.SetGrab(true)
+			// Warp back to centre so the first motion event after regaining
+			// focus is measured from the correct origin.
+			Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
 		}
 
 	case sdl.KeyboardEvent:
-		keyCode := t.Keysym.Sym
-		// keys := ""
-
-		// Modifier keys
-		// switch t.Keysym.Mod {
-		// case sdl.KMOD_LALT:
-		// 	keys += "Left Alt"
-		// case sdl.KMOD_LCTRL:
-		// 	keys += "Left Control"
-		// case sdl.KMOD_LSHIFT:
-		// 	keys += "Left Shift"
-		// case sdl.KMOD_LGUI:
-		// 	keys += "Left Meta or Windows key"
-		// case sdl.KMOD_RALT:
-		// 	keys += "Right Alt"
-		// case sdl.KMOD_RCTRL:
-		// 	keys += "Right Control"
-		// case sdl.KMOD_RSHIFT:
-		// 	keys += "Right Shift"
-		// case sdl.KMOD_RGUI:
-		// 	keys += "Right Meta or Windows key"
-		// case sdl.KMOD_NUM:
-		// 	keys += "Num Lock"
-		// case sdl.KMOD_CAPS:
-		// 	keys += "Caps Lock"
-		// case sdl.KMOD_MODE:
-		// 	keys += "AltGr Key"
-		// }
-
-		if keyCode < 10000 {
-			// If the key is held down, this will fire
-			if t.Repeat > 0 {
-				// skip
-			} else {
-				if t.State == sdl.RELEASED {
-					// skip
-				} else if t.State == sdl.PRESSED {
-					// skip
+		if t.Type == sdl.KEYDOWN {
+			switch t.Keysym.Scancode {
+			case sdl.SCANCODE_F11:
+				ToggleFullscreen()
+			case sdl.SCANCODE_GRAVE: // tilde (~) key toggles level editor
+				EditorToggle()
+			case sdl.SCANCODE_SPACE:
+				if !Editor.Active && GravityEnabled && IsOnGround {
+					JumpRequested = true
+				}
+			case sdl.SCANCODE_F3:
+				DebugToggle()
+			case sdl.SCANCODE_0:
+				if !Editor.Active {
+					GravityEnabled = !GravityEnabled
+					if !GravityEnabled {
+						IsOnGround = false
+						JumpRequested = false
+					}
 				}
 			}
-
 		}
 	}
 }

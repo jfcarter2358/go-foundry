@@ -1,0 +1,133 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"runtime"
+	"strings"
+	"time"
+
+	imgui "github.com/inkyblackness/imgui-go/v4"
+)
+
+// DebugOverlayVisible controls whether the F3 debug overlay is drawn.
+var DebugOverlayVisible = false
+
+// DebugStats holds the values displayed in the debug overlay.
+var DebugStats struct {
+	FPS            float32
+	FrameTimeMs    float32
+	CPUPercent     float32
+	MemAllocMB     float32
+	MemSysMB       float32
+	EntitiesLoaded int
+	SectorsLoaded  int
+	ChunksLoaded   int
+	EntitiesDrawn  int
+	SectorsDrawn        int
+	SectorsPortalCulled int
+	ChunksDrawn         int
+}
+
+// cpuTracker holds state for per-frame CPU usage estimation.
+var cpuTracker struct {
+	lastTime    time.Time
+	lastCPU     float64 // cumulative CPU seconds at last sample
+	initialized bool
+}
+
+// DebugToggle flips the debug overlay on/off.
+func DebugToggle() {
+	DebugOverlayVisible = !DebugOverlayVisible
+}
+
+// DebugUpdateCPU samples process CPU usage. Call once per frame.
+func DebugUpdateCPU() {
+	now := time.Now()
+	cpuSec := processCPUSeconds()
+
+	if !cpuTracker.initialized {
+		cpuTracker.lastTime = now
+		cpuTracker.lastCPU = cpuSec
+		cpuTracker.initialized = true
+		return
+	}
+
+	wall := now.Sub(cpuTracker.lastTime).Seconds()
+	if wall > 0 {
+		DebugStats.CPUPercent = float32((cpuSec - cpuTracker.lastCPU) / wall * 100.0)
+	}
+	cpuTracker.lastTime = now
+	cpuTracker.lastCPU = cpuSec
+}
+
+// DebugUpdateMemory reads Go runtime memory stats.
+func DebugUpdateMemory() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	DebugStats.MemAllocMB = float32(m.Alloc) / (1024 * 1024)
+	DebugStats.MemSysMB = float32(m.Sys) / (1024 * 1024)
+}
+
+// DebugRenderOverlay draws the debug HUD using ImGui.
+// Must be called between ImGuiNewFrame and ImGuiRender.
+func DebugRenderOverlay() {
+	if !DebugOverlayVisible {
+		return
+	}
+
+	// Position at top-left with some padding
+	imgui.SetNextWindowPosV(imgui.Vec2{X: 10, Y: 10}, imgui.ConditionAlways, imgui.Vec2{})
+	imgui.SetNextWindowBgAlpha(0.6)
+
+	flags := imgui.WindowFlagsNoDecoration |
+		imgui.WindowFlagsAlwaysAutoResize |
+		imgui.WindowFlagsNoSavedSettings |
+		imgui.WindowFlagsNoFocusOnAppearing |
+		imgui.WindowFlagsNoNav |
+		imgui.WindowFlagsNoMove
+
+	if imgui.BeginV("##debug_overlay", nil, flags) {
+		imgui.Text("--- Debug Overlay (F3) ---")
+		imgui.Separator()
+
+		imgui.Text(fmt.Sprintf("FPS:          %.1f", DebugStats.FPS))
+		imgui.Text(fmt.Sprintf("Frame Time:   %.2f ms", DebugStats.FrameTimeMs))
+		imgui.Text(fmt.Sprintf("CPU Usage:    %.1f%%", DebugStats.CPUPercent))
+		imgui.Text(fmt.Sprintf("Mem Alloc:    %.1f MB", DebugStats.MemAllocMB))
+		imgui.Text(fmt.Sprintf("Mem Sys:      %.1f MB", DebugStats.MemSysMB))
+		imgui.Separator()
+
+		imgui.Text(fmt.Sprintf("Entities:     %d loaded / %d drawn", DebugStats.EntitiesLoaded, DebugStats.EntitiesDrawn))
+		imgui.Text(fmt.Sprintf("Sectors:      %d loaded / %d drawn / %d portal-culled", DebugStats.SectorsLoaded, DebugStats.SectorsDrawn, DebugStats.SectorsPortalCulled))
+		imgui.Text(fmt.Sprintf("Chunks:       %d loaded / %d drawn", DebugStats.ChunksLoaded, DebugStats.ChunksDrawn))
+		imgui.Separator()
+
+		if PlayerEntity != nil {
+			p := PlayerEntity.Position
+			imgui.Text(fmt.Sprintf("Position:     %.2f, %.2f, %.2f", p.X(), p.Y(), p.Z()))
+		} else {
+			imgui.Text("Position:     N/A")
+		}
+		imgui.Text(fmt.Sprintf("Rotation:     yaw=%.2f  pitch=%.2f", Cam.Yaw, Cam.Pitch))
+	}
+	imgui.End()
+}
+
+// processCPUSeconds returns the cumulative CPU time used by this process.
+// On Linux it reads /proc/self/stat; on other platforms it returns 0.
+func processCPUSeconds() float64 {
+	data, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 15 {
+		return 0
+	}
+	var utime, stime int64
+	fmt.Sscanf(fields[13], "%d", &utime)
+	fmt.Sscanf(fields[14], "%d", &stime)
+	clkTck := 100.0 // sysconf(_SC_CLK_TCK) is almost always 100 on Linux
+	return float64(utime+stime) / clkTck
+}

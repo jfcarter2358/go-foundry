@@ -1,0 +1,68 @@
+package main
+
+import "github.com/go-gl/mathgl/mgl32"
+
+// BoundingType controls which bounding volume shape is used for collision.
+type BoundingType int
+
+const (
+	BoundingAABB     BoundingType = iota
+	BoundingSphere
+	BoundingCylinder
+)
+
+// Entity is a dynamic game object that can move between chunks and sectors.
+type Entity struct {
+	ID            string
+	Position      mgl32.Vec3
+	Velocity      mgl32.Vec3
+	Rotation      mgl32.Vec3 // Euler angles (X, Y, Z) in radians
+	Scale         mgl32.Vec3 // per-axis scale; zero value treated as {1,1,1}
+	ModelPath     string
+	TexturePath   string
+	BoundingKind  BoundingType
+	BoundHalfX    float32
+	BoundHalfY    float32
+	BoundHalfZ    float32
+	Geometry      Geometry
+	Visible       bool
+	CurrentSector string
+	CurrentChunk  string
+}
+
+// ModelMatrix builds the TRS model matrix for this entity.
+// Scale zero-value is treated as identity {1,1,1}.
+func (e *Entity) ModelMatrix() mgl32.Mat4 {
+	scale := e.Scale
+	if scale == (mgl32.Vec3{}) {
+		scale = mgl32.Vec3{1, 1, 1}
+	}
+	T := mgl32.Translate3D(e.Position.X(), e.Position.Y(), e.Position.Z())
+	Rx := mgl32.HomogRotate3DX(e.Rotation.X())
+	Ry := mgl32.HomogRotate3DY(e.Rotation.Y())
+	Rz := mgl32.HomogRotate3DZ(e.Rotation.Z())
+	S := mgl32.Scale3D(scale.X(), scale.Y(), scale.Z())
+	return T.Mul4(Ry).Mul4(Rx).Mul4(Rz).Mul4(S)
+}
+
+// Load uploads the entity's OBJ model to the GPU.
+// Skipped when ModelPath is empty (e.g. invisible first-person player).
+func (e *Entity) Load() error {
+	if e.ModelPath == "" {
+		return nil
+	}
+	verts, err := LoadOBJ(e.ModelPath)
+	if err != nil {
+		return err
+	}
+	// Convert flat []float32 to [][]float32 for Geometry.Load
+	vertices := make([][]float32, len(verts)/5)
+	for i := range vertices {
+		vertices[i] = verts[i*5 : i*5+5]
+	}
+	indices := make([]int, len(vertices))
+	for i := range indices {
+		indices[i] = i
+	}
+	return e.Geometry.Load(vertices, indices, e.TexturePath, e.Position)
+}
