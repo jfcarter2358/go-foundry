@@ -14,9 +14,10 @@ type Floor struct {
 	Texture       string
 	Terrain       bool // if true, use terrain displacement mesh
 	DoubleSided   bool // if true, floor is rendered from both sides (default true)
-	Extrusions    []Extrusion
-	TerrainPoints []TerrainPoint // extra points for terrain displacement (U=worldX, V=worldZ)
-	Geometry      Geometry
+	Extrusions          []Extrusion
+	TerrainPoints       []TerrainPoint
+	Geometry            Geometry
+	ExtrusionGeometries []Geometry
 
 	// Collision cache for terrain mode (populated by Sector.Load)
 	CollisionPts    []mgl32.Vec2 // boundary + terrain points in XZ
@@ -40,9 +41,10 @@ type Ceiling struct {
 	Texture       string
 	Terrain       bool // if true, use terrain displacement mesh
 	DoubleSided   bool // if true, ceiling is rendered from both sides (default true)
-	Extrusions    []Extrusion
-	TerrainPoints []TerrainPoint // extra points for terrain displacement (U=worldX, V=worldZ)
-	Geometry      Geometry
+	Extrusions          []Extrusion
+	TerrainPoints       []TerrainPoint
+	Geometry            Geometry
+	ExtrusionGeometries []Geometry
 
 	// Collision cache for terrain mode (populated by Sector.Load)
 	CollisionPts    []mgl32.Vec2 // boundary + terrain points in XZ
@@ -169,10 +171,15 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 			}
 		} else if len(w.Extrusions) > 0 {
 			// Wall has extrusions — generate complex geometry with holes
-			verts, indices := buildWallWithExtrusions(w, p1, p2, floorH1, floorH2, ceilH1, ceilH2)
+			verts, indices, bfList := buildWallWithExtrusions(w, p1, p2, floorH1, floorH2, ceilH1, ceilH2)
 			if err := w.Geometry.Load(verts, indices, w.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
+			geoms, err := loadExtrusionGeometries(w.ExtrusionGeometries, bfList)
+			if err != nil {
+				return err
+			}
+			w.ExtrusionGeometries = geoms
 		} else {
 			// Simple quad (original path)
 			wallLen := mgl32.Vec2{p2.X() - p1.X(), p2.Y() - p1.Y()}.Len()
@@ -209,10 +216,15 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 			s.Floor.CollisionPts, s.Floor.CollisionDepths, s.Floor.CollisionTris = buildFloorCollisionData(points, s.Floor.VertexHeight, s.Floor.Height, s.Floor.TerrainPoints)
 		} else if len(s.Floor.Extrusions) > 0 {
 			// Floor with extrusions
-			verts, indices := buildFloorWithExtrusions(points, s.Floor.VertexHeight, s.Floor.Height, true, s.Floor.DoubleSided, tileScale, s.Floor.Extrusions)
+			verts, indices, bfList := buildFloorWithExtrusions(points, s.Floor.VertexHeight, s.Floor.Height, true, s.Floor.DoubleSided, tileScale, s.Floor.Extrusions)
 			if err := s.Floor.Geometry.Load(verts, indices, s.Floor.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
+			geoms, err := loadExtrusionGeometries(s.Floor.ExtrusionGeometries, bfList)
+			if err != nil {
+				return err
+			}
+			s.Floor.ExtrusionGeometries = geoms
 		} else {
 			// Simple triangle fan (original path)
 			verts := make([][]float32, len(points))
@@ -242,10 +254,15 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 			s.Ceiling.CollisionPts, s.Ceiling.CollisionDepths, s.Ceiling.CollisionTris = buildFloorCollisionData(points, s.Ceiling.VertexHeight, s.Ceiling.Height, s.Ceiling.TerrainPoints)
 		} else if len(s.Ceiling.Extrusions) > 0 {
 			// Ceiling with extrusions
-			verts, indices := buildFloorWithExtrusions(points, s.Ceiling.VertexHeight, s.Ceiling.Height, false, s.Ceiling.DoubleSided, tileScale, s.Ceiling.Extrusions)
+			verts, indices, bfList := buildFloorWithExtrusions(points, s.Ceiling.VertexHeight, s.Ceiling.Height, false, s.Ceiling.DoubleSided, tileScale, s.Ceiling.Extrusions)
 			if err := s.Ceiling.Geometry.Load(verts, indices, s.Ceiling.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
+			geoms, err := loadExtrusionGeometries(s.Ceiling.ExtrusionGeometries, bfList)
+			if err != nil {
+				return err
+			}
+			s.Ceiling.ExtrusionGeometries = geoms
 		} else {
 			// Simple triangle fan (original path, reversed winding)
 			verts := make([][]float32, len(points))
@@ -264,6 +281,26 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 	}
 
 	return nil
+}
+
+// loadExtrusionGeometries releases old GPU resources and uploads each
+// ExtrusionBackFace as a separate Geometry.
+func loadExtrusionGeometries(old []Geometry, bfList []ExtrusionBackFace) ([]Geometry, error) {
+	for i := range old {
+		old[i].Delete()
+	}
+	if len(bfList) == 0 {
+		return nil, nil
+	}
+	geoms := make([]Geometry, 0, len(bfList))
+	for _, bf := range bfList {
+		var g Geometry
+		if err := g.Load(bf.Vertices, bf.Indices, bf.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
+			return nil, err
+		}
+		geoms = append(geoms, g)
+	}
+	return geoms, nil
 }
 
 // max0 returns i if i >= 0, else 0.

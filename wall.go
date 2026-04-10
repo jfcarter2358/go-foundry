@@ -42,6 +42,10 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	g.Texture = texture
 	g.Position = position
 
+	if len(g.Vertices) == 0 {
+		return nil
+	}
+
 	g.Model = mgl32.Ident4()
 	g.ModelUniform = gl.GetUniformLocation(Program, gl.Str("model\x00"))
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &g.Model[0])
@@ -67,8 +71,19 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	return nil
 }
 
+// Delete releases the GPU resources (VAO and VBO) held by this geometry.
+func (g *Geometry) Delete() {
+	if g.Vao != 0 {
+		gl.DeleteVertexArrays(1, &g.Vao)
+		g.Vao = 0
+	}
+	if g.Vbo != 0 {
+		gl.DeleteBuffers(1, &g.Vbo)
+		g.Vbo = 0
+	}
+}
+
 // Draw renders the geometry using the current OpenGL state.
-// Phase 0 fix: use g. receiver (not w.), identity model matrix, and dynamic vertex count.
 func (g Geometry) Draw() {
 	if len(g.Vertices) == 0 {
 		return
@@ -129,7 +144,8 @@ type Wall struct {
 	Terrain       bool // if true, use terrain displacement mesh
 	Extrusions    []Extrusion
 	TerrainPoints []TerrainPoint
-	Geometry      Geometry
+	Geometry            Geometry
+	ExtrusionGeometries []Geometry
 }
 
 // DrawWithTransform renders the geometry using a caller-supplied model matrix.

@@ -404,14 +404,23 @@ func renderSceneShadow(level *Level, modelUniform int32) {
 			sector := &chunk.Sectors[si]
 			if sector.Floor.Enabled {
 				drawGeometryShadow(&sector.Floor.Geometry)
+				for eg := range sector.Floor.ExtrusionGeometries {
+					drawGeometryShadow(&sector.Floor.ExtrusionGeometries[eg])
+				}
 			}
 			if sector.Ceiling.Enabled {
 				drawGeometryShadow(&sector.Ceiling.Geometry)
+				for eg := range sector.Ceiling.ExtrusionGeometries {
+					drawGeometryShadow(&sector.Ceiling.ExtrusionGeometries[eg])
+				}
 			}
 			for wi := range sector.Walls {
 				w := &sector.Walls[wi]
 				if w.Visible {
 					drawGeometryShadow(&w.Geometry)
+					for eg := range w.ExtrusionGeometries {
+						drawGeometryShadow(&w.ExtrusionGeometries[eg])
+					}
 				}
 			}
 			for pi := range sector.Portals {

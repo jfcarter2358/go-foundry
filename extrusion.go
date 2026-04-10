@@ -12,6 +12,14 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+// ExtrusionBackFace holds per-extrusion back face geometry data
+// that should be rendered with the extrusion's custom texture.
+type ExtrusionBackFace struct {
+	Texture  string
+	Vertices [][]float32
+	Indices  []int
+}
+
 // wallFrame computes the wall's local coordinate frame vectors.
 // wallDir is the normalised direction from p1→p2 in XZ.
 // wallNorm is the outward-facing normal (perpendicular in XZ, right-hand rule).
@@ -74,7 +82,7 @@ func buildWallWithExtrusions(
 	w *Wall,
 	p1, p2 mgl32.Vec2,
 	floorH1, floorH2, ceilH1, ceilH2 float32,
-) ([][]float32, []int) {
+) ([][]float32, []int, []ExtrusionBackFace) {
 	dir, norm := wallFrame(p1, p2)
 	wallLen := mgl32.Vec2{p2.X() - p1.X(), p2.Y() - p1.Y()}.Len()
 	wallH1 := ceilH1 - floorH1
@@ -84,6 +92,7 @@ func buildWallWithExtrusions(
 
 	var allVerts [][]float32
 	var allIndices []int
+	var backFaces []ExtrusionBackFace
 
 	// Helper to add a vertex and return its index
 	addVert := func(v []float32) int {
@@ -105,8 +114,13 @@ func buildWallWithExtrusions(
 		{0, wallH},
 	}
 
-	holes := make([][]mgl32.Vec2, len(w.Extrusions))
-	for ei, ext := range w.Extrusions {
+	var holes [][]mgl32.Vec2
+	for _, ext := range w.Extrusions {
+		// Only cut a hole when the extrusion is not visible — visible
+		// extrusions render their own geometry filling the area.
+		if ext.Visible {
+			continue
+		}
 		hole := make([]mgl32.Vec2, len(ext.Outer))
 		for i, p := range ext.Outer {
 			hole[i] = mgl32.Vec2{p.U, p.V}
@@ -115,7 +129,7 @@ func buildWallWithExtrusions(
 		if signedArea2D_UV(hole) > 0 {
 			reverseVec2Slice(hole)
 		}
-		holes[ei] = hole
+		holes = append(holes, hole)
 	}
 
 	merged, triIdx := earClipWithHoles(outerQuad, holes)
@@ -131,20 +145,6 @@ func buildWallWithExtrusions(
 
 	// --- 2. Back face (if wall is double-sided) ---
 	if w.DoubleSided {
-		// All extrusions cut holes in the back face — the extrusion's own
-		// back face (at the extruded depth) replaces it when BackVisible is true.
-		var backHoles [][]mgl32.Vec2
-		for _, ext := range w.Extrusions {
-			hole := make([]mgl32.Vec2, len(ext.Outer))
-			for i, p := range ext.Outer {
-				hole[i] = mgl32.Vec2{p.U, p.V}
-			}
-			if signedArea2D_UV(hole) > 0 {
-				reverseVec2Slice(hole)
-			}
-			backHoles = append(backHoles, hole)
-		}
-
 		backOuter := []mgl32.Vec2{
 			{0, 0},
 			{wallLen, 0},
@@ -152,7 +152,7 @@ func buildWallWithExtrusions(
 			{0, wallH},
 		}
 
-		backMerged, backTriIdx := earClipWithHoles(backOuter, backHoles)
+		backMerged, backTriIdx := earClipWithHoles(backOuter, holes)
 		backBase := len(allVerts)
 		for _, uv := range backMerged {
 			v := wallLocalVertex(uv.X(), uv.Y(), 0, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
@@ -222,33 +222,51 @@ func buildWallWithExtrusions(
 			}
 		}
 
-		// Back face (the inner polygon at depth) — requires both Visible and BackVisible
-		if ext.Visible && ext.BackVisible {
+		// Back face (the inner polygon at depth) — rendered when the extrusion
+		// is visible, or when explicitly requested via BackVisible.
+		if ext.Visible || ext.BackVisible {
 			innerPoly := make([]mgl32.Vec2, nPts)
 			for i, p := range ext.Inner {
 				innerPoly[i] = mgl32.Vec2{p.U, p.V}
 			}
 			backTris := earClip(innerPoly)
-			backBase := len(allVerts)
-			for _, p := range ext.Inner {
-				v := wallLocalVertex(p.U, p.V, ext.Depth, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
-				addVert(v)
-			}
-			// Winding: for negative depth (inward), back face normal should point inward (same as front CCW)
-			// For positive depth (outward), back face normal should point outward (reversed)
-			if ext.Depth < 0 {
-				for i := 0; i < len(backTris); i += 3 {
-					allIndices = append(allIndices, backBase+backTris[i+2], backBase+backTris[i+1], backBase+backTris[i])
+
+			if ext.Texture != "" {
+				// Separate geometry for custom extrusion texture
+				bf := ExtrusionBackFace{Texture: ext.Texture}
+				for _, p := range ext.Inner {
+					v := wallLocalVertex(p.U, p.V, ext.Depth, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
+					bf.Vertices = append(bf.Vertices, v)
 				}
+				if ext.Depth < 0 {
+					for i := 0; i < len(backTris); i += 3 {
+						bf.Indices = append(bf.Indices, backTris[i+2], backTris[i+1], backTris[i])
+					}
+				} else {
+					bf.Indices = append(bf.Indices, backTris...)
+				}
+				backFaces = append(backFaces, bf)
 			} else {
-				for i := 0; i < len(backTris); i += 3 {
-					allIndices = append(allIndices, backBase+backTris[i], backBase+backTris[i+1], backBase+backTris[i+2])
+				// No custom texture — merge into main geometry
+				backBase := len(allVerts)
+				for _, p := range ext.Inner {
+					v := wallLocalVertex(p.U, p.V, ext.Depth, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
+					addVert(v)
+				}
+				if ext.Depth < 0 {
+					for i := 0; i < len(backTris); i += 3 {
+						allIndices = append(allIndices, backBase+backTris[i+2], backBase+backTris[i+1], backBase+backTris[i])
+					}
+				} else {
+					for i := 0; i < len(backTris); i += 3 {
+						allIndices = append(allIndices, backBase+backTris[i], backBase+backTris[i+1], backBase+backTris[i+2])
+					}
 				}
 			}
 		}
 	}
 
-	return allVerts, allIndices
+	return allVerts, allIndices, backFaces
 }
 
 // signedArea2D_UV computes the signed area of a 2D polygon in UV space.
@@ -287,9 +305,10 @@ func buildFloorWithExtrusions(
 	doubleSided bool,
 	tileScale float32,
 	extrusions []Extrusion,
-) ([][]float32, []int) {
+) ([][]float32, []int, []ExtrusionBackFace) {
 	var allVerts [][]float32
 	var allIndices []int
+	var backFaces []ExtrusionBackFace
 
 	addVert := func(v []float32) int {
 		idx := len(allVerts)
@@ -304,9 +323,12 @@ func buildFloorWithExtrusions(
 	outer := make([]mgl32.Vec2, len(points))
 	copy(outer, points)
 
-	// Build holes from extrusion outer polygons
-	holes := make([][]mgl32.Vec2, len(extrusions))
-	for ei, ext := range extrusions {
+	// Build holes from extrusion outer polygons — only for non-visible extrusions
+	var holes [][]mgl32.Vec2
+	for _, ext := range extrusions {
+		if ext.Visible {
+			continue
+		}
 		hole := make([]mgl32.Vec2, len(ext.Outer))
 		for i, p := range ext.Outer {
 			hole[i] = mgl32.Vec2{p.U, p.V}
@@ -323,7 +345,7 @@ func buildFloorWithExtrusions(
 				reverseVec2Slice(hole)
 			}
 		}
-		holes[ei] = hole
+		holes = append(holes, hole)
 	}
 
 	// Ensure outer polygon has correct winding
@@ -423,31 +445,49 @@ func buildFloorWithExtrusions(
 			}
 		}
 
-		// Back face — requires both Visible and BackVisible
-		if ext.Visible && ext.BackVisible {
+		// Back face — rendered when the extrusion is visible, or when
+		// explicitly requested via BackVisible.
+		if ext.Visible || ext.BackVisible {
 			innerPoly := make([]mgl32.Vec2, nPts)
 			for i, p := range ext.Inner {
 				innerPoly[i] = mgl32.Vec2{p.U, p.V}
 			}
 			backTris := earClip(innerPoly)
-			backBase := len(allVerts)
-			for _, p := range ext.Inner {
-				allVerts = append(allVerts, []float32{p.U, baseHeight - depthY, p.V, p.U / tileScale, p.V / tileScale})
-			}
-			if normalUp {
-				// Floor back face: normal points downward (reversed winding)
-				for i := 0; i < len(backTris); i += 3 {
-					allIndices = append(allIndices, backBase+backTris[i+2], backBase+backTris[i+1], backBase+backTris[i])
+
+			if ext.Texture != "" {
+				// Separate geometry for custom extrusion texture
+				bf := ExtrusionBackFace{Texture: ext.Texture}
+				for _, p := range ext.Inner {
+					bf.Vertices = append(bf.Vertices, []float32{p.U, baseHeight - depthY, p.V, p.U / tileScale, p.V / tileScale})
 				}
+				if normalUp {
+					for i := 0; i < len(backTris); i += 3 {
+						bf.Indices = append(bf.Indices, backTris[i+2], backTris[i+1], backTris[i])
+					}
+				} else {
+					bf.Indices = append(bf.Indices, backTris...)
+				}
+				backFaces = append(backFaces, bf)
 			} else {
-				for i := 0; i < len(backTris); i += 3 {
-					allIndices = append(allIndices, backBase+backTris[i], backBase+backTris[i+1], backBase+backTris[i+2])
+				// No custom texture — merge into main geometry
+				backBase := len(allVerts)
+				for _, p := range ext.Inner {
+					allVerts = append(allVerts, []float32{p.U, baseHeight - depthY, p.V, p.U / tileScale, p.V / tileScale})
+				}
+				if normalUp {
+					for i := 0; i < len(backTris); i += 3 {
+						allIndices = append(allIndices, backBase+backTris[i+2], backBase+backTris[i+1], backBase+backTris[i])
+					}
+				} else {
+					for i := 0; i < len(backTris); i += 3 {
+						allIndices = append(allIndices, backBase+backTris[i], backBase+backTris[i+1], backBase+backTris[i+2])
+					}
 				}
 			}
 		}
 	}
 
-	return allVerts, allIndices
+	return allVerts, allIndices, backFaces
 }
 
 // ---------- Terrain displacement mesh ----------
@@ -611,9 +651,6 @@ func buildFloorTerrainMesh(
 
 	toVertex := func(pt mgl32.Vec2, depth float32) []float32 {
 		y := baseHeight + depth
-		if normalUp {
-			return []float32{pt.X(), y, pt.Y(), pt.X() / tileScale, pt.Y() / tileScale}
-		}
 		return []float32{pt.X(), y, pt.Y(), pt.X() / tileScale, pt.Y() / tileScale}
 	}
 

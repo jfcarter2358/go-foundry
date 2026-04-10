@@ -59,6 +59,38 @@ func isEar(polygon []mgl32.Vec2, indices []int, i int) bool {
 	return true
 }
 
+// isEarDegenerate is like isEar but accepts collinear vertices (cross == 0).
+// Used as a fallback when no strictly convex ear exists, which happens when
+// hole vertices coincide with the outer boundary (e.g., an extrusion covering
+// the top half of a wall).
+func isEarDegenerate(polygon []mgl32.Vec2, indices []int, i int) bool {
+	n := len(indices)
+	prev := indices[(i-1+n)%n]
+	curr := indices[i]
+	next := indices[(i+1)%n]
+
+	a := polygon[prev]
+	b := polygon[curr]
+	c := polygon[next]
+
+	cross := triCross(a, b, c)
+
+	// Accept convex or collinear, reject only reflex
+	if cross < 0 {
+		return false
+	}
+
+	for j := 0; j < n; j++ {
+		if j == (i-1+n)%n || j == i || j == (i+1)%n {
+			continue
+		}
+		if pointInTriangle(polygon[indices[j]], a, b, c) {
+			return false
+		}
+	}
+	return true
+}
+
 // earClip triangulates a simple polygon using ear clipping.
 // polygon must be CCW. Returns triangle indices into the polygon slice.
 func earClip(polygon []mgl32.Vec2) []int {
@@ -75,8 +107,26 @@ func earClip(polygon []mgl32.Vec2) []int {
 	var tris []int
 	for len(indices) > 2 {
 		earFound := false
+		// First pass: look for a strictly convex ear
 		for i := 0; i < len(indices); i++ {
 			if isEar(polygon, indices, i) {
+				n := len(indices)
+				prev := indices[(i-1+n)%n]
+				curr := indices[i]
+				next := indices[(i+1)%n]
+				tris = append(tris, prev, curr, next)
+				indices = append(indices[:i], indices[i+1:]...)
+				earFound = true
+				break
+			}
+		}
+		if earFound {
+			continue
+		}
+		// Fallback: allow collinear ears to make progress when hole
+		// vertices coincide with the outer polygon boundary.
+		for i := 0; i < len(indices); i++ {
+			if isEarDegenerate(polygon, indices, i) {
 				n := len(indices)
 				prev := indices[(i-1+n)%n]
 				curr := indices[i]

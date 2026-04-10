@@ -358,14 +358,18 @@ func main() {
 			chunksDrawn++
 
 			// Portal visibility: only render sectors reachable through portals from the player's sector.
+			// Sectors disconnected from the portal graph (e.g. nested sectors with no shared
+			// edges) bypass portal culling and fall through to frustum-only culling.
 			var visibleSectors map[string]bool
+			var connectedSectors map[string]bool
 			if PlayerEntity != nil && chunk.ID == PlayerEntity.CurrentChunk {
 				visibleSectors = PortalVisibleSectors(chunk, PlayerEntity.CurrentSector, Cam.Position)
+				connectedSectors = PortalConnectedSectors(chunk, PlayerEntity.CurrentSector)
 			}
 
 			for j := range chunk.Sectors {
 				sector := &chunk.Sectors[j]
-				if visibleSectors != nil && !visibleSectors[sector.ID] {
+				if visibleSectors != nil && connectedSectors[sector.ID] && !visibleSectors[sector.ID] {
 					sectorsPortalCulled++
 					continue
 				}
@@ -377,14 +381,23 @@ func main() {
 				sectorsDrawn++
 				if sector.Floor.Enabled {
 					sector.Floor.Geometry.Draw()
+					for eg := range sector.Floor.ExtrusionGeometries {
+						sector.Floor.ExtrusionGeometries[eg].Draw()
+					}
 				}
 				if sector.Ceiling.Enabled {
 					sector.Ceiling.Geometry.Draw()
+					for eg := range sector.Ceiling.ExtrusionGeometries {
+						sector.Ceiling.ExtrusionGeometries[eg].Draw()
+					}
 				}
 				for k := range sector.Walls {
 					w := &sector.Walls[k]
 					if w.Visible && (w.DoubleSided || WallFacingCamera(*w, Cam.Position)) {
 						w.Geometry.Draw()
+						for eg := range w.ExtrusionGeometries {
+							w.ExtrusionGeometries[eg].Draw()
+						}
 					}
 				}
 				// Draw gap-fill geometry on portals connecting sectors at different heights.

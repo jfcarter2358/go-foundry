@@ -73,16 +73,15 @@ func PortalFacingCamera(start, end mgl32.Vec2, camPos mgl32.Vec3) bool {
 	return nx*toCamX+nz*toCamZ > 0
 }
 
-// PortalVisibleSectors performs a BFS from startSectorID through camera-facing
-// portals and returns the set of sector IDs reachable (and therefore visible).
-// Returns nil if startSectorID is empty or not found, signalling the caller to
-// fall back to frustum-only culling.
-func PortalVisibleSectors(chunk *Chunk, startSectorID string, camPos mgl32.Vec3) map[string]bool {
+// portalBFS performs a BFS from startSectorID through portals and returns the
+// set of reachable sector IDs. If portalFilter is non-nil, only portals for
+// which portalFilter returns true are traversed.
+// Returns nil if startSectorID is empty or not found.
+func portalBFS(chunk *Chunk, startSectorID string, portalFilter func(p *Portal) bool) map[string]bool {
 	if startSectorID == "" {
 		return nil
 	}
 
-	// Build ID → index lookup for sectors in this chunk.
 	idToIdx := make(map[string]int, len(chunk.Sectors))
 	for i := range chunk.Sectors {
 		idToIdx[chunk.Sectors[i].ID] = i
@@ -93,7 +92,7 @@ func PortalVisibleSectors(chunk *Chunk, startSectorID string, camPos mgl32.Vec3)
 		return nil
 	}
 
-	visible := map[string]bool{startSectorID: true}
+	result := map[string]bool{startSectorID: true}
 	queue := []int{startIdx}
 
 	for len(queue) > 0 {
@@ -103,20 +102,39 @@ func PortalVisibleSectors(chunk *Chunk, startSectorID string, camPos mgl32.Vec3)
 
 		for k := range sec.Portals {
 			p := &sec.Portals[k]
-			if p.ToSector == "" || visible[p.ToSector] {
+			if p.ToSector == "" || result[p.ToSector] {
 				continue
 			}
-			if !PortalFacingCamera(p.StartPoint, p.EndPoint, camPos) {
+			if portalFilter != nil && !portalFilter(p) {
 				continue
 			}
-			visible[p.ToSector] = true
+			result[p.ToSector] = true
 			if ni, ok := idToIdx[p.ToSector]; ok {
 				queue = append(queue, ni)
 			}
 		}
 	}
 
-	return visible
+	return result
+}
+
+// PortalVisibleSectors performs a BFS from startSectorID through camera-facing
+// portals and returns the set of sector IDs reachable (and therefore visible).
+// Returns nil if startSectorID is empty or not found, signalling the caller to
+// fall back to frustum-only culling.
+func PortalVisibleSectors(chunk *Chunk, startSectorID string, camPos mgl32.Vec3) map[string]bool {
+	return portalBFS(chunk, startSectorID, func(p *Portal) bool {
+		return PortalFacingCamera(p.StartPoint, p.EndPoint, camPos)
+	})
+}
+
+// PortalConnectedSectors returns the set of all sector IDs reachable from
+// startSectorID through portals, ignoring camera direction. This identifies
+// which sectors participate in the portal graph so that disconnected sectors
+// (e.g. nested sectors with no shared edges) can bypass portal culling.
+// Returns nil if startSectorID is empty or not found.
+func PortalConnectedSectors(chunk *Chunk, startSectorID string) map[string]bool {
+	return portalBFS(chunk, startSectorID, nil)
 }
 
 // WallFacingCamera returns true when the wall's outward normal (left-hand normal

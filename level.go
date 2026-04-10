@@ -413,7 +413,8 @@ func LoadLevel(levelPath string) (Level, error) {
 			sectorPts := SectorPoints(&chunk, &sector)
 
 			// Enforce CCW winding (interior to the LEFT of each edge, viewed from +Y).
-			if signedArea2D(sectorPts) < 0 {
+			reversed := signedArea2D(sectorPts) < 0
+			if reversed {
 				for i, j := 0, len(sector.PointIndices)-1; i < j; i, j = i+1, j-1 {
 					sector.PointIndices[i], sector.PointIndices[j] = sector.PointIndices[j], sector.PointIndices[i]
 				}
@@ -432,7 +433,9 @@ func LoadLevel(levelPath string) (Level, error) {
 				sectorPts = SectorPoints(&chunk, &sector)
 			}
 
-			// Load per-vertex height offsets (pad/trim to match PointIndices length)
+			// Load per-vertex height offsets (pad/trim to match PointIndices length).
+			// If winding was reversed above, reverse the offsets to keep them
+			// aligned with the (now-reversed) PointIndices.
 			nPts := len(sector.PointIndices)
 			sector.Floor.VertexOffsets = make([]float32, nPts)
 			for i := 0; i < nPts && i < len(rs.Floor.VertexOffsets); i++ {
@@ -441,6 +444,14 @@ func LoadLevel(levelPath string) (Level, error) {
 			sector.Ceiling.VertexOffsets = make([]float32, nPts)
 			for i := 0; i < nPts && i < len(rs.Ceiling.VertexOffsets); i++ {
 				sector.Ceiling.VertexOffsets[i] = rs.Ceiling.VertexOffsets[i]
+			}
+			if reversed {
+				for i, j := 0, len(sector.Floor.VertexOffsets)-1; i < j; i, j = i+1, j-1 {
+					sector.Floor.VertexOffsets[i], sector.Floor.VertexOffsets[j] = sector.Floor.VertexOffsets[j], sector.Floor.VertexOffsets[i]
+				}
+				for i, j := 0, len(sector.Ceiling.VertexOffsets)-1; i < j; i, j = i+1, j-1 {
+					sector.Ceiling.VertexOffsets[i], sector.Ceiling.VertexOffsets[j] = sector.Ceiling.VertexOffsets[j], sector.Ceiling.VertexOffsets[i]
+				}
 			}
 
 			// Extend chunk Y bounds for sector floor/ceiling, including per-vertex offsets,
