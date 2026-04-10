@@ -16,6 +16,9 @@ type Floor struct {
 	DoubleSided   bool // if true, floor is rendered from both sides (default true)
 	Extrusions          []Extrusion
 	TerrainPoints       []TerrainPoint
+	UVOffset      mgl32.Vec2 // UV translation
+	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
+	UVRotation    float32    // UV rotation in radians
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 
@@ -43,6 +46,9 @@ type Ceiling struct {
 	DoubleSided   bool // if true, ceiling is rendered from both sides (default true)
 	Extrusions          []Extrusion
 	TerrainPoints       []TerrainPoint
+	UVOffset      mgl32.Vec2 // UV translation
+	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
+	UVRotation    float32    // UV rotation in radians
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 
@@ -73,8 +79,9 @@ type Sector struct {
 	Portals      []Portal
 	Floor        Floor
 	Ceiling      Ceiling
-	MinBound     mgl32.Vec2
-	MaxBound     mgl32.Vec2
+	MinBound         mgl32.Vec2
+	MaxBound         mgl32.Vec2
+	PrimitiveIndices []int // indices into parent Chunk.Primitives
 }
 
 // SectorPoints returns the resolved world-space points for a sector.
@@ -166,12 +173,14 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 		if w.Terrain && len(w.TerrainPoints) > 0 {
 			// Wall terrain mode — Delaunay displacement mesh
 			verts, indices := buildWallTerrainMesh(w, p1, p2, floorH1, floorH2, ceilH1, ceilH2)
+			applyUVTransform(verts, w.UVOffset, w.UVScale, w.UVRotation)
 			if err := w.Geometry.Load(verts, indices, w.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
 		} else if len(w.Extrusions) > 0 {
 			// Wall has extrusions — generate complex geometry with holes
 			verts, indices, bfList := buildWallWithExtrusions(w, p1, p2, floorH1, floorH2, ceilH1, ceilH2)
+			applyUVTransform(verts, w.UVOffset, w.UVScale, w.UVRotation)
 			if err := w.Geometry.Load(verts, indices, w.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
@@ -191,8 +200,10 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 			c := []float32{p2.X(), floorH2, p2.Y(), wallLen, wallH2}
 			d := []float32{p1.X(), floorH1, p1.Y(), 0.0, wallH1}
 
+			verts := [][]float32{a, b, c, d}
+			applyUVTransform(verts, w.UVOffset, w.UVScale, w.UVRotation)
 			if err := w.Geometry.Load(
-				[][]float32{a, b, c, d},
+				verts,
 				[]int{0, 1, 2, 2, 3, 0},
 				w.Texture,
 				mgl32.Vec3{0, 0, 0},
@@ -209,6 +220,7 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 		if s.Floor.Terrain && len(s.Floor.TerrainPoints) > 0 {
 			// Floor terrain mode — Delaunay displacement mesh
 			verts, indices := buildFloorTerrainMesh(points, s.Floor.VertexHeight, s.Floor.Height, true, s.Floor.DoubleSided, tileScale, s.Floor.TerrainPoints)
+			applyUVTransform(verts, s.Floor.UVOffset, s.Floor.UVScale, s.Floor.UVRotation)
 			if err := s.Floor.Geometry.Load(verts, indices, s.Floor.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
@@ -217,6 +229,7 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 		} else if len(s.Floor.Extrusions) > 0 {
 			// Floor with extrusions
 			verts, indices, bfList := buildFloorWithExtrusions(points, s.Floor.VertexHeight, s.Floor.Height, true, s.Floor.DoubleSided, tileScale, s.Floor.Extrusions)
+			applyUVTransform(verts, s.Floor.UVOffset, s.Floor.UVScale, s.Floor.UVRotation)
 			if err := s.Floor.Geometry.Load(verts, indices, s.Floor.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
@@ -232,6 +245,7 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 				y := s.Floor.VertexHeight(i)
 				verts[i] = []float32{pt.X(), y, pt.Y(), pt.X() / tileScale, pt.Y() / tileScale}
 			}
+			applyUVTransform(verts, s.Floor.UVOffset, s.Floor.UVScale, s.Floor.UVRotation)
 			indices := make([]int, 0, (len(points)-2)*3)
 			for i := 1; i < len(points)-1; i++ {
 				indices = append(indices, 0, i, i+1)
@@ -247,6 +261,7 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 		if s.Ceiling.Terrain && len(s.Ceiling.TerrainPoints) > 0 {
 			// Ceiling terrain mode — Delaunay displacement mesh
 			verts, indices := buildFloorTerrainMesh(points, s.Ceiling.VertexHeight, s.Ceiling.Height, false, s.Ceiling.DoubleSided, tileScale, s.Ceiling.TerrainPoints)
+			applyUVTransform(verts, s.Ceiling.UVOffset, s.Ceiling.UVScale, s.Ceiling.UVRotation)
 			if err := s.Ceiling.Geometry.Load(verts, indices, s.Ceiling.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
@@ -255,6 +270,7 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 		} else if len(s.Ceiling.Extrusions) > 0 {
 			// Ceiling with extrusions
 			verts, indices, bfList := buildFloorWithExtrusions(points, s.Ceiling.VertexHeight, s.Ceiling.Height, false, s.Ceiling.DoubleSided, tileScale, s.Ceiling.Extrusions)
+			applyUVTransform(verts, s.Ceiling.UVOffset, s.Ceiling.UVScale, s.Ceiling.UVRotation)
 			if err := s.Ceiling.Geometry.Load(verts, indices, s.Ceiling.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
@@ -270,6 +286,7 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 				y := s.Ceiling.VertexHeight(i)
 				verts[i] = []float32{pt.X(), y, pt.Y(), pt.X() / tileScale, pt.Y() / tileScale}
 			}
+			applyUVTransform(verts, s.Ceiling.UVOffset, s.Ceiling.UVScale, s.Ceiling.UVRotation)
 			indices := make([]int, 0, (len(points)-2)*3)
 			for i := len(points) - 2; i >= 1; i-- {
 				indices = append(indices, 0, i+1, i)

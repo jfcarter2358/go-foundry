@@ -65,21 +65,21 @@ func editorExtrusionPanel(ch *Chunk, s *Sector, w *Wall) {
 		changed = imgui.Checkbox(fmt.Sprintf("Visible##extv%d", ei), &ext.Visible) || changed
 		changed = imgui.Checkbox(fmt.Sprintf("Back Visible##extbv%d", ei), &ext.BackVisible) || changed
 
-		// Per-vertex editing
-		if imgui.TreeNodeV(fmt.Sprintf("Outer Polygon##exto%d", ei), imgui.TreeNodeFlagsNone) {
+		// Per-vertex shape editing (extrusion outline on the wall surface)
+		if imgui.TreeNodeV(fmt.Sprintf("Outer Shape##exto%d", ei), imgui.TreeNodeFlagsNone) {
 			for vi := range ext.Outer {
 				p := &ext.Outer[vi]
-				changed = editorDragFloat(fmt.Sprintf("U##extoU%d_%d", ei, vi), &p.U, 0, 0, "%.3f") || changed
-				changed = editorDragFloat(fmt.Sprintf("V##extoV%d_%d", ei, vi), &p.V, 0, 0, "%.3f") || changed
+				changed = editorDragFloat(fmt.Sprintf("X##extoU%d_%d", ei, vi), &p.U, 0, 0, "%.3f") || changed
+				changed = editorDragFloat(fmt.Sprintf("Y##extoV%d_%d", ei, vi), &p.V, 0, 0, "%.3f") || changed
 			}
 			imgui.TreePop()
 		}
 
-		if imgui.TreeNodeV(fmt.Sprintf("Inner Polygon##exti%d", ei), imgui.TreeNodeFlagsNone) {
+		if imgui.TreeNodeV(fmt.Sprintf("Inner Shape##exti%d", ei), imgui.TreeNodeFlagsNone) {
 			for vi := range ext.Inner {
 				p := &ext.Inner[vi]
-				changed = editorDragFloat(fmt.Sprintf("U##extiU%d_%d", ei, vi), &p.U, 0, 0, "%.3f") || changed
-				changed = editorDragFloat(fmt.Sprintf("V##extiV%d_%d", ei, vi), &p.V, 0, 0, "%.3f") || changed
+				changed = editorDragFloat(fmt.Sprintf("X##extiU%d_%d", ei, vi), &p.U, 0, 0, "%.3f") || changed
+				changed = editorDragFloat(fmt.Sprintf("Y##extiV%d_%d", ei, vi), &p.V, 0, 0, "%.3f") || changed
 			}
 			imgui.TreePop()
 		}
@@ -87,6 +87,8 @@ func editorExtrusionPanel(ch *Chunk, s *Sector, w *Wall) {
 		if imgui.Button(fmt.Sprintf("Delete##extdel%d", ei)) {
 			deleteIdx = ei
 		}
+
+		changed = editorUVControls(fmt.Sprintf("WallExt%d", ei), &ext.UVOffset, &ext.UVScale, &ext.UVRotation) || changed
 
 		if changed {
 			_ = s.Load(SectorPoints(ch, s))
@@ -412,7 +414,7 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 		changed = imgui.Checkbox(fmt.Sprintf("Visible##%sev%d", surfaceLabel, ei), &ext.Visible) || changed
 		changed = imgui.Checkbox(fmt.Sprintf("Back Visible##%sebv%d", surfaceLabel, ei), &ext.BackVisible) || changed
 
-		if imgui.TreeNodeV(fmt.Sprintf("Outer##%seo%d", surfaceLabel, ei), imgui.TreeNodeFlagsNone) {
+		if imgui.TreeNodeV(fmt.Sprintf("Outer Shape##%seo%d", surfaceLabel, ei), imgui.TreeNodeFlagsNone) {
 			for vi := range ext.Outer {
 				p := &ext.Outer[vi]
 				changed = editorDragFloat(fmt.Sprintf("X##%seoU%d_%d", surfaceLabel, ei, vi), &p.U, 0, 0, "%.3f") || changed
@@ -420,7 +422,7 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 			}
 			imgui.TreePop()
 		}
-		if imgui.TreeNodeV(fmt.Sprintf("Inner##%sei%d", surfaceLabel, ei), imgui.TreeNodeFlagsNone) {
+		if imgui.TreeNodeV(fmt.Sprintf("Inner Shape##%sei%d", surfaceLabel, ei), imgui.TreeNodeFlagsNone) {
 			for vi := range ext.Inner {
 				p := &ext.Inner[vi]
 				changed = editorDragFloat(fmt.Sprintf("X##%seiU%d_%d", surfaceLabel, ei, vi), &p.U, 0, 0, "%.3f") || changed
@@ -432,6 +434,8 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 		if imgui.Button(fmt.Sprintf("Delete##%sedel%d", surfaceLabel, ei)) {
 			deleteIdx = ei
 		}
+
+		changed = editorUVControls(fmt.Sprintf("%sExt%d", surfaceLabel, ei), &ext.UVOffset, &ext.UVScale, &ext.UVRotation) || changed
 
 		if changed {
 			_ = s.Load(SectorPoints(ch, s))

@@ -79,6 +79,32 @@ chunks:
           - { from: I, to: J, kind: wall,   texture: rock,   collision: true  }
           - { from: J, to: G, kind: wall,   texture: rock,   collision: true  }
 
+    primitives:
+      - id: "crate1"
+        type: rect_prism
+        position: { x: -3.0, y: 0.5, z: -10.0 }
+        scale: { x: 1.0, y: 1.0, z: 1.0 }
+        texture: wood_floor
+        collision: true
+      - id: "ball1"
+        type: sphere
+        position: { x: 0.0, y: 0.5, z: -12.0 }
+        scale: { x: 1.0, y: 1.0, z: 1.0 }
+        texture: rock
+        collision: true
+      - id: "pillar1"
+        type: cylinder
+        position: { x: 3.0, y: 1.5, z: -10.0 }
+        scale: { x: 0.5, y: 3.0, z: 0.5 }
+        texture: concrete
+        sides: 12
+        collision: true
+      - id: "mat1"
+        type: plane
+        position: { x: 0.0, y: 0.01, z: -8.0 }
+        scale: { x: 3.0, y: 1.0, z: 3.0 }
+        texture: stone_floor
+
   # ----------------------------------------------------------------
   # Chunk "building_ground"
   # Ground floor: X:-8..8, Z:4..20, Y range 0–4.

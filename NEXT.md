@@ -31,7 +31,6 @@
 - [ ] Baked lighting
 - [ ] Animations
 - [ ] Scripting engine
-- [ ] RDS (isometric?) mode
 - [ ] Default entity definitions
 - [ ] Gravity (volumes)
 - [ ] Script trigger volumes
@@ -41,7 +40,8 @@
 - [ ] UI builder
 - [ ] Object collision physics
 - [ ] "Static" models (don't move, baked into collision/lighting)
-- [ ] Primitives (plane, square, etc.)
+- [x] Primitives (plane, square, etc.)
 - [ ] Sprites
 - [ ] Transparency in textures
 - [ ] Textures/models/entities/etc. should be loaded from a directory traversal, not a hard-coded map
+- [x] UV editing

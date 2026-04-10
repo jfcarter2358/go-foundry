@@ -116,11 +116,6 @@ func buildWallWithExtrusions(
 
 	var holes [][]mgl32.Vec2
 	for _, ext := range w.Extrusions {
-		// Only cut a hole when the extrusion is not visible — visible
-		// extrusions render their own geometry filling the area.
-		if ext.Visible {
-			continue
-		}
 		hole := make([]mgl32.Vec2, len(ext.Outer))
 		for i, p := range ext.Outer {
 			hole[i] = mgl32.Vec2{p.U, p.V}
@@ -170,6 +165,8 @@ func buildWallWithExtrusions(
 		if nPts < 3 || len(ext.Inner) != nPts {
 			continue
 		}
+
+		extSideStart := len(allVerts) // track start for UV transform
 
 		// Side faces: quads connecting outer[i]→inner[i]→inner[i+1]→outer[i+1]
 		for i := 0; i < nPts; i++ {
@@ -245,6 +242,7 @@ func buildWallWithExtrusions(
 				} else {
 					bf.Indices = append(bf.Indices, backTris...)
 				}
+				applyUVTransform(bf.Vertices, ext.UVOffset, ext.UVScale, ext.UVRotation)
 				backFaces = append(backFaces, bf)
 			} else {
 				// No custom texture — merge into main geometry
@@ -264,6 +262,9 @@ func buildWallWithExtrusions(
 				}
 			}
 		}
+
+		// Apply per-extrusion UV transform to side faces and merged back faces
+		applyUVTransform(allVerts[extSideStart:], ext.UVOffset, ext.UVScale, ext.UVRotation)
 	}
 
 	return allVerts, allIndices, backFaces
@@ -323,12 +324,9 @@ func buildFloorWithExtrusions(
 	outer := make([]mgl32.Vec2, len(points))
 	copy(outer, points)
 
-	// Build holes from extrusion outer polygons — only for non-visible extrusions
+	// Build holes from extrusion outer polygons
 	var holes [][]mgl32.Vec2
 	for _, ext := range extrusions {
-		if ext.Visible {
-			continue
-		}
 		hole := make([]mgl32.Vec2, len(ext.Outer))
 		for i, p := range ext.Outer {
 			hole[i] = mgl32.Vec2{p.U, p.V}
@@ -400,6 +398,8 @@ func buildFloorWithExtrusions(
 			continue
 		}
 
+		extSideStart := len(allVerts)
+
 		depthDir := float32(1)
 		if !normalUp {
 			depthDir = -1 // ceilings: depth goes upward (positive Y)
@@ -467,6 +467,7 @@ func buildFloorWithExtrusions(
 				} else {
 					bf.Indices = append(bf.Indices, backTris...)
 				}
+				applyUVTransform(bf.Vertices, ext.UVOffset, ext.UVScale, ext.UVRotation)
 				backFaces = append(backFaces, bf)
 			} else {
 				// No custom texture — merge into main geometry
@@ -485,6 +486,9 @@ func buildFloorWithExtrusions(
 				}
 			}
 		}
+
+		// Apply per-extrusion UV transform to side faces and merged back faces
+		applyUVTransform(allVerts[extSideStart:], ext.UVOffset, ext.UVScale, ext.UVRotation)
 	}
 
 	return allVerts, allIndices, backFaces

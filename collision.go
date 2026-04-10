@@ -657,3 +657,36 @@ func SegmentIntersect2D(a1, a2, b1, b2 mgl32.Vec2) (bool, float32) {
 	}
 	return false, 0
 }
+
+// ResolvePrimitiveCollision pushes the entity out of any overlapping primitives
+// in the current sector and portal-adjacent sectors.
+func ResolvePrimitiveCollision(entity *Entity, chunk *Chunk, sector *Sector, newPos mgl32.Vec3) mgl32.Vec3 {
+	if chunk == nil || sector == nil {
+		return newPos
+	}
+	// Check current sector
+	for _, pi := range sector.PrimitiveIndices {
+		prim := &chunk.Primitives[pi]
+		if !prim.Collision {
+			continue
+		}
+		tmp := primAsEntity(prim)
+		if EntityOverlap(entity, tmp, newPos) {
+			newPos = ResolveEntityCollision(entity, tmp, newPos)
+		}
+	}
+	// Check adjacent sectors
+	for _, adj := range getAdjacentSectors(chunk, sector) {
+		for _, pi := range adj.PrimitiveIndices {
+			prim := &chunk.Primitives[pi]
+			if !prim.Collision {
+				continue
+			}
+			tmp := primAsEntity(prim)
+			if EntityOverlap(entity, tmp, newPos) {
+				newPos = ResolveEntityCollision(entity, tmp, newPos)
+			}
+		}
+	}
+	return newPos
+}

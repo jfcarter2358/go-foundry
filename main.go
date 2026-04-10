@@ -295,6 +295,11 @@ func main() {
 					}
 				}
 
+				// Primitive collision: push player out of overlapping primitives
+				if chunk != nil && sector != nil {
+					newPlayerPos = ResolvePrimitiveCollision(PlayerEntity, chunk, sector, newPlayerPos)
+				}
+
 				// Landing/bonk: reset vertical velocity on floor or ceiling contact.
 				if GravityEnabled {
 					if hitFloor {
@@ -407,6 +412,11 @@ func main() {
 						p.FloorGap.Draw()
 						p.CeilGap.Draw()
 					}
+				}
+				// Draw primitives belonging to this sector
+				for _, pi := range sector.PrimitiveIndices {
+					prim := &chunk.Primitives[pi]
+					prim.Geometry.DrawWithTransform(prim.ModelMatrix())
 				}
 			}
 		}

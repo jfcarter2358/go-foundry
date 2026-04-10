@@ -150,6 +150,37 @@ func editorDragFloat3(label string, values *[3]float32, min, max float32, format
 	return changed
 }
 
+// editorUVControls draws collapsible UV offset/scale/rotation controls.
+// Returns true if any value changed.
+func editorUVControls(label string, offset *mgl32.Vec2, scale *mgl32.Vec2, rotation *float32) bool {
+	if !imgui.CollapsingHeader(fmt.Sprintf("Texture UV##%sUV", label)) {
+		return false
+	}
+	changed := false
+	uvOff := [2]float32{offset.X(), offset.Y()}
+	if editorDragFloat(fmt.Sprintf("UV Offset U##%suvou", label), &uvOff[0], 0, 0, "%.3f") ||
+		editorDragFloat(fmt.Sprintf("UV Offset V##%suvov", label), &uvOff[1], 0, 0, "%.3f") {
+		*offset = mgl32.Vec2{uvOff[0], uvOff[1]}
+		changed = true
+	}
+	uvSc := *scale
+	if uvSc == (mgl32.Vec2{}) {
+		uvSc = mgl32.Vec2{1, 1}
+	}
+	uvScArr := [2]float32{uvSc.X(), uvSc.Y()}
+	if editorDragFloat(fmt.Sprintf("UV Scale U##%suvsu", label), &uvScArr[0], 0.01, 100, "%.3f") ||
+		editorDragFloat(fmt.Sprintf("UV Scale V##%suvsv", label), &uvScArr[1], 0.01, 100, "%.3f") {
+		*scale = mgl32.Vec2{uvScArr[0], uvScArr[1]}
+		changed = true
+	}
+	rotDeg := *rotation * 180 / math.Pi
+	if editorDragFloat(fmt.Sprintf("UV Rotation (deg)##%suvrot", label), &rotDeg, -360, 360, "%.1f") {
+		*rotation = rotDeg * math.Pi / 180
+		changed = true
+	}
+	return changed
+}
+
 // editorGridSettings draws the step-size and snap-to-grid controls.
 func editorGridSettings() {
 	imgui.Checkbox("Snap to Grid", &Editor.SnapToGrid)
@@ -263,6 +294,7 @@ func EditorDrawUI() {
 	if currentMode == ModeSurface2D {
 		imgui.PopStyleColor()
 	}
+
 
 	imgui.SameLine()
 	imgui.Separator()

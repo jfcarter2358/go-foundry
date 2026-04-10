@@ -26,6 +26,9 @@ type RawExtrusion struct {
 	Texture     string              `yaml:"texture,omitempty"`
 	Visible     *bool               `yaml:"visible,omitempty"`      // default true when absent
 	BackVisible *bool               `yaml:"back_visible,omitempty"` // default true when absent
+	UVOffset    Point               `yaml:"uv_offset,omitempty"`
+	UVScale     Point               `yaml:"uv_scale,omitempty"`
+	UVRotation  float32             `yaml:"uv_rotation,omitempty"`
 }
 
 // RawTerrainPoint is the YAML representation of a terrain displacement point.
@@ -51,6 +54,9 @@ type RawEdge struct {
 	Extrusions    []RawExtrusion   `yaml:"extrusions,omitempty"`
 	WallTerrain   bool             `yaml:"terrain,omitempty"`
 	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
+	UVOffset      Point             `yaml:"uv_offset,omitempty"`
+	UVScale       Point             `yaml:"uv_scale,omitempty"`
+	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
 }
 
 // RawFloor is the YAML representation of a sector floor.
@@ -63,6 +69,9 @@ type RawFloor struct {
 	DoubleSided   *bool             `yaml:"double_sided,omitempty"` // default true when absent
 	Extrusions    []RawExtrusion    `yaml:"extrusions,omitempty"`
 	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
+	UVOffset      Point             `yaml:"uv_offset,omitempty"`
+	UVScale       Point             `yaml:"uv_scale,omitempty"`
+	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
 }
 
 // RawCeiling is the YAML representation of a sector ceiling.
@@ -75,6 +84,9 @@ type RawCeiling struct {
 	DoubleSided   *bool             `yaml:"double_sided,omitempty"` // default true when absent
 	Extrusions    []RawExtrusion    `yaml:"extrusions,omitempty"`
 	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
+	UVOffset      Point             `yaml:"uv_offset,omitempty"`
+	UVScale       Point             `yaml:"uv_scale,omitempty"`
+	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
 }
 
 // RawSector is the YAML representation of one sector.
@@ -83,6 +95,21 @@ type RawSector struct {
 	Floor   RawFloor   `yaml:"floor"`
 	Ceiling RawCeiling `yaml:"ceiling"`
 	Edges   []RawEdge  `yaml:"edges"`
+}
+
+// RawPrimitive is the YAML representation of a procedural 3D primitive.
+type RawPrimitive struct {
+	ID        string            `yaml:"id"`
+	Type      string            `yaml:"type"`                // "rect_prism", "sphere", "cylinder", "plane"
+	Position  RawEntityPosition `yaml:"position"`
+	Rotation  RawEntityPosition `yaml:"rotation"`
+	Scale     RawEntityPosition `yaml:"scale"`
+	Texture   string            `yaml:"texture"`
+	Sides     int               `yaml:"sides,omitempty"`     // cylinder only; default 16
+	Collision bool              `yaml:"collision,omitempty"`
+	UVOffset   Point             `yaml:"uv_offset,omitempty"`
+	UVScale    Point             `yaml:"uv_scale,omitempty"`  // zero = {1,1}
+	UVRotation float32           `yaml:"uv_rotation,omitempty"` // radians
 }
 
 // RawChunkOrigin is the YAML representation of a chunk's world-space origin offset.
@@ -101,7 +128,8 @@ type RawChunk struct {
 	Sectors  []RawSector       `yaml:"sectors"`
 	Origin   RawChunkOrigin    `yaml:"origin"`
 	Rotation float32           `yaml:"rotation"`
-	Scale    float32           `yaml:"scale"`
+	Scale      float32           `yaml:"scale"`
+	Primitives []RawPrimitive    `yaml:"primitives,omitempty"`
 }
 
 // RawEntityPosition holds the 3D spawn position of an entity.
@@ -276,11 +304,18 @@ func LoadLevel(levelPath string) (Level, error) {
 			loadExtrusions := func(raws []RawExtrusion, transformXZ bool) []Extrusion {
 				var out []Extrusion
 				for _, re := range raws {
+					extUVScale := mgl32.Vec2{re.UVScale.X, re.UVScale.Y}
+					if extUVScale == (mgl32.Vec2{}) {
+						extUVScale = mgl32.Vec2{1, 1}
+					}
 					ext := Extrusion{
 						Depth:       re.Depth,
 						Texture:     re.Texture,
 						Visible:     boolDefault(re.Visible, true),
 						BackVisible: boolDefault(re.BackVisible, true),
+						UVOffset:    mgl32.Vec2{re.UVOffset.X, re.UVOffset.Y},
+						UVScale:     extUVScale,
+						UVRotation:  re.UVRotation,
 					}
 					if re.Texture != "" {
 						texNeeded[re.Texture] = true
@@ -318,6 +353,14 @@ func LoadLevel(levelPath string) (Level, error) {
 				return out
 			}
 
+			floorUVScale := mgl32.Vec2{rs.Floor.UVScale.X, rs.Floor.UVScale.Y}
+			if floorUVScale == (mgl32.Vec2{}) {
+				floorUVScale = mgl32.Vec2{1, 1}
+			}
+			ceilUVScale := mgl32.Vec2{rs.Ceiling.UVScale.X, rs.Ceiling.UVScale.Y}
+			if ceilUVScale == (mgl32.Vec2{}) {
+				ceilUVScale = mgl32.Vec2{1, 1}
+			}
 			sector := Sector{
 				ID: rs.ID,
 				Floor: Floor{
@@ -328,6 +371,9 @@ func LoadLevel(levelPath string) (Level, error) {
 					DoubleSided:   boolDefault(rs.Floor.DoubleSided, true),
 					Extrusions:    loadExtrusions(rs.Floor.Extrusions, true),
 					TerrainPoints: loadTerrainPts(rs.Floor.TerrainPoints, true),
+					UVOffset:      mgl32.Vec2{rs.Floor.UVOffset.X, rs.Floor.UVOffset.Y},
+					UVScale:       floorUVScale,
+					UVRotation:    rs.Floor.UVRotation,
 				},
 				Ceiling: Ceiling{
 					Enabled:       rs.Ceiling.Enabled,
@@ -337,6 +383,9 @@ func LoadLevel(levelPath string) (Level, error) {
 					DoubleSided:   boolDefault(rs.Ceiling.DoubleSided, true),
 					Extrusions:    loadExtrusions(rs.Ceiling.Extrusions, true),
 					TerrainPoints: loadTerrainPts(rs.Ceiling.TerrainPoints, true),
+					UVOffset:      mgl32.Vec2{rs.Ceiling.UVOffset.X, rs.Ceiling.UVOffset.Y},
+					UVScale:       ceilUVScale,
+					UVRotation:    rs.Ceiling.UVRotation,
 				},
 			}
 
@@ -382,6 +431,10 @@ func LoadLevel(levelPath string) (Level, error) {
 					if edge.Texture != "" {
 						texNeeded[edge.Texture] = true
 					}
+					wallUVScale := mgl32.Vec2{edge.UVScale.X, edge.UVScale.Y}
+					if wallUVScale == (mgl32.Vec2{}) {
+						wallUVScale = mgl32.Vec2{1, 1}
+					}
 					sector.Walls = append(sector.Walls, Wall{
 						StartPoint:    start,
 						EndPoint:      end,
@@ -393,6 +446,9 @@ func LoadLevel(levelPath string) (Level, error) {
 						Terrain:       edge.WallTerrain,
 						Extrusions:    loadExtrusions(edge.Extrusions, false),
 						TerrainPoints: loadTerrainPts(edge.TerrainPoints, false),
+						UVOffset:      mgl32.Vec2{edge.UVOffset.X, edge.UVOffset.Y},
+						UVScale:       wallUVScale,
+						UVRotation:    edge.UVRotation,
 					})
 					sector.EdgeKinds = append(sector.EdgeKinds, "wall")
 				case "portal":
@@ -562,6 +618,118 @@ func LoadLevel(levelPath string) (Level, error) {
 					if err := p.CeilGap.Load(verts, indices, tex, mgl32.Vec3{}); err != nil {
 						return Level{}, fmt.Errorf("portal ceil gap %q→%q: %w", s.ID, p.ToSector, err)
 					}
+				}
+			}
+		}
+
+		// Load primitives defined in this chunk
+		for _, rp := range rc.Primitives {
+			scale := mgl32.Vec3{rp.Scale.X, rp.Scale.Y, rp.Scale.Z}
+			if scale == (mgl32.Vec3{}) {
+				scale = mgl32.Vec3{1, 1, 1}
+			}
+
+			// Transform position: apply chunk scale → rotate → translate
+			px := rp.Position.X * sc
+			pz := rp.Position.Z * sc
+			worldX := cos32*px - sin32*pz + origin.X()
+			worldZ := sin32*px + cos32*pz + origin.Z()
+			worldY := rp.Position.Y + origin.Y()
+
+			var kind PrimitiveType
+			switch rp.Type {
+			case "sphere":
+				kind = PrimitiveSphere
+			case "cylinder":
+				kind = PrimitiveCylinder
+			case "plane":
+				kind = PrimitivePlane
+			default:
+				kind = PrimitiveRectPrism
+			}
+
+			sides := rp.Sides
+			if sides < 3 {
+				sides = 16
+			}
+
+			uvScale := mgl32.Vec2{rp.UVScale.X, rp.UVScale.Y}
+			if uvScale == (mgl32.Vec2{}) {
+				uvScale = mgl32.Vec2{1, 1}
+			}
+
+			prim := Primitive{
+				ID:        rp.ID,
+				Kind:      kind,
+				Position:  mgl32.Vec3{worldX, worldY, worldZ},
+				Rotation:  mgl32.Vec3{rp.Rotation.X, rp.Rotation.Y, rp.Rotation.Z},
+				Scale:     scale,
+				Texture:   rp.Texture,
+				Sides:     sides,
+				Collision: rp.Collision,
+				UVOffset:   mgl32.Vec2{rp.UVOffset.X, rp.UVOffset.Y},
+				UVScale:    uvScale,
+				UVRotation: rp.UVRotation,
+				ChunkID:    chunk.ID,
+			}
+
+			// Compute bounding volumes from type + scale
+			switch kind {
+			case PrimitiveRectPrism:
+				prim.BoundingKind = BoundingAABB
+				prim.BoundHalfX = scale.X() / 2
+				prim.BoundHalfY = scale.Y() / 2
+				prim.BoundHalfZ = scale.Z() / 2
+			case PrimitiveSphere:
+				prim.BoundingKind = BoundingSphere
+				maxS := scale.X()
+				if scale.Y() > maxS {
+					maxS = scale.Y()
+				}
+				if scale.Z() > maxS {
+					maxS = scale.Z()
+				}
+				prim.BoundHalfX = maxS / 2
+				prim.BoundHalfY = maxS / 2
+				prim.BoundHalfZ = maxS / 2
+			case PrimitiveCylinder:
+				prim.BoundingKind = BoundingCylinder
+				maxXZ := scale.X()
+				if scale.Z() > maxXZ {
+					maxXZ = scale.Z()
+				}
+				prim.BoundHalfX = maxXZ / 2
+				prim.BoundHalfY = scale.Y() / 2
+				prim.BoundHalfZ = maxXZ / 2
+			case PrimitivePlane:
+				prim.BoundingKind = BoundingAABB
+				prim.BoundHalfX = scale.X() / 2
+				prim.BoundHalfY = 0.01
+				prim.BoundHalfZ = scale.Z() / 2
+			}
+
+			if err := prim.Load(); err != nil {
+				return Level{}, fmt.Errorf("primitive %q load: %w", rp.ID, err)
+			}
+
+			if rp.Texture != "" {
+				texNeeded[rp.Texture] = true
+			}
+
+			chunk.Primitives = append(chunk.Primitives, prim)
+		}
+
+		// Assign primitives to sectors based on center position
+		for pi := range chunk.Primitives {
+			p := &chunk.Primitives[pi]
+			xz := mgl32.Vec2{p.Position.X(), p.Position.Z()}
+			for si := range chunk.Sectors {
+				s := &chunk.Sectors[si]
+				pts := SectorPoints(&chunk, s)
+				if pointInPolygon(xz, pts) {
+					p.SectorID = s.ID
+					s.PrimitiveIndices = append(s.PrimitiveIndices, pi)
+					break
 				}
 			}
 		}

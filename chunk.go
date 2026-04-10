@@ -21,6 +21,7 @@ type Chunk struct {
 	Rotation   float32                 // Y-axis rotation in radians applied at load time
 	Scale      float32                 // uniform XZ scale applied at load time (0 = 1.0)
 	PointNames map[string]mgl32.Vec2   // original point name → pre-transform XZ coords
+	Primitives []Primitive
 }
 
 // InferPortals detects edges shared between two sectors in this chunk and

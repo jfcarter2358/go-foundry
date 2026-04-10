@@ -114,6 +114,9 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				DoubleSided:   boolPtrIfFalse(s.Floor.DoubleSided),
 				Extrusions:    saveExtrusions(s.Floor.Extrusions, ch, true),
 				TerrainPoints: saveTerrainPts(s.Floor.TerrainPoints, ch, true),
+				UVOffset:      Point{X: s.Floor.UVOffset.X(), Y: s.Floor.UVOffset.Y()},
+				UVScale:       Point{X: s.Floor.UVScale.X(), Y: s.Floor.UVScale.Y()},
+				UVRotation:    s.Floor.UVRotation,
 			},
 			Ceiling: RawCeiling{
 				Enabled:       s.Ceiling.Enabled,
@@ -124,6 +127,9 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				DoubleSided:   boolPtrIfFalse(s.Ceiling.DoubleSided),
 				Extrusions:    saveExtrusions(s.Ceiling.Extrusions, ch, true),
 				TerrainPoints: saveTerrainPts(s.Ceiling.TerrainPoints, ch, true),
+				UVOffset:      Point{X: s.Ceiling.UVOffset.X(), Y: s.Ceiling.UVOffset.Y()},
+				UVScale:       Point{X: s.Ceiling.UVScale.X(), Y: s.Ceiling.UVScale.Y()},
+				UVRotation:    s.Ceiling.UVRotation,
 			},
 		}
 
@@ -156,6 +162,9 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 					Extrusions:    saveExtrusions(w.Extrusions, ch, false),
 					WallTerrain:   w.Terrain,
 					TerrainPoints: saveTerrainPts(w.TerrainPoints, ch, false),
+					UVOffset:      Point{X: w.UVOffset.X(), Y: w.UVOffset.Y()},
+					UVScale:       Point{X: w.UVScale.X(), Y: w.UVScale.Y()},
+					UVRotation:    w.UVRotation,
 				})
 				wallIdx++
 			} else if kind == "portal" && portalIdx < len(s.Portals) {
@@ -184,7 +193,61 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 		rc.Sectors = append(rc.Sectors, rs)
 	}
 
+	// Serialize primitives with reverse-transformed positions
+	for pi := range ch.Primitives {
+		p := &ch.Primitives[pi]
+		rc.Primitives = append(rc.Primitives, primitiveToRaw(p, ch))
+	}
+
 	return rc, nil
+}
+
+// primitiveToRaw converts a runtime Primitive to its raw YAML form,
+// reverse-transforming the position back to chunk-local coordinates.
+func primitiveToRaw(p *Primitive, ch *Chunk) RawPrimitive {
+	// Reverse-transform position from world to chunk-local
+	localXZ := reverseTransformPoint2D(
+		mgl32.Vec2{p.Position.X(), p.Position.Z()},
+		ch.Origin, ch.Rotation, ch.Scale,
+	)
+	localY := p.Position.Y() - ch.Origin.Y()
+
+	sc := p.Scale
+	if sc == (mgl32.Vec3{}) {
+		sc = mgl32.Vec3{1, 1, 1}
+	}
+
+	var typeStr string
+	switch p.Kind {
+	case PrimitiveSphere:
+		typeStr = "sphere"
+	case PrimitiveCylinder:
+		typeStr = "cylinder"
+	case PrimitivePlane:
+		typeStr = "plane"
+	default:
+		typeStr = "rect_prism"
+	}
+
+	uvSc := p.UVScale
+	if uvSc == (mgl32.Vec2{}) {
+		uvSc = mgl32.Vec2{1, 1}
+	}
+
+	rp := RawPrimitive{
+		ID:        p.ID,
+		Type:      typeStr,
+		Position:  RawEntityPosition{X: localXZ.X(), Y: localY, Z: localXZ.Y()},
+		Rotation:  RawEntityPosition{X: p.Rotation.X(), Y: p.Rotation.Y(), Z: p.Rotation.Z()},
+		Scale:     RawEntityPosition{X: sc.X(), Y: sc.Y(), Z: sc.Z()},
+		Texture:   p.Texture,
+		Sides:     p.Sides,
+		Collision: p.Collision,
+		UVOffset:   Point{X: p.UVOffset.X(), Y: p.UVOffset.Y()},
+		UVScale:    Point{X: uvSc.X(), Y: uvSc.Y()},
+		UVRotation: p.UVRotation,
+	}
+	return rp
 }
 
 // entityToRaw converts one entity to its raw YAML form.
@@ -273,6 +336,9 @@ func saveExtrusions(exts []Extrusion, ch *Chunk, transformXZ bool) []RawExtrusio
 			Texture:     ext.Texture,
 			Visible:     boolPtrIfFalse(ext.Visible),
 			BackVisible: boolPtrIfFalse(ext.BackVisible),
+			UVOffset:    Point{X: ext.UVOffset.X(), Y: ext.UVOffset.Y()},
+			UVScale:     Point{X: ext.UVScale.X(), Y: ext.UVScale.Y()},
+			UVRotation:  ext.UVRotation,
 		}
 		for _, p := range ext.Outer {
 			if transformXZ {

@@ -38,7 +38,8 @@ type EditorState struct {
 	ActiveEdgeKind  string // "wall" or "portal"
 	ActiveEdgeIdx   int    // index within sector.Walls or sector.Portals; -1 = none
 
-	ActiveEntityIdx int // index into level.Entities; -1 = none
+	ActiveEntityIdx    int // index into level.Entities; -1 = none
+	ActivePrimitiveIdx int // index into active chunk's Primitives; -1 = none
 
 	// Saved gameplay camera state (restored on editor exit)
 	SavedCamPos   mgl32.Vec3
@@ -49,6 +50,10 @@ type EditorState struct {
 	EntityDefs     []EntityDef
 	SelectedDefIdx int  // selected entry in the catalog panel
 	PlacementMode  bool // true: next left-click places a new entity
+
+	// Primitive placement state
+	PrimPlacementMode bool   // true: next left-click places a primitive
+	PrimPlacementType string // "rect_prism", "sphere", "cylinder", "plane"
 
 	// Chunk creation dialog
 	NewChunkID   string
@@ -138,6 +143,8 @@ func EditorInit(level *Level, levelPath string) {
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveEdgeIdx = -1
 	Editor.ActiveEntityIdx = -1
+	Editor.ActivePrimitiveIdx = -1
+	Editor.PrimPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
@@ -505,6 +512,21 @@ func EditorDeleteSelected() {
 		return
 	}
 
+	// Primitive deletion
+	if Editor.ActivePrimitiveIdx >= 0 && Editor.ActiveChunkIdx >= 0 &&
+		Editor.ActiveChunkIdx < len(Editor.level.Chunks) {
+		ch := &Editor.level.Chunks[Editor.ActiveChunkIdx]
+		idx := Editor.ActivePrimitiveIdx
+		if idx < len(ch.Primitives) {
+			ch.Primitives[idx].Geometry.Delete()
+			ch.Primitives = append(ch.Primitives[:idx], ch.Primitives[idx+1:]...)
+			// Rebuild sector PrimitiveIndices
+			rebuildPrimitiveIndices(ch)
+			Editor.ActivePrimitiveIdx = -1
+		}
+		return
+	}
+
 	// Entity deletion
 	if Editor.ActiveEntityIdx < 0 {
 		return
@@ -516,6 +538,26 @@ func EditorDeleteSelected() {
 	}
 	lvl.Entities = append(lvl.Entities[:idx], lvl.Entities[idx+1:]...)
 	Editor.ActiveEntityIdx = -1
+}
+
+// rebuildPrimitiveIndices recomputes Sector.PrimitiveIndices for all sectors in a chunk.
+func rebuildPrimitiveIndices(ch *Chunk) {
+	for si := range ch.Sectors {
+		ch.Sectors[si].PrimitiveIndices = nil
+	}
+	for pi := range ch.Primitives {
+		p := &ch.Primitives[pi]
+		xz := mgl32.Vec2{p.Position.X(), p.Position.Z()}
+		for si := range ch.Sectors {
+			s := &ch.Sectors[si]
+			pts := SectorPoints(ch, s)
+			if pointInPolygon(xz, pts) {
+				p.SectorID = s.ID
+				s.PrimitiveIndices = append(s.PrimitiveIndices, pi)
+				break
+			}
+		}
+	}
 }
 
 // EditorLoadLevel loads a new level from the given YAML path, replacing the
@@ -546,6 +588,8 @@ func EditorLoadLevel(path string) error {
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveEdgeIdx = -1
 	Editor.ActiveEntityIdx = -1
+	Editor.ActivePrimitiveIdx = -1
+	Editor.PrimPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1

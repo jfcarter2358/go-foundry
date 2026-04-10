@@ -442,6 +442,17 @@ func renderSceneShadow(level *Level, modelUniform int32) {
 			drawGeometryShadow(&e.Geometry)
 		}
 	}
+
+	// Primitives (static procedural objects)
+	for ci := range level.Chunks {
+		chunk := &level.Chunks[ci]
+		for pi := range chunk.Primitives {
+			p := &chunk.Primitives[pi]
+			model := p.ModelMatrix()
+			gl.UniformMatrix4fv(modelUniform, 1, false, &model[0])
+			drawGeometryShadow(&p.Geometry)
+		}
+	}
 }
 
 func drawGeometryShadow(g *Geometry) {

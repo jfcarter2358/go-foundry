@@ -190,10 +190,77 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	if Editor.PrimPlacementMode {
+		// Place a new primitive 4m in front of camera
+		Editor.PrimPlacementMode = false
+		if Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
+			return
+		}
+		ch := &lvl.Chunks[Editor.ActiveChunkIdx]
+		spawnPos := Cam.Position.Add(Cam.Direction.Mul(4.0))
+		spawnPos[1] -= eyeHeight
+
+		var kind PrimitiveType
+		switch Editor.PrimPlacementType {
+		case "sphere":
+			kind = PrimitiveSphere
+		case "cylinder":
+			kind = PrimitiveCylinder
+		case "plane":
+			kind = PrimitivePlane
+		default:
+			kind = PrimitiveRectPrism
+		}
+
+		prim := Primitive{
+			ID:       fmt.Sprintf("prim_%d", len(ch.Primitives)),
+			Kind:     kind,
+			Position: spawnPos,
+			Scale:    mgl32.Vec3{1, 1, 1},
+			Texture:  "concrete",
+			Sides:    16,
+			ChunkID:  ch.ID,
+		}
+
+		// Compute bounding volumes
+		switch kind {
+		case PrimitiveRectPrism:
+			prim.BoundingKind = BoundingAABB
+			prim.BoundHalfX = 0.5
+			prim.BoundHalfY = 0.5
+			prim.BoundHalfZ = 0.5
+		case PrimitiveSphere:
+			prim.BoundingKind = BoundingSphere
+			prim.BoundHalfX = 0.5
+			prim.BoundHalfY = 0.5
+			prim.BoundHalfZ = 0.5
+		case PrimitiveCylinder:
+			prim.BoundingKind = BoundingCylinder
+			prim.BoundHalfX = 0.5
+			prim.BoundHalfY = 0.5
+			prim.BoundHalfZ = 0.5
+		case PrimitivePlane:
+			prim.BoundingKind = BoundingAABB
+			prim.BoundHalfX = 0.5
+			prim.BoundHalfY = 0.01
+			prim.BoundHalfZ = 0.5
+		}
+
+		if err := prim.Load(); err == nil {
+			ch.Primitives = append(ch.Primitives, prim)
+			Editor.ActivePrimitiveIdx = len(ch.Primitives) - 1
+			Editor.ActiveEntityIdx = -1
+			rebuildPrimitiveIndices(ch)
+		}
+		return
+	}
+
 	// Selection: find closest hit among entities and sector geometry
 	origin, dir := screenRay(t.X, t.Y)
 	bestT := float32(math.MaxFloat32)
 	bestEntityIdx := -1
+	bestPrimitiveIdx := -1
+	bestPrimitiveChunkIdx := -1
 	bestChunkIdx := -1
 	bestSectorIdx := -1
 	bestEdgeKind := ""
@@ -211,6 +278,26 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 			bestSectorIdx = -1
 			bestEdgeKind = ""
 			bestEdgeIdx = -1
+		}
+	}
+
+	// Test primitive AABBs
+	for ci := range lvl.Chunks {
+		ch := &lvl.Chunks[ci]
+		for pi := range ch.Primitives {
+			p := &ch.Primitives[pi]
+			bmin := p.Position.Sub(mgl32.Vec3{p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ})
+			bmax := p.Position.Add(mgl32.Vec3{p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ})
+			if hit, ht := rayAABBIntersect(origin, dir, bmin, bmax); hit && ht < bestT {
+				bestT = ht
+				bestPrimitiveIdx = pi
+				bestPrimitiveChunkIdx = ci
+				bestEntityIdx = -1
+				bestChunkIdx = -1
+				bestSectorIdx = -1
+				bestEdgeKind = ""
+				bestEdgeIdx = -1
+			}
 		}
 	}
 
@@ -281,7 +368,14 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	}
 
 	Editor.ActiveEntityIdx = bestEntityIdx
-	if bestSectorIdx >= 0 {
+	Editor.ActivePrimitiveIdx = -1
+	if bestPrimitiveIdx >= 0 {
+		Editor.ActivePrimitiveIdx = bestPrimitiveIdx
+		Editor.ActiveChunkIdx = bestPrimitiveChunkIdx
+		Editor.ActiveEntityIdx = -1
+		Editor.ActiveSectorIdx = -1
+		Editor.ActiveEdgeIdx = -1
+	} else if bestSectorIdx >= 0 {
 		Editor.ActiveChunkIdx = bestChunkIdx
 		Editor.ActiveSectorIdx = bestSectorIdx
 		Editor.ActiveEdgeKind = bestEdgeKind
@@ -343,6 +437,24 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 			e.Position.Add(mgl32.Vec3{e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ}),
 			col,
 		)
+	}
+
+	// Highlight primitive AABBs
+	green := mgl32.Vec3{0, 1, 0}
+	for ci := range lvl.Chunks {
+		ch := &lvl.Chunks[ci]
+		for pi := range ch.Primitives {
+			p := &ch.Primitives[pi]
+			col := white
+			if ci == Editor.ActiveChunkIdx && pi == Editor.ActivePrimitiveIdx {
+				col = green
+			}
+			GizmoAABB(
+				p.Position.Sub(mgl32.Vec3{p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ}),
+				p.Position.Add(mgl32.Vec3{p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ}),
+				col,
+			)
+		}
 	}
 
 	// Draw point light spheres
@@ -434,6 +546,120 @@ func Editor3DPanel() {
 		}
 	}
 
+	// --- Primitive catalog ---
+	if imgui.CollapsingHeader("Primitive Catalog") {
+		primTypes := []string{"rect_prism", "sphere", "cylinder", "plane"}
+		for _, pt := range primTypes {
+			selected := pt == Editor.PrimPlacementType
+			if imgui.SelectableV(pt, selected, 0, imgui.Vec2{}) {
+				Editor.PrimPlacementType = pt
+			}
+		}
+		if imgui.Button("Place Primitive") && Editor.PrimPlacementType != "" {
+			Editor.PrimPlacementMode = true
+			Editor.PlacementMode = false
+		}
+		if Editor.PrimPlacementMode {
+			imgui.SameLine()
+			imgui.Text("Click to place...")
+		}
+	}
+
+	// --- Selected primitive properties ---
+	if Editor.ActivePrimitiveIdx >= 0 && Editor.ActiveChunkIdx >= 0 &&
+		Editor.ActiveChunkIdx < len(lvl.Chunks) {
+		ch := &lvl.Chunks[Editor.ActiveChunkIdx]
+		if Editor.ActivePrimitiveIdx < len(ch.Primitives) {
+			imgui.Separator()
+			if imgui.CollapsingHeaderV("Primitive Properties", imgui.TreeNodeFlagsDefaultOpen) {
+				p := &ch.Primitives[Editor.ActivePrimitiveIdx]
+				imgui.InputText("ID##primid", &p.ID)
+
+				typeNames := []string{"rect_prism", "sphere", "cylinder", "plane"}
+				currentType := int(p.Kind)
+				if imgui.BeginCombo("Type##primtype", typeNames[currentType]) {
+					for i, tn := range typeNames {
+						if imgui.SelectableV(tn, i == currentType, 0, imgui.Vec2{}) {
+							p.Kind = PrimitiveType(i)
+							reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
+						}
+					}
+					imgui.EndCombo()
+				}
+
+				pos := [3]float32{p.Position.X(), p.Position.Y(), p.Position.Z()}
+				if editorDragFloat3("Position##prim", &pos, 0, 0, "%.3f") {
+					p.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
+					rebuildPrimitiveIndices(ch)
+				}
+				rot := [3]float32{
+					p.Rotation.X() * 180 / math.Pi,
+					p.Rotation.Y() * 180 / math.Pi,
+					p.Rotation.Z() * 180 / math.Pi,
+				}
+				if editorDragFloat3("Rotation (deg)##prim", &rot, -360, 360, "%.1f") {
+					p.Rotation = mgl32.Vec3{
+						rot[0] * math.Pi / 180,
+						rot[1] * math.Pi / 180,
+						rot[2] * math.Pi / 180,
+					}
+				}
+				sc := [3]float32{p.Scale.X(), p.Scale.Y(), p.Scale.Z()}
+				if editorDragFloat3("Scale##prim", &sc, 0.01, 100, "%.2f") {
+					p.Scale = mgl32.Vec3{sc[0], sc[1], sc[2]}
+					reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
+				}
+
+				imgui.InputText("Texture##primtex", &p.Texture)
+
+				if p.Kind == PrimitiveCylinder {
+					sides := int32(p.Sides)
+					if imgui.DragIntV("Sides##primsides", &sides, 1, 3, 64, "%d", 0) {
+						p.Sides = int(sides)
+						reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
+					}
+				}
+
+				imgui.Checkbox("Collision##primcol", &p.Collision)
+
+				if imgui.CollapsingHeader("Texture UV##primUVhdr") {
+					uvChanged := false
+					uvOff := [2]float32{p.UVOffset.X(), p.UVOffset.Y()}
+					if editorDragFloat("UV Offset U##primuvou", &uvOff[0], 0, 0, "%.3f") ||
+						editorDragFloat("UV Offset V##primuvov", &uvOff[1], 0, 0, "%.3f") {
+						p.UVOffset = mgl32.Vec2{uvOff[0], uvOff[1]}
+						uvChanged = true
+					}
+					uvSc := p.UVScale
+					if uvSc == (mgl32.Vec2{}) {
+						uvSc = mgl32.Vec2{1, 1}
+					}
+					uvScArr := [2]float32{uvSc.X(), uvSc.Y()}
+					if editorDragFloat("UV Scale U##primuvsu", &uvScArr[0], 0.01, 100, "%.3f") ||
+						editorDragFloat("UV Scale V##primuvsv", &uvScArr[1], 0.01, 100, "%.3f") {
+						p.UVScale = mgl32.Vec2{uvScArr[0], uvScArr[1]}
+						uvChanged = true
+					}
+					uvRotDeg := p.UVRotation * 180 / math.Pi
+					if editorDragFloat("UV Rotation (deg)##primuvrot", &uvRotDeg, -360, 360, "%.1f") {
+						p.UVRotation = uvRotDeg * math.Pi / 180
+						uvChanged = true
+					}
+					if uvChanged {
+						reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
+					}
+				}
+
+				if imgui.Button("Delete Primitive") {
+					ch.Primitives[Editor.ActivePrimitiveIdx].Geometry.Delete()
+					ch.Primitives = append(ch.Primitives[:Editor.ActivePrimitiveIdx], ch.Primitives[Editor.ActivePrimitiveIdx+1:]...)
+					rebuildPrimitiveIndices(ch)
+					Editor.ActivePrimitiveIdx = -1
+				}
+			}
+		}
+	}
+
 	// --- Selected entity properties ---
 	if Editor.ActiveEntityIdx >= 0 && Editor.ActiveEntityIdx < len(lvl.Entities) {
 		imgui.Separator()
@@ -445,9 +671,17 @@ func Editor3DPanel() {
 			if editorDragFloat3("Position", &pos, 0, 0, "%.3f") {
 				e.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
 			}
-			rot := [3]float32{e.Rotation.X(), e.Rotation.Y(), e.Rotation.Z()}
-			if editorDragFloat3("Rotation", &rot, -math.Pi, math.Pi, "%.2f") {
-				e.Rotation = mgl32.Vec3{rot[0], rot[1], rot[2]}
+			rot := [3]float32{
+				e.Rotation.X() * 180 / math.Pi,
+				e.Rotation.Y() * 180 / math.Pi,
+				e.Rotation.Z() * 180 / math.Pi,
+			}
+			if editorDragFloat3("Rotation (deg)", &rot, -360, 360, "%.1f") {
+				e.Rotation = mgl32.Vec3{
+					rot[0] * math.Pi / 180,
+					rot[1] * math.Pi / 180,
+					rot[2] * math.Pi / 180,
+				}
 			}
 			sc := [3]float32{e.Scale.X(), e.Scale.Y(), e.Scale.Z()}
 			if editorDragFloat3("Scale", &sc, 0.01, 100, "%.2f") {
@@ -481,6 +715,9 @@ func Editor3DPanel() {
 				if imgui.Button("Edit Floor Surface##floorSurf3d") {
 					EnterSurface2D("floor")
 				}
+				if editorUVControls("Floor", &s3d.Floor.UVOffset, &s3d.Floor.UVScale, &s3d.Floor.UVRotation) {
+					_ = s3d.Load(SectorPoints(sch, s3d))
+				}
 				editorSurfaceExtrusionPanel(sch, s3d, "Floor", &s3d.Floor.Extrusions)
 				editorTerrainPanel(sch, s3d, "Floor", &s3d.Floor.Terrain, &s3d.Floor.TerrainPoints)
 				if imgui.TreeNode("Ceiling##3dc") {
@@ -495,6 +732,9 @@ func Editor3DPanel() {
 				}
 				if imgui.Button("Edit Ceiling Surface##ceilSurf3d") {
 					EnterSurface2D("ceiling")
+				}
+				if editorUVControls("Ceiling", &s3d.Ceiling.UVOffset, &s3d.Ceiling.UVScale, &s3d.Ceiling.UVRotation) {
+					_ = s3d.Load(SectorPoints(sch, s3d))
 				}
 				editorSurfaceExtrusionPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Extrusions)
 				editorTerrainPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Terrain, &s3d.Ceiling.TerrainPoints)
@@ -514,6 +754,9 @@ func Editor3DPanel() {
 					// Surface 2D editor button
 					if imgui.Button("Edit Wall Surface##wallSurf3d") {
 						EnterSurface2D("wall")
+					}
+					if editorUVControls("Wall", &w.UVOffset, &w.UVScale, &w.UVRotation) {
+						_ = s3d.Load(SectorPoints(sch, s3d))
 					}
 					// Extrusion sub-panel
 					editorExtrusionPanel(sch, s3d, w)
@@ -613,6 +856,54 @@ func Editor3DPanel() {
 		}
 		imgui.EndPopup()
 	}
+}
+
+// reloadPrimitive regenerates the geometry and bounding volumes for a primitive
+// after its type, scale, or side count changes.
+func reloadPrimitive(ch *Chunk, idx int) {
+	p := &ch.Primitives[idx]
+	p.Geometry.Delete()
+
+	// Recompute bounding volumes from type + scale
+	scale := p.Scale
+	if scale == (mgl32.Vec3{}) {
+		scale = mgl32.Vec3{1, 1, 1}
+	}
+	switch p.Kind {
+	case PrimitiveRectPrism:
+		p.BoundingKind = BoundingAABB
+		p.BoundHalfX = scale.X() / 2
+		p.BoundHalfY = scale.Y() / 2
+		p.BoundHalfZ = scale.Z() / 2
+	case PrimitiveSphere:
+		p.BoundingKind = BoundingSphere
+		maxS := scale.X()
+		if scale.Y() > maxS {
+			maxS = scale.Y()
+		}
+		if scale.Z() > maxS {
+			maxS = scale.Z()
+		}
+		p.BoundHalfX = maxS / 2
+		p.BoundHalfY = maxS / 2
+		p.BoundHalfZ = maxS / 2
+	case PrimitiveCylinder:
+		p.BoundingKind = BoundingCylinder
+		maxXZ := scale.X()
+		if scale.Z() > maxXZ {
+			maxXZ = scale.Z()
+		}
+		p.BoundHalfX = maxXZ / 2
+		p.BoundHalfY = scale.Y() / 2
+		p.BoundHalfZ = maxXZ / 2
+	case PrimitivePlane:
+		p.BoundingKind = BoundingAABB
+		p.BoundHalfX = scale.X() / 2
+		p.BoundHalfY = 0.01
+		p.BoundHalfZ = scale.Z() / 2
+	}
+
+	_ = p.Load()
 }
 
 // createChunkAtCamera creates a minimal rectangular chunk at the camera's XZ position.

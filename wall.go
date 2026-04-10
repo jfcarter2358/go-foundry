@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -101,6 +102,27 @@ func (g Geometry) Draw() {
 	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
 }
 
+// applyUVTransform transforms the UV coordinates of a vertex slice in-place.
+// Vertices are [X,Y,Z,U,V]. Applies scale around (0,0), then rotation, then offset.
+func applyUVTransform(vertices [][]float32, offset mgl32.Vec2, scale mgl32.Vec2, rotation float32) {
+	if scale == (mgl32.Vec2{}) {
+		scale = mgl32.Vec2{1, 1}
+	}
+	if offset == (mgl32.Vec2{}) && scale == (mgl32.Vec2{1, 1}) && rotation == 0 {
+		return
+	}
+	cos := float32(math.Cos(float64(rotation)))
+	sin := float32(math.Sin(float64(rotation)))
+	for i := range vertices {
+		u := vertices[i][3] * scale.X()
+		v := vertices[i][4] * scale.Y()
+		ru := u*cos - v*sin
+		rv := u*sin + v*cos
+		vertices[i][3] = ru + offset.X()
+		vertices[i][4] = rv + offset.Y()
+	}
+}
+
 // ExtrusionPoint is a point in surface-local coordinate space.
 //
 // For walls:          U = distance along wall, V = distance from ceiling down.
@@ -122,6 +144,9 @@ type Extrusion struct {
 	Texture     string           // optional texture for back face + sides; empty = surface texture
 	Visible     bool             // if true, render side faces and back face; if false, only the hole is cut
 	BackVisible bool             // if true, render the inner polygon face; if false, it's open
+	UVOffset    mgl32.Vec2       // UV translation for side/back faces
+	UVScale     mgl32.Vec2       // UV scale for side/back faces; zero = {1,1}
+	UVRotation  float32          // UV rotation in radians for side/back faces
 }
 
 // TerrainPoint is an additional point placed on a surface for terrain
@@ -144,6 +169,9 @@ type Wall struct {
 	Terrain       bool // if true, use terrain displacement mesh
 	Extrusions    []Extrusion
 	TerrainPoints []TerrainPoint
+	UVOffset      mgl32.Vec2 // UV translation
+	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
+	UVRotation    float32    // UV rotation in radians
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 }
