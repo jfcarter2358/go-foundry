@@ -1,6 +1,7 @@
 #version 410
 
 uniform sampler2D tex;
+uniform float alpha; // per-geometry alpha multiplier (default 1.0)
 
 // Global ambient light
 uniform vec3  globalLightColor;
@@ -154,5 +155,7 @@ void main() {
         }
     }
 
-    outputColor = vec4(texColor.rgb * clamp(lighting, 0.0, 1.0), texColor.a);
+    float finalAlpha = texColor.a * alpha;
+    if (finalAlpha < 0.001) discard;
+    outputColor = vec4(texColor.rgb * clamp(lighting, 0.0, 1.0), finalAlpha);
 }

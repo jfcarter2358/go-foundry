@@ -8,6 +8,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -295,11 +296,86 @@ func EditorDrawUI() {
 		imgui.PopStyleColor()
 	}
 
+	imgui.SameLine()
+	if currentMode == ModeScenery {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.6, Y: 0.2, Z: 0.6, W: 1})
+	}
+	if imgui.Button("Scenery") {
+		if Editor.Mode != ModeScenery {
+			EnterSceneryEditor()
+		}
+	}
+	if currentMode == ModeScenery {
+		imgui.PopStyleColor()
+	}
 
 	imgui.SameLine()
 	imgui.Separator()
 	imgui.SameLine()
 
+	if currentMode == ModeScenery {
+		// Scenery-specific toolbar
+		id := Editor.SceneryID
+		if id == "" {
+			id = "(unsaved)"
+		}
+		imgui.Text(fmt.Sprintf("Scenery: %s", id))
+		imgui.SameLine()
+
+		if imgui.Button("New##sc") {
+			for i := range Editor.SceneryPrimitives {
+				Editor.SceneryPrimitives[i].Geometry.Delete()
+			}
+			Editor.SceneryPrimitives = nil
+			Editor.SceneryActivePrimIdx = -1
+			Editor.SceneryFilePath = ""
+			Editor.SceneryID = ""
+		}
+		imgui.SameLine()
+
+		if imgui.Button("Open##sc") {
+			Editor.ShowSceneryPicker = true
+		}
+		imgui.SameLine()
+
+		if imgui.Button("Save##sc") {
+			if Editor.SceneryFilePath != "" {
+				id := Editor.SceneryID
+				if id == "" {
+					id = strings.TrimSuffix(filepath.Base(Editor.SceneryFilePath), ".yaml")
+				}
+				if err := SaveScenery(Editor.SceneryPrimitives, id, Editor.SceneryFilePath); err != nil {
+					Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
+				} else {
+					Editor.StatusMsg = fmt.Sprintf("Saved to %s", filepath.Base(Editor.SceneryFilePath))
+				}
+				Editor.StatusTime = sdl.GetTicks()
+			} else {
+				Editor.ShowScenerySaveAs = true
+			}
+		}
+		imgui.SameLine()
+
+		if imgui.Button("Save As...##sc") {
+			Editor.ScenerySaveAsName = Editor.SceneryID
+			Editor.ShowScenerySaveAs = true
+		}
+		imgui.SameLine()
+
+		if imgui.Button("Exit Scenery") {
+			exitSceneryEditor()
+		}
+		imgui.SameLine()
+
+		// Status message
+		if Editor.StatusMsg != "" {
+			if sdl.GetTicks()-Editor.StatusTime < 3000 {
+				imgui.Text(Editor.StatusMsg)
+			} else {
+				Editor.StatusMsg = ""
+			}
+		}
+	} else {
 	// Chunk selector
 	imgui.Text("Chunk:")
 	imgui.SameLine()
@@ -331,14 +407,17 @@ func EditorDrawUI() {
 	imgui.Separator()
 	imgui.SameLine()
 
-	// Level path input
-	imgui.Text("Path:")
-	imgui.SameLine()
-	imgui.SetNextItemWidth(200)
-	imgui.InputText("##levelpath", &Editor.SavePath)
+	// Level toolbar
+	imgui.Text(fmt.Sprintf("Level: %s", filepath.Base(Editor.SavePath)))
 	imgui.SameLine()
 
-	// Save button
+	if imgui.Button("Open") {
+		Editor.LevelFiles = ScanLevelFiles(Editor.LevelsDir)
+		Editor.NewLevelName = ""
+		Editor.ShowLevelPicker = true
+	}
+	imgui.SameLine()
+
 	if imgui.Button("Save") {
 		if err := SaveLevel(lvl, Editor.SavePath); err != nil {
 			Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
@@ -347,19 +426,12 @@ func EditorDrawUI() {
 		}
 		Editor.StatusTime = sdl.GetTicks()
 	}
-
 	imgui.SameLine()
 
-	// Load button
-	if imgui.Button("Load") {
-		if err := EditorLoadLevel(Editor.SavePath); err != nil {
-			Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
-		} else {
-			Editor.StatusMsg = fmt.Sprintf("Loaded %s", Editor.SavePath)
-		}
-		Editor.StatusTime = sdl.GetTicks()
+	if imgui.Button("Save As...") {
+		Editor.SaveAsName = filepath.Base(Editor.SavePath)
+		Editor.ShowSaveAs = true
 	}
-
 	imgui.SameLine()
 
 	// Status message (shown for 3 seconds after save/load)
@@ -371,6 +443,87 @@ func EditorDrawUI() {
 		}
 	}
 
+	// --- Level Picker popup ---
+	if Editor.ShowLevelPicker {
+		imgui.OpenPopup("Level Picker")
+		Editor.ShowLevelPicker = false
+	}
+	if imgui.BeginPopupModalV("Level Picker", nil, imgui.WindowFlagsAlwaysAutoResize) {
+		imgui.Text("Select a level to open:")
+		imgui.Separator()
+		for _, f := range Editor.LevelFiles {
+			if imgui.SelectableV(f, false, 0, imgui.Vec2{}) {
+				path := filepath.Join(Editor.LevelsDir, f)
+				if err := EditorLoadLevel(path); err != nil {
+					Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
+				} else {
+					Editor.StatusMsg = fmt.Sprintf("Loaded %s", f)
+				}
+				Editor.StatusTime = sdl.GetTicks()
+				imgui.CloseCurrentPopup()
+			}
+		}
+		imgui.Separator()
+		imgui.Text("New Level:")
+		imgui.SetNextItemWidth(200)
+		imgui.InputText("##newlevel", &Editor.NewLevelName)
+		imgui.SameLine()
+		if imgui.Button("Create") && Editor.NewLevelName != "" {
+			name := Editor.NewLevelName
+			if !strings.HasSuffix(name, ".yaml") {
+				name += ".yaml"
+			}
+			path := filepath.Join(Editor.LevelsDir, name)
+			if err := WriteBlankLevel(path); err != nil {
+				Editor.StatusMsg = fmt.Sprintf("Create failed: %v", err)
+			} else if err := EditorLoadLevel(path); err != nil {
+				Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
+			} else {
+				Editor.StatusMsg = fmt.Sprintf("Created %s", name)
+			}
+			Editor.StatusTime = sdl.GetTicks()
+			imgui.CloseCurrentPopup()
+		}
+		imgui.Separator()
+		if imgui.Button("Cancel") {
+			imgui.CloseCurrentPopup()
+		}
+		imgui.EndPopup()
+	}
+
+	// --- Save As popup ---
+	if Editor.ShowSaveAs {
+		imgui.OpenPopup("Save As")
+		Editor.ShowSaveAs = false
+	}
+	if imgui.BeginPopupModalV("Save As", nil, imgui.WindowFlagsAlwaysAutoResize) {
+		imgui.Text("Save level as:")
+		imgui.SetNextItemWidth(200)
+		imgui.InputText("##saveas", &Editor.SaveAsName)
+		if imgui.Button("Save") && Editor.SaveAsName != "" {
+			name := Editor.SaveAsName
+			if !strings.HasSuffix(name, ".yaml") {
+				name += ".yaml"
+			}
+			path := filepath.Join(Editor.LevelsDir, name)
+			if err := SaveLevel(lvl, path); err != nil {
+				Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
+			} else {
+				Editor.SavePath = path
+				Editor.StatusMsg = fmt.Sprintf("Saved to %s", name)
+			}
+			Editor.StatusTime = sdl.GetTicks()
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##saveas") {
+			imgui.CloseCurrentPopup()
+		}
+		imgui.EndPopup()
+	}
+
+	} // end if currentMode == ModeScenery else
+
 	imgui.End()
 
 	// ---- Mode-specific side panel ----
@@ -380,6 +533,8 @@ func EditorDrawUI() {
 		Editor2DPanel()
 	} else if Editor.Mode == ModeSurface2D {
 		Surface2DPanel()
+	} else if Editor.Mode == ModeScenery {
+		SceneryEditorPanel()
 	}
 }
 
@@ -432,6 +587,7 @@ func Editor2DPanel() {
 				changed = imgui.InputText("Texture##ft", &s.Floor.Texture) || changed
 				changed = imgui.Checkbox("Terrain##fter", &s.Floor.Terrain) || changed
 				imgui.Checkbox("Double Sided##fds", &s.Floor.DoubleSided)
+				changed = editorDragFloat("Alpha##fa", &s.Floor.Alpha, 0, 1, "%.2f") || changed
 				if changed {
 					_ = s.Load(SectorPoints(ch, s))
 				}
@@ -446,6 +602,7 @@ func Editor2DPanel() {
 				changed = imgui.InputText("Texture##ct", &s.Ceiling.Texture) || changed
 				changed = imgui.Checkbox("Terrain##cter", &s.Ceiling.Terrain) || changed
 				imgui.Checkbox("Double Sided##cds", &s.Ceiling.DoubleSided)
+				changed = editorDragFloat("Alpha##ca", &s.Ceiling.Alpha, 0, 1, "%.2f") || changed
 				if changed {
 					_ = s.Load(SectorPoints(ch, s))
 				}
@@ -563,6 +720,7 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 		changed = imgui.Checkbox("Collision##wc", &w.Collision) || changed
 		changed = imgui.Checkbox("Visible##wv", &w.Visible) || changed
 		imgui.Checkbox("Double Sided##wds", &w.DoubleSided)
+		changed = editorDragFloat("Alpha##wa", &w.Alpha, 0, 1, "%.2f") || changed
 		if changed {
 			_ = s.Load(SectorPoints(ch, s))
 			ch.RebuildGaps()
@@ -582,6 +740,7 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 		}
 		changed = imgui.Checkbox("Visible##pv", &p.Visible) || changed
 		imgui.Checkbox("Double Sided##pds", &p.DoubleSided)
+		changed = editorDragFloat("Alpha##pa", &p.Alpha, 0, 1, "%.2f") || changed
 	}
 
 	if changed {

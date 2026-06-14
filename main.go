@@ -7,6 +7,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -14,16 +16,39 @@ import (
 )
 
 // textureNames maps logical texture names to paths relative to executablePath.
-var textureNames = map[string]string{
-	"square":      "textures/square.png",
-	"grass":       "textures/grass.png",
-	"dirt":        "textures/dirt.png",
-	"rock":        "textures/rock.png",
-	"brick":       "textures/brick.png",
-	"stone_floor": "textures/stone_floor.png",
-	"wood_floor":  "textures/wood_floor.png",
-	"concrete":    "textures/concrete.png",
-	"stucco":      "textures/stucco.png",
+// Populated at startup by ScanTextures.
+var textureNames map[string]string
+
+// ScanTextures walks texturesDir and returns a map from logical name
+// (filename without extension) to the relative path "textures/<file>".
+func ScanTextures(texturesDir string) map[string]string {
+	result := make(map[string]string)
+	entries, err := os.ReadDir(texturesDir)
+	if err != nil {
+		log.Printf("WARNING: could not scan textures directory %s: %v", texturesDir, err)
+		return result
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".png") {
+			continue
+		}
+		logical := strings.TrimSuffix(name, filepath.Ext(name))
+		result[logical] = "textures/" + name
+	}
+	return result
+}
+
+// TransparentDraw holds a deferred draw call for a transparent geometry object.
+// Collected during the opaque pass and drawn back-to-front afterward.
+type TransparentDraw struct {
+	Geom        *Geometry
+	Model       mgl32.Mat4
+	Distance    float32
+	DoubleSided bool
 }
 
 var Textures = map[string]uint32{}
@@ -57,7 +82,10 @@ var Projection mgl32.Mat4
 
 // ProjectionUniform is the shader uniform location for the projection matrix.
 // Kept global so RefreshWindowSize can re-upload it after a resize or fullscreen toggle.
+//
+// AlphaUniform is the shader uniform location for the per-geometry alpha multiplier.
 var ProjectionUniform int32
+var AlphaUniform int32
 
 // eyeHeight is the camera offset above the player entity's Y position.
 const eyeHeight = float32(1.7)
@@ -89,6 +117,9 @@ func main() {
 	}
 	log.SetFlags(log.Ltime | log.Lmsgprefix)
 	log.SetPrefix("[foundry] ")
+
+	textureNames = ScanTextures(filepath.Join(executablePath, "textures"))
+	log.Printf("scanned %d textures", len(textureNames))
 
 	// Catch any unexpected panic and write it to the log before exiting.
 	defer func() {
@@ -168,11 +199,15 @@ func main() {
 	ProjectionUniform = gl.GetUniformLocation(Program, gl.Str("projection\x00"))
 	gl.UniformMatrix4fv(ProjectionUniform, 1, false, &Projection[0])
 
+	AlphaUniform = gl.GetUniformLocation(Program, gl.Str("alpha\x00"))
+	gl.Uniform1f(AlphaUniform, 1.0) // default: fully opaque
+
 	// Default camera position; overridden after player entity is found
 	LoadCamera(mgl32.Vec3{0, eyeHeight, 3}, 0.0, float32(math.Pi/2.0))
 
 	// LoadLevel handles geometry upload and texture loading
-	levelPath := filepath.Join(executablePath, "levels/test.yaml")
+	levelsDir := filepath.Join(executablePath, "levels")
+	levelPath := filepath.Join(levelsDir, "test.yaml")
 	log.Printf("loading level: %s", levelPath)
 	level, err := LoadLevel(levelPath)
 	if err != nil {
@@ -203,7 +238,7 @@ func main() {
 	}
 
 	// Init level editor (must be after LoadLevel and OpenGL context ready)
-	EditorInit(&level, levelPath)
+	EditorInit(&level, levelPath, levelsDir)
 	defer ImGuiShutdown()
 
 	// Cache total sector count (constant after load) for debug stats.
@@ -337,6 +372,14 @@ func main() {
 		DebugStats.EntitiesLoaded = len(level.Entities)
 		DebugStats.SectorsLoaded = totalSectors
 
+		if Editor.Active && Editor.Mode == ModeScenery {
+			// Scenery editor: blank world with only scenery primitives
+			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+			for i := range Editor.SceneryPrimitives {
+				prim := &Editor.SceneryPrimitives[i]
+				prim.Geometry.DrawWithTransform(prim.ModelMatrix())
+			}
+		} else {
 		// --- Shadow pass: render depth from each shadow-casting light ---
 		shadowMatrices := RenderShadowPass(level.Lights, &level, Cam.Position)
 		UploadShadowUniforms(level.Lights, shadowMatrices)
@@ -351,10 +394,36 @@ func main() {
 		frustum := ExtractFrustum(projView)
 
 		// Draw world geometry: chunks → sectors → floor/ceiling/walls
+		// Two-pass rendering: opaque geometry first, then transparent geometry sorted back-to-front.
 		chunksDrawn := 0
 		sectorsDrawn := 0
 		sectorsPortalCulled := 0
 		entitiesDrawn := 0
+		var transparentDraws []TransparentDraw
+
+		// Helper to queue or draw a geometry object based on its alpha.
+		identity := mgl32.Ident4()
+		drawOrQueue := func(g *Geometry, model mgl32.Mat4, doubleSided bool) {
+			if g.IsTransparent() {
+				pos := model.Mul4x1(mgl32.Vec4{g.Position.X(), g.Position.Y(), g.Position.Z(), 1})
+				dx := pos.X() - Cam.Position.X()
+				dy := pos.Y() - Cam.Position.Y()
+				dz := pos.Z() - Cam.Position.Z()
+				transparentDraws = append(transparentDraws, TransparentDraw{
+					Geom:        g,
+					Model:       model,
+					Distance:    dx*dx + dy*dy + dz*dz,
+					DoubleSided: doubleSided,
+				})
+				return
+			}
+			if model == identity {
+				g.Draw()
+			} else {
+				g.DrawWithTransform(model)
+			}
+		}
+
 		for i := range level.Chunks {
 			chunk := &level.Chunks[i]
 			if !AABBInFrustum(frustum, chunk.MinBound, chunk.MaxBound) {
@@ -385,23 +454,23 @@ func main() {
 				}
 				sectorsDrawn++
 				if sector.Floor.Enabled {
-					sector.Floor.Geometry.Draw()
+					drawOrQueue(&sector.Floor.Geometry, identity, sector.Floor.DoubleSided)
 					for eg := range sector.Floor.ExtrusionGeometries {
-						sector.Floor.ExtrusionGeometries[eg].Draw()
+						drawOrQueue(&sector.Floor.ExtrusionGeometries[eg], identity, sector.Floor.DoubleSided)
 					}
 				}
 				if sector.Ceiling.Enabled {
-					sector.Ceiling.Geometry.Draw()
+					drawOrQueue(&sector.Ceiling.Geometry, identity, sector.Ceiling.DoubleSided)
 					for eg := range sector.Ceiling.ExtrusionGeometries {
-						sector.Ceiling.ExtrusionGeometries[eg].Draw()
+						drawOrQueue(&sector.Ceiling.ExtrusionGeometries[eg], identity, sector.Ceiling.DoubleSided)
 					}
 				}
 				for k := range sector.Walls {
 					w := &sector.Walls[k]
 					if w.Visible && (w.DoubleSided || WallFacingCamera(*w, Cam.Position)) {
-						w.Geometry.Draw()
+						drawOrQueue(&w.Geometry, identity, w.DoubleSided)
 						for eg := range w.ExtrusionGeometries {
-							w.ExtrusionGeometries[eg].Draw()
+							drawOrQueue(&w.ExtrusionGeometries[eg], identity, w.DoubleSided)
 						}
 					}
 				}
@@ -409,14 +478,14 @@ func main() {
 				for k := range sector.Portals {
 					p := &sector.Portals[k]
 					if p.Visible && p.DrawGap && (p.DoubleSided || PortalFacingCamera(p.StartPoint, p.EndPoint, Cam.Position)) {
-						p.FloorGap.Draw()
-						p.CeilGap.Draw()
+						drawOrQueue(&p.FloorGap, identity, p.DoubleSided)
+						drawOrQueue(&p.CeilGap, identity, p.DoubleSided)
 					}
 				}
 				// Draw primitives belonging to this sector
 				for _, pi := range sector.PrimitiveIndices {
 					prim := &chunk.Primitives[pi]
-					prim.Geometry.DrawWithTransform(prim.ModelMatrix())
+					drawOrQueue(&prim.Geometry, prim.ModelMatrix(), false)
 				}
 			}
 		}
@@ -425,15 +494,56 @@ func main() {
 		for i := range level.Entities {
 			e := &level.Entities[i]
 			if e.Visible {
-				e.Geometry.DrawWithTransform(e.ModelMatrix())
+				drawOrQueue(&e.Geometry, e.ModelMatrix(), false)
 				entitiesDrawn++
 			}
+		}
+
+		// --- Transparent pass: draw collected transparent geometry back-to-front ---
+		if len(transparentDraws) > 0 {
+			sort.Slice(transparentDraws, func(a, b int) bool {
+				return transparentDraws[a].Distance > transparentDraws[b].Distance
+			})
+
+			gl.Enable(gl.BLEND)
+			gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+			gl.DepthMask(false)
+
+			for _, td := range transparentDraws {
+				if td.DoubleSided {
+					// Two-sub-pass for double-sided: back faces first, then front faces
+					gl.Enable(gl.CULL_FACE)
+					gl.CullFace(gl.FRONT) // draw back faces
+					if td.Model == identity {
+						td.Geom.Draw()
+					} else {
+						td.Geom.DrawWithTransform(td.Model)
+					}
+					gl.CullFace(gl.BACK) // draw front faces
+					if td.Model == identity {
+						td.Geom.Draw()
+					} else {
+						td.Geom.DrawWithTransform(td.Model)
+					}
+					gl.Disable(gl.CULL_FACE)
+				} else {
+					if td.Model == identity {
+						td.Geom.Draw()
+					} else {
+						td.Geom.DrawWithTransform(td.Model)
+					}
+				}
+			}
+
+			gl.DepthMask(true)
+			gl.Disable(gl.BLEND)
 		}
 
 		DebugStats.ChunksDrawn = chunksDrawn
 		DebugStats.SectorsDrawn = sectorsDrawn
 		DebugStats.SectorsPortalCulled = sectorsPortalCulled
 		DebugStats.EntitiesDrawn = entitiesDrawn
+		} // end non-scenery rendering
 
 		// Draw editor overlays and ImGui UI when editor is active
 		if Editor.Active {

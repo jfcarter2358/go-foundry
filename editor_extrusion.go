@@ -65,6 +65,9 @@ func editorExtrusionPanel(ch *Chunk, s *Sector, w *Wall) {
 		changed = imgui.Checkbox(fmt.Sprintf("Visible##extv%d", ei), &ext.Visible) || changed
 		changed = imgui.Checkbox(fmt.Sprintf("Back Visible##extbv%d", ei), &ext.BackVisible) || changed
 
+		// Alpha (only affects custom-texture back face)
+		changed = editorDragFloat(fmt.Sprintf("Alpha##exta%d", ei), &ext.Alpha, 0, 1, "%.2f") || changed
+
 		// Per-vertex shape editing (extrusion outline on the wall surface)
 		if imgui.TreeNodeV(fmt.Sprintf("Outer Shape##exto%d", ei), imgui.TreeNodeFlagsNone) {
 			for vi := range ext.Outer {
@@ -153,6 +156,7 @@ func editorFinalizeExtrusion() {
 		Depth:       -0.1, // default slight inward
 		Visible:     true,
 		BackVisible: true,
+		Alpha:       1,
 	}
 	w.Extrusions = append(w.Extrusions, ext)
 	_ = s.Load(SectorPoints(ch, s))
@@ -413,6 +417,7 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 		changed = imgui.InputText(fmt.Sprintf("Texture##%set%d", surfaceLabel, ei), &ext.Texture) || changed
 		changed = imgui.Checkbox(fmt.Sprintf("Visible##%sev%d", surfaceLabel, ei), &ext.Visible) || changed
 		changed = imgui.Checkbox(fmt.Sprintf("Back Visible##%sebv%d", surfaceLabel, ei), &ext.BackVisible) || changed
+		changed = editorDragFloat(fmt.Sprintf("Alpha##%sea%d", surfaceLabel, ei), &ext.Alpha, 0, 1, "%.2f") || changed
 
 		if imgui.TreeNodeV(fmt.Sprintf("Outer Shape##%seo%d", surfaceLabel, ei), imgui.TreeNodeFlagsNone) {
 			for vi := range ext.Outer {

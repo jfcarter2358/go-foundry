@@ -33,6 +33,9 @@ func Editor2DRender() {
 	ch := &lvl.Chunks[Editor.ActiveChunkIdx]
 	ortho := editor2DOrtho()
 
+	// Draw background grid before any geometry
+	drawEditorGrid(Editor.Pan2D, Editor.Zoom2D)
+
 	white := mgl32.Vec3{1, 1, 1}
 	cyan := mgl32.Vec3{0, 1, 1}
 	yellow := mgl32.Vec3{1, 1, 0}
@@ -1332,4 +1335,42 @@ func approxEq2(a, b mgl32.Vec2) bool {
 	const eps = 0.001
 	return math.Abs(float64(a.X()-b.X())) < eps &&
 		math.Abs(float64(a.Y()-b.Y())) < eps
+}
+
+// drawEditorGrid draws a background grid with lines every 5 units and
+// more distinctive lines at the x and z axes.
+func drawEditorGrid(pan mgl32.Vec2, zoom float32) {
+	gridColor := mgl32.Vec3{0.2, 0.2, 0.2}
+	axisColor := mgl32.Vec3{0.4, 0.4, 0.4}
+
+	halfW := float32(WinWidth) / 2 / zoom
+	halfH := float32(WinHeight) / 2 / zoom
+	minX := pan.X() - halfW
+	maxX := pan.X() + halfW
+	minZ := pan.Y() - halfH
+	maxZ := pan.Y() + halfH
+
+	gridStep := float32(5)
+	startX := float32(math.Floor(float64(minX/gridStep))) * gridStep
+	endX := float32(math.Ceil(float64(maxX/gridStep))) * gridStep
+	startZ := float32(math.Floor(float64(minZ/gridStep))) * gridStep
+	endZ := float32(math.Ceil(float64(maxZ/gridStep))) * gridStep
+
+	y := float32(0)
+
+	for x := startX; x <= endX; x += gridStep {
+		col := gridColor
+		if math.Abs(float64(x)) < 0.01 {
+			col = axisColor
+		}
+		GizmoLine(mgl32.Vec3{x, y, minZ}, mgl32.Vec3{x, y, maxZ}, col)
+	}
+
+	for z := startZ; z <= endZ; z += gridStep {
+		col := gridColor
+		if math.Abs(float64(z)) < 0.01 {
+			col = axisColor
+		}
+		GizmoLine(mgl32.Vec3{minX, y, z}, mgl32.Vec3{maxX, y, z}, col)
+	}
 }

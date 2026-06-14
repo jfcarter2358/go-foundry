@@ -25,6 +25,7 @@ const (
 	Mode3D                          // 3D fly-around editor
 	Mode2D                          // 2D top-down sector editor
 	ModeSurface2D                   // 2D surface editor for extrusions/terrain
+	ModeScenery                     // scenery editor (blank world, single-item model compositor)
 )
 
 // EditorState holds all editor runtime state.
@@ -58,6 +59,14 @@ type EditorState struct {
 	// Chunk creation dialog
 	NewChunkID   string
 	ShowNewChunk bool
+
+	// Chunk save/import/delete
+	ShowSaveChunk    bool
+	SaveChunkName    string
+	ShowDeleteChunk  bool
+	ShowImportChunk  bool
+	ImportChunkFiles []string
+	ImportChunkIdx   int32
 
 	// --- 2D mode ---
 	Pan2D        mgl32.Vec2 // center of the 2D view in world XZ
@@ -128,6 +137,35 @@ type EditorState struct {
 	// Status message (shown briefly in the toolbar after save/load)
 	StatusMsg  string
 	StatusTime uint32
+
+	// Level picker dialog
+	ShowLevelPicker bool
+	LevelFiles      []string
+	NewLevelName    string
+	LevelsDir       string
+
+	// Save As dialog
+	ShowSaveAs  bool
+	SaveAsName  string
+
+	// --- Scenery editor ---
+	SceneryPrimitives    []Primitive // working set of primitives (not part of any level)
+	SceneryActivePrimIdx int        // selected primitive; -1 = none
+	SceneryPrimPlacement bool       // true: next left-click places a primitive
+	SceneryPrimPlaceType string     // "rect_prism", "sphere", "cylinder", "plane"
+	SceneryFilePath      string     // current save path
+	SceneryID            string     // asset name
+	SceneryPrevMode      EditorMode // mode to return to on exit
+	ScenerySavedCamPos   mgl32.Vec3
+	ScenerySavedCamYaw   float32
+	ScenerySavedCamPitch float32
+	ShowSceneryPicker    bool     // load dialog visible
+	SceneryFiles         []string // scanned .yaml files
+	ShowScenerySaveAs    bool
+	ScenerySaveAsName    string
+	ShowImportScenery    bool     // import dialog (used from 3D editor)
+	ImportSceneryFiles   []string
+	ImportSceneryIdx     int32
 }
 
 // Editor is the global editor instance.
@@ -135,8 +173,9 @@ var Editor EditorState
 
 // EditorInit must be called once after LoadLevel and after the OpenGL context
 // is current. It initialises ImGui, gizmo shaders, and the entity catalog.
-func EditorInit(level *Level, levelPath string) {
+func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.level = level
+	Editor.LevelsDir = levelsDir
 	Editor.Active = false
 	Editor.Mode = ModeGame
 	Editor.ActiveChunkIdx = 0
@@ -171,6 +210,9 @@ func EditorInit(level *Level, levelPath string) {
 
 	ImGuiInit()
 	GizmoInit()
+
+	Editor.SceneryActivePrimIdx = -1
+	Editor.SceneryPrimPlacement = false
 
 	Editor.EntityDefs = ScanEntityDefs(executablePath + "/entities")
 }
@@ -281,6 +323,10 @@ func EditorHandleEvent(event sdl.Event) bool {
 
 	switch t := event.(type) {
 	case sdl.KeyboardEvent:
+		// Scenery mode intercepts keys first
+		if Editor.Mode == ModeScenery && sceneryEditorHandleKey(t) {
+			return true
+		}
 		// Surface 2D mode intercepts keys first
 		if Editor.Mode == ModeSurface2D && surface2DHandleKey(t) {
 			return true
@@ -320,7 +366,15 @@ func EditorHandleEvent(event sdl.Event) bool {
 			break
 		}
 		if t.Type == sdl.MOUSEBUTTONDOWN {
-			if Editor.Mode == ModeSurface2D {
+			if Editor.Mode == ModeScenery {
+				if t.Button == sdl.ButtonRight {
+					Editor.MouseDragging3D = true
+					Editor.LastDragX = t.X
+					Editor.LastDragY = t.Y
+				} else {
+					SceneryEditorHandleClick(t)
+				}
+			} else if Editor.Mode == ModeSurface2D {
 				Surface2DHandleClick(t)
 			} else if Editor.Mode == Mode3D {
 				if t.Button == sdl.ButtonRight {
@@ -336,7 +390,9 @@ func EditorHandleEvent(event sdl.Event) bool {
 				Editor2DHandleClick(t)
 			}
 		} else if t.Type == sdl.MOUSEBUTTONUP {
-			if Editor.Mode == ModeSurface2D {
+			if Editor.Mode == ModeScenery && t.Button == sdl.ButtonRight {
+				Editor.MouseDragging3D = false
+			} else if Editor.Mode == ModeSurface2D {
 				Surface2DHandleRelease(t)
 			} else if Editor.Mode == Mode3D && t.Button == sdl.ButtonRight {
 				Editor.MouseDragging3D = false
@@ -346,7 +402,22 @@ func EditorHandleEvent(event sdl.Event) bool {
 		}
 
 	case sdl.MouseMotionEvent:
-		if Editor.Mode == ModeSurface2D {
+		if Editor.Mode == ModeScenery && Editor.MouseDragging3D {
+			dx := t.X - Editor.LastDragX
+			dy := t.Y - Editor.LastDragY
+			Cam.Yaw += MouseRotationSpeed * float32(dx)
+			Cam.Pitch -= MouseRotationSpeed * float32(dy)
+			if Cam.Pitch > maxPitch {
+				Cam.Pitch = maxPitch
+			}
+			if Cam.Pitch < -maxPitch {
+				Cam.Pitch = -maxPitch
+			}
+			updateCamDirection()
+			updateCamMatrix()
+			Editor.LastDragX = t.X
+			Editor.LastDragY = t.Y
+		} else if Editor.Mode == ModeSurface2D {
 			Surface2DHandleMouseMove(t)
 		} else if Editor.Mode == Mode3D && Editor.MouseDragging3D {
 			dx := t.X - Editor.LastDragX
@@ -406,7 +477,7 @@ func EditorTick(keyStates []uint8) {
 		return // ImGui is capturing text input
 	}
 
-	if Editor.Mode == Mode3D {
+	if Editor.Mode == Mode3D || Editor.Mode == ModeScenery {
 		// Free-fly using existing HandleInput (gravity is already off)
 		preMovePos := Cam.Position
 		HandleInput(keyStates)
@@ -469,6 +540,13 @@ func EditorRender() {
 	if Editor.Mode == Mode3D {
 		projView := Projection.Mul4(Cam.Matrix)
 		Editor3DRenderGizmos(projView)
+		GizmoFlush(projView)
+	}
+
+	// --- Scenery editor gizmos ---
+	if Editor.Mode == ModeScenery {
+		projView := Projection.Mul4(Cam.Matrix)
+		SceneryEditorRenderGizmos(projView)
 		GizmoFlush(projView)
 	}
 

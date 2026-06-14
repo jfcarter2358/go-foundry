@@ -13,6 +13,7 @@ type Portal struct {
 	GapTexture  string   // texture for gap walls (falls back to sector floor texture)
 	Visible     bool     // if false, gap-fill geometry is not drawn (default true)
 	DoubleSided bool     // if true, gap geometry is rendered from both sides (default true)
+	Alpha       float32  // 0.0 = fully transparent, 1.0 = fully opaque
 	FloorGap    Geometry // riser wall from lower floor up to higher floor
 	CeilGap     Geometry // filler wall from lower ceiling up to higher ceiling
 }

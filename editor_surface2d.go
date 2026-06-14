@@ -212,6 +212,9 @@ func Surface2DRender() {
 
 	ortho := surfaceOrtho()
 
+	// Draw background grid before any geometry
+	drawEditorGrid(Editor.SurfacePan, Editor.SurfaceZoom)
+
 	white := mgl32.Vec3{1, 1, 1}
 	cyan := mgl32.Vec3{0, 1, 1}
 	green := mgl32.Vec3{0.2, 0.9, 0.2}
@@ -549,6 +552,7 @@ func surface2DFinalizeExtrusion() {
 		Depth:       -0.1,
 		Visible:     true,
 		BackVisible: true,
+		Alpha:       1,
 	})
 	surfaceReload()
 

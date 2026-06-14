@@ -18,6 +18,7 @@ type ExtrusionBackFace struct {
 	Texture  string
 	Vertices [][]float32
 	Indices  []int
+	Alpha    float32
 }
 
 // wallFrame computes the wall's local coordinate frame vectors.
@@ -230,7 +231,7 @@ func buildWallWithExtrusions(
 
 			if ext.Texture != "" {
 				// Separate geometry for custom extrusion texture
-				bf := ExtrusionBackFace{Texture: ext.Texture}
+				bf := ExtrusionBackFace{Texture: ext.Texture, Alpha: ext.Alpha}
 				for _, p := range ext.Inner {
 					v := wallLocalVertex(p.U, p.V, ext.Depth, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
 					bf.Vertices = append(bf.Vertices, v)
@@ -456,7 +457,7 @@ func buildFloorWithExtrusions(
 
 			if ext.Texture != "" {
 				// Separate geometry for custom extrusion texture
-				bf := ExtrusionBackFace{Texture: ext.Texture}
+				bf := ExtrusionBackFace{Texture: ext.Texture, Alpha: ext.Alpha}
 				for _, p := range ext.Inner {
 					bf.Vertices = append(bf.Vertices, []float32{p.U, baseHeight - depthY, p.V, p.U / tileScale, p.V / tileScale})
 				}

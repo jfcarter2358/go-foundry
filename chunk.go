@@ -24,6 +24,144 @@ type Chunk struct {
 	Primitives []Primitive
 }
 
+// Clone returns a fully-independent deep copy of the chunk. All slices and
+// maps get fresh backing arrays so edits to the copy do not affect the source.
+// GPU geometry handles are intentionally zeroed — the caller must re-upload
+// sector/primitive/gap geometry before the clone can be rendered. Sector and
+// primitive IDs are rewritten with idSuffix so they stay unique within the
+// level; in-chunk portal ToSector references are remapped to the new IDs.
+func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
+	cp := Chunk{
+		ID:       newID,
+		MinBound: ch.MinBound,
+		MaxBound: ch.MaxBound,
+		Origin:   ch.Origin,
+		Rotation: ch.Rotation,
+		Scale:    ch.Scale,
+	}
+
+	cp.Points = append([]mgl32.Vec2(nil), ch.Points...)
+
+	if ch.PointNames != nil {
+		cp.PointNames = make(map[string]mgl32.Vec2, len(ch.PointNames))
+		for k, v := range ch.PointNames {
+			cp.PointNames[k] = v
+		}
+	}
+
+	// Build old-sector-ID → new-sector-ID map for portal remapping.
+	sectorIDRemap := make(map[string]string, len(ch.Sectors))
+	for i := range ch.Sectors {
+		oldID := ch.Sectors[i].ID
+		sectorIDRemap[oldID] = oldID + idSuffix
+	}
+
+	cp.Sectors = make([]Sector, len(ch.Sectors))
+	for si := range ch.Sectors {
+		cp.Sectors[si] = cloneSector(&ch.Sectors[si], idSuffix, sectorIDRemap)
+	}
+
+	cp.Primitives = make([]Primitive, len(ch.Primitives))
+	for pi := range ch.Primitives {
+		cp.Primitives[pi] = clonePrimitive(&ch.Primitives[pi], newID, idSuffix, sectorIDRemap)
+	}
+
+	return cp
+}
+
+func cloneSector(s *Sector, idSuffix string, sectorIDRemap map[string]string) Sector {
+	out := Sector{
+		ID:       s.ID + idSuffix,
+		MinBound: s.MinBound,
+		MaxBound: s.MaxBound,
+	}
+	out.PointIndices = append([]int(nil), s.PointIndices...)
+	out.EdgeKinds = append([]string(nil), s.EdgeKinds...)
+	out.PrimitiveIndices = append([]int(nil), s.PrimitiveIndices...)
+
+	out.Walls = make([]Wall, len(s.Walls))
+	for i := range s.Walls {
+		out.Walls[i] = cloneWall(&s.Walls[i])
+	}
+
+	out.Portals = make([]Portal, len(s.Portals))
+	for i := range s.Portals {
+		out.Portals[i] = clonePortal(&s.Portals[i], sectorIDRemap)
+	}
+
+	out.Floor = cloneFloor(&s.Floor)
+	out.Ceiling = cloneCeiling(&s.Ceiling)
+	return out
+}
+
+func cloneWall(w *Wall) Wall {
+	out := *w
+	out.Geometry = Geometry{}
+	out.Extrusions = cloneExtrusions(w.Extrusions)
+	out.TerrainPoints = append([]TerrainPoint(nil), w.TerrainPoints...)
+	return out
+}
+
+func clonePortal(p *Portal, sectorIDRemap map[string]string) Portal {
+	out := *p
+	out.FloorGap = Geometry{}
+	out.CeilGap = Geometry{}
+	if remapped, ok := sectorIDRemap[p.ToSector]; ok {
+		out.ToSector = remapped
+	}
+	return out
+}
+
+func cloneFloor(f *Floor) Floor {
+	out := *f
+	out.Geometry = Geometry{}
+	out.VertexOffsets = append([]float32(nil), f.VertexOffsets...)
+	out.Extrusions = cloneExtrusions(f.Extrusions)
+	out.TerrainPoints = append([]TerrainPoint(nil), f.TerrainPoints...)
+	out.CollisionPts = append([]mgl32.Vec2(nil), f.CollisionPts...)
+	out.CollisionDepths = append([]float32(nil), f.CollisionDepths...)
+	out.CollisionTris = append([]int(nil), f.CollisionTris...)
+	out.ExtrusionGeometries = make([]Geometry, len(f.ExtrusionGeometries))
+	return out
+}
+
+func cloneCeiling(c *Ceiling) Ceiling {
+	out := *c
+	out.Geometry = Geometry{}
+	out.VertexOffsets = append([]float32(nil), c.VertexOffsets...)
+	out.Extrusions = cloneExtrusions(c.Extrusions)
+	out.TerrainPoints = append([]TerrainPoint(nil), c.TerrainPoints...)
+	out.CollisionPts = append([]mgl32.Vec2(nil), c.CollisionPts...)
+	out.CollisionDepths = append([]float32(nil), c.CollisionDepths...)
+	out.CollisionTris = append([]int(nil), c.CollisionTris...)
+	out.ExtrusionGeometries = make([]Geometry, len(c.ExtrusionGeometries))
+	return out
+}
+
+func cloneExtrusions(src []Extrusion) []Extrusion {
+	if src == nil {
+		return nil
+	}
+	out := make([]Extrusion, len(src))
+	for i := range src {
+		out[i] = src[i]
+		out[i].Outer = append([]ExtrusionPoint(nil), src[i].Outer...)
+		out[i].Inner = append([]ExtrusionPoint(nil), src[i].Inner...)
+	}
+	return out
+}
+
+func clonePrimitive(p *Primitive, newChunkID, idSuffix string, sectorIDRemap map[string]string) Primitive {
+	out := *p
+	out.Geometry = Geometry{}
+	out.ID = p.ID + idSuffix
+	out.ChunkID = newChunkID
+	if remapped, ok := sectorIDRemap[p.SectorID]; ok {
+		out.SectorID = remapped
+	}
+	return out
+}
+
 // InferPortals detects edges shared between two sectors in this chunk and
 // converts wall edges into portal connections. An edge is "shared" when sector
 // A has edge (P→Q) and sector B has edge (Q→P) — i.e. the same two chunk

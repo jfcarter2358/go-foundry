@@ -456,7 +456,7 @@ func renderSceneShadow(level *Level, modelUniform int32) {
 }
 
 func drawGeometryShadow(g *Geometry) {
-	if len(g.Vertices) == 0 {
+	if len(g.Vertices) == 0 || g.Alpha < 0.05 {
 		return
 	}
 	gl.BindVertexArray(g.Vao)

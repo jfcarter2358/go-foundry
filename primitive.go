@@ -29,6 +29,7 @@ type Primitive struct {
 	UVOffset     mgl32.Vec2  // UV translation
 	UVScale      mgl32.Vec2  // UV scale; zero treated as {1,1}
 	UVRotation   float32     // UV rotation in radians
+	Alpha        float32     // 0.0 = fully transparent, 1.0 = fully opaque
 	BoundingKind BoundingType
 	BoundHalfX   float32
 	BoundHalfY   float32
@@ -91,7 +92,11 @@ func (p *Primitive) Load() error {
 		vertices[i][4] = rv + p.UVOffset.Y()
 	}
 
-	return p.Geometry.Load(vertices, indices, p.Texture, p.Position)
+	if err := p.Geometry.Load(vertices, indices, p.Texture, p.Position); err != nil {
+		return err
+	}
+	p.Geometry.Alpha = p.Alpha
+	return nil
 }
 
 // primAsEntity creates a lightweight Entity view for collision reuse.

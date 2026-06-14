@@ -22,6 +22,7 @@ type Geometry struct {
 	Normal                     mgl32.Vec3
 	Position                   mgl32.Vec3
 	Yaw                        float32
+	Alpha                      float32 // 0.0 = fully transparent, 1.0 = fully opaque
 	Vao                        uint32
 	Vbo                        uint32
 }
@@ -42,6 +43,9 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	g.Vertices = verts
 	g.Texture = texture
 	g.Position = position
+	if g.Alpha == 0 {
+		g.Alpha = 1.0
+	}
 
 	if len(g.Vertices) == 0 {
 		return nil
@@ -84,6 +88,11 @@ func (g *Geometry) Delete() {
 	}
 }
 
+// IsTransparent returns true if this geometry has a non-opaque alpha value.
+func (g *Geometry) IsTransparent() bool {
+	return g.Alpha > 0 && g.Alpha < 1.0
+}
+
 // Draw renders the geometry using the current OpenGL state.
 func (g Geometry) Draw() {
 	if len(g.Vertices) == 0 {
@@ -93,6 +102,7 @@ func (g Geometry) Draw() {
 
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
+	gl.Uniform1f(AlphaUniform, g.Alpha)
 
 	gl.BindVertexArray(g.Vao)
 
@@ -147,6 +157,7 @@ type Extrusion struct {
 	UVOffset    mgl32.Vec2       // UV translation for side/back faces
 	UVScale     mgl32.Vec2       // UV scale for side/back faces; zero = {1,1}
 	UVRotation  float32          // UV rotation in radians for side/back faces
+	Alpha       float32          // per-extrusion alpha; only affects custom-texture back faces
 }
 
 // TerrainPoint is an additional point placed on a surface for terrain
@@ -167,6 +178,7 @@ type Wall struct {
 	Pinned        bool // if true, InferPortals will not convert this wall to a portal
 	DoubleSided   bool // if true, wall is rendered from both sides (default true)
 	Terrain       bool // if true, use terrain displacement mesh
+	Alpha         float32 // 0.0 = fully transparent, 1.0 = fully opaque
 	Extrusions    []Extrusion
 	TerrainPoints []TerrainPoint
 	UVOffset      mgl32.Vec2 // UV translation
@@ -183,6 +195,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	}
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
+	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])

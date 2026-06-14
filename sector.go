@@ -14,6 +14,7 @@ type Floor struct {
 	Texture       string
 	Terrain       bool // if true, use terrain displacement mesh
 	DoubleSided   bool // if true, floor is rendered from both sides (default true)
+	Alpha         float32 // 0.0 = fully transparent, 1.0 = fully opaque
 	Extrusions          []Extrusion
 	TerrainPoints       []TerrainPoint
 	UVOffset      mgl32.Vec2 // UV translation
@@ -44,6 +45,7 @@ type Ceiling struct {
 	Texture       string
 	Terrain       bool // if true, use terrain displacement mesh
 	DoubleSided   bool // if true, ceiling is rendered from both sides (default true)
+	Alpha         float32 // 0.0 = fully transparent, 1.0 = fully opaque
 	Extrusions          []Extrusion
 	TerrainPoints       []TerrainPoint
 	UVOffset      mgl32.Vec2 // UV translation
@@ -256,6 +258,9 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 		}
 	}
 
+	// Propagate floor alpha to its geometry (extrusion geometries keep their own per-extrusion alpha)
+	s.Floor.Geometry.Alpha = s.Floor.Alpha
+
 	// Build ceiling geometry
 	if s.Ceiling.Enabled && len(points) >= 3 {
 		if s.Ceiling.Terrain && len(s.Ceiling.TerrainPoints) > 0 {
@@ -297,6 +302,20 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 		}
 	}
 
+	// Propagate ceiling alpha to its geometry (extrusion geometries keep their own per-extrusion alpha)
+	s.Ceiling.Geometry.Alpha = s.Ceiling.Alpha
+
+	// Propagate wall alpha to geometry (extrusion geometries keep their own per-extrusion alpha)
+	for i := range s.Walls {
+		s.Walls[i].Geometry.Alpha = s.Walls[i].Alpha
+	}
+
+	// Propagate portal alpha to gap geometry
+	for i := range s.Portals {
+		s.Portals[i].FloorGap.Alpha = s.Portals[i].Alpha
+		s.Portals[i].CeilGap.Alpha = s.Portals[i].Alpha
+	}
+
 	return nil
 }
 
@@ -315,6 +334,7 @@ func loadExtrusionGeometries(old []Geometry, bfList []ExtrusionBackFace) ([]Geom
 		if err := g.Load(bf.Vertices, bf.Indices, bf.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 			return nil, err
 		}
+		g.Alpha = bf.Alpha
 		geoms = append(geoms, g)
 	}
 	return geoms, nil

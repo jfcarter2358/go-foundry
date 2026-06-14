@@ -118,32 +118,49 @@ func rayAABBIntersect(origin, dir, aabbMin, aabbMax mgl32.Vec3) (bool, float32) 
 }
 
 // rayTriangleIntersect tests a ray against a triangle (two-sided) using Möller–Trumbore.
-// Returns true and the distance t if the ray hits the triangle in front of the origin.
-func rayTriangleIntersect(origin, dir, v0, v1, v2 mgl32.Vec3) (bool, float32) {
+// Returns true, the distance t if the ray hits the triangle in front of the origin,
+// and a front flag that is true when the ray approaches the triangle from the side
+// its vertex winding faces (front-facing), false when it hits the back side.
+func rayTriangleIntersect(origin, dir, v0, v1, v2 mgl32.Vec3) (bool, float32, bool) {
 	const eps = 1e-6
 	edge1 := v1.Sub(v0)
 	edge2 := v2.Sub(v0)
 	h := dir.Cross(edge2)
 	a := edge1.Dot(h)
 	if a > -eps && a < eps {
-		return false, 0
+		return false, 0, false
 	}
 	f := 1.0 / a
 	sv := origin.Sub(v0)
 	u := f * sv.Dot(h)
 	if u < 0 || u > 1 {
-		return false, 0
+		return false, 0, false
 	}
 	q := sv.Cross(edge1)
 	v := f * dir.Dot(q)
 	if v < 0 || u+v > 1 {
-		return false, 0
+		return false, 0, false
 	}
 	t := f * edge2.Dot(q)
 	if t < eps {
-		return false, 0
+		return false, 0, false
 	}
-	return true, t
+	return true, t, a > 0
+}
+
+// pickFaceBias is added to a back-facing triangle's distance when comparing
+// picker hits, so that a coincident front-facing triangle wins the tie. Chosen
+// to be large enough to dominate float noise at typical editor scales (~1 mm)
+// yet small enough that a genuinely-closer back face still beats a distant
+// front face.
+const pickFaceBias float32 = 1e-3
+
+// effectivePickT returns t biased by pickFaceBias when the hit is back-facing.
+func effectivePickT(t float32, front bool) float32 {
+	if front {
+		return t
+	}
+	return t + pickFaceBias
 }
 
 // Editor3DHandleClick processes a mouse click in 3D mode (entity/sector selection or placement).
@@ -307,22 +324,31 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		for seci := range ch.Sectors {
 			s := &ch.Sectors[seci]
 			sPts := SectorPoints(ch, s)
-			// Walls — iterate all triangles in the wall's vertex buffer
+			// Walls — iterate all triangles in the wall's vertex buffer.
+			// Track the closest hit per wall using effective distance (back
+			// faces are biased outward by pickFaceBias) so coincident walls at
+			// chunk boundaries deterministically resolve in favor of the
+			// front-facing one the user actually sees.
 			for wi := range s.Walls {
 				w := &s.Walls[wi]
 				verts := w.Geometry.Vertices
 				// Each triangle = 3 vertices × 5 floats = 15 floats
-				ht := float32(math.MaxFloat32)
+				bestWallEff := float32(math.MaxFloat32)
 				for ti := 0; ti+14 < len(verts); ti += 15 {
 					v0 := mgl32.Vec3{verts[ti+0], verts[ti+1], verts[ti+2]}
 					v1 := mgl32.Vec3{verts[ti+5], verts[ti+6], verts[ti+7]}
 					v2 := mgl32.Vec3{verts[ti+10], verts[ti+11], verts[ti+12]}
-					if h, t2 := rayTriangleIntersect(origin, dir, v0, v1, v2); h && t2 < ht {
-						ht = t2
+					h, t2, front := rayTriangleIntersect(origin, dir, v0, v1, v2)
+					if !h {
+						continue
+					}
+					eff := effectivePickT(t2, front)
+					if eff < bestWallEff {
+						bestWallEff = eff
 					}
 				}
-				if ht < bestT {
-					bestT = ht
+				if bestWallEff < bestT {
+					bestT = bestWallEff
 					bestEntityIdx = -1
 					bestChunkIdx = ci
 					bestSectorIdx = seci
@@ -338,13 +364,15 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 					v0 := mgl32.Vec3{sPts[0].X(), s.Floor.VertexHeight(0), sPts[0].Y()}
 					v1 := mgl32.Vec3{sPts[i].X(), s.Floor.VertexHeight(i), sPts[i].Y()}
 					v2 := mgl32.Vec3{sPts[i+1].X(), s.Floor.VertexHeight(i+1), sPts[i+1].Y()}
-					if h, ht := rayTriangleIntersect(origin, dir, v0, v1, v2); h && ht < bestT {
-						bestT = ht
-						bestEntityIdx = -1
-						bestChunkIdx = ci
-						bestSectorIdx = seci
-						bestEdgeKind = ""
-						bestEdgeIdx = -1
+					if h, ht, front := rayTriangleIntersect(origin, dir, v0, v1, v2); h {
+						if eff := effectivePickT(ht, front); eff < bestT {
+							bestT = eff
+							bestEntityIdx = -1
+							bestChunkIdx = ci
+							bestSectorIdx = seci
+							bestEdgeKind = ""
+							bestEdgeIdx = -1
+						}
 					}
 				}
 			}
@@ -354,13 +382,15 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 					v0 := mgl32.Vec3{sPts[0].X(), s.Ceiling.VertexHeight(0), sPts[0].Y()}
 					v1 := mgl32.Vec3{sPts[i+1].X(), s.Ceiling.VertexHeight(i+1), sPts[i+1].Y()}
 					v2 := mgl32.Vec3{sPts[i].X(), s.Ceiling.VertexHeight(i), sPts[i].Y()}
-					if h, ht := rayTriangleIntersect(origin, dir, v0, v1, v2); h && ht < bestT {
-						bestT = ht
-						bestEntityIdx = -1
-						bestChunkIdx = ci
-						bestSectorIdx = seci
-						bestEdgeKind = ""
-						bestEdgeIdx = -1
+					if h, ht, front := rayTriangleIntersect(origin, dir, v0, v1, v2); h {
+						if eff := effectivePickT(ht, front); eff < bestT {
+							bestT = eff
+							bestEntityIdx = -1
+							bestChunkIdx = ci
+							bestSectorIdx = seci
+							bestEdgeKind = ""
+							bestEdgeIdx = -1
+						}
 					}
 				}
 			}
@@ -565,6 +595,16 @@ func Editor3DPanel() {
 		}
 	}
 
+	// --- Scenery import ---
+	if imgui.CollapsingHeader("Scenery") {
+		if imgui.Button("Import Scenery") {
+			Editor.ImportSceneryFiles = nil
+			Editor.ImportSceneryIdx = 0
+			Editor.ShowImportScenery = true
+		}
+		importSceneryPopup()
+	}
+
 	// --- Selected primitive properties ---
 	if Editor.ActivePrimitiveIdx >= 0 && Editor.ActiveChunkIdx >= 0 &&
 		Editor.ActiveChunkIdx < len(lvl.Chunks) {
@@ -621,6 +661,9 @@ func Editor3DPanel() {
 				}
 
 				imgui.Checkbox("Collision##primcol", &p.Collision)
+				if editorDragFloat("Alpha##prima", &p.Alpha, 0, 1, "%.2f") {
+					p.Geometry.Alpha = p.Alpha
+				}
 
 				if imgui.CollapsingHeader("Texture UV##primUVhdr") {
 					uvChanged := false
@@ -690,6 +733,9 @@ func Editor3DPanel() {
 
 			imgui.Text(fmt.Sprintf("Model: %s", filepath.Base(e.ModelPath)))
 			imgui.Text(fmt.Sprintf("Texture: %s", e.TexturePath))
+			if editorDragFloat("Alpha##enta", &e.Alpha, 0, 1, "%.2f") {
+				e.Geometry.Alpha = e.Alpha
+			}
 		}
 	}
 
@@ -799,6 +845,30 @@ func Editor3DPanel() {
 		if imgui.Button("New Chunk") {
 			Editor.ShowNewChunk = true
 		}
+		if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
+			imgui.SameLine()
+			if imgui.Button("Duplicate Chunk") {
+				duplicateActiveChunk()
+			}
+			imgui.SameLine()
+			if imgui.Button("Save Chunk") {
+				Editor.SaveChunkName = lvl.Chunks[Editor.ActiveChunkIdx].ID
+				Editor.ShowSaveChunk = true
+			}
+			imgui.SameLine()
+			if imgui.Button("Delete Chunk") {
+				Editor.ShowDeleteChunk = true
+			}
+		}
+		if imgui.Button("Import Chunk") {
+			files, _ := filepath.Glob(filepath.Join(executablePath, "chunks", "*.yaml"))
+			Editor.ImportChunkFiles = nil
+			for _, f := range files {
+				Editor.ImportChunkFiles = append(Editor.ImportChunkFiles, filepath.Base(f))
+			}
+			Editor.ImportChunkIdx = 0
+			Editor.ShowImportChunk = true
+		}
 	}
 
 	// --- Selected chunk properties ---
@@ -852,6 +922,93 @@ func Editor3DPanel() {
 		}
 		imgui.SameLine()
 		if imgui.Button("Cancel") {
+			imgui.CloseCurrentPopup()
+		}
+		imgui.EndPopup()
+	}
+
+	// Save chunk popup
+	if Editor.ShowSaveChunk {
+		imgui.OpenPopup("Save Chunk")
+		Editor.ShowSaveChunk = false
+	}
+	if imgui.BeginPopupModalV("Save Chunk", nil, imgui.WindowFlagsAlwaysAutoResize) {
+		imgui.InputText("Filename", &Editor.SaveChunkName)
+		if imgui.Button("Save") && Editor.SaveChunkName != "" {
+			ch := &lvl.Chunks[Editor.ActiveChunkIdx]
+			path := filepath.Join(executablePath, "chunks", Editor.SaveChunkName+".yaml")
+			if err := SaveChunk(ch, path); err != nil {
+				Editor.StatusMsg = fmt.Sprintf("Save chunk error: %v", err)
+			} else {
+				Editor.StatusMsg = fmt.Sprintf("Saved chunk to %s", path)
+			}
+			Editor.StatusTime = sdl.GetTicks()
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##savechunk") {
+			imgui.CloseCurrentPopup()
+		}
+		imgui.EndPopup()
+	}
+
+	// Delete chunk confirmation popup
+	if Editor.ShowDeleteChunk {
+		imgui.OpenPopup("Delete Chunk")
+		Editor.ShowDeleteChunk = false
+	}
+	if imgui.BeginPopupModalV("Delete Chunk", nil, imgui.WindowFlagsAlwaysAutoResize) {
+		chunkName := ""
+		if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
+			chunkName = lvl.Chunks[Editor.ActiveChunkIdx].ID
+		}
+		imgui.Text(fmt.Sprintf("Delete chunk %q? This cannot be undone.", chunkName))
+		if imgui.Button("Delete") {
+			deleteActiveChunk()
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##deletechunk") {
+			imgui.CloseCurrentPopup()
+		}
+		imgui.EndPopup()
+	}
+
+	// Import chunk popup
+	if Editor.ShowImportChunk {
+		imgui.OpenPopup("Import Chunk")
+		Editor.ShowImportChunk = false
+	}
+	if imgui.BeginPopupModalV("Import Chunk", nil, imgui.WindowFlagsAlwaysAutoResize) {
+		if len(Editor.ImportChunkFiles) == 0 {
+			imgui.Text("No chunk files found in chunks/")
+		} else {
+			if imgui.BeginComboV("##chunkfile", Editor.ImportChunkFiles[Editor.ImportChunkIdx], 0) {
+				for i, name := range Editor.ImportChunkFiles {
+					if imgui.SelectableV(name, int32(i) == Editor.ImportChunkIdx, 0, imgui.Vec2{}) {
+						Editor.ImportChunkIdx = int32(i)
+					}
+				}
+				imgui.EndCombo()
+			}
+			if imgui.Button("Import") {
+				path := filepath.Join(executablePath, "chunks", Editor.ImportChunkFiles[Editor.ImportChunkIdx])
+				chunkID, err := ImportChunkIntoLevel(lvl, path)
+				if err != nil {
+					Editor.StatusMsg = fmt.Sprintf("Import error: %v", err)
+				} else {
+					Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
+					Editor.ActiveSectorIdx = -1
+					Editor.ActiveEdgeIdx = -1
+					Editor.ActivePrimitiveIdx = -1
+					Editor.StatusMsg = fmt.Sprintf("Imported chunk %q", chunkID)
+				}
+				Editor.StatusTime = sdl.GetTicks()
+				imgui.CloseCurrentPopup()
+			}
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##importchunk") {
 			imgui.CloseCurrentPopup()
 		}
 		imgui.EndPopup()
@@ -954,4 +1111,110 @@ func createChunkAtCamera(id string) {
 
 	lvl.Chunks = append(lvl.Chunks, chunk)
 	Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
+}
+
+// duplicateActiveChunk deep-copies the currently active chunk, reuploads all
+// GPU geometry, and makes the copy the new active chunk. The new chunk keeps
+// the same world-space position as the source; the user can move it via the
+// Chunk Properties Origin drag. Sector and primitive IDs are suffixed with
+// _copy (or _copyN) to stay unique within the level.
+func duplicateActiveChunk() {
+	lvl := Editor.level
+	if lvl == nil {
+		return
+	}
+	idx := Editor.ActiveChunkIdx
+	if idx < 0 || idx >= len(lvl.Chunks) {
+		return
+	}
+	src := &lvl.Chunks[idx]
+
+	newID, suffix := uniqueChunkCopyID(lvl, src.ID)
+	clone := src.Clone(newID, suffix)
+
+	for si := range clone.Sectors {
+		s := &clone.Sectors[si]
+		_ = s.Load(SectorPoints(&clone, s))
+	}
+	for pi := range clone.Primitives {
+		_ = clone.Primitives[pi].Load()
+	}
+	clone.RebuildGaps()
+
+	lvl.Chunks = append(lvl.Chunks, clone)
+	Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
+}
+
+// deleteActiveChunk removes the currently active chunk from the level after
+// releasing all of its GPU resources (sector walls, floor/ceiling, portals,
+// extrusion geometries, and primitives).
+func deleteActiveChunk() {
+	lvl := Editor.level
+	if lvl == nil {
+		return
+	}
+	idx := Editor.ActiveChunkIdx
+	if idx < 0 || idx >= len(lvl.Chunks) {
+		return
+	}
+	ch := &lvl.Chunks[idx]
+
+	// Release all GPU resources owned by the chunk.
+	for si := range ch.Sectors {
+		s := &ch.Sectors[si]
+		for wi := range s.Walls {
+			s.Walls[wi].Geometry.Delete()
+			for ei := range s.Walls[wi].ExtrusionGeometries {
+				s.Walls[wi].ExtrusionGeometries[ei].Delete()
+			}
+		}
+		s.Floor.Geometry.Delete()
+		for ei := range s.Floor.ExtrusionGeometries {
+			s.Floor.ExtrusionGeometries[ei].Delete()
+		}
+		s.Ceiling.Geometry.Delete()
+		for ei := range s.Ceiling.ExtrusionGeometries {
+			s.Ceiling.ExtrusionGeometries[ei].Delete()
+		}
+		for pi := range s.Portals {
+			s.Portals[pi].FloorGap.Delete()
+			s.Portals[pi].CeilGap.Delete()
+		}
+	}
+	for pi := range ch.Primitives {
+		ch.Primitives[pi].Geometry.Delete()
+	}
+
+	// Remove the chunk from the level.
+	lvl.Chunks = append(lvl.Chunks[:idx], lvl.Chunks[idx+1:]...)
+
+	// Fix up active chunk index.
+	if len(lvl.Chunks) == 0 {
+		Editor.ActiveChunkIdx = -1
+	} else if Editor.ActiveChunkIdx >= len(lvl.Chunks) {
+		Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
+	}
+	Editor.ActiveSectorIdx = -1
+	Editor.ActiveEdgeIdx = -1
+	Editor.ActiveEntityIdx = -1
+	Editor.ActivePrimitiveIdx = -1
+}
+
+// uniqueChunkCopyID returns a chunk ID + suffix pair that does not collide
+// with any existing chunk in lvl. The suffix ("_copy", "_copy2", ...) is
+// reused for nested sector/primitive IDs so they stay consistent.
+func uniqueChunkCopyID(lvl *Level, srcID string) (string, string) {
+	existing := make(map[string]struct{}, len(lvl.Chunks))
+	for i := range lvl.Chunks {
+		existing[lvl.Chunks[i].ID] = struct{}{}
+	}
+	suffix := "_copy"
+	candidate := srcID + suffix
+	for n := 2; ; n++ {
+		if _, taken := existing[candidate]; !taken {
+			return candidate, suffix
+		}
+		suffix = fmt.Sprintf("_copy%d", n)
+		candidate = srcID + suffix
+	}
 }

@@ -10,10 +10,72 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"gopkg.in/yaml.v2"
 )
+
+// ScanLevelFiles returns sorted filenames of .yaml files in dir.
+func ScanLevelFiles(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		files = append(files, e.Name())
+	}
+	sort.Strings(files)
+	return files
+}
+
+// WriteBlankLevel writes a minimal valid level YAML to path.
+func WriteBlankLevel(path string) error {
+	raw := RawLevel{
+		Chunks: []RawChunk{{
+			ID: "default",
+			Points: map[string]Point{
+				"A": {X: -4, Y: -4},
+				"B": {X: 4, Y: -4},
+				"C": {X: 4, Y: 4},
+				"D": {X: -4, Y: 4},
+			},
+			Sectors: []RawSector{{
+				ID: "room",
+				Floor: RawFloor{
+					Enabled: true,
+					Height:  0,
+					Texture: "default",
+				},
+				Ceiling: RawCeiling{
+					Enabled: true,
+					Height:  4,
+					Texture: "default",
+				},
+				Edges: []RawEdge{
+					{From: "A", To: "B", Kind: "wall", Texture: "default", Collision: true},
+					{From: "B", To: "C", Kind: "wall", Texture: "default", Collision: true},
+					{From: "C", To: "D", Kind: "wall", Texture: "default", Collision: true},
+					{From: "D", To: "A", Kind: "wall", Texture: "default", Collision: true},
+				},
+			}},
+		}},
+		Lights: RawLights{
+			Global: RawGlobalLight{Color: RawColor{R: 1, G: 1, B: 1}, Brightness: 0.3},
+		},
+	}
+	data, err := yaml.Marshal(&raw)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
 
 // SaveLevel serialises level to YAML and writes it to path.
 func SaveLevel(level *Level, path string) error {
@@ -112,6 +174,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				Texture:       s.Floor.Texture,
 				Terrain:       s.Floor.Terrain,
 				DoubleSided:   boolPtrIfFalse(s.Floor.DoubleSided),
+				Alpha:         float32PtrIfNotOne(s.Floor.Alpha),
 				Extrusions:    saveExtrusions(s.Floor.Extrusions, ch, true),
 				TerrainPoints: saveTerrainPts(s.Floor.TerrainPoints, ch, true),
 				UVOffset:      Point{X: s.Floor.UVOffset.X(), Y: s.Floor.UVOffset.Y()},
@@ -125,6 +188,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				Texture:       s.Ceiling.Texture,
 				Terrain:       s.Ceiling.Terrain,
 				DoubleSided:   boolPtrIfFalse(s.Ceiling.DoubleSided),
+				Alpha:         float32PtrIfNotOne(s.Ceiling.Alpha),
 				Extrusions:    saveExtrusions(s.Ceiling.Extrusions, ch, true),
 				TerrainPoints: saveTerrainPts(s.Ceiling.TerrainPoints, ch, true),
 				UVOffset:      Point{X: s.Ceiling.UVOffset.X(), Y: s.Ceiling.UVOffset.Y()},
@@ -159,6 +223,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 					Hidden:        !w.Visible,
 					Pinned:        w.Pinned,
 					DoubleSided:   boolPtrIfFalse(w.DoubleSided),
+					Alpha:         float32PtrIfNotOne(w.Alpha),
 					Extrusions:    saveExtrusions(w.Extrusions, ch, false),
 					WallTerrain:   w.Terrain,
 					TerrainPoints: saveTerrainPts(w.TerrainPoints, ch, false),
@@ -178,6 +243,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 					GapTexture:  p.GapTexture,
 					Hidden:      !p.Visible,
 					DoubleSided: boolPtrIfFalse(p.DoubleSided),
+					Alpha:       float32PtrIfNotOne(p.Alpha),
 				})
 				portalIdx++
 			} else {
@@ -243,6 +309,7 @@ func primitiveToRaw(p *Primitive, ch *Chunk) RawPrimitive {
 		Texture:   p.Texture,
 		Sides:     p.Sides,
 		Collision: p.Collision,
+		Alpha:      float32PtrIfNotOne(p.Alpha),
 		UVOffset:   Point{X: p.UVOffset.X(), Y: p.UVOffset.Y()},
 		UVScale:    Point{X: uvSc.X(), Y: uvSc.Y()},
 		UVRotation: p.UVRotation,
@@ -280,6 +347,7 @@ func entityToRaw(e *Entity) RawEntity {
 		BoundHalfX: e.BoundHalfX,
 		BoundHalfY: e.BoundHalfY,
 		BoundHalfZ: e.BoundHalfZ,
+		Alpha:      float32PtrIfNotOne(e.Alpha),
 	}
 }
 
@@ -339,6 +407,7 @@ func saveExtrusions(exts []Extrusion, ch *Chunk, transformXZ bool) []RawExtrusio
 			UVOffset:    Point{X: ext.UVOffset.X(), Y: ext.UVOffset.Y()},
 			UVScale:     Point{X: ext.UVScale.X(), Y: ext.UVScale.Y()},
 			UVRotation:  ext.UVRotation,
+			Alpha:       float32PtrIfNotOne(ext.Alpha),
 		}
 		for _, p := range ext.Outer {
 			if transformXZ {
@@ -422,6 +491,15 @@ func boolPtrIfFalse(v bool) *bool {
 	return nil
 }
 
+// float32PtrIfNotOne returns a *float32 pointer only when v differs from 1.0.
+// Returns nil when v == 1.0 so the field is omitted from YAML via omitempty.
+func float32PtrIfNotOne(v float32) *float32 {
+	if v != 1.0 {
+		return &v
+	}
+	return nil
+}
+
 // trimTrailingZeros returns a copy of s with trailing zero values removed.
 // Returns nil if all values are zero (avoids writing empty arrays to YAML).
 func trimTrailingZeros(s []float32) []float32 {
@@ -437,4 +515,116 @@ func trimTrailingZeros(s []float32) []float32 {
 	out := make([]float32, last+1)
 	copy(out, s[:last+1])
 	return out
+}
+
+// SaveChunk serialises a single chunk to a standalone YAML file.
+func SaveChunk(ch *Chunk, path string) error {
+	rc, err := chunkToRaw(ch)
+	if err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(rc)
+	if err != nil {
+		return fmt.Errorf("yaml marshal: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// LoadChunkFromFile reads a standalone chunk YAML file.
+func LoadChunkFromFile(path string) (RawChunk, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return RawChunk{}, err
+	}
+	var rc RawChunk
+	if err := yaml.Unmarshal(data, &rc); err != nil {
+		return RawChunk{}, err
+	}
+	return rc, nil
+}
+
+// ImportChunkIntoLevel loads a chunk from a YAML file and appends it to the level.
+// It resolves ID conflicts by appending numeric suffixes.
+func ImportChunkIntoLevel(lvl *Level, path string) (string, error) {
+	rc, err := LoadChunkFromFile(path)
+	if err != nil {
+		return "", err
+	}
+
+	existingIDs := map[string]bool{}
+	existingSectorIDs := map[string]bool{}
+	for i := range lvl.Chunks {
+		existingIDs[lvl.Chunks[i].ID] = true
+		for j := range lvl.Chunks[i].Sectors {
+			existingSectorIDs[lvl.Chunks[i].Sectors[j].ID] = true
+		}
+	}
+
+	suffix := ""
+	if existingIDs[rc.ID] {
+		for n := 1; ; n++ {
+			suffix = fmt.Sprintf("_%d", n)
+			if !existingIDs[rc.ID+suffix] {
+				break
+			}
+		}
+		rc.ID = rc.ID + suffix
+	}
+
+	if suffix != "" {
+		for si := range rc.Sectors {
+			oldID := rc.Sectors[si].ID
+			rc.Sectors[si].ID = oldID + suffix
+			for ei := range rc.Sectors[si].Edges {
+				if rc.Sectors[si].Edges[ei].ToSector == oldID {
+					rc.Sectors[si].Edges[ei].ToSector = oldID + suffix
+				}
+			}
+		}
+		// Remap portal ToSector references that point to other sectors in the chunk
+		sectorOldIDs := map[string]bool{}
+		for si := range rc.Sectors {
+			sectorOldIDs[rc.Sectors[si].ID] = true
+		}
+		for si := range rc.Sectors {
+			for ei := range rc.Sectors[si].Edges {
+				e := &rc.Sectors[si].Edges[ei]
+				if e.Kind == "portal" && !sectorOldIDs[e.ToSector] {
+					candidate := e.ToSector + suffix
+					if sectorOldIDs[candidate] {
+						e.ToSector = candidate
+					}
+				}
+			}
+		}
+		for pi := range rc.Primitives {
+			rc.Primitives[pi].ID = rc.Primitives[pi].ID + suffix
+		}
+	}
+
+	chunk, texNeeded, err := loadRawChunk(rc)
+	if err != nil {
+		return "", fmt.Errorf("load chunk %q: %w", rc.ID, err)
+	}
+
+	for name := range texNeeded {
+		if _, already := Textures[name]; already {
+			continue
+		}
+		tpath, ok := textureNames[name]
+		if !ok {
+			return "", fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
+		}
+		if err := LoadTexture(name, filepath.Join(executablePath, tpath)); err != nil {
+			return "", err
+		}
+	}
+
+	lvl.Chunks = append(lvl.Chunks, chunk)
+	lvl.Spatial = BuildSpatialHash(lvl.Chunks, 8.0)
+
+	return rc.ID, nil
 }

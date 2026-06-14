@@ -24,6 +24,7 @@ type Entity struct {
 	BoundHalfX    float32
 	BoundHalfY    float32
 	BoundHalfZ    float32
+	Alpha         float32
 	Geometry      Geometry
 	Visible       bool
 	CurrentSector string
@@ -64,5 +65,9 @@ func (e *Entity) Load() error {
 	for i := range indices {
 		indices[i] = i
 	}
-	return e.Geometry.Load(vertices, indices, e.TexturePath, e.Position)
+	if err := e.Geometry.Load(vertices, indices, e.TexturePath, e.Position); err != nil {
+		return err
+	}
+	e.Geometry.Alpha = e.Alpha
+	return nil
 }
