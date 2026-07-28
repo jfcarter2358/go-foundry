@@ -265,6 +265,67 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 		rc.Primitives = append(rc.Primitives, primitiveToRaw(p, ch))
 	}
 
+	// World-builder chunks save the full edited geometry above (so manual tweaks
+	// persist verbatim) AND the editable grid block (so the brush keeps working).
+	if ch.WorldGrid != nil {
+		g := ch.WorldGrid
+		rw := &RawWorldGrid{
+			Cols:      g.Cols,
+			Rows:      g.Rows,
+			CellSize:  g.CellSize,
+			Origin:    Point{X: g.Origin.X(), Y: g.Origin.Y()},
+			Seed:      g.Seed,
+			StyleName: g.StyleName,
+			Heights:   append([]float32(nil), g.Heights...),
+			CellCity:  append([]int32(nil), g.CellCity...),
+		}
+		rw.CellType = make([]int, len(g.CellType))
+		for i, v := range g.CellType {
+			rw.CellType[i] = int(v)
+		}
+		// Only persist biome coverage when something was painted, so plain worlds
+		// stay compact. Ranges always persist so custom draw distances survive.
+		if sliceHasNonzero(g.GrassDensity) {
+			rw.GrassDensity = append([]float32(nil), g.GrassDensity...)
+		}
+		if sliceHasNonzero(g.RockDensity) {
+			rw.RockDensity = append([]float32(nil), g.RockDensity...)
+		}
+		rw.GrassRange = g.GrassRange
+		rw.RockRange = g.RockRange
+		rw.GrassHeight = g.GrassHeight
+		rw.GrassWidth = g.GrassWidth
+		rw.RockSides = g.RockSides
+		rw.Density = g.Density
+		faceRoads := g.FaceRoads
+		rw.FaceRoads = &faceRoads
+		for _, s := range g.Roads {
+			rs := RawRoadStroke{Width: s.Width}
+			for _, p := range s.Points {
+				rs.Points = append(rs.Points, Point{X: p.X(), Y: p.Y()})
+			}
+			rw.Roads = append(rw.Roads, rs)
+		}
+		for _, t := range g.Palette {
+			rw.Palette = append(rw.Palette, RawBuildingTemplate{
+				Name:        t.Name,
+				Width:       t.Width,
+				Depth:       t.Depth,
+				Stories:     t.Stories,
+				StoryHeight: t.StoryHeight,
+				WallThick:   t.WallThick,
+				Parapet:     t.Parapet,
+				DoorWidth:   t.DoorWidth,
+				Enterable:   t.Enterable,
+				WallTex:     t.WallTex,
+				RoofTex:     t.RoofTex,
+				FloorTex:    t.FloorTex,
+				Weight:      t.Weight,
+			})
+		}
+		rc.WorldGrid = rw
+	}
+
 	return rc, nil
 }
 

@@ -379,6 +379,10 @@ func main() {
 				prim := &Editor.SceneryPrimitives[i]
 				prim.Geometry.DrawWithTransform(prim.ModelMatrix())
 			}
+		} else if Editor.Active && Editor.Mode == ModeBuilding {
+			// Building editor: blank world with only the single preview building.
+			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+			DrawBuildingPreview()
 		} else {
 		// --- Shadow pass: render depth from each shadow-casting light ---
 		shadowMatrices := RenderShadowPass(level.Lights, &level, Cam.Position)
@@ -498,6 +502,11 @@ func main() {
 				entitiesDrawn++
 			}
 		}
+
+		// --- Procedural biome scatter (GPU grass / rocks) ---
+		// Drawn after opaque geometry but before the transparent pass: blades and
+		// rocks are solid (depth-written) so translucent water still sorts on top.
+		RenderBiomes(&level, projView, Cam.Position, float32(now)/1000.0)
 
 		// --- Transparent pass: draw collected transparent geometry back-to-front ---
 		if len(transparentDraws) > 0 {

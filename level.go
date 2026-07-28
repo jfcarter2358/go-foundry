@@ -135,6 +135,61 @@ type RawChunk struct {
 	Rotation float32           `yaml:"rotation"`
 	Scale      float32           `yaml:"scale"`
 	Primitives []RawPrimitive    `yaml:"primitives,omitempty"`
+	WorldGrid  *RawWorldGrid     `yaml:"world_grid,omitempty"`
+}
+
+// RawWorldGrid is the YAML representation of a procedural world grid. When
+// present on a chunk it makes the chunk re-editable in the world builder; the
+// chunk's sectors/primitives are still stored normally so manual tweaks persist.
+type RawWorldGrid struct {
+	Cols      int       `yaml:"cols"`
+	Rows      int       `yaml:"rows"`
+	CellSize  float32   `yaml:"cell_size"`
+	Origin    Point     `yaml:"origin"`
+	Seed      int64     `yaml:"seed"`
+	StyleName string    `yaml:"style_name,omitempty"`
+	Heights   []float32 `yaml:"heights"`
+	CellType  []int     `yaml:"cell_type"`
+	CellCity  []int32   `yaml:"cell_city"`
+
+	// GPU-scattered biome coverage (grass / rock), one value per cell, and the
+	// per-biome camera-ring draw radii. Omitted on worlds with no painted biomes.
+	GrassDensity []float32 `yaml:"grass_density,omitempty"`
+	RockDensity  []float32 `yaml:"rock_density,omitempty"`
+	GrassRange   float32   `yaml:"grass_range,omitempty"`
+	RockRange    float32   `yaml:"rock_range,omitempty"`
+	GrassHeight  float32   `yaml:"grass_height,omitempty"`
+	GrassWidth   float32   `yaml:"grass_width,omitempty"`
+	RockSides    int32     `yaml:"rock_sides,omitempty"`
+
+	// City generation controls.
+	Palette   []RawBuildingTemplate `yaml:"palette,omitempty"`
+	Density   float32               `yaml:"density,omitempty"`
+	FaceRoads *bool                 `yaml:"face_roads,omitempty"` // pointer so absent == default(true)
+	Roads     []RawRoadStroke       `yaml:"roads,omitempty"`      // free-hand road paths
+}
+
+// RawRoadStroke is the YAML form of a RoadStroke (world-XZ polyline + width).
+type RawRoadStroke struct {
+	Points []Point `yaml:"points"`
+	Width  float32 `yaml:"width,omitempty"`
+}
+
+// RawBuildingTemplate is the YAML form of a BuildingTemplate.
+type RawBuildingTemplate struct {
+	Name        string  `yaml:"name"`
+	Width       float32 `yaml:"width"`
+	Depth       float32 `yaml:"depth"`
+	Stories     int     `yaml:"stories"`
+	StoryHeight float32 `yaml:"story_height"`
+	WallThick   float32 `yaml:"wall_thick"`
+	Parapet     float32 `yaml:"parapet"`
+	DoorWidth   float32 `yaml:"door_width"`
+	Enterable   bool    `yaml:"enterable"`
+	WallTex     string  `yaml:"wall_tex"`
+	RoofTex     string  `yaml:"roof_tex"`
+	FloorTex    string  `yaml:"floor_tex"`
+	Weight      float32 `yaml:"weight"`
 }
 
 // RawEntityPosition holds the 3D spawn position of an entity.
@@ -698,7 +753,96 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		}
 	}
 
+	// Attach the editable world grid (if any) for continued brush editing. The
+	// full geometry was loaded above, so manual edits persist verbatim.
+	if rc.WorldGrid != nil {
+		chunk.WorldGrid = worldGridFromRaw(rc.WorldGrid, chunk.ID)
+	}
+
 	return chunk, texNeeded, nil
+}
+
+// worldGridFromRaw reconstructs a WorldGrid from its serialised form.
+func worldGridFromRaw(rw *RawWorldGrid, chunkID string) *WorldGrid {
+	g := &WorldGrid{
+		Cols:      rw.Cols,
+		Rows:      rw.Rows,
+		CellSize:  rw.CellSize,
+		Origin:    mgl32.Vec2{rw.Origin.X, rw.Origin.Y},
+		Seed:      rw.Seed,
+		Heights:   append([]float32(nil), rw.Heights...),
+		CellCity:  append([]int32(nil), rw.CellCity...),
+		ChunkID:   chunkID,
+		StyleName: rw.StyleName,
+	}
+	g.CellType = make([]WorldTerrainType, len(rw.CellType))
+	for i, v := range rw.CellType {
+		g.CellType[i] = WorldTerrainType(v)
+	}
+	if g.StyleName == "" {
+		g.StyleName = "desert"
+	}
+
+	g.Density = rw.Density
+	g.FaceRoads = true
+	if rw.FaceRoads != nil {
+		g.FaceRoads = *rw.FaceRoads
+	}
+
+	// GPU-scattered biomes. Always allocate the per-cell arrays so the brush and
+	// mask upload can index them even on older saves that predate biomes.
+	nCells := rw.Cols * rw.Rows
+	g.GrassDensity = make([]float32, nCells)
+	g.RockDensity = make([]float32, nCells)
+	copy(g.GrassDensity, rw.GrassDensity)
+	copy(g.RockDensity, rw.RockDensity)
+	g.GrassRange = rw.GrassRange
+	if g.GrassRange <= 0 {
+		g.GrassRange = defaultGrassRange
+	}
+	g.RockRange = rw.RockRange
+	if g.RockRange <= 0 {
+		g.RockRange = defaultRockRange
+	}
+	g.GrassHeight = rw.GrassHeight
+	if g.GrassHeight <= 0 {
+		g.GrassHeight = defaultGrassHeight
+	}
+	g.GrassWidth = rw.GrassWidth
+	if g.GrassWidth <= 0 {
+		g.GrassWidth = defaultGrassWidth
+	}
+	g.RockSides = rw.RockSides
+	if g.RockSides < 3 {
+		g.RockSides = defaultRockSides
+	}
+	for _, rt := range rw.Palette {
+		g.Palette = append(g.Palette, BuildingTemplate{
+			Name:        rt.Name,
+			Width:       rt.Width,
+			Depth:       rt.Depth,
+			Stories:     rt.Stories,
+			StoryHeight: rt.StoryHeight,
+			WallThick:   rt.WallThick,
+			Parapet:     rt.Parapet,
+			DoorWidth:   rt.DoorWidth,
+			Enterable:   rt.Enterable,
+			WallTex:     rt.WallTex,
+			RoofTex:     rt.RoofTex,
+			FloorTex:    rt.FloorTex,
+			Weight:      rt.Weight,
+		})
+	}
+	for _, rs := range rw.Roads {
+		stroke := RoadStroke{Width: rs.Width}
+		for _, p := range rs.Points {
+			stroke.Points = append(stroke.Points, mgl32.Vec2{p.X, p.Y})
+		}
+		if len(stroke.Points) >= 2 {
+			g.Roads = append(g.Roads, stroke)
+		}
+	}
+	return g
 }
 
 // LoadLevel reads a YAML level file, converts it to runtime types, and uploads

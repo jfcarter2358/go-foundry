@@ -310,6 +310,32 @@ func EditorDrawUI() {
 	}
 
 	imgui.SameLine()
+	if currentMode == ModeWorld {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.15, Y: 0.5, Z: 0.55, W: 1})
+	}
+	if imgui.Button("World") {
+		if Editor.Mode != ModeWorld {
+			EnterWorldEditor()
+		}
+	}
+	if currentMode == ModeWorld {
+		imgui.PopStyleColor()
+	}
+
+	imgui.SameLine()
+	if currentMode == ModeBuilding {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.15, Y: 0.45, Z: 0.6, W: 1})
+	}
+	if imgui.Button("Buildings") {
+		if Editor.Mode != ModeBuilding {
+			EnterBuildingEditor()
+		}
+	}
+	if currentMode == ModeBuilding {
+		imgui.PopStyleColor()
+	}
+
+	imgui.SameLine()
 	imgui.Separator()
 	imgui.SameLine()
 
@@ -535,6 +561,10 @@ func EditorDrawUI() {
 		Surface2DPanel()
 	} else if Editor.Mode == ModeScenery {
 		SceneryEditorPanel()
+	} else if Editor.Mode == ModeWorld {
+		WorldEditorPanel()
+	} else if Editor.Mode == ModeBuilding {
+		BuildingEditorPanel()
 	}
 }
 

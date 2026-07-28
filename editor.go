@@ -26,6 +26,8 @@ const (
 	Mode2D                          // 2D top-down sector editor
 	ModeSurface2D                   // 2D surface editor for extrusions/terrain
 	ModeScenery                     // scenery editor (blank world, single-item model compositor)
+	ModeWorld                       // procedural world builder (top-down brush editor)
+	ModeBuilding                    // building editor (design palette buildings in a 3D preview)
 )
 
 // EditorState holds all editor runtime state.
@@ -166,6 +168,36 @@ type EditorState struct {
 	ShowImportScenery    bool     // import dialog (used from 3D editor)
 	ImportSceneryFiles   []string
 	ImportSceneryIdx     int32
+
+	// --- World builder ---
+	WorldTool          int              // raise/lower/smooth/flatten/paintTex/paintCity/erase
+	WorldRadius        float32          // brush radius in world units
+	WorldStrength      float32          // height delta per second / paint rate
+	WorldFalloff       int              // smooth/linear/constant
+	WorldPaintType     WorldTerrainType // terrain type for the paint tool
+	WorldCityID        int32            // city-region id painted by the city tool
+	WorldPainting      bool             // left button held
+	WorldFlattenTarget float32          // captured height for the flatten tool
+	WorldMouse         mgl32.Vec2       // last cursor position in world XZ
+	WorldBiome         int              // BiomeGrass / BiomeRock for the Paint Biome tool
+	WorldBiomeDensity  float32          // 0..1 coverage the Paint Biome tool applies
+	WorldRoadStroke    []mgl32.Vec2     // in-progress free-hand road stroke (world XZ)
+	WorldRoadWidth     float32          // width applied to new road strokes
+	WorldNeedsRecarve  bool             // a road stroke/erase changed geometry; recarve on release
+	// New World dialog
+	ShowNewWorld     bool
+	NewWorldName     string
+	NewWorldCols     int32
+	NewWorldRows     int32
+	NewWorldCellSize float32
+	NewWorldSeed     int32
+
+	// --- Building editor (ModeBuilding) ---
+	EditTemplate     BuildingTemplate // the template currently being designed
+	PaletteSel       int              // selected palette index; -1 = editing a new/unsaved template
+	BuildingPreview  *Chunk           // standalone carved preview chunk (geometry uploaded)
+	BuildingDirty    bool             // preview needs rebuilding
+	BuildingPrevMode EditorMode       // mode to return to on exit
 }
 
 // Editor is the global editor instance.
@@ -210,9 +242,29 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 
 	ImGuiInit()
 	GizmoInit()
+	GrassInit()
 
 	Editor.SceneryActivePrimIdx = -1
 	Editor.SceneryPrimPlacement = false
+
+	// World builder defaults
+	Editor.WorldTool = WorldToolRaise
+	Editor.WorldRadius = 6.0
+	Editor.WorldStrength = 4.0
+	Editor.WorldFalloff = FalloffSmooth
+	Editor.WorldPaintType = TerrainGeneral
+	Editor.WorldCityID = 1
+	Editor.WorldBiome = BiomeGrass
+	Editor.WorldBiomeDensity = 0.8
+	Editor.WorldRoadWidth = 4.0
+	Editor.NewWorldCols = 32
+	Editor.NewWorldRows = 32
+	Editor.NewWorldCellSize = 6.0
+	Editor.NewWorldSeed = 1
+
+	// Building editor defaults
+	Editor.EditTemplate = defaultBuildingTemplate()
+	Editor.PaletteSel = -1
 
 	Editor.EntityDefs = ScanEntityDefs(executablePath + "/entities")
 }
@@ -366,7 +418,13 @@ func EditorHandleEvent(event sdl.Event) bool {
 			break
 		}
 		if t.Type == sdl.MOUSEBUTTONDOWN {
-			if Editor.Mode == ModeScenery {
+			if Editor.Mode == ModeBuilding {
+				if t.Button == sdl.ButtonRight {
+					Editor.MouseDragging3D = true
+					Editor.LastDragX = t.X
+					Editor.LastDragY = t.Y
+				}
+			} else if Editor.Mode == ModeScenery {
 				if t.Button == sdl.ButtonRight {
 					Editor.MouseDragging3D = true
 					Editor.LastDragX = t.X
@@ -388,9 +446,13 @@ func EditorHandleEvent(event sdl.Event) bool {
 				}
 			} else if Editor.Mode == Mode2D {
 				Editor2DHandleClick(t)
+			} else if Editor.Mode == ModeWorld {
+				WorldHandleClick(t)
 			}
 		} else if t.Type == sdl.MOUSEBUTTONUP {
-			if Editor.Mode == ModeScenery && t.Button == sdl.ButtonRight {
+			if Editor.Mode == ModeBuilding && t.Button == sdl.ButtonRight {
+				Editor.MouseDragging3D = false
+			} else if Editor.Mode == ModeScenery && t.Button == sdl.ButtonRight {
 				Editor.MouseDragging3D = false
 			} else if Editor.Mode == ModeSurface2D {
 				Surface2DHandleRelease(t)
@@ -398,11 +460,13 @@ func EditorHandleEvent(event sdl.Event) bool {
 				Editor.MouseDragging3D = false
 			} else if Editor.Mode == Mode2D {
 				Editor2DHandleRelease(t)
+			} else if Editor.Mode == ModeWorld {
+				WorldHandleRelease(t)
 			}
 		}
 
 	case sdl.MouseMotionEvent:
-		if Editor.Mode == ModeScenery && Editor.MouseDragging3D {
+		if (Editor.Mode == ModeScenery || Editor.Mode == ModeBuilding) && Editor.MouseDragging3D {
 			dx := t.X - Editor.LastDragX
 			dy := t.Y - Editor.LastDragY
 			Cam.Yaw += MouseRotationSpeed * float32(dx)
@@ -438,6 +502,8 @@ func EditorHandleEvent(event sdl.Event) bool {
 			// 3D fly: handled by existing HandleEvent (mouse look)
 		} else if Editor.Mode == Mode2D {
 			Editor2DHandleMouseMove(t)
+		} else if Editor.Mode == ModeWorld {
+			WorldHandleMouseMove(t)
 		}
 
 	case sdl.MouseWheelEvent:
@@ -451,7 +517,7 @@ func EditorHandleEvent(event sdl.Event) bool {
 			}
 			return true
 		}
-		if Editor.Mode == Mode2D && !imgui.CurrentIO().WantCaptureMouse() {
+		if (Editor.Mode == Mode2D || Editor.Mode == ModeWorld) && !imgui.CurrentIO().WantCaptureMouse() {
 			Editor.Zoom2D *= float32(math.Pow(1.1, float64(t.Y)))
 			if Editor.Zoom2D < 2 {
 				Editor.Zoom2D = 2
@@ -477,7 +543,7 @@ func EditorTick(keyStates []uint8) {
 		return // ImGui is capturing text input
 	}
 
-	if Editor.Mode == Mode3D || Editor.Mode == ModeScenery {
+	if Editor.Mode == Mode3D || Editor.Mode == ModeScenery || Editor.Mode == ModeBuilding {
 		// Free-fly using existing HandleInput (gravity is already off)
 		preMovePos := Cam.Position
 		HandleInput(keyStates)
@@ -529,6 +595,8 @@ func EditorTick(keyStates []uint8) {
 		if keyStates[sdl.SCANCODE_D] != 0 {
 			Editor.Pan2D[0] += panSpeed
 		}
+	} else if Editor.Mode == ModeWorld {
+		WorldTick(keyStates)
 	}
 }
 
@@ -561,6 +629,13 @@ func EditorRender() {
 	if Editor.Mode == ModeSurface2D {
 		gl.Disable(gl.DEPTH_TEST)
 		Surface2DRender()
+		gl.Enable(gl.DEPTH_TEST)
+	}
+
+	// --- World builder overlay ---
+	if Editor.Mode == ModeWorld {
+		gl.Disable(gl.DEPTH_TEST)
+		WorldEditorRender()
 		gl.Enable(gl.DEPTH_TEST)
 	}
 

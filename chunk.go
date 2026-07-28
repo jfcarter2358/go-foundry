@@ -22,6 +22,7 @@ type Chunk struct {
 	Scale      float32                 // uniform XZ scale applied at load time (0 = 1.0)
 	PointNames map[string]mgl32.Vec2   // original point name → pre-transform XZ coords
 	Primitives []Primitive
+	WorldGrid  *WorldGrid              // non-nil for procedurally-built world chunks
 }
 
 // Clone returns a fully-independent deep copy of the chunk. All slices and
@@ -64,6 +65,20 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 	cp.Primitives = make([]Primitive, len(ch.Primitives))
 	for pi := range ch.Primitives {
 		cp.Primitives[pi] = clonePrimitive(&ch.Primitives[pi], newID, idSuffix, sectorIDRemap)
+	}
+
+	if ch.WorldGrid != nil {
+		g := *ch.WorldGrid
+		g.ChunkID = newID
+		g.Heights = append([]float32(nil), ch.WorldGrid.Heights...)
+		g.CellType = append([]WorldTerrainType(nil), ch.WorldGrid.CellType...)
+		g.CellCity = append([]int32(nil), ch.WorldGrid.CellCity...)
+		g.Palette = append([]BuildingTemplate(nil), ch.WorldGrid.Palette...)
+		g.Roads = make([]RoadStroke, len(ch.WorldGrid.Roads))
+		for i, s := range ch.WorldGrid.Roads {
+			g.Roads[i] = RoadStroke{Width: s.Width, Points: append([]mgl32.Vec2(nil), s.Points...)}
+		}
+		cp.WorldGrid = &g
 	}
 
 	return cp

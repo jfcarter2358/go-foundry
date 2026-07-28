@@ -23,6 +23,7 @@
 - [x] 2-way rendering for walls/ceilings/floors
 - [x] Optional FPS/position/debug/etc. display
 - [x] Sector/chunk culling for rendering
+- [x] UV editing
 
 ## TODO
 
@@ -44,4 +45,10 @@
 - [ ] Sprites
 - [ ] Transparency in textures
 - [ ] Textures/models/entities/etc. should be loaded from a directory traversal, not a hard-coded map
-- [x] UV editing
+- [ ] Model editor
+- [ ] Animation editor
+- [ ] Music
+- [ ] Volumes in general
+- [ ] Water
+- [ ] Volumetric displacement (e.g. sand, snow)
+- [ ] Procedural detail
