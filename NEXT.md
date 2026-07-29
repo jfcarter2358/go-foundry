@@ -27,28 +27,27 @@
 
 ## TODO
 
-- [ ] Level editor should pop out into a separate window and I should be able to switch between them, using a key to switch between the two (handling mouse focus as well)
-- [ ] Direct YAML editor
-- [ ] Baked lighting
-- [ ] Animations
 - [ ] Scripting engine
 - [ ] Default entity definitions
+- [ ] Volumes in general
 - [ ] Gravity (volumes)
 - [ ] Script trigger volumes
 - [ ] Vehicles
-- [ ] Level builder
 - [ ] UI elements
 - [ ] UI builder
 - [ ] Object collision physics
-- [ ] "Static" models (don't move, baked into collision/lighting)
 - [x] Primitives (plane, square, etc.)
 - [ ] Sprites
 - [ ] Transparency in textures
-- [ ] Textures/models/entities/etc. should be loaded from a directory traversal, not a hard-coded map
+- [x] Textures/models/entities/etc. should be loaded from a directory traversal, not a hard-coded map
 - [ ] Model editor
+- [ ] Animations
 - [ ] Animation editor
 - [ ] Music
-- [ ] Volumes in general
-- [ ] Water
+- [x] Water
 - [ ] Volumetric displacement (e.g. sand, snow)
-- [ ] Procedural detail
+- [x] Procedural detail
+- [x] Should start on empty world
+- [ ] Brush settings should pop out into new windows and be separate from each other
+- [ ] Face mode where I can click on a face and move it, moving the vertices at the same time
+- [ ] Baked lighting

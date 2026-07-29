@@ -20,6 +20,7 @@ type Floor struct {
 	UVOffset      mgl32.Vec2 // UV translation
 	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
 	UVRotation    float32    // UV rotation in radians
+	Detail        DetailSpec // per-face procedural detail (rocks); disabled by default
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 
@@ -51,6 +52,7 @@ type Ceiling struct {
 	UVOffset      mgl32.Vec2 // UV translation
 	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
 	UVRotation    float32    // UV rotation in radians
+	Detail        DetailSpec // per-face procedural detail (rocks); disabled by default
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 
@@ -84,6 +86,27 @@ type Sector struct {
 	MinBound         mgl32.Vec2
 	MaxBound         mgl32.Vec2
 	PrimitiveIndices []int // indices into parent Chunk.Primitives
+}
+
+// wallTopBase is the flat ceiling plane wall tops hang from. A disabled ceiling
+// still positions wall tops; only when it carries no height of its own do walls
+// fall back to a fixed height above the floor.
+func (s *Sector) wallTopBase() float32 {
+	if !s.Ceiling.Enabled && s.Ceiling.Height == s.Floor.Height {
+		return s.Floor.Height + 3.0
+	}
+	return s.Ceiling.Height
+}
+
+// WallTopHeight returns the Y position of the top of a wall at sector vertex i.
+// Ceiling vertex offsets apply whether or not the ceiling surface itself is
+// enabled, so wall tops slope with them either way.
+func (s *Sector) WallTopHeight(i int) float32 {
+	top := s.wallTopBase()
+	if i >= 0 && i < len(s.Ceiling.VertexOffsets) {
+		top += s.Ceiling.VertexOffsets[i]
+	}
+	return top
 }
 
 // SectorPoints returns the resolved world-space points for a sector.
@@ -138,13 +161,6 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 		s.Ceiling.VertexOffsets = append(s.Ceiling.VertexOffsets, 0)
 	}
 
-	// Fallback ceiling height for wall tops when ceiling is disabled
-	baseCeilH := s.Ceiling.Height
-	if !s.Ceiling.Enabled && baseCeilH == s.Floor.Height {
-		baseCeilH = s.Floor.Height + 3.0
-	}
-	ceilEnabled := s.Ceiling.Enabled
-
 	// Build wall geometry — each wall is a quad with 4 independent corner heights
 	for i := range s.Walls {
 		w := &s.Walls[i]
@@ -163,14 +179,8 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 
 		floorH1 := s.Floor.VertexHeight(si1)
 		floorH2 := s.Floor.VertexHeight(si2)
-		var ceilH1, ceilH2 float32
-		if ceilEnabled {
-			ceilH1 = s.Ceiling.VertexHeight(si1)
-			ceilH2 = s.Ceiling.VertexHeight(si2)
-		} else {
-			ceilH1 = baseCeilH
-			ceilH2 = baseCeilH
-		}
+		ceilH1 := s.WallTopHeight(si1)
+		ceilH2 := s.WallTopHeight(si2)
 
 		if w.Terrain && len(w.TerrainPoints) > 0 {
 			// Wall terrain mode — Delaunay displacement mesh

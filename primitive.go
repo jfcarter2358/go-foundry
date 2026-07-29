@@ -14,7 +14,77 @@ const (
 	PrimitiveSphere
 	PrimitiveCylinder
 	PrimitivePlane
+	PrimitiveWater
 )
+
+// WaterParams controls the animated-water shader path. Only meaningful on a
+// PrimitiveWater; Enabled gates every water effect in the shaders.
+//
+// Waves are evaluated from world XZ, not mesh UV, so a wave keeps the same
+// physical size whether it is on a 4-unit pond or a 400-unit lake — scaling a
+// water plane up makes it cover more area rather than stretching the swell.
+type WaterParams struct {
+	Enabled       bool
+	WaveAmplitude float32    // peak vertical displacement, world units
+	WaveLength    float32    // world units per wave cycle
+	WaveSpeed     float32    // wave cycles per second
+	Reflectivity  float32    // 0 = plain texture, 1 = fully mirror-like at grazing angles
+	ReflectColor  mgl32.Vec3 // environment/sky colour mixed in by the fresnel term
+}
+
+// DefaultWaterParams returns the starting look for a newly placed water plane.
+func DefaultWaterParams() WaterParams {
+	return WaterParams{
+		Enabled:       true,
+		WaveAmplitude: 0.06,
+		WaveLength:    3.0,
+		WaveSpeed:     0.35,
+		Reflectivity:  0.45,
+		ReflectColor:  mgl32.Vec3{0.55, 0.72, 0.92},
+	}
+}
+
+// waterParamsFromRaw converts the YAML form, falling back to defaults when the
+// block is absent (water planes authored before these settings existed).
+func waterParamsFromRaw(rw *RawWater, kind PrimitiveType) WaterParams {
+	if kind != PrimitiveWater {
+		return WaterParams{}
+	}
+	if rw == nil {
+		return DefaultWaterParams()
+	}
+	return WaterParams{
+		Enabled:       true,
+		WaveAmplitude: rw.WaveAmplitude,
+		WaveLength:    rw.WaveLength,
+		WaveSpeed:     rw.WaveSpeed,
+		Reflectivity:  rw.Reflectivity,
+		ReflectColor:  mgl32.Vec3{rw.ReflectColor.R, rw.ReflectColor.G, rw.ReflectColor.B},
+	}
+}
+
+// waterParamsToRaw returns the YAML form, or nil for non-water primitives.
+func waterParamsToRaw(p *Primitive) *RawWater {
+	if p.Kind != PrimitiveWater {
+		return nil
+	}
+	return &RawWater{
+		WaveAmplitude: p.Water.WaveAmplitude,
+		WaveLength:    p.Water.WaveLength,
+		WaveSpeed:     p.Water.WaveSpeed,
+		Reflectivity:  p.Water.Reflectivity,
+		ReflectColor: RawColor3{
+			R: p.Water.ReflectColor.X(),
+			G: p.Water.ReflectColor.Y(),
+			B: p.Water.ReflectColor.Z(),
+		},
+	}
+}
+
+// waterSubdiv is the per-axis quad count of a water plane's mesh. Wave
+// displacement happens per-vertex, so a flat 2-triangle quad cannot show it;
+// this is the density that makes the swell read without a tessellation stage.
+const waterSubdiv = 48
 
 // Primitive is a procedurally-generated 3D shape placed in the world.
 type Primitive struct {
@@ -25,6 +95,7 @@ type Primitive struct {
 	Scale        mgl32.Vec3 // per-axis scale; zero value treated as {1,1,1}
 	Texture      string
 	Sides        int          // cylinder only; default 16
+	Water        WaterParams  // water only
 	Collision    bool
 	UVOffset     mgl32.Vec2  // UV translation
 	UVScale      mgl32.Vec2  // UV scale; zero treated as {1,1}
@@ -71,6 +142,8 @@ func (p *Primitive) Load() error {
 		vertices, indices = generateCylinder(sides)
 	case PrimitivePlane:
 		vertices, indices = generatePlane()
+	case PrimitiveWater:
+		vertices, indices = generateWaterPlane(waterSubdiv)
 	}
 
 	// Apply UV offset, scale, and rotation to all vertices
@@ -96,7 +169,60 @@ func (p *Primitive) Load() error {
 		return err
 	}
 	p.Geometry.Alpha = p.Alpha
+	if p.Kind == PrimitiveWater {
+		p.Geometry.Water = p.Water
+	} else {
+		p.Geometry.Water = WaterParams{}
+	}
 	return nil
+}
+
+// WorldAABB returns the primitive's world-space axis-aligned bounds, accounting
+// for rotation. Used for frustum culling, which must test the primitive itself
+// rather than its owning sector — a water plane routinely extends far past the
+// sector its centre happens to land in.
+func (p *Primitive) WorldAABB() (mgl32.Vec3, mgl32.Vec3) {
+	h := mgl32.Vec3{p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ}
+	if p.Kind == PrimitiveWater && p.Water.Enabled {
+		h[1] += p.Water.WaveAmplitude
+	}
+
+	if p.Rotation == (mgl32.Vec3{}) {
+		return p.Position.Sub(h), p.Position.Add(h)
+	}
+
+	R := mgl32.HomogRotate3DY(p.Rotation.Y()).
+		Mul4(mgl32.HomogRotate3DX(p.Rotation.X())).
+		Mul4(mgl32.HomogRotate3DZ(p.Rotation.Z()))
+
+	var lo, hi mgl32.Vec3
+	for corner := 0; corner < 8; corner++ {
+		c := h
+		if corner&1 != 0 {
+			c[0] = -c[0]
+		}
+		if corner&2 != 0 {
+			c[1] = -c[1]
+		}
+		if corner&4 != 0 {
+			c[2] = -c[2]
+		}
+		w := R.Mul4x1(c.Vec4(0))
+		v := mgl32.Vec3{w.X(), w.Y(), w.Z()}
+		if corner == 0 {
+			lo, hi = v, v
+			continue
+		}
+		for a := 0; a < 3; a++ {
+			if v[a] < lo[a] {
+				lo[a] = v[a]
+			}
+			if v[a] > hi[a] {
+				hi[a] = v[a]
+			}
+		}
+	}
+	return p.Position.Add(lo), p.Position.Add(hi)
 }
 
 // primAsEntity creates a lightweight Entity view for collision reuse.
@@ -271,6 +397,42 @@ func generatePlane() ([][]float32, []int) {
 	indices := []int{
 		0, 2, 1, 0, 3, 2, // top face
 		0, 1, 2, 0, 2, 3, // bottom face
+	}
+
+	return vertices, indices
+}
+
+// generateWaterPlane creates a double-sided XZ grid at y=0 spanning
+// (-0.5,-0.5) to (0.5,0.5), subdivided n times per axis. Same footprint as
+// generatePlane, but with enough interior vertices for the vertex shader to
+// displace into waves.
+func generateWaterPlane(n int) ([][]float32, []int) {
+	if n < 1 {
+		n = 1
+	}
+	step := 1.0 / float32(n)
+
+	vertices := make([][]float32, 0, (n+1)*(n+1))
+	for j := 0; j <= n; j++ {
+		for i := 0; i <= n; i++ {
+			u := float32(i) * step
+			v := float32(j) * step
+			vertices = append(vertices, []float32{u - 0.5, 0, v - 0.5, u, v})
+		}
+	}
+
+	idx := func(i, j int) int { return j*(n+1) + i }
+
+	indices := make([]int, 0, n*n*12)
+	for j := 0; j < n; j++ {
+		for i := 0; i < n; i++ {
+			a := idx(i, j)
+			b := idx(i+1, j)
+			c := idx(i+1, j+1)
+			d := idx(i, j+1)
+			indices = append(indices, a, c, b, a, d, c) // top
+			indices = append(indices, a, b, c, a, c, d) // bottom
+		}
 	}
 
 	return vertices, indices

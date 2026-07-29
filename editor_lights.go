@@ -85,6 +85,10 @@ func EditorLightPanel() {
 				Color:       mgl32.Vec3{1, 1, 1},
 				Brightness:  1.0,
 				CastShadows: true,
+				// Must be non-zero, or the shadow map is rendered and then
+				// multiplied out by (1 - shadow * 0) and the light reads as
+				// casting nothing. Matches the Add Point Light default.
+				ShadowStrength: 0.5,
 			})
 			changed = true
 		}

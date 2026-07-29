@@ -3,6 +3,16 @@
 uniform sampler2D tex;
 uniform float alpha; // per-geometry alpha multiplier (default 1.0)
 
+// Water surface. isWater gates the whole path.
+uniform int   isWater;
+uniform float time;
+uniform float waveAmplitude;
+uniform float waveLength;
+uniform float waveSpeed;
+uniform float reflectivity;
+uniform vec3  reflectColor;
+uniform vec3  camPos;
+
 // Global ambient light
 uniform vec3  globalLightColor;
 uniform float globalLightBrightness;
@@ -39,6 +49,31 @@ in vec3 fragWorldPos;
 in vec4 fragPosLightSpace[MAX_DIR_LIGHTS];
 
 out vec4 outputColor;
+
+// MUST stay identical to waterHeight() in vertex.glsl — see the note there.
+float waterHeight(vec2 p) {
+    float k = 6.2831853 / max(waveLength, 0.001);
+    float t = time * waveSpeed * 6.2831853;
+
+    float h = 0.0;
+    h += sin(p.x * k + t) * 0.50;
+    h += sin((p.x * 0.7 + p.y * 0.7) * k * 1.3 - t * 1.1) * 0.30;
+    h += sin(p.y * k * 0.8 + t * 0.8) * 0.20;
+    return h * waveAmplitude;
+}
+
+// Central-difference gradient of the wave field. Done per-pixel rather than
+// per-vertex so the swell stays smooth regardless of mesh density, and so no
+// extra varying is needed — this fragment shader is also linked against the
+// detail tessellation and scatter vertex stages, which know nothing of water.
+vec3 waterNormal(vec2 p) {
+    float e  = max(waveLength * 0.02, 0.01);
+    float hL = waterHeight(p - vec2(e, 0.0));
+    float hR = waterHeight(p + vec2(e, 0.0));
+    float hD = waterHeight(p - vec2(0.0, e));
+    float hU = waterHeight(p + vec2(0.0, e));
+    return normalize(vec3(hL - hR, 2.0 * e, hD - hU));
+}
 
 // 5x5 PCF shadow sampling for soft directional shadows.
 float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
@@ -106,17 +141,36 @@ float calcPointShadow(int lightIdx, vec3 fragPos) {
 }
 
 void main() {
-    // Derive the surface normal from screen-space position derivatives.
-    vec3 dX = dFdx(fragWorldPos);
-    vec3 dY = dFdy(fragWorldPos);
-    vec3 normal = normalize(cross(dX, dY));
+    vec3 normal;
+    if (isWater != 0) {
+        // Re-derive from the wave field; the derivative normal below would only
+        // recover the flat triangle facet and lose the swell entirely.
+        normal = waterNormal(fragWorldPos.xz);
+    } else {
+        // Derive the surface normal from screen-space position derivatives.
+        vec3 dX = dFdx(fragWorldPos);
+        vec3 dY = dFdy(fragWorldPos);
+        normal = normalize(cross(dX, dY));
+    }
 
     // Flip normal for back faces so double-sided surfaces are lit correctly.
     if (!gl_FrontFacing) {
         normal = -normal;
     }
 
-    vec4 texColor = texture(tex, fragTexCoord);
+    vec2 uv = fragTexCoord;
+    if (isWater != 0) {
+        // Two layers scrolling at different speeds/headings so the texture
+        // never reads as a rigid sheet sliding across the surface.
+        float t = time * waveSpeed;
+        uv += vec2(t * 0.03, t * 0.02);
+    }
+
+    vec4 texColor = texture(tex, uv);
+    if (isWater != 0) {
+        vec2 uv2 = fragTexCoord * 1.7 - vec2(time * waveSpeed * 0.021, time * waveSpeed * 0.034);
+        texColor = mix(texColor, texture(tex, uv2), 0.5);
+    }
 
     // Start with global ambient contribution
     vec3 lighting = globalLightColor * globalLightBrightness;
@@ -157,5 +211,31 @@ void main() {
 
     float finalAlpha = texColor.a * alpha;
     if (finalAlpha < 0.001) discard;
-    outputColor = vec4(texColor.rgb * clamp(lighting, 0.0, 1.0), finalAlpha);
+
+    vec3 surface = texColor.rgb * clamp(lighting, 0.0, 1.0);
+
+    if (isWater != 0) {
+        vec3 viewDir = normalize(camPos - fragWorldPos);
+
+        // Schlick fresnel: water is barely reflective looking straight down and
+        // near-mirror at grazing angles, which is what sells it as a surface.
+        float cosTheta = clamp(dot(normal, viewDir), 0.0, 1.0);
+        float fresnel  = reflectivity + (1.0 - reflectivity) * pow(1.0 - cosTheta, 5.0);
+
+        surface = mix(surface, reflectColor * clamp(lighting, 0.0, 1.0), fresnel);
+
+        // Blinn-Phong glint from each directional light — the moving specular
+        // highlight that reads as sun on water.
+        for (int i = 0; i < numDirLights; i++) {
+            vec3  ldir = -normalize(dirLightDir[i]);
+            vec3  halfVec = normalize(ldir + viewDir);
+            float spec = pow(max(dot(normal, halfVec), 0.0), 128.0);
+            surface += dirLightColor[i] * dirLightBrightness[i] * spec * fresnel;
+        }
+
+        // Grazing angles also read as more opaque, matching the reflection.
+        finalAlpha = clamp(finalAlpha + fresnel * (1.0 - finalAlpha) * 0.5, 0.0, 1.0);
+    }
+
+    outputColor = vec4(surface, finalAlpha);
 }

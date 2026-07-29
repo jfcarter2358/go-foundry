@@ -201,6 +201,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 			entity.BoundingKind = BoundingAABB
 		}
 		if err := entity.Load(); err == nil {
+			EditorPushUndo()
 			lvl.Entities = append(lvl.Entities, entity)
 			Editor.ActiveEntityIdx = len(lvl.Entities) - 1
 		}
@@ -225,6 +226,8 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 			kind = PrimitiveCylinder
 		case "plane":
 			kind = PrimitivePlane
+		case "water":
+			kind = PrimitiveWater
 		default:
 			kind = PrimitiveRectPrism
 		}
@@ -237,7 +240,16 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 			Texture:  "concrete",
 			Sides:    16,
 			ChunkID:  ch.ID,
+			Alpha:    1.0,
 		}
+		if kind == PrimitiveWater {
+			prim.Texture = "water"
+			prim.Scale = mgl32.Vec3{8, 1, 8}
+			prim.Alpha = 0.75
+			prim.UVScale = mgl32.Vec2{4, 4}
+			prim.Water = DefaultWaterParams()
+		}
+		_ = ensureTextureLoaded(prim.Texture)
 
 		// Compute bounding volumes
 		switch kind {
@@ -256,14 +268,15 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 			prim.BoundHalfX = 0.5
 			prim.BoundHalfY = 0.5
 			prim.BoundHalfZ = 0.5
-		case PrimitivePlane:
+		case PrimitivePlane, PrimitiveWater:
 			prim.BoundingKind = BoundingAABB
-			prim.BoundHalfX = 0.5
+			prim.BoundHalfX = prim.Scale.X() / 2
 			prim.BoundHalfY = 0.01
-			prim.BoundHalfZ = 0.5
+			prim.BoundHalfZ = prim.Scale.Z() / 2
 		}
 
 		if err := prim.Load(); err == nil {
+			EditorPushUndo()
 			ch.Primitives = append(ch.Primitives, prim)
 			Editor.ActivePrimitiveIdx = len(ch.Primitives) - 1
 			Editor.ActiveEntityIdx = -1
@@ -578,7 +591,7 @@ func Editor3DPanel() {
 
 	// --- Primitive catalog ---
 	if imgui.CollapsingHeader("Primitive Catalog") {
-		primTypes := []string{"rect_prism", "sphere", "cylinder", "plane"}
+		primTypes := []string{"rect_prism", "sphere", "cylinder", "plane", "water"}
 		for _, pt := range primTypes {
 			selected := pt == Editor.PrimPlacementType
 			if imgui.SelectableV(pt, selected, 0, imgui.Vec2{}) {
@@ -615,7 +628,7 @@ func Editor3DPanel() {
 				p := &ch.Primitives[Editor.ActivePrimitiveIdx]
 				imgui.InputText("ID##primid", &p.ID)
 
-				typeNames := []string{"rect_prism", "sphere", "cylinder", "plane"}
+				typeNames := []string{"rect_prism", "sphere", "cylinder", "plane", "water"}
 				currentType := int(p.Kind)
 				if imgui.BeginCombo("Type##primtype", typeNames[currentType]) {
 					for i, tn := range typeNames {
@@ -645,12 +658,16 @@ func Editor3DPanel() {
 					}
 				}
 				sc := [3]float32{p.Scale.X(), p.Scale.Y(), p.Scale.Z()}
-				if editorDragFloat3("Scale##prim", &sc, 0.01, 100, "%.2f") {
+				if editorDragFloat3("Scale##prim", &sc, 0.01, 1000, "%.2f") {
 					p.Scale = mgl32.Vec3{sc[0], sc[1], sc[2]}
 					reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
 				}
 
-				imgui.InputText("Texture##primtex", &p.Texture)
+				textureCombo("Texture##primtex", &p.Texture, false)
+
+				if p.Kind == PrimitiveWater {
+					waterControls("prim", &p.Water, &p.Geometry)
+				}
 
 				if p.Kind == PrimitiveCylinder {
 					sides := int32(p.Sides)
@@ -752,7 +769,7 @@ func Editor3DPanel() {
 					changed := false
 					changed = imgui.Checkbox("Enabled##fe3d", &s3d.Floor.Enabled) || changed
 					changed = editorDragFloat("Height##fh3d", &s3d.Floor.Height, 0, 0, "%.3f") || changed
-					changed = imgui.InputText("Texture##ft3d", &s3d.Floor.Texture) || changed
+					changed = textureCombo("Texture##ft3d", &s3d.Floor.Texture, false) || changed
 					if changed {
 						_ = s3d.Load(SectorPoints(sch, s3d))
 					}
@@ -766,11 +783,12 @@ func Editor3DPanel() {
 				}
 				editorSurfaceExtrusionPanel(sch, s3d, "Floor", &s3d.Floor.Extrusions)
 				editorTerrainPanel(sch, s3d, "Floor", &s3d.Floor.Terrain, &s3d.Floor.TerrainPoints)
+				editorDetailPanel("Floor", &s3d.Floor.Detail)
 				if imgui.TreeNode("Ceiling##3dc") {
 					changed := false
 					changed = imgui.Checkbox("Enabled##ce3d", &s3d.Ceiling.Enabled) || changed
 					changed = editorDragFloat("Height##ch3d", &s3d.Ceiling.Height, 0, 0, "%.3f") || changed
-					changed = imgui.InputText("Texture##ct3d", &s3d.Ceiling.Texture) || changed
+					changed = textureCombo("Texture##ct3d", &s3d.Ceiling.Texture, false) || changed
 					if changed {
 						_ = s3d.Load(SectorPoints(sch, s3d))
 					}
@@ -784,13 +802,14 @@ func Editor3DPanel() {
 				}
 				editorSurfaceExtrusionPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Extrusions)
 				editorTerrainPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Terrain, &s3d.Ceiling.TerrainPoints)
+				editorDetailPanel("Ceiling", &s3d.Ceiling.Detail)
 				if Editor.ActiveEdgeKind == "wall" && Editor.ActiveEdgeIdx >= 0 &&
 					Editor.ActiveEdgeIdx < len(s3d.Walls) {
 					imgui.Separator()
 					w := &s3d.Walls[Editor.ActiveEdgeIdx]
 					imgui.Text(fmt.Sprintf("Wall #%d", Editor.ActiveEdgeIdx))
 					changed := false
-					changed = imgui.InputText("Texture##wt3d", &w.Texture) || changed
+					changed = textureCombo("Texture##wt3d", &w.Texture, false) || changed
 					changed = imgui.Checkbox("Collision##wc3d", &w.Collision) || changed
 					changed = imgui.Checkbox("Visible##wv3d", &w.Visible) || changed
 					changed = imgui.Checkbox("Double Sided##wds3d", &w.DoubleSided) || changed
@@ -808,6 +827,8 @@ func Editor3DPanel() {
 					editorExtrusionPanel(sch, s3d, w)
 					// Terrain sub-panel
 					editorTerrainPanel(sch, s3d, "Wall", &w.Terrain, &w.TerrainPoints)
+					// Detail (rock) sub-panel
+					editorDetailPanel("Wall", &w.Detail)
 				} else if Editor.ActiveEdgeKind == "portal" && Editor.ActiveEdgeIdx >= 0 &&
 					Editor.ActiveEdgeIdx < len(s3d.Portals) {
 					imgui.Separator()
@@ -817,7 +838,7 @@ func Editor3DPanel() {
 					changed = imgui.InputText("To Sector##pts3d", &p3d.ToSector) || changed
 					changed = imgui.Checkbox("Draw Gap##pdg3d", &p3d.DrawGap) || changed
 					if p3d.DrawGap {
-						changed = imgui.InputText("Gap Texture##pgt3d", &p3d.GapTexture) || changed
+						changed = textureCombo("Gap Texture##pgt3d", &p3d.GapTexture, true) || changed
 					}
 					changed = imgui.Checkbox("Visible##pv3d", &p3d.Visible) || changed
 					if changed {
@@ -848,6 +869,7 @@ func Editor3DPanel() {
 		if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 			imgui.SameLine()
 			if imgui.Button("Duplicate Chunk") {
+				EditorPushUndo()
 				duplicateActiveChunk()
 			}
 			imgui.SameLine()
@@ -916,6 +938,7 @@ func Editor3DPanel() {
 	if imgui.BeginPopupModalV("New Chunk", nil, imgui.WindowFlagsAlwaysAutoResize) {
 		imgui.InputText("Chunk ID", &Editor.NewChunkID)
 		if imgui.Button("Create") && Editor.NewChunkID != "" {
+			EditorPushUndo()
 			createChunkAtCamera(Editor.NewChunkID)
 			Editor.NewChunkID = ""
 			imgui.CloseCurrentPopup()
@@ -962,8 +985,9 @@ func Editor3DPanel() {
 		if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 			chunkName = lvl.Chunks[Editor.ActiveChunkIdx].ID
 		}
-		imgui.Text(fmt.Sprintf("Delete chunk %q? This cannot be undone.", chunkName))
+		imgui.Text(fmt.Sprintf("Delete chunk %q?", chunkName))
 		if imgui.Button("Delete") {
+			EditorPushUndo()
 			deleteActiveChunk()
 			imgui.CloseCurrentPopup()
 		}
@@ -992,6 +1016,7 @@ func Editor3DPanel() {
 				imgui.EndCombo()
 			}
 			if imgui.Button("Import") {
+				EditorPushUndo()
 				path := filepath.Join(executablePath, "chunks", Editor.ImportChunkFiles[Editor.ImportChunkIdx])
 				chunkID, err := ImportChunkIntoLevel(lvl, path)
 				if err != nil {
@@ -1020,6 +1045,11 @@ func Editor3DPanel() {
 func reloadPrimitive(ch *Chunk, idx int) {
 	p := &ch.Primitives[idx]
 	p.Geometry.Delete()
+
+	// Switching an existing primitive to water needs a usable starting look.
+	if p.Kind == PrimitiveWater && !p.Water.Enabled {
+		p.Water = DefaultWaterParams()
+	}
 
 	// Recompute bounding volumes from type + scale
 	scale := p.Scale
@@ -1053,7 +1083,7 @@ func reloadPrimitive(ch *Chunk, idx int) {
 		p.BoundHalfX = maxXZ / 2
 		p.BoundHalfY = scale.Y() / 2
 		p.BoundHalfZ = maxXZ / 2
-	case PrimitivePlane:
+	case PrimitivePlane, PrimitiveWater:
 		p.BoundingKind = BoundingAABB
 		p.BoundHalfX = scale.X() / 2
 		p.BoundHalfY = 0.01
@@ -1080,19 +1110,26 @@ func createChunkAtCamera(id string) {
 	floorH := float32(0.0)
 	ceilH := float32(4.0)
 
+	// Wall/Floor/Ceiling.Alpha and DoubleSided have no zero-value-safe default
+	// like the YAML loader's float32Default/boolDefault helpers apply — leaving
+	// them unset here means Alpha stays 0 (fully transparent) and DoubleSided
+	// stays false, so set them explicitly to match what a loaded level gets.
+	_ = ensureTextureLoaded("concrete")
+	_ = ensureTextureLoaded("stone_floor")
+
 	walls := []Wall{
-		{StartPoint: pts[0], EndPoint: pts[1], Texture: "concrete", Collision: true, Visible: true},
-		{StartPoint: pts[1], EndPoint: pts[2], Texture: "concrete", Collision: true, Visible: true},
-		{StartPoint: pts[2], EndPoint: pts[3], Texture: "concrete", Collision: true, Visible: true},
-		{StartPoint: pts[3], EndPoint: pts[0], Texture: "concrete", Collision: true, Visible: true},
+		{StartPoint: pts[0], EndPoint: pts[1], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
+		{StartPoint: pts[1], EndPoint: pts[2], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
+		{StartPoint: pts[2], EndPoint: pts[3], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
+		{StartPoint: pts[3], EndPoint: pts[0], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
 	}
 
 	sector := Sector{
 		ID:           id + "_room",
 		PointIndices: []int{0, 1, 2, 3},
 		EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
-		Floor:        Floor{Enabled: true, Height: floorH, Texture: "stone_floor"},
-		Ceiling:      Ceiling{Enabled: true, Height: ceilH, Texture: "concrete"},
+		Floor:        Floor{Enabled: true, Height: floorH, Texture: "stone_floor", DoubleSided: true, Alpha: 1.0},
+		Ceiling:      Ceiling{Enabled: true, Height: ceilH, Texture: "concrete", DoubleSided: true, Alpha: 1.0},
 		Walls:        walls,
 	}
 
@@ -1102,9 +1139,7 @@ func createChunkAtCamera(id string) {
 		Sectors:  []Sector{sector},
 		MinBound: mgl32.Vec3{cx - halfSize, floorH, cz - halfSize},
 		MaxBound: mgl32.Vec3{cx + halfSize, ceilH, cz + halfSize},
-		PointNames: map[string]mgl32.Vec2{
-			"A": pts[0], "B": pts[1], "C": pts[2], "D": pts[3],
-		},
+		PointNames: []string{"A", "B", "C", "D"},
 	}
 	_ = sector.Load(SectorPoints(&chunk, &sector))
 	chunk.Sectors[0] = sector

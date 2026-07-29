@@ -1,0 +1,3351 @@
+chunks:
+- id: main
+  points:
+    A:
+      x: -5
+      "y": -2
+    B:
+      x: 5
+      "y": -2
+    C:
+      x: 5
+      "y": 8
+    D:
+      x: -5
+      "y": 8
+    E0:
+      x: 37.569695
+      "y": -25.478567
+    E1:
+      x: 39.169697
+      "y": -12.728567
+    E2:
+      x: 36.869686
+      "y": 0.52143574
+    E3:
+      x: 24.169687
+      "y": 6.4714355
+    E4:
+      x: 35.369694
+      "y": 16.971432
+    E5:
+      x: 10.069692
+      "y": 25.92143
+    E6:
+      x: 8.619691
+      "y": 26.521431
+    E7:
+      x: -6.480309
+      "y": 27.82143
+    E8:
+      x: -8.780313
+      "y": 27.621437
+    E9:
+      x: -18.730309
+      "y": 23.621431
+    E10:
+      x: -36.03031
+      "y": 15.121432
+    E11:
+      x: -36.580307
+      "y": 0.42143154
+    E12:
+      x: -36.13031
+      "y": -14.878569
+    E13:
+      x: -30.830309
+      "y": -20.378567
+    E14:
+      x: -31.38031
+      "y": -30.378567
+    E15:
+      x: -3.831812
+      "y": -7.568183
+    E16:
+      x: -6.706532
+      "y": -1.8915482
+    E17:
+      x: -6.3318157
+      "y": 7.795455
+    E18:
+      x: -6.4227257
+      "y": 11.75
+    E19:
+      x: -4.7863617
+      "y": 20.931818
+    E20:
+      x: -8.37727
+      "y": 26.204546
+    E21:
+      x: 5.8500156
+      "y": -37.65909
+    E22:
+      x: 6.304556
+      "y": -19.204544
+    E23:
+      x: 9.213646
+      "y": -11.840908
+    E24:
+      x: 6.031826
+      "y": -2.295454
+    E25:
+      x: 6.168188
+      "y": 7.840909
+    E26:
+      x: 3.713644
+      "y": 16.25
+    E27:
+      x: 8.98637
+      "y": 24.65909
+    E28:
+      x: 22.133953
+      "y": -29.08012
+    E29:
+      x: 36.7
+      "y": -12.450002
+    E30:
+      x: 35.65
+      "y": -24.900002
+    E31:
+      x: 33.5
+      "y": -0.050001144
+    E32:
+      x: 20.699997
+      "y": 6.599998
+    E33:
+      x: 33.399998
+      "y": 16.549997
+    E34:
+      x: -17.800001
+      "y": 22.749998
+    E35:
+      x: -15.750002
+      "y": 11.949998
+    E36:
+      x: -34.550003
+      "y": 15.049997
+    E37:
+      x: -34.800003
+      "y": 0.34999752
+    E38:
+      x: -28.5
+      "y": -5.2000017
+    E39:
+      x: -17.400002
+      "y": -0.40000248
+    E40:
+      x: -11.650001
+      "y": -9.000002
+    E41:
+      x: -12.350004
+      "y": -20.350002
+    E42:
+      x: -14.500001
+      "y": -30.100002
+    E43:
+      x: -18.000002
+      "y": -17.550001
+    E44:
+      x: -34.25
+      "y": -14.650003
+    E45:
+      x: -27.8
+      "y": -20.250002
+    E46:
+      x: -28.516579
+      "y": -30.69063
+  sectors:
+  - id: main_room
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - -0.5
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: A
+      to: E0
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_1
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E0
+      to: E1
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_17
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E1
+      to: D
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_4
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: D
+      to: A
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_10
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_1
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - -0.5
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E0
+      to: A
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: main_room
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: A
+      to: E2
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_9
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E2
+      to: E3
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_2
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E3
+      to: E0
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_16
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_2
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - -0.5
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E3
+      to: E2
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_1
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E2
+      to: E4
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_8
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E4
+      to: E5
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_3
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E5
+      to: E3
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_15
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_3
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - -0.5
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E5
+      to: E4
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_2
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E4
+      to: E6
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_7
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E6
+      to: E7
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      uv_scale:
+        x: 1
+        "y": 1
+    - from: E7
+      to: E5
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_14
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_4
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - -0.5
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: D
+      to: E1
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: main_room
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E1
+      to: E8
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_18
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E8
+      to: E9
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_5
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E9
+      to: D
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_11
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_5
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E10
+      to: E9
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_12
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E9
+      to: E8
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_4
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E8
+      to: E10
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_6
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_6
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 0
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E11
+      to: E12
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      uv_scale:
+        x: 1
+        "y": 1
+    - from: E12
+      to: E10
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_13
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E10
+      to: E8
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_5
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E8
+      to: E11
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_19
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_7
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - -0.5
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E13
+      to: E14
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_36
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E14
+      to: E6
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      uv_scale:
+        x: 1
+        "y": 1
+    - from: E6
+      to: E4
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_3
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E4
+      to: E13
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_8
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_8
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - 0
+      - 0
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E2
+      to: E15
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_9
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E15
+      to: E13
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_35
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E13
+      to: E4
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_7
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E4
+      to: E2
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_2
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_9
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - 0
+      - 0
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: A
+      to: E16
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_10
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E16
+      to: E15
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_34
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E15
+      to: E2
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_8
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E2
+      to: A
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_1
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_10
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - 0
+      - 0
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: D
+      to: E17
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_11
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E17
+      to: E16
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_33
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E16
+      to: A
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_9
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: A
+      to: D
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: main_room
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_11
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - 0
+      - 0
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E9
+      to: E18
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_12
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E18
+      to: E17
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_32
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E17
+      to: D
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_10
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: D
+      to: E9
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_4
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_12
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - 0
+      - 0
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E10
+      to: E19
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_13
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E19
+      to: E18
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_28
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E18
+      to: E9
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_11
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E9
+      to: E10
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_5
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_13
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 0
+      - 0
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E12
+      to: E20
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E20
+      to: E19
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_27
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E19
+      to: E10
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_12
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E10
+      to: E12
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_6
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_14
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E5
+      to: E7
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_3
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E7
+      to: E21
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      uv_scale:
+        x: 1
+        "y": 1
+    - from: E21
+      to: E22
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_20
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E22
+      to: E5
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_15
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_15
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E23
+      to: E3
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_16
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E3
+      to: E5
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_2
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E5
+      to: E22
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_14
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E22
+      to: E23
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_21
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_16
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - -0.5
+      - 0
+      - 0
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E3
+      to: E23
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_15
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E23
+      to: E24
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_23
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E24
+      to: E0
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_17
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E0
+      to: E3
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_1
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_17
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E25
+      to: E1
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_18
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E1
+      to: E0
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: main_room
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E0
+      to: E24
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_16
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E24
+      to: E25
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_24
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_18
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E26
+      to: E8
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_19
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E8
+      to: E1
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_4
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E1
+      to: E25
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_17
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E25
+      to: E26
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_25
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_19
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 0
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E27
+      to: E11
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_47
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E11
+      to: E8
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_6
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E8
+      to: E26
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_18
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E26
+      to: E27
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_26
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_20
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E22
+      to: E21
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_14
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E21
+      to: E28
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      uv_scale:
+        x: 1
+        "y": 1
+    - from: E28
+      to: E22
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_22
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_21
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E29
+      to: E23
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_23
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E23
+      to: E22
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_15
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E22
+      to: E30
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_22
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E30
+      to: E29
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+  - id: sector_22
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 0
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E30
+      to: E22
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_21
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E22
+      to: E28
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_20
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E28
+      to: E30
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      uv_scale:
+        x: 1
+        "y": 1
+  - id: sector_23
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E23
+      to: E29
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_21
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E29
+      to: E31
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_43
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E31
+      to: E24
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_24
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E24
+      to: E23
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_16
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_24
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E24
+      to: E31
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_23
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E31
+      to: E32
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_44
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E32
+      to: E25
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_25
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E25
+      to: E24
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_17
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_25
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E25
+      to: E32
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_24
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E32
+      to: E33
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_45
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E33
+      to: E26
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_26
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E26
+      to: E25
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_18
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_26
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E26
+      to: E33
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_25
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E33
+      to: E27
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_46
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E27
+      to: E26
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_19
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_27
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E19
+      to: E20
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_13
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E20
+      to: E34
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_49
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E34
+      to: E19
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_28
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_28
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E19
+      to: E34
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_27
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E34
+      to: E35
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_29
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E35
+      to: E18
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_32
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E18
+      to: E19
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_12
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_29
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E35
+      to: E34
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_28
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E34
+      to: E36
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_50
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E36
+      to: E35
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_30
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_30
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E35
+      to: E36
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_29
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E36
+      to: E37
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_51
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E37
+      to: E38
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_39
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E38
+      to: E35
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_31
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_31
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E39
+      to: E35
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_32
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E35
+      to: E38
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_30
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E38
+      to: E39
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_38
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_32
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E17
+      to: E18
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_11
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E18
+      to: E35
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_28
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E35
+      to: E39
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_31
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E39
+      to: E17
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_33
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_33
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E39
+      to: E40
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_38
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E40
+      to: E16
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_34
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E16
+      to: E17
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_10
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E17
+      to: E39
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_32
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_34
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E16
+      to: E40
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_33
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E40
+      to: E15
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_35
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E15
+      to: E16
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_9
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_35
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E15
+      to: E40
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_34
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E40
+      to: E41
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_37
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E41
+      to: E13
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_36
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E13
+      to: E15
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_8
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_36
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 0
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E13
+      to: E41
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_35
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E41
+      to: E42
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_41
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E42
+      to: E14
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      uv_scale:
+        x: 1
+        "y": 1
+    - from: E14
+      to: E13
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_7
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_37
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E43
+      to: E41
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_41
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E41
+      to: E40
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_35
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E40
+      to: E43
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_38
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_38
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E43
+      to: E40
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_37
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E40
+      to: E39
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_33
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E39
+      to: E38
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_31
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E38
+      to: E43
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_40
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_39
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E38
+      to: E37
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_30
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E37
+      to: E44
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_52
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E44
+      to: E38
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_40
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_40
+    floor:
+      enabled: true
+      height: 0
+      texture: stone_floor
+      terrain: false
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E38
+      to: E44
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_39
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E44
+      to: E45
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_53
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E45
+      to: E43
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_41
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E43
+      to: E38
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_38
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_41
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 0
+      - -0.5
+      - -0.5
+      uv_scale:
+        x: 1
+        "y": 1
+    ceiling:
+      enabled: false
+      height: 4
+      texture: concrete
+      uv_scale:
+        x: 1
+        "y": 1
+    edges:
+    - from: E43
+      to: E45
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_40
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E45
+      to: E46
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E46
+      to: E42
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      uv_scale:
+        x: 1
+        "y": 1
+    - from: E42
+      to: E41
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_36
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E41
+      to: E43
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_37
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_42
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 0
+      - 1
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E29
+      to: E30
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_21
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E30
+      to: E0
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E0
+      to: E1
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+    - from: E1
+      to: E29
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_43
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_43
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 1
+      - 0
+      - 0
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E2
+      to: E31
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_44
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E31
+      to: E29
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E29
+      to: E1
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_42
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E1
+      to: E2
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+  - id: sector_44
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 1
+      - 0
+      - 0
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E3
+      to: E32
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_45
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E32
+      to: E31
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E31
+      to: E2
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_43
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E2
+      to: E3
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+  - id: sector_45
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 1
+      - 0
+      - 0
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E4
+      to: E33
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_46
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E33
+      to: E32
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E32
+      to: E3
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_44
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E3
+      to: E4
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+  - id: sector_46
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 1
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E4
+      to: E5
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+    - from: E5
+      to: E27
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_47
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E27
+      to: E33
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E33
+      to: E4
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_45
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_47
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 1
+      - 0
+      - 0
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E6
+      to: E11
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E11
+      to: E27
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E27
+      to: E5
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_46
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E5
+      to: E6
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+  - id: sector_48
+    floor:
+      enabled: true
+      height: 0
+      texture: sand
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 0
+      - 1
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E20
+      to: E12
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E12
+      to: E7
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+    - from: E7
+      to: E8
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+    - from: E8
+      to: E20
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_49
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+  - id: sector_49
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 1
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E20
+      to: E8
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_48
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E8
+      to: E9
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+    - from: E9
+      to: E34
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_50
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E34
+      to: E20
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+  - id: sector_50
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 1
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E34
+      to: E9
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_49
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E9
+      to: E10
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+    - from: E10
+      to: E36
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_51
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E36
+      to: E34
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+  - id: sector_51
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 1
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E36
+      to: E10
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_50
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E10
+      to: E11
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+    - from: E11
+      to: E37
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_52
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E37
+      to: E36
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+  - id: sector_52
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 1
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E37
+      to: E11
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_51
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E11
+      to: E12
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+    - from: E12
+      to: E44
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_53
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E44
+      to: E37
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+  - id: sector_53
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 1
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E44
+      to: E12
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_52
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E12
+      to: E13
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+    - from: E13
+      to: E45
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_54
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E45
+      to: E44
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+  - id: sector_54
+    floor:
+      enabled: true
+      height: 0
+      texture: rock
+      terrain: false
+      vertex_offsets:
+      - 0
+      - 1
+      - 1
+    ceiling:
+      enabled: true
+      height: 4
+      texture: concrete
+    edges:
+    - from: E45
+      to: E13
+      kind: portal
+      texture: ""
+      collision: false
+      hidden: false
+      to_sector: sector_53
+      draw_gap: true
+      gap_texture: ""
+      alpha: 0
+    - from: E13
+      to: E14
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+    - from: E14
+      to: E46
+      kind: wall
+      texture: concrete
+      collision: false
+      hidden: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+      double_sided: false
+    - from: E46
+      to: E45
+      kind: wall
+      texture: concrete
+      collision: true
+      hidden: false
+      pinned: true
+      to_sector: ""
+      draw_gap: false
+      gap_texture: ""
+  origin:
+    x: 0
+    "y": 0
+    z: 0
+  rotation: 0
+  scale: 1
+  primitives:
+  - id: prim_0
+    type: water
+    position:
+      x: 4.841
+      "y": -0.25
+      z: -17.01
+    rotation:
+      x: 0
+      "y": 0
+      z: 0
+    scale:
+      x: 100
+      "y": 1
+      z: 100
+    texture: water
+    sides: 16
+    alpha: 0.75
+    uv_scale:
+      x: 1
+      "y": 1
+    water:
+      wave_amplitude: 0.06
+      wave_length: 3
+      wave_speed: 0.35
+      reflectivity: 0.45
+      reflect_color:
+        r: 0.55
+        g: 0.72
+        b: 0.92
+entities: []
+lights:
+  global:
+    color:
+      r: 1
+      g: 1
+      b: 1
+    brightness: 0.3
+  directional: []
+  point: []

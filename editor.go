@@ -23,11 +23,9 @@ type EditorMode int
 const (
 	ModeGame      EditorMode = iota // editor inactive — normal gameplay
 	Mode3D                          // 3D fly-around editor
-	Mode2D                          // 2D top-down sector editor
+	Mode2D                          // 2D top-down sector editor (+ biome painting)
 	ModeSurface2D                   // 2D surface editor for extrusions/terrain
 	ModeScenery                     // scenery editor (blank world, single-item model compositor)
-	ModeWorld                       // procedural world builder (top-down brush editor)
-	ModeBuilding                    // building editor (design palette buildings in a 3D preview)
 )
 
 // EditorState holds all editor runtime state.
@@ -56,7 +54,7 @@ type EditorState struct {
 
 	// Primitive placement state
 	PrimPlacementMode bool   // true: next left-click places a primitive
-	PrimPlacementType string // "rect_prism", "sphere", "cylinder", "plane"
+	PrimPlacementType string // "rect_prism", "sphere", "cylinder", "plane", "water"
 
 	// Chunk creation dialog
 	NewChunkID   string
@@ -154,7 +152,7 @@ type EditorState struct {
 	SceneryPrimitives    []Primitive // working set of primitives (not part of any level)
 	SceneryActivePrimIdx int        // selected primitive; -1 = none
 	SceneryPrimPlacement bool       // true: next left-click places a primitive
-	SceneryPrimPlaceType string     // "rect_prism", "sphere", "cylinder", "plane"
+	SceneryPrimPlaceType string     // "rect_prism", "sphere", "cylinder", "plane", "water"
 	SceneryFilePath      string     // current save path
 	SceneryID            string     // asset name
 	SceneryPrevMode      EditorMode // mode to return to on exit
@@ -169,35 +167,12 @@ type EditorState struct {
 	ImportSceneryFiles   []string
 	ImportSceneryIdx     int32
 
-	// --- World builder ---
-	WorldTool          int              // raise/lower/smooth/flatten/paintTex/paintCity/erase
-	WorldRadius        float32          // brush radius in world units
-	WorldStrength      float32          // height delta per second / paint rate
-	WorldFalloff       int              // smooth/linear/constant
-	WorldPaintType     WorldTerrainType // terrain type for the paint tool
-	WorldCityID        int32            // city-region id painted by the city tool
-	WorldPainting      bool             // left button held
-	WorldFlattenTarget float32          // captured height for the flatten tool
-	WorldMouse         mgl32.Vec2       // last cursor position in world XZ
-	WorldBiome         int              // BiomeGrass / BiomeRock for the Paint Biome tool
-	WorldBiomeDensity  float32          // 0..1 coverage the Paint Biome tool applies
-	WorldRoadStroke    []mgl32.Vec2     // in-progress free-hand road stroke (world XZ)
-	WorldRoadWidth     float32          // width applied to new road strokes
-	WorldNeedsRecarve  bool             // a road stroke/erase changed geometry; recarve on release
-	// New World dialog
-	ShowNewWorld     bool
-	NewWorldName     string
-	NewWorldCols     int32
-	NewWorldRows     int32
-	NewWorldCellSize float32
-	NewWorldSeed     int32
-
-	// --- Building editor (ModeBuilding) ---
-	EditTemplate     BuildingTemplate // the template currently being designed
-	PaletteSel       int              // selected palette index; -1 = editing a new/unsaved template
-	BuildingPreview  *Chunk           // standalone carved preview chunk (geometry uploaded)
-	BuildingDirty    bool             // preview needs rebuilding
-	BuildingPrevMode EditorMode       // mode to return to on exit
+	// --- 2D biome sector layer ---
+	BiomeLayerActive     bool         // 2D view edits the biome-sector layer instead of structural geometry
+	BiomeDrawing         bool         // placing points for a new sector polygon
+	BiomeDrawPoints      []mgl32.Vec2 // points placed so far for the in-progress polygon
+	ActiveBiomeSectorIdx int          // index into the active chunk's BiomeSectors; -1 = none
+	BiomeDragVertexIdx   int          // vertex index being dragged on the selected sector; -1 = none
 }
 
 // Editor is the global editor instance.
@@ -243,28 +218,17 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	ImGuiInit()
 	GizmoInit()
 	GrassInit()
+	DetailInit()
 
 	Editor.SceneryActivePrimIdx = -1
 	Editor.SceneryPrimPlacement = false
 
-	// World builder defaults
-	Editor.WorldTool = WorldToolRaise
-	Editor.WorldRadius = 6.0
-	Editor.WorldStrength = 4.0
-	Editor.WorldFalloff = FalloffSmooth
-	Editor.WorldPaintType = TerrainGeneral
-	Editor.WorldCityID = 1
-	Editor.WorldBiome = BiomeGrass
-	Editor.WorldBiomeDensity = 0.8
-	Editor.WorldRoadWidth = 4.0
-	Editor.NewWorldCols = 32
-	Editor.NewWorldRows = 32
-	Editor.NewWorldCellSize = 6.0
-	Editor.NewWorldSeed = 1
-
-	// Building editor defaults
-	Editor.EditTemplate = defaultBuildingTemplate()
-	Editor.PaletteSel = -1
+	// Biome sector layer defaults
+	Editor.BiomeLayerActive = false
+	Editor.BiomeDrawing = false
+	Editor.BiomeDrawPoints = nil
+	Editor.ActiveBiomeSectorIdx = -1
+	Editor.BiomeDragVertexIdx = -1
 
 	Editor.EntityDefs = ScanEntityDefs(executablePath + "/entities")
 }
@@ -332,10 +296,7 @@ func EditorToggle() {
 		updateCamMatrix()
 
 		// Re-enable mouse lock for gameplay
-		Cam.MouseLock = true
-		sdl.ShowCursor(sdl.DISABLE)
-		Window.SetGrab(true)
-		Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
+		SetMouseLock(true)
 
 		GravityEnabled = true
 		Editor.Active = false
@@ -347,9 +308,7 @@ func EditorToggle() {
 		Editor.SavedCamPitch = Cam.Pitch
 
 		// Release mouse for ImGui
-		Cam.MouseLock = false
-		sdl.ShowCursor(sdl.ENABLE)
-		Window.SetGrab(false)
+		SetMouseLock(false)
 
 		// Enter 3D fly mode (gravity off)
 		GravityEnabled = false
@@ -387,9 +346,46 @@ func EditorHandleEvent(event sdl.Event) bool {
 		if Editor.ExtrusionMode && editorExtrusionHandleKey(t) {
 			return true
 		}
+		// Biome sector polygon placement intercepts keys next
+		if Editor.Mode == Mode2D && biomeHandleKey(t) {
+			return true
+		}
 		if t.Type != sdl.KEYDOWN {
 			break
 		}
+
+		// Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) — undo/redo, scoped to whichever
+		// editor workspace is active.
+		if !imgui.CurrentIO().WantCaptureKeyboard() {
+			mods := sdl.GetModState()
+			if mods&sdl.KMOD_CTRL != 0 {
+				switch t.Keysym.Scancode {
+				case sdl.SCANCODE_Z:
+					if mods&sdl.KMOD_SHIFT != 0 {
+						if Editor.Mode == ModeScenery {
+							SceneryRedo()
+						} else {
+							EditorRedo()
+						}
+					} else {
+						if Editor.Mode == ModeScenery {
+							SceneryUndo()
+						} else {
+							EditorUndo()
+						}
+					}
+					return true
+				case sdl.SCANCODE_Y:
+					if Editor.Mode == ModeScenery {
+						SceneryRedo()
+					} else {
+						EditorRedo()
+					}
+					return true
+				}
+			}
+		}
+
 		switch t.Keysym.Scancode {
 		case sdl.SCANCODE_TAB:
 			// Toggle 2D / 3D sub-mode (surface mode is separate)
@@ -402,9 +398,7 @@ func EditorHandleEvent(event sdl.Event) bool {
 			// Tab in surface mode is handled by surface2D event handler
 			// Always keep cursor free in editor — both modes need visible mouse
 			// for selection, clicking edges, and placing vertices.
-			Cam.MouseLock = false
-			sdl.ShowCursor(sdl.ENABLE)
-			Window.SetGrab(false)
+			SetMouseLock(false)
 			return true
 
 		case sdl.SCANCODE_DELETE:
@@ -418,13 +412,7 @@ func EditorHandleEvent(event sdl.Event) bool {
 			break
 		}
 		if t.Type == sdl.MOUSEBUTTONDOWN {
-			if Editor.Mode == ModeBuilding {
-				if t.Button == sdl.ButtonRight {
-					Editor.MouseDragging3D = true
-					Editor.LastDragX = t.X
-					Editor.LastDragY = t.Y
-				}
-			} else if Editor.Mode == ModeScenery {
+			if Editor.Mode == ModeScenery {
 				if t.Button == sdl.ButtonRight {
 					Editor.MouseDragging3D = true
 					Editor.LastDragX = t.X
@@ -446,13 +434,9 @@ func EditorHandleEvent(event sdl.Event) bool {
 				}
 			} else if Editor.Mode == Mode2D {
 				Editor2DHandleClick(t)
-			} else if Editor.Mode == ModeWorld {
-				WorldHandleClick(t)
 			}
 		} else if t.Type == sdl.MOUSEBUTTONUP {
-			if Editor.Mode == ModeBuilding && t.Button == sdl.ButtonRight {
-				Editor.MouseDragging3D = false
-			} else if Editor.Mode == ModeScenery && t.Button == sdl.ButtonRight {
+			if Editor.Mode == ModeScenery && t.Button == sdl.ButtonRight {
 				Editor.MouseDragging3D = false
 			} else if Editor.Mode == ModeSurface2D {
 				Surface2DHandleRelease(t)
@@ -460,13 +444,11 @@ func EditorHandleEvent(event sdl.Event) bool {
 				Editor.MouseDragging3D = false
 			} else if Editor.Mode == Mode2D {
 				Editor2DHandleRelease(t)
-			} else if Editor.Mode == ModeWorld {
-				WorldHandleRelease(t)
 			}
 		}
 
 	case sdl.MouseMotionEvent:
-		if (Editor.Mode == ModeScenery || Editor.Mode == ModeBuilding) && Editor.MouseDragging3D {
+		if Editor.Mode == ModeScenery && Editor.MouseDragging3D {
 			dx := t.X - Editor.LastDragX
 			dy := t.Y - Editor.LastDragY
 			Cam.Yaw += MouseRotationSpeed * float32(dx)
@@ -502,8 +484,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 			// 3D fly: handled by existing HandleEvent (mouse look)
 		} else if Editor.Mode == Mode2D {
 			Editor2DHandleMouseMove(t)
-		} else if Editor.Mode == ModeWorld {
-			WorldHandleMouseMove(t)
 		}
 
 	case sdl.MouseWheelEvent:
@@ -517,7 +497,7 @@ func EditorHandleEvent(event sdl.Event) bool {
 			}
 			return true
 		}
-		if (Editor.Mode == Mode2D || Editor.Mode == ModeWorld) && !imgui.CurrentIO().WantCaptureMouse() {
+		if Editor.Mode == Mode2D && !imgui.CurrentIO().WantCaptureMouse() {
 			Editor.Zoom2D *= float32(math.Pow(1.1, float64(t.Y)))
 			if Editor.Zoom2D < 2 {
 				Editor.Zoom2D = 2
@@ -543,7 +523,7 @@ func EditorTick(keyStates []uint8) {
 		return // ImGui is capturing text input
 	}
 
-	if Editor.Mode == Mode3D || Editor.Mode == ModeScenery || Editor.Mode == ModeBuilding {
+	if Editor.Mode == Mode3D || Editor.Mode == ModeScenery {
 		// Free-fly using existing HandleInput (gravity is already off)
 		preMovePos := Cam.Position
 		HandleInput(keyStates)
@@ -595,8 +575,6 @@ func EditorTick(keyStates []uint8) {
 		if keyStates[sdl.SCANCODE_D] != 0 {
 			Editor.Pan2D[0] += panSpeed
 		}
-	} else if Editor.Mode == ModeWorld {
-		WorldTick(keyStates)
 	}
 }
 
@@ -632,17 +610,11 @@ func EditorRender() {
 		gl.Enable(gl.DEPTH_TEST)
 	}
 
-	// --- World builder overlay ---
-	if Editor.Mode == ModeWorld {
-		gl.Disable(gl.DEPTH_TEST)
-		WorldEditorRender()
-		gl.Enable(gl.DEPTH_TEST)
-	}
-
 	// --- ImGui UI ---
 	ImGuiNewFrame(dt)
 	EditorDrawUI()
 	if Editor.Mode == Mode2D {
+		Editor2DRenderBiomeOverlay()
 		Editor2DRenderLabels()
 	}
 	if Editor.Mode == ModeSurface2D {
@@ -657,10 +629,21 @@ func EditorDeleteSelected() {
 		return
 	}
 
+	// 2D mode, biome layer active: delete the selected biome sector
+	if Editor.Mode == Mode2D && Editor.BiomeLayerActive {
+		if ch := activeChunk(); ch != nil && Editor.ActiveBiomeSectorIdx >= 0 &&
+			Editor.ActiveBiomeSectorIdx < len(ch.BiomeSectors) {
+			EditorPushUndo()
+			deleteBiomeSector(ch, Editor.ActiveBiomeSectorIdx)
+		}
+		return
+	}
+
 	// 2D mode: edge deletion (wall → delete sector, portal → merge sectors)
 	if Editor.Mode == Mode2D && Editor.ActiveEdgeIdx >= 0 &&
 		Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(Editor.level.Chunks) {
 		ch := &Editor.level.Chunks[Editor.ActiveChunkIdx]
+		EditorPushUndo()
 		removeSelectedEdge(ch)
 		return
 	}
@@ -671,6 +654,7 @@ func EditorDeleteSelected() {
 		ch := &Editor.level.Chunks[Editor.ActiveChunkIdx]
 		idx := Editor.ActivePrimitiveIdx
 		if idx < len(ch.Primitives) {
+			EditorPushUndo()
 			ch.Primitives[idx].Geometry.Delete()
 			ch.Primitives = append(ch.Primitives[:idx], ch.Primitives[idx+1:]...)
 			// Rebuild sector PrimitiveIndices
@@ -689,6 +673,7 @@ func EditorDeleteSelected() {
 	if idx >= len(lvl.Entities) {
 		return
 	}
+	EditorPushUndo()
 	lvl.Entities = append(lvl.Entities[:idx], lvl.Entities[idx+1:]...)
 	Editor.ActiveEntityIdx = -1
 }
@@ -754,7 +739,13 @@ func EditorLoadLevel(path string) error {
 	Editor.PendingOuter = nil
 	Editor.PendingInner = nil
 	Editor.PlacingInner = false
+	Editor.BiomeDrawing = false
+	Editor.BiomeDrawPoints = nil
+	Editor.ActiveBiomeSectorIdx = -1
+	Editor.BiomeDragVertexIdx = -1
 	Editor.SavePath = path
+
+	EditorClearUndoHistory()
 
 	return nil
 }

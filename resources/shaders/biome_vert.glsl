@@ -3,10 +3,12 @@
 // biome_vert.glsl — GPU-scattered biome instancing (grass blades / rock debris).
 //
 // Every blade/rock is generated entirely on the GPU: gl_InstanceID indexes a
-// world-stable lattice around the camera; a hash scatters/jitters it; the biome
-// mask texture decides whether it survives and how dense the area is; the height
-// texture drops it onto the terrain surface. No per-instance CPU data is used —
-// only a small template mesh drawn with glDrawArraysInstanced.
+// world-stable lattice around the camera; a hash scatters/jitters it; a
+// point-in-polygon test against the sector's own points (uploaded directly as
+// a uniform array — no coverage texture) decides whether it survives; a
+// per-sector height texture drops it onto the structural floor beneath it.
+// No per-instance CPU data is used — only a small template mesh drawn with
+// glDrawArraysInstanced.
 
 in vec3  aLocal;   // template-local position (blade: y in [0,1] up; rock: unit blob)
 in vec3  aNormal;  // template normal (rock lighting; grass ignores)
@@ -20,21 +22,31 @@ uniform float spacing;  // lattice spacing (world units) between scatter slots
 uniform int   gridN;    // slots per side (instanceCount == gridN*gridN)
 uniform float range;    // max spawn radius from camera
 
-// World grid mapping (matches WorldGrid: Origin, CellSize, Cols, Rows).
-uniform vec2  gridOrigin;
-uniform float cellSize;
-uniform int   cols;
-uniform int   rows;
-
 uniform float time;       // seconds, for wind animation
 uniform bool  isRock;     // false = grass blade, true = rock
-uniform int   channel;    // mask channel: 0 = grass (.r), 1 = rock (.g)
 uniform float bladeHeight;// world height of a unit grass blade
 uniform float bladeWidth; // world half-width of a grass blade at its base
 uniform float rockScale;  // world scale of a unit rock
+uniform float density;    // 0..1 survival probability, uniform across the sector
 
-uniform sampler2D heightTex; // R32F, (cols+1)x(rows+1) terrain heights
-uniform sampler2D maskTex;   // RG32F, cols x rows biome coverage (r=grass, g=rock)
+// Per-sector polygon mask (the sector's own drawn points, world XZ). Tested
+// directly instead of sampling a rasterized coverage texture.
+const int MAX_POLY = 64;
+uniform vec2 polyPts[MAX_POLY];
+uniform int  numPolyPts;
+uniform vec2 polyMin, polyMax; // AABB, for a cheap reject before the ray-cast loop
+
+// Per-sector height texture: covers [heightOrigin, heightOrigin+heightSize].
+uniform sampler2D heightTex;
+uniform vec2 heightOrigin;
+uniform vec2 heightSize;
+
+// Per-sector seed (derived from sector ID + brush settings) shifts the hash
+// inputs so different sectors don't scatter identically even when their
+// lattices overlap in world space — e.g. tall grass and short grass painted
+// over the same area land on different spots instead of stacking.
+uniform vec2 seed;
+uniform vec3 tintColor; // base color of the painted object itself (the brush's paint color)
 
 // Lighting (mirrors the main shader's globals, kept cheap / Gouraud).
 uniform vec3 ambient;   // globalColor * globalBrightness
@@ -50,22 +62,30 @@ vec2 hash22(vec2 p) {
     return fract(sin(p) * 43758.5453);
 }
 
-// Bilinear terrain height at a world XZ, matching WorldGrid.HeightAt. Texel
-// centers sit on grid vertices, so (g+0.5)/(dim+1) hits the right sample point.
+// Bilinear structural-floor height at a world XZ, sampled from this sector's
+// cached height texture.
 float sampleHeight(vec2 world) {
-    float gx = (world.x - gridOrigin.x) / cellSize;
-    float gz = (world.y - gridOrigin.y) / cellSize;
-    vec2 uv = vec2((gx + 0.5) / float(cols + 1), (gz + 0.5) / float(rows + 1));
+    vec2 uv = (world - heightOrigin) / heightSize;
     return textureLod(heightTex, uv, 0.0).r;
 }
 
-// Biome coverage at a world XZ. LINEAR filtering softens biome edges between
-// adjacent cell centers.
-float sampleMask(vec2 world) {
-    vec2 uv = vec2((world.x - gridOrigin.x) / (float(cols) * cellSize),
-                   (world.y - gridOrigin.y) / (float(rows) * cellSize));
-    vec4 m = textureLod(maskTex, uv, 0.0);
-    return (channel == 0) ? m.r : m.g;
+// Ray-casting point-in-polygon test against the sector's own drawn points.
+bool pointInPoly(vec2 p) {
+    if (p.x < polyMin.x || p.x > polyMax.x || p.y < polyMin.y || p.y > polyMax.y) {
+        return false;
+    }
+    bool inside = false;
+    int j = numPolyPts - 1;
+    for (int i = 0; i < numPolyPts; i++) {
+        vec2 a = polyPts[i];
+        vec2 b = polyPts[j];
+        if (((a.y > p.y) != (b.y > p.y)) &&
+            (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)) {
+            inside = !inside;
+        }
+        j = i;
+    }
+    return inside;
 }
 
 void main() {
@@ -85,17 +105,13 @@ void main() {
     vec2 gi = baseIdx + vec2(float(ix), float(iz));
     vec2 hgi = mod(gi, 2048.0);
     vec2 cellPos = gi * spacing;
-    vec2 rnd = hash22(hgi);
+    vec2 rnd = hash22(hgi + seed);
     cellPos += (rnd - 0.5) * spacing * 0.85;
 
     float dist = distance(cellPos, camXZ);
-    float density = sampleMask(cellPos);
-    float pick = hash11(dot(hgi, vec2(12.9898, 78.233)));
+    float pick = hash11(dot(hgi + seed, vec2(12.9898, 78.233)));
 
-    bool inGrid = cellPos.x >= gridOrigin.x && cellPos.y >= gridOrigin.y &&
-                  cellPos.x <= gridOrigin.x + float(cols) * cellSize &&
-                  cellPos.y <= gridOrigin.y + float(rows) * cellSize;
-    bool alive = inGrid && (dist <= range) && (density > 0.02) && (pick <= density);
+    bool alive = pointInPoly(cellPos) && (dist <= range) && (pick <= density);
 
     if (!alive) {
         // Collapse the whole instance off-screen; it clips away.
@@ -121,7 +137,7 @@ void main() {
         off = vec3(p.x * ca - p.z * sa, p.y, p.x * sa + p.z * ca);
         vec3 nrm = normalize(vec3(aNormal.x * ca - aNormal.z * sa, aNormal.y,
                                   aNormal.x * sa + aNormal.z * ca));
-        vec3 base = vec3(0.5, 0.48, 0.45) * (0.8 + 0.4 * rnd.x);
+        vec3 base = tintColor * (0.8 + 0.4 * rnd.x);
         float ndl = max(dot(nrm, -normalize(sunDir)), 0.0);
         vColor = base * (ambient + sunColor * ndl);
     } else {
@@ -134,9 +150,10 @@ void main() {
         off = vec3(p.x * ca, p.y, p.x * sa);
         vec2 windDir = normalize(vec2(0.8, 0.6));
         off.xz += windDir * sway * h;
-        // Grass lit as an up-facing surface with a root→tip brightness gradient.
-        vec3 root = vec3(0.12, 0.32, 0.10);
-        vec3 tip  = vec3(0.45, 0.75, 0.28);
+        // Grass lit as an up-facing surface with a root→tip brightness gradient,
+        // shaded around the brush's paint color rather than a hardcoded green.
+        vec3 root = tintColor * 0.55;
+        vec3 tip  = tintColor;
         vec3 base = mix(root, tip, t) * (0.85 + 0.3 * rnd.y);
         float ndl = max(dot(vec3(0.0, 1.0, 0.0), -normalize(sunDir)), 0.0);
         vColor = base * (ambient + sunColor * (0.4 + 0.6 * ndl));

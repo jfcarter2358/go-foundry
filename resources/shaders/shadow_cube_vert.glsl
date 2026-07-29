@@ -3,7 +3,7 @@
 uniform mat4 lightSpaceMatrix;
 uniform mat4 model;
 
-in vec3 vert;
+layout(location = 0) in vec3 vert;
 
 out vec3 fragWorldPos;
 

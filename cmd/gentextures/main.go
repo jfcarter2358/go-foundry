@@ -287,6 +287,100 @@ func genStucco(rng *rand.Rand) {
 	save("stucco", img)
 }
 
+// tileableNoise is smoothNoise with wrapping grid lookups, so the result is
+// seamless when the texture repeats. gridSize must divide size evenly.
+func tileableNoise(rng *rand.Rand, gridSize int) func(x, y int) float64 {
+	stride := size / gridSize
+	grid := make([]float64, stride*stride)
+	for i := range grid {
+		grid[i] = rng.Float64()
+	}
+	get := func(gx, gy int) float64 {
+		return grid[(gy%stride)*stride+(gx%stride)]
+	}
+	return func(x, y int) float64 {
+		fx := float64(x) / float64(gridSize)
+		fy := float64(y) / float64(gridSize)
+		gx := int(fx)
+		gy := int(fy)
+		tx := fx - float64(gx)
+		ty := fy - float64(gy)
+		tx = tx * tx * (3 - 2*tx)
+		ty = ty * ty * (3 - 2*ty)
+		v00 := get(gx, gy)
+		v10 := get(gx+1, gy)
+		v01 := get(gx, gy+1)
+		v11 := get(gx+1, gy+1)
+		return v00*(1-tx)*(1-ty) + v10*tx*(1-ty) + v01*(1-tx)*ty + v11*tx*ty
+	}
+}
+
+// tileableFractalNoise sums octaves of tileableNoise. Grid sizes are halved per
+// octave starting at size/2, so every octave divides size and stays seamless.
+func tileableFractalNoise(rng *rand.Rand, octaves int) func(x, y int) float64 {
+	type layer struct {
+		n   func(x, y int) float64
+		amp float64
+	}
+	layers := make([]layer, 0, octaves)
+	total := 0.0
+	amp := 1.0
+	grid := size / 2
+	for i := 0; i < octaves && grid >= 1; i++ {
+		layers = append(layers, layer{tileableNoise(rng, grid), amp})
+		total += amp
+		amp *= 0.5
+		grid /= 2
+	}
+	return func(x, y int) float64 {
+		v := 0.0
+		for _, l := range layers {
+			v += l.n(x, y) * l.amp
+		}
+		return v / total
+	}
+}
+
+// sand: warm tan base with wind ripples and fine grain speckle
+func genSand(rng *rand.Rand) {
+	img := newRGBA()
+	noise := tileableFractalNoise(rng, 5)
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			n := noise(x, y)
+			// wind ripples: low-amplitude wave running at a slight angle.
+			// Integer cycle counts keep the pattern seamless across the tile.
+			fx := float64(x) / size
+			fy := float64(y) / size
+			// Warping the wave phase by the noise breaks up the regular banding
+			// that a pure sine shows once the texture repeats.
+			warp := (n - 0.5) * 0.6
+			ripple := math.Sin(2*math.Pi*(3*fy+fx+warp)) * 0.5
+			ripple += math.Sin(2*math.Pi*(5*fy+2*fx+warp)) * 0.2
+			r := 200 + n*26 + ripple*7
+			g := 175 + n*24 + ripple*6
+			b := 130 + n*20 + ripple*5
+			// individual grains: bright quartz flecks and darker mineral bits
+			if s := rng.Float64(); s < 0.07 {
+				r += 22
+				g += 20
+				b += 16
+			} else if s < 0.12 {
+				r -= 26
+				g -= 24
+				b -= 18
+			}
+			img.SetNRGBA(x, y, color.NRGBA{clamp8(r), clamp8(g), clamp8(b), 255})
+		}
+	}
+	save("sand", img)
+}
+
+// clamp8 converts a float channel value to uint8, clamping to [0,255].
+func clamp8(v float64) uint8 {
+	return uint8(math.Min(255, math.Max(0, v)))
+}
+
 func main() {
 	rng := rand.New(rand.NewSource(42))
 	genGrass(rng)
@@ -297,4 +391,5 @@ func main() {
 	genWoodFloor(rng)
 	genConcrete(rng)
 	genStucco(rng)
+	genSand(rng)
 }

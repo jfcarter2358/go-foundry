@@ -145,8 +145,8 @@ func surfaceBoundary() []mgl32.Vec2 {
 		wallLen := mgl32.Vec2{w.EndPoint.X() - w.StartPoint.X(), w.EndPoint.Y() - w.StartPoint.Y()}.Len()
 		floorH1 := s.Floor.VertexHeight(vi1)
 		floorH2 := s.Floor.VertexHeight(vi2)
-		ceilH1 := s.Ceiling.VertexHeight(vi1)
-		ceilH2 := s.Ceiling.VertexHeight(vi2)
+		ceilH1 := s.WallTopHeight(vi1)
+		ceilH2 := s.WallTopHeight(vi2)
 		wallH := ((ceilH1 - floorH1) + (ceilH2 - floorH2)) / 2
 		return []mgl32.Vec2{{0, 0}, {wallLen, 0}, {wallLen, wallH}, {0, wallH}}
 	case "floor", "ceiling":
@@ -378,6 +378,7 @@ func Surface2DHandleClick(t sdl.MouseButtonEvent) {
 				}
 			}
 			if bestIdx >= 0 {
+				EditorPushUndo()
 				*tPts = append((*tPts)[:bestIdx], (*tPts)[bestIdx+1:]...)
 				surfaceReload()
 			}
@@ -401,6 +402,7 @@ func Surface2DHandleClick(t sdl.MouseButtonEvent) {
 		} else if Editor.SurfacePlacing == "terrain" {
 			_, tPts := surfaceTerrainPts()
 			if tPts != nil {
+				EditorPushUndo()
 				*tPts = append(*tPts, TerrainPoint{U: u, V: v, Depth: 0})
 				surfaceReload()
 			}
@@ -419,6 +421,7 @@ func Surface2DHandleClick(t sdl.MouseButtonEvent) {
 			if layer == "both" || layer == "outer" {
 				for vi, p := range ext.Outer {
 					if dist2D(u, v, p.U, p.V) < threshold {
+						EditorPushUndo() // snapshot at drag start, not per-frame during the drag
 						Editor.SurfaceDragPt = vi
 						Editor.SurfaceDragKind = "outer"
 						Editor.SurfaceDragExtIdx = ei
@@ -429,6 +432,7 @@ func Surface2DHandleClick(t sdl.MouseButtonEvent) {
 			if layer == "both" || layer == "inner" {
 				for vi, p := range ext.Inner {
 					if dist2D(u, v, p.U, p.V) < threshold {
+						EditorPushUndo() // snapshot at drag start, not per-frame during the drag
 						Editor.SurfaceDragPt = vi
 						Editor.SurfaceDragKind = "inner"
 						Editor.SurfaceDragExtIdx = ei
@@ -443,6 +447,7 @@ func Surface2DHandleClick(t sdl.MouseButtonEvent) {
 	if tPts != nil {
 		for i, tp := range *tPts {
 			if dist2D(u, v, tp.U, tp.V) < threshold {
+				EditorPushUndo() // snapshot at drag start, not per-frame during the drag
 				Editor.SurfaceDragPt = i
 				Editor.SurfaceDragKind = "terrain"
 				Editor.ActiveTerrainPtIdx = i
@@ -546,6 +551,7 @@ func surface2DFinalizeExtrusion() {
 	inner := make([]ExtrusionPoint, len(outer))
 	copy(inner, outer)
 
+	EditorPushUndo()
 	*exts = append(*exts, Extrusion{
 		Outer:       outer,
 		Inner:       inner,
@@ -659,7 +665,7 @@ func Surface2DPanel() {
 				if imgui.TreeNodeV(fmt.Sprintf("Ext #%d (%d pts)##surfext%d", ei, len(ext.Outer), ei), imgui.TreeNodeFlagsNone) {
 					changed := false
 					changed = editorDragFloat(fmt.Sprintf("Depth##sed%d", ei), &ext.Depth, -10, 10, "%.3f") || changed
-					changed = imgui.InputText(fmt.Sprintf("Texture##set%d", ei), &ext.Texture) || changed
+					changed = textureCombo(fmt.Sprintf("Texture##set%d", ei), &ext.Texture, true) || changed
 					changed = imgui.Checkbox(fmt.Sprintf("Visible##sev%d", ei), &ext.Visible) || changed
 					changed = imgui.Checkbox(fmt.Sprintf("Back Visible##sebv%d", ei), &ext.BackVisible) || changed
 					if imgui.Button(fmt.Sprintf("Delete##sedel%d", ei)) {
@@ -672,6 +678,7 @@ func Surface2DPanel() {
 				}
 			}
 			if deleteIdx >= 0 {
+				EditorPushUndo()
 				*exts = append((*exts)[:deleteIdx], (*exts)[deleteIdx+1:]...)
 				surfaceReload()
 			}
@@ -710,6 +717,7 @@ func Surface2DPanel() {
 					changed = editorDragFloat("V##stpv", &tp.V, 0, 0, "%.3f") || changed
 					changed = editorDragFloat("Depth##stpd", &tp.Depth, -10, 10, "%.3f") || changed
 					if imgui.Button("Delete##stpdel") {
+						EditorPushUndo()
 						*tPts = append((*tPts)[:idx], (*tPts)[idx+1:]...)
 						Editor.ActiveTerrainPtIdx = -1
 						changed = true

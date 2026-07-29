@@ -16,6 +16,12 @@ type Camera struct {
 	Yaw       float32
 	Pitch     float32
 	MouseLock bool
+	// MouseLockWanted is the lock state the current mode asks for.  MouseLock
+	// itself is dropped temporarily whenever the window loses focus; on regaining
+	// focus we restore this rather than assuming gameplay.  Without it, any
+	// focus-lost/gained cycle (which X11/WSL2 can emit on a right or middle
+	// click) would grab the cursor while the editor is in a 2D mode.
+	MouseLockWanted bool
 }
 
 var Cam Camera
@@ -34,6 +40,29 @@ func DirectionFromAngles(yaw, pitch float32) mgl32.Vec3 {
 	}
 }
 
+// SetMouseLock enables or disables mouse-look capture and records the request
+// so focus changes can restore it.  Locking hides the cursor, grabs the window
+// so it stays confined, and warps to centre; see the warp-to-center note in
+// LoadCamera for why SDL relative mouse mode is avoided.
+func SetMouseLock(lock bool) {
+	Cam.MouseLockWanted = lock
+	applyMouseLock(lock)
+}
+
+// applyMouseLock changes the actual capture state without touching the wanted
+// state — used when focus is lost and regained.
+func applyMouseLock(lock bool) {
+	Cam.MouseLock = lock
+	if lock {
+		sdl.ShowCursor(sdl.DISABLE)
+		Window.SetGrab(true)
+		Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
+	} else {
+		sdl.ShowCursor(sdl.ENABLE)
+		Window.SetGrab(false)
+	}
+}
+
 func LoadCamera(position mgl32.Vec3, pitch, yaw float32) {
 	Cam.Yaw = yaw
 	Cam.Pitch = pitch
@@ -47,10 +76,7 @@ func LoadCamera(position mgl32.Vec3, pitch, yaw float32) {
 	//   2. Grab the window so the cursor stays confined
 	//   3. Warp to center; after each motion event we warp back to center and
 	//      measure delta as (t.X - halfW, t.Y - halfH)
-	Cam.MouseLock = true
-	sdl.ShowCursor(sdl.DISABLE)
-	Window.SetGrab(true)
-	Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
+	SetMouseLock(true)
 
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
 	Cam.Uniform = gl.GetUniformLocation(Program, gl.Str("camera\x00"))

@@ -144,18 +144,17 @@ func HandleEvent(event sdl.Event) {
 	case sdl.WindowEvent:
 		switch t.Event {
 		case sdl.WINDOWEVENT_FOCUS_LOST:
-			Cam.MouseLock = false
-			sdl.ShowCursor(sdl.ENABLE)
-			Window.SetGrab(false)
+			// Release capture but remember whether the current mode wanted it.
+			applyMouseLock(false)
 		case sdl.WINDOWEVENT_SIZE_CHANGED:
 			RefreshWindowSize()
 		case sdl.WINDOWEVENT_FOCUS_GAINED:
-			Cam.MouseLock = true
-			sdl.ShowCursor(sdl.DISABLE)
-			Window.SetGrab(true)
-			// Warp back to centre so the first motion event after regaining
-			// focus is measured from the correct origin.
-			Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
+			// Restore only what the mode asked for.  Editor 2D/surface/scenery
+			// modes never want capture, and a stray focus cycle from a right or
+			// middle click must not hand them a grabbed cursor.  The warp inside
+			// applyMouseLock also makes the first motion event after regaining
+			// focus measure from the correct origin.
+			applyMouseLock(Cam.MouseLockWanted)
 		}
 
 	case sdl.KeyboardEvent:

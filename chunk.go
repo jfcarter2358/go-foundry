@@ -9,8 +9,14 @@ import (
 // Chunk is a top-level spatial grouping of sectors.
 // MinBound/MaxBound are 3D AABBs (Y-up) used for frustum culling.
 // Origin, Rotation, and Scale are editor-set transforms baked into sector
-// geometry at load time. PointNames preserves the original YAML point name →
-// pre-transform coordinate mapping so SaveLevel can round-trip correctly.
+// geometry at load time.
+//
+// PointNames is index-aligned with Points and carries each point's YAML name so
+// SaveLevel can round-trip it. It must be maintained by every mutation of the
+// point pool — use AddPoint/RemovePoint rather than touching Points directly.
+// An empty string means "not yet named"; SaveLevel mints a stable unique name
+// for those slots. Binding names to indices rather than to coordinates is what
+// lets a point keep its identity when the editor drags it.
 type Chunk struct {
 	ID         string
 	Points     []mgl32.Vec2            // shared point pool; sectors reference by index
@@ -20,9 +26,35 @@ type Chunk struct {
 	Origin     mgl32.Vec3              // world-space offset applied to all points at load time
 	Rotation   float32                 // Y-axis rotation in radians applied at load time
 	Scale      float32                 // uniform XZ scale applied at load time (0 = 1.0)
-	PointNames map[string]mgl32.Vec2   // original point name → pre-transform XZ coords
+	PointNames []string                // index-aligned with Points; "" = unnamed
 	Primitives []Primitive
-	WorldGrid  *WorldGrid              // non-nil for procedurally-built world chunks
+	BiomeSectors []BiomeSector         // user-drawn biome-paint polygons, owned by this chunk
+}
+
+// AddPoint appends a point to the shared pool and returns its index, keeping
+// PointNames index-aligned. The point starts unnamed; SaveLevel assigns it a
+// stable name on the next serialise.
+func (ch *Chunk) AddPoint(p mgl32.Vec2) int {
+	idx := len(ch.Points)
+	ch.Points = append(ch.Points, p)
+	for len(ch.PointNames) < idx {
+		ch.PointNames = append(ch.PointNames, "")
+	}
+	ch.PointNames = append(ch.PointNames, "")
+	return idx
+}
+
+// RemovePoint deletes the point at index pi from the shared pool, keeping
+// PointNames index-aligned. Callers remain responsible for fixing up sector
+// PointIndices and any other index references.
+func (ch *Chunk) RemovePoint(pi int) {
+	if pi < 0 || pi >= len(ch.Points) {
+		return
+	}
+	ch.Points = append(ch.Points[:pi], ch.Points[pi+1:]...)
+	if pi < len(ch.PointNames) {
+		ch.PointNames = append(ch.PointNames[:pi], ch.PointNames[pi+1:]...)
+	}
 }
 
 // Clone returns a fully-independent deep copy of the chunk. All slices and
@@ -43,12 +75,7 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 
 	cp.Points = append([]mgl32.Vec2(nil), ch.Points...)
 
-	if ch.PointNames != nil {
-		cp.PointNames = make(map[string]mgl32.Vec2, len(ch.PointNames))
-		for k, v := range ch.PointNames {
-			cp.PointNames[k] = v
-		}
-	}
+	cp.PointNames = append([]string(nil), ch.PointNames...)
 
 	// Build old-sector-ID → new-sector-ID map for portal remapping.
 	sectorIDRemap := make(map[string]string, len(ch.Sectors))
@@ -67,18 +94,17 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 		cp.Primitives[pi] = clonePrimitive(&ch.Primitives[pi], newID, idSuffix, sectorIDRemap)
 	}
 
-	if ch.WorldGrid != nil {
-		g := *ch.WorldGrid
-		g.ChunkID = newID
-		g.Heights = append([]float32(nil), ch.WorldGrid.Heights...)
-		g.CellType = append([]WorldTerrainType(nil), ch.WorldGrid.CellType...)
-		g.CellCity = append([]int32(nil), ch.WorldGrid.CellCity...)
-		g.Palette = append([]BuildingTemplate(nil), ch.WorldGrid.Palette...)
-		g.Roads = make([]RoadStroke, len(ch.WorldGrid.Roads))
-		for i, s := range ch.WorldGrid.Roads {
-			g.Roads[i] = RoadStroke{Width: s.Width, Points: append([]mgl32.Vec2(nil), s.Points...)}
+	if ch.BiomeSectors != nil {
+		cp.BiomeSectors = make([]BiomeSector, len(ch.BiomeSectors))
+		for bi := range ch.BiomeSectors {
+			src := &ch.BiomeSectors[bi]
+			cp.BiomeSectors[bi] = BiomeSector{
+				ID:          src.ID + idSuffix,
+				Points:      append([]mgl32.Vec2(nil), src.Points...),
+				Brush:       src.Brush,
+				HeightDirty: true,
+			}
 		}
-		cp.WorldGrid = &g
 	}
 
 	return cp
@@ -177,6 +203,81 @@ func clonePrimitive(p *Primitive, newChunkID, idSuffix string, sectorIDRemap map
 	return out
 }
 
+// RecomputeBounds re-derives the chunk's world-space AABB (used for
+// frustum-culling the whole chunk before descending into per-sector culling)
+// from its current sectors and primitives. Sector.Load keeps each sector's own
+// bounds accurate, but nothing else rolls that up to the chunk level, so any
+// editor operation that adds/removes/moves a sector without going through
+// InferPortalsAndReload leaves MinBound/MaxBound stale — geometry added
+// outside the original bounds then gets frustum-culled along with the rest of
+// the chunk even when it's on screen.
+func (ch *Chunk) RecomputeBounds() {
+	if len(ch.Sectors) == 0 && len(ch.Primitives) == 0 {
+		return
+	}
+	first := true
+	extend := func(min, max mgl32.Vec3) {
+		if first {
+			ch.MinBound = min
+			ch.MaxBound = max
+			first = false
+			return
+		}
+		for i := 0; i < 3; i++ {
+			if min[i] < ch.MinBound[i] {
+				ch.MinBound[i] = min[i]
+			}
+			if max[i] > ch.MaxBound[i] {
+				ch.MaxBound[i] = max[i]
+			}
+		}
+	}
+
+	for si := range ch.Sectors {
+		s := &ch.Sectors[si]
+		minFloor := s.Floor.Height
+		for _, off := range s.Floor.VertexOffsets {
+			if h := s.Floor.Height + off; h < minFloor {
+				minFloor = h
+			}
+		}
+		for _, tp := range s.Floor.TerrainPoints {
+			if h := s.Floor.Height + tp.Depth; h < minFloor {
+				minFloor = h
+			}
+		}
+		for _, ext := range s.Floor.Extrusions {
+			if h := s.Floor.Height - ext.Depth; h < minFloor {
+				minFloor = h
+			}
+		}
+		maxCeil := s.Ceiling.Height
+		for _, off := range s.Ceiling.VertexOffsets {
+			if h := s.Ceiling.Height + off; h > maxCeil {
+				maxCeil = h
+			}
+		}
+		for _, tp := range s.Ceiling.TerrainPoints {
+			if h := s.Ceiling.Height + tp.Depth; h > maxCeil {
+				maxCeil = h
+			}
+		}
+		for _, ext := range s.Ceiling.Extrusions {
+			if h := s.Ceiling.Height + ext.Depth; h > maxCeil {
+				maxCeil = h
+			}
+		}
+		extend(
+			mgl32.Vec3{s.MinBound.X(), minFloor, s.MinBound.Y()},
+			mgl32.Vec3{s.MaxBound.X(), maxCeil, s.MaxBound.Y()},
+		)
+	}
+
+	for pi := range ch.Primitives {
+		extend(ch.Primitives[pi].WorldAABB())
+	}
+}
+
 // InferPortals detects edges shared between two sectors in this chunk and
 // converts wall edges into portal connections. An edge is "shared" when sector
 // A has edge (P→Q) and sector B has edge (Q→P) — i.e. the same two chunk
@@ -269,6 +370,7 @@ func (ch *Chunk) InferPortalsAndReload() {
 		_ = s.Load(SectorPoints(ch, s))
 	}
 	ch.RebuildGaps()
+	ch.RecomputeBounds()
 }
 
 // RebuildGaps regenerates portal gap geometry for all sectors in this chunk.
@@ -306,30 +408,18 @@ func (ch *Chunk) RebuildGaps() {
 
 			// Floor riser: only drawn from the lower-floor side.
 			if s.Floor.Height < adj.Floor.Height {
-				lo, hi := s.Floor.Height, adj.Floor.Height
-				gapH := hi - lo
-				a := []float32{start.X(), hi, start.Y(), 0, 0}
-				b := []float32{end.X(), hi, end.Y(), segLen, 0}
-				c := []float32{end.X(), lo, end.Y(), segLen, gapH}
-				d := []float32{start.X(), lo, start.Y(), 0, gapH}
-				_ = p.FloorGap.Load(
-					[][]float32{a, b, c, d}, []int{0, 1, 2, 2, 3, 0},
-					tex, mgl32.Vec3{},
-				)
+				lo1, lo2 := edgeHeights(ch, s, s.Floor.VertexHeight, start, end)
+				hi1, hi2 := edgeHeights(ch, adj, adj.Floor.VertexHeight, start, end)
+				verts, indices := buildGapQuad(start, end, lo1, lo2, hi1, hi2, segLen)
+				_ = p.FloorGap.Load(verts, indices, tex, mgl32.Vec3{})
 			}
 
 			// Ceiling filler: only drawn from the higher-ceiling side.
 			if s.Ceiling.Enabled && adj.Ceiling.Enabled && s.Ceiling.Height > adj.Ceiling.Height {
-				lo, hi := adj.Ceiling.Height, s.Ceiling.Height
-				gapH := hi - lo
-				a := []float32{start.X(), hi, start.Y(), 0, 0}
-				b := []float32{end.X(), hi, end.Y(), segLen, 0}
-				c := []float32{end.X(), lo, end.Y(), segLen, gapH}
-				d := []float32{start.X(), lo, start.Y(), 0, gapH}
-				_ = p.CeilGap.Load(
-					[][]float32{a, b, c, d}, []int{0, 1, 2, 2, 3, 0},
-					tex, mgl32.Vec3{},
-				)
+				lo1, lo2 := edgeHeights(ch, adj, adj.Ceiling.VertexHeight, start, end)
+				hi1, hi2 := edgeHeights(ch, s, s.Ceiling.VertexHeight, start, end)
+				verts, indices := buildGapQuad(start, end, lo1, lo2, hi1, hi2, segLen)
+				_ = p.CeilGap.Load(verts, indices, tex, mgl32.Vec3{})
 			}
 		}
 	}

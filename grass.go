@@ -2,16 +2,24 @@ package main
 
 // grass.go — GPU-scattered biome rendering (procedural grass & rock).
 //
-// Biomes are painted per grid cell in the world builder (WorldGrid.GrassDensity /
-// RockDensity). Nothing is placed as a scene object: at render time a small
-// template mesh (a grass blade or a rock) is drawn with glDrawArraysInstanced,
-// and the vertex shader (biome_vert.glsl) generates every instance procedurally
-// from gl_InstanceID — scattering it across a camera-centered lattice, sampling a
-// biome mask texture to decide survival/density, and a heightmap texture to drop
-// it onto the terrain. Cost is bounded by the camera ring, not the world size.
+// Biomes are painted as BiomeSector polygons (see biome_sector.go), each
+// carrying its own brush. Nothing is placed as a scene object: at render
+// time a small template mesh (a grass blade or a rock) is drawn with
+// glDrawArraysInstanced, and the vertex shader (biome_vert.glsl) generates
+// every instance procedurally from gl_InstanceID — scattering it across a
+// camera-centered lattice, testing point-in-polygon against the sector's own
+// points (uploaded as a uniform array) to decide whether a candidate
+// survives, and sampling a small per-sector height texture to drop it onto
+// the structural floor beneath it (so scatter follows slopes/elevated
+// floors instead of sitting flat). Cost is bounded by the camera ring, not
+// world size.
 //
-// This mirrors the self-contained GizmoProgram pattern (editor_gizmo.go): its own
-// GL program and VAOs, never touching the main game shader's state.
+// Each BiomeSector renders as its own instanced pass, so overlapping sectors
+// naturally layer (e.g. tall + short grass over the same area) — there is no
+// shared coverage grid to reconcile.
+//
+// This mirrors the self-contained GizmoProgram pattern (editor_gizmo.go): its
+// own GL program and VAOs, never touching the main game shader's state.
 
 import (
 	"fmt"
@@ -35,7 +43,6 @@ const (
 // Per-instance world size of a unit template.
 const (
 	grassBladeHeight = 0.55
-	rockWorldScale   = 0.35
 )
 
 // Caps on lattice side length so a huge draw range can't explode the instance
@@ -45,56 +52,69 @@ const (
 	maxRockGridN  = 130
 )
 
-// biomeRenderer holds the GL objects and cached grid textures for the biome pass.
+// Per-sector height texture resolution/cap.
+const (
+	biomeHeightTexelSize = float32(0.5)
+	biomeMaxTexDim       = 2048
+)
+
+// rockMesh is a cached rock template VAO for a given equatorial side count.
+type rockMesh struct {
+	vao, vbo uint32
+	verts    int32
+}
+
+// biomeHeightEntry is a cached per-sector height texture and the world-space
+// AABB it covers.
+type biomeHeightEntry struct {
+	tex          uint32
+	origin, size mgl32.Vec2
+}
+
+// biomeRenderer holds the GL objects and cached per-sector height textures for
+// the biome pass.
 type biomeRenderer struct {
 	program uint32
 
-	// Template meshes.
+	// Grass template mesh (appearance is scaled by uniforms, so one mesh suffices).
 	bladeVAO, bladeVBO uint32
 	bladeVerts         int32
-	rockVAO, rockVBO   uint32
-	rockVerts          int32
+	// Rock template meshes, cached by equatorial side count (mesh topology varies).
+	rockMeshes map[int32]rockMesh
 
-	// Per-grid textures (regenerated when the grid or its data changes).
-	maskTex   uint32 // RG32F cols x rows: r=grass, g=rock coverage
-	heightTex uint32 // R32F (cols+1)x(rows+1): terrain heights
-	curGrid   *WorldGrid
-	dirty     bool
-	haveGrass bool
-	haveRock  bool
-	rockSides int32 // equatorial vertex count baked into the current rock VBO
+	// Per-sector height texture cache, keyed by BiomeSector.ID. Rebuilt only
+	// when the sector's HeightDirty flag is set.
+	heightCache map[string]biomeHeightEntry
 
 	// Cached uniform locations.
-	uProjView, uCamXZ, uSpacing, uGridN, uRange           int32
-	uGridOrigin, uCellSize, uCols, uRows                  int32
-	uTime, uIsRock, uChannel, uBladeHeight, uRockScale    int32
-	uBladeWidth                                           int32
-	uHeightTex, uMaskTex, uAmbient, uSunDir, uSunColor    int32
-	aLocal, aNormal, aParam                               uint32
+	uProjView, uCamXZ, uSpacing, uGridN, uRange int32
+	uTime, uIsRock, uBladeHeight, uRockScale    int32
+	uBladeWidth, uDensity                       int32
+	uHeightTex, uHeightOrigin, uHeightSize      int32
+	uPolyPts, uNumPolyPts, uPolyMin, uPolyMax   int32
+	uSeed, uTintColor                           int32
+	uAmbient, uSunDir, uSunColor                int32
+	aLocal, aNormal, aParam                     uint32
 
 	initialized bool
 }
 
 var biomes biomeRenderer
 
-// MarkBiomesDirty flags the biome mask/height textures for regeneration on the
-// next frame. Call after any world-builder stroke (biome paint, or height edits
-// that move the surface the scatter sits on) or range change.
-func MarkBiomesDirty() { biomes.dirty = true }
-
-// sliceHasNonzero reports whether s contains any value != 0. Used to decide
-// whether painted biome coverage is worth persisting / drawing.
-func sliceHasNonzero(s []float32) bool {
-	for _, v := range s {
-		if v != 0 {
-			return true
-		}
+// EvictBiomeHeightCache releases the cached height texture for a deleted
+// biome sector. Call from the editor when a sector is removed.
+func EvictBiomeHeightCache(id string) {
+	e, ok := biomes.heightCache[id]
+	if !ok {
+		return
 	}
-	return false
+	t := e.tex
+	gl.DeleteTextures(1, &t)
+	delete(biomes.heightCache, id)
 }
 
-// GrassInit compiles the biome shader program and builds the blade/rock template
-// meshes. Must be called once with the GL context current (see EditorInit).
+// GrassInit compiles the biome shader program and builds the grass template mesh.
+// Must be called once with the GL context current (see EditorInit).
 func GrassInit() {
 	var err error
 	biomes.program, err = compileProgramFromFiles(
@@ -111,18 +131,21 @@ func GrassInit() {
 	biomes.uSpacing = gl.GetUniformLocation(p, gl.Str("spacing\x00"))
 	biomes.uGridN = gl.GetUniformLocation(p, gl.Str("gridN\x00"))
 	biomes.uRange = gl.GetUniformLocation(p, gl.Str("range\x00"))
-	biomes.uGridOrigin = gl.GetUniformLocation(p, gl.Str("gridOrigin\x00"))
-	biomes.uCellSize = gl.GetUniformLocation(p, gl.Str("cellSize\x00"))
-	biomes.uCols = gl.GetUniformLocation(p, gl.Str("cols\x00"))
-	biomes.uRows = gl.GetUniformLocation(p, gl.Str("rows\x00"))
 	biomes.uTime = gl.GetUniformLocation(p, gl.Str("time\x00"))
 	biomes.uIsRock = gl.GetUniformLocation(p, gl.Str("isRock\x00"))
-	biomes.uChannel = gl.GetUniformLocation(p, gl.Str("channel\x00"))
 	biomes.uBladeHeight = gl.GetUniformLocation(p, gl.Str("bladeHeight\x00"))
 	biomes.uBladeWidth = gl.GetUniformLocation(p, gl.Str("bladeWidth\x00"))
 	biomes.uRockScale = gl.GetUniformLocation(p, gl.Str("rockScale\x00"))
+	biomes.uDensity = gl.GetUniformLocation(p, gl.Str("density\x00"))
 	biomes.uHeightTex = gl.GetUniformLocation(p, gl.Str("heightTex\x00"))
-	biomes.uMaskTex = gl.GetUniformLocation(p, gl.Str("maskTex\x00"))
+	biomes.uHeightOrigin = gl.GetUniformLocation(p, gl.Str("heightOrigin\x00"))
+	biomes.uHeightSize = gl.GetUniformLocation(p, gl.Str("heightSize\x00"))
+	biomes.uPolyPts = gl.GetUniformLocation(p, gl.Str("polyPts[0]\x00"))
+	biomes.uNumPolyPts = gl.GetUniformLocation(p, gl.Str("numPolyPts\x00"))
+	biomes.uPolyMin = gl.GetUniformLocation(p, gl.Str("polyMin\x00"))
+	biomes.uPolyMax = gl.GetUniformLocation(p, gl.Str("polyMax\x00"))
+	biomes.uSeed = gl.GetUniformLocation(p, gl.Str("seed\x00"))
+	biomes.uTintColor = gl.GetUniformLocation(p, gl.Str("tintColor\x00"))
 	biomes.uAmbient = gl.GetUniformLocation(p, gl.Str("ambient\x00"))
 	biomes.uSunDir = gl.GetUniformLocation(p, gl.Str("sunDir\x00"))
 	biomes.uSunColor = gl.GetUniformLocation(p, gl.Str("sunColor\x00"))
@@ -135,16 +158,26 @@ func GrassInit() {
 	biomes.bladeVerts = int32(len(blade) / biomeVertexStride)
 	biomes.bladeVAO, biomes.bladeVBO = uploadBiomeMesh(blade)
 
-	biomes.rockSides = defaultRockSides
-	rock := buildRockMesh(int(biomes.rockSides))
-	biomes.rockVerts = int32(len(rock) / biomeVertexStride)
-	biomes.rockVAO, biomes.rockVBO = uploadBiomeMesh(rock)
-
-	gl.GenTextures(1, &biomes.maskTex)
-	gl.GenTextures(1, &biomes.heightTex)
+	biomes.rockMeshes = map[int32]rockMesh{}
+	biomes.heightCache = map[string]biomeHeightEntry{}
 
 	biomes.initialized = true
-	biomes.dirty = true
+}
+
+// rockMeshFor returns (building & caching if necessary) the rock template for the
+// given equatorial side count.
+func (br *biomeRenderer) rockMeshFor(sides int32) rockMesh {
+	if sides < 3 {
+		sides = defaultRockSides
+	}
+	if m, ok := br.rockMeshes[sides]; ok {
+		return m
+	}
+	verts := buildRockMesh(int(sides))
+	vao, vbo := uploadBiomeMesh(verts)
+	m := rockMesh{vao: vao, vbo: vbo, verts: int32(len(verts) / biomeVertexStride)}
+	br.rockMeshes[sides] = m
+	return m
 }
 
 // uploadBiomeMesh creates a VAO/VBO for a template mesh laid out as
@@ -227,107 +260,104 @@ func buildRockMesh(sides int) []float32 {
 	}
 	for i := 0; i < sides; i++ {
 		j := (i + 1) % sides
-		addFace(top, eq[i], eq[j])   // upper cap, CCW seen from outside
-		addFace(bot, eq[j], eq[i])   // lower cap
+		addFace(top, eq[i], eq[j]) // upper cap, CCW seen from outside
+		addFace(bot, eq[j], eq[i]) // lower cap
 	}
 	return v
 }
 
-// rebuildRockMesh regenerates the rock template VBO for a new equatorial vertex
-// count. Called when WorldGrid.RockSides changes.
-func rebuildRockMesh(sides int32) {
-	if sides < 3 {
-		sides = 3
+// uploadR32F (re)uploads a single-channel float texture with the given filtering.
+func uploadR32F(tex uint32, w, h int, data []float32, linear bool) {
+	filter := int32(gl.NEAREST)
+	if linear {
+		filter = gl.LINEAR
 	}
-	if biomes.rockVAO != 0 {
-		gl.DeleteVertexArrays(1, &biomes.rockVAO)
-	}
-	if biomes.rockVBO != 0 {
-		gl.DeleteBuffers(1, &biomes.rockVBO)
-	}
-	rock := buildRockMesh(int(sides))
-	biomes.rockVerts = int32(len(rock) / biomeVertexStride)
-	biomes.rockVAO, biomes.rockVBO = uploadBiomeMesh(rock)
-	biomes.rockSides = sides
+	gl.BindTexture(gl.TEXTURE_2D, tex)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.R32F, int32(w), int32(h), 0, gl.RED, gl.FLOAT, gl.Ptr(data))
 }
 
-// activeBiomeGrid returns the first world grid in the level (biomes assume a
-// single world chunk), or nil if there is none.
-func activeBiomeGrid(level *Level) *WorldGrid {
+// floorHeightUnderLevel returns the structural floor height (accounting for
+// terrain-mode slope/displacement, via the same code path player collision
+// uses) at world XZ (wx,wz), or 0 over open ground with no sector.
+func floorHeightUnderLevel(level *Level, wx, wz float32) float32 {
 	if level == nil {
-		return nil
+		return 0
 	}
-	for i := range level.Chunks {
-		if level.Chunks[i].WorldGrid != nil {
-			return level.Chunks[i].WorldGrid
+	xz := mgl32.Vec2{wx, wz}
+	for ci := range level.Chunks {
+		c := &level.Chunks[ci]
+		if s := FindSector(c, xz); s != nil {
+			h, _, _ := InterpolateSurfaceHeight(c, s, xz, true)
+			return h
 		}
 	}
-	return nil
+	return 0
 }
 
-// updateBiomeTextures (re)uploads the mask and height textures from the grid.
-func updateBiomeTextures(g *WorldGrid) {
-	cw, ch := g.Cols, g.Rows
-
-	// Mask: RG32F, one texel per cell (r=grass, g=rock).
-	mask := make([]float32, cw*ch*2)
-	biomes.haveGrass = false
-	biomes.haveRock = false
-	for i := 0; i < cw*ch; i++ {
-		var gr, rk float32
-		if i < len(g.GrassDensity) {
-			gr = g.GrassDensity[i]
-		}
-		if i < len(g.RockDensity) {
-			rk = g.RockDensity[i]
-		}
-		if gr > 0 {
-			biomes.haveGrass = true
-		}
-		if rk > 0 {
-			biomes.haveRock = true
-		}
-		mask[i*2] = gr
-		mask[i*2+1] = rk
+// biomeHeightTexDims picks a texture resolution covering [min,max] at
+// ~biomeHeightTexelSize world units per texel, capped at biomeMaxTexDim.
+func biomeHeightTexDims(min, max mgl32.Vec2) (w, h int, size mgl32.Vec2) {
+	size = mgl32.Vec2{max.X() - min.X(), max.Y() - min.Y()}
+	if size.X() < biomeHeightTexelSize {
+		size[0] = biomeHeightTexelSize
 	}
-	gl.BindTexture(gl.TEXTURE_2D, biomes.maskTex)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RG32F, int32(cw), int32(ch), 0, gl.RG, gl.FLOAT, gl.Ptr(mask))
-
-	// Height: R32F, one texel per grid vertex. g.Heights already matches
-	// row-major (cols+1)x(rows+1).
-	hw, hh := cw+1, ch+1
-	heights := g.Heights
-	if len(heights) < hw*hh {
-		// Defensive: pad if the slice is short (shouldn't happen).
-		heights = append(append([]float32(nil), heights...), make([]float32, hw*hh-len(heights))...)
+	if size.Y() < biomeHeightTexelSize {
+		size[1] = biomeHeightTexelSize
 	}
-	gl.BindTexture(gl.TEXTURE_2D, biomes.heightTex)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.R32F, int32(hw), int32(hh), 0, gl.RED, gl.FLOAT, gl.Ptr(heights))
+	w = int(size.X()/biomeHeightTexelSize) + 2
+	h = int(size.Y()/biomeHeightTexelSize) + 2
+	if w > biomeMaxTexDim {
+		w = biomeMaxTexDim
+	}
+	if h > biomeMaxTexDim {
+		h = biomeMaxTexDim
+	}
+	return
+}
 
-	gl.BindTexture(gl.TEXTURE_2D, 0)
+// ensureBiomeHeight returns the cached height texture for sector s, rebuilding
+// it from current structural floor geometry if it's missing or HeightDirty.
+func (br *biomeRenderer) ensureBiomeHeight(level *Level, s *BiomeSector) biomeHeightEntry {
+	e, ok := br.heightCache[s.ID]
+	if ok && !s.HeightDirty {
+		return e
+	}
+	if !ok {
+		gl.GenTextures(1, &e.tex)
+	}
+	min, max := s.Bounds()
+	w, h, size := biomeHeightTexDims(min, max)
+	data := make([]float32, w*h)
+	for ty := 0; ty < h; ty++ {
+		v := float32(ty) / float32(h-1)
+		wz := min.Y() + v*size.Y()
+		for tx := 0; tx < w; tx++ {
+			u := float32(tx) / float32(w-1)
+			wx := min.X() + u*size.X()
+			data[ty*w+tx] = floorHeightUnderLevel(level, wx, wz)
+		}
+	}
+	uploadR32F(e.tex, w, h, data, true)
+	e.origin = min
+	e.size = size
+	br.heightCache[s.ID] = e
+	s.HeightDirty = false
+	return e
 }
 
 // biomeLattice returns the lattice side length (gridN) and spacing needed to
 // cover the full 2*range square centered on the camera. It prefers baseSpacing,
 // but once that would exceed the instance cap it GROWS the spacing so the
-// (capped) lattice still spans the whole range — otherwise a large range would
-// leave the lattice fixed-size and off-center, shrinking/sliding the coverage.
-// The tradeoff at extreme ranges is sparser scatter, never a smaller area.
+// (capped) lattice still spans the whole range.
 func biomeLattice(rng, baseSpacing float32, cap int32) (gridN int32, spacing float32) {
 	spacing = baseSpacing
 	if spacing <= 0 {
 		spacing = 0.5
 	}
-	// +2 slots of margin so the snap-to-spacing in the shader still covers both
-	// edges of the range.
 	n := int32(2*rng/spacing) + 2
 	if n < 1 {
 		n = 1
@@ -341,61 +371,45 @@ func biomeLattice(rng, baseSpacing float32, cap int32) (gridN int32, spacing flo
 	return n, spacing
 }
 
-// RenderBiomes draws the painted grass/rock scatter for the level's world grid,
-// if any. Uses its own GL program; restores the main program on exit. Call in
-// the opaque render pass (depth test on, blend off).
+// RenderBiomes draws every chunk's painted biome sectors (grass/rock scatter).
+// Uses its own GL program; restores the main program on exit. Call in the
+// opaque render pass (depth test on, blend off).
 func RenderBiomes(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, timeSec float32) {
-	if !biomes.initialized {
-		return
-	}
-	g := activeBiomeGrid(level)
-	if g == nil {
-		return
-	}
-	if g != biomes.curGrid || biomes.dirty {
-		updateBiomeTextures(g)
-		biomes.curGrid = g
-		biomes.dirty = false
-	}
-	if !biomes.haveGrass && !biomes.haveRock {
+	if !biomes.initialized || level == nil {
 		return
 	}
 
+	started := false
+	for ci := range level.Chunks {
+		ch := &level.Chunks[ci]
+		for si := range ch.BiomeSectors {
+			s := &ch.BiomeSectors[si]
+			if len(s.Points) < 3 || s.Brush.Density <= 0 {
+				continue
+			}
+			if !started {
+				beginBiomePass(level, projView, camPos, timeSec)
+				started = true
+			}
+			renderBiomeSector(level, s)
+		}
+	}
+
+	if started {
+		endBiomePass()
+	}
+}
+
+// beginBiomePass activates the biome program and uploads the uniforms shared
+// by every sector this frame (camera, lighting).
+func beginBiomePass(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, timeSec float32) {
 	gl.UseProgram(biomes.program)
 
-	// Shared uniforms.
 	pv := projView
 	gl.UniformMatrix4fv(biomes.uProjView, 1, false, &pv[0])
 	gl.Uniform2f(biomes.uCamXZ, camPos.X(), camPos.Z())
-	gl.Uniform2f(biomes.uGridOrigin, g.Origin.X(), g.Origin.Y())
-	gl.Uniform1f(biomes.uCellSize, g.CellSize)
-	gl.Uniform1i(biomes.uCols, int32(g.Cols))
-	gl.Uniform1i(biomes.uRows, int32(g.Rows))
 	gl.Uniform1f(biomes.uTime, timeSec)
 
-	// Appearance from the grid, falling back to defaults for old/zeroed values.
-	bladeHeight := g.GrassHeight
-	if bladeHeight <= 0 {
-		bladeHeight = defaultGrassHeight
-	}
-	bladeWidth := g.GrassWidth
-	if bladeWidth <= 0 {
-		bladeWidth = defaultGrassWidth
-	}
-	gl.Uniform1f(biomes.uBladeHeight, bladeHeight)
-	gl.Uniform1f(biomes.uBladeWidth, bladeWidth)
-	gl.Uniform1f(biomes.uRockScale, rockWorldScale)
-
-	// Rebuild the rock template if the configured face count changed.
-	rockSides := g.RockSides
-	if rockSides < 3 {
-		rockSides = defaultRockSides
-	}
-	if rockSides != biomes.rockSides {
-		rebuildRockMesh(rockSides)
-	}
-
-	// Lighting from the level (global ambient + first directional light).
 	amb := level.Lights.Global.Color.Mul(level.Lights.Global.Brightness)
 	gl.Uniform3f(biomes.uAmbient, amb.X(), amb.Y(), amb.Z())
 	sunDir := mgl32.Vec3{-0.3, -1, -0.2}
@@ -410,48 +424,84 @@ func RenderBiomes(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, timeSec 
 	gl.Uniform3f(biomes.uSunDir, sunDir.X(), sunDir.Y(), sunDir.Z())
 	gl.Uniform3f(biomes.uSunColor, sunCol.X(), sunCol.Y(), sunCol.Z())
 
-	// Bind textures: unit 0 = height, unit 1 = mask.
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, biomes.heightTex)
 	gl.Uniform1i(biomes.uHeightTex, 0)
-	gl.ActiveTexture(gl.TEXTURE1)
-	gl.BindTexture(gl.TEXTURE_2D, biomes.maskTex)
-	gl.Uniform1i(biomes.uMaskTex, 1)
+}
 
-	grassRange := g.GrassRange
-	if grassRange <= 0 {
-		grassRange = defaultGrassRange
-	}
-	rockRange := g.RockRange
-	if rockRange <= 0 {
-		rockRange = defaultRockRange
-	}
+// renderBiomeSector uploads one sector's polygon/brush/height uniforms and
+// issues its instanced draw call.
+func renderBiomeSector(level *Level, s *BiomeSector) {
+	entry := biomes.ensureBiomeHeight(level, s)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, entry.tex)
+	gl.Uniform2f(biomes.uHeightOrigin, entry.origin.X(), entry.origin.Y())
+	gl.Uniform2f(biomes.uHeightSize, entry.size.X(), entry.size.Y())
 
-	// Grass pass.
-	if biomes.haveGrass {
-		n, sp := biomeLattice(grassRange, grassSpacing, maxGrassGridN)
-		gl.Uniform1i(biomes.uChannel, 0)
-		gl.Uniform1i(biomes.uIsRock, 0)
+	n := len(s.Points)
+	if n > biomeMaxPolyVerts {
+		n = biomeMaxPolyVerts
+	}
+	flat := make([]float32, n*2)
+	for i := 0; i < n; i++ {
+		flat[i*2] = s.Points[i].X()
+		flat[i*2+1] = s.Points[i].Y()
+	}
+	gl.Uniform2fv(biomes.uPolyPts, int32(n), &flat[0])
+	gl.Uniform1i(biomes.uNumPolyPts, int32(n))
+	polyMin, polyMax := s.Bounds()
+	gl.Uniform2f(biomes.uPolyMin, polyMin.X(), polyMin.Y())
+	gl.Uniform2f(biomes.uPolyMax, polyMax.X(), polyMax.Y())
+
+	seed := biomeSeed(s)
+	gl.Uniform2f(biomes.uSeed, seed.X(), seed.Y())
+	gl.Uniform1f(biomes.uDensity, s.Brush.Density)
+	c := s.Brush.Color
+	gl.Uniform3f(biomes.uTintColor, c.X(), c.Y(), c.Z())
+
+	if s.Brush.Kind == BiomeRock {
+		rng := s.Brush.Range
+		if rng <= 0 {
+			rng = defaultRockRange
+		}
+		rockScale := s.Brush.RockScale
+		if rockScale <= 0 {
+			rockScale = defaultRockScale
+		}
+		rm := biomes.rockMeshFor(s.Brush.RockSides)
+		n, sp := biomeLattice(rng, rockSpacing, maxRockGridN)
+		gl.Uniform1i(biomes.uIsRock, 1)
+		gl.Uniform1f(biomes.uRockScale, rockScale)
 		gl.Uniform1f(biomes.uSpacing, sp)
 		gl.Uniform1i(biomes.uGridN, n)
-		gl.Uniform1f(biomes.uRange, grassRange)
+		gl.Uniform1f(biomes.uRange, rng)
+		gl.BindVertexArray(rm.vao)
+		gl.DrawArraysInstanced(gl.TRIANGLES, 0, rm.verts, n*n)
+	} else {
+		rng := s.Brush.Range
+		if rng <= 0 {
+			rng = defaultGrassRange
+		}
+		bh := s.Brush.GrassHeight
+		if bh <= 0 {
+			bh = defaultGrassHeight
+		}
+		bw := s.Brush.GrassWidth
+		if bw <= 0 {
+			bw = defaultGrassWidth
+		}
+		n, sp := biomeLattice(rng, grassSpacing, maxGrassGridN)
+		gl.Uniform1i(biomes.uIsRock, 0)
+		gl.Uniform1f(biomes.uBladeHeight, bh)
+		gl.Uniform1f(biomes.uBladeWidth, bw)
+		gl.Uniform1f(biomes.uSpacing, sp)
+		gl.Uniform1i(biomes.uGridN, n)
+		gl.Uniform1f(biomes.uRange, rng)
 		gl.BindVertexArray(biomes.bladeVAO)
 		gl.DrawArraysInstanced(gl.TRIANGLES, 0, biomes.bladeVerts, n*n)
 	}
+}
 
-	// Rock pass.
-	if biomes.haveRock {
-		n, sp := biomeLattice(rockRange, rockSpacing, maxRockGridN)
-		gl.Uniform1i(biomes.uChannel, 1)
-		gl.Uniform1i(biomes.uIsRock, 1)
-		gl.Uniform1f(biomes.uSpacing, sp)
-		gl.Uniform1i(biomes.uGridN, n)
-		gl.Uniform1f(biomes.uRange, rockRange)
-		gl.BindVertexArray(biomes.rockVAO)
-		gl.DrawArraysInstanced(gl.TRIANGLES, 0, biomes.rockVerts, n*n)
-	}
-
-	// Restore state for the rest of the frame.
+// endBiomePass restores GL state for the rest of the frame.
+func endBiomePass() {
 	gl.BindVertexArray(0)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.UseProgram(Program)

@@ -87,6 +87,19 @@ var Projection mgl32.Mat4
 var ProjectionUniform int32
 var AlphaUniform int32
 
+// Water shader uniform locations. TimeUniform and CamPosUniform are set once
+// per frame; the rest are set per-draw from Geometry.Water.
+var (
+	TimeUniform          int32
+	CamPosUniform        int32
+	IsWaterUniform       int32
+	WaveAmplitudeUniform int32
+	WaveLengthUniform    int32
+	WaveSpeedUniform     int32
+	ReflectivityUniform  int32
+	ReflectColorUniform  int32
+)
+
 // eyeHeight is the camera offset above the player entity's Y position.
 const eyeHeight = float32(1.7)
 
@@ -137,11 +150,18 @@ func main() {
 	defer sdl.Quit()
 
 	Window, err = sdl.CreateWindow(WinTitle, sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED,
-		WinWidth, WinHeight, sdl.WINDOW_OPENGL|sdl.WINDOW_RESIZABLE)
+		WinWidth, WinHeight, sdl.WINDOW_OPENGL|sdl.WINDOW_RESIZABLE|sdl.WINDOW_FULLSCREEN_DESKTOP)
 	if err != nil {
 		log.Fatalf("sdl.CreateWindow: %v", err)
 	}
 	defer Window.Destroy()
+	// Starting in borderless-fullscreen mode reports the desktop resolution
+	// here rather than the 800x600 requested above; pick that up now so the
+	// viewport/projection setup below uses the real window size.
+	WinWidth, WinHeight = Window.GetSize()
+	WinHalfWidth = WinWidth / 2
+	WinHalfHeight = WinHeight / 2
+
 	Context, err = Window.GLCreateContext()
 	if err != nil {
 		log.Fatalf("Window.GLCreateContext: %v", err)
@@ -202,16 +222,27 @@ func main() {
 	AlphaUniform = gl.GetUniformLocation(Program, gl.Str("alpha\x00"))
 	gl.Uniform1f(AlphaUniform, 1.0) // default: fully opaque
 
+	TimeUniform = gl.GetUniformLocation(Program, gl.Str("time\x00"))
+	CamPosUniform = gl.GetUniformLocation(Program, gl.Str("camPos\x00"))
+	IsWaterUniform = gl.GetUniformLocation(Program, gl.Str("isWater\x00"))
+	WaveAmplitudeUniform = gl.GetUniformLocation(Program, gl.Str("waveAmplitude\x00"))
+	WaveLengthUniform = gl.GetUniformLocation(Program, gl.Str("waveLength\x00"))
+	WaveSpeedUniform = gl.GetUniformLocation(Program, gl.Str("waveSpeed\x00"))
+	ReflectivityUniform = gl.GetUniformLocation(Program, gl.Str("reflectivity\x00"))
+	ReflectColorUniform = gl.GetUniformLocation(Program, gl.Str("reflectColor\x00"))
+	gl.Uniform1i(IsWaterUniform, 0)
+
 	// Default camera position; overridden after player entity is found
 	LoadCamera(mgl32.Vec3{0, eyeHeight, 3}, 0.0, float32(math.Pi/2.0))
 
-	// LoadLevel handles geometry upload and texture loading
+	// Start with a blank in-memory level rather than loading one from disk;
+	// the user can save it (or open an existing level) from the editor.
 	levelsDir := filepath.Join(executablePath, "levels")
-	levelPath := filepath.Join(levelsDir, "test.yaml")
-	log.Printf("loading level: %s", levelPath)
-	level, err := LoadLevel(levelPath)
+	levelPath := filepath.Join(levelsDir, "untitled.yaml")
+	log.Printf("starting with blank level")
+	level, err := NewBlankLevel()
 	if err != nil {
-		log.Fatalf("LoadLevel: %v", err)
+		log.Fatalf("NewBlankLevel: %v", err)
 	}
 	log.Printf("level loaded: %d chunk(s), %d entity(s), %d dir light(s), %d point light(s)",
 		len(level.Chunks), len(level.Entities),
@@ -240,6 +271,10 @@ func main() {
 	// Init level editor (must be after LoadLevel and OpenGL context ready)
 	EditorInit(&level, levelPath, levelsDir)
 	defer ImGuiShutdown()
+
+	// Start directly in the 3D editor rather than play mode, since a fresh
+	// blank level has nothing to play.
+	EditorToggle()
 
 	// Cache total sector count (constant after load) for debug stats.
 	totalSectors := 0
@@ -372,6 +407,12 @@ func main() {
 		DebugStats.EntitiesLoaded = len(level.Entities)
 		DebugStats.SectorsLoaded = totalSectors
 
+		// Per-frame water shader inputs: animation clock and the view position
+		// the fresnel/specular terms are measured against.
+		gl.UseProgram(Program)
+		gl.Uniform1f(TimeUniform, float32(now)/1000.0)
+		gl.Uniform3f(CamPosUniform, Cam.Position.X(), Cam.Position.Y(), Cam.Position.Z())
+
 		if Editor.Active && Editor.Mode == ModeScenery {
 			// Scenery editor: blank world with only scenery primitives
 			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -379,10 +420,6 @@ func main() {
 				prim := &Editor.SceneryPrimitives[i]
 				prim.Geometry.DrawWithTransform(prim.ModelMatrix())
 			}
-		} else if Editor.Active && Editor.Mode == ModeBuilding {
-			// Building editor: blank world with only the single preview building.
-			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-			DrawBuildingPreview()
 		} else {
 		// --- Shadow pass: render depth from each shadow-casting light ---
 		shadowMatrices := RenderShadowPass(level.Lights, &level, Cam.Position)
@@ -430,6 +467,14 @@ func main() {
 
 		for i := range level.Chunks {
 			chunk := &level.Chunks[i]
+			if Editor.Active {
+				// Editor mutations (vertex drag, extrusion/terrain edits,
+				// primitive add/delete, height changes) can move geometry
+				// outside the chunk's cached AABB without updating it. Keep
+				// bounds honest while editing so culling doesn't hide what
+				// was just added.
+				chunk.RecomputeBounds()
+			}
 			if !AABBInFrustum(frustum, chunk.MinBound, chunk.MaxBound) {
 				continue
 			}
@@ -458,13 +503,19 @@ func main() {
 				}
 				sectorsDrawn++
 				if sector.Floor.Enabled {
-					drawOrQueue(&sector.Floor.Geometry, identity, sector.Floor.DoubleSided)
+					// Displaced faces are drawn by RenderDetailColor via the tess
+					// program instead of the flat mesh (avoids z-fighting).
+					if !sector.Floor.Detail.HasDisplace() {
+						drawOrQueue(&sector.Floor.Geometry, identity, sector.Floor.DoubleSided)
+					}
 					for eg := range sector.Floor.ExtrusionGeometries {
 						drawOrQueue(&sector.Floor.ExtrusionGeometries[eg], identity, sector.Floor.DoubleSided)
 					}
 				}
 				if sector.Ceiling.Enabled {
-					drawOrQueue(&sector.Ceiling.Geometry, identity, sector.Ceiling.DoubleSided)
+					if !sector.Ceiling.Detail.HasDisplace() {
+						drawOrQueue(&sector.Ceiling.Geometry, identity, sector.Ceiling.DoubleSided)
+					}
 					for eg := range sector.Ceiling.ExtrusionGeometries {
 						drawOrQueue(&sector.Ceiling.ExtrusionGeometries[eg], identity, sector.Ceiling.DoubleSided)
 					}
@@ -472,7 +523,9 @@ func main() {
 				for k := range sector.Walls {
 					w := &sector.Walls[k]
 					if w.Visible && (w.DoubleSided || WallFacingCamera(*w, Cam.Position)) {
-						drawOrQueue(&w.Geometry, identity, w.DoubleSided)
+						if !w.Detail.HasDisplace() {
+							drawOrQueue(&w.Geometry, identity, w.DoubleSided)
+						}
 						for eg := range w.ExtrusionGeometries {
 							drawOrQueue(&w.ExtrusionGeometries[eg], identity, w.DoubleSided)
 						}
@@ -486,11 +539,25 @@ func main() {
 						drawOrQueue(&p.CeilGap, identity, p.DoubleSided)
 					}
 				}
-				// Draw primitives belonging to this sector
-				for _, pi := range sector.PrimitiveIndices {
-					prim := &chunk.Primitives[pi]
-					drawOrQueue(&prim.Geometry, prim.ModelMatrix(), false)
+			}
+
+			// Primitives are culled against their own bounds rather than drawn
+			// inside the sector loop above. A primitive is assigned to whichever
+			// sector contains its centre point, but its extent is unrelated to
+			// that sector's — a water plane spanning several sectors would vanish
+			// as soon as the small sector holding its centre left the frustum,
+			// and one whose centre fell outside every sector never drew at all.
+			for pi := range chunk.Primitives {
+				prim := &chunk.Primitives[pi]
+				if visibleSectors != nil && prim.SectorID != "" &&
+					connectedSectors[prim.SectorID] && !visibleSectors[prim.SectorID] {
+					continue
 				}
+				pmin, pmax := prim.WorldAABB()
+				if !AABBInFrustum(frustum, pmin, pmax) {
+					continue
+				}
+				drawOrQueue(&prim.Geometry, prim.ModelMatrix(), prim.Kind == PrimitiveWater)
 			}
 		}
 
@@ -507,6 +574,11 @@ func main() {
 		// Drawn after opaque geometry but before the transparent pass: blades and
 		// rocks are solid (depth-written) so translucent water still sorts on top.
 		RenderBiomes(&level, projView, Cam.Position, float32(now)/1000.0)
+
+		// --- Procedural face detail (GPU rock displacement + scatter) ---
+		// Drawn after opaque geometry; reuses the main fragment shader so it
+		// receives shadows, and was rendered into the shadow maps above so it casts.
+		RenderDetailColor(&level, shadowMatrices)
 
 		// --- Transparent pass: draw collected transparent geometry back-to-front ---
 		if len(transparentDraws) > 0 {

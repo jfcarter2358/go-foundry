@@ -259,6 +259,8 @@ lights:
     - direction: { x: -0.4, y: -1.0, z: 0.3 }
       color:     { r: 1.0, g: 0.95, b: 0.8 }
       brightness: 0.75
+      cast_shadows: true
+      shadow_strength: 0.5
 
   point:
     # Courtyard lantern

@@ -61,6 +61,7 @@ func EnterSceneryEditor() {
 	Editor.SceneryPrimPlacement = false
 	Editor.SceneryFilePath = ""
 	Editor.SceneryID = ""
+	SceneryClearUndoHistory()
 
 	Editor.Mode = ModeScenery
 }
@@ -102,6 +103,7 @@ func sceneryEditorHandleKey(t sdl.KeyboardEvent) bool {
 	switch t.Keysym.Scancode {
 	case sdl.SCANCODE_DELETE:
 		if Editor.SceneryActivePrimIdx >= 0 && Editor.SceneryActivePrimIdx < len(Editor.SceneryPrimitives) {
+			SceneryPushUndo()
 			Editor.SceneryPrimitives[Editor.SceneryActivePrimIdx].Geometry.Delete()
 			Editor.SceneryPrimitives = append(
 				Editor.SceneryPrimitives[:Editor.SceneryActivePrimIdx],
@@ -136,6 +138,8 @@ func SceneryEditorHandleClick(t sdl.MouseButtonEvent) {
 			kind = PrimitiveCylinder
 		case "plane":
 			kind = PrimitivePlane
+		case "water":
+			kind = PrimitiveWater
 		default:
 			kind = PrimitiveRectPrism
 		}
@@ -149,6 +153,14 @@ func SceneryEditorHandleClick(t sdl.MouseButtonEvent) {
 			Sides:    16,
 			Alpha:    1.0,
 		}
+		if kind == PrimitiveWater {
+			prim.Texture = "water"
+			prim.Scale = mgl32.Vec3{8, 1, 8}
+			prim.Alpha = 0.75
+			prim.UVScale = mgl32.Vec2{4, 4}
+			prim.Water = DefaultWaterParams()
+		}
+		_ = ensureTextureLoaded(prim.Texture)
 
 		// Compute bounding volumes
 		switch kind {
@@ -167,14 +179,15 @@ func SceneryEditorHandleClick(t sdl.MouseButtonEvent) {
 			prim.BoundHalfX = 0.5
 			prim.BoundHalfY = 0.5
 			prim.BoundHalfZ = 0.5
-		case PrimitivePlane:
+		case PrimitivePlane, PrimitiveWater:
 			prim.BoundingKind = BoundingAABB
-			prim.BoundHalfX = 0.5
+			prim.BoundHalfX = prim.Scale.X() / 2
 			prim.BoundHalfY = 0.01
-			prim.BoundHalfZ = 0.5
+			prim.BoundHalfZ = prim.Scale.Z() / 2
 		}
 
 		if err := prim.Load(); err == nil {
+			SceneryPushUndo()
 			Editor.SceneryPrimitives = append(Editor.SceneryPrimitives, prim)
 			Editor.SceneryActivePrimIdx = len(Editor.SceneryPrimitives) - 1
 		}
@@ -288,7 +301,7 @@ func SceneryEditorPanel() {
 
 	// Primitive catalog
 	if imgui.CollapsingHeader("Primitive Catalog") {
-		primTypes := []string{"rect_prism", "sphere", "cylinder", "plane"}
+		primTypes := []string{"rect_prism", "sphere", "cylinder", "plane", "water"}
 		for _, pt := range primTypes {
 			selected := pt == Editor.SceneryPrimPlaceType
 			if imgui.SelectableV(pt, selected, 0, imgui.Vec2{}) {
@@ -322,7 +335,7 @@ func SceneryEditorPanel() {
 			p := &Editor.SceneryPrimitives[Editor.SceneryActivePrimIdx]
 			imgui.InputText("ID##scprimid", &p.ID)
 
-			typeNames := []string{"rect_prism", "sphere", "cylinder", "plane"}
+			typeNames := []string{"rect_prism", "sphere", "cylinder", "plane", "water"}
 			currentType := int(p.Kind)
 			if imgui.BeginCombo("Type##scprimtype", typeNames[currentType]) {
 				for i, tn := range typeNames {
@@ -351,12 +364,16 @@ func SceneryEditorPanel() {
 				}
 			}
 			sc := [3]float32{p.Scale.X(), p.Scale.Y(), p.Scale.Z()}
-			if editorDragFloat3("Scale##scprim", &sc, 0.01, 100, "%.2f") {
+			if editorDragFloat3("Scale##scprim", &sc, 0.01, 1000, "%.2f") {
 				p.Scale = mgl32.Vec3{sc[0], sc[1], sc[2]}
 				reloadSceneryPrimitive(Editor.SceneryActivePrimIdx)
 			}
 
-			imgui.InputText("Texture##scprimtex", &p.Texture)
+			textureCombo("Texture##scprimtex", &p.Texture, false)
+
+			if p.Kind == PrimitiveWater {
+				waterControls("scprim", &p.Water, &p.Geometry)
+			}
 
 			if p.Kind == PrimitiveCylinder {
 				sides := int32(p.Sides)
@@ -400,6 +417,7 @@ func SceneryEditorPanel() {
 			}
 
 			if imgui.Button("Delete Primitive##sc") {
+				SceneryPushUndo()
 				Editor.SceneryPrimitives[Editor.SceneryActivePrimIdx].Geometry.Delete()
 				Editor.SceneryPrimitives = append(
 					Editor.SceneryPrimitives[:Editor.SceneryActivePrimIdx],
@@ -424,6 +442,11 @@ func reloadSceneryPrimitive(idx int) {
 	}
 	p := &Editor.SceneryPrimitives[idx]
 	p.Geometry.Delete()
+
+	// Switching an existing primitive to water needs a usable starting look.
+	if p.Kind == PrimitiveWater && !p.Water.Enabled {
+		p.Water = DefaultWaterParams()
+	}
 
 	scale := p.Scale
 	if scale == (mgl32.Vec3{}) {
@@ -456,7 +479,7 @@ func reloadSceneryPrimitive(idx int) {
 		p.BoundHalfX = maxXZ / 2
 		p.BoundHalfY = scale.Y() / 2
 		p.BoundHalfZ = maxXZ / 2
-	case PrimitivePlane:
+	case PrimitivePlane, PrimitiveWater:
 		p.BoundingKind = BoundingAABB
 		p.BoundHalfX = scale.X() / 2
 		p.BoundHalfY = 0.01
@@ -499,6 +522,8 @@ func sceneryPrimToRaw(p *Primitive) RawPrimitive {
 		typeStr = "cylinder"
 	case PrimitivePlane:
 		typeStr = "plane"
+	case PrimitiveWater:
+		typeStr = "water"
 	default:
 		typeStr = "rect_prism"
 	}
@@ -521,6 +546,7 @@ func sceneryPrimToRaw(p *Primitive) RawPrimitive {
 		UVOffset:   Point{X: p.UVOffset.X(), Y: p.UVOffset.Y()},
 		UVScale:    Point{X: uvSc.X(), Y: uvSc.Y()},
 		UVRotation: p.UVRotation,
+		Water:      waterParamsToRaw(p),
 	}
 }
 
@@ -562,6 +588,8 @@ func rawToSceneryPrimitive(rp RawPrimitive) Primitive {
 		kind = PrimitiveCylinder
 	case "plane":
 		kind = PrimitivePlane
+	case "water":
+		kind = PrimitiveWater
 	default:
 		kind = PrimitiveRectPrism
 	}
@@ -589,6 +617,7 @@ func rawToSceneryPrimitive(rp RawPrimitive) Primitive {
 		UVOffset:   mgl32.Vec2{rp.UVOffset.X, rp.UVOffset.Y},
 		UVScale:    uvScale,
 		UVRotation: rp.UVRotation,
+		Water:      waterParamsFromRaw(rp.Water, kind),
 	}
 
 	// Compute bounding volumes
@@ -619,7 +648,7 @@ func rawToSceneryPrimitive(rp RawPrimitive) Primitive {
 		prim.BoundHalfX = maxXZ / 2
 		prim.BoundHalfY = scale.Y() / 2
 		prim.BoundHalfZ = maxXZ / 2
-	case PrimitivePlane:
+	case PrimitivePlane, PrimitiveWater:
 		prim.BoundingKind = BoundingAABB
 		prim.BoundHalfX = scale.X() / 2
 		prim.BoundHalfY = 0.01
@@ -710,6 +739,7 @@ func sceneryPickerPopup() {
 					Editor.SceneryID = id
 					Editor.SceneryFilePath = path
 					Editor.SceneryActivePrimIdx = -1
+					SceneryClearUndoHistory()
 					// Load textures
 					for i := range prims {
 						tex := prims[i].Texture
@@ -792,6 +822,7 @@ func importSceneryPopup() {
 				path := filepath.Join(sceneryDir, Editor.ImportSceneryFiles[Editor.ImportSceneryIdx])
 				spawnPos := Cam.Position.Add(Cam.Direction.Mul(4.0))
 				spawnPos[1] -= eyeHeight
+				EditorPushUndo()
 				_ = ImportSceneryIntoChunk(ch, path, spawnPos)
 			}
 			Editor.ImportSceneryFiles = nil

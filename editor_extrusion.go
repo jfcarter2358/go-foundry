@@ -59,7 +59,7 @@ func editorExtrusionPanel(ch *Chunk, s *Sector, w *Wall) {
 		changed = editorDragFloat(fmt.Sprintf("Depth##extd%d", ei), &ext.Depth, -10, 10, "%.3f") || changed
 
 		// Texture override
-		changed = imgui.InputText(fmt.Sprintf("Texture##extt%d", ei), &ext.Texture) || changed
+		changed = textureCombo(fmt.Sprintf("Texture##extt%d", ei), &ext.Texture, true) || changed
 
 		// Back visible toggle
 		changed = imgui.Checkbox(fmt.Sprintf("Visible##extv%d", ei), &ext.Visible) || changed
@@ -102,6 +102,7 @@ func editorExtrusionPanel(ch *Chunk, s *Sector, w *Wall) {
 
 	// Process deletion outside the loop
 	if deleteIdx >= 0 {
+		EditorPushUndo()
 		w.Extrusions = append(w.Extrusions[:deleteIdx], w.Extrusions[deleteIdx+1:]...)
 		_ = s.Load(SectorPoints(ch, s))
 	}
@@ -158,6 +159,7 @@ func editorFinalizeExtrusion() {
 		BackVisible: true,
 		Alpha:       1,
 	}
+	EditorPushUndo()
 	w.Extrusions = append(w.Extrusions, ext)
 	_ = s.Load(SectorPoints(ch, s))
 
@@ -238,8 +240,8 @@ func rayToWallUV(origin, dir mgl32.Vec3, w *Wall, s *Sector, ch *Chunk) (float32
 	vi1 := findVertexIdx(sPts, p1)
 	vi2 := findVertexIdx(sPts, p2)
 
-	ceilH1 := s.Ceiling.VertexHeight(vi1)
-	ceilH2 := s.Ceiling.VertexHeight(vi2)
+	ceilH1 := s.WallTopHeight(vi1)
+	ceilH2 := s.WallTopHeight(vi2)
 	floorH1 := s.Floor.VertexHeight(vi1)
 	floorH2 := s.Floor.VertexHeight(vi2)
 
@@ -313,8 +315,8 @@ func editorExtrusionRenderGizmos() {
 	wallLen := mgl32.Vec2{p2.X() - p1.X(), p2.Y() - p1.Y()}.Len()
 	floorH1 := s.Floor.VertexHeight(vi1)
 	floorH2 := s.Floor.VertexHeight(vi2)
-	ceilH1 := s.Ceiling.VertexHeight(vi1)
-	ceilH2 := s.Ceiling.VertexHeight(vi2)
+	ceilH1 := s.WallTopHeight(vi1)
+	ceilH2 := s.WallTopHeight(vi2)
 
 	green := mgl32.Vec3{0, 1, 0.3}
 	yellow := mgl32.Vec3{1, 1, 0}
@@ -377,8 +379,8 @@ func editorRenderExtrusionOutlines() {
 	wallLen := mgl32.Vec2{p2.X() - p1.X(), p2.Y() - p1.Y()}.Len()
 	floorH1 := s.Floor.VertexHeight(vi1)
 	floorH2 := s.Floor.VertexHeight(vi2)
-	ceilH1 := s.Ceiling.VertexHeight(vi1)
-	ceilH2 := s.Ceiling.VertexHeight(vi2)
+	ceilH1 := s.WallTopHeight(vi1)
+	ceilH2 := s.WallTopHeight(vi2)
 
 	cyan := mgl32.Vec3{0, 1, 1}
 
@@ -414,7 +416,7 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 
 		changed := false
 		changed = editorDragFloat(fmt.Sprintf("Depth##%sed%d", surfaceLabel, ei), &ext.Depth, -10, 10, "%.3f") || changed
-		changed = imgui.InputText(fmt.Sprintf("Texture##%set%d", surfaceLabel, ei), &ext.Texture) || changed
+		changed = textureCombo(fmt.Sprintf("Texture##%set%d", surfaceLabel, ei), &ext.Texture, true) || changed
 		changed = imgui.Checkbox(fmt.Sprintf("Visible##%sev%d", surfaceLabel, ei), &ext.Visible) || changed
 		changed = imgui.Checkbox(fmt.Sprintf("Back Visible##%sebv%d", surfaceLabel, ei), &ext.BackVisible) || changed
 		changed = editorDragFloat(fmt.Sprintf("Alpha##%sea%d", surfaceLabel, ei), &ext.Alpha, 0, 1, "%.2f") || changed
@@ -449,6 +451,7 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 	}
 
 	if deleteIdx >= 0 {
+		EditorPushUndo()
 		*extrusions = append((*extrusions)[:deleteIdx], (*extrusions)[deleteIdx+1:]...)
 		_ = s.Load(SectorPoints(ch, s))
 	}
@@ -470,6 +473,7 @@ func editorTerrainPanel(ch *Chunk, s *Sector, surfaceLabel string, terrain *bool
 	changed = imgui.Checkbox(fmt.Sprintf("Enabled##%sterrEn", surfaceLabel), terrain) || changed
 
 	if imgui.Button(fmt.Sprintf("+ Add Point##%sterrAdd", surfaceLabel)) {
+		EditorPushUndo()
 		*terrainPts = append(*terrainPts, TerrainPoint{U: 0, V: 0, Depth: 0})
 		Editor.ActiveTerrainPtIdx = len(*terrainPts) - 1
 		changed = true
@@ -498,6 +502,7 @@ func editorTerrainPanel(ch *Chunk, s *Sector, surfaceLabel string, terrain *bool
 		changed = editorDragFloat("V##tpv", &tp.V, 0, 0, "%.3f") || changed
 		changed = editorDragFloat("Depth##tpd", &tp.Depth, -10, 10, "%.3f") || changed
 		if imgui.Button("Delete##tpdel") {
+			EditorPushUndo()
 			*terrainPts = append((*terrainPts)[:idx], (*terrainPts)[idx+1:]...)
 			Editor.ActiveTerrainPtIdx = -1
 			changed = true

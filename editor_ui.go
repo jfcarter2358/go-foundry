@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,24 @@ import (
 
 // editorTextEdits tracks which fields are in text-input mode and their buffer.
 var editorTextEdits = map[string]string{}
+
+// editorPushDisabled visually dims and blocks input on the widgets drawn
+// until the matching editorPopDisabled. This imgui-go build has the
+// BeginDisabled/EndDisabled API commented out, so combine PushItemFlag
+// (blocks interaction) with a dimmed alpha (visual feedback) instead.
+func editorPushDisabled(disabled bool) {
+	imgui.PushItemFlag(imgui.ItemFlagsDisabled, disabled)
+	alpha := float32(1.0)
+	if disabled {
+		alpha = 0.4
+	}
+	imgui.PushStyleVarFloat(imgui.StyleVarAlpha, alpha)
+}
+
+func editorPopDisabled() {
+	imgui.PopStyleVar()
+	imgui.PopItemFlag()
+}
 
 // snapValue rounds v to the nearest multiple of step.
 func snapValue(v, step float32) float32 {
@@ -151,6 +170,77 @@ func editorDragFloat3(label string, values *[3]float32, min, max float32, format
 	return changed
 }
 
+// textureCombo draws a dropdown of texture names discovered from the
+// textures/ directory (see ScanTextures in main.go) rather than a hard-coded
+// list. If the current value isn't among the scanned textures (e.g. a name
+// from a level authored before the file was added or renamed), it is still
+// shown as the selected/preview entry so it isn't silently lost.
+// When allowEmpty is true, a "(none)" entry lets the field be cleared.
+// Returns true if the selection changed.
+func textureCombo(label string, tex *string, allowEmpty bool) bool {
+	names := make([]string, 0, len(textureNames))
+	for n := range textureNames {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	preview := *tex
+	if preview == "" {
+		preview = "(none)"
+	}
+
+	changed := false
+	if imgui.BeginCombo(label, preview) {
+		if allowEmpty {
+			if imgui.SelectableV("(none)", *tex == "", 0, imgui.Vec2{}) && *tex != "" {
+				*tex = ""
+				changed = true
+			}
+		}
+		known := false
+		for _, n := range names {
+			if n == *tex {
+				known = true
+			}
+			if imgui.SelectableV(n, n == *tex, 0, imgui.Vec2{}) && n != *tex {
+				_ = ensureTextureLoaded(n)
+				*tex = n
+				changed = true
+			}
+		}
+		if !known && *tex != "" {
+			imgui.SelectableV(*tex+" (missing)", true, 0, imgui.Vec2{})
+		}
+		imgui.EndCombo()
+	}
+	return changed
+}
+
+// waterControls draws the wave and reflection settings for a water primitive.
+//
+// Edits are pushed straight to the already-uploaded Geometry rather than going
+// through Primitive.Load — the water mesh is a 48×48 grid, and rebuilding and
+// re-uploading it on every slider frame would stall the drag. None of these
+// values affect vertex positions on the CPU side; they are shader uniforms.
+func waterControls(idSuffix string, w *WaterParams, g *Geometry) {
+	if !imgui.CollapsingHeaderV(fmt.Sprintf("Water##%swaterhdr", idSuffix), imgui.TreeNodeFlagsDefaultOpen) {
+		return
+	}
+
+	editorDragFloat(fmt.Sprintf("Wave Amplitude##%swamp", idSuffix), &w.WaveAmplitude, 0, 10, "%.3f")
+	editorDragFloat(fmt.Sprintf("Wave Length##%swlen", idSuffix), &w.WaveLength, 0.05, 500, "%.2f")
+	editorDragFloat(fmt.Sprintf("Wave Speed##%swspd", idSuffix), &w.WaveSpeed, 0, 10, "%.2f")
+	editorDragFloat(fmt.Sprintf("Reflectivity##%swrefl", idSuffix), &w.Reflectivity, 0, 1, "%.2f")
+
+	col := [3]float32{w.ReflectColor.X(), w.ReflectColor.Y(), w.ReflectColor.Z()}
+	if imgui.ColorEdit3(fmt.Sprintf("Reflect Color##%swcol", idSuffix), &col) {
+		w.ReflectColor = mgl32.Vec3{col[0], col[1], col[2]}
+	}
+
+	w.Enabled = true
+	g.Water = *w
+}
+
 // editorUVControls draws collapsible UV offset/scale/rotation controls.
 // Returns true if any value changed.
 func editorUVControls(label string, offset *mgl32.Vec2, scale *mgl32.Vec2, rotation *float32) bool {
@@ -178,6 +268,87 @@ func editorUVControls(label string, offset *mgl32.Vec2, scale *mgl32.Vec2, rotat
 	if editorDragFloat(fmt.Sprintf("UV Rotation (deg)##%suvrot", label), &rotDeg, -360, 360, "%.1f") {
 		*rotation = rotDeg * math.Pi / 180
 		changed = true
+	}
+	return changed
+}
+
+// editorDetailPanel draws the per-face procedural-detail controls (rock
+// displacement + scatter). surfaceLabel disambiguates ImGui IDs across the
+// Floor/Ceiling/Wall panels. Returns true if any value changed.
+func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
+	imgui.Separator()
+	if !imgui.CollapsingHeader(fmt.Sprintf("Detail (Rock)##%sdet", surfaceLabel)) {
+		return false
+	}
+	changed := false
+	changed = imgui.Checkbox(fmt.Sprintf("Enabled##%sdetEn", surfaceLabel), &d.Enabled) || changed
+	if !d.Enabled {
+		return changed
+	}
+
+	// Preset picker — copies a ready-made parameter set in.
+	preset := d.Preset
+	if preset == "" {
+		preset = "(custom)"
+	}
+	if imgui.BeginCombo(fmt.Sprintf("Preset##%sdetPre", surfaceLabel), preset) {
+		for _, name := range detailPresetNames {
+			if imgui.SelectableV(name, name == d.Preset, 0, imgui.Vec2{}) {
+				applyDetailPreset(d, name)
+				changed = true
+			}
+		}
+		imgui.EndCombo()
+	}
+
+	// Deterministic seed.
+	seed := int32(d.Seed)
+	if imgui.InputInt(fmt.Sprintf("Seed##%sdetSeed", surfaceLabel), &seed) {
+		d.Seed = int64(seed)
+		changed = true
+	}
+	imgui.SameLine()
+	if imgui.Button(fmt.Sprintf("Randomize##%sdetRnd", surfaceLabel)) {
+		d.Seed = int64(sdl.GetTicks())&0x7fffffff | 1
+		changed = true
+	}
+
+	// --- Displacement ---
+	changed = imgui.Checkbox(fmt.Sprintf("Displace surface##%sdetDisp", surfaceLabel), &d.Displace) || changed
+	if d.Displace {
+		imgui.Indent()
+		changed = editorDragFloat(fmt.Sprintf("Amplitude##%sdetAmp", surfaceLabel), &d.Amplitude, 0, 20, "%.3f") || changed
+		changed = editorDragFloat(fmt.Sprintf("Frequency##%sdetFreq", surfaceLabel), &d.Frequency, 0.01, 20, "%.3f") || changed
+		oct := int32(d.Octaves)
+		if imgui.SliderInt(fmt.Sprintf("Octaves##%sdetOct", surfaceLabel), &oct, 1, 6) {
+			d.Octaves = int(oct)
+			changed = true
+		}
+		changed = editorDragFloat(fmt.Sprintf("Tessellation##%sdetTess", surfaceLabel), &d.TessLevel, 1, 64, "%.0f") || changed
+		changed = editorDragFloat(fmt.Sprintf("Edge Taper##%sdetTaper", surfaceLabel), &d.EdgeTaper, 0, 10, "%.2f") || changed
+		imgui.Unindent()
+	}
+
+	// --- Scatter ---
+	changed = imgui.Checkbox(fmt.Sprintf("Scatter meshes##%sdetScat", surfaceLabel), &d.Scatter) || changed
+	if d.Scatter {
+		imgui.Indent()
+		if textureCombo(fmt.Sprintf("Rock Texture##%sdetScTex", surfaceLabel), &d.ScatterTex, false) {
+			changed = true
+		}
+		changed = editorDragFloat(fmt.Sprintf("Density##%sdetScDen", surfaceLabel), &d.ScatterDensity, 0, 1, "%.2f") || changed
+		changed = editorDragFloat(fmt.Sprintf("Spacing##%sdetScSp", surfaceLabel), &d.ScatterSpacing, 0.05, 10, "%.2f") || changed
+		changed = editorDragFloat(fmt.Sprintf("Scale##%sdetScScl", surfaceLabel), &d.ScatterScale, 0.02, 5, "%.2f") || changed
+		changed = editorDragFloat(fmt.Sprintf("Jitter##%sdetScJit", surfaceLabel), &d.ScatterJitter, 0, 1, "%.2f") || changed
+		changed = editorDragFloat(fmt.Sprintf("Draw Range##%sdetScRng", surfaceLabel), &d.ScatterRange, 4, 400, "%.0f") || changed
+		if d.ScatterMesh == "" {
+			d.ScatterMesh = "rock"
+		}
+		imgui.Unindent()
+	}
+
+	if changed {
+		d.clamp()
 	}
 	return changed
 }
@@ -310,32 +481,6 @@ func EditorDrawUI() {
 	}
 
 	imgui.SameLine()
-	if currentMode == ModeWorld {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.15, Y: 0.5, Z: 0.55, W: 1})
-	}
-	if imgui.Button("World") {
-		if Editor.Mode != ModeWorld {
-			EnterWorldEditor()
-		}
-	}
-	if currentMode == ModeWorld {
-		imgui.PopStyleColor()
-	}
-
-	imgui.SameLine()
-	if currentMode == ModeBuilding {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.15, Y: 0.45, Z: 0.6, W: 1})
-	}
-	if imgui.Button("Buildings") {
-		if Editor.Mode != ModeBuilding {
-			EnterBuildingEditor()
-		}
-	}
-	if currentMode == ModeBuilding {
-		imgui.PopStyleColor()
-	}
-
-	imgui.SameLine()
 	imgui.Separator()
 	imgui.SameLine()
 
@@ -356,12 +501,27 @@ func EditorDrawUI() {
 			Editor.SceneryActivePrimIdx = -1
 			Editor.SceneryFilePath = ""
 			Editor.SceneryID = ""
+			SceneryClearUndoHistory()
 		}
 		imgui.SameLine()
 
 		if imgui.Button("Open##sc") {
 			Editor.ShowSceneryPicker = true
 		}
+		imgui.SameLine()
+
+		editorPushDisabled(!SceneryCanUndo())
+		if imgui.Button("Undo##sc") {
+			SceneryUndo()
+		}
+		editorPopDisabled()
+		imgui.SameLine()
+
+		editorPushDisabled(!SceneryCanRedo())
+		if imgui.Button("Redo##sc") {
+			SceneryRedo()
+		}
+		editorPopDisabled()
 		imgui.SameLine()
 
 		if imgui.Button("Save##sc") {
@@ -452,6 +612,20 @@ func EditorDrawUI() {
 		}
 		Editor.StatusTime = sdl.GetTicks()
 	}
+	imgui.SameLine()
+
+	editorPushDisabled(!EditorCanUndo())
+	if imgui.Button("Undo##lvl") {
+		EditorUndo()
+	}
+	editorPopDisabled()
+	imgui.SameLine()
+
+	editorPushDisabled(!EditorCanRedo())
+	if imgui.Button("Redo##lvl") {
+		EditorRedo()
+	}
+	editorPopDisabled()
 	imgui.SameLine()
 
 	if imgui.Button("Save As...") {
@@ -561,10 +735,6 @@ func EditorDrawUI() {
 		Surface2DPanel()
 	} else if Editor.Mode == ModeScenery {
 		SceneryEditorPanel()
-	} else if Editor.Mode == ModeWorld {
-		WorldEditorPanel()
-	} else if Editor.Mode == ModeBuilding {
-		BuildingEditorPanel()
 	}
 }
 
@@ -614,7 +784,7 @@ func Editor2DPanel() {
 				changed := false
 				changed = imgui.Checkbox("Enabled##fe", &s.Floor.Enabled) || changed
 				changed = editorDragFloat("Height##fh", &s.Floor.Height, 0, 0, "%.3f") || changed
-				changed = imgui.InputText("Texture##ft", &s.Floor.Texture) || changed
+				changed = textureCombo("Texture##ft", &s.Floor.Texture, false) || changed
 				changed = imgui.Checkbox("Terrain##fter", &s.Floor.Terrain) || changed
 				imgui.Checkbox("Double Sided##fds", &s.Floor.DoubleSided)
 				changed = editorDragFloat("Alpha##fa", &s.Floor.Alpha, 0, 1, "%.2f") || changed
@@ -629,7 +799,7 @@ func Editor2DPanel() {
 				changed := false
 				changed = imgui.Checkbox("Enabled##ce", &s.Ceiling.Enabled) || changed
 				changed = editorDragFloat("Height##ch", &s.Ceiling.Height, 0, 0, "%.3f") || changed
-				changed = imgui.InputText("Texture##ct", &s.Ceiling.Texture) || changed
+				changed = textureCombo("Texture##ct", &s.Ceiling.Texture, false) || changed
 				changed = imgui.Checkbox("Terrain##cter", &s.Ceiling.Terrain) || changed
 				imgui.Checkbox("Double Sided##cds", &s.Ceiling.DoubleSided)
 				changed = editorDragFloat("Alpha##ca", &s.Ceiling.Alpha, 0, 1, "%.2f") || changed
@@ -718,6 +888,9 @@ func Editor2DPanel() {
 		}
 	}
 
+	// ---- Biome painting ----
+	biomePanelSection()
+
 	imgui.End()
 }
 
@@ -746,7 +919,7 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 
 	if kind == "wall" && idx < len(s.Walls) {
 		w := &s.Walls[idx]
-		changed = imgui.InputText("Texture##wt", &w.Texture) || changed
+		changed = textureCombo("Texture##wt", &w.Texture, false) || changed
 		changed = imgui.Checkbox("Collision##wc", &w.Collision) || changed
 		changed = imgui.Checkbox("Visible##wv", &w.Visible) || changed
 		imgui.Checkbox("Double Sided##wds", &w.DoubleSided)
@@ -766,7 +939,7 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 		changed = imgui.InputText("To Sector##pts", &p.ToSector) || changed
 		changed = imgui.Checkbox("Draw Gap##pdg", &p.DrawGap) || changed
 		if p.DrawGap {
-			changed = imgui.InputText("Gap Texture##pgt", &p.GapTexture) || changed
+			changed = textureCombo("Gap Texture##pgt", &p.GapTexture, true) || changed
 		}
 		changed = imgui.Checkbox("Visible##pv", &p.Visible) || changed
 		imgui.Checkbox("Double Sided##pds", &p.DoubleSided)
@@ -813,7 +986,8 @@ func convertEdge(ch *Chunk, s *Sector, fromKind string, idx int, toKind string) 
 		Editor.ActiveEdgeIdx = insertIdx
 	} else if fromKind == "portal" && idx < len(s.Portals) {
 		p := s.Portals[idx]
-		w := Wall{StartPoint: p.StartPoint, EndPoint: p.EndPoint, Texture: "concrete", Collision: true, Visible: true, Pinned: true, DoubleSided: p.DoubleSided}
+		_ = ensureTextureLoaded("concrete")
+		w := Wall{StartPoint: p.StartPoint, EndPoint: p.EndPoint, Texture: "concrete", Collision: true, Visible: true, Pinned: true, DoubleSided: p.DoubleSided, Alpha: 1.0}
 		s.Portals = append(s.Portals[:idx], s.Portals[idx+1:]...)
 		// Insert wall at the correct position
 		s.Walls = append(s.Walls, Wall{})

@@ -23,8 +23,26 @@ type Geometry struct {
 	Position                   mgl32.Vec3
 	Yaw                        float32
 	Alpha                      float32 // 0.0 = fully transparent, 1.0 = fully opaque
+	Water                      WaterParams
 	Vao                        uint32
 	Vbo                        uint32
+}
+
+// applyWaterUniforms pushes this geometry's water settings to the shader.
+// Every draw call sets them, including the disabled case, so a water plane
+// never leaks its wave/fresnel state onto the geometry drawn after it.
+func (g *Geometry) applyWaterUniforms() {
+	if !g.Water.Enabled {
+		gl.Uniform1i(IsWaterUniform, 0)
+		return
+	}
+	gl.Uniform1i(IsWaterUniform, 1)
+	gl.Uniform1f(WaveAmplitudeUniform, g.Water.WaveAmplitude)
+	gl.Uniform1f(WaveLengthUniform, g.Water.WaveLength)
+	gl.Uniform1f(WaveSpeedUniform, g.Water.WaveSpeed)
+	gl.Uniform1f(ReflectivityUniform, g.Water.Reflectivity)
+	gl.Uniform3f(ReflectColorUniform,
+		g.Water.ReflectColor.X(), g.Water.ReflectColor.Y(), g.Water.ReflectColor.Z())
 }
 
 // Load uploads vertices (indexed by indices) to the GPU.
@@ -103,6 +121,7 @@ func (g Geometry) Draw() {
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
+	g.applyWaterUniforms()
 
 	gl.BindVertexArray(g.Vao)
 
@@ -184,6 +203,7 @@ type Wall struct {
 	UVOffset      mgl32.Vec2 // UV translation
 	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
 	UVRotation    float32    // UV rotation in radians
+	Detail        DetailSpec // per-face procedural detail (rocks); disabled by default
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 }
@@ -196,6 +216,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
+	g.applyWaterUniforms()
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])

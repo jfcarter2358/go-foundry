@@ -322,6 +322,9 @@ func RenderShadowPass(lights LightSet, level *Level, focusPoint mgl32.Vec3) []mg
 		gl.UniformMatrix4fv(Shadows.LSMUniform, 1, false, &lsm[0])
 
 		renderSceneShadow(level, Shadows.ModelUniform)
+		// Cast displaced/scattered detail (drawn via its own tess/instanced
+		// programs so bumps and rocks cast accurate shadows); restores Shadows.Program.
+		RenderDetailDirShadow(level, lsm)
 		mapIdx++
 	}
 
@@ -382,6 +385,8 @@ func RenderPointShadowPass(lights LightSet, level *Level) {
 			gl.UniformMatrix4fv(Shadows.CubeLSMUniform, 1, false, &lsm[0])
 
 			renderSceneShadow(level, Shadows.CubeModelUniform)
+			// Cast displaced/scattered detail into this cube face; restores Shadows.CubeProgram.
+			RenderDetailCubeShadow(level, lsm, pl.Position, farPlane)
 		}
 		mapIdx++
 	}
@@ -403,13 +408,19 @@ func renderSceneShadow(level *Level, modelUniform int32) {
 		for si := range chunk.Sectors {
 			sector := &chunk.Sectors[si]
 			if sector.Floor.Enabled {
-				drawGeometryShadow(&sector.Floor.Geometry)
+				// Displaced faces cast via the detail tess program instead (see
+				// RenderDetailDirShadow / RenderDetailCubeShadow), so skip the flat mesh.
+				if !sector.Floor.Detail.HasDisplace() {
+					drawGeometryShadow(&sector.Floor.Geometry)
+				}
 				for eg := range sector.Floor.ExtrusionGeometries {
 					drawGeometryShadow(&sector.Floor.ExtrusionGeometries[eg])
 				}
 			}
 			if sector.Ceiling.Enabled {
-				drawGeometryShadow(&sector.Ceiling.Geometry)
+				if !sector.Ceiling.Detail.HasDisplace() {
+					drawGeometryShadow(&sector.Ceiling.Geometry)
+				}
 				for eg := range sector.Ceiling.ExtrusionGeometries {
 					drawGeometryShadow(&sector.Ceiling.ExtrusionGeometries[eg])
 				}
@@ -417,7 +428,9 @@ func renderSceneShadow(level *Level, modelUniform int32) {
 			for wi := range sector.Walls {
 				w := &sector.Walls[wi]
 				if w.Visible {
-					drawGeometryShadow(&w.Geometry)
+					if !w.Detail.HasDisplace() {
+						drawGeometryShadow(&w.Geometry)
+					}
 					for eg := range w.ExtrusionGeometries {
 						drawGeometryShadow(&w.ExtrusionGeometries[eg])
 					}
@@ -467,7 +480,14 @@ func drawGeometryShadow(g *Geometry) {
 
 // UploadShadowUniforms sends directional shadow data to the main shader.
 func UploadShadowUniforms(lights LightSet, matrices []mgl32.Mat4) {
-	gl.UseProgram(Program)
+	UploadShadowUniformsTo(Program, lights, matrices)
+}
+
+// UploadShadowUniformsTo sends directional shadow data (matrices, cast flags,
+// strengths, and shadow-map samplers) to prog. Binds prog as active.
+func UploadShadowUniformsTo(prog uint32, lights LightSet, matrices []mgl32.Mat4) {
+	gl.UseProgram(prog)
+	uniformLoc := func(name string) int32 { return progUniformLoc(prog, name) }
 	gl.Uniform1f(uniformLoc("shadowBias\x00"), DefaultShadowBias)
 
 	mapIdx := 0
@@ -504,7 +524,13 @@ func UploadShadowUniforms(lights LightSet, matrices []mgl32.Mat4) {
 // UploadPointShadowUniforms sends point light shadow cubemaps to the main shader.
 // Texture units start after directional shadow maps (1..MaxDirLights are dir, then point).
 func UploadPointShadowUniforms(lights LightSet) {
-	gl.UseProgram(Program)
+	UploadPointShadowUniformsTo(Program, lights)
+}
+
+// UploadPointShadowUniformsTo sends point-light cubemap shadow data to prog.
+func UploadPointShadowUniformsTo(prog uint32, lights LightSet) {
+	gl.UseProgram(prog)
+	uniformLoc := func(name string) int32 { return progUniformLoc(prog, name) }
 
 	baseUnit := int32(1 + MaxDirLights) // units 1-4 reserved for dir shadow maps
 

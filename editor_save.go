@@ -3,8 +3,14 @@ package main
 // editor_save.go — serialise a runtime Level back to YAML.
 //
 // SaveLevel reconstructs the RawLevel representation from the live runtime
-// state and writes it to disk. Original point names are preserved via
-// chunk.PointNames; new points added by the editor get auto-names "E0", "E1", …
+// state and writes it to disk. Point names come from chunk.PointNames, which is
+// index-aligned with chunk.Points; points the editor added are unnamed there and
+// get auto-names "E0", "E1", … chosen to avoid names already in use.
+//
+// Names are bound to point indices, never to coordinates. Matching by
+// coordinate meant a point the editor had moved no longer matched its recorded
+// name, so it was issued a fresh one — which collided with an existing point and
+// silently corrupted the level on the next load.
 
 import (
 	"fmt"
@@ -37,57 +43,72 @@ func ScanLevelFiles(dir string) []string {
 
 // WriteBlankLevel writes a minimal valid level YAML to path.
 func WriteBlankLevel(path string) error {
-	raw := RawLevel{
-		Chunks: []RawChunk{{
-			ID: "default",
-			Points: map[string]Point{
-				"A": {X: -4, Y: -4},
-				"B": {X: 4, Y: -4},
-				"C": {X: 4, Y: 4},
-				"D": {X: -4, Y: 4},
-			},
-			Sectors: []RawSector{{
-				ID: "room",
-				Floor: RawFloor{
-					Enabled: true,
-					Height:  0,
-					Texture: "default",
-				},
-				Ceiling: RawCeiling{
-					Enabled: true,
-					Height:  4,
-					Texture: "default",
-				},
-				Edges: []RawEdge{
-					{From: "A", To: "B", Kind: "wall", Texture: "default", Collision: true},
-					{From: "B", To: "C", Kind: "wall", Texture: "default", Collision: true},
-					{From: "C", To: "D", Kind: "wall", Texture: "default", Collision: true},
-					{From: "D", To: "A", Kind: "wall", Texture: "default", Collision: true},
-				},
-			}},
-		}},
-		Lights: RawLights{
-			Global: RawGlobalLight{Color: RawColor{R: 1, G: 1, B: 1}, Brightness: 0.3},
-		},
-	}
+	raw := blankRawLevel()
 	data, err := yaml.Marshal(&raw)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return writeFileAtomic(path, data)
 }
 
-// SaveLevel serialises level to YAML and writes it to path.
+// SaveLevel serialises level to YAML and writes it to path. The level is
+// validated before anything touches the filesystem: a level that would not load
+// back correctly is never written, so a bad save cannot destroy a good file.
 func SaveLevel(level *Level, path string) error {
 	raw, err := levelToRaw(level)
 	if err != nil {
 		return err
 	}
+	if err := validateRawLevel(&raw); err != nil {
+		return fmt.Errorf("refusing to save malformed level: %w", err)
+	}
 	data, err := yaml.Marshal(raw)
 	if err != nil {
 		return fmt.Errorf("yaml marshal: %w", err)
 	}
-	return os.WriteFile(path, data, 0644)
+	return writeFileAtomic(path, data)
+}
+
+// writeFileAtomic writes data to path via a temporary file in the same
+// directory followed by a rename, so an interrupted or failing write can never
+// leave a truncated level behind. The previous contents are retained as
+// path+".bak".
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename below succeeds
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		return err
+	}
+
+	// Keep one generation of backup so a bad edit is still recoverable.
+	if prev, err := os.ReadFile(path); err == nil {
+		if err := os.WriteFile(path+".bak", prev, 0644); err != nil {
+			return err
+		}
+	}
+
+	return os.Rename(tmpName, path)
 }
 
 // levelToRaw converts the runtime Level into its serialisable form.
@@ -126,42 +147,17 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 		rc.Scale = 1
 	}
 
-	// Build a canonical set of unique points across all sectors.
-	// Key: "x,z" (rounded to 4 dp) → point name.
-	pointKey := func(v mgl32.Vec2) string {
-		return fmt.Sprintf("%.4f,%.4f", v.X(), v.Y())
-	}
-	ptNames := make(map[string]string) // key → name
-	ptCounter := 0
-
-	// Prefer to re-use original names from PointNames
-	if ch.PointNames != nil {
-		for name, orig := range ch.PointNames {
-			// Transform forward to get the world coord, then use as key
-			tp := transformPoint2D(orig, ch.Origin, ch.Rotation, ch.Scale)
-			ptNames[pointKey(tp)] = name
-			rc.Points[name] = Point{X: orig.X(), Y: orig.Y()}
-		}
-	}
-
-	// For any sector point not already in PointNames, assign a new name.
-	assignPoint := func(worldPt mgl32.Vec2) string {
-		key := pointKey(worldPt)
-		if name, ok := ptNames[key]; ok {
-			return name
-		}
-		// Reverse-transform to local coords
-		local := reverseTransformPoint2D(worldPt, ch.Origin, ch.Rotation, ch.Scale)
-		name := fmt.Sprintf("E%d", ptCounter)
-		ptCounter++
-		ptNames[key] = name
+	// Name every point in the pool by index, then emit the live pool. Names are
+	// bound to point indices, never to coordinates, so a point the editor moved
+	// keeps its identity and cannot collide with an unrelated point.
+	names := chunkPointNames(ch)
+	for i, name := range names {
+		local := reverseTransformPoint2D(ch.Points[i], ch.Origin, ch.Rotation, ch.Scale)
 		rc.Points[name] = Point{X: local.X(), Y: local.Y()}
-		return name
 	}
 
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
-		sectorPts := SectorPoints(ch, s)
 		// Only save non-zero VertexOffsets to keep YAML clean
 		floorOffsets := trimTrailingZeros(s.Floor.VertexOffsets)
 		ceilOffsets := trimTrailingZeros(s.Ceiling.VertexOffsets)
@@ -180,6 +176,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				UVOffset:      Point{X: s.Floor.UVOffset.X(), Y: s.Floor.UVOffset.Y()},
 				UVScale:       Point{X: s.Floor.UVScale.X(), Y: s.Floor.UVScale.Y()},
 				UVRotation:    s.Floor.UVRotation,
+				Detail:        detailToRaw(s.Floor.Detail),
 			},
 			Ceiling: RawCeiling{
 				Enabled:       s.Ceiling.Enabled,
@@ -194,18 +191,24 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				UVOffset:      Point{X: s.Ceiling.UVOffset.X(), Y: s.Ceiling.UVOffset.Y()},
 				UVScale:       Point{X: s.Ceiling.UVScale.X(), Y: s.Ceiling.UVScale.Y()},
 				UVRotation:    s.Ceiling.UVRotation,
+				Detail:        detailToRaw(s.Ceiling.Detail),
 			},
 		}
 
 		// Reconstruct edges from Walls and Portals in polygon order,
 		// using EdgeKinds index-based matching (robust against float drift).
-		nPts := len(sectorPts)
+		nPts := len(s.PointIndices)
 		wallIdx, portalIdx := 0, 0
 		for ei := 0; ei < nPts; ei++ {
-			a := sectorPts[ei]
-			b := sectorPts[(ei+1)%nPts]
-			fromName := assignPoint(a)
-			toName := assignPoint(b)
+			fromIdx := s.PointIndices[ei]
+			toIdx := s.PointIndices[(ei+1)%nPts]
+			if fromIdx < 0 || fromIdx >= len(names) || toIdx < 0 || toIdx >= len(names) {
+				return RawChunk{}, fmt.Errorf(
+					"sector %q: edge %d references point index out of range (pool has %d points)",
+					s.ID, ei, len(names))
+			}
+			fromName := names[fromIdx]
+			toName := names[toIdx]
 
 			kind := "wall"
 			if ei < len(s.EdgeKinds) {
@@ -230,6 +233,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 					UVOffset:      Point{X: w.UVOffset.X(), Y: w.UVOffset.Y()},
 					UVScale:       Point{X: w.UVScale.X(), Y: w.UVScale.Y()},
 					UVRotation:    w.UVRotation,
+					Detail:        detailToRaw(w.Detail),
 				})
 				wallIdx++
 			} else if kind == "portal" && portalIdx < len(s.Portals) {
@@ -265,68 +269,114 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 		rc.Primitives = append(rc.Primitives, primitiveToRaw(p, ch))
 	}
 
-	// World-builder chunks save the full edited geometry above (so manual tweaks
-	// persist verbatim) AND the editable grid block (so the brush keeps working).
-	if ch.WorldGrid != nil {
-		g := ch.WorldGrid
-		rw := &RawWorldGrid{
-			Cols:      g.Cols,
-			Rows:      g.Rows,
-			CellSize:  g.CellSize,
-			Origin:    Point{X: g.Origin.X(), Y: g.Origin.Y()},
-			Seed:      g.Seed,
-			StyleName: g.StyleName,
-			Heights:   append([]float32(nil), g.Heights...),
-			CellCity:  append([]int32(nil), g.CellCity...),
+	// Serialize biome sectors with reverse-transformed (chunk-local) points.
+	for bi := range ch.BiomeSectors {
+		bs := &ch.BiomeSectors[bi]
+		rb := RawBiomeSector{
+			ID:     bs.ID,
+			Points: make([]Point, len(bs.Points)),
+			Brush: RawBiomeBrush{
+				Kind:        bs.Brush.Kind,
+				Density:     bs.Brush.Density,
+				Range:       bs.Brush.Range,
+				Color:       RawColor{R: bs.Brush.Color.X(), G: bs.Brush.Color.Y(), B: bs.Brush.Color.Z()},
+				GrassHeight: bs.Brush.GrassHeight,
+				GrassWidth:  bs.Brush.GrassWidth,
+				RockSides:   bs.Brush.RockSides,
+			},
 		}
-		rw.CellType = make([]int, len(g.CellType))
-		for i, v := range g.CellType {
-			rw.CellType[i] = int(v)
+		for i, wp := range bs.Points {
+			local := reverseTransformPoint2D(wp, ch.Origin, ch.Rotation, ch.Scale)
+			rb.Points[i] = Point{X: local.X(), Y: local.Y()}
 		}
-		// Only persist biome coverage when something was painted, so plain worlds
-		// stay compact. Ranges always persist so custom draw distances survive.
-		if sliceHasNonzero(g.GrassDensity) {
-			rw.GrassDensity = append([]float32(nil), g.GrassDensity...)
-		}
-		if sliceHasNonzero(g.RockDensity) {
-			rw.RockDensity = append([]float32(nil), g.RockDensity...)
-		}
-		rw.GrassRange = g.GrassRange
-		rw.RockRange = g.RockRange
-		rw.GrassHeight = g.GrassHeight
-		rw.GrassWidth = g.GrassWidth
-		rw.RockSides = g.RockSides
-		rw.Density = g.Density
-		faceRoads := g.FaceRoads
-		rw.FaceRoads = &faceRoads
-		for _, s := range g.Roads {
-			rs := RawRoadStroke{Width: s.Width}
-			for _, p := range s.Points {
-				rs.Points = append(rs.Points, Point{X: p.X(), Y: p.Y()})
-			}
-			rw.Roads = append(rw.Roads, rs)
-		}
-		for _, t := range g.Palette {
-			rw.Palette = append(rw.Palette, RawBuildingTemplate{
-				Name:        t.Name,
-				Width:       t.Width,
-				Depth:       t.Depth,
-				Stories:     t.Stories,
-				StoryHeight: t.StoryHeight,
-				WallThick:   t.WallThick,
-				Parapet:     t.Parapet,
-				DoorWidth:   t.DoorWidth,
-				Enterable:   t.Enterable,
-				WallTex:     t.WallTex,
-				RoofTex:     t.RoofTex,
-				FloorTex:    t.FloorTex,
-				Weight:      t.Weight,
-			})
-		}
-		rc.WorldGrid = rw
+		rc.BiomeSectors = append(rc.BiomeSectors, rb)
 	}
 
 	return rc, nil
+}
+
+// chunkPointNames returns a YAML point name for every entry in ch.Points,
+// index-aligned with that slice. Names recorded in ch.PointNames are preserved;
+// unnamed slots (points the editor added) get a fresh "E<n>" chosen so it cannot
+// collide with a name already in use.
+//
+// The collision check is the point of this function. Names used to be minted
+// from a counter that started at zero on every save while ch.PointNames already
+// held E0, E1, … from the previous save, so re-saving an edited level silently
+// overwrote unrelated points and scrambled the geometry on the next load.
+func chunkPointNames(ch *Chunk) []string {
+	names := make([]string, len(ch.Points))
+	used := make(map[string]bool, len(ch.Points))
+
+	for i := range ch.Points {
+		if i >= len(ch.PointNames) {
+			break
+		}
+		if n := ch.PointNames[i]; n != "" && !used[n] {
+			names[i] = n
+			used[n] = true
+		}
+	}
+
+	ctr := 0
+	for i := range names {
+		for names[i] == "" {
+			n := fmt.Sprintf("E%d", ctr)
+			ctr++
+			if !used[n] {
+				names[i] = n
+				used[n] = true
+			}
+		}
+	}
+	return names
+}
+
+// validateRawChunk checks the invariants loadRawChunk depends on: every edge
+// references a defined point, and each sector's edges form a closed ring that
+// visits each point exactly once. Callers abort the write on error, so a
+// serialisation bug can never overwrite a good level file with a broken one.
+func validateRawChunk(rc *RawChunk) error {
+	for si := range rc.Sectors {
+		s := &rc.Sectors[si]
+		if len(s.Edges) == 0 {
+			continue
+		}
+		seen := make(map[string]bool, len(s.Edges))
+		for ei, e := range s.Edges {
+			if _, ok := rc.Points[e.From]; !ok {
+				return fmt.Errorf("chunk %q sector %q: edge %d references undefined point %q",
+					rc.ID, s.ID, ei, e.From)
+			}
+			if _, ok := rc.Points[e.To]; !ok {
+				return fmt.Errorf("chunk %q sector %q: edge %d references undefined point %q",
+					rc.ID, s.ID, ei, e.To)
+			}
+			if seen[e.From] {
+				return fmt.Errorf("chunk %q sector %q: point %q appears more than once in the edge ring",
+					rc.ID, s.ID, e.From)
+			}
+			seen[e.From] = true
+
+			nextIdx := (ei + 1) % len(s.Edges)
+			if next := s.Edges[nextIdx]; e.To != next.From {
+				return fmt.Errorf(
+					"chunk %q sector %q: edge %d ends at %q but edge %d starts at %q — edges must form a closed ring",
+					rc.ID, s.ID, ei, e.To, nextIdx, next.From)
+			}
+		}
+	}
+	return nil
+}
+
+// validateRawLevel runs validateRawChunk over every chunk in a level.
+func validateRawLevel(raw *RawLevel) error {
+	for ci := range raw.Chunks {
+		if err := validateRawChunk(&raw.Chunks[ci]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // primitiveToRaw converts a runtime Primitive to its raw YAML form,
@@ -352,6 +402,8 @@ func primitiveToRaw(p *Primitive, ch *Chunk) RawPrimitive {
 		typeStr = "cylinder"
 	case PrimitivePlane:
 		typeStr = "plane"
+	case PrimitiveWater:
+		typeStr = "water"
 	default:
 		typeStr = "rect_prism"
 	}
@@ -374,6 +426,7 @@ func primitiveToRaw(p *Primitive, ch *Chunk) RawPrimitive {
 		UVOffset:   Point{X: p.UVOffset.X(), Y: p.UVOffset.Y()},
 		UVScale:    Point{X: uvSc.X(), Y: uvSc.Y()},
 		UVRotation: p.UVRotation,
+		Water:      waterParamsToRaw(p),
 	}
 	return rp
 }
@@ -542,6 +595,32 @@ func reverseTransformPoint2D(world mgl32.Vec2, origin mgl32.Vec3, rotation, scal
 	return mgl32.Vec2{rx / scale, ry / scale}
 }
 
+// detailToRaw converts a face's DetailSpec to an optional RawDetail. A disabled
+// spec returns nil so the "detail" key is omitted from YAML entirely.
+func detailToRaw(d DetailSpec) *RawDetail {
+	if !d.Enabled {
+		return nil
+	}
+	return &RawDetail{
+		Preset:         d.Preset,
+		Seed:           d.Seed,
+		Displace:       d.Displace,
+		Amplitude:      d.Amplitude,
+		Frequency:      d.Frequency,
+		Octaves:        d.Octaves,
+		TessLevel:      d.TessLevel,
+		EdgeTaper:      d.EdgeTaper,
+		Scatter:        d.Scatter,
+		ScatterMesh:    d.ScatterMesh,
+		ScatterTex:     d.ScatterTex,
+		ScatterDensity: d.ScatterDensity,
+		ScatterSpacing: d.ScatterSpacing,
+		ScatterScale:   d.ScatterScale,
+		ScatterJitter:  d.ScatterJitter,
+		ScatterRange:   d.ScatterRange,
+	}
+}
+
 // boolPtrIfFalse returns a *bool pointer only when v is false (non-default).
 // When v is true (the default for DoubleSided), returns nil so the field is
 // omitted from YAML via omitempty.
@@ -584,14 +663,14 @@ func SaveChunk(ch *Chunk, path string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateRawChunk(&rc); err != nil {
+		return fmt.Errorf("refusing to save malformed chunk: %w", err)
+	}
 	data, err := yaml.Marshal(rc)
 	if err != nil {
 		return fmt.Errorf("yaml marshal: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0644)
+	return writeFileAtomic(path, data)
 }
 
 // LoadChunkFromFile reads a standalone chunk YAML file.

@@ -6,7 +6,10 @@ package main
 // Sectors reference them via PointIndices.
 //
 // Shift+click  : place a new free point (also splits an edge if near one)
-// Ctrl+click   : connect two points with an edge (creates/splits sectors)
+// Ctrl+click   : connect two points with an edge (creates/splits sectors);
+//                selection chains to the point just clicked, so ctrl+clicking
+//                around a loop draws the whole outline. Ctrl+click the same
+//                point twice to stop connecting.
 // Right-click  : remove a point and all connected edges
 // Left-click   : select vertex/edge/sector, drag vertices
 // Middle-mouse : pan the view
@@ -166,6 +169,9 @@ func Editor2DRender() {
 		}
 	}
 
+	// Biome sector layer (always visible, dim when not the active tool).
+	Editor2DRenderBiomeSectors(ch)
+
 	GizmoFlush(ortho)
 }
 
@@ -268,12 +274,18 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 	shiftHeld := mods&sdl.KMOD_SHIFT != 0
 	ctrlHeld := mods&sdl.KMOD_CTRL != 0
 
+	// Biome brush intercepts clicks (except middle-mouse pan).
+	if biomeHandleClick(t) {
+		return
+	}
+
 	threshold := screenToWorldSize(editor2DSelectRadius, editor2DOrtho())
 
 	// --- Right-click: remove point ---
 	if t.Button == sdl.ButtonRight {
 		pi := findChunkPointNear(ch, wx, wz, threshold)
 		if pi >= 0 {
+			EditorPushUndo()
 			removeChunkPoint(ch, pi)
 		}
 		return
@@ -290,9 +302,9 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 
 	// --- Shift+click: place a new free point ---
 	if shiftHeld {
+		EditorPushUndo()
 		newPt := mgl32.Vec2{wx, wz}
-		newIdx := len(ch.Points)
-		ch.Points = append(ch.Points, newPt)
+		newIdx := ch.AddPoint(newPt)
 
 		// If near an existing sector edge, also insert into that sector
 		for si := range ch.Sectors {
@@ -327,7 +339,10 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 		}
 		fromIdx := Editor.ConnectFromIdx
 		toIdx := pi
-		Editor.ConnectFromIdx = -1
+		// Chain from the point just connected so a run of ctrl+clicks walks an
+		// outline without re-selecting each vertex. Ctrl+click the same point
+		// again to stop connecting.
+		Editor.ConnectFromIdx = toIdx
 
 		// Check if both points are on the boundary of the same sector → split
 		for si := range ch.Sectors {
@@ -335,6 +350,7 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 			posA := sectorVertexPos(s, fromIdx)
 			posB := sectorVertexPos(s, toIdx)
 			if posA >= 0 && posB >= 0 && !adjacentInSector(s, posA, posB) {
+				EditorPushUndo()
 				splitSector(ch, si, posA, posB)
 				return
 			}
@@ -342,13 +358,25 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 
 		// Otherwise add as pending edge and check for polygon completion
 		Editor.PendingEdges = append(Editor.PendingEdges, [2]int{fromIdx, toIdx})
-		tryCreateSectorFromPendingEdges(ch)
+		EditorPushUndo()
+		if tryCreateSectorFromPendingEdges(ch) {
+			// Polygon closed — start fresh instead of dangling off the last vertex.
+			Editor.ConnectFromIdx = -1
+		}
 		return
 	}
 
 	// --- Normal left-click: select vertex/edge/sector ---
 
-	// 1. Vertex proximity — highest priority (check all chunk points in sectors)
+	// 1. Vertex proximity — highest priority (check all chunk points in
+	// sectors). A vertex shared by multiple sectors uses the same chunk
+	// point index in each sector's PointIndices, so repeated clicks cycle
+	// through every sector that shares it, wrapping back to the first.
+	type vertexCandidate struct {
+		si, vi, pIdx int
+		dist         float32
+	}
+	var vertexCandidates []vertexCandidate
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
 		for vi, pIdx := range s.PointIndices {
@@ -356,17 +384,39 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 				continue
 			}
 			pt := ch.Points[pIdx]
-			if dist2D(wx, wz, pt.X(), pt.Y()) < threshold {
-				Editor.ActiveSectorIdx = si
-				Editor.ActiveVertexSI = si
-				Editor.ActiveVertexVI = vi
-				Editor.ActiveEdgeIdx = -1
-				Editor.DragVertexSI = si
-				Editor.DragVertexVI = vi
-				Editor.DragIsFloor = true
-				return
+			if d := dist2D(wx, wz, pt.X(), pt.Y()); d < threshold {
+				vertexCandidates = append(vertexCandidates, vertexCandidate{si, vi, pIdx, d})
 			}
 		}
+	}
+	if len(vertexCandidates) > 0 {
+		sort.Slice(vertexCandidates, func(i, j int) bool { return vertexCandidates[i].dist < vertexCandidates[j].dist })
+		targetPIdx := vertexCandidates[0].pIdx
+		var group []vertexCandidate
+		for _, c := range vertexCandidates {
+			if c.pIdx == targetPIdx {
+				group = append(group, c)
+			}
+		}
+		sort.Slice(group, func(i, j int) bool { return group[i].si < group[j].si })
+
+		pick := group[0]
+		for gi, c := range group {
+			if c.si == Editor.ActiveVertexSI && c.vi == Editor.ActiveVertexVI {
+				pick = group[(gi+1)%len(group)]
+				break
+			}
+		}
+
+		Editor.ActiveSectorIdx = pick.si
+		Editor.ActiveVertexSI = pick.si
+		Editor.ActiveVertexVI = pick.vi
+		Editor.ActiveEdgeIdx = -1
+		EditorPushUndo() // snapshot at drag start, not per-frame during the drag
+		Editor.DragVertexSI = pick.si
+		Editor.DragVertexVI = pick.vi
+		Editor.DragIsFloor = true
+		return
 	}
 
 	// 2. Edge proximity (segment distance, with cycling on repeated clicks)
@@ -427,6 +477,7 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 
 // Editor2DHandleRelease processes mouse button release to stop vertex dragging.
 func Editor2DHandleRelease(t sdl.MouseButtonEvent) {
+	biomeHandleRelease(t)
 	if t.Button == sdl.ButtonLeft {
 		Editor.DragVertexSI = -1
 		Editor.DragVertexVI = -1
@@ -448,6 +499,9 @@ func Editor2DHandleMouseMove(t sdl.MouseMotionEvent) {
 		Editor.Pan2D[1] -= dy
 	}
 	Editor.LastMouse2D = [2]int32{t.X, t.Y}
+
+	// Biome brush: track cursor and paint while the button is held.
+	biomeHandleMouseMove(t)
 
 	// Vertex drag
 	if Editor.DragVertexSI >= 0 && Editor.DragVertexVI >= 0 &&
@@ -494,7 +548,8 @@ func rebuildSectorEdgePoints(ch *Chunk, s *Sector) {
 }
 
 // reloadSectorsUsingPoint rebuilds edge points and geometry for all sectors
-// in the chunk that reference the given chunk point index.
+// in the chunk that reference the given chunk point index, then regenerates
+// portal gap-fill geometry so it follows the moved vertex.
 func reloadSectorsUsingPoint(ch *Chunk, pointIdx int) {
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
@@ -506,6 +561,7 @@ func reloadSectorsUsingPoint(ch *Chunk, pointIdx int) {
 			}
 		}
 	}
+	ch.RebuildGaps()
 }
 
 // insertSectorVertex inserts a chunk point (already in ch.Points at newPtIdx)
@@ -556,11 +612,13 @@ func insertSectorVertex(ch *Chunk, s *Sector, si, ei, newPtIdx int) {
 	if wKind == "wall" && wIdx < len(s.Walls) {
 		existing := s.Walls[wIdx]
 		newWall := Wall{
-			StartPoint: newPt,
-			EndPoint:   existing.EndPoint,
-			Texture:    existing.Texture,
-			Collision:  existing.Collision,
-			Visible:    existing.Visible,
+			StartPoint:  newPt,
+			EndPoint:    existing.EndPoint,
+			Texture:     existing.Texture,
+			Collision:   existing.Collision,
+			Visible:     existing.Visible,
+			DoubleSided: existing.DoubleSided,
+			Alpha:       existing.Alpha,
 		}
 		existing.EndPoint = newPt
 		s.Walls[wIdx] = existing
@@ -660,7 +718,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	edgeKindsA = append(edgeKindsA, "wall")
 	ptB := ch.Points[s.PointIndices[posB]]
 	ptA := ch.Points[s.PointIndices[posA]]
-	wallsA = append(wallsA, Wall{StartPoint: ptB, EndPoint: ptA, Texture: "concrete", Collision: true, Visible: true})
+	wallsA = append(wallsA, Wall{StartPoint: ptB, EndPoint: ptA, Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0})
 
 	// Sector B: posB..n-1, 0..posA (wrapping, inclusive)
 	var indicesB []int
@@ -697,7 +755,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	}
 	// New closing edge for sector B (posA → posB): wall
 	edgeKindsB = append(edgeKindsB, "wall")
-	wallsB = append(wallsB, Wall{StartPoint: ptA, EndPoint: ptB, Texture: "concrete", Collision: true, Visible: true})
+	wallsB = append(wallsB, Wall{StartPoint: ptA, EndPoint: ptB, Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0})
 
 	// Distribute vertex offsets
 	floorOffsA := distributeOffsets(s.Floor.VertexOffsets, posA, posB, n)
@@ -711,8 +769,8 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 		EdgeKinds:    edgeKindsA,
 		Walls:        wallsA,
 		Portals:      portalsA,
-		Floor:        Floor{Enabled: s.Floor.Enabled, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, VertexOffsets: floorOffsA},
-		Ceiling:      Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, VertexOffsets: ceilOffsA},
+		Floor:        Floor{Enabled: s.Floor.Enabled, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsA},
+		Ceiling:      Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsA},
 	}
 	sectorB := Sector{
 		ID:           s.ID + "_split",
@@ -720,8 +778,8 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 		EdgeKinds:    edgeKindsB,
 		Walls:        wallsB,
 		Portals:      portalsB,
-		Floor:        Floor{Enabled: s.Floor.Enabled, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, VertexOffsets: floorOffsB},
-		Ceiling:      Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, VertexOffsets: ceilOffsB},
+		Floor:        Floor{Enabled: s.Floor.Enabled, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsB},
+		Ceiling:      Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsB},
 	}
 
 	// Replace original sector with A, append B
@@ -802,7 +860,7 @@ func removeChunkPoint(ch *Chunk, pi int) {
 	}
 
 	// Remove the point from ch.Points and adjust all indices
-	ch.Points = append(ch.Points[:pi], ch.Points[pi+1:]...)
+	ch.RemovePoint(pi)
 	// Adjust PointIndices in all sectors
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
@@ -884,10 +942,10 @@ func removeSectorPoint(ch *Chunk, s *Sector, pi int) {
 }
 
 // tryCreateSectorFromPendingEdges checks if pending edges form a closed polygon
-// and creates a new sector if so.
-func tryCreateSectorFromPendingEdges(ch *Chunk) {
+// and creates a new sector if so. Reports whether a sector was created.
+func tryCreateSectorFromPendingEdges(ch *Chunk) bool {
 	if len(Editor.PendingEdges) < 3 {
-		return
+		return false
 	}
 
 	// Build adjacency from pending edges
@@ -927,7 +985,9 @@ func tryCreateSectorFromPendingEdges(ch *Chunk) {
 
 		// Create sector from polygon
 		createSectorFromPolygon(ch, polyIndices)
+		return true
 	}
+	return false
 }
 
 // dfsFindPath searches for a path from the last element of path to target through adj.
@@ -969,11 +1029,13 @@ func createSectorFromPolygon(ch *Chunk, polyIndices []int) {
 		a := ch.Points[polyIndices[i]]
 		b := ch.Points[polyIndices[(i+1)%len(polyIndices)]]
 		walls = append(walls, Wall{
-			StartPoint: a,
-			EndPoint:   b,
-			Texture:    "concrete",
-			Collision:  true,
-			Visible:    true,
+			StartPoint:  a,
+			EndPoint:    b,
+			Texture:     "concrete",
+			Collision:   true,
+			Visible:     true,
+			DoubleSided: true,
+			Alpha:       1.0,
 		})
 		edgeKinds[i] = "wall"
 	}
@@ -996,14 +1058,19 @@ func createSectorFromPolygon(ch *Chunk, polyIndices []int) {
 			ceilTex = ref.Ceiling.Texture
 		}
 	}
+	// Wall/Floor/Ceiling.Alpha and DoubleSided have no zero-value-safe default
+	// like the YAML loader's float32Default/boolDefault helpers apply, so an
+	// unset Alpha here means fully transparent (invisible), not opaque.
+	_ = ensureTextureLoaded(floorTex)
+	_ = ensureTextureLoaded(ceilTex)
 
 	sector := Sector{
 		ID:           fmt.Sprintf("sector_%d", len(ch.Sectors)),
 		PointIndices: polyIndices,
 		EdgeKinds:    edgeKinds,
 		Walls:        walls,
-		Floor:        Floor{Enabled: true, Height: floorH, Texture: floorTex},
-		Ceiling:      Ceiling{Enabled: true, Height: ceilH, Texture: ceilTex},
+		Floor:        Floor{Enabled: true, Height: floorH, Texture: floorTex, DoubleSided: true, Alpha: 1.0},
+		Ceiling:      Ceiling{Enabled: true, Height: ceilH, Texture: ceilTex, DoubleSided: true, Alpha: 1.0},
 	}
 	ch.Sectors = append(ch.Sectors, sector)
 	ch.InferPortalsAndReload()
@@ -1081,11 +1148,13 @@ func convertPortalsToWalls(ch *Chunk, s *Sector, targetSectorID string) {
 			}
 		}
 		newWall := Wall{
-			StartPoint: p.StartPoint,
-			EndPoint:   p.EndPoint,
-			Texture:    "concrete",
-			Collision:  true,
-			Visible:    true,
+			StartPoint:  p.StartPoint,
+			EndPoint:    p.EndPoint,
+			Texture:     "concrete",
+			Collision:   true,
+			Visible:     true,
+			DoubleSided: true,
+			Alpha:       1.0,
 		}
 		// Insert wall at wallIdx
 		s.Walls = append(s.Walls, Wall{})
@@ -1230,11 +1299,13 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 				// Portal between the two merging sectors → convert to wall
 				mergedEdgeKinds = append(mergedEdgeKinds, "wall")
 				mergedWalls = append(mergedWalls, Wall{
-					StartPoint: p.StartPoint,
-					EndPoint:   p.EndPoint,
-					Texture:    "concrete",
-					Collision:  true,
-					Visible:    true,
+					StartPoint:  p.StartPoint,
+					EndPoint:    p.EndPoint,
+					Texture:     "concrete",
+					Collision:   true,
+					Visible:     true,
+					DoubleSided: true,
+					Alpha:       1.0,
 				})
 			} else {
 				mergedEdgeKinds = append(mergedEdgeKinds, "portal")
@@ -1255,11 +1326,13 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 			if removedIDs[p.ToSector] {
 				mergedEdgeKinds = append(mergedEdgeKinds, "wall")
 				mergedWalls = append(mergedWalls, Wall{
-					StartPoint: p.StartPoint,
-					EndPoint:   p.EndPoint,
-					Texture:    "concrete",
-					Collision:  true,
-					Visible:    true,
+					StartPoint:  p.StartPoint,
+					EndPoint:    p.EndPoint,
+					Texture:     "concrete",
+					Collision:   true,
+					Visible:     true,
+					DoubleSided: true,
+					Alpha:       1.0,
 				})
 			} else {
 				mergedEdgeKinds = append(mergedEdgeKinds, "portal")
@@ -1287,8 +1360,8 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 		EdgeKinds:    mergedEdgeKinds,
 		Walls:        mergedWalls,
 		Portals:      mergedPortals,
-		Floor:        Floor{Enabled: sA.Floor.Enabled, Height: sA.Floor.Height, Texture: sA.Floor.Texture, Terrain: sA.Floor.Terrain, DoubleSided: sA.Floor.DoubleSided, VertexOffsets: mergedFloorOff},
-		Ceiling:      Ceiling{Enabled: sA.Ceiling.Enabled, Height: sA.Ceiling.Height, Texture: sA.Ceiling.Texture, Terrain: sA.Ceiling.Terrain, DoubleSided: sA.Ceiling.DoubleSided, VertexOffsets: mergedCeilOff},
+		Floor:        Floor{Enabled: sA.Floor.Enabled, Height: sA.Floor.Height, Texture: sA.Floor.Texture, Terrain: sA.Floor.Terrain, DoubleSided: sA.Floor.DoubleSided, Alpha: sA.Floor.Alpha, VertexOffsets: mergedFloorOff},
+		Ceiling:      Ceiling{Enabled: sA.Ceiling.Enabled, Height: sA.Ceiling.Height, Texture: sA.Ceiling.Texture, Terrain: sA.Ceiling.Terrain, DoubleSided: sA.Ceiling.DoubleSided, Alpha: sA.Ceiling.Alpha, VertexOffsets: mergedCeilOff},
 	}
 
 	// Replace A with the merged sector

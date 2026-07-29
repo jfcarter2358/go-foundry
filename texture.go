@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/draw"
 	"os"
+	"path/filepath"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
@@ -46,4 +47,26 @@ func LoadTexture(name, file string) error {
 
 	Textures[name] = texture
 	return nil
+}
+
+// ensureTextureLoaded uploads the named texture to the GPU if it isn't
+// already resident. Level loading (loadRawChunk) walks every referenced
+// texture and loads it up front, but editor operations that build Wall/
+// Floor/Ceiling/Primitive structs directly (e.g. createChunkAtCamera,
+// createSectorFromPolygon) bypass that pipeline. Without this, drawing with
+// an unloaded name binds texture 0 (gl.BindTexture(TEXTURE_2D, 0)), which
+// samples as black — the geometry renders, but pure black, regardless of
+// how much light is in the scene.
+func ensureTextureLoaded(name string) error {
+	if name == "" {
+		return nil
+	}
+	if _, ok := Textures[name]; ok {
+		return nil
+	}
+	path, ok := textureNames[name]
+	if !ok {
+		return fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
+	}
+	return LoadTexture(name, filepath.Join(executablePath, path))
 }

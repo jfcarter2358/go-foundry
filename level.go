@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"gopkg.in/yaml.v2"
@@ -39,6 +40,58 @@ type RawTerrainPoint struct {
 	Depth float32 `yaml:"depth"`
 }
 
+// RawDetail is the YAML representation of a face's procedural detail (rocks).
+// Present only when a face has detail enabled (omitempty on the pointer).
+type RawDetail struct {
+	Preset string `yaml:"preset,omitempty"`
+	Seed   int64  `yaml:"seed"`
+
+	Displace  bool    `yaml:"displace,omitempty"`
+	Amplitude float32 `yaml:"amplitude,omitempty"`
+	Frequency float32 `yaml:"frequency,omitempty"`
+	Octaves   int     `yaml:"octaves,omitempty"`
+	TessLevel float32 `yaml:"tess_level,omitempty"`
+	EdgeTaper float32 `yaml:"edge_taper,omitempty"`
+
+	Scatter        bool    `yaml:"scatter,omitempty"`
+	ScatterMesh    string  `yaml:"scatter_mesh,omitempty"`
+	ScatterTex     string  `yaml:"scatter_tex,omitempty"`
+	ScatterDensity float32 `yaml:"scatter_density,omitempty"`
+	ScatterSpacing float32 `yaml:"scatter_spacing,omitempty"`
+	ScatterScale   float32 `yaml:"scatter_scale,omitempty"`
+	ScatterJitter  float32 `yaml:"scatter_jitter,omitempty"`
+	ScatterRange   float32 `yaml:"scatter_range,omitempty"`
+}
+
+// detailFromRaw converts an optional RawDetail into a DetailSpec. A nil pointer
+// yields a disabled spec.
+func detailFromRaw(r *RawDetail) DetailSpec {
+	if r == nil {
+		return DetailSpec{}
+	}
+	d := DetailSpec{
+		Enabled:        true,
+		Preset:         r.Preset,
+		Seed:           r.Seed,
+		Displace:       r.Displace,
+		Amplitude:      r.Amplitude,
+		Frequency:      r.Frequency,
+		Octaves:        r.Octaves,
+		TessLevel:      r.TessLevel,
+		EdgeTaper:      r.EdgeTaper,
+		Scatter:        r.Scatter,
+		ScatterMesh:    r.ScatterMesh,
+		ScatterTex:     r.ScatterTex,
+		ScatterDensity: r.ScatterDensity,
+		ScatterSpacing: r.ScatterSpacing,
+		ScatterScale:   r.ScatterScale,
+		ScatterJitter:  r.ScatterJitter,
+		ScatterRange:   r.ScatterRange,
+	}
+	d.clamp()
+	return d
+}
+
 // RawEdge describes one edge (wall or portal) in a sector's edge list.
 type RawEdge struct {
 	From       string `yaml:"from"`
@@ -59,6 +112,7 @@ type RawEdge struct {
 	UVOffset      Point             `yaml:"uv_offset,omitempty"`
 	UVScale       Point             `yaml:"uv_scale,omitempty"`
 	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
+	Detail        *RawDetail        `yaml:"detail,omitempty"`
 }
 
 // RawFloor is the YAML representation of a sector floor.
@@ -75,6 +129,7 @@ type RawFloor struct {
 	UVOffset      Point             `yaml:"uv_offset,omitempty"`
 	UVScale       Point             `yaml:"uv_scale,omitempty"`
 	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
+	Detail        *RawDetail        `yaml:"detail,omitempty"`
 }
 
 // RawCeiling is the YAML representation of a sector ceiling.
@@ -91,6 +146,7 @@ type RawCeiling struct {
 	UVOffset      Point             `yaml:"uv_offset,omitempty"`
 	UVScale       Point             `yaml:"uv_scale,omitempty"`
 	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
+	Detail        *RawDetail        `yaml:"detail,omitempty"`
 }
 
 // RawSector is the YAML representation of one sector.
@@ -104,7 +160,7 @@ type RawSector struct {
 // RawPrimitive is the YAML representation of a procedural 3D primitive.
 type RawPrimitive struct {
 	ID        string            `yaml:"id"`
-	Type      string            `yaml:"type"`                // "rect_prism", "sphere", "cylinder", "plane"
+	Type      string            `yaml:"type"`                // "rect_prism", "sphere", "cylinder", "plane", "water"
 	Position  RawEntityPosition `yaml:"position"`
 	Rotation  RawEntityPosition `yaml:"rotation"`
 	Scale     RawEntityPosition `yaml:"scale"`
@@ -115,6 +171,24 @@ type RawPrimitive struct {
 	UVOffset   Point             `yaml:"uv_offset,omitempty"`
 	UVScale    Point             `yaml:"uv_scale,omitempty"`  // zero = {1,1}
 	UVRotation float32           `yaml:"uv_rotation,omitempty"` // radians
+	Water      *RawWater         `yaml:"water,omitempty"`       // water primitives only
+}
+
+// RawWater is the YAML representation of a water plane's wave and reflection
+// settings. Absent means the defaults from DefaultWaterParams.
+type RawWater struct {
+	WaveAmplitude float32   `yaml:"wave_amplitude"`
+	WaveLength    float32   `yaml:"wave_length"`
+	WaveSpeed     float32   `yaml:"wave_speed"`
+	Reflectivity  float32   `yaml:"reflectivity"`
+	ReflectColor  RawColor3 `yaml:"reflect_color"`
+}
+
+// RawColor3 is an RGB triple in YAML.
+type RawColor3 struct {
+	R float32 `yaml:"r"`
+	G float32 `yaml:"g"`
+	B float32 `yaml:"b"`
 }
 
 // RawChunkOrigin is the YAML representation of a chunk's world-space origin offset.
@@ -133,63 +207,30 @@ type RawChunk struct {
 	Sectors  []RawSector       `yaml:"sectors"`
 	Origin   RawChunkOrigin    `yaml:"origin"`
 	Rotation float32           `yaml:"rotation"`
-	Scale      float32           `yaml:"scale"`
-	Primitives []RawPrimitive    `yaml:"primitives,omitempty"`
-	WorldGrid  *RawWorldGrid     `yaml:"world_grid,omitempty"`
+	Scale        float32            `yaml:"scale"`
+	Primitives   []RawPrimitive     `yaml:"primitives,omitempty"`
+	BiomeSectors []RawBiomeSector   `yaml:"biome_sectors,omitempty"`
 }
 
-// RawWorldGrid is the YAML representation of a procedural world grid. When
-// present on a chunk it makes the chunk re-editable in the world builder; the
-// chunk's sectors/primitives are still stored normally so manual tweaks persist.
-type RawWorldGrid struct {
-	Cols      int       `yaml:"cols"`
-	Rows      int       `yaml:"rows"`
-	CellSize  float32   `yaml:"cell_size"`
-	Origin    Point     `yaml:"origin"`
-	Seed      int64     `yaml:"seed"`
-	StyleName string    `yaml:"style_name,omitempty"`
-	Heights   []float32 `yaml:"heights"`
-	CellType  []int     `yaml:"cell_type"`
-	CellCity  []int32   `yaml:"cell_city"`
-
-	// GPU-scattered biome coverage (grass / rock), one value per cell, and the
-	// per-biome camera-ring draw radii. Omitted on worlds with no painted biomes.
-	GrassDensity []float32 `yaml:"grass_density,omitempty"`
-	RockDensity  []float32 `yaml:"rock_density,omitempty"`
-	GrassRange   float32   `yaml:"grass_range,omitempty"`
-	RockRange    float32   `yaml:"rock_range,omitempty"`
-	GrassHeight  float32   `yaml:"grass_height,omitempty"`
-	GrassWidth   float32   `yaml:"grass_width,omitempty"`
-	RockSides    int32     `yaml:"rock_sides,omitempty"`
-
-	// City generation controls.
-	Palette   []RawBuildingTemplate `yaml:"palette,omitempty"`
-	Density   float32               `yaml:"density,omitempty"`
-	FaceRoads *bool                 `yaml:"face_roads,omitempty"` // pointer so absent == default(true)
-	Roads     []RawRoadStroke       `yaml:"roads,omitempty"`      // free-hand road paths
+// RawBiomeSector is the YAML representation of a user-drawn biome-paint
+// polygon (see BiomeSector). Points are stored in chunk-local coordinates
+// (like structural sector points) and re-derived to world space at load time
+// using the chunk's Origin/Rotation/Scale, so a sector moves with its chunk.
+type RawBiomeSector struct {
+	ID     string        `yaml:"id"`
+	Points []Point       `yaml:"points"`
+	Brush  RawBiomeBrush `yaml:"brush"`
 }
 
-// RawRoadStroke is the YAML form of a RoadStroke (world-XZ polyline + width).
-type RawRoadStroke struct {
-	Points []Point `yaml:"points"`
-	Width  float32 `yaml:"width,omitempty"`
-}
-
-// RawBuildingTemplate is the YAML form of a BuildingTemplate.
-type RawBuildingTemplate struct {
-	Name        string  `yaml:"name"`
-	Width       float32 `yaml:"width"`
-	Depth       float32 `yaml:"depth"`
-	Stories     int     `yaml:"stories"`
-	StoryHeight float32 `yaml:"story_height"`
-	WallThick   float32 `yaml:"wall_thick"`
-	Parapet     float32 `yaml:"parapet"`
-	DoorWidth   float32 `yaml:"door_width"`
-	Enterable   bool    `yaml:"enterable"`
-	WallTex     string  `yaml:"wall_tex"`
-	RoofTex     string  `yaml:"roof_tex"`
-	FloorTex    string  `yaml:"floor_tex"`
-	Weight      float32 `yaml:"weight"`
+// RawBiomeBrush is the YAML form of a BiomeBrush.
+type RawBiomeBrush struct {
+	Kind        int32    `yaml:"kind"`
+	Density     float32  `yaml:"density"`
+	Range       float32  `yaml:"range,omitempty"`
+	Color       RawColor `yaml:"color,omitempty"`
+	GrassHeight float32  `yaml:"grass_height,omitempty"`
+	GrassWidth  float32  `yaml:"grass_width,omitempty"`
+	RockSides   int32    `yaml:"rock_sides,omitempty"`
 }
 
 // RawEntityPosition holds the 3D spawn position of an entity.
@@ -228,12 +269,18 @@ type RawGlobalLight struct {
 }
 
 // RawDirLight is the YAML representation of a directional light.
+// Direction is written out for readability and for levels read by older builds;
+// Yaw/Pitch (degrees) are the authored values and win when present. They are
+// pointers so an absent pair is distinguishable from a deliberate 0/0, which
+// would otherwise be indistinguishable from "derive from direction".
 type RawDirLight struct {
 	Direction struct {
 		X float32 `yaml:"x"`
 		Y float32 `yaml:"y"`
 		Z float32 `yaml:"z"`
 	} `yaml:"direction"`
+	Yaw            *float32 `yaml:"yaw,omitempty"`
+	Pitch          *float32 `yaml:"pitch,omitempty"`
 	Color          RawColor `yaml:"color"`
 	Brightness     float32  `yaml:"brightness"`
 	CastShadows    bool     `yaml:"cast_shadows"`
@@ -297,26 +344,29 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		Scale:    sc,
 	}
 
-	chunk.PointNames = make(map[string]mgl32.Vec2, len(rc.Points))
-	for name, rp := range rc.Points {
-		chunk.PointNames[name] = mgl32.Vec2{rp.X, rp.Y}
-	}
-
 	cos32 := float32(math.Cos(float64(rc.Rotation)))
 	sin32 := float32(math.Sin(float64(rc.Rotation)))
-	transformedPoints := make(map[string]Point, len(rc.Points))
-	for name, rp := range rc.Points {
+
+	// Sort so the point pool is built in a deterministic order — Go map
+	// iteration is randomised, which would otherwise shuffle point indices on
+	// every load and make saved files churn between runs.
+	names := make([]string, 0, len(rc.Points))
+	for name := range rc.Points {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	chunk.PointNames = make([]string, 0, len(names))
+	pointNameToIdx := make(map[string]int, len(names))
+	for _, name := range names {
+		rp := rc.Points[name]
 		x := rp.X * sc
 		y := rp.Y * sc
 		tx := cos32*x - sin32*y + origin.X()
 		tz := sin32*x + cos32*y + origin.Z()
-		transformedPoints[name] = Point{X: tx, Y: tz}
-	}
-
-	pointNameToIdx := make(map[string]int, len(transformedPoints))
-	for name, rp := range transformedPoints {
 		pointNameToIdx[name] = len(chunk.Points)
-		chunk.Points = append(chunk.Points, mgl32.Vec2{rp.X, rp.Y})
+		chunk.Points = append(chunk.Points, mgl32.Vec2{tx, tz})
+		chunk.PointNames = append(chunk.PointNames, name)
 	}
 
 	for i, pt := range chunk.Points {
@@ -415,6 +465,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				UVOffset:      mgl32.Vec2{rs.Floor.UVOffset.X, rs.Floor.UVOffset.Y},
 				UVScale:       floorUVScale,
 				UVRotation:    rs.Floor.UVRotation,
+				Detail:        detailFromRaw(rs.Floor.Detail),
 			},
 			Ceiling: Ceiling{
 				Enabled:       rs.Ceiling.Enabled,
@@ -428,6 +479,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				UVOffset:      mgl32.Vec2{rs.Ceiling.UVOffset.X, rs.Ceiling.UVOffset.Y},
 				UVScale:       ceilUVScale,
 				UVRotation:    rs.Ceiling.UVRotation,
+				Detail:        detailFromRaw(rs.Ceiling.Detail),
 			},
 		}
 
@@ -438,22 +490,32 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			texNeeded[rs.Ceiling.Texture] = true
 		}
 
-		pointSeen := map[string]bool{}
-		var pointOrder []string
-		for _, e := range rs.Edges {
-			if !pointSeen[e.From] {
-				pointSeen[e.From] = true
-				pointOrder = append(pointOrder, e.From)
+		// A sector's edges must form a closed ring visiting each point exactly
+		// once. Silently de-duplicating a repeated name (as this used to do)
+		// produces a sector with fewer vertices than edges, which desynchronises
+		// Walls/Portals from EdgeKinds and yields degenerate, overlapping
+		// geometry. Reject the file instead so the damage is visible.
+		pointSeen := make(map[string]bool, len(rs.Edges))
+		for ei, e := range rs.Edges {
+			if pointSeen[e.From] {
+				return Chunk{}, nil, fmt.Errorf(
+					"sector %q: point %q appears more than once in the edge ring", rs.ID, e.From)
 			}
-			if !pointSeen[e.To] {
-				pointSeen[e.To] = true
-				pointOrder = append(pointOrder, e.To)
+			pointSeen[e.From] = true
+
+			next := rs.Edges[(ei+1)%len(rs.Edges)]
+			if e.To != next.From {
+				return Chunk{}, nil, fmt.Errorf(
+					"sector %q: edge %d ends at %q but edge %d starts at %q — edges must form a closed ring",
+					rs.ID, ei, e.To, (ei+1)%len(rs.Edges), next.From)
 			}
-		}
-		for _, name := range pointOrder {
-			if idx, ok := pointNameToIdx[name]; ok {
-				sector.PointIndices = append(sector.PointIndices, idx)
+
+			idx, ok := pointNameToIdx[e.From]
+			if !ok {
+				return Chunk{}, nil, fmt.Errorf(
+					"sector %q: edge references unknown point %q", rs.ID, e.From)
 			}
+			sector.PointIndices = append(sector.PointIndices, idx)
 		}
 
 		for _, edge := range rs.Edges {
@@ -490,6 +552,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 					UVOffset:      mgl32.Vec2{edge.UVOffset.X, edge.UVOffset.Y},
 					UVScale:       wallUVScale,
 					UVRotation:    edge.UVRotation,
+					Detail:        detailFromRaw(edge.Detail),
 				})
 				sector.EdgeKinds = append(sector.EdgeKinds, "wall")
 			case "portal":
@@ -511,20 +574,52 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 
 		reversed := signedArea2D(sectorPts) < 0
 		if reversed {
-			for i, j := 0, len(sector.PointIndices)-1; i < j; i, j = i+1, j-1 {
-				sector.PointIndices[i], sector.PointIndices[j] = sector.PointIndices[j], sector.PointIndices[i]
+			// Reversing vertex order shifts which polygon edge is which: new
+			// edge i is the reverse of old edge (n-2-i) mod n, not old edge
+			// (n-1-i) — a plain array-reverse of EdgeKinds/Walls/Portals
+			// misaligns edge kinds against the reversed points. Rebuild the
+			// per-edge kind/wall/portal records in the correct new order.
+			n := len(sector.PointIndices)
+			type edgeRec struct {
+				kind   string
+				wall   Wall
+				portal Portal
 			}
-			for i := range sector.Walls {
-				sector.Walls[i].StartPoint, sector.Walls[i].EndPoint =
-					sector.Walls[i].EndPoint, sector.Walls[i].StartPoint
+			recs := make([]edgeRec, n)
+			wi, pi := 0, 0
+			for i := 0; i < n; i++ {
+				if i < len(sector.EdgeKinds) && sector.EdgeKinds[i] == "portal" {
+					recs[i] = edgeRec{kind: "portal", portal: sector.Portals[pi]}
+					pi++
+				} else {
+					recs[i] = edgeRec{kind: "wall", wall: sector.Walls[wi]}
+					wi++
+				}
 			}
-			for i := range sector.Portals {
-				sector.Portals[i].StartPoint, sector.Portals[i].EndPoint =
-					sector.Portals[i].EndPoint, sector.Portals[i].StartPoint
+
+			newPointIndices := make([]int, n)
+			for i := 0; i < n; i++ {
+				newPointIndices[i] = sector.PointIndices[n-1-i]
 			}
-			for i, j := 0, len(sector.EdgeKinds)-1; i < j; i, j = i+1, j-1 {
-				sector.EdgeKinds[i], sector.EdgeKinds[j] = sector.EdgeKinds[j], sector.EdgeKinds[i]
+			sector.PointIndices = newPointIndices
+
+			newEdgeKinds := make([]string, n)
+			newWalls := make([]Wall, 0, len(sector.Walls))
+			newPortals := make([]Portal, 0, len(sector.Portals))
+			for i := 0; i < n; i++ {
+				rec := recs[((n-2-i)%n+n)%n]
+				newEdgeKinds[i] = rec.kind
+				if rec.kind == "portal" {
+					rec.portal.StartPoint, rec.portal.EndPoint = rec.portal.EndPoint, rec.portal.StartPoint
+					newPortals = append(newPortals, rec.portal)
+				} else {
+					rec.wall.StartPoint, rec.wall.EndPoint = rec.wall.EndPoint, rec.wall.StartPoint
+					newWalls = append(newWalls, rec.wall)
+				}
 			}
+			sector.EdgeKinds = newEdgeKinds
+			sector.Walls = newWalls
+			sector.Portals = newPortals
 			sectorPts = SectorPoints(&chunk, &sector)
 		}
 
@@ -629,14 +724,18 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			}
 
 			if s.Floor.Height < adj.Floor.Height {
-				verts, indices := buildGapQuad(start, end, s.Floor.Height, adj.Floor.Height, segLen)
+				lo1, lo2 := edgeHeights(&chunk, s, s.Floor.VertexHeight, start, end)
+				hi1, hi2 := edgeHeights(&chunk, adj, adj.Floor.VertexHeight, start, end)
+				verts, indices := buildGapQuad(start, end, lo1, lo2, hi1, hi2, segLen)
 				if err := p.FloorGap.Load(verts, indices, tex, mgl32.Vec3{}); err != nil {
 					return Chunk{}, nil, fmt.Errorf("portal floor gap %q→%q: %w", s.ID, p.ToSector, err)
 				}
 			}
 
 			if s.Ceiling.Enabled && adj.Ceiling.Enabled && s.Ceiling.Height > adj.Ceiling.Height {
-				verts, indices := buildGapQuad(start, end, adj.Ceiling.Height, s.Ceiling.Height, segLen)
+				lo1, lo2 := edgeHeights(&chunk, adj, adj.Ceiling.VertexHeight, start, end)
+				hi1, hi2 := edgeHeights(&chunk, s, s.Ceiling.VertexHeight, start, end)
+				verts, indices := buildGapQuad(start, end, lo1, lo2, hi1, hi2, segLen)
 				if err := p.CeilGap.Load(verts, indices, tex, mgl32.Vec3{}); err != nil {
 					return Chunk{}, nil, fmt.Errorf("portal ceil gap %q→%q: %w", s.ID, p.ToSector, err)
 				}
@@ -664,6 +763,8 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			kind = PrimitiveCylinder
 		case "plane":
 			kind = PrimitivePlane
+		case "water":
+			kind = PrimitiveWater
 		default:
 			kind = PrimitiveRectPrism
 		}
@@ -691,6 +792,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			UVOffset:   mgl32.Vec2{rp.UVOffset.X, rp.UVOffset.Y},
 			UVScale:    uvScale,
 			UVRotation: rp.UVRotation,
+			Water:      waterParamsFromRaw(rp.Water, kind),
 			ChunkID:    chunk.ID,
 		}
 
@@ -721,7 +823,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			prim.BoundHalfX = maxXZ / 2
 			prim.BoundHalfY = scale.Y() / 2
 			prim.BoundHalfZ = maxXZ / 2
-		case PrimitivePlane:
+		case PrimitivePlane, PrimitiveWater:
 			prim.BoundingKind = BoundingAABB
 			prim.BoundHalfX = scale.X() / 2
 			prim.BoundHalfY = 0.01
@@ -753,96 +855,34 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		}
 	}
 
-	// Attach the editable world grid (if any) for continued brush editing. The
-	// full geometry was loaded above, so manual edits persist verbatim.
-	if rc.WorldGrid != nil {
-		chunk.WorldGrid = worldGridFromRaw(rc.WorldGrid, chunk.ID)
+	// Bounds so far come only from the chunk's points; fold in primitives so a
+	// plane extending past the sector polygons isn't frustum-culled with them.
+	chunk.RecomputeBounds()
+
+	// Biome sector polygons — points are chunk-local, re-derived to world
+	// space using the same transform already applied to structural points.
+	for _, rb := range rc.BiomeSectors {
+		bs := BiomeSector{
+			ID:          rb.ID,
+			Points:      make([]mgl32.Vec2, len(rb.Points)),
+			HeightDirty: true,
+			Brush: BiomeBrush{
+				Kind:        rb.Brush.Kind,
+				Density:     rb.Brush.Density,
+				Range:       rb.Brush.Range,
+				Color:       mgl32.Vec3{rb.Brush.Color.R, rb.Brush.Color.G, rb.Brush.Color.B},
+				GrassHeight: rb.Brush.GrassHeight,
+				GrassWidth:  rb.Brush.GrassWidth,
+				RockSides:   rb.Brush.RockSides,
+			},
+		}
+		for i, rp := range rb.Points {
+			bs.Points[i] = transformPoint2D(mgl32.Vec2{rp.X, rp.Y}, origin, rc.Rotation, sc)
+		}
+		chunk.BiomeSectors = append(chunk.BiomeSectors, bs)
 	}
 
 	return chunk, texNeeded, nil
-}
-
-// worldGridFromRaw reconstructs a WorldGrid from its serialised form.
-func worldGridFromRaw(rw *RawWorldGrid, chunkID string) *WorldGrid {
-	g := &WorldGrid{
-		Cols:      rw.Cols,
-		Rows:      rw.Rows,
-		CellSize:  rw.CellSize,
-		Origin:    mgl32.Vec2{rw.Origin.X, rw.Origin.Y},
-		Seed:      rw.Seed,
-		Heights:   append([]float32(nil), rw.Heights...),
-		CellCity:  append([]int32(nil), rw.CellCity...),
-		ChunkID:   chunkID,
-		StyleName: rw.StyleName,
-	}
-	g.CellType = make([]WorldTerrainType, len(rw.CellType))
-	for i, v := range rw.CellType {
-		g.CellType[i] = WorldTerrainType(v)
-	}
-	if g.StyleName == "" {
-		g.StyleName = "desert"
-	}
-
-	g.Density = rw.Density
-	g.FaceRoads = true
-	if rw.FaceRoads != nil {
-		g.FaceRoads = *rw.FaceRoads
-	}
-
-	// GPU-scattered biomes. Always allocate the per-cell arrays so the brush and
-	// mask upload can index them even on older saves that predate biomes.
-	nCells := rw.Cols * rw.Rows
-	g.GrassDensity = make([]float32, nCells)
-	g.RockDensity = make([]float32, nCells)
-	copy(g.GrassDensity, rw.GrassDensity)
-	copy(g.RockDensity, rw.RockDensity)
-	g.GrassRange = rw.GrassRange
-	if g.GrassRange <= 0 {
-		g.GrassRange = defaultGrassRange
-	}
-	g.RockRange = rw.RockRange
-	if g.RockRange <= 0 {
-		g.RockRange = defaultRockRange
-	}
-	g.GrassHeight = rw.GrassHeight
-	if g.GrassHeight <= 0 {
-		g.GrassHeight = defaultGrassHeight
-	}
-	g.GrassWidth = rw.GrassWidth
-	if g.GrassWidth <= 0 {
-		g.GrassWidth = defaultGrassWidth
-	}
-	g.RockSides = rw.RockSides
-	if g.RockSides < 3 {
-		g.RockSides = defaultRockSides
-	}
-	for _, rt := range rw.Palette {
-		g.Palette = append(g.Palette, BuildingTemplate{
-			Name:        rt.Name,
-			Width:       rt.Width,
-			Depth:       rt.Depth,
-			Stories:     rt.Stories,
-			StoryHeight: rt.StoryHeight,
-			WallThick:   rt.WallThick,
-			Parapet:     rt.Parapet,
-			DoorWidth:   rt.DoorWidth,
-			Enterable:   rt.Enterable,
-			WallTex:     rt.WallTex,
-			RoofTex:     rt.RoofTex,
-			FloorTex:    rt.FloorTex,
-			Weight:      rt.Weight,
-		})
-	}
-	for _, rs := range rw.Roads {
-		stroke := RoadStroke{Width: rs.Width}
-		for _, p := range rs.Points {
-			stroke.Points = append(stroke.Points, mgl32.Vec2{p.X, p.Y})
-		}
-		if len(stroke.Points) >= 2 {
-			g.Roads = append(g.Roads, stroke)
-		}
-	}
-	return g
 }
 
 // LoadLevel reads a YAML level file, converts it to runtime types, and uploads
@@ -859,6 +899,67 @@ func LoadLevel(levelPath string) (Level, error) {
 		return Level{}, err
 	}
 
+	return rawToLevel(raw)
+}
+
+// blankRawLevel returns a minimal valid RawLevel: a single four-walled room
+// lit by soft ambient light. Used to write a starter file from the editor's
+// "New Level" dialog.
+func blankRawLevel() RawLevel {
+	return RawLevel{
+		Chunks: []RawChunk{{
+			ID: "default",
+			Points: map[string]Point{
+				"A": {X: -4, Y: -4},
+				"B": {X: 4, Y: -4},
+				"C": {X: 4, Y: 4},
+				"D": {X: -4, Y: 4},
+			},
+			Sectors: []RawSector{{
+				ID: "room",
+				Floor: RawFloor{
+					Enabled: true,
+					Height:  0,
+					Texture: "default",
+				},
+				Ceiling: RawCeiling{
+					Enabled: true,
+					Height:  4,
+					Texture: "default",
+				},
+				Edges: []RawEdge{
+					{From: "A", To: "B", Kind: "wall", Texture: "default", Collision: true},
+					{From: "B", To: "C", Kind: "wall", Texture: "default", Collision: true},
+					{From: "C", To: "D", Kind: "wall", Texture: "default", Collision: true},
+					{From: "D", To: "A", Kind: "wall", Texture: "default", Collision: true},
+				},
+			}},
+		}},
+		Lights: RawLights{
+			Global: RawGlobalLight{Color: RawColor{R: 1, G: 1, B: 1}, Brightness: 0.3},
+		},
+	}
+}
+
+// NewBlankLevel builds a completely empty in-memory level (no chunks or
+// entities, and not backed by any file on disk) suitable for opening the
+// editor to a truly blank scene. It still carries the same default ambient
+// light as blankRawLevel — a level with zero lights renders everything pure
+// black (see fragment.glsl: lighting starts at globalLightColor *
+// globalLightBrightness and only grows from there), so geometry added via
+// "New Chunk" would otherwise be invisible until a light is added by hand.
+// The caller is responsible for saving it if they want to keep it.
+func NewBlankLevel() (Level, error) {
+	return rawToLevel(RawLevel{
+		Lights: RawLights{
+			Global: RawGlobalLight{Color: RawColor{R: 1, G: 1, B: 1}, Brightness: 0.3},
+		},
+	})
+}
+
+// rawToLevel converts a parsed RawLevel into runtime types and uploads all
+// referenced geometry/textures to the GPU.
+func rawToLevel(raw RawLevel) (Level, error) {
 	var level Level
 	texNeeded := map[string]bool{}
 
@@ -917,13 +1018,19 @@ func LoadLevel(levelPath string) (Level, error) {
 		if ss == 0 && rd.CastShadows {
 			ss = 0.5 // default to half-strength shadows
 		}
-		level.Lights.Directional = append(level.Lights.Directional, DirectionalLight{
-			Direction:      mgl32.Vec3{rd.Direction.X, rd.Direction.Y, rd.Direction.Z},
+		dl := DirectionalLight{
 			Color:          mgl32.Vec3{rd.Color.R, rd.Color.G, rd.Color.B},
 			Brightness:     rd.Brightness,
 			CastShadows:    rd.CastShadows,
 			ShadowStrength: ss,
-		})
+		}
+		if rd.Yaw != nil && rd.Pitch != nil {
+			dl.Yaw, dl.Pitch = *rd.Yaw, *rd.Pitch
+		} else {
+			dl.Yaw, dl.Pitch = DirLightYawPitch(mgl32.Vec3{rd.Direction.X, rd.Direction.Y, rd.Direction.Z})
+		}
+		dl.SyncDirection()
+		level.Lights.Directional = append(level.Lights.Directional, dl)
 	}
 	for _, rp := range rl.Point {
 		ss := rp.ShadowStrength
@@ -977,13 +1084,28 @@ func float32Default(p *float32, def float32) float32 {
 
 // buildGapQuad returns the vertices and indices for a vertical quad spanning
 // from lo to hi between start and end (in XZ), with the given segment length.
-func buildGapQuad(start, end mgl32.Vec2, lo, hi, segLen float32) ([][]float32, []int) {
-	gapH := hi - lo
-	a := []float32{start.X(), hi, start.Y(), 0, 0}
-	b := []float32{end.X(), hi, end.Y(), segLen, 0}
-	c := []float32{end.X(), lo, end.Y(), segLen, gapH}
-	d := []float32{start.X(), lo, start.Y(), 0, gapH}
+func buildGapQuad(start, end mgl32.Vec2, lo1, lo2, hi1, hi2, segLen float32) ([][]float32, []int) {
+	// Sloped surfaces can cross within the edge; collapse rather than invert
+	// the quad so the face never winds backwards.
+	if hi1 < lo1 {
+		hi1 = lo1
+	}
+	if hi2 < lo2 {
+		hi2 = lo2
+	}
+	a := []float32{start.X(), hi1, start.Y(), 0, 0}
+	b := []float32{end.X(), hi2, end.Y(), segLen, 0}
+	c := []float32{end.X(), lo2, end.Y(), segLen, hi2 - lo2}
+	d := []float32{start.X(), lo1, start.Y(), 0, hi1 - lo1}
 	return [][]float32{a, b, c, d}, []int{0, 1, 2, 2, 3, 0}
+}
+
+// edgeHeights returns a sector surface's height at the two endpoints of an edge,
+// honoring per-vertex offsets. Endpoints that aren't sector vertices fall back
+// to the surface's flat height.
+func edgeHeights(ch *Chunk, s *Sector, vertexHeight func(int) float32, start, end mgl32.Vec2) (float32, float32) {
+	pts := SectorPoints(ch, s)
+	return vertexHeight(findVertexIdx(pts, start)), vertexHeight(findVertexIdx(pts, end))
 }
 
 // signedArea2D computes the signed area of a 2D polygon (shoelace formula).

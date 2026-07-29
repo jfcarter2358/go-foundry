@@ -399,11 +399,6 @@ func resolveWallsForSector(
 ) {
 	pts := SectorPoints(chunk, s)
 
-	baseCeilH := s.Ceiling.Height
-	if !s.Ceiling.Enabled && baseCeilH == s.Floor.Height {
-		baseCeilH = s.Floor.Height + 3.0
-	}
-
 	for _, wall := range s.Walls {
 		if !wall.Collision {
 			continue
@@ -420,12 +415,7 @@ func resolveWallsForSector(
 		// below the wall's endpoint floor heights while still inside the sector.
 		si1 := findVertexIdx(pts, wall.StartPoint)
 		si2 := findVertexIdx(pts, wall.EndPoint)
-		var ceilH float32
-		if s.Ceiling.Enabled {
-			ceilH = s.Ceiling.VertexHeight(si1)*(1-t) + s.Ceiling.VertexHeight(si2)*t
-		} else {
-			ceilH = baseCeilH
-		}
+		ceilH := s.WallTopHeight(si1)*(1-t) + s.WallTopHeight(si2)*t
 
 		if entityMinY >= ceilH {
 			continue
