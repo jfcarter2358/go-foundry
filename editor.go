@@ -42,6 +42,33 @@ type EditorState struct {
 	ActiveEntityIdx    int // index into level.Entities; -1 = none
 	ActivePrimitiveIdx int // index into active chunk's Primitives; -1 = none
 
+	// Face of the selected sector picked by a 3D click: "floor", "ceiling",
+	// "wall", "portal", or "" for none. Walls/portals also set ActiveEdgeKind.
+	ActiveSurface string
+
+	// Sector vertices selected by clicking their handle boxes in 3D. The first
+	// entry is the primary one and mirrors ActiveVertexSI/VI; ctrl+click adds
+	// the rest. Empty = no vertex selection.
+	SelectedVertices []vertexSel
+
+	// --- Three-axis translate gizmo (3D + scenery modes) ---
+	GizmoKind         string       // what the gizmo targets; see the gizmoKind* constants
+	GizmoDragging     bool         // an axis drag is in progress
+	GizmoDragAxis     int          // axis being dragged: 0=X, 1=Y, 2=Z; -1 = not dragging
+	GizmoDragOrigin   mgl32.Vec3   // gizmo position when the drag started
+	GizmoDragStartS   float32      // position along the drag axis under the cursor at mouse-down
+	GizmoDragStartPos mgl32.Vec3   // primitive/entity position, or chunk origin, at mouse-down
+	GizmoDragPoints   []mgl32.Vec2 // per selected vertex: chunk point XZ at mouse-down
+	GizmoDragOffsets  []float32    // per selected vertex: height offset at mouse-down
+	// One-shot request from a selection change to open (and scroll to) a
+	// properties section in the side panel. See the panelFocus* constants;
+	// cleared by the panel once it has been applied.
+	PanelFocus string
+
+	// Directional light whose open tree node is showing in the light panel;
+	// -1 = none. Drives the on-screen direction indicator only.
+	SelectedDirLightIdx int
+
 	// Saved gameplay camera state (restored on editor exit)
 	SavedCamPos   mgl32.Vec3
 	SavedCamYaw   float32
@@ -188,13 +215,20 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.ActiveChunkIdx = 0
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveEdgeIdx = -1
+	Editor.ActiveSurface = ""
+	Editor.PanelFocus = ""
 	Editor.ActiveEntityIdx = -1
 	Editor.ActivePrimitiveIdx = -1
+	Editor.SelectedDirLightIdx = -1
 	Editor.PrimPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
 	Editor.ActiveVertexVI = -1
+	Editor.SelectedVertices = nil
+	Editor.GizmoKind = gizmoKindNone
+	Editor.GizmoDragAxis = -1
+	Editor.GizmoDragging = false
 	Editor.ConnectFromIdx = -1
 	Editor.PendingEdges = nil
 	Editor.ActiveExtrusionIdx = -1
@@ -417,6 +451,8 @@ func EditorHandleEvent(event sdl.Event) bool {
 					Editor.MouseDragging3D = true
 					Editor.LastDragX = t.X
 					Editor.LastDragY = t.Y
+				} else if translateGizmoMouseDown(t) {
+					// Grabbed an axis arm — the click must not re-select.
 				} else {
 					SceneryEditorHandleClick(t)
 				}
@@ -429,6 +465,8 @@ func EditorHandleEvent(event sdl.Event) bool {
 					Editor.LastDragY = t.Y
 				} else if Editor.ExtrusionMode && editorExtrusionHandleClick(t) {
 					// Extrusion placement consumed the click
+				} else if translateGizmoMouseDown(t) {
+					// Grabbed an axis arm — the click must not re-select.
 				} else {
 					Editor3DHandleClick(t)
 				}
@@ -436,6 +474,10 @@ func EditorHandleEvent(event sdl.Event) bool {
 				Editor2DHandleClick(t)
 			}
 		} else if t.Type == sdl.MOUSEBUTTONUP {
+			if t.Button == sdl.ButtonLeft && translateGizmoDragging() {
+				translateGizmoMouseUp()
+				return true
+			}
 			if Editor.Mode == ModeScenery && t.Button == sdl.ButtonRight {
 				Editor.MouseDragging3D = false
 			} else if Editor.Mode == ModeSurface2D {
@@ -448,6 +490,11 @@ func EditorHandleEvent(event sdl.Event) bool {
 		}
 
 	case sdl.MouseMotionEvent:
+		// An axis drag owns the mouse until release.
+		if translateGizmoDragging() {
+			translateGizmoMouseMove(t.X, t.Y)
+			return true
+		}
 		if Editor.Mode == ModeScenery && Editor.MouseDragging3D {
 			dx := t.X - Editor.LastDragX
 			dy := t.Y - Editor.LastDragY
@@ -725,13 +772,20 @@ func EditorLoadLevel(path string) error {
 	Editor.ActiveChunkIdx = 0
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveEdgeIdx = -1
+	Editor.ActiveSurface = ""
+	Editor.PanelFocus = ""
 	Editor.ActiveEntityIdx = -1
 	Editor.ActivePrimitiveIdx = -1
+	Editor.SelectedDirLightIdx = -1
 	Editor.PrimPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
 	Editor.ActiveVertexVI = -1
+	Editor.SelectedVertices = nil
+	Editor.GizmoKind = gizmoKindNone
+	Editor.GizmoDragAxis = -1
+	Editor.GizmoDragging = false
 	Editor.ConnectFromIdx = -1
 	Editor.PendingEdges = nil
 	Editor.ActiveExtrusionIdx = -1

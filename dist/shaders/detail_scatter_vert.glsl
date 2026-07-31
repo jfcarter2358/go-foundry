@@ -12,26 +12,30 @@ layout(location = 2) in float aParam;
 uniform mat4 projection;
 uniform mat4 camera;
 
-#define MAX_DIR_LIGHTS 4
-uniform int  numDirLights;
-uniform mat4 lightSpaceMatrix[MAX_DIR_LIGHTS];
-
 out vec2 fragTexCoord;
 out vec3 fragWorldPos;
-out vec4 fragPosLightSpace[MAX_DIR_LIGHTS];
+out vec3 fragNormal;
+// View-axis distance; the fragment stage uses it to select a shadow cascade.
+out float fragViewDepth;
 
 void main() {
-    vec3 w;
-    if (!scatterPlace(gl_InstanceID, aLocal, w)) {
+    vec3 w, n;
+    if (!scatterPlaceN(gl_InstanceID, aLocal, aNormal, w, n)) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // collapse off-screen; clipped away
         fragTexCoord = vec2(0.0);
         fragWorldPos = vec3(0.0);
+        fragNormal = vec3(0.0);
+        fragViewDepth = 0.0;
         return;
     }
     fragTexCoord = aLocal.xz * 0.5 + 0.5;
     fragWorldPos = w;
-    for (int i = 0; i < numDirLights; i++) {
-        fragPosLightSpace[i] = lightSpaceMatrix[i] * vec4(w, 1.0);
-    }
-    gl_Position = projection * camera * vec4(w, 1.0);
+    // The rock template carries one normal per facet, so this matches the flat
+    // normal the fragment stage would derive — but without the derivative, and
+    // it follows the mesh if it ever gains smoothed normals.
+    fragNormal = n;
+
+    vec4 viewPos = camera * vec4(w, 1.0);
+    fragViewDepth = -viewPos.z;
+    gl_Position = projection * viewPos;
 }

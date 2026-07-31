@@ -46,6 +46,26 @@ func (e *Entity) ModelMatrix() mgl32.Mat4 {
 	return T.Mul4(Ry).Mul4(Rx).Mul4(Rz).Mul4(S)
 }
 
+// WorldAABB returns the entity's world-space bounds from its bounding
+// half-extents, scaled and (conservatively) rotated. ok is false when no
+// extents are authored, in which case the caller must not cull the entity — an
+// unbounded entity is not a zero-sized one. A rotated entity uses the extents'
+// length as a uniform radius so the box stays valid at any orientation.
+func (e *Entity) WorldAABB() (min, max mgl32.Vec3, ok bool) {
+	h := mgl32.Vec3{e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ}
+	if h.X() <= 0 || h.Y() <= 0 || h.Z() <= 0 {
+		return mgl32.Vec3{}, mgl32.Vec3{}, false
+	}
+	if s := e.Scale; s != (mgl32.Vec3{}) {
+		h = mgl32.Vec3{h.X() * abs32(s.X()), h.Y() * abs32(s.Y()), h.Z() * abs32(s.Z())}
+	}
+	if e.Rotation != (mgl32.Vec3{}) {
+		r := h.Len()
+		h = mgl32.Vec3{r, r, r}
+	}
+	return e.Position.Sub(h), e.Position.Add(h), true
+}
+
 // Load uploads the entity's OBJ model to the GPU.
 // Skipped when ModelPath is empty (e.g. invisible first-person player).
 func (e *Entity) Load() error {

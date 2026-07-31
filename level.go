@@ -40,18 +40,39 @@ type RawTerrainPoint struct {
 	Depth float32 `yaml:"depth"`
 }
 
-// RawDetail is the YAML representation of a face's procedural detail (rocks).
+// RawDetailWave is the YAML representation of one displacement wave layer.
+type RawDetailWave struct {
+	Enabled   bool    `yaml:"enabled"`
+	Amplitude float32 `yaml:"amplitude,omitempty"`
+	Frequency float32 `yaml:"frequency,omitempty"`
+	Rotation  float32 `yaml:"rotation,omitempty"` // degrees within the face plane
+	TessLevel float32 `yaml:"tess_level,omitempty"`
+}
+
+// RawDetail is the YAML representation of a face's procedural detail.
 // Present only when a face has detail enabled (omitempty on the pointer).
 type RawDetail struct {
 	Preset string `yaml:"preset,omitempty"`
 	Seed   int64  `yaml:"seed"`
 
-	Displace  bool    `yaml:"displace,omitempty"`
+	Displace bool            `yaml:"displace,omitempty"`
+	Waves    []RawDetailWave `yaml:"waves,omitempty"`
+
+	Noise          bool    `yaml:"noise,omitempty"`
+	NoiseAmplitude float32 `yaml:"noise_amplitude,omitempty"`
+	NoiseFrequency float32 `yaml:"noise_frequency,omitempty"`
+	NoiseOctaves   int     `yaml:"noise_octaves,omitempty"`
+	NoiseTessLevel float32 `yaml:"noise_tess_level,omitempty"`
+
+	EdgeTaper float32 `yaml:"edge_taper,omitempty"`
+
+	// Legacy single-layer displacement fields (pre-waves levels). Load-only:
+	// detailFromRaw folds them into wave 0 + the noise layer, and they are never
+	// written back.
 	Amplitude float32 `yaml:"amplitude,omitempty"`
 	Frequency float32 `yaml:"frequency,omitempty"`
 	Octaves   int     `yaml:"octaves,omitempty"`
 	TessLevel float32 `yaml:"tess_level,omitempty"`
-	EdgeTaper float32 `yaml:"edge_taper,omitempty"`
 
 	Scatter        bool    `yaml:"scatter,omitempty"`
 	ScatterMesh    string  `yaml:"scatter_mesh,omitempty"`
@@ -74,10 +95,11 @@ func detailFromRaw(r *RawDetail) DetailSpec {
 		Preset:         r.Preset,
 		Seed:           r.Seed,
 		Displace:       r.Displace,
-		Amplitude:      r.Amplitude,
-		Frequency:      r.Frequency,
-		Octaves:        r.Octaves,
-		TessLevel:      r.TessLevel,
+		Noise:          r.Noise,
+		NoiseAmplitude: r.NoiseAmplitude,
+		NoiseFrequency: r.NoiseFrequency,
+		NoiseOctaves:   r.NoiseOctaves,
+		NoiseTessLevel: r.NoiseTessLevel,
 		EdgeTaper:      r.EdgeTaper,
 		Scatter:        r.Scatter,
 		ScatterMesh:    r.ScatterMesh,
@@ -87,6 +109,27 @@ func detailFromRaw(r *RawDetail) DetailSpec {
 		ScatterScale:   r.ScatterScale,
 		ScatterJitter:  r.ScatterJitter,
 		ScatterRange:   r.ScatterRange,
+	}
+	for i, w := range r.Waves {
+		if i >= detailMaxWaves {
+			break
+		}
+		d.Waves[i] = DetailWave{
+			Enabled:   w.Enabled,
+			Amplitude: w.Amplitude,
+			Frequency: w.Frequency,
+			Rotation:  w.Rotation,
+			TessLevel: w.TessLevel,
+		}
+	}
+	// Legacy levels stored one noise layer as amplitude/frequency/octaves/tess.
+	// Fold it into the noise layer so old faces keep their look.
+	if len(r.Waves) == 0 && !r.Noise && r.Amplitude != 0 {
+		d.Noise = true
+		d.NoiseAmplitude = r.Amplitude
+		d.NoiseFrequency = r.Frequency
+		d.NoiseOctaves = r.Octaves
+		d.NoiseTessLevel = r.TessLevel
 	}
 	d.clamp()
 	return d
@@ -113,6 +156,8 @@ type RawEdge struct {
 	UVScale       Point             `yaml:"uv_scale,omitempty"`
 	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
 	Detail        *RawDetail        `yaml:"detail,omitempty"`
+	Smooth        bool              `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
+	SmoothAngle   float32           `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
 }
 
 // RawFloor is the YAML representation of a sector floor.
@@ -130,6 +175,8 @@ type RawFloor struct {
 	UVScale       Point             `yaml:"uv_scale,omitempty"`
 	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
 	Detail        *RawDetail        `yaml:"detail,omitempty"`
+	Smooth        bool              `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
+	SmoothAngle   float32           `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
 }
 
 // RawCeiling is the YAML representation of a sector ceiling.
@@ -147,6 +194,8 @@ type RawCeiling struct {
 	UVScale       Point             `yaml:"uv_scale,omitempty"`
 	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
 	Detail        *RawDetail        `yaml:"detail,omitempty"`
+	Smooth        bool              `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
+	SmoothAngle   float32           `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
 }
 
 // RawSector is the YAML representation of one sector.
@@ -171,6 +220,8 @@ type RawPrimitive struct {
 	UVOffset   Point             `yaml:"uv_offset,omitempty"`
 	UVScale    Point             `yaml:"uv_scale,omitempty"`  // zero = {1,1}
 	UVRotation float32           `yaml:"uv_rotation,omitempty"` // radians
+	Smooth      bool             `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
+	SmoothAngle float32          `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
 	Water      *RawWater         `yaml:"water,omitempty"`       // water primitives only
 }
 
@@ -466,6 +517,8 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				UVScale:       floorUVScale,
 				UVRotation:    rs.Floor.UVRotation,
 				Detail:        detailFromRaw(rs.Floor.Detail),
+				Smooth:        rs.Floor.Smooth,
+				SmoothAngle:   rs.Floor.SmoothAngle,
 			},
 			Ceiling: Ceiling{
 				Enabled:       rs.Ceiling.Enabled,
@@ -480,6 +533,8 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				UVScale:       ceilUVScale,
 				UVRotation:    rs.Ceiling.UVRotation,
 				Detail:        detailFromRaw(rs.Ceiling.Detail),
+				Smooth:        rs.Ceiling.Smooth,
+				SmoothAngle:   rs.Ceiling.SmoothAngle,
 			},
 		}
 
@@ -553,6 +608,8 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 					UVScale:       wallUVScale,
 					UVRotation:    edge.UVRotation,
 					Detail:        detailFromRaw(edge.Detail),
+					Smooth:        edge.Smooth,
+					SmoothAngle:   edge.SmoothAngle,
 				})
 				sector.EdgeKinds = append(sector.EdgeKinds, "wall")
 			case "portal":
@@ -791,8 +848,10 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			Alpha:      float32Default(rp.Alpha, 1.0),
 			UVOffset:   mgl32.Vec2{rp.UVOffset.X, rp.UVOffset.Y},
 			UVScale:    uvScale,
-			UVRotation: rp.UVRotation,
-			Water:      waterParamsFromRaw(rp.Water, kind),
+			UVRotation:  rp.UVRotation,
+			Smooth:      rp.Smooth,
+			SmoothAngle: rp.SmoothAngle,
+			Water:       waterParamsFromRaw(rp.Water, kind),
 			ChunkID:    chunk.ID,
 		}
 
@@ -957,6 +1016,52 @@ func NewBlankLevel() (Level, error) {
 	})
 }
 
+// rawToLightSet converts parsed YAML lights into runtime lights. Split out of
+// rawToLevel because it touches no GPU state.
+func rawToLightSet(rl RawLights) LightSet {
+	var ls LightSet
+	ls.Global = GlobalLight{
+		Color:      mgl32.Vec3{rl.Global.Color.R, rl.Global.Color.G, rl.Global.Color.B},
+		Brightness: rl.Global.Brightness,
+	}
+	for _, rd := range rl.Directional {
+		ss := rd.ShadowStrength
+		if ss == 0 && rd.CastShadows {
+			ss = 0.5 // default to half-strength shadows
+		}
+		dl := DirectionalLight{
+			Color:          mgl32.Vec3{rd.Color.R, rd.Color.G, rd.Color.B},
+			Brightness:     rd.Brightness,
+			CastShadows:    rd.CastShadows,
+			ShadowStrength: ss,
+		}
+		// Angles are authoritative when present; otherwise derive them from the
+		// direction vector, which is all pre-rotation levels stored.
+		if rd.Yaw != nil && rd.Pitch != nil {
+			dl.Yaw, dl.Pitch = *rd.Yaw, *rd.Pitch
+		} else {
+			dl.Yaw, dl.Pitch = DirLightYawPitch(mgl32.Vec3{rd.Direction.X, rd.Direction.Y, rd.Direction.Z})
+		}
+		dl.SyncDirection()
+		ls.Directional = append(ls.Directional, dl)
+	}
+	for _, rp := range rl.Point {
+		ss := rp.ShadowStrength
+		if ss == 0 && rp.CastShadows {
+			ss = 0.5
+		}
+		ls.Points = append(ls.Points, PointLight{
+			Position:       mgl32.Vec3{rp.Position.X, rp.Position.Y, rp.Position.Z},
+			Color:          mgl32.Vec3{rp.Color.R, rp.Color.G, rp.Color.B},
+			Brightness:     rp.Brightness,
+			Radius:         rp.Radius,
+			CastShadows:    rp.CastShadows,
+			ShadowStrength: ss,
+		})
+	}
+	return ls
+}
+
 // rawToLevel converts a parsed RawLevel into runtime types and uploads all
 // referenced geometry/textures to the GPU.
 func rawToLevel(raw RawLevel) (Level, error) {
@@ -1008,44 +1113,7 @@ func rawToLevel(raw RawLevel) (Level, error) {
 	}
 
 	// Convert lights
-	rl := raw.Lights
-	level.Lights.Global = GlobalLight{
-		Color:      mgl32.Vec3{rl.Global.Color.R, rl.Global.Color.G, rl.Global.Color.B},
-		Brightness: rl.Global.Brightness,
-	}
-	for _, rd := range rl.Directional {
-		ss := rd.ShadowStrength
-		if ss == 0 && rd.CastShadows {
-			ss = 0.5 // default to half-strength shadows
-		}
-		dl := DirectionalLight{
-			Color:          mgl32.Vec3{rd.Color.R, rd.Color.G, rd.Color.B},
-			Brightness:     rd.Brightness,
-			CastShadows:    rd.CastShadows,
-			ShadowStrength: ss,
-		}
-		if rd.Yaw != nil && rd.Pitch != nil {
-			dl.Yaw, dl.Pitch = *rd.Yaw, *rd.Pitch
-		} else {
-			dl.Yaw, dl.Pitch = DirLightYawPitch(mgl32.Vec3{rd.Direction.X, rd.Direction.Y, rd.Direction.Z})
-		}
-		dl.SyncDirection()
-		level.Lights.Directional = append(level.Lights.Directional, dl)
-	}
-	for _, rp := range rl.Point {
-		ss := rp.ShadowStrength
-		if ss == 0 && rp.CastShadows {
-			ss = 0.5
-		}
-		level.Lights.Points = append(level.Lights.Points, PointLight{
-			Position:       mgl32.Vec3{rp.Position.X, rp.Position.Y, rp.Position.Z},
-			Color:          mgl32.Vec3{rp.Color.R, rp.Color.G, rp.Color.B},
-			Brightness:     rp.Brightness,
-			Radius:         rp.Radius,
-			CastShadows:    rp.CastShadows,
-			ShadowStrength: ss,
-		})
-	}
+	level.Lights = rawToLightSet(raw.Lights)
 
 	// Load all textures referenced by this level
 	for name := range texNeeded {

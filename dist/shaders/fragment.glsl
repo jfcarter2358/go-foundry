@@ -24,11 +24,24 @@ uniform vec3  dirLightDir[MAX_DIR_LIGHTS];
 uniform vec3  dirLightColor[MAX_DIR_LIGHTS];
 uniform float dirLightBrightness[MAX_DIR_LIGHTS];
 
-// Directional shadow maps
-uniform sampler2D shadowMap[MAX_DIR_LIGHTS];
-uniform bool      dirLightCastShadows[MAX_DIR_LIGHTS];
-uniform float     dirLightShadowStrength[MAX_DIR_LIGHTS];
-uniform float     shadowBias;
+// Directional cascaded shadow maps.
+//
+// SHADOW_CASCADES, SHADOW_CASCADE_BLEND and SHADOW_FADE_FRACTION must match
+// ShadowCascades / ShadowCascadeBlend / shadowFadeFraction in shadow.go.
+#define SHADOW_CASCADES       3
+#define SHADOW_CASCADE_BLEND  0.12
+#define SHADOW_FADE_FRACTION  0.15
+
+// One array texture holds every cascade of every casting light — MAX_DIR_LIGHTS
+// * SHADOW_CASCADES separate sampler2Ds would blow the 16 fragment texture
+// units GL 4.1 guarantees.
+uniform sampler2DArray shadowMapArray;
+uniform mat4  cascadeMatrix[MAX_DIR_LIGHTS * SHADOW_CASCADES];
+uniform float cascadeBias[MAX_DIR_LIGHTS * SHADOW_CASCADES];
+uniform float cascadeSplit[SHADOW_CASCADES]; // view-space distance each cascade ends at
+uniform int   dirLightShadowLayer[MAX_DIR_LIGHTS]; // first array layer, -1 = light doesn't cast
+uniform bool  dirLightCastShadows[MAX_DIR_LIGHTS];
+uniform float dirLightShadowStrength[MAX_DIR_LIGHTS];
 
 // Point lights
 #define MAX_POINT_LIGHTS 8
@@ -44,9 +57,19 @@ uniform bool        pointLightCastShadows[MAX_POINT_LIGHTS];
 uniform float       pointLightShadowStrength[MAX_POINT_LIGHTS];
 uniform float       pointLightFarPlane[MAX_POINT_LIGHTS];
 
+// Smooth shading. When set, the surface normal is the interpolated per-vertex
+// normal supplied by the vertex/tessellation stage instead of the flat facet
+// the derivatives below recover — see smooth.go.
+uniform int smoothShading;
+
 in vec2 fragTexCoord;
 in vec3 fragWorldPos;
-in vec4 fragPosLightSpace[MAX_DIR_LIGHTS];
+in vec3 fragNormal;
+// Distance along the view axis, used to pick a cascade. The light-space
+// positions themselves are derived here from fragWorldPos rather than passed as
+// varyings — a vec4 per light per cascade would be 48 float varyings against a
+// guaranteed budget of 60.
+in float fragViewDepth;
 
 out vec4 outputColor;
 
@@ -75,34 +98,92 @@ vec3 waterNormal(vec2 p) {
     return normalize(vec3(hL - hR, 2.0 * e, hD - hU));
 }
 
-// 5x5 PCF shadow sampling for soft directional shadows.
-float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
-    vec4 posLS = fragPosLightSpace[lightIdx];
+// 5x5 PCF sample of a single cascade layer. Returns occlusion in 0..1, or -1.0
+// when the fragment falls outside this cascade's box — the caller then falls
+// through to a wider cascade rather than reporting the fragment as lit.
+float sampleCascade(int matIdx, int layer, vec3 normal, vec3 lightDir) {
+    vec4 posLS = cascadeMatrix[matIdx] * vec4(fragWorldPos, 1.0);
     vec3 projCoords = posLS.xyz / posLS.w;
     projCoords = projCoords * 0.5 + 0.5;
 
-    // Fragments outside the shadow map are lit
     if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
         projCoords.y < 0.0 || projCoords.y > 1.0 ||
         projCoords.z > 1.0) {
-        return 0.0;
+        return -1.0;
     }
 
-    // Quadratic slope-scaled bias — tighter than linear at seams
+    // Quadratic slope-scaled bias — tighter than linear at seams. The base bias
+    // is per-cascade because each cascade normalizes the same world-space bias
+    // over its own depth range.
+    float base = cascadeBias[matIdx];
     float cosTheta = abs(dot(normal, lightDir));
-    float bias = shadowBias * (1.0 - cosTheta) * (1.0 - cosTheta) + shadowBias * 0.05;
+    float bias = base * (1.0 - cosTheta) * (1.0 - cosTheta) + base * 0.05;
     float currentDepth = projCoords.z;
 
     // 5x5 PCF for softer edges
     float shadow = 0.0;
-    vec2 texelSize = 1.0 / textureSize(shadowMap[lightIdx], 0);
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMapArray, 0).xy);
     for (int x = -2; x <= 2; x++) {
         for (int y = -2; y <= 2; y++) {
-            float pcfDepth = texture(shadowMap[lightIdx], projCoords.xy + vec2(x, y) * texelSize).r;
+            float pcfDepth = texture(shadowMapArray,
+                vec3(projCoords.xy + vec2(x, y) * texelSize, float(layer))).r;
             shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
         }
     }
-    shadow /= 25.0;
+    return shadow / 25.0;
+}
+
+// Cascaded directional shadow lookup: pick the tightest cascade covering this
+// fragment, cross-fade into the next at the split, and fade out entirely as the
+// shadow range runs out.
+float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
+    int layerBase = dirLightShadowLayer[lightIdx];
+    if (layerBase < 0) {
+        return 0.0;
+    }
+
+    int c = SHADOW_CASCADES;
+    for (int i = 0; i < SHADOW_CASCADES; i++) {
+        if (fragViewDepth <= cascadeSplit[i]) {
+            c = i;
+            break;
+        }
+    }
+    if (c >= SHADOW_CASCADES) {
+        return 0.0; // beyond ShadowMaxDistance — unshadowed
+    }
+
+    int matBase = lightIdx * SHADOW_CASCADES;
+    float shadow = sampleCascade(matBase + c, layerBase + c, normal, lightDir);
+    if (shadow < 0.0) {
+        // A fragment at the corner of a slice can sit just outside its own
+        // cascade's box; the next one out always contains it.
+        if (c + 1 < SHADOW_CASCADES) {
+            c += 1;
+            shadow = sampleCascade(matBase + c, layerBase + c, normal, lightDir);
+        }
+        if (shadow < 0.0) {
+            return 0.0;
+        }
+    }
+
+    // Cross-fade over the tail of this cascade so the jump in texel density
+    // reads as a softening rather than a seam.
+    float prev = (c == 0) ? 0.0 : cascadeSplit[c - 1];
+    float span = max(cascadeSplit[c] - prev, 1e-4);
+    float t = (fragViewDepth - prev) / span;
+    if (c + 1 < SHADOW_CASCADES && t > 1.0 - SHADOW_CASCADE_BLEND) {
+        float next = sampleCascade(matBase + c + 1, layerBase + c + 1, normal, lightDir);
+        if (next >= 0.0) {
+            shadow = mix(shadow, next, (t - (1.0 - SHADOW_CASCADE_BLEND)) / SHADOW_CASCADE_BLEND);
+        }
+    }
+
+    // Fade the shadow term out approaching the range limit, so the boundary
+    // isn't a hard line across the ground.
+    float maxDist = cascadeSplit[SHADOW_CASCADES - 1];
+    float fadeBegin = maxDist * (1.0 - SHADOW_FADE_FRACTION);
+    shadow *= 1.0 - clamp((fragViewDepth - fadeBegin) / max(maxDist - fadeBegin, 1e-4), 0.0, 1.0);
 
     return shadow;
 }
@@ -141,16 +222,21 @@ float calcPointShadow(int lightIdx, vec3 fragPos) {
 }
 
 void main() {
+    // Flat facet normal from screen-space position derivatives. Correct for a
+    // flat surface and the fallback whenever no better normal is available.
+    vec3 faceNormal = normalize(cross(dFdx(fragWorldPos), dFdy(fragWorldPos)));
+
     vec3 normal;
     if (isWater != 0) {
-        // Re-derive from the wave field; the derivative normal below would only
-        // recover the flat triangle facet and lose the swell entirely.
+        // Re-derive from the wave field; the facet normal would only recover the
+        // flat triangle and lose the swell entirely.
         normal = waterNormal(fragWorldPos.xz);
+    } else if (smoothShading != 0 && dot(fragNormal, fragNormal) > 1e-12) {
+        // Interpolated across the triangle, so lighting varies continuously
+        // instead of stepping at every shared edge.
+        normal = normalize(fragNormal);
     } else {
-        // Derive the surface normal from screen-space position derivatives.
-        vec3 dX = dFdx(fragWorldPos);
-        vec3 dY = dFdy(fragWorldPos);
-        normal = normalize(cross(dX, dY));
+        normal = faceNormal;
     }
 
     // Flip normal for back faces so double-sided surfaces are lit correctly.

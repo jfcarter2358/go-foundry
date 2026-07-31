@@ -109,12 +109,17 @@ func restoreLevelSnapshot(raw RawLevel) {
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveEdgeIdx = -1
 	Editor.ActiveEdgeKind = ""
+	Editor.ActiveSurface = ""
 	Editor.ActiveEntityIdx = -1
 	Editor.ActivePrimitiveIdx = -1
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
 	Editor.ActiveVertexVI = -1
+	Editor.SelectedVertices = nil
+	Editor.GizmoKind = gizmoKindNone
+	Editor.GizmoDragAxis = -1
+	Editor.GizmoDragging = false
 	Editor.ConnectFromIdx = -1
 	Editor.PendingEdges = nil
 	Editor.ActiveExtrusionIdx = -1

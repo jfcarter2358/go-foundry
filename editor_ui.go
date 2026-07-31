@@ -63,6 +63,13 @@ func clampValue(v, min, max float32) float32 {
 // The visible label is rendered on a line above the widget so it never clips.
 // Layout: label (own line) then [-] [drag field] [=] [+]
 func editorDragFloat(label string, value *float32, min, max float32, format string) bool {
+	return editorDragFloatStep(label, value, min, max, format, Editor.StepSize)
+}
+
+// editorDragFloatStep is editorDragFloat with an explicit drag speed / button
+// increment, for fields whose unit isn't world distance (e.g. light angles in
+// degrees, where the grid step would make dragging uselessly slow).
+func editorDragFloatStep(label string, value *float32, min, max float32, format string, step float32) bool {
 	changed := false
 
 	// Extract the visible portion of the label (before ##) for display
@@ -82,9 +89,9 @@ func editorDragFloat(label string, value *float32, min, max float32, format stri
 	// [-] button
 	imgui.PushButtonRepeat(true)
 	if imgui.ButtonV("-##dec"+label, imgui.Vec2{X: btnW, Y: 0}) {
-		*value -= Editor.StepSize
+		*value -= step
 		if Editor.SnapToGrid {
-			*value = snapValue(*value, Editor.StepSize)
+			*value = snapValue(*value, step)
 		}
 		*value = clampValue(*value, min, max)
 		changed = true
@@ -108,7 +115,7 @@ func editorDragFloat(label string, value *float32, min, max float32, format stri
 			if f, err := strconv.ParseFloat(buf, 32); err == nil {
 				*value = float32(f)
 				if Editor.SnapToGrid {
-					*value = snapValue(*value, Editor.StepSize)
+					*value = snapValue(*value, step)
 				}
 				*value = clampValue(*value, min, max)
 				changed = true
@@ -124,9 +131,9 @@ func editorDragFloat(label string, value *float32, min, max float32, format stri
 	} else {
 		// Drag mode
 		imgui.SetNextItemWidth(fieldWidth)
-		if imgui.DragFloatV(hiddenLabel, value, Editor.StepSize, min, max, format, 0) {
+		if imgui.DragFloatV(hiddenLabel, value, step, min, max, format, 0) {
 			if Editor.SnapToGrid {
-				*value = snapValue(*value, Editor.StepSize)
+				*value = snapValue(*value, step)
 				*value = clampValue(*value, min, max)
 			}
 			changed = true
@@ -141,9 +148,9 @@ func editorDragFloat(label string, value *float32, min, max float32, format stri
 	imgui.SameLine()
 	imgui.PushButtonRepeat(true)
 	if imgui.ButtonV("+##inc"+label, imgui.Vec2{X: btnW, Y: 0}) {
-		*value += Editor.StepSize
+		*value += step
 		if Editor.SnapToGrid {
-			*value = snapValue(*value, Editor.StepSize)
+			*value = snapValue(*value, step)
 		}
 		*value = clampValue(*value, min, max)
 		changed = true
@@ -272,12 +279,119 @@ func editorUVControls(label string, offset *mgl32.Vec2, scale *mgl32.Vec2, rotat
 	return changed
 }
 
-// editorDetailPanel draws the per-face procedural-detail controls (rock
+// editorSmoothPanel draws the per-surface smooth-shading toggle and its crease
+// angle. surfaceLabel disambiguates ImGui IDs across the Floor/Ceiling/Wall and
+// primitive panels. Returns true when the surface must be rebuilt — the normals
+// are generated at upload time, so the caller has to reload the geometry.
+func editorSmoothPanel(surfaceLabel string, smooth *bool, angle *float32) bool {
+	changed := imgui.Checkbox(fmt.Sprintf("Smooth Shading##%ssm", surfaceLabel), smooth)
+	if !*smooth {
+		return changed
+	}
+	// Materialize the default so the control shows the angle actually in use;
+	// 0 already means "default", so this changes nothing about the shading.
+	if *angle == 0 {
+		*angle = defaultSmoothAngle
+	}
+	imgui.Indent()
+	if editorDragFloat(fmt.Sprintf("Crease Angle (deg)##%ssma", surfaceLabel), angle, 1, 179, "%.0f") {
+		changed = true
+	}
+	imgui.Unindent()
+	return changed
+}
+
+// detailPresetNameEdits holds the preset-name text buffer per surface panel, so
+// a half-typed name survives across frames. Keyed by surfaceLabel.
+var detailPresetNameEdits = map[string]string{}
+
+// detailPresetNameSeen is the preset tag each surface panel showed last frame.
+// When it changes the panel is looking at a different face (or a preset was
+// applied), so the typed buffer is dropped rather than following the user onto
+// unrelated geometry.
+var detailPresetNameSeen = map[string]string{}
+
+// detailPresetStatus is the last preset save/delete result, shown inline under
+// the row for a few seconds.
+var (
+	detailPresetStatus     string
+	detailPresetStatusTime uint32
+)
+
+func detailPresetSetStatus(format string, args ...interface{}) {
+	detailPresetStatus = fmt.Sprintf(format, args...)
+	detailPresetStatusTime = sdl.GetTicks()
+}
+
+// editorDetailPresetSaveRow draws the name field and Save/Update/Delete buttons
+// that persist the face's current wave, noise, taper and scatter settings as a
+// named preset under <exe>/detail_presets. Returns true if the face changed
+// (only its Preset label ever does here — the parameters are read, not written).
+func editorDetailPresetSaveRow(surfaceLabel string, d *DetailSpec) bool {
+	changed := false
+
+	if seen, ok := detailPresetNameSeen[surfaceLabel]; !ok || seen != d.Preset {
+		detailPresetNameSeen[surfaceLabel] = d.Preset
+		delete(detailPresetNameEdits, surfaceLabel)
+	}
+
+	// The buffer starts from whatever preset the face is tagged with, so the
+	// common case — tweak a preset, save it back — is one click.
+	name, editing := detailPresetNameEdits[surfaceLabel]
+	if !editing {
+		name = d.Preset
+	}
+	imgui.SetNextItemWidth(140)
+	if imgui.InputText(fmt.Sprintf("##%sdetPreName", surfaceLabel), &name) {
+		detailPresetNameEdits[surfaceLabel] = name
+	}
+	imgui.SameLine()
+
+	clean := detailPresetName(name)
+	label := "Save Preset"
+	if _, exists := detailPresets[clean]; exists && clean != "" {
+		label = "Update Preset"
+	}
+	editorPushDisabled(clean == "")
+	if imgui.Button(fmt.Sprintf("%s##%sdetPreSave", label, surfaceLabel)) && clean != "" {
+		if err := SaveDetailPreset(clean, *d); err != nil {
+			detailPresetSetStatus("Preset save failed: %v", err)
+		} else {
+			d.Preset = clean
+			detailPresetSetStatus("Saved preset %q", clean)
+			changed = true
+		}
+	}
+	editorPopDisabled()
+
+	// Only user presets are deletable; the built-ins are compiled in.
+	if detailUserPresets[clean] {
+		imgui.SameLine()
+		if imgui.Button(fmt.Sprintf("Delete##%sdetPreDel", surfaceLabel)) {
+			if err := DeleteDetailPreset(clean); err != nil {
+				detailPresetSetStatus("Preset delete failed: %v", err)
+			} else {
+				detailPresetSetStatus("Deleted preset %q", clean)
+			}
+		}
+	}
+
+	if detailPresetStatus != "" {
+		if sdl.GetTicks()-detailPresetStatusTime < 4000 {
+			imgui.Text(detailPresetStatus)
+		} else {
+			detailPresetStatus = ""
+		}
+	}
+	return changed
+}
+
+// editorDetailPanel draws the per-face procedural-detail controls (wave/noise
 // displacement + scatter). surfaceLabel disambiguates ImGui IDs across the
 // Floor/Ceiling/Wall panels. Returns true if any value changed.
 func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
 	imgui.Separator()
-	if !imgui.CollapsingHeader(fmt.Sprintf("Detail (Rock)##%sdet", surfaceLabel)) {
+	if !imgui.CollapsingHeader(fmt.Sprintf("Detail##%sdet", surfaceLabel)) {
 		return false
 	}
 	changed := false
@@ -298,8 +412,26 @@ func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
 				changed = true
 			}
 		}
+		// User presets from <exe>/detail_presets, below the built-ins. Names that
+		// shadow a built-in already appeared above.
+		first := true
+		for _, name := range detailUserPresetNames {
+			if _, builtin := detailBuiltinPresets[name]; builtin {
+				continue
+			}
+			if first {
+				imgui.Separator()
+				first = false
+			}
+			if imgui.SelectableV(name, name == d.Preset, 0, imgui.Vec2{}) {
+				applyDetailPreset(d, name)
+				changed = true
+			}
+		}
 		imgui.EndCombo()
 	}
+
+	changed = editorDetailPresetSaveRow(surfaceLabel, d) || changed
 
 	// Deterministic seed.
 	seed := int32(d.Seed)
@@ -313,18 +445,56 @@ func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
 		changed = true
 	}
 
-	// --- Displacement ---
-	changed = imgui.Checkbox(fmt.Sprintf("Displace surface##%sdetDisp", surfaceLabel), &d.Displace) || changed
+	// --- Displacement: up to detailMaxWaves sine layers + optional noise ---
+	if imgui.Checkbox(fmt.Sprintf("Displace surface##%sdetDisp", surfaceLabel), &d.Displace) {
+		if d.Displace {
+			d.ensureDisplaceDefaults()
+		}
+		changed = true
+	}
 	if d.Displace {
 		imgui.Indent()
-		changed = editorDragFloat(fmt.Sprintf("Amplitude##%sdetAmp", surfaceLabel), &d.Amplitude, 0, 20, "%.3f") || changed
-		changed = editorDragFloat(fmt.Sprintf("Frequency##%sdetFreq", surfaceLabel), &d.Frequency, 0.01, 20, "%.3f") || changed
-		oct := int32(d.Octaves)
-		if imgui.SliderInt(fmt.Sprintf("Octaves##%sdetOct", surfaceLabel), &oct, 1, 6) {
-			d.Octaves = int(oct)
+		for i := range d.Waves {
+			w := &d.Waves[i]
+			id := fmt.Sprintf("%sdetW%d", surfaceLabel, i)
+			if imgui.Checkbox(fmt.Sprintf("Wave %d##%sEn", i+1, id), &w.Enabled) {
+				if w.Enabled && w.Frequency == 0 {
+					*w = detailDefaultWave(i)
+				}
+				changed = true
+			}
+			if w.Enabled {
+				imgui.Indent()
+				changed = editorDragFloat(fmt.Sprintf("Amplitude##%sAmp", id), &w.Amplitude, 0, 20, "%.3f") || changed
+				changed = editorDragFloat(fmt.Sprintf("Frequency##%sFreq", id), &w.Frequency, 0, 20, "%.3f") || changed
+				changed = editorDragFloat(fmt.Sprintf("Rotation (deg)##%sRot", id), &w.Rotation, -360, 360, "%.1f") || changed
+				changed = editorDragFloat(fmt.Sprintf("Tessellation##%sTess", id), &w.TessLevel, 1, 64, "%.0f") || changed
+				imgui.Unindent()
+			}
+		}
+
+		// Noise layer — added on top of the summed waves.
+		if imgui.Checkbox(fmt.Sprintf("Noise##%sdetNoise", surfaceLabel), &d.Noise) {
+			if d.Noise {
+				d.ensureNoiseDefaults()
+			}
 			changed = true
 		}
-		changed = editorDragFloat(fmt.Sprintf("Tessellation##%sdetTess", surfaceLabel), &d.TessLevel, 1, 64, "%.0f") || changed
+		if d.Noise {
+			imgui.Indent()
+			changed = editorDragFloat(fmt.Sprintf("Amplitude##%sdetNAmp", surfaceLabel), &d.NoiseAmplitude, 0, 20, "%.3f") || changed
+			changed = editorDragFloat(fmt.Sprintf("Frequency##%sdetNFreq", surfaceLabel), &d.NoiseFrequency, 0.01, 20, "%.3f") || changed
+			oct := int32(d.NoiseOctaves)
+			if imgui.SliderInt(fmt.Sprintf("Octaves##%sdetNOct", surfaceLabel), &oct, 1, 6) {
+				d.NoiseOctaves = int(oct)
+				changed = true
+			}
+			changed = editorDragFloat(fmt.Sprintf("Tessellation##%sdetNTess", surfaceLabel), &d.NoiseTessLevel, 1, 64, "%.0f") || changed
+			imgui.Unindent()
+		}
+
+		// Tessellation is per-patch, so the active layers share the highest level.
+		imgui.Text(fmt.Sprintf("Effective tessellation: %.0f", d.tessLevelFor()))
 		changed = editorDragFloat(fmt.Sprintf("Edge Taper##%sdetTaper", surfaceLabel), &d.EdgeTaper, 0, 10, "%.2f") || changed
 		imgui.Unindent()
 	}
@@ -729,6 +899,8 @@ func EditorDrawUI() {
 	// ---- Mode-specific side panel ----
 	if Editor.Mode == Mode3D {
 		Editor3DPanel()
+		// After the panel — it sets the selection the indicator reads.
+		EditorDirLightIndicator()
 	} else if Editor.Mode == Mode2D {
 		Editor2DPanel()
 	} else if Editor.Mode == ModeSurface2D {

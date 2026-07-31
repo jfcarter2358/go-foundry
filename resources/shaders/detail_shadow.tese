@@ -14,9 +14,6 @@ in vec2 teUV[];
 
 void main() {
     vec3 w = gl_TessCoord.x * teWorld[0] + gl_TessCoord.y * teWorld[1] + gl_TessCoord.z * teWorld[2];
-    vec3 nrm = cross(teWorld[1] - teWorld[0], teWorld[2] - teWorld[0]);
-    float nl = length(nrm);
-    nrm = (nl > 1e-8) ? nrm / nl : vec3(0.0, 1.0, 0.0);
-    vec3 dp = detailDisplace(w, nrm);
+    vec3 dp = detailDisplace(w);
     gl_Position = lightSpaceMatrix * vec4(dp, 1.0);
 }

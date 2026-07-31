@@ -21,10 +21,13 @@ vec2 s_hash22(vec2 p) {
     return fract(sin(p) * 43758.5453);
 }
 
-// scatterPlace computes the world position of local rock vertex `local` for
-// instance `id`. Returns false when the instance is culled (empty slot / thinned
+// scatterPlaceN computes the world position of local rock vertex `local` for
+// instance `id`, and rotates the vertex's local normal `localNrm` into world
+// space with it. Returns false when the instance is culled (empty slot / thinned
 // by density / outside the face rectangle).
-bool scatterPlace(int id, vec3 local, out vec3 outWorld) {
+bool scatterPlaceN(int id, vec3 local, vec3 localNrm, out vec3 outWorld, out vec3 outNormal) {
+    outNormal = faceNrm;
+
     int ix = id % gridNU;
     int iz = id / gridNU;
     vec2 slot = (vec2(float(ix), float(iz)) + 0.5) * sSpacing;
@@ -48,8 +51,20 @@ bool scatterPlace(int id, vec3 local, out vec3 outWorld) {
     vec3 lp = local * scl;
     vec3 off = t * lp.x + faceNrm * lp.y + b * lp.z;
 
+    // The instance basis is orthonormal (t, faceNrm, b are unit and mutually
+    // perpendicular, and scl is uniform), so the normal rotates with the same
+    // combination as the position — no inverse-transpose needed.
+    outNormal = t * localNrm.x + faceNrm * localNrm.y + b * localNrm.z;
+
     // Nestle the rock half-buried so it reads as sitting on the surface.
     base -= faceNrm * scl * 0.35;
     outWorld = base + off;
     return true;
+}
+
+// scatterPlace is the position-only form, for the depth passes that have no use
+// for a normal.
+bool scatterPlace(int id, vec3 local, out vec3 outWorld) {
+    vec3 ignored;
+    return scatterPlaceN(id, local, vec3(0.0, 1.0, 0.0), outWorld, ignored);
 }

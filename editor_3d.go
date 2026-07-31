@@ -285,148 +285,66 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
-	// Selection: find closest hit among entities and sector geometry
-	origin, dir := screenRay(t.X, t.Y)
-	bestT := float32(math.MaxFloat32)
-	bestEntityIdx := -1
-	bestPrimitiveIdx := -1
-	bestPrimitiveChunkIdx := -1
-	bestChunkIdx := -1
-	bestSectorIdx := -1
-	bestEdgeKind := ""
-	bestEdgeIdx := -1
-
-	// Test entity AABBs
-	for i := range lvl.Entities {
-		e := &lvl.Entities[i]
-		bmin := e.Position.Sub(mgl32.Vec3{e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ})
-		bmax := e.Position.Add(mgl32.Vec3{e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ})
-		if hit, ht := rayAABBIntersect(origin, dir, bmin, bmax); hit && ht < bestT {
-			bestT = ht
-			bestEntityIdx = i
-			bestChunkIdx = -1
-			bestSectorIdx = -1
-			bestEdgeKind = ""
-			bestEdgeIdx = -1
-		}
+	// Vertex handles win over world geometry: they are small, deliberate
+	// targets drawn on top of everything. Repeated clicks on the same cluster
+	// cycle through every vertex under the cursor; ctrl+click takes them all.
+	// (Ctrl rather than shift — shift is held to fly downward.)
+	ctrlHeld := sdl.GetModState()&sdl.KMOD_CTRL != 0
+	if handleVertexClick(t.X, t.Y, ctrlHeld) {
+		return
 	}
 
-	// Test primitive AABBs
-	for ci := range lvl.Chunks {
-		ch := &lvl.Chunks[ci]
-		for pi := range ch.Primitives {
-			p := &ch.Primitives[pi]
-			bmin := p.Position.Sub(mgl32.Vec3{p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ})
-			bmax := p.Position.Add(mgl32.Vec3{p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ})
-			if hit, ht := rayAABBIntersect(origin, dir, bmin, bmax); hit && ht < bestT {
-				bestT = ht
-				bestPrimitiveIdx = pi
-				bestPrimitiveChunkIdx = ci
-				bestEntityIdx = -1
-				bestChunkIdx = -1
-				bestSectorIdx = -1
-				bestEdgeKind = ""
-				bestEdgeIdx = -1
-			}
-		}
-	}
+	// Selection: one ray, closest hit wins across entities, primitives, and
+	// sector faces.
+	hit := pick3D(t.X, t.Y)
 
-	// Test sector geometry (walls, portals, floors, ceilings)
-	for ci := range lvl.Chunks {
-		ch := &lvl.Chunks[ci]
-		for seci := range ch.Sectors {
-			s := &ch.Sectors[seci]
-			sPts := SectorPoints(ch, s)
-			// Walls — iterate all triangles in the wall's vertex buffer.
-			// Track the closest hit per wall using effective distance (back
-			// faces are biased outward by pickFaceBias) so coincident walls at
-			// chunk boundaries deterministically resolve in favor of the
-			// front-facing one the user actually sees.
-			for wi := range s.Walls {
-				w := &s.Walls[wi]
-				verts := w.Geometry.Vertices
-				// Each triangle = 3 vertices × 5 floats = 15 floats
-				bestWallEff := float32(math.MaxFloat32)
-				for ti := 0; ti+14 < len(verts); ti += 15 {
-					v0 := mgl32.Vec3{verts[ti+0], verts[ti+1], verts[ti+2]}
-					v1 := mgl32.Vec3{verts[ti+5], verts[ti+6], verts[ti+7]}
-					v2 := mgl32.Vec3{verts[ti+10], verts[ti+11], verts[ti+12]}
-					h, t2, front := rayTriangleIntersect(origin, dir, v0, v1, v2)
-					if !h {
-						continue
-					}
-					eff := effectivePickT(t2, front)
-					if eff < bestWallEff {
-						bestWallEff = eff
-					}
-				}
-				if bestWallEff < bestT {
-					bestT = bestWallEff
-					bestEntityIdx = -1
-					bestChunkIdx = ci
-					bestSectorIdx = seci
-					bestEdgeKind = "wall"
-					bestEdgeIdx = wi
-				}
-			}
-			// Portals — skip hit-testing so clicks pass through to
-			// walls in adjacent chunks behind the portal opening.
-			// Floor triangles
-			if s.Floor.Enabled && len(sPts) >= 3 {
-				for i := 1; i < len(sPts)-1; i++ {
-					v0 := mgl32.Vec3{sPts[0].X(), s.Floor.VertexHeight(0), sPts[0].Y()}
-					v1 := mgl32.Vec3{sPts[i].X(), s.Floor.VertexHeight(i), sPts[i].Y()}
-					v2 := mgl32.Vec3{sPts[i+1].X(), s.Floor.VertexHeight(i+1), sPts[i+1].Y()}
-					if h, ht, front := rayTriangleIntersect(origin, dir, v0, v1, v2); h {
-						if eff := effectivePickT(ht, front); eff < bestT {
-							bestT = eff
-							bestEntityIdx = -1
-							bestChunkIdx = ci
-							bestSectorIdx = seci
-							bestEdgeKind = ""
-							bestEdgeIdx = -1
-						}
-					}
-				}
-			}
-			// Ceiling triangles
-			if s.Ceiling.Enabled && len(sPts) >= 3 {
-				for i := len(sPts) - 2; i >= 1; i-- {
-					v0 := mgl32.Vec3{sPts[0].X(), s.Ceiling.VertexHeight(0), sPts[0].Y()}
-					v1 := mgl32.Vec3{sPts[i+1].X(), s.Ceiling.VertexHeight(i+1), sPts[i+1].Y()}
-					v2 := mgl32.Vec3{sPts[i].X(), s.Ceiling.VertexHeight(i), sPts[i].Y()}
-					if h, ht, front := rayTriangleIntersect(origin, dir, v0, v1, v2); h {
-						if eff := effectivePickT(ht, front); eff < bestT {
-							bestT = eff
-							bestEntityIdx = -1
-							bestChunkIdx = ci
-							bestSectorIdx = seci
-							bestEdgeKind = ""
-							bestEdgeIdx = -1
-						}
-					}
-				}
-			}
-		}
-	}
-
-	Editor.ActiveEntityIdx = bestEntityIdx
+	// Start from a clean slate so no stale selection survives the click.
+	Editor.ActiveEntityIdx = -1
 	Editor.ActivePrimitiveIdx = -1
-	if bestPrimitiveIdx >= 0 {
-		Editor.ActivePrimitiveIdx = bestPrimitiveIdx
-		Editor.ActiveChunkIdx = bestPrimitiveChunkIdx
-		Editor.ActiveEntityIdx = -1
+	clearVertexSelection()
+	Editor.ActiveSurface = ""
+	Editor.ActiveEdgeKind = ""
+	Editor.ActiveEdgeIdx = -1
+	Editor.GizmoKind = gizmoKindNone
+
+	switch hit.kind {
+	case pickEntity:
+		Editor.ActiveEntityIdx = hit.idx
 		Editor.ActiveSectorIdx = -1
-		Editor.ActiveEdgeIdx = -1
-	} else if bestSectorIdx >= 0 {
-		Editor.ActiveChunkIdx = bestChunkIdx
-		Editor.ActiveSectorIdx = bestSectorIdx
-		Editor.ActiveEdgeKind = bestEdgeKind
-		Editor.ActiveEdgeIdx = bestEdgeIdx
-	} else if bestEntityIdx < 0 {
-		// Click on empty space — deselect sector
+		Editor.GizmoKind = gizmoKindEntity
+		Editor.PanelFocus = panelFocusEntity
+
+	case pickPrimitive:
+		Editor.ActiveChunkIdx = hit.chunkIdx
+		Editor.ActivePrimitiveIdx = hit.idx
 		Editor.ActiveSectorIdx = -1
-		Editor.ActiveEdgeIdx = -1
+		Editor.GizmoKind = gizmoKindPrimitive
+		Editor.PanelFocus = panelFocusPrimitive
+
+	case pickWall:
+		Editor.ActiveChunkIdx = hit.chunkIdx
+		Editor.ActiveSectorIdx = hit.sectorIdx
+		Editor.ActiveSurface = "wall"
+		Editor.ActiveEdgeKind = "wall"
+		Editor.ActiveEdgeIdx = hit.idx
+		Editor.PanelFocus = panelFocusWall
+
+	case pickFloor:
+		Editor.ActiveChunkIdx = hit.chunkIdx
+		Editor.ActiveSectorIdx = hit.sectorIdx
+		Editor.ActiveSurface = "floor"
+		Editor.PanelFocus = panelFocusFloor
+
+	case pickCeiling:
+		Editor.ActiveChunkIdx = hit.chunkIdx
+		Editor.ActiveSectorIdx = hit.sectorIdx
+		Editor.ActiveSurface = "ceiling"
+		Editor.PanelFocus = panelFocusCeiling
+
+	default:
+		// Click on empty space — deselect.
+		Editor.ActiveSectorIdx = -1
+		Editor.PanelFocus = panelFocusNone
 	}
 }
 
@@ -520,9 +438,128 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 	// Extrusion gizmos
 	editorExtrusionRenderGizmos()
 	editorRenderExtrusionOutlines()
+
+	// Vertex handle boxes near the cursor plus the translate gizmo, drawn last
+	// and without depth testing so a handle is always visible where it is
+	// clickable.
+	editorRenderInteractiveOverlays(projView, true)
 }
 
 // ---------- ImGui panels for 3D mode ----------
+
+// editorPanelFocused reports whether the side panel has a pending request to
+// reveal one of the given sections, so a 3D click lands the user directly on
+// the properties for whatever they clicked.
+func editorPanelFocused(sections ...string) bool {
+	for _, s := range sections {
+		if Editor.PanelFocus == s {
+			return true
+		}
+	}
+	return false
+}
+
+// editorFocusOpen force-opens the next collapsing header / tree node when one
+// of the given sections is focused. Call immediately before the widget.
+func editorFocusOpen(sections ...string) {
+	if editorPanelFocused(sections...) {
+		imgui.SetNextItemOpen(true, imgui.ConditionAlways)
+	}
+}
+
+// editorFocusScroll scrolls the panel to the current cursor position when one
+// of the given sections is focused. Call just inside the opened section.
+func editorFocusScroll(sections ...string) {
+	if editorPanelFocused(sections...) {
+		imgui.SetScrollHereY(0.15)
+	}
+}
+
+// editor3DVertexPanel draws the properties of the sector vertices selected by
+// clicking their handle boxes in 3D. With more than one selected, editing a
+// coordinate collapses every selected vertex onto that value — dragging an axis
+// arm is the way to move them as a group.
+func editor3DVertexPanel(lvl *Level) {
+	sels := Editor.SelectedVertices
+	if len(sels) == 0 {
+		return
+	}
+	primary := sels[0]
+	ch, s := sectorOf(primary)
+	if ch == nil || s == nil || primary.vertIdx >= len(s.PointIndices) {
+		return
+	}
+	pIdx := s.PointIndices[primary.vertIdx]
+	if pIdx < 0 || pIdx >= len(ch.Points) {
+		return
+	}
+
+	which := "Ceiling"
+	if primary.isFloor {
+		which = "Floor"
+	}
+	title := fmt.Sprintf("Vertex #%d (%s) — %s", primary.vertIdx, which, s.ID)
+	if len(sels) > 1 {
+		title = fmt.Sprintf("%d Vertices Selected", len(sels))
+	}
+
+	imgui.Separator()
+	editorFocusOpen(panelFocusVertex)
+	if imgui.CollapsingHeaderV(title, imgui.TreeNodeFlagsDefaultOpen) {
+		editorFocusScroll(panelFocusVertex)
+
+		pt := ch.Points[pIdx]
+		x := pt.X()
+		z := pt.Y()
+		xChanged := editorDragFloat("X##v3dx", &x, -1e6, 1e6, "%.3f")
+		zChanged := editorDragFloat("Z##v3dz", &z, -1e6, 1e6, "%.3f")
+		if xChanged || zChanged {
+			setSelectedVertexPoints(func(_ int, _ vertexSel, cur mgl32.Vec2) mgl32.Vec2 {
+				out := cur
+				if xChanged {
+					out[0] = x
+				}
+				if zChanged {
+					out[1] = z
+				}
+				return out
+			})
+		}
+
+		if len(sels) > 1 {
+			// One field for the whole selection: each vertex's own surface
+			// (floor or ceiling, per handle) gets the offset.
+			off := vertexOffset(s, primary)
+			if editorDragFloat("Height Offset##v3dmulti", &off, -100, 100, "%.3f") {
+				setSelectedVertexOffsets(func(_ int, _ vertexSel, _ float32) float32 {
+					return off
+				})
+			}
+			imgui.Text("Editing a field collapses all selected vertices to it")
+		} else {
+			if primary.vertIdx < len(s.Floor.VertexOffsets) {
+				fOff := s.Floor.VertexOffsets[primary.vertIdx]
+				if editorDragFloat("Floor Offset##v3dfo", &fOff, -100, 100, "%.3f") {
+					s.Floor.VertexOffsets[primary.vertIdx] = fOff
+					_ = s.Load(SectorPoints(ch, s))
+				}
+			}
+			if primary.vertIdx < len(s.Ceiling.VertexOffsets) {
+				cOff := s.Ceiling.VertexOffsets[primary.vertIdx]
+				if editorDragFloat("Ceil Offset##v3dco", &cOff, -100, 100, "%.3f") {
+					s.Ceiling.VertexOffsets[primary.vertIdx] = cOff
+					_ = s.Load(SectorPoints(ch, s))
+				}
+			}
+			imgui.Text("Click the handle again to cycle overlapping vertices")
+		}
+		imgui.Text("Ctrl+click adds every vertex under the cursor")
+
+		if imgui.Button("Deselect Vertices##v3dclear") {
+			clearVertexSelection()
+		}
+	}
+}
 
 // Editor3DPanel draws the 3D-mode ImGui side panel.
 func Editor3DPanel() {
@@ -541,6 +578,8 @@ func Editor3DPanel() {
 	// ---- Navigation buttons ----
 	if imgui.CollapsingHeaderV("Navigation", imgui.TreeNodeFlagsDefaultOpen) {
 		imgui.Text("Right-click drag to rotate")
+		imgui.Text("Click a face, object or vertex to select it")
+		imgui.Text("Drag an R/G/B arm to move it along X/Y/Z")
 		imgui.Button("Fwd##nav")
 		if imgui.IsItemActive() {
 			Editor.NavForward = true
@@ -624,7 +663,9 @@ func Editor3DPanel() {
 		ch := &lvl.Chunks[Editor.ActiveChunkIdx]
 		if Editor.ActivePrimitiveIdx < len(ch.Primitives) {
 			imgui.Separator()
+			editorFocusOpen(panelFocusPrimitive)
 			if imgui.CollapsingHeaderV("Primitive Properties", imgui.TreeNodeFlagsDefaultOpen) {
+				editorFocusScroll(panelFocusPrimitive)
 				p := &ch.Primitives[Editor.ActivePrimitiveIdx]
 				imgui.InputText("ID##primid", &p.ID)
 
@@ -681,6 +722,9 @@ func Editor3DPanel() {
 				if editorDragFloat("Alpha##prima", &p.Alpha, 0, 1, "%.2f") {
 					p.Geometry.Alpha = p.Alpha
 				}
+				if editorSmoothPanel("Primitive", &p.Smooth, &p.SmoothAngle) {
+					reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
+				}
 
 				if imgui.CollapsingHeader("Texture UV##primUVhdr") {
 					uvChanged := false
@@ -723,7 +767,9 @@ func Editor3DPanel() {
 	// --- Selected entity properties ---
 	if Editor.ActiveEntityIdx >= 0 && Editor.ActiveEntityIdx < len(lvl.Entities) {
 		imgui.Separator()
-		if imgui.CollapsingHeader("Entity Properties") {
+		editorFocusOpen(panelFocusEntity)
+		if imgui.CollapsingHeaderV("Entity Properties", imgui.TreeNodeFlagsDefaultOpen) {
+			editorFocusScroll(panelFocusEntity)
 			e := &lvl.Entities[Editor.ActiveEntityIdx]
 			imgui.Text(fmt.Sprintf("ID: %s", e.ID))
 
@@ -763,9 +809,15 @@ func Editor3DPanel() {
 		sch := &lvl.Chunks[Editor.ActiveChunkIdx]
 		if Editor.ActiveSectorIdx < len(sch.Sectors) {
 			s3d := &sch.Sectors[Editor.ActiveSectorIdx]
+			editorFocusOpen(panelFocusFloor, panelFocusCeiling, panelFocusWall)
 			if imgui.CollapsingHeaderV("Sector: "+s3d.ID, imgui.TreeNodeFlagsDefaultOpen) {
 				imgui.InputText("ID##sid3d", &s3d.ID)
+				if Editor.ActiveSurface != "" {
+					imgui.Text("Clicked face: " + Editor.ActiveSurface)
+				}
+				editorFocusOpen(panelFocusFloor)
 				if imgui.TreeNode("Floor##3df") {
+					editorFocusScroll(panelFocusFloor)
 					changed := false
 					changed = imgui.Checkbox("Enabled##fe3d", &s3d.Floor.Enabled) || changed
 					changed = editorDragFloat("Height##fh3d", &s3d.Floor.Height, 0, 0, "%.3f") || changed
@@ -783,8 +835,13 @@ func Editor3DPanel() {
 				}
 				editorSurfaceExtrusionPanel(sch, s3d, "Floor", &s3d.Floor.Extrusions)
 				editorTerrainPanel(sch, s3d, "Floor", &s3d.Floor.Terrain, &s3d.Floor.TerrainPoints)
+				if editorSmoothPanel("Floor", &s3d.Floor.Smooth, &s3d.Floor.SmoothAngle) {
+					_ = s3d.Load(SectorPoints(sch, s3d))
+				}
 				editorDetailPanel("Floor", &s3d.Floor.Detail)
+				editorFocusOpen(panelFocusCeiling)
 				if imgui.TreeNode("Ceiling##3dc") {
+					editorFocusScroll(panelFocusCeiling)
 					changed := false
 					changed = imgui.Checkbox("Enabled##ce3d", &s3d.Ceiling.Enabled) || changed
 					changed = editorDragFloat("Height##ch3d", &s3d.Ceiling.Height, 0, 0, "%.3f") || changed
@@ -802,10 +859,14 @@ func Editor3DPanel() {
 				}
 				editorSurfaceExtrusionPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Extrusions)
 				editorTerrainPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Terrain, &s3d.Ceiling.TerrainPoints)
+				if editorSmoothPanel("Ceiling", &s3d.Ceiling.Smooth, &s3d.Ceiling.SmoothAngle) {
+					_ = s3d.Load(SectorPoints(sch, s3d))
+				}
 				editorDetailPanel("Ceiling", &s3d.Ceiling.Detail)
 				if Editor.ActiveEdgeKind == "wall" && Editor.ActiveEdgeIdx >= 0 &&
 					Editor.ActiveEdgeIdx < len(s3d.Walls) {
 					imgui.Separator()
+					editorFocusScroll(panelFocusWall)
 					w := &s3d.Walls[Editor.ActiveEdgeIdx]
 					imgui.Text(fmt.Sprintf("Wall #%d", Editor.ActiveEdgeIdx))
 					changed := false
@@ -827,7 +888,11 @@ func Editor3DPanel() {
 					editorExtrusionPanel(sch, s3d, w)
 					// Terrain sub-panel
 					editorTerrainPanel(sch, s3d, "Wall", &w.Terrain, &w.TerrainPoints)
-					// Detail (rock) sub-panel
+					// Smooth shading (rebuilds the wall: normals are made at upload)
+					if editorSmoothPanel("Wall", &w.Smooth, &w.SmoothAngle) {
+						_ = s3d.Load(SectorPoints(sch, s3d))
+					}
+					// Detail sub-panel
 					editorDetailPanel("Wall", &w.Detail)
 				} else if Editor.ActiveEdgeKind == "portal" && Editor.ActiveEdgeIdx >= 0 &&
 					Editor.ActiveEdgeIdx < len(s3d.Portals) {
@@ -846,11 +911,14 @@ func Editor3DPanel() {
 						sch.RebuildGaps()
 					}
 				} else {
-					imgui.Text("Floor/Ceiling — switch to 2D to edit vertices")
+					imgui.Text("Click a vertex handle to edit its position")
 				}
 			}
 		}
 	}
+
+	// --- Selected vertex properties (from a 3D handle click) ---
+	editor3DVertexPanel(lvl)
 
 	// --- Chunk list ---
 	imgui.Separator()
@@ -859,8 +927,13 @@ func Editor3DPanel() {
 			ch := &lvl.Chunks[i]
 			selected := i == Editor.ActiveChunkIdx
 			if imgui.SelectableV(ch.ID, selected, 0, imgui.Vec2{}) {
+				// Selecting a chunk by name is the explicit "I want the whole
+				// chunk" action, so it takes the translate gizmo.
 				Editor.ActiveChunkIdx = i
 				Editor.ActiveEntityIdx = -1
+				Editor.ActivePrimitiveIdx = -1
+				clearVertexSelection()
+				Editor.GizmoKind = gizmoKindChunk
 			}
 		}
 		if imgui.Button("New Chunk") {
@@ -927,6 +1000,9 @@ func Editor3DPanel() {
 	// --- Light editor ---
 	imgui.Separator()
 	EditorLightPanel()
+
+	// Every section has had its chance to open and scroll itself.
+	Editor.PanelFocus = panelFocusNone
 
 	imgui.End()
 

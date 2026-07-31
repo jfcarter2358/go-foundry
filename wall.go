@@ -11,12 +11,20 @@ import (
 // Geometry holds GPU-side vertex data and associated handles.
 // Vertex format: 5 floats per vertex [X, Y, Z, U, V].
 // All geometry is stored in world space; model matrix is always identity.
+//
+// Smooth surfaces additionally carry Normals — one per vertex, in a buffer of
+// their own rather than interleaved, so Vertices stays the 5-float record that
+// picking, the shadow passes and the detail renderer all index directly.
 type Geometry struct {
 	Texture                    string
 	TextureUniform             int32
 	TextureCoordinateAttribute uint32
 	Vertices                   []float32
 	VertexAttribute            uint32
+	Smooth                     bool    // shade from interpolated vertex normals instead of flat facets
+	SmoothAngle                float32 // crease threshold in degrees; 0 = defaultSmoothAngle
+	Normals                    []float32
+	NormalAttribute            uint32
 	Model                      mgl32.Mat4
 	ModelUniform               int32
 	Normal                     mgl32.Vec3
@@ -26,6 +34,18 @@ type Geometry struct {
 	Water                      WaterParams
 	Vao                        uint32
 	Vbo                        uint32
+	Nbo                        uint32 // normal buffer; 0 when the surface is flat-shaded
+}
+
+// smoothFlag returns the value of the shader's `smoothShading` uniform for this
+// geometry: 1 only when smoothing is on *and* normals were actually generated,
+// so a surface whose mesh produced none still falls back to the derivative
+// normal rather than shading off an empty attribute.
+func (g *Geometry) smoothFlag() int32 {
+	if g.Smooth && len(g.Normals) > 0 {
+		return 1
+	}
+	return 0
 }
 
 // applyWaterUniforms pushes this geometry's water settings to the shader.
@@ -65,6 +85,14 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 		g.Alpha = 1.0
 	}
 
+	// Normals are derived from the indexed mesh, before de-indexing loses which
+	// triangles shared a vertex — smooth.go welds by position anyway, but the
+	// index list is what defines the triangles in the first place.
+	g.Normals = nil
+	if g.Smooth {
+		g.Normals = computeSmoothNormals(vertices, indices, g.SmoothAngle)
+	}
+
 	if len(g.Vertices) == 0 {
 		return nil
 	}
@@ -91,6 +119,25 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	gl.EnableVertexAttribArray(g.TextureCoordinateAttribute)
 	gl.VertexAttribPointerWithOffset(g.TextureCoordinateAttribute, 2, gl.FLOAT, false, 5*4, 3*4)
 
+	// Smooth surfaces get a second buffer in the same VAO. Reloading a surface
+	// runs Load again, so release the previous one first.
+	if g.Nbo != 0 {
+		gl.DeleteBuffers(1, &g.Nbo)
+		g.Nbo = 0
+	}
+	if len(g.Normals) > 0 {
+		if loc := gl.GetAttribLocation(Program, gl.Str("vertNormal\x00")); loc >= 0 {
+			g.NormalAttribute = uint32(loc)
+			gl.GenBuffers(1, &g.Nbo)
+			gl.BindBuffer(gl.ARRAY_BUFFER, g.Nbo)
+			gl.BufferData(gl.ARRAY_BUFFER, len(g.Normals)*4, gl.Ptr(g.Normals), gl.STATIC_DRAW)
+			gl.EnableVertexAttribArray(g.NormalAttribute)
+			gl.VertexAttribPointerWithOffset(g.NormalAttribute, 3, gl.FLOAT, false, 3*4, 0)
+		} else {
+			g.Normals = nil // shader has no normal input; stay flat-shaded
+		}
+	}
+
 	return nil
 }
 
@@ -103,6 +150,10 @@ func (g *Geometry) Delete() {
 	if g.Vbo != 0 {
 		gl.DeleteBuffers(1, &g.Vbo)
 		g.Vbo = 0
+	}
+	if g.Nbo != 0 {
+		gl.DeleteBuffers(1, &g.Nbo)
+		g.Nbo = 0
 	}
 }
 
@@ -121,6 +172,7 @@ func (g Geometry) Draw() {
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
+	gl.Uniform1i(SmoothUniform, g.smoothFlag())
 	g.applyWaterUniforms()
 
 	gl.BindVertexArray(g.Vao)
@@ -204,6 +256,8 @@ type Wall struct {
 	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
 	UVRotation    float32    // UV rotation in radians
 	Detail        DetailSpec // per-face procedural detail (rocks); disabled by default
+	Smooth        bool       // shade from interpolated vertex normals (see smooth.go)
+	SmoothAngle   float32    // crease threshold in degrees; 0 = defaultSmoothAngle
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 }
@@ -216,6 +270,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
+	gl.Uniform1i(SmoothUniform, g.smoothFlag())
 	g.applyWaterUniforms()
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)

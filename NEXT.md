@@ -47,7 +47,10 @@
 - [x] Water
 - [ ] Volumetric displacement (e.g. sand, snow)
 - [x] Procedural detail
+- [x] Smooth shading (per-surface normal smoothing, including displaced detail)
 - [x] Should start on empty world
 - [ ] Brush settings should pop out into new windows and be separate from each other
 - [ ] Face mode where I can click on a face and move it, moving the vertices at the same time
 - [ ] Baked lighting
+- [ ] Water reflections
+- [ ] texture blending

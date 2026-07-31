@@ -21,6 +21,8 @@ type Floor struct {
 	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
 	UVRotation    float32    // UV rotation in radians
 	Detail        DetailSpec // per-face procedural detail (rocks); disabled by default
+	Smooth        bool       // shade from interpolated vertex normals (see smooth.go)
+	SmoothAngle   float32    // crease threshold in degrees; 0 = defaultSmoothAngle
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 
@@ -53,6 +55,8 @@ type Ceiling struct {
 	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
 	UVRotation    float32    // UV rotation in radians
 	Detail        DetailSpec // per-face procedural detail (rocks); disabled by default
+	Smooth        bool       // shade from interpolated vertex normals (see smooth.go)
+	SmoothAngle   float32    // crease threshold in degrees; 0 = defaultSmoothAngle
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 
@@ -86,6 +90,56 @@ type Sector struct {
 	MinBound         mgl32.Vec2
 	MaxBound         mgl32.Vec2
 	PrimitiveIndices []int // indices into parent Chunk.Primitives
+}
+
+// WorldAABB returns the sector's world-space bounds: its XZ polygon AABB
+// extended vertically to cover the lowest floor and highest ceiling point,
+// including per-vertex offsets, terrain points and extrusions. Used for
+// frustum-culling the sector against both the camera and a shadow cascade.
+func (s *Sector) WorldAABB() (min, max mgl32.Vec3) {
+	minFloor := s.Floor.Height
+	for _, off := range s.Floor.VertexOffsets {
+		if h := s.Floor.Height + off; h < minFloor {
+			minFloor = h
+		}
+	}
+	for _, tp := range s.Floor.TerrainPoints {
+		if h := s.Floor.Height + tp.Depth; h < minFloor {
+			minFloor = h
+		}
+	}
+	for _, ext := range s.Floor.Extrusions {
+		if h := s.Floor.Height - ext.Depth; h < minFloor {
+			minFloor = h
+		}
+	}
+
+	maxCeil := s.Ceiling.Height
+	for _, off := range s.Ceiling.VertexOffsets {
+		if h := s.Ceiling.Height + off; h > maxCeil {
+			maxCeil = h
+		}
+	}
+	for _, tp := range s.Ceiling.TerrainPoints {
+		if h := s.Ceiling.Height + tp.Depth; h > maxCeil {
+			maxCeil = h
+		}
+	}
+	for _, ext := range s.Ceiling.Extrusions {
+		if h := s.Ceiling.Height + ext.Depth; h > maxCeil {
+			maxCeil = h
+		}
+	}
+
+	// Wall tops can sit above a disabled ceiling's plane (see wallTopBase).
+	for i := range s.Ceiling.VertexOffsets {
+		if h := s.WallTopHeight(i); h > maxCeil {
+			maxCeil = h
+		}
+	}
+
+	return mgl32.Vec3{s.MinBound.X(), minFloor, s.MinBound.Y()},
+		mgl32.Vec3{s.MaxBound.X(), maxCeil, s.MaxBound.Y()}
 }
 
 // wallTopBase is the flat ceiling plane wall tops hang from. A disabled ceiling
@@ -161,6 +215,15 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 		s.Ceiling.VertexOffsets = append(s.Ceiling.VertexOffsets, 0)
 	}
 
+	// Smoothing is generated inside Geometry.Load, so each surface's setting has
+	// to be on its Geometry before the mesh is uploaded.
+	s.Floor.Geometry.Smooth, s.Floor.Geometry.SmoothAngle = s.Floor.Smooth, s.Floor.SmoothAngle
+	s.Ceiling.Geometry.Smooth, s.Ceiling.Geometry.SmoothAngle = s.Ceiling.Smooth, s.Ceiling.SmoothAngle
+	for i := range s.Walls {
+		s.Walls[i].Geometry.Smooth = s.Walls[i].Smooth
+		s.Walls[i].Geometry.SmoothAngle = s.Walls[i].SmoothAngle
+	}
+
 	// Build wall geometry — each wall is a quad with 4 independent corner heights
 	for i := range s.Walls {
 		w := &s.Walls[i]
@@ -196,7 +259,7 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 			if err := w.Geometry.Load(verts, indices, w.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
-			geoms, err := loadExtrusionGeometries(w.ExtrusionGeometries, bfList)
+			geoms, err := loadExtrusionGeometries(w.ExtrusionGeometries, bfList, w.Smooth, w.SmoothAngle)
 			if err != nil {
 				return err
 			}
@@ -245,7 +308,7 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 			if err := s.Floor.Geometry.Load(verts, indices, s.Floor.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
-			geoms, err := loadExtrusionGeometries(s.Floor.ExtrusionGeometries, bfList)
+			geoms, err := loadExtrusionGeometries(s.Floor.ExtrusionGeometries, bfList, s.Floor.Smooth, s.Floor.SmoothAngle)
 			if err != nil {
 				return err
 			}
@@ -289,7 +352,7 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 			if err := s.Ceiling.Geometry.Load(verts, indices, s.Ceiling.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 				return err
 			}
-			geoms, err := loadExtrusionGeometries(s.Ceiling.ExtrusionGeometries, bfList)
+			geoms, err := loadExtrusionGeometries(s.Ceiling.ExtrusionGeometries, bfList, s.Ceiling.Smooth, s.Ceiling.SmoothAngle)
 			if err != nil {
 				return err
 			}
@@ -330,8 +393,10 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 }
 
 // loadExtrusionGeometries releases old GPU resources and uploads each
-// ExtrusionBackFace as a separate Geometry.
-func loadExtrusionGeometries(old []Geometry, bfList []ExtrusionBackFace) ([]Geometry, error) {
+// ExtrusionBackFace as a separate Geometry. smooth/smoothAngle come from the
+// surface the extrusion was cut into, so a smoothed surface's bevels round off
+// with it rather than staying faceted next to it.
+func loadExtrusionGeometries(old []Geometry, bfList []ExtrusionBackFace, smooth bool, smoothAngle float32) ([]Geometry, error) {
 	for i := range old {
 		old[i].Delete()
 	}
@@ -341,6 +406,7 @@ func loadExtrusionGeometries(old []Geometry, bfList []ExtrusionBackFace) ([]Geom
 	geoms := make([]Geometry, 0, len(bfList))
 	for _, bf := range bfList {
 		var g Geometry
+		g.Smooth, g.SmoothAngle = smooth, smoothAngle
 		if err := g.Load(bf.Vertices, bf.Indices, bf.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 			return nil, err
 		}

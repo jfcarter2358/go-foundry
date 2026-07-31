@@ -5,12 +5,17 @@ package main
 // Points are stored in the chunk's shared pool (Chunk.Points).
 // Sectors reference them via PointIndices.
 //
-// Shift+click  : place a new free point (also splits an edge if near one)
+// Shift+click  : on a sector edge, insert a vertex on that edge — the edge is
+//                split into two halves that both inherit the original wall's
+//                (or portal's) properties, and every sector sharing the edge is
+//                split with it. Away from any edge, places a new free point.
 // Ctrl+click   : connect two points with an edge (creates/splits sectors);
 //                selection chains to the point just clicked, so ctrl+clicking
 //                around a loop draws the whole outline. Ctrl+click the same
-//                point twice to stop connecting.
-// Right-click  : remove a point and all connected edges
+//                point twice to stop connecting; a plain click also discards
+//                the half-drawn outline.
+// Right-click  : remove a point and all connected edges; on empty space (no
+//                point, no line, no modifier) clear the vertex selection
 // Left-click   : select vertex/edge/sector, drag vertices
 // Middle-mouse : pan the view
 
@@ -262,6 +267,45 @@ func findChunkPointNear(ch *Chunk, wx, wz, threshold float32) int {
 	return bestIdx
 }
 
+// anyEdgeNear reports whether any drawn line — a sector edge or a pending edge
+// from an in-progress ctrl+click chain — passes within threshold of (wx,wz).
+func anyEdgeNear(ch *Chunk, wx, wz, threshold float32) bool {
+	near := func(pIdxA, pIdxB int) bool {
+		if pIdxA < 0 || pIdxA >= len(ch.Points) || pIdxB < 0 || pIdxB >= len(ch.Points) {
+			return false
+		}
+		a, b := ch.Points[pIdxA], ch.Points[pIdxB]
+		return distToSegment2D(wx, wz, a.X(), a.Y(), b.X(), b.Y()) < threshold
+	}
+	for si := range ch.Sectors {
+		s := &ch.Sectors[si]
+		nPts := len(s.PointIndices)
+		if nPts < 2 {
+			continue
+		}
+		for ei := 0; ei < nPts; ei++ {
+			if near(s.PointIndices[ei], s.PointIndices[(ei+1)%nPts]) {
+				return true
+			}
+		}
+	}
+	for _, e := range Editor.PendingEdges {
+		if near(e[0], e[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// editor2DCancelPendingPolygon abandons an in-progress ctrl+click outline: the
+// connect anchor and every edge drawn since the chain started. The chunk points
+// themselves survive — only the edges between them are dropped, so a wrong
+// polygon can be redrawn without replacing its vertices.
+func editor2DCancelPendingPolygon() {
+	Editor.ConnectFromIdx = -1
+	Editor.PendingEdges = nil
+}
+
 // Editor2DHandleClick processes a mouse button down event in 2D mode.
 func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 	lvl := Editor.level
@@ -281,12 +325,20 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 
 	threshold := screenToWorldSize(editor2DSelectRadius, editor2DOrtho())
 
-	// --- Right-click: remove point ---
+	// --- Right-click: remove point, or deselect on empty space ---
 	if t.Button == sdl.ButtonRight {
 		pi := findChunkPointNear(ch, wx, wz, threshold)
 		if pi >= 0 {
 			EditorPushUndo()
 			removeChunkPoint(ch, pi)
+			return
+		}
+		// Nothing under the cursor — an unmodified right-click drops the
+		// vertex selection. Edges keep their own click target, so a
+		// right-click near a line is left alone.
+		if !shiftHeld && !ctrlHeld && !anyEdgeNear(ch, wx, wz, threshold*2) {
+			clearVertexSelection()
+			editor2DCancelPendingPolygon()
 		}
 		return
 	}
@@ -300,26 +352,13 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
-	// --- Shift+click: place a new free point ---
+	// --- Shift+click: split the nearest edge, else place a new free point ---
 	if shiftHeld {
-		EditorPushUndo()
-		newPt := mgl32.Vec2{wx, wz}
-		newIdx := ch.AddPoint(newPt)
-
-		// If near an existing sector edge, also insert into that sector
-		for si := range ch.Sectors {
-			s := &ch.Sectors[si]
-			nPts := len(s.PointIndices)
-			for ei := 0; ei < nPts; ei++ {
-				a := ch.Points[s.PointIndices[ei]]
-				b := ch.Points[s.PointIndices[(ei+1)%nPts]]
-				d := distToSegment2D(wx, wz, a.X(), a.Y(), b.X(), b.Y())
-				if d < threshold*2 {
-					insertSectorVertex(ch, s, si, ei, newIdx)
-					return
-				}
-			}
+		if splitSectorEdgeNear(ch, wx, wz, threshold*2) {
+			return
 		}
+		EditorPushUndo()
+		ch.AddPoint(mgl32.Vec2{wx, wz})
 		return
 	}
 
@@ -368,6 +407,11 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 
 	// --- Normal left-click: select vertex/edge/sector ---
 
+	// Releasing ctrl and clicking ends the connect chain and abandons the
+	// half-drawn polygon, so a mis-drawn outline can be thrown away without
+	// unwinding it edge by edge.
+	editor2DCancelPendingPolygon()
+
 	// 1. Vertex proximity — highest priority (check all chunk points in
 	// sectors). A vertex shared by multiple sectors uses the same chunk
 	// point index in each sector's PointIndices, so repeated clicks cycle
@@ -408,10 +452,14 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 			}
 		}
 
+		setVertexSelection([]vertexSel{{
+			chunkIdx:  Editor.ActiveChunkIdx,
+			sectorIdx: pick.si,
+			vertIdx:   pick.vi,
+			pointIdx:  pick.pIdx,
+			isFloor:   Editor.EditFloorVerts,
+		}})
 		Editor.ActiveSectorIdx = pick.si
-		Editor.ActiveVertexSI = pick.si
-		Editor.ActiveVertexVI = pick.vi
-		Editor.ActiveEdgeIdx = -1
 		EditorPushUndo() // snapshot at drag start, not per-frame during the drag
 		Editor.DragVertexSI = pick.si
 		Editor.DragVertexVI = pick.vi
@@ -452,8 +500,7 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 		Editor.ActiveSectorIdx = best.si
 		Editor.ActiveEdgeKind = best.kind
 		Editor.ActiveEdgeIdx = best.kindIdx
-		Editor.ActiveVertexSI = -1
-		Editor.ActiveVertexVI = -1
+		clearVertexSelection()
 		return
 	}
 
@@ -463,16 +510,14 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 		if pointInPolygon(mgl32.Vec2{wx, wz}, SectorPoints(ch, s)) {
 			Editor.ActiveSectorIdx = si
 			Editor.ActiveEdgeIdx = -1
-			Editor.ActiveVertexSI = -1
-			Editor.ActiveVertexVI = -1
+			clearVertexSelection()
 			return
 		}
 	}
 
 	// 4. Click on empty space — deselect everything
 	Editor.ActiveEdgeIdx = -1
-	Editor.ActiveVertexSI = -1
-	Editor.ActiveVertexVI = -1
+	clearVertexSelection()
 }
 
 // Editor2DHandleRelease processes mouse button release to stop vertex dragging.
@@ -564,28 +609,198 @@ func reloadSectorsUsingPoint(ch *Chunk, pointIdx int) {
 	ch.RebuildGaps()
 }
 
+// minSplitSegLen is the shortest wall half (world units) a split may produce.
+// Splitting closer than this to an existing vertex would leave a zero-length
+// wall whose endpoints alias its neighbour's, which Sector.Load resolves by
+// position and would then mis-match.
+const minSplitSegLen = float32(0.01)
+
+// edgeSplitRef names one sector edge to split, with t measured in that sector's
+// own winding order.
+type edgeSplitRef struct {
+	si, ei int
+	t      float32
+}
+
+// edgeSplitPlan is a resolved edge-insertion: where the new vertex goes, which
+// sector edges it splits, and which edge selection survives it. kind/kindIdx
+// describe the clicked edge as seen from sector si.
+type edgeSplitPlan struct {
+	newPt   mgl32.Vec2
+	refs    []edgeSplitRef
+	si      int
+	kind    string
+	kindIdx int
+}
+
+// planEdgeSplit resolves the sector edge nearest to (wx,wz) within threshold
+// into an edgeSplitPlan, or reports false if there is no edge close enough (or
+// the split would land on top of an existing vertex).
+//
+// The new vertex is snapped onto the edge so the sector outline keeps its exact
+// shape. Every sector that walks the same pair of chunk points is included: a
+// portal shared by two sectors is only recognised while both sides still have
+// matching reverse edges, so splitting one side alone would make InferPortals
+// demote both halves back to walls.
+func planEdgeSplit(ch *Chunk, wx, wz, threshold float32) (edgeSplitPlan, bool) {
+	// Nearest edge across all sectors, not merely the first within threshold.
+	bestSI, bestEI := -1, -1
+	bestDist := threshold
+	for si := range ch.Sectors {
+		s := &ch.Sectors[si]
+		nPts := len(s.PointIndices)
+		if nPts < 3 {
+			continue
+		}
+		for ei := 0; ei < nPts; ei++ {
+			a := ch.Points[s.PointIndices[ei]]
+			b := ch.Points[s.PointIndices[(ei+1)%nPts]]
+			if d := distToSegment2D(wx, wz, a.X(), a.Y(), b.X(), b.Y()); d < bestDist {
+				bestDist, bestSI, bestEI = d, si, ei
+			}
+		}
+	}
+	if bestSI < 0 {
+		return edgeSplitPlan{}, false
+	}
+
+	best := &ch.Sectors[bestSI]
+	nBest := len(best.PointIndices)
+	pIdxA := best.PointIndices[bestEI]
+	pIdxB := best.PointIndices[(bestEI+1)%nBest]
+	a := ch.Points[pIdxA]
+	b := ch.Points[pIdxB]
+
+	edgeLen := b.Sub(a).Len()
+	t := segmentParam2D(wx, wz, a.X(), a.Y(), b.X(), b.Y())
+	if edgeLen < 2*minSplitSegLen || t*edgeLen < minSplitSegLen || (1-t)*edgeLen < minSplitSegLen {
+		return edgeSplitPlan{}, false
+	}
+
+	// One ref per sector, so the recorded positions all stay valid once the
+	// first insert shifts indices.
+	var refs []edgeSplitRef
+	for si := range ch.Sectors {
+		s := &ch.Sectors[si]
+		nPts := len(s.PointIndices)
+		for ei := 0; ei < nPts; ei++ {
+			q0 := s.PointIndices[ei]
+			q1 := s.PointIndices[(ei+1)%nPts]
+			if q0 == pIdxA && q1 == pIdxB {
+				refs = append(refs, edgeSplitRef{si, ei, t})
+			} else if q0 == pIdxB && q1 == pIdxA {
+				// Opposite winding, so the split sits at 1-t along this edge.
+				refs = append(refs, edgeSplitRef{si, ei, 1 - t})
+			} else {
+				continue
+			}
+			break
+		}
+	}
+
+	kind, kindIdx := edgeKindAndIndex(best, bestEI)
+	return edgeSplitPlan{
+		newPt:   a.Add(b.Sub(a).Mul(t)),
+		refs:    refs,
+		si:      bestSI,
+		kind:    kind,
+		kindIdx: kindIdx,
+	}, true
+}
+
+// applyEdgeSplit adds the plan's vertex to the chunk point pool and splits every
+// edge the plan names. Geometry is left stale; the caller reloads.
+func applyEdgeSplit(ch *Chunk, plan edgeSplitPlan) int {
+	newPtIdx := ch.AddPoint(plan.newPt)
+	for _, r := range plan.refs {
+		if r.si < 0 || r.si >= len(ch.Sectors) {
+			continue
+		}
+		insertSectorVertex(ch, &ch.Sectors[r.si], r.ei, newPtIdx, r.t)
+	}
+	return newPtIdx
+}
+
+// splitSectorEdgeNear inserts a new vertex on the sector edge nearest to
+// (wx,wz) within threshold, splitting that edge into two halves that both
+// inherit the split wall's (or portal's) properties. Reports whether a split
+// happened; pushes undo only in that case.
+func splitSectorEdgeNear(ch *Chunk, wx, wz, threshold float32) bool {
+	plan, ok := planEdgeSplit(ch, wx, wz, threshold)
+	if !ok {
+		return false
+	}
+
+	EditorPushUndo()
+	newPtIdx := applyEdgeSplit(ch, plan)
+	reloadSectorsUsingPoint(ch, newPtIdx)
+
+	// The first half keeps the split edge's wall/portal index, so leave that
+	// selected; vertex positions after the insert have shifted, so drop those.
+	Editor.ActiveSectorIdx = plan.si
+	Editor.ActiveEdgeKind = plan.kind
+	Editor.ActiveEdgeIdx = plan.kindIdx
+	clearVertexSelection()
+	return true
+}
+
 // insertSectorVertex inserts a chunk point (already in ch.Points at newPtIdx)
-// into a sector at edge position ei, splitting the edge.
-func insertSectorVertex(ch *Chunk, s *Sector, si, ei, newPtIdx int) {
+// into a sector at edge position ei, splitting the edge. t is where the new
+// point sits along the edge (0 = edge start, 1 = edge end) in this sector's
+// winding order. Geometry is left stale — the caller must reload the sector.
+func insertSectorVertex(ch *Chunk, s *Sector, ei, newPtIdx int, t float32) {
+	nPts := len(s.PointIndices)
+	if ei < 0 || ei >= nPts || newPtIdx < 0 || newPtIdx >= len(ch.Points) {
+		return
+	}
+	// EdgeKinds is meant to be index-aligned with PointIndices; pad a malformed
+	// sector rather than bail, so the split still lands.
+	for len(s.EdgeKinds) < nPts {
+		s.EdgeKinds = append(s.EdgeKinds, "wall")
+	}
+
+	// Split the wall/portal covering edge ei while the indices are still the
+	// pre-insert ones.
+	newPt := ch.Points[newPtIdx]
+	wKind, wIdx := edgeKindAndIndex(s, ei)
+	switch {
+	case wKind == "wall" && wIdx < len(s.Walls):
+		first, second := splitWall(s.Walls[wIdx], newPt, t)
+		s.Walls = append(s.Walls, Wall{})
+		copy(s.Walls[wIdx+2:], s.Walls[wIdx+1:])
+		s.Walls[wIdx] = first
+		s.Walls[wIdx+1] = second
+	case wKind == "portal" && wIdx < len(s.Portals):
+		first, second := splitPortal(s.Portals[wIdx], newPt)
+		s.Portals = append(s.Portals, Portal{})
+		copy(s.Portals[wIdx+2:], s.Portals[wIdx+1:])
+		s.Portals[wIdx] = first
+		s.Portals[wIdx+1] = second
+	default:
+		log.Printf("insertSectorVertex: sector %q edge %d has kind %q with no matching wall/portal entry; skipping split", s.ID, ei, wKind)
+		return
+	}
+
 	// Insert into PointIndices
-	newIndices := make([]int, len(s.PointIndices)+1)
+	newIndices := make([]int, nPts+1)
 	copy(newIndices, s.PointIndices[:ei+1])
 	newIndices[ei+1] = newPtIdx
 	copy(newIndices[ei+2:], s.PointIndices[ei+1:])
 	s.PointIndices = newIndices
 
-	// Extend VertexOffsets: interpolate new vertex's offset between its neighbors
+	// Extend VertexOffsets: lerp the new vertex's offset between its neighbours
+	// at t so the floor/ceiling surface through the split edge is unchanged.
 	interpOffset := func(offsets []float32) []float32 {
-		n := len(offsets)
-		if n == 0 {
-			return []float32{0}
+		// Offsets are meant to be index-aligned with PointIndices; pad a short
+		// slice so the insert below can't run off the end.
+		for len(offsets) < nPts {
+			offsets = append(offsets, 0)
 		}
-		prevOff := offsets[ei%n]
-		nextOff := offsets[(ei+1)%n]
-		mid := (prevOff + nextOff) / 2
-		newOff := make([]float32, n+1)
+		prevOff := offsets[ei]
+		nextOff := offsets[(ei+1)%nPts]
+		newOff := make([]float32, len(offsets)+1)
 		copy(newOff, offsets[:ei+1])
-		newOff[ei+1] = mid
+		newOff[ei+1] = prevOff + (nextOff-prevOff)*t
 		copy(newOff[ei+2:], offsets[ei+1:])
 		return newOff
 	}
@@ -593,59 +808,152 @@ func insertSectorVertex(ch *Chunk, s *Sector, si, ei, newPtIdx int) {
 	s.Ceiling.VertexOffsets = interpOffset(s.Ceiling.VertexOffsets)
 
 	// Insert EdgeKind for the new edge (same kind as the edge being split)
-	if ei < len(s.EdgeKinds) {
-		newKinds := make([]string, len(s.EdgeKinds)+1)
-		copy(newKinds, s.EdgeKinds[:ei+1])
-		newKinds[ei+1] = s.EdgeKinds[ei]
-		copy(newKinds[ei+2:], s.EdgeKinds[ei+1:])
-		s.EdgeKinds = newKinds
-	}
+	newKinds := make([]string, len(s.EdgeKinds)+1)
+	copy(newKinds, s.EdgeKinds[:ei+1])
+	newKinds[ei+1] = s.EdgeKinds[ei]
+	copy(newKinds[ei+2:], s.EdgeKinds[ei+1:])
+	s.EdgeKinds = newKinds
+}
 
-	// Insert a new wall or portal (splitting the existing edge at ei)
-	pts := SectorPoints(ch, s)
-	newPt := ch.Points[newPtIdx]
-	wKind, wIdx := edgeKindAndIndex(s, ei)
-	if wKind != "wall" && wKind != "portal" {
-		log.Printf("insertSectorVertex: sector %q edge %d has unknown kind %q; skipping split", s.ID, ei, wKind)
-		return
-	}
-	if wKind == "wall" && wIdx < len(s.Walls) {
-		existing := s.Walls[wIdx]
-		newWall := Wall{
-			StartPoint:  newPt,
-			EndPoint:    existing.EndPoint,
-			Texture:     existing.Texture,
-			Collision:   existing.Collision,
-			Visible:     existing.Visible,
-			DoubleSided: existing.DoubleSided,
-			Alpha:       existing.Alpha,
+// splitWall divides w at newPt, which must lie on the segment at parameter t
+// (0 = StartPoint, 1 = EndPoint). Both halves inherit every property of the
+// original — texture, collision, visibility, pinning, UV transform, procedural
+// detail — so the split is invisible until one half is edited. Extrusions and
+// terrain points go to whichever half now covers them.
+func splitWall(w Wall, newPt mgl32.Vec2, t float32) (first, second Wall) {
+	splitU := w.EndPoint.Sub(w.StartPoint).Len() * t
+
+	first = w
+	second = w
+	// Geometry holds live GL handles; both halves get fresh ones from Load.
+	first.Geometry = Geometry{}
+	first.ExtrusionGeometries = nil
+	second.Geometry = Geometry{}
+	second.ExtrusionGeometries = nil
+
+	first.EndPoint = newPt
+	second.StartPoint = newPt
+
+	// Wall U/V is measured in world units from StartPoint (see
+	// buildWallWithExtrusions), so the second half's features shift back by the
+	// split distance rather than being rescaled.
+	first.Extrusions, second.Extrusions = splitExtrusionsAtU(w.Extrusions, splitU)
+	first.TerrainPoints, second.TerrainPoints = splitTerrainPointsAtU(w.TerrainPoints, splitU)
+	return first, second
+}
+
+// splitPortal divides p at newPt. Both halves keep the same target sector and
+// gap-fill settings; gap geometry is regenerated by Chunk.RebuildGaps.
+func splitPortal(p Portal, newPt mgl32.Vec2) (first, second Portal) {
+	first = p
+	second = p
+	first.FloorGap = Geometry{}
+	first.CeilGap = Geometry{}
+	second.FloorGap = Geometry{}
+	second.CeilGap = Geometry{}
+
+	first.EndPoint = newPt
+	second.StartPoint = newPt
+	return first, second
+}
+
+// splitExtrusionsAtU distributes a wall's extrusions between the two halves of
+// a wall split at splitU units from StartPoint. An extrusion that straddles the
+// split can't span two walls, so each half gets the part of it on that side,
+// clamped to the seam; U on the second half is rebased to its own StartPoint.
+func splitExtrusionsAtU(exts []Extrusion, splitU float32) (first, second []Extrusion) {
+	for _, ext := range exts {
+		minU, maxU := extrusionURange(ext)
+		switch {
+		case maxU <= splitU:
+			first = append(first, ext)
+		case minU >= splitU:
+			second = append(second, offsetExtrusionU(ext, -splitU))
+		default:
+			// Skip a sliver too thin to trianglate into anything meaningful.
+			if splitU-minU > minSplitSegLen {
+				first = append(first, clampExtrusionU(ext, minU, splitU))
+			}
+			if maxU-splitU > minSplitSegLen {
+				second = append(second, offsetExtrusionU(clampExtrusionU(ext, splitU, maxU), -splitU))
+			}
 		}
-		existing.EndPoint = newPt
-		s.Walls[wIdx] = existing
-		newWalls := make([]Wall, len(s.Walls)+1)
-		copy(newWalls, s.Walls[:wIdx+1])
-		newWalls[wIdx+1] = newWall
-		copy(newWalls[wIdx+2:], s.Walls[wIdx+1:])
-		s.Walls = newWalls
-	} else if wKind == "portal" && wIdx < len(s.Portals) {
-		existing := s.Portals[wIdx]
-		newPortal := Portal{
-			StartPoint: newPt,
-			EndPoint:   existing.EndPoint,
-			ToSector:   existing.ToSector,
-			DrawGap:    existing.DrawGap,
-			GapTexture: existing.GapTexture,
-			Visible:    existing.Visible,
-		}
-		existing.EndPoint = newPt
-		s.Portals[wIdx] = existing
-		newPortals := make([]Portal, len(s.Portals)+1)
-		copy(newPortals, s.Portals[:wIdx+1])
-		newPortals[wIdx+1] = newPortal
-		copy(newPortals[wIdx+2:], s.Portals[wIdx+1:])
-		s.Portals = newPortals
 	}
-	_ = s.Load(pts)
+	return first, second
+}
+
+// extrusionURange returns the min and max U over an extrusion's outer and inner
+// rings. An extrusion with no points reports a degenerate range at 0.
+func extrusionURange(ext Extrusion) (minU, maxU float32) {
+	seen := false
+	visit := func(pts []ExtrusionPoint) {
+		for _, p := range pts {
+			if !seen || p.U < minU {
+				minU = p.U
+			}
+			if !seen || p.U > maxU {
+				maxU = p.U
+			}
+			seen = true
+		}
+	}
+	visit(ext.Outer)
+	visit(ext.Inner)
+	return minU, maxU
+}
+
+// offsetExtrusionU shifts every U coordinate of an extrusion by delta.
+func offsetExtrusionU(ext Extrusion, delta float32) Extrusion {
+	out := ext
+	shift := func(pts []ExtrusionPoint) []ExtrusionPoint {
+		moved := make([]ExtrusionPoint, len(pts))
+		for i, p := range pts {
+			moved[i] = ExtrusionPoint{U: p.U + delta, V: p.V}
+		}
+		return moved
+	}
+	out.Outer = shift(ext.Outer)
+	out.Inner = shift(ext.Inner)
+	return out
+}
+
+// clampExtrusionU clamps every U coordinate of an extrusion into [lo,hi],
+// keeping the vertex count (Outer and Inner must stay index-aligned).
+func clampExtrusionU(ext Extrusion, lo, hi float32) Extrusion {
+	out := ext
+	clamp := func(pts []ExtrusionPoint) []ExtrusionPoint {
+		clamped := make([]ExtrusionPoint, len(pts))
+		for i, p := range pts {
+			u := p.U
+			if u < lo {
+				u = lo
+			}
+			if u > hi {
+				u = hi
+			}
+			clamped[i] = ExtrusionPoint{U: u, V: p.V}
+		}
+		return clamped
+	}
+	out.Outer = clamp(ext.Outer)
+	out.Inner = clamp(ext.Inner)
+	return out
+}
+
+// splitTerrainPointsAtU distributes a wall's terrain points between the two
+// halves of a wall split at splitU units from StartPoint, rebasing U for the
+// second half. A point sitting on the seam goes to both halves so the two
+// displacement meshes agree there.
+func splitTerrainPointsAtU(pts []TerrainPoint, splitU float32) (first, second []TerrainPoint) {
+	for _, p := range pts {
+		if p.U <= splitU+minSplitSegLen {
+			first = append(first, p)
+		}
+		if p.U >= splitU-minSplitSegLen {
+			second = append(second, TerrainPoint{U: p.U - splitU, V: p.V, Depth: p.Depth})
+		}
+	}
+	return first, second
 }
 
 // edgeKindAndIndex returns the edge type and its index within Walls or Portals
@@ -838,8 +1146,7 @@ func removeChunkPoint(ch *Chunk, pi int) {
 			}
 			// Clear all stale selection indices that referenced the deleted sector
 			Editor.ActiveEdgeIdx = -1
-			Editor.ActiveVertexSI = -1
-			Editor.ActiveVertexVI = -1
+			clearVertexSelection()
 			Editor.DragVertexSI = -1
 			Editor.DragVertexVI = -1
 		}
@@ -885,8 +1192,7 @@ func removeChunkPoint(ch *Chunk, pi int) {
 	}
 
 	// Deselect vertices that might now be invalid
-	Editor.ActiveVertexSI = -1
-	Editor.ActiveVertexVI = -1
+	clearVertexSelection()
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 }
@@ -1104,8 +1410,7 @@ func removeSelectedEdge(ch *Chunk) {
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveEdgeIdx = -1
 	Editor.ActiveEdgeKind = ""
-	Editor.ActiveVertexSI = -1
-	Editor.ActiveVertexVI = -1
+	clearVertexSelection()
 }
 
 // removeSectorKeepPoints removes a sector from the chunk but leaves all chunk
@@ -1381,21 +1686,29 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 
 // ---------- helpers ----------
 
-// distToSegment2D returns the minimum distance from point (px,py) to segment (ax,ay)-(bx,by).
-func distToSegment2D(px, py, ax, ay, bx, by float32) float32 {
+// segmentParam2D returns the parameter in [0,1] of the point on segment
+// (ax,ay)-(bx,by) closest to (px,py). A degenerate segment reports 0.
+func segmentParam2D(px, py, ax, ay, bx, by float32) float32 {
 	dx := bx - ax
 	dy := by - ay
-	if dx == 0 && dy == 0 {
-		return dist2D(px, py, ax, ay)
+	d2 := dx*dx + dy*dy
+	if d2 == 0 {
+		return 0
 	}
-	t := ((px-ax)*dx + (py-ay)*dy) / (dx*dx + dy*dy)
+	t := ((px-ax)*dx + (py-ay)*dy) / d2
 	if t < 0 {
 		t = 0
 	}
 	if t > 1 {
 		t = 1
 	}
-	return dist2D(px, py, ax+t*dx, ay+t*dy)
+	return t
+}
+
+// distToSegment2D returns the minimum distance from point (px,py) to segment (ax,ay)-(bx,by).
+func distToSegment2D(px, py, ax, ay, bx, by float32) float32 {
+	t := segmentParam2D(px, py, ax, ay, bx, by)
+	return dist2D(px, py, ax+t*(bx-ax), ay+t*(by-ay))
 }
 
 func dist2D(ax, ay, bx, by float32) float32 {

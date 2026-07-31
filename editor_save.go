@@ -177,6 +177,8 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				UVScale:       Point{X: s.Floor.UVScale.X(), Y: s.Floor.UVScale.Y()},
 				UVRotation:    s.Floor.UVRotation,
 				Detail:        detailToRaw(s.Floor.Detail),
+				Smooth:        s.Floor.Smooth,
+				SmoothAngle:   s.Floor.SmoothAngle,
 			},
 			Ceiling: RawCeiling{
 				Enabled:       s.Ceiling.Enabled,
@@ -192,6 +194,8 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				UVScale:       Point{X: s.Ceiling.UVScale.X(), Y: s.Ceiling.UVScale.Y()},
 				UVRotation:    s.Ceiling.UVRotation,
 				Detail:        detailToRaw(s.Ceiling.Detail),
+				Smooth:        s.Ceiling.Smooth,
+				SmoothAngle:   s.Ceiling.SmoothAngle,
 			},
 		}
 
@@ -234,6 +238,8 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 					UVScale:       Point{X: w.UVScale.X(), Y: w.UVScale.Y()},
 					UVRotation:    w.UVRotation,
 					Detail:        detailToRaw(w.Detail),
+					Smooth:        w.Smooth,
+					SmoothAngle:   w.SmoothAngle,
 				})
 				wallIdx++
 			} else if kind == "portal" && portalIdx < len(s.Portals) {
@@ -425,8 +431,10 @@ func primitiveToRaw(p *Primitive, ch *Chunk) RawPrimitive {
 		Alpha:      float32PtrIfNotOne(p.Alpha),
 		UVOffset:   Point{X: p.UVOffset.X(), Y: p.UVOffset.Y()},
 		UVScale:    Point{X: uvSc.X(), Y: uvSc.Y()},
-		UVRotation: p.UVRotation,
-		Water:      waterParamsToRaw(p),
+		UVRotation:  p.UVRotation,
+		Smooth:      p.Smooth,
+		SmoothAngle: p.SmoothAngle,
+		Water:       waterParamsToRaw(p),
 	}
 	return rp
 }
@@ -474,12 +482,18 @@ func lightsToRaw(ls LightSet) RawLights {
 		},
 	}
 	for _, dl := range ls.Directional {
+		// Re-derive so a stale/NaN Direction from an older in-memory level can
+		// never be written back out.
+		dl.SyncDirection()
+		yaw, pitch := dl.Yaw, dl.Pitch
 		rl.Directional = append(rl.Directional, RawDirLight{
 			Direction: struct {
 				X float32 `yaml:"x"`
 				Y float32 `yaml:"y"`
 				Z float32 `yaml:"z"`
 			}{dl.Direction.X(), dl.Direction.Y(), dl.Direction.Z()},
+			Yaw:            &yaw,
+			Pitch:          &pitch,
 			Color:          RawColor{R: dl.Color.X(), G: dl.Color.Y(), B: dl.Color.Z()},
 			Brightness:     dl.Brightness,
 			CastShadows:    dl.CastShadows,
@@ -601,14 +615,26 @@ func detailToRaw(d DetailSpec) *RawDetail {
 	if !d.Enabled {
 		return nil
 	}
+	waves := make([]RawDetailWave, 0, detailMaxWaves)
+	for _, w := range d.Waves {
+		waves = append(waves, RawDetailWave{
+			Enabled:   w.Enabled,
+			Amplitude: w.Amplitude,
+			Frequency: w.Frequency,
+			Rotation:  w.Rotation,
+			TessLevel: w.TessLevel,
+		})
+	}
 	return &RawDetail{
 		Preset:         d.Preset,
 		Seed:           d.Seed,
 		Displace:       d.Displace,
-		Amplitude:      d.Amplitude,
-		Frequency:      d.Frequency,
-		Octaves:        d.Octaves,
-		TessLevel:      d.TessLevel,
+		Waves:          waves,
+		Noise:          d.Noise,
+		NoiseAmplitude: d.NoiseAmplitude,
+		NoiseFrequency: d.NoiseFrequency,
+		NoiseOctaves:   d.NoiseOctaves,
+		NoiseTessLevel: d.NoiseTessLevel,
 		EdgeTaper:      d.EdgeTaper,
 		Scatter:        d.Scatter,
 		ScatterMesh:    d.ScatterMesh,

@@ -4,10 +4,6 @@ uniform mat4 projection;
 uniform mat4 camera;
 uniform mat4 model;
 
-#define MAX_DIR_LIGHTS 4
-uniform int  numDirLights;
-uniform mat4 lightSpaceMatrix[MAX_DIR_LIGHTS];
-
 // Water animation. isWater gates the whole path; time is seconds since start.
 uniform int   isWater;
 uniform float time;
@@ -15,12 +11,22 @@ uniform float waveAmplitude;
 uniform float waveLength;
 uniform float waveSpeed;
 
+// Smooth shading: 1 = shade from vertNormal, 0 = let the fragment stage recover
+// a flat facet normal from screen-space derivatives. Locations are pinned so the
+// same VAO also feeds the detail tessellation program (see detail_vert.glsl).
+uniform int smoothShading;
+
 layout(location = 0) in vec3 vert;
 layout(location = 1) in vec2 vertTexCoord;
+// Per-vertex normal, present only on surfaces built with smoothing on. The
+// attribute array is disabled otherwise, so this reads (0,0,0) and is ignored.
+layout(location = 2) in vec3 vertNormal;
 
 out vec2 fragTexCoord;
 out vec3 fragWorldPos;
-out vec4 fragPosLightSpace[MAX_DIR_LIGHTS];
+out vec3 fragNormal;
+// View-axis distance; the fragment stage uses it to select a shadow cascade.
+out float fragViewDepth;
 
 // Sum of three travelling sine waves at different headings, so the surface
 // never reads as a single repeating ripple. Driven by world XZ, which keeps
@@ -52,9 +58,16 @@ void main() {
 
     fragWorldPos = worldPos.xyz;
 
-    for (int i = 0; i < numDirLights; i++) {
-        fragPosLightSpace[i] = lightSpaceMatrix[i] * worldPos;
+    // Inverse-transpose rather than mat3(model): primitives carry per-axis
+    // scale, which skews a plain rotation of the normal off the surface. Only
+    // paid for on smoothed surfaces.
+    fragNormal = vec3(0.0);
+    if (smoothShading != 0) {
+        fragNormal = transpose(inverse(mat3(model))) * vertNormal;
     }
 
-    gl_Position = projection * camera * worldPos;
+    vec4 viewPos = camera * worldPos;
+    fragViewDepth = -viewPos.z;
+
+    gl_Position = projection * viewPos;
 }

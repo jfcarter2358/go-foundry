@@ -101,6 +101,8 @@ type Primitive struct {
 	UVScale      mgl32.Vec2  // UV scale; zero treated as {1,1}
 	UVRotation   float32     // UV rotation in radians
 	Alpha        float32     // 0.0 = fully transparent, 1.0 = fully opaque
+	Smooth       bool        // shade from interpolated vertex normals (see smooth.go)
+	SmoothAngle  float32     // crease threshold in degrees; 0 = defaultSmoothAngle
 	BoundingKind BoundingType
 	BoundHalfX   float32
 	BoundHalfY   float32
@@ -165,6 +167,10 @@ func (p *Primitive) Load() error {
 		vertices[i][4] = rv + p.UVOffset.Y()
 	}
 
+	// A sphere or a cylinder is a faceted approximation of a curved shape, so
+	// smoothing is what makes it read as round; set it before the upload, which
+	// is where the normals get generated.
+	p.Geometry.Smooth, p.Geometry.SmoothAngle = p.Smooth, p.SmoothAngle
 	if err := p.Geometry.Load(vertices, indices, p.Texture, p.Position); err != nil {
 		return err
 	}

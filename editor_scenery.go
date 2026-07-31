@@ -247,6 +247,10 @@ func SceneryEditorRenderGizmos(projView mgl32.Mat4) {
 		}
 		GizmoAABB(bmin, bmax, color)
 	}
+
+	// Translate gizmo for the selected primitive (no vertex handles here —
+	// scenery is loose primitives, not sectors).
+	editorRenderInteractiveOverlays(projView, false)
 }
 
 // ---------- ImGui Panel ----------
@@ -386,6 +390,9 @@ func SceneryEditorPanel() {
 			imgui.Checkbox("Collision##scprimcol", &p.Collision)
 			if editorDragFloat("Alpha##scprima", &p.Alpha, 0, 1, "%.2f") {
 				p.Geometry.Alpha = p.Alpha
+			}
+			if editorSmoothPanel("SceneryPrim", &p.Smooth, &p.SmoothAngle) {
+				reloadSceneryPrimitive(Editor.SceneryActivePrimIdx)
 			}
 
 			if imgui.CollapsingHeader("Texture UV##scprimUVhdr") {

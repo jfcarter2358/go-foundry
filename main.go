@@ -84,8 +84,14 @@ var Projection mgl32.Mat4
 // Kept global so RefreshWindowSize can re-upload it after a resize or fullscreen toggle.
 //
 // AlphaUniform is the shader uniform location for the per-geometry alpha multiplier.
+//
+// SmoothUniform selects the normal the fragment stage shades with: the
+// interpolated per-vertex normal when set, the flat screen-space derivative
+// facet when not. Every draw through Geometry sets it, so a smoothed surface
+// never leaks its setting onto the geometry drawn after it.
 var ProjectionUniform int32
 var AlphaUniform int32
+var SmoothUniform int32
 
 // Water shader uniform locations. TimeUniform and CamPosUniform are set once
 // per frame; the rest are set per-draw from Geometry.Water.
@@ -133,6 +139,9 @@ func main() {
 
 	textureNames = ScanTextures(filepath.Join(executablePath, "textures"))
 	log.Printf("scanned %d textures", len(textureNames))
+
+	// Merge the user's saved detail presets in over the compiled-in ones.
+	LoadDetailPresets()
 
 	// Catch any unexpected panic and write it to the log before exiting.
 	defer func() {
@@ -221,6 +230,9 @@ func main() {
 
 	AlphaUniform = gl.GetUniformLocation(Program, gl.Str("alpha\x00"))
 	gl.Uniform1f(AlphaUniform, 1.0) // default: fully opaque
+
+	SmoothUniform = gl.GetUniformLocation(Program, gl.Str("smoothShading\x00"))
+	gl.Uniform1i(SmoothUniform, 0) // default: flat facet normals
 
 	TimeUniform = gl.GetUniformLocation(Program, gl.Str("time\x00"))
 	CamPosUniform = gl.GetUniformLocation(Program, gl.Str("camPos\x00"))
@@ -422,8 +434,8 @@ func main() {
 			}
 		} else {
 		// --- Shadow pass: render depth from each shadow-casting light ---
-		shadowMatrices := RenderShadowPass(level.Lights, &level, Cam.Position)
-		UploadShadowUniforms(level.Lights, shadowMatrices)
+		shadowFrame := RenderShadowPass(level.Lights, &level, Cam.Matrix, Projection)
+		UploadShadowUniforms(level.Lights, shadowFrame)
 		RenderPointShadowPass(level.Lights, &level)
 		UploadPointShadowUniforms(level.Lights)
 
@@ -578,7 +590,7 @@ func main() {
 		// --- Procedural face detail (GPU rock displacement + scatter) ---
 		// Drawn after opaque geometry; reuses the main fragment shader so it
 		// receives shadows, and was rendered into the shadow maps above so it casts.
-		RenderDetailColor(&level, shadowMatrices)
+		RenderDetailColor(&level, shadowFrame)
 
 		// --- Transparent pass: draw collected transparent geometry back-to-front ---
 		if len(transparentDraws) > 0 {

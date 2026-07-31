@@ -234,43 +234,7 @@ func (ch *Chunk) RecomputeBounds() {
 	}
 
 	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		minFloor := s.Floor.Height
-		for _, off := range s.Floor.VertexOffsets {
-			if h := s.Floor.Height + off; h < minFloor {
-				minFloor = h
-			}
-		}
-		for _, tp := range s.Floor.TerrainPoints {
-			if h := s.Floor.Height + tp.Depth; h < minFloor {
-				minFloor = h
-			}
-		}
-		for _, ext := range s.Floor.Extrusions {
-			if h := s.Floor.Height - ext.Depth; h < minFloor {
-				minFloor = h
-			}
-		}
-		maxCeil := s.Ceiling.Height
-		for _, off := range s.Ceiling.VertexOffsets {
-			if h := s.Ceiling.Height + off; h > maxCeil {
-				maxCeil = h
-			}
-		}
-		for _, tp := range s.Ceiling.TerrainPoints {
-			if h := s.Ceiling.Height + tp.Depth; h > maxCeil {
-				maxCeil = h
-			}
-		}
-		for _, ext := range s.Ceiling.Extrusions {
-			if h := s.Ceiling.Height + ext.Depth; h > maxCeil {
-				maxCeil = h
-			}
-		}
-		extend(
-			mgl32.Vec3{s.MinBound.X(), minFloor, s.MinBound.Y()},
-			mgl32.Vec3{s.MaxBound.X(), maxCeil, s.MaxBound.Y()},
-		)
+		extend(ch.Sectors[si].WorldAABB())
 	}
 
 	for pi := range ch.Primitives {
