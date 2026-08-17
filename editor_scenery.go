@@ -11,7 +11,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -667,19 +666,7 @@ func rawToSceneryPrimitive(rp RawPrimitive) Primitive {
 
 // ScanSceneryFiles returns sorted .yaml filenames from the scenery directory.
 func ScanSceneryFiles(dir string) []string {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var files []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-			continue
-		}
-		files = append(files, e.Name())
-	}
-	sort.Strings(files)
-	return files
+	return scanFilesByExt(dir, ".yaml")
 }
 
 // ImportSceneryIntoChunk loads a scenery file and adds its primitives to the chunk,

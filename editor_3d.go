@@ -13,7 +13,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -36,16 +35,9 @@ type EntityDef struct {
 
 // ScanEntityDefs reads all .yaml files in entitiesDir and returns their definitions.
 func ScanEntityDefs(entitiesDir string) []EntityDef {
-	entries, err := os.ReadDir(entitiesDir)
-	if err != nil {
-		return nil
-	}
 	var defs []EntityDef
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(entitiesDir, e.Name()))
+	for _, name := range scanFilesByExt(entitiesDir, ".yaml") {
+		data, err := os.ReadFile(filepath.Join(entitiesDir, name))
 		if err != nil {
 			continue
 		}

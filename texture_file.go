@@ -355,16 +355,10 @@ func ImportPNG(path string) (*TexDoc, error) {
 // ScanFtexFiles returns sorted logical names (without extension) of .ftex
 // files in <exe>/textures.
 func ScanFtexFiles() []string {
-	entries, err := os.ReadDir(texturesDir())
-	if err != nil {
-		return nil
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ftex") {
-			continue
-		}
-		names = append(names, strings.TrimSuffix(e.Name(), ".ftex"))
+	files := scanFilesByExt(texturesDir(), ".ftex")
+	names := make([]string, len(files))
+	for i, f := range files {
+		names[i] = strings.TrimSuffix(f, ".ftex")
 	}
 	return names
 }

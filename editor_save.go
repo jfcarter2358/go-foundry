@@ -17,8 +17,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"gopkg.in/yaml.v2"
@@ -26,19 +24,7 @@ import (
 
 // ScanLevelFiles returns sorted filenames of .yaml files in dir.
 func ScanLevelFiles(dir string) []string {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var files []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-			continue
-		}
-		files = append(files, e.Name())
-	}
-	sort.Strings(files)
-	return files
+	return scanFilesByExt(dir, ".yaml")
 }
 
 // WriteBlankLevel writes a minimal valid level YAML to path.
@@ -67,48 +53,6 @@ func SaveLevel(level *Level, path string) error {
 		return fmt.Errorf("yaml marshal: %w", err)
 	}
 	return writeFileAtomic(path, data)
-}
-
-// writeFileAtomic writes data to path via a temporary file in the same
-// directory followed by a rename, so an interrupted or failing write can never
-// leave a truncated level behind. The previous contents are retained as
-// path+".bak".
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename below succeeds
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, 0644); err != nil {
-		return err
-	}
-
-	// Keep one generation of backup so a bad edit is still recoverable.
-	if prev, err := os.ReadFile(path); err == nil {
-		if err := os.WriteFile(path+".bak", prev, 0644); err != nil {
-			return err
-		}
-	}
-
-	return os.Rename(tmpName, path)
 }
 
 // levelToRaw converts the runtime Level into its serialisable form.

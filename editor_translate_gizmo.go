@@ -84,7 +84,7 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 		}
 
 	case gizmoKindChunk:
-		if ch := gizmoChunk(); ch != nil {
+		if ch := activeChunk(); ch != nil {
 			// The chunk's Origin field can sit far from its geometry, so anchor
 			// the gizmo on the middle of the chunk's bounds instead.
 			return ch.MinBound.Add(ch.MaxBound).Mul(0.5), true
@@ -98,18 +98,9 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	return mgl32.Vec3{}, false
 }
 
-// gizmoChunk returns the chunk the gizmo targets, or nil.
-func gizmoChunk() *Chunk {
-	lvl := Editor.level
-	if lvl == nil || Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
-		return nil
-	}
-	return &lvl.Chunks[Editor.ActiveChunkIdx]
-}
-
 // activeGizmoPrimitive returns the selected level primitive, or nil.
 func activeGizmoPrimitive() *Primitive {
-	ch := gizmoChunk()
+	ch := activeChunk()
 	if ch == nil || Editor.ActivePrimitiveIdx < 0 || Editor.ActivePrimitiveIdx >= len(ch.Primitives) {
 		return nil
 	}
@@ -264,7 +255,7 @@ func captureGizmoDragStart() bool {
 		return true
 
 	case gizmoKindChunk:
-		ch := gizmoChunk()
+		ch := activeChunk()
 		if ch == nil {
 			return false
 		}
@@ -319,7 +310,7 @@ func translateGizmoMouseMove(mx, my int32) {
 	case gizmoKindPrimitive:
 		if p := activeGizmoPrimitive(); p != nil {
 			p.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
-			if ch := gizmoChunk(); ch != nil {
+			if ch := activeChunk(); ch != nil {
 				rebuildPrimitiveIndices(ch)
 			}
 		}
@@ -330,7 +321,7 @@ func translateGizmoMouseMove(mx, my int32) {
 				axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindChunk:
-		if ch := gizmoChunk(); ch != nil {
+		if ch := activeChunk(); ch != nil {
 			moveChunk(ch, axisMoved(Editor.GizmoDragStartPos, axis, delta))
 		}
 	case gizmoKindScenery:
