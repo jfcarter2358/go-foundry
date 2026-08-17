@@ -344,153 +344,123 @@ func texEditorDoOpen(name string) {
 }
 
 func drawTexEditorNewDialog() {
-	if texEditorShowNewDialog {
-		imgui.OpenPopup("New Texture")
-		texEditorShowNewDialog = false
-	}
-	if !imgui.BeginPopupModalV("New Texture", nil, imgui.WindowFlagsAlwaysAutoResize) {
-		return
-	}
-	imgui.Text("Name:")
-	imgui.SetNextItemWidth(200)
-	imgui.InputText("##newtexname", &texEditorNewName)
-	imgui.Text("Size (square):")
-	sizeLabels := make([]string, len(texEditorSizeOptions))
-	for i, s := range texEditorSizeOptions {
-		sizeLabels[i] = fmt.Sprintf("%dx%d", s, s)
-	}
-	imgui.SetNextItemWidth(150)
-	imgui.Combo("##newtexsize", &texEditorNewSizeIdx, sizeLabels)
-	if imgui.Button("Create") && texEditorNewName != "" {
-		sz := int(texEditorSizeOptions[texEditorNewSizeIdx])
-		ed, err := NewTexEditorDoc(texEditorNewName, sz, sz)
-		if err != nil {
-			texEditorStatus(fmt.Sprintf("New failed: %v", err))
-		} else {
-			texEditorAdoptDoc(ed)
+	withModalPopup("New Texture", &texEditorShowNewDialog, func() {
+		imgui.Text("Name:")
+		imgui.SetNextItemWidth(200)
+		imgui.InputText("##newtexname", &texEditorNewName)
+		imgui.Text("Size (square):")
+		sizeLabels := make([]string, len(texEditorSizeOptions))
+		for i, s := range texEditorSizeOptions {
+			sizeLabels[i] = fmt.Sprintf("%dx%d", s, s)
 		}
-		imgui.CloseCurrentPopup()
-	}
-	imgui.SameLine()
-	if imgui.Button("Cancel##newtex") {
-		imgui.CloseCurrentPopup()
-	}
-	imgui.EndPopup()
-}
-
-func drawTexEditorOpenDialog() {
-	if texEditorShowOpenDialog {
-		imgui.OpenPopup("Open Texture")
-		texEditorShowOpenDialog = false
-	}
-	if !imgui.BeginPopupModalV("Open Texture", nil, imgui.WindowFlagsAlwaysAutoResize) {
-		return
-	}
-	names := ScanFtexFiles()
-	if len(names) == 0 {
-		imgui.Text("No .ftex files found in textures/.")
-	}
-	for _, n := range names {
-		if imgui.SelectableV(n, false, 0, imgui.Vec2{}) {
-			texEditorDoOpen(n)
-			imgui.CloseCurrentPopup()
-		}
-	}
-	imgui.Separator()
-	if imgui.Button("Cancel##opentex") {
-		imgui.CloseCurrentPopup()
-	}
-	imgui.EndPopup()
-}
-
-func drawTexEditorImportDialog() {
-	if texEditorShowImportDialog {
-		imgui.OpenPopup("Import PNG")
-		texEditorShowImportDialog = false
-	}
-	if !imgui.BeginPopupModalV("Import PNG", nil, imgui.WindowFlagsAlwaysAutoResize) {
-		return
-	}
-	names := make([]string, 0, len(textureNames))
-	for n := range textureNames {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	imgui.Text("Import as a new single-layer document (quantised to the current palette):")
-	for _, n := range names {
-		if imgui.SelectableV(n, false, 0, imgui.Vec2{}) {
-			path := filepath.Join(executablePath, textureNames[n])
-			ed, err := ImportTexEditorDoc(path)
+		imgui.SetNextItemWidth(150)
+		imgui.Combo("##newtexsize", &texEditorNewSizeIdx, sizeLabels)
+		if imgui.Button("Create") && texEditorNewName != "" {
+			sz := int(texEditorSizeOptions[texEditorNewSizeIdx])
+			ed, err := NewTexEditorDoc(texEditorNewName, sz, sz)
 			if err != nil {
-				texEditorStatus(fmt.Sprintf("Import failed: %v", err))
+				texEditorStatus(fmt.Sprintf("New failed: %v", err))
 			} else {
 				texEditorAdoptDoc(ed)
 			}
 			imgui.CloseCurrentPopup()
 		}
-	}
-	imgui.Separator()
-	if imgui.Button("Cancel##importtex") {
-		imgui.CloseCurrentPopup()
-	}
-	imgui.EndPopup()
+		imgui.SameLine()
+		if imgui.Button("Cancel##newtex") {
+			imgui.CloseCurrentPopup()
+		}
+	})
+}
+
+func drawTexEditorOpenDialog() {
+	withModalPopup("Open Texture", &texEditorShowOpenDialog, func() {
+		names := ScanFtexFiles()
+		if len(names) == 0 {
+			imgui.Text("No .ftex files found in textures/.")
+		}
+		for _, n := range names {
+			if imgui.SelectableV(n, false, 0, imgui.Vec2{}) {
+				texEditorDoOpen(n)
+				imgui.CloseCurrentPopup()
+			}
+		}
+		imgui.Separator()
+		if imgui.Button("Cancel##opentex") {
+			imgui.CloseCurrentPopup()
+		}
+	})
+}
+
+func drawTexEditorImportDialog() {
+	withModalPopup("Import PNG", &texEditorShowImportDialog, func() {
+		names := make([]string, 0, len(textureNames))
+		for n := range textureNames {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		imgui.Text("Import as a new single-layer document (quantised to the current palette):")
+		for _, n := range names {
+			if imgui.SelectableV(n, false, 0, imgui.Vec2{}) {
+				path := filepath.Join(executablePath, textureNames[n])
+				ed, err := ImportTexEditorDoc(path)
+				if err != nil {
+					texEditorStatus(fmt.Sprintf("Import failed: %v", err))
+				} else {
+					texEditorAdoptDoc(ed)
+				}
+				imgui.CloseCurrentPopup()
+			}
+		}
+		imgui.Separator()
+		if imgui.Button("Cancel##importtex") {
+			imgui.CloseCurrentPopup()
+		}
+	})
 }
 
 func drawTexEditorSaveAsDialog() {
-	if texEditorShowSaveAsDialog {
-		imgui.OpenPopup("Save Texture As")
-		texEditorShowSaveAsDialog = false
-	}
-	if !imgui.BeginPopupModalV("Save Texture As", nil, imgui.WindowFlagsAlwaysAutoResize) {
-		return
-	}
-	imgui.SetNextItemWidth(200)
-	imgui.InputText("##saveastexname", &texEditorSaveAsName)
-	if imgui.Button("Save##saveastex") && texEditorSaveAsName != "" {
-		if ed := activeTexEditor; ed != nil {
-			if err := ed.Save(texEditorSaveAsName); err != nil {
-				texEditorStatus(fmt.Sprintf("Save failed: %v", err))
-			} else {
-				texEditorStatus(fmt.Sprintf("Saved %s", texEditorSaveAsName))
+	withModalPopup("Save Texture As", &texEditorShowSaveAsDialog, func() {
+		imgui.SetNextItemWidth(200)
+		imgui.InputText("##saveastexname", &texEditorSaveAsName)
+		if imgui.Button("Save##saveastex") && texEditorSaveAsName != "" {
+			if ed := activeTexEditor; ed != nil {
+				if err := ed.Save(texEditorSaveAsName); err != nil {
+					texEditorStatus(fmt.Sprintf("Save failed: %v", err))
+				} else {
+					texEditorStatus(fmt.Sprintf("Saved %s", texEditorSaveAsName))
+				}
 			}
+			imgui.CloseCurrentPopup()
 		}
-		imgui.CloseCurrentPopup()
-	}
-	imgui.SameLine()
-	if imgui.Button("Cancel##saveastex") {
-		imgui.CloseCurrentPopup()
-	}
-	imgui.EndPopup()
+		imgui.SameLine()
+		if imgui.Button("Cancel##saveastex") {
+			imgui.CloseCurrentPopup()
+		}
+	})
 }
 
 func drawTexEditorMismatchDialog() {
-	if texEditorShowMismatch {
-		imgui.OpenPopup("Palette Mismatch")
-		texEditorShowMismatch = false
-	}
-	if !imgui.BeginPopupModalV("Palette Mismatch", nil, imgui.WindowFlagsAlwaysAutoResize) {
-		return
-	}
-	imgui.Text("This file's embedded palette differs from the current global palette.")
-	if imgui.Button("Adopt file's palette globally") {
-		if err := AdoptDocPaletteGlobally(texEditorPendingOpen.Doc); err != nil {
-			texEditorStatus(err.Error())
+	withModalPopup("Palette Mismatch", &texEditorShowMismatch, func() {
+		imgui.Text("This file's embedded palette differs from the current global palette.")
+		if imgui.Button("Adopt file's palette globally") {
+			if err := AdoptDocPaletteGlobally(texEditorPendingOpen.Doc); err != nil {
+				texEditorStatus(err.Error())
+			}
+			texEditorAdoptDoc(texEditorPendingOpen)
+			texEditorPendingOpen = nil
+			imgui.CloseCurrentPopup()
 		}
-		texEditorAdoptDoc(texEditorPendingOpen)
-		texEditorPendingOpen = nil
-		imgui.CloseCurrentPopup()
-	}
-	if imgui.Button("Remap art to current palette") {
-		RemapDocToGlobalPalette(texEditorPendingOpen.Doc)
-		texEditorAdoptDoc(texEditorPendingOpen)
-		texEditorPendingOpen = nil
-		imgui.CloseCurrentPopup()
-	}
-	if imgui.Button("Cancel##mismatch") {
-		texEditorPendingOpen = nil
-		imgui.CloseCurrentPopup()
-	}
-	imgui.EndPopup()
+		if imgui.Button("Remap art to current palette") {
+			RemapDocToGlobalPalette(texEditorPendingOpen.Doc)
+			texEditorAdoptDoc(texEditorPendingOpen)
+			texEditorPendingOpen = nil
+			imgui.CloseCurrentPopup()
+		}
+		if imgui.Button("Cancel##mismatch") {
+			texEditorPendingOpen = nil
+			imgui.CloseCurrentPopup()
+		}
+	})
 }
 
 // ---------- tools panel ----------

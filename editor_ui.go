@@ -39,6 +39,23 @@ func editorPopDisabled() {
 	imgui.PopItemFlag()
 }
 
+// withModalPopup draws an auto-resizing modal popup titled title, opening it
+// (once) when *show is true. show is cleared immediately so the OpenPopup
+// call fires exactly once per request; body is only invoked while the popup
+// is actually open. This is the "if show { OpenPopup }; if Begin { body;
+// End }" shape every popup in the editor and texture editor used to
+// duplicate individually.
+func withModalPopup(title string, show *bool, body func()) {
+	if show != nil && *show {
+		imgui.OpenPopup(title)
+		*show = false
+	}
+	if imgui.BeginPopupModalV(title, nil, imgui.WindowFlagsAlwaysAutoResize) {
+		body()
+		imgui.EndPopup()
+	}
+}
+
 // snapValue rounds v to the nearest multiple of step.
 func snapValue(v, step float32) float32 {
 	if step <= 0 {
@@ -737,165 +754,155 @@ func EditorDrawUI() {
 			}
 		}
 	} else {
-	// Chunk selector
-	imgui.Text("Chunk:")
-	imgui.SameLine()
-	chunkNames := make([]string, len(lvl.Chunks))
-	for i := range lvl.Chunks {
-		chunkNames[i] = lvl.Chunks[i].ID
-	}
-	if len(chunkNames) > 0 {
-		if Editor.ActiveChunkIdx < 0 {
-			Editor.ActiveChunkIdx = 0
+		// Chunk selector
+		imgui.Text("Chunk:")
+		imgui.SameLine()
+		chunkNames := make([]string, len(lvl.Chunks))
+		for i := range lvl.Chunks {
+			chunkNames[i] = lvl.Chunks[i].ID
 		}
-		if Editor.ActiveChunkIdx >= len(chunkNames) {
-			Editor.ActiveChunkIdx = len(chunkNames) - 1
+		if len(chunkNames) > 0 {
+			if Editor.ActiveChunkIdx < 0 {
+				Editor.ActiveChunkIdx = 0
+			}
+			if Editor.ActiveChunkIdx >= len(chunkNames) {
+				Editor.ActiveChunkIdx = len(chunkNames) - 1
+			}
+			currentName := chunkNames[Editor.ActiveChunkIdx]
+			imgui.SetNextItemWidth(150)
+			if imgui.BeginCombo("##chunk", currentName) {
+				for i, name := range chunkNames {
+					selected := i == Editor.ActiveChunkIdx
+					if imgui.SelectableV(name, selected, 0, imgui.Vec2{}) {
+						Editor.ActiveChunkIdx = i
+					}
+				}
+				imgui.EndCombo()
+			}
 		}
-		currentName := chunkNames[Editor.ActiveChunkIdx]
-		imgui.SetNextItemWidth(150)
-		if imgui.BeginCombo("##chunk", currentName) {
-			for i, name := range chunkNames {
-				selected := i == Editor.ActiveChunkIdx
-				if imgui.SelectableV(name, selected, 0, imgui.Vec2{}) {
-					Editor.ActiveChunkIdx = i
+
+		imgui.SameLine()
+		imgui.Separator()
+		imgui.SameLine()
+
+		// Level toolbar
+		imgui.Text(fmt.Sprintf("Level: %s", filepath.Base(Editor.SavePath)))
+		imgui.SameLine()
+
+		if imgui.Button("Open") {
+			Editor.LevelFiles = ScanLevelFiles(Editor.LevelsDir)
+			Editor.NewLevelName = ""
+			Editor.ShowLevelPicker = true
+		}
+		imgui.SameLine()
+
+		if imgui.Button("Save") {
+			if err := SaveLevel(lvl, Editor.SavePath); err != nil {
+				Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
+			} else {
+				Editor.StatusMsg = fmt.Sprintf("Saved to %s", Editor.SavePath)
+			}
+			Editor.StatusTime = sdl.GetTicks()
+		}
+		imgui.SameLine()
+
+		editorPushDisabled(!EditorCanUndo())
+		if imgui.Button("Undo##lvl") {
+			EditorUndo()
+		}
+		editorPopDisabled()
+		imgui.SameLine()
+
+		editorPushDisabled(!EditorCanRedo())
+		if imgui.Button("Redo##lvl") {
+			EditorRedo()
+		}
+		editorPopDisabled()
+		imgui.SameLine()
+
+		if imgui.Button("Save As...") {
+			Editor.SaveAsName = filepath.Base(Editor.SavePath)
+			Editor.ShowSaveAs = true
+		}
+		imgui.SameLine()
+
+		// Status message (shown for 3 seconds after save/load)
+		if Editor.StatusMsg != "" {
+			if sdl.GetTicks()-Editor.StatusTime < 3000 {
+				imgui.Text(Editor.StatusMsg)
+			} else {
+				Editor.StatusMsg = ""
+			}
+		}
+
+		// --- Level Picker popup ---
+		withModalPopup("Level Picker", &Editor.ShowLevelPicker, func() {
+			imgui.Text("Select a level to open:")
+			imgui.Separator()
+			for _, f := range Editor.LevelFiles {
+				if imgui.SelectableV(f, false, 0, imgui.Vec2{}) {
+					path := filepath.Join(Editor.LevelsDir, f)
+					if err := EditorLoadLevel(path); err != nil {
+						Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
+					} else {
+						Editor.StatusMsg = fmt.Sprintf("Loaded %s", f)
+					}
+					Editor.StatusTime = sdl.GetTicks()
+					imgui.CloseCurrentPopup()
 				}
 			}
-			imgui.EndCombo()
-		}
-	}
-
-	imgui.SameLine()
-	imgui.Separator()
-	imgui.SameLine()
-
-	// Level toolbar
-	imgui.Text(fmt.Sprintf("Level: %s", filepath.Base(Editor.SavePath)))
-	imgui.SameLine()
-
-	if imgui.Button("Open") {
-		Editor.LevelFiles = ScanLevelFiles(Editor.LevelsDir)
-		Editor.NewLevelName = ""
-		Editor.ShowLevelPicker = true
-	}
-	imgui.SameLine()
-
-	if imgui.Button("Save") {
-		if err := SaveLevel(lvl, Editor.SavePath); err != nil {
-			Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
-		} else {
-			Editor.StatusMsg = fmt.Sprintf("Saved to %s", Editor.SavePath)
-		}
-		Editor.StatusTime = sdl.GetTicks()
-	}
-	imgui.SameLine()
-
-	editorPushDisabled(!EditorCanUndo())
-	if imgui.Button("Undo##lvl") {
-		EditorUndo()
-	}
-	editorPopDisabled()
-	imgui.SameLine()
-
-	editorPushDisabled(!EditorCanRedo())
-	if imgui.Button("Redo##lvl") {
-		EditorRedo()
-	}
-	editorPopDisabled()
-	imgui.SameLine()
-
-	if imgui.Button("Save As...") {
-		Editor.SaveAsName = filepath.Base(Editor.SavePath)
-		Editor.ShowSaveAs = true
-	}
-	imgui.SameLine()
-
-	// Status message (shown for 3 seconds after save/load)
-	if Editor.StatusMsg != "" {
-		if sdl.GetTicks()-Editor.StatusTime < 3000 {
-			imgui.Text(Editor.StatusMsg)
-		} else {
-			Editor.StatusMsg = ""
-		}
-	}
-
-	// --- Level Picker popup ---
-	if Editor.ShowLevelPicker {
-		imgui.OpenPopup("Level Picker")
-		Editor.ShowLevelPicker = false
-	}
-	if imgui.BeginPopupModalV("Level Picker", nil, imgui.WindowFlagsAlwaysAutoResize) {
-		imgui.Text("Select a level to open:")
-		imgui.Separator()
-		for _, f := range Editor.LevelFiles {
-			if imgui.SelectableV(f, false, 0, imgui.Vec2{}) {
-				path := filepath.Join(Editor.LevelsDir, f)
-				if err := EditorLoadLevel(path); err != nil {
+			imgui.Separator()
+			imgui.Text("New Level:")
+			imgui.SetNextItemWidth(200)
+			imgui.InputText("##newlevel", &Editor.NewLevelName)
+			imgui.SameLine()
+			if imgui.Button("Create") && Editor.NewLevelName != "" {
+				name := Editor.NewLevelName
+				if !strings.HasSuffix(name, ".yaml") {
+					name += ".yaml"
+				}
+				path := filepath.Join(Editor.LevelsDir, name)
+				if err := WriteBlankLevel(path); err != nil {
+					Editor.StatusMsg = fmt.Sprintf("Create failed: %v", err)
+				} else if err := EditorLoadLevel(path); err != nil {
 					Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
 				} else {
-					Editor.StatusMsg = fmt.Sprintf("Loaded %s", f)
+					Editor.StatusMsg = fmt.Sprintf("Created %s", name)
 				}
 				Editor.StatusTime = sdl.GetTicks()
 				imgui.CloseCurrentPopup()
 			}
-		}
-		imgui.Separator()
-		imgui.Text("New Level:")
-		imgui.SetNextItemWidth(200)
-		imgui.InputText("##newlevel", &Editor.NewLevelName)
-		imgui.SameLine()
-		if imgui.Button("Create") && Editor.NewLevelName != "" {
-			name := Editor.NewLevelName
-			if !strings.HasSuffix(name, ".yaml") {
-				name += ".yaml"
+			imgui.Separator()
+			if imgui.Button("Cancel") {
+				imgui.CloseCurrentPopup()
 			}
-			path := filepath.Join(Editor.LevelsDir, name)
-			if err := WriteBlankLevel(path); err != nil {
-				Editor.StatusMsg = fmt.Sprintf("Create failed: %v", err)
-			} else if err := EditorLoadLevel(path); err != nil {
-				Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
-			} else {
-				Editor.StatusMsg = fmt.Sprintf("Created %s", name)
-			}
-			Editor.StatusTime = sdl.GetTicks()
-			imgui.CloseCurrentPopup()
-		}
-		imgui.Separator()
-		if imgui.Button("Cancel") {
-			imgui.CloseCurrentPopup()
-		}
-		imgui.EndPopup()
-	}
+		})
 
-	// --- Save As popup ---
-	if Editor.ShowSaveAs {
-		imgui.OpenPopup("Save As")
-		Editor.ShowSaveAs = false
-	}
-	if imgui.BeginPopupModalV("Save As", nil, imgui.WindowFlagsAlwaysAutoResize) {
-		imgui.Text("Save level as:")
-		imgui.SetNextItemWidth(200)
-		imgui.InputText("##saveas", &Editor.SaveAsName)
-		if imgui.Button("Save") && Editor.SaveAsName != "" {
-			name := Editor.SaveAsName
-			if !strings.HasSuffix(name, ".yaml") {
-				name += ".yaml"
+		// --- Save As popup ---
+		withModalPopup("Save As", &Editor.ShowSaveAs, func() {
+			imgui.Text("Save level as:")
+			imgui.SetNextItemWidth(200)
+			imgui.InputText("##saveas", &Editor.SaveAsName)
+			if imgui.Button("Save") && Editor.SaveAsName != "" {
+				name := Editor.SaveAsName
+				if !strings.HasSuffix(name, ".yaml") {
+					name += ".yaml"
+				}
+				path := filepath.Join(Editor.LevelsDir, name)
+				if err := SaveLevel(lvl, path); err != nil {
+					Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
+				} else {
+					Editor.SavePath = path
+					Editor.StatusMsg = fmt.Sprintf("Saved to %s", name)
+				}
+				Editor.StatusTime = sdl.GetTicks()
+				imgui.CloseCurrentPopup()
 			}
-			path := filepath.Join(Editor.LevelsDir, name)
-			if err := SaveLevel(lvl, path); err != nil {
-				Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
-			} else {
-				Editor.SavePath = path
-				Editor.StatusMsg = fmt.Sprintf("Saved to %s", name)
+			imgui.SameLine()
+			if imgui.Button("Cancel##saveas") {
+				imgui.CloseCurrentPopup()
 			}
-			Editor.StatusTime = sdl.GetTicks()
-			imgui.CloseCurrentPopup()
-		}
-		imgui.SameLine()
-		if imgui.Button("Cancel##saveas") {
-			imgui.CloseCurrentPopup()
-		}
-		imgui.EndPopup()
-	}
+		})
 
 	} // end if currentMode == ModeScenery else
 

@@ -680,11 +680,7 @@ func ImportSceneryIntoChunk(ch *Chunk, path string, spawnPos mgl32.Vec3) error {
 // ---------- Popups ----------
 
 func sceneryPickerPopup() {
-	if Editor.ShowSceneryPicker {
-		imgui.OpenPopup("Load Scenery##popup")
-		Editor.ShowSceneryPicker = false
-	}
-	if imgui.BeginPopupModal("Load Scenery##popup") {
+	withModalPopup("Load Scenery##popup", &Editor.ShowSceneryPicker, func() {
 		sceneryDir := filepath.Join(executablePath, "scenery")
 		if Editor.SceneryFiles == nil {
 			Editor.SceneryFiles = ScanSceneryFiles(sceneryDir)
@@ -723,16 +719,11 @@ func sceneryPickerPopup() {
 			Editor.SceneryFiles = nil
 			imgui.CloseCurrentPopup()
 		}
-		imgui.EndPopup()
-	}
+	})
 }
 
 func scenerySaveAsPopup() {
-	if Editor.ShowScenerySaveAs {
-		imgui.OpenPopup("Save Scenery As##popup")
-		Editor.ShowScenerySaveAs = false
-	}
-	if imgui.BeginPopupModal("Save Scenery As##popup") {
+	withModalPopup("Save Scenery As##popup", &Editor.ShowScenerySaveAs, func() {
 		imgui.InputText("Filename##scsaveas", &Editor.ScenerySaveAsName)
 		if imgui.Button("Save##scsaveas") && Editor.ScenerySaveAsName != "" {
 			name := Editor.ScenerySaveAsName
@@ -757,17 +748,12 @@ func scenerySaveAsPopup() {
 		if imgui.Button("Cancel##scsaveas") {
 			imgui.CloseCurrentPopup()
 		}
-		imgui.EndPopup()
-	}
+	})
 }
 
 // importSceneryPopup is the popup for importing scenery into a level chunk (used from 3D editor).
 func importSceneryPopup() {
-	if Editor.ShowImportScenery {
-		imgui.OpenPopup("Import Scenery##popup")
-		Editor.ShowImportScenery = false
-	}
-	if imgui.BeginPopupModal("Import Scenery##popup") {
+	withModalPopup("Import Scenery##popup", &Editor.ShowImportScenery, func() {
 		sceneryDir := filepath.Join(executablePath, "scenery")
 		if Editor.ImportSceneryFiles == nil {
 			Editor.ImportSceneryFiles = ScanSceneryFiles(sceneryDir)
@@ -796,6 +782,5 @@ func importSceneryPopup() {
 			Editor.ImportSceneryFiles = nil
 			imgui.CloseCurrentPopup()
 		}
-		imgui.EndPopup()
-	}
+	})
 }

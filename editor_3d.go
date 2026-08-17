@@ -1001,11 +1001,7 @@ func Editor3DPanel() {
 	imgui.End()
 
 	// New chunk popup
-	if Editor.ShowNewChunk {
-		imgui.OpenPopup("New Chunk")
-		Editor.ShowNewChunk = false
-	}
-	if imgui.BeginPopupModalV("New Chunk", nil, imgui.WindowFlagsAlwaysAutoResize) {
+	withModalPopup("New Chunk", &Editor.ShowNewChunk, func() {
 		imgui.InputText("Chunk ID", &Editor.NewChunkID)
 		if imgui.Button("Create") && Editor.NewChunkID != "" {
 			EditorPushUndo()
@@ -1017,15 +1013,10 @@ func Editor3DPanel() {
 		if imgui.Button("Cancel") {
 			imgui.CloseCurrentPopup()
 		}
-		imgui.EndPopup()
-	}
+	})
 
 	// Save chunk popup
-	if Editor.ShowSaveChunk {
-		imgui.OpenPopup("Save Chunk")
-		Editor.ShowSaveChunk = false
-	}
-	if imgui.BeginPopupModalV("Save Chunk", nil, imgui.WindowFlagsAlwaysAutoResize) {
+	withModalPopup("Save Chunk", &Editor.ShowSaveChunk, func() {
 		imgui.InputText("Filename", &Editor.SaveChunkName)
 		if imgui.Button("Save") && Editor.SaveChunkName != "" {
 			ch := &lvl.Chunks[Editor.ActiveChunkIdx]
@@ -1042,15 +1033,10 @@ func Editor3DPanel() {
 		if imgui.Button("Cancel##savechunk") {
 			imgui.CloseCurrentPopup()
 		}
-		imgui.EndPopup()
-	}
+	})
 
 	// Delete chunk confirmation popup
-	if Editor.ShowDeleteChunk {
-		imgui.OpenPopup("Delete Chunk")
-		Editor.ShowDeleteChunk = false
-	}
-	if imgui.BeginPopupModalV("Delete Chunk", nil, imgui.WindowFlagsAlwaysAutoResize) {
+	withModalPopup("Delete Chunk", &Editor.ShowDeleteChunk, func() {
 		chunkName := ""
 		if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 			chunkName = lvl.Chunks[Editor.ActiveChunkIdx].ID
@@ -1065,15 +1051,10 @@ func Editor3DPanel() {
 		if imgui.Button("Cancel##deletechunk") {
 			imgui.CloseCurrentPopup()
 		}
-		imgui.EndPopup()
-	}
+	})
 
 	// Import chunk popup
-	if Editor.ShowImportChunk {
-		imgui.OpenPopup("Import Chunk")
-		Editor.ShowImportChunk = false
-	}
-	if imgui.BeginPopupModalV("Import Chunk", nil, imgui.WindowFlagsAlwaysAutoResize) {
+	withModalPopup("Import Chunk", &Editor.ShowImportChunk, func() {
 		if len(Editor.ImportChunkFiles) == 0 {
 			imgui.Text("No chunk files found in chunks/")
 		} else {
@@ -1106,8 +1087,7 @@ func Editor3DPanel() {
 		if imgui.Button("Cancel##importchunk") {
 			imgui.CloseCurrentPopup()
 		}
-		imgui.EndPopup()
-	}
+	})
 }
 
 // reloadPrimitive regenerates the geometry and bounding volumes for a primitive
@@ -1204,11 +1184,11 @@ func createChunkAtCamera(id string) {
 	}
 
 	chunk := Chunk{
-		ID:       id,
-		Points:   pts,
-		Sectors:  []Sector{sector},
-		MinBound: mgl32.Vec3{cx - halfSize, floorH, cz - halfSize},
-		MaxBound: mgl32.Vec3{cx + halfSize, ceilH, cz + halfSize},
+		ID:         id,
+		Points:     pts,
+		Sectors:    []Sector{sector},
+		MinBound:   mgl32.Vec3{cx - halfSize, floorH, cz - halfSize},
+		MaxBound:   mgl32.Vec3{cx + halfSize, ceilH, cz + halfSize},
 		PointNames: []string{"A", "B", "C", "D"},
 	}
 	_ = sector.Load(SectorPoints(&chunk, &sector))
