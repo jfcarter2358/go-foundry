@@ -19,11 +19,38 @@ import "github.com/veandco/go-sdl2/sdl"
 // maxUndoDepth bounds memory use; older snapshots are dropped once exceeded.
 const maxUndoDepth = 100
 
-var levelUndoStack []RawLevel
-var levelRedoStack []RawLevel
+// boundedStack is a LIFO snapshot stack capped at maxUndoDepth entries —
+// the push/pop bookkeeping shared by the level and scenery undo/redo stacks
+// below (previously duplicated one pair of stacks per editor).
+type boundedStack[T any] struct {
+	items []T
+}
 
-var sceneryUndoStack [][]RawPrimitive
-var sceneryRedoStack [][]RawPrimitive
+func (s *boundedStack[T]) push(v T) {
+	s.items = append(s.items, v)
+	if len(s.items) > maxUndoDepth {
+		s.items = s.items[len(s.items)-maxUndoDepth:]
+	}
+}
+
+func (s *boundedStack[T]) pop() (T, bool) {
+	var zero T
+	if len(s.items) == 0 {
+		return zero, false
+	}
+	v := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return v, true
+}
+
+func (s *boundedStack[T]) len() int { return len(s.items) }
+func (s *boundedStack[T]) clear()   { s.items = nil }
+
+var levelUndoStack boundedStack[RawLevel]
+var levelRedoStack boundedStack[RawLevel]
+
+var sceneryUndoStack boundedStack[[]RawPrimitive]
+var sceneryRedoStack boundedStack[[]RawPrimitive]
 
 // ---------- Level (3D/2D/Surface editor) undo/redo ----------
 
@@ -37,47 +64,42 @@ func EditorPushUndo() {
 	if err != nil {
 		return
 	}
-	levelUndoStack = append(levelUndoStack, raw)
-	if len(levelUndoStack) > maxUndoDepth {
-		levelUndoStack = levelUndoStack[len(levelUndoStack)-maxUndoDepth:]
-	}
-	levelRedoStack = nil
+	levelUndoStack.push(raw)
+	levelRedoStack.clear()
 }
 
 // EditorClearUndoHistory discards all undo/redo state. Called when a
 // different level is loaded so undo can't reach across files.
 func EditorClearUndoHistory() {
-	levelUndoStack = nil
-	levelRedoStack = nil
+	levelUndoStack.clear()
+	levelRedoStack.clear()
 }
 
-func EditorCanUndo() bool { return len(levelUndoStack) > 0 }
-func EditorCanRedo() bool { return len(levelRedoStack) > 0 }
+func EditorCanUndo() bool { return levelUndoStack.len() > 0 }
+func EditorCanRedo() bool { return levelRedoStack.len() > 0 }
 
 // EditorUndo restores the most recently pushed snapshot, moving the current
 // state onto the redo stack.
 func EditorUndo() {
-	if Editor.level == nil || len(levelUndoStack) == 0 {
+	if Editor.level == nil || levelUndoStack.len() == 0 {
 		return
 	}
 	if cur, err := levelToRaw(Editor.level); err == nil {
-		levelRedoStack = append(levelRedoStack, cur)
+		levelRedoStack.push(cur)
 	}
-	prev := levelUndoStack[len(levelUndoStack)-1]
-	levelUndoStack = levelUndoStack[:len(levelUndoStack)-1]
+	prev, _ := levelUndoStack.pop()
 	restoreLevelSnapshot(prev)
 }
 
 // EditorRedo re-applies the most recently undone snapshot.
 func EditorRedo() {
-	if Editor.level == nil || len(levelRedoStack) == 0 {
+	if Editor.level == nil || levelRedoStack.len() == 0 {
 		return
 	}
 	if cur, err := levelToRaw(Editor.level); err == nil {
-		levelUndoStack = append(levelUndoStack, cur)
+		levelUndoStack.push(cur)
 	}
-	next := levelRedoStack[len(levelRedoStack)-1]
-	levelRedoStack = levelRedoStack[:len(levelRedoStack)-1]
+	next, _ := levelRedoStack.pop()
 	restoreLevelSnapshot(next)
 }
 
@@ -149,22 +171,19 @@ func restoreLevelSnapshot(raw RawLevel) {
 // SceneryPushUndo snapshots the current scenery primitive set. Call
 // immediately BEFORE a structural mutation in the scenery compositor.
 func SceneryPushUndo() {
-	sceneryUndoStack = append(sceneryUndoStack, sceneryPrimsToRaw(Editor.SceneryPrimitives))
-	if len(sceneryUndoStack) > maxUndoDepth {
-		sceneryUndoStack = sceneryUndoStack[len(sceneryUndoStack)-maxUndoDepth:]
-	}
-	sceneryRedoStack = nil
+	sceneryUndoStack.push(sceneryPrimsToRaw(Editor.SceneryPrimitives))
+	sceneryRedoStack.clear()
 }
 
 // SceneryClearUndoHistory discards all scenery undo/redo state. Called when
 // entering the scenery editor or loading a different scenery asset.
 func SceneryClearUndoHistory() {
-	sceneryUndoStack = nil
-	sceneryRedoStack = nil
+	sceneryUndoStack.clear()
+	sceneryRedoStack.clear()
 }
 
-func SceneryCanUndo() bool { return len(sceneryUndoStack) > 0 }
-func SceneryCanRedo() bool { return len(sceneryRedoStack) > 0 }
+func SceneryCanUndo() bool { return sceneryUndoStack.len() > 0 }
+func SceneryCanRedo() bool { return sceneryRedoStack.len() > 0 }
 
 func sceneryPrimsToRaw(prims []Primitive) []RawPrimitive {
 	raw := make([]RawPrimitive, len(prims))
@@ -192,21 +211,19 @@ func restoreSceneryPrimitives(raw []RawPrimitive) {
 }
 
 func SceneryUndo() {
-	if len(sceneryUndoStack) == 0 {
+	if sceneryUndoStack.len() == 0 {
 		return
 	}
-	sceneryRedoStack = append(sceneryRedoStack, sceneryPrimsToRaw(Editor.SceneryPrimitives))
-	prev := sceneryUndoStack[len(sceneryUndoStack)-1]
-	sceneryUndoStack = sceneryUndoStack[:len(sceneryUndoStack)-1]
+	sceneryRedoStack.push(sceneryPrimsToRaw(Editor.SceneryPrimitives))
+	prev, _ := sceneryUndoStack.pop()
 	restoreSceneryPrimitives(prev)
 }
 
 func SceneryRedo() {
-	if len(sceneryRedoStack) == 0 {
+	if sceneryRedoStack.len() == 0 {
 		return
 	}
-	sceneryUndoStack = append(sceneryUndoStack, sceneryPrimsToRaw(Editor.SceneryPrimitives))
-	next := sceneryRedoStack[len(sceneryRedoStack)-1]
-	sceneryRedoStack = sceneryRedoStack[:len(sceneryRedoStack)-1]
+	sceneryUndoStack.push(sceneryPrimsToRaw(Editor.SceneryPrimitives))
+	next, _ := sceneryRedoStack.pop()
 	restoreSceneryPrimitives(next)
 }
