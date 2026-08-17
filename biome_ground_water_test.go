@@ -563,8 +563,8 @@ func TestBiomeWaterCentroidAndFloor(t *testing.T) {
 
 // TestRawBiomeBrushYAMLRoundTrip pins the new persisted fields (RockScale —
 // previously never saved at all — SandHeight, WaterDepth, Water) surviving a
-// YAML marshal/unmarshal cycle, the same contract editor_save.go/level.go
-// rely on for the level file.
+// YAML marshal/unmarshal cycle, the same contract editor_save.go/
+// level_schema.go rely on for the level file.
 func TestRawBiomeBrushYAMLRoundTrip(t *testing.T) {
 	rb := RawBiomeSector{
 		ID:     "b0",
