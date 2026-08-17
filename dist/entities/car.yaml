@@ -1,7 +1,0 @@
-id: car
-model: models/car.obj
-texture: concrete
-bounding: aabb
-bound_half_x: 2.0
-bound_half_y: 0.75
-bound_half_z: 1.0
