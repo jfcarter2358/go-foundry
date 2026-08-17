@@ -384,6 +384,17 @@ func primitiveToRaw(p *Primitive, ch *Chunk) RawPrimitive {
 	)
 	localY := p.Position.Y() - ch.Origin.Y()
 
+	rp := primitiveToRawCommon(p)
+	rp.Position = RawEntityPosition{X: localXZ.X(), Y: localY, Z: localXZ.Y()}
+	return rp
+}
+
+// primitiveToRawCommon converts every field of p that doesn't depend on
+// which coordinate space Position is expressed in — level primitives store
+// chunk-local position (see primitiveToRaw above), scenery primitives store
+// raw world position (see sceneryPrimToRaw, editor_scenery.go) — callers set
+// Position themselves after calling this.
+func primitiveToRawCommon(p *Primitive) RawPrimitive {
 	sc := p.Scale
 	if sc == (mgl32.Vec3{}) {
 		sc = mgl32.Vec3{1, 1, 1}
@@ -408,10 +419,9 @@ func primitiveToRaw(p *Primitive, ch *Chunk) RawPrimitive {
 		uvSc = mgl32.Vec2{1, 1}
 	}
 
-	rp := RawPrimitive{
+	return RawPrimitive{
 		ID:          p.ID,
 		Type:        typeStr,
-		Position:    RawEntityPosition{X: localXZ.X(), Y: localY, Z: localXZ.Y()},
 		Rotation:    RawEntityPosition{X: p.Rotation.X(), Y: p.Rotation.Y(), Z: p.Rotation.Z()},
 		Scale:       RawEntityPosition{X: sc.X(), Y: sc.Y(), Z: sc.Z()},
 		Texture:     p.Texture,
@@ -425,7 +435,6 @@ func primitiveToRaw(p *Primitive, ch *Chunk) RawPrimitive {
 		SmoothAngle: p.SmoothAngle,
 		Water:       waterParamsToRaw(p),
 	}
-	return rp
 }
 
 // entityToRaw converts one entity to its raw YAML form.

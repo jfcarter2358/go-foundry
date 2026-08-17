@@ -39,37 +39,26 @@ const surface2DSelectRadius = float32(8.0)
 
 // ---------- coordinate helpers ----------
 
+// surfaceView returns the surface UV editor's current orthoView (see
+// editor_orthoview.go).
+func surfaceView() orthoView {
+	return orthoView{pan: Editor.SurfacePan, zoom: Editor.SurfaceZoom}
+}
+
 func surfaceOrtho() mgl32.Mat4 {
-	halfW := float32(WinWidth) / 2 / Editor.SurfaceZoom
-	halfH := float32(WinHeight) / 2 / Editor.SurfaceZoom
-	cx := Editor.SurfacePan.X()
-	cy := Editor.SurfacePan.Y()
-	return mgl32.Ortho(-halfW, halfW, -halfH, halfH, -100, 100).
-		Mul4(mgl32.LookAtV(
-			mgl32.Vec3{cx, 50, cy},
-			mgl32.Vec3{cx, 0, cy},
-			mgl32.Vec3{0, 0, -1},
-		))
+	return surfaceView().ortho()
 }
 
 func surfaceWorldToScreen(u, v float32) (sx, sy float32) {
-	halfW := float32(WinWidth) / 2
-	halfH := float32(WinHeight) / 2
-	sx = (u-Editor.SurfacePan.X())*Editor.SurfaceZoom + halfW
-	sy = (v-Editor.SurfacePan.Y())*Editor.SurfaceZoom + halfH
-	return
+	return surfaceView().worldToScreen(u, v)
 }
 
 func surfaceScreenToWorld(sx, sy int32) (u, v float32) {
-	halfW := float32(WinWidth) / 2
-	halfH := float32(WinHeight) / 2
-	u = (float32(sx)-halfW)/Editor.SurfaceZoom + Editor.SurfacePan.X()
-	v = (float32(sy)-halfH)/Editor.SurfaceZoom + Editor.SurfacePan.Y()
-	return
+	return surfaceView().screenToWorld(sx, sy)
 }
 
 func surfaceScreenToWorldSize(px float32) float32 {
-	return px / Editor.SurfaceZoom
+	return surfaceView().screenToWorldSize(px)
 }
 
 // ---------- enter / exit ----------

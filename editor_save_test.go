@@ -227,3 +227,35 @@ func TestValidateRawChunkAcceptsWellFormed(t *testing.T) {
 		t.Fatalf("well-formed chunk rejected: %v", err)
 	}
 }
+
+// sceneryPrimToRaw used to omit Smooth/SmoothAngle entirely (it built its
+// own RawPrimitive literal by hand instead of sharing primitiveToRawCommon
+// with the level editor's primitiveToRaw), so toggling smooth shading on a
+// scenery primitive was silently lost on save. Covers both the save side
+// (sceneryPrimToRaw) and the load side (rawToSceneryPrimitive), which had
+// the same field missing.
+func TestSceneryPrimitiveRoundTripsSmoothing(t *testing.T) {
+	p := Primitive{
+		ID:          "block",
+		Kind:        PrimitiveRectPrism,
+		Position:    mgl32.Vec3{1, 2, 3},
+		Scale:       mgl32.Vec3{1, 1, 1},
+		Smooth:      true,
+		SmoothAngle: 42,
+	}
+	rp := sceneryPrimToRaw(&p)
+	if !rp.Smooth {
+		t.Fatal("sceneryPrimToRaw dropped Smooth=true")
+	}
+	if rp.SmoothAngle != 42 {
+		t.Fatalf("sceneryPrimToRaw dropped SmoothAngle: got %v, want 42", rp.SmoothAngle)
+	}
+
+	back := rawToSceneryPrimitive(rp)
+	if !back.Smooth {
+		t.Fatal("rawToSceneryPrimitive dropped Smooth=true")
+	}
+	if back.SmoothAngle != 42 {
+		t.Fatalf("rawToSceneryPrimitive dropped SmoothAngle: got %v, want 42", back.SmoothAngle)
+	}
+}

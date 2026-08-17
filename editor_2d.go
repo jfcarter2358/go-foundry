@@ -229,46 +229,29 @@ func Editor2DRenderLabels() {
 	}
 }
 
+// editor2DView returns the current 2D map's orthoView (see editor_orthoview.go).
+func editor2DView() orthoView {
+	return orthoView{pan: Editor.Pan2D, zoom: Editor.Zoom2D}
+}
+
 // editor2DOrtho returns the orthographic projection×view matrix for the 2D map.
 func editor2DOrtho() mgl32.Mat4 {
-	halfW := float32(WinWidth) / 2 / Editor.Zoom2D
-	halfH := float32(WinHeight) / 2 / Editor.Zoom2D
-	cx := Editor.Pan2D.X()
-	cy := Editor.Pan2D.Y()
-
-	return mgl32.Ortho(-halfW, halfW, -halfH, halfH, -100, 100).
-		Mul4(mgl32.LookAtV(
-			mgl32.Vec3{cx, 50, cy},
-			mgl32.Vec3{cx, 0, cy},
-			mgl32.Vec3{0, 0, -1},
-		))
+	return editor2DView().ortho()
 }
 
 // screenToWorldSize converts a pixel distance to world units at current zoom.
 func screenToWorldSize(screenPx float32, _ mgl32.Mat4) float32 {
-	return screenPx / Editor.Zoom2D
+	return editor2DView().screenToWorldSize(screenPx)
 }
 
 // worldToScreen converts a world XZ point to screen pixel coordinates.
 func worldToScreen(wx, wz float32) (sx, sy float32) {
-	halfW := float32(WinWidth) / 2
-	halfH := float32(WinHeight) / 2
-	cx := Editor.Pan2D.X()
-	cy := Editor.Pan2D.Y()
-	sx = (wx-cx)*Editor.Zoom2D + halfW
-	sy = (wz-cy)*Editor.Zoom2D + halfH
-	return
+	return editor2DView().worldToScreen(wx, wz)
 }
 
 // screenToWorld converts screen pixels to world XZ.
 func screenToWorld(sx, sy int32) (wx, wz float32) {
-	halfW := float32(WinWidth) / 2
-	halfH := float32(WinHeight) / 2
-	cx := Editor.Pan2D.X()
-	cy := Editor.Pan2D.Y()
-	wx = (float32(sx)-halfW)/Editor.Zoom2D + cx
-	wz = (float32(sy)-halfH)/Editor.Zoom2D + cy
-	return
+	return editor2DView().screenToWorld(sx, sy)
 }
 
 // findChunkPointNear returns the index of the chunk point nearest to (wx,wz)

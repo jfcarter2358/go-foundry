@@ -515,45 +515,12 @@ func SaveScenery(prims []Primitive, id, path string) error {
 
 // sceneryPrimToRaw converts a primitive to its YAML form (no chunk transform).
 func sceneryPrimToRaw(p *Primitive) RawPrimitive {
-	sc := p.Scale
-	if sc == (mgl32.Vec3{}) {
-		sc = mgl32.Vec3{1, 1, 1}
-	}
-
-	var typeStr string
-	switch p.Kind {
-	case PrimitiveSphere:
-		typeStr = "sphere"
-	case PrimitiveCylinder:
-		typeStr = "cylinder"
-	case PrimitivePlane:
-		typeStr = "plane"
-	case PrimitiveWater:
-		typeStr = "water"
-	default:
-		typeStr = "rect_prism"
-	}
-
-	uvSc := p.UVScale
-	if uvSc == (mgl32.Vec2{}) {
-		uvSc = mgl32.Vec2{1, 1}
-	}
-
-	return RawPrimitive{
-		ID:         p.ID,
-		Type:       typeStr,
-		Position:   RawEntityPosition{X: p.Position.X(), Y: p.Position.Y(), Z: p.Position.Z()},
-		Rotation:   RawEntityPosition{X: p.Rotation.X(), Y: p.Rotation.Y(), Z: p.Rotation.Z()},
-		Scale:      RawEntityPosition{X: sc.X(), Y: sc.Y(), Z: sc.Z()},
-		Texture:    p.Texture,
-		Sides:      p.Sides,
-		Collision:  p.Collision,
-		Alpha:      float32PtrIfNotOne(p.Alpha),
-		UVOffset:   Point{X: p.UVOffset.X(), Y: p.UVOffset.Y()},
-		UVScale:    Point{X: uvSc.X(), Y: uvSc.Y()},
-		UVRotation: p.UVRotation,
-		Water:      waterParamsToRaw(p),
-	}
+	// Scenery primitives store raw world position (no chunk to be local to);
+	// everything else is shared with the level editor's primitiveToRaw
+	// (editor_save.go) via primitiveToRawCommon.
+	rp := primitiveToRawCommon(p)
+	rp.Position = RawEntityPosition{X: p.Position.X(), Y: p.Position.Y(), Z: p.Position.Z()}
+	return rp
 }
 
 // LoadSceneryForEditor reads a scenery YAML and converts to runtime primitives.
@@ -611,19 +578,21 @@ func rawToSceneryPrimitive(rp RawPrimitive) Primitive {
 	}
 
 	prim := Primitive{
-		ID:         rp.ID,
-		Kind:       kind,
-		Position:   mgl32.Vec3{rp.Position.X, rp.Position.Y, rp.Position.Z},
-		Rotation:   mgl32.Vec3{rp.Rotation.X, rp.Rotation.Y, rp.Rotation.Z},
-		Scale:      scale,
-		Texture:    rp.Texture,
-		Sides:      sides,
-		Collision:  rp.Collision,
-		Alpha:      float32Default(rp.Alpha, 1.0),
-		UVOffset:   mgl32.Vec2{rp.UVOffset.X, rp.UVOffset.Y},
-		UVScale:    uvScale,
-		UVRotation: rp.UVRotation,
-		Water:      waterParamsFromRaw(rp.Water, kind),
+		ID:          rp.ID,
+		Kind:        kind,
+		Position:    mgl32.Vec3{rp.Position.X, rp.Position.Y, rp.Position.Z},
+		Rotation:    mgl32.Vec3{rp.Rotation.X, rp.Rotation.Y, rp.Rotation.Z},
+		Scale:       scale,
+		Texture:     rp.Texture,
+		Sides:       sides,
+		Collision:   rp.Collision,
+		Alpha:       float32Default(rp.Alpha, 1.0),
+		UVOffset:    mgl32.Vec2{rp.UVOffset.X, rp.UVOffset.Y},
+		UVScale:     uvScale,
+		UVRotation:  rp.UVRotation,
+		Smooth:      rp.Smooth,
+		SmoothAngle: rp.SmoothAngle,
+		Water:       waterParamsFromRaw(rp.Water, kind),
 	}
 
 	// Compute bounding volumes
