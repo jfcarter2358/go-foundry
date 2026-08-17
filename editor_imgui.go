@@ -406,6 +406,3 @@ func imguiRenderDrawData(drawData imgui.DrawData, vao, vbo, ebo uint32) {
 		gl.Disable(gl.SCISSOR_TEST)
 	}
 }
-
-// indexSize returns the byte size of one imgui index.
-func indexSize(n int) int { return n }
