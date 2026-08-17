@@ -28,14 +28,81 @@ const (
 	ModeScenery                     // scenery editor (blank world, single-item model compositor)
 )
 
+// GizmoState is the three-axis translate gizmo's interaction state (3D +
+// scenery modes) — embedded (anonymously) in EditorState so existing
+// Editor.GizmoKind-style field access keeps working unchanged via Go's
+// field promotion; see RESTRUCTURE_PROPOSAL.md §5 Phase A.
+type GizmoState struct {
+	GizmoKind         string       // what the gizmo targets; see the gizmoKind* constants
+	GizmoDragging     bool         // an axis drag is in progress
+	GizmoDragAxis     int          // axis being dragged: 0=X, 1=Y, 2=Z; -1 = not dragging
+	GizmoDragOrigin   mgl32.Vec3   // gizmo position when the drag started
+	GizmoDragStartS   float32      // position along the drag axis under the cursor at mouse-down
+	GizmoDragStartPos mgl32.Vec3   // primitive/entity position, or chunk origin, at mouse-down
+	GizmoDragPoints   []mgl32.Vec2 // per selected vertex: chunk point XZ at mouse-down
+	GizmoDragOffsets  []float32    // per selected vertex: height offset at mouse-down
+}
+
+// SurfaceEditorState is the per-surface (wall/floor/ceiling) UV-space 2D
+// editor's state (editor_surface2d.go) — embedded in EditorState, see
+// GizmoState's doc comment above for why.
+type SurfaceEditorState struct {
+	SurfaceKind        string           // "wall", "floor", "ceiling"
+	SurfacePan         mgl32.Vec2       // pan center in surface coords (U,V or X,Z)
+	SurfaceZoom        float32          // pixels per surface unit
+	SurfaceEditLayer   string           // "both", "outer", "inner" — which extrusion points are draggable
+	SurfacePlacing     string           // "extrusion", "terrain", "" (none)
+	SurfacePendingPts  []ExtrusionPoint // polygon vertices being placed
+	SurfaceDragPt      int              // index of point being dragged; -1 = none
+	SurfaceDragKind    string           // "outer", "inner", "terrain" — what's being dragged
+	SurfaceDragExtIdx  int              // extrusion index for outer/inner drag
+	SurfaceLastMouse   [2]int32         // for pan
+	SurfacePrevMode    EditorMode       // mode to return to on Escape
+	ActiveTerrainPtIdx int              // selected terrain point index; -1 = none
+}
+
+// SceneryEditorState is the standalone scenery-prefab editor's state
+// (editor_scenery.go) — embedded in EditorState, see GizmoState's doc
+// comment above for why.
+type SceneryEditorState struct {
+	SceneryPrimitives    []Primitive // working set of primitives (not part of any level)
+	SceneryActivePrimIdx int         // selected primitive; -1 = none
+	SceneryPrimPlacement bool        // true: next left-click places a primitive
+	SceneryPrimPlaceType string      // "rect_prism", "sphere", "cylinder", "plane", "water"
+	SceneryFilePath      string      // current save path
+	SceneryID            string      // asset name
+	SceneryPrevMode      EditorMode  // mode to return to on exit
+	ScenerySavedCamPos   mgl32.Vec3
+	ScenerySavedCamYaw   float32
+	ScenerySavedCamPitch float32
+	ShowSceneryPicker    bool     // load dialog visible
+	SceneryFiles         []string // scanned .yaml files
+	ShowScenerySaveAs    bool
+	ScenerySaveAsName    string
+	ShowImportScenery    bool // import dialog (used from 3D editor)
+	ImportSceneryFiles   []string
+	ImportSceneryIdx     int32
+}
+
+// BiomeLayerState is the 2D biome-sector polygon layer's state
+// (editor_biome.go) — embedded in EditorState, see GizmoState's doc comment
+// above for why.
+type BiomeLayerState struct {
+	BiomeLayerActive     bool         // 2D view edits the biome-sector layer instead of structural geometry
+	BiomeDrawing         bool         // placing points for a new sector polygon
+	BiomeDrawPoints      []mgl32.Vec2 // points placed so far for the in-progress polygon
+	ActiveBiomeSectorIdx int          // index into the active chunk's BiomeSectors; -1 = none
+	BiomeDragVertexIdx   int          // vertex index being dragged on the selected sector; -1 = none
+}
+
 // EditorState holds all editor runtime state.
 type EditorState struct {
 	Active bool
 	Mode   EditorMode
 
 	// --- 3D mode ---
-	ActiveChunkIdx  int // chunk being displayed/edited
-	ActiveSectorIdx int // sector selected in 3D/2D mode
+	ActiveChunkIdx  int    // chunk being displayed/edited
+	ActiveSectorIdx int    // sector selected in 3D/2D mode
 	ActiveEdgeKind  string // "wall" or "portal"
 	ActiveEdgeIdx   int    // index within sector.Walls or sector.Portals; -1 = none
 
@@ -52,14 +119,7 @@ type EditorState struct {
 	SelectedVertices []vertexSel
 
 	// --- Three-axis translate gizmo (3D + scenery modes) ---
-	GizmoKind         string       // what the gizmo targets; see the gizmoKind* constants
-	GizmoDragging     bool         // an axis drag is in progress
-	GizmoDragAxis     int          // axis being dragged: 0=X, 1=Y, 2=Z; -1 = not dragging
-	GizmoDragOrigin   mgl32.Vec3   // gizmo position when the drag started
-	GizmoDragStartS   float32      // position along the drag axis under the cursor at mouse-down
-	GizmoDragStartPos mgl32.Vec3   // primitive/entity position, or chunk origin, at mouse-down
-	GizmoDragPoints   []mgl32.Vec2 // per selected vertex: chunk point XZ at mouse-down
-	GizmoDragOffsets  []float32    // per selected vertex: height offset at mouse-down
+	GizmoState
 	// One-shot request from a selection change to open (and scroll to) a
 	// properties section in the side panel. See the panelFocus* constants;
 	// cleared by the panel once it has been applied.
@@ -126,28 +186,17 @@ type EditorState struct {
 	NavForward, NavBack, NavLeft, NavRight, NavUp, NavDown bool
 
 	// Extrusion editing state (legacy 3D placement — kept for compatibility)
-	ExtrusionMode      bool               // placing extrusion vertices
-	PendingOuter       []ExtrusionPoint   // outer polygon being placed
-	PendingInner       []ExtrusionPoint   // inner polygon being placed
-	PlacingInner       bool               // false=placing outer, true=placing inner
-	ActiveExtrusionIdx int                // selected extrusion on active wall; -1 = none
+	ExtrusionMode      bool             // placing extrusion vertices
+	PendingOuter       []ExtrusionPoint // outer polygon being placed
+	PendingInner       []ExtrusionPoint // inner polygon being placed
+	PlacingInner       bool             // false=placing outer, true=placing inner
+	ActiveExtrusionIdx int              // selected extrusion on active wall; -1 = none
 
 	// --- Surface 2D editor ---
-	SurfaceKind       string           // "wall", "floor", "ceiling"
-	SurfacePan        mgl32.Vec2       // pan center in surface coords (U,V or X,Z)
-	SurfaceZoom       float32          // pixels per surface unit
-	SurfaceEditLayer  string           // "both", "outer", "inner" — which extrusion points are draggable
-	SurfacePlacing    string           // "extrusion", "terrain", "" (none)
-	SurfacePendingPts []ExtrusionPoint // polygon vertices being placed
-	SurfaceDragPt     int              // index of point being dragged; -1 = none
-	SurfaceDragKind   string           // "outer", "inner", "terrain" — what's being dragged
-	SurfaceDragExtIdx int              // extrusion index for outer/inner drag
-	SurfaceLastMouse  [2]int32         // for pan
-	SurfacePrevMode   EditorMode       // mode to return to on Escape
-	ActiveTerrainPtIdx int             // selected terrain point index; -1 = none
+	SurfaceEditorState
 
 	// Right-click drag rotation state (3D mode)
-	MouseDragging3D    bool
+	MouseDragging3D      bool
 	LastDragX, LastDragY int32
 
 	// Drag step / snap-to-grid
@@ -178,34 +227,14 @@ type EditorState struct {
 	LevelsDir       string
 
 	// Save As dialog
-	ShowSaveAs  bool
-	SaveAsName  string
+	ShowSaveAs bool
+	SaveAsName string
 
 	// --- Scenery editor ---
-	SceneryPrimitives    []Primitive // working set of primitives (not part of any level)
-	SceneryActivePrimIdx int        // selected primitive; -1 = none
-	SceneryPrimPlacement bool       // true: next left-click places a primitive
-	SceneryPrimPlaceType string     // "rect_prism", "sphere", "cylinder", "plane", "water"
-	SceneryFilePath      string     // current save path
-	SceneryID            string     // asset name
-	SceneryPrevMode      EditorMode // mode to return to on exit
-	ScenerySavedCamPos   mgl32.Vec3
-	ScenerySavedCamYaw   float32
-	ScenerySavedCamPitch float32
-	ShowSceneryPicker    bool     // load dialog visible
-	SceneryFiles         []string // scanned .yaml files
-	ShowScenerySaveAs    bool
-	ScenerySaveAsName    string
-	ShowImportScenery    bool     // import dialog (used from 3D editor)
-	ImportSceneryFiles   []string
-	ImportSceneryIdx     int32
+	SceneryEditorState
 
 	// --- 2D biome sector layer ---
-	BiomeLayerActive     bool         // 2D view edits the biome-sector layer instead of structural geometry
-	BiomeDrawing         bool         // placing points for a new sector polygon
-	BiomeDrawPoints      []mgl32.Vec2 // points placed so far for the in-progress polygon
-	ActiveBiomeSectorIdx int          // index into the active chunk's BiomeSectors; -1 = none
-	BiomeDragVertexIdx   int          // vertex index being dragged on the selected sector; -1 = none
+	BiomeLayerState
 }
 
 // Editor is the global editor instance.
@@ -247,7 +276,7 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.ActiveTerrainPtIdx = -1
 	Editor.SurfacePlacing = ""
 	Editor.SurfaceEditLayer = "both"
-	Editor.Zoom2D = 20.0   // 20 px per world unit
+	Editor.Zoom2D = 20.0    // 20 px per world unit
 	Editor.PanelWidth = 360 // default side panel width
 	Editor.StepSize = 0.25
 	Editor.SnapToGrid = false
