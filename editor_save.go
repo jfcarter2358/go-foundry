@@ -165,6 +165,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 			ID: s.ID,
 			Floor: RawFloor{
 				Enabled:       s.Floor.Enabled,
+				Hidden:        s.Floor.Hidden,
 				Height:        s.Floor.Height,
 				VertexOffsets: floorOffsets,
 				Texture:       s.Floor.Texture,
@@ -282,14 +283,58 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 			ID:     bs.ID,
 			Points: make([]Point, len(bs.Points)),
 			Brush: RawBiomeBrush{
-				Kind:        bs.Brush.Kind,
-				Density:     bs.Brush.Density,
-				Range:       bs.Brush.Range,
-				Color:       RawColor{R: bs.Brush.Color.X(), G: bs.Brush.Color.Y(), B: bs.Brush.Color.Z()},
-				GrassHeight: bs.Brush.GrassHeight,
-				GrassWidth:  bs.Brush.GrassWidth,
-				RockSides:   bs.Brush.RockSides,
+				Kind:         bs.Brush.Kind,
+				Density:      bs.Brush.Density,
+				Range:        bs.Brush.Range,
+				Color:        RawColor{R: bs.Brush.Color.X(), G: bs.Brush.Color.Y(), B: bs.Brush.Color.Z()},
+				GrassHeight:  bs.Brush.GrassHeight,
+				GrassWidth:   bs.Brush.GrassWidth,
+				HeadScale:    bs.Brush.HeadScale,
+				GrassClump:   bs.Brush.GrassClump,
+				LOD1Distance: bs.Brush.LOD1Distance,
+				LOD2Distance: bs.Brush.LOD2Distance,
+				RockSides:    bs.Brush.RockSides,
+				RockScale:    bs.Brush.RockScale,
+				SandHeight:   bs.Brush.SandHeight,
+				WaterDepth:   bs.Brush.WaterDepth,
+
+				MossScatter:   bs.Brush.MossScatter,
+				MinSlopeAngle: bs.Brush.MinSlopeAngle,
+				MaxSlopeAngle: bs.Brush.MaxSlopeAngle,
+
+				BloomSpike:      bs.Brush.BloomSpike,
+				BloomCenter:     bs.Brush.BloomCenter,
+				BloomSolidColor: bs.Brush.BloomSolidColor,
+				CenterColor: RawColor{
+					R: bs.Brush.CenterColor.X(), G: bs.Brush.CenterColor.Y(), B: bs.Brush.CenterColor.Z(),
+				},
+				StemLeaves: bs.Brush.StemLeaves,
+				LeafScale:  bs.Brush.LeafScale,
+
+				GroundTexture:   bs.Brush.GroundTexture,
+				GroundAmplitude: bs.Brush.GroundAmplitude,
+				GroundFrequency: bs.Brush.GroundFrequency,
+				GroundOctaves:   bs.Brush.GroundOctaves,
+				GroundUVScale:   Point{X: bs.Brush.GroundUVScale.X(), Y: bs.Brush.GroundUVScale.Y()},
+
+				RangeFadeFraction:  bs.Brush.RangeFadeFraction,
+				EdgeFadeDistance:   bs.Brush.EdgeFadeDistance,
+				FakeShadowStrength: bs.Brush.FakeShadowStrength,
+				FakeShadowSpread:   bs.Brush.FakeShadowSpread,
+				BoundaryJitter:     bs.Brush.BoundaryJitter,
 			},
+		}
+		if bs.Brush.Kind == BiomeWater {
+			water := bs.Brush.Water
+			rb.Brush.Water = &RawWater{
+				WaveAmplitude: water.WaveAmplitude,
+				WaveLength:    water.WaveLength,
+				WaveSpeed:     water.WaveSpeed,
+				Reflectivity:  water.Reflectivity,
+				ReflectColor: RawColor3{
+					R: water.ReflectColor.X(), G: water.ReflectColor.Y(), B: water.ReflectColor.Z(),
+				},
+			}
 		}
 		for i, wp := range bs.Points {
 			local := reverseTransformPoint2D(wp, ch.Origin, ch.Rotation, ch.Scale)
@@ -420,17 +465,17 @@ func primitiveToRaw(p *Primitive, ch *Chunk) RawPrimitive {
 	}
 
 	rp := RawPrimitive{
-		ID:        p.ID,
-		Type:      typeStr,
-		Position:  RawEntityPosition{X: localXZ.X(), Y: localY, Z: localXZ.Y()},
-		Rotation:  RawEntityPosition{X: p.Rotation.X(), Y: p.Rotation.Y(), Z: p.Rotation.Z()},
-		Scale:     RawEntityPosition{X: sc.X(), Y: sc.Y(), Z: sc.Z()},
-		Texture:   p.Texture,
-		Sides:     p.Sides,
-		Collision: p.Collision,
-		Alpha:      float32PtrIfNotOne(p.Alpha),
-		UVOffset:   Point{X: p.UVOffset.X(), Y: p.UVOffset.Y()},
-		UVScale:    Point{X: uvSc.X(), Y: uvSc.Y()},
+		ID:          p.ID,
+		Type:        typeStr,
+		Position:    RawEntityPosition{X: localXZ.X(), Y: localY, Z: localXZ.Y()},
+		Rotation:    RawEntityPosition{X: p.Rotation.X(), Y: p.Rotation.Y(), Z: p.Rotation.Z()},
+		Scale:       RawEntityPosition{X: sc.X(), Y: sc.Y(), Z: sc.Z()},
+		Texture:     p.Texture,
+		Sides:       p.Sides,
+		Collision:   p.Collision,
+		Alpha:       float32PtrIfNotOne(p.Alpha),
+		UVOffset:    Point{X: p.UVOffset.X(), Y: p.UVOffset.Y()},
+		UVScale:     Point{X: uvSc.X(), Y: uvSc.Y()},
 		UVRotation:  p.UVRotation,
 		Smooth:      p.Smooth,
 		SmoothAngle: p.SmoothAngle,
@@ -459,13 +504,13 @@ func entityToRaw(e *Entity) RawEntity {
 		bKind = "cylinder"
 	}
 	return RawEntity{
-		ID:       e.ID,
-		Position: RawEntityPosition{X: e.Position.X(), Y: e.Position.Y(), Z: e.Position.Z()},
-		Rotation: RawEntityPosition{X: e.Rotation.X(), Y: e.Rotation.Y(), Z: e.Rotation.Z()},
-		Scale:    RawEntityPosition{X: sc.X(), Y: sc.Y(), Z: sc.Z()},
-		Model:    modelPath,
-		Texture:  e.TexturePath,
-		Bounding: bKind,
+		ID:         e.ID,
+		Position:   RawEntityPosition{X: e.Position.X(), Y: e.Position.Y(), Z: e.Position.Z()},
+		Rotation:   RawEntityPosition{X: e.Rotation.X(), Y: e.Rotation.Y(), Z: e.Rotation.Z()},
+		Scale:      RawEntityPosition{X: sc.X(), Y: sc.Y(), Z: sc.Z()},
+		Model:      modelPath,
+		Texture:    e.TexturePath,
+		Bounding:   bKind,
 		BoundHalfX: e.BoundHalfX,
 		BoundHalfY: e.BoundHalfY,
 		BoundHalfZ: e.BoundHalfZ,

@@ -250,7 +250,7 @@ func forEachDetailFace(level *Level, cull *Frustum, fn func(f detailFace)) {
 			if cull != nil {
 				secMin, secMax = s.WorldAABB()
 			}
-			if s.Floor.Enabled && s.Floor.Detail.Enabled && visible(secMin, secMax, &s.Floor.Detail) {
+			if s.Floor.Enabled && !s.Floor.Hidden && s.Floor.Detail.Enabled && visible(secMin, secMax, &s.Floor.Detail) {
 				fn(detailFace{&s.Floor.Detail, &s.Floor.Geometry, s.Floor.Texture})
 			}
 			if s.Ceiling.Enabled && s.Ceiling.Detail.Enabled && visible(secMin, secMax, &s.Ceiling.Detail) {

@@ -54,3 +54,6 @@
 - [ ] Baked lighting
 - [ ] Water reflections
 - [ ] texture blending
+- [ ] Biome painting (e.g. prarie, forest, etc.)
+- [ ] Detail shadow casting
+- [ ] Trees

@@ -541,6 +541,11 @@ func RenderShadowPass(lights LightSet, level *Level, view, projection mgl32.Mat4
 			// Cast displaced/scattered detail (drawn via its own tess/instanced
 			// programs so bumps and rocks cast accurate shadows); restores Shadows.Program.
 			RenderDetailDirShadow(level, lsm, &cull)
+			// Cast painted biome scatter, re-instanced through its own placement
+			// code so a blade's shadow lands on the blade; gated per kind and
+			// limited to the nearest cascades by BiomeShadows. Restores
+			// Shadows.Program.
+			RenderBiomeScatterDirShadow(level, lsm, c, frame.Splits[c], Cam.Position, BiomeWindTime, &cull)
 			layer++
 		}
 	}
@@ -605,6 +610,8 @@ func RenderPointShadowPass(lights LightSet, level *Level) {
 			renderSceneShadow(level, Shadows.CubeModelUniform, &cull)
 			// Cast displaced/scattered detail into this cube face; restores Shadows.CubeProgram.
 			RenderDetailCubeShadow(level, lsm, pl.Position, farPlane, &cull)
+			// Cast painted biome scatter into this cube face; restores Shadows.CubeProgram.
+			RenderBiomeScatterCubeShadow(level, lsm, pl.Position, farPlane, Cam.Position, BiomeWindTime, &cull)
 		}
 		mapIdx++
 	}
@@ -637,7 +644,7 @@ func renderSceneShadow(level *Level, modelUniform int32, cull *Frustum) {
 					continue
 				}
 			}
-			if sector.Floor.Enabled {
+			if sector.Floor.Enabled && !sector.Floor.Hidden {
 				// Displaced faces cast via the detail tess program instead (see
 				// RenderDetailDirShadow / RenderDetailCubeShadow), so skip the flat mesh.
 				if !sector.Floor.Detail.HasDisplace() {

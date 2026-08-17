@@ -9,6 +9,7 @@ import (
 // Floor represents a sector's floor surface.
 type Floor struct {
 	Enabled       bool
+	Hidden        bool // if true, the floor's own texture/geometry is not drawn (or shadow-cast); Enabled/collision/terrain are unaffected. Default false = visible — e.g. for a floor fully covered by a biome ground patch (see biome_ground.go) where the structural texture would otherwise show through at the patch's edges.
 	Height        float32
 	VertexOffsets []float32 // per-vertex Y delta from Height; len must equal len(sector.PointIndices)
 	Texture       string

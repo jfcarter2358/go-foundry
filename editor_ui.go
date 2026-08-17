@@ -930,6 +930,7 @@ func Editor2DPanel() {
 	imgui.Text(fmt.Sprintf("Chunk: %s", ch.ID))
 	imgui.Text(fmt.Sprintf("Zoom: %.0f px/unit", Editor.Zoom2D))
 	imgui.Text("Scroll: zoom | MMB drag: pan | Shift+click: add vertex")
+	imgui.Checkbox("Show All Point Boxes", &Editor.ShowPointSelectRadius)
 
 	// ---- Grid settings ----
 	imgui.Separator()
@@ -960,6 +961,7 @@ func Editor2DPanel() {
 			if imgui.TreeNode("Floor") {
 				changed := false
 				changed = imgui.Checkbox("Enabled##fe", &s.Floor.Enabled) || changed
+				imgui.Checkbox("Hide Texture##fhid", &s.Floor.Hidden)
 				changed = editorDragFloat("Height##fh", &s.Floor.Height, 0, 0, "%.3f") || changed
 				changed = textureCombo("Texture##ft", &s.Floor.Texture, false) || changed
 				changed = imgui.Checkbox("Terrain##fter", &s.Floor.Terrain) || changed

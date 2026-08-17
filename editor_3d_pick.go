@@ -294,6 +294,10 @@ const (
 	// get a handle. Without it, a distant vertex that happens to project under
 	// the cursor would hijack clicks meant for the geometry in front of it.
 	vertexHandleMaxDist float32 = 30
+	// vertexHandleShowAllPx replaces vertexHandleShowPx when the "show all
+	// vertex boxes" toggle is on — wider than any screen, so cursor proximity
+	// stops filtering and every in-range vertex draws its box.
+	vertexHandleShowAllPx float32 = 1e6
 )
 
 // vertexSel identifies one selected sector vertex handle. Selections are stored
@@ -564,10 +568,34 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	mx, my, _ := sdl.GetMouseState()
 	if !translateGizmoDragging() {
 		if gizmoSuppressed() || imgui.CurrentIO().WantCaptureMouse() || mx >= panelLeftEdgeX() {
+			// The cursor is off the world, so nothing is under it — but the
+			// show-all toggle still wants every box drawn, not least while the
+			// user is over the panel that holds the toggle.
+			if withVertexHandles && Editor.ShowPointSelectRadius {
+				editorRenderAllVertexBoxes(projView)
+			}
 			return
 		}
 	}
 	editorRenderHandleOverlays(projView, mx, my, withVertexHandles)
+}
+
+// editorRenderAllVertexBoxes draws every in-range vertex handle box with no
+// cursor under them — the show-all toggle's view while the pointer is over the
+// side panel. The translate gizmo stays hidden, matching the suppressed path
+// this stands in for.
+func editorRenderAllVertexBoxes(projView mgl32.Mat4) {
+	GizmoFlush(projView)
+	prevDepth := gl.IsEnabled(gl.DEPTH_TEST)
+	gl.Disable(gl.DEPTH_TEST)
+	defer func() {
+		GizmoFlush(projView)
+		if prevDepth {
+			gl.Enable(gl.DEPTH_TEST)
+		}
+	}()
+	// Far off-screen cursor: no handle reads as hovered.
+	drawVertexHandleBoxes(math.MinInt32/2, math.MinInt32/2, vertexHandleShowAllPx)
 }
 
 // editorRenderHandleOverlays draws the interactive handles — vertex boxes near
@@ -588,33 +616,43 @@ func editorRenderHandleOverlays(projView mgl32.Mat4, mx, my int32, withVertexHan
 	}()
 
 	if withVertexHandles {
-		// Selected vertices stay marked wherever they are, so a multi-selection
-		// is visible while the cursor is over the gizmo instead of the vertices.
-		for _, sel := range Editor.SelectedVertices {
-			if pos, ok := vertexSelPos(sel); ok {
-				gizmoBox(pos, vertexHandleHalfPx, mgl32.Vec3{1, 1, 0})
-			}
+		showPx := vertexHandleShowPx
+		if Editor.ShowPointSelectRadius {
+			showPx = vertexHandleShowAllPx
 		}
-
-		// Floor handles are blue and ceiling handles red (matching the 2D
-		// editor's vertex-mode buttons); selected is yellow, and the handle
-		// under the cursor is white.
-		for _, h := range collectVertexHandles(mx, my, vertexHandleShowPx) {
-			col := mgl32.Vec3{0.35, 0.55, 1}
-			if !h.isFloor {
-				col = mgl32.Vec3{1, 0.45, 0.35}
-			}
-			if handleBoxContains(h, mx, my) {
-				col = mgl32.Vec3{1, 1, 1}
-			}
-			if isVertexSelected(h.vertexSel) {
-				col = mgl32.Vec3{1, 1, 0}
-			}
-			gizmoBox(h.pos, vertexHandleHalfPx, col)
-		}
+		drawVertexHandleBoxes(mx, my, showPx)
 	}
 
 	renderTranslateGizmo(mx, my)
+}
+
+// drawVertexHandleBoxes queues the selection marks and the handle boxes for
+// every vertex within showPx of (mx, my). Caller sets up the depth state.
+func drawVertexHandleBoxes(mx, my int32, showPx float32) {
+	// Selected vertices stay marked wherever they are, so a multi-selection
+	// is visible while the cursor is over the gizmo instead of the vertices.
+	for _, sel := range Editor.SelectedVertices {
+		if pos, ok := vertexSelPos(sel); ok {
+			gizmoBox(pos, vertexHandleHalfPx, mgl32.Vec3{1, 1, 0})
+		}
+	}
+
+	// Floor handles are blue and ceiling handles red (matching the 2D
+	// editor's vertex-mode buttons); selected is yellow, and the handle
+	// under the cursor is white.
+	for _, h := range collectVertexHandles(mx, my, showPx) {
+		col := mgl32.Vec3{0.35, 0.55, 1}
+		if !h.isFloor {
+			col = mgl32.Vec3{1, 0.45, 0.35}
+		}
+		if handleBoxContains(h, mx, my) {
+			col = mgl32.Vec3{1, 1, 1}
+		}
+		if isVertexSelected(h.vertexSel) {
+			col = mgl32.Vec3{1, 1, 0}
+		}
+		gizmoBox(h.pos, vertexHandleHalfPx, col)
+	}
 }
 
 // handleVertexClick resolves a click against the vertex handle boxes. A plain

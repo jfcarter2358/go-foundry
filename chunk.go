@@ -29,6 +29,14 @@ type Chunk struct {
 	PointNames []string                // index-aligned with Points; "" = unnamed
 	Primitives []Primitive
 	BiomeSectors []BiomeSector         // user-drawn biome-paint polygons, owned by this chunk
+
+	// BiomeWaterPrims is runtime-only (never serialized, never cloned):
+	// companion PrimitiveWater entries auto-managed from Water-kind
+	// BiomeSectors (see biome_water.go). Kept separate from Primitives so
+	// they never show up in the primitive/scenery editor or the save file —
+	// they are fully derived from BiomeSectors and rebuilt on load and
+	// whenever the owning sector changes.
+	BiomeWaterPrims []Primitive
 }
 
 // AddPoint appends a point to the shared pool and returns its index, keeping
@@ -103,9 +111,13 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 				Points:      append([]mgl32.Vec2(nil), src.Points...),
 				Brush:       src.Brush,
 				HeightDirty: true,
+				GroundDirty: true,
 			}
 		}
 	}
+	// BiomeWaterPrims is intentionally left empty — it's fully derived from
+	// BiomeSectors (marked GroundDirty above) and gets rebuilt the next time
+	// SyncBiomeWaterPrimitives runs.
 
 	return cp
 }
@@ -212,7 +224,7 @@ func clonePrimitive(p *Primitive, newChunkID, idSuffix string, sectorIDRemap map
 // outside the original bounds then gets frustum-culled along with the rest of
 // the chunk even when it's on screen.
 func (ch *Chunk) RecomputeBounds() {
-	if len(ch.Sectors) == 0 && len(ch.Primitives) == 0 {
+	if len(ch.Sectors) == 0 && len(ch.Primitives) == 0 && len(ch.BiomeWaterPrims) == 0 {
 		return
 	}
 	first := true
@@ -239,6 +251,10 @@ func (ch *Chunk) RecomputeBounds() {
 
 	for pi := range ch.Primitives {
 		extend(ch.Primitives[pi].WorldAABB())
+	}
+
+	for pi := range ch.BiomeWaterPrims {
+		extend(ch.BiomeWaterPrims[pi].WorldAABB())
 	}
 }
 

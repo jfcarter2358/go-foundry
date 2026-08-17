@@ -112,6 +112,12 @@ type EditorState struct {
 	// In 2D mode, whether the floor vertices (true) or ceiling vertices (false) are being edited
 	EditFloorVerts bool
 
+	// Draw a box around every selectable point instead of only the ones the
+	// cursor is near, so overlapping/hard-to-see points can be found. In 2D
+	// the box is each chunk point's click-proximity radius; in 3D it is every
+	// vertex handle within pick range of the camera.
+	ShowPointSelectRadius bool
+
 	// Point connection state for ctrl+click workflow
 	ConnectFromIdx int      // chunk point index to connect from; -1 = not connecting
 	PendingEdges   [][2]int // edges not yet part of a sector (chunk point indices)

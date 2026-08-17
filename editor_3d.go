@@ -580,6 +580,7 @@ func Editor3DPanel() {
 		imgui.Text("Right-click drag to rotate")
 		imgui.Text("Click a face, object or vertex to select it")
 		imgui.Text("Drag an R/G/B arm to move it along X/Y/Z")
+		imgui.Checkbox("Show All Point Boxes", &Editor.ShowPointSelectRadius)
 		imgui.Button("Fwd##nav")
 		if imgui.IsItemActive() {
 			Editor.NavForward = true
@@ -820,6 +821,7 @@ func Editor3DPanel() {
 					editorFocusScroll(panelFocusFloor)
 					changed := false
 					changed = imgui.Checkbox("Enabled##fe3d", &s3d.Floor.Enabled) || changed
+					imgui.Checkbox("Hide Texture##fhid3d", &s3d.Floor.Hidden)
 					changed = editorDragFloat("Height##fh3d", &s3d.Floor.Height, 0, 0, "%.3f") || changed
 					changed = textureCombo("Texture##ft3d", &s3d.Floor.Texture, false) || changed
 					if changed {

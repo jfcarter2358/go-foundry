@@ -141,6 +141,25 @@ func Editor2DRender() {
 		}
 	}
 
+	// Optionally draw a box around every point showing its click-proximity
+	// radius, so points can be found even when hidden behind geometry or
+	// packed too closely to tell apart.
+	if Editor.ShowPointSelectRadius {
+		magenta := mgl32.Vec3{1, 0.2, 1}
+		r := screenToWorldSize(editor2DSelectRadius, ortho)
+		for _, pt := range ch.Points {
+			x, z := pt.X(), pt.Y()
+			c00 := mgl32.Vec3{x - r, 0, z - r}
+			c10 := mgl32.Vec3{x + r, 0, z - r}
+			c11 := mgl32.Vec3{x + r, 0, z + r}
+			c01 := mgl32.Vec3{x - r, 0, z + r}
+			GizmoLine(c00, c10, magenta)
+			GizmoLine(c10, c11, magenta)
+			GizmoLine(c11, c01, magenta)
+			GizmoLine(c01, c00, magenta)
+		}
+	}
+
 	// Draw free points (not in any sector) as white crosses
 	for pi, pt := range ch.Points {
 		if usedPoints[pi] {
@@ -1077,7 +1096,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 		EdgeKinds:    edgeKindsA,
 		Walls:        wallsA,
 		Portals:      portalsA,
-		Floor:        Floor{Enabled: s.Floor.Enabled, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsA},
+		Floor:        Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsA},
 		Ceiling:      Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsA},
 	}
 	sectorB := Sector{
@@ -1086,7 +1105,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 		EdgeKinds:    edgeKindsB,
 		Walls:        wallsB,
 		Portals:      portalsB,
-		Floor:        Floor{Enabled: s.Floor.Enabled, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsB},
+		Floor:        Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsB},
 		Ceiling:      Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsB},
 	}
 
@@ -1665,7 +1684,7 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 		EdgeKinds:    mergedEdgeKinds,
 		Walls:        mergedWalls,
 		Portals:      mergedPortals,
-		Floor:        Floor{Enabled: sA.Floor.Enabled, Height: sA.Floor.Height, Texture: sA.Floor.Texture, Terrain: sA.Floor.Terrain, DoubleSided: sA.Floor.DoubleSided, Alpha: sA.Floor.Alpha, VertexOffsets: mergedFloorOff},
+		Floor:        Floor{Enabled: sA.Floor.Enabled, Hidden: sA.Floor.Hidden, Height: sA.Floor.Height, Texture: sA.Floor.Texture, Terrain: sA.Floor.Terrain, DoubleSided: sA.Floor.DoubleSided, Alpha: sA.Floor.Alpha, VertexOffsets: mergedFloorOff},
 		Ceiling:      Ceiling{Enabled: sA.Ceiling.Enabled, Height: sA.Ceiling.Height, Texture: sA.Ceiling.Texture, Terrain: sA.Ceiling.Terrain, DoubleSided: sA.Ceiling.DoubleSided, Alpha: sA.Ceiling.Alpha, VertexOffsets: mergedCeilOff},
 	}
 

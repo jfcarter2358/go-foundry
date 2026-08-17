@@ -178,6 +178,27 @@ func HandleEvent(event sdl.Event) {
 				}
 			case sdl.SCANCODE_F3:
 				DebugToggle()
+			// Biome lighting cost switches — see BiomeShadowSettings. Bound to
+			// keys, not editor checkboxes, so they can be flipped while flying
+			// around with the mouse captured and the F3 overlay's frame time
+			// read directly against each one.
+			case sdl.SCANCODE_F5:
+				BiomeShadows.Receive = !BiomeShadows.Receive
+			case sdl.SCANCODE_F6:
+				BiomeShadows.CastRockMoss = !BiomeShadows.CastRockMoss
+			case sdl.SCANCODE_F7:
+				BiomeShadows.CastFoliage = !BiomeShadows.CastFoliage
+			case sdl.SCANCODE_F8:
+				// Cycle 0..ShadowCascades: 0 disables scatter casting entirely
+				// without losing the per-kind switches above.
+				BiomeShadows.CastCascades = (BiomeShadows.CastCascades + 1) % (ShadowCascades + 1)
+			case sdl.SCANCODE_F9:
+				// Cycle 1..3: how many LOD tiers (Near/Mid/Far) cast real
+				// per-instance shadows — see BiomeShadowSettings.CastLODTiers.
+				BiomeShadows.CastLODTiers = BiomeShadows.CastLODTiers%3 + 1
+			case sdl.SCANCODE_F10:
+				// Window-level multisample anti-aliasing — see antialias.go.
+				ToggleAntiAlias()
 			case sdl.SCANCODE_0:
 				if !Editor.Active {
 					GravityEnabled = !GravityEnabled

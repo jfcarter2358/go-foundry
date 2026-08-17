@@ -1,11 +1,12 @@
-11:09:41 [foundry] scanned 12 textures
-11:09:41 [foundry] executable directory: /home/jfcarter2358/personal/code/main/foundry/dist
-11:09:42 [foundry] OpenGL version : 4.2 (Compatibility Profile) Mesa 23.2.1-1ubuntu3.1~22.04.4
-11:09:42 [foundry] GLSL version   : 4.20
-11:09:42 [foundry] GPU renderer   : D3D12 (NVIDIA GeForce GTX 1070)
-11:09:42 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/dist/shaders/vertex.glsl (2573 bytes)
-11:09:42 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/dist/shaders/fragment.glsl (12802 bytes)
-11:09:42 [foundry] --- vertex shader source ---
+16:46:50 [foundry] scanned 13 textures
+16:46:50 [foundry] executable directory: /home/jfcarter2358/personal/code/main/foundry/dist
+16:46:50 [foundry] OpenGL version : 4.2 (Compatibility Profile) Mesa 23.2.1-1ubuntu3.1~22.04.4
+16:46:50 [foundry] GLSL version   : 4.20
+16:46:50 [foundry] GPU renderer   : D3D12 (NVIDIA GeForce GTX 1070)
+16:46:50 [foundry] multisampling: 4 samples granted (of 4 requested)
+16:46:50 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/dist/shaders/vertex.glsl (2573 bytes)
+16:46:50 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/dist/shaders/fragment.glsl (12802 bytes)
+16:46:50 [foundry] --- vertex shader source ---
 #version 410
 
 uniform mat4 projection;
@@ -80,8 +81,8 @@ void main() {
     gl_Position = projection * viewPos;
 }
 ---
-11:09:42 [foundry] vertex shader compiled OK
-11:09:42 [foundry] --- fragment shader source ---
+16:46:50 [foundry] vertex shader compiled OK
+16:46:50 [foundry] --- fragment shader source ---
 #version 410
 
 uniform sampler2D tex;
@@ -410,13 +411,13 @@ void main() {
     outputColor = vec4(surface, finalAlpha);
 }
 ---
-11:09:42 [foundry] fragment shader compiled OK
-11:09:42 [foundry] shader program linked OK (id=3)
-11:09:42 [foundry] dir shadow program linked OK (id=6)
-11:09:42 [foundry] cube shadow program linked OK (id=9)
-11:09:42 [foundry] dummy cubemap created (id=1)
-11:09:42 [foundry] starting with blank level
-11:09:42 [foundry] level loaded: 0 chunk(s), 0 entity(s), 0 dir light(s), 0 point light(s)
-11:09:42 [foundry] uploading lights: global=1, directional=0, point=0
-11:09:42 [foundry] light uniforms uploaded
-11:09:42 [foundry] startup complete — entering game loop
+16:46:51 [foundry] fragment shader compiled OK
+16:46:51 [foundry] shader program linked OK (id=3)
+16:46:51 [foundry] dir shadow program linked OK (id=6)
+16:46:51 [foundry] cube shadow program linked OK (id=9)
+16:46:51 [foundry] dummy cubemap created (id=1)
+16:46:51 [foundry] starting with blank level
+16:46:51 [foundry] level loaded: 0 chunk(s), 0 entity(s), 0 dir light(s), 0 point light(s)
+16:46:51 [foundry] uploading lights: global=1, directional=0, point=0
+16:46:51 [foundry] light uniforms uploaded
+16:46:51 [foundry] startup complete — entering game loop

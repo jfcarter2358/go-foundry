@@ -15,15 +15,15 @@ var DebugOverlayVisible = false
 
 // DebugStats holds the values displayed in the debug overlay.
 var DebugStats struct {
-	FPS            float32
-	FrameTimeMs    float32
-	CPUPercent     float32
-	MemAllocMB     float32
-	MemSysMB       float32
-	EntitiesLoaded int
-	SectorsLoaded  int
-	ChunksLoaded   int
-	EntitiesDrawn  int
+	FPS                 float32
+	FrameTimeMs         float32
+	CPUPercent          float32
+	MemAllocMB          float32
+	MemSysMB            float32
+	EntitiesLoaded      int
+	SectorsLoaded       int
+	ChunksLoaded        int
+	EntitiesDrawn       int
 	SectorsDrawn        int
 	SectorsPortalCulled int
 	ChunksDrawn         int
@@ -110,8 +110,37 @@ func DebugRenderOverlay() {
 			imgui.Text("Position:     N/A")
 		}
 		imgui.Text(fmt.Sprintf("Rotation:     yaw=%.2f  pitch=%.2f", Cam.Yaw, Cam.Pitch))
+		imgui.Separator()
+
+		if AntiAliasGrantedSamples > 0 {
+			imgui.Text(fmt.Sprintf("Anti-aliasing: %s  (%dx, F10)", onOff(AntiAliasEnabled), AntiAliasGrantedSamples))
+		} else {
+			imgui.Text("Anti-aliasing: unavailable (driver granted 0 samples)")
+		}
+		imgui.Separator()
+
+		// Biome lighting cost switches. Reported here, next to the frame time,
+		// because that is the whole point of their being runtime-toggleable:
+		// flip one and read what it cost off the line above rather than
+		// guessing. Driven by keys (see input.go) rather than by checkboxes so
+		// they work with the mouse captured for camera look.
+		imgui.Text("--- Biome lighting ---")
+		imgui.Text(fmt.Sprintf("Receive shadows:  %s  (F5)", onOff(BiomeShadows.Receive)))
+		imgui.Text(fmt.Sprintf("Cast rock/moss:   %s  (F6)", onOff(BiomeShadows.CastRockMoss)))
+		imgui.Text(fmt.Sprintf("Cast foliage:     %s  (F7)", onOff(BiomeShadows.CastFoliage)))
+		imgui.Text(fmt.Sprintf("Cast cascades:    %d of %d  (F8)", BiomeShadows.CastCascades, ShadowCascades))
+		imgui.Text(fmt.Sprintf("Cast range:       %.0f", BiomeShadows.CastRange))
+		imgui.Text(fmt.Sprintf("Cast LOD tiers:   %d of 3  (F9)", BiomeShadows.CastLODTiers))
 	}
 	imgui.End()
+}
+
+// onOff renders a bool as an overlay-friendly fixed-width label.
+func onOff(b bool) string {
+	if b {
+		return "ON "
+	}
+	return "OFF"
 }
 
 // processCPUSeconds returns the cumulative CPU time used by this process.

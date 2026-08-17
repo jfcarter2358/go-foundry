@@ -1,8 +1,8 @@
 package main
 
 import (
-	"io"
 	_ "image/png"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -172,6 +172,12 @@ func main() {
 	}
 	defer sdl.Quit()
 
+	// Must precede CreateWindow — the multisample buffer request is part of
+	// the pixel format the window's framebuffer is created with. See
+	// antialias.go's own doc comment for why this is the window-level MSAA
+	// approach rather than an offscreen resolve pass.
+	RequestAntiAliasWindow()
+
 	Window, err = sdl.CreateWindow(WinTitle, sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED,
 		WinWidth, WinHeight, sdl.WINDOW_OPENGL|sdl.WINDOW_RESIZABLE|sdl.WINDOW_FULLSCREEN_DESKTOP)
 	if err != nil {
@@ -201,6 +207,10 @@ func main() {
 	log.Printf("OpenGL version : %s", gl.GoStr(gl.GetString(gl.VERSION)))
 	log.Printf("GLSL version   : %s", gl.GoStr(gl.GetString(gl.SHADING_LANGUAGE_VERSION)))
 	log.Printf("GPU renderer   : %s", gl.GoStr(gl.GetString(gl.RENDERER)))
+
+	// Reads back what RequestAntiAliasWindow's request above actually got
+	// granted and applies AntiAliasEnabled's default (on) — see antialias.go.
+	ApplyAntiAliasGLState()
 
 	gl.Enable(gl.DEPTH_TEST)
 	gl.ClearColor(0.2, 0.2, 0.3, 1.0)
@@ -459,209 +469,232 @@ func main() {
 				prim.Geometry.DrawWithTransform(prim.ModelMatrix())
 			}
 		} else {
-		// --- Shadow pass: render depth from each shadow-casting light ---
-		shadowFrame := RenderShadowPass(level.Lights, &level, Cam.Matrix, Projection)
-		UploadShadowUniforms(level.Lights, shadowFrame)
-		RenderPointShadowPass(level.Lights, &level)
-		UploadPointShadowUniforms(level.Lights)
+			// Keep every Water-kind biome sector's companion water-plane
+			// primitive (chunk.BiomeWaterPrims) in step before anything reads
+			// it this frame — the primitive draw loop below, and shadow/culling
+			// passes that walk chunk bounds.
+			SyncBiomeWaterPrimitives(&level)
 
-		// --- Render ---
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+			// Latch the biome wind clock before the shadow passes read it, so
+			// scatter sways identically in the depth maps and in the color pass and
+			// a blade's shadow stays under the blade.
+			BiomeWindTime = float32(now) / 1000.0
 
-		// Build frustum from current projection × camera matrices
-		projView := Projection.Mul4(Cam.Matrix)
-		frustum := ExtractFrustum(projView)
+			// --- Shadow pass: render depth from each shadow-casting light ---
+			shadowFrame := RenderShadowPass(level.Lights, &level, Cam.Matrix, Projection)
+			UploadShadowUniforms(level.Lights, shadowFrame)
+			RenderPointShadowPass(level.Lights, &level)
+			UploadPointShadowUniforms(level.Lights)
 
-		// Draw world geometry: chunks → sectors → floor/ceiling/walls
-		// Two-pass rendering: opaque geometry first, then transparent geometry sorted back-to-front.
-		chunksDrawn := 0
-		sectorsDrawn := 0
-		sectorsPortalCulled := 0
-		entitiesDrawn := 0
-		var transparentDraws []TransparentDraw
+			// --- Render ---
+			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		// Helper to queue or draw a geometry object based on its alpha.
-		identity := mgl32.Ident4()
-		drawOrQueue := func(g *Geometry, model mgl32.Mat4, doubleSided bool) {
-			if g.IsTransparent() {
-				pos := model.Mul4x1(mgl32.Vec4{g.Position.X(), g.Position.Y(), g.Position.Z(), 1})
-				dx := pos.X() - Cam.Position.X()
-				dy := pos.Y() - Cam.Position.Y()
-				dz := pos.Z() - Cam.Position.Z()
-				transparentDraws = append(transparentDraws, TransparentDraw{
-					Geom:        g,
-					Model:       model,
-					Distance:    dx*dx + dy*dy + dz*dz,
-					DoubleSided: doubleSided,
-				})
-				return
-			}
-			if model == identity {
-				g.Draw()
-			} else {
-				g.DrawWithTransform(model)
-			}
-		}
+			// Build frustum from current projection × camera matrices
+			projView := Projection.Mul4(Cam.Matrix)
+			frustum := ExtractFrustum(projView)
 
-		for i := range level.Chunks {
-			chunk := &level.Chunks[i]
-			if Editor.Active {
-				// Editor mutations (vertex drag, extrusion/terrain edits,
-				// primitive add/delete, height changes) can move geometry
-				// outside the chunk's cached AABB without updating it. Keep
-				// bounds honest while editing so culling doesn't hide what
-				// was just added.
-				chunk.RecomputeBounds()
-			}
-			if !AABBInFrustum(frustum, chunk.MinBound, chunk.MaxBound) {
-				continue
-			}
-			chunksDrawn++
+			// Draw world geometry: chunks → sectors → floor/ceiling/walls
+			// Two-pass rendering: opaque geometry first, then transparent geometry sorted back-to-front.
+			chunksDrawn := 0
+			sectorsDrawn := 0
+			sectorsPortalCulled := 0
+			entitiesDrawn := 0
+			var transparentDraws []TransparentDraw
 
-			// Portal visibility: only render sectors reachable through portals from the player's sector.
-			// Sectors disconnected from the portal graph (e.g. nested sectors with no shared
-			// edges) bypass portal culling and fall through to frustum-only culling.
-			var visibleSectors map[string]bool
-			var connectedSectors map[string]bool
-			if PlayerEntity != nil && chunk.ID == PlayerEntity.CurrentChunk {
-				visibleSectors = PortalVisibleSectors(chunk, PlayerEntity.CurrentSector, Cam.Position)
-				connectedSectors = PortalConnectedSectors(chunk, PlayerEntity.CurrentSector)
-			}
-
-			for j := range chunk.Sectors {
-				sector := &chunk.Sectors[j]
-				if visibleSectors != nil && connectedSectors[sector.ID] && !visibleSectors[sector.ID] {
-					sectorsPortalCulled++
-					continue
+			// Helper to queue or draw a geometry object based on its alpha.
+			identity := mgl32.Ident4()
+			drawOrQueue := func(g *Geometry, model mgl32.Mat4, doubleSided bool) {
+				if g.IsTransparent() {
+					pos := model.Mul4x1(mgl32.Vec4{g.Position.X(), g.Position.Y(), g.Position.Z(), 1})
+					dx := pos.X() - Cam.Position.X()
+					dy := pos.Y() - Cam.Position.Y()
+					dz := pos.Z() - Cam.Position.Z()
+					transparentDraws = append(transparentDraws, TransparentDraw{
+						Geom:        g,
+						Model:       model,
+						Distance:    dx*dx + dy*dy + dz*dz,
+						DoubleSided: doubleSided,
+					})
+					return
 				}
-				sectorMin := mgl32.Vec3{sector.MinBound.X(), sector.Floor.Height, sector.MinBound.Y()}
-				sectorMax := mgl32.Vec3{sector.MaxBound.X(), sector.Ceiling.Height, sector.MaxBound.Y()}
-				if !AABBInFrustum(frustum, sectorMin, sectorMax) {
-					continue
-				}
-				sectorsDrawn++
-				if sector.Floor.Enabled {
-					// Displaced faces are drawn by RenderDetailColor via the tess
-					// program instead of the flat mesh (avoids z-fighting).
-					if !sector.Floor.Detail.HasDisplace() {
-						drawOrQueue(&sector.Floor.Geometry, identity, sector.Floor.DoubleSided)
-					}
-					for eg := range sector.Floor.ExtrusionGeometries {
-						drawOrQueue(&sector.Floor.ExtrusionGeometries[eg], identity, sector.Floor.DoubleSided)
-					}
-				}
-				if sector.Ceiling.Enabled {
-					if !sector.Ceiling.Detail.HasDisplace() {
-						drawOrQueue(&sector.Ceiling.Geometry, identity, sector.Ceiling.DoubleSided)
-					}
-					for eg := range sector.Ceiling.ExtrusionGeometries {
-						drawOrQueue(&sector.Ceiling.ExtrusionGeometries[eg], identity, sector.Ceiling.DoubleSided)
-					}
-				}
-				for k := range sector.Walls {
-					w := &sector.Walls[k]
-					if w.Visible && (w.DoubleSided || WallFacingCamera(*w, Cam.Position)) {
-						if !w.Detail.HasDisplace() {
-							drawOrQueue(&w.Geometry, identity, w.DoubleSided)
-						}
-						for eg := range w.ExtrusionGeometries {
-							drawOrQueue(&w.ExtrusionGeometries[eg], identity, w.DoubleSided)
-						}
-					}
-				}
-				// Draw gap-fill geometry on portals connecting sectors at different heights.
-				for k := range sector.Portals {
-					p := &sector.Portals[k]
-					if p.Visible && p.DrawGap && (p.DoubleSided || PortalFacingCamera(p.StartPoint, p.EndPoint, Cam.Position)) {
-						drawOrQueue(&p.FloorGap, identity, p.DoubleSided)
-						drawOrQueue(&p.CeilGap, identity, p.DoubleSided)
-					}
-				}
-			}
-
-			// Primitives are culled against their own bounds rather than drawn
-			// inside the sector loop above. A primitive is assigned to whichever
-			// sector contains its centre point, but its extent is unrelated to
-			// that sector's — a water plane spanning several sectors would vanish
-			// as soon as the small sector holding its centre left the frustum,
-			// and one whose centre fell outside every sector never drew at all.
-			for pi := range chunk.Primitives {
-				prim := &chunk.Primitives[pi]
-				if visibleSectors != nil && prim.SectorID != "" &&
-					connectedSectors[prim.SectorID] && !visibleSectors[prim.SectorID] {
-					continue
-				}
-				pmin, pmax := prim.WorldAABB()
-				if !AABBInFrustum(frustum, pmin, pmax) {
-					continue
-				}
-				drawOrQueue(&prim.Geometry, prim.ModelMatrix(), prim.Kind == PrimitiveWater)
-			}
-		}
-
-		// Draw visible entities with their transform (position, rotation, scale)
-		for i := range level.Entities {
-			e := &level.Entities[i]
-			if e.Visible {
-				drawOrQueue(&e.Geometry, e.ModelMatrix(), false)
-				entitiesDrawn++
-			}
-		}
-
-		// --- Procedural biome scatter (GPU grass / rocks) ---
-		// Drawn after opaque geometry but before the transparent pass: blades and
-		// rocks are solid (depth-written) so translucent water still sorts on top.
-		RenderBiomes(&level, projView, Cam.Position, float32(now)/1000.0)
-
-		// --- Procedural face detail (GPU rock displacement + scatter) ---
-		// Drawn after opaque geometry; reuses the main fragment shader so it
-		// receives shadows, and was rendered into the shadow maps above so it casts.
-		RenderDetailColor(&level, shadowFrame)
-
-		// --- Transparent pass: draw collected transparent geometry back-to-front ---
-		if len(transparentDraws) > 0 {
-			sort.Slice(transparentDraws, func(a, b int) bool {
-				return transparentDraws[a].Distance > transparentDraws[b].Distance
-			})
-
-			gl.Enable(gl.BLEND)
-			gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-			gl.DepthMask(false)
-
-			for _, td := range transparentDraws {
-				if td.DoubleSided {
-					// Two-sub-pass for double-sided: back faces first, then front faces
-					gl.Enable(gl.CULL_FACE)
-					gl.CullFace(gl.FRONT) // draw back faces
-					if td.Model == identity {
-						td.Geom.Draw()
-					} else {
-						td.Geom.DrawWithTransform(td.Model)
-					}
-					gl.CullFace(gl.BACK) // draw front faces
-					if td.Model == identity {
-						td.Geom.Draw()
-					} else {
-						td.Geom.DrawWithTransform(td.Model)
-					}
-					gl.Disable(gl.CULL_FACE)
+				if model == identity {
+					g.Draw()
 				} else {
-					if td.Model == identity {
-						td.Geom.Draw()
-					} else {
-						td.Geom.DrawWithTransform(td.Model)
-					}
+					g.DrawWithTransform(model)
 				}
 			}
 
-			gl.DepthMask(true)
-			gl.Disable(gl.BLEND)
-		}
+			for i := range level.Chunks {
+				chunk := &level.Chunks[i]
+				if Editor.Active {
+					// Editor mutations (vertex drag, extrusion/terrain edits,
+					// primitive add/delete, height changes) can move geometry
+					// outside the chunk's cached AABB without updating it. Keep
+					// bounds honest while editing so culling doesn't hide what
+					// was just added.
+					chunk.RecomputeBounds()
+				}
+				if !AABBInFrustum(frustum, chunk.MinBound, chunk.MaxBound) {
+					continue
+				}
+				chunksDrawn++
 
-		DebugStats.ChunksDrawn = chunksDrawn
-		DebugStats.SectorsDrawn = sectorsDrawn
-		DebugStats.SectorsPortalCulled = sectorsPortalCulled
-		DebugStats.EntitiesDrawn = entitiesDrawn
+				// Portal visibility: only render sectors reachable through portals from the player's sector.
+				// Sectors disconnected from the portal graph (e.g. nested sectors with no shared
+				// edges) bypass portal culling and fall through to frustum-only culling.
+				var visibleSectors map[string]bool
+				var connectedSectors map[string]bool
+				if PlayerEntity != nil && chunk.ID == PlayerEntity.CurrentChunk {
+					visibleSectors = PortalVisibleSectors(chunk, PlayerEntity.CurrentSector, Cam.Position)
+					connectedSectors = PortalConnectedSectors(chunk, PlayerEntity.CurrentSector)
+				}
+
+				for j := range chunk.Sectors {
+					sector := &chunk.Sectors[j]
+					if visibleSectors != nil && connectedSectors[sector.ID] && !visibleSectors[sector.ID] {
+						sectorsPortalCulled++
+						continue
+					}
+					sectorMin := mgl32.Vec3{sector.MinBound.X(), sector.Floor.Height, sector.MinBound.Y()}
+					sectorMax := mgl32.Vec3{sector.MaxBound.X(), sector.Ceiling.Height, sector.MaxBound.Y()}
+					if !AABBInFrustum(frustum, sectorMin, sectorMax) {
+						continue
+					}
+					sectorsDrawn++
+					if sector.Floor.Enabled && !sector.Floor.Hidden {
+						// Displaced faces are drawn by RenderDetailColor via the tess
+						// program instead of the flat mesh (avoids z-fighting).
+						if !sector.Floor.Detail.HasDisplace() {
+							drawOrQueue(&sector.Floor.Geometry, identity, sector.Floor.DoubleSided)
+						}
+						for eg := range sector.Floor.ExtrusionGeometries {
+							drawOrQueue(&sector.Floor.ExtrusionGeometries[eg], identity, sector.Floor.DoubleSided)
+						}
+					}
+					if sector.Ceiling.Enabled {
+						if !sector.Ceiling.Detail.HasDisplace() {
+							drawOrQueue(&sector.Ceiling.Geometry, identity, sector.Ceiling.DoubleSided)
+						}
+						for eg := range sector.Ceiling.ExtrusionGeometries {
+							drawOrQueue(&sector.Ceiling.ExtrusionGeometries[eg], identity, sector.Ceiling.DoubleSided)
+						}
+					}
+					for k := range sector.Walls {
+						w := &sector.Walls[k]
+						if w.Visible && (w.DoubleSided || WallFacingCamera(*w, Cam.Position)) {
+							if !w.Detail.HasDisplace() {
+								drawOrQueue(&w.Geometry, identity, w.DoubleSided)
+							}
+							for eg := range w.ExtrusionGeometries {
+								drawOrQueue(&w.ExtrusionGeometries[eg], identity, w.DoubleSided)
+							}
+						}
+					}
+					// Draw gap-fill geometry on portals connecting sectors at different heights.
+					for k := range sector.Portals {
+						p := &sector.Portals[k]
+						if p.Visible && p.DrawGap && (p.DoubleSided || PortalFacingCamera(p.StartPoint, p.EndPoint, Cam.Position)) {
+							drawOrQueue(&p.FloorGap, identity, p.DoubleSided)
+							drawOrQueue(&p.CeilGap, identity, p.DoubleSided)
+						}
+					}
+				}
+
+				// Primitives are culled against their own bounds rather than drawn
+				// inside the sector loop above. A primitive is assigned to whichever
+				// sector contains its centre point, but its extent is unrelated to
+				// that sector's — a water plane spanning several sectors would vanish
+				// as soon as the small sector holding its centre left the frustum,
+				// and one whose centre fell outside every sector never drew at all.
+				for pi := range chunk.Primitives {
+					prim := &chunk.Primitives[pi]
+					if visibleSectors != nil && prim.SectorID != "" &&
+						connectedSectors[prim.SectorID] && !visibleSectors[prim.SectorID] {
+						continue
+					}
+					pmin, pmax := prim.WorldAABB()
+					if !AABBInFrustum(frustum, pmin, pmax) {
+						continue
+					}
+					drawOrQueue(&prim.Geometry, prim.ModelMatrix(), prim.Kind == PrimitiveWater)
+				}
+
+				// Biome-painted water planes (see biome_water.go) — kept in a
+				// separate slice so they never show up in the primitive/scenery
+				// editor, but drawn exactly like a hand-placed water primitive.
+				for pi := range chunk.BiomeWaterPrims {
+					prim := &chunk.BiomeWaterPrims[pi]
+					pmin, pmax := prim.WorldAABB()
+					if !AABBInFrustum(frustum, pmin, pmax) {
+						continue
+					}
+					drawOrQueue(&prim.Geometry, prim.ModelMatrix(), true)
+				}
+			}
+
+			// Draw visible entities with their transform (position, rotation, scale)
+			for i := range level.Entities {
+				e := &level.Entities[i]
+				if e.Visible {
+					drawOrQueue(&e.Geometry, e.ModelMatrix(), false)
+					entitiesDrawn++
+				}
+			}
+
+			// --- Procedural biome scatter (GPU grass / rocks) ---
+			// Drawn after opaque geometry but before the transparent pass: blades and
+			// rocks are solid (depth-written) so translucent water still sorts on top.
+			RenderBiomes(&level, projView, Cam.Position, shadowFrame)
+
+			// --- Procedural face detail (GPU rock displacement + scatter) ---
+			// Drawn after opaque geometry; reuses the main fragment shader so it
+			// receives shadows, and was rendered into the shadow maps above so it casts.
+			RenderDetailColor(&level, shadowFrame)
+
+			// --- Transparent pass: draw collected transparent geometry back-to-front ---
+			if len(transparentDraws) > 0 {
+				sort.Slice(transparentDraws, func(a, b int) bool {
+					return transparentDraws[a].Distance > transparentDraws[b].Distance
+				})
+
+				gl.Enable(gl.BLEND)
+				gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+				gl.DepthMask(false)
+
+				for _, td := range transparentDraws {
+					if td.DoubleSided {
+						// Two-sub-pass for double-sided: back faces first, then front faces
+						gl.Enable(gl.CULL_FACE)
+						gl.CullFace(gl.FRONT) // draw back faces
+						if td.Model == identity {
+							td.Geom.Draw()
+						} else {
+							td.Geom.DrawWithTransform(td.Model)
+						}
+						gl.CullFace(gl.BACK) // draw front faces
+						if td.Model == identity {
+							td.Geom.Draw()
+						} else {
+							td.Geom.DrawWithTransform(td.Model)
+						}
+						gl.Disable(gl.CULL_FACE)
+					} else {
+						if td.Model == identity {
+							td.Geom.Draw()
+						} else {
+							td.Geom.DrawWithTransform(td.Model)
+						}
+					}
+				}
+
+				gl.DepthMask(true)
+				gl.Disable(gl.BLEND)
+			}
+
+			DebugStats.ChunksDrawn = chunksDrawn
+			DebugStats.SectorsDrawn = sectorsDrawn
+			DebugStats.SectorsPortalCulled = sectorsPortalCulled
+			DebugStats.EntitiesDrawn = entitiesDrawn
 		} // end non-scenery rendering
 
 		// Draw editor overlays and ImGui UI when editor is active

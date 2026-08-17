@@ -126,6 +126,31 @@ func genGrass(rng *rand.Rand) {
 	save("grass", img)
 }
 
+// moss: dense dark-green clumpy base with small darker crevice flecks —
+// distinct from grass (no blade stripes; blotchier, damper-looking noise) and
+// from dirt/rock (green, not brown/grey), for BiomeMoss's ground patch.
+func genMoss(rng *rand.Rand) {
+	img := newRGBA()
+	noise := fractalNoise(rng, 5)
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			n := noise(x, y)
+			// base mossy green: 25-55, 65-105, 25-50
+			r := uint8(25 + n*30)
+			g := uint8(65 + n*40)
+			b := uint8(25 + n*25)
+			// crevice flecks: small dark clumps, denser than dirt's pebbles
+			if rng.Float64() < 0.08 {
+				r = uint8(math.Max(0, float64(r)-15))
+				g = uint8(math.Max(0, float64(g)-35))
+				b = uint8(math.Max(0, float64(b)-15))
+			}
+			img.SetNRGBA(x, y, color.NRGBA{r, g, b, 255})
+		}
+	}
+	save("moss", img)
+}
+
 // dirt: brown earthy base with pebble-like speckles
 func genDirt(rng *rand.Rand) {
 	img := newRGBA()
@@ -392,4 +417,8 @@ func main() {
 	genConcrete(rng)
 	genStucco(rng)
 	genSand(rng)
+	// Appended last on purpose: every generator draws from this one seeded
+	// rng, so inserting a call earlier in the sequence would shift the draws
+	// of all the textures after it and silently regenerate them differently.
+	genMoss(rng)
 }

@@ -137,20 +137,20 @@ func detailFromRaw(r *RawDetail) DetailSpec {
 
 // RawEdge describes one edge (wall or portal) in a sector's edge list.
 type RawEdge struct {
-	From       string `yaml:"from"`
-	To         string `yaml:"to"`
-	Kind       string `yaml:"kind"`
-	Texture    string `yaml:"texture"`
-	Collision  bool   `yaml:"collision"`
-	Hidden     bool   `yaml:"hidden"`     // true = wall/portal not rendered (default false = visible)
-	Pinned     bool   `yaml:"pinned,omitempty"` // true = wall stays a wall even if shared with another sector
-	ToSector   string `yaml:"to_sector"`
-	DrawGap     bool   `yaml:"draw_gap"`
-	GapTexture  string `yaml:"gap_texture"`
+	From          string            `yaml:"from"`
+	To            string            `yaml:"to"`
+	Kind          string            `yaml:"kind"`
+	Texture       string            `yaml:"texture"`
+	Collision     bool              `yaml:"collision"`
+	Hidden        bool              `yaml:"hidden"`           // true = wall/portal not rendered (default false = visible)
+	Pinned        bool              `yaml:"pinned,omitempty"` // true = wall stays a wall even if shared with another sector
+	ToSector      string            `yaml:"to_sector"`
+	DrawGap       bool              `yaml:"draw_gap"`
+	GapTexture    string            `yaml:"gap_texture"`
 	DoubleSided   *bool             `yaml:"double_sided,omitempty"` // default true when absent
 	Alpha         *float32          `yaml:"alpha,omitempty"`        // nil = opaque (1.0)
-	Extrusions    []RawExtrusion   `yaml:"extrusions,omitempty"`
-	WallTerrain   bool             `yaml:"terrain,omitempty"`
+	Extrusions    []RawExtrusion    `yaml:"extrusions,omitempty"`
+	WallTerrain   bool              `yaml:"terrain,omitempty"`
 	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
 	UVOffset      Point             `yaml:"uv_offset,omitempty"`
 	UVScale       Point             `yaml:"uv_scale,omitempty"`
@@ -163,6 +163,7 @@ type RawEdge struct {
 // RawFloor is the YAML representation of a sector floor.
 type RawFloor struct {
 	Enabled       bool              `yaml:"enabled"`
+	Hidden        bool              `yaml:"hidden,omitempty"` // texture/geometry hidden; Enabled/collision unaffected
 	Height        float32           `yaml:"height"`
 	Texture       string            `yaml:"texture"`
 	Terrain       bool              `yaml:"terrain"`
@@ -208,21 +209,21 @@ type RawSector struct {
 
 // RawPrimitive is the YAML representation of a procedural 3D primitive.
 type RawPrimitive struct {
-	ID        string            `yaml:"id"`
-	Type      string            `yaml:"type"`                // "rect_prism", "sphere", "cylinder", "plane", "water"
-	Position  RawEntityPosition `yaml:"position"`
-	Rotation  RawEntityPosition `yaml:"rotation"`
-	Scale     RawEntityPosition `yaml:"scale"`
-	Texture   string            `yaml:"texture"`
-	Sides     int               `yaml:"sides,omitempty"`     // cylinder only; default 16
-	Collision bool              `yaml:"collision,omitempty"`
-	Alpha      *float32          `yaml:"alpha,omitempty"`        // nil = opaque (1.0)
-	UVOffset   Point             `yaml:"uv_offset,omitempty"`
-	UVScale    Point             `yaml:"uv_scale,omitempty"`  // zero = {1,1}
-	UVRotation float32           `yaml:"uv_rotation,omitempty"` // radians
-	Smooth      bool             `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
-	SmoothAngle float32          `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
-	Water      *RawWater         `yaml:"water,omitempty"`       // water primitives only
+	ID          string            `yaml:"id"`
+	Type        string            `yaml:"type"` // "rect_prism", "sphere", "cylinder", "plane", "water"
+	Position    RawEntityPosition `yaml:"position"`
+	Rotation    RawEntityPosition `yaml:"rotation"`
+	Scale       RawEntityPosition `yaml:"scale"`
+	Texture     string            `yaml:"texture"`
+	Sides       int               `yaml:"sides,omitempty"` // cylinder only; default 16
+	Collision   bool              `yaml:"collision,omitempty"`
+	Alpha       *float32          `yaml:"alpha,omitempty"` // nil = opaque (1.0)
+	UVOffset    Point             `yaml:"uv_offset,omitempty"`
+	UVScale     Point             `yaml:"uv_scale,omitempty"`     // zero = {1,1}
+	UVRotation  float32           `yaml:"uv_rotation,omitempty"`  // radians
+	Smooth      bool              `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
+	SmoothAngle float32           `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
+	Water       *RawWater         `yaml:"water,omitempty"`        // water primitives only
 }
 
 // RawWater is the YAML representation of a water plane's wave and reflection
@@ -253,14 +254,14 @@ type RawChunkOrigin struct {
 // Points use {x, y} which map to world (X, Z) — Y-up convention.
 // Origin, Rotation, and Scale are optional editor-set transforms baked in at load time.
 type RawChunk struct {
-	ID       string            `yaml:"id"`
-	Points   map[string]Point  `yaml:"points"`
-	Sectors  []RawSector       `yaml:"sectors"`
-	Origin   RawChunkOrigin    `yaml:"origin"`
-	Rotation float32           `yaml:"rotation"`
-	Scale        float32            `yaml:"scale"`
-	Primitives   []RawPrimitive     `yaml:"primitives,omitempty"`
-	BiomeSectors []RawBiomeSector   `yaml:"biome_sectors,omitempty"`
+	ID           string           `yaml:"id"`
+	Points       map[string]Point `yaml:"points"`
+	Sectors      []RawSector      `yaml:"sectors"`
+	Origin       RawChunkOrigin   `yaml:"origin"`
+	Rotation     float32          `yaml:"rotation"`
+	Scale        float32          `yaml:"scale"`
+	Primitives   []RawPrimitive   `yaml:"primitives,omitempty"`
+	BiomeSectors []RawBiomeSector `yaml:"biome_sectors,omitempty"`
 }
 
 // RawBiomeSector is the YAML representation of a user-drawn biome-paint
@@ -281,7 +282,63 @@ type RawBiomeBrush struct {
 	Color       RawColor `yaml:"color,omitempty"`
 	GrassHeight float32  `yaml:"grass_height,omitempty"`
 	GrassWidth  float32  `yaml:"grass_width,omitempty"`
-	RockSides   int32    `yaml:"rock_sides,omitempty"`
+	HeadScale   float32  `yaml:"head_scale,omitempty"`  // wildflower bloom / cattail seed-head size
+	GrassClump  float32  `yaml:"grass_clump,omitempty"` // Grass only: 0 = even scatter, 1 = tight plant-like tufts
+
+	// LOD1Distance/LOD2Distance are the Near->Mid and Mid->Far mesh-detail
+	// boundaries (grass.go's three-tier scatter); 0 = the kind's default
+	// fraction of Range. See BiomeBrush's own doc comment.
+	LOD1Distance float32 `yaml:"lod1_distance,omitempty"`
+	LOD2Distance float32 `yaml:"lod2_distance,omitempty"`
+
+	RockSides  int32     `yaml:"rock_sides,omitempty"`
+	RockScale  float32   `yaml:"rock_scale,omitempty"`
+	SandHeight float32   `yaml:"sand_height,omitempty"`
+	WaterDepth float32   `yaml:"water_depth,omitempty"`
+	Water      *RawWater `yaml:"water,omitempty"` // Water kind only; absent = DefaultWaterParams
+
+	// Moss kind only: whether the optional clump scatter rides on top of the
+	// ground patch. Plain omitempty bool — the meaningful default (patch
+	// only) matches Go's zero value, same reasoning as RawFloor.Hidden.
+	MossScatter bool `yaml:"moss_scatter,omitempty"`
+
+	// Wildflower bloom options (see BiomeBrush's Bloom* fields). All plain
+	// omitempty bools for the same reason as MossScatter: every zero value
+	// is the pre-existing look, so blooms saved before these existed load
+	// back unchanged with no migration.
+	BloomSpike      bool     `yaml:"bloom_spike,omitempty"`
+	BloomCenter     bool     `yaml:"bloom_center,omitempty"`
+	BloomSolidColor bool     `yaml:"bloom_solid_color,omitempty"`
+	CenterColor     RawColor `yaml:"center_color,omitempty"`
+	StemLeaves      bool     `yaml:"stem_leaves,omitempty"` // Wildflower only: basal leaves around the stem
+	LeafScale       float32  `yaml:"leaf_scale,omitempty"`  // multiplier on those leaves; 0 = defaultWildflowerLeafScale
+
+	// Slope gating over displaced faces (Grass/Sand/Rock/Moss); 0 = the
+	// kind's default (resolvedMinSlope/resolvedMaxSlope).
+	MinSlopeAngle float32 `yaml:"min_slope_angle,omitempty"`
+	MaxSlopeAngle float32 `yaml:"max_slope_angle,omitempty"`
+
+	// Ground patch (see BiomeBrush's own doc comment).
+	GroundTexture   string  `yaml:"ground_texture,omitempty"`
+	GroundAmplitude float32 `yaml:"ground_amplitude,omitempty"`
+	GroundFrequency float32 `yaml:"ground_frequency,omitempty"`
+	GroundOctaves   int32   `yaml:"ground_octaves,omitempty"`
+	// GroundUVScale tiles the patch texture (world XZ * scale), same units as
+	// a surface's uv_scale; zero/absent = defaultGroundUVScale.
+	GroundUVScale Point `yaml:"ground_uv_scale,omitempty"`
+
+	// Soft edges and fake ground-contact shadow (see BiomeBrush's own doc
+	// comments). All zero-value-safe: a sector saved before these existed
+	// loads back with the exact old hard-edged, unshadowed look.
+	RangeFadeFraction  float32 `yaml:"range_fade_fraction,omitempty"`
+	EdgeFadeDistance   float32 `yaml:"edge_fade_distance,omitempty"`
+	FakeShadowStrength float32 `yaml:"fake_shadow_strength,omitempty"`
+	FakeShadowSpread   float32 `yaml:"fake_shadow_spread,omitempty"`
+
+	// BoundaryJitter (see BiomeBrush's own doc comment) — 0 means "use
+	// defaultBoundaryJitter", not "off", so a sector saved before this existed
+	// picks it up automatically rather than needing a resave to look right.
+	BoundaryJitter float32 `yaml:"boundary_jitter,omitempty"`
 }
 
 // RawEntityPosition holds the 3D spawn position of an entity.
@@ -506,6 +563,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			ID: rs.ID,
 			Floor: Floor{
 				Enabled:       rs.Floor.Enabled,
+				Hidden:        rs.Floor.Hidden,
 				Height:        rs.Floor.Height,
 				Texture:       rs.Floor.Texture,
 				Terrain:       rs.Floor.Terrain,
@@ -837,22 +895,22 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		}
 
 		prim := Primitive{
-			ID:         rp.ID,
-			Kind:       kind,
-			Position:   mgl32.Vec3{worldX, worldY, worldZ},
-			Rotation:   mgl32.Vec3{rp.Rotation.X, rp.Rotation.Y, rp.Rotation.Z},
-			Scale:      scale,
-			Texture:    rp.Texture,
-			Sides:      sides,
-			Collision:  rp.Collision,
-			Alpha:      float32Default(rp.Alpha, 1.0),
-			UVOffset:   mgl32.Vec2{rp.UVOffset.X, rp.UVOffset.Y},
-			UVScale:    uvScale,
+			ID:          rp.ID,
+			Kind:        kind,
+			Position:    mgl32.Vec3{worldX, worldY, worldZ},
+			Rotation:    mgl32.Vec3{rp.Rotation.X, rp.Rotation.Y, rp.Rotation.Z},
+			Scale:       scale,
+			Texture:     rp.Texture,
+			Sides:       sides,
+			Collision:   rp.Collision,
+			Alpha:       float32Default(rp.Alpha, 1.0),
+			UVOffset:    mgl32.Vec2{rp.UVOffset.X, rp.UVOffset.Y},
+			UVScale:     uvScale,
 			UVRotation:  rp.UVRotation,
 			Smooth:      rp.Smooth,
 			SmoothAngle: rp.SmoothAngle,
 			Water:       waterParamsFromRaw(rp.Water, kind),
-			ChunkID:    chunk.ID,
+			ChunkID:     chunk.ID,
 		}
 
 		switch kind {
@@ -925,14 +983,48 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			ID:          rb.ID,
 			Points:      make([]mgl32.Vec2, len(rb.Points)),
 			HeightDirty: true,
+			GroundDirty: true,
 			Brush: BiomeBrush{
-				Kind:        rb.Brush.Kind,
-				Density:     rb.Brush.Density,
-				Range:       rb.Brush.Range,
-				Color:       mgl32.Vec3{rb.Brush.Color.R, rb.Brush.Color.G, rb.Brush.Color.B},
-				GrassHeight: rb.Brush.GrassHeight,
-				GrassWidth:  rb.Brush.GrassWidth,
-				RockSides:   rb.Brush.RockSides,
+				Kind:         rb.Brush.Kind,
+				Density:      rb.Brush.Density,
+				Range:        rb.Brush.Range,
+				Color:        mgl32.Vec3{rb.Brush.Color.R, rb.Brush.Color.G, rb.Brush.Color.B},
+				GrassHeight:  rb.Brush.GrassHeight,
+				GrassWidth:   rb.Brush.GrassWidth,
+				HeadScale:    rb.Brush.HeadScale,
+				GrassClump:   rb.Brush.GrassClump,
+				LOD1Distance: rb.Brush.LOD1Distance,
+				LOD2Distance: rb.Brush.LOD2Distance,
+				RockSides:    rb.Brush.RockSides,
+				RockScale:    rb.Brush.RockScale,
+				SandHeight:   rb.Brush.SandHeight,
+				WaterDepth:   rb.Brush.WaterDepth,
+				Water:        waterParamsFromRaw(rb.Brush.Water, PrimitiveWater),
+
+				MossScatter:   rb.Brush.MossScatter,
+				MinSlopeAngle: rb.Brush.MinSlopeAngle,
+				MaxSlopeAngle: rb.Brush.MaxSlopeAngle,
+
+				BloomSpike:      rb.Brush.BloomSpike,
+				BloomCenter:     rb.Brush.BloomCenter,
+				BloomSolidColor: rb.Brush.BloomSolidColor,
+				CenterColor: mgl32.Vec3{
+					rb.Brush.CenterColor.R, rb.Brush.CenterColor.G, rb.Brush.CenterColor.B,
+				},
+				StemLeaves: rb.Brush.StemLeaves,
+				LeafScale:  rb.Brush.LeafScale,
+
+				GroundTexture:   rb.Brush.GroundTexture,
+				GroundAmplitude: rb.Brush.GroundAmplitude,
+				GroundFrequency: rb.Brush.GroundFrequency,
+				GroundOctaves:   rb.Brush.GroundOctaves,
+				GroundUVScale:   mgl32.Vec2{rb.Brush.GroundUVScale.X, rb.Brush.GroundUVScale.Y},
+
+				RangeFadeFraction:  rb.Brush.RangeFadeFraction,
+				EdgeFadeDistance:   rb.Brush.EdgeFadeDistance,
+				FakeShadowStrength: rb.Brush.FakeShadowStrength,
+				FakeShadowSpread:   rb.Brush.FakeShadowSpread,
+				BoundaryJitter:     rb.Brush.BoundaryJitter,
 			},
 		}
 		for i, rp := range rb.Points {
