@@ -10,9 +10,7 @@ package main
 // creation and imgui drawing live in texture_editor_ui.go.
 
 import (
-	"fmt"
 	"image"
-	"image/color"
 	"image/draw"
 	"math/rand"
 )
@@ -59,16 +57,6 @@ func docByteSize(d *TexDoc) int {
 		n += len(l.Idx)
 	}
 	return n
-}
-
-func cloneTexDoc(d *TexDoc) *TexDoc {
-	cp := *d
-	cp.Layers = make([]TexLayer, len(d.Layers))
-	for i, l := range d.Layers {
-		cp.Layers[i] = l
-		cp.Layers[i].Idx = append([]uint8(nil), l.Idx...)
-	}
-	return &cp
 }
 
 // texEditorState is one open document plus its editing state. The plan's UI
@@ -476,67 +464,4 @@ func ImportTexEditorDoc(pngPath string) (*texEditorState, error) {
 		return nil, err
 	}
 	return NewTexEditor(d), nil
-}
-
-// ---------- palette ----------
-
-// PaletteMismatch reports whether doc's embedded palette differs from the
-// current global one — checked on open, per the plan's palette section.
-func PaletteMismatch(d *TexDoc) bool {
-	return d.Pal != globalPalette
-}
-
-// AdoptDocPaletteGlobally makes d's embedded palette the new global one.
-func AdoptDocPaletteGlobally(d *TexDoc) error {
-	globalPalette = d.Pal
-	return WritePalette(palettePath(), &globalPalette)
-}
-
-// RemapDocToGlobalPalette re-quantises d's layer indices from its own
-// (mismatched) palette onto the current global one, nearest colour per
-// index, and adopts the global palette as its own.
-func RemapDocToGlobalPalette(d *TexDoc) {
-	for i := range d.Layers {
-		d.Layers[i].Idx = RemapIndices(&d.Pal, d.Layers[i].Idx, &globalPalette)
-	}
-	d.Pal = globalPalette
-	d.MarkDirty()
-}
-
-// SetPaletteColor updates one global palette slot and persists it. Indices
-// never move on a palette edit, so any document already bound to a live
-// texture just needs SyncLiveTexture to pick up the new color — the caller
-// (texture_editor_ui.go) does that for the currently open document.
-// Already-saved PNGs need RebuildAllTextures.
-func SetPaletteColor(idx uint8, c color.RGBA) error {
-	globalPalette[idx] = c
-	return WritePalette(palettePath(), &globalPalette)
-}
-
-// RebuildAllTextures walks every .ftex on disk, re-flattens it against the
-// current global palette (remapping first if its embedded palette doesn't
-// match), rewrites its PNG, and re-registers + re-uploads it. Returns every
-// per-file error rather than stopping at the first one, so one bad file
-// doesn't block the rest of the art from rebuilding.
-func RebuildAllTextures() []error {
-	var errs []error
-	for _, name := range ScanFtexFiles() {
-		d, err := ReadTexDoc(ftexPath(name))
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", name, err))
-			continue
-		}
-		if d.Pal != globalPalette {
-			RemapDocToGlobalPalette(d)
-		}
-		if err := SaveTexDoc(d, name); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", name, err))
-			continue
-		}
-		RegisterTexture(name)
-		flat := d.Flatten()
-		UpdateTextureHasAlpha(name, &d.Pal, flat)
-		QueueTextureUpload(name, rgbaFromPaletted(flat))
-	}
-	return errs
 }

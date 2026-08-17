@@ -81,6 +81,18 @@ func NewTexDoc(name string, w, h int, pal TexPalette) (*TexDoc, error) {
 	}, nil
 }
 
+// cloneTexDoc deep-copies d, including each layer's index buffer, so the
+// clone can be mutated (e.g. held as an undo snapshot) without aliasing d.
+func cloneTexDoc(d *TexDoc) *TexDoc {
+	cp := *d
+	cp.Layers = make([]TexLayer, len(d.Layers))
+	for i, l := range d.Layers {
+		cp.Layers[i] = l
+		cp.Layers[i].Idx = append([]uint8(nil), l.Idx...)
+	}
+	return &cp
+}
+
 // MarkDirty flags the document as having unsaved changes.
 func (d *TexDoc) MarkDirty()  { d.dirty = true }
 func (d *TexDoc) Dirty() bool { return d.dirty }
