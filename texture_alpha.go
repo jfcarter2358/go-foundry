@@ -10,7 +10,11 @@ package main
 // and that was purely the per-geometry Alpha scalar. See IsTransparent in
 // wall.go for the routing this feeds.
 
-import "image"
+import (
+	"image"
+
+	"foundry/internal/texdoc"
+)
 
 // textureHasAlpha records which uploaded textures contain semi-transparent
 // texels, keyed by texture name. Populated by UpdateTextureHasAlpha whenever
@@ -32,8 +36,8 @@ const (
 // texel whose palette slot is semi-transparent. It builds a used-index
 // histogram first so a 1024x1024 image with only a handful of distinct
 // colors costs a 256-entry palette scan, not a million-texel one.
-func ComputeHasAlpha(pal *TexPalette, img *image.Paletted) bool {
-	var used [texPaletteSz]bool
+func ComputeHasAlpha(pal *texdoc.TexPalette, img *image.Paletted) bool {
+	var used [texdoc.TexPaletteSz]bool
 	for _, idx := range img.Pix {
 		used[idx] = true
 	}
@@ -51,6 +55,6 @@ func ComputeHasAlpha(pal *TexPalette, img *image.Paletted) bool {
 
 // UpdateTextureHasAlpha recomputes and records the has-alpha flag for name
 // from its flattened image and the palette it was flattened against.
-func UpdateTextureHasAlpha(name string, pal *TexPalette, img *image.Paletted) {
+func UpdateTextureHasAlpha(name string, pal *texdoc.TexPalette, img *image.Paletted) {
 	textureHasAlpha[name] = ComputeHasAlpha(pal, img)
 }

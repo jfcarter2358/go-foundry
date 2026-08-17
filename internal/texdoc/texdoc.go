@@ -1,8 +1,11 @@
-package main
-
-// texture_doc.go — pure-Go layered texture document model for the texture
-// editor. No GL calls in this file; see texture.go for GPU upload and
-// texture_file.go for the on-disk format.
+// Package texdoc is the pure-Go layered texture document model used by the
+// texture editor: TexDoc/TexLayer/TexPalette plus the RGBA<->palette-index
+// quantiser. It has no GL/SDL/imgui dependency — GPU upload lives in
+// texture.go and the on-disk .ftex/.pal format in texture_file.go, both in
+// package main, which import this package. Extracted from what used to be
+// texture_doc.go + texture_palette.go in package main; see
+// RESTRUCTURE_PROPOSAL.md §5 Phase B.
+package texdoc
 
 import (
 	"fmt"
@@ -11,9 +14,9 @@ import (
 )
 
 const (
-	texMaxLayers = 8
-	texMaxDim    = 1024
-	texPaletteSz = 256
+	TexMaxLayers = 8
+	TexMaxDim    = 1024
+	TexPaletteSz = 256
 )
 
 // TexBlend selects how a layer composites onto the layers below it.
@@ -28,7 +31,7 @@ const (
 
 // TexPalette is the 256-entry colour table shared by every texture. Straight
 // (non-premultiplied) alpha; slot 0 is transparent by convention.
-type TexPalette [texPaletteSz]color.RGBA
+type TexPalette [TexPaletteSz]color.RGBA
 
 // TexLayer is one layer of a TexDoc: one palette index per texel.
 type TexLayer struct {
@@ -50,22 +53,22 @@ type TexDoc struct {
 	dirty  bool
 }
 
-// validTexSize is the single place canvas dimensions are checked, so a
+// ValidTexSize is the single place canvas dimensions are checked, so a
 // hand-edited or oversized .ftex can't smuggle a larger-than-allowed canvas
 // past NewTexDoc, ReadTexDoc, or PNG import.
-func validTexSize(w, h int) error {
+func ValidTexSize(w, h int) error {
 	if w <= 0 || h <= 0 {
 		return fmt.Errorf("texture dimensions must be positive, got %dx%d", w, h)
 	}
-	if w > texMaxDim || h > texMaxDim {
-		return fmt.Errorf("texture dimensions %dx%d exceed the %dx%d cap", w, h, texMaxDim, texMaxDim)
+	if w > TexMaxDim || h > TexMaxDim {
+		return fmt.Errorf("texture dimensions %dx%d exceed the %dx%d cap", w, h, TexMaxDim, TexMaxDim)
 	}
 	return nil
 }
 
 // NewTexDoc creates a document with a single empty (fully transparent) layer.
 func NewTexDoc(name string, w, h int, pal TexPalette) (*TexDoc, error) {
-	if err := validTexSize(w, h); err != nil {
+	if err := ValidTexSize(w, h); err != nil {
 		return nil, err
 	}
 	idx := make([]uint8, w*h) // zero value == palette slot 0 == transparent
@@ -81,9 +84,9 @@ func NewTexDoc(name string, w, h int, pal TexPalette) (*TexDoc, error) {
 	}, nil
 }
 
-// cloneTexDoc deep-copies d, including each layer's index buffer, so the
+// CloneTexDoc deep-copies d, including each layer's index buffer, so the
 // clone can be mutated (e.g. held as an undo snapshot) without aliasing d.
-func cloneTexDoc(d *TexDoc) *TexDoc {
+func CloneTexDoc(d *TexDoc) *TexDoc {
 	cp := *d
 	cp.Layers = make([]TexLayer, len(d.Layers))
 	for i, l := range d.Layers {
@@ -98,10 +101,10 @@ func (d *TexDoc) MarkDirty()  { d.dirty = true }
 func (d *TexDoc) Dirty() bool { return d.dirty }
 func (d *TexDoc) ClearDirty() { d.dirty = false }
 
-// AddLayer appends a new empty layer above the current top, up to texMaxLayers.
+// AddLayer appends a new empty layer above the current top, up to TexMaxLayers.
 func (d *TexDoc) AddLayer(name string) error {
-	if len(d.Layers) >= texMaxLayers {
-		return fmt.Errorf("cannot add layer: already at the %d-layer cap", texMaxLayers)
+	if len(d.Layers) >= TexMaxLayers {
+		return fmt.Errorf("cannot add layer: already at the %d-layer cap", TexMaxLayers)
 	}
 	d.Layers = append(d.Layers, TexLayer{
 		Name: name, Visible: true, Opacity: 1, Blend: BlendNormal,
@@ -116,8 +119,8 @@ func (d *TexDoc) DuplicateLayer(i int) error {
 	if i < 0 || i >= len(d.Layers) {
 		return fmt.Errorf("layer index %d out of range", i)
 	}
-	if len(d.Layers) >= texMaxLayers {
-		return fmt.Errorf("cannot duplicate layer: already at the %d-layer cap", texMaxLayers)
+	if len(d.Layers) >= TexMaxLayers {
+		return fmt.Errorf("cannot duplicate layer: already at the %d-layer cap", TexMaxLayers)
 	}
 	src := d.Layers[i]
 	dup := TexLayer{
@@ -286,12 +289,12 @@ func (d *TexDoc) Flatten() *image.Paletted {
 		}
 	}
 
-	pcm := make(color.Palette, texPaletteSz)
+	pcm := make(color.Palette, TexPaletteSz)
 	for i, c := range d.Pal {
 		pcm[i] = c
 	}
 	out := image.NewPaletted(image.Rect(0, 0, d.W, d.H), pcm)
-	q := newQuantCache(&d.Pal)
+	q := NewQuantCache(&d.Pal)
 	for i, c := range rgba {
 		out.Pix[i] = q.Quantize(c)
 	}

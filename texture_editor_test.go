@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"foundry/internal/texdoc"
+)
 
 func newTestEditor(t *testing.T, w, h int) *texEditorState {
 	t.Helper()
@@ -248,7 +252,7 @@ func TestUndoStructuralLayerOps(t *testing.T) {
 
 func TestLayerCapEnforcedThroughEditor(t *testing.T) {
 	ed := newTestEditor(t, 2, 2)
-	for i := 1; i < texMaxLayers; i++ {
+	for i := 1; i < texdoc.TexMaxLayers; i++ {
 		if err := ed.AddLayer("l"); err != nil {
 			t.Fatalf("AddLayer %d: %v", i, err)
 		}
@@ -309,7 +313,7 @@ func TestUndoRingEvictsOldestPastByteBudget(t *testing.T) {
 }
 
 func TestNewTexEditorDocRejectsOversizedCanvas(t *testing.T) {
-	if _, err := NewTexEditorDoc("t", texMaxDim+1, 64); err == nil {
-		t.Error("NewTexEditorDoc accepted width > texMaxDim")
+	if _, err := NewTexEditorDoc("t", texdoc.TexMaxDim+1, 64); err == nil {
+		t.Error("NewTexEditorDoc accepted width > texdoc.TexMaxDim")
 	}
 }

@@ -4,10 +4,12 @@ import (
 	"image"
 	"image/color"
 	"testing"
+
+	"foundry/internal/texdoc"
 )
 
-func alphaTestPalette() TexPalette {
-	var pal TexPalette
+func alphaTestPalette() texdoc.TexPalette {
+	var pal texdoc.TexPalette
 	pal[0] = color.RGBA{0, 0, 0, 0}     // transparent
 	pal[1] = color.RGBA{255, 0, 0, 255} // opaque
 	pal[2] = color.RGBA{0, 255, 0, 128} // semi-transparent
@@ -16,8 +18,8 @@ func alphaTestPalette() TexPalette {
 	return pal
 }
 
-func paletted(w, h int, pal TexPalette, pix []uint8) *image.Paletted {
-	pcm := make(color.Palette, texPaletteSz)
+func paletted(w, h int, pal texdoc.TexPalette, pix []uint8) *image.Paletted {
+	pcm := make(color.Palette, texdoc.TexPaletteSz)
 	for i, c := range pal {
 		pcm[i] = c
 	}

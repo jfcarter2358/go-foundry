@@ -36,6 +36,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"foundry/internal/texdoc"
 )
 
 const (
@@ -44,8 +46,8 @@ const (
 	fpalMagic   = "FPAL"
 	fpalVersion = uint16(1)
 
-	ftexHeaderLen = 4 + 2 + 2 + 4 + 4 + 1 + 3 + texPaletteSz*4 // 1044
-	fpalFileLen   = 4 + 2 + texPaletteSz*4
+	ftexHeaderLen = 4 + 2 + 2 + 4 + 4 + 1 + 3 + texdoc.TexPaletteSz*4 // 1044
+	fpalFileLen   = 4 + 2 + texdoc.TexPaletteSz*4
 )
 
 const texturesDirName = "textures"
@@ -59,7 +61,7 @@ func texPNGPath(name string) string { return filepath.Join(texturesDir(), name+"
 // ---------- palette ----------
 
 // WritePalette writes pal to path in the FPAL format.
-func WritePalette(path string, pal *TexPalette) error {
+func WritePalette(path string, pal *texdoc.TexPalette) error {
 	buf := make([]byte, fpalFileLen)
 	copy(buf[0:4], fpalMagic)
 	binary.LittleEndian.PutUint16(buf[4:6], fpalVersion)
@@ -71,7 +73,7 @@ func WritePalette(path string, pal *TexPalette) error {
 }
 
 // ReadPalette reads and validates an FPAL file.
-func ReadPalette(path string) (*TexPalette, error) {
+func ReadPalette(path string) (*texdoc.TexPalette, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -85,7 +87,7 @@ func ReadPalette(path string) (*TexPalette, error) {
 	if v := binary.LittleEndian.Uint16(data[4:6]); v != fpalVersion {
 		return nil, fmt.Errorf("palette %s: unsupported version %d", path, v)
 	}
-	var pal TexPalette
+	var pal texdoc.TexPalette
 	for i := range pal {
 		off := 6 + i*4
 		pal[i] = color.RGBA{R: data[off], G: data[off+1], B: data[off+2], A: data[off+3]}
@@ -93,20 +95,20 @@ func ReadPalette(path string) (*TexPalette, error) {
 	return &pal, nil
 }
 
-// LoadGlobalPalette loads <exe>/textures/palette.pal into globalPalette. If
+// LoadGlobalPalette loads <exe>/textures/palette.pal into texdoc.GlobalPalette. If
 // the file is missing, the compiled-in default is used and written out
 // immediately, so a fresh checkout has a palette.pal after startup without
 // requiring a save first.
 func LoadGlobalPalette() {
 	pal, err := ReadPalette(palettePath())
 	if err != nil {
-		globalPalette = DefaultPalette()
-		if werr := WritePalette(palettePath(), &globalPalette); werr != nil {
+		texdoc.GlobalPalette = texdoc.DefaultPalette()
+		if werr := WritePalette(palettePath(), &texdoc.GlobalPalette); werr != nil {
 			log.Printf("WARNING: could not write default palette: %v", werr)
 		}
 		return
 	}
-	globalPalette = *pal
+	texdoc.GlobalPalette = *pal
 }
 
 // ---------- .ftex ----------
@@ -128,12 +130,12 @@ func writeF32(buf *bytes.Buffer, v float32) {
 }
 
 // WriteTexDoc encodes d in the .ftex format and writes it to path.
-func WriteTexDoc(path string, d *TexDoc) error {
-	if err := validTexSize(d.W, d.H); err != nil {
+func WriteTexDoc(path string, d *texdoc.TexDoc) error {
+	if err := texdoc.ValidTexSize(d.W, d.H); err != nil {
 		return err
 	}
-	if len(d.Layers) < 1 || len(d.Layers) > texMaxLayers {
-		return fmt.Errorf("layer count %d out of range [1,%d]", len(d.Layers), texMaxLayers)
+	if len(d.Layers) < 1 || len(d.Layers) > texdoc.TexMaxLayers {
+		return fmt.Errorf("layer count %d out of range [1,%d]", len(d.Layers), texdoc.TexMaxLayers)
 	}
 
 	var buf bytes.Buffer
@@ -186,7 +188,7 @@ func WriteTexDoc(path string, d *TexDoc) error {
 }
 
 // ReadTexDoc reads and validates a .ftex file from path.
-func ReadTexDoc(path string) (*TexDoc, error) {
+func ReadTexDoc(path string) (*texdoc.TexDoc, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -200,7 +202,7 @@ func ReadTexDoc(path string) (*TexDoc, error) {
 	return doc, nil
 }
 
-func parseTexDoc(data []byte) (*TexDoc, error) {
+func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 	if len(data) < ftexHeaderLen {
 		return nil, fmt.Errorf(".ftex: truncated header (got %d bytes, want at least %d)", len(data), ftexHeaderLen)
 	}
@@ -215,15 +217,15 @@ func parseTexDoc(data []byte) (*TexDoc, error) {
 	if width == 0 || height == 0 {
 		return nil, fmt.Errorf(".ftex: zero dimension %dx%d", width, height)
 	}
-	if err := validTexSize(int(width), int(height)); err != nil {
+	if err := texdoc.ValidTexSize(int(width), int(height)); err != nil {
 		return nil, fmt.Errorf(".ftex: %w", err)
 	}
 	layerCount := data[16]
-	if layerCount == 0 || layerCount > texMaxLayers {
-		return nil, fmt.Errorf(".ftex: layer count %d out of range [1,%d]", layerCount, texMaxLayers)
+	if layerCount == 0 || layerCount > texdoc.TexMaxLayers {
+		return nil, fmt.Errorf(".ftex: layer count %d out of range [1,%d]", layerCount, texdoc.TexMaxLayers)
 	}
 
-	var pal TexPalette
+	var pal texdoc.TexPalette
 	const palOff = 20
 	for i := range pal {
 		off := palOff + i*4
@@ -232,7 +234,7 @@ func parseTexDoc(data []byte) (*TexDoc, error) {
 
 	want := int(width) * int(height)
 	pos := ftexHeaderLen
-	layers := make([]TexLayer, 0, layerCount)
+	layers := make([]texdoc.TexLayer, 0, layerCount)
 	for li := 0; li < int(layerCount); li++ {
 		if pos+2 > len(data) {
 			return nil, fmt.Errorf(".ftex: truncated at layer %d name length", li)
@@ -248,7 +250,7 @@ func parseTexDoc(data []byte) (*TexDoc, error) {
 		if pos+1+1+4+4 > len(data) {
 			return nil, fmt.Errorf(".ftex: truncated at layer %d header", li)
 		}
-		blend := TexBlend(data[pos])
+		blend := texdoc.TexBlend(data[pos])
 		pos++
 		visible := data[pos] != 0
 		pos++
@@ -277,18 +279,18 @@ func parseTexDoc(data []byte) (*TexDoc, error) {
 		zr.Close()
 		pos += compLen
 
-		layers = append(layers, TexLayer{Name: name, Visible: visible, Opacity: opacity, Blend: blend, Idx: idx})
+		layers = append(layers, texdoc.TexLayer{Name: name, Visible: visible, Opacity: opacity, Blend: blend, Idx: idx})
 	}
 
-	return &TexDoc{W: int(width), H: int(height), Pal: pal, Layers: layers, Active: 0}, nil
+	return &texdoc.TexDoc{W: int(width), H: int(height), Pal: pal, Layers: layers, Active: 0}, nil
 }
 
 // SaveTexDoc writes both the .ftex source and the flattened PNG the engine
 // uses to <exe>/textures/<name>.{ftex,png}. It does not touch the GPU or the
 // texture registry — see RegisterTexture/QueueTextureUpload in texture.go,
 // called by the editor immediately after a successful save.
-func SaveTexDoc(d *TexDoc, name string) error {
-	if err := validTexSize(d.W, d.H); err != nil {
+func SaveTexDoc(d *texdoc.TexDoc, name string) error {
+	if err := texdoc.ValidTexSize(d.W, d.H); err != nil {
 		return err
 	}
 	dir := texturesDir()
@@ -316,10 +318,10 @@ func SaveTexDoc(d *TexDoc, name string) error {
 }
 
 // ImportPNG loads an existing PNG (or other image.Decode-able file) as a
-// new single-layer TexDoc, quantised against the current global palette.
-// Images larger than texMaxDim in either dimension are rejected rather than
+// new single-layer texdoc.TexDoc, quantised against the current global palette.
+// Images larger than texdoc.TexMaxDim in either dimension are rejected rather than
 // silently downscaled — a rescale changes the art and should be explicit.
-func ImportPNG(path string) (*TexDoc, error) {
+func ImportPNG(path string) (*texdoc.TexDoc, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -331,12 +333,12 @@ func ImportPNG(path string) (*TexDoc, error) {
 	}
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
-	if err := validTexSize(w, h); err != nil {
+	if err := texdoc.ValidTexSize(w, h); err != nil {
 		return nil, fmt.Errorf("import %s: %w", filepath.Base(path), err)
 	}
 
 	idx := make([]uint8, w*h)
-	q := newQuantCache(&globalPalette)
+	q := texdoc.NewQuantCache(&texdoc.GlobalPalette)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			r, g, bl, a := img.At(b.Min.X+x, b.Min.Y+y).RGBA()
@@ -345,9 +347,9 @@ func ImportPNG(path string) (*TexDoc, error) {
 	}
 
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	return &TexDoc{
-		Name: name, W: w, H: h, Pal: globalPalette,
-		Layers: []TexLayer{{Name: "Layer 1", Visible: true, Opacity: 1, Blend: BlendNormal, Idx: idx}},
+	return &texdoc.TexDoc{
+		Name: name, W: w, H: h, Pal: texdoc.GlobalPalette,
+		Layers: []texdoc.TexLayer{{Name: "Layer 1", Visible: true, Opacity: 1, Blend: texdoc.BlendNormal, Idx: idx}},
 		Active: 0,
 	}, nil
 }

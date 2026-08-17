@@ -2,7 +2,7 @@ package main
 
 // texture_editor.go — texture editor state, tools, and undo/redo.
 //
-// This file only touches the TexDoc model plus the map/slice bookkeeping in
+// This file only touches the texdoc.TexDoc model plus the map/slice bookkeeping in
 // texture.go (RegisterTexture, QueueTextureUpload) and texture_alpha.go
 // (UpdateTextureHasAlpha) — none of which call into GL themselves, so every
 // function here is unit-testable without a display. The actual GL upload
@@ -13,6 +13,8 @@ import (
 	"image"
 	"image/draw"
 	"math/rand"
+
+	"foundry/internal/texdoc"
 )
 
 // TexTool selects the active painting tool.
@@ -39,9 +41,9 @@ const texUndoByteBudget = 32 * 1024 * 1024
 // same struct shape works for both the undo and redo stacks.
 type texUndoEntry struct {
 	Structural bool
-	LayerIdx   int     // paint ops only
-	Before     []uint8 // paint ops only: the indices to write when applied
-	Doc        *TexDoc // structural ops only: the doc to swap in when applied
+	LayerIdx   int            // paint ops only
+	Before     []uint8        // paint ops only: the indices to write when applied
+	Doc        *texdoc.TexDoc // structural ops only: the doc to swap in when applied
 }
 
 func entrySize(e texUndoEntry) int {
@@ -51,7 +53,7 @@ func entrySize(e texUndoEntry) int {
 	return len(e.Before)
 }
 
-func docByteSize(d *TexDoc) int {
+func docByteSize(d *texdoc.TexDoc) int {
 	n := 0
 	for _, l := range d.Layers {
 		n += len(l.Idx)
@@ -63,7 +65,7 @@ func docByteSize(d *TexDoc) int {
 // hosts a single texture editor window with one active document at a time —
 // see activeTexEditor in texture_editor_ui.go.
 type texEditorState struct {
-	Doc          *TexDoc
+	Doc          *texdoc.TexDoc
 	BoundTexture string // texture name this doc live-updates; "" until bound
 	Tool         TexTool
 	PrimaryIdx   uint8
@@ -89,11 +91,11 @@ type texEditorState struct {
 }
 
 // NewTexEditor wraps doc in fresh editing state with no undo history.
-func NewTexEditor(doc *TexDoc) *texEditorState {
+func NewTexEditor(doc *texdoc.TexDoc) *texEditorState {
 	return &texEditorState{Doc: doc, Tool: ToolBrush, PrimaryIdx: 1, BrushSize: 1, SprayDensity: 8, strokeLayer: -1, previewDirty: true}
 }
 
-func (e *texEditorState) activeLayer() *TexLayer {
+func (e *texEditorState) activeLayer() *texdoc.TexLayer {
 	if e.Doc == nil || e.Doc.Active < 0 || e.Doc.Active >= len(e.Doc.Layers) {
 		return nil
 	}
@@ -195,8 +197,8 @@ func (e *texEditorState) StampSpray(cx, cy int, idx uint8) {
 // StampLine draws idx along a Bresenham line from (x0,y0) to (x1,y1),
 // stamping the current brush at each step.
 func (e *texEditorState) StampLine(x0, y0, x1, y1 int, idx uint8) {
-	dx := absInt(x1 - x0)
-	dy := -absInt(y1 - y0)
+	dx := texdoc.AbsInt(x1 - x0)
+	dy := -texdoc.AbsInt(y1 - y0)
 	sx, sy := 1, 1
 	if x0 > x1 {
 		sx = -1
@@ -319,7 +321,7 @@ func (e *texEditorState) Undo() {
 
 	var redoEntry texUndoEntry
 	if entry.Structural {
-		redoEntry = texUndoEntry{Structural: true, Doc: cloneTexDoc(e.Doc)}
+		redoEntry = texUndoEntry{Structural: true, Doc: texdoc.CloneTexDoc(e.Doc)}
 		e.Doc = entry.Doc
 	} else {
 		layer := &e.Doc.Layers[entry.LayerIdx]
@@ -343,7 +345,7 @@ func (e *texEditorState) Redo() {
 
 	var undoEntry texUndoEntry
 	if entry.Structural {
-		undoEntry = texUndoEntry{Structural: true, Doc: cloneTexDoc(e.Doc)}
+		undoEntry = texUndoEntry{Structural: true, Doc: texdoc.CloneTexDoc(e.Doc)}
 		e.Doc = entry.Doc
 	} else {
 		layer := &e.Doc.Layers[entry.LayerIdx]
@@ -363,7 +365,7 @@ func (e *texEditorState) Redo() {
 // op (e.g. hitting the 8-layer cap) never leaves a no-op undo step behind.
 
 func (e *texEditorState) AddLayer(name string) error {
-	before := cloneTexDoc(e.Doc)
+	before := texdoc.CloneTexDoc(e.Doc)
 	if err := e.Doc.AddLayer(name); err != nil {
 		return err
 	}
@@ -373,7 +375,7 @@ func (e *texEditorState) AddLayer(name string) error {
 }
 
 func (e *texEditorState) DuplicateLayer(i int) error {
-	before := cloneTexDoc(e.Doc)
+	before := texdoc.CloneTexDoc(e.Doc)
 	if err := e.Doc.DuplicateLayer(i); err != nil {
 		return err
 	}
@@ -383,7 +385,7 @@ func (e *texEditorState) DuplicateLayer(i int) error {
 }
 
 func (e *texEditorState) DeleteLayer(i int) error {
-	before := cloneTexDoc(e.Doc)
+	before := texdoc.CloneTexDoc(e.Doc)
 	if err := e.Doc.DeleteLayer(i); err != nil {
 		return err
 	}
@@ -393,7 +395,7 @@ func (e *texEditorState) DeleteLayer(i int) error {
 }
 
 func (e *texEditorState) MoveLayer(i int, up bool) error {
-	before := cloneTexDoc(e.Doc)
+	before := texdoc.CloneTexDoc(e.Doc)
 	if err := e.Doc.MoveLayer(i, up); err != nil {
 		return err
 	}
@@ -441,7 +443,7 @@ func (e *texEditorState) Save(name string) error {
 // ---------- new/open/import ----------
 
 func NewTexEditorDoc(name string, w, h int) (*texEditorState, error) {
-	d, err := NewTexDoc(name, w, h, globalPalette)
+	d, err := texdoc.NewTexDoc(name, w, h, texdoc.GlobalPalette)
 	if err != nil {
 		return nil, err
 	}

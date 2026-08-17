@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"foundry/internal/texdoc"
 )
 
 // withTempTextureDir points executablePath at a scratch dir so file-format
@@ -17,16 +19,16 @@ import (
 func withTempTextureDir(t *testing.T) {
 	t.Helper()
 	prev := executablePath
-	prevPal := globalPalette
+	prevPal := texdoc.GlobalPalette
 	executablePath = t.TempDir()
 	t.Cleanup(func() {
 		executablePath = prev
-		globalPalette = prevPal
+		texdoc.GlobalPalette = prevPal
 	})
 }
 
-func roundTripPalette() TexPalette {
-	var pal TexPalette
+func roundTripPalette() texdoc.TexPalette {
+	var pal texdoc.TexPalette
 	for i := range pal {
 		pal[i] = color.RGBA{
 			R: uint8(i), G: uint8(255 - i), B: uint8(i * 3), A: uint8(200 + i%56),
@@ -72,12 +74,12 @@ func TestReadPaletteRejectsShortFile(t *testing.T) {
 	}
 }
 
-func roundTripDoc() *TexDoc {
+func roundTripDoc() *texdoc.TexDoc {
 	pal := roundTripPalette()
-	d, _ := NewTexDoc("mixed", 4, 3, pal)
+	d, _ := texdoc.NewTexDoc("mixed", 4, 3, pal)
 	names := []string{"base", "détail ✓", "", "over 8000", "e", "f", "g", "h"}
 	opacities := []float32{1, 0.5, 0.0, 0.999, 0.1, 0.75, 0.33, 1}
-	blends := []TexBlend{BlendNormal, BlendMultiply, BlendAdd, BlendScreen, BlendNormal, BlendMultiply, BlendAdd, BlendScreen}
+	blends := []texdoc.TexBlend{texdoc.BlendNormal, texdoc.BlendMultiply, texdoc.BlendAdd, texdoc.BlendScreen, texdoc.BlendNormal, texdoc.BlendMultiply, texdoc.BlendAdd, texdoc.BlendScreen}
 	for i := 1; i < 8; i++ {
 		if err := d.AddLayer(names[i]); err != nil {
 			panic(err)
@@ -89,7 +91,7 @@ func roundTripDoc() *TexDoc {
 		d.Layers[i].Blend = blends[i]
 		d.Layers[i].Visible = i%2 == 0
 		for j := range d.Layers[i].Idx {
-			d.Layers[i].Idx[j] = uint8((j*7 + i*13) % texPaletteSz)
+			d.Layers[i].Idx[j] = uint8((j*7 + i*13) % texdoc.TexPaletteSz)
 		}
 	}
 	return d
@@ -169,10 +171,10 @@ func TestFtexRejectsLayerCountAboveMax(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	data[16] = texMaxLayers + 1
+	data[16] = texdoc.TexMaxLayers + 1
 	os.WriteFile(path, data, 0644)
 	if _, err := ReadTexDoc(path); err == nil {
-		t.Error("ReadTexDoc accepted layerCount > texMaxLayers")
+		t.Error("ReadTexDoc accepted layerCount > texdoc.TexMaxLayers")
 	}
 }
 
@@ -184,10 +186,10 @@ func TestFtexRejectsOversizedDimensions(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	binary.LittleEndian.PutUint32(data[8:12], texMaxDim+1)
+	binary.LittleEndian.PutUint32(data[8:12], texdoc.TexMaxDim+1)
 	os.WriteFile(path, data, 0644)
 	if _, err := ReadTexDoc(path); err == nil {
-		t.Error("ReadTexDoc accepted width > texMaxDim")
+		t.Error("ReadTexDoc accepted width > texdoc.TexMaxDim")
 	}
 }
 
@@ -224,8 +226,8 @@ func TestFtexRejectsWrongDecompressedLength(t *testing.T) {
 	withTempTextureDir(t)
 	// One layer whose compressed payload decompresses to fewer bytes than W*H.
 	pal := roundTripPalette()
-	d, _ := NewTexDoc("small", 4, 4, pal) // 16 indices
-	d.Layers[0].Idx = d.Layers[0].Idx[:8] // WriteTexDoc should refuse this directly
+	d, _ := texdoc.NewTexDoc("small", 4, 4, pal) // 16 indices
+	d.Layers[0].Idx = d.Layers[0].Idx[:8]        // WriteTexDoc should refuse this directly
 	path := filepath.Join(t.TempDir(), "wl.ftex")
 	if err := WriteTexDoc(path, d); err == nil {
 		t.Error("WriteTexDoc accepted a layer whose index count doesn't match W*H")
@@ -256,7 +258,7 @@ func TestImportPNGRejectsNonexistentFile(t *testing.T) {
 
 func TestImportPNGRejectsOversizedImage(t *testing.T) {
 	withTempTextureDir(t)
-	img := image.NewRGBA(image.Rect(0, 0, texMaxDim+1, 1))
+	img := image.NewRGBA(image.Rect(0, 0, texdoc.TexMaxDim+1, 1))
 	path := filepath.Join(t.TempDir(), "big.png")
 	f, err := os.Create(path)
 	if err != nil {
@@ -268,13 +270,13 @@ func TestImportPNGRejectsOversizedImage(t *testing.T) {
 	f.Close()
 
 	if _, err := ImportPNG(path); err == nil {
-		t.Error("ImportPNG accepted an image wider than texMaxDim")
+		t.Error("ImportPNG accepted an image wider than texdoc.TexMaxDim")
 	}
 }
 
 func TestImportPNGQuantisesToGlobalPalette(t *testing.T) {
 	withTempTextureDir(t)
-	globalPalette = flattenPalette() // 0 transparent, 1 red, 2 green, 3 blue, 4 grey
+	texdoc.GlobalPalette = flattenPalette() // 0 transparent, 1 red, 2 green, 3 blue, 4 grey
 	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
 	img.Set(0, 0, color.RGBA{255, 0, 0, 255}) // exact red
 	img.Set(1, 0, color.RGBA{0, 0, 0, 0})     // exact transparent

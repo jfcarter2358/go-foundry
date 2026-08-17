@@ -21,6 +21,8 @@ import (
 	"github.com/go-gl/gl/v4.1-core/gl"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
+
+	"foundry/internal/texdoc"
 )
 
 var (
@@ -513,11 +515,11 @@ func drawPalettePanel() {
 	imgui.Text("Palette")
 
 	const cell = float32(14)
-	for i := 0; i < texPaletteSz; i++ {
+	for i := 0; i < texdoc.TexPaletteSz; i++ {
 		if i%16 != 0 {
 			imgui.SameLine()
 		}
-		c := globalPalette[i]
+		c := texdoc.GlobalPalette[i]
 		imgui.PushID(fmt.Sprintf("palslot%d", i))
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{
 			X: float32(c.R) / 255, Y: float32(c.G) / 255, Z: float32(c.B) / 255, W: float32(c.A) / 255,
@@ -540,7 +542,7 @@ func drawPalettePanel() {
 
 	if imgui.BeginPopup("Edit Palette Color") {
 		idx := texEditorPaletteEditIdx
-		c := globalPalette[idx]
+		c := texdoc.GlobalPalette[idx]
 		col := [4]float32{float32(c.R) / 255, float32(c.G) / 255, float32(c.B) / 255, float32(c.A) / 255}
 		imgui.Text(fmt.Sprintf("Slot %d", idx))
 		if imgui.ColorEdit4("Color", &col) {
@@ -580,9 +582,9 @@ var texEditorBlendNames = []string{"Normal", "Multiply", "Add", "Screen"}
 func drawLayersPanel() {
 	ed := activeTexEditor
 	d := ed.Doc
-	imgui.Text(fmt.Sprintf("Layers (%d/%d)", len(d.Layers), texMaxLayers))
+	imgui.Text(fmt.Sprintf("Layers (%d/%d)", len(d.Layers), texdoc.TexMaxLayers))
 
-	editorPushDisabled(len(d.Layers) >= texMaxLayers)
+	editorPushDisabled(len(d.Layers) >= texdoc.TexMaxLayers)
 	if imgui.Button("Add") {
 		if err := ed.AddLayer(fmt.Sprintf("Layer %d", len(d.Layers)+1)); err != nil {
 			texEditorStatus(err.Error())
@@ -590,7 +592,7 @@ func drawLayersPanel() {
 	}
 	editorPopDisabled()
 	imgui.SameLine()
-	editorPushDisabled(len(d.Layers) >= texMaxLayers)
+	editorPushDisabled(len(d.Layers) >= texdoc.TexMaxLayers)
 	if imgui.Button("Duplicate") {
 		if err := ed.DuplicateLayer(d.Active); err != nil {
 			texEditorStatus(err.Error())
@@ -638,7 +640,7 @@ func drawLayersPanel() {
 		blend := int32(l.Blend)
 		imgui.SetNextItemWidth(120)
 		if imgui.Combo("Blend##bl", &blend, texEditorBlendNames) {
-			l.Blend = TexBlend(blend)
+			l.Blend = texdoc.TexBlend(blend)
 			ed.previewDirty = true
 		}
 

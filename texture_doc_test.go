@@ -3,12 +3,14 @@ package main
 import (
 	"image/color"
 	"testing"
+
+	"foundry/internal/texdoc"
 )
 
 // flattenPalette gives distinct, easily-reasoned-about colors: 0 transparent,
 // 1 red, 2 green, 3 blue, 4 a 50% grey used to probe blend-quantisation.
-func flattenPalette() TexPalette {
-	var pal TexPalette
+func flattenPalette() texdoc.TexPalette {
+	var pal texdoc.TexPalette
 	pal[0] = color.RGBA{0, 0, 0, 0}
 	pal[1] = color.RGBA{255, 0, 0, 255}
 	pal[2] = color.RGBA{0, 255, 0, 255}
@@ -17,8 +19,8 @@ func flattenPalette() TexPalette {
 	return pal
 }
 
-func onePixelDoc(pal TexPalette) *TexDoc {
-	d, err := NewTexDoc("t", 1, 1, pal)
+func onePixelDoc(pal texdoc.TexPalette) *texdoc.TexDoc {
+	d, err := texdoc.NewTexDoc("t", 1, 1, pal)
 	if err != nil {
 		panic(err)
 	}
@@ -27,7 +29,7 @@ func onePixelDoc(pal TexPalette) *TexDoc {
 
 // everyTexelOnPalette is the invariant that matters most: Flatten must never
 // produce a color outside d.Pal.
-func everyTexelOnPalette(t *testing.T, d *TexDoc) {
+func everyTexelOnPalette(t *testing.T, d *texdoc.TexDoc) {
 	t.Helper()
 	out := d.Flatten()
 	for i, px := range out.Pix {
@@ -119,12 +121,12 @@ func TestFlattenBlendModes(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		blend TexBlend
+		blend texdoc.TexBlend
 	}{
-		{"normal", BlendNormal},
-		{"multiply", BlendMultiply},
-		{"add", BlendAdd},
-		{"screen", BlendScreen},
+		{"normal", texdoc.BlendNormal},
+		{"multiply", texdoc.BlendMultiply},
+		{"add", texdoc.BlendAdd},
+		{"screen", texdoc.BlendScreen},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -160,48 +162,48 @@ func TestFlattenEmptyDoc(t *testing.T) {
 }
 
 func TestFlattenEveryTexelOnPalette(t *testing.T) {
-	pal := DefaultPalette()
-	d, err := NewTexDoc("t", 8, 8, pal)
+	pal := texdoc.DefaultPalette()
+	d, err := texdoc.NewTexDoc("t", 8, 8, pal)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := range d.Layers[0].Idx {
-		d.Layers[0].Idx[i] = uint8(i % texPaletteSz)
+		d.Layers[0].Idx[i] = uint8(i % texdoc.TexPaletteSz)
 	}
 	if err := d.AddLayer("top"); err != nil {
 		t.Fatal(err)
 	}
 	for i := range d.Layers[1].Idx {
-		d.Layers[1].Idx[i] = uint8((i * 7) % texPaletteSz)
+		d.Layers[1].Idx[i] = uint8((i * 7) % texdoc.TexPaletteSz)
 	}
 	d.Layers[1].Opacity = 0.37
-	d.Layers[1].Blend = BlendScreen
+	d.Layers[1].Blend = texdoc.BlendScreen
 	everyTexelOnPalette(t, d)
 }
 
 func TestNewTexDocRejectsOversizedCanvas(t *testing.T) {
 	pal := flattenPalette()
-	if _, err := NewTexDoc("t", texMaxDim+1, 64, pal); err == nil {
-		t.Error("NewTexDoc accepted width > texMaxDim")
+	if _, err := texdoc.NewTexDoc("t", texdoc.TexMaxDim+1, 64, pal); err == nil {
+		t.Error("texdoc.NewTexDoc accepted width > texdoc.TexMaxDim")
 	}
-	if _, err := NewTexDoc("t", 64, texMaxDim+1, pal); err == nil {
-		t.Error("NewTexDoc accepted height > texMaxDim")
+	if _, err := texdoc.NewTexDoc("t", 64, texdoc.TexMaxDim+1, pal); err == nil {
+		t.Error("texdoc.NewTexDoc accepted height > texdoc.TexMaxDim")
 	}
-	if _, err := NewTexDoc("t", texMaxDim, texMaxDim, pal); err != nil {
-		t.Errorf("NewTexDoc rejected the exact cap: %v", err)
+	if _, err := texdoc.NewTexDoc("t", texdoc.TexMaxDim, texdoc.TexMaxDim, pal); err != nil {
+		t.Errorf("texdoc.NewTexDoc rejected the exact cap: %v", err)
 	}
 }
 
 func TestLayerLimits(t *testing.T) {
 	pal := flattenPalette()
 	d := onePixelDoc(pal)
-	for i := 1; i < texMaxLayers; i++ {
+	for i := 1; i < texdoc.TexMaxLayers; i++ {
 		if err := d.AddLayer("l"); err != nil {
 			t.Fatalf("AddLayer %d: %v", i, err)
 		}
 	}
-	if len(d.Layers) != texMaxLayers {
-		t.Fatalf("layer count = %d, want %d", len(d.Layers), texMaxLayers)
+	if len(d.Layers) != texdoc.TexMaxLayers {
+		t.Fatalf("layer count = %d, want %d", len(d.Layers), texdoc.TexMaxLayers)
 	}
 	if err := d.AddLayer("overflow"); err == nil {
 		t.Error("AddLayer beyond the cap should fail")
