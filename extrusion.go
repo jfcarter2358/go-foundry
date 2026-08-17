@@ -122,7 +122,7 @@ func buildWallWithExtrusions(
 			hole[i] = mgl32.Vec2{p.U, p.V}
 		}
 		// Holes must be CW for mergeHoles; reverse if CCW
-		if signedArea2D_UV(hole) > 0 {
+		if signedArea2D(hole) > 0 {
 			reverseVec2Slice(hole)
 		}
 		holes = append(holes, hole)
@@ -271,18 +271,6 @@ func buildWallWithExtrusions(
 	return allVerts, allIndices, backFaces
 }
 
-// signedArea2D_UV computes the signed area of a 2D polygon in UV space.
-// Positive = CCW; negative = CW.
-func signedArea2D_UV(pts []mgl32.Vec2) float32 {
-	n := len(pts)
-	area := float32(0)
-	for i := 0; i < n; i++ {
-		j := (i + 1) % n
-		area += pts[i].X()*pts[j].Y() - pts[j].X()*pts[i].Y()
-	}
-	return area / 2
-}
-
 // reverseVec2Slice reverses a slice of Vec2 in place.
 func reverseVec2Slice(s []mgl32.Vec2) {
 	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
@@ -335,12 +323,12 @@ func buildFloorWithExtrusions(
 		// Holes must be CW for floors (CCW boundary), or CCW for ceilings (CW boundary after reversal)
 		if normalUp {
 			// Floor: outer is CCW, holes must be CW
-			if signedArea2D_UV(hole) > 0 {
+			if signedArea2D(hole) > 0 {
 				reverseVec2Slice(hole)
 			}
 		} else {
 			// Ceiling: outer is CW (reversed), holes must be CCW
-			if signedArea2D_UV(hole) < 0 {
+			if signedArea2D(hole) < 0 {
 				reverseVec2Slice(hole)
 			}
 		}
@@ -350,12 +338,12 @@ func buildFloorWithExtrusions(
 	// Ensure outer polygon has correct winding
 	if normalUp {
 		// Floor: CCW
-		if signedArea2D_UV(outer) < 0 {
+		if signedArea2D(outer) < 0 {
 			reverseVec2Slice(outer)
 		}
 	} else {
 		// Ceiling: CW (so face points downward)
-		if signedArea2D_UV(outer) > 0 {
+		if signedArea2D(outer) > 0 {
 			reverseVec2Slice(outer)
 		}
 	}
@@ -576,7 +564,7 @@ func buildFloorCollisionData(
 	}
 
 	// Ensure CCW winding (Delaunay expects this for clipping)
-	if signedArea2D_UV(boundary) < 0 {
+	if signedArea2D(boundary) < 0 {
 		reverseVec2Slice(boundary)
 		for i, j := 0, len(boundaryDepths)-1; i < j; i, j = i+1, j-1 {
 			boundaryDepths[i], boundaryDepths[j] = boundaryDepths[j], boundaryDepths[i]
@@ -646,7 +634,7 @@ func buildFloorTerrainMesh(
 	}
 
 	// Ensure CCW winding for the boundary (Delaunay expects this for clipping)
-	if signedArea2D_UV(boundary) < 0 {
+	if signedArea2D(boundary) < 0 {
 		reverseVec2Slice(boundary)
 		// Also reverse depths
 		for i, j := 0, len(boundaryDepths)-1; i < j; i, j = i+1, j-1 {

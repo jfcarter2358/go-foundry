@@ -808,19 +808,14 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		}
 	}
 
-	sectorByID := map[string]*Sector{}
-	for i := range chunk.Sectors {
-		sectorByID[chunk.Sectors[i].ID] = &chunk.Sectors[i]
-	}
+	// Collect gap textures so they get registered/uploaded; the actual gap
+	// geometry is built by RebuildGaps (chunk.go), which every other caller
+	// that (re)builds portal gaps also uses — see chunk.go's own doc comment.
 	for si := range chunk.Sectors {
 		s := &chunk.Sectors[si]
 		for pi := range s.Portals {
 			p := &s.Portals[pi]
 			if !p.DrawGap {
-				continue
-			}
-			adj, ok := sectorByID[p.ToSector]
-			if !ok {
 				continue
 			}
 			tex := p.GapTexture
@@ -830,33 +825,9 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			if tex != "" {
 				texNeeded[tex] = true
 			}
-			start := p.StartPoint
-			end := p.EndPoint
-			edgeVec := mgl32.Vec2{end.X() - start.X(), end.Y() - start.Y()}
-			segLen := edgeVec.Len()
-			if segLen < 1e-6 {
-				continue
-			}
-
-			if s.Floor.Height < adj.Floor.Height {
-				lo1, lo2 := edgeHeights(&chunk, s, s.Floor.VertexHeight, start, end)
-				hi1, hi2 := edgeHeights(&chunk, adj, adj.Floor.VertexHeight, start, end)
-				verts, indices := buildGapQuad(start, end, lo1, lo2, hi1, hi2, segLen)
-				if err := p.FloorGap.Load(verts, indices, tex, mgl32.Vec3{}); err != nil {
-					return Chunk{}, nil, fmt.Errorf("portal floor gap %q→%q: %w", s.ID, p.ToSector, err)
-				}
-			}
-
-			if s.Ceiling.Enabled && adj.Ceiling.Enabled && s.Ceiling.Height > adj.Ceiling.Height {
-				lo1, lo2 := edgeHeights(&chunk, adj, adj.Ceiling.VertexHeight, start, end)
-				hi1, hi2 := edgeHeights(&chunk, s, s.Ceiling.VertexHeight, start, end)
-				verts, indices := buildGapQuad(start, end, lo1, lo2, hi1, hi2, segLen)
-				if err := p.CeilGap.Load(verts, indices, tex, mgl32.Vec3{}); err != nil {
-					return Chunk{}, nil, fmt.Errorf("portal ceil gap %q→%q: %w", s.ID, p.ToSector, err)
-				}
-			}
 		}
 	}
+	chunk.RebuildGaps()
 
 	for _, rp := range rc.Primitives {
 		scale := mgl32.Vec3{rp.Scale.X, rp.Scale.Y, rp.Scale.Z}

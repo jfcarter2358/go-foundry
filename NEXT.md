@@ -38,6 +38,7 @@
 - [ ] Object collision physics
 - [x] Primitives (plane, square, etc.)
 - [ ] Sprites
+- [ ] Particles
 - [ ] Transparency in textures
 - [x] Textures/models/entities/etc. should be loaded from a directory traversal, not a hard-coded map
 - [ ] Model editor
@@ -55,5 +56,6 @@
 - [ ] Water reflections
 - [ ] texture blending
 - [ ] Biome painting (e.g. prarie, forest, etc.)
-- [ ] Detail shadow casting
+- [x] Detail shadow casting
 - [ ] Trees
+- [ ] Animated textures
