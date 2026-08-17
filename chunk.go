@@ -18,17 +18,17 @@ import (
 // for those slots. Binding names to indices rather than to coordinates is what
 // lets a point keep its identity when the editor drags it.
 type Chunk struct {
-	ID         string
-	Points     []mgl32.Vec2            // shared point pool; sectors reference by index
-	Sectors    []Sector
-	MinBound   mgl32.Vec3
-	MaxBound   mgl32.Vec3
-	Origin     mgl32.Vec3              // world-space offset applied to all points at load time
-	Rotation   float32                 // Y-axis rotation in radians applied at load time
-	Scale      float32                 // uniform XZ scale applied at load time (0 = 1.0)
-	PointNames []string                // index-aligned with Points; "" = unnamed
-	Primitives []Primitive
-	BiomeSectors []BiomeSector         // user-drawn biome-paint polygons, owned by this chunk
+	ID           string
+	Points       []mgl32.Vec2 // shared point pool; sectors reference by index
+	Sectors      []Sector
+	MinBound     mgl32.Vec3
+	MaxBound     mgl32.Vec3
+	Origin       mgl32.Vec3 // world-space offset applied to all points at load time
+	Rotation     float32    // Y-axis rotation in radians applied at load time
+	Scale        float32    // uniform XZ scale applied at load time (0 = 1.0)
+	PointNames   []string   // index-aligned with Points; "" = unnamed
+	Primitives   []Primitive
+	BiomeSectors []BiomeSector // user-drawn biome-paint polygons, owned by this chunk
 
 	// BiomeWaterPrims is runtime-only (never serialized, never cloned):
 	// companion PrimitiveWater entries auto-managed from Water-kind
@@ -403,4 +403,44 @@ func (ch *Chunk) RebuildGaps() {
 			}
 		}
 	}
+}
+
+// buildGapQuad returns the vertices and indices for a vertical quad spanning
+// from lo to hi between start and end (in XZ), with the given segment length.
+// Pure sector/polygon geometry — moved here (from level.go) to sit beside its
+// only caller, RebuildGaps, per RESTRUCTURE_PROPOSAL.md §5 Phase A.
+func buildGapQuad(start, end mgl32.Vec2, lo1, lo2, hi1, hi2, segLen float32) ([][]float32, []int) {
+	// Sloped surfaces can cross within the edge; collapse rather than invert
+	// the quad so the face never winds backwards.
+	if hi1 < lo1 {
+		hi1 = lo1
+	}
+	if hi2 < lo2 {
+		hi2 = lo2
+	}
+	a := []float32{start.X(), hi1, start.Y(), 0, 0}
+	b := []float32{end.X(), hi2, end.Y(), segLen, 0}
+	c := []float32{end.X(), lo2, end.Y(), segLen, hi2 - lo2}
+	d := []float32{start.X(), lo1, start.Y(), 0, hi1 - lo1}
+	return [][]float32{a, b, c, d}, []int{0, 1, 2, 2, 3, 0}
+}
+
+// edgeHeights returns a sector surface's height at the two endpoints of an edge,
+// honoring per-vertex offsets. Endpoints that aren't sector vertices fall back
+// to the surface's flat height.
+func edgeHeights(ch *Chunk, s *Sector, vertexHeight func(int) float32, start, end mgl32.Vec2) (float32, float32) {
+	pts := SectorPoints(ch, s)
+	return vertexHeight(findVertexIdx(pts, start)), vertexHeight(findVertexIdx(pts, end))
+}
+
+// signedArea2D computes the signed area of a 2D polygon (shoelace formula).
+// Positive = CCW winding (interior to the left); negative = CW.
+func signedArea2D(pts []mgl32.Vec2) float32 {
+	n := len(pts)
+	area := float32(0)
+	for i := 0; i < n; i++ {
+		j := (i + 1) % n
+		area += pts[i].X()*pts[j].Y() - pts[j].X()*pts[i].Y()
+	}
+	return area / 2
 }
