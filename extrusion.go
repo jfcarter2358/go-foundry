@@ -12,6 +12,41 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+// ExtrusionPoint is a point in surface-local coordinate space.
+//
+// For walls:          U = distance along wall, V = distance from ceiling down.
+// For floors/ceilings: U = world X, V = world Z.
+type ExtrusionPoint struct {
+	U float32
+	V float32
+}
+
+// Extrusion defines a polygonal region on a surface that is displaced along the
+// surface normal. Outer and Inner must have the same number of vertices. Outer
+// defines the hole cut in the surface; Inner defines the shape at Depth.
+// Side faces connect Outer[i]→Inner[i]. When Outer != Inner you get
+// sloped/beveled sides.
+type Extrusion struct {
+	Outer       []ExtrusionPoint // CCW polygon on surface (the hole)
+	Inner       []ExtrusionPoint // CCW polygon at extruded depth (same vertex count)
+	Depth       float32          // displacement along surface normal (+outward, -inward)
+	Texture     string           // optional texture for back face + sides; empty = surface texture
+	Visible     bool             // if true, render side faces and back face; if false, only the hole is cut
+	BackVisible bool             // if true, render the inner polygon face; if false, it's open
+	UVOffset    mgl32.Vec2       // UV translation for side/back faces
+	UVScale     mgl32.Vec2       // UV scale for side/back faces; zero = {1,1}
+	UVRotation  float32          // UV rotation in radians for side/back faces
+	Alpha       float32          // per-extrusion alpha; only affects custom-texture back faces
+}
+
+// TerrainPoint is an additional point placed on a surface for terrain
+// displacement. Coordinates follow the same convention as ExtrusionPoint.
+type TerrainPoint struct {
+	U     float32
+	V     float32
+	Depth float32 // displacement along surface normal
+}
+
 // ExtrusionBackFace holds per-extrusion back face geometry data
 // that should be rendered with the extrusion's custom texture.
 type ExtrusionBackFace struct {
