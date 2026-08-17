@@ -52,8 +52,8 @@ func TestWaterPlaneMeshMatchesPlaneFootprint(t *testing.T) {
 	minX, maxX := float32(math.MaxFloat32), float32(-math.MaxFloat32)
 	minZ, maxZ := float32(math.MaxFloat32), float32(-math.MaxFloat32)
 	for _, v := range verts {
-		minX, maxX = min32(minX, v[0]), max32(maxX, v[0])
-		minZ, maxZ = min32(minZ, v[2]), max32(maxZ, v[2])
+		minX, maxX = min(minX, v[0]), max(maxX, v[0])
+		minZ, maxZ = min(minZ, v[2]), max(maxZ, v[2])
 	}
 
 	if minX != -0.5 || maxX != 0.5 || minZ != -0.5 || maxZ != 0.5 {

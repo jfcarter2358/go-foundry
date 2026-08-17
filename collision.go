@@ -576,8 +576,8 @@ func EntityOverlap(a, b *Entity, candidatePos mgl32.Vec3) bool {
 }
 
 func sphereOverlap(posA mgl32.Vec3, a *Entity, posB mgl32.Vec3, b *Entity) bool {
-	rA := float64(max32(a.BoundHalfX, max32(a.BoundHalfY, a.BoundHalfZ)))
-	rB := float64(max32(b.BoundHalfX, max32(b.BoundHalfY, b.BoundHalfZ)))
+	rA := float64(max(a.BoundHalfX, max(a.BoundHalfY, a.BoundHalfZ)))
+	rB := float64(max(b.BoundHalfX, max(b.BoundHalfY, b.BoundHalfZ)))
 	d := posA.Sub(posB)
 	distSq := float64(d.X())*float64(d.X()) + float64(d.Y())*float64(d.Y()) + float64(d.Z())*float64(d.Z())
 	sumR := rA + rB
@@ -586,8 +586,8 @@ func sphereOverlap(posA mgl32.Vec3, a *Entity, posB mgl32.Vec3, b *Entity) bool 
 
 func cylinderOverlap(posA mgl32.Vec3, a *Entity, posB mgl32.Vec3, b *Entity) bool {
 	// XZ circle test
-	rA := float64(max32(a.BoundHalfX, a.BoundHalfZ))
-	rB := float64(max32(b.BoundHalfX, b.BoundHalfZ))
+	rA := float64(max(a.BoundHalfX, a.BoundHalfZ))
+	rB := float64(max(b.BoundHalfX, b.BoundHalfZ))
 	dx := float64(posA.X() - posB.X())
 	dz := float64(posA.Z() - posB.Z())
 	distSqXZ := dx*dx + dz*dz
@@ -598,13 +598,6 @@ func cylinderOverlap(posA mgl32.Vec3, a *Entity, posB mgl32.Vec3, b *Entity) boo
 	// Y AABB test
 	dy := math.Abs(float64(posA.Y() - posB.Y()))
 	return dy < float64(a.BoundHalfY+b.BoundHalfY)
-}
-
-func max32(a, b float32) float32 {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // ResolveEntityCollision pushes entity a out of entity b in the XZ plane.
@@ -618,8 +611,8 @@ func ResolveEntityCollision(a, b *Entity, pos mgl32.Vec3) mgl32.Vec3 {
 		dist = 1
 	}
 	// Compute combined radius in push direction
-	rA := max32(a.BoundHalfX, a.BoundHalfZ)
-	rB := max32(b.BoundHalfX, b.BoundHalfZ)
+	rA := max(a.BoundHalfX, a.BoundHalfZ)
+	rB := max(b.BoundHalfX, b.BoundHalfZ)
 	overlap := (rA + rB) - dist
 	if overlap <= 0 {
 		return pos

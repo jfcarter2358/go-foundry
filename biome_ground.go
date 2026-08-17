@@ -267,9 +267,9 @@ func resolveGroundUVScale(brush *BiomeBrush) mgl32.Vec2 {
 // groundPatchGridDims picks the (cells-per-axis) grid resolution covering
 // [min,max] at ~groundPatchCellSize world units per cell, capped at
 // groundPatchMaxDim.
-func groundPatchGridDims(min, max mgl32.Vec2) (nx, nz int) {
-	sizeX := max.X() - min.X()
-	sizeZ := max.Y() - min.Y()
+func groundPatchGridDims(lo, hi mgl32.Vec2) (nx, nz int) {
+	sizeX := hi.X() - lo.X()
+	sizeZ := hi.Y() - lo.Y()
 	if sizeX < groundPatchCellSize {
 		sizeX = groundPatchCellSize
 	}
@@ -278,23 +278,9 @@ func groundPatchGridDims(min, max mgl32.Vec2) (nx, nz int) {
 	}
 	nx = int(sizeX/groundPatchCellSize) + 1
 	nz = int(sizeZ/groundPatchCellSize) + 1
-	nx = max2(1, min2(nx, groundPatchMaxDim))
-	nz = max2(1, min2(nz, groundPatchMaxDim))
+	nx = max(1, min(nx, groundPatchMaxDim))
+	nz = max(1, min(nz, groundPatchMaxDim))
 	return
-}
-
-func min2(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max2(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // densifyPolygonMaxStepsPerEdge caps how many extra points densifyPolygon

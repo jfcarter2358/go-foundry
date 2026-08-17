@@ -76,12 +76,3 @@ func FindChunkAndSectorSH(sh *SpatialHash, chunks []Chunk, pos mgl32.Vec3) (*Chu
 	}
 	return nil, nil
 }
-
-// floor32 returns the floor of a float32 as a float32.
-func floor32(x float32) float32 {
-	i := int(x)
-	if float32(i) > x {
-		i--
-	}
-	return float32(i)
-}

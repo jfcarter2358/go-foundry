@@ -122,8 +122,8 @@ func partBounds(t *testing.T, mesh []float32, lo, hi float32) (halfWidth, height
 		}
 		found = true
 		x, y := mesh[i], mesh[i+1]
-		minX, maxX = min32(minX, x), max32(maxX, x)
-		minY, maxY = min32(minY, y), max32(maxY, y)
+		minX, maxX = min(minX, x), max(maxX, x)
+		minY, maxY = min(minY, y), max(maxY, y)
 	}
 	if !found {
 		t.Fatalf("mesh has no vertices tagged in [%g,%g)", lo, hi)
@@ -799,7 +799,7 @@ func TestFlowerAndReedStemsAreConstantWidth(t *testing.T) {
 				continue
 			}
 			w := float32(math.Abs(float64(tc.mesh[i])))
-			widest, narrowest = max32(widest, w), min32(narrowest, w)
+			widest, narrowest = max(widest, w), min(narrowest, w)
 		}
 		if widest <= 0 {
 			t.Fatalf("%s: stem has no width at all", tc.name)
@@ -821,7 +821,7 @@ func TestGrassBladeStillTapers(t *testing.T) {
 		if mesh[i+6] < 1 { // aParam == y; only the topmost vertices
 			continue
 		}
-		tipWidth = min32(tipWidth, float32(math.Abs(float64(mesh[i]))))
+		tipWidth = min(tipWidth, float32(math.Abs(float64(mesh[i]))))
 	}
 	if tipWidth != 0 {
 		t.Errorf("grass blade tip half-width is %.4f, want 0 — the blade must still taper to a point", tipWidth)
@@ -849,7 +849,7 @@ func TestWildflowerLeavesArcOutward(t *testing.T) {
 			t.Fatalf("leaf aParam fraction %v does not match vertex height %v", got, y)
 		}
 		r := float32(math.Hypot(float64(x), float64(z)))
-		maxRadius, maxY = max32(maxRadius, r), max32(maxY, y)
+		maxRadius, maxY = max(maxRadius, r), max(maxY, y)
 		if r > maxRadius-1e-6 {
 			tipY = y
 		}
@@ -958,7 +958,7 @@ func TestStemsReachTheirHeadAnchor(t *testing.T) {
 			if p := tc.mesh[i+6]; p < 0 || p > 1 { // stem band only
 				continue
 			}
-			top = max32(top, tc.mesh[i+1])
+			top = max(top, tc.mesh[i+1])
 		}
 		if math.Abs(float64(top-tc.anchor)) > 1e-5 {
 			t.Errorf("%s stem tops out at %.4f but its head anchors at %.4f — "+

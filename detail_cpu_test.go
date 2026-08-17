@@ -542,8 +542,8 @@ func TestMossClumpIsSunkAndNotAFlatDisc(t *testing.T) {
 	maxAbsXZ := float32(0)
 	for i := 0; i < len(mesh); i += biomeVertexStride {
 		x, y, z := mesh[i], mesh[i+1], mesh[i+2]
-		minY, maxY = min32(minY, y), max32(maxY, y)
-		maxAbsXZ = max32(maxAbsXZ, max32(abs32(x), abs32(z)))
+		minY, maxY = min(minY, y), max(maxY, y)
+		maxAbsXZ = max(maxAbsXZ, max(abs32(x), abs32(z)))
 	}
 
 	if minY >= 0 {

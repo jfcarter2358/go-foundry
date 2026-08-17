@@ -416,11 +416,3 @@ func loadExtrusionGeometries(old []Geometry, bfList []ExtrusionBackFace, smooth 
 	}
 	return geoms, nil
 }
-
-// max0 returns i if i >= 0, else 0.
-func max0(i int) int {
-	if i < 0 {
-		return 0
-	}
-	return i
-}

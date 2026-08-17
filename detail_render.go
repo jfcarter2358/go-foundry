@@ -325,8 +325,8 @@ func computeFaceBasis(verts []float32) faceBasis {
 	for i := 0; i+4 < len(verts); i += 5 {
 		d := vtx(verts, i).Sub(p0)
 		du, dv := d.Dot(u), d.Dot(v)
-		uMin, uMax = min32(uMin, du), max32(uMax, du)
-		vMin, vMax = min32(vMin, dv), max32(vMax, dv)
+		uMin, uMax = min(uMin, du), max(uMax, du)
+		vMin, vMax = min(vMin, dv), max(vMax, dv)
 	}
 	origin := p0.Add(u.Mul(uMin)).Add(v.Mul(vMin))
 	return faceBasis{origin: origin, u: u, v: v, n: n, uMax: uMax - uMin, vMax: vMax - vMin, ok: true}
@@ -370,24 +370,6 @@ func perpAxis(n mgl32.Vec3) mgl32.Vec3 {
 		return mgl32.Vec3{0, 1, 0}.Cross(n)
 	}
 	return mgl32.Vec3{1, 0, 0}.Cross(n)
-}
-
-func min32(a, b float32) float32 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// clamp01 clamps v to [0,1].
-func clamp01(v float32) float32 {
-	if v < 0 {
-		return 0
-	}
-	if v > 1 {
-		return 1
-	}
-	return v
 }
 
 // ---------- uniform setters ----------
