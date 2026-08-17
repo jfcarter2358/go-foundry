@@ -651,6 +651,11 @@ func EditorDrawUI() {
 	}
 
 	imgui.SameLine()
+	if imgui.Button("Textures") {
+		OpenTextureEditor()
+	}
+
+	imgui.SameLine()
 	imgui.Separator()
 	imgui.SameLine()
 

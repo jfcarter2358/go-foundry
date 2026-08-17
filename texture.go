@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -69,4 +70,95 @@ func ensureTextureLoaded(name string) error {
 		return fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 	}
 	return LoadTexture(name, filepath.Join(executablePath, path))
+}
+
+// ---------- texture editor GPU sync ----------
+//
+// Nothing in the renderer caches a texture handle beyond the Textures map —
+// every draw call does gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture]) at
+// draw time. So updating a texture in place is just re-specifying the same GL
+// texture object: every wall, floor, primitive, scenery item and detail-
+// scatter instance shows the new image on the next frame with no level walk
+// and no geometry rebuild.
+
+// pendingUpload is one queued GPU upload from the texture editor.
+type pendingUpload struct {
+	Name string
+	Img  *image.RGBA
+}
+
+// pendingTextureUploads is drained once per frame by DrainTextureUploads,
+// while the main GL context is current — see the frame-order note in
+// window.go. Queuing (rather than uploading directly from the editor window)
+// throttles a brush drag to one upload per frame and keeps all world-GL
+// mutation in one place, even though shared GL contexts make a direct upload
+// legal.
+var pendingTextureUploads []pendingUpload
+
+// QueueTextureUpload schedules img to be uploaded to the GL texture named
+// name at the start of the next frame. A second call for the same name before
+// the queue drains replaces the pending image rather than growing the queue.
+func QueueTextureUpload(name string, img *image.RGBA) {
+	for i := range pendingTextureUploads {
+		if pendingTextureUploads[i].Name == name {
+			pendingTextureUploads[i].Img = img
+			return
+		}
+	}
+	pendingTextureUploads = append(pendingTextureUploads, pendingUpload{Name: name, Img: img})
+}
+
+// DrainTextureUploads uploads every queued image and clears the queue. Must
+// be called with the main GL context current.
+func DrainTextureUploads() {
+	if len(pendingTextureUploads) == 0 {
+		return
+	}
+	for _, u := range pendingTextureUploads {
+		if err := UpdateTextureFromRGBA(u.Name, u.Img); err != nil {
+			log.Printf("texture upload %q: %v", u.Name, err)
+		}
+	}
+	pendingTextureUploads = pendingTextureUploads[:0]
+}
+
+// UpdateTextureFromRGBA uploads img into the GL texture object already
+// registered under name, or creates one if this is a brand-new texture.
+// Re-specifying the same handle (rather than allocating a new one) is what
+// makes every existing instance of the texture update live — nothing else
+// needs to change.
+func UpdateTextureFromRGBA(name string, img *image.RGBA) error {
+	w := int32(img.Rect.Dx())
+	h := int32(img.Rect.Dy())
+	if w <= 0 || h <= 0 {
+		return fmt.Errorf("UpdateTextureFromRGBA %q: empty image", name)
+	}
+	if img.Stride != img.Rect.Size().X*4 {
+		return fmt.Errorf("UpdateTextureFromRGBA %q: unsupported stride", name)
+	}
+
+	tex, ok := Textures[name]
+	if !ok {
+		gl.GenTextures(1, &tex)
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, tex)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+		Textures[name] = tex
+	} else {
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, tex)
+	}
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(img.Pix))
+	return nil
+}
+
+// RegisterTexture makes name resolve to <exe>/textures/<name>.png for every
+// consumer that reads through textureNames — textureCombo's dropdown
+// (editor_ui.go) and ensureTextureLoaded both rebuild/resolve from this map
+// on every use, so a single insert is all requirement 7 needs.
+func RegisterTexture(name string) {
+	textureNames[name] = texturesDirName + "/" + name + ".png"
 }

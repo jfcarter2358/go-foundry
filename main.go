@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -14,6 +15,15 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
+
+// The texture editor drives a second SDL window and GL context on the same
+// OS thread as the main loop (see window.go). SDL/GL calls must stay pinned
+// to one OS thread — without this, the Go scheduler is free to migrate the
+// goroutine between them and the "current" GL context becomes whichever
+// thread last touched it.
+func init() {
+	runtime.LockOSThread()
+}
 
 // textureNames maps logical texture names to paths relative to executablePath.
 // Populated at startup by ScanTextures.
@@ -142,6 +152,10 @@ func main() {
 
 	// Merge the user's saved detail presets in over the compiled-in ones.
 	LoadDetailPresets()
+
+	// Load (or, on a fresh checkout, create) the global 256-colour palette
+	// every texture in the texture editor composites against.
+	LoadGlobalPalette()
 
 	// Catch any unexpected panic and write it to the log before exiting.
 	defer func() {
@@ -318,7 +332,14 @@ func main() {
 		sdl.PumpEvents()
 
 		// --- Process events first so mouse rotation is applied before movement ---
+		mainWindowID, _ := Window.GetID()
 		for event = sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
+			// A secondary UIWindow (texture editor, etc.) owns its own imgui
+			// context; route its events there instead of into the 3D
+			// editor/gameplay handlers, which know nothing about it.
+			if RouteWindowEvent(event, mainWindowID) {
+				continue
+			}
 			if Editor.Active {
 				EditorHandleEvent(event)
 			}
@@ -418,6 +439,11 @@ func main() {
 		DebugStats.ChunksLoaded = len(level.Chunks)
 		DebugStats.EntitiesLoaded = len(level.Entities)
 		DebugStats.SectorsLoaded = totalSectors
+
+		// Texture editor uploads (painted texels, saves) are queued rather
+		// than applied immediately; drain them now, while the main GL
+		// context is current, so this frame's draw calls already see them.
+		DrainTextureUploads()
 
 		// Per-frame water shader inputs: animation clock and the view position
 		// the fresnel/specular terms are measured against.
@@ -651,5 +677,10 @@ func main() {
 		}
 
 		Window.GLSwap()
+
+		// Secondary windows (texture editor, etc.) render last, each in its
+		// own GL/imgui context, restoring the main ones before the next
+		// iteration touches world GL state again.
+		RenderSecondaryWindows(DeltaTime)
 	}
 }

@@ -142,6 +142,14 @@ func HandleEvent(event sdl.Event) {
 		Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
 
 	case sdl.WindowEvent:
+		// A secondary UIWindow (texture editor, etc.) reports its own size/
+		// focus events too; only the main window's should drive the 3D
+		// viewport and mouse-capture state. Its own close/resize/redraw are
+		// handled by RouteWindowEvent (window.go) before HandleEvent ever
+		// sees them — see the dispatch in main.go.
+		if mw, err := Window.GetID(); err != nil || t.WindowID != mw {
+			break
+		}
 		switch t.Event {
 		case sdl.WINDOWEVENT_FOCUS_LOST:
 			// Release capture but remember whether the current mode wanted it.

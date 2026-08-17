@@ -157,9 +157,12 @@ func (g *Geometry) Delete() {
 	}
 }
 
-// IsTransparent returns true if this geometry has a non-opaque alpha value.
+// IsTransparent returns true if this geometry has a non-opaque alpha value,
+// or its texture has any semi-transparent texel (see texture_alpha.go). Both
+// route the surface into the sorted, back-to-front blended pass instead of
+// the opaque one.
 func (g *Geometry) IsTransparent() bool {
-	return g.Alpha > 0 && g.Alpha < 1.0
+	return (g.Alpha > 0 && g.Alpha < 1.0) || textureHasAlpha[g.Texture]
 }
 
 // Draw renders the geometry using the current OpenGL state.
