@@ -62,9 +62,6 @@ func HandleInput(keyStates []uint8) {
 	uMove := float32(0.0)
 	rMove := float32(0.0)
 
-	if keyStates[sdl.SCANCODE_ESCAPE] != 0 {
-		Running = false
-	}
 	if keyStates[sdl.SCANCODE_W] != 0 {
 		fMove += moveSpeed
 	}

@@ -9,16 +9,31 @@ package main
 
 import "github.com/go-gl/mathgl/mgl32"
 
-// orthoView is a pan/zoom pair describing one orthographic top-down camera.
+// orthoView is a pan/zoom pair describing one orthographic top-down camera,
+// plus the pixel size of the surface it is drawn into.
 type orthoView struct {
 	pan  mgl32.Vec2
 	zoom float32
+	// viewW/viewH are the viewport's pixel dimensions. Zero means "the main
+	// window", which is every view except the 2D map when it has been popped
+	// out into its own OS window (editor_2d_window.go).
+	viewW, viewH float32
+}
+
+// size returns the viewport dimensions this view maps into, defaulting to the
+// main window's.
+func (v orthoView) size() (w, h float32) {
+	if v.viewW > 0 && v.viewH > 0 {
+		return v.viewW, v.viewH
+	}
+	return float32(WinWidth), float32(WinHeight)
 }
 
 // ortho returns the projection×view matrix for this view.
 func (v orthoView) ortho() mgl32.Mat4 {
-	halfW := float32(WinWidth) / 2 / v.zoom
-	halfH := float32(WinHeight) / 2 / v.zoom
+	vw, vh := v.size()
+	halfW := vw / 2 / v.zoom
+	halfH := vh / 2 / v.zoom
 	cx, cy := v.pan.X(), v.pan.Y()
 	return mgl32.Ortho(-halfW, halfW, -halfH, halfH, -100, 100).
 		Mul4(mgl32.LookAtV(
@@ -30,8 +45,9 @@ func (v orthoView) ortho() mgl32.Mat4 {
 
 // worldToScreen converts a world-space XZ (or surface UV) point to screen pixels.
 func (v orthoView) worldToScreen(wx, wz float32) (sx, sy float32) {
-	halfW := float32(WinWidth) / 2
-	halfH := float32(WinHeight) / 2
+	vw, vh := v.size()
+	halfW := vw / 2
+	halfH := vh / 2
 	sx = (wx-v.pan.X())*v.zoom + halfW
 	sy = (wz-v.pan.Y())*v.zoom + halfH
 	return
@@ -39,8 +55,9 @@ func (v orthoView) worldToScreen(wx, wz float32) (sx, sy float32) {
 
 // screenToWorld converts screen pixels to world-space XZ (or surface UV).
 func (v orthoView) screenToWorld(sx, sy int32) (wx, wz float32) {
-	halfW := float32(WinWidth) / 2
-	halfH := float32(WinHeight) / 2
+	vw, vh := v.size()
+	halfW := vw / 2
+	halfH := vh / 2
 	wx = (float32(sx)-halfW)/v.zoom + v.pan.X()
 	wz = (float32(sy)-halfH)/v.zoom + v.pan.Y()
 	return

@@ -189,9 +189,68 @@ func TestBiomeLightUniformsMatchSceneShader(t *testing.T) {
 	}
 
 	// The cascade constants are duplicated in three places by necessity (Go,
-	// fragment.glsl, biome_light.glsl); pin the biome copy against shadow.go.
+	// fragment.glsl, biome_light.glsl); pin the biome copies against shadow.go.
 	if !strings.Contains(biome, "#define SHADOW_CASCADES       3") {
 		t.Errorf("biome_light.glsl SHADOW_CASCADES is out of step with ShadowCascades=%d", ShadowCascades)
+	}
+	if !strings.Contains(biome, "#define SHADOW_CASCADE_BLEND  0.12") {
+		t.Errorf("biome_light.glsl SHADOW_CASCADE_BLEND is out of step with ShadowCascadeBlend=%v", ShadowCascadeBlend)
+	}
+}
+
+// TestGroundPatchShadesLikeTheStructuralFloor guards the reason the ground
+// patch has no shading of its own. It is not a decal floating above the floor:
+// a Water lakebed dips BELOW the floor it was painted on and a sand dune rises
+// THROUGH it, so the two surfaces interpenetrate and are visible pixel against
+// pixel. Any term the patch applies that fragment.glsl doesn't — a noise AO
+// multiplier, a perturbed normal, a cheaper shadow filter — shows up along that
+// intersection as two floors lit by different scenes, which is exactly what
+// this used to look like.
+func TestGroundPatchShadesLikeTheStructuralFloor(t *testing.T) {
+	frag := readBiomeShader(t, "ground_frag.glsl")
+
+	// Lighting comes from the shared block, on the mesh's own facet normal —
+	// the same normal fragment.glsl recovers from derivatives for the floor.
+	if !strings.Contains(frag, "biomeLighting(vWorldPos, n, vViewDepth") {
+		t.Error("ground_frag.glsl must light the raw facet normal via biomeLighting; " +
+			"a perturbed normal makes the patch disagree with the floor it intersects")
+	}
+	// No private darkening term between the texture and the scene lighting.
+	// fakeShadowStrength is the one allowed multiplier, and it is allowed only
+	// because biome_shadow_decal.go paints the SAME strength onto the
+	// structural floor around the patch, so both surfaces darken together.
+	if !strings.Contains(frag, "vec3 color = tc.rgb * clamp(lighting, 0.0, 1.0) * (1.0 - fakeShadowStrength);") {
+		t.Error("ground_frag.glsl's final color is no longer texture * scene lighting * fakeShadowStrength")
+	}
+	for _, banned := range []string{"noise3", "hash13", "bumpN", "float ao"} {
+		if strings.Contains(frag, banned) {
+			t.Errorf("ground_frag.glsl reintroduced %q — the patch must shade exactly like fragment.glsl", banned)
+		}
+	}
+
+	// And it must buy the full-cost lighting block: 5x5 PCF, point-light
+	// cubemaps, and the cascade cross-fade, so a shadow edge lands in the same
+	// place on the patch and on the floor. Asserted against the Go source
+	// rather than by calling biomeLightSnippet, which resolves shader paths
+	// relative to executablePath and so needs a running binary.
+	ground, err := os.ReadFile("biome_ground.go")
+	if err != nil {
+		t.Fatalf("read biome_ground.go: %v", err)
+	}
+	if !strings.Contains(string(ground), "biomeLightSnippet(2, true, true)") {
+		t.Error("the ground patch's fragment stage no longer takes pcf=2 + point shadows + cascade blend")
+	}
+	if !strings.Contains(readBiomeShader(t, "biome_light.glsl"), "#ifdef BIOME_LIGHT_CASCADE_BLEND") {
+		t.Error("biome_light.glsl no longer implements the cascade cross-fade")
+	}
+	// The scatter deliberately does NOT pay for the cross-fade: a blade or a
+	// pebble is too small to show the seam it hides.
+	grass, err := os.ReadFile("grass.go")
+	if err != nil {
+		t.Fatalf("read grass.go: %v", err)
+	}
+	if strings.Contains(string(grass), "biomeLightSnippet(1, true, true)") {
+		t.Error("the scatter should not enable the cascade cross-fade")
 	}
 }
 

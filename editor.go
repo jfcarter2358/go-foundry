@@ -310,10 +310,19 @@ func panelLeftEdgeX() int32 {
 	return int32(float32(WinWidth) - Editor.PanelWidth)
 }
 
-// panelHandleResize checks SDL mouse events for drag-resizing the side panel.
-// Returns true if the event was consumed by the resize handle.
+// panelHandleResize checks SDL mouse events for drag-resizing the main
+// window's side panel. Returns true if the event was consumed by the resize
+// handle.
 func panelHandleResize(event sdl.Event) bool {
-	edge := panelLeftEdgeX()
+	return panelHandleResizeAt(event, WinWidth)
+}
+
+// panelHandleResizeAt is panelHandleResize against a window of width viewW —
+// the popped-out 2D editor (editor_2d_window.go) hosts the same panel in a
+// window of its own size. Editor.PanelWidth is shared: the panel is the same
+// width wherever it is drawn, and only one window can be dragging it at once.
+func panelHandleResizeAt(event sdl.Event, viewW int32) bool {
+	edge := int32(float32(viewW) - Editor.PanelWidth)
 
 	switch t := event.(type) {
 	case sdl.MouseButtonEvent:
@@ -332,11 +341,11 @@ func panelHandleResize(event sdl.Event) bool {
 
 	case sdl.MouseMotionEvent:
 		if Editor.PanelDragging {
-			newWidth := float32(WinWidth) - float32(t.X) - 5
+			newWidth := float32(viewW) - float32(t.X) - 5
 			if newWidth < panelMinWidth {
 				newWidth = panelMinWidth
 			}
-			maxWidth := float32(WinWidth) - 20
+			maxWidth := float32(viewW) - 20
 			if newWidth > maxWidth {
 				newWidth = maxWidth
 			}
@@ -367,6 +376,9 @@ func EditorToggle() {
 		// Re-enable mouse lock for gameplay
 		SetMouseLock(true)
 
+		// The pop-out only makes sense while the editor is up.
+		CloseEditor2DWindow()
+
 		GravityEnabled = true
 		Editor.Active = false
 		Editor.Mode = ModeGame
@@ -393,6 +405,8 @@ func EditorToggle() {
 // EditorHandleEvent processes one SDL event for the editor.
 // Returns true if the editor consumed the event (game should ignore it).
 func EditorHandleEvent(event sdl.Event) bool {
+	editorSyncPoppedOutMode()
+
 	// Check panel resize before ImGui so the drag handle takes priority.
 	if panelHandleResize(event) {
 		return true
@@ -459,6 +473,11 @@ func EditorHandleEvent(event sdl.Event) bool {
 		case sdl.SCANCODE_TAB:
 			// Toggle 2D / 3D sub-mode (surface mode is separate)
 			if Editor.Mode == Mode3D {
+				if Editor2DPoppedOut() {
+					// The 2D view already has a window; the main one stays 3D.
+					editor2DWindow.Win.Raise()
+					return true
+				}
 				Editor.Mode = Mode2D
 				Editor.Pan2D = mgl32.Vec2{Cam.Position.X(), Cam.Position.Z()}
 			} else if Editor.Mode == Mode2D {
@@ -580,13 +599,7 @@ func EditorHandleEvent(event sdl.Event) bool {
 			return true
 		}
 		if Editor.Mode == Mode2D && !imgui.CurrentIO().WantCaptureMouse() {
-			Editor.Zoom2D *= float32(math.Pow(1.1, float64(t.Y)))
-			if Editor.Zoom2D < 2 {
-				Editor.Zoom2D = 2
-			}
-			if Editor.Zoom2D > 200 {
-				Editor.Zoom2D = 200
-			}
+			Editor2DZoom(t.Y)
 			return true
 		}
 	}
@@ -603,6 +616,13 @@ func EditorTick(keyStates []uint8) {
 
 	if imgui.CurrentIO().WantCaptureKeyboard() {
 		return // ImGui is capturing text input
+	}
+
+	// sdl.GetKeyboardState is global, not per-window: without this, typing in
+	// a secondary window (the texture editor, the popped-out 2D editor) would
+	// also fly the main window's camera.
+	if Window.GetFlags()&sdl.WINDOW_INPUT_FOCUS == 0 {
+		return
 	}
 
 	if Editor.Mode == Mode3D || Editor.Mode == ModeScenery {
@@ -662,6 +682,8 @@ func EditorTick(keyStates []uint8) {
 
 // EditorRender draws all editor overlays, then the ImGui UI.
 func EditorRender() {
+	editorSyncPoppedOutMode()
+
 	dt := DeltaTime
 
 	// --- 3D gizmos (drawn on top of world, depth-tested) ---

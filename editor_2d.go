@@ -42,7 +42,7 @@ func Editor2DRender() {
 	ortho := editor2DOrtho()
 
 	// Draw background grid before any geometry
-	drawEditorGrid(Editor.Pan2D, Editor.Zoom2D)
+	drawEditorGrid(editor2DView())
 
 	white := mgl32.Vec3{1, 1, 1}
 	cyan := mgl32.Vec3{0, 1, 1}
@@ -193,6 +193,9 @@ func Editor2DRender() {
 		}
 	}
 
+	// Objects the side panel can edit — entities, primitives, point lights.
+	Editor2DRenderObjects(lvl, ch)
+
 	// Biome sector layer (always visible, dim when not the active tool).
 	Editor2DRenderBiomeSectors(ch)
 
@@ -229,9 +232,13 @@ func Editor2DRenderLabels() {
 	}
 }
 
-// editor2DView returns the current 2D map's orthoView (see editor_orthoview.go).
+// editor2DView returns the current 2D map's orthoView (see
+// editor_orthoview.go), sized to whichever window the map is being drawn
+// into — the main window, or the popped-out 2D window when one is open (see
+// editor2DViewportSize in editor_2d_window.go).
 func editor2DView() orthoView {
-	return orthoView{pan: Editor.Pan2D, zoom: Editor.Zoom2D}
+	vw, vh := editor2DViewportSize()
+	return orthoView{pan: Editor.Pan2D, zoom: Editor.Zoom2D, viewW: vw, viewH: vh}
 }
 
 // editor2DOrtho returns the orthographic projection×view matrix for the 2D map.
@@ -299,6 +306,19 @@ func anyEdgeNear(ch *Chunk, wx, wz, threshold float32) bool {
 	return false
 }
 
+// Editor2DZoom applies one mouse-wheel notch of zoom to the 2D map, clamped
+// to a usable range. Shared by the main window's event handler (editor.go)
+// and the pop-out's (editor_2d_window.go).
+func Editor2DZoom(wheelY int32) {
+	Editor.Zoom2D *= float32(math.Pow(1.1, float64(wheelY)))
+	if Editor.Zoom2D < 2 {
+		Editor.Zoom2D = 2
+	}
+	if Editor.Zoom2D > 200 {
+		Editor.Zoom2D = 200
+	}
+}
+
 // editor2DCancelPendingPolygon abandons an in-progress ctrl+click outline: the
 // connect anchor and every edge drawn since the chain started. The chunk points
 // themselves survive — only the edges between them are dropped, so a wrong
@@ -319,6 +339,12 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 	mods := sdl.GetModState()
 	shiftHeld := mods&sdl.KMOD_SHIFT != 0
 	ctrlHeld := mods&sdl.KMOD_CTRL != 0
+
+	// An armed placement is an explicit request and outranks every other
+	// tool, including the biome brush.
+	if editor2DHandlePlacement(t, ch, wx, wz) {
+		return
+	}
 
 	// Biome brush intercepts clicks (except middle-mouse pan).
 	if biomeHandleClick(t) {
@@ -506,7 +532,14 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
-	// 3. Sector interior — point-in-polygon test
+	// 3. Objects — an entity or primitive sitting inside a sector is the more
+	// specific target, so it wins over selecting the sector itself. Vertices
+	// and edges still come first: they are the core 2D workflow.
+	if editor2DPickObject(lvl, ch, wx, wz) {
+		return
+	}
+
+	// 4. Sector interior — point-in-polygon test
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
 		if pointInPolygon(mgl32.Vec2{wx, wz}, SectorPoints(ch, s)) {
@@ -517,8 +550,10 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 		}
 	}
 
-	// 4. Click on empty space — deselect everything
+	// 5. Click on empty space — deselect everything
 	Editor.ActiveEdgeIdx = -1
+	Editor.ActiveEntityIdx = -1
+	Editor.ActivePrimitiveIdx = -1
 	clearVertexSelection()
 }
 
@@ -1727,12 +1762,14 @@ func approxEq2(a, b mgl32.Vec2) bool {
 
 // drawEditorGrid draws a background grid with lines every 5 units and
 // more distinctive lines at the x and z axes.
-func drawEditorGrid(pan mgl32.Vec2, zoom float32) {
+func drawEditorGrid(v orthoView) {
 	gridColor := mgl32.Vec3{0.2, 0.2, 0.2}
 	axisColor := mgl32.Vec3{0.4, 0.4, 0.4}
 
-	halfW := float32(WinWidth) / 2 / zoom
-	halfH := float32(WinHeight) / 2 / zoom
+	pan := v.pan
+	vw, vh := v.size()
+	halfW := vw / 2 / v.zoom
+	halfH := vh / 2 / v.zoom
 	minX := pan.X() - halfW
 	maxX := pan.X() + halfW
 	minZ := pan.Y() - halfH

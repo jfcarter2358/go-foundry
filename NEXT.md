@@ -24,38 +24,45 @@
 - [x] Optional FPS/position/debug/etc. display
 - [x] Sector/chunk culling for rendering
 - [x] UV editing
-
-## TODO
-
-- [ ] Scripting engine
-- [ ] Default entity definitions
-- [ ] Volumes in general
-- [ ] Gravity (volumes)
-- [ ] Script trigger volumes
-- [ ] Vehicles
-- [ ] UI elements
-- [ ] UI builder
-- [ ] Object collision physics
 - [x] Primitives (plane, square, etc.)
-- [ ] Sprites
-- [ ] Particles
-- [ ] Transparency in textures
 - [x] Textures/models/entities/etc. should be loaded from a directory traversal, not a hard-coded map
-- [ ] Model editor
-- [ ] Animations
-- [ ] Animation editor
-- [ ] Music
 - [x] Water
-- [ ] Volumetric displacement (e.g. sand, snow)
 - [x] Procedural detail
 - [x] Smooth shading (per-surface normal smoothing, including displaced detail)
 - [x] Should start on empty world
-- [ ] Brush settings should pop out into new windows and be separate from each other
-- [ ] Face mode where I can click on a face and move it, moving the vertices at the same time
-- [ ] Baked lighting
-- [ ] Water reflections
-- [ ] texture blending
-- [ ] Biome painting (e.g. prarie, forest, etc.)
 - [x] Detail shadow casting
-- [ ] Trees
+- [x] Multi-window mode
+
+## TODO
+
+### Editor
+
+- [/] 3D mode edge selection
+- [ ] Re-organize settings panel
+- [ ] Right click action menu
+- [ ] Model editor
+- [ ] Animation editor
+- [ ] UI builder
+- [ ] Default entity definitions
+- [ ] Default sector settings
+- [ ] Configurable editor keybindings
+
+### Engine
+
+- [/] Remove fake lighting
+- [ ] Models
+- [ ] Animations
 - [ ] Animated textures
+- [ ] Sprites
+- [ ] Particles
+- [ ] Texture transparency
+- [ ] Texture blending
+- [ ] Trees
+- [ ] Scripting engine
+- [ ] Volumes
+- [ ] Vehicles
+- [ ] Configurable keybindings
+- [ ] Object collision physics
+- [ ] Water reflections
+- [ ] Music and Sound Effects
+- [ ] Volumetric displacement (e.g. sand, snow)

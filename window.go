@@ -30,10 +30,25 @@ type UIWindow struct {
 	GL            sdl.GLContext
 	Ctx           *imgui.Context
 	VAO, VBO, EBO uint32
-	ID            uint32
-	W, H          int32
-	Draw          func() // per-frame UI body; called with this window's imgui context current
-	OnClose       func()
+	// GizmoVAO is this window's vertex array for the editor's line renderer
+	// (editor_gizmo.go). Like the imgui VAO above it can't be shared with the
+	// main context, so any window that draws gizmo lines binds this one
+	// instead — see gizmoVAOOverride.
+	GizmoVAO uint32
+	ID       uint32
+	W, H     int32
+	// ClearColor is the RGBA this window's framebuffer is cleared to each
+	// frame. Defaults to the editor's panel grey; the 2D editor window uses
+	// black so its map isn't drawn over a backdrop.
+	ClearColor  [4]float32
+	Draw        func()          // per-frame UI body; called with this window's imgui context current
+	HandleEvent func(sdl.Event) // optional: window-specific input, run after imgui sees the event
+	OnClose     func()
+	// CloseRequested asks for this window to be destroyed after the current
+	// frame. Set it instead of calling CloseUIWindow from inside Draw — the
+	// frame's imgui.Render still needs the context that CloseUIWindow tears
+	// down.
+	CloseRequested bool
 }
 
 // uiWindows holds every open secondary window, keyed by SDL window ID so
@@ -79,11 +94,16 @@ func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWind
 	io.SetIniFilename("")
 	mapImGuiKeys(io)
 
-	uw := &UIWindow{Win: win, GL: glCtx, Ctx: ctx, ID: id, W: w, H: h, Draw: draw, OnClose: onClose}
+	uw := &UIWindow{
+		Win: win, GL: glCtx, Ctx: ctx, ID: id, W: w, H: h,
+		ClearColor: [4]float32{0.15, 0.15, 0.17, 1.0},
+		Draw:       draw, OnClose: onClose,
+	}
 
 	gl.GenBuffers(1, &uw.VBO)
 	gl.GenBuffers(1, &uw.EBO)
 	gl.GenVertexArrays(1, &uw.VAO)
+	gl.GenVertexArrays(1, &uw.GizmoVAO)
 
 	uiWindows[uw.ID] = uw
 
@@ -116,6 +136,9 @@ func CloseUIWindow(w *UIWindow) {
 	if w.EBO != 0 {
 		gl.DeleteBuffers(1, &w.EBO)
 	}
+	if w.GizmoVAO != 0 {
+		gl.DeleteVertexArrays(1, &w.GizmoVAO)
+	}
 	w.Ctx.Destroy()
 	sdl.GLDeleteContext(w.GL)
 	w.Win.Destroy()
@@ -136,6 +159,7 @@ func RenderSecondaryWindows(dt float32) {
 	if len(uiWindows) == 0 {
 		return
 	}
+	var closing []*UIWindow
 	for _, w := range uiWindows {
 		w.Win.GLMakeCurrent(w.GL)
 		w.Ctx.SetCurrent()
@@ -143,21 +167,35 @@ func RenderSecondaryWindows(dt float32) {
 		ww, wh := w.Win.GetSize()
 		w.W, w.H = ww, wh
 		gl.Viewport(0, 0, ww, wh)
-		gl.ClearColor(0.15, 0.15, 0.17, 1.0)
+		gl.ClearColor(w.ClearColor[0], w.ClearColor[1], w.ClearColor[2], w.ClearColor[3])
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
 		uiWindowNewFrame(w, dt)
+		// Gizmo lines drawn by this window's Draw go through its own VAO.
+		gizmoVAOOverride = w.GizmoVAO
 		if w.Draw != nil {
 			w.Draw()
 		}
+		gizmoVAOOverride = 0
 		imgui.Render()
 		imguiRenderDrawData(imgui.RenderedDrawData(), w.VAO, w.VBO, w.EBO)
 
 		w.Win.GLSwap()
+
+		if w.CloseRequested {
+			closing = append(closing, w)
+		}
 	}
 
 	Window.GLMakeCurrent(Context)
 	imguiContext.SetCurrent()
+
+	// Deferred closes happen only now that every context has finished its
+	// frame — CloseUIWindow destroys the imgui context the loop above was
+	// still rendering with.
+	for _, w := range closing {
+		CloseUIWindow(w)
+	}
 }
 
 // uiWindowNewFrame feeds SDL state into w's imgui IO. Uses the global mouse
@@ -195,6 +233,11 @@ func RouteWindowEvent(event sdl.Event, mainWindowID uint32) bool {
 	w.Win.GLMakeCurrent(w.GL)
 	w.Ctx.SetCurrent()
 	ImGuiProcessEvent(event)
+	if w.HandleEvent != nil {
+		// Runs with w's imgui context current, so WantCaptureMouse/Keyboard
+		// checks inside it refer to this window's UI, not the main one's.
+		w.HandleEvent(event)
+	}
 	Window.GLMakeCurrent(Context)
 	imguiContext.SetCurrent()
 	return true

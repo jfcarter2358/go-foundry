@@ -622,6 +622,10 @@ func EditorDrawUI() {
 	// Mode toggle buttons — snapshot mode before rendering so Push/Pop stay matched
 	currentMode := Editor.Mode
 
+	// Remember the toolbar's first line so the Exit button can be placed on it
+	// no matter where the cursor ends up after the mode-specific widgets.
+	toolbarY := imgui.CursorPosY()
+
 	if currentMode == Mode3D {
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
 	}
@@ -637,9 +641,31 @@ func EditorDrawUI() {
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
 	}
 	if imgui.Button("2D Mode [Tab]") && Editor.Mode != Mode2D {
-		Editor.Mode = Mode2D
+		if Editor2DPoppedOut() {
+			// The 2D view has its own window; raise it rather than taking
+			// this one over with a second copy.
+			OpenEditor2DWindow()
+		} else {
+			Editor.Mode = Mode2D
+		}
 	}
 	if currentMode == Mode2D {
+		imgui.PopStyleColor()
+	}
+
+	imgui.SameLine()
+	// Snapshot before the button: clicking it opens the window, so re-testing
+	// Editor2DPoppedOut() afterwards would pop a color that was never pushed
+	// and unbalance imgui's global style stack (it asserts on the next
+	// push/pop anywhere). Same reason drawToolsPanel latches its selection.
+	poppedOut := Editor2DPoppedOut()
+	if poppedOut {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
+	}
+	if imgui.Button("2D Window") {
+		OpenEditor2DWindow()
+	}
+	if poppedOut {
 		imgui.PopStyleColor()
 	}
 
@@ -906,6 +932,16 @@ func EditorDrawUI() {
 
 	} // end if currentMode == ModeScenery else
 
+	// ---- Exit button (top-right of the toolbar) ----
+	const exitBtnWidth = 60
+	imgui.SetCursorPos(imgui.Vec2{X: float32(WinWidth) - exitBtnWidth - 8, Y: toolbarY})
+	imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.6, Y: 0.15, Z: 0.15, W: 1})
+	imgui.PushStyleColor(imgui.StyleColorButtonHovered, imgui.Vec4{X: 0.8, Y: 0.2, Z: 0.2, W: 1})
+	if imgui.ButtonV("Exit", imgui.Vec2{X: exitBtnWidth, Y: 0}) {
+		Running = false
+	}
+	imgui.PopStyleColorV(2)
+
 	imgui.End()
 
 	// ---- Mode-specific side panel ----
@@ -915,6 +951,8 @@ func EditorDrawUI() {
 		EditorDirLightIndicator()
 	} else if Editor.Mode == Mode2D {
 		Editor2DPanel()
+		// After the panel — it sets the selection the indicator reads.
+		EditorDirLightIndicator()
 	} else if Editor.Mode == ModeSurface2D {
 		Surface2DPanel()
 	} else if Editor.Mode == ModeScenery {
@@ -925,16 +963,29 @@ func EditorDrawUI() {
 // Editor2DPanel draws the 2D mode side panel.
 func Editor2DPanel() {
 	lvl := Editor.level
-	if lvl == nil || Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
+	if lvl == nil {
 		return
 	}
-	ch := &lvl.Chunks[Editor.ActiveChunkIdx]
+	// The chunk-scoped sections need an active chunk, but the chunk list and
+	// the level-wide sections (catalogs, lights) must stay reachable without
+	// one — otherwise a level with no chunk selected offers no way back.
+	var ch *Chunk
+	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
+		ch = &lvl.Chunks[Editor.ActiveChunkIdx]
+	}
 
-	imgui.SetNextWindowPos(imgui.Vec2{X: float32(WinWidth) - Editor.PanelWidth, Y: 28})
-	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: float32(WinHeight) - 28})
+	// Sized to whichever window is hosting the 2D view — the main one, or the
+	// pop-out (editor_2d_window.go).
+	viewW, viewH := editor2DViewportSize()
+	imgui.SetNextWindowPos(imgui.Vec2{X: viewW - Editor.PanelWidth, Y: 28})
+	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: viewH - 28})
 	imgui.BeginV("2D Sector Editor", nil, imgui.WindowFlagsNoMove|imgui.WindowFlagsNoResize)
 
-	imgui.Text(fmt.Sprintf("Chunk: %s", ch.ID))
+	if ch != nil {
+		imgui.Text(fmt.Sprintf("Chunk: %s", ch.ID))
+	} else {
+		imgui.Text("Chunk: (none selected)")
+	}
 	imgui.Text(fmt.Sprintf("Zoom: %.0f px/unit", Editor.Zoom2D))
 	imgui.Text("Scroll: zoom | MMB drag: pan | Shift+click: add vertex")
 	imgui.Checkbox("Show All Point Boxes", &Editor.ShowPointSelectRadius)
@@ -943,6 +994,41 @@ func Editor2DPanel() {
 	imgui.Separator()
 	editorGridSettings()
 
+	// ---- Object catalogs ----
+	imgui.Separator()
+	editorEntityCatalogSection()
+	editorPrimitiveCatalogSection()
+	editorSceneryImportSection()
+
+	// ---- Selected object properties ----
+	editorPrimitivePropertiesSection(lvl)
+	editorEntityPropertiesSection(lvl)
+
+	if ch != nil {
+		editor2DSectorSections(ch)
+
+		// ---- Biome painting ----
+		biomePanelSection()
+	}
+
+	// ---- Chunk list / properties ----
+	editorChunkListSection(lvl)
+	editorChunkPropertiesSection(lvl)
+
+	// ---- Light editor ----
+	imgui.Separator()
+	EditorLightPanel()
+
+	// Every section has had its chance to open and scroll itself.
+	Editor.PanelFocus = panelFocusNone
+
+	imgui.End()
+	editorChunkPopups(lvl)
+}
+
+// editor2DSectorSections draws the sector list and the selected sector's
+// properties, vertex, and edge editors for the active chunk.
+func editor2DSectorSections(ch *Chunk) {
 	// ---- Sector list ----
 	imgui.Separator()
 	if imgui.CollapsingHeader(fmt.Sprintf("Sectors (%d)", len(ch.Sectors))) {
@@ -995,17 +1081,32 @@ func Editor2DPanel() {
 				imgui.TreePop()
 			}
 
-			// Floor/ceiling surface editors + extrusion + terrain panels
+			// Floor/ceiling surface editors + UV, extrusion, terrain, smooth
+			// and detail panels — the same set the 3D panel offers.
 			if imgui.Button("Edit Floor Surface##floorSurf2d") {
 				EnterSurface2D("floor")
 			}
+			if editorUVControls("Floor2D", &s.Floor.UVOffset, &s.Floor.UVScale, &s.Floor.UVRotation) {
+				_ = s.Load(SectorPoints(ch, s))
+			}
 			editorSurfaceExtrusionPanel(ch, s, "Floor2D", &s.Floor.Extrusions)
 			editorTerrainPanel(ch, s, "Floor2D", &s.Floor.Terrain, &s.Floor.TerrainPoints)
+			if editorSmoothPanel("Floor2D", &s.Floor.Smooth, &s.Floor.SmoothAngle) {
+				_ = s.Load(SectorPoints(ch, s))
+			}
+			editorDetailPanel("Floor2D", &s.Floor.Detail)
 			if imgui.Button("Edit Ceiling Surface##ceilSurf2d") {
 				EnterSurface2D("ceiling")
 			}
+			if editorUVControls("Ceil2D", &s.Ceiling.UVOffset, &s.Ceiling.UVScale, &s.Ceiling.UVRotation) {
+				_ = s.Load(SectorPoints(ch, s))
+			}
 			editorSurfaceExtrusionPanel(ch, s, "Ceil2D", &s.Ceiling.Extrusions)
 			editorTerrainPanel(ch, s, "Ceil2D", &s.Ceiling.Terrain, &s.Ceiling.TerrainPoints)
+			if editorSmoothPanel("Ceil2D", &s.Ceiling.Smooth, &s.Ceiling.SmoothAngle) {
+				_ = s.Load(SectorPoints(ch, s))
+			}
+			editorDetailPanel("Ceil2D", &s.Ceiling.Detail)
 		}
 
 		// ---- Floor/Ceiling vertex edit toggle ----
@@ -1073,11 +1174,6 @@ func Editor2DPanel() {
 			editorEdgePanel(ch, s)
 		}
 	}
-
-	// ---- Biome painting ----
-	biomePanelSection()
-
-	imgui.End()
 }
 
 // editorEdgePanel draws the property editor for the currently selected edge.
@@ -1088,18 +1184,7 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 	imgui.Text(fmt.Sprintf("Edge: %s #%d", kind, idx))
 
 	// Kind toggle
-	kindStr := kind
-	if imgui.BeginCombo("Kind##ek", kindStr) {
-		if imgui.SelectableV("wall", kindStr == "wall", 0, imgui.Vec2{}) {
-			convertEdge(ch, s, kind, idx, "wall")
-			Editor.ActiveEdgeKind = "wall"
-		}
-		if imgui.SelectableV("portal", kindStr == "portal", 0, imgui.Vec2{}) {
-			convertEdge(ch, s, kind, idx, "portal")
-			Editor.ActiveEdgeKind = "portal"
-		}
-		imgui.EndCombo()
-	}
+	editorEdgeKindCombo(ch, s, "2d")
 
 	changed := false
 
@@ -1108,7 +1193,9 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 		changed = textureCombo("Texture##wt", &w.Texture, false) || changed
 		changed = imgui.Checkbox("Collision##wc", &w.Collision) || changed
 		changed = imgui.Checkbox("Visible##wv", &w.Visible) || changed
-		imgui.Checkbox("Double Sided##wds", &w.DoubleSided)
+		// The wall mesh bakes DoubleSided in, so this needs the rebuild below —
+		// unlike floor/ceiling, which read the flag at draw time.
+		changed = imgui.Checkbox("Double Sided##wds", &w.DoubleSided) || changed
 		changed = editorDragFloat("Alpha##wa", &w.Alpha, 0, 1, "%.2f") || changed
 		if changed {
 			_ = s.Load(SectorPoints(ch, s))
@@ -1118,8 +1205,16 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 		if imgui.Button("Edit Wall Surface##wallSurf2d") {
 			EnterSurface2D("wall")
 		}
+		if editorUVControls("Wall2D", &w.UVOffset, &w.UVScale, &w.UVRotation) {
+			_ = s.Load(SectorPoints(ch, s))
+		}
 		editorExtrusionPanel(ch, s, w)
 		editorTerrainPanel(ch, s, "Wall2D", &w.Terrain, &w.TerrainPoints)
+		// Smooth shading (rebuilds the wall: normals are made at upload)
+		if editorSmoothPanel("Wall2D", &w.Smooth, &w.SmoothAngle) {
+			_ = s.Load(SectorPoints(ch, s))
+		}
+		editorDetailPanel("Wall2D", &w.Detail)
 	} else if kind == "portal" && idx < len(s.Portals) {
 		p := &s.Portals[idx]
 		changed = imgui.InputText("To Sector##pts", &p.ToSector) || changed
@@ -1128,7 +1223,8 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 			changed = textureCombo("Gap Texture##pgt", &p.GapTexture, true) || changed
 		}
 		changed = imgui.Checkbox("Visible##pv", &p.Visible) || changed
-		imgui.Checkbox("Double Sided##pds", &p.DoubleSided)
+		// Same as walls: the gap quad bakes DoubleSided in.
+		changed = imgui.Checkbox("Double Sided##pds", &p.DoubleSided) || changed
 		changed = editorDragFloat("Alpha##pa", &p.Alpha, 0, 1, "%.2f") || changed
 	}
 

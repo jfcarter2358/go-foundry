@@ -21,6 +21,23 @@ import (
 var GizmoProgram uint32
 var gizmoVAO, gizmoVBO uint32
 
+// gizmoVAOOverride, when non-zero, is the vertex array GizmoFlush binds
+// instead of gizmoVAO. VAOs are never shared between GL contexts, so a
+// secondary window that draws gizmo lines (the popped-out 2D editor) supplies
+// its own for the duration of its frame — see RenderSecondaryWindows
+// (window.go). The VBO and the shader program are shared objects and need no
+// such treatment; GizmoFlush re-specifies the attribute pointers on every
+// call, so a bare VAO works.
+var gizmoVAOOverride uint32
+
+// gizmoCurrentVAO returns the vertex array to draw this flush through.
+func gizmoCurrentVAO() uint32 {
+	if gizmoVAOOverride != 0 {
+		return gizmoVAOOverride
+	}
+	return gizmoVAO
+}
+
 // gizmoBuf accumulates line endpoints each frame; flushed by GizmoFlush.
 var gizmoBuf []float32
 
@@ -168,7 +185,7 @@ func GizmoFlush(projView mgl32.Mat4) {
 	gl.UniformMatrix4fv(projLoc, 1, false, &projView[0])
 	gl.UniformMatrix4fv(viewLoc, 1, false, &ident[0])
 
-	gl.BindVertexArray(gizmoVAO)
+	gl.BindVertexArray(gizmoCurrentVAO())
 	gl.BindBuffer(gl.ARRAY_BUFFER, gizmoVBO)
 	gl.BufferData(gl.ARRAY_BUFFER, len(gizmoBuf)*4, gl.Ptr(gizmoBuf), gl.STREAM_DRAW)
 

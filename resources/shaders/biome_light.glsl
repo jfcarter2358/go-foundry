@@ -10,7 +10,7 @@
 // There is no biome-specific light upload path to keep in sync with the main
 // shader's — adding a light type to the scene shader is enough.
 //
-// What differs from fragment.glsl is the COST, tuned per call site by two
+// What differs from fragment.glsl is the COST, tuned per call site by three
 // defines the compile helper sets:
 //
 //   BIOME_LIGHT_PCF   0 = a single tap, 1 = 3x3, 2 = 5x5 (fragment.glsl's own
@@ -26,14 +26,20 @@
 //                     for the vertex stage: foliage takes point-light diffuse
 //                     but not point-light shadows.
 //
-// SHADOW_CASCADES and SHADOW_FADE_FRACTION must match ShadowCascades and
-// shadowFadeFraction in shadow.go, exactly as fragment.glsl's copies do.
+//   BIOME_LIGHT_CASCADE_BLEND  gates fragment.glsl's cascade cross-fade band.
+//                     Off for the scatter: it costs a second full cascade
+//                     lookup per sample to hide a resolution seam that a blade
+//                     or a pebble is too small to show. ON for the ground
+//                     patch, which is a floor-sized surface that INTERSECTS the
+//                     structural floor (a Water lakebed dips below it, a dune
+//                     rises through it) — the two are visible pixel against
+//                     pixel there, so a shadow edge that steps at a cascade
+//                     split on one and cross-fades on the other reads as two
+//                     differently-lit floors, not as one softened seam.
 //
-// fragment.glsl's cascade cross-fade band (SHADOW_CASCADE_BLEND) is
-// deliberately absent here: it costs a second full cascade lookup per sample
-// to hide a resolution seam that a blade or a pebble is too small to show. The
-// ground patch would show it, but it sits on top of a structural floor that
-// draws the blended version underneath, so the seam is already softened there.
+// SHADOW_CASCADES, SHADOW_CASCADE_BLEND and SHADOW_FADE_FRACTION must match
+// ShadowCascades, ShadowCascadeBlend and shadowFadeFraction in shadow.go,
+// exactly as fragment.glsl's copies do.
 
 #define SHADOW_CASCADES       3
 #define SHADOW_FADE_FRACTION  0.15
@@ -44,6 +50,11 @@
 #ifndef BIOME_LIGHT_PCF
 #define BIOME_LIGHT_PCF 0
 #endif
+
+// Width of the cross-fade band at the tail of a cascade, as a fraction of that
+// cascade's own span. Must match ShadowCascadeBlend in shadow.go, exactly as
+// fragment.glsl's copy does. Only read when BIOME_LIGHT_CASCADE_BLEND is set.
+#define SHADOW_CASCADE_BLEND  0.12
 
 // World->view matrix, used only to recover the view-axis distance that picks a
 // cascade. Matches vertex.glsl's fragViewDepth (-(camera * worldPos).z) so the
@@ -129,8 +140,9 @@ float biomeSampleCascade(int matIdx, int layer, vec3 worldPos, vec3 normal, vec3
 #endif
 }
 
-// Cascaded directional shadow lookup: tightest cascade covering the point, no
-// cross-fade (see the header note), faded out as the shadow range runs out.
+// Cascaded directional shadow lookup: tightest cascade covering the point,
+// cross-faded into the next one at the split if BIOME_LIGHT_CASCADE_BLEND is
+// set (see the header note), faded out as the shadow range runs out.
 float biomeDirShadow(int lightIdx, vec3 worldPos, float viewDepth, vec3 normal, vec3 lightDir) {
     int layerBase = dirLightShadowLayer[lightIdx];
     if (layerBase < 0) {
@@ -161,6 +173,22 @@ float biomeDirShadow(int lightIdx, vec3 worldPos, float viewDepth, vec3 normal, 
             return 0.0;
         }
     }
+
+#ifdef BIOME_LIGHT_CASCADE_BLEND
+    // Cross-fade over the tail of this cascade so the jump in texel density
+    // reads as a softening rather than a seam — fragment.glsl's calcDirShadow
+    // does exactly this, and the ground patch has to agree with it where the
+    // two surfaces meet.
+    float prev = (c == 0) ? 0.0 : cascadeSplit[c - 1];
+    float span = max(cascadeSplit[c] - prev, 1e-4);
+    float t = (viewDepth - prev) / span;
+    if (c + 1 < SHADOW_CASCADES && t > 1.0 - SHADOW_CASCADE_BLEND) {
+        float next = biomeSampleCascade(matBase + c + 1, layerBase + c + 1, worldPos, normal, lightDir);
+        if (next >= 0.0) {
+            shadow = mix(shadow, next, (t - (1.0 - SHADOW_CASCADE_BLEND)) / SHADOW_CASCADE_BLEND);
+        }
+    }
+#endif
 
     float maxDist = cascadeSplit[SHADOW_CASCADES - 1];
     float fadeBegin = maxDist * (1.0 - SHADOW_FADE_FRACTION);

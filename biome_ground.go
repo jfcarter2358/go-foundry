@@ -14,8 +14,11 @@ package main
 // grass/rock/wildflower/cattail (just enough to read as uneven ground instead
 // of a perfectly flat plane), a lot for Sand (dune mounds — the "volumetric
 // displacement" sand asked for), and gently for Water's lakebed. It's drawn
-// textured (dirt/rock/sand per kind, see groundTextureFor) with a cheap
-// procedural bump in the fragment shader standing in for a real normal map.
+// textured (dirt/rock/sand per kind, see groundTextureFor) and lit by exactly
+// the scene lighting model the structural floor takes, nothing added on top:
+// the patch INTERSECTS that floor wherever the displacement crosses it, and any
+// extra shading term of its own shows up there as two differently-lit floors
+// meeting. See the header of ground_frag.glsl.
 //
 // Self-contained GL program, like biomeRenderer in grass.go — never touches
 // the main game shader's state.
@@ -75,16 +78,17 @@ var groundPatches groundRenderer
 //
 // The patch is an ordinary opaque surface with an ordinary fragment count, so
 // it takes the full-cost lighting block: 5x5 cascade PCF matching
-// fragment.glsl's own filter, and point-light cubemap shadows. Anything cheaper
-// shows as a seam, since the patch's shadows have to line up with those on the
-// structural floor it drapes over. See biomeLightSnippet.
+// fragment.glsl's own filter, the cascade cross-fade band, and point-light
+// cubemap shadows. Anything cheaper shows as a seam, since the patch's shadows
+// have to line up with those on the structural floor it drapes over — and
+// crosses. See biomeLightSnippet.
 func GroundInit() {
 	// The vertex stage takes the cheapest variant of the block — all it needs
 	// from it is biomeViewDepth; declaring the cubemap samplers there too would
 	// just hand the linker vertex texture units it has no use for.
 	groundPatches.program = mustBiomeProgram(
 		biomeShaderPath("ground_vert.glsl"), biomeShaderPath("ground_frag.glsl"),
-		biomeLightSnippet(0, false), biomeLightSnippet(2, true))
+		biomeLightSnippet(0, false, false), biomeLightSnippet(2, true, true))
 
 	p := groundPatches.program
 	groundPatches.uProjView = gl.GetUniformLocation(p, gl.Str("projView\x00"))
@@ -496,8 +500,7 @@ func ensureGroundPatch(level *Level, s *BiomeSector) groundEntry {
 // is not itself drawn into the shadow maps — it is a thin drape over a
 // structural floor that already casts, and giving two near-coincident surfaces
 // to the same depth map buys acne rather than shadows. (Sand is the one kind
-// whose dunes rise far enough to make that arguable; they self-shadow through
-// the bump term instead.)
+// whose dunes rise far enough to make that arguable.)
 func RenderBiomeGround(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame ShadowFrame) {
 	if !groundPatches.initialized || level == nil {
 		return

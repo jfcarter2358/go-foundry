@@ -16,7 +16,7 @@ package main
 // UploadPointShadowUniformsTo (shadow.go) drive the biome programs unchanged.
 // Adding a light type to the scene shader reaches the biome passes for free.
 //
-// What is tuned per call site is the COST, via the two defines below — see the
+// What is tuned per call site is the COST, via the three defines below — see the
 // header of biome_light.glsl for what each one buys.
 
 import (
@@ -168,10 +168,20 @@ func biomeShaderPath(name string) string {
 //
 // pointShadows gates the 20-tap cubemap lookup, which foliage skips: it still
 // takes point-light diffuse, just not point-light shadows.
-func biomeLightSnippet(pcf int, pointShadows bool) string {
+//
+// cascadeBlend gates fragment.glsl's cascade cross-fade band, which costs a
+// second cascade lookup in the tail of each split. Only the ground patch buys
+// it, and it buys it for the same reason it buys the 5x5 filter: it is a
+// floor-sized surface that intersects the structural floor, so anywhere the
+// two are visible together a shadow edge has to land in the same place on
+// both. A blade or a pebble is too small to show the seam.
+func biomeLightSnippet(pcf int, pointShadows, cascadeBlend bool) string {
 	src := fmt.Sprintf("#define BIOME_LIGHT_PCF %d\n", pcf)
 	if pointShadows {
 		src += "#define BIOME_LIGHT_POINT_SHADOWS 1\n"
+	}
+	if cascadeBlend {
+		src += "#define BIOME_LIGHT_CASCADE_BLEND 1\n"
 	}
 	return src + mustReadShader(biomeShaderPath("biome_light.glsl"))
 }

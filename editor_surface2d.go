@@ -202,7 +202,7 @@ func Surface2DRender() {
 	ortho := surfaceOrtho()
 
 	// Draw background grid before any geometry
-	drawEditorGrid(Editor.SurfacePan, Editor.SurfaceZoom)
+	drawEditorGrid(surfaceView())
 
 	white := mgl32.Vec3{1, 1, 1}
 	cyan := mgl32.Vec3{0, 1, 1}

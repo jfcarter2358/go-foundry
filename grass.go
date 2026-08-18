@@ -217,7 +217,7 @@ func GrassInit() {
 	// fragment.glsl's own per-pixel filter.
 	biomes.color = mk(mustBiomeProgram(
 		biomeShaderPath("biome_vert.glsl"), biomeShaderPath("biome_frag.glsl"),
-		scatShared+"\n"+biomeLightSnippet(1, false), biomeLightSnippet(1, true)))
+		scatShared+"\n"+biomeLightSnippet(1, false, false), biomeLightSnippet(1, true, false)))
 
 	// Depth passes. Placement only — the depth-only fragment stages need no
 	// lighting block at all.
