@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
@@ -162,4 +163,31 @@ func UpdateTextureFromRGBA(name string, img *image.RGBA) error {
 // on every use, so a single insert is all requirement 7 needs.
 func RegisterTexture(name string) {
 	textureNames[name] = texturesDirName + "/" + name + ".png"
+}
+
+// textureNames maps logical texture names to paths relative to executablePath.
+// Populated at startup by ScanTextures.
+var textureNames map[string]string
+
+// ScanTextures walks texturesDir and returns a map from logical name
+// (filename without extension) to the relative path "textures/<file>".
+func ScanTextures(texturesDir string) map[string]string {
+	result := make(map[string]string)
+	entries, err := os.ReadDir(texturesDir)
+	if err != nil {
+		log.Printf("WARNING: could not scan textures directory %s: %v", texturesDir, err)
+		return result
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".png") {
+			continue
+		}
+		logical := strings.TrimSuffix(name, filepath.Ext(name))
+		result[logical] = "textures/" + name
+	}
+	return result
 }

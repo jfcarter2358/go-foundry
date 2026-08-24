@@ -1,9 +1,13 @@
 package main
 
-// editor_gizmo.go — flat-color line/wireframe rendering for the level editor.
+// gizmo.go — flat-color line/wireframe rendering.
 //
-// Uses GizmoProgram (separate from the textured game shader) so editor
-// overlays never corrupt game rendering state.
+// Uses GizmoProgram (separate from the textured game shader) so overlays never
+// corrupt game rendering state.
+//
+// This is a renderer, not an editor: the editor is its heaviest caller, but the
+// biome scatter, the volume overlay and the multi-window plumbing draw through
+// it too, so it sits below all of them rather than inside the editor cluster.
 //
 // Vertex format: [x, y, z, r, g, b]  (6 floats per vertex, no indices)
 

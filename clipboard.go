@@ -1,6 +1,6 @@
 package main
 
-// editor_clipboard.go — the system clipboard, handed to every ImGui context.
+// clipboard.go — the system clipboard, handed to every ImGui context.
 //
 // ImGui ships a fallback clipboard, but it is a buffer inside the process: with
 // it, Ctrl+C in the script editor and Ctrl+V in a browser have nothing to do

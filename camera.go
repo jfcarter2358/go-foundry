@@ -90,3 +90,29 @@ func MoveCamera(f, u, r float32) {
 	delta := forward.Mul(f).Add(WorldUp.Mul(u)).Add(right.Mul(r))
 	Cam.Position = Cam.Position.Add(delta)
 }
+
+// updateCamDirection and updateCamMatrix recompute the camera basis and upload
+// the view matrix. They live here rather than with the editor toggle that first
+// needed them: the spawn-point preview and the 3D fly camera call them too.
+// ---------- camera helpers used by editor toggle ----------
+
+func updateCamDirection() {
+	yaw64 := float64(Cam.Yaw)
+	pitch64 := float64(Cam.Pitch)
+	Cam.Direction = mgl32.Vec3{
+		float32(math.Cos(yaw64) * math.Cos(pitch64)),
+		float32(math.Sin(pitch64)),
+		float32(math.Sin(yaw64) * math.Cos(pitch64)),
+	}
+}
+
+func updateCamMatrix() {
+	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), mgl32.Vec3{0, 1, 0})
+	if Program == 0 {
+		// No world shader, so nowhere to upload to. Only a headless test gets
+		// here — a GL call with no context current segfaults in the driver
+		// rather than returning an error, so the guard has to be on this side.
+		return
+	}
+	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+}

@@ -117,33 +117,6 @@ func EditorRedo() {
 
 // restoreLevelSnapshot rebuilds runtime level state from raw and resets
 // editor selection/drag state so stale indices can't crash the UI.
-// applyRawLevel rebuilds lvl from a raw snapshot, in place.
-//
-// Split out of restoreLevelSnapshot because three different things need exactly
-// this and nothing else: undo, redo, and the end of a play session
-// (script_play.go). The parts they do *not* share — resetting the editor's
-// selection, and moving the player to the spawn — are the caller's to decide.
-func applyRawLevel(raw RawLevel, lvl *Level) error {
-	newLevel, err := rawToLevel(raw)
-	if err != nil {
-		return err
-	}
-	// Built before the swap so a failed rebuild leaves the current level intact,
-	// released after it so the outgoing entities' GPU buffers do not leak — see
-	// EditorLoadLevel's note.
-	DeleteEntities(lvl)
-	DeleteVolumes(lvl)
-	*lvl = newLevel
-
-	UploadLights(lvl.Lights)
-	LoadVolumes(lvl)
-
-	// Every ref a script holds now points at an object that has been
-	// re-instantiated, so anything the runtime remembered about them is stale.
-	ScriptRuntimeLoad(lvl)
-	return nil
-}
-
 // editorResetSelectionState clears every selection, drag and mode that names
 // something by index. A snapshot swap invalidates all of them at once.
 func editorResetSelectionState() {

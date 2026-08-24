@@ -54,23 +54,27 @@ func PlaySessionMarkDirty() {
 // PlaySessionDirty reports whether the current play session has changed anything.
 func PlaySessionDirty() bool { return playSession.valid && playSession.dirty }
 
-// PlaySessionEnd restores the authored level, if a script changed it.
+// PlaySessionEnd restores the authored level, if a script changed it, and
+// reports whether it actually did.
 //
 // It deliberately does not call ApplySpawnPoint: leaving play must put the
-// *level* back, not move the editor camera to the spawn.
-func PlaySessionEnd(lvl *Level) {
+// *level* back, not move the editor camera to the spawn. Nor does it clear the
+// editor's selection — a restore invalidates every index-based selection, but
+// saying so is the caller's job, because this file sits below the editor and
+// must not reach up into it.
+func PlaySessionEnd(lvl *Level) (restored bool) {
 	defer func() {
 		playSession.valid = false
 		playSession.dirty = false
 		playSession.authored = RawLevel{}
 	}()
 	if lvl == nil || !playSession.valid || !playSession.dirty {
-		return
+		return false
 	}
 	if err := applyRawLevel(playSession.authored, lvl); err != nil {
 		ScriptLog.Errorf("", "could not restore the level after play: %v", err)
-		return
+		return false
 	}
-	editorResetSelectionState()
 	ScriptLog.Infof("", "restored the level after play; script changes were discarded")
+	return true
 }

@@ -1,6 +1,6 @@
 package main
 
-// editor_resync.go — keeping caches derived from structural geometry in step
+// level_resync.go — keeping caches derived from structural geometry in step
 // with edits to that geometry.
 //
 // A biome sector is a world-space polygon that drapes over whatever floor
@@ -57,8 +57,12 @@ func markBiomesDirtyOverBox(ch *Chunk, lo, hi mgl32.Vec2) {
 // whichever chunk they were painted in, which need not be the chunk holding the
 // floor they sit over. Outside the editor there is no level to scan and the
 // edited chunk is all there is to go on — nothing edits geometry there anyway.
+//
+// The level arrives through CurrentLevel (level_context.go) rather than by
+// parameter: every caller in the rebuild chain would otherwise have to thread a
+// *Level it does not itself use.
 func forEachBiomeSector(ch *Chunk, fn func(bs *BiomeSector)) {
-	if lvl := Editor.level; lvl != nil {
+	if lvl := CurrentLevel(); lvl != nil {
 		for ci := range lvl.Chunks {
 			c := &lvl.Chunks[ci]
 			for i := range c.BiomeSectors {

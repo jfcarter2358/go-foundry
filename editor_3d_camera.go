@@ -324,23 +324,6 @@ func editorSelectionBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 	return mgl32.Vec3{}, mgl32.Vec3{}, false
 }
 
-// vecMin and vecMax are the component-wise pair used to grow an AABB.
-func vecMin(a, b mgl32.Vec3) mgl32.Vec3 {
-	return mgl32.Vec3{
-		float32(math.Min(float64(a.X()), float64(b.X()))),
-		float32(math.Min(float64(a.Y()), float64(b.Y()))),
-		float32(math.Min(float64(a.Z()), float64(b.Z()))),
-	}
-}
-
-func vecMax(a, b mgl32.Vec3) mgl32.Vec3 {
-	return mgl32.Vec3{
-		float32(math.Max(float64(a.X()), float64(b.X()))),
-		float32(math.Max(float64(a.Y()), float64(b.Y()))),
-		float32(math.Max(float64(a.Z()), float64(b.Z()))),
-	}
-}
-
 // editorCameraLabel names the camera toggle by the mode it is in, matching the
 // model editor's button.
 func editorCameraLabel() string {

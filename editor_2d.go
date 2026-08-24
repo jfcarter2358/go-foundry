@@ -849,22 +849,6 @@ func splitTerrainPointsAtU(pts []TerrainPoint, splitU float32) (first, second []
 	return first, second
 }
 
-// edgeKindAndIndex returns the edge type and its index within Walls or Portals
-// for polygon edge ei, using EdgeKinds for reliable mixed-type lookup.
-func edgeKindAndIndex(s *Sector, ei int) (string, int) {
-	if ei < 0 || ei >= len(s.EdgeKinds) {
-		return "wall", 0
-	}
-	kind := s.EdgeKinds[ei]
-	idx := 0
-	for i := 0; i < ei; i++ {
-		if i < len(s.EdgeKinds) && s.EdgeKinds[i] == kind {
-			idx++
-		}
-	}
-	return kind, idx
-}
-
 // sectorVertexPos returns the position within s.PointIndices that holds chunk point index pi, or -1.
 func sectorVertexPos(s *Sector, pi int) int {
 	for i, idx := range s.PointIndices {
@@ -1689,12 +1673,6 @@ func dist2D(ax, ay, bx, by float32) float32 {
 	dx := ax - bx
 	dy := ay - by
 	return float32(math.Sqrt(float64(dx*dx + dy*dy)))
-}
-
-func approxEq2(a, b mgl32.Vec2) bool {
-	const eps = 0.001
-	return math.Abs(float64(a.X()-b.X())) < eps &&
-		math.Abs(float64(a.Y()-b.Y())) < eps
 }
 
 // drawEditorGrid draws a background grid with lines every 5 units and

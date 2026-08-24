@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -25,33 +24,6 @@ func init() {
 	runtime.LockOSThread()
 }
 
-// textureNames maps logical texture names to paths relative to executablePath.
-// Populated at startup by ScanTextures.
-var textureNames map[string]string
-
-// ScanTextures walks texturesDir and returns a map from logical name
-// (filename without extension) to the relative path "textures/<file>".
-func ScanTextures(texturesDir string) map[string]string {
-	result := make(map[string]string)
-	entries, err := os.ReadDir(texturesDir)
-	if err != nil {
-		log.Printf("WARNING: could not scan textures directory %s: %v", texturesDir, err)
-		return result
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if !strings.HasSuffix(strings.ToLower(name), ".png") {
-			continue
-		}
-		logical := strings.TrimSuffix(name, filepath.Ext(name))
-		result[logical] = "textures/" + name
-	}
-	return result
-}
-
 // TransparentDraw holds a deferred draw call for a transparent geometry object.
 // Collected during the opaque pass and drawn back-to-front afterward.
 type TransparentDraw struct {
@@ -61,76 +33,12 @@ type TransparentDraw struct {
 	DoubleSided bool
 }
 
-var Textures = map[string]uint32{}
 var vertexShaderPath = "shaders/vertex.glsl"
 var fragmentShaderPath = "shaders/fragment.glsl"
 var shadowVertShaderPath = "shaders/shadow_vert.glsl"
 var shadowFragShaderPath = "shaders/shadow_frag.glsl"
 var shadowCubeVertPath = "shaders/shadow_cube_vert.glsl"
 var shadowCubeFragPath = "shaders/shadow_cube_frag.glsl"
-var Running = true
-var Program uint32
-var KeyStates []uint8
-var event sdl.Event
-var WinTitle string = "Foundry Engine"
-var WinWidth, WinHeight int32 = 1600, 900
-var WinHalfHeight int32 = WinHeight / 2
-var WinHalfWidth int32 = WinWidth / 2
-var Window *sdl.Window
-var Context sdl.GLContext
-
-// executablePath is the directory containing the game executable.
-// Used by LoadLevel to resolve relative asset paths.
-var executablePath string
-
-// PlayerEntity points to the entity with ID "player" in the current level.
-// Global so that EditorLoadLevel can update it when a new level is loaded.
-var PlayerEntity *Entity
-
-// Projection is the perspective matrix; kept global for frustum extraction.
-var Projection mgl32.Mat4
-
-// ProjectionUniform is the shader uniform location for the projection matrix.
-// Kept global so RefreshWindowSize can re-upload it after a resize or fullscreen toggle.
-//
-// AlphaUniform is the shader uniform location for the per-geometry alpha multiplier.
-//
-// SmoothUniform selects the normal the fragment stage shades with: the
-// interpolated per-vertex normal when set, the flat screen-space derivative
-// facet when not. Every draw through Geometry sets it, so a smoothed surface
-// never leaks its setting onto the geometry drawn after it.
-//
-// AlphaSharpenUniform gates fragment.glsl's alpha-cutout anti-aliasing. Set
-// per pass rather than per draw — on for the opaque pass, where a fragment's
-// alpha is a coverage mask (SetAlphaToCoverage, antialias.go) and cutout
-// silhouettes want a one-pixel edge; off for the sorted transparent pass,
-// where alpha is blend weight and sharpening it would quantise real
-// translucency to opaque-or-gone.
-var ProjectionUniform int32
-var AlphaUniform int32
-var SmoothUniform int32
-var AlphaSharpenUniform int32
-
-// Water shader uniform locations. TimeUniform and CamPosUniform are set once
-// per frame; the rest are set per-draw from Geometry.Water.
-var (
-	TimeUniform          int32
-	CamPosUniform        int32
-	IsWaterUniform       int32
-	WaveAmplitudeUniform int32
-	WaveLengthUniform    int32
-	WaveSpeedUniform     int32
-	ReflectivityUniform  int32
-	ReflectColorUniform  int32
-)
-
-// eyeHeight is the camera offset above the player entity's Y position.
-const eyeHeight = float32(1.7)
-
-// DeltaTime is the elapsed time in seconds since the last frame.
-// Clamped to [0.001, 0.05] to prevent physics instability.
-var DeltaTime float32 = 1.0 / 60.0
-var lastFrameTick uint32
 
 func main() {
 	Textures = make(map[string]uint32)

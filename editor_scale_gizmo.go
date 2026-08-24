@@ -190,21 +190,6 @@ func applyScaleToSelection(origin, factors mgl32.Vec3) {
 }
 
 // entityScaleMin is the smallest magnitude an entity axis can be scaled to.
-// A zero scale collapses the model to nothing and makes its matrix singular,
-// which the picker inverts — so a drag can approach flat but not reach it.
-const entityScaleMin = float32(0.001)
-
-// entityScaleClamp keeps a scale factor off zero without forcing its sign: a
-// negative scale legitimately mirrors a model.
-func entityScaleClamp(v float32) float32 {
-	if v > -entityScaleMin && v < entityScaleMin {
-		if v < 0 {
-			return -entityScaleMin
-		}
-		return entityScaleMin
-	}
-	return v
-}
 
 // scaleTransform is the position map a scale drag applies: every selected
 // vertex pushed out from (or pulled in toward) origin from where it was at

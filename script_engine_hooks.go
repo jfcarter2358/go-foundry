@@ -44,13 +44,22 @@ type AnimEvent struct {
 
 var animEvents []AnimEvent
 
+// EditorActive reports whether the editor is open, and is the only thing in
+// this file that needs to know anything about the editor at all.
+//
+// It is a function the editor installs (EditorInit) rather than a read of
+// editor state, so that this file — and the engine code that writes to its
+// buffers — stays below the editor in the import graph. The default answers
+// "no editor", which is correct for a shipped game and for every test.
+var EditorActive = func() bool { return false }
+
 // recordAnimEvent notes a clip transition.
 //
 // Gated on play, and deliberately so: UpdateAnimations runs in the editor too —
 // that is what lets a clip be previewed while placing the thing that plays it —
 // and an editor preview must not fire script events.
 func recordAnimEvent(ev AnimEvent) {
-	if Editor.Active {
+	if EditorActive() {
 		return
 	}
 	animEvents = append(animEvents, ev)

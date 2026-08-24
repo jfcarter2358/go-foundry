@@ -1,5 +1,14 @@
 package main
 
+// graphics.go — the world shader program, and the GL handles every draw call
+// needs to reach.
+//
+// LoadProgram compiles and links the program and caches each uniform's
+// location; the locations live here beside it rather than in main.go, because
+// the code that reads them is Geometry.Draw (geometry.go), not the bootstrap.
+// Textures and Program are here for the same reason: they are what a draw call
+// binds, and nothing about them belongs to the application's startup.
+
 import (
 	"fmt"
 	"log"
@@ -7,6 +16,50 @@ import (
 	"strings"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/mathgl/mgl32"
+)
+
+// Program is the linked world shader program, and Textures maps a texture name
+// to its uploaded GL handle. Both are written once at startup and read by every
+// draw call.
+var Program uint32
+var Textures = map[string]uint32{}
+
+// Projection is the perspective matrix; kept global for frustum extraction.
+var Projection mgl32.Mat4
+
+// ProjectionUniform is the shader uniform location for the projection matrix.
+// Kept global so RefreshWindowSize can re-upload it after a resize or fullscreen toggle.
+//
+// AlphaUniform is the shader uniform location for the per-geometry alpha multiplier.
+//
+// SmoothUniform selects the normal the fragment stage shades with: the
+// interpolated per-vertex normal when set, the flat screen-space derivative
+// facet when not. Every draw through Geometry sets it, so a smoothed surface
+// never leaks its setting onto the geometry drawn after it.
+//
+// AlphaSharpenUniform gates fragment.glsl's alpha-cutout anti-aliasing. Set
+// per pass rather than per draw — on for the opaque pass, where a fragment's
+// alpha is a coverage mask (SetAlphaToCoverage, antialias.go) and cutout
+// silhouettes want a one-pixel edge; off for the sorted transparent pass,
+// where alpha is blend weight and sharpening it would quantise real
+// translucency to opaque-or-gone.
+var ProjectionUniform int32
+var AlphaUniform int32
+var SmoothUniform int32
+var AlphaSharpenUniform int32
+
+// Water shader uniform locations. TimeUniform and CamPosUniform are set once
+// per frame; the rest are set per-draw from Geometry.Water.
+var (
+	TimeUniform          int32
+	CamPosUniform        int32
+	IsWaterUniform       int32
+	WaveAmplitudeUniform int32
+	WaveLengthUniform    int32
+	WaveSpeedUniform     int32
+	ReflectivityUniform  int32
+	ReflectColorUniform  int32
 )
 
 func LoadProgram(vertexShaderPath, fragmentShaderPath string) error {

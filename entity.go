@@ -589,3 +589,27 @@ func uniqueEntityID(lvl *Level, base string) string {
 	// uniqueLevelID in identity.go.
 	return uniqueLevelID(lvl, base)
 }
+
+// A zero scale collapses the model to nothing and makes its matrix singular,
+// which the picker inverts — so a drag can approach flat but not reach it.
+const entityScaleMin = float32(0.001)
+
+// entityScaleClamp keeps a scale factor off zero without forcing its sign: a
+// negative scale legitimately mirrors a model.
+func entityScaleClamp(v float32) float32 {
+	if v > -entityScaleMin && v < entityScaleMin {
+		if v < 0 {
+			return -entityScaleMin
+		}
+		return entityScaleMin
+	}
+	return v
+}
+
+// PlayerEntity points to the entity with ID "player" in the current level.
+// Global so that a level load can update it — the player outlives the level it
+// is standing in, which is why it is not simply a field on Level.
+var PlayerEntity *Entity
+
+// eyeHeight is the camera offset above the player entity's Y position.
+const eyeHeight = float32(1.7)

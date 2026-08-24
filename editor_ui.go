@@ -21,24 +21,6 @@ import (
 // editorTextEdits tracks which fields are in text-input mode and their buffer.
 var editorTextEdits = map[string]string{}
 
-// editorPushDisabled visually dims and blocks input on the widgets drawn
-// until the matching editorPopDisabled. This imgui-go build has the
-// BeginDisabled/EndDisabled API commented out, so combine PushItemFlag
-// (blocks interaction) with a dimmed alpha (visual feedback) instead.
-func editorPushDisabled(disabled bool) {
-	imgui.PushItemFlag(imgui.ItemFlagsDisabled, disabled)
-	alpha := float32(1.0)
-	if disabled {
-		alpha = 0.4
-	}
-	imgui.PushStyleVarFloat(imgui.StyleVarAlpha, alpha)
-}
-
-func editorPopDisabled() {
-	imgui.PopStyleVar()
-	imgui.PopItemFlag()
-}
-
 // editorActiveToggleButton draws a button highlighted when active, and reports
 // whether it was clicked.
 //
@@ -79,40 +61,12 @@ func editorActiveToggleButtonColor(label string, active bool, col imgui.Vec4) bo
 	return clicked
 }
 
-// withModalPopup draws an auto-resizing modal popup titled title, opening it
-// (once) when *show is true. show is cleared immediately so the OpenPopup
-// call fires exactly once per request; body is only invoked while the popup
-// is actually open. This is the "if show { OpenPopup }; if Begin { body;
-// End }" shape every popup in the editor and texture editor used to
-// duplicate individually.
-func withModalPopup(title string, show *bool, body func()) {
-	if show != nil && *show {
-		imgui.OpenPopup(title)
-		*show = false
-	}
-	if imgui.BeginPopupModalV(title, nil, imgui.WindowFlagsAlwaysAutoResize) {
-		body()
-		imgui.EndPopup()
-	}
-}
-
 // snapValue rounds v to the nearest multiple of step.
 func snapValue(v, step float32) float32 {
 	if step <= 0 {
 		return v
 	}
 	return float32(math.Round(float64(v)/float64(step))) * step
-}
-
-// clampValue clamps v to [min, max] when the range is non-zero.
-func clampValue(v, min, max float32) float32 {
-	if min != 0 && v < min {
-		v = min
-	}
-	if max != 0 && v > max {
-		v = max
-	}
-	return v
 }
 
 // editorDragFloat draws a drag field with [-] and [+] increment buttons and

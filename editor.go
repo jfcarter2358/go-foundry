@@ -331,6 +331,12 @@ var Editor EditorState
 // is current. It initialises ImGui and the gizmo shaders.
 func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.level = level
+	// Install the two inversions that let level-rebuild and engine-hook code
+	// sit *below* the editor in the import graph rather than reaching up into
+	// it. See level_context.go and script_engine_hooks.go for why each exists.
+	CurrentLevel = func() *Level { return Editor.level }
+	EditorActive = func() bool { return Editor.Active }
+	UVGuideForTexture = modelUVLayoutFor
 	Editor.LevelsDir = levelsDir
 	Editor.Active = false
 	Editor.Mode = ModeGame
@@ -493,7 +499,12 @@ func EditorToggle() {
 		// Enter 3D fly mode (gravity off)
 		// Put the level back if a script wrote to it, then drop everything the
 		// runtime remembered about objects that have just been re-instantiated.
-		PlaySessionEnd(Editor.level)
+		// A restore re-instantiates every object, so every selection that
+		// names one by index is stale. PlaySessionEnd cannot clear them itself
+		// without reaching up into the editor — see its doc comment.
+		if PlaySessionEnd(Editor.level) {
+			editorResetSelectionState()
+		}
 		ScriptRuntimeReset(Editor.level)
 		ScriptEventsReset()
 		GravityEnabled = false
@@ -941,27 +952,4 @@ func EditorLoadLevel(path string) error {
 	EditorClearUndoHistory()
 
 	return nil
-}
-
-// ---------- camera helpers used by editor toggle ----------
-
-func updateCamDirection() {
-	yaw64 := float64(Cam.Yaw)
-	pitch64 := float64(Cam.Pitch)
-	Cam.Direction = mgl32.Vec3{
-		float32(math.Cos(yaw64) * math.Cos(pitch64)),
-		float32(math.Sin(pitch64)),
-		float32(math.Sin(yaw64) * math.Cos(pitch64)),
-	}
-}
-
-func updateCamMatrix() {
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), mgl32.Vec3{0, 1, 0})
-	if Program == 0 {
-		// No world shader, so nowhere to upload to. Only a headless test gets
-		// here — a GL call with no context current segfaults in the driver
-		// rather than returning an error, so the guard has to be on this side.
-		return
-	}
-	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
 }

@@ -8,19 +8,6 @@ import (
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-var MovementSpeed = float32(0.1)
-var KeyRotationSpeed = float32(0.025)
-var MouseRotationSpeed = float32(0.003)
-
-// Gravity system globals — read and written by input handling and the main loop.
-var GravityEnabled = true
-var IsOnGround = false
-var JumpRequested = false
-
-const GravityAccel = float32(0.010) // downward acceleration per frame
-const MaxFallSpeed = float32(0.50)  // terminal fall speed per frame
-const JumpVelocity = float32(0.20)  // upward impulse on jump
-
 // maxPitch prevents the camera from crossing vertical (avoids gimbal flip).
 const maxPitch = float32(math.Pi/2 - 0.01)
 

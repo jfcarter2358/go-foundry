@@ -936,7 +936,7 @@ func drawCanvasPanel() {
 
 	// Only offered when there is a layout to show. A permanent checkbox that
 	// did nothing on most textures would be worse than no checkbox.
-	if n := len(modelUVLayoutFor(ed.BoundTexture)); n > 0 {
+	if n := len(UVGuideForTexture(ed.BoundTexture)); n > 0 {
 		imgui.SameLine()
 		imgui.Checkbox(fmt.Sprintf("UV layout (%d faces)##texuvlayout", n), &texEditorShowUVLayout)
 	}
@@ -960,7 +960,7 @@ func drawTexEditorUVLayout(dl imgui.DrawList, topLeft imgui.Vec2, canvasW, canva
 	if !texEditorShowUVLayout || ed == nil {
 		return
 	}
-	loops := modelUVLayoutFor(ed.BoundTexture)
+	loops := UVGuideForTexture(ed.BoundTexture)
 	if len(loops) == 0 {
 		return
 	}

@@ -287,3 +287,19 @@ func edgeIDDisplay(id string) string {
 	}
 	return id
 }
+
+// edgeKindAndIndex returns the edge type and its index within Walls or Portals
+// for polygon edge ei, using EdgeKinds for reliable mixed-type lookup.
+func edgeKindAndIndex(s *Sector, ei int) (string, int) {
+	if ei < 0 || ei >= len(s.EdgeKinds) {
+		return "wall", 0
+	}
+	kind := s.EdgeKinds[ei]
+	idx := 0
+	for i := 0; i < ei; i++ {
+		if i < len(s.EdgeKinds) && s.EdgeKinds[i] == kind {
+			idx++
+		}
+	}
+	return kind, idx
+}
