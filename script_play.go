@@ -1,5 +1,7 @@
 package main
 
+import "foundry/internal/world"
+
 // script_play.go — keeping play from dirtying the authored level.
 //
 // A script writes attributes and properties. Without this, pressing `~` to play,
@@ -20,7 +22,7 @@ package main
 
 // playSession is the authored level, held for the duration of a play session.
 var playSession struct {
-	authored RawLevel
+	authored world.RawLevel
 	valid    bool
 	dirty    bool
 }

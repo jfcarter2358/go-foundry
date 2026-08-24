@@ -10,6 +10,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/world"
 	"strconv"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -18,7 +19,7 @@ import (
 
 // editorVolumeSection draws the place button, the volume list, and the selected
 // volume's properties.
-func editorVolumeSection(lvl *Level) {
+func editorVolumeSection(lvl *world.Level) {
 	imgui.Separator()
 	editorFocusOpen(panelFocusVolume)
 	if !imgui.CollapsingHeaderV("Volumes", imgui.TreeNodeFlagsDefaultOpen) {
@@ -58,7 +59,7 @@ func editorVolumePlacement() {
 }
 
 // editorVolumeList draws every volume in the level as a selectable row.
-func editorVolumeList(lvl *Level) {
+func editorVolumeList(lvl *world.Level) {
 	if lvl == nil || len(lvl.Volumes) == 0 {
 		imgui.Text("(none in this level)")
 		return
@@ -81,7 +82,7 @@ func editorVolumeList(lvl *Level) {
 }
 
 // editorVolumeProperties draws the selected volume's editable state.
-func editorVolumeProperties(v *Volume) {
+func editorVolumeProperties(v *world.Volume) {
 	editorVolumeIdentity(v)
 	imgui.Separator()
 	editorVolumeTransform(v)
@@ -98,13 +99,13 @@ func editorVolumeProperties(v *Volume) {
 // The rename is committed on Enter rather than per keystroke: an ID is what a
 // script addresses, and renaming through every intermediate spelling would fire
 // a uniqueness check against half-typed names.
-func editorVolumeIdentity(v *Volume) {
+func editorVolumeIdentity(v *world.Volume) {
 	id := v.ID
 	if imgui.InputTextV("ID##volid", &id, imgui.InputTextFlagsEnterReturnsTrue, nil) && id != v.ID {
 		lvl := Editor.level
 		if id == "" {
 			editorSetStatus("A volume needs an ID for a script to address it")
-		} else if levelIDTaken(lvl, id) {
+		} else if world.LevelIDTaken(lvl, id) {
 			editorSetStatus("%q is already used by something else in this level", id)
 		} else {
 			EditorPushUndo()
@@ -122,7 +123,7 @@ func editorVolumeIdentity(v *Volume) {
 
 // editorVolumeTransform draws position and rotation. There is no scale — a
 // volume's size is its half-extents, edited under Shape.
-func editorVolumeTransform(v *Volume) {
+func editorVolumeTransform(v *world.Volume) {
 	pos := [3]float32{v.Position.X(), v.Position.Y(), v.Position.Z()}
 	if editorDragFloat3("Position##volpos", &pos, 0, 0, "%.3f") {
 		v.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
@@ -139,10 +140,10 @@ func editorVolumeTransform(v *Volume) {
 // Both rebuild the wireframe cage, which is the only thing here that needs one:
 // the cage is built in volume-local space, so moving or rotating a volume needs
 // no rebuild at all.
-func editorVolumeShape(v *Volume) {
-	if imgui.BeginCombo("Shape##volshape", volumeShapeName(v.Shape)) {
-		for i, name := range volumeShapeNames {
-			kind := VolumeShape(i)
+func editorVolumeShape(v *world.Volume) {
+	if imgui.BeginCombo("Shape##volshape", world.VolumeShapeName(v.Shape)) {
+		for i, name := range world.VolumeShapeNames {
+			kind := world.VolumeShape(i)
 			if imgui.SelectableV(name, kind == v.Shape, 0, imgui.Vec2{}) && kind != v.Shape {
 				EditorPushUndo()
 				v.Shape = kind
@@ -163,7 +164,7 @@ func editorVolumeShape(v *Volume) {
 }
 
 // editorVolumeActions draws duplicate and delete.
-func editorVolumeActions(v *Volume) {
+func editorVolumeActions(v *world.Volume) {
 	if imgui.Button("Duplicate##voldup") {
 		duplicateActiveVolume()
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -8,7 +9,7 @@ import (
 
 // joinTestChunk is selectTestChunk plus three free points — chunk points 6, 7
 // and 8, in no sector — which is the raw material a join turns into one.
-func joinTestChunk(t *testing.T) *Chunk {
+func joinTestChunk(t *testing.T) *world.Chunk {
 	t.Helper()
 	ch := selectTestChunk(t)
 	ch.Points = append(ch.Points, mgl32.Vec2{0, 20}, mgl32.Vec2{10, 20}, mgl32.Vec2{10, 30})
@@ -21,7 +22,7 @@ func joinTestChunk(t *testing.T) *Chunk {
 
 // selectPoints replaces the selection with the given chunk points, in order,
 // as the map's point mode would.
-func selectPoints(ch *Chunk, pts ...int) {
+func selectPoints(ch *world.Chunk, pts ...int) {
 	sels := make([]vertexSel, 0, len(pts))
 	for _, p := range pts {
 		sel := freePointSel(Editor.ActiveChunkIdx, p)

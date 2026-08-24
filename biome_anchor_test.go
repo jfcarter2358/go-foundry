@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -11,18 +12,18 @@ import (
 // sits at the sector's centre and whose other two are far outside it, so one
 // call exercises both the "follows the floor" and "nothing to follow" paths.
 // Floor and ceiling stay disabled to keep Sector.Load off the GPU.
-func anchorTestLevel() *Chunk {
-	Editor.level = &Level{Chunks: []Chunk{{
+func anchorTestLevel() *world.Chunk {
+	Editor.level = &world.Level{Chunks: []world.Chunk{{
 		ID:      "c0",
 		Points:  []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}},
-		Sectors: []Sector{{ID: "s0", PointIndices: []int{0, 1, 2, 3}}},
-		BiomeSectors: []BiomeSector{{
+		Sectors: []world.Sector{{ID: "s0", PointIndices: []int{0, 1, 2, 3}}},
+		BiomeSectors: []world.BiomeSector{{
 			ID:     "paint",
 			Points: []mgl32.Vec2{{2, 2}, {50, 50}, {54, 50}},
 		}},
 	}}}
 	ch := &Editor.level.Chunks[0]
-	_ = reloadSector(ch, &ch.Sectors[0])
+	_ = world.ReloadSector(ch, &ch.Sectors[0])
 	ch.BiomeSectors[0].HeightDirty = false
 	ch.BiomeSectors[0].GroundDirty = false
 	return ch
@@ -152,21 +153,21 @@ func TestChunkMoveCarriesAllItsPaint(t *testing.T) {
 func TestPaintOnAnotherSectorIsUntouched(t *testing.T) {
 	restore := saveEditorSelection()
 	defer restore()
-	Editor.level = &Level{Chunks: []Chunk{{
+	Editor.level = &world.Level{Chunks: []world.Chunk{{
 		ID: "c0",
 		Points: []mgl32.Vec2{
 			{0, 0}, {4, 0}, {4, 4}, {0, 4}, // sector 0
 			{10, 0}, {14, 0}, {14, 4}, {10, 4}, // sector 1
 		},
-		Sectors: []Sector{
+		Sectors: []world.Sector{
 			{ID: "s0", PointIndices: []int{0, 1, 2, 3}},
 			{ID: "s1", PointIndices: []int{4, 5, 6, 7}},
 		},
-		BiomeSectors: []BiomeSector{{ID: "paint", Points: []mgl32.Vec2{{12, 2}, {13, 2}, {12, 3}}}},
+		BiomeSectors: []world.BiomeSector{{ID: "paint", Points: []mgl32.Vec2{{12, 2}, {13, 2}, {12, 3}}}},
 	}}}
 	ch := &Editor.level.Chunks[0]
 	for si := range ch.Sectors {
-		_ = reloadSector(ch, &ch.Sectors[si])
+		_ = world.ReloadSector(ch, &ch.Sectors[si])
 	}
 
 	Editor.SelectedVertices = []vertexSel{

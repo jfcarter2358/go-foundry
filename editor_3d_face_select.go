@@ -20,6 +20,7 @@ package main
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -76,7 +77,7 @@ func editorOutlineFace(sel faceSel, col mgl32.Vec3) {
 	if ch == nil || s == nil {
 		return
 	}
-	pts := SectorPoints(ch, s)
+	pts := world.SectorPoints(ch, s)
 	switch sel.kind {
 	case "floor":
 		editorOutlineSurface(pts, s.Floor.VertexHeight, gfx.WorldUp, col)
@@ -124,11 +125,11 @@ func editorOutlineSurface(pts []mgl32.Vec2, heightAt func(int) float32, normal, 
 // two height functions — the shape a wall occupies, and a portal's gap fill.
 //
 // The endpoints are looked up in the sector's own points to find which vertex
-// heights apply, exactly as the wall mesh is built. findVertexIdx returns -1
+// heights apply, exactly as the wall mesh is built. FindVertexIdx returns -1
 // for a point that is not one of them, and VertexHeight reads that as "no
 // offset" — the same fallback the mesh itself lands on.
 func editorOutlineUprightQuad(pts []mgl32.Vec2, p1, p2 mgl32.Vec2, bottom, top func(int) float32, col mgl32.Vec3) {
-	i1, i2 := findVertexIdx(pts, p1), findVertexIdx(pts, p2)
+	i1, i2 := world.FindVertexIdx(pts, p1), world.FindVertexIdx(pts, p2)
 	a := mgl32.Vec3{p1.X(), bottom(i1), p1.Y()}
 	b := mgl32.Vec3{p2.X(), bottom(i2), p2.Y()}
 	c := mgl32.Vec3{p2.X(), top(i2), p2.Y()}
@@ -147,12 +148,12 @@ func editorOutlineUprightQuad(pts []mgl32.Vec2, p1, p2 mgl32.Vec2, bottom, top f
 // editorOutlineWaterSurface outlines the water plane of the selected Water-kind
 // biome sector: the polygon that was painted, drawn at the height the plane
 // derived from it actually sits at.
-func editorOutlineWaterSurface(ch *Chunk) {
+func editorOutlineWaterSurface(ch *world.Chunk) {
 	if Editor.ActiveBiomeSectorIdx < 0 || Editor.ActiveBiomeSectorIdx >= len(ch.BiomeSectors) {
 		return
 	}
 	bs := &ch.BiomeSectors[Editor.ActiveBiomeSectorIdx]
-	if bs.Brush.Kind != BiomeWater || len(bs.Points) < 2 {
+	if bs.Brush.Kind != world.BiomeWater || len(bs.Points) < 2 {
 		return
 	}
 	y, ok := float32(0), false

@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -50,7 +51,7 @@ func placeSpawnPointAt(pos mgl32.Vec3) {
 	}
 	EditorPushUndo()
 	if lvl.Spawn == nil {
-		lvl.Spawn = &SpawnPoint{}
+		lvl.Spawn = &world.SpawnPoint{}
 	}
 	lvl.Spawn.Position = pos
 	lvl.Spawn.Rotation = mgl32.Vec3{0, -gfx.Cam.Yaw, 0}
@@ -73,7 +74,7 @@ func spawnRotationFromCamera() mgl32.Vec3 {
 // editorSpawnPointSection draws the spawn point's properties: where it is, its
 // rotation and the facing that falls out of it, and the two "match the fly
 // camera" shortcuts.
-func editorSpawnPointSection(lvl *Level) {
+func editorSpawnPointSection(lvl *world.Level) {
 	s := lvl.Spawn
 	if s == nil {
 		return
@@ -95,7 +96,7 @@ func editorSpawnPointSection(lvl *Level) {
 	// The facing the rotation works out to, which is what gameplay reads. It is
 	// derived rather than editable: the pitch clamp lives in SpawnYawPitch, so a
 	// marker aimed straight up shows the angle the player will actually get.
-	yaw, pitch := SpawnYawPitch(s)
+	yaw, pitch := world.SpawnYawPitch(s)
 	imgui.Text(fmt.Sprintf("Facing: yaw %.1f°  pitch %.1f°",
 		yaw*180/math.Pi, pitch*180/math.Pi))
 
@@ -110,7 +111,7 @@ func editorSpawnPointSection(lvl *Level) {
 	if imgui.Button("Move To Camera##spawn") {
 		EditorPushUndo()
 		// The camera sits at eye height; the marker sits at the player's feet.
-		s.Position = gfx.Cam.Position.Sub(mgl32.Vec3{0, eyeHeight, 0})
+		s.Position = gfx.Cam.Position.Sub(mgl32.Vec3{0, world.EyeHeight, 0})
 		s.Rotation = spawnRotationFromCamera()
 	}
 
@@ -126,8 +127,8 @@ func editorSpawnPointSection(lvl *Level) {
 
 // editor2DDrawSpawnHeading draws the marker's facing as an arrow on the top-down
 // map, scaled to the footprint it grows out of so it stays readable at any zoom.
-func editor2DDrawSpawnHeading(s *SpawnPoint, hx, hz float32, col mgl32.Vec3) {
-	d := SpawnDirection(s)
+func editor2DDrawSpawnHeading(s *world.SpawnPoint, hx, hz float32, col mgl32.Vec3) {
+	d := world.SpawnDirection(s)
 	editor2DDrawHeading(
 		mgl32.Vec2{s.Position.X(), s.Position.Z()},
 		mgl32.Vec2{d.X(), d.Z()}, hx, hz, col)

@@ -27,6 +27,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -171,7 +172,7 @@ func editorPointOccluded(eye, p mgl32.Vec3) bool {
 // editorSectorBounds is a sector's world AABB, grown vertically so a displaced
 // or extruded surface that pushes past the stored floor/ceiling heights still
 // gets its triangles tested.
-func editorSectorBounds(s *Sector) (mgl32.Vec3, mgl32.Vec3) {
+func editorSectorBounds(s *world.Sector) (mgl32.Vec3, mgl32.Vec3) {
 	const margin = 2
 	lo, hi := s.Floor.Height, s.Ceiling.Height
 	if hi < lo {

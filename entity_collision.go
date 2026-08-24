@@ -28,61 +28,13 @@ package main
 
 import (
 	"foundry/internal/hooks"
+	"foundry/internal/world"
 	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// Engine-wide master switches. Per-entity flags say what *wants* to collide;
-// these say whether the engine is listening. Both default on, so turning a
-// flag on in a definition is all it takes.
-var (
-	EntityWorldCollisionEnabled  = true
-	EntityEntityCollisionEnabled = true
-)
-
-// Entity gravity, in world units per second and per second squared.
-//
-// These are the player's own GravityAccel/MaxFallSpeed (input.go) converted out
-// of its per-frame-at-60fps units, so a dropped crate falls at the rate a
-// player does. The player's cannot simply be reused: its velocity is measured
-// per frame, an entity's per second.
-const (
-	EntityGravityAccel  = float32(36.0)
-	EntityMaxFallSpeed  = float32(30.0)
-	entityGroundEpsilon = float32(0.0001)
-)
-
-// collidesWithWorld / collidesWithEntities fold the master switch into the
-// per-entity flag, so no caller has to remember to check both.
-func (e *Entity) collidesWithWorld() bool {
-	return EntityWorldCollisionEnabled && e.Collision.World
-}
-
-func (e *Entity) collidesWithEntities() bool {
-	return EntityEntityCollisionEnabled && e.Collision.Entities && e.HasBounds()
-}
-
-// hasGravity reports whether the entity should fall. An immovable entity never
-// does, whatever its flag says — nothing can displace it, gravity included.
-func (e *Entity) hasGravity() bool {
-	return e.Collision.Gravity && e.Collision.Movable
-}
-
 // ---------- gravity ----------
-
-// applyGravity accelerates the entity downward, capped at terminal velocity so
-// a long fall cannot tunnel through a floor in one step.
-func (e *Entity) applyGravity(dt float32) {
-	if !e.hasGravity() {
-		return
-	}
-	v := e.Velocity.Y() - EntityGravityAccel*dt
-	if v < -EntityMaxFallSpeed {
-		v = -EntityMaxFallSpeed
-	}
-	e.Velocity[1] = v
-}
 
 // ---------- world ----------
 
@@ -94,13 +46,13 @@ func (e *Entity) applyGravity(dt float32) {
 // an entity's own Position is its base, and its bounds can be offset from it
 // besides. Whatever the resolvers do to the proxy is applied back as a delta,
 // so the offset and the scale never have to be un-done.
-func resolveEntityWorld(lvl *Level, e *Entity, oldPos mgl32.Vec3) bool {
+func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bool {
 	if lvl == nil || !e.HasBounds() {
 		return false
 	}
 	h := e.BoundHalfExtents()
 	center := e.BoundCenter()
-	proxy := Entity{
+	proxy := world.Entity{
 		Position:   center,
 		BoundHalfX: h.X(),
 		BoundHalfY: h.Y(),
@@ -110,7 +62,7 @@ func resolveEntityWorld(lvl *Level, e *Entity, oldPos mgl32.Vec3) bool {
 	// uphill movement from downhill.
 	oldCenter := center.Sub(e.Position.Sub(oldPos))
 
-	chunk, sector := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, center)
+	chunk, sector := world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, center)
 	if sector == nil {
 		// Outside every sector there is nothing to resolve against. The entity
 		// is left where it is rather than being pulled to the nearest floor:
@@ -122,7 +74,7 @@ func resolveEntityWorld(lvl *Level, e *Entity, oldPos mgl32.Vec3) bool {
 	pos = ResolveSlopeCollision(&proxy, chunk, sector, oldCenter, pos)
 	// Sliding along a slope can carry the entity into a different sector, so
 	// the floor it lands on has to be looked up again from where it ended.
-	chunk, sector = FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, pos)
+	chunk, sector = world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, pos)
 	hitFloor, hitCeiling := resolveEntityFloorCeiling(&proxy, chunk, sector, &pos)
 
 	e.Position = e.Position.Add(pos.Sub(center))
@@ -143,14 +95,14 @@ func resolveEntityWorld(lvl *Level, e *Entity, oldPos mgl32.Vec3) bool {
 //
 // Unlike the player's ResolveFloorCollision, both halves agree on what the
 // position means — see that function's note on why its own two halves do not.
-func resolveEntityFloorCeiling(proxy *Entity, chunk *Chunk, sector *Sector, pos *mgl32.Vec3) (hitFloor, hitCeiling bool) {
+func resolveEntityFloorCeiling(proxy *world.Entity, chunk *world.Chunk, sector *world.Sector, pos *mgl32.Vec3) (hitFloor, hitCeiling bool) {
 	if chunk == nil || sector == nil {
 		return false, false
 	}
 	xz := mgl32.Vec2{pos[0], pos[2]}
 
 	minY := sectorFloorHeightAt(chunk, sector, xz) + proxy.BoundHalfY
-	if pos[1] <= minY+entityGroundEpsilon {
+	if pos[1] <= minY+world.EntityGroundEpsilon {
 		pos[1] = minY
 		hitFloor = true
 	}
@@ -190,13 +142,13 @@ func resolveEntityFloorCeiling(proxy *Entity, chunk *Chunk, sector *Sector, pos 
 // It is O(n²) over *participating* entities — the ones with the flag set, not
 // the whole level. A level of a few hundred solid entities is nothing; if that
 // ever stops being true, the spatial hash the chunks already use is the answer.
-func ResolveEntityCollisions(lvl *Level, player *Entity) []int {
-	if lvl == nil || !EntityEntityCollisionEnabled {
+func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
+	if lvl == nil || !world.EntityEntityCollisionEnabled {
 		return nil
 	}
 	idx := make([]int, 0, len(lvl.Entities))
 	for i := range lvl.Entities {
-		if lvl.Entities[i].collidesWithEntities() {
+		if lvl.Entities[i].CollidesWithEntities() {
 			idx = append(idx, i)
 		}
 	}
@@ -262,7 +214,7 @@ func ResolveEntityCollisions(lvl *Level, player *Entity) []int {
 // on it rather than squirting out sideways. The volumes are compared as boxes
 // whatever their BoundingKind: the kinds refine ContainsPoint, which is the
 // query scripts ask, not the push-apart.
-func resolveEntityOverlap(a, b *Entity) (movedA, movedB bool) {
+func resolveEntityOverlap(a, b *world.Entity) (movedA, movedB bool) {
 	// A pair with nothing that can move has nothing to resolve, and checking
 	// first skips the box maths for every static-against-static pair.
 	if !a.Collision.Movable && !b.Collision.Movable {
@@ -342,14 +294,14 @@ func resolveEntityOverlap(a, b *Entity) (movedA, movedB bool) {
 // push it straight back out, and the pair would never quite come apart —
 // a stack of boxes would visibly sag and jitter. Refusing hands the whole
 // separation to the one that can take it.
-func canDisplace(e *Entity, axis int, sign float32) bool {
+func canDisplace(e *world.Entity, axis int, sign float32) bool {
 	return !(axis == 1 && sign < 0 && e.Collision.OnGround)
 }
 
 // entityPushOut displaces an entity along one axis and kills the velocity it
 // was closing with, so it stops pressing into what it hit instead of building
 // up speed against it forever.
-func entityPushOut(e *Entity, axis int, delta float32) {
+func entityPushOut(e *world.Entity, axis int, delta float32) {
 	e.Position[axis] += delta
 	// Only the component moving *into* the other body is cancelled. Zeroing the
 	// whole axis would also stop something already separating, which is what
@@ -364,14 +316,6 @@ func entityPushOut(e *Entity, axis int, delta float32) {
 	// lets a third box stack on a second. Staged rather than applied, so the
 	// pair pass cannot see its own work — see OnGround.
 	if axis == 1 && delta > 0 {
-		e.Collision.groundedNext = true
+		e.Collision.GroundedNext = true
 	}
-}
-
-// commitGrounded promotes this frame's accumulated answer to the readable flag.
-// Called once per entity at the end of EntityUpdate, after every push and every
-// settle has had its say.
-func (e *Entity) commitGrounded() {
-	e.Collision.OnGround = e.Collision.groundedNext
-	e.Collision.groundedNext = false
 }

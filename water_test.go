@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -9,7 +10,7 @@ import (
 
 // TestWaterParamsRoundTrip checks a configured water sector survives save/load.
 // The save side is inline in editor_save.go, so this mirrors it rather than
-// calling it — the point is that waterParamsFromRaw reads back every field the
+// calling it — the point is that WaterParamsFromRaw reads back every field the
 // writer puts out.
 func TestWaterParamsRoundTrip(t *testing.T) {
 	want := gfx.WaterParams{
@@ -20,17 +21,17 @@ func TestWaterParamsRoundTrip(t *testing.T) {
 		Reflectivity:  0.8,
 		ReflectColor:  mgl32.Vec3{0.1, 0.2, 0.3},
 	}
-	raw := &RawWater{
+	raw := &world.RawWater{
 		WaveAmplitude: want.WaveAmplitude,
 		WaveLength:    want.WaveLength,
 		WaveSpeed:     want.WaveSpeed,
 		Reflectivity:  want.Reflectivity,
-		ReflectColor: RawColor3{
+		ReflectColor: world.RawColor3{
 			R: want.ReflectColor.X(), G: want.ReflectColor.Y(), B: want.ReflectColor.Z(),
 		},
 	}
 
-	if got := waterParamsFromRaw(raw); got != want {
+	if got := world.WaterParamsFromRaw(raw); got != want {
 		t.Fatalf("round trip changed params:\n got %+v\nwant %+v", got, want)
 	}
 }
@@ -39,7 +40,7 @@ func TestWaterParamsRoundTrip(t *testing.T) {
 // existed — they must load with a usable look rather than a flat, motionless
 // surface with zero amplitude.
 func TestWaterParamsDefaultWhenAbsent(t *testing.T) {
-	got := waterParamsFromRaw(nil)
+	got := world.WaterParamsFromRaw(nil)
 
 	if !got.Enabled {
 		t.Fatal("water params from absent YAML block are disabled")
@@ -54,7 +55,7 @@ func TestWaterParamsDefaultWhenAbsent(t *testing.T) {
 // sector's bounds, so the plane's own extent never entered the decision. The
 // AABB must span the whole surface, not just a region around the centre.
 func TestWaterSurfaceAABBCoversFullExtent(t *testing.T) {
-	w := WaterSurface{
+	w := world.WaterSurface{
 		Position:   mgl32.Vec3{10, 2, -4},
 		BoundHalfX: 25,
 		BoundHalfY: 0.1,
@@ -73,7 +74,7 @@ func TestWaterSurfaceAABBCoversFullExtent(t *testing.T) {
 // box it is culled against: displacement happens in the shader, so the CPU-side
 // bounds have to allow for it explicitly.
 func TestWaterSurfaceAABBIncludesWaveCrests(t *testing.T) {
-	w := WaterSurface{
+	w := world.WaterSurface{
 		BoundHalfX: 5,
 		BoundHalfY: 0.1,
 		BoundHalfZ: 5,

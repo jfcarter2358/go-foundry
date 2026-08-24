@@ -6,12 +6,12 @@ package main
 // to *enumerate* it: the script editor's completion list, the reference panel,
 // and the "no property called `visble`, did you mean `visible`" message. A switch
 // cannot be enumerated. This codebase already makes exactly that argument at
-// entity.go's boundingTypeNames — "a per-file switch is what lets an unknown
+// entity.go's BoundingTypeNames — "a per-file switch is what lets an unknown
 // name quietly load as the wrong shape".
 //
 // The `dirty` flag is the other reason the table earns its place. Many property
 // writes are geometry-mutating — a floor's height, a wall's texture — and
-// applying one means reloadSector, which means GL, which cannot happen inside
+// applying one means ReloadSector, which means GL, which cannot happen inside
 // the script tick. Declaring "this setter needs a rebuild" once per property is
 // far safer than remembering it at each call site; DrainScriptWork (see
 // script_runtime.go) does the rest.
@@ -32,6 +32,7 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 // propAccess is one property: how to read it, how to write it, and whether
@@ -123,7 +124,7 @@ func (e *scriptPropError) Error() string {
 // ---------- entity ----------
 
 func entityProps() map[string]propAccess {
-	get := func(fn func(e *Entity) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+	get := func(fn func(e *world.Entity) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
 		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 			e := c.entityFor(r)
 			if e == nil {
@@ -132,7 +133,7 @@ func entityProps() map[string]propAccess {
 			return fn(e), true
 		}
 	}
-	set := func(fn func(e *Entity, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+	set := func(fn func(e *world.Entity, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
 		return func(c *refCache, r flang.RefVal, v flang.Value) error {
 			e := c.entityFor(r)
 			if e == nil {
@@ -141,8 +142,8 @@ func entityProps() map[string]propAccess {
 			return fn(e, v)
 		}
 	}
-	vecSet := func(name string, apply func(e *Entity, v mgl32.Vec3)) func(*Entity, flang.Value) error {
-		return func(e *Entity, v flang.Value) error {
+	vecSet := func(name string, apply func(e *world.Entity, v mgl32.Vec3)) func(*world.Entity, flang.Value) error {
+		return func(e *world.Entity, v flang.Value) error {
 			p, ok := toVec3(v)
 			if !ok {
 				return propErr(name, "vec", v)
@@ -151,8 +152,8 @@ func entityProps() map[string]propAccess {
 			return nil
 		}
 	}
-	boolSet := func(name string, apply func(e *Entity, b bool)) func(*Entity, flang.Value) error {
-		return func(e *Entity, v flang.Value) error {
+	boolSet := func(name string, apply func(e *world.Entity, b bool)) func(*world.Entity, flang.Value) error {
+		return func(e *world.Entity, v flang.Value) error {
 			b, ok := toBool(v)
 			if !ok {
 				return propErr(name, "bool", v)
@@ -164,37 +165,37 @@ func entityProps() map[string]propAccess {
 
 	return map[string]propAccess{
 		"position": {
-			Get: get(func(e *Entity) flang.Value { return vecValue(e.Position) }),
-			Set: set(vecSet("position", func(e *Entity, p mgl32.Vec3) { e.Position = p })),
+			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.Position) }),
+			Set: set(vecSet("position", func(e *world.Entity, p mgl32.Vec3) { e.Position = p })),
 			Doc: "world-space position",
 		},
 		"rotation": {
-			Get: get(func(e *Entity) flang.Value { return vecValue(e.Rotation) }),
-			Set: set(vecSet("rotation", func(e *Entity, p mgl32.Vec3) { e.Rotation = p })),
+			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.Rotation) }),
+			Set: set(vecSet("rotation", func(e *world.Entity, p mgl32.Vec3) { e.Rotation = p })),
 			Doc: "Euler angles in radians",
 		},
 		"scale": {
-			Get: get(func(e *Entity) flang.Value { return vecValue(e.effectiveScale()) }),
-			Set: set(vecSet("scale", func(e *Entity, p mgl32.Vec3) {
+			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.EffectiveScale()) }),
+			Set: set(vecSet("scale", func(e *world.Entity, p mgl32.Vec3) {
 				e.Scale = mgl32.Vec3{
-					entityScaleClamp(p.X()), entityScaleClamp(p.Y()), entityScaleClamp(p.Z()),
+					world.EntityScaleClamp(p.X()), world.EntityScaleClamp(p.Y()), world.EntityScaleClamp(p.Z()),
 				}
 			})),
 			Doc: "per-axis scale; clamped away from zero",
 		},
 		"velocity": {
-			Get: get(func(e *Entity) flang.Value { return vecValue(e.Velocity) }),
-			Set: set(vecSet("velocity", func(e *Entity, p mgl32.Vec3) { e.Velocity = p })),
+			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.Velocity) }),
+			Set: set(vecSet("velocity", func(e *world.Entity, p mgl32.Vec3) { e.Velocity = p })),
 			Doc: "world units per second",
 		},
 		"angular_velocity": {
-			Get: get(func(e *Entity) flang.Value { return vecValue(e.AngularVelocity) }),
-			Set: set(vecSet("angular_velocity", func(e *Entity, p mgl32.Vec3) { e.AngularVelocity = p })),
+			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.AngularVelocity) }),
+			Set: set(vecSet("angular_velocity", func(e *world.Entity, p mgl32.Vec3) { e.AngularVelocity = p })),
 			Doc: "radians per second about each Euler axis",
 		},
 		"visible": {
-			Get: get(func(e *Entity) flang.Value { return flang.BoolVal(e.Visible) }),
-			Set: set(boolSet("visible", func(e *Entity, b bool) { e.Visible = b })),
+			Get: get(func(e *world.Entity) flang.Value { return flang.BoolVal(e.Visible) }),
+			Set: set(boolSet("visible", func(e *world.Entity, b bool) { e.Visible = b })),
 			Doc: "whether the entity's models draw",
 		},
 		"texture": {
@@ -202,8 +203,8 @@ func entityProps() map[string]propAccess {
 			// to report. The first one is what the property means, and writing
 			// reskins them all; a script that wants one attachment of several
 			// calls set_texture(ref, model, name).
-			Get: get(func(e *Entity) flang.Value { return flang.StrVal(entityTextureName(e)) }),
-			Set: set(func(e *Entity, v flang.Value) error {
+			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(entityTextureName(e)) }),
+			Set: set(func(e *world.Entity, v flang.Value) error {
 				s, ok := toStr(v)
 				if !ok {
 					return propErr("texture", "str", v)
@@ -217,68 +218,68 @@ func entityProps() map[string]propAccess {
 			Doc: "texture every attachment draws with, resolved against textures/",
 		},
 		"bounding": {
-			Get: get(func(e *Entity) flang.Value { return flang.AtomVal(boundingTypeName(e.BoundingKind)) }),
-			Set: set(func(e *Entity, v flang.Value) error {
+			Get: get(func(e *world.Entity) flang.Value { return flang.AtomVal(world.BoundingTypeName(e.BoundingKind)) }),
+			Set: set(func(e *world.Entity, v flang.Value) error {
 				s, ok := toStr(v)
 				if !ok {
 					return propErr("bounding", "str or atom", v)
 				}
-				e.BoundingKind = boundingKindFromName(s)
+				e.BoundingKind = world.BoundingKindFromName(s)
 				return nil
 			}),
 			Doc: "aabb, sphere or cylinder",
 		},
 		"bound_half": {
-			Get: get(func(e *Entity) flang.Value {
+			Get: get(func(e *world.Entity) flang.Value {
 				return flang.VecVal{float64(e.BoundHalfX), float64(e.BoundHalfY), float64(e.BoundHalfZ)}
 			}),
-			Set: set(vecSet("bound_half", func(e *Entity, p mgl32.Vec3) {
+			Set: set(vecSet("bound_half", func(e *world.Entity, p mgl32.Vec3) {
 				e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ = p.X(), p.Y(), p.Z()
 			})),
 			Doc: "half-extents of the bounding volume",
 		},
 		"bound_offset": {
-			Get: get(func(e *Entity) flang.Value { return vecValue(e.BoundOffset) }),
-			Set: set(vecSet("bound_offset", func(e *Entity, p mgl32.Vec3) { e.BoundOffset = p })),
+			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.BoundOffset) }),
+			Set: set(vecSet("bound_offset", func(e *world.Entity, p mgl32.Vec3) { e.BoundOffset = p })),
 			Doc: "offset of the volume's centre from the entity's origin",
 		},
 		"collision_world": {
-			Get: get(func(e *Entity) flang.Value { return flang.BoolVal(e.Collision.World) }),
-			Set: set(boolSet("collision_world", func(e *Entity, b bool) { e.Collision.World = b })),
+			Get: get(func(e *world.Entity) flang.Value { return flang.BoolVal(e.Collision.World) }),
+			Set: set(boolSet("collision_world", func(e *world.Entity, b bool) { e.Collision.World = b })),
 			Doc: "resolve against walls, floors and slopes",
 		},
 		"collision_entities": {
-			Get: get(func(e *Entity) flang.Value { return flang.BoolVal(e.Collision.Entities) }),
-			Set: set(boolSet("collision_entities", func(e *Entity, b bool) { e.Collision.Entities = b })),
+			Get: get(func(e *world.Entity) flang.Value { return flang.BoolVal(e.Collision.Entities) }),
+			Set: set(boolSet("collision_entities", func(e *world.Entity, b bool) { e.Collision.Entities = b })),
 			Doc: "push apart from other entities that also set it",
 		},
 		"collision_gravity": {
-			Get: get(func(e *Entity) flang.Value { return flang.BoolVal(e.Collision.Gravity) }),
-			Set: set(boolSet("collision_gravity", func(e *Entity, b bool) { e.Collision.Gravity = b })),
+			Get: get(func(e *world.Entity) flang.Value { return flang.BoolVal(e.Collision.Gravity) }),
+			Set: set(boolSet("collision_gravity", func(e *world.Entity, b bool) { e.Collision.Gravity = b })),
 			Doc: "fall, and stop when something is underneath",
 		},
 		"collision_movable": {
-			Get: get(func(e *Entity) flang.Value { return flang.BoolVal(e.Collision.Movable) }),
-			Set: set(boolSet("collision_movable", func(e *Entity, b bool) { e.Collision.Movable = b })),
+			Get: get(func(e *world.Entity) flang.Value { return flang.BoolVal(e.Collision.Movable) }),
+			Set: set(boolSet("collision_movable", func(e *world.Entity, b bool) { e.Collision.Movable = b })),
 			Doc: "whether a resolution may displace this entity",
 		},
 
 		// Derived state. Read-only because writing it would be overwritten by
 		// EntityUpdate on the very next frame, which is worse than refusing.
 		"on_ground": {
-			Get: get(func(e *Entity) flang.Value { return flang.BoolVal(e.Collision.OnGround) }),
+			Get: get(func(e *world.Entity) flang.Value { return flang.BoolVal(e.Collision.OnGround) }),
 			Doc: "read-only: whether the entity is resting on something",
 		},
 		"type": {
-			Get: get(func(e *Entity) flang.Value { return flang.StrVal(e.Type) }),
+			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(e.Type) }),
 			Doc: "read-only: the definition this instance came from",
 		},
 		"current_sector": {
-			Get: get(func(e *Entity) flang.Value { return flang.StrVal(e.CurrentSector) }),
+			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(e.CurrentSector) }),
 			Doc: "read-only: the sector the entity is in, refreshed each frame",
 		},
 		"current_chunk": {
-			Get: get(func(e *Entity) flang.Value { return flang.StrVal(e.CurrentChunk) }),
+			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(e.CurrentChunk) }),
 			Doc: "read-only: the chunk the entity is in, refreshed each frame",
 		},
 	}
@@ -287,7 +288,7 @@ func entityProps() map[string]propAccess {
 // entityTextureName reports what the entity's first attachment draws with: its
 // override if it has one, otherwise whatever the loaded mesh ended up wearing.
 // Empty for an entity with no models, or one whose models have not loaded.
-func entityTextureName(e *Entity) string {
+func entityTextureName(e *world.Entity) string {
 	if len(e.Models) == 0 {
 		return ""
 	}
@@ -304,7 +305,7 @@ func entityTextureName(e *Entity) string {
 // ---------- volume ----------
 
 func volumeProps() map[string]propAccess {
-	get := func(fn func(v *Volume) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+	get := func(fn func(v *world.Volume) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
 		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 			vol := c.volumeFor(r)
 			if vol == nil {
@@ -313,7 +314,7 @@ func volumeProps() map[string]propAccess {
 			return fn(vol), true
 		}
 	}
-	set := func(fn func(vol *Volume, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+	set := func(fn func(vol *world.Volume, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
 		return func(c *refCache, r flang.RefVal, v flang.Value) error {
 			vol := c.volumeFor(r)
 			if vol == nil {
@@ -325,8 +326,8 @@ func volumeProps() map[string]propAccess {
 
 	return map[string]propAccess{
 		"position": {
-			Get: get(func(v *Volume) flang.Value { return vecValue(v.Position) }),
-			Set: set(func(vol *Volume, v flang.Value) error {
+			Get: get(func(v *world.Volume) flang.Value { return vecValue(v.Position) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
 				p, ok := toVec3(v)
 				if !ok {
 					return propErr("position", "vec", v)
@@ -339,8 +340,8 @@ func volumeProps() map[string]propAccess {
 			Doc: "world-space position",
 		},
 		"rotation": {
-			Get: get(func(v *Volume) flang.Value { return vecValue(v.Rotation) }),
-			Set: set(func(vol *Volume, v flang.Value) error {
+			Get: get(func(v *world.Volume) flang.Value { return vecValue(v.Rotation) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
 				p, ok := toVec3(v)
 				if !ok {
 					return propErr("rotation", "vec", v)
@@ -351,10 +352,10 @@ func volumeProps() map[string]propAccess {
 			Doc: "Euler angles in radians",
 		},
 		"half": {
-			Get: get(func(v *Volume) flang.Value {
+			Get: get(func(v *world.Volume) flang.Value {
 				return flang.VecVal{float64(v.HalfX), float64(v.HalfY), float64(v.HalfZ)}
 			}),
-			Set: set(func(vol *Volume, v flang.Value) error {
+			Set: set(func(vol *world.Volume, v flang.Value) error {
 				p, ok := toVec3(v)
 				if !ok {
 					return propErr("half", "vec", v)
@@ -368,21 +369,21 @@ func volumeProps() map[string]propAccess {
 			Doc:   "half-extents of the region",
 		},
 		"shape": {
-			Get: get(func(v *Volume) flang.Value { return flang.AtomVal(volumeShapeName(v.Shape)) }),
-			Set: set(func(vol *Volume, v flang.Value) error {
+			Get: get(func(v *world.Volume) flang.Value { return flang.AtomVal(world.VolumeShapeName(v.Shape)) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
 				s, ok := toStr(v)
 				if !ok {
 					return propErr("shape", "str or atom", v)
 				}
-				vol.Shape = volumeShapeFromName(s)
+				vol.Shape = world.VolumeShapeFromName(s)
 				return nil
 			}),
 			Dirty: true,
 			Doc:   "box, sphere or cylinder",
 		},
 		"enabled": {
-			Get: get(func(v *Volume) flang.Value { return flang.BoolVal(v.Enabled) }),
-			Set: set(func(vol *Volume, v flang.Value) error {
+			Get: get(func(v *world.Volume) flang.Value { return flang.BoolVal(v.Enabled) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
 				b, ok := toBool(v)
 				if !ok {
 					return propErr("enabled", "bool", v)

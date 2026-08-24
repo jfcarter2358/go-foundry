@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -8,9 +9,9 @@ import (
 
 // faceTestLevel is two square sectors sharing an edge, each with a floor, a
 // ceiling and four walls — enough faces of every kind to select across.
-func faceTestLevel(t *testing.T) *Chunk {
+func faceTestLevel(t *testing.T) *world.Chunk {
 	t.Helper()
-	lvl := &Level{Chunks: []Chunk{*splitTestChunk()}}
+	lvl := &world.Level{Chunks: []world.Chunk{*splitTestChunk()}}
 	Editor.level = lvl
 	Editor.Mode = Mode3D
 	Editor.ActiveChunkIdx = 0
@@ -197,7 +198,7 @@ func TestFaceAndVertexSelectionsExcludeEachOther(t *testing.T) {
 func TestFaceSelectionClearsTheSpawnMarker(t *testing.T) {
 	defer saveEditorSelection()()
 	faceTestLevel(t)
-	Editor.level.Spawn = &SpawnPoint{Position: mgl32.Vec3{}}
+	Editor.level.Spawn = &world.SpawnPoint{Position: mgl32.Vec3{}}
 	editorSelectSpawn()
 
 	setFaceSelection([]faceSel{floorFace(0)})

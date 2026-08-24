@@ -17,6 +17,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -24,7 +25,7 @@ import (
 
 // entityDrawable reports whether an attachment should be drawn at all: its
 // entity is visible, it is visible, and it has something uploaded.
-func entityDrawable(e *Entity, m *EntityModel) bool {
+func entityDrawable(e *world.Entity, m *world.EntityModel) bool {
 	return e.Visible && m.Visible && m.HasGeometry()
 }
 
@@ -33,7 +34,7 @@ func entityDrawable(e *Entity, m *EntityModel) bool {
 // An entity with no authored bounds is never culled. Its bounding volume is
 // what culling has to work from, and treating an absent one as zero-sized would
 // make an unbounded entity invisible everywhere except dead centre of the view.
-func entityInFrustum(e *Entity, cull *Frustum) bool {
+func entityInFrustum(e *world.Entity, cull *Frustum) bool {
 	if cull == nil {
 		return true
 	}
@@ -51,7 +52,7 @@ func entityInFrustum(e *Entity, cull *Frustum) bool {
 // back-to-front queue and draws the rest immediately, so an entity with a
 // translucent attachment sorts against the level's own transparent surfaces
 // rather than in a pass of its own.
-func RenderEntities(lvl *Level, cull *Frustum, draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSided bool)) {
+func RenderEntities(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSided bool)) {
 	if lvl == nil {
 		return
 	}
@@ -85,7 +86,7 @@ func RenderEntities(lvl *Level, cull *Frustum, draw func(g *gfx.Geometry, model 
 // It restores the identity model matrix on the way out. The shadow walker sets
 // that once and leaves it (renderSceneShadow), so an entity's matrix left in
 // place would drag every wall drawn afterwards along with it.
-func RenderEntitiesShadow(lvl *Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
+func RenderEntitiesShadow(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
 	if lvl == nil || len(lvl.Entities) == 0 {
 		return
 	}

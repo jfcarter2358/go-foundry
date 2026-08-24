@@ -14,6 +14,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -91,7 +92,7 @@ func rayAABBIntersect(origin, dir, aabbMin, aabbMax mgl32.Vec3) (bool, float32) 
 	return true, tmin
 }
 
-// rayShapeRange is the ray-cast counterpart of shapeContainsPoint: the range of
+// rayShapeRange is the ray-cast counterpart of ShapeContainsPoint: the range of
 // distances along a ray that lie inside one of the three bounding solids. It
 // takes the same arguments so the two agree on what a shape is — rotated by its
 // Euler angles, inscribed in the box its half-extents describe — and so a
@@ -99,7 +100,7 @@ func rayAABBIntersect(origin, dir, aabbMin, aabbMax mgl32.Vec3) (bool, float32) 
 //
 // t0 negative means the ray's origin is inside the solid. ok is false when the
 // ray misses, or when the extents describe no solid at all.
-func rayShapeRange(origin, dir, center, rotation, half mgl32.Vec3, kind BoundingType) (t0, t1 float32, ok bool) {
+func rayShapeRange(origin, dir, center, rotation, half mgl32.Vec3, kind world.BoundingType) (t0, t1 float32, ok bool) {
 	if half.X() <= 0 || half.Y() <= 0 || half.Z() <= 0 {
 		return 0, 0, false
 	}
@@ -107,22 +108,22 @@ func rayShapeRange(origin, dir, center, rotation, half mgl32.Vec3, kind Bounding
 	d := dir
 	if rotation != (mgl32.Vec3{}) {
 		// The inverse of a rotation is its transpose, the same shortcut
-		// shapeContainsPoint takes. Being orthonormal it leaves lengths alone,
+		// ShapeContainsPoint takes. Being orthonormal it leaves lengths alone,
 		// so the distances that come back are directly comparable with every
 		// other hit measured in world space.
-		inv := eulerMatrixYXZ(rotation).Transpose()
+		inv := world.EulerMatrixYXZ(rotation).Transpose()
 		o4 := inv.Mul4x1(o.Vec4(0))
 		d4 := inv.Mul4x1(d.Vec4(0))
 		o = mgl32.Vec3{o4.X(), o4.Y(), o4.Z()}
 		d = mgl32.Vec3{d4.X(), d4.Y(), d4.Z()}
 	}
 	switch kind {
-	case BoundingSphere:
+	case world.BoundingSphere:
 		// Dividing through by the half-extents turns the ellipsoid into the
 		// unit sphere. Origin and direction are scaled together, which leaves
 		// the ray parameter untouched — the roots are still world distances.
 		return rayUnitSphereRange(shapeNormalize(o, half), shapeNormalize(d, half))
-	case BoundingCylinder:
+	case world.BoundingCylinder:
 		return rayCylinderRange(o, d, half)
 	default:
 		return raySlabRange(o, d, half.Mul(-1), half)
@@ -142,7 +143,7 @@ func rayUnitSphereRange(o, d mgl32.Vec3) (float32, float32, bool) {
 
 // rayCylinderRange solves a ray against an upright cylinder — a unit circle in
 // XZ once divided by the half-extents, capped by a slab on Y, matching the
-// cylinder shapeContainsPoint describes.
+// cylinder ShapeContainsPoint describes.
 func rayCylinderRange(o, d, half mgl32.Vec3) (float32, float32, bool) {
 	ox, oz := o.X()/half.X(), o.Z()/half.Z()
 	dx, dz := d.X()/half.X(), d.Z()/half.Z()
@@ -264,7 +265,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	if Editor.SpawnPlacementMode {
 		// 4m in front of the camera, at the floor the camera is standing on.
 		pos := gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(4.0))
-		pos[1] -= eyeHeight
+		pos[1] -= world.EyeHeight
 		placeSpawnPointAt(pos)
 		return
 	}
@@ -393,7 +394,7 @@ func editor3DClearSelection() {
 // The plane itself has nothing to edit — it is regenerated from its Water-kind
 // biome sector whenever that sector changes — so this is that sector's water
 // half, reached from the 3D view instead of from the 2D biome layer.
-func editorWaterSection(lvl *Level) {
+func editorWaterSection(lvl *world.Level) {
 	// Shown whenever a water sector is the selection, however it was selected:
 	// clicking the plane here, or picking the sector in the 2D biome layer.
 	if Editor.ActiveBiomeSectorIdx < 0 ||
@@ -405,7 +406,7 @@ func editorWaterSection(lvl *Level) {
 		return
 	}
 	bs := &ch.BiomeSectors[Editor.ActiveBiomeSectorIdx]
-	if bs.Brush.Kind != BiomeWater {
+	if bs.Brush.Kind != world.BiomeWater {
 		return
 	}
 
@@ -444,7 +445,7 @@ func editorWaterSectorFor(chunkIdx, surfaceIdx int) int {
 
 // moveChunk shifts all shared points in a chunk by the delta to newOrigin,
 // rebuilds geometry, and updates the chunk's origin and AABB.
-func moveChunk(ch *Chunk, newOrigin mgl32.Vec3) {
+func moveChunk(ch *world.Chunk, newOrigin mgl32.Vec3) {
 	delta := newOrigin.Sub(ch.Origin)
 	dx := delta.X()
 	dy := delta.Y()
@@ -470,7 +471,7 @@ func moveChunk(ch *Chunk, newOrigin mgl32.Vec3) {
 		s.Floor.Height += dy
 		s.Ceiling.Height += dy
 		rebuildSectorEdgePoints(ch, s)
-		_ = reloadSector(ch, s)
+		_ = world.ReloadSector(ch, s)
 	}
 	ch.RebuildGaps()
 	ch.MinBound = ch.MinBound.Add(delta)
@@ -561,7 +562,7 @@ func editorFocusScroll(sections ...string) {
 // clicking their handle boxes in 3D. With more than one selected, editing a
 // coordinate collapses every selected vertex onto that value — dragging an axis
 // arm is the way to move them as a group.
-func editor3DVertexPanel(lvl *Level) {
+func editor3DVertexPanel(lvl *world.Level) {
 	sels := Editor.SelectedVertices
 	if len(sels) == 0 {
 		return
@@ -623,14 +624,14 @@ func editor3DVertexPanel(lvl *Level) {
 				fOff := s.Floor.VertexOffsets[primary.vertIdx]
 				if editorDragFloat("Floor Offset##v3dfo", &fOff, -100, 100, "%.3f") {
 					s.Floor.VertexOffsets[primary.vertIdx] = fOff
-					_ = reloadSector(ch, s)
+					_ = world.ReloadSector(ch, s)
 				}
 			}
 			if primary.vertIdx < len(s.Ceiling.VertexOffsets) {
 				cOff := s.Ceiling.VertexOffsets[primary.vertIdx]
 				if editorDragFloat("Ceil Offset##v3dco", &cOff, -100, 100, "%.3f") {
 					s.Ceiling.VertexOffsets[primary.vertIdx] = cOff
-					_ = reloadSector(ch, s)
+					_ = world.ReloadSector(ch, s)
 				}
 			}
 			imgui.Text("Click the handle again to cycle overlapping vertices")
@@ -737,7 +738,7 @@ func Editor3DPanel() {
 					imgui.Checkbox("Double Sided##fds3d", &s3d.Floor.DoubleSided)
 					changed = editorDragFloat("Alpha##fa3d", &s3d.Floor.Alpha, 0, 1, "%.2f") || changed
 					if changed {
-						_ = reloadSector(sch, s3d)
+						_ = world.ReloadSector(sch, s3d)
 					}
 					imgui.TreePop()
 				}
@@ -745,12 +746,12 @@ func Editor3DPanel() {
 					EnterSurface2D("floor")
 				}
 				if editorUVControls("Floor", &s3d.Floor.UVOffset, &s3d.Floor.UVScale, &s3d.Floor.UVRotation) {
-					_ = reloadSector(sch, s3d)
+					_ = world.ReloadSector(sch, s3d)
 				}
 				editorSurfaceExtrusionPanel(sch, s3d, "Floor", &s3d.Floor.Extrusions)
 				editorTerrainPanel(sch, s3d, "Floor", &s3d.Floor.Terrain, &s3d.Floor.TerrainPoints)
 				if editorSmoothPanel("Floor", &s3d.Floor.Smooth, &s3d.Floor.SmoothAngle) {
-					_ = reloadSector(sch, s3d)
+					_ = world.ReloadSector(sch, s3d)
 				}
 				editorDetailPanel("Floor", &s3d.Floor.Detail)
 				editorScriptDataUI(&s3d.Floor.ScriptData, "floor3d", "This floor")
@@ -765,7 +766,7 @@ func Editor3DPanel() {
 					imgui.Checkbox("Double Sided##cds3d", &s3d.Ceiling.DoubleSided)
 					changed = editorDragFloat("Alpha##ca3d", &s3d.Ceiling.Alpha, 0, 1, "%.2f") || changed
 					if changed {
-						_ = reloadSector(sch, s3d)
+						_ = world.ReloadSector(sch, s3d)
 					}
 					imgui.TreePop()
 				}
@@ -773,12 +774,12 @@ func Editor3DPanel() {
 					EnterSurface2D("ceiling")
 				}
 				if editorUVControls("Ceiling", &s3d.Ceiling.UVOffset, &s3d.Ceiling.UVScale, &s3d.Ceiling.UVRotation) {
-					_ = reloadSector(sch, s3d)
+					_ = world.ReloadSector(sch, s3d)
 				}
 				editorSurfaceExtrusionPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Extrusions)
 				editorTerrainPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Terrain, &s3d.Ceiling.TerrainPoints)
 				if editorSmoothPanel("Ceiling", &s3d.Ceiling.Smooth, &s3d.Ceiling.SmoothAngle) {
-					_ = reloadSector(sch, s3d)
+					_ = world.ReloadSector(sch, s3d)
 				}
 				editorDetailPanel("Ceiling", &s3d.Ceiling.Detail)
 				editorScriptDataUI(&s3d.Ceiling.ScriptData, "ceil3d", "This ceiling")
@@ -793,7 +794,7 @@ func Editor3DPanel() {
 					w := &s3d.Walls[Editor.ActiveEdgeIdx]
 					// The ID rather than the index: the index shifts under
 					// nearly every edit, and the ID is what a script addresses.
-					imgui.Text("Wall " + edgeIDDisplay(w.ID))
+					imgui.Text("Wall " + world.EdgeIDDisplay(w.ID))
 					if imgui.IsItemHovered() {
 						imgui.SetTooltip("A script reaches this edge as @" + s3d.ID + ".edge." + w.ID)
 					}
@@ -804,14 +805,14 @@ func Editor3DPanel() {
 					changed = imgui.Checkbox("Double Sided##wds3d", &w.DoubleSided) || changed
 					changed = editorDragFloat("Alpha##wa3d", &w.Alpha, 0, 1, "%.2f") || changed
 					if changed {
-						_ = reloadSector(sch, s3d)
+						_ = world.ReloadSector(sch, s3d)
 					}
 					// Surface 2D editor button
 					if imgui.Button("Edit Wall Surface##wallSurf3d") {
 						EnterSurface2D("wall")
 					}
 					if editorUVControls("Wall", &w.UVOffset, &w.UVScale, &w.UVRotation) {
-						_ = reloadSector(sch, s3d)
+						_ = world.ReloadSector(sch, s3d)
 					}
 					// Extrusion sub-panel
 					editorExtrusionPanel(sch, s3d, w)
@@ -819,7 +820,7 @@ func Editor3DPanel() {
 					editorTerrainPanel(sch, s3d, "Wall", &w.Terrain, &w.TerrainPoints)
 					// Smooth shading (rebuilds the wall: normals are made at upload)
 					if editorSmoothPanel("Wall", &w.Smooth, &w.SmoothAngle) {
-						_ = reloadSector(sch, s3d)
+						_ = world.ReloadSector(sch, s3d)
 					}
 					// Detail sub-panel
 					editorDetailPanel("Wall", &w.Detail)
@@ -828,7 +829,7 @@ func Editor3DPanel() {
 					Editor.ActiveEdgeIdx < len(s3d.Portals) {
 					imgui.Separator()
 					p3d := &s3d.Portals[Editor.ActiveEdgeIdx]
-					imgui.Text("Portal " + edgeIDDisplay(p3d.ID))
+					imgui.Text("Portal " + world.EdgeIDDisplay(p3d.ID))
 					if imgui.IsItemHovered() {
 						imgui.SetTooltip("A script reaches this edge as @" + s3d.ID + ".edge." + p3d.ID)
 					}
@@ -845,7 +846,7 @@ func Editor3DPanel() {
 					changed = imgui.Checkbox("Double Sided##pds3d", &p3d.DoubleSided) || changed
 					changed = editorDragFloat("Alpha##pa3d", &p3d.Alpha, 0, 1, "%.2f") || changed
 					if changed {
-						_ = reloadSector(sch, s3d)
+						_ = world.ReloadSector(sch, s3d)
 						sch.RebuildGaps()
 					}
 				} else {
@@ -899,37 +900,37 @@ func createChunkAtCamera(id string) {
 	ceilH := float32(4.0)
 
 	// Wall/Floor/Ceiling.Alpha and DoubleSided have no zero-value-safe default
-	// like the YAML loader's float32Default/boolDefault helpers apply — leaving
+	// like the YAML loader's float32Default/BoolDefault helpers apply — leaving
 	// them unset here means Alpha stays 0 (fully transparent) and DoubleSided
 	// stays false, so set them explicitly to match what a loaded level gets.
 	_ = gfx.EnsureTextureLoaded("concrete")
 	_ = gfx.EnsureTextureLoaded("stone_floor")
 
-	walls := []Wall{
+	walls := []world.Wall{
 		{StartPoint: pts[0], EndPoint: pts[1], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
 		{StartPoint: pts[1], EndPoint: pts[2], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
 		{StartPoint: pts[2], EndPoint: pts[3], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
 		{StartPoint: pts[3], EndPoint: pts[0], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
 	}
 
-	sector := Sector{
+	sector := world.Sector{
 		ID:           id + "_room",
 		PointIndices: []int{0, 1, 2, 3},
 		EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
-		Floor:        Floor{Enabled: true, Height: floorH, Texture: "stone_floor", DoubleSided: true, Alpha: 1.0},
-		Ceiling:      Ceiling{Enabled: true, Height: ceilH, Texture: "concrete", DoubleSided: true, Alpha: 1.0},
+		Floor:        world.Floor{Enabled: true, Height: floorH, Texture: "stone_floor", DoubleSided: true, Alpha: 1.0},
+		Ceiling:      world.Ceiling{Enabled: true, Height: ceilH, Texture: "concrete", DoubleSided: true, Alpha: 1.0},
 		Walls:        walls,
 	}
 
-	chunk := Chunk{
+	chunk := world.Chunk{
 		ID:         id,
 		Points:     pts,
-		Sectors:    []Sector{sector},
+		Sectors:    []world.Sector{sector},
 		MinBound:   mgl32.Vec3{cx - halfSize, floorH, cz - halfSize},
 		MaxBound:   mgl32.Vec3{cx + halfSize, ceilH, cz + halfSize},
 		PointNames: []string{"A", "B", "C", "D"},
 	}
-	_ = reloadSector(&chunk, &sector)
+	_ = world.ReloadSector(&chunk, &sector)
 	chunk.Sectors[0] = sector
 
 	lvl.Chunks = append(lvl.Chunks, chunk)
@@ -957,7 +958,7 @@ func duplicateActiveChunk() {
 
 	for si := range clone.Sectors {
 		s := &clone.Sectors[si]
-		_ = reloadSector(&clone, s)
+		_ = world.ReloadSector(&clone, s)
 	}
 	clone.RebuildGaps()
 
@@ -1022,7 +1023,7 @@ func deleteActiveChunk() {
 // uniqueChunkCopyID returns a chunk ID + suffix pair that does not collide
 // with any existing chunk in lvl. The suffix ("_copy", "_copy2", ...) is
 // reused for nested sector IDs so they stay consistent.
-func uniqueChunkCopyID(lvl *Level, srcID string) (string, string) {
+func uniqueChunkCopyID(lvl *world.Level, srcID string) (string, string) {
 	existing := make(map[string]struct{}, len(lvl.Chunks))
 	for i := range lvl.Chunks {
 		existing[lvl.Chunks[i].ID] = struct{}{}

@@ -19,6 +19,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -180,7 +181,7 @@ func editor2DGizmoMouseDown(t sdl.MouseButtonEvent) bool {
 	if e := activeGizmoEntity(); e != nil {
 		Editor.Gizmo2DStartEntity = e.Position
 		Editor.Gizmo2DStartEntityRot = e.Rotation
-		Editor.Gizmo2DStartEntityScale = e.effectiveScale()
+		Editor.Gizmo2DStartEntityScale = e.EffectiveScale()
 	}
 	return true
 }
@@ -335,29 +336,29 @@ func gizmo2DApply(fn func(mgl32.Vec2) mgl32.Vec2) {
 // The map measures angles counter-clockwise from +X through +Z, while a Y Euler
 // rotation carries +X toward -Z — so the entity's yaw takes the negated delta.
 // It is the same sign the spawn marker's rotation is built with.
-func gizmo2DRotateEntity(e *Entity, delta float32) {
+func gizmo2DRotateEntity(e *world.Entity, delta float32) {
 	r := Editor.Gizmo2DStartEntityRot
-	e.Rotation = mgl32.Vec3{r.X(), wrapAngle(r.Y() - delta), r.Z()}
+	e.Rotation = mgl32.Vec3{r.X(), world.WrapAngle(r.Y() - delta), r.Z()}
 }
 
 // gizmo2DRotateSpawn swings the spawn marker's facing by a map-space angle.
 // Only the yaw moves: the map has no pitch to drag, so a spawn aimed up or down
 // keeps the pitch it was given in the 3D view or the panel. The sign is the
 // entity's, and for the same reason gizmo2DRotateEntity gives.
-func gizmo2DRotateSpawn(s *SpawnPoint, delta float32) {
+func gizmo2DRotateSpawn(s *world.SpawnPoint, delta float32) {
 	r := Editor.Gizmo2DStartSpawnRot
-	s.Rotation = mgl32.Vec3{r.X(), wrapAngle(r.Y() - delta), r.Z()}
+	s.Rotation = mgl32.Vec3{r.X(), world.WrapAngle(r.Y() - delta), r.Z()}
 }
 
 // gizmo2DScaleEntity resizes the entity in place. The map can only reach X and
 // Z; Y is carried through untouched, for the same reason heights are elsewhere
 // up here — a top-down drag must not silently flatten something.
-func gizmo2DScaleEntity(e *Entity, s mgl32.Vec2) {
+func gizmo2DScaleEntity(e *world.Entity, s mgl32.Vec2) {
 	start := Editor.Gizmo2DStartEntityScale
 	e.Scale = mgl32.Vec3{
-		entityScaleClamp(start.X() * s.X()),
+		world.EntityScaleClamp(start.X() * s.X()),
 		start.Y(),
-		entityScaleClamp(start.Z() * s.Y()),
+		world.EntityScaleClamp(start.Z() * s.Y()),
 	}
 }
 

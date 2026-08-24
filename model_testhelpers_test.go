@@ -77,3 +77,17 @@ func skinnedCube(t *testing.T) (*model.ModelDoc, int) {
 	m.AssignVertsToBone(modelAllVerts(m), bi, 1)
 	return m, bi
 }
+
+// vecNear reports whether two vectors agree within tol. internal/world's tests
+// carry the same three lines — see the note on vec3Close.
+func vecNear(a, b mgl32.Vec3, tol float32) bool {
+	d := a.Sub(b)
+	return mgl32.Abs(d.X()) <= tol && mgl32.Abs(d.Y()) <= tol && mgl32.Abs(d.Z()) <= tol
+}
+
+// nearlyEqual reports whether two scalars agree within tol. internal/world's
+// tests carry the same three lines — see the note on vec3Close.
+func nearlyEqual(a, b, tol float32) bool {
+	d := a - b
+	return d <= tol && d >= -tol
+}

@@ -18,6 +18,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"math"
 	"sort"
 
@@ -142,7 +143,7 @@ func pickModelT(origin, dir mgl32.Vec3, verts []float32, model mgl32.Mat4) float
 // is legitimately model-less — a trigger volume, a script anchor — and one that
 // could not be clicked would be one the editor could place but never select
 // again.
-func pickEntityT(origin, dir mgl32.Vec3, e *Entity) float32 {
+func pickEntityT(origin, dir mgl32.Vec3, e *world.Entity) float32 {
 	best := float32(math.MaxFloat32)
 	world := e.ModelMatrix()
 	for mi := range e.Models {
@@ -280,7 +281,7 @@ func pick3D(sx, sy int32) pickHit {
 // is available (it accounts for terrain displacement, extrusion holes, and the
 // real triangulation); a fan over the sector polygon is the fallback for a
 // surface whose geometry has not been built yet.
-func pickSurfaceT(origin, dir mgl32.Vec3, ch *Chunk, s *Sector, geo *gfx.Geometry,
+func pickSurfaceT(origin, dir mgl32.Vec3, ch *world.Chunk, s *world.Sector, geo *gfx.Geometry,
 	extrusions []gfx.Geometry, heightAt func(int) float32, reversed bool) float32 {
 
 	best := pickGeometryT(origin, dir, geo.Vertices)
@@ -291,7 +292,7 @@ func pickSurfaceT(origin, dir mgl32.Vec3, ch *Chunk, s *Sector, geo *gfx.Geometr
 		return best
 	}
 
-	pts := SectorPoints(ch, s)
+	pts := world.SectorPoints(ch, s)
 	if len(pts) < 3 {
 		return best
 	}

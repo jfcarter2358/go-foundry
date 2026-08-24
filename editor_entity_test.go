@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -11,9 +12,9 @@ import (
 // entityEditorLevel points the editor at a level holding two entities and
 // selects the first. Nothing here uploads geometry — that needs a GL context —
 // so the entities carry bounds and transforms but no models.
-func entityEditorLevel(t *testing.T) *Level {
+func entityEditorLevel(t *testing.T) *world.Level {
 	t.Helper()
-	lvl := &Level{Entities: []Entity{
+	lvl := &world.Level{Entities: []world.Entity{
 		{ID: "a", Type: "crate", Position: mgl32.Vec3{1, 0, 1}, Scale: mgl32.Vec3{1, 1, 1},
 			BoundHalfX: 0.5, BoundHalfY: 0.5, BoundHalfZ: 0.5, Visible: true},
 		{ID: "b", Type: "crate", Position: mgl32.Vec3{5, 0, 5}, Scale: mgl32.Vec3{1, 1, 1},
@@ -113,7 +114,7 @@ func TestGizmoScaleResizesTheEntityInPlace(t *testing.T) {
 	e := &lvl.Entities[0]
 	start := e.Position
 
-	Editor.GizmoDragStartScale = e.effectiveScale()
+	Editor.GizmoDragStartScale = e.EffectiveScale()
 	applyScaleToSelection(e.Position, mgl32.Vec3{2, 1, 1})
 
 	if e.Position != start {
@@ -131,13 +132,13 @@ func TestGizmoScaleResizesTheEntityInPlace(t *testing.T) {
 func TestEntityScaleClampKeepsSignAndAvoidsZero(t *testing.T) {
 	// A zero scale makes the model matrix singular, which the picker inverts.
 	// A negative one legitimately mirrors a model, so the sign is kept.
-	if got := entityScaleClamp(0); got != entityScaleMin {
-		t.Errorf("got %v, want %v", got, entityScaleMin)
+	if got := world.EntityScaleClamp(0); got != world.EntityScaleMin {
+		t.Errorf("got %v, want %v", got, world.EntityScaleMin)
 	}
-	if got := entityScaleClamp(-0.0000001); got != -entityScaleMin {
-		t.Errorf("got %v, want %v", got, -entityScaleMin)
+	if got := world.EntityScaleClamp(-0.0000001); got != -world.EntityScaleMin {
+		t.Errorf("got %v, want %v", got, -world.EntityScaleMin)
 	}
-	if got := entityScaleClamp(-3); got != -3 {
+	if got := world.EntityScaleClamp(-3); got != -3 {
 		t.Errorf("a legitimate mirror was clamped: %v", got)
 	}
 }
@@ -154,7 +155,7 @@ func TestGizmo2DRotateMatchesTheMapsAngleSense(t *testing.T) {
 
 	// Forward (+X local) should now point along +Z in world space, which is the
 	// direction the cursor was dragged toward.
-	d := eulerMatrixYXZ(e.Rotation).Mul4x1(mgl32.Vec4{1, 0, 0, 0})
+	d := world.EulerMatrixYXZ(e.Rotation).Mul4x1(mgl32.Vec4{1, 0, 0, 0})
 	if !vecNear(mgl32.Vec3{d.X(), d.Y(), d.Z()}, mgl32.Vec3{0, 0, 1}, 1e-5) {
 		t.Errorf("forward: got {%v %v %v}, want {0 0 1}", d.X(), d.Y(), d.Z())
 	}
@@ -205,7 +206,7 @@ func TestDeleteActiveEntityRemovesAndDeselects(t *testing.T) {
 func TestDuplicateActiveEntityGivesItItsOwnIdentity(t *testing.T) {
 	lvl := entityEditorLevel(t)
 	lvl.Entities[0].Tags = []string{"prop"}
-	lvl.Entities[0].Attributes = AttrSet{"health": IntAttr(5)}
+	lvl.Entities[0].Attributes = world.AttrSet{"health": world.IntAttr(5)}
 
 	duplicateActiveEntity()
 
@@ -221,9 +222,9 @@ func TestDuplicateActiveEntityGivesItItsOwnIdentity(t *testing.T) {
 		t.Error("the duplicate landed exactly on the original")
 	}
 	// Editing the copy must not reach the original.
-	dup.SetAttr("health", IntAttr(99))
+	dup.SetAttr("health", world.IntAttr(99))
 	dup.AddTag("copy")
-	if lvl.Entities[0].Attributes["health"] != IntAttr(5) {
+	if lvl.Entities[0].Attributes["health"] != world.IntAttr(5) {
 		t.Error("the duplicate shares its attribute set with the original")
 	}
 	if lvl.Entities[0].HasTag("copy") {
@@ -235,7 +236,7 @@ func TestDuplicateActiveEntityGivesItItsOwnIdentity(t *testing.T) {
 	}
 }
 
-func levelEntityIDs(lvl *Level) []string {
+func levelEntityIDs(lvl *world.Level) []string {
 	out := make([]string, len(lvl.Entities))
 	for i := range lvl.Entities {
 		out[i] = lvl.Entities[i].ID
@@ -246,7 +247,7 @@ func levelEntityIDs(lvl *Level) []string {
 func TestEditor2DEntityPickTakesTheTopmost(t *testing.T) {
 	// Later entities win, so the one just dropped onto a pile is the one a
 	// click grabs.
-	lvl := &Level{Entities: []Entity{
+	lvl := &world.Level{Entities: []world.Entity{
 		{ID: "under", Position: mgl32.Vec3{0, 0, 0}, BoundHalfX: 1, BoundHalfY: 1, BoundHalfZ: 1},
 		{ID: "over", Position: mgl32.Vec3{0, 0, 0}, BoundHalfX: 1, BoundHalfY: 1, BoundHalfZ: 1},
 	}}

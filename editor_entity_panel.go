@@ -16,6 +16,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"strconv"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -26,7 +27,7 @@ import (
 
 // editorEntitySection draws the definition catalog, the place button, and the
 // list of entities already in the level.
-func editorEntitySection(lvl *Level) {
+func editorEntitySection(lvl *world.Level) {
 	imgui.Separator()
 	editorFocusOpen(panelFocusEntity)
 	if !imgui.CollapsingHeaderV("Entities", imgui.TreeNodeFlagsDefaultOpen) {
@@ -55,11 +56,11 @@ func editorEntitySection(lvl *Level) {
 // them next to the per-entity flags is what makes "is it this entity, or is it
 // the engine" a glance rather than a hunt.
 func editorEntityEngineToggles() {
-	imgui.Checkbox("Entity/world collision  [8]##engworld", &EntityWorldCollisionEnabled)
+	imgui.Checkbox("Entity/world collision  [8]##engworld", &world.EntityWorldCollisionEnabled)
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Engine-wide. Each entity still has to opt in;\nthis says whether the engine listens.")
 	}
-	imgui.Checkbox("Entity/entity collision  [9]##engent", &EntityEntityCollisionEnabled)
+	imgui.Checkbox("Entity/entity collision  [9]##engent", &world.EntityEntityCollisionEnabled)
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Engine-wide. Each entity still has to opt in;\nthis says whether the engine listens.")
 	}
@@ -98,7 +99,7 @@ func editorEntityCatalog() {
 	if name == "" {
 		editorTextWrapped("No model and no type: a box you place and then " +
 			"describe here. The level file carries all of it.")
-	} else if def, err := LoadEntityDef(name); err == nil {
+	} else if def, err := world.LoadEntityDef(name); err == nil {
 		// The description is the definition author's one-line note about what
 		// the type is for — worth showing, but not worth failing the picker
 		// over, so a definition that will not load simply shows why instead.
@@ -111,7 +112,7 @@ func editorEntityCatalog() {
 
 	imgui.InputTextV("ID##newent", &Editor.NewEntityID, 0, nil)
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Leave blank to name it after its type, or \"" + blankEntityID + "\"\n" +
+		imgui.SetTooltip("Leave blank to name it after its type, or \"" + world.BlankEntityID + "\"\n" +
 			"for a blank one. A number is appended if the name is taken.")
 	}
 
@@ -129,16 +130,16 @@ func editorEntityCatalog() {
 	imgui.SameLine()
 	if imgui.Button("Reload Definitions##entdefs") {
 		editorRefreshEntityDefs()
-		editorSetStatus("Rescanned %s/", entitiesDirName)
+		editorSetStatus("Rescanned %s/", world.EntitiesDirName)
 	}
 	if len(Editor.EntityDefNames) == 0 && imgui.IsItemHovered() {
-		imgui.SetTooltip("Nothing in " + entitiesDirName + "/ yet. A definition is a\n" +
+		imgui.SetTooltip("Nothing in " + world.EntitiesDirName + "/ yet. A definition is a\n" +
 			".yaml file describing one type; entities do not need one.")
 	}
 }
 
 // editorEntityList draws every entity in the level as a selectable row.
-func editorEntityList(lvl *Level) {
+func editorEntityList(lvl *world.Level) {
 	if len(lvl.Entities) == 0 {
 		imgui.Text("This level has no entities.")
 		return
@@ -161,7 +162,7 @@ func editorEntityList(lvl *Level) {
 
 // editorEntityProperties draws the selected entity's fields. Nothing is drawn
 // when no entity is selected, so both panels can call it unconditionally.
-func editorEntityProperties(lvl *Level) {
+func editorEntityProperties(lvl *world.Level) {
 	e := activeEntity()
 	if e == nil {
 		return
@@ -196,7 +197,7 @@ func editorEntityProperties(lvl *Level) {
 }
 
 // editorEntityIdentity draws the ID and the type it was instanced from.
-func editorEntityIdentity(lvl *Level, e *Entity) {
+func editorEntityIdentity(lvl *world.Level, e *world.Entity) {
 	id := e.ID
 	if imgui.InputTextV("ID##entid", &id, imgui.InputTextFlagsEnterReturnsTrue, nil) {
 		// Renaming to a name already in use would make `@id` ambiguous, so the
@@ -205,7 +206,7 @@ func editorEntityIdentity(lvl *Level, e *Entity) {
 		switch {
 		case id == "":
 			editorSetStatus("An entity needs an ID")
-		case id != e.ID && FindEntity(lvl, id) != nil:
+		case id != e.ID && world.FindEntity(lvl, id) != nil:
 			editorSetStatus("There is already an entity called %q", id)
 		default:
 			e.ID = id
@@ -214,7 +215,7 @@ func editorEntityIdentity(lvl *Level, e *Entity) {
 	if e.Type != "" {
 		imgui.Text("Type: " + e.Type)
 		if imgui.IsItemHovered() {
-			imgui.SetTooltip("Stamped from " + entitiesDirName + "/" + e.Type + ".yaml.\n" +
+			imgui.SetTooltip("Stamped from " + world.EntitiesDirName + "/" + e.Type + ".yaml.\n" +
 				"The level stores only what differs from it.")
 		}
 	} else {
@@ -240,7 +241,7 @@ func orDash(s string) string {
 }
 
 // editorEntityTransform draws position, rotation and scale.
-func editorEntityTransform(e *Entity) {
+func editorEntityTransform(e *world.Entity) {
 	pos := [3]float32{e.Position.X(), e.Position.Y(), e.Position.Z()}
 	if editorDragFloat3("Position##entpos", &pos, 0, 0, "%.3f") {
 		e.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
@@ -251,19 +252,19 @@ func editorEntityTransform(e *Entity) {
 		e.Rotation = vec3FromDegrees(rot)
 	}
 
-	sc := e.effectiveScale()
+	sc := e.EffectiveScale()
 	scv := [3]float32{sc.X(), sc.Y(), sc.Z()}
 	if editorDragFloat3Step("Scale##entscale", &scv, -100, 100, "%.3f", 0.01) {
 		e.Scale = mgl32.Vec3{
-			entityScaleClamp(scv[0]),
-			entityScaleClamp(scv[1]),
-			entityScaleClamp(scv[2]),
+			world.EntityScaleClamp(scv[0]),
+			world.EntityScaleClamp(scv[1]),
+			world.EntityScaleClamp(scv[2]),
 		}
 	}
 }
 
 // editorEntityMotion draws velocity and angular velocity.
-func editorEntityMotion(e *Entity) {
+func editorEntityMotion(e *world.Entity) {
 	if !imgui.CollapsingHeader("Motion##entmotion") {
 		return
 	}
@@ -287,15 +288,15 @@ func editorEntityMotion(e *Entity) {
 
 // editorEntityBounds draws the bounding volume: its shape, its size and where
 // it sits relative to the entity's origin.
-func editorEntityBounds(e *Entity) {
+func editorEntityBounds(e *world.Entity) {
 	if !imgui.CollapsingHeader("Bounds##entbounds") {
 		return
 	}
 
-	if imgui.BeginCombo("Shape##entboundkind", boundingTypeName(e.BoundingKind)) {
-		for i, n := range boundingTypeNames {
-			if imgui.SelectableV(n, BoundingType(i) == e.BoundingKind, 0, imgui.Vec2{}) {
-				e.BoundingKind = BoundingType(i)
+	if imgui.BeginCombo("Shape##entboundkind", world.BoundingTypeName(e.BoundingKind)) {
+		for i, n := range world.BoundingTypeNames {
+			if imgui.SelectableV(n, world.BoundingType(i) == e.BoundingKind, 0, imgui.Vec2{}) {
+				e.BoundingKind = world.BoundingType(i)
 			}
 		}
 		imgui.EndCombo()
@@ -325,7 +326,7 @@ func editorEntityBounds(e *Entity) {
 // wherever it is placed. The note says so, since the natural next move after
 // ticking a box on one instance is to wonder why the next one placed is not
 // solid too.
-func editorEntityCollisionSection(e *Entity) {
+func editorEntityCollisionSection(e *world.Entity) {
 	if !imgui.CollapsingHeaderV("Collision##entcol", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
@@ -355,15 +356,15 @@ func editorEntityCollisionSection(e *Entity) {
 		imgui.Text("Resting on ground")
 	}
 
-	if !EntityWorldCollisionEnabled && e.Collision.World {
+	if !world.EntityWorldCollisionEnabled && e.Collision.World {
 		editorTextWrapped("World collision is switched off engine-wide.")
 	}
-	if !EntityEntityCollisionEnabled && e.Collision.Entities {
+	if !world.EntityEntityCollisionEnabled && e.Collision.Entities {
 		editorTextWrapped("Entity collision is switched off engine-wide.")
 	}
 	if e.Type != "" {
 		editorTextWrapped("These belong on the type. Set them in " +
-			entitiesDirName + "/" + e.Type + ".yaml and every one placed gets them.")
+			world.EntitiesDirName + "/" + e.Type + ".yaml and every one placed gets them.")
 	}
 }
 
@@ -374,18 +375,18 @@ func editorEntityCollisionSection(e *Entity) {
 // from its definition rather than held in a ScriptData, so it cannot use
 // editorScriptDataUI wholesale — but the widgets themselves are the same ones a
 // volume or a sector gets, and there is no reason for two copies of them.
-func editorEntityTags(e *Entity) {
+func editorEntityTags(e *world.Entity) {
 	editorTagsUI(&e.Tags, "ent", "Tags")
 }
 
-func editorEntityAttributes(e *Entity) {
+func editorEntityAttributes(e *world.Entity) {
 	editorAttributesUI(&e.Attributes, "ent", "Attributes", strconv.Quote(e.ID))
 }
 
 // editorEntityScript draws the entity's script picker. An instance's script
 // starts as its definition's and may be overridden or detached here; saving
 // writes only the difference.
-func editorEntityScript(e *Entity) {
+func editorEntityScript(e *world.Entity) {
 	editorScriptUI(&e.Script, &e.ScriptParams, "ent", strconv.Quote(e.ID))
 }
 
@@ -393,7 +394,7 @@ func editorEntityScript(e *Entity) {
 // over from a shorter list cannot index past the end.
 func editorNewAttrTypeIdx() int {
 	i := int(Editor.NewAttrType)
-	if i < 0 || i >= len(attrTypeNames) {
+	if i < 0 || i >= len(world.AttrTypeNames) {
 		return 0
 	}
 	return i
@@ -403,7 +404,7 @@ func editorNewAttrTypeIdx() int {
 
 // editorEntityModels draws the attachment list: what each one wears, where it
 // sits, and what it can play.
-func editorEntityModels(e *Entity) {
+func editorEntityModels(e *world.Entity) {
 	if !imgui.CollapsingHeaderV("Models##entmodels", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
@@ -434,13 +435,13 @@ func editorEntityModels(e *Entity) {
 	if e.Type != "" {
 		editorTextWrapped("This entity has a type, so what is changed here is " +
 			"stored in the level as an override on " + e.Type + ". Change " +
-			entitiesDirName + "/" + e.Type + ".yaml instead and every one placed gets it.")
+			world.EntitiesDirName + "/" + e.Type + ".yaml instead and every one placed gets it.")
 	}
 }
 
 // editorEntityModelSection draws one attachment. Reports whether the list was
 // structurally changed, which is the caller's cue to stop walking it.
-func editorEntityModelSection(e *Entity, idx int) bool {
+func editorEntityModelSection(e *world.Entity, idx int) bool {
 	m := &e.Models[idx]
 	imgui.PushID(fmt.Sprintf("entmodel%d", idx))
 	defer imgui.PopID()
@@ -507,17 +508,17 @@ func editorEntityModelSection(e *Entity, idx int) bool {
 		m.Rotation = vec3FromDegrees(rot)
 	}
 
-	sc := m.effectiveScale()
+	sc := m.EffectiveScale()
 	scv := [3]float32{sc.X(), sc.Y(), sc.Z()}
 	if editorDragFloat3Step("Scale##mscale", &scv, -100, 100, "%.3f", 0.01) {
 		m.Scale = mgl32.Vec3{
-			entityScaleClamp(scv[0]),
-			entityScaleClamp(scv[1]),
-			entityScaleClamp(scv[2]),
+			world.EntityScaleClamp(scv[0]),
+			world.EntityScaleClamp(scv[1]),
+			world.EntityScaleClamp(scv[2]),
 		}
 	}
 
-	alpha := m.effectiveAlpha()
+	alpha := m.EffectiveAlpha()
 	if editorDragFloatStep("Alpha##malpha", &alpha, 0, 1, "%.2f", 0.02) {
 		m.SetAlpha(alpha)
 	}
@@ -528,7 +529,7 @@ func editorEntityModelSection(e *Entity, idx int) bool {
 
 // editorEntityAnimations draws an attachment's named animations, plus the
 // playback controls that let a clip be previewed in the editor.
-func editorEntityAnimations(e *Entity, m *EntityModel) {
+func editorEntityAnimations(e *world.Entity, m *world.EntityModel) {
 	if !imgui.CollapsingHeaderV("Animations##manims", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
@@ -557,8 +558,8 @@ func editorEntityAnimations(e *Entity, m *EntityModel) {
 			// something rather than naming a clip that does not exist.
 			base = clips[0]
 		}
-		m.Animations = append(m.Animations, EntityAnimation{
-			Name: uniqueAnimationName(m, base),
+		m.Animations = append(m.Animations, world.EntityAnimation{
+			Name: world.UniqueAnimationName(m, base),
 			Clip: base,
 		})
 	}
@@ -574,7 +575,7 @@ func editorEntityAnimations(e *Entity, m *EntityModel) {
 // editorEntityAnimationRow draws one animation: its game-facing name, the clip
 // it maps to, and its playback settings. Reports whether the list was
 // structurally changed.
-func editorEntityAnimationRow(m *EntityModel, idx int, clips []string, playing string) bool {
+func editorEntityAnimationRow(m *world.EntityModel, idx int, clips []string, playing string) bool {
 	a := &m.Animations[idx]
 	imgui.PushID(fmt.Sprintf("anim%d", idx))
 	defer imgui.PopID()
@@ -598,23 +599,23 @@ func editorEntityAnimationRow(m *EntityModel, idx int, clips []string, playing s
 	// The clip is the .fmdl's own name for the motion. Shown even when it is
 	// not among the model's clips, so a mapping that has gone stale is visible
 	// rather than silently reset to something that happens to exist.
-	if imgui.BeginCombo("Clip##clip", a.effectiveClip()) {
+	if imgui.BeginCombo("Clip##clip", a.EffectiveClip()) {
 		known := false
 		for _, c := range clips {
-			if c == a.effectiveClip() {
+			if c == a.EffectiveClip() {
 				known = true
 			}
-			if imgui.SelectableV(c, c == a.effectiveClip(), 0, imgui.Vec2{}) {
+			if imgui.SelectableV(c, c == a.EffectiveClip(), 0, imgui.Vec2{}) {
 				a.Clip = c
 			}
 		}
 		if !known {
-			imgui.SelectableV(a.effectiveClip()+" (missing)", true, 0, imgui.Vec2{})
+			imgui.SelectableV(a.EffectiveClip()+" (missing)", true, 0, imgui.Vec2{})
 		}
 		imgui.EndCombo()
 	}
 
-	speed := a.effectiveSpeed()
+	speed := a.EffectiveSpeed()
 	if editorDragFloatStep("Speed##speed", &speed, 0.01, 100, "%.2f", 0.05) {
 		a.Speed = speed
 	}
@@ -628,7 +629,7 @@ func editorEntityAnimationRow(m *EntityModel, idx int, clips []string, playing s
 		imgui.Text("(playing)")
 	} else if imgui.Button("Play##play") {
 		if !m.Play(a.Name) {
-			editorSetStatus("Cannot play %q — clip %q is not in this model", a.Name, a.effectiveClip())
+			editorSetStatus("Cannot play %q — clip %q is not in this model", a.Name, a.EffectiveClip())
 		}
 	}
 	imgui.Separator()
@@ -636,7 +637,7 @@ func editorEntityAnimationRow(m *EntityModel, idx int, clips []string, playing s
 }
 
 // editorEntityLoopCombo draws the tri-state loop override.
-func editorEntityLoopCombo(a *EntityAnimation) {
+func editorEntityLoopCombo(a *world.EntityAnimation) {
 	const (
 		followClip = "follow clip"
 		forceOn    = "loop"
@@ -670,7 +671,7 @@ func editorEntityLoopCombo(a *EntityAnimation) {
 // ---------- actions ----------
 
 // editorEntityActions draws the buttons that act on the whole entity.
-func editorEntityActions(e *Entity) {
+func editorEntityActions(e *world.Entity) {
 	if imgui.Button("Duplicate##entdup") {
 		duplicateActiveEntity()
 	}
@@ -678,7 +679,7 @@ func editorEntityActions(e *Entity) {
 	if imgui.Button("Move To Camera##entcam") {
 		// The camera sits at eye height; an entity's position is its base, the
 		// same convention the spawn marker uses.
-		e.Position = gfx.Cam.Position.Sub(mgl32.Vec3{0, eyeHeight, 0})
+		e.Position = gfx.Cam.Position.Sub(mgl32.Vec3{0, world.EyeHeight, 0})
 	}
 
 	if e.Type != "" {

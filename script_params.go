@@ -29,6 +29,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 // ---------- declarations ----------
@@ -89,9 +90,9 @@ func ScriptParamsInvalidate(path string) {
 
 // scriptParamsFor returns the parameter bindings an object carries, ready to be
 // written through. Entities keep theirs outside a ScriptData — their params are
-// merged from a definition, which entityToRaw depends on — so they are handled
+// merged from a definition, which EntityToRaw depends on — so they are handled
 // separately, exactly as their attributes are.
-func (rt *ScriptRuntime) scriptParamsFor(r flang.RefVal) *AttrSet {
+func (rt *ScriptRuntime) scriptParamsFor(r flang.RefVal) *world.AttrSet {
 	if rt.host == nil {
 		return nil
 	}
@@ -129,49 +130,49 @@ func (h *levelHost) Param(name string) (flang.Value, bool) {
 
 // scriptParamAttrType maps a declared param type onto the storage that holds it.
 // A `ref` is stored as the ID it names, which is a string.
-func scriptParamAttrType(declType string) AttrType {
+func scriptParamAttrType(declType string) world.AttrType {
 	switch declType {
 	case "int":
-		return AttrInt
+		return world.AttrInt
 	case "float":
-		return AttrFloat
+		return world.AttrFloat
 	case "bool":
-		return AttrBool
+		return world.AttrBool
 	}
 	// "str" and "ref" both.
-	return AttrString
+	return world.AttrString
 }
 
 // scriptParamDefault converts a declaration's default into the attribute the
 // editor should show when nothing has been bound. The bool is false when the
 // declaration has no default, which reads as null.
-func scriptParamDefault(d *flang.ParamDecl) (AttrValue, bool) {
+func scriptParamDefault(d *flang.ParamDecl) (world.AttrValue, bool) {
 	v, ok := d.DefaultValue()
 	if !ok {
-		return AttrValue{}, false
+		return world.AttrValue{}, false
 	}
 	a, ok := valueToAttr(v)
 	if !ok {
-		return AttrValue{}, false
+		return world.AttrValue{}, false
 	}
-	return convertAttr(a, scriptParamAttrType(d.Type)), true
+	return world.ConvertAttr(a, scriptParamAttrType(d.Type)), true
 }
 
 // scriptParamValue returns the value to show for one declared param: what the
 // object bound, else the declaration's default, else the type's zero. The bool
 // reports whether the object bound it — which is what the panel needs to say
 // "(default)" rather than presenting a fallback as a choice.
-func scriptParamValue(params AttrSet, d *flang.ParamDecl) (AttrValue, bool) {
+func scriptParamValue(params world.AttrSet, d *flang.ParamDecl) (world.AttrValue, bool) {
 	want := scriptParamAttrType(d.Type)
 	if a, ok := params.Attr(d.Name); ok {
 		// Converted rather than trusted: a declaration whose type changed after
 		// a level bound a value would otherwise hand the widget the wrong kind.
-		return convertAttr(a, want), true
+		return world.ConvertAttr(a, want), true
 	}
 	if a, ok := scriptParamDefault(d); ok {
 		return a, false
 	}
-	return zeroAttr(want), false
+	return world.ZeroAttr(want), false
 }
 
 // scriptParamsPrune drops bindings for names the script no longer declares,
@@ -180,7 +181,7 @@ func scriptParamValue(params AttrSet, d *flang.ParamDecl) (AttrValue, bool) {
 // Not automatic. A param renamed in the script would silently take its level
 // wiring with it, and the author is better served by a panel that says "3
 // unused" with a button than by one that quietly discards what they wrote.
-func scriptParamsPrune(params *AttrSet, path string) int {
+func scriptParamsPrune(params *world.AttrSet, path string) int {
 	if params == nil || len(*params) == 0 {
 		return 0
 	}
@@ -200,7 +201,7 @@ func scriptParamsPrune(params *AttrSet, path string) int {
 
 // scriptParamsUnused names the bindings an object carries that its script does
 // not declare, sorted. Shown in the panel rather than deleted — see above.
-func scriptParamsUnused(params AttrSet, path string) []string {
+func scriptParamsUnused(params world.AttrSet, path string) []string {
 	if len(params) == 0 {
 		return nil
 	}
@@ -238,7 +239,7 @@ type scriptRefTarget struct {
 // The kind is read off the walk rather than looked up per entry: labelling each
 // ID through refFor would rebuild or re-search the index once per row, which is
 // quadratic in a list the panel redraws every frame.
-func scriptRefTargets(lvl *Level) []scriptRefTarget {
+func scriptRefTargets(lvl *world.Level) []scriptRefTarget {
 	if lvl == nil {
 		return nil
 	}

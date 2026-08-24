@@ -10,6 +10,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -26,17 +27,17 @@ func withoutGeometryUploads(t *testing.T) {
 }
 
 // edgeIDTestChunk builds a single square sector with named edges, GL-free.
-func edgeIDTestChunk(t *testing.T) *Chunk {
+func edgeIDTestChunk(t *testing.T) *world.Chunk {
 	t.Helper()
 	withoutGeometryUploads(t)
-	ch := &Chunk{
+	ch := &world.Chunk{
 		Points:     []mgl32.Vec2{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
 		PointNames: []string{"P0", "P1", "P2", "P3"},
 	}
 	idx := []int{0, 1, 2, 3}
-	var walls []Wall
+	var walls []world.Wall
 	for i := range idx {
-		walls = append(walls, Wall{
+		walls = append(walls, world.Wall{
 			StartPoint: ch.Points[idx[i]],
 			EndPoint:   ch.Points[idx[(i+1)%len(idx)]],
 			Texture:    "concrete",
@@ -45,24 +46,24 @@ func edgeIDTestChunk(t *testing.T) *Chunk {
 			Alpha:      1,
 		})
 	}
-	s := Sector{
+	s := world.Sector{
 		ID:           "room",
 		PointIndices: idx,
 		EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
 		Walls:        walls,
-		Floor:        Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0, 0}},
-		Ceiling:      Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
+		Floor:        world.Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0, 0}},
+		Ceiling:      world.Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
 	}
-	ensureEdgeIDs(&s)
-	syncEdgeRecordIDs(&s)
-	ch.Sectors = []Sector{s}
+	world.EnsureEdgeIDs(&s)
+	world.SyncEdgeRecordIDs(&s)
+	ch.Sectors = []world.Sector{s}
 	return ch
 }
 
 // mustValidate fails the test unless every sector in ch holds the invariant.
-func mustValidate(t *testing.T, ch *Chunk, stage string) {
+func mustValidate(t *testing.T, ch *world.Chunk, stage string) {
 	t.Helper()
-	if err := validateChunkEdges(ch); err != nil {
+	if err := world.ValidateChunkEdges(ch); err != nil {
 		t.Fatalf("%s: edge invariant broken: %v", stage, err)
 	}
 }
@@ -80,11 +81,11 @@ func TestMigrateEdgeIDIgnoresDirection(t *testing.T) {
 	// The whole reason the migration key is an unordered pair: the loader's
 	// winding fixup turns edge A→B into B→A, and a direction-sensitive key would
 	// rename the edge on the next save.
-	if got, want := migrateEdgeID("A", "B"), migrateEdgeID("B", "A"); got != want {
-		t.Errorf("migrateEdgeID is direction-sensitive: %q vs %q", got, want)
+	if got, want := world.MigrateEdgeID("A", "B"), world.MigrateEdgeID("B", "A"); got != want {
+		t.Errorf("MigrateEdgeID is direction-sensitive: %q vs %q", got, want)
 	}
-	if got := migrateEdgeID("B", "A"); got != "A|B" {
-		t.Errorf("migrateEdgeID(B,A) = %q, want %q", got, "A|B")
+	if got := world.MigrateEdgeID("B", "A"); got != "A|B" {
+		t.Errorf("MigrateEdgeID(B,A) = %q, want %q", got, "A|B")
 	}
 }
 
@@ -92,8 +93,8 @@ func TestDedupeSectorEdgeIDsResolvesCollisions(t *testing.T) {
 	ch := edgeIDTestChunk(t)
 	s := &ch.Sectors[0]
 	s.EdgeIDs = []string{"dup", "dup", "", "other"}
-	dedupeSectorEdgeIDs(s)
-	syncEdgeRecordIDs(s)
+	world.DedupeSectorEdgeIDs(s)
+	world.SyncEdgeRecordIDs(s)
 	mustValidate(t, ch, "after dedupe")
 
 	seen := map[string]bool{}
@@ -153,7 +154,7 @@ func TestRemoveSectorPointKeepsSurvivingEdgeID(t *testing.T) {
 	if len(s.EdgeIDs) != 4 {
 		t.Fatalf("got %d edges after removal, want 4", len(s.EdgeIDs))
 	}
-	if polyEdgeIdxByID(s, survivorID) < 0 {
+	if world.PolyEdgeIdxByID(s, survivorID) < 0 {
 		t.Errorf("the merged-into edge %q lost its ID", survivorID)
 	}
 }
@@ -171,18 +172,18 @@ func TestConvertEdgePreservesID(t *testing.T) {
 	if got := s.EdgeIDs[2]; got != want {
 		t.Fatalf("wall→portal changed the edge ID: got %q, want %q", got, want)
 	}
-	if p := portalByEdgeID(s, want); p == nil {
+	if p := world.PortalByEdgeID(s, want); p == nil {
 		t.Fatalf("edge %q does not resolve to a portal after conversion", want)
 	} else if p.ID != want {
 		t.Errorf("portal record ID %q does not match edge ID %q", p.ID, want)
 	}
-	if wallByEdgeID(s, want) != nil {
+	if world.WallByEdgeID(s, want) != nil {
 		t.Errorf("edge %q still resolves as a wall after conversion", want)
 	}
 
-	kind, idx, ok := edgeRecordByID(s, want)
+	kind, idx, ok := world.EdgeRecordByID(s, want)
 	if !ok || kind != "portal" {
-		t.Fatalf("edgeRecordByID(%q) = (%q, %d, %v), want a portal", want, kind, idx, ok)
+		t.Fatalf("EdgeRecordByID(%q) = (%q, %d, %v), want a portal", want, kind, idx, ok)
 	}
 
 	convertEdge(ch, s, "portal", idx, "wall")
@@ -190,7 +191,7 @@ func TestConvertEdgePreservesID(t *testing.T) {
 	if got := s.EdgeIDs[2]; got != want {
 		t.Fatalf("portal→wall changed the edge ID: got %q, want %q", got, want)
 	}
-	if w := wallByEdgeID(s, want); w == nil {
+	if w := world.WallByEdgeID(s, want); w == nil {
 		t.Errorf("edge %q does not resolve back to a wall", want)
 	}
 }
@@ -199,8 +200,8 @@ func TestInferPortalsCarriesEdgeIDs(t *testing.T) {
 	withoutGeometryUploads(t)
 	ch := splitTestChunk()
 	for si := range ch.Sectors {
-		ensureEdgeIDs(&ch.Sectors[si])
-		syncEdgeRecordIDs(&ch.Sectors[si])
+		world.EnsureEdgeIDs(&ch.Sectors[si])
+		world.SyncEdgeRecordIDs(&ch.Sectors[si])
 	}
 	// A's edge 1 is the shared one; InferPortals will promote it to a portal
 	// without anyone asking, which is exactly the case an index could not survive.
@@ -220,7 +221,7 @@ func TestInferPortalsCarriesEdgeIDs(t *testing.T) {
 	if a.EdgeIDs[0] != unsharedID {
 		t.Errorf("untouched edge lost its ID: got %q, want %q", a.EdgeIDs[0], unsharedID)
 	}
-	if p := portalByEdgeID(a, sharedID); p == nil {
+	if p := world.PortalByEdgeID(a, sharedID); p == nil {
 		t.Errorf("promoted edge %q does not resolve to a portal", sharedID)
 	}
 }
@@ -256,22 +257,22 @@ func TestSplitSectorGivesBothHalvesValidEdges(t *testing.T) {
 
 func TestUniqueSectorIDAvoidsCollisions(t *testing.T) {
 	ch := edgeIDTestChunk(t)
-	ch.Sectors = append(ch.Sectors, Sector{ID: "room_2"})
+	ch.Sectors = append(ch.Sectors, world.Sector{ID: "room_2"})
 
-	if got := uniqueSectorID(ch, "room"); got == "room" || got == "room_2" {
-		t.Errorf("uniqueSectorID returned a name already in use: %q", got)
+	if got := world.UniqueSectorID(ch, "room"); got == "room" || got == "room_2" {
+		t.Errorf("UniqueSectorID returned a name already in use: %q", got)
 	}
-	if got := uniqueSectorID(ch, "hall"); got != "hall" {
-		t.Errorf("uniqueSectorID renamed a free name: got %q, want %q", got, "hall")
+	if got := world.UniqueSectorID(ch, "hall"); got != "hall" {
+		t.Errorf("UniqueSectorID renamed a free name: got %q, want %q", got, "hall")
 	}
 }
 
 func TestResolveLevelIDCollisionsRenamesDuplicates(t *testing.T) {
-	chunks := []Chunk{
-		{ID: "c", Sectors: []Sector{{ID: "dup"}}},
-		{ID: "c", Sectors: []Sector{{ID: "dup"}}},
+	chunks := []world.Chunk{
+		{ID: "c", Sectors: []world.Sector{{ID: "dup"}}},
+		{ID: "c", Sectors: []world.Sector{{ID: "dup"}}},
 	}
-	resolveLevelIDCollisions(chunks)
+	world.ResolveLevelIDCollisions(chunks)
 
 	if chunks[0].ID == chunks[1].ID {
 		t.Errorf("chunk IDs still collide: both %q", chunks[0].ID)
@@ -288,11 +289,11 @@ func TestResolveLevelIDCollisionsRenamesDuplicates(t *testing.T) {
 }
 
 func TestAssignLightIDsMintsAndDedupes(t *testing.T) {
-	ls := &LightSet{
-		Directional: []DirectionalLight{{}, {ID: "sun"}},
-		Points:      []PointLight{{ID: "sun"}, {}},
+	ls := &world.LightSet{
+		Directional: []world.DirectionalLight{{}, {ID: "sun"}},
+		Points:      []world.PointLight{{ID: "sun"}, {}},
 	}
-	assignLightIDs(ls)
+	world.AssignLightIDs(ls)
 
 	seen := map[string]bool{}
 	for _, d := range ls.Directional {

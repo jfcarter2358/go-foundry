@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -13,7 +14,7 @@ import (
 )
 
 // editorExtrusionPanel draws the extrusion sub-panel for a selected wall.
-func editorExtrusionPanel(ch *Chunk, s *Sector, w *Wall) {
+func editorExtrusionPanel(ch *world.Chunk, s *world.Sector, w *world.Wall) {
 	imgui.Separator()
 	if !imgui.CollapsingHeader(fmt.Sprintf("Extrusions (%d)##ext", len(w.Extrusions))) {
 		return
@@ -95,7 +96,7 @@ func editorExtrusionPanel(ch *Chunk, s *Sector, w *Wall) {
 		changed = editorUVControls(fmt.Sprintf("WallExt%d", ei), &ext.UVOffset, &ext.UVScale, &ext.UVRotation) || changed
 
 		if changed {
-			_ = reloadSector(ch, s)
+			_ = world.ReloadSector(ch, s)
 		}
 
 		imgui.TreePop()
@@ -105,7 +106,7 @@ func editorExtrusionPanel(ch *Chunk, s *Sector, w *Wall) {
 	if deleteIdx >= 0 {
 		EditorPushUndo()
 		w.Extrusions = append(w.Extrusions[:deleteIdx], w.Extrusions[deleteIdx+1:]...)
-		_ = reloadSector(ch, s)
+		_ = world.ReloadSector(ch, s)
 	}
 }
 
@@ -141,18 +142,18 @@ func editorFinalizeExtrusion() {
 	}
 	w := &s.Walls[Editor.ActiveEdgeIdx]
 
-	outer := make([]ExtrusionPoint, len(Editor.PendingOuter))
+	outer := make([]world.ExtrusionPoint, len(Editor.PendingOuter))
 	copy(outer, Editor.PendingOuter)
 
 	// If no inner polygon was placed, copy outer
-	inner := make([]ExtrusionPoint, len(outer))
+	inner := make([]world.ExtrusionPoint, len(outer))
 	if len(Editor.PendingInner) == len(outer) {
 		copy(inner, Editor.PendingInner)
 	} else {
 		copy(inner, outer)
 	}
 
-	ext := Extrusion{
+	ext := world.Extrusion{
 		Outer:       outer,
 		Inner:       inner,
 		Depth:       -0.1, // default slight inward
@@ -162,7 +163,7 @@ func editorFinalizeExtrusion() {
 	}
 	EditorPushUndo()
 	w.Extrusions = append(w.Extrusions, ext)
-	_ = reloadSector(ch, s)
+	_ = world.ReloadSector(ch, s)
 
 	editorCancelExtrusion()
 }
@@ -185,7 +186,7 @@ func editorExtrusionHandleKey(t sdl.KeyboardEvent) bool {
 		if !Editor.PlacingInner && len(Editor.PendingOuter) >= 3 {
 			// Switch to inner polygon placement, pre-fill from outer
 			Editor.PlacingInner = true
-			Editor.PendingInner = make([]ExtrusionPoint, len(Editor.PendingOuter))
+			Editor.PendingInner = make([]world.ExtrusionPoint, len(Editor.PendingOuter))
 			copy(Editor.PendingInner, Editor.PendingOuter)
 		} else if Editor.PlacingInner {
 			// Switch back to outer
@@ -224,7 +225,7 @@ func editorExtrusionHandleClick(t sdl.MouseButtonEvent) bool {
 		return true // consumed but missed
 	}
 
-	pt := ExtrusionPoint{U: u, V: v}
+	pt := world.ExtrusionPoint{U: u, V: v}
 	if Editor.PlacingInner {
 		Editor.PendingInner = append(Editor.PendingInner, pt)
 	} else {
@@ -234,19 +235,19 @@ func editorExtrusionHandleClick(t sdl.MouseButtonEvent) bool {
 }
 
 // rayToWallUV raycasts against a wall's plane and returns (u, v, hit).
-func rayToWallUV(origin, dir mgl32.Vec3, w *Wall, s *Sector, ch *Chunk) (float32, float32, bool) {
+func rayToWallUV(origin, dir mgl32.Vec3, w *world.Wall, s *world.Sector, ch *world.Chunk) (float32, float32, bool) {
 	p1 := w.StartPoint
 	p2 := w.EndPoint
-	sPts := SectorPoints(ch, s)
-	vi1 := findVertexIdx(sPts, p1)
-	vi2 := findVertexIdx(sPts, p2)
+	sPts := world.SectorPoints(ch, s)
+	vi1 := world.FindVertexIdx(sPts, p1)
+	vi2 := world.FindVertexIdx(sPts, p2)
 
 	ceilH1 := s.WallTopHeight(vi1)
 	ceilH2 := s.WallTopHeight(vi2)
 	floorH1 := s.Floor.VertexHeight(vi1)
 	floorH2 := s.Floor.VertexHeight(vi2)
 
-	wDir, wNorm := wallFrame(p1, p2)
+	wDir, wNorm := world.WallFrame(p1, p2)
 	wallLen := mgl32.Vec2{p2.X() - p1.X(), p2.Y() - p1.Y()}.Len()
 
 	// Wall plane: defined by wall normal (in 3D) and a point on the wall
@@ -308,11 +309,11 @@ func editorExtrusionRenderGizmos() {
 
 	p1 := w.StartPoint
 	p2 := w.EndPoint
-	sPts := SectorPoints(ch, s)
-	vi1 := findVertexIdx(sPts, p1)
-	vi2 := findVertexIdx(sPts, p2)
+	sPts := world.SectorPoints(ch, s)
+	vi1 := world.FindVertexIdx(sPts, p1)
+	vi2 := world.FindVertexIdx(sPts, p2)
 
-	dir, norm := wallFrame(p1, p2)
+	dir, norm := world.WallFrame(p1, p2)
 	wallLen := mgl32.Vec2{p2.X() - p1.X(), p2.Y() - p1.Y()}.Len()
 	floorH1 := s.Floor.VertexHeight(vi1)
 	floorH2 := s.Floor.VertexHeight(vi2)
@@ -322,13 +323,13 @@ func editorExtrusionRenderGizmos() {
 	green := mgl32.Vec3{0, 1, 0.3}
 	yellow := mgl32.Vec3{1, 1, 0}
 
-	uvToWorld := func(ep ExtrusionPoint) mgl32.Vec3 {
-		x, y, z := wallLocalToWorld(ep.U, ep.V, 0.01, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
+	uvToWorld := func(ep world.ExtrusionPoint) mgl32.Vec3 {
+		x, y, z := world.WallLocalToWorld(ep.U, ep.V, 0.01, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
 		return mgl32.Vec3{x, y, z}
 	}
 
 	// Draw outer polygon
-	drawPoly := func(pts []ExtrusionPoint, col mgl32.Vec3) {
+	drawPoly := func(pts []world.ExtrusionPoint, col mgl32.Vec3) {
 		if len(pts) < 2 {
 			return
 		}
@@ -372,11 +373,11 @@ func editorRenderExtrusionOutlines() {
 
 	p1 := w.StartPoint
 	p2 := w.EndPoint
-	sPts := SectorPoints(ch, s)
-	vi1 := findVertexIdx(sPts, p1)
-	vi2 := findVertexIdx(sPts, p2)
+	sPts := world.SectorPoints(ch, s)
+	vi1 := world.FindVertexIdx(sPts, p1)
+	vi2 := world.FindVertexIdx(sPts, p2)
 
-	dir, norm := wallFrame(p1, p2)
+	dir, norm := world.WallFrame(p1, p2)
 	wallLen := mgl32.Vec2{p2.X() - p1.X(), p2.Y() - p1.Y()}.Len()
 	floorH1 := s.Floor.VertexHeight(vi1)
 	floorH2 := s.Floor.VertexHeight(vi2)
@@ -389,8 +390,8 @@ func editorRenderExtrusionOutlines() {
 		for i := 0; i < len(ext.Outer); i++ {
 			a := ext.Outer[i]
 			b := ext.Outer[(i+1)%len(ext.Outer)]
-			ax, ay, az := wallLocalToWorld(a.U, a.V, 0.01, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
-			bx, by, bz := wallLocalToWorld(b.U, b.V, 0.01, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
+			ax, ay, az := world.WallLocalToWorld(a.U, a.V, 0.01, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
+			bx, by, bz := world.WallLocalToWorld(b.U, b.V, 0.01, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
 			gizmo.GizmoLine(mgl32.Vec3{ax, ay, az}, mgl32.Vec3{bx, by, bz}, cyan)
 		}
 	}
@@ -400,7 +401,7 @@ func editorRenderExtrusionOutlines() {
 
 // editorSurfaceExtrusionPanel draws extrusion controls for a floor or ceiling.
 // surfaceLabel: "Floor" or "Ceiling". extrusions: pointer to the extrusion slice.
-func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extrusions *[]Extrusion) {
+func editorSurfaceExtrusionPanel(ch *world.Chunk, s *world.Sector, surfaceLabel string, extrusions *[]world.Extrusion) {
 	imgui.Separator()
 	if !imgui.CollapsingHeader(fmt.Sprintf("%s Extrusions (%d)##%sext", surfaceLabel, len(*extrusions), surfaceLabel)) {
 		return
@@ -446,7 +447,7 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 		changed = editorUVControls(fmt.Sprintf("%sExt%d", surfaceLabel, ei), &ext.UVOffset, &ext.UVScale, &ext.UVRotation) || changed
 
 		if changed {
-			_ = reloadSector(ch, s)
+			_ = world.ReloadSector(ch, s)
 		}
 		imgui.TreePop()
 	}
@@ -454,7 +455,7 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 	if deleteIdx >= 0 {
 		EditorPushUndo()
 		*extrusions = append((*extrusions)[:deleteIdx], (*extrusions)[deleteIdx+1:]...)
-		_ = reloadSector(ch, s)
+		_ = world.ReloadSector(ch, s)
 	}
 }
 
@@ -464,7 +465,7 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 // surfaceLabel: "Floor", "Ceiling", or "Wall".
 // terrain: pointer to the terrain toggle.
 // terrainPts: pointer to the terrain points slice.
-func editorTerrainPanel(ch *Chunk, s *Sector, surfaceLabel string, terrain *bool, terrainPts *[]TerrainPoint) {
+func editorTerrainPanel(ch *world.Chunk, s *world.Sector, surfaceLabel string, terrain *bool, terrainPts *[]world.TerrainPoint) {
 	imgui.Separator()
 	if !imgui.CollapsingHeader(fmt.Sprintf("%s Terrain (%d pts)##%sterr", surfaceLabel, len(*terrainPts), surfaceLabel)) {
 		return
@@ -475,7 +476,7 @@ func editorTerrainPanel(ch *Chunk, s *Sector, surfaceLabel string, terrain *bool
 
 	if imgui.Button(fmt.Sprintf("+ Add Point##%sterrAdd", surfaceLabel)) {
 		EditorPushUndo()
-		*terrainPts = append(*terrainPts, TerrainPoint{U: 0, V: 0, Depth: 0})
+		*terrainPts = append(*terrainPts, world.TerrainPoint{U: 0, V: 0, Depth: 0})
 		Editor.ActiveTerrainPtIdx = len(*terrainPts) - 1
 		changed = true
 	}
@@ -512,6 +513,6 @@ func editorTerrainPanel(ch *Chunk, s *Sector, surfaceLabel string, terrain *bool
 	}
 
 	if changed {
-		_ = reloadSector(ch, s)
+		_ = world.ReloadSector(ch, s)
 	}
 }

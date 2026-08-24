@@ -23,12 +23,13 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 // editorTagsUI draws a tag list and its add row, editing tags in place.
 //
 // Tags are what a script's `#tag` addresses, so the list is kept sorted —
-// normalizeTags does that on every add.
+// NormalizeTags does that on every add.
 func editorTagsUI(tags *[]string, idSuffix, header string) {
 	if !imgui.CollapsingHeaderV(header+"##tags"+idSuffix, imgui.TreeNodeFlagsDefaultOpen) {
 		return
@@ -57,14 +58,14 @@ func editorTagsUI(tags *[]string, idSuffix, header string) {
 	imgui.SameLine()
 	if imgui.Button("Add Tag##tagadd"+idSuffix) && Editor.NewTagText != "" {
 		EditorPushUndo()
-		*tags = normalizeTags(append(*tags, Editor.NewTagText))
+		*tags = world.NormalizeTags(append(*tags, Editor.NewTagText))
 		Editor.NewTagText = ""
 	}
 }
 
 // editorAttributesUI draws an attribute table and its add row, editing the set
 // in place. owner names the object in the duplicate-name message.
-func editorAttributesUI(attrs *AttrSet, idSuffix, header, owner string) {
+func editorAttributesUI(attrs *world.AttrSet, idSuffix, header, owner string) {
 	if !imgui.CollapsingHeaderV(header+"##attrs"+idSuffix, imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
@@ -81,8 +82,8 @@ func editorAttributesUI(attrs *AttrSet, idSuffix, header, owner string) {
 
 	imgui.Separator()
 	imgui.InputTextV("Name##newattr"+idSuffix, &Editor.NewAttrName, 0, nil)
-	if imgui.BeginCombo("Type##newattr"+idSuffix, string(attrTypeNames[editorNewAttrTypeIdx()])) {
-		for i, t := range attrTypeNames {
+	if imgui.BeginCombo("Type##newattr"+idSuffix, string(world.AttrTypeNames[editorNewAttrTypeIdx()])) {
+		for i, t := range world.AttrTypeNames {
 			if imgui.SelectableV(string(t), int32(i) == Editor.NewAttrType, 0, imgui.Vec2{}) {
 				Editor.NewAttrType = int32(i)
 			}
@@ -95,9 +96,9 @@ func editorAttributesUI(attrs *AttrSet, idSuffix, header, owner string) {
 		} else {
 			EditorPushUndo()
 			if *attrs == nil {
-				*attrs = AttrSet{}
+				*attrs = world.AttrSet{}
 			}
-			(*attrs)[Editor.NewAttrName] = zeroAttr(attrTypeNames[editorNewAttrTypeIdx()])
+			(*attrs)[Editor.NewAttrName] = world.ZeroAttr(world.AttrTypeNames[editorNewAttrTypeIdx()])
 			Editor.NewAttrName = ""
 		}
 	}
@@ -106,7 +107,7 @@ func editorAttributesUI(attrs *AttrSet, idSuffix, header, owner string) {
 // editorAttributeRow draws one attribute: its type combo, its value editor and
 // its delete button. Reports whether the set was structurally changed, which
 // ends the caller's iteration for this frame.
-func editorAttributeRow(attrs *AttrSet, idSuffix, name string) bool {
+func editorAttributeRow(attrs *world.AttrSet, idSuffix, name string) bool {
 	v := (*attrs)[name]
 	imgui.PushID("attr_" + idSuffix + name)
 	defer imgui.PopID()
@@ -121,12 +122,12 @@ func editorAttributeRow(attrs *AttrSet, idSuffix, name string) bool {
 
 	imgui.SetNextItemWidth(90)
 	if imgui.BeginCombo("##type", string(v.Type)) {
-		for _, t := range attrTypeNames {
+		for _, t := range world.AttrTypeNames {
 			if imgui.SelectableV(string(t), t == v.Type, 0, imgui.Vec2{}) && t != v.Type {
 				// Converted rather than reset: picking float after typing 25
-				// should not throw the 25 away. See convertAttr.
+				// should not throw the 25 away. See ConvertAttr.
 				EditorPushUndo()
-				(*attrs)[name] = convertAttr(v, t)
+				(*attrs)[name] = world.ConvertAttr(v, t)
 			}
 		}
 		imgui.EndCombo()
@@ -137,30 +138,30 @@ func editorAttributeRow(attrs *AttrSet, idSuffix, name string) bool {
 }
 
 // editorAttributeValue draws the value editor matching an attribute's type.
-func editorAttributeValue(attrs *AttrSet, name string, v AttrValue) {
+func editorAttributeValue(attrs *world.AttrSet, name string, v world.AttrValue) {
 	switch v.Type {
-	case AttrInt:
+	case world.AttrInt:
 		n := int32(v.I)
 		imgui.SetNextItemWidth(-1)
 		if imgui.DragIntV("##val", &n, 1, -1<<30, 1<<30, "%d", 0) {
-			(*attrs)[name] = IntAttr(int64(n))
+			(*attrs)[name] = world.IntAttr(int64(n))
 		}
-	case AttrFloat:
+	case world.AttrFloat:
 		f := float32(v.F)
 		imgui.SetNextItemWidth(-1)
 		if imgui.DragFloatV("##val", &f, 0.01, -1e9, 1e9, "%.4f", 0) {
-			(*attrs)[name] = FloatAttr(float64(f))
+			(*attrs)[name] = world.FloatAttr(float64(f))
 		}
-	case AttrBool:
+	case world.AttrBool:
 		b := v.B
 		if imgui.Checkbox("##val", &b) {
-			(*attrs)[name] = BoolAttr(b)
+			(*attrs)[name] = world.BoolAttr(b)
 		}
-	case AttrString:
+	case world.AttrString:
 		str := v.S
 		imgui.SetNextItemWidth(-1)
 		if imgui.InputTextV("##val", &str, 0, nil) {
-			(*attrs)[name] = StringAttr(str)
+			(*attrs)[name] = world.StringAttr(str)
 		}
 	}
 }
@@ -171,7 +172,7 @@ func editorAttributeValue(attrs *AttrSet, name string, v AttrValue) {
 // script that silently never runs, which is among the harder things to notice.
 // The list is rescanned when the section is opened rather than watched, matching
 // how the entity catalog and the texture picker work.
-func editorScriptUI(script *string, params *AttrSet, idSuffix, owner string) {
+func editorScriptUI(script *string, params *world.AttrSet, idSuffix, owner string) {
 	if !imgui.CollapsingHeaderV("Script##script"+idSuffix, imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
@@ -221,7 +222,7 @@ func editorScriptUI(script *string, params *AttrSet, idSuffix, owner string) {
 // can disagree — a param renamed after a level bound it leaves a value nothing
 // reads. Those are listed at the bottom rather than deleted; see
 // scriptParamsPrune.
-func editorScriptParamsUI(script string, params *AttrSet, idSuffix string) {
+func editorScriptParamsUI(script string, params *world.AttrSet, idSuffix string) {
 	if params == nil {
 		return
 	}
@@ -265,7 +266,7 @@ func editorScriptParamsUI(script string, params *AttrSet, idSuffix string) {
 
 // editorScriptParamRow draws one parameter: its name, its value editor, and the
 // button that hands it back to the script's default.
-func editorScriptParamRow(d *flang.ParamDecl, params *AttrSet, refTargets []scriptRefTarget, idSuffix string) {
+func editorScriptParamRow(d *flang.ParamDecl, params *world.AttrSet, refTargets []scriptRefTarget, idSuffix string) {
 	imgui.PushID("param_" + idSuffix + d.Name)
 	defer imgui.PopID()
 
@@ -288,7 +289,7 @@ func editorScriptParamRow(d *flang.ParamDecl, params *AttrSet, refTargets []scri
 		}
 	}
 
-	var next AttrValue
+	var next world.AttrValue
 	changed := false
 	if d.Type == "ref" {
 		next, changed = editorScriptParamRefValue(cur, refTargets)
@@ -306,7 +307,7 @@ func editorScriptParamRow(d *flang.ParamDecl, params *AttrSet, refTargets []scri
 		EditorPushUndo()
 	}
 	if *params == nil {
-		*params = AttrSet{}
+		*params = world.AttrSet{}
 	}
 	(*params)[d.Name] = next
 }
@@ -316,7 +317,7 @@ func editorScriptParamRow(d *flang.ParamDecl, params *AttrSet, refTargets []scri
 // A combo over the level's IDs rather than a text field, for the same reason the
 // script picker is a combo: a mistyped ID is a param that silently reads null,
 // and null is indistinguishable from "not wired up yet".
-func editorScriptParamRefValue(cur AttrValue, targets []scriptRefTarget) (AttrValue, bool) {
+func editorScriptParamRefValue(cur world.AttrValue, targets []scriptRefTarget) (world.AttrValue, bool) {
 	id := cur.S
 	imgui.SetNextItemWidth(-1)
 	if !imgui.BeginCombo("##paramref", scriptRefLabel(targets, id)) {
@@ -327,11 +328,11 @@ func editorScriptParamRefValue(cur AttrValue, targets []scriptRefTarget) (AttrVa
 	changed := false
 	out := cur
 	if imgui.SelectableV("(none)", id == "", 0, imgui.Vec2{}) && id != "" {
-		out, changed = StringAttr(""), true
+		out, changed = world.StringAttr(""), true
 	}
 	for _, t := range targets {
 		if imgui.SelectableV(t.Label, t.ID == id, 0, imgui.Vec2{}) && t.ID != id {
-			out, changed = StringAttr(t.ID), true
+			out, changed = world.StringAttr(t.ID), true
 		}
 	}
 	return out, changed
@@ -340,30 +341,30 @@ func editorScriptParamRefValue(cur AttrValue, targets []scriptRefTarget) (AttrVa
 // editorScriptParamScalarValue draws the value editor for the four scalar
 // parameter types. Deliberately the same widgets an attribute gets — a float is
 // a float, and two different ways to type one would be two things to learn.
-func editorScriptParamScalarValue(cur AttrValue) (AttrValue, bool) {
+func editorScriptParamScalarValue(cur world.AttrValue) (world.AttrValue, bool) {
 	switch cur.Type {
-	case AttrInt:
+	case world.AttrInt:
 		n := int32(cur.I)
 		imgui.SetNextItemWidth(-1)
 		if imgui.DragIntV("##paramval", &n, 1, -1<<30, 1<<30, "%d", 0) {
-			return IntAttr(int64(n)), true
+			return world.IntAttr(int64(n)), true
 		}
-	case AttrFloat:
+	case world.AttrFloat:
 		f := float32(cur.F)
 		imgui.SetNextItemWidth(-1)
 		if imgui.DragFloatV("##paramval", &f, 0.01, -1e9, 1e9, "%.4f", 0) {
-			return FloatAttr(float64(f)), true
+			return world.FloatAttr(float64(f)), true
 		}
-	case AttrBool:
+	case world.AttrBool:
 		b := cur.B
 		if imgui.Checkbox("##paramval", &b) {
-			return BoolAttr(b), true
+			return world.BoolAttr(b), true
 		}
-	case AttrString:
+	case world.AttrString:
 		str := cur.S
 		imgui.SetNextItemWidth(-1)
 		if imgui.InputTextV("##paramval", &str, 0, nil) {
-			return StringAttr(str), true
+			return world.StringAttr(str), true
 		}
 	}
 	return cur, false
@@ -387,7 +388,7 @@ func editorRefreshScriptFiles() {
 // editorScriptDataUI draws all three sections for an object that carries a
 // ScriptData — every scriptable thing except an entity, whose tags and
 // attributes are merged from its definition and so are edited separately.
-func editorScriptDataUI(d *ScriptData, idSuffix, owner string) {
+func editorScriptDataUI(d *world.ScriptData, idSuffix, owner string) {
 	editorTagsUI(&d.Tags, idSuffix, "Tags")
 	editorAttributesUI(&d.Attributes, idSuffix, "Attributes", owner)
 	editorScriptUI(&d.Script, &d.ScriptParams, idSuffix, owner)

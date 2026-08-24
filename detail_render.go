@@ -22,6 +22,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"math"
 	"os"
 	"path/filepath"
@@ -191,7 +192,7 @@ func mustScatterProgram(vertPath, fragPath, shared string) uint32 {
 
 // detailFace is a resolved detail-bearing face for rendering.
 type detailFace struct {
-	spec *DetailSpec
+	spec *world.DetailSpec
 	geo  *gfx.Geometry
 	tex  string
 }
@@ -201,10 +202,10 @@ type detailFace struct {
 // the height of a scattered instance. Culling uses the sector AABB grown by this
 // so a displaced ridge or a rock sitting on the boundary is never culled while
 // still on screen.
-func detailPad(d *DetailSpec) float32 {
+func detailPad(d *world.DetailSpec) float32 {
 	var pad float32
 	if d.HasDisplace() {
-		for i := 0; i < detailMaxWaves; i++ {
+		for i := 0; i < world.DetailMaxWaves; i++ {
 			if w := d.Waves[i]; w.Enabled {
 				pad += geom.Abs32(w.Amplitude)
 			}
@@ -222,8 +223,8 @@ func detailPad(d *DetailSpec) float32 {
 // forEachDetailFace invokes fn for every enabled face carrying a DetailSpec.
 // When cull is non-nil, faces whose sector AABB (grown by detailPad) falls
 // outside it are skipped.
-func forEachDetailFace(level *Level, cull *Frustum, fn func(f detailFace)) {
-	visible := func(secMin, secMax mgl32.Vec3, d *DetailSpec) bool {
+func forEachDetailFace(level *world.Level, cull *Frustum, fn func(f detailFace)) {
+	visible := func(secMin, secMax mgl32.Vec3, d *world.DetailSpec) bool {
 		if cull == nil {
 			return true
 		}
@@ -261,7 +262,7 @@ func forEachDetailFace(level *Level, cull *Frustum, fn func(f detailFace)) {
 
 // DetailAnyEnabled reports whether any face wants displacement or scatter, so the
 // render loop can skip the whole detail pass cheaply.
-func DetailAnyEnabled(level *Level) (displace, scatter bool) {
+func DetailAnyEnabled(level *world.Level) (displace, scatter bool) {
 	forEachDetailFace(level, nil, func(f detailFace) {
 		if f.spec.HasDisplace() {
 			displace = true
@@ -277,7 +278,7 @@ func DetailAnyEnabled(level *Level) (displace, scatter bool) {
 
 // ---------- uniform setters ----------
 
-func setDispUniforms(p *progUniforms, d *DetailSpec, geo *gfx.Geometry) {
+func setDispUniforms(p *progUniforms, d *world.DetailSpec, geo *gfx.Geometry) {
 	gl.Uniform1f(p.u("dispSeed"), float32(d.Seed))
 
 	// One normal for the whole face — the same average plane the scatter pass
@@ -290,7 +291,7 @@ func setDispUniforms(p *progUniforms, d *DetailSpec, geo *gfx.Geometry) {
 
 	// Disabled wave slots upload amplitude 0 (rather than being packed out) so a
 	// wave's seeded phase stays tied to its slot index.
-	for i := 0; i < detailMaxWaves; i++ {
+	for i := 0; i < world.DetailMaxWaves; i++ {
 		amp, freq, rot := float32(0), float32(0), float32(0)
 		if w := d.Waves[i]; w.Enabled {
 			amp, freq, rot = w.Amplitude, w.Frequency, w.Rotation*math.Pi/180
@@ -309,7 +310,7 @@ func setDispUniforms(p *progUniforms, d *DetailSpec, geo *gfx.Geometry) {
 	gl.Uniform1f(p.u("noiseFreq"), d.NoiseFrequency)
 	gl.Uniform1i(p.u("noiseOct"), int32(d.NoiseOctaves))
 
-	tess := d.tessLevelFor()
+	tess := d.TessLevelFor()
 	if tess < 1 {
 		tess = 1
 	}
@@ -353,7 +354,7 @@ func setDispBoundary(p *progUniforms, taper float32, geo *gfx.Geometry) {
 
 // setScatterUniforms sets the per-face scatter uniforms and returns the instance
 // count (gridNU*gridNV). Returns 0 when nothing should be drawn.
-func setScatterUniforms(p *progUniforms, d *DetailSpec, b faceBasis) int32 {
+func setScatterUniforms(p *progUniforms, d *world.DetailSpec, b faceBasis) int32 {
 	spacing := d.ScatterSpacing
 	if spacing < 0.05 {
 		spacing = 0.05
@@ -407,7 +408,7 @@ func detailAlbedo(name, fallback string) uint32 {
 // frame carries the directional cascade setup from RenderShadowPass, which the
 // detail programs need in order to receive shadows the same way world geometry
 // does. Restores the main Program on exit.
-func RenderDetailColor(level *Level, frame ShadowFrame) {
+func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 	if !detail.initialized {
 		return
 	}
@@ -423,7 +424,7 @@ func RenderDetailColor(level *Level, frame ShadowFrame) {
 
 	if haveD {
 		p := &detail.dispColor
-		UploadLightsTo(p.prog, level.Lights, false)
+		world.UploadLightsTo(p.prog, level.Lights, false)
 		UploadShadowUniformsTo(p.prog, level.Lights, frame)
 		UploadPointShadowUniformsTo(p.prog, level.Lights)
 		gl.UseProgram(p.prog)
@@ -446,7 +447,7 @@ func RenderDetailColor(level *Level, frame ShadowFrame) {
 
 	if haveS {
 		p := &detail.scatColor
-		UploadLightsTo(p.prog, level.Lights, false)
+		world.UploadLightsTo(p.prog, level.Lights, false)
 		UploadShadowUniformsTo(p.prog, level.Lights, frame)
 		UploadPointShadowUniformsTo(p.prog, level.Lights)
 		gl.UseProgram(p.prog)
@@ -486,7 +487,7 @@ func RenderDetailColor(level *Level, frame ShadowFrame) {
 // cascade layer using light-space matrix lsm. cull, when non-nil, restricts the
 // faces drawn to those reaching into that cascade's box. Restores
 // Shadows.Program on exit.
-func RenderDetailDirShadow(level *Level, lsm mgl32.Mat4, cull *Frustum) {
+func RenderDetailDirShadow(level *world.Level, lsm mgl32.Mat4, cull *Frustum) {
 	if !detail.initialized {
 		return
 	}
@@ -532,7 +533,7 @@ func RenderDetailDirShadow(level *Level, lsm mgl32.Mat4, cull *Frustum) {
 // FBO face using lsm, the light position, and its far plane. cull, when non-nil,
 // restricts the faces drawn to those inside that face's frustum. Restores
 // Shadows.CubeProgram on exit.
-func RenderDetailCubeShadow(level *Level, lsm mgl32.Mat4, lightPos mgl32.Vec3, farPlane float32, cull *Frustum) {
+func RenderDetailCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.Vec3, farPlane float32, cull *Frustum) {
 	if !detail.initialized {
 		return
 	}

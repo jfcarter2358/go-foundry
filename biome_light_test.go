@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/world"
 	"os"
 	"path/filepath"
 	"strings"
@@ -255,25 +256,25 @@ func TestGroundPatchShadesLikeTheStructuralFloor(t *testing.T) {
 func TestBiomeShadowsCastsKind(t *testing.T) {
 	s := BiomeShadowSettings{CastRockMoss: true, CastFoliage: false, CastCascades: 1, CastRange: 45}
 
-	for _, k := range []int32{BiomeRock, BiomeMoss} {
+	for _, k := range []int32{world.BiomeRock, world.BiomeMoss} {
 		if !s.CastsKind(k) {
 			t.Errorf("kind %d should cast when CastRockMoss is on", k)
 		}
 	}
-	for _, k := range []int32{BiomeGrass, BiomeWildflower, BiomeCattail} {
+	for _, k := range []int32{world.BiomeGrass, world.BiomeWildflower, world.BiomeCattail} {
 		if s.CastsKind(k) {
 			t.Errorf("kind %d should not cast when CastFoliage is off", k)
 		}
 	}
 	// Sand and Water have no scatter at all.
-	for _, k := range []int32{BiomeSand, BiomeWater} {
+	for _, k := range []int32{world.BiomeSand, world.BiomeWater} {
 		if s.CastsKind(k) {
 			t.Errorf("kind %d has no scatter and must never cast", k)
 		}
 	}
 
 	s.CastFoliage = true
-	if !s.CastsKind(BiomeGrass) {
+	if !s.CastsKind(world.BiomeGrass) {
 		t.Error("grass should cast once CastFoliage is on")
 	}
 }
@@ -335,8 +336,8 @@ func TestCastRangeForNeverExtends(t *testing.T) {
 // it must come back inverted, which is how forEachScatterSector recognises
 // "nothing of this sector is scattered right now" and skips it.
 func TestBiomeScatterBoundsClipsToCameraRing(t *testing.T) {
-	ch := &Chunk{MinBound: mgl32.Vec3{-100, 0, -100}, MaxBound: mgl32.Vec3{100, 10, 100}}
-	s := &BiomeSector{Points: []mgl32.Vec2{{0, 0}, {200, 0}, {200, 200}, {0, 200}}}
+	ch := &world.Chunk{MinBound: mgl32.Vec3{-100, 0, -100}, MaxBound: mgl32.Vec3{100, 10, 100}}
+	s := &world.BiomeSector{Points: []mgl32.Vec2{{0, 0}, {200, 0}, {200, 200}, {0, 200}}}
 
 	// Camera inside the sector: the box is the ring, not the whole polygon.
 	bmin, bmax := biomeScatterBounds(ch, s, mgl32.Vec3{100, 0, 100}, 30)
@@ -357,9 +358,9 @@ func TestBiomeScatterBoundsClipsToCameraRing(t *testing.T) {
 }
 
 func TestResolvedBoundaryJitter(t *testing.T) {
-	b := &BiomeBrush{}
-	if got := resolvedBoundaryJitter(b); got != defaultBoundaryJitter {
-		t.Errorf("resolvedBoundaryJitter(zero brush) = %v, want the default %v", got, defaultBoundaryJitter)
+	b := &world.BiomeBrush{}
+	if got := resolvedBoundaryJitter(b); got != world.DefaultBoundaryJitter {
+		t.Errorf("resolvedBoundaryJitter(zero brush) = %v, want the default %v", got, world.DefaultBoundaryJitter)
 	}
 	b.BoundaryJitter = 7
 	if got := resolvedBoundaryJitter(b); got != 7 {

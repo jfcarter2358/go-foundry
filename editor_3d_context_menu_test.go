@@ -10,6 +10,7 @@ package main
 // GL context these tests do not have.
 
 import (
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -17,7 +18,7 @@ import (
 
 // withEditor3DMenu installs a level, puts the editor in 3D mode, and restores
 // every global the menu reads or writes.
-func withEditor3DMenu(t *testing.T, lvl *Level) {
+func withEditor3DMenu(t *testing.T, lvl *world.Level) {
 	t.Helper()
 	restore := saveEditorSelection()
 	prevSurface, prevEdgeKind, prevEdgeIdx := Editor.ActiveSurface, Editor.ActiveEdgeKind, Editor.ActiveEdgeIdx
@@ -52,22 +53,22 @@ func withEditor3DMenu(t *testing.T, lvl *Level) {
 // menuLevel is a one-chunk level with a square sector — four points, four
 // walls — plus a spawn point, so every selection kind has something to resolve
 // to.
-func menuLevel() *Level {
-	sector := Sector{
+func menuLevel() *world.Level {
+	sector := world.Sector{
 		ID:           "s0",
 		PointIndices: []int{0, 1, 2, 3},
-		Walls:        []Wall{{Texture: "concrete", Visible: true, Collision: true}},
-		Portals:      []Portal{{ToSector: "s1", Visible: true}},
+		Walls:        []world.Wall{{Texture: "concrete", Visible: true, Collision: true}},
+		Portals:      []world.Portal{{ToSector: "s1", Visible: true}},
 	}
 	sector.Floor.Enabled = true
 	sector.Floor.Texture = "concrete"
-	return &Level{
-		Chunks: []Chunk{{
+	return &world.Level{
+		Chunks: []world.Chunk{{
 			ID:      "c0",
 			Points:  []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}},
-			Sectors: []Sector{sector},
+			Sectors: []world.Sector{sector},
 		}},
-		Spawn: &SpawnPoint{Position: mgl32.Vec3{1.13, 0, 2.4}},
+		Spawn: &world.SpawnPoint{Position: mgl32.Vec3{1.13, 0, 2.4}},
 	}
 }
 

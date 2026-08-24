@@ -5,11 +5,11 @@ package main
 // The presets in detail.go are compiled in. This file adds presets the user
 // creates from the editor's Detail panel: the face's current wave, noise, taper
 // and scatter settings are written to <exe>/detail_presets/<name>.yaml and
-// merged into detailPresets at startup, so they show up in the preset combo
+// merged into DetailPresets at startup, so they show up in the preset combo
 // beside the built-ins and can be applied to any other face.
 //
 // A preset never carries a Seed — that stays per-face, exactly as
-// applyDetailPreset already treats it.
+// ApplyDetailPreset already treats it.
 //
 // A user preset may reuse a built-in's name, in which case it shadows the
 // built-in; deleting it restores the original. The on-disk format is the same
@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/world"
 	"log"
 	"os"
 	"path/filepath"
@@ -44,9 +45,9 @@ var detailUserPresets = map[string]bool{}
 // detailUserPresetNames is detailUserPresets sorted, for a stable UI listing.
 var detailUserPresetNames []string
 
-func snapshotDetailPresets() map[string]DetailSpec {
-	m := make(map[string]DetailSpec, len(detailPresets))
-	for name, spec := range detailPresets {
+func snapshotDetailPresets() map[string]world.DetailSpec {
+	m := make(map[string]world.DetailSpec, len(world.DetailPresets))
+	for name, spec := range world.DetailPresets {
 		m[name] = spec // Waves is an array, so this copy is deep
 	}
 	return m
@@ -58,7 +59,7 @@ func detailPresetsDir() string {
 }
 
 // LoadDetailPresets merges every preset file in <exe>/detail_presets into
-// detailPresets. A missing directory just means no user presets yet; a bad file
+// DetailPresets. A missing directory just means no user presets yet; a bad file
 // is logged and skipped rather than taken down the whole startup.
 func LoadDetailPresets() {
 	dir := detailPresetsDir()
@@ -80,7 +81,7 @@ func LoadDetailPresets() {
 			continue
 		}
 		spec.Preset = name
-		detailPresets[name] = spec
+		world.DetailPresets[name] = spec
 		markDetailUserPreset(name)
 	}
 	if n := len(detailUserPresetNames); n > 0 {
@@ -90,16 +91,16 @@ func LoadDetailPresets() {
 
 // loadDetailPresetFile reads one preset file. The seed is dropped: applying a
 // preset preserves the target face's own seed.
-func loadDetailPresetFile(path string) (DetailSpec, error) {
+func loadDetailPresetFile(path string) (world.DetailSpec, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return DetailSpec{}, err
+		return world.DetailSpec{}, err
 	}
-	var raw RawDetail
+	var raw world.RawDetail
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return DetailSpec{}, fmt.Errorf("yaml: %w", err)
+		return world.DetailSpec{}, fmt.Errorf("yaml: %w", err)
 	}
-	spec := detailFromRaw(&raw)
+	spec := world.DetailFromRaw(&raw)
 	spec.Seed = 0
 	return spec, nil
 }
@@ -107,7 +108,7 @@ func loadDetailPresetFile(path string) (DetailSpec, error) {
 // SaveDetailPreset writes d's parameters as the named preset and registers it,
 // creating the preset directory on first use. An existing preset of that name
 // (user or built-in) is replaced.
-func SaveDetailPreset(name string, d DetailSpec) error {
+func SaveDetailPreset(name string, d world.DetailSpec) error {
 	name = detailPresetName(name)
 	if name == "" {
 		return fmt.Errorf("preset name is empty")
@@ -118,13 +119,13 @@ func SaveDetailPreset(name string, d DetailSpec) error {
 	}
 
 	spec := d
-	spec.Enabled = true // detailToRaw omits a disabled spec entirely
+	spec.Enabled = true // DetailToRaw omits a disabled spec entirely
 	spec.Preset = name
 	spec.Seed = 0
-	spec.clamp()
+	spec.Clamp()
 	spec.Seed = 0 // clamp() forces a non-zero seed; a preset carries none
 
-	data, err := yaml.Marshal(detailToRaw(spec))
+	data, err := yaml.Marshal(world.DetailToRaw(spec))
 	if err != nil {
 		return fmt.Errorf("yaml marshal: %w", err)
 	}
@@ -132,7 +133,7 @@ func SaveDetailPreset(name string, d DetailSpec) error {
 		return err
 	}
 
-	detailPresets[name] = spec
+	world.DetailPresets[name] = spec
 	markDetailUserPreset(name)
 	return nil
 }
@@ -155,9 +156,9 @@ func DeleteDetailPreset(name string) error {
 		}
 	}
 	if builtin, ok := detailBuiltinPresets[name]; ok {
-		detailPresets[name] = builtin
+		world.DetailPresets[name] = builtin
 	} else {
-		delete(detailPresets, name)
+		delete(world.DetailPresets, name)
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -9,24 +10,24 @@ import (
 
 // squareChunk builds a chunk equivalent to one just loaded from disk: four
 // named points forming a square, wired into a single sector.
-func squareChunk() Chunk {
-	return Chunk{
+func squareChunk() world.Chunk {
+	return world.Chunk{
 		ID:         "main",
 		Scale:      1,
 		Points:     []mgl32.Vec2{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
 		PointNames: []string{"A", "E0", "E1", "E2"},
-		Sectors: []Sector{{
+		Sectors: []world.Sector{{
 			ID:           "room",
 			PointIndices: []int{0, 1, 2, 3},
 			EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
-			Walls:        make([]Wall, 4),
+			Walls:        make([]world.Wall, 4),
 		}},
 	}
 }
 
 // ring returns the sector's edge ring as point names, and verifies the edges
 // chain head-to-tail.
-func ring(t *testing.T, rc RawChunk, sectorIdx int) []string {
+func ring(t *testing.T, rc world.RawChunk, sectorIdx int) []string {
 	t.Helper()
 	edges := rc.Sectors[sectorIdx].Edges
 	names := make([]string, len(edges))
@@ -95,7 +96,7 @@ func TestSaveNamesNewPointsWithoutCollision(t *testing.T) {
 	}
 	ch.Sectors[0].PointIndices = []int{0, 4, 1, 2, 3}
 	ch.Sectors[0].EdgeKinds = []string{"wall", "wall", "wall", "wall", "wall"}
-	ch.Sectors[0].Walls = make([]Wall, 5)
+	ch.Sectors[0].Walls = make([]world.Wall, 5)
 
 	rc, err := chunkToRaw(&ch)
 	if err != nil {
@@ -170,12 +171,12 @@ func TestSaveIsStableAcrossRepeatedEdits(t *testing.T) {
 }
 
 func TestValidateRawChunkRejectsRepeatedPoint(t *testing.T) {
-	rc := RawChunk{
+	rc := world.RawChunk{
 		ID:     "main",
 		Points: map[string]geom.Point{"A": {}, "B": {}, "C": {}},
-		Sectors: []RawSector{{
+		Sectors: []world.RawSector{{
 			ID: "room",
-			Edges: []RawEdge{
+			Edges: []world.RawEdge{
 				{From: "A", To: "B"}, {From: "B", To: "A"},
 				{From: "A", To: "C"}, {From: "C", To: "A"},
 			},
@@ -187,12 +188,12 @@ func TestValidateRawChunkRejectsRepeatedPoint(t *testing.T) {
 }
 
 func TestValidateRawChunkRejectsBrokenRing(t *testing.T) {
-	rc := RawChunk{
+	rc := world.RawChunk{
 		ID:     "main",
 		Points: map[string]geom.Point{"A": {}, "B": {}, "C": {}},
-		Sectors: []RawSector{{
+		Sectors: []world.RawSector{{
 			ID: "room",
-			Edges: []RawEdge{
+			Edges: []world.RawEdge{
 				{From: "A", To: "B"}, {From: "B", To: "C"}, {From: "C", To: "B"},
 			},
 		}},
@@ -203,12 +204,12 @@ func TestValidateRawChunkRejectsBrokenRing(t *testing.T) {
 }
 
 func TestValidateRawChunkRejectsUndefinedPoint(t *testing.T) {
-	rc := RawChunk{
+	rc := world.RawChunk{
 		ID:     "main",
 		Points: map[string]geom.Point{"A": {}, "B": {}},
-		Sectors: []RawSector{{
+		Sectors: []world.RawSector{{
 			ID: "room",
-			Edges: []RawEdge{
+			Edges: []world.RawEdge{
 				{From: "A", To: "B"}, {From: "B", To: "Z"}, {From: "Z", To: "A"},
 			},
 		}},

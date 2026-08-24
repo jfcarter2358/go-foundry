@@ -36,6 +36,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -46,7 +47,7 @@ import (
 const biomeVertexStride = 7
 
 // Lattice spacing (world units) between scatter slots for each biome's NEAR
-// LOD tier (or its only tier, for Rock — see biomeLODTierCount). Painted
+// LOD tier (or its only tier, for Rock — see BiomeLODTierCount). Painted
 // density thins these out; spacing sets the maximum (fully-covered) instance
 // count.
 const (
@@ -57,7 +58,7 @@ const (
 	mossSpacing       = 0.5 // denser than rock: small clumps, not boulders
 )
 
-// Mid/Far LOD tier lattice spacing for the kinds biomeLODTierCount gives 3
+// Mid/Far LOD tier lattice spacing for the kinds BiomeLODTierCount gives 3
 // tiers to. Each Far-tier instance is a multi-blade/stem "clump" template
 // (buildGrassClumpMesh and friends) rather than one simplified instance, so
 // its spacing is wide enough that one clump's own footprint roughly covers
@@ -139,7 +140,7 @@ type biomeRenderer struct {
 	cube   progUniforms // instanced: point-light cubemap depth
 
 	// Grass/wildflower/cattail/moss template meshes, ONE PER LOD TIER
-	// (index 0=Near, 1=Mid, 2=Far — see biomeLODTierCount and grass.go's
+	// (index 0=Near, 1=Mid, 2=Far — see BiomeLODTierCount and grass.go's
 	// package doc comment on the three-tier scatter). Appearance beyond mesh
 	// choice is scaled by uniforms, so one mesh per kind per tier suffices.
 	// Rock has no LOD tiers and keeps its existing single-VAO-per-side-count
@@ -265,7 +266,7 @@ func GrassInit() {
 // given equatorial side count.
 func (br *biomeRenderer) rockMeshFor(sides int32) rockMesh {
 	if sides < 3 {
-		sides = defaultRockSides
+		sides = world.DefaultRockSides
 	}
 	if m, ok := br.rockMeshes[sides]; ok {
 		return m
@@ -920,7 +921,7 @@ func biomeHeightTexDims(min, max mgl32.Vec2) (w, h int, size mgl32.Vec2) {
 // rocks/clumps drop onto, .g is the slope-coverage factor (0..1) the vertex
 // shader multiplies into density so instances thin out and vanish past the
 // brush's slope range instead of floating on/embedding in a cliff face.
-func (br *biomeRenderer) ensureBiomeHeight(level *Level, s *BiomeSector) biomeHeightEntry {
+func (br *biomeRenderer) ensureBiomeHeight(level *world.Level, s *world.BiomeSector) biomeHeightEntry {
 	e, ok := br.heightCache[s.ID]
 	if ok && !s.HeightDirty {
 		return e
@@ -933,7 +934,7 @@ func (br *biomeRenderer) ensureBiomeHeight(level *Level, s *BiomeSector) biomeHe
 	// Same seed the ground patch's own mesh is built with, so both agree on
 	// this sector's procedural ground displacement and scatter lands exactly
 	// on the patch (see biomeSurfaceAt).
-	seed := biomeSeed(s)
+	seed := world.BiomeSeed(s)
 	data := make([]float32, w*h*2)
 	for ty := 0; ty < h; ty++ {
 		v := float32(ty) / float32(h-1)
@@ -979,9 +980,9 @@ func biomeLattice(rng, baseSpacing float32, cap int32) (gridN int32, spacing flo
 
 // resolvedBoundaryJitter applies the usual "0 means the kind's default"
 // convention to BoundaryJitter (see BiomeBrush's own doc comment).
-func resolvedBoundaryJitter(b *BiomeBrush) float32 {
+func resolvedBoundaryJitter(b *world.BiomeBrush) float32 {
 	if !(b.BoundaryJitter > 0) { // also catches NaN out of a hand-edited save
-		return defaultBoundaryJitter
+		return world.DefaultBoundaryJitter
 	}
 	return b.BoundaryJitter
 }
@@ -991,7 +992,7 @@ func resolvedBoundaryJitter(b *BiomeBrush) float32 {
 // within rng of the camera, however large the painted sector is), spanning the
 // owning chunk vertically since instances are planted on that chunk's floors.
 // Used to cull whole sectors out of a shadow cascade.
-func biomeScatterBounds(ch *Chunk, s *BiomeSector, camPos mgl32.Vec3, rng float32) (mgl32.Vec3, mgl32.Vec3) {
+func biomeScatterBounds(ch *world.Chunk, s *world.BiomeSector, camPos mgl32.Vec3, rng float32) (mgl32.Vec3, mgl32.Vec3) {
 	pmin, pmax := s.Bounds()
 	minX, maxX := pmin.X(), pmax.X()
 	minZ, maxZ := pmin.Y(), pmax.Y()
@@ -1007,10 +1008,10 @@ func biomeScatterBounds(ch *Chunk, s *BiomeSector, camPos mgl32.Vec3, rng float3
 	if v := camPos.Z() + rng; v < maxZ {
 		maxZ = v
 	}
-	// maxStemHeight bounds any instance's reach above the surface it sits on;
+	// MaxStemHeight bounds any instance's reach above the surface it sits on;
 	// the chunk's own span already covers where that surface can be.
-	return mgl32.Vec3{minX, ch.MinBound.Y() - maxStemHeight, minZ},
-		mgl32.Vec3{maxX, ch.MaxBound.Y() + maxStemHeight, maxZ}
+	return mgl32.Vec3{minX, ch.MinBound.Y() - world.MaxStemHeight, minZ},
+		mgl32.Vec3{maxX, ch.MaxBound.Y() + world.MaxStemHeight, maxZ}
 }
 
 // biomeCastOuterBound returns the outer world-unit bound the CASTING tiers of
@@ -1018,11 +1019,11 @@ func biomeScatterBounds(ch *Chunk, s *BiomeSector, camPos mgl32.Vec3, rng float3
 // BiomeShadows.CastLODTiers cuts off at, not the sector's full Range (which
 // only Mid/Far, never-casting-by-default tiers reach beyond). Kinds with a
 // single tier (Rock) always cast that whole tier, so this is just
-// biomeSectorRange for them.
-func biomeCastOuterBound(b *BiomeBrush) float32 {
-	tierCount := biomeLODTierCount(b.Kind)
+// BiomeSectorRange for them.
+func biomeCastOuterBound(b *world.BiomeBrush) float32 {
+	tierCount := world.BiomeLODTierCount(b.Kind)
 	if tierCount == 1 {
-		return biomeSectorRange(b)
+		return world.BiomeSectorRange(b)
 	}
 	castTiers := BiomeShadows.CastLODTiers
 	if castTiers > tierCount {
@@ -1033,11 +1034,11 @@ func biomeCastOuterBound(b *BiomeBrush) float32 {
 	// gate casting off; this is only ever a cull-box bound.
 	switch castTiers {
 	case 1:
-		return resolvedLOD1(b)
+		return world.ResolvedLOD1(b)
 	case 2:
-		return resolvedLOD2(b)
+		return world.ResolvedLOD2(b)
 	default: // 3, or 0
-		return biomeSectorRange(b)
+		return world.BiomeSectorRange(b)
 	}
 }
 
@@ -1053,7 +1054,7 @@ func biomeCastOuterBound(b *BiomeBrush) float32 {
 // castRange uniform in renderBiomeSector — the two MUST agree, or an instance
 // culled out of the box here could still think it belongs in a map it was
 // never drawn into, or vice versa.
-func forEachScatterSector(level *Level, camPos mgl32.Vec3, castOnly bool, castCap float32, cull *Frustum, fn func(*BiomeSector)) {
+func forEachScatterSector(level *world.Level, camPos mgl32.Vec3, castOnly bool, castCap float32, cull *Frustum, fn func(*world.BiomeSector)) {
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
 		for si := range ch.BiomeSectors {
@@ -1065,7 +1066,7 @@ func forEachScatterSector(level *Level, camPos mgl32.Vec3, castOnly bool, castCa
 				continue
 			}
 			if cull != nil {
-				rng := biomeSectorRange(&s.Brush)
+				rng := world.BiomeSectorRange(&s.Brush)
 				if castOnly {
 					// Use the outermost CASTING tier's own bound, not the
 					// sector's full Range — a sector whose Far tier reaches
@@ -1102,7 +1103,7 @@ func forEachScatterSector(level *Level, camPos mgl32.Vec3, castOnly bool, castCa
 // frame carries the directional cascade setup from RenderShadowPass, which the
 // first two passes need in order to receive shadows the way world geometry
 // does.
-func RenderBiomes(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame ShadowFrame) {
+func RenderBiomes(level *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame ShadowFrame) {
 	if !biomes.initialized || level == nil {
 		return
 	}
@@ -1112,7 +1113,7 @@ func RenderBiomes(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame Sh
 
 	p := &biomes.color
 	started := false
-	forEachScatterSector(level, camPos, false, 0, nil, func(s *BiomeSector) {
+	forEachScatterSector(level, camPos, false, 0, nil, func(s *world.BiomeSector) {
 		if !started {
 			uploadBiomeLighting(p.prog, level, frame)
 			pv := projView
@@ -1120,7 +1121,7 @@ func RenderBiomes(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame Sh
 			beginBiomePass(p, camPos, timeSec)
 			started = true
 		}
-		for tier := 0; tier < biomeLODTierCount(s.Brush.Kind); tier++ {
+		for tier := 0; tier < world.BiomeLODTierCount(s.Brush.Kind); tier++ {
 			renderBiomeSector(level, s, p, tier, false, 0)
 		}
 	})
@@ -1138,7 +1139,7 @@ func RenderBiomes(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame Sh
 // castRangeFor use to stop small scatter from being re-instanced into a cascade
 // its shadow can't usefully reach, or thinned to a range the cascade's own box
 // doesn't cover in the first place. Restores Shadows.Program on exit.
-func RenderBiomeScatterDirShadow(level *Level, lsm mgl32.Mat4, cascade int, cascadeSplit float32, camPos mgl32.Vec3, timeSec float32, cull *Frustum) {
+func RenderBiomeScatterDirShadow(level *world.Level, lsm mgl32.Mat4, cascade int, cascadeSplit float32, camPos mgl32.Vec3, timeSec float32, cull *Frustum) {
 	if !biomes.initialized || level == nil || !BiomeShadows.AnyCast() {
 		return
 	}
@@ -1148,7 +1149,7 @@ func RenderBiomeScatterDirShadow(level *Level, lsm mgl32.Mat4, cascade int, casc
 
 	p := &biomes.shadow
 	started := false
-	forEachScatterSector(level, camPos, true, cascadeSplit, cull, func(s *BiomeSector) {
+	forEachScatterSector(level, camPos, true, cascadeSplit, cull, func(s *world.BiomeSector) {
 		if !started {
 			gl.UseProgram(p.prog)
 			m := lsm
@@ -1163,7 +1164,7 @@ func RenderBiomeScatterDirShadow(level *Level, lsm mgl32.Mat4, cascade int, casc
 		if tiers < 1 {
 			tiers = 1 // a zero-value/misconfigured settings struct still casts Near
 		}
-		if kindTiers := biomeLODTierCount(s.Brush.Kind); tiers > kindTiers {
+		if kindTiers := world.BiomeLODTierCount(s.Brush.Kind); tiers > kindTiers {
 			tiers = kindTiers
 		}
 		for tier := 0; tier < tiers; tier++ {
@@ -1181,14 +1182,14 @@ func RenderBiomeScatterDirShadow(level *Level, lsm mgl32.Mat4, cascade int, casc
 // light's own reach already bounds how far an instance could usefully cast into
 // it, the same role a cascade's split distance plays in the directional pass.
 // Restores Shadows.CubeProgram on exit.
-func RenderBiomeScatterCubeShadow(level *Level, lsm mgl32.Mat4, lightPos mgl32.Vec3, farPlane float32, camPos mgl32.Vec3, timeSec float32, cull *Frustum) {
+func RenderBiomeScatterCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.Vec3, farPlane float32, camPos mgl32.Vec3, timeSec float32, cull *Frustum) {
 	if !biomes.initialized || level == nil || !BiomeShadows.AnyCast() {
 		return
 	}
 
 	p := &biomes.cube
 	started := false
-	forEachScatterSector(level, camPos, true, farPlane, cull, func(s *BiomeSector) {
+	forEachScatterSector(level, camPos, true, farPlane, cull, func(s *world.BiomeSector) {
 		if !started {
 			gl.UseProgram(p.prog)
 			m := lsm
@@ -1204,7 +1205,7 @@ func RenderBiomeScatterCubeShadow(level *Level, lsm mgl32.Mat4, lightPos mgl32.V
 		if tiers < 1 {
 			tiers = 1
 		}
-		if kindTiers := biomeLODTierCount(s.Brush.Kind); tiers > kindTiers {
+		if kindTiers := world.BiomeLODTierCount(s.Brush.Kind); tiers > kindTiers {
 			tiers = kindTiers
 		}
 		for tier := 0; tier < tiers; tier++ {
@@ -1234,26 +1235,26 @@ func beginBiomePass(p *progUniforms, camPos mgl32.Vec3, timeSec float32) {
 
 // biomeLODBounds resolves sector s's three LOD boundaries — the Near->Mid and
 // Mid->Far distances plus the sector's own outer Range — via
-// resolvedLOD1/resolvedLOD2/biomeSectorRange, so every caller (the per-tier
+// ResolvedLOD1/ResolvedLOD2/BiomeSectorRange, so every caller (the per-tier
 // render loops, the editor panel) agrees on exactly the same numbers a
 // sector's draw calls are split across.
-func biomeLODBounds(s *BiomeSector) (lod1, lod2, rng float32) {
-	rng = biomeSectorRange(&s.Brush)
-	lod1 = resolvedLOD1(&s.Brush)
-	lod2 = resolvedLOD2(&s.Brush)
+func biomeLODBounds(s *world.BiomeSector) (lod1, lod2, rng float32) {
+	rng = world.BiomeSectorRange(&s.Brush)
+	lod1 = world.ResolvedLOD1(&s.Brush)
+	lod2 = world.ResolvedLOD2(&s.Brush)
 	return
 }
 
 // renderBiomeSector uploads one sector's polygon/brush/height uniforms to p
 // and issues its instanced draw call for LOD tier `tier` (0=Near, 1=Mid,
-// 2=Far — ignored, always treated as 0, for kinds with biomeLODTierCount==1
+// 2=Far — ignored, always treated as 0, for kinds with BiomeLODTierCount==1
 // like Rock). shadowPass shortens the castRange uniform using castCap (a
 // cascade split distance or a point light's far plane — see the two
 // Render*Shadow callers); everything else is identical between the color and
 // depth passes, which is the point — the three programs share their
 // placement code (biome_scatter_common.glsl) and must be fed identically for
 // a blade's shadow to land on the blade.
-func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, shadowPass bool, castCap float32) {
+func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms, tier int, shadowPass bool, castCap float32) {
 	entry := biomes.ensureBiomeHeight(level, s)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, entry.tex)
@@ -1261,8 +1262,8 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 	gl.Uniform2f(p.u("heightSize"), entry.size.X(), entry.size.Y())
 
 	n := len(s.Points)
-	if n > biomeMaxPolyVerts {
-		n = biomeMaxPolyVerts
+	if n > world.BiomeMaxPolyVerts {
+		n = world.BiomeMaxPolyVerts
 	}
 	flat := make([]float32, n*2)
 	for i := 0; i < n; i++ {
@@ -1276,12 +1277,12 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 	gl.Uniform2f(p.u("polyMax"), polyMax.X(), polyMax.Y())
 
 	// This tier's own [inner, outer] distance band. Kinds with only one tier
-	// (biomeLODTierCount==1, e.g. Rock) always get [0, rng] — bit-for-bit
+	// (BiomeLODTierCount==1, e.g. Rock) always get [0, rng] — bit-for-bit
 	// today's single-tier behavior. LOD-capable kinds split rng into three
 	// concentric bands at lod1/lod2 (biomeLODBounds); tier is clamped to
 	// whatever the caller actually loops (0 for a single-tier kind).
 	lod1, lod2, rng := biomeLODBounds(s)
-	tierCount := biomeLODTierCount(s.Brush.Kind)
+	tierCount := world.BiomeLODTierCount(s.Brush.Kind)
 	inner, outer := float32(0), rng
 	if tierCount == 3 {
 		switch tier {
@@ -1325,7 +1326,7 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 	// shader ignores it whenever outerIsLOD says this edge isn't Range.
 	gl.Uniform1i(p.u("outerIsLOD"), boolToInt32(tier < tierCount-1))
 	gl.Uniform1f(p.u("rangeFadeFraction"), geom.Clamp01(s.Brush.RangeFadeFraction))
-	gl.Uniform1f(p.u("lodFadeFraction"), biomeLODFadeFraction)
+	gl.Uniform1f(p.u("lodFadeFraction"), world.BiomeLODFadeFraction)
 	edgeFade := s.Brush.EdgeFadeDistance
 	if edgeFade < 0 {
 		edgeFade = 0
@@ -1333,19 +1334,19 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 	gl.Uniform1f(p.u("edgeFadeDistance"), edgeFade)
 	gl.Uniform1f(p.u("boundaryJitter"), resolvedBoundaryJitter(&s.Brush))
 
-	seed := biomeSeed(s)
+	seed := world.BiomeSeed(s)
 	gl.Uniform2f(p.u("seed"), seed.X(), seed.Y())
 	gl.Uniform1f(p.u("density"), s.Brush.Density)
 	c := s.Brush.Color
 	gl.Uniform3f(p.u("tintColor"), c.X(), c.Y(), c.Z())
 	shapeKind := s.Brush.Kind
-	if shapeKind == BiomeMoss {
+	if shapeKind == world.BiomeMoss {
 		// Moss has no shader-side case of its own: it reuses Rock's
 		// per-instance warp + per-fragment noise-bump/specular shading
 		// (biome_vert/frag.glsl's shapeKind==1 path) unchanged — only the
 		// template mesh (mossVAO: small, squashed clumps, see buildMossMesh)
 		// and this sector's scatter density/spacing/scale differ.
-		shapeKind = BiomeRock
+		shapeKind = world.BiomeRock
 	}
 	gl.Uniform1i(p.u("shapeKind"), shapeKind)
 
@@ -1364,11 +1365,11 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 	gl.Uniform1f(p.u("clump"), 0)
 
 	switch s.Brush.Kind {
-	case BiomeRock:
-		// No LOD tiers (biomeLODTierCount==1) — tier is always 0, outer==rng.
+	case world.BiomeRock:
+		// No LOD tiers (BiomeLODTierCount==1) — tier is always 0, outer==rng.
 		rockScale := s.Brush.RockScale
 		if rockScale <= 0 {
-			rockScale = defaultRockScale
+			rockScale = world.DefaultRockScale
 		}
 		rm := biomes.rockMeshFor(s.Brush.RockSides)
 		n, sp := biomeLattice(outer, rockSpacing, maxRockGridN)
@@ -1378,10 +1379,10 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 		gl.BindVertexArray(rm.vao)
 		gl.DrawArraysInstanced(gl.TRIANGLES, 0, rm.verts, n*n)
 
-	case BiomeMoss:
+	case world.BiomeMoss:
 		clumpScale := s.Brush.RockScale
 		if clumpScale <= 0 {
-			clumpScale = defaultRockScale
+			clumpScale = world.DefaultRockScale
 		}
 		vao, verts, baseSpacing, cap := biomes.mossTemplate(tier)
 		n, sp := biomeLattice(outer, baseSpacing, cap)
@@ -1391,21 +1392,21 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 		gl.BindVertexArray(vao)
 		gl.DrawArraysInstanced(gl.TRIANGLES, 0, verts, n*n)
 
-	case BiomeWildflower:
+	case world.BiomeWildflower:
 		bh := s.Brush.GrassHeight
 		if bh <= 0 {
-			bh = defaultWildflowerHeight
+			bh = world.DefaultWildflowerHeight
 		}
-		if bh > maxStemHeight {
-			bh = maxStemHeight
+		if bh > world.MaxStemHeight {
+			bh = world.MaxStemHeight
 		}
 		bw := s.Brush.GrassWidth
 		if bw <= 0 {
-			bw = defaultWildflowerWidth
+			bw = world.DefaultWildflowerWidth
 		}
 		hs := s.Brush.HeadScale
 		if hs <= 0 {
-			hs = defaultWildflowerHeadScale
+			hs = world.DefaultWildflowerHeadScale
 		}
 		aspect := wildflowerDiscAspect
 		if s.Brush.BloomSpike {
@@ -1413,7 +1414,7 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 		}
 		cc := s.Brush.CenterColor
 		if cc == (mgl32.Vec3{}) {
-			cc = defaultCenterColor
+			cc = world.DefaultCenterColor
 		}
 		vao, verts, baseSpacing, cap := biomes.wildflowerTemplate(tier)
 		n, sp := biomeLattice(outer, baseSpacing, cap)
@@ -1427,7 +1428,7 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 		if tier == 0 {
 			gl.Uniform1i(p.u("hasCenter"), boolToInt32(s.Brush.BloomCenter))
 			gl.Uniform1i(p.u("hasLeaves"), boolToInt32(s.Brush.StemLeaves))
-			gl.Uniform1f(p.u("leafScale"), resolvedLeafScale(s.Brush.LeafScale))
+			gl.Uniform1f(p.u("leafScale"), world.ResolvedLeafScale(s.Brush.LeafScale))
 		}
 		gl.Uniform1i(p.u("bloomSolid"), boolToInt32(s.Brush.BloomSolidColor))
 		gl.Uniform3f(p.u("centerColor"), cc.X(), cc.Y(), cc.Z())
@@ -1436,18 +1437,18 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 		gl.BindVertexArray(vao)
 		gl.DrawArraysInstanced(gl.TRIANGLES, 0, verts, n*n)
 
-	case BiomeCattail:
+	case world.BiomeCattail:
 		bh := s.Brush.GrassHeight
 		if bh <= 0 {
-			bh = defaultCattailHeight
+			bh = world.DefaultCattailHeight
 		}
 		bw := s.Brush.GrassWidth
 		if bw <= 0 {
-			bw = defaultCattailWidth
+			bw = world.DefaultCattailWidth
 		}
 		hs := s.Brush.HeadScale
 		if hs <= 0 {
-			hs = defaultCattailHeadScale
+			hs = world.DefaultCattailHeadScale
 		}
 		vao, verts, baseSpacing, cap := biomes.cattailTemplate(tier)
 		n, sp := biomeLattice(outer, baseSpacing, cap)
@@ -1462,14 +1463,14 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 	default: // BiomeGrass
 		bh := s.Brush.GrassHeight
 		if bh <= 0 {
-			bh = defaultGrassHeight
+			bh = world.DefaultGrassHeight
 		}
-		if bh > maxStemHeight {
-			bh = maxStemHeight
+		if bh > world.MaxStemHeight {
+			bh = world.MaxStemHeight
 		}
 		bw := s.Brush.GrassWidth
 		if bw <= 0 {
-			bw = defaultGrassWidth
+			bw = world.DefaultGrassWidth
 		}
 		vao, verts, baseSpacing, cap := biomes.grassTemplate(tier)
 		n, sp := biomeLattice(outer, baseSpacing, cap)
@@ -1481,7 +1482,7 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 		// biome_scatter_common.glsl assumes the Near tier's own tight lattice
 		// spacing).
 		if tier == 0 {
-			gl.Uniform1f(p.u("clump"), clampGrassClump(s.Brush.GrassClump))
+			gl.Uniform1f(p.u("clump"), world.ClampGrassClump(s.Brush.GrassClump))
 		}
 		gl.Uniform1f(p.u("spacing"), sp)
 		gl.Uniform1i(p.u("gridN"), n)

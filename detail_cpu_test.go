@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -13,12 +14,12 @@ var worldUp = mgl32.Vec3{0, 1, 0}
 
 // rockySpec returns a displacement spec with both a wave layer and noise
 // active — the interesting case for every property below.
-func rockySpec() *DetailSpec {
-	d := &DetailSpec{
+func rockySpec() *world.DetailSpec {
+	d := &world.DetailSpec{
 		Enabled:  true,
 		Displace: true,
 		Seed:     12345,
-		Waves: [detailMaxWaves]DetailWave{
+		Waves: [world.DetailMaxWaves]world.DetailWave{
 			{Enabled: true, Amplitude: 0.5, Frequency: 0.4, Rotation: 0, TessLevel: 24},
 			{Enabled: true, Amplitude: 0.25, Frequency: 1.1, Rotation: 65, TessLevel: 24},
 			{},
@@ -72,7 +73,7 @@ func TestDetailDisplaceAtBoundedByAmplitudes(t *testing.T) {
 // leaves the position untouched, so a face that merely *has* a DetailSpec
 // (Enabled but no waves, no noise) never silently shifts the biome layer.
 func TestDetailDisplaceAtFlatSpecIsIdentity(t *testing.T) {
-	d := &DetailSpec{Enabled: true, Displace: true, Seed: 7}
+	d := &world.DetailSpec{Enabled: true, Displace: true, Seed: 7}
 	p := mgl32.Vec3{3, 2, -4}
 	if got := detailDisplaceAt(d, worldUp, nil, p); got != p {
 		t.Fatalf("flat spec displaced %v to %v, want identity", p, got)
@@ -81,12 +82,12 @@ func TestDetailDisplaceAtFlatSpecIsIdentity(t *testing.T) {
 
 // TestDetailDisplaceAtDisabledWaveSlotIgnored checks a slot with Enabled=false
 // contributes nothing even when it still carries a stale amplitude/frequency
-// (which it does — DetailSpec.clamp deliberately leaves disabled slots
+// (which it does — DetailSpec.Clamp deliberately leaves disabled slots
 // untouched so ensureDisplaceDefaults can tell "never configured" apart).
 func TestDetailDisplaceAtDisabledWaveSlotIgnored(t *testing.T) {
-	d := &DetailSpec{
+	d := &world.DetailSpec{
 		Enabled: true, Displace: true, Seed: 3,
-		Waves: [detailMaxWaves]DetailWave{
+		Waves: [world.DetailMaxWaves]world.DetailWave{
 			{Enabled: false, Amplitude: 5, Frequency: 2, TessLevel: 16},
 			{}, {},
 		},
@@ -162,7 +163,7 @@ func TestDetailNormalAtIsUnitAndUpward(t *testing.T) {
 // yields the face normal exactly, so an unshaped face reads as perfectly flat
 // (coverage 1 for a below-an-angle kind) rather than picking up noise.
 func TestDetailNormalAtFlatSpecIsFaceNormal(t *testing.T) {
-	d := &DetailSpec{Enabled: true, Displace: true, Seed: 9}
+	d := &world.DetailSpec{Enabled: true, Displace: true, Seed: 9}
 	n := detailNormalAt(d, worldUp, nil, dispNormalEps(d), mgl32.Vec3{2, 0, 3})
 	if (n.Sub(worldUp)).Len() > 1e-5 {
 		t.Fatalf("flat spec normal = %v, want %v", n, worldUp)
@@ -283,13 +284,13 @@ var testSeed = mgl32.Vec2{3.5, 11.25}
 
 // flatFloorLevel returns a level with one 32x32 sector whose floor sits at
 // y=5, carrying the given detail spec.
-func flatFloorLevel(spec DetailSpec) *Level {
-	return &Level{Chunks: []Chunk{{
+func flatFloorLevel(spec world.DetailSpec) *world.Level {
+	return &world.Level{Chunks: []world.Chunk{{
 		Points: []mgl32.Vec2{{-16, -16}, {16, -16}, {16, 16}, {-16, 16}},
-		Sectors: []Sector{{
+		Sectors: []world.Sector{{
 			ID:           "s0",
 			PointIndices: []int{0, 1, 2, 3},
-			Floor:        Floor{Enabled: true, Height: 5, Detail: spec},
+			Floor:        world.Floor{Enabled: true, Height: 5, Detail: spec},
 		}},
 	}}}
 }
@@ -303,11 +304,11 @@ func flatFloorLevel(spec DetailSpec) *Level {
 // engaging), while a non-following kind must come out bit-identical.
 func TestBiomeSurfaceAtFollowsDisplacedFloor(t *testing.T) {
 	displaced := flatFloorLevel(*rockySpec())
-	plain := flatFloorLevel(DetailSpec{})
+	plain := flatFloorLevel(world.DetailSpec{})
 
 	// An authored slope ceiling, since the shipped default range covers
 	// everything and would never gate — see TestResolvedSlopeDefaultsGateNothing.
-	grass := &BiomeBrush{Kind: BiomeGrass, MaxSlopeAngle: 25}
+	grass := &world.BiomeBrush{Kind: world.BiomeGrass, MaxSlopeAngle: 25}
 	diverged, sawPartialCoverage := false, false
 	for x := float32(-12); x <= 12; x += 0.7 {
 		for z := float32(-12); z <= 12; z += 0.9 {
@@ -336,7 +337,7 @@ func TestBiomeSurfaceAtFollowsDisplacedFloor(t *testing.T) {
 
 	// Cattail opts out of displacement entirely, so the displaced and plain
 	// floors must agree exactly — same code path, same inputs.
-	cattail := &BiomeBrush{Kind: BiomeCattail}
+	cattail := &world.BiomeBrush{Kind: world.BiomeCattail}
 	for x := float32(-12); x <= 12; x += 1.9 {
 		for z := float32(-12); z <= 12; z += 2.3 {
 			h, cov := biomeSurfaceAt(displaced, cattail, testSeed, x, z)
@@ -365,16 +366,16 @@ func TestGroundPatchMeshMatchesScatterHeight(t *testing.T) {
 	lvl := flatFloorLevel(*rockySpec())
 
 	for _, kind := range allBiomeKinds {
-		s := &BiomeSector{
+		s := &world.BiomeSector{
 			ID:     "gp",
 			Points: []mgl32.Vec2{{-10, -10}, {10, -10}, {10, 10}, {-10, 10}},
-			Brush:  defaultBiomeBrush(kind),
+			Brush:  world.DefaultBiomeBrush(kind),
 		}
 		verts := buildGroundPatchMesh(lvl, s)
 		if len(verts) == 0 {
 			t.Fatalf("kind %d produced an empty ground patch mesh", kind)
 		}
-		seed := biomeSeed(s)
+		seed := world.BiomeSeed(s)
 
 		for i := 0; i < len(verts); i += groundVertexStride {
 			x, y, z := verts[i], verts[i+1], verts[i+2]
@@ -429,10 +430,10 @@ func TestGroundPatchIsSlopeGated(t *testing.T) {
 	}
 
 	newPatch := func(minA, maxA float32) []float32 {
-		s := &BiomeSector{
+		s := &world.BiomeSector{
 			ID:     "slopegate",
 			Points: []mgl32.Vec2{{-7, -7}, {7, -7}, {7, 7}, {-7, 7}},
-			Brush:  defaultBiomeBrush(BiomeMoss),
+			Brush:  world.DefaultBiomeBrush(world.BiomeMoss),
 		}
 		s.Brush.MinSlopeAngle, s.Brush.MaxSlopeAngle = minA, maxA
 		return buildGroundPatchMesh(lvl, s)
@@ -456,10 +457,10 @@ func TestGroundPatchIsSlopeGated(t *testing.T) {
 	}
 
 	// A kind that opts out of displacement must stay fully covered regardless.
-	s := &BiomeSector{
+	s := &world.BiomeSector{
 		ID:     "cattail",
 		Points: []mgl32.Vec2{{-7, -7}, {7, -7}, {7, 7}, {-7, 7}},
-		Brush:  defaultBiomeBrush(BiomeCattail),
+		Brush:  world.DefaultBiomeBrush(world.BiomeCattail),
 	}
 	s.Brush.MinSlopeAngle, s.Brush.MaxSlopeAngle = 80, 90
 	if lo, hi := groundPatchCoverageRange(t, buildGroundPatchMesh(lvl, s)); lo != 1 || hi != 1 {
@@ -473,8 +474,8 @@ func TestGroundPatchIsSlopeGated(t *testing.T) {
 // the bare floor height. Without this, a future refactor could quietly go back
 // to returning the raw floor height and re-plant everything underground.
 func TestBiomeSurfaceAtIncludesGroundPatchOffsets(t *testing.T) {
-	lvl := flatFloorLevel(DetailSpec{}) // undisplaced: isolate the patch's own offsets
-	brush := defaultBiomeBrush(BiomeMoss)
+	lvl := flatFloorLevel(world.DetailSpec{}) // undisplaced: isolate the patch's own offsets
+	brush := world.DefaultBiomeBrush(world.BiomeMoss)
 
 	sawAbove, sawBelow, differsFromFloor := false, false, false
 	for x := float32(-10); x <= 10; x += 0.6 {
@@ -511,9 +512,9 @@ func TestBiomeSurfaceAtIgnoresDisplaceOffFace(t *testing.T) {
 	spec := *rockySpec()
 	spec.Displace = false // scatter-only detail: the surface itself stays flat
 	scatterOnly := flatFloorLevel(spec)
-	plain := flatFloorLevel(DetailSpec{})
+	plain := flatFloorLevel(world.DetailSpec{})
 
-	brush := &BiomeBrush{Kind: BiomeGrass}
+	brush := &world.BiomeBrush{Kind: world.BiomeGrass}
 	for x := float32(-8); x <= 8; x += 2.1 {
 		for z := float32(-8); z <= 8; z += 2.7 {
 			h, cov := biomeSurfaceAt(scatterOnly, brush, testSeed, x, z)

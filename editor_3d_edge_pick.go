@@ -23,6 +23,7 @@ package main
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 	"math"
 	"sort"
 
@@ -394,7 +395,7 @@ func noteEdgeSurface(sel edgeSel) {
 		Editor.ActiveEdgeIdx = -1
 		return
 	}
-	kind, kindIdx := edgeKindAndIndex(&ch.Sectors[sel.sectorIdx], sel.vertIdx)
+	kind, kindIdx := world.EdgeKindAndIndex(&ch.Sectors[sel.sectorIdx], sel.vertIdx)
 	Editor.ActiveSectorIdx = sel.sectorIdx
 	Editor.ActiveEdgeKind = kind
 	Editor.ActiveEdgeIdx = kindIdx

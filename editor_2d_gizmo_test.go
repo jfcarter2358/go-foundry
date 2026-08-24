@@ -3,6 +3,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -37,7 +38,7 @@ func setupGizmo2DView(t *testing.T) {
 }
 
 // gizmo2DTestSelection selects sector A's four corners, whose centre is (5,5).
-func gizmo2DTestSelection(t *testing.T) *Chunk {
+func gizmo2DTestSelection(t *testing.T) *world.Chunk {
 	t.Helper()
 	ch := selectTestChunk(t)
 	Editor.SelectedVertices = []vertexSel{
@@ -91,7 +92,7 @@ func TestGizmo2DOffersMoveAndRotateForTheSpawnMarker(t *testing.T) {
 	defer saveEditorSelection()()
 	setupGizmo2DView(t)
 	selectTestChunk(t)
-	Editor.level.Spawn = &SpawnPoint{Position: mgl32.Vec3{2, 0, 3}}
+	Editor.level.Spawn = &world.SpawnPoint{Position: mgl32.Vec3{2, 0, 3}}
 	Editor.SpawnSelected = true
 
 	for _, tool := range []editorGizmoTool{editorToolMove, editorToolRotate} {
@@ -110,7 +111,7 @@ func TestGizmo2DOffersMoveAndRotateForTheSpawnMarker(t *testing.T) {
 // leaves an aimed-up or aimed-down spawn as it was.
 func TestGizmo2DRotateSpawnMovesOnlyTheYaw(t *testing.T) {
 	defer saveEditorSelection()()
-	s := &SpawnPoint{Position: mgl32.Vec3{2, 0, 3}, Rotation: mgl32.Vec3{0, 0.25, 0.4}}
+	s := &world.SpawnPoint{Position: mgl32.Vec3{2, 0, 3}, Rotation: mgl32.Vec3{0, 0.25, 0.4}}
 	Editor.Gizmo2DStartSpawnRot = s.Rotation
 	start := s.Position
 

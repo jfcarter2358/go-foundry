@@ -12,7 +12,7 @@ package main
 //     wholesale by undo and by a reload, so a script holding a ref across a
 //     frame is ordinary, and a stale one has to fail softly.
 //   - A mutating call marks the play session dirty and, when the property says
-//     so, queues a geometry rebuild. Neither happens inline: reloadSector is GL
+//     so, queues a geometry rebuild. Neither happens inline: ReloadSector is GL
 //     work, and the script tick is not where GL can happen.
 
 import (
@@ -22,6 +22,7 @@ import (
 
 	"foundry/internal/flang"
 	"foundry/internal/strutil"
+	"foundry/internal/world"
 )
 
 // levelHost is the engine side of the language boundary.
@@ -30,7 +31,7 @@ type levelHost struct {
 }
 
 // lvl is the level the host is reading, or nil.
-func (h *levelHost) lvl() *Level {
+func (h *levelHost) lvl() *world.Level {
 	if h.rt == nil {
 		return nil
 	}
@@ -53,7 +54,7 @@ func (h *levelHost) Resolve(id string) (flang.RefVal, bool) {
 	case "player":
 		// The player is engine-owned and not in Level.Entities, so it needs its
 		// own case — but it answers to `@player` like anything else.
-		if PlayerEntity != nil {
+		if world.PlayerEntity != nil {
 			return flang.RefVal{Kind: flang.RefEntity, A: "player"}, true
 		}
 		return flang.RefVal{}, false
@@ -74,15 +75,15 @@ func (h *levelHost) Self() flang.RefVal {
 
 func (h *levelHost) Alive(r flang.RefVal) bool {
 	if r.Kind == flang.RefEntity && r.A == "player" {
-		return PlayerEntity != nil
+		return world.PlayerEntity != nil
 	}
 	return h.cache().alive(r)
 }
 
 // entityFor resolves an entity ref, including the engine-owned player.
-func (h *levelHost) entityFor(r flang.RefVal) *Entity {
+func (h *levelHost) entityFor(r flang.RefVal) *world.Entity {
 	if r.Kind == flang.RefEntity && r.A == "player" {
-		return PlayerEntity
+		return world.PlayerEntity
 	}
 	return h.cache().entityFor(r)
 }
@@ -91,8 +92,8 @@ func (h *levelHost) entityFor(r flang.RefVal) *Entity {
 
 // scriptData returns the tags/attributes an object carries. Entities keep theirs
 // outside a ScriptData — their tags and attributes are merged from a definition,
-// which entityToRaw depends on — so they are handled separately.
-func (h *levelHost) scriptData(r flang.RefVal) *ScriptData {
+// which EntityToRaw depends on — so they are handled separately.
+func (h *levelHost) scriptData(r flang.RefVal) *world.ScriptData {
 	return h.cache().scriptDataFor(r)
 }
 
@@ -174,7 +175,7 @@ func (h *levelHost) SetProp(r flang.RefVal, name string, v flang.Value) error {
 		}
 	}
 	if acc.Dirty {
-		// Geometry work cannot happen here — reloadSector is GL, and the tick
+		// Geometry work cannot happen here — ReloadSector is GL, and the tick
 		// runs before the frame's GL work. DrainScriptWork applies it, coalesced,
 		// with the main context current.
 		h.rt.markGeometryDirty(r)
@@ -232,7 +233,7 @@ func (h *levelHost) Member(r flang.RefVal, name string) (flang.Value, bool) {
 		case "ceil", "ceiling":
 			return flang.RefVal{Kind: flang.RefCeiling, A: r.A, B: r.B}, true
 		case "edges":
-			ensureEdgeIDs(s)
+			world.EnsureEdgeIDs(s)
 			elems := make([]flang.Value, 0, len(s.EdgeIDs))
 			for _, id := range s.EdgeIDs {
 				elems = append(elems, flang.RefVal{Kind: flang.RefEdge, A: r.A, B: r.B, C: id})
@@ -260,7 +261,7 @@ func (h *levelHost) Member(r flang.RefVal, name string) (flang.Value, bool) {
 		// step is the id.
 		if r.C == "" {
 			_, s := c.sectorFor(r)
-			if s == nil || polyEdgeIdxByID(s, name) < 0 {
+			if s == nil || world.PolyEdgeIdxByID(s, name) < 0 {
 				return nil, false
 			}
 			return flang.RefVal{Kind: flang.RefEdge, A: r.A, B: r.B, C: name}, true

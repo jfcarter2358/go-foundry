@@ -35,6 +35,7 @@ import (
 
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 )
 
 // ScriptIssue is one thing a script asks for that the level cannot deliver.
@@ -54,7 +55,7 @@ var scriptEventAtoms = []string{
 // linter carries what the checks share: the level, its index, and the lazily
 // built asset lists.
 type linter struct {
-	lvl   *Level
+	lvl   *world.Level
 	cache *refCache
 	// inScope is every function name the script can call — its own plus its
 	// imports'. Nil disables the unknown-call check, which is what a caller that
@@ -79,7 +80,7 @@ type linter struct {
 //
 // lvl may be nil — the script editor can be open with no level loaded — in which
 // case only the checks that need no world are made.
-func LintScript(lvl *Level, f *flang.File, inScope, params map[string]bool) []ScriptIssue {
+func LintScript(lvl *world.Level, f *flang.File, inScope, params map[string]bool) []ScriptIssue {
 	if f == nil {
 		return nil
 	}
@@ -143,7 +144,7 @@ func (l *linter) handlerAtom(p flang.Param) {
 	if containsString(scriptEventAtoms, p.Atom) {
 		return
 	}
-	if near := nearestName(p.Atom, scriptEventAtoms); near != "" {
+	if near := world.NearestName(p.Atom, scriptEventAtoms); near != "" {
 		l.add(p.Pos_, "this handler is for :%s:, which the engine never posts — did you mean :%s:? "+
 			"(a custom atom needs no declaration, so ignore this if :%s: is your own message)",
 			p.Atom, near, p.Atom)
@@ -251,7 +252,7 @@ func (l *linter) addr(x *flang.AddrExpr) {
 		return
 	}
 	msg := fmt.Sprintf("nothing in this level is called %q, so @%s is null", x.Name, x.Name)
-	if near := nearestName(x.Name, l.levelNames()); near != "" {
+	if near := world.NearestName(x.Name, l.levelNames()); near != "" {
 		msg += fmt.Sprintf("; did you mean @%s?", near)
 	}
 	l.add(x.Pos_, "%s", msg)
@@ -266,7 +267,7 @@ func (l *linter) tag(x *flang.TagExpr) {
 		return
 	}
 	msg := fmt.Sprintf("nothing in this level carries the tag %q, so #%s is an empty list", x.Name, x.Name)
-	if near := nearestName(x.Name, l.cache.allTags()); near != "" {
+	if near := world.NearestName(x.Name, l.cache.allTags()); near != "" {
 		msg += fmt.Sprintf("; did you mean #%s?", near)
 	}
 	l.add(x.Pos_, "%s", msg)
@@ -290,7 +291,7 @@ func (l *linter) member(x *flang.MemberExpr) {
 		return
 	}
 	msg := fmt.Sprintf("a %s has no property called %q", kind, x.Name)
-	if near := nearestName(x.Name, names); near != "" {
+	if near := world.NearestName(x.Name, names); near != "" {
 		msg += fmt.Sprintf("; did you mean %q?", near)
 	}
 	l.add(x.Pos_, "%s", msg)
@@ -331,7 +332,7 @@ func (l *linter) knownFunc(name *flang.IdentExpr) {
 		return
 	}
 	msg := fmt.Sprintf("nothing defines a function called %q", name.Name)
-	if near := nearestName(name.Name, l.scopeNames()); near != "" {
+	if near := world.NearestName(name.Name, l.scopeNames()); near != "" {
 		msg += fmt.Sprintf("; did you mean %q?", near)
 	}
 	l.add(name.Pos_, "%s", msg)
@@ -407,7 +408,7 @@ func (l *linter) textureExists(name string, pos flang.Pos) {
 		return
 	}
 	msg := fmt.Sprintf("there is no texture called %q in textures/", name)
-	if near := nearestName(name, textureKeys()); near != "" {
+	if near := world.NearestName(name, textureKeys()); near != "" {
 		msg += fmt.Sprintf("; did you mean %q?", near)
 	}
 	l.add(pos, "%s", msg)
@@ -427,7 +428,7 @@ func (l *linter) spawn(c *flang.CallExpr) {
 		return
 	}
 	msg := fmt.Sprintf("there is no entity definition called %q in resources/entities/", name)
-	if near := nearestName(name, defs); near != "" {
+	if near := world.NearestName(name, defs); near != "" {
 		msg += fmt.Sprintf("; did you mean %q?", near)
 	}
 	l.add(c.Pos_, "%s", msg)
@@ -459,7 +460,7 @@ func (l *linter) selfAtom(msg flang.Expr, pos flang.Pos) {
 
 // entityArg resolves argument i to an entity in the level, when it is written as
 // a literal address that names one.
-func (l *linter) entityArg(c *flang.CallExpr, i int) (*Entity, bool) {
+func (l *linter) entityArg(c *flang.CallExpr, i int) (*world.Entity, bool) {
 	if l.lvl == nil || i >= len(c.Args) {
 		return nil, false
 	}
@@ -568,7 +569,7 @@ func (l *linter) scopeNames() []string {
 // entityDefs scans resources/entities once per lint run.
 func (l *linter) entityDefs() []string {
 	if !l.defsRead {
-		l.defs = ScanEntityDefs()
+		l.defs = world.ScanEntityDefs()
 		l.defsRead = true
 	}
 	return l.defs

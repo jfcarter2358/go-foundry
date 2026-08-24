@@ -3,6 +3,7 @@ package main
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -54,7 +55,7 @@ func TestPickTranslateAxis(t *testing.T) {
 	restore := saveEditorSelection()
 	defer restore()
 	Editor.Mode = Mode3D
-	Editor.level = &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
+	Editor.level = &world.Level{Spawn: &world.SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
 	Editor.SpawnSelected = true
 	Editor.GizmoKind = gizmoKindSpawn
 	Editor.GizmoDragging = false
@@ -91,7 +92,7 @@ func TestGizmoDragSpawnPoint(t *testing.T) {
 	restore := saveEditorSelection()
 	defer restore()
 	Editor.Mode = Mode3D
-	Editor.level = &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
+	Editor.level = &world.Level{Spawn: &world.SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
 	Editor.SpawnSelected = true
 	Editor.GizmoKind = gizmoKindSpawn
 	Editor.GizmoDragging = false
@@ -164,7 +165,7 @@ func TestGizmoKindIsModeScoped(t *testing.T) {
 
 	restore := saveEditorSelection()
 	defer restore()
-	Editor.level = &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
+	Editor.level = &world.Level{Spawn: &world.SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
 	Editor.SpawnSelected = true
 	Editor.GizmoKind = gizmoKindSpawn
 
@@ -201,10 +202,10 @@ func TestGizmoArmClickAlwaysConsumes(t *testing.T) {
 	restore := saveEditorSelection()
 	defer restore()
 	Editor.Mode = Mode3D
-	Editor.level = &Level{Chunks: []Chunk{{
+	Editor.level = &world.Level{Chunks: []world.Chunk{{
 		ID:      "c0",
 		Points:  []mgl32.Vec2{{0, 0}, {2, 0}, {0, 2}},
-		Sectors: []Sector{{ID: "s0", PointIndices: []int{0, 1, 2}}},
+		Sectors: []world.Sector{{ID: "s0", PointIndices: []int{0, 1, 2}}},
 	}}}
 	Editor.SelectedVertices = []vertexSel{{chunkIdx: 0, sectorIdx: 0, vertIdx: 0, pointIdx: 0, isFloor: true}}
 	Editor.GizmoKind = gizmoKindVertices

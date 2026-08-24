@@ -11,6 +11,7 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 func init() {
@@ -32,18 +33,18 @@ func init() {
 // edgeAt resolves an edge ref to whichever record currently occupies it. Both
 // are returned so a caller can handle the wall-only and portal-only properties
 // without resolving twice.
-func edgeAt(c *refCache, r flang.RefVal) (*Wall, *Portal) {
+func edgeAt(c *refCache, r flang.RefVal) (*world.Wall, *world.Portal) {
 	_, s := c.sectorFor(r)
 	if s == nil {
 		return nil, nil
 	}
-	return wallByEdgeID(s, r.C), portalByEdgeID(s, r.C)
+	return world.WallByEdgeID(s, r.C), world.PortalByEdgeID(s, r.C)
 }
 
 func edgeProps() map[string]propAccess {
 	// Most edge properties exist on a wall and, in a different form or not at
 	// all, on a portal. These helpers keep each entry to the part that differs.
-	wallGet := func(fn func(w *Wall) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+	wallGet := func(fn func(w *world.Wall) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
 		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 			w, _ := edgeAt(c, r)
 			if w == nil {
@@ -52,7 +53,7 @@ func edgeProps() map[string]propAccess {
 			return fn(w), true
 		}
 	}
-	wallSet := func(fn func(w *Wall, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+	wallSet := func(fn func(w *world.Wall, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
 		return func(c *refCache, r flang.RefVal, v flang.Value) error {
 			w, _ := edgeAt(c, r)
 			if w == nil {
@@ -140,8 +141,8 @@ func edgeProps() map[string]propAccess {
 			Doc: "0.0 fully transparent, 1.0 opaque",
 		},
 		"collision": {
-			Get: wallGet(func(w *Wall) flang.Value { return flang.BoolVal(w.Collision) }),
-			Set: wallSet(func(w *Wall, v flang.Value) error {
+			Get: wallGet(func(w *world.Wall) flang.Value { return flang.BoolVal(w.Collision) }),
+			Set: wallSet(func(w *world.Wall, v flang.Value) error {
 				b, ok := toBool(v)
 				if !ok {
 					return propErr("collision", "bool", v)
@@ -153,8 +154,8 @@ func edgeProps() map[string]propAccess {
 			Doc:   "whether the wall stops anything",
 		},
 		"texture": {
-			Get: wallGet(func(w *Wall) flang.Value { return flang.StrVal(w.Texture) }),
-			Set: wallSet(func(w *Wall, v flang.Value) error {
+			Get: wallGet(func(w *world.Wall) flang.Value { return flang.StrVal(w.Texture) }),
+			Set: wallSet(func(w *world.Wall, v flang.Value) error {
 				s, ok := toStr(v)
 				if !ok {
 					return propErr("texture", "str", v)
@@ -167,8 +168,8 @@ func edgeProps() map[string]propAccess {
 			Doc:   "texture name, resolved against textures/",
 		},
 		"double_sided": {
-			Get: wallGet(func(w *Wall) flang.Value { return flang.BoolVal(w.DoubleSided) }),
-			Set: wallSet(func(w *Wall, v flang.Value) error {
+			Get: wallGet(func(w *world.Wall) flang.Value { return flang.BoolVal(w.DoubleSided) }),
+			Set: wallSet(func(w *world.Wall, v flang.Value) error {
 				b, ok := toBool(v)
 				if !ok {
 					return propErr("double_sided", "bool", v)
@@ -180,8 +181,8 @@ func edgeProps() map[string]propAccess {
 			Doc:   "render from both sides",
 		},
 		"pinned": {
-			Get: wallGet(func(w *Wall) flang.Value { return flang.BoolVal(w.Pinned) }),
-			Set: wallSet(func(w *Wall, v flang.Value) error {
+			Get: wallGet(func(w *world.Wall) flang.Value { return flang.BoolVal(w.Pinned) }),
+			Set: wallSet(func(w *world.Wall, v flang.Value) error {
 				b, ok := toBool(v)
 				if !ok {
 					return propErr("pinned", "bool", v)
@@ -192,8 +193,8 @@ func edgeProps() map[string]propAccess {
 			Doc: "keep this a wall even where it is shared with another sector",
 		},
 		"smooth": {
-			Get: wallGet(func(w *Wall) flang.Value { return flang.BoolVal(w.Smooth) }),
-			Set: wallSet(func(w *Wall, v flang.Value) error {
+			Get: wallGet(func(w *world.Wall) flang.Value { return flang.BoolVal(w.Smooth) }),
+			Set: wallSet(func(w *world.Wall, v flang.Value) error {
 				b, ok := toBool(v)
 				if !ok {
 					return propErr("smooth", "bool", v)
@@ -226,8 +227,8 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 	// A floor and a ceiling are different types with the same field names, so
 	// each accessor takes both and picks.
 	type surface struct {
-		f *Floor
-		c *Ceiling
+		f *world.Floor
+		c *world.Ceiling
 	}
 	at := func(cache *refCache, r flang.RefVal) (surface, bool) {
 		_, s := cache.sectorFor(r)
@@ -240,7 +241,7 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 		return surface{c: &s.Ceiling}, true
 	}
 
-	getF := func(ff func(*Floor) flang.Value, cf func(*Ceiling) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+	getF := func(ff func(*world.Floor) flang.Value, cf func(*world.Ceiling) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
 		return func(cache *refCache, r flang.RefVal) (flang.Value, bool) {
 			s, ok := at(cache, r)
 			if !ok {
@@ -252,7 +253,7 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 			return cf(s.c), true
 		}
 	}
-	setF := func(ff func(*Floor, flang.Value) error, cf func(*Ceiling, flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+	setF := func(ff func(*world.Floor, flang.Value) error, cf func(*world.Ceiling, flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
 		return func(cache *refCache, r flang.RefVal, v flang.Value) error {
 			s, ok := at(cache, r)
 			if !ok {
@@ -268,10 +269,10 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 	tbl := map[string]propAccess{
 		"height": {
 			Get: getF(
-				func(f *Floor) flang.Value { return flang.FloatVal(f.Height) },
-				func(c *Ceiling) flang.Value { return flang.FloatVal(c.Height) }),
+				func(f *world.Floor) flang.Value { return flang.FloatVal(f.Height) },
+				func(c *world.Ceiling) flang.Value { return flang.FloatVal(c.Height) }),
 			Set: setF(
-				func(f *Floor, v flang.Value) error {
+				func(f *world.Floor, v flang.Value) error {
 					h, ok := toFloat32(v)
 					if !ok {
 						return propErr("height", "float", v)
@@ -279,7 +280,7 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 					f.Height = h
 					return nil
 				},
-				func(c *Ceiling, v flang.Value) error {
+				func(c *world.Ceiling, v flang.Value) error {
 					h, ok := toFloat32(v)
 					if !ok {
 						return propErr("height", "float", v)
@@ -292,10 +293,10 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 		},
 		"texture": {
 			Get: getF(
-				func(f *Floor) flang.Value { return flang.StrVal(f.Texture) },
-				func(c *Ceiling) flang.Value { return flang.StrVal(c.Texture) }),
+				func(f *world.Floor) flang.Value { return flang.StrVal(f.Texture) },
+				func(c *world.Ceiling) flang.Value { return flang.StrVal(c.Texture) }),
 			Set: setF(
-				func(f *Floor, v flang.Value) error {
+				func(f *world.Floor, v flang.Value) error {
 					s, ok := toStr(v)
 					if !ok {
 						return propErr("texture", "str", v)
@@ -303,7 +304,7 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 					f.Texture = s
 					return nil
 				},
-				func(c *Ceiling, v flang.Value) error {
+				func(c *world.Ceiling, v flang.Value) error {
 					s, ok := toStr(v)
 					if !ok {
 						return propErr("texture", "str", v)
@@ -317,10 +318,10 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 		},
 		"enabled": {
 			Get: getF(
-				func(f *Floor) flang.Value { return flang.BoolVal(f.Enabled) },
-				func(c *Ceiling) flang.Value { return flang.BoolVal(c.Enabled) }),
+				func(f *world.Floor) flang.Value { return flang.BoolVal(f.Enabled) },
+				func(c *world.Ceiling) flang.Value { return flang.BoolVal(c.Enabled) }),
 			Set: setF(
-				func(f *Floor, v flang.Value) error {
+				func(f *world.Floor, v flang.Value) error {
 					b, ok := toBool(v)
 					if !ok {
 						return propErr("enabled", "bool", v)
@@ -328,7 +329,7 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 					f.Enabled = b
 					return nil
 				},
-				func(c *Ceiling, v flang.Value) error {
+				func(c *world.Ceiling, v flang.Value) error {
 					b, ok := toBool(v)
 					if !ok {
 						return propErr("enabled", "bool", v)
@@ -341,10 +342,10 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 		},
 		"alpha": {
 			Get: getF(
-				func(f *Floor) flang.Value { return flang.FloatVal(f.Alpha) },
-				func(c *Ceiling) flang.Value { return flang.FloatVal(c.Alpha) }),
+				func(f *world.Floor) flang.Value { return flang.FloatVal(f.Alpha) },
+				func(c *world.Ceiling) flang.Value { return flang.FloatVal(c.Alpha) }),
 			Set: setF(
-				func(f *Floor, v flang.Value) error {
+				func(f *world.Floor, v flang.Value) error {
 					a, ok := toFloat32(v)
 					if !ok {
 						return propErr("alpha", "float", v)
@@ -352,7 +353,7 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 					f.Alpha = a
 					return nil
 				},
-				func(c *Ceiling, v flang.Value) error {
+				func(c *world.Ceiling, v flang.Value) error {
 					a, ok := toFloat32(v)
 					if !ok {
 						return propErr("alpha", "float", v)
@@ -364,10 +365,10 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 		},
 		"terrain": {
 			Get: getF(
-				func(f *Floor) flang.Value { return flang.BoolVal(f.Terrain) },
-				func(c *Ceiling) flang.Value { return flang.BoolVal(c.Terrain) }),
+				func(f *world.Floor) flang.Value { return flang.BoolVal(f.Terrain) },
+				func(c *world.Ceiling) flang.Value { return flang.BoolVal(c.Terrain) }),
 			Set: setF(
-				func(f *Floor, v flang.Value) error {
+				func(f *world.Floor, v flang.Value) error {
 					b, ok := toBool(v)
 					if !ok {
 						return propErr("terrain", "bool", v)
@@ -375,7 +376,7 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 					f.Terrain = b
 					return nil
 				},
-				func(c *Ceiling, v flang.Value) error {
+				func(c *world.Ceiling, v flang.Value) error {
 					b, ok := toBool(v)
 					if !ok {
 						return propErr("terrain", "bool", v)
@@ -388,10 +389,10 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 		},
 		"smooth": {
 			Get: getF(
-				func(f *Floor) flang.Value { return flang.BoolVal(f.Smooth) },
-				func(c *Ceiling) flang.Value { return flang.BoolVal(c.Smooth) }),
+				func(f *world.Floor) flang.Value { return flang.BoolVal(f.Smooth) },
+				func(c *world.Ceiling) flang.Value { return flang.BoolVal(c.Smooth) }),
 			Set: setF(
-				func(f *Floor, v flang.Value) error {
+				func(f *world.Floor, v flang.Value) error {
 					b, ok := toBool(v)
 					if !ok {
 						return propErr("smooth", "bool", v)
@@ -399,7 +400,7 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 					f.Smooth = b
 					return nil
 				},
-				func(c *Ceiling, v flang.Value) error {
+				func(c *world.Ceiling, v flang.Value) error {
 					b, ok := toBool(v)
 					if !ok {
 						return propErr("smooth", "bool", v)
@@ -451,7 +452,7 @@ func sectorProps() map[string]propAccess {
 }
 
 func chunkProps() map[string]propAccess {
-	get := func(fn func(*Chunk) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+	get := func(fn func(*world.Chunk) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
 		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 			ch := c.chunkFor(r)
 			if ch == nil {
@@ -462,15 +463,15 @@ func chunkProps() map[string]propAccess {
 	}
 	return map[string]propAccess{
 		"origin": {
-			Get: get(func(ch *Chunk) flang.Value { return vecValue(ch.Origin) }),
+			Get: get(func(ch *world.Chunk) flang.Value { return vecValue(ch.Origin) }),
 			Doc: "read-only: the offset baked into this chunk's points at load",
 		},
 		"rotation": {
-			Get: get(func(ch *Chunk) flang.Value { return flang.FloatVal(ch.Rotation) }),
+			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.Rotation) }),
 			Doc: "read-only: Y rotation baked in at load",
 		},
 		"scale": {
-			Get: get(func(ch *Chunk) flang.Value { return flang.FloatVal(ch.Scale) }),
+			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.Scale) }),
 			Doc: "read-only: uniform XZ scale baked in at load",
 		},
 	}
@@ -666,7 +667,7 @@ func lightProps() map[string]propAccess {
 // ---------- biome sectors ----------
 
 func biomeProps() map[string]propAccess {
-	get := func(fn func(*BiomeSector) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+	get := func(fn func(*world.BiomeSector) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
 		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 			b := c.biomeFor(r)
 			if b == nil {
@@ -677,7 +678,7 @@ func biomeProps() map[string]propAccess {
 	}
 	return map[string]propAccess{
 		"density": {
-			Get: get(func(b *BiomeSector) flang.Value { return flang.FloatVal(b.Brush.Density) }),
+			Get: get(func(b *world.BiomeSector) flang.Value { return flang.FloatVal(b.Brush.Density) }),
 			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
 				b := c.biomeFor(r)
 				if b == nil {
@@ -694,7 +695,7 @@ func biomeProps() map[string]propAccess {
 			Doc: "scatter density",
 		},
 		"color": {
-			Get: get(func(b *BiomeSector) flang.Value { return vecValue(mgl32.Vec3(b.Brush.Color)) }),
+			Get: get(func(b *world.BiomeSector) flang.Value { return vecValue(mgl32.Vec3(b.Brush.Color)) }),
 			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
 				b := c.biomeFor(r)
 				if b == nil {
@@ -710,7 +711,7 @@ func biomeProps() map[string]propAccess {
 			Doc: "scatter tint",
 		},
 		"ground_texture": {
-			Get: get(func(b *BiomeSector) flang.Value { return flang.StrVal(b.Brush.GroundTexture) }),
+			Get: get(func(b *world.BiomeSector) flang.Value { return flang.StrVal(b.Brush.GroundTexture) }),
 			Doc: "read-only: the ground patch's texture",
 		},
 	}

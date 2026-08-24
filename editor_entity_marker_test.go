@@ -6,6 +6,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -17,20 +18,20 @@ import (
 func TestEntityMarkerMatrixMatchesTheBounds(t *testing.T) {
 	cases := []struct {
 		name string
-		e    Entity
+		e    world.Entity
 	}{
-		{"blank, as placed", NewBlankEntity("x")},
-		{"offset volume", Entity{
+		{"blank, as placed", world.NewBlankEntity("x")},
+		{"offset volume", world.Entity{
 			Position: mgl32.Vec3{1, 2, 3}, Scale: mgl32.Vec3{1, 1, 1},
 			BoundHalfX: 0.4, BoundHalfY: 0.9, BoundHalfZ: 0.4,
 			BoundOffset: mgl32.Vec3{0, 0.9, 0},
 		}},
-		{"scaled", Entity{
+		{"scaled", world.Entity{
 			Position: mgl32.Vec3{-5, 0, 2}, Scale: mgl32.Vec3{2, 2, 2},
 			BoundHalfX: 0.5, BoundHalfY: 0.5, BoundHalfZ: 0.5,
 			BoundOffset: mgl32.Vec3{0, 0.5, 0},
 		}},
-		{"unscaled zero value", Entity{
+		{"unscaled zero value", world.Entity{
 			BoundHalfX: 1, BoundHalfY: 1, BoundHalfZ: 1,
 		}},
 	}
@@ -50,14 +51,14 @@ func TestEntityMarkerMatrixMatchesTheBounds(t *testing.T) {
 // The marker exists for entities the colour pass drew nothing for, so the two
 // have to agree on what "drew nothing" means.
 func TestEntityHasVisibleGeometry(t *testing.T) {
-	var e Entity
+	var e world.Entity
 	if entityHasVisibleGeometry(&e) {
 		t.Error("an entity with no attachments has nothing drawn")
 	}
 
 	// An attachment with no uploaded submeshes — a mesh-less one, or one whose
 	// file would not load — still draws nothing.
-	e.Models = append(e.Models, EntityModel{Name: "body", Visible: true})
+	e.Models = append(e.Models, world.EntityModel{Name: "body", Visible: true})
 	if entityHasVisibleGeometry(&e) {
 		t.Error("an attachment with nothing uploaded draws nothing")
 	}

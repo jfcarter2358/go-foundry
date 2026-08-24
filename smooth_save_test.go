@@ -6,7 +6,10 @@ package main
 // what a chunk saves and what a DetailSpec implies, so they stay with the
 // types they read.
 
-import "testing"
+import (
+	"foundry/internal/world"
+	"testing"
+)
 
 // Smoothing is a per-surface authored setting, so it has to survive a save.
 func TestSmoothSavesPerSurface(t *testing.T) {
@@ -45,31 +48,31 @@ func TestSmoothSavesPerSurface(t *testing.T) {
 // The displacement-field difference step has to shrink as features get finer,
 // and stay bounded at both ends.
 func TestDispNormalEps(t *testing.T) {
-	flat := &DetailSpec{}
+	flat := &world.DetailSpec{}
 	if got := dispNormalEps(flat); got <= 0 || got > 0.25 {
 		t.Fatalf("flat spec eps = %v, want a bounded positive default", got)
 	}
 
-	coarse := &DetailSpec{Waves: [detailMaxWaves]DetailWave{{Enabled: true, Frequency: 0.5}}}
-	fine := &DetailSpec{Waves: [detailMaxWaves]DetailWave{{Enabled: true, Frequency: 5}}}
+	coarse := &world.DetailSpec{Waves: [world.DetailMaxWaves]world.DetailWave{{Enabled: true, Frequency: 0.5}}}
+	fine := &world.DetailSpec{Waves: [world.DetailMaxWaves]world.DetailWave{{Enabled: true, Frequency: 5}}}
 	if dispNormalEps(fine) >= dispNormalEps(coarse) {
 		t.Fatalf("finer waves must use a smaller step: fine=%v coarse=%v",
 			dispNormalEps(fine), dispNormalEps(coarse))
 	}
 
 	// Disabled slots must not drive the step.
-	off := &DetailSpec{Waves: [detailMaxWaves]DetailWave{{Enabled: false, Frequency: 20}}}
+	off := &world.DetailSpec{Waves: [world.DetailMaxWaves]world.DetailWave{{Enabled: false, Frequency: 20}}}
 	if dispNormalEps(off) != dispNormalEps(flat) {
 		t.Fatalf("disabled wave affected eps: %v vs %v", dispNormalEps(off), dispNormalEps(flat))
 	}
 
 	// Noise octaves double the frequency each step, so they can be the finest
 	// feature present.
-	noisy := &DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 5}
-	if dispNormalEps(noisy) >= dispNormalEps(&DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 1}) {
+	noisy := &world.DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 5}
+	if dispNormalEps(noisy) >= dispNormalEps(&world.DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 1}) {
 		t.Fatal("more noise octaves must shrink the step")
 	}
-	if got := dispNormalEps(&DetailSpec{Noise: true, NoiseFrequency: 500, NoiseOctaves: 6}); got < 0.001 {
+	if got := dispNormalEps(&world.DetailSpec{Noise: true, NoiseFrequency: 500, NoiseOctaves: 6}); got < 0.001 {
 		t.Fatalf("eps = %v, want it clamped at 0.001", got)
 	}
 }

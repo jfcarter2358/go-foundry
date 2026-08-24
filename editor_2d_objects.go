@@ -12,6 +12,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -90,7 +91,7 @@ func editor2DDrawHeading(c, dir mgl32.Vec2, hx, hz float32, col mgl32.Vec3) {
 
 // Editor2DRenderObjects draws the level's spawn point, its entities and its
 // point lights as top-down footprints.
-func Editor2DRenderObjects(lvl *Level, ch *Chunk) {
+func Editor2DRenderObjects(lvl *world.Level, ch *world.Chunk) {
 	green := mgl32.Vec3{0.2, 1, 0.2}
 	orange := mgl32.Vec3{1, 0.55, 0.15}
 
@@ -99,7 +100,7 @@ func Editor2DRenderObjects(lvl *Level, ch *Chunk) {
 		if Editor.SpawnSelected {
 			col = green
 		}
-		hxRaw, _, hzRaw := spawnPointBounds()
+		hxRaw, _, hzRaw := world.SpawnPointBounds()
 		hx, hz := editor2DObjectHalfExtents(hxRaw, hzRaw)
 		editor2DDrawFootprint(lvl.Spawn.Position.X(), lvl.Spawn.Position.Z(), hx, hz, col)
 		// A square footprint says nothing about facing, and facing is half of
@@ -148,15 +149,15 @@ var entityMapColor = mgl32.Vec3{0.35, 0.75, 1}
 
 // editor2DEntityHalfExtents returns the top-down half-extents to draw and
 // hit-test an entity with, widened to the minimum on-screen size.
-func editor2DEntityHalfExtents(e *Entity) (float32, float32) {
+func editor2DEntityHalfExtents(e *world.Entity) (float32, float32) {
 	h := e.BoundHalfExtents()
 	return editor2DObjectHalfExtents(h.X(), h.Z())
 }
 
 // editor2DDrawEntityHeading draws an entity's yaw as an arrow on the map, using
 // the same shape the spawn point's heading uses so the two read alike.
-func editor2DDrawEntityHeading(e *Entity, hx, hz float32, col mgl32.Vec3) {
-	d := eulerMatrixYXZ(e.Rotation).Mul4x1(mgl32.Vec4{1, 0, 0, 0})
+func editor2DDrawEntityHeading(e *world.Entity, hx, hz float32, col mgl32.Vec3) {
+	d := world.EulerMatrixYXZ(e.Rotation).Mul4x1(mgl32.Vec4{1, 0, 0, 0})
 	c := e.BoundCenter()
 	editor2DDrawHeading(mgl32.Vec2{c.X(), c.Z()}, mgl32.Vec2{d.X(), d.Z()}, hx, hz, col)
 }
@@ -167,7 +168,7 @@ func editor2DDrawEntityHeading(e *Entity, hx, hz float32, col mgl32.Vec3) {
 // Entities are tested first: they are things *in* the level, and the spawn
 // marker is an annotation on it, so where the two overlap the click should
 // reach the one that is actually part of the world.
-func editor2DPickObject(lvl *Level, ch *Chunk, wx, wz float32) bool {
+func editor2DPickObject(lvl *world.Level, ch *world.Chunk, wx, wz float32) bool {
 	if idx, ok := editor2DEntityAt(lvl, wx, wz); ok {
 		clearVertexSelection()
 		editorClearSpawnSelection()
@@ -181,7 +182,7 @@ func editor2DPickObject(lvl *Level, ch *Chunk, wx, wz float32) bool {
 	if lvl.Spawn == nil {
 		return false
 	}
-	hxRaw, _, hzRaw := spawnPointBounds()
+	hxRaw, _, hzRaw := world.SpawnPointBounds()
 	hx, hz := editor2DObjectHalfExtents(hxRaw, hzRaw)
 	dx := wx - lvl.Spawn.Position.X()
 	dz := wz - lvl.Spawn.Position.Z()
@@ -201,7 +202,7 @@ func editor2DPickObject(lvl *Level, ch *Chunk, wx, wz float32) bool {
 // editor2DEntityAt returns the index of the entity whose footprint covers
 // (wx,wz). Later entities win, so the most recently placed one is on top —
 // which is what a user who just dropped an entity onto a pile expects to grab.
-func editor2DEntityAt(lvl *Level, wx, wz float32) (int, bool) {
+func editor2DEntityAt(lvl *world.Level, wx, wz float32) (int, bool) {
 	found, ok := -1, false
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]
@@ -219,10 +220,10 @@ func editor2DEntityAt(lvl *Level, wx, wz float32) (int, bool) {
 // editor2DFloorHeightAt returns the floor height of the sector containing
 // (wx,wz), or 0 when the point is outside every sector. The spawn point is
 // placed relative to it so a click on a raised floor doesn't drop it through.
-func editor2DFloorHeightAt(ch *Chunk, wx, wz float32) float32 {
+func editor2DFloorHeightAt(ch *world.Chunk, wx, wz float32) float32 {
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
-		if geom.PointInPolygon(mgl32.Vec2{wx, wz}, SectorPoints(ch, s)) {
+		if geom.PointInPolygon(mgl32.Vec2{wx, wz}, world.SectorPoints(ch, s)) {
 			return s.Floor.Height
 		}
 	}
@@ -233,7 +234,7 @@ func editor2DFloorHeightAt(ch *Chunk, wx, wz float32) float32 {
 // reports whether it consumed the click. Placement is checked before every
 // other 2D tool: arming it is an explicit request, so it must not be swallowed
 // by the biome brush or by vertex editing.
-func editor2DHandlePlacement(t sdl.MouseButtonEvent, ch *Chunk, wx, wz float32) bool {
+func editor2DHandlePlacement(t sdl.MouseButtonEvent, ch *world.Chunk, wx, wz float32) bool {
 	if t.Button != sdl.ButtonLeft {
 		return false
 	}

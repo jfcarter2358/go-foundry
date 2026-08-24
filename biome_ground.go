@@ -14,7 +14,7 @@ package main
 // grass/rock/wildflower/cattail (just enough to read as uneven ground instead
 // of a perfectly flat plane), a lot for Sand (dune mounds — the "volumetric
 // displacement" sand asked for), and gently for Water's lakebed. It's drawn
-// textured (dirt/rock/sand per kind, see groundTextureFor) and lit by exactly
+// textured (dirt/rock/sand per kind, see GroundTextureFor) and lit by exactly
 // the scene lighting model the structural floor takes, nothing added on top:
 // the patch INTERSECTS that floor wherever the displacement crosses it, and any
 // extra shading term of its own shows up there as two differently-lit floors
@@ -26,6 +26,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -101,27 +102,27 @@ func EvictGroundPatchCache(id string) {
 
 // resolveGroundTexture returns the texture to paint on brush's ground patch:
 // brush.GroundTexture when the user picked one, else the kind's default
-// (groundTextureFor).
-func resolveGroundTexture(brush *BiomeBrush) string {
+// (GroundTextureFor).
+func resolveGroundTexture(brush *world.BiomeBrush) string {
 	if brush.GroundTexture != "" {
 		return brush.GroundTexture
 	}
-	return groundTextureFor(brush.Kind)
+	return world.GroundTextureFor(brush.Kind)
 }
 
 // resolveGroundUVScale returns the texture tiling baked into brush's ground
 // patch UVs (world XZ * scale, matching a structural floor's Surface.UVScale
-// semantics), substituting defaultGroundUVScale for a non-positive component
+// semantics), substituting DefaultGroundUVScale for a non-positive component
 // so a partly-set or pre-existing (zero) brush still tiles sanely. Written as
 // `!(v > 0)` so a NaN out of a hand-edited save falls back too rather than
 // poisoning every UV in the mesh.
-func resolveGroundUVScale(brush *BiomeBrush) mgl32.Vec2 {
+func resolveGroundUVScale(brush *world.BiomeBrush) mgl32.Vec2 {
 	s := brush.GroundUVScale
 	if !(s.X() > 0) {
-		s[0] = defaultGroundUVScale
+		s[0] = world.DefaultGroundUVScale
 	}
 	if !(s.Y() > 0) {
-		s[1] = defaultGroundUVScale
+		s[1] = world.DefaultGroundUVScale
 	}
 	return s
 }
@@ -134,7 +135,7 @@ func resolveGroundUVScale(brush *BiomeBrush) mgl32.Vec2 {
 // exactly on the polygon's edges, the mesh's outer edge follows the painted
 // shape precisely rather than the axis-aligned staircase a grid-quad clip
 // would give a diagonal edge.
-func buildGroundPatchMesh(level *Level, s *BiomeSector) []float32 {
+func buildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
 	boundary, allPts := biomeMeshPoints(s)
 	if len(allPts) == 0 {
 		return nil
@@ -144,7 +145,7 @@ func buildGroundPatchMesh(level *Level, s *BiomeSector) []float32 {
 		return nil
 	}
 
-	seed := biomeSeed(s)
+	seed := world.BiomeSeed(s)
 	heights := make([]float32, len(allPts))
 	coverage := make([]float32, len(allPts))
 	for i, p := range allPts {
@@ -201,7 +202,7 @@ func buildGroundPatchMesh(level *Level, s *BiomeSector) []float32 {
 // This runs later in the frame than SyncBiomeWaterSurfaces (see main.go),
 // so it's the one that clears GroundDirty once built — by the time it does,
 // the water sync has already had its chance to see the sector dirty too.
-func ensureGroundPatch(level *Level, s *BiomeSector) groundEntry {
+func ensureGroundPatch(level *world.Level, s *world.BiomeSector) groundEntry {
 	e, ok := groundPatches.cache[s.ID]
 	tex := resolveGroundTexture(&s.Brush)
 	if ok && !s.GroundDirty && e.texture == tex {
@@ -245,7 +246,7 @@ func ensureGroundPatch(level *Level, s *BiomeSector) groundEntry {
 // structural floor that already casts, and giving two near-coincident surfaces
 // to the same depth map buys acne rather than shadows. (Sand is the one kind
 // whose dunes rise far enough to make that arguable.)
-func RenderBiomeGround(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame ShadowFrame) {
+func RenderBiomeGround(level *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame ShadowFrame) {
 	if !groundPatches.initialized || level == nil {
 		return
 	}
@@ -285,7 +286,7 @@ func RenderBiomeGround(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, fra
 // uniforms shared by every patch this frame: the whole scene light and shadow
 // state (uploadBiomeLighting — the same three Upload*To calls the main shader
 // and the detail programs get) plus the patch pass's own two.
-func beginGroundPass(level *Level, projView mgl32.Mat4, frame ShadowFrame) {
+func beginGroundPass(level *world.Level, projView mgl32.Mat4, frame ShadowFrame) {
 	uploadBiomeLighting(groundPatches.program, level, frame)
 	pv := projView
 	gl.UniformMatrix4fv(groundPatches.uProjView, 1, false, &pv[0])

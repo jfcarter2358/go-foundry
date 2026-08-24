@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -10,19 +11,19 @@ import (
 // and a second biome far away. Floor and ceiling are left disabled so
 // Sector.Load stays off the GPU — the marking under test reads the sector's
 // bounds, not its uploaded mesh.
-func biomeTestLevel() *Chunk {
-	Editor.level = &Level{Chunks: []Chunk{{
+func biomeTestLevel() *world.Chunk {
+	Editor.level = &world.Level{Chunks: []world.Chunk{{
 		ID:      "c0",
 		Points:  []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}},
-		Sectors: []Sector{{ID: "s0", PointIndices: []int{0, 1, 2, 3}}},
-		BiomeSectors: []BiomeSector{
+		Sectors: []world.Sector{{ID: "s0", PointIndices: []int{0, 1, 2, 3}}},
+		BiomeSectors: []world.BiomeSector{
 			{ID: "under", Points: []mgl32.Vec2{{1, 1}, {3, 1}, {3, 3}, {1, 3}}},
 			{ID: "elsewhere", Points: []mgl32.Vec2{{100, 100}, {104, 100}, {104, 104}}},
 		},
 	}}}
 	ch := &Editor.level.Chunks[0]
 	// Bake once, then declare everything current, as it would be after a frame.
-	_ = reloadSector(ch, &ch.Sectors[0])
+	_ = world.ReloadSector(ch, &ch.Sectors[0])
 	for i := range ch.BiomeSectors {
 		ch.BiomeSectors[i].HeightDirty = false
 		ch.BiomeSectors[i].GroundDirty = false
@@ -31,7 +32,7 @@ func biomeTestLevel() *Chunk {
 }
 
 // biomeDirty reports the two rebuild flags of the named biome sector.
-func biomeDirty(ch *Chunk, id string) (height, ground bool) {
+func biomeDirty(ch *world.Chunk, id string) (height, ground bool) {
 	for i := range ch.BiomeSectors {
 		if ch.BiomeSectors[i].ID == id {
 			return ch.BiomeSectors[i].HeightDirty, ch.BiomeSectors[i].GroundDirty
@@ -97,7 +98,7 @@ func TestReloadSectorMarksVacatedGround(t *testing.T) {
 	for i := range ch.Points {
 		ch.Points[i] = ch.Points[i].Add(mgl32.Vec2{50, 50})
 	}
-	_ = reloadSector(ch, &ch.Sectors[0])
+	_ = world.ReloadSector(ch, &ch.Sectors[0])
 
 	if h, g := biomeDirty(ch, "under"); !h || !g {
 		t.Fatalf("biome the floor moved away from: HeightDirty=%v GroundDirty=%v, want both set", h, g)

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 	"log"
 	"math"
 
@@ -76,7 +77,7 @@ func Editor2DRender() {
 			if ei < len(s.EdgeKinds) {
 				kind = s.EdgeKinds[ei]
 			}
-			_, kindIdx := edgeKindAndIndex(s, ei)
+			_, kindIdx := world.EdgeKindAndIndex(s, ei)
 			isSelected := si == Editor.ActiveSectorIdx &&
 				Editor.ActiveEdgeKind == kind &&
 				Editor.ActiveEdgeIdx == kindIdx
@@ -276,7 +277,7 @@ func screenToWorld(sx, sy int32) (wx, wz float32) {
 
 // findChunkPointNear returns the index of the chunk point nearest to (wx,wz)
 // within threshold, or -1.
-func findChunkPointNear(ch *Chunk, wx, wz, threshold float32) int {
+func findChunkPointNear(ch *world.Chunk, wx, wz, threshold float32) int {
 	bestIdx := -1
 	bestDist := threshold
 	for i, pt := range ch.Points {
@@ -458,7 +459,7 @@ func Editor2DHandleMouseMove(t sdl.MouseMotionEvent) {
 
 // rebuildSectorEdgePoints re-derives wall/portal StartPoint/EndPoint from chunk points,
 // using s.EdgeKinds to correctly handle mixed wall/portal sectors.
-func rebuildSectorEdgePoints(ch *Chunk, s *Sector) {
+func rebuildSectorEdgePoints(ch *world.Chunk, s *world.Sector) {
 	nPts := len(s.PointIndices)
 	wallIdx, portalIdx := 0, 0
 	for ei := 0; ei < nPts; ei++ {
@@ -483,13 +484,13 @@ func rebuildSectorEdgePoints(ch *Chunk, s *Sector) {
 // reloadSectorsUsingPoint rebuilds edge points and geometry for all sectors
 // in the chunk that reference the given chunk point index, then regenerates
 // portal gap-fill geometry so it follows the moved vertex.
-func reloadSectorsUsingPoint(ch *Chunk, pointIdx int) {
+func reloadSectorsUsingPoint(ch *world.Chunk, pointIdx int) {
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
 		for _, pIdx := range s.PointIndices {
 			if pIdx == pointIdx {
 				rebuildSectorEdgePoints(ch, s)
-				_ = reloadSector(ch, s)
+				_ = world.ReloadSector(ch, s)
 				break
 			}
 		}
@@ -530,7 +531,7 @@ type edgeSplitPlan struct {
 // portal shared by two sectors is only recognised while both sides still have
 // matching reverse edges, so splitting one side alone would make InferPortals
 // demote both halves back to walls.
-func planEdgeSplit(ch *Chunk, wx, wz, threshold float32) (edgeSplitPlan, bool) {
+func planEdgeSplit(ch *world.Chunk, wx, wz, threshold float32) (edgeSplitPlan, bool) {
 	// Nearest edge across all sectors, not merely the first within threshold.
 	bestSI, bestEI := -1, -1
 	bestDist := threshold
@@ -586,7 +587,7 @@ func planEdgeSplit(ch *Chunk, wx, wz, threshold float32) (edgeSplitPlan, bool) {
 		}
 	}
 
-	kind, kindIdx := edgeKindAndIndex(best, bestEI)
+	kind, kindIdx := world.EdgeKindAndIndex(best, bestEI)
 	return edgeSplitPlan{
 		newPt:   a.Add(b.Sub(a).Mul(t)),
 		refs:    refs,
@@ -598,7 +599,7 @@ func planEdgeSplit(ch *Chunk, wx, wz, threshold float32) (edgeSplitPlan, bool) {
 
 // applyEdgeSplit adds the plan's vertex to the chunk point pool and splits every
 // edge the plan names. Geometry is left stale; the caller reloads.
-func applyEdgeSplit(ch *Chunk, plan edgeSplitPlan) int {
+func applyEdgeSplit(ch *world.Chunk, plan edgeSplitPlan) int {
 	newPtIdx := ch.AddPoint(plan.newPt)
 	for _, r := range plan.refs {
 		if r.si < 0 || r.si >= len(ch.Sectors) {
@@ -613,7 +614,7 @@ func applyEdgeSplit(ch *Chunk, plan edgeSplitPlan) int {
 // (wx,wz) within threshold, splitting that edge into two halves that both
 // inherit the split wall's (or portal's) properties. Reports whether a split
 // happened; pushes undo only in that case.
-func splitSectorEdgeNear(ch *Chunk, wx, wz, threshold float32) bool {
+func splitSectorEdgeNear(ch *world.Chunk, wx, wz, threshold float32) bool {
 	plan, ok := planEdgeSplit(ch, wx, wz, threshold)
 	if !ok {
 		return false
@@ -636,7 +637,7 @@ func splitSectorEdgeNear(ch *Chunk, wx, wz, threshold float32) bool {
 // into a sector at edge position ei, splitting the edge. t is where the new
 // point sits along the edge (0 = edge start, 1 = edge end) in this sector's
 // winding order. Geometry is left stale — the caller must reload the sector.
-func insertSectorVertex(ch *Chunk, s *Sector, ei, newPtIdx int, t float32) {
+func insertSectorVertex(ch *world.Chunk, s *world.Sector, ei, newPtIdx int, t float32) {
 	nPts := len(s.PointIndices)
 	if ei < 0 || ei >= nPts || newPtIdx < 0 || newPtIdx >= len(ch.Points) {
 		return
@@ -646,22 +647,22 @@ func insertSectorVertex(ch *Chunk, s *Sector, ei, newPtIdx int, t float32) {
 	for len(s.EdgeKinds) < nPts {
 		s.EdgeKinds = append(s.EdgeKinds, "wall")
 	}
-	ensureEdgeIDs(s)
+	world.EnsureEdgeIDs(s)
 
 	// Split the wall/portal covering edge ei while the indices are still the
 	// pre-insert ones.
 	newPt := ch.Points[newPtIdx]
-	wKind, wIdx := edgeKindAndIndex(s, ei)
+	wKind, wIdx := world.EdgeKindAndIndex(s, ei)
 	switch {
 	case wKind == "wall" && wIdx < len(s.Walls):
 		first, second := splitWall(s.Walls[wIdx], newPt, t)
-		s.Walls = append(s.Walls, Wall{})
+		s.Walls = append(s.Walls, world.Wall{})
 		copy(s.Walls[wIdx+2:], s.Walls[wIdx+1:])
 		s.Walls[wIdx] = first
 		s.Walls[wIdx+1] = second
 	case wKind == "portal" && wIdx < len(s.Portals):
 		first, second := splitPortal(s.Portals[wIdx], newPt)
-		s.Portals = append(s.Portals, Portal{})
+		s.Portals = append(s.Portals, world.Portal{})
 		copy(s.Portals[wIdx+2:], s.Portals[wIdx+1:])
 		s.Portals[wIdx] = first
 		s.Portals[wIdx+1] = second
@@ -706,8 +707,8 @@ func insertSectorVertex(ch *Chunk, s *Sector, ei, newPtIdx int, t float32) {
 	// The first half keeps the split edge's ID — splitSectorEdgeNear leaves that
 	// half selected as "the wall the user clicked", so it has to stay the same
 	// object as far as a script is concerned. The second half is new.
-	insertEdgeID(s, ei)
-	syncEdgeRecordIDs(s)
+	world.InsertEdgeID(s, ei)
+	world.SyncEdgeRecordIDs(s)
 }
 
 // splitWall divides w at newPt, which must lie on the segment at parameter t
@@ -715,7 +716,7 @@ func insertSectorVertex(ch *Chunk, s *Sector, ei, newPtIdx int, t float32) {
 // original — texture, collision, visibility, pinning, UV transform, procedural
 // detail — so the split is invisible until one half is edited. Extrusions and
 // terrain points go to whichever half now covers them.
-func splitWall(w Wall, newPt mgl32.Vec2, t float32) (first, second Wall) {
+func splitWall(w world.Wall, newPt mgl32.Vec2, t float32) (first, second world.Wall) {
 	splitU := w.EndPoint.Sub(w.StartPoint).Len() * t
 
 	first = w
@@ -739,7 +740,7 @@ func splitWall(w Wall, newPt mgl32.Vec2, t float32) (first, second Wall) {
 
 // splitPortal divides p at newPt. Both halves keep the same target sector and
 // gap-fill settings; gap geometry is regenerated by Chunk.RebuildGaps.
-func splitPortal(p Portal, newPt mgl32.Vec2) (first, second Portal) {
+func splitPortal(p world.Portal, newPt mgl32.Vec2) (first, second world.Portal) {
 	first = p
 	second = p
 	first.FloorGap = gfx.Geometry{}
@@ -756,7 +757,7 @@ func splitPortal(p Portal, newPt mgl32.Vec2) (first, second Portal) {
 // a wall split at splitU units from StartPoint. An extrusion that straddles the
 // split can't span two walls, so each half gets the part of it on that side,
 // clamped to the seam; U on the second half is rebased to its own StartPoint.
-func splitExtrusionsAtU(exts []Extrusion, splitU float32) (first, second []Extrusion) {
+func splitExtrusionsAtU(exts []world.Extrusion, splitU float32) (first, second []world.Extrusion) {
 	for _, ext := range exts {
 		minU, maxU := extrusionURange(ext)
 		switch {
@@ -779,9 +780,9 @@ func splitExtrusionsAtU(exts []Extrusion, splitU float32) (first, second []Extru
 
 // extrusionURange returns the min and max U over an extrusion's outer and inner
 // rings. An extrusion with no points reports a degenerate range at 0.
-func extrusionURange(ext Extrusion) (minU, maxU float32) {
+func extrusionURange(ext world.Extrusion) (minU, maxU float32) {
 	seen := false
-	visit := func(pts []ExtrusionPoint) {
+	visit := func(pts []world.ExtrusionPoint) {
 		for _, p := range pts {
 			if !seen || p.U < minU {
 				minU = p.U
@@ -798,12 +799,12 @@ func extrusionURange(ext Extrusion) (minU, maxU float32) {
 }
 
 // offsetExtrusionU shifts every U coordinate of an extrusion by delta.
-func offsetExtrusionU(ext Extrusion, delta float32) Extrusion {
+func offsetExtrusionU(ext world.Extrusion, delta float32) world.Extrusion {
 	out := ext
-	shift := func(pts []ExtrusionPoint) []ExtrusionPoint {
-		moved := make([]ExtrusionPoint, len(pts))
+	shift := func(pts []world.ExtrusionPoint) []world.ExtrusionPoint {
+		moved := make([]world.ExtrusionPoint, len(pts))
 		for i, p := range pts {
-			moved[i] = ExtrusionPoint{U: p.U + delta, V: p.V}
+			moved[i] = world.ExtrusionPoint{U: p.U + delta, V: p.V}
 		}
 		return moved
 	}
@@ -814,10 +815,10 @@ func offsetExtrusionU(ext Extrusion, delta float32) Extrusion {
 
 // clampExtrusionU clamps every U coordinate of an extrusion into [lo,hi],
 // keeping the vertex count (Outer and Inner must stay index-aligned).
-func clampExtrusionU(ext Extrusion, lo, hi float32) Extrusion {
+func clampExtrusionU(ext world.Extrusion, lo, hi float32) world.Extrusion {
 	out := ext
-	clamp := func(pts []ExtrusionPoint) []ExtrusionPoint {
-		clamped := make([]ExtrusionPoint, len(pts))
+	clamp := func(pts []world.ExtrusionPoint) []world.ExtrusionPoint {
+		clamped := make([]world.ExtrusionPoint, len(pts))
 		for i, p := range pts {
 			u := p.U
 			if u < lo {
@@ -826,7 +827,7 @@ func clampExtrusionU(ext Extrusion, lo, hi float32) Extrusion {
 			if u > hi {
 				u = hi
 			}
-			clamped[i] = ExtrusionPoint{U: u, V: p.V}
+			clamped[i] = world.ExtrusionPoint{U: u, V: p.V}
 		}
 		return clamped
 	}
@@ -839,20 +840,20 @@ func clampExtrusionU(ext Extrusion, lo, hi float32) Extrusion {
 // halves of a wall split at splitU units from StartPoint, rebasing U for the
 // second half. A point sitting on the seam goes to both halves so the two
 // displacement meshes agree there.
-func splitTerrainPointsAtU(pts []TerrainPoint, splitU float32) (first, second []TerrainPoint) {
+func splitTerrainPointsAtU(pts []world.TerrainPoint, splitU float32) (first, second []world.TerrainPoint) {
 	for _, p := range pts {
 		if p.U <= splitU+minSplitSegLen {
 			first = append(first, p)
 		}
 		if p.U >= splitU-minSplitSegLen {
-			second = append(second, TerrainPoint{U: p.U - splitU, V: p.V, Depth: p.Depth})
+			second = append(second, world.TerrainPoint{U: p.U - splitU, V: p.V, Depth: p.Depth})
 		}
 	}
 	return first, second
 }
 
 // sectorVertexPos returns the position within s.PointIndices that holds chunk point index pi, or -1.
-func sectorVertexPos(s *Sector, pi int) int {
+func sectorVertexPos(s *world.Sector, pi int) int {
 	for i, idx := range s.PointIndices {
 		if idx == pi {
 			return i
@@ -862,7 +863,7 @@ func sectorVertexPos(s *Sector, pi int) int {
 }
 
 // adjacentInSector checks if two positions in a sector's PointIndices are adjacent (including wrap).
-func adjacentInSector(s *Sector, posA, posB int) bool {
+func adjacentInSector(s *world.Sector, posA, posB int) bool {
 	n := len(s.PointIndices)
 	if n < 2 {
 		return true
@@ -876,7 +877,7 @@ func adjacentInSector(s *Sector, posA, posB int) bool {
 
 // splitSector splits sector at sectorIdx into two sectors along a new edge
 // between vertices at positions posA and posB within the sector's PointIndices.
-func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
+func splitSector(ch *world.Chunk, sectorIdx, posA, posB int) {
 	s := &ch.Sectors[sectorIdx]
 	n := len(s.PointIndices)
 	if posA > posB {
@@ -887,9 +888,9 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	var indicesA []int
 	var edgeKindsA []string
 	var edgeIDsA []string
-	var wallsA []Wall
-	var portalsA []Portal
-	ensureEdgeIDs(s)
+	var wallsA []world.Wall
+	var portalsA []world.Portal
+	world.EnsureEdgeIDs(s)
 	for i := posA; i <= posB; i++ {
 		indicesA = append(indicesA, s.PointIndices[i])
 	}
@@ -897,7 +898,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 		ek := s.EdgeKinds[i]
 		edgeKindsA = append(edgeKindsA, ek)
 		edgeIDsA = append(edgeIDsA, s.EdgeIDs[i])
-		kind, kIdx := edgeKindAndIndex(s, i)
+		kind, kIdx := world.EdgeKindAndIndex(s, i)
 		if kind == "wall" && kIdx < len(s.Walls) {
 			wallsA = append(wallsA, s.Walls[kIdx])
 		} else if kind == "portal" && kIdx < len(s.Portals) {
@@ -909,14 +910,14 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	edgeIDsA = append(edgeIDsA, "")
 	ptB := ch.Points[s.PointIndices[posB]]
 	ptA := ch.Points[s.PointIndices[posA]]
-	wallsA = append(wallsA, Wall{StartPoint: ptB, EndPoint: ptA, Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0})
+	wallsA = append(wallsA, world.Wall{StartPoint: ptB, EndPoint: ptA, Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0})
 
 	// Sector B: posB..n-1, 0..posA (wrapping, inclusive)
 	var indicesB []int
 	var edgeKindsB []string
 	var edgeIDsB []string
-	var wallsB []Wall
-	var portalsB []Portal
+	var wallsB []world.Wall
+	var portalsB []world.Portal
 	for i := posB; i < n; i++ {
 		indicesB = append(indicesB, s.PointIndices[i])
 	}
@@ -929,7 +930,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 		ek := s.EdgeKinds[ei]
 		edgeKindsB = append(edgeKindsB, ek)
 		edgeIDsB = append(edgeIDsB, s.EdgeIDs[ei])
-		kind, kIdx := edgeKindAndIndex(s, ei)
+		kind, kIdx := world.EdgeKindAndIndex(s, ei)
 		if kind == "wall" && kIdx < len(s.Walls) {
 			wallsB = append(wallsB, s.Walls[kIdx])
 		} else if kind == "portal" && kIdx < len(s.Portals) {
@@ -940,7 +941,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 		ek := s.EdgeKinds[i]
 		edgeKindsB = append(edgeKindsB, ek)
 		edgeIDsB = append(edgeIDsB, s.EdgeIDs[i])
-		kind, kIdx := edgeKindAndIndex(s, i)
+		kind, kIdx := world.EdgeKindAndIndex(s, i)
 		if kind == "wall" && kIdx < len(s.Walls) {
 			wallsB = append(wallsB, s.Walls[kIdx])
 		} else if kind == "portal" && kIdx < len(s.Portals) {
@@ -950,7 +951,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	// New closing edge for sector B (posA → posB): wall
 	edgeKindsB = append(edgeKindsB, "wall")
 	edgeIDsB = append(edgeIDsB, "")
-	wallsB = append(wallsB, Wall{StartPoint: ptA, EndPoint: ptB, Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0})
+	wallsB = append(wallsB, world.Wall{StartPoint: ptA, EndPoint: ptB, Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0})
 
 	// Distribute vertex offsets
 	floorOffsA := distributeOffsets(s.Floor.VertexOffsets, posA, posB, n)
@@ -958,34 +959,34 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	floorOffsB := distributeOffsetsWrap(s.Floor.VertexOffsets, posB, posA, n)
 	ceilOffsB := distributeOffsetsWrap(s.Ceiling.VertexOffsets, posB, posA, n)
 
-	sectorA := Sector{
+	sectorA := world.Sector{
 		ID:           s.ID,
 		PointIndices: indicesA,
 		EdgeKinds:    edgeKindsA,
 		EdgeIDs:      edgeIDsA,
 		Walls:        wallsA,
 		Portals:      portalsA,
-		Floor:        Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsA},
-		Ceiling:      Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsA},
+		Floor:        world.Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsA},
+		Ceiling:      world.Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsA},
 	}
-	sectorB := Sector{
-		ID:           uniqueSectorID(ch, s.ID+"_split"),
+	sectorB := world.Sector{
+		ID:           world.UniqueSectorID(ch, s.ID+"_split"),
 		PointIndices: indicesB,
 		EdgeKinds:    edgeKindsB,
 		EdgeIDs:      edgeIDsB,
 		Walls:        wallsB,
 		Portals:      portalsB,
-		Floor:        Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsB},
-		Ceiling:      Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsB},
+		Floor:        world.Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsB},
+		Ceiling:      world.Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsB},
 	}
 
 	// Both halves inherit edge IDs from the sector they came from, and each gains
 	// one freshly-minted closing wall. Edge IDs are sector-scoped, so the two
 	// halves carrying the same names is correct — they are different sectors.
-	ensureEdgeIDs(&sectorA)
-	ensureEdgeIDs(&sectorB)
-	syncEdgeRecordIDs(&sectorA)
-	syncEdgeRecordIDs(&sectorB)
+	world.EnsureEdgeIDs(&sectorA)
+	world.EnsureEdgeIDs(&sectorB)
+	world.SyncEdgeRecordIDs(&sectorA)
+	world.SyncEdgeRecordIDs(&sectorB)
 
 	// Replace original sector with A, append B
 	ch.Sectors[sectorIdx] = sectorA
@@ -1028,7 +1029,7 @@ func distributeOffsetsWrap(offsets []float32, from, to, n int) []float32 {
 }
 
 // removeChunkPoint removes a point from the chunk and all sectors/pending edges referencing it.
-func removeChunkPoint(ch *Chunk, pi int) {
+func removeChunkPoint(ch *world.Chunk, pi int) {
 	// Remove from each sector that uses this point
 	for si := len(ch.Sectors) - 1; si >= 0; si-- {
 		s := &ch.Sectors[si]
@@ -1087,7 +1088,7 @@ func removeChunkPoint(ch *Chunk, pi int) {
 }
 
 // removeSectorPoint removes chunk point pi from a sector's boundary, merging adjacent edges.
-func removeSectorPoint(ch *Chunk, s *Sector, pi int) {
+func removeSectorPoint(ch *world.Chunk, s *world.Sector, pi int) {
 	pos := sectorVertexPos(s, pi)
 	if pos < 0 {
 		return
@@ -1103,11 +1104,11 @@ func removeSectorPoint(ch *Chunk, s *Sector, pi int) {
 	// remove the corresponding wall/portal.
 	prevEdge := (pos - 1 + n) % n
 	currEdge := pos
-	ensureEdgeIDs(s)
+	world.EnsureEdgeIDs(s)
 
 	// Remove the wall/portal for currEdge (pos→pos+1)
 	if currEdge < len(s.EdgeKinds) {
-		kind, kIdx := edgeKindAndIndex(s, currEdge)
+		kind, kIdx := world.EdgeKindAndIndex(s, currEdge)
 		if kind == "wall" && kIdx < len(s.Walls) {
 			s.Walls = append(s.Walls[:kIdx], s.Walls[kIdx+1:]...)
 		} else if kind == "portal" && kIdx < len(s.Portals) {
@@ -1120,7 +1121,7 @@ func removeSectorPoint(ch *Chunk, s *Sector, pi int) {
 	if currEdge < len(s.EdgeKinds) {
 		s.EdgeKinds = append(s.EdgeKinds[:currEdge], s.EdgeKinds[currEdge+1:]...)
 	}
-	removeEdgeID(s, currEdge)
+	world.RemoveEdgeID(s, currEdge)
 
 	// Remove from PointIndices
 	s.PointIndices = append(s.PointIndices[:pos], s.PointIndices[pos+1:]...)
@@ -1135,14 +1136,14 @@ func removeSectorPoint(ch *Chunk, s *Sector, pi int) {
 
 	// Update the surviving edge's endpoints
 	_ = prevEdge
-	syncEdgeRecordIDs(s)
+	world.SyncEdgeRecordIDs(s)
 	rebuildSectorEdgePoints(ch, s)
-	_ = reloadSector(ch, s)
+	_ = world.ReloadSector(ch, s)
 }
 
 // tryCreateSectorFromPendingEdges checks if pending edges alone form a closed
 // polygon and creates a new sector if so. Reports whether a sector was created.
-func tryCreateSectorFromPendingEdges(ch *Chunk) bool {
+func tryCreateSectorFromPendingEdges(ch *world.Chunk) bool {
 	return closePendingLoop(ch, nil)
 }
 
@@ -1158,7 +1159,7 @@ func tryCreateSectorFromPendingEdges(ch *Chunk) bool {
 // Only this run's links count. Existing walls are not a general shortcut for
 // the search to wander through, or a single pending edge between two far-apart
 // sectors could "close" a loop around geometry nobody pointed at.
-func closePendingLoop(ch *Chunk, links [][2]int) bool {
+func closePendingLoop(ch *world.Chunk, links [][2]int) bool {
 	polyIndices := pendingLoopPolygon(links)
 	if polyIndices == nil {
 		return false
@@ -1245,25 +1246,25 @@ func dfsFindPath(adj map[int][]int, path []int, target int, visited map[int]bool
 }
 
 // createSectorFromPolygon creates a new sector from the given chunk point indices.
-func createSectorFromPolygon(ch *Chunk, polyIndices []int) {
+func createSectorFromPolygon(ch *world.Chunk, polyIndices []int) {
 	// Ensure CCW winding
 	pts := make([]mgl32.Vec2, len(polyIndices))
 	for i, idx := range polyIndices {
 		pts[i] = ch.Points[idx]
 	}
-	if signedArea2D(pts) < 0 {
+	if world.SignedArea2D(pts) < 0 {
 		for i, j := 0, len(polyIndices)-1; i < j; i, j = i+1, j-1 {
 			polyIndices[i], polyIndices[j] = polyIndices[j], polyIndices[i]
 		}
 	}
 
 	// Build walls for each edge
-	var walls []Wall
+	var walls []world.Wall
 	edgeKinds := make([]string, len(polyIndices))
 	for i := range polyIndices {
 		a := ch.Points[polyIndices[i]]
 		b := ch.Points[polyIndices[(i+1)%len(polyIndices)]]
-		walls = append(walls, Wall{
+		walls = append(walls, world.Wall{
 			StartPoint:  a,
 			EndPoint:    b,
 			Texture:     "concrete",
@@ -1294,21 +1295,21 @@ func createSectorFromPolygon(ch *Chunk, polyIndices []int) {
 		}
 	}
 	// Wall/Floor/Ceiling.Alpha and DoubleSided have no zero-value-safe default
-	// like the YAML loader's float32Default/boolDefault helpers apply, so an
+	// like the YAML loader's float32Default/BoolDefault helpers apply, so an
 	// unset Alpha here means fully transparent (invisible), not opaque.
 	_ = gfx.EnsureTextureLoaded(floorTex)
 	_ = gfx.EnsureTextureLoaded(ceilTex)
 
-	sector := Sector{
-		ID:           uniqueSectorID(ch, fmt.Sprintf("sector_%d", len(ch.Sectors))),
+	sector := world.Sector{
+		ID:           world.UniqueSectorID(ch, fmt.Sprintf("sector_%d", len(ch.Sectors))),
 		PointIndices: polyIndices,
 		EdgeKinds:    edgeKinds,
 		Walls:        walls,
-		Floor:        Floor{Enabled: true, Height: floorH, Texture: floorTex, DoubleSided: true, Alpha: 1.0},
-		Ceiling:      Ceiling{Enabled: true, Height: ceilH, Texture: ceilTex, DoubleSided: true, Alpha: 1.0},
+		Floor:        world.Floor{Enabled: true, Height: floorH, Texture: floorTex, DoubleSided: true, Alpha: 1.0},
+		Ceiling:      world.Ceiling{Enabled: true, Height: ceilH, Texture: ceilTex, DoubleSided: true, Alpha: 1.0},
 	}
-	ensureEdgeIDs(&sector)
-	syncEdgeRecordIDs(&sector)
+	world.EnsureEdgeIDs(&sector)
+	world.SyncEdgeRecordIDs(&sector)
 	ch.Sectors = append(ch.Sectors, sector)
 	ch.InferPortalsAndReload()
 	Editor.ActiveSectorIdx = len(ch.Sectors) - 1
@@ -1319,7 +1320,7 @@ func createSectorFromPolygon(ch *Chunk, polyIndices []int) {
 // removeSelectedEdge handles Delete-key on the currently selected edge.
 // Wall (external) edge → delete the sector, keep chunk points as free vertices.
 // Portal (internal) edge → merge the two connected sectors.
-func removeSelectedEdge(ch *Chunk) {
+func removeSelectedEdge(ch *world.Chunk) {
 	si := Editor.ActiveSectorIdx
 	if si < 0 || si >= len(ch.Sectors) {
 		return
@@ -1347,27 +1348,27 @@ func removeSelectedEdge(ch *Chunk) {
 // removeSectorKeepPoints removes a sector from the chunk but leaves all chunk
 // points intact so the user can re-create sectors from the free vertices.
 // Portals in other sectors that referenced the removed sector are converted to walls.
-func removeSectorKeepPoints(ch *Chunk, si int) {
+func removeSectorKeepPoints(ch *world.Chunk, si int) {
 	removedID := ch.Sectors[si].ID
 	// Nothing reloads the sector that is going away, so mark the biomes over
 	// its footprint here: with the floor gone they have new heights (none) to
 	// bake, and would otherwise keep draping over a surface that no longer
 	// exists.
-	markBiomesDirtyOverBox(ch, ch.Sectors[si].MinBound, ch.Sectors[si].MaxBound)
+	world.MarkBiomesDirtyOverBox(ch, ch.Sectors[si].MinBound, ch.Sectors[si].MaxBound)
 	ch.Sectors = append(ch.Sectors[:si], ch.Sectors[si+1:]...)
 
 	// Convert portals in remaining sectors that pointed to the removed sector into walls.
 	for i := range ch.Sectors {
 		convertPortalsToWalls(ch, &ch.Sectors[i], removedID)
 		rebuildSectorEdgePoints(ch, &ch.Sectors[i])
-		_ = reloadSector(ch, &ch.Sectors[i])
+		_ = world.ReloadSector(ch, &ch.Sectors[i])
 	}
 	ch.RebuildGaps()
 }
 
 // convertPortalsToWalls converts all portals in s that reference targetSectorID
 // into wall edges, updating EdgeKinds, Walls, and Portals slices.
-func convertPortalsToWalls(ch *Chunk, s *Sector, targetSectorID string) {
+func convertPortalsToWalls(ch *world.Chunk, s *world.Sector, targetSectorID string) {
 	changed := false
 	for pi := len(s.Portals) - 1; pi >= 0; pi-- {
 		if s.Portals[pi].ToSector != targetSectorID {
@@ -1389,8 +1390,8 @@ func convertPortalsToWalls(ch *Chunk, s *Sector, targetSectorID string) {
 			}
 		}
 		// Same edge, different kind — the ID goes with it.
-		newWall := Wall{
-			ID:          edgeIDAt(s, ei),
+		newWall := world.Wall{
+			ID:          world.EdgeIDAt(s, ei),
 			StartPoint:  p.StartPoint,
 			EndPoint:    p.EndPoint,
 			Texture:     "concrete",
@@ -1400,7 +1401,7 @@ func convertPortalsToWalls(ch *Chunk, s *Sector, targetSectorID string) {
 			Alpha:       1.0,
 		}
 		// Insert wall at wallIdx
-		s.Walls = append(s.Walls, Wall{})
+		s.Walls = append(s.Walls, world.Wall{})
 		copy(s.Walls[wallIdx+1:], s.Walls[wallIdx:])
 		s.Walls[wallIdx] = newWall
 
@@ -1409,13 +1410,13 @@ func convertPortalsToWalls(ch *Chunk, s *Sector, targetSectorID string) {
 		changed = true
 	}
 	if changed {
-		syncEdgeRecordIDs(s)
+		world.SyncEdgeRecordIDs(s)
 		rebuildSectorEdgePoints(ch, s)
 	}
 }
 
 // portalEdgePosition returns the edge position in EdgeKinds for portal index pi.
-func portalEdgePosition(s *Sector, pi int) int {
+func portalEdgePosition(s *world.Sector, pi int) int {
 	count := 0
 	for i, ek := range s.EdgeKinds {
 		if ek == "portal" {
@@ -1430,7 +1431,7 @@ func portalEdgePosition(s *Sector, pi int) int {
 
 // mergeSectorsAtPortal merges the sector at siA with the sector connected by
 // portal portalIdx, producing a single combined sector.
-func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
+func mergeSectorsAtPortal(ch *world.Chunk, siA, portalIdx int) {
 	sA := &ch.Sectors[siA]
 	if portalIdx >= len(sA.Portals) {
 		return
@@ -1486,13 +1487,13 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 	mergedCeilOff := make([]float32, 0, mergedN)
 
 	// Helper to safely read vertex offsets
-	floorOff := func(s *Sector, pos int) float32 {
+	floorOff := func(s *world.Sector, pos int) float32 {
 		if pos < len(s.Floor.VertexOffsets) {
 			return s.Floor.VertexOffsets[pos]
 		}
 		return 0
 	}
-	ceilOff := func(s *Sector, pos int) float32 {
+	ceilOff := func(s *world.Sector, pos int) float32 {
 		if pos < len(s.Ceiling.VertexOffsets) {
 			return s.Ceiling.VertexOffsets[pos]
 		}
@@ -1520,15 +1521,15 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 	// B's edges: positions (eB+1), (eB+2), ..., (eB-1) — nB-1 edges (skip portal at eB)
 	mergedEdgeKinds := make([]string, 0, mergedN)
 	mergedEdgeIDs := make([]string, 0, mergedN)
-	mergedWalls := make([]Wall, 0)
-	mergedPortals := make([]Portal, 0)
+	mergedWalls := make([]world.Wall, 0)
+	mergedPortals := make([]world.Portal, 0)
 
 	// Edge IDs are sector-scoped, so A's and B's sets can overlap. A's edges are
-	// collected first and keep their names; dedupeSectorEdgeIDs below suffixes
+	// collected first and keep their names; DedupeSectorEdgeIDs below suffixes
 	// any of B's that clash. The merged sector keeps A's ID, so A's addresses
 	// staying put is the behaviour an author would expect.
-	ensureEdgeIDs(sA)
-	ensureEdgeIDs(sB)
+	world.EnsureEdgeIDs(sA)
+	world.EnsureEdgeIDs(sB)
 
 	removedIDs := map[string]bool{sA.ID: true, sB.ID: true}
 
@@ -1539,8 +1540,8 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 		if pos < len(sA.EdgeKinds) {
 			ek = sA.EdgeKinds[pos]
 		}
-		edgeID := edgeIDAt(sA, pos)
-		kind, kIdx := edgeKindAndIndex(sA, pos)
+		edgeID := world.EdgeIDAt(sA, pos)
+		kind, kIdx := world.EdgeKindAndIndex(sA, pos)
 		if kind == "wall" && kIdx < len(sA.Walls) {
 			w := sA.Walls[kIdx]
 			// Portal to the other merged sector becomes a wall
@@ -1553,7 +1554,7 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 				// Portal between the two merging sectors → convert to wall
 				mergedEdgeKinds = append(mergedEdgeKinds, "wall")
 				mergedEdgeIDs = append(mergedEdgeIDs, edgeID)
-				mergedWalls = append(mergedWalls, Wall{
+				mergedWalls = append(mergedWalls, world.Wall{
 					ID:          edgeID,
 					StartPoint:  p.StartPoint,
 					EndPoint:    p.EndPoint,
@@ -1574,8 +1575,8 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 	// Collect B's edges (skip portal at eB)
 	for i := 1; i < nB; i++ {
 		pos := (eB + i) % nB
-		edgeID := edgeIDAt(sB, pos)
-		kind, kIdx := edgeKindAndIndex(sB, pos)
+		edgeID := world.EdgeIDAt(sB, pos)
+		kind, kIdx := world.EdgeKindAndIndex(sB, pos)
 		if kind == "wall" && kIdx < len(sB.Walls) {
 			mergedEdgeKinds = append(mergedEdgeKinds, "wall")
 			mergedEdgeIDs = append(mergedEdgeIDs, edgeID)
@@ -1585,7 +1586,7 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 			if removedIDs[p.ToSector] {
 				mergedEdgeKinds = append(mergedEdgeKinds, "wall")
 				mergedEdgeIDs = append(mergedEdgeIDs, edgeID)
-				mergedWalls = append(mergedWalls, Wall{
+				mergedWalls = append(mergedWalls, world.Wall{
 					ID:          edgeID,
 					StartPoint:  p.StartPoint,
 					EndPoint:    p.EndPoint,
@@ -1616,23 +1617,23 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 	}
 
 	// Build the merged sector (keep A's ID and floor/ceiling properties)
-	merged := Sector{
+	merged := world.Sector{
 		ID:           sA.ID,
 		PointIndices: mergedIndices,
 		EdgeKinds:    mergedEdgeKinds,
 		EdgeIDs:      mergedEdgeIDs,
 		Walls:        mergedWalls,
 		Portals:      mergedPortals,
-		Floor:        Floor{Enabled: sA.Floor.Enabled, Hidden: sA.Floor.Hidden, Height: sA.Floor.Height, Texture: sA.Floor.Texture, Terrain: sA.Floor.Terrain, DoubleSided: sA.Floor.DoubleSided, Alpha: sA.Floor.Alpha, VertexOffsets: mergedFloorOff},
-		Ceiling:      Ceiling{Enabled: sA.Ceiling.Enabled, Height: sA.Ceiling.Height, Texture: sA.Ceiling.Texture, Terrain: sA.Ceiling.Terrain, DoubleSided: sA.Ceiling.DoubleSided, Alpha: sA.Ceiling.Alpha, VertexOffsets: mergedCeilOff},
+		Floor:        world.Floor{Enabled: sA.Floor.Enabled, Hidden: sA.Floor.Hidden, Height: sA.Floor.Height, Texture: sA.Floor.Texture, Terrain: sA.Floor.Terrain, DoubleSided: sA.Floor.DoubleSided, Alpha: sA.Floor.Alpha, VertexOffsets: mergedFloorOff},
+		Ceiling:      world.Ceiling{Enabled: sA.Ceiling.Enabled, Height: sA.Ceiling.Height, Texture: sA.Ceiling.Texture, Terrain: sA.Ceiling.Terrain, DoubleSided: sA.Ceiling.DoubleSided, Alpha: sA.Ceiling.Alpha, VertexOffsets: mergedCeilOff},
 	}
 
 	// Replace A with the merged sector
 	ch.Sectors[siA] = merged
-	dedupeSectorEdgeIDs(&ch.Sectors[siA])
-	syncEdgeRecordIDs(&ch.Sectors[siA])
+	world.DedupeSectorEdgeIDs(&ch.Sectors[siA])
+	world.SyncEdgeRecordIDs(&ch.Sectors[siA])
 	rebuildSectorEdgePoints(ch, &ch.Sectors[siA])
-	_ = reloadSector(ch, &ch.Sectors[siA])
+	_ = world.ReloadSector(ch, &ch.Sectors[siA])
 
 	// Remove B (adjust index if B comes before A)
 	if siB > siA {

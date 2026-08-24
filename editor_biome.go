@@ -17,6 +17,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -24,7 +25,7 @@ import (
 )
 
 // activeChunk returns the chunk currently shown in the 2D/3D editor, or nil.
-func activeChunk() *Chunk {
+func activeChunk() *world.Chunk {
 	lvl := Editor.level
 	if lvl == nil || Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
 		return nil
@@ -34,7 +35,7 @@ func activeChunk() *Chunk {
 
 // biomeSectorAt returns the index of the topmost (last-drawn) BiomeSector in
 // ch containing world point (wx,wz), or -1.
-func biomeSectorAt(ch *Chunk, wx, wz float32) int {
+func biomeSectorAt(ch *world.Chunk, wx, wz float32) int {
 	pt := mgl32.Vec2{wx, wz}
 	for i := len(ch.BiomeSectors) - 1; i >= 0; i-- {
 		if geom.PointInPolygon(pt, ch.BiomeSectors[i].Points) {
@@ -46,19 +47,19 @@ func biomeSectorAt(ch *Chunk, wx, wz float32) int {
 
 // finishBiomeSectorDraw commits the in-progress polygon (if it has enough
 // points) as a new BiomeSector with default brush settings, and selects it.
-func finishBiomeSectorDraw(ch *Chunk) {
+func finishBiomeSectorDraw(ch *world.Chunk) {
 	if len(Editor.BiomeDrawPoints) >= 3 {
 		EditorPushUndo()
 		pts := append([]mgl32.Vec2(nil), Editor.BiomeDrawPoints...)
-		if signedArea2D(pts) < 0 {
+		if world.SignedArea2D(pts) < 0 {
 			for i, j := 0, len(pts)-1; i < j; i, j = i+1, j-1 {
 				pts[i], pts[j] = pts[j], pts[i]
 			}
 		}
-		bs := BiomeSector{
-			ID:     nextBiomeSectorID(Editor.level, ch),
+		bs := world.BiomeSector{
+			ID:     world.NextBiomeSectorID(Editor.level, ch),
 			Points: pts,
-			Brush:  defaultBiomeBrush(BiomeGrass),
+			Brush:  world.DefaultBiomeBrush(world.BiomeGrass),
 
 			HeightDirty: true,
 			GroundDirty: true,
@@ -74,7 +75,7 @@ func finishBiomeSectorDraw(ch *Chunk) {
 
 // deleteBiomeSector removes ch.BiomeSectors[idx] and evicts its cached GPU
 // height texture.
-func deleteBiomeSector(ch *Chunk, idx int) {
+func deleteBiomeSector(ch *world.Chunk, idx int) {
 	if ch == nil || idx < 0 || idx >= len(ch.BiomeSectors) {
 		return
 	}
@@ -118,7 +119,7 @@ func biomeHandleClick(t sdl.MouseButtonEvent) bool {
 			finishBiomeSectorDraw(ch)
 			return true
 		}
-		if len(Editor.BiomeDrawPoints) < biomeMaxPolyVerts {
+		if len(Editor.BiomeDrawPoints) < world.BiomeMaxPolyVerts {
 			Editor.BiomeDrawPoints = append(Editor.BiomeDrawPoints, mgl32.Vec2{wx, wz})
 		}
 		return true
@@ -211,17 +212,17 @@ func biomeHandleKey(t sdl.KeyboardEvent) bool {
 // biomeSectorColor returns the outline/fill tint for a sector's brush kind.
 func biomeSectorColor(kind int32) mgl32.Vec3 {
 	switch kind {
-	case BiomeRock:
+	case world.BiomeRock:
 		return mgl32.Vec3{0.65, 0.65, 0.7}
-	case BiomeWildflower:
+	case world.BiomeWildflower:
 		return mgl32.Vec3{0.9, 0.6, 0.75}
-	case BiomeCattail:
+	case world.BiomeCattail:
 		return mgl32.Vec3{0.55, 0.4, 0.2}
-	case BiomeSand:
+	case world.BiomeSand:
 		return mgl32.Vec3{0.85, 0.75, 0.45}
-	case BiomeWater:
+	case world.BiomeWater:
 		return mgl32.Vec3{0.3, 0.55, 0.9}
-	case BiomeMoss:
+	case world.BiomeMoss:
 		return mgl32.Vec3{0.2, 0.5, 0.25} // darker/duller than Grass, so the two read apart
 	default: // BiomeGrass
 		return mgl32.Vec3{0.25, 0.85, 0.3}
@@ -232,7 +233,7 @@ func biomeSectorColor(kind int32) mgl32.Vec3 {
 // (dim when the layer isn't active, bright + vertex handles when it is), the
 // selected sector in yellow, and the in-progress draw polygon in green.
 // Called from Editor2DRender alongside the structural-sector rendering.
-func Editor2DRenderBiomeSectors(ch *Chunk) {
+func Editor2DRenderBiomeSectors(ch *world.Chunk) {
 	const y = float32(0.12)
 	yellow := mgl32.Vec3{1, 1, 0}
 	green := mgl32.Vec3{0.2, 0.9, 0.2}
@@ -412,7 +413,7 @@ func biomePanelSection() {
 					// stale field values (a Rock's RockScale left on a
 					// sector switched to Grass, etc.) — every field the new
 					// kind actually reads starts sensible.
-					bs.Brush = defaultBiomeBrush(int32(i))
+					bs.Brush = world.DefaultBiomeBrush(int32(i))
 					bs.HeightDirty = true
 					bs.GroundDirty = true
 				}
@@ -424,23 +425,23 @@ func biomePanelSection() {
 	// Moss's scatter is opt-in (ground patch alone is the default look), and
 	// this toggle gates whether Density/Draw Dist below mean anything at all —
 	// so it has to come before them rather than in the per-kind switch.
-	if bs.Brush.Kind == BiomeMoss {
+	if bs.Brush.Kind == world.BiomeMoss {
 		imgui.Checkbox("Scatter Clumps##bsmossscat", &bs.Brush.MossScatter)
 	}
 
 	if bs.Brush.Scatters() {
 		imgui.SliderFloat("Density##bsd", &bs.Brush.Density, 0, 1)
 		maxRange := float32(300)
-		if bs.Brush.Kind == BiomeRock {
+		if bs.Brush.Kind == world.BiomeRock {
 			maxRange = 400
 		}
 		if bs.Brush.Range <= 0 {
-			bs.Brush.Range = defaultBiomeBrush(bs.Brush.Kind).Range
+			bs.Brush.Range = world.DefaultBiomeBrush(bs.Brush.Kind).Range
 		}
 		editorDragFloat("Draw Dist##bsr", &bs.Brush.Range, 4, maxRange, "%.1f")
 	}
 
-	if bs.Brush.Kind != BiomeSand && bs.Brush.Kind != BiomeWater {
+	if bs.Brush.Kind != world.BiomeSand && bs.Brush.Kind != world.BiomeWater {
 		color := [3]float32{bs.Brush.Color.X(), bs.Brush.Color.Y(), bs.Brush.Color.Z()}
 		if imgui.ColorEdit3("Color##bscol", &color) {
 			bs.Brush.Color = mgl32.Vec3{color[0], color[1], color[2]}
@@ -448,21 +449,21 @@ func biomePanelSection() {
 	}
 
 	switch bs.Brush.Kind {
-	case BiomeRock:
+	case world.BiomeRock:
 		sides := bs.Brush.RockSides
 		if imgui.SliderInt("Rock Sides##bss", &sides, 3, 16) {
 			bs.Brush.RockSides = sides
 		}
 		if bs.Brush.RockScale <= 0 {
-			bs.Brush.RockScale = defaultRockScale
+			bs.Brush.RockScale = world.DefaultRockScale
 		}
 		imgui.SliderFloat("Rock Size##bssz", &bs.Brush.RockScale, 0.05, 3)
 
-	case BiomeWildflower:
-		imgui.SliderFloat("Stem Height##bsh", &bs.Brush.GrassHeight, 0.05, maxStemHeight)
+	case world.BiomeWildflower:
+		imgui.SliderFloat("Stem Height##bsh", &bs.Brush.GrassHeight, 0.05, world.MaxStemHeight)
 		imgui.SliderFloat("Stem Width##bsw", &bs.Brush.GrassWidth, 0.005, 0.2)
 		if bs.Brush.HeadScale <= 0 {
-			bs.Brush.HeadScale = defaultWildflowerHeadScale
+			bs.Brush.HeadScale = world.DefaultWildflowerHeadScale
 		}
 		imgui.SliderFloat("Bloom Size##bshead", &bs.Brush.HeadScale, 0.02, 1.5)
 
@@ -475,8 +476,8 @@ func biomePanelSection() {
 			// Resolve through the same "0 means the default" path the renderer
 			// uses, so the slider shows the size actually in effect rather
 			// than a misleading 0 on a brush from before this field existed.
-			bs.Brush.LeafScale = resolvedLeafScale(bs.Brush.LeafScale)
-			imgui.SliderFloat("Leaf Size##bsleafsz", &bs.Brush.LeafScale, 0.2, maxWildflowerLeafScale)
+			bs.Brush.LeafScale = world.ResolvedLeafScale(bs.Brush.LeafScale)
+			imgui.SliderFloat("Leaf Size##bsleafsz", &bs.Brush.LeafScale, 0.2, world.MaxWildflowerLeafScale)
 		} else {
 			imgui.Text("Bare stem.")
 		}
@@ -508,7 +509,7 @@ func biomePanelSection() {
 		imgui.Checkbox("Bloom Center##bscenter", &bs.Brush.BloomCenter)
 		if bs.Brush.BloomCenter {
 			if bs.Brush.CenterColor == (mgl32.Vec3{}) {
-				bs.Brush.CenterColor = defaultCenterColor
+				bs.Brush.CenterColor = world.DefaultCenterColor
 			}
 			cc := [3]float32{bs.Brush.CenterColor.X(), bs.Brush.CenterColor.Y(), bs.Brush.CenterColor.Z()}
 			if imgui.ColorEdit3("Center Color##bsccol", &cc) {
@@ -516,31 +517,31 @@ func biomePanelSection() {
 			}
 		}
 
-	case BiomeCattail:
+	case world.BiomeCattail:
 		imgui.SliderFloat("Reed Height##bsh", &bs.Brush.GrassHeight, 0.1, 2.5)
 		imgui.SliderFloat("Reed Width##bsw", &bs.Brush.GrassWidth, 0.005, 0.15)
 		if bs.Brush.HeadScale <= 0 {
-			bs.Brush.HeadScale = defaultCattailHeadScale
+			bs.Brush.HeadScale = world.DefaultCattailHeadScale
 		}
 		imgui.SliderFloat("Seed Head Size##bshead", &bs.Brush.HeadScale, 0.02, 1.5)
 
-	case BiomeSand:
+	case world.BiomeSand:
 		if bs.Brush.SandHeight <= 0 {
-			bs.Brush.SandHeight = defaultSandHeight
+			bs.Brush.SandHeight = world.DefaultSandHeight
 		}
 		if imgui.SliderFloat("Dune Height##bssand", &bs.Brush.SandHeight, 0.02, 2) {
 			bs.GroundDirty = true
 		}
 		imgui.Text("Volumetric displacement, no scatter — paint Rock on top for outcrops.")
 
-	case BiomeWater:
+	case world.BiomeWater:
 		biomeWaterControls(ch, bs)
 		imgui.Text("Auto-fills the painted area with a water plane.")
 
-	case BiomeMoss:
+	case world.BiomeMoss:
 		if bs.Brush.MossScatter {
 			if bs.Brush.RockScale <= 0 {
-				bs.Brush.RockScale = defaultRockScale
+				bs.Brush.RockScale = world.DefaultRockScale
 			}
 			imgui.SliderFloat("Clump Size##bsmosssz", &bs.Brush.RockScale, 0.05, 1.5)
 		} else {
@@ -548,7 +549,7 @@ func biomePanelSection() {
 		}
 
 	default: // BiomeGrass
-		imgui.SliderFloat("Grass Height##bsh", &bs.Brush.GrassHeight, 0.05, maxStemHeight)
+		imgui.SliderFloat("Grass Height##bsh", &bs.Brush.GrassHeight, 0.05, world.MaxStemHeight)
 		imgui.SliderFloat("Blade Width##bsw", &bs.Brush.GrassWidth, 0.005, 0.3)
 
 		// Pure shader uniform — clumping only rearranges where the same
@@ -570,11 +571,11 @@ func biomePanelSection() {
 
 // biomeLODSection draws the Near/Mid/Far distance-based LOD controls (see
 // grass.go's package doc comment and biomeLODBounds) — only shown for the
-// kinds that actually render three tiers (biomeLODTierCount). Sliders edit
+// kinds that actually render three tiers (BiomeLODTierCount). Sliders edit
 // world-unit distances, clamped 0 < Near <= Mid <= Draw Dist, mirroring how
 // Range's own "Draw Dist" slider already works.
-func biomeLODSection(bs *BiomeSector) {
-	if biomeLODTierCount(bs.Brush.Kind) != 3 {
+func biomeLODSection(bs *world.BiomeSector) {
+	if world.BiomeLODTierCount(bs.Brush.Kind) != 3 {
 		return
 	}
 
@@ -586,8 +587,8 @@ func biomeLODSection(bs *BiomeSector) {
 	imgui.Text("Mesh detail drops Near -> Mid -> Far with distance; only Near")
 	imgui.Text("casts real per-instance shadows by default (F9 changes that).")
 
-	rng := biomeSectorRange(&bs.Brush)
-	lod1 := resolvedLOD1(&bs.Brush)
+	rng := world.BiomeSectorRange(&bs.Brush)
+	lod1 := world.ResolvedLOD1(&bs.Brush)
 	if editorDragFloat("Near Dist##bslod1", &lod1, 1, rng, "%.1f") {
 		bs.Brush.LOD1Distance = lod1
 		if bs.Brush.LOD2Distance > 0 && bs.Brush.LOD2Distance < lod1 {
@@ -595,7 +596,7 @@ func biomeLODSection(bs *BiomeSector) {
 		}
 	}
 
-	lod2 := resolvedLOD2(&bs.Brush)
+	lod2 := world.ResolvedLOD2(&bs.Brush)
 	if editorDragFloat("Mid Dist##bslod2", &lod2, lod1, rng, "%.1f") {
 		bs.Brush.LOD2Distance = lod2
 	}
@@ -607,7 +608,7 @@ func biomeLODSection(bs *BiomeSector) {
 // boundaries (the outer camera-ring and the sector's own painted polygon) fade
 // instead of cutting off hard. See BiomeBrush's own doc comments for what each
 // field does.
-func biomeFadeSection(bs *BiomeSector) {
+func biomeFadeSection(bs *world.BiomeSector) {
 	if !bs.Brush.Scatters() {
 		return
 	}
@@ -657,7 +658,7 @@ func biomeFadeSection(bs *BiomeSector) {
 // procedural displacement detail, terrain mode, or plain per-vertex offsets.
 // Hidden entirely for the kinds that never follow displacement
 // (Wildflower/Cattail/Water), since the fields would do nothing for them.
-func biomeSlopeSection(bs *BiomeSector) {
+func biomeSlopeSection(bs *world.BiomeSector) {
 	if !biomeFollowsDisplacement(bs.Brush.Kind) {
 		return
 	}
@@ -707,14 +708,14 @@ func biomeSlopeSection(bs *BiomeSector) {
 // painted with, and how its procedural noise displacement is shaped. Applies
 // to every kind, including Water (its patch is the lakebed seen through the
 // translucent surface).
-func biomeGroundSection(bs *BiomeSector) {
-	def := defaultBiomeBrush(bs.Brush.Kind)
+func biomeGroundSection(bs *world.BiomeSector) {
+	def := world.DefaultBiomeBrush(bs.Brush.Kind)
 
 	imgui.Separator()
 	if !imgui.CollapsingHeaderV("Ground##bsground", 0) {
 		return
 	}
-	if bs.Brush.Kind == BiomeWater {
+	if bs.Brush.Kind == world.BiomeWater {
 		imgui.Text("Lakebed (seen through the water surface)")
 	}
 
@@ -734,7 +735,7 @@ func biomeGroundSection(bs *BiomeSector) {
 		bs.GroundDirty = true
 	}
 
-	if bs.Brush.Kind != BiomeSand {
+	if bs.Brush.Kind != world.BiomeSand {
 		// Sand's amplitude is the dedicated SandHeight/"Dune Height" slider
 		// above instead — much larger range, and already the sand-specific
 		// control users expect.
@@ -742,7 +743,7 @@ func biomeGroundSection(bs *BiomeSector) {
 			bs.Brush.GroundAmplitude = def.GroundAmplitude
 		}
 		ampLabel := "Roughness##bsgamp"
-		if bs.Brush.Kind == BiomeWater {
+		if bs.Brush.Kind == world.BiomeWater {
 			ampLabel = "Lakebed Roughness##bsgamp"
 		}
 		if imgui.SliderFloat(ampLabel, &bs.Brush.GroundAmplitude, 0.001, 1) {
@@ -771,9 +772,9 @@ func biomeGroundSection(bs *BiomeSector) {
 // out of biomePanelSection because the 3D view reaches the same settings by a
 // different route: clicking the water plane itself (editorWaterSection,
 // editor_3d.go), which lands on the sector that produced it.
-func biomeWaterControls(ch *Chunk, bs *BiomeSector) {
+func biomeWaterControls(ch *world.Chunk, bs *world.BiomeSector) {
 	if bs.Brush.WaterDepth <= 0 {
-		bs.Brush.WaterDepth = defaultWaterDepth
+		bs.Brush.WaterDepth = world.DefaultWaterDepth
 	}
 	if editorDragFloat("Depth##bswd", &bs.Brush.WaterDepth, 0.05, 20, "%.2f") {
 		bs.GroundDirty = true // moves the plane's Y — needs a mesh rebuild
@@ -796,7 +797,7 @@ func biomeWaterControls(ch *Chunk, bs *BiomeSector) {
 // biomeWaterGeometryFor returns the live Geometry of sector id's companion
 // water surface (see biome_water.go), or nil before the first sync has run for
 // a newly-switched-to-Water sector.
-func biomeWaterGeometryFor(ch *Chunk, id string) *gfx.Geometry {
+func biomeWaterGeometryFor(ch *world.Chunk, id string) *gfx.Geometry {
 	for i := range ch.WaterSurfaces {
 		if ch.WaterSurfaces[i].ID == id {
 			return &ch.WaterSurfaces[i].Geometry
@@ -808,17 +809,17 @@ func biomeWaterGeometryFor(ch *Chunk, id string) *gfx.Geometry {
 // biomeKindName returns the display name for a brush kind.
 func biomeKindName(kind int32) string {
 	switch kind {
-	case BiomeRock:
+	case world.BiomeRock:
 		return "Rock"
-	case BiomeWildflower:
+	case world.BiomeWildflower:
 		return "Wildflower"
-	case BiomeCattail:
+	case world.BiomeCattail:
 		return "Cattail"
-	case BiomeSand:
+	case world.BiomeSand:
 		return "Sand"
-	case BiomeWater:
+	case world.BiomeWater:
 		return "Water"
-	case BiomeMoss:
+	case world.BiomeMoss:
 		return "Moss"
 	default:
 		return "Grass"

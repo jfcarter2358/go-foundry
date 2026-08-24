@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"foundry/internal/gizmo"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -96,7 +97,7 @@ func exitSurface2D() {
 
 // ---------- surface data accessors ----------
 
-func surfaceSector() (*Chunk, *Sector) {
+func surfaceSector() (*world.Chunk, *world.Sector) {
 	lvl := Editor.level
 	if lvl == nil || Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
 		return nil, nil
@@ -108,7 +109,7 @@ func surfaceSector() (*Chunk, *Sector) {
 	return ch, &ch.Sectors[Editor.ActiveSectorIdx]
 }
 
-func surfaceWall() *Wall {
+func surfaceWall() *world.Wall {
 	ch, s := surfaceSector()
 	if ch == nil || s == nil {
 		return nil
@@ -130,9 +131,9 @@ func surfaceBoundary() []mgl32.Vec2 {
 		if w == nil {
 			return nil
 		}
-		sPts := SectorPoints(ch, s)
-		vi1 := findVertexIdx(sPts, w.StartPoint)
-		vi2 := findVertexIdx(sPts, w.EndPoint)
+		sPts := world.SectorPoints(ch, s)
+		vi1 := world.FindVertexIdx(sPts, w.StartPoint)
+		vi2 := world.FindVertexIdx(sPts, w.EndPoint)
 		wallLen := mgl32.Vec2{w.EndPoint.X() - w.StartPoint.X(), w.EndPoint.Y() - w.StartPoint.Y()}.Len()
 		floorH1 := s.Floor.VertexHeight(vi1)
 		floorH2 := s.Floor.VertexHeight(vi2)
@@ -141,12 +142,12 @@ func surfaceBoundary() []mgl32.Vec2 {
 		wallH := ((ceilH1 - floorH1) + (ceilH2 - floorH2)) / 2
 		return []mgl32.Vec2{{0, 0}, {wallLen, 0}, {wallLen, wallH}, {0, wallH}}
 	case "floor", "ceiling":
-		return SectorPoints(ch, s)
+		return world.SectorPoints(ch, s)
 	}
 	return nil
 }
 
-func surfaceExtrusions() *[]Extrusion {
+func surfaceExtrusions() *[]world.Extrusion {
 	ch, s := surfaceSector()
 	if ch == nil || s == nil {
 		return nil
@@ -166,7 +167,7 @@ func surfaceExtrusions() *[]Extrusion {
 	return nil
 }
 
-func surfaceTerrainPts() (*bool, *[]TerrainPoint) {
+func surfaceTerrainPts() (*bool, *[]world.TerrainPoint) {
 	ch, s := surfaceSector()
 	if ch == nil || s == nil {
 		return nil, nil
@@ -189,7 +190,7 @@ func surfaceTerrainPts() (*bool, *[]TerrainPoint) {
 func surfaceReload() {
 	ch, s := surfaceSector()
 	if ch != nil && s != nil {
-		_ = reloadSector(ch, s)
+		_ = world.ReloadSector(ch, s)
 	}
 }
 
@@ -389,12 +390,12 @@ func Surface2DHandleClick(t sdl.MouseButtonEvent) {
 			Editor.SurfacePendingPts = nil
 		}
 		if Editor.SurfacePlacing == "extrusion" {
-			Editor.SurfacePendingPts = append(Editor.SurfacePendingPts, ExtrusionPoint{U: u, V: v})
+			Editor.SurfacePendingPts = append(Editor.SurfacePendingPts, world.ExtrusionPoint{U: u, V: v})
 		} else if Editor.SurfacePlacing == "terrain" {
 			_, tPts := surfaceTerrainPts()
 			if tPts != nil {
 				EditorPushUndo()
-				*tPts = append(*tPts, TerrainPoint{U: u, V: v, Depth: 0})
+				*tPts = append(*tPts, world.TerrainPoint{U: u, V: v, Depth: 0})
 				surfaceReload()
 			}
 		}
@@ -478,7 +479,7 @@ func Surface2DHandleMouseMove(t sdl.MouseMotionEvent) {
 			if exts != nil && Editor.SurfaceDragExtIdx < len(*exts) {
 				ext := &(*exts)[Editor.SurfaceDragExtIdx]
 				if Editor.SurfaceDragPt < len(ext.Outer) {
-					ext.Outer[Editor.SurfaceDragPt] = ExtrusionPoint{U: u, V: v}
+					ext.Outer[Editor.SurfaceDragPt] = world.ExtrusionPoint{U: u, V: v}
 					surfaceReload()
 				}
 			}
@@ -486,14 +487,14 @@ func Surface2DHandleMouseMove(t sdl.MouseMotionEvent) {
 			if exts != nil && Editor.SurfaceDragExtIdx < len(*exts) {
 				ext := &(*exts)[Editor.SurfaceDragExtIdx]
 				if Editor.SurfaceDragPt < len(ext.Inner) {
-					ext.Inner[Editor.SurfaceDragPt] = ExtrusionPoint{U: u, V: v}
+					ext.Inner[Editor.SurfaceDragPt] = world.ExtrusionPoint{U: u, V: v}
 					surfaceReload()
 				}
 			}
 		case "terrain":
 			_, tPts := surfaceTerrainPts()
 			if tPts != nil && Editor.SurfaceDragPt < len(*tPts) {
-				(*tPts)[Editor.SurfaceDragPt] = TerrainPoint{U: u, V: v, Depth: (*tPts)[Editor.SurfaceDragPt].Depth}
+				(*tPts)[Editor.SurfaceDragPt] = world.TerrainPoint{U: u, V: v, Depth: (*tPts)[Editor.SurfaceDragPt].Depth}
 				surfaceReload()
 			}
 		}
@@ -535,15 +536,15 @@ func surface2DFinalizeExtrusion() {
 		return
 	}
 
-	outer := make([]ExtrusionPoint, len(Editor.SurfacePendingPts))
+	outer := make([]world.ExtrusionPoint, len(Editor.SurfacePendingPts))
 	copy(outer, Editor.SurfacePendingPts)
 
 	// Inner starts as a copy of outer — user drags inner points to adjust bevel
-	inner := make([]ExtrusionPoint, len(outer))
+	inner := make([]world.ExtrusionPoint, len(outer))
 	copy(inner, outer)
 
 	EditorPushUndo()
-	*exts = append(*exts, Extrusion{
+	*exts = append(*exts, world.Extrusion{
 		Outer:       outer,
 		Inner:       inner,
 		Depth:       -0.1,

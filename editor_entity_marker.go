@@ -19,6 +19,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -27,35 +28,35 @@ import (
 // which has to be inside the frame loop, since uploading needs a live GL
 // context. A zero Geometry has no vertices, so an entry that failed to build
 // simply draws nothing.
-var entityMarkerCages = make([]gfx.Geometry, len(boundingTypeNames))
+var entityMarkerCages = make([]gfx.Geometry, len(world.BoundingTypeNames))
 
 // entityMarkerCage returns the unit cage for a bounding kind, building it if
 // this is the first time it has been asked for.
-func entityMarkerCage(kind BoundingType) *gfx.Geometry {
+func entityMarkerCage(kind world.BoundingType) *gfx.Geometry {
 	i := int(kind)
 	if i < 0 || i >= len(entityMarkerCages) {
-		i = int(BoundingAABB)
+		i = int(world.BoundingAABB)
 	}
 	g := &entityMarkerCages[i]
 	if len(g.Vertices) > 0 {
 		return g
 	}
-	if err := gfx.EnsureTextureLoaded(volumeMarkerTexture); err != nil {
+	if err := gfx.EnsureTextureLoaded(world.VolumeMarkerTexture); err != nil {
 		return g
 	}
 	// Half-extents of 1: the draw matrix carries the entity's real ones, so one
 	// mesh serves every size.
 	var verts [][]float32
 	var idx []int
-	switch BoundingType(i) {
-	case BoundingSphere:
-		verts, idx = ellipsoidCage(1, 1, 1)
-	case BoundingCylinder:
-		verts, idx = cylinderCage(1, 1, 1)
+	switch world.BoundingType(i) {
+	case world.BoundingSphere:
+		verts, idx = world.EllipsoidCage(1, 1, 1)
+	case world.BoundingCylinder:
+		verts, idx = world.CylinderCage(1, 1, 1)
 	default:
-		verts, idx = boxCage(1, 1, 1)
+		verts, idx = world.BoxCage(1, 1, 1)
 	}
-	if err := g.Load(verts, idx, volumeMarkerTexture, mgl32.Vec3{}); err != nil {
+	if err := g.Load(verts, idx, world.VolumeMarkerTexture, mgl32.Vec3{}); err != nil {
 		return g
 	}
 	return g
@@ -64,7 +65,7 @@ func entityMarkerCage(kind BoundingType) *gfx.Geometry {
 // entityHasVisibleGeometry reports whether the colour pass drew anything for
 // this entity. It is the exact condition RenderEntities walks, so a marker
 // appears precisely where a model did not.
-func entityHasVisibleGeometry(e *Entity) bool {
+func entityHasVisibleGeometry(e *world.Entity) bool {
 	for i := range e.Models {
 		if e.Models[i].Visible && e.Models[i].HasGeometry() {
 			return true
@@ -78,7 +79,7 @@ func entityHasVisibleGeometry(e *Entity) bool {
 // as a scale. The offset is applied unscaled because the entity's matrix has
 // already scaled everything under it — the same composition BoundCenter does
 // by hand.
-func entityMarkerMatrix(e *Entity) mgl32.Mat4 {
+func entityMarkerMatrix(e *world.Entity) mgl32.Mat4 {
 	off := e.BoundOffset
 	return e.ModelMatrix().
 		Mul4(mgl32.Translate3D(off.X(), off.Y(), off.Z())).
@@ -88,7 +89,7 @@ func entityMarkerMatrix(e *Entity) mgl32.Mat4 {
 // RenderEntityMarkers draws a cage around every entity the renderer had nothing
 // to draw. Editor-only: the caller is responsible for not calling it during
 // play, the same rule the spawn marker and the volume cages follow.
-func RenderEntityMarkers(lvl *Level, cull *Frustum) {
+func RenderEntityMarkers(lvl *world.Level, cull *Frustum) {
 	if lvl == nil {
 		return
 	}

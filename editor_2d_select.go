@@ -27,6 +27,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -43,7 +44,7 @@ import (
 //
 // Unlike the 3D handle picker this is not filtered by visibility: the map draws
 // everything from above and nothing occludes anything.
-func editor2DVertexCandidates(ch *Chunk, wx, wz, threshold float32) []vertexSel {
+func editor2DVertexCandidates(ch *world.Chunk, wx, wz, threshold float32) []vertexSel {
 	type cand struct {
 		sel  vertexSel
 		dist float32
@@ -89,7 +90,7 @@ func editor2DVertexCandidates(ch *Chunk, wx, wz, threshold float32) []vertexSel 
 
 // editor2DEdgeCandidates returns every sector edge passing within threshold of
 // (wx,wz), nearest first, at whichever height the map is currently editing.
-func editor2DEdgeCandidates(ch *Chunk, wx, wz, threshold float32) []edgeSel {
+func editor2DEdgeCandidates(ch *world.Chunk, wx, wz, threshold float32) []edgeSel {
 	kind := edgeKind3DCeiling
 	if Editor.EditFloorVerts {
 		kind = edgeKind3DFloor
@@ -151,7 +152,7 @@ func editor2DCycle(n int, selected func(int) bool) int {
 // map's alt+click — see Editor2DHandleClick) unions every corner under the
 // cursor into the selection instead. Returns false when the click missed every
 // corner.
-func editor2DHandlePointClick(ch *Chunk, wx, wz, threshold float32, addToSelection, armDrag bool) bool {
+func editor2DHandlePointClick(ch *world.Chunk, wx, wz, threshold float32, addToSelection, armDrag bool) bool {
 	cands := editor2DVertexCandidates(ch, wx, wz, threshold)
 	if len(cands) == 0 {
 		return false
@@ -191,7 +192,7 @@ func editor2DHandlePointClick(ch *Chunk, wx, wz, threshold float32, addToSelecti
 // editor2DHandleEdgeClick resolves a click against the sector edges, cycling on
 // repeat and unioning on alt+click the way point mode does. Returns false when
 // the click missed every edge.
-func editor2DHandleEdgeClick(ch *Chunk, wx, wz, threshold float32, addToSelection bool) bool {
+func editor2DHandleEdgeClick(ch *world.Chunk, wx, wz, threshold float32, addToSelection bool) bool {
 	cands := editor2DEdgeCandidates(ch, wx, wz, threshold)
 	if len(cands) == 0 {
 		return false
@@ -221,7 +222,7 @@ func editor2DHandleEdgeClick(ch *Chunk, wx, wz, threshold float32, addToSelectio
 // can name: a wall or portal edge, the spawn marker, or a sector interior. This
 // is the map's original ladder minus its vertex rung, which point mode now
 // owns. Returns false when the click landed on none of them.
-func editor2DHandleFaceClick(lvl *Level, ch *Chunk, wx, wz, threshold float32, addToSelection bool) bool {
+func editor2DHandleFaceClick(lvl *world.Level, ch *world.Chunk, wx, wz, threshold float32, addToSelection bool) bool {
 	if f, ok := editor2DFaceAt(ch, wx, wz, threshold); ok {
 		editorSelectFace(f, addToSelection)
 		return true
@@ -238,21 +239,21 @@ func editor2DHandleFaceClick(lvl *Level, ch *Chunk, wx, wz, threshold float32, a
 // sector is the more specific target than the sector it is drawn across.
 // Repeated clicks cycle through the lines stacked under the cursor, so the far
 // side of a shared wall is reachable.
-func editor2DFaceAt(ch *Chunk, wx, wz, threshold float32) (faceSel, bool) {
+func editor2DFaceAt(ch *world.Chunk, wx, wz, threshold float32) (faceSel, bool) {
 	if cands := editor2DEdgeCandidates(ch, wx, wz, threshold*2); len(cands) > 0 {
 		pick := cands[editor2DCycle(len(cands), func(i int) bool {
 			s := &ch.Sectors[cands[i].sectorIdx]
-			kind, kindIdx := edgeKindAndIndex(s, cands[i].vertIdx)
+			kind, kindIdx := world.EdgeKindAndIndex(s, cands[i].vertIdx)
 			return isFaceSelected(edgeFaceSel(Editor.ActiveChunkIdx, cands[i].sectorIdx, kind, kindIdx))
 		})]
 		s := &ch.Sectors[pick.sectorIdx]
-		kind, kindIdx := edgeKindAndIndex(s, pick.vertIdx)
+		kind, kindIdx := world.EdgeKindAndIndex(s, pick.vertIdx)
 		return edgeFaceSel(Editor.ActiveChunkIdx, pick.sectorIdx, kind, kindIdx), true
 	}
 
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
-		if !geom.PointInPolygon(mgl32.Vec2{wx, wz}, SectorPoints(ch, s)) {
+		if !geom.PointInPolygon(mgl32.Vec2{wx, wz}, world.SectorPoints(ch, s)) {
 			continue
 		}
 		// Which of the two horizontal surfaces the click means is the map's own
@@ -306,7 +307,7 @@ func editor2DHasSelection() bool {
 // without arming a drag. This is the context menu's "open it on what I pointed
 // at" — it deliberately skips the placement, biome and gizmo branches a real
 // click goes through, since none of them are what a right-click means.
-func editor2DSelectAt(lvl *Level, ch *Chunk, wx, wz float32) {
+func editor2DSelectAt(lvl *world.Level, ch *world.Chunk, wx, wz float32) {
 	threshold := screenToWorldSize(editor2DSelectRadius, editor2DOrtho())
 	switch Editor.SelMode {
 	case editorSelPoint:

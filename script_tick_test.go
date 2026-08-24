@@ -21,6 +21,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 // withTempScriptDir points the scripts folder at a temp directory, in the style
@@ -54,16 +55,16 @@ func writeScript(t *testing.T, root, name, src string) string {
 }
 
 // tickTestLevel builds a level with a scripted crate and a scripted trigger.
-func tickTestLevel(t *testing.T) *Level {
+func tickTestLevel(t *testing.T) *world.Level {
 	t.Helper()
 	withoutGeometryUploads(t)
 	ch := edgeIDTestChunk(t)
 	ch.ID = "chunk"
-	return &Level{Chunks: []Chunk{*ch}}
+	return &world.Level{Chunks: []world.Chunk{*ch}}
 }
 
 // runTicks binds the runtime to lvl, loads its scripts, and runs n frames.
-func runTicks(t *testing.T, lvl *Level, n int) {
+func runTicks(t *testing.T, lvl *world.Level, n int) {
 	t.Helper()
 	prevRT := *Scripts
 	prevEv := scriptEvents
@@ -85,9 +86,9 @@ func TestSpawnFiresOncePerObject(t *testing.T) {
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
+	lvl.Entities = append(lvl.Entities, world.Entity{
 		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Attributes: AttrSet{"spawns": IntAttr(0)},
+		Attributes: world.AttrSet{"spawns": world.IntAttr(0)},
 	})
 
 	runTicks(t, lvl, 5)
@@ -105,9 +106,9 @@ func TestTickFiresEveryFrame(t *testing.T) {
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
+	lvl.Entities = append(lvl.Entities, world.Entity{
 		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Attributes: AttrSet{"ticks": IntAttr(0)},
+		Attributes: world.AttrSet{"ticks": world.IntAttr(0)},
 	})
 
 	runTicks(t, lvl, 5)
@@ -130,9 +131,9 @@ func TestGuardedTickHandlerDoesNotErrorOnDeclinedFrames(t *testing.T) {
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
+	lvl.Entities = append(lvl.Entities, world.Entity{
 		ID: "door", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Attributes: AttrSet{"opening": BoolAttr(false), "ticks": IntAttr(0)},
+		Attributes: world.AttrSet{"opening": world.BoolAttr(false), "ticks": world.IntAttr(0)},
 	})
 
 	runTicks(t, lvl, 5)
@@ -145,7 +146,7 @@ end`)
 	}
 
 	// The same handler still fires once the guard holds.
-	lvl.Entities[0].SetAttr("opening", BoolAttr(true))
+	lvl.Entities[0].SetAttr("opening", world.BoolAttr(true))
 	runTicks(t, lvl, 3)
 
 	if n := ScriptStatsSnapshot().Errors; n != 0 {
@@ -167,17 +168,17 @@ def on_exit(:exit:, other ref) -> null
 end`)
 
 	lvl := tickTestLevel(t)
-	v := NewVolume("trigger", mgl32.Vec3{0, 0, 0})
+	v := world.NewVolume("trigger", mgl32.Vec3{0, 0, 0})
 	v.HalfX, v.HalfY, v.HalfZ = 2, 2, 2
 	v.Script = path
-	v.SetAttr("entered", IntAttr(0))
-	v.SetAttr("exited", IntAttr(0))
+	v.SetAttr("entered", world.IntAttr(0))
+	v.SetAttr("exited", world.IntAttr(0))
 	lvl.Volumes = append(lvl.Volumes, v)
 
 	// Outside to start with.
-	lvl.Entities = append(lvl.Entities, Entity{
+	lvl.Entities = append(lvl.Entities, world.Entity{
 		ID: "walker", Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Position: mgl32.Vec3{10, 0, 0}, Attributes: AttrSet{},
+		Position: mgl32.Vec3{10, 0, 0}, Attributes: world.AttrSet{},
 	})
 
 	prevRT := *Scripts
@@ -227,9 +228,9 @@ def on_c(:step_c:) -> null
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
+	lvl.Entities = append(lvl.Entities, world.Entity{
 		ID: "chain", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Attributes: AttrSet{"stage": IntAttr(0)},
+		Attributes: world.AttrSet{"stage": world.IntAttr(0)},
 	})
 
 	runTicks(t, lvl, 1)
@@ -251,25 +252,25 @@ end`)
 
 	lvl := tickTestLevel(t)
 	lvl.Entities = append(lvl.Entities,
-		Entity{ID: "gun", Script: sender, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}},
-		Entity{ID: "a", Script: target, Tags: []string{"breakable"}, Visible: true,
-			Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{"health": IntAttr(10)}},
-		Entity{ID: "b", Script: target, Tags: []string{"breakable"}, Visible: true,
-			Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{"health": IntAttr(10)}},
-		Entity{ID: "c", Script: target, Visible: true,
-			Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{"health": IntAttr(10)}},
+		world.Entity{ID: "gun", Script: sender, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}},
+		world.Entity{ID: "a", Script: target, Tags: []string{"breakable"}, Visible: true,
+			Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{"health": world.IntAttr(10)}},
+		world.Entity{ID: "b", Script: target, Tags: []string{"breakable"}, Visible: true,
+			Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{"health": world.IntAttr(10)}},
+		world.Entity{ID: "c", Script: target, Visible: true,
+			Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{"health": world.IntAttr(10)}},
 	)
 
 	runTicks(t, lvl, 1)
 
 	for _, id := range []string{"a", "b"} {
-		e := FindEntity(lvl, id)
+		e := world.FindEntity(lvl, id)
 		if a, _ := e.Attr("health"); a.I != 5 {
 			t.Errorf("%s has %d health, want 5", id, a.I)
 		}
 	}
 	// The untagged one must not have been hit.
-	if a, _ := FindEntity(lvl, "c").Attr("health"); a.I != 10 {
+	if a, _ := world.FindEntity(lvl, "c").Attr("health"); a.I != 10 {
 		t.Errorf("an untagged entity was hit: %d health", a.I)
 	}
 }
@@ -287,9 +288,9 @@ def on_ping(:ping:) -> null
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
+	lvl.Entities = append(lvl.Entities, world.Entity{
 		ID: "pong", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Attributes: AttrSet{"count": IntAttr(0)},
+		Attributes: world.AttrSet{"count": world.IntAttr(0)},
 	})
 
 	// If this hangs, the cap is broken — which is exactly the failure worth
@@ -315,8 +316,8 @@ func TestBrokenScriptIsReportedAndDisabled(t *testing.T) {
 	path := writeScript(t, root, "broken.flang", "def oops( -> null\n    return\nend")
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
-		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{},
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{},
 	})
 
 	runTicks(t, lvl, 2)
@@ -338,8 +339,8 @@ func TestRuntimeErrorDisablesAfterRepeatedFailures(t *testing.T) {
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
-		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{},
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{},
 	})
 
 	runTicks(t, lvl, scriptMaxErrorsPerScript+2)
@@ -387,9 +388,9 @@ func TestScriptsDoNotRunWhileEditing(t *testing.T) {
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
+	lvl.Entities = append(lvl.Entities, world.Entity{
 		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Attributes: AttrSet{"ticks": IntAttr(0)},
+		Attributes: world.AttrSet{"ticks": world.IntAttr(0)},
 	})
 
 	prevRT := *Scripts
@@ -414,9 +415,9 @@ def on_later(:later:) -> null
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
+	lvl.Entities = append(lvl.Entities, world.Entity{
 		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Attributes: AttrSet{"fired": IntAttr(0)},
+		Attributes: world.AttrSet{"fired": world.IntAttr(0)},
 	})
 
 	prevRT := *Scripts
@@ -450,9 +451,9 @@ def on_spawn(:spawn:) -> null
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
+	lvl.Entities = append(lvl.Entities, world.Entity{
 		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Attributes: AttrSet{"value": IntAttr(0)},
+		Attributes: world.AttrSet{"value": world.IntAttr(0)},
 	})
 
 	runTicks(t, lvl, 1)
@@ -483,16 +484,16 @@ end`)
 
 	lvl := tickTestLevel(t)
 	lvl.Entities = append(lvl.Entities,
-		Entity{ID: "reaper", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}},
-		Entity{ID: "victim", Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}},
+		world.Entity{ID: "reaper", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}},
+		world.Entity{ID: "victim", Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}},
 	)
 
 	runTicks(t, lvl, 1)
 
-	if FindEntity(lvl, "victim") != nil {
+	if world.FindEntity(lvl, "victim") != nil {
 		t.Error("destroy did not remove the entity")
 	}
-	if FindEntity(lvl, "reaper") == nil {
+	if world.FindEntity(lvl, "reaper") == nil {
 		t.Error("destroy removed the wrong entity")
 	}
 }
@@ -504,8 +505,8 @@ func TestSendingToADestroyedObjectIsDropped(t *testing.T) {
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
-		ID: "sender", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{},
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "sender", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{},
 	})
 
 	// Must not panic, and must not disable the script: an object may legitimately
@@ -521,8 +522,8 @@ func TestRefsSurviveALevelRebuild(t *testing.T) {
 	// The reason a ref is a path of names: undo rebuilds the level wholesale,
 	// and anything positional would dangle.
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
-		ID: "crate", Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{},
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{},
 	})
 
 	prevRT := *Scripts
@@ -535,8 +536,8 @@ func TestRefsSurviveALevelRebuild(t *testing.T) {
 
 	// Rebuild the entity slice with a different backing array — the same thing
 	// rawToLevel does — and the ref must still resolve.
-	rebuilt := make([]Entity, 0, 4)
-	rebuilt = append(rebuilt, Entity{ID: "other"}, lvl.Entities[0])
+	rebuilt := make([]world.Entity, 0, 4)
+	rebuilt = append(rebuilt, world.Entity{ID: "other"}, lvl.Entities[0])
 	lvl.Entities = rebuilt
 	Scripts.cache = buildRefCache(lvl)
 
@@ -557,9 +558,9 @@ func TestStatsCountDeliveries(t *testing.T) {
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
+	lvl.Entities = append(lvl.Entities, world.Entity{
 		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Attributes: AttrSet{"n": IntAttr(0)},
+		Attributes: world.AttrSet{"n": world.IntAttr(0)},
 	})
 
 	runTicks(t, lvl, 1)
@@ -577,8 +578,8 @@ func TestUnhandledAtomIsNotAnError(t *testing.T) {
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
-		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{},
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{},
 	})
 
 	// `tick` fires every frame and nothing handles it.
@@ -666,7 +667,7 @@ end`)
 		t.Errorf("the chunk's Y bounds stop at %v but its floor is at %v",
 			lvl.Chunks[0].MinBound.Y(), h)
 	}
-	if ch, s := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{5, h + 0.1, 5}); ch == nil || s == nil {
+	if ch, s := world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{5, h + 0.1, 5}); ch == nil || s == nil {
 		t.Error("standing on the lowered floor finds no sector — the player would fall out of the world")
 	}
 }
@@ -695,7 +696,7 @@ end`)
 	// rebuild the hash.
 	ScriptTick(lvl, 0.016, true)
 	DrainScriptWork(lvl)
-	lvl.Spatial = BuildSpatialHash(lvl.Chunks, 8.0)
+	lvl.Spatial = world.BuildSpatialHash(lvl.Chunks, 8.0)
 	before := lvl.Spatial
 
 	for i := 0; i < 5; i++ {
@@ -710,14 +711,14 @@ end`)
 // DrainScriptWorkSettle brings a hand-built test level to the state loading
 // would have left it in: sector bounds computed, chunk bounds rolled up, and a
 // spatial hash over the result.
-func DrainScriptWorkSettle(t *testing.T, lvl *Level) {
+func DrainScriptWorkSettle(t *testing.T, lvl *world.Level) {
 	t.Helper()
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
 		for si := range ch.Sectors {
-			_ = reloadSector(ch, &ch.Sectors[si])
+			_ = world.ReloadSector(ch, &ch.Sectors[si])
 		}
 		ch.RecomputeBounds()
 	}
-	lvl.Spatial = BuildSpatialHash(lvl.Chunks, 8.0)
+	lvl.Spatial = world.BuildSpatialHash(lvl.Chunks, 8.0)
 }

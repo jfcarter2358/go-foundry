@@ -20,6 +20,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
@@ -304,11 +305,11 @@ func editor3DVolumeMenuItems() []ctxMenuItem {
 	if v == nil {
 		return nil
 	}
-	shapes := make([]ctxMenuItem, 0, len(volumeShapeNames))
-	for i := range volumeShapeNames {
-		kind := VolumeShape(i)
+	shapes := make([]ctxMenuItem, 0, len(world.VolumeShapeNames))
+	for i := range world.VolumeShapeNames {
+		kind := world.VolumeShape(i)
 		shapes = append(shapes, ctxMenuItem{
-			Label:   volumeShapeNames[i],
+			Label:   world.VolumeShapeNames[i],
 			Checked: kind == v.Shape,
 			Do:      func() { editor3DSetVolumeShape(kind) },
 		})
@@ -331,7 +332,7 @@ func editor3DVolumeMenuItems() []ctxMenuItem {
 // editor3DSetVolumeShape switches the selected volume's shape, rebuilding the
 // cage that draws it — the menu's half of the panel's shape combo, going
 // through the same rebuild so the two cannot disagree.
-func editor3DSetVolumeShape(kind VolumeShape) {
+func editor3DSetVolumeShape(kind world.VolumeShape) {
 	v := activeVolume()
 	if v == nil || v.Shape == kind {
 		return

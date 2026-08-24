@@ -4,6 +4,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -152,11 +153,11 @@ func HandleEvent(event sdl.Event) {
 				// per-entity flags at all, which is how you tell "this entity
 				// is not solid" from "collision is off".
 				if !Editor.Active {
-					EntityWorldCollisionEnabled = !EntityWorldCollisionEnabled
+					world.EntityWorldCollisionEnabled = !world.EntityWorldCollisionEnabled
 				}
 			case sdl.SCANCODE_9:
 				if !Editor.Active {
-					EntityEntityCollisionEnabled = !EntityEntityCollisionEnabled
+					world.EntityEntityCollisionEnabled = !world.EntityEntityCollisionEnabled
 				}
 			}
 		}

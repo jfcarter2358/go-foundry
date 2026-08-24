@@ -18,10 +18,11 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 // hostTestLevel builds a small level with one of each addressable kind.
-func hostTestLevel(t *testing.T) *Level {
+func hostTestLevel(t *testing.T) *world.Level {
 	t.Helper()
 	withoutGeometryUploads(t)
 
@@ -30,25 +31,25 @@ func hostTestLevel(t *testing.T) *Level {
 	ch.Sectors[0].AddTag("room")
 	ch.Sectors[0].Floor.Texture = "concrete"
 
-	lvl := &Level{Chunks: []Chunk{*ch}}
+	lvl := &world.Level{Chunks: []world.Chunk{*ch}}
 
-	crate := Entity{ID: "crate", Type: "box", Visible: true,
+	crate := world.Entity{ID: "crate", Type: "box", Visible: true,
 		BoundHalfX: 1, BoundHalfY: 1, BoundHalfZ: 1,
 		Scale:      mgl32.Vec3{1, 1, 1},
-		Attributes: AttrSet{"health": IntAttr(25)}}
+		Attributes: world.AttrSet{"health": world.IntAttr(25)}}
 	crate.AddTag("breakable")
 	lvl.Entities = append(lvl.Entities, crate)
 
-	trigger := NewVolume("trigger", mgl32.Vec3{0, 0, 0})
+	trigger := world.NewVolume("trigger", mgl32.Vec3{0, 0, 0})
 	trigger.HalfX, trigger.HalfY, trigger.HalfZ = 5, 5, 5
 	trigger.AddTag("trap")
-	trigger.SetAttr("armed", BoolAttr(true))
+	trigger.SetAttr("armed", world.BoolAttr(true))
 	lvl.Volumes = append(lvl.Volumes, trigger)
 
-	lvl.Lights.Points = append(lvl.Lights.Points, PointLight{
+	lvl.Lights.Points = append(lvl.Lights.Points, world.PointLight{
 		ID: "lamp", Brightness: 1, Radius: 10, Color: mgl32.Vec3{1, 1, 1},
 	})
-	lvl.Lights.Directional = append(lvl.Lights.Directional, DirectionalLight{
+	lvl.Lights.Directional = append(lvl.Lights.Directional, world.DirectionalLight{
 		ID: "sun", Yaw: 0, Pitch: -45, Brightness: 1,
 	})
 	lvl.Lights.Directional[0].SyncDirection()
@@ -56,7 +57,7 @@ func hostTestLevel(t *testing.T) *Level {
 }
 
 // bindRuntime points the global runtime at lvl and restores it afterwards.
-func bindRuntime(t *testing.T, lvl *Level) *ScriptRuntime {
+func bindRuntime(t *testing.T, lvl *world.Level) *ScriptRuntime {
 	t.Helper()
 	prev := *Scripts
 	t.Cleanup(func() { *Scripts = prev })
@@ -65,7 +66,7 @@ func bindRuntime(t *testing.T, lvl *Level) *ScriptRuntime {
 }
 
 // runScript compiles src against the level host and calls `main`.
-func runScript(t *testing.T, lvl *Level, self string, src string) flang.Value {
+func runScript(t *testing.T, lvl *world.Level, self string, src string) flang.Value {
 	t.Helper()
 	rt := bindRuntime(t, lvl)
 	if self != "" {
@@ -94,7 +95,7 @@ func runScript(t *testing.T, lvl *Level, self string, src string) flang.Value {
 }
 
 // runScriptErr is runScript for the cases that are supposed to fail.
-func runScriptErr(t *testing.T, lvl *Level, self string, src string) error {
+func runScriptErr(t *testing.T, lvl *world.Level, self string, src string) error {
 	t.Helper()
 	rt := bindRuntime(t, lvl)
 	if self != "" {
@@ -267,7 +268,7 @@ func TestEdgeVisibilityIsNotInverted(t *testing.T) {
 
 func TestFloorHeightWriteQueuesARebuild(t *testing.T) {
 	// Height is geometry-mutating, so the write must be recorded for
-	// DrainScriptWork rather than applied inline — reloadSector is GL.
+	// DrainScriptWork rather than applied inline — ReloadSector is GL.
 	lvl := hostTestLevel(t)
 	rt := bindRuntime(t, lvl)
 	r, _ := rt.host.Resolve("room")
@@ -311,8 +312,8 @@ func TestLightDirectionIsWrittenThroughAngles(t *testing.T) {
 
 func TestTagBroadcastWritesEveryMember(t *testing.T) {
 	lvl := hostTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{ID: "crate2", Visible: true,
-		Scale: mgl32.Vec3{1, 1, 1}, Tags: []string{"breakable"}, Attributes: AttrSet{}})
+	lvl.Entities = append(lvl.Entities, world.Entity{ID: "crate2", Visible: true,
+		Scale: mgl32.Vec3{1, 1, 1}, Tags: []string{"breakable"}, Attributes: world.AttrSet{}})
 
 	runScript(t, lvl, "", script(`    #breakable.attr.health = 0`))
 	for i := range lvl.Entities {
@@ -402,7 +403,7 @@ func TestSetTextureOnASurface(t *testing.T) {
 
 func TestSetTextureReskinsEveryAttachment(t *testing.T) {
 	lvl := hostTestLevel(t)
-	lvl.Entities[0].Models = []EntityModel{{Name: "body"}, {Name: "lid"}}
+	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}, {Name: "lid"}}
 
 	runScript(t, lvl, "crate", script(`    set_texture(@crate, "rust")`))
 
@@ -422,7 +423,7 @@ func TestSetTextureReskinsEveryAttachment(t *testing.T) {
 
 func TestSetTextureTargetsOneAttachment(t *testing.T) {
 	lvl := hostTestLevel(t)
-	lvl.Entities[0].Models = []EntityModel{{Name: "body"}, {Name: "lid"}}
+	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}, {Name: "lid"}}
 
 	got := runScript(t, lvl, "crate", script(`    return set_texture(@crate, "lid", "rust")`))
 
@@ -441,7 +442,7 @@ func TestSetTextureOnAnUnknownAttachmentIsFalse(t *testing.T) {
 	// False rather than an error: a script reskinning "turret" on an entity
 	// type that has none is a miss, not a broken script.
 	lvl := hostTestLevel(t)
-	lvl.Entities[0].Models = []EntityModel{{Name: "body"}}
+	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}}
 	got := runScript(t, lvl, "crate", script(`    return set_texture(@crate, "turret", "rust")`))
 	if !flang.Equal(got, flang.BoolVal(false)) {
 		t.Errorf("got %v, want false", got)
@@ -458,7 +459,7 @@ func TestSetTextureRefusesSomethingWithoutOne(t *testing.T) {
 
 func TestEntityTextureProperty(t *testing.T) {
 	lvl := hostTestLevel(t)
-	lvl.Entities[0].Models = []EntityModel{{Name: "body"}}
+	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}}
 	got := runScript(t, lvl, "crate", script(`    @crate.prop.texture = "rust"
     return @crate.prop.texture`))
 	if !flang.Equal(got, flang.StrVal("rust")) {
@@ -481,9 +482,9 @@ func TestThePlayerCannotBeDestroyed(t *testing.T) {
 	// The engine owns the player and the camera rides on it; deleting it would
 	// leave the view attached to nothing.
 	lvl := hostTestLevel(t)
-	prev := PlayerEntity
-	PlayerEntity = NewPlayer(mgl32.Vec3{})
-	t.Cleanup(func() { PlayerEntity = prev })
+	prev := world.PlayerEntity
+	world.PlayerEntity = world.NewPlayer(mgl32.Vec3{})
+	t.Cleanup(func() { world.PlayerEntity = prev })
 
 	err := runScriptErr(t, lvl, "crate", script(`    destroy(@player)`))
 	if !strings.Contains(err.Error(), "player") {

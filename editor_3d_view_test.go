@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -11,19 +12,19 @@ import (
 // occluderLevel builds a level whose only geometry is one wall quad standing at
 // z = -5, spanning ±2 in X and Y. The camera set up by setupPickCamera looks
 // straight down -Z through the middle of it.
-func occluderLevel() *Level {
-	wall := Wall{Visible: true, Geometry: gfx.Geometry{Vertices: quadVerts(-5, 2)}}
-	return &Level{Chunks: []Chunk{{
+func occluderLevel() *world.Level {
+	wall := world.Wall{Visible: true, Geometry: gfx.Geometry{Vertices: quadVerts(-5, 2)}}
+	return &world.Level{Chunks: []world.Chunk{{
 		ID:       "c0",
 		MinBound: mgl32.Vec3{-3, -5, -11},
 		MaxBound: mgl32.Vec3{3, 5, -1},
-		Sectors: []Sector{{
+		Sectors: []world.Sector{{
 			ID:       "s0",
-			Walls:    []Wall{wall},
+			Walls:    []world.Wall{wall},
 			MinBound: mgl32.Vec2{-3, -11},
 			MaxBound: mgl32.Vec2{3, -1},
-			Floor:    Floor{Height: -3},
-			Ceiling:  Ceiling{Height: 3},
+			Floor:    world.Floor{Height: -3},
+			Ceiling:  world.Ceiling{Height: 3},
 		}},
 	}}}
 }
@@ -236,14 +237,14 @@ func TestPointModeMissDoesNotFallThroughToTheFace(t *testing.T) {
 
 // waterLevel puts a water plane at z = -4, in front of occluderLevel's wall,
 // with the Water-kind biome sector it was derived from.
-func waterLevel() *Level {
+func waterLevel() *world.Level {
 	lvl := occluderLevel()
 	ch := &lvl.Chunks[0]
-	ch.BiomeSectors = []BiomeSector{
-		{ID: "other", Brush: BiomeBrush{Kind: BiomeGrass}},
-		{ID: "lake", Brush: BiomeBrush{Kind: BiomeWater}},
+	ch.BiomeSectors = []world.BiomeSector{
+		{ID: "other", Brush: world.BiomeBrush{Kind: world.BiomeGrass}},
+		{ID: "lake", Brush: world.BiomeBrush{Kind: world.BiomeWater}},
 	}
-	ch.WaterSurfaces = []WaterSurface{{
+	ch.WaterSurfaces = []world.WaterSurface{{
 		ID:       "lake",
 		ChunkID:  ch.ID,
 		Position: mgl32.Vec3{0, 0, -4},

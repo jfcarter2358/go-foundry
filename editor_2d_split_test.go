@@ -3,6 +3,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -17,18 +18,18 @@ import (
 // A walks 0→1→2→3, so its edge 1 is (1→2). B walks 1→4→5→2, so its edge 3 is
 // (2→1) — the same segment in the opposite winding, which is how InferPortals
 // recognises a shared edge.
-func splitTestChunk() *Chunk {
-	ch := &Chunk{
+func splitTestChunk() *world.Chunk {
+	ch := &world.Chunk{
 		Points: []mgl32.Vec2{
 			{0, 0}, {10, 0}, {10, 10}, {0, 10}, {20, 0}, {20, 10},
 		},
 	}
 	ch.PointNames = make([]string, len(ch.Points))
 
-	mkWalls := func(indices []int) []Wall {
-		var walls []Wall
+	mkWalls := func(indices []int) []world.Wall {
+		var walls []world.Wall
 		for i := range indices {
-			walls = append(walls, Wall{
+			walls = append(walls, world.Wall{
 				StartPoint: ch.Points[indices[i]],
 				EndPoint:   ch.Points[indices[(i+1)%len(indices)]],
 				Texture:    "concrete",
@@ -42,40 +43,40 @@ func splitTestChunk() *Chunk {
 
 	idxA := []int{0, 1, 2, 3}
 	idxB := []int{1, 4, 5, 2}
-	ch.Sectors = []Sector{
+	ch.Sectors = []world.Sector{
 		{
 			ID:           "A",
 			PointIndices: idxA,
 			EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
 			Walls:        mkWalls(idxA),
-			Floor:        Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0, 0}},
-			Ceiling:      Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
+			Floor:        world.Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0, 0}},
+			Ceiling:      world.Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
 		},
 		{
 			ID:           "B",
 			PointIndices: idxB,
 			EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
 			Walls:        mkWalls(idxB),
-			Floor:        Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0, 0}},
-			Ceiling:      Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
+			Floor:        world.Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0, 0}},
+			Ceiling:      world.Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
 		},
 	}
 	return ch
 }
 
 // makeSharedEdgeAPortal turns the A/B shared edge into a reciprocal portal pair.
-func makeSharedEdgeAPortal(ch *Chunk) {
+func makeSharedEdgeAPortal(ch *world.Chunk) {
 	a, b := &ch.Sectors[0], &ch.Sectors[1]
 
 	a.EdgeKinds = []string{"wall", "portal", "wall", "wall"}
-	a.Portals = []Portal{{
+	a.Portals = []world.Portal{{
 		StartPoint: ch.Points[1], EndPoint: ch.Points[2], ToSector: "B",
 		DrawGap: true, GapTexture: "metal", Visible: true, DoubleSided: true, Alpha: 0.75,
 	}}
 	a.Walls = append(a.Walls[:1], a.Walls[2:]...)
 
 	b.EdgeKinds = []string{"wall", "wall", "wall", "portal"}
-	b.Portals = []Portal{{
+	b.Portals = []world.Portal{{
 		StartPoint: ch.Points[2], EndPoint: ch.Points[1], ToSector: "A",
 		DrawGap: true, GapTexture: "metal", Visible: true, DoubleSided: true, Alpha: 0.75,
 	}}
@@ -83,7 +84,7 @@ func makeSharedEdgeAPortal(ch *Chunk) {
 }
 
 // sectorEdges returns each sector edge as an ordered pair of chunk point indices.
-func sectorEdges(s *Sector) [][2]int {
+func sectorEdges(s *world.Sector) [][2]int {
 	n := len(s.PointIndices)
 	edges := make([][2]int, n)
 	for ei := 0; ei < n; ei++ {
@@ -160,7 +161,7 @@ func TestApplyEdgeSplitWallHalvesInheritProperties(t *testing.T) {
 	ch := splitTestChunk()
 
 	// Give the wall about to be split a thoroughly non-default set of properties.
-	orig := Wall{
+	orig := world.Wall{
 		StartPoint:  ch.Points[1],
 		EndPoint:    ch.Points[2],
 		Texture:     "rusted_metal",
@@ -173,7 +174,7 @@ func TestApplyEdgeSplitWallHalvesInheritProperties(t *testing.T) {
 		UVOffset:    mgl32.Vec2{0.25, 0.5},
 		UVScale:     mgl32.Vec2{2, 3},
 		UVRotation:  1.25,
-		Detail:      DetailSpec{Enabled: true},
+		Detail:      world.DetailSpec{Enabled: true},
 	}
 	ch.Sectors[0].Walls[1] = orig
 
@@ -200,7 +201,7 @@ func TestApplyEdgeSplitWallHalvesInheritProperties(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		w    Wall
+		w    world.Wall
 	}{{"first half", first}, {"second half", second}} {
 		got, want := tc.w, orig
 		// Endpoints and geometry legitimately differ; everything else must not.
@@ -251,7 +252,7 @@ func TestApplyEdgeSplitKeepsSharedPortalReciprocal(t *testing.T) {
 	if len(a.Portals) != 2 || len(b.Portals) != 2 {
 		t.Fatalf("portals after split = A:%d B:%d, want 2 each", len(a.Portals), len(b.Portals))
 	}
-	for _, p := range append(append([]Portal{}, a.Portals...), b.Portals...) {
+	for _, p := range append(append([]world.Portal{}, a.Portals...), b.Portals...) {
 		if p.ToSector == "" || !p.DrawGap || p.GapTexture != "metal" || !p.Visible ||
 			!p.DoubleSided || p.Alpha != 0.75 {
 			t.Errorf("portal half lost properties: %+v", p)
@@ -318,13 +319,13 @@ func TestInsertSectorVertexLerpsVertexOffsets(t *testing.T) {
 }
 
 func TestSplitWallDividesExtrusionsAtSplitPoint(t *testing.T) {
-	rect := func(u0, u1 float32) []ExtrusionPoint {
-		return []ExtrusionPoint{{U: u0, V: 1}, {U: u1, V: 1}, {U: u1, V: 2}, {U: u0, V: 2}}
+	rect := func(u0, u1 float32) []world.ExtrusionPoint {
+		return []world.ExtrusionPoint{{U: u0, V: 1}, {U: u1, V: 1}, {U: u1, V: 2}, {U: u0, V: 2}}
 	}
-	w := Wall{
+	w := world.Wall{
 		StartPoint: mgl32.Vec2{0, 0},
 		EndPoint:   mgl32.Vec2{10, 0},
-		Extrusions: []Extrusion{
+		Extrusions: []world.Extrusion{
 			{Outer: rect(0.5, 1.5), Inner: rect(0.5, 1.5), Texture: "left"},
 			{Outer: rect(5, 6), Inner: rect(5, 6), Texture: "right"},
 			{Outer: rect(2, 4), Inner: rect(2, 4), Texture: "straddle"},
@@ -352,14 +353,14 @@ func TestSplitWallDividesExtrusionsAtSplitPoint(t *testing.T) {
 }
 
 func TestSplitWallDropsSliverExtrusionSides(t *testing.T) {
-	rect := func(u0, u1 float32) []ExtrusionPoint {
-		return []ExtrusionPoint{{U: u0, V: 1}, {U: u1, V: 1}, {U: u1, V: 2}, {U: u0, V: 2}}
+	rect := func(u0, u1 float32) []world.ExtrusionPoint {
+		return []world.ExtrusionPoint{{U: u0, V: 1}, {U: u1, V: 1}, {U: u1, V: 2}, {U: u0, V: 2}}
 	}
 	// Straddles the 3.0 seam by only 0.001 units on the far side.
-	w := Wall{
+	w := world.Wall{
 		StartPoint: mgl32.Vec2{0, 0},
 		EndPoint:   mgl32.Vec2{10, 0},
-		Extrusions: []Extrusion{{Outer: rect(1, 3.001), Inner: rect(1, 3.001)}},
+		Extrusions: []world.Extrusion{{Outer: rect(1, 3.001), Inner: rect(1, 3.001)}},
 	}
 
 	first, second := splitWall(w, mgl32.Vec2{3, 0}, 0.3)
@@ -372,11 +373,11 @@ func TestSplitWallDropsSliverExtrusionSides(t *testing.T) {
 }
 
 func TestSplitWallDividesTerrainPoints(t *testing.T) {
-	w := Wall{
+	w := world.Wall{
 		StartPoint: mgl32.Vec2{0, 0},
 		EndPoint:   mgl32.Vec2{10, 0},
 		Terrain:    true,
-		TerrainPoints: []TerrainPoint{
+		TerrainPoints: []world.TerrainPoint{
 			{U: 1, V: 2, Depth: 0.5},
 			{U: 7, V: 2, Depth: -0.5},
 			{U: 3, V: 1, Depth: 0.25},
@@ -405,7 +406,7 @@ func TestSplitWallDividesTerrainPoints(t *testing.T) {
 }
 
 func TestSplitPortalHalvesShareTargetAndSettings(t *testing.T) {
-	p := Portal{
+	p := world.Portal{
 		StartPoint: mgl32.Vec2{0, 0},
 		EndPoint:   mgl32.Vec2{10, 0},
 		ToSector:   "hallway",
@@ -421,7 +422,7 @@ func TestSplitPortalHalvesShareTargetAndSettings(t *testing.T) {
 		t.Errorf("halves do not meet at %v: %v→%v and %v→%v",
 			mid, first.StartPoint, first.EndPoint, second.StartPoint, second.EndPoint)
 	}
-	for name, got := range map[string]Portal{"first": first, "second": second} {
+	for name, got := range map[string]world.Portal{"first": first, "second": second} {
 		if got.ToSector != p.ToSector || got.DrawGap != p.DrawGap ||
 			got.GapTexture != p.GapTexture || got.Visible != p.Visible || got.Alpha != p.Alpha {
 			t.Errorf("%s half lost portal settings: %+v", name, got)
@@ -452,7 +453,7 @@ func TestSegmentParam2D(t *testing.T) {
 	}
 }
 
-func assertURanges(t *testing.T, label string, exts []Extrusion, want [][2]float32) {
+func assertURanges(t *testing.T, label string, exts []world.Extrusion, want [][2]float32) {
 	t.Helper()
 	if len(exts) != len(want) {
 		t.Fatalf("%s has %d extrusions, want %d", label, len(exts), len(want))

@@ -3,6 +3,7 @@ package main
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -12,21 +13,21 @@ import (
 // setupEdgePickScene builds a chunk holding sectors over the given point set,
 // aims the camera at the origin from +Z, and returns the level. Ceilings sit at
 // y=3 so ceiling and vertical edges stay well away from the clicked pixels.
-func setupEdgePickScene(points []mgl32.Vec2, sectors ...[]int) *Level {
+func setupEdgePickScene(points []mgl32.Vec2, sectors ...[]int) *world.Level {
 	platform.WinWidth, platform.WinHeight = 800, 600
 	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	gfx.Cam.Position = mgl32.Vec3{0, 1, 6}
 	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 
-	ch := Chunk{ID: "c0", Points: points}
+	ch := world.Chunk{ID: "c0", Points: points}
 	for i, idx := range sectors {
-		s := Sector{ID: string(rune('a' + i)), PointIndices: idx}
+		s := world.Sector{ID: string(rune('a' + i)), PointIndices: idx}
 		s.Floor.Enabled = true
 		s.Ceiling.Enabled = true
 		s.Ceiling.Height = 3
 		ch.Sectors = append(ch.Sectors, s)
 	}
-	return &Level{Chunks: []Chunk{ch}}
+	return &world.Level{Chunks: []world.Chunk{ch}}
 }
 
 // pixelOf projects a world point to the pixel it lands on.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -16,14 +17,14 @@ func gizmo3DVertexSelection(t *testing.T) mgl32.Mat4 {
 	t.Helper()
 	projView := setupGizmoView()
 	Editor.Mode = Mode3D
-	Editor.level = &Level{Chunks: []Chunk{{
+	Editor.level = &world.Level{Chunks: []world.Chunk{{
 		ID:     "c0",
 		Points: []mgl32.Vec2{{-1, 0}, {1, 0}, {0, 2}},
-		Sectors: []Sector{{
+		Sectors: []world.Sector{{
 			ID:           "s0",
 			PointIndices: []int{0, 1, 2},
-			Floor:        Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0}},
-			Ceiling:      Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0}},
+			Floor:        world.Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0}},
+			Ceiling:      world.Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0}},
 		}},
 	}}}
 	Editor.ActiveChunkIdx = 0
@@ -105,7 +106,7 @@ func gizmo3DSpawnSelection(t *testing.T) {
 	t.Helper()
 	setupGizmoView()
 	Editor.Mode = Mode3D
-	Editor.level = &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
+	Editor.level = &world.Level{Spawn: &world.SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
 	Editor.SelectedVertices = nil
 	Editor.SpawnSelected = true
 	Editor.GizmoKind = gizmoKindSpawn
@@ -170,7 +171,7 @@ func TestGizmoRotateTurnsTheSpawnMarkerInPlace(t *testing.T) {
 	}
 	// The arrow the author sees and the direction gameplay reads are the same
 	// vector, so a quarter turn about Y has to swing the facing from +X to -Z.
-	if d := SpawnDirection(s); !vecNear(d, mgl32.Vec3{0, 0, -1}, 1e-5) {
+	if d := world.SpawnDirection(s); !vecNear(d, mgl32.Vec3{0, 0, -1}, 1e-5) {
 		t.Errorf("facing after the turn = %v, want {0 0 -1}", d)
 	}
 }

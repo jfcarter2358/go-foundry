@@ -21,14 +21,8 @@ package main
 // which is why EntityUpdate is handed a pointer to it.
 
 import (
-	"foundry/internal/hooks"
-	"math"
-
-	"github.com/go-gl/mathgl/mgl32"
+	"foundry/internal/world"
 )
-
-// twoPi is the wrap period for Euler angles under angular velocity.
-const twoPi = float32(2 * math.Pi)
 
 // EntityUpdate advances every entity in the level by dt seconds.
 //
@@ -44,7 +38,7 @@ const twoPi = float32(2 * math.Pi)
 // against the world. Separating as each entity moved would make the result
 // depend on the order the level lists them in; skipping the settle would let a
 // push shove something through a wall.
-func EntityUpdate(lvl *Level, dt float32, motion bool, player *Entity) {
+func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entity) {
 	if lvl == nil {
 		return
 	}
@@ -52,12 +46,12 @@ func EntityUpdate(lvl *Level, dt float32, motion bool, player *Entity) {
 		e := &lvl.Entities[i]
 		if motion {
 			old := e.Position
-			e.applyGravity(dt)
+			e.ApplyGravity(dt)
 			e.Integrate(dt)
-			if e.collidesWithWorld() && resolveEntityWorld(lvl, e, old) {
-				e.Collision.groundedNext = true
+			if e.CollidesWithWorld() && resolveEntityWorld(lvl, e, old) {
+				e.Collision.GroundedNext = true
 			}
-			e.updateLocation(lvl)
+			e.UpdateLocation(lvl)
 		}
 		e.UpdateAnimations(dt)
 	}
@@ -67,7 +61,7 @@ func EntityUpdate(lvl *Level, dt float32, motion bool, player *Entity) {
 
 	for _, i := range ResolveEntityCollisions(lvl, player) {
 		e := &lvl.Entities[i]
-		if !e.collidesWithWorld() {
+		if !e.CollidesWithWorld() {
 			continue
 		}
 		// Settle from where it now is rather than from where it started the
@@ -75,133 +69,26 @@ func EntityUpdate(lvl *Level, dt float32, motion bool, player *Entity) {
 		// resolver the frame's original position would have it judge the push
 		// as though the entity had walked there.
 		if resolveEntityWorld(lvl, e, e.Position) {
-			e.Collision.groundedNext = true
+			e.Collision.GroundedNext = true
 		}
-		e.updateLocation(lvl)
+		e.UpdateLocation(lvl)
 	}
 
 	// Publish this frame's ground state, now that every push and every settle
 	// has contributed to it.
 	for i := range lvl.Entities {
-		lvl.Entities[i].commitGrounded()
+		lvl.Entities[i].CommitGrounded()
 	}
 	if player != nil {
-		player.commitGrounded()
-	}
-}
-
-// Integrate advances position by velocity and rotation by angular velocity.
-//
-// Rotation wraps into [-π, π] rather than growing without bound: an entity
-// spinning at 1 rad/s for an hour would otherwise reach an angle whose float32
-// resolution is coarser than a degree, and the spin would visibly quantise.
-func (e *Entity) Integrate(dt float32) {
-	if e.Velocity != (mgl32.Vec3{}) {
-		e.Position = e.Position.Add(e.Velocity.Mul(dt))
-	}
-	if e.AngularVelocity != (mgl32.Vec3{}) {
-		r := e.Rotation.Add(e.AngularVelocity.Mul(dt))
-		e.Rotation = mgl32.Vec3{wrapAngle(r.X()), wrapAngle(r.Y()), wrapAngle(r.Z())}
-	}
-}
-
-// wrapAngle folds an angle into [-π, π].
-func wrapAngle(a float32) float32 {
-	if a >= -math.Pi && a <= math.Pi {
-		return a
-	}
-	a = float32(math.Mod(float64(a), float64(twoPi)))
-	if a > math.Pi {
-		a -= twoPi
-	} else if a < -math.Pi {
-		a += twoPi
-	}
-	return a
-}
-
-// updateLocation refreshes which chunk and sector the entity is standing in.
-//
-// This is derived state that scripts read — which room is the guard in — and
-// that a future entity-aware collision pass would start from. It narrows the
-// same way the player already does, through the same spatial hash.
-func (e *Entity) updateLocation(lvl *Level) {
-	chunk, sector := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, e.Position)
-	if chunk != nil {
-		e.CurrentChunk = chunk.ID
-	} else {
-		e.CurrentChunk = ""
-	}
-	if sector != nil {
-		e.CurrentSector = sector.ID
-	} else {
-		e.CurrentSector = ""
-	}
-}
-
-// UpdateAnimations advances every attachment's clip.
-func (e *Entity) UpdateAnimations(dt float32) {
-	for i := range e.Models {
-		e.Models[i].Update(dt, e.ID)
-	}
-}
-
-// PlayAnimation starts a named animation on one attachment and reports whether
-// it resolved. An empty model name plays on every attachment that has an
-// animation by that name, which is what a script asking a whole entity to
-// "walk" means when the walk is split across a body and a pair of legs.
-func (e *Entity) PlayAnimation(model, animation string) bool {
-	if model != "" {
-		m := e.Model(model)
-		if m == nil {
-			return false
-		}
-		if !m.Play(animation) {
-			return false
-		}
-		// The clip has begun. Emitted here rather than in EntityModel.Play
-		// because an attachment has no way back to its entity, and a clip
-		// restarted from its own end has no clock change for Update to notice.
-		hooks.RecordAnimEvent(hooks.AnimEvent{Entity: e.ID, Model: m.Name, Animation: animation})
-		return true
-	}
-	any := false
-	for i := range e.Models {
-		if e.Models[i].Play(animation) {
-			hooks.RecordAnimEvent(hooks.AnimEvent{Entity: e.ID, Model: e.Models[i].Name, Animation: animation})
-			any = true
-		}
-	}
-	return any
-}
-
-// StopAnimations returns every attachment to its rest pose.
-func (e *Entity) StopAnimations() {
-	for i := range e.Models {
-		e.Models[i].Stop()
+		player.CommitGrounded()
 	}
 }
 
 // ---------- level-wide helpers ----------
 
-// EntitiesContaining returns every entity whose bounding volume holds p — the
-// query behind the scripting engine's `enter`/`exit` events, and what an
-// "interact" key press resolves through.
-func EntitiesContaining(lvl *Level, p mgl32.Vec3) []*Entity {
-	if lvl == nil {
-		return nil
-	}
-	var out []*Entity
-	for i := range lvl.Entities {
-		if lvl.Entities[i].ContainsPoint(p) {
-			out = append(out, &lvl.Entities[i])
-		}
-	}
-	return out
-}
-
 // DeleteEntities releases every entity's GPU buffers. Called when a level is
 // replaced, so the outgoing level's meshes do not leak.
-func DeleteEntities(lvl *Level) {
+func DeleteEntities(lvl *world.Level) {
 	if lvl == nil {
 		return
 	}

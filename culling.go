@@ -1,6 +1,10 @@
 package main
 
-import "github.com/go-gl/mathgl/mgl32"
+import (
+	"foundry/internal/world"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
 
 // Frustum holds the six clip planes of the view frustum.
 type Frustum struct {
@@ -77,7 +81,7 @@ func PortalFacingCamera(start, end mgl32.Vec2, camPos mgl32.Vec3) bool {
 // set of reachable sector IDs. If portalFilter is non-nil, only portals for
 // which portalFilter returns true are traversed.
 // Returns nil if startSectorID is empty or not found.
-func portalBFS(chunk *Chunk, startSectorID string, portalFilter func(p *Portal) bool) map[string]bool {
+func portalBFS(chunk *world.Chunk, startSectorID string, portalFilter func(p *world.Portal) bool) map[string]bool {
 	if startSectorID == "" {
 		return nil
 	}
@@ -122,8 +126,8 @@ func portalBFS(chunk *Chunk, startSectorID string, portalFilter func(p *Portal) 
 // portals and returns the set of sector IDs reachable (and therefore visible).
 // Returns nil if startSectorID is empty or not found, signalling the caller to
 // fall back to frustum-only culling.
-func PortalVisibleSectors(chunk *Chunk, startSectorID string, camPos mgl32.Vec3) map[string]bool {
-	return portalBFS(chunk, startSectorID, func(p *Portal) bool {
+func PortalVisibleSectors(chunk *world.Chunk, startSectorID string, camPos mgl32.Vec3) map[string]bool {
+	return portalBFS(chunk, startSectorID, func(p *world.Portal) bool {
 		return PortalFacingCamera(p.StartPoint, p.EndPoint, camPos)
 	})
 }
@@ -133,13 +137,13 @@ func PortalVisibleSectors(chunk *Chunk, startSectorID string, camPos mgl32.Vec3)
 // which sectors participate in the portal graph so that disconnected sectors
 // (e.g. nested sectors with no shared edges) can bypass portal culling.
 // Returns nil if startSectorID is empty or not found.
-func PortalConnectedSectors(chunk *Chunk, startSectorID string) map[string]bool {
+func PortalConnectedSectors(chunk *world.Chunk, startSectorID string) map[string]bool {
 	return portalBFS(chunk, startSectorID, nil)
 }
 
 // WallFacingCamera returns true when the wall's outward normal (left-hand normal
 // of its direction vector, CCW interior convention) points toward camPos.
-func WallFacingCamera(wall Wall, camPos mgl32.Vec3) bool {
+func WallFacingCamera(wall world.Wall, camPos mgl32.Vec3) bool {
 	dx := wall.EndPoint.X() - wall.StartPoint.X()
 	dz := wall.EndPoint.Y() - wall.StartPoint.Y()
 	// Left-hand normal of (dx, dz) in XZ plane

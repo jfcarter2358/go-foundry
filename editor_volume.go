@@ -15,6 +15,7 @@ package main
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -23,7 +24,7 @@ import (
 // ---------- selection ----------
 
 // activeVolume returns the selected volume, or nil.
-func activeVolume() *Volume {
+func activeVolume() *world.Volume {
 	lvl := Editor.level
 	if lvl == nil || Editor.ActiveVolumeIdx < 0 || Editor.ActiveVolumeIdx >= len(lvl.Volumes) {
 		return nil
@@ -55,7 +56,7 @@ func editorClearVolumeSelection() {
 // activeGizmoVolume returns the volume the gizmo is attached to, or nil. The
 // gizmo kind is checked as well as the index, so a stale selection left by
 // another tool cannot silently be dragged.
-func activeGizmoVolume() *Volume {
+func activeGizmoVolume() *world.Volume {
 	if Editor.GizmoKind != gizmoKindVolume {
 		return nil
 	}
@@ -86,7 +87,7 @@ func placeVolumeAt(pos mgl32.Vec3) bool {
 	if base == "" {
 		base = "volume"
 	}
-	v := NewVolume(uniqueVolumeID(lvl, base), pos)
+	v := world.NewVolume(world.UniqueVolumeID(lvl, base), pos)
 	if err := v.Load(); err != nil {
 		// The cage is an authoring aid; a volume without one still triggers.
 		editorSetStatus("Volume %s: %v", v.ID, err)
@@ -111,9 +112,9 @@ func duplicateActiveVolume() {
 	}
 	EditorPushUndo()
 	cp := *src
-	cp.ScriptData = cloneScriptData(src.ScriptData)
+	cp.ScriptData = world.CloneScriptData(src.ScriptData)
 	cp.Geometry = gfx.Geometry{}
-	cp.ID = uniqueVolumeID(lvl, src.ID)
+	cp.ID = world.UniqueVolumeID(lvl, src.ID)
 	cp.Position = src.Position.Add(mgl32.Vec3{src.HalfX * 2, 0, 0})
 	if err := cp.Load(); err != nil {
 		editorSetStatus("Volume %s: %v", cp.ID, err)
@@ -161,11 +162,11 @@ func rebuildActiveVolumeCage() {
 //
 // Enabled is ignored for the same reason pickVolumeAt ignores it: a script that
 // disarmed a trigger must not thereby make it unselectable.
-func pickVolumeRayT(origin, dir mgl32.Vec3, v *Volume) float32 {
+func pickVolumeRayT(origin, dir mgl32.Vec3, v *world.Volume) float32 {
 	if !v.HasBounds() {
 		return float32(math.MaxFloat32)
 	}
-	t0, _, ok := rayShapeRange(origin, dir, v.Position, v.Rotation, v.HalfExtents(), v.boundingKind())
+	t0, _, ok := rayShapeRange(origin, dir, v.Position, v.Rotation, v.HalfExtents(), v.BoundingKind())
 	if !ok || t0 <= 0 {
 		return float32(math.MaxFloat32)
 	}
@@ -175,7 +176,7 @@ func pickVolumeRayT(origin, dir mgl32.Vec3, v *Volume) float32 {
 // pickVolumeAt returns the index of the volume whose region contains p, or -1.
 // The smallest containing volume wins, so a small trigger inside a large room
 // volume is still selectable.
-func pickVolumeAt(lvl *Level, p mgl32.Vec3) int {
+func pickVolumeAt(lvl *world.Level, p mgl32.Vec3) int {
 	if lvl == nil {
 		return -1
 	}
@@ -188,7 +189,7 @@ func pickVolumeAt(lvl *Level, p mgl32.Vec3) int {
 		if !v.HasBounds() {
 			continue
 		}
-		if !shapeContainsPoint(p, v.Position, v.Rotation, v.HalfExtents(), v.boundingKind()) {
+		if !world.ShapeContainsPoint(p, v.Position, v.Rotation, v.HalfExtents(), v.BoundingKind()) {
 			continue
 		}
 		vol := v.HalfX * v.HalfY * v.HalfZ
@@ -235,7 +236,7 @@ func drawSelectedVolumeOutline() {
 	if v == nil || !v.HasBounds() {
 		return
 	}
-	verts, idx := v.cageMesh()
+	verts, idx := v.CageMesh()
 	model := v.ModelMatrix()
 	at := func(i int) mgl32.Vec3 {
 		p := model.Mul4x1(mgl32.Vec4{verts[i][0], verts[i][1], verts[i][2], 1})

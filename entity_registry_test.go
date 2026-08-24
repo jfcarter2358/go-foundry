@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/fileutil"
+	"foundry/internal/world"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,11 +17,11 @@ import (
 func withEntityDefsDir(t *testing.T, files map[string]string) {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, entitiesDirName), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, world.EntitiesDirName), 0755); err != nil {
 		t.Fatal(err)
 	}
 	for name, body := range files {
-		path := filepath.Join(root, entitiesDirName, name)
+		path := filepath.Join(root, world.EntitiesDirName, name)
 		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -28,10 +29,10 @@ func withEntityDefsDir(t *testing.T, files map[string]string) {
 
 	prev := fileutil.ExecutablePath
 	fileutil.ExecutablePath = root
-	ReloadEntityDefs()
+	world.ReloadEntityDefs()
 	t.Cleanup(func() {
 		fileutil.ExecutablePath = prev
-		ReloadEntityDefs()
+		world.ReloadEntityDefs()
 	})
 }
 
@@ -43,7 +44,7 @@ func TestLoadEntityDefReadsFromDisk(t *testing.T) {
 		"unnamed.yaml": "tags: [scenery]\n",
 	})
 
-	def, err := LoadEntityDef("crate")
+	def, err := world.LoadEntityDef("crate")
 	if err != nil {
 		t.Fatalf("LoadEntityDef: %v", err)
 	}
@@ -51,7 +52,7 @@ func TestLoadEntityDefReadsFromDisk(t *testing.T) {
 		t.Errorf("got %+v", def)
 	}
 
-	def, err = LoadEntityDef("unnamed")
+	def, err = world.LoadEntityDef("unnamed")
 	if err != nil {
 		t.Fatalf("LoadEntityDef(unnamed): %v", err)
 	}
@@ -65,15 +66,15 @@ func TestLoadEntityDefReportsMissingAndMalformed(t *testing.T) {
 		"broken.yaml": "id: broken\nattributes:\n  health: {type: colour, value: 1}\n",
 	})
 
-	if _, err := LoadEntityDef("nothere"); err == nil {
+	if _, err := world.LoadEntityDef("nothere"); err == nil {
 		t.Error("a missing definition loaded")
 	}
-	if _, err := LoadEntityDef("broken"); err == nil {
+	if _, err := world.LoadEntityDef("broken"); err == nil {
 		t.Error("a definition with an unknown attribute type loaded")
 	}
 	// The failure is cached too, so a level placing fifty of a missing type
 	// reports it once rather than opening the file fifty times.
-	if _, err := LoadEntityDef("nothere"); err == nil {
+	if _, err := world.LoadEntityDef("nothere"); err == nil {
 		t.Error("the second lookup of a missing definition succeeded")
 	}
 }
@@ -85,7 +86,7 @@ func TestScanEntityDefsListsSortedNames(t *testing.T) {
 		"notes.txt":  "not a definition",
 	})
 
-	got := ScanEntityDefs()
+	got := world.ScanEntityDefs()
 	if len(got) != 2 || got[0] != "alpha" || got[1] != "zeta" {
 		t.Errorf("got %v, want [alpha zeta]", got)
 	}
@@ -94,35 +95,35 @@ func TestScanEntityDefsListsSortedNames(t *testing.T) {
 func TestSaveEntityDefRoundTrips(t *testing.T) {
 	withEntityDefsDir(t, nil)
 
-	def := &EntityDef{
+	def := &world.EntityDef{
 		Name:         "turret",
 		Description:  "Shoots.",
 		Tags:         []string{"hostile"},
-		BoundingKind: BoundingCylinder,
+		BoundingKind: world.BoundingCylinder,
 		BoundHalfX:   0.5, BoundHalfY: 1, BoundHalfZ: 0.5,
 		Visible:    true,
-		Attributes: AttrSet{"damage": IntAttr(7)},
-		Models: []EntityModel{{
+		Attributes: world.AttrSet{"damage": world.IntAttr(7)},
+		Models: []world.EntityModel{{
 			Name:    "barrel",
 			Path:    "models/turret.fmdl",
 			Visible: true,
-			Animations: []EntityAnimation{
+			Animations: []world.EntityAnimation{
 				{Name: "fire", Clip: "recoil", Speed: 2},
 			},
 		}},
 	}
-	if err := SaveEntityDef(def); err != nil {
+	if err := world.SaveEntityDef(def); err != nil {
 		t.Fatalf("SaveEntityDef: %v", err)
 	}
 
-	got, err := LoadEntityDef("turret")
+	got, err := world.LoadEntityDef("turret")
 	if err != nil {
 		t.Fatalf("LoadEntityDef: %v", err)
 	}
 	if got.Name != def.Name || got.BoundingKind != def.BoundingKind || !got.Visible {
 		t.Errorf("identity/bounds drifted: %+v", got)
 	}
-	if v := got.Attributes["damage"]; v != IntAttr(7) {
+	if v := got.Attributes["damage"]; v != world.IntAttr(7) {
 		t.Errorf("attribute drifted: %+v", v)
 	}
 	if len(got.Models) != 1 {
@@ -142,18 +143,18 @@ func TestSaveEntityDefRoundTrips(t *testing.T) {
 func TestShippedEntityDefsLoad(t *testing.T) {
 	prev := fileutil.ExecutablePath
 	fileutil.ExecutablePath = "resources"
-	ReloadEntityDefs()
+	world.ReloadEntityDefs()
 	t.Cleanup(func() {
 		fileutil.ExecutablePath = prev
-		ReloadEntityDefs()
+		world.ReloadEntityDefs()
 	})
 
-	names := ScanEntityDefs()
+	names := world.ScanEntityDefs()
 	if len(names) == 0 {
 		t.Skip("no definitions shipped in resources/entities/")
 	}
 	for _, name := range names {
-		def, err := LoadEntityDef(name)
+		def, err := world.LoadEntityDef(name)
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue

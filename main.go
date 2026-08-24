@@ -6,6 +6,7 @@ import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
 	"foundry/internal/texture"
+	"foundry/internal/world"
 	_ "image/png"
 	"io"
 	"log"
@@ -203,7 +204,7 @@ func main() {
 
 	// Default camera position; overridden by the level's spawn point when it
 	// has one.
-	gfx.LoadCamera(mgl32.Vec3{0, eyeHeight, 3}, 0.0, float32(math.Pi/2.0))
+	gfx.LoadCamera(mgl32.Vec3{0, world.EyeHeight, 3}, 0.0, float32(math.Pi/2.0))
 
 	// Start with a blank in-memory level rather than loading one from disk;
 	// the user can save it (or open an existing level) from the editor.
@@ -223,19 +224,19 @@ func main() {
 	// [SCENARIO 5] UploadLights logs any uniform that the shader doesn't expose
 	// (-1 location) so mismatches between Go-side light data and shader uniforms
 	// are immediately visible in the log.
-	UploadLights(level.Lights)
+	world.UploadLights(level.Lights)
 
 	// The player is created by the engine, not authored into the level — see
 	// NewPlayer (entity.go). It carries the camera and is what collision is
 	// resolved for; nothing draws it, since the view is from inside its head.
-	PlayerEntity = NewPlayer(gfx.Cam.Position.Sub(mgl32.Vec3{0, eyeHeight, 0}))
-	gfx.Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
+	world.PlayerEntity = world.NewPlayer(gfx.Cam.Position.Sub(mgl32.Vec3{0, world.EyeHeight, 0}))
+	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
 	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
 	gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
 
 	// A spawn point in the level overrides that starting position, so a level
 	// loaded straight into gameplay starts where the editor says it should.
-	ApplySpawnPoint(&level)
+	world.ApplySpawnPoint(&level)
 
 	// Init level editor (must be after LoadLevel and OpenGL context ready)
 	EditorInit(&level, levelPath, levelsDir)
@@ -309,14 +310,14 @@ func main() {
 			gfx.HandleInput(platform.KeyStates)
 
 			// --- Player entity update + collision ---
-			if PlayerEntity != nil {
+			if world.PlayerEntity != nil {
 				delta := gfx.Cam.Position.Sub(preMovePos)
-				newPlayerPos := PlayerEntity.Position.Add(delta)
+				newPlayerPos := world.PlayerEntity.Position.Add(delta)
 
 				// Apply pending jump impulse before gravity so the jump
 				// frame isn't immediately reduced by one tick of gravity.
 				if platform.JumpRequested {
-					PlayerEntity.Velocity[1] = platform.JumpVelocity
+					world.PlayerEntity.Velocity[1] = platform.JumpVelocity
 					platform.JumpRequested = false
 					platform.IsOnGround = false
 				}
@@ -325,43 +326,43 @@ func main() {
 				// Scale by DeltaTime*60 to normalize to 60 FPS baseline.
 				dtScale := platform.DeltaTime * 60.0
 				if platform.GravityEnabled {
-					PlayerEntity.Velocity[1] -= platform.GravityAccel * dtScale
-					if PlayerEntity.Velocity[1] < -platform.MaxFallSpeed {
-						PlayerEntity.Velocity[1] = -platform.MaxFallSpeed
+					world.PlayerEntity.Velocity[1] -= platform.GravityAccel * dtScale
+					if world.PlayerEntity.Velocity[1] < -platform.MaxFallSpeed {
+						world.PlayerEntity.Velocity[1] = -platform.MaxFallSpeed
 					}
 				}
-				newPlayerPos[1] += PlayerEntity.Velocity[1] * dtScale
+				newPlayerPos[1] += world.PlayerEntity.Velocity[1] * dtScale
 
-				chunk, sector := FindChunkAndSectorSH(level.Spatial, level.Chunks, newPlayerPos)
-				newPlayerPos = ResolveWallCollision(PlayerEntity, chunk, sector, newPlayerPos)
-				newPlayerPos = ResolveSlopeCollision(PlayerEntity, chunk, sector, PlayerEntity.Position, newPlayerPos)
+				chunk, sector := world.FindChunkAndSectorSH(level.Spatial, level.Chunks, newPlayerPos)
+				newPlayerPos = ResolveWallCollision(world.PlayerEntity, chunk, sector, newPlayerPos)
+				newPlayerPos = ResolveSlopeCollision(world.PlayerEntity, chunk, sector, world.PlayerEntity.Position, newPlayerPos)
 				// Re-find sector after slope adjustment (player may have slid to a different sector)
-				chunk, sector = FindChunkAndSectorSH(level.Spatial, level.Chunks, newPlayerPos)
-				hitFloor, hitCeiling := ResolveFloorCollision(PlayerEntity, chunk, sector, &newPlayerPos)
+				chunk, sector = world.FindChunkAndSectorSH(level.Spatial, level.Chunks, newPlayerPos)
+				hitFloor, hitCeiling := ResolveFloorCollision(world.PlayerEntity, chunk, sector, &newPlayerPos)
 
 				// Landing/bonk: reset vertical velocity on floor or ceiling contact.
 				if platform.GravityEnabled {
 					if hitFloor {
-						PlayerEntity.Velocity[1] = 0
+						world.PlayerEntity.Velocity[1] = 0
 						platform.IsOnGround = true
 					} else {
 						platform.IsOnGround = false
 					}
-					if hitCeiling && PlayerEntity.Velocity[1] > 0 {
-						PlayerEntity.Velocity[1] = 0
+					if hitCeiling && world.PlayerEntity.Velocity[1] > 0 {
+						world.PlayerEntity.Velocity[1] = 0
 					}
 				}
 
-				PlayerEntity.Position = newPlayerPos
+				world.PlayerEntity.Position = newPlayerPos
 				if chunk != nil {
-					PlayerEntity.CurrentChunk = chunk.ID
+					world.PlayerEntity.CurrentChunk = chunk.ID
 				}
 				if sector != nil {
-					PlayerEntity.CurrentSector = sector.ID
+					world.PlayerEntity.CurrentSector = sector.ID
 				} else {
-					PlayerEntity.CurrentSector = ""
+					world.PlayerEntity.CurrentSector = ""
 				}
-				gfx.Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
+				gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
 				gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
 				gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
 			}
@@ -378,20 +379,20 @@ func main() {
 		// up onto an entity is the same as landing on a floor as far as jumping
 		// is concerned.
 		playerPosBefore := mgl32.Vec3{}
-		if PlayerEntity != nil {
-			playerPosBefore = PlayerEntity.Position
-			PlayerEntity.Collision.OnGround = false
+		if world.PlayerEntity != nil {
+			playerPosBefore = world.PlayerEntity.Position
+			world.PlayerEntity.Collision.OnGround = false
 		}
-		EntityUpdate(&level, platform.DeltaTime, !Editor.Active, PlayerEntity)
-		if !Editor.Active && PlayerEntity != nil {
-			if PlayerEntity.Collision.OnGround {
+		EntityUpdate(&level, platform.DeltaTime, !Editor.Active, world.PlayerEntity)
+		if !Editor.Active && world.PlayerEntity != nil {
+			if world.PlayerEntity.Collision.OnGround {
 				platform.IsOnGround = true
 			}
 			// Being pushed out of a solid entity happens after the camera was
 			// placed on the player above, so put it back where the player now
 			// actually is.
-			if PlayerEntity.Position != playerPosBefore {
-				gfx.Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
+			if world.PlayerEntity.Position != playerPosBefore {
+				gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
 				gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
 				gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
 			}
@@ -417,7 +418,7 @@ func main() {
 		gfx.DrainTextureUploads()
 
 		// Geometry rebuilds and texture loads the script tick deferred. They
-		// cannot happen inside the tick — reloadSector ends in gl.* calls — so
+		// cannot happen inside the tick — ReloadSector ends in gl.* calls — so
 		// they are applied here, where the main context is current, coalesced so
 		// a hundred writes to one height cost one rebuild.
 		DrainScriptWork(&level)
@@ -532,9 +533,9 @@ func main() {
 				// edges) bypass portal culling and fall through to frustum-only culling.
 				var visibleSectors map[string]bool
 				var connectedSectors map[string]bool
-				if PlayerEntity != nil && chunk.ID == PlayerEntity.CurrentChunk {
-					visibleSectors = PortalVisibleSectors(chunk, PlayerEntity.CurrentSector, gfx.Cam.Position)
-					connectedSectors = PortalConnectedSectors(chunk, PlayerEntity.CurrentSector)
+				if world.PlayerEntity != nil && chunk.ID == world.PlayerEntity.CurrentChunk {
+					visibleSectors = PortalVisibleSectors(chunk, world.PlayerEntity.CurrentSector, gfx.Cam.Position)
+					connectedSectors = PortalConnectedSectors(chunk, world.PlayerEntity.CurrentSector)
 				}
 
 				for j := range chunk.Sectors {

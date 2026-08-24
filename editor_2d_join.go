@@ -30,7 +30,10 @@ package main
 // carried along as links so the loop can close through them; without that the
 // pending edges are forever a chain, and the sector never gets made.
 
-import "fmt"
+import (
+	"fmt"
+	"foundry/internal/world"
+)
 
 // editorSelectedChunkPoints returns the chunk points the selection names, in
 // selection order and without repeats.
@@ -95,7 +98,7 @@ func editorCanJoinPoints() bool {
 
 // pointsAdjacentInAnySector reports whether some sector already walks straight
 // from a to b, meaning there is a wall or portal between them already.
-func pointsAdjacentInAnySector(ch *Chunk, a, b int) bool {
+func pointsAdjacentInAnySector(ch *world.Chunk, a, b int) bool {
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
 		posA := sectorVertexPos(s, a)
@@ -125,7 +128,7 @@ func pendingEdgeExists(a, b int) bool {
 // sector's whole ring and closing it should be a no-op, not a second set of
 // walls laid over the first. (The old ctrl+click had no such check, because a
 // click chain never revisited an edge it had just drawn.)
-func joinPointPair(ch *Chunk, a, b int) bool {
+func joinPointPair(ch *world.Chunk, a, b int) bool {
 	if !joinPairPending(ch, a, b) {
 		return false
 	}
@@ -152,7 +155,7 @@ func joinPointPair(ch *Chunk, a, b int) bool {
 // joinPairPending reports whether a pair still has an edge to draw. Used both
 // to decide whether a join is worth an undo entry and, inside joinPointPair, to
 // skip pairs that are already connected.
-func joinPairPending(ch *Chunk, a, b int) bool {
+func joinPairPending(ch *world.Chunk, a, b int) bool {
 	return a != b && !pointsAdjacentInAnySector(ch, a, b) && !pendingEdgeExists(a, b)
 }
 

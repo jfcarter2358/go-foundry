@@ -15,24 +15,25 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 // paramTestLevel builds two volumes running one script and two doors for them to
 // point at — the arrangement the feature exists for.
-func paramTestLevel(t *testing.T) *Level {
+func paramTestLevel(t *testing.T) *world.Level {
 	t.Helper()
 	withoutGeometryUploads(t)
 
-	lvl := &Level{}
+	lvl := &world.Level{}
 	for _, id := range []string{"button_a", "button_b"} {
-		v := NewVolume(id, mgl32.Vec3{0, 0, 0})
+		v := world.NewVolume(id, mgl32.Vec3{0, 0, 0})
 		v.HalfX, v.HalfY, v.HalfZ = 1, 1, 1
 		v.Script = "scripts/button.flang"
 		lvl.Volumes = append(lvl.Volumes, v)
 	}
 	lvl.Entities = append(lvl.Entities,
-		Entity{ID: "door_north", Visible: true, Scale: mgl32.Vec3{1, 1, 1}},
-		Entity{ID: "door_south", Visible: true, Scale: mgl32.Vec3{1, 1, 1}})
+		world.Entity{ID: "door_north", Visible: true, Scale: mgl32.Vec3{1, 1, 1}},
+		world.Entity{ID: "door_south", Visible: true, Scale: mgl32.Vec3{1, 1, 1}})
 	return lvl
 }
 
@@ -40,8 +41,8 @@ func paramTestLevel(t *testing.T) *Level {
 // feature: without it, `button.flang` would be a script for one door.
 func TestParamIsPerObject(t *testing.T) {
 	lvl := paramTestLevel(t)
-	lvl.Volumes[0].SetScriptParam("target", StringAttr("door_north"))
-	lvl.Volumes[1].SetScriptParam("target", StringAttr("door_south"))
+	lvl.Volumes[0].SetScriptParam("target", world.StringAttr("door_north"))
+	lvl.Volumes[1].SetScriptParam("target", world.StringAttr("door_south"))
 
 	src := `
 param target ref
@@ -65,7 +66,7 @@ end
 // object's binding — the lookup is against `self`, not a runtime-wide table.
 func TestParamUnboundFallsBackToDefault(t *testing.T) {
 	lvl := paramTestLevel(t)
-	lvl.Volumes[0].SetScriptParam("drop", FloatAttr(9.0))
+	lvl.Volumes[0].SetScriptParam("drop", world.FloatAttr(9.0))
 
 	src := `
 param drop float = 3.0
@@ -86,7 +87,7 @@ end
 func TestRefParamReachesGeometry(t *testing.T) {
 	lvl := hostTestLevel(t)
 	sectorID := lvl.Chunks[0].Sectors[0].ID
-	lvl.Volumes[0].SetScriptParam("room", StringAttr(sectorID))
+	lvl.Volumes[0].SetScriptParam("room", world.StringAttr(sectorID))
 
 	got := runScript(t, lvl, "trigger", `
 param room ref
@@ -105,7 +106,7 @@ end
 // than throwing, so the guard an author writes is the one that runs.
 func TestRefParamToMissingObjectIsNull(t *testing.T) {
 	lvl := paramTestLevel(t)
-	lvl.Volumes[0].SetScriptParam("target", StringAttr("door_that_left"))
+	lvl.Volumes[0].SetScriptParam("target", world.StringAttr("door_that_left"))
 
 	got := runScript(t, lvl, "button_a", `
 param target ref
@@ -137,18 +138,18 @@ end
 // ---------- storage ----------
 
 func TestScriptParamsRoundTripThroughYAML(t *testing.T) {
-	d := ScriptData{
+	d := world.ScriptData{
 		Script:       "scripts/button.flang",
-		ScriptParams: AttrSet{"target": StringAttr("door_north"), "drop": FloatAttr(2.5)},
+		ScriptParams: world.AttrSet{"target": world.StringAttr("door_north"), "drop": world.FloatAttr(2.5)},
 	}
-	back, err := scriptDataFromRaw(scriptDataToRaw(d), "a wall")
+	back, err := world.ScriptDataFromRaw(world.ScriptDataToRaw(d), "a wall")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := back.ScriptParam("target"); !ok || v != StringAttr("door_north") {
+	if v, ok := back.ScriptParam("target"); !ok || v != world.StringAttr("door_north") {
 		t.Errorf("target = %v (ok=%v)", v, ok)
 	}
-	if v, ok := back.ScriptParam("drop"); !ok || v != FloatAttr(2.5) {
+	if v, ok := back.ScriptParam("drop"); !ok || v != world.FloatAttr(2.5) {
 		t.Errorf("drop = %v (ok=%v)", v, ok)
 	}
 }
@@ -157,8 +158,8 @@ func TestScriptParamsRoundTripThroughYAML(t *testing.T) {
 // state the script writes, a param is configuration the level owns, and merging
 // the two would let a script overwrite its own wiring.
 func TestScriptParamsAreNotAttributes(t *testing.T) {
-	d := ScriptData{ScriptParams: AttrSet{"target": StringAttr("door_north")}}
-	raw := scriptDataToRaw(d)
+	d := world.ScriptData{ScriptParams: world.AttrSet{"target": world.StringAttr("door_north")}}
+	raw := world.ScriptDataToRaw(d)
 	if len(raw.Attributes) != 0 {
 		t.Errorf("params leaked into attributes: %v", raw.Attributes)
 	}
@@ -170,10 +171,10 @@ func TestScriptParamsAreNotAttributes(t *testing.T) {
 // A cloned chunk's bindings are its own, so retargeting the copy does not
 // retarget the original.
 func TestCloneScriptDataCopiesParams(t *testing.T) {
-	d := ScriptData{ScriptParams: AttrSet{"target": StringAttr("door_north")}}
-	c := cloneScriptData(d)
-	c.SetScriptParam("target", StringAttr("door_south"))
-	if v, _ := d.ScriptParam("target"); v != StringAttr("door_north") {
+	d := world.ScriptData{ScriptParams: world.AttrSet{"target": world.StringAttr("door_north")}}
+	c := world.CloneScriptData(d)
+	c.SetScriptParam("target", world.StringAttr("door_south"))
+	if v, _ := d.ScriptParam("target"); v != world.StringAttr("door_north") {
 		t.Errorf("original changed to %v", v)
 	}
 }
@@ -184,30 +185,30 @@ func TestCloneScriptDataCopiesParams(t *testing.T) {
 // same way its attributes are — so a type can ship a scripted behaviour whose
 // wiring each placed copy fills in.
 func TestEntityParamsMergeFromDefinition(t *testing.T) {
-	def := &EntityDef{
+	def := &world.EntityDef{
 		Name:    "button",
 		Script:  "scripts/button.flang",
 		Visible: true,
-		Params:  AttrSet{"drop": FloatAttr(3.0), "latching": BoolAttr(true)},
+		Params:  world.AttrSet{"drop": world.FloatAttr(3.0), "latching": world.BoolAttr(true)},
 	}
-	e, err := entityFromRaw(RawEntity{
+	e, err := world.EntityFromRaw(world.RawEntity{
 		Type:   "button",
 		ID:     "button_a",
-		Params: map[string]RawAttribute{"drop": {Type: "float", Value: "9.5"}},
-	}, func(string) (*EntityDef, error) { return def, nil })
+		Params: map[string]world.RawAttribute{"drop": {Type: "float", Value: "9.5"}},
+	}, func(string) (*world.EntityDef, error) { return def, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := e.ScriptParams.Attr("drop"); v != FloatAttr(9.5) {
+	if v, _ := e.ScriptParams.Attr("drop"); v != world.FloatAttr(9.5) {
 		t.Errorf("drop = %v, want the instance's 9.5", v)
 	}
-	if v, _ := e.ScriptParams.Attr("latching"); v != BoolAttr(true) {
+	if v, _ := e.ScriptParams.Attr("latching"); v != world.BoolAttr(true) {
 		t.Errorf("latching = %v, want the definition's true", v)
 	}
 
 	// Only the difference is written back, so a definition that retunes its
 	// default retunes every instance that never overrode it.
-	raw := entityToRaw(&e, def)
+	raw := world.EntityToRaw(&e, def)
 	if _, ok := raw.Params["latching"]; ok {
 		t.Errorf("an inherited param was written back: %v", raw.Params)
 	}
@@ -237,11 +238,11 @@ func TestScriptParamValuePrefersBinding(t *testing.T) {
 		t.Fatalf("got %d decls", len(decls))
 	}
 	v, bound := scriptParamValue(nil, decls[0])
-	if bound || v != FloatAttr(3.0) {
+	if bound || v != world.FloatAttr(3.0) {
 		t.Errorf("unbound = %v (bound=%v), want the default 3.0", v, bound)
 	}
-	v, bound = scriptParamValue(AttrSet{"drop": FloatAttr(1.5)}, decls[0])
-	if !bound || v != FloatAttr(1.5) {
+	v, bound = scriptParamValue(world.AttrSet{"drop": world.FloatAttr(1.5)}, decls[0])
+	if !bound || v != world.FloatAttr(1.5) {
 		t.Errorf("bound = %v (bound=%v), want 1.5", v, bound)
 	}
 }
@@ -251,7 +252,7 @@ func TestScriptParamValuePrefersBinding(t *testing.T) {
 func TestScriptParamValueZeroWithoutDefault(t *testing.T) {
 	decls := declFor(t, "param count int\n\ndef main() -> null\nend\n")
 	v, bound := scriptParamValue(nil, decls[0])
-	if bound || v != IntAttr(0) {
+	if bound || v != world.IntAttr(0) {
 		t.Errorf("got %v (bound=%v), want 0", v, bound)
 	}
 }
@@ -260,8 +261,8 @@ func TestScriptParamValueZeroWithoutDefault(t *testing.T) {
 // the picker always has something to show.
 func TestScriptParamValueCoercesToDeclaredType(t *testing.T) {
 	decls := declFor(t, "param target ref\n\ndef main() -> null\nend\n")
-	v, bound := scriptParamValue(AttrSet{"target": IntAttr(7)}, decls[0])
-	if !bound || v.Type != AttrString {
+	v, bound := scriptParamValue(world.AttrSet{"target": world.IntAttr(7)}, decls[0])
+	if !bound || v.Type != world.AttrString {
 		t.Errorf("got %v (type %v), want a str", v, v.Type)
 	}
 }
@@ -275,7 +276,7 @@ func TestScriptParamsUnusedAndPrune(t *testing.T) {
 		"scripts/x.flang": declFor(t, "param target ref\n\ndef main() -> null\nend\n"),
 	}
 
-	params := AttrSet{"target": StringAttr("door_north"), "old_name": IntAttr(1)}
+	params := world.AttrSet{"target": world.StringAttr("door_north"), "old_name": world.IntAttr(1)}
 	unused := scriptParamsUnused(params, "scripts/x.flang")
 	if len(unused) != 1 || unused[0] != "old_name" {
 		t.Fatalf("unused = %v, want [old_name]", unused)
@@ -340,11 +341,11 @@ func TestShippedButtonScriptUsesItsParams(t *testing.T) {
 	sectorID := lvl.Chunks[0].Sectors[0].ID
 	top := lvl.Chunks[0].Sectors[0].Floor.Height
 
-	button := NewVolume("button_north", mgl32.Vec3{0, 0, 0})
+	button := world.NewVolume("button_north", mgl32.Vec3{0, 0, 0})
 	button.HalfX, button.HalfY, button.HalfZ = 1, 1, 1
 	button.Script = path
-	button.SetScriptParam("target", StringAttr(sectorID))
-	button.SetScriptParam("drop", FloatAttr(2.0))
+	button.SetScriptParam("target", world.StringAttr(sectorID))
+	button.SetScriptParam("drop", world.FloatAttr(2.0))
 	lvl.Volumes = append(lvl.Volumes, button)
 
 	prevRT := *Scripts

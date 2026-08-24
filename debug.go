@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
+	"foundry/internal/world"
 	"os"
 	"runtime"
 	"strings"
@@ -114,8 +115,8 @@ func DebugRenderOverlay() {
 		if hooks.EditorActive() {
 			c := gfx.Cam.Position
 			imgui.Text(fmt.Sprintf("Camera:       %.2f, %.2f, %.2f", c.X(), c.Y(), c.Z()))
-		} else if PlayerEntity != nil {
-			p := PlayerEntity.Position
+		} else if world.PlayerEntity != nil {
+			p := world.PlayerEntity.Position
 			imgui.Text(fmt.Sprintf("Position:     %.2f, %.2f, %.2f", p.X(), p.Y(), p.Z()))
 		} else {
 			imgui.Text("Position:     N/A")

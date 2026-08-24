@@ -16,10 +16,11 @@ import (
 
 	"foundry/internal/flang"
 	"foundry/internal/model"
+	"foundry/internal/world"
 )
 
 // riggedDoc is a model with an armature and a "press" clip, but no skin weights
-// — the half-built rig that newEntityAnim refuses.
+// — the half-built rig that NewEntityAnim refuses.
 func riggedDoc(t *testing.T) *model.ModelDoc {
 	t.Helper()
 	m, idx := boneChain(t)
@@ -33,17 +34,17 @@ func riggedDoc(t *testing.T) *model.ModelDoc {
 // buttonEntity is the shape the whole feature exists for: an entity with one
 // attachment whose model has a clip, and which declares whichever animations
 // the caller asks for.
-func buttonEntity(t *testing.T, declared ...EntityAnimation) Entity {
+func buttonEntity(t *testing.T, declared ...world.EntityAnimation) world.Entity {
 	t.Helper()
 	doc := riggedDoc(t)
-	e := Entity{ID: "button", Visible: true, Scale: mgl32.Vec3{1, 1, 1},
+	e := world.Entity{ID: "button", Visible: true, Scale: mgl32.Vec3{1, 1, 1},
 		BoundHalfX: 1, BoundHalfY: 1, BoundHalfZ: 1}
-	e.Models = []EntityModel{{
+	e.Models = []world.EntityModel{{
 		Name:       "button",
 		Animations: declared,
 		// Built directly rather than through Load: uploading needs GL, and what
 		// is under test is the mapping from names to clips, which is not.
-		Anim: &EntityAnim{Doc: doc, Clip: -1, Speed: 1},
+		Anim: &world.EntityAnim{Doc: doc, Clip: -1, Speed: 1},
 	}}
 	return e
 }
@@ -62,14 +63,14 @@ func TestAnimUnavailableNamesTheMissingStep(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			why := animUnavailable(tc.doc(t))
+			why := world.AnimUnavailable(tc.doc(t))
 			if !strings.Contains(why, tc.want) {
-				t.Errorf("animUnavailable = %q, want it to mention %q", why, tc.want)
+				t.Errorf("AnimUnavailable = %q, want it to mention %q", why, tc.want)
 			}
 			// Whatever the reason, the outcome is the same and the two must not
 			// disagree: a reason means no playback state.
-			if newEntityAnim(tc.doc(t)) != nil {
-				t.Error("newEntityAnim returned playback state for a model it cannot animate")
+			if world.NewEntityAnim(tc.doc(t)) != nil {
+				t.Error("NewEntityAnim returned playback state for a model it cannot animate")
 			}
 		})
 	}
@@ -85,34 +86,34 @@ func TestAnimUnavailableIsEmptyForAWorkingRig(t *testing.T) {
 	if n := m.AssignVertsToBone(all, 0, 1); n != len(all) {
 		t.Fatalf("bound %d of %d vertices", n, len(all))
 	}
-	if why := animUnavailable(m); why != "" {
+	if why := world.AnimUnavailable(m); why != "" {
 		t.Fatalf("a rigged, skinned, keyed model reported %q", why)
 	}
-	if newEntityAnim(m) == nil {
-		t.Fatal("newEntityAnim refused a complete rig")
+	if world.NewEntityAnim(m) == nil {
+		t.Fatal("NewEntityAnim refused a complete rig")
 	}
 }
 
 // ---------- the four ways play_anim comes back false ----------
 
 func TestAnimationProblemDistinguishesTheFourFailures(t *testing.T) {
-	declared := EntityAnimation{Name: "button_press", Clip: "press"}
+	declared := world.EntityAnimation{Name: "button_press", Clip: "press"}
 	cases := []struct {
 		name           string
-		entity         func(t *testing.T) Entity
+		entity         func(t *testing.T) world.Entity
 		model, anim    string
 		wantSubstrings []string
 	}{
 		{
 			name:           "no attachment by that name",
-			entity:         func(t *testing.T) Entity { return buttonEntity(t, declared) },
+			entity:         func(t *testing.T) world.Entity { return buttonEntity(t, declared) },
 			model:          "buton",
 			anim:           "button_press",
 			wantSubstrings: []string{"no model attachment called \"buton\"", "it has \"button\""},
 		},
 		{
 			name: "attachment cannot animate at all",
-			entity: func(t *testing.T) Entity {
+			entity: func(t *testing.T) world.Entity {
 				e := buttonEntity(t)
 				e.Models[0].Anim = nil
 				e.Models[0].AnimBlocked = "no vertex in the model is weighted to a bone"
@@ -124,7 +125,7 @@ func TestAnimationProblemDistinguishesTheFourFailures(t *testing.T) {
 		},
 		{
 			name:   "clip exists but the entity never declared it",
-			entity: func(t *testing.T) Entity { return buttonEntity(t) },
+			entity: func(t *testing.T) world.Entity { return buttonEntity(t) },
 			model:  "button",
 			anim:   "button_press",
 			// The one that started all this. It has to say both that the entity
@@ -135,8 +136,8 @@ func TestAnimationProblemDistinguishesTheFourFailures(t *testing.T) {
 		},
 		{
 			name: "declared, but pointing at a clip the model lacks",
-			entity: func(t *testing.T) Entity {
-				return buttonEntity(t, EntityAnimation{Name: "button_press", Clip: "shove"})
+			entity: func(t *testing.T) world.Entity {
+				return buttonEntity(t, world.EntityAnimation{Name: "button_press", Clip: "shove"})
 			},
 			model:          "button",
 			anim:           "button_press",
@@ -165,7 +166,7 @@ func TestAnimationProblemDistinguishesTheFourFailures(t *testing.T) {
 }
 
 func TestAnimationProblemIsSilentWhenItWouldPlay(t *testing.T) {
-	e := buttonEntity(t, EntityAnimation{Name: "button_press", Clip: "press"})
+	e := buttonEntity(t, world.EntityAnimation{Name: "button_press", Clip: "press"})
 	if why := e.AnimationProblem("button", "button_press"); why != "" {
 		t.Fatalf("a correctly wired animation reported %q", why)
 	}
@@ -177,7 +178,7 @@ func TestAnimationProblemIsSilentWhenItWouldPlay(t *testing.T) {
 // ---------- the verbs logging what they did not do ----------
 
 // warningsFrom runs one statement against lvl and returns the warnings it logged.
-func warningsFrom(t *testing.T, lvl *Level, self, body string) []string {
+func warningsFrom(t *testing.T, lvl *world.Level, self, body string) []string {
 	t.Helper()
 	ring := withScriptLog(t, 64)
 	runScript(t, lvl, self, script(body))
@@ -269,7 +270,7 @@ func TestDifferentProblemsOnOneLineAreBothLogged(t *testing.T) {
 // ---------- the linter ----------
 
 // lintSource parses src and lints it against lvl.
-func lintSource(t *testing.T, lvl *Level, src string) []ScriptIssue {
+func lintSource(t *testing.T, lvl *world.Level, src string) []ScriptIssue {
 	t.Helper()
 	f, errs := flang.Parse("test.flang", []byte(src))
 	if len(errs) > 0 {
@@ -351,7 +352,7 @@ func TestLintLeavesCustomAtomsAlone(t *testing.T) {
 func TestLintIsSilentOnACorrectScript(t *testing.T) {
 	lvl := hostTestLevel(t)
 	lvl.Entities = append(lvl.Entities, buttonEntity(t,
-		EntityAnimation{Name: "button_press", Clip: "press"}))
+		world.EntityAnimation{Name: "button_press", Clip: "press"}))
 	src := `def on_interact(:interact:, src ref) -> null
     play_anim(@button, "button", "button_press")
     @crate.prop.visible = false
@@ -402,7 +403,7 @@ func TestLintAndRuntimeAgreeOnTheReason(t *testing.T) {
 // tickWarnings runs n ticks and returns the warnings logged, minus the ones the
 // lint-at-load pass produced — those are checked separately, and mixing them in
 // would make these tests fail whenever the linter learned something new.
-func tickWarnings(t *testing.T, lvl *Level, n int) []string {
+func tickWarnings(t *testing.T, lvl *world.Level, n int) []string {
 	t.Helper()
 	ring := withScriptLog(t, 256)
 	runTicks(t, lvl, n)
@@ -426,8 +427,8 @@ end`)
 
 	lvl := tickTestLevel(t)
 	lvl.Entities = append(lvl.Entities,
-		Entity{ID: "sender", Script: sender, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}},
-		Entity{ID: "door", Script: door, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}},
+		world.Entity{ID: "sender", Script: sender, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}},
+		world.Entity{ID: "door", Script: door, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}},
 	)
 
 	got := tickWarnings(t, lvl, 1)
@@ -459,8 +460,8 @@ end`)
 
 	lvl := tickTestLevel(t)
 	lvl.Entities = append(lvl.Entities,
-		Entity{ID: "sender", Script: sender, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}},
-		Entity{ID: "door", Script: door, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}},
+		world.Entity{ID: "sender", Script: sender, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}},
+		world.Entity{ID: "door", Script: door, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}},
 	)
 
 	ring := withScriptLog(t, 64)
@@ -491,12 +492,12 @@ end`)
 end`)
 
 	lvl := tickTestLevel(t)
-	a := Entity{ID: "lamp_a", Script: listens, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}}
-	b := Entity{ID: "lamp_b", Script: ignores, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}}
+	a := world.Entity{ID: "lamp_a", Script: listens, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}}
+	b := world.Entity{ID: "lamp_b", Script: ignores, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}}
 	a.AddTag("light")
 	b.AddTag("light")
 	lvl.Entities = append(lvl.Entities,
-		Entity{ID: "caller", Script: sender, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}},
+		world.Entity{ID: "caller", Script: sender, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}},
 		a, b)
 
 	for _, w := range tickWarnings(t, lvl, 1) {
@@ -506,7 +507,7 @@ end`)
 	}
 	// The half that does listen still has to have heard it, or the test would
 	// pass on a broadcast that reached nobody at all.
-	if v, _ := FindEntity(lvl, "lamp_a").Attr("dimmed"); v.I != 1 {
+	if v, _ := world.FindEntity(lvl, "lamp_a").Attr("dimmed"); v.I != 1 {
 		t.Error("the broadcast never reached the object that handles it")
 	}
 }
@@ -521,7 +522,7 @@ end`)
 
 	lvl := tickTestLevel(t)
 	lvl.Entities = append(lvl.Entities,
-		Entity{ID: "quiet", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}})
+		world.Entity{ID: "quiet", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}})
 
 	// Several ticks, so `:tick:` — which this script has no clause for — is
 	// posted repeatedly.
@@ -542,7 +543,7 @@ end`)
 
 	lvl := tickTestLevel(t)
 	lvl.Entities = append(lvl.Entities,
-		Entity{ID: "b", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: AttrSet{}})
+		world.Entity{ID: "b", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}})
 
 	ring := withScriptLog(t, 64)
 	runTicks(t, lvl, 1)

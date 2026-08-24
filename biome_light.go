@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"path/filepath"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -76,7 +77,7 @@ type BiomeShadowSettings struct {
 
 	// CastLODTiers caps how many of a scatter kind's LOD tiers (Near=1,
 	// Mid=2, Far=3 — see grass.go's three-tier scatter doc comment and
-	// biomeLODTierCount) render into shadow maps at all, nearest first. This
+	// BiomeLODTierCount) render into shadow maps at all, nearest first. This
 	// is a SEPARATE gate from CastRange/CastCascades above: a tier that
 	// doesn't make this cut is skipped structurally, not range-clipped, and
 	// when it DOES make the cut it casts using its own (cheaper, for Mid/Far)
@@ -121,9 +122,9 @@ func (b *BiomeShadowSettings) AnyCast() bool {
 // Rock's shader path everywhere else (see renderBiomeSector).
 func (b *BiomeShadowSettings) CastsKind(kind int32) bool {
 	switch kind {
-	case BiomeRock, BiomeMoss:
+	case world.BiomeRock, world.BiomeMoss:
 		return b.CastRockMoss
-	case BiomeGrass, BiomeWildflower, BiomeCattail:
+	case world.BiomeGrass, world.BiomeWildflower, world.BiomeCattail:
 		return b.CastFoliage
 	}
 	return false
@@ -225,13 +226,13 @@ func mustBiomeProgram(vertPath, fragPath, vertSnippet, fragSnippet string) uint3
 // detail programs; nothing here is biome-specific except the view matrix (for
 // cascade selection, which fragment.glsl gets as a varying from vertex.glsl)
 // and the Receive toggle.
-func uploadBiomeLighting(prog uint32, level *Level, frame ShadowFrame) {
-	UploadLightsTo(prog, level.Lights, false)
+func uploadBiomeLighting(prog uint32, level *world.Level, frame ShadowFrame) {
+	world.UploadLightsTo(prog, level.Lights, false)
 	UploadShadowUniformsTo(prog, level.Lights, frame)
 	UploadPointShadowUniformsTo(prog, level.Lights)
 
 	gl.UseProgram(prog)
 	cam := gfx.Cam.Matrix
-	gl.UniformMatrix4fv(progUniformLoc(prog, "camera\x00"), 1, false, &cam[0])
-	gl.Uniform1i(progUniformLoc(prog, "receiveShadows\x00"), boolToInt32(BiomeShadows.Receive))
+	gl.UniformMatrix4fv(world.ProgUniformLoc(prog, "camera\x00"), 1, false, &cam[0])
+	gl.Uniform1i(world.ProgUniformLoc(prog, "receiveShadows\x00"), boolToInt32(BiomeShadows.Receive))
 }

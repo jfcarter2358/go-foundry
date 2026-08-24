@@ -15,6 +15,7 @@ package main
 // and every accessor here bounds-checks it.
 
 import (
+	"foundry/internal/world"
 	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -23,7 +24,7 @@ import (
 // ---------- selection ----------
 
 // activeEntity returns the selected entity, or nil.
-func activeEntity() *Entity {
+func activeEntity() *world.Entity {
 	lvl := Editor.level
 	if lvl == nil || Editor.ActiveEntityIdx < 0 || Editor.ActiveEntityIdx >= len(lvl.Entities) {
 		return nil
@@ -55,7 +56,7 @@ func editorClearEntitySelection() {
 // activeGizmoEntity returns the entity the gizmo is attached to, or nil. The
 // gizmo kind is checked as well as the index so a stale selection left behind
 // by another tool cannot silently be dragged.
-func activeGizmoEntity() *Entity {
+func activeGizmoEntity() *world.Entity {
 	if Editor.GizmoKind != gizmoKindEntity {
 		return nil
 	}
@@ -72,8 +73,8 @@ func activeGizmoEntity() *Entity {
 // speed, and a file watcher would be a thread and a platform dependency to save
 // one button press.
 func editorRefreshEntityDefs() {
-	ReloadEntityDefs()
-	Editor.EntityDefNames = ScanEntityDefs()
+	world.ReloadEntityDefs()
+	Editor.EntityDefNames = world.ScanEntityDefs()
 	// Index 0 is the blank entry, so the last definition sits at len(), not
 	// len()-1. A selection past that is one whose file has gone, and falls back
 	// to blank rather than to some other author's type.
@@ -125,9 +126,9 @@ func placeEntityAt(pos mgl32.Vec3) bool {
 		return false
 	}
 
-	var def *EntityDef
+	var def *world.EntityDef
 	if typeName != "" {
-		d, err := LoadEntityDef(typeName)
+		d, err := world.LoadEntityDef(typeName)
 		if err != nil {
 			editorSetStatus("Entity %s: %v", typeName, err)
 			return false
@@ -136,8 +137,8 @@ func placeEntityAt(pos mgl32.Vec3) bool {
 	}
 
 	EditorPushUndo()
-	id := uniqueEntityID(lvl, entityPlacementID(typeName))
-	e := NewBlankEntity(id)
+	id := world.UniqueEntityID(lvl, entityPlacementID(typeName))
+	e := world.NewBlankEntity(id)
 	if def != nil {
 		e = def.Instantiate(id)
 		e.Type = typeName
@@ -161,14 +162,14 @@ func placeEntityAt(pos mgl32.Vec3) bool {
 
 // entityPlacementID returns the base ID a newly placed entity gets: whatever
 // the panel's ID field holds, or the type name, or plain "entity" for a blank
-// one. uniqueEntityID makes it unique afterwards, so "barrel" placed three
+// one. UniqueEntityID makes it unique afterwards, so "barrel" placed three
 // times gives barrel, barrel_2, barrel_3.
 func entityPlacementID(typeName string) string {
 	if Editor.NewEntityID != "" {
 		return Editor.NewEntityID
 	}
 	if typeName == "" {
-		return blankEntityID
+		return world.BlankEntityID
 	}
 	return typeName
 }
@@ -187,7 +188,7 @@ func duplicateActiveEntity() {
 	EditorPushUndo()
 
 	e := *src
-	e.ID = uniqueEntityID(lvl, src.ID)
+	e.ID = world.UniqueEntityID(lvl, src.ID)
 	e.Tags = append([]string(nil), src.Tags...)
 	e.Attributes = src.Attributes.Clone()
 	// The source's Models hold live GPU handles; a struct copy would alias
@@ -195,7 +196,7 @@ func duplicateActiveEntity() {
 	// a released VAO. Copy the authored fields and upload afresh.
 	e.Models = nil
 	for i := range src.Models {
-		e.Models = append(e.Models, src.Models[i].templateCopy())
+		e.Models = append(e.Models, src.Models[i].TemplateCopy())
 	}
 	e.Position = src.Position.Add(mgl32.Vec3{entityDuplicateOffset, 0, entityDuplicateOffset})
 	if err := e.Load(); err != nil {
@@ -233,13 +234,13 @@ func deleteActiveEntity() {
 // Attachments used to come only from a definition, which meant a thing had to
 // have a .yaml file before it could have a shape. It does not: this is how a
 // blank entity gets its first model, and how anything grows a second one.
-func editorEntityAddModel(e *Entity) {
+func editorEntityAddModel(e *world.Entity) {
 	if e == nil {
 		return
 	}
 	EditorPushUndo()
-	e.Models = append(e.Models, EntityModel{
-		Name:    uniqueModelName(e, defaultModelName),
+	e.Models = append(e.Models, world.EntityModel{
+		Name:    world.UniqueModelName(e, defaultModelName),
 		Visible: true,
 	})
 }
@@ -249,7 +250,7 @@ func editorEntityAddModel(e *Entity) {
 const defaultModelName = "model"
 
 // editorEntityRemoveModel drops one attachment, releasing its GPU buffers.
-func editorEntityRemoveModel(e *Entity, idx int) {
+func editorEntityRemoveModel(e *world.Entity, idx int) {
 	if e == nil || idx < 0 || idx >= len(e.Models) {
 		return
 	}
@@ -267,13 +268,13 @@ func editorEntityRemoveModel(e *Entity, idx int) {
 // up with "barrel" rather than "model" without anyone typing it. A name that
 // has been chosen is left alone: scripts address attachments by name, and
 // renaming one out from under a script is not a thing to do quietly.
-func editorEntitySetModelPath(e *Entity, m *EntityModel, prev, next string) {
+func editorEntitySetModelPath(e *world.Entity, m *world.EntityModel, prev, next string) {
 	m.Path = prev
 	EditorPushUndo()
 	m.Path = next
 
 	if next != "" && isPlaceholderModelName(m.Name) {
-		m.Name = uniqueModelName(e, modelNameForPath(next))
+		m.Name = world.UniqueModelName(e, world.ModelNameForPath(next))
 	}
 	if err := m.Load(e.ID); err != nil {
 		editorSetStatus("Entity %s: %v", e.ID, err)
@@ -322,7 +323,7 @@ func reapplyEntityDefinition() {
 	if lvl == nil || e == nil || e.Type == "" {
 		return
 	}
-	def, err := LoadEntityDef(e.Type)
+	def, err := world.LoadEntityDef(e.Type)
 	if err != nil {
 		editorSetStatus("Entity type %s: %v", e.Type, err)
 		return

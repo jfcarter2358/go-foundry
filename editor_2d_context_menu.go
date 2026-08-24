@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/world"
 	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -190,7 +191,7 @@ func editor2DJoinMenuItems() []ctxMenuItem {
 
 // ---------- points ----------
 
-func editor2DPointMenuItems(ch *Chunk) []ctxMenuItem {
+func editor2DPointMenuItems(ch *world.Chunk) []ctxMenuItem {
 	nSel := len(editorSelectedChunkPoints())
 	deleteLabel := "Delete Point"
 	if nSel > 1 {
@@ -209,7 +210,7 @@ func editor2DPointMenuItems(ch *Chunk) []ctxMenuItem {
 
 // editor2DCanDeletePoints reports whether there is a point the delete row would
 // remove — a selected one, or the one the menu was opened on.
-func editor2DCanDeletePoints(ch *Chunk) bool {
+func editor2DCanDeletePoints(ch *world.Chunk) bool {
 	if len(editorSelectedChunkPoints()) > 0 {
 		return true
 	}

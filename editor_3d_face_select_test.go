@@ -3,6 +3,7 @@ package main
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -26,16 +27,16 @@ func gizmoSegments() [][3]mgl32.Vec3 {
 
 // outlineLevel is a 4x4 square sector with a floor at y=0, a ceiling at y=3 and
 // one wall running along its first edge.
-func outlineLevel() *Level {
-	return &Level{Chunks: []Chunk{{
+func outlineLevel() *world.Level {
+	return &world.Level{Chunks: []world.Chunk{{
 		ID:     "c0",
 		Points: []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}},
-		Sectors: []Sector{{
+		Sectors: []world.Sector{{
 			ID:           "s0",
 			PointIndices: []int{0, 1, 2, 3},
-			Floor:        Floor{Enabled: true, Height: 0},
-			Ceiling:      Ceiling{Enabled: true, Height: 3},
-			Walls: []Wall{{
+			Floor:        world.Floor{Enabled: true, Height: 0},
+			Ceiling:      world.Ceiling{Enabled: true, Height: 3},
+			Walls: []world.Wall{{
 				Visible:    true,
 				StartPoint: mgl32.Vec2{0, 0},
 				EndPoint:   mgl32.Vec2{4, 0},
@@ -199,12 +200,12 @@ func TestSelectedWaterIsOutlinedAtThePlaneHeight(t *testing.T) {
 	setupPickCamera()
 	Editor.level = outlineLevel()
 	ch := &Editor.level.Chunks[0]
-	ch.BiomeSectors = []BiomeSector{{
+	ch.BiomeSectors = []world.BiomeSector{{
 		ID:     "lake",
 		Points: []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}},
-		Brush:  BiomeBrush{Kind: BiomeWater},
+		Brush:  world.BiomeBrush{Kind: world.BiomeWater},
 	}}
-	ch.WaterSurfaces = []WaterSurface{{ID: "lake", Position: mgl32.Vec3{2, -0.6, 2}}}
+	ch.WaterSurfaces = []world.WaterSurface{{ID: "lake", Position: mgl32.Vec3{2, -0.6, 2}}}
 
 	Editor.ActiveChunkIdx = 0
 	Editor.ActiveSectorIdx = -1

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 // newTestRing returns a ring of the given size that echoes nowhere.
@@ -327,8 +328,8 @@ func TestScriptLogReceivesScriptOutput(t *testing.T) {
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
-		ID: "crate", Script: path, Visible: true, Attributes: AttrSet{},
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Attributes: world.AttrSet{},
 	})
 	runTicks(t, lvl, 1)
 
@@ -358,8 +359,8 @@ func TestScriptErrorsReachTheLogWithAPosition(t *testing.T) {
 end`)
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
-		ID: "crate", Script: path, Visible: true, Attributes: AttrSet{},
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Attributes: world.AttrSet{},
 	})
 	runTicks(t, lvl, 1)
 
@@ -377,8 +378,8 @@ func TestBrokenScriptDiagnosticsReachTheLog(t *testing.T) {
 	path := writeScript(t, root, "broken.flang", "def oops( -> null\n    return\nend")
 
 	lvl := tickTestLevel(t)
-	lvl.Entities = append(lvl.Entities, Entity{
-		ID: "crate", Script: path, Visible: true, Attributes: AttrSet{},
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Attributes: world.AttrSet{},
 	})
 	runTicks(t, lvl, 1)
 

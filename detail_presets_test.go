@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/fileutil"
+	"foundry/internal/world"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,7 +26,7 @@ func withTempPresetDir(t *testing.T) {
 		fileutil.ExecutablePath = prevPath
 		detailUserPresets = prevSet
 		detailUserPresetNames = prevNames
-		detailPresets = prevPresets
+		world.DetailPresets = prevPresets
 	})
 }
 
@@ -34,9 +35,9 @@ func withTempPresetDir(t *testing.T) {
 func TestDetailPresetSaveLoad(t *testing.T) {
 	withTempPresetDir(t)
 
-	in := DetailSpec{
+	in := world.DetailSpec{
 		Enabled: true, Seed: 99, Displace: true,
-		Waves: [detailMaxWaves]DetailWave{
+		Waves: [world.DetailMaxWaves]world.DetailWave{
 			{Enabled: true, Amplitude: 0.42, Frequency: 0.7, Rotation: 15, TessLevel: 28},
 			{Enabled: false},
 			{Enabled: true, Amplitude: 0.11, Frequency: 2.5, Rotation: -80, TessLevel: 12},
@@ -57,10 +58,10 @@ func TestDetailPresetSaveLoad(t *testing.T) {
 	// Forget everything and reload from disk.
 	detailUserPresets = map[string]bool{}
 	detailUserPresetNames = nil
-	delete(detailPresets, "my ridges")
+	delete(world.DetailPresets, "my ridges")
 	LoadDetailPresets()
 
-	got, ok := detailPresets["my ridges"]
+	got, ok := world.DetailPresets["my ridges"]
 	if !ok {
 		t.Fatal("preset not registered after LoadDetailPresets")
 	}
@@ -84,8 +85,8 @@ func TestDetailPresetSaveLoad(t *testing.T) {
 	}
 
 	// Applying it must keep the target face's own seed.
-	face := DetailSpec{Seed: 1234}
-	applyDetailPreset(&face, "my ridges")
+	face := world.DetailSpec{Seed: 1234}
+	world.ApplyDetailPreset(&face, "my ridges")
 	if face.Seed != 1234 {
 		t.Errorf("applying preset clobbered the face seed: got %d want 1234", face.Seed)
 	}
@@ -99,8 +100,8 @@ func TestDetailPresetSaveLoad(t *testing.T) {
 func TestDetailPresetUpdate(t *testing.T) {
 	withTempPresetDir(t)
 
-	first := DetailSpec{Enabled: true, Displace: true,
-		Waves: [detailMaxWaves]DetailWave{{Enabled: true, Amplitude: 0.1, Frequency: 1, TessLevel: 8}}}
+	first := world.DetailSpec{Enabled: true, Displace: true,
+		Waves: [world.DetailMaxWaves]world.DetailWave{{Enabled: true, Amplitude: 0.1, Frequency: 1, TessLevel: 8}}}
 	if err := SaveDetailPreset("ridges", first); err != nil {
 		t.Fatalf("SaveDetailPreset: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestDetailPresetUpdate(t *testing.T) {
 	if n := len(detailUserPresetNames); n != 1 {
 		t.Fatalf("user preset count = %d, want 1 (%v)", n, detailUserPresetNames)
 	}
-	if got := detailPresets["ridges"].Waves[0].Amplitude; got != 0.9 {
+	if got := world.DetailPresets["ridges"].Waves[0].Amplitude; got != 0.9 {
 		t.Errorf("amplitude after update = %v, want 0.9", got)
 	}
 }
@@ -132,14 +133,14 @@ func TestDetailPresetDeleteRestoresBuiltin(t *testing.T) {
 	if err := SaveDetailPreset("rock", shadow); err != nil {
 		t.Fatalf("SaveDetailPreset: %v", err)
 	}
-	if got := detailPresets["rock"].Waves[0].Amplitude; got != shadow.Waves[0].Amplitude {
+	if got := world.DetailPresets["rock"].Waves[0].Amplitude; got != shadow.Waves[0].Amplitude {
 		t.Fatalf("shadowing preset not applied: amplitude %v", got)
 	}
 
 	if err := DeleteDetailPreset("rock"); err != nil {
 		t.Fatalf("DeleteDetailPreset: %v", err)
 	}
-	if detailPresets["rock"].Waves[0].Amplitude != builtin.Waves[0].Amplitude {
+	if world.DetailPresets["rock"].Waves[0].Amplitude != builtin.Waves[0].Amplitude {
 		t.Error("built-in preset not restored after deleting its shadow")
 	}
 	if detailUserPresets["rock"] {

@@ -16,6 +16,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -76,7 +77,7 @@ func editor3DSelectionSummary() string {
 
 	case sel3DVolume:
 		v := activeVolume()
-		return fmt.Sprintf("Volume %s (%s)", v.ID, volumeShapeName(v.Shape))
+		return fmt.Sprintf("Volume %s (%s)", v.ID, world.VolumeShapeName(v.Shape))
 
 	case sel3DVertices:
 		if n := len(Editor.SelectedVertices); n > 1 {
@@ -116,7 +117,7 @@ func editor3DKindLabel(s string) string {
 
 // editor3DActiveSpawn is the level's spawn point when it is what a click left
 // selected, or nil.
-func editor3DActiveSpawn() *SpawnPoint {
+func editor3DActiveSpawn() *world.SpawnPoint {
 	lvl := Editor.level
 	if lvl == nil || !Editor.SpawnSelected {
 		return nil
@@ -124,7 +125,7 @@ func editor3DActiveSpawn() *SpawnPoint {
 	return lvl.Spawn
 }
 
-func editor3DActiveSector() (*Chunk, *Sector) {
+func editor3DActiveSector() (*world.Chunk, *world.Sector) {
 	lvl := Editor.level
 	if lvl == nil || Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
 		return nil, nil
@@ -147,8 +148,8 @@ func editor3DActiveSector() (*Chunk, *Sector) {
 // were taken in, which is all they need to be: the menu rebuilds its rows every
 // frame it is open, and a row's action runs during that same frame.
 type surface3DRefs struct {
-	ch   *Chunk
-	s    *Sector
+	ch   *world.Chunk
+	s    *world.Sector
 	kind string // "floor", "ceiling", "wall", "portal"
 
 	Texture     *string
@@ -262,7 +263,7 @@ func rebuildSelectedFaceSectors() {
 			continue
 		}
 		done[key] = struct{}{}
-		_ = reloadSector(ch, s)
+		_ = world.ReloadSector(ch, s)
 	}
 	for ci := range gaps {
 		if ci >= 0 && ci < len(lvl.Chunks) {
@@ -275,7 +276,7 @@ func rebuildSelectedFaceSectors() {
 // the sector, and the chunk's portal gap quads with it when the edit could have
 // changed one.
 func (r surface3DRefs) rebuild() {
-	_ = reloadSector(r.ch, r.s)
+	_ = world.ReloadSector(r.ch, r.s)
 	if r.kind == "portal" {
 		r.ch.RebuildGaps()
 	}
@@ -359,7 +360,7 @@ func editor3DConvertSelectedEdge(to string) {
 		if s == nil || ref.polyIdx >= len(s.EdgeKinds) {
 			continue
 		}
-		kind, idx := edgeKindAndIndex(s, ref.polyIdx)
+		kind, idx := world.EdgeKindAndIndex(s, ref.polyIdx)
 		if kind == to {
 			continue
 		}
@@ -374,7 +375,7 @@ func editor3DConvertSelectedEdge(to string) {
 		if s == nil || ref.polyIdx >= len(s.EdgeKinds) {
 			continue
 		}
-		kind, idx := edgeKindAndIndex(s, ref.polyIdx)
+		kind, idx := world.EdgeKindAndIndex(s, ref.polyIdx)
 		sels = append(sels, edgeFaceSel(ref.chunkIdx, ref.sectorIdx, kind, idx))
 	}
 	if len(sels) > 0 {

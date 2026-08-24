@@ -16,6 +16,7 @@ package main
 import (
 	"foundry/internal/flang"
 	"foundry/internal/hooks"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -78,7 +79,7 @@ func ScriptEventsReset() {
 }
 
 // ScriptEventsTick derives and posts one frame's events.
-func ScriptEventsTick(rt *ScriptRuntime, lvl *Level, dt float32) {
+func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	scriptEvents.elapsed += float64(dt)
 
 	postSpawnEvents(rt, lvl)
@@ -93,7 +94,7 @@ func ScriptEventsTick(rt *ScriptRuntime, lvl *Level, dt float32) {
 
 // scriptedRefs returns every object in the level that has a script, so the
 // per-object events do not have to walk objects that could not react anyway.
-func scriptedRefs(rt *ScriptRuntime, lvl *Level) []flang.RefVal {
+func scriptedRefs(rt *ScriptRuntime, lvl *world.Level) []flang.RefVal {
 	if lvl == nil {
 		return nil
 	}
@@ -124,9 +125,9 @@ func scriptedRefs(rt *ScriptRuntime, lvl *Level) []flang.RefVal {
 			if s.Ceiling.Script != "" {
 				out = append(out, flang.RefVal{Kind: flang.RefCeiling, A: ch.ID, B: s.ID})
 			}
-			ensureEdgeIDs(s)
+			world.EnsureEdgeIDs(s)
 			for ei, id := range s.EdgeIDs {
-				kind, idx := edgeKindAndIndex(s, ei)
+				kind, idx := world.EdgeKindAndIndex(s, ei)
 				script := ""
 				if kind == "wall" && idx < len(s.Walls) {
 					script = s.Walls[idx].Script
@@ -156,7 +157,7 @@ func scriptedRefs(rt *ScriptRuntime, lvl *Level) []flang.RefVal {
 }
 
 // postSpawnEvents fires `:spawn:` once per scripted object.
-func postSpawnEvents(rt *ScriptRuntime, lvl *Level) {
+func postSpawnEvents(rt *ScriptRuntime, lvl *world.Level) {
 	for _, r := range scriptedRefs(rt, lvl) {
 		if scriptEvents.spawned[r] {
 			continue
@@ -167,7 +168,7 @@ func postSpawnEvents(rt *ScriptRuntime, lvl *Level) {
 }
 
 // postTickEvents fires `:tick:` on every scripted object, with the frame time.
-func postTickEvents(rt *ScriptRuntime, lvl *Level, dt float32) {
+func postTickEvents(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	for _, r := range scriptedRefs(rt, lvl) {
 		_ = rt.post(r, "tick", []flang.Value{flang.FloatVal(dt)}, flang.Pos{})
 	}
@@ -175,9 +176,9 @@ func postTickEvents(rt *ScriptRuntime, lvl *Level, dt float32) {
 
 // movers returns everything whose position can trigger a containment event: the
 // player, and every entity.
-func movers(lvl *Level) []flang.RefVal {
+func movers(lvl *world.Level) []flang.RefVal {
 	var out []flang.RefVal
-	if PlayerEntity != nil {
+	if world.PlayerEntity != nil {
 		out = append(out, flang.RefVal{Kind: flang.RefEntity, A: "player"})
 	}
 	if lvl != nil {
@@ -189,14 +190,14 @@ func movers(lvl *Level) []flang.RefVal {
 }
 
 // moverPosition returns where a mover currently is.
-func moverPosition(lvl *Level, r flang.RefVal) (mgl32.Vec3, bool) {
+func moverPosition(lvl *world.Level, r flang.RefVal) (mgl32.Vec3, bool) {
 	if r.A == "player" {
-		if PlayerEntity == nil {
+		if world.PlayerEntity == nil {
 			return mgl32.Vec3{}, false
 		}
-		return PlayerEntity.Position, true
+		return world.PlayerEntity.Position, true
 	}
-	if e := FindEntity(lvl, r.A); e != nil {
+	if e := world.FindEntity(lvl, r.A); e != nil {
 		return e.Position, true
 	}
 	return mgl32.Vec3{}, false
@@ -208,7 +209,7 @@ func moverPosition(lvl *Level, r flang.RefVal) (mgl32.Vec3, bool) {
 // The containers are volumes and entities with bounds; the movers are the player
 // and every entity. An object never contains itself, and a container with no
 // script is skipped — nothing would hear the event.
-func postOverlapEvents(rt *ScriptRuntime, lvl *Level) {
+func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 	if lvl == nil {
 		return
 	}
@@ -280,7 +281,7 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *Level) {
 // Free, near enough: EntityUpdate already refreshes Entity.CurrentSector every
 // frame, so this is one string comparison per entity rather than a containment
 // test.
-func postSectorEvents(rt *ScriptRuntime, lvl *Level) {
+func postSectorEvents(rt *ScriptRuntime, lvl *world.Level) {
 	if lvl == nil {
 		return
 	}
@@ -305,8 +306,8 @@ func postSectorEvents(rt *ScriptRuntime, lvl *Level) {
 		e := &lvl.Entities[i]
 		check(e.ID, e.CurrentSector, flang.RefVal{Kind: flang.RefEntity, A: e.ID})
 	}
-	if PlayerEntity != nil {
-		check("player", PlayerEntity.CurrentSector, flang.RefVal{Kind: flang.RefEntity, A: "player"})
+	if world.PlayerEntity != nil {
+		check("player", world.PlayerEntity.CurrentSector, flang.RefVal{Kind: flang.RefEntity, A: "player"})
 	}
 }
 
@@ -343,12 +344,12 @@ func postAnimEvents(rt *ScriptRuntime) {
 // Containment rather than a camera raycast, because EntitiesContaining and
 // VolumesContaining already exist and a ray does not. The nearest container
 // wins, so a small trigger inside a large room volume is still reachable.
-func postInteractEvent(rt *ScriptRuntime, lvl *Level) {
+func postInteractEvent(rt *ScriptRuntime, lvl *world.Level) {
 	pressed := hooks.ScriptInteractPressed()
-	if !pressed || PlayerEntity == nil || lvl == nil {
+	if !pressed || world.PlayerEntity == nil || lvl == nil {
 		return
 	}
-	p := PlayerEntity.Position
+	p := world.PlayerEntity.Position
 	player := flang.RefVal{Kind: flang.RefEntity, A: "player"}
 
 	best := flang.RefVal{}
@@ -359,12 +360,12 @@ func postInteractEvent(rt *ScriptRuntime, lvl *Level) {
 			best, bestDist = r, d
 		}
 	}
-	for _, v := range VolumesContaining(lvl, p) {
+	for _, v := range world.VolumesContaining(lvl, p) {
 		if v.Script != "" {
 			consider(flang.RefVal{Kind: flang.RefVolume, A: v.ID}, v.Position)
 		}
 	}
-	for _, e := range EntitiesContaining(lvl, p) {
+	for _, e := range world.EntitiesContaining(lvl, p) {
 		if e.Script != "" {
 			consider(flang.RefVal{Kind: flang.RefEntity, A: e.ID}, e.BoundCenter())
 		}

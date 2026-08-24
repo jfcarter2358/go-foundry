@@ -12,6 +12,7 @@ import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/model"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"math"
 	"path/filepath"
 	"sort"
@@ -410,7 +411,7 @@ func detailPresetSetStatus(format string, args ...interface{}) {
 // that persist the face's current wave, noise, taper and scatter settings as a
 // named preset under <exe>/detail_presets. Returns true if the face changed
 // (only its Preset label ever does here — the parameters are read, not written).
-func editorDetailPresetSaveRow(surfaceLabel string, d *DetailSpec) bool {
+func editorDetailPresetSaveRow(surfaceLabel string, d *world.DetailSpec) bool {
 	changed := false
 
 	if seen, ok := detailPresetNameSeen[surfaceLabel]; !ok || seen != d.Preset {
@@ -432,7 +433,7 @@ func editorDetailPresetSaveRow(surfaceLabel string, d *DetailSpec) bool {
 
 	clean := detailPresetName(name)
 	label := "Save Preset"
-	if _, exists := detailPresets[clean]; exists && clean != "" {
+	if _, exists := world.DetailPresets[clean]; exists && clean != "" {
 		label = "Update Preset"
 	}
 	imguibackend.EditorPushDisabled(clean == "")
@@ -472,7 +473,7 @@ func editorDetailPresetSaveRow(surfaceLabel string, d *DetailSpec) bool {
 // editorDetailPanel draws the per-face procedural-detail controls (wave/noise
 // displacement + scatter). surfaceLabel disambiguates ImGui IDs across the
 // Floor/Ceiling/Wall panels. Returns true if any value changed.
-func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
+func editorDetailPanel(surfaceLabel string, d *world.DetailSpec) bool {
 	imgui.Separator()
 	if !imgui.CollapsingHeader(fmt.Sprintf("Detail##%sdet", surfaceLabel)) {
 		return false
@@ -489,9 +490,9 @@ func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
 		preset = "(custom)"
 	}
 	if imgui.BeginCombo(fmt.Sprintf("Preset##%sdetPre", surfaceLabel), preset) {
-		for _, name := range detailPresetNames {
+		for _, name := range world.DetailPresetNames {
 			if imgui.SelectableV(name, name == d.Preset, 0, imgui.Vec2{}) {
-				applyDetailPreset(d, name)
+				world.ApplyDetailPreset(d, name)
 				changed = true
 			}
 		}
@@ -507,7 +508,7 @@ func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
 				first = false
 			}
 			if imgui.SelectableV(name, name == d.Preset, 0, imgui.Vec2{}) {
-				applyDetailPreset(d, name)
+				world.ApplyDetailPreset(d, name)
 				changed = true
 			}
 		}
@@ -528,10 +529,10 @@ func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
 		changed = true
 	}
 
-	// --- Displacement: up to detailMaxWaves sine layers + optional noise ---
+	// --- Displacement: up to DetailMaxWaves sine layers + optional noise ---
 	if imgui.Checkbox(fmt.Sprintf("Displace surface##%sdetDisp", surfaceLabel), &d.Displace) {
 		if d.Displace {
-			d.ensureDisplaceDefaults()
+			d.EnsureDisplaceDefaults()
 		}
 		changed = true
 	}
@@ -542,7 +543,7 @@ func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
 			id := fmt.Sprintf("%sdetW%d", surfaceLabel, i)
 			if imgui.Checkbox(fmt.Sprintf("Wave %d##%sEn", i+1, id), &w.Enabled) {
 				if w.Enabled && w.Frequency == 0 {
-					*w = detailDefaultWave(i)
+					*w = world.DetailDefaultWave(i)
 				}
 				changed = true
 			}
@@ -559,7 +560,7 @@ func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
 		// Noise layer — added on top of the summed waves.
 		if imgui.Checkbox(fmt.Sprintf("Noise##%sdetNoise", surfaceLabel), &d.Noise) {
 			if d.Noise {
-				d.ensureNoiseDefaults()
+				d.EnsureNoiseDefaults()
 			}
 			changed = true
 		}
@@ -577,7 +578,7 @@ func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
 		}
 
 		// Tessellation is per-patch, so the active layers share the highest level.
-		imgui.Text(fmt.Sprintf("Effective tessellation: %.0f", d.tessLevelFor()))
+		imgui.Text(fmt.Sprintf("Effective tessellation: %.0f", d.TessLevelFor()))
 		changed = editorDragFloat(fmt.Sprintf("Edge Taper##%sdetTaper", surfaceLabel), &d.EdgeTaper, 0, 10, "%.2f") || changed
 		imgui.Unindent()
 	}
@@ -601,7 +602,7 @@ func editorDetailPanel(surfaceLabel string, d *DetailSpec) bool {
 	}
 
 	if changed {
-		d.clamp()
+		d.Clamp()
 	}
 	return changed
 }
@@ -1014,7 +1015,7 @@ func Editor2DPanel() {
 	// the level-wide sections (the spawn point, lights) must stay reachable
 	// without one — otherwise a level with no chunk selected offers no way
 	// back.
-	var ch *Chunk
+	var ch *world.Chunk
 	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 		ch = &lvl.Chunks[Editor.ActiveChunkIdx]
 	}
@@ -1077,7 +1078,7 @@ func Editor2DPanel() {
 
 // editor2DSectorSections draws the sector list and the selected sector's
 // properties, vertex, and edge editors for the active chunk.
-func editor2DSectorSections(ch *Chunk) {
+func editor2DSectorSections(ch *world.Chunk) {
 	// ---- Sector list ----
 	imgui.Separator()
 	if imgui.CollapsingHeader(fmt.Sprintf("Sectors (%d)", len(ch.Sectors))) {
@@ -1095,7 +1096,7 @@ func editor2DSectorSections(ch *Chunk) {
 	if Editor.ActiveSectorIdx >= 0 && Editor.ActiveSectorIdx < len(ch.Sectors) {
 		imgui.Separator()
 		s := &ch.Sectors[Editor.ActiveSectorIdx]
-		sectorPts := SectorPoints(ch, s)
+		sectorPts := world.SectorPoints(ch, s)
 		if imgui.CollapsingHeaderV("Sector: "+s.ID, imgui.TreeNodeFlagsDefaultOpen) {
 			imgui.InputText("Sector ID##sid", &s.ID)
 
@@ -1110,7 +1111,7 @@ func editor2DSectorSections(ch *Chunk) {
 				imgui.Checkbox("Double Sided##fds", &s.Floor.DoubleSided)
 				changed = editorDragFloat("Alpha##fa", &s.Floor.Alpha, 0, 1, "%.2f") || changed
 				if changed {
-					_ = reloadSector(ch, s)
+					_ = world.ReloadSector(ch, s)
 				}
 				imgui.TreePop()
 			}
@@ -1125,7 +1126,7 @@ func editor2DSectorSections(ch *Chunk) {
 				imgui.Checkbox("Double Sided##cds", &s.Ceiling.DoubleSided)
 				changed = editorDragFloat("Alpha##ca", &s.Ceiling.Alpha, 0, 1, "%.2f") || changed
 				if changed {
-					_ = reloadSector(ch, s)
+					_ = world.ReloadSector(ch, s)
 				}
 				imgui.TreePop()
 			}
@@ -1136,24 +1137,24 @@ func editor2DSectorSections(ch *Chunk) {
 				EnterSurface2D("floor")
 			}
 			if editorUVControls("Floor2D", &s.Floor.UVOffset, &s.Floor.UVScale, &s.Floor.UVRotation) {
-				_ = reloadSector(ch, s)
+				_ = world.ReloadSector(ch, s)
 			}
 			editorSurfaceExtrusionPanel(ch, s, "Floor2D", &s.Floor.Extrusions)
 			editorTerrainPanel(ch, s, "Floor2D", &s.Floor.Terrain, &s.Floor.TerrainPoints)
 			if editorSmoothPanel("Floor2D", &s.Floor.Smooth, &s.Floor.SmoothAngle) {
-				_ = reloadSector(ch, s)
+				_ = world.ReloadSector(ch, s)
 			}
 			editorDetailPanel("Floor2D", &s.Floor.Detail)
 			if imgui.Button("Edit Ceiling Surface##ceilSurf2d") {
 				EnterSurface2D("ceiling")
 			}
 			if editorUVControls("Ceil2D", &s.Ceiling.UVOffset, &s.Ceiling.UVScale, &s.Ceiling.UVRotation) {
-				_ = reloadSector(ch, s)
+				_ = world.ReloadSector(ch, s)
 			}
 			editorSurfaceExtrusionPanel(ch, s, "Ceil2D", &s.Ceiling.Extrusions)
 			editorTerrainPanel(ch, s, "Ceil2D", &s.Ceiling.Terrain, &s.Ceiling.TerrainPoints)
 			if editorSmoothPanel("Ceil2D", &s.Ceiling.Smooth, &s.Ceiling.SmoothAngle) {
-				_ = reloadSector(ch, s)
+				_ = world.ReloadSector(ch, s)
 			}
 			editorDetailPanel("Ceil2D", &s.Ceiling.Detail)
 		}
@@ -1207,7 +1208,7 @@ func editor2DSectorSections(ch *Chunk) {
 				fOff := s.Floor.VertexOffsets[vi]
 				if editorDragFloat(fmt.Sprintf("Floor Offset##fo%d", vi), &fOff, -100, 100, "%.3f") {
 					s.Floor.VertexOffsets[vi] = fOff
-					_ = reloadSector(ch, s)
+					_ = world.ReloadSector(ch, s)
 				}
 			}
 			// Ceiling vertex offset
@@ -1215,7 +1216,7 @@ func editor2DSectorSections(ch *Chunk) {
 				cOff := s.Ceiling.VertexOffsets[vi]
 				if editorDragFloat(fmt.Sprintf("Ceil Offset##co%d", vi), &cOff, -100, 100, "%.3f") {
 					s.Ceiling.VertexOffsets[vi] = cOff
-					_ = reloadSector(ch, s)
+					_ = world.ReloadSector(ch, s)
 				}
 			}
 		}
@@ -1229,7 +1230,7 @@ func editor2DSectorSections(ch *Chunk) {
 }
 
 // editorEdgePanel draws the property editor for the currently selected edge.
-func editorEdgePanel(ch *Chunk, s *Sector) {
+func editorEdgePanel(ch *world.Chunk, s *world.Sector) {
 	kind := Editor.ActiveEdgeKind
 	idx := Editor.ActiveEdgeIdx
 
@@ -1250,7 +1251,7 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 		changed = imgui.Checkbox("Double Sided##wds", &w.DoubleSided) || changed
 		changed = editorDragFloat("Alpha##wa", &w.Alpha, 0, 1, "%.2f") || changed
 		if changed {
-			_ = reloadSector(ch, s)
+			_ = world.ReloadSector(ch, s)
 			ch.RebuildGaps()
 		}
 		changed = false
@@ -1258,13 +1259,13 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 			EnterSurface2D("wall")
 		}
 		if editorUVControls("Wall2D", &w.UVOffset, &w.UVScale, &w.UVRotation) {
-			_ = reloadSector(ch, s)
+			_ = world.ReloadSector(ch, s)
 		}
 		editorExtrusionPanel(ch, s, w)
 		editorTerrainPanel(ch, s, "Wall2D", &w.Terrain, &w.TerrainPoints)
 		// Smooth shading (rebuilds the wall: normals are made at upload)
 		if editorSmoothPanel("Wall2D", &w.Smooth, &w.SmoothAngle) {
-			_ = reloadSector(ch, s)
+			_ = world.ReloadSector(ch, s)
 		}
 		editorDetailPanel("Wall2D", &w.Detail)
 	} else if kind == "portal" && idx < len(s.Portals) {
@@ -1281,13 +1282,13 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 	}
 
 	if changed {
-		_ = reloadSector(ch, s)
+		_ = world.ReloadSector(ch, s)
 		ch.RebuildGaps()
 	}
 }
 
 // convertEdge converts an edge between wall and portal types.
-func convertEdge(ch *Chunk, s *Sector, fromKind string, idx int, toKind string) {
+func convertEdge(ch *world.Chunk, s *world.Sector, fromKind string, idx int, toKind string) {
 	if fromKind == toKind {
 		return
 	}
@@ -1312,15 +1313,15 @@ func convertEdge(ch *Chunk, s *Sector, fromKind string, idx int, toKind string) 
 	// identity lives on the edge rather than on the wall or portal record: a
 	// script addressing @sector.edge.<id> must not lose its target because the
 	// author turned that edge into a doorway.
-	ensureEdgeIDs(s)
+	world.EnsureEdgeIDs(s)
 	edgeID := s.EdgeIDs[polyIdx]
 
 	if fromKind == "wall" && idx < len(s.Walls) {
 		w := s.Walls[idx]
-		p := Portal{ID: edgeID, StartPoint: w.StartPoint, EndPoint: w.EndPoint, Visible: true, DoubleSided: w.DoubleSided}
+		p := world.Portal{ID: edgeID, StartPoint: w.StartPoint, EndPoint: w.EndPoint, Visible: true, DoubleSided: w.DoubleSided}
 		s.Walls = append(s.Walls[:idx], s.Walls[idx+1:]...)
 		// Insert portal at the correct position
-		s.Portals = append(s.Portals, Portal{})
+		s.Portals = append(s.Portals, world.Portal{})
 		copy(s.Portals[insertIdx+1:], s.Portals[insertIdx:])
 		s.Portals[insertIdx] = p
 		Editor.ActiveEdgeKind = "portal"
@@ -1328,10 +1329,10 @@ func convertEdge(ch *Chunk, s *Sector, fromKind string, idx int, toKind string) 
 	} else if fromKind == "portal" && idx < len(s.Portals) {
 		p := s.Portals[idx]
 		_ = gfx.EnsureTextureLoaded("concrete")
-		w := Wall{ID: edgeID, StartPoint: p.StartPoint, EndPoint: p.EndPoint, Texture: "concrete", Collision: true, Visible: true, Pinned: true, DoubleSided: p.DoubleSided, Alpha: 1.0}
+		w := world.Wall{ID: edgeID, StartPoint: p.StartPoint, EndPoint: p.EndPoint, Texture: "concrete", Collision: true, Visible: true, Pinned: true, DoubleSided: p.DoubleSided, Alpha: 1.0}
 		s.Portals = append(s.Portals[:idx], s.Portals[idx+1:]...)
 		// Insert wall at the correct position
-		s.Walls = append(s.Walls, Wall{})
+		s.Walls = append(s.Walls, world.Wall{})
 		copy(s.Walls[insertIdx+1:], s.Walls[insertIdx:])
 		s.Walls[insertIdx] = w
 		Editor.ActiveEdgeKind = "wall"
@@ -1339,12 +1340,12 @@ func convertEdge(ch *Chunk, s *Sector, fromKind string, idx int, toKind string) 
 	}
 
 	s.EdgeKinds[polyIdx] = toKind
-	syncEdgeRecordIDs(s)
-	_ = reloadSector(ch, s)
+	world.SyncEdgeRecordIDs(s)
+	_ = world.ReloadSector(ch, s)
 }
 
 // polyEdgeIdx returns the polygon edge index for the wall/portal at kind+idx.
-func polyEdgeIdx(s *Sector, kind string, idx int) int {
+func polyEdgeIdx(s *world.Sector, kind string, idx int) int {
 	count := 0
 	for ei, k := range s.EdgeKinds {
 		if k == kind {

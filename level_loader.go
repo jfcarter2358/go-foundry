@@ -5,6 +5,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"log"
 	"math"
 	"os"
@@ -24,7 +25,7 @@ import (
 
 // loadRawChunk converts a single RawChunk into a runtime Chunk, uploading all
 // geometry to the GPU. It returns the chunk and the set of texture names needed.
-func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
+func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 	texNeeded := map[string]bool{}
 
 	sc := float32(1.0)
@@ -32,11 +33,11 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		sc = rc.Scale
 	}
 	origin := mgl32.Vec3{rc.Origin.X, rc.Origin.Y, rc.Origin.Z}
-	chunkScript, err := scriptDataFromRaw(rc.RawScriptData, "chunk "+rc.ID)
+	chunkScript, err := world.ScriptDataFromRaw(rc.RawScriptData, "chunk "+rc.ID)
 	if err != nil {
-		return Chunk{}, nil, err
+		return world.Chunk{}, nil, err
 	}
-	chunk := Chunk{
+	chunk := world.Chunk{
 		ID:         rc.ID,
 		ScriptData: chunkScript,
 		Origin:     origin,
@@ -90,18 +91,18 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 	}
 
 	for _, rs := range rc.Sectors {
-		loadExtrusions := func(raws []RawExtrusion, transformXZ bool) []Extrusion {
-			var out []Extrusion
+		loadExtrusions := func(raws []world.RawExtrusion, transformXZ bool) []world.Extrusion {
+			var out []world.Extrusion
 			for _, re := range raws {
 				extUVScale := mgl32.Vec2{re.UVScale.X, re.UVScale.Y}
 				if extUVScale == (mgl32.Vec2{}) {
 					extUVScale = mgl32.Vec2{1, 1}
 				}
-				ext := Extrusion{
+				ext := world.Extrusion{
 					Depth:       re.Depth,
 					Texture:     re.Texture,
-					Visible:     boolDefault(re.Visible, true),
-					BackVisible: boolDefault(re.BackVisible, true),
+					Visible:     world.BoolDefault(re.Visible, true),
+					BackVisible: world.BoolDefault(re.BackVisible, true),
 					UVOffset:    mgl32.Vec2{re.UVOffset.X, re.UVOffset.Y},
 					UVScale:     extUVScale,
 					UVRotation:  re.UVRotation,
@@ -113,31 +114,31 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				for _, rp := range re.Outer {
 					if transformXZ {
 						tp := transformPoint2D(mgl32.Vec2{rp.U, rp.V}, origin, rc.Rotation, sc)
-						ext.Outer = append(ext.Outer, ExtrusionPoint{U: tp.X(), V: tp.Y()})
+						ext.Outer = append(ext.Outer, world.ExtrusionPoint{U: tp.X(), V: tp.Y()})
 					} else {
-						ext.Outer = append(ext.Outer, ExtrusionPoint{U: rp.U, V: rp.V})
+						ext.Outer = append(ext.Outer, world.ExtrusionPoint{U: rp.U, V: rp.V})
 					}
 				}
 				for _, rp := range re.Inner {
 					if transformXZ {
 						tp := transformPoint2D(mgl32.Vec2{rp.U, rp.V}, origin, rc.Rotation, sc)
-						ext.Inner = append(ext.Inner, ExtrusionPoint{U: tp.X(), V: tp.Y()})
+						ext.Inner = append(ext.Inner, world.ExtrusionPoint{U: tp.X(), V: tp.Y()})
 					} else {
-						ext.Inner = append(ext.Inner, ExtrusionPoint{U: rp.U, V: rp.V})
+						ext.Inner = append(ext.Inner, world.ExtrusionPoint{U: rp.U, V: rp.V})
 					}
 				}
 				out = append(out, ext)
 			}
 			return out
 		}
-		loadTerrainPts := func(raws []RawTerrainPoint, transformXZ bool) []TerrainPoint {
-			var out []TerrainPoint
+		loadTerrainPts := func(raws []world.RawTerrainPoint, transformXZ bool) []world.TerrainPoint {
+			var out []world.TerrainPoint
 			for _, rtp := range raws {
 				if transformXZ {
 					tp := transformPoint2D(mgl32.Vec2{rtp.U, rtp.V}, origin, rc.Rotation, sc)
-					out = append(out, TerrainPoint{U: tp.X(), V: tp.Y(), Depth: rtp.Depth})
+					out = append(out, world.TerrainPoint{U: tp.X(), V: tp.Y(), Depth: rtp.Depth})
 				} else {
-					out = append(out, TerrainPoint{U: rtp.U, V: rtp.V, Depth: rtp.Depth})
+					out = append(out, world.TerrainPoint{U: rtp.U, V: rtp.V, Depth: rtp.Depth})
 				}
 			}
 			return out
@@ -151,54 +152,54 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		if ceilUVScale == (mgl32.Vec2{}) {
 			ceilUVScale = mgl32.Vec2{1, 1}
 		}
-		sectorScript, err := scriptDataFromRaw(rs.RawScriptData, "sector "+rs.ID)
+		sectorScript, err := world.ScriptDataFromRaw(rs.RawScriptData, "sector "+rs.ID)
 		if err != nil {
-			return Chunk{}, nil, err
+			return world.Chunk{}, nil, err
 		}
-		floorScript, err := scriptDataFromRaw(rs.Floor.RawScriptData, "sector "+rs.ID+" floor")
+		floorScript, err := world.ScriptDataFromRaw(rs.Floor.RawScriptData, "sector "+rs.ID+" floor")
 		if err != nil {
-			return Chunk{}, nil, err
+			return world.Chunk{}, nil, err
 		}
-		ceilScript, err := scriptDataFromRaw(rs.Ceiling.RawScriptData, "sector "+rs.ID+" ceiling")
+		ceilScript, err := world.ScriptDataFromRaw(rs.Ceiling.RawScriptData, "sector "+rs.ID+" ceiling")
 		if err != nil {
-			return Chunk{}, nil, err
+			return world.Chunk{}, nil, err
 		}
 
-		sector := Sector{
+		sector := world.Sector{
 			ID:         rs.ID,
 			ScriptData: sectorScript,
-			Floor: Floor{
+			Floor: world.Floor{
 				ScriptData:    floorScript,
 				Enabled:       rs.Floor.Enabled,
 				Hidden:        rs.Floor.Hidden,
 				Height:        rs.Floor.Height,
 				Texture:       rs.Floor.Texture,
 				Terrain:       rs.Floor.Terrain,
-				DoubleSided:   boolDefault(rs.Floor.DoubleSided, true),
+				DoubleSided:   world.BoolDefault(rs.Floor.DoubleSided, true),
 				Alpha:         float32Default(rs.Floor.Alpha, 1.0),
 				Extrusions:    loadExtrusions(rs.Floor.Extrusions, true),
 				TerrainPoints: loadTerrainPts(rs.Floor.TerrainPoints, true),
 				UVOffset:      mgl32.Vec2{rs.Floor.UVOffset.X, rs.Floor.UVOffset.Y},
 				UVScale:       floorUVScale,
 				UVRotation:    rs.Floor.UVRotation,
-				Detail:        detailFromRaw(rs.Floor.Detail),
+				Detail:        world.DetailFromRaw(rs.Floor.Detail),
 				Smooth:        rs.Floor.Smooth,
 				SmoothAngle:   rs.Floor.SmoothAngle,
 			},
-			Ceiling: Ceiling{
+			Ceiling: world.Ceiling{
 				ScriptData:    ceilScript,
 				Enabled:       rs.Ceiling.Enabled,
 				Height:        rs.Ceiling.Height,
 				Texture:       rs.Ceiling.Texture,
 				Terrain:       rs.Ceiling.Terrain,
-				DoubleSided:   boolDefault(rs.Ceiling.DoubleSided, true),
+				DoubleSided:   world.BoolDefault(rs.Ceiling.DoubleSided, true),
 				Alpha:         float32Default(rs.Ceiling.Alpha, 1.0),
 				Extrusions:    loadExtrusions(rs.Ceiling.Extrusions, true),
 				TerrainPoints: loadTerrainPts(rs.Ceiling.TerrainPoints, true),
 				UVOffset:      mgl32.Vec2{rs.Ceiling.UVOffset.X, rs.Ceiling.UVOffset.Y},
 				UVScale:       ceilUVScale,
 				UVRotation:    rs.Ceiling.UVRotation,
-				Detail:        detailFromRaw(rs.Ceiling.Detail),
+				Detail:        world.DetailFromRaw(rs.Ceiling.Detail),
 				Smooth:        rs.Ceiling.Smooth,
 				SmoothAngle:   rs.Ceiling.SmoothAngle,
 			},
@@ -219,21 +220,21 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		pointSeen := make(map[string]bool, len(rs.Edges))
 		for ei, e := range rs.Edges {
 			if pointSeen[e.From] {
-				return Chunk{}, nil, fmt.Errorf(
+				return world.Chunk{}, nil, fmt.Errorf(
 					"sector %q: point %q appears more than once in the edge ring", rs.ID, e.From)
 			}
 			pointSeen[e.From] = true
 
 			next := rs.Edges[(ei+1)%len(rs.Edges)]
 			if e.To != next.From {
-				return Chunk{}, nil, fmt.Errorf(
+				return world.Chunk{}, nil, fmt.Errorf(
 					"sector %q: edge %d ends at %q but edge %d starts at %q — edges must form a closed ring",
 					rs.ID, ei, e.To, (ei+1)%len(rs.Edges), next.From)
 			}
 
 			idx, ok := pointNameToIdx[e.From]
 			if !ok {
-				return Chunk{}, nil, fmt.Errorf(
+				return world.Chunk{}, nil, fmt.Errorf(
 					"sector %q: edge references unknown point %q", rs.ID, e.From)
 			}
 			sector.PointIndices = append(sector.PointIndices, idx)
@@ -243,7 +244,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			fromIdx, okFrom := pointNameToIdx[edge.From]
 			toIdx, okTo := pointNameToIdx[edge.To]
 			if !okFrom || !okTo {
-				return Chunk{}, nil, fmt.Errorf("sector %q: edge references unknown point: %s->%s",
+				return world.Chunk{}, nil, fmt.Errorf("sector %q: edge references unknown point: %s->%s",
 					rs.ID, edge.From, edge.To)
 			}
 			start := chunk.Points[fromIdx]
@@ -255,11 +256,11 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			// clockwise-authored sector on its next save.
 			edgeID := edge.ID
 			if edgeID == "" {
-				edgeID = migrateEdgeID(edge.From, edge.To)
+				edgeID = world.MigrateEdgeID(edge.From, edge.To)
 			}
-			edgeScript, err := scriptDataFromRaw(edge.RawScriptData, "sector "+rs.ID+" edge "+edgeID)
+			edgeScript, err := world.ScriptDataFromRaw(edge.RawScriptData, "sector "+rs.ID+" edge "+edgeID)
 			if err != nil {
-				return Chunk{}, nil, err
+				return world.Chunk{}, nil, err
 			}
 
 			switch edge.Kind {
@@ -271,7 +272,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				if wallUVScale == (mgl32.Vec2{}) {
 					wallUVScale = mgl32.Vec2{1, 1}
 				}
-				sector.Walls = append(sector.Walls, Wall{
+				sector.Walls = append(sector.Walls, world.Wall{
 					ID:            edgeID,
 					ScriptData:    edgeScript,
 					StartPoint:    start,
@@ -280,7 +281,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 					Collision:     edge.Collision,
 					Visible:       !edge.Hidden,
 					Pinned:        edge.Pinned,
-					DoubleSided:   boolDefault(edge.DoubleSided, true),
+					DoubleSided:   world.BoolDefault(edge.DoubleSided, true),
 					Terrain:       edge.WallTerrain,
 					Alpha:         float32Default(edge.Alpha, 1.0),
 					Extrusions:    loadExtrusions(edge.Extrusions, false),
@@ -288,14 +289,14 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 					UVOffset:      mgl32.Vec2{edge.UVOffset.X, edge.UVOffset.Y},
 					UVScale:       wallUVScale,
 					UVRotation:    edge.UVRotation,
-					Detail:        detailFromRaw(edge.Detail),
+					Detail:        world.DetailFromRaw(edge.Detail),
 					Smooth:        edge.Smooth,
 					SmoothAngle:   edge.SmoothAngle,
 				})
 				sector.EdgeKinds = append(sector.EdgeKinds, "wall")
 				sector.EdgeIDs = append(sector.EdgeIDs, edgeID)
 			case "portal":
-				sector.Portals = append(sector.Portals, Portal{
+				sector.Portals = append(sector.Portals, world.Portal{
 					ID:          edgeID,
 					ScriptData:  edgeScript,
 					StartPoint:  start,
@@ -304,7 +305,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 					DrawGap:     edge.DrawGap,
 					GapTexture:  edge.GapTexture,
 					Visible:     !edge.Hidden,
-					DoubleSided: boolDefault(edge.DoubleSided, true),
+					DoubleSided: world.BoolDefault(edge.DoubleSided, true),
 					Alpha:       float32Default(edge.Alpha, 1.0),
 				})
 				sector.EdgeKinds = append(sector.EdgeKinds, "portal")
@@ -315,11 +316,11 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		// A file can carry duplicate IDs (hand-edited, or two edges migrating to
 		// the same point pair in a malformed ring). Resolve them here so the
 		// invariant holds from the moment the sector exists.
-		dedupeSectorEdgeIDs(&sector)
+		world.DedupeSectorEdgeIDs(&sector)
 
-		sectorPts := SectorPoints(&chunk, &sector)
+		sectorPts := world.SectorPoints(&chunk, &sector)
 
-		reversed := signedArea2D(sectorPts) < 0
+		reversed := world.SignedArea2D(sectorPts) < 0
 		if reversed {
 			// Reversing vertex order shifts which polygon edge is which: new
 			// edge i is the reverse of old edge (n-2-i) mod n, not old edge
@@ -330,8 +331,8 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			type edgeRec struct {
 				kind   string
 				id     string
-				wall   Wall
-				portal Portal
+				wall   world.Wall
+				portal world.Portal
 			}
 			recs := make([]edgeRec, n)
 			wi, pi := 0, 0
@@ -360,8 +361,8 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 
 			newEdgeKinds := make([]string, n)
 			newEdgeIDs := make([]string, n)
-			newWalls := make([]Wall, 0, len(sector.Walls))
-			newPortals := make([]Portal, 0, len(sector.Portals))
+			newWalls := make([]world.Wall, 0, len(sector.Walls))
+			newPortals := make([]world.Portal, 0, len(sector.Portals))
 			for i := 0; i < n; i++ {
 				rec := recs[((n-2-i)%n+n)%n]
 				newEdgeKinds[i] = rec.kind
@@ -378,9 +379,9 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			sector.EdgeIDs = newEdgeIDs
 			sector.Walls = newWalls
 			sector.Portals = newPortals
-			sectorPts = SectorPoints(&chunk, &sector)
+			sectorPts = world.SectorPoints(&chunk, &sector)
 		}
-		syncEdgeRecordIDs(&sector)
+		world.SyncEdgeRecordIDs(&sector)
 
 		nPts := len(sector.PointIndices)
 		sector.Floor.VertexOffsets = make([]float32, nPts)
@@ -446,9 +447,9 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 
 	for si := range chunk.Sectors {
 		s := &chunk.Sectors[si]
-		sectorPts := SectorPoints(&chunk, s)
+		sectorPts := world.SectorPoints(&chunk, s)
 		if err := s.Load(sectorPts); err != nil {
-			return Chunk{}, nil, fmt.Errorf("sector %q load: %w", s.ID, err)
+			return world.Chunk{}, nil, fmt.Errorf("sector %q load: %w", s.ID, err)
 		}
 	}
 
@@ -481,12 +482,12 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 	// Biome sector polygons — points are chunk-local, re-derived to world
 	// space using the same transform already applied to structural points.
 	for _, rb := range rc.BiomeSectors {
-		bs := BiomeSector{
+		bs := world.BiomeSector{
 			ID:          rb.ID,
 			Points:      make([]mgl32.Vec2, len(rb.Points)),
 			HeightDirty: true,
 			GroundDirty: true,
-			Brush: BiomeBrush{
+			Brush: world.BiomeBrush{
 				Kind:         rb.Brush.Kind,
 				Density:      rb.Brush.Density,
 				Range:        rb.Brush.Range,
@@ -501,7 +502,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				RockScale:    rb.Brush.RockScale,
 				SandHeight:   rb.Brush.SandHeight,
 				WaterDepth:   rb.Brush.WaterDepth,
-				Water:        waterParamsFromRaw(rb.Brush.Water),
+				Water:        world.WaterParamsFromRaw(rb.Brush.Water),
 
 				MossScatter:   rb.Brush.MossScatter,
 				MinSlopeAngle: rb.Brush.MinSlopeAngle,
@@ -539,10 +540,10 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 // LoadLevel reads a YAML level file, converts it to runtime types, and uploads
 // all geometry to the GPU. Texture loading is driven from this function via the
 // global TextureNames map and ExecutablePath variable.
-func LoadLevel(levelPath string) (Level, error) {
+func LoadLevel(levelPath string) (world.Level, error) {
 	raw, err := readRawLevelFile(levelPath)
 	if err != nil {
-		return Level{}, err
+		return world.Level{}, err
 	}
 	return rawToLevel(raw)
 }
@@ -550,14 +551,14 @@ func LoadLevel(levelPath string) (Level, error) {
 // readRawLevelFile parses a level file into its Raw form without touching the
 // GPU. Split from LoadLevel so anything that only wants to inspect a level's
 // authored shape — validation, migration checks, tooling — can do so headlessly.
-func readRawLevelFile(levelPath string) (RawLevel, error) {
+func readRawLevelFile(levelPath string) (world.RawLevel, error) {
 	data, err := os.ReadFile(levelPath)
 	if err != nil {
-		return RawLevel{}, err
+		return world.RawLevel{}, err
 	}
-	var raw RawLevel
+	var raw world.RawLevel
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return RawLevel{}, err
+		return world.RawLevel{}, err
 	}
 	return raw, nil
 }
@@ -565,9 +566,9 @@ func readRawLevelFile(levelPath string) (RawLevel, error) {
 // blankRawLevel returns a minimal valid RawLevel: a single four-walled room
 // lit by soft ambient light. Used to write a starter file from the editor's
 // "New Level" dialog.
-func blankRawLevel() RawLevel {
-	return RawLevel{
-		Chunks: []RawChunk{{
+func blankRawLevel() world.RawLevel {
+	return world.RawLevel{
+		Chunks: []world.RawChunk{{
 			ID: "default",
 			Points: map[string]geom.Point{
 				"A": {X: -4, Y: -4},
@@ -575,19 +576,19 @@ func blankRawLevel() RawLevel {
 				"C": {X: 4, Y: 4},
 				"D": {X: -4, Y: 4},
 			},
-			Sectors: []RawSector{{
+			Sectors: []world.RawSector{{
 				ID: "room",
-				Floor: RawFloor{
+				Floor: world.RawFloor{
 					Enabled: true,
 					Height:  0,
 					Texture: "default",
 				},
-				Ceiling: RawCeiling{
+				Ceiling: world.RawCeiling{
 					Enabled: true,
 					Height:  4,
 					Texture: "default",
 				},
-				Edges: []RawEdge{
+				Edges: []world.RawEdge{
 					{From: "A", To: "B", Kind: "wall", Texture: "default", Collision: true},
 					{From: "B", To: "C", Kind: "wall", Texture: "default", Collision: true},
 					{From: "C", To: "D", Kind: "wall", Texture: "default", Collision: true},
@@ -595,8 +596,8 @@ func blankRawLevel() RawLevel {
 				},
 			}},
 		}},
-		Lights: RawLights{
-			Global: RawGlobalLight{Color: RawColor{R: 1, G: 1, B: 1}, Brightness: 0.3},
+		Lights: world.RawLights{
+			Global: world.RawGlobalLight{Color: world.RawColor{R: 1, G: 1, B: 1}, Brightness: 0.3},
 		},
 	}
 }
@@ -609,19 +610,19 @@ func blankRawLevel() RawLevel {
 // globalLightBrightness and only grows from there), so geometry added via
 // "New Chunk" would otherwise be invisible until a light is added by hand.
 // The caller is responsible for saving it if they want to keep it.
-func NewBlankLevel() (Level, error) {
-	return rawToLevel(RawLevel{
-		Lights: RawLights{
-			Global: RawGlobalLight{Color: RawColor{R: 1, G: 1, B: 1}, Brightness: 0.3},
+func NewBlankLevel() (world.Level, error) {
+	return rawToLevel(world.RawLevel{
+		Lights: world.RawLights{
+			Global: world.RawGlobalLight{Color: world.RawColor{R: 1, G: 1, B: 1}, Brightness: 0.3},
 		},
 	})
 }
 
 // rawToLightSet converts parsed YAML lights into runtime lights. Split out of
 // rawToLevel because it touches no GPU state.
-func rawToLightSet(rl RawLights) LightSet {
-	var ls LightSet
-	ls.Global = GlobalLight{
+func rawToLightSet(rl world.RawLights) world.LightSet {
+	var ls world.LightSet
+	ls.Global = world.GlobalLight{
 		Color:      mgl32.Vec3{rl.Global.Color.R, rl.Global.Color.G, rl.Global.Color.B},
 		Brightness: rl.Global.Brightness,
 	}
@@ -630,8 +631,8 @@ func rawToLightSet(rl RawLights) LightSet {
 		if ss == 0 && rd.CastShadows {
 			ss = 0.5 // default to half-strength shadows
 		}
-		dlScript, _ := scriptDataFromRaw(rd.RawScriptData, "directional light "+rd.ID)
-		dl := DirectionalLight{
+		dlScript, _ := world.ScriptDataFromRaw(rd.RawScriptData, "directional light "+rd.ID)
+		dl := world.DirectionalLight{
 			ID:             rd.ID,
 			ScriptData:     dlScript,
 			Color:          mgl32.Vec3{rd.Color.R, rd.Color.G, rd.Color.B},
@@ -644,7 +645,7 @@ func rawToLightSet(rl RawLights) LightSet {
 		if rd.Yaw != nil && rd.Pitch != nil {
 			dl.Yaw, dl.Pitch = *rd.Yaw, *rd.Pitch
 		} else {
-			dl.Yaw, dl.Pitch = DirLightYawPitch(mgl32.Vec3{rd.Direction.X, rd.Direction.Y, rd.Direction.Z})
+			dl.Yaw, dl.Pitch = world.DirLightYawPitch(mgl32.Vec3{rd.Direction.X, rd.Direction.Y, rd.Direction.Z})
 		}
 		dl.SyncDirection()
 		ls.Directional = append(ls.Directional, dl)
@@ -654,8 +655,8 @@ func rawToLightSet(rl RawLights) LightSet {
 		if ss == 0 && rp.CastShadows {
 			ss = 0.5
 		}
-		plScript, _ := scriptDataFromRaw(rp.RawScriptData, "point light "+rp.ID)
-		ls.Points = append(ls.Points, PointLight{
+		plScript, _ := world.ScriptDataFromRaw(rp.RawScriptData, "point light "+rp.ID)
+		ls.Points = append(ls.Points, world.PointLight{
 			ID:             rp.ID,
 			ScriptData:     plScript,
 			Position:       mgl32.Vec3{rp.Position.X, rp.Position.Y, rp.Position.Z},
@@ -669,20 +670,20 @@ func rawToLightSet(rl RawLights) LightSet {
 	// Lights predate having identity, so most levels arrive with none. Mint them
 	// here rather than at every use site, so a light is addressable the moment it
 	// exists.
-	assignLightIDs(&ls)
+	world.AssignLightIDs(&ls)
 	return ls
 }
 
 // rawToLevel converts a parsed RawLevel into runtime types and uploads all
 // referenced geometry/textures to the GPU.
-func rawToLevel(raw RawLevel) (Level, error) {
-	var level Level
+func rawToLevel(raw world.RawLevel) (world.Level, error) {
+	var level world.Level
 	texNeeded := map[string]bool{}
 
 	for _, rc := range raw.Chunks {
 		chunk, chunkTex, err := loadRawChunk(rc)
 		if err != nil {
-			return Level{}, err
+			return world.Level{}, err
 		}
 		for t := range chunkTex {
 			texNeeded[t] = true
@@ -697,17 +698,17 @@ func rawToLevel(raw RawLevel) (Level, error) {
 	// should still open.
 	level.Scripts = append([]string(nil), raw.Scripts...)
 
-	resolveLevelIDCollisions(level.Chunks)
-	resolveBiomeSectorIDCollisions(&level)
+	world.ResolveLevelIDCollisions(level.Chunks)
+	world.ResolveBiomeSectorIDCollisions(&level)
 
 	// The player spawn: one optional marker per level, not a placed object.
 	if raw.Spawn != nil {
-		spawn := &SpawnPoint{
+		spawn := &world.SpawnPoint{
 			Position: mgl32.Vec3{raw.Spawn.Position.X, raw.Spawn.Position.Y, raw.Spawn.Position.Z},
 			Rotation: mgl32.Vec3{raw.Spawn.Rotation.X, raw.Spawn.Rotation.Y, raw.Spawn.Rotation.Z},
 		}
 		if err := spawn.Load(); err != nil {
-			return Level{}, fmt.Errorf("spawn point load: %w", err)
+			return world.Level{}, fmt.Errorf("spawn point load: %w", err)
 		}
 		level.Spawn = spawn
 	}
@@ -720,26 +721,26 @@ func rawToLevel(raw RawLevel) (Level, error) {
 	// first sign of trouble would be a script failing to find something the
 	// level plainly says is there.
 	for _, re := range raw.Entities {
-		e, err := entityFromRaw(re, LoadEntityDef)
+		e, err := world.EntityFromRaw(re, world.LoadEntityDef)
 		if err != nil {
-			return Level{}, err
+			return world.Level{}, err
 		}
 		// IDs address entities from scripts, so a level with two of the same
 		// gets the duplicate renamed rather than made unreachable.
-		e.ID = uniqueEntityID(&level, e.ID)
+		e.ID = world.UniqueEntityID(&level, e.ID)
 		if err := e.Load(); err != nil {
-			return Level{}, fmt.Errorf("entity %q load: %w", e.ID, err)
+			return world.Level{}, fmt.Errorf("entity %q load: %w", e.ID, err)
 		}
 		level.Entities = append(level.Entities, e)
 	}
 
 	// Volumes: scriptable regions, with the same ID guarantee entities get.
 	for _, rv := range raw.Volumes {
-		v, err := volumeFromRaw(rv)
+		v, err := world.VolumeFromRaw(rv)
 		if err != nil {
-			return Level{}, err
+			return world.Level{}, err
 		}
-		v.ID = uniqueVolumeID(&level, v.ID)
+		v.ID = world.UniqueVolumeID(&level, v.ID)
 		if err := v.Load(); err != nil {
 			// A cage that would not build is a missing authoring aid, not a
 			// broken level — the volume still works.
@@ -758,14 +759,14 @@ func rawToLevel(raw RawLevel) (Level, error) {
 		}
 		path, ok := gfx.TextureNames[name]
 		if !ok {
-			return Level{}, fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
+			return world.Level{}, fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 		}
 		if err := gfx.LoadTexture(name, filepath.Join(fileutil.ExecutablePath, path)); err != nil {
-			return Level{}, err
+			return world.Level{}, err
 		}
 	}
 
-	level.Spatial = BuildSpatialHash(level.Chunks, 8.0)
+	level.Spatial = world.BuildSpatialHash(level.Chunks, 8.0)
 
 	return level, nil
 }

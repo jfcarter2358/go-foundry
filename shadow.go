@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"log"
 	"math"
 	"strings"
@@ -500,12 +501,12 @@ func CascadeLightMatrix(dir mgl32.Vec3, corners [8]mgl32.Vec3) (mgl32.Mat4, floa
 // camera. view is the camera (world→view) matrix and projection its perspective
 // matrix; the cascades are fitted to slices of that frustum, so shadows follow
 // the view instead of stopping at a fixed radius around the camera.
-func RenderShadowPass(lights LightSet, level *Level, view, projection mgl32.Mat4) ShadowFrame {
+func RenderShadowPass(lights world.LightSet, level *world.Level, view, projection mgl32.Mat4) ShadowFrame {
 	tanHalfV, aspect, near := perspectiveParams(projection)
 
 	numDir := len(lights.Directional)
-	if numDir > MaxDirLights {
-		numDir = MaxDirLights
+	if numDir > world.MaxDirLights {
+		numDir = world.MaxDirLights
 	}
 	frame := newShadowFrame(len(lights.Directional), near)
 
@@ -574,7 +575,7 @@ func RenderShadowPass(lights LightSet, level *Level, view, projection mgl32.Mat4
 }
 
 // RenderPointShadowPass renders cubemap shadow maps for point lights.
-func RenderPointShadowPass(lights LightSet, level *Level) {
+func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 	shadowCount := 0
 	for _, pl := range lights.Points {
 		if pl.CastShadows {
@@ -645,7 +646,7 @@ func RenderPointShadowPass(lights LightSet, level *Level) {
 // renderSceneShadow walks the level for one shadow pass. prog and skin identify
 // which program is bound: both passes share this walker but resolve the skinning
 // uniforms to different locations, so the cache cannot be a single global.
-func renderSceneShadow(level *Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
+func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
 	identity := mgl32.Ident4()
 	gl.UniformMatrix4fv(modelUniform, 1, false, &identity[0])
 
@@ -725,16 +726,16 @@ func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
 const CascadeTexUnit = 1
 
 // UploadShadowUniforms sends directional shadow data to the main shader.
-func UploadShadowUniforms(lights LightSet, frame ShadowFrame) {
+func UploadShadowUniforms(lights world.LightSet, frame ShadowFrame) {
 	UploadShadowUniformsTo(gfx.Program, lights, frame)
 }
 
 // UploadShadowUniformsTo sends directional shadow data (cascade matrices, split
 // distances, per-cascade biases, cast flags, strengths and the cascade array
 // sampler) to prog. Binds prog as active.
-func UploadShadowUniformsTo(prog uint32, lights LightSet, frame ShadowFrame) {
+func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFrame) {
 	gl.UseProgram(prog)
-	uniformLoc := func(name string) int32 { return progUniformLoc(prog, name) }
+	uniformLoc := func(name string) int32 { return world.ProgUniformLoc(prog, name) }
 
 	for c := 0; c < ShadowCascades; c++ {
 		splitName := fmt.Sprintf("cascadeSplit[%d]\x00", c)
@@ -748,7 +749,7 @@ func UploadShadowUniformsTo(prog uint32, lights LightSet, frame ShadowFrame) {
 	gl.BindTexture(gl.TEXTURE_2D_ARRAY, Shadows.CascadeArray)
 	gl.Uniform1i(uniformLoc("shadowMapArray\x00"), CascadeTexUnit)
 
-	for i := 0; i < MaxDirLights; i++ {
+	for i := 0; i < world.MaxDirLights; i++ {
 		layer := int32(-1)
 		strength := float32(0)
 		cast := int32(0)
@@ -788,14 +789,14 @@ func UploadShadowUniformsTo(prog uint32, lights LightSet, frame ShadowFrame) {
 
 // UploadPointShadowUniforms sends point light shadow cubemaps to the main shader.
 // Texture units start after directional shadow maps (1..MaxDirLights are dir, then point).
-func UploadPointShadowUniforms(lights LightSet) {
+func UploadPointShadowUniforms(lights world.LightSet) {
 	UploadPointShadowUniformsTo(gfx.Program, lights)
 }
 
 // UploadPointShadowUniformsTo sends point-light cubemap shadow data to prog.
-func UploadPointShadowUniformsTo(prog uint32, lights LightSet) {
+func UploadPointShadowUniformsTo(prog uint32, lights world.LightSet) {
 	gl.UseProgram(prog)
-	uniformLoc := func(name string) int32 { return progUniformLoc(prog, name) }
+	uniformLoc := func(name string) int32 { return world.ProgUniformLoc(prog, name) }
 
 	baseUnit := int32(CascadeTexUnit + 1) // unit 0 = albedo, unit 1 = dir cascade array
 
@@ -803,7 +804,7 @@ func UploadPointShadowUniformsTo(prog uint32, lights LightSet) {
 	// lights) so that every samplerCube uniform references a unit with a valid
 	// cubemap. Unassigned samplerCube uniforms default to unit 0 which holds
 	// the diffuse sampler2D — a type mismatch that causes undefined behavior.
-	for i := 0; i < MaxPointLights; i++ {
+	for i := 0; i < world.MaxPointLights; i++ {
 		texUnit := baseUnit + int32(i)
 		gl.ActiveTexture(uint32(gl.TEXTURE0 + texUnit))
 		gl.BindTexture(gl.TEXTURE_CUBE_MAP, Shadows.DummyCubemap)
@@ -812,8 +813,8 @@ func UploadPointShadowUniformsTo(prog uint32, lights LightSet) {
 	}
 
 	numPt := len(lights.Points)
-	if numPt > MaxPointLights {
-		numPt = MaxPointLights
+	if numPt > world.MaxPointLights {
+		numPt = world.MaxPointLights
 	}
 	mapIdx := 0
 	for i := 0; i < numPt; i++ {

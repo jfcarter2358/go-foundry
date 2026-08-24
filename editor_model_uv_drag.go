@@ -40,7 +40,7 @@ func (t modelUVTransform) IsIdentity() bool {
 }
 
 // apply transforms one UV: scale about the origin, then rotate, then offset —
-// the same order applyUVTransform (wall.go) uses, so a texture behaves the same
+// the same order ApplyUVTransform (wall.go) uses, so a texture behaves the same
 // way on a model face as on a wall.
 func (t modelUVTransform) apply(uv mgl32.Vec2) mgl32.Vec2 {
 	scale := t.Scale

@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/model"
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -10,7 +11,7 @@ import (
 func uvClose(a, b mgl32.Vec2, eps float32) bool { return a.Sub(b).Len() <= eps }
 
 func TestUVTransformOrderMatchesWalls(t *testing.T) {
-	// Scale, then rotate, then offset — the same order applyUVTransform uses,
+	// Scale, then rotate, then offset — the same order ApplyUVTransform uses,
 	// so a texture behaves the same on a model face as on a wall.
 	x := modelUVTransform{Offset: mgl32.Vec2{1, 2}, Scale: mgl32.Vec2{2, 3}, Rotation: 0}
 	if got := x.apply(mgl32.Vec2{1, 1}); !uvClose(got, mgl32.Vec2{3, 5}, 1e-5) {
@@ -19,9 +20,9 @@ func TestUVTransformOrderMatchesWalls(t *testing.T) {
 
 	// Cross-check against the engine's own implementation on the same input.
 	verts := [][]float32{{0, 0, 0, 1, 1}}
-	applyUVTransform(verts, mgl32.Vec2{1, 2}, mgl32.Vec2{2, 3}, 0)
+	world.ApplyUVTransform(verts, mgl32.Vec2{1, 2}, mgl32.Vec2{2, 3}, 0)
 	if verts[0][3] != 3 || verts[0][4] != 5 {
-		t.Errorf("applyUVTransform disagrees: %v", verts[0][3:])
+		t.Errorf("ApplyUVTransform disagrees: %v", verts[0][3:])
 	}
 }
 

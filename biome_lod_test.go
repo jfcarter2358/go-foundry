@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/world"
 	"math"
 	"testing"
 )
@@ -11,30 +12,30 @@ import (
 // individually-read instances) and every non-scattering kind stay at one,
 // unchanged from before LOD existed.
 func TestBiomeLODTierCount(t *testing.T) {
-	three := []int32{BiomeGrass, BiomeWildflower, BiomeCattail, BiomeMoss}
+	three := []int32{world.BiomeGrass, world.BiomeWildflower, world.BiomeCattail, world.BiomeMoss}
 	for _, k := range three {
-		if got := biomeLODTierCount(k); got != 3 {
-			t.Errorf("biomeLODTierCount(%d) = %d, want 3", k, got)
+		if got := world.BiomeLODTierCount(k); got != 3 {
+			t.Errorf("BiomeLODTierCount(%d) = %d, want 3", k, got)
 		}
 	}
-	one := []int32{BiomeRock, BiomeSand, BiomeWater}
+	one := []int32{world.BiomeRock, world.BiomeSand, world.BiomeWater}
 	for _, k := range one {
-		if got := biomeLODTierCount(k); got != 1 {
-			t.Errorf("biomeLODTierCount(%d) = %d, want 1", k, got)
+		if got := world.BiomeLODTierCount(k); got != 1 {
+			t.Errorf("BiomeLODTierCount(%d) = %d, want 1", k, got)
 		}
 	}
 }
 
 // TestResolvedLODDefaults checks the "0 means the kind's default" resolution
-// — defaultLOD1Fraction/defaultLOD2Fraction of the brush's own Range — the
+// — DefaultLOD1Fraction/DefaultLOD2Fraction of the brush's own Range — the
 // same convention every other zero-value brush field uses.
 func TestResolvedLODDefaults(t *testing.T) {
-	b := &BiomeBrush{Kind: BiomeGrass, Range: 100}
-	if got, want := resolvedLOD1(b), float32(100)*defaultLOD1Fraction; got != want {
-		t.Errorf("resolvedLOD1 = %v, want %v", got, want)
+	b := &world.BiomeBrush{Kind: world.BiomeGrass, Range: 100}
+	if got, want := world.ResolvedLOD1(b), float32(100)*world.DefaultLOD1Fraction; got != want {
+		t.Errorf("ResolvedLOD1 = %v, want %v", got, want)
 	}
-	if got, want := resolvedLOD2(b), float32(100)*defaultLOD2Fraction; got != want {
-		t.Errorf("resolvedLOD2 = %v, want %v", got, want)
+	if got, want := world.ResolvedLOD2(b), float32(100)*world.DefaultLOD2Fraction; got != want {
+		t.Errorf("ResolvedLOD2 = %v, want %v", got, want)
 	}
 }
 
@@ -59,20 +60,20 @@ func TestResolvedLODOrdering(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			b := &BiomeBrush{Kind: BiomeGrass, Range: c.rng, LOD1Distance: c.lod1, LOD2Distance: c.lod2}
-			lod1 := resolvedLOD1(b)
-			lod2 := resolvedLOD2(b)
+			b := &world.BiomeBrush{Kind: world.BiomeGrass, Range: c.rng, LOD1Distance: c.lod1, LOD2Distance: c.lod2}
+			lod1 := world.ResolvedLOD1(b)
+			lod2 := world.ResolvedLOD2(b)
 			if !(lod1 > 0) {
-				t.Fatalf("resolvedLOD1 = %v, want > 0", lod1)
+				t.Fatalf("ResolvedLOD1 = %v, want > 0", lod1)
 			}
 			if lod1 > c.rng {
-				t.Errorf("resolvedLOD1 = %v, want <= range %v", lod1, c.rng)
+				t.Errorf("ResolvedLOD1 = %v, want <= range %v", lod1, c.rng)
 			}
 			if lod2 < lod1 {
-				t.Errorf("resolvedLOD2 = %v, want >= resolvedLOD1 %v", lod2, lod1)
+				t.Errorf("ResolvedLOD2 = %v, want >= ResolvedLOD1 %v", lod2, lod1)
 			}
 			if lod2 > c.rng {
-				t.Errorf("resolvedLOD2 = %v, want <= range %v", lod2, c.rng)
+				t.Errorf("ResolvedLOD2 = %v, want <= range %v", lod2, c.rng)
 			}
 		})
 	}

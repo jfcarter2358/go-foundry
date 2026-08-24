@@ -3,6 +3,7 @@ package main
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -75,21 +76,21 @@ func TestPickModelTDegenerateMatrix(t *testing.T) {
 func TestPick3DClosestWins(t *testing.T) {
 	mx, my := setupPickCamera()
 
-	newLevel := func(wallZ, spawnZ float32) *Level {
-		wall := Wall{Visible: true}
+	newLevel := func(wallZ, spawnZ float32) *world.Level {
+		wall := world.Wall{Visible: true}
 		wall.Geometry.Vertices = quadVerts(wallZ, 4)
-		return &Level{
-			Chunks: []Chunk{{
+		return &world.Level{
+			Chunks: []world.Chunk{{
 				ID: "c0",
-				Sectors: []Sector{{
+				Sectors: []world.Sector{{
 					ID:    "s0",
-					Walls: []Wall{wall},
+					Walls: []world.Wall{wall},
 				}},
 			}},
 			// No uploaded mesh, so picking falls back to the marker's AABB —
 			// which is the case that matters here, since the arrow itself is
 			// only generated against a GL context.
-			Spawn: &SpawnPoint{Position: mgl32.Vec3{0, 0, spawnZ}},
+			Spawn: &world.SpawnPoint{Position: mgl32.Vec3{0, 0, spawnZ}},
 		}
 	}
 
@@ -110,7 +111,7 @@ func TestPick3DClosestWins(t *testing.T) {
 	}
 
 	// Nothing along the ray → no selection.
-	Editor.level = &Level{}
+	Editor.level = &world.Level{}
 	if hit := pick3D(mx, my); hit.kind != pickNone {
 		t.Fatalf("empty level: got kind=%q, want none", hit.kind)
 	}
@@ -123,7 +124,7 @@ func TestPick3DFloorAndCeiling(t *testing.T) {
 	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	gfx.Cam.Position = mgl32.Vec3{0, 2, 0}
 
-	sector := Sector{ID: "s0"}
+	sector := world.Sector{ID: "s0"}
 	sector.Floor.Enabled = true
 	sector.Ceiling.Enabled = true
 	// Horizontal quads: floor at y=0, ceiling at y=4, both spanning x,z ∈ [-4,4].
@@ -145,7 +146,7 @@ func TestPick3DFloorAndCeiling(t *testing.T) {
 
 	prevLevel := Editor.level
 	defer func() { Editor.level = prevLevel }()
-	Editor.level = &Level{Chunks: []Chunk{{ID: "c0", Sectors: []Sector{sector}}}}
+	Editor.level = &world.Level{Chunks: []world.Chunk{{ID: "c0", Sectors: []world.Sector{sector}}}}
 
 	mx, my := platform.WinWidth/2, platform.WinHeight/2
 
@@ -169,22 +170,22 @@ func TestVertexHandleCycling(t *testing.T) {
 	gfx.Cam.Position = mgl32.Vec3{0, 1, 6}
 	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 
-	mkSector := func(id string) Sector {
-		s := Sector{ID: id, PointIndices: []int{0, 1, 2}}
+	mkSector := func(id string) world.Sector {
+		s := world.Sector{ID: id, PointIndices: []int{0, 1, 2}}
 		s.Floor.Enabled = true
 		s.Ceiling.Enabled = true
 		s.Ceiling.Height = 4 // keeps ceiling handles off the clicked pixel
 		return s
 	}
-	chunk := Chunk{
+	chunk := world.Chunk{
 		ID:      "c0",
 		Points:  []mgl32.Vec2{{0, 0}, {2, 0}, {0, 2}},
-		Sectors: []Sector{mkSector("s0"), mkSector("s1")},
+		Sectors: []world.Sector{mkSector("s0"), mkSector("s1")},
 	}
 
 	restore := saveEditorSelection()
 	defer restore()
-	Editor.level = &Level{Chunks: []Chunk{chunk}}
+	Editor.level = &world.Level{Chunks: []world.Chunk{chunk}}
 	Editor.ActiveChunkIdx = 0
 	clearVertexSelection()
 
@@ -247,13 +248,13 @@ func TestVertexHandleRangeLimit(t *testing.T) {
 	platform.WinWidth, platform.WinHeight = 800, 600
 	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 
-	sector := Sector{ID: "s0", PointIndices: []int{0}}
+	sector := world.Sector{ID: "s0", PointIndices: []int{0}}
 	far := vertexHandleMaxDist * 3
-	chunk := Chunk{ID: "c0", Points: []mgl32.Vec2{{0, -far}}, Sectors: []Sector{sector}}
+	chunk := world.Chunk{ID: "c0", Points: []mgl32.Vec2{{0, -far}}, Sectors: []world.Sector{sector}}
 
 	restore := saveEditorSelection()
 	defer restore()
-	Editor.level = &Level{Chunks: []Chunk{chunk}}
+	Editor.level = &world.Level{Chunks: []world.Chunk{chunk}}
 	Editor.ActiveChunkIdx = 0
 	clearVertexSelection()
 

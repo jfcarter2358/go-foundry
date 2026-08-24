@@ -17,6 +17,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
@@ -173,9 +174,9 @@ func applyScaleToSelection(origin, factors mgl32.Vec3) {
 	if e := activeGizmoEntity(); e != nil {
 		s := Editor.GizmoDragStartScale
 		e.Scale = mgl32.Vec3{
-			entityScaleClamp(s.X() * factors.X()),
-			entityScaleClamp(s.Y() * factors.Y()),
-			entityScaleClamp(s.Z() * factors.Z()),
+			world.EntityScaleClamp(s.X() * factors.X()),
+			world.EntityScaleClamp(s.Y() * factors.Y()),
+			world.EntityScaleClamp(s.Z() * factors.Z()),
 		}
 		return
 	}
@@ -184,16 +185,16 @@ func applyScaleToSelection(origin, factors mgl32.Vec3) {
 		// dragging resizes the region itself. That does change the cage's shape,
 		// which is the one gizmo operation on a volume that needs a rebuild.
 		h := Editor.GizmoDragStartScale
-		v.HalfX = entityScaleClamp(h.X() * factors.X())
-		v.HalfY = entityScaleClamp(h.Y() * factors.Y())
-		v.HalfZ = entityScaleClamp(h.Z() * factors.Z())
+		v.HalfX = world.EntityScaleClamp(h.X() * factors.X())
+		v.HalfY = world.EntityScaleClamp(h.Y() * factors.Y())
+		v.HalfZ = world.EntityScaleClamp(h.Z() * factors.Z())
 		_ = v.Load()
 		return
 	}
 	setSelectedVertexWorld(scaleTransform(origin, factors))
 }
 
-// entityScaleMin is the smallest magnitude an entity axis can be scaled to.
+// EntityScaleMin is the smallest magnitude an entity axis can be scaled to.
 
 // scaleTransform is the position map a scale drag applies: every selected
 // vertex pushed out from (or pulled in toward) origin from where it was at

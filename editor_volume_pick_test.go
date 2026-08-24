@@ -4,6 +4,7 @@ package main
 // viewport, and the selection it leaves behind.
 
 import (
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -33,24 +34,24 @@ func TestRayShapeRangeEntryAndExit(t *testing.T) {
 	center := mgl32.Vec3{0, 0, -10}
 	half := mgl32.Vec3{1, 2, 3}
 
-	t0, t1, ok := rayShapeRange(origin, dir, center, mgl32.Vec3{}, half, BoundingAABB)
+	t0, t1, ok := rayShapeRange(origin, dir, center, mgl32.Vec3{}, half, world.BoundingAABB)
 	wantRange(t, "box", t0, t1, ok, 7, 13)
 
 	// Down the Z axis the ellipsoid is as deep as its Z half-extent, so it
 	// spans the same range as the box that contains it.
-	t0, t1, ok = rayShapeRange(origin, dir, center, mgl32.Vec3{}, half, BoundingSphere)
+	t0, t1, ok = rayShapeRange(origin, dir, center, mgl32.Vec3{}, half, world.BoundingSphere)
 	wantRange(t, "sphere", t0, t1, ok, 7, 13)
 
-	t0, t1, ok = rayShapeRange(origin, dir, center, mgl32.Vec3{}, half, BoundingCylinder)
+	t0, t1, ok = rayShapeRange(origin, dir, center, mgl32.Vec3{}, half, world.BoundingCylinder)
 	wantRange(t, "cylinder", t0, t1, ok, 7, 13)
 
 	// Off the axis by more than the X half-extent: the box is still hit at that
 	// height, but the round shapes have narrowed past it.
 	off := mgl32.Vec3{0.99, 0, 0}
-	if _, _, ok := rayShapeRange(off, dir, center, mgl32.Vec3{}, half, BoundingAABB); !ok {
+	if _, _, ok := rayShapeRange(off, dir, center, mgl32.Vec3{}, half, world.BoundingAABB); !ok {
 		t.Fatal("box: an offset ray inside the X extent should still hit")
 	}
-	for _, kind := range []BoundingType{BoundingSphere, BoundingCylinder} {
+	for _, kind := range []world.BoundingType{world.BoundingSphere, world.BoundingCylinder} {
 		if _, _, ok := rayShapeRange(mgl32.Vec3{1.5, 0, 0}, dir, center, mgl32.Vec3{}, half, kind); ok {
 			t.Fatalf("kind %v: a ray outside the X extent should miss", kind)
 		}
@@ -66,13 +67,13 @@ func TestRayShapeRangeRotated(t *testing.T) {
 	center := mgl32.Vec3{0, 0, -10}
 	half := mgl32.Vec3{4, 1, 0.5} // wide in X, thin in Z
 
-	t0, t1, ok := rayShapeRange(origin, dir, center, mgl32.Vec3{}, half, BoundingAABB)
+	t0, t1, ok := rayShapeRange(origin, dir, center, mgl32.Vec3{}, half, world.BoundingAABB)
 	wantRange(t, "unrotated slab", t0, t1, ok, 9.5, 10.5)
 
 	// A quarter turn about Y swaps X and Z, so the ray now runs the slab's
 	// length instead of its thickness.
 	turned := mgl32.Vec3{0, float32(math.Pi / 2), 0}
-	t0, t1, ok = rayShapeRange(origin, dir, center, turned, half, BoundingAABB)
+	t0, t1, ok = rayShapeRange(origin, dir, center, turned, half, world.BoundingAABB)
 	wantRange(t, "rotated slab", t0, t1, ok, 6, 14)
 }
 
@@ -81,12 +82,12 @@ func TestRayShapeRangeRotated(t *testing.T) {
 func TestRayShapeRangeCylinderCaps(t *testing.T) {
 	half := mgl32.Vec3{1, 2, 1}
 	t0, t1, ok := rayShapeRange(mgl32.Vec3{0, 10, 0}, mgl32.Vec3{0, -1, 0},
-		mgl32.Vec3{}, mgl32.Vec3{}, half, BoundingCylinder)
+		mgl32.Vec3{}, mgl32.Vec3{}, half, world.BoundingCylinder)
 	wantRange(t, "down the axis", t0, t1, ok, 8, 12)
 
 	// Parallel to the axis but outside the circle: never inside.
 	if _, _, ok := rayShapeRange(mgl32.Vec3{5, 10, 0}, mgl32.Vec3{0, -1, 0},
-		mgl32.Vec3{}, mgl32.Vec3{}, half, BoundingCylinder); ok {
+		mgl32.Vec3{}, mgl32.Vec3{}, half, world.BoundingCylinder); ok {
 		t.Fatal("a ray parallel to the axis and outside the circle should miss")
 	}
 }
@@ -97,12 +98,12 @@ func TestPickVolumeRayTSkipsVolumeAroundTheCamera(t *testing.T) {
 	origin := mgl32.Vec3{0, 0, 0}
 	dir := mgl32.Vec3{0, 0, -1}
 
-	ahead := NewVolume("ahead", mgl32.Vec3{0, 0, -5})
+	ahead := world.NewVolume("ahead", mgl32.Vec3{0, 0, -5})
 	if got := pickVolumeRayT(origin, dir, &ahead); math.Abs(float64(got-4)) > nearMiss {
 		t.Fatalf("volume ahead: got %v, want ~4", got)
 	}
 
-	around := NewVolume("around", mgl32.Vec3{0, 0, 0})
+	around := world.NewVolume("around", mgl32.Vec3{0, 0, 0})
 	around.HalfX, around.HalfY, around.HalfZ = 50, 50, 50
 	if got := pickVolumeRayT(origin, dir, &around); got != float32(math.MaxFloat32) {
 		t.Fatalf("volume around the camera: got %v, want a miss", got)
@@ -130,16 +131,16 @@ func TestPick3DPicksVolume(t *testing.T) {
 	prevLevel := Editor.level
 	defer func() { Editor.level = prevLevel }()
 
-	newLevel := func(wallZ float32) *Level {
-		wall := Wall{}
+	newLevel := func(wallZ float32) *world.Level {
+		wall := world.Wall{}
 		wall.Geometry.Vertices = quadVerts(wallZ, 4)
-		v := NewVolume("v0", mgl32.Vec3{0, 0, -8})
-		return &Level{
-			Chunks: []Chunk{{
+		v := world.NewVolume("v0", mgl32.Vec3{0, 0, -8})
+		return &world.Level{
+			Chunks: []world.Chunk{{
 				ID:      "c0",
-				Sectors: []Sector{{ID: "s0", Walls: []Wall{wall}}},
+				Sectors: []world.Sector{{ID: "s0", Walls: []world.Wall{wall}}},
 			}},
-			Volumes: []Volume{v},
+			Volumes: []world.Volume{v},
 		}
 	}
 
@@ -167,7 +168,7 @@ func TestEditorSelectVolumeGivesItTheGizmo(t *testing.T) {
 
 	Editor.Mode = Mode3D
 	Editor.GizmoKind = gizmoKindNone
-	Editor.level = &Level{Volumes: []Volume{NewVolume("v0", mgl32.Vec3{1, 2, 3})}}
+	Editor.level = &world.Level{Volumes: []world.Volume{world.NewVolume("v0", mgl32.Vec3{1, 2, 3})}}
 
 	editorSelectVolume(0)
 	if Editor.GizmoKind != gizmoKindVolume {

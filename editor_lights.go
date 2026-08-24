@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"foundry/internal/gfx"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -106,9 +107,9 @@ func EditorLightPanel() {
 			// Angled by default: straight down (pitch -90) lights every
 			// upward-facing surface identically and makes yaw a no-op, which
 			// reads as "the light can't be aimed".
-			nl := DirectionalLight{
-				Yaw:         DefaultDirLightYaw,
-				Pitch:       DefaultDirLightPitch,
+			nl := world.DirectionalLight{
+				Yaw:         world.DefaultDirLightYaw,
+				Pitch:       world.DefaultDirLightPitch,
 				Color:       mgl32.Vec3{1, 1, 1},
 				Brightness:  1.0,
 				CastShadows: true,
@@ -170,7 +171,7 @@ func EditorLightPanel() {
 			}
 		}
 		if imgui.Button("Add Point Light") {
-			lvl.Lights.Points = append(lvl.Lights.Points, PointLight{
+			lvl.Lights.Points = append(lvl.Lights.Points, world.PointLight{
 				Position:       gfx.Cam.Position,
 				Color:          mgl32.Vec3{1, 0.9, 0.7},
 				Brightness:     2.0,
@@ -184,7 +185,7 @@ func EditorLightPanel() {
 	}
 
 	if changed {
-		UploadLights(lvl.Lights)
+		world.UploadLights(lvl.Lights)
 	}
 }
 

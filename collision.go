@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -41,7 +42,7 @@ func closestPointOnSegment2DWithT(p, a, b mgl32.Vec2) (mgl32.Vec2, float32, floa
 // extrusion's outer polygon and offsets the height by the extrusion depth.
 // For floors (floor=true): the extruded area is lower (height - depth).
 // For ceilings (floor=false): the extruded area is higher (height + depth).
-func adjustHeightForExtrusions(xz mgl32.Vec2, height float32, extrusions []Extrusion, floor bool) float32 {
+func adjustHeightForExtrusions(xz mgl32.Vec2, height float32, extrusions []world.Extrusion, floor bool) float32 {
 	for _, ext := range extrusions {
 		if len(ext.Outer) < 3 {
 			continue
@@ -65,12 +66,12 @@ func adjustHeightForExtrusions(xz mgl32.Vec2, height float32, extrusions []Extru
 // vertical walls: the uphill component of XZ movement is removed so the
 // entity slides along the base of the slope instead.
 // oldPos is the entity position from the previous frame.
-func ResolveSlopeCollision(entity *Entity, chunk *Chunk, sector *Sector, oldPos, newPos mgl32.Vec3) mgl32.Vec3 {
+func ResolveSlopeCollision(entity *world.Entity, chunk *world.Chunk, sector *world.Sector, oldPos, newPos mgl32.Vec3) mgl32.Vec3 {
 	if chunk == nil || sector == nil {
 		return newPos
 	}
 	xz := mgl32.Vec2{newPos.X(), newPos.Z()}
-	_, normal, found := InterpolateSurfaceHeight(chunk, sector, xz, true)
+	_, normal, found := world.InterpolateSurfaceHeight(chunk, sector, xz, true)
 	if !found {
 		return newPos
 	}
@@ -108,7 +109,7 @@ func ResolveSlopeCollision(entity *Entity, chunk *Chunk, sector *Sector, oldPos,
 // u is the distance along the wall, ceilH is the interpolated ceiling height
 // at this position. Extrusion V is distance from ceiling downward, so world
 // Y = ceilH - V.
-func playerInWallExtrusion(wall *Wall, entityMinY, entityMaxY, u, ceilH float32) bool {
+func playerInWallExtrusion(wall *world.Wall, entityMinY, entityMaxY, u, ceilH float32) bool {
 	for _, ext := range wall.Extrusions {
 		if len(ext.Outer) < 3 {
 			continue
@@ -155,11 +156,11 @@ func playerInWallExtrusion(wall *Wall, entityMinY, entityMaxY, u, ceilH float32)
 
 // getAdjacentSectors returns the sectors connected to sector via portals
 // within the same chunk.
-func getAdjacentSectors(chunk *Chunk, sector *Sector) []*Sector {
+func getAdjacentSectors(chunk *world.Chunk, sector *world.Sector) []*world.Sector {
 	if chunk == nil || sector == nil {
 		return nil
 	}
-	var adj []*Sector
+	var adj []*world.Sector
 	for _, p := range sector.Portals {
 		for i := range chunk.Sectors {
 			if chunk.Sectors[i].ID == p.ToSector {
@@ -174,10 +175,10 @@ func getAdjacentSectors(chunk *Chunk, sector *Sector) []*Sector {
 // resolveWallsForSector pushes newXZ away from the collidable walls of a
 // single sector, respecting wall height and extrusion openings.
 func resolveWallsForSector(
-	chunk *Chunk, s *Sector,
+	chunk *world.Chunk, s *world.Sector,
 	newXZ *mgl32.Vec2, entityMinY, entityMaxY, radius, epsilon float32,
 ) {
-	pts := SectorPoints(chunk, s)
+	pts := world.SectorPoints(chunk, s)
 
 	for _, wall := range s.Walls {
 		if !wall.Collision {
@@ -193,8 +194,8 @@ func resolveWallsForSector(
 		// (allows passing over short walls). We do NOT skip when the entity
 		// is below the wall floor, because terrain dips can place the player
 		// below the wall's endpoint floor heights while still inside the sector.
-		si1 := findVertexIdx(pts, wall.StartPoint)
-		si2 := findVertexIdx(pts, wall.EndPoint)
+		si1 := world.FindVertexIdx(pts, wall.StartPoint)
+		si2 := world.FindVertexIdx(pts, wall.EndPoint)
 		ceilH := s.WallTopHeight(si1)*(1-t) + s.WallTopHeight(si2)*t
 
 		if entityMinY >= ceilH {
@@ -234,7 +235,7 @@ func resolveWallsForSector(
 // Walls are only checked when the entity's vertical extent overlaps the wall's
 // height range, and extrusion openings allow pass-through.
 // Checks both the current sector and portal-adjacent sectors.
-func ResolveWallCollision(entity *Entity, chunk *Chunk, sector *Sector, newPos mgl32.Vec3) mgl32.Vec3 {
+func ResolveWallCollision(entity *world.Entity, chunk *world.Chunk, sector *world.Sector, newPos mgl32.Vec3) mgl32.Vec3 {
 	if sector == nil || chunk == nil {
 		return newPos
 	}
@@ -264,16 +265,16 @@ func ResolveWallCollision(entity *Entity, chunk *Chunk, sector *Sector, newPos m
 // same query with a different clamp — see resolveEntityFloorCeiling
 // (entity_collision.go). The "highest wins" rule is what keeps something
 // standing on a portal boundary from sinking into the lower of the two floors.
-func sectorFloorHeightAt(chunk *Chunk, sector *Sector, xz mgl32.Vec2) float32 {
-	floorH, _, _ := InterpolateSurfaceHeight(chunk, sector, xz, true)
+func sectorFloorHeightAt(chunk *world.Chunk, sector *world.Sector, xz mgl32.Vec2) float32 {
+	floorH, _, _ := world.InterpolateSurfaceHeight(chunk, sector, xz, true)
 	if len(sector.Floor.Extrusions) > 0 {
 		floorH = adjustHeightForExtrusions(xz, floorH, sector.Floor.Extrusions, true)
 	}
 	for _, adj := range getAdjacentSectors(chunk, sector) {
-		if !geom.PointInPolygon(xz, SectorPoints(chunk, adj)) {
+		if !geom.PointInPolygon(xz, world.SectorPoints(chunk, adj)) {
 			continue
 		}
-		adjFloorH, _, _ := InterpolateSurfaceHeight(chunk, adj, xz, true)
+		adjFloorH, _, _ := world.InterpolateSurfaceHeight(chunk, adj, xz, true)
 		if len(adj.Floor.Extrusions) > 0 {
 			adjFloorH = adjustHeightForExtrusions(xz, adjFloorH, adj.Floor.Extrusions, true)
 		}
@@ -287,19 +288,19 @@ func sectorFloorHeightAt(chunk *Chunk, sector *Sector, xz mgl32.Vec2) float32 {
 // sectorCeilingHeightAt is sectorFloorHeightAt's mirror: the lowest ceiling over
 // xz, and whether there is one at all. A sector with no ceiling is open sky, not
 // a ceiling at height zero.
-func sectorCeilingHeightAt(chunk *Chunk, sector *Sector, xz mgl32.Vec2) (float32, bool) {
+func sectorCeilingHeightAt(chunk *world.Chunk, sector *world.Sector, xz mgl32.Vec2) (float32, bool) {
 	if !sector.Ceiling.Enabled {
 		return 0, false
 	}
-	ceilH, _, _ := InterpolateSurfaceHeight(chunk, sector, xz, false)
+	ceilH, _, _ := world.InterpolateSurfaceHeight(chunk, sector, xz, false)
 	if len(sector.Ceiling.Extrusions) > 0 {
 		ceilH = adjustHeightForExtrusions(xz, ceilH, sector.Ceiling.Extrusions, false)
 	}
 	for _, adj := range getAdjacentSectors(chunk, sector) {
-		if !adj.Ceiling.Enabled || !geom.PointInPolygon(xz, SectorPoints(chunk, adj)) {
+		if !adj.Ceiling.Enabled || !geom.PointInPolygon(xz, world.SectorPoints(chunk, adj)) {
 			continue
 		}
-		adjCeilH, _, _ := InterpolateSurfaceHeight(chunk, adj, xz, false)
+		adjCeilH, _, _ := world.InterpolateSurfaceHeight(chunk, adj, xz, false)
 		if len(adj.Ceiling.Extrusions) > 0 {
 			adjCeilH = adjustHeightForExtrusions(xz, adjCeilH, adj.Ceiling.Extrusions, false)
 		}
@@ -322,7 +323,7 @@ func sectorCeilingHeightAt(chunk *Chunk, sector *Sector, xz mgl32.Vec2) (float32
 // BoundHalfY tall above it. That asymmetry is load-bearing tuning for how
 // gameplay feels, so it is left alone — placed entities get their own
 // symmetric clamp instead (resolveEntityFloorCeiling).
-func ResolveFloorCollision(entity *Entity, chunk *Chunk, sector *Sector, pos *mgl32.Vec3) (bool, bool) {
+func ResolveFloorCollision(entity *world.Entity, chunk *world.Chunk, sector *world.Sector, pos *mgl32.Vec3) (bool, bool) {
 	if sector == nil || chunk == nil {
 		return false, false
 	}

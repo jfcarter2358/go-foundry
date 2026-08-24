@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 	"math"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ import (
 // can't silently stop covering everything when a new one is appended (adding
 // Moss did exactly that to the two tests that used to hardcode their lists).
 var allBiomeKinds = []int32{
-	BiomeGrass, BiomeRock, BiomeWildflower, BiomeCattail, BiomeSand, BiomeWater, BiomeMoss,
+	world.BiomeGrass, world.BiomeRock, world.BiomeWildflower, world.BiomeCattail, world.BiomeSand, world.BiomeWater, world.BiomeMoss,
 }
 
 // TestAllBiomeKindsIsComplete guards allBiomeKinds itself: BiomeMoss is the
@@ -26,7 +27,7 @@ var allBiomeKinds = []int32{
 // kind without extending the list fails here rather than quietly shrinking
 // every test's coverage.
 func TestAllBiomeKindsIsComplete(t *testing.T) {
-	if want := int(BiomeMoss) + 1; len(allBiomeKinds) != want {
+	if want := int(world.BiomeMoss) + 1; len(allBiomeKinds) != want {
 		t.Fatalf("allBiomeKinds has %d entries, want %d — a new biome kind was added without extending it", len(allBiomeKinds), want)
 	}
 	seen := map[int32]bool{}
@@ -43,13 +44,13 @@ func TestAllBiomeKindsIsComplete(t *testing.T) {
 // Moss is scatter-*capable* here but gated by its own toggle at draw time —
 // see TestMossScatterGating.
 func TestIsScatterKind(t *testing.T) {
-	for _, k := range []int32{BiomeGrass, BiomeRock, BiomeWildflower, BiomeCattail, BiomeMoss} {
-		if !isScatterKind(k) {
+	for _, k := range []int32{world.BiomeGrass, world.BiomeRock, world.BiomeWildflower, world.BiomeCattail, world.BiomeMoss} {
+		if !world.IsScatterKind(k) {
 			t.Errorf("kind %d should scatter", k)
 		}
 	}
-	for _, k := range []int32{BiomeSand, BiomeWater} {
-		if isScatterKind(k) {
+	for _, k := range []int32{world.BiomeSand, world.BiomeWater} {
+		if world.IsScatterKind(k) {
 			t.Errorf("kind %d should not scatter", k)
 		}
 	}
@@ -61,37 +62,37 @@ func TestIsScatterKind(t *testing.T) {
 func TestGroundTextureForEveryKind(t *testing.T) {
 	known := map[string]bool{"dirt": true, "rock": true, "sand": true, "moss": true}
 	for _, k := range allBiomeKinds {
-		tex := groundTextureFor(k)
+		tex := world.GroundTextureFor(k)
 		if !known[tex] {
 			t.Errorf("kind %d ground texture %q is not one of the known textures", k, tex)
 		}
 	}
 }
 
-// TestDefaultBiomeBrushSetsKind checks defaultBiomeBrush always returns a
+// TestDefaultBiomeBrushSetsKind checks DefaultBiomeBrush always returns a
 // brush tagged with the kind it was asked for, and never leaves a
 // zero-valued Range on a scatter kind (which would fall back to 0 everywhere
 // the renderer clamps it, rather than the intended default).
 func TestDefaultBiomeBrushSetsKind(t *testing.T) {
 	for _, k := range allBiomeKinds {
-		b := defaultBiomeBrush(k)
+		b := world.DefaultBiomeBrush(k)
 		if b.Kind != k {
-			t.Fatalf("defaultBiomeBrush(%d).Kind = %d", k, b.Kind)
+			t.Fatalf("DefaultBiomeBrush(%d).Kind = %d", k, b.Kind)
 		}
-		if isScatterKind(k) && b.Range <= 0 {
+		if world.IsScatterKind(k) && b.Range <= 0 {
 			t.Errorf("kind %d default brush has non-positive Range", k)
 		}
 	}
-	water := defaultBiomeBrush(BiomeWater)
+	water := world.DefaultBiomeBrush(world.BiomeWater)
 	if !water.Water.Enabled {
 		t.Fatal("default Water brush should carry Enabled water params")
 	}
 
-	wild := defaultBiomeBrush(BiomeWildflower)
+	wild := world.DefaultBiomeBrush(world.BiomeWildflower)
 	if wild.HeadScale <= 0 {
 		t.Fatal("default Wildflower brush should have a positive HeadScale (bloom size)")
 	}
-	cat := defaultBiomeBrush(BiomeCattail)
+	cat := world.DefaultBiomeBrush(world.BiomeCattail)
 	if cat.HeadScale <= 0 {
 		t.Fatal("default Cattail brush should have a positive HeadScale (seed-head size)")
 	}
@@ -102,8 +103,8 @@ func TestDefaultBiomeBrushSetsKind(t *testing.T) {
 // constant's own doc comment — so a regression here would silently change
 // the cap without any test noticing).
 func TestMaxStemHeightConstantIsPositiveAndFinite(t *testing.T) {
-	if maxStemHeight <= 0 || maxStemHeight != 5 {
-		t.Fatalf("maxStemHeight = %v, want 5", maxStemHeight)
+	if world.MaxStemHeight <= 0 || world.MaxStemHeight != 5 {
+		t.Fatalf("MaxStemHeight = %v, want 5", world.MaxStemHeight)
 	}
 }
 
@@ -223,11 +224,11 @@ func TestGroundPatchGridDimsCapped(t *testing.T) {
 // layer) — a runaway noise sum would make the ground patch spike through the
 // scatter sitting on top of it.
 func TestGroundDisplacementBounded(t *testing.T) {
-	brush := &BiomeBrush{SandHeight: 0.5}
+	brush := &world.BiomeBrush{SandHeight: 0.5}
 	seed := mgl32.Vec2{1.7, 4.2}
 	for x := float32(0); x < 40; x += 3.3 {
 		for z := float32(0); z < 40; z += 4.1 {
-			d := groundDisplacement(BiomeSand, brush, seed, x, z)
+			d := groundDisplacement(world.BiomeSand, brush, seed, x, z)
 			// Regression guard: dunes must be mounds rising from the floor,
 			// never valleys dipping below it — a negative displacement here
 			// used to sink the sand patch below the actual structural floor.
@@ -237,7 +238,7 @@ func TestGroundDisplacementBounded(t *testing.T) {
 			if d > 0.7 { // amp 0.5 + up to 15% ripple headroom
 				t.Fatalf("sand displacement %.3f at (%.1f,%.1f) exceeds expected bound", d, x, z)
 			}
-			d2 := groundDisplacement(BiomeGrass, brush, seed, x, z)
+			d2 := groundDisplacement(world.BiomeGrass, brush, seed, x, z)
 			if d2 < -0.1 || d2 > 0.1 {
 				t.Fatalf("grass ground displacement %.3f at (%.1f,%.1f) exceeds expected bound", d2, x, z)
 			}
@@ -250,10 +251,10 @@ func TestGroundDisplacementBounded(t *testing.T) {
 // slider only has meaning if this actually reaches groundDisplacement.
 func TestGroundDisplacementRespectsConfiguredAmplitude(t *testing.T) {
 	seed := mgl32.Vec2{2.1, 0.6}
-	small := &BiomeBrush{GroundAmplitude: 0.02, GroundFrequency: 0.3, GroundOctaves: 2}
-	large := &BiomeBrush{GroundAmplitude: 0.9, GroundFrequency: 0.3, GroundOctaves: 2}
+	small := &world.BiomeBrush{GroundAmplitude: 0.02, GroundFrequency: 0.3, GroundOctaves: 2}
+	large := &world.BiomeBrush{GroundAmplitude: 0.9, GroundFrequency: 0.3, GroundOctaves: 2}
 
-	maxAbs := func(brush *BiomeBrush, kind int32) float32 {
+	maxAbs := func(brush *world.BiomeBrush, kind int32) float32 {
 		m := float32(0)
 		for x := float32(0); x < 30; x += 1.7 {
 			for z := float32(0); z < 30; z += 2.3 {
@@ -265,7 +266,7 @@ func TestGroundDisplacementRespectsConfiguredAmplitude(t *testing.T) {
 		return m
 	}
 
-	for _, kind := range []int32{BiomeGrass, BiomeWater} {
+	for _, kind := range []int32{world.BiomeGrass, world.BiomeWater} {
 		smallMax := maxAbs(small, kind)
 		largeMax := maxAbs(large, kind)
 		if smallMax > 0.02+1e-6 {
@@ -289,34 +290,34 @@ func TestClampOctavesRange(t *testing.T) {
 }
 
 // TestResolveGroundTexture checks an explicit GroundTexture overrides the
-// kind's default, and an empty one falls back to groundTextureFor.
+// kind's default, and an empty one falls back to GroundTextureFor.
 func TestResolveGroundTexture(t *testing.T) {
-	auto := &BiomeBrush{Kind: BiomeGrass}
-	if got, want := resolveGroundTexture(auto), groundTextureFor(BiomeGrass); got != want {
+	auto := &world.BiomeBrush{Kind: world.BiomeGrass}
+	if got, want := resolveGroundTexture(auto), world.GroundTextureFor(world.BiomeGrass); got != want {
 		t.Errorf("resolveGroundTexture with no override = %q, want kind default %q", got, want)
 	}
-	override := &BiomeBrush{Kind: BiomeGrass, GroundTexture: "stone_floor"}
+	override := &world.BiomeBrush{Kind: world.BiomeGrass, GroundTexture: "stone_floor"}
 	if got := resolveGroundTexture(override); got != "stone_floor" {
 		t.Errorf("resolveGroundTexture with override = %q, want %q", got, "stone_floor")
 	}
 }
 
 // TestResolveGroundUVScale covers the per-component fallback: an unset (or
-// nonsense) component must land on defaultGroundUVScale — the tiling every
+// nonsense) component must land on DefaultGroundUVScale — the tiling every
 // sector authored before GroundUVScale existed was fixed at — while a set one
 // passes straight through.
 func TestResolveGroundUVScale(t *testing.T) {
-	def := mgl32.Vec2{defaultGroundUVScale, defaultGroundUVScale}
-	if got := resolveGroundUVScale(&BiomeBrush{Kind: BiomeGrass}); got != def {
+	def := mgl32.Vec2{world.DefaultGroundUVScale, world.DefaultGroundUVScale}
+	if got := resolveGroundUVScale(&world.BiomeBrush{Kind: world.BiomeGrass}); got != def {
 		t.Errorf("unset GroundUVScale = %v, want default %v", got, def)
 	}
-	set := &BiomeBrush{Kind: BiomeGrass, GroundUVScale: mgl32.Vec2{2, 0.5}}
+	set := &world.BiomeBrush{Kind: world.BiomeGrass, GroundUVScale: mgl32.Vec2{2, 0.5}}
 	if got := resolveGroundUVScale(set); got != (mgl32.Vec2{2, 0.5}) {
 		t.Errorf("set GroundUVScale = %v, want {2 0.5}", got)
 	}
-	half := &BiomeBrush{Kind: BiomeGrass, GroundUVScale: mgl32.Vec2{0, 4}}
-	if got := resolveGroundUVScale(half); got != (mgl32.Vec2{defaultGroundUVScale, 4}) {
-		t.Errorf("half-set GroundUVScale = %v, want {%v 4}", got, defaultGroundUVScale)
+	half := &world.BiomeBrush{Kind: world.BiomeGrass, GroundUVScale: mgl32.Vec2{0, 4}}
+	if got := resolveGroundUVScale(half); got != (mgl32.Vec2{world.DefaultGroundUVScale, 4}) {
+		t.Errorf("half-set GroundUVScale = %v, want {%v 4}", got, world.DefaultGroundUVScale)
 	}
 }
 
@@ -325,11 +326,11 @@ func TestResolveGroundUVScale(t *testing.T) {
 // structural floor's Surface.UVScale), which is what lets a patch be dialed to
 // tile identically to the floor it's painted over.
 func TestBuildGroundPatchMeshUsesGroundUVScale(t *testing.T) {
-	lvl := &Level{} // no chunks: floorHeightUnderLevel falls back to 0 everywhere
-	s := &BiomeSector{
+	lvl := &world.Level{} // no chunks: floorHeightUnderLevel falls back to 0 everywhere
+	s := &world.BiomeSector{
 		ID:     "gpuv",
 		Points: []mgl32.Vec2{{0, 0}, {8, 0}, {8, 8}, {0, 8}},
-		Brush:  BiomeBrush{Kind: BiomeGrass, GroundUVScale: mgl32.Vec2{2, 0.5}},
+		Brush:  world.BiomeBrush{Kind: world.BiomeGrass, GroundUVScale: mgl32.Vec2{2, 0.5}},
 	}
 	verts := buildGroundPatchMesh(lvl, s)
 	if len(verts) == 0 {
@@ -344,35 +345,35 @@ func TestBuildGroundPatchMeshUsesGroundUVScale(t *testing.T) {
 	}
 
 	// Unset scale falls back to the 1x1 default tiling.
-	legacy := &BiomeSector{ID: "gpuv2", Points: s.Points, Brush: BiomeBrush{Kind: BiomeGrass}}
+	legacy := &world.BiomeSector{ID: "gpuv2", Points: s.Points, Brush: world.BiomeBrush{Kind: world.BiomeGrass}}
 	lverts := buildGroundPatchMesh(lvl, legacy)
 	if len(lverts) == 0 {
 		t.Fatal("expected a non-empty ground patch mesh for the unset-scale sector")
 	}
 	x, u := lverts[0], lverts[6]
-	if math.Abs(float64(u-x*defaultGroundUVScale)) > 1e-4 {
-		t.Fatalf("unset-scale U at x=%.3f is %.3f, want %.3f", x, u, x*defaultGroundUVScale)
+	if math.Abs(float64(u-x*world.DefaultGroundUVScale)) > 1e-4 {
+		t.Fatalf("unset-scale U at x=%.3f is %.3f, want %.3f", x, u, x*world.DefaultGroundUVScale)
 	}
 }
 
 // TestBiomeSeedChangesWithGroundFields is the regression test for the bug
-// where adding BiomeBrush.GroundTexture (a string) broke biomeSeed: passing
+// where adding BiomeBrush.GroundTexture (a string) broke BiomeSeed: passing
 // a struct containing a string to binary.Write silently writes nothing,
 // which made every field decorrelation this function exists for stop
 // working — two sectors with different ground settings (or anything else)
 // would hash identically as long as their ID matched.
 func TestBiomeSeedChangesWithGroundFields(t *testing.T) {
-	base := BiomeSector{ID: "s0", Brush: BiomeBrush{Kind: BiomeGrass, GroundFrequency: 0.2}}
+	base := world.BiomeSector{ID: "s0", Brush: world.BiomeBrush{Kind: world.BiomeGrass, GroundFrequency: 0.2}}
 
 	tex := base
 	tex.Brush.GroundTexture = "rock"
-	if biomeSeed(&base) == biomeSeed(&tex) {
+	if world.BiomeSeed(&base) == world.BiomeSeed(&tex) {
 		t.Fatal("different GroundTexture should produce a different seed")
 	}
 
 	amp := base
 	amp.Brush.GroundAmplitude = 0.5
-	if biomeSeed(&base) == biomeSeed(&amp) {
+	if world.BiomeSeed(&base) == world.BiomeSeed(&amp) {
 		t.Fatal("different GroundAmplitude should produce a different seed")
 	}
 }
@@ -383,12 +384,12 @@ func TestBiomeSeedChangesWithGroundFields(t *testing.T) {
 // that the vertex buffer is well-formed (a whole number of triangles, stride
 // groundVertexStride).
 func TestBuildGroundPatchMeshStaysInsidePolygon(t *testing.T) {
-	s := &BiomeSector{
+	s := &world.BiomeSector{
 		ID:     "gp0",
 		Points: []mgl32.Vec2{{0, 0}, {8, 0}, {8, 8}, {0, 8}},
-		Brush:  BiomeBrush{Kind: BiomeGrass},
+		Brush:  world.BiomeBrush{Kind: world.BiomeGrass},
 	}
-	lvl := &Level{} // no chunks: floorHeightUnderLevel falls back to 0 everywhere
+	lvl := &world.Level{} // no chunks: floorHeightUnderLevel falls back to 0 everywhere
 
 	verts := buildGroundPatchMesh(lvl, s)
 	if len(verts) == 0 {
@@ -418,12 +419,12 @@ func TestBuildGroundPatchMeshStaysInsidePolygon(t *testing.T) {
 // still reach close to the hypotenuse rather than just shrinking away from
 // it (which would "pass" a boundary check for the wrong reason).
 func TestBuildGroundPatchMeshFollowsDiagonalEdge(t *testing.T) {
-	s := &BiomeSector{
+	s := &world.BiomeSector{
 		ID:     "diag0",
 		Points: []mgl32.Vec2{{0, 0}, {10, 0}, {0, 10}},
-		Brush:  BiomeBrush{Kind: BiomeGrass},
+		Brush:  world.BiomeBrush{Kind: world.BiomeGrass},
 	}
-	lvl := &Level{}
+	lvl := &world.Level{}
 
 	verts := buildGroundPatchMesh(lvl, s)
 	if len(verts) == 0 {
@@ -484,18 +485,18 @@ func TestDensifyPolygonRespectsMaxSegAndShape(t *testing.T) {
 // clockwise-wound polygon and leaves an already-CCW one untouched.
 func TestCcwPolygonFlipsClockwiseInput(t *testing.T) {
 	ccw := []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}}
-	if signedArea2D(ccw) <= 0 {
+	if world.SignedArea2D(ccw) <= 0 {
 		t.Fatal("test polygon should already be CCW")
 	}
-	if got := ccwPolygon(ccw); signedArea2D(got) <= 0 {
+	if got := ccwPolygon(ccw); world.SignedArea2D(got) <= 0 {
 		t.Fatal("ccwPolygon flipped an already-CCW polygon")
 	}
 
 	cw := []mgl32.Vec2{{0, 0}, {0, 4}, {4, 4}, {4, 0}}
-	if signedArea2D(cw) >= 0 {
+	if world.SignedArea2D(cw) >= 0 {
 		t.Fatal("test polygon should be CW")
 	}
-	if got := ccwPolygon(cw); signedArea2D(got) <= 0 {
+	if got := ccwPolygon(cw); world.SignedArea2D(got) <= 0 {
 		t.Fatal("ccwPolygon did not fix a CW polygon")
 	}
 }
@@ -505,7 +506,7 @@ func TestCcwPolygonFlipsClockwiseInput(t *testing.T) {
 // see TestWaterPlaneMeshIsTessellated for the hand-placed equivalent) and
 // that its footprint is centered on the given centroid.
 func TestBuildBiomeWaterMeshIsFlat(t *testing.T) {
-	s := &BiomeSector{
+	s := &world.BiomeSector{
 		ID:     "w0",
 		Points: []mgl32.Vec2{{10, 10}, {20, 10}, {20, 20}, {10, 20}},
 	}
@@ -542,16 +543,16 @@ func TestBuildBiomeWaterMeshIsFlat(t *testing.T) {
 // place the companion water primitive follows the structural floor at the
 // polygon's center, matching floorHeightUnderLevel's own contract.
 func TestBiomeWaterCentroidAndFloor(t *testing.T) {
-	ch := Chunk{
+	ch := world.Chunk{
 		Points: []mgl32.Vec2{{-4, -4}, {4, -4}, {4, 4}, {-4, 4}},
-		Sectors: []Sector{{
+		Sectors: []world.Sector{{
 			ID:           "s0",
 			PointIndices: []int{0, 1, 2, 3},
-			Floor:        Floor{Enabled: true, Height: 2},
+			Floor:        world.Floor{Enabled: true, Height: 2},
 		}},
 	}
-	lvl := &Level{Chunks: []Chunk{ch}}
-	s := &BiomeSector{Points: []mgl32.Vec2{{-2, -2}, {2, -2}, {2, 2}, {-2, 2}}}
+	lvl := &world.Level{Chunks: []world.Chunk{ch}}
+	s := &world.BiomeSector{Points: []mgl32.Vec2{{-2, -2}, {2, -2}, {2, 2}, {-2, 2}}}
 
 	centroid, floorY := biomeWaterCentroidAndFloor(lvl, s)
 	if centroid != (mgl32.Vec2{0, 0}) {
@@ -567,21 +568,21 @@ func TestBiomeWaterCentroidAndFloor(t *testing.T) {
 // YAML marshal/unmarshal cycle, the same contract editor_save.go/
 // level_schema.go rely on for the level file.
 func TestRawBiomeBrushYAMLRoundTrip(t *testing.T) {
-	rb := RawBiomeSector{
+	rb := world.RawBiomeSector{
 		ID:     "b0",
 		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
-		Brush: RawBiomeBrush{
-			Kind:       BiomeWater,
+		Brush: world.RawBiomeBrush{
+			Kind:       world.BiomeWater,
 			Density:    0.5,
 			RockScale:  0.42,
 			SandHeight: 0.77,
 			WaterDepth: 1.25,
-			Water: &RawWater{
+			Water: &world.RawWater{
 				WaveAmplitude: 0.2,
 				WaveLength:    5,
 				WaveSpeed:     0.8,
 				Reflectivity:  0.6,
-				ReflectColor:  RawColor3{R: 0.1, G: 0.2, B: 0.3},
+				ReflectColor:  world.RawColor3{R: 0.1, G: 0.2, B: 0.3},
 			},
 		},
 	}
@@ -590,7 +591,7 @@ func TestRawBiomeBrushYAMLRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var got RawBiomeSector
+	var got world.RawBiomeSector
 	if err := yaml.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -614,15 +615,15 @@ func TestRawBiomeBrushYAMLRoundTrip(t *testing.T) {
 // plain omitempty field whose zero value is the pre-existing look — that a
 // default brush writes none of them, so old levels reload unchanged.
 func TestWildflowerBloomOptionsRoundTrip(t *testing.T) {
-	set := RawBiomeSector{
+	set := world.RawBiomeSector{
 		ID:     "w0",
 		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
-		Brush: RawBiomeBrush{
-			Kind:            BiomeWildflower,
+		Brush: world.RawBiomeBrush{
+			Kind:            world.BiomeWildflower,
 			BloomSpike:      true,
 			BloomCenter:     true,
 			BloomSolidColor: true,
-			CenterColor:     RawColor{R: 0.9, G: 0.8, B: 0.2},
+			CenterColor:     world.RawColor{R: 0.9, G: 0.8, B: 0.2},
 		},
 	}
 
@@ -630,7 +631,7 @@ func TestWildflowerBloomOptionsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var got RawBiomeSector
+	var got world.RawBiomeSector
 	if err := yaml.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -642,7 +643,7 @@ func TestWildflowerBloomOptionsRoundTrip(t *testing.T) {
 	}
 
 	// All-default bloom options must not be written at all.
-	plain, err := yaml.Marshal(RawBiomeSector{ID: "w1", Brush: RawBiomeBrush{Kind: BiomeWildflower}})
+	plain, err := yaml.Marshal(world.RawBiomeSector{ID: "w1", Brush: world.RawBiomeBrush{Kind: world.BiomeWildflower}})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -667,8 +668,8 @@ func TestClampGrassClumpRange(t *testing.T) {
 		{float32(math.NaN()), 0},
 	}
 	for _, c := range cases {
-		if got := clampGrassClump(c.in); got != c.want {
-			t.Errorf("clampGrassClump(%v) = %v, want %v", c.in, got, c.want)
+		if got := world.ClampGrassClump(c.in); got != c.want {
+			t.Errorf("ClampGrassClump(%v) = %v, want %v", c.in, got, c.want)
 		}
 	}
 }
@@ -678,16 +679,16 @@ func TestClampGrassClumpRange(t *testing.T) {
 // an unclumped brush writes no key at all, so levels authored before the field
 // existed reload byte-identically.
 func TestGrassClumpRoundTrip(t *testing.T) {
-	set := RawBiomeSector{
+	set := world.RawBiomeSector{
 		ID:     "g0",
 		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
-		Brush:  RawBiomeBrush{Kind: BiomeGrass, GrassClump: 0.65},
+		Brush:  world.RawBiomeBrush{Kind: world.BiomeGrass, GrassClump: 0.65},
 	}
 	out, err := yaml.Marshal(set)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var got RawBiomeSector
+	var got world.RawBiomeSector
 	if err := yaml.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -695,7 +696,7 @@ func TestGrassClumpRoundTrip(t *testing.T) {
 		t.Errorf("GrassClump round trip: got %v, want %v", got.Brush.GrassClump, set.Brush.GrassClump)
 	}
 
-	plain, err := yaml.Marshal(RawBiomeSector{ID: "g1", Brush: RawBiomeBrush{Kind: BiomeGrass}})
+	plain, err := yaml.Marshal(world.RawBiomeSector{ID: "g1", Brush: world.RawBiomeBrush{Kind: world.BiomeGrass}})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -709,11 +710,11 @@ func TestGrassClumpRoundTrip(t *testing.T) {
 // omitempty fields whose zero value is the pre-existing hard-edged look —
 // that a sector saved before these existed loads back completely unaffected.
 func TestFadeRoundTrip(t *testing.T) {
-	set := RawBiomeSector{
+	set := world.RawBiomeSector{
 		ID:     "f0",
 		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
-		Brush: RawBiomeBrush{
-			Kind:              BiomeGrass,
+		Brush: world.RawBiomeBrush{
+			Kind:              world.BiomeGrass,
 			RangeFadeFraction: 0.5,
 			EdgeFadeDistance:  2.5,
 			// BoundaryJitter's zero value means something different from its
@@ -728,7 +729,7 @@ func TestFadeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var got RawBiomeSector
+	var got world.RawBiomeSector
 	if err := yaml.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -736,7 +737,7 @@ func TestFadeRoundTrip(t *testing.T) {
 		t.Errorf("brush round trip: got %+v, want %+v", got.Brush, set.Brush)
 	}
 
-	plain, err := yaml.Marshal(RawBiomeSector{ID: "f1", Brush: RawBiomeBrush{Kind: BiomeGrass}})
+	plain, err := yaml.Marshal(world.RawBiomeSector{ID: "f1", Brush: world.RawBiomeBrush{Kind: world.BiomeGrass}})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -754,24 +755,24 @@ func TestFadeRoundTrip(t *testing.T) {
 // feature existed, so nothing about an existing level changes on upgrade.
 func TestDefaultGrassBrushIsUnclumped(t *testing.T) {
 	for _, kind := range allBiomeKinds {
-		if c := defaultBiomeBrush(kind).GrassClump; c != 0 {
-			t.Errorf("defaultBiomeBrush(%d).GrassClump = %v, want 0", kind, c)
+		if c := world.DefaultBiomeBrush(kind).GrassClump; c != 0 {
+			t.Errorf("DefaultBiomeBrush(%d).GrassClump = %v, want 0", kind, c)
 		}
 	}
 }
 
 // TestBiomeSeedIgnoresGrassClump pins the one deliberate exception to
-// biomeSeed hashing every brush field. Folding GrassClump in would reshuffle
+// BiomeSeed hashing every brush field. Folding GrassClump in would reshuffle
 // the scatter of every already-authored sector the moment the field existed
 // (breaking "clumping 0 looks exactly like before") and would teleport the
 // whole lattice while the slider is dragged, hiding the effect being tuned.
 func TestBiomeSeedIgnoresGrassClump(t *testing.T) {
-	base := BiomeSector{ID: "s0", Brush: BiomeBrush{Kind: BiomeGrass, Density: 0.8, GrassHeight: 0.5}}
+	base := world.BiomeSector{ID: "s0", Brush: world.BiomeBrush{Kind: world.BiomeGrass, Density: 0.8, GrassHeight: 0.5}}
 	clumped := base
 	clumped.Brush.GrassClump = 1
 
-	if biomeSeed(&base) != biomeSeed(&clumped) {
-		t.Fatal("GrassClump changed the scatter seed; it is deliberately excluded from biomeSeed")
+	if world.BiomeSeed(&base) != world.BiomeSeed(&clumped) {
+		t.Fatal("GrassClump changed the scatter seed; it is deliberately excluded from BiomeSeed")
 	}
 }
 
@@ -901,16 +902,16 @@ func TestWildflowerMeshCarriesLeaves(t *testing.T) {
 // cycle, and that a bare-stemmed flower writes no key — its zero value is the
 // pre-existing look, so levels authored before leaves existed reload unchanged.
 func TestStemLeavesRoundTrip(t *testing.T) {
-	set := RawBiomeSector{
+	set := world.RawBiomeSector{
 		ID:     "f0",
 		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
-		Brush:  RawBiomeBrush{Kind: BiomeWildflower, StemLeaves: true},
+		Brush:  world.RawBiomeBrush{Kind: world.BiomeWildflower, StemLeaves: true},
 	}
 	out, err := yaml.Marshal(set)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var got RawBiomeSector
+	var got world.RawBiomeSector
 	if err := yaml.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -918,18 +919,18 @@ func TestStemLeavesRoundTrip(t *testing.T) {
 		t.Error("StemLeaves did not survive the round trip")
 	}
 
-	plain, err := yaml.Marshal(RawBiomeSector{ID: "f1", Brush: RawBiomeBrush{Kind: BiomeWildflower}})
+	plain, err := yaml.Marshal(world.RawBiomeSector{ID: "f1", Brush: world.RawBiomeBrush{Kind: world.BiomeWildflower}})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	if strings.Contains(string(plain), "stem_leaves") {
 		t.Errorf("bare-stemmed brush wrote stem_leaves; the zero value must be omitted:\n%s", plain)
 	}
-	if defaultBiomeBrush(BiomeWildflower).StemLeaves {
-		t.Error("defaultBiomeBrush turns leaves on; they are meant to be opt-in")
+	if world.DefaultBiomeBrush(world.BiomeWildflower).StemLeaves {
+		t.Error("DefaultBiomeBrush turns leaves on; they are meant to be opt-in")
 	}
-	if biomeSeed(&BiomeSector{ID: "x"}) != biomeSeed(&BiomeSector{ID: "x", Brush: BiomeBrush{StemLeaves: true}}) {
-		t.Error("StemLeaves changed the scatter seed; it is deliberately excluded from biomeSeed")
+	if world.BiomeSeed(&world.BiomeSector{ID: "x"}) != world.BiomeSeed(&world.BiomeSector{ID: "x", Brush: world.BiomeBrush{StemLeaves: true}}) {
+		t.Error("StemLeaves changed the scatter seed; it is deliberately excluded from BiomeSeed")
 	}
 }
 
@@ -969,18 +970,18 @@ func TestStemsReachTheirHeadAnchor(t *testing.T) {
 // the upper clamp for the wildflower leaf-size knob.
 func TestResolvedLeafScale(t *testing.T) {
 	cases := []struct{ in, want float32 }{
-		{0, defaultWildflowerLeafScale},                   // unset / pre-field save
-		{-1, defaultWildflowerLeafScale},                  // junk
-		{float32(math.NaN()), defaultWildflowerLeafScale}, // junk
+		{0, world.DefaultWildflowerLeafScale},                   // unset / pre-field save
+		{-1, world.DefaultWildflowerLeafScale},                  // junk
+		{float32(math.NaN()), world.DefaultWildflowerLeafScale}, // junk
 		{0.5, 0.5}, // honored
-		{maxWildflowerLeafScale + 10, maxWildflowerLeafScale}, // clamped
+		{world.MaxWildflowerLeafScale + 10, world.MaxWildflowerLeafScale}, // clamped
 	}
 	for _, c := range cases {
-		if got := resolvedLeafScale(c.in); got != c.want {
-			t.Errorf("resolvedLeafScale(%v) = %v, want %v", c.in, got, c.want)
+		if got := world.ResolvedLeafScale(c.in); got != c.want {
+			t.Errorf("ResolvedLeafScale(%v) = %v, want %v", c.in, got, c.want)
 		}
 	}
-	if defaultBiomeBrush(BiomeWildflower).LeafScale != defaultWildflowerLeafScale {
+	if world.DefaultBiomeBrush(world.BiomeWildflower).LeafScale != world.DefaultWildflowerLeafScale {
 		t.Error("a fresh wildflower brush should start at the default leaf scale")
 	}
 }
@@ -989,16 +990,16 @@ func TestResolvedLeafScale(t *testing.T) {
 // cycle, and that it is omitted when unset so a level authored before the
 // field existed reloads at the default rather than at a leafless 0.
 func TestLeafScaleRoundTrip(t *testing.T) {
-	set := RawBiomeSector{
+	set := world.RawBiomeSector{
 		ID:     "l0",
 		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
-		Brush:  RawBiomeBrush{Kind: BiomeWildflower, StemLeaves: true, LeafScale: 2.25},
+		Brush:  world.RawBiomeBrush{Kind: world.BiomeWildflower, StemLeaves: true, LeafScale: 2.25},
 	}
 	out, err := yaml.Marshal(set)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var got RawBiomeSector
+	var got world.RawBiomeSector
 	if err := yaml.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -1006,7 +1007,7 @@ func TestLeafScaleRoundTrip(t *testing.T) {
 		t.Errorf("LeafScale round trip: got %v, want %v", got.Brush.LeafScale, set.Brush.LeafScale)
 	}
 
-	plain, err := yaml.Marshal(RawBiomeSector{ID: "l1", Brush: RawBiomeBrush{Kind: BiomeWildflower}})
+	plain, err := yaml.Marshal(world.RawBiomeSector{ID: "l1", Brush: world.RawBiomeBrush{Kind: world.BiomeWildflower}})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -1014,7 +1015,7 @@ func TestLeafScaleRoundTrip(t *testing.T) {
 		t.Errorf("unset LeafScale was written; it must be omitted so 0 resolves to the default:\n%s", plain)
 	}
 	// An unset value must land on the default, NOT on zero-sized leaves.
-	if resolvedLeafScale(got.Brush.LeafScale) <= 0 {
+	if world.ResolvedLeafScale(got.Brush.LeafScale) <= 0 {
 		t.Error("an unset LeafScale resolved to zero-sized leaves")
 	}
 }

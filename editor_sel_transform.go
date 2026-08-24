@@ -19,6 +19,7 @@ package main
 // result does not depend on which handle was clicked first.
 
 import (
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -189,7 +190,7 @@ func rebuildAfterVertexWrite(w vertexWriteback) {
 				continue
 			}
 			rebuilt[[2]int{key[0], si}] = struct{}{}
-			_ = reloadSector(ch, &ch.Sectors[si])
+			_ = world.ReloadSector(ch, &ch.Sectors[si])
 		}
 	}
 	for key := range touchedSectors {
@@ -201,7 +202,7 @@ func rebuildAfterVertexWrite(w vertexWriteback) {
 			continue
 		}
 		rebuilt[key] = struct{}{}
-		_ = reloadSector(ch, &ch.Sectors[key[1]])
+		_ = world.ReloadSector(ch, &ch.Sectors[key[1]])
 	}
 
 	touchedChunks := map[int]struct{}{}

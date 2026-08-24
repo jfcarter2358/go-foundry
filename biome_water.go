@@ -20,6 +20,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -34,7 +35,7 @@ import (
 // chunk.WaterSurfaces (main.go) — and before RenderBiomeGround, which is what
 // actually clears BiomeSector.GroundDirty once every mesh derived from it this
 // frame (this sync and the ground patch) has had a chance to see it dirty.
-func SyncBiomeWaterSurfaces(level *Level) {
+func SyncBiomeWaterSurfaces(level *world.Level) {
 	if level == nil {
 		return
 	}
@@ -43,15 +44,15 @@ func SyncBiomeWaterSurfaces(level *Level) {
 	}
 }
 
-func syncChunkWaterSurfaces(level *Level, ch *Chunk) {
+func syncChunkWaterSurfaces(level *world.Level, ch *world.Chunk) {
 	if len(ch.BiomeSectors) == 0 && len(ch.WaterSurfaces) == 0 {
 		return
 	}
 
-	want := map[string]*BiomeSector{}
+	want := map[string]*world.BiomeSector{}
 	for si := range ch.BiomeSectors {
 		s := &ch.BiomeSectors[si]
-		if s.Brush.Kind == BiomeWater && len(s.Points) >= 3 {
+		if s.Brush.Kind == world.BiomeWater && len(s.Points) >= 3 {
 			want[s.ID] = s
 		}
 	}
@@ -79,7 +80,7 @@ func syncChunkWaterSurfaces(level *Level, ch *Chunk) {
 		}
 		isNew := idx < 0
 		if isNew {
-			ch.WaterSurfaces = append(ch.WaterSurfaces, WaterSurface{ID: id, ChunkID: ch.ID})
+			ch.WaterSurfaces = append(ch.WaterSurfaces, world.WaterSurface{ID: id, ChunkID: ch.ID})
 			idx = len(ch.WaterSurfaces) - 1
 		}
 		w := &ch.WaterSurfaces[idx]
@@ -97,7 +98,7 @@ func syncChunkWaterSurfaces(level *Level, ch *Chunk) {
 // biomeWaterCentroidAndFloor returns the sector's polygon-AABB center and the
 // structural floor height sampled there — the water plane's reference
 // position (its surface then sits WaterDepth below that floor height).
-func biomeWaterCentroidAndFloor(level *Level, s *BiomeSector) (mgl32.Vec2, float32) {
+func biomeWaterCentroidAndFloor(level *world.Level, s *world.BiomeSector) (mgl32.Vec2, float32) {
 	min, max := s.Bounds()
 	c := mgl32.Vec2{(min.X() + max.X()) / 2, (min.Y() + max.Y()) / 2}
 	return c, floorHeightUnderLevel(level, c.X(), c.Y())
@@ -110,7 +111,7 @@ func biomeWaterCentroidAndFloor(level *Level, s *BiomeSector) (mgl32.Vec2, float
 // painted polygon exactly (no grid-diagonal staircase) and lines up with its
 // lakebed. UV tiles from world position so the texture doesn't re-stretch as
 // the sector is edited.
-func buildBiomeWaterMesh(s *BiomeSector, centroid mgl32.Vec2) ([][]float32, []int) {
+func buildBiomeWaterMesh(s *world.BiomeSector, centroid mgl32.Vec2) ([][]float32, []int) {
 	boundary, allPts := biomeMeshPoints(s)
 	if len(allPts) == 0 {
 		return nil, nil
@@ -147,11 +148,11 @@ const biomeWaterAlpha = float32(0.75)
 
 // rebuildBiomeWaterSurface (re)generates w's geometry and water params from
 // sector s, in place.
-func rebuildBiomeWaterSurface(level *Level, s *BiomeSector, w *WaterSurface) {
+func rebuildBiomeWaterSurface(level *world.Level, s *world.BiomeSector, w *world.WaterSurface) {
 	centroid, floorY := biomeWaterCentroidAndFloor(level, s)
 	depth := s.Brush.WaterDepth
 	if depth <= 0 {
-		depth = defaultWaterDepth
+		depth = world.DefaultWaterDepth
 	}
 	verts, indices := buildBiomeWaterMesh(s, centroid)
 

@@ -18,6 +18,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -77,7 +78,7 @@ func detailValueNoise3(x mgl32.Vec3) float32 {
 }
 
 // detailFBM3 mirrors d_fbm: fractal value noise in [-1,1], octaves clamped to
-// detail_common.glsl's DETAIL-side 1..6 (mirrored by DetailSpec.clamp()).
+// detail_common.glsl's DETAIL-side 1..6 (mirrored by DetailSpec.Clamp()).
 func detailFBM3(p mgl32.Vec3, octaves int) float32 {
 	if octaves < 1 {
 		octaves = 1
@@ -120,18 +121,18 @@ func detailPlaneBasis(n mgl32.Vec3) (t, b mgl32.Vec3) {
 }
 
 // detailWaveSumAt mirrors d_waveSum at world position pos.
-func detailWaveSumAt(d *DetailSpec, n mgl32.Vec3, pos mgl32.Vec3) float32 {
+func detailWaveSumAt(d *world.DetailSpec, n mgl32.Vec3, pos mgl32.Vec3) float32 {
 	t, b := detailPlaneBasis(n)
 	s := float32(math.Mod(float64(d.Seed), 1024.0))
 
 	sum := float32(0)
-	for i := 0; i < detailMaxWaves; i++ {
+	for i := 0; i < world.DetailMaxWaves; i++ {
 		w := d.Waves[i]
 		if !w.Enabled || w.Amplitude == 0 || w.Frequency == 0 {
 			continue
 		}
 		fi := float32(i)
-		phase := (detailHash21(mgl32.Vec2{s, fi}) + fi/float32(detailMaxWaves)) * 2 * math.Pi
+		phase := (detailHash21(mgl32.Vec2{s, fi}) + fi/float32(world.DetailMaxWaves)) * 2 * math.Pi
 		rot := float64(w.Rotation) * math.Pi / 180
 		dir := t.Mul(float32(math.Cos(rot))).Add(b.Mul(float32(math.Sin(rot))))
 		sum += w.Amplitude * float32(math.Sin(float64(pos.Dot(dir)*w.Frequency*2*math.Pi+phase)))
@@ -141,7 +142,7 @@ func detailWaveSumAt(d *DetailSpec, n mgl32.Vec3, pos mgl32.Vec3) float32 {
 
 // detailTaperAt mirrors detailTaper, given the face's boundary edges (see
 // boundaryEdgesFor in detail_render.go).
-func detailTaperAt(d *DetailSpec, edges [][2]mgl32.Vec3, pos mgl32.Vec3) float32 {
+func detailTaperAt(d *world.DetailSpec, edges [][2]mgl32.Vec3, pos mgl32.Vec3) float32 {
 	if d.EdgeTaper <= 0 || len(edges) == 0 {
 		return 1
 	}
@@ -168,7 +169,7 @@ func distPointSeg(p, a, b mgl32.Vec3) float32 {
 // detailDisplaceAt mirrors detailDisplace: pos pushed along n by the summed
 // waves plus (when enabled) seeded fractal noise, tapered at the face
 // boundary.
-func detailDisplaceAt(d *DetailSpec, n mgl32.Vec3, edges [][2]mgl32.Vec3, pos mgl32.Vec3) mgl32.Vec3 {
+func detailDisplaceAt(d *world.DetailSpec, n mgl32.Vec3, edges [][2]mgl32.Vec3, pos mgl32.Vec3) mgl32.Vec3 {
 	disp := detailWaveSumAt(d, n, pos)
 	if d.Noise {
 		off := mgl32.Vec3{float32(d.Seed) * 13.1, float32(d.Seed) * 7.7, float32(d.Seed) * 3.3}
@@ -180,7 +181,7 @@ func detailDisplaceAt(d *DetailSpec, n mgl32.Vec3, edges [][2]mgl32.Vec3, pos mg
 // detailNormalAt mirrors detailNormal: the displaced surface's unit normal at
 // pos, by central-differencing detailDisplaceAt across the face plane. eps is
 // the differencing step — pass dispNormalEps(d) (detail_render.go).
-func detailNormalAt(d *DetailSpec, n mgl32.Vec3, edges [][2]mgl32.Vec3, eps float32, pos mgl32.Vec3) mgl32.Vec3 {
+func detailNormalAt(d *world.DetailSpec, n mgl32.Vec3, edges [][2]mgl32.Vec3, eps float32, pos mgl32.Vec3) mgl32.Vec3 {
 	t, b := detailPlaneBasis(n)
 	e := eps
 	if e < 1e-4 {
@@ -202,7 +203,7 @@ func detailNormalAt(d *DetailSpec, n mgl32.Vec3, edges [][2]mgl32.Vec3, eps floa
 // Callers must check fl.Detail.HasDisplace() first; an unconfigured spec
 // would just return (baseHeight, {0,1,0}) here, which is a legitimate but
 // pointless answer to bother computing.
-func detailSurfaceAt(fl *Floor, wx, wz, baseHeight float32) (height float32, normal mgl32.Vec3) {
+func detailSurfaceAt(fl *world.Floor, wx, wz, baseHeight float32) (height float32, normal mgl32.Vec3) {
 	d := &fl.Detail
 	n := dispNormalFor(&fl.Geometry)
 	edges := boundaryEdgesFor(&fl.Geometry)
@@ -238,7 +239,7 @@ func dispNormalFor(g *gfx.Geometry) mgl32.Vec3 {
 // wide and the shading smooths across the shape itself, too narrow and the
 // difference is lost in float noise. 1/20th of the shortest wavelength sits
 // comfortably between the two.
-func dispNormalEps(d *DetailSpec) float32 {
+func dispNormalEps(d *world.DetailSpec) float32 {
 	var maxFreq float32
 	for i := range d.Waves {
 		if w := d.Waves[i]; w.Enabled && w.Frequency > maxFreq {

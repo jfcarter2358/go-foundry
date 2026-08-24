@@ -15,6 +15,7 @@ package main
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -90,7 +91,7 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 
 // activeGizmoSpawn returns the level's spawn point when it is the selection,
 // or nil.
-func activeGizmoSpawn() *SpawnPoint {
+func activeGizmoSpawn() *world.SpawnPoint {
 	if !Editor.SpawnSelected || Editor.level == nil {
 		return nil
 	}
@@ -255,7 +256,7 @@ func captureGizmoDragStart() bool {
 		// entity's own orientation and size rather than from a point cloud.
 		Editor.GizmoDragStartPos = e.Position
 		Editor.GizmoDragStartRot = e.Rotation
-		Editor.GizmoDragStartScale = e.effectiveScale()
+		Editor.GizmoDragStartScale = e.EffectiveScale()
 		EditorPushUndo()
 		return true
 
@@ -354,7 +355,7 @@ func gizmoSnap(v float32) float32 {
 
 // sectorOf resolves the chunk and sector a selected vertex belongs to. Either
 // return value is nil when the indices no longer point at live geometry.
-func sectorOf(sel vertexSel) (*Chunk, *Sector) {
+func sectorOf(sel vertexSel) (*world.Chunk, *world.Sector) {
 	lvl := Editor.level
 	if lvl == nil || sel.chunkIdx < 0 || sel.chunkIdx >= len(lvl.Chunks) {
 		return nil, nil
@@ -415,7 +416,7 @@ func setSelectedVertexOffsets(fn func(i int, sel vertexSel, cur float32) float32
 	for key := range touched {
 		ch := &lvl.Chunks[key[0]]
 		s := &ch.Sectors[key[1]]
-		_ = reloadSector(ch, s)
+		_ = world.ReloadSector(ch, s)
 		ch.RebuildGaps()
 	}
 }
@@ -464,7 +465,7 @@ func gizmoSnapOffset(sel vertexSel, offset float32) float32 {
 }
 
 // vertexOffset reads the floor or ceiling height offset for a selected vertex.
-func vertexOffset(s *Sector, sel vertexSel) float32 {
+func vertexOffset(s *world.Sector, sel vertexSel) float32 {
 	offsets := s.Ceiling.VertexOffsets
 	if sel.isFloor {
 		offsets = s.Floor.VertexOffsets
@@ -477,7 +478,7 @@ func vertexOffset(s *Sector, sel vertexSel) float32 {
 
 // setVertexOffset writes the floor or ceiling height offset for a selected
 // vertex, growing the offset slice if the sector has never been loaded.
-func setVertexOffset(s *Sector, sel vertexSel, value float32) {
+func setVertexOffset(s *world.Sector, sel vertexSel, value float32) {
 	if sel.vertIdx < 0 {
 		return
 	}

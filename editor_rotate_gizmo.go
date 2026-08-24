@@ -18,6 +18,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -214,7 +215,7 @@ func applyRotationToSelection(axis, origin mgl32.Vec3, delta float32) {
 // eulerRotatedAbout adds delta about one world axis to an Euler triple.
 //
 // The gizmo only ever drags a world axis, and the three Euler channels *are*
-// the world axes here (see eulerMatrixYXZ), so this is an addition on one
+// the world axes here (see EulerMatrixYXZ), so this is an addition on one
 // channel rather than a quaternion composition. Composing properly would let a
 // drag about X leak into Y and Z, which is exactly what an author dragging the
 // X ring does not want to see happen to the numbers in the panel.
@@ -222,11 +223,11 @@ func eulerRotatedAbout(start, axis mgl32.Vec3, delta float32) mgl32.Vec3 {
 	out := start
 	switch {
 	case axis == (mgl32.Vec3{1, 0, 0}):
-		out[0] = wrapAngle(out[0] + delta)
+		out[0] = world.WrapAngle(out[0] + delta)
 	case axis == (mgl32.Vec3{0, 1, 0}):
-		out[1] = wrapAngle(out[1] + delta)
+		out[1] = world.WrapAngle(out[1] + delta)
 	case axis == (mgl32.Vec3{0, 0, 1}):
-		out[2] = wrapAngle(out[2] + delta)
+		out[2] = world.WrapAngle(out[2] + delta)
 	}
 	return out
 }

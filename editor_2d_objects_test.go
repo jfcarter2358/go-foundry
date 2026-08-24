@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -48,8 +49,8 @@ func TestEditor2DObjectHalfExtentsFloorsAtScreenSize(t *testing.T) {
 func TestEditor2DPickObjectHitsTheSpawnPoint(t *testing.T) {
 	objectPickTestSetup(t)
 
-	ch := &Chunk{}
-	lvl := &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{2, 0, 2}}}
+	ch := &world.Chunk{}
+	lvl := &world.Level{Spawn: &world.SpawnPoint{Position: mgl32.Vec3{2, 0, 2}}}
 
 	// Inside the marker's footprint (half-extents 0.5 x 0.25, both above the
 	// 0.1 screen-size floor).
@@ -79,7 +80,7 @@ func TestEditor2DPickObjectHitsTheSpawnPoint(t *testing.T) {
 func TestEditor2DPickObjectWithNoSpawnPoint(t *testing.T) {
 	objectPickTestSetup(t)
 
-	if editor2DPickObject(&Level{}, &Chunk{}, 0, 0) {
+	if editor2DPickObject(&world.Level{}, &world.Chunk{}, 0, 0) {
 		t.Error("a level with no spawn point has nothing to pick")
 	}
 	if Editor.SpawnSelected {

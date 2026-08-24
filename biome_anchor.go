@@ -24,6 +24,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -43,7 +44,7 @@ type sectorWarp struct {
 // carryBiomesWithPoints re-fits the biome polygons draped over ch to the new
 // positions of the points in moves — which the caller has already written into
 // ch.Points — and marks every polygon it changes for a mesh rebuild.
-func carryBiomesWithPoints(ch *Chunk, moves []pointMove) {
+func carryBiomesWithPoints(ch *world.Chunk, moves []pointMove) {
 	if ch == nil || len(moves) == 0 {
 		return
 	}
@@ -63,7 +64,7 @@ func carryBiomesWithPoints(ch *Chunk, moves []pointMove) {
 	var warps []sectorWarp
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
-		after := SectorPoints(ch, s)
+		after := world.SectorPoints(ch, s)
 		if len(after) < 3 {
 			continue
 		}
@@ -84,7 +85,7 @@ func carryBiomesWithPoints(ch *Chunk, moves []pointMove) {
 		return
 	}
 
-	forEachBiomeSector(ch, func(bs *BiomeSector) {
+	world.ForEachBiomeSector(ch, func(bs *world.BiomeSector) {
 		changed := false
 		for i, v := range bs.Points {
 			moved, ok := warpPoint(v, warps)
@@ -196,7 +197,7 @@ func meanValueCoords(v mgl32.Vec2, poly []mgl32.Vec2) []float32 {
 // floorHeightUnderLevel returns the structural floor height (accounting for
 // terrain-mode slope/displacement, via the same code path player collision
 // uses) at world XZ (wx,wz), or 0 over open ground with no sector.
-func floorHeightUnderLevel(level *Level, wx, wz float32) float32 {
+func floorHeightUnderLevel(level *world.Level, wx, wz float32) float32 {
 	h, _, _ := floorHeightNormalUnderLevel(level, wx, wz)
 	return h
 }
@@ -206,15 +207,15 @@ func floorHeightUnderLevel(level *Level, wx, wz float32) float32 {
 // ground with no sector), so callers that need to know about e.g. that
 // sector's procedural displacement detail (biome_displace.go) don't have to
 // re-run the same chunk/sector search.
-func floorHeightNormalUnderLevel(level *Level, wx, wz float32) (float32, mgl32.Vec3, *Sector) {
+func floorHeightNormalUnderLevel(level *world.Level, wx, wz float32) (float32, mgl32.Vec3, *world.Sector) {
 	if level == nil {
 		return 0, mgl32.Vec3{0, 1, 0}, nil
 	}
 	xz := mgl32.Vec2{wx, wz}
 	for ci := range level.Chunks {
 		c := &level.Chunks[ci]
-		if s := FindSector(c, xz); s != nil {
-			h, n, _ := InterpolateSurfaceHeight(c, s, xz, true)
+		if s := world.FindSector(c, xz); s != nil {
+			h, n, _ := world.InterpolateSurfaceHeight(c, s, xz, true)
 			return h, n, s
 		}
 	}

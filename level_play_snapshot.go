@@ -1,5 +1,7 @@
 package main
 
+import "foundry/internal/world"
+
 // level_play_snapshot.go — taking and restoring the authored level around a
 // play session.
 //
@@ -14,7 +16,7 @@ package main
 // It writes a flag; it does not know a YAML document is involved.
 
 // PlaySessionBegin snapshots the level before play starts.
-func PlaySessionBegin(lvl *Level) {
+func PlaySessionBegin(lvl *world.Level) {
 	playSession.valid = false
 	playSession.dirty = false
 	if lvl == nil {
@@ -39,11 +41,11 @@ func PlaySessionBegin(lvl *Level) {
 // editor's selection — a restore invalidates every index-based selection, but
 // saying so is the caller's job, because this file sits below the editor and
 // must not reach up into it.
-func PlaySessionEnd(lvl *Level) (restored bool) {
+func PlaySessionEnd(lvl *world.Level) (restored bool) {
 	defer func() {
 		playSession.valid = false
 		playSession.dirty = false
-		playSession.authored = RawLevel{}
+		playSession.authored = world.RawLevel{}
 	}()
 	if lvl == nil || !playSession.valid || !playSession.dirty {
 		return false

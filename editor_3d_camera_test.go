@@ -3,6 +3,7 @@ package main
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -168,16 +169,16 @@ func TestEditorFrameSelectionOrbitsTheSelection(t *testing.T) {
 	defer saveEditorSelection()()
 	setupEditorCam()
 
-	Editor.level = &Level{Chunks: []Chunk{{
+	Editor.level = &world.Level{Chunks: []world.Chunk{{
 		ID:       "c0",
 		Points:   []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}},
 		MinBound: mgl32.Vec3{0, 0, 0},
 		MaxBound: mgl32.Vec3{4, 3, 4},
-		Sectors: []Sector{{
+		Sectors: []world.Sector{{
 			ID:           "s0",
 			PointIndices: []int{0, 1, 2, 3},
-			Floor:        Floor{Height: 0},
-			Ceiling:      Ceiling{Height: 3},
+			Floor:        world.Floor{Height: 0},
+			Ceiling:      world.Ceiling{Height: 3},
 		}},
 	}}}
 	Editor.ActiveChunkIdx = 0

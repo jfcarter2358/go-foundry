@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -10,25 +11,25 @@ import (
 
 // solidEntity is a 1×1×1 box at pos, opted into everything and movable — the
 // default subject for the tests below.
-func solidEntity(id string, pos mgl32.Vec3) Entity {
-	return Entity{
+func solidEntity(id string, pos mgl32.Vec3) world.Entity {
+	return world.Entity{
 		ID:         id,
 		Position:   pos,
 		Scale:      mgl32.Vec3{1, 1, 1},
 		BoundHalfX: 0.5, BoundHalfY: 0.5, BoundHalfZ: 0.5,
 		Visible:   true,
-		Collision: EntityCollision{World: true, Entities: true, Gravity: true, Movable: true},
+		Collision: world.EntityCollision{World: true, Entities: true, Gravity: true, Movable: true},
 	}
 }
 
 // withCollisionMasters forces both engine-wide switches on for the duration of
 // a test and puts them back afterwards, so a test that flips one cannot leak
 // into the next.
-func withCollisionMasters(t *testing.T, world, entities bool) {
+func withCollisionMasters(t *testing.T, worldOn, entities bool) {
 	t.Helper()
-	pw, pe := EntityWorldCollisionEnabled, EntityEntityCollisionEnabled
-	EntityWorldCollisionEnabled, EntityEntityCollisionEnabled = world, entities
-	t.Cleanup(func() { EntityWorldCollisionEnabled, EntityEntityCollisionEnabled = pw, pe })
+	pw, pe := world.EntityWorldCollisionEnabled, world.EntityEntityCollisionEnabled
+	world.EntityWorldCollisionEnabled, world.EntityEntityCollisionEnabled = worldOn, entities
+	t.Cleanup(func() { world.EntityWorldCollisionEnabled, world.EntityEntityCollisionEnabled = pw, pe })
 }
 
 // ---------- defaults and gating ----------
@@ -37,7 +38,7 @@ func TestEntityCollisionDefaultsToInertButMovable(t *testing.T) {
 	// An engine update must not silently start shoving a level's props around,
 	// so everything physical is opt-in. Movable is the exception: it defaults
 	// on so turning a single flag on behaves the obvious way.
-	c := DefaultEntityCollision()
+	c := world.DefaultEntityCollision()
 	if c.World || c.Entities || c.Gravity {
 		t.Errorf("collision defaulted to on: %+v", c)
 	}
@@ -50,28 +51,28 @@ func TestCollisionMastersGateThePerEntityFlags(t *testing.T) {
 	e := solidEntity("a", mgl32.Vec3{})
 
 	withCollisionMasters(t, true, true)
-	if !e.collidesWithWorld() || !e.collidesWithEntities() {
+	if !e.CollidesWithWorld() || !e.CollidesWithEntities() {
 		t.Error("both on: entity should collide")
 	}
 
-	EntityWorldCollisionEnabled = false
-	if e.collidesWithWorld() {
+	world.EntityWorldCollisionEnabled = false
+	if e.CollidesWithWorld() {
 		t.Error("world master off but entity still collides with world")
 	}
-	if !e.collidesWithEntities() {
+	if !e.CollidesWithEntities() {
 		t.Error("the world master should not gate entity collision")
 	}
 
-	EntityWorldCollisionEnabled, EntityEntityCollisionEnabled = true, false
-	if e.collidesWithEntities() {
+	world.EntityWorldCollisionEnabled, world.EntityEntityCollisionEnabled = true, false
+	if e.CollidesWithEntities() {
 		t.Error("entity master off but entity still collides with entities")
 	}
 
 	// An entity with no volume has nothing to collide with, whatever it asks
 	// for — and resolving against a zero-sized box would be a divide by nothing.
-	EntityEntityCollisionEnabled = true
+	world.EntityEntityCollisionEnabled = true
 	e.BoundHalfY = 0
-	if e.collidesWithEntities() {
+	if e.CollidesWithEntities() {
 		t.Error("an entity with no bounds reported entity collision")
 	}
 }
@@ -81,25 +82,25 @@ func TestCollisionMastersGateThePerEntityFlags(t *testing.T) {
 func TestApplyGravityAcceleratesAndCaps(t *testing.T) {
 	e := solidEntity("a", mgl32.Vec3{})
 
-	e.applyGravity(0.5)
-	if want := -EntityGravityAccel * 0.5; geom.Abs32(e.Velocity.Y()-want) > 1e-4 {
+	e.ApplyGravity(0.5)
+	if want := -world.EntityGravityAccel * 0.5; geom.Abs32(e.Velocity.Y()-want) > 1e-4 {
 		t.Errorf("got %v, want %v", e.Velocity.Y(), want)
 	}
 
 	// Terminal velocity: a long fall must not build up enough speed to tunnel
 	// through a floor in one step.
 	for i := 0; i < 100; i++ {
-		e.applyGravity(0.1)
+		e.ApplyGravity(0.1)
 	}
-	if e.Velocity.Y() < -EntityMaxFallSpeed-1e-4 {
-		t.Errorf("fall speed %v exceeded the cap %v", e.Velocity.Y(), EntityMaxFallSpeed)
+	if e.Velocity.Y() < -world.EntityMaxFallSpeed-1e-4 {
+		t.Errorf("fall speed %v exceeded the cap %v", e.Velocity.Y(), world.EntityMaxFallSpeed)
 	}
 }
 
 func TestApplyGravityRespectsItsFlags(t *testing.T) {
 	e := solidEntity("a", mgl32.Vec3{})
 	e.Collision.Gravity = false
-	e.applyGravity(1)
+	e.ApplyGravity(1)
 	if e.Velocity.Y() != 0 {
 		t.Errorf("gravity off but velocity changed: %v", e.Velocity.Y())
 	}
@@ -107,7 +108,7 @@ func TestApplyGravityRespectsItsFlags(t *testing.T) {
 	// Nothing can displace an immovable entity, gravity included.
 	e.Collision.Gravity = true
 	e.Collision.Movable = false
-	e.applyGravity(1)
+	e.ApplyGravity(1)
 	if e.Velocity.Y() != 0 {
 		t.Errorf("immovable entity fell: %v", e.Velocity.Y())
 	}
@@ -198,7 +199,7 @@ func TestResolveOverlapSplitsBetweenTwoMovableEntities(t *testing.T) {
 // overlapOf reports the per-axis overlap of two entities and whether they
 // intersect at all — the test's own reading of the boxes, kept separate from
 // the resolver so it cannot agree with a bug in it.
-func overlapOf(a, b *Entity) (mgl32.Vec3, int, bool) {
+func overlapOf(a, b *world.Entity) (mgl32.Vec3, int, bool) {
 	amin, amax, _ := a.CollisionAABB()
 	bmin, bmax, _ := b.CollisionAABB()
 	var ov mgl32.Vec3
@@ -282,13 +283,13 @@ func TestResolveOverlapCancelsOnlyTheClosingVelocity(t *testing.T) {
 	// Staged, not published: the pair pass must not be able to see its own
 	// work, or a stack would resolve differently depending on list order.
 	// EntityUpdate commits it once the frame's resolution is finished.
-	if !a.Collision.groundedNext {
+	if !a.Collision.GroundedNext {
 		t.Error("being pushed up onto something should count as standing on it")
 	}
 	if a.Collision.OnGround {
 		t.Error("the ground flag was published mid-pass")
 	}
-	a.commitGrounded()
+	a.CommitGrounded()
 	if !a.Collision.OnGround {
 		t.Error("commit did not publish the staged ground flag")
 	}
@@ -308,7 +309,7 @@ func TestResolveOverlapCancelsOnlyTheClosingVelocity(t *testing.T) {
 func TestResolveEntityCollisionsOnlyTouchesOptedInEntities(t *testing.T) {
 	withCollisionMasters(t, true, true)
 
-	lvl := &Level{Entities: []Entity{
+	lvl := &world.Level{Entities: []world.Entity{
 		solidEntity("a", mgl32.Vec3{0, 0, 0}),
 		solidEntity("b", mgl32.Vec3{0.6, 0, 0}),
 		solidEntity("ghost", mgl32.Vec3{0.3, 0, 0}),
@@ -331,7 +332,7 @@ func TestResolveEntityCollisionsOnlyTouchesOptedInEntities(t *testing.T) {
 func TestResolveEntityCollisionsRespectsTheMaster(t *testing.T) {
 	withCollisionMasters(t, true, false)
 
-	lvl := &Level{Entities: []Entity{
+	lvl := &world.Level{Entities: []world.Entity{
 		solidEntity("a", mgl32.Vec3{0, 0, 0}),
 		solidEntity("b", mgl32.Vec3{0.6, 0, 0}),
 	}}
@@ -347,10 +348,10 @@ func TestResolveEntityCollisionsIncludesThePlayer(t *testing.T) {
 	// A solid crate should be solid to walk into.
 	withCollisionMasters(t, true, true)
 
-	lvl := &Level{Entities: []Entity{solidEntity("crate", mgl32.Vec3{0, 0, 0})}}
+	lvl := &world.Level{Entities: []world.Entity{solidEntity("crate", mgl32.Vec3{0, 0, 0})}}
 	lvl.Entities[0].Collision.Movable = false
 
-	player := NewPlayer(mgl32.Vec3{0.2, 0, 0})
+	player := world.NewPlayer(mgl32.Vec3{0.2, 0, 0})
 	moved := ResolveEntityCollisions(lvl, player)
 
 	if len(moved) != 0 {
@@ -369,11 +370,11 @@ func TestResolveEntityCollisionsIsOrderIndependent(t *testing.T) {
 	// entities the other way round must give the same separation.
 	withCollisionMasters(t, true, true)
 
-	fwd := &Level{Entities: []Entity{
+	fwd := &world.Level{Entities: []world.Entity{
 		solidEntity("a", mgl32.Vec3{0, 0, 0}),
 		solidEntity("b", mgl32.Vec3{0.6, 0, 0}),
 	}}
-	rev := &Level{Entities: []Entity{
+	rev := &world.Level{Entities: []world.Entity{
 		solidEntity("b", mgl32.Vec3{0.6, 0, 0}),
 		solidEntity("a", mgl32.Vec3{0, 0, 0}),
 	}}
@@ -397,7 +398,7 @@ func TestResolveEntityCollisionsIsOrderIndependent(t *testing.T) {
 // The 2D sector bounds are computed here rather than through Sector.Load, which
 // also uploads geometry and so needs a GL context. Without them every sector
 // AABB is degenerate and the chunk lookup rejects the whole level.
-func collisionTestLevel() *Level {
+func collisionTestLevel() *world.Level {
 	ch := *splitTestChunk()
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
@@ -406,7 +407,7 @@ func collisionTestLevel() *Level {
 		s.Ceiling.Enabled = true
 		s.Ceiling.Height = 8
 
-		pts := SectorPoints(&ch, s)
+		pts := world.SectorPoints(&ch, s)
 		s.MinBound, s.MaxBound = pts[0], pts[0]
 		for _, p := range pts[1:] {
 			s.MinBound = mgl32.Vec2{
@@ -420,7 +421,7 @@ func collisionTestLevel() *Level {
 		}
 	}
 	ch.RecomputeBounds()
-	return &Level{Chunks: []Chunk{ch}}
+	return &world.Level{Chunks: []world.Chunk{ch}}
 }
 
 func TestResolveEntityWorldRestsOnTheFloor(t *testing.T) {
@@ -516,7 +517,7 @@ func TestResolveEntityWorldPushesOutOfAWall(t *testing.T) {
 func TestEntityUpdateAppliesGravityOnlyWithMotion(t *testing.T) {
 	withCollisionMasters(t, true, true)
 	lvl := collisionTestLevel()
-	lvl.Entities = []Entity{solidEntity("crate", mgl32.Vec3{5, 5, 5})}
+	lvl.Entities = []world.Entity{solidEntity("crate", mgl32.Vec3{5, 5, 5})}
 
 	// Editor open: nothing physical happens, so an entity cannot drift off the
 	// spot it was just placed on.
@@ -539,7 +540,7 @@ func TestEntityUpdateSettlesAFallingEntityOnTheFloor(t *testing.T) {
 	lvl := collisionTestLevel()
 	e := solidEntity("crate", mgl32.Vec3{5, 4, 5})
 	e.BoundOffset = mgl32.Vec3{0, 0.5, 0}
-	lvl.Entities = []Entity{e}
+	lvl.Entities = []world.Entity{e}
 
 	for i := 0; i < 240; i++ {
 		EntityUpdate(lvl, 1.0/60, true, nil)
@@ -620,7 +621,7 @@ func TestEntityUpdateStacksTwoEntities(t *testing.T) {
 	bottom.BoundOffset = mgl32.Vec3{0, 0.5, 0}
 	top := solidEntity("top", mgl32.Vec3{5, 3, 5})
 	top.BoundOffset = mgl32.Vec3{0, 0.5, 0}
-	lvl.Entities = []Entity{bottom, top}
+	lvl.Entities = []world.Entity{bottom, top}
 
 	for i := 0; i < 300; i++ {
 		EntityUpdate(lvl, 1.0/60, true, nil)

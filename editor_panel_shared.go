@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"foundry/internal/fileutil"
 	"foundry/internal/imguibackend"
+	"foundry/internal/world"
 	"path/filepath"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -25,7 +26,7 @@ import (
 // One section rather than a catalog and a properties block, because a level has
 // exactly one spawn point — there is nothing to pick from, and "place" and
 // "move" are the same operation.
-func editorSpawnSection(lvl *Level) {
+func editorSpawnSection(lvl *world.Level) {
 	editorFocusOpen(panelFocusSpawn)
 	if !imgui.CollapsingHeaderV("Player Spawn", imgui.TreeNodeFlagsDefaultOpen) {
 		return
@@ -54,7 +55,7 @@ func editorSpawnSection(lvl *Level) {
 
 // editorChunkListSection draws the chunk list plus the new/duplicate/save/
 // delete/import controls. The popups it opens are drawn by editorChunkPopups.
-func editorChunkListSection(lvl *Level) {
+func editorChunkListSection(lvl *world.Level) {
 	// --- Chunk list ---
 	imgui.Separator()
 	if imgui.CollapsingHeader("Chunks") {
@@ -103,7 +104,7 @@ func editorChunkListSection(lvl *Level) {
 
 // editorChunkPropertiesSection draws the selected chunk's origin/rotation/scale
 // and the jump-to-the-other-sub-mode button.
-func editorChunkPropertiesSection(lvl *Level) {
+func editorChunkPropertiesSection(lvl *world.Level) {
 	// --- Selected chunk properties ---
 	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 		imgui.Separator()
@@ -146,7 +147,7 @@ func editorChunkPropertiesSection(lvl *Level) {
 
 // editorChunkPopups draws the modal popups opened from editorChunkListSection.
 // Must be called after the owning window's imgui.End().
-func editorChunkPopups(lvl *Level) {
+func editorChunkPopups(lvl *world.Level) {
 	// New chunk popup
 	imguibackend.WithModalPopup("New Chunk", &Editor.ShowNewChunk, func() {
 		imgui.InputText("Chunk ID", &Editor.NewChunkID)
@@ -240,7 +241,7 @@ func editorChunkPopups(lvl *Level) {
 // idSuffix keeps the imgui IDs distinct between the 2D and 3D panels.
 // convertEdge rewrites the sector's edge arrays, so the change is snapshotted
 // for undo like every other structural edit.
-func editorEdgeKindCombo(ch *Chunk, s *Sector, idSuffix string) {
+func editorEdgeKindCombo(ch *world.Chunk, s *world.Sector, idSuffix string) {
 	kind := Editor.ActiveEdgeKind
 	idx := Editor.ActiveEdgeIdx
 	if idx < 0 || (kind != "wall" && kind != "portal") {

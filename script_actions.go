@@ -26,6 +26,7 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 // action dispatches a world verb. The bool reports whether this engine provides
@@ -48,7 +49,7 @@ var scriptVerbs map[string]scriptVerb
 func init() {
 	scriptVerbs = map[string]scriptVerb{
 		"player": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
-			if PlayerEntity == nil {
+			if world.PlayerEntity == nil {
 				rt.warnAt(pos, "player() is null: there is no player yet, which is the case in the editor and before the level finishes loading")
 				return flang.NullVal{}, nil
 			}
@@ -228,12 +229,12 @@ func init() {
 			if rt.lvl == nil {
 				return flang.NullVal{}, nil
 			}
-			def, err := LoadEntityDef(typeName)
+			def, err := world.LoadEntityDef(typeName)
 			if err != nil {
 				return nil, fmt.Errorf("spawn %q: %w", typeName, err)
 			}
 			rt.markDirty()
-			id := uniqueEntityID(rt.lvl, typeName)
+			id := world.UniqueEntityID(rt.lvl, typeName)
 			e := def.Instantiate(id)
 			e.Position = p
 			// A model that will not load costs the entity its mesh, not its
@@ -340,7 +341,7 @@ func (rt *ScriptRuntime) positionOf(v flang.Value) (mgl32.Vec3, bool) {
 }
 
 // verbEntity resolves an argument to an entity, including the player.
-func (rt *ScriptRuntime) verbEntity(args []flang.Value, i int, name string) (*Entity, error) {
+func (rt *ScriptRuntime) verbEntity(args []flang.Value, i int, name string) (*world.Entity, error) {
 	if i >= len(args) {
 		return nil, fmt.Errorf("%s needs an object", name)
 	}
@@ -363,7 +364,7 @@ func (rt *ScriptRuntime) verbEntity(args []flang.Value, i int, name string) (*En
 }
 
 // entityCanAnimate reports whether any attachment has playback state at all.
-func entityCanAnimate(e *Entity) bool {
+func entityCanAnimate(e *world.Entity) bool {
 	for i := range e.Models {
 		if e.Models[i].Anim != nil {
 			return true
@@ -388,7 +389,7 @@ func destroyRefusal(r flang.RefVal) string {
 // nearestTag renders a "did you mean" for a tag that matched nothing, or "" when
 // nothing in the level is close enough to suggest.
 func (rt *ScriptRuntime) nearestTag(tag string) string {
-	if best := nearestName(tag, rt.cache.allTags()); best != "" {
+	if best := world.NearestName(tag, rt.cache.allTags()); best != "" {
 		return fmt.Sprintf("; did you mean #%s?", best)
 	}
 	return ""

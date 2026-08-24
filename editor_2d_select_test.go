@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -9,9 +10,9 @@ import (
 // selectTestChunk is splitTestChunk in a level with the editor pointed at it,
 // with the map's own switches put in a known state: floor heights, no
 // selection, nothing being dragged.
-func selectTestChunk(t *testing.T) *Chunk {
+func selectTestChunk(t *testing.T) *world.Chunk {
 	t.Helper()
-	lvl := &Level{Chunks: []Chunk{*splitTestChunk()}}
+	lvl := &world.Level{Chunks: []world.Chunk{*splitTestChunk()}}
 	Editor.level = lvl
 	Editor.Mode = Mode2D
 	Editor.ActiveChunkIdx = 0
@@ -275,7 +276,7 @@ func TestEditor2DVertexSelectedIsHeightSpecific(t *testing.T) {
 func TestEditor2DClearSelectionDropsEverything(t *testing.T) {
 	defer saveEditorSelection()()
 	ch := selectTestChunk(t)
-	Editor.level.Spawn = &SpawnPoint{Position: mgl32.Vec3{}}
+	Editor.level.Spawn = &world.SpawnPoint{Position: mgl32.Vec3{}}
 
 	editor2DHandlePointClick(ch, 0, 0, 0.5, false, true)
 	Editor.SpawnSelected = true

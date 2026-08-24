@@ -12,7 +12,11 @@ package main
 // Restoring a snapshot re-derives all runtime geometry via rawToLevel — the
 // same path already used by "Open Level".
 
-import "github.com/veandco/go-sdl2/sdl"
+import (
+	"foundry/internal/world"
+
+	"github.com/veandco/go-sdl2/sdl"
+)
 
 // maxUndoDepth bounds memory use; older snapshots are dropped once exceeded.
 const maxUndoDepth = 100
@@ -43,8 +47,8 @@ func (s *boundedStack[T]) pop() (T, bool) {
 func (s *boundedStack[T]) len() int { return len(s.items) }
 func (s *boundedStack[T]) clear()   { s.items = nil }
 
-var levelUndoStack boundedStack[RawLevel]
-var levelRedoStack boundedStack[RawLevel]
+var levelUndoStack boundedStack[world.RawLevel]
+var levelRedoStack boundedStack[world.RawLevel]
 
 // ---------- Level (3D/2D/Surface editor) undo/redo ----------
 
@@ -168,13 +172,13 @@ func editorResetSelectionState() {
 
 // restoreLevelSnapshot applies an undo/redo snapshot: rebuild the level, put the
 // player on the restored spawn, and clear the editor's selection.
-func restoreLevelSnapshot(raw RawLevel) {
+func restoreLevelSnapshot(raw world.RawLevel) {
 	if err := applyRawLevel(raw, Editor.level); err != nil {
 		return
 	}
 	// The player is engine-owned and survives the snapshot swap; only its
 	// position follows the restored spawn point.
-	ApplySpawnPoint(Editor.level)
+	world.ApplySpawnPoint(Editor.level)
 	editorResetSelectionState()
 
 	Editor.StatusMsg = "Undo/redo applied"

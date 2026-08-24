@@ -12,6 +12,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -46,7 +47,7 @@ const slopeFeatherDegrees = float32(4)
 // Scoped to the kinds that plausibly grow over broken/rocky ground.
 func biomeFollowsDisplacement(kind int32) bool {
 	switch kind {
-	case BiomeGrass, BiomeRock, BiomeSand, BiomeMoss:
+	case world.BiomeGrass, world.BiomeRock, world.BiomeSand, world.BiomeMoss:
 		return true
 	default:
 		return false
@@ -146,7 +147,7 @@ func slopeCoverage(kind int32, n mgl32.Vec3, minAngle, maxAngle float32) float32
 // returns a real normal for those), and gating used to consult the detail
 // normal only — so on an ordinary ramp or sculpted terrain the slope sliders
 // did nothing at all.
-func biomeSurfaceAt(level *Level, brush *BiomeBrush, seed mgl32.Vec2, wx, wz float32) (height, coverage float32) {
+func biomeSurfaceAt(level *world.Level, brush *world.BiomeBrush, seed mgl32.Vec2, wx, wz float32) (height, coverage float32) {
 	flat, rawNormal, sector := floorHeightNormalUnderLevel(level, wx, wz)
 
 	// InterpolateSurfaceHeight's normal is an un-normalized cross product (see
@@ -212,21 +213,21 @@ func rotateNormalBetween(from, to, n mgl32.Vec3) mgl32.Vec3 {
 // keyed by the painting kind — this is the "volumetric displacement" Sand
 // asked for, and the subtler unevenness every other land kind gets so its
 // patch doesn't look like a flat cutout.
-func groundDisplacement(kind int32, brush *BiomeBrush, seed mgl32.Vec2, wx, wz float32) float32 {
+func groundDisplacement(kind int32, brush *world.BiomeBrush, seed mgl32.Vec2, wx, wz float32) float32 {
 	freq := brush.GroundFrequency
 	oct := clampOctaves(brush.GroundOctaves)
 
 	switch kind {
-	case BiomeSand:
+	case world.BiomeSand:
 		amp := brush.SandHeight
 		if amp <= 0 {
-			amp = defaultSandHeight
+			amp = world.DefaultSandHeight
 		}
 		if freq <= 0 {
-			freq = defaultSandFrequency
+			freq = world.DefaultSandFrequency
 		}
 		if brush.GroundOctaves <= 0 {
-			oct = int(defaultSandOctaves)
+			oct = int(world.DefaultSandOctaves)
 		}
 		// Mounds only (groundFBM is already ~[0,1], so no *2-1 remap here) —
 		// dunes rise from the structural floor, they never dip below it.
@@ -244,29 +245,29 @@ func groundDisplacement(kind int32, brush *BiomeBrush, seed mgl32.Vec2, wx, wz f
 		ripples := groundFBM(wx*rippleFreq+seed.X()*1.7, wz*rippleFreq+seed.Y()*1.7, rippleOct) * amp * 0.15
 		return dunes + ripples
 
-	case BiomeWater:
+	case world.BiomeWater:
 		amp := brush.GroundAmplitude
 		if amp <= 0 {
-			amp = defaultWaterGroundAmplitude
+			amp = world.DefaultWaterGroundAmplitude
 		}
 		if freq <= 0 {
-			freq = defaultWaterGroundFrequency
+			freq = world.DefaultWaterGroundFrequency
 		}
 		if brush.GroundOctaves <= 0 {
-			oct = int(defaultWaterGroundOctaves)
+			oct = int(world.DefaultWaterGroundOctaves)
 		}
 		return (groundFBM(wx*freq+seed.X(), wz*freq+seed.Y(), oct)*2 - 1) * amp // gently uneven lakebed
 
 	default: // Grass, Rock, Wildflower, Cattail, Moss
 		amp := brush.GroundAmplitude
 		if amp <= 0 {
-			amp = defaultGroundAmplitude
+			amp = world.DefaultGroundAmplitude
 		}
 		if freq <= 0 {
-			freq = defaultGroundFrequency
+			freq = world.DefaultGroundFrequency
 		}
 		if brush.GroundOctaves <= 0 {
-			oct = int(defaultGroundOctaves)
+			oct = int(world.DefaultGroundOctaves)
 		}
 		return (groundFBM(wx*freq+seed.X(), wz*freq+seed.Y(), oct)*2 - 1) * amp
 	}
@@ -282,7 +283,7 @@ const groundPatchYBias = float32(0.015)
 // densifyPolygon) followed by an interior grid of points strictly inside it.
 // Returns the densified boundary too — DelaunayTriangulate needs it both as
 // input points and as the inside/outside test polygon.
-func biomeMeshPoints(s *BiomeSector) (boundary, allPts []mgl32.Vec2) {
+func biomeMeshPoints(s *world.BiomeSector) (boundary, allPts []mgl32.Vec2) {
 	boundary = ccwPolygon(s.Points)
 	if len(boundary) < 3 {
 		return nil, nil
@@ -321,13 +322,13 @@ func biomeMeshPoints(s *BiomeSector) (boundary, allPts []mgl32.Vec2) {
 // The water plane has to land on the same grid at the same height, so neither
 // can be private to the ground mesher.
 
-// ccwPolygon returns pts in counter-clockwise winding (per signedArea2D),
+// ccwPolygon returns pts in counter-clockwise winding (per SignedArea2D),
 // reversing a copy if it isn't already — DelaunayTriangulate/EarClip both
 // assume CCW. BiomeSector.Points is normalized to CCW when a sector is first
 // drawn (finishBiomeSectorDraw), but nothing re-checks it after a vertex is
 // dragged, so this is a defensive re-check rather than a known-redundant one.
 func ccwPolygon(pts []mgl32.Vec2) []mgl32.Vec2 {
-	if signedArea2D(pts) >= 0 {
+	if world.SignedArea2D(pts) >= 0 {
 		return pts
 	}
 	out := make([]mgl32.Vec2, len(pts))

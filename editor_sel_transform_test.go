@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -12,9 +13,9 @@ import (
 // it. Geometry is never rebuilt in these tests — that needs a GL context —
 // so everything here goes through writeSelectedVertexWorld, the write half of
 // setSelectedVertexWorld.
-func transformTestLevel(t *testing.T) *Chunk {
+func transformTestLevel(t *testing.T) *world.Chunk {
 	t.Helper()
-	lvl := &Level{Chunks: []Chunk{*splitTestChunk()}}
+	lvl := &world.Level{Chunks: []world.Chunk{*splitTestChunk()}}
 	Editor.level = lvl
 	Editor.ActiveChunkIdx = 0
 	Editor.SelectedVertices = nil
@@ -22,7 +23,7 @@ func transformTestLevel(t *testing.T) *Chunk {
 }
 
 // vsel names one corner handle of the level above.
-func vsel(ch *Chunk, si, vi int, isFloor bool) vertexSel {
+func vsel(ch *world.Chunk, si, vi int, isFloor bool) vertexSel {
 	return vertexSel{
 		chunkIdx:  0,
 		sectorIdx: si,
@@ -230,7 +231,7 @@ func TestScaleTransformLeavesUnselectedCornersAlone(t *testing.T) {
 
 func TestSelectionCenterXZFallsBackToTheSpawnMarker(t *testing.T) {
 	defer saveEditorSelection()()
-	Editor.level = &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{4, 1, 6}}}
+	Editor.level = &world.Level{Spawn: &world.SpawnPoint{Position: mgl32.Vec3{4, 1, 6}}}
 	Editor.SelectedVertices = nil
 	Editor.SpawnSelected = true
 

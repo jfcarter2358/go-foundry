@@ -15,13 +15,14 @@ package main
 
 import (
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 // refCache indexes a level by the names refs are made of. Valid for exactly one
 // tick — anything structural invalidates it, and rebuilding is cheaper than
 // reasoning about when it did not.
 type refCache struct {
-	lvl      *Level
+	lvl      *world.Level
 	entity   map[string]int    // entity ID -> index into lvl.Entities
 	volume   map[string]int    // volume ID -> index into lvl.Volumes
 	chunk    map[string]int    // chunk ID -> index into lvl.Chunks
@@ -33,7 +34,7 @@ type refCache struct {
 
 // buildRefCache indexes lvl. Cheap enough to do every tick at the entity counts
 // a level holds.
-func buildRefCache(lvl *Level) *refCache {
+func buildRefCache(lvl *world.Level) *refCache {
 	c := &refCache{
 		lvl:      lvl,
 		entity:   map[string]int{},
@@ -110,7 +111,7 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 // ---------- ref to object ----------
 
 // entity returns the entity a ref names, or nil.
-func (c *refCache) entityFor(r flang.RefVal) *Entity {
+func (c *refCache) entityFor(r flang.RefVal) *world.Entity {
 	if c.lvl == nil || r.Kind != flang.RefEntity {
 		return nil
 	}
@@ -121,7 +122,7 @@ func (c *refCache) entityFor(r flang.RefVal) *Entity {
 }
 
 // volumeFor returns the volume a ref names, or nil.
-func (c *refCache) volumeFor(r flang.RefVal) *Volume {
+func (c *refCache) volumeFor(r flang.RefVal) *world.Volume {
 	if c.lvl == nil || r.Kind != flang.RefVolume {
 		return nil
 	}
@@ -133,7 +134,7 @@ func (c *refCache) volumeFor(r flang.RefVal) *Volume {
 
 // chunkFor returns the chunk a ref names, or nil. Sector, edge, floor, ceiling
 // and biome refs all carry their chunk in A, so this serves them too.
-func (c *refCache) chunkFor(r flang.RefVal) *Chunk {
+func (c *refCache) chunkFor(r flang.RefVal) *world.Chunk {
 	if c.lvl == nil {
 		return nil
 	}
@@ -144,7 +145,7 @@ func (c *refCache) chunkFor(r flang.RefVal) *Chunk {
 }
 
 // sectorFor returns the sector a ref names, along with its chunk.
-func (c *refCache) sectorFor(r flang.RefVal) (*Chunk, *Sector) {
+func (c *refCache) sectorFor(r flang.RefVal) (*world.Chunk, *world.Sector) {
 	if c.lvl == nil {
 		return nil, nil
 	}
@@ -164,7 +165,7 @@ func (c *refCache) sectorFor(r flang.RefVal) (*Chunk, *Sector) {
 }
 
 // biomeFor returns the biome sector a ref names.
-func (c *refCache) biomeFor(r flang.RefVal) *BiomeSector {
+func (c *refCache) biomeFor(r flang.RefVal) *world.BiomeSector {
 	if c.lvl == nil || r.Kind != flang.RefBiome {
 		return nil
 	}
@@ -181,7 +182,7 @@ func (c *refCache) biomeFor(r flang.RefVal) *BiomeSector {
 
 // lightFor returns the light a ref names. The two kinds are returned separately
 // because a directional light and a point light share only some properties.
-func (c *refCache) lightFor(r flang.RefVal) (*DirectionalLight, *PointLight) {
+func (c *refCache) lightFor(r flang.RefVal) (*world.DirectionalLight, *world.PointLight) {
 	if c.lvl == nil || r.Kind != flang.RefLight {
 		return nil, nil
 	}
@@ -199,7 +200,7 @@ func (c *refCache) lightFor(r flang.RefVal) (*DirectionalLight, *PointLight) {
 //
 // This is the one place the eight scriptable kinds are enumerated against their
 // storage, so adding a ninth means adding it here and to refFor.
-func (c *refCache) scriptDataFor(r flang.RefVal) *ScriptData {
+func (c *refCache) scriptDataFor(r flang.RefVal) *world.ScriptData {
 	switch r.Kind {
 	case flang.RefVolume:
 		if v := c.volumeFor(r); v != nil {
@@ -219,10 +220,10 @@ func (c *refCache) scriptDataFor(r flang.RefVal) *ScriptData {
 		}
 	case flang.RefEdge:
 		if _, s := c.sectorFor(r); s != nil {
-			if w := wallByEdgeID(s, r.C); w != nil {
+			if w := world.WallByEdgeID(s, r.C); w != nil {
 				return &w.ScriptData
 			}
-			if p := portalByEdgeID(s, r.C); p != nil {
+			if p := world.PortalByEdgeID(s, r.C); p != nil {
 				return &p.ScriptData
 			}
 		}
@@ -256,7 +257,7 @@ func (c *refCache) alive(r flang.RefVal) bool {
 		return s != nil
 	case flang.RefEdge:
 		_, s := c.sectorFor(r)
-		return s != nil && polyEdgeIdxByID(s, r.C) >= 0
+		return s != nil && world.PolyEdgeIdxByID(s, r.C) >= 0
 	case flang.RefBiome:
 		return c.biomeFor(r) != nil
 	case flang.RefLight:
@@ -303,10 +304,10 @@ func (c *refCache) refsWithTag(tag string) []flang.RefVal {
 			if s.Ceiling.HasTag(tag) {
 				out = append(out, flang.RefVal{Kind: flang.RefCeiling, A: ch.ID, B: s.ID})
 			}
-			ensureEdgeIDs(s)
+			world.EnsureEdgeIDs(s)
 			for ei, id := range s.EdgeIDs {
-				kind, idx := edgeKindAndIndex(s, ei)
-				var d *ScriptData
+				kind, idx := world.EdgeKindAndIndex(s, ei)
+				var d *world.ScriptData
 				if kind == "wall" && idx < len(s.Walls) {
 					d = &s.Walls[idx].ScriptData
 				} else if kind == "portal" && idx < len(s.Portals) {
@@ -384,13 +385,13 @@ func (c *refCache) allTags() []string {
 
 // attrToValue converts a stored attribute into a script value. The four types
 // line up exactly, which is why entity_attr.go chose them.
-func attrToValue(a AttrValue) flang.Value {
+func attrToValue(a world.AttrValue) flang.Value {
 	switch a.Type {
-	case AttrInt:
+	case world.AttrInt:
 		return flang.IntVal(a.I)
-	case AttrFloat:
+	case world.AttrFloat:
 		return flang.FloatVal(a.F)
-	case AttrBool:
+	case world.AttrBool:
 		return flang.BoolVal(a.B)
 	default:
 		return flang.StrVal(a.S)
@@ -403,20 +404,20 @@ func attrToValue(a AttrValue) flang.Value {
 // or a ref, so accepting one here would produce an attribute that could not be
 // saved. A script wanting compound state uses `@self.state`, which is transient
 // by design.
-func valueToAttr(v flang.Value) (AttrValue, bool) {
+func valueToAttr(v flang.Value) (world.AttrValue, bool) {
 	switch t := v.(type) {
 	case flang.IntVal:
-		return IntAttr(int64(t)), true
+		return world.IntAttr(int64(t)), true
 	case flang.FloatVal:
-		return FloatAttr(float64(t)), true
+		return world.FloatAttr(float64(t)), true
 	case flang.BoolVal:
-		return BoolAttr(bool(t)), true
+		return world.BoolAttr(bool(t)), true
 	case flang.StrVal:
-		return StringAttr(string(t)), true
+		return world.StringAttr(string(t)), true
 	case flang.AtomVal:
 		// An atom stores as its name, so `:open:` round-trips as "open" and a
 		// level author can see what it was.
-		return StringAttr(string(t)), true
+		return world.StringAttr(string(t)), true
 	}
-	return AttrValue{}, false
+	return world.AttrValue{}, false
 }

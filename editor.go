@@ -19,6 +19,7 @@ import (
 	"foundry/internal/hooks"
 	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
+	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -108,18 +109,18 @@ type Gizmo2DState struct {
 // editor's state (editor_surface2d.go) — embedded in EditorState, see
 // GizmoState's doc comment above for why.
 type SurfaceEditorState struct {
-	SurfaceKind        string           // "wall", "floor", "ceiling"
-	SurfacePan         mgl32.Vec2       // pan center in surface coords (U,V or X,Z)
-	SurfaceZoom        float32          // pixels per surface unit
-	SurfaceEditLayer   string           // "both", "outer", "inner" — which extrusion points are draggable
-	SurfacePlacing     string           // "extrusion", "terrain", "" (none)
-	SurfacePendingPts  []ExtrusionPoint // polygon vertices being placed
-	SurfaceDragPt      int              // index of point being dragged; -1 = none
-	SurfaceDragKind    string           // "outer", "inner", "terrain" — what's being dragged
-	SurfaceDragExtIdx  int              // extrusion index for outer/inner drag
-	SurfaceLastMouse   [2]int32         // for pan
-	SurfacePrevMode    EditorMode       // mode to return to on Escape
-	ActiveTerrainPtIdx int              // selected terrain point index; -1 = none
+	SurfaceKind        string                 // "wall", "floor", "ceiling"
+	SurfacePan         mgl32.Vec2             // pan center in surface coords (U,V or X,Z)
+	SurfaceZoom        float32                // pixels per surface unit
+	SurfaceEditLayer   string                 // "both", "outer", "inner" — which extrusion points are draggable
+	SurfacePlacing     string                 // "extrusion", "terrain", "" (none)
+	SurfacePendingPts  []world.ExtrusionPoint // polygon vertices being placed
+	SurfaceDragPt      int                    // index of point being dragged; -1 = none
+	SurfaceDragKind    string                 // "outer", "inner", "terrain" — what's being dragged
+	SurfaceDragExtIdx  int                    // extrusion index for outer/inner drag
+	SurfaceLastMouse   [2]int32               // for pan
+	SurfacePrevMode    EditorMode             // mode to return to on Escape
+	ActiveTerrainPtIdx int                    // selected terrain point index; -1 = none
 }
 
 // BiomeLayerState is the 2D biome-sector polygon layer's state
@@ -276,11 +277,11 @@ type EditorState struct {
 	NavForward, NavBack, NavLeft, NavRight, NavUp, NavDown bool
 
 	// Extrusion editing state (legacy 3D placement — kept for compatibility)
-	ExtrusionMode      bool             // placing extrusion vertices
-	PendingOuter       []ExtrusionPoint // outer polygon being placed
-	PendingInner       []ExtrusionPoint // inner polygon being placed
-	PlacingInner       bool             // false=placing outer, true=placing inner
-	ActiveExtrusionIdx int              // selected extrusion on active wall; -1 = none
+	ExtrusionMode      bool                   // placing extrusion vertices
+	PendingOuter       []world.ExtrusionPoint // outer polygon being placed
+	PendingInner       []world.ExtrusionPoint // inner polygon being placed
+	PlacingInner       bool                   // false=placing outer, true=placing inner
+	ActiveExtrusionIdx int                    // selected extrusion on active wall; -1 = none
 
 	// --- Surface 2D editor ---
 	SurfaceEditorState
@@ -306,7 +307,7 @@ type EditorState struct {
 	LastTick uint32
 
 	// Level reference (set by EditorInit)
-	level *Level
+	level *world.Level
 
 	// Pending save path
 	SavePath string
@@ -334,12 +335,12 @@ var Editor EditorState
 
 // EditorInit must be called once after LoadLevel and after the OpenGL context
 // is current. It initialises ImGui and the gizmo shaders.
-func EditorInit(level *Level, levelPath string, levelsDir string) {
+func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.level = level
 	// Install the two inversions that let level-rebuild and engine-hook code
 	// sit *below* the editor in the import graph rather than reaching up into
 	// it. See level_context.go and script_engine_hooks.go for why each exists.
-	CurrentLevel = func() *Level { return Editor.level }
+	world.CurrentLevel = func() *world.Level { return Editor.level }
 	hooks.EditorActive = func() bool { return Editor.Active }
 	UVGuideForTexture = modelUVLayoutFor
 	Editor.LevelsDir = levelsDir
@@ -470,7 +471,7 @@ func EditorToggle() {
 		// Entering gameplay puts the player on the level's spawn point. Only a
 		// level with no spawn marker falls back to restoring wherever the
 		// camera was before the editor was opened.
-		if !ApplySpawnPoint(Editor.level) {
+		if !world.ApplySpawnPoint(Editor.level) {
 			gfx.Cam.Position = Editor.SavedCamPos
 			gfx.Cam.Yaw = Editor.SavedCamYaw
 			gfx.Cam.Pitch = Editor.SavedCamPitch
@@ -906,7 +907,7 @@ func EditorLoadLevel(path string) error {
 	*Editor.level = newLevel
 
 	// Upload lights to GPU
-	UploadLights(Editor.level.Lights)
+	world.UploadLights(Editor.level.Lights)
 
 	// The new level's scripts. Everything the old level's runtime remembered
 	// describes objects that no longer exist.
@@ -916,7 +917,7 @@ func EditorLoadLevel(path string) error {
 	// The player is engine-owned, so opening a level does not replace it — it
 	// only moves it onto the new level's spawn point (or leaves it be when
 	// there isn't one).
-	ApplySpawnPoint(Editor.level)
+	world.ApplySpawnPoint(Editor.level)
 
 	// Reset editor selection state
 	Editor.ActiveChunkIdx = 0

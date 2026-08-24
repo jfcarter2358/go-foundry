@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 	"math"
 	"testing"
 
@@ -220,15 +221,15 @@ func TestFrustumSliceCornersSpanTheSlice(t *testing.T) {
 }
 
 func TestSectorWorldAABBIncludesOffsetsAndExtrusions(t *testing.T) {
-	s := Sector{
+	s := world.Sector{
 		MinBound: mgl32.Vec2{-4, -6},
 		MaxBound: mgl32.Vec2{4, 6},
-		Floor: Floor{
+		Floor: world.Floor{
 			Height:        0,
 			VertexOffsets: []float32{0, -1.5, 0.5},
-			Extrusions:    []Extrusion{{Depth: 3}},
+			Extrusions:    []world.Extrusion{{Depth: 3}},
 		},
-		Ceiling: Ceiling{
+		Ceiling: world.Ceiling{
 			Height:        5,
 			VertexOffsets: []float32{0, 2.25, 0},
 		},

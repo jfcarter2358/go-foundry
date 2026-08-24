@@ -29,6 +29,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -94,7 +95,7 @@ type ScriptStats struct {
 
 // ScriptRuntime owns every loaded script and the message queue between them.
 type ScriptRuntime struct {
-	lvl   *Level
+	lvl   *world.Level
 	cache *refCache
 	host  *levelHost
 
@@ -174,7 +175,7 @@ func ScriptStatsSnapshot() ScriptStats { return Scripts.stats }
 // session. Refs are name paths so most would survive, but the objects behind
 // those names have been re-instantiated, so anything remembered about them is
 // stale by construction.
-func ScriptRuntimeReset(lvl *Level) {
+func ScriptRuntimeReset(lvl *world.Level) {
 	rt := Scripts
 	rt.lvl = lvl
 	rt.cache = buildRefCache(lvl)
@@ -195,7 +196,7 @@ func ScriptRuntimeReset(lvl *Level) {
 
 // ScriptRuntimeLoad parses every script the level references. Diagnostics are
 // logged and kept on the unit, so the script editor can show them.
-func ScriptRuntimeLoad(lvl *Level) {
+func ScriptRuntimeLoad(lvl *world.Level) {
 	ScriptRuntimeReset(lvl)
 	if lvl == nil {
 		return
@@ -641,7 +642,7 @@ func (rt *ScriptRuntime) drain() {
 //
 // play mirrors EntityUpdate's own gate: scripts do not run while the editor is
 // up, except through the script editor's explicit run button.
-func ScriptTick(lvl *Level, dt float32, play bool) {
+func ScriptTick(lvl *world.Level, dt float32, play bool) {
 	rt := Scripts
 	if !play || lvl == nil {
 		return
@@ -683,13 +684,13 @@ func noHandlerReason(rt *ScriptRuntime, r flang.RefVal) string {
 // texture loads.
 //
 // Called once per frame from the main loop, beside DrainTextureUploads, with the
-// main GL context current. It cannot happen inside the tick — reloadSector ends
+// main GL context current. It cannot happen inside the tick — ReloadSector ends
 // in gl.* calls, and the tick runs before the frame's GL work — which is the
 // same reason DrainModelTexEditorRequest exists.
 //
 // Coalescing by ref means a script writing a floor's height a hundred times in
 // one tick costs exactly one rebuild.
-func DrainScriptWork(lvl *Level) {
+func DrainScriptWork(lvl *world.Level) {
 	rt := Scripts
 	if lvl == nil {
 		return
@@ -706,7 +707,7 @@ func DrainScriptWork(lvl *Level) {
 		// Chunk-level work is collected rather than done per sector: RebuildGaps
 		// and RecomputeBounds both cover the whole chunk, so running them once
 		// per dirty sector would repeat the same work for every sector in it.
-		dirtyChunks := map[*Chunk]bool{}
+		dirtyChunks := map[*world.Chunk]bool{}
 		// A script can change what a sector looks like, but nothing it can write
 		// moves the sector's XZ footprint — and the spatial hash is indexed by
 		// XZ alone. Rebuilding it every frame an animated floor moves would cost
@@ -732,7 +733,7 @@ func DrainScriptWork(lvl *Level) {
 					}
 				}
 				beforeMin, beforeMax := s.MinBound, s.MaxBound
-				_ = reloadSector(ch, s)
+				_ = world.ReloadSector(ch, s)
 				if s.MinBound != beforeMin || s.MaxBound != beforeMax {
 					footprintMoved = true
 				}
@@ -750,13 +751,13 @@ func DrainScriptWork(lvl *Level) {
 			ch.RecomputeBounds()
 		}
 		if footprintMoved {
-			lvl.Spatial = BuildSpatialHash(lvl.Chunks, 8.0)
+			lvl.Spatial = world.BuildSpatialHash(lvl.Chunks, 8.0)
 		}
 	}
 
 	if len(rt.dirtyVolumes) > 0 {
 		for id := range rt.dirtyVolumes {
-			if v := FindVolume(lvl, id); v != nil {
+			if v := world.FindVolume(lvl, id); v != nil {
 				_ = v.Load()
 			}
 			delete(rt.dirtyVolumes, id)
@@ -791,7 +792,7 @@ func vec3Value(v flang.Value) (mgl32.Vec3, bool) { return toVec3(v) }
 // deliberately the only way a script touches the world while the editor is up:
 // the caller pushes an undo entry first, so a deliberate editor-time run is as
 // undoable as any other operation, and everything else stays gated on play.
-func RunScriptOnce(lvl *Level, name, src, entry string) error {
+func RunScriptOnce(lvl *world.Level, name, src, entry string) error {
 	rt := Scripts
 	prevLvl, prevSelf := rt.lvl, rt.self
 	rt.lvl = lvl

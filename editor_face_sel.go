@@ -1,5 +1,7 @@
 package main
 
+import "foundry/internal/world"
+
 // editor_face_sel.go — the selected faces.
 //
 // Points and edges have been multi-selectable for a while (Editor.SelectedVertices);
@@ -44,7 +46,7 @@ func (f faceSel) isEdgeFace() bool { return f.kind == "wall" || f.kind == "porta
 
 // faceSelSector resolves the chunk and sector a face belongs to, or nil when
 // the indices no longer point at live geometry.
-func faceSelSector(f faceSel) (*Chunk, *Sector) {
+func faceSelSector(f faceSel) (*world.Chunk, *world.Sector) {
 	lvl := Editor.level
 	if lvl == nil || f.chunkIdx < 0 || f.chunkIdx >= len(lvl.Chunks) {
 		return nil, nil

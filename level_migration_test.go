@@ -13,13 +13,14 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/world"
 	"testing"
 )
 
 // squareRawChunk builds a four-edge sector wound counter-clockwise in the
 // loader's convention, with no edge IDs — the shape of every level written
 // before scripting existed.
-func squareRawChunk(clockwise bool) RawChunk {
+func squareRawChunk(clockwise bool) world.RawChunk {
 	pts := map[string]geom.Point{
 		"A": {X: 0, Y: 0},
 		"B": {X: 10, Y: 0},
@@ -30,9 +31,9 @@ func squareRawChunk(clockwise bool) RawChunk {
 	if clockwise {
 		ring = []string{"A", "D", "C", "B"}
 	}
-	var edges []RawEdge
+	var edges []world.RawEdge
 	for i := range ring {
-		edges = append(edges, RawEdge{
+		edges = append(edges, world.RawEdge{
 			From:      ring[i],
 			To:        ring[(i+1)%len(ring)],
 			Kind:      "wall",
@@ -40,13 +41,13 @@ func squareRawChunk(clockwise bool) RawChunk {
 			Collision: true,
 		})
 	}
-	return RawChunk{
+	return world.RawChunk{
 		ID:     "chunk",
 		Points: pts,
-		Sectors: []RawSector{{
+		Sectors: []world.RawSector{{
 			ID:      "room",
-			Floor:   RawFloor{Enabled: true, Height: 0, Texture: "concrete"},
-			Ceiling: RawCeiling{Enabled: true, Height: 4, Texture: "concrete"},
+			Floor:   world.RawFloor{Enabled: true, Height: 0, Texture: "concrete"},
+			Ceiling: world.RawCeiling{Enabled: true, Height: 4, Texture: "concrete"},
 			Edges:   edges,
 		}},
 	}
@@ -54,7 +55,7 @@ func squareRawChunk(clockwise bool) RawChunk {
 
 // edgeIDSet returns the sector's edge IDs as a set, for order-insensitive
 // comparison across a re-wind.
-func edgeIDSet(s *Sector) map[string]bool {
+func edgeIDSet(s *world.Sector) map[string]bool {
 	out := make(map[string]bool, len(s.EdgeIDs))
 	for _, id := range s.EdgeIDs {
 		out[id] = true
@@ -68,7 +69,7 @@ func TestEdgeIDsMintedForLegacyLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadRawChunk: %v", err)
 	}
-	if err := validateChunkEdges(&ch); err != nil {
+	if err := world.ValidateChunkEdges(&ch); err != nil {
 		t.Fatalf("loaded chunk breaks the edge invariant: %v", err)
 	}
 
@@ -119,7 +120,7 @@ func TestEdgeIDsSurviveSaveLoadRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("second load: %v", err)
 			}
-			if err := validateChunkEdges(&second); err != nil {
+			if err := world.ValidateChunkEdges(&second); err != nil {
 				t.Fatalf("reloaded chunk breaks the edge invariant: %v", err)
 			}
 
@@ -171,10 +172,10 @@ func TestEdgeIDsAuthoredInFileAreHonoured(t *testing.T) {
 		t.Fatalf("loadRawChunk: %v", err)
 	}
 	s := &ch.Sectors[0]
-	if polyEdgeIdxByID(s, "front_door") < 0 {
+	if world.PolyEdgeIdxByID(s, "front_door") < 0 {
 		t.Fatalf("authored edge ID was not kept; got %v", s.EdgeIDs)
 	}
-	if w := wallByEdgeID(s, "front_door"); w == nil {
+	if w := world.WallByEdgeID(s, "front_door"); w == nil {
 		t.Error(`edge "front_door" does not resolve to a wall`)
 	}
 }
@@ -192,7 +193,7 @@ func TestShippedTestLevelMigratesCleanly(t *testing.T) {
 		if err != nil {
 			t.Fatalf("chunk %q: %v", rc.ID, err)
 		}
-		if err := validateChunkEdges(&ch); err != nil {
+		if err := world.ValidateChunkEdges(&ch); err != nil {
 			t.Errorf("chunk %q breaks the edge invariant after migration: %v", rc.ID, err)
 		}
 	}
@@ -207,7 +208,7 @@ func TestShippedTestLevelMigratesCleanly(t *testing.T) {
 	// Every entity in it has to load. The level places none today, but the walk
 	// is what catches an entry written against a definition that has gone.
 	for _, re := range raw.Entities {
-		if _, err := entityFromRaw(re, LoadEntityDef); err != nil {
+		if _, err := world.EntityFromRaw(re, world.LoadEntityDef); err != nil {
 			t.Errorf("entity %q: %v", re.ID, err)
 		}
 	}

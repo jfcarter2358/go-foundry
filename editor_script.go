@@ -20,6 +20,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/world"
 )
 
 // scriptDocDebounceMS is how long the buffer must go unedited before it is
@@ -124,7 +125,7 @@ func (d *scriptDoc) SetText(text string, nowMS uint32) {
 //
 // lvl is what the level-aware checks run against, and may be nil — the script
 // editor can be open with no level, in which case they are simply skipped.
-func (d *scriptDoc) Reparse(nowMS uint32, lvl *Level) {
+func (d *scriptDoc) Reparse(nowMS uint32, lvl *world.Level) {
 	if d.dirtyAt == 0 || nowMS-d.dirtyAt < scriptDocDebounceMS {
 		return
 	}
@@ -133,7 +134,7 @@ func (d *scriptDoc) Reparse(nowMS uint32, lvl *Level) {
 }
 
 // reparseNow parses unconditionally, for a save or an explicit request.
-func (d *scriptDoc) reparseNow(lvl *Level) {
+func (d *scriptDoc) reparseNow(lvl *world.Level) {
 	name := d.Path
 	if name == "" {
 		name = "(unsaved)"
