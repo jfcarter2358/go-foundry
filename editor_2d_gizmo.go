@@ -18,6 +18,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gizmo"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -462,7 +463,7 @@ func Editor2DRenderGizmo(mx, my int32) {
 
 // gizmo2DLine queues a map-space line at y=0.
 func gizmo2DLine(a, b mgl32.Vec2, col mgl32.Vec3) {
-	GizmoLine(mgl32.Vec3{a.X(), 0, a.Y()}, mgl32.Vec3{b.X(), 0, b.Y()}, col)
+	gizmo.GizmoLine(mgl32.Vec3{a.X(), 0, a.Y()}, mgl32.Vec3{b.X(), 0, b.Y()}, col)
 }
 
 // gizmo2DBox queues a square of constant on-screen size centred on p.

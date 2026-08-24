@@ -29,6 +29,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gizmo"
 	"foundry/internal/platform"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -220,12 +221,12 @@ func Surface2DRender() {
 	for i := 0; i < len(boundary); i++ {
 		a := boundary[i]
 		b := boundary[(i+1)%len(boundary)]
-		GizmoLine(mgl32.Vec3{a.X(), y, a.Y()}, mgl32.Vec3{b.X(), y, b.Y()}, white)
+		gizmo.GizmoLine(mgl32.Vec3{a.X(), y, a.Y()}, mgl32.Vec3{b.X(), y, b.Y()}, white)
 	}
 	// Boundary vertex markers
 	for _, p := range boundary {
-		GizmoLine(mgl32.Vec3{p.X() - crossSz, y, p.Y()}, mgl32.Vec3{p.X() + crossSz, y, p.Y()}, red)
-		GizmoLine(mgl32.Vec3{p.X(), y, p.Y() - crossSz}, mgl32.Vec3{p.X(), y, p.Y() + crossSz}, red)
+		gizmo.GizmoLine(mgl32.Vec3{p.X() - crossSz, y, p.Y()}, mgl32.Vec3{p.X() + crossSz, y, p.Y()}, red)
+		gizmo.GizmoLine(mgl32.Vec3{p.X(), y, p.Y() - crossSz}, mgl32.Vec3{p.X(), y, p.Y() + crossSz}, red)
 	}
 
 	// Existing extrusions — outer, inner, and CONNECTION LINES
@@ -247,18 +248,18 @@ func Surface2DRender() {
 			for i := 0; i < nPts; i++ {
 				a := ext.Outer[i]
 				b := ext.Outer[(i+1)%nPts]
-				GizmoLine(mgl32.Vec3{a.U, y, a.V}, mgl32.Vec3{b.U, y, b.V}, outerCol)
-				GizmoLine(mgl32.Vec3{a.U - crossSz, y, a.V}, mgl32.Vec3{a.U + crossSz, y, a.V}, outerCol)
-				GizmoLine(mgl32.Vec3{a.U, y, a.V - crossSz}, mgl32.Vec3{a.U, y, a.V + crossSz}, outerCol)
+				gizmo.GizmoLine(mgl32.Vec3{a.U, y, a.V}, mgl32.Vec3{b.U, y, b.V}, outerCol)
+				gizmo.GizmoLine(mgl32.Vec3{a.U - crossSz, y, a.V}, mgl32.Vec3{a.U + crossSz, y, a.V}, outerCol)
+				gizmo.GizmoLine(mgl32.Vec3{a.U, y, a.V - crossSz}, mgl32.Vec3{a.U, y, a.V + crossSz}, outerCol)
 			}
 			// Inner polygon edges + vertices
 			for i := 0; i < len(ext.Inner); i++ {
 				a := ext.Inner[i]
 				b := ext.Inner[(i+1)%len(ext.Inner)]
-				GizmoLine(mgl32.Vec3{a.U, y, a.V}, mgl32.Vec3{b.U, y, b.V}, innerCol)
+				gizmo.GizmoLine(mgl32.Vec3{a.U, y, a.V}, mgl32.Vec3{b.U, y, b.V}, innerCol)
 				sz := crossSz * 0.7
-				GizmoLine(mgl32.Vec3{a.U - sz, y, a.V}, mgl32.Vec3{a.U + sz, y, a.V}, innerCol)
-				GizmoLine(mgl32.Vec3{a.U, y, a.V - sz}, mgl32.Vec3{a.U, y, a.V + sz}, innerCol)
+				gizmo.GizmoLine(mgl32.Vec3{a.U - sz, y, a.V}, mgl32.Vec3{a.U + sz, y, a.V}, innerCol)
+				gizmo.GizmoLine(mgl32.Vec3{a.U, y, a.V - sz}, mgl32.Vec3{a.U, y, a.V + sz}, innerCol)
 			}
 			// Connection lines outer[i] ↔ inner[i]
 			nConn := nPts
@@ -268,7 +269,7 @@ func Surface2DRender() {
 			for i := 0; i < nConn; i++ {
 				o := ext.Outer[i]
 				in := ext.Inner[i]
-				GizmoLine(mgl32.Vec3{o.U, y, o.V}, mgl32.Vec3{in.U, y, in.V}, grey)
+				gizmo.GizmoLine(mgl32.Vec3{o.U, y, o.V}, mgl32.Vec3{in.U, y, in.V}, grey)
 			}
 		}
 	}
@@ -283,8 +284,8 @@ func Surface2DRender() {
 				sz *= 1.5
 				col = mgl32.Vec3{1, 1, 0} // yellow highlight
 			}
-			GizmoLine(mgl32.Vec3{tp.U - sz, y, tp.V - sz}, mgl32.Vec3{tp.U + sz, y, tp.V + sz}, col)
-			GizmoLine(mgl32.Vec3{tp.U + sz, y, tp.V - sz}, mgl32.Vec3{tp.U - sz, y, tp.V + sz}, col)
+			gizmo.GizmoLine(mgl32.Vec3{tp.U - sz, y, tp.V - sz}, mgl32.Vec3{tp.U + sz, y, tp.V + sz}, col)
+			gizmo.GizmoLine(mgl32.Vec3{tp.U + sz, y, tp.V - sz}, mgl32.Vec3{tp.U - sz, y, tp.V + sz}, col)
 		}
 	}
 
@@ -295,19 +296,19 @@ func Surface2DRender() {
 			a := pts[i]
 			if i+1 < len(pts) {
 				b := pts[i+1]
-				GizmoLine(mgl32.Vec3{a.U, y, a.V}, mgl32.Vec3{b.U, y, b.V}, green)
+				gizmo.GizmoLine(mgl32.Vec3{a.U, y, a.V}, mgl32.Vec3{b.U, y, b.V}, green)
 			}
-			GizmoLine(mgl32.Vec3{a.U - crossSz, y, a.V}, mgl32.Vec3{a.U + crossSz, y, a.V}, green)
-			GizmoLine(mgl32.Vec3{a.U, y, a.V - crossSz}, mgl32.Vec3{a.U, y, a.V + crossSz}, green)
+			gizmo.GizmoLine(mgl32.Vec3{a.U - crossSz, y, a.V}, mgl32.Vec3{a.U + crossSz, y, a.V}, green)
+			gizmo.GizmoLine(mgl32.Vec3{a.U, y, a.V - crossSz}, mgl32.Vec3{a.U, y, a.V + crossSz}, green)
 		}
 		if len(pts) >= 3 {
 			a := pts[len(pts)-1]
 			b := pts[0]
-			GizmoLine(mgl32.Vec3{a.U, y, a.V}, mgl32.Vec3{b.U, y, b.V}, green)
+			gizmo.GizmoLine(mgl32.Vec3{a.U, y, a.V}, mgl32.Vec3{b.U, y, b.V}, green)
 		}
 	}
 
-	GizmoFlush(ortho)
+	gizmo.GizmoFlush(ortho)
 }
 
 func Surface2DRenderLabels() {

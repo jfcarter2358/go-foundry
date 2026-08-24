@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -253,15 +254,15 @@ func Editor2DRenderBiomeSectors(ch *Chunk) {
 		for i := 0; i < n; i++ {
 			a := bs.Points[i]
 			b := bs.Points[(i+1)%n]
-			GizmoLine(mgl32.Vec3{a.X(), y, a.Y()}, mgl32.Vec3{b.X(), y, b.Y()}, col)
+			gizmo.GizmoLine(mgl32.Vec3{a.X(), y, a.Y()}, mgl32.Vec3{b.X(), y, b.Y()}, col)
 		}
 		if Editor.BiomeLayerActive && selected {
 			ortho := editor2DOrtho()
 			crossSz := screenToWorldSize(5, ortho)
 			for _, p := range bs.Points {
 				gp := mgl32.Vec3{p.X(), y, p.Y()}
-				GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), yellow)
-				GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), yellow)
+				gizmo.GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), yellow)
+				gizmo.GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), yellow)
 			}
 		}
 	}
@@ -270,14 +271,14 @@ func Editor2DRenderBiomeSectors(ch *Chunk) {
 		pts := Editor.BiomeDrawPoints
 		for i := 0; i < len(pts)-1; i++ {
 			a, b := pts[i], pts[i+1]
-			GizmoLine(mgl32.Vec3{a.X(), y, a.Y()}, mgl32.Vec3{b.X(), y, b.Y()}, green)
+			gizmo.GizmoLine(mgl32.Vec3{a.X(), y, a.Y()}, mgl32.Vec3{b.X(), y, b.Y()}, green)
 		}
 		ortho := editor2DOrtho()
 		crossSz := screenToWorldSize(5, ortho)
 		for _, p := range pts {
 			gp := mgl32.Vec3{p.X(), y, p.Y()}
-			GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), green)
-			GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), green)
+			gizmo.GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), green)
+			gizmo.GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), green)
 		}
 	}
 }

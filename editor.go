@@ -15,6 +15,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
 	"math"
@@ -388,7 +389,7 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.SavePath = levelPath
 
 	ImGuiInit()
-	GizmoInit()
+	gizmo.GizmoInit()
 	GrassInit()
 	DetailInit()
 
@@ -812,7 +813,7 @@ func EditorRender() {
 	if Editor.Mode == Mode3D {
 		projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 		Editor3DRenderGizmos(projView)
-		GizmoFlush(projView)
+		gizmo.GizmoFlush(projView)
 	}
 
 	// The 2D sector map is not drawn here: it has its own window, which draws

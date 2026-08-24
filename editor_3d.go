@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"foundry/internal/platform"
 	"math"
 
@@ -496,7 +497,7 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 			col = yellow
 		}
 		smin, smax := lvl.Spawn.WorldAABB()
-		GizmoAABB(smin, smax, col)
+		gizmo.GizmoAABB(smin, smax, col)
 	}
 
 	// Draw point light spheres
@@ -506,14 +507,14 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 		if col.Len() < 0.1 {
 			col = mgl32.Vec3{1, 0.8, 0.2}
 		}
-		GizmoSphere(pl.Position, pl.Radius*0.1, col)
-		GizmoLine(pl.Position, pl.Position.Add(mgl32.Vec3{0, 0.3, 0}), col)
+		gizmo.GizmoSphere(pl.Position, pl.Radius*0.1, col)
+		gizmo.GizmoLine(pl.Position, pl.Position.Add(mgl32.Vec3{0, 0.3, 0}), col)
 	}
 
 	// Highlight selected chunk AABB
 	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 		ch := &lvl.Chunks[Editor.ActiveChunkIdx]
-		GizmoAABB(ch.MinBound, ch.MaxBound, cyan)
+		gizmo.GizmoAABB(ch.MinBound, ch.MaxBound, cyan)
 	}
 
 	// Extrusion gizmos

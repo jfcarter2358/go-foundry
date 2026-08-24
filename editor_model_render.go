@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"log"
 	"path/filepath"
 
@@ -183,7 +184,7 @@ func drawModelWireframe() {
 		if e.A >= len(verts) || e.B >= len(verts) {
 			continue
 		}
-		GizmoLine(verts[e.A], verts[e.B], col)
+		gizmo.GizmoLine(verts[e.A], verts[e.B], col)
 	}
 }
 
@@ -197,7 +198,7 @@ func drawModelGrid() {
 		if i == 0 {
 			xCol, zCol = modelAxisZ, modelAxisX
 		}
-		GizmoLine(mgl32.Vec3{f, 0, -half}, mgl32.Vec3{f, 0, half}, xCol)
-		GizmoLine(mgl32.Vec3{-half, 0, f}, mgl32.Vec3{half, 0, f}, zCol)
+		gizmo.GizmoLine(mgl32.Vec3{f, 0, -half}, mgl32.Vec3{f, 0, half}, xCol)
+		gizmo.GizmoLine(mgl32.Vec3{-half, 0, f}, mgl32.Vec3{half, 0, f}, zCol)
 	}
 }

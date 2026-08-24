@@ -1,6 +1,6 @@
-package main
+package gizmo
 
-// gizmo.go — flat-color line/wireframe rendering.
+// go — flat-color line/wireframe rendering.
 //
 // Uses GizmoProgram (separate from the textured game shader) so overlays never
 // corrupt game rendering state.
@@ -25,25 +25,28 @@ import (
 var GizmoProgram uint32
 var gizmoVAO, gizmoVBO uint32
 
-// gizmoVAOOverride, when non-zero, is the vertex array GizmoFlush binds
+// GizmoVAOOverride, when non-zero, is the vertex array GizmoFlush binds
 // instead of gizmoVAO. VAOs are never shared between GL contexts, so a
 // secondary window that draws gizmo lines (the popped-out 2D editor) supplies
 // its own for the duration of its frame — see RenderSecondaryWindows
 // (window.go). The VBO and the shader program are shared objects and need no
 // such treatment; GizmoFlush re-specifies the attribute pointers on every
 // call, so a bare VAO works.
-var gizmoVAOOverride uint32
+var GizmoVAOOverride uint32
 
 // gizmoCurrentVAO returns the vertex array to draw this flush through.
 func gizmoCurrentVAO() uint32 {
-	if gizmoVAOOverride != 0 {
-		return gizmoVAOOverride
+	if GizmoVAOOverride != 0 {
+		return GizmoVAOOverride
 	}
 	return gizmoVAO
 }
 
-// gizmoBuf accumulates line endpoints each frame; flushed by GizmoFlush.
-var gizmoBuf []float32
+// Buf accumulates line endpoints each frame, flushed by GizmoFlush.
+// Exported because the editor's picking tests read back what a panel drew
+// rather than rendering it — the only way to assert on an immediate-mode
+// overlay without a GL context.
+var Buf []float32
 
 // GizmoInit compiles the flat-color shader and allocates the scratch VBO.
 // Must be called after the OpenGL context is current.
@@ -79,7 +82,7 @@ func GizmoInit() {
 
 // GizmoLine queues a world-space line segment.
 func GizmoLine(a, b mgl32.Vec3, color mgl32.Vec3) {
-	gizmoBuf = append(gizmoBuf,
+	Buf = append(Buf,
 		a.X(), a.Y(), a.Z(), color.X(), color.Y(), color.Z(),
 		b.X(), b.Y(), b.Z(), color.X(), color.Y(), color.Z(),
 	)
@@ -163,7 +166,7 @@ func GizmoSphere(center mgl32.Vec3, radius float32, color mgl32.Vec3) {
 // GizmoFlush uploads the accumulated line buffer to the GPU and draws it, then
 // clears the buffer. projView is the combined projection×view matrix.
 func GizmoFlush(projView mgl32.Mat4) {
-	if len(gizmoBuf) == 0 {
+	if len(Buf) == 0 {
 		return
 	}
 
@@ -179,7 +182,7 @@ func GizmoFlush(projView mgl32.Mat4) {
 
 	gl.BindVertexArray(gizmoCurrentVAO())
 	gl.BindBuffer(gl.ARRAY_BUFFER, gizmoVBO)
-	gl.BufferData(gl.ARRAY_BUFFER, len(gizmoBuf)*4, gl.Ptr(gizmoBuf), gl.STREAM_DRAW)
+	gl.BufferData(gl.ARRAY_BUFFER, len(Buf)*4, gl.Ptr(Buf), gl.STREAM_DRAW)
 
 	stride := int32(6 * 4)
 	vertAttr := uint32(gl.GetAttribLocation(GizmoProgram, gl.Str("vert\x00")))
@@ -189,7 +192,7 @@ func GizmoFlush(projView mgl32.Mat4) {
 	gl.EnableVertexAttribArray(colAttr)
 	gl.VertexAttribPointerWithOffset(colAttr, 3, gl.FLOAT, false, stride, 3*4)
 
-	gl.DrawArrays(gl.LINES, 0, int32(len(gizmoBuf)/6))
+	gl.DrawArrays(gl.LINES, 0, int32(len(Buf)/6))
 
 	gl.BindVertexArray(0)
 	gl.UseProgram(gfx.Program)
@@ -197,5 +200,5 @@ func GizmoFlush(projView mgl32.Mat4) {
 		gl.Disable(gl.DEPTH_TEST)
 	}
 
-	gizmoBuf = gizmoBuf[:0]
+	Buf = Buf[:0]
 }

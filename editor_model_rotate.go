@@ -16,6 +16,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gizmo"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -301,7 +302,7 @@ func drawModelRotateGizmo(mx, my int32) {
 		for s := 1; s <= modelRingSegments; s++ {
 			angle := float64(s) / modelRingSegments * 2 * math.Pi
 			p := modelRingPoint(origin, u, v, radius, angle)
-			GizmoLine(prev, p, col)
+			gizmo.GizmoLine(prev, p, col)
 			prev = p
 		}
 	}

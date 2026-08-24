@@ -19,6 +19,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gizmo"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -373,7 +374,7 @@ func drawModelBones() {
 		// A non-connected child is drawn back to its parent's tail, so a
 		// skeleton reads as a hierarchy rather than as loose sticks.
 		if !b.Connected && b.Parent >= 0 && b.Parent < len(bones) {
-			GizmoLine(bones[b.Parent].Tail, b.Head, modelBoneParentColor)
+			gizmo.GizmoLine(bones[b.Parent].Tail, b.Head, modelBoneParentColor)
 		}
 
 		if boneMode {
@@ -406,9 +407,9 @@ func drawBoneOctahedron(b ModelBone, col mgl32.Vec3) {
 		ring[i] = mgl32.Vec3{p.X(), p.Y(), p.Z()}
 	}
 	for i := 0; i < 4; i++ {
-		GizmoLine(b.Head, ring[i], col)
-		GizmoLine(ring[i], ring[(i+1)%4], col)
-		GizmoLine(ring[i], b.Tail, col)
+		gizmo.GizmoLine(b.Head, ring[i], col)
+		gizmo.GizmoLine(ring[i], ring[(i+1)%4], col)
+		gizmo.GizmoLine(ring[i], b.Tail, col)
 	}
 }
 

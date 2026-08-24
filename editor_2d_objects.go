@@ -11,6 +11,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gizmo"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -44,12 +45,12 @@ func editor2DDrawFootprint(cx, cz, halfX, halfZ float32, col mgl32.Vec3) {
 	c10 := mgl32.Vec3{cx + halfX, 0, cz - halfZ}
 	c11 := mgl32.Vec3{cx + halfX, 0, cz + halfZ}
 	c01 := mgl32.Vec3{cx - halfX, 0, cz + halfZ}
-	GizmoLine(c00, c10, col)
-	GizmoLine(c10, c11, col)
-	GizmoLine(c11, c01, col)
-	GizmoLine(c01, c00, col)
-	GizmoLine(c00, c11, col)
-	GizmoLine(c10, c01, col)
+	gizmo.GizmoLine(c00, c10, col)
+	gizmo.GizmoLine(c10, c11, col)
+	gizmo.GizmoLine(c11, c01, col)
+	gizmo.GizmoLine(c01, c00, col)
+	gizmo.GizmoLine(c00, c11, col)
+	gizmo.GizmoLine(c10, c01, col)
 }
 
 // editor2DDrawHeading draws a facing arrow on the map at world XZ centre c,
@@ -74,14 +75,14 @@ func editor2DDrawHeading(c, dir mgl32.Vec2, hx, hz float32, col mgl32.Vec3) {
 
 	c3 := mgl32.Vec3{c.X(), 0, c.Y()}
 	tip := c3.Add(mgl32.Vec3{flat.X() * reach, 0, flat.Y() * reach})
-	GizmoLine(c3, tip, col)
+	gizmo.GizmoLine(c3, tip, col)
 
 	// Barbs at ±140° from the heading, a third of the shaft long.
 	const barbAngle = 140 * math.Pi / 180
 	barb := reach / 3
 	for _, sign := range []float64{1, -1} {
 		a := math.Atan2(float64(flat.Y()), float64(flat.X())) + sign*barbAngle
-		GizmoLine(tip, tip.Add(mgl32.Vec3{
+		gizmo.GizmoLine(tip, tip.Add(mgl32.Vec3{
 			float32(math.Cos(a)) * barb, 0, float32(math.Sin(a)) * barb,
 		}), col)
 	}
@@ -135,8 +136,8 @@ func Editor2DRenderObjects(lvl *Level, ch *Chunk) {
 			col = mgl32.Vec3{1, 0.8, 0.2}
 		}
 		c := mgl32.Vec3{pl.Position.X(), 0, pl.Position.Z()}
-		GizmoLine(c.Sub(mgl32.Vec3{r, 0, r}), c.Add(mgl32.Vec3{r, 0, r}), col)
-		GizmoLine(c.Sub(mgl32.Vec3{r, 0, -r}), c.Add(mgl32.Vec3{r, 0, -r}), col)
+		gizmo.GizmoLine(c.Sub(mgl32.Vec3{r, 0, r}), c.Add(mgl32.Vec3{r, 0, r}), col)
+		gizmo.GizmoLine(c.Sub(mgl32.Vec3{r, 0, -r}), c.Add(mgl32.Vec3{r, 0, -r}), col)
 	}
 }
 

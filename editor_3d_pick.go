@@ -16,6 +16,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"foundry/internal/platform"
 	"math"
 	"sort"
@@ -674,7 +675,7 @@ func selectedVerticesCenter() (mgl32.Vec3, bool) {
 func gizmoBox(p mgl32.Vec3, halfPx float32, col mgl32.Vec3) {
 	half := worldSizeForPixels(p, halfPx)
 	hv := mgl32.Vec3{half, half, half}
-	GizmoAABB(p.Sub(hv), p.Add(hv), col)
+	gizmo.GizmoAABB(p.Sub(hv), p.Add(hv), col)
 }
 
 // editorRenderInteractiveOverlays draws everything that goes on top of the
@@ -696,11 +697,11 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	offWorld := !editorGizmoDragging() &&
 		(gizmoSuppressed() || imgui.CurrentIO().WantCaptureMouse() || mx >= panelLeftEdgeX())
 
-	GizmoFlush(projView)
+	gizmo.GizmoFlush(projView)
 	prevDepth := gl.IsEnabled(gl.DEPTH_TEST)
 	gl.Disable(gl.DEPTH_TEST)
 	defer func() {
-		GizmoFlush(projView)
+		gizmo.GizmoFlush(projView)
 		if prevDepth {
 			gl.Enable(gl.DEPTH_TEST)
 		}

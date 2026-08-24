@@ -14,6 +14,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -245,6 +246,6 @@ func drawSelectedVolumeOutline() {
 		if a < 0 || a >= len(verts) || b < 0 || b >= len(verts) {
 			continue
 		}
-		GizmoLine(at(a), at(b), volumeSelColor)
+		gizmo.GizmoLine(at(a), at(b), volumeSelColor)
 	}
 }

@@ -10,6 +10,7 @@ package main
 // editor even though the camera is not.
 
 import (
+	"foundry/internal/gizmo"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -717,7 +718,7 @@ func drawModelSelection(mx, my int32) {
 	case modelSelEdge:
 		for _, e := range modelSelection.Edges {
 			if e.A < len(modelDoc.Verts) && e.B < len(modelDoc.Verts) {
-				GizmoLine(modelDoc.Verts[e.A], modelDoc.Verts[e.B], modelSelColor)
+				gizmo.GizmoLine(modelDoc.Verts[e.A], modelDoc.Verts[e.B], modelSelColor)
 			}
 		}
 
@@ -731,12 +732,12 @@ func drawModelSelection(mx, my int32) {
 			for i := 0; i < n; i++ {
 				a := modelDoc.Verts[f.Verts[i]]
 				b := modelDoc.Verts[f.Verts[(i+1)%n]]
-				GizmoLine(a, b, modelFaceSelColor)
+				gizmo.GizmoLine(a, b, modelFaceSelColor)
 			}
 			// A short normal stub: which way "out" is decides which way an
 			// extrude goes, so it is worth being able to see it.
 			c := modelDoc.FaceCenter(fi)
-			GizmoLine(c, c.Add(modelDoc.FaceNormal(fi).Mul(0.25)), modelFaceSelColor)
+			gizmo.GizmoLine(c, c.Add(modelDoc.FaceNormal(fi).Mul(0.25)), modelFaceSelColor)
 		}
 	}
 
@@ -774,7 +775,7 @@ func drawModelGizmo(mx, my int32) {
 			col = yellow
 		}
 		tip := origin.Add(axis.Mul(armLen))
-		GizmoLine(origin, tip, col)
+		gizmo.GizmoLine(origin, tip, col)
 		// The grab box at the tip is the affordance that makes the arm findable
 		// — a one-pixel line is a hard target at any distance. Same size and
 		// placement as renderTranslateGizmo's.
@@ -788,7 +789,7 @@ func drawModelGizmo(mx, my int32) {
 func modelGizmoBox(p mgl32.Vec3, halfPx float32, col mgl32.Vec3) {
 	half := modelWorldSizeForPixels(p, halfPx)
 	hv := mgl32.Vec3{half, half, half}
-	GizmoAABB(p.Sub(hv), p.Add(hv), col)
+	gizmo.GizmoAABB(p.Sub(hv), p.Add(hv), col)
 }
 
 // modelWorldSizeForPixels is worldSizeForPixels against this window's viewport.

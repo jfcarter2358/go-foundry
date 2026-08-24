@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"foundry/internal/platform"
 	"log"
 	"math"
@@ -311,14 +312,14 @@ func drawModelEditorWindow() {
 	}
 	drawModelGrid()
 	drawModelWireframe()
-	GizmoFlush(projView)
+	gizmo.GizmoFlush(projView)
 
 	// Handles and the gizmo draw without depth testing, so a vertex on the far
 	// side of the mesh is still visible and therefore still grabbable.
 	gl.Disable(gl.DEPTH_TEST)
 	drawModelBones()
 	drawModelSelection(modelMouseX, modelMouseY)
-	GizmoFlush(projView)
+	gizmo.GizmoFlush(projView)
 	gl.Enable(gl.DEPTH_TEST)
 
 	modelEditorToolbar()

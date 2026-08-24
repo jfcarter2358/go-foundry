@@ -22,6 +22,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"math"
 	"sort"
 
@@ -455,6 +456,6 @@ func drawEdgeHandlePrisms(mx, my int32, showPx float32) {
 		if isEdgeSelected(h.edgeSel) {
 			col = mgl32.Vec3{1, 1, 0}
 		}
-		GizmoOBB(h.center, h.axes, h.half, col)
+		gizmo.GizmoOBB(h.center, h.axes, h.half, col)
 	}
 }

@@ -17,6 +17,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gizmo"
 	"foundry/internal/platform"
 	"log"
 
@@ -35,7 +36,7 @@ type UIWindow struct {
 	// GizmoVAO is this window's vertex array for the editor's line renderer
 	// (editor_gizmo.go). Like the imgui VAO above it can't be shared with the
 	// main context, so any window that draws gizmo lines binds this one
-	// instead — see gizmoVAOOverride.
+	// instead — see GizmoVAOOverride.
 	GizmoVAO uint32
 	ID       uint32
 	W, H     int32
@@ -186,11 +187,11 @@ func RenderSecondaryWindows(dt float32) {
 
 		uiWindowNewFrame(w, dt)
 		// Gizmo lines drawn by this window's Draw go through its own VAO.
-		gizmoVAOOverride = w.GizmoVAO
+		gizmo.GizmoVAOOverride = w.GizmoVAO
 		if w.Draw != nil {
 			w.Draw()
 		}
-		gizmoVAOOverride = 0
+		gizmo.GizmoVAOOverride = 0
 		// The F1 reference belongs to whichever window has focus, so a
 		// secondary window draws it inside its own frame.
 		KeybindHelpRenderInWindow(w)

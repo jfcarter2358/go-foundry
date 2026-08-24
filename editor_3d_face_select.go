@@ -19,6 +19,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -113,7 +114,7 @@ func editorOutlineSurface(pts []mgl32.Vec2, heightAt func(int) float32, normal, 
 	var sum mgl32.Vec3
 	for i := 0; i < n; i++ {
 		a := at(i)
-		GizmoLine(a, at((i+1)%n), col)
+		gizmo.GizmoLine(a, at((i+1)%n), col)
 		sum = sum.Add(a)
 	}
 	editorFaceNormalStub(sum.Mul(1/float32(n)), normal, col)
@@ -133,7 +134,7 @@ func editorOutlineUprightQuad(pts []mgl32.Vec2, p1, p2 mgl32.Vec2, bottom, top f
 	c := mgl32.Vec3{p2.X(), top(i2), p2.Y()}
 	d := mgl32.Vec3{p1.X(), top(i1), p1.Y()}
 	for _, e := range [4][2]mgl32.Vec3{{a, b}, {b, c}, {c, d}, {d, a}} {
-		GizmoLine(e[0], e[1], col)
+		gizmo.GizmoLine(e[0], e[1], col)
 	}
 
 	// Outward normal: the left-hand normal of the run, which is the convention
@@ -176,5 +177,5 @@ func editorFaceNormalStub(center, normal, col mgl32.Vec3) {
 		return
 	}
 	length := worldSizeForPixels(center, editorFaceNormalStubPx)
-	GizmoLine(center, center.Add(normal.Normalize().Mul(length)), col)
+	gizmo.GizmoLine(center, center.Add(normal.Normalize().Mul(length)), col)
 }

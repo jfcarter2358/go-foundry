@@ -21,6 +21,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"log"
 	"math"
 
@@ -98,7 +99,7 @@ func Editor2DRender() {
 			if isSelected {
 				col = yellow
 			}
-			GizmoLine(pa, pb, col)
+			gizmo.GizmoLine(pa, pb, col)
 		}
 
 		// Draw floor vertex dots (red crosses) — bright when editing floor, dim otherwise
@@ -121,8 +122,8 @@ func Editor2DRender() {
 			y := s.Floor.VertexHeight(vi)
 			gp := mgl32.Vec3{pt.X(), y, pt.Y()}
 			crossSz := screenToWorldSize(4, ortho)
-			GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), col)
-			GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), col)
+			gizmo.GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), col)
+			gizmo.GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), col)
 		}
 
 		// Draw ceiling vertex dots (blue crosses) — bright when editing ceiling, dim otherwise
@@ -150,8 +151,8 @@ func Editor2DRender() {
 				// stayed dim blue however it was picked, which is why only free
 				// points looked as though selecting them did anything.
 				d := screenToWorldSize(4, ortho) * 1.1
-				GizmoLine(gp.Sub(mgl32.Vec3{d, 0, d}), gp.Add(mgl32.Vec3{d, 0, d}), col)
-				GizmoLine(gp.Sub(mgl32.Vec3{d, 0, -d}), gp.Add(mgl32.Vec3{d, 0, -d}), col)
+				gizmo.GizmoLine(gp.Sub(mgl32.Vec3{d, 0, d}), gp.Add(mgl32.Vec3{d, 0, d}), col)
+				gizmo.GizmoLine(gp.Sub(mgl32.Vec3{d, 0, -d}), gp.Add(mgl32.Vec3{d, 0, -d}), col)
 			}
 		}
 	}
@@ -168,10 +169,10 @@ func Editor2DRender() {
 			c10 := mgl32.Vec3{x + r, 0, z - r}
 			c11 := mgl32.Vec3{x + r, 0, z + r}
 			c01 := mgl32.Vec3{x - r, 0, z + r}
-			GizmoLine(c00, c10, magenta)
-			GizmoLine(c10, c11, magenta)
-			GizmoLine(c11, c01, magenta)
-			GizmoLine(c01, c00, magenta)
+			gizmo.GizmoLine(c00, c10, magenta)
+			gizmo.GizmoLine(c10, c11, magenta)
+			gizmo.GizmoLine(c11, c01, magenta)
+			gizmo.GizmoLine(c01, c00, magenta)
 		}
 	}
 
@@ -188,8 +189,8 @@ func Editor2DRender() {
 		}
 		gp := mgl32.Vec3{pt.X(), 0, pt.Y()}
 		crossSz := screenToWorldSize(5, ortho)
-		GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), col)
-		GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), col)
+		gizmo.GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), col)
+		gizmo.GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), col)
 	}
 
 	// Draw pending edges as green lines
@@ -197,7 +198,7 @@ func Editor2DRender() {
 		if e[0] < len(ch.Points) && e[1] < len(ch.Points) {
 			a := ch.Points[e[0]]
 			b := ch.Points[e[1]]
-			GizmoLine(mgl32.Vec3{a.X(), 0, a.Y()}, mgl32.Vec3{b.X(), 0, b.Y()}, green)
+			gizmo.GizmoLine(mgl32.Vec3{a.X(), 0, a.Y()}, mgl32.Vec3{b.X(), 0, b.Y()}, green)
 		}
 	}
 
@@ -211,7 +212,7 @@ func Editor2DRender() {
 	mx, my := editor2DCursor()
 	Editor2DRenderGizmo(mx, my)
 
-	GizmoFlush(ortho)
+	gizmo.GizmoFlush(ortho)
 }
 
 // Editor2DRenderLabels draws sector name labels as an ImGui overlay.
@@ -1704,7 +1705,7 @@ func drawEditorGrid(v orthoView) {
 		if math.Abs(float64(x)) < 0.01 {
 			col = axisColor
 		}
-		GizmoLine(mgl32.Vec3{x, y, minZ}, mgl32.Vec3{x, y, maxZ}, col)
+		gizmo.GizmoLine(mgl32.Vec3{x, y, minZ}, mgl32.Vec3{x, y, maxZ}, col)
 	}
 
 	for z := startZ; z <= endZ; z += gridStep {
@@ -1712,6 +1713,6 @@ func drawEditorGrid(v orthoView) {
 		if math.Abs(float64(z)) < 0.01 {
 			col = axisColor
 		}
-		GizmoLine(mgl32.Vec3{minX, y, z}, mgl32.Vec3{maxX, y, z}, col)
+		gizmo.GizmoLine(mgl32.Vec3{minX, y, z}, mgl32.Vec3{maxX, y, z}, col)
 	}
 }

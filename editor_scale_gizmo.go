@@ -16,6 +16,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
@@ -232,7 +233,7 @@ func renderScaleGizmo(mx, my int32) {
 			col = yellow
 		}
 		tip := origin.Add(axis.Mul(armLen))
-		GizmoLine(origin, tip, col)
+		gizmo.GizmoLine(origin, tip, col)
 		gizmoBox(tip, modelScaleTipHalfPx, col)
 	}
 

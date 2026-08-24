@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gizmo"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -334,13 +335,13 @@ func editorExtrusionRenderGizmos() {
 		for i := 0; i < len(pts); i++ {
 			a := uvToWorld(pts[i])
 			b := uvToWorld(pts[(i+1)%len(pts)])
-			GizmoLine(a, b, col)
+			gizmo.GizmoLine(a, b, col)
 		}
 		// Draw vertex crosses
 		for _, p := range pts {
 			c := uvToWorld(p)
-			GizmoLine(c.Add(mgl32.Vec3{-0.05, 0, 0}), c.Add(mgl32.Vec3{0.05, 0, 0}), col)
-			GizmoLine(c.Add(mgl32.Vec3{0, -0.05, 0}), c.Add(mgl32.Vec3{0, 0.05, 0}), col)
+			gizmo.GizmoLine(c.Add(mgl32.Vec3{-0.05, 0, 0}), c.Add(mgl32.Vec3{0.05, 0, 0}), col)
+			gizmo.GizmoLine(c.Add(mgl32.Vec3{0, -0.05, 0}), c.Add(mgl32.Vec3{0, 0.05, 0}), col)
 		}
 	}
 
@@ -390,7 +391,7 @@ func editorRenderExtrusionOutlines() {
 			b := ext.Outer[(i+1)%len(ext.Outer)]
 			ax, ay, az := wallLocalToWorld(a.U, a.V, 0.01, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
 			bx, by, bz := wallLocalToWorld(b.U, b.V, 0.01, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
-			GizmoLine(mgl32.Vec3{ax, ay, az}, mgl32.Vec3{bx, by, bz}, cyan)
+			gizmo.GizmoLine(mgl32.Vec3{ax, ay, az}, mgl32.Vec3{bx, by, bz}, cyan)
 		}
 	}
 }

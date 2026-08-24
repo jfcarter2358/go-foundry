@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -12,14 +13,14 @@ import (
 // floats.
 func gizmoSegments() [][3]mgl32.Vec3 {
 	var out [][3]mgl32.Vec3
-	for i := 0; i+11 < len(gizmoBuf); i += 12 {
+	for i := 0; i+11 < len(gizmo.Buf); i += 12 {
 		out = append(out, [3]mgl32.Vec3{
-			{gizmoBuf[i+0], gizmoBuf[i+1], gizmoBuf[i+2]},
-			{gizmoBuf[i+6], gizmoBuf[i+7], gizmoBuf[i+8]},
-			{gizmoBuf[i+3], gizmoBuf[i+4], gizmoBuf[i+5]},
+			{gizmo.Buf[i+0], gizmo.Buf[i+1], gizmo.Buf[i+2]},
+			{gizmo.Buf[i+6], gizmo.Buf[i+7], gizmo.Buf[i+8]},
+			{gizmo.Buf[i+3], gizmo.Buf[i+4], gizmo.Buf[i+5]},
 		})
 	}
-	gizmoBuf = gizmoBuf[:0]
+	gizmo.Buf = gizmo.Buf[:0]
 	return out
 }
 
@@ -49,7 +50,7 @@ func outlineOf(surface string, edgeIdx int) [][3]mgl32.Vec3 {
 	Editor.ActiveChunkIdx = 0
 	Editor.ActiveBiomeSectorIdx = -1
 	setFaceSelection([]faceSel{{chunkIdx: 0, sectorIdx: 0, kind: surface, idx: edgeIdx}})
-	gizmoBuf = gizmoBuf[:0]
+	gizmo.Buf = gizmo.Buf[:0]
 	drawSelectedFaceOutline()
 	return gizmoSegments()
 }
@@ -184,7 +185,7 @@ func TestNoSelectionOutlinesNothing(t *testing.T) {
 
 	Editor.ActiveSurface = "wall"
 	Editor.ActiveEdgeIdx = 7 // past the end of s0's walls
-	gizmoBuf = gizmoBuf[:0]
+	gizmo.Buf = gizmo.Buf[:0]
 	drawSelectedFaceOutline()
 	if segs := gizmoSegments(); len(segs) != 0 {
 		t.Errorf("an out-of-range wall index queued %d segments", len(segs))
@@ -209,7 +210,7 @@ func TestSelectedWaterIsOutlinedAtThePlaneHeight(t *testing.T) {
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveSurface = ""
 	Editor.ActiveBiomeSectorIdx = 0
-	gizmoBuf = gizmoBuf[:0]
+	gizmo.Buf = gizmo.Buf[:0]
 	drawSelectedFaceOutline()
 	segs := gizmoSegments()
 
@@ -222,7 +223,7 @@ func TestSelectedWaterIsOutlinedAtThePlaneHeight(t *testing.T) {
 
 	// A sector painted but not yet synced into a plane has no height to draw at.
 	ch.WaterSurfaces = nil
-	gizmoBuf = gizmoBuf[:0]
+	gizmo.Buf = gizmo.Buf[:0]
 	drawSelectedFaceOutline()
 	if segs := gizmoSegments(); len(segs) != 0 {
 		t.Errorf("a water sector with no plane yet queued %d segments", len(segs))
