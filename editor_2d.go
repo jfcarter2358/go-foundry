@@ -9,21 +9,19 @@ package main
 //                split into two halves that both inherit the original wall's
 //                (or portal's) properties, and every sector sharing the edge is
 //                split with it. Away from any edge, places a new free point.
-// Ctrl+click   : connect two points with an edge (creates/splits sectors);
-//                selection chains to the point just clicked, so ctrl+clicking
-//                around a loop draws the whole outline. Ctrl+click the same
-//                point twice to stop connecting; a plain click also discards
-//                the half-drawn outline.
-// Right-click  : remove a point and all connected edges; on empty space (no
-//                point, no line, no modifier) clear the vertex selection
-// Left-click   : select vertex/edge/sector, drag vertices
+// Ctrl+click   : add everything under the cursor to the selection (point and
+//                edge modes). Ctrl+clicking around an outline and pressing J
+//                joins the picked points into edges — see editor_2d_join.go.
+// Right-click  : open the context menu (editor_2d_context_menu.go), selecting
+//                whatever is under the cursor first when nothing is selected
+// Left-click   : select whatever the current mode selects — a corner, an edge,
+//                or a wall/object/sector — and drag a single corner
 // Middle-mouse : pan the view
 
 import (
 	"fmt"
 	"log"
 	"math"
-	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -110,6 +108,12 @@ func Editor2DRender() {
 		for vi, pIdx := range s.PointIndices {
 			pt := ch.Points[pIdx]
 			col := floorCol
+			// Every selected corner is marked, not merely the one being
+			// dragged: a multi-selection the gizmo is about to move has to be
+			// visible as the group it is.
+			if editor2DVertexSelected(si, vi, pIdx, true) {
+				col = yellow
+			}
 			if si == Editor.ActiveSectorIdx && vi == Editor.DragVertexVI && Editor.DragIsFloor {
 				col = yellow
 			}
@@ -129,6 +133,9 @@ func Editor2DRender() {
 			for vi, pIdx := range s.PointIndices {
 				pt := ch.Points[pIdx]
 				col := ceilCol
+				if editor2DVertexSelected(si, vi, pIdx, false) {
+					col = yellow
+				}
 				if si == Editor.ActiveSectorIdx && vi == Editor.DragVertexVI && !Editor.DragIsFloor {
 					col = yellow
 				}
@@ -160,28 +167,21 @@ func Editor2DRender() {
 		}
 	}
 
-	// Draw free points (not in any sector) as white crosses
+	// Draw free points (points in no sector) as white crosses, yellow when
+	// selected — a picked free point is a corner of the sector a Join is about
+	// to make, so it has to be as visible as a sector's own corners are.
 	for pi, pt := range ch.Points {
 		if usedPoints[pi] {
 			continue
 		}
 		col := white
-		if pi == Editor.ConnectFromIdx {
-			col = green
+		if isVertexSelected(freePointSel(Editor.ActiveChunkIdx, pi)) {
+			col = yellow
 		}
 		gp := mgl32.Vec3{pt.X(), 0, pt.Y()}
 		crossSz := screenToWorldSize(5, ortho)
 		GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), col)
 		GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), col)
-	}
-
-	// Highlight ConnectFrom point in green if it's a sector point
-	if Editor.ConnectFromIdx >= 0 && Editor.ConnectFromIdx < len(ch.Points) && usedPoints[Editor.ConnectFromIdx] {
-		pt := ch.Points[Editor.ConnectFromIdx]
-		gp := mgl32.Vec3{pt.X(), 0, pt.Y()}
-		crossSz := screenToWorldSize(7, ortho)
-		GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), green)
-		GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), green)
 	}
 
 	// Draw pending edges as green lines
@@ -193,11 +193,15 @@ func Editor2DRender() {
 		}
 	}
 
-	// Objects the side panel can edit — entities, primitives, point lights.
+	// Objects the side panel can edit — the spawn point, the point lights.
 	Editor2DRenderObjects(lvl, ch)
 
 	// Biome sector layer (always visible, dim when not the active tool).
 	Editor2DRenderBiomeSectors(ch)
+
+	// Last, so its handles sit on top of everything they act on.
+	mx, my := editor2DCursor()
+	Editor2DRenderGizmo(mx, my)
 
 	GizmoFlush(ortho)
 }
@@ -276,36 +280,6 @@ func findChunkPointNear(ch *Chunk, wx, wz, threshold float32) int {
 	return bestIdx
 }
 
-// anyEdgeNear reports whether any drawn line — a sector edge or a pending edge
-// from an in-progress ctrl+click chain — passes within threshold of (wx,wz).
-func anyEdgeNear(ch *Chunk, wx, wz, threshold float32) bool {
-	near := func(pIdxA, pIdxB int) bool {
-		if pIdxA < 0 || pIdxA >= len(ch.Points) || pIdxB < 0 || pIdxB >= len(ch.Points) {
-			return false
-		}
-		a, b := ch.Points[pIdxA], ch.Points[pIdxB]
-		return distToSegment2D(wx, wz, a.X(), a.Y(), b.X(), b.Y()) < threshold
-	}
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		nPts := len(s.PointIndices)
-		if nPts < 2 {
-			continue
-		}
-		for ei := 0; ei < nPts; ei++ {
-			if near(s.PointIndices[ei], s.PointIndices[(ei+1)%nPts]) {
-				return true
-			}
-		}
-	}
-	for _, e := range Editor.PendingEdges {
-		if near(e[0], e[1]) {
-			return true
-		}
-	}
-	return false
-}
-
 // Editor2DZoom applies one mouse-wheel notch of zoom to the 2D map, clamped
 // to a usable range. Shared by the main window's event handler (editor.go)
 // and the pop-out's (editor_2d_window.go).
@@ -317,15 +291,6 @@ func Editor2DZoom(wheelY int32) {
 	if Editor.Zoom2D > 200 {
 		Editor.Zoom2D = 200
 	}
-}
-
-// editor2DCancelPendingPolygon abandons an in-progress ctrl+click outline: the
-// connect anchor and every edge drawn since the chain started. The chunk points
-// themselves survive — only the edges between them are dropped, so a wrong
-// polygon can be redrawn without replacing its vertices.
-func editor2DCancelPendingPolygon() {
-	Editor.ConnectFromIdx = -1
-	Editor.PendingEdges = nil
 }
 
 // Editor2DHandleClick processes a mouse button down event in 2D mode.
@@ -351,23 +316,28 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	// The gizmo's handles are drawn on top of everything and sit right where
+	// the selection's own marks are, so a click aimed at one must be resolved
+	// before picking gets a look at it.
+	//
+	// Only an unmodified click, though. Shift+click drops a point and ctrl+click
+	// adds to the selection, and both are aimed at points that may well sit
+	// under the gizmo — a handle that swallowed those would make it impossible
+	// to extend a selection near its own centre.
+	if !shiftHeld && !ctrlHeld && editor2DGizmoMouseDown(t) {
+		return
+	}
+
 	threshold := screenToWorldSize(editor2DSelectRadius, editor2DOrtho())
 
-	// --- Right-click: remove point, or deselect on empty space ---
+	// --- Right-click: the context menu ---
+	//
+	// It used to delete the point under the cursor outright, and clear the
+	// selection when it hit nothing. Both are still here, as rows — the menu is
+	// where "join these points" had to live, and one button cannot both open a
+	// menu and destroy geometry without asking.
 	if t.Button == sdl.ButtonRight {
-		pi := findChunkPointNear(ch, wx, wz, threshold)
-		if pi >= 0 {
-			EditorPushUndo()
-			removeChunkPoint(ch, pi)
-			return
-		}
-		// Nothing under the cursor — an unmodified right-click drops the
-		// vertex selection. Edges keep their own click target, so a
-		// right-click near a line is left alone.
-		if !shiftHeld && !ctrlHeld && !anyEdgeNear(ch, wx, wz, threshold*2) {
-			clearVertexSelection()
-			editor2DCancelPendingPolygon()
-		}
+		editor2DContextPressed(t.X, t.Y)
 		return
 	}
 
@@ -390,177 +360,39 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
-	// --- Ctrl+click: connect points ---
-	if ctrlHeld {
-		pi := findChunkPointNear(ch, wx, wz, threshold)
-		if pi < 0 {
-			return
-		}
-		if Editor.ConnectFromIdx < 0 {
-			Editor.ConnectFromIdx = pi
-			return
-		}
-		if Editor.ConnectFromIdx == pi {
-			Editor.ConnectFromIdx = -1
-			return
-		}
-		fromIdx := Editor.ConnectFromIdx
-		toIdx := pi
-		// Chain from the point just connected so a run of ctrl+clicks walks an
-		// outline without re-selecting each vertex. Ctrl+click the same point
-		// again to stop connecting.
-		Editor.ConnectFromIdx = toIdx
+	// --- Left-click: select whatever the current mode selects ---
+	//
+	// Ctrl adds to the selection here, as it does in the 3D view. It used to
+	// draw an edge to the last point clicked; that is now two steps — pick the
+	// points, then Join them (editor_2d_join.go) — which frees the modifier and
+	// lets a half-picked outline be looked at before it is committed to.
 
-		// Check if both points are on the boundary of the same sector → split
-		for si := range ch.Sectors {
-			s := &ch.Sectors[si]
-			posA := sectorVertexPos(s, fromIdx)
-			posB := sectorVertexPos(s, toIdx)
-			if posA >= 0 && posB >= 0 && !adjacentInSector(s, posA, posB) {
-				EditorPushUndo()
-				splitSector(ch, si, posA, posB)
-				return
-			}
+	// Point and edge mode own their click outright, exactly as in the 3D
+	// viewport: hitting nothing there clears the selection rather than falling
+	// through to the sector behind, which is what makes the modes predictable.
+	switch Editor.SelMode {
+	case editorSelPoint:
+		if !editor2DHandlePointClick(ch, wx, wz, threshold, ctrlHeld, true) && !ctrlHeld {
+			editor2DClearSelection()
 		}
-
-		// Otherwise add as pending edge and check for polygon completion
-		Editor.PendingEdges = append(Editor.PendingEdges, [2]int{fromIdx, toIdx})
-		EditorPushUndo()
-		if tryCreateSectorFromPendingEdges(ch) {
-			// Polygon closed — start fresh instead of dangling off the last vertex.
-			Editor.ConnectFromIdx = -1
+		return
+	case editorSelEdge:
+		if !editor2DHandleEdgeClick(ch, wx, wz, threshold*2, ctrlHeld) && !ctrlHeld {
+			editor2DClearSelection()
 		}
 		return
 	}
 
-	// --- Normal left-click: select vertex/edge/sector ---
-
-	// Releasing ctrl and clicking ends the connect chain and abandons the
-	// half-drawn polygon, so a mis-drawn outline can be thrown away without
-	// unwinding it edge by edge.
-	editor2DCancelPendingPolygon()
-
-	// 1. Vertex proximity — highest priority (check all chunk points in
-	// sectors). A vertex shared by multiple sectors uses the same chunk
-	// point index in each sector's PointIndices, so repeated clicks cycle
-	// through every sector that shares it, wrapping back to the first.
-	type vertexCandidate struct {
-		si, vi, pIdx int
-		dist         float32
+	if !editor2DHandleFaceClick(lvl, ch, wx, wz, threshold, ctrlHeld) && !ctrlHeld {
+		editor2DClearSelection()
 	}
-	var vertexCandidates []vertexCandidate
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		for vi, pIdx := range s.PointIndices {
-			if pIdx < 0 || pIdx >= len(ch.Points) {
-				continue
-			}
-			pt := ch.Points[pIdx]
-			if d := dist2D(wx, wz, pt.X(), pt.Y()); d < threshold {
-				vertexCandidates = append(vertexCandidates, vertexCandidate{si, vi, pIdx, d})
-			}
-		}
-	}
-	if len(vertexCandidates) > 0 {
-		sort.Slice(vertexCandidates, func(i, j int) bool { return vertexCandidates[i].dist < vertexCandidates[j].dist })
-		targetPIdx := vertexCandidates[0].pIdx
-		var group []vertexCandidate
-		for _, c := range vertexCandidates {
-			if c.pIdx == targetPIdx {
-				group = append(group, c)
-			}
-		}
-		sort.Slice(group, func(i, j int) bool { return group[i].si < group[j].si })
-
-		pick := group[0]
-		for gi, c := range group {
-			if c.si == Editor.ActiveVertexSI && c.vi == Editor.ActiveVertexVI {
-				pick = group[(gi+1)%len(group)]
-				break
-			}
-		}
-
-		setVertexSelection([]vertexSel{{
-			chunkIdx:  Editor.ActiveChunkIdx,
-			sectorIdx: pick.si,
-			vertIdx:   pick.vi,
-			pointIdx:  pick.pIdx,
-			isFloor:   Editor.EditFloorVerts,
-		}})
-		Editor.ActiveSectorIdx = pick.si
-		EditorPushUndo() // snapshot at drag start, not per-frame during the drag
-		Editor.DragVertexSI = pick.si
-		Editor.DragVertexVI = pick.vi
-		Editor.DragIsFloor = true
-		return
-	}
-
-	// 2. Edge proximity (segment distance, with cycling on repeated clicks)
-	type edgeCandidate struct {
-		si, ei  int
-		dist    float32
-		kind    string
-		kindIdx int
-	}
-	var edgeCandidates []edgeCandidate
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		nPts := len(s.PointIndices)
-		for ei := 0; ei < nPts; ei++ {
-			a := ch.Points[s.PointIndices[ei]]
-			b := ch.Points[s.PointIndices[(ei+1)%nPts]]
-			d := distToSegment2D(wx, wz, a.X(), a.Y(), b.X(), b.Y())
-			if d < threshold*2 {
-				kind, kindIdx := edgeKindAndIndex(s, ei)
-				edgeCandidates = append(edgeCandidates, edgeCandidate{si, ei, d, kind, kindIdx})
-			}
-		}
-	}
-	sort.Slice(edgeCandidates, func(i, j int) bool { return edgeCandidates[i].dist < edgeCandidates[j].dist })
-	if len(edgeCandidates) > 0 {
-		best := edgeCandidates[0]
-		if len(edgeCandidates) > 1 &&
-			best.si == Editor.ActiveSectorIdx &&
-			best.kind == Editor.ActiveEdgeKind &&
-			best.kindIdx == Editor.ActiveEdgeIdx {
-			best = edgeCandidates[1]
-		}
-		Editor.ActiveSectorIdx = best.si
-		Editor.ActiveEdgeKind = best.kind
-		Editor.ActiveEdgeIdx = best.kindIdx
-		clearVertexSelection()
-		return
-	}
-
-	// 3. Objects — an entity or primitive sitting inside a sector is the more
-	// specific target, so it wins over selecting the sector itself. Vertices
-	// and edges still come first: they are the core 2D workflow.
-	if editor2DPickObject(lvl, ch, wx, wz) {
-		return
-	}
-
-	// 4. Sector interior — point-in-polygon test
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		if pointInPolygon(mgl32.Vec2{wx, wz}, SectorPoints(ch, s)) {
-			Editor.ActiveSectorIdx = si
-			Editor.ActiveEdgeIdx = -1
-			clearVertexSelection()
-			return
-		}
-	}
-
-	// 5. Click on empty space — deselect everything
-	Editor.ActiveEdgeIdx = -1
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = -1
-	clearVertexSelection()
 }
 
 // Editor2DHandleRelease processes mouse button release to stop vertex dragging.
 func Editor2DHandleRelease(t sdl.MouseButtonEvent) {
 	biomeHandleRelease(t)
 	if t.Button == sdl.ButtonLeft {
+		editor2DGizmoMouseUp()
 		Editor.DragVertexSI = -1
 		Editor.DragVertexVI = -1
 	}
@@ -570,6 +402,14 @@ func Editor2DHandleRelease(t sdl.MouseButtonEvent) {
 func Editor2DHandleMouseMove(t sdl.MouseMotionEvent) {
 	lvl := Editor.level
 	if lvl == nil {
+		return
+	}
+
+	// A gizmo drag owns the mouse until release — before the pan check, so a
+	// stray middle button cannot slide the map out from under it.
+	if editor2DGizmoDragging() {
+		Editor.LastMouse2D = [2]int32{t.X, t.Y}
+		editor2DGizmoMouseMove(t.X, t.Y)
 		return
 	}
 
@@ -1186,6 +1026,7 @@ func removeChunkPoint(ch *Chunk, pi int) {
 			// Clear all stale selection indices that referenced the deleted sector
 			Editor.ActiveEdgeIdx = -1
 			clearVertexSelection()
+			clearFaceSelection()
 			Editor.DragVertexSI = -1
 			Editor.DragVertexVI = -1
 		}
@@ -1199,11 +1040,6 @@ func removeChunkPoint(ch *Chunk, pi int) {
 		}
 	}
 	Editor.PendingEdges = kept
-
-	// Reset connect-from if it was this point
-	if Editor.ConnectFromIdx == pi {
-		Editor.ConnectFromIdx = -1
-	}
 
 	// Remove the point from ch.Points and adjust all indices
 	ch.RemovePoint(pi)
@@ -1225,13 +1061,9 @@ func removeChunkPoint(ch *Chunk, pi int) {
 			Editor.PendingEdges[i][1]--
 		}
 	}
-	// Adjust ConnectFromIdx
-	if Editor.ConnectFromIdx > pi {
-		Editor.ConnectFromIdx--
-	}
-
 	// Deselect vertices that might now be invalid
 	clearVertexSelection()
+	clearFaceSelection()
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 }

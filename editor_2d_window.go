@@ -187,6 +187,8 @@ func drawEditor2DWindow() {
 			Editor2DPanel()
 			Editor2DRenderBiomeOverlay()
 			Editor2DRenderLabels()
+			// Last, so the popup opens over the panel as well as the map.
+			Editor2DContextMenu()
 		})
 	})
 }
@@ -238,7 +240,24 @@ func editor2DWindowToolbar() {
 	imgui.SameLine()
 	imgui.Text(fmt.Sprintf("| Zoom: %.0f px/unit", Editor.Zoom2D))
 	imgui.SameLine()
-	imgui.Text("| Scroll: zoom  MMB: pan  WASD: pan  Shift+click: add vertex")
+	imgui.Text("| Shift+click: add point  Ctrl+click: multi-select  J: join  RMB: menu")
+
+	imgui.SameLine()
+	imgui.Separator()
+	for _, mode := range editorSelModes {
+		m := mode
+		imgui.SameLine()
+		if editorActiveToggleButton(
+			fmt.Sprintf("%s [%s]##selmode2dwin", m, editorSelModeKey(m)), Editor.SelMode == m) {
+			editorSetSelMode(m)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip(editorSelModeTooltip(m))
+		}
+	}
+	imgui.SameLine()
+	imgui.Separator()
+	editorGizmoToolButtons()
 
 	const popInBtnWidth = 90
 	imgui.SetCursorPos(imgui.Vec2{X: float32(w.W) - popInBtnWidth - 8, Y: toolbarY})
@@ -305,6 +324,24 @@ func editor2DWindowInput(event sdl.Event) {
 			// Tab is "switch view" everywhere else in the editor; here the
 			// other view is the main window, so hand focus back to it.
 			Window.Raise()
+
+		// The selection unit and the gizmo tool, on the same keys the main
+		// window binds them to (editor.go). The pop-out has its own event loop,
+		// so without these the map would show modes it could not switch.
+		case sdl.SCANCODE_1:
+			editorSetSelMode(editorSelPoint)
+		case sdl.SCANCODE_2:
+			editorSetSelMode(editorSelEdge)
+		case sdl.SCANCODE_3:
+			editorSetSelMode(editorSelFace)
+		case sdl.SCANCODE_J:
+			EditorJoinSelectedPoints(mods&sdl.KMOD_SHIFT != 0)
+		case sdl.SCANCODE_G:
+			editorSetGizmoTool(editorToolMove)
+		case sdl.SCANCODE_R:
+			editorSetGizmoTool(editorToolRotate)
+		case sdl.SCANCODE_C:
+			editorSetGizmoTool(editorToolScale)
 		}
 
 	case sdl.MouseButtonEvent:

@@ -282,7 +282,8 @@ func main() {
 	ReflectColorUniform = gl.GetUniformLocation(Program, gl.Str("reflectColor\x00"))
 	gl.Uniform1i(IsWaterUniform, 0)
 
-	// Default camera position; overridden after player entity is found
+	// Default camera position; overridden by the level's spawn point when it
+	// has one.
 	LoadCamera(mgl32.Vec3{0, eyeHeight, 3}, 0.0, float32(math.Pi/2.0))
 
 	// Start with a blank in-memory level rather than loading one from disk;
@@ -294,8 +295,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("NewBlankLevel: %v", err)
 	}
-	log.Printf("level loaded: %d chunk(s), %d entity(s), %d dir light(s), %d point light(s)",
-		len(level.Chunks), len(level.Entities),
+	log.Printf("level loaded: %d chunk(s), %d dir light(s), %d point light(s)",
+		len(level.Chunks),
 		len(level.Lights.Directional), len(level.Lights.Points))
 
 	gl.BindFragDataLocation(Program, 0, gl.Str("outputColor\x00"))
@@ -305,22 +306,16 @@ func main() {
 	// are immediately visible in the log.
 	UploadLights(level.Lights)
 
-	// Attach camera to the player entity (ID == "player")
-	for i := range level.Entities {
-		if level.Entities[i].ID == "player" {
-			PlayerEntity = &level.Entities[i]
-			break
-		}
-	}
-	if PlayerEntity != nil {
-		Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
-		Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
-		gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
-	}
+	// The player is created by the engine, not authored into the level — see
+	// NewPlayer (entity.go). It carries the camera and is what collision is
+	// resolved for; nothing draws it, since the view is from inside its head.
+	PlayerEntity = NewPlayer(Cam.Position.Sub(mgl32.Vec3{0, eyeHeight, 0}))
+	Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
+	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
+	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
 
-	// A spawn marker in the level overrides the player entity's authored
-	// position, so a level loaded straight into gameplay starts where the
-	// editor says it should.
+	// A spawn point in the level overrides that starting position, so a level
+	// loaded straight into gameplay starts where the editor says it should.
 	ApplySpawnPoint(&level)
 
 	// Init level editor (must be after LoadLevel and OpenGL context ready)
@@ -386,11 +381,6 @@ func main() {
 		// Point the F1 reference at the focused window before anything draws.
 		KeybindHelpUpdateFocus(MainWindowID)
 
-		// Animated entities advance outside the editor/gameplay branch below, so a
-		// clip plays while the level editor is open too — an animation you cannot
-		// see while you are placing the entity is most of the way to useless.
-		UpdateEntityAnimations(&level, DeltaTime)
-
 		if Editor.Active {
 			// Editor owns camera and input; gameplay logic is bypassed.
 			EditorTick(KeyStates)
@@ -430,22 +420,6 @@ func main() {
 				chunk, sector = FindChunkAndSectorSH(level.Spatial, level.Chunks, newPlayerPos)
 				hitFloor, hitCeiling := ResolveFloorCollision(PlayerEntity, chunk, sector, &newPlayerPos)
 
-				// Entity-entity collision: push player out of overlapping entities
-				for i := range level.Entities {
-					other := &level.Entities[i]
-					if other == PlayerEntity {
-						continue
-					}
-					if EntityOverlap(PlayerEntity, other, newPlayerPos) {
-						newPlayerPos = ResolveEntityCollision(PlayerEntity, other, newPlayerPos)
-					}
-				}
-
-				// Primitive collision: push player out of overlapping primitives
-				if chunk != nil && sector != nil {
-					newPlayerPos = ResolvePrimitiveCollision(PlayerEntity, chunk, sector, newPlayerPos)
-				}
-
 				// Landing/bonk: reset vertical velocity on floor or ceiling contact.
 				if GravityEnabled {
 					if hitFloor {
@@ -474,13 +448,42 @@ func main() {
 			}
 		}
 
+		// --- Placed entities ---
+		// Outside the editor/gameplay branch so clips keep playing while the
+		// editor is open; motion is gated on gameplay so an entity cannot
+		// drift away from where it was just placed.
+		//
+		// The player is handed in so it takes part in entity-against-entity
+		// collision — a solid crate should be solid to walk into. Its
+		// ground flag is cleared first and read back after, since being pushed
+		// up onto an entity is the same as landing on a floor as far as jumping
+		// is concerned.
+		playerPosBefore := mgl32.Vec3{}
+		if PlayerEntity != nil {
+			playerPosBefore = PlayerEntity.Position
+			PlayerEntity.Collision.OnGround = false
+		}
+		EntityUpdate(&level, DeltaTime, !Editor.Active, PlayerEntity)
+		if !Editor.Active && PlayerEntity != nil {
+			if PlayerEntity.Collision.OnGround {
+				IsOnGround = true
+			}
+			// Being pushed out of a solid entity happens after the camera was
+			// placed on the player above, so put it back where the player now
+			// actually is.
+			if PlayerEntity.Position != playerPosBefore {
+				Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
+				Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
+				gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+			}
+		}
+
 		// --- Debug stats: update CPU & memory ---
 		DebugUpdateCPU()
 		DebugUpdateMemory()
 		DebugStats.FPS = 1.0 / DeltaTime
 		DebugStats.FrameTimeMs = DeltaTime * 1000.0
 		DebugStats.ChunksLoaded = len(level.Chunks)
-		DebugStats.EntitiesLoaded = len(level.Entities)
 		DebugStats.SectorsLoaded = totalSectors
 
 		// Texture editor uploads (painted texels, saves) are queued rather
@@ -488,25 +491,24 @@ func main() {
 		// context is current, so this frame's draw calls already see them.
 		DrainTextureUploads()
 
+		// Likewise for a model editor asking to open the texture editor on a
+		// freshly unwrapped atlas: creating a window from inside another
+		// window's draw would insert into the map being ranged over and leave
+		// the wrong GL context current. See modelPendingTexEditor.
+		DrainModelTexEditorRequest()
+
 		// Per-frame water shader inputs: animation clock and the view position
 		// the fresnel/specular terms are measured against.
 		gl.UseProgram(Program)
 		gl.Uniform1f(TimeUniform, float32(now)/1000.0)
 		gl.Uniform3f(CamPosUniform, Cam.Position.X(), Cam.Position.Y(), Cam.Position.Z())
 
-		if Editor.Active && Editor.Mode == ModeScenery {
-			// Scenery editor: blank world with only scenery primitives
-			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-			for i := range Editor.SceneryPrimitives {
-				prim := &Editor.SceneryPrimitives[i]
-				prim.Geometry.DrawWithTransform(prim.ModelMatrix())
-			}
-		} else {
-			// Keep every Water-kind biome sector's companion water-plane
-			// primitive (chunk.BiomeWaterPrims) in step before anything reads
-			// it this frame — the primitive draw loop below, and shadow/culling
-			// passes that walk chunk bounds.
-			SyncBiomeWaterPrimitives(&level)
+		{
+			// Keep every Water-kind biome sector's companion water surface
+			// (chunk.WaterSurfaces) in step before anything reads it this
+			// frame — the water draw loop below, and shadow/culling passes
+			// that walk chunk bounds.
+			SyncBiomeWaterSurfaces(&level)
 
 			// Latch the biome wind clock before the shadow passes read it, so
 			// scatter sways identically in the depth maps and in the color pass and
@@ -521,6 +523,18 @@ func main() {
 
 			// --- Render ---
 			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+			// The 3D editor's wireframe shading (editor_3d_view.go). Drawing
+			// the world as lines is the whole of it: with no filled triangles
+			// nothing hides behind anything, which is the same contract the
+			// handle picker switches to in this mode. The scatter and
+			// displacement passes below are skipped rather than outlined —
+			// a wireframe field of grass blades is a solid mask, which is
+			// precisely what the mode exists to get rid of.
+			editorWire := Editor.Active && Editor.Mode == Mode3D && Editor.Wireframe
+			if editorWire {
+				gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
+			}
 
 			// Opaque pass: alpha means coverage here, so MSAA can reach the
 			// edges a discard would otherwise leave hard — alpha-cutout
@@ -541,7 +555,6 @@ func main() {
 			chunksDrawn := 0
 			sectorsDrawn := 0
 			sectorsPortalCulled := 0
-			entitiesDrawn := 0
 			var transparentDraws []TransparentDraw
 
 			// Helper to queue or draw a geometry object based on its alpha.
@@ -571,7 +584,7 @@ func main() {
 				chunk := &level.Chunks[i]
 				if Editor.Active {
 					// Editor mutations (vertex drag, extrusion/terrain edits,
-					// primitive add/delete, height changes) can move geometry
+					// height changes) can move geometry
 					// outside the chunk's cached AABB without updating it. Keep
 					// bounds honest while editing so culling doesn't hide what
 					// was just added.
@@ -643,68 +656,43 @@ func main() {
 					}
 				}
 
-				// Primitives are culled against their own bounds rather than drawn
-				// inside the sector loop above. A primitive is assigned to whichever
-				// sector contains its centre point, but its extent is unrelated to
-				// that sector's — a water plane spanning several sectors would vanish
-				// as soon as the small sector holding its centre left the frustum,
-				// and one whose centre fell outside every sector never drew at all.
-				for pi := range chunk.Primitives {
-					prim := &chunk.Primitives[pi]
-					// The spawn marker is an authoring aid, not level geometry:
-					// it exists to be seen and dragged in the editor and must
-					// never show up in the shot the player spawns into.
-					if isSpawnPoint(prim) && !Editor.Active {
+				// Biome-painted water surfaces (see biome_water.go). They are
+				// culled against their own bounds rather than inside the sector
+				// loop above: a lake's extent is unrelated to the sector its
+				// centre lands in, so it would otherwise vanish as soon as that
+				// one small sector left the frustum.
+				for wi := range chunk.WaterSurfaces {
+					w := &chunk.WaterSurfaces[wi]
+					wmin, wmax := w.WorldAABB()
+					if !AABBInFrustum(frustum, wmin, wmax) {
 						continue
 					}
-					if visibleSectors != nil && prim.SectorID != "" &&
-						connectedSectors[prim.SectorID] && !visibleSectors[prim.SectorID] {
-						continue
-					}
-					pmin, pmax := prim.WorldAABB()
-					if !AABBInFrustum(frustum, pmin, pmax) {
-						continue
-					}
-					drawOrQueue(&prim.Geometry, prim.ModelMatrix(), prim.Kind == PrimitiveWater)
-				}
-
-				// Biome-painted water planes (see biome_water.go) — kept in a
-				// separate slice so they never show up in the primitive/scenery
-				// editor, but drawn exactly like a hand-placed water primitive.
-				for pi := range chunk.BiomeWaterPrims {
-					prim := &chunk.BiomeWaterPrims[pi]
-					pmin, pmax := prim.WorldAABB()
-					if !AABBInFrustum(frustum, pmin, pmax) {
-						continue
-					}
-					drawOrQueue(&prim.Geometry, prim.ModelMatrix(), true)
+					drawOrQueue(&w.Geometry, w.ModelMatrix(), true)
 				}
 			}
 
-			// Draw visible entities with their transform (position, rotation, scale)
-			for i := range level.Entities {
-				e := &level.Entities[i]
-				if e.Visible {
-					// One draw per material. drawOrQueue splits opaque from
-					// transparent per Geometry, so a model that mixes the two
-					// still sorts correctly.
-					model := e.ModelMatrix()
-					for si := range e.Submeshes {
-						drawOrQueue(&e.Submeshes[si], model, false)
-					}
-					entitiesDrawn++
-				}
+			// Placed entities. Unlike the spawn marker below, these are part
+			// of the world and draw in gameplay as well as in the editor.
+			RenderEntities(&level, &frustum, drawOrQueue)
+
+			// The spawn marker is an authoring aid, not level geometry: it
+			// exists to be seen and dragged in the editor and must never show
+			// up in the shot the player spawns into.
+			if Editor.Active && level.Spawn != nil {
+				drawOrQueue(&level.Spawn.Geometry, level.Spawn.ModelMatrix(), false)
 			}
 
-			// --- Procedural biome scatter (GPU grass / rocks) ---
-			// Drawn after opaque geometry but before the transparent pass: blades and
-			// rocks are solid (depth-written) so translucent water still sorts on top.
-			RenderBiomes(&level, projView, Cam.Position, shadowFrame)
+			if !editorWire {
+				// --- Procedural biome scatter (GPU grass / rocks) ---
+				// Drawn after opaque geometry but before the transparent pass: blades and
+				// rocks are solid (depth-written) so translucent water still sorts on top.
+				RenderBiomes(&level, projView, Cam.Position, shadowFrame)
 
-			// --- Procedural face detail (GPU rock displacement + scatter) ---
-			// Drawn after opaque geometry; reuses the main fragment shader so it
-			// receives shadows, and was rendered into the shadow maps above so it casts.
-			RenderDetailColor(&level, shadowFrame)
+				// --- Procedural face detail (GPU rock displacement + scatter) ---
+				// Drawn after opaque geometry; reuses the main fragment shader so it
+				// receives shadows, and was rendered into the shadow maps above so it casts.
+				RenderDetailColor(&level, shadowFrame)
+			}
 
 			// End of the opaque pass — hand alpha back to blending. Done
 			// unconditionally rather than inside the transparent block below,
@@ -754,11 +742,16 @@ func main() {
 				gl.Disable(gl.BLEND)
 			}
 
+			// Back to filled triangles before the editor overlays and ImGui,
+			// neither of which would survive being drawn as outlines.
+			if editorWire {
+				gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
+			}
+
 			DebugStats.ChunksDrawn = chunksDrawn
 			DebugStats.SectorsDrawn = sectorsDrawn
 			DebugStats.SectorsPortalCulled = sectorsPortalCulled
-			DebugStats.EntitiesDrawn = entitiesDrawn
-		} // end non-scenery rendering
+		}
 
 		// Draw editor overlays and ImGui UI when editor is active
 		if Editor.Active {

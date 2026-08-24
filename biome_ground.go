@@ -2,7 +2,7 @@ package main
 
 // biome_ground.go — conforming, textured, lightly-displaced ground patch
 // rendered underneath every painted biome sector (except the water surface
-// itself, which is a separate transparent primitive — see biome_water.go;
+// itself, which is a separate transparent surface — see biome_water.go;
 // its patch here is the lakebed seen through it).
 //
 // Painting grass, rock, wildflowers, cattails or sand over open ground would
@@ -452,7 +452,7 @@ func buildGroundPatchMesh(level *Level, s *BiomeSector) []float32 {
 // ensureGroundPatch returns the cached ground patch mesh for sector s,
 // rebuilding it if missing or GroundDirty.
 //
-// This runs later in the frame than SyncBiomeWaterPrimitives (see main.go),
+// This runs later in the frame than SyncBiomeWaterSurfaces (see main.go),
 // so it's the one that clears GroundDirty once built — by the time it does,
 // the water sync has already had its chance to see the sector dirty too.
 func ensureGroundPatch(level *Level, s *BiomeSector) groundEntry {

@@ -1,51 +1,47 @@
 package main
 
-// biome_water.go — auto-manages a companion water-plane Primitive for every
-// Water-kind BiomeSector, filling the painted polygon.
+// biome_water.go — auto-manages a companion water plane for every Water-kind
+// BiomeSector, filling the painted polygon.
 //
 // Water paints differently from every other biome kind: instead of GPU
 // scatter or a shaded ground patch, painting Water gets you an actual water
-// *surface* — reusing the engine's existing animated-water primitive
-// pipeline (waves, fresnel reflection, alpha-blended pass, shadows-off — see
-// primitive.go/wall.go/main.go) rather than reinventing it. The companion
-// primitive lives in Chunk.BiomeWaterPrims, a runtime-only slice kept in sync
-// with BiomeSectors here — never in Chunk.Primitives, so it never shows up in
-// the scenery/primitive editor or gets serialized (it's fully derived from
-// the owning BiomeSector and rebuilt after load).
+// *surface* — waves, fresnel reflection, alpha-blended pass, shadows off (see
+// water_surface.go/wall.go/main.go). The companion surface lives in
+// Chunk.WaterSurfaces, a runtime-only slice kept in sync with BiomeSectors
+// here, so it never gets serialized: it is fully derived from the owning
+// BiomeSector and rebuilt after load.
 //
-// The mesh is a grid over the sector's polygon AABB, clipped to the polygon
-// the same way biome_ground.go's ground patch is (all four corners of a quad
-// must fall inside), flat at local y=0 — wave displacement happens in the
-// shared water vertex/fragment shader, same as a hand-placed water
-// primitive. The sector's own ground patch (rendered separately, see
-// biome_ground.go) acts as the lakebed beneath it.
+// The mesh follows the painted polygon exactly (the same Delaunay-triangulated
+// point cloud the ground patch uses), flat at local y=0 — wave displacement
+// happens in the shared water vertex/fragment shader. The sector's own ground
+// patch (rendered separately, see biome_ground.go) acts as the lakebed
+// beneath it.
 
 import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// SyncBiomeWaterPrimitives keeps every chunk's BiomeWaterPrims in step with
-// its Water-kind BiomeSectors: adds a companion primitive for a newly-painted
-// or newly-switched-to-Water sector, rebuilds one whose polygon or water
-// params changed, and drops one whose sector was deleted or switched to a
-// different kind.
+// SyncBiomeWaterSurfaces keeps every chunk's WaterSurfaces in step with its
+// Water-kind BiomeSectors: adds a companion surface for a newly-painted or
+// newly-switched-to-Water sector, rebuilds one whose polygon or water params
+// changed, and drops one whose sector was deleted or switched to a different
+// kind.
 //
-// Must run early in the frame, before the main primitive draw loop picks up
-// chunk.BiomeWaterPrims (main.go) — and before RenderBiomeGround, which is
-// what actually clears BiomeSector.GroundDirty once every mesh derived from
-// it this frame (this sync and the ground patch) has had a chance to see it
-// dirty.
-func SyncBiomeWaterPrimitives(level *Level) {
+// Must run early in the frame, before the water draw loop picks up
+// chunk.WaterSurfaces (main.go) — and before RenderBiomeGround, which is what
+// actually clears BiomeSector.GroundDirty once every mesh derived from it this
+// frame (this sync and the ground patch) has had a chance to see it dirty.
+func SyncBiomeWaterSurfaces(level *Level) {
 	if level == nil {
 		return
 	}
 	for ci := range level.Chunks {
-		syncChunkWaterPrimitives(level, &level.Chunks[ci])
+		syncChunkWaterSurfaces(level, &level.Chunks[ci])
 	}
 }
 
-func syncChunkWaterPrimitives(level *Level, ch *Chunk) {
-	if len(ch.BiomeSectors) == 0 && len(ch.BiomeWaterPrims) == 0 {
+func syncChunkWaterSurfaces(level *Level, ch *Chunk) {
+	if len(ch.BiomeSectors) == 0 && len(ch.WaterSurfaces) == 0 {
 		return
 	}
 
@@ -57,35 +53,35 @@ func syncChunkWaterPrimitives(level *Level, ch *Chunk) {
 		}
 	}
 
-	// Drop companion prims whose sector is gone or no longer Water.
-	kept := ch.BiomeWaterPrims[:0]
-	for i := range ch.BiomeWaterPrims {
-		p := &ch.BiomeWaterPrims[i]
-		if _, ok := want[p.ID]; !ok {
-			p.Geometry.Delete()
+	// Drop companion surfaces whose sector is gone or no longer Water.
+	kept := ch.WaterSurfaces[:0]
+	for i := range ch.WaterSurfaces {
+		w := &ch.WaterSurfaces[i]
+		if _, ok := want[w.ID]; !ok {
+			w.Geometry.Delete()
 			continue
 		}
-		kept = append(kept, *p)
+		kept = append(kept, *w)
 	}
-	ch.BiomeWaterPrims = kept
+	ch.WaterSurfaces = kept
 
 	// Add missing / rebuild dirty.
 	for id, s := range want {
 		idx := -1
-		for i := range ch.BiomeWaterPrims {
-			if ch.BiomeWaterPrims[i].ID == id {
+		for i := range ch.WaterSurfaces {
+			if ch.WaterSurfaces[i].ID == id {
 				idx = i
 				break
 			}
 		}
 		isNew := idx < 0
 		if isNew {
-			ch.BiomeWaterPrims = append(ch.BiomeWaterPrims, Primitive{ID: id, ChunkID: ch.ID})
-			idx = len(ch.BiomeWaterPrims) - 1
+			ch.WaterSurfaces = append(ch.WaterSurfaces, WaterSurface{ID: id, ChunkID: ch.ID})
+			idx = len(ch.WaterSurfaces) - 1
 		}
-		p := &ch.BiomeWaterPrims[idx]
-		if isNew || s.GroundDirty || p.Geometry.Vao == 0 {
-			rebuildBiomeWaterPrimitive(level, s, p)
+		w := &ch.WaterSurfaces[idx]
+		if isNew || s.GroundDirty || w.Geometry.Vao == 0 {
+			rebuildBiomeWaterSurface(level, s, w)
 			// Fold the new/changed plane into the chunk's cull bounds right
 			// away — outside the editor nothing else recomputes them
 			// per-frame (see main.go), and a lake at a chunk's edge could
@@ -128,8 +124,8 @@ func buildBiomeWaterMesh(s *BiomeSector, centroid mgl32.Vec2) ([][]float32, []in
 	}
 
 	// Double-sided: both windings, so the surface is visible from below too
-	// (matches the old grid mesh's behavior, and the primitive draw loop's
-	// DoubleSided transparent sub-pass expects it).
+	// (matches the old grid mesh's behavior, and the transparent sub-pass the
+	// water draw loop hands it to expects it).
 	indices := make([]int, 0, len(triIdx)*2)
 	indices = append(indices, triIdx...)
 	for i := 0; i < len(triIdx); i += 3 {
@@ -138,11 +134,17 @@ func buildBiomeWaterMesh(s *BiomeSector, centroid mgl32.Vec2) ([][]float32, []in
 	return verts, indices
 }
 
-// rebuildBiomeWaterPrimitive (re)generates p's geometry and water params from
-// sector s, in place — mirrors the tail of Primitive.Load() since a polygon-
-// shaped water plane needs custom geometry generatePlane/generateWaterPlane
-// can't produce.
-func rebuildBiomeWaterPrimitive(level *Level, s *BiomeSector, p *Primitive) {
+// biomeWaterTexture is what every derived water plane is drawn with. There is
+// no per-sector choice: the look is carried by the wave and reflection params,
+// not by swapping the base map.
+const biomeWaterTexture = "water"
+
+// biomeWaterAlpha is how much of the lakebed shows through the surface.
+const biomeWaterAlpha = float32(0.75)
+
+// rebuildBiomeWaterSurface (re)generates w's geometry and water params from
+// sector s, in place.
+func rebuildBiomeWaterSurface(level *Level, s *BiomeSector, w *WaterSurface) {
 	centroid, floorY := biomeWaterCentroidAndFloor(level, s)
 	depth := s.Brush.WaterDepth
 	if depth <= 0 {
@@ -150,32 +152,26 @@ func rebuildBiomeWaterPrimitive(level *Level, s *BiomeSector, p *Primitive) {
 	}
 	verts, indices := buildBiomeWaterMesh(s, centroid)
 
-	p.Kind = PrimitiveWater
-	p.Texture = "water"
-	p.Position = mgl32.Vec3{centroid.X(), floorY - depth, centroid.Y()}
-	p.Rotation = mgl32.Vec3{}
-	p.Scale = mgl32.Vec3{1, 1, 1}
-	p.Alpha = 0.75
-	p.Collision = false
-	p.Water = s.Brush.Water
-	if !p.Water.Enabled {
-		p.Water = DefaultWaterParams()
+	w.Position = mgl32.Vec3{centroid.X(), floorY - depth, centroid.Y()}
+	w.Alpha = biomeWaterAlpha
+	w.Water = s.Brush.Water
+	if !w.Water.Enabled {
+		w.Water = DefaultWaterParams()
 	}
 
 	min, max := s.Bounds()
-	p.BoundingKind = BoundingAABB
-	p.BoundHalfX = (max.X()-min.X())/2 + 1
-	p.BoundHalfY = depth + 0.5
-	p.BoundHalfZ = (max.Y()-min.Y())/2 + 1
+	w.BoundHalfX = (max.X()-min.X())/2 + 1
+	w.BoundHalfY = depth + 0.5
+	w.BoundHalfZ = (max.Y()-min.Y())/2 + 1
 
-	p.Geometry.Delete()
-	_ = ensureTextureLoaded(p.Texture)
+	w.Geometry.Delete()
+	_ = ensureTextureLoaded(biomeWaterTexture)
 	if len(verts) == 0 || len(indices) == 0 {
-		p.Geometry = Geometry{}
+		w.Geometry = Geometry{}
 		return
 	}
-	p.Geometry.Smooth = false
-	_ = p.Geometry.Load(verts, indices, p.Texture, p.Position)
-	p.Geometry.Alpha = p.Alpha
-	p.Geometry.Water = p.Water
+	w.Geometry.Smooth = false
+	_ = w.Geometry.Load(verts, indices, biomeWaterTexture, w.Position)
+	w.Geometry.Alpha = w.Alpha
+	w.Geometry.Water = w.Water
 }

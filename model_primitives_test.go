@@ -100,9 +100,6 @@ func TestPrimitivesHaveFullUVs(t *testing.T) {
 			if len(f.UVs) != len(f.Verts) {
 				t.Errorf("%s face %d has %d UVs for %d verts", kind, i, len(f.UVs), len(f.Verts))
 			}
-			if f.Texture == "" {
-				t.Errorf("%s face %d has no texture", kind, i)
-			}
 		}
 	}
 }
@@ -110,7 +107,7 @@ func TestPrimitivesHaveFullUVs(t *testing.T) {
 func TestMergeAppendsAndOffsets(t *testing.T) {
 	base := NewCubeDoc()
 	other := NewCubeDoc()
-	other.SetFaceTexture(modelAllFaceIndicesOf(other), "brick")
+	other.SetTexture("brick")
 
 	added := base.Merge(other, mgl32.Vec3{5, 0, 0})
 
@@ -126,9 +123,6 @@ func TestMergeAppendsAndOffsets(t *testing.T) {
 			if v < 8 {
 				t.Fatalf("merged face %d references original vertex %d", fi, v)
 			}
-		}
-		if base.Faces[fi].Texture != "brick" {
-			t.Errorf("merged face %d lost its texture", fi)
 		}
 	}
 	// Two separate islands: every edge still has exactly two faces, and the
@@ -178,5 +172,20 @@ func TestPrimitiveKindNames(t *testing.T) {
 			t.Errorf("primitive kind %d has a missing or duplicate name %q", int(k), name)
 		}
 		seen[name] = true
+	}
+}
+
+// A document wears one texture, so merging cannot bring a second one in: the
+// combined mesh keeps the texture the destination already had.
+func TestMergeKeepsDestinationTexture(t *testing.T) {
+	base := NewCubeDoc()
+	base.SetTexture("stone")
+	other := NewCubeDoc()
+	other.SetTexture("brick")
+
+	base.Merge(other, mgl32.Vec3{5, 0, 0})
+
+	if base.Texture != "stone" {
+		t.Errorf("texture = %q, want stone — merge must not adopt the source's", base.Texture)
 	}
 }

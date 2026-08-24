@@ -27,8 +27,8 @@ func twoQuadStrip() *ModelDoc {
 			{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {2, 0, 1}, {1, 0, 1}, {0, 0, 1},
 		},
 		Faces: []ModelFace{
-			{Verts: []int{0, 5, 4, 1}, UVs: uv(), Texture: "default"},
-			{Verts: []int{1, 4, 3, 2}, UVs: uv(), Texture: "default"},
+			{Verts: []int{0, 5, 4, 1}, UVs: uv()},
+			{Verts: []int{1, 4, 3, 2}, UVs: uv()},
 		},
 	}
 	return m
@@ -129,15 +129,15 @@ func TestExtrudeOpposingFacesRefused(t *testing.T) {
 	}
 }
 
-func TestExtrudeSideInheritsSourceTexture(t *testing.T) {
+func TestExtrudeSideInheritsSourceSmoothing(t *testing.T) {
 	m := NewCubeDoc()
 	top := cubeTopFace(t, m)
-	m.SetFaceTexture([]int{top}, "brick")
+	m.SetFaceSmooth([]int{top}, true)
 	m.ExtrudeFaces([]int{top}, 1)
 
 	for fi := 6; fi < len(m.Faces); fi++ {
-		if m.Faces[fi].Texture != "brick" {
-			t.Errorf("side face %d texture = %q, want brick", fi, m.Faces[fi].Texture)
+		if !m.Faces[fi].Smooth {
+			t.Errorf("side face %d did not inherit the source face's smoothing", fi)
 		}
 	}
 }
@@ -212,16 +212,16 @@ func TestSubdivideInterpolatesUVs(t *testing.T) {
 	m := &ModelDoc{
 		Verts: []mgl32.Vec3{{0, 0, 0}, {1, 0, 0}, {1, 0, 1}, {0, 0, 1}},
 		Faces: []ModelFace{{
-			Verts:   []int{0, 1, 2, 3},
-			UVs:     []mgl32.Vec2{{0, 0}, {1, 0}, {1, 1}, {0, 1}},
-			Texture: "brick",
+			Verts:  []int{0, 1, 2, 3},
+			UVs:    []mgl32.Vec2{{0, 0}, {1, 0}, {1, 1}, {0, 1}},
+			Smooth: true,
 		}},
 	}
 	m.SubdivideFaces([]int{0})
 
 	for i, f := range m.Faces {
-		if f.Texture != "brick" {
-			t.Errorf("child %d lost the parent texture", i)
+		if !f.Smooth {
+			t.Errorf("child %d lost the parent's smoothing", i)
 		}
 		if len(f.UVs) != len(f.Verts) {
 			t.Fatalf("child %d has %d UVs for %d verts", i, len(f.UVs), len(f.Verts))

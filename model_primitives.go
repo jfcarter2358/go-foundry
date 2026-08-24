@@ -79,9 +79,8 @@ func newPlaneDoc() *ModelDoc {
 		ID:    "plane",
 		Verts: []mgl32.Vec3{{-h, 0, -h}, {-h, 0, h}, {h, 0, h}, {h, 0, -h}},
 		Faces: []ModelFace{{
-			Verts:   []int{0, 1, 2, 3},
-			UVs:     []mgl32.Vec2{{0, 0}, {0, 1}, {1, 1}, {1, 0}},
-			Texture: "default",
+			Verts: []int{0, 1, 2, 3},
+			UVs:   []mgl32.Vec2{{0, 0}, {0, 1}, {1, 1}, {1, 0}},
 		}},
 	}
 	m.invalidate()
@@ -111,9 +110,8 @@ func newCylinderDoc(sides int) *ModelDoc {
 		u0 := float32(i) / float32(sides)
 		u1 := float32(i+1) / float32(sides)
 		m.Faces = append(m.Faces, ModelFace{
-			Verts:   []int{i, j, sides + j, sides + i},
-			UVs:     []mgl32.Vec2{{u0, 0}, {u1, 0}, {u1, 1}, {u0, 1}},
-			Texture: "default",
+			Verts: []int{i, j, sides + j, sides + i},
+			UVs:   []mgl32.Vec2{{u0, 0}, {u1, 0}, {u1, 1}, {u0, 1}},
 		})
 	}
 
@@ -143,7 +141,7 @@ func ringCapFace(base, count int) ModelFace {
 			float32(math.Sin(a))*0.5 + 0.5,
 		}
 	}
-	return ModelFace{Verts: verts, UVs: uvs, Texture: "default"}
+	return ModelFace{Verts: verts, UVs: uvs}
 }
 
 // newConeDoc builds a cone: n triangles up to an apex, over one n-gon base.
@@ -164,9 +162,8 @@ func newConeDoc(sides int) *ModelDoc {
 		u0 := float32(i) / float32(sides)
 		u1 := float32(i+1) / float32(sides)
 		m.Faces = append(m.Faces, ModelFace{
-			Verts:   []int{i, j, apex},
-			UVs:     []mgl32.Vec2{{u0, 0}, {u1, 0}, {(u0 + u1) / 2, 1}},
-			Texture: "default",
+			Verts: []int{i, j, apex},
+			UVs:   []mgl32.Vec2{{u0, 0}, {u1, 0}, {(u0 + u1) / 2, 1}},
 		})
 	}
 	m.Faces = append(m.Faces, ringCapFace(0, sides))
@@ -210,25 +207,22 @@ func newSphereDoc(slices, stacks int) *ModelDoc {
 		j := (i + 1) % slices
 		// North cap.
 		m.Faces = append(m.Faces, ModelFace{
-			Verts:   []int{north, ringStart[0] + i, ringStart[0] + j},
-			UVs:     []mgl32.Vec2{uvAt(i, 0), uvAt(i, 1), uvAt(i+1, 1)},
-			Texture: "default",
+			Verts: []int{north, ringStart[0] + i, ringStart[0] + j},
+			UVs:   []mgl32.Vec2{uvAt(i, 0), uvAt(i, 1), uvAt(i+1, 1)},
 		})
 		// Body.
 		for s := 0; s < stacks-2; s++ {
 			a, b := ringStart[s], ringStart[s+1]
 			m.Faces = append(m.Faces, ModelFace{
-				Verts:   []int{a + i, b + i, b + j, a + j},
-				UVs:     []mgl32.Vec2{uvAt(i, s+1), uvAt(i, s+2), uvAt(i+1, s+2), uvAt(i+1, s+1)},
-				Texture: "default",
+				Verts: []int{a + i, b + i, b + j, a + j},
+				UVs:   []mgl32.Vec2{uvAt(i, s+1), uvAt(i, s+2), uvAt(i+1, s+2), uvAt(i+1, s+1)},
 			})
 		}
 		// South cap.
 		last := ringStart[stacks-2]
 		m.Faces = append(m.Faces, ModelFace{
-			Verts:   []int{south, last + j, last + i},
-			UVs:     []mgl32.Vec2{uvAt(i, stacks), uvAt(i+1, stacks-1), uvAt(i, stacks-1)},
-			Texture: "default",
+			Verts: []int{south, last + j, last + i},
+			UVs:   []mgl32.Vec2{uvAt(i, stacks), uvAt(i+1, stacks-1), uvAt(i, stacks-1)},
 		})
 	}
 	m.orientFacesOutward()
@@ -289,6 +283,12 @@ func reverseFaceLoop(f *ModelFace) {
 // would be a silent data loss the moment anyone merges two rigged models — and
 // a primitive, which is what this is usually called with, simply has no bones to
 // bring.
+//
+// Its texture does not come across, because a document wears exactly one and
+// the merged result is one document. The merged geometry therefore arrives
+// wearing whatever m already wears, and its UVs — authored against a different
+// atlas — will land wherever those coordinates fall on it. Re-unwrapping
+// (model_uv_atlas.go) is what puts the combined mesh back on one layout.
 func (m *ModelDoc) Merge(other *ModelDoc, offset mgl32.Vec3) []int {
 	if other == nil || len(other.Verts) == 0 {
 		return nil

@@ -200,26 +200,7 @@ type RawSector struct {
 	Edges   []RawEdge  `yaml:"edges"`
 }
 
-// RawPrimitive is the YAML representation of a procedural 3D primitive.
-type RawPrimitive struct {
-	ID          string            `yaml:"id"`
-	Type        string            `yaml:"type"` // one of primitiveTypeNames (primitive.go)
-	Position    RawEntityPosition `yaml:"position"`
-	Rotation    RawEntityPosition `yaml:"rotation"`
-	Scale       RawEntityPosition `yaml:"scale"`
-	Texture     string            `yaml:"texture"`
-	Sides       int               `yaml:"sides,omitempty"` // cylinder only; default 16
-	Collision   bool              `yaml:"collision,omitempty"`
-	Alpha       *float32          `yaml:"alpha,omitempty"` // nil = opaque (1.0)
-	UVOffset    Point             `yaml:"uv_offset,omitempty"`
-	UVScale     Point             `yaml:"uv_scale,omitempty"`     // zero = {1,1}
-	UVRotation  float32           `yaml:"uv_rotation,omitempty"`  // radians
-	Smooth      bool              `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
-	SmoothAngle float32           `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
-	Water       *RawWater         `yaml:"water,omitempty"`        // water primitives only
-}
-
-// RawWater is the YAML representation of a water plane's wave and reflection
+// RawWater is the YAML representation of a water surface's wave and reflection
 // settings. Absent means the defaults from DefaultWaterParams.
 type RawWater struct {
 	WaveAmplitude float32   `yaml:"wave_amplitude"`
@@ -253,7 +234,6 @@ type RawChunk struct {
 	Origin       RawChunkOrigin   `yaml:"origin"`
 	Rotation     float32          `yaml:"rotation"`
 	Scale        float32          `yaml:"scale"`
-	Primitives   []RawPrimitive   `yaml:"primitives,omitempty"`
 	BiomeSectors []RawBiomeSector `yaml:"biome_sectors,omitempty"`
 }
 
@@ -332,32 +312,20 @@ type RawBiomeBrush struct {
 	BoundaryJitter float32 `yaml:"boundary_jitter,omitempty"`
 }
 
-// RawEntityPosition holds the 3D spawn position of an entity.
-type RawEntityPosition struct {
+// RawVec3 is a bare {x, y, z} triple in YAML.
+type RawVec3 struct {
 	X float32 `yaml:"x"`
 	Y float32 `yaml:"y"`
 	Z float32 `yaml:"z"`
 }
 
-// RawEntity is the YAML representation of an entity.
-type RawEntity struct {
-	ID         string            `yaml:"id"`
-	Position   RawEntityPosition `yaml:"position"`
-	Rotation   RawEntityPosition `yaml:"rotation"` // Euler XYZ in radians
-	Scale      RawEntityPosition `yaml:"scale"`    // per-axis scale; zero = {1,1,1}
-	Model      string            `yaml:"model"`
-	Texture    string            `yaml:"texture"`
-	Bounding   string            `yaml:"bounding"`
-	BoundHalfX float32           `yaml:"bound_half_x"`
-	BoundHalfY float32           `yaml:"bound_half_y"`
-	BoundHalfZ float32           `yaml:"bound_half_z"`
-	Alpha      *float32          `yaml:"alpha,omitempty"` // nil = opaque (1.0)
-	// Animation names a clip inside the entity's .fmdl. Addressed by name so a
-	// model can gain and lose clips without every level that places it needing
-	// to be renumbered. Speed 0 means 1x; a nil Loop follows the clip's own flag.
-	Animation      string  `yaml:"animation,omitempty"`
-	AnimationSpeed float32 `yaml:"animation_speed,omitempty"`
-	AnimationLoop  *bool   `yaml:"animation_loop,omitempty"`
+// RawSpawn is the YAML representation of the level's player spawn point
+// (spawn_point.go). Rotation is Euler XYZ in radians; the facing it produces is
+// derived from it rather than stored, so the arrow in the editor and the camera
+// gameplay starts with can never disagree.
+type RawSpawn struct {
+	Position RawVec3 `yaml:"position"`
+	Rotation RawVec3 `yaml:"rotation"`
 }
 
 // RawColor is the YAML representation of an RGB color.
@@ -414,8 +382,20 @@ type RawLights struct {
 }
 
 // RawLevel is the top-level YAML document.
+//
+// Spawn is a pointer so "no spawn point authored" stays distinguishable from
+// one deliberately placed at the origin facing +X, which a zero value would
+// otherwise look exactly like.
+//
+// Entities are instances of the definitions under resources/entities/ — their
+// YAML shape is RawEntity, which lives in entity_def.go beside the definition
+// format it references. They sit at the level rather than inside a chunk
+// because they move: an entity that walked out of the chunk it was authored in
+// would otherwise have to be re-parented mid-frame, and its saved position is
+// world-space for exactly the same reason.
 type RawLevel struct {
 	Chunks   []RawChunk  `yaml:"chunks"`
-	Entities []RawEntity `yaml:"entities"`
+	Spawn    *RawSpawn   `yaml:"spawn,omitempty"`
+	Entities []RawEntity `yaml:"entities,omitempty"`
 	Lights   RawLights   `yaml:"lights"`
 }

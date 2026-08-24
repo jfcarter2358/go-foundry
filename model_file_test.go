@@ -14,7 +14,7 @@ func TestFmdlRoundTripPreservesEverything(t *testing.T) {
 	m := NewCubeDoc()
 	m.ID = "crate"
 	m.SmoothAngle = 45
-	m.SetFaceTexture([]int{0, 1}, "brick")
+	m.SetTexture("brick")
 	m.SetFaceSmooth([]int{1}, true)
 	m.Faces[0].UVs[2] = mgl32.Vec2{0.25, 0.75}
 
@@ -34,6 +34,9 @@ func TestFmdlRoundTripPreservesEverything(t *testing.T) {
 	if got.ID != "crate" || got.SmoothAngle != 45 {
 		t.Errorf("header lost: ID=%q SmoothAngle=%v", got.ID, got.SmoothAngle)
 	}
+	if got.Texture != "brick" {
+		t.Errorf("texture: %q -> %q", m.Texture, got.Texture)
+	}
 	if len(got.Verts) != len(m.Verts) || len(got.Faces) != len(m.Faces) {
 		t.Fatalf("shape lost: %d verts %d faces", len(got.Verts), len(got.Faces))
 	}
@@ -44,9 +47,6 @@ func TestFmdlRoundTripPreservesEverything(t *testing.T) {
 	}
 	for i := range m.Faces {
 		a, b := m.Faces[i], got.Faces[i]
-		if a.Texture != b.Texture {
-			t.Errorf("face %d texture: %q -> %q", i, a.Texture, b.Texture)
-		}
 		if a.Smooth != b.Smooth {
 			t.Errorf("face %d smooth: %v -> %v", i, a.Smooth, b.Smooth)
 		}
@@ -123,7 +123,7 @@ func TestSaveAndLoadModelFile(t *testing.T) {
 
 	m := NewCubeDoc()
 	m.ID = "crate"
-	m.SetFaceTexture([]int{3}, "brick")
+	m.SetTexture("brick")
 
 	if err := SaveModel(m, path); err != nil {
 		t.Fatalf("SaveModel: %v", err)
@@ -138,8 +138,8 @@ func TestSaveAndLoadModelFile(t *testing.T) {
 	if got.Path != path {
 		t.Errorf("Path = %q, want %q", got.Path, path)
 	}
-	if got.Faces[3].Texture != "brick" {
-		t.Errorf("face 3 texture = %q, want brick", got.Faces[3].Texture)
+	if got.Texture != "brick" {
+		t.Errorf("texture = %q, want brick", got.Texture)
 	}
 	if !got.Dirty() {
 		t.Error("freshly loaded document is not dirty; it would never reach the GPU")
@@ -155,5 +155,55 @@ func TestLoadModelRejectsCorruptFile(t *testing.T) {
 	}
 	if _, err := LoadModel(path); err == nil {
 		t.Error("LoadModel accepted a face referencing vertices that do not exist")
+	}
+}
+
+// A .fmdl written before the move to one texture per document named a texture
+// per face. Those files must still open wearing the material they were saved
+// with, rather than silently reverting to the default.
+func TestLoadModelPromotesLegacyPerFaceTexture(t *testing.T) {
+	raw := RawModel{
+		ID:       "old",
+		Vertices: [][]float32{{0, 0, 0}, {1, 0, 0}, {1, 1, 0}},
+		Faces: []RawModelFace{
+			{Verts: []int{0, 1, 2}, Texture: "default"},
+			{Verts: []int{0, 1, 2}, Texture: "brick"},
+		},
+	}
+	got := rawToModelDoc(raw)
+	if got.Texture != "brick" {
+		t.Errorf("legacy texture = %q, want brick", got.Texture)
+	}
+}
+
+// The legacy field is read, never written: a document saved after the migration
+// must not re-emit a per-face texture for the next reader to promote again.
+func TestSaveModelOmitsPerFaceTexture(t *testing.T) {
+	m := NewCubeDoc()
+	m.SetTexture("brick")
+	raw := modelDocToRaw(m)
+	if raw.Texture != "brick" {
+		t.Errorf("raw.Texture = %q, want brick", raw.Texture)
+	}
+	for i, f := range raw.Faces {
+		if f.Texture != "" {
+			t.Errorf("face %d still carries texture %q", i, f.Texture)
+		}
+	}
+}
+
+// "Never chose a texture" and "chose the default" have to serialise the same
+// way, or a load/save round-trip would invent a change.
+func TestDefaultTextureRoundTripsAsEmpty(t *testing.T) {
+	m := NewCubeDoc()
+	m.SetTexture(defaultModelTexture)
+	if m.Texture != "" {
+		t.Errorf("Texture = %q, want empty", m.Texture)
+	}
+	if got := m.TextureName(); got != defaultModelTexture {
+		t.Errorf("TextureName() = %q, want %q", got, defaultModelTexture)
+	}
+	if raw := modelDocToRaw(m); raw.Texture != "" {
+		t.Errorf("raw.Texture = %q, want empty", raw.Texture)
 	}
 }

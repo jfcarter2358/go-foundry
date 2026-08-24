@@ -1,14 +1,17 @@
 package main
 
-// editor_2d_objects.go — entities, primitives and point lights in the top-down
-// 2D map.
+// editor_2d_objects.go — the spawn point, the placed entities and the point
+// lights in the top-down 2D map.
 //
-// The 2D map used to draw sector geometry only, so the object tools the side
-// panel offers (catalogs, primitive/entity properties) had nothing to aim at.
-// This file gives those objects a top-down footprint, a click target, and a
-// spawn position, so placing and selecting them works the same in 2D as in 3D.
+// The 2D map draws sector geometry, which left the things that are not geometry
+// — the player spawn, the entities, the lights — with nothing to show for
+// themselves up here. This file gives them a top-down footprint, and the spawn
+// point and entities a click target and a placement position, so placing and
+// selecting either works the same in 2D as in 3D.
 
 import (
+	"math"
+
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -48,39 +51,76 @@ func editor2DDrawFootprint(cx, cz, halfX, halfZ float32, col mgl32.Vec3) {
 	GizmoLine(c10, c01, col)
 }
 
-// Editor2DRenderObjects draws the level's entities, the active chunk's
-// primitives, and the point lights as top-down footprints.
+// editor2DDrawHeading draws a facing arrow on the map at world XZ centre c,
+// pointing along the (unnormalised) XZ direction dir and sized against the
+// footprint it grows out of, so it stays readable at any zoom.
+//
+// Shared by the spawn point and the entities: both answer "which way is this
+// thing pointing", and drawing that two different ways would make one of them
+// look like a different kind of annotation.
+func editor2DDrawHeading(c, dir mgl32.Vec2, hx, hz float32, col mgl32.Vec3) {
+	if dir.Len() < 1e-4 {
+		// Pointing straight up or down has no heading to draw.
+		return
+	}
+	flat := dir.Normalize()
+
+	reach := hx
+	if hz > reach {
+		reach = hz
+	}
+	reach *= 2.2
+
+	c3 := mgl32.Vec3{c.X(), 0, c.Y()}
+	tip := c3.Add(mgl32.Vec3{flat.X() * reach, 0, flat.Y() * reach})
+	GizmoLine(c3, tip, col)
+
+	// Barbs at ±140° from the heading, a third of the shaft long.
+	const barbAngle = 140 * math.Pi / 180
+	barb := reach / 3
+	for _, sign := range []float64{1, -1} {
+		a := math.Atan2(float64(flat.Y()), float64(flat.X())) + sign*barbAngle
+		GizmoLine(tip, tip.Add(mgl32.Vec3{
+			float32(math.Cos(a)) * barb, 0, float32(math.Sin(a)) * barb,
+		}), col)
+	}
+}
+
+// Editor2DRenderObjects draws the level's spawn point, its entities and its
+// point lights as top-down footprints.
 func Editor2DRenderObjects(lvl *Level, ch *Chunk) {
-	yellow := mgl32.Vec3{1, 1, 0}
 	green := mgl32.Vec3{0.2, 1, 0.2}
 	orange := mgl32.Vec3{1, 0.55, 0.15}
-	purple := mgl32.Vec3{0.65, 0.45, 1}
 
-	// Primitives belong to the active chunk, matching what the panel edits.
-	for pi := range ch.Primitives {
-		p := &ch.Primitives[pi]
+	if lvl.Spawn != nil {
 		col := orange
-		if pi == Editor.ActivePrimitiveIdx {
+		if Editor.SpawnSelected {
 			col = green
 		}
-		hx, hz := editor2DObjectHalfExtents(p.BoundHalfX, p.BoundHalfZ)
-		editor2DDrawFootprint(p.Position.X(), p.Position.Z(), hx, hz, col)
+		hxRaw, _, hzRaw := spawnPointBounds()
+		hx, hz := editor2DObjectHalfExtents(hxRaw, hzRaw)
+		editor2DDrawFootprint(lvl.Spawn.Position.X(), lvl.Spawn.Position.Z(), hx, hz, col)
 		// A square footprint says nothing about facing, and facing is half of
 		// what a spawn point is — draw its heading on the map too.
-		if isSpawnPoint(p) {
-			editor2DDrawSpawnHeading(p, hx, hz, col)
-		}
+		editor2DDrawSpawnHeading(lvl.Spawn, hx, hz, col)
 	}
 
-	// Entities are level-wide, not chunk-scoped.
+	// Entities: their bounding footprint, filled in green when selected. An
+	// entity with no authored bounds still gets one at the minimum on-screen
+	// size — it is a thing in the level whether or not it has a volume, and one
+	// that drew nothing would be unfindable from up here.
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]
-		col := purple
+		col := entityMapColor
 		if i == Editor.ActiveEntityIdx {
-			col = yellow
+			col = green
 		}
-		hx, hz := editor2DObjectHalfExtents(e.BoundHalfX, e.BoundHalfZ)
-		editor2DDrawFootprint(e.Position.X(), e.Position.Z(), hx, hz, col)
+		hx, hz := editor2DEntityHalfExtents(e)
+		c := e.BoundCenter()
+		editor2DDrawFootprint(c.X(), c.Z(), hx, hz, col)
+		// Facing matters for an entity the same way it does for the spawn
+		// point: a square says nothing about which way the model is pointing.
+		editor2DDrawEntityHeading(e, hx, hz, col)
 	}
 
 	// Point lights: a cross tinted with the light's own color, so several
@@ -99,60 +139,82 @@ func Editor2DRenderObjects(lvl *Level, ch *Chunk) {
 	}
 }
 
-// editor2DPickObject selects the entity or primitive whose footprint contains
-// (wx,wz), nearest centre first, and reports whether anything was hit.
-// Primitives win ties with entities only by being closer; both are tested.
+// entityMapColor is the footprint colour of an unselected entity — distinct
+// from the spawn point's orange so the two do not read as the same kind of
+// thing on a busy map.
+var entityMapColor = mgl32.Vec3{0.35, 0.75, 1}
+
+// editor2DEntityHalfExtents returns the top-down half-extents to draw and
+// hit-test an entity with, widened to the minimum on-screen size.
+func editor2DEntityHalfExtents(e *Entity) (float32, float32) {
+	h := e.BoundHalfExtents()
+	return editor2DObjectHalfExtents(h.X(), h.Z())
+}
+
+// editor2DDrawEntityHeading draws an entity's yaw as an arrow on the map, using
+// the same shape the spawn point's heading uses so the two read alike.
+func editor2DDrawEntityHeading(e *Entity, hx, hz float32, col mgl32.Vec3) {
+	d := eulerMatrixYXZ(e.Rotation).Mul4x1(mgl32.Vec4{1, 0, 0, 0})
+	c := e.BoundCenter()
+	editor2DDrawHeading(mgl32.Vec2{c.X(), c.Z()}, mgl32.Vec2{d.X(), d.Z()}, hx, hz, col)
+}
+
+// editor2DPickObject selects the spawn point or an entity when (wx,wz) falls
+// inside its footprint, and reports whether it did.
+//
+// Entities are tested first: they are things *in* the level, and the spawn
+// marker is an annotation on it, so where the two overlap the click should
+// reach the one that is actually part of the world.
 func editor2DPickObject(lvl *Level, ch *Chunk, wx, wz float32) bool {
-	bestDist := float32(0)
-	bestEntity := -1
-	bestPrim := -1
-
-	consider := func(cx, cz, halfX, halfZ float32, entIdx, primIdx int) {
-		hx, hz := editor2DObjectHalfExtents(halfX, halfZ)
-		dx := wx - cx
-		dz := wz - cz
-		if dx < -hx || dx > hx || dz < -hz || dz > hz {
-			return
-		}
-		d := dx*dx + dz*dz
-		if (bestEntity < 0 && bestPrim < 0) || d < bestDist {
-			bestDist = d
-			bestEntity = entIdx
-			bestPrim = primIdx
-		}
+	if idx, ok := editor2DEntityAt(lvl, wx, wz); ok {
+		clearVertexSelection()
+		editorClearSpawnSelection()
+		Editor.ActiveEdgeIdx = -1
+		Editor.ActiveEdgeKind = ""
+		editorSelectEntity(idx)
+		return true
 	}
 
-	for pi := range ch.Primitives {
-		p := &ch.Primitives[pi]
-		consider(p.Position.X(), p.Position.Z(), p.BoundHalfX, p.BoundHalfZ, -1, pi)
+	if lvl.Spawn == nil {
+		return false
 	}
-	for i := range lvl.Entities {
-		e := &lvl.Entities[i]
-		consider(e.Position.X(), e.Position.Z(), e.BoundHalfX, e.BoundHalfZ, i, -1)
-	}
-
-	if bestEntity < 0 && bestPrim < 0 {
+	hxRaw, _, hzRaw := spawnPointBounds()
+	hx, hz := editor2DObjectHalfExtents(hxRaw, hzRaw)
+	dx := wx - lvl.Spawn.Position.X()
+	dz := wz - lvl.Spawn.Position.Z()
+	if dx < -hx || dx > hx || dz < -hz || dz > hz {
 		return false
 	}
 
 	clearVertexSelection()
+	editorClearEntitySelection()
 	Editor.ActiveEdgeIdx = -1
 	Editor.ActiveEdgeKind = ""
-	Editor.ActiveEntityIdx = bestEntity
-	Editor.ActivePrimitiveIdx = bestPrim
-	if bestEntity >= 0 {
-		Editor.PanelFocus = panelFocusEntity
-		Editor.GizmoKind = gizmoKindEntity
-	} else {
-		Editor.PanelFocus = panelFocusPrimitive
-		Editor.GizmoKind = gizmoKindPrimitive
-	}
+	editorSelectSpawn()
 	return true
 }
 
+// editor2DEntityAt returns the index of the entity whose footprint covers
+// (wx,wz). Later entities win, so the most recently placed one is on top —
+// which is what a user who just dropped an entity onto a pile expects to grab.
+func editor2DEntityAt(lvl *Level, wx, wz float32) (int, bool) {
+	found, ok := -1, false
+	for i := range lvl.Entities {
+		e := &lvl.Entities[i]
+		hx, hz := editor2DEntityHalfExtents(e)
+		c := e.BoundCenter()
+		dx, dz := wx-c.X(), wz-c.Z()
+		if dx < -hx || dx > hx || dz < -hz || dz > hz {
+			continue
+		}
+		found, ok = i, true
+	}
+	return found, ok
+}
+
 // editor2DFloorHeightAt returns the floor height of the sector containing
-// (wx,wz), or 0 when the point is outside every sector. New objects spawn
-// relative to it so a click on a raised floor doesn't drop them through it.
+// (wx,wz), or 0 when the point is outside every sector. The spawn point is
+// placed relative to it so a click on a raised floor doesn't drop it through.
 func editor2DFloorHeightAt(ch *Chunk, wx, wz float32) float32 {
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
@@ -163,42 +225,26 @@ func editor2DFloorHeightAt(ch *Chunk, wx, wz float32) float32 {
 	return 0
 }
 
-// editor2DHandlePlacement spawns the armed entity or primitive at the clicked
-// point and reports whether it consumed the click. Placement is checked before
-// every other 2D tool: arming it is an explicit request, so it must not be
-// swallowed by the biome brush or by vertex editing.
+// editor2DHandlePlacement drops the spawn point at the clicked position and
+// reports whether it consumed the click. Placement is checked before every
+// other 2D tool: arming it is an explicit request, so it must not be swallowed
+// by the biome brush or by vertex editing.
 func editor2DHandlePlacement(t sdl.MouseButtonEvent, ch *Chunk, wx, wz float32) bool {
 	if t.Button != sdl.ButtonLeft {
 		return false
 	}
-	if !Editor.PlacementMode && !Editor.PrimPlacementMode && !Editor.ModelPlacementMode {
-		return false
-	}
-	y := editor2DFloorHeightAt(ch, wx, wz)
-
-	if Editor.ModelPlacementMode {
-		// Same floor alignment as an entity: a model's origin is its own
-		// author's choice, but resting it at floor height is what the 3D
-		// placement does, so the two sub-modes agree on where a click puts it.
-		placeSelectedModelAt(mgl32.Vec3{wx, y, wz})
+	switch {
+	case Editor.SpawnPlacementMode:
+		// The marker's Position is the player's feet, so it sits at floor
+		// height rather than being lifted like a solid would be.
+		placeSpawnPointAt(mgl32.Vec3{wx, editor2DFloorHeightAt(ch, wx, wz), wz})
+		return true
+	case Editor.EntityPlacementMode:
+		// Same reasoning: an entity's Position is its base, so the floor is
+		// where it belongs. The 3D view puts it on the surface under the
+		// cursor; up here there is only one surface it can mean.
+		placeEntityAt(mgl32.Vec3{wx, editor2DFloorHeightAt(ch, wx, wz), wz})
 		return true
 	}
-
-	if Editor.PlacementMode {
-		// Entity origins are model-space bases, so the floor height puts the
-		// model on the ground — the same alignment the 3D placement does.
-		placeSelectedEntityAt(mgl32.Vec3{wx, y, wz})
-		return true
-	}
-
-	// Primitives are centred on their origin, so lift the solid kinds by half
-	// their default height to rest them on the floor. Planes and water are
-	// flat and stay at floor level.
-	switch Editor.PrimPlacementType {
-	case "plane", "water", "spawn_point":
-	default:
-		y += 0.5
-	}
-	placeSelectedPrimitiveAt(mgl32.Vec3{wx, y, wz})
-	return true
+	return false
 }

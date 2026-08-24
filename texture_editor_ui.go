@@ -45,6 +45,13 @@ var (
 	texEditorDragStart [2]int
 )
 
+// texEditorShowUVLayout draws the open model's UV islands over the canvas, so a
+// texture unwrapped from a mesh can be painted region by region instead of
+// blind. On by default: the overlay only appears at all when the model editor
+// happens to be open on a model wearing *this* texture, which is precisely the
+// case where it is wanted.
+var texEditorShowUVLayout = true
+
 // Dialog state.
 var (
 	texEditorShowNewDialog    bool
@@ -492,16 +499,22 @@ func drawToolsPanel() {
 	}
 	imgui.Separator()
 	brushSize := int32(ed.BrushSize)
+	// Wrap the explanatory labels and stretch the sliders to the panel: a
+	// fixed width overflows the child and scrolls it sideways.
+	imgui.PushTextWrapPos()
 	imgui.Text("Brush size (no hardness — quantisation would turn a soft edge into speckle):")
-	imgui.SetNextItemWidth(160)
+	imgui.PopTextWrapPos()
+	imgui.SetNextItemWidth(-1)
 	if imgui.SliderInt("##brushsize", &brushSize, 1, 32) {
 		ed.BrushSize = int(brushSize)
 	}
 
 	if ed.Tool == ToolSpray {
 		density := int32(ed.SprayDensity)
+		imgui.PushTextWrapPos()
 		imgui.Text("Spray density (dabs/frame while held):")
-		imgui.SetNextItemWidth(160)
+		imgui.PopTextWrapPos()
+		imgui.SetNextItemWidth(-1)
 		if imgui.SliderInt("##spraydensity", &density, 1, 64) {
 			ed.SprayDensity = int(density)
 		}
@@ -514,9 +527,19 @@ func drawPalettePanel() {
 	ed := activeTexEditor
 	imgui.Text("Palette")
 
+	// Lay the swatch grid out against the panel's real width instead of a
+	// fixed 16 per row: a row wider than the child clips (and lets imgui
+	// scroll the whole panel sideways, which reads as the panel being cut
+	// off at its left edge).
 	const cell = float32(14)
+	spacing := float32(2)
+	imgui.PushStyleVarVec2(imgui.StyleVarItemSpacing, imgui.Vec2{X: spacing, Y: spacing})
+	perRow := int((imgui.ContentRegionAvail().X + spacing) / (cell + spacing))
+	if perRow < 1 {
+		perRow = 1
+	}
 	for i := 0; i < texdoc.TexPaletteSz; i++ {
-		if i%16 != 0 {
+		if i%perRow != 0 {
 			imgui.SameLine()
 		}
 		c := texdoc.GlobalPalette[i]
@@ -537,6 +560,7 @@ func drawPalettePanel() {
 		imgui.PopStyleColor()
 		imgui.PopID()
 	}
+	imgui.PopStyleVar()
 
 	imgui.Text(fmt.Sprintf("Primary: %d   Secondary: %d", ed.PrimaryIdx, ed.SecondaryIdx))
 
@@ -693,6 +717,8 @@ func drawCanvasPanel() {
 	dl.AddImageV(imgui.TextureID(texEditorChecker), topLeft, botRight, imgui.Vec2{}, checkerUV, white)
 	dl.AddImageV(imgui.TextureID(texEditorPreview), topLeft, botRight, imgui.Vec2{}, imgui.Vec2{X: 1, Y: 1}, white)
 
+	drawTexEditorUVLayout(dl, topLeft, canvasW, canvasH)
+
 	// Live preview of an in-progress line/rect drag, in screen space only —
 	// the document itself isn't touched until mouse-up (StampLine/StampRect
 	// commit through the normal undo path there).
@@ -749,6 +775,46 @@ func drawCanvasPanel() {
 	}
 
 	imgui.Text(fmt.Sprintf("%d x %d   zoom %.0f%%", ed.Doc.W, ed.Doc.H, zoom*100/8))
+
+	// Only offered when there is a layout to show. A permanent checkbox that
+	// did nothing on most textures would be worse than no checkbox.
+	if n := len(modelUVLayoutFor(ed.BoundTexture)); n > 0 {
+		imgui.SameLine()
+		imgui.Checkbox(fmt.Sprintf("UV layout (%d faces)##texuvlayout", n), &texEditorShowUVLayout)
+	}
+}
+
+// texEditorUVLayoutColor is a translucent cyan: bright enough to read over any
+// painted colour, transparent enough that it does not hide what is underneath.
+// The overlay is a guide, not part of the image — it is drawn on the canvas and
+// never into the document, so nothing here can be painted over or saved.
+var texEditorUVLayoutColor = imgui.PackedColorFromVec4(imgui.Vec4{X: 0.2, Y: 0.9, Z: 1, W: 0.65})
+
+// drawTexEditorUVLayout outlines the UV island of every face the open model
+// maps onto this texture.
+//
+// UV (0,0) is drawn at the canvas's top-left corner and V grows downwards,
+// which is the same convention the sampler uses: the flattened image is
+// uploaded with its top row first, so texture coordinate V=0 is that top row.
+// The outline therefore lands on the texels the face actually samples.
+func drawTexEditorUVLayout(dl imgui.DrawList, topLeft imgui.Vec2, canvasW, canvasH float32) {
+	ed := activeTexEditor
+	if !texEditorShowUVLayout || ed == nil {
+		return
+	}
+	loops := modelUVLayoutFor(ed.BoundTexture)
+	if len(loops) == 0 {
+		return
+	}
+	for _, loop := range loops {
+		for i := range loop {
+			a, b := loop[i], loop[(i+1)%len(loop)]
+			dl.AddLineV(
+				imgui.Vec2{X: topLeft.X + a.X()*canvasW, Y: topLeft.Y + a.Y()*canvasH},
+				imgui.Vec2{X: topLeft.X + b.X()*canvasW, Y: topLeft.Y + b.Y()*canvasH},
+				texEditorUVLayoutColor, 1)
+		}
+	}
 }
 
 // texEditorHandlePaintInput drives one tool's gesture state machine from the

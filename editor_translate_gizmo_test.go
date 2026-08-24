@@ -52,9 +52,9 @@ func TestPickTranslateAxis(t *testing.T) {
 	restore := saveEditorSelection()
 	defer restore()
 	Editor.Mode = Mode3D
-	Editor.level = &Level{Entities: []Entity{{ID: "e0", Position: mgl32.Vec3{0, 0, 0}}}}
-	Editor.ActiveEntityIdx = 0
-	Editor.GizmoKind = gizmoKindEntity
+	Editor.level = &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
+	Editor.SpawnSelected = true
+	Editor.GizmoKind = gizmoKindSpawn
 	Editor.GizmoDragging = false
 
 	origin, ok := translateGizmoOrigin()
@@ -83,15 +83,15 @@ func TestPickTranslateAxis(t *testing.T) {
 
 // TestGizmoDragEntity drives a whole drag — mouse down on an arm, motion, mouse
 // up — and checks the entity slid along that axis only.
-func TestGizmoDragEntity(t *testing.T) {
+func TestGizmoDragSpawnPoint(t *testing.T) {
 	projView := setupGizmoView()
 
 	restore := saveEditorSelection()
 	defer restore()
 	Editor.Mode = Mode3D
-	Editor.level = &Level{Entities: []Entity{{ID: "e0", Position: mgl32.Vec3{0, 0, 0}}}}
-	Editor.ActiveEntityIdx = 0
-	Editor.GizmoKind = gizmoKindEntity
+	Editor.level = &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
+	Editor.SpawnSelected = true
+	Editor.GizmoKind = gizmoKindSpawn
 	Editor.GizmoDragging = false
 	Editor.GizmoDragAxis = -1
 	Editor.SnapToGrid = false
@@ -108,15 +108,15 @@ func TestGizmoDragEntity(t *testing.T) {
 	}
 
 	// Drag to where world (3,0,0) appears. The move is relative to where the arm
-	// was grabbed, so the entity slides by (3 - grab offset) rather than jumping
+	// was grabbed, so the marker slides by (3 - grab offset) rather than jumping
 	// its centre onto the cursor.
 	to, _ := projectToScreen(projView, mgl32.Vec3{3, 0, 0})
 	translateGizmoMouseMove(int32(to.X()), int32(to.Y()))
 
 	wantX := 3 - armLen*0.75
-	pos := Editor.level.Entities[0].Position
+	pos := Editor.level.Spawn.Position
 	if math.Abs(float64(pos.X()-wantX)) > 0.05 {
-		t.Fatalf("entity X = %v, want ~%v", pos.X(), wantX)
+		t.Fatalf("spawn X = %v, want ~%v", pos.X(), wantX)
 	}
 	if pos.Y() != 0 || pos.Z() != 0 {
 		t.Fatalf("dragging X moved other axes: %v", pos)
@@ -128,10 +128,10 @@ func TestGizmoDragEntity(t *testing.T) {
 	}
 
 	// Motion after release must not move anything.
-	before := Editor.level.Entities[0].Position
+	before := Editor.level.Spawn.Position
 	translateGizmoMouseMove(int32(to.X())+50, int32(to.Y()))
-	if Editor.level.Entities[0].Position != before {
-		t.Fatal("motion after release still moved the entity")
+	if Editor.level.Spawn.Position != before {
+		t.Fatal("motion after release still moved the spawn point")
 	}
 }
 
@@ -155,20 +155,20 @@ func TestGizmoSnapAndAxisMoved(t *testing.T) {
 	}
 }
 
-// TestGizmoKindIsModeScoped checks that a level-mode selection cannot drag
-// scenery and vice versa, so stale state from another workspace is inert.
+// TestGizmoKindIsModeScoped checks that a 3D-mode selection cannot be dragged
+// from another sub-mode, so stale state from another workspace is inert.
 func TestGizmoKindIsModeScoped(t *testing.T) {
 	setupGizmoView()
 
 	restore := saveEditorSelection()
 	defer restore()
-	Editor.level = &Level{Entities: []Entity{{ID: "e0", Position: mgl32.Vec3{0, 0, 0}}}}
-	Editor.ActiveEntityIdx = 0
-	Editor.GizmoKind = gizmoKindEntity
+	Editor.level = &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
+	Editor.SpawnSelected = true
+	Editor.GizmoKind = gizmoKindSpawn
 
 	Editor.Mode = Mode3D
 	if _, ok := translateGizmoOrigin(); !ok {
-		t.Fatal("entity gizmo missing in 3D mode")
+		t.Fatal("spawn gizmo missing in 3D mode")
 	}
 
 	Editor.Mode = Mode2D
@@ -176,25 +176,10 @@ func TestGizmoKindIsModeScoped(t *testing.T) {
 		t.Fatal("gizmo should not exist in 2D mode")
 	}
 
-	prevPrims := Editor.SceneryPrimitives
-	prevIdx := Editor.SceneryActivePrimIdx
-	defer func() {
-		Editor.SceneryPrimitives = prevPrims
-		Editor.SceneryActivePrimIdx = prevIdx
-	}()
-
-	Editor.Mode = ModeScenery
-	Editor.SceneryPrimitives = nil
-	Editor.SceneryActivePrimIdx = -1
+	Editor.Mode = Mode3D
+	Editor.SpawnSelected = false
 	if _, ok := translateGizmoOrigin(); ok {
-		t.Fatal("scenery mode with nothing selected should have no gizmo")
-	}
-
-	Editor.SceneryPrimitives = []Primitive{{ID: "p0", Position: mgl32.Vec3{5, 6, 7}}}
-	Editor.SceneryActivePrimIdx = 0
-	origin, ok := translateGizmoOrigin()
-	if !ok || origin != (mgl32.Vec3{5, 6, 7}) {
-		t.Fatalf("scenery gizmo origin = %v (ok=%v), want {5 6 7}", origin, ok)
+		t.Fatal("deselecting the spawn point left its gizmo behind")
 	}
 }
 

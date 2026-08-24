@@ -3,55 +3,19 @@ package main
 // editor_3d.go — 3D fly-around sub-mode of the level editor.
 //
 // Handles:
-//   - Entity selection via screen-space ray casting (AABB test)
-//   - Entity placement from the catalog
+//   - Selection via screen-space ray casting
+//   - Spawn-point placement
 //   - Chunk creation at camera position
 //   - Gizmo drawing for selected objects
 
 import (
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
-	"gopkg.in/yaml.v2"
 )
-
-// ---------- Entity catalog ----------
-
-// EntityDef is a template read from resources/entities/*.yaml.
-type EntityDef struct {
-	ID         string  `yaml:"id"`
-	Model      string  `yaml:"model"`   // path relative to executablePath
-	Texture    string  `yaml:"texture"` // logical texture name
-	Bounding   string  `yaml:"bounding"`
-	BoundHalfX float32 `yaml:"bound_half_x"`
-	BoundHalfY float32 `yaml:"bound_half_y"`
-	BoundHalfZ float32 `yaml:"bound_half_z"`
-	// Animation is the clip a freshly placed entity starts on, so a prefab can
-	// ship already moving rather than needing the clip picked every time.
-	Animation string `yaml:"animation,omitempty"`
-}
-
-// ScanEntityDefs reads all .yaml files in entitiesDir and returns their definitions.
-func ScanEntityDefs(entitiesDir string) []EntityDef {
-	var defs []EntityDef
-	for _, name := range scanFilesByExt(entitiesDir, ".yaml") {
-		data, err := os.ReadFile(filepath.Join(entitiesDir, name))
-		if err != nil {
-			continue
-		}
-		var def EntityDef
-		if err := yaml.Unmarshal(data, &def); err != nil {
-			continue
-		}
-		defs = append(defs, def)
-	}
-	return defs
-}
 
 // ---------- Ray casting ----------
 
@@ -158,101 +122,173 @@ func effectivePickT(t float32, front bool) float32 {
 	return t + pickFaceBias
 }
 
-// Editor3DHandleClick processes a mouse click in 3D mode (entity/sector selection or placement).
+// Editor3DHandleClick processes a mouse click in 3D mode (selection or spawn
+// placement).
 func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	if t.Button != sdl.ButtonLeft {
 		return
 	}
 
-	if Editor.PlacementMode {
-		// 4m in front of the camera, base aligned to the floor.
-		spawnPos := Cam.Position.Add(Cam.Direction.Mul(4.0))
-		spawnPos[1] -= eyeHeight
-		placeSelectedEntityAt(spawnPos)
+	if Editor.SpawnPlacementMode {
+		// 4m in front of the camera, at the floor the camera is standing on.
+		pos := Cam.Position.Add(Cam.Direction.Mul(4.0))
+		pos[1] -= eyeHeight
+		placeSpawnPointAt(pos)
 		return
 	}
 
-	if Editor.PrimPlacementMode {
-		spawnPos := Cam.Position.Add(Cam.Direction.Mul(4.0))
-		spawnPos[1] -= eyeHeight
-		placeSelectedPrimitiveAt(spawnPos)
+	if Editor.EntityPlacementMode {
+		// editor3DPointAt puts it on the surface the click is aimed at, so an
+		// entity lands on the floor rather than floating at a fixed distance.
+		placeEntityAt(editor3DPointAt(t.X, t.Y))
 		return
 	}
 
-	if Editor.ModelPlacementMode {
-		spawnPos := Cam.Position.Add(Cam.Direction.Mul(4.0))
-		spawnPos[1] -= eyeHeight
-		placeSelectedModelAt(spawnPos)
-		return
-	}
-
-	// Vertex handles win over world geometry: they are small, deliberate
-	// targets drawn on top of everything. Repeated clicks on the same cluster
-	// cycle through every vertex under the cursor; ctrl+click takes them all.
-	// (Ctrl rather than shift — shift is held to fly downward.)
+	// What a click means is the selection mode's call. Point and edge mode each
+	// own the click outright: hitting nothing there clears the selection rather
+	// than falling through to the surface behind, which is what makes the modes
+	// predictable. Repeated clicks on the same cluster cycle through every
+	// handle under the cursor; ctrl+click takes them all. (Ctrl rather than
+	// shift — shift is held to fly downward.)
 	ctrlHeld := sdl.GetModState()&sdl.KMOD_CTRL != 0
-	if handleVertexClick(t.X, t.Y, ctrlHeld) {
+	switch Editor.SelMode {
+	case editorSelPoint:
+		if !handleVertexClick(t.X, t.Y, ctrlHeld) && !ctrlHeld {
+			editor3DClearSelection()
+		}
+		return
+	case editorSelEdge:
+		if !handleEdgeClick(t.X, t.Y, ctrlHeld) && !ctrlHeld {
+			editor3DClearSelection()
+		}
 		return
 	}
 
-	// Edges come next, for the same reason and on the same terms — their
-	// prisms are pulled back from the corners, so points win the overlap.
-	if handleEdgeClick(t.X, t.Y, ctrlHeld) {
-		return
-	}
-
-	// Selection: one ray, closest hit wins across entities, primitives, and
-	// sector faces.
+	// Face mode. Selection: one ray, closest hit wins across the spawn marker,
+	// the placed entities and the sector faces.
 	hit := pick3D(t.X, t.Y)
 
-	// Start from a clean slate so no stale selection survives the click.
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = -1
+	// A face, and ctrl held: add it to (or take it back out of) the set being
+	// built, leaving everything else alone. This is the only branch that does
+	// not start from a clean slate, because building a multi-selection is
+	// exactly the case where the previous click's result has to survive.
+	if f, ok := faceSelFromHit(hit); ok && ctrlHeld {
+		editorSelectFace(f, true)
+		Editor.ActiveBiomeSectorIdx = -1
+		return
+	}
+	// A ctrl+click that reached no face keeps the set as it is rather than
+	// throwing it away: aiming past the last wall of a dozen and missing must
+	// not undo the other eleven.
+	if ctrlHeld {
+		return
+	}
+
+	// Start from a clean slate so no stale selection survives the click. The
+	// biome sector goes with the rest: it is the same selection the 2D layer
+	// works in, and one sector is selected wherever it was clicked.
+	editorClearSpawnSelection()
+	editorClearEntitySelection()
 	clearVertexSelection()
-	Editor.ActiveSurface = ""
-	Editor.ActiveEdgeKind = ""
-	Editor.ActiveEdgeIdx = -1
+	clearFaceSelection()
+	Editor.ActiveBiomeSectorIdx = -1
 	Editor.GizmoKind = gizmoKindNone
 
+	if f, ok := faceSelFromHit(hit); ok {
+		editorSelectFace(f, false)
+		return
+	}
+
 	switch hit.kind {
+	case pickSpawn:
+		Editor.ActiveSectorIdx = -1
+		editorSelectSpawn()
+
 	case pickEntity:
-		Editor.ActiveEntityIdx = hit.idx
 		Editor.ActiveSectorIdx = -1
-		Editor.GizmoKind = gizmoKindEntity
-		Editor.PanelFocus = panelFocusEntity
+		editorSelectEntity(hit.idx)
 
-	case pickPrimitive:
+	case pickWater:
+		// A water plane has no properties of its own — everything about it is
+		// derived from the Water-kind biome sector that produced it — so the
+		// click selects that sector and the panel shows its water settings.
 		Editor.ActiveChunkIdx = hit.chunkIdx
-		Editor.ActivePrimitiveIdx = hit.idx
 		Editor.ActiveSectorIdx = -1
-		Editor.GizmoKind = gizmoKindPrimitive
-		Editor.PanelFocus = panelFocusPrimitive
-
-	case pickWall:
-		Editor.ActiveChunkIdx = hit.chunkIdx
-		Editor.ActiveSectorIdx = hit.sectorIdx
-		Editor.ActiveSurface = "wall"
-		Editor.ActiveEdgeKind = "wall"
-		Editor.ActiveEdgeIdx = hit.idx
-		Editor.PanelFocus = panelFocusWall
-
-	case pickFloor:
-		Editor.ActiveChunkIdx = hit.chunkIdx
-		Editor.ActiveSectorIdx = hit.sectorIdx
-		Editor.ActiveSurface = "floor"
-		Editor.PanelFocus = panelFocusFloor
-
-	case pickCeiling:
-		Editor.ActiveChunkIdx = hit.chunkIdx
-		Editor.ActiveSectorIdx = hit.sectorIdx
-		Editor.ActiveSurface = "ceiling"
-		Editor.PanelFocus = panelFocusCeiling
+		Editor.ActiveBiomeSectorIdx = editorWaterSectorFor(hit.chunkIdx, hit.idx)
+		Editor.PanelFocus = panelFocusWater
 
 	default:
 		// Click on empty space — deselect.
 		Editor.ActiveSectorIdx = -1
 		Editor.PanelFocus = panelFocusNone
 	}
+}
+
+// editor3DClearSelection drops every kind of 3D selection at once — the miss
+// case for point and edge mode, where nothing under the cursor means nothing
+// selected.
+func editor3DClearSelection() {
+	clearVertexSelection()
+	editorClearSpawnSelection()
+	editorClearEntitySelection()
+	clearFaceSelection()
+	Editor.ActiveSectorIdx = -1
+	Editor.ActiveBiomeSectorIdx = -1
+	Editor.GizmoKind = gizmoKindNone
+	Editor.PanelFocus = panelFocusNone
+}
+
+// editorWaterSection shows the settings behind the water plane the user clicked.
+// The plane itself has nothing to edit — it is regenerated from its Water-kind
+// biome sector whenever that sector changes — so this is that sector's water
+// half, reached from the 3D view instead of from the 2D biome layer.
+func editorWaterSection(lvl *Level) {
+	// Shown whenever a water sector is the selection, however it was selected:
+	// clicking the plane here, or picking the sector in the 2D biome layer.
+	if Editor.ActiveBiomeSectorIdx < 0 ||
+		Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
+		return
+	}
+	ch := &lvl.Chunks[Editor.ActiveChunkIdx]
+	if Editor.ActiveBiomeSectorIdx < 0 || Editor.ActiveBiomeSectorIdx >= len(ch.BiomeSectors) {
+		return
+	}
+	bs := &ch.BiomeSectors[Editor.ActiveBiomeSectorIdx]
+	if bs.Brush.Kind != BiomeWater {
+		return
+	}
+
+	imgui.Separator()
+	editorFocusOpen(panelFocusWater)
+	if !imgui.CollapsingHeaderV("Water: "+bs.ID, imgui.TreeNodeFlagsDefaultOpen) {
+		return
+	}
+	editorFocusScroll(panelFocusWater)
+	biomeWaterControls(ch, bs)
+	imgui.Text("Shape and extent come from the painted polygon —")
+	imgui.Text("edit those in the 2D view's biome layer.")
+}
+
+// editorWaterSectorFor resolves a water surface back to the biome sector that
+// produced it. The two are matched by ID, which is what biome_water.go's sync
+// keys on as well; -1 when the sector has since been deleted and the surface
+// has not been swept up yet.
+func editorWaterSectorFor(chunkIdx, surfaceIdx int) int {
+	lvl := Editor.level
+	if lvl == nil || chunkIdx < 0 || chunkIdx >= len(lvl.Chunks) {
+		return -1
+	}
+	ch := &lvl.Chunks[chunkIdx]
+	if surfaceIdx < 0 || surfaceIdx >= len(ch.WaterSurfaces) {
+		return -1
+	}
+	id := ch.WaterSurfaces[surfaceIdx].ID
+	for i := range ch.BiomeSectors {
+		if ch.BiomeSectors[i].ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 // moveChunk shifts all shared points in a chunk by the delta to newOrigin,
@@ -302,39 +338,15 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 	cyan := mgl32.Vec3{0, 1, 1}
 	white := mgl32.Vec3{1, 1, 1}
 
-	// Highlight all entity AABBs (dim white)
-	for i := range lvl.Entities {
-		e := &lvl.Entities[i]
-		if !e.Visible {
-			continue
-		}
+	// Outline the spawn marker, so it stays findable even when the arrow itself
+	// is edge-on or buried in a slope.
+	if lvl.Spawn != nil {
 		col := white
-		if i == Editor.ActiveEntityIdx {
+		if Editor.SpawnSelected {
 			col = yellow
 		}
-		GizmoAABB(
-			e.Position.Sub(mgl32.Vec3{e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ}),
-			e.Position.Add(mgl32.Vec3{e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ}),
-			col,
-		)
-	}
-
-	// Highlight primitive AABBs
-	green := mgl32.Vec3{0, 1, 0}
-	for ci := range lvl.Chunks {
-		ch := &lvl.Chunks[ci]
-		for pi := range ch.Primitives {
-			p := &ch.Primitives[pi]
-			col := white
-			if ci == Editor.ActiveChunkIdx && pi == Editor.ActivePrimitiveIdx {
-				col = green
-			}
-			GizmoAABB(
-				p.Position.Sub(mgl32.Vec3{p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ}),
-				p.Position.Add(mgl32.Vec3{p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ}),
-				col,
-			)
-		}
+		smin, smax := lvl.Spawn.WorldAABB()
+		GizmoAABB(smin, smax, col)
 	}
 
 	// Draw point light spheres
@@ -358,9 +370,9 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 	editorExtrusionRenderGizmos()
 	editorRenderExtrusionOutlines()
 
-	// Vertex handle boxes near the cursor plus the translate gizmo, drawn last
-	// and without depth testing so a handle is always visible where it is
-	// clickable.
+	// The selected face's outline, the handles the current selection mode can
+	// act on, and the translate gizmo — drawn last and without depth testing,
+	// so a mark is visible wherever it means something.
 	editorRenderInteractiveOverlays(projView, true)
 }
 
@@ -496,11 +508,16 @@ func Editor3DPanel() {
 
 	// ---- Navigation buttons ----
 	if imgui.CollapsingHeaderV("Navigation", imgui.TreeNodeFlagsDefaultOpen) {
-		imgui.Text("Right-click drag to rotate")
-		imgui.Text("Click a face, object, vertex or edge to select it")
-		imgui.Text("Right-click without dragging for its actions")
+		imgui.Text("Right- or middle-drag to turn; shift+middle to pan")
+		imgui.Text("V flies or orbits, F frames the selection, wheel zooms")
+		imgui.Text("1/2/3 pick points, edges or faces; Z toggles wireframe")
+		imgui.Text("Ctrl+click adds to the selection, in all three modes")
+		imgui.Text("Right-click without dragging for the selection's actions")
 		imgui.Text("Drag an R/G/B arm to move it along X/Y/Z")
 		imgui.Checkbox("Show All Point/Edge Boxes", &Editor.ShowPointSelectRadius)
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Wireframe already draws them all; this is the same\nfor a solid-shaded view.")
+		}
 		imgui.Button("Fwd##nav")
 		if imgui.IsItemActive() {
 			Editor.NavForward = true
@@ -532,26 +549,18 @@ func Editor3DPanel() {
 		}
 	}
 
-	// --- Entity catalog ---
-	editorEntityCatalogSection()
+	// --- Player spawn point ---
+	editorSpawnSection(lvl)
 
-	// --- Primitive catalog ---
-	editorPrimitiveCatalogSection()
+	// --- Entities: the catalog, the level's list, and the selected one ---
+	editorEntitySection(lvl)
+	editorEntityProperties(lvl)
 
-	// --- Model catalog ---
-	editorModelCatalogSection()
-
-	// --- Scenery import ---
-	editorSceneryImportSection()
-
-	// --- Selected primitive properties ---
-	editorPrimitivePropertiesSection(lvl)
-
-	// --- Selected entity properties ---
-	editorEntityPropertiesSection(lvl)
+	// --- Water plane clicked in the viewport ---
+	editorWaterSection(lvl)
 
 	// --- Selected sector/edge properties (from 3D click) ---
-	if Editor.ActiveEntityIdx < 0 && Editor.ActiveSectorIdx >= 0 &&
+	if !Editor.SpawnSelected && Editor.ActiveSectorIdx >= 0 &&
 		Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 		imgui.Separator()
 		sch := &lvl.Chunks[Editor.ActiveChunkIdx]
@@ -560,9 +569,7 @@ func Editor3DPanel() {
 			editorFocusOpen(panelFocusFloor, panelFocusCeiling, panelFocusWall)
 			if imgui.CollapsingHeaderV("Sector: "+s3d.ID, imgui.TreeNodeFlagsDefaultOpen) {
 				imgui.InputText("ID##sid3d", &s3d.ID)
-				if Editor.ActiveSurface != "" {
-					imgui.Text("Clicked face: " + Editor.ActiveSurface)
-				}
+				editorFaceSelectionNote()
 				editorFocusOpen(panelFocusFloor)
 				if imgui.TreeNode("Floor##3df") {
 					editorFocusScroll(panelFocusFloor)
@@ -702,62 +709,6 @@ func Editor3DPanel() {
 	editorChunkPopups(lvl)
 }
 
-// reloadPrimitive regenerates the geometry and bounding volumes for a primitive
-// after its type, scale, or side count changes.
-func reloadPrimitive(ch *Chunk, idx int) {
-	p := &ch.Primitives[idx]
-	p.Geometry.Delete()
-
-	// Switching an existing primitive to water needs a usable starting look.
-	if p.Kind == PrimitiveWater && !p.Water.Enabled {
-		p.Water = DefaultWaterParams()
-	}
-
-	// Recompute bounding volumes from type + scale
-	scale := p.Scale
-	if scale == (mgl32.Vec3{}) {
-		scale = mgl32.Vec3{1, 1, 1}
-	}
-	switch p.Kind {
-	case PrimitiveRectPrism:
-		p.BoundingKind = BoundingAABB
-		p.BoundHalfX = scale.X() / 2
-		p.BoundHalfY = scale.Y() / 2
-		p.BoundHalfZ = scale.Z() / 2
-	case PrimitiveSphere:
-		p.BoundingKind = BoundingSphere
-		maxS := scale.X()
-		if scale.Y() > maxS {
-			maxS = scale.Y()
-		}
-		if scale.Z() > maxS {
-			maxS = scale.Z()
-		}
-		p.BoundHalfX = maxS / 2
-		p.BoundHalfY = maxS / 2
-		p.BoundHalfZ = maxS / 2
-	case PrimitiveCylinder:
-		p.BoundingKind = BoundingCylinder
-		maxXZ := scale.X()
-		if scale.Z() > maxXZ {
-			maxXZ = scale.Z()
-		}
-		p.BoundHalfX = maxXZ / 2
-		p.BoundHalfY = scale.Y() / 2
-		p.BoundHalfZ = maxXZ / 2
-	case PrimitivePlane, PrimitiveWater:
-		p.BoundingKind = BoundingAABB
-		p.BoundHalfX = scale.X() / 2
-		p.BoundHalfY = 0.01
-		p.BoundHalfZ = scale.Z() / 2
-	case PrimitiveSpawnPoint:
-		p.BoundingKind = BoundingAABB
-		p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ = spawnPointBounds(scale)
-	}
-
-	_ = p.Load()
-}
-
 // createChunkAtCamera creates a minimal rectangular chunk at the camera's XZ position.
 func createChunkAtCamera(id string) {
 	lvl := Editor.level
@@ -822,8 +773,8 @@ func createChunkAtCamera(id string) {
 // duplicateActiveChunk deep-copies the currently active chunk, reuploads all
 // GPU geometry, and makes the copy the new active chunk. The new chunk keeps
 // the same world-space position as the source; the user can move it via the
-// Chunk Properties Origin drag. Sector and primitive IDs are suffixed with
-// _copy (or _copyN) to stay unique within the level.
+// Chunk Properties Origin drag. Sector IDs are suffixed with _copy (or
+// _copyN) to stay unique within the level.
 func duplicateActiveChunk() {
 	lvl := Editor.level
 	if lvl == nil {
@@ -842,9 +793,6 @@ func duplicateActiveChunk() {
 		s := &clone.Sectors[si]
 		_ = reloadSector(&clone, s)
 	}
-	for pi := range clone.Primitives {
-		_ = clone.Primitives[pi].Load()
-	}
 	clone.RebuildGaps()
 
 	lvl.Chunks = append(lvl.Chunks, clone)
@@ -853,7 +801,7 @@ func duplicateActiveChunk() {
 
 // deleteActiveChunk removes the currently active chunk from the level after
 // releasing all of its GPU resources (sector walls, floor/ceiling, portals,
-// extrusion geometries, and primitives).
+// extrusion geometries, and derived water surfaces).
 func deleteActiveChunk() {
 	lvl := Editor.level
 	if lvl == nil {
@@ -887,8 +835,8 @@ func deleteActiveChunk() {
 			s.Portals[pi].CeilGap.Delete()
 		}
 	}
-	for pi := range ch.Primitives {
-		ch.Primitives[pi].Geometry.Delete()
+	for wi := range ch.WaterSurfaces {
+		ch.WaterSurfaces[wi].Geometry.Delete()
 	}
 
 	// Remove the chunk from the level.
@@ -902,13 +850,12 @@ func deleteActiveChunk() {
 	}
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveEdgeIdx = -1
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = -1
+	editorClearSpawnSelection()
 }
 
 // uniqueChunkCopyID returns a chunk ID + suffix pair that does not collide
 // with any existing chunk in lvl. The suffix ("_copy", "_copy2", ...) is
-// reused for nested sector/primitive IDs so they stay consistent.
+// reused for nested sector IDs so they stay consistent.
 func uniqueChunkCopyID(lvl *Level, srcID string) (string, string) {
 	existing := make(map[string]struct{}, len(lvl.Chunks))
 	for i := range lvl.Chunks {
@@ -922,5 +869,29 @@ func uniqueChunkCopyID(lvl *Level, srcID string) (string, string) {
 		}
 		suffix = fmt.Sprintf("_copy%d", n)
 		candidate = srcID + suffix
+	}
+}
+
+// editorFaceSelectionNote says what the face selection is, and — when it holds
+// more than one — that the fields below it describe only the first.
+//
+// The panel binds its widgets straight to the primary's fields, which is what
+// makes them live; there is no honest way for a slider to edit twelve floats at
+// once. So the note points at where the bulk actions actually are, rather than
+// letting the panel quietly imply that typing a texture name here repaints
+// everything outlined in the viewport.
+func editorFaceSelectionNote() {
+	n := selectedFaceCount()
+	if n == 0 {
+		return
+	}
+	if n == 1 {
+		imgui.Text("Selected face: " + Editor.ActiveSurface)
+		return
+	}
+	imgui.Text(fmt.Sprintf("%d faces selected — fields below are the first one's", n))
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Right-click the viewport for texture, visibility,\n" +
+			"collision and wall/portal actions that apply to all of them.")
 	}
 }

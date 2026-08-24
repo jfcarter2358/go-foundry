@@ -1,20 +1,20 @@
 package main
 
-// spawn_point.go — the player spawn point: a marker "primitive" (PrimitiveSpawnPoint)
-// that carries the position and facing the player starts gameplay with.
+// spawn_point.go — the player spawn point: where gameplay starts, and which way
+// it faces.
 //
-// It rides on the primitive system rather than being its own level concept so it
-// inherits everything primitives already have for free: placement from the 3D and
-// 2D catalogs, ray picking, the translate gizmo, the properties panel, chunk-local
-// save/load, undo, and chunk import. What makes it a marker rather than geometry is
-// the three exemptions below — it never draws outside the editor, never casts a
-// shadow, and never collides — plus the fact that its Position is the player's
-// *feet*, the same reference point placeSelectedPrimitiveAt uses in 3D.
+// It used to ride on the primitive system, inheriting placement, picking and
+// save/load from it for free. Primitives are no longer part of a level, so the
+// spawn is now its own first-class thing: one optional SpawnPoint per level,
+// written under the top-level `spawn:` key. What it kept from the primitive
+// days is the part that was always specific to it — an arrow mesh drawn only in
+// the editor, a Position that is the player's *feet* rather than their eyes,
+// and no collision of any kind.
 //
-// Facing is derived from the primitive's own Rotation by transforming the mesh's
-// local forward axis (+X, matching yaw 0 in DirectionFromAngles) through the
-// rotation, so the arrow the user sees in the viewport and the direction the player
-// looks are the same vector by construction — no separate yaw field to drift.
+// Facing is derived from Rotation by transforming the mesh's local forward axis
+// (+X, matching yaw 0 in DirectionFromAngles) through that rotation, so the
+// arrow the user sees in the viewport and the direction the player looks are the
+// same vector by construction — no separate yaw field to drift.
 
 import (
 	"math"
@@ -26,26 +26,71 @@ import (
 // player's feet, so an unlifted marker would z-fight with the floor it sits on.
 const spawnArrowLift = float32(0.16)
 
+// spawnMarkerTexture is what the arrow is drawn with. It is an editor-only
+// marker, so this only ever needs to be a texture that exists.
+const spawnMarkerTexture = "default"
+
 // spawnArrowForward is the arrow's local pointing axis. +X is yaw 0 in
 // DirectionFromAngles, which makes an unrotated spawn point face the same way an
 // unrotated camera does.
 var spawnArrowForward = mgl32.Vec3{1, 0, 0}
 
-// isSpawnPoint reports whether p is a spawn marker rather than real geometry.
-func isSpawnPoint(p *Primitive) bool { return p.Kind == PrimitiveSpawnPoint }
+// SpawnPoint is a level's player start: a position (the player's feet), a
+// facing, and the arrow mesh that shows both in the editor.
+type SpawnPoint struct {
+	Position mgl32.Vec3
+	Rotation mgl32.Vec3 // Euler angles (X, Y, Z) in radians
+	Geometry Geometry
+}
 
-// primitiveCollides reports whether p should take part in collision. Spawn
-// markers never do, even if a hand-edited level sets collision on one.
-func primitiveCollides(p *Primitive) bool { return p.Collision && !isSpawnPoint(p) }
+// ModelMatrix builds the marker's model matrix, composed in the same Y*X*Z
+// order SpawnDirection derives its facing from.
+func (s *SpawnPoint) ModelMatrix() mgl32.Mat4 {
+	T := mgl32.Translate3D(s.Position.X(), s.Position.Y(), s.Position.Z())
+	return T.Mul4(spawnRotationMatrix(s.Rotation))
+}
+
+// Load uploads the arrow mesh. Safe to call repeatedly — the previous upload is
+// released first, which is what makes it usable as a "rebuild after an edit".
+func (s *SpawnPoint) Load() error {
+	s.Geometry.Delete()
+	verts, idx := generateSpawnArrow()
+	if err := ensureTextureLoaded(spawnMarkerTexture); err != nil {
+		return err
+	}
+	return s.Geometry.Load(verts, idx, spawnMarkerTexture, s.Position)
+}
+
+// Delete releases the marker's GPU buffers.
+func (s *SpawnPoint) Delete() { s.Geometry.Delete() }
+
+// WorldAABB returns the marker's world-space bounds, used for frustum culling
+// and as the picking fallback.
+func (s *SpawnPoint) WorldAABB() (mgl32.Vec3, mgl32.Vec3) {
+	hx, hy, hz := spawnPointBounds()
+	h := mgl32.Vec3{hx, hy, hz}
+	if s.Rotation != (mgl32.Vec3{}) {
+		// A rotated marker uses the extents' length as a uniform radius so the
+		// box stays valid at any orientation.
+		r := h.Len()
+		h = mgl32.Vec3{r, r, r}
+	}
+	return s.Position.Sub(h), s.Position.Add(h)
+}
+
+// spawnRotationMatrix composes an Euler triple the one way everything here
+// agrees on: Y, then X, then Z.
+func spawnRotationMatrix(rot mgl32.Vec3) mgl32.Mat4 {
+	return mgl32.HomogRotate3DY(rot.Y()).
+		Mul4(mgl32.HomogRotate3DX(rot.X())).
+		Mul4(mgl32.HomogRotate3DZ(rot.Z()))
+}
 
 // SpawnDirection returns the unit direction a spawn point faces, derived from its
-// Euler rotation the same way ModelMatrix builds it (Y * X * Z), so it always
-// agrees with the arrow on screen.
-func SpawnDirection(p *Primitive) mgl32.Vec3 {
-	R := mgl32.HomogRotate3DY(p.Rotation.Y()).
-		Mul4(mgl32.HomogRotate3DX(p.Rotation.X())).
-		Mul4(mgl32.HomogRotate3DZ(p.Rotation.Z()))
-	d := R.Mul4x1(spawnArrowForward.Vec4(0)).Vec3()
+// Euler rotation the same way ModelMatrix builds it, so it always agrees with
+// the arrow on screen.
+func SpawnDirection(s *SpawnPoint) mgl32.Vec3 {
+	d := spawnRotationMatrix(s.Rotation).Mul4x1(spawnArrowForward.Vec4(0)).Vec3()
 	if d.Len() < 1e-6 {
 		return spawnArrowForward
 	}
@@ -55,8 +100,8 @@ func SpawnDirection(p *Primitive) mgl32.Vec3 {
 // SpawnYawPitch returns the camera angles (radians) a spawn point spawns the
 // player with. Pitch is clamped to the same limit mouse-look enforces so a
 // straight-up marker can't hand gameplay a gimbal-flipped camera.
-func SpawnYawPitch(p *Primitive) (yaw, pitch float32) {
-	d := SpawnDirection(p)
+func SpawnYawPitch(s *SpawnPoint) (yaw, pitch float32) {
+	d := SpawnDirection(s)
 	yaw = float32(math.Atan2(float64(d.Z()), float64(d.X())))
 	pitch = float32(math.Asin(float64(clampValue(d.Y(), -1, 1))))
 	if pitch > maxPitch {
@@ -68,41 +113,30 @@ func SpawnYawPitch(p *Primitive) (yaw, pitch float32) {
 	return yaw, pitch
 }
 
-// FindSpawnPoint returns the level's active spawn point, or nil when the level has
-// none. Levels are free to hold several (handy while blocking out a map); the
-// first one in chunk order wins, which is stable across saves because chunk and
-// primitive order both round-trip through the YAML.
-func FindSpawnPoint(lvl *Level) *Primitive {
+// FindSpawnPoint returns the level's spawn point, or nil when it has none.
+func FindSpawnPoint(lvl *Level) *SpawnPoint {
 	if lvl == nil {
 		return nil
 	}
-	for ci := range lvl.Chunks {
-		ch := &lvl.Chunks[ci]
-		for pi := range ch.Primitives {
-			if isSpawnPoint(&ch.Primitives[pi]) {
-				return &ch.Primitives[pi]
-			}
-		}
-	}
-	return nil
+	return lvl.Spawn
 }
 
 // ApplySpawnPoint teleports the player and camera to the level's spawn point and
 // reports whether one was found. Callers fall back to whatever camera they already
 // had when it returns false, so a level with no spawn point behaves as before.
 func ApplySpawnPoint(lvl *Level) bool {
-	p := FindSpawnPoint(lvl)
-	if p == nil {
+	s := FindSpawnPoint(lvl)
+	if s == nil {
 		return false
 	}
 
-	Cam.Yaw, Cam.Pitch = SpawnYawPitch(p)
-	Cam.Position = p.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
+	Cam.Yaw, Cam.Pitch = SpawnYawPitch(s)
+	Cam.Position = s.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
 	updateCamDirection()
 	updateCamMatrix()
 
 	if PlayerEntity != nil {
-		PlayerEntity.Position = p.Position
+		PlayerEntity.Position = s.Position
 		PlayerEntity.Velocity = mgl32.Vec3{}
 	}
 	// Spawning mid-air is legitimate (a marker over a ledge), so let gravity
@@ -138,7 +172,7 @@ func generateSpawnArrow() ([][]float32, []int) {
 	x0, x1 := spawnShaftBackX, spawnShaftFrontX
 
 	// Shaft box. Corner order per face is CCW seen from outside; addQuad emits the
-	// index pattern that matches the winding generateRectPrism uses.
+	// index pattern that matches the winding the arrow's other faces use.
 	addQuad(&verts, &idx, // +Y
 		[3]float32{x0, y1, z1}, [3]float32{x1, y1, z1}, [3]float32{x1, y1, z0}, [3]float32{x0, y1, z0})
 	addQuad(&verts, &idx, // -Y
@@ -175,7 +209,7 @@ func generateSpawnArrow() ([][]float32, []int) {
 
 // addQuad appends one textured quad. a,b,c,d run counter-clockwise as seen from
 // the front of the face; the emitted indices reverse that, matching the winding
-// every other primitive generator uses (see generateRectPrism).
+// the head's sloping faces use (see addTri).
 func addQuad(verts *[][]float32, idx *[]int, a, b, c, d [3]float32) {
 	base := len(*verts)
 	*verts = append(*verts,
@@ -198,9 +232,10 @@ func addTri(verts *[][]float32, idx *[]int, a, b, c [3]float32) {
 	*idx = append(*idx, base, base+2, base+1)
 }
 
-// spawnPointBounds returns the marker's half-extents for the given scale. Used
-// only for frustum culling and as the picking fallback — the mesh itself is what
-// clicks actually hit.
-func spawnPointBounds(scale mgl32.Vec3) (hx, hy, hz float32) {
-	return 0.5 * scale.X(), 0.35 * scale.Y(), 0.25 * scale.Z()
+// spawnPointBounds returns the marker's half-extents. Used only for frustum
+// culling and as the picking fallback — the mesh itself is what clicks actually
+// hit. The marker has no scale of its own: it is a fixed-size annotation on the
+// level, not geometry in it.
+func spawnPointBounds() (hx, hy, hz float32) {
+	return 0.5, 0.35, 0.25
 }

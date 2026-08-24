@@ -92,6 +92,8 @@ func modelContextMenuItems() []ctxMenuItem {
 		return nil
 	}
 	items := []ctxMenuItem{{Label: modelContextHeading()}, {Separator: true}}
+	items = append(items, modelDocMenuItems()...)
+	items = append(items, ctxMenuItem{Separator: true})
 
 	switch {
 	case modelPoseActive():
@@ -149,7 +151,6 @@ func modelFaceMenuItems() []ctxMenuItem {
 		{Separator: true},
 		{Label: "Smooth", Checked: smooth, Disabled: none,
 			Do: func() { modelSetSelectedFaceSmooth(!smooth) }},
-		{Label: "Texture", Disabled: none, Sub: modelTextureMenuItems()},
 		{Label: "UV", Disabled: none, Sub: []ctxMenuItem{
 			{Label: "Unwrap (world scale)", Do: func() { modelUnwrapSelectedFaces(false) }},
 			{Label: "Unwrap to 0..1", Do: func() { modelUnwrapSelectedFaces(true) }},
@@ -160,10 +161,22 @@ func modelFaceMenuItems() []ctxMenuItem {
 	}
 }
 
-// modelTextureMenuItems is the texture list, ticked at the one the first
-// selected face wears.
+// modelTextureMenuItems is the texture list, ticked at the one the model wears.
 func modelTextureMenuItems() []ctxMenuItem {
-	return ctxTextureMenuItems(modelSelectedFaceTexture(), modelSetSelectedFaceTexture)
+	return ctxTextureMenuItems(modelTexture(), modelSetTexture)
+}
+
+// modelDocMenuItems are the whole-document rows. They sit above the
+// selection-specific block and are never disabled, because the texture a model
+// wears and the atlas it is unwrapped onto belong to the document — asking for
+// either has nothing to do with what happens to be selected.
+func modelDocMenuItems() []ctxMenuItem {
+	return []ctxMenuItem{
+		{Label: "Texture", Sub: modelTextureMenuItems(),
+			Tooltip: "The one image the whole model is painted with."},
+		{Label: "Unwrap && Paint...", Do: modelOpenUnwrapDialog,
+			Tooltip: "Flatten the whole mesh into one texture and open it\nin the texture editor. The model updates as you paint."},
+	}
 }
 
 // ---------- weights ----------

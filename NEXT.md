@@ -1,9 +1,3 @@
-# Bugs
-
-- [ ] Sector editor mouse drag should snap when enabled
-- [ ] Lighting sometimes bleeds through the back of walls when it shouldn't
-- [ ] Jump doesn't work anymore
-
 # Features
 
 ## Done
@@ -16,16 +10,14 @@
 - [x] Ability to snap points together so we can connect sectors
 - [x] Ability to fullscreen the application
 - [x] Should be able to connect to vertices to create new sectors
-- [x] 3D level editor should let me click on entities to then edit their properties
-- [x] Entity collision
+- [x] 3D level editor should let me click on a face, vertex or edge to edit its properties
 - [x] Shadows
 - [x] Gravity (global)
 - [x] 2-way rendering for walls/ceilings/floors
 - [x] Optional FPS/position/debug/etc. display
 - [x] Sector/chunk culling for rendering
 - [x] UV editing
-- [x] Primitives (plane, square, etc.)
-- [x] Textures/models/entities/etc. should be loaded from a directory traversal, not a hard-coded map
+- [x] Textures should be loaded from a directory traversal, not a hard-coded map
 - [x] Water
 - [x] Procedural detail
 - [x] Smooth shading (per-surface normal smoothing, including displaced detail)
@@ -35,41 +27,73 @@
 - [x] Remove fake ground-contact shadows (dynamic shadows only)
 - [x] 3D mode edge selection
 - [x] Skeletal animation (pose mode, keyframes, GPU skinning)
+- [x] Remove entities/primitives from levels, and the scenery editor
+- [x] Entities, reintroduced: reusable definitions in `entities/`, instances
+      placed in a level, several named model attachments each with its own
+      transform and animation set, tags, typed attributes, velocity and angular
+      velocity
+- [x] 2D mode point/edge/face selection modes (shared with the 3D view)
+- [x] Move/rotate/scale gizmos in both editor views, acting on a multi-selection
+      about its own centre
+- [x] Ctrl+click multi-select on the 2D map, and Join (J / Shift+J) to turn the
+      picked points into edges — replaces the ctrl+click connect chain
+- [x] 2D map right-click context menu
+- [x] Multi-select faces (ctrl+click) in both views; texture, visibility,
+      collision and wall/portal conversion apply to the whole selection
+- [x] Right click action menu (3D editor and model editor)
+- [x] Selection modes and gizmo tools shared between the 2D map and the 3D view
+- [x] 3D mode edge selection
+- [x] Model editor
+- [x] Animation editor
+- [x] Models
+- [x] Model bones
+- [x] Animations
 
 ## TODO
 
 ### Editor
 
-- [x] 3D mode edge selection
-- [ ] Re-organize settings panel
-- [x] Model editor
-- [x] Animation editor
-- [ ] Re-do top bar
+- [ ] Script editor
 - [ ] UI builder
-- [ ] Default entity definitions
-- [ ] Default sector settings
+- [ ] Re-do top bar
+- [ ] Re-organize 3D editor settings panel
 - [ ] Configurable editor keybindings
-- [x] Right click action menu (3D editor and model editor)
 
 ### Engine
 
-- [x] Models
-- [x] Model bones
-- [x] Animations
+- [/] Scripting
 - [ ] Animated textures
 - [ ] Sprites
 - [ ] Particles
-- [ ] Scripting engine
 - [ ] Skeleton sockets
 - [ ] Volumes
 - [ ] Vehicles
+- [ ] Physics engine
 - [ ] Texture transparency
 - [ ] Texture blending
 - [ ] Trees
 - [ ] Configurable keybindings
-- [ ] Object collision physics
+- [x] Object collision physics (push-apart; no restitution or friction yet)
 - [ ] Water reflections
 - [ ] Music and Sound Effects
 - [ ] Volumetric displacement (e.g. sand, snow)
-- [ ] 3D water plane
 - [ ] Re-do wall extrusions
+
+### Follow-on from entities
+
+Entities answered "how does an authored model get into a world" — a definition
+under `entities/`, placed as an instance by a level — and re-fed the GPU skinning
+path. What is left is what deliberately was not built with them:
+
+- [x] Entity-against-world and entity-against-entity collision, as per-type
+      toggles (`collision: {world, entities, gravity, movable}`) with engine-wide
+      master switches on 8 and 9 — no scripting needed
+- [ ] `enter`/`exit`/`interact` events over the overlap tests
+- [ ] Shape-aware push-apart. Overlaps resolve on the world AABB whatever the
+      `bounding` kind is, so a sphere pushes apart as a box.
+- [ ] Restitution/friction, and more than one solver iteration per frame
+- [ ] Scripting: `@id` and `#tag` addressing, and reading/writing attributes.
+      `EntitiesContaining` and `FindEntitiesByTag` are the queries it needs.
+- [ ] Animation blending between clips (a switch is a hard cut today)
+- [ ] Editing entity *definitions* in the editor. The panel edits an instance;
+      changing the type still means editing its YAML and pressing Reload.

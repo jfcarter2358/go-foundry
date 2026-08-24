@@ -25,11 +25,14 @@ import (
 
 // ModelFace is one CCW polygon of the mesh. Verts indexes ModelDoc.Verts; UVs
 // is index-parallel to Verts, so UVs[i] belongs to Verts[i].
+//
+// A face carries no texture of its own: the whole document wears one texture
+// (ModelDoc.Texture), and a face's share of it is decided by where its UVs
+// land. See the note on ModelDoc.Texture for why.
 type ModelFace struct {
-	Verts   []int
-	UVs     []mgl32.Vec2
-	Texture string // logical texture name — same namespace as Wall.Texture
-	Smooth  bool
+	Verts  []int
+	UVs    []mgl32.Vec2
+	Smooth bool
 }
 
 // clone returns a deep copy; the slices must not be shared with the original or
@@ -47,10 +50,27 @@ func (f ModelFace) clone() ModelFace {
 // the one thing the level places, and a skeleton kept somewhere else would be a
 // second file the user has to remember to keep in step.
 type ModelDoc struct {
-	ID    string
-	Verts []mgl32.Vec3
-	Faces []ModelFace
-	Bones []ModelBone
+	ID string
+	// Texture is the one image the whole model is painted with — the same
+	// logical name Wall.Texture holds. Empty means defaultModelTexture.
+	//
+	// One texture per model, rather than one per face, because the two ways of
+	// texturing a mesh answer different questions and only one of them scales.
+	// Per-face textures suit a mesh assembled out of tiling materials, where
+	// each face repeats a brick or a plank; they cannot express a model that is
+	// *painted*, because a painted model needs every face to own a distinct
+	// region of one image. That is what an atlas UV unwrap produces
+	// (model_uv_atlas.go), and it is the workflow the texture editor is built
+	// around: unwrap, paint the atlas, watch the model update. Keeping a
+	// per-face override alongside it would mean the painted atlas silently did
+	// nothing on any face that had been pointed elsewhere.
+	//
+	// It also makes the mesh one draw call, which the per-texture submesh split
+	// below no longer has to guess at.
+	Texture string
+	Verts   []mgl32.Vec3
+	Faces   []ModelFace
+	Bones   []ModelBone
 	// Weights is index-parallel to Verts: Weights[i] is what moves Verts[i].
 	// A nil or empty entry is an unbound vertex, which no bone moves.
 	Weights [][]ModelVertexWeight
@@ -70,6 +90,36 @@ type ModelDoc struct {
 	rev uint64
 }
 
+// defaultModelTexture is what an untextured document is drawn with. It is a
+// real entry in textures/, so a fresh cube looks like something rather than
+// binding texture 0 and rendering black.
+const defaultModelTexture = "default"
+
+// TextureName is the document's texture, resolved through the empty-means-
+// default rule. Every consumer that is about to *use* the name — compiling
+// submeshes, exporting a material, seeding the picker — goes through this so
+// the fallback lives in one place; ModelDoc.Texture stays empty on disk.
+func (m *ModelDoc) TextureName() string {
+	if m.Texture == "" {
+		return defaultModelTexture
+	}
+	return m.Texture
+}
+
+// SetTexture repoints the whole model at tex. Passing defaultModelTexture
+// stores it as the empty string, so "never chosen" and "chosen the default"
+// serialise the same way and a round-trip cannot invent a change.
+func (m *ModelDoc) SetTexture(tex string) {
+	if tex == defaultModelTexture {
+		tex = ""
+	}
+	if m.Texture == tex {
+		return
+	}
+	m.Texture = tex
+	m.touch()
+}
+
 // Rev returns the document's edit counter.
 func (m *ModelDoc) Rev() uint64 { return m.rev }
 
@@ -78,6 +128,7 @@ func (m *ModelDoc) Rev() uint64 { return m.rev }
 func (m *ModelDoc) Clone() *ModelDoc {
 	c := &ModelDoc{
 		ID:          m.ID,
+		Texture:     m.Texture,
 		Verts:       append([]mgl32.Vec3(nil), m.Verts...),
 		Faces:       make([]ModelFace, len(m.Faces)),
 		Bones:       cloneBones(m.Bones),
@@ -157,9 +208,8 @@ func NewCubeDoc() *ModelDoc {
 	unitUV := []mgl32.Vec2{{0, 0}, {1, 0}, {1, 1}, {0, 1}}
 	for _, q := range quads {
 		m.Faces = append(m.Faces, ModelFace{
-			Verts:   []int{q[0], q[1], q[2], q[3]},
-			UVs:     append([]mgl32.Vec2(nil), unitUV...),
-			Texture: "default",
+			Verts: []int{q[0], q[1], q[2], q[3]},
+			UVs:   append([]mgl32.Vec2(nil), unitUV...),
 		})
 	}
 	m.invalidate()
@@ -369,13 +419,14 @@ func fanTriangles(n int) [][3]int {
 
 // ---------- compiling to GPU buffers ----------
 
-// modelSubmesh is one texture's worth of the mesh, in the [][]float32 +
-// []int shape Geometry.Load expects.
+// modelSubmesh is the mesh in the [][]float32 + []int shape Geometry.Load
+// expects. A document compiles to exactly one of these — see modelSubmeshes —
+// but the slice-returning shape is kept so callers stay indifferent to that.
 type modelSubmesh struct {
 	Texture  string
 	Vertices [][]float32 // each [X, Y, Z, U, V]
 	Indices  []int
-	Smooth   bool // true when any face in the group asked for smoothing
+	Smooth   bool // true when any face asked for smoothing
 	// Skinning attributes, index-parallel to Vertices: four bone indices and
 	// four weights per record, padded with zero weight. Populated only when the
 	// document has an armature, so a static model uploads nothing extra.
@@ -385,13 +436,12 @@ type modelSubmesh struct {
 	SrcVerts []int
 }
 
-// modelSubmeshes triangulates every face and groups the result by texture.
+// modelSubmeshes triangulates every face into a single submesh.
 //
-// One Geometry per texture is forced by Geometry itself, which binds a single
-// texture per draw call. The repo already does exactly this wherever a surface
-// needs a second texture — see ExtrusionBackFace and loadExtrusionGeometries
-// (sector.go) — so a model with four materials is four Geometry, no differently
-// from a wall with a custom-textured extrusion cap.
+// It used to group faces by their per-face texture, because Geometry binds one
+// texture per draw call and a mesh with four materials therefore needed four
+// Geometry. A document now wears one texture (ModelDoc.Texture), so there is
+// one group and one draw call, and an empty mesh compiles to nothing at all.
 //
 // Normals are not computed here: Smooth rides on the submesh and Geometry.Load
 // runs computeSmoothNormals itself, welding across the whole submesh, which is
@@ -407,8 +457,7 @@ func (m *ModelDoc) modelSubmeshes() []modelSubmesh {
 // document goes on holding the rest mesh — so save, undo and every mesh op stay
 // untouched by posing — while what reaches the GPU is the deformed shape.
 func (m *ModelDoc) modelSubmeshesFrom(verts []mgl32.Vec3) []modelSubmesh {
-	groups := map[string]*modelSubmesh{}
-	var order []string
+	g := &modelSubmesh{Texture: m.TextureName()}
 	skinned := len(m.Bones) > 0 && m.hasSkin()
 
 	for fi := range m.Faces {
@@ -416,16 +465,6 @@ func (m *ModelDoc) modelSubmeshesFrom(verts []mgl32.Vec3) []modelSubmesh {
 		tris := m.faceTriangles(fi)
 		if len(tris) == 0 {
 			continue
-		}
-		tex := f.Texture
-		if tex == "" {
-			tex = "default"
-		}
-		g, ok := groups[tex]
-		if !ok {
-			g = &modelSubmesh{Texture: tex}
-			groups[tex] = g
-			order = append(order, tex)
 		}
 		if f.Smooth {
 			g.Smooth = true
@@ -457,11 +496,10 @@ func (m *ModelDoc) modelSubmeshesFrom(verts []mgl32.Vec3) []modelSubmesh {
 		}
 	}
 
-	out := make([]modelSubmesh, 0, len(order))
-	for _, tex := range order {
-		out = append(out, *groups[tex])
+	if len(g.Indices) == 0 {
+		return nil
 	}
-	return out
+	return []modelSubmesh{*g}
 }
 
 // skinAttrsFor packs one vertex's influences into the fixed vec4 pair the

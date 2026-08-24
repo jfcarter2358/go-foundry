@@ -28,9 +28,6 @@ func TestNewCubeDocIsAClosedSolid(t *testing.T) {
 		if len(f.UVs) != len(f.Verts) {
 			t.Errorf("face %d has %d UVs for %d verts", i, len(f.UVs), len(f.Verts))
 		}
-		if f.Texture == "" {
-			t.Errorf("face %d has no texture", i)
-		}
 	}
 
 	// Every edge shared by exactly two faces is what "closed solid" means; it
@@ -125,48 +122,54 @@ func TestFaceNormalNewellHandlesNonPlanarQuad(t *testing.T) {
 	}
 }
 
-func TestModelSubmeshesGroupByTexture(t *testing.T) {
+// A document wears one texture, so it compiles to exactly one submesh however
+// many faces it has — the per-texture grouping this used to assert is gone.
+func TestModelSubmeshesAreOneGroup(t *testing.T) {
 	m := NewCubeDoc()
-	m.SetFaceTexture([]int{0, 1}, "brick")
+	m.SetTexture("brick")
 
 	subs := m.modelSubmeshes()
-	if len(subs) != 2 {
-		t.Fatalf("submeshes = %d, want 2 (default + brick)", len(subs))
+	if len(subs) != 1 {
+		t.Fatalf("submeshes = %d, want 1", len(subs))
 	}
-	byTex := map[string]modelSubmesh{}
-	for _, s := range subs {
-		byTex[s.Texture] = s
+	s := subs[0]
+	if s.Texture != "brick" {
+		t.Errorf("submesh texture = %q, want brick", s.Texture)
 	}
-	brick, ok := byTex["brick"]
-	if !ok {
-		t.Fatal("no brick submesh")
+	// Six quads -> 24 vertex records, 12 triangles -> 36 indices.
+	if len(s.Vertices) != 24 {
+		t.Errorf("vertices = %d, want 24", len(s.Vertices))
 	}
-	// Two quads -> 8 vertex records, 4 triangles -> 12 indices.
-	if len(brick.Vertices) != 8 {
-		t.Errorf("brick vertices = %d, want 8", len(brick.Vertices))
+	if len(s.Indices) != 36 {
+		t.Errorf("indices = %d, want 36", len(s.Indices))
 	}
-	if len(brick.Indices) != 12 {
-		t.Errorf("brick indices = %d, want 12", len(brick.Indices))
-	}
-	for _, v := range brick.Vertices {
+	for _, v := range s.Vertices {
 		if len(v) != 5 {
 			t.Fatalf("vertex record has %d floats, want 5 [X,Y,Z,U,V]", len(v))
 		}
 	}
-	def, ok := byTex["default"]
-	if !ok {
-		t.Fatal("no default submesh")
-	}
-	if len(def.Indices) != 24 {
-		t.Errorf("default indices = %d, want 24 (4 quads)", len(def.Indices))
-	}
-	// Indices must stay inside their own submesh's vertex list.
-	for _, s := range subs {
-		for _, idx := range s.Indices {
-			if idx < 0 || idx >= len(s.Vertices) {
-				t.Fatalf("submesh %q index %d out of range (%d verts)", s.Texture, idx, len(s.Vertices))
-			}
+	for _, idx := range s.Indices {
+		if idx < 0 || idx >= len(s.Vertices) {
+			t.Fatalf("index %d out of range (%d verts)", idx, len(s.Vertices))
 		}
+	}
+}
+
+// An untextured document still names a texture, so the renderer never binds
+// texture 0 and draws the mesh black.
+func TestModelSubmeshFallsBackToDefaultTexture(t *testing.T) {
+	m := NewCubeDoc()
+	if got := m.modelSubmeshes()[0].Texture; got != defaultModelTexture {
+		t.Errorf("submesh texture = %q, want %q", got, defaultModelTexture)
+	}
+}
+
+// An empty mesh compiles to nothing rather than to one empty submesh, so the
+// renderer has no zero-vertex Geometry to upload.
+func TestModelSubmeshesEmptyMesh(t *testing.T) {
+	m := &ModelDoc{ID: "empty"}
+	if subs := m.modelSubmeshes(); len(subs) != 0 {
+		t.Errorf("submeshes = %d, want 0 for an empty mesh", len(subs))
 	}
 }
 
@@ -188,7 +191,7 @@ func TestCloneIsDeep(t *testing.T) {
 	c := m.Clone()
 	c.Verts[0] = mgl32.Vec3{9, 9, 9}
 	c.Faces[0].Verts[0] = 7
-	c.Faces[0].Texture = "brick"
+	c.Texture = "brick"
 
 	if m.Verts[0] == (mgl32.Vec3{9, 9, 9}) {
 		t.Error("clone shares the vertex slice")
@@ -196,7 +199,7 @@ func TestCloneIsDeep(t *testing.T) {
 	if m.Faces[0].Verts[0] == 7 {
 		t.Error("clone shares a face's vertex slice")
 	}
-	if m.Faces[0].Texture == "brick" {
-		t.Error("clone shares face texture")
+	if m.Texture == "brick" {
+		t.Error("clone shares the document texture")
 	}
 }

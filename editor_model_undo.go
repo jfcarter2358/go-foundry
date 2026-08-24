@@ -46,6 +46,17 @@ func ModelPushUndo() {
 	modelRedoStack.clear()
 }
 
+// ModelDiscardUndo drops the most recent undo entry without restoring it.
+//
+// For an action that pushed an entry and then turned out to change nothing —
+// an unwrap that could not fit, a mesh op that refused its input. Calling
+// ModelUndo there would work, but it would also push a redo entry and clear
+// the selection, so a failed action would leave the editor visibly different
+// from how it found it.
+func ModelDiscardUndo() {
+	modelUndoStack.pop()
+}
+
 // ModelUndo restores the previous document state.
 func ModelUndo() {
 	prev, ok := modelUndoStack.pop()

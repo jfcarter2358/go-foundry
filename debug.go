@@ -20,10 +20,8 @@ var DebugStats struct {
 	CPUPercent          float32
 	MemAllocMB          float32
 	MemSysMB            float32
-	EntitiesLoaded      int
 	SectorsLoaded       int
 	ChunksLoaded        int
-	EntitiesDrawn       int
 	SectorsDrawn        int
 	SectorsPortalCulled int
 	ChunksDrawn         int
@@ -104,7 +102,6 @@ func DebugRenderOverlay() {
 		imgui.Text(fmt.Sprintf("Mem Sys:      %.1f MB", DebugStats.MemSysMB))
 		imgui.Separator()
 
-		imgui.Text(fmt.Sprintf("Entities:     %d loaded / %d drawn", DebugStats.EntitiesLoaded, DebugStats.EntitiesDrawn))
 		imgui.Text(fmt.Sprintf("Sectors:      %d loaded / %d drawn / %d portal-culled", DebugStats.SectorsLoaded, DebugStats.SectorsDrawn, DebugStats.SectorsPortalCulled))
 		imgui.Text(fmt.Sprintf("Chunks:       %d loaded / %d drawn", DebugStats.ChunksLoaded, DebugStats.ChunksDrawn))
 		imgui.Separator()

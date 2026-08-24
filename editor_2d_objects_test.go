@@ -12,17 +12,16 @@ import (
 func objectPickTestSetup(t *testing.T) {
 	t.Helper()
 	prevZoom, prevW, prevH := Editor.Zoom2D, WinWidth, WinHeight
-	prevEnt, prevPrim := Editor.ActiveEntityIdx, Editor.ActivePrimitiveIdx
+	prevSpawn := Editor.SpawnSelected
 	prevFocus, prevGizmo := Editor.PanelFocus, Editor.GizmoKind
 	// 60 px/unit → the 6 px minimum half-extent is 0.1 world units, well under
 	// the object sizes the cases below use.
 	Editor.Zoom2D = 60
 	WinWidth, WinHeight = 1280, 720
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = -1
+	Editor.SpawnSelected = false
 	t.Cleanup(func() {
 		Editor.Zoom2D, WinWidth, WinHeight = prevZoom, prevW, prevH
-		Editor.ActiveEntityIdx, Editor.ActivePrimitiveIdx = prevEnt, prevPrim
+		Editor.SpawnSelected = prevSpawn
 		Editor.PanelFocus, Editor.GizmoKind = prevFocus, prevGizmo
 	})
 }
@@ -45,40 +44,25 @@ func TestEditor2DObjectHalfExtentsFloorsAtScreenSize(t *testing.T) {
 	}
 }
 
-func TestEditor2DPickObject(t *testing.T) {
+func TestEditor2DPickObjectHitsTheSpawnPoint(t *testing.T) {
 	objectPickTestSetup(t)
 
-	ch := &Chunk{
-		Primitives: []Primitive{
-			{ID: "far", Position: mgl32.Vec3{10, 0, 10}, BoundHalfX: 1, BoundHalfY: 1, BoundHalfZ: 1},
-			{ID: "near", Position: mgl32.Vec3{2, 0, 2}, BoundHalfX: 1, BoundHalfY: 1, BoundHalfZ: 1},
-		},
-	}
-	lvl := &Level{
-		Entities: []Entity{
-			{ID: "ent", Position: mgl32.Vec3{-5, 0, -5}, BoundHalfX: 0.5, BoundHalfY: 1, BoundHalfZ: 0.5},
-		},
-	}
+	ch := &Chunk{}
+	lvl := &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{2, 0, 2}}}
 
-	// Inside the second primitive's footprint.
-	if !editor2DPickObject(lvl, ch, 2.4, 1.7) {
-		t.Fatal("click inside a primitive footprint should hit")
+	// Inside the marker's footprint (half-extents 0.5 x 0.25, both above the
+	// 0.1 screen-size floor).
+	if !editor2DPickObject(lvl, ch, 2.4, 2.1) {
+		t.Fatal("click inside the spawn footprint should hit")
 	}
-	if Editor.ActivePrimitiveIdx != 1 || Editor.ActiveEntityIdx != -1 {
-		t.Errorf("got prim=%d ent=%d, want prim=1 ent=-1",
-			Editor.ActivePrimitiveIdx, Editor.ActiveEntityIdx)
+	if !Editor.SpawnSelected {
+		t.Error("a hit did not select the spawn point")
 	}
-	if Editor.PanelFocus != panelFocusPrimitive {
-		t.Errorf("PanelFocus = %q, want %q", Editor.PanelFocus, panelFocusPrimitive)
+	if Editor.PanelFocus != panelFocusSpawn {
+		t.Errorf("PanelFocus = %q, want %q", Editor.PanelFocus, panelFocusSpawn)
 	}
-
-	// Entities are hit too, and the previous primitive selection is dropped.
-	if !editor2DPickObject(lvl, ch, -5.2, -4.8) {
-		t.Fatal("click inside an entity footprint should hit")
-	}
-	if Editor.ActiveEntityIdx != 0 || Editor.ActivePrimitiveIdx != -1 {
-		t.Errorf("got ent=%d prim=%d, want ent=0 prim=-1",
-			Editor.ActiveEntityIdx, Editor.ActivePrimitiveIdx)
+	if Editor.GizmoKind != gizmoKindSpawn {
+		t.Errorf("GizmoKind = %q, want %q", Editor.GizmoKind, gizmoKindSpawn)
 	}
 
 	// A miss leaves the selection untouched so the caller can fall through to
@@ -86,28 +70,19 @@ func TestEditor2DPickObject(t *testing.T) {
 	if editor2DPickObject(lvl, ch, 40, 40) {
 		t.Error("click on empty space should not hit an object")
 	}
-	if Editor.ActiveEntityIdx != 0 {
-		t.Errorf("a miss changed the selection: ent=%d, want 0", Editor.ActiveEntityIdx)
+	if !Editor.SpawnSelected {
+		t.Error("a miss dropped the existing selection")
 	}
 }
 
-func TestEditor2DPickObjectPrefersNearestCentre(t *testing.T) {
+func TestEditor2DPickObjectWithNoSpawnPoint(t *testing.T) {
 	objectPickTestSetup(t)
 
-	// Two overlapping primitives: the click sits inside both, closer to #1.
-	ch := &Chunk{
-		Primitives: []Primitive{
-			{ID: "wide", Position: mgl32.Vec3{0, 0, 0}, BoundHalfX: 4, BoundHalfZ: 4},
-			{ID: "tight", Position: mgl32.Vec3{3, 0, 3}, BoundHalfX: 1, BoundHalfZ: 1},
-		},
+	if editor2DPickObject(&Level{}, &Chunk{}, 0, 0) {
+		t.Error("a level with no spawn point has nothing to pick")
 	}
-	lvl := &Level{}
-
-	if !editor2DPickObject(lvl, ch, 3.1, 3.1) {
-		t.Fatal("click inside both footprints should hit")
-	}
-	if Editor.ActivePrimitiveIdx != 1 {
-		t.Errorf("ActivePrimitiveIdx = %d, want 1 (nearest centre)", Editor.ActivePrimitiveIdx)
+	if Editor.SpawnSelected {
+		t.Error("picking nothing selected the spawn point anyway")
 	}
 }
 

@@ -23,20 +23,17 @@ type Chunk struct {
 	Sectors      []Sector
 	MinBound     mgl32.Vec3
 	MaxBound     mgl32.Vec3
-	Origin       mgl32.Vec3 // world-space offset applied to all points at load time
-	Rotation     float32    // Y-axis rotation in radians applied at load time
-	Scale        float32    // uniform XZ scale applied at load time (0 = 1.0)
-	PointNames   []string   // index-aligned with Points; "" = unnamed
-	Primitives   []Primitive
+	Origin       mgl32.Vec3    // world-space offset applied to all points at load time
+	Rotation     float32       // Y-axis rotation in radians applied at load time
+	Scale        float32       // uniform XZ scale applied at load time (0 = 1.0)
+	PointNames   []string      // index-aligned with Points; "" = unnamed
 	BiomeSectors []BiomeSector // user-drawn biome-paint polygons, owned by this chunk
 
-	// BiomeWaterPrims is runtime-only (never serialized, never cloned):
-	// companion PrimitiveWater entries auto-managed from Water-kind
-	// BiomeSectors (see biome_water.go). Kept separate from Primitives so
-	// they never show up in the primitive/scenery editor or the save file —
-	// they are fully derived from BiomeSectors and rebuilt on load and
-	// whenever the owning sector changes.
-	BiomeWaterPrims []Primitive
+	// WaterSurfaces is runtime-only (never serialized, never cloned): the
+	// companion water planes auto-managed from Water-kind BiomeSectors (see
+	// biome_water.go). They are fully derived from BiomeSectors and rebuilt on
+	// load and whenever the owning sector changes.
+	WaterSurfaces []WaterSurface
 }
 
 // AddPoint appends a point to the shared pool and returns its index, keeping
@@ -68,8 +65,8 @@ func (ch *Chunk) RemovePoint(pi int) {
 // Clone returns a fully-independent deep copy of the chunk. All slices and
 // maps get fresh backing arrays so edits to the copy do not affect the source.
 // GPU geometry handles are intentionally zeroed — the caller must re-upload
-// sector/primitive/gap geometry before the clone can be rendered. Sector and
-// primitive IDs are rewritten with idSuffix so they stay unique within the
+// sector/gap geometry before the clone can be rendered. Sector IDs are
+// rewritten with idSuffix so they stay unique within the
 // level; in-chunk portal ToSector references are remapped to the new IDs.
 func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 	cp := Chunk{
@@ -97,11 +94,6 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 		cp.Sectors[si] = cloneSector(&ch.Sectors[si], idSuffix, sectorIDRemap)
 	}
 
-	cp.Primitives = make([]Primitive, len(ch.Primitives))
-	for pi := range ch.Primitives {
-		cp.Primitives[pi] = clonePrimitive(&ch.Primitives[pi], newID, idSuffix, sectorIDRemap)
-	}
-
 	if ch.BiomeSectors != nil {
 		cp.BiomeSectors = make([]BiomeSector, len(ch.BiomeSectors))
 		for bi := range ch.BiomeSectors {
@@ -115,9 +107,9 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 			}
 		}
 	}
-	// BiomeWaterPrims is intentionally left empty — it's fully derived from
+	// WaterSurfaces is intentionally left empty — it's fully derived from
 	// BiomeSectors (marked GroundDirty above) and gets rebuilt the next time
-	// SyncBiomeWaterPrimitives runs.
+	// SyncBiomeWaterSurfaces runs.
 
 	return cp
 }
@@ -130,7 +122,6 @@ func cloneSector(s *Sector, idSuffix string, sectorIDRemap map[string]string) Se
 	}
 	out.PointIndices = append([]int(nil), s.PointIndices...)
 	out.EdgeKinds = append([]string(nil), s.EdgeKinds...)
-	out.PrimitiveIndices = append([]int(nil), s.PrimitiveIndices...)
 
 	out.Walls = make([]Wall, len(s.Walls))
 	for i := range s.Walls {
@@ -204,27 +195,16 @@ func cloneExtrusions(src []Extrusion) []Extrusion {
 	return out
 }
 
-func clonePrimitive(p *Primitive, newChunkID, idSuffix string, sectorIDRemap map[string]string) Primitive {
-	out := *p
-	out.Geometry = Geometry{}
-	out.ID = p.ID + idSuffix
-	out.ChunkID = newChunkID
-	if remapped, ok := sectorIDRemap[p.SectorID]; ok {
-		out.SectorID = remapped
-	}
-	return out
-}
-
 // RecomputeBounds re-derives the chunk's world-space AABB (used for
 // frustum-culling the whole chunk before descending into per-sector culling)
-// from its current sectors and primitives. Sector.Load keeps each sector's own
+// from its current sectors and water surfaces. Sector.Load keeps each sector's own
 // bounds accurate, but nothing else rolls that up to the chunk level, so any
 // editor operation that adds/removes/moves a sector without going through
 // InferPortalsAndReload leaves MinBound/MaxBound stale — geometry added
 // outside the original bounds then gets frustum-culled along with the rest of
 // the chunk even when it's on screen.
 func (ch *Chunk) RecomputeBounds() {
-	if len(ch.Sectors) == 0 && len(ch.Primitives) == 0 && len(ch.BiomeWaterPrims) == 0 {
+	if len(ch.Sectors) == 0 && len(ch.WaterSurfaces) == 0 {
 		return
 	}
 	first := true
@@ -249,12 +229,8 @@ func (ch *Chunk) RecomputeBounds() {
 		extend(ch.Sectors[si].WorldAABB())
 	}
 
-	for pi := range ch.Primitives {
-		extend(ch.Primitives[pi].WorldAABB())
-	}
-
-	for pi := range ch.BiomeWaterPrims {
-		extend(ch.BiomeWaterPrims[pi].WorldAABB())
+	for wi := range ch.WaterSurfaces {
+		extend(ch.WaterSurfaces[wi].WorldAABB())
 	}
 }
 

@@ -307,6 +307,10 @@ func modelEditorPanel() {
 	imgui.Separator()
 	modelAddSection()
 	imgui.Separator()
+	// The texture is a whole-document property, so it leads rather than sitting
+	// inside the face section it used to live in.
+	modelTextureSection()
+	imgui.Separator()
 	modelFaceSection()
 	imgui.Separator()
 	modelBoneSection()
@@ -320,6 +324,10 @@ func modelEditorPanel() {
 	modelMeshSection()
 	imgui.Separator()
 	modelTransformSection()
+
+	// Modals are drawn inside the panel window, after its sections, so a popup
+	// opened by one of them is queued in the same frame it was asked for.
+	drawModelUnwrapDialog()
 
 	imgui.End()
 }
@@ -376,8 +384,8 @@ func modelAllFaceIndices() []int {
 
 // modelFaceSection holds the per-face operations, which need a face selection.
 func modelFaceSection() {
-	// Open by default: assigning a texture to a face is the single most common
-	// thing to do in here, and a collapsed header hides it.
+	// Open by default: extrude is the single most common thing to do in here,
+	// and a collapsed header hides it.
 	if !imgui.CollapsingHeaderV("Face##modelface", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
@@ -385,15 +393,8 @@ func modelFaceSection() {
 	hasFaces := modelSelection.Mode == modelSelFace && len(faces) > 0
 	if !hasFaces {
 		imgui.Text("Switch to Face select [3]")
-		imgui.Text("and click a face to texture it.")
+		imgui.Text("and click a face to edit it.")
 		return
-	}
-
-	// Texture assignment leads. The first selected face seeds the combo, and
-	// picking a texture applies it to all of them.
-	tex := modelSelectedFaceTexture()
-	if textureCombo("Texture##modelfacetex", &tex, false) {
-		modelSetSelectedFaceTexture(tex)
 	}
 
 	smooth := modelSelectedFaceSmooth()

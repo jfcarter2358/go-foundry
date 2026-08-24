@@ -1,18 +1,16 @@
 package main
 
-// editor_undo.go — structural undo/redo for the level editor and the
-// standalone scenery compositor.
+// editor_undo.go — structural undo/redo for the level editor.
 //
-// Scope: add/delete/move of entities, primitives, sectors/walls/portals,
-// chunks, biome sectors, and extrusion/terrain points. Property-panel field
-// edits (texture pickers, sliders, numeric drags) are not tracked.
+// Scope: add/delete/move of sectors/walls/portals, chunks, biome sectors, the
+// spawn point, and extrusion/terrain points. Property-panel field edits
+// (texture pickers, sliders, numeric drags) are not tracked.
 //
 // Snapshots store the plain-data Raw* representation rather than a copy of
-// runtime structs, since runtime Sector/Wall/Primitive geometry holds live
-// OpenGL VAO/VBO handles that a struct copy would alias rather than
-// duplicate. Restoring a snapshot re-derives all runtime geometry via
-// rawToLevel / rawToSceneryPrimitive — the same path already used by
-// "Open Level" and "Load Scenery".
+// runtime structs, since runtime Sector/Wall geometry holds live OpenGL
+// VAO/VBO handles that a struct copy would alias rather than duplicate.
+// Restoring a snapshot re-derives all runtime geometry via rawToLevel — the
+// same path already used by "Open Level".
 
 import "github.com/veandco/go-sdl2/sdl"
 
@@ -20,8 +18,7 @@ import "github.com/veandco/go-sdl2/sdl"
 const maxUndoDepth = 100
 
 // boundedStack is a LIFO snapshot stack capped at maxUndoDepth entries —
-// the push/pop bookkeeping shared by the level and scenery undo/redo stacks
-// below (previously duplicated one pair of stacks per editor).
+// the push/pop bookkeeping shared by the level undo and redo stacks below.
 type boundedStack[T any] struct {
 	items []T
 }
@@ -48,9 +45,6 @@ func (s *boundedStack[T]) clear()   { s.items = nil }
 
 var levelUndoStack boundedStack[RawLevel]
 var levelRedoStack boundedStack[RawLevel]
-
-var sceneryUndoStack boundedStack[[]RawPrimitive]
-var sceneryRedoStack boundedStack[[]RawPrimitive]
 
 // ---------- Level (3D/2D/Surface editor) undo/redo ----------
 
@@ -110,17 +104,17 @@ func restoreLevelSnapshot(raw RawLevel) {
 	if err != nil {
 		return
 	}
+	// Built before the swap so a failed rebuild leaves the current level intact,
+	// released after it so the outgoing entities' GPU buffers do not leak — see
+	// EditorLoadLevel's note.
+	DeleteEntities(Editor.level)
 	*Editor.level = newLevel
 
 	UploadLights(Editor.level.Lights)
 
-	PlayerEntity = nil
-	for i := range Editor.level.Entities {
-		if Editor.level.Entities[i].ID == "player" {
-			PlayerEntity = &Editor.level.Entities[i]
-			break
-		}
-	}
+	// The player is engine-owned and survives the snapshot swap; only its
+	// position follows the restored spawn point.
+	ApplySpawnPoint(Editor.level)
 
 	if Editor.ActiveChunkIdx >= len(Editor.level.Chunks) {
 		Editor.ActiveChunkIdx = len(Editor.level.Chunks) - 1
@@ -132,8 +126,10 @@ func restoreLevelSnapshot(raw RawLevel) {
 	Editor.ActiveEdgeIdx = -1
 	Editor.ActiveEdgeKind = ""
 	Editor.ActiveSurface = ""
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = -1
+	Editor.SelectedFaces = nil
+	editorClearSpawnSelection()
+	editorClearEntitySelection()
+	Editor.EntityPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
@@ -142,7 +138,6 @@ func restoreLevelSnapshot(raw RawLevel) {
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
-	Editor.ConnectFromIdx = -1
 	Editor.PendingEdges = nil
 	Editor.ActiveExtrusionIdx = -1
 	Editor.ExtrusionMode = false
@@ -164,66 +159,4 @@ func restoreLevelSnapshot(raw RawLevel) {
 
 	Editor.StatusMsg = "Undo/redo applied"
 	Editor.StatusTime = sdl.GetTicks()
-}
-
-// ---------- Scenery editor undo/redo ----------
-
-// SceneryPushUndo snapshots the current scenery primitive set. Call
-// immediately BEFORE a structural mutation in the scenery compositor.
-func SceneryPushUndo() {
-	sceneryUndoStack.push(sceneryPrimsToRaw(Editor.SceneryPrimitives))
-	sceneryRedoStack.clear()
-}
-
-// SceneryClearUndoHistory discards all scenery undo/redo state. Called when
-// entering the scenery editor or loading a different scenery asset.
-func SceneryClearUndoHistory() {
-	sceneryUndoStack.clear()
-	sceneryRedoStack.clear()
-}
-
-func SceneryCanUndo() bool { return sceneryUndoStack.len() > 0 }
-func SceneryCanRedo() bool { return sceneryRedoStack.len() > 0 }
-
-func sceneryPrimsToRaw(prims []Primitive) []RawPrimitive {
-	raw := make([]RawPrimitive, len(prims))
-	for i := range prims {
-		raw[i] = sceneryPrimToRaw(&prims[i])
-	}
-	return raw
-}
-
-// restoreSceneryPrimitives deletes the live GPU geometry for the current
-// primitive set and rebuilds it from a raw snapshot.
-func restoreSceneryPrimitives(raw []RawPrimitive) {
-	for i := range Editor.SceneryPrimitives {
-		Editor.SceneryPrimitives[i].Geometry.Delete()
-	}
-	prims := make([]Primitive, 0, len(raw))
-	for _, rp := range raw {
-		p := rawToSceneryPrimitive(rp)
-		if err := p.Load(); err == nil {
-			prims = append(prims, p)
-		}
-	}
-	Editor.SceneryPrimitives = prims
-	Editor.SceneryActivePrimIdx = -1
-}
-
-func SceneryUndo() {
-	if sceneryUndoStack.len() == 0 {
-		return
-	}
-	sceneryRedoStack.push(sceneryPrimsToRaw(Editor.SceneryPrimitives))
-	prev, _ := sceneryUndoStack.pop()
-	restoreSceneryPrimitives(prev)
-}
-
-func SceneryRedo() {
-	if sceneryRedoStack.len() == 0 {
-		return
-	}
-	sceneryUndoStack.push(sceneryPrimsToRaw(Editor.SceneryPrimitives))
-	next, _ := sceneryRedoStack.pop()
-	restoreSceneryPrimitives(next)
 }

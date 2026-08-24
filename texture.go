@@ -51,7 +51,7 @@ func LoadTexture(name, file string) error {
 // ensureTextureLoaded uploads the named texture to the GPU if it isn't
 // already resident. Level loading (loadRawChunk) walks every referenced
 // texture and loads it up front, but editor operations that build Wall/
-// Floor/Ceiling/Primitive structs directly (e.g. createChunkAtCamera,
+// Floor/Ceiling structs directly (e.g. createChunkAtCamera,
 // createSectorFromPolygon) bypass that pipeline. Without this, drawing with
 // an unloaded name binds texture 0 (gl.BindTexture(TEXTURE_2D, 0)), which
 // samples as black — the geometry renders, but pure black, regardless of
@@ -75,7 +75,7 @@ func ensureTextureLoaded(name string) error {
 // Nothing in the renderer caches a texture handle beyond the Textures map —
 // every draw call does gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture]) at
 // draw time. So updating a texture in place is just re-specifying the same GL
-// texture object: every wall, floor, primitive, scenery item and detail-
+// texture object: every wall, floor, water surface and detail-
 // scatter instance shows the new image on the next frame with no level walk
 // and no geometry rebuild.
 

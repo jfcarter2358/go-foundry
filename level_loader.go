@@ -18,9 +18,16 @@ import (
 
 // ---------- Runtime types ----------
 
-// Level holds all loaded chunks, entities, and lights.
+// Level holds all loaded chunks, the player spawn point, and the lights.
+//
+// Spawn is a pointer so a level with no spawn authored stays distinguishable
+// from one whose spawn happens to sit at the origin; nil means "start the
+// player wherever the caller already had them".
 type Level struct {
-	Chunks   []Chunk
+	Chunks []Chunk
+	Spawn  *SpawnPoint
+	// Entities are the level's placed dynamic objects (entity.go). They live on
+	// the level rather than in a chunk because they move — see RawLevel's note.
 	Entities []Entity
 	Lights   LightSet
 	Spatial  *SpatialHash // accelerated chunk/sector lookup; rebuilt after level load
@@ -422,113 +429,9 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 	}
 	chunk.RebuildGaps()
 
-	for _, rp := range rc.Primitives {
-		scale := mgl32.Vec3{rp.Scale.X, rp.Scale.Y, rp.Scale.Z}
-		if scale == (mgl32.Vec3{}) {
-			scale = mgl32.Vec3{1, 1, 1}
-		}
-
-		px := rp.Position.X * sc
-		pz := rp.Position.Z * sc
-		worldX := cos32*px - sin32*pz + origin.X()
-		worldZ := sin32*px + cos32*pz + origin.Z()
-		worldY := rp.Position.Y + origin.Y()
-
-		kind := primitiveKindFromName(rp.Type)
-
-		sides := rp.Sides
-		if sides < 3 {
-			sides = 16
-		}
-
-		uvScale := mgl32.Vec2{rp.UVScale.X, rp.UVScale.Y}
-		if uvScale == (mgl32.Vec2{}) {
-			uvScale = mgl32.Vec2{1, 1}
-		}
-
-		prim := Primitive{
-			ID:          rp.ID,
-			Kind:        kind,
-			Position:    mgl32.Vec3{worldX, worldY, worldZ},
-			Rotation:    mgl32.Vec3{rp.Rotation.X, rp.Rotation.Y, rp.Rotation.Z},
-			Scale:       scale,
-			Texture:     rp.Texture,
-			Sides:       sides,
-			Collision:   rp.Collision,
-			Alpha:       float32Default(rp.Alpha, 1.0),
-			UVOffset:    mgl32.Vec2{rp.UVOffset.X, rp.UVOffset.Y},
-			UVScale:     uvScale,
-			UVRotation:  rp.UVRotation,
-			Smooth:      rp.Smooth,
-			SmoothAngle: rp.SmoothAngle,
-			Water:       waterParamsFromRaw(rp.Water, kind),
-			ChunkID:     chunk.ID,
-		}
-
-		switch kind {
-		case PrimitiveRectPrism:
-			prim.BoundingKind = BoundingAABB
-			prim.BoundHalfX = scale.X() / 2
-			prim.BoundHalfY = scale.Y() / 2
-			prim.BoundHalfZ = scale.Z() / 2
-		case PrimitiveSphere:
-			prim.BoundingKind = BoundingSphere
-			maxS := scale.X()
-			if scale.Y() > maxS {
-				maxS = scale.Y()
-			}
-			if scale.Z() > maxS {
-				maxS = scale.Z()
-			}
-			prim.BoundHalfX = maxS / 2
-			prim.BoundHalfY = maxS / 2
-			prim.BoundHalfZ = maxS / 2
-		case PrimitiveCylinder:
-			prim.BoundingKind = BoundingCylinder
-			maxXZ := scale.X()
-			if scale.Z() > maxXZ {
-				maxXZ = scale.Z()
-			}
-			prim.BoundHalfX = maxXZ / 2
-			prim.BoundHalfY = scale.Y() / 2
-			prim.BoundHalfZ = maxXZ / 2
-		case PrimitivePlane, PrimitiveWater:
-			prim.BoundingKind = BoundingAABB
-			prim.BoundHalfX = scale.X() / 2
-			prim.BoundHalfY = 0.01
-			prim.BoundHalfZ = scale.Z() / 2
-		case PrimitiveSpawnPoint:
-			prim.BoundingKind = BoundingAABB
-			prim.BoundHalfX, prim.BoundHalfY, prim.BoundHalfZ = spawnPointBounds(scale)
-		}
-
-		if err := prim.Load(); err != nil {
-			return Chunk{}, nil, fmt.Errorf("primitive %q load: %w", rp.ID, err)
-		}
-
-		if rp.Texture != "" {
-			texNeeded[rp.Texture] = true
-		}
-
-		chunk.Primitives = append(chunk.Primitives, prim)
-	}
-
-	for pi := range chunk.Primitives {
-		p := &chunk.Primitives[pi]
-		xz := mgl32.Vec2{p.Position.X(), p.Position.Z()}
-		for si := range chunk.Sectors {
-			s := &chunk.Sectors[si]
-			pts := SectorPoints(&chunk, s)
-			if pointInPolygon(xz, pts) {
-				p.SectorID = s.ID
-				s.PrimitiveIndices = append(s.PrimitiveIndices, pi)
-				break
-			}
-		}
-	}
-
-	// Bounds so far come only from the chunk's points; fold in primitives so a
-	// plane extending past the sector polygons isn't frustum-culled with them.
+	// Bounds so far come only from the chunk's points; roll up the sectors' own
+	// bounds so geometry reaching past the point pool isn't frustum-culled with
+	// it. Water surfaces are folded in later, by SyncBiomeWaterSurfaces.
 	chunk.RecomputeBounds()
 
 	// Biome sector polygons — points are chunk-local, re-derived to world
@@ -554,7 +457,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				RockScale:    rb.Brush.RockScale,
 				SandHeight:   rb.Brush.SandHeight,
 				WaterDepth:   rb.Brush.WaterDepth,
-				Water:        waterParamsFromRaw(rb.Brush.Water, PrimitiveWater),
+				Water:        waterParamsFromRaw(rb.Brush.Water),
 
 				MossScatter:   rb.Brush.MossScatter,
 				MinSlopeAngle: rb.Brush.MinSlopeAngle,
@@ -645,8 +548,8 @@ func blankRawLevel() RawLevel {
 	}
 }
 
-// NewBlankLevel builds a completely empty in-memory level (no chunks or
-// entities, and not backed by any file on disk) suitable for opening the
+// NewBlankLevel builds a completely empty in-memory level (no chunks, and not
+// backed by any file on disk) suitable for opening the
 // editor to a truly blank scene. It still carries the same default ambient
 // light as blankRawLevel — a level with zero lights renders everything pure
 // black (see fragment.glsl: lighting starts at globalLightColor *
@@ -724,42 +627,36 @@ func rawToLevel(raw RawLevel) (Level, error) {
 		level.Chunks = append(level.Chunks, chunk)
 	}
 
-	// Convert entities
+	// The player spawn: one optional marker per level, not a placed object.
+	if raw.Spawn != nil {
+		spawn := &SpawnPoint{
+			Position: mgl32.Vec3{raw.Spawn.Position.X, raw.Spawn.Position.Y, raw.Spawn.Position.Z},
+			Rotation: mgl32.Vec3{raw.Spawn.Rotation.X, raw.Spawn.Rotation.Y, raw.Spawn.Rotation.Z},
+		}
+		if err := spawn.Load(); err != nil {
+			return Level{}, fmt.Errorf("spawn point load: %w", err)
+		}
+		level.Spawn = spawn
+	}
+
+	// Entities: instances of the definitions under resources/entities/.
+	//
+	// A bad entity fails the load rather than being skipped. An entity that
+	// quietly vanished would take its attributes and its ID with it, and the
+	// first sign of trouble would be a script failing to find something the
+	// level plainly says is there.
 	for _, re := range raw.Entities {
-		scale := mgl32.Vec3{re.Scale.X, re.Scale.Y, re.Scale.Z}
-		if scale == (mgl32.Vec3{}) {
-			scale = mgl32.Vec3{1, 1, 1}
+		e, err := entityFromRaw(re, LoadEntityDef)
+		if err != nil {
+			return Level{}, err
 		}
-		entity := Entity{
-			ID:          re.ID,
-			Position:    mgl32.Vec3{re.Position.X, re.Position.Y, re.Position.Z},
-			Rotation:    mgl32.Vec3{re.Rotation.X, re.Rotation.Y, re.Rotation.Z},
-			Scale:       scale,
-			ModelPath:   resolveAssetPath(re.Model),
-			TexturePath: re.Texture,
-			BoundHalfX:  re.BoundHalfX,
-			BoundHalfY:  re.BoundHalfY,
-			BoundHalfZ:  re.BoundHalfZ,
-			Alpha:       float32Default(re.Alpha, 1.0),
-			Visible:     re.Model != "",
-			// Set before Load: InitAnimation runs inside it and reads these to
-			// pick the starting clip.
-			Animation:      re.Animation,
-			AnimationSpeed: re.AnimationSpeed,
-			AnimationLoop:  re.AnimationLoop,
+		// IDs address entities from scripts, so a level with two of the same
+		// gets the duplicate renamed rather than made unreachable.
+		e.ID = uniqueEntityID(&level, e.ID)
+		if err := e.Load(); err != nil {
+			return Level{}, fmt.Errorf("entity %q load: %w", e.ID, err)
 		}
-		switch re.Bounding {
-		case "sphere":
-			entity.BoundingKind = BoundingSphere
-		case "cylinder":
-			entity.BoundingKind = BoundingCylinder
-		default:
-			entity.BoundingKind = BoundingAABB
-		}
-		if err := entity.Load(); err != nil {
-			return Level{}, fmt.Errorf("entity %q load: %w", re.ID, err)
-		}
-		level.Entities = append(level.Entities, entity)
+		level.Entities = append(level.Entities, e)
 	}
 
 	// Convert lights

@@ -1,7 +1,37 @@
+# A plain crate: one static mesh, an axis-aligned box around it, and a couple of
+# attributes for a script to act on.
+#
+# Position is not here and never is — a definition describes what a thing is,
+# and a level places instances of it. See entity_def.go.
 id: box
-model: models/box.obj
-texture: concrete
+description: A wooden crate. Breakable, and worth something when broken.
+tags:
+  - prop
+  - breakable
+
+# Solid and subject to gravity: dropped in mid-air it falls to the floor and
+# stops there, and other solid entities cannot pass through it. Movable is the
+# default, so two crates shoved together push each other apart.
+collision:
+  world: true
+  entities: true
+  gravity: true
+
 bounding: aabb
 bound_half_x: 0.5
 bound_half_y: 0.5
 bound_half_z: 0.5
+# The mesh is centred on its origin, so the box sits half a unit up to leave the
+# entity's own position on the floor.
+bound_offset: {x: 0.0, y: 0.5, z: 0.0}
+
+models:
+  - name: body
+    path: models/box.obj
+    texture: concrete
+    offset: {x: 0.0, y: 0.5, z: 0.0}
+
+attributes:
+  health: {type: int, value: 25}
+  loot_value: {type: int, value: 10}
+  breakable: {type: bool, value: true}

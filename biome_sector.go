@@ -21,7 +21,7 @@ import (
 
 // Biome kinds a brush can paint. Grass/Rock/Wildflower/Cattail are GPU-
 // instanced scatter (grass.go); Sand is a displaced ground patch with no
-// scatter on top; Water auto-manages a companion water-plane primitive
+// scatter on top; Water auto-manages a companion water plane
 // (biome_water.go). Every land kind (everything but Water) also gets a
 // conforming, textured, lightly-displaced ground patch underneath it so the
 // painted area reads as real terrain rather than a flat cutout — see
@@ -322,10 +322,9 @@ type BiomeBrush struct {
 	// displacement amplitude (world units); 0 uses defaultSandHeight.
 	SandHeight float32
 
-	// Water: auto-manages a companion water-plane primitive filling the
-	// painted polygon (see biome_water.go). WaterDepth is how far below the
-	// surrounding floor the water surface sits; 0 uses defaultWaterDepth.
-	// Wave/reflection look reuses the existing water-primitive params.
+	// Water: auto-manages a companion water plane filling the painted polygon
+	// (see biome_water.go). WaterDepth is how far below the surrounding floor
+	// the water surface sits; 0 uses defaultWaterDepth.
 	WaterDepth float32
 	Water      WaterParams
 
@@ -423,8 +422,7 @@ type BiomeSector struct {
 
 	// GroundDirty is runtime-only, mirroring HeightDirty for the two other
 	// sector-derived meshes: the ground patch (biome_ground.go, every land
-	// kind) and the companion water-plane primitive (biome_water.go, Water
-	// kind only). Kept separate from HeightDirty so a param change that only
+	// kind) and the companion water plane (biome_water.go, Water kind only). Kept separate from HeightDirty so a param change that only
 	// affects one of those (e.g. WaterDepth) doesn't force a height-texture
 	// rebuild, and vice versa — but every call site that sets one currently
 	// sets both, since points/kind changes affect all three.
@@ -434,7 +432,7 @@ type BiomeSector struct {
 // isScatterKind reports whether kind is *structurally* capable of spawning
 // GPU-instanced blade/rock/clump instances (grass.go) — i.e. whether
 // Density/Range are meaningful for it at all. Sand and Water never scatter —
-// Sand is a ground patch only, Water is a companion primitive. Moss is
+// Sand is a ground patch only, Water is a companion plane. Moss is
 // structurally capable but only actually scatters when its own
 // BiomeBrush.MossScatter toggle is on — see (*BiomeBrush).Scatters, which
 // callers issuing the actual draw call should use instead of this.

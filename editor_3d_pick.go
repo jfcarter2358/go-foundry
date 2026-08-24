@@ -2,8 +2,8 @@ package main
 
 // editor_3d_pick.go — 3D-mode click picking.
 //
-// One ray cast resolves every clickable thing in the world — entities,
-// primitives, and sector faces (walls, floors, ceilings) — into a single
+// One ray cast resolves every clickable thing in the world — the spawn point
+// and the sector faces (walls, floors, ceilings) — into a single
 // closest hit, so a click always selects whatever is actually nearest the
 // camera along the ray. Sector faces and primitives are tested against their
 // real triangles rather than their bounding boxes so that curved or thin
@@ -27,13 +27,14 @@ import (
 // panelFocus* are the values EditorState.PanelFocus takes: the properties
 // section a fresh selection wants the side panel to open and scroll to.
 const (
-	panelFocusNone      = ""
-	panelFocusEntity    = "entity"
-	panelFocusPrimitive = "primitive"
-	panelFocusWall      = "wall"
-	panelFocusFloor     = "floor"
-	panelFocusCeiling   = "ceiling"
-	panelFocusVertex    = "vertex"
+	panelFocusNone    = ""
+	panelFocusSpawn   = "spawn"
+	panelFocusWall    = "wall"
+	panelFocusFloor   = "floor"
+	panelFocusCeiling = "ceiling"
+	panelFocusVertex  = "vertex"
+	panelFocusWater   = "water"
+	panelFocusEntity  = "entity"
 )
 
 // ---------- pick result ----------
@@ -42,21 +43,23 @@ const (
 type pickKind string
 
 const (
-	pickNone      pickKind = ""
-	pickEntity    pickKind = "entity"
-	pickPrimitive pickKind = "primitive"
-	pickWall      pickKind = "wall"
-	pickFloor     pickKind = "floor"
-	pickCeiling   pickKind = "ceiling"
+	pickNone    pickKind = ""
+	pickSpawn   pickKind = "spawn"
+	pickWall    pickKind = "wall"
+	pickFloor   pickKind = "floor"
+	pickCeiling pickKind = "ceiling"
+	pickWater   pickKind = "water"
+	pickEntity  pickKind = "entity"
 )
 
 // pickHit is the closest thing found along a picking ray. Which index fields
 // are meaningful depends on kind:
 //
-//	entity     → idx = level entity index
-//	primitive  → chunkIdx + idx = primitive index within that chunk
+//	spawn      → none; the level has at most one spawn point
+//	entity     → idx = index into level.Entities
 //	wall       → chunkIdx + sectorIdx + idx = wall index within that sector
 //	floor/ceil → chunkIdx + sectorIdx
+//	water      → chunkIdx + idx = surface index within that chunk
 type pickHit struct {
 	kind      pickKind
 	t         float32
@@ -126,6 +129,39 @@ func pickModelT(origin, dir mgl32.Vec3, verts []float32, model mgl32.Mat4) float
 	)
 }
 
+// pickEntityT returns the closest hit on an entity: its attachments' triangles
+// when it has any uploaded, its bounding volume otherwise.
+//
+// The fallback matters more here than it does for the spawn marker. An entity
+// is legitimately model-less — a trigger volume, a script anchor — and one that
+// could not be clicked would be one the editor could place but never select
+// again.
+func pickEntityT(origin, dir mgl32.Vec3, e *Entity) float32 {
+	best := float32(math.MaxFloat32)
+	world := e.ModelMatrix()
+	for mi := range e.Models {
+		m := &e.Models[mi]
+		if !m.Visible {
+			continue
+		}
+		model := world.Mul4(m.LocalMatrix())
+		for si := range m.Submeshes {
+			if t := pickModelT(origin, dir, m.Submeshes[si].Vertices, model); t < best {
+				best = t
+			}
+		}
+	}
+	if best < float32(math.MaxFloat32) {
+		return best
+	}
+	if bmin, bmax, ok := e.WorldAABB(); ok {
+		if boxHit, boxT := rayAABBIntersect(origin, dir, bmin, bmax); boxHit {
+			return boxT
+		}
+	}
+	return float32(math.MaxFloat32)
+}
+
 // ---------- the picker ----------
 
 // pick3D casts a ray through screen pixel (sx, sy) and returns the closest
@@ -138,45 +174,38 @@ func pick3D(sx, sy int32) pickHit {
 	}
 	origin, dir := screenRay(sx, sy)
 
-	// Entities — exact mesh when one is loaded, AABB otherwise (an entity with
-	// no model, such as the first-person player, is only its bounding box).
-	for i := range lvl.Entities {
-		e := &lvl.Entities[i]
-		if e.HasGeometry() {
-			// Every submesh is part of the same object, so the nearest hit
-			// across all of them is the entity's hit.
-			model := e.ModelMatrix()
-			for si := range e.Submeshes {
-				if t := pickModelT(origin, dir, e.Submeshes[si].Vertices, model); t < float32(math.MaxFloat32) {
-					hit.consider(t, pickEntity, -1, -1, i)
-				}
+	// The spawn marker — exact mesh when it has been uploaded, its AABB
+	// otherwise. It is the only non-geometry thing in the level a click can
+	// land on.
+	if sp := lvl.Spawn; sp != nil {
+		if len(sp.Geometry.Vertices) > 0 {
+			if t := pickModelT(origin, dir, sp.Geometry.Vertices, sp.ModelMatrix()); t < float32(math.MaxFloat32) {
+				hit.consider(t, pickSpawn, -1, -1, -1)
 			}
+		} else {
+			bmin, bmax := sp.WorldAABB()
+			if boxHit, boxT := rayAABBIntersect(origin, dir, bmin, bmax); boxHit {
+				hit.consider(boxT, pickSpawn, -1, -1, -1)
+			}
+		}
+	}
+
+	// Placed entities — every attachment's real triangles, so a click lands on
+	// the model the user can see rather than on the box around it. An entity
+	// with nothing uploaded (no models, or a model that failed to load) falls
+	// back to its bounding volume, which is the only thing left to aim at.
+	for ei := range lvl.Entities {
+		e := &lvl.Entities[ei]
+		if !e.Visible {
 			continue
 		}
-		bmin := e.Position.Sub(mgl32.Vec3{e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ})
-		bmax := e.Position.Add(mgl32.Vec3{e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ})
-		if boxHit, boxT := rayAABBIntersect(origin, dir, bmin, bmax); boxHit {
-			hit.consider(boxT, pickEntity, -1, -1, i)
+		if t := pickEntityT(origin, dir, e); t < float32(math.MaxFloat32) {
+			hit.consider(t, pickEntity, -1, -1, ei)
 		}
 	}
 
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
-
-		// Primitives — exact mesh in model space, AABB as a fallback.
-		for pi := range ch.Primitives {
-			p := &ch.Primitives[pi]
-			if len(p.Geometry.Vertices) > 0 {
-				if t := pickModelT(origin, dir, p.Geometry.Vertices, p.ModelMatrix()); t < float32(math.MaxFloat32) {
-					hit.consider(t, pickPrimitive, ci, -1, pi)
-				}
-				continue
-			}
-			bmin, bmax := p.WorldAABB()
-			if boxHit, boxT := rayAABBIntersect(origin, dir, bmin, bmax); boxHit {
-				hit.consider(boxT, pickPrimitive, ci, -1, pi)
-			}
-		}
 
 		// Sector faces.
 		for seci := range ch.Sectors {
@@ -207,6 +236,21 @@ func pick3D(sx, sy int32) pickHit {
 				t := pickSurfaceT(origin, dir, ch, s, &s.Ceiling.Geometry, s.Ceiling.ExtrusionGeometries,
 					s.Ceiling.VertexHeight, true)
 				hit.consider(t, pickCeiling, ci, seci, -1)
+			}
+		}
+
+		// Water planes. They are derived from a Water-kind biome sector rather
+		// than placed, but they are still a surface the user points at and
+		// wants the settings for, so a click resolves to the sector that owns
+		// one (see editorWaterSectorFor). Tested last only because the loop
+		// reads better that way — hit.consider sorts by distance, not order.
+		for wi := range ch.WaterSurfaces {
+			w := &ch.WaterSurfaces[wi]
+			if len(w.Geometry.Vertices) == 0 {
+				continue
+			}
+			if t := pickModelT(origin, dir, w.Geometry.Vertices, w.ModelMatrix()); t < float32(math.MaxFloat32) {
+				hit.consider(t, pickWater, ci, -1, wi)
 			}
 		}
 	}
@@ -319,15 +363,35 @@ const (
 	vertexHandleShowAllPx float32 = 1e6
 )
 
-// vertexSel identifies one selected sector vertex handle. Selections are stored
-// as indices rather than pointers so they survive geometry rebuilds.
+// vertexSel identifies one selected point. Selections are stored as indices
+// rather than pointers so they survive geometry rebuilds.
+//
+// Almost always that is a sector vertex handle — one corner of one sector, at
+// its floor or its ceiling height. The exception is a *free* point: a chunk
+// point that belongs to no sector yet, which the 2D map can select so it can be
+// joined into one (editor_2d_join.go). A free point has no sector and so no
+// vertIdx and no height of its own; see freePointSel.
 type vertexSel struct {
 	chunkIdx  int
 	sectorIdx int
-	vertIdx   int // index into Sector.PointIndices
+	vertIdx   int // index into Sector.PointIndices; -1 for a free point
 	pointIdx  int // index into Chunk.Points
 	isFloor   bool
 }
+
+// freePointSel names a chunk point that is in no sector.
+//
+// isFloor is fixed rather than following the map's floor/ceiling switch: a free
+// point has one position and no heights, so letting the switch vary it would
+// make the same point two different selections depending on which way a toggle
+// happened to be set.
+func freePointSel(chunkIdx, pointIdx int) vertexSel {
+	return vertexSel{chunkIdx: chunkIdx, sectorIdx: -1, vertIdx: -1, pointIdx: pointIdx, isFloor: true}
+}
+
+// isFreePoint reports whether this selection is a chunk point with no sector
+// behind it, which is what every "…and a sector" step has to skip.
+func (s vertexSel) isFreePoint() bool { return s.sectorIdx < 0 }
 
 // vertexHandle is one clickable sector vertex, at either its floor or its
 // ceiling height. A point shared by several sectors yields one handle per
@@ -379,18 +443,25 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 					if d > maxPx {
 						continue
 					}
+					sel := vertexSel{
+						chunkIdx:  ci,
+						sectorIdx: seci,
+						vertIdx:   vi,
+						pointIdx:  pIdx,
+						isFloor:   isFloor,
+					}
+					// Solid shading hides the far side of the world, so a
+					// handle behind a wall is neither drawn nor clickable;
+					// wireframe answers true for everything.
+					if !editorVertexVisible(sel, pos) {
+						continue
+					}
 					out = append(out, vertexHandle{
-						vertexSel: vertexSel{
-							chunkIdx:  ci,
-							sectorIdx: seci,
-							vertIdx:   vi,
-							pointIdx:  pIdx,
-							isFloor:   isFloor,
-						},
-						pos:     pos,
-						screen:  screen,
-						screenD: d,
-						depth:   depth,
+						vertexSel: sel,
+						pos:       pos,
+						screen:    screen,
+						screenD:   d,
+						depth:     depth,
 					})
 				}
 			}
@@ -495,11 +566,9 @@ func addVertexHandlesToSelection(sels []vertexSel) {
 // displayed values.
 func setVertexSelection(sels []vertexSel) {
 	Editor.SelectedVertices = sels
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = -1
-	Editor.ActiveEdgeKind = ""
-	Editor.ActiveEdgeIdx = -1
-	Editor.ActiveSurface = ""
+	editorClearSpawnSelection()
+	editorClearEntitySelection()
+	clearFaceSelection()
 
 	if len(sels) == 0 {
 		Editor.ActiveVertexSI = -1
@@ -512,7 +581,12 @@ func setVertexSelection(sels []vertexSel) {
 	Editor.ActiveSectorIdx = primary.sectorIdx
 	Editor.ActiveVertexSI = primary.sectorIdx
 	Editor.ActiveVertexVI = primary.vertIdx
-	Editor.EditFloorVerts = primary.isFloor
+	// A free point has no height of its own, so it must not drag the map's
+	// floor/ceiling switch with it — that switch decides which handles the next
+	// click reaches, and a point with neither should leave it alone.
+	if !primary.isFreePoint() {
+		Editor.EditFloorVerts = primary.isFloor
+	}
 	Editor.GizmoKind = gizmoKindVertices
 	Editor.PanelFocus = panelFocusVertex
 }
@@ -528,14 +602,23 @@ func clearVertexSelection() {
 	}
 }
 
-// vertexSelPos returns the world position of a selected vertex handle.
+// vertexSelPos returns the world position of a selected vertex handle. A free
+// point sits at y=0, which is where the 2D map draws it — it has no floor or
+// ceiling to take a height from until it is part of a sector.
 func vertexSelPos(sel vertexSel) (mgl32.Vec3, bool) {
 	lvl := Editor.level
 	if lvl == nil || sel.chunkIdx < 0 || sel.chunkIdx >= len(lvl.Chunks) {
 		return mgl32.Vec3{}, false
 	}
 	ch := &lvl.Chunks[sel.chunkIdx]
-	if sel.sectorIdx < 0 || sel.sectorIdx >= len(ch.Sectors) {
+	if sel.isFreePoint() {
+		if sel.pointIdx < 0 || sel.pointIdx >= len(ch.Points) {
+			return mgl32.Vec3{}, false
+		}
+		pt := ch.Points[sel.pointIdx]
+		return mgl32.Vec3{pt.X(), 0, pt.Y()}, true
+	}
+	if sel.sectorIdx >= len(ch.Sectors) {
 		return mgl32.Vec3{}, false
 	}
 	s := &ch.Sectors[sel.sectorIdx]
@@ -579,74 +662,68 @@ func gizmoBox(p mgl32.Vec3, halfPx float32, col mgl32.Vec3) {
 	GizmoAABB(p.Sub(hv), p.Add(hv), col)
 }
 
-// editorRenderInteractiveOverlays draws the handle overlays when the cursor is
-// in the viewport and the next click is not already spoken for by a placement
-// mode. An in-progress axis drag always draws, so the gizmo does not vanish when
-// the cursor crosses the side panel mid-drag.
+// editorRenderInteractiveOverlays draws everything that goes on top of the
+// world: the selected face's outline, the handles the current selection mode
+// can act on, and whichever gizmo the current tool shows.
+//
+// All of it is drawn with depth testing off, so a mark is visible wherever it
+// is meaningful — a handle at the corner of a sector on the far side of a wall,
+// or the outline of the floor you just picked from across the room. (What is
+// *clickable* is a separate question, and solid shading answers it by culling
+// occluded handles before they get here — see editor_3d_visibility.go.)
+//
+// The cursor counts as off the world when it is over the side panel or an ImGui
+// window, or when a placement mode has already spoken for the next click. An
+// in-progress axis drag overrides that, so the gizmo does not vanish when the
+// cursor crosses the panel mid-drag.
 func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool) {
 	mx, my, _ := sdl.GetMouseState()
-	if !editorGizmoDragging() {
-		if gizmoSuppressed() || imgui.CurrentIO().WantCaptureMouse() || mx >= panelLeftEdgeX() {
-			// The cursor is off the world, so nothing is under it — but the
-			// show-all toggle still wants every box drawn, not least while the
-			// user is over the panel that holds the toggle.
-			if withVertexHandles && Editor.ShowPointSelectRadius {
-				editorRenderAllVertexBoxes(projView)
-			}
-			return
+	offWorld := !editorGizmoDragging() &&
+		(gizmoSuppressed() || imgui.CurrentIO().WantCaptureMouse() || mx >= panelLeftEdgeX())
+
+	GizmoFlush(projView)
+	prevDepth := gl.IsEnabled(gl.DEPTH_TEST)
+	gl.Disable(gl.DEPTH_TEST)
+	defer func() {
+		GizmoFlush(projView)
+		if prevDepth {
+			gl.Enable(gl.DEPTH_TEST)
 		}
+	}()
+
+	// Drawn whatever the cursor is doing: the selection does not stop existing
+	// because the pointer moved onto the panel.
+	drawSelectedFaceOutline()
+
+	if offWorld {
+		// Nothing is under the cursor, so no handle reads as hovered and the
+		// gizmo stays hidden — but a view that draws the whole cage (wireframe,
+		// or the show-all toggle) still wants every handle drawn, not least
+		// while the user is over the panel holding those switches.
+		if withVertexHandles && editorShowsAllHandles() {
+			drawSelModeHandles(math.MinInt32/2, math.MinInt32/2, vertexHandleShowAllPx)
+		}
+		return
 	}
-	editorRenderHandleOverlays(projView, mx, my, withVertexHandles)
-}
-
-// editorRenderAllVertexBoxes draws every in-range vertex handle box and edge
-// prism with no cursor under them — the show-all toggle's view while the pointer is over the
-// side panel. The translate gizmo stays hidden, matching the suppressed path
-// this stands in for.
-func editorRenderAllVertexBoxes(projView mgl32.Mat4) {
-	GizmoFlush(projView)
-	prevDepth := gl.IsEnabled(gl.DEPTH_TEST)
-	gl.Disable(gl.DEPTH_TEST)
-	defer func() {
-		GizmoFlush(projView)
-		if prevDepth {
-			gl.Enable(gl.DEPTH_TEST)
-		}
-	}()
-	// Far off-screen cursor: no handle reads as hovered.
-	drawVertexHandleBoxes(math.MinInt32/2, math.MinInt32/2, vertexHandleShowAllPx)
-	drawEdgeHandlePrisms(math.MinInt32/2, math.MinInt32/2, vertexHandleShowAllPx)
-}
-
-// editorRenderHandleOverlays draws the interactive handles — vertex boxes and
-// edge prisms near the cursor (3D mode only) and whichever gizmo the current
-// tool shows — on top of the world.
-//
-// Any gizmos queued so far are flushed first, then the overlays are drawn with
-// depth testing off so a handle is visible wherever it is clickable, including
-// the corners of a sector on the far side of a wall.
-func editorRenderHandleOverlays(projView mgl32.Mat4, mx, my int32, withVertexHandles bool) {
-	GizmoFlush(projView)
-	prevDepth := gl.IsEnabled(gl.DEPTH_TEST)
-	gl.Disable(gl.DEPTH_TEST)
-	defer func() {
-		GizmoFlush(projView)
-		if prevDepth {
-			gl.Enable(gl.DEPTH_TEST)
-		}
-	}()
 
 	if withVertexHandles {
-		showPx := vertexHandleShowPx
-		if Editor.ShowPointSelectRadius {
-			showPx = vertexHandleShowAllPx
-		}
-		// Edges first, so a vertex box draws over the prisms it caps.
-		drawEdgeHandlePrisms(mx, my, showPx)
-		drawVertexHandleBoxes(mx, my, showPx)
+		drawSelModeHandles(mx, my, editorHandleShowPx())
 	}
-
 	renderEditorGizmo(mx, my)
+}
+
+// drawSelModeHandles queues the handles the current selection mode can act on,
+// and only those: point mode draws vertex boxes, edge mode draws edge prisms,
+// and face mode draws neither, because a click there goes to the surface or the
+// object behind them. Drawing a handle no click can reach was the confusing
+// part of the pre-mode viewport, where every box was always up.
+func drawSelModeHandles(mx, my int32, showPx float32) {
+	switch Editor.SelMode {
+	case editorSelPoint:
+		drawVertexHandleBoxes(mx, my, showPx)
+	case editorSelEdge:
+		drawEdgeHandlePrisms(mx, my, showPx)
+	}
 }
 
 // drawVertexHandleBoxes queues the selection marks and the handle boxes for

@@ -154,7 +154,7 @@ func HandleEvent(event sdl.Event) {
 		case sdl.WINDOWEVENT_SIZE_CHANGED:
 			RefreshWindowSize()
 		case sdl.WINDOWEVENT_FOCUS_GAINED:
-			// Restore only what the mode asked for.  Editor 2D/surface/scenery
+			// Restore only what the mode asked for.  Editor 2D/surface
 			// modes never want capture, and a stray focus cycle from a right or
 			// middle click must not hand them a grabbed cursor.  The warp inside
 			// applyMouseLock also makes the first motion event after regaining
@@ -203,6 +203,18 @@ func HandleEvent(event sdl.Event) {
 						IsOnGround = false
 						JumpRequested = false
 					}
+				}
+			case sdl.SCANCODE_8:
+				// Engine-wide entity collision switches. Debug switches, not
+				// gameplay ones: they say whether the engine honours the
+				// per-entity flags at all, which is how you tell "this entity
+				// is not solid" from "collision is off".
+				if !Editor.Active {
+					EntityWorldCollisionEnabled = !EntityWorldCollisionEnabled
+				}
+			case sdl.SCANCODE_9:
+				if !Editor.Active {
+					EntityEntityCollisionEnabled = !EntityEntityCollisionEnabled
 				}
 			}
 		}

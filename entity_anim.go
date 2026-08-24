@@ -1,6 +1,6 @@
 package main
 
-// entity_anim.go — playing a model's clips on a level entity.
+// entity_anim.go — clip playback for one entity model attachment.
 //
 // The player is deliberately thin: advance a clock, sample the clip into a
 // pose, turn the pose into a bone palette, and leave. Everything below that is
@@ -8,18 +8,20 @@ package main
 // editor's pose mode makes, so a clip cannot look one way in the editor and
 // another in the level.
 //
-// Deformation itself happens on the GPU (model_skin_gpu.go). The entity never
+// It speaks in *clips* — the names inside a .fmdl — rather than in the names a
+// game uses. Mapping one to the other is EntityModel.Play's job (entity_model.go),
+// which keeps this file indifferent to how an entity chose to name its motion.
+//
+// Deformation itself happens on the GPU (model_skin_gpu.go). Nothing here
 // touches vertex data after Load: it owns one []mgl32.Mat4 that every submesh
 // holds a slice header on, rewrites it in place each frame, and the colour pass
 // and both shadow passes read it from there.
 
 import (
-	"log"
-
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// EntityAnim is one entity's playback state.
+// EntityAnim is one attachment's playback state.
 //
 // Doc is kept alive past Load — the only thing in the runtime that holds a
 // ModelDoc — because the bones, the weights and the rest vertices are what a
@@ -132,72 +134,12 @@ func (a *EntityAnim) update(dt float32) {
 	copy(a.Palette, deltas)
 }
 
-// ---------- the entity's side ----------
-
-// InitAnimation attaches playback state, if the loaded document has any. Called
-// from Entity.Load, which is the only place a ModelDoc is in hand.
-func (e *Entity) InitAnimation(doc *ModelDoc) {
-	e.Anim = newEntityAnim(doc)
-	if e.Anim == nil {
-		return
-	}
-	if e.AnimationSpeed > 0 {
-		e.Anim.Speed = e.AnimationSpeed
-	}
-	if e.Animation != "" && !e.Anim.SetClip(e.Animation) {
-		// A level naming a clip the model does not have is a content error worth
-		// seeing, but not worth refusing to load the entity over.
-		log.Printf("entity %s: model %s has no animation %q", e.ID, e.ModelPath, e.Animation)
-	}
-	if e.AnimationLoop != nil {
-		e.Anim.Loop = *e.AnimationLoop
-	}
-}
-
-// bindPalette points every submesh at the entity's palette, so the draw paths
-// find it without the entity being involved in the draw call.
-func (e *Entity) bindPalette() {
-	if e.Anim == nil {
-		return
-	}
-	for i := range e.Submeshes {
-		e.Submeshes[i].BonePalette = e.Anim.Palette
-	}
-}
-
-// UpdateAnimation advances this entity's clip by dt seconds.
-func (e *Entity) UpdateAnimation(dt float32) {
-	if e.Anim != nil {
-		e.Anim.Update(dt)
-	}
-}
-
-// SetClip switches the entity to a named clip. Reports whether it resolved.
-func (e *Entity) SetClip(name string) bool {
-	e.Animation = name
-	if e.Anim == nil {
-		return name == ""
-	}
-	return e.Anim.SetClip(name)
-}
-
-// ClipNames lists what this entity can play, for the 3D editor's picker.
-func (e *Entity) ClipNames() []string {
-	if e.Anim == nil || e.Anim.Doc == nil {
+// ClipNames lists the clips the underlying model holds, for the editor's clip
+// picker. These are the .fmdl's own names — what an EntityAnimation's Clip
+// field points at, not what the game calls the animation.
+func (a *EntityAnim) ClipNames() []string {
+	if a == nil || a.Doc == nil {
 		return nil
 	}
-	return e.Anim.Doc.ClipNames()
-}
-
-// UpdateEntityAnimations advances every entity in the level. Called once per
-// frame from the main loop, outside the editor/gameplay branch so a clip plays
-// in the 3D editor view too — an animation you cannot see while placing the
-// entity is most of the way to useless.
-func UpdateEntityAnimations(level *Level, dt float32) {
-	if level == nil {
-		return
-	}
-	for i := range level.Entities {
-		level.Entities[i].UpdateAnimation(dt)
-	}
+	return a.Doc.ClipNames()
 }

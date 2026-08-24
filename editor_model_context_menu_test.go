@@ -83,7 +83,7 @@ func TestContextMenuFaceModeOffersFaceOps(t *testing.T) {
 	modelSelection.Faces = []int{0}
 
 	items := modelContextMenuItems()
-	for _, label := range []string{"Extrude", "Subdivide", "Delete", "Smooth", "Texture", "UV"} {
+	for _, label := range []string{"Extrude", "Subdivide", "Delete", "Smooth", "UV"} {
 		if it := mustMenuItem(t, items, label); it.Disabled {
 			t.Errorf("%q should be live with a face selected", label)
 		}
@@ -101,7 +101,7 @@ func TestContextMenuGreysOutFaceOpsWithNothingSelected(t *testing.T) {
 	modelClearMeshSelection()
 
 	items := modelContextMenuItems()
-	for _, label := range []string{"Extrude", "Subdivide", "Delete", "Texture"} {
+	for _, label := range []string{"Extrude", "Subdivide", "Delete"} {
 		if it := mustMenuItem(t, items, label); !it.Disabled {
 			t.Errorf("%q should be greyed out with nothing selected", label)
 		}
@@ -390,5 +390,30 @@ func TestRightClickSelectsUnderTheCursorOnlyWhenNothingIsSelected(t *testing.T) 
 	modelContextReleased(mx, my)
 	if len(modelSelection.Faces) != 3 {
 		t.Fatalf("selection is %v, want the three faces left as they were", modelSelection.Faces)
+	}
+}
+
+// The texture a model wears and the atlas it is unwrapped onto are document
+// properties, so their rows stay live whatever is selected — including with
+// nothing selected at all, which is when someone is most likely to be reaching
+// for "give this model a texture".
+func TestContextMenuDocumentRowsIgnoreSelection(t *testing.T) {
+	m := NewCubeDoc()
+	withModelDoc(t, m)
+	withModelMenuState(t)
+
+	for _, clear := range []bool{true, false} {
+		modelSelection.Mode = modelSelFace
+		if clear {
+			modelClearMeshSelection()
+		} else {
+			modelSelection.Faces = []int{0}
+		}
+		items := modelContextMenuItems()
+		for _, label := range []string{"Texture", "Unwrap && Paint..."} {
+			if it := mustMenuItem(t, items, label); it.Disabled {
+				t.Errorf("%q greyed out (selection cleared=%v); it is a document row", label, clear)
+			}
+		}
 	}
 }

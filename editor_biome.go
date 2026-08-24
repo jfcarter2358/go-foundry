@@ -531,26 +531,7 @@ func biomePanelSection() {
 		imgui.Text("Volumetric displacement, no scatter — paint Rock on top for outcrops.")
 
 	case BiomeWater:
-		if bs.Brush.WaterDepth <= 0 {
-			bs.Brush.WaterDepth = defaultWaterDepth
-		}
-		if editorDragFloat("Depth##bswd", &bs.Brush.WaterDepth, 0.05, 20, "%.2f") {
-			bs.GroundDirty = true // moves the plane's Y — needs a mesh rebuild
-		}
-		if !bs.Brush.Water.Enabled {
-			bs.Brush.Water = DefaultWaterParams()
-		}
-		// Push wave/reflection edits straight to the live companion
-		// primitive's Geometry when it already exists, same as a
-		// hand-placed water primitive — these are pure shader uniforms, so
-		// this avoids rebuilding the mesh on every slider-drag frame (see
-		// waterControls's own doc comment). Falls back to a scratch
-		// Geometry (still edits bs.Brush.Water) before the first sync.
-		g := biomeWaterGeometryFor(ch, bs.ID)
-		if g == nil {
-			g = &Geometry{}
-		}
-		waterControls("bswater", &bs.Brush.Water, g)
+		biomeWaterControls(ch, bs)
 		imgui.Text("Auto-fills the painted area with a water plane.")
 
 	case BiomeMoss:
@@ -783,13 +764,39 @@ func biomeGroundSection(bs *BiomeSector) {
 	}
 }
 
+// biomeWaterControls draws a Water-kind sector's depth and wave settings. Split
+// out of biomePanelSection because the 3D view reaches the same settings by a
+// different route: clicking the water plane itself (editorWaterSection,
+// editor_3d.go), which lands on the sector that produced it.
+func biomeWaterControls(ch *Chunk, bs *BiomeSector) {
+	if bs.Brush.WaterDepth <= 0 {
+		bs.Brush.WaterDepth = defaultWaterDepth
+	}
+	if editorDragFloat("Depth##bswd", &bs.Brush.WaterDepth, 0.05, 20, "%.2f") {
+		bs.GroundDirty = true // moves the plane's Y — needs a mesh rebuild
+	}
+	if !bs.Brush.Water.Enabled {
+		bs.Brush.Water = DefaultWaterParams()
+	}
+	// Push wave/reflection edits straight to the live companion surface's
+	// Geometry when it already exists — these are pure shader uniforms, so this
+	// avoids rebuilding the mesh on every slider-drag frame (see waterControls's
+	// own doc comment). Falls back to a scratch Geometry (still edits
+	// bs.Brush.Water) before the first sync.
+	g := biomeWaterGeometryFor(ch, bs.ID)
+	if g == nil {
+		g = &Geometry{}
+	}
+	waterControls("bswater", &bs.Brush.Water, g)
+}
+
 // biomeWaterGeometryFor returns the live Geometry of sector id's companion
-// water primitive (see biome_water.go), or nil before the first sync has run
-// for a newly-switched-to-Water sector.
+// water surface (see biome_water.go), or nil before the first sync has run for
+// a newly-switched-to-Water sector.
 func biomeWaterGeometryFor(ch *Chunk, id string) *Geometry {
-	for i := range ch.BiomeWaterPrims {
-		if ch.BiomeWaterPrims[i].ID == id {
-			return &ch.BiomeWaterPrims[i].Geometry
+	for i := range ch.WaterSurfaces {
+		if ch.WaterSurfaces[i].ID == id {
+			return &ch.WaterSurfaces[i].Geometry
 		}
 	}
 	return nil

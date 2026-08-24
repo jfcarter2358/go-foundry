@@ -36,7 +36,10 @@ func modelPath(name string) string { return filepath.Join(modelsDir(), name+mode
 
 // RawModel is the on-disk form of a ModelDoc.
 type RawModel struct {
-	ID          string           `yaml:"id"`
+	ID string `yaml:"id"`
+	// Texture is the one image the model is painted with. Omitted when the
+	// document never chose one, which loads back as defaultModelTexture.
+	Texture     string           `yaml:"texture,omitempty"`
 	SmoothAngle float32          `yaml:"smooth_angle,omitempty"`
 	Vertices    [][]float32      `yaml:"vertices"`
 	Faces       []RawModelFace   `yaml:"faces"`
@@ -101,16 +104,22 @@ type RawModelKey struct {
 // RawModelFace is one n-gon. Verts indexes RawModel.Vertices; UVs is
 // index-parallel to it.
 type RawModelFace struct {
-	Verts   []int       `yaml:"v"`
-	UVs     [][]float32 `yaml:"uv,omitempty"`
-	Texture string      `yaml:"texture,omitempty"`
-	Smooth  *bool       `yaml:"smooth,omitempty"`
+	Verts []int       `yaml:"v"`
+	UVs   [][]float32 `yaml:"uv,omitempty"`
+	// Texture is read, never written: models authored before the move to one
+	// texture per document named a texture per face. rawToModelDoc promotes the
+	// first one it finds to RawModel.Texture so those files still open with the
+	// material they were saved with, instead of silently reverting to the
+	// default. Once such a file is saved again the field is gone.
+	Texture string `yaml:"texture,omitempty"`
+	Smooth  *bool  `yaml:"smooth,omitempty"`
 }
 
 // modelDocToRaw converts a document for serialization.
 func modelDocToRaw(m *ModelDoc) RawModel {
 	raw := RawModel{
 		ID:          m.ID,
+		Texture:     m.Texture,
 		SmoothAngle: m.SmoothAngle,
 		Vertices:    make([][]float32, len(m.Verts)),
 		Faces:       make([]RawModelFace, len(m.Faces)),
@@ -121,9 +130,8 @@ func modelDocToRaw(m *ModelDoc) RawModel {
 	for i := range m.Faces {
 		f := &m.Faces[i]
 		rf := RawModelFace{
-			Verts:   append([]int(nil), f.Verts...),
-			Texture: f.Texture,
-			Smooth:  boolPtrIfTrue(f.Smooth),
+			Verts:  append([]int(nil), f.Verts...),
+			Smooth: boolPtrIfTrue(f.Smooth),
 		}
 		// UVs are omitted wholesale when every one is zero — a model imported
 		// from an untextured OBJ would otherwise carry a screenful of [0, 0].
@@ -228,6 +236,7 @@ func anyNonZeroUV(uvs []mgl32.Vec2) bool {
 func rawToModelDoc(raw RawModel) *ModelDoc {
 	m := &ModelDoc{
 		ID:          raw.ID,
+		Texture:     raw.Texture,
 		SmoothAngle: raw.SmoothAngle,
 		Verts:       make([]mgl32.Vec3, len(raw.Vertices)),
 		Faces:       make([]ModelFace, len(raw.Faces)),
@@ -237,9 +246,8 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 	}
 	for i, rf := range raw.Faces {
 		f := ModelFace{
-			Verts:   append([]int(nil), rf.Verts...),
-			Texture: rf.Texture,
-			Smooth:  rf.Smooth != nil && *rf.Smooth,
+			Verts:  append([]int(nil), rf.Verts...),
+			Smooth: rf.Smooth != nil && *rf.Smooth,
 			// UVs are always materialised at full length even when the file
 			// omitted them, so uvAt and every UV-interpolating op can index
 			// them without a length check of their own.
@@ -253,8 +261,12 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 				f.UVs[j] = mgl32.Vec2{rf.UVs[j][0], rf.UVs[j][1]}
 			}
 		}
-		if f.Texture == "" {
-			f.Texture = "default"
+		// Legacy per-face texture: the first face that names one decides the
+		// document's texture. A file that used several is flattened to the
+		// first, which is lossy — but the alternative is refusing to open it,
+		// and the UVs it carries are still the ones that were authored.
+		if raw.Texture == "" && m.Texture == "" && rf.Texture != "" && rf.Texture != defaultModelTexture {
+			m.Texture = rf.Texture
 		}
 		m.Faces[i] = f
 	}

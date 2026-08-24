@@ -28,7 +28,7 @@ import (
 )
 
 // detailPresetsDirName is the directory (next to the executable) that user
-// presets live in. Like levels/ and scenery/, it is not created until something
+// presets live in. Like levels/, it is not created until something
 // is saved into it.
 const detailPresetsDirName = "detail_presets"
 

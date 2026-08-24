@@ -3,7 +3,7 @@ package main
 // editor.go — core level editor state machine.
 //
 // Toggle with the tilde (~) key. Two sub-modes:
-//   Mode3D : fly-around entity/chunk/light placement
+//   Mode3D : fly-around chunk/light/spawn editing
 //   Mode2D : top-down orthographic sector editor for the active chunk
 //
 // The editor owns all input while active; normal gameplay logic is bypassed.
@@ -25,30 +25,72 @@ const (
 	Mode3D                          // 3D fly-around editor
 	Mode2D                          // 2D top-down sector editor (+ biome painting)
 	ModeSurface2D                   // 2D surface editor for extrusions/terrain
-	ModeScenery                     // scenery editor (blank world, single-item model compositor)
 )
 
-// GizmoState is the three-axis translate gizmo's interaction state (3D +
-// scenery modes) — embedded (anonymously) in EditorState so existing
+// GizmoState is the 3D viewport's gizmo interaction state — embedded
+// (anonymously) in EditorState so existing
 // Editor.GizmoKind-style field access keeps working unchanged via Go's
 // field promotion; see RESTRUCTURE_PROPOSAL.md §5 Phase A.
+//
+// The three tools (move, rotate, scale) share this one set of fields: only one
+// gizmo is on screen at a time, and only one drag can be in progress. What the
+// shared fields mean depends on GizmoDragTool — see GizmoDragStartS.
 type GizmoState struct {
-	GizmoKind         string       // what the gizmo targets; see the gizmoKind* constants
-	GizmoDragging     bool         // an axis drag is in progress
-	GizmoDragAxis     int          // axis being dragged: 0=X, 1=Y, 2=Z; -1 = not dragging
-	GizmoDragOrigin   mgl32.Vec3   // gizmo position when the drag started
-	GizmoDragStartS   float32      // position along the drag axis under the cursor at mouse-down
-	GizmoDragStartPos mgl32.Vec3   // primitive/entity position, or chunk origin, at mouse-down
-	GizmoDragPoints   []mgl32.Vec2 // per selected vertex: chunk point XZ at mouse-down
-	GizmoDragOffsets  []float32    // per selected vertex: height offset at mouse-down
+	GizmoKind     string          // what the gizmo targets; see the gizmoKind* constants
+	GizmoTool     editorGizmoTool // which gizmo is on screen; see the editorTool* constants
+	GizmoDragging bool            // an axis drag is in progress
+	GizmoDragTool editorGizmoTool // the tool the in-progress drag belongs to
+	// GizmoDragAxis is the handle being dragged: 0=X, 1=Y, 2=Z, and for the
+	// scale tool also modelScaleUniformAxis for the centre handle. -1 = not
+	// dragging.
+	GizmoDragAxis   int
+	GizmoDragOrigin mgl32.Vec3 // gizmo position when the drag started
+	// GizmoDragStartS is the measure the drag is an offset from, in whatever
+	// unit its tool works in: distance along the axis for move, an angle in
+	// radians for rotate, and the reference a factor is a ratio of for scale.
+	GizmoDragStartS   float32
+	GizmoDragStartPos mgl32.Vec3 // spawn-point position, chunk origin or entity position at mouse-down
+	// GizmoDragStartRot/Scale are the entity's own rotation and scale at
+	// mouse-down. A vertex selection has neither — rotating it moves the points
+	// themselves — so these are only read on the entity path.
+	GizmoDragStartRot   mgl32.Vec3
+	GizmoDragStartScale mgl32.Vec3
+	GizmoDragPoints     []mgl32.Vec2 // per selected vertex: chunk point XZ at mouse-down
+	GizmoDragOffsets    []float32    // per selected vertex: height offset at mouse-down
+	// GizmoDragWorld is per selected vertex: its world position at mouse-down.
+	// Rotate and scale work from this rather than from the XZ/offset pair,
+	// since both are defined on positions relative to the selection's centre.
+	GizmoDragWorld []mgl32.Vec3
+}
 
-	// Scale-gizmo drag state (editor_scale_gizmo.go). GizmoDragTool is which
-	// tool owns the drag in progress, recorded at mouse-down so a tool switch
-	// cannot reinterpret a half-finished one; GizmoDragAxis holds the scale
-	// handle for it, which may be modelScaleUniformAxis rather than an axis.
-	GizmoDragTool       modelGizmoToolKind
-	GizmoDragStartScale mgl32.Vec3    // entity scale at mouse-down
-	GizmoScaleAxes      [3]mgl32.Vec3 // the entity's own axes, captured at mouse-down
+// Gizmo2DState is the top-down map's gizmo interaction state, embedded in
+// EditorState the way GizmoState is.
+//
+// It is deliberately separate from the 3D gizmo's rather than shared: the two
+// views can both be on screen at once (the 2D map pops out into a window of its
+// own), each resolves the cursor through its own projection, and a drag started
+// in one must not be continued by motion events arriving from the other.
+type Gizmo2DState struct {
+	Gizmo2DDragging bool            // a handle drag is in progress on the map
+	Gizmo2DTool     editorGizmoTool // the tool the in-progress drag belongs to
+	// Gizmo2DAxis is the handle being dragged: 0=X, 2=Z (world axes, matching
+	// gizmoAxes), gizmo2DPlaneAxis for the free-move square, and
+	// modelScaleUniformAxis for scale's centre handle. -1 = not dragging.
+	Gizmo2DAxis   int
+	Gizmo2DCenter mgl32.Vec2 // selection centre in world XZ at mouse-down
+	// Gizmo2DStartS is the measure the drag is an offset from, in its tool's
+	// unit: world units along the axis, radians, or a scale reference.
+	Gizmo2DStartS     float32
+	Gizmo2DStartWorld mgl32.Vec2   // cursor position in world XZ at mouse-down
+	Gizmo2DStartPts   []mgl32.Vec3 // per selected vertex: world position at mouse-down
+	Gizmo2DStartSpawn mgl32.Vec3   // spawn-point position at mouse-down
+	// The selected entity's own transform at mouse-down. Kept apart from the
+	// 3D gizmo's snapshot of the same thing for the reason this whole struct
+	// is: the map can be a window of its own, so a drag can be in progress in
+	// each view at once.
+	Gizmo2DStartEntity      mgl32.Vec3
+	Gizmo2DStartEntityRot   mgl32.Vec3
+	Gizmo2DStartEntityScale mgl32.Vec3
 }
 
 // SurfaceEditorState is the per-surface (wall/floor/ceiling) UV-space 2D
@@ -67,29 +109,6 @@ type SurfaceEditorState struct {
 	SurfaceLastMouse   [2]int32         // for pan
 	SurfacePrevMode    EditorMode       // mode to return to on Escape
 	ActiveTerrainPtIdx int              // selected terrain point index; -1 = none
-}
-
-// SceneryEditorState is the standalone scenery-prefab editor's state
-// (editor_scenery.go) — embedded in EditorState, see GizmoState's doc
-// comment above for why.
-type SceneryEditorState struct {
-	SceneryPrimitives    []Primitive // working set of primitives (not part of any level)
-	SceneryActivePrimIdx int         // selected primitive; -1 = none
-	SceneryPrimPlacement bool        // true: next left-click places a primitive
-	SceneryPrimPlaceType string      // one of primitiveTypeNames (primitive.go)
-	SceneryFilePath      string      // current save path
-	SceneryID            string      // asset name
-	SceneryPrevMode      EditorMode  // mode to return to on exit
-	ScenerySavedCamPos   mgl32.Vec3
-	ScenerySavedCamYaw   float32
-	ScenerySavedCamPitch float32
-	ShowSceneryPicker    bool     // load dialog visible
-	SceneryFiles         []string // scanned .yaml files
-	ShowScenerySaveAs    bool
-	ScenerySaveAsName    string
-	ShowImportScenery    bool // import dialog (used from 3D editor)
-	ImportSceneryFiles   []string
-	ImportSceneryIdx     int32
 }
 
 // BiomeLayerState is the 2D biome-sector polygon layer's state
@@ -114,20 +133,35 @@ type EditorState struct {
 	ActiveEdgeKind  string // "wall" or "portal"
 	ActiveEdgeIdx   int    // index within sector.Walls or sector.Portals; -1 = none
 
-	ActiveEntityIdx    int // index into level.Entities; -1 = none
-	ActivePrimitiveIdx int // index into active chunk's Primitives; -1 = none
-
 	// Face of the selected sector picked by a 3D click: "floor", "ceiling",
 	// "wall", "portal", or "" for none. Walls/portals also set ActiveEdgeKind.
+	//
+	// Derived: this and ActiveEdgeKind/ActiveEdgeIdx mirror SelectedFaces[0].
+	// Write it through editor_face_sel.go, never directly.
 	ActiveSurface string
+
+	// Sector faces selected by clicking them in face mode. The first entry is
+	// the primary and mirrors ActiveSurface (and, for a wall or portal,
+	// ActiveEdgeKind/Idx); ctrl+click adds the rest. Empty = no face selection.
+	SelectedFaces []faceSel
 
 	// Sector vertices selected by clicking their handle boxes in 3D. The first
 	// entry is the primary one and mirrors ActiveVertexSI/VI; ctrl+click adds
 	// the rest. Empty = no vertex selection.
 	SelectedVertices []vertexSel
 
-	// --- Three-axis translate gizmo (3D + scenery modes) ---
+	// What a 3D click selects: points, edges, or faces and objects. See the
+	// editorSel* constants (editor_3d_view.go).
+	SelMode editorSelMode
+
+	// Draw the world as lines rather than solid, which also makes every point
+	// and edge in range selectable instead of only the ones the camera can
+	// actually see. See editor_3d_visibility.go.
+	Wireframe bool
+
+	// --- Move/rotate/scale gizmos ---
 	GizmoState
+	Gizmo2DState
 	// One-shot request from a selection change to open (and scroll to) a
 	// properties section in the side panel. See the panelFocus* constants;
 	// cleared by the panel once it has been applied.
@@ -142,23 +176,36 @@ type EditorState struct {
 	SavedCamYaw   float32
 	SavedCamPitch float32
 
-	// Entity definition catalog (loaded from resources/entities/*.yaml)
-	EntityDefs     []EntityDef
-	SelectedDefIdx int  // selected entry in the catalog panel
-	PlacementMode  bool // true: next left-click places a new entity
+	// Spawn-point placement state: true when the next left-click drops (or
+	// moves) the level's spawn marker.
+	SpawnPlacementMode bool
+	// SpawnSelected is whether the spawn marker is the current selection, which
+	// is what gives it the gizmo and its properties section.
+	SpawnSelected bool
 
-	// Primitive placement state
-	PrimPlacementMode bool   // true: next left-click places a primitive
-	PrimPlacementType string // one of primitiveTypeNames (primitive.go)
-
-	// Model catalog (files in <exe>/models, both .fmdl and .obj). Scanned on
-	// first use rather than at init so a model saved from the model editor
-	// mid-session is one Refresh away, not one restart.
-	ModelFiles            []string
-	ModelFilesScanned     bool
-	SelectedModelIdx      int    // selected entry in the model catalog; -1 = none
-	ModelPlacementMode    bool   // true: next left-click places the selected model
-	ModelPlacementTexture string // fallback texture for faces that name none
+	// --- Entities ---
+	// ActiveEntityIdx indexes level.Entities; -1 = none selected. An index
+	// rather than a pointer because undo swaps the whole level out from under
+	// the editor, and a pointer into the old one would outlive it.
+	ActiveEntityIdx int
+	// EntityPlacementMode is true when the next left-click drops an instance of
+	// EntityPlaceType into the level.
+	EntityPlacementMode bool
+	EntityPlaceType     string
+	// EntityDefNames is the definition catalog, rescanned rather than watched —
+	// see editorRefreshEntityDefs.
+	EntityDefNames []string
+	EntityDefIdx   int32
+	// NewEntityID is the ID field of the placement section, empty for "name it
+	// after its type".
+	NewEntityID string
+	// Text/type fields of the selected entity's "add a tag" and "add an
+	// attribute" rows. They live on the editor rather than in imgui's own
+	// storage because both are read when their button is pressed, which is a
+	// different frame from the one the text was typed in.
+	NewTagText  string
+	NewAttrName string
+	NewAttrType int32
 
 	// Chunk creation dialog
 	NewChunkID   string
@@ -197,8 +244,7 @@ type EditorState struct {
 	ShowPointSelectRadius bool
 
 	// Point connection state for ctrl+click workflow
-	ConnectFromIdx int      // chunk point index to connect from; -1 = not connecting
-	PendingEdges   [][2]int // edges not yet part of a sector (chunk point indices)
+	PendingEdges [][2]int // edges not yet part of a sector (chunk point indices)
 
 	// Navigation button state (reset each frame after applying)
 	NavForward, NavBack, NavLeft, NavRight, NavUp, NavDown bool
@@ -214,7 +260,12 @@ type EditorState struct {
 	SurfaceEditorState
 
 	// Right-click drag rotation state (3D mode)
-	MouseDragging3D      bool
+	MouseDragging3D bool
+	// Middle-button camera drag (3D mode): turns like the right-drag does, or
+	// pans when shift was held at mouse-down — PanDragging3D is latched there
+	// so letting go of shift mid-drag does not change what the drag means.
+	MiddleDragging3D     bool
+	PanDragging3D        bool
 	LastDragX, LastDragY int32
 
 	// Drag step / snap-to-grid
@@ -248,9 +299,6 @@ type EditorState struct {
 	ShowSaveAs bool
 	SaveAsName string
 
-	// --- Scenery editor ---
-	SceneryEditorState
-
 	// --- 2D biome sector layer ---
 	BiomeLayerState
 }
@@ -259,7 +307,7 @@ type EditorState struct {
 var Editor EditorState
 
 // EditorInit must be called once after LoadLevel and after the OpenGL context
-// is current. It initialises ImGui, gizmo shaders, and the entity catalog.
+// is current. It initialises ImGui and the gizmo shaders.
 func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.level = level
 	Editor.LevelsDir = levelsDir
@@ -269,22 +317,25 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveEdgeIdx = -1
 	Editor.ActiveSurface = ""
+	Editor.SelectedFaces = nil
 	Editor.PanelFocus = ""
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = -1
 	Editor.SelectedDirLightIdx = -1
-	Editor.PrimPlacementMode = false
-	Editor.ModelPlacementMode = false
+	Editor.SpawnPlacementMode = false
+	Editor.SpawnSelected = false
+	Editor.ActiveEntityIdx = -1
+	Editor.EntityPlacementMode = false
+	Editor.EntityPlaceType = ""
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
 	Editor.ActiveVertexVI = -1
 	Editor.SelectedVertices = nil
 	Editor.GizmoKind = gizmoKindNone
+	Editor.GizmoTool = editorToolMove
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
-	Editor.GizmoDragTool = modelToolMove
-	Editor.ConnectFromIdx = -1
+	Editor.Gizmo2DAxis = -1
+	Editor.Gizmo2DDragging = false
 	Editor.PendingEdges = nil
 	Editor.ActiveExtrusionIdx = -1
 	Editor.ExtrusionMode = false
@@ -309,9 +360,6 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	GrassInit()
 	DetailInit()
 
-	Editor.SceneryActivePrimIdx = -1
-	Editor.SceneryPrimPlacement = false
-
 	// Biome sector layer defaults
 	Editor.BiomeLayerActive = false
 	Editor.BiomeDrawing = false
@@ -319,13 +367,6 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.ActiveBiomeSectorIdx = -1
 	Editor.BiomeDragVertexIdx = -1
 
-	Editor.EntityDefs = ScanEntityDefs(executablePath + "/entities")
-
-	// The model catalog itself is scanned lazily (editorModelCatalogSection),
-	// but its selection and fallback texture need valid starting values.
-	Editor.SelectedModelIdx = -1
-	Editor.ModelFilesScanned = false
-	Editor.ModelPlacementTexture = modelImportFallbackTexture
 }
 
 const panelGrabZone int32 = 6
@@ -429,6 +470,10 @@ func EditorToggle() {
 		Editor.Active = true
 		Editor.Mode = Mode3D
 		Editor.Pan2D = mgl32.Vec2{Cam.Position.X(), Cam.Position.Z()}
+		// Re-derive the orbit pivot from where the player left the camera, so
+		// an orbit carried over from the last editing session does not yank the
+		// view back to somewhere they have since walked away from.
+		editorCamEnter()
 	}
 }
 
@@ -447,10 +492,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 
 	switch t := event.(type) {
 	case sdl.KeyboardEvent:
-		// Scenery mode intercepts keys first
-		if Editor.Mode == ModeScenery && sceneryEditorHandleKey(t) {
-			return true
-		}
 		// Surface 2D mode intercepts keys first
 		if Editor.Mode == ModeSurface2D && surface2DHandleKey(t) {
 			return true
@@ -467,33 +508,20 @@ func EditorHandleEvent(event sdl.Event) bool {
 			break
 		}
 
-		// Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) — undo/redo, scoped to whichever
-		// editor workspace is active.
+		// Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) — undo/redo.
 		if !imgui.CurrentIO().WantCaptureKeyboard() {
 			mods := sdl.GetModState()
 			if mods&sdl.KMOD_CTRL != 0 {
 				switch t.Keysym.Scancode {
 				case sdl.SCANCODE_Z:
 					if mods&sdl.KMOD_SHIFT != 0 {
-						if Editor.Mode == ModeScenery {
-							SceneryRedo()
-						} else {
-							EditorRedo()
-						}
+						EditorRedo()
 					} else {
-						if Editor.Mode == ModeScenery {
-							SceneryUndo()
-						} else {
-							EditorUndo()
-						}
+						EditorUndo()
 					}
 					return true
 				case sdl.SCANCODE_Y:
-					if Editor.Mode == ModeScenery {
-						SceneryRedo()
-					} else {
-						EditorRedo()
-					}
+					EditorRedo()
 					return true
 				}
 			}
@@ -524,17 +552,68 @@ func EditorHandleEvent(event sdl.Event) bool {
 				EditorDeleteSelected()
 			}
 
-		// Gizmo tools, on the model editor's shortcuts so the two viewports
-		// answer to the same keys. Guarded on keyboard capture so typing a "g"
-		// into an ID field does not also swap the tool underneath the panel.
+		// View switches, again on the model editor's shortcuts: 1/2/3 pick the
+		// selection unit, G/R/C pick the gizmo, Z swaps shading, V swaps
+		// camera, F frames what is selected. Same guard as the tool keys —
+		// typing an id into a panel field must not also change the view
+		// underneath it.
+		//
+		// 1/2/3 and G/R/C answer in both viewports: the selection and the tool
+		// are shared between them (editor_3d_view.go, editor_sel_tool.go), so
+		// binding them to the 3D view alone would leave the 2D map able to show
+		// a mode it could not switch.
+		case sdl.SCANCODE_1:
+			if editorSelKeysActive() {
+				editorSetSelMode(editorSelPoint)
+				return true
+			}
+		case sdl.SCANCODE_2:
+			if editorSelKeysActive() {
+				editorSetSelMode(editorSelEdge)
+				return true
+			}
+		case sdl.SCANCODE_3:
+			if editorSelKeysActive() {
+				editorSetSelMode(editorSelFace)
+				return true
+			}
 		case sdl.SCANCODE_G:
-			if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureKeyboard() {
-				editorSetGizmoTool(modelToolMove)
+			if editorSelKeysActive() {
+				editorSetGizmoTool(editorToolMove)
+				return true
+			}
+		case sdl.SCANCODE_R:
+			if editorSelKeysActive() {
+				editorSetGizmoTool(editorToolRotate)
 				return true
 			}
 		case sdl.SCANCODE_C:
+			if editorSelKeysActive() {
+				editorSetGizmoTool(editorToolScale)
+				return true
+			}
+		// J joins the picked points into edges — the map's replacement for the
+		// ctrl+click chain that used to draw them one at a time. Shift+J also
+		// closes the loop, which is what turns an outline into a sector.
+		case sdl.SCANCODE_J:
+			if Editor.Mode == Mode2D && !imgui.CurrentIO().WantCaptureKeyboard() {
+				EditorJoinSelectedPoints(sdl.GetModState()&sdl.KMOD_SHIFT != 0)
+				return true
+			}
+		case sdl.SCANCODE_Z:
+			// Bare Z only: Ctrl+Z is undo, and that is handled above.
 			if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureKeyboard() {
-				editorSetGizmoTool(modelToolScale)
+				editorSetWireframe(!Editor.Wireframe)
+				return true
+			}
+		case sdl.SCANCODE_V:
+			if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureKeyboard() {
+				editorSetFlyCam(!editorCam3D.Fly)
+				return true
+			}
+		case sdl.SCANCODE_F:
+			if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureKeyboard() {
+				editorFrameSelection()
 				return true
 			}
 		}
@@ -544,17 +623,7 @@ func EditorHandleEvent(event sdl.Event) bool {
 			break
 		}
 		if t.Type == sdl.MOUSEBUTTONDOWN {
-			if Editor.Mode == ModeScenery {
-				if t.Button == sdl.ButtonRight {
-					Editor.MouseDragging3D = true
-					Editor.LastDragX = t.X
-					Editor.LastDragY = t.Y
-				} else if editorGizmoMouseDown(t) {
-					// Grabbed an axis arm — the click must not re-select.
-				} else {
-					SceneryEditorHandleClick(t)
-				}
-			} else if Editor.Mode == ModeSurface2D {
+			if Editor.Mode == ModeSurface2D {
 				Surface2DHandleClick(t)
 			} else if Editor.Mode == Mode3D {
 				if t.Button == sdl.ButtonRight {
@@ -565,6 +634,14 @@ func EditorHandleEvent(event sdl.Event) bool {
 					Editor.LastDragX = t.X
 					Editor.LastDragY = t.Y
 					editor3DContextPressed(t.X, t.Y)
+				} else if t.Button == sdl.ButtonMiddle {
+					// Middle-drag turns as well, and shift+middle pans — the
+					// model editor's gestures, so the two viewports are flown
+					// and orbited with the same hand.
+					Editor.MiddleDragging3D = true
+					Editor.PanDragging3D = sdl.GetModState()&sdl.KMOD_SHIFT != 0
+					Editor.LastDragX = t.X
+					Editor.LastDragY = t.Y
 				} else if Editor.ExtrusionMode && editorExtrusionHandleClick(t) {
 					// Extrusion placement consumed the click
 				} else if editorGizmoMouseDown(t) {
@@ -580,13 +657,17 @@ func EditorHandleEvent(event sdl.Event) bool {
 				editorGizmoMouseUp()
 				return true
 			}
-			if Editor.Mode == ModeScenery && t.Button == sdl.ButtonRight {
-				Editor.MouseDragging3D = false
-			} else if Editor.Mode == ModeSurface2D {
+			if Editor.Mode == ModeSurface2D {
 				Surface2DHandleRelease(t)
 			} else if Editor.Mode == Mode3D && t.Button == sdl.ButtonRight {
 				Editor.MouseDragging3D = false
 				editor3DContextReleased(t.X, t.Y)
+			} else if Editor.Mode == Mode3D && t.Button == sdl.ButtonMiddle {
+				// Not gated on WantCaptureMouse: releasing over the side panel
+				// must still end a drag that began on the viewport, or the
+				// camera would stay stuck to the mouse.
+				Editor.MiddleDragging3D = false
+				Editor.PanDragging3D = false
 			} else if Editor.Mode == Mode2D {
 				Editor2DHandleRelease(t)
 			}
@@ -602,36 +683,19 @@ func EditorHandleEvent(event sdl.Event) bool {
 			editorGizmoMouseMove(t.X, t.Y)
 			return true
 		}
-		if Editor.Mode == ModeScenery && Editor.MouseDragging3D {
-			dx := t.X - Editor.LastDragX
-			dy := t.Y - Editor.LastDragY
-			Cam.Yaw += MouseRotationSpeed * float32(dx)
-			Cam.Pitch -= MouseRotationSpeed * float32(dy)
-			if Cam.Pitch > maxPitch {
-				Cam.Pitch = maxPitch
-			}
-			if Cam.Pitch < -maxPitch {
-				Cam.Pitch = -maxPitch
-			}
-			updateCamDirection()
-			updateCamMatrix()
-			Editor.LastDragX = t.X
-			Editor.LastDragY = t.Y
-		} else if Editor.Mode == ModeSurface2D {
+		if Editor.Mode == ModeSurface2D {
 			Surface2DHandleMouseMove(t)
-		} else if Editor.Mode == Mode3D && Editor.MouseDragging3D {
+		} else if Editor.Mode == Mode3D && (Editor.MouseDragging3D || Editor.MiddleDragging3D) {
 			dx := t.X - Editor.LastDragX
 			dy := t.Y - Editor.LastDragY
-			Cam.Yaw += MouseRotationSpeed * float32(dx)
-			Cam.Pitch -= MouseRotationSpeed * float32(dy)
-			if Cam.Pitch > maxPitch {
-				Cam.Pitch = maxPitch
+			// One rotation path for both camera modes: the angles change either
+			// way, and editorCamLook decides whether that turns the head in
+			// place or swings the eye around the pivot.
+			if Editor.PanDragging3D {
+				editorCamPan(dx, dy)
+			} else {
+				editorCamLook(dx, dy)
 			}
-			if Cam.Pitch < -maxPitch {
-				Cam.Pitch = -maxPitch
-			}
-			updateCamDirection()
-			updateCamMatrix()
 			Editor.LastDragX = t.X
 			Editor.LastDragY = t.Y
 		} else if Editor.Mode == Mode3D && Cam.MouseLock {
@@ -653,6 +717,10 @@ func EditorHandleEvent(event sdl.Event) bool {
 		}
 		if Editor.Mode == Mode2D && !imgui.CurrentIO().WantCaptureMouse() {
 			Editor2DZoom(t.Y)
+			return true
+		}
+		if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureMouse() {
+			editorCamZoom(t.Y)
 			return true
 		}
 	}
@@ -678,32 +746,36 @@ func EditorTick(keyStates []uint8) {
 		return
 	}
 
-	if Editor.Mode == Mode3D || Editor.Mode == ModeScenery {
-		// Free-fly using existing HandleInput (gravity is already off)
-		preMovePos := Cam.Position
-		HandleInput(keyStates)
-		_ = preMovePos
+	if Editor.Mode == Mode3D {
+		if Editor.Mode == Mode3D && !editorCam3D.Fly {
+			// Orbiting: the same keys, but they slide the pivot rather than
+			// the eye (editor_3d_camera.go).
+			editorOrbitKeys(keyStates)
+		} else {
+			// Free-fly using existing HandleInput (gravity is already off)
+			HandleInput(keyStates)
+		}
 
 		// Apply navigation button movement
 		dtScale := DeltaTime * 60.0
 		navSpeed := MovementSpeed * dtScale
 		if Editor.NavForward {
-			MoveCamera(navSpeed, 0, 0)
+			editorNavMove(Editor.Mode, navSpeed, 0, 0)
 		}
 		if Editor.NavBack {
-			MoveCamera(-navSpeed, 0, 0)
+			editorNavMove(Editor.Mode, -navSpeed, 0, 0)
 		}
 		if Editor.NavLeft {
-			MoveCamera(0, 0, navSpeed)
+			editorNavMove(Editor.Mode, 0, 0, navSpeed)
 		}
 		if Editor.NavRight {
-			MoveCamera(0, 0, -navSpeed)
+			editorNavMove(Editor.Mode, 0, 0, -navSpeed)
 		}
 		if Editor.NavUp {
-			MoveCamera(0, navSpeed, 0)
+			editorNavMove(Editor.Mode, 0, navSpeed, 0)
 		}
 		if Editor.NavDown {
-			MoveCamera(0, -navSpeed, 0)
+			editorNavMove(Editor.Mode, 0, -navSpeed, 0)
 		}
 		if Editor.NavForward || Editor.NavBack || Editor.NavLeft || Editor.NavRight || Editor.NavUp || Editor.NavDown {
 			Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), mgl32.Vec3{0, 1, 0})
@@ -739,17 +811,15 @@ func EditorRender() {
 
 	dt := DeltaTime
 
+	// Which handles the camera can see is answered once per frame and cached
+	// for the rest of it, including the clicks that land before the next one
+	// (editor_3d_visibility.go).
+	editorVisNewFrame()
+
 	// --- 3D gizmos (drawn on top of world, depth-tested) ---
 	if Editor.Mode == Mode3D {
 		projView := Projection.Mul4(Cam.Matrix)
 		Editor3DRenderGizmos(projView)
-		GizmoFlush(projView)
-	}
-
-	// --- Scenery editor gizmos ---
-	if Editor.Mode == ModeScenery {
-		projView := Projection.Mul4(Cam.Matrix)
-		SceneryEditorRenderGizmos(projView)
 		GizmoFlush(projView)
 	}
 
@@ -785,7 +855,8 @@ func EditorRender() {
 	ImGuiRender()
 }
 
-// EditorDeleteSelected removes the currently selected entity or edge.
+// EditorDeleteSelected removes the current selection: a biome sector, an edge,
+// or the level's spawn point.
 func EditorDeleteSelected() {
 	if Editor.level == nil {
 		return
@@ -810,53 +881,18 @@ func EditorDeleteSelected() {
 		return
 	}
 
-	// Primitive deletion
-	if Editor.ActivePrimitiveIdx >= 0 && Editor.ActiveChunkIdx >= 0 &&
-		Editor.ActiveChunkIdx < len(Editor.level.Chunks) {
-		ch := &Editor.level.Chunks[Editor.ActiveChunkIdx]
-		idx := Editor.ActivePrimitiveIdx
-		if idx < len(ch.Primitives) {
-			EditorPushUndo()
-			ch.Primitives[idx].Geometry.Delete()
-			ch.Primitives = append(ch.Primitives[:idx], ch.Primitives[idx+1:]...)
-			// Rebuild sector PrimitiveIndices
-			rebuildPrimitiveIndices(ch)
-			Editor.ActivePrimitiveIdx = -1
-		}
+	// Spawn-point deletion
+	if Editor.SpawnSelected && Editor.level.Spawn != nil {
+		EditorPushUndo()
+		Editor.level.Spawn.Delete()
+		Editor.level.Spawn = nil
+		editorClearSpawnSelection()
 		return
 	}
 
 	// Entity deletion
-	if Editor.ActiveEntityIdx < 0 {
-		return
-	}
-	idx := Editor.ActiveEntityIdx
-	lvl := Editor.level
-	if idx >= len(lvl.Entities) {
-		return
-	}
-	EditorPushUndo()
-	lvl.Entities = append(lvl.Entities[:idx], lvl.Entities[idx+1:]...)
-	Editor.ActiveEntityIdx = -1
-}
-
-// rebuildPrimitiveIndices recomputes Sector.PrimitiveIndices for all sectors in a chunk.
-func rebuildPrimitiveIndices(ch *Chunk) {
-	for si := range ch.Sectors {
-		ch.Sectors[si].PrimitiveIndices = nil
-	}
-	for pi := range ch.Primitives {
-		p := &ch.Primitives[pi]
-		xz := mgl32.Vec2{p.Position.X(), p.Position.Z()}
-		for si := range ch.Sectors {
-			s := &ch.Sectors[si]
-			pts := SectorPoints(ch, s)
-			if pointInPolygon(xz, pts) {
-				p.SectorID = s.ID
-				s.PrimitiveIndices = append(s.PrimitiveIndices, pi)
-				break
-			}
-		}
+	if activeEntity() != nil {
+		deleteActiveEntity()
 	}
 }
 
@@ -868,32 +904,34 @@ func EditorLoadLevel(path string) error {
 		return err
 	}
 
+	// Entity meshes are the one thing in a level that is uploaded per *entity*
+	// rather than per surface, so the outgoing level's have to be released
+	// explicitly — overwriting the struct would drop the handles, not free them.
+	DeleteEntities(Editor.level)
+
 	// Replace the level contents in-place (Editor.level points to main's level)
 	*Editor.level = newLevel
 
 	// Upload lights to GPU
 	UploadLights(Editor.level.Lights)
 
-	// Find player entity
-	PlayerEntity = nil
-	for i := range Editor.level.Entities {
-		if Editor.level.Entities[i].ID == "player" {
-			PlayerEntity = &Editor.level.Entities[i]
-			break
-		}
-	}
+	// The player is engine-owned, so opening a level does not replace it — it
+	// only moves it onto the new level's spawn point (or leaves it be when
+	// there isn't one).
+	ApplySpawnPoint(Editor.level)
 
 	// Reset editor selection state
 	Editor.ActiveChunkIdx = 0
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveEdgeIdx = -1
 	Editor.ActiveSurface = ""
+	Editor.SelectedFaces = nil
 	Editor.PanelFocus = ""
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = -1
 	Editor.SelectedDirLightIdx = -1
-	Editor.PrimPlacementMode = false
-	Editor.ModelPlacementMode = false
+	Editor.SpawnPlacementMode = false
+	Editor.SpawnSelected = false
+	Editor.ActiveEntityIdx = -1
+	Editor.EntityPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
@@ -902,8 +940,8 @@ func EditorLoadLevel(path string) error {
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
-	Editor.GizmoDragTool = modelToolMove
-	Editor.ConnectFromIdx = -1
+	Editor.Gizmo2DAxis = -1
+	Editor.Gizmo2DDragging = false
 	Editor.PendingEdges = nil
 	Editor.ActiveExtrusionIdx = -1
 	Editor.ExtrusionMode = false
@@ -935,5 +973,11 @@ func updateCamDirection() {
 
 func updateCamMatrix() {
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), mgl32.Vec3{0, 1, 0})
+	if Program == 0 {
+		// No world shader, so nowhere to upload to. Only a headless test gets
+		// here — a GL call with no context current segfaults in the driver
+		// rather than returning an error, so the guard has to be on this side.
+		return
+	}
 	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
 }

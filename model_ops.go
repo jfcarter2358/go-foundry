@@ -103,16 +103,6 @@ func (m *ModelDoc) SetVertPos(v int, p mgl32.Vec3) {
 	m.touch()
 }
 
-// SetFaceTexture assigns a logical texture name to the given faces. This is what
-// splits the mesh into more than one Geometry at draw time — see
-// modelSubmeshes.
-func (m *ModelDoc) SetFaceTexture(faces []int, tex string) {
-	for fi := range m.faceSet(faces) {
-		m.Faces[fi].Texture = tex
-	}
-	m.touch()
-}
-
 // SetFaceSmooth toggles smooth shading on the given faces.
 func (m *ModelDoc) SetFaceSmooth(faces []int, smooth bool) {
 	for fi := range m.faceSet(faces) {
@@ -215,10 +205,9 @@ func (m *ModelDoc) ExtrudeFaces(faces []int, dist float32) (caps, sides []int) {
 		src := &m.Faces[de.face]
 		sides = append(sides, len(m.Faces))
 		m.Faces = append(m.Faces, ModelFace{
-			Verts:   []int{de.a, de.b, dup[de.b], dup[de.a]},
-			UVs:     make([]mgl32.Vec2, 4),
-			Texture: src.Texture,
-			Smooth:  src.Smooth,
+			Verts:  []int{de.a, de.b, dup[de.b], dup[de.a]},
+			UVs:    make([]mgl32.Vec2, 4),
+			Smooth: src.Smooth,
 		})
 	}
 
@@ -457,7 +446,7 @@ func (m *ModelDoc) splitFace(fi int, edgeMid map[edgeKey]int) []ModelFace {
 	}
 
 	child := func(verts []int, uvs []mgl32.Vec2) ModelFace {
-		return ModelFace{Verts: verts, UVs: uvs, Texture: f.Texture, Smooth: f.Smooth}
+		return ModelFace{Verts: verts, UVs: uvs, Smooth: f.Smooth}
 	}
 	// walk appends the face's own vertices at the given loop indices, so a
 	// child keeps the T-junction points that lie along its share of an edge.
@@ -708,8 +697,7 @@ func (m *ModelDoc) CatmullClark() {
 					faceUV,
 					f.uvAt(prev).Add(f.uvAt(i)).Mul(0.5),
 				},
-				Texture: f.Texture,
-				Smooth:  f.Smooth,
+				Smooth: f.Smooth,
 			})
 		}
 	}

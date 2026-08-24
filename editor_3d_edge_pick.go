@@ -255,6 +255,13 @@ func buildEdgeHandle(sel edgeSel, projView mgl32.Mat4, cursor mgl32.Vec2, maxPx 
 		return edgeHandle{}, false
 	}
 
+	// Solid shading hides the far side of the world. As in the model editor an
+	// edge counts as visible when either endpoint is: one running behind a wall
+	// but emerging at one end is still something the user can see and aim at.
+	if !editorEdgeVisible(va, vb, p0, p1) {
+		return edgeHandle{}, false
+	}
+
 	center, axes, half, ok := edgePrism(p0, p1)
 	if !ok {
 		return edgeHandle{}, false
@@ -351,13 +358,44 @@ func edgeVertices(sels []edgeSel) []vertexSel {
 
 // setEdgeSelection replaces the selection with sels' endpoints. Reports false
 // when none of the edges resolve, leaving the current selection alone.
+//
+// The endpoints are the selection proper — that is what the gizmo moves and
+// what undo records — but the wall or portal the first edge runs along is noted
+// alongside them, so the side panel has something to edit and the 2D map has an
+// edge to draw in the selected colour. Both views go through here, which is
+// what makes an edge picked in one show up as an edge in the other.
 func setEdgeSelection(sels []edgeSel) bool {
 	verts := edgeVertices(sels)
 	if len(verts) == 0 {
 		return false
 	}
 	setVertexSelection(verts)
+	noteEdgeSurface(sels[0])
 	return true
+}
+
+// noteEdgeSurface points ActiveEdgeKind/ActiveEdgeIdx at the wall or portal an
+// edge selection runs along, without disturbing the vertex selection itself.
+// A vertical edge joins one corner's floor and ceiling handles and lies along
+// no wall, so it clears the note rather than pointing at an unrelated one.
+func noteEdgeSurface(sel edgeSel) {
+	lvl := Editor.level
+	if lvl == nil || sel.chunkIdx < 0 || sel.chunkIdx >= len(lvl.Chunks) {
+		return
+	}
+	ch := &lvl.Chunks[sel.chunkIdx]
+	if sel.sectorIdx < 0 || sel.sectorIdx >= len(ch.Sectors) {
+		return
+	}
+	if sel.kind == edgeKind3DVertical {
+		Editor.ActiveEdgeKind = ""
+		Editor.ActiveEdgeIdx = -1
+		return
+	}
+	kind, kindIdx := edgeKindAndIndex(&ch.Sectors[sel.sectorIdx], sel.vertIdx)
+	Editor.ActiveSectorIdx = sel.sectorIdx
+	Editor.ActiveEdgeKind = kind
+	Editor.ActiveEdgeIdx = kindIdx
 }
 
 // handleEdgeClick resolves a click against the edge prisms. A plain click
@@ -386,6 +424,7 @@ func handleEdgeClick(mx, my int32, ctrlHeld bool) bool {
 		return false
 	}
 	addVertexHandlesToSelection(verts)
+	noteEdgeSurface(sels[0])
 	return true
 }
 

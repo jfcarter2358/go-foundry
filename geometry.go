@@ -1,7 +1,7 @@
 package main
 
 // geometry.go — Geometry, the core GPU vertex-buffer type shared by walls,
-// floors, ceilings, primitives, and extrusions. Split out of wall.go, where
+// floors, ceilings, water surfaces, and extrusions. Split out of wall.go, where
 // it used to sit alongside the unrelated Wall/Extrusion/TerrainPoint types
 // — see RESTRUCTURE_PROPOSAL.md §5 Phase A.
 

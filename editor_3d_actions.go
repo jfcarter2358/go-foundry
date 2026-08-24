@@ -22,17 +22,17 @@ import (
 
 // ---------- what is selected ----------
 
-// editor3DSelKind is what a 3D click has left selected. The five are mutually
+// editor3DSelKind is what a 3D click has left selected. They are mutually
 // exclusive by construction: every selection path in Editor3DHandleClick and
-// setVertexSelection clears the other four.
+// setVertexSelection clears the others.
 type editor3DSelKind int
 
 const (
 	sel3DNone editor3DSelKind = iota
 	sel3DVertices
 	sel3DSurface // a sector's floor, ceiling, wall or portal
+	sel3DSpawn
 	sel3DEntity
-	sel3DPrimitive
 )
 
 func editor3DSelection() editor3DSelKind {
@@ -41,10 +41,10 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DNone
 	}
 	switch {
-	case editor3DActiveEntity() != nil:
+	case editor3DActiveSpawn() != nil:
+		return sel3DSpawn
+	case activeEntity() != nil:
 		return sel3DEntity
-	case editor3DActivePrimitiveIdx() >= 0:
-		return sel3DPrimitive
 	case len(Editor.SelectedVertices) > 0:
 		return sel3DVertices
 	case Editor.ActiveSurface != "":
@@ -60,12 +60,15 @@ func editor3DHasSelection() bool { return editor3DSelection() != sel3DNone }
 // editor3DSelectionSummary names the selection for the menu's heading.
 func editor3DSelectionSummary() string {
 	switch editor3DSelection() {
-	case sel3DEntity:
-		return fmt.Sprintf("Entity — %s", editor3DActiveEntity().ID)
+	case sel3DSpawn:
+		return "Spawn point"
 
-	case sel3DPrimitive:
-		_, p := editor3DActivePrimitive()
-		return fmt.Sprintf("Primitive — %s (%s)", p.ID, primitiveTypeName(p.Kind))
+	case sel3DEntity:
+		e := activeEntity()
+		if e.Type != "" {
+			return fmt.Sprintf("Entity %s (%s)", e.ID, e.Type)
+		}
+		return fmt.Sprintf("Entity %s", e.ID)
 
 	case sel3DVertices:
 		if n := len(Editor.SelectedVertices); n > 1 {
@@ -79,6 +82,9 @@ func editor3DSelectionSummary() string {
 		return fmt.Sprintf("Vertex #%d (%s)", primary.vertIdx, which)
 
 	case sel3DSurface:
+		if n := selectedFaceCount(); n > 1 {
+			return fmt.Sprintf("%d faces", n)
+		}
 		_, s := editor3DActiveSector()
 		if Editor.ActiveEdgeIdx >= 0 && Editor.ActiveEdgeKind != "" {
 			return fmt.Sprintf("%s #%d — sector %s",
@@ -100,36 +106,14 @@ func editor3DKindLabel(s string) string {
 
 // ---------- selection accessors ----------
 
-func editor3DActiveEntity() *Entity {
+// editor3DActiveSpawn is the level's spawn point when it is what a click left
+// selected, or nil.
+func editor3DActiveSpawn() *SpawnPoint {
 	lvl := Editor.level
-	if lvl == nil || Editor.ActiveEntityIdx < 0 || Editor.ActiveEntityIdx >= len(lvl.Entities) {
+	if lvl == nil || !Editor.SpawnSelected {
 		return nil
 	}
-	return &lvl.Entities[Editor.ActiveEntityIdx]
-}
-
-// editor3DActivePrimitiveIdx is the selected primitive's index, or -1. Split
-// out from editor3DActivePrimitive because several callers want the index for
-// the reload helpers, which take it rather than the primitive.
-func editor3DActivePrimitiveIdx() int {
-	lvl := Editor.level
-	if lvl == nil || Editor.ActivePrimitiveIdx < 0 ||
-		Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
-		return -1
-	}
-	if Editor.ActivePrimitiveIdx >= len(lvl.Chunks[Editor.ActiveChunkIdx].Primitives) {
-		return -1
-	}
-	return Editor.ActivePrimitiveIdx
-}
-
-func editor3DActivePrimitive() (*Chunk, *Primitive) {
-	idx := editor3DActivePrimitiveIdx()
-	if idx < 0 {
-		return nil, nil
-	}
-	ch := &Editor.level.Chunks[Editor.ActiveChunkIdx]
-	return ch, &ch.Primitives[idx]
+	return lvl.Spawn
 }
 
 func editor3DActiveSector() (*Chunk, *Sector) {
@@ -167,16 +151,26 @@ type surface3DRefs struct {
 	Terrain     *bool
 }
 
-// editor3DSurfaceRefs resolves the selected surface. False when the selection
-// is not a surface, or when its indices no longer point at live geometry.
+// editor3DSurfaceRefs resolves the primary selected surface — the one the side
+// panel shows and the one a toggle reads its "before" value from. False when the
+// selection is not a surface, or when its indices no longer point at live
+// geometry.
 func editor3DSurfaceRefs() (surface3DRefs, bool) {
-	ch, s := editor3DActiveSector()
-	if ch == nil || s == nil || Editor.ActiveSurface == "" {
+	if len(Editor.SelectedFaces) == 0 {
 		return surface3DRefs{}, false
 	}
-	r := surface3DRefs{ch: ch, s: s, kind: Editor.ActiveSurface}
+	return editor3DSurfaceRefsFor(Editor.SelectedFaces[0])
+}
 
-	switch Editor.ActiveSurface {
+// editor3DSurfaceRefsFor resolves one named face's editable fields.
+func editor3DSurfaceRefsFor(sel faceSel) (surface3DRefs, bool) {
+	ch, s := faceSelSector(sel)
+	if ch == nil || s == nil || sel.kind == "" {
+		return surface3DRefs{}, false
+	}
+	r := surface3DRefs{ch: ch, s: s, kind: sel.kind}
+
+	switch sel.kind {
 	case "floor":
 		r.Texture, r.Smooth = &s.Floor.Texture, &s.Floor.Smooth
 		r.On, r.DoubleSided, r.Terrain = &s.Floor.Enabled, &s.Floor.DoubleSided, &s.Floor.Terrain
@@ -184,17 +178,17 @@ func editor3DSurfaceRefs() (surface3DRefs, bool) {
 		r.Texture, r.Smooth = &s.Ceiling.Texture, &s.Ceiling.Smooth
 		r.On, r.DoubleSided, r.Terrain = &s.Ceiling.Enabled, &s.Ceiling.DoubleSided, &s.Ceiling.Terrain
 	case "wall":
-		if Editor.ActiveEdgeIdx < 0 || Editor.ActiveEdgeIdx >= len(s.Walls) {
+		if sel.idx < 0 || sel.idx >= len(s.Walls) {
 			return surface3DRefs{}, false
 		}
-		w := &s.Walls[Editor.ActiveEdgeIdx]
+		w := &s.Walls[sel.idx]
 		r.Texture, r.Smooth = &w.Texture, &w.Smooth
 		r.On, r.DoubleSided, r.Collision, r.Terrain = &w.Visible, &w.DoubleSided, &w.Collision, &w.Terrain
 	case "portal":
-		if Editor.ActiveEdgeIdx < 0 || Editor.ActiveEdgeIdx >= len(s.Portals) {
+		if sel.idx < 0 || sel.idx >= len(s.Portals) {
 			return surface3DRefs{}, false
 		}
-		p := &s.Portals[Editor.ActiveEdgeIdx]
+		p := &s.Portals[sel.idx]
 		// A portal is a hole: its only surface is the optional gap quad, so
 		// that is what "texture" means here, and there is nothing to smooth.
 		r.Texture, r.On, r.DoubleSided = &p.GapTexture, &p.Visible, &p.DoubleSided
@@ -202,6 +196,71 @@ func editor3DSurfaceRefs() (surface3DRefs, bool) {
 		return surface3DRefs{}, false
 	}
 	return r, true
+}
+
+// editor3DForEachSelectedFace applies fn to every selected face and then
+// rebuilds the geometry it invalidated.
+//
+// The two halves are separate because they answer to different constraints. The
+// edit is pure bookkeeping over the level's slices; the rebuild re-uploads
+// meshes and needs a GL context. Keeping them apart also stops a sector with
+// eight selected walls from being reloaded eight times — it is rebuilt once,
+// after every face on it has been written.
+func editor3DForEachSelectedFace(fn func(surface3DRefs)) int {
+	n := applySelectedFaceEdits(fn)
+	rebuildSelectedFaceSectors()
+	return n
+}
+
+// applySelectedFaceEdits runs fn over every selected face's refs, in selection
+// order, and reports how many it reached. It rebuilds nothing.
+//
+// The refs are resolved one at a time rather than collected up front because
+// they are pointers into the level's slices — see surface3DRefs' own note about
+// how long they stay good for.
+func applySelectedFaceEdits(fn func(surface3DRefs)) int {
+	touched := 0
+	for _, sel := range Editor.SelectedFaces {
+		r, ok := editor3DSurfaceRefsFor(sel)
+		if !ok {
+			continue
+		}
+		fn(r)
+		touched++
+	}
+	return touched
+}
+
+// rebuildSelectedFaceSectors reloads every sector the face selection touches,
+// once each, and regenerates a chunk's portal gap quads when a portal was among
+// them.
+func rebuildSelectedFaceSectors() {
+	lvl := Editor.level
+	if lvl == nil {
+		return
+	}
+	done := map[[2]int]struct{}{}
+	gaps := map[int]struct{}{}
+	for _, sel := range Editor.SelectedFaces {
+		ch, s := faceSelSector(sel)
+		if ch == nil || s == nil {
+			continue
+		}
+		if sel.kind == "portal" {
+			gaps[sel.chunkIdx] = struct{}{}
+		}
+		key := [2]int{sel.chunkIdx, sel.sectorIdx}
+		if _, seen := done[key]; seen {
+			continue
+		}
+		done[key] = struct{}{}
+		_ = reloadSector(ch, s)
+	}
+	for ci := range gaps {
+		if ci >= 0 && ci < len(lvl.Chunks) {
+			lvl.Chunks[ci].RebuildGaps()
+		}
+	}
 }
 
 // editor3DRebuildSurface is the bookkeeping every surface edit owes: rebuild
@@ -214,21 +273,32 @@ func (r surface3DRefs) rebuild() {
 	}
 }
 
-// editor3DSetSurfaceTexture repaints the selected surface.
+// editor3DSetSurfaceTexture repaints every selected surface — retexturing a
+// room being the reason faces became multi-selectable in the first place.
+// Surfaces with no texture of their own (a portal's gap quad aside) are skipped
+// rather than blocking the rest.
 func editor3DSetSurfaceTexture(name string) {
-	r, ok := editor3DSurfaceRefs()
-	if !ok || r.Texture == nil {
+	if _, ok := editor3DSurfaceRefs(); !ok {
 		return
 	}
 	_ = ensureTextureLoaded(name)
 	EditorPushUndo()
-	*r.Texture = name
-	r.rebuild()
+	n := editor3DForEachSelectedFace(func(r surface3DRefs) {
+		if r.Texture != nil {
+			*r.Texture = name
+		}
+	})
+	editorSetStatus("Textured %d face(s) with %s", n, name)
 }
 
-// editor3DToggleSurfaceFlag flips one of the selected surface's booleans. The
+// editor3DToggleSurfaceFlag flips one of the selected surfaces' booleans. The
 // caller picks the field out of the refs, so this stays one undo-and-rebuild
 // path rather than one per flag.
+//
+// Across a multi-selection every face is set to the *same* value — the opposite
+// of the primary's — rather than each being flipped independently. Independent
+// flips would scatter a mixed selection into the same mess it started as, and
+// "turn collision off for these twelve walls" is what the action is for.
 func editor3DToggleSurfaceFlag(pick func(surface3DRefs) *bool) {
 	r, ok := editor3DSurfaceRefs()
 	if !ok {
@@ -238,23 +308,73 @@ func editor3DToggleSurfaceFlag(pick func(surface3DRefs) *bool) {
 	if field == nil {
 		return
 	}
+	want := !*field
 	EditorPushUndo()
-	*field = !*field
-	r.rebuild()
+	editor3DForEachSelectedFace(func(r surface3DRefs) {
+		if f := pick(r); f != nil {
+			*f = want
+		}
+	})
 }
 
-// editor3DConvertSelectedEdge turns the selected wall into a portal or back.
+// editor3DConvertSelectedEdge turns every selected wall into a portal, or back.
+//
+// Conversion renumbers a sector's Walls and Portals, so the faces are tracked
+// through it by *polygon* edge index instead — which the sector's outline fixes
+// and a conversion cannot move. Each edge is re-resolved from that index right
+// before it is converted, and the selection is rebuilt from the same indices
+// afterwards, so a run of walls can be opened up in one action.
 func editor3DConvertSelectedEdge(to string) {
-	r, ok := editor3DSurfaceRefs()
-	if !ok || (r.kind != "wall" && r.kind != "portal") || r.kind == to {
+	type edgeRef struct {
+		chunkIdx, sectorIdx, polyIdx int
+	}
+	var refs []edgeRef
+	for _, sel := range Editor.SelectedFaces {
+		if !sel.isEdgeFace() || sel.kind == to {
+			continue
+		}
+		_, s := faceSelSector(sel)
+		if s == nil {
+			continue
+		}
+		if pi := polyEdgeIdx(s, sel.kind, sel.idx); pi >= 0 {
+			refs = append(refs, edgeRef{sel.chunkIdx, sel.sectorIdx, pi})
+		}
+	}
+	if len(refs) == 0 {
 		return
 	}
+
 	EditorPushUndo()
-	convertEdge(r.ch, r.s, r.kind, Editor.ActiveEdgeIdx, to)
-	Editor.ActiveSurface = Editor.ActiveEdgeKind
-	_ = reloadSector(r.ch, r.s)
-	r.ch.RebuildGaps()
-	editorSetStatus("Converted the edge to a %s", to)
+	for _, ref := range refs {
+		ch, s := faceSelSector(faceSel{chunkIdx: ref.chunkIdx, sectorIdx: ref.sectorIdx})
+		if s == nil || ref.polyIdx >= len(s.EdgeKinds) {
+			continue
+		}
+		kind, idx := edgeKindAndIndex(s, ref.polyIdx)
+		if kind == to {
+			continue
+		}
+		convertEdge(ch, s, kind, idx, to)
+		ch.RebuildGaps()
+	}
+
+	// Rebuild the selection from the polygon indices, which survived.
+	sels := make([]faceSel, 0, len(refs))
+	for _, ref := range refs {
+		_, s := faceSelSector(faceSel{chunkIdx: ref.chunkIdx, sectorIdx: ref.sectorIdx})
+		if s == nil || ref.polyIdx >= len(s.EdgeKinds) {
+			continue
+		}
+		kind, idx := edgeKindAndIndex(s, ref.polyIdx)
+		sels = append(sels, edgeFaceSel(ref.chunkIdx, ref.sectorIdx, kind, idx))
+	}
+	if len(sels) > 0 {
+		setFaceSelection(sels)
+	} else {
+		clearFaceSelection()
+	}
+	editorSetStatus("Converted %d edge(s) to %s", len(refs), to)
 }
 
 // editor3DEditSurfaceIn2D opens the selected surface in the 2D surface editor —
@@ -310,7 +430,7 @@ func editor3DSelectSectorRing() {
 // editor3DCanSnap reports whether the selection is something snapping can move.
 func editor3DCanSnap() bool {
 	switch editor3DSelection() {
-	case sel3DVertices, sel3DEntity, sel3DPrimitive:
+	case sel3DVertices, sel3DSpawn, sel3DEntity:
 		return Editor.StepSize > 0
 	}
 	return false
@@ -332,18 +452,17 @@ func editor3DSnapSelectionToGrid() {
 		})
 		editorSetStatus("Snapped %d vertices to the grid", len(Editor.SelectedVertices))
 
+	case sel3DSpawn:
+		sp := editor3DActiveSpawn()
+		EditorPushUndo()
+		sp.Position = snapVec3(sp.Position, step)
+		editorSetStatus("Snapped the spawn point to the grid")
+
 	case sel3DEntity:
-		e := editor3DActiveEntity()
+		e := activeEntity()
 		EditorPushUndo()
 		e.Position = snapVec3(e.Position, step)
-		editorSetStatus("Snapped %s to the grid", e.ID)
-
-	case sel3DPrimitive:
-		ch, p := editor3DActivePrimitive()
-		EditorPushUndo()
-		p.Position = snapVec3(p.Position, step)
-		rebuildPrimitiveIndices(ch)
-		editorSetStatus("Snapped %s to the grid", p.ID)
+		editorSetStatus("Snapped entity %q to the grid", e.ID)
 	}
 }
 
@@ -356,81 +475,34 @@ func snapVec3(v mgl32.Vec3, step float32) mgl32.Vec3 {
 	}
 }
 
-// ---------- entities and primitives ----------
+// ---------- spawn point ----------
 
-// editor3DSetEntityTexture repaints the selected entity's untextured faces.
-// The change has to go back through the model reader — which submesh the
-// fallback applies to is decided at load time.
-func editor3DSetEntityTexture(name string) {
-	e := editor3DActiveEntity()
-	if e == nil {
-		return
-	}
-	EditorPushUndo()
-	e.TexturePath = name
-	if err := e.Load(); err != nil {
-		editorSetStatus("Entity %q: %v", e.ID, err)
-	}
-}
-
-func editor3DSetPrimitiveTexture(name string) {
-	ch, p := editor3DActivePrimitive()
-	if ch == nil {
-		return
-	}
-	_ = ensureTextureLoaded(name)
-	EditorPushUndo()
-	p.Texture = name
-	reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
-}
-
-func editor3DSetPrimitiveKind(kind PrimitiveType) {
-	ch, p := editor3DActivePrimitive()
-	if ch == nil || p.Kind == kind {
-		return
-	}
-	EditorPushUndo()
-	p.Kind = kind
-	reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
-}
-
-// editor3DTogglePrimitiveFlag flips one of the selected primitive's booleans
-// and rebuilds it, on the same shape as editor3DToggleSurfaceFlag.
-func editor3DTogglePrimitiveFlag(pick func(*Primitive) *bool, rebuild bool) {
-	ch, p := editor3DActivePrimitive()
-	if ch == nil {
-		return
-	}
-	field := pick(p)
-	if field == nil {
-		return
-	}
-	EditorPushUndo()
-	*field = !*field
-	if rebuild {
-		reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
-	}
-}
-
-// editor3DFaceCamera points the selected spawn marker where the camera looks.
+// editor3DFaceCamera points the spawn marker where the camera looks.
 func editor3DFaceCamera() {
-	_, p := editor3DActivePrimitive()
-	if p == nil || !isSpawnPoint(p) {
+	sp := editor3DActiveSpawn()
+	if sp == nil {
 		return
 	}
 	EditorPushUndo()
-	p.Rotation = spawnRotationFromCamera()
+	sp.Rotation = spawnRotationFromCamera()
 }
 
-// editor3DAddPrimitiveAt drops a primitive of the named type at pos. It goes
-// through the catalog's own placement path, so a primitive added from the menu
-// is identical to one placed from the panel — same defaults, same undo, same
-// "it ends up selected".
-func editor3DAddPrimitiveAt(typeName string, pos mgl32.Vec3) {
-	prev := Editor.PrimPlacementType
-	Editor.PrimPlacementType = typeName
-	placeSelectedPrimitiveAt(pos)
-	Editor.PrimPlacementType = prev
+// editor3DAddSpawnPointAt drops the level's spawn point at pos. It goes through
+// the same placement path the panel's button uses, so a spawn placed from the
+// menu is identical to one placed from the panel — same undo, same "it ends up
+// selected".
+func editor3DAddSpawnPointAt(pos mgl32.Vec3) { placeSpawnPointAt(pos) }
+
+// ---------- entities ----------
+
+// editor3DAddEntityAt drops an instance of the catalog's current definition at
+// pos, the same way the panel's placement button does. The menu offers it as
+// "add one here" rather than arming a mode, since the menu was opened at a
+// point and that point is where it should land.
+func editor3DAddEntityAt(typeName string, pos mgl32.Vec3) {
+	Editor.EntityPlaceType = typeName
+	Editor.EntityPlacementMode = true
+	placeEntityAt(pos)
 }
 
 // ---------- panel ----------
@@ -438,3 +510,44 @@ func editor3DAddPrimitiveAt(typeName string, pos mgl32.Vec3) {
 // editor3DFocusPanel asks the side panel to open and scroll to the selection's
 // own section — the menu's way of saying "and now show me the numbers".
 func editor3DFocusPanel(section string) { Editor.PanelFocus = section }
+
+// editor3DSelectSectorFaces replaces the selection with every face of the
+// sector the primary belongs to: its floor, its ceiling, and every wall and
+// portal around it.
+//
+// This is the shortcut behind the reason faces became multi-selectable —
+// retexturing a room, or turning its collision off, without ctrl+clicking each
+// wall in turn and missing one behind the camera.
+func editor3DSelectSectorFaces() {
+	ch, s := editor3DActiveSector()
+	if ch == nil || s == nil {
+		return
+	}
+	ci, si := Editor.ActiveChunkIdx, Editor.ActiveSectorIdx
+	sels := []faceSel{surfaceFaceSel(ci, si, "floor"), surfaceFaceSel(ci, si, "ceiling")}
+	for i := range s.Walls {
+		sels = append(sels, edgeFaceSel(ci, si, "wall", i))
+	}
+	for i := range s.Portals {
+		sels = append(sels, edgeFaceSel(ci, si, "portal", i))
+	}
+	setFaceSelection(sels)
+	editorSetStatus("Selected %d faces of %s", len(sels), s.ID)
+}
+
+// editor3DSelectSectorWalls is editor3DSelectSectorFaces narrowed to the
+// upright faces — the common case, since a room's walls usually want one
+// texture and its floor another.
+func editor3DSelectSectorWalls() {
+	ch, s := editor3DActiveSector()
+	if ch == nil || s == nil || len(s.Walls) == 0 {
+		return
+	}
+	ci, si := Editor.ActiveChunkIdx, Editor.ActiveSectorIdx
+	sels := make([]faceSel, 0, len(s.Walls))
+	for i := range s.Walls {
+		sels = append(sels, edgeFaceSel(ci, si, "wall", i))
+	}
+	setFaceSelection(sels)
+	editorSetStatus("Selected %d walls of %s", len(sels), s.ID)
+}

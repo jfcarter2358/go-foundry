@@ -73,12 +73,13 @@ func scanFilesByExt(dir, ext string) []string {
 // resolveAssetPath makes a stored asset path absolute against the executable
 // directory.
 //
-// Levels store model paths relative to the install root so a level YAML stays
-// portable between machines and platforms (relAssetPath strips the prefix on
-// save). Handing that relative path straight to os.Open would instead resolve
-// it against the working directory, which only happens to be the install root
-// when the game is launched from inside it — "make run-linux" runs ./dist/foundry
-// from the repo root, and every entity model in the level would fail to load.
+// Entity definitions store model paths relative to the install root so a
+// definition stays portable between machines and platforms (relAssetPath strips
+// the prefix on save). Handing that relative path straight to os.Open would
+// instead resolve it against the working directory, which only happens to be
+// the install root when the game is launched from inside it — "make run-linux"
+// runs ./dist/foundry from the repo root, and every entity model would fail to
+// load.
 //
 // An absolute path is left alone: it is either already resolved or points
 // somewhere outside the install root on purpose.
@@ -92,7 +93,7 @@ func resolveAssetPath(p string) string {
 // relAssetPath is resolveAssetPath's inverse, used when writing a path back to
 // YAML. A path that does not live under the executable directory is written as
 // it is — there is nothing shorter that would still find it — and the result is
-// slash-separated so a level saved on Windows still loads on Linux.
+// slash-separated so a definition saved on Windows still loads on Linux.
 func relAssetPath(p string) string {
 	if p == "" || executablePath == "" {
 		return p

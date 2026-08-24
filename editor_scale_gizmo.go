@@ -1,128 +1,49 @@
 package main
 
-// editor_scale_gizmo.go — the model editor's scale gizmo, on a model placed
-// into a level.
+// editor_scale_gizmo.go — the 3D viewport's scale gizmo.
 //
-// A model imported from the catalog (editor_model_import.go) becomes an Entity
-// whose Scale the render path already honours, but the only way to change that
-// scale was to type three numbers into the side panel. The model editor has had
-// a proper scale widget since editor_model_scale.go, so this is that widget
-// again rather than a second one: the arm proportions, the uniform handle, the
-// snapping quantum, the floor a drag clamps to and the "apply absolutely from
-// the mouse-down snapshot" rule all come straight from there, and the maths is
-// literally the same functions.
+// Three short arms plus a handle at the centre, all at the selection's centre.
+// Dragging one moves every selected vertex toward or away from that centre —
+// nothing is resized. A sector vertex has no size to change: it is a corner,
+// and the only thing "scale the selection" can mean for a set of corners is how
+// far apart they are. An axis arm spreads them along that world axis alone; the
+// centre handle spreads them in all three at once.
 //
-// What differs is what a drag writes. In the model editor a scale moves
-// vertices; here the mesh is a shared asset that other placements of the same
-// model must not be dragged along with, so the drag writes the entity's Scale
-// instead and the mesh on disk is never touched.
-//
-// The move and scale gizmos are separate tools, toggled from the toolbar or
-// with G / C, for the same reason they are in the model editor: their handles
-// would otherwise sit on top of each other and every click near an arm would be
-// a coin toss.
+// Handles, snapping and clamping are the model editor's (editor_model_scale.go)
+// via scaleFactorBetween, so a handle pulled the same distance means the same
+// thing in both viewports.
 
 import (
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-// editorGizmoTools are the tools the 3D viewport offers, in toolbar order.
-// Rotate is the model editor's alone: an entity's rotation is authored in the
-// side panel, and there is no ring widget here to conflict with.
-var editorGizmoTools = []modelGizmoToolKind{modelToolMove, modelToolScale}
-
-// editorGizmoTool is the tool the 3D viewport is currently showing.
-var editorGizmoTool = modelToolMove
-
-// editorSetGizmoTool switches tools, cancelling any drag in progress so a
-// half-finished move cannot be finished as a scale.
-func editorSetGizmoTool(tool modelGizmoToolKind) {
-	if tool != modelToolMove && tool != modelToolScale || editorGizmoTool == tool {
-		return
-	}
-	editorGizmoMouseUp()
-	editorGizmoTool = tool
-}
-
-// editorScaleTarget returns the entity the scale gizmo would act on, or nil.
+// scaleGizmoOrigin returns the centre the selection spreads about: the middle
+// of a vertex selection, or an entity's own position.
 //
-// Only entities scale here. A sector's shape is its points and its heights, a
-// primitive's is its own geometry — those are edited where they live — so the
-// scale tool has nothing to grab unless a placed model is selected.
-func editorScaleTarget() *Entity {
-	if gizmoEffectiveKind() != gizmoKindEntity {
-		return nil
-	}
-	lvl := Editor.level
-	if lvl == nil || Editor.ActiveEntityIdx < 0 || Editor.ActiveEntityIdx >= len(lvl.Entities) {
-		return nil
-	}
-	return &lvl.Entities[Editor.ActiveEntityIdx]
-}
-
-// editorScaleGizmoActive reports whether the scale gizmo is what the viewport
-// draws and what a click in it grabs. With the tool armed but nothing scalable
-// selected, the move gizmo stays on screen rather than leaving the selection
-// with no handles at all.
-func editorScaleGizmoActive() bool {
-	return editorGizmoTool == modelToolScale && editorScaleTarget() != nil
-}
-
-// entityScale reads an entity's scale with the zero value read as identity, the
-// way Entity.ModelMatrix does — an entity that predates the field, or one
-// loaded from a level that never wrote it, scales from 1 rather than from 0.
-func entityScale(e *Entity) mgl32.Vec3 {
-	if e.Scale == (mgl32.Vec3{}) {
-		return mgl32.Vec3{1, 1, 1}
-	}
-	return e.Scale
-}
-
-// editorScaleAxes returns the directions the three axis handles drag along: the
-// entity's own axes, in world space.
-//
-// They are the entity's and not the world's because Entity.ModelMatrix applies
-// the scale before the rotation, so a component of Scale stretches the model
-// along its own axis however it is turned. Handles drawn on the world axes
-// would stretch a rotated model in a direction they do not point.
-// There is no world/local switch here, the way the model editor has one
-// (editor_model_local_axes.go): a world-axis stretch of a rotated entity is not
-// expressible as a TRS scale at all, so the local frame is not a preference
-// here but the only frame the value being edited has.
-func editorScaleAxes(e *Entity) [3]mgl32.Vec3 {
-	if e == nil || e.Rotation == (mgl32.Vec3{}) {
-		return worldBasis()
-	}
-	// Same composition order as ModelMatrix, so column i is where the model's
-	// local axis i ends up.
-	r := mgl32.HomogRotate3DY(e.Rotation.Y()).
-		Mul4(mgl32.HomogRotate3DX(e.Rotation.X())).
-		Mul4(mgl32.HomogRotate3DZ(e.Rotation.Z()))
-	var out [3]mgl32.Vec3
-	for i := 0; i < 3; i++ {
-		c := r.Col(i)
-		v := mgl32.Vec3{c.X(), c.Y(), c.Z()}
-		if v.Len() < 1e-6 {
-			return worldBasis()
+// As with rotate, the two mean different things — a vertex selection spreads
+// its points apart, an entity rewrites its Scale and grows in place — and a
+// spawn marker and a chunk have no size to change at all.
+func scaleGizmoOrigin() (mgl32.Vec3, bool) {
+	switch gizmoEffectiveKind() {
+	case gizmoKindVertices:
+		return selectedVerticesCenter()
+	case gizmoKindEntity:
+		if e := activeGizmoEntity(); e != nil {
+			return e.Position, true
 		}
-		out[i] = v.Normalize()
 	}
-	return out
+	return mgl32.Vec3{}, false
 }
 
-// editorPickScaleHandle returns the handle a click grabs: 0..2 for an axis,
-// modelScaleUniformAxis for the centre, or -1.
+// pickScaleHandle returns the handle a click at (mx, my) grabs: 0..2 for an
+// axis, modelScaleUniformAxis for the centre, or -1.
 //
-// The centre is tested first for the same reason modelPickScaleHandle does it:
-// all three arms start there, so every click near the middle is within zero
-// pixels of all of them, and uniform scaling is the likelier intent anyway.
-func editorPickScaleHandle(mx, my int32) int {
-	e := editorScaleTarget()
-	if e == nil {
-		return -1
-	}
-	origin, ok := translateGizmoOrigin()
+// The centre is tested first because all three arms start there, so every click
+// near it is within zero pixels of all of them — and spreading in every
+// direction is the more common intent when aiming at the middle of the widget.
+func pickScaleHandle(mx, my int32) int {
+	origin, ok := scaleGizmoOrigin()
 	if !ok {
 		return -1
 	}
@@ -137,15 +58,14 @@ func editorPickScaleHandle(mx, my int32) int {
 	}
 
 	armLen := gizmoArmLength(origin) * modelScaleArmFrac
-	axes := editorScaleAxes(e)
 	best := -1
 	bestD := gizmoPickPx
-	for i, axis := range axes {
+	for i, axis := range gizmoAxes {
 		tip, ok := projectToScreen(projView, origin.Add(axis.Mul(armLen)))
 		if !ok {
 			continue
 		}
-		d := distToSegment2D(float32(mx), float32(my),
+		d := distToSegment2D(cursor.X(), cursor.Y(),
 			originScreen.X(), originScreen.Y(), tip.X(), tip.Y())
 		if d <= bestD {
 			bestD = d
@@ -155,10 +75,13 @@ func editorPickScaleHandle(mx, my int32) int {
 	return best
 }
 
-// editorScaleReference returns the measure a scale factor is a ratio of — the
-// cursor's position along the grabbed axis, or its distance from the centre on
-// screen for the uniform handle. Same split as modelScaleReference.
-func editorScaleReference(mx, my int32, origin mgl32.Vec3, axes [3]mgl32.Vec3, handle int) (float32, bool) {
+// scaleReference returns the measure a scale factor is a ratio of.
+//
+// For an axis handle that is the cursor's position along the axis, so pulling
+// the handle out from the centre spreads the selection and pushing it in draws
+// it together. For the centre handle it is the cursor's distance from the
+// origin on screen, since no single world axis describes that drag.
+func scaleReference(mx, my int32, origin mgl32.Vec3, handle int) (float32, bool) {
 	if handle == modelScaleUniformAxis {
 		originScreen, ok := projectToScreen(Projection.Mul4(Cam.Matrix), origin)
 		if !ok {
@@ -169,157 +92,138 @@ func editorScaleReference(mx, my int32, origin mgl32.Vec3, axes [3]mgl32.Vec3, h
 	if handle < 0 || handle > 2 {
 		return 0, false
 	}
-	rayO, rayD := screenRay(mx, my)
-	return axisParamForRay(rayO, rayD, origin, axes[handle])
+	return axisParamAtMouse(origin, gizmoAxes[handle], mx, my)
 }
 
-// editorScaleApply returns start scaled by the per-axis factors in f, with no
-// component allowed past modelScaleMin. Scaling through zero would mirror the
-// model and invert the winding of every face, which is never what a drag that
-// only asked for "smaller" meant.
-func editorScaleApply(start, f mgl32.Vec3) mgl32.Vec3 {
-	out := mgl32.Vec3{start.X() * f.X(), start.Y() * f.Y(), start.Z() * f.Z()}
-	for i := 0; i < 3; i++ {
-		if out[i] < modelScaleMin {
-			out[i] = modelScaleMin
-		}
+// scaleVector spreads a factor over the axes the handle drives.
+func scaleVector(handle int, f float32) mgl32.Vec3 {
+	if handle == modelScaleUniformAxis {
+		return mgl32.Vec3{f, f, f}
+	}
+	out := mgl32.Vec3{1, 1, 1}
+	if handle >= 0 && handle <= 2 {
+		out[handle] = f
 	}
 	return out
 }
 
 // ---------- the drag ----------
 
-// editorScaleMouseDown starts a scale drag if the click grabbed a handle.
-// Returns true when the click was consumed.
-//
-// A handle under the cursor consumes the click even when the drag cannot start,
-// for the same reason the translate gizmo does it: the handles are drawn over
-// everything, so a click aimed at one must never fall through to picking and
-// throw away the selection it exists to scale.
-func editorScaleMouseDown(t sdl.MouseButtonEvent) bool {
+// scaleGizmoMouseDown starts a scale if the click landed on a handle. As with
+// the other two tools, a handle under the cursor consumes the click even when
+// the grab is refused, so a near miss never throws the selection away.
+func scaleGizmoMouseDown(t sdl.MouseButtonEvent) bool {
 	if t.Button != sdl.ButtonLeft || gizmoSuppressed() {
 		return false
 	}
-	e := editorScaleTarget()
-	if e == nil {
-		return false
-	}
-	handle := editorPickScaleHandle(t.X, t.Y)
+	handle := pickScaleHandle(t.X, t.Y)
 	if handle < 0 {
 		return false
 	}
-	origin, ok := translateGizmoOrigin()
+	origin, ok := scaleGizmoOrigin()
 	if !ok {
 		return true
 	}
-	axes := editorScaleAxes(e)
-	ref, ok := editorScaleReference(t.X, t.Y, origin, axes, handle)
-	if !ok || abs32(ref) < scaleRefMin {
+	ref, ok := scaleReference(t.X, t.Y, origin, handle)
+	if !ok {
+		return true
+	}
+	// Too near the centre to be a ratio of anything: the first motion event
+	// would multiply by a huge number.
+	if abs32(ref) < scaleRefMin {
 		return true
 	}
 
-	// One undo entry for the whole drag, as the translate gizmo does.
-	EditorPushUndo()
-
+	// captureGizmoDragStart pushes the undo entry and snapshots whatever the
+	// target scales from — the vertex positions, or the entity's own Scale.
+	if !captureGizmoDragStart() {
+		return true
+	}
 	Editor.GizmoDragging = true
-	Editor.GizmoDragTool = modelToolScale
+	Editor.GizmoDragTool = editorToolScale
 	Editor.GizmoDragAxis = handle
 	Editor.GizmoDragStartS = ref
 	Editor.GizmoDragOrigin = origin
-	Editor.GizmoScaleAxes = axes
-	Editor.GizmoDragStartScale = entityScale(e)
 	return true
 }
 
-// editorScaleMouseMove applies the scale, always from the mouse-down snapshot —
-// composing a factor per motion event would compound exponentially over a drag.
-func editorScaleMouseMove(mx, my int32) {
-	if !Editor.GizmoDragging || Editor.GizmoDragTool != modelToolScale {
-		return
-	}
-	e := editorScaleTarget()
-	if e == nil {
-		return
-	}
-	ref, ok := editorScaleReference(mx, my, Editor.GizmoDragOrigin,
-		Editor.GizmoScaleAxes, Editor.GizmoDragAxis)
+// scaleGizmoMouseMove applies the drag, always from the mouse-down snapshot:
+// multiplying a factor in on every motion event compounds exponentially.
+func scaleGizmoMouseMove(mx, my int32) {
+	origin := Editor.GizmoDragOrigin
+	ref, ok := scaleReference(mx, my, origin, Editor.GizmoDragAxis)
 	if !ok {
 		return
 	}
-	f := modelScaleVector(Editor.GizmoDragAxis, scaleFactorBetween(Editor.GizmoDragStartS, ref))
-	e.Scale = editorScaleApply(Editor.GizmoDragStartScale, f)
+	applyScaleToSelection(origin, scaleVector(Editor.GizmoDragAxis,
+		scaleFactorBetween(Editor.GizmoDragStartS, ref)))
 }
 
-// ---------- dispatch ----------
-
-// editorGizmoDragging reports whether a gizmo drag — of either tool — is in
-// progress. A drag owns the mouse until release.
-func editorGizmoDragging() bool { return Editor.GizmoDragging }
-
-// editorGizmoMouseDown routes a click to whichever gizmo is on screen. The
-// tools never share a click: the arms of the one that is not drawn must not be
-// clickable, so a miss on the scale handles stays a miss rather than falling
-// through to a translate arm nobody can see.
-func editorGizmoMouseDown(t sdl.MouseButtonEvent) bool {
-	if editorScaleGizmoActive() {
-		return editorScaleMouseDown(t)
-	}
-	return translateGizmoMouseDown(t)
-}
-
-// editorGizmoMouseMove hands motion to the tool that owns the drag — recorded
-// at mouse-down, so switching tools mid-drag cannot reinterpret it.
-func editorGizmoMouseMove(mx, my int32) {
-	if Editor.GizmoDragTool == modelToolScale {
-		editorScaleMouseMove(mx, my)
+// applyScaleToSelection moves every selected vertex toward or away from origin,
+// or resizes the selected entity in place.
+func applyScaleToSelection(origin, factors mgl32.Vec3) {
+	if e := activeGizmoEntity(); e != nil {
+		s := Editor.GizmoDragStartScale
+		e.Scale = mgl32.Vec3{
+			entityScaleClamp(s.X() * factors.X()),
+			entityScaleClamp(s.Y() * factors.Y()),
+			entityScaleClamp(s.Z() * factors.Z()),
+		}
 		return
 	}
-	translateGizmoMouseMove(mx, my)
+	setSelectedVertexWorld(scaleTransform(origin, factors))
 }
 
-// editorGizmoMouseUp ends a drag of either tool.
-func editorGizmoMouseUp() {
-	Editor.GizmoDragTool = modelToolMove
-	Editor.GizmoDragStartScale = mgl32.Vec3{}
-	translateGizmoMouseUp()
+// entityScaleMin is the smallest magnitude an entity axis can be scaled to.
+// A zero scale collapses the model to nothing and makes its matrix singular,
+// which the picker inverts — so a drag can approach flat but not reach it.
+const entityScaleMin = float32(0.001)
+
+// entityScaleClamp keeps a scale factor off zero without forcing its sign: a
+// negative scale legitimately mirrors a model.
+func entityScaleClamp(v float32) float32 {
+	if v > -entityScaleMin && v < entityScaleMin {
+		if v < 0 {
+			return -entityScaleMin
+		}
+		return entityScaleMin
+	}
+	return v
+}
+
+// scaleTransform is the position map a scale drag applies: every selected
+// vertex pushed out from (or pulled in toward) origin from where it was at
+// mouse-down.
+func scaleTransform(origin, factors mgl32.Vec3) func(int, vertexSel, mgl32.Vec3) mgl32.Vec3 {
+	start := Editor.GizmoDragWorld
+	return func(i int, sel vertexSel, cur mgl32.Vec3) mgl32.Vec3 {
+		if i >= len(start) {
+			return cur
+		}
+		return scalePointAbout(start[i], origin, factors)
+	}
 }
 
 // ---------- drawing ----------
 
-// renderEditorGizmo draws whichever gizmo the viewport is showing.
-func renderEditorGizmo(mx, my int32) {
-	if editorScaleGizmoActive() {
-		renderEditorScaleGizmo(mx, my)
-		return
-	}
-	renderTranslateGizmo(mx, my)
-}
-
-// renderEditorScaleGizmo draws the three axis handles and the uniform handle at
-// the centre, brightening whichever is under the cursor or being dragged.
-func renderEditorScaleGizmo(mx, my int32) {
-	e := editorScaleTarget()
-	if e == nil {
-		return
-	}
-	origin, ok := translateGizmoOrigin()
+// renderScaleGizmo draws the three axis handles and the centre handle,
+// brightening whichever is under the cursor or being dragged.
+func renderScaleGizmo(mx, my int32) {
+	origin, ok := scaleGizmoOrigin()
 	if !ok {
 		return
 	}
+	armLen := gizmoArmLength(origin) * modelScaleArmFrac
 
 	hover := -1
-	axes := editorScaleAxes(e)
-	if Editor.GizmoDragging && Editor.GizmoDragTool == modelToolScale {
+	if editorGizmoDragging() {
 		hover = Editor.GizmoDragAxis
-		// The drag's own axes, so the handles stay where they were grabbed.
-		axes = Editor.GizmoScaleAxes
-	} else if !Editor.GizmoDragging {
-		hover = editorPickScaleHandle(mx, my)
+	} else {
+		hover = pickScaleHandle(mx, my)
 	}
 
-	armLen := gizmoArmLength(origin) * modelScaleArmFrac
 	yellow := mgl32.Vec3{1, 1, 0}
-	for i, axis := range axes {
+	for i, axis := range gizmoAxes {
 		col := gizmoAxisColors[i]
 		if i == hover {
 			col = yellow
@@ -329,8 +233,8 @@ func renderEditorScaleGizmo(mx, my int32) {
 		gizmoBox(tip, modelScaleTipHalfPx, col)
 	}
 
-	// The uniform handle. Neutral rather than any axis colour, because it is
-	// the one that belongs to none of them.
+	// The centre handle. Neutral rather than any axis colour, because it is the
+	// one that belongs to none of them.
 	col := mgl32.Vec3{0.85, 0.85, 0.9}
 	if hover == modelScaleUniformAxis {
 		col = yellow

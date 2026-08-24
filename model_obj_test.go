@@ -9,13 +9,13 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-func TestOBJRoundTripPreservesNgonsAndMaterials(t *testing.T) {
+func TestOBJRoundTripPreservesNgonsAndMaterial(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "crate.obj")
 
 	m := NewCubeDoc()
 	m.ID = "crate"
-	m.SetFaceTexture([]int{0, 1}, "brick")
+	m.SetTexture("brick")
 
 	if err := SaveOBJ(m, path); err != nil {
 		t.Fatalf("SaveOBJ: %v", err)
@@ -37,16 +37,10 @@ func TestOBJRoundTripPreservesNgonsAndMaterials(t *testing.T) {
 			t.Errorf("face %d has %d verts, want a quad", i, len(f.Verts))
 		}
 	}
-	brick := 0
-	for _, f := range got.Faces {
-		if f.Texture == "brick" {
-			brick++
-		}
+	if got.Texture != "brick" {
+		t.Errorf("texture came back as %q, want brick", got.Texture)
 	}
-	if brick != 2 {
-		t.Errorf("%d faces came back as brick, want 2", brick)
-	}
-	// Geometry must be unchanged, whatever order the material grouping used.
+	// Geometry must be unchanged.
 	minA, maxA := m.Bounds()
 	minB, maxB := got.Bounds()
 	if !vec3Close(minA, minB, 1e-5) || !vec3Close(maxA, maxB, 1e-5) {
@@ -59,7 +53,7 @@ func TestSaveOBJWritesMTL(t *testing.T) {
 	path := filepath.Join(dir, "crate.obj")
 
 	m := NewCubeDoc()
-	m.SetFaceTexture([]int{0}, "brick")
+	m.SetTexture("brick")
 	if err := SaveOBJ(m, path); err != nil {
 		t.Fatalf("SaveOBJ: %v", err)
 	}
@@ -72,17 +66,24 @@ func TestSaveOBJWritesMTL(t *testing.T) {
 		t.Error("OBJ does not reference its material library")
 	}
 	if !strings.Contains(string(obj), "usemtl brick") {
-		t.Error("OBJ has no usemtl group for the brick faces")
+		t.Error("OBJ has no usemtl line for the model's material")
+	}
+	// One material means one usemtl, not one per face.
+	if n := strings.Count(string(obj), "usemtl "); n != 1 {
+		t.Errorf("%d usemtl lines, want 1", n)
 	}
 
 	mtl, err := os.ReadFile(filepath.Join(dir, "crate.mtl"))
 	if err != nil {
 		t.Fatalf("no sibling .mtl written: %v", err)
 	}
-	for _, want := range []string{"newmtl brick", "newmtl default", "map_Kd textures/brick.png"} {
+	for _, want := range []string{"newmtl brick", "map_Kd textures/brick.png"} {
 		if !strings.Contains(string(mtl), want) {
 			t.Errorf(".mtl missing %q:\n%s", want, mtl)
 		}
+	}
+	if strings.Contains(string(mtl), "newmtl default") {
+		t.Errorf(".mtl still writes a per-face fallback material:\n%s", mtl)
 	}
 }
 

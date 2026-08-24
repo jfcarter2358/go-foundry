@@ -144,9 +144,8 @@ func TestRefreshSkipsFacesThatAreNotQuads(t *testing.T) {
 	m := &ModelDoc{
 		Verts: []mgl32.Vec3{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}},
 		Faces: []ModelFace{{
-			Verts:   []int{0, 1, 2},
-			UVs:     []mgl32.Vec2{{0, 0}, {3, 0}, {0, 7}},
-			Texture: "default",
+			Verts: []int{0, 1, 2},
+			UVs:   []mgl32.Vec2{{0, 0}, {3, 0}, {0, 7}},
 		}},
 	}
 	before := append([]mgl32.Vec2(nil), m.Faces[0].UVs...)

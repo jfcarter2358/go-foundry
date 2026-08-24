@@ -645,10 +645,10 @@ func RenderPointShadowPass(lights LightSet, level *Level) {
 }
 
 // renderSceneShadow draws scene geometry into the currently bound FBO using the
-// given model uniform location. cull, when non-nil, frustum-culls chunks,
-// sectors, entities and primitives against it — for the cascade pass that is the
-// cascade's own light box, which is what keeps a large level from re-drawing
-// every sector once per cascade.
+// given model uniform location. cull, when non-nil, frustum-culls chunks and
+// sectors against it — for the cascade pass that is the cascade's own light
+// box, which is what keeps a large level from re-drawing every sector once per
+// cascade.
 // renderSceneShadow walks the level for one shadow pass. prog and skin identify
 // which program is bound: both passes share this walker but resolve the skinning
 // uniforms to different locations, so the cache cannot be a single global.
@@ -708,48 +708,10 @@ func renderSceneShadow(level *Level, prog uint32, skin *skinUniforms, modelUnifo
 		}
 	}
 
-	// Entities (dynamic objects)
-	for ei := range level.Entities {
-		e := &level.Entities[ei]
-		if !e.Visible {
-			continue
-		}
-		if cull != nil {
-			if eMin, eMax, ok := e.WorldAABB(); ok && !AABBInFrustum(*cull, eMin, eMax) {
-				continue
-			}
-		}
-		model := e.ModelMatrix()
-		gl.UniformMatrix4fv(modelUniform, 1, false, &model[0])
-		for si := range e.Submeshes {
-			drawGeometryShadow(&e.Submeshes[si], prog, skin)
-		}
-	}
-
-	// Primitives (static procedural objects)
-	for ci := range level.Chunks {
-		chunk := &level.Chunks[ci]
-		if cull != nil && !AABBInFrustum(*cull, chunk.MinBound, chunk.MaxBound) {
-			continue
-		}
-		for pi := range chunk.Primitives {
-			p := &chunk.Primitives[pi]
-			// A marker casting a shadow would darken the floor the player
-			// spawns on even though nothing is there.
-			if isSpawnPoint(p) {
-				continue
-			}
-			if cull != nil {
-				pMin, pMax := p.WorldAABB()
-				if !AABBInFrustum(*cull, pMin, pMax) {
-					continue
-				}
-			}
-			model := p.ModelMatrix()
-			gl.UniformMatrix4fv(modelUniform, 1, false, &model[0])
-			drawGeometryShadow(&p.Geometry, prog, skin)
-		}
-	}
+	// Placed entities, after the world walk: they are the only thing here that
+	// needs a model matrix of its own, and RenderEntitiesShadow puts the
+	// identity back when it is done.
+	RenderEntitiesShadow(level, prog, skin, modelUniform, cull)
 }
 
 func drawGeometryShadow(g *Geometry, prog uint32, skin *skinUniforms) {

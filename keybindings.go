@@ -33,8 +33,8 @@ type KeybindSection struct {
 
 // keybindSections is the full reference, in display order. Keep it in sync
 // with the handlers: HandleEvent/HandleInput (input.go), EditorHandleEvent
-// (editor.go), and the per-mode key handlers in editor_scenery.go,
-// editor_surface2d.go, editor_extrusion.go and editor_biome.go.
+// (editor.go), and the per-mode key handlers in editor_surface2d.go,
+// editor_extrusion.go and editor_biome.go.
 var keybindSections = []KeybindSection{
 	{
 		Title:  "Model editor",
@@ -97,6 +97,8 @@ var keybindSections = []KeybindSection{
 			{"Arrow keys", "Turn / look"},
 			{"Mouse", "Look (cursor is captured)"},
 			{"0", "Toggle gravity (fly mode)"},
+			{"8", "Toggle entity-vs-world collision (engine-wide)"},
+			{"9", "Toggle entity-vs-entity collision (engine-wide)"},
 		},
 	},
 	{
@@ -113,18 +115,20 @@ var keybindSections = []KeybindSection{
 		Title:  "Editor — 3D view",
 		Active: func() bool { return Editor.Active && Editor.Mode == Mode3D },
 		Binds: []Keybind{
-			{"W / A / S / D", "Fly the camera"},
-			{"Space / Left Shift", "Fly up / down"},
-			{"Right-drag", "Look around"},
-			{"Left click", "Select entity, primitive or sector face"},
-			{"Left click (handle)", "Pick a vertex; repeat clicks cycle overlaps"},
-			{"Ctrl+Left click", "Add every vertex/edge under the cursor"},
-			{"Left click (armed)", "Place the armed entity/primitive ahead of the camera"},
-			{"G", "Move gizmo"},
-			{"C", "Scale gizmo (placed models only)"},
+			{"1 / 2 / 3", "Point / edge / face select"},
+			{"Z", "Toggle wireframe"},
+			{"V", "Toggle orbit and fly camera"},
+			{"F", "Frame the selection"},
+			{"W / A / S / D", "Fly the camera (orbit: slide the pivot)"},
+			{"Space / Left Shift", "Up / down"},
+			{"Right-drag / Middle-drag", "Look around, or orbit the pivot"},
+			{"Shift+Middle-drag", "Pan"},
+			{"Mouse wheel", "Dolly in fly, zoom the orbit radius"},
+			{"Left click", "Select whatever the current mode picks"},
+			{"Left click (handle)", "Pick a point/edge; repeat clicks cycle overlaps"},
+			{"Ctrl+Left click", "Add every point/edge under the cursor"},
+			{"Left click (armed)", "Place the spawn point ahead of the camera"},
 			{"Drag gizmo arm", "Translate the selection along that axis"},
-			{"Drag scale handle", "Scale the selected model along its own axis"},
-			{"Drag scale centre", "Scale the selected model uniformly"},
 		},
 	},
 	{
@@ -173,18 +177,6 @@ var keybindSections = []KeybindSection{
 			{"Tab", "Switch between the outer and inner polygon"},
 			{"Enter", "Finalize the extrusion"},
 			{"Esc", "Cancel"},
-		},
-	},
-	{
-		Title:  "Editor — scenery",
-		Active: func() bool { return Editor.Active && Editor.Mode == ModeScenery },
-		Binds: []Keybind{
-			{"W / A / S / D", "Fly the camera"},
-			{"Space / Left Shift", "Fly up / down"},
-			{"Right-drag", "Look around"},
-			{"Left click", "Select a primitive, or place the armed one"},
-			{"Delete", "Delete the selected primitive"},
-			{"Esc", "Leave the scenery editor"},
 		},
 	},
 }

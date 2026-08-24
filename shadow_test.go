@@ -244,29 +244,3 @@ func TestSectorWorldAABBIncludesOffsetsAndExtrusions(t *testing.T) {
 		t.Errorf("max Y = %v, want 7.25 (ceiling vertex offset)", max.Y())
 	}
 }
-
-func TestEntityWorldAABBUnboundedIsNotCullable(t *testing.T) {
-	e := Entity{Position: mgl32.Vec3{1, 2, 3}}
-	if _, _, ok := e.WorldAABB(); ok {
-		t.Error("entity with no authored extents reported cullable bounds")
-	}
-
-	e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ = 1, 2, 3
-	min, max, ok := e.WorldAABB()
-	if !ok {
-		t.Fatal("bounded entity reported no bounds")
-	}
-	if min != (mgl32.Vec3{0, 0, 0}) || max != (mgl32.Vec3{2, 4, 6}) {
-		t.Errorf("bounds = %v..%v, want (0,0,0)..(2,4,6)", min, max)
-	}
-
-	// A rotated entity must grow to a rotation-invariant box, never shrink.
-	e.Rotation = mgl32.Vec3{0, 0.7, 0}
-	rMin, rMax, _ := e.WorldAABB()
-	for i := 0; i < 3; i++ {
-		if rMin[i] > min[i] || rMax[i] < max[i] {
-			t.Errorf("rotated bounds %v..%v are not a superset of %v..%v",
-				rMin, rMax, min, max)
-		}
-	}
-}

@@ -2,10 +2,9 @@ package main
 
 // editor_translate_gizmo.go — three-axis drag gizmo for the 3D editors.
 //
-// Whatever is selected (sector vertices, a primitive, an entity, a scenery
-// primitive, or a whole chunk) gets three arms — X red, Y green, Z blue — drawn
-// at a constant on-screen size around it. Dragging an arm slides the selection
-// along that world axis only.
+// Whatever is selected (sector vertices, the spawn point, or a whole chunk)
+// gets three arms — X red, Y green, Z blue — drawn at a constant on-screen size
+// around it. Dragging an arm slides the selection along that world axis only.
 //
 // The drag maps the mouse to a position along the axis by taking the closest
 // point between the axis line and the cursor's view ray, and applies the offset
@@ -23,12 +22,11 @@ import (
 // gizmoKind* are the values EditorState.GizmoKind takes: what the translate
 // gizmo is currently attached to.
 const (
-	gizmoKindNone      = ""
-	gizmoKindVertices  = "vertices"
-	gizmoKindPrimitive = "primitive"
-	gizmoKindEntity    = "entity"
-	gizmoKindChunk     = "chunk"
-	gizmoKindScenery   = "scenery"
+	gizmoKindNone     = ""
+	gizmoKindVertices = "vertices"
+	gizmoKindSpawn    = "spawn"
+	gizmoKindChunk    = "chunk"
+	gizmoKindEntity   = "entity"
 )
 
 const (
@@ -47,20 +45,10 @@ const (
 var gizmoAxes = [3]mgl32.Vec3{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}
 var gizmoAxisColors = [3]mgl32.Vec3{{1, 0.25, 0.25}, {0.3, 1, 0.3}, {0.35, 0.5, 1}}
 
-// gizmoEffectiveKind returns what the gizmo drags right now. The scenery editor
-// keeps its own selection, so there it always follows the active scenery
-// primitive; the 2D modes have no 3D gizmo at all.
+// gizmoEffectiveKind returns what the gizmo drags right now. The 2D modes have
+// no 3D gizmo at all.
 func gizmoEffectiveKind() string {
-	switch Editor.Mode {
-	case ModeScenery:
-		if activeSceneryPrimitive() != nil {
-			return gizmoKindScenery
-		}
-		return gizmoKindNone
-	case Mode3D:
-		if Editor.GizmoKind == gizmoKindScenery {
-			return gizmoKindNone // stale scenery selection
-		}
+	if Editor.Mode == Mode3D {
 		return Editor.GizmoKind
 	}
 	return gizmoKindNone
@@ -72,15 +60,14 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindVertices:
 		return selectedVerticesCenter()
 
-	case gizmoKindPrimitive:
-		if p := activeGizmoPrimitive(); p != nil {
-			return p.Position, true
+	case gizmoKindSpawn:
+		if s := activeGizmoSpawn(); s != nil {
+			return s.Position, true
 		}
 
 	case gizmoKindEntity:
-		lvl := Editor.level
-		if lvl != nil && Editor.ActiveEntityIdx >= 0 && Editor.ActiveEntityIdx < len(lvl.Entities) {
-			return lvl.Entities[Editor.ActiveEntityIdx].Position, true
+		if e := activeGizmoEntity(); e != nil {
+			return e.Position, true
 		}
 
 	case gizmoKindChunk:
@@ -89,30 +76,17 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 			// the gizmo on the middle of the chunk's bounds instead.
 			return ch.MinBound.Add(ch.MaxBound).Mul(0.5), true
 		}
-
-	case gizmoKindScenery:
-		if p := activeSceneryPrimitive(); p != nil {
-			return p.Position, true
-		}
 	}
 	return mgl32.Vec3{}, false
 }
 
-// activeGizmoPrimitive returns the selected level primitive, or nil.
-func activeGizmoPrimitive() *Primitive {
-	ch := activeChunk()
-	if ch == nil || Editor.ActivePrimitiveIdx < 0 || Editor.ActivePrimitiveIdx >= len(ch.Primitives) {
+// activeGizmoSpawn returns the level's spawn point when it is the selection,
+// or nil.
+func activeGizmoSpawn() *SpawnPoint {
+	if !Editor.SpawnSelected || Editor.level == nil {
 		return nil
 	}
-	return &ch.Primitives[Editor.ActivePrimitiveIdx]
-}
-
-// activeSceneryPrimitive returns the selected scenery primitive, or nil.
-func activeSceneryPrimitive() *Primitive {
-	if Editor.SceneryActivePrimIdx < 0 || Editor.SceneryActivePrimIdx >= len(Editor.SceneryPrimitives) {
-		return nil
-	}
-	return &Editor.SceneryPrimitives[Editor.SceneryActivePrimIdx]
+	return Editor.level.Spawn
 }
 
 // gizmoArmLength returns the world length of an arm at the gizmo's distance, so
@@ -179,8 +153,7 @@ func pickTranslateAxis(mx, my int32) int {
 // click already means something else. The arms are hidden in these states, so
 // they must not be clickable either.
 func gizmoSuppressed() bool {
-	return Editor.PlacementMode || Editor.PrimPlacementMode || Editor.ModelPlacementMode ||
-		Editor.ExtrusionMode || Editor.SceneryPrimPlacement
+	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode || Editor.ExtrusionMode
 }
 
 // translateGizmoMouseDown starts an axis drag if the click grabbed an arm.
@@ -212,7 +185,7 @@ func translateGizmoMouseDown(t sdl.MouseButtonEvent) bool {
 		return true
 	}
 	Editor.GizmoDragging = true
-	Editor.GizmoDragTool = modelToolMove
+	Editor.GizmoDragTool = editorToolMove
 	Editor.GizmoDragAxis = axis
 	Editor.GizmoDragStartS = s
 	Editor.GizmoDragOrigin = origin
@@ -247,24 +220,30 @@ func captureGizmoDragStart() bool {
 			Editor.GizmoDragPoints = append(Editor.GizmoDragPoints, pt)
 			Editor.GizmoDragOffsets = append(Editor.GizmoDragOffsets, off)
 		}
+		Editor.GizmoDragWorld = selectedVerticesWorld()
 		EditorPushUndo()
 		return true
 
-	case gizmoKindPrimitive:
-		p := activeGizmoPrimitive()
-		if p == nil {
+	case gizmoKindSpawn:
+		s := activeGizmoSpawn()
+		if s == nil {
 			return false
 		}
-		Editor.GizmoDragStartPos = p.Position
+		Editor.GizmoDragStartPos = s.Position
 		EditorPushUndo()
 		return true
 
 	case gizmoKindEntity:
-		lvl := Editor.level
-		if lvl == nil || Editor.ActiveEntityIdx < 0 || Editor.ActiveEntityIdx >= len(lvl.Entities) {
+		e := activeGizmoEntity()
+		if e == nil {
 			return false
 		}
-		Editor.GizmoDragStartPos = lvl.Entities[Editor.ActiveEntityIdx].Position
+		// All three of these are snapshotted, not just the position: the same
+		// capture serves the rotate and scale drags, which start from the
+		// entity's own orientation and size rather than from a point cloud.
+		Editor.GizmoDragStartPos = e.Position
+		Editor.GizmoDragStartRot = e.Rotation
+		Editor.GizmoDragStartScale = e.effectiveScale()
 		EditorPushUndo()
 		return true
 
@@ -276,25 +255,17 @@ func captureGizmoDragStart() bool {
 		Editor.GizmoDragStartPos = ch.Origin
 		EditorPushUndo()
 		return true
-
-	case gizmoKindScenery:
-		p := activeSceneryPrimitive()
-		if p == nil {
-			return false
-		}
-		Editor.GizmoDragStartPos = p.Position
-		SceneryPushUndo()
-		return true
 	}
 	return false
 }
 
-// translateGizmoMouseUp ends an axis drag.
+// translateGizmoMouseUp ends a drag, whichever tool started it.
 func translateGizmoMouseUp() {
 	Editor.GizmoDragging = false
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragPoints = nil
 	Editor.GizmoDragOffsets = nil
+	Editor.GizmoDragWorld = nil
 }
 
 // translateGizmoMouseMove applies the current cursor position to the drag.
@@ -318,26 +289,17 @@ func translateGizmoMouseMove(mx, my int32) {
 	switch gizmoEffectiveKind() {
 	case gizmoKindVertices:
 		dragVerticesAlongAxis(axis, delta)
-	case gizmoKindPrimitive:
-		if p := activeGizmoPrimitive(); p != nil {
-			p.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
-			if ch := activeChunk(); ch != nil {
-				rebuildPrimitiveIndices(ch)
-			}
+	case gizmoKindSpawn:
+		if s := activeGizmoSpawn(); s != nil {
+			s.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindEntity:
-		lvl := Editor.level
-		if lvl != nil && Editor.ActiveEntityIdx >= 0 && Editor.ActiveEntityIdx < len(lvl.Entities) {
-			lvl.Entities[Editor.ActiveEntityIdx].Position =
-				axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		if e := activeGizmoEntity(); e != nil {
+			e.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindChunk:
 		if ch := activeChunk(); ch != nil {
 			moveChunk(ch, axisMoved(Editor.GizmoDragStartPos, axis, delta))
-		}
-	case gizmoKindScenery:
-		if p := activeSceneryPrimitive(); p != nil {
-			p.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	}
 }
@@ -521,5 +483,66 @@ func renderTranslateGizmo(mx, my int32) {
 		tip := origin.Add(axis.Mul(armLen))
 		GizmoLine(origin, tip, col)
 		gizmoBox(tip, gizmoTipHalfPx, col)
+	}
+}
+
+// ---------- dispatch ----------
+//
+// The 3D viewport shows one gizmo at a time — Editor.GizmoTool says which, on
+// the model editor's G/R/C shortcuts (editor_sel_tool.go). They are separate
+// tools rather than one combined widget because their handles would sit on top
+// of each other: a rotate ring passes through the tips of the move arms, and
+// every click near the end of an axis would be a coin toss.
+//
+// Rotate and scale act only on a vertex selection. Move is the only one that
+// means anything for the other two targets: the spawn marker and a whole chunk
+// are single anchors with no extent, so there is nothing there to turn about
+// itself or spread apart.
+
+// editorGizmoDragging reports whether a drag is in progress. A drag owns the
+// mouse until release.
+func editorGizmoDragging() bool { return Editor.GizmoDragging }
+
+// editorGizmoMouseDown routes a click to whichever gizmo is on screen.
+func editorGizmoMouseDown(t sdl.MouseButtonEvent) bool {
+	switch Editor.GizmoTool {
+	case editorToolRotate:
+		return rotateGizmoMouseDown(t)
+	case editorToolScale:
+		return scaleGizmoMouseDown(t)
+	}
+	return translateGizmoMouseDown(t)
+}
+
+// editorGizmoMouseMove applies motion to a drag in progress. It dispatches on
+// the tool the *drag* belongs to, not the tool now selected: a tool switch
+// cancels the drag first (editorSetGizmoTool), and routing on the live value
+// would otherwise let a stale drag be finished by the wrong maths.
+func editorGizmoMouseMove(mx, my int32) {
+	if !Editor.GizmoDragging {
+		return
+	}
+	switch Editor.GizmoDragTool {
+	case editorToolRotate:
+		rotateGizmoMouseMove(mx, my)
+	case editorToolScale:
+		scaleGizmoMouseMove(mx, my)
+	default:
+		translateGizmoMouseMove(mx, my)
+	}
+}
+
+// editorGizmoMouseUp ends a drag.
+func editorGizmoMouseUp() { translateGizmoMouseUp() }
+
+// renderEditorGizmo draws the gizmo for the current selection.
+func renderEditorGizmo(mx, my int32) {
+	switch Editor.GizmoTool {
+	case editorToolRotate:
+		renderRotateGizmo(mx, my)
+	case editorToolScale:
+		renderScaleGizmo(mx, my)
+	default:
+		renderTranslateGizmo(mx, my)
 	}
 }

@@ -31,7 +31,7 @@ func TestSpawnRotationFromCameraRoundTrips(t *testing.T) {
 
 	for _, c := range cases {
 		Cam.Yaw, Cam.Pitch = c.yaw, c.pitch
-		p := Primitive{Kind: PrimitiveSpawnPoint, Rotation: spawnRotationFromCamera()}
+		p := SpawnPoint{Rotation: spawnRotationFromCamera()}
 
 		gotYaw, gotPitch := SpawnYawPitch(&p)
 		// Yaw is compared through the direction vector so ±180° wrap doesn't
@@ -53,7 +53,7 @@ func TestSpawnRotationFromCameraRoundTrips(t *testing.T) {
 // An unrotated marker must point the way an unrotated camera looks, or every
 // spawn authored by hand would be 90° out.
 func TestSpawnDirectionDefaultsToYawZero(t *testing.T) {
-	p := Primitive{Kind: PrimitiveSpawnPoint}
+	p := SpawnPoint{}
 	d := SpawnDirection(&p)
 	want := DirectionFromAngles(0, 0)
 	if !nearlyEqual(d.X(), want.X(), 1e-5) || !nearlyEqual(d.Y(), want.Y(), 1e-5) ||
@@ -64,47 +64,10 @@ func TestSpawnDirectionDefaultsToYawZero(t *testing.T) {
 
 // A marker aimed at the sky must not hand gameplay a gimbal-flipped camera.
 func TestSpawnPitchClampedToMouseLookLimit(t *testing.T) {
-	p := Primitive{Kind: PrimitiveSpawnPoint, Rotation: mgl32.Vec3{0, 0, float32(math.Pi / 2)}}
+	p := SpawnPoint{Rotation: mgl32.Vec3{0, 0, float32(math.Pi / 2)}}
 	_, pitch := SpawnYawPitch(&p)
 	if pitch > maxPitch || pitch < maxPitch-0.02 {
 		t.Errorf("straight-up marker: got pitch %.4f, want ≈%.4f", pitch, maxPitch)
-	}
-}
-
-func TestFindSpawnPointPicksFirstInChunkOrder(t *testing.T) {
-	lvl := &Level{Chunks: []Chunk{
-		{Primitives: []Primitive{
-			{ID: "box", Kind: PrimitiveRectPrism},
-		}},
-		{Primitives: []Primitive{
-			{ID: "first", Kind: PrimitiveSpawnPoint},
-			{ID: "second", Kind: PrimitiveSpawnPoint},
-		}},
-	}}
-	got := FindSpawnPoint(lvl)
-	if got == nil || got.ID != "first" {
-		t.Fatalf("got %v, want the first spawn point", got)
-	}
-
-	none := &Level{Chunks: []Chunk{{Primitives: []Primitive{{Kind: PrimitiveSphere}}}}}
-	if p := FindSpawnPoint(none); p != nil {
-		t.Errorf("level without a spawn point: got %v, want nil", p)
-	}
-	if p := FindSpawnPoint(nil); p != nil {
-		t.Errorf("nil level: got %v, want nil", p)
-	}
-}
-
-// A hand-edited level can set collision:true on anything; a marker must still
-// never block the player who is about to spawn inside it.
-func TestSpawnPointNeverCollides(t *testing.T) {
-	spawn := Primitive{Kind: PrimitiveSpawnPoint, Collision: true}
-	if primitiveCollides(&spawn) {
-		t.Error("spawn marker with collision:true should not collide")
-	}
-	box := Primitive{Kind: PrimitiveRectPrism, Collision: true}
-	if !primitiveCollides(&box) {
-		t.Error("solid primitive with collision:true should collide")
 	}
 }
 
@@ -121,7 +84,7 @@ func TestSpawnArrowFitsItsBounds(t *testing.T) {
 		}
 	}
 
-	hx, hy, hz := spawnPointBounds(mgl32.Vec3{1, 1, 1})
+	hx, hy, hz := spawnPointBounds()
 	for _, v := range verts {
 		if len(v) != 5 {
 			t.Fatalf("vertex %v: want 5 floats (xyz + uv)", v)
@@ -144,26 +107,5 @@ func TestSpawnArrowClearsTheFloor(t *testing.T) {
 	}
 	if minY <= 0 {
 		t.Errorf("arrow dips to y=%.3f, want it clear of the floor plane", minY)
-	}
-}
-
-// Adding a kind means adding one name to primitiveTypeNames; if the mapping
-// ever goes one-way, a spawn point saved to YAML loads back as a rect prism and
-// the level silently loses its spawn.
-func TestPrimitiveTypeNamesRoundTrip(t *testing.T) {
-	for i := range primitiveTypeNames {
-		kind := PrimitiveType(i)
-		if got := primitiveKindFromName(primitiveTypeName(kind)); got != kind {
-			t.Errorf("%q: round-tripped kind %d to %d", primitiveTypeNames[i], kind, got)
-		}
-	}
-	if got := primitiveKindFromName("written_by_a_newer_build"); got != PrimitiveRectPrism {
-		t.Errorf("unknown type: got kind %d, want a rect prism", got)
-	}
-	if got := primitiveTypeName(PrimitiveType(len(primitiveTypeNames))); got != "rect_prism" {
-		t.Errorf("out-of-range kind: got %q, want %q", got, "rect_prism")
-	}
-	if got := primitiveTypeName(PrimitiveSpawnPoint); got != "spawn_point" {
-		t.Errorf("spawn point saves as %q", got)
 	}
 }

@@ -89,37 +89,17 @@ func modelRingPoint(origin, u, v mgl32.Vec3, r float32, angle float64) mgl32.Vec
 }
 
 // modelRotationAngleAt returns the cursor's angle around origin in the plane
-// perpendicular to axis.
-//
-// The cursor is placed by intersecting the view ray with that plane, not by
-// measuring an angle in screen space. Screen space would be simpler and would
-// feel wrong the moment the ring is seen at a shallow angle: the same wrist
-// movement would produce a different rotation on the near and far sides of the
-// ellipse the circle projects to.
+// perpendicular to axis, through this window's camera. The measurement itself
+// is rotationAngleForRay (editor_rotate_gizmo.go), shared with the level
+// editor's rotate gizmo so a ring dragged the same way means the same thing in
+// both viewports.
 func modelRotationAngleAt(mx, my int32, origin, axis mgl32.Vec3) (float32, bool) {
 	w, h, ok := modelViewport()
 	if !ok {
 		return 0, false
 	}
 	rayO, rayD := modelCam.ray(mx, my, w, h)
-
-	denom := rayD.Dot(axis)
-	// Edge-on: the ray runs along the plane and the intersection is either
-	// nowhere or wildly unstable. Refusing leaves the selection where it is,
-	// which is better than letting it spin on numerical noise.
-	if float32(math.Abs(float64(denom))) < 1e-4 {
-		return 0, false
-	}
-	t := origin.Sub(rayO).Dot(axis) / denom
-	if t <= 0 {
-		return 0, false // the plane is behind the camera
-	}
-	rel := rayO.Add(rayD.Mul(t)).Sub(origin)
-	if rel.Len() < 1e-6 {
-		return 0, false // dead centre: no angle to speak of
-	}
-	u, v := modelRingBasis(axis)
-	return float32(math.Atan2(float64(rel.Dot(v)), float64(rel.Dot(u)))), true
+	return rotationAngleForRay(rayO, rayD, origin, axis)
 }
 
 // modelPickRotateRing returns the ring a click at (mx, my) grabs, or -1.

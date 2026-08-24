@@ -21,7 +21,7 @@ package main
 //
 // Sand and Water sectors never scatter instances here — Sand is a bare
 // ground patch (biome_ground.go) and Water auto-manages a companion
-// water-plane primitive (biome_water.go). Every land kind (everything but
+// water plane (biome_water.go). Every land kind (everything but
 // Water) additionally renders a conforming, textured, lightly-displaced
 // ground patch underneath its scatter, via RenderBiomes calling into
 // biome_ground.go.
@@ -185,7 +185,7 @@ func EvictBiomeHeightCache(id string) {
 
 // EvictBiomeSectorCaches releases every GPU resource derived from sector id —
 // the scatter height texture, the ground patch mesh, and the companion water
-// primitive (if any). Call from the editor whenever a sector is deleted or its
+// surface (if any). Call from the editor whenever a sector is deleted or its
 // chunk is discarded.
 func EvictBiomeSectorCaches(id string) {
 	EvictBiomeHeightCache(id)
@@ -1143,8 +1143,7 @@ func forEachScatterSector(level *Level, camPos mgl32.Vec3, castOnly bool, castCa
 // first the conforming ground patch under every land kind (biome_ground.go),
 // then the GPU-instanced scatter (grass/rock/wildflower/cattail/moss) on top
 // of it. Sand/Water sectors only render the ground pass — Sand has no scatter,
-// Water's surface is a separate companion primitive drawn by the normal
-// primitive pass. Moss only scatters when its own MossScatter toggle is on
+// Water's surface is a separate companion plane drawn by the water pass. Moss only scatters when its own MossScatter toggle is on
 // (see (*BiomeBrush).Scatters) — otherwise it's ground-patch-only, like Sand.
 //
 // frame carries the directional cascade setup from RenderShadowPass, which the

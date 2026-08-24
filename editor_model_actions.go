@@ -82,15 +82,17 @@ func modelSelectedFaces() []int {
 	return modelSelection.Faces
 }
 
-func modelSetSelectedFaceTexture(tex string) {
-	faces := modelSelectedFaces()
-	if len(faces) == 0 {
+// modelSetTexture repoints the whole model at tex. There is no per-face
+// variant: a document wears one texture and a face's share of it is decided by
+// its UVs — see the note on ModelDoc.Texture.
+func modelSetTexture(tex string) {
+	if modelDoc == nil {
 		return
 	}
 	_ = ensureTextureLoaded(tex)
 	ModelPushUndo()
-	modelDoc.SetFaceTexture(faces, tex)
-	modelSetStatus("Textured %d faces with %s", len(faces), tex)
+	modelDoc.SetTexture(tex)
+	modelSetStatus("Model texture: %s", modelDoc.TextureName())
 }
 
 func modelSetSelectedFaceSmooth(smooth bool) {
@@ -117,14 +119,13 @@ func modelSelectedFaceSmooth() bool {
 	return modelDoc.Faces[faces[0]].Smooth
 }
 
-// modelSelectedFaceTexture is the first selected face's texture, seeding the
-// panel's combo and ticking the menu's texture list.
-func modelSelectedFaceTexture() string {
-	faces := modelSelectedFaces()
-	if len(faces) == 0 {
+// modelTexture is the document's texture, seeding the panel's combo and
+// ticking the menu's texture list.
+func modelTexture() string {
+	if modelDoc == nil {
 		return ""
 	}
-	return modelDoc.Faces[faces[0]].Texture
+	return modelDoc.TextureName()
 }
 
 func modelSubdivideSelectedFaces() {

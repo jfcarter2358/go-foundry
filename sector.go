@@ -8,22 +8,22 @@ import (
 
 // Floor represents a sector's floor surface.
 type Floor struct {
-	Enabled       bool
-	Hidden        bool // if true, the floor's own texture/geometry is not drawn (or shadow-cast); Enabled/collision/terrain are unaffected. Default false = visible — e.g. for a floor fully covered by a biome ground patch (see biome_ground.go) where the structural texture would otherwise show through at the patch's edges.
-	Height        float32
-	VertexOffsets []float32 // per-vertex Y delta from Height; len must equal len(sector.PointIndices)
-	Texture       string
-	Terrain       bool // if true, use terrain displacement mesh
-	DoubleSided   bool // if true, floor is rendered from both sides (default true)
-	Alpha         float32 // 0.0 = fully transparent, 1.0 = fully opaque
+	Enabled             bool
+	Hidden              bool // if true, the floor's own texture/geometry is not drawn (or shadow-cast); Enabled/collision/terrain are unaffected. Default false = visible — e.g. for a floor fully covered by a biome ground patch (see biome_ground.go) where the structural texture would otherwise show through at the patch's edges.
+	Height              float32
+	VertexOffsets       []float32 // per-vertex Y delta from Height; len must equal len(sector.PointIndices)
+	Texture             string
+	Terrain             bool    // if true, use terrain displacement mesh
+	DoubleSided         bool    // if true, floor is rendered from both sides (default true)
+	Alpha               float32 // 0.0 = fully transparent, 1.0 = fully opaque
 	Extrusions          []Extrusion
 	TerrainPoints       []TerrainPoint
-	UVOffset      mgl32.Vec2 // UV translation
-	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
-	UVRotation    float32    // UV rotation in radians
-	Detail        DetailSpec // per-face procedural detail (rocks); disabled by default
-	Smooth        bool       // shade from interpolated vertex normals (see smooth.go)
-	SmoothAngle   float32    // crease threshold in degrees; 0 = defaultSmoothAngle
+	UVOffset            mgl32.Vec2 // UV translation
+	UVScale             mgl32.Vec2 // UV scale; zero = {1,1}
+	UVRotation          float32    // UV rotation in radians
+	Detail              DetailSpec // per-face procedural detail (rocks); disabled by default
+	Smooth              bool       // shade from interpolated vertex normals (see smooth.go)
+	SmoothAngle         float32    // crease threshold in degrees; 0 = defaultSmoothAngle
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 
@@ -43,21 +43,21 @@ func (f *Floor) VertexHeight(i int) float32 {
 
 // Ceiling represents a sector's ceiling surface.
 type Ceiling struct {
-	Enabled       bool
-	Height        float32
-	VertexOffsets []float32 // per-vertex Y delta from Height; len must equal len(sector.PointIndices)
-	Texture       string
-	Terrain       bool // if true, use terrain displacement mesh
-	DoubleSided   bool // if true, ceiling is rendered from both sides (default true)
-	Alpha         float32 // 0.0 = fully transparent, 1.0 = fully opaque
+	Enabled             bool
+	Height              float32
+	VertexOffsets       []float32 // per-vertex Y delta from Height; len must equal len(sector.PointIndices)
+	Texture             string
+	Terrain             bool    // if true, use terrain displacement mesh
+	DoubleSided         bool    // if true, ceiling is rendered from both sides (default true)
+	Alpha               float32 // 0.0 = fully transparent, 1.0 = fully opaque
 	Extrusions          []Extrusion
 	TerrainPoints       []TerrainPoint
-	UVOffset      mgl32.Vec2 // UV translation
-	UVScale       mgl32.Vec2 // UV scale; zero = {1,1}
-	UVRotation    float32    // UV rotation in radians
-	Detail        DetailSpec // per-face procedural detail (rocks); disabled by default
-	Smooth        bool       // shade from interpolated vertex normals (see smooth.go)
-	SmoothAngle   float32    // crease threshold in degrees; 0 = defaultSmoothAngle
+	UVOffset            mgl32.Vec2 // UV translation
+	UVScale             mgl32.Vec2 // UV scale; zero = {1,1}
+	UVRotation          float32    // UV rotation in radians
+	Detail              DetailSpec // per-face procedural detail (rocks); disabled by default
+	Smooth              bool       // shade from interpolated vertex normals (see smooth.go)
+	SmoothAngle         float32    // crease threshold in degrees; 0 = defaultSmoothAngle
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 
@@ -88,9 +88,8 @@ type Sector struct {
 	Portals      []Portal
 	Floor        Floor
 	Ceiling      Ceiling
-	MinBound         mgl32.Vec2
-	MaxBound         mgl32.Vec2
-	PrimitiveIndices []int // indices into parent Chunk.Primitives
+	MinBound     mgl32.Vec2
+	MaxBound     mgl32.Vec2
 }
 
 // WorldAABB returns the sector's world-space bounds: its XZ polygon AABB

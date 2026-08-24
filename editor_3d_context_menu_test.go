@@ -1,8 +1,9 @@
 package main
 
 // The 3D menu is built as data for the same reason the model editor's is: what
-// a wall, a vertex, an entity or empty space offers is a question about the
-// item tree, and answering it needs neither a GL context nor an ImGui frame.
+// a wall, a vertex, the spawn point or empty space offers is a question about
+// the item tree, and answering it needs neither a GL context nor an ImGui
+// frame.
 //
 // Rows whose actions rebuild geometry (a texture change, a flag toggle) are
 // checked for presence and enabled-ness only — running them would upload to a
@@ -21,7 +22,7 @@ func withEditor3DMenu(t *testing.T, lvl *Level) {
 	restore := saveEditorSelection()
 	prevSurface, prevEdgeKind, prevEdgeIdx := Editor.ActiveSurface, Editor.ActiveEdgeKind, Editor.ActiveEdgeIdx
 	prevSectorIdx, prevFocus, prevFloorVerts := Editor.ActiveSectorIdx, Editor.PanelFocus, Editor.EditFloorVerts
-	prevBoxes, prevTool, prevPress := Editor.ShowPointSelectRadius, editorGizmoTool, editor3DRightPress
+	prevBoxes, prevPress := Editor.ShowPointSelectRadius, editor3DRightPress
 	prevUndo, prevRedo := levelUndoStack, levelRedoStack
 
 	levelUndoStack.clear()
@@ -31,8 +32,7 @@ func withEditor3DMenu(t *testing.T, lvl *Level) {
 	Editor.level = lvl
 	Editor.ActiveChunkIdx = 0
 	Editor.ActiveSectorIdx = -1
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = -1
+	Editor.SpawnSelected = false
 	Editor.ActiveSurface = ""
 	Editor.ActiveEdgeKind = ""
 	Editor.ActiveEdgeIdx = -1
@@ -43,15 +43,15 @@ func withEditor3DMenu(t *testing.T, lvl *Level) {
 	t.Cleanup(func() {
 		Editor.ActiveSurface, Editor.ActiveEdgeKind, Editor.ActiveEdgeIdx = prevSurface, prevEdgeKind, prevEdgeIdx
 		Editor.ActiveSectorIdx, Editor.PanelFocus, Editor.EditFloorVerts = prevSectorIdx, prevFocus, prevFloorVerts
-		Editor.ShowPointSelectRadius, editorGizmoTool, editor3DRightPress = prevBoxes, prevTool, prevPress
+		Editor.ShowPointSelectRadius, editor3DRightPress = prevBoxes, prevPress
 		levelUndoStack, levelRedoStack = prevUndo, prevRedo
 		restore()
 	})
 }
 
 // menuLevel is a one-chunk level with a square sector — four points, four
-// walls — plus an entity and a primitive, so every selection kind has
-// something to resolve to.
+// walls — plus a spawn point, so every selection kind has something to resolve
+// to.
 func menuLevel() *Level {
 	sector := Sector{
 		ID:           "s0",
@@ -66,26 +66,20 @@ func menuLevel() *Level {
 			ID:      "c0",
 			Points:  []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}},
 			Sectors: []Sector{sector},
-			Primitives: []Primitive{{
-				ID: "p0", Kind: PrimitiveRectPrism, Texture: "concrete",
-				Position: mgl32.Vec3{1.13, 0, 2.4}, Scale: mgl32.Vec3{1, 1, 1},
-			}},
 		}},
-		Entities: []Entity{{ID: "e0", Position: mgl32.Vec3{0.13, 1.6, -2.4}, Visible: true}},
+		Spawn: &SpawnPoint{Position: mgl32.Vec3{1.13, 0, 2.4}},
 	}
 }
 
 // selectSurface points the editor at one of the sector's surfaces the way a
-// click on it would.
+// click on it would. It goes through setFaceSelection rather than writing the
+// Active* fields, since those are derived from the face selection now
+// (editor_face_sel.go) and setting them by hand would leave the two disagreeing.
 func selectSurface(kind string, edgeIdx int) {
-	Editor.ActiveSectorIdx = 0
-	Editor.ActiveSurface = kind
-	Editor.ActiveEdgeKind = ""
-	Editor.ActiveEdgeIdx = -1
-	if kind == "wall" || kind == "portal" {
-		Editor.ActiveEdgeKind = kind
-		Editor.ActiveEdgeIdx = edgeIdx
+	if kind != "wall" && kind != "portal" {
+		edgeIdx = -1
 	}
+	setFaceSelection([]faceSel{{chunkIdx: 0, sectorIdx: 0, kind: kind, idx: edgeIdx}})
 }
 
 func TestEditor3DMenuOffersTheWallsOwnActions(t *testing.T) {
@@ -145,47 +139,19 @@ func TestEditor3DMenuPortalGreysOutWhatItLacks(t *testing.T) {
 	mustMenuItem(t, items, "Convert to wall")
 }
 
-func TestEditor3DMenuEntityAndPrimitiveBlocks(t *testing.T) {
-	lvl := menuLevel()
-	withEditor3DMenu(t, lvl)
+func TestEditor3DMenuSpawnBlock(t *testing.T) {
+	withEditor3DMenu(t, menuLevel())
 
-	Editor.ActiveEntityIdx = 0
+	Editor.SpawnSelected = true
 	items := editor3DContextMenuItems()
-	if items[0].Label != "Entity — e0" {
+	if items[0].Label != "Spawn point" {
 		t.Fatalf("heading is %q", items[0].Label)
 	}
-	for _, label := range []string{"Texture", "Visible", "Snap to grid", "Delete"} {
+	for _, label := range []string{"Properties", "Face the camera", "Snap to grid", "Delete"} {
 		mustMenuItem(t, items, label)
 	}
-	// No model on this entity, so the two rows that need one are greyed out.
-	for _, label := range []string{"Fit bounds to model", "Reload model"} {
-		if it := mustMenuItem(t, items, label); !it.Disabled {
-			t.Errorf("%q should be greyed out on an entity with no model", label)
-		}
-	}
 	if _, ok := findMenuItem(items, "Edit wall in 2D"); ok {
-		t.Error("surface rows have no business in the entity menu")
-	}
-
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = 0
-	items = editor3DContextMenuItems()
-	if items[0].Label != "Primitive — p0 (rect_prism)" {
-		t.Fatalf("heading is %q", items[0].Label)
-	}
-	kind := mustMenuItem(t, items, "Type")
-	if it, _ := findMenuItem(kind.Sub, "rect_prism"); !it.Checked {
-		t.Error("the primitive's own kind should be ticked in the Type submenu")
-	}
-	if _, ok := findMenuItem(items, "Face the camera"); ok {
-		t.Error("only a spawn marker gets the facing row")
-	}
-
-	lvl.Chunks[0].Primitives[0].Kind = PrimitiveSpawnPoint
-	items = editor3DContextMenuItems()
-	mustMenuItem(t, items, "Face the camera")
-	if it := mustMenuItem(t, items, "Texture"); !it.Disabled {
-		t.Error("a spawn marker never renders, so its texture row should be greyed out")
+		t.Error("surface rows have no business in the spawn menu")
 	}
 }
 
@@ -243,22 +209,14 @@ func TestEditor3DSnapToGridRoundsOntoTheStep(t *testing.T) {
 	withEditor3DMenu(t, lvl)
 	Editor.StepSize = 0.25
 
-	Editor.ActiveEntityIdx = 0
+	Editor.SpawnSelected = true
 	mustMenuItem(t, editor3DContextMenuItems(), "Snap to grid").Do()
-	want := mgl32.Vec3{0.25, 1.5, -2.5}
-	if got := lvl.Entities[0].Position; got.Sub(want).Len() > 1e-5 {
-		t.Fatalf("entity snapped to %v, want %v", got, want)
+	want := mgl32.Vec3{1.25, 0, 2.5}
+	if got := lvl.Spawn.Position; got.Sub(want).Len() > 1e-5 {
+		t.Fatalf("spawn point snapped to %v, want %v", got, want)
 	}
 	if !EditorCanUndo() {
 		t.Error("snapping moves geometry and must be undoable")
-	}
-
-	Editor.ActiveEntityIdx = -1
-	Editor.ActivePrimitiveIdx = 0
-	mustMenuItem(t, editor3DContextMenuItems(), "Snap to grid").Do()
-	want = mgl32.Vec3{1.25, 0, 2.5}
-	if got := lvl.Chunks[0].Primitives[0].Position; got.Sub(want).Len() > 1e-5 {
-		t.Fatalf("primitive snapped to %v, want %v", got, want)
 	}
 }
 
@@ -266,14 +224,13 @@ func TestEditor3DSharedRowsAreAlwaysThere(t *testing.T) {
 	withEditor3DMenu(t, menuLevel())
 
 	for _, kind := range []func(){
-		func() { Editor.ActiveEntityIdx = 0 },
-		func() { Editor.ActiveEntityIdx, Editor.ActivePrimitiveIdx = -1, 0 },
-		func() { Editor.ActivePrimitiveIdx = -1; selectSurface("wall", 0) },
+		func() { Editor.SpawnSelected = true },
+		func() { Editor.SpawnSelected = false; selectSurface("wall", 0) },
 		func() { selectSurface("", -1) },
 	} {
 		kind()
 		items := editor3DContextMenuItems()
-		for _, label := range []string{"Add primitive here", "Transform tool",
+		for _, label := range []string{"Move spawn point here",
 			"Snap to grid while dragging", "Show all point/edge boxes", "Undo", "Redo"} {
 			mustMenuItem(t, items, label)
 		}
@@ -282,11 +239,6 @@ func TestEditor3DSharedRowsAreAlwaysThere(t *testing.T) {
 	items := editor3DContextMenuItems()
 	if it := mustMenuItem(t, items, "Undo"); !it.Disabled {
 		t.Error("Undo should be greyed out with an empty history")
-	}
-	tool := mustMenuItem(t, items, "Transform tool")
-	mustMenuItem(t, tool.Sub, "Scale").Do()
-	if editorGizmoTool != modelToolScale {
-		t.Fatal("picking Scale from the menu should switch the tool")
 	}
 	mustMenuItem(t, items, "Show all point/edge boxes").Do()
 	if !Editor.ShowPointSelectRadius {
@@ -299,7 +251,7 @@ func TestEditor3DSharedRowsAreAlwaysThere(t *testing.T) {
 func TestEditor3DRightClickOpensTheMenuAndRightDragDoesNot(t *testing.T) {
 	withEditor3DMenu(t, menuLevel())
 	setupPickCamera()
-	Editor.ActiveEntityIdx = 0 // something selected, so no picking runs
+	Editor.SpawnSelected = true // something selected, so no picking runs
 
 	editor3DContextPressed(400, 300)
 	editor3DContextMoved(402, 301)
@@ -338,18 +290,18 @@ func TestEditor3DRightClickSelectsUnderTheCursorOnlyWhenNothingIsSelected(t *tes
 
 	// With something already selected the click is a menu and nothing else.
 	Editor.ActiveSurface, Editor.ActiveEdgeKind, Editor.ActiveEdgeIdx = "", "", -1
-	Editor.ActiveEntityIdx = 0
+	Editor.SpawnSelected = true
 	editor3DContextPressed(mx, my)
 	editor3DContextReleased(mx, my)
-	if Editor.ActiveEntityIdx != 0 {
-		t.Fatalf("entity selection was replaced by the right-click (surface %q)", Editor.ActiveSurface)
+	if !Editor.SpawnSelected {
+		t.Fatalf("spawn selection was replaced by the right-click (surface %q)", Editor.ActiveSurface)
 	}
 
 	// Nor does it pick while a placement mode is armed — the click that
 	// resolves placement is the left one.
-	Editor.ActiveEntityIdx = -1
-	Editor.PrimPlacementMode = true
-	t.Cleanup(func() { Editor.PrimPlacementMode = false })
+	Editor.SpawnSelected = false
+	Editor.SpawnPlacementMode = true
+	t.Cleanup(func() { Editor.SpawnPlacementMode = false })
 	editor3DContextPressed(mx, my)
 	editor3DContextReleased(mx, my)
 	if Editor.ActiveSurface != "" {

@@ -64,6 +64,21 @@ func editorActiveToggleButton(label string, active bool) bool {
 	return clicked
 }
 
+// editorActiveToggleButtonColor is editorActiveToggleButton with the highlight
+// colour named, for toggles that want to read as their own thing rather than as
+// another entry in the orange mode row. Same evaluate-once contract — see the
+// hazard documented above.
+func editorActiveToggleButtonColor(label string, active bool, col imgui.Vec4) bool {
+	if active {
+		imgui.PushStyleColor(imgui.StyleColorButton, col)
+	}
+	clicked := imgui.Button(label)
+	if active {
+		imgui.PopStyleColor()
+	}
+	return clicked
+}
+
 // withModalPopup draws an auto-resizing modal popup titled title, opening it
 // (once) when *show is true. show is cleared immediately so the OpenPopup
 // call fires exactly once per request; body is only invoked while the popup
@@ -273,7 +288,7 @@ func textureCombo(label string, tex *string, allowEmpty bool) bool {
 	return changed
 }
 
-// waterControls draws the wave and reflection settings for a water primitive.
+// waterControls draws the wave and reflection settings for a water surface.
 //
 // Edits are pushed straight to the already-uploaded Geometry rather than going
 // through Primitive.Load — the water mesh is a 48×48 grid, and rebuilding and
@@ -714,19 +729,6 @@ func EditorDrawUI() {
 	}
 
 	imgui.SameLine()
-	if currentMode == ModeScenery {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.6, Y: 0.2, Z: 0.6, W: 1})
-	}
-	if imgui.Button("Scenery") {
-		if Editor.Mode != ModeScenery {
-			EnterSceneryEditor()
-		}
-	}
-	if currentMode == ModeScenery {
-		imgui.PopStyleColor()
-	}
-
-	imgui.SameLine()
 	if imgui.Button("Textures") {
 		OpenTextureEditor()
 	}
@@ -746,26 +748,56 @@ func EditorDrawUI() {
 		imgui.PopStyleColor()
 	}
 
-	// Gizmo tool toggle. Only 3D mode has a gizmo to point at, and the pair
-	// mirrors the model editor's toolbar — same labels, same shortcuts — so the
-	// two viewports are driven the same way.
-	if currentMode == Mode3D {
+	// View controls: what a click selects and which gizmo acts on it. Both are
+	// shared by the 3D viewport and the 2D map — same state, same shortcuts —
+	// so the two are driven the same way and a selection made in one is legible
+	// in the other. (Shading and the camera below are 3D's alone.)
+	if currentMode == Mode3D || currentMode == Mode2D {
 		imgui.SameLine()
 		imgui.Separator()
-		for _, tool := range editorGizmoTools {
+		for _, mode := range editorSelModes {
+			m := mode
 			imgui.SameLine()
-			active := editorGizmoTool == tool
-			if active {
-				imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.85, Y: 0.55, Z: 0.1, W: 1})
+			if editorActiveToggleButton(
+				fmt.Sprintf("%s [%s]##selmode", m, editorSelModeKey(m)), Editor.SelMode == m) {
+				editorSetSelMode(m)
 			}
-			if imgui.Button(fmt.Sprintf("%s [%s]##gizmotool", tool, modelToolKey(tool))) {
-				editorSetGizmoTool(tool)
+			if imgui.IsItemHovered() {
+				imgui.SetTooltip(editorSelModeTooltip(m))
 			}
-			if active {
-				imgui.PopStyleColor()
-			}
-			if tool == modelToolScale && imgui.IsItemHovered() {
-				imgui.SetTooltip("Scales the selected model about its own origin.\nSelect a placed model first — nothing else here scales,\nso the move gizmo stays up until one is.")
+		}
+
+		imgui.SameLine()
+		imgui.Separator()
+		editorGizmoToolButtons()
+	}
+
+	if currentMode == Mode3D {
+		imgui.SameLine()
+		wire := Editor.Wireframe
+		if editorActiveToggleButtonColor(editorShadingLabel(), wire,
+			imgui.Vec4{X: 0.2, Y: 0.45, Z: 0.7, W: 1}) {
+			editorSetWireframe(!wire)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Z — Solid hides the far side of the world, and only the\n" +
+				"points and edges you can see can be clicked.\n" +
+				"Wireframe draws it as lines and lets you click any of them.")
+		}
+
+		imgui.SameLine()
+		flying := editorCam3D.Fly
+		if editorActiveToggleButtonColor(editorCameraLabel(), flying,
+			imgui.Vec4{X: 0.2, Y: 0.55, Z: 0.35, W: 1}) {
+			editorSetFlyCam(!flying)
+		}
+		if imgui.IsItemHovered() {
+			if flying {
+				imgui.SetTooltip("RMB/MMB drag to look, WASD fly, Space/Shift up and down,\n" +
+					"wheel dollies, F frames the selection.")
+			} else {
+				imgui.SetTooltip("RMB/MMB drag to orbit, Shift+MMB pan, wheel zoom,\n" +
+					"WASD slides the pivot, F frames the selection.")
 			}
 		}
 	}
@@ -774,235 +806,155 @@ func EditorDrawUI() {
 	imgui.Separator()
 	imgui.SameLine()
 
-	if currentMode == ModeScenery {
-		// Scenery-specific toolbar
-		id := Editor.SceneryID
-		if id == "" {
-			id = "(unsaved)"
+	// Chunk selector
+	imgui.Text("Chunk:")
+	imgui.SameLine()
+	chunkNames := make([]string, len(lvl.Chunks))
+	for i := range lvl.Chunks {
+		chunkNames[i] = lvl.Chunks[i].ID
+	}
+	if len(chunkNames) > 0 {
+		if Editor.ActiveChunkIdx < 0 {
+			Editor.ActiveChunkIdx = 0
 		}
-		imgui.Text(fmt.Sprintf("Scenery: %s", id))
-		imgui.SameLine()
-
-		if imgui.Button("New##sc") {
-			for i := range Editor.SceneryPrimitives {
-				Editor.SceneryPrimitives[i].Geometry.Delete()
-			}
-			Editor.SceneryPrimitives = nil
-			Editor.SceneryActivePrimIdx = -1
-			Editor.SceneryFilePath = ""
-			Editor.SceneryID = ""
-			SceneryClearUndoHistory()
+		if Editor.ActiveChunkIdx >= len(chunkNames) {
+			Editor.ActiveChunkIdx = len(chunkNames) - 1
 		}
-		imgui.SameLine()
-
-		if imgui.Button("Open##sc") {
-			Editor.ShowSceneryPicker = true
-		}
-		imgui.SameLine()
-
-		editorPushDisabled(!SceneryCanUndo())
-		if imgui.Button("Undo##sc") {
-			SceneryUndo()
-		}
-		editorPopDisabled()
-		imgui.SameLine()
-
-		editorPushDisabled(!SceneryCanRedo())
-		if imgui.Button("Redo##sc") {
-			SceneryRedo()
-		}
-		editorPopDisabled()
-		imgui.SameLine()
-
-		if imgui.Button("Save##sc") {
-			if Editor.SceneryFilePath != "" {
-				id := Editor.SceneryID
-				if id == "" {
-					id = strings.TrimSuffix(filepath.Base(Editor.SceneryFilePath), ".yaml")
+		currentName := chunkNames[Editor.ActiveChunkIdx]
+		imgui.SetNextItemWidth(150)
+		if imgui.BeginCombo("##chunk", currentName) {
+			for i, name := range chunkNames {
+				selected := i == Editor.ActiveChunkIdx
+				if imgui.SelectableV(name, selected, 0, imgui.Vec2{}) {
+					Editor.ActiveChunkIdx = i
 				}
-				if err := SaveScenery(Editor.SceneryPrimitives, id, Editor.SceneryFilePath); err != nil {
-					Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
-				} else {
-					Editor.StatusMsg = fmt.Sprintf("Saved to %s", filepath.Base(Editor.SceneryFilePath))
-				}
-				Editor.StatusTime = sdl.GetTicks()
-			} else {
-				Editor.ShowScenerySaveAs = true
 			}
+			imgui.EndCombo()
 		}
-		imgui.SameLine()
+	}
 
-		if imgui.Button("Save As...##sc") {
-			Editor.ScenerySaveAsName = Editor.SceneryID
-			Editor.ShowScenerySaveAs = true
-		}
-		imgui.SameLine()
+	imgui.SameLine()
+	imgui.Separator()
+	imgui.SameLine()
 
-		if imgui.Button("Exit Scenery") {
-			exitSceneryEditor()
-		}
-		imgui.SameLine()
+	// Level toolbar
+	imgui.Text(fmt.Sprintf("Level: %s", filepath.Base(Editor.SavePath)))
+	imgui.SameLine()
 
-		// Status message
-		if Editor.StatusMsg != "" {
-			if sdl.GetTicks()-Editor.StatusTime < 3000 {
-				imgui.Text(Editor.StatusMsg)
-			} else {
-				Editor.StatusMsg = ""
-			}
-		}
-	} else {
-		// Chunk selector
-		imgui.Text("Chunk:")
-		imgui.SameLine()
-		chunkNames := make([]string, len(lvl.Chunks))
-		for i := range lvl.Chunks {
-			chunkNames[i] = lvl.Chunks[i].ID
-		}
-		if len(chunkNames) > 0 {
-			if Editor.ActiveChunkIdx < 0 {
-				Editor.ActiveChunkIdx = 0
-			}
-			if Editor.ActiveChunkIdx >= len(chunkNames) {
-				Editor.ActiveChunkIdx = len(chunkNames) - 1
-			}
-			currentName := chunkNames[Editor.ActiveChunkIdx]
-			imgui.SetNextItemWidth(150)
-			if imgui.BeginCombo("##chunk", currentName) {
-				for i, name := range chunkNames {
-					selected := i == Editor.ActiveChunkIdx
-					if imgui.SelectableV(name, selected, 0, imgui.Vec2{}) {
-						Editor.ActiveChunkIdx = i
-					}
-				}
-				imgui.EndCombo()
-			}
-		}
+	if imgui.Button("Open") {
+		Editor.LevelFiles = ScanLevelFiles(Editor.LevelsDir)
+		Editor.NewLevelName = ""
+		Editor.ShowLevelPicker = true
+	}
+	imgui.SameLine()
 
-		imgui.SameLine()
+	if imgui.Button("Save") {
+		if err := SaveLevel(lvl, Editor.SavePath); err != nil {
+			Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
+		} else {
+			Editor.StatusMsg = fmt.Sprintf("Saved to %s", Editor.SavePath)
+		}
+		Editor.StatusTime = sdl.GetTicks()
+	}
+	imgui.SameLine()
+
+	editorPushDisabled(!EditorCanUndo())
+	if imgui.Button("Undo##lvl") {
+		EditorUndo()
+	}
+	editorPopDisabled()
+	imgui.SameLine()
+
+	editorPushDisabled(!EditorCanRedo())
+	if imgui.Button("Redo##lvl") {
+		EditorRedo()
+	}
+	editorPopDisabled()
+	imgui.SameLine()
+
+	if imgui.Button("Save As...") {
+		Editor.SaveAsName = filepath.Base(Editor.SavePath)
+		Editor.ShowSaveAs = true
+	}
+	imgui.SameLine()
+
+	// Status message (shown for 3 seconds after save/load)
+	if Editor.StatusMsg != "" {
+		if sdl.GetTicks()-Editor.StatusTime < 3000 {
+			imgui.Text(Editor.StatusMsg)
+		} else {
+			Editor.StatusMsg = ""
+		}
+	}
+
+	// --- Level Picker popup ---
+	withModalPopup("Level Picker", &Editor.ShowLevelPicker, func() {
+		imgui.Text("Select a level to open:")
 		imgui.Separator()
-		imgui.SameLine()
-
-		// Level toolbar
-		imgui.Text(fmt.Sprintf("Level: %s", filepath.Base(Editor.SavePath)))
-		imgui.SameLine()
-
-		if imgui.Button("Open") {
-			Editor.LevelFiles = ScanLevelFiles(Editor.LevelsDir)
-			Editor.NewLevelName = ""
-			Editor.ShowLevelPicker = true
-		}
-		imgui.SameLine()
-
-		if imgui.Button("Save") {
-			if err := SaveLevel(lvl, Editor.SavePath); err != nil {
-				Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
-			} else {
-				Editor.StatusMsg = fmt.Sprintf("Saved to %s", Editor.SavePath)
-			}
-			Editor.StatusTime = sdl.GetTicks()
-		}
-		imgui.SameLine()
-
-		editorPushDisabled(!EditorCanUndo())
-		if imgui.Button("Undo##lvl") {
-			EditorUndo()
-		}
-		editorPopDisabled()
-		imgui.SameLine()
-
-		editorPushDisabled(!EditorCanRedo())
-		if imgui.Button("Redo##lvl") {
-			EditorRedo()
-		}
-		editorPopDisabled()
-		imgui.SameLine()
-
-		if imgui.Button("Save As...") {
-			Editor.SaveAsName = filepath.Base(Editor.SavePath)
-			Editor.ShowSaveAs = true
-		}
-		imgui.SameLine()
-
-		// Status message (shown for 3 seconds after save/load)
-		if Editor.StatusMsg != "" {
-			if sdl.GetTicks()-Editor.StatusTime < 3000 {
-				imgui.Text(Editor.StatusMsg)
-			} else {
-				Editor.StatusMsg = ""
-			}
-		}
-
-		// --- Level Picker popup ---
-		withModalPopup("Level Picker", &Editor.ShowLevelPicker, func() {
-			imgui.Text("Select a level to open:")
-			imgui.Separator()
-			for _, f := range Editor.LevelFiles {
-				if imgui.SelectableV(f, false, 0, imgui.Vec2{}) {
-					path := filepath.Join(Editor.LevelsDir, f)
-					if err := EditorLoadLevel(path); err != nil {
-						Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
-					} else {
-						Editor.StatusMsg = fmt.Sprintf("Loaded %s", f)
-					}
-					Editor.StatusTime = sdl.GetTicks()
-					imgui.CloseCurrentPopup()
-				}
-			}
-			imgui.Separator()
-			imgui.Text("New Level:")
-			imgui.SetNextItemWidth(200)
-			imgui.InputText("##newlevel", &Editor.NewLevelName)
-			imgui.SameLine()
-			if imgui.Button("Create") && Editor.NewLevelName != "" {
-				name := Editor.NewLevelName
-				if !strings.HasSuffix(name, ".yaml") {
-					name += ".yaml"
-				}
-				path := filepath.Join(Editor.LevelsDir, name)
-				if err := WriteBlankLevel(path); err != nil {
-					Editor.StatusMsg = fmt.Sprintf("Create failed: %v", err)
-				} else if err := EditorLoadLevel(path); err != nil {
+		for _, f := range Editor.LevelFiles {
+			if imgui.SelectableV(f, false, 0, imgui.Vec2{}) {
+				path := filepath.Join(Editor.LevelsDir, f)
+				if err := EditorLoadLevel(path); err != nil {
 					Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
 				} else {
-					Editor.StatusMsg = fmt.Sprintf("Created %s", name)
+					Editor.StatusMsg = fmt.Sprintf("Loaded %s", f)
 				}
 				Editor.StatusTime = sdl.GetTicks()
 				imgui.CloseCurrentPopup()
 			}
-			imgui.Separator()
-			if imgui.Button("Cancel") {
-				imgui.CloseCurrentPopup()
+		}
+		imgui.Separator()
+		imgui.Text("New Level:")
+		imgui.SetNextItemWidth(200)
+		imgui.InputText("##newlevel", &Editor.NewLevelName)
+		imgui.SameLine()
+		if imgui.Button("Create") && Editor.NewLevelName != "" {
+			name := Editor.NewLevelName
+			if !strings.HasSuffix(name, ".yaml") {
+				name += ".yaml"
 			}
-		})
+			path := filepath.Join(Editor.LevelsDir, name)
+			if err := WriteBlankLevel(path); err != nil {
+				Editor.StatusMsg = fmt.Sprintf("Create failed: %v", err)
+			} else if err := EditorLoadLevel(path); err != nil {
+				Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
+			} else {
+				Editor.StatusMsg = fmt.Sprintf("Created %s", name)
+			}
+			Editor.StatusTime = sdl.GetTicks()
+			imgui.CloseCurrentPopup()
+		}
+		imgui.Separator()
+		if imgui.Button("Cancel") {
+			imgui.CloseCurrentPopup()
+		}
+	})
 
-		// --- Save As popup ---
-		withModalPopup("Save As", &Editor.ShowSaveAs, func() {
-			imgui.Text("Save level as:")
-			imgui.SetNextItemWidth(200)
-			imgui.InputText("##saveas", &Editor.SaveAsName)
-			if imgui.Button("Save") && Editor.SaveAsName != "" {
-				name := Editor.SaveAsName
-				if !strings.HasSuffix(name, ".yaml") {
-					name += ".yaml"
-				}
-				path := filepath.Join(Editor.LevelsDir, name)
-				if err := SaveLevel(lvl, path); err != nil {
-					Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
-				} else {
-					Editor.SavePath = path
-					Editor.StatusMsg = fmt.Sprintf("Saved to %s", name)
-				}
-				Editor.StatusTime = sdl.GetTicks()
-				imgui.CloseCurrentPopup()
+	// --- Save As popup ---
+	withModalPopup("Save As", &Editor.ShowSaveAs, func() {
+		imgui.Text("Save level as:")
+		imgui.SetNextItemWidth(200)
+		imgui.InputText("##saveas", &Editor.SaveAsName)
+		if imgui.Button("Save") && Editor.SaveAsName != "" {
+			name := Editor.SaveAsName
+			if !strings.HasSuffix(name, ".yaml") {
+				name += ".yaml"
 			}
-			imgui.SameLine()
-			if imgui.Button("Cancel##saveas") {
-				imgui.CloseCurrentPopup()
+			path := filepath.Join(Editor.LevelsDir, name)
+			if err := SaveLevel(lvl, path); err != nil {
+				Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
+			} else {
+				Editor.SavePath = path
+				Editor.StatusMsg = fmt.Sprintf("Saved to %s", name)
 			}
-		})
-
-	} // end if currentMode == ModeScenery else
+			Editor.StatusTime = sdl.GetTicks()
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##saveas") {
+			imgui.CloseCurrentPopup()
+		}
+	})
 
 	// ---- Exit button (top-right of the toolbar) ----
 	const exitBtnWidth = 60
@@ -1027,10 +979,10 @@ func EditorDrawUI() {
 		Editor2DPanel()
 		// After the panel — it sets the selection the indicator reads.
 		EditorDirLightIndicator()
+		// Last, so the popup opens over the panel as well as the map.
+		Editor2DContextMenu()
 	} else if Editor.Mode == ModeSurface2D {
 		Surface2DPanel()
-	} else if Editor.Mode == ModeScenery {
-		SceneryEditorPanel()
 	}
 }
 
@@ -1041,8 +993,9 @@ func Editor2DPanel() {
 		return
 	}
 	// The chunk-scoped sections need an active chunk, but the chunk list and
-	// the level-wide sections (catalogs, lights) must stay reachable without
-	// one — otherwise a level with no chunk selected offers no way back.
+	// the level-wide sections (the spawn point, lights) must stay reachable
+	// without one — otherwise a level with no chunk selected offers no way
+	// back.
 	var ch *Chunk
 	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 		ch = &lvl.Chunks[Editor.ActiveChunkIdx]
@@ -1061,23 +1014,25 @@ func Editor2DPanel() {
 		imgui.Text("Chunk: (none selected)")
 	}
 	imgui.Text(fmt.Sprintf("Zoom: %.0f px/unit", Editor.Zoom2D))
-	imgui.Text("Scroll: zoom | MMB drag: pan | Shift+click: add vertex")
+	imgui.Text("Scroll: zoom | MMB drag: pan | Shift+click: add point")
+	imgui.Text(fmt.Sprintf("Select: %s [1/2/3] | Gizmo: %s [G/R/C]",
+		Editor.SelMode, Editor.GizmoTool))
+	imgui.Text("Ctrl+click: add to selection | RMB: menu")
+
+	editor2DJoinButtons()
 	imgui.Checkbox("Show All Point Boxes", &Editor.ShowPointSelectRadius)
 
 	// ---- Grid settings ----
 	imgui.Separator()
 	editorGridSettings()
 
-	// ---- Object catalogs ----
+	// ---- Player spawn point ----
 	imgui.Separator()
-	editorEntityCatalogSection()
-	editorPrimitiveCatalogSection()
-	editorModelCatalogSection()
-	editorSceneryImportSection()
+	editorSpawnSection(lvl)
 
-	// ---- Selected object properties ----
-	editorPrimitivePropertiesSection(lvl)
-	editorEntityPropertiesSection(lvl)
+	// ---- Entities ----
+	editorEntitySection(lvl)
+	editorEntityProperties(lvl)
 
 	if ch != nil {
 		editor2DSectorSections(ch)
@@ -1373,4 +1328,61 @@ func polyEdgeIdx(s *Sector, kind string, idx int) int {
 		}
 	}
 	return -1
+}
+
+// editorGizmoToolButtons draws the move/rotate/scale toggles. Shared by the
+// main window's toolbar and the 2D pop-out's, so the tool can be switched
+// wherever the view being edited happens to live.
+func editorGizmoToolButtons() {
+	for _, tool := range editorGizmoTools {
+		tl := tool
+		imgui.SameLine()
+		if editorActiveToggleButtonColor(
+			fmt.Sprintf("%s [%s]##gizmotool", tl, editorGizmoToolKey(tl)),
+			Editor.GizmoTool == tl, imgui.Vec4{X: 0.55, Y: 0.35, Z: 0.15, W: 1}) {
+			editorSetGizmoTool(tl)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip(editorGizmoToolTooltip(tl))
+		}
+	}
+}
+
+// editor2DJoinButtons draws the map's join actions. They are the panel half of
+// the pair of rows the right-click menu carries: picking points and then saying
+// what to do with them is the map's way of drawing a sector, and a workflow
+// that lives only in a context menu is a workflow nobody finds.
+func editor2DJoinButtons() {
+	can := editorCanJoinPoints()
+	editorPushDisabled(!can)
+	if imgui.Button(editorJoinLabel(false) + "##join") {
+		EditorJoinSelectedPoints(false)
+	}
+	editorPopDisabled()
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("J — Draw an edge between each picked point and the next,\n" +
+			"in the order you picked them. Ctrl+click points to pick them.")
+	}
+
+	imgui.SameLine()
+	editorPushDisabled(!can)
+	if imgui.Button(editorJoinLabel(true) + "##joinclose") {
+		EditorJoinSelectedPoints(true)
+	}
+	editorPopDisabled()
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Shift+J — The same, plus the edge back to the first point,\n" +
+			"which closes the outline and turns it into a sector.")
+	}
+
+	if len(Editor.PendingEdges) > 0 {
+		if imgui.Button(fmt.Sprintf("Discard %d Unjoined Edge(s)##discardpending",
+			len(Editor.PendingEdges))) {
+			EditorDiscardPendingEdges()
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Edges drawn but not yet closed into a sector.\n" +
+				"The points themselves stay.")
+		}
+	}
 }

@@ -68,13 +68,31 @@ func levelToRaw(level *Level) (RawLevel, error) {
 		raw.Chunks = append(raw.Chunks, rc)
 	}
 
-	for ei := range level.Entities {
-		e := &level.Entities[ei]
-		raw.Entities = append(raw.Entities, entityToRaw(e))
+	if level.Spawn != nil {
+		raw.Spawn = spawnToRaw(level.Spawn)
+	}
+
+	for i := range level.Entities {
+		raw.Entities = append(raw.Entities, entityToRaw(&level.Entities[i], entityDefFor(&level.Entities[i])))
 	}
 
 	raw.Lights = lightsToRaw(level.Lights)
 	return raw, nil
+}
+
+// entityDefFor returns the definition an entity was instanced from, or nil when
+// it cannot be read. Saving falls back to writing the entity in full in that
+// case (see entityToRaw), so a definition that has been deleted or renamed out
+// from under a level costs a verbose entry rather than a lost one.
+func entityDefFor(e *Entity) *EntityDef {
+	if e.Type == "" {
+		return nil
+	}
+	def, err := LoadEntityDef(e.Type)
+	if err != nil {
+		return nil
+	}
+	return def
 }
 
 // chunkToRaw serialises one chunk. It reverse-transforms points by removing
@@ -212,12 +230,6 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 		}
 
 		rc.Sectors = append(rc.Sectors, rs)
-	}
-
-	// Serialize primitives with reverse-transformed positions
-	for pi := range ch.Primitives {
-		p := &ch.Primitives[pi]
-		rc.Primitives = append(rc.Primitives, primitiveToRaw(p, ch))
 	}
 
 	// Serialize biome sectors with reverse-transformed (chunk-local) points.
@@ -372,89 +384,13 @@ func validateRawLevel(raw *RawLevel) error {
 	return nil
 }
 
-// primitiveToRaw converts a runtime Primitive to its raw YAML form,
-// reverse-transforming the position back to chunk-local coordinates.
-func primitiveToRaw(p *Primitive, ch *Chunk) RawPrimitive {
-	// Reverse-transform position from world to chunk-local
-	localXZ := reverseTransformPoint2D(
-		mgl32.Vec2{p.Position.X(), p.Position.Z()},
-		ch.Origin, ch.Rotation, ch.Scale,
-	)
-	localY := p.Position.Y() - ch.Origin.Y()
-
-	rp := primitiveToRawCommon(p)
-	rp.Position = RawEntityPosition{X: localXZ.X(), Y: localY, Z: localXZ.Y()}
-	return rp
-}
-
-// primitiveToRawCommon converts every field of p that doesn't depend on
-// which coordinate space Position is expressed in — level primitives store
-// chunk-local position (see primitiveToRaw above), scenery primitives store
-// raw world position (see sceneryPrimToRaw, editor_scenery.go) — callers set
-// Position themselves after calling this.
-func primitiveToRawCommon(p *Primitive) RawPrimitive {
-	sc := p.Scale
-	if sc == (mgl32.Vec3{}) {
-		sc = mgl32.Vec3{1, 1, 1}
-	}
-
-	typeStr := primitiveTypeName(p.Kind)
-
-	uvSc := p.UVScale
-	if uvSc == (mgl32.Vec2{}) {
-		uvSc = mgl32.Vec2{1, 1}
-	}
-
-	return RawPrimitive{
-		ID:          p.ID,
-		Type:        typeStr,
-		Rotation:    RawEntityPosition{X: p.Rotation.X(), Y: p.Rotation.Y(), Z: p.Rotation.Z()},
-		Scale:       RawEntityPosition{X: sc.X(), Y: sc.Y(), Z: sc.Z()},
-		Texture:     p.Texture,
-		Sides:       p.Sides,
-		Collision:   p.Collision,
-		Alpha:       float32PtrIfNotOne(p.Alpha),
-		UVOffset:    Point{X: p.UVOffset.X(), Y: p.UVOffset.Y()},
-		UVScale:     Point{X: uvSc.X(), Y: uvSc.Y()},
-		UVRotation:  p.UVRotation,
-		Smooth:      p.Smooth,
-		SmoothAngle: p.SmoothAngle,
-		Water:       waterParamsToRaw(p),
-	}
-}
-
-// entityToRaw converts one entity to its raw YAML form.
-func entityToRaw(e *Entity) RawEntity {
-	sc := e.Scale
-	if sc == (mgl32.Vec3{}) {
-		sc = mgl32.Vec3{1, 1, 1}
-	}
-	// Model paths are written relative to the install root so the level stays
-	// portable; the loader resolves them back (fileutil.go).
-	modelPath := relAssetPath(e.ModelPath)
-	bKind := "aabb"
-	switch e.BoundingKind {
-	case BoundingSphere:
-		bKind = "sphere"
-	case BoundingCylinder:
-		bKind = "cylinder"
-	}
-	return RawEntity{
-		ID:         e.ID,
-		Position:   RawEntityPosition{X: e.Position.X(), Y: e.Position.Y(), Z: e.Position.Z()},
-		Rotation:   RawEntityPosition{X: e.Rotation.X(), Y: e.Rotation.Y(), Z: e.Rotation.Z()},
-		Scale:      RawEntityPosition{X: sc.X(), Y: sc.Y(), Z: sc.Z()},
-		Model:      modelPath,
-		Texture:    e.TexturePath,
-		Bounding:   bKind,
-		BoundHalfX: e.BoundHalfX,
-		BoundHalfY: e.BoundHalfY,
-		BoundHalfZ: e.BoundHalfZ,
-
-		Animation:      e.Animation,
-		AnimationSpeed: e.AnimationSpeed,
-		AnimationLoop:  e.AnimationLoop,
-		Alpha:          float32PtrIfNotOne(e.Alpha),
+// spawnToRaw converts the level's spawn point to its raw YAML form. Position
+// stays in world space: the spawn belongs to the level, not to a chunk, so
+// there is no chunk transform to be local to.
+func spawnToRaw(s *SpawnPoint) *RawSpawn {
+	return &RawSpawn{
+		Position: RawVec3{X: s.Position.X(), Y: s.Position.Y(), Z: s.Position.Z()},
+		Rotation: RawVec3{X: s.Rotation.X(), Y: s.Rotation.Y(), Z: s.Rotation.Z()},
 	}
 }
 
@@ -750,9 +686,6 @@ func ImportChunkIntoLevel(lvl *Level, path string) (string, error) {
 					}
 				}
 			}
-		}
-		for pi := range rc.Primitives {
-			rc.Primitives[pi].ID = rc.Primitives[pi].ID + suffix
 		}
 	}
 

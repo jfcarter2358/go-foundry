@@ -68,12 +68,12 @@ func TestPickModelTDegenerateMatrix(t *testing.T) {
 }
 
 // TestPick3DClosestWins covers the rule that a click selects whatever is
-// nearest along the ray, in both orders: a wall in front of a primitive and a
-// primitive in front of a wall.
+// nearest along the ray, in both orders: a wall in front of the spawn marker
+// and the marker in front of a wall.
 func TestPick3DClosestWins(t *testing.T) {
 	mx, my := setupPickCamera()
 
-	newLevel := func(wallZ, primZ float32) *Level {
+	newLevel := func(wallZ, spawnZ float32) *Level {
 		wall := Wall{Visible: true}
 		wall.Geometry.Vertices = quadVerts(wallZ, 4)
 		return &Level{
@@ -83,34 +83,28 @@ func TestPick3DClosestWins(t *testing.T) {
 					ID:    "s0",
 					Walls: []Wall{wall},
 				}},
-				Primitives: []Primitive{{
-					ID:         "p0",
-					Kind:       PrimitiveRectPrism,
-					Position:   mgl32.Vec3{0, 0, primZ},
-					Scale:      mgl32.Vec3{1, 1, 1},
-					BoundHalfX: 0.5,
-					BoundHalfY: 0.5,
-					BoundHalfZ: 0.5,
-				}},
 			}},
+			// No uploaded mesh, so picking falls back to the marker's AABB —
+			// which is the case that matters here, since the arrow itself is
+			// only generated against a GL context.
+			Spawn: &SpawnPoint{Position: mgl32.Vec3{0, 0, spawnZ}},
 		}
 	}
 
 	prevLevel := Editor.level
 	defer func() { Editor.level = prevLevel }()
 
-	// Wall at 3, primitive at 10 → the wall wins.
+	// Wall at 3, spawn marker at 10 → the wall wins.
 	Editor.level = newLevel(-3, -10)
 	if hit := pick3D(mx, my); hit.kind != pickWall || hit.idx != 0 || hit.sectorIdx != 0 {
 		t.Fatalf("near wall: got kind=%q chunk=%d sector=%d idx=%d, want the wall",
 			hit.kind, hit.chunkIdx, hit.sectorIdx, hit.idx)
 	}
 
-	// Primitive at 3, wall at 10 → the primitive wins.
+	// Spawn marker at 3, wall at 10 → the marker wins.
 	Editor.level = newLevel(-10, -3)
-	if hit := pick3D(mx, my); hit.kind != pickPrimitive || hit.idx != 0 || hit.chunkIdx != 0 {
-		t.Fatalf("near primitive: got kind=%q chunk=%d sector=%d idx=%d, want the primitive",
-			hit.kind, hit.chunkIdx, hit.sectorIdx, hit.idx)
+	if hit := pick3D(mx, my); hit.kind != pickSpawn {
+		t.Fatalf("near spawn: got kind=%q, want the spawn point", hit.kind)
 	}
 
 	// Nothing along the ray → no selection.
@@ -283,23 +277,40 @@ func saveEditorSelection() func() {
 	lvl := Editor.level
 	mode := Editor.Mode
 	chunkIdx := Editor.ActiveChunkIdx
-	entityIdx := Editor.ActiveEntityIdx
-	primIdx := Editor.ActivePrimitiveIdx
+	sectorIdx := Editor.ActiveSectorIdx
+	surface, edgeKind, edgeIdx := Editor.ActiveSurface, Editor.ActiveEdgeKind, Editor.ActiveEdgeIdx
+	spawn := Editor.SpawnSelected
 	si, vi := Editor.ActiveVertexSI, Editor.ActiveVertexVI
 	sels := Editor.SelectedVertices
+	faces := Editor.SelectedFaces
 	kind := Editor.GizmoKind
 	dragging, axis := Editor.GizmoDragging, Editor.GizmoDragAxis
 	snap, step := Editor.SnapToGrid, Editor.StepSize
+	selMode, wire := Editor.SelMode, Editor.Wireframe
+	biomeIdx := Editor.ActiveBiomeSectorIdx
+	tool := Editor.GizmoTool
+	gizmo2D := Editor.Gizmo2DState
+	editFloor := Editor.EditFloorVerts
+	dragSI, dragVI := Editor.DragVertexSI, Editor.DragVertexVI
 	return func() {
 		Editor.level = lvl
 		Editor.Mode = mode
 		Editor.ActiveChunkIdx = chunkIdx
-		Editor.ActiveEntityIdx = entityIdx
-		Editor.ActivePrimitiveIdx = primIdx
+		Editor.ActiveSectorIdx = sectorIdx
+		Editor.ActiveSurface, Editor.ActiveEdgeKind, Editor.ActiveEdgeIdx = surface, edgeKind, edgeIdx
+		Editor.SpawnSelected = spawn
 		Editor.ActiveVertexSI, Editor.ActiveVertexVI = si, vi
 		Editor.SelectedVertices = sels
+		Editor.SelectedFaces = faces
 		Editor.GizmoKind = kind
 		Editor.GizmoDragging, Editor.GizmoDragAxis = dragging, axis
 		Editor.SnapToGrid, Editor.StepSize = snap, step
+		Editor.SelMode, Editor.Wireframe = selMode, wire
+		Editor.ActiveBiomeSectorIdx = biomeIdx
+		Editor.GizmoTool = tool
+		Editor.Gizmo2DState = gizmo2D
+		Editor.EditFloorVerts = editFloor
+		Editor.DragVertexSI, Editor.DragVertexVI = dragSI, dragVI
+		editorVisReset()
 	}
 }

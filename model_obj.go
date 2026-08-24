@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -122,12 +121,16 @@ func LoadOBJMesh(path string) (*ModelDoc, error) {
 			if len(parts) < 4 {
 				continue
 			}
-			face := ModelFace{Texture: "default"}
-			if curTex != "" {
+			face := ModelFace{}
+			// One texture per document, so the first material the file actually
+			// uses on a face wins. An OBJ that switches material partway through
+			// loses the later ones — the geometry and UVs are what matter here,
+			// and the model can be repointed in one click afterwards.
+			if curTex != "" && doc.Texture == "" {
 				if mapped, ok := mtlTex[curTex]; ok && mapped != "" {
-					face.Texture = mapped
+					doc.Texture = mapped
 				} else {
-					face.Texture = curTex
+					doc.Texture = curTex
 				}
 			}
 			for _, token := range parts[1:] {
@@ -174,7 +177,7 @@ func LoadOBJMesh(path string) (*ModelDoc, error) {
 
 // loadMTLTextures maps material names to logical texture names by reading each
 // newmtl's map_Kd and stripping it back to a bare basename — "textures/brick.png"
-// becomes "brick", which is what Wall.Texture and ModelFace.Texture hold.
+// becomes "brick", which is what Wall.Texture and ModelDoc.Texture hold.
 // Returns an empty map if the file cannot be read.
 func loadMTLTextures(path string) map[string]string {
 	out := map[string]string{}
@@ -204,10 +207,11 @@ func loadMTLTextures(path string) map[string]string {
 	return out
 }
 
-// SaveOBJ writes the document as OBJ, with a sibling .mtl naming each texture.
+// SaveOBJ writes the document as OBJ, with a sibling .mtl naming its texture.
 //
-// Faces are grouped by texture under usemtl, since OBJ has no per-face material
-// slot — the material is a mode that persists until the next usemtl line.
+// The whole mesh is one material, so there is a single usemtl line — which is
+// also the shape OBJ is happiest with, the material being a mode that persists
+// until the next usemtl rather than a per-face slot.
 func SaveOBJ(m *ModelDoc, path string) error {
 	if len(m.Verts) == 0 {
 		return fmt.Errorf("model %q has no geometry to export", m.ID)
@@ -225,38 +229,23 @@ func SaveOBJ(m *ModelDoc, path string) error {
 		fmt.Fprintf(&b, "v %s %s %s\n", objF(p.X()), objF(p.Y()), objF(p.Z()))
 	}
 
-	// Group faces by texture, in a stable order so an export is reproducible.
-	byTex := map[string][]int{}
-	for fi := range m.Faces {
-		tex := m.Faces[fi].Texture
-		if tex == "" {
-			tex = "default"
-		}
-		byTex[tex] = append(byTex[tex], fi)
-	}
-	textures := make([]string, 0, len(byTex))
-	for tex := range byTex {
-		textures = append(textures, tex)
-	}
-	sort.Strings(textures)
+	tex := m.TextureName()
 
 	// vt indices are assigned as they are written, so the face lines below have
 	// to be built in the same pass.
 	var faceLines strings.Builder
+	fmt.Fprintf(&faceLines, "usemtl %s\n", tex)
 	vtIdx := 1
-	for _, tex := range textures {
-		fmt.Fprintf(&faceLines, "usemtl %s\n", tex)
-		for _, fi := range byTex[tex] {
-			f := &m.Faces[fi]
-			faceLines.WriteString("f")
-			for i, v := range f.Verts {
-				uv := f.uvAt(i)
-				fmt.Fprintf(&b, "vt %s %s\n", objF(uv.X()), objF(uv.Y()))
-				fmt.Fprintf(&faceLines, " %d/%d", v+1, vtIdx)
-				vtIdx++
-			}
-			faceLines.WriteString("\n")
+	for fi := range m.Faces {
+		f := &m.Faces[fi]
+		faceLines.WriteString("f")
+		for i, v := range f.Verts {
+			uv := f.uvAt(i)
+			fmt.Fprintf(&b, "vt %s %s\n", objF(uv.X()), objF(uv.Y()))
+			fmt.Fprintf(&faceLines, " %d/%d", v+1, vtIdx)
+			vtIdx++
 		}
+		faceLines.WriteString("\n")
 	}
 	b.WriteString(faceLines.String())
 
@@ -269,10 +258,8 @@ func SaveOBJ(m *ModelDoc, path string) error {
 
 	var mtl strings.Builder
 	mtl.WriteString("# exported by Foundry model editor\n")
-	for _, tex := range textures {
-		fmt.Fprintf(&mtl, "newmtl %s\nKd 1.000 1.000 1.000\nmap_Kd %s/%s.png\n\n",
-			tex, texturesDirName, tex)
-	}
+	fmt.Fprintf(&mtl, "newmtl %s\nKd 1.000 1.000 1.000\nmap_Kd %s/%s.png\n\n",
+		tex, texturesDirName, tex)
 	mtlPath := filepath.Join(filepath.Dir(path), mtlName)
 	if err := writeFileAtomic(mtlPath, []byte(mtl.String())); err != nil {
 		return fmt.Errorf("write %s: %w", mtlPath, err)

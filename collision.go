@@ -476,27 +476,21 @@ func ResolveWallCollision(entity *Entity, chunk *Chunk, sector *Sector, newPos m
 	return mgl32.Vec3{newXZ.X(), newPos.Y(), newXZ.Y()}
 }
 
-// ResolveFloorCollision clamps pos.Y so the entity rests on the sector floor
-// and cannot pass through the ceiling.  Floor and ceiling heights are
-// interpolated per-vertex so the entity follows sloped surfaces.
-// Returns (hitFloor, hitCeiling) so the caller can reset vertical velocity on
-// both landing and head-bonk events.
-func ResolveFloorCollision(entity *Entity, chunk *Chunk, sector *Sector, pos *mgl32.Vec3) (bool, bool) {
-	if sector == nil || chunk == nil {
-		return false, false
-	}
-	hitFloor, hitCeiling := false, false
-	xz := mgl32.Vec2{pos[0], pos[2]}
-
+// sectorFloorHeightAt returns the highest walkable floor under xz: this
+// sector's, plus any portal-adjacent sector whose polygon also covers the
+// point. Extrusions are folded in, so a raised step reads as floor.
+//
+// Split out of ResolveFloorCollision because entity world collision needs the
+// same query with a different clamp — see resolveEntityFloorCeiling
+// (entity_collision.go). The "highest wins" rule is what keeps something
+// standing on a portal boundary from sinking into the lower of the two floors.
+func sectorFloorHeightAt(chunk *Chunk, sector *Sector, xz mgl32.Vec2) float32 {
 	floorH, _, _ := InterpolateSurfaceHeight(chunk, sector, xz, true)
 	if len(sector.Floor.Extrusions) > 0 {
 		floorH = adjustHeightForExtrusions(xz, floorH, sector.Floor.Extrusions, true)
 	}
-
-	// Also consider adjacent sector floors (player near portal boundary)
 	for _, adj := range getAdjacentSectors(chunk, sector) {
-		adjPts := SectorPoints(chunk, adj)
-		if !pointInPolygon(xz, adjPts) {
+		if !pointInPolygon(xz, SectorPoints(chunk, adj)) {
 			continue
 		}
 		adjFloorH, _, _ := InterpolateSurfaceHeight(chunk, adj, xz, true)
@@ -507,37 +501,61 @@ func ResolveFloorCollision(entity *Entity, chunk *Chunk, sector *Sector, pos *mg
 			floorH = adjFloorH
 		}
 	}
+	return floorH
+}
 
-	minY := floorH + entity.BoundHalfY
+// sectorCeilingHeightAt is sectorFloorHeightAt's mirror: the lowest ceiling over
+// xz, and whether there is one at all. A sector with no ceiling is open sky, not
+// a ceiling at height zero.
+func sectorCeilingHeightAt(chunk *Chunk, sector *Sector, xz mgl32.Vec2) (float32, bool) {
+	if !sector.Ceiling.Enabled {
+		return 0, false
+	}
+	ceilH, _, _ := InterpolateSurfaceHeight(chunk, sector, xz, false)
+	if len(sector.Ceiling.Extrusions) > 0 {
+		ceilH = adjustHeightForExtrusions(xz, ceilH, sector.Ceiling.Extrusions, false)
+	}
+	for _, adj := range getAdjacentSectors(chunk, sector) {
+		if !adj.Ceiling.Enabled || !pointInPolygon(xz, SectorPoints(chunk, adj)) {
+			continue
+		}
+		adjCeilH, _, _ := InterpolateSurfaceHeight(chunk, adj, xz, false)
+		if len(adj.Ceiling.Extrusions) > 0 {
+			adjCeilH = adjustHeightForExtrusions(xz, adjCeilH, adj.Ceiling.Extrusions, false)
+		}
+		if adjCeilH < ceilH {
+			ceilH = adjCeilH
+		}
+	}
+	return ceilH, true
+}
+
+// ResolveFloorCollision clamps pos.Y so the entity rests on the sector floor
+// and cannot pass through the ceiling.  Floor and ceiling heights are
+// interpolated per-vertex so the entity follows sloped surfaces.
+// Returns (hitFloor, hitCeiling) so the caller can reset vertical velocity on
+// both landing and head-bonk events.
+//
+// This is the *player's* clamp, and its two halves do not agree about what
+// pos means: the floor treats it as the body centre (pos - BoundHalfY is the
+// feet), while the ceiling treats it as the feet and allows a body twice
+// BoundHalfY tall above it. That asymmetry is load-bearing tuning for how
+// gameplay feels, so it is left alone — placed entities get their own
+// symmetric clamp instead (resolveEntityFloorCeiling).
+func ResolveFloorCollision(entity *Entity, chunk *Chunk, sector *Sector, pos *mgl32.Vec3) (bool, bool) {
+	if sector == nil || chunk == nil {
+		return false, false
+	}
+	hitFloor, hitCeiling := false, false
+	xz := mgl32.Vec2{pos[0], pos[2]}
+
+	minY := sectorFloorHeightAt(chunk, sector, xz) + entity.BoundHalfY
 	if pos[1] <= minY {
 		pos[1] = minY
 		hitFloor = true
 	}
 
-	if sector.Ceiling.Enabled {
-		ceilH, _, _ := InterpolateSurfaceHeight(chunk, sector, xz, false)
-		if len(sector.Ceiling.Extrusions) > 0 {
-			ceilH = adjustHeightForExtrusions(xz, ceilH, sector.Ceiling.Extrusions, false)
-		}
-
-		// Also consider adjacent sector ceilings
-		for _, adj := range getAdjacentSectors(chunk, sector) {
-			if !adj.Ceiling.Enabled {
-				continue
-			}
-			adjPts := SectorPoints(chunk, adj)
-			if !pointInPolygon(xz, adjPts) {
-				continue
-			}
-			adjCeilH, _, _ := InterpolateSurfaceHeight(chunk, adj, xz, false)
-			if len(adj.Ceiling.Extrusions) > 0 {
-				adjCeilH = adjustHeightForExtrusions(xz, adjCeilH, adj.Ceiling.Extrusions, false)
-			}
-			if adjCeilH < ceilH {
-				ceilH = adjCeilH
-			}
-		}
-
+	if ceilH, ok := sectorCeilingHeightAt(chunk, sector, xz); ok {
 		maxY := ceilH - entity.BoundHalfY*2 - 0.05
 		if pos[1] >= maxY {
 			pos[1] = maxY
@@ -545,82 +563,6 @@ func ResolveFloorCollision(entity *Entity, chunk *Chunk, sector *Sector, pos *mg
 		}
 	}
 	return hitFloor, hitCeiling
-}
-
-// AABBOverlap returns true when two entity AABBs overlap.
-func AABBOverlap(a, b *Entity) bool {
-	dx := math.Abs(float64(a.Position.X() - b.Position.X()))
-	dy := math.Abs(float64(a.Position.Y() - b.Position.Y()))
-	dz := math.Abs(float64(a.Position.Z() - b.Position.Z()))
-	return dx < float64(a.BoundHalfX+b.BoundHalfX) &&
-		dy < float64(a.BoundHalfY+b.BoundHalfY) &&
-		dz < float64(a.BoundHalfZ+b.BoundHalfZ)
-}
-
-// EntityOverlap tests whether entity a (at candidatePos) overlaps entity b,
-// dispatching based on BoundingKind.
-func EntityOverlap(a, b *Entity, candidatePos mgl32.Vec3) bool {
-	switch {
-	case a.BoundingKind == BoundingSphere && b.BoundingKind == BoundingSphere:
-		return sphereOverlap(candidatePos, a, b.Position, b)
-	case a.BoundingKind == BoundingCylinder || b.BoundingKind == BoundingCylinder:
-		return cylinderOverlap(candidatePos, a, b.Position, b)
-	default: // AABB
-		dx := math.Abs(float64(candidatePos.X() - b.Position.X()))
-		dy := math.Abs(float64(candidatePos.Y() - b.Position.Y()))
-		dz := math.Abs(float64(candidatePos.Z() - b.Position.Z()))
-		return dx < float64(a.BoundHalfX+b.BoundHalfX) &&
-			dy < float64(a.BoundHalfY+b.BoundHalfY) &&
-			dz < float64(a.BoundHalfZ+b.BoundHalfZ)
-	}
-}
-
-func sphereOverlap(posA mgl32.Vec3, a *Entity, posB mgl32.Vec3, b *Entity) bool {
-	rA := float64(max(a.BoundHalfX, max(a.BoundHalfY, a.BoundHalfZ)))
-	rB := float64(max(b.BoundHalfX, max(b.BoundHalfY, b.BoundHalfZ)))
-	d := posA.Sub(posB)
-	distSq := float64(d.X())*float64(d.X()) + float64(d.Y())*float64(d.Y()) + float64(d.Z())*float64(d.Z())
-	sumR := rA + rB
-	return distSq < sumR*sumR
-}
-
-func cylinderOverlap(posA mgl32.Vec3, a *Entity, posB mgl32.Vec3, b *Entity) bool {
-	// XZ circle test
-	rA := float64(max(a.BoundHalfX, a.BoundHalfZ))
-	rB := float64(max(b.BoundHalfX, b.BoundHalfZ))
-	dx := float64(posA.X() - posB.X())
-	dz := float64(posA.Z() - posB.Z())
-	distSqXZ := dx*dx + dz*dz
-	sumR := rA + rB
-	if distSqXZ >= sumR*sumR {
-		return false
-	}
-	// Y AABB test
-	dy := math.Abs(float64(posA.Y() - posB.Y()))
-	return dy < float64(a.BoundHalfY+b.BoundHalfY)
-}
-
-// ResolveEntityCollision pushes entity a out of entity b in the XZ plane.
-func ResolveEntityCollision(a, b *Entity, pos mgl32.Vec3) mgl32.Vec3 {
-	dx := pos.X() - b.Position.X()
-	dz := pos.Z() - b.Position.Z()
-	dist := float32(math.Sqrt(float64(dx*dx + dz*dz)))
-	if dist < 1e-6 {
-		// Exactly overlapping — push along X
-		dx = 1
-		dist = 1
-	}
-	// Compute combined radius in push direction
-	rA := max(a.BoundHalfX, a.BoundHalfZ)
-	rB := max(b.BoundHalfX, b.BoundHalfZ)
-	overlap := (rA + rB) - dist
-	if overlap <= 0 {
-		return pos
-	}
-	const epsilon = float32(0.001)
-	pushX := (dx / dist) * (overlap + epsilon)
-	pushZ := (dz / dist) * (overlap + epsilon)
-	return mgl32.Vec3{pos.X() + pushX, pos.Y(), pos.Z() + pushZ}
 }
 
 // SegmentIntersect2D tests whether segments (a1,a2) and (b1,b2) intersect.
@@ -639,37 +581,4 @@ func SegmentIntersect2D(a1, a2, b1, b2 mgl32.Vec2) (bool, float32) {
 		return true, t
 	}
 	return false, 0
-}
-
-// ResolvePrimitiveCollision pushes the entity out of any overlapping primitives
-// in the current sector and portal-adjacent sectors.
-func ResolvePrimitiveCollision(entity *Entity, chunk *Chunk, sector *Sector, newPos mgl32.Vec3) mgl32.Vec3 {
-	if chunk == nil || sector == nil {
-		return newPos
-	}
-	// Check current sector
-	for _, pi := range sector.PrimitiveIndices {
-		prim := &chunk.Primitives[pi]
-		if !primitiveCollides(prim) {
-			continue
-		}
-		tmp := primAsEntity(prim)
-		if EntityOverlap(entity, tmp, newPos) {
-			newPos = ResolveEntityCollision(entity, tmp, newPos)
-		}
-	}
-	// Check adjacent sectors
-	for _, adj := range getAdjacentSectors(chunk, sector) {
-		for _, pi := range adj.PrimitiveIndices {
-			prim := &chunk.Primitives[pi]
-			if !primitiveCollides(prim) {
-				continue
-			}
-			tmp := primAsEntity(prim)
-			if EntityOverlap(entity, tmp, newPos) {
-				newPos = ResolveEntityCollision(entity, tmp, newPos)
-			}
-		}
-	}
-	return newPos
 }
