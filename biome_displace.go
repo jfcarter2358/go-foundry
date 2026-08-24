@@ -426,3 +426,43 @@ func groundPatchGridDims(lo, hi mgl32.Vec2) (nx, nz int) {
 	nz = max(1, min(nz, groundPatchMaxDim))
 	return
 }
+
+// densifyPolygonMaxStepsPerEdge caps how many extra points densifyPolygon
+// inserts along any one edge — a safety valve against a pathologically long
+// edge with a tiny maxSeg blowing up the triangulation's point count.
+const densifyPolygonMaxStepsPerEdge = 200
+
+// groundPatchMaxDim caps the interior sample grid's cells-per-axis, bounding
+// triangle count for a huge sector the same way the scatter passes bound
+// instance count. Lower than a pure-grid approach would need, since
+// Bowyer-Watson triangulation (see buildGroundPatchMesh) costs more per point.
+const groundPatchMaxDim = 64
+
+// groundValueNoise is bilinearly-interpolated value noise built from
+// groundHash, smoothstepped for a soft (not blocky) result.
+func groundValueNoise(x, z float32) float32 {
+	x0f, z0f := math.Floor(float64(x)), math.Floor(float64(z))
+	x0, z0 := float32(x0f), float32(z0f)
+	fx, fz := x-x0, z-z0
+	fx = fx * fx * (3 - 2*fx)
+	fz = fz * fz * (3 - 2*fz)
+	h00 := groundHash(x0, z0)
+	h10 := groundHash(x0+1, z0)
+	h01 := groundHash(x0, z0+1)
+	h11 := groundHash(x0+1, z0+1)
+	a := h00 + (h10-h00)*fx
+	b := h01 + (h11-h01)*fx
+	return a + (b-a)*fz
+}
+
+// groundHash is a deterministic scalar hash of a world XZ position, in the
+// same family as the shaders' hash functions but evaluated on the CPU since
+// the ground patch's displacement is baked into the mesh at build time.
+func groundHash(x, z float32) float32 {
+	v := math.Sin(float64(x)*127.1+float64(z)*311.7) * 43758.5453
+	_, frac := math.Modf(v)
+	if frac < 0 {
+		frac += 1
+	}
+	return float32(frac)
+}

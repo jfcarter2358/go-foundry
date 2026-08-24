@@ -442,3 +442,48 @@ func pointInPolygon(pt mgl32.Vec2, polygon []mgl32.Vec2) bool {
 	}
 	return inside
 }
+
+// ---------- triangle queries ----------
+//
+// Used by the collision resolver, by the terrain height lookup a sector does
+// for its own floor, and by the biome mesher. Pure geometry, so it sits with
+// the rest of it rather than inside whichever caller needed it first.
+
+// pointInTriangle2D tests whether p lies inside the 2D triangle (a, b, c).
+// Returns (inside, wA, wB, wC) where wA/wB/wC are the barycentric weights
+// for vertices A, B, C respectively.
+func pointInTriangle2D(p, a, b, c mgl32.Vec2) (bool, float32, float32, float32) {
+	v0 := c.Sub(a)
+	v1 := b.Sub(a)
+	v2 := p.Sub(a)
+	d00 := v0.Dot(v0)
+	d01 := v0.Dot(v1)
+	d02 := v0.Dot(v2)
+	d11 := v1.Dot(v1)
+	d12 := v1.Dot(v2)
+	denom := d00*d11 - d01*d01
+	if denom > -1e-12 && denom < 1e-12 {
+		return false, 0, 0, 0 // degenerate triangle
+	}
+	inv := float32(1.0) / denom
+	u := (d11*d02 - d01*d12) * inv // weight for C
+	v := (d00*d12 - d01*d02) * inv // weight for B
+	w := 1 - u - v                 // weight for A
+	const eps = float32(-0.001)
+	if u >= eps && v >= eps && w >= eps {
+		return true, w, v, u
+	}
+	return false, 0, 0, 0
+}
+
+// triangleNormal returns the (unnormalized) cross-product normal of the
+// triangle defined by 3D vertices a, b, c.
+func triangleNormal(a, b, c mgl32.Vec3) mgl32.Vec3 {
+	e1 := b.Sub(a)
+	e2 := c.Sub(a)
+	return mgl32.Vec3{
+		e1.Y()*e2.Z() - e1.Z()*e2.Y(),
+		e1.Z()*e2.X() - e1.X()*e2.Z(),
+		e1.X()*e2.Y() - e1.Y()*e2.X(),
+	}
+}

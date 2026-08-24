@@ -1,12 +1,16 @@
 package main
 
-// entity_attr.go — user-defined entity attributes.
+// attr.go — user-defined attributes on a level object.
 //
-// An entity's built-in fields (position, bounds, models) are what the engine
+// An object's built-in fields (position, bounds, models) are what the engine
 // itself needs. Attributes are what the *game* needs: health, a door's locked
 // flag, an NPC's display name — arbitrary named values the engine stores,
 // round-trips through YAML, and otherwise leaves alone until a script reads
 // them.
+//
+// Entities carry them, and so do volumes; nothing here names either. That is
+// why the file is attr.go rather than entity_attr.go, where it used to sit —
+// the volume code had to reach into the entity code to read its own data.
 //
 // The four types are deliberately the four scalar types flang has (see
 // SCRIPTING.md): int, float, bool, str. Keeping the sets identical means an

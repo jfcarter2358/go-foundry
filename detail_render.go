@@ -272,63 +272,6 @@ func DetailAnyEnabled(level *Level) (displace, scatter bool) {
 
 // ---------- face plane basis (for scatter) ----------
 
-type faceBasis struct {
-	origin     mgl32.Vec3
-	u, v, n    mgl32.Vec3
-	uMax, vMax float32
-	ok         bool
-}
-
-func vtx(verts []float32, i int) mgl32.Vec3 {
-	return mgl32.Vec3{verts[i], verts[i+1], verts[i+2]}
-}
-
-// computeFaceBasis derives a plane basis + in-plane bounding rectangle from a
-// face's world-space triangle list (5 floats/vertex, 15/triangle).
-func computeFaceBasis(verts []float32) faceBasis {
-	if len(verts) < 15 {
-		return faceBasis{}
-	}
-	var nrm mgl32.Vec3
-	for ti := 0; ti+14 < len(verts); ti += 15 {
-		a := vtx(verts, ti)
-		b := vtx(verts, ti+5)
-		c := vtx(verts, ti+10)
-		nrm = nrm.Add(b.Sub(a).Cross(c.Sub(a)))
-	}
-	if nrm.Len() < 1e-8 {
-		return faceBasis{}
-	}
-	n := nrm.Normalize()
-
-	p0 := vtx(verts, 0)
-	tan := vtx(verts, 5).Sub(p0)
-	tan = tan.Sub(n.Mul(tan.Dot(n))) // project into plane
-	if tan.Len() < 1e-6 {
-		tan = perpAxis(n)
-	}
-	u := tan.Normalize()
-	v := n.Cross(u).Normalize()
-
-	uMin, uMax := float32(math.MaxFloat32), float32(-math.MaxFloat32)
-	vMin, vMax := float32(math.MaxFloat32), float32(-math.MaxFloat32)
-	for i := 0; i+4 < len(verts); i += 5 {
-		d := vtx(verts, i).Sub(p0)
-		du, dv := d.Dot(u), d.Dot(v)
-		uMin, uMax = min(uMin, du), max(uMax, du)
-		vMin, vMax = min(vMin, dv), max(vMax, dv)
-	}
-	origin := p0.Add(u.Mul(uMin)).Add(v.Mul(vMin))
-	return faceBasis{origin: origin, u: u, v: v, n: n, uMax: uMax - uMin, vMax: vMax - vMin, ok: true}
-}
-
-type basisEntry struct {
-	fp    uint64
-	basis faceBasis
-}
-
-var detailBasisCache = map[*Geometry]basisEntry{}
-
 // ---------- uniform setters ----------
 
 func setDispUniforms(p *progUniforms, d *DetailSpec, geo *Geometry) {

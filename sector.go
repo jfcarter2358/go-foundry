@@ -486,3 +486,57 @@ func InterpolateSurfaceHeight(chunk *Chunk, sector *Sector, xz mgl32.Vec2, floor
 	}
 	return sector.Ceiling.Height, mgl32.Vec3{0, -1, 0}, false
 }
+
+// interpolateTerrainHeight is here rather than with the triangle maths it uses
+// because it reads a Sector: it is a query about a floor, not about a triangle.
+// interpolateTerrainHeight queries the cached Delaunay collision mesh for a
+// terrain-displaced floor or ceiling.  Returns (height, normal, found).
+func interpolateTerrainHeight(sector *Sector, xz mgl32.Vec2, floor bool) (float32, mgl32.Vec3, bool) {
+	var pts []mgl32.Vec2
+	var depths []float32
+	var tris []int
+	var baseH float32
+	if floor {
+		pts = sector.Floor.CollisionPts
+		depths = sector.Floor.CollisionDepths
+		tris = sector.Floor.CollisionTris
+		baseH = sector.Floor.Height
+	} else {
+		pts = sector.Ceiling.CollisionPts
+		depths = sector.Ceiling.CollisionDepths
+		tris = sector.Ceiling.CollisionTris
+		baseH = sector.Ceiling.Height
+	}
+
+	for i := 0; i+2 < len(tris); i += 3 {
+		ai, bi, ci := tris[i], tris[i+1], tris[i+2]
+		if ai >= len(pts) || bi >= len(pts) || ci >= len(pts) {
+			continue
+		}
+		inside, wA, wB, wC := pointInTriangle2D(xz, pts[ai], pts[bi], pts[ci])
+		if !inside {
+			continue
+		}
+		hA := baseH + depths[ai]
+		hB := baseH + depths[bi]
+		hC := baseH + depths[ci]
+		height := wA*hA + wB*hB + wC*hC
+
+		a3 := mgl32.Vec3{pts[ai].X(), hA, pts[ai].Y()}
+		b3 := mgl32.Vec3{pts[bi].X(), hB, pts[bi].Y()}
+		c3 := mgl32.Vec3{pts[ci].X(), hC, pts[ci].Y()}
+		normal := triangleNormal(a3, b3, c3)
+		if floor && normal.Y() < 0 {
+			normal = normal.Mul(-1)
+		} else if !floor && normal.Y() > 0 {
+			normal = normal.Mul(-1)
+		}
+		return height, normal, true
+	}
+
+	// Fallback
+	if floor {
+		return baseH, mgl32.Vec3{0, 1, 0}, false
+	}
+	return baseH, mgl32.Vec3{0, -1, 0}, false
+}
