@@ -1,4 +1,4 @@
-package main
+package hooks
 
 // script_engine_hooks.go — the three places the engine records something the
 // scripting engine will want to hear about.
@@ -16,9 +16,9 @@ package main
 // collisionPairs are the entity pairs the resolver pushed apart this frame.
 var collisionPairs [][2]string
 
-// recordCollisionPair notes that two entities were separated. Called from
+// RecordCollisionPair notes that two entities were separated. Called from
 // ResolveEntityCollisions, which is the only place that knows which pair.
-func recordCollisionPair(a, b string) {
+func RecordCollisionPair(a, b string) {
 	if a == "" || b == "" {
 		return
 	}
@@ -53,12 +53,12 @@ var animEvents []AnimEvent
 // "no editor", which is correct for a shipped game and for every test.
 var EditorActive = func() bool { return false }
 
-// recordAnimEvent notes a clip transition.
+// RecordAnimEvent notes a clip transition.
 //
 // Gated on play, and deliberately so: UpdateAnimations runs in the editor too —
 // that is what lets a clip be previewed while placing the thing that plays it —
 // and an editor preview must not fire script events.
-func recordAnimEvent(ev AnimEvent) {
+func RecordAnimEvent(ev AnimEvent) {
 	if EditorActive() {
 		return
 	}

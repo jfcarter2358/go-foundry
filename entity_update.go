@@ -21,6 +21,7 @@ package main
 // which is why EntityUpdate is handed a pointer to it.
 
 import (
+	"foundry/internal/hooks"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -160,13 +161,13 @@ func (e *Entity) PlayAnimation(model, animation string) bool {
 		// The clip has begun. Emitted here rather than in EntityModel.Play
 		// because an attachment has no way back to its entity, and a clip
 		// restarted from its own end has no clock change for Update to notice.
-		recordAnimEvent(AnimEvent{Entity: e.ID, Model: m.Name, Animation: animation})
+		hooks.RecordAnimEvent(hooks.AnimEvent{Entity: e.ID, Model: m.Name, Animation: animation})
 		return true
 	}
 	any := false
 	for i := range e.Models {
 		if e.Models[i].Play(animation) {
-			recordAnimEvent(AnimEvent{Entity: e.ID, Model: e.Models[i].Name, Animation: animation})
+			hooks.RecordAnimEvent(hooks.AnimEvent{Entity: e.ID, Model: e.Models[i].Name, Animation: animation})
 			any = true
 		}
 	}

@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/hooks"
 	"log"
 	"path/filepath"
 	"strings"
@@ -369,12 +370,12 @@ func (m *EntityModel) Update(dt float32, entityID string) {
 		m.Anim.wrapped = false
 		// A looping clip emits end-then-start per cycle, in that order: the
 		// cycle that just closed, then the one that opened.
-		recordAnimEvent(AnimEvent{Entity: entityID, Model: m.Name, Animation: name, Ended: true})
-		recordAnimEvent(AnimEvent{Entity: entityID, Model: m.Name, Animation: name})
+		hooks.RecordAnimEvent(hooks.AnimEvent{Entity: entityID, Model: m.Name, Animation: name, Ended: true})
+		hooks.RecordAnimEvent(hooks.AnimEvent{Entity: entityID, Model: m.Name, Animation: name})
 	}
 	if m.Anim.finished {
 		m.Anim.finished = false
-		recordAnimEvent(AnimEvent{Entity: entityID, Model: m.Name, Animation: name, Ended: true})
+		hooks.RecordAnimEvent(hooks.AnimEvent{Entity: entityID, Model: m.Name, Animation: name, Ended: true})
 	}
 }
 

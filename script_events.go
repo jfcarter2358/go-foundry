@@ -15,6 +15,7 @@ package main
 
 import (
 	"foundry/internal/flang"
+	"foundry/internal/hooks"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -312,7 +313,7 @@ func postSectorEvents(rt *ScriptRuntime, lvl *Level) {
 // postCollideEvents fires `:collide:` for each pair the resolver pushed apart
 // this frame. Both sides hear it: which one a script cares about is its business.
 func postCollideEvents(rt *ScriptRuntime) {
-	for _, pair := range TakeCollisionPairs() {
+	for _, pair := range hooks.TakeCollisionPairs() {
 		a := flang.RefVal{Kind: flang.RefEntity, A: pair[0]}
 		b := flang.RefVal{Kind: flang.RefEntity, A: pair[1]}
 		_ = rt.post(a, "collide", []flang.Value{b}, flang.Pos{})
@@ -323,7 +324,7 @@ func postCollideEvents(rt *ScriptRuntime) {
 // postAnimEvents fires `:anim_start:` and `:anim_end:` for the clip transitions
 // this frame produced.
 func postAnimEvents(rt *ScriptRuntime) {
-	for _, ev := range TakeAnimEvents() {
+	for _, ev := range hooks.TakeAnimEvents() {
 		atom := "anim_start"
 		if ev.Ended {
 			atom = "anim_end"
@@ -343,7 +344,7 @@ func postAnimEvents(rt *ScriptRuntime) {
 // VolumesContaining already exist and a ray does not. The nearest container
 // wins, so a small trigger inside a large room volume is still reachable.
 func postInteractEvent(rt *ScriptRuntime, lvl *Level) {
-	pressed := ScriptInteractPressed()
+	pressed := hooks.ScriptInteractPressed()
 	if !pressed || PlayerEntity == nil || lvl == nil {
 		return
 	}

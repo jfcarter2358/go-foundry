@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/hooks"
 	"foundry/internal/platform"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -104,7 +105,7 @@ func HandleEvent(event sdl.Event) {
 				// level, so holding it fires once — SCRIPTING.md's `:interact:`
 				// is a press, not a state.
 				if !Editor.Active {
-					ScriptInteractRequest()
+					hooks.ScriptInteractRequest()
 				}
 
 			case sdl.SCANCODE_GRAVE: // tilde (~) key toggles level editor

@@ -27,6 +27,7 @@ package main
 // asks for, and it is deliberately cheap.
 
 import (
+	"foundry/internal/hooks"
 	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -219,7 +220,7 @@ func ResolveEntityCollisions(lvl *Level, player *Entity) []int {
 				// hit, and this is the only place that knows. Recorded rather
 				// than returned so the resolver's signature stays about
 				// physics — see collisionPairs.
-				recordCollisionPair(ea.ID, eb.ID)
+				hooks.RecordCollisionPair(ea.ID, eb.ID)
 			}
 			if movedA {
 				moved[idx[a]] = true
@@ -236,7 +237,7 @@ func ResolveEntityCollisions(lvl *Level, player *Entity) []int {
 		for _, i := range idx {
 			movedP, movedE := resolveEntityOverlap(player, &lvl.Entities[i])
 			if movedP || movedE {
-				recordCollisionPair(player.ID, lvl.Entities[i].ID)
+				hooks.RecordCollisionPair(player.ID, lvl.Entities[i].ID)
 			}
 			if movedE {
 				moved[i] = true

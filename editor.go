@@ -14,6 +14,7 @@ package main
 // The editor owns all input while active; normal gameplay logic is bypassed.
 
 import (
+	"foundry/internal/hooks"
 	"foundry/internal/platform"
 	"math"
 
@@ -336,7 +337,7 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	// sit *below* the editor in the import graph rather than reaching up into
 	// it. See level_context.go and script_engine_hooks.go for why each exists.
 	CurrentLevel = func() *Level { return Editor.level }
-	EditorActive = func() bool { return Editor.Active }
+	hooks.EditorActive = func() bool { return Editor.Active }
 	UVGuideForTexture = modelUVLayoutFor
 	Editor.LevelsDir = levelsDir
 	Editor.Active = false
