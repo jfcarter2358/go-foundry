@@ -1,6 +1,9 @@
 package main
 
-import "foundry/internal/uiwin"
+import (
+	"foundry/internal/textureui"
+	"foundry/internal/uiwin"
+)
 
 // keybindings.go — what the F1 overlay says.
 //
@@ -39,7 +42,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 	},
 	{
 		Title:  "Texture editor",
-		Active: TextureEditorOpen,
+		Active: textureui.TextureEditorOpen,
 		Binds: []uiwin.Keybind{
 			{Keys: "Ctrl+Z / Ctrl+Y", Desc: "Undo / redo (Ctrl+Shift+Z redoes too)"},
 			{Keys: "Left click / drag", Desc: "Paint with the current tool"},

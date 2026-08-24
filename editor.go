@@ -23,6 +23,7 @@ import (
 	"foundry/internal/platform"
 	"foundry/internal/render"
 	"foundry/internal/script"
+	"foundry/internal/textureui"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
 	"math"
@@ -347,7 +348,7 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	// it. See level_context.go and script_engine_hooks.go for why each exists.
 	world.CurrentLevel = func() *world.Level { return Editor.level }
 	hooks.EditorActive = func() bool { return Editor.Active }
-	UVGuideForTexture = modelUVLayoutFor
+	textureui.UVGuideForTexture = modelUVLayoutFor
 	Editor.LevelsDir = levelsDir
 	Editor.Active = false
 	Editor.Mode = ModeGame

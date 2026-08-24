@@ -1,4 +1,4 @@
-package main
+package textureui
 
 // texture_editor_ui.go — the texture editor's ImGui panels and its OS window.
 //
@@ -32,7 +32,7 @@ import (
 )
 
 var (
-	activeTexEditor  *texture.TexEditorState
+	ActiveTexEditor  *texture.TexEditorState
 	texEditorWindow  *uiwin.UIWindow
 	texEditorPreview uint32 // flattened-preview GL texture, shown on the canvas
 	texEditorChecker uint32 // small tiled checkerboard behind the canvas
@@ -85,7 +85,7 @@ var (
 	texEditorPaletteEditCol    [4]float32 // staging value the picker writes into
 )
 
-var texEditorSizeOptions = []int32{64, 128, 256, 512, 1024}
+var TexEditorSizeOptions = []int32{64, 128, 256, 512, 1024}
 
 func texEditorStatus(msg string) {
 	texEditorStatusMsg = msg
@@ -114,12 +114,12 @@ func OpenTextureEditor() {
 	}
 	w.HandleEvent = texEditorHandleEvent
 	texEditorWindow = w
-	if activeTexEditor == nil {
+	if ActiveTexEditor == nil {
 		if ed, err := texture.NewTexEditorDoc("untitled", 512, 512); err == nil {
-			activeTexEditor = ed
+			ActiveTexEditor = ed
 		}
 	} else {
-		activeTexEditor.PreviewDirty = true
+		ActiveTexEditor.PreviewDirty = true
 	}
 }
 
@@ -140,8 +140,8 @@ func onTextureEditorClose() {
 	texEditorWindow = nil
 }
 
-func texEditorAdoptDoc(ed *texture.TexEditorState) {
-	activeTexEditor = ed
+func TexEditorAdoptDoc(ed *texture.TexEditorState) {
+	ActiveTexEditor = ed
 	ed.PreviewDirty = true
 	texEditorZoom = 8
 	texEditorPanX, texEditorPanY = 0, 0
@@ -180,7 +180,7 @@ func ensureTexEditorGLObjects() {
 // at most once per frame, gated on PreviewDirty (set by any paint/structural
 // mutation), so an idle frame (e.g. just panning) costs nothing.
 func texEditorRefreshPreview() {
-	ed := activeTexEditor
+	ed := ActiveTexEditor
 	if ed == nil || !ed.PreviewDirty {
 		return
 	}
@@ -250,7 +250,7 @@ func texEditorHandleEvent(event sdl.Event) {
 	if !ok || t.Type != sdl.KEYDOWN {
 		return
 	}
-	ed := activeTexEditor
+	ed := ActiveTexEditor
 	if ed == nil {
 		return
 	}
@@ -295,7 +295,7 @@ func drawTextureEditorUI() {
 	drawTextureEditorMenuBar()
 	imgui.Separator()
 
-	if activeTexEditor == nil {
+	if ActiveTexEditor == nil {
 		imgui.Text("No document open — use New, Open, or Import PNG above.")
 		imgui.End()
 		return
@@ -323,7 +323,7 @@ func drawTextureEditorUI() {
 // ---------- menu bar + file dialogs ----------
 
 func drawTextureEditorMenuBar() {
-	ed := activeTexEditor
+	ed := ActiveTexEditor
 
 	if imgui.Button("New") {
 		texEditorNewName = "untitled"
@@ -395,7 +395,7 @@ func drawTextureEditorMenuBar() {
 }
 
 func texEditorDoSave() {
-	ed := activeTexEditor
+	ed := ActiveTexEditor
 	if ed == nil {
 		return
 	}
@@ -422,7 +422,7 @@ func texEditorDoOpen(name string) {
 		texEditorShowMismatch = true
 		return
 	}
-	texEditorAdoptDoc(ed)
+	TexEditorAdoptDoc(ed)
 }
 
 func drawTexEditorNewDialog() {
@@ -431,19 +431,19 @@ func drawTexEditorNewDialog() {
 		imgui.SetNextItemWidth(200)
 		imgui.InputText("##newtexname", &texEditorNewName)
 		imgui.Text("Size (square):")
-		sizeLabels := make([]string, len(texEditorSizeOptions))
-		for i, s := range texEditorSizeOptions {
+		sizeLabels := make([]string, len(TexEditorSizeOptions))
+		for i, s := range TexEditorSizeOptions {
 			sizeLabels[i] = fmt.Sprintf("%dx%d", s, s)
 		}
 		imgui.SetNextItemWidth(150)
 		imgui.Combo("##newtexsize", &texEditorNewSizeIdx, sizeLabels)
 		if imgui.Button("Create") && texEditorNewName != "" {
-			sz := int(texEditorSizeOptions[texEditorNewSizeIdx])
+			sz := int(TexEditorSizeOptions[texEditorNewSizeIdx])
 			ed, err := texture.NewTexEditorDoc(texEditorNewName, sz, sz)
 			if err != nil {
 				texEditorStatus(fmt.Sprintf("New failed: %v", err))
 			} else {
-				texEditorAdoptDoc(ed)
+				TexEditorAdoptDoc(ed)
 			}
 			imgui.CloseCurrentPopup()
 		}
@@ -488,7 +488,7 @@ func drawTexEditorImportDialog() {
 				if err != nil {
 					texEditorStatus(fmt.Sprintf("Import failed: %v", err))
 				} else {
-					texEditorAdoptDoc(ed)
+					TexEditorAdoptDoc(ed)
 				}
 				imgui.CloseCurrentPopup()
 			}
@@ -505,7 +505,7 @@ func drawTexEditorSaveAsDialog() {
 		imgui.SetNextItemWidth(200)
 		imgui.InputText("##saveastexname", &texEditorSaveAsName)
 		if imgui.Button("Save##saveastex") && texEditorSaveAsName != "" {
-			if ed := activeTexEditor; ed != nil {
+			if ed := ActiveTexEditor; ed != nil {
 				if err := ed.Save(texEditorSaveAsName); err != nil {
 					texEditorStatus(fmt.Sprintf("Save failed: %v", err))
 				} else {
@@ -528,13 +528,13 @@ func drawTexEditorMismatchDialog() {
 			if err := texture.AdoptDocPaletteGlobally(texEditorPendingOpen.Doc); err != nil {
 				texEditorStatus(err.Error())
 			}
-			texEditorAdoptDoc(texEditorPendingOpen)
+			TexEditorAdoptDoc(texEditorPendingOpen)
 			texEditorPendingOpen = nil
 			imgui.CloseCurrentPopup()
 		}
 		if imgui.Button("Remap art to current palette") {
 			texture.RemapDocToGlobalPalette(texEditorPendingOpen.Doc)
-			texEditorAdoptDoc(texEditorPendingOpen)
+			TexEditorAdoptDoc(texEditorPendingOpen)
 			texEditorPendingOpen = nil
 			imgui.CloseCurrentPopup()
 		}
@@ -550,7 +550,7 @@ func drawTexEditorMismatchDialog() {
 var texEditorToolNames = []string{"Brush", "Eraser", "Fill", "Line", "Rect", "Eyedropper", "Spray"}
 
 func drawToolsPanel() {
-	ed := activeTexEditor
+	ed := ActiveTexEditor
 	imgui.Text("Tools")
 	for i, name := range texEditorToolNames {
 		tool := texture.TexTool(i)
@@ -597,7 +597,7 @@ func drawToolsPanel() {
 // ---------- palette panel ----------
 
 func drawPalettePanel() {
-	ed := activeTexEditor
+	ed := ActiveTexEditor
 	imgui.Text("Palette")
 
 	// Lay the swatch grid out against the panel's real width instead of a
@@ -685,7 +685,7 @@ func texEditorBeginPaletteEdit(idx uint8) {
 // colour up on its own.
 func texEditorApplyPaletteColor(idx uint8, c color.RGBA) {
 	texdoc.GlobalPalette[idx] = c
-	if ed := activeTexEditor; ed != nil {
+	if ed := ActiveTexEditor; ed != nil {
 		// The document carries its own copy of the palette it was authored
 		// against (see the mismatch dialog) — keep it in lockstep so editing a
 		// slot doesn't immediately make the open document count as mismatched.
@@ -768,7 +768,7 @@ func texEditorVec4ToColor(v [4]float32) color.RGBA {
 var texEditorBlendNames = []string{"Normal", "Multiply", "Add", "Screen"}
 
 func drawLayersPanel() {
-	ed := activeTexEditor
+	ed := ActiveTexEditor
 	d := ed.Doc
 	imgui.Text(fmt.Sprintf("Layers (%d/%d)", len(d.Layers), texdoc.TexMaxLayers))
 
@@ -856,7 +856,7 @@ func drawLayersPanel() {
 // ---------- canvas panel ----------
 
 func drawCanvasPanel() {
-	ed := activeTexEditor
+	ed := ActiveTexEditor
 	ensureTexEditorGLObjects()
 
 	avail := imgui.ContentRegionAvail()
@@ -962,7 +962,7 @@ var texEditorUVLayoutColor = imgui.PackedColorFromVec4(imgui.Vec4{X: 0.2, Y: 0.9
 // uploaded with its top row first, so texture coordinate V=0 is that top row.
 // The outline therefore lands on the texels the face actually samples.
 func drawTexEditorUVLayout(dl imgui.DrawList, topLeft imgui.Vec2, canvasW, canvasH float32) {
-	ed := activeTexEditor
+	ed := ActiveTexEditor
 	if !texEditorShowUVLayout || ed == nil {
 		return
 	}

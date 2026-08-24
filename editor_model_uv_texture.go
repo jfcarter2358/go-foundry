@@ -40,6 +40,7 @@ import (
 	"foundry/internal/model"
 	"foundry/internal/texdoc"
 	"foundry/internal/texture"
+	"foundry/internal/textureui"
 )
 
 // modelUnwrapDialogState is the Unwrap & Paint form. It lives across frames
@@ -155,9 +156,9 @@ func modelTextureSection() {
 // modelTextureIsBoundForPainting reports whether the open texture document is
 // the one this model wears — the state in which painting updates the mesh live.
 func modelTextureIsBoundForPainting() bool {
-	return modelDoc != nil && activeTexEditor != nil &&
-		activeTexEditor.BoundTexture != "" &&
-		activeTexEditor.BoundTexture == modelDoc.TextureName()
+	return modelDoc != nil && textureui.ActiveTexEditor != nil &&
+		textureui.ActiveTexEditor.BoundTexture != "" &&
+		textureui.ActiveTexEditor.BoundTexture == modelDoc.TextureName()
 }
 
 // ---------- the dialog ----------
@@ -176,8 +177,8 @@ func drawModelUnwrapDialog() {
 		imgui.InputText("##modelunwrapname", &d.Name)
 
 		imgui.Text("Size (square):")
-		sizeLabels := make([]string, len(texEditorSizeOptions))
-		for i, s := range texEditorSizeOptions {
+		sizeLabels := make([]string, len(textureui.TexEditorSizeOptions))
+		for i, s := range textureui.TexEditorSizeOptions {
 			sizeLabels[i] = fmt.Sprintf("%dx%d", s, s)
 		}
 		imgui.SetNextItemWidth(150)
@@ -211,7 +212,7 @@ func drawModelUnwrapDialog() {
 		imgui.Separator()
 		imguibackend.EditorPushDisabled(name == "")
 		if imgui.Button("Unwrap##modelunwrapok") {
-			size := int(texEditorSizeOptions[d.SizeIdx])
+			size := int(textureui.TexEditorSizeOptions[d.SizeIdx])
 			err := modelUnwrapToTexture(name, size, d.AngleDeg, d.PadTexels)
 			if err != nil {
 				d.Err = err.Error()
@@ -387,9 +388,9 @@ func DrainModelTexEditorRequest() {
 	// when nothing is open, and building one only to replace it would leave the
 	// user's window flashing a document they never asked for.
 	if ed != nil {
-		texEditorAdoptDoc(ed)
+		textureui.TexEditorAdoptDoc(ed)
 	}
-	OpenTextureEditor()
+	textureui.OpenTextureEditor()
 }
 
 // ---------- the UV layout overlay ----------

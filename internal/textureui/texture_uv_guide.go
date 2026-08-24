@@ -1,4 +1,4 @@
-package main
+package textureui
 
 // texture_uv_guide.go — the texture editor's window onto the open model.
 //

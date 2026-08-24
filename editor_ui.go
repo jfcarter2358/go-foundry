@@ -15,6 +15,7 @@ import (
 	"foundry/internal/levelio"
 	"foundry/internal/model"
 	"foundry/internal/platform"
+	"foundry/internal/textureui"
 	"foundry/internal/world"
 	"math"
 	"path/filepath"
@@ -729,7 +730,7 @@ func EditorDrawUI() {
 
 	imgui.SameLine()
 	if imgui.Button("Textures") {
-		OpenTextureEditor()
+		textureui.OpenTextureEditor()
 	}
 
 	imgui.SameLine()
