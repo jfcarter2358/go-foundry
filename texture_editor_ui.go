@@ -24,6 +24,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"foundry/internal/texdoc"
 )
 
@@ -188,8 +189,8 @@ func texEditorRefreshPreview() {
 	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, int32(ed.Doc.W), int32(ed.Doc.H), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(rgba.Pix))
 
 	if ed.BoundTexture != "" {
-		UpdateTextureHasAlpha(ed.BoundTexture, &ed.Doc.Pal, flat)
-		QueueTextureUpload(ed.BoundTexture, rgba)
+		gfx.UpdateTextureHasAlpha(ed.BoundTexture, &ed.Doc.Pal, flat)
+		gfx.QueueTextureUpload(ed.BoundTexture, rgba)
 	}
 	ed.previewDirty = false
 }
@@ -471,15 +472,15 @@ func drawTexEditorOpenDialog() {
 
 func drawTexEditorImportDialog() {
 	withModalPopup("Import PNG", &texEditorShowImportDialog, func() {
-		names := make([]string, 0, len(textureNames))
-		for n := range textureNames {
+		names := make([]string, 0, len(gfx.TextureNames))
+		for n := range gfx.TextureNames {
 			names = append(names, n)
 		}
 		sort.Strings(names)
 		imgui.Text("Import as a new single-layer document (quantised to the current palette):")
 		for _, n := range names {
 			if imgui.SelectableV(n, false, 0, imgui.Vec2{}) {
-				path := filepath.Join(fileutil.ExecutablePath, textureNames[n])
+				path := filepath.Join(fileutil.ExecutablePath, gfx.TextureNames[n])
 				ed, err := ImportTexEditorDoc(path)
 				if err != nil {
 					texEditorStatus(fmt.Sprintf("Import failed: %v", err))

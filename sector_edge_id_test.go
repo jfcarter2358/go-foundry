@@ -9,6 +9,7 @@ package main
 // invariant still holds and the name still points at the same edge.
 
 import (
+	"foundry/internal/gfx"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -19,9 +20,9 @@ import (
 // cleanup, in the style of withTempTextureDir.
 func withoutGeometryUploads(t *testing.T) {
 	t.Helper()
-	prev := geometryUploadsEnabled
-	geometryUploadsEnabled = false
-	t.Cleanup(func() { geometryUploadsEnabled = prev })
+	prev := gfx.GeometryUploadsEnabled
+	gfx.GeometryUploadsEnabled = false
+	t.Cleanup(func() { gfx.GeometryUploadsEnabled = prev })
 }
 
 // edgeIDTestChunk builds a single square sector with named edges, GL-free.

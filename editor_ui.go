@@ -8,6 +8,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"math"
 	"path/filepath"
@@ -194,8 +195,8 @@ func editorDragFloat3(label string, values *[3]float32, min, max float32, format
 // every picker that offers it — the combo below and the context menus, which
 // must not disagree about what exists or in what order.
 func sortedTextureNames() []string {
-	names := make([]string, 0, len(textureNames))
-	for n := range textureNames {
+	names := make([]string, 0, len(gfx.TextureNames))
+	for n := range gfx.TextureNames {
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -231,7 +232,7 @@ func textureCombo(label string, tex *string, allowEmpty bool) bool {
 				known = true
 			}
 			if imgui.SelectableV(n, n == *tex, 0, imgui.Vec2{}) && n != *tex {
-				_ = ensureTextureLoaded(n)
+				_ = gfx.EnsureTextureLoaded(n)
 				*tex = n
 				changed = true
 			}
@@ -309,7 +310,7 @@ func modelFileCombo(label string, path *string) bool {
 // through Primitive.Load — the water mesh is a 48×48 grid, and rebuilding and
 // re-uploading it on every slider frame would stall the drag. None of these
 // values affect vertex positions on the CPU side; they are shader uniforms.
-func waterControls(idSuffix string, w *WaterParams, g *Geometry) {
+func waterControls(idSuffix string, w *gfx.WaterParams, g *gfx.Geometry) {
 	if !imgui.CollapsingHeaderV(fmt.Sprintf("Water##%swaterhdr", idSuffix), imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
@@ -699,7 +700,7 @@ func EditorDrawUI() {
 	if editor2DOpen {
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
 	}
-	if imgui.Button("2D platform.Window") {
+	if imgui.Button("2D Window") {
 		OpenEditor2DWindow()
 	}
 	if editor2DOpen {
@@ -726,7 +727,7 @@ func EditorDrawUI() {
 	}
 
 	imgui.SameLine()
-	// Snapshot before the button, for the same reason "2D platform.Window" above does:
+	// Snapshot before the button, for the same reason "2D Window" above does:
 	// clicking it opens the window, so re-testing ModelEditorOpen() afterwards
 	// would pop a color that was never pushed.
 	modelOpen := ModelEditorOpen()
@@ -1035,7 +1036,7 @@ func Editor2DPanel() {
 	imgui.Text("Ctrl+click: add to selection | RMB: menu")
 
 	editor2DJoinButtons()
-	imgui.Checkbox("Show All geom.Point Boxes", &Editor.ShowPointSelectRadius)
+	imgui.Checkbox("Show All Point Boxes", &Editor.ShowPointSelectRadius)
 
 	// ---- Grid settings ----
 	imgui.Separator()
@@ -1324,7 +1325,7 @@ func convertEdge(ch *Chunk, s *Sector, fromKind string, idx int, toKind string) 
 		Editor.ActiveEdgeIdx = insertIdx
 	} else if fromKind == "portal" && idx < len(s.Portals) {
 		p := s.Portals[idx]
-		_ = ensureTextureLoaded("concrete")
+		_ = gfx.EnsureTextureLoaded("concrete")
 		w := Wall{ID: edgeID, StartPoint: p.StartPoint, EndPoint: p.EndPoint, Texture: "concrete", Collision: true, Visible: true, Pinned: true, DoubleSided: p.DoubleSided, Alpha: 1.0}
 		s.Portals = append(s.Portals[:idx], s.Portals[idx+1:]...)
 		// Insert wall at the correct position

@@ -6,7 +6,7 @@ package main
 // texture.go (RegisterTexture, QueueTextureUpload) and texture_alpha.go
 // (UpdateTextureHasAlpha) — none of which call into GL themselves, so every
 // function here is unit-testable without a display. The actual GL upload
-// happens later, when the main loop drains the queue (texture.go). platform.Window
+// happens later, when the main loop drains the queue (texture.go). Window
 // creation and imgui drawing live in texture_editor_ui.go.
 
 import (
@@ -14,6 +14,7 @@ import (
 	"image/draw"
 	"math/rand"
 
+	"foundry/internal/gfx"
 	"foundry/internal/texdoc"
 )
 
@@ -423,8 +424,8 @@ func (e *texEditorState) SyncLiveTexture() {
 		return
 	}
 	flat := e.Doc.Flatten()
-	UpdateTextureHasAlpha(e.BoundTexture, &e.Doc.Pal, flat)
-	QueueTextureUpload(e.BoundTexture, rgbaFromPaletted(flat))
+	gfx.UpdateTextureHasAlpha(e.BoundTexture, &e.Doc.Pal, flat)
+	gfx.QueueTextureUpload(e.BoundTexture, rgbaFromPaletted(flat))
 }
 
 // Save writes the document to <exe>/textures/<name>.{ftex,png}, registers it
@@ -434,7 +435,7 @@ func (e *texEditorState) Save(name string) error {
 	if err := SaveTexDoc(e.Doc, name); err != nil {
 		return err
 	}
-	RegisterTexture(name)
+	gfx.RegisterTexture(name)
 	e.BoundTexture = name
 	e.SyncLiveTexture()
 	return nil

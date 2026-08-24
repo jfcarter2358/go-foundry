@@ -1,6 +1,6 @@
 package fileutil
 
-// fileutil.go — generic file-system helpers with no level/texture-specific
+// go — generic file-system helpers with no level/texture-specific
 // logic, shared across the editor and texture-editor code.
 
 import (

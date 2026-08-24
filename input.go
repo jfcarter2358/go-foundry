@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
 
@@ -19,9 +20,9 @@ func RefreshWindowSize() {
 	if platform.WinHeight < 1 {
 		platform.WinHeight = 1
 	}
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	gl.UniformMatrix4fv(ProjectionUniform, 1, false, &Projection[0])
-	if Cam.MouseLock {
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gl.UniformMatrix4fv(gfx.ProjectionUniform, 1, false, &gfx.Projection[0])
+	if gfx.Cam.MouseLock {
 		platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
 	}
 }
@@ -42,7 +43,7 @@ func HandleEvent(event sdl.Event) {
 		platform.Running = false
 
 	case sdl.MouseMotionEvent:
-		if !Cam.MouseLock {
+		if !gfx.Cam.MouseLock {
 			break
 		}
 		// Warp-to-center approach: measure delta from the window centre.
@@ -55,19 +56,19 @@ func HandleEvent(event sdl.Event) {
 		if dx == 0 && dy == 0 {
 			break
 		}
-		Cam.Yaw += platform.MouseRotationSpeed * float32(dx)
-		Cam.Pitch -= platform.MouseRotationSpeed * float32(dy)
-		if Cam.Pitch > maxPitch {
-			Cam.Pitch = maxPitch
+		gfx.Cam.Yaw += platform.MouseRotationSpeed * float32(dx)
+		gfx.Cam.Pitch -= platform.MouseRotationSpeed * float32(dy)
+		if gfx.Cam.Pitch > gfx.MaxPitch {
+			gfx.Cam.Pitch = gfx.MaxPitch
 		}
-		if Cam.Pitch < -maxPitch {
-			Cam.Pitch = -maxPitch
+		if gfx.Cam.Pitch < -gfx.MaxPitch {
+			gfx.Cam.Pitch = -gfx.MaxPitch
 		}
 		// Recompute direction immediately so movement this frame uses the
 		// correct look direction (no one-frame rotation lag).
-		Cam.Direction = DirectionFromAngles(Cam.Yaw, Cam.Pitch)
-		Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
-		gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+		gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
+		gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
+		gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
 		// Return cursor to centre for next delta measurement.
 		platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
 
@@ -83,16 +84,16 @@ func HandleEvent(event sdl.Event) {
 		switch t.Event {
 		case sdl.WINDOWEVENT_FOCUS_LOST:
 			// Release capture but remember whether the current mode wanted it.
-			applyMouseLock(false)
+			gfx.ApplyMouseLock(false)
 		case sdl.WINDOWEVENT_SIZE_CHANGED:
 			RefreshWindowSize()
 		case sdl.WINDOWEVENT_FOCUS_GAINED:
 			// Restore only what the mode asked for.  Editor 2D/surface
 			// modes never want capture, and a stray focus cycle from a right or
 			// middle click must not hand them a grabbed cursor.  The warp inside
-			// applyMouseLock also makes the first motion event after regaining
+			// ApplyMouseLock also makes the first motion event after regaining
 			// focus measure from the correct origin.
-			applyMouseLock(Cam.MouseLockWanted)
+			gfx.ApplyMouseLock(gfx.Cam.MouseLockWanted)
 		}
 
 	case sdl.KeyboardEvent:
@@ -135,7 +136,7 @@ func HandleEvent(event sdl.Event) {
 				// per-instance shadows — see BiomeShadowSettings.CastLODTiers.
 				BiomeShadows.CastLODTiers = BiomeShadows.CastLODTiers%3 + 1
 			case sdl.SCANCODE_F10:
-				// platform.Window-level multisample anti-aliasing — see antialias.go.
+				// Window-level multisample anti-aliasing — see antialias.go.
 				ToggleAntiAlias()
 			case sdl.SCANCODE_0:
 				if !Editor.Active {

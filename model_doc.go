@@ -80,7 +80,7 @@ type ModelDoc struct {
 	// does: a .fmdl is the one thing the level places, and motion kept elsewhere
 	// would be a second file to keep in step.
 	Animations  []ModelClip
-	SmoothAngle float32 // 0 = geom.DefaultSmoothAngle (smooth.go)
+	SmoothAngle float32 // 0 = DefaultSmoothAngle (smooth.go)
 	Path        string  // on-disk .fmdl path; empty until first Save As
 
 	adj   *modelAdjacency // derived; nil when stale
@@ -359,9 +359,9 @@ func faceUVCentroid(f *ModelFace) mgl32.Vec2 {
 // (0..len(f.Verts)-1), so callers can look up both the position and the UV of
 // each corner.
 //
-// triangulate.go's geom.EarClip is a 2D routine, so the face is projected onto its
+// triangulate.go's EarClip is a 2D routine, so the face is projected onto its
 // own best-fit plane first: a basis (u, v) perpendicular to the Newell normal,
-// with geom.PerpAxis (detail_render.go) picking a stable first axis. This is the
+// with PerpAxis (detail_render.go) picking a stable first axis. This is the
 // same trick computeFaceBasis uses for procedural detail, but on indexed data
 // rather than a flat vertex buffer.
 func (m *ModelDoc) faceTriangles(fi int) [][3]int {
@@ -445,7 +445,7 @@ type modelSubmesh struct {
 // one group and one draw call, and an empty mesh compiles to nothing at all.
 //
 // Normals are not computed here: Smooth rides on the submesh and Geometry.Load
-// runs geom.ComputeSmoothNormals itself, welding across the whole submesh, which is
+// runs ComputeSmoothNormals itself, welding across the whole submesh, which is
 // what makes a subdivided sphere shade as one surface.
 func (m *ModelDoc) modelSubmeshes() []modelSubmesh {
 	return m.modelSubmeshesFrom(m.Verts)
@@ -473,7 +473,7 @@ func (m *ModelDoc) modelSubmeshesFrom(verts []mgl32.Vec3) []modelSubmesh {
 
 		// Each face contributes its own vertex records. Sharing them between
 		// faces would merge UV seams that the user set deliberately; the
-		// position-welding in geom.ComputeSmoothNormals re-joins them for shading.
+		// position-welding in ComputeSmoothNormals re-joins them for shading.
 		base := len(g.Vertices)
 		for i, vi := range f.Verts {
 			var p mgl32.Vec3

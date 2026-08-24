@@ -3,7 +3,7 @@ package main
 // level_save.go — serialise a runtime Level back to YAML.
 //
 // SaveLevel reconstructs the RawLevel representation from the live runtime
-// state and writes it to disk. geom.Point names come from chunk.PointNames, which is
+// state and writes it to disk. Point names come from chunk.PointNames, which is
 // index-aligned with chunk.Points; points the editor added are unnamed there and
 // get auto-names "E0", "E1", … chosen to avoid names already in use.
 //
@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"math"
 	"os"
 	"path/filepath"
@@ -668,14 +669,14 @@ func ImportChunkIntoLevel(lvl *Level, path string) (string, error) {
 	}
 
 	for name := range texNeeded {
-		if _, already := Textures[name]; already {
+		if _, already := gfx.Textures[name]; already {
 			continue
 		}
-		tpath, ok := textureNames[name]
+		tpath, ok := gfx.TextureNames[name]
 		if !ok {
 			return "", fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 		}
-		if err := LoadTexture(name, filepath.Join(fileutil.ExecutablePath, tpath)); err != nil {
+		if err := gfx.LoadTexture(name, filepath.Join(fileutil.ExecutablePath, tpath)); err != nil {
 			return "", err
 		}
 	}

@@ -16,6 +16,8 @@ package main
 // so an animated model and its shadow are the same pose by construction.
 
 import (
+	"foundry/internal/gfx"
+
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -49,7 +51,7 @@ func entityInFrustum(e *Entity, cull *Frustum) bool {
 // back-to-front queue and draws the rest immediately, so an entity with a
 // translucent attachment sorts against the level's own transparent surfaces
 // rather than in a pass of its own.
-func RenderEntities(lvl *Level, cull *Frustum, draw func(g *Geometry, model mgl32.Mat4, doubleSided bool)) {
+func RenderEntities(lvl *Level, cull *Frustum, draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSided bool)) {
 	if lvl == nil {
 		return
 	}
@@ -83,7 +85,7 @@ func RenderEntities(lvl *Level, cull *Frustum, draw func(g *Geometry, model mgl3
 // It restores the identity model matrix on the way out. The shadow walker sets
 // that once and leaves it (renderSceneShadow), so an entity's matrix left in
 // place would drag every wall drawn afterwards along with it.
-func RenderEntitiesShadow(lvl *Level, prog uint32, skin *skinUniforms, modelUniform int32, cull *Frustum) {
+func RenderEntitiesShadow(lvl *Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
 	if lvl == nil || len(lvl.Entities) == 0 {
 		return
 	}

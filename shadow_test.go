@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"math"
 	"testing"
 
@@ -107,7 +108,7 @@ func TestCascadesCoverTheWholeShadowRange(t *testing.T) {
 
 	camPos := mgl32.Vec3{10, 2, -30}
 	viewDir := mgl32.Vec3{0.6, -0.1, 0.8}.Normalize()
-	view := mgl32.LookAtV(camPos, camPos.Add(viewDir), WorldUp)
+	view := mgl32.LookAtV(camPos, camPos.Add(viewDir), gfx.WorldUp)
 
 	lightDir := mgl32.Vec3{0.5, -1, 0.3}.Normalize()
 
@@ -149,7 +150,7 @@ func TestCascadeLightMatrixIsStableUnderCameraRotation(t *testing.T) {
 	var wantDepth float32
 	for i, yaw := range []float64{0, 0.3, 1.1, 2.7, 4.9} {
 		dir := mgl32.Vec3{float32(math.Cos(yaw)), -0.2, float32(math.Sin(yaw))}.Normalize()
-		view := mgl32.LookAtV(camPos, camPos.Add(dir), WorldUp)
+		view := mgl32.LookAtV(camPos, camPos.Add(dir), gfx.WorldUp)
 		corners := frustumSliceCorners(view, tanHalfV, aspect, near, splits[0])
 		_, depth := CascadeLightMatrix(lightDir, corners)
 		if i == 0 {
@@ -168,7 +169,7 @@ func TestCascadeLightMatrixCapturesCastersTowardTheLight(t *testing.T) {
 	splits := CascadeSplits(near, ShadowMaxDistance)
 	lightDir := mgl32.Vec3{0, -1, 0}.Normalize() // straight down
 	camPos := mgl32.Vec3{0, 2, 0}
-	view := mgl32.LookAtV(camPos, camPos.Add(mgl32.Vec3{0, 0, 1}), WorldUp)
+	view := mgl32.LookAtV(camPos, camPos.Add(mgl32.Vec3{0, 0, 1}), gfx.WorldUp)
 
 	corners := frustumSliceCorners(view, tanHalfV, aspect, near, splits[0])
 	lsm, _ := CascadeLightMatrix(lightDir, corners)
@@ -192,7 +193,7 @@ func TestFrustumSliceCornersSpanTheSlice(t *testing.T) {
 	tanHalfV, aspect, _ := perspectiveParams(testProjection())
 	camPos := mgl32.Vec3{5, 1, -2}
 	dir := mgl32.Vec3{0, 0, 1}
-	view := mgl32.LookAtV(camPos, camPos.Add(dir), WorldUp)
+	view := mgl32.LookAtV(camPos, camPos.Add(dir), gfx.WorldUp)
 
 	corners := frustumSliceCorners(view, tanHalfV, aspect, 10, 40)
 

@@ -11,13 +11,14 @@ package main
 //
 // The schema follows level_schema.go's conventions: pointer fields with
 // omitempty where "absent" and "false/zero" must stay distinguishable, and
-// fileutil.WriteFileAtomic (fileutil.go) for the write so a crash mid-save cannot leave
+// WriteFileAtomic (go) for the write so a crash mid-save cannot leave
 // a half-written model behind.
 
 import (
 	"fmt"
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"os"
 	"path/filepath"
 	"strings"
@@ -403,9 +404,9 @@ func validateRawAnimations(raw RawModel) error {
 	if len(raw.Animations) == 0 {
 		return nil
 	}
-	if len(raw.Bones) > maxSkinBones {
+	if len(raw.Bones) > gfx.MaxSkinBones {
 		return fmt.Errorf("model %q has %d bones; the skinning shader carries at most %d",
-			raw.ID, len(raw.Bones), maxSkinBones)
+			raw.ID, len(raw.Bones), gfx.MaxSkinBones)
 	}
 	bones := make(map[string]bool, len(raw.Bones))
 	for _, b := range raw.Bones {

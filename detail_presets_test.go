@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// withTempPresetDir points fileutil.ExecutablePath at a scratch directory and clears the
+// withTempPresetDir points ExecutablePath at a scratch directory and clears the
 // user-preset registry, so preset tests never touch the real dist/ tree or leak
 // state into each other.
 func withTempPresetDir(t *testing.T) {

@@ -22,6 +22,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"path/filepath"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -199,11 +200,11 @@ func biomeScatterSnippet() string {
 // failure, like the detail programs it mirrors — a shader that won't compile is
 // a build error, not a runtime condition worth limping through.
 func mustBiomeProgram(vertPath, fragPath, vertSnippet, fragSnippet string) uint32 {
-	vs, err := CompileShader(injectAfterVersion(mustReadShader(vertPath), vertSnippet), gl.VERTEX_SHADER)
+	vs, err := gfx.CompileShader(gfx.InjectAfterVersion(mustReadShader(vertPath), vertSnippet), gl.VERTEX_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("biome vert %s: %v", vertPath, err))
 	}
-	fs, err := CompileShader(injectAfterVersion(mustReadShader(fragPath), fragSnippet), gl.FRAGMENT_SHADER)
+	fs, err := gfx.CompileShader(gfx.InjectAfterVersion(mustReadShader(fragPath), fragSnippet), gl.FRAGMENT_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("biome frag %s: %v", fragPath, err))
 	}
@@ -230,7 +231,7 @@ func uploadBiomeLighting(prog uint32, level *Level, frame ShadowFrame) {
 	UploadPointShadowUniformsTo(prog, level.Lights)
 
 	gl.UseProgram(prog)
-	cam := Cam.Matrix
+	cam := gfx.Cam.Matrix
 	gl.UniformMatrix4fv(progUniformLoc(prog, "camera\x00"), 1, false, &cam[0])
 	gl.Uniform1i(progUniformLoc(prog, "receiveShadows\x00"), boolToInt32(BiomeShadows.Receive))
 }

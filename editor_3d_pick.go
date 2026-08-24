@@ -15,6 +15,7 @@ package main
 // ctrl+click selects all of them at once.
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"math"
 	"sort"
@@ -104,7 +105,7 @@ func pickGeometryT(origin, dir mgl32.Vec3, verts []float32) float32 {
 }
 
 // pickGeometriesT is pickGeometryT across a slice of geometries (extrusions).
-func pickGeometriesT(origin, dir mgl32.Vec3, geoms []Geometry) float32 {
+func pickGeometriesT(origin, dir mgl32.Vec3, geoms []gfx.Geometry) float32 {
 	best := float32(math.MaxFloat32)
 	for i := range geoms {
 		if t := pickGeometryT(origin, dir, geoms[i].Vertices); t < best {
@@ -278,8 +279,8 @@ func pick3D(sx, sy int32) pickHit {
 // is available (it accounts for terrain displacement, extrusion holes, and the
 // real triangulation); a fan over the sector polygon is the fallback for a
 // surface whose geometry has not been built yet.
-func pickSurfaceT(origin, dir mgl32.Vec3, ch *Chunk, s *Sector, geo *Geometry,
-	extrusions []Geometry, heightAt func(int) float32, reversed bool) float32 {
+func pickSurfaceT(origin, dir mgl32.Vec3, ch *Chunk, s *Sector, geo *gfx.Geometry,
+	extrusions []gfx.Geometry, heightAt func(int) float32, reversed bool) float32 {
 
 	best := pickGeometryT(origin, dir, geo.Vertices)
 	if et := pickGeometriesT(origin, dir, extrusions); et < best {
@@ -338,7 +339,7 @@ func projectToScreenIn(projView mgl32.Mat4, p mgl32.Vec3, viewW, viewH int32) (m
 // pixels vertically at point p, so a gizmo drawn with it keeps a constant
 // on-screen size regardless of distance.
 func worldSizeForPixels(p mgl32.Vec3, halfPx float32) float32 {
-	return worldSizeForPixelsIn(p, Cam.Position, halfPx, Projection.At(1, 1), platform.WinHeight)
+	return worldSizeForPixelsIn(p, gfx.Cam.Position, halfPx, gfx.Projection.At(1, 1), platform.WinHeight)
 }
 
 // worldSizeForPixelsIn is worldSizeForPixels against an explicit camera,
@@ -426,7 +427,7 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 		return nil
 	}
 	cursor := mgl32.Vec2{float32(mx), float32(my)}
-	projView := Projection.Mul4(Cam.Matrix)
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 
 	var out []vertexHandle
 	for ci := range lvl.Chunks {
@@ -444,7 +445,7 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 						y = s.Floor.VertexHeight(vi)
 					}
 					pos := mgl32.Vec3{pt.X(), y, pt.Y()}
-					depth := pos.Sub(Cam.Position).Len()
+					depth := pos.Sub(gfx.Cam.Position).Len()
 					if depth > vertexHandleMaxDist {
 						continue
 					}

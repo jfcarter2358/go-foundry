@@ -13,6 +13,7 @@ package main
 // exact, and makes snap-to-grid land on absolute grid multiples.
 
 import (
+	"foundry/internal/gfx"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -130,7 +131,7 @@ func pickTranslateAxis(mx, my int32) int {
 	if !ok {
 		return -1
 	}
-	projView := Projection.Mul4(Cam.Matrix)
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 	originScreen, ok := projectToScreen(projView, origin)
 	if !ok {
 		return -1

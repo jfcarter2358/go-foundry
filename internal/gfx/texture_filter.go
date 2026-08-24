@@ -1,4 +1,4 @@
-package main
+package gfx
 
 // texture_filter.go — mipmapping and anisotropic filtering for world textures.
 //

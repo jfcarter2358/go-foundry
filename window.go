@@ -7,7 +7,7 @@ package main
 // VAO/VBO/EBO here. imguiShaderProgram and imguiFontTexture (editor_imgui.go)
 // stay package globals since they ARE shared GL objects, reused by every
 // window's renderer, and every imgui.Context shares the same default font
-// atlas (imgui-go v4 platform.Context.go), so a secondary context's font glyphs sample
+// atlas (imgui-go v4 Context.go), so a secondary context's font glyphs sample
 // that same texture correctly.
 //
 // Frame order lives in main.go: the main window renders and swaps first,
@@ -58,7 +58,7 @@ type UIWindow struct {
 // directly.
 var uiWindows = map[uint32]*UIWindow{}
 
-// MainWindowID is the SDL window ID of platform.Window, the primary game/editor window.
+// MainWindowID is the SDL window ID of Window, the primary game/editor window.
 // Set once at startup; anything that has to tell the main window apart from a
 // secondary one (event routing, the F1 overlay) compares against it.
 var MainWindowID uint32

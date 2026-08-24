@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"math"
 	"testing"
 
@@ -26,18 +27,18 @@ func TestSpawnRotationFromCameraRoundTrips(t *testing.T) {
 		{mgl32.DegToRad(30), mgl32.DegToRad(20)},
 		{mgl32.DegToRad(170), mgl32.DegToRad(-45)},
 	}
-	savedYaw, savedPitch := Cam.Yaw, Cam.Pitch
-	defer func() { Cam.Yaw, Cam.Pitch = savedYaw, savedPitch }()
+	savedYaw, savedPitch := gfx.Cam.Yaw, gfx.Cam.Pitch
+	defer func() { gfx.Cam.Yaw, gfx.Cam.Pitch = savedYaw, savedPitch }()
 
 	for _, c := range cases {
-		Cam.Yaw, Cam.Pitch = c.yaw, c.pitch
+		gfx.Cam.Yaw, gfx.Cam.Pitch = c.yaw, c.pitch
 		p := SpawnPoint{Rotation: spawnRotationFromCamera()}
 
 		gotYaw, gotPitch := SpawnYawPitch(&p)
 		// Yaw is compared through the direction vector so ±180° wrap doesn't
 		// fail an otherwise-correct answer.
-		want := DirectionFromAngles(c.yaw, c.pitch)
-		got := DirectionFromAngles(gotYaw, gotPitch)
+		want := gfx.DirectionFromAngles(c.yaw, c.pitch)
+		got := gfx.DirectionFromAngles(gotYaw, gotPitch)
 		if !nearlyEqual(got.X(), want.X(), 1e-4) ||
 			!nearlyEqual(got.Y(), want.Y(), 1e-4) ||
 			!nearlyEqual(got.Z(), want.Z(), 1e-4) {
@@ -55,7 +56,7 @@ func TestSpawnRotationFromCameraRoundTrips(t *testing.T) {
 func TestSpawnDirectionDefaultsToYawZero(t *testing.T) {
 	p := SpawnPoint{}
 	d := SpawnDirection(&p)
-	want := DirectionFromAngles(0, 0)
+	want := gfx.DirectionFromAngles(0, 0)
 	if !nearlyEqual(d.X(), want.X(), 1e-5) || !nearlyEqual(d.Y(), want.Y(), 1e-5) ||
 		!nearlyEqual(d.Z(), want.Z(), 1e-5) {
 		t.Errorf("got %v, want %v", d, want)
@@ -66,8 +67,8 @@ func TestSpawnDirectionDefaultsToYawZero(t *testing.T) {
 func TestSpawnPitchClampedToMouseLookLimit(t *testing.T) {
 	p := SpawnPoint{Rotation: mgl32.Vec3{0, 0, float32(math.Pi / 2)}}
 	_, pitch := SpawnYawPitch(&p)
-	if pitch > maxPitch || pitch < maxPitch-0.02 {
-		t.Errorf("straight-up marker: got pitch %.4f, want ≈%.4f", pitch, maxPitch)
+	if pitch > gfx.MaxPitch || pitch < gfx.MaxPitch-0.02 {
+		t.Errorf("straight-up marker: got pitch %.4f, want ≈%.4f", pitch, gfx.MaxPitch)
 	}
 }
 

@@ -1,4 +1,4 @@
-package main
+package gfx
 
 // texture_alpha.go — semi-transparent-texel detection.
 //

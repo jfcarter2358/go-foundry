@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"os"
 	"path/filepath"
 	"strings"
@@ -300,7 +301,7 @@ func TestLoadRejectsDuplicateClipNames(t *testing.T) {
 
 func TestLoadRejectsAnArmatureTooBigForTheShader(t *testing.T) {
 	m := NewCubeDoc()
-	for i := 0; i <= maxSkinBones; i++ {
+	for i := 0; i <= gfx.MaxSkinBones; i++ {
 		y := float32(i)
 		if m.AddBone(mgl32.Vec3{0, y, 0}, mgl32.Vec3{0, y + 1, 0}) < 0 {
 			t.Fatalf("AddBone refused bone %d", i)
@@ -310,7 +311,7 @@ func TestLoadRejectsAnArmatureTooBigForTheShader(t *testing.T) {
 	c.SetKey(0, 0, identBonePose())
 
 	if err := validateRawModel(modelDocToRaw(m)); err == nil {
-		t.Errorf("validation accepted %d bones; the shader palette holds %d", len(m.Bones), maxSkinBones)
+		t.Errorf("validation accepted %d bones; the shader palette holds %d", len(m.Bones), gfx.MaxSkinBones)
 	}
 }
 

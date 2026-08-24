@@ -35,6 +35,7 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 
+	"foundry/internal/gfx"
 	"foundry/internal/texdoc"
 )
 
@@ -334,13 +335,13 @@ func modelBuildAtlasTexture(name string, size int) (*texEditorState, error) {
 
 	// Upload synchronously rather than through the frame queue. The queue
 	// drains under the main context next frame, but the model editor draws
-	// this frame and would call ensureTextureLoaded on a name whose .png was
+	// this frame and would call EnsureTextureLoaded on a name whose .png was
 	// only just written — a wasted disk read at best, one black frame and a log
 	// line at worst. Texture objects are shared across the window contexts (see
 	// the file comment), so specifying it here is visible everywhere.
 	flat := doc.Flatten()
-	UpdateTextureHasAlpha(name, &doc.Pal, flat)
-	if err := UpdateTextureFromRGBA(name, rgbaFromPaletted(flat)); err != nil {
+	gfx.UpdateTextureHasAlpha(name, &doc.Pal, flat)
+	if err := gfx.UpdateTextureFromRGBA(name, rgbaFromPaletted(flat)); err != nil {
 		return nil, fmt.Errorf("upload texture %q: %w", name, err)
 	}
 	return ed, nil

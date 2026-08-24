@@ -21,7 +21,11 @@ package main
 // do: a trigger region can span a doorway between two chunks, and its authored
 // position is world-space.
 
-import "github.com/go-gl/mathgl/mgl32"
+import (
+	"foundry/internal/gfx"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
 
 // Volume is a scriptable region of space.
 type Volume struct {
@@ -48,7 +52,7 @@ type Volume struct {
 
 	// Geometry is the editor's wireframe box. Runtime-only, never serialized —
 	// a volume is invisible during play.
-	Geometry Geometry
+	Geometry gfx.Geometry
 }
 
 // VolumeShape is the region's shape. The values line up with BoundingType so the

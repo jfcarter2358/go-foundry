@@ -15,6 +15,7 @@ package main
 // the write-back differ, and both live here.
 
 import (
+	"foundry/internal/gfx"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -66,7 +67,7 @@ func pickRotateRing(mx, my int32) int {
 	if !ok {
 		return -1
 	}
-	projView := Projection.Mul4(Cam.Matrix)
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 	radius := gizmoArmLength(origin)
 
 	best := -1

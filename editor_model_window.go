@@ -14,12 +14,13 @@ package main
 //   - a camera and projection: modelCam below, because the global Cam is being
 //     driven by the main window every frame;
 //   - a picking ray: modelCamera.ray, since screenRay (editor_3d.go) reads the
-//     main window's platform.WinWidth/platform.WinHeight/Projection globals;
+//     main window's WinWidth/WinHeight/Projection globals;
 //   - GL object ownership: see the header of editor_model_render.go.
 
 import (
 	"fmt"
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"log"
 	"math"
@@ -70,7 +71,7 @@ var modelMouseX, modelMouseY int32
 //
 // Yaw and Pitch are the *look* direction in radians, the same convention as the
 // global Cam (camera.go), which is what lets fly mode reuse DirectionFromAngles
-// and the editor's own platform.MouseRotationSpeed/maxPitch. Orbit derives the eye from
+// and the editor's own MouseRotationSpeed/MaxPitch. Orbit derives the eye from
 // them (eye = Target - look*Dist), so switching modes never jumps the view.
 type modelCamera struct {
 	Target mgl32.Vec3 // orbit pivot
@@ -83,7 +84,7 @@ type modelCamera struct {
 
 // forward is the unit look direction.
 func (c modelCamera) forward() mgl32.Vec3 {
-	return DirectionFromAngles(c.Yaw, c.Pitch)
+	return gfx.DirectionFromAngles(c.Yaw, c.Pitch)
 }
 
 // position returns the eye point.
@@ -96,7 +97,7 @@ func (c modelCamera) position() mgl32.Vec3 {
 
 func (c modelCamera) view() mgl32.Mat4 {
 	eye := c.position()
-	return mgl32.LookAtV(eye, eye.Add(c.forward()), WorldUp)
+	return mgl32.LookAtV(eye, eye.Add(c.forward()), gfx.WorldUp)
 }
 
 func (c modelCamera) proj(w, h int32) mgl32.Mat4 {
@@ -110,7 +111,7 @@ func (c modelCamera) proj(w, h int32) mgl32.Mat4 {
 // right and up are the camera's screen-aligned axes, used to pan in the plane
 // the user is looking at rather than along world axes.
 func (c modelCamera) right() mgl32.Vec3 {
-	r := c.forward().Cross(WorldUp)
+	r := c.forward().Cross(gfx.WorldUp)
 	if r.Len() < 1e-5 {
 		return mgl32.Vec3{1, 0, 0}
 	}
@@ -179,7 +180,7 @@ func (c *modelCamera) frame(m *ModelDoc) {
 func (c *modelCamera) look(dx, dy int32) {
 	c.Yaw += platform.MouseRotationSpeed * float32(dx)
 	c.Pitch -= platform.MouseRotationSpeed * float32(dy)
-	c.Pitch = geom.ClampValue(c.Pitch, -maxPitch, maxPitch)
+	c.Pitch = geom.ClampValue(c.Pitch, -gfx.MaxPitch, gfx.MaxPitch)
 }
 
 // move flies the eye. f/u/r are forward, up and right amounts; forward is
@@ -198,7 +199,7 @@ func (c *modelCamera) move(f, u, r float32) {
 	if right.Len() > 1e-6 {
 		right = right.Normalize()
 	}
-	c.Pos = c.Pos.Add(forward.Mul(f)).Add(WorldUp.Mul(u)).Add(right.Mul(r))
+	c.Pos = c.Pos.Add(forward.Mul(f)).Add(gfx.WorldUp.Mul(u)).Add(right.Mul(r))
 }
 
 // ---------- lifecycle ----------
@@ -331,7 +332,7 @@ func drawModelEditorWindow() {
 	modelDialogs()
 }
 
-// modelFlySpeed is the per-frame fly distance, scaled by platform.DeltaTime the same way
+// modelFlySpeed is the per-frame fly distance, scaled by DeltaTime the same way
 // HandleInput (input.go) scales the 3D view's, so the two feel alike. Holding
 // shift is the usual "go faster".
 func modelFlySpeed() float32 {

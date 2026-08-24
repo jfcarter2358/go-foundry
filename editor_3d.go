@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"math"
 
@@ -29,16 +30,16 @@ func screenRay(sx, sy int32) (origin, dir mgl32.Vec3) {
 	ndcY := 1.0 - (float32(sy)/float32(platform.WinHeight))*2.0
 
 	// Unproject through inverse projection
-	invProj := Projection.Inv()
+	invProj := gfx.Projection.Inv()
 	clip := mgl32.Vec4{ndcX, ndcY, -1, 1}
 	eye := invProj.Mul4x1(clip)
 	eye[2] = -1
 	eye[3] = 0
 
-	invCam := Cam.Matrix.Inv()
+	invCam := gfx.Cam.Matrix.Inv()
 	world := invCam.Mul4x1(eye)
 	dir = mgl32.Vec3{world.X(), world.Y(), world.Z()}.Normalize()
-	return Cam.Position, dir
+	return gfx.Cam.Position, dir
 }
 
 // raySlabRange returns the range of distances along a ray that lie inside an
@@ -149,7 +150,7 @@ func rayCylinderRange(o, d, half mgl32.Vec3) (float32, float32, bool) {
 	c := ox*ox + oz*oz - 1
 	var t0, t1 float32
 	if a < 1e-12 {
-		// platform.Running straight up the axis: the ray never crosses the side, so it
+		// Running straight up the axis: the ray never crosses the side, so it
 		// is within the circle for its whole length or for none of it.
 		if c > 0 {
 			return 0, 0, false
@@ -261,7 +262,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 
 	if Editor.SpawnPlacementMode {
 		// 4m in front of the camera, at the floor the camera is standing on.
-		pos := Cam.Position.Add(Cam.Direction.Mul(4.0))
+		pos := gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(4.0))
 		pos[1] -= eyeHeight
 		placeSpawnPointAt(pos)
 		return
@@ -284,7 +285,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
-	// What a click means is the selection mode's call. geom.Point and edge mode each
+	// What a click means is the selection mode's call. Point and edge mode each
 	// own the click outright: hitting nothing there clears the selection rather
 	// than falling through to the surface behind, which is what makes the modes
 	// predictable. Repeated clicks on the same cluster cycle through every
@@ -663,7 +664,7 @@ func Editor3DPanel() {
 		imgui.Text("Ctrl+click adds to the selection, in all three modes")
 		imgui.Text("Right-click without dragging for the selection's actions")
 		imgui.Text("Drag an R/G/B arm to move it along X/Y/Z")
-		imgui.Checkbox("Show All geom.Point/Edge Boxes", &Editor.ShowPointSelectRadius)
+		imgui.Checkbox("Show All Point/Edge Boxes", &Editor.ShowPointSelectRadius)
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("Wireframe already draws them all; this is the same\nfor a solid-shaded view.")
 		}
@@ -878,8 +879,8 @@ func createChunkAtCamera(id string) {
 	lvl := Editor.level
 	// Centre the new chunk on whatever the active sub-mode is looking at: the
 	// fly camera in 3D, the map pan in 2D.
-	cx := Cam.Position.X()
-	cz := Cam.Position.Z()
+	cx := gfx.Cam.Position.X()
+	cz := gfx.Cam.Position.Z()
 	if Editor.Mode == Mode2D {
 		cx = Editor.Pan2D.X()
 		cz = Editor.Pan2D.Y()
@@ -900,8 +901,8 @@ func createChunkAtCamera(id string) {
 	// like the YAML loader's float32Default/boolDefault helpers apply — leaving
 	// them unset here means Alpha stays 0 (fully transparent) and DoubleSided
 	// stays false, so set them explicitly to match what a loaded level gets.
-	_ = ensureTextureLoaded("concrete")
-	_ = ensureTextureLoaded("stone_floor")
+	_ = gfx.EnsureTextureLoaded("concrete")
+	_ = gfx.EnsureTextureLoaded("stone_floor")
 
 	walls := []Wall{
 		{StartPoint: pts[0], EndPoint: pts[1], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},

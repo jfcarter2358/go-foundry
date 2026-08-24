@@ -14,6 +14,7 @@ package main
 
 import (
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"testing"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -22,11 +23,11 @@ import (
 // compileBiomeStages mirrors mustBiomeProgram without its panic, so a failure
 // is a test message rather than a stack trace.
 func compileBiomeStages(vertPath, fragPath, vertSnippet, fragSnippet string) error {
-	vs, err := CompileShader(injectAfterVersion(mustReadShader(vertPath), vertSnippet), gl.VERTEX_SHADER)
+	vs, err := gfx.CompileShader(gfx.InjectAfterVersion(mustReadShader(vertPath), vertSnippet), gl.VERTEX_SHADER)
 	if err != nil {
 		return err
 	}
-	fs, err := CompileShader(injectAfterVersion(mustReadShader(fragPath), fragSnippet), gl.FRAGMENT_SHADER)
+	fs, err := gfx.CompileShader(gfx.InjectAfterVersion(mustReadShader(fragPath), fragSnippet), gl.FRAGMENT_SHADER)
 	if err != nil {
 		return err
 	}
@@ -42,7 +43,7 @@ func TestShadowSamplingShadersCompile(t *testing.T) {
 	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
 
 	// The scene shader: 5x5 PCF in a fragment stage.
-	if err := LoadProgram("resources/shaders/vertex.glsl", "resources/shaders/fragment.glsl"); err != nil {
+	if err := gfx.LoadProgram("resources/shaders/vertex.glsl", "resources/shaders/fragment.glsl"); err != nil {
 		t.Fatalf("world program: %v", err)
 	}
 

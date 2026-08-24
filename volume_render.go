@@ -15,6 +15,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -47,7 +48,7 @@ func (v *Volume) Load() error {
 	if !v.HasBounds() {
 		return nil
 	}
-	if err := ensureTextureLoaded(volumeMarkerTexture); err != nil {
+	if err := gfx.EnsureTextureLoaded(volumeMarkerTexture); err != nil {
 		return err
 	}
 	verts, idx := v.cageMesh()

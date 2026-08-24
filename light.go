@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"log"
 	"math"
 
@@ -53,7 +54,7 @@ func (dl *DirectionalLight) SyncDirection() {
 	} else if dl.Pitch < -90 {
 		dl.Pitch = -90
 	}
-	dl.Direction = DirectionFromAngles(mgl32.DegToRad(dl.Yaw), mgl32.DegToRad(dl.Pitch))
+	dl.Direction = gfx.DirectionFromAngles(mgl32.DegToRad(dl.Yaw), mgl32.DegToRad(dl.Pitch))
 }
 
 // DirLightYawPitch derives editor angles (degrees) from a direction vector, for
@@ -105,7 +106,7 @@ type LightSet struct {
 // [SCENARIO 5] Storing the name in a local variable also ensures the backing
 // array is not collected before gl.Str returns the pointer to the driver.
 func uniformLoc(name string) int32 {
-	return progUniformLoc(Program, name)
+	return progUniformLoc(gfx.Program, name)
 }
 
 // progUniformLoc fetches a uniform location from an arbitrary program. Unlike
@@ -116,7 +117,7 @@ func progUniformLoc(prog uint32, name string) int32 {
 }
 
 // UploadLights sends all light uniforms to the main shader program.
-func UploadLights(ls LightSet) { UploadLightsTo(Program, ls, true) }
+func UploadLights(ls LightSet) { UploadLightsTo(gfx.Program, ls, true) }
 
 // UploadLightsTo sends all light uniforms to prog. prog must already be linked;
 // this binds it as the active program. verbose enables the informational log

@@ -10,6 +10,7 @@ package main
 // keybindings.go fills the table in.
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -99,15 +100,15 @@ func KeybindHelpSetVisible(visible bool) {
 	}
 	KeybindHelpVisible = visible
 	if visible {
-		keybindHelpRestoreMouseLock = Cam.MouseLockWanted
+		keybindHelpRestoreMouseLock = gfx.Cam.MouseLockWanted
 		if keybindHelpRestoreMouseLock {
-			SetMouseLock(false)
+			gfx.SetMouseLock(false)
 		}
 		return
 	}
 	if keybindHelpRestoreMouseLock {
 		keybindHelpRestoreMouseLock = false
-		SetMouseLock(true)
+		gfx.SetMouseLock(true)
 	}
 }
 

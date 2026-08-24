@@ -4,7 +4,7 @@ package main
 //
 // The biome layer is a separate polygon layer from structural sector
 // geometry: while Editor.BiomeLayerActive, the 2D view draws/selects/edits
-// BiomeSector polygons instead of structural sectors. geom.Point placement mirrors
+// BiomeSector polygons instead of structural sectors. Point placement mirrors
 // the existing wall-extrusion placement pattern (editor_extrusion.go): click
 // to add a point, click near the first point (or press Enter) to close the
 // polygon, Escape to cancel. Once drawn, a sector is selected (from the 2D
@@ -15,6 +15,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -305,7 +306,7 @@ func Editor2DRenderBiomeOverlay() {
 		col := imgui.PackedColorFromVec4(imgui.Vec4{X: c.X(), Y: c.Y(), Z: c.Z(), W: a})
 		// A triangle fan from Points[0] only fills correctly for convex
 		// polygons; concave sectors need real ear-clip triangulation or the
-		// fan bulges outside the boundary. geom.EarClip assumes CCW input.
+		// fan bulges outside the boundary. EarClip assumes CCW input.
 		poly := ccwPolygon(bs.Points)
 		tris := geom.EarClip(poly)
 		for i := 0; i+2 < len(tris); i += 3 {
@@ -777,7 +778,7 @@ func biomeWaterControls(ch *Chunk, bs *BiomeSector) {
 		bs.GroundDirty = true // moves the plane's Y — needs a mesh rebuild
 	}
 	if !bs.Brush.Water.Enabled {
-		bs.Brush.Water = DefaultWaterParams()
+		bs.Brush.Water = gfx.DefaultWaterParams()
 	}
 	// Push wave/reflection edits straight to the live companion surface's
 	// Geometry when it already exists — these are pure shader uniforms, so this
@@ -786,7 +787,7 @@ func biomeWaterControls(ch *Chunk, bs *BiomeSector) {
 	// bs.Brush.Water) before the first sync.
 	g := biomeWaterGeometryFor(ch, bs.ID)
 	if g == nil {
-		g = &Geometry{}
+		g = &gfx.Geometry{}
 	}
 	waterControls("bswater", &bs.Brush.Water, g)
 }
@@ -794,7 +795,7 @@ func biomeWaterControls(ch *Chunk, bs *BiomeSector) {
 // biomeWaterGeometryFor returns the live Geometry of sector id's companion
 // water surface (see biome_water.go), or nil before the first sync has run for
 // a newly-switched-to-Water sector.
-func biomeWaterGeometryFor(ch *Chunk, id string) *Geometry {
+func biomeWaterGeometryFor(ch *Chunk, id string) *gfx.Geometry {
 	for i := range ch.WaterSurfaces {
 		if ch.WaterSurfaces[i].ID == id {
 			return &ch.WaterSurfaces[i].Geometry

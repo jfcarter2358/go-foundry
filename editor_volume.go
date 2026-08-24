@@ -13,6 +13,7 @@ package main
 // into the old one would outlive it.
 
 import (
+	"foundry/internal/gfx"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -110,7 +111,7 @@ func duplicateActiveVolume() {
 	EditorPushUndo()
 	cp := *src
 	cp.ScriptData = cloneScriptData(src.ScriptData)
-	cp.Geometry = Geometry{}
+	cp.Geometry = gfx.Geometry{}
 	cp.ID = uniqueVolumeID(lvl, src.ID)
 	cp.Position = src.Position.Add(mgl32.Vec3{src.HalfX * 2, 0, 0})
 	if err := cp.Load(); err != nil {

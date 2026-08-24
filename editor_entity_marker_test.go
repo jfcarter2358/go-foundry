@@ -5,6 +5,7 @@ package main
 // where they end up does not, and that is where the mistake would be.
 
 import (
+	"foundry/internal/gfx"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -61,7 +62,7 @@ func TestEntityHasVisibleGeometry(t *testing.T) {
 		t.Error("an attachment with nothing uploaded draws nothing")
 	}
 
-	e.Models[0].Submeshes = []Geometry{{Vertices: []float32{0, 0, 0, 0, 0}}}
+	e.Models[0].Submeshes = []gfx.Geometry{{Vertices: []float32{0, 0, 0, 0, 0}}}
 	if !entityHasVisibleGeometry(&e) {
 		t.Error("an uploaded, visible attachment draws")
 	}

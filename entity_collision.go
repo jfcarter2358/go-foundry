@@ -43,7 +43,7 @@ var (
 
 // Entity gravity, in world units per second and per second squared.
 //
-// These are the player's own platform.GravityAccel/platform.MaxFallSpeed (input.go) converted out
+// These are the player's own GravityAccel/MaxFallSpeed (input.go) converted out
 // of its per-frame-at-60fps units, so a dropped crate falls at the rate a
 // player does. The player's cannot simply be reused: its velocity is measured
 // per frame, an entity's per second.

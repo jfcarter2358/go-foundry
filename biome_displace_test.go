@@ -171,7 +171,7 @@ func TestSlopeCoverageMinAngleExcludesFlat(t *testing.T) {
 
 // TestSlopeCoverageNormalizesInput is the regression test for the bug behind
 // "changing the slope angles doesn't do anything". InterpolateSurfaceHeight
-// returns collision.go's raw geom.TriangleNormal — a cross product whose length
+// returns collision.go's raw TriangleNormal — a cross product whose length
 // scales with triangle area, e.g. (0,256,-128) for a 16x16 floor quad. Reading
 // .Y off that and clamping into acos's domain pinned every structural normal
 // at 0 degrees, so gating thought every sloped floor was level. slopeCoverage

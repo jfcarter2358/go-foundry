@@ -22,6 +22,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"log"
 
@@ -75,7 +76,7 @@ func OpenEditor2DWindow() {
 
 	// Open the map on whatever the 3D camera is looking at, the way Tab used
 	// to when the two views shared the main window.
-	Editor.Pan2D = mgl32.Vec2{Cam.Position.X(), Cam.Position.Z()}
+	Editor.Pan2D = mgl32.Vec2{gfx.Cam.Position.X(), gfx.Cam.Position.Z()}
 }
 
 // CloseEditor2DWindow asks for the 2D editor to go away at the end of the

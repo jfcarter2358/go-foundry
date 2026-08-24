@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	_ "image/png"
 	"io"
@@ -29,7 +30,7 @@ func init() {
 // TransparentDraw holds a deferred draw call for a transparent geometry object.
 // Collected during the opaque pass and drawn back-to-front afterward.
 type TransparentDraw struct {
-	Geom        *Geometry
+	Geom        *gfx.Geometry
 	Model       mgl32.Mat4
 	Distance    float32
 	DoubleSided bool
@@ -41,7 +42,7 @@ var shadowCubeVertPath = "shaders/shadow_cube_vert.glsl"
 var shadowCubeFragPath = "shaders/shadow_cube_frag.glsl"
 
 func main() {
-	Textures = make(map[string]uint32)
+	gfx.Textures = make(map[string]uint32)
 
 	executable, err := os.Executable()
 	if err != nil {
@@ -70,8 +71,8 @@ func main() {
 	// flags are set, because the tee has to strip exactly what they add.
 	InstallLogCapture(logSinks)
 
-	textureNames = ScanTextures(filepath.Join(fileutil.ExecutablePath, "textures"))
-	log.Printf("scanned %d textures", len(textureNames))
+	gfx.TextureNames = gfx.ScanTextures(filepath.Join(fileutil.ExecutablePath, "textures"))
+	log.Printf("scanned %d textures", len(gfx.TextureNames))
 
 	// Merge the user's saved detail presets in over the compiled-in ones.
 	LoadDetailPresets()
@@ -115,7 +116,7 @@ func main() {
 	platform.WinHalfWidth = platform.WinWidth / 2
 	platform.WinHalfHeight = platform.WinHeight / 2
 	if MainWindowID, err = platform.Window.GetID(); err != nil {
-		log.Fatalf("platform.Window.GetID: %v", err)
+		log.Fatalf("Window.GetID: %v", err)
 	}
 
 	if err = gl.Init(); err != nil {
@@ -137,7 +138,7 @@ func main() {
 	// before the first texture upload — LoadTexture reads it at upload time.
 	// See texture_filter.go for why mipmapping is the half of anti-aliasing
 	// MSAA above can't do.
-	InitTextureFiltering()
+	gfx.InitTextureFiltering()
 
 	gl.Enable(gl.DEPTH_TEST)
 	gl.ClearColor(0.2, 0.2, 0.3, 1.0)
@@ -147,8 +148,8 @@ func main() {
 
 	// [SCENARIO 4] Check that shader files actually exist on disk before
 	// attempting to load them — catches stale/missing dist files immediately.
-	vShaderFull := filepath.Join(fileutil.ExecutablePath, vertexShaderPath)
-	fShaderFull := filepath.Join(fileutil.ExecutablePath, fragmentShaderPath)
+	vShaderFull := filepath.Join(fileutil.ExecutablePath, gfx.VertexShaderPath)
+	fShaderFull := filepath.Join(fileutil.ExecutablePath, gfx.FragmentShaderPath)
 	for _, p := range []string{vShaderFull, fShaderFull} {
 		if info, serr := os.Stat(p); serr != nil {
 			log.Printf("MISSING shader file: %s (%v)", p, serr)
@@ -160,11 +161,11 @@ func main() {
 	// [SCENARIO 1] Shader compilation / linking errors are returned here; a
 	// failure causes an immediate fatal log so the reason is preserved in the
 	// log file before the process exits.
-	if err := LoadProgram(vShaderFull, fShaderFull); err != nil {
+	if err := gfx.LoadProgram(vShaderFull, fShaderFull); err != nil {
 		log.Fatalf("LoadProgram: %v", err)
 	}
-	log.Printf("shader program linked OK (id=%d)", Program)
-	gl.UseProgram(Program)
+	log.Printf("shader program linked OK (id=%d)", gfx.Program)
+	gl.UseProgram(gfx.Program)
 
 	// Initialize shadow mapping pipeline (depth-only shaders + FBOs).
 	svShaderFull := filepath.Join(fileutil.ExecutablePath, shadowVertShaderPath)
@@ -175,32 +176,32 @@ func main() {
 		log.Fatalf("InitShadows: %v", err)
 	}
 
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	ProjectionUniform = gl.GetUniformLocation(Program, gl.Str("projection\x00"))
-	gl.UniformMatrix4fv(ProjectionUniform, 1, false, &Projection[0])
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.ProjectionUniform = gl.GetUniformLocation(gfx.Program, gl.Str("projection\x00"))
+	gl.UniformMatrix4fv(gfx.ProjectionUniform, 1, false, &gfx.Projection[0])
 
-	AlphaUniform = gl.GetUniformLocation(Program, gl.Str("alpha\x00"))
-	gl.Uniform1f(AlphaUniform, 1.0) // default: fully opaque
+	gfx.AlphaUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alpha\x00"))
+	gl.Uniform1f(gfx.AlphaUniform, 1.0) // default: fully opaque
 
-	SmoothUniform = gl.GetUniformLocation(Program, gl.Str("smoothShading\x00"))
-	gl.Uniform1i(SmoothUniform, 0) // default: flat facet normals
+	gfx.SmoothUniform = gl.GetUniformLocation(gfx.Program, gl.Str("smoothShading\x00"))
+	gl.Uniform1i(gfx.SmoothUniform, 0) // default: flat facet normals
 
-	AlphaSharpenUniform = gl.GetUniformLocation(Program, gl.Str("alphaSharpen\x00"))
-	gl.Uniform1i(AlphaSharpenUniform, 0) // default: off; the opaque pass turns it on
+	gfx.AlphaSharpenUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alphaSharpen\x00"))
+	gl.Uniform1i(gfx.AlphaSharpenUniform, 0) // default: off; the opaque pass turns it on
 
-	TimeUniform = gl.GetUniformLocation(Program, gl.Str("time\x00"))
-	CamPosUniform = gl.GetUniformLocation(Program, gl.Str("camPos\x00"))
-	IsWaterUniform = gl.GetUniformLocation(Program, gl.Str("isWater\x00"))
-	WaveAmplitudeUniform = gl.GetUniformLocation(Program, gl.Str("waveAmplitude\x00"))
-	WaveLengthUniform = gl.GetUniformLocation(Program, gl.Str("waveLength\x00"))
-	WaveSpeedUniform = gl.GetUniformLocation(Program, gl.Str("waveSpeed\x00"))
-	ReflectivityUniform = gl.GetUniformLocation(Program, gl.Str("reflectivity\x00"))
-	ReflectColorUniform = gl.GetUniformLocation(Program, gl.Str("reflectColor\x00"))
-	gl.Uniform1i(IsWaterUniform, 0)
+	gfx.TimeUniform = gl.GetUniformLocation(gfx.Program, gl.Str("time\x00"))
+	gfx.CamPosUniform = gl.GetUniformLocation(gfx.Program, gl.Str("camPos\x00"))
+	gfx.IsWaterUniform = gl.GetUniformLocation(gfx.Program, gl.Str("isWater\x00"))
+	gfx.WaveAmplitudeUniform = gl.GetUniformLocation(gfx.Program, gl.Str("waveAmplitude\x00"))
+	gfx.WaveLengthUniform = gl.GetUniformLocation(gfx.Program, gl.Str("waveLength\x00"))
+	gfx.WaveSpeedUniform = gl.GetUniformLocation(gfx.Program, gl.Str("waveSpeed\x00"))
+	gfx.ReflectivityUniform = gl.GetUniformLocation(gfx.Program, gl.Str("reflectivity\x00"))
+	gfx.ReflectColorUniform = gl.GetUniformLocation(gfx.Program, gl.Str("reflectColor\x00"))
+	gl.Uniform1i(gfx.IsWaterUniform, 0)
 
 	// Default camera position; overridden by the level's spawn point when it
 	// has one.
-	LoadCamera(mgl32.Vec3{0, eyeHeight, 3}, 0.0, float32(math.Pi/2.0))
+	gfx.LoadCamera(mgl32.Vec3{0, eyeHeight, 3}, 0.0, float32(math.Pi/2.0))
 
 	// Start with a blank in-memory level rather than loading one from disk;
 	// the user can save it (or open an existing level) from the editor.
@@ -215,7 +216,7 @@ func main() {
 		len(level.Chunks),
 		len(level.Lights.Directional), len(level.Lights.Points))
 
-	gl.BindFragDataLocation(Program, 0, gl.Str("outputColor\x00"))
+	gl.BindFragDataLocation(gfx.Program, 0, gl.Str("outputColor\x00"))
 
 	// [SCENARIO 5] UploadLights logs any uniform that the shader doesn't expose
 	// (-1 location) so mismatches between Go-side light data and shader uniforms
@@ -225,10 +226,10 @@ func main() {
 	// The player is created by the engine, not authored into the level — see
 	// NewPlayer (entity.go). It carries the camera and is what collision is
 	// resolved for; nothing draws it, since the view is from inside its head.
-	PlayerEntity = NewPlayer(Cam.Position.Sub(mgl32.Vec3{0, eyeHeight, 0}))
-	Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
-	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+	PlayerEntity = NewPlayer(gfx.Cam.Position.Sub(mgl32.Vec3{0, eyeHeight, 0}))
+	gfx.Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
+	gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
 
 	// A spawn point in the level overrides that starting position, so a level
 	// loaded straight into gameplay starts where the editor says it should.
@@ -294,7 +295,7 @@ func main() {
 
 		platform.KeyStates = sdl.GetKeyboardState()
 
-		// geom.Point the F1 reference at the focused window before anything draws.
+		// Point the F1 reference at the focused window before anything draws.
 		KeybindHelpUpdateFocus(MainWindowID)
 
 		if Editor.Active {
@@ -302,12 +303,12 @@ func main() {
 			EditorTick(platform.KeyStates)
 		} else {
 			// --- Input: let HandleInput update Cam.Position normally ---
-			preMovePos := Cam.Position
-			HandleInput(platform.KeyStates)
+			preMovePos := gfx.Cam.Position
+			gfx.HandleInput(platform.KeyStates)
 
 			// --- Player entity update + collision ---
 			if PlayerEntity != nil {
-				delta := Cam.Position.Sub(preMovePos)
+				delta := gfx.Cam.Position.Sub(preMovePos)
 				newPlayerPos := PlayerEntity.Position.Add(delta)
 
 				// Apply pending jump impulse before gravity so the jump
@@ -319,7 +320,7 @@ func main() {
 				}
 
 				// Apply gravity: accelerate downward, clamp to terminal velocity.
-				// Scale by platform.DeltaTime*60 to normalize to 60 FPS baseline.
+				// Scale by DeltaTime*60 to normalize to 60 FPS baseline.
 				dtScale := platform.DeltaTime * 60.0
 				if platform.GravityEnabled {
 					PlayerEntity.Velocity[1] -= platform.GravityAccel * dtScale
@@ -358,9 +359,9 @@ func main() {
 				} else {
 					PlayerEntity.CurrentSector = ""
 				}
-				Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
-				Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
-				gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+				gfx.Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
+				gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
+				gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
 			}
 		}
 
@@ -388,9 +389,9 @@ func main() {
 			// placed on the player above, so put it back where the player now
 			// actually is.
 			if PlayerEntity.Position != playerPosBefore {
-				Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
-				Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
-				gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+				gfx.Cam.Position = PlayerEntity.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
+				gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
+				gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
 			}
 		}
 
@@ -411,7 +412,7 @@ func main() {
 		// Texture editor uploads (painted texels, saves) are queued rather
 		// than applied immediately; drain them now, while the main GL
 		// context is current, so this frame's draw calls already see them.
-		DrainTextureUploads()
+		gfx.DrainTextureUploads()
 
 		// Geometry rebuilds and texture loads the script tick deferred. They
 		// cannot happen inside the tick — reloadSector ends in gl.* calls — so
@@ -428,9 +429,9 @@ func main() {
 
 		// Per-frame water shader inputs: animation clock and the view position
 		// the fresnel/specular terms are measured against.
-		gl.UseProgram(Program)
-		gl.Uniform1f(TimeUniform, float32(now)/1000.0)
-		gl.Uniform3f(CamPosUniform, Cam.Position.X(), Cam.Position.Y(), Cam.Position.Z())
+		gl.UseProgram(gfx.Program)
+		gl.Uniform1f(gfx.TimeUniform, float32(now)/1000.0)
+		gl.Uniform3f(gfx.CamPosUniform, gfx.Cam.Position.X(), gfx.Cam.Position.Y(), gfx.Cam.Position.Z())
 
 		{
 			// Keep every Water-kind biome sector's companion water surface
@@ -445,7 +446,7 @@ func main() {
 			BiomeWindTime = float32(now) / 1000.0
 
 			// --- Shadow pass: render depth from each shadow-casting light ---
-			shadowFrame := RenderShadowPass(level.Lights, &level, Cam.Matrix, Projection)
+			shadowFrame := RenderShadowPass(level.Lights, &level, gfx.Cam.Matrix, gfx.Projection)
 			UploadShadowUniforms(level.Lights, shadowFrame)
 			RenderPointShadowPass(level.Lights, &level)
 			UploadPointShadowUniforms(level.Lights)
@@ -472,11 +473,11 @@ func main() {
 			// off below, before the transparent pass reads alpha as blend
 			// weight again. See antialias.go.
 			SetAlphaToCoverage(true)
-			gl.UseProgram(Program)
-			gl.Uniform1i(AlphaSharpenUniform, 1)
+			gl.UseProgram(gfx.Program)
+			gl.Uniform1i(gfx.AlphaSharpenUniform, 1)
 
 			// Build frustum from current projection × camera matrices
-			projView := Projection.Mul4(Cam.Matrix)
+			projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 			frustum := ExtractFrustum(projView)
 
 			// Draw world geometry: chunks → sectors → floor/ceiling/walls
@@ -488,12 +489,12 @@ func main() {
 
 			// Helper to queue or draw a geometry object based on its alpha.
 			identity := mgl32.Ident4()
-			drawOrQueue := func(g *Geometry, model mgl32.Mat4, doubleSided bool) {
+			drawOrQueue := func(g *gfx.Geometry, model mgl32.Mat4, doubleSided bool) {
 				if g.IsTransparent() {
 					pos := model.Mul4x1(mgl32.Vec4{g.Position.X(), g.Position.Y(), g.Position.Z(), 1})
-					dx := pos.X() - Cam.Position.X()
-					dy := pos.Y() - Cam.Position.Y()
-					dz := pos.Z() - Cam.Position.Z()
+					dx := pos.X() - gfx.Cam.Position.X()
+					dy := pos.Y() - gfx.Cam.Position.Y()
+					dz := pos.Z() - gfx.Cam.Position.Z()
 					transparentDraws = append(transparentDraws, TransparentDraw{
 						Geom:        g,
 						Model:       model,
@@ -530,7 +531,7 @@ func main() {
 				var visibleSectors map[string]bool
 				var connectedSectors map[string]bool
 				if PlayerEntity != nil && chunk.ID == PlayerEntity.CurrentChunk {
-					visibleSectors = PortalVisibleSectors(chunk, PlayerEntity.CurrentSector, Cam.Position)
+					visibleSectors = PortalVisibleSectors(chunk, PlayerEntity.CurrentSector, gfx.Cam.Position)
 					connectedSectors = PortalConnectedSectors(chunk, PlayerEntity.CurrentSector)
 				}
 
@@ -566,7 +567,7 @@ func main() {
 					}
 					for k := range sector.Walls {
 						w := &sector.Walls[k]
-						if w.Visible && (w.DoubleSided || WallFacingCamera(*w, Cam.Position)) {
+						if w.Visible && (w.DoubleSided || WallFacingCamera(*w, gfx.Cam.Position)) {
 							if !w.Detail.HasDisplace() {
 								drawOrQueue(&w.Geometry, identity, w.DoubleSided)
 							}
@@ -578,7 +579,7 @@ func main() {
 					// Draw gap-fill geometry on portals connecting sectors at different heights.
 					for k := range sector.Portals {
 						p := &sector.Portals[k]
-						if p.Visible && p.DrawGap && (p.DoubleSided || PortalFacingCamera(p.StartPoint, p.EndPoint, Cam.Position)) {
+						if p.Visible && p.DrawGap && (p.DoubleSided || PortalFacingCamera(p.StartPoint, p.EndPoint, gfx.Cam.Position)) {
 							drawOrQueue(&p.FloorGap, identity, p.DoubleSided)
 							drawOrQueue(&p.CeilGap, identity, p.DoubleSided)
 						}
@@ -627,7 +628,7 @@ func main() {
 				// --- Procedural biome scatter (GPU grass / rocks) ---
 				// Drawn after opaque geometry but before the transparent pass: blades and
 				// rocks are solid (depth-written) so translucent water still sorts on top.
-				RenderBiomes(&level, projView, Cam.Position, shadowFrame)
+				RenderBiomes(&level, projView, gfx.Cam.Position, shadowFrame)
 
 				// --- Procedural face detail (GPU rock displacement + scatter) ---
 				// Drawn after opaque geometry; reuses the main fragment shader so it
@@ -640,8 +641,8 @@ func main() {
 			// so the editor overlays and ImGui that follow never inherit
 			// either setting on a frame with nothing transparent in it.
 			SetAlphaToCoverage(false)
-			gl.UseProgram(Program)
-			gl.Uniform1i(AlphaSharpenUniform, 0)
+			gl.UseProgram(gfx.Program)
+			gl.Uniform1i(gfx.AlphaSharpenUniform, 0)
 
 			// --- Transparent pass: draw collected transparent geometry back-to-front ---
 			if len(transparentDraws) > 0 {

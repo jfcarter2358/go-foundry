@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -51,7 +52,7 @@ type Wall struct {
 	UVRotation          float32    // UV rotation in radians
 	Detail              DetailSpec // per-face procedural detail (rocks); disabled by default
 	Smooth              bool       // shade from interpolated vertex normals (see smooth.go)
-	SmoothAngle         float32    // crease threshold in degrees; 0 = geom.DefaultSmoothAngle
-	Geometry            Geometry
-	ExtrusionGeometries []Geometry
+	SmoothAngle         float32    // crease threshold in degrees; 0 = DefaultSmoothAngle
+	Geometry            gfx.Geometry
+	ExtrusionGeometries []gfx.Geometry
 }

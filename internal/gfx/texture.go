@@ -1,4 +1,4 @@
-package main
+package gfx
 
 import (
 	"fmt"
@@ -50,7 +50,7 @@ func LoadTexture(name, file string) error {
 	return nil
 }
 
-// ensureTextureLoaded uploads the named texture to the GPU if it isn't
+// EnsureTextureLoaded uploads the named texture to the GPU if it isn't
 // already resident. Level loading (loadRawChunk) walks every referenced
 // texture and loads it up front, but editor operations that build Wall/
 // Floor/Ceiling structs directly (e.g. createChunkAtCamera,
@@ -58,14 +58,14 @@ func LoadTexture(name, file string) error {
 // an unloaded name binds texture 0 (gl.BindTexture(TEXTURE_2D, 0)), which
 // samples as black — the geometry renders, but pure black, regardless of
 // how much light is in the scene.
-func ensureTextureLoaded(name string) error {
+func EnsureTextureLoaded(name string) error {
 	if name == "" {
 		return nil
 	}
 	if _, ok := Textures[name]; ok {
 		return nil
 	}
-	path, ok := textureNames[name]
+	path, ok := TextureNames[name]
 	if !ok {
 		return fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 	}
@@ -159,16 +159,16 @@ func UpdateTextureFromRGBA(name string, img *image.RGBA) error {
 }
 
 // RegisterTexture makes name resolve to <exe>/textures/<name>.png for every
-// consumer that reads through textureNames — textureCombo's dropdown
-// (editor_ui.go) and ensureTextureLoaded both rebuild/resolve from this map
+// consumer that reads through TextureNames — textureCombo's dropdown
+// (editor_ui.go) and EnsureTextureLoaded both rebuild/resolve from this map
 // on every use, so a single insert is all requirement 7 needs.
 func RegisterTexture(name string) {
-	textureNames[name] = fileutil.TexturesDirName + "/" + name + ".png"
+	TextureNames[name] = fileutil.TexturesDirName + "/" + name + ".png"
 }
 
-// textureNames maps logical texture names to paths relative to fileutil.ExecutablePath.
+// TextureNames maps logical texture names to paths relative to ExecutablePath.
 // Populated at startup by ScanTextures.
-var textureNames map[string]string
+var TextureNames map[string]string
 
 // ScanTextures walks dir and returns a map from logical name (filename without
 // extension) to the relative path "textures/<file>".

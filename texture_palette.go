@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"image/color"
 
+	"foundry/internal/gfx"
 	"foundry/internal/texdoc"
 )
 
@@ -69,10 +70,10 @@ func RebuildAllTextures() []error {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
-		RegisterTexture(name)
+		gfx.RegisterTexture(name)
 		flat := d.Flatten()
-		UpdateTextureHasAlpha(name, &d.Pal, flat)
-		QueueTextureUpload(name, rgbaFromPaletted(flat))
+		gfx.UpdateTextureHasAlpha(name, &d.Pal, flat)
+		gfx.QueueTextureUpload(name, rgbaFromPaletted(flat))
 	}
 	return errs
 }

@@ -1,5 +1,7 @@
 package main
 
+import "foundry/internal/gfx"
+
 // editor_model_actions.go — the model editor's selection-scoped operations.
 //
 // Every entry here is "do this to whatever is selected": the panel's buttons
@@ -89,7 +91,7 @@ func modelSetTexture(tex string) {
 	if modelDoc == nil {
 		return
 	}
-	_ = ensureTextureLoaded(tex)
+	_ = gfx.EnsureTextureLoaded(tex)
 	ModelPushUndo()
 	modelDoc.SetTexture(tex)
 	modelSetStatus("Model texture: %s", modelDoc.TextureName())

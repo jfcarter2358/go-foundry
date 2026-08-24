@@ -25,6 +25,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -265,9 +266,9 @@ func RenderBiomeGround(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, fra
 				beginGroundPass(level, projView, frame)
 				started = true
 			}
-			_ = ensureTextureLoaded(entry.texture)
+			_ = gfx.EnsureTextureLoaded(entry.texture)
 			gl.ActiveTexture(gl.TEXTURE0)
-			gl.BindTexture(gl.TEXTURE_2D, Textures[entry.texture])
+			gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[entry.texture])
 			gl.BindVertexArray(entry.vao)
 			gl.DrawArrays(gl.TRIANGLES, 0, entry.verts)
 		}
@@ -276,7 +277,7 @@ func RenderBiomeGround(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, fra
 	if started {
 		gl.BindVertexArray(0)
 		gl.ActiveTexture(gl.TEXTURE0)
-		gl.UseProgram(Program)
+		gl.UseProgram(gfx.Program)
 	}
 }
 

@@ -18,6 +18,8 @@ package main
 // arm colours instead of defining its own.
 
 import (
+	"foundry/internal/gfx"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -76,9 +78,9 @@ func editorOutlineFace(sel faceSel, col mgl32.Vec3) {
 	pts := SectorPoints(ch, s)
 	switch sel.kind {
 	case "floor":
-		editorOutlineSurface(pts, s.Floor.VertexHeight, WorldUp, col)
+		editorOutlineSurface(pts, s.Floor.VertexHeight, gfx.WorldUp, col)
 	case "ceiling":
-		editorOutlineSurface(pts, s.Ceiling.VertexHeight, WorldUp.Mul(-1), col)
+		editorOutlineSurface(pts, s.Ceiling.VertexHeight, gfx.WorldUp.Mul(-1), col)
 	case "wall":
 		if sel.idx >= 0 && sel.idx < len(s.Walls) {
 			w := &s.Walls[sel.idx]
@@ -164,7 +166,7 @@ func editorOutlineWaterSurface(ch *Chunk) {
 		// outline and no height to guess at.
 		return
 	}
-	editorOutlineSurface(bs.Points, func(int) float32 { return y }, WorldUp, modelFaceSelColor)
+	editorOutlineSurface(bs.Points, func(int) float32 { return y }, gfx.WorldUp, modelFaceSelColor)
 }
 
 // editorFaceNormalStub draws the short line out of a face's middle that says

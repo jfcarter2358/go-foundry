@@ -293,7 +293,7 @@ func posedRoll(rest ModelBone, d mgl32.Mat4, head, tail mgl32.Vec3) float32 {
 	x = x.Normalize()
 
 	// The untwisted pair boneBasisAxes would build for this direction, before any
-	// roll: u from geom.PerpAxis, w = u x dir. It writes a roll of r as
+	// roll: u from PerpAxis, w = u x dir. It writes a roll of r as
 	// u*cos(r) - w*sin(r) (right-handed about +Y — see boneBasisAxes), so the
 	// angle back out is an atan2 carrying the same negation.
 	u := geom.PerpAxis(dir)

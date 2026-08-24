@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"os"
 	"runtime"
@@ -111,7 +112,7 @@ func DebugRenderOverlay() {
 		// wherever gameplay left it, so reporting that as "Position" there
 		// would be a stale number next to a live one.
 		if hooks.EditorActive() {
-			c := Cam.Position
+			c := gfx.Cam.Position
 			imgui.Text(fmt.Sprintf("Camera:       %.2f, %.2f, %.2f", c.X(), c.Y(), c.Z()))
 		} else if PlayerEntity != nil {
 			p := PlayerEntity.Position
@@ -119,7 +120,7 @@ func DebugRenderOverlay() {
 		} else {
 			imgui.Text("Position:     N/A")
 		}
-		imgui.Text(fmt.Sprintf("Rotation:     yaw=%.2f  pitch=%.2f", Cam.Yaw, Cam.Pitch))
+		imgui.Text(fmt.Sprintf("Rotation:     yaw=%.2f  pitch=%.2f", gfx.Cam.Yaw, gfx.Cam.Pitch))
 		imgui.Separator()
 
 		if AntiAliasGrantedSamples > 0 {
@@ -132,8 +133,8 @@ func DebugRenderOverlay() {
 		// can't do (see texture_filter.go), and because a driver silently
 		// refusing anisotropy looks exactly like distant ground being blurry
 		// for no reason.
-		if TextureAnisotropy > 1 {
-			imgui.Text(fmt.Sprintf("Texture filter: mipmaps + %.0fx aniso", TextureAnisotropy))
+		if gfx.TextureAnisotropy > 1 {
+			imgui.Text(fmt.Sprintf("Texture filter: mipmaps + %.0fx aniso", gfx.TextureAnisotropy))
 		} else {
 			imgui.Text("Texture filter: mipmaps (anisotropic unavailable)")
 		}

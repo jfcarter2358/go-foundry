@@ -28,7 +28,7 @@ const (
 func (m editorSelMode) String() string {
 	switch m {
 	case editorSelPoint:
-		return "geom.Point"
+		return "Point"
 	case editorSelEdge:
 		return "Edge"
 	default:
@@ -72,7 +72,7 @@ var editorSelModes = []editorSelMode{editorSelPoint, editorSelEdge, editorSelFac
 // editorSetSelMode switches what clicks select, dropping whatever the new mode
 // cannot express.
 //
-// geom.Point and edge share their storage — an edge selection *is* the selection of
+// Point and edge share their storage — an edge selection *is* the selection of
 // its two endpoints (editor_3d_edge_pick.go) — so switching between those two
 // converts the selection for free and deliberately keeps it. Face mode works in
 // a different unit entirely, so the crossing clears in both directions rather

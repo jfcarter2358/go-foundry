@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -204,7 +205,7 @@ func TestApplyEdgeSplitWallHalvesInheritProperties(t *testing.T) {
 		got, want := tc.w, orig
 		// Endpoints and geometry legitimately differ; everything else must not.
 		got.StartPoint, got.EndPoint = want.StartPoint, want.EndPoint
-		got.Geometry, want.Geometry = Geometry{}, Geometry{}
+		got.Geometry, want.Geometry = gfx.Geometry{}, gfx.Geometry{}
 		got.ExtrusionGeometries, want.ExtrusionGeometries = nil, nil
 		if got.Texture != want.Texture || got.Collision != want.Collision ||
 			got.Visible != want.Visible || got.Pinned != want.Pinned ||

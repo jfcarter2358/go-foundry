@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"math"
 	"testing"
@@ -28,10 +29,10 @@ func quadVerts(z, half float32) []float32 {
 // centre pixel, which therefore casts a ray straight down -Z.
 func setupPickCamera() (int32, int32) {
 	platform.WinWidth, platform.WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	Cam.Position = mgl32.Vec3{0, 0, 0}
-	Cam.Direction = mgl32.Vec3{0, 0, -1}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, -1}, mgl32.Vec3{0, 1, 0})
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Cam.Position = mgl32.Vec3{0, 0, 0}
+	gfx.Cam.Direction = mgl32.Vec3{0, 0, -1}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, -1}, mgl32.Vec3{0, 1, 0})
 	return platform.WinWidth / 2, platform.WinHeight / 2
 }
 
@@ -119,8 +120,8 @@ func TestPick3DClosestWins(t *testing.T) {
 // separately, each resolving to its own sector face.
 func TestPick3DFloorAndCeiling(t *testing.T) {
 	platform.WinWidth, platform.WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	Cam.Position = mgl32.Vec3{0, 2, 0}
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Cam.Position = mgl32.Vec3{0, 2, 0}
 
 	sector := Sector{ID: "s0"}
 	sector.Floor.Enabled = true
@@ -148,12 +149,12 @@ func TestPick3DFloorAndCeiling(t *testing.T) {
 
 	mx, my := platform.WinWidth/2, platform.WinHeight/2
 
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(mgl32.Vec3{0, -1, 0}), mgl32.Vec3{0, 0, -1})
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(mgl32.Vec3{0, -1, 0}), mgl32.Vec3{0, 0, -1})
 	if hit := pick3D(mx, my); hit.kind != pickFloor {
 		t.Fatalf("looking down: got kind=%q, want floor", hit.kind)
 	}
 
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(mgl32.Vec3{0, 1, 0}), mgl32.Vec3{0, 0, 1})
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(mgl32.Vec3{0, 1, 0}), mgl32.Vec3{0, 0, 1})
 	if hit := pick3D(mx, my); hit.kind != pickCeiling {
 		t.Fatalf("looking up: got kind=%q, want ceiling", hit.kind)
 	}
@@ -164,9 +165,9 @@ func TestPick3DFloorAndCeiling(t *testing.T) {
 // share chunk point 0, so its floor handle is really two candidates.
 func TestVertexHandleCycling(t *testing.T) {
 	platform.WinWidth, platform.WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	Cam.Position = mgl32.Vec3{0, 1, 6}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Cam.Position = mgl32.Vec3{0, 1, 6}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 
 	mkSector := func(id string) Sector {
 		s := Sector{ID: id, PointIndices: []int{0, 1, 2}}
@@ -188,7 +189,7 @@ func TestVertexHandleCycling(t *testing.T) {
 	clearVertexSelection()
 
 	// Click dead-centre on the shared point's floor handle.
-	projView := Projection.Mul4(Cam.Matrix)
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 	screen, ok := projectToScreen(projView, mgl32.Vec3{0, 0, 0})
 	if !ok {
 		t.Fatal("shared point did not project to the screen")
@@ -244,7 +245,7 @@ func TestVertexHandleCycling(t *testing.T) {
 // no handle, so distant geometry cannot hijack a click.
 func TestVertexHandleRangeLimit(t *testing.T) {
 	platform.WinWidth, platform.WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 
 	sector := Sector{ID: "s0", PointIndices: []int{0}}
 	far := vertexHandleMaxDist * 3
@@ -257,16 +258,16 @@ func TestVertexHandleRangeLimit(t *testing.T) {
 	clearVertexSelection()
 
 	// In range: camera a few units away from the point.
-	Cam.Position = mgl32.Vec3{0, 0, -far + 5}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, -far}, mgl32.Vec3{0, 1, 0})
+	gfx.Cam.Position = mgl32.Vec3{0, 0, -far + 5}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, -far}, mgl32.Vec3{0, 1, 0})
 	mx, my := platform.WinWidth/2, platform.WinHeight/2
 	if _, ok := pickVertexHandle(mx, my); !ok {
 		t.Fatal("vertex within range was not pickable")
 	}
 
 	// Out of range: same screen position, camera far away.
-	Cam.Position = mgl32.Vec3{0, 0, 0}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, -1}, mgl32.Vec3{0, 1, 0})
+	gfx.Cam.Position = mgl32.Vec3{0, 0, 0}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, -1}, mgl32.Vec3{0, 1, 0})
 	if _, ok := pickVertexHandle(mx, my); ok {
 		t.Fatalf("vertex %.0f units away was pickable (limit %.0f)", far, vertexHandleMaxDist)
 	}

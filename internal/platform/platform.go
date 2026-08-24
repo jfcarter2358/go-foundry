@@ -1,6 +1,6 @@
 package platform
 
-// platform.go — the window, the GL context, the keyboard, and the clock.
+// go — the window, the GL context, the keyboard, and the clock.
 //
 // These are the handles that everything above them reaches for and nothing
 // owns: the renderer needs the window size to build a projection, the editor

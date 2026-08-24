@@ -105,6 +105,6 @@ func TestSelModeIsSharedByBothViews(t *testing.T) {
 	editorSetSelMode(editorSelPoint)
 	Editor.Mode = Mode3D
 	if Editor.SelMode != editorSelPoint {
-		t.Errorf("SelMode = %v in the 3D view, want the geom.Point mode set on the map", Editor.SelMode)
+		t.Errorf("SelMode = %v in the 3D view, want the Point mode set on the map", Editor.SelMode)
 	}
 }

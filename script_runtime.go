@@ -28,6 +28,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/gfx"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -694,7 +695,7 @@ func DrainScriptWork(lvl *Level) {
 		return
 	}
 	for name := range rt.dirtyTex {
-		if err := ensureTextureLoaded(name); err != nil {
+		if err := gfx.EnsureTextureLoaded(name); err != nil {
 			ScriptLog.Warnf("", "texture %q: %v", name, err)
 		}
 		delete(rt.dirtyTex, name)
@@ -720,14 +721,14 @@ func DrainScriptWork(lvl *Level) {
 				// Deliberately not InferPortalsAndReload: that renumbers edges,
 				// which would invalidate every address a script holds.
 				if s.Floor.Texture != "" {
-					_ = ensureTextureLoaded(s.Floor.Texture)
+					_ = gfx.EnsureTextureLoaded(s.Floor.Texture)
 				}
 				if s.Ceiling.Texture != "" {
-					_ = ensureTextureLoaded(s.Ceiling.Texture)
+					_ = gfx.EnsureTextureLoaded(s.Ceiling.Texture)
 				}
 				for i := range s.Walls {
 					if s.Walls[i].Texture != "" {
-						_ = ensureTextureLoaded(s.Walls[i].Texture)
+						_ = gfx.EnsureTextureLoaded(s.Walls[i].Texture)
 					}
 				}
 				beforeMin, beforeMax := s.MinBound, s.MaxBound

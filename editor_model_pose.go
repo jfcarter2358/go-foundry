@@ -347,7 +347,7 @@ func modelPoseStepFrame(delta int) {
 }
 
 // modelPoseTick advances playback by one frame's worth of wall time. Called from
-// the editor window's Draw, which is where platform.DeltaTime is in hand.
+// the editor window's Draw, which is where DeltaTime is in hand.
 func modelPoseTick(dt float32) {
 	if !modelPosePlaying || !modelPoseActive() {
 		return

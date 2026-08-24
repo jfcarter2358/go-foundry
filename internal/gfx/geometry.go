@@ -1,4 +1,4 @@
-package main
+package gfx
 
 // geometry.go — Geometry, the core GPU vertex-buffer type shared by walls,
 // floors, ceilings, water surfaces, and extrusions. Split out of wall.go, where
@@ -27,7 +27,7 @@ type Geometry struct {
 	Vertices                   []float32
 	VertexAttribute            uint32
 	Smooth                     bool    // shade from interpolated vertex normals instead of flat facets
-	SmoothAngle                float32 // crease threshold in degrees; 0 = geom.DefaultSmoothAngle
+	SmoothAngle                float32 // crease threshold in degrees; 0 = DefaultSmoothAngle
 	Normals                    []float32
 	NormalAttribute            uint32
 	// Skinning inputs, set before Load on a submesh built from a rigged model:
@@ -55,11 +55,11 @@ type Geometry struct {
 	Nbo          uint32 // normal buffer; 0 when the surface is flat-shaded
 }
 
-// smoothFlag returns the value of the shader's `smoothShading` uniform for this
+// SmoothFlag returns the value of the shader's `smoothShading` uniform for this
 // geometry: 1 only when smoothing is on *and* normals were actually generated,
 // so a surface whose mesh produced none still falls back to the derivative
 // normal rather than shading off an empty attribute.
-func (g *Geometry) smoothFlag() int32 {
+func (g *Geometry) SmoothFlag() int32 {
 	if g.Smooth && len(g.Normals) > 0 {
 		return 1
 	}
@@ -83,14 +83,14 @@ func (g *Geometry) applyWaterUniforms() {
 		g.Water.ReflectColor.X(), g.Water.ReflectColor.Y(), g.Water.ReflectColor.Z())
 }
 
-// geometryUploadsEnabled gates the GPU half of Geometry.Load. It is true in the
+// GeometryUploadsEnabled gates the GPU half of Geometry.Load. It is true in the
 // running engine and always will be; tests turn it off so that editor operations
 // which rebuild geometry as a side effect can be exercised without a window.
 //
 // The split is real rather than a test affordance: the CPU half computes the
 // mesh, its normals and its bounds, all of which non-rendering code legitimately
 // reads. Only the upload needs a context.
-var geometryUploadsEnabled = true
+var GeometryUploadsEnabled = true
 
 // Load uploads vertices (indexed by indices) to the GPU.
 // vertices: slice of [X,Y,Z,U,V] vertex definitions.
@@ -149,7 +149,7 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	// the GPU. Only the second half needs a live GL context, which is what lets
 	// the editor's structural operations — splitting an edge, merging sectors —
 	// be exercised headlessly. See withoutGeometryUploads in the tests.
-	if !geometryUploadsEnabled {
+	if !GeometryUploadsEnabled {
 		return nil
 	}
 
@@ -267,9 +267,9 @@ func (g Geometry) Draw() {
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
-	gl.Uniform1i(SmoothUniform, g.smoothFlag())
+	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	g.applyWaterUniforms()
-	applySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
+	ApplySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
 
 	gl.BindVertexArray(g.Vao)
 
@@ -287,9 +287,9 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
-	gl.Uniform1i(SmoothUniform, g.smoothFlag())
+	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	g.applyWaterUniforms()
-	applySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
+	ApplySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])
@@ -312,7 +312,7 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, 0)
 	gl.Uniform1i(IsWaterUniform, 0)
-	applySkinUniforms(&worldSkinUniforms, Program, nil)
+	ApplySkinUniforms(&worldSkinUniforms, Program, nil)
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])

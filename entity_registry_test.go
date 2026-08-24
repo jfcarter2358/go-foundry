@@ -10,7 +10,7 @@ import (
 // withEntityDefsDir points the registry at a temporary install root holding the
 // given definition files, and restores the real one afterwards.
 //
-// The registry resolves paths against fileutil.ExecutablePath and caches what it reads,
+// The registry resolves paths against ExecutablePath and caches what it reads,
 // so both have to be swapped or a test would either read the real
 // resources/entities/ or be served a definition an earlier test cached.
 func withEntityDefsDir(t *testing.T, files map[string]string) {

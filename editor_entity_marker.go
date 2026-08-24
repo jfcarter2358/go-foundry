@@ -17,17 +17,21 @@ package main
 // nothing to resize. It also means the markers need no loading, no reloading
 // after an undo, and no cleanup when a level is swapped out.
 
-import "github.com/go-gl/mathgl/mgl32"
+import (
+	"foundry/internal/gfx"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
 
 // entityMarkerCages holds one unit cage per BoundingType, built on first use —
 // which has to be inside the frame loop, since uploading needs a live GL
 // context. A zero Geometry has no vertices, so an entry that failed to build
 // simply draws nothing.
-var entityMarkerCages = make([]Geometry, len(boundingTypeNames))
+var entityMarkerCages = make([]gfx.Geometry, len(boundingTypeNames))
 
 // entityMarkerCage returns the unit cage for a bounding kind, building it if
 // this is the first time it has been asked for.
-func entityMarkerCage(kind BoundingType) *Geometry {
+func entityMarkerCage(kind BoundingType) *gfx.Geometry {
 	i := int(kind)
 	if i < 0 || i >= len(entityMarkerCages) {
 		i = int(BoundingAABB)
@@ -36,7 +40,7 @@ func entityMarkerCage(kind BoundingType) *Geometry {
 	if len(g.Vertices) > 0 {
 		return g
 	}
-	if err := ensureTextureLoaded(volumeMarkerTexture); err != nil {
+	if err := gfx.EnsureTextureLoaded(volumeMarkerTexture); err != nil {
 		return g
 	}
 	// Half-extents of 1: the draw matrix carries the entity's real ones, so one

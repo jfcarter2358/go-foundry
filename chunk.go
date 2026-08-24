@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"log"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -147,7 +148,7 @@ func cloneSector(s *Sector, idSuffix string, sectorIDRemap map[string]string) Se
 func cloneWall(w *Wall) Wall {
 	out := *w
 	out.ScriptData = cloneScriptData(w.ScriptData)
-	out.Geometry = Geometry{}
+	out.Geometry = gfx.Geometry{}
 	out.Extrusions = cloneExtrusions(w.Extrusions)
 	out.TerrainPoints = append([]TerrainPoint(nil), w.TerrainPoints...)
 	return out
@@ -156,8 +157,8 @@ func cloneWall(w *Wall) Wall {
 func clonePortal(p *Portal, sectorIDRemap map[string]string) Portal {
 	out := *p
 	out.ScriptData = cloneScriptData(p.ScriptData)
-	out.FloorGap = Geometry{}
-	out.CeilGap = Geometry{}
+	out.FloorGap = gfx.Geometry{}
+	out.CeilGap = gfx.Geometry{}
 	if remapped, ok := sectorIDRemap[p.ToSector]; ok {
 		out.ToSector = remapped
 	}
@@ -167,28 +168,28 @@ func clonePortal(p *Portal, sectorIDRemap map[string]string) Portal {
 func cloneFloor(f *Floor) Floor {
 	out := *f
 	out.ScriptData = cloneScriptData(f.ScriptData)
-	out.Geometry = Geometry{}
+	out.Geometry = gfx.Geometry{}
 	out.VertexOffsets = append([]float32(nil), f.VertexOffsets...)
 	out.Extrusions = cloneExtrusions(f.Extrusions)
 	out.TerrainPoints = append([]TerrainPoint(nil), f.TerrainPoints...)
 	out.CollisionPts = append([]mgl32.Vec2(nil), f.CollisionPts...)
 	out.CollisionDepths = append([]float32(nil), f.CollisionDepths...)
 	out.CollisionTris = append([]int(nil), f.CollisionTris...)
-	out.ExtrusionGeometries = make([]Geometry, len(f.ExtrusionGeometries))
+	out.ExtrusionGeometries = make([]gfx.Geometry, len(f.ExtrusionGeometries))
 	return out
 }
 
 func cloneCeiling(c *Ceiling) Ceiling {
 	out := *c
 	out.ScriptData = cloneScriptData(c.ScriptData)
-	out.Geometry = Geometry{}
+	out.Geometry = gfx.Geometry{}
 	out.VertexOffsets = append([]float32(nil), c.VertexOffsets...)
 	out.Extrusions = cloneExtrusions(c.Extrusions)
 	out.TerrainPoints = append([]TerrainPoint(nil), c.TerrainPoints...)
 	out.CollisionPts = append([]mgl32.Vec2(nil), c.CollisionPts...)
 	out.CollisionDepths = append([]float32(nil), c.CollisionDepths...)
 	out.CollisionTris = append([]int(nil), c.CollisionTris...)
-	out.ExtrusionGeometries = make([]Geometry, len(c.ExtrusionGeometries))
+	out.ExtrusionGeometries = make([]gfx.Geometry, len(c.ExtrusionGeometries))
 	return out
 }
 

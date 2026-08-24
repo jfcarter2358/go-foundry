@@ -19,6 +19,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -158,7 +159,7 @@ func rebuildBiomeWaterSurface(level *Level, s *BiomeSector, w *WaterSurface) {
 	w.Alpha = biomeWaterAlpha
 	w.Water = s.Brush.Water
 	if !w.Water.Enabled {
-		w.Water = DefaultWaterParams()
+		w.Water = gfx.DefaultWaterParams()
 	}
 
 	min, max := s.Bounds()
@@ -167,9 +168,9 @@ func rebuildBiomeWaterSurface(level *Level, s *BiomeSector, w *WaterSurface) {
 	w.BoundHalfZ = (max.Y()-min.Y())/2 + 1
 
 	w.Geometry.Delete()
-	_ = ensureTextureLoaded(biomeWaterTexture)
+	_ = gfx.EnsureTextureLoaded(biomeWaterTexture)
 	if len(verts) == 0 || len(indices) == 0 {
-		w.Geometry = Geometry{}
+		w.Geometry = gfx.Geometry{}
 		return
 	}
 	w.Geometry.Smooth = false

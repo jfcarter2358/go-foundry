@@ -702,7 +702,7 @@ func Surface2DPanel() {
 				if idx >= 0 && idx < len(*tPts) {
 					tp := &(*tPts)[idx]
 					imgui.PushID(fmt.Sprintf("surftp%d", idx))
-					imgui.Text(fmt.Sprintf("geom.Point #%d", idx))
+					imgui.Text(fmt.Sprintf("Point #%d", idx))
 					changed = editorDragFloat("U##stpu", &tp.U, 0, 0, "%.3f") || changed
 					changed = editorDragFloat("V##stpv", &tp.V, 0, 0, "%.3f") || changed
 					changed = editorDragFloat("Depth##stpd", &tp.Depth, -10, 10, "%.3f") || changed

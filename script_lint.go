@@ -34,6 +34,7 @@ import (
 	"strings"
 
 	"foundry/internal/flang"
+	"foundry/internal/gfx"
 )
 
 // ScriptIssue is one thing a script asks for that the level cannot deliver.
@@ -399,10 +400,10 @@ func (l *linter) setTexture(c *flang.CallExpr) {
 // texture list is empty, which means it was never scanned — in a test, or before
 // startup finished — rather than that the folder is empty.
 func (l *linter) textureExists(name string, pos flang.Pos) {
-	if len(textureNames) == 0 || name == "" {
+	if len(gfx.TextureNames) == 0 || name == "" {
 		return
 	}
-	if _, ok := textureNames[name]; ok {
+	if _, ok := gfx.TextureNames[name]; ok {
 		return
 	}
 	msg := fmt.Sprintf("there is no texture called %q in textures/", name)
@@ -575,8 +576,8 @@ func (l *linter) entityDefs() []string {
 
 // textureKeys lists the logical texture names, for "did you mean".
 func textureKeys() []string {
-	out := make([]string, 0, len(textureNames))
-	for n := range textureNames {
+	out := make([]string, 0, len(gfx.TextureNames))
+	for n := range gfx.TextureNames {
 		out = append(out, n)
 	}
 	return out

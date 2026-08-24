@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"math"
 	"testing"
 
@@ -168,7 +169,7 @@ func TestDispNormalIsFaceConstant(t *testing.T) {
 		t.Fatalf("test quad is planar (%v vs %v); it cannot exercise the seam", n1, n2)
 	}
 
-	geo := &Geometry{Vertices: verts}
+	geo := &gfx.Geometry{Vertices: verts}
 	n := dispNormalFor(geo)
 	if math.Abs(float64(n.Len()-1)) > 1e-4 {
 		t.Fatalf("dispNormal must be unit length, got %v (len %.4f)", n, n.Len())

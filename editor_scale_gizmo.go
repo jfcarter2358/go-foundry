@@ -15,6 +15,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
@@ -53,7 +54,7 @@ func pickScaleHandle(mx, my int32) int {
 	if !ok {
 		return -1
 	}
-	projView := Projection.Mul4(Cam.Matrix)
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 	originScreen, ok := projectToScreen(projView, origin)
 	if !ok {
 		return -1
@@ -89,7 +90,7 @@ func pickScaleHandle(mx, my int32) int {
 // origin on screen, since no single world axis describes that drag.
 func scaleReference(mx, my int32, origin mgl32.Vec3, handle int) (float32, bool) {
 	if handle == modelScaleUniformAxis {
-		originScreen, ok := projectToScreen(Projection.Mul4(Cam.Matrix), origin)
+		originScreen, ok := projectToScreen(gfx.Projection.Mul4(gfx.Cam.Matrix), origin)
 		if !ok {
 			return 0, false
 		}

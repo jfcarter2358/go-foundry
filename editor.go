@@ -8,12 +8,13 @@ package main
 //
 // Mode2D — the top-down sector map — is no longer one of the main window's
 // views. It lives in a window of its own (editor_2d_window.go), opened from
-// the toolbar's "2D platform.Window" button, and is only ever the current mode inside
+// the toolbar's "2D Window" button, and is only ever the current mode inside
 // that window's withEditor2DMode brackets.
 //
 // The editor owns all input while active; normal gameplay logic is bypassed.
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
 	"math"
@@ -266,7 +267,7 @@ type EditorState struct {
 	// joining them.
 	ShowPointSelectRadius bool
 
-	// geom.Point connection state for ctrl+click workflow
+	// Point connection state for ctrl+click workflow
 	PendingEdges [][2]int // edges not yet part of a sector (chunk point indices)
 
 	// Navigation button state (reset each frame after applying)
@@ -468,15 +469,15 @@ func EditorToggle() {
 		// level with no spawn marker falls back to restoring wherever the
 		// camera was before the editor was opened.
 		if !ApplySpawnPoint(Editor.level) {
-			Cam.Position = Editor.SavedCamPos
-			Cam.Yaw = Editor.SavedCamYaw
-			Cam.Pitch = Editor.SavedCamPitch
-			updateCamDirection()
-			updateCamMatrix()
+			gfx.Cam.Position = Editor.SavedCamPos
+			gfx.Cam.Yaw = Editor.SavedCamYaw
+			gfx.Cam.Pitch = Editor.SavedCamPitch
+			gfx.UpdateCamDirection()
+			gfx.UpdateCamMatrix()
 		}
 
 		// Re-enable mouse lock for gameplay
-		SetMouseLock(true)
+		gfx.SetMouseLock(true)
 
 		// The pop-out only makes sense while the editor is up.
 		CloseEditor2DWindow()
@@ -491,12 +492,12 @@ func EditorToggle() {
 		Editor.Mode = ModeGame
 	} else {
 		// Save gameplay camera
-		Editor.SavedCamPos = Cam.Position
-		Editor.SavedCamYaw = Cam.Yaw
-		Editor.SavedCamPitch = Cam.Pitch
+		Editor.SavedCamPos = gfx.Cam.Position
+		Editor.SavedCamYaw = gfx.Cam.Yaw
+		Editor.SavedCamPitch = gfx.Cam.Pitch
 
 		// Release mouse for ImGui
-		SetMouseLock(false)
+		gfx.SetMouseLock(false)
 
 		// Enter 3D fly mode (gravity off)
 		// Put the level back if a script wrote to it, then drop everything the
@@ -515,7 +516,7 @@ func EditorToggle() {
 
 		Editor.Active = true
 		Editor.Mode = Mode3D
-		Editor.Pan2D = mgl32.Vec2{Cam.Position.X(), Cam.Position.Z()}
+		Editor.Pan2D = mgl32.Vec2{gfx.Cam.Position.X(), gfx.Cam.Position.Z()}
 		// Re-derive the orbit pivot from where the player left the camera, so
 		// an orbit carried over from the last editing session does not yank the
 		// view back to somewhere they have since walked away from.
@@ -709,7 +710,7 @@ func EditorHandleEvent(event sdl.Event) bool {
 			}
 			Editor.LastDragX = t.X
 			Editor.LastDragY = t.Y
-		} else if Editor.Mode == Mode3D && Cam.MouseLock {
+		} else if Editor.Mode == Mode3D && gfx.Cam.MouseLock {
 			// 3D fly: handled by existing HandleEvent (mouse look)
 		}
 
@@ -759,7 +760,7 @@ func EditorTick(keyStates []uint8) {
 			editorOrbitKeys(keyStates)
 		} else {
 			// Free-fly using existing HandleInput (gravity is already off)
-			HandleInput(keyStates)
+			gfx.HandleInput(keyStates)
 		}
 
 		// Apply navigation button movement
@@ -784,8 +785,8 @@ func EditorTick(keyStates []uint8) {
 			editorNavMove(Editor.Mode, 0, -navSpeed, 0)
 		}
 		if Editor.NavForward || Editor.NavBack || Editor.NavLeft || Editor.NavRight || Editor.NavUp || Editor.NavDown {
-			Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), mgl32.Vec3{0, 1, 0})
-			gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+			gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), mgl32.Vec3{0, 1, 0})
+			gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
 		}
 		Editor.NavForward = false
 		Editor.NavBack = false
@@ -809,7 +810,7 @@ func EditorRender() {
 
 	// --- 3D gizmos (drawn on top of world, depth-tested) ---
 	if Editor.Mode == Mode3D {
-		projView := Projection.Mul4(Cam.Matrix)
+		projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 		Editor3DRenderGizmos(projView)
 		GizmoFlush(projView)
 	}

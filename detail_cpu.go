@@ -17,6 +17,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -220,7 +221,7 @@ func detailSurfaceAt(fl *Floor, wx, wz, baseHeight float32) (height float32, nor
 // dispNormalFor is the unit normal the whole face displaces along: the average
 // plane normal, falling back to the geometry's own normal (then world up) for
 // degenerate faces where computeFaceBasis finds no area.
-func dispNormalFor(g *Geometry) mgl32.Vec3 {
+func dispNormalFor(g *gfx.Geometry) mgl32.Vec3 {
 	if b := faceBasisFor(g); b.ok {
 		return b.n
 	}
@@ -273,7 +274,7 @@ func dispNormalEps(d *DetailSpec) float32 {
 // boundaryEdgesFor returns the face's outer boundary edges (world space),
 // caching by a fingerprint of the vertex data so it only recomputes when the
 // geometry actually changes.
-func boundaryEdgesFor(g *Geometry) [][2]mgl32.Vec3 {
+func boundaryEdgesFor(g *gfx.Geometry) [][2]mgl32.Vec3 {
 	fp := geomFingerprint(g.Vertices)
 	if e, ok := detailBoundaryCache[g]; ok && e.fp == fp {
 		return e.edges
@@ -351,12 +352,12 @@ func computeBoundaryEdges(verts []float32) [][2]mgl32.Vec3 {
 	return out
 }
 
-var detailBoundaryCache = map[*Geometry]boundaryEntry{}
+var detailBoundaryCache = map[*gfx.Geometry]boundaryEntry{}
 
 // faceBasisFor returns the face's plane basis, caching by a fingerprint of the
 // vertex data so it only recomputes when the geometry actually changes. Both the
 // displacement and the scatter pass go through here, so they share one plane.
-func faceBasisFor(g *Geometry) faceBasis {
+func faceBasisFor(g *gfx.Geometry) faceBasis {
 	fp := geomFingerprint(g.Vertices)
 	if e, ok := detailBasisCache[g]; ok && e.fp == fp {
 		return e.basis
@@ -421,7 +422,7 @@ func computeFaceBasis(verts []float32) faceBasis {
 	return faceBasis{origin: origin, u: u, v: v, n: n, uMax: uMax - uMin, vMax: vMax - vMin, ok: true}
 }
 
-var detailBasisCache = map[*Geometry]basisEntry{}
+var detailBasisCache = map[*gfx.Geometry]basisEntry{}
 
 type faceBasis struct {
 	origin     mgl32.Vec3

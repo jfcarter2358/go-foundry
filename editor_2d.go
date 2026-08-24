@@ -20,6 +20,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"log"
 	"math"
 
@@ -374,7 +375,7 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 	// points, then Join them (editor_2d_join.go) — which frees the modifier and
 	// lets a half-picked outline be looked at before it is committed to.
 
-	// geom.Point and edge mode own their click outright, exactly as in the 3D
+	// Point and edge mode own their click outright, exactly as in the 3D
 	// viewport: hitting nothing there clears the selection rather than falling
 	// through to the sector behind, which is what makes the modes predictable.
 	switch Editor.SelMode {
@@ -719,9 +720,9 @@ func splitWall(w Wall, newPt mgl32.Vec2, t float32) (first, second Wall) {
 	first = w
 	second = w
 	// Geometry holds live GL handles; both halves get fresh ones from Load.
-	first.Geometry = Geometry{}
+	first.Geometry = gfx.Geometry{}
 	first.ExtrusionGeometries = nil
-	second.Geometry = Geometry{}
+	second.Geometry = gfx.Geometry{}
 	second.ExtrusionGeometries = nil
 
 	first.EndPoint = newPt
@@ -740,10 +741,10 @@ func splitWall(w Wall, newPt mgl32.Vec2, t float32) (first, second Wall) {
 func splitPortal(p Portal, newPt mgl32.Vec2) (first, second Portal) {
 	first = p
 	second = p
-	first.FloorGap = Geometry{}
-	first.CeilGap = Geometry{}
-	second.FloorGap = Geometry{}
-	second.CeilGap = Geometry{}
+	first.FloorGap = gfx.Geometry{}
+	first.CeilGap = gfx.Geometry{}
+	second.FloorGap = gfx.Geometry{}
+	second.CeilGap = gfx.Geometry{}
 
 	first.EndPoint = newPt
 	second.StartPoint = newPt
@@ -1294,8 +1295,8 @@ func createSectorFromPolygon(ch *Chunk, polyIndices []int) {
 	// Wall/Floor/Ceiling.Alpha and DoubleSided have no zero-value-safe default
 	// like the YAML loader's float32Default/boolDefault helpers apply, so an
 	// unset Alpha here means fully transparent (invisible), not opaque.
-	_ = ensureTextureLoaded(floorTex)
-	_ = ensureTextureLoaded(ceilTex)
+	_ = gfx.EnsureTextureLoaded(floorTex)
+	_ = gfx.EnsureTextureLoaded(ceilTex)
 
 	sector := Sector{
 		ID:           uniqueSectorID(ch, fmt.Sprintf("sector_%d", len(ch.Sectors))),

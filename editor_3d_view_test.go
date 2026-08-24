@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -11,7 +12,7 @@ import (
 // z = -5, spanning ±2 in X and Y. The camera set up by setupPickCamera looks
 // straight down -Z through the middle of it.
 func occluderLevel() *Level {
-	wall := Wall{Visible: true, Geometry: Geometry{Vertices: quadVerts(-5, 2)}}
+	wall := Wall{Visible: true, Geometry: gfx.Geometry{Vertices: quadVerts(-5, 2)}}
 	return &Level{Chunks: []Chunk{{
 		ID:       "c0",
 		MinBound: mgl32.Vec3{-3, -5, -11},
@@ -115,7 +116,7 @@ func TestEdgeVisibleWhenEitherEndIs(t *testing.T) {
 
 // ---------- selection modes ----------
 
-// geom.Point and edge are two views of the same vertices, so switching between them
+// Point and edge are two views of the same vertices, so switching between them
 // keeps the selection; face works in another unit, so crossing to it clears.
 func TestSelModeSwitchCarriesPointsButNotFaces(t *testing.T) {
 	defer saveEditorSelection()()
@@ -204,7 +205,7 @@ func TestFaceModeSelectsTheWall(t *testing.T) {
 	}
 }
 
-// geom.Point and edge mode own their click outright: nothing under the cursor means
+// Point and edge mode own their click outright: nothing under the cursor means
 // nothing selected, rather than falling through to the face behind. Without
 // that, aiming at a corner and missing would silently select the wall.
 func TestPointModeMissDoesNotFallThroughToTheFace(t *testing.T) {
@@ -246,7 +247,7 @@ func waterLevel() *Level {
 		ID:       "lake",
 		ChunkID:  ch.ID,
 		Position: mgl32.Vec3{0, 0, -4},
-		Geometry: Geometry{Vertices: quadVerts(0, 2)},
+		Geometry: gfx.Geometry{Vertices: quadVerts(0, 2)},
 	}}
 	return lvl
 }

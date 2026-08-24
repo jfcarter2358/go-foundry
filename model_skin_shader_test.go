@@ -10,19 +10,20 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"strings"
 	"testing"
 )
 
-// TestSkinShaderMatchesGoBoneLimit pins MAX_BONES against maxSkinBones. They are
+// TestSkinShaderMatchesGoBoneLimit pins MAX_BONES against MaxSkinBones. They are
 // duplicated by necessity — one in GLSL, one in Go — and the Go side is what
 // refuses an oversized armature at load, so a shader with the smaller number
 // would let a model through and then bind past the end of its palette.
 func TestSkinShaderMatchesGoBoneLimit(t *testing.T) {
 	src := readBiomeShader(t, "skin_common.glsl")
-	want := fmt.Sprintf("#define MAX_BONES %d", maxSkinBones)
+	want := fmt.Sprintf("#define MAX_BONES %d", gfx.MaxSkinBones)
 	if !strings.Contains(src, want) {
-		t.Errorf("skin_common.glsl is out of step with maxSkinBones=%d (looking for %q)", maxSkinBones, want)
+		t.Errorf("skin_common.glsl is out of step with MaxSkinBones=%d (looking for %q)", gfx.MaxSkinBones, want)
 	}
 }
 

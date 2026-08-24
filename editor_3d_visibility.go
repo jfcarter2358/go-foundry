@@ -26,6 +26,8 @@ package main
 //     just ask without coordinating.
 
 import (
+	"foundry/internal/gfx"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -66,7 +68,7 @@ func editorVisReset() {
 	} else {
 		clear(editorVis.cache)
 	}
-	editorVis.eye = Cam.Position
+	editorVis.eye = gfx.Cam.Position
 	editorVis.wire = Editor.Wireframe
 	editorVis.ready = true
 	editorVis.budget = editorVisRayBudget
@@ -78,7 +80,7 @@ func editorVertexVisible(sel vertexSel, pos mgl32.Vec3) bool {
 	if Editor.Wireframe {
 		return true
 	}
-	if !editorVis.ready || editorVis.eye != Cam.Position || editorVis.wire != Editor.Wireframe {
+	if !editorVis.ready || editorVis.eye != gfx.Cam.Position || editorVis.wire != Editor.Wireframe {
 		editorVisReset()
 	}
 	if v, ok := editorVis.cache[sel]; ok {
@@ -88,7 +90,7 @@ func editorVertexVisible(sel vertexSel, pos mgl32.Vec3) bool {
 		return true
 	}
 	editorVis.budget--
-	v := !editorPointOccluded(Cam.Position, pos)
+	v := !editorPointOccluded(gfx.Cam.Position, pos)
 	editorVis.cache[sel] = v
 	return v
 }
@@ -215,7 +217,7 @@ func geometryBlocks(origin, dir mgl32.Vec3, limit float32, verts []float32) bool
 }
 
 // geometriesBlock is geometryBlocks across a slice (a surface's extrusions).
-func geometriesBlock(origin, dir mgl32.Vec3, limit float32, geoms []Geometry) bool {
+func geometriesBlock(origin, dir mgl32.Vec3, limit float32, geoms []gfx.Geometry) bool {
 	for i := range geoms {
 		if geometryBlocks(origin, dir, limit, geoms[i].Vertices) {
 			return true

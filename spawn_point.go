@@ -18,6 +18,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"math"
 
@@ -42,7 +43,7 @@ var spawnArrowForward = mgl32.Vec3{1, 0, 0}
 type SpawnPoint struct {
 	Position mgl32.Vec3
 	Rotation mgl32.Vec3 // Euler angles (X, Y, Z) in radians
-	Geometry Geometry
+	Geometry gfx.Geometry
 }
 
 // ModelMatrix builds the marker's model matrix, composed in the same Y*X*Z
@@ -57,7 +58,7 @@ func (s *SpawnPoint) ModelMatrix() mgl32.Mat4 {
 func (s *SpawnPoint) Load() error {
 	s.Geometry.Delete()
 	verts, idx := generateSpawnArrow()
-	if err := ensureTextureLoaded(spawnMarkerTexture); err != nil {
+	if err := gfx.EnsureTextureLoaded(spawnMarkerTexture); err != nil {
 		return err
 	}
 	return s.Geometry.Load(verts, idx, spawnMarkerTexture, s.Position)
@@ -106,11 +107,11 @@ func SpawnYawPitch(s *SpawnPoint) (yaw, pitch float32) {
 	d := SpawnDirection(s)
 	yaw = float32(math.Atan2(float64(d.Z()), float64(d.X())))
 	pitch = float32(math.Asin(float64(geom.ClampValue(d.Y(), -1, 1))))
-	if pitch > maxPitch {
-		pitch = maxPitch
+	if pitch > gfx.MaxPitch {
+		pitch = gfx.MaxPitch
 	}
-	if pitch < -maxPitch {
-		pitch = -maxPitch
+	if pitch < -gfx.MaxPitch {
+		pitch = -gfx.MaxPitch
 	}
 	return yaw, pitch
 }
@@ -132,10 +133,10 @@ func ApplySpawnPoint(lvl *Level) bool {
 		return false
 	}
 
-	Cam.Yaw, Cam.Pitch = SpawnYawPitch(s)
-	Cam.Position = s.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
-	updateCamDirection()
-	updateCamMatrix()
+	gfx.Cam.Yaw, gfx.Cam.Pitch = SpawnYawPitch(s)
+	gfx.Cam.Position = s.Position.Add(mgl32.Vec3{0, eyeHeight, 0})
+	gfx.UpdateCamDirection()
+	gfx.UpdateCamMatrix()
 
 	if PlayerEntity != nil {
 		PlayerEntity.Position = s.Position

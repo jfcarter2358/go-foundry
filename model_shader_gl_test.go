@@ -15,6 +15,7 @@ package main
 
 import (
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"os"
 	"runtime"
 	"testing"
@@ -58,7 +59,7 @@ func glTestContext(t *testing.T) {
 func TestModelShadersCompile(t *testing.T) {
 	glTestContext(t)
 
-	prog, err := compileProgramFromFiles(
+	prog, err := gfx.CompileProgramFromFiles(
 		"resources/shaders/model_vert.glsl",
 		"resources/shaders/model_frag.glsl",
 	)
@@ -66,7 +67,7 @@ func TestModelShadersCompile(t *testing.T) {
 		t.Fatalf("model editor shaders failed to build: %v", err)
 	}
 	if prog == 0 {
-		t.Fatal("compileProgramFromFiles returned program 0")
+		t.Fatal("CompileProgramFromFiles returned program 0")
 	}
 
 	// Every uniform the renderer sets must exist, or drawModelMesh would be
@@ -102,21 +103,21 @@ func TestSkinnedShadersCompileAndLink(t *testing.T) {
 	fileutil.ExecutablePath = "resources"
 	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
 
-	if _, err := skinCommonSource(); err != nil {
+	if _, err := gfx.SkinCommonSource(); err != nil {
 		t.Fatalf("skin_common.glsl did not load: %v", err)
 	}
 
 	// The colour pass, through the real loader.
-	if err := LoadProgram("resources/shaders/vertex.glsl", "resources/shaders/fragment.glsl"); err != nil {
+	if err := gfx.LoadProgram("resources/shaders/vertex.glsl", "resources/shaders/fragment.glsl"); err != nil {
 		t.Fatalf("world program with skinning failed to build: %v", err)
 	}
 	for _, name := range []string{"skinned", "bones"} {
-		if loc := gl.GetUniformLocation(Program, gl.Str(name+"\x00")); loc < 0 {
-			t.Errorf("uniform %q missing from the world program; applySkinUniforms would write to -1", name)
+		if loc := gl.GetUniformLocation(gfx.Program, gl.Str(name+"\x00")); loc < 0 {
+			t.Errorf("uniform %q missing from the world program; ApplySkinUniforms would write to -1", name)
 		}
 	}
 	for name, want := range map[string]int32{"vert": 0, "vertTexCoord": 1, "vertNormal": 2, "boneIdx": 3, "boneWt": 4} {
-		if got := gl.GetAttribLocation(Program, gl.Str(name+"\x00")); got != want {
+		if got := gl.GetAttribLocation(gfx.Program, gl.Str(name+"\x00")); got != want {
 			t.Errorf("attribute %q at location %d, want %d", name, got, want)
 		}
 	}

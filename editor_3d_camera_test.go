@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"math"
 	"testing"
@@ -12,10 +13,10 @@ import (
 // returns a function that puts both back. Every test here drives Cam directly,
 // which the rest of the suite also reads.
 func saveEditorCam() func() {
-	cam := Cam
+	cam := gfx.Cam
 	orbit := editorCam3D
 	return func() {
-		Cam = cam
+		gfx.Cam = cam
 		editorCam3D = orbit
 	}
 }
@@ -23,10 +24,10 @@ func saveEditorCam() func() {
 // setupEditorCam puts the camera somewhere with a non-trivial yaw and pitch, so
 // a bug that only works looking down an axis cannot pass.
 func setupEditorCam() {
-	Cam.Position = mgl32.Vec3{3, 2, 7}
-	Cam.Yaw = mgl32.DegToRad(200)
-	Cam.Pitch = mgl32.DegToRad(-15)
-	updateCamDirection()
+	gfx.Cam.Position = mgl32.Vec3{3, 2, 7}
+	gfx.Cam.Yaw = mgl32.DegToRad(200)
+	gfx.Cam.Pitch = mgl32.DegToRad(-15)
+	gfx.UpdateCamDirection()
 	editorCam3D.Fly = true
 	editorCam3D.Dist = 6
 }
@@ -42,20 +43,20 @@ func TestEditorCameraModeSwitchKeepsTheEye(t *testing.T) {
 	defer saveEditorCam()()
 	setupEditorCam()
 
-	start := Cam.Position
-	dir := Cam.Direction
+	start := gfx.Cam.Position
+	dir := gfx.Cam.Direction
 
 	editorSetFlyCam(false)
-	if !nearlyVec(Cam.Position, start, 1e-4) {
-		t.Errorf("switching to orbit moved the eye to %v, want %v", Cam.Position, start)
+	if !nearlyVec(gfx.Cam.Position, start, 1e-4) {
+		t.Errorf("switching to orbit moved the eye to %v, want %v", gfx.Cam.Position, start)
 	}
-	if !nearlyVec(Cam.Direction, dir, 1e-5) {
-		t.Errorf("switching to orbit turned the look to %v, want %v", Cam.Direction, dir)
+	if !nearlyVec(gfx.Cam.Direction, dir, 1e-5) {
+		t.Errorf("switching to orbit turned the look to %v, want %v", gfx.Cam.Direction, dir)
 	}
 
 	editorSetFlyCam(true)
-	if !nearlyVec(Cam.Position, start, 1e-4) {
-		t.Errorf("round trip left the eye at %v, want %v", Cam.Position, start)
+	if !nearlyVec(gfx.Cam.Position, start, 1e-4) {
+		t.Errorf("round trip left the eye at %v, want %v", gfx.Cam.Position, start)
 	}
 }
 
@@ -69,12 +70,12 @@ func TestEditorOrbitEyeLooksAtTheTarget(t *testing.T) {
 	target := editorCam3D.Target
 	for _, d := range []struct{ dx, dy int32 }{{0, 0}, {60, 0}, {0, -40}, {-120, 25}} {
 		editorCamLook(d.dx, d.dy)
-		toTarget := target.Sub(Cam.Position)
+		toTarget := target.Sub(gfx.Cam.Position)
 		if math.Abs(float64(toTarget.Len()-editorCam3D.Dist)) > 1e-3 {
 			t.Errorf("delta %v: eye is %v from the pivot, want %v",
 				d, toTarget.Len(), editorCam3D.Dist)
 		}
-		if !nearlyVec(toTarget.Normalize(), Cam.Direction, 1e-4) {
+		if !nearlyVec(toTarget.Normalize(), gfx.Cam.Direction, 1e-4) {
 			t.Errorf("delta %v: eye does not look at the pivot", d)
 		}
 		if editorCam3D.Target != target {
@@ -88,11 +89,11 @@ func TestFlyLookKeepsTheEyeStill(t *testing.T) {
 	defer saveEditorCam()()
 	setupEditorCam()
 
-	before := Cam.Position
+	before := gfx.Cam.Position
 	editorCamLook(80, -30)
-	if Cam.Position != before {
+	if gfx.Cam.Position != before {
 		t.Errorf("looking around in fly mode moved the eye to %v, want %v",
-			Cam.Position, before)
+			gfx.Cam.Position, before)
 	}
 }
 
@@ -114,15 +115,15 @@ func TestEditorCamZoomPerMode(t *testing.T) {
 
 	editorSetFlyCam(true)
 	platform.DeltaTime = 1.0 / 60
-	before := Cam.Position
+	before := gfx.Cam.Position
 	editorCamZoom(1)
-	moved := Cam.Position.Sub(before)
+	moved := gfx.Cam.Position.Sub(before)
 	if moved.Len() < 1e-4 {
 		t.Fatal("wheel up did not dolly the flying eye")
 	}
-	if !nearlyVec(moved.Normalize(), Cam.Direction, 1e-4) {
+	if !nearlyVec(moved.Normalize(), gfx.Cam.Direction, 1e-4) {
 		t.Errorf("dolly went %v, want along the look direction %v",
-			moved.Normalize(), Cam.Direction)
+			moved.Normalize(), gfx.Cam.Direction)
 	}
 }
 
@@ -132,20 +133,20 @@ func TestEditorCamMoveTargetsTheRightThing(t *testing.T) {
 	defer saveEditorCam()()
 	setupEditorCam()
 
-	beforePos := Cam.Position
+	beforePos := gfx.Cam.Position
 	editorCamPan(40, 15)
-	if Cam.Position == beforePos {
+	if gfx.Cam.Position == beforePos {
 		t.Error("panning in fly mode did not move the eye")
 	}
 
 	editorSetFlyCam(false)
-	target, eye := editorCam3D.Target, Cam.Position
+	target, eye := editorCam3D.Target, gfx.Cam.Position
 	editorCamPan(40, 15)
 	if editorCam3D.Target == target {
 		t.Error("panning in orbit mode did not move the pivot")
 	}
 	// The eye is derived, so it must have followed the pivot rigidly.
-	if !nearlyVec(Cam.Position.Sub(eye), editorCam3D.Target.Sub(target), 1e-4) {
+	if !nearlyVec(gfx.Cam.Position.Sub(eye), editorCam3D.Target.Sub(target), 1e-4) {
 		t.Error("the orbit eye did not travel with its pivot")
 	}
 
@@ -154,7 +155,7 @@ func TestEditorCamMoveTargetsTheRightThing(t *testing.T) {
 	if editorCam3D.Target == target {
 		t.Error("WASD in orbit mode did not slide the pivot")
 	}
-	if math.Abs(float64(Cam.Position.Sub(editorCam3D.Target).Len()-editorCam3D.Dist)) > 1e-3 {
+	if math.Abs(float64(gfx.Cam.Position.Sub(editorCam3D.Target).Len()-editorCam3D.Dist)) > 1e-3 {
 		t.Error("sliding the pivot changed the orbit radius")
 	}
 }
@@ -192,7 +193,7 @@ func TestEditorFrameSelectionOrbitsTheSelection(t *testing.T) {
 	if !nearlyVec(editorCam3D.Target, mgl32.Vec3{2, 1.5, 2}, 1e-4) {
 		t.Errorf("pivot = %v, want the chunk centre {2 1.5 2}", editorCam3D.Target)
 	}
-	if !nearlyVec(Cam.Position.Add(Cam.Direction.Mul(editorCam3D.Dist)), editorCam3D.Target, 1e-3) {
+	if !nearlyVec(gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(editorCam3D.Dist)), editorCam3D.Target, 1e-3) {
 		t.Error("framing did not point the eye at the pivot")
 	}
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -159,8 +160,8 @@ func TestFaceNormalStubIsPixelSized(t *testing.T) {
 
 	near := stubFrom(t, outlineOf("floor", -1), mgl32.Vec3{2, 0, 2}).Len()
 
-	Cam.Position = mgl32.Vec3{2, 0, 60}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{2, 0, 2}, mgl32.Vec3{0, 1, 0})
+	gfx.Cam.Position = mgl32.Vec3{2, 0, 60}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{2, 0, 2}, mgl32.Vec3{0, 1, 0})
 	far := stubFrom(t, outlineOf("floor", -1), mgl32.Vec3{2, 0, 2}).Len()
 
 	if far <= near {

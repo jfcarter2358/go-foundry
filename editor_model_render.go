@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"log"
 	"path/filepath"
 
@@ -41,7 +42,7 @@ var modelUniforms struct {
 // modelGeoms is the mesh compiled for the GPU: one Geometry per texture, since
 // Geometry binds a single texture per draw call. Owned by the model editor
 // window's GL context.
-var modelGeoms []Geometry
+var modelGeoms []gfx.Geometry
 
 // modelEditorEnsureProgram compiles the editor shader on first use. Called from
 // the window's Draw, so a GL context is current.
@@ -49,7 +50,7 @@ func modelEditorEnsureProgram() error {
 	if modelProgram != 0 {
 		return nil
 	}
-	p, err := compileProgramFromFiles(
+	p, err := gfx.CompileProgramFromFiles(
 		filepath.Join(fileutil.ExecutablePath, "shaders/model_vert.glsl"),
 		filepath.Join(fileutil.ExecutablePath, "shaders/model_frag.glsl"),
 	)
@@ -85,12 +86,12 @@ func modelEditorRebuild() {
 		if len(sub.Indices) == 0 {
 			continue
 		}
-		if err := ensureTextureLoaded(sub.Texture); err != nil {
+		if err := gfx.EnsureTextureLoaded(sub.Texture); err != nil {
 			// A missing texture is a content problem, not a reason to drop the
 			// geometry — it still draws, just untextured.
 			log.Printf("model editor: texture %q: %v", sub.Texture, err)
 		}
-		g := Geometry{
+		g := gfx.Geometry{
 			Smooth:      sub.Smooth,
 			SmoothAngle: modelDoc.SmoothAngle,
 			Alpha:       1,
@@ -142,10 +143,10 @@ func drawModelMesh(view, proj mgl32.Mat4, camPos mgl32.Vec3) {
 		if len(g.Vertices) == 0 {
 			continue
 		}
-		gl.Uniform1i(modelUniforms.smoothShading, g.smoothFlag())
+		gl.Uniform1i(modelUniforms.smoothShading, g.SmoothFlag())
 		gl.BindVertexArray(g.Vao)
 		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])
+		gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[g.Texture])
 		gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
 	}
 

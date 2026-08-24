@@ -192,12 +192,12 @@ func editor2DJoinMenuItems() []ctxMenuItem {
 
 func editor2DPointMenuItems(ch *Chunk) []ctxMenuItem {
 	nSel := len(editorSelectedChunkPoints())
-	deleteLabel := "Delete geom.Point"
+	deleteLabel := "Delete Point"
 	if nSel > 1 {
 		deleteLabel = fmt.Sprintf("Delete %d Points", nSel)
 	}
 	return []ctxMenuItem{
-		{Label: "Add geom.Point Here", Do: editor2DAddPointAtMenuPoint,
+		{Label: "Add Point Here", Do: editor2DAddPointAtMenuPoint,
 			Tooltip: "Same as shift+click on empty map."},
 		{Label: deleteLabel, Shortcut: "Del", Disabled: !editor2DCanDeletePoints(ch),
 			Do:      editor2DDeleteSelectedPoints,

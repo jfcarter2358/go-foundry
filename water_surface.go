@@ -10,16 +10,18 @@ package main
 // them.
 
 import (
+	"foundry/internal/gfx"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
 // waterParamsFromRaw converts the YAML form, falling back to defaults when the
 // block is absent (sectors painted before these settings existed).
-func waterParamsFromRaw(rw *RawWater) WaterParams {
+func waterParamsFromRaw(rw *RawWater) gfx.WaterParams {
 	if rw == nil {
-		return DefaultWaterParams()
+		return gfx.DefaultWaterParams()
 	}
-	return WaterParams{
+	return gfx.WaterParams{
 		Enabled:       true,
 		WaveAmplitude: rw.WaveAmplitude,
 		WaveLength:    rw.WaveLength,
@@ -44,7 +46,7 @@ type WaterSurface struct {
 	ID       string
 	ChunkID  string
 	Position mgl32.Vec3
-	Water    WaterParams
+	Water    gfx.WaterParams
 	Alpha    float32
 
 	// Half-extents of the plane, used for frustum culling. Culling tests the
@@ -54,7 +56,7 @@ type WaterSurface struct {
 	BoundHalfY float32
 	BoundHalfZ float32
 
-	Geometry Geometry
+	Geometry gfx.Geometry
 }
 
 // ModelMatrix builds the model matrix for this surface — a translation, since

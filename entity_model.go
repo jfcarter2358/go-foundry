@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"log"
 	"path/filepath"
@@ -71,7 +72,7 @@ type EntityModel struct {
 	// names to override this attachment's transform. Unique per entity.
 	Name string
 	// Path is the model file, stored relative to the install root (see
-	// fileutil.RelAssetPath). Both .fmdl and .obj are accepted.
+	// RelAssetPath). Both .fmdl and .obj are accepted.
 	Path string
 	// Texture overrides the model document's own texture. Empty keeps whatever
 	// the model was authored with, which is the usual case — the override is
@@ -99,7 +100,7 @@ type EntityModel struct {
 	// Submeshes is the uploaded mesh. A document compiles to one submesh today
 	// (model_doc.go), but the slice is kept so a model that later splits by
 	// material needs no change here.
-	Submeshes []Geometry
+	Submeshes []gfx.Geometry
 	// Anim is live playback state, nil on a model with no motion to play.
 	Anim *EntityAnim
 	// Doc is kept past Load only when there is an armature to pose against;
@@ -179,10 +180,10 @@ func (m *EntityModel) Load(ownerID string) error {
 		// loads it. The level loader only walks chunk geometry, so a model
 		// placed with a texture no wall happens to use would otherwise draw
 		// untextured.
-		if err := ensureTextureLoaded(sub.Texture); err != nil {
+		if err := gfx.EnsureTextureLoaded(sub.Texture); err != nil {
 			log.Printf("entity %s: model %s: texture %q: %v", ownerID, m.Name, sub.Texture, err)
 		}
-		g := Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle}
+		g := gfx.Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle}
 		if m.Anim != nil {
 			// Set before Load, which de-indexes these alongside the positions.
 			g.SkinIdx, g.SkinWt = sub.SkinIdx, sub.SkinWt

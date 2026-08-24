@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"math"
 	"os"
 	"path/filepath"
@@ -112,7 +113,7 @@ func DetailInit() {
 	gl.BindVertexArray(0)
 
 	detail.initialized = true
-	gl.UseProgram(Program)
+	gl.UseProgram(gfx.Program)
 }
 
 // ---------- shader compilation helpers ----------
@@ -147,19 +148,19 @@ func linkStages(shaders ...uint32) (uint32, error) {
 }
 
 func mustTessProgram(vertPath, tescPath, tesePath, fragPath, shared string) uint32 {
-	vs, err := CompileShader(injectAfterVersion(mustReadShader(vertPath), shared), gl.VERTEX_SHADER)
+	vs, err := gfx.CompileShader(gfx.InjectAfterVersion(mustReadShader(vertPath), shared), gl.VERTEX_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("detail vert %s: %v", vertPath, err))
 	}
-	tcs, err := CompileShader(injectAfterVersion(mustReadShader(tescPath), shared), gl.TESS_CONTROL_SHADER)
+	tcs, err := gfx.CompileShader(gfx.InjectAfterVersion(mustReadShader(tescPath), shared), gl.TESS_CONTROL_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("detail tesc %s: %v", tescPath, err))
 	}
-	tes, err := CompileShader(injectAfterVersion(mustReadShader(tesePath), shared), gl.TESS_EVALUATION_SHADER)
+	tes, err := gfx.CompileShader(gfx.InjectAfterVersion(mustReadShader(tesePath), shared), gl.TESS_EVALUATION_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("detail tese %s: %v", tesePath, err))
 	}
-	fs, err := CompileShader(mustReadShader(fragPath), gl.FRAGMENT_SHADER)
+	fs, err := gfx.CompileShader(mustReadShader(fragPath), gl.FRAGMENT_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("detail frag %s: %v", fragPath, err))
 	}
@@ -171,11 +172,11 @@ func mustTessProgram(vertPath, tescPath, tesePath, fragPath, shared string) uint
 }
 
 func mustScatterProgram(vertPath, fragPath, shared string) uint32 {
-	vs, err := CompileShader(injectAfterVersion(mustReadShader(vertPath), shared), gl.VERTEX_SHADER)
+	vs, err := gfx.CompileShader(gfx.InjectAfterVersion(mustReadShader(vertPath), shared), gl.VERTEX_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("detail scatter vert %s: %v", vertPath, err))
 	}
-	fs, err := CompileShader(mustReadShader(fragPath), gl.FRAGMENT_SHADER)
+	fs, err := gfx.CompileShader(mustReadShader(fragPath), gl.FRAGMENT_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("detail scatter frag %s: %v", fragPath, err))
 	}
@@ -191,7 +192,7 @@ func mustScatterProgram(vertPath, fragPath, shared string) uint32 {
 // detailFace is a resolved detail-bearing face for rendering.
 type detailFace struct {
 	spec *DetailSpec
-	geo  *Geometry
+	geo  *gfx.Geometry
 	tex  string
 }
 
@@ -276,7 +277,7 @@ func DetailAnyEnabled(level *Level) (displace, scatter bool) {
 
 // ---------- uniform setters ----------
 
-func setDispUniforms(p *progUniforms, d *DetailSpec, geo *Geometry) {
+func setDispUniforms(p *progUniforms, d *DetailSpec, geo *gfx.Geometry) {
 	gl.Uniform1f(p.u("dispSeed"), float32(d.Seed))
 
 	// One normal for the whole face — the same average plane the scatter pass
@@ -317,7 +318,7 @@ func setDispUniforms(p *progUniforms, d *DetailSpec, geo *Geometry) {
 	// Displaced detail follows the surface's own smoothing setting: one toggle
 	// covers the flat face and the detail generated from it. Harmless on the two
 	// depth programs, whose shaders drop the unused uniform.
-	gl.Uniform1i(p.u("smoothShading"), geo.smoothFlag())
+	gl.Uniform1i(p.u("smoothShading"), geo.SmoothFlag())
 	gl.Uniform1f(p.u("dispNormalEps"), dispNormalEps(d))
 
 	setDispBoundary(p, d.EdgeTaper, geo)
@@ -328,7 +329,7 @@ const detailMaxEdges = 32
 
 // setDispBoundary uploads the taper band width plus the face's boundary edges so
 // the shader can fade displacement to 0 at edges shared with adjacent walls.
-func setDispBoundary(p *progUniforms, taper float32, geo *Geometry) {
+func setDispBoundary(p *progUniforms, taper float32, geo *gfx.Geometry) {
 	if taper <= 0 {
 		gl.Uniform1f(p.u("edgeTaper"), 0)
 		gl.Uniform1i(p.u("numEdges"), 0)
@@ -391,13 +392,13 @@ func setScatterUniforms(p *progUniforms, d *DetailSpec, b faceBasis) int32 {
 // detailAlbedo returns a valid GL texture handle for name, falling back to a
 // known-loaded texture so an unloaded scatter texture never binds unit 0 to 0.
 func detailAlbedo(name, fallback string) uint32 {
-	if h, ok := Textures[name]; ok && h != 0 {
+	if h, ok := gfx.Textures[name]; ok && h != 0 {
 		return h
 	}
-	if h, ok := Textures[fallback]; ok && h != 0 {
+	if h, ok := gfx.Textures[fallback]; ok && h != 0 {
 		return h
 	}
-	return Textures["default"]
+	return gfx.Textures["default"]
 }
 
 // ---------- render entry points ----------
@@ -417,8 +418,8 @@ func RenderDetailColor(level *Level, frame ShadowFrame) {
 	if !haveD && !haveS {
 		return
 	}
-	proj := Projection
-	cam := Cam.Matrix
+	proj := gfx.Projection
+	cam := gfx.Cam.Matrix
 
 	if haveD {
 		p := &detail.dispColor
@@ -469,7 +470,7 @@ func RenderDetailColor(level *Level, frame ShadowFrame) {
 			// Scattered instances follow the same per-surface toggle; the rock
 			// template's normals are per-facet, so this shades them exactly as
 			// the derivative path does, just without the derivative.
-			gl.Uniform1i(p.u("smoothShading"), f.geo.smoothFlag())
+			gl.Uniform1i(p.u("smoothShading"), f.geo.SmoothFlag())
 			gl.ActiveTexture(gl.TEXTURE0)
 			gl.BindTexture(gl.TEXTURE_2D, detailAlbedo(f.spec.ScatterTex, f.tex))
 			gl.DrawArraysInstanced(gl.TRIANGLES, 0, detail.rockVerts, inst)
@@ -478,7 +479,7 @@ func RenderDetailColor(level *Level, frame ShadowFrame) {
 
 	gl.BindVertexArray(0)
 	gl.ActiveTexture(gl.TEXTURE0)
-	gl.UseProgram(Program)
+	gl.UseProgram(gfx.Program)
 }
 
 // RenderDetailDirShadow draws detail into the currently-bound directional shadow

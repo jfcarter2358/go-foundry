@@ -14,6 +14,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"math"
 	"path/filepath"
 
@@ -48,7 +49,7 @@ var gizmoBuf []float32
 // Must be called after the OpenGL context is current.
 func GizmoInit() {
 	var err error
-	GizmoProgram, err = compileProgramFromFiles(
+	GizmoProgram, err = gfx.CompileProgramFromFiles(
 		filepath.Join(fileutil.ExecutablePath, "shaders/gizmo_vert.glsl"),
 		filepath.Join(fileutil.ExecutablePath, "shaders/gizmo_frag.glsl"),
 	)
@@ -191,7 +192,7 @@ func GizmoFlush(projView mgl32.Mat4) {
 	gl.DrawArrays(gl.LINES, 0, int32(len(gizmoBuf)/6))
 
 	gl.BindVertexArray(0)
-	gl.UseProgram(Program)
+	gl.UseProgram(gfx.Program)
 	if !prevDepth {
 		gl.Disable(gl.DEPTH_TEST)
 	}

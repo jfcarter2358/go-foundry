@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"math"
 	"testing"
@@ -13,10 +14,10 @@ import (
 // are well separated on screen, and returns the projection×view matrix.
 func setupGizmoView() mgl32.Mat4 {
 	platform.WinWidth, platform.WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	Cam.Position = mgl32.Vec3{4, 3, 8}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
-	return Projection.Mul4(Cam.Matrix)
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Cam.Position = mgl32.Vec3{4, 3, 8}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
+	return gfx.Projection.Mul4(gfx.Cam.Matrix)
 }
 
 func TestAxisParamAtMouse(t *testing.T) {
@@ -25,7 +26,7 @@ func TestAxisParamAtMouse(t *testing.T) {
 
 	// A pixel is chosen by projecting a known point on the X axis; mapping that
 	// pixel back must recover the point's distance along the axis.
-	projView := Projection.Mul4(Cam.Matrix)
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 	target := mgl32.Vec3{2, 0, 0}
 	screen, ok := projectToScreen(projView, target)
 	if !ok {
@@ -40,8 +41,8 @@ func TestAxisParamAtMouse(t *testing.T) {
 	}
 
 	// An axis pointing straight at the camera has no usable mapping.
-	Cam.Position = mgl32.Vec3{0, 0, 5}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
+	gfx.Cam.Position = mgl32.Vec3{0, 0, 5}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 	if _, ok := axisParamAtMouse(origin, gizmoAxes[2], platform.WinWidth/2, platform.WinHeight/2); ok {
 		t.Fatal("edge-on axis should be rejected")
 	}
@@ -191,11 +192,11 @@ func TestGizmoKindIsModeScoped(t *testing.T) {
 // the user was about to move.
 func TestGizmoArmClickAlwaysConsumes(t *testing.T) {
 	platform.WinWidth, platform.WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	// Straight down the Z axis: the blue arm projects onto the gizmo origin, so
 	// clicking there grabs an axis that axisParamAtMouse has to reject.
-	Cam.Position = mgl32.Vec3{0, 0, 5}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
+	gfx.Cam.Position = mgl32.Vec3{0, 0, 5}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 
 	restore := saveEditorSelection()
 	defer restore()
@@ -214,7 +215,7 @@ func TestGizmoArmClickAlwaysConsumes(t *testing.T) {
 	if !ok {
 		t.Fatal("no gizmo origin for the selected vertex")
 	}
-	screen, ok := projectToScreen(Projection.Mul4(Cam.Matrix), origin)
+	screen, ok := projectToScreen(gfx.Projection.Mul4(gfx.Cam.Matrix), origin)
 	if !ok {
 		t.Fatal("gizmo origin did not project")
 	}

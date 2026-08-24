@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"log"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -25,9 +26,9 @@ type Floor struct {
 	UVRotation          float32    // UV rotation in radians
 	Detail              DetailSpec // per-face procedural detail (rocks); disabled by default
 	Smooth              bool       // shade from interpolated vertex normals (see smooth.go)
-	SmoothAngle         float32    // crease threshold in degrees; 0 = geom.DefaultSmoothAngle
-	Geometry            Geometry
-	ExtrusionGeometries []Geometry
+	SmoothAngle         float32    // crease threshold in degrees; 0 = DefaultSmoothAngle
+	Geometry            gfx.Geometry
+	ExtrusionGeometries []gfx.Geometry
 
 	// Collision cache for terrain mode (populated by Sector.Load)
 	CollisionPts    []mgl32.Vec2 // boundary + terrain points in XZ
@@ -60,9 +61,9 @@ type Ceiling struct {
 	UVRotation          float32    // UV rotation in radians
 	Detail              DetailSpec // per-face procedural detail (rocks); disabled by default
 	Smooth              bool       // shade from interpolated vertex normals (see smooth.go)
-	SmoothAngle         float32    // crease threshold in degrees; 0 = geom.DefaultSmoothAngle
-	Geometry            Geometry
-	ExtrusionGeometries []Geometry
+	SmoothAngle         float32    // crease threshold in degrees; 0 = DefaultSmoothAngle
+	Geometry            gfx.Geometry
+	ExtrusionGeometries []gfx.Geometry
 
 	// Collision cache for terrain mode (populated by Sector.Load)
 	CollisionPts    []mgl32.Vec2 // boundary + terrain points in XZ
@@ -407,16 +408,16 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 // ExtrusionBackFace as a separate Geometry. smooth/smoothAngle come from the
 // surface the extrusion was cut into, so a smoothed surface's bevels round off
 // with it rather than staying faceted next to it.
-func loadExtrusionGeometries(old []Geometry, bfList []ExtrusionBackFace, smooth bool, smoothAngle float32) ([]Geometry, error) {
+func loadExtrusionGeometries(old []gfx.Geometry, bfList []ExtrusionBackFace, smooth bool, smoothAngle float32) ([]gfx.Geometry, error) {
 	for i := range old {
 		old[i].Delete()
 	}
 	if len(bfList) == 0 {
 		return nil, nil
 	}
-	geoms := make([]Geometry, 0, len(bfList))
+	geoms := make([]gfx.Geometry, 0, len(bfList))
 	for _, bf := range bfList {
-		var g Geometry
+		var g gfx.Geometry
 		g.Smooth, g.SmoothAngle = smooth, smoothAngle
 		if err := g.Load(bf.Vertices, bf.Indices, bf.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
 			return nil, err

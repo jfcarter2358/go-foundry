@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"math"
 	"testing"
@@ -13,9 +14,9 @@ import (
 // y=3 so ceiling and vertical edges stay well away from the clicked pixels.
 func setupEdgePickScene(points []mgl32.Vec2, sectors ...[]int) *Level {
 	platform.WinWidth, platform.WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	Cam.Position = mgl32.Vec3{0, 1, 6}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Cam.Position = mgl32.Vec3{0, 1, 6}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 
 	ch := Chunk{ID: "c0", Points: points}
 	for i, idx := range sectors {
@@ -31,7 +32,7 @@ func setupEdgePickScene(points []mgl32.Vec2, sectors ...[]int) *Level {
 // pixelOf projects a world point to the pixel it lands on.
 func pixelOf(t *testing.T, p mgl32.Vec3) (int32, int32) {
 	t.Helper()
-	screen, ok := projectToScreen(Projection.Mul4(Cam.Matrix), p)
+	screen, ok := projectToScreen(gfx.Projection.Mul4(gfx.Cam.Matrix), p)
 	if !ok {
 		t.Fatalf("%v did not project to the screen", p)
 	}
@@ -176,16 +177,16 @@ func TestEdgeHandleRangeLimit(t *testing.T) {
 	clearVertexSelection()
 
 	// In range: camera a few units in front of the edge.
-	Cam.Position = mgl32.Vec3{0, 1, -far + 6}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, -far}, mgl32.Vec3{0, 1, 0})
+	gfx.Cam.Position = mgl32.Vec3{0, 1, -far + 6}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, -far}, mgl32.Vec3{0, 1, 0})
 	mx, my := pixelOf(t, mgl32.Vec3{0, 0, -far})
 	if len(edgeHandlesInPrism(mx, my)) == 0 {
 		t.Fatal("edge within range was not pickable")
 	}
 
 	// Out of range: same screen position, camera far away.
-	Cam.Position = mgl32.Vec3{0, 1, 6}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
+	gfx.Cam.Position = mgl32.Vec3{0, 1, 6}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 	if got := edgeHandlesInPrism(platform.WinWidth/2, platform.WinHeight/2); len(got) != 0 {
 		t.Fatalf("edge %.0f units away was pickable (limit %.0f)", far, vertexHandleMaxDist)
 	}
@@ -196,10 +197,10 @@ func TestEdgeHandleRangeLimit(t *testing.T) {
 // screen, and it is thinner across than one of those boxes.
 func TestEdgePrismTrimAndThickness(t *testing.T) {
 	platform.WinWidth, platform.WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	Cam.Position = mgl32.Vec3{0, 0, 6}
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
-	projView := Projection.Mul4(Cam.Matrix)
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Cam.Position = mgl32.Vec3{0, 0, 6}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 
 	p0 := mgl32.Vec3{-2, 0, 0}
 	p1 := mgl32.Vec3{2, 0, 0}

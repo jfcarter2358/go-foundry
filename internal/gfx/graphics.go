@@ -1,4 +1,4 @@
-package main
+package gfx
 
 // graphics.go — the world shader program, and the GL handles every draw call
 // needs to reach.
@@ -62,12 +62,12 @@ var (
 	ReflectColorUniform  int32
 )
 
-func LoadProgram(vertexShaderPath, fragmentShaderPath string) error {
-	vertexShaderBytes, err := os.ReadFile(vertexShaderPath)
+func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
+	vertexShaderBytes, err := os.ReadFile(VertexShaderPath)
 	if err != nil {
 		return fmt.Errorf("read vertex shader: %w", err)
 	}
-	fragmentShaderBytes, err := os.ReadFile(fragmentShaderPath)
+	fragmentShaderBytes, err := os.ReadFile(FragmentShaderPath)
 	if err != nil {
 		return fmt.Errorf("read fragment shader: %w", err)
 	}
@@ -76,7 +76,7 @@ func LoadProgram(vertexShaderPath, fragmentShaderPath string) error {
 	// #version line, so an animated entity deforms on the GPU. Static geometry
 	// is unaffected: skinPosition is the identity until a draw call sets the
 	// `skinned` uniform (skin_common.glsl).
-	vertexSource, err := injectSkinning(strings.ReplaceAll(strings.TrimRight(string(vertexShaderBytes), "\n"), "\r\n", "\n"))
+	vertexSource, err := InjectSkinning(strings.ReplaceAll(strings.TrimRight(string(vertexShaderBytes), "\n"), "\r\n", "\n"))
 	if err != nil {
 		return err
 	}
@@ -148,14 +148,14 @@ func CompileShader(source string, shaderType uint32) (uint32, error) {
 }
 
 // Where the world shader's two stages are read from, relative to
-// fileutil.ExecutablePath. Named here rather than at the call site so a build that wants
+// ExecutablePath. Named here rather than at the call site so a build that wants
 // to swap them has one place to do it.
-var vertexShaderPath = "shaders/vertex.glsl"
-var fragmentShaderPath = "shaders/fragment.glsl"
+var VertexShaderPath = "shaders/vertex.glsl"
+var FragmentShaderPath = "shaders/fragment.glsl"
 
-// readShaderFile is shared by every program in the engine, not just the world
+// ReadShaderFile is shared by every program in the engine, not just the world
 // shader — the shadow, detail, gizmo and skinning programs all read through it.
-func readShaderFile(path string) (string, error) {
+func ReadShaderFile(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -163,9 +163,9 @@ func readShaderFile(path string) (string, error) {
 	return strings.ReplaceAll(strings.TrimRight(string(data), "\n"), "\r\n", "\n"), nil
 }
 
-// injectAfterVersion inserts snippet immediately after the shader's first line
+// InjectAfterVersion inserts snippet immediately after the shader's first line
 // (the #version directive), so shared uniforms/functions are declared before use.
-func injectAfterVersion(src, snippet string) string {
+func InjectAfterVersion(src, snippet string) string {
 	idx := strings.Index(src, "\n")
 	if idx < 0 {
 		return src + "\n" + snippet
@@ -173,12 +173,12 @@ func injectAfterVersion(src, snippet string) string {
 	return src[:idx+1] + "\n" + snippet + "\n" + src[idx+1:]
 }
 
-// compileProgramFromFiles links a standalone program from a vertex/fragment
+// CompileProgramFromFiles links a standalone program from a vertex/fragment
 // pair on disk. The gizmo and model-preview shaders both use it; the world
 // program has LoadProgram above, which also caches uniform locations.
-// compileProgramFromFiles loads two shader files and links a GL program
+// CompileProgramFromFiles loads two shader files and links a GL program
 // without touching the global Program variable.
-func compileProgramFromFiles(vertPath, fragPath string) (uint32, error) {
+func CompileProgramFromFiles(vertPath, fragPath string) (uint32, error) {
 	vb, err := os.ReadFile(vertPath)
 	if err != nil {
 		return 0, fmt.Errorf("read %s: %w", vertPath, err)

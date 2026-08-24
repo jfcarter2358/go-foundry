@@ -3,7 +3,7 @@ package main
 // editor_model_pick.go — selection and the translate gizmo for the model editor.
 //
 // Picking has to be local to this window: screenRay, projectToScreen and
-// worldSizeForPixels all read the main window's platform.WinWidth/platform.WinHeight/Projection/Cam
+// worldSizeForPixels all read the main window's WinWidth/WinHeight/Projection/Cam
 // globals, and the model editor has none of those. Each is used here through the
 // viewport-parameterised variant added beside it (projectToScreenIn,
 // worldSizeForPixelsIn, axisParamForRay), so the maths is shared with the level
@@ -784,7 +784,7 @@ func drawModelGizmo(mx, my int32) {
 
 // modelGizmoBox draws a screen-constant cube at p. This is gizmoBox
 // (editor_3d_pick.go) against this window's camera; the original sizes itself
-// from the main window's Projection and platform.WinHeight.
+// from the main window's Projection and WinHeight.
 func modelGizmoBox(p mgl32.Vec3, halfPx float32, col mgl32.Vec3) {
 	half := modelWorldSizeForPixels(p, halfPx)
 	hv := mgl32.Vec3{half, half, half}

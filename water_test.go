@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -11,7 +12,7 @@ import (
 // calling it — the point is that waterParamsFromRaw reads back every field the
 // writer puts out.
 func TestWaterParamsRoundTrip(t *testing.T) {
-	want := WaterParams{
+	want := gfx.WaterParams{
 		Enabled:       true,
 		WaveAmplitude: 0.25,
 		WaveLength:    7.5,
@@ -76,7 +77,7 @@ func TestWaterSurfaceAABBIncludesWaveCrests(t *testing.T) {
 		BoundHalfX: 5,
 		BoundHalfY: 0.1,
 		BoundHalfZ: 5,
-		Water:      WaterParams{Enabled: true, WaveAmplitude: 0.4},
+		Water:      gfx.WaterParams{Enabled: true, WaveAmplitude: 0.4},
 	}
 	min, max := w.WorldAABB()
 	if max.Y() < 0.5-1e-6 || min.Y() > -0.5+1e-6 {

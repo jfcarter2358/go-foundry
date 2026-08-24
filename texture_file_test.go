@@ -14,7 +14,7 @@ import (
 	"foundry/internal/texdoc"
 )
 
-// withTempTextureDir points fileutil.ExecutablePath at a scratch dir so file-format
+// withTempTextureDir points ExecutablePath at a scratch dir so file-format
 // tests never touch the real textures/ tree, matching withTempPresetDir's
 // pattern in detail_presets_test.go.
 func withTempTextureDir(t *testing.T) {

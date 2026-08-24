@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -288,7 +289,7 @@ func editor3DSetSurfaceTexture(name string) {
 	if _, ok := editor3DSurfaceRefs(); !ok {
 		return
 	}
-	_ = ensureTextureLoaded(name)
+	_ = gfx.EnsureTextureLoaded(name)
 	EditorPushUndo()
 	n := editor3DForEachSelectedFace(func(r surface3DRefs) {
 		if r.Texture != nil {

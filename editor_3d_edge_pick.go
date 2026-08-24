@@ -21,6 +21,7 @@ package main
 // edges exist.
 
 import (
+	"foundry/internal/gfx"
 	"math"
 	"sort"
 
@@ -159,7 +160,7 @@ func edgePrism(p0, p1 mgl32.Vec3) (center mgl32.Vec3, axes [3]mgl32.Vec3, half m
 // and there is nothing left to click.
 func edgeTrim(p, u mgl32.Vec3) float32 {
 	half := worldSizeForPixels(p, vertexHandleHalfPx)
-	view := p.Sub(Cam.Position)
+	view := p.Sub(gfx.Cam.Position)
 	if view.Len() < 1e-5 {
 		return half
 	}
@@ -194,7 +195,7 @@ func collectEdgeHandles(mx, my int32, maxPx float32) []edgeHandle {
 		return nil
 	}
 	cursor := mgl32.Vec2{float32(mx), float32(my)}
-	projView := Projection.Mul4(Cam.Matrix)
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 
 	var out []edgeHandle
 	for ci := range lvl.Chunks {
@@ -251,7 +252,7 @@ func buildEdgeHandle(sel edgeSel, projView mgl32.Mat4, cursor mgl32.Vec2, maxPx 
 	}
 	// An edge is only reachable where both of its points are, so distant
 	// geometry cannot hijack a click here either.
-	if p0.Sub(Cam.Position).Len() > vertexHandleMaxDist || p1.Sub(Cam.Position).Len() > vertexHandleMaxDist {
+	if p0.Sub(gfx.Cam.Position).Len() > vertexHandleMaxDist || p1.Sub(gfx.Cam.Position).Len() > vertexHandleMaxDist {
 		return edgeHandle{}, false
 	}
 
@@ -285,7 +286,7 @@ func buildEdgeHandle(sel edgeSel, projView mgl32.Mat4, cursor mgl32.Vec2, maxPx 
 		axes:    axes,
 		half:    half,
 		screenD: d,
-		depth:   center.Sub(Cam.Position).Len(),
+		depth:   center.Sub(gfx.Cam.Position).Len(),
 	}, true
 }
 

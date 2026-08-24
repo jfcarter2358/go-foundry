@@ -1,4 +1,4 @@
-package main
+package gfx
 
 import (
 	"foundry/internal/platform"
@@ -47,12 +47,12 @@ func DirectionFromAngles(yaw, pitch float32) mgl32.Vec3 {
 // LoadCamera for why SDL relative mouse mode is avoided.
 func SetMouseLock(lock bool) {
 	Cam.MouseLockWanted = lock
-	applyMouseLock(lock)
+	ApplyMouseLock(lock)
 }
 
-// applyMouseLock changes the actual capture state without touching the wanted
+// ApplyMouseLock changes the actual capture state without touching the wanted
 // state — used when focus is lost and regained.
-func applyMouseLock(lock bool) {
+func ApplyMouseLock(lock bool) {
 	Cam.MouseLock = lock
 	if lock {
 		sdl.ShowCursor(sdl.DISABLE)
@@ -92,12 +92,12 @@ func MoveCamera(f, u, r float32) {
 	Cam.Position = Cam.Position.Add(delta)
 }
 
-// updateCamDirection and updateCamMatrix recompute the camera basis and upload
+// UpdateCamDirection and UpdateCamMatrix recompute the camera basis and upload
 // the view matrix. They live here rather than with the editor toggle that first
 // needed them: the spawn-point preview and the 3D fly camera call them too.
 // ---------- camera helpers used by editor toggle ----------
 
-func updateCamDirection() {
+func UpdateCamDirection() {
 	yaw64 := float64(Cam.Yaw)
 	pitch64 := float64(Cam.Pitch)
 	Cam.Direction = mgl32.Vec3{
@@ -107,7 +107,7 @@ func updateCamDirection() {
 	}
 }
 
-func updateCamMatrix() {
+func UpdateCamMatrix() {
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), mgl32.Vec3{0, 1, 0})
 	if Program == 0 {
 		// No world shader, so nowhere to upload to. Only a headless test gets
@@ -118,8 +118,8 @@ func updateCamMatrix() {
 	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
 }
 
-// maxPitch prevents the camera from crossing vertical (avoids gimbal flip).
-const maxPitch = float32(math.Pi/2 - 0.01)
+// MaxPitch prevents the camera from crossing vertical (avoids gimbal flip).
+const MaxPitch = float32(math.Pi/2 - 0.01)
 
 // HandleInput applies this frame's held keys to the camera.
 //
@@ -128,7 +128,7 @@ const maxPitch = float32(math.Pi/2 - 0.01)
 // putting it in the application shell made the editor depend on the shell for
 // what is really a camera operation.
 func HandleInput(keyStates []uint8) {
-	// Scale movement and rotation by platform.DeltaTime*60 so behavior is frame-rate independent
+	// Scale movement and rotation by DeltaTime*60 so behavior is frame-rate independent
 	// while preserving the same feel as the original 60 FPS-tuned constants.
 	dtScale := platform.DeltaTime * 60.0
 	moveSpeed := platform.MovementSpeed * dtScale

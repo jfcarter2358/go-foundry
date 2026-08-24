@@ -14,6 +14,7 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"foundry/internal/gfx"
 	"hash/fnv"
 	"log"
 
@@ -327,7 +328,7 @@ type BiomeBrush struct {
 	// (see biome_water.go). WaterDepth is how far below the surrounding floor
 	// the water surface sits; 0 uses defaultWaterDepth.
 	WaterDepth float32
-	Water      WaterParams
+	Water      gfx.WaterParams
 
 	// Moss: always a ground patch (moss texture); MossScatter additionally
 	// turns on a dense low-clump scatter on top, reusing Density/Range/Color
@@ -476,7 +477,7 @@ func defaultBiomeBrush(kind int32) BiomeBrush {
 		RockScale:       defaultRockScale,
 		SandHeight:      defaultSandHeight,
 		WaterDepth:      defaultWaterDepth,
-		Water:           DefaultWaterParams(),
+		Water:           gfx.DefaultWaterParams(),
 		GroundAmplitude: defaultGroundAmplitude,
 		GroundFrequency: defaultGroundFrequency,
 		GroundOctaves:   defaultGroundOctaves,
@@ -600,7 +601,7 @@ func biomeSeed(s *BiomeSector) mgl32.Vec2 {
 		RockScale                          float32
 		SandHeight                         float32
 		WaterDepth                         float32
-		Water                              WaterParams
+		Water                              gfx.WaterParams
 		MossScatter                        bool
 		BloomSpike                         bool
 		BloomCenter                        bool

@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"strconv"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -677,7 +678,7 @@ func editorEntityActions(e *Entity) {
 	if imgui.Button("Move To Camera##entcam") {
 		// The camera sits at eye height; an entity's position is its base, the
 		// same convention the spawn marker uses.
-		e.Position = Cam.Position.Sub(mgl32.Vec3{0, eyeHeight, 0})
+		e.Position = gfx.Cam.Position.Sub(mgl32.Vec3{0, eyeHeight, 0})
 	}
 
 	if e.Type != "" {

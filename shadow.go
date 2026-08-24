@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"log"
 	"math"
 	"strings"
@@ -87,7 +88,7 @@ type ShadowState struct {
 	CascadeFBO    uint32
 	CascadeLayers int32
 
-	// geom.Point light cubemap shadow program
+	// Point light cubemap shadow program
 	CubeProgram      uint32
 	CubeModelUniform int32
 	CubeLSMUniform   int32
@@ -141,25 +142,25 @@ func loadCubeShadowProgram(vertPath, fragPath string) error {
 }
 
 func linkProgram(vertPath, fragPath string, out *uint32) error {
-	vertSrc, err := readShaderFile(vertPath)
+	vertSrc, err := gfx.ReadShaderFile(vertPath)
 	if err != nil {
 		return err
 	}
 	// Both shadow passes skin, or an animated entity would cast the silhouette
 	// of its rest pose while the mesh moved.
-	vertSrc, err = injectSkinning(vertSrc)
+	vertSrc, err = gfx.InjectSkinning(vertSrc)
 	if err != nil {
 		return err
 	}
-	fragSrc, err := readShaderFile(fragPath)
+	fragSrc, err := gfx.ReadShaderFile(fragPath)
 	if err != nil {
 		return err
 	}
-	vs, err := CompileShader(vertSrc, gl.VERTEX_SHADER)
+	vs, err := gfx.CompileShader(vertSrc, gl.VERTEX_SHADER)
 	if err != nil {
 		return err
 	}
-	fs, err := CompileShader(fragSrc, gl.FRAGMENT_SHADER)
+	fs, err := gfx.CompileShader(fragSrc, gl.FRAGMENT_SHADER)
 	if err != nil {
 		return err
 	}
@@ -265,7 +266,7 @@ func createDummyCubemap() uint32 {
 	return tex
 }
 
-// ---------- geom.Point light cubemap shadow maps ----------
+// ---------- Point light cubemap shadow maps ----------
 
 func EnsurePointShadowMaps(count int) {
 	for len(Shadows.PointMaps) < count {
@@ -551,7 +552,7 @@ func RenderShadowPass(lights LightSet, level *Level, view, projection mgl32.Mat4
 			// caster behind the player can still drop a shadow into view, and
 			// the box already extends toward the light to include it.
 			cull := ExtractFrustum(lsm)
-			renderSceneShadow(level, Shadows.Program, &shadowSkinUniforms, Shadows.ModelUniform, &cull)
+			renderSceneShadow(level, Shadows.Program, &gfx.ShadowSkinUniforms, Shadows.ModelUniform, &cull)
 			// Cast displaced/scattered detail (drawn via its own tess/instanced
 			// programs so bumps and rocks cast accurate shadows); restores Shadows.Program.
 			RenderDetailDirShadow(level, lsm, &cull)
@@ -559,7 +560,7 @@ func RenderShadowPass(lights LightSet, level *Level, view, projection mgl32.Mat4
 			// code so a blade's shadow lands on the blade; gated per kind and
 			// limited to the nearest cascades by BiomeShadows. Restores
 			// Shadows.Program.
-			RenderBiomeScatterDirShadow(level, lsm, c, frame.Splits[c], Cam.Position, BiomeWindTime, &cull)
+			RenderBiomeScatterDirShadow(level, lsm, c, frame.Splits[c], gfx.Cam.Position, BiomeWindTime, &cull)
 			layer++
 		}
 	}
@@ -567,7 +568,7 @@ func RenderShadowPass(lights LightSet, level *Level, view, projection mgl32.Mat4
 	gl.Disable(gl.POLYGON_OFFSET_FILL)
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 	gl.Viewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3])
-	gl.UseProgram(Program)
+	gl.UseProgram(gfx.Program)
 
 	return frame
 }
@@ -621,11 +622,11 @@ func RenderPointShadowPass(lights LightSet, level *Level) {
 			gl.UniformMatrix4fv(Shadows.CubeLSMUniform, 1, false, &lsm[0])
 
 			cull := ExtractFrustum(lsm)
-			renderSceneShadow(level, Shadows.CubeProgram, &shadowCubeSkinUniforms, Shadows.CubeModelUniform, &cull)
+			renderSceneShadow(level, Shadows.CubeProgram, &gfx.ShadowCubeSkinUniforms, Shadows.CubeModelUniform, &cull)
 			// Cast displaced/scattered detail into this cube face; restores Shadows.CubeProgram.
 			RenderDetailCubeShadow(level, lsm, pl.Position, farPlane, &cull)
 			// Cast painted biome scatter into this cube face; restores Shadows.CubeProgram.
-			RenderBiomeScatterCubeShadow(level, lsm, pl.Position, farPlane, Cam.Position, BiomeWindTime, &cull)
+			RenderBiomeScatterCubeShadow(level, lsm, pl.Position, farPlane, gfx.Cam.Position, BiomeWindTime, &cull)
 		}
 		mapIdx++
 	}
@@ -633,7 +634,7 @@ func RenderPointShadowPass(lights LightSet, level *Level) {
 	gl.Disable(gl.POLYGON_OFFSET_FILL)
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 	gl.Viewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3])
-	gl.UseProgram(Program)
+	gl.UseProgram(gfx.Program)
 }
 
 // renderSceneShadow draws scene geometry into the currently bound FBO using the
@@ -644,7 +645,7 @@ func RenderPointShadowPass(lights LightSet, level *Level) {
 // renderSceneShadow walks the level for one shadow pass. prog and skin identify
 // which program is bound: both passes share this walker but resolve the skinning
 // uniforms to different locations, so the cache cannot be a single global.
-func renderSceneShadow(level *Level, prog uint32, skin *skinUniforms, modelUniform int32, cull *Frustum) {
+func renderSceneShadow(level *Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
 	identity := mgl32.Ident4()
 	gl.UniformMatrix4fv(modelUniform, 1, false, &identity[0])
 
@@ -706,13 +707,13 @@ func renderSceneShadow(level *Level, prog uint32, skin *skinUniforms, modelUnifo
 	RenderEntitiesShadow(level, prog, skin, modelUniform, cull)
 }
 
-func drawGeometryShadow(g *Geometry, prog uint32, skin *skinUniforms) {
+func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
 	if len(g.Vertices) == 0 || g.Alpha < 0.05 {
 		return
 	}
 	// The shadow passes deform from the same palette the colour pass uses, so an
 	// animated entity's silhouette tracks its mesh.
-	applySkinUniforms(skin, prog, g.BonePalette)
+	gfx.ApplySkinUniforms(skin, prog, g.BonePalette)
 	gl.BindVertexArray(g.Vao)
 	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
 }
@@ -725,7 +726,7 @@ const CascadeTexUnit = 1
 
 // UploadShadowUniforms sends directional shadow data to the main shader.
 func UploadShadowUniforms(lights LightSet, frame ShadowFrame) {
-	UploadShadowUniformsTo(Program, lights, frame)
+	UploadShadowUniformsTo(gfx.Program, lights, frame)
 }
 
 // UploadShadowUniformsTo sends directional shadow data (cascade matrices, split
@@ -788,7 +789,7 @@ func UploadShadowUniformsTo(prog uint32, lights LightSet, frame ShadowFrame) {
 // UploadPointShadowUniforms sends point light shadow cubemaps to the main shader.
 // Texture units start after directional shadow maps (1..MaxDirLights are dir, then point).
 func UploadPointShadowUniforms(lights LightSet) {
-	UploadPointShadowUniformsTo(Program, lights)
+	UploadPointShadowUniformsTo(gfx.Program, lights)
 }
 
 // UploadPointShadowUniformsTo sends point-light cubemap shadow data to prog.

@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -52,7 +53,7 @@ func placeSpawnPointAt(pos mgl32.Vec3) {
 		lvl.Spawn = &SpawnPoint{}
 	}
 	lvl.Spawn.Position = pos
-	lvl.Spawn.Rotation = mgl32.Vec3{0, -Cam.Yaw, 0}
+	lvl.Spawn.Rotation = mgl32.Vec3{0, -gfx.Cam.Yaw, 0}
 	if err := lvl.Spawn.Load(); err != nil {
 		editorSetStatus("Spawn point: %v", err)
 	}
@@ -64,7 +65,7 @@ func placeSpawnPointAt(pos mgl32.Vec3) {
 // camera yaw and rotation Z is the pitch, which is what SpawnYawPitch reads
 // straight back out (see the derivation in spawn_point.go).
 func spawnRotationFromCamera() mgl32.Vec3 {
-	return mgl32.Vec3{0, -Cam.Yaw, Cam.Pitch}
+	return mgl32.Vec3{0, -gfx.Cam.Yaw, gfx.Cam.Pitch}
 }
 
 // ---------- panel ----------
@@ -109,11 +110,11 @@ func editorSpawnPointSection(lvl *Level) {
 	if imgui.Button("Move To Camera##spawn") {
 		EditorPushUndo()
 		// The camera sits at eye height; the marker sits at the player's feet.
-		s.Position = Cam.Position.Sub(mgl32.Vec3{0, eyeHeight, 0})
+		s.Position = gfx.Cam.Position.Sub(mgl32.Vec3{0, eyeHeight, 0})
 		s.Rotation = spawnRotationFromCamera()
 	}
 
-	if imgui.Button("Delete Spawn geom.Point##spawn") {
+	if imgui.Button("Delete Spawn Point##spawn") {
 		EditorPushUndo()
 		s.Delete()
 		lvl.Spawn = nil

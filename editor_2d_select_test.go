@@ -220,7 +220,7 @@ func TestEditor2DFaceClickPrefersAWallToTheSectorBehindIt(t *testing.T) {
 	}
 }
 
-// geom.Point and edge mode own their click outright: aiming at a corner and missing
+// Point and edge mode own their click outright: aiming at a corner and missing
 // must not silently select the sector behind it.
 func TestEditor2DPointAndEdgeMissesSelectNothing(t *testing.T) {
 	defer saveEditorSelection()()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/gfx"
 	"math"
 	"testing"
 
@@ -52,12 +53,12 @@ func TestCameraLookClampsPitch(t *testing.T) {
 	// LookAtV has no defined right vector there.
 	c := modelCamera{Dist: 4}
 	c.look(0, -100000)
-	if c.Pitch > maxPitch+1e-6 {
-		t.Errorf("pitch = %v, above maxPitch %v", c.Pitch, maxPitch)
+	if c.Pitch > gfx.MaxPitch+1e-6 {
+		t.Errorf("pitch = %v, above MaxPitch %v", c.Pitch, gfx.MaxPitch)
 	}
 	c.look(0, 200000)
-	if c.Pitch < -maxPitch-1e-6 {
-		t.Errorf("pitch = %v, below -maxPitch %v", c.Pitch, -maxPitch)
+	if c.Pitch < -gfx.MaxPitch-1e-6 {
+		t.Errorf("pitch = %v, below -MaxPitch %v", c.Pitch, -gfx.MaxPitch)
 	}
 	// The view must stay well-formed at the clamp.
 	if v := c.view(); math.IsNaN(float64(v[0])) {

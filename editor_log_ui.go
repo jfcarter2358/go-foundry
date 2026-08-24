@@ -25,7 +25,7 @@ import (
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
 
-// platform.Window state. Package-level in the style of the texture and script editors:
+// Window state. Package-level in the style of the texture and script editors:
 // these outlive the window so closing and reopening keeps your filters.
 var (
 	logWindowPaused      bool

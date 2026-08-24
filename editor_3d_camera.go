@@ -18,6 +18,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"math"
 
@@ -42,12 +43,12 @@ const (
 // it is and only turns the look; orbiting swings the eye around the pivot,
 // which is the whole difference between the two modes.
 func editorApplyCamAngles() {
-	updateCamDirection()
+	gfx.UpdateCamDirection()
 	if !editorCam3D.Fly {
 		editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
-		Cam.Position = editorCam3D.Target.Sub(Cam.Direction.Mul(editorCam3D.Dist))
+		gfx.Cam.Position = editorCam3D.Target.Sub(gfx.Cam.Direction.Mul(editorCam3D.Dist))
 	}
-	updateCamMatrix()
+	gfx.UpdateCamMatrix()
 }
 
 // editorSetFlyCam switches modes without moving the eye or changing where it
@@ -59,10 +60,10 @@ func editorSetFlyCam(fly bool) {
 		return
 	}
 	editorCam3D.Fly = fly
-	updateCamDirection()
+	gfx.UpdateCamDirection()
 	if !fly {
 		editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
-		editorCam3D.Target = Cam.Position.Add(Cam.Direction.Mul(editorCam3D.Dist))
+		editorCam3D.Target = gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(editorCam3D.Dist))
 	}
 	editorApplyCamAngles()
 }
@@ -72,25 +73,25 @@ func editorSetFlyCam(fly bool) {
 // in the editor does not pull the view back to a pivot the player has since
 // walked away from.
 func editorCamEnter() {
-	updateCamDirection()
+	gfx.UpdateCamDirection()
 	editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
-	editorCam3D.Target = Cam.Position.Add(Cam.Direction.Mul(editorCam3D.Dist))
+	editorCam3D.Target = gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(editorCam3D.Dist))
 }
 
 // editorCamLook applies a mouse-look delta. One path for both modes: the angles
 // change either way, and editorApplyCamAngles decides whether that turns the
 // head or swings the eye.
 func editorCamLook(dx, dy int32) {
-	Cam.Yaw += platform.MouseRotationSpeed * float32(dx)
-	Cam.Pitch -= platform.MouseRotationSpeed * float32(dy)
-	Cam.Pitch = geom.ClampValue(Cam.Pitch, -maxPitch, maxPitch)
+	gfx.Cam.Yaw += platform.MouseRotationSpeed * float32(dx)
+	gfx.Cam.Pitch -= platform.MouseRotationSpeed * float32(dy)
+	gfx.Cam.Pitch = geom.ClampValue(gfx.Cam.Pitch, -gfx.MaxPitch, gfx.MaxPitch)
 	editorApplyCamAngles()
 }
 
 // editorCamRight and editorCamUp are the camera's screen-aligned axes, so a pan
 // slides the view in the plane being looked at rather than along world axes.
 func editorCamRight() mgl32.Vec3 {
-	r := Cam.Direction.Cross(WorldUp)
+	r := gfx.Cam.Direction.Cross(gfx.WorldUp)
 	if r.Len() < 1e-5 {
 		return mgl32.Vec3{1, 0, 0}
 	}
@@ -98,7 +99,7 @@ func editorCamRight() mgl32.Vec3 {
 }
 
 func editorCamUp() mgl32.Vec3 {
-	return editorCamRight().Cross(Cam.Direction).Normalize()
+	return editorCamRight().Cross(gfx.Cam.Direction).Normalize()
 }
 
 // editorCamPan slides the view sideways and vertically by a mouse delta. Scaled
@@ -114,7 +115,7 @@ func editorCamPan(dx, dy int32) {
 // the eye and the pivot is the authoritative one in the current mode.
 func editorCamTranslate(delta mgl32.Vec3) {
 	if editorCam3D.Fly {
-		Cam.Position = Cam.Position.Add(delta)
+		gfx.Cam.Position = gfx.Cam.Position.Add(delta)
 	} else {
 		editorCam3D.Target = editorCam3D.Target.Add(delta)
 	}
@@ -133,7 +134,7 @@ func editorCamZoom(wheelY int32) {
 		if speed <= 0 {
 			speed = platform.MovementSpeed
 		}
-		Cam.Position = Cam.Position.Add(Cam.Direction.Mul(float32(wheelY) * speed * 4))
+		gfx.Cam.Position = gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(float32(wheelY) * speed * 4))
 		editorApplyCamAngles()
 		return
 	}
@@ -151,12 +152,12 @@ func editorCamZoom(wheelY int32) {
 // regression from a viewport whose only way to travel is to fly.
 func editorCamMove(f, u, r float32) {
 	if editorCam3D.Fly {
-		MoveCamera(f, u, r)
+		gfx.MoveCamera(f, u, r)
 		return
 	}
 	// Flattened forward and world up, matching MoveCamera, so orbiting and
 	// flying answer the keys the same way.
-	d := Cam.Direction
+	d := gfx.Cam.Direction
 	forward := mgl32.Vec3{d.X(), 0, d.Z()}
 	if forward.Len() > 1e-6 {
 		forward = forward.Normalize()
@@ -165,7 +166,7 @@ func editorCamMove(f, u, r float32) {
 	if right.Len() > 1e-6 {
 		right = right.Normalize()
 	}
-	editorCamTranslate(forward.Mul(f).Add(WorldUp.Mul(u)).Add(right.Mul(r)))
+	editorCamTranslate(forward.Mul(f).Add(gfx.WorldUp.Mul(u)).Add(right.Mul(r)))
 }
 
 // editorOrbitKeys is EditorTick's keyboard path while orbiting. Fly mode hands
@@ -200,18 +201,18 @@ func editorOrbitKeys(keyStates []uint8) {
 	}
 
 	if keyStates[sdl.SCANCODE_LEFT] != 0 {
-		Cam.Yaw -= rotSpeed
+		gfx.Cam.Yaw -= rotSpeed
 	}
 	if keyStates[sdl.SCANCODE_RIGHT] != 0 {
-		Cam.Yaw += rotSpeed
+		gfx.Cam.Yaw += rotSpeed
 	}
 	if keyStates[sdl.SCANCODE_UP] != 0 {
-		Cam.Pitch += rotSpeed
+		gfx.Cam.Pitch += rotSpeed
 	}
 	if keyStates[sdl.SCANCODE_DOWN] != 0 {
-		Cam.Pitch -= rotSpeed
+		gfx.Cam.Pitch -= rotSpeed
 	}
-	Cam.Pitch = geom.ClampValue(Cam.Pitch, -maxPitch, maxPitch)
+	gfx.Cam.Pitch = geom.ClampValue(gfx.Cam.Pitch, -gfx.MaxPitch, gfx.MaxPitch)
 
 	editorCamMove(f, u, r)
 	editorApplyCamAngles()
@@ -224,7 +225,7 @@ func editorNavMove(mode EditorMode, f, u, r float32) {
 		editorCamMove(f, u, r)
 		return
 	}
-	MoveCamera(f, u, r)
+	gfx.MoveCamera(f, u, r)
 }
 
 // ---------- framing ----------

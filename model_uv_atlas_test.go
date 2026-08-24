@@ -147,7 +147,7 @@ func TestAtlasUnwrapKeepsUniformTexelDensity(t *testing.T) {
 	}
 	// Compare areas, not one axis: which world axis the projection basis sends
 	// to U and which to V depends on the island's normal, so an axis-specific
-	// assertion would be testing geom.PerpAxis rather than the packing.
+	// assertion would be testing PerpAxis rather than the packing.
 	area := func(fi int) float32 {
 		lo, hi := uvBounds(&m.Faces[fi])
 		return (hi.X() - lo.X()) * (hi.Y() - lo.Y())

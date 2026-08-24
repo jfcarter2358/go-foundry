@@ -124,7 +124,7 @@ func Editor2DRenderObjects(lvl *Level, ch *Chunk) {
 		editor2DDrawEntityHeading(e, hx, hz, col)
 	}
 
-	// geom.Point lights: a cross tinted with the light's own color, so several
+	// Point lights: a cross tinted with the light's own color, so several
 	// lights stay distinguishable. They are edited from the Lights panel
 	// rather than by clicking, so they get no hit test.
 	r := screenToWorldSize(7, editor2DOrtho())

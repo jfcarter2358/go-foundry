@@ -80,7 +80,7 @@ func resolvedMaxSlope(kind int32, v float32) float32 {
 // covered, 0 = fully excluded, in between across the transition band.
 //
 // n need NOT be unit length — it is normalized here. That is load-bearing, not
-// politeness: InterpolateSurfaceHeight (via collision.go's geom.TriangleNormal)
+// politeness: InterpolateSurfaceHeight (via collision.go's TriangleNormal)
 // hands back a raw cross product, whose length scales with the triangle's
 // area. A 16x16 floor quad yields something like (0,256,-128). Reading .Y off
 // that and clamping into acos's domain pins every such normal at 0 degrees, so
@@ -280,7 +280,7 @@ const groundPatchYBias = float32(0.015)
 // buildBiomeWaterMesh both triangulate: sector s's polygon boundary
 // (densified so long edges get their own points to snap to, see
 // densifyPolygon) followed by an interior grid of points strictly inside it.
-// Returns the densified boundary too — geom.DelaunayTriangulate needs it both as
+// Returns the densified boundary too — DelaunayTriangulate needs it both as
 // input points and as the inside/outside test polygon.
 func biomeMeshPoints(s *BiomeSector) (boundary, allPts []mgl32.Vec2) {
 	boundary = ccwPolygon(s.Points)
@@ -322,7 +322,7 @@ func biomeMeshPoints(s *BiomeSector) (boundary, allPts []mgl32.Vec2) {
 // can be private to the ground mesher.
 
 // ccwPolygon returns pts in counter-clockwise winding (per signedArea2D),
-// reversing a copy if it isn't already — geom.DelaunayTriangulate/geom.EarClip both
+// reversing a copy if it isn't already — DelaunayTriangulate/EarClip both
 // assume CCW. BiomeSector.Points is normalized to CCW when a sector is first
 // drawn (finishBiomeSectorDraw), but nothing re-checks it after a vertex is
 // dragged, so this is a defensive re-check rather than a known-redundant one.
@@ -356,7 +356,7 @@ func clampOctaves(n int32) int {
 // winding order.
 //
 // Feeding this — rather than just the sector's own hand-placed vertices —
-// into geom.DelaunayTriangulate as its boundary is what makes the mesh's edge
+// into DelaunayTriangulate as its boundary is what makes the mesh's edge
 // follow the polygon exactly: with only the sparse hand-placed vertices as
 // boundary points, Bowyer-Watson has nothing to stop it from routing a
 // boundary edge through a long diagonal as a staircase of grid-aligned

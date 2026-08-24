@@ -35,6 +35,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/gfx"
 	"math"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -1125,7 +1126,7 @@ func RenderBiomes(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame Sh
 	})
 
 	if started {
-		endBiomePass(Program)
+		endBiomePass(gfx.Program)
 	}
 }
 
