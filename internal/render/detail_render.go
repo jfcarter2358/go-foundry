@@ -1,4 +1,4 @@
-package main
+package render
 
 // detail_render.go — GPU rendering for per-face procedural detail (see go).
 //
@@ -99,13 +99,13 @@ func DetailInit() {
 	// the explicit locations in the scatter vertex shaders (0=aLocal, 1=aNormal,
 	// 2=aParam).
 	mesh := buildRockMesh(7)
-	detailRender.rockVerts = int32(len(mesh) / biomeVertexStride)
+	detailRender.rockVerts = int32(len(mesh) / BiomeVertexStride)
 	gl.GenVertexArrays(1, &detailRender.rockVAO)
 	gl.GenBuffers(1, &detailRender.rockVBO)
 	gl.BindVertexArray(detailRender.rockVAO)
 	gl.BindBuffer(gl.ARRAY_BUFFER, detailRender.rockVBO)
 	gl.BufferData(gl.ARRAY_BUFFER, len(mesh)*4, gl.Ptr(mesh), gl.STATIC_DRAW)
-	stride := int32(biomeVertexStride * 4)
+	stride := int32(BiomeVertexStride * 4)
 	gl.EnableVertexAttribArray(0)
 	gl.VertexAttribPointerWithOffset(0, 3, gl.FLOAT, false, stride, 0)
 	gl.EnableVertexAttribArray(1)

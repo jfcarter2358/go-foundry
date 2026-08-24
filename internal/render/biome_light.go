@@ -1,4 +1,4 @@
-package main
+package render
 
 // biome_light.go — lighting and shadow plumbing shared by the biome passes
 // (the scatter in grass.go and the ground patch in biome_ground.go).

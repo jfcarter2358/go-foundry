@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/gfx"
+	"foundry/internal/leveltest"
 	"foundry/internal/model"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ import (
 // refuses an oversized armature at load, so a shader with the smaller number
 // would let a model through and then bind past the end of its palette.
 func TestSkinShaderMatchesGoBoneLimit(t *testing.T) {
-	src := readBiomeShader(t, "skin_common.glsl")
+	src := leveltest.RepoFile(t, "resources", "shaders", "skin_common.glsl")
 	want := fmt.Sprintf("#define MAX_BONES %d", gfx.MaxSkinBones)
 	if !strings.Contains(src, want) {
 		t.Errorf("skin_common.glsl is out of step with MaxSkinBones=%d (looking for %q)", gfx.MaxSkinBones, want)
@@ -34,7 +35,7 @@ func TestSkinShaderCarriesTheInfluenceBudget(t *testing.T) {
 	if model.ModelMaxInfluences != 4 {
 		t.Fatalf("ModelMaxInfluences is %d; skin_common.glsl carries influences in a vec4", model.ModelMaxInfluences)
 	}
-	src := readBiomeShader(t, "skin_common.glsl")
+	src := leveltest.RepoFile(t, "resources", "shaders", "skin_common.glsl")
 	for _, decl := range []string{"in vec4 boneIdx", "in vec4 boneWt"} {
 		if !strings.Contains(src, decl) {
 			t.Errorf("skin_common.glsl no longer declares %q", decl)
@@ -47,7 +48,7 @@ func TestSkinShaderCarriesTheInfluenceBudget(t *testing.T) {
 // and a pass that forgot to skin would draw it in its rest pose.
 func TestEveryEntityPassSkins(t *testing.T) {
 	for _, name := range []string{"vertex.glsl", "shadow_vert.glsl", "shadow_cube_vert.glsl"} {
-		src := readBiomeShader(t, name)
+		src := leveltest.RepoFile(t, "resources", "shaders", name)
 		if !strings.Contains(src, "skinPosition(vert)") {
 			t.Errorf("%s does not skin its position — an animated entity would draw at rest in this pass", name)
 		}
@@ -58,7 +59,7 @@ func TestEveryEntityPassSkins(t *testing.T) {
 // header describes: an unbound VAO hands a vec4 attribute the default
 // (0, 0, 0, 1), so a weight sum of zero is not what "unskinned" looks like.
 func TestSkinIsGatedOnTheUniformNotTheWeights(t *testing.T) {
-	src := readBiomeShader(t, "skin_common.glsl")
+	src := leveltest.RepoFile(t, "resources", "shaders", "skin_common.glsl")
 	if !strings.Contains(src, "uniform int  skinned") && !strings.Contains(src, "uniform int skinned") {
 		t.Fatal("skin_common.glsl no longer declares the `skinned` uniform")
 	}
@@ -85,7 +86,7 @@ func TestSkinIsGatedOnTheUniformNotTheWeights(t *testing.T) {
 // the CPU into the array its wireframe and picking read, so a second
 // implementation in model_vert.glsl would be a second thing to keep in step.
 func TestModelEditorShaderDoesNotSkin(t *testing.T) {
-	src := readBiomeShader(t, "model_vert.glsl")
+	src := leveltest.RepoFile(t, "resources", "shaders", "model_vert.glsl")
 	if strings.Contains(src, "skinPosition") {
 		t.Error("model_vert.glsl skins; the model editor is supposed to deform on the CPU")
 	}

@@ -8,6 +8,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
+	"foundry/internal/render"
 	"foundry/internal/texture"
 	"foundry/internal/world"
 	_ "image/png"
@@ -107,7 +108,7 @@ func main() {
 	// part of the pixel format, so it has to be settled here and can't change
 	// afterwards. See antialias.go for why this is window-level MSAA rather
 	// than an offscreen resolve pass, and why the request is tiered.
-	platform.Window, platform.Context, err = CreateAntiAliasedWindow(platform.WinTitle, platform.WinWidth, platform.WinHeight,
+	platform.Window, platform.Context, err = render.CreateAntiAliasedWindow(platform.WinTitle, platform.WinWidth, platform.WinHeight,
 		sdl.WINDOW_OPENGL|sdl.WINDOW_RESIZABLE)
 	if err != nil {
 		log.Fatalf("CreateAntiAliasedWindow: %v", err)
@@ -138,7 +139,7 @@ func main() {
 
 	// Reads back what CreateAntiAliasedWindow's request above actually got
 	// granted and applies AntiAliasEnabled's default (on) — see antialias.go.
-	ApplyAntiAliasGLState()
+	render.ApplyAntiAliasGLState()
 
 	// Resolves the anisotropic filtering level for world textures. Must come
 	// before the first texture upload — LoadTexture reads it at upload time.
@@ -178,7 +179,7 @@ func main() {
 	sfShaderFull := filepath.Join(fileutil.ExecutablePath, shadowFragShaderPath)
 	scvShaderFull := filepath.Join(fileutil.ExecutablePath, shadowCubeVertPath)
 	scfShaderFull := filepath.Join(fileutil.ExecutablePath, shadowCubeFragPath)
-	if err := InitShadows(svShaderFull, sfShaderFull, scvShaderFull, scfShaderFull); err != nil {
+	if err := render.InitShadows(svShaderFull, sfShaderFull, scvShaderFull, scfShaderFull); err != nil {
 		log.Fatalf("InitShadows: %v", err)
 	}
 
@@ -408,12 +409,12 @@ func main() {
 		ScriptTick(&level, platform.DeltaTime, !Editor.Active)
 
 		// --- Debug stats: update CPU & memory ---
-		DebugUpdateCPU()
-		DebugUpdateMemory()
-		DebugStats.FPS = 1.0 / platform.DeltaTime
-		DebugStats.FrameTimeMs = platform.DeltaTime * 1000.0
-		DebugStats.ChunksLoaded = len(level.Chunks)
-		DebugStats.SectorsLoaded = totalSectors
+		render.DebugUpdateCPU()
+		render.DebugUpdateMemory()
+		render.DebugStats.FPS = 1.0 / platform.DeltaTime
+		render.DebugStats.FrameTimeMs = platform.DeltaTime * 1000.0
+		render.DebugStats.ChunksLoaded = len(level.Chunks)
+		render.DebugStats.SectorsLoaded = totalSectors
 
 		// Texture editor uploads (painted texels, saves) are queued rather
 		// than applied immediately; drain them now, while the main GL
@@ -449,13 +450,13 @@ func main() {
 			// Latch the biome wind clock before the shadow passes read it, so
 			// scatter sways identically in the depth maps and in the color pass and
 			// a blade's shadow stays under the blade.
-			BiomeWindTime = float32(now) / 1000.0
+			render.BiomeWindTime = float32(now) / 1000.0
 
 			// --- Shadow pass: render depth from each shadow-casting light ---
-			shadowFrame := RenderShadowPass(level.Lights, &level, gfx.Cam.Matrix, gfx.Projection)
-			UploadShadowUniforms(level.Lights, shadowFrame)
-			RenderPointShadowPass(level.Lights, &level)
-			UploadPointShadowUniforms(level.Lights)
+			shadowFrame := render.RenderShadowPass(level.Lights, &level, gfx.Cam.Matrix, gfx.Projection)
+			render.UploadShadowUniforms(level.Lights, shadowFrame)
+			render.RenderPointShadowPass(level.Lights, &level)
+			render.UploadPointShadowUniforms(level.Lights)
 
 			// --- Render ---
 			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -478,13 +479,13 @@ func main() {
 			// patch's slope contour (ground_frag.glsl). Both are turned back
 			// off below, before the transparent pass reads alpha as blend
 			// weight again. See antialias.go.
-			SetAlphaToCoverage(true)
+			render.SetAlphaToCoverage(true)
 			gl.UseProgram(gfx.Program)
 			gl.Uniform1i(gfx.AlphaSharpenUniform, 1)
 
 			// Build frustum from current projection × camera matrices
 			projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
-			frustum := ExtractFrustum(projView)
+			frustum := render.ExtractFrustum(projView)
 
 			// Draw world geometry: chunks → sectors → floor/ceiling/walls
 			// Two-pass rendering: opaque geometry first, then transparent geometry sorted back-to-front.
@@ -526,7 +527,7 @@ func main() {
 					// was just added.
 					chunk.RecomputeBounds()
 				}
-				if !AABBInFrustum(frustum, chunk.MinBound, chunk.MaxBound) {
+				if !render.AABBInFrustum(frustum, chunk.MinBound, chunk.MaxBound) {
 					continue
 				}
 				chunksDrawn++
@@ -537,8 +538,8 @@ func main() {
 				var visibleSectors map[string]bool
 				var connectedSectors map[string]bool
 				if world.PlayerEntity != nil && chunk.ID == world.PlayerEntity.CurrentChunk {
-					visibleSectors = PortalVisibleSectors(chunk, world.PlayerEntity.CurrentSector, gfx.Cam.Position)
-					connectedSectors = PortalConnectedSectors(chunk, world.PlayerEntity.CurrentSector)
+					visibleSectors = render.PortalVisibleSectors(chunk, world.PlayerEntity.CurrentSector, gfx.Cam.Position)
+					connectedSectors = render.PortalConnectedSectors(chunk, world.PlayerEntity.CurrentSector)
 				}
 
 				for j := range chunk.Sectors {
@@ -549,7 +550,7 @@ func main() {
 					}
 					sectorMin := mgl32.Vec3{sector.MinBound.X(), sector.Floor.Height, sector.MinBound.Y()}
 					sectorMax := mgl32.Vec3{sector.MaxBound.X(), sector.Ceiling.Height, sector.MaxBound.Y()}
-					if !AABBInFrustum(frustum, sectorMin, sectorMax) {
+					if !render.AABBInFrustum(frustum, sectorMin, sectorMax) {
 						continue
 					}
 					sectorsDrawn++
@@ -573,7 +574,7 @@ func main() {
 					}
 					for k := range sector.Walls {
 						w := &sector.Walls[k]
-						if w.Visible && (w.DoubleSided || WallFacingCamera(*w, gfx.Cam.Position)) {
+						if w.Visible && (w.DoubleSided || render.WallFacingCamera(*w, gfx.Cam.Position)) {
 							if !w.Detail.HasDisplace() {
 								drawOrQueue(&w.Geometry, identity, w.DoubleSided)
 							}
@@ -585,7 +586,7 @@ func main() {
 					// Draw gap-fill geometry on portals connecting sectors at different heights.
 					for k := range sector.Portals {
 						p := &sector.Portals[k]
-						if p.Visible && p.DrawGap && (p.DoubleSided || PortalFacingCamera(p.StartPoint, p.EndPoint, gfx.Cam.Position)) {
+						if p.Visible && p.DrawGap && (p.DoubleSided || render.PortalFacingCamera(p.StartPoint, p.EndPoint, gfx.Cam.Position)) {
 							drawOrQueue(&p.FloorGap, identity, p.DoubleSided)
 							drawOrQueue(&p.CeilGap, identity, p.DoubleSided)
 						}
@@ -600,7 +601,7 @@ func main() {
 				for wi := range chunk.WaterSurfaces {
 					w := &chunk.WaterSurfaces[wi]
 					wmin, wmax := w.WorldAABB()
-					if !AABBInFrustum(frustum, wmin, wmax) {
+					if !render.AABBInFrustum(frustum, wmin, wmax) {
 						continue
 					}
 					drawOrQueue(&w.Geometry, w.ModelMatrix(), true)
@@ -609,7 +610,7 @@ func main() {
 
 			// Placed entities. Unlike the spawn marker below, these are part
 			// of the world and draw in gameplay as well as in the editor.
-			RenderEntities(&level, &frustum, drawOrQueue)
+			render.RenderEntities(&level, &frustum, drawOrQueue)
 
 			// The spawn marker is an authoring aid, not level geometry: it
 			// exists to be seen and dragged in the editor and must never show
@@ -626,7 +627,7 @@ func main() {
 			// reason: it has to be visible to be worked on, and invisible once
 			// the editor is closed.
 			if Editor.Active {
-				RenderVolumes(&level, &frustum)
+				render.RenderVolumes(&level, &frustum)
 				RenderEntityMarkers(&level, &frustum)
 			}
 
@@ -634,19 +635,19 @@ func main() {
 				// --- Procedural biome scatter (GPU grass / rocks) ---
 				// Drawn after opaque geometry but before the transparent pass: blades and
 				// rocks are solid (depth-written) so translucent water still sorts on top.
-				RenderBiomes(&level, projView, gfx.Cam.Position, shadowFrame)
+				render.RenderBiomes(&level, projView, gfx.Cam.Position, shadowFrame)
 
 				// --- Procedural face detail (GPU rock displacement + scatter) ---
 				// Drawn after opaque geometry; reuses the main fragment shader so it
 				// receives shadows, and was rendered into the shadow maps above so it casts.
-				RenderDetailColor(&level, shadowFrame)
+				render.RenderDetailColor(&level, shadowFrame)
 			}
 
 			// End of the opaque pass — hand alpha back to blending. Done
 			// unconditionally rather than inside the transparent block below,
 			// so the editor overlays and ImGui that follow never inherit
 			// either setting on a frame with nothing transparent in it.
-			SetAlphaToCoverage(false)
+			render.SetAlphaToCoverage(false)
 			gl.UseProgram(gfx.Program)
 			gl.Uniform1i(gfx.AlphaSharpenUniform, 0)
 
@@ -696,9 +697,9 @@ func main() {
 				gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
 			}
 
-			DebugStats.ChunksDrawn = chunksDrawn
-			DebugStats.SectorsDrawn = sectorsDrawn
-			DebugStats.SectorsPortalCulled = sectorsPortalCulled
+			render.DebugStats.ChunksDrawn = chunksDrawn
+			render.DebugStats.SectorsDrawn = sectorsDrawn
+			render.DebugStats.SectorsPortalCulled = sectorsPortalCulled
 		}
 
 		// Draw editor overlays and ImGui UI when editor is active
@@ -709,9 +710,9 @@ func main() {
 		// Draw debug overlay and keybinding reference (both use ImGui,
 		// independent of the editor — when it is active, EditorRender has
 		// already drawn them inside its own frame).
-		if (DebugOverlayVisible || KeybindHelpVisibleIn(MainWindowID)) && !Editor.Active {
+		if (render.DebugOverlayVisible || KeybindHelpVisibleIn(MainWindowID)) && !Editor.Active {
 			imguibackend.ImGuiNewFrame(platform.DeltaTime)
-			DebugRenderOverlay()
+			render.DebugRenderOverlay()
 			KeybindHelpRender()
 			imguibackend.ImGuiRender()
 		}

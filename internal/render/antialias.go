@@ -1,4 +1,4 @@
-package main
+package render
 
 // antialias.go — window-level multisample anti-aliasing (MSAA).
 //

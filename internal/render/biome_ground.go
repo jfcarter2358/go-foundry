@@ -1,4 +1,4 @@
-package main
+package render
 
 // biome_ground.go — conforming, textured, lightly-displaced ground patch
 // rendered underneath every painted biome sector (except the water surface
@@ -33,9 +33,9 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// groundVertexStride is floats per vertex: aPos(3) aNormal(3) aUV(2)
+// GroundVertexStride is floats per vertex: aPos(3) aNormal(3) aUV(2)
 // aCoverage(1).
-const groundVertexStride = 9
+const GroundVertexStride = 9
 
 // groundEntry is a cached per-sector ground patch mesh.
 type groundEntry struct {
@@ -101,10 +101,10 @@ func EvictGroundPatchCache(id string) {
 	delete(groundPatches.cache, id)
 }
 
-// resolveGroundTexture returns the texture to paint on brush's ground patch:
+// ResolveGroundTexture returns the texture to paint on brush's ground patch:
 // brush.GroundTexture when the user picked one, else the kind's default
 // (GroundTextureFor).
-func resolveGroundTexture(brush *world.BiomeBrush) string {
+func ResolveGroundTexture(brush *world.BiomeBrush) string {
 	if brush.GroundTexture != "" {
 		return brush.GroundTexture
 	}
@@ -117,7 +117,7 @@ func resolveGroundTexture(brush *world.BiomeBrush) string {
 // so a partly-set or pre-existing (zero) brush still tiles sanely. Written as
 // `!(v > 0)` so a NaN out of a hand-edited save falls back too rather than
 // poisoning every UV in the mesh.
-func resolveGroundUVScale(brush *world.BiomeBrush) mgl32.Vec2 {
+func ResolveGroundUVScale(brush *world.BiomeBrush) mgl32.Vec2 {
 	s := brush.GroundUVScale
 	if !(s.X() > 0) {
 		s[0] = world.DefaultGroundUVScale
@@ -128,15 +128,15 @@ func resolveGroundUVScale(brush *world.BiomeBrush) mgl32.Vec2 {
 	return s
 }
 
-// buildGroundPatchMesh builds the flat triangle-list vertex buffer (see
-// groundVertexStride) for sector s: a Delaunay triangulation of the sector's
+// BuildGroundPatchMesh builds the flat triangle-list vertex buffer (see
+// GroundVertexStride) for sector s: a Delaunay triangulation of the sector's
 // own (densified) polygon boundary plus an interior sample grid — see
 // biomeMeshPoints — height-conformed to the structural floor plus
 // biome.GroundDisplacement. Because the triangulation's boundary points sit
 // exactly on the polygon's edges, the mesh's outer edge follows the painted
 // shape precisely rather than the axis-aligned staircase a grid-quad clip
 // would give a diagonal edge.
-func buildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
+func BuildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
 	boundary, allPts := biome.BiomeMeshPoints(s)
 	if len(allPts) == 0 {
 		return nil
@@ -167,8 +167,8 @@ func buildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
 		heights[i], coverage[i] = biome.BiomeSurfaceAt(level, &s.Brush, seed, p.X(), p.Y())
 	}
 
-	uvScale := resolveGroundUVScale(&s.Brush)
-	out := make([]float32, 0, len(triIdx)*groundVertexStride)
+	uvScale := ResolveGroundUVScale(&s.Brush)
+	out := make([]float32, 0, len(triIdx)*GroundVertexStride)
 	for i := 0; i < len(triIdx); i += 3 {
 		ia, ib, ic := triIdx[i], triIdx[i+1], triIdx[i+2]
 		pa := mgl32.Vec3{allPts[ia].X(), heights[ia], allPts[ia].Y()}
@@ -205,11 +205,11 @@ func buildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
 // the water sync has already had its chance to see the sector dirty too.
 func ensureGroundPatch(level *world.Level, s *world.BiomeSector) groundEntry {
 	e, ok := groundPatches.cache[s.ID]
-	tex := resolveGroundTexture(&s.Brush)
+	tex := ResolveGroundTexture(&s.Brush)
 	if ok && !s.GroundDirty && e.texture == tex {
 		return e
 	}
-	verts := buildGroundPatchMesh(level, s)
+	verts := BuildGroundPatchMesh(level, s)
 	s.GroundDirty = false
 	if !ok {
 		gl.GenVertexArrays(1, &e.vao)
@@ -219,7 +219,7 @@ func ensureGroundPatch(level *world.Level, s *world.BiomeSector) groundEntry {
 	gl.BindBuffer(gl.ARRAY_BUFFER, e.vbo)
 	gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.DYNAMIC_DRAW)
 
-	stride := int32(groundVertexStride * 4)
+	stride := int32(GroundVertexStride * 4)
 	gl.EnableVertexAttribArray(groundPatches.aPos)
 	gl.VertexAttribPointerWithOffset(groundPatches.aPos, 3, gl.FLOAT, false, stride, 0)
 	gl.EnableVertexAttribArray(groundPatches.aNormal)
@@ -230,7 +230,7 @@ func ensureGroundPatch(level *world.Level, s *world.BiomeSector) groundEntry {
 	gl.VertexAttribPointerWithOffset(groundPatches.aCoverage, 1, gl.FLOAT, false, stride, 8*4)
 	gl.BindVertexArray(0)
 
-	e.verts = int32(len(verts) / groundVertexStride)
+	e.verts = int32(len(verts) / GroundVertexStride)
 	e.texture = tex
 	groundPatches.cache[s.ID] = e
 	return e

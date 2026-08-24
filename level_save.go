@@ -18,6 +18,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/render"
 	"foundry/internal/world"
 	"math"
 	"os"
@@ -704,11 +705,11 @@ func applyRawLevel(raw world.RawLevel, lvl *world.Level) error {
 	// released after it so the outgoing entities' GPU buffers do not leak — see
 	// EditorLoadLevel's note.
 	collision.DeleteEntities(lvl)
-	DeleteVolumes(lvl)
+	render.DeleteVolumes(lvl)
 	*lvl = newLevel
 
 	world.UploadLights(lvl.Lights)
-	LoadVolumes(lvl)
+	render.LoadVolumes(lvl)
 
 	// Every ref a script holds now points at an object that has been
 	// re-instantiated, so anything the runtime remembered about them is stale.

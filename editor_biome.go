@@ -18,6 +18,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/render"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -80,7 +81,7 @@ func deleteBiomeSector(ch *world.Chunk, idx int) {
 	if ch == nil || idx < 0 || idx >= len(ch.BiomeSectors) {
 		return
 	}
-	EvictBiomeSectorCaches(ch.BiomeSectors[idx].ID)
+	render.EvictBiomeSectorCaches(ch.BiomeSectors[idx].ID)
 	ch.BiomeSectors = append(ch.BiomeSectors[:idx], ch.BiomeSectors[idx+1:]...)
 	Editor.ActiveBiomeSectorIdx = -1
 	Editor.BiomeDragVertexIdx = -1
@@ -647,7 +648,7 @@ func biomeFadeSection(bs *world.BiomeSector) {
 
 	imgui.Text("Boundary Jitter — bulges Draw Dist (and any LOD rings)")
 	imgui.Text("so the transition doesn't read as a circle around the camera.")
-	jitter := resolvedBoundaryJitter(&bs.Brush)
+	jitter := render.ResolvedBoundaryJitter(&bs.Brush)
 	if imgui.SliderFloat("Jitter##bsbjit", &jitter, 0, 15) {
 		bs.Brush.BoundaryJitter = jitter
 	}
@@ -728,7 +729,7 @@ func biomeGroundSection(bs *world.BiomeSector) {
 	// Scale (editorUVControls) — set these to the covered floor's numbers and
 	// the patch tiles at exactly its texel size. Baked into the patch mesh's
 	// UVs, so it needs a rebuild.
-	uv := resolveGroundUVScale(&bs.Brush)
+	uv := render.ResolveGroundUVScale(&bs.Brush)
 	uvArr := [2]float32{uv.X(), uv.Y()}
 	if editorDragFloat("Texture Scale U##bsguvu", &uvArr[0], 0.01, 100, "%.3f") ||
 		editorDragFloat("Texture Scale V##bsguvv", &uvArr[1], 0.01, 100, "%.3f") {

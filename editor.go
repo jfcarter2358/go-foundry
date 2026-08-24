@@ -20,6 +20,7 @@ import (
 	"foundry/internal/hooks"
 	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
+	"foundry/internal/render"
 	"foundry/internal/world"
 	"math"
 
@@ -393,8 +394,8 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 
 	imguibackend.ImGuiInit()
 	gizmo.GizmoInit()
-	GrassInit()
-	DetailInit()
+	render.GrassInit()
+	render.DetailInit()
 
 	// Biome sector layer defaults
 	Editor.BiomeLayerActive = false
@@ -838,7 +839,7 @@ func EditorRender() {
 	// The F3 overlay is drawn here rather than in main.go's non-editor branch
 	// so it is available in every editor mode too — frame time and draw counts
 	// matter most while you are building the thing that costs them.
-	DebugRenderOverlay()
+	render.DebugRenderOverlay()
 	KeybindHelpRender()
 	imguibackend.ImGuiRender()
 }
@@ -902,7 +903,7 @@ func EditorLoadLevel(path string) error {
 	// rather than per surface, so the outgoing level's have to be released
 	// explicitly — overwriting the struct would drop the handles, not free them.
 	collision.DeleteEntities(Editor.level)
-	DeleteVolumes(Editor.level)
+	render.DeleteVolumes(Editor.level)
 
 	// Replace the level contents in-place (Editor.level points to main's level)
 	*Editor.level = newLevel

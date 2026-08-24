@@ -1,4 +1,4 @@
-package main
+package render
 
 import (
 	"strings"
@@ -35,7 +35,7 @@ func TestAntiAliasSampleTiersTerminate(t *testing.T) {
 // return -1 and every cutout would fade out at distance under mipmapping with
 // nothing to point at.
 func TestFragmentShaderSharpensCutoutsBehindUniform(t *testing.T) {
-	src := readBiomeShader(t, "fragment.glsl")
+	src := ReadBiomeShader(t, "fragment.glsl")
 	if !strings.Contains(src, "uniform int alphaSharpen;") {
 		t.Error("fragment.glsl does not declare `uniform int alphaSharpen` — AlphaSharpenUniform in main.go has nothing to bind to")
 	}
@@ -52,7 +52,7 @@ func TestFragmentShaderSharpensCutoutsBehindUniform(t *testing.T) {
 // through the interior of a triangle, so MSAA cannot see it on its own —
 // per-sample coverage is the only thing antialiasing it.
 func TestGroundShaderResolvesSlopeCutoffToCoverage(t *testing.T) {
-	src := readBiomeShader(t, "ground_frag.glsl")
+	src := ReadBiomeShader(t, "ground_frag.glsl")
 	if !strings.Contains(src, "fwidth(vCoverage)") {
 		t.Error("ground_frag.glsl does not rescale vCoverage by fwidth — the slope cutoff is back to a hard, aliased edge")
 	}

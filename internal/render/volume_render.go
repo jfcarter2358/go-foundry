@@ -1,4 +1,4 @@
-package main
+package render
 
 // volume_render.go — drawing a volume in the editor, and only in the editor.
 //

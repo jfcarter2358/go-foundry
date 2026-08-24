@@ -19,6 +19,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/render"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -89,7 +90,7 @@ func entityMarkerMatrix(e *world.Entity) mgl32.Mat4 {
 // RenderEntityMarkers draws a cage around every entity the renderer had nothing
 // to draw. Editor-only: the caller is responsible for not calling it during
 // play, the same rule the spawn marker and the volume cages follow.
-func RenderEntityMarkers(lvl *world.Level, cull *Frustum) {
+func RenderEntityMarkers(lvl *world.Level, cull *render.Frustum) {
 	if lvl == nil {
 		return
 	}
@@ -101,7 +102,7 @@ func RenderEntityMarkers(lvl *world.Level, cull *Frustum) {
 		if !e.Visible || !e.HasBounds() || entityHasVisibleGeometry(e) {
 			continue
 		}
-		if !entityInFrustum(e, cull) {
+		if !render.EntityInFrustum(e, cull) {
 			continue
 		}
 		if g := entityMarkerCage(e.BoundingKind); len(g.Vertices) > 0 {

@@ -1,4 +1,4 @@
-package main
+package render
 
 // shadow_shader_gl_test.go — opt-in check that every stage which samples the
 // cascade array still compiles against the driver.
@@ -15,6 +15,7 @@ package main
 import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/gltest"
 	"testing"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -36,7 +37,7 @@ func compileBiomeStages(vertPath, fragPath, vertSnippet, fragSnippet string) err
 }
 
 func TestShadowSamplingShadersCompile(t *testing.T) {
-	glTestContext(t)
+	gltest.Context(t)
 
 	prevExe := fileutil.ExecutablePath
 	fileutil.ExecutablePath = "resources"

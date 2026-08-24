@@ -1,4 +1,4 @@
-package main
+package render
 
 import (
 	"fmt"
@@ -135,14 +135,14 @@ func InitShadows(shadowVertPath, shadowFragPath, cubeVertPath, cubeFragPath stri
 }
 
 func loadShadowProgram(vertPath, fragPath string) error {
-	return linkProgram(vertPath, fragPath, &Shadows.Program)
+	return LinkProgram(vertPath, fragPath, &Shadows.Program)
 }
 
 func loadCubeShadowProgram(vertPath, fragPath string) error {
-	return linkProgram(vertPath, fragPath, &Shadows.CubeProgram)
+	return LinkProgram(vertPath, fragPath, &Shadows.CubeProgram)
 }
 
-func linkProgram(vertPath, fragPath string, out *uint32) error {
+func LinkProgram(vertPath, fragPath string, out *uint32) error {
 	vertSrc, err := gfx.ReadShaderFile(vertPath)
 	if err != nil {
 		return err

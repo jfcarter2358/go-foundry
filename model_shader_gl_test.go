@@ -16,48 +16,15 @@ package main
 import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
-	"os"
-	"runtime"
+	"foundry/internal/gltest"
+	"foundry/internal/render"
 	"testing"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
-	"github.com/veandco/go-sdl2/sdl"
 )
 
-// glTestContext stands up a hidden GL 4.1 context, or skips the test when the
-// opt-in env var is unset. Nothing is torn down on the way out: a Go test does
-// not necessarily run on the process's main OS thread, and tearing an SDL video
-// subsystem down from another thread segfaults in the driver. The test binary
-// is about to exit, so the OS reclaims everything.
-func glTestContext(t *testing.T) {
-	t.Helper()
-	if os.Getenv("FOUNDRY_GL_TEST") == "" {
-		t.Skip("set FOUNDRY_GL_TEST=1 to run (needs a display and a GL 4.1 driver)")
-	}
-	runtime.LockOSThread()
-
-	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
-		t.Fatalf("sdl.Init: %v", err)
-	}
-	_ = sdl.GLSetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
-	_ = sdl.GLSetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 1)
-	_ = sdl.GLSetAttribute(sdl.GL_CONTEXT_PROFILE_MASK, sdl.GL_CONTEXT_PROFILE_CORE)
-
-	win, err := sdl.CreateWindow("gl test", sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED,
-		64, 64, sdl.WINDOW_OPENGL|sdl.WINDOW_HIDDEN)
-	if err != nil {
-		t.Fatalf("CreateWindow: %v", err)
-	}
-	if _, err := win.GLCreateContext(); err != nil {
-		t.Fatalf("GLCreateContext: %v", err)
-	}
-	if err := gl.Init(); err != nil {
-		t.Fatalf("gl.Init: %v", err)
-	}
-}
-
 func TestModelShadersCompile(t *testing.T) {
-	glTestContext(t)
+	gltest.Context(t)
 
 	prog, err := gfx.CompileProgramFromFiles(
 		"resources/shaders/model_vert.glsl",
@@ -97,7 +64,7 @@ func TestModelShadersCompile(t *testing.T) {
 // could not fit it would fail to link here rather than silently at the moment
 // someone loads a rigged model.
 func TestSkinnedShadersCompileAndLink(t *testing.T) {
-	glTestContext(t)
+	gltest.Context(t)
 
 	prevExe := fileutil.ExecutablePath
 	fileutil.ExecutablePath = "resources"
@@ -122,12 +89,12 @@ func TestSkinnedShadersCompileAndLink(t *testing.T) {
 		}
 	}
 
-	// Both shadow passes, through the same linkProgram the engine uses.
+	// Both shadow passes, through the same render.LinkProgram the engine uses.
 	var dirProg, cubeProg uint32
-	if err := linkProgram("resources/shaders/shadow_vert.glsl", "resources/shaders/shadow_frag.glsl", &dirProg); err != nil {
+	if err := render.LinkProgram("resources/shaders/shadow_vert.glsl", "resources/shaders/shadow_frag.glsl", &dirProg); err != nil {
 		t.Fatalf("cascade shadow program with skinning failed to build: %v", err)
 	}
-	if err := linkProgram("resources/shaders/shadow_cube_vert.glsl", "resources/shaders/shadow_cube_frag.glsl", &cubeProg); err != nil {
+	if err := render.LinkProgram("resources/shaders/shadow_cube_vert.glsl", "resources/shaders/shadow_cube_frag.glsl", &cubeProg); err != nil {
 		t.Fatalf("point shadow program with skinning failed to build: %v", err)
 	}
 	for _, p := range []struct {

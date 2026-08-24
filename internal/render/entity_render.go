@@ -1,4 +1,4 @@
-package main
+package render
 
 // entity_render.go — drawing placed entities.
 //
@@ -34,7 +34,7 @@ func entityDrawable(e *world.Entity, m *world.EntityModel) bool {
 // An entity with no authored bounds is never culled. Its bounding volume is
 // what culling has to work from, and treating an absent one as zero-sized would
 // make an unbounded entity invisible everywhere except dead centre of the view.
-func entityInFrustum(e *world.Entity, cull *Frustum) bool {
+func EntityInFrustum(e *world.Entity, cull *Frustum) bool {
 	if cull == nil {
 		return true
 	}
@@ -58,7 +58,7 @@ func RenderEntities(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, 
 	}
 	for ei := range lvl.Entities {
 		e := &lvl.Entities[ei]
-		if !e.Visible || !entityInFrustum(e, cull) {
+		if !e.Visible || !EntityInFrustum(e, cull) {
 			continue
 		}
 		world := e.ModelMatrix()
@@ -93,7 +93,7 @@ func RenderEntitiesShadow(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms,
 	drewAny := false
 	for ei := range lvl.Entities {
 		e := &lvl.Entities[ei]
-		if !e.Visible || !entityInFrustum(e, cull) {
+		if !e.Visible || !EntityInFrustum(e, cull) {
 			continue
 		}
 		world := e.ModelMatrix()

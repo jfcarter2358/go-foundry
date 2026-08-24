@@ -1,4 +1,4 @@
-package main
+package render
 
 // grass.go — GPU-scattered biome rendering (procedural grass, wildflowers,
 // cattails & rock).
@@ -44,8 +44,8 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// biomeVertexStride is floats per template vertex: aLocal(3) aNormal(3) aParam(1).
-const biomeVertexStride = 7
+// BiomeVertexStride is floats per template vertex: aLocal(3) aNormal(3) aParam(1).
+const BiomeVertexStride = 7
 
 // Lattice spacing (world units) between scatter slots for each biome's NEAR
 // LOD tier (or its only tier, for Rock — see BiomeLODTierCount). Painted
@@ -235,23 +235,23 @@ func GrassInit() {
 	// see biomeRenderer's doc comment on why those are [3]uint32/[3]int32
 	// rather than one VAO per kind.
 	uploadTier := func(vao, vbo *[3]uint32, verts *[3]int32, tier int, mesh []float32) {
-		verts[tier] = int32(len(mesh) / biomeVertexStride)
+		verts[tier] = int32(len(mesh) / BiomeVertexStride)
 		vao[tier], vbo[tier] = uploadBiomeMesh(mesh)
 	}
 
-	uploadTier(&biomes.bladeVAO, &biomes.bladeVBO, &biomes.bladeVerts, 0, buildBladeMesh())
+	uploadTier(&biomes.bladeVAO, &biomes.bladeVBO, &biomes.bladeVerts, 0, BuildBladeMesh())
 	uploadTier(&biomes.bladeVAO, &biomes.bladeVBO, &biomes.bladeVerts, 1, buildTaperedStemN(1.0, 1.0, lodStemSegs))
 	uploadTier(&biomes.bladeVAO, &biomes.bladeVBO, &biomes.bladeVerts, 2, buildGrassClumpMesh())
 
-	uploadTier(&biomes.wildflowerVAO, &biomes.wildflowerVBO, &biomes.wildflowerVerts, 0, buildWildflowerMesh())
+	uploadTier(&biomes.wildflowerVAO, &biomes.wildflowerVBO, &biomes.wildflowerVerts, 0, BuildWildflowerMesh())
 	uploadTier(&biomes.wildflowerVAO, &biomes.wildflowerVBO, &biomes.wildflowerVerts, 1, buildWildflowerMeshSimple())
 	uploadTier(&biomes.wildflowerVAO, &biomes.wildflowerVBO, &biomes.wildflowerVerts, 2, buildWildflowerClumpMesh())
 
-	uploadTier(&biomes.cattailVAO, &biomes.cattailVBO, &biomes.cattailVerts, 0, buildCattailMesh())
+	uploadTier(&biomes.cattailVAO, &biomes.cattailVBO, &biomes.cattailVerts, 0, BuildCattailMesh())
 	uploadTier(&biomes.cattailVAO, &biomes.cattailVBO, &biomes.cattailVerts, 1, buildCattailMeshSimple())
 	uploadTier(&biomes.cattailVAO, &biomes.cattailVBO, &biomes.cattailVerts, 2, buildCattailClumpMesh())
 
-	uploadTier(&biomes.mossVAO, &biomes.mossVBO, &biomes.mossVerts, 0, buildMossMesh())
+	uploadTier(&biomes.mossVAO, &biomes.mossVBO, &biomes.mossVerts, 0, BuildMossMesh())
 	uploadTier(&biomes.mossVAO, &biomes.mossVBO, &biomes.mossVerts, 1, buildMossMeshMid())
 	uploadTier(&biomes.mossVAO, &biomes.mossVBO, &biomes.mossVerts, 2, buildMossClumpMesh())
 
@@ -274,7 +274,7 @@ func (br *biomeRenderer) rockMeshFor(sides int32) rockMesh {
 	}
 	verts := buildRockMesh(int(sides))
 	vao, vbo := uploadBiomeMesh(verts)
-	m := rockMesh{vao: vao, vbo: vbo, verts: int32(len(verts) / biomeVertexStride)}
+	m := rockMesh{vao: vao, vbo: vbo, verts: int32(len(verts) / BiomeVertexStride)}
 	br.rockMeshes[sides] = m
 	return m
 }
@@ -348,7 +348,7 @@ func uploadBiomeMesh(verts []float32) (vao, vbo uint32) {
 	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
 	gl.BufferData(gl.ARRAY_BUFFER, len(verts)*4, gl.Ptr(verts), gl.STATIC_DRAW)
 
-	stride := int32(biomeVertexStride * 4)
+	stride := int32(BiomeVertexStride * 4)
 	gl.EnableVertexAttribArray(biomeAttrLocal)
 	gl.VertexAttribPointerWithOffset(biomeAttrLocal, 3, gl.FLOAT, false, stride, 0)
 	gl.EnableVertexAttribArray(biomeAttrNormal)
@@ -360,20 +360,20 @@ func uploadBiomeMesh(verts []float32) (vao, vbo uint32) {
 	return vao, vbo
 }
 
-// buildBladeMesh returns a tapered grass blade as a triangle list, occupying
+// BuildBladeMesh returns a tapered grass blade as a triangle list, occupying
 // the full unit height/width. Local y runs 0..1 (scaled to world height by
 // bladeHeight in the shader); aParam carries the height fraction (0..1) so
 // the shader can bend/light along the blade. Normal is unused for grass (lit
 // as up-facing) but kept for a uniform vertex layout.
-func buildBladeMesh() []float32 {
+func BuildBladeMesh() []float32 {
 	return buildTaperedStem(1.0, 1.0)
 }
 
-// transformMeshXZ returns a copy of verts (biomeVertexStride-per-vertex
+// transformMeshXZ returns a copy of verts (BiomeVertexStride-per-vertex
 // layout) rotated by yaw around Y and translated by (dx, dz) in the local XZ
 // plane — the tool every Far-tier "clump" template below uses to bake several
 // sub-instances of an existing builder into one static mesh, the same
-// "concatenate transformed copies" trick buildWildflowerMesh already uses to
+// "concatenate transformed copies" trick BuildWildflowerMesh already uses to
 // combine stem + bloom + center + leaves, just applied to a whole sub-mesh at
 // once instead of one part. Y and aParam (the 7th float, which encodes the
 // sub-mesh's own part/height banding) are left untouched; the normal is
@@ -385,7 +385,7 @@ func transformMeshXZ(verts []float32, dx, dz, yaw float32) []float32 {
 	ca, sa := float32(math.Cos(float64(yaw))), float32(math.Sin(float64(yaw)))
 	out := make([]float32, len(verts))
 	copy(out, verts)
-	for i := 0; i < len(out); i += biomeVertexStride {
+	for i := 0; i < len(out); i += BiomeVertexStride {
 		x, z := out[i+0], out[i+2]
 		out[i+0] = x*ca - z*sa + dx
 		out[i+2] = x*sa + z*ca + dz
@@ -519,7 +519,7 @@ func buildStem(heightFrac, widthFrac float32, taper bool, segs int) []float32 {
 // encoding: [0,1) stem, [2,3) wildflower head, [3,4) cattail head).
 func buildBlobMesh(sides int, cx, cy, cz, rx, ry, rz, param float32) []float32 {
 	base := buildRockMesh(sides)
-	for i := 0; i < len(base); i += biomeVertexStride {
+	for i := 0; i < len(base); i += BiomeVertexStride {
 		base[i+0] = base[i+0]*rx + cx
 		base[i+1] = base[i+1]*ry + cy
 		base[i+2] = base[i+2]*rz + cz
@@ -528,7 +528,7 @@ func buildBlobMesh(sides int, cx, cy, cz, rx, ry, rz, param float32) []float32 {
 	return base
 }
 
-// wildflowerHeadAnchor/cattailHeadAnchor are the fraction of the stem's
+// WildflowerHeadAnchor/CattailHeadAnchor are the fraction of the stem's
 // world height (bladeHeight) the head sits above — MUST match the matching
 // constants in biome_vert.glsl, which apply this offset after scaling the
 // head by the (independently configurable) headScale uniform. The head's own
@@ -536,8 +536,8 @@ func buildBlobMesh(sides int, cx, cy, cz, rx, ry, rz, param float32) []float32 {
 // baked translation — so the shader can grow/shrink it around a fixed anchor
 // point without the anchor itself drifting.
 //
-// These double as the stem's own height (see buildWildflowerMesh /
-// buildCattailMesh), so the stalk runs all the way up to the point its head
+// These double as the stem's own height (see BuildWildflowerMesh /
+// BuildCattailMesh), so the stalk runs all the way up to the point its head
 // hangs from and the head swallows the tip. The stem used to stop a little
 // short — 0.75 under a 0.84 anchor, 0.88 under a 0.95 one — and the head's own
 // radius was left to bridge that gap. It only just did at the default head
@@ -547,19 +547,19 @@ func buildBlobMesh(sides int, cx, cy, cz, rx, ry, rz, param float32) []float32 {
 // dog floating over open air. Anchoring both to one number makes the joint
 // hold at every combination instead of at the ones it was tuned for.
 const (
-	wildflowerHeadAnchor = 0.84
-	cattailHeadAnchor    = 0.95
+	WildflowerHeadAnchor = 0.84
+	CattailHeadAnchor    = 0.95
 )
 
 // Wildflower bloom proportions, applied to the mesh's unit bloom blob by the
-// shader's bloomAspect uniform (see buildWildflowerMesh). Keeping these here
+// shader's bloomAspect uniform (see BuildWildflowerMesh). Keeping these here
 // rather than baked into the template is what lets one VAO serve both
 // silhouettes — BiomeBrush.BloomSpike just selects which one is uploaded.
-// wildflowerDiscAspect reproduces the radii the bloom used to be built with,
+// WildflowerDiscAspect reproduces the radii the bloom used to be built with,
 // so a brush with BloomSpike off looks exactly as it did before the toggle.
 var (
-	wildflowerDiscAspect  = mgl32.Vec3{0.85, 0.24, 0.85}
-	wildflowerSpikeAspect = mgl32.Vec3{0.34, 1.15, 0.34}
+	WildflowerDiscAspect  = mgl32.Vec3{0.85, 0.24, 0.85}
+	WildflowerSpikeAspect = mgl32.Vec3{0.34, 1.15, 0.34}
 )
 
 // aParam tags identifying the parts of a foliage template to the shader (see
@@ -567,10 +567,10 @@ var (
 // each head part gets its own integer band so the shader can size and color
 // it separately.
 const (
-	wildflowerBloomParam  = 2.0
-	cattailHeadParam      = 3.0
-	wildflowerCenterParam = 4.0
-	wildflowerLeafParam   = 5.0
+	WildflowerBloomParam  = 2.0
+	CattailHeadParam      = 3.0
+	WildflowerCenterParam = 4.0
+	WildflowerLeafParam   = 5.0
 )
 
 // Basal-leaf geometry for a wildflower (BiomeBrush.StemLeaves). Every one of
@@ -589,7 +589,7 @@ const (
 const (
 	wildflowerLeafCount = 3
 	wildflowerLeafSegs  = 3
-	wildflowerLeafLen   = float32(0.55) // radial reach
+	WildflowerLeafLen   = float32(0.55) // radial reach
 	wildflowerLeafWidth = float32(0.09) // half-width where it meets the stem
 	wildflowerLeafBaseY = float32(0.05) // where it leaves the stem
 	wildflowerLeafRise  = float32(0.34) // peak height of the arc above leafBaseY
@@ -597,8 +597,8 @@ const (
 	wildflowerLeafYaw   = 0.4           // radians, so the fan doesn't align with anything
 )
 
-// buildWildflowerLeaves returns the wildflower's basal leaves as a triangle
-// list, tagged in the wildflowerLeafParam band so the shader can scale, color
+// BuildWildflowerLeaves returns the wildflower's basal leaves as a triangle
+// list, tagged in the WildflowerLeafParam band so the shader can scale, color
 // and (when BiomeBrush.StemLeaves is off) collapse them independently of the
 // stem they ring. Proportions are documented on the constants above.
 //
@@ -606,7 +606,7 @@ const (
 // degenerated away when switched off rather than getting a VAO of their own —
 // a zero-area triangle never reaches rasterization, so an unleafed wildflower
 // pays for them in the vertex shader only.
-func buildWildflowerLeaves() []float32 {
+func BuildWildflowerLeaves() []float32 {
 	var v []float32
 	for k := 0; k < wildflowerLeafCount; k++ {
 		a := float64(k)/wildflowerLeafCount*2*math.Pi + wildflowerLeafYaw
@@ -617,7 +617,7 @@ func buildWildflowerLeaves() []float32 {
 		// at returns the leaf's centerline radius/height and its half-width a
 		// fraction s of the way from the stem to the tip.
 		at := func(s float32) (r, y, w float32) {
-			r = wildflowerLeafLen * s
+			r = WildflowerLeafLen * s
 			y = wildflowerLeafBaseY + wildflowerLeafRise*float32(math.Sin(float64(s)*wildflowerLeafBend))
 			w = wildflowerLeafWidth * (1 - s)
 			return
@@ -628,7 +628,7 @@ func buildWildflowerLeaves() []float32 {
 		// how high off the ground it is, like the stem does.
 		push := func(r, y, w, side float32) {
 			v = append(v, dx*r+tx*w*side, y, dz*r+tz*w*side,
-				0, 1, 0, wildflowerLeafParam+y)
+				0, 1, 0, WildflowerLeafParam+y)
 		}
 		for i := 0; i < wildflowerLeafSegs; i++ {
 			s0 := float32(i) / wildflowerLeafSegs
@@ -646,9 +646,9 @@ func buildWildflowerLeaves() []float32 {
 	return v
 }
 
-// buildWildflowerMesh returns a thin, even-thickness green stem topped with a
+// BuildWildflowerMesh returns a thin, even-thickness green stem topped with a
 // bloom and a small separate bloom center, ringed at its base by the optional
-// leaves (BiomeBrush.StemLeaves, see buildWildflowerLeaves). The bloom is
+// leaves (BiomeBrush.StemLeaves, see BuildWildflowerLeaves). The bloom is
 // colored in-shader from a
 // per-instance hue palette (tinted by the brush color) rather than baked into
 // the mesh, so one sector reads as a mix of flower colors instead of a single
@@ -659,17 +659,17 @@ func buildWildflowerLeaves() []float32 {
 //
 // Both the bloom and the center are built as UNIT blobs: their actual
 // proportions come from the shader's bloomAspect uniform (disc vs spike, see
-// wildflowerDiscAspect/wildflowerSpikeAspect) and a fixed center aspect, so
+// WildflowerDiscAspect/WildflowerSpikeAspect) and a fixed center aspect, so
 // one template covers every combination of the bloom toggles. The center is
 // always present in the mesh and collapsed to a degenerate (zero-area, so
 // never rasterized) triangle in the shader when BloomCenter is off — cheaper
 // and simpler than maintaining a second VAO for the two-part variant. The
 // basal leaves are carried and switched off the same way.
-func buildWildflowerMesh() []float32 {
-	v := buildStraightStem(wildflowerHeadAnchor, 0.55)
-	v = append(v, buildBlobMesh(6, 0, 0, 0, 1, 1, 1, wildflowerBloomParam)...)
-	v = append(v, buildBlobMesh(5, 0, 0, 0, 1, 1, 1, wildflowerCenterParam)...)
-	v = append(v, buildWildflowerLeaves()...)
+func BuildWildflowerMesh() []float32 {
+	v := buildStraightStem(WildflowerHeadAnchor, 0.55)
+	v = append(v, buildBlobMesh(6, 0, 0, 0, 1, 1, 1, WildflowerBloomParam)...)
+	v = append(v, buildBlobMesh(5, 0, 0, 0, 1, 1, 1, WildflowerCenterParam)...)
+	v = append(v, BuildWildflowerLeaves()...)
 	return v
 }
 
@@ -680,8 +680,8 @@ func buildWildflowerMesh() []float32 {
 // vertex-count saving instead of just a fill-rate one. Also the building
 // block buildWildflowerClumpMesh bakes several copies of for the Far tier.
 func buildWildflowerMeshSimple() []float32 {
-	v := buildStraightStemN(wildflowerHeadAnchor, 0.55, lodStemSegs)
-	v = append(v, buildBlobMesh(6, 0, 0, 0, 1, 1, 1, wildflowerBloomParam)...)
+	v := buildStraightStemN(WildflowerHeadAnchor, 0.55, lodStemSegs)
+	v = append(v, buildBlobMesh(6, 0, 0, 0, 1, 1, 1, WildflowerBloomParam)...)
 	return v
 }
 
@@ -710,10 +710,10 @@ func buildWildflowerClumpMesh() []float32 {
 	return v
 }
 
-// buildCattailMesh returns a tall thin reed — an even-thickness stalk, not a
+// BuildCattailMesh returns a tall thin reed — an even-thickness stalk, not a
 // tapered blade — topped with an elongated brown seed head (reusing the
 // rock/blob generator, stretched along Y for the characteristic "corn dog"
-// silhouette). See buildWildflowerMesh's note on independent head sizing.
+// silhouette). See BuildWildflowerMesh's note on independent head sizing.
 //
 // The elongation MUST live here in the template's own local radii. It used to
 // come for free from the head sharing the stem's transform, which scales X/Z
@@ -722,9 +722,9 @@ func buildWildflowerClumpMesh() []float32 {
 // uniformly (so it grows around a fixed anchor instead of dragging the anchor
 // with it), that free anisotropy was gone and the seed head flattened into a
 // disc. Keep ry well above rx/rz or the corn dog silhouette is lost again.
-func buildCattailMesh() []float32 {
-	v := buildStraightStem(cattailHeadAnchor, 0.35)
-	v = append(v, buildBlobMesh(7, 0, 0, 0, 0.30, 1.15, 0.30, cattailHeadParam)...)
+func BuildCattailMesh() []float32 {
+	v := buildStraightStem(CattailHeadAnchor, 0.35)
+	v = append(v, buildBlobMesh(7, 0, 0, 0, 0.30, 1.15, 0.30, CattailHeadParam)...)
 	return v
 }
 
@@ -733,8 +733,8 @@ func buildCattailMesh() []float32 {
 // buildWildflowerMeshSimple's doc comment, same reasoning. Also the building
 // block buildCattailClumpMesh bakes several copies of for the Far tier.
 func buildCattailMeshSimple() []float32 {
-	v := buildStraightStemN(cattailHeadAnchor, 0.35, lodStemSegs)
-	v = append(v, buildBlobMesh(5, 0, 0, 0, 0.30, 1.15, 0.30, cattailHeadParam)...)
+	v := buildStraightStemN(CattailHeadAnchor, 0.35, lodStemSegs)
+	v = append(v, buildBlobMesh(5, 0, 0, 0, 0.30, 1.15, 0.30, CattailHeadParam)...)
 	return v
 }
 
@@ -778,7 +778,7 @@ func buildCattailClumpMesh() []float32 {
 // height texture is absorbed too.
 const mossClumpSink = float32(0.12)
 
-// buildMossMesh returns a small faceted clump — the same blob generator as a
+// BuildMossMesh returns a small faceted clump — the same blob generator as a
 // rock (buildRockMesh), squashed into a low wide mound and sunk into the
 // ground (see mossClumpSink) so it reads as moss growing on the surface
 // rather than a boulder resting on it. Kept a mound rather than a flat disc
@@ -789,7 +789,7 @@ const mossClumpSink = float32(0.12)
 // case), so it gets the same per-instance warp and per-fragment
 // noise-bump/specular shading a rock does — the squashed, sunken silhouette
 // is the only thing distinguishing it from scattered stones.
-func buildMossMesh() []float32 {
+func BuildMossMesh() []float32 {
 	return buildBlobMesh(6, 0, -mossClumpSink, 0, 1.15, 0.45, 1.15, 0)
 }
 
@@ -979,9 +979,9 @@ func biomeLattice(rng, baseSpacing float32, cap int32) (gridN int32, spacing flo
 	return n, spacing
 }
 
-// resolvedBoundaryJitter applies the usual "0 means the kind's default"
+// ResolvedBoundaryJitter applies the usual "0 means the kind's default"
 // convention to BoundaryJitter (see BiomeBrush's own doc comment).
-func resolvedBoundaryJitter(b *world.BiomeBrush) float32 {
+func ResolvedBoundaryJitter(b *world.BiomeBrush) float32 {
 	if !(b.BoundaryJitter > 0) { // also catches NaN out of a hand-edited save
 		return world.DefaultBoundaryJitter
 	}
@@ -1080,7 +1080,7 @@ func forEachScatterSector(level *world.Level, camPos mgl32.Vec3, castOnly bool, 
 				// biome_scatter_common.glsl) — pad the cull box to match, or a
 				// jitter-extended instance near the true edge could be culled
 				// out of a frustum that never expected it to reach that far.
-				rng += resolvedBoundaryJitter(&s.Brush)
+				rng += ResolvedBoundaryJitter(&s.Brush)
 				bmin, bmax := biomeScatterBounds(ch, s, camPos, rng)
 				if bmin.X() > bmax.X() || bmin.Z() > bmax.Z() {
 					continue // sector lies entirely outside the camera ring
@@ -1333,7 +1333,7 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 		edgeFade = 0
 	}
 	gl.Uniform1f(p.U("edgeFadeDistance"), edgeFade)
-	gl.Uniform1f(p.U("boundaryJitter"), resolvedBoundaryJitter(&s.Brush))
+	gl.Uniform1f(p.U("boundaryJitter"), ResolvedBoundaryJitter(&s.Brush))
 
 	seed := world.BiomeSeed(s)
 	gl.Uniform2f(p.U("seed"), seed.X(), seed.Y())
@@ -1345,7 +1345,7 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 		// Moss has no shader-side case of its own: it reuses Rock's
 		// per-instance warp + per-fragment noise-bump/specular shading
 		// (biome_vert/frag.glsl's shapeKind==1 path) unchanged — only the
-		// template mesh (mossVAO: small, squashed clumps, see buildMossMesh)
+		// template mesh (mossVAO: small, squashed clumps, see BuildMossMesh)
 		// and this sector's scatter density/spacing/scale differ.
 		shapeKind = world.BiomeRock
 	}
@@ -1409,9 +1409,9 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 		if hs <= 0 {
 			hs = world.DefaultWildflowerHeadScale
 		}
-		aspect := wildflowerDiscAspect
+		aspect := WildflowerDiscAspect
 		if s.Brush.BloomSpike {
-			aspect = wildflowerSpikeAspect
+			aspect = WildflowerSpikeAspect
 		}
 		cc := s.Brush.CenterColor
 		if cc == (mgl32.Vec3{}) {

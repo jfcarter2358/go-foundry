@@ -1,22 +1,30 @@
-package main
+package render
 
 import (
+	"foundry/internal/leveltest"
 	"foundry/internal/world"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-func readBiomeShader(t *testing.T, name string) string {
+// ReadBiomeShader reads one of the engine's .glsl files.
+//
+// Through leveltest.RepoFile rather than a bare relative path: `go test` runs
+// this package from its own directory, so "resources/shaders/..." would only
+// have resolved while these tests lived in the root package.
+func ReadBiomeShader(t *testing.T, name string) string {
 	t.Helper()
-	src, err := os.ReadFile(filepath.Join("resources", "shaders", name))
-	if err != nil {
-		t.Fatalf("read %s: %v", name, err)
-	}
-	return string(src)
+	return leveltest.RepoFile(t, "resources", "shaders", name)
+}
+
+// readRepoSource reads one of the engine's own .go files. Several tests below
+// assert on the *order* of statements in a render pass, which the type system
+// cannot express.
+func readRepoSource(t *testing.T, parts ...string) string {
+	t.Helper()
+	return leveltest.RepoFile(t, parts...)
 }
 
 // TestScatterStagesShareOnePlacement pins the invariant the whole casting
@@ -26,13 +34,13 @@ func readBiomeShader(t *testing.T, name string) string {
 // would slide off the blade — the kind of bug that looks like a shadow bias
 // problem and isn't.
 func TestScatterStagesShareOnePlacement(t *testing.T) {
-	common := readBiomeShader(t, "biome_scatter_common.glsl")
+	common := ReadBiomeShader(t, "biome_scatter_common.glsl")
 	if !strings.Contains(common, "bool biomePlace(") {
 		t.Fatal("biome_scatter_common.glsl no longer defines biomePlace")
 	}
 
 	for _, stage := range []string{"biome_vert.glsl", "biome_shadow_vert.glsl", "biome_cube_vert.glsl"} {
-		src := readBiomeShader(t, stage)
+		src := ReadBiomeShader(t, stage)
 		if !strings.Contains(src, "biomePlace(gl_InstanceID") {
 			t.Errorf("%s does not call biomePlace — it must not place instances itself", stage)
 		}
@@ -49,7 +57,7 @@ func TestScatterStagesShareOnePlacement(t *testing.T) {
 // shortening IT for the shadow passes would relocate every instance and the
 // shadows would no longer match the visible scatter. castRange may only reject.
 func TestCastRangeDoesNotMovePlacement(t *testing.T) {
-	common := readBiomeShader(t, "biome_scatter_common.glsl")
+	common := ReadBiomeShader(t, "biome_scatter_common.glsl")
 
 	for _, placement := range []string{
 		"vec2 baseIdx = floor((camXZ - vec2(range)) / spacing);", // lattice origin
@@ -88,7 +96,7 @@ func TestCastRangeDoesNotMovePlacement(t *testing.T) {
 // stay a perfect circle while the others bulge, which reads as a worse bug
 // than no jitter at all (the mesh/density and the visible fade disagreeing).
 func TestBoundaryJitterAppliesToAllCircularTests(t *testing.T) {
-	common := readBiomeShader(t, "biome_scatter_common.glsl")
+	common := ReadBiomeShader(t, "biome_scatter_common.glsl")
 
 	if !strings.Contains(common, "float distJ = dist;") {
 		t.Fatal("distJ is no longer derived from dist — check the jitter is still applied at a single point")
@@ -115,7 +123,7 @@ func TestBoundaryJitterAppliesToAllCircularTests(t *testing.T) {
 // full size and dithers WHICH instances survive instead — folded into the
 // alive test via the shared `pick`, not into the late per-vertex `off` scale.
 func TestLODCrossfadeDithersInsteadOfShrinking(t *testing.T) {
-	common := readBiomeShader(t, "biome_scatter_common.glsl")
+	common := ReadBiomeShader(t, "biome_scatter_common.glsl")
 
 	if !strings.Contains(common, "alive = pick <= density * hc.y * lodGrowIn * lodShrinkOut;") {
 		t.Error("LOD crossfade is no longer folded into the alive test as a dither — " +
@@ -151,10 +159,7 @@ func TestLODCrossfadeDithersInsteadOfShrinking(t *testing.T) {
 // user's own slider); getting it backwards on an LOD split reintroduces the
 // exact gap this whole change fixes.
 func TestOuterIsLODMatchesTierPosition(t *testing.T) {
-	src, err := os.ReadFile("grass.go")
-	if err != nil {
-		t.Fatalf("read grass.go: %v", err)
-	}
+	src := []byte(readRepoSource(t, "internal", "render", "grass.go"))
 	if !strings.Contains(string(src), `gl.Uniform1i(p.U("outerIsLOD"), boolToInt32(tier < tierCount-1))`) {
 		t.Error(`outerIsLOD is no longer uploaded as boolToInt32(tier < tierCount-1) — ` +
 			"a single-tier kind (tierCount==1, tier==0) must resolve to false (the true Range edge shrinks), " +
@@ -168,8 +173,8 @@ func TestOuterIsLODMatchesTierPosition(t *testing.T) {
 // otherwise fail silently — glGetUniformLocation returns -1 and every
 // glUniform* call against it is a no-op, so the lights would simply go out.
 func TestBiomeLightUniformsMatchSceneShader(t *testing.T) {
-	scene := readBiomeShader(t, "fragment.glsl")
-	biome := readBiomeShader(t, "biome_light.glsl")
+	scene := ReadBiomeShader(t, "fragment.glsl")
+	biome := ReadBiomeShader(t, "biome_light.glsl")
 
 	for _, u := range []string{
 		"globalLightColor", "globalLightBrightness",
@@ -208,7 +213,7 @@ func TestBiomeLightUniformsMatchSceneShader(t *testing.T) {
 // intersection as two floors lit by different scenes, which is exactly what
 // this used to look like.
 func TestGroundPatchShadesLikeTheStructuralFloor(t *testing.T) {
-	frag := readBiomeShader(t, "ground_frag.glsl")
+	frag := ReadBiomeShader(t, "ground_frag.glsl")
 
 	// Lighting comes from the shared block, on the mesh's own facet normal —
 	// the same normal fragment.glsl recovers from derivatives for the floor.
@@ -232,22 +237,16 @@ func TestGroundPatchShadesLikeTheStructuralFloor(t *testing.T) {
 	// place on the patch and on the floor. Asserted against the Go source
 	// rather than by calling biomeLightSnippet, which resolves shader paths
 	// relative to ExecutablePath and so needs a running binary.
-	ground, err := os.ReadFile("biome_ground.go")
-	if err != nil {
-		t.Fatalf("read biome_ground.go: %v", err)
-	}
+	ground := []byte(readRepoSource(t, "internal", "render", "biome_ground.go"))
 	if !strings.Contains(string(ground), "biomeLightSnippet(2, true, true)") {
 		t.Error("the ground patch's fragment stage no longer takes pcf=2 + point shadows + cascade blend")
 	}
-	if !strings.Contains(readBiomeShader(t, "biome_light.glsl"), "#ifdef BIOME_LIGHT_CASCADE_BLEND") {
+	if !strings.Contains(ReadBiomeShader(t, "biome_light.glsl"), "#ifdef BIOME_LIGHT_CASCADE_BLEND") {
 		t.Error("biome_light.glsl no longer implements the cascade cross-fade")
 	}
 	// The scatter deliberately does NOT pay for the cross-fade: a blade or a
 	// pebble is too small to show the seam it hides.
-	grass, err := os.ReadFile("grass.go")
-	if err != nil {
-		t.Fatalf("read grass.go: %v", err)
-	}
+	grass := []byte(readRepoSource(t, "internal", "render", "grass.go"))
 	if strings.Contains(string(grass), "biomeLightSnippet(1, true, true)") {
 		t.Error("the scatter should not enable the cascade cross-fade")
 	}
@@ -359,11 +358,11 @@ func TestBiomeScatterBoundsClipsToCameraRing(t *testing.T) {
 
 func TestResolvedBoundaryJitter(t *testing.T) {
 	b := &world.BiomeBrush{}
-	if got := resolvedBoundaryJitter(b); got != world.DefaultBoundaryJitter {
+	if got := ResolvedBoundaryJitter(b); got != world.DefaultBoundaryJitter {
 		t.Errorf("resolvedBoundaryJitter(zero brush) = %v, want the default %v", got, world.DefaultBoundaryJitter)
 	}
 	b.BoundaryJitter = 7
-	if got := resolvedBoundaryJitter(b); got != 7 {
+	if got := ResolvedBoundaryJitter(b); got != 7 {
 		t.Errorf("resolvedBoundaryJitter(7) = %v, want 7 unchanged", got)
 	}
 }
@@ -376,7 +375,7 @@ func TestResolvedBoundaryJitter(t *testing.T) {
 // visible artifact it exists to remove. distJ must be floored at 0, not left
 // to go negative.
 func TestBoundaryJitterClampsAtZero(t *testing.T) {
-	common := readBiomeShader(t, "biome_scatter_common.glsl")
+	common := ReadBiomeShader(t, "biome_scatter_common.glsl")
 	if !strings.Contains(common, "distJ = max(distJ + n * boundaryJitter, 0.0);") {
 		t.Error("distJ is no longer clamped at 0 after applying the jitter offset — " +
 			"a negative jitter sample near the camera could cull instances at the player's own feet")
@@ -394,10 +393,7 @@ func TestBoundaryJitterClampsAtZero(t *testing.T) {
 // meaningfully) — same tradeoff TestBiomeWindTimeIsLatchedBeforeShadowPass
 // below makes for the same reason.
 func TestForEachScatterSectorPadsCullBoxForJitter(t *testing.T) {
-	src, err := os.ReadFile("grass.go")
-	if err != nil {
-		t.Fatalf("read grass.go: %v", err)
-	}
+	src := []byte(readRepoSource(t, "internal", "render", "grass.go"))
 	body := string(src)
 	fn := strings.Index(body, "func forEachScatterSector(")
 	if fn < 0 {
@@ -408,8 +404,8 @@ func TestForEachScatterSectorPadsCullBoxForJitter(t *testing.T) {
 		end = len(body) - fn
 	}
 	section := body[fn : fn+end]
-	if !strings.Contains(section, "resolvedBoundaryJitter(&s.Brush)") {
-		t.Error("forEachScatterSector's cull box no longer pads by resolvedBoundaryJitter — " +
+	if !strings.Contains(section, "ResolvedBoundaryJitter(&s.Brush)") {
+		t.Error("forEachScatterSector's cull box no longer pads by ResolvedBoundaryJitter — " +
 			"a jittered instance near the true edge could be culled out of a frustum that never expected it to reach that far")
 	}
 }
@@ -417,10 +413,7 @@ func TestForEachScatterSectorPadsCullBoxForJitter(t *testing.T) {
 // The wind clock has to be one value per frame shared by the color and depth
 // passes; a blade that sways in one and not the other sheds its shadow.
 func TestBiomeWindTimeIsLatchedBeforeShadowPass(t *testing.T) {
-	src, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatalf("read main.go: %v", err)
-	}
+	src := []byte(readRepoSource(t, "main.go"))
 	body := string(src)
 	latch := strings.Index(body, "BiomeWindTime =")
 	pass := strings.Index(body, "RenderShadowPass(level.Lights")
