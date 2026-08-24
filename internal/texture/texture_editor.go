@@ -1,12 +1,12 @@
-package main
+package texture
 
 // texture_editor.go — texture editor state, tools, and undo/redo.
 //
 // This file only touches the texdoc.TexDoc model plus the map/slice bookkeeping in
-// texture.go (RegisterTexture, QueueTextureUpload) and texture_alpha.go
+// go (RegisterTexture, QueueTextureUpload) and texture_alpha.go
 // (UpdateTextureHasAlpha) — none of which call into GL themselves, so every
 // function here is unit-testable without a display. The actual GL upload
-// happens later, when the main loop drains the queue (texture.go). Window
+// happens later, when the main loop drains the queue (go). Window
 // creation and imgui drawing live in texture_editor_ui.go.
 
 import (
@@ -62,10 +62,10 @@ func docByteSize(d *texdoc.TexDoc) int {
 	return n
 }
 
-// texEditorState is one open document plus its editing state. The plan's UI
+// TexEditorState is one open document plus its editing state. The plan's UI
 // hosts a single texture editor window with one active document at a time —
 // see activeTexEditor in texture_editor_ui.go.
-type texEditorState struct {
+type TexEditorState struct {
 	Doc          *texdoc.TexDoc
 	BoundTexture string // texture name this doc live-updates; "" until bound
 	Tool         TexTool
@@ -82,21 +82,21 @@ type texEditorState struct {
 	strokeLayer  int
 	strokeBefore []uint8
 
-	// previewDirty is set by any texel/layer mutation and cleared by the UI
+	// PreviewDirty is set by any texel/layer mutation and cleared by the UI
 	// once it has re-flattened and re-uploaded — see texture_editor_ui.go.
 	// Gating the (relatively expensive) Flatten call on this rather than
 	// running it unconditionally every frame is what keeps a brush drag to
 	// one upload per frame without also burning a full flatten on frames
 	// where nothing changed (e.g. while just panning/zooming the canvas).
-	previewDirty bool
+	PreviewDirty bool
 }
 
 // NewTexEditor wraps doc in fresh editing state with no undo history.
-func NewTexEditor(doc *texdoc.TexDoc) *texEditorState {
-	return &texEditorState{Doc: doc, Tool: ToolBrush, PrimaryIdx: 1, BrushSize: 1, SprayDensity: 8, strokeLayer: -1, previewDirty: true}
+func NewTexEditor(doc *texdoc.TexDoc) *TexEditorState {
+	return &TexEditorState{Doc: doc, Tool: ToolBrush, PrimaryIdx: 1, BrushSize: 1, SprayDensity: 8, strokeLayer: -1, PreviewDirty: true}
 }
 
-func (e *texEditorState) activeLayer() *texdoc.TexLayer {
+func (e *TexEditorState) activeLayer() *texdoc.TexLayer {
 	if e.Doc == nil || e.Doc.Active < 0 || e.Doc.Active >= len(e.Doc.Layers) {
 		return nil
 	}
@@ -108,7 +108,7 @@ func (e *texEditorState) activeLayer() *texdoc.TexLayer {
 // BeginStroke snapshots the active layer's indices before a paint gesture
 // (brush drag, single fill/line/rect op) so EndStroke can diff and commit a
 // single undo entry regardless of how many texels the gesture touched.
-func (e *texEditorState) BeginStroke() {
+func (e *TexEditorState) BeginStroke() {
 	layer := e.activeLayer()
 	if layer == nil {
 		return
@@ -120,7 +120,7 @@ func (e *texEditorState) BeginStroke() {
 
 // EndStroke commits the accumulated diff as one undo entry, if anything
 // actually changed.
-func (e *texEditorState) EndStroke() {
+func (e *TexEditorState) EndStroke() {
 	if !e.strokeActive {
 		return
 	}
@@ -141,7 +141,7 @@ func (e *texEditorState) EndStroke() {
 	}
 }
 
-func (e *texEditorState) setTexel(x, y int, idx uint8) {
+func (e *TexEditorState) setTexel(x, y int, idx uint8) {
 	if x < 0 || y < 0 || x >= e.Doc.W || y >= e.Doc.H {
 		return
 	}
@@ -150,12 +150,12 @@ func (e *texEditorState) setTexel(x, y int, idx uint8) {
 		return
 	}
 	layer.Idx[y*e.Doc.W+x] = idx
-	e.previewDirty = true
+	e.PreviewDirty = true
 }
 
 // StampBrush writes idx into every texel within BrushSize-1 texels of
 // (cx, cy) (a circular brush), clamped to the canvas.
-func (e *texEditorState) StampBrush(cx, cy int, idx uint8) {
+func (e *TexEditorState) StampBrush(cx, cy int, idx uint8) {
 	r := e.BrushSize - 1
 	if r < 0 {
 		r = 0
@@ -175,7 +175,7 @@ func (e *texEditorState) StampBrush(cx, cy int, idx uint8) {
 // fill, this is meant to be called once per painted frame while the button
 // stays down, so density builds up gradually the longer the cursor lingers
 // rather than filling solidly on first contact.
-func (e *texEditorState) StampSpray(cx, cy int, idx uint8) {
+func (e *TexEditorState) StampSpray(cx, cy int, idx uint8) {
 	r := e.BrushSize - 1
 	if r < 0 {
 		r = 0
@@ -197,7 +197,7 @@ func (e *texEditorState) StampSpray(cx, cy int, idx uint8) {
 
 // StampLine draws idx along a Bresenham line from (x0,y0) to (x1,y1),
 // stamping the current brush at each step.
-func (e *texEditorState) StampLine(x0, y0, x1, y1 int, idx uint8) {
+func (e *TexEditorState) StampLine(x0, y0, x1, y1 int, idx uint8) {
 	dx := texdoc.AbsInt(x1 - x0)
 	dy := -texdoc.AbsInt(y1 - y0)
 	sx, sy := 1, 1
@@ -228,7 +228,7 @@ func (e *texEditorState) StampLine(x0, y0, x1, y1 int, idx uint8) {
 
 // StampRect draws a rectangle from (x0,y0) to (x1,y1): outline only, or
 // filled.
-func (e *texEditorState) StampRect(x0, y0, x1, y1 int, idx uint8, filled bool) {
+func (e *TexEditorState) StampRect(x0, y0, x1, y1 int, idx uint8, filled bool) {
 	if x0 > x1 {
 		x0, x1 = x1, x0
 	}
@@ -255,7 +255,7 @@ func (e *texEditorState) StampRect(x0, y0, x1, y1 int, idx uint8, filled bool) {
 
 // Fill flood-fills the 4-connected region matching the texel at (x,y) with
 // idx, on the active layer.
-func (e *texEditorState) Fill(x, y int, idx uint8) {
+func (e *TexEditorState) Fill(x, y int, idx uint8) {
 	layer := e.activeLayer()
 	if layer == nil || x < 0 || y < 0 || x >= e.Doc.W || y >= e.Doc.H {
 		return
@@ -283,7 +283,7 @@ func (e *texEditorState) Fill(x, y int, idx uint8) {
 }
 
 // Eyedropper returns the palette index at (x,y) on the active layer.
-func (e *texEditorState) Eyedropper(x, y int) (uint8, bool) {
+func (e *TexEditorState) Eyedropper(x, y int) (uint8, bool) {
 	layer := e.activeLayer()
 	if layer == nil || x < 0 || y < 0 || x >= e.Doc.W || y >= e.Doc.H {
 		return 0, false
@@ -296,7 +296,7 @@ func (e *texEditorState) Eyedropper(x, y int) (uint8, bool) {
 // pushUndo records a completed action: clears redo history (a new action
 // invalidates it) and appends to the undo stack, evicting the oldest entries
 // while over the byte budget.
-func (e *texEditorState) pushUndo(entry texUndoEntry) {
+func (e *TexEditorState) pushUndo(entry texUndoEntry) {
 	e.redoStack = nil
 	e.undoStack = append(e.undoStack, entry)
 	e.undoBytes += entrySize(entry)
@@ -306,12 +306,12 @@ func (e *texEditorState) pushUndo(entry texUndoEntry) {
 	}
 }
 
-func (e *texEditorState) CanUndo() bool { return len(e.undoStack) > 0 }
-func (e *texEditorState) CanRedo() bool { return len(e.redoStack) > 0 }
+func (e *TexEditorState) CanUndo() bool { return len(e.undoStack) > 0 }
+func (e *TexEditorState) CanRedo() bool { return len(e.redoStack) > 0 }
 
 // Undo applies the most recent undo entry and pushes its inverse onto the
 // redo stack.
-func (e *texEditorState) Undo() {
+func (e *TexEditorState) Undo() {
 	if len(e.undoStack) == 0 {
 		return
 	}
@@ -331,12 +331,12 @@ func (e *texEditorState) Undo() {
 	}
 	e.redoStack = append(e.redoStack, redoEntry)
 	e.Doc.MarkDirty()
-	e.previewDirty = true
+	e.PreviewDirty = true
 }
 
 // Redo re-applies the most recently undone entry and pushes its inverse back
 // onto the undo stack.
-func (e *texEditorState) Redo() {
+func (e *TexEditorState) Redo() {
 	if len(e.redoStack) == 0 {
 		return
 	}
@@ -356,7 +356,7 @@ func (e *texEditorState) Redo() {
 	e.undoStack = append(e.undoStack, undoEntry)
 	e.undoBytes += entrySize(undoEntry)
 	e.Doc.MarkDirty()
-	e.previewDirty = true
+	e.PreviewDirty = true
 }
 
 // ---------- structural layer ops ----------
@@ -365,51 +365,51 @@ func (e *texEditorState) Redo() {
 // records the undo entry if the mutation actually succeeded, so a rejected
 // op (e.g. hitting the 8-layer cap) never leaves a no-op undo step behind.
 
-func (e *texEditorState) AddLayer(name string) error {
+func (e *TexEditorState) AddLayer(name string) error {
 	before := texdoc.CloneTexDoc(e.Doc)
 	if err := e.Doc.AddLayer(name); err != nil {
 		return err
 	}
 	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
-	e.previewDirty = true
+	e.PreviewDirty = true
 	return nil
 }
 
-func (e *texEditorState) DuplicateLayer(i int) error {
+func (e *TexEditorState) DuplicateLayer(i int) error {
 	before := texdoc.CloneTexDoc(e.Doc)
 	if err := e.Doc.DuplicateLayer(i); err != nil {
 		return err
 	}
 	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
-	e.previewDirty = true
+	e.PreviewDirty = true
 	return nil
 }
 
-func (e *texEditorState) DeleteLayer(i int) error {
+func (e *TexEditorState) DeleteLayer(i int) error {
 	before := texdoc.CloneTexDoc(e.Doc)
 	if err := e.Doc.DeleteLayer(i); err != nil {
 		return err
 	}
 	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
-	e.previewDirty = true
+	e.PreviewDirty = true
 	return nil
 }
 
-func (e *texEditorState) MoveLayer(i int, up bool) error {
+func (e *TexEditorState) MoveLayer(i int, up bool) error {
 	before := texdoc.CloneTexDoc(e.Doc)
 	if err := e.Doc.MoveLayer(i, up); err != nil {
 		return err
 	}
 	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
-	e.previewDirty = true
+	e.PreviewDirty = true
 	return nil
 }
 
 // ---------- GPU sync + persistence ----------
 
-// rgbaFromPaletted expands a flattened, on-palette image to plain RGBA for
-// upload — the GPU side stays plain RGBA8 (see texture.go).
-func rgbaFromPaletted(p *image.Paletted) *image.RGBA {
+// RgbaFromPaletted expands a flattened, on-palette image to plain RGBA for
+// upload — the GPU side stays plain RGBA8 (see go).
+func RgbaFromPaletted(p *image.Paletted) *image.RGBA {
 	b := p.Bounds()
 	out := image.NewRGBA(b)
 	draw.Draw(out, b, p, b.Min, draw.Src)
@@ -419,19 +419,19 @@ func rgbaFromPaletted(p *image.Paletted) *image.RGBA {
 // SyncLiveTexture flattens the document and queues a GPU upload if it's
 // bound to a texture name, so every keystroke/brush stroke updates the world
 // live — requirement 6 covers editing, not just saving.
-func (e *texEditorState) SyncLiveTexture() {
+func (e *TexEditorState) SyncLiveTexture() {
 	if e.BoundTexture == "" {
 		return
 	}
 	flat := e.Doc.Flatten()
 	gfx.UpdateTextureHasAlpha(e.BoundTexture, &e.Doc.Pal, flat)
-	gfx.QueueTextureUpload(e.BoundTexture, rgbaFromPaletted(flat))
+	gfx.QueueTextureUpload(e.BoundTexture, RgbaFromPaletted(flat))
 }
 
 // Save writes the document to <exe>/textures/<name>.{ftex,png}, registers it
 // so the 2D/3D editor's texture dropdowns can find it immediately
 // (requirement 7), and queues the flattened image for GPU upload.
-func (e *texEditorState) Save(name string) error {
+func (e *TexEditorState) Save(name string) error {
 	if err := SaveTexDoc(e.Doc, name); err != nil {
 		return err
 	}
@@ -443,7 +443,7 @@ func (e *texEditorState) Save(name string) error {
 
 // ---------- new/open/import ----------
 
-func NewTexEditorDoc(name string, w, h int) (*texEditorState, error) {
+func NewTexEditorDoc(name string, w, h int) (*TexEditorState, error) {
 	d, err := texdoc.NewTexDoc(name, w, h, texdoc.GlobalPalette)
 	if err != nil {
 		return nil, err
@@ -451,8 +451,8 @@ func NewTexEditorDoc(name string, w, h int) (*texEditorState, error) {
 	return NewTexEditor(d), nil
 }
 
-func OpenTexEditorDoc(name string) (*texEditorState, error) {
-	d, err := ReadTexDoc(ftexPath(name))
+func OpenTexEditorDoc(name string) (*TexEditorState, error) {
+	d, err := ReadTexDoc(FtexPath(name))
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +461,7 @@ func OpenTexEditorDoc(name string) (*texEditorState, error) {
 	return ed, nil
 }
 
-func ImportTexEditorDoc(pngPath string) (*texEditorState, error) {
+func ImportTexEditorDoc(pngPath string) (*TexEditorState, error) {
 	d, err := ImportPNG(pngPath)
 	if err != nil {
 		return nil, err

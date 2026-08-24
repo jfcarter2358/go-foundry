@@ -38,6 +38,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
 	"foundry/internal/texdoc"
+	"foundry/internal/texture"
 )
 
 // modelUnwrapDialogState is the Unwrap & Paint form. It lives across frames
@@ -229,7 +230,7 @@ func drawModelUnwrapDialog() {
 
 // texDocExistsOnDisk reports whether a texture of this name is already saved.
 func texDocExistsOnDisk(name string) bool {
-	_, err := os.Stat(ftexPath(name))
+	_, err := os.Stat(texture.FtexPath(name))
 	return err == nil
 }
 
@@ -312,7 +313,7 @@ func modelUnwrapToTexture(name string, size int, angleDeg, padTexels float32) er
 // that can be hidden or thrown away without taking the guide with it — and,
 // just as importantly, so the guide itself can be hidden once the painting no
 // longer needs it, without disturbing the paint.
-func modelBuildAtlasTexture(name string, size int) (*texEditorState, error) {
+func modelBuildAtlasTexture(name string, size int) (*texture.TexEditorState, error) {
 	doc, err := texdoc.NewTexDoc(name, size, size, texdoc.GlobalPalette)
 	if err != nil {
 		return nil, err
@@ -324,7 +325,7 @@ func modelBuildAtlasTexture(name string, size int) (*texEditorState, error) {
 	}
 	doc.Active = len(doc.Layers) - 1
 
-	ed := NewTexEditor(doc)
+	ed := texture.NewTexEditor(doc)
 	// Save immediately. The model now names this texture, and a model that
 	// names a texture with no file behind it renders black on the next load —
 	// so "unwrap onto a new texture" has to actually produce the texture, not
@@ -342,7 +343,7 @@ func modelBuildAtlasTexture(name string, size int) (*texEditorState, error) {
 	// the file comment), so specifying it here is visible everywhere.
 	flat := doc.Flatten()
 	gfx.UpdateTextureHasAlpha(name, &doc.Pal, flat)
-	if err := gfx.UpdateTextureFromRGBA(name, rgbaFromPaletted(flat)); err != nil {
+	if err := gfx.UpdateTextureFromRGBA(name, texture.RgbaFromPaletted(flat)); err != nil {
 		return nil, fmt.Errorf("upload texture %q: %w", name, err)
 	}
 	return ed, nil
@@ -360,12 +361,12 @@ func modelBuildAtlasTexture(name string, size int) (*texEditorState, error) {
 // loop, where neither is true.
 var modelPendingTexEditor struct {
 	Armed bool
-	Doc   *texEditorState // nil means "just raise it on what is already open"
+	Doc   *texture.TexEditorState // nil means "just raise it on what is already open"
 }
 
 // modelRequestTexEditor asks the main loop to open the texture editor, adopting
 // ed if it is non-nil.
-func modelRequestTexEditor(ed *texEditorState) {
+func modelRequestTexEditor(ed *texture.TexEditorState) {
 	modelPendingTexEditor.Armed = true
 	modelPendingTexEditor.Doc = ed
 }

@@ -1,4 +1,4 @@
-package main
+package texture
 
 import (
 	"image/color"

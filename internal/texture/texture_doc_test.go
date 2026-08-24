@@ -1,4 +1,7 @@
-package main
+package texture
+
+// texture_doc_test.go — the layered-document model from internal/texdoc,
+// exercised here because this is the package that composites and stores it.
 
 import (
 	"image/color"

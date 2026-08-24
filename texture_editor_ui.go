@@ -7,7 +7,7 @@ package main
 // activeTexEditor — matching the plan's single texture-editor-window design.
 //
 // This file is the only GL-touching part of the texture editor beyond
-// texture.go's upload queue: it owns a canvas preview texture and a small
+// go's upload queue: it owns a canvas preview texture and a small
 // checkerboard texture, both created lazily the first time the window draws.
 
 import (
@@ -27,10 +27,11 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
 	"foundry/internal/texdoc"
+	"foundry/internal/texture"
 )
 
 var (
-	activeTexEditor  *texEditorState
+	activeTexEditor  *texture.TexEditorState
 	texEditorWindow  *UIWindow
 	texEditorPreview uint32 // flattened-preview GL texture, shown on the canvas
 	texEditorChecker uint32 // small tiled checkerboard behind the canvas
@@ -66,7 +67,7 @@ var (
 	texEditorShowSaveAsDialog bool
 	texEditorSaveAsName       string
 	texEditorShowMismatch     bool
-	texEditorPendingOpen      *texEditorState
+	texEditorPendingOpen      *texture.TexEditorState
 	texEditorStatusMsg        string
 	texEditorStatusTime       uint32
 )
@@ -113,11 +114,11 @@ func OpenTextureEditor() {
 	w.HandleEvent = texEditorHandleEvent
 	texEditorWindow = w
 	if activeTexEditor == nil {
-		if ed, err := NewTexEditorDoc("untitled", 512, 512); err == nil {
+		if ed, err := texture.NewTexEditorDoc("untitled", 512, 512); err == nil {
 			activeTexEditor = ed
 		}
 	} else {
-		activeTexEditor.previewDirty = true
+		activeTexEditor.PreviewDirty = true
 	}
 }
 
@@ -138,9 +139,9 @@ func onTextureEditorClose() {
 	texEditorWindow = nil
 }
 
-func texEditorAdoptDoc(ed *texEditorState) {
+func texEditorAdoptDoc(ed *texture.TexEditorState) {
 	activeTexEditor = ed
-	ed.previewDirty = true
+	ed.PreviewDirty = true
 	texEditorZoom = 8
 	texEditorPanX, texEditorPanY = 0, 0
 	texEditorStatus(fmt.Sprintf("Opened %s", ed.Doc.Name))
@@ -175,17 +176,17 @@ func ensureTexEditorGLObjects() {
 // texEditorRefreshPreview re-flattens the active document, updates the
 // canvas preview texture, and — if the doc is bound to a live engine texture
 // — queues a world upload and refreshes the transparency-routing flag. Runs
-// at most once per frame, gated on previewDirty (set by any paint/structural
+// at most once per frame, gated on PreviewDirty (set by any paint/structural
 // mutation), so an idle frame (e.g. just panning) costs nothing.
 func texEditorRefreshPreview() {
 	ed := activeTexEditor
-	if ed == nil || !ed.previewDirty {
+	if ed == nil || !ed.PreviewDirty {
 		return
 	}
 	ensureTexEditorGLObjects()
 
 	flat := ed.Doc.Flatten()
-	rgba := rgbaFromPaletted(flat)
+	rgba := texture.RgbaFromPaletted(flat)
 	gl.BindTexture(gl.TEXTURE_2D, texEditorPreview)
 	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, int32(ed.Doc.W), int32(ed.Doc.H), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(rgba.Pix))
 
@@ -193,7 +194,7 @@ func texEditorRefreshPreview() {
 		gfx.UpdateTextureHasAlpha(ed.BoundTexture, &ed.Doc.Pal, flat)
 		gfx.QueueTextureUpload(ed.BoundTexture, rgba)
 	}
-	ed.previewDirty = false
+	ed.PreviewDirty = false
 }
 
 // ---------- keyboard shortcuts ----------
@@ -268,7 +269,7 @@ func texEditorHandleEvent(event sdl.Event) {
 
 // texEditorFinishStroke commits an in-progress paint gesture, if any, so an
 // undo taken while the mouse is still down operates on a settled document.
-func texEditorFinishStroke(ed *texEditorState) {
+func texEditorFinishStroke(ed *texture.TexEditorState) {
 	if !texEditorPainting {
 		return
 	}
@@ -410,12 +411,12 @@ func texEditorDoSave() {
 }
 
 func texEditorDoOpen(name string) {
-	ed, err := OpenTexEditorDoc(name)
+	ed, err := texture.OpenTexEditorDoc(name)
 	if err != nil {
 		texEditorStatus(fmt.Sprintf("Open failed: %v", err))
 		return
 	}
-	if PaletteMismatch(ed.Doc) {
+	if texture.PaletteMismatch(ed.Doc) {
 		texEditorPendingOpen = ed
 		texEditorShowMismatch = true
 		return
@@ -437,7 +438,7 @@ func drawTexEditorNewDialog() {
 		imgui.Combo("##newtexsize", &texEditorNewSizeIdx, sizeLabels)
 		if imgui.Button("Create") && texEditorNewName != "" {
 			sz := int(texEditorSizeOptions[texEditorNewSizeIdx])
-			ed, err := NewTexEditorDoc(texEditorNewName, sz, sz)
+			ed, err := texture.NewTexEditorDoc(texEditorNewName, sz, sz)
 			if err != nil {
 				texEditorStatus(fmt.Sprintf("New failed: %v", err))
 			} else {
@@ -454,7 +455,7 @@ func drawTexEditorNewDialog() {
 
 func drawTexEditorOpenDialog() {
 	imguibackend.WithModalPopup("Open Texture", &texEditorShowOpenDialog, func() {
-		names := ScanFtexFiles()
+		names := texture.ScanFtexFiles()
 		if len(names) == 0 {
 			imgui.Text("No .ftex files found in textures/.")
 		}
@@ -482,7 +483,7 @@ func drawTexEditorImportDialog() {
 		for _, n := range names {
 			if imgui.SelectableV(n, false, 0, imgui.Vec2{}) {
 				path := filepath.Join(fileutil.ExecutablePath, gfx.TextureNames[n])
-				ed, err := ImportTexEditorDoc(path)
+				ed, err := texture.ImportTexEditorDoc(path)
 				if err != nil {
 					texEditorStatus(fmt.Sprintf("Import failed: %v", err))
 				} else {
@@ -523,7 +524,7 @@ func drawTexEditorMismatchDialog() {
 	imguibackend.WithModalPopup("Palette Mismatch", &texEditorShowMismatch, func() {
 		imgui.Text("This file's embedded palette differs from the current global palette.")
 		if imgui.Button("Adopt file's palette globally") {
-			if err := AdoptDocPaletteGlobally(texEditorPendingOpen.Doc); err != nil {
+			if err := texture.AdoptDocPaletteGlobally(texEditorPendingOpen.Doc); err != nil {
 				texEditorStatus(err.Error())
 			}
 			texEditorAdoptDoc(texEditorPendingOpen)
@@ -531,7 +532,7 @@ func drawTexEditorMismatchDialog() {
 			imgui.CloseCurrentPopup()
 		}
 		if imgui.Button("Remap art to current palette") {
-			RemapDocToGlobalPalette(texEditorPendingOpen.Doc)
+			texture.RemapDocToGlobalPalette(texEditorPendingOpen.Doc)
 			texEditorAdoptDoc(texEditorPendingOpen)
 			texEditorPendingOpen = nil
 			imgui.CloseCurrentPopup()
@@ -551,7 +552,7 @@ func drawToolsPanel() {
 	ed := activeTexEditor
 	imgui.Text("Tools")
 	for i, name := range texEditorToolNames {
-		tool := TexTool(i)
+		tool := texture.TexTool(i)
 		// Decide push/pop once, before the click can change ed.Tool — a
 		// click on a not-yet-selected row must not push a color (it wasn't
 		// highlighted going in) but a re-check after Button() would see the
@@ -580,7 +581,7 @@ func drawToolsPanel() {
 		ed.BrushSize = int(brushSize)
 	}
 
-	if ed.Tool == ToolSpray {
+	if ed.Tool == texture.ToolSpray {
 		density := int32(ed.SprayDensity)
 		imgui.PushTextWrapPos()
 		imgui.Text("Spray density (dabs/frame while held):")
@@ -652,7 +653,7 @@ func drawPalettePanel() {
 
 	imgui.Separator()
 	if imgui.Button("Rebuild All Textures") {
-		errs := RebuildAllTextures()
+		errs := texture.RebuildAllTextures()
 		if len(errs) == 0 {
 			texEditorStatus("Rebuilt all textures against the current palette")
 		} else {
@@ -688,7 +689,7 @@ func texEditorApplyPaletteColor(idx uint8, c color.RGBA) {
 		// against (see the mismatch dialog) — keep it in lockstep so editing a
 		// slot doesn't immediately make the open document count as mismatched.
 		ed.Doc.Pal[idx] = c
-		ed.previewDirty = true
+		ed.PreviewDirty = true
 	}
 }
 
@@ -699,7 +700,7 @@ func texEditorCommitPaletteColor() {
 	if c == texEditorPaletteEditOrig {
 		return
 	}
-	if err := SetPaletteColor(idx, c); err != nil {
+	if err := texture.SetPaletteColor(idx, c); err != nil {
 		texEditorStatus(fmt.Sprintf("Palette save failed: %v", err))
 		return
 	}
@@ -803,7 +804,7 @@ func drawLayersPanel() {
 		visible := l.Visible
 		if imgui.Checkbox("##vis", &visible) {
 			l.Visible = visible
-			ed.previewDirty = true
+			ed.PreviewDirty = true
 		}
 		imgui.SameLine()
 		selected := i == d.Active
@@ -820,14 +821,14 @@ func drawLayersPanel() {
 		imgui.SetNextItemWidth(160)
 		if imgui.SliderFloat("Opacity##op", &opacity, 0, 1) {
 			l.Opacity = opacity
-			ed.previewDirty = true
+			ed.PreviewDirty = true
 		}
 
 		blend := int32(l.Blend)
 		imgui.SetNextItemWidth(120)
 		if imgui.Combo("Blend##bl", &blend, texEditorBlendNames) {
 			l.Blend = texdoc.TexBlend(blend)
-			ed.previewDirty = true
+			ed.PreviewDirty = true
 		}
 
 		imguibackend.EditorPushDisabled(i == len(d.Layers)-1)
@@ -884,12 +885,12 @@ func drawCanvasPanel() {
 	// Live preview of an in-progress line/rect drag, in screen space only —
 	// the document itself isn't touched until mouse-up (StampLine/StampRect
 	// commit through the normal undo path there).
-	if texEditorPainting && (ed.Tool == ToolLine || ed.Tool == ToolRect) {
+	if texEditorPainting && (ed.Tool == texture.ToolLine || ed.Tool == texture.ToolRect) {
 		sx := topLeft.X + float32(texEditorDragStart[0])*zoom + zoom/2
 		sy := topLeft.Y + float32(texEditorDragStart[1])*zoom + zoom/2
 		mp := imgui.MousePos()
 		yellow := imgui.PackedColorFromVec4(imgui.Vec4{X: 1, Y: 1, Z: 0, W: 1})
-		if ed.Tool == ToolLine {
+		if ed.Tool == texture.ToolLine {
 			dl.AddLineV(imgui.Vec2{X: sx, Y: sy}, mp, yellow, 2)
 		} else {
 			dl.AddRectV(imgui.Vec2{X: sx, Y: sy}, mp, yellow, 0, 0, 2)
@@ -981,13 +982,13 @@ func drawTexEditorUVLayout(dl imgui.DrawList, topLeft imgui.Vec2, canvasW, canva
 
 // texEditorHandlePaintInput drives one tool's gesture state machine from the
 // current texel under the cursor and the left mouse button's state.
-func texEditorHandlePaintInput(ed *texEditorState, tx, ty int, active bool) {
+func texEditorHandlePaintInput(ed *texture.TexEditorState, tx, ty int, active bool) {
 	leftDown := imgui.IsMouseDown(0) && active
 
 	switch ed.Tool {
-	case ToolBrush, ToolEraser, ToolSpray:
+	case texture.ToolBrush, texture.ToolEraser, texture.ToolSpray:
 		idx := ed.PrimaryIdx
-		if ed.Tool == ToolEraser {
+		if ed.Tool == texture.ToolEraser {
 			idx = 0
 		}
 		if leftDown {
@@ -995,7 +996,7 @@ func texEditorHandlePaintInput(ed *texEditorState, tx, ty int, active bool) {
 				ed.BeginStroke()
 				texEditorPainting = true
 			}
-			if ed.Tool == ToolSpray {
+			if ed.Tool == texture.ToolSpray {
 				ed.StampSpray(tx, ty, idx)
 			} else {
 				ed.StampBrush(tx, ty, idx)
@@ -1005,7 +1006,7 @@ func texEditorHandlePaintInput(ed *texEditorState, tx, ty int, active bool) {
 			texEditorPainting = false
 		}
 
-	case ToolFill:
+	case texture.ToolFill:
 		if leftDown && !texEditorPainting {
 			ed.BeginStroke()
 			ed.Fill(tx, ty, ed.PrimaryIdx)
@@ -1015,7 +1016,7 @@ func texEditorHandlePaintInput(ed *texEditorState, tx, ty int, active bool) {
 			texEditorPainting = false
 		}
 
-	case ToolLine, ToolRect:
+	case texture.ToolLine, texture.ToolRect:
 		if leftDown {
 			if !texEditorPainting {
 				texEditorDragStart = [2]int{tx, ty}
@@ -1023,7 +1024,7 @@ func texEditorHandlePaintInput(ed *texEditorState, tx, ty int, active bool) {
 			}
 		} else if texEditorPainting {
 			ed.BeginStroke()
-			if ed.Tool == ToolLine {
+			if ed.Tool == texture.ToolLine {
 				ed.StampLine(texEditorDragStart[0], texEditorDragStart[1], tx, ty, ed.PrimaryIdx)
 			} else {
 				ed.StampRect(texEditorDragStart[0], texEditorDragStart[1], tx, ty, ed.PrimaryIdx, false)
@@ -1032,7 +1033,7 @@ func texEditorHandlePaintInput(ed *texEditorState, tx, ty int, active bool) {
 			texEditorPainting = false
 		}
 
-	case ToolEyedropper:
+	case texture.ToolEyedropper:
 		if leftDown {
 			if idx, ok := ed.Eyedropper(tx, ty); ok {
 				ed.PrimaryIdx = idx

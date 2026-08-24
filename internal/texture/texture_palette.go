@@ -1,10 +1,10 @@
-package main
+package texture
 
 // texture_palette.go — global-palette persistence: loading/saving the active
 // palette and rebuilding on-disk .ftex files against it. The palette data
 // model, quantiser, and TexDoc live in internal/texdoc (pure-Go, no file I/O
 // or GPU dependency); this file is the package-main glue that needs both
-// file I/O (texture_file.go) and the GPU upload queue (texture.go), which
+// file I/O (texture_file.go) and the GPU upload queue (go), which
 // internal/texdoc deliberately doesn't depend on.
 
 import (
@@ -58,7 +58,7 @@ func SetPaletteColor(idx uint8, c color.RGBA) error {
 func RebuildAllTextures() []error {
 	var errs []error
 	for _, name := range ScanFtexFiles() {
-		d, err := ReadTexDoc(ftexPath(name))
+		d, err := ReadTexDoc(FtexPath(name))
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
@@ -73,7 +73,7 @@ func RebuildAllTextures() []error {
 		gfx.RegisterTexture(name)
 		flat := d.Flatten()
 		gfx.UpdateTextureHasAlpha(name, &d.Pal, flat)
-		gfx.QueueTextureUpload(name, rgbaFromPaletted(flat))
+		gfx.QueueTextureUpload(name, RgbaFromPaletted(flat))
 	}
 	return errs
 }

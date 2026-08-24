@@ -1,4 +1,4 @@
-package main
+package texture
 
 // texture_file.go — on-disk format for layered texture documents (.ftex) and
 // the global palette (palette.pal). Pure I/O + encoding; no GL calls.
@@ -52,7 +52,7 @@ const (
 )
 
 func palettePath() string           { return filepath.Join(fileutil.TexturesDir(), "palette.pal") }
-func ftexPath(name string) string   { return filepath.Join(fileutil.TexturesDir(), name+".ftex") }
+func FtexPath(name string) string   { return filepath.Join(fileutil.TexturesDir(), name+".ftex") }
 func texPNGPath(name string) string { return filepath.Join(fileutil.TexturesDir(), name+".png") }
 
 // ---------- palette ----------
@@ -284,7 +284,7 @@ func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 
 // SaveTexDoc writes both the .ftex source and the flattened PNG the engine
 // uses to <exe>/textures/<name>.{ftex,png}. It does not touch the GPU or the
-// texture registry — see RegisterTexture/QueueTextureUpload in texture.go,
+// texture registry — see RegisterTexture/QueueTextureUpload in go,
 // called by the editor immediately after a successful save.
 func SaveTexDoc(d *texdoc.TexDoc, name string) error {
 	if err := texdoc.ValidTexSize(d.W, d.H); err != nil {
@@ -296,7 +296,7 @@ func SaveTexDoc(d *texdoc.TexDoc, name string) error {
 	}
 
 	d.Name = name
-	d.Path = ftexPath(name)
+	d.Path = FtexPath(name)
 	if err := WriteTexDoc(d.Path, d); err != nil {
 		return err
 	}

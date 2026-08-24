@@ -207,7 +207,7 @@ func (m *EntityModel) Load(ownerID string) error {
 //
 // Patching the submeshes is the whole of the live change: every draw call binds
 // Textures[g.Texture] afresh, so a name swap needs no re-upload of the mesh and
-// no reload of the model — see the note above pendingUpload in texture.go.
+// no reload of the model — see the note above pendingUpload in go.
 func (m *EntityModel) SetTexture(texture string) {
 	m.Texture = texture
 	for i := range m.Submeshes {

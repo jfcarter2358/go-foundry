@@ -1,7 +1,7 @@
 // Package texdoc is the pure-Go layered texture document model used by the
 // texture editor: TexDoc/TexLayer/TexPalette plus the RGBA<->palette-index
 // quantiser. It has no GL/SDL/imgui dependency — GPU upload lives in
-// texture.go and the on-disk .ftex/.pal format in texture_file.go, both in
+// go and the on-disk .ftex/.pal format in texture_file.go, both in
 // package main, which import this package. Extracted from what used to be
 // texture_doc.go + texture_palette.go in package main; see
 // RESTRUCTURE_PROPOSAL.md §5 Phase B.

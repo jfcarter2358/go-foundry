@@ -5,6 +5,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
+	"foundry/internal/texture"
 	_ "image/png"
 	"io"
 	"log"
@@ -80,7 +81,7 @@ func main() {
 
 	// Load (or, on a fresh checkout, create) the global 256-colour palette
 	// every texture in the texture editor composites against.
-	LoadGlobalPalette()
+	texture.LoadGlobalPalette()
 
 	// Catch any unexpected panic and write it to the log before exiting.
 	defer func() {
