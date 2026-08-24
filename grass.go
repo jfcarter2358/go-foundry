@@ -1117,7 +1117,7 @@ func RenderBiomes(level *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3, fr
 		if !started {
 			uploadBiomeLighting(p.prog, level, frame)
 			pv := projView
-			gl.UniformMatrix4fv(p.u("projView"), 1, false, &pv[0])
+			gl.UniformMatrix4fv(p.U("projView"), 1, false, &pv[0])
 			beginBiomePass(p, camPos, timeSec)
 			started = true
 		}
@@ -1153,7 +1153,7 @@ func RenderBiomeScatterDirShadow(level *world.Level, lsm mgl32.Mat4, cascade int
 		if !started {
 			gl.UseProgram(p.prog)
 			m := lsm
-			gl.UniformMatrix4fv(p.u("lightSpaceMatrix"), 1, false, &m[0])
+			gl.UniformMatrix4fv(p.U("lightSpaceMatrix"), 1, false, &m[0])
 			beginBiomePass(p, camPos, timeSec)
 			started = true
 		}
@@ -1193,9 +1193,9 @@ func RenderBiomeScatterCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos m
 		if !started {
 			gl.UseProgram(p.prog)
 			m := lsm
-			gl.UniformMatrix4fv(p.u("lightSpaceMatrix"), 1, false, &m[0])
-			gl.Uniform3f(p.u("lightPos"), lightPos.X(), lightPos.Y(), lightPos.Z())
-			gl.Uniform1f(p.u("farPlane"), farPlane)
+			gl.UniformMatrix4fv(p.U("lightSpaceMatrix"), 1, false, &m[0])
+			gl.Uniform3f(p.U("lightPos"), lightPos.X(), lightPos.Y(), lightPos.Z())
+			gl.Uniform1f(p.U("farPlane"), farPlane)
 			beginBiomePass(p, camPos, timeSec)
 			started = true
 		}
@@ -1227,10 +1227,10 @@ func RenderBiomeScatterCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos m
 // pass and would stand still in the shadow map without it, so its shadow would
 // detach from it every time the wind moved.
 func beginBiomePass(p *progUniforms, camPos mgl32.Vec3, timeSec float32) {
-	gl.Uniform2f(p.u("camXZ"), camPos.X(), camPos.Z())
-	gl.Uniform3f(p.u("camPos"), camPos.X(), camPos.Y(), camPos.Z())
-	gl.Uniform1f(p.u("time"), timeSec)
-	gl.Uniform1i(p.u("heightTex"), 0)
+	gl.Uniform2f(p.U("camXZ"), camPos.X(), camPos.Z())
+	gl.Uniform3f(p.U("camPos"), camPos.X(), camPos.Y(), camPos.Z())
+	gl.Uniform1f(p.U("time"), timeSec)
+	gl.Uniform1i(p.U("heightTex"), 0)
 }
 
 // biomeLODBounds resolves sector s's three LOD boundaries — the Near->Mid and
@@ -1258,8 +1258,8 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 	entry := biomes.ensureBiomeHeight(level, s)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, entry.tex)
-	gl.Uniform2f(p.u("heightOrigin"), entry.origin.X(), entry.origin.Y())
-	gl.Uniform2f(p.u("heightSize"), entry.size.X(), entry.size.Y())
+	gl.Uniform2f(p.U("heightOrigin"), entry.origin.X(), entry.origin.Y())
+	gl.Uniform2f(p.U("heightSize"), entry.size.X(), entry.size.Y())
 
 	n := len(s.Points)
 	if n > world.BiomeMaxPolyVerts {
@@ -1270,11 +1270,11 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 		flat[i*2] = s.Points[i].X()
 		flat[i*2+1] = s.Points[i].Y()
 	}
-	gl.Uniform2fv(p.u("polyPts[0]"), int32(n), &flat[0])
-	gl.Uniform1i(p.u("numPolyPts"), int32(n))
+	gl.Uniform2fv(p.U("polyPts[0]"), int32(n), &flat[0])
+	gl.Uniform1i(p.U("numPolyPts"), int32(n))
 	polyMin, polyMax := s.Bounds()
-	gl.Uniform2f(p.u("polyMin"), polyMin.X(), polyMin.Y())
-	gl.Uniform2f(p.u("polyMax"), polyMax.X(), polyMax.Y())
+	gl.Uniform2f(p.U("polyMin"), polyMin.X(), polyMin.Y())
+	gl.Uniform2f(p.U("polyMax"), polyMax.X(), polyMax.Y())
 
 	// This tier's own [inner, outer] distance band. Kinds with only one tier
 	// (BiomeLODTierCount==1, e.g. Rock) always get [0, rng] — bit-for-bit
@@ -1301,12 +1301,12 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 	// shadow passes' extra rejection, applied after placement, relative to
 	// THIS tier's own outer bound rather than the sector's full Range — see
 	// the castRange uniform doc.
-	gl.Uniform1f(p.u("range"), outer)
-	gl.Uniform1f(p.u("lodMin"), inner)
+	gl.Uniform1f(p.U("range"), outer)
+	gl.Uniform1f(p.U("lodMin"), inner)
 	if shadowPass {
-		gl.Uniform1f(p.u("castRange"), BiomeShadows.castRangeFor(outer, castCap))
+		gl.Uniform1f(p.U("castRange"), BiomeShadows.castRangeFor(outer, castCap))
 	} else {
-		gl.Uniform1f(p.u("castRange"), outer)
+		gl.Uniform1f(p.U("castRange"), outer)
 	}
 
 	// Optional soft edges (see BiomeBrush's doc comments): the outer
@@ -1324,21 +1324,21 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 	// against the next tier's own dithered grow-in. rangeFadeFraction is
 	// still just the user's own RangeFadeFraction unconditionally now — the
 	// shader ignores it whenever outerIsLOD says this edge isn't Range.
-	gl.Uniform1i(p.u("outerIsLOD"), boolToInt32(tier < tierCount-1))
-	gl.Uniform1f(p.u("rangeFadeFraction"), geom.Clamp01(s.Brush.RangeFadeFraction))
-	gl.Uniform1f(p.u("lodFadeFraction"), world.BiomeLODFadeFraction)
+	gl.Uniform1i(p.U("outerIsLOD"), boolToInt32(tier < tierCount-1))
+	gl.Uniform1f(p.U("rangeFadeFraction"), geom.Clamp01(s.Brush.RangeFadeFraction))
+	gl.Uniform1f(p.U("lodFadeFraction"), world.BiomeLODFadeFraction)
 	edgeFade := s.Brush.EdgeFadeDistance
 	if edgeFade < 0 {
 		edgeFade = 0
 	}
-	gl.Uniform1f(p.u("edgeFadeDistance"), edgeFade)
-	gl.Uniform1f(p.u("boundaryJitter"), resolvedBoundaryJitter(&s.Brush))
+	gl.Uniform1f(p.U("edgeFadeDistance"), edgeFade)
+	gl.Uniform1f(p.U("boundaryJitter"), resolvedBoundaryJitter(&s.Brush))
 
 	seed := world.BiomeSeed(s)
-	gl.Uniform2f(p.u("seed"), seed.X(), seed.Y())
-	gl.Uniform1f(p.u("density"), s.Brush.Density)
+	gl.Uniform2f(p.U("seed"), seed.X(), seed.Y())
+	gl.Uniform1f(p.U("density"), s.Brush.Density)
 	c := s.Brush.Color
-	gl.Uniform3f(p.u("tintColor"), c.X(), c.Y(), c.Z())
+	gl.Uniform3f(p.U("tintColor"), c.X(), c.Y(), c.Z())
 	shapeKind := s.Brush.Kind
 	if shapeKind == world.BiomeMoss {
 		// Moss has no shader-side case of its own: it reuses Rock's
@@ -1348,7 +1348,7 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 		// and this sector's scatter density/spacing/scale differ.
 		shapeKind = world.BiomeRock
 	}
-	gl.Uniform1i(p.u("shapeKind"), shapeKind)
+	gl.Uniform1i(p.U("shapeKind"), shapeKind)
 
 	// Neutral bloom/clump state, overridden by the Wildflower and Grass cases
 	// below. Uniforms persist across draw calls, so these must be reset for
@@ -1356,13 +1356,13 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 	// the next sector's cattail seed heads (which share the head code path),
 	// and a clumped grass sector would gather the next sector's rocks into
 	// tufts.
-	gl.Uniform3f(p.u("bloomAspect"), 1, 1, 1)
-	gl.Uniform1i(p.u("hasCenter"), 0)
-	gl.Uniform1i(p.u("hasLeaves"), 0)
-	gl.Uniform1f(p.u("leafScale"), 1)
-	gl.Uniform1i(p.u("bloomSolid"), 0)
-	gl.Uniform3f(p.u("centerColor"), 1, 1, 1)
-	gl.Uniform1f(p.u("clump"), 0)
+	gl.Uniform3f(p.U("bloomAspect"), 1, 1, 1)
+	gl.Uniform1i(p.U("hasCenter"), 0)
+	gl.Uniform1i(p.U("hasLeaves"), 0)
+	gl.Uniform1f(p.U("leafScale"), 1)
+	gl.Uniform1i(p.U("bloomSolid"), 0)
+	gl.Uniform3f(p.U("centerColor"), 1, 1, 1)
+	gl.Uniform1f(p.U("clump"), 0)
 
 	switch s.Brush.Kind {
 	case world.BiomeRock:
@@ -1373,9 +1373,9 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 		}
 		rm := biomes.rockMeshFor(s.Brush.RockSides)
 		n, sp := biomeLattice(outer, rockSpacing, maxRockGridN)
-		gl.Uniform1f(p.u("rockScale"), rockScale)
-		gl.Uniform1f(p.u("spacing"), sp)
-		gl.Uniform1i(p.u("gridN"), n)
+		gl.Uniform1f(p.U("rockScale"), rockScale)
+		gl.Uniform1f(p.U("spacing"), sp)
+		gl.Uniform1i(p.U("gridN"), n)
 		gl.BindVertexArray(rm.vao)
 		gl.DrawArraysInstanced(gl.TRIANGLES, 0, rm.verts, n*n)
 
@@ -1386,9 +1386,9 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 		}
 		vao, verts, baseSpacing, cap := biomes.mossTemplate(tier)
 		n, sp := biomeLattice(outer, baseSpacing, cap)
-		gl.Uniform1f(p.u("rockScale"), clumpScale)
-		gl.Uniform1f(p.u("spacing"), sp)
-		gl.Uniform1i(p.u("gridN"), n)
+		gl.Uniform1f(p.U("rockScale"), clumpScale)
+		gl.Uniform1f(p.U("spacing"), sp)
+		gl.Uniform1i(p.U("gridN"), n)
 		gl.BindVertexArray(vao)
 		gl.DrawArraysInstanced(gl.TRIANGLES, 0, verts, n*n)
 
@@ -1418,22 +1418,22 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 		}
 		vao, verts, baseSpacing, cap := biomes.wildflowerTemplate(tier)
 		n, sp := biomeLattice(outer, baseSpacing, cap)
-		gl.Uniform1f(p.u("bladeHeight"), bh)
-		gl.Uniform1f(p.u("bladeWidth"), bw)
-		gl.Uniform1f(p.u("headScale"), hs)
-		gl.Uniform3f(p.u("bloomAspect"), aspect.X(), aspect.Y(), aspect.Z())
+		gl.Uniform1f(p.U("bladeHeight"), bh)
+		gl.Uniform1f(p.U("bladeWidth"), bw)
+		gl.Uniform1f(p.U("headScale"), hs)
+		gl.Uniform3f(p.U("bloomAspect"), aspect.X(), aspect.Y(), aspect.Z())
 		// Mid/Far templates carry no center/leaf geometry at all (see
 		// buildWildflowerMeshSimple) — leaving these at the neutral 0 the
 		// reset above already set is belt-and-braces, not load-bearing.
 		if tier == 0 {
-			gl.Uniform1i(p.u("hasCenter"), boolToInt32(s.Brush.BloomCenter))
-			gl.Uniform1i(p.u("hasLeaves"), boolToInt32(s.Brush.StemLeaves))
-			gl.Uniform1f(p.u("leafScale"), world.ResolvedLeafScale(s.Brush.LeafScale))
+			gl.Uniform1i(p.U("hasCenter"), boolToInt32(s.Brush.BloomCenter))
+			gl.Uniform1i(p.U("hasLeaves"), boolToInt32(s.Brush.StemLeaves))
+			gl.Uniform1f(p.U("leafScale"), world.ResolvedLeafScale(s.Brush.LeafScale))
 		}
-		gl.Uniform1i(p.u("bloomSolid"), boolToInt32(s.Brush.BloomSolidColor))
-		gl.Uniform3f(p.u("centerColor"), cc.X(), cc.Y(), cc.Z())
-		gl.Uniform1f(p.u("spacing"), sp)
-		gl.Uniform1i(p.u("gridN"), n)
+		gl.Uniform1i(p.U("bloomSolid"), boolToInt32(s.Brush.BloomSolidColor))
+		gl.Uniform3f(p.U("centerColor"), cc.X(), cc.Y(), cc.Z())
+		gl.Uniform1f(p.U("spacing"), sp)
+		gl.Uniform1i(p.U("gridN"), n)
 		gl.BindVertexArray(vao)
 		gl.DrawArraysInstanced(gl.TRIANGLES, 0, verts, n*n)
 
@@ -1452,11 +1452,11 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 		}
 		vao, verts, baseSpacing, cap := biomes.cattailTemplate(tier)
 		n, sp := biomeLattice(outer, baseSpacing, cap)
-		gl.Uniform1f(p.u("bladeHeight"), bh)
-		gl.Uniform1f(p.u("bladeWidth"), bw)
-		gl.Uniform1f(p.u("headScale"), hs)
-		gl.Uniform1f(p.u("spacing"), sp)
-		gl.Uniform1i(p.u("gridN"), n)
+		gl.Uniform1f(p.U("bladeHeight"), bh)
+		gl.Uniform1f(p.U("bladeWidth"), bw)
+		gl.Uniform1f(p.U("headScale"), hs)
+		gl.Uniform1f(p.U("spacing"), sp)
+		gl.Uniform1i(p.U("gridN"), n)
 		gl.BindVertexArray(vao)
 		gl.DrawArraysInstanced(gl.TRIANGLES, 0, verts, n*n)
 
@@ -1474,18 +1474,18 @@ func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms
 		}
 		vao, verts, baseSpacing, cap := biomes.grassTemplate(tier)
 		n, sp := biomeLattice(outer, baseSpacing, cap)
-		gl.Uniform1f(p.u("bladeHeight"), bh)
-		gl.Uniform1f(p.u("bladeWidth"), bw)
+		gl.Uniform1f(p.U("bladeHeight"), bh)
+		gl.Uniform1f(p.U("bladeWidth"), bw)
 		// Grass is the only kind that clumps, and only its Near tier — Mid/Far
 		// tiers leave the neutral 0 set above (Mid is already a cheaper single
 		// blade, Far is already a pre-baked group; the tuft-gather math in
 		// biome_scatter_common.glsl assumes the Near tier's own tight lattice
 		// spacing).
 		if tier == 0 {
-			gl.Uniform1f(p.u("clump"), world.ClampGrassClump(s.Brush.GrassClump))
+			gl.Uniform1f(p.U("clump"), world.ClampGrassClump(s.Brush.GrassClump))
 		}
-		gl.Uniform1f(p.u("spacing"), sp)
-		gl.Uniform1i(p.u("gridN"), n)
+		gl.Uniform1f(p.U("spacing"), sp)
+		gl.Uniform1i(p.U("gridN"), n)
 		gl.BindVertexArray(vao)
 		gl.DrawArraysInstanced(gl.TRIANGLES, 0, verts, n*n)
 	}

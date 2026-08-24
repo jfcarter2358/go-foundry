@@ -1,6 +1,6 @@
 package world
 
-// detail.go — per-face procedural detail (GPU-generated rock surfaces & scatter).
+// go — per-face procedural detail (GPU-generated rock surfaces & scatter).
 //
 // A face (Floor/Ceiling/Wall) may carry a DetailSpec. When enabled it is no
 // longer drawn as a flat textured surface: instead the GPU generates detail from

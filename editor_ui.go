@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/detail"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
@@ -431,14 +432,14 @@ func editorDetailPresetSaveRow(surfaceLabel string, d *world.DetailSpec) bool {
 	}
 	imgui.SameLine()
 
-	clean := detailPresetName(name)
+	clean := detail.DetailPresetName(name)
 	label := "Save Preset"
 	if _, exists := world.DetailPresets[clean]; exists && clean != "" {
 		label = "Update Preset"
 	}
 	imguibackend.EditorPushDisabled(clean == "")
 	if imgui.Button(fmt.Sprintf("%s##%sdetPreSave", label, surfaceLabel)) && clean != "" {
-		if err := SaveDetailPreset(clean, *d); err != nil {
+		if err := detail.SaveDetailPreset(clean, *d); err != nil {
 			detailPresetSetStatus("Preset save failed: %v", err)
 		} else {
 			d.Preset = clean
@@ -449,10 +450,10 @@ func editorDetailPresetSaveRow(surfaceLabel string, d *world.DetailSpec) bool {
 	imguibackend.EditorPopDisabled()
 
 	// Only user presets are deletable; the built-ins are compiled in.
-	if detailUserPresets[clean] {
+	if detail.DetailUserPresets[clean] {
 		imgui.SameLine()
 		if imgui.Button(fmt.Sprintf("Delete##%sdetPreDel", surfaceLabel)) {
-			if err := DeleteDetailPreset(clean); err != nil {
+			if err := detail.DeleteDetailPreset(clean); err != nil {
 				detailPresetSetStatus("Preset delete failed: %v", err)
 			} else {
 				detailPresetSetStatus("Deleted preset %q", clean)
@@ -499,8 +500,8 @@ func editorDetailPanel(surfaceLabel string, d *world.DetailSpec) bool {
 		// User presets from <exe>/detail_presets, below the built-ins. Names that
 		// shadow a built-in already appeared above.
 		first := true
-		for _, name := range detailUserPresetNames {
-			if _, builtin := detailBuiltinPresets[name]; builtin {
+		for _, name := range detail.DetailUserPresetNames {
+			if _, builtin := detail.DetailBuiltinPresets[name]; builtin {
 				continue
 			}
 			if first {

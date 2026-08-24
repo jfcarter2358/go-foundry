@@ -1,7 +1,7 @@
 package main
 
 // biome_displace.go — bridges painted BiomeSectors to a covering floor's
-// procedural displacement detail (detail.go/detail_cpu.go), so Grass/Sand/
+// procedural displacement detail (go/detail_cpu.go), so Grass/Sand/
 // Rock/Moss painted over a displaced (rocky/broken) floor drop onto its
 // *actual* bumpy surface instead of the flat structural floor, and thin out
 // past a configurable slope — e.g. Grass only on a rock outcrop's flatter
@@ -11,6 +11,7 @@ package main
 // displaced floor keeps the old flat behavior, unaffected by any of this.
 
 import (
+	"foundry/internal/detail"
 	"foundry/internal/geom"
 	"foundry/internal/world"
 	"math"
@@ -105,11 +106,11 @@ func slopeCoverage(kind int32, n mgl32.Vec3, minAngle, maxAngle float32) float32
 
 	lo := float32(1)
 	if minA > 0 {
-		lo = smoothstep32(minA-slopeFeatherDegrees, minA+slopeFeatherDegrees, angle)
+		lo = detail.Smoothstep32(minA-slopeFeatherDegrees, minA+slopeFeatherDegrees, angle)
 	}
 	hi := float32(1)
 	if maxA < 90 {
-		hi = 1 - smoothstep32(maxA-slopeFeatherDegrees, maxA+slopeFeatherDegrees, angle)
+		hi = 1 - detail.Smoothstep32(maxA-slopeFeatherDegrees, maxA+slopeFeatherDegrees, angle)
 	}
 	return geom.Clamp01(lo * hi)
 }
@@ -161,7 +162,7 @@ func biomeSurfaceAt(level *world.Level, brush *world.BiomeBrush, seed mgl32.Vec2
 	base, normal := flat, structuralNormal
 	follows := sector != nil && biomeFollowsDisplacement(brush.Kind)
 	if follows && sector.Floor.Detail.HasDisplace() {
-		dh, dn := detailSurfaceAt(&sector.Floor, wx, wz, flat)
+		dh, dn := detail.DetailSurfaceAt(&sector.Floor, wx, wz, flat)
 		base = dh
 		// dn is expressed about the face's *average* plane (that's the frame
 		// detailNormalAt differentiates in), so on a bumpy terrain floor it
@@ -169,7 +170,7 @@ func biomeSurfaceAt(level *world.Level, brush *world.BiomeBrush, seed mgl32.Vec2
 		// underneath them. Rotating it out of the average plane and into the
 		// local structural normal composes the two; for the common case of a
 		// planar floor the two frames coincide and this is the identity.
-		normal = rotateNormalBetween(dispNormalFor(&sector.Floor.Geometry), structuralNormal, dn)
+		normal = rotateNormalBetween(detail.DispNormalFor(&sector.Floor.Geometry), structuralNormal, dn)
 	}
 
 	// Scoped to the same kinds the panel exposes the sliders for, so a stale

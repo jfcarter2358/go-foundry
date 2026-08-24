@@ -137,7 +137,7 @@ func TestScriptEditNothingToDo(t *testing.T) {
 func TestScriptSelOrdered(t *testing.T) {
 	cases := []struct {
 		in, want scriptSel
-		n        int
+		N        int
 	}{
 		{scriptSel{Start: 5, End: 2}, scriptSel{Start: 2, End: 5}, 10},
 		{scriptSel{Start: -3, End: 4}, scriptSel{Start: 0, End: 4}, 10},
@@ -145,8 +145,8 @@ func TestScriptSelOrdered(t *testing.T) {
 		{scriptSel{Start: 8, End: 9}, scriptSel{Start: 4, End: 4}, 4},
 	}
 	for _, c := range cases {
-		if got := c.in.ordered(c.n); got != c.want {
-			t.Errorf("%+v.ordered(%d) = %+v, want %+v", c.in, c.n, got, c.want)
+		if got := c.in.ordered(c.N); got != c.want {
+			t.Errorf("%+v.ordered(%d) = %+v, want %+v", c.in, c.N, got, c.want)
 		}
 	}
 }

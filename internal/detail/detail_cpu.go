@@ -1,4 +1,4 @@
-package main
+package detail
 
 // detail_cpu.go — CPU-side evaluation of the procedural face-displacement
 // field, ported 1:1 from detail_common.glsl (same hashes, same wave sum,
@@ -9,7 +9,7 @@ package main
 // [[procedural-face-detail]] / [[biome-scatter-feature]].
 //
 // Every function here takes the same per-face inputs the GLSL uniforms would
-// carry (dispNormal, boundary edges, dispNormalEps — the last two already
+// carry (dispNormal, boundary edges, DispNormalEps — the last two already
 // exist as plain Go functions in detail_render.go, no GL calls involved) plus
 // a world position, and is a pure function of those — exactly like its GLSL
 // counterpart, so two callers evaluating the same face at the same position
@@ -24,8 +24,8 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// smoothstep32 mirrors GLSL's smoothstep(edge0, edge1, x).
-func smoothstep32(edge0, edge1, x float32) float32 {
+// Smoothstep32 mirrors GLSL's smoothstep(edge0, edge1, x).
+func Smoothstep32(edge0, edge1, x float32) float32 {
 	if edge0 == edge1 {
 		if x < edge0 {
 			return 0
@@ -36,8 +36,8 @@ func smoothstep32(edge0, edge1, x float32) float32 {
 	return t * t * (3 - 2*t)
 }
 
-func fract32(v float32) float32 {
-	return v - float32(math.Floor(float64(v)))
+func fract32(V float32) float32 {
+	return V - float32(math.Floor(float64(V)))
 }
 
 // detailHash13 mirrors d_hash13 (detail_common.glsl).
@@ -57,7 +57,7 @@ func detailHash13(p mgl32.Vec3) float32 {
 func detailValueNoise3(x mgl32.Vec3) float32 {
 	i := mgl32.Vec3{float32(math.Floor(float64(x.X()))), float32(math.Floor(float64(x.Y()))), float32(math.Floor(float64(x.Z())))}
 	f := x.Sub(i)
-	u := mgl32.Vec3{f.X() * f.X() * (3 - 2*f.X()), f.Y() * f.Y() * (3 - 2*f.Y()), f.Z() * f.Z() * (3 - 2*f.Z())}
+	U := mgl32.Vec3{f.X() * f.X() * (3 - 2*f.X()), f.Y() * f.Y() * (3 - 2*f.Y()), f.Z() * f.Z() * (3 - 2*f.Z())}
 
 	n000 := detailHash13(i.Add(mgl32.Vec3{0, 0, 0}))
 	n100 := detailHash13(i.Add(mgl32.Vec3{1, 0, 0}))
@@ -68,13 +68,13 @@ func detailValueNoise3(x mgl32.Vec3) float32 {
 	n011 := detailHash13(i.Add(mgl32.Vec3{0, 1, 1}))
 	n111 := detailHash13(i.Add(mgl32.Vec3{1, 1, 1}))
 
-	nx00 := n000 + (n100-n000)*u.X()
-	nx10 := n010 + (n110-n010)*u.X()
-	nx01 := n001 + (n101-n001)*u.X()
-	nx11 := n011 + (n111-n011)*u.X()
-	nxy0 := nx00 + (nx10-nx00)*u.Y()
-	nxy1 := nx01 + (nx11-nx01)*u.Y()
-	return nxy0 + (nxy1-nxy0)*u.Z()
+	nx00 := n000 + (n100-n000)*U.X()
+	nx10 := n010 + (n110-n010)*U.X()
+	nx01 := n001 + (n101-n001)*U.X()
+	nx11 := n011 + (n111-n011)*U.X()
+	nxy0 := nx00 + (nx10-nx00)*U.Y()
+	nxy1 := nx01 + (nx11-nx01)*U.Y()
+	return nxy0 + (nxy1-nxy0)*U.Z()
 }
 
 // detailFBM3 mirrors d_fbm: fractal value noise in [-1,1], octaves clamped to
@@ -99,30 +99,30 @@ func detailFBM3(p mgl32.Vec3, octaves int) float32 {
 
 // detailHash21 mirrors d_hash21, used only for a wave slot's phase.
 func detailHash21(p mgl32.Vec2) float32 {
-	v := math.Sin(float64(p.X()*127.1+p.Y()*311.7)) * 43758.5453
-	return fract32(float32(v))
+	V := math.Sin(float64(p.X()*127.1+p.Y()*311.7)) * 43758.5453
+	return fract32(float32(V))
 }
 
 // detailPlaneBasis mirrors d_planeBasis: the face's canonical in-plane axes
 // derived purely from its displacement normal n, so wave rotation is
 // authored the same way on floors/ceilings/walls alike. Deliberately NOT the
-// same basis faceBasisFor/computeFaceBasis returns (that one's tangent comes
+// same basis FaceBasisFor/ComputeFaceBasis returns (that one's tangent comes
 // from the face's first edge, used only to align the scatter lattice) — the
 // two are independent in the shaders too.
-func detailPlaneBasis(n mgl32.Vec3) (t, b mgl32.Vec3) {
-	if math.Abs(float64(n.Y())) < 0.9 {
-		t = mgl32.Vec3{0, 1, 0}.Cross(n)
+func detailPlaneBasis(N mgl32.Vec3) (t, b mgl32.Vec3) {
+	if math.Abs(float64(N.Y())) < 0.9 {
+		t = mgl32.Vec3{0, 1, 0}.Cross(N)
 	} else {
-		t = mgl32.Vec3{1, 0, 0}.Cross(n)
+		t = mgl32.Vec3{1, 0, 0}.Cross(N)
 	}
 	t = t.Normalize()
-	b = n.Cross(t).Normalize()
+	b = N.Cross(t).Normalize()
 	return
 }
 
 // detailWaveSumAt mirrors d_waveSum at world position pos.
-func detailWaveSumAt(d *world.DetailSpec, n mgl32.Vec3, pos mgl32.Vec3) float32 {
-	t, b := detailPlaneBasis(n)
+func detailWaveSumAt(d *world.DetailSpec, N mgl32.Vec3, pos mgl32.Vec3) float32 {
+	t, b := detailPlaneBasis(N)
 	s := float32(math.Mod(float64(d.Seed), 1024.0))
 
 	sum := float32(0)
@@ -141,7 +141,7 @@ func detailWaveSumAt(d *world.DetailSpec, n mgl32.Vec3, pos mgl32.Vec3) float32 
 }
 
 // detailTaperAt mirrors detailTaper, given the face's boundary edges (see
-// boundaryEdgesFor in detail_render.go).
+// BoundaryEdgesFor in detail_render.go).
 func detailTaperAt(d *world.DetailSpec, edges [][2]mgl32.Vec3, pos mgl32.Vec3) float32 {
 	if d.EdgeTaper <= 0 || len(edges) == 0 {
 		return 1
@@ -152,7 +152,7 @@ func detailTaperAt(d *world.DetailSpec, edges [][2]mgl32.Vec3, pos mgl32.Vec3) f
 			md = dist
 		}
 	}
-	return smoothstep32(0, d.EdgeTaper, md)
+	return Smoothstep32(0, d.EdgeTaper, md)
 }
 
 // distPointSeg mirrors d_distSeg: distance from p to segment a..b.
@@ -169,47 +169,47 @@ func distPointSeg(p, a, b mgl32.Vec3) float32 {
 // detailDisplaceAt mirrors detailDisplace: pos pushed along n by the summed
 // waves plus (when enabled) seeded fractal noise, tapered at the face
 // boundary.
-func detailDisplaceAt(d *world.DetailSpec, n mgl32.Vec3, edges [][2]mgl32.Vec3, pos mgl32.Vec3) mgl32.Vec3 {
-	disp := detailWaveSumAt(d, n, pos)
+func detailDisplaceAt(d *world.DetailSpec, N mgl32.Vec3, edges [][2]mgl32.Vec3, pos mgl32.Vec3) mgl32.Vec3 {
+	disp := detailWaveSumAt(d, N, pos)
 	if d.Noise {
 		off := mgl32.Vec3{float32(d.Seed) * 13.1, float32(d.Seed) * 7.7, float32(d.Seed) * 3.3}
 		disp += d.NoiseAmplitude * detailFBM3(pos.Mul(d.NoiseFrequency).Add(off), d.NoiseOctaves)
 	}
-	return pos.Add(n.Mul(disp * detailTaperAt(d, edges, pos)))
+	return pos.Add(N.Mul(disp * detailTaperAt(d, edges, pos)))
 }
 
 // detailNormalAt mirrors detailNormal: the displaced surface's unit normal at
 // pos, by central-differencing detailDisplaceAt across the face plane. eps is
-// the differencing step — pass dispNormalEps(d) (detail_render.go).
-func detailNormalAt(d *world.DetailSpec, n mgl32.Vec3, edges [][2]mgl32.Vec3, eps float32, pos mgl32.Vec3) mgl32.Vec3 {
-	t, b := detailPlaneBasis(n)
+// the differencing step — pass DispNormalEps(d) (detail_render.go).
+func detailNormalAt(d *world.DetailSpec, N mgl32.Vec3, edges [][2]mgl32.Vec3, eps float32, pos mgl32.Vec3) mgl32.Vec3 {
+	t, b := detailPlaneBasis(N)
 	e := eps
 	if e < 1e-4 {
 		e = 1e-4
 	}
-	du := detailDisplaceAt(d, n, edges, pos.Add(t.Mul(e))).Sub(detailDisplaceAt(d, n, edges, pos.Sub(t.Mul(e))))
-	dv := detailDisplaceAt(d, n, edges, pos.Add(b.Mul(e))).Sub(detailDisplaceAt(d, n, edges, pos.Sub(b.Mul(e))))
+	du := detailDisplaceAt(d, N, edges, pos.Add(t.Mul(e))).Sub(detailDisplaceAt(d, N, edges, pos.Sub(t.Mul(e))))
+	dv := detailDisplaceAt(d, N, edges, pos.Add(b.Mul(e))).Sub(detailDisplaceAt(d, N, edges, pos.Sub(b.Mul(e))))
 	nn := du.Cross(dv)
 	if l := nn.Len(); l > 1e-8 {
 		return nn.Mul(1 / l)
 	}
-	return n
+	return N
 }
 
-// detailSurfaceAt returns the displaced world height and unit normal for fl
+// DetailSurfaceAt returns the displaced world height and unit normal for fl
 // at world XZ (wx,wz), given the flat floor's own height baseHeight (from
 // InterpolateSurfaceHeight — used as the Y component fed into the wave/noise
 // field, matching the GPU's own use of the undisplaced vertex position).
 // Callers must check fl.Detail.HasDisplace() first; an unconfigured spec
 // would just return (baseHeight, {0,1,0}) here, which is a legitimate but
 // pointless answer to bother computing.
-func detailSurfaceAt(fl *world.Floor, wx, wz, baseHeight float32) (height float32, normal mgl32.Vec3) {
+func DetailSurfaceAt(fl *world.Floor, wx, wz, baseHeight float32) (height float32, normal mgl32.Vec3) {
 	d := &fl.Detail
-	n := dispNormalFor(&fl.Geometry)
-	edges := boundaryEdgesFor(&fl.Geometry)
+	N := DispNormalFor(&fl.Geometry)
+	edges := BoundaryEdgesFor(&fl.Geometry)
 	pos := mgl32.Vec3{wx, baseHeight, wz}
-	disp := detailDisplaceAt(d, n, edges, pos)
-	norm := detailNormalAt(d, n, edges, dispNormalEps(d), pos)
+	disp := detailDisplaceAt(d, N, edges, pos)
+	norm := detailNormalAt(d, N, edges, DispNormalEps(d), pos)
 	return disp.Y(), norm
 }
 
@@ -219,12 +219,12 @@ func detailSurfaceAt(fl *world.Floor, wx, wz, baseHeight float32) (height float3
 // live on the CPU side: the renderer may depend on the maths, the maths must
 // not depend on the renderer.
 
-// dispNormalFor is the unit normal the whole face displaces along: the average
+// DispNormalFor is the unit normal the whole face displaces along: the average
 // plane normal, falling back to the geometry's own normal (then world up) for
-// degenerate faces where computeFaceBasis finds no area.
-func dispNormalFor(g *gfx.Geometry) mgl32.Vec3 {
-	if b := faceBasisFor(g); b.ok {
-		return b.n
+// degenerate faces where ComputeFaceBasis finds no area.
+func DispNormalFor(g *gfx.Geometry) mgl32.Vec3 {
+	if b := FaceBasisFor(g); b.Ok {
+		return b.N
 	}
 	if g.Normal.Len() > 1e-6 {
 		return g.Normal.Normalize()
@@ -232,14 +232,14 @@ func dispNormalFor(g *gfx.Geometry) mgl32.Vec3 {
 	return mgl32.Vec3{0, 1, 0}
 }
 
-// dispNormalEps returns the central-difference step detailNormal() (see
+// DispNormalEps returns the central-difference step detailNormal() (see
 // detail_common.glsl) differentiates the displacement field over. It is tied to
 // the finest feature the spec can produce — the highest wave frequency, or the
 // top noise octave — because the step has to stay well inside one feature: too
 // wide and the shading smooths across the shape itself, too narrow and the
 // difference is lost in float noise. 1/20th of the shortest wavelength sits
 // comfortably between the two.
-func dispNormalEps(d *world.DetailSpec) float32 {
+func DispNormalEps(d *world.DetailSpec) float32 {
 	var maxFreq float32
 	for i := range d.Waves {
 		if w := d.Waves[i]; w.Enabled && w.Frequency > maxFreq {
@@ -272,15 +272,15 @@ func dispNormalEps(d *world.DetailSpec) float32 {
 	return eps
 }
 
-// boundaryEdgesFor returns the face's outer boundary edges (world space),
+// BoundaryEdgesFor returns the face's outer boundary edges (world space),
 // caching by a fingerprint of the vertex data so it only recomputes when the
 // geometry actually changes.
-func boundaryEdgesFor(g *gfx.Geometry) [][2]mgl32.Vec3 {
+func BoundaryEdgesFor(g *gfx.Geometry) [][2]mgl32.Vec3 {
 	fp := geomFingerprint(g.Vertices)
-	if e, ok := detailBoundaryCache[g]; ok && e.fp == fp {
+	if e, Ok := detailBoundaryCache[g]; Ok && e.fp == fp {
 		return e.edges
 	}
-	edges := computeBoundaryEdges(g.Vertices)
+	edges := ComputeBoundaryEdges(g.Vertices)
 	detailBoundaryCache[g] = boundaryEntry{fp: fp, edges: edges}
 	return edges
 }
@@ -295,22 +295,22 @@ type boundaryEntry struct {
 	edges [][2]mgl32.Vec3
 }
 
-// computeBoundaryEdges returns the mesh's boundary edges — those used by exactly
+// ComputeBoundaryEdges returns the mesh's boundary edges — those used by exactly
 // one triangle. For a triangle-fan floor this is the sector polygon perimeter;
 // for a wall quad it is the four quad edges; interior/shared edges (fan diagonals,
 // the quad diagonal) are excluded. Vertices are matched by quantized position so
 // the de-indexed triangle soup still shares edges.
-func computeBoundaryEdges(verts []float32) [][2]mgl32.Vec3 {
+func ComputeBoundaryEdges(verts []float32) [][2]mgl32.Vec3 {
 	type rec struct {
 		a, b  mgl32.Vec3
 		count int
 	}
 	m := map[[6]int64]*rec{}
-	q := func(v mgl32.Vec3) [3]int64 {
+	q := func(V mgl32.Vec3) [3]int64 {
 		return [3]int64{
-			int64(math.Round(float64(v.X()) * 1e4)),
-			int64(math.Round(float64(v.Y()) * 1e4)),
-			int64(math.Round(float64(v.Z()) * 1e4)),
+			int64(math.Round(float64(V.X()) * 1e4)),
+			int64(math.Round(float64(V.Y()) * 1e4)),
+			int64(math.Round(float64(V.Z()) * 1e4)),
 		}
 	}
 	less := func(a, b [3]int64) bool {
@@ -330,16 +330,16 @@ func computeBoundaryEdges(verts []float32) [][2]mgl32.Vec3 {
 			qa, qb = qb, qa
 		}
 		k := [6]int64{qa[0], qa[1], qa[2], qb[0], qb[1], qb[2]}
-		if r, ok := m[k]; ok {
+		if r, Ok := m[k]; Ok {
 			r.count++
 		} else {
 			m[k] = &rec{a: a, b: b, count: 1}
 		}
 	}
 	for ti := 0; ti+14 < len(verts); ti += 15 {
-		v0 := vtx(verts, ti)
-		v1 := vtx(verts, ti+5)
-		v2 := vtx(verts, ti+10)
+		v0 := Vtx(verts, ti)
+		v1 := Vtx(verts, ti+5)
+		v2 := Vtx(verts, ti+10)
 		add(v0, v1)
 		add(v1, v2)
 		add(v2, v0)
@@ -355,83 +355,83 @@ func computeBoundaryEdges(verts []float32) [][2]mgl32.Vec3 {
 
 var detailBoundaryCache = map[*gfx.Geometry]boundaryEntry{}
 
-// faceBasisFor returns the face's plane basis, caching by a fingerprint of the
+// FaceBasisFor returns the face's plane basis, caching by a fingerprint of the
 // vertex data so it only recomputes when the geometry actually changes. Both the
 // displacement and the scatter pass go through here, so they share one plane.
-func faceBasisFor(g *gfx.Geometry) faceBasis {
+func FaceBasisFor(g *gfx.Geometry) FaceBasis {
 	fp := geomFingerprint(g.Vertices)
-	if e, ok := detailBasisCache[g]; ok && e.fp == fp {
+	if e, Ok := detailBasisCache[g]; Ok && e.fp == fp {
 		return e.basis
 	}
-	b := computeFaceBasis(g.Vertices)
+	b := ComputeFaceBasis(g.Vertices)
 	detailBasisCache[g] = basisEntry{fp: fp, basis: b}
 	return b
 }
 
-func geomFingerprint(v []float32) uint64 {
+func geomFingerprint(V []float32) uint64 {
 	h := uint64(14695981039346656037)
 	mix := func(x uint32) { h ^= uint64(x); h *= 1099511628211 }
-	mix(uint32(len(v)))
-	step := len(v)/17 + 1
-	for i := 0; i < len(v); i += step {
-		mix(math.Float32bits(v[i]))
+	mix(uint32(len(V)))
+	step := len(V)/17 + 1
+	for i := 0; i < len(V); i += step {
+		mix(math.Float32bits(V[i]))
 	}
 	return h
 }
 
 type basisEntry struct {
 	fp    uint64
-	basis faceBasis
+	basis FaceBasis
 }
 
-// computeFaceBasis derives a plane basis + in-plane bounding rectangle from a
+// ComputeFaceBasis derives a plane basis + in-plane bounding rectangle from a
 // face's world-space triangle list (5 floats/vertex, 15/triangle).
-func computeFaceBasis(verts []float32) faceBasis {
+func ComputeFaceBasis(verts []float32) FaceBasis {
 	if len(verts) < 15 {
-		return faceBasis{}
+		return FaceBasis{}
 	}
 	var nrm mgl32.Vec3
 	for ti := 0; ti+14 < len(verts); ti += 15 {
-		a := vtx(verts, ti)
-		b := vtx(verts, ti+5)
-		c := vtx(verts, ti+10)
+		a := Vtx(verts, ti)
+		b := Vtx(verts, ti+5)
+		c := Vtx(verts, ti+10)
 		nrm = nrm.Add(b.Sub(a).Cross(c.Sub(a)))
 	}
 	if nrm.Len() < 1e-8 {
-		return faceBasis{}
+		return FaceBasis{}
 	}
-	n := nrm.Normalize()
+	N := nrm.Normalize()
 
-	p0 := vtx(verts, 0)
-	tan := vtx(verts, 5).Sub(p0)
-	tan = tan.Sub(n.Mul(tan.Dot(n))) // project into plane
+	p0 := Vtx(verts, 0)
+	tan := Vtx(verts, 5).Sub(p0)
+	tan = tan.Sub(N.Mul(tan.Dot(N))) // project into plane
 	if tan.Len() < 1e-6 {
-		tan = geom.PerpAxis(n)
+		tan = geom.PerpAxis(N)
 	}
-	u := tan.Normalize()
-	v := n.Cross(u).Normalize()
+	U := tan.Normalize()
+	V := N.Cross(U).Normalize()
 
-	uMin, uMax := float32(math.MaxFloat32), float32(-math.MaxFloat32)
-	vMin, vMax := float32(math.MaxFloat32), float32(-math.MaxFloat32)
+	uMin, UMax := float32(math.MaxFloat32), float32(-math.MaxFloat32)
+	vMin, VMax := float32(math.MaxFloat32), float32(-math.MaxFloat32)
 	for i := 0; i+4 < len(verts); i += 5 {
-		d := vtx(verts, i).Sub(p0)
-		du, dv := d.Dot(u), d.Dot(v)
-		uMin, uMax = min(uMin, du), max(uMax, du)
-		vMin, vMax = min(vMin, dv), max(vMax, dv)
+		d := Vtx(verts, i).Sub(p0)
+		du, dv := d.Dot(U), d.Dot(V)
+		uMin, UMax = min(uMin, du), max(UMax, du)
+		vMin, VMax = min(vMin, dv), max(VMax, dv)
 	}
-	origin := p0.Add(u.Mul(uMin)).Add(v.Mul(vMin))
-	return faceBasis{origin: origin, u: u, v: v, n: n, uMax: uMax - uMin, vMax: vMax - vMin, ok: true}
+	Origin := p0.Add(U.Mul(uMin)).Add(V.Mul(vMin))
+	return FaceBasis{Origin: Origin, U: U, V: V, N: N, UMax: UMax - uMin, VMax: VMax - vMin, Ok: true}
 }
 
 var detailBasisCache = map[*gfx.Geometry]basisEntry{}
 
-type faceBasis struct {
-	origin     mgl32.Vec3
-	u, v, n    mgl32.Vec3
-	uMax, vMax float32
-	ok         bool
+type FaceBasis struct {
+	Origin     mgl32.Vec3
+	U, V, N    mgl32.Vec3
+	UMax, VMax float32
+	Ok         bool
 }
 
-func vtx(verts []float32, i int) mgl32.Vec3 {
+func Vtx(verts []float32, i int) mgl32.Vec3 {
 	return mgl32.Vec3{verts[i], verts[i+1], verts[i+2]}
 }

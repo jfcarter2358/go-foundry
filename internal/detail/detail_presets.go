@@ -1,8 +1,8 @@
-package main
+package detail
 
 // detail_presets.go — user-authored procedural-detail presets.
 //
-// The presets in detail.go are compiled in. This file adds presets the user
+// The presets in go are compiled in. This file adds presets the user
 // creates from the editor's Detail panel: the face's current wave, noise, taper
 // and scatter settings are written to <exe>/detail_presets/<name>.yaml and
 // merged into DetailPresets at startup, so they show up in the preset combo
@@ -34,16 +34,16 @@ import (
 // is saved into it.
 const detailPresetsDirName = "detail_presets"
 
-// detailBuiltinPresets snapshots the compiled-in presets before a user preset
+// DetailBuiltinPresets snapshots the compiled-in presets before a user preset
 // can shadow one, so deleting the shadowing preset restores the original.
-var detailBuiltinPresets = snapshotDetailPresets()
+var DetailBuiltinPresets = snapshotDetailPresets()
 
-// detailUserPresets is the set of preset names backed by a file on disk. Only
+// DetailUserPresets is the set of preset names backed by a file on disk. Only
 // these can be deleted; the built-ins are code.
-var detailUserPresets = map[string]bool{}
+var DetailUserPresets = map[string]bool{}
 
-// detailUserPresetNames is detailUserPresets sorted, for a stable UI listing.
-var detailUserPresetNames []string
+// DetailUserPresetNames is DetailUserPresets sorted, for a stable UI listing.
+var DetailUserPresetNames []string
 
 func snapshotDetailPresets() map[string]world.DetailSpec {
 	m := make(map[string]world.DetailSpec, len(world.DetailPresets))
@@ -71,7 +71,7 @@ func LoadDetailPresets() {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		name := detailPresetName(strings.TrimSuffix(e.Name(), ".yaml"))
+		name := DetailPresetName(strings.TrimSuffix(e.Name(), ".yaml"))
 		if name == "" {
 			continue
 		}
@@ -84,8 +84,8 @@ func LoadDetailPresets() {
 		world.DetailPresets[name] = spec
 		markDetailUserPreset(name)
 	}
-	if n := len(detailUserPresetNames); n > 0 {
-		log.Printf("loaded %d user detail preset(s) from %s", n, dir)
+	if N := len(DetailUserPresetNames); N > 0 {
+		log.Printf("loaded %d user detail preset(s) from %s", N, dir)
 	}
 }
 
@@ -109,7 +109,7 @@ func loadDetailPresetFile(path string) (world.DetailSpec, error) {
 // creating the preset directory on first use. An existing preset of that name
 // (user or built-in) is replaced.
 func SaveDetailPreset(name string, d world.DetailSpec) error {
-	name = detailPresetName(name)
+	name = DetailPresetName(name)
 	if name == "" {
 		return fmt.Errorf("preset name is empty")
 	}
@@ -141,21 +141,21 @@ func SaveDetailPreset(name string, d world.DetailSpec) error {
 // DeleteDetailPreset removes a user preset's file and unregisters it. If it was
 // shadowing a built-in of the same name, the built-in comes back.
 func DeleteDetailPreset(name string) error {
-	name = detailPresetName(name)
-	if !detailUserPresets[name] {
+	name = DetailPresetName(name)
+	if !DetailUserPresets[name] {
 		return fmt.Errorf("%q is not a user preset", name)
 	}
 	if err := os.Remove(filepath.Join(detailPresetsDir(), name+".yaml")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	delete(detailUserPresets, name)
-	for i, n := range detailUserPresetNames {
-		if n == name {
-			detailUserPresetNames = append(detailUserPresetNames[:i], detailUserPresetNames[i+1:]...)
+	delete(DetailUserPresets, name)
+	for i, N := range DetailUserPresetNames {
+		if N == name {
+			DetailUserPresetNames = append(DetailUserPresetNames[:i], DetailUserPresetNames[i+1:]...)
 			break
 		}
 	}
-	if builtin, ok := detailBuiltinPresets[name]; ok {
+	if builtin, Ok := DetailBuiltinPresets[name]; Ok {
 		world.DetailPresets[name] = builtin
 	} else {
 		delete(world.DetailPresets, name)
@@ -165,19 +165,19 @@ func DeleteDetailPreset(name string) error {
 
 // markDetailUserPreset records name as disk-backed, keeping the name list sorted.
 func markDetailUserPreset(name string) {
-	if detailUserPresets[name] {
+	if DetailUserPresets[name] {
 		return
 	}
-	detailUserPresets[name] = true
-	detailUserPresetNames = append(detailUserPresetNames, name)
-	sort.Strings(detailUserPresetNames)
+	DetailUserPresets[name] = true
+	DetailUserPresetNames = append(DetailUserPresetNames, name)
+	sort.Strings(DetailUserPresetNames)
 }
 
-// detailPresetName normalises a typed preset name into something safe to use as
+// DetailPresetName normalises a typed preset name into something safe to use as
 // a filename: surrounding space trimmed, a typed ".yaml" suffix dropped, and
 // anything outside [A-Za-z0-9 _-] removed so it can never escape the presets
 // directory.
-func detailPresetName(s string) string {
+func DetailPresetName(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimSuffix(s, ".yaml")
 	s = strings.Map(func(r rune) rune {

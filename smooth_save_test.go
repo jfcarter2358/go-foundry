@@ -7,6 +7,7 @@ package main
 // types they read.
 
 import (
+	"foundry/internal/detail"
 	"foundry/internal/world"
 	"testing"
 )
@@ -49,30 +50,30 @@ func TestSmoothSavesPerSurface(t *testing.T) {
 // and stay bounded at both ends.
 func TestDispNormalEps(t *testing.T) {
 	flat := &world.DetailSpec{}
-	if got := dispNormalEps(flat); got <= 0 || got > 0.25 {
+	if got := detail.DispNormalEps(flat); got <= 0 || got > 0.25 {
 		t.Fatalf("flat spec eps = %v, want a bounded positive default", got)
 	}
 
 	coarse := &world.DetailSpec{Waves: [world.DetailMaxWaves]world.DetailWave{{Enabled: true, Frequency: 0.5}}}
 	fine := &world.DetailSpec{Waves: [world.DetailMaxWaves]world.DetailWave{{Enabled: true, Frequency: 5}}}
-	if dispNormalEps(fine) >= dispNormalEps(coarse) {
+	if detail.DispNormalEps(fine) >= detail.DispNormalEps(coarse) {
 		t.Fatalf("finer waves must use a smaller step: fine=%v coarse=%v",
-			dispNormalEps(fine), dispNormalEps(coarse))
+			detail.DispNormalEps(fine), detail.DispNormalEps(coarse))
 	}
 
 	// Disabled slots must not drive the step.
 	off := &world.DetailSpec{Waves: [world.DetailMaxWaves]world.DetailWave{{Enabled: false, Frequency: 20}}}
-	if dispNormalEps(off) != dispNormalEps(flat) {
-		t.Fatalf("disabled wave affected eps: %v vs %v", dispNormalEps(off), dispNormalEps(flat))
+	if detail.DispNormalEps(off) != detail.DispNormalEps(flat) {
+		t.Fatalf("disabled wave affected eps: %v vs %v", detail.DispNormalEps(off), detail.DispNormalEps(flat))
 	}
 
 	// Noise octaves double the frequency each step, so they can be the finest
 	// feature present.
 	noisy := &world.DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 5}
-	if dispNormalEps(noisy) >= dispNormalEps(&world.DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 1}) {
+	if detail.DispNormalEps(noisy) >= detail.DispNormalEps(&world.DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 1}) {
 		t.Fatal("more noise octaves must shrink the step")
 	}
-	if got := dispNormalEps(&world.DetailSpec{Noise: true, NoiseFrequency: 500, NoiseOctaves: 6}); got < 0.001 {
+	if got := detail.DispNormalEps(&world.DetailSpec{Noise: true, NoiseFrequency: 500, NoiseOctaves: 6}); got < 0.001 {
 		t.Fatalf("eps = %v, want it clamped at 0.001", got)
 	}
 }

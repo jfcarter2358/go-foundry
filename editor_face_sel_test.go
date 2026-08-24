@@ -214,7 +214,7 @@ func TestFaceSelFromHit(t *testing.T) {
 		name string
 		hit  pickHit
 		want faceSel
-		ok   bool
+		Ok   bool
 	}{
 		{"a wall", pickHit{kind: pickWall, chunkIdx: 1, sectorIdx: 2, idx: 3},
 			edgeFaceSel(1, 2, "wall", 3), true},
@@ -228,8 +228,8 @@ func TestFaceSelFromHit(t *testing.T) {
 	}
 	for _, c := range cases {
 		got, ok := faceSelFromHit(c.hit)
-		if ok != c.ok {
-			t.Errorf("%s: ok = %v, want %v", c.name, ok, c.ok)
+		if ok != c.Ok {
+			t.Errorf("%s: ok = %v, want %v", c.name, ok, c.Ok)
 			continue
 		}
 		if ok && got != c.want {

@@ -85,7 +85,7 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 	// per shared chunk point so the reconciliation below can average it.
 	type xzAccum struct {
 		sum mgl32.Vec2
-		n   int
+		N   int
 	}
 	targets := make([]mgl32.Vec3, len(Editor.SelectedVertices))
 	resolved := make([]bool, len(Editor.SelectedVertices))
@@ -105,7 +105,7 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 			accum[key] = a
 		}
 		a.sum = a.sum.Add(mgl32.Vec2{p.X(), p.Z()})
-		a.n++
+		a.N++
 	}
 
 	// Pass two: the shared XZ. Only points that actually moved are recorded, so
@@ -118,7 +118,7 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 		if key[1] < 0 || key[1] >= len(ch.Points) {
 			continue
 		}
-		want := a.sum.Mul(1 / float32(a.n))
+		want := a.sum.Mul(1 / float32(a.N))
 		was := ch.Points[key[1]]
 		// Exact, not approximate: every drag is applied absolutely from its
 		// mouse-down snapshot, so a still cursor recomputes the identical value

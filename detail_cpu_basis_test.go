@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/detail"
 	"foundry/internal/gfx"
 	"math"
 	"testing"
@@ -34,7 +35,7 @@ func TestDispNormalIsFaceConstant(t *testing.T) {
 
 	// The two triangles really are non-coplanar, or the test proves nothing.
 	triNrm := func(a, b, c []float32) mgl32.Vec3 {
-		pa, pb, pc := vtx(a, 0), vtx(b, 0), vtx(c, 0)
+		pa, pb, pc := detail.Vtx(a, 0), detail.Vtx(b, 0), detail.Vtx(c, 0)
 		return pb.Sub(pa).Cross(pc.Sub(pa)).Normalize()
 	}
 	n1, n2 := triNrm(p00, p20, p22), triNrm(p00, p22, p02)
@@ -43,7 +44,7 @@ func TestDispNormalIsFaceConstant(t *testing.T) {
 	}
 
 	geo := &gfx.Geometry{Vertices: verts}
-	n := dispNormalFor(geo)
+	n := detail.DispNormalFor(geo)
 	if math.Abs(float64(n.Len()-1)) > 1e-4 {
 		t.Fatalf("dispNormal must be unit length, got %v (len %.4f)", n, n.Len())
 	}
@@ -57,7 +58,7 @@ func TestDispNormalIsFaceConstant(t *testing.T) {
 	}
 	// Cached repeat must be identical, not merely close — the shader relies on
 	// every patch of the face getting bit-identical uniforms.
-	if again := dispNormalFor(geo); again != n {
+	if again := detail.DispNormalFor(geo); again != n {
 		t.Fatalf("dispNormal not stable across calls: %v then %v", n, again)
 	}
 }
@@ -77,16 +78,16 @@ func TestComputeFaceBasis(t *testing.T) {
 	tri(p00, p20, p23)
 	tri(p00, p23, p03)
 
-	b := computeFaceBasis(verts)
-	if !b.ok {
-		t.Fatal("computeFaceBasis failed on a valid quad")
+	b := detail.ComputeFaceBasis(verts)
+	if !b.Ok {
+		t.Fatal("detail.ComputeFaceBasis failed on a valid quad")
 	}
 	// Normal should be vertical (|n.y| ~ 1).
-	if math.Abs(float64(b.n.Y())) < 0.99 {
-		t.Fatalf("expected vertical normal, got %v", b.n)
+	if math.Abs(float64(b.N.Y())) < 0.99 {
+		t.Fatalf("expected vertical normal, got %v", b.N)
 	}
 	// Bounding rectangle should cover the 2x3 extent (order of u/v may swap).
-	uv := []float64{float64(b.uMax), float64(b.vMax)}
+	uv := []float64{float64(b.UMax), float64(b.VMax)}
 	got2, got3 := false, false
 	for _, e := range uv {
 		if math.Abs(e-2) < 1e-3 {
@@ -97,7 +98,7 @@ func TestComputeFaceBasis(t *testing.T) {
 		}
 	}
 	if !got2 || !got3 {
-		t.Fatalf("expected extents {2,3}, got uMax=%.3f vMax=%.3f", b.uMax, b.vMax)
+		t.Fatalf("expected extents {2,3}, got uMax=%.3f vMax=%.3f", b.UMax, b.VMax)
 	}
 }
 
@@ -116,7 +117,7 @@ func TestComputeBoundaryEdges(t *testing.T) {
 	tri(p00, p20, p23) // shares diagonal p00-p23
 	tri(p00, p23, p03)
 
-	edges := computeBoundaryEdges(verts)
+	edges := detail.ComputeBoundaryEdges(verts)
 	if len(edges) != 4 {
 		t.Fatalf("expected 4 boundary edges for a quad fan, got %d", len(edges))
 	}

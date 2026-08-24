@@ -912,7 +912,7 @@ func splitSector(ch *world.Chunk, sectorIdx, posA, posB int) {
 	ptA := ch.Points[s.PointIndices[posA]]
 	wallsA = append(wallsA, world.Wall{StartPoint: ptB, EndPoint: ptA, Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0})
 
-	// Sector B: posB..n-1, 0..posA (wrapping, inclusive)
+	// Sector B: posB..N-1, 0..posA (wrapping, inclusive)
 	var indicesB []int
 	var edgeKindsB []string
 	var edgeIDsB []string
@@ -924,7 +924,7 @@ func splitSector(ch *world.Chunk, sectorIdx, posA, posB int) {
 	for i := 0; i <= posA; i++ {
 		indicesB = append(indicesB, s.PointIndices[i])
 	}
-	// Edges for B: posB..n-1 (wrap at n-1→0), 0..posA-1, then new closing edge
+	// Edges for B: posB..N-1 (wrap at n-1→0), 0..posA-1, then new closing edge
 	for i := posB; i < n; i++ {
 		ei := i % n
 		ek := s.EdgeKinds[ei]
@@ -1008,7 +1008,7 @@ func distributeOffsets(offsets []float32, from, to, n int) []float32 {
 	return result
 }
 
-// distributeOffsetsWrap extracts vertex offsets for a wrapping range [from..n-1, 0..to] inclusive.
+// distributeOffsetsWrap extracts vertex offsets for a wrapping range [from..N-1, 0..to] inclusive.
 func distributeOffsetsWrap(offsets []float32, from, to, n int) []float32 {
 	var result []float32
 	for i := from; i < n; i++ {

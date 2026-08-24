@@ -1,4 +1,4 @@
-package main
+package detail
 
 import (
 	"foundry/internal/fileutil"
@@ -14,18 +14,18 @@ import (
 func withTempPresetDir(t *testing.T) {
 	t.Helper()
 	prevPath := fileutil.ExecutablePath
-	prevSet := detailUserPresets
-	prevNames := detailUserPresetNames
+	prevSet := DetailUserPresets
+	prevNames := DetailUserPresetNames
 	prevPresets := snapshotDetailPresets()
 
 	fileutil.ExecutablePath = t.TempDir()
-	detailUserPresets = map[string]bool{}
-	detailUserPresetNames = nil
+	DetailUserPresets = map[string]bool{}
+	DetailUserPresetNames = nil
 
 	t.Cleanup(func() {
 		fileutil.ExecutablePath = prevPath
-		detailUserPresets = prevSet
-		detailUserPresetNames = prevNames
+		DetailUserPresets = prevSet
+		DetailUserPresetNames = prevNames
 		world.DetailPresets = prevPresets
 	})
 }
@@ -56,16 +56,16 @@ func TestDetailPresetSaveLoad(t *testing.T) {
 	}
 
 	// Forget everything and reload from disk.
-	detailUserPresets = map[string]bool{}
-	detailUserPresetNames = nil
+	DetailUserPresets = map[string]bool{}
+	DetailUserPresetNames = nil
 	delete(world.DetailPresets, "my ridges")
 	LoadDetailPresets()
 
-	got, ok := world.DetailPresets["my ridges"]
-	if !ok {
+	got, Ok := world.DetailPresets["my ridges"]
+	if !Ok {
 		t.Fatal("preset not registered after LoadDetailPresets")
 	}
-	if !detailUserPresets["my ridges"] {
+	if !DetailUserPresets["my ridges"] {
 		t.Error("reloaded preset not marked as a user preset")
 	}
 	if got.Waves != in.Waves {
@@ -111,8 +111,8 @@ func TestDetailPresetUpdate(t *testing.T) {
 		t.Fatalf("SaveDetailPreset (update): %v", err)
 	}
 
-	if n := len(detailUserPresetNames); n != 1 {
-		t.Fatalf("user preset count = %d, want 1 (%v)", n, detailUserPresetNames)
+	if N := len(DetailUserPresetNames); N != 1 {
+		t.Fatalf("user preset count = %d, want 1 (%v)", N, DetailUserPresetNames)
 	}
 	if got := world.DetailPresets["ridges"].Waves[0].Amplitude; got != 0.9 {
 		t.Errorf("amplitude after update = %v, want 0.9", got)
@@ -124,8 +124,8 @@ func TestDetailPresetUpdate(t *testing.T) {
 func TestDetailPresetDeleteRestoresBuiltin(t *testing.T) {
 	withTempPresetDir(t)
 
-	builtin, ok := detailBuiltinPresets["rock"]
-	if !ok {
+	builtin, Ok := DetailBuiltinPresets["rock"]
+	if !Ok {
 		t.Fatal(`built-in preset "rock" missing`)
 	}
 	shadow := builtin
@@ -143,7 +143,7 @@ func TestDetailPresetDeleteRestoresBuiltin(t *testing.T) {
 	if world.DetailPresets["rock"].Waves[0].Amplitude != builtin.Waves[0].Amplitude {
 		t.Error("built-in preset not restored after deleting its shadow")
 	}
-	if detailUserPresets["rock"] {
+	if DetailUserPresets["rock"] {
 		t.Error("deleted preset still marked as a user preset")
 	}
 	if _, err := os.Stat(filepath.Join(detailPresetsDir(), "rock.yaml")); !os.IsNotExist(err) {
@@ -169,8 +169,8 @@ func TestDetailPresetNameSanitising(t *testing.T) {
 		"Rock_2-b":         "Rock_2-b",
 	}
 	for in, want := range cases {
-		if got := detailPresetName(in); got != want {
-			t.Errorf("detailPresetName(%q) = %q, want %q", in, got, want)
+		if got := DetailPresetName(in); got != want {
+			t.Errorf("DetailPresetName(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

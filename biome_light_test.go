@@ -155,7 +155,7 @@ func TestOuterIsLODMatchesTierPosition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read grass.go: %v", err)
 	}
-	if !strings.Contains(string(src), `gl.Uniform1i(p.u("outerIsLOD"), boolToInt32(tier < tierCount-1))`) {
+	if !strings.Contains(string(src), `gl.Uniform1i(p.U("outerIsLOD"), boolToInt32(tier < tierCount-1))`) {
 		t.Error(`outerIsLOD is no longer uploaded as boolToInt32(tier < tierCount-1) — ` +
 			"a single-tier kind (tierCount==1, tier==0) must resolve to false (the true Range edge shrinks), " +
 			"and every tier but the last of a 3-tier kind must resolve to true (dithers)")

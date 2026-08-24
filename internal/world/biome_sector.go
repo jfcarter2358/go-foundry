@@ -339,7 +339,7 @@ type BiomeBrush struct {
 
 	// MinSlopeAngle/MaxSlopeAngle (degrees from world-up) restrict where
 	// Grass/Sand/Rock/Moss appear when painted over a floor with active
-	// procedural displacement detail (detail.go) — e.g. Grass only on the
+	// procedural displacement detail (go) — e.g. Grass only on the
 	// flatter mesa tops of a rock outcrop, Rock only on its steeper faces.
 	// Ignored on an ordinary flat floor (nothing to gate — its slope is
 	// always ~0) and by Wildflower/Cattail/Water, which never follow

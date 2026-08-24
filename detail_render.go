@@ -1,6 +1,6 @@
 package main
 
-// detail_render.go — GPU rendering for per-face procedural detail (see detail.go).
+// detail_render.go — GPU rendering for per-face procedural detail (see go).
 //
 // Two self-contained pipelines, mirroring the grass.go biome pattern (own GL
 // programs, restore the main Program on exit):
@@ -19,6 +19,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/detail"
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
@@ -38,7 +39,7 @@ type progUniforms struct {
 	loc  map[string]int32
 }
 
-func (p *progUniforms) u(name string) int32 {
+func (p *progUniforms) U(name string) int32 {
 	if l, ok := p.loc[name]; ok {
 		return l
 	}
@@ -62,7 +63,7 @@ type detailRenderer struct {
 	initialized bool
 }
 
-var detail detailRenderer
+var detailRender detailRenderer
 
 // DetailInit compiles the detail programs and builds the rock template mesh.
 // Must be called once with the GL context current (see EditorInit).
@@ -76,33 +77,33 @@ func DetailInit() {
 	mk := func(prog uint32) progUniforms { return progUniforms{prog: prog, loc: map[string]int32{}} }
 
 	// --- Displacement (tessellation) programs ---
-	detail.dispColor = mk(mustTessProgram(
+	detailRender.dispColor = mk(mustTessProgram(
 		sp("detail_vert.glsl"), sp("detail.tesc"), sp("detail.tese"),
 		sp("fragment.glsl"), dispShared))
-	detail.dispShadow = mk(mustTessProgram(
+	detailRender.dispShadow = mk(mustTessProgram(
 		sp("detail_vert.glsl"), sp("detail.tesc"), sp("detail_shadow.tese"),
 		sp("shadow_frag.glsl"), dispShared))
-	detail.dispCube = mk(mustTessProgram(
+	detailRender.dispCube = mk(mustTessProgram(
 		sp("detail_vert.glsl"), sp("detail.tesc"), sp("detail_shadow_cube.tese"),
 		sp("shadow_cube_frag.glsl"), dispShared))
 
 	// --- Scatter (instanced) programs ---
-	detail.scatColor = mk(mustScatterProgram(
+	detailRender.scatColor = mk(mustScatterProgram(
 		sp("detail_scatter_vert.glsl"), sp("fragment.glsl"), scatShared))
-	detail.scatShadow = mk(mustScatterProgram(
+	detailRender.scatShadow = mk(mustScatterProgram(
 		sp("detail_scatter_shadow_vert.glsl"), sp("shadow_frag.glsl"), scatShared))
-	detail.scatCube = mk(mustScatterProgram(
+	detailRender.scatCube = mk(mustScatterProgram(
 		sp("detail_scatter_cube_vert.glsl"), sp("shadow_cube_frag.glsl"), scatShared))
 
 	// Rock template mesh (reuse the biome rock builder); attribute layout matches
 	// the explicit locations in the scatter vertex shaders (0=aLocal, 1=aNormal,
 	// 2=aParam).
 	mesh := buildRockMesh(7)
-	detail.rockVerts = int32(len(mesh) / biomeVertexStride)
-	gl.GenVertexArrays(1, &detail.rockVAO)
-	gl.GenBuffers(1, &detail.rockVBO)
-	gl.BindVertexArray(detail.rockVAO)
-	gl.BindBuffer(gl.ARRAY_BUFFER, detail.rockVBO)
+	detailRender.rockVerts = int32(len(mesh) / biomeVertexStride)
+	gl.GenVertexArrays(1, &detailRender.rockVAO)
+	gl.GenBuffers(1, &detailRender.rockVBO)
+	gl.BindVertexArray(detailRender.rockVAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, detailRender.rockVBO)
 	gl.BufferData(gl.ARRAY_BUFFER, len(mesh)*4, gl.Ptr(mesh), gl.STATIC_DRAW)
 	stride := int32(biomeVertexStride * 4)
 	gl.EnableVertexAttribArray(0)
@@ -113,7 +114,7 @@ func DetailInit() {
 	gl.VertexAttribPointerWithOffset(2, 1, gl.FLOAT, false, stride, 6*4)
 	gl.BindVertexArray(0)
 
-	detail.initialized = true
+	detailRender.initialized = true
 	gl.UseProgram(gfx.Program)
 }
 
@@ -279,15 +280,15 @@ func DetailAnyEnabled(level *world.Level) (displace, scatter bool) {
 // ---------- uniform setters ----------
 
 func setDispUniforms(p *progUniforms, d *world.DetailSpec, geo *gfx.Geometry) {
-	gl.Uniform1f(p.u("dispSeed"), float32(d.Seed))
+	gl.Uniform1f(p.U("dispSeed"), float32(d.Seed))
 
 	// One normal for the whole face — the same average plane the scatter pass
 	// uses. It must NOT be the per-patch geometric normal: a floor/ceiling quad
 	// with independent corner heights is non-planar, so its two triangles would
 	// displace along different directions and tear apart along their shared
 	// diagonal. See detail_common.glsl.
-	n := dispNormalFor(geo)
-	gl.Uniform3f(p.u("dispNormal"), n.X(), n.Y(), n.Z())
+	n := detail.DispNormalFor(geo)
+	gl.Uniform3f(p.U("dispNormal"), n.X(), n.Y(), n.Z())
 
 	// Disabled wave slots upload amplitude 0 (rather than being packed out) so a
 	// wave's seeded phase stays tied to its slot index.
@@ -296,31 +297,31 @@ func setDispUniforms(p *progUniforms, d *world.DetailSpec, geo *gfx.Geometry) {
 		if w := d.Waves[i]; w.Enabled {
 			amp, freq, rot = w.Amplitude, w.Frequency, w.Rotation*math.Pi/180
 		}
-		gl.Uniform1f(p.u(fmt.Sprintf("waveAmp[%d]", i)), amp)
-		gl.Uniform1f(p.u(fmt.Sprintf("waveFreq[%d]", i)), freq)
-		gl.Uniform1f(p.u(fmt.Sprintf("waveRot[%d]", i)), rot)
+		gl.Uniform1f(p.U(fmt.Sprintf("waveAmp[%d]", i)), amp)
+		gl.Uniform1f(p.U(fmt.Sprintf("waveFreq[%d]", i)), freq)
+		gl.Uniform1f(p.U(fmt.Sprintf("waveRot[%d]", i)), rot)
 	}
 
 	noiseOn := int32(0)
 	if d.Noise {
 		noiseOn = 1
 	}
-	gl.Uniform1i(p.u("noiseOn"), noiseOn)
-	gl.Uniform1f(p.u("noiseAmp"), d.NoiseAmplitude)
-	gl.Uniform1f(p.u("noiseFreq"), d.NoiseFrequency)
-	gl.Uniform1i(p.u("noiseOct"), int32(d.NoiseOctaves))
+	gl.Uniform1i(p.U("noiseOn"), noiseOn)
+	gl.Uniform1f(p.U("noiseAmp"), d.NoiseAmplitude)
+	gl.Uniform1f(p.U("noiseFreq"), d.NoiseFrequency)
+	gl.Uniform1i(p.U("noiseOct"), int32(d.NoiseOctaves))
 
 	tess := d.TessLevelFor()
 	if tess < 1 {
 		tess = 1
 	}
-	gl.Uniform1f(p.u("tessLevel"), tess)
+	gl.Uniform1f(p.U("tessLevel"), tess)
 
 	// Displaced detail follows the surface's own smoothing setting: one toggle
 	// covers the flat face and the detail generated from it. Harmless on the two
 	// depth programs, whose shaders drop the unused uniform.
-	gl.Uniform1i(p.u("smoothShading"), geo.SmoothFlag())
-	gl.Uniform1f(p.u("dispNormalEps"), dispNormalEps(d))
+	gl.Uniform1i(p.U("smoothShading"), geo.SmoothFlag())
+	gl.Uniform1f(p.U("dispNormalEps"), detail.DispNormalEps(d))
 
 	setDispBoundary(p, d.EdgeTaper, geo)
 }
@@ -332,21 +333,21 @@ const detailMaxEdges = 32
 // the shader can fade displacement to 0 at edges shared with adjacent walls.
 func setDispBoundary(p *progUniforms, taper float32, geo *gfx.Geometry) {
 	if taper <= 0 {
-		gl.Uniform1f(p.u("edgeTaper"), 0)
-		gl.Uniform1i(p.u("numEdges"), 0)
+		gl.Uniform1f(p.U("edgeTaper"), 0)
+		gl.Uniform1i(p.U("numEdges"), 0)
 		return
 	}
-	edges := boundaryEdgesFor(geo)
+	edges := detail.BoundaryEdgesFor(geo)
 	n := len(edges)
 	if n > detailMaxEdges {
 		n = detailMaxEdges
 	}
-	gl.Uniform1f(p.u("edgeTaper"), taper)
-	gl.Uniform1i(p.u("numEdges"), int32(n))
+	gl.Uniform1f(p.U("edgeTaper"), taper)
+	gl.Uniform1i(p.U("numEdges"), int32(n))
 	for i := 0; i < n; i++ {
 		a, b := edges[i][0], edges[i][1]
-		gl.Uniform3f(p.u(fmt.Sprintf("edgeA[%d]", i)), a.X(), a.Y(), a.Z())
-		gl.Uniform3f(p.u(fmt.Sprintf("edgeB[%d]", i)), b.X(), b.Y(), b.Z())
+		gl.Uniform3f(p.U(fmt.Sprintf("edgeA[%d]", i)), a.X(), a.Y(), a.Z())
+		gl.Uniform3f(p.U(fmt.Sprintf("edgeB[%d]", i)), b.X(), b.Y(), b.Z())
 	}
 }
 
@@ -354,14 +355,14 @@ func setDispBoundary(p *progUniforms, taper float32, geo *gfx.Geometry) {
 
 // setScatterUniforms sets the per-face scatter uniforms and returns the instance
 // count (gridNU*gridNV). Returns 0 when nothing should be drawn.
-func setScatterUniforms(p *progUniforms, d *world.DetailSpec, b faceBasis) int32 {
+func setScatterUniforms(p *progUniforms, d *world.DetailSpec, b detail.FaceBasis) int32 {
 	spacing := d.ScatterSpacing
 	if spacing < 0.05 {
 		spacing = 0.05
 	}
 	const maxSide = 256
-	gridNU := int(b.uMax/spacing) + 1
-	gridNV := int(b.vMax/spacing) + 1
+	gridNU := int(b.UMax/spacing) + 1
+	gridNV := int(b.VMax/spacing) + 1
 	if gridNU < 1 {
 		gridNU = 1
 	}
@@ -375,18 +376,18 @@ func setScatterUniforms(p *progUniforms, d *world.DetailSpec, b faceBasis) int32
 		gridNV = maxSide
 	}
 
-	gl.Uniform3f(p.u("faceOrigin"), b.origin.X(), b.origin.Y(), b.origin.Z())
-	gl.Uniform3f(p.u("faceU"), b.u.X(), b.u.Y(), b.u.Z())
-	gl.Uniform3f(p.u("faceV"), b.v.X(), b.v.Y(), b.v.Z())
-	gl.Uniform3f(p.u("faceNrm"), b.n.X(), b.n.Y(), b.n.Z())
-	gl.Uniform1f(p.u("faceUMax"), b.uMax)
-	gl.Uniform1f(p.u("faceVMax"), b.vMax)
-	gl.Uniform1f(p.u("sSpacing"), spacing)
-	gl.Uniform1f(p.u("sDensity"), geom.Clamp01(d.ScatterDensity))
-	gl.Uniform1f(p.u("sScale"), d.ScatterScale)
-	gl.Uniform1f(p.u("sJitter"), geom.Clamp01(d.ScatterJitter))
-	gl.Uniform1f(p.u("sSeed"), float32(d.Seed))
-	gl.Uniform1i(p.u("gridNU"), int32(gridNU))
+	gl.Uniform3f(p.U("faceOrigin"), b.Origin.X(), b.Origin.Y(), b.Origin.Z())
+	gl.Uniform3f(p.U("faceU"), b.U.X(), b.U.Y(), b.U.Z())
+	gl.Uniform3f(p.U("faceV"), b.V.X(), b.V.Y(), b.V.Z())
+	gl.Uniform3f(p.U("faceNrm"), b.N.X(), b.N.Y(), b.N.Z())
+	gl.Uniform1f(p.U("faceUMax"), b.UMax)
+	gl.Uniform1f(p.U("faceVMax"), b.VMax)
+	gl.Uniform1f(p.U("sSpacing"), spacing)
+	gl.Uniform1f(p.U("sDensity"), geom.Clamp01(d.ScatterDensity))
+	gl.Uniform1f(p.U("sScale"), d.ScatterScale)
+	gl.Uniform1f(p.U("sJitter"), geom.Clamp01(d.ScatterJitter))
+	gl.Uniform1f(p.U("sSeed"), float32(d.Seed))
+	gl.Uniform1i(p.U("gridNU"), int32(gridNU))
 	return int32(gridNU * gridNV)
 }
 
@@ -409,7 +410,7 @@ func detailAlbedo(name, fallback string) uint32 {
 // detail programs need in order to receive shadows the same way world geometry
 // does. Restores the main Program on exit.
 func RenderDetailColor(level *world.Level, frame ShadowFrame) {
-	if !detail.initialized {
+	if !detailRender.initialized {
 		return
 	}
 	// The color pass is not culled here — it is drawn with the same coverage as
@@ -423,15 +424,15 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 	cam := gfx.Cam.Matrix
 
 	if haveD {
-		p := &detail.dispColor
+		p := &detailRender.dispColor
 		world.UploadLightsTo(p.prog, level.Lights, false)
 		UploadShadowUniformsTo(p.prog, level.Lights, frame)
 		UploadPointShadowUniformsTo(p.prog, level.Lights)
 		gl.UseProgram(p.prog)
-		gl.UniformMatrix4fv(p.u("projection"), 1, false, &proj[0])
-		gl.UniformMatrix4fv(p.u("camera"), 1, false, &cam[0])
-		gl.Uniform1i(p.u("tex"), 0)
-		gl.Uniform1f(p.u("alpha"), 1.0)
+		gl.UniformMatrix4fv(p.U("projection"), 1, false, &proj[0])
+		gl.UniformMatrix4fv(p.U("camera"), 1, false, &cam[0])
+		gl.Uniform1i(p.U("tex"), 0)
+		gl.Uniform1f(p.U("alpha"), 1.0)
 		gl.PatchParameteri(gl.PATCH_VERTICES, 3)
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasDisplace() || len(f.geo.Vertices) == 0 {
@@ -446,22 +447,22 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 	}
 
 	if haveS {
-		p := &detail.scatColor
+		p := &detailRender.scatColor
 		world.UploadLightsTo(p.prog, level.Lights, false)
 		UploadShadowUniformsTo(p.prog, level.Lights, frame)
 		UploadPointShadowUniformsTo(p.prog, level.Lights)
 		gl.UseProgram(p.prog)
-		gl.UniformMatrix4fv(p.u("projection"), 1, false, &proj[0])
-		gl.UniformMatrix4fv(p.u("camera"), 1, false, &cam[0])
-		gl.Uniform1i(p.u("tex"), 0)
-		gl.Uniform1f(p.u("alpha"), 1.0)
-		gl.BindVertexArray(detail.rockVAO)
+		gl.UniformMatrix4fv(p.U("projection"), 1, false, &proj[0])
+		gl.UniformMatrix4fv(p.U("camera"), 1, false, &cam[0])
+		gl.Uniform1i(p.U("tex"), 0)
+		gl.Uniform1f(p.U("alpha"), 1.0)
+		gl.BindVertexArray(detailRender.rockVAO)
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasScatter() || len(f.geo.Vertices) == 0 {
 				return
 			}
-			b := faceBasisFor(f.geo)
-			if !b.ok {
+			b := detail.FaceBasisFor(f.geo)
+			if !b.Ok {
 				return
 			}
 			inst := setScatterUniforms(p, f.spec, b)
@@ -471,10 +472,10 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 			// Scattered instances follow the same per-surface toggle; the rock
 			// template's normals are per-facet, so this shades them exactly as
 			// the derivative path does, just without the derivative.
-			gl.Uniform1i(p.u("smoothShading"), f.geo.SmoothFlag())
+			gl.Uniform1i(p.U("smoothShading"), f.geo.SmoothFlag())
 			gl.ActiveTexture(gl.TEXTURE0)
 			gl.BindTexture(gl.TEXTURE_2D, detailAlbedo(f.spec.ScatterTex, f.tex))
-			gl.DrawArraysInstanced(gl.TRIANGLES, 0, detail.rockVerts, inst)
+			gl.DrawArraysInstanced(gl.TRIANGLES, 0, detailRender.rockVerts, inst)
 		})
 	}
 
@@ -488,14 +489,14 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 // faces drawn to those reaching into that cascade's box. Restores
 // Shadows.Program on exit.
 func RenderDetailDirShadow(level *world.Level, lsm mgl32.Mat4, cull *Frustum) {
-	if !detail.initialized {
+	if !detailRender.initialized {
 		return
 	}
 	haveD, haveS := DetailAnyEnabled(level)
 	if haveD {
-		p := &detail.dispShadow
+		p := &detailRender.dispShadow
 		gl.UseProgram(p.prog)
-		gl.UniformMatrix4fv(p.u("lightSpaceMatrix"), 1, false, &lsm[0])
+		gl.UniformMatrix4fv(p.U("lightSpaceMatrix"), 1, false, &lsm[0])
 		gl.PatchParameteri(gl.PATCH_VERTICES, 3)
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasDisplace() || len(f.geo.Vertices) == 0 {
@@ -507,21 +508,21 @@ func RenderDetailDirShadow(level *world.Level, lsm mgl32.Mat4, cull *Frustum) {
 		})
 	}
 	if haveS {
-		p := &detail.scatShadow
+		p := &detailRender.scatShadow
 		gl.UseProgram(p.prog)
-		gl.UniformMatrix4fv(p.u("lightSpaceMatrix"), 1, false, &lsm[0])
-		gl.BindVertexArray(detail.rockVAO)
+		gl.UniformMatrix4fv(p.U("lightSpaceMatrix"), 1, false, &lsm[0])
+		gl.BindVertexArray(detailRender.rockVAO)
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasScatter() || len(f.geo.Vertices) == 0 {
 				return
 			}
-			b := faceBasisFor(f.geo)
-			if !b.ok {
+			b := detail.FaceBasisFor(f.geo)
+			if !b.Ok {
 				return
 			}
 			inst := setScatterUniforms(p, f.spec, b)
 			if inst > 0 {
-				gl.DrawArraysInstanced(gl.TRIANGLES, 0, detail.rockVerts, inst)
+				gl.DrawArraysInstanced(gl.TRIANGLES, 0, detailRender.rockVerts, inst)
 			}
 		})
 	}
@@ -534,16 +535,16 @@ func RenderDetailDirShadow(level *world.Level, lsm mgl32.Mat4, cull *Frustum) {
 // restricts the faces drawn to those inside that face's frustum. Restores
 // Shadows.CubeProgram on exit.
 func RenderDetailCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.Vec3, farPlane float32, cull *Frustum) {
-	if !detail.initialized {
+	if !detailRender.initialized {
 		return
 	}
 	haveD, haveS := DetailAnyEnabled(level)
 	if haveD {
-		p := &detail.dispCube
+		p := &detailRender.dispCube
 		gl.UseProgram(p.prog)
-		gl.UniformMatrix4fv(p.u("lightSpaceMatrix"), 1, false, &lsm[0])
-		gl.Uniform3f(p.u("lightPos"), lightPos.X(), lightPos.Y(), lightPos.Z())
-		gl.Uniform1f(p.u("farPlane"), farPlane)
+		gl.UniformMatrix4fv(p.U("lightSpaceMatrix"), 1, false, &lsm[0])
+		gl.Uniform3f(p.U("lightPos"), lightPos.X(), lightPos.Y(), lightPos.Z())
+		gl.Uniform1f(p.U("farPlane"), farPlane)
 		gl.PatchParameteri(gl.PATCH_VERTICES, 3)
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasDisplace() || len(f.geo.Vertices) == 0 {
@@ -555,23 +556,23 @@ func RenderDetailCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.V
 		})
 	}
 	if haveS {
-		p := &detail.scatCube
+		p := &detailRender.scatCube
 		gl.UseProgram(p.prog)
-		gl.UniformMatrix4fv(p.u("lightSpaceMatrix"), 1, false, &lsm[0])
-		gl.Uniform3f(p.u("lightPos"), lightPos.X(), lightPos.Y(), lightPos.Z())
-		gl.Uniform1f(p.u("farPlane"), farPlane)
-		gl.BindVertexArray(detail.rockVAO)
+		gl.UniformMatrix4fv(p.U("lightSpaceMatrix"), 1, false, &lsm[0])
+		gl.Uniform3f(p.U("lightPos"), lightPos.X(), lightPos.Y(), lightPos.Z())
+		gl.Uniform1f(p.U("farPlane"), farPlane)
+		gl.BindVertexArray(detailRender.rockVAO)
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasScatter() || len(f.geo.Vertices) == 0 {
 				return
 			}
-			b := faceBasisFor(f.geo)
-			if !b.ok {
+			b := detail.FaceBasisFor(f.geo)
+			if !b.Ok {
 				return
 			}
 			inst := setScatterUniforms(p, f.spec, b)
 			if inst > 0 {
-				gl.DrawArraysInstanced(gl.TRIANGLES, 0, detail.rockVerts, inst)
+				gl.DrawArraysInstanced(gl.TRIANGLES, 0, detailRender.rockVerts, inst)
 			}
 		})
 	}

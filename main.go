@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/detail"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
@@ -78,7 +79,7 @@ func main() {
 	log.Printf("scanned %d textures", len(gfx.TextureNames))
 
 	// Merge the user's saved detail presets in over the compiled-in ones.
-	LoadDetailPresets()
+	detail.LoadDetailPresets()
 
 	// Load (or, on a fresh checkout, create) the global 256-colour palette
 	// every texture in the texture editor composites against.
