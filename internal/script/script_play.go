@@ -1,4 +1,4 @@
-package main
+package script
 
 import "foundry/internal/world"
 
@@ -21,19 +21,19 @@ import "foundry/internal/world"
 // session that changed nothing costs nothing to leave.
 
 // playSession is the authored level, held for the duration of a play session.
-var playSession struct {
-	authored world.RawLevel
-	valid    bool
-	dirty    bool
+var PlaySession struct {
+	Authored world.RawLevel
+	Valid    bool
+	Dirty    bool
 }
 
 // PlaySessionMarkDirty records that something has written authored state. Called
 // from every mutating host method.
 func PlaySessionMarkDirty() {
-	if playSession.valid {
-		playSession.dirty = true
+	if PlaySession.Valid {
+		PlaySession.Dirty = true
 	}
 }
 
 // PlaySessionDirty reports whether the current play session has changed anything.
-func PlaySessionDirty() bool { return playSession.valid && playSession.dirty }
+func PlaySessionDirty() bool { return PlaySession.Valid && PlaySession.Dirty }

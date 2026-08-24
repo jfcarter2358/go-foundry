@@ -19,6 +19,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/render"
+	"foundry/internal/script"
 	"foundry/internal/world"
 	"math"
 	"os"
@@ -713,6 +714,6 @@ func applyRawLevel(raw world.RawLevel, lvl *world.Level) error {
 
 	// Every ref a script holds now points at an object that has been
 	// re-instantiated, so anything the runtime remembered about them is stale.
-	ScriptRuntimeLoad(lvl)
+	script.ScriptRuntimeLoad(lvl)
 	return nil
 }

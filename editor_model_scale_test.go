@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/model"
+	"foundry/internal/modeltest"
 	"math"
 	"testing"
 
@@ -32,7 +33,7 @@ func selectTopFaceForScale(t *testing.T, m *model.ModelDoc) int {
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
 	modelGizmoTool = modelToolScale
-	top := cubeTopFace(t, m)
+	top := modeltest.CubeTopFace(t, m)
 	modelSelection.Mode = modelSelFace
 	modelSelection.Faces = []int{top}
 	return top
@@ -184,7 +185,7 @@ func TestScaleNeverMirrorsThroughZero(t *testing.T) {
 }
 
 func TestScaleLengthensABoneFromItsHead(t *testing.T) {
-	m, bi := skinnedCube(t)
+	m, bi := modeltest.SkinnedCube(t)
 	withModelDoc(t, m)
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
@@ -198,7 +199,7 @@ func TestScaleLengthensABoneFromItsHead(t *testing.T) {
 	// A corner at the tail end of the bone. Vertex 0 would be the wrong probe:
 	// it sits level with the head, and stretching a bone along its own axis
 	// about the head leaves everything in that plane exactly where it is.
-	probe := cubeTopFace(t, m)
+	probe := modeltest.CubeTopFace(t, m)
 	probeVert := m.Faces[probe].Verts[0]
 	vertBefore := m.Verts[probeVert]
 

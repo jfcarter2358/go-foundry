@@ -3,6 +3,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/model"
+	"foundry/internal/modeltest"
 	"math"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestRotateRingIsPickable(t *testing.T) {
 	withModelViewport(t)
 	modelGizmoTool = modelToolRotate
 	modelSelection.Mode = modelSelFace
-	modelSelection.Faces = []int{cubeTopFace(t, m)}
+	modelSelection.Faces = []int{modeltest.CubeTopFace(t, m)}
 
 	for axis := 0; axis < 3; axis++ {
 		mx, my := ringMouse(t, axis, 0.125)
@@ -78,7 +79,7 @@ func TestRotateTurnsTheSelectionAboutItsCentre(t *testing.T) {
 	withGridSnap(t, false, 0.1)
 	modelGizmoTool = modelToolRotate
 
-	top := cubeTopFace(t, m)
+	top := modeltest.CubeTopFace(t, m)
 	modelSelection.Mode = modelSelFace
 	modelSelection.Faces = []int{top}
 	centre := m.FaceCenter(top)
@@ -123,7 +124,7 @@ func TestRotateSnapsToFifteenDegrees(t *testing.T) {
 	withGridSnap(t, true, 0.25)
 	modelGizmoTool = modelToolRotate
 
-	top := cubeTopFace(t, m)
+	top := modeltest.CubeTopFace(t, m)
 	modelSelection.Mode = modelSelFace
 	modelSelection.Faces = []int{top}
 	centre := m.FaceCenter(top)
@@ -148,7 +149,7 @@ func TestRotateSnapsToFifteenDegrees(t *testing.T) {
 }
 
 func TestRotateSwingsABoneAboutItsHead(t *testing.T) {
-	m, bi := skinnedCube(t)
+	m, bi := modeltest.SkinnedCube(t)
 	withModelDoc(t, m)
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
@@ -220,7 +221,7 @@ func TestSwitchingToolsCancelsADragInProgress(t *testing.T) {
 	withModelViewport(t)
 	modelGizmoTool = modelToolRotate
 	modelSelection.Mode = modelSelFace
-	modelSelection.Faces = []int{cubeTopFace(t, m)}
+	modelSelection.Faces = []int{modeltest.CubeTopFace(t, m)}
 
 	grabRing(t, 1)
 	modelSetGizmoTool(modelToolMove)

@@ -21,6 +21,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/script"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -39,7 +40,7 @@ var (
 
 	// frozen is the snapshot the window is displaying while paused, so the view
 	// genuinely stops rather than merely stopping scrolling.
-	logWindowFrozen []LogEntry
+	logWindowFrozen []script.LogEntry
 	// lastSeq is the newest entry drawn, so autoscroll only fires when something
 	// has actually arrived rather than on every frame.
 	logWindowLastSeq uint64
@@ -48,10 +49,10 @@ var (
 // levelColors are the row colours, indexed by level. Info is left near the
 // default text colour: most lines are info, and colouring them all would mean
 // colouring nothing.
-var levelColors = map[LogLevel]imgui.Vec4{
-	LogInfo:  {X: 0.82, Y: 0.82, Z: 0.85, W: 1},
-	LogWarn:  {X: 1.00, Y: 0.80, Z: 0.35, W: 1},
-	LogError: {X: 1.00, Y: 0.45, Z: 0.45, W: 1},
+var levelColors = map[script.LogLevel]imgui.Vec4{
+	script.LogInfo:  {X: 0.82, Y: 0.82, Z: 0.85, W: 1},
+	script.LogWarn:  {X: 1.00, Y: 0.80, Z: 0.35, W: 1},
+	script.LogError: {X: 1.00, Y: 0.45, Z: 0.45, W: 1},
 }
 
 // drawLogWindow renders one frame. Called by RenderSecondaryWindows with this
@@ -81,7 +82,7 @@ func drawLogWindow() {
 // drawLogToolbar draws the controls.
 func drawLogToolbar() {
 	if imgui.Button("Clear") {
-		ScriptLog.Clear()
+		script.ScriptLog.Clear()
 		logWindowFrozen = nil
 	}
 	if imgui.IsItemHovered() {
@@ -156,9 +157,9 @@ func drawLogToolbar() {
 // not running or a script that has nothing to say, and "0 delivered" tells the
 // two apart at a glance.
 func drawLogCounters() {
-	s := ScriptStatsSnapshot()
+	s := script.ScriptStatsSnapshot()
 	parts := []string{
-		fmt.Sprintf("%d held", ScriptLog.Len()),
+		fmt.Sprintf("%d held", script.ScriptLog.Len()),
 		fmt.Sprintf("delivered %d", s.Delivered),
 	}
 	if s.Deferred > 0 {
@@ -170,7 +171,7 @@ func drawLogCounters() {
 	if s.Errors > 0 {
 		parts = append(parts, fmt.Sprintf("errors %d", s.Errors))
 	}
-	if d := ScriptLog.Dropped(); d > 0 {
+	if d := script.ScriptLog.Dropped(); d > 0 {
 		parts = append(parts, fmt.Sprintf("%d evicted", d))
 	}
 	editorTextMuted(strings.Join(parts, "   ·   "))
@@ -208,7 +209,7 @@ func drawLogList() {
 	// scrolling back to the bottom takes it again. Only re-pinned when something
 	// new has arrived, so dragging the scrollbar to the bottom and stopping does
 	// not fight the user for the rest of the session.
-	newest := ScriptLog.Seq()
+	newest := script.ScriptLog.Seq()
 	if newest != logWindowLastSeq {
 		logWindowLastSeq = newest
 		if logWindowAutoscroll && !logWindowPaused {
@@ -225,10 +226,10 @@ func drawLogList() {
 }
 
 // drawLogEntry draws one row.
-func drawLogEntry(e LogEntry) {
+func drawLogEntry(e script.LogEntry) {
 	col, ok := levelColors[e.Level]
 	if !ok {
-		col = levelColors[LogInfo]
+		col = levelColors[script.LogInfo]
 	}
 
 	// Timestamp in seconds since start: an absolute clock is no use for reading
@@ -274,29 +275,29 @@ func logShortSource(path string) string {
 //
 // Pausing freezes the *snapshot*, not just the scrolling: a view that kept
 // growing while claiming to be paused would be worse than no pause at all.
-func logWindowEntries() []LogEntry {
+func logWindowEntries() []script.LogEntry {
 	if logWindowPaused {
 		if logWindowFrozen == nil {
-			logWindowFrozen = ScriptLog.Snapshot()
+			logWindowFrozen = script.ScriptLog.Snapshot()
 		}
 		return logWindowFrozen
 	}
 	logWindowFrozen = nil
-	return ScriptLog.Snapshot()
+	return script.ScriptLog.Snapshot()
 }
 
 // logEntryVisible applies the level, source and text filters.
-func logEntryVisible(e LogEntry) bool {
+func logEntryVisible(e script.LogEntry) bool {
 	switch e.Level {
-	case LogInfo:
+	case script.LogInfo:
 		if !logWindowShowInfo {
 			return false
 		}
-	case LogWarn:
+	case script.LogWarn:
 		if !logWindowShowWarn {
 			return false
 		}
-	case LogError:
+	case script.LogError:
 		if !logWindowShowError {
 			return false
 		}

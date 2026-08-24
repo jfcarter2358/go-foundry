@@ -9,7 +9,6 @@ package main
 // invariant still holds and the name still points at the same edge.
 
 import (
-	"foundry/internal/gfx"
 	"foundry/internal/leveltest"
 	"foundry/internal/world"
 	"testing"
@@ -17,49 +16,9 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// withoutGeometryUploads makes Geometry.Load stop at the CPU mesh, so an editor
+// leveltest.WithoutGeometryUploads makes Geometry.Load stop at the CPU mesh, so an editor
 // operation that rebuilds a sector can run without a GL context. Restored on
 // cleanup, in the style of withTempTextureDir.
-func withoutGeometryUploads(t *testing.T) {
-	t.Helper()
-	prev := gfx.GeometryUploadsEnabled
-	gfx.GeometryUploadsEnabled = false
-	t.Cleanup(func() { gfx.GeometryUploadsEnabled = prev })
-}
-
-// edgeIDTestChunk builds a single square sector with named edges, GL-free.
-func edgeIDTestChunk(t *testing.T) *world.Chunk {
-	t.Helper()
-	withoutGeometryUploads(t)
-	ch := &world.Chunk{
-		Points:     []mgl32.Vec2{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
-		PointNames: []string{"P0", "P1", "P2", "P3"},
-	}
-	idx := []int{0, 1, 2, 3}
-	var walls []world.Wall
-	for i := range idx {
-		walls = append(walls, world.Wall{
-			StartPoint: ch.Points[idx[i]],
-			EndPoint:   ch.Points[idx[(i+1)%len(idx)]],
-			Texture:    "concrete",
-			Collision:  true,
-			Visible:    true,
-			Alpha:      1,
-		})
-	}
-	s := world.Sector{
-		ID:           "room",
-		PointIndices: idx,
-		EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
-		Walls:        walls,
-		Floor:        world.Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0, 0}},
-		Ceiling:      world.Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
-	}
-	world.EnsureEdgeIDs(&s)
-	world.SyncEdgeRecordIDs(&s)
-	ch.Sectors = []world.Sector{s}
-	return ch
-}
 
 // mustValidate fails the test unless every sector in ch holds the invariant.
 func mustValidate(t *testing.T, ch *world.Chunk, stage string) {
@@ -70,7 +29,7 @@ func mustValidate(t *testing.T, ch *world.Chunk, stage string) {
 }
 
 func TestEnsureEdgeIDsMintsOnePerEdge(t *testing.T) {
-	ch := edgeIDTestChunk(t)
+	ch := leveltest.EdgeIDChunk(t)
 	s := &ch.Sectors[0]
 	if len(s.EdgeIDs) != 4 {
 		t.Fatalf("got %d edge IDs, want 4", len(s.EdgeIDs))
@@ -91,7 +50,7 @@ func TestMigrateEdgeIDIgnoresDirection(t *testing.T) {
 }
 
 func TestDedupeSectorEdgeIDsResolvesCollisions(t *testing.T) {
-	ch := edgeIDTestChunk(t)
+	ch := leveltest.EdgeIDChunk(t)
 	s := &ch.Sectors[0]
 	s.EdgeIDs = []string{"dup", "dup", "", "other"}
 	world.DedupeSectorEdgeIDs(s)
@@ -114,7 +73,7 @@ func TestDedupeSectorEdgeIDsResolvesCollisions(t *testing.T) {
 }
 
 func TestInsertSectorVertexKeepsFirstHalfID(t *testing.T) {
-	ch := edgeIDTestChunk(t)
+	ch := leveltest.EdgeIDChunk(t)
 	s := &ch.Sectors[0]
 	splitID := s.EdgeIDs[1]
 	otherID := s.EdgeIDs[3]
@@ -142,7 +101,7 @@ func TestInsertSectorVertexKeepsFirstHalfID(t *testing.T) {
 }
 
 func TestRemoveSectorPointKeepsSurvivingEdgeID(t *testing.T) {
-	ch := edgeIDTestChunk(t)
+	ch := leveltest.EdgeIDChunk(t)
 	s := &ch.Sectors[0]
 	// Split first so removal leaves a legal (>3 vertex) polygon.
 	newPt := ch.AddPoint(mgl32.Vec2{10, 5})
@@ -164,7 +123,7 @@ func TestConvertEdgePreservesID(t *testing.T) {
 	// The site that proves identity belongs to the edge: a wall that becomes a
 	// portal and comes back must be the same object throughout, or a script's
 	// address breaks the moment an author opens a doorway.
-	ch := edgeIDTestChunk(t)
+	ch := leveltest.EdgeIDChunk(t)
 	s := &ch.Sectors[0]
 	want := s.EdgeIDs[2]
 
@@ -198,7 +157,7 @@ func TestConvertEdgePreservesID(t *testing.T) {
 }
 
 func TestInferPortalsCarriesEdgeIDs(t *testing.T) {
-	withoutGeometryUploads(t)
+	leveltest.WithoutGeometryUploads(t)
 	ch := leveltest.SplitChunk()
 	for si := range ch.Sectors {
 		world.EnsureEdgeIDs(&ch.Sectors[si])
@@ -231,7 +190,7 @@ func TestInferPortalsSubstitutesRatherThanDropping(t *testing.T) {
 	// A kind/record mismatch used to drop the edge, leaving Walls one short of
 	// the ring and silently shifting every record after it. Substituting a blank
 	// wall keeps the alignment, which is what the invariant checks.
-	ch := edgeIDTestChunk(t)
+	ch := leveltest.EdgeIDChunk(t)
 	s := &ch.Sectors[0]
 	s.EdgeKinds[2] = "portal" // claims a portal that does not exist
 
@@ -244,7 +203,7 @@ func TestInferPortalsSubstitutesRatherThanDropping(t *testing.T) {
 }
 
 func TestSplitSectorGivesBothHalvesValidEdges(t *testing.T) {
-	ch := edgeIDTestChunk(t)
+	ch := leveltest.EdgeIDChunk(t)
 	splitSector(ch, 0, 0, 2)
 
 	mustValidate(t, ch, "after sector split")
@@ -257,7 +216,7 @@ func TestSplitSectorGivesBothHalvesValidEdges(t *testing.T) {
 }
 
 func TestUniqueSectorIDAvoidsCollisions(t *testing.T) {
-	ch := edgeIDTestChunk(t)
+	ch := leveltest.EdgeIDChunk(t)
 	ch.Sectors = append(ch.Sectors, world.Sector{ID: "room_2"})
 
 	if got := world.UniqueSectorID(ch, "room"); got == "room" || got == "room_2" {

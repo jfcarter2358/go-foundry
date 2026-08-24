@@ -21,6 +21,7 @@ import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
 	"foundry/internal/render"
+	"foundry/internal/script"
 	"foundry/internal/world"
 	"math"
 
@@ -490,8 +491,8 @@ func EditorToggle() {
 		// Snapshot before play so a script cannot permanently change the
 		// authored level — see script_play.go.
 		PlaySessionBegin(Editor.level)
-		ScriptRuntimeLoad(Editor.level)
-		ScriptEventsReset()
+		script.ScriptRuntimeLoad(Editor.level)
+		script.ScriptEventsReset()
 		platform.GravityEnabled = true
 		Editor.Active = false
 		Editor.Mode = ModeGame
@@ -513,8 +514,8 @@ func EditorToggle() {
 		if PlaySessionEnd(Editor.level) {
 			editorResetSelectionState()
 		}
-		ScriptRuntimeReset(Editor.level)
-		ScriptEventsReset()
+		script.ScriptRuntimeReset(Editor.level)
+		script.ScriptEventsReset()
 		platform.GravityEnabled = false
 		platform.IsOnGround = false
 		platform.JumpRequested = false
@@ -913,8 +914,8 @@ func EditorLoadLevel(path string) error {
 
 	// The new level's scripts. Everything the old level's runtime remembered
 	// describes objects that no longer exist.
-	ScriptRuntimeLoad(Editor.level)
-	ScriptEventsReset()
+	script.ScriptRuntimeLoad(Editor.level)
+	script.ScriptEventsReset()
 
 	// The player is engine-owned, so opening a level does not replace it — it
 	// only moves it onto the new level's spawn point (or leaves it be when

@@ -13,6 +13,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/leveltest"
 	"foundry/internal/model"
+	"foundry/internal/modeltest"
 	"strings"
 	"testing"
 )
@@ -131,8 +132,8 @@ func TestSubmeshesCarrySkinAttributesOnlyWhenRigged(t *testing.T) {
 		}
 	}
 
-	rigged, idx := boneChain(t)
-	rigged.AssignVertsToBone(modelAllVerts(rigged), idx[0], 1)
+	rigged, idx := modeltest.BoneChain(t)
+	rigged.AssignVertsToBone(modeltest.AllVerts(rigged), idx[0], 1)
 	for _, sub := range rigged.ModelSubmeshes() {
 		if len(sub.SkinIdx) != len(sub.Vertices) || len(sub.SkinWt) != len(sub.Vertices) {
 			t.Fatalf("rigged submesh has %d/%d skin records for %d vertices",

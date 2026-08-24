@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_file.go — reading .flang files, and resolving imports safely.
 //
@@ -16,7 +16,7 @@ import (
 )
 
 // readScriptFile reads a .flang source file.
-func readScriptFile(path string) ([]byte, error) {
+func ReadScriptFile(path string) ([]byte, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s: %w", fileutil.RelAssetPath(path), err)
@@ -26,7 +26,7 @@ func readScriptFile(path string) ([]byte, error) {
 
 // resolveScriptImport turns an `import("…")` path into an absolute one, relative
 // to the importing file and rooted at the scripts folder.
-func resolveScriptImport(fromFile, importPath string) (string, error) {
+func ResolveScriptImport(fromFile, importPath string) (string, error) {
 	if importPath == "" {
 		return "", fmt.Errorf("import needs a path")
 	}

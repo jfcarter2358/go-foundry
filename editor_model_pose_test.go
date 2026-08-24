@@ -3,6 +3,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/model"
+	"foundry/internal/modeltest"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -23,8 +24,8 @@ func withPoseEditor(t *testing.T) [3]int {
 		modelPosePlaying = false
 	})
 
-	m, idx := boneChain(t)
-	m.AutoWeightVerts(modelAllVerts(m))
+	m, idx := modeltest.BoneChain(t)
+	m.AutoWeightVerts(modeltest.AllVerts(m))
 	modelDoc = m
 	modelPoseMode = false
 	modelPoseClip = -1

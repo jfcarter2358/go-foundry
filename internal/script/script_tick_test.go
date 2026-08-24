@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_tick_test.go — the event loop, end to end.
 //
@@ -21,6 +21,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/leveltest"
 	"foundry/internal/world"
 )
 
@@ -57,8 +58,8 @@ func writeScript(t *testing.T, root, name, src string) string {
 // tickTestLevel builds a level with a scripted crate and a scripted trigger.
 func tickTestLevel(t *testing.T) *world.Level {
 	t.Helper()
-	withoutGeometryUploads(t)
-	ch := edgeIDTestChunk(t)
+	leveltest.WithoutGeometryUploads(t)
+	ch := leveltest.EdgeIDChunk(t)
 	ch.ID = "chunk"
 	return &world.Level{Chunks: []world.Chunk{*ch}}
 }
@@ -467,7 +468,7 @@ func TestImportCannotEscapeTheScriptsRoot(t *testing.T) {
 	// A script tree that can read arbitrary files becomes dangerous the moment
 	// someone hands you a level.
 	root := withTempScriptDir(t)
-	_, err := resolveScriptImport(filepath.Join(root, "a.flang"), "../../../etc/passwd")
+	_, err := ResolveScriptImport(filepath.Join(root, "a.flang"), "../../../etc/passwd")
 	if err == nil {
 		t.Fatal("an import escaped the scripts folder")
 	}
@@ -676,7 +677,7 @@ func TestAnimatingAFloorDoesNotRebuildTheSpatialHash(t *testing.T) {
 	// The hash is indexed by XZ alone, and nothing a script can write moves a
 	// sector's footprint. Rebuilding a whole-level structure every frame an
 	// animated floor moves would make the obvious thing to script the expensive
-	// thing to script.
+	// thing to
 	root := withTempScriptDir(t)
 	path := writeScript(t, root, "lift.flang", `def on_tick(:tick:, dt float) -> null
     @self.floor.prop.height = @self.floor.prop.height - 0.1

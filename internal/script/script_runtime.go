@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_runtime.go — the script event loop, and the play sandbox around it.
 //
@@ -265,7 +265,7 @@ func (rt *ScriptRuntime) loadUnit(path string) *scriptUnit {
 	rt.units[path] = u
 
 	full := fileutil.ScriptPath(path)
-	src, err := readScriptFile(full)
+	src, err := ReadScriptFile(full)
 	if err != nil {
 		u.errs = flang.ErrorList{{Pos: flang.Pos{File: path}, Msg: err.Error()}}
 		u.disabled = true
@@ -771,11 +771,11 @@ func DrainScriptWork(lvl *world.Level) {
 type scriptLoader struct{}
 
 func (scriptLoader) Load(fromFile, importPath string) ([]byte, string, error) {
-	resolved, err := resolveScriptImport(fromFile, importPath)
+	resolved, err := ResolveScriptImport(fromFile, importPath)
 	if err != nil {
 		return nil, "", err
 	}
-	src, err := readScriptFile(resolved)
+	src, err := ReadScriptFile(resolved)
 	if err != nil {
 		return nil, "", fmt.Errorf("import %q: %w", importPath, err)
 	}

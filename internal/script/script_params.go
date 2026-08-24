@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_params.go — script parameters: the tunables a .flang file declares and
 // the level fills in.
@@ -40,7 +40,7 @@ import (
 // running game agree on what a script declares. A path the runtime has not
 // loaded — the usual case in the editor, where nothing has been attached yet —
 // is parsed on demand and cached.
-func scriptParamDecls(path string) []*flang.ParamDecl {
+func ScriptParamDecls(path string) []*flang.ParamDecl {
 	if path == "" {
 		return nil
 	}
@@ -60,7 +60,7 @@ func scriptParamCacheGet(path string) []*flang.ParamDecl {
 		return decls
 	}
 	var decls []*flang.ParamDecl
-	if src, err := readScriptFile(fileutil.ScriptPath(path)); err == nil {
+	if src, err := ReadScriptFile(fileutil.ScriptPath(path)); err == nil {
 		// Linked rather than merely parsed, so a param an imported library
 		// declares shows up in the panel too — which is the point of libraries.
 		// Diagnostics are dropped here: a broken script's errors belong in the
@@ -162,7 +162,7 @@ func scriptParamDefault(d *flang.ParamDecl) (world.AttrValue, bool) {
 // object bound, else the declaration's default, else the type's zero. The bool
 // reports whether the object bound it — which is what the panel needs to say
 // "(default)" rather than presenting a fallback as a choice.
-func scriptParamValue(params world.AttrSet, d *flang.ParamDecl) (world.AttrValue, bool) {
+func ScriptParamValue(params world.AttrSet, d *flang.ParamDecl) (world.AttrValue, bool) {
 	want := scriptParamAttrType(d.Type)
 	if a, ok := params.Attr(d.Name); ok {
 		// Converted rather than trusted: a declaration whose type changed after
@@ -181,12 +181,12 @@ func scriptParamValue(params world.AttrSet, d *flang.ParamDecl) (world.AttrValue
 // Not automatic. A param renamed in the script would silently take its level
 // wiring with it, and the author is better served by a panel that says "3
 // unused" with a button than by one that quietly discards what they wrote.
-func scriptParamsPrune(params *world.AttrSet, path string) int {
+func ScriptParamsPrune(params *world.AttrSet, path string) int {
 	if params == nil || len(*params) == 0 {
 		return 0
 	}
 	declared := map[string]bool{}
-	for _, d := range scriptParamDecls(path) {
+	for _, d := range ScriptParamDecls(path) {
 		declared[d.Name] = true
 	}
 	n := 0
@@ -201,12 +201,12 @@ func scriptParamsPrune(params *world.AttrSet, path string) int {
 
 // scriptParamsUnused names the bindings an object carries that its script does
 // not declare, sorted. Shown in the panel rather than deleted — see above.
-func scriptParamsUnused(params world.AttrSet, path string) []string {
+func ScriptParamsUnused(params world.AttrSet, path string) []string {
 	if len(params) == 0 {
 		return nil
 	}
 	declared := map[string]bool{}
-	for _, d := range scriptParamDecls(path) {
+	for _, d := range ScriptParamDecls(path) {
 		declared[d.Name] = true
 	}
 	var out []string
@@ -223,7 +223,7 @@ func scriptParamsUnused(params world.AttrSet, path string) []string {
 
 // scriptRefTarget is one object a `ref` param could name: the ID that gets
 // stored, and the label the picker shows.
-type scriptRefTarget struct {
+type ScriptRefTarget struct {
 	ID    string
 	Label string
 }
@@ -239,14 +239,14 @@ type scriptRefTarget struct {
 // The kind is read off the walk rather than looked up per entry: labelling each
 // ID through refFor would rebuild or re-search the index once per row, which is
 // quadratic in a list the panel redraws every frame.
-func scriptRefTargets(lvl *world.Level) []scriptRefTarget {
+func ScriptRefTargets(lvl *world.Level) []ScriptRefTarget {
 	if lvl == nil {
 		return nil
 	}
-	var out []scriptRefTarget
+	var out []ScriptRefTarget
 	add := func(id, kind string) {
 		if id != "" {
-			out = append(out, scriptRefTarget{ID: id, Label: id + "  (" + kind + ")"})
+			out = append(out, ScriptRefTarget{ID: id, Label: id + "  (" + kind + ")"})
 		}
 	}
 	for i := range lvl.Entities {
@@ -277,7 +277,7 @@ func scriptRefTargets(lvl *world.Level) []scriptRefTarget {
 // An ID nothing in the list matches is shown as missing rather than blanked. A
 // param pointing at a deleted object is exactly what an author needs to see, and
 // blanking it would look like they had never set one.
-func scriptRefLabel(targets []scriptRefTarget, id string) string {
+func ScriptRefLabel(targets []ScriptRefTarget, id string) string {
 	if id == "" {
 		return "(none)"
 	}

@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_wiring_test.go — the checks that turn a silent no-op into a sentence.
 //
@@ -16,6 +16,7 @@ import (
 
 	"foundry/internal/flang"
 	"foundry/internal/model"
+	"foundry/internal/modeltest"
 	"foundry/internal/world"
 )
 
@@ -23,7 +24,7 @@ import (
 // — the half-built rig that NewEntityAnim refuses.
 func riggedDoc(t *testing.T) *model.ModelDoc {
 	t.Helper()
-	m, idx := boneChain(t)
+	m, idx := modeltest.BoneChain(t)
 	ci := m.AddClip("press")
 	c := m.Clip(ci)
 	c.SetKey(idx[0], 0, model.IdentBonePose())

@@ -1,6 +1,9 @@
 package main
 
-import "foundry/internal/world"
+import (
+	"foundry/internal/script"
+	"foundry/internal/world"
+)
 
 // level_play_snapshot.go — taking and restoring the authored level around a
 // play session.
@@ -17,8 +20,8 @@ import "foundry/internal/world"
 
 // PlaySessionBegin snapshots the level before play starts.
 func PlaySessionBegin(lvl *world.Level) {
-	playSession.valid = false
-	playSession.dirty = false
+	script.PlaySession.Valid = false
+	script.PlaySession.Dirty = false
 	if lvl == nil {
 		return
 	}
@@ -26,11 +29,11 @@ func PlaySessionBegin(lvl *world.Level) {
 	if err != nil {
 		// Without a snapshot there is no way back, so the honest thing is to
 		// say so rather than to let a script write into an unprotected level.
-		ScriptLog.Warnf("", "cannot snapshot the level for play (%v); script writes will not be undone", err)
+		script.ScriptLog.Warnf("", "cannot snapshot the level for play (%v); script writes will not be undone", err)
 		return
 	}
-	playSession.authored = raw
-	playSession.valid = true
+	script.PlaySession.Authored = raw
+	script.PlaySession.Valid = true
 }
 
 // PlaySessionEnd restores the authored level, if a script changed it, and
@@ -43,17 +46,17 @@ func PlaySessionBegin(lvl *world.Level) {
 // must not reach up into it.
 func PlaySessionEnd(lvl *world.Level) (restored bool) {
 	defer func() {
-		playSession.valid = false
-		playSession.dirty = false
-		playSession.authored = world.RawLevel{}
+		script.PlaySession.Valid = false
+		script.PlaySession.Dirty = false
+		script.PlaySession.Authored = world.RawLevel{}
 	}()
-	if lvl == nil || !playSession.valid || !playSession.dirty {
+	if lvl == nil || !script.PlaySession.Valid || !script.PlaySession.Dirty {
 		return false
 	}
-	if err := applyRawLevel(playSession.authored, lvl); err != nil {
-		ScriptLog.Errorf("", "could not restore the level after play: %v", err)
+	if err := applyRawLevel(script.PlaySession.Authored, lvl); err != nil {
+		script.ScriptLog.Errorf("", "could not restore the level after play: %v", err)
 		return false
 	}
-	ScriptLog.Infof("", "restored the level after play; script changes were discarded")
+	script.ScriptLog.Infof("", "restored the level after play; script changes were discarded")
 	return true
 }

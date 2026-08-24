@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_lint.go — the checks that can be made before a script is ever run.
 //

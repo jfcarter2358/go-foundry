@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_host_test.go — the language against a real Level.
 //
@@ -18,15 +18,16 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
+	"foundry/internal/leveltest"
 	"foundry/internal/world"
 )
 
 // hostTestLevel builds a small level with one of each addressable kind.
 func hostTestLevel(t *testing.T) *world.Level {
 	t.Helper()
-	withoutGeometryUploads(t)
+	leveltest.WithoutGeometryUploads(t)
 
-	ch := edgeIDTestChunk(t)
+	ch := leveltest.EdgeIDChunk(t)
 	ch.ID = "chunk"
 	ch.Sectors[0].AddTag("room")
 	ch.Sectors[0].Floor.Texture = "concrete"
@@ -538,9 +539,9 @@ func TestPlaySessionTracksDirtiness(t *testing.T) {
 	lvl := hostTestLevel(t)
 	bindRuntime(t, lvl)
 
-	playSession.valid = true
-	playSession.dirty = false
-	t.Cleanup(func() { playSession.valid, playSession.dirty = false, false })
+	PlaySession.Valid = true
+	PlaySession.Dirty = false
+	t.Cleanup(func() { PlaySession.Valid, PlaySession.Dirty = false, false })
 
 	if PlaySessionDirty() {
 		t.Error("a fresh session is already dirty")
@@ -554,9 +555,9 @@ func TestPlaySessionTracksDirtiness(t *testing.T) {
 func TestUndoIsRefusedDuringPlay(t *testing.T) {
 	// A snapshot taken over script-mutated state would poison the stack
 	// permanently, and leaving play restores the level underneath it anyway.
-	playSession.valid = true
-	t.Cleanup(func() { playSession.valid = false })
-	if !inPlaySession() {
+	PlaySession.Valid = true
+	t.Cleanup(func() { PlaySession.Valid = false })
+	if !PlaySession.Valid {
 		t.Fatal("inPlaySession did not see the session")
 	}
 }

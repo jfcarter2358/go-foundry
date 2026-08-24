@@ -16,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"foundry/internal/gfx"
 )
 
 // RepoRoot returns the absolute path of the directory holding go.mod.
@@ -46,4 +48,17 @@ func RepoFile(t *testing.T, parts ...string) string {
 		t.Fatalf("read %s: %v", p, err)
 	}
 	return string(b)
+}
+
+// WithoutGeometryUploads makes gfx.Geometry.Load stop at the CPU mesh, so an
+// edit that rebuilds a sector can run with no GL context. Restored on cleanup.
+//
+// Shared rather than duplicated because it is the one seam that lets otherwise
+// pure logic — a sector reload, a level load, a script writing a property —
+// be tested headless, and four packages' tests need it.
+func WithoutGeometryUploads(t *testing.T) {
+	t.Helper()
+	prev := gfx.GeometryUploadsEnabled
+	gfx.GeometryUploadsEnabled = false
+	t.Cleanup(func() { gfx.GeometryUploadsEnabled = prev })
 }

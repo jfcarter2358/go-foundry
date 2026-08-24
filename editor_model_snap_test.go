@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/model"
+	"foundry/internal/modeltest"
 	"math"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestSnappedDragLandsEveryVertexOnTheGrid(t *testing.T) {
 	withModelDoc(t, m)
 	withGridSnap(t, true, 0.25)
 
-	top := cubeTopFace(t, m)
+	top := modeltest.CubeTopFace(t, m)
 	modelSelection.Mode = modelSelFace
 	modelSelection.Faces = []int{top}
 
@@ -70,7 +71,7 @@ func TestNudgeMovesASelectionRigidlyOntoTheGrid(t *testing.T) {
 	withModelDoc(t, m)
 	withGridSnap(t, true, 0.1)
 
-	top := cubeTopFace(t, m)
+	top := modeltest.CubeTopFace(t, m)
 	modelSelection.Mode = modelSelFace
 	modelSelection.Faces = []int{top}
 	before := append([]mgl32.Vec3(nil), m.Verts...)
@@ -117,7 +118,7 @@ func TestNudgeWithoutSnappingMovesTheFullStep(t *testing.T) {
 }
 
 func TestNudgeInBoneModeMovesTheBoneAndItsPoints(t *testing.T) {
-	m, bi := skinnedCube(t)
+	m, bi := modeltest.SkinnedCube(t)
 	withModelDoc(t, m)
 	withGridSnap(t, false, 0.1)
 
@@ -138,7 +139,7 @@ func TestNudgeInBoneModeMovesTheBoneAndItsPoints(t *testing.T) {
 }
 
 func TestNudgeInBoneModeCanMoveJustTheTail(t *testing.T) {
-	m, bi := skinnedCube(t)
+	m, bi := modeltest.SkinnedCube(t)
 	withModelDoc(t, m)
 	withGridSnap(t, false, 0.1)
 

@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_host.go — flang.Host, implemented over a Level.
 //

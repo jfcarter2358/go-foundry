@@ -13,6 +13,7 @@ package main
 // same path already used by "Open Level".
 
 import (
+	"foundry/internal/script"
 	"foundry/internal/world"
 
 	"github.com/veandco/go-sdl2/sdl"
@@ -61,7 +62,7 @@ var levelRedoStack boundedStack[world.RawLevel]
 //
 // Gated on the session rather than on !Editor.Active, which is also true before
 // the editor has ever been opened — including in every headless test.
-func inPlaySession() bool { return playSession.valid }
+func inPlaySession() bool { return script.PlaySession.Valid }
 
 func EditorPushUndo() {
 	if inPlaySession() {

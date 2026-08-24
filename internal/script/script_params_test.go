@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_params_test.go — script parameters against a real Level.
 //
@@ -8,13 +8,13 @@ package main
 // that an entity's comes from its definition unless the instance says otherwise.
 
 import (
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
+	"foundry/internal/leveltest"
 	"foundry/internal/world"
 )
 
@@ -22,7 +22,7 @@ import (
 // point at — the arrangement the feature exists for.
 func paramTestLevel(t *testing.T) *world.Level {
 	t.Helper()
-	withoutGeometryUploads(t)
+	leveltest.WithoutGeometryUploads(t)
 
 	lvl := &world.Level{}
 	for _, id := range []string{"button_a", "button_b"} {
@@ -237,11 +237,11 @@ func TestScriptParamValuePrefersBinding(t *testing.T) {
 	if len(decls) != 1 {
 		t.Fatalf("got %d decls", len(decls))
 	}
-	v, bound := scriptParamValue(nil, decls[0])
+	v, bound := ScriptParamValue(nil, decls[0])
 	if bound || v != world.FloatAttr(3.0) {
 		t.Errorf("unbound = %v (bound=%v), want the default 3.0", v, bound)
 	}
-	v, bound = scriptParamValue(world.AttrSet{"drop": world.FloatAttr(1.5)}, decls[0])
+	v, bound = ScriptParamValue(world.AttrSet{"drop": world.FloatAttr(1.5)}, decls[0])
 	if !bound || v != world.FloatAttr(1.5) {
 		t.Errorf("bound = %v (bound=%v), want 1.5", v, bound)
 	}
@@ -251,7 +251,7 @@ func TestScriptParamValuePrefersBinding(t *testing.T) {
 // the honest one.
 func TestScriptParamValueZeroWithoutDefault(t *testing.T) {
 	decls := declFor(t, "param count int\n\ndef main() -> null\nend\n")
-	v, bound := scriptParamValue(nil, decls[0])
+	v, bound := ScriptParamValue(nil, decls[0])
 	if bound || v != world.IntAttr(0) {
 		t.Errorf("got %v (bound=%v), want 0", v, bound)
 	}
@@ -261,7 +261,7 @@ func TestScriptParamValueZeroWithoutDefault(t *testing.T) {
 // the picker always has something to show.
 func TestScriptParamValueCoercesToDeclaredType(t *testing.T) {
 	decls := declFor(t, "param target ref\n\ndef main() -> null\nend\n")
-	v, bound := scriptParamValue(world.AttrSet{"target": world.IntAttr(7)}, decls[0])
+	v, bound := ScriptParamValue(world.AttrSet{"target": world.IntAttr(7)}, decls[0])
 	if !bound || v.Type != world.AttrString {
 		t.Errorf("got %v (type %v), want a str", v, v.Type)
 	}
@@ -277,11 +277,11 @@ func TestScriptParamsUnusedAndPrune(t *testing.T) {
 	}
 
 	params := world.AttrSet{"target": world.StringAttr("door_north"), "old_name": world.IntAttr(1)}
-	unused := scriptParamsUnused(params, "scripts/x.flang")
+	unused := ScriptParamsUnused(params, "scripts/x.flang")
 	if len(unused) != 1 || unused[0] != "old_name" {
 		t.Fatalf("unused = %v, want [old_name]", unused)
 	}
-	if n := scriptParamsPrune(&params, "scripts/x.flang"); n != 1 {
+	if n := ScriptParamsPrune(&params, "scripts/x.flang"); n != 1 {
 		t.Errorf("pruned %d, want 1", n)
 	}
 	if _, ok := params["target"]; !ok {
@@ -296,7 +296,7 @@ func TestScriptParamsUnusedAndPrune(t *testing.T) {
 // it is — two objects that read alike still have to be tellable apart.
 func TestScriptRefTargets(t *testing.T) {
 	lvl := hostTestLevel(t)
-	targets := scriptRefTargets(lvl)
+	targets := ScriptRefTargets(lvl)
 
 	var ids []string
 	for _, tg := range targets {
@@ -310,13 +310,13 @@ func TestScriptRefTargets(t *testing.T) {
 	if ids[0] != "crate" {
 		t.Errorf("entities should come first, got %v", ids)
 	}
-	if got := scriptRefLabel(targets, "crate"); !strings.Contains(got, "entity") {
+	if got := ScriptRefLabel(targets, "crate"); !strings.Contains(got, "entity") {
 		t.Errorf("label %q should name the kind", got)
 	}
-	if got := scriptRefLabel(targets, "gone"); !strings.Contains(got, "missing") {
+	if got := ScriptRefLabel(targets, "gone"); !strings.Contains(got, "missing") {
 		t.Errorf("label %q should flag a dangling binding", got)
 	}
-	if got := scriptRefLabel(targets, ""); got != "(none)" {
+	if got := ScriptRefLabel(targets, ""); got != "(none)" {
 		t.Errorf("empty label = %q", got)
 	}
 }
@@ -330,12 +330,11 @@ func TestScriptRefTargets(t *testing.T) {
 // of it: an example that parses but does not do what its comments claim is worse
 // than no example, because it is the first thing an author copies.
 func TestShippedButtonScriptUsesItsParams(t *testing.T) {
-	src, err := os.ReadFile("resources/scripts/button.flang")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Through leveltest.RepoFile: `go test` runs this package from its own
+	// directory, so a bare "resources/..." path would not resolve here.
+	src := leveltest.RepoFile(t, "resources", "scripts", "button.flang")
 	root := withTempScriptDir(t)
-	path := writeScript(t, root, "button.flang", string(src))
+	path := writeScript(t, root, "button.flang", src)
 
 	lvl := tickTestLevel(t)
 	sectorID := lvl.Chunks[0].Sectors[0].ID

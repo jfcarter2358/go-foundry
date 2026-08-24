@@ -9,6 +9,7 @@ import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
 	"foundry/internal/render"
+	"foundry/internal/script"
 	"foundry/internal/texture"
 	"foundry/internal/world"
 	_ "image/png"
@@ -76,7 +77,7 @@ func main() {
 	// Everything logged from here on is also readable in the log window, and a
 	// script's own output joins the same sinks. Installed after the prefix and
 	// flags are set, because the tee has to strip exactly what they add.
-	InstallLogCapture(logSinks)
+	script.InstallLogCapture(logSinks)
 
 	gfx.TextureNames = gfx.ScanTextures(filepath.Join(fileutil.ExecutablePath, "textures"))
 	log.Printf("scanned %d textures", len(gfx.TextureNames))
@@ -406,7 +407,7 @@ func main() {
 		// frame's overlaps produce this frame's `enter`, and whatever a handler
 		// writes lands before the frame draws. `!Editor.Active` is the same play
 		// gate EntityUpdate takes.
-		ScriptTick(&level, platform.DeltaTime, !Editor.Active)
+		script.ScriptTick(&level, platform.DeltaTime, !Editor.Active)
 
 		// --- Debug stats: update CPU & memory ---
 		render.DebugUpdateCPU()
@@ -425,7 +426,7 @@ func main() {
 		// cannot happen inside the tick — ReloadSector ends in gl.* calls — so
 		// they are applied here, where the main context is current, coalesced so
 		// a hundred writes to one height cost one rebuild.
-		DrainScriptWork(&level)
+		script.DrainScriptWork(&level)
 
 		// Likewise for a model editor asking to open the texture editor on a
 		// freshly unwrapped atlas: creating a window from inside another

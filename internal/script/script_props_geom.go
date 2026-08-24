@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_props_geom.go — properties of the world's geometry and lights.
 //

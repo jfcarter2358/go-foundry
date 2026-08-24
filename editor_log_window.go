@@ -14,6 +14,7 @@ package main
 // monitor, or beside the script editor, and keep scrolling while you play.
 
 import (
+	"foundry/internal/script"
 	"log"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -77,7 +78,7 @@ func logWindowHandleEvent(event sdl.Event) {
 	if sdl.GetModState()&sdl.KMOD_CTRL != 0 {
 		switch t.Keysym.Scancode {
 		case sdl.SCANCODE_L:
-			ScriptLog.Clear()
+			script.ScriptLog.Clear()
 		case sdl.SCANCODE_F:
 			logWindowFocusFilter = true
 		}

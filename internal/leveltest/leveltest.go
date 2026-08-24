@@ -9,6 +9,8 @@ package leveltest
 // somewhere both can import. Everything here is deterministic and GL-free.
 
 import (
+	"testing"
+
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/world"
@@ -66,5 +68,39 @@ func SplitChunk() *world.Chunk {
 			Ceiling:      world.Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
 		},
 	}
+	return ch
+}
+
+// EdgeIDChunk builds a single square sector with named edges, GL-free.
+func EdgeIDChunk(t *testing.T) *world.Chunk {
+	t.Helper()
+	WithoutGeometryUploads(t)
+	ch := &world.Chunk{
+		Points:     []mgl32.Vec2{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
+		PointNames: []string{"P0", "P1", "P2", "P3"},
+	}
+	idx := []int{0, 1, 2, 3}
+	var walls []world.Wall
+	for i := range idx {
+		walls = append(walls, world.Wall{
+			StartPoint: ch.Points[idx[i]],
+			EndPoint:   ch.Points[idx[(i+1)%len(idx)]],
+			Texture:    "concrete",
+			Collision:  true,
+			Visible:    true,
+			Alpha:      1,
+		})
+	}
+	s := world.Sector{
+		ID:           "room",
+		PointIndices: idx,
+		EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
+		Walls:        walls,
+		Floor:        world.Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0, 0}},
+		Ceiling:      world.Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
+	}
+	world.EnsureEdgeIDs(&s)
+	world.SyncEdgeRecordIDs(&s)
+	ch.Sectors = []world.Sector{s}
 	return ch
 }

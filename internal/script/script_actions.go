@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_actions.go — the world verbs.
 //

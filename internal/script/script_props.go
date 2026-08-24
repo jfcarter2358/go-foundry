@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_props.go — the `.prop` surface.
 //

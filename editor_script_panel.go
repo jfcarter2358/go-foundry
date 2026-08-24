@@ -23,6 +23,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/script"
 	"foundry/internal/world"
 )
 
@@ -172,7 +173,7 @@ func editorAttributeValue(attrs *world.AttrSet, name string, v world.AttrValue) 
 // script that silently never runs, which is among the harder things to notice.
 // The list is rescanned when the section is opened rather than watched, matching
 // how the entity catalog and the texture picker work.
-func editorScriptUI(script *string, params *world.AttrSet, idSuffix, owner string) {
+func editorScriptUI(scriptPath *string, params *world.AttrSet, idSuffix, owner string) {
 	if !imgui.CollapsingHeaderV("Script##script"+idSuffix, imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
@@ -181,20 +182,20 @@ func editorScriptUI(script *string, params *world.AttrSet, idSuffix, owner strin
 		editorRefreshScriptFiles()
 	}
 
-	label := *script
+	label := *scriptPath
 	if label == "" {
 		label = "(none)"
 	}
 	if imgui.BeginCombo("File##scriptfile"+idSuffix, label) {
-		if imgui.SelectableV("(none)", *script == "", 0, imgui.Vec2{}) && *script != "" {
+		if imgui.SelectableV("(none)", *scriptPath == "", 0, imgui.Vec2{}) && *scriptPath != "" {
 			EditorPushUndo()
-			*script = ""
+			*scriptPath = ""
 		}
 		for _, name := range Editor.ScriptFileNames {
 			path := fileutil.ScriptsDirName + "/" + name
-			if imgui.SelectableV(name, *script == path, 0, imgui.Vec2{}) && *script != path {
+			if imgui.SelectableV(name, *scriptPath == path, 0, imgui.Vec2{}) && *scriptPath != path {
 				EditorPushUndo()
-				*script = path
+				*scriptPath = path
 			}
 		}
 		imgui.EndCombo()
@@ -204,9 +205,9 @@ func editorScriptUI(script *string, params *world.AttrSet, idSuffix, owner strin
 		editorRefreshScriptFiles()
 	}
 
-	if *script != "" {
-		editorTextWrapped(fmt.Sprintf("%s runs %s", owner, *script))
-		editorScriptParamsUI(*script, params, idSuffix)
+	if *scriptPath != "" {
+		editorTextWrapped(fmt.Sprintf("%s runs %s", owner, *scriptPath))
+		editorScriptParamsUI(*scriptPath, params, idSuffix)
 	}
 }
 
@@ -222,11 +223,11 @@ func editorScriptUI(script *string, params *world.AttrSet, idSuffix, owner strin
 // can disagree — a param renamed after a level bound it leaves a value nothing
 // reads. Those are listed at the bottom rather than deleted; see
 // scriptParamsPrune.
-func editorScriptParamsUI(script string, params *world.AttrSet, idSuffix string) {
+func editorScriptParamsUI(scriptPath string, params *world.AttrSet, idSuffix string) {
 	if params == nil {
 		return
 	}
-	decls := scriptParamDecls(script)
+	decls := script.ScriptParamDecls(scriptPath)
 	if len(decls) == 0 && len(*params) == 0 {
 		return
 	}
@@ -234,16 +235,16 @@ func editorScriptParamsUI(script string, params *world.AttrSet, idSuffix string)
 	imgui.Separator()
 	imgui.Text("Parameters")
 	if len(decls) == 0 {
-		editorTextMutedWrapped(script + " declares no parameters.")
+		editorTextMutedWrapped(scriptPath + " declares no parameters.")
 	}
 
 	// Built once for the whole section rather than per row: every `ref` row
 	// shares the list, and rebuilding it per row would walk the level once per
 	// parameter, every frame.
-	var refTargets []scriptRefTarget
+	var refTargets []script.ScriptRefTarget
 	for _, d := range decls {
 		if d.Type == "ref" {
-			refTargets = scriptRefTargets(Editor.level)
+			refTargets = script.ScriptRefTargets(Editor.level)
 			break
 		}
 	}
@@ -252,25 +253,25 @@ func editorScriptParamsUI(script string, params *world.AttrSet, idSuffix string)
 		editorScriptParamRow(d, params, refTargets, idSuffix)
 	}
 
-	unused := scriptParamsUnused(*params, script)
+	unused := script.ScriptParamsUnused(*params, scriptPath)
 	if len(unused) == 0 {
 		return
 	}
 	imgui.Separator()
-	editorTextMutedWrapped(fmt.Sprintf("%s does not declare: %s", script, strings.Join(unused, ", ")))
+	editorTextMutedWrapped(fmt.Sprintf("%s does not declare: %s", scriptPath, strings.Join(unused, ", ")))
 	if imgui.Button("Clear Unused##paramprune" + idSuffix) {
 		EditorPushUndo()
-		scriptParamsPrune(params, script)
+		script.ScriptParamsPrune(params, scriptPath)
 	}
 }
 
 // editorScriptParamRow draws one parameter: its name, its value editor, and the
 // button that hands it back to the script's default.
-func editorScriptParamRow(d *flang.ParamDecl, params *world.AttrSet, refTargets []scriptRefTarget, idSuffix string) {
+func editorScriptParamRow(d *flang.ParamDecl, params *world.AttrSet, refTargets []script.ScriptRefTarget, idSuffix string) {
 	imgui.PushID("param_" + idSuffix + d.Name)
 	defer imgui.PopID()
 
-	cur, bound := scriptParamValue(*params, d)
+	cur, bound := script.ScriptParamValue(*params, d)
 
 	imgui.Text("@" + d.Name)
 	imgui.SameLine()
@@ -317,10 +318,10 @@ func editorScriptParamRow(d *flang.ParamDecl, params *world.AttrSet, refTargets 
 // A combo over the level's IDs rather than a text field, for the same reason the
 // script picker is a combo: a mistyped ID is a param that silently reads null,
 // and null is indistinguishable from "not wired up yet".
-func editorScriptParamRefValue(cur world.AttrValue, targets []scriptRefTarget) (world.AttrValue, bool) {
+func editorScriptParamRefValue(cur world.AttrValue, targets []script.ScriptRefTarget) (world.AttrValue, bool) {
 	id := cur.S
 	imgui.SetNextItemWidth(-1)
-	if !imgui.BeginCombo("##paramref", scriptRefLabel(targets, id)) {
+	if !imgui.BeginCombo("##paramref", script.ScriptRefLabel(targets, id)) {
 		return cur, false
 	}
 	defer imgui.EndCombo()
@@ -377,7 +378,7 @@ func editorRefreshScriptFiles() {
 	Editor.ScriptFileNames = fileutil.ScanScriptFiles()
 	// A rescan is also the moment to forget what each file declared: the reason
 	// to press it is that the folder changed under the editor.
-	ScriptParamsInvalidate("")
+	script.ScriptParamsInvalidate("")
 	if Editor.ScriptFileNames == nil {
 		// Distinguish "scanned, found nothing" from "never scanned", so an empty
 		// folder is not rescanned every frame.

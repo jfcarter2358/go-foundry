@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_events.go — turning what the engine just did into messages.
 //

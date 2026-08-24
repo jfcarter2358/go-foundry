@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/model"
+	"foundry/internal/modeltest"
 	"math"
 	"testing"
 
@@ -25,7 +26,7 @@ func uvVSpan(f *model.ModelFace) float32 {
 
 func TestExtrudeByDistanceGivesSidesRealV(t *testing.T) {
 	m := model.NewCubeDoc()
-	top := cubeTopFace(t, m)
+	top := modeltest.CubeTopFace(t, m)
 
 	_, sides := m.ExtrudeFaces([]int{top}, 2)
 
@@ -51,7 +52,7 @@ func TestInteractiveExtrudeSidesFollowTheDrag(t *testing.T) {
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
 
-	top := cubeTopFace(t, m)
+	top := modeltest.CubeTopFace(t, m)
 	modelSelection.Mode = modelSelFace
 	modelSelection.Faces = []int{top}
 
@@ -84,7 +85,7 @@ func TestScalingVOnAnExtrudedSideActuallyScales(t *testing.T) {
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
 
-	top := cubeTopFace(t, m)
+	top := modeltest.CubeTopFace(t, m)
 	modelSelection.Mode = modelSelFace
 	modelSelection.Faces = []int{top}
 	modelStartExtrude()
@@ -115,7 +116,7 @@ func TestPendingExtrudeExpiresWithTheSelection(t *testing.T) {
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
 
-	top := cubeTopFace(t, m)
+	top := modeltest.CubeTopFace(t, m)
 	modelSelection.Mode = modelSelFace
 	modelSelection.Faces = []int{top}
 	modelStartExtrude()

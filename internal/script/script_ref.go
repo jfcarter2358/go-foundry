@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_ref.go — turning a flang ref into something in the level, and back.
 //

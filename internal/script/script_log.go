@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_log.go — where script output goes so a person can read it.
 //

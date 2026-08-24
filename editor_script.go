@@ -20,6 +20,7 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/script"
 	"foundry/internal/world"
 )
 
@@ -48,8 +49,8 @@ type scriptDoc struct {
 	// means the script cannot run, an issue means it will run and do nothing —
 	// and because they are only as true as whichever level happens to be open.
 	// See script_lint.go.
-	Issues     []ScriptIssue
-	issueLines map[int][]ScriptIssue
+	Issues     []script.ScriptIssue
+	issueLines map[int][]script.ScriptIssue
 
 	// dirtyAt is when the buffer last changed, for the debounce. Zero means the
 	// diagnostics are current.
@@ -69,7 +70,7 @@ func NewScriptDoc() *scriptDoc {
 	return &scriptDoc{
 		Text:       scriptStarterText,
 		diagLines:  map[int][]flang.Error{},
-		issueLines: map[int][]ScriptIssue{},
+		issueLines: map[int][]script.ScriptIssue{},
 	}
 }
 
@@ -149,10 +150,10 @@ func (d *scriptDoc) reparseNow(lvl *world.Level) {
 	// Linting a file that did not parse would report on whatever fragment the
 	// recovery managed to build, which is noise on top of the real errors.
 	d.Issues = nil
-	d.issueLines = map[int][]ScriptIssue{}
+	d.issueLines = map[int][]script.ScriptIssue{}
 	if len(errs) == 0 {
 		scope, params := scriptScopeNames(f, name)
-		d.Issues = LintScript(lvl, f, scope, params)
+		d.Issues = script.LintScript(lvl, f, scope, params)
 		for _, s := range d.Issues {
 			d.issueLines[s.Pos.Line] = append(d.issueLines[s.Pos.Line], s)
 		}
@@ -163,7 +164,7 @@ func (d *scriptDoc) reparseNow(lvl *world.Level) {
 func (d *scriptDoc) DiagnosticsOn(line int) []flang.Error { return d.diagLines[line] }
 
 // IssuesOn returns the level-aware issues for one 1-based line.
-func (d *scriptDoc) IssuesOn(line int) []ScriptIssue { return d.issueLines[line] }
+func (d *scriptDoc) IssuesOn(line int) []script.ScriptIssue { return d.issueLines[line] }
 
 // HasErrors reports whether the last parse found anything.
 func (d *scriptDoc) HasErrors() bool { return len(d.Diags) > 0 }
@@ -195,14 +196,14 @@ func (d *scriptDoc) Save(path string) error {
 	d.reparseNow(Editor.level)
 	// The saved file is what every object panel reads its `param` rows from, and
 	// this edit may have added, renamed or retyped one.
-	ScriptParamsInvalidate(d.Path)
+	script.ScriptParamsInvalidate(d.Path)
 	return nil
 }
 
 // OpenScriptDoc reads a script into a new document. name is as a level writes
 // it — with or without the scripts/ prefix and the extension.
 func OpenScriptDoc(name string) (*scriptDoc, error) {
-	src, err := readScriptFile(fileutil.ScriptPath(name))
+	src, err := script.ReadScriptFile(fileutil.ScriptPath(name))
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +211,7 @@ func OpenScriptDoc(name string) (*scriptDoc, error) {
 		Path:       fileutil.ScriptsDirName + "/" + strings.TrimPrefix(strings.TrimSuffix(filepath.ToSlash(name), fileutil.ScriptExt), fileutil.ScriptsDirName+"/") + fileutil.ScriptExt,
 		Text:       string(src),
 		diagLines:  map[int][]flang.Error{},
-		issueLines: map[int][]ScriptIssue{},
+		issueLines: map[int][]script.ScriptIssue{},
 	}
 	d.saved = d.Text
 	d.reparseNow(Editor.level)
@@ -264,7 +265,7 @@ func scriptScopeNames(f *flang.File, fromPath string) (funcs, params map[string]
 			params[d.Name] = true
 		}
 		for _, imp := range file.Imports {
-			resolved, err := resolveScriptImport(fileutil.ScriptPath(path), imp.Path)
+			resolved, err := script.ResolveScriptImport(fileutil.ScriptPath(path), imp.Path)
 			if err != nil {
 				ok = false
 				continue
@@ -273,7 +274,7 @@ func scriptScopeNames(f *flang.File, fromPath string) (funcs, params map[string]
 				continue
 			}
 			seen[resolved] = true
-			src, err := readScriptFile(resolved)
+			src, err := script.ReadScriptFile(resolved)
 			if err != nil {
 				ok = false
 				continue

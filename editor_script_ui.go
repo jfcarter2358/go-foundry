@@ -27,6 +27,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 	"foundry/internal/imguibackend"
+	"foundry/internal/script"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
@@ -183,7 +184,7 @@ func drawScriptEditorRunButton() {
 		fmt.Sprintf("%d issue(s)", len(activeScript.Issues)))
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Checked against the open level — these parse fine but would do nothing.\n\n" +
-			ScriptIssuesText(activeScript.Issues))
+			script.ScriptIssuesText(activeScript.Issues))
 	}
 }
 
@@ -220,19 +221,19 @@ func drawScriptEditorFileList() {
 		}
 		// A script the level actually uses is worth telling apart from one
 		// sitting in the folder unreferenced.
-		if diags := ScriptDiagnostics(path); len(diags) > 0 {
+		if diags := script.ScriptDiagnostics(path); len(diags) > 0 {
 			imgui.SameLine()
 			editorTextColored(imgui.Vec4{X: 1, Y: 0.4, Z: 0.4, W: 1}, "!")
 			if imgui.IsItemHovered() {
 				imgui.SetTooltip(diags.Error())
 			}
-		} else if issues := ScriptIssues(path); len(issues) > 0 {
+		} else if issues := script.ScriptIssues(path); len(issues) > 0 {
 			// Only when it compiled: a script with parse errors has not been
 			// linted, and two markers on one row would say the same thing twice.
 			imgui.SameLine()
 			editorTextColored(scriptIssueColor, "?")
 			if imgui.IsItemHovered() {
-				imgui.SetTooltip(ScriptIssuesText(issues))
+				imgui.SetTooltip(script.ScriptIssuesText(issues))
 			}
 		}
 	}
@@ -684,7 +685,7 @@ func drawScriptEditorReference() {
 
 	imgui.Text("Properties")
 	for _, k := range scriptRefKindOrder {
-		names := PropertyNames(k.kind)
+		names := script.PropertyNames(k.kind)
 		if len(names) == 0 {
 			continue
 		}
@@ -730,7 +731,7 @@ func scriptEditorSave() {
 	// Hot reload: a script saved while the game is running should take effect
 	// without a restart, which is most of why an in-editor editor is worth
 	// having at all.
-	ScriptReload()
+	script.ScriptReload()
 	scriptEditorFiles = nil
 }
 
@@ -747,7 +748,7 @@ func scriptEditorOpenFile(name string) {
 
 // scriptEditorReloadAll re-reads every script the level uses.
 func scriptEditorReloadAll() {
-	ScriptReload()
+	script.ScriptReload()
 	scriptEditorFiles = nil
 	scriptEditorStatus("Reloaded all scripts")
 }
@@ -759,7 +760,7 @@ func scriptEditorRunOnEditorLevel() {
 		return
 	}
 	EditorPushUndo()
-	if err := RunScriptOnce(Editor.level, activeScript.Name(), activeScript.Text, "main"); err != nil {
+	if err := script.RunScriptOnce(Editor.level, activeScript.Name(), activeScript.Text, "main"); err != nil {
 		scriptEditorStatus("%v", err)
 		return
 	}
@@ -823,7 +824,7 @@ func drawScriptEditorSaveAsDialog() {
 				scriptEditorStatus("%v", err)
 			} else {
 				scriptEditorStatus("Saved %s", activeScript.Path)
-				ScriptReload()
+				script.ScriptReload()
 				scriptEditorFiles = nil
 			}
 			scriptEditorSaveAsName = ""
