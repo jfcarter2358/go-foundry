@@ -1,4 +1,4 @@
-package main
+package render
 
 // model_shader_gl_test.go — an opt-in smoke test that the model editor's
 // shaders actually compile and link on this machine's driver.
@@ -17,7 +17,6 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/gltest"
-	"foundry/internal/render"
 	"testing"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -89,12 +88,12 @@ func TestSkinnedShadersCompileAndLink(t *testing.T) {
 		}
 	}
 
-	// Both shadow passes, through the same render.LinkProgram the engine uses.
+	// Both shadow passes, through the same LinkProgram the engine uses.
 	var dirProg, cubeProg uint32
-	if err := render.LinkProgram("resources/shaders/shadow_vert.glsl", "resources/shaders/shadow_frag.glsl", &dirProg); err != nil {
+	if err := LinkProgram("resources/shaders/shadow_vert.glsl", "resources/shaders/shadow_frag.glsl", &dirProg); err != nil {
 		t.Fatalf("cascade shadow program with skinning failed to build: %v", err)
 	}
-	if err := render.LinkProgram("resources/shaders/shadow_cube_vert.glsl", "resources/shaders/shadow_cube_frag.glsl", &cubeProg); err != nil {
+	if err := LinkProgram("resources/shaders/shadow_cube_vert.glsl", "resources/shaders/shadow_cube_frag.glsl", &cubeProg); err != nil {
 		t.Fatalf("point shadow program with skinning failed to build: %v", err)
 	}
 	for _, p := range []struct {

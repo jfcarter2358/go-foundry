@@ -19,13 +19,14 @@ import (
 
 	"foundry/internal/flang"
 	"foundry/internal/leveltest"
+	"foundry/internal/testenv"
 	"foundry/internal/world"
 )
 
 // hostTestLevel builds a small level with one of each addressable kind.
 func hostTestLevel(t *testing.T) *world.Level {
 	t.Helper()
-	leveltest.WithoutGeometryUploads(t)
+	testenv.WithoutGeometryUploads(t)
 
 	ch := leveltest.EdgeIDChunk(t)
 	ch.ID = "chunk"

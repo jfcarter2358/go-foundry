@@ -1,7 +1,6 @@
-package main
+package world
 
 import (
-	"foundry/internal/world"
 	"math"
 	"testing"
 )
@@ -12,15 +11,15 @@ import (
 // individually-read instances) and every non-scattering kind stay at one,
 // unchanged from before LOD existed.
 func TestBiomeLODTierCount(t *testing.T) {
-	three := []int32{world.BiomeGrass, world.BiomeWildflower, world.BiomeCattail, world.BiomeMoss}
+	three := []int32{BiomeGrass, BiomeWildflower, BiomeCattail, BiomeMoss}
 	for _, k := range three {
-		if got := world.BiomeLODTierCount(k); got != 3 {
+		if got := BiomeLODTierCount(k); got != 3 {
 			t.Errorf("BiomeLODTierCount(%d) = %d, want 3", k, got)
 		}
 	}
-	one := []int32{world.BiomeRock, world.BiomeSand, world.BiomeWater}
+	one := []int32{BiomeRock, BiomeSand, BiomeWater}
 	for _, k := range one {
-		if got := world.BiomeLODTierCount(k); got != 1 {
+		if got := BiomeLODTierCount(k); got != 1 {
 			t.Errorf("BiomeLODTierCount(%d) = %d, want 1", k, got)
 		}
 	}
@@ -30,11 +29,11 @@ func TestBiomeLODTierCount(t *testing.T) {
 // — DefaultLOD1Fraction/DefaultLOD2Fraction of the brush's own Range — the
 // same convention every other zero-value brush field uses.
 func TestResolvedLODDefaults(t *testing.T) {
-	b := &world.BiomeBrush{Kind: world.BiomeGrass, Range: 100}
-	if got, want := world.ResolvedLOD1(b), float32(100)*world.DefaultLOD1Fraction; got != want {
+	b := &BiomeBrush{Kind: BiomeGrass, Range: 100}
+	if got, want := ResolvedLOD1(b), float32(100)*DefaultLOD1Fraction; got != want {
 		t.Errorf("ResolvedLOD1 = %v, want %v", got, want)
 	}
-	if got, want := world.ResolvedLOD2(b), float32(100)*world.DefaultLOD2Fraction; got != want {
+	if got, want := ResolvedLOD2(b), float32(100)*DefaultLOD2Fraction; got != want {
 		t.Errorf("ResolvedLOD2 = %v, want %v", got, want)
 	}
 }
@@ -60,9 +59,9 @@ func TestResolvedLODOrdering(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			b := &world.BiomeBrush{Kind: world.BiomeGrass, Range: c.rng, LOD1Distance: c.lod1, LOD2Distance: c.lod2}
-			lod1 := world.ResolvedLOD1(b)
-			lod2 := world.ResolvedLOD2(b)
+			b := &BiomeBrush{Kind: BiomeGrass, Range: c.rng, LOD1Distance: c.lod1, LOD2Distance: c.lod2}
+			lod1 := ResolvedLOD1(b)
+			lod2 := ResolvedLOD2(b)
 			if !(lod1 > 0) {
 				t.Fatalf("ResolvedLOD1 = %v, want > 0", lod1)
 			}

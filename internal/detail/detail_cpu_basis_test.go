@@ -1,7 +1,6 @@
-package main
+package detail
 
 import (
-	"foundry/internal/detail"
 	"foundry/internal/gfx"
 	"math"
 	"testing"
@@ -35,7 +34,7 @@ func TestDispNormalIsFaceConstant(t *testing.T) {
 
 	// The two triangles really are non-coplanar, or the test proves nothing.
 	triNrm := func(a, b, c []float32) mgl32.Vec3 {
-		pa, pb, pc := detail.Vtx(a, 0), detail.Vtx(b, 0), detail.Vtx(c, 0)
+		pa, pb, pc := Vtx(a, 0), Vtx(b, 0), Vtx(c, 0)
 		return pb.Sub(pa).Cross(pc.Sub(pa)).Normalize()
 	}
 	n1, n2 := triNrm(p00, p20, p22), triNrm(p00, p22, p02)
@@ -44,7 +43,7 @@ func TestDispNormalIsFaceConstant(t *testing.T) {
 	}
 
 	geo := &gfx.Geometry{Vertices: verts}
-	n := detail.DispNormalFor(geo)
+	n := DispNormalFor(geo)
 	if math.Abs(float64(n.Len()-1)) > 1e-4 {
 		t.Fatalf("dispNormal must be unit length, got %v (len %.4f)", n, n.Len())
 	}
@@ -58,7 +57,7 @@ func TestDispNormalIsFaceConstant(t *testing.T) {
 	}
 	// Cached repeat must be identical, not merely close — the shader relies on
 	// every patch of the face getting bit-identical uniforms.
-	if again := detail.DispNormalFor(geo); again != n {
+	if again := DispNormalFor(geo); again != n {
 		t.Fatalf("dispNormal not stable across calls: %v then %v", n, again)
 	}
 }
@@ -78,9 +77,9 @@ func TestComputeFaceBasis(t *testing.T) {
 	tri(p00, p20, p23)
 	tri(p00, p23, p03)
 
-	b := detail.ComputeFaceBasis(verts)
+	b := ComputeFaceBasis(verts)
 	if !b.Ok {
-		t.Fatal("detail.ComputeFaceBasis failed on a valid quad")
+		t.Fatal("ComputeFaceBasis failed on a valid quad")
 	}
 	// Normal should be vertical (|n.y| ~ 1).
 	if math.Abs(float64(b.N.Y())) < 0.99 {
@@ -117,7 +116,7 @@ func TestComputeBoundaryEdges(t *testing.T) {
 	tri(p00, p20, p23) // shares diagonal p00-p23
 	tri(p00, p23, p03)
 
-	edges := detail.ComputeBoundaryEdges(verts)
+	edges := ComputeBoundaryEdges(verts)
 	if len(edges) != 4 {
 		t.Fatalf("expected 4 boundary edges for a quad fan, got %d", len(edges))
 	}

@@ -1,8 +1,7 @@
-package main
+package world
 
 import (
 	"foundry/internal/gfx"
-	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -21,17 +20,17 @@ func TestWaterParamsRoundTrip(t *testing.T) {
 		Reflectivity:  0.8,
 		ReflectColor:  mgl32.Vec3{0.1, 0.2, 0.3},
 	}
-	raw := &world.RawWater{
+	raw := &RawWater{
 		WaveAmplitude: want.WaveAmplitude,
 		WaveLength:    want.WaveLength,
 		WaveSpeed:     want.WaveSpeed,
 		Reflectivity:  want.Reflectivity,
-		ReflectColor: world.RawColor3{
+		ReflectColor: RawColor3{
 			R: want.ReflectColor.X(), G: want.ReflectColor.Y(), B: want.ReflectColor.Z(),
 		},
 	}
 
-	if got := world.WaterParamsFromRaw(raw); got != want {
+	if got := WaterParamsFromRaw(raw); got != want {
 		t.Fatalf("round trip changed params:\n got %+v\nwant %+v", got, want)
 	}
 }
@@ -40,7 +39,7 @@ func TestWaterParamsRoundTrip(t *testing.T) {
 // existed — they must load with a usable look rather than a flat, motionless
 // surface with zero amplitude.
 func TestWaterParamsDefaultWhenAbsent(t *testing.T) {
-	got := world.WaterParamsFromRaw(nil)
+	got := WaterParamsFromRaw(nil)
 
 	if !got.Enabled {
 		t.Fatal("water params from absent YAML block are disabled")
@@ -55,7 +54,7 @@ func TestWaterParamsDefaultWhenAbsent(t *testing.T) {
 // sector's bounds, so the plane's own extent never entered the decision. The
 // AABB must span the whole surface, not just a region around the centre.
 func TestWaterSurfaceAABBCoversFullExtent(t *testing.T) {
-	w := world.WaterSurface{
+	w := WaterSurface{
 		Position:   mgl32.Vec3{10, 2, -4},
 		BoundHalfX: 25,
 		BoundHalfY: 0.1,
@@ -74,7 +73,7 @@ func TestWaterSurfaceAABBCoversFullExtent(t *testing.T) {
 // box it is culled against: displacement happens in the shader, so the CPU-side
 // bounds have to allow for it explicitly.
 func TestWaterSurfaceAABBIncludesWaveCrests(t *testing.T) {
-	w := world.WaterSurface{
+	w := WaterSurface{
 		BoundHalfX: 5,
 		BoundHalfY: 0.1,
 		BoundHalfZ: 5,

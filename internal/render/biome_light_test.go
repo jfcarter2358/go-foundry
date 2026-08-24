@@ -1,7 +1,7 @@
 package render
 
 import (
-	"foundry/internal/leveltest"
+	"foundry/internal/testenv"
 	"foundry/internal/world"
 	"strings"
 	"testing"
@@ -11,12 +11,12 @@ import (
 
 // ReadBiomeShader reads one of the engine's .glsl files.
 //
-// Through leveltest.RepoFile rather than a bare relative path: `go test` runs
+// Through testenv.RepoFile rather than a bare relative path: `go test` runs
 // this package from its own directory, so "resources/shaders/..." would only
 // have resolved while these tests lived in the root package.
 func ReadBiomeShader(t *testing.T, name string) string {
 	t.Helper()
-	return leveltest.RepoFile(t, "resources", "shaders", name)
+	return testenv.RepoFile(t, "resources", "shaders", name)
 }
 
 // readRepoSource reads one of the engine's own .go files. Several tests below
@@ -24,7 +24,7 @@ func ReadBiomeShader(t *testing.T, name string) string {
 // cannot express.
 func readRepoSource(t *testing.T, parts ...string) string {
 	t.Helper()
-	return leveltest.RepoFile(t, parts...)
+	return testenv.RepoFile(t, parts...)
 }
 
 // TestScatterStagesShareOnePlacement pins the invariant the whole casting
@@ -413,12 +413,12 @@ func TestForEachScatterSectorPadsCullBoxForJitter(t *testing.T) {
 // The wind clock has to be one value per frame shared by the color and depth
 // passes; a blade that sways in one and not the other sheds its shadow.
 func TestBiomeWindTimeIsLatchedBeforeShadowPass(t *testing.T) {
-	src := []byte(readRepoSource(t, "main.go"))
+	src := []byte(readRepoSource(t, "internal", "app", "app.go"))
 	body := string(src)
 	latch := strings.Index(body, "BiomeWindTime =")
 	pass := strings.Index(body, "RenderShadowPass(level.Lights")
 	if latch < 0 || pass < 0 {
-		t.Fatal("could not locate the wind latch or the shadow pass in main.go")
+		t.Fatal("could not locate the wind latch or the shadow pass in internal/app/app.go")
 	}
 	if latch > pass {
 		t.Error("BiomeWindTime is latched after RenderShadowPass — the depth passes " +

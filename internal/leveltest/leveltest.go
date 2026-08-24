@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-gl/mathgl/mgl32"
 
+	"foundry/internal/testenv"
 	"foundry/internal/world"
 )
 
@@ -74,7 +75,7 @@ func SplitChunk() *world.Chunk {
 // EdgeIDChunk builds a single square sector with named edges, GL-free.
 func EdgeIDChunk(t *testing.T) *world.Chunk {
 	t.Helper()
-	WithoutGeometryUploads(t)
+	testenv.WithoutGeometryUploads(t)
 	ch := &world.Chunk{
 		Points:     []mgl32.Vec2{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
 		PointNames: []string{"P0", "P1", "P2", "P3"},

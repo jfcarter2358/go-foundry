@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"foundry/internal/biome"
@@ -21,22 +21,12 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
-
-// The texture editor drives a second SDL window and GL context on the same
-// OS thread as the main loop (see window.go). SDL/GL calls must stay pinned
-// to one OS thread — without this, the Go scheduler is free to migrate the
-// goroutine between them and the "current" GL context becomes whichever
-// thread last touched it.
-func init() {
-	runtime.LockOSThread()
-}
 
 // TransparentDraw holds a deferred draw call for a transparent geometry object.
 // Collected during the opaque pass and drawn back-to-front afterward.
@@ -52,7 +42,12 @@ var shadowFragShaderPath = "shaders/shadow_frag.glsl"
 var shadowCubeVertPath = "shaders/shadow_cube_vert.glsl"
 var shadowCubeFragPath = "shaders/shadow_cube_frag.glsl"
 
-func main() {
+// Run starts the engine: opens the log, scans assets, stands up the window and
+// GL context, loads the level, and does not return until the main loop ends.
+//
+// The thread-pinning that has to happen before any of this is cmd/foundry's —
+// see the note on its init.
+func Run() {
 	gfx.Textures = make(map[string]uint32)
 
 	executable, err := os.Executable()

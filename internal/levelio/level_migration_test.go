@@ -9,11 +9,11 @@ package levelio
 //
 // These use loadRawChunk/chunkToRaw rather than LoadLevel, so they stay headless:
 // the conversion is pure, and the geometry upload it would otherwise trigger is
-// switched off by leveltest.WithoutGeometryUploads.
+// switched off by testenv.WithoutGeometryUploads.
 
 import (
 	"foundry/internal/geom"
-	"foundry/internal/leveltest"
+	"foundry/internal/testenv"
 	"foundry/internal/world"
 	"testing"
 )
@@ -65,7 +65,7 @@ func edgeIDSet(s *world.Sector) map[string]bool {
 }
 
 func TestEdgeIDsMintedForLegacyLevel(t *testing.T) {
-	leveltest.WithoutGeometryUploads(t)
+	testenv.WithoutGeometryUploads(t)
 	ch, _, err := loadRawChunk(squareRawChunk(false))
 	if err != nil {
 		t.Fatalf("loadRawChunk: %v", err)
@@ -90,7 +90,7 @@ func TestEdgeIDsMintedForLegacyLevel(t *testing.T) {
 }
 
 func TestEdgeIDsSurviveSaveLoadRoundTrip(t *testing.T) {
-	leveltest.WithoutGeometryUploads(t)
+	testenv.WithoutGeometryUploads(t)
 	for _, tc := range []struct {
 		name      string
 		clockwise bool
@@ -139,7 +139,7 @@ func TestEdgeIDsSurviveSaveLoadRoundTrip(t *testing.T) {
 }
 
 func TestClockwiseSectorKeepsEdgeIDsThroughRewind(t *testing.T) {
-	leveltest.WithoutGeometryUploads(t)
+	testenv.WithoutGeometryUploads(t)
 	// The loader re-winds a clockwise sector, which flips every edge's direction.
 	// A name derived from the `from` point alone would change here; the unordered
 	// pair does not. This is the specific regression the migration key exists for.
@@ -164,7 +164,7 @@ func TestClockwiseSectorKeepsEdgeIDsThroughRewind(t *testing.T) {
 }
 
 func TestEdgeIDsAuthoredInFileAreHonoured(t *testing.T) {
-	leveltest.WithoutGeometryUploads(t)
+	testenv.WithoutGeometryUploads(t)
 	raw := squareRawChunk(false)
 	raw.Sectors[0].Edges[0].ID = "front_door"
 
@@ -182,7 +182,7 @@ func TestEdgeIDsAuthoredInFileAreHonoured(t *testing.T) {
 }
 
 func TestShippedTestLevelMigratesCleanly(t *testing.T) {
-	leveltest.WithoutGeometryUploads(t)
+	testenv.WithoutGeometryUploads(t)
 	// The level the editor actually opens. It predates edge IDs entirely, so this
 	// is the real migration, not a fixture of one.
 	raw, err := readRawLevelFile("resources/levels/test.yaml")

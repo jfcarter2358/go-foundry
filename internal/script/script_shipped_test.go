@@ -1,4 +1,4 @@
-package main
+package script
 
 // script_shipped_test.go — the scripts that ship with the engine must parse.
 //

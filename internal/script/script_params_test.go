@@ -14,7 +14,7 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
-	"foundry/internal/leveltest"
+	"foundry/internal/testenv"
 	"foundry/internal/world"
 )
 
@@ -22,7 +22,7 @@ import (
 // point at — the arrangement the feature exists for.
 func paramTestLevel(t *testing.T) *world.Level {
 	t.Helper()
-	leveltest.WithoutGeometryUploads(t)
+	testenv.WithoutGeometryUploads(t)
 
 	lvl := &world.Level{}
 	for _, id := range []string{"button_a", "button_b"} {
@@ -330,9 +330,9 @@ func TestScriptRefTargets(t *testing.T) {
 // of it: an example that parses but does not do what its comments claim is worse
 // than no example, because it is the first thing an author copies.
 func TestShippedButtonScriptUsesItsParams(t *testing.T) {
-	// Through leveltest.RepoFile: `go test` runs this package from its own
+	// Through testenv.RepoFile: `go test` runs this package from its own
 	// directory, so a bare "resources/..." path would not resolve here.
-	src := leveltest.RepoFile(t, "resources", "scripts", "button.flang")
+	src := testenv.RepoFile(t, "resources", "scripts", "button.flang")
 	root := withTempScriptDir(t)
 	path := writeScript(t, root, "button.flang", src)
 

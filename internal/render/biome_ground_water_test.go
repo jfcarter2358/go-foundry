@@ -1,13 +1,11 @@
-package main
+package render
 
 import (
 	"foundry/internal/biome"
 	"foundry/internal/geom"
-	"foundry/internal/render"
+	"foundry/internal/testenv"
 	"foundry/internal/world"
 	"math"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -120,7 +118,7 @@ func partBounds(t *testing.T, mesh []float32, lo, hi float32) (halfWidth, height
 	minX, maxX := float32(math.MaxFloat32), float32(-math.MaxFloat32)
 	minY, maxY := float32(math.MaxFloat32), float32(-math.MaxFloat32)
 	found := false
-	for i := 0; i < len(mesh); i += render.BiomeVertexStride {
+	for i := 0; i < len(mesh); i += BiomeVertexStride {
 		if p := mesh[i+6]; p < lo || p >= hi {
 			continue
 		}
@@ -145,7 +143,7 @@ func partBounds(t *testing.T, mesh []float32, lo, hi float32) (halfWidth, height
 // scale uniformly, so the local radii are now the only thing keeping it
 // elongated, and a flat blob renders as a disc instead.
 func TestCattailSeedHeadIsElongated(t *testing.T) {
-	halfWidth, height := partBounds(t, render.BuildCattailMesh(), render.CattailHeadParam, render.CattailHeadParam+1)
+	halfWidth, height := partBounds(t, BuildCattailMesh(), CattailHeadParam, CattailHeadParam+1)
 	width := halfWidth * 2
 	if height <= width*2 {
 		t.Fatalf("cattail seed head is %.3f tall by %.3f wide — needs to be at least 2x "+
@@ -160,17 +158,17 @@ func TestCattailSeedHeadIsElongated(t *testing.T) {
 // thing defining the two shapes.
 func TestWildflowerBloomAspects(t *testing.T) {
 	// Disc: squat, wider than tall — deliberately unlike the cattail spike.
-	if render.WildflowerDiscAspect.Y() >= render.WildflowerDiscAspect.X() {
-		t.Errorf("disc bloom aspect %v is not squat (Y should be well under X)", render.WildflowerDiscAspect)
+	if WildflowerDiscAspect.Y() >= WildflowerDiscAspect.X() {
+		t.Errorf("disc bloom aspect %v is not squat (Y should be well under X)", WildflowerDiscAspect)
 	}
 	// Spike: the cattail-like corn dog, markedly taller than wide.
-	if render.WildflowerSpikeAspect.Y() <= render.WildflowerSpikeAspect.X()*2 {
-		t.Errorf("spike bloom aspect %v is not elongated (Y should be >2x X)", render.WildflowerSpikeAspect)
+	if WildflowerSpikeAspect.Y() <= WildflowerSpikeAspect.X()*2 {
+		t.Errorf("spike bloom aspect %v is not elongated (Y should be >2x X)", WildflowerSpikeAspect)
 	}
 	// The toggle has to actually change the silhouette, not just nudge it.
-	if render.WildflowerSpikeAspect.Y() <= render.WildflowerDiscAspect.Y() {
+	if WildflowerSpikeAspect.Y() <= WildflowerDiscAspect.Y() {
 		t.Errorf("spike aspect %v is no taller than disc aspect %v — the toggle would be a no-op",
-			render.WildflowerSpikeAspect, render.WildflowerDiscAspect)
+			WildflowerSpikeAspect, WildflowerDiscAspect)
 	}
 }
 
@@ -179,10 +177,10 @@ func TestWildflowerBloomAspects(t *testing.T) {
 // unit blobs — the shader assumes it can shape them purely from bloomAspect /
 // its own center aspect, so a baked-in radius here would double-scale them.
 func TestWildflowerMeshHasBloomAndCenterParts(t *testing.T) {
-	mesh := render.BuildWildflowerMesh()
+	mesh := BuildWildflowerMesh()
 
-	bloomHalfW, bloomH := partBounds(t, mesh, render.WildflowerBloomParam, render.WildflowerBloomParam+1)
-	centerHalfW, centerH := partBounds(t, mesh, render.WildflowerCenterParam, render.WildflowerCenterParam+1)
+	bloomHalfW, bloomH := partBounds(t, mesh, WildflowerBloomParam, WildflowerBloomParam+1)
+	centerHalfW, centerH := partBounds(t, mesh, WildflowerCenterParam, WildflowerCenterParam+1)
 
 	// Same generator, same unit radii — the two parts differ only in the
 	// aspect the shader applies, so their raw extents must match.
@@ -295,12 +293,12 @@ func TestClampOctavesRange(t *testing.T) {
 // kind's default, and an empty one falls back to GroundTextureFor.
 func TestResolveGroundTexture(t *testing.T) {
 	auto := &world.BiomeBrush{Kind: world.BiomeGrass}
-	if got, want := render.ResolveGroundTexture(auto), world.GroundTextureFor(world.BiomeGrass); got != want {
-		t.Errorf("render.ResolveGroundTexture with no override = %q, want kind default %q", got, want)
+	if got, want := ResolveGroundTexture(auto), world.GroundTextureFor(world.BiomeGrass); got != want {
+		t.Errorf("ResolveGroundTexture with no override = %q, want kind default %q", got, want)
 	}
 	override := &world.BiomeBrush{Kind: world.BiomeGrass, GroundTexture: "stone_floor"}
-	if got := render.ResolveGroundTexture(override); got != "stone_floor" {
-		t.Errorf("render.ResolveGroundTexture with override = %q, want %q", got, "stone_floor")
+	if got := ResolveGroundTexture(override); got != "stone_floor" {
+		t.Errorf("ResolveGroundTexture with override = %q, want %q", got, "stone_floor")
 	}
 }
 
@@ -310,15 +308,15 @@ func TestResolveGroundTexture(t *testing.T) {
 // passes straight through.
 func TestResolveGroundUVScale(t *testing.T) {
 	def := mgl32.Vec2{world.DefaultGroundUVScale, world.DefaultGroundUVScale}
-	if got := render.ResolveGroundUVScale(&world.BiomeBrush{Kind: world.BiomeGrass}); got != def {
+	if got := ResolveGroundUVScale(&world.BiomeBrush{Kind: world.BiomeGrass}); got != def {
 		t.Errorf("unset GroundUVScale = %v, want default %v", got, def)
 	}
 	set := &world.BiomeBrush{Kind: world.BiomeGrass, GroundUVScale: mgl32.Vec2{2, 0.5}}
-	if got := render.ResolveGroundUVScale(set); got != (mgl32.Vec2{2, 0.5}) {
+	if got := ResolveGroundUVScale(set); got != (mgl32.Vec2{2, 0.5}) {
 		t.Errorf("set GroundUVScale = %v, want {2 0.5}", got)
 	}
 	half := &world.BiomeBrush{Kind: world.BiomeGrass, GroundUVScale: mgl32.Vec2{0, 4}}
-	if got := render.ResolveGroundUVScale(half); got != (mgl32.Vec2{world.DefaultGroundUVScale, 4}) {
+	if got := ResolveGroundUVScale(half); got != (mgl32.Vec2{world.DefaultGroundUVScale, 4}) {
 		t.Errorf("half-set GroundUVScale = %v, want {%v 4}", got, world.DefaultGroundUVScale)
 	}
 }
@@ -334,11 +332,11 @@ func TestBuildGroundPatchMeshUsesGroundUVScale(t *testing.T) {
 		Points: []mgl32.Vec2{{0, 0}, {8, 0}, {8, 8}, {0, 8}},
 		Brush:  world.BiomeBrush{Kind: world.BiomeGrass, GroundUVScale: mgl32.Vec2{2, 0.5}},
 	}
-	verts := render.BuildGroundPatchMesh(lvl, s)
+	verts := BuildGroundPatchMesh(lvl, s)
 	if len(verts) == 0 {
 		t.Fatal("expected a non-empty ground patch mesh")
 	}
-	for i := 0; i < len(verts); i += render.GroundVertexStride {
+	for i := 0; i < len(verts); i += GroundVertexStride {
 		x, z := verts[i], verts[i+2]
 		u, v := verts[i+6], verts[i+7]
 		if math.Abs(float64(u-x*2)) > 1e-4 || math.Abs(float64(v-z*0.5)) > 1e-4 {
@@ -348,7 +346,7 @@ func TestBuildGroundPatchMeshUsesGroundUVScale(t *testing.T) {
 
 	// Unset scale falls back to the 1x1 default tiling.
 	legacy := &world.BiomeSector{ID: "gpuv2", Points: s.Points, Brush: world.BiomeBrush{Kind: world.BiomeGrass}}
-	lverts := render.BuildGroundPatchMesh(lvl, legacy)
+	lverts := BuildGroundPatchMesh(lvl, legacy)
 	if len(lverts) == 0 {
 		t.Fatal("expected a non-empty ground patch mesh for the unset-scale sector")
 	}
@@ -384,7 +382,7 @@ func TestBiomeSeedChangesWithGroundFields(t *testing.T) {
 // vertices fall within the sector polygon's own AABB (the per-quad
 // all-corners-inside clip must not leak geometry past the painted shape) and
 // that the vertex buffer is well-formed (a whole number of triangles, stride
-// render.GroundVertexStride).
+// GroundVertexStride).
 func TestBuildGroundPatchMeshStaysInsidePolygon(t *testing.T) {
 	s := &world.BiomeSector{
 		ID:     "gp0",
@@ -393,18 +391,18 @@ func TestBuildGroundPatchMeshStaysInsidePolygon(t *testing.T) {
 	}
 	lvl := &world.Level{} // no chunks: biome.FloorHeightUnderLevel falls back to 0 everywhere
 
-	verts := render.BuildGroundPatchMesh(lvl, s)
+	verts := BuildGroundPatchMesh(lvl, s)
 	if len(verts) == 0 {
 		t.Fatal("expected a non-empty ground patch mesh for an 8x8 square sector")
 	}
-	if len(verts)%render.GroundVertexStride != 0 {
-		t.Fatalf("vertex buffer length %d is not a multiple of stride %d", len(verts), render.GroundVertexStride)
+	if len(verts)%GroundVertexStride != 0 {
+		t.Fatalf("vertex buffer length %d is not a multiple of stride %d", len(verts), GroundVertexStride)
 	}
-	nVerts := len(verts) / render.GroundVertexStride
+	nVerts := len(verts) / GroundVertexStride
 	if nVerts%3 != 0 {
 		t.Fatalf("%d vertices is not a whole number of triangles", nVerts)
 	}
-	for i := 0; i < len(verts); i += render.GroundVertexStride {
+	for i := 0; i < len(verts); i += GroundVertexStride {
 		x, z := verts[i], verts[i+2]
 		if x < -0.01 || x > 8.01 || z < -0.01 || z > 8.01 {
 			t.Fatalf("vertex (%.3f,_,%.3f) falls outside the sector's AABB", x, z)
@@ -428,13 +426,13 @@ func TestBuildGroundPatchMeshFollowsDiagonalEdge(t *testing.T) {
 	}
 	lvl := &world.Level{}
 
-	verts := render.BuildGroundPatchMesh(lvl, s)
+	verts := BuildGroundPatchMesh(lvl, s)
 	if len(verts) == 0 {
 		t.Fatal("expected a non-empty mesh for the right-triangle sector")
 	}
 
 	maxSum := float32(0)
-	for i := 0; i < len(verts); i += render.GroundVertexStride {
+	for i := 0; i < len(verts); i += GroundVertexStride {
 		x, z := verts[i], verts[i+2]
 		if x < -0.05 || z < -0.05 {
 			t.Fatalf("vertex (%.3f,_,%.3f) falls outside the triangle's right-angle legs", x, z)
@@ -788,13 +786,13 @@ func TestFlowerAndReedStemsAreConstantWidth(t *testing.T) {
 		name string
 		mesh []float32
 	}{
-		{"wildflower", render.BuildWildflowerMesh()},
-		{"cattail", render.BuildCattailMesh()},
+		{"wildflower", BuildWildflowerMesh()},
+		{"cattail", BuildCattailMesh()},
 	} {
 		// Widest and narrowest |x| among the stem's vertices (aParam in
 		// [0,1]); a taper would drive the narrowest to 0 at the tip.
 		widest, narrowest := float32(0), float32(math.MaxFloat32)
-		for i := 0; i < len(tc.mesh); i += render.BiomeVertexStride {
+		for i := 0; i < len(tc.mesh); i += BiomeVertexStride {
 			if p := tc.mesh[i+6]; p < 0 || p > 1 {
 				continue
 			}
@@ -815,9 +813,9 @@ func TestFlowerAndReedStemsAreConstantWidth(t *testing.T) {
 // the tapered silhouette, so "stems are constant width" must not have been
 // applied across the board.
 func TestGrassBladeStillTapers(t *testing.T) {
-	mesh := render.BuildBladeMesh()
+	mesh := BuildBladeMesh()
 	tipWidth := float32(math.MaxFloat32)
-	for i := 0; i < len(mesh); i += render.BiomeVertexStride {
+	for i := 0; i < len(mesh); i += BiomeVertexStride {
 		if mesh[i+6] < 1 { // aParam == y; only the topmost vertices
 			continue
 		}
@@ -832,20 +830,20 @@ func TestGrassBladeStillTapers(t *testing.T) {
 // triangle (full width at the stem, a point at the tip) swept along an arc
 // that reaches outward and then bends back over, rather than a flat spike.
 func TestWildflowerLeavesArcOutward(t *testing.T) {
-	leaves := render.BuildWildflowerLeaves()
-	if len(leaves) == 0 || len(leaves)%render.BiomeVertexStride != 0 {
-		t.Fatalf("leaf mesh is %d floats, want a non-zero multiple of %d", len(leaves), render.BiomeVertexStride)
+	leaves := BuildWildflowerLeaves()
+	if len(leaves) == 0 || len(leaves)%BiomeVertexStride != 0 {
+		t.Fatalf("leaf mesh is %d floats, want a non-zero multiple of %d", len(leaves), BiomeVertexStride)
 	}
 
 	var maxRadius, maxY, tipY float32
-	for i := 0; i < len(leaves); i += render.BiomeVertexStride {
+	for i := 0; i < len(leaves); i += BiomeVertexStride {
 		x, y, z, p := leaves[i], leaves[i+1], leaves[i+2], leaves[i+6]
-		if p < render.WildflowerLeafParam || p >= render.WildflowerLeafParam+1 {
-			t.Fatalf("leaf vertex tagged %v, outside the [%v,%v) band", p, render.WildflowerLeafParam, render.WildflowerLeafParam+1)
+		if p < WildflowerLeafParam || p >= WildflowerLeafParam+1 {
+			t.Fatalf("leaf vertex tagged %v, outside the [%v,%v) band", p, WildflowerLeafParam, WildflowerLeafParam+1)
 		}
 		// aParam's fraction must be the vertex's own height, which is what
 		// the shader bends the leaf by in the wind.
-		if got := p - render.WildflowerLeafParam; math.Abs(float64(got-y)) > 1e-5 {
+		if got := p - WildflowerLeafParam; math.Abs(float64(got-y)) > 1e-5 {
 			t.Fatalf("leaf aParam fraction %v does not match vertex height %v", got, y)
 		}
 		r := float32(math.Hypot(float64(x), float64(z)))
@@ -859,8 +857,8 @@ func TestWildflowerLeavesArcOutward(t *testing.T) {
 		t.Fatal("leaves reach no distance from the stem")
 	}
 	// They have to read as leaves, not as a collar: a meaningful reach out.
-	if maxRadius < render.WildflowerLeafLen*0.9 {
-		t.Errorf("leaves reach only %.3f, want about %.3f", maxRadius, render.WildflowerLeafLen)
+	if maxRadius < WildflowerLeafLen*0.9 {
+		t.Errorf("leaves reach only %.3f, want about %.3f", maxRadius, WildflowerLeafLen)
 	}
 	// The arc must peak BEFORE the tip — that bend-back is the "curving out"
 	// shape; a monotonically rising leaf is just a spike pointing up and out.
@@ -877,9 +875,9 @@ func TestWildflowerLeavesArcOutward(t *testing.T) {
 // template (they are switched off in the shader, not by swapping VAOs) and
 // that they didn't disturb the bands the other parts are tagged in.
 func TestWildflowerMeshCarriesLeaves(t *testing.T) {
-	mesh := render.BuildWildflowerMesh()
+	mesh := BuildWildflowerMesh()
 	counts := map[int]int{}
-	for i := 0; i < len(mesh); i += render.BiomeVertexStride {
+	for i := 0; i < len(mesh); i += BiomeVertexStride {
 		counts[int(mesh[i+6])]++
 	}
 	for _, band := range []struct {
@@ -887,15 +885,15 @@ func TestWildflowerMeshCarriesLeaves(t *testing.T) {
 		name  string
 	}{
 		{0, "stem"},
-		{int(render.WildflowerBloomParam), "bloom"},
-		{int(render.WildflowerCenterParam), "bloom center"},
-		{int(render.WildflowerLeafParam), "leaves"},
+		{int(WildflowerBloomParam), "bloom"},
+		{int(WildflowerCenterParam), "bloom center"},
+		{int(WildflowerLeafParam), "leaves"},
 	} {
 		if counts[band.param] == 0 {
 			t.Errorf("wildflower template carries no %s vertices (aParam band %d)", band.name, band.param)
 		}
 	}
-	if counts[int(render.CattailHeadParam)] != 0 {
+	if counts[int(CattailHeadParam)] != 0 {
 		t.Errorf("wildflower template has vertices in the cattail seed-head band")
 	}
 }
@@ -950,11 +948,11 @@ func TestStemsReachTheirHeadAnchor(t *testing.T) {
 		mesh   []float32
 		anchor float32
 	}{
-		{"wildflower", render.BuildWildflowerMesh(), render.WildflowerHeadAnchor},
-		{"cattail", render.BuildCattailMesh(), render.CattailHeadAnchor},
+		{"wildflower", BuildWildflowerMesh(), WildflowerHeadAnchor},
+		{"cattail", BuildCattailMesh(), CattailHeadAnchor},
 	} {
 		top := float32(0)
-		for i := 0; i < len(tc.mesh); i += render.BiomeVertexStride {
+		for i := 0; i < len(tc.mesh); i += BiomeVertexStride {
 			if p := tc.mesh[i+6]; p < 0 || p > 1 { // stem band only
 				continue
 			}
@@ -1039,11 +1037,7 @@ func TestClumpTuftsAreNotGridAligned(t *testing.T) {
 	// The clump constants live in the shared placement snippet, not the color
 	// vertex stage — all three scatter stages (color, cascade depth, cubemap
 	// depth) compile the same copy so a tuft is shaped identically in each.
-	src, err := os.ReadFile(filepath.Join("resources", "shaders", "biome_scatter_common.glsl"))
-	if err != nil {
-		t.Fatalf("read shader: %v", err)
-	}
-	shader := string(src)
+	shader := testenv.RepoFile(t, "resources", "shaders", "biome_scatter_common.glsl")
 
 	jitter := glslFloatConst(t, shader, "CLUMP_ROOT_JITTER")
 	if jitter < 0.7 {

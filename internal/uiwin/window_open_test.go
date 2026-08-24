@@ -1,4 +1,4 @@
-package main
+package uiwin
 
 // window_open_test.go — the deferred-open queue.
 //
@@ -11,40 +11,39 @@ package main
 // not, which is most of why the deferral is a queue rather than a flag.
 
 import (
-	"foundry/internal/uiwin"
 	"testing"
 )
 
 func TestWindowOpensAreDeferredUntilDrained(t *testing.T) {
-	prev := uiwin.PendingWindowOpens
-	t.Cleanup(func() { uiwin.PendingWindowOpens = prev })
-	uiwin.PendingWindowOpens = nil
+	prev := PendingWindowOpens
+	t.Cleanup(func() { PendingWindowOpens = prev })
+	PendingWindowOpens = nil
 
 	opened := 0
-	uiwin.RequestWindowOpen(func() { opened++ })
+	RequestWindowOpen(func() { opened++ })
 	if opened != 0 {
 		t.Fatal("the request ran immediately; it has to wait for the main loop")
 	}
-	uiwin.DrainWindowOpens()
+	DrainWindowOpens()
 	if opened != 1 {
 		t.Errorf("ran %d times after draining, want 1", opened)
 	}
 	// Draining again must not repeat it: the queue is consumed, not replayed.
-	uiwin.DrainWindowOpens()
+	DrainWindowOpens()
 	if opened != 1 {
 		t.Errorf("ran %d times after a second drain, want 1", opened)
 	}
 }
 
 func TestWindowOpensRunInOrder(t *testing.T) {
-	prev := uiwin.PendingWindowOpens
-	t.Cleanup(func() { uiwin.PendingWindowOpens = prev })
-	uiwin.PendingWindowOpens = nil
+	prev := PendingWindowOpens
+	t.Cleanup(func() { PendingWindowOpens = prev })
+	PendingWindowOpens = nil
 
 	var order []string
-	uiwin.RequestWindowOpen(func() { order = append(order, "first") })
-	uiwin.RequestWindowOpen(func() { order = append(order, "second") })
-	uiwin.DrainWindowOpens()
+	RequestWindowOpen(func() { order = append(order, "first") })
+	RequestWindowOpen(func() { order = append(order, "second") })
+	DrainWindowOpens()
 
 	if len(order) != 2 || order[0] != "first" || order[1] != "second" {
 		t.Errorf("ran %v, want [first second]", order)
@@ -55,32 +54,32 @@ func TestRequestingFromInsideADrainIsSafe(t *testing.T) {
 	// A window whose Open asks for another one. The queue is swapped out before
 	// running anything, so the nested request lands in the next batch rather
 	// than mutating the slice being iterated.
-	prev := uiwin.PendingWindowOpens
-	t.Cleanup(func() { uiwin.PendingWindowOpens = prev })
-	uiwin.PendingWindowOpens = nil
+	prev := PendingWindowOpens
+	t.Cleanup(func() { PendingWindowOpens = prev })
+	PendingWindowOpens = nil
 
 	inner := 0
-	uiwin.RequestWindowOpen(func() {
-		uiwin.RequestWindowOpen(func() { inner++ })
+	RequestWindowOpen(func() {
+		RequestWindowOpen(func() { inner++ })
 	})
-	uiwin.DrainWindowOpens()
+	DrainWindowOpens()
 	if inner != 0 {
 		t.Error("a nested request ran in the same drain")
 	}
-	uiwin.DrainWindowOpens()
+	DrainWindowOpens()
 	if inner != 1 {
 		t.Errorf("the nested request ran %d times, want 1", inner)
 	}
 }
 
 func TestNilRequestIsIgnored(t *testing.T) {
-	prev := uiwin.PendingWindowOpens
-	t.Cleanup(func() { uiwin.PendingWindowOpens = prev })
-	uiwin.PendingWindowOpens = nil
+	prev := PendingWindowOpens
+	t.Cleanup(func() { PendingWindowOpens = prev })
+	PendingWindowOpens = nil
 
-	uiwin.RequestWindowOpen(nil)
-	if len(uiwin.PendingWindowOpens) != 0 {
+	RequestWindowOpen(nil)
+	if len(PendingWindowOpens) != 0 {
 		t.Error("a nil request was queued and would panic on drain")
 	}
-	uiwin.DrainWindowOpens()
+	DrainWindowOpens()
 }

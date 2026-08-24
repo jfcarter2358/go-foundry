@@ -22,6 +22,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 	"foundry/internal/leveltest"
+	"foundry/internal/testenv"
 	"foundry/internal/world"
 )
 
@@ -58,7 +59,7 @@ func writeScript(t *testing.T, root, name, src string) string {
 // tickTestLevel builds a level with a scripted crate and a scripted trigger.
 func tickTestLevel(t *testing.T) *world.Level {
 	t.Helper()
-	leveltest.WithoutGeometryUploads(t)
+	testenv.WithoutGeometryUploads(t)
 	ch := leveltest.EdgeIDChunk(t)
 	ch.ID = "chunk"
 	return &world.Level{Chunks: []world.Chunk{*ch}}

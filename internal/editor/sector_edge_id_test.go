@@ -10,13 +10,14 @@ package editor
 
 import (
 	"foundry/internal/leveltest"
+	"foundry/internal/testenv"
 	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// leveltest.WithoutGeometryUploads makes Geometry.Load stop at the CPU mesh, so an editor
+// testenv.WithoutGeometryUploads makes Geometry.Load stop at the CPU mesh, so an editor
 // operation that rebuilds a sector can run without a GL context. Restored on
 // cleanup, in the style of withTempTextureDir.
 
@@ -157,7 +158,7 @@ func TestConvertEdgePreservesID(t *testing.T) {
 }
 
 func TestInferPortalsCarriesEdgeIDs(t *testing.T) {
-	leveltest.WithoutGeometryUploads(t)
+	testenv.WithoutGeometryUploads(t)
 	ch := leveltest.SplitChunk()
 	for si := range ch.Sectors {
 		world.EnsureEdgeIDs(&ch.Sectors[si])

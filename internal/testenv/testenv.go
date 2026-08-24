@@ -1,6 +1,14 @@
-package leveltest
+package testenv
 
-// repo.go — finding the repository root from inside a package's tests.
+// Package testenv holds the two things a test needs from its environment,
+// independent of what it is testing: where the repository is, and how to turn
+// GPU uploads off.
+//
+// Kept apart from internal/leveltest because that package imports
+// internal/world to build its fixtures, which would make it unimportable from
+// internal/world's and internal/model's own tests.
+
+// Finding the repository root from inside a package's tests.
 //
 // Several tests assert that a .glsl file and the Go that uploads to it still
 // agree, which means reading both off disk. `go test` runs each package with

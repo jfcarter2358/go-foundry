@@ -1,9 +1,8 @@
-package main
+package render
 
 import (
 	"foundry/internal/biome"
 	"foundry/internal/geom"
-	"foundry/internal/render"
 	"foundry/internal/world"
 	"math"
 	"testing"
@@ -110,13 +109,13 @@ func TestGroundPatchMeshMatchesScatterHeight(t *testing.T) {
 			Points: []mgl32.Vec2{{-10, -10}, {10, -10}, {10, 10}, {-10, 10}},
 			Brush:  world.DefaultBiomeBrush(kind),
 		}
-		verts := render.BuildGroundPatchMesh(lvl, s)
+		verts := BuildGroundPatchMesh(lvl, s)
 		if len(verts) == 0 {
 			t.Fatalf("kind %d produced an empty ground patch mesh", kind)
 		}
 		seed := world.BiomeSeed(s)
 
-		for i := 0; i < len(verts); i += render.GroundVertexStride {
+		for i := 0; i < len(verts); i += GroundVertexStride {
 			x, y, z := verts[i], verts[i+1], verts[i+2]
 			want, _ := biome.BiomeSurfaceAt(lvl, &s.Brush, seed, x, z)
 			if geom.Abs32(y-want) > 1e-4 {
@@ -129,14 +128,14 @@ func TestGroundPatchMeshMatchesScatterHeight(t *testing.T) {
 
 // groundPatchCoverageRange returns the min/max of the per-vertex aCoverage
 // attribute across a built ground patch mesh (the last float of each vertex,
-// see render.GroundVertexStride).
+// see GroundVertexStride).
 func groundPatchCoverageRange(t *testing.T, verts []float32) (min, max float32) {
 	t.Helper()
 	if len(verts) == 0 {
 		t.Fatal("empty ground patch mesh")
 	}
 	min, max = 1, 0
-	for i := 0; i < len(verts); i += render.GroundVertexStride {
+	for i := 0; i < len(verts); i += GroundVertexStride {
 		c := verts[i+8]
 		if c < 0 || c > 1 {
 			t.Fatalf("baked coverage %v outside [0,1]", c)
@@ -175,7 +174,7 @@ func TestGroundPatchIsSlopeGated(t *testing.T) {
 			Brush:  world.DefaultBiomeBrush(world.BiomeMoss),
 		}
 		s.Brush.MinSlopeAngle, s.Brush.MaxSlopeAngle = minA, maxA
-		return render.BuildGroundPatchMesh(lvl, s)
+		return BuildGroundPatchMesh(lvl, s)
 	}
 
 	// Permissive: fully covered everywhere.
@@ -202,7 +201,7 @@ func TestGroundPatchIsSlopeGated(t *testing.T) {
 		Brush:  world.DefaultBiomeBrush(world.BiomeCattail),
 	}
 	s.Brush.MinSlopeAngle, s.Brush.MaxSlopeAngle = 80, 90
-	if lo, hi := groundPatchCoverageRange(t, render.BuildGroundPatchMesh(lvl, s)); lo != 1 || hi != 1 {
+	if lo, hi := groundPatchCoverageRange(t, BuildGroundPatchMesh(lvl, s)); lo != 1 || hi != 1 {
 		t.Errorf("Cattail patch coverage = %v..%v, want all 1 (it never follows displacement)", lo, hi)
 	}
 }
@@ -274,14 +273,14 @@ func TestBiomeSurfaceAtIgnoresDisplaceOffFace(t *testing.T) {
 // normal, so a clump balanced exactly on the origin lifts off wherever the
 // ground falls away) and must stay a mound rather than a razor-thin disc.
 func TestMossClumpIsSunkAndNotAFlatDisc(t *testing.T) {
-	mesh := render.BuildMossMesh()
+	mesh := BuildMossMesh()
 	if len(mesh) == 0 {
-		t.Fatal("render.BuildMossMesh returned no vertices")
+		t.Fatal("BuildMossMesh returned no vertices")
 	}
 
 	minY, maxY := float32(math.MaxFloat32), float32(-math.MaxFloat32)
 	maxAbsXZ := float32(0)
-	for i := 0; i < len(mesh); i += render.BiomeVertexStride {
+	for i := 0; i < len(mesh); i += BiomeVertexStride {
 		x, y, z := mesh[i], mesh[i+1], mesh[i+2]
 		minY, maxY = min(minY, y), max(maxY, y)
 		maxAbsXZ = max(maxAbsXZ, max(geom.Abs32(x), geom.Abs32(z)))
