@@ -374,7 +374,7 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 	// points, then Join them (editor_2d_join.go) — which frees the modifier and
 	// lets a half-picked outline be looked at before it is committed to.
 
-	// Point and edge mode own their click outright, exactly as in the 3D
+	// geom.Point and edge mode own their click outright, exactly as in the 3D
 	// viewport: hitting nothing there clears the selection rather than falling
 	// through to the sector behind, which is what makes the modes predictable.
 	switch Editor.SelMode {

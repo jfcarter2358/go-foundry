@@ -24,6 +24,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/strutil"
 	"sort"
 	"strconv"
 	"strings"
@@ -183,7 +184,7 @@ func nearestName(name string, candidates []string) string {
 	sorted := append([]string(nil), candidates...)
 	sort.Strings(sorted) // deterministic when two candidates tie
 	for _, cand := range sorted {
-		if d := editDistance(name, cand); d < bestDist {
+		if d := strutil.EditDistance(name, cand); d < bestDist {
 			best, bestDist = cand, d
 		}
 	}

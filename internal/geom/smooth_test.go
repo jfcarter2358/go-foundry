@@ -1,4 +1,4 @@
-package main
+package geom
 
 import (
 	"math"
@@ -30,7 +30,7 @@ func assertNear(t *testing.T, got vec3, want vec3, tol float32) {
 func TestSmoothNormalsFlatQuadUnchanged(t *testing.T) {
 	verts := [][]float32{v(0, 0, 0), v(1, 0, 0), v(1, 0, 1), v(0, 0, 1)}
 	// CCW seen from +Y.
-	out := computeSmoothNormals(verts, []int{0, 2, 1, 0, 3, 2}, 60)
+	out := ComputeSmoothNormals(verts, []int{0, 2, 1, 0, 3, 2}, 60)
 
 	if len(out) != 6*3 {
 		t.Fatalf("got %d floats, want %d", len(out), 6*3)
@@ -54,7 +54,7 @@ func TestSmoothNormalsAveragesAcrossShallowSeam(t *testing.T) {
 		0, 1, 3, 0, 3, 2, // flat quad
 		0, 5, 1, 0, 4, 5, // tilted quad
 	}
-	out := computeSmoothNormals(verts, indices, 60)
+	out := ComputeSmoothNormals(verts, indices, 60)
 
 	// Corner 0 is seam vertex (0,0,0) on the flat triangle: it must have moved
 	// off the facet normal towards the tilted face.
@@ -90,12 +90,12 @@ func TestSmoothNormalsKeepsCreaseSharp(t *testing.T) {
 	}
 
 	// 60° threshold: the 90° crease must be rejected on both sides.
-	out := computeSmoothNormals(verts, indices, 60)
+	out := ComputeSmoothNormals(verts, indices, 60)
 	assertNear(t, normalAt(t, out, 0), vec3{0, 1, 0}, 1e-5) // floor side of the seam
 	assertNear(t, normalAt(t, out, 6), vec3{0, 0, 1}, 1e-5) // wall side of the seam
 
 	// Raise the threshold past 90° and the same corner smooths.
-	soft := computeSmoothNormals(verts, indices, 120)
+	soft := ComputeSmoothNormals(verts, indices, 120)
 	n := normalAt(t, soft, 0)
 	if n[1] < 0.1 || n[2] < 0.1 {
 		t.Fatalf("crease angle 120 should have blended the corner, got %v", n)
@@ -111,7 +111,7 @@ func TestSmoothNormalsDoubleSidedDoesNotCancel(t *testing.T) {
 		0, 1, 2, 0, 2, 3, // back  (-Y)
 	}
 	for _, angle := range []float32{60, 179, 0 /* default */} {
-		out := computeSmoothNormals(verts, indices, angle)
+		out := ComputeSmoothNormals(verts, indices, angle)
 		for c := 0; c < 6; c++ {
 			assertNear(t, normalAt(t, out, c), vec3{0, 1, 0}, 1e-5)
 		}
@@ -125,7 +125,7 @@ func TestSmoothNormalsDoubleSidedDoesNotCancel(t *testing.T) {
 // triangles, so a bad vertex can't put NaNs into the buffer.
 func TestSmoothNormalsDegenerateTriangle(t *testing.T) {
 	verts := [][]float32{v(0, 0, 0), v(1, 0, 0), v(1, 0, 1)}
-	out := computeSmoothNormals(verts, []int{0, 1, 1}, 60) // zero-area
+	out := ComputeSmoothNormals(verts, []int{0, 1, 1}, 60) // zero-area
 
 	if len(out) != 9 {
 		t.Fatalf("got %d floats, want 9", len(out))
@@ -138,15 +138,15 @@ func TestSmoothNormalsDegenerateTriangle(t *testing.T) {
 }
 
 func TestSmoothNormalsEmptyMesh(t *testing.T) {
-	if out := computeSmoothNormals(nil, nil, 60); out != nil {
+	if out := ComputeSmoothNormals(nil, nil, 60); out != nil {
 		t.Fatalf("got %v, want nil", out)
 	}
 }
 
 func TestSmoothAngleOrDefault(t *testing.T) {
 	cases := []struct{ in, want float32 }{
-		{0, defaultSmoothAngle},
-		{-5, defaultSmoothAngle},
+		{0, DefaultSmoothAngle},
+		{-5, DefaultSmoothAngle},
 		{30, 30},
 		{179, 179},
 		{200, 179}, // clamped below 180 so opposed facets always read as a crease
@@ -155,71 +155,5 @@ func TestSmoothAngleOrDefault(t *testing.T) {
 		if got := smoothAngleOrDefault(c.in); got != c.want {
 			t.Errorf("smoothAngleOrDefault(%v) = %v, want %v", c.in, got, c.want)
 		}
-	}
-}
-
-// Smoothing is a per-surface authored setting, so it has to survive a save.
-func TestSmoothSavesPerSurface(t *testing.T) {
-	ch := squareChunk()
-	s := &ch.Sectors[0]
-	s.Floor.Smooth, s.Floor.SmoothAngle = true, 35
-	s.Walls[2].Smooth, s.Walls[2].SmoothAngle = true, 80
-
-	rc, err := chunkToRaw(&ch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rs := rc.Sectors[0]
-
-	if !rs.Floor.Smooth || rs.Floor.SmoothAngle != 35 {
-		t.Errorf("floor = (%v, %v), want (true, 35)", rs.Floor.Smooth, rs.Floor.SmoothAngle)
-	}
-	if rs.Ceiling.Smooth {
-		t.Error("ceiling picked up the floor's smoothing")
-	}
-
-	var smoothed []int
-	for i, e := range rs.Edges {
-		if e.Smooth {
-			smoothed = append(smoothed, i)
-			if e.SmoothAngle != 80 {
-				t.Errorf("edge %d angle = %v, want 80", i, e.SmoothAngle)
-			}
-		}
-	}
-	if len(smoothed) != 1 || smoothed[0] != 2 {
-		t.Errorf("smoothed edges = %v, want [2]", smoothed)
-	}
-}
-
-// The displacement-field difference step has to shrink as features get finer,
-// and stay bounded at both ends.
-func TestDispNormalEps(t *testing.T) {
-	flat := &DetailSpec{}
-	if got := dispNormalEps(flat); got <= 0 || got > 0.25 {
-		t.Fatalf("flat spec eps = %v, want a bounded positive default", got)
-	}
-
-	coarse := &DetailSpec{Waves: [detailMaxWaves]DetailWave{{Enabled: true, Frequency: 0.5}}}
-	fine := &DetailSpec{Waves: [detailMaxWaves]DetailWave{{Enabled: true, Frequency: 5}}}
-	if dispNormalEps(fine) >= dispNormalEps(coarse) {
-		t.Fatalf("finer waves must use a smaller step: fine=%v coarse=%v",
-			dispNormalEps(fine), dispNormalEps(coarse))
-	}
-
-	// Disabled slots must not drive the step.
-	off := &DetailSpec{Waves: [detailMaxWaves]DetailWave{{Enabled: false, Frequency: 20}}}
-	if dispNormalEps(off) != dispNormalEps(flat) {
-		t.Fatalf("disabled wave affected eps: %v vs %v", dispNormalEps(off), dispNormalEps(flat))
-	}
-
-	// Noise octaves double the frequency each step, so they can be the finest
-	// feature present.
-	noisy := &DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 5}
-	if dispNormalEps(noisy) >= dispNormalEps(&DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 1}) {
-		t.Fatal("more noise octaves must shrink the step")
-	}
-	if got := dispNormalEps(&DetailSpec{Noise: true, NoiseFrequency: 500, NoiseOctaves: 6}); got < 0.001 {
-		t.Fatalf("eps = %v, want it clamped at 0.001", got)
 	}
 }

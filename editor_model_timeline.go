@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
@@ -45,7 +46,7 @@ var modelSelectedKeys []modelKeyRef
 
 func modelKeySelected(bone int, t float32) bool {
 	for _, k := range modelSelectedKeys {
-		if k.Bone == bone && abs32(k.Time-t) <= modelKeyEpsilon {
+		if k.Bone == bone && geom.Abs32(k.Time-t) <= modelKeyEpsilon {
 			return true
 		}
 	}
@@ -65,7 +66,7 @@ func modelSelectKey(refs []modelKeyRef, additive bool) {
 		if modelKeySelected(r.Bone, r.Time) {
 			kept := modelSelectedKeys[:0]
 			for _, k := range modelSelectedKeys {
-				if k.Bone == r.Bone && abs32(k.Time-r.Time) <= modelKeyEpsilon {
+				if k.Bone == r.Bone && geom.Abs32(k.Time-r.Time) <= modelKeyEpsilon {
 					continue
 				}
 				kept = append(kept, k)
@@ -138,14 +139,14 @@ func (l modelTimelineLayout) timeToX(t float32) float32 {
 	if l.dur <= 0 {
 		return l.x0
 	}
-	return l.x0 + l.span*clampValue(t/l.dur, 0, 1)
+	return l.x0 + l.span*geom.ClampValue(t/l.dur, 0, 1)
 }
 
 func (l modelTimelineLayout) xToTime(x float32) float32 {
 	if l.span <= 0 {
 		return 0
 	}
-	return clampValue((x-l.x0)/l.span, 0, 1) * l.dur
+	return geom.ClampValue((x-l.x0)/l.span, 0, 1) * l.dur
 }
 
 // summaryY is the "every bone" lane, directly under the ruler.
@@ -373,7 +374,7 @@ func modelSummaryKeySelected(c *ModelClip, t float32) bool {
 	any := false
 	for i := range c.Tracks {
 		for _, k := range c.Tracks[i].Keys {
-			if abs32(k.Time-t) > modelKeyEpsilon {
+			if geom.Abs32(k.Time-t) > modelKeyEpsilon {
 				continue
 			}
 			any = true
@@ -427,7 +428,7 @@ func modelTimelinePickKey(l modelTimelineLayout, c *ModelClip, mouse imgui.Vec2)
 	const rowSlop = modelTimelineLaneH / 2
 
 	// Summary lane.
-	if abs32(mouse.Y-l.summaryY()) <= rowSlop {
+	if geom.Abs32(mouse.Y-l.summaryY()) <= rowSlop {
 		best, ok := modelNearestKeyTime(l, c.KeyTimes(), mouse.X)
 		if !ok {
 			return nil, false
@@ -435,7 +436,7 @@ func modelTimelinePickKey(l modelTimelineLayout, c *ModelClip, mouse imgui.Vec2)
 		var refs []modelKeyRef
 		for i := range c.Tracks {
 			for _, k := range c.Tracks[i].Keys {
-				if abs32(k.Time-best) <= modelKeyEpsilon {
+				if geom.Abs32(k.Time-best) <= modelKeyEpsilon {
 					refs = append(refs, modelKeyRef{Bone: c.Tracks[i].Bone, Time: k.Time})
 				}
 			}
@@ -444,7 +445,7 @@ func modelTimelinePickKey(l modelTimelineLayout, c *ModelClip, mouse imgui.Vec2)
 	}
 
 	for i, bi := range l.lanes {
-		if abs32(mouse.Y-l.laneY(i)) > rowSlop {
+		if geom.Abs32(mouse.Y-l.laneY(i)) > rowSlop {
 			continue
 		}
 		tr := c.trackFor(bi)
@@ -471,7 +472,7 @@ func modelNearestKeyTime(l modelTimelineLayout, times []float32, x float32) (flo
 	bestD := modelTimelineKeyR + 2
 	found := false
 	for _, t := range times {
-		if d := abs32(l.timeToX(t) - x); d <= bestD {
+		if d := geom.Abs32(l.timeToX(t) - x); d <= bestD {
 			best, bestD, found = t, d, true
 		}
 	}

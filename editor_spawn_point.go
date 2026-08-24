@@ -113,7 +113,7 @@ func editorSpawnPointSection(lvl *Level) {
 		s.Rotation = spawnRotationFromCamera()
 	}
 
-	if imgui.Button("Delete Spawn Point##spawn") {
+	if imgui.Button("Delete Spawn geom.Point##spawn") {
 		EditorPushUndo()
 		s.Delete()
 		lvl.Spawn = nil

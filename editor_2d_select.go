@@ -26,6 +26,7 @@ package main
 // since a sector that does not exist yet has only free points to pick.
 
 import (
+	"foundry/internal/geom"
 	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -251,7 +252,7 @@ func editor2DFaceAt(ch *Chunk, wx, wz, threshold float32) (faceSel, bool) {
 
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
-		if !pointInPolygon(mgl32.Vec2{wx, wz}, SectorPoints(ch, s)) {
+		if !geom.PointInPolygon(mgl32.Vec2{wx, wz}, SectorPoints(ch, s)) {
 			continue
 		}
 		// Which of the two horizontal surfaces the click means is the map's own

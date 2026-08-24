@@ -31,9 +31,9 @@ func editorSpawnSection(lvl *Level) {
 	}
 	editorFocusScroll(panelFocusSpawn)
 
-	label := "Place Spawn Point"
+	label := "Place Spawn geom.Point"
 	if lvl.Spawn != nil {
-		label = "Move Spawn Point"
+		label = "Move Spawn geom.Point"
 	}
 	if imgui.Button(label + "##spawnplace") {
 		Editor.SpawnPlacementMode = true

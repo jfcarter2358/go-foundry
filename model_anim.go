@@ -33,6 +33,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 	"math"
 	"sort"
 	"strings"
@@ -177,7 +178,7 @@ func (c *ModelClip) wrapClipTime(t float32) float32 {
 		return 0
 	}
 	if !c.Loop {
-		return clampValue(t, 0, d)
+		return geom.ClampValue(t, 0, d)
 	}
 	t = float32(math.Mod(float64(t), float64(d)))
 	if t < 0 {
@@ -220,7 +221,7 @@ func (c *ModelClip) SetKey(bi int, t float32, bp ModelBonePose) {
 	tr := c.ensureTrack(bi)
 	key := ModelBoneKey{Time: t, ModelBonePose: bp.normalized()}
 	for i := range tr.Keys {
-		if abs32(tr.Keys[i].Time-t) <= modelKeyEpsilon {
+		if geom.Abs32(tr.Keys[i].Time-t) <= modelKeyEpsilon {
 			tr.Keys[i] = key
 			return
 		}
@@ -238,7 +239,7 @@ func (c *ModelClip) DeleteKey(bi int, t float32) bool {
 		}
 		tr := &c.Tracks[i]
 		for k := range tr.Keys {
-			if abs32(tr.Keys[k].Time-t) > modelKeyEpsilon {
+			if geom.Abs32(tr.Keys[k].Time-t) > modelKeyEpsilon {
 				continue
 			}
 			tr.Keys = append(tr.Keys[:k], tr.Keys[k+1:]...)
@@ -270,7 +271,7 @@ func (c *ModelClip) HasKeyAt(bi int, t float32) bool {
 		return false
 	}
 	for _, k := range tr.Keys {
-		if abs32(k.Time-t) <= modelKeyEpsilon {
+		if geom.Abs32(k.Time-t) <= modelKeyEpsilon {
 			return true
 		}
 	}
@@ -285,7 +286,7 @@ func (c *ModelClip) KeyTimes() []float32 {
 		for _, k := range c.Tracks[i].Keys {
 			dup := false
 			for _, t := range out {
-				if abs32(t-k.Time) <= modelKeyEpsilon {
+				if geom.Abs32(t-k.Time) <= modelKeyEpsilon {
 					dup = true
 					break
 				}

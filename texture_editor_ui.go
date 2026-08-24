@@ -23,6 +23,7 @@ import (
 	"github.com/veandco/go-sdl2/sdl"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/geom"
 	"foundry/internal/texdoc"
 )
 
@@ -754,7 +755,7 @@ func texEditorColorToVec4(c color.RGBA) [4]float32 {
 }
 
 func texEditorVec4ToColor(v [4]float32) color.RGBA {
-	q := func(f float32) uint8 { return uint8(clamp01(f)*255 + 0.5) }
+	q := func(f float32) uint8 { return uint8(geom.Clamp01(f)*255 + 0.5) }
 	return color.RGBA{R: q(v[0]), G: q(v[1]), B: q(v[2]), A: q(v[3])}
 }
 

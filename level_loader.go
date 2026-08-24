@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/geom"
 	"log"
 	"math"
 	"os"
@@ -567,7 +568,7 @@ func blankRawLevel() RawLevel {
 	return RawLevel{
 		Chunks: []RawChunk{{
 			ID: "default",
-			Points: map[string]Point{
+			Points: map[string]geom.Point{
 				"A": {X: -4, Y: -4},
 				"B": {X: 4, Y: -4},
 				"C": {X: 4, Y: 4},

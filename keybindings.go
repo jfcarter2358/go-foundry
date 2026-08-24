@@ -127,7 +127,7 @@ var keybindSectionTable = []KeybindSection{
 		Title:  "Editor — 3D view",
 		Active: func() bool { return Editor.Active && Editor.Mode == Mode3D },
 		Binds: []Keybind{
-			{"1 / 2 / 3", "Point / edge / face select"},
+			{"1 / 2 / 3", "geom.Point / edge / face select"},
 			{"Z", "Toggle wireframe"},
 			{"V", "Toggle orbit and fly camera"},
 			{"F", "Frame the selection"},

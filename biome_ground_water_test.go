@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"math"
 	"os"
 	"path/filepath"
@@ -256,8 +257,8 @@ func TestGroundDisplacementRespectsConfiguredAmplitude(t *testing.T) {
 		m := float32(0)
 		for x := float32(0); x < 30; x += 1.7 {
 			for z := float32(0); z < 30; z += 2.3 {
-				if d := groundDisplacement(kind, brush, seed, x, z); abs32(d) > m {
-					m = abs32(d)
+				if d := groundDisplacement(kind, brush, seed, x, z); geom.Abs32(d) > m {
+					m = geom.Abs32(d)
 				}
 			}
 		}
@@ -568,7 +569,7 @@ func TestBiomeWaterCentroidAndFloor(t *testing.T) {
 func TestRawBiomeBrushYAMLRoundTrip(t *testing.T) {
 	rb := RawBiomeSector{
 		ID:     "b0",
-		Points: []Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
+		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
 		Brush: RawBiomeBrush{
 			Kind:       BiomeWater,
 			Density:    0.5,
@@ -615,7 +616,7 @@ func TestRawBiomeBrushYAMLRoundTrip(t *testing.T) {
 func TestWildflowerBloomOptionsRoundTrip(t *testing.T) {
 	set := RawBiomeSector{
 		ID:     "w0",
-		Points: []Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
+		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
 		Brush: RawBiomeBrush{
 			Kind:            BiomeWildflower,
 			BloomSpike:      true,
@@ -679,7 +680,7 @@ func TestClampGrassClumpRange(t *testing.T) {
 func TestGrassClumpRoundTrip(t *testing.T) {
 	set := RawBiomeSector{
 		ID:     "g0",
-		Points: []Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
+		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
 		Brush:  RawBiomeBrush{Kind: BiomeGrass, GrassClump: 0.65},
 	}
 	out, err := yaml.Marshal(set)
@@ -710,7 +711,7 @@ func TestGrassClumpRoundTrip(t *testing.T) {
 func TestFadeRoundTrip(t *testing.T) {
 	set := RawBiomeSector{
 		ID:     "f0",
-		Points: []Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
+		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
 		Brush: RawBiomeBrush{
 			Kind:              BiomeGrass,
 			RangeFadeFraction: 0.5,
@@ -902,7 +903,7 @@ func TestWildflowerMeshCarriesLeaves(t *testing.T) {
 func TestStemLeavesRoundTrip(t *testing.T) {
 	set := RawBiomeSector{
 		ID:     "f0",
-		Points: []Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
+		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
 		Brush:  RawBiomeBrush{Kind: BiomeWildflower, StemLeaves: true},
 	}
 	out, err := yaml.Marshal(set)
@@ -990,7 +991,7 @@ func TestResolvedLeafScale(t *testing.T) {
 func TestLeafScaleRoundTrip(t *testing.T) {
 	set := RawBiomeSector{
 		ID:     "l0",
-		Points: []Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
+		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
 		Brush:  RawBiomeBrush{Kind: BiomeWildflower, StemLeaves: true, LeafScale: 2.25},
 	}
 	out, err := yaml.Marshal(set)

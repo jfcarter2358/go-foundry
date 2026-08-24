@@ -472,7 +472,7 @@ func editorTerrainPanel(ch *Chunk, s *Sector, surfaceLabel string, terrain *bool
 	changed := false
 	changed = imgui.Checkbox(fmt.Sprintf("Enabled##%sterrEn", surfaceLabel), terrain) || changed
 
-	if imgui.Button(fmt.Sprintf("+ Add Point##%sterrAdd", surfaceLabel)) {
+	if imgui.Button(fmt.Sprintf("+ Add geom.Point##%sterrAdd", surfaceLabel)) {
 		EditorPushUndo()
 		*terrainPts = append(*terrainPts, TerrainPoint{U: 0, V: 0, Depth: 0})
 		Editor.ActiveTerrainPtIdx = len(*terrainPts) - 1
@@ -482,7 +482,7 @@ func editorTerrainPanel(ch *Chunk, s *Sector, surfaceLabel string, terrain *bool
 	// List points as selectable items
 	for i := range *terrainPts {
 		selected := i == Editor.ActiveTerrainPtIdx
-		if imgui.SelectableV(fmt.Sprintf("Point #%d##%sterr%d", i, surfaceLabel, i), selected, 0, imgui.Vec2{}) {
+		if imgui.SelectableV(fmt.Sprintf("geom.Point #%d##%sterr%d", i, surfaceLabel, i), selected, 0, imgui.Vec2{}) {
 			if selected {
 				Editor.ActiveTerrainPtIdx = -1
 			} else {
@@ -497,7 +497,7 @@ func editorTerrainPanel(ch *Chunk, s *Sector, surfaceLabel string, terrain *bool
 		tp := &(*terrainPts)[idx]
 		imgui.PushID(fmt.Sprintf("%sterr%d", surfaceLabel, idx))
 		imgui.Separator()
-		imgui.Text(fmt.Sprintf("Point #%d", idx))
+		imgui.Text(fmt.Sprintf("geom.Point #%d", idx))
 		changed = editorDragFloat("U##tpu", &tp.U, 0, 0, "%.3f") || changed
 		changed = editorDragFloat("V##tpv", &tp.V, 0, 0, "%.3f") || changed
 		changed = editorDragFloat("Depth##tpd", &tp.Depth, -10, 10, "%.3f") || changed

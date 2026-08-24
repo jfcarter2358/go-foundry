@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"math"
 	"testing"
 
@@ -81,7 +82,7 @@ func TestGizmoRotateTurnsTheEntityInPlace(t *testing.T) {
 	if e.Position != start {
 		t.Errorf("entity moved while rotating: %v", e.Position)
 	}
-	if abs32(e.Rotation.Y()-0.5) > 1e-5 {
+	if geom.Abs32(e.Rotation.Y()-0.5) > 1e-5 {
 		t.Errorf("rotation: got %v, want Y=0.5", e.Rotation)
 	}
 	// A drag about one world axis must not leak into the other two channels —
@@ -93,11 +94,11 @@ func TestGizmoRotateTurnsTheEntityInPlace(t *testing.T) {
 
 func TestEulerRotatedAboutIsPerAxis(t *testing.T) {
 	start := mgl32.Vec3{0.1, 0.2, 0.3}
-	if got := eulerRotatedAbout(start, mgl32.Vec3{1, 0, 0}, 0.5); abs32(got.X()-0.6) > 1e-5 ||
+	if got := eulerRotatedAbout(start, mgl32.Vec3{1, 0, 0}, 0.5); geom.Abs32(got.X()-0.6) > 1e-5 ||
 		got.Y() != start.Y() || got.Z() != start.Z() {
 		t.Errorf("X axis: got %v", got)
 	}
-	if got := eulerRotatedAbout(start, mgl32.Vec3{0, 0, 1}, 0.5); abs32(got.Z()-0.8) > 1e-5 {
+	if got := eulerRotatedAbout(start, mgl32.Vec3{0, 0, 1}, 0.5); geom.Abs32(got.Z()-0.8) > 1e-5 {
 		t.Errorf("Z axis: got %v", got)
 	}
 	// Wrapped, so a long drag cannot run the angle away.

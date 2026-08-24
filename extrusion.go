@@ -7,6 +7,7 @@ package main
 // (at the extruded depth), plus an optional back face.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -163,7 +164,7 @@ func buildWallWithExtrusions(
 		holes = append(holes, hole)
 	}
 
-	merged, triIdx := earClipWithHoles(outerQuad, holes)
+	merged, triIdx := geom.EarClipWithHoles(outerQuad, holes)
 	// Map merged polygon points to world-space vertices
 	frontBase := len(allVerts)
 	for _, uv := range merged {
@@ -183,7 +184,7 @@ func buildWallWithExtrusions(
 			{0, wallH},
 		}
 
-		backMerged, backTriIdx := earClipWithHoles(backOuter, holes)
+		backMerged, backTriIdx := geom.EarClipWithHoles(backOuter, holes)
 		backBase := len(allVerts)
 		for _, uv := range backMerged {
 			v := wallLocalVertex(uv.X(), uv.Y(), 0, p1, p2, dir, norm, wallLen, floorH1, floorH2, ceilH1, ceilH2)
@@ -262,7 +263,7 @@ func buildWallWithExtrusions(
 			for i, p := range ext.Inner {
 				innerPoly[i] = mgl32.Vec2{p.U, p.V}
 			}
-			backTris := earClip(innerPoly)
+			backTris := geom.EarClip(innerPoly)
 
 			if ext.Texture != "" {
 				// Separate geometry for custom extrusion texture
@@ -383,7 +384,7 @@ func buildFloorWithExtrusions(
 		}
 	}
 
-	merged, triIdx := earClipWithHoles(outer, holes)
+	merged, triIdx := geom.EarClipWithHoles(outer, holes)
 	base := len(allVerts)
 	for _, pt := range merged {
 		// Find matching boundary point for height
@@ -476,7 +477,7 @@ func buildFloorWithExtrusions(
 			for i, p := range ext.Inner {
 				innerPoly[i] = mgl32.Vec2{p.U, p.V}
 			}
-			backTris := earClip(innerPoly)
+			backTris := geom.EarClip(innerPoly)
 
 			if ext.Texture != "" {
 				// Separate geometry for custom extrusion texture
@@ -548,7 +549,7 @@ func buildTerrainMesh(
 	}
 
 	// Delaunay triangulate with boundary clipping
-	triIdx := delaunayTriangulate(allPts, boundary)
+	triIdx := geom.DelaunayTriangulate(allPts, boundary)
 
 	// Build vertices
 	var allVerts [][]float32
@@ -618,7 +619,7 @@ func buildFloorCollisionData(
 		allDepths[nBoundary+i] = tp.Depth
 	}
 
-	tris := delaunayTriangulate(allPts, boundary)
+	tris := geom.DelaunayTriangulate(allPts, boundary)
 	return allPts, allDepths, tris
 }
 

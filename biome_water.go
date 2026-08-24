@@ -18,6 +18,8 @@ package main
 // beneath it.
 
 import (
+	"foundry/internal/geom"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -112,7 +114,7 @@ func buildBiomeWaterMesh(s *BiomeSector, centroid mgl32.Vec2) ([][]float32, []in
 	if len(allPts) == 0 {
 		return nil, nil
 	}
-	triIdx := delaunayTriangulate(allPts, boundary)
+	triIdx := geom.DelaunayTriangulate(allPts, boundary)
 	if len(triIdx) == 0 {
 		return nil, nil
 	}

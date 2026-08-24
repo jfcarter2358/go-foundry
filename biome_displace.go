@@ -11,6 +11,7 @@ package main
 // displaced floor keeps the old flat behavior, unaffected by any of this.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -79,7 +80,7 @@ func resolvedMaxSlope(kind int32, v float32) float32 {
 // covered, 0 = fully excluded, in between across the transition band.
 //
 // n need NOT be unit length — it is normalized here. That is load-bearing, not
-// politeness: InterpolateSurfaceHeight (via collision.go's triangleNormal)
+// politeness: InterpolateSurfaceHeight (via collision.go's geom.TriangleNormal)
 // hands back a raw cross product, whose length scales with the triangle's
 // area. A 16x16 floor quad yields something like (0,256,-128). Reading .Y off
 // that and clamping into acos's domain pins every such normal at 0 degrees, so
@@ -109,7 +110,7 @@ func slopeCoverage(kind int32, n mgl32.Vec3, minAngle, maxAngle float32) float32
 	if maxA < 90 {
 		hi = 1 - smoothstep32(maxA-slopeFeatherDegrees, maxA+slopeFeatherDegrees, angle)
 	}
-	return clamp01(lo * hi)
+	return geom.Clamp01(lo * hi)
 }
 
 // biomeSurfaceAt is the single definition of where a biome sector's terrain
@@ -279,7 +280,7 @@ const groundPatchYBias = float32(0.015)
 // buildBiomeWaterMesh both triangulate: sector s's polygon boundary
 // (densified so long edges get their own points to snap to, see
 // densifyPolygon) followed by an interior grid of points strictly inside it.
-// Returns the densified boundary too — delaunayTriangulate needs it both as
+// Returns the densified boundary too — geom.DelaunayTriangulate needs it both as
 // input points and as the inside/outside test polygon.
 func biomeMeshPoints(s *BiomeSector) (boundary, allPts []mgl32.Vec2) {
 	boundary = ccwPolygon(s.Points)
@@ -306,7 +307,7 @@ func biomeMeshPoints(s *BiomeSector) (boundary, allPts []mgl32.Vec2) {
 		for ix := 1; ix < nx; ix++ {
 			wx := min.X() + float32(ix)*cellX
 			p := mgl32.Vec2{wx, wz}
-			if pointInPolygon(p, boundary) {
+			if geom.PointInPolygon(p, boundary) {
 				allPts = append(allPts, p)
 			}
 		}
@@ -321,7 +322,7 @@ func biomeMeshPoints(s *BiomeSector) (boundary, allPts []mgl32.Vec2) {
 // can be private to the ground mesher.
 
 // ccwPolygon returns pts in counter-clockwise winding (per signedArea2D),
-// reversing a copy if it isn't already — delaunayTriangulate/earClip both
+// reversing a copy if it isn't already — geom.DelaunayTriangulate/geom.EarClip both
 // assume CCW. BiomeSector.Points is normalized to CCW when a sector is first
 // drawn (finishBiomeSectorDraw), but nothing re-checks it after a vertex is
 // dragged, so this is a defensive re-check rather than a known-redundant one.
@@ -355,7 +356,7 @@ func clampOctaves(n int32) int {
 // winding order.
 //
 // Feeding this — rather than just the sector's own hand-placed vertices —
-// into delaunayTriangulate as its boundary is what makes the mesh's edge
+// into geom.DelaunayTriangulate as its boundary is what makes the mesh's edge
 // follow the polygon exactly: with only the sparse hand-placed vertices as
 // boundary points, Bowyer-Watson has nothing to stop it from routing a
 // boundary edge through a long diagonal as a staircase of grid-aligned

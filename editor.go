@@ -264,7 +264,7 @@ type EditorState struct {
 	// joining them.
 	ShowPointSelectRadius bool
 
-	// Point connection state for ctrl+click workflow
+	// geom.Point connection state for ctrl+click workflow
 	PendingEdges [][2]int // edges not yet part of a sector (chunk point indices)
 
 	// Navigation button state (reset each frame after applying)

@@ -1,4 +1,4 @@
-package main
+package geom
 
 // triangulate.go — ear-clipping triangulation with hole support.
 //
@@ -91,9 +91,9 @@ func isEarDegenerate(polygon []mgl32.Vec2, indices []int, i int) bool {
 	return true
 }
 
-// earClip triangulates a simple polygon using ear clipping.
+// EarClip triangulates a simple polygon using ear clipping.
 // polygon must be CCW. Returns triangle indices into the polygon slice.
-func earClip(polygon []mgl32.Vec2) []int {
+func EarClip(polygon []mgl32.Vec2) []int {
 	n := len(polygon)
 	if n < 3 {
 		return nil
@@ -246,7 +246,7 @@ func bridgeHole(outer []mgl32.Vec2, hole []mgl32.Vec2) []mgl32.Vec2 {
 	//
 	// The bridge creates two pairs of nearly-coincident vertices (one pair
 	// at the outer bridge point, one at the hole bridge point). We offset
-	// each duplicate perpendicular to the bridge direction so earClip
+	// each duplicate perpendicular to the bridge direction so EarClip
 	// sees distinct vertices and can triangulate normally.
 	outerBridge := outer[bestIdx]
 	holeBridge := hole[holeIdx]
@@ -285,13 +285,13 @@ func bridgeHole(outer []mgl32.Vec2, hole []mgl32.Vec2) []mgl32.Vec2 {
 	return result
 }
 
-// earClipWithHoles triangulates an outer polygon with holes.
+// EarClipWithHoles triangulates an outer polygon with holes.
 // outer must be CCW; each hole must be CW.
 // Returns triangle indices into the merged polygon vertex array, along with
 // the merged polygon itself (needed for coordinate lookup).
-func earClipWithHoles(outer []mgl32.Vec2, holes [][]mgl32.Vec2) ([]mgl32.Vec2, []int) {
+func EarClipWithHoles(outer []mgl32.Vec2, holes [][]mgl32.Vec2) ([]mgl32.Vec2, []int) {
 	merged := mergeHoles(outer, holes)
-	tris := earClip(merged)
+	tris := EarClip(merged)
 	return merged, tris
 }
 
@@ -318,11 +318,11 @@ func circumcircleContains(a, b, c, p mgl32.Vec2) bool {
 	return det < 0
 }
 
-// delaunayTriangulate performs Bowyer-Watson Delaunay triangulation on a set of 2D points.
+// DelaunayTriangulate performs Bowyer-Watson Delaunay triangulation on a set of 2D points.
 // Returns triangle indices (triplets) into the points slice. Only triangles whose centroids
 // are inside the boundary polygon are kept. If boundary is nil, all non-super-triangle
 // triangles are returned.
-func delaunayTriangulate(points []mgl32.Vec2, boundary []mgl32.Vec2) []int {
+func DelaunayTriangulate(points []mgl32.Vec2, boundary []mgl32.Vec2) []int {
 	n := len(points)
 	if n < 3 {
 		return nil
@@ -416,7 +416,7 @@ func delaunayTriangulate(points []mgl32.Vec2, boundary []mgl32.Vec2) []int {
 		if boundary != nil {
 			cx := (points[t.v[0]].X() + points[t.v[1]].X() + points[t.v[2]].X()) / 3
 			cy := (points[t.v[0]].Y() + points[t.v[1]].Y() + points[t.v[2]].Y()) / 3
-			if !pointInPolygon(mgl32.Vec2{cx, cy}, boundary) {
+			if !PointInPolygon(mgl32.Vec2{cx, cy}, boundary) {
 				continue
 			}
 		}
@@ -426,8 +426,8 @@ func delaunayTriangulate(points []mgl32.Vec2, boundary []mgl32.Vec2) []int {
 	return result
 }
 
-// pointInPolygon uses ray-casting to test if pt is inside polygon (XZ coordinates).
-func pointInPolygon(pt mgl32.Vec2, polygon []mgl32.Vec2) bool {
+// PointInPolygon uses ray-casting to test if pt is inside polygon (XZ coordinates).
+func PointInPolygon(pt mgl32.Vec2, polygon []mgl32.Vec2) bool {
 	n := len(polygon)
 	inside := false
 	j := n - 1
@@ -449,10 +449,10 @@ func pointInPolygon(pt mgl32.Vec2, polygon []mgl32.Vec2) bool {
 // for its own floor, and by the biome mesher. Pure geometry, so it sits with
 // the rest of it rather than inside whichever caller needed it first.
 
-// pointInTriangle2D tests whether p lies inside the 2D triangle (a, b, c).
+// PointInTriangle2D tests whether p lies inside the 2D triangle (a, b, c).
 // Returns (inside, wA, wB, wC) where wA/wB/wC are the barycentric weights
 // for vertices A, B, C respectively.
-func pointInTriangle2D(p, a, b, c mgl32.Vec2) (bool, float32, float32, float32) {
+func PointInTriangle2D(p, a, b, c mgl32.Vec2) (bool, float32, float32, float32) {
 	v0 := c.Sub(a)
 	v1 := b.Sub(a)
 	v2 := p.Sub(a)
@@ -476,9 +476,9 @@ func pointInTriangle2D(p, a, b, c mgl32.Vec2) (bool, float32, float32, float32) 
 	return false, 0, 0, 0
 }
 
-// triangleNormal returns the (unnormalized) cross-product normal of the
+// TriangleNormal returns the (unnormalized) cross-product normal of the
 // triangle defined by 3D vertices a, b, c.
-func triangleNormal(a, b, c mgl32.Vec3) mgl32.Vec3 {
+func TriangleNormal(a, b, c mgl32.Vec3) mgl32.Vec3 {
 	e1 := b.Sub(a)
 	e2 := c.Sub(a)
 	return mgl32.Vec3{

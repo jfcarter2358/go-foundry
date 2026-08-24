@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"math"
 	"testing"
 
@@ -119,10 +120,10 @@ func TestGizmo2DRotateSpawnMovesOnlyTheYaw(t *testing.T) {
 	}
 	// The map measures angles the other way round from a Y Euler rotation, so
 	// a positive map delta subtracts from the yaw.
-	if abs32(s.Rotation.Y()-(0.25-0.5)) > 1e-5 {
+	if geom.Abs32(s.Rotation.Y()-(0.25-0.5)) > 1e-5 {
 		t.Errorf("yaw: got %v, want %v", s.Rotation.Y(), 0.25-0.5)
 	}
-	if s.Rotation.X() != 0 || abs32(s.Rotation.Z()-0.4) > 1e-6 {
+	if s.Rotation.X() != 0 || geom.Abs32(s.Rotation.Z()-0.4) > 1e-6 {
 		t.Errorf("the map drag disturbed pitch or roll: %v", s.Rotation)
 	}
 }

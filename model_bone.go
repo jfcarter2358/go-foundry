@@ -24,6 +24,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 	"math"
 	"sort"
 	"strings"
@@ -422,7 +423,7 @@ func boneBasisAxes(b ModelBone) (x, y, z mgl32.Vec3, length float32, ok bool) {
 	}
 	y = dir.Mul(1 / length)
 
-	x = perpAxis(y)
+	x = geom.PerpAxis(y)
 	if x.Len() < 1e-6 {
 		x = mgl32.Vec3{1, 0, 0}
 	}
@@ -490,7 +491,7 @@ func closestPointOnSegment3D(p, a, b mgl32.Vec3) (mgl32.Vec3, float32) {
 	if denom < 1e-12 {
 		return a, p.Sub(a).Len()
 	}
-	t := clampValue(p.Sub(a).Dot(ab)/denom, 0, 1)
+	t := geom.ClampValue(p.Sub(a).Dot(ab)/denom, 0, 1)
 	q := a.Add(ab.Mul(t))
 	return q, p.Sub(q).Len()
 }

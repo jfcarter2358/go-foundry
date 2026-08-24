@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"math"
 	"testing"
 
@@ -8,7 +9,7 @@ import (
 )
 
 func vecNear(a, b mgl32.Vec3, tol float32) bool {
-	return abs32(a.X()-b.X()) <= tol && abs32(a.Y()-b.Y()) <= tol && abs32(a.Z()-b.Z()) <= tol
+	return geom.Abs32(a.X()-b.X()) <= tol && geom.Abs32(a.Y()-b.Y()) <= tol && geom.Abs32(a.Z()-b.Z()) <= tol
 }
 
 // ---------- transform ----------
@@ -201,7 +202,7 @@ func TestWrapAngle(t *testing.T) {
 		{float32(4*math.Pi + 1), 1},
 	}
 	for _, c := range cases {
-		if got := wrapAngle(c.in); abs32(got-c.want) > 1e-4 {
+		if got := wrapAngle(c.in); geom.Abs32(got-c.want) > 1e-4 {
 			t.Errorf("wrapAngle(%v) = %v, want %v", c.in, got, c.want)
 		}
 	}
@@ -214,7 +215,7 @@ func TestWrapAngle(t *testing.T) {
 		if got < -math.Pi-1e-4 || got > math.Pi+1e-4 {
 			t.Errorf("wrapAngle(%v) = %v, out of [-pi, pi]", in, got)
 		}
-		if abs32(abs32(got)-math.Pi) > 1e-4 {
+		if geom.Abs32(geom.Abs32(got)-math.Pi) > 1e-4 {
 			t.Errorf("wrapAngle(%v) = %v, want ±pi", in, got)
 		}
 	}

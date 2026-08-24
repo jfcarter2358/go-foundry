@@ -4,7 +4,7 @@ package main
 //
 // The biome layer is a separate polygon layer from structural sector
 // geometry: while Editor.BiomeLayerActive, the 2D view draws/selects/edits
-// BiomeSector polygons instead of structural sectors. Point placement mirrors
+// BiomeSector polygons instead of structural sectors. geom.Point placement mirrors
 // the existing wall-extrusion placement pattern (editor_extrusion.go): click
 // to add a point, click near the first point (or press Enter) to close the
 // polygon, Escape to cancel. Once drawn, a sector is selected (from the 2D
@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -34,7 +35,7 @@ func activeChunk() *Chunk {
 func biomeSectorAt(ch *Chunk, wx, wz float32) int {
 	pt := mgl32.Vec2{wx, wz}
 	for i := len(ch.BiomeSectors) - 1; i >= 0; i-- {
-		if pointInPolygon(pt, ch.BiomeSectors[i].Points) {
+		if geom.PointInPolygon(pt, ch.BiomeSectors[i].Points) {
 			return i
 		}
 	}
@@ -304,9 +305,9 @@ func Editor2DRenderBiomeOverlay() {
 		col := imgui.PackedColorFromVec4(imgui.Vec4{X: c.X(), Y: c.Y(), Z: c.Z(), W: a})
 		// A triangle fan from Points[0] only fills correctly for convex
 		// polygons; concave sectors need real ear-clip triangulation or the
-		// fan bulges outside the boundary. earClip assumes CCW input.
+		// fan bulges outside the boundary. geom.EarClip assumes CCW input.
 		poly := ccwPolygon(bs.Points)
-		tris := earClip(poly)
+		tris := geom.EarClip(poly)
 		for i := 0; i+2 < len(tris); i += 3 {
 			ax, ay := worldToScreen(poly[tris[i]].X(), poly[tris[i]].Y())
 			bx, by := worldToScreen(poly[tris[i+1]].X(), poly[tris[i+1]].Y())

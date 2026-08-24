@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"math"
 	"testing"
 
@@ -164,7 +165,7 @@ func TestGizmoRotateTurnsTheSpawnMarkerInPlace(t *testing.T) {
 	if s.Position != start {
 		t.Errorf("the marker moved while rotating: %v", s.Position)
 	}
-	if abs32(s.Rotation.Y()-float32(math.Pi/2)) > 1e-5 {
+	if geom.Abs32(s.Rotation.Y()-float32(math.Pi/2)) > 1e-5 {
 		t.Errorf("rotation: got %v, want Y=pi/2", s.Rotation)
 	}
 	// The arrow the author sees and the direction gameplay reads are the same

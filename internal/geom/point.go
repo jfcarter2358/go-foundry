@@ -1,4 +1,4 @@
-package main
+package geom
 
 type Point struct {
 	X float32 `yaml:"x"`

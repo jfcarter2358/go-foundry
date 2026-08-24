@@ -31,6 +31,8 @@ package main
 // mesh and editor framerates there is nothing to gain from the hardware path.
 
 import (
+	"foundry/internal/geom"
+
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -291,7 +293,7 @@ func modelPoseSetTime(t float32) {
 		modelPoseTime = 0
 		return
 	}
-	modelPoseTime = clampValue(t, 0, c.duration())
+	modelPoseTime = geom.ClampValue(t, 0, c.duration())
 	modelPoseSampleClip()
 }
 

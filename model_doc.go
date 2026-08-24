@@ -18,6 +18,7 @@ package main
 // subdivide and texture as a unit.
 
 import (
+	"foundry/internal/geom"
 	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -79,7 +80,7 @@ type ModelDoc struct {
 	// does: a .fmdl is the one thing the level places, and motion kept elsewhere
 	// would be a second file to keep in step.
 	Animations  []ModelClip
-	SmoothAngle float32 // 0 = defaultSmoothAngle (smooth.go)
+	SmoothAngle float32 // 0 = geom.DefaultSmoothAngle (smooth.go)
 	Path        string  // on-disk .fmdl path; empty until first Save As
 
 	adj   *modelAdjacency // derived; nil when stale
@@ -358,9 +359,9 @@ func faceUVCentroid(f *ModelFace) mgl32.Vec2 {
 // (0..len(f.Verts)-1), so callers can look up both the position and the UV of
 // each corner.
 //
-// triangulate.go's earClip is a 2D routine, so the face is projected onto its
+// triangulate.go's geom.EarClip is a 2D routine, so the face is projected onto its
 // own best-fit plane first: a basis (u, v) perpendicular to the Newell normal,
-// with perpAxis (detail_render.go) picking a stable first axis. This is the
+// with geom.PerpAxis (detail_render.go) picking a stable first axis. This is the
 // same trick computeFaceBasis uses for procedural detail, but on indexed data
 // rather than a flat vertex buffer.
 func (m *ModelDoc) faceTriangles(fi int) [][3]int {
@@ -382,7 +383,7 @@ func (m *ModelDoc) faceTriangles(fi int) [][3]int {
 		// keeps the triangle count right without inventing a plane.
 		return fanTriangles(n)
 	}
-	u := perpAxis(nrm)
+	u := geom.PerpAxis(nrm)
 	if u.Len() < 1e-6 {
 		return fanTriangles(n)
 	}
@@ -396,7 +397,7 @@ func (m *ModelDoc) faceTriangles(fi int) [][3]int {
 		poly[i] = mgl32.Vec2{d.Dot(u), d.Dot(v)}
 	}
 
-	flat := earClip(poly)
+	flat := geom.EarClip(poly)
 	if len(flat) < 3 {
 		return fanTriangles(n)
 	}
@@ -444,7 +445,7 @@ type modelSubmesh struct {
 // one group and one draw call, and an empty mesh compiles to nothing at all.
 //
 // Normals are not computed here: Smooth rides on the submesh and Geometry.Load
-// runs computeSmoothNormals itself, welding across the whole submesh, which is
+// runs geom.ComputeSmoothNormals itself, welding across the whole submesh, which is
 // what makes a subdivided sphere shade as one surface.
 func (m *ModelDoc) modelSubmeshes() []modelSubmesh {
 	return m.modelSubmeshesFrom(m.Verts)
@@ -472,7 +473,7 @@ func (m *ModelDoc) modelSubmeshesFrom(verts []mgl32.Vec3) []modelSubmesh {
 
 		// Each face contributes its own vertex records. Sharing them between
 		// faces would merge UV seams that the user set deliberately; the
-		// position-welding in computeSmoothNormals re-joins them for shading.
+		// position-welding in geom.ComputeSmoothNormals re-joins them for shading.
 		base := len(g.Vertices)
 		for i, vi := range f.Verts {
 			var p mgl32.Vec3

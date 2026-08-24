@@ -293,7 +293,7 @@ func main() {
 
 		KeyStates = sdl.GetKeyboardState()
 
-		// Point the F1 reference at the focused window before anything draws.
+		// geom.Point the F1 reference at the focused window before anything draws.
 		KeybindHelpUpdateFocus(MainWindowID)
 
 		if Editor.Active {

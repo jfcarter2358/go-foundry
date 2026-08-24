@@ -15,6 +15,7 @@ package main
 // slowly shear the selection.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -73,7 +74,7 @@ const (
 // axis. Deterministic for a given axis, so the angle measured during a drag and
 // the ring drawn on screen agree about where zero is.
 func modelRingBasis(axis mgl32.Vec3) (u, v mgl32.Vec3) {
-	u = perpAxis(axis)
+	u = geom.PerpAxis(axis)
 	if u.Len() < 1e-6 {
 		u = mgl32.Vec3{1, 0, 0}
 	}

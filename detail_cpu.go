@@ -16,6 +16,7 @@ package main
 // always agree.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -29,7 +30,7 @@ func smoothstep32(edge0, edge1, x float32) float32 {
 		}
 		return 1
 	}
-	t := clamp01((x - edge0) / (edge1 - edge0))
+	t := geom.Clamp01((x - edge0) / (edge1 - edge0))
 	return t * t * (3 - 2*t)
 }
 
@@ -159,7 +160,7 @@ func distPointSeg(p, a, b mgl32.Vec3) float32 {
 	if denom < 1e-8 {
 		denom = 1e-8
 	}
-	t := clamp01(p.Sub(a).Dot(ab) / denom)
+	t := geom.Clamp01(p.Sub(a).Dot(ab) / denom)
 	return p.Sub(a.Add(ab.Mul(t))).Len()
 }
 
@@ -403,7 +404,7 @@ func computeFaceBasis(verts []float32) faceBasis {
 	tan := vtx(verts, 5).Sub(p0)
 	tan = tan.Sub(n.Mul(tan.Dot(n))) // project into plane
 	if tan.Len() < 1e-6 {
-		tan = perpAxis(n)
+		tan = geom.PerpAxis(n)
 	}
 	u := tan.Normalize()
 	v := n.Cross(u).Normalize()

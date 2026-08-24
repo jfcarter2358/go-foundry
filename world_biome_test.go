@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -55,10 +56,10 @@ func TestBiomeSectorPointInPolygon(t *testing.T) {
 	if signedArea2D(pts) < 0 {
 		t.Fatal("test polygon should already be CCW")
 	}
-	if !pointInPolygon(mgl32.Vec2{0, 0}, pts) {
+	if !geom.PointInPolygon(mgl32.Vec2{0, 0}, pts) {
 		t.Fatal("origin should be inside the square")
 	}
-	if pointInPolygon(mgl32.Vec2{10, 10}, pts) {
+	if geom.PointInPolygon(mgl32.Vec2{10, 10}, pts) {
 		t.Fatal("far point should be outside the square")
 	}
 

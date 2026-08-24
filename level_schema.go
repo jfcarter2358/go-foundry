@@ -1,5 +1,7 @@
 package main
 
+import "foundry/internal/geom"
+
 // level_schema.go — the YAML-facing "Raw*" level format: every type here maps
 // directly to a level file's on-disk shape (see resources/levels/*.yaml).
 // Conversion to/from the runtime types (Chunk, Sector, Level, ...) lives in
@@ -20,8 +22,8 @@ type RawExtrusion struct {
 	Texture     string              `yaml:"texture,omitempty"`
 	Visible     *bool               `yaml:"visible,omitempty"`      // default true when absent
 	BackVisible *bool               `yaml:"back_visible,omitempty"` // default true when absent
-	UVOffset    Point               `yaml:"uv_offset,omitempty"`
-	UVScale     Point               `yaml:"uv_scale,omitempty"`
+	UVOffset    geom.Point          `yaml:"uv_offset,omitempty"`
+	UVScale     geom.Point          `yaml:"uv_scale,omitempty"`
 	UVRotation  float32             `yaml:"uv_rotation,omitempty"`
 	Alpha       *float32            `yaml:"alpha,omitempty"` // default 1.0 when absent
 }
@@ -162,8 +164,8 @@ type RawEdge struct {
 	Extrusions    []RawExtrusion    `yaml:"extrusions,omitempty"`
 	WallTerrain   bool              `yaml:"terrain,omitempty"`
 	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
-	UVOffset      Point             `yaml:"uv_offset,omitempty"`
-	UVScale       Point             `yaml:"uv_scale,omitempty"`
+	UVOffset      geom.Point        `yaml:"uv_offset,omitempty"`
+	UVScale       geom.Point        `yaml:"uv_scale,omitempty"`
 	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
 	Detail        *RawDetail        `yaml:"detail,omitempty"`
 	Smooth        bool              `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
@@ -183,8 +185,8 @@ type RawFloor struct {
 	Alpha         *float32          `yaml:"alpha,omitempty"`        // nil = opaque (1.0)
 	Extrusions    []RawExtrusion    `yaml:"extrusions,omitempty"`
 	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
-	UVOffset      Point             `yaml:"uv_offset,omitempty"`
-	UVScale       Point             `yaml:"uv_scale,omitempty"`
+	UVOffset      geom.Point        `yaml:"uv_offset,omitempty"`
+	UVScale       geom.Point        `yaml:"uv_scale,omitempty"`
 	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
 	Detail        *RawDetail        `yaml:"detail,omitempty"`
 	Smooth        bool              `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
@@ -203,8 +205,8 @@ type RawCeiling struct {
 	Alpha         *float32          `yaml:"alpha,omitempty"`        // nil = opaque (1.0)
 	Extrusions    []RawExtrusion    `yaml:"extrusions,omitempty"`
 	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
-	UVOffset      Point             `yaml:"uv_offset,omitempty"`
-	UVScale       Point             `yaml:"uv_scale,omitempty"`
+	UVOffset      geom.Point        `yaml:"uv_offset,omitempty"`
+	UVScale       geom.Point        `yaml:"uv_scale,omitempty"`
 	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
 	Detail        *RawDetail        `yaml:"detail,omitempty"`
 	Smooth        bool              `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
@@ -250,12 +252,12 @@ type RawChunkOrigin struct {
 type RawChunk struct {
 	ID            string `yaml:"id"`
 	RawScriptData `yaml:",inline"`
-	Points        map[string]Point `yaml:"points"`
-	Sectors       []RawSector      `yaml:"sectors"`
-	Origin        RawChunkOrigin   `yaml:"origin"`
-	Rotation      float32          `yaml:"rotation"`
-	Scale         float32          `yaml:"scale"`
-	BiomeSectors  []RawBiomeSector `yaml:"biome_sectors,omitempty"`
+	Points        map[string]geom.Point `yaml:"points"`
+	Sectors       []RawSector           `yaml:"sectors"`
+	Origin        RawChunkOrigin        `yaml:"origin"`
+	Rotation      float32               `yaml:"rotation"`
+	Scale         float32               `yaml:"scale"`
+	BiomeSectors  []RawBiomeSector      `yaml:"biome_sectors,omitempty"`
 }
 
 // RawBiomeSector is the YAML representation of a user-drawn biome-paint
@@ -264,7 +266,7 @@ type RawChunk struct {
 // using the chunk's Origin/Rotation/Scale, so a sector moves with its chunk.
 type RawBiomeSector struct {
 	ID     string        `yaml:"id"`
-	Points []Point       `yaml:"points"`
+	Points []geom.Point  `yaml:"points"`
 	Brush  RawBiomeBrush `yaml:"brush"`
 }
 
@@ -319,7 +321,7 @@ type RawBiomeBrush struct {
 	GroundOctaves   int32   `yaml:"ground_octaves,omitempty"`
 	// GroundUVScale tiles the patch texture (world XZ * scale), same units as
 	// a surface's uv_scale; zero/absent = defaultGroundUVScale.
-	GroundUVScale Point `yaml:"ground_uv_scale,omitempty"`
+	GroundUVScale geom.Point `yaml:"ground_uv_scale,omitempty"`
 
 	// Soft edges (see BiomeBrush's own doc comments). Both zero-value-safe: a
 	// sector saved before these existed loads back with the exact old

@@ -1,4 +1,4 @@
-package main
+package geom
 
 // smooth.go — smooth shading for world surfaces.
 //
@@ -23,10 +23,10 @@ package main
 
 import "math"
 
-// defaultSmoothAngle is the crease threshold used when a surface enables
+// DefaultSmoothAngle is the crease threshold used when a surface enables
 // smoothing without picking one. 60° keeps a box's corners sharp while merging
 // the gentle steps of a terrain mesh or a subdivided sphere.
-const defaultSmoothAngle = float32(60)
+const DefaultSmoothAngle = float32(60)
 
 // smoothAngleOrDefault normalizes a stored smoothing angle. The upper clamp is
 // just under 180 so that back-to-back facets (the two sides of a double-sided
@@ -34,7 +34,7 @@ const defaultSmoothAngle = float32(60)
 // crease test instead of averaging each other out to nothing.
 func smoothAngleOrDefault(a float32) float32 {
 	if a <= 0 {
-		return defaultSmoothAngle
+		return DefaultSmoothAngle
 	}
 	if a > 179 {
 		return 179
@@ -55,7 +55,7 @@ func smoothWeld(x, y, z float32) smoothWeldKey {
 	}
 }
 
-// computeSmoothNormals returns one unit normal per entry in indices — i.e. one
+// ComputeSmoothNormals returns one unit normal per entry in indices — i.e. one
 // per de-indexed corner, parallel to the 5-float vertex records Geometry.Load
 // builds — so the result can be uploaded as its own buffer without disturbing
 // the position/UV layout every other reader assumes.
@@ -63,7 +63,7 @@ func smoothWeld(x, y, z float32) smoothWeldKey {
 // vertices supplies the indexed vertex pool ([X,Y,Z,U,V] each; only XYZ is read)
 // and indices the triangle list. angleDeg is the crease threshold in degrees;
 // 0 means "use the default".
-func computeSmoothNormals(vertices [][]float32, indices []int, angleDeg float32) []float32 {
+func ComputeSmoothNormals(vertices [][]float32, indices []int, angleDeg float32) []float32 {
 	triCount := len(indices) / 3
 	if triCount == 0 {
 		return nil

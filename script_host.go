@@ -21,6 +21,7 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
+	"foundry/internal/strutil"
 )
 
 // levelHost is the engine side of the language boundary.
@@ -187,7 +188,7 @@ func (h *levelHost) SetProp(r flang.RefVal, name string, v flang.Value) error {
 func didYouMean(name string, tbl map[string]propAccess) string {
 	best, bestDist := "", 3
 	for cand := range tbl {
-		if d := editDistance(name, cand); d < bestDist {
+		if d := strutil.EditDistance(name, cand); d < bestDist {
 			best, bestDist = cand, d
 		}
 	}

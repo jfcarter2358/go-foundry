@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"math"
 	"testing"
 
@@ -170,7 +171,7 @@ func TestSlopeCoverageMinAngleExcludesFlat(t *testing.T) {
 
 // TestSlopeCoverageNormalizesInput is the regression test for the bug behind
 // "changing the slope angles doesn't do anything". InterpolateSurfaceHeight
-// returns collision.go's raw triangleNormal — a cross product whose length
+// returns collision.go's raw geom.TriangleNormal — a cross product whose length
 // scales with triangle area, e.g. (0,256,-128) for a 16x16 floor quad. Reading
 // .Y off that and clamping into acos's domain pinned every structural normal
 // at 0 degrees, so gating thought every sloped floor was level. slopeCoverage
@@ -183,7 +184,7 @@ func TestSlopeCoverageNormalizesInput(t *testing.T) {
 			for _, r := range [][2]float32{{0, 30}, {0, 60}, {20, 90}, {30, 60}} {
 				want := slopeCoverage(BiomeMoss, unit, r[0], r[1])
 				got := slopeCoverage(BiomeMoss, scaled, r[0], r[1])
-				if abs32(got-want) > 1e-5 {
+				if geom.Abs32(got-want) > 1e-5 {
 					t.Fatalf("normal at %.2f degrees scaled by %v gates differently: got %v, want %v (range %v..%v)",
 						deg, scale, got, want, r[0], r[1])
 				}
@@ -274,7 +275,7 @@ func TestBiomeSurfaceAtLevelFloorStaysFullyCovered(t *testing.T) {
 		bound := groundPatchYBias + amp + 1e-4
 
 		h, cov := biomeSurfaceAt(lvl, &brush, mgl32.Vec2{1, 2}, 0, 0)
-		if abs32(h-3) > bound {
+		if geom.Abs32(h-3) > bound {
 			t.Errorf("kind %d height over a level floor = %v, further than bias+amplitude (%v) from the floor at 3", k, h, bound)
 		}
 		if cov != 1 {
@@ -304,7 +305,7 @@ func TestSlopeGatingAppliesToPlainSlopedFloor(t *testing.T) {
 	}
 	// Normalize before reading the angle: InterpolateSurfaceHeight's normal is a
 	// raw cross product scaled by triangle area, not a unit vector.
-	angle := float32(math.Acos(float64(clamp01(n.Normalize().Y())))) * 180 / math.Pi
+	angle := float32(math.Acos(float64(geom.Clamp01(n.Normalize().Y())))) * 180 / math.Pi
 	if angle < 10 {
 		t.Fatalf("fixture floor is only %.1f degrees from level; expected a meaningful ramp", angle)
 	}
@@ -361,7 +362,7 @@ func TestRotateNormalBetween(t *testing.T) {
 	// Always unit length.
 	for _, deg := range []float64{0, 15, 45, 75, 90} {
 		got := rotateNormalBetween(up, normalAtAngle(deg), normalAtAngle(20))
-		if l := got.Len(); abs32(l-1) > 1e-5 {
+		if l := got.Len(); geom.Abs32(l-1) > 1e-5 {
 			t.Errorf("rotated normal at %.0f degrees has length %v, want 1", deg, l)
 		}
 	}
@@ -376,7 +377,7 @@ func TestBiomeSurfaceAtNoSector(t *testing.T) {
 	for _, k := range []int32{BiomeGrass, BiomeMoss, BiomeWater} {
 		brush := defaultBiomeBrush(k)
 		h, cov := biomeSurfaceAt(lvl, &brush, mgl32.Vec2{4, 5}, 5, 5)
-		if bound := groundPatchYBias + brush.GroundAmplitude + 1e-4; abs32(h) > bound {
+		if bound := groundPatchYBias + brush.GroundAmplitude + 1e-4; geom.Abs32(h) > bound {
 			t.Errorf("kind %d height over open ground = %v, want within %v of 0", k, h, bound)
 		}
 		if cov != 1 {
@@ -392,7 +393,7 @@ func TestBiomeSurfaceAtNoSector(t *testing.T) {
 func TestRawBiomeBrushMossYAMLRoundTrip(t *testing.T) {
 	rb := RawBiomeSector{
 		ID:     "m0",
-		Points: []Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
+		Points: []geom.Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
 		Brush: RawBiomeBrush{
 			Kind:          BiomeMoss,
 			Density:       0.6,

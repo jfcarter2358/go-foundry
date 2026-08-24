@@ -10,6 +10,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -161,7 +162,7 @@ func rayCylinderRange(o, d, half mgl32.Vec3) (float32, float32, bool) {
 	}
 
 	if math.Abs(float64(d.Y())) < 1e-6 {
-		if abs32(o.Y()) > half.Y() {
+		if geom.Abs32(o.Y()) > half.Y() {
 			return 0, 0, false
 		}
 		return t0, t1, true
@@ -188,7 +189,7 @@ func rayCylinderRange(o, d, half mgl32.Vec3) (float32, float32, bool) {
 // quadratic at all — what a degenerate ray means is the shape's business, not
 // this function's.
 func solveQuadratic(a, b, c float32) (float32, float32, bool) {
-	if abs32(a) < 1e-12 {
+	if geom.Abs32(a) < 1e-12 {
 		return 0, 0, false
 	}
 	disc := b*b - 4*a*c
@@ -282,7 +283,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
-	// What a click means is the selection mode's call. Point and edge mode each
+	// What a click means is the selection mode's call. geom.Point and edge mode each
 	// own the click outright: hitting nothing there clears the selection rather
 	// than falling through to the surface behind, which is what makes the modes
 	// predictable. Repeated clicks on the same cluster cycle through every
@@ -661,7 +662,7 @@ func Editor3DPanel() {
 		imgui.Text("Ctrl+click adds to the selection, in all three modes")
 		imgui.Text("Right-click without dragging for the selection's actions")
 		imgui.Text("Drag an R/G/B arm to move it along X/Y/Z")
-		imgui.Checkbox("Show All Point/Edge Boxes", &Editor.ShowPointSelectRadius)
+		imgui.Checkbox("Show All geom.Point/Edge Boxes", &Editor.ShowPointSelectRadius)
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("Wireframe already draws them all; this is the same\nfor a solid-shaded view.")
 		}

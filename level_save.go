@@ -3,7 +3,7 @@ package main
 // level_save.go — serialise a runtime Level back to YAML.
 //
 // SaveLevel reconstructs the RawLevel representation from the live runtime
-// state and writes it to disk. Point names come from chunk.PointNames, which is
+// state and writes it to disk. geom.Point names come from chunk.PointNames, which is
 // index-aligned with chunk.Points; points the editor added are unnamed there and
 // get auto-names "E0", "E1", … chosen to avoid names already in use.
 //
@@ -15,6 +15,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/geom"
 	"math"
 	"os"
 	"path/filepath"
@@ -107,7 +108,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 	rc := RawChunk{
 		ID:            ch.ID,
 		RawScriptData: scriptDataToRaw(ch.ScriptData),
-		Points:        make(map[string]Point),
+		Points:        make(map[string]geom.Point),
 		Origin:        RawChunkOrigin{X: ch.Origin.X(), Y: ch.Origin.Y(), Z: ch.Origin.Z()},
 		Rotation:      ch.Rotation,
 		Scale:         ch.Scale,
@@ -122,7 +123,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 	names := chunkPointNames(ch)
 	for i, name := range names {
 		local := reverseTransformPoint2D(ch.Points[i], ch.Origin, ch.Rotation, ch.Scale)
-		rc.Points[name] = Point{X: local.X(), Y: local.Y()}
+		rc.Points[name] = geom.Point{X: local.X(), Y: local.Y()}
 	}
 
 	for si := range ch.Sectors {
@@ -145,8 +146,8 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				Alpha:         float32PtrIfNotOne(s.Floor.Alpha),
 				Extrusions:    saveExtrusions(s.Floor.Extrusions, ch, true),
 				TerrainPoints: saveTerrainPts(s.Floor.TerrainPoints, ch, true),
-				UVOffset:      Point{X: s.Floor.UVOffset.X(), Y: s.Floor.UVOffset.Y()},
-				UVScale:       Point{X: s.Floor.UVScale.X(), Y: s.Floor.UVScale.Y()},
+				UVOffset:      geom.Point{X: s.Floor.UVOffset.X(), Y: s.Floor.UVOffset.Y()},
+				UVScale:       geom.Point{X: s.Floor.UVScale.X(), Y: s.Floor.UVScale.Y()},
 				UVRotation:    s.Floor.UVRotation,
 				Detail:        detailToRaw(s.Floor.Detail),
 				Smooth:        s.Floor.Smooth,
@@ -163,8 +164,8 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				Alpha:         float32PtrIfNotOne(s.Ceiling.Alpha),
 				Extrusions:    saveExtrusions(s.Ceiling.Extrusions, ch, true),
 				TerrainPoints: saveTerrainPts(s.Ceiling.TerrainPoints, ch, true),
-				UVOffset:      Point{X: s.Ceiling.UVOffset.X(), Y: s.Ceiling.UVOffset.Y()},
-				UVScale:       Point{X: s.Ceiling.UVScale.X(), Y: s.Ceiling.UVScale.Y()},
+				UVOffset:      geom.Point{X: s.Ceiling.UVOffset.X(), Y: s.Ceiling.UVOffset.Y()},
+				UVScale:       geom.Point{X: s.Ceiling.UVScale.X(), Y: s.Ceiling.UVScale.Y()},
 				UVRotation:    s.Ceiling.UVRotation,
 				Detail:        detailToRaw(s.Ceiling.Detail),
 				Smooth:        s.Ceiling.Smooth,
@@ -210,8 +211,8 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 					Extrusions:    saveExtrusions(w.Extrusions, ch, false),
 					WallTerrain:   w.Terrain,
 					TerrainPoints: saveTerrainPts(w.TerrainPoints, ch, false),
-					UVOffset:      Point{X: w.UVOffset.X(), Y: w.UVOffset.Y()},
-					UVScale:       Point{X: w.UVScale.X(), Y: w.UVScale.Y()},
+					UVOffset:      geom.Point{X: w.UVOffset.X(), Y: w.UVOffset.Y()},
+					UVScale:       geom.Point{X: w.UVScale.X(), Y: w.UVScale.Y()},
 					UVRotation:    w.UVRotation,
 					Detail:        detailToRaw(w.Detail),
 					Smooth:        w.Smooth,
@@ -253,7 +254,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 		bs := &ch.BiomeSectors[bi]
 		rb := RawBiomeSector{
 			ID:     bs.ID,
-			Points: make([]Point, len(bs.Points)),
+			Points: make([]geom.Point, len(bs.Points)),
 			Brush: RawBiomeBrush{
 				Kind:         bs.Brush.Kind,
 				Density:      bs.Brush.Density,
@@ -287,7 +288,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				GroundAmplitude: bs.Brush.GroundAmplitude,
 				GroundFrequency: bs.Brush.GroundFrequency,
 				GroundOctaves:   bs.Brush.GroundOctaves,
-				GroundUVScale:   Point{X: bs.Brush.GroundUVScale.X(), Y: bs.Brush.GroundUVScale.Y()},
+				GroundUVScale:   geom.Point{X: bs.Brush.GroundUVScale.X(), Y: bs.Brush.GroundUVScale.Y()},
 
 				RangeFadeFraction: bs.Brush.RangeFadeFraction,
 				EdgeFadeDistance:  bs.Brush.EdgeFadeDistance,
@@ -308,7 +309,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 		}
 		for i, wp := range bs.Points {
 			local := reverseTransformPoint2D(wp, ch.Origin, ch.Rotation, ch.Scale)
-			rb.Points[i] = Point{X: local.X(), Y: local.Y()}
+			rb.Points[i] = geom.Point{X: local.X(), Y: local.Y()}
 		}
 		rc.BiomeSectors = append(rc.BiomeSectors, rb)
 	}
@@ -473,8 +474,8 @@ func saveExtrusions(exts []Extrusion, ch *Chunk, transformXZ bool) []RawExtrusio
 			Texture:     ext.Texture,
 			Visible:     boolPtrIfFalse(ext.Visible),
 			BackVisible: boolPtrIfFalse(ext.BackVisible),
-			UVOffset:    Point{X: ext.UVOffset.X(), Y: ext.UVOffset.Y()},
-			UVScale:     Point{X: ext.UVScale.X(), Y: ext.UVScale.Y()},
+			UVOffset:    geom.Point{X: ext.UVOffset.X(), Y: ext.UVOffset.Y()},
+			UVScale:     geom.Point{X: ext.UVScale.X(), Y: ext.UVScale.Y()},
 			UVRotation:  ext.UVRotation,
 			Alpha:       float32PtrIfNotOne(ext.Alpha),
 		}

@@ -24,6 +24,8 @@ package main
 // the main game shader's state.
 
 import (
+	"foundry/internal/geom"
+
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -136,7 +138,7 @@ func buildGroundPatchMesh(level *Level, s *BiomeSector) []float32 {
 	if len(allPts) == 0 {
 		return nil
 	}
-	triIdx := delaunayTriangulate(allPts, boundary)
+	triIdx := geom.DelaunayTriangulate(allPts, boundary)
 	if len(triIdx) == 0 {
 		return nil
 	}

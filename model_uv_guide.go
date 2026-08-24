@@ -32,6 +32,7 @@ import (
 	"image/color"
 	"math"
 
+	"foundry/internal/geom"
 	"foundry/internal/texdoc"
 )
 
@@ -103,8 +104,8 @@ var atlasGuideDark = color.RGBA{R: 18, G: 18, B: 24, A: 255}
 // other two corners apart. See TestAtlasGuideDistantSquaresDiffer and
 // TestAtlasGuideOffDiagonalPointsDiffer, which pin both properties.
 func atlasGuideColorAt(u, v float32) color.RGBA {
-	hue := float64(clamp01(u)) * atlasGuideHueSpan
-	val := atlasGuideValMin + (atlasGuideValMax-atlasGuideValMin)*float64(clamp01(v))
+	hue := float64(geom.Clamp01(u)) * atlasGuideHueSpan
+	val := atlasGuideValMin + (atlasGuideValMax-atlasGuideValMin)*float64(geom.Clamp01(v))
 	return hsvToRGBA(hue, atlasGuideSat, val)
 }
 

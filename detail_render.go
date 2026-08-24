@@ -20,6 +20,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/geom"
 	"math"
 	"os"
 	"path/filepath"
@@ -204,15 +205,15 @@ func detailPad(d *DetailSpec) float32 {
 	if d.HasDisplace() {
 		for i := 0; i < detailMaxWaves; i++ {
 			if w := d.Waves[i]; w.Enabled {
-				pad += abs32(w.Amplitude)
+				pad += geom.Abs32(w.Amplitude)
 			}
 		}
 		if d.Noise {
-			pad += abs32(d.NoiseAmplitude)
+			pad += geom.Abs32(d.NoiseAmplitude)
 		}
 	}
 	if d.HasScatter() {
-		pad += abs32(d.ScatterScale)
+		pad += geom.Abs32(d.ScatterScale)
 	}
 	return pad
 }
@@ -379,9 +380,9 @@ func setScatterUniforms(p *progUniforms, d *DetailSpec, b faceBasis) int32 {
 	gl.Uniform1f(p.u("faceUMax"), b.uMax)
 	gl.Uniform1f(p.u("faceVMax"), b.vMax)
 	gl.Uniform1f(p.u("sSpacing"), spacing)
-	gl.Uniform1f(p.u("sDensity"), clamp01(d.ScatterDensity))
+	gl.Uniform1f(p.u("sDensity"), geom.Clamp01(d.ScatterDensity))
 	gl.Uniform1f(p.u("sScale"), d.ScatterScale)
-	gl.Uniform1f(p.u("sJitter"), clamp01(d.ScatterJitter))
+	gl.Uniform1f(p.u("sJitter"), geom.Clamp01(d.ScatterJitter))
 	gl.Uniform1f(p.u("sSeed"), float32(d.Seed))
 	gl.Uniform1i(p.u("gridNU"), int32(gridNU))
 	return int32(gridNU * gridNV)

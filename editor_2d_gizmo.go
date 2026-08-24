@@ -17,6 +17,7 @@ package main
 // same size to aim at however far the map is zoomed out.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -101,7 +102,7 @@ func pickGizmo2DHandle(mx, my int32) int {
 	if Editor.GizmoTool == editorToolRotate {
 		// The ring is a circle on screen — the map's projection has no
 		// foreshortening — so "near the ring" is just "near that radius".
-		if abs32(centreD-gizmo2DArmPx) <= gizmo2DPickPx {
+		if geom.Abs32(centreD-gizmo2DArmPx) <= gizmo2DPickPx {
 			return gizmo2DAxes[0]
 		}
 		return -1
@@ -200,7 +201,7 @@ func gizmo2DReference(cursor, origin mgl32.Vec2, handle int) (float32, bool) {
 		ref := gizmo2DScaleReference(cursor, origin, handle)
 		// Too near the centre to be a ratio of anything: the first motion
 		// event would multiply by a huge number.
-		if abs32(ref) < scaleRefMin {
+		if geom.Abs32(ref) < scaleRefMin {
 			return 0, false
 		}
 		return ref, true

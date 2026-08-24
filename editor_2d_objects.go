@@ -10,6 +10,7 @@ package main
 // selecting either works the same in 2D as in 3D.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -123,7 +124,7 @@ func Editor2DRenderObjects(lvl *Level, ch *Chunk) {
 		editor2DDrawEntityHeading(e, hx, hz, col)
 	}
 
-	// Point lights: a cross tinted with the light's own color, so several
+	// geom.Point lights: a cross tinted with the light's own color, so several
 	// lights stay distinguishable. They are edited from the Lights panel
 	// rather than by clicking, so they get no hit test.
 	r := screenToWorldSize(7, editor2DOrtho())
@@ -220,7 +221,7 @@ func editor2DEntityAt(lvl *Level, wx, wz float32) (int, bool) {
 func editor2DFloorHeightAt(ch *Chunk, wx, wz float32) float32 {
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
-		if pointInPolygon(mgl32.Vec2{wx, wz}, SectorPoints(ch, s)) {
+		if geom.PointInPolygon(mgl32.Vec2{wx, wz}, SectorPoints(ch, s)) {
 			return s.Floor.Height
 		}
 	}

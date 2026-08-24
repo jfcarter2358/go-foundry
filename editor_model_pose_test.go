@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -467,7 +468,7 @@ func TestSummaryKeySelectionCoversEveryBone(t *testing.T) {
 	var refs []modelKeyRef
 	for i := range c.Tracks {
 		for _, k := range c.Tracks[i].Keys {
-			if abs32(k.Time-0.5) <= modelKeyEpsilon {
+			if geom.Abs32(k.Time-0.5) <= modelKeyEpsilon {
 				refs = append(refs, modelKeyRef{Bone: c.Tracks[i].Bone, Time: k.Time})
 			}
 		}
@@ -515,7 +516,7 @@ func TestTimelinePickKeyFindsTheDiamondUnderTheCursor(t *testing.T) {
 	}
 	at := imgui.Vec2{X: l.timeToX(0.5), Y: l.laneY(lane)}
 	refs, ok := modelTimelinePickKey(l, c, at)
-	if !ok || len(refs) != 1 || refs[0].Bone != idx[1] || abs32(refs[0].Time-0.5) > modelKeyEpsilon {
+	if !ok || len(refs) != 1 || refs[0].Bone != idx[1] || geom.Abs32(refs[0].Time-0.5) > modelKeyEpsilon {
 		t.Fatalf("hit test missed the diamond: ok=%v refs=%+v", ok, refs)
 	}
 

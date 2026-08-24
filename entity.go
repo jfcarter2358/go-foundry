@@ -22,6 +22,8 @@ package main
 // view is from inside its head, and is never saved.
 
 import (
+	"foundry/internal/geom"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -211,9 +213,9 @@ func (e *Entity) BoundCenter() mgl32.Vec3 {
 func (e *Entity) BoundHalfExtents() mgl32.Vec3 {
 	s := e.effectiveScale()
 	return mgl32.Vec3{
-		e.BoundHalfX * abs32(s.X()),
-		e.BoundHalfY * abs32(s.Y()),
-		e.BoundHalfZ * abs32(s.Z()),
+		e.BoundHalfX * geom.Abs32(s.X()),
+		e.BoundHalfY * geom.Abs32(s.Y()),
+		e.BoundHalfZ * geom.Abs32(s.Z()),
 	}
 }
 
@@ -275,7 +277,7 @@ func (e *Entity) CollisionAABB() (min, max mgl32.Vec3, ok bool) {
 			min, max = p, p
 			continue
 		}
-		min, max = vecMin(min, p), vecMax(max, p)
+		min, max = geom.VecMin(min, p), geom.VecMax(max, p)
 	}
 	return min, max, true
 }

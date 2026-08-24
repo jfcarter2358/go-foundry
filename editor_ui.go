@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 	"math"
 	"path/filepath"
 	"sort"
@@ -104,7 +105,7 @@ func editorDragFloatStep(label string, value *float32, min, max float32, format 
 		if Editor.SnapToGrid {
 			*value = snapValue(*value, step)
 		}
-		*value = clampValue(*value, min, max)
+		*value = geom.ClampValue(*value, min, max)
 		changed = true
 	}
 	imgui.PopButtonRepeat()
@@ -128,7 +129,7 @@ func editorDragFloatStep(label string, value *float32, min, max float32, format 
 				if Editor.SnapToGrid {
 					*value = snapValue(*value, step)
 				}
-				*value = clampValue(*value, min, max)
+				*value = geom.ClampValue(*value, min, max)
 				changed = true
 			}
 			delete(editorTextEdits, label)
@@ -145,7 +146,7 @@ func editorDragFloatStep(label string, value *float32, min, max float32, format 
 		if imgui.DragFloatV(hiddenLabel, value, step, min, max, format, 0) {
 			if Editor.SnapToGrid {
 				*value = snapValue(*value, step)
-				*value = clampValue(*value, min, max)
+				*value = geom.ClampValue(*value, min, max)
 			}
 			changed = true
 		}
@@ -163,7 +164,7 @@ func editorDragFloatStep(label string, value *float32, min, max float32, format 
 		if Editor.SnapToGrid {
 			*value = snapValue(*value, step)
 		}
-		*value = clampValue(*value, min, max)
+		*value = geom.ClampValue(*value, min, max)
 		changed = true
 	}
 	imgui.PopButtonRepeat()
@@ -369,7 +370,7 @@ func editorSmoothPanel(surfaceLabel string, smooth *bool, angle *float32) bool {
 	// Materialize the default so the control shows the angle actually in use;
 	// 0 already means "default", so this changes nothing about the shading.
 	if *angle == 0 {
-		*angle = defaultSmoothAngle
+		*angle = geom.DefaultSmoothAngle
 	}
 	imgui.Indent()
 	if editorDragFloat(fmt.Sprintf("Crease Angle (deg)##%ssma", surfaceLabel), angle, 1, 179, "%.0f") {
@@ -1033,7 +1034,7 @@ func Editor2DPanel() {
 	imgui.Text("Ctrl+click: add to selection | RMB: menu")
 
 	editor2DJoinButtons()
-	imgui.Checkbox("Show All Point Boxes", &Editor.ShowPointSelectRadius)
+	imgui.Checkbox("Show All geom.Point Boxes", &Editor.ShowPointSelectRadius)
 
 	// ---- Grid settings ----
 	imgui.Separator()

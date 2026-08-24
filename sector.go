@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"log"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -24,7 +25,7 @@ type Floor struct {
 	UVRotation          float32    // UV rotation in radians
 	Detail              DetailSpec // per-face procedural detail (rocks); disabled by default
 	Smooth              bool       // shade from interpolated vertex normals (see smooth.go)
-	SmoothAngle         float32    // crease threshold in degrees; 0 = defaultSmoothAngle
+	SmoothAngle         float32    // crease threshold in degrees; 0 = geom.DefaultSmoothAngle
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 
@@ -59,7 +60,7 @@ type Ceiling struct {
 	UVRotation          float32    // UV rotation in radians
 	Detail              DetailSpec // per-face procedural detail (rocks); disabled by default
 	Smooth              bool       // shade from interpolated vertex normals (see smooth.go)
-	SmoothAngle         float32    // crease threshold in degrees; 0 = defaultSmoothAngle
+	SmoothAngle         float32    // crease threshold in degrees; 0 = geom.DefaultSmoothAngle
 	Geometry            Geometry
 	ExtrusionGeometries []Geometry
 
@@ -187,7 +188,7 @@ func SectorPoints(ch *Chunk, s *Sector) []mgl32.Vec2 {
 // findVertexIdx returns the index in pts whose position matches pt, or -1.
 func findVertexIdx(pts []mgl32.Vec2, pt mgl32.Vec2) int {
 	for i, p := range pts {
-		if approxEq2(p, pt) {
+		if geom.ApproxEq2(p, pt) {
 			return i
 		}
 	}
@@ -453,7 +454,7 @@ func InterpolateSurfaceHeight(chunk *Chunk, sector *Sector, xz mgl32.Vec2, floor
 	}
 	// Triangle fan: hub = pts[0], triangles (0, i, i+1)
 	for i := 1; i < n-1; i++ {
-		inside, wA, wB, wC := pointInTriangle2D(xz, pts[0], pts[i], pts[i+1])
+		inside, wA, wB, wC := geom.PointInTriangle2D(xz, pts[0], pts[i], pts[i+1])
 		if !inside {
 			continue
 		}
@@ -471,7 +472,7 @@ func InterpolateSurfaceHeight(chunk *Chunk, sector *Sector, xz mgl32.Vec2, floor
 		a3 := mgl32.Vec3{pts[0].X(), hA, pts[0].Y()}
 		b3 := mgl32.Vec3{pts[i].X(), hB, pts[i].Y()}
 		c3 := mgl32.Vec3{pts[i+1].X(), hC, pts[i+1].Y()}
-		normal := triangleNormal(a3, b3, c3)
+		normal := geom.TriangleNormal(a3, b3, c3)
 		// Ensure floor normals point upward, ceiling normals point downward
 		if floor && normal.Y() < 0 {
 			normal = normal.Mul(-1)
@@ -513,7 +514,7 @@ func interpolateTerrainHeight(sector *Sector, xz mgl32.Vec2, floor bool) (float3
 		if ai >= len(pts) || bi >= len(pts) || ci >= len(pts) {
 			continue
 		}
-		inside, wA, wB, wC := pointInTriangle2D(xz, pts[ai], pts[bi], pts[ci])
+		inside, wA, wB, wC := geom.PointInTriangle2D(xz, pts[ai], pts[bi], pts[ci])
 		if !inside {
 			continue
 		}
@@ -525,7 +526,7 @@ func interpolateTerrainHeight(sector *Sector, xz mgl32.Vec2, floor bool) (float3
 		a3 := mgl32.Vec3{pts[ai].X(), hA, pts[ai].Y()}
 		b3 := mgl32.Vec3{pts[bi].X(), hB, pts[bi].Y()}
 		c3 := mgl32.Vec3{pts[ci].X(), hC, pts[ci].Y()}
-		normal := triangleNormal(a3, b3, c3)
+		normal := geom.TriangleNormal(a3, b3, c3)
 		if floor && normal.Y() < 0 {
 			normal = normal.Mul(-1)
 		} else if !floor && normal.Y() > 0 {

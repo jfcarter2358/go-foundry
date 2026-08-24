@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -171,7 +172,7 @@ func TestSaveIsStableAcrossRepeatedEdits(t *testing.T) {
 func TestValidateRawChunkRejectsRepeatedPoint(t *testing.T) {
 	rc := RawChunk{
 		ID:     "main",
-		Points: map[string]Point{"A": {}, "B": {}, "C": {}},
+		Points: map[string]geom.Point{"A": {}, "B": {}, "C": {}},
 		Sectors: []RawSector{{
 			ID: "room",
 			Edges: []RawEdge{
@@ -188,7 +189,7 @@ func TestValidateRawChunkRejectsRepeatedPoint(t *testing.T) {
 func TestValidateRawChunkRejectsBrokenRing(t *testing.T) {
 	rc := RawChunk{
 		ID:     "main",
-		Points: map[string]Point{"A": {}, "B": {}, "C": {}},
+		Points: map[string]geom.Point{"A": {}, "B": {}, "C": {}},
 		Sectors: []RawSector{{
 			ID: "room",
 			Edges: []RawEdge{
@@ -204,7 +205,7 @@ func TestValidateRawChunkRejectsBrokenRing(t *testing.T) {
 func TestValidateRawChunkRejectsUndefinedPoint(t *testing.T) {
 	rc := RawChunk{
 		ID:     "main",
-		Points: map[string]Point{"A": {}, "B": {}},
+		Points: map[string]geom.Point{"A": {}, "B": {}},
 		Sectors: []RawSector{{
 			ID: "room",
 			Edges: []RawEdge{

@@ -19,6 +19,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 	"log"
 	"math"
 
@@ -177,7 +178,7 @@ func (c *modelCamera) frame(m *ModelDoc) {
 func (c *modelCamera) look(dx, dy int32) {
 	c.Yaw += MouseRotationSpeed * float32(dx)
 	c.Pitch -= MouseRotationSpeed * float32(dy)
-	c.Pitch = clampValue(c.Pitch, -maxPitch, maxPitch)
+	c.Pitch = geom.ClampValue(c.Pitch, -maxPitch, maxPitch)
 }
 
 // move flies the eye. f/u/r are forward, up and right amounts; forward is
@@ -738,7 +739,7 @@ func modelEditorZoom(wheelY int32) {
 	// Multiplicative so each notch covers the same visual fraction whether the
 	// camera is close in or far out.
 	factor := float32(math.Pow(0.88, float64(wheelY)))
-	modelCam.Dist = clampValue(modelCam.Dist*factor, 0.05, 400)
+	modelCam.Dist = geom.ClampValue(modelCam.Dist*factor, 0.05, 400)
 }
 
 // modelCameraLabel names the camera button by the mode it is in.

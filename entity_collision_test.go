@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"math"
 	"testing"
 
@@ -81,7 +82,7 @@ func TestApplyGravityAcceleratesAndCaps(t *testing.T) {
 	e := solidEntity("a", mgl32.Vec3{})
 
 	e.applyGravity(0.5)
-	if want := -EntityGravityAccel * 0.5; abs32(e.Velocity.Y()-want) > 1e-4 {
+	if want := -EntityGravityAccel * 0.5; geom.Abs32(e.Velocity.Y()-want) > 1e-4 {
 		t.Errorf("got %v, want %v", e.Velocity.Y(), want)
 	}
 
@@ -132,10 +133,10 @@ func TestCollisionAABBIsTighterThanTheCullingBox(t *testing.T) {
 
 	// A 45° yaw spreads a unit box to half-diagonal √2/2 ≈ 0.707 in X and Z,
 	// and leaves Y alone.
-	if abs32(cmax.X()-0.7071) > 1e-3 || abs32(cmax.Z()-0.7071) > 1e-3 {
+	if geom.Abs32(cmax.X()-0.7071) > 1e-3 || geom.Abs32(cmax.Z()-0.7071) > 1e-3 {
 		t.Errorf("XZ span: got %v", cmax)
 	}
-	if abs32(cmax.Y()-0.5) > 1e-4 {
+	if geom.Abs32(cmax.Y()-0.5) > 1e-4 {
 		t.Errorf("Y should be untouched by a yaw: got %v", cmax.Y())
 	}
 	// The culling box must still contain the collision box.
@@ -182,10 +183,10 @@ func TestResolveOverlapSplitsBetweenTwoMovableEntities(t *testing.T) {
 	if !ma || !mb {
 		t.Fatalf("both should have moved: %v %v", ma, mb)
 	}
-	if abs32(a.Position.X()-(-0.2)) > 1e-4 {
+	if geom.Abs32(a.Position.X()-(-0.2)) > 1e-4 {
 		t.Errorf("a.x = %v, want -0.2", a.Position.X())
 	}
-	if abs32(b.Position.X()-0.8) > 1e-4 {
+	if geom.Abs32(b.Position.X()-0.8) > 1e-4 {
 		t.Errorf("b.x = %v, want 0.8", b.Position.X())
 	}
 	// Exactly touching afterwards, not still overlapping.
@@ -229,7 +230,7 @@ func TestResolveOverlapImmovableEntityDoesNotMove(t *testing.T) {
 		t.Errorf("boulder moved: %v", b.Position)
 	}
 	// The crate takes the whole separation rather than half of it.
-	if abs32(a.Position.X()-1.0) > 1e-4 {
+	if geom.Abs32(a.Position.X()-1.0) > 1e-4 {
 		t.Errorf("crate.x = %v, want 1.0", a.Position.X())
 	}
 }
@@ -253,10 +254,10 @@ func TestResolveOverlapPushesAlongTheShallowestAxis(t *testing.T) {
 
 	resolveEntityOverlap(&a, &b)
 
-	if abs32(a.Position.X()) > 1e-4 || abs32(a.Position.Z()) > 1e-4 {
+	if geom.Abs32(a.Position.X()) > 1e-4 || geom.Abs32(a.Position.Z()) > 1e-4 {
 		t.Errorf("pushed sideways: %v", a.Position)
 	}
-	if abs32(a.Position.Y()-1.0) > 1e-4 {
+	if geom.Abs32(a.Position.Y()-1.0) > 1e-4 {
 		t.Errorf("y = %v, want to rest at 1.0", a.Position.Y())
 	}
 }
@@ -438,7 +439,7 @@ func TestResolveEntityWorldRestsOnTheFloor(t *testing.T) {
 	if !resolveEntityWorld(lvl, &e, mgl32.Vec3{5, 0.2, 5}) {
 		t.Fatal("expected to land on the floor")
 	}
-	if abs32(e.Position.Y()) > 1e-4 {
+	if geom.Abs32(e.Position.Y()) > 1e-4 {
 		t.Errorf("base ended at y=%v, want 0", e.Position.Y())
 	}
 	if e.Velocity.Y() != 0 {
@@ -474,7 +475,7 @@ func TestResolveEntityWorldClampsUnderTheCeiling(t *testing.T) {
 
 	// The volume's top ends at the ceiling, symmetrically about its centre —
 	// unlike the player's clamp, which is deliberately loose.
-	if abs32((e.Position.Y()+0.5)-8) > 1e-4 {
+	if geom.Abs32((e.Position.Y()+0.5)-8) > 1e-4 {
 		t.Errorf("top ended at y=%v, want the ceiling at 8", e.Position.Y()+0.5)
 	}
 	if e.Velocity.Y() != 0 {
@@ -545,7 +546,7 @@ func TestEntityUpdateSettlesAFallingEntityOnTheFloor(t *testing.T) {
 	}
 
 	got := &lvl.Entities[0]
-	if abs32(got.Position.Y()) > 1e-3 {
+	if geom.Abs32(got.Position.Y()) > 1e-3 {
 		t.Errorf("came to rest at y=%v, want the floor at 0", got.Position.Y())
 	}
 	if !got.Collision.OnGround {
@@ -588,7 +589,7 @@ func TestEntityUpdateStackSettlesWhateverTheListOrder(t *testing.T) {
 		sortFloats(got)
 		want := []float32{0, 1, 2}
 		for i := range want {
-			if abs32(got[i]-want[i]) > 1e-4 {
+			if geom.Abs32(got[i]-want[i]) > 1e-4 {
 				t.Errorf("topDown=%v: settled at %v, want %v", topDown, got, want)
 				break
 			}
@@ -626,12 +627,12 @@ func TestEntityUpdateStacksTwoEntities(t *testing.T) {
 	}
 
 	b, tp := &lvl.Entities[0], &lvl.Entities[1]
-	if abs32(b.Position.Y()) > 1e-2 {
+	if geom.Abs32(b.Position.Y()) > 1e-2 {
 		t.Errorf("bottom box at y=%v, want the floor at 0", b.Position.Y())
 	}
 	// Boxes are 1 unit tall, so the upper one's base should sit on the lower
 	// one's top.
-	if abs32(tp.Position.Y()-1) > 1e-2 {
+	if geom.Abs32(tp.Position.Y()-1) > 1e-2 {
 		t.Errorf("top box at y=%v, want to rest at 1", tp.Position.Y())
 	}
 	if _, _, overlapping := overlapOf(b, tp); overlapping {
@@ -681,7 +682,7 @@ func TestResolveOverlapGivesTheWholePushToTheOneThatCanTakeIt(t *testing.T) {
 	if bottom.Position.Y() != 0 {
 		t.Errorf("bottom moved to %v", bottom.Position.Y())
 	}
-	if abs32(top.Position.Y()-1) > 1e-4 {
+	if geom.Abs32(top.Position.Y()-1) > 1e-4 {
 		t.Errorf("top at %v, want to rest at 1", top.Position.Y())
 	}
 	if _, _, overlapping := overlapOf(&bottom, &top); overlapping {

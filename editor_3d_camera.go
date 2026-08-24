@@ -17,6 +17,7 @@ package main
 // mode behaving precisely as it did before.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -42,7 +43,7 @@ const (
 func editorApplyCamAngles() {
 	updateCamDirection()
 	if !editorCam3D.Fly {
-		editorCam3D.Dist = clampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
+		editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
 		Cam.Position = editorCam3D.Target.Sub(Cam.Direction.Mul(editorCam3D.Dist))
 	}
 	updateCamMatrix()
@@ -59,7 +60,7 @@ func editorSetFlyCam(fly bool) {
 	editorCam3D.Fly = fly
 	updateCamDirection()
 	if !fly {
-		editorCam3D.Dist = clampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
+		editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
 		editorCam3D.Target = Cam.Position.Add(Cam.Direction.Mul(editorCam3D.Dist))
 	}
 	editorApplyCamAngles()
@@ -71,7 +72,7 @@ func editorSetFlyCam(fly bool) {
 // walked away from.
 func editorCamEnter() {
 	updateCamDirection()
-	editorCam3D.Dist = clampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
+	editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist, editorCamMinDist, editorCamMaxDist)
 	editorCam3D.Target = Cam.Position.Add(Cam.Direction.Mul(editorCam3D.Dist))
 }
 
@@ -81,7 +82,7 @@ func editorCamEnter() {
 func editorCamLook(dx, dy int32) {
 	Cam.Yaw += MouseRotationSpeed * float32(dx)
 	Cam.Pitch -= MouseRotationSpeed * float32(dy)
-	Cam.Pitch = clampValue(Cam.Pitch, -maxPitch, maxPitch)
+	Cam.Pitch = geom.ClampValue(Cam.Pitch, -maxPitch, maxPitch)
 	editorApplyCamAngles()
 }
 
@@ -138,7 +139,7 @@ func editorCamZoom(wheelY int32) {
 	// Multiplicative, so each notch covers the same visual fraction whether the
 	// camera is close in or far out.
 	factor := float32(math.Pow(0.88, float64(wheelY)))
-	editorCam3D.Dist = clampValue(editorCam3D.Dist*factor, editorCamMinDist, editorCamMaxDist)
+	editorCam3D.Dist = geom.ClampValue(editorCam3D.Dist*factor, editorCamMinDist, editorCamMaxDist)
 	editorApplyCamAngles()
 }
 
@@ -209,7 +210,7 @@ func editorOrbitKeys(keyStates []uint8) {
 	if keyStates[sdl.SCANCODE_DOWN] != 0 {
 		Cam.Pitch -= rotSpeed
 	}
-	Cam.Pitch = clampValue(Cam.Pitch, -maxPitch, maxPitch)
+	Cam.Pitch = geom.ClampValue(Cam.Pitch, -maxPitch, maxPitch)
 
 	editorCamMove(f, u, r)
 	editorApplyCamAngles()
@@ -246,7 +247,7 @@ func editorFrameSelection() {
 
 	editorCam3D.Fly = false
 	editorCam3D.Target = center
-	editorCam3D.Dist = clampValue(dist, editorCamMinDist, editorCamMaxDist)
+	editorCam3D.Dist = geom.ClampValue(dist, editorCamMinDist, editorCamMaxDist)
 	editorApplyCamAngles()
 }
 
@@ -272,7 +273,7 @@ func editorSelectionBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 				min, max, found = pos, pos, true
 				continue
 			}
-			min, max = vecMin(min, pos), vecMax(max, pos)
+			min, max = geom.VecMin(min, pos), geom.VecMax(max, pos)
 		}
 		if found {
 			return min, max, true

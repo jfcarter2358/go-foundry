@@ -8,6 +8,8 @@ package main
 // since multiplying a factor in every motion event compounds exponentially.
 
 import (
+	"foundry/internal/geom"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -126,7 +128,7 @@ func modelScaleReference(mx, my int32, origin mgl32.Vec3, handle int) (float32, 
 func scaleFactorBetween(start, now float32) float32 {
 	// Grabbing where the reference is ~0 — the cursor level with the centre
 	// along the axis — would divide by nothing and send the factor to infinity.
-	if abs32(start) < scaleRefMin {
+	if geom.Abs32(start) < scaleRefMin {
 		return 1
 	}
 	f := now / start
@@ -195,7 +197,7 @@ func modelScaleMouseDown(mx, my int32) bool {
 	}
 	// Too near the centre to be a ratio of anything: the first motion event
 	// would multiply by a huge number.
-	if abs32(ref) < scaleRefMin {
+	if geom.Abs32(ref) < scaleRefMin {
 		return false
 	}
 

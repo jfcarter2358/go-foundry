@@ -14,6 +14,8 @@ package main
 // thing in both viewports.
 
 import (
+	"foundry/internal/geom"
+
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -134,7 +136,7 @@ func scaleGizmoMouseDown(t sdl.MouseButtonEvent) bool {
 	}
 	// Too near the centre to be a ratio of anything: the first motion event
 	// would multiply by a huge number.
-	if abs32(ref) < scaleRefMin {
+	if geom.Abs32(ref) < scaleRefMin {
 		return true
 	}
 

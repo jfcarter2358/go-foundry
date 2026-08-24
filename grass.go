@@ -34,6 +34,7 @@ package main
 // own GL program and VAOs, never touching the main game shader's state.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -1322,7 +1323,7 @@ func renderBiomeSector(level *Level, s *BiomeSector, p *progUniforms, tier int, 
 	// still just the user's own RangeFadeFraction unconditionally now — the
 	// shader ignores it whenever outerIsLOD says this edge isn't Range.
 	gl.Uniform1i(p.u("outerIsLOD"), boolToInt32(tier < tierCount-1))
-	gl.Uniform1f(p.u("rangeFadeFraction"), clamp01(s.Brush.RangeFadeFraction))
+	gl.Uniform1f(p.u("rangeFadeFraction"), geom.Clamp01(s.Brush.RangeFadeFraction))
 	gl.Uniform1f(p.u("lodFadeFraction"), biomeLODFadeFraction)
 	edgeFade := s.Brush.EdgeFadeDistance
 	if edgeFade < 0 {

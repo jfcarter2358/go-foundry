@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -98,7 +99,7 @@ func TestPlanEdgeSplitSnapsPointOntoEdge(t *testing.T) {
 	if !ok {
 		t.Fatal("planEdgeSplit found no edge near the shared edge")
 	}
-	if want := (mgl32.Vec2{10, 2}); !approxEq2(plan.newPt, want) {
+	if want := (mgl32.Vec2{10, 2}); !geom.ApproxEq2(plan.newPt, want) {
 		t.Errorf("new point = %v, want %v (snapped onto the edge)", plan.newPt, want)
 	}
 	if plan.si != 0 || plan.kind != "wall" || plan.kindIdx != 1 {
@@ -189,10 +190,10 @@ func TestApplyEdgeSplitWallHalvesInheritProperties(t *testing.T) {
 
 	// The split point ends both the first half and starts the second, so the
 	// two halves together span exactly the original edge.
-	if !approxEq2(first.StartPoint, orig.StartPoint) || !approxEq2(first.EndPoint, plan.newPt) {
+	if !geom.ApproxEq2(first.StartPoint, orig.StartPoint) || !geom.ApproxEq2(first.EndPoint, plan.newPt) {
 		t.Errorf("first half = %v→%v, want %v→%v", first.StartPoint, first.EndPoint, orig.StartPoint, plan.newPt)
 	}
-	if !approxEq2(second.StartPoint, plan.newPt) || !approxEq2(second.EndPoint, orig.EndPoint) {
+	if !geom.ApproxEq2(second.StartPoint, plan.newPt) || !geom.ApproxEq2(second.EndPoint, orig.EndPoint) {
 		t.Errorf("second half = %v→%v, want %v→%v", second.StartPoint, second.EndPoint, plan.newPt, orig.EndPoint)
 	}
 
@@ -415,7 +416,7 @@ func TestSplitPortalHalvesShareTargetAndSettings(t *testing.T) {
 	mid := mgl32.Vec2{4, 0}
 
 	first, second := splitPortal(p, mid)
-	if !approxEq2(first.EndPoint, mid) || !approxEq2(second.StartPoint, mid) {
+	if !geom.ApproxEq2(first.EndPoint, mid) || !geom.ApproxEq2(second.StartPoint, mid) {
 		t.Errorf("halves do not meet at %v: %v→%v and %v→%v",
 			mid, first.StartPoint, first.EndPoint, second.StartPoint, second.EndPoint)
 	}

@@ -112,7 +112,7 @@ func EditorLightPanel() {
 				CastShadows: true,
 				// Must be non-zero, or the shadow map is rendered and then
 				// multiplied out by (1 - shadow * 0) and the light reads as
-				// casting nothing. Matches the Add Point Light default.
+				// casting nothing. Matches the Add geom.Point Light default.
 				ShadowStrength: 0.5,
 			}
 			nl.SyncDirection()
@@ -124,11 +124,11 @@ func EditorLightPanel() {
 	}
 	Editor.SelectedDirLightIdx = selDir
 
-	// ---- Point lights ----
-	if imgui.TreeNode(fmt.Sprintf("Point Lights (%d)###pointLights", len(lvl.Lights.Points))) {
+	// ---- geom.Point lights ----
+	if imgui.TreeNode(fmt.Sprintf("geom.Point Lights (%d)###pointLights", len(lvl.Lights.Points))) {
 		for i := range lvl.Lights.Points {
 			pl := &lvl.Lights.Points[i]
-			label := fmt.Sprintf("Point Light %d", i)
+			label := fmt.Sprintf("geom.Point Light %d", i)
 			if imgui.TreeNode(label) {
 				pos := [3]float32{pl.Position.X(), pl.Position.Y(), pl.Position.Z()}
 				if editorDragFloat3(fmt.Sprintf("Position##pt%d", i), &pos, 0, 0, "%.3f") {
@@ -167,7 +167,7 @@ func EditorLightPanel() {
 				imgui.TreePop()
 			}
 		}
-		if imgui.Button("Add Point Light") {
+		if imgui.Button("Add geom.Point Light") {
 			lvl.Lights.Points = append(lvl.Lights.Points, PointLight{
 				Position:       Cam.Position,
 				Color:          mgl32.Vec3{1, 0.9, 0.7},

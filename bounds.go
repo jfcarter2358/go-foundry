@@ -8,6 +8,7 @@ package main
 // depend on the things that walk through it.
 
 import (
+	"foundry/internal/geom"
 	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -91,7 +92,7 @@ func shapeContainsPoint(p, center, rotation, half mgl32.Vec3, kind BoundingType)
 		nx, nz := d.X()/half.X(), d.Z()/half.Z()
 		return nx*nx+nz*nz <= 1
 	default:
-		return abs32(d.X()) <= half.X() && abs32(d.Y()) <= half.Y() && abs32(d.Z()) <= half.Z()
+		return geom.Abs32(d.X()) <= half.X() && geom.Abs32(d.Y()) <= half.Y() && geom.Abs32(d.Z()) <= half.Z()
 	}
 }
 

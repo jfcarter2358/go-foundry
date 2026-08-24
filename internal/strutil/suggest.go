@@ -1,4 +1,4 @@
-package main
+package strutil
 
 // suggest.go — "did you mean ...?" for names a user typed.
 //
@@ -6,8 +6,8 @@ package main
 // the closest known one. It is the same measure in both places, and neither is
 // the natural owner of it.
 
-// editDistance is the Levenshtein distance between two short names.
-func editDistance(a, b string) int {
+// EditDistance is the Levenshtein distance between two short names.
+func EditDistance(a, b string) int {
 	prev := make([]int, len(b)+1)
 	cur := make([]int, len(b)+1)
 	for j := range prev {

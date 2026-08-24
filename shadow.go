@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 	"log"
 	"math"
 	"strings"
@@ -86,7 +87,7 @@ type ShadowState struct {
 	CascadeFBO    uint32
 	CascadeLayers int32
 
-	// Point light cubemap shadow program
+	// geom.Point light cubemap shadow program
 	CubeProgram      uint32
 	CubeModelUniform int32
 	CubeLSMUniform   int32
@@ -264,7 +265,7 @@ func createDummyCubemap() uint32 {
 	return tex
 }
 
-// ---------- Point light cubemap shadow maps ----------
+// ---------- geom.Point light cubemap shadow maps ----------
 
 func EnsurePointShadowMaps(count int) {
 	for len(Shadows.PointMaps) < count {
@@ -469,7 +470,7 @@ func CascadeLightMatrix(dir mgl32.Vec3, corners [8]mgl32.Vec3) (mgl32.Mat4, floa
 	}
 
 	up := mgl32.Vec3{0, 1, 0}
-	if abs32(lightDir.Y()) > 0.99 {
+	if geom.Abs32(lightDir.Y()) > 0.99 {
 		up = mgl32.Vec3{0, 0, 1}
 	}
 	// Depth runs from the light-side plane (0) through the far side of the

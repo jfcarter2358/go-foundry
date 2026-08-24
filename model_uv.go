@@ -12,6 +12,7 @@ package main
 // slider session that drives these lives in editor_model_uv_drag.go.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -37,7 +38,7 @@ func (m *ModelDoc) ModelPlanarUnwrap(faces []int, fitUnit bool) {
 		if n.Len() < 0.5 {
 			continue
 		}
-		u := perpAxis(n)
+		u := geom.PerpAxis(n)
 		if u.Len() < 1e-6 {
 			continue
 		}

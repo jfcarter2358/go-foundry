@@ -12,6 +12,7 @@ package main
 // switched off by withoutGeometryUploads.
 
 import (
+	"foundry/internal/geom"
 	"testing"
 )
 
@@ -19,7 +20,7 @@ import (
 // loader's convention, with no edge IDs — the shape of every level written
 // before scripting existed.
 func squareRawChunk(clockwise bool) RawChunk {
-	pts := map[string]Point{
+	pts := map[string]geom.Point{
 		"A": {X: 0, Y: 0},
 		"B": {X: 10, Y: 0},
 		"C": {X: 10, Y: 10},

@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -26,7 +27,7 @@ type Geometry struct {
 	Vertices                   []float32
 	VertexAttribute            uint32
 	Smooth                     bool    // shade from interpolated vertex normals instead of flat facets
-	SmoothAngle                float32 // crease threshold in degrees; 0 = defaultSmoothAngle
+	SmoothAngle                float32 // crease threshold in degrees; 0 = geom.DefaultSmoothAngle
 	Normals                    []float32
 	NormalAttribute            uint32
 	// Skinning inputs, set before Load on a submesh built from a rigged model:
@@ -135,7 +136,7 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	// index list is what defines the triangles in the first place.
 	g.Normals = nil
 	if g.Smooth {
-		g.Normals = computeSmoothNormals(vertices, indices, g.SmoothAngle)
+		g.Normals = geom.ComputeSmoothNormals(vertices, indices, g.SmoothAngle)
 	}
 
 	if len(g.Vertices) == 0 {

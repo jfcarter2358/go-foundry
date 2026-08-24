@@ -17,6 +17,7 @@ package main
 // same vector by construction — no separate yaw field to drift.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -103,7 +104,7 @@ func SpawnDirection(s *SpawnPoint) mgl32.Vec3 {
 func SpawnYawPitch(s *SpawnPoint) (yaw, pitch float32) {
 	d := SpawnDirection(s)
 	yaw = float32(math.Atan2(float64(d.Z()), float64(d.X())))
-	pitch = float32(math.Asin(float64(clampValue(d.Y(), -1, 1))))
+	pitch = float32(math.Asin(float64(geom.ClampValue(d.Y(), -1, 1))))
 	if pitch > maxPitch {
 		pitch = maxPitch
 	}

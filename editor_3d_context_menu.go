@@ -149,7 +149,7 @@ func editor3DSpawnMenuItems() []ctxMenuItem {
 		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusSpawn) },
 			Tooltip: "Open the spawn point's section of the side panel."},
 		{Label: "Face the camera", Do: editor3DFaceCamera,
-			Tooltip: "Point the marker where you are looking — including the\npitch, which placing it only takes the yaw of."},
+			Tooltip: "geom.Point the marker where you are looking — including the\npitch, which placing it only takes the yaw of."},
 		{Separator: true},
 		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid},
 		{Label: "Delete", Shortcut: "Del", Do: EditorDeleteSelected},

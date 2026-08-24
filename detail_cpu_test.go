@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"math"
 	"testing"
 
@@ -60,7 +61,7 @@ func TestDetailDisplaceAtBoundedByAmplitudes(t *testing.T) {
 		for z := float32(-20); z <= 20; z += 1.1 {
 			p := mgl32.Vec3{x, 0, z}
 			off := detailDisplaceAt(d, worldUp, nil, p).Y() - p.Y()
-			if abs32(off) > bound+1e-5 {
+			if geom.Abs32(off) > bound+1e-5 {
 				t.Fatalf("displacement %.4f at %v exceeds the advertised amplitude sum %.4f", off, p, bound)
 			}
 		}
@@ -147,7 +148,7 @@ func TestDetailNormalAtIsUnitAndUpward(t *testing.T) {
 	for x := float32(-8); x <= 8; x += 1.3 {
 		for z := float32(-8); z <= 8; z += 1.7 {
 			n := detailNormalAt(d, worldUp, nil, eps, mgl32.Vec3{x, 0, z})
-			if l := n.Len(); abs32(l-1) > 1e-4 {
+			if l := n.Len(); geom.Abs32(l-1) > 1e-4 {
 				t.Fatalf("normal at (%.1f,%.1f) has length %.6f, want 1", x, z, l)
 			}
 			if n.Y() <= 0 {
@@ -238,16 +239,16 @@ func TestDetailPlaneBasisIsRightHanded(t *testing.T) {
 		mgl32.Vec3{0.3, 0.8, -0.5}.Normalize(),
 	} {
 		tan, bit := detailPlaneBasis(n)
-		if l := tan.Len(); abs32(l-1) > 1e-5 {
+		if l := tan.Len(); geom.Abs32(l-1) > 1e-5 {
 			t.Errorf("n=%v: tangent length %v, want 1", n, l)
 		}
-		if l := bit.Len(); abs32(l-1) > 1e-5 {
+		if l := bit.Len(); geom.Abs32(l-1) > 1e-5 {
 			t.Errorf("n=%v: bitangent length %v, want 1", n, l)
 		}
-		if d := tan.Dot(bit); abs32(d) > 1e-5 {
+		if d := tan.Dot(bit); geom.Abs32(d) > 1e-5 {
 			t.Errorf("n=%v: tangent·bitangent = %v, want 0", n, d)
 		}
-		if d := tan.Dot(n); abs32(d) > 1e-5 {
+		if d := tan.Dot(n); geom.Abs32(d) > 1e-5 {
 			t.Errorf("n=%v: tangent·normal = %v, want 0", n, d)
 		}
 		if c := tan.Cross(bit); (c.Sub(n)).Len() > 1e-5 {
@@ -266,7 +267,7 @@ func TestSmoothstep32MatchesGLSL(t *testing.T) {
 	if got := smoothstep32(0, 1, 2); got != 1 {
 		t.Errorf("smoothstep32 above the range = %v, want 1", got)
 	}
-	if got := smoothstep32(0, 1, 0.5); abs32(got-0.5) > 1e-6 {
+	if got := smoothstep32(0, 1, 0.5); geom.Abs32(got-0.5) > 1e-6 {
 		t.Errorf("smoothstep32 midpoint = %v, want 0.5", got)
 	}
 	if got := smoothstep32(5, 5, 4); got != 0 {
@@ -312,7 +313,7 @@ func TestBiomeSurfaceAtFollowsDisplacedFloor(t *testing.T) {
 		for z := float32(-12); z <= 12; z += 0.9 {
 			h, cov := biomeSurfaceAt(displaced, grass, testSeed, x, z)
 			flatH, flatCov := biomeSurfaceAt(plain, grass, testSeed, x, z)
-			if abs32(h-flatH) > 1e-4 {
+			if geom.Abs32(h-flatH) > 1e-4 {
 				diverged = true
 			}
 			if flatCov != 1 {
@@ -378,7 +379,7 @@ func TestGroundPatchMeshMatchesScatterHeight(t *testing.T) {
 		for i := 0; i < len(verts); i += groundVertexStride {
 			x, y, z := verts[i], verts[i+1], verts[i+2]
 			want, _ := biomeSurfaceAt(lvl, &s.Brush, seed, x, z)
-			if abs32(y-want) > 1e-4 {
+			if geom.Abs32(y-want) > 1e-4 {
 				t.Fatalf("kind %d: ground patch vertex at (%.3f,%.3f) sits at y=%.5f but scatter would be planted at y=%.5f — "+
 					"the patch and the scatter height must come from the same surface", kind, x, z, y, want)
 			}
@@ -479,7 +480,7 @@ func TestBiomeSurfaceAtIncludesGroundPatchOffsets(t *testing.T) {
 	for x := float32(-10); x <= 10; x += 0.6 {
 		for z := float32(-10); z <= 10; z += 0.8 {
 			h, _ := biomeSurfaceAt(lvl, &brush, testSeed, x, z)
-			if abs32(h-5) > 1e-4 {
+			if geom.Abs32(h-5) > 1e-4 {
 				differsFromFloor = true
 			}
 			if h > 5 {
@@ -489,7 +490,7 @@ func TestBiomeSurfaceAtIncludesGroundPatchOffsets(t *testing.T) {
 				sawBelow = true
 			}
 			// Bias plus the kind's noise amplitude bounds how far it can stray.
-			if bound := groundPatchYBias + brush.GroundAmplitude + 1e-4; abs32(h-5) > bound {
+			if bound := groundPatchYBias + brush.GroundAmplitude + 1e-4; geom.Abs32(h-5) > bound {
 				t.Fatalf("height %v at (%.1f,%.1f) strays further from the floor than bias+amplitude (%v)", h, x, z, bound)
 			}
 		}
@@ -543,7 +544,7 @@ func TestMossClumpIsSunkAndNotAFlatDisc(t *testing.T) {
 	for i := 0; i < len(mesh); i += biomeVertexStride {
 		x, y, z := mesh[i], mesh[i+1], mesh[i+2]
 		minY, maxY = min(minY, y), max(maxY, y)
-		maxAbsXZ = max(maxAbsXZ, max(abs32(x), abs32(z)))
+		maxAbsXZ = max(maxAbsXZ, max(geom.Abs32(x), geom.Abs32(z)))
 	}
 
 	if minY >= 0 {

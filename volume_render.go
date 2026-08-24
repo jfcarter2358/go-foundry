@@ -13,7 +13,11 @@ package main
 // there, and stacking two overlapping triggers would produce a muddle no one
 // could read. Lines stay legible however many overlap.
 
-import "github.com/go-gl/mathgl/mgl32"
+import (
+	"foundry/internal/geom"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
 
 // volumeMarkerTexture is what the cage is drawn with. It is an untextured line
 // list, so this only has to be a texture that exists — the same reasoning as
@@ -96,7 +100,7 @@ func ellipsoidCage(hx, hy, hz float32) ([][]float32, []int) {
 	ring := func(ax, ay, az, bx, by, bz float32) {
 		base := len(verts)
 		for i := 0; i < volumeCageSegments; i++ {
-			c, s := circlePoint(i, volumeCageSegments)
+			c, s := geom.CirclePoint(i, volumeCageSegments)
 			verts = append(verts, []float32{
 				ax*c + bx*s,
 				ay*c + by*s,
@@ -120,7 +124,7 @@ func cylinderCage(hx, hy, hz float32) ([][]float32, []int) {
 	for c, y := range []float32{-hy, hy} {
 		capBase[c] = len(verts)
 		for i := 0; i < volumeCageSegments; i++ {
-			cs, sn := circlePoint(i, volumeCageSegments)
+			cs, sn := geom.CirclePoint(i, volumeCageSegments)
 			verts = append(verts, []float32{cs * hx, y, sn * hz, 0, 0})
 			idx = append(idx, capBase[c]+i, capBase[c]+(i+1)%volumeCageSegments)
 		}

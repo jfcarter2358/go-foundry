@@ -18,6 +18,7 @@ package main
 // header of editor_model_pick.go.
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -415,7 +416,7 @@ func drawBoneOctahedron(b ModelBone, col mgl32.Vec3) {
 // forever: cold means barely influenced, hot means rigidly attached. Reusing
 // the convention means the display needs no legend.
 func modelWeightColor(w float32) mgl32.Vec3 {
-	w = clampValue(w, 0, 1)
+	w = geom.ClampValue(w, 0, 1)
 	stops := [4]mgl32.Vec3{
 		{0.10, 0.20, 0.90}, // 0.00 blue
 		{0.10, 0.85, 0.85}, // 0.33 cyan

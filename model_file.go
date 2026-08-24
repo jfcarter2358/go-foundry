@@ -17,6 +17,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/geom"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,10 +205,10 @@ func rawKeyFrom(k ModelBoneKey) RawModelKey {
 	if k.Trans.Len() > eps {
 		out.Trans = []float32{k.Trans.X(), k.Trans.Y(), k.Trans.Z()}
 	}
-	if q := k.rot(); abs32(abs32(q.W)-1) > eps {
+	if q := k.rot(); geom.Abs32(geom.Abs32(q.W)-1) > eps {
 		out.Rot = []float32{q.V.X(), q.V.Y(), q.V.Z(), q.W}
 	}
-	if sc := k.scale(); abs32(sc.X()-1) > eps || abs32(sc.Y()-1) > eps || abs32(sc.Z()-1) > eps {
+	if sc := k.scale(); geom.Abs32(sc.X()-1) > eps || geom.Abs32(sc.Y()-1) > eps || geom.Abs32(sc.Z()-1) > eps {
 		out.Scale = []float32{sc.X(), sc.Y(), sc.Z()}
 	}
 	return out

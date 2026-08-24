@@ -22,7 +22,11 @@ package main
 // Vertices outside every edited sector are left where they are — paint spilling
 // past the floor has nothing to follow.
 
-import "github.com/go-gl/mathgl/mgl32"
+import (
+	"foundry/internal/geom"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
 
 // pointMove records one chunk point an edit has already moved: its index, and
 // where it was before the move.
@@ -102,7 +106,7 @@ func carryBiomesWithPoints(ch *Chunk, moves []pointMove) {
 // move it.
 func warpPoint(v mgl32.Vec2, warps []sectorWarp) (mgl32.Vec2, bool) {
 	for _, w := range warps {
-		if !pointInPolygon(v, w.before) {
+		if !geom.PointInPolygon(v, w.before) {
 			continue
 		}
 		coords := meanValueCoords(v, w.before)
@@ -152,7 +156,7 @@ func meanValueCoords(v mgl32.Vec2, poly []mgl32.Vec2) []float32 {
 		j := (i + 1) % n
 		cross := spoke[i].X()*spoke[j].Y() - spoke[i].Y()*spoke[j].X()
 		dot := spoke[i].Dot(spoke[j])
-		if abs32(cross) < eps {
+		if geom.Abs32(cross) < eps {
 			if dot < 0 {
 				// v lies on edge i→j, where the half-angle tangent blows up:
 				// the edge's two ends carry it between them.
@@ -174,7 +178,7 @@ func meanValueCoords(v mgl32.Vec2, poly []mgl32.Vec2) []float32 {
 		w[i] = (tanHalf[prev] + tanHalf[i]) / dist[i]
 		sum += w[i]
 	}
-	if abs32(sum) < eps {
+	if geom.Abs32(sum) < eps {
 		return nil
 	}
 	for i := range w {

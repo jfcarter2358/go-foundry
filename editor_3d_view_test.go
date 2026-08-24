@@ -115,7 +115,7 @@ func TestEdgeVisibleWhenEitherEndIs(t *testing.T) {
 
 // ---------- selection modes ----------
 
-// Point and edge are two views of the same vertices, so switching between them
+// geom.Point and edge are two views of the same vertices, so switching between them
 // keeps the selection; face works in another unit, so crossing to it clears.
 func TestSelModeSwitchCarriesPointsButNotFaces(t *testing.T) {
 	defer saveEditorSelection()()
@@ -204,7 +204,7 @@ func TestFaceModeSelectsTheWall(t *testing.T) {
 	}
 }
 
-// Point and edge mode own their click outright: nothing under the cursor means
+// geom.Point and edge mode own their click outright: nothing under the cursor means
 // nothing selected, rather than falling through to the face behind. Without
 // that, aiming at a corner and missing would silently select the wall.
 func TestPointModeMissDoesNotFallThroughToTheFace(t *testing.T) {

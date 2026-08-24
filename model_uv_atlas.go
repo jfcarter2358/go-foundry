@@ -38,6 +38,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 	"math"
 	"sort"
 
@@ -288,7 +289,7 @@ func (m *ModelDoc) projectIsland(faces []int) uvIsland {
 
 	// The same basis ModelPlanarUnwrap builds, so a face unwrapped either way
 	// comes out with its texture the same way up rather than mirrored.
-	u := perpAxis(n)
+	u := geom.PerpAxis(n)
 	if u.Len() < 1e-6 {
 		u = mgl32.Vec3{1, 0, 0}
 	}

@@ -1,6 +1,10 @@
 package main
 
-import "github.com/go-gl/mathgl/mgl32"
+import (
+	"foundry/internal/geom"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
 
 // SpatialHash provides O(1) lookup for chunk/sector pairs by XZ position.
 // Each cell in the grid stores references to all (chunk, sector) pairs whose
@@ -32,10 +36,10 @@ func BuildSpatialHash(chunks []Chunk, cellSize float32) *SpatialHash {
 		for si := range c.Sectors {
 			s := &c.Sectors[si]
 			// Use sector 2D AABB to determine which cells it overlaps
-			minCellX := int(floor32(s.MinBound.X() * sh.InvCell))
-			minCellZ := int(floor32(s.MinBound.Y() * sh.InvCell)) // MinBound.Y() is Z in 2D
-			maxCellX := int(floor32(s.MaxBound.X() * sh.InvCell))
-			maxCellZ := int(floor32(s.MaxBound.Y() * sh.InvCell))
+			minCellX := int(geom.Floor32(s.MinBound.X() * sh.InvCell))
+			minCellZ := int(geom.Floor32(s.MinBound.Y() * sh.InvCell)) // MinBound.Y() is Z in 2D
+			maxCellX := int(geom.Floor32(s.MaxBound.X() * sh.InvCell))
+			maxCellZ := int(geom.Floor32(s.MaxBound.Y() * sh.InvCell))
 			ref := ChunkSectorRef{ChunkIdx: ci, SectorIdx: si}
 			for cx := minCellX; cx <= maxCellX; cx++ {
 				for cz := minCellZ; cz <= maxCellZ; cz++ {
@@ -54,8 +58,8 @@ func FindChunkAndSectorSH(sh *SpatialHash, chunks []Chunk, pos mgl32.Vec3) (*Chu
 	if sh == nil {
 		return FindChunkAndSector(chunks, pos)
 	}
-	cx := int(floor32(pos.X() * sh.InvCell))
-	cz := int(floor32(pos.Z() * sh.InvCell))
+	cx := int(geom.Floor32(pos.X() * sh.InvCell))
+	cz := int(geom.Floor32(pos.Z() * sh.InvCell))
 	refs := sh.Cells[[2]int{cx, cz}]
 	if len(refs) == 0 {
 		return nil, nil
@@ -70,7 +74,7 @@ func FindChunkAndSectorSH(sh *SpatialHash, chunks []Chunk, pos mgl32.Vec3) (*Chu
 			continue
 		}
 		s := &c.Sectors[ref.SectorIdx]
-		if pointInPolygon(xz, SectorPoints(c, s)) {
+		if geom.PointInPolygon(xz, SectorPoints(c, s)) {
 			return c, s
 		}
 	}
@@ -107,7 +111,7 @@ func FindSector(chunk *Chunk, xz mgl32.Vec2) *Sector {
 	}
 	for i := range chunk.Sectors {
 		s := &chunk.Sectors[i]
-		if pointInPolygon(xz, SectorPoints(chunk, s)) {
+		if geom.PointInPolygon(xz, SectorPoints(chunk, s)) {
 			return s
 		}
 	}
@@ -131,7 +135,7 @@ func FindChunkAndSector(chunks []Chunk, pos mgl32.Vec3) (*Chunk, *Sector) {
 		}
 		for j := range c.Sectors {
 			s := &c.Sectors[j]
-			if pointInPolygon(xz, SectorPoints(c, s)) {
+			if geom.PointInPolygon(xz, SectorPoints(c, s)) {
 				return c, s
 			}
 		}

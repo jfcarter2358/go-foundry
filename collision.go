@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/geom"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -49,7 +50,7 @@ func adjustHeightForExtrusions(xz mgl32.Vec2, height float32, extrusions []Extru
 		for i, p := range ext.Outer {
 			poly[i] = mgl32.Vec2{p.U, p.V}
 		}
-		if pointInPolygon(xz, poly) {
+		if geom.PointInPolygon(xz, poly) {
 			if floor {
 				return height - ext.Depth
 			}
@@ -145,7 +146,7 @@ func playerInWallExtrusion(wall *Wall, entityMinY, entityMaxY, u, ceilH float32)
 		// Check if u is within the extrusion's horizontal extent using
 		// point-in-polygon at the entity's center V
 		entityCenterV := ceilH - (entityMinY+entityMaxY)/2
-		if pointInPolygon(mgl32.Vec2{u, entityCenterV}, poly) {
+		if geom.PointInPolygon(mgl32.Vec2{u, entityCenterV}, poly) {
 			return true
 		}
 	}
@@ -269,7 +270,7 @@ func sectorFloorHeightAt(chunk *Chunk, sector *Sector, xz mgl32.Vec2) float32 {
 		floorH = adjustHeightForExtrusions(xz, floorH, sector.Floor.Extrusions, true)
 	}
 	for _, adj := range getAdjacentSectors(chunk, sector) {
-		if !pointInPolygon(xz, SectorPoints(chunk, adj)) {
+		if !geom.PointInPolygon(xz, SectorPoints(chunk, adj)) {
 			continue
 		}
 		adjFloorH, _, _ := InterpolateSurfaceHeight(chunk, adj, xz, true)
@@ -295,7 +296,7 @@ func sectorCeilingHeightAt(chunk *Chunk, sector *Sector, xz mgl32.Vec2) (float32
 		ceilH = adjustHeightForExtrusions(xz, ceilH, sector.Ceiling.Extrusions, false)
 	}
 	for _, adj := range getAdjacentSectors(chunk, sector) {
-		if !adj.Ceiling.Enabled || !pointInPolygon(xz, SectorPoints(chunk, adj)) {
+		if !adj.Ceiling.Enabled || !geom.PointInPolygon(xz, SectorPoints(chunk, adj)) {
 			continue
 		}
 		adjCeilH, _, _ := InterpolateSurfaceHeight(chunk, adj, xz, false)
