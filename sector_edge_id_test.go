@@ -10,6 +10,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/leveltest"
 	"foundry/internal/world"
 	"testing"
 
@@ -198,7 +199,7 @@ func TestConvertEdgePreservesID(t *testing.T) {
 
 func TestInferPortalsCarriesEdgeIDs(t *testing.T) {
 	withoutGeometryUploads(t)
-	ch := splitTestChunk()
+	ch := leveltest.SplitChunk()
 	for si := range ch.Sectors {
 		world.EnsureEdgeIDs(&ch.Sectors[si])
 		world.SyncEdgeRecordIDs(&ch.Sectors[si])

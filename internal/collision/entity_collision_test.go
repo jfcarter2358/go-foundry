@@ -1,7 +1,8 @@
-package main
+package collision
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/leveltest"
 	"foundry/internal/world"
 	"math"
 	"testing"
@@ -391,7 +392,7 @@ func TestResolveEntityCollisionsIsOrderIndependent(t *testing.T) {
 
 // ---------- world collision ----------
 
-// collisionTestLevel is splitTestChunk's two 10×10 sectors with their floors at
+// collisionTestLevel is leveltest.SplitChunk's two 10×10 sectors with their floors at
 // y=0 and their ceilings at y=8 — enough for the floor/ceiling clamp and the
 // wall push.
 //
@@ -399,7 +400,7 @@ func TestResolveEntityCollisionsIsOrderIndependent(t *testing.T) {
 // also uploads geometry and so needs a GL context. Without them every sector
 // AABB is degenerate and the chunk lookup rejects the whole level.
 func collisionTestLevel() *world.Level {
-	ch := *splitTestChunk()
+	ch := *leveltest.SplitChunk()
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
 		s.Floor.Enabled = true

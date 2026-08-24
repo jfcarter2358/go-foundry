@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/collision"
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
@@ -702,7 +703,7 @@ func applyRawLevel(raw world.RawLevel, lvl *world.Level) error {
 	// Built before the swap so a failed rebuild leaves the current level intact,
 	// released after it so the outgoing entities' GPU buffers do not leak — see
 	// EditorLoadLevel's note.
-	DeleteEntities(lvl)
+	collision.DeleteEntities(lvl)
 	DeleteVolumes(lvl)
 	*lvl = newLevel
 

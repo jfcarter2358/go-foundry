@@ -1,18 +1,19 @@
 package main
 
 import (
+	"foundry/internal/leveltest"
 	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// selectTestChunk is splitTestChunk in a level with the editor pointed at it,
+// selectTestChunk is leveltest.SplitChunk in a level with the editor pointed at it,
 // with the map's own switches put in a known state: floor heights, no
 // selection, nothing being dragged.
 func selectTestChunk(t *testing.T) *world.Chunk {
 	t.Helper()
-	lvl := &world.Level{Chunks: []world.Chunk{*splitTestChunk()}}
+	lvl := &world.Level{Chunks: []world.Chunk{*leveltest.SplitChunk()}}
 	Editor.level = lvl
 	Editor.Mode = Mode2D
 	Editor.ActiveChunkIdx = 0

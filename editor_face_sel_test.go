@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/leveltest"
 	"foundry/internal/world"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 // ceiling and four walls — enough faces of every kind to select across.
 func faceTestLevel(t *testing.T) *world.Chunk {
 	t.Helper()
-	lvl := &world.Level{Chunks: []world.Chunk{*splitTestChunk()}}
+	lvl := &world.Level{Chunks: []world.Chunk{*leveltest.SplitChunk()}}
 	Editor.level = lvl
 	Editor.Mode = Mode3D
 	Editor.ActiveChunkIdx = 0

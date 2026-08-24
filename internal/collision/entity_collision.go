@@ -1,4 +1,4 @@
-package main
+package collision
 
 // entity_collision.go — making placed entities solid, without a line of script.
 //

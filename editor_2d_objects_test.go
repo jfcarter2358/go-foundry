@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/leveltest"
 	"foundry/internal/platform"
 	"foundry/internal/world"
 	"testing"
@@ -89,7 +90,7 @@ func TestEditor2DPickObjectWithNoSpawnPoint(t *testing.T) {
 }
 
 func TestEditor2DFloorHeightAt(t *testing.T) {
-	ch := splitTestChunk()
+	ch := leveltest.SplitChunk()
 	ch.Sectors[0].Floor.Height = 3
 	ch.Sectors[1].Floor.Height = -2
 

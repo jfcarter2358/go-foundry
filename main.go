@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/biome"
+	"foundry/internal/collision"
 	"foundry/internal/detail"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
@@ -336,11 +337,11 @@ func main() {
 				newPlayerPos[1] += world.PlayerEntity.Velocity[1] * dtScale
 
 				chunk, sector := world.FindChunkAndSectorSH(level.Spatial, level.Chunks, newPlayerPos)
-				newPlayerPos = ResolveWallCollision(world.PlayerEntity, chunk, sector, newPlayerPos)
-				newPlayerPos = ResolveSlopeCollision(world.PlayerEntity, chunk, sector, world.PlayerEntity.Position, newPlayerPos)
+				newPlayerPos = collision.ResolveWallCollision(world.PlayerEntity, chunk, sector, newPlayerPos)
+				newPlayerPos = collision.ResolveSlopeCollision(world.PlayerEntity, chunk, sector, world.PlayerEntity.Position, newPlayerPos)
 				// Re-find sector after slope adjustment (player may have slid to a different sector)
 				chunk, sector = world.FindChunkAndSectorSH(level.Spatial, level.Chunks, newPlayerPos)
-				hitFloor, hitCeiling := ResolveFloorCollision(world.PlayerEntity, chunk, sector, &newPlayerPos)
+				hitFloor, hitCeiling := collision.ResolveFloorCollision(world.PlayerEntity, chunk, sector, &newPlayerPos)
 
 				// Landing/bonk: reset vertical velocity on floor or ceiling contact.
 				if platform.GravityEnabled {
@@ -385,7 +386,7 @@ func main() {
 			playerPosBefore = world.PlayerEntity.Position
 			world.PlayerEntity.Collision.OnGround = false
 		}
-		EntityUpdate(&level, platform.DeltaTime, !Editor.Active, world.PlayerEntity)
+		collision.EntityUpdate(&level, platform.DeltaTime, !Editor.Active, world.PlayerEntity)
 		if !Editor.Active && world.PlayerEntity != nil {
 			if world.PlayerEntity.Collision.OnGround {
 				platform.IsOnGround = true

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/leveltest"
 	"foundry/internal/world"
 	"math"
 	"testing"
@@ -8,14 +9,14 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// transformTestLevel is splitTestChunk (two square sectors sharing the edge
+// transformTestLevel is leveltest.SplitChunk (two square sectors sharing the edge
 // between chunk points 1 and 2) wrapped in a level, with the editor pointed at
 // it. Geometry is never rebuilt in these tests — that needs a GL context —
 // so everything here goes through writeSelectedVertexWorld, the write half of
 // setSelectedVertexWorld.
 func transformTestLevel(t *testing.T) *world.Chunk {
 	t.Helper()
-	lvl := &world.Level{Chunks: []world.Chunk{*splitTestChunk()}}
+	lvl := &world.Level{Chunks: []world.Chunk{*leveltest.SplitChunk()}}
 	Editor.level = lvl
 	Editor.ActiveChunkIdx = 0
 	Editor.SelectedVertices = nil

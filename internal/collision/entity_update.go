@@ -1,4 +1,4 @@
-package main
+package collision
 
 // entity_update.go — what happens to entities between frames.
 //

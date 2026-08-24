@@ -3,66 +3,12 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/leveltest"
 	"foundry/internal/world"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
-
-// splitTestChunk builds two square sectors sharing one edge:
-//
-//	3---------2=====5
-//	|    A    |  B  |
-//	0---------1=====4
-//
-// A walks 0→1→2→3, so its edge 1 is (1→2). B walks 1→4→5→2, so its edge 3 is
-// (2→1) — the same segment in the opposite winding, which is how InferPortals
-// recognises a shared edge.
-func splitTestChunk() *world.Chunk {
-	ch := &world.Chunk{
-		Points: []mgl32.Vec2{
-			{0, 0}, {10, 0}, {10, 10}, {0, 10}, {20, 0}, {20, 10},
-		},
-	}
-	ch.PointNames = make([]string, len(ch.Points))
-
-	mkWalls := func(indices []int) []world.Wall {
-		var walls []world.Wall
-		for i := range indices {
-			walls = append(walls, world.Wall{
-				StartPoint: ch.Points[indices[i]],
-				EndPoint:   ch.Points[indices[(i+1)%len(indices)]],
-				Texture:    "concrete",
-				Collision:  true,
-				Visible:    true,
-				Alpha:      1,
-			})
-		}
-		return walls
-	}
-
-	idxA := []int{0, 1, 2, 3}
-	idxB := []int{1, 4, 5, 2}
-	ch.Sectors = []world.Sector{
-		{
-			ID:           "A",
-			PointIndices: idxA,
-			EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
-			Walls:        mkWalls(idxA),
-			Floor:        world.Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0, 0}},
-			Ceiling:      world.Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
-		},
-		{
-			ID:           "B",
-			PointIndices: idxB,
-			EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
-			Walls:        mkWalls(idxB),
-			Floor:        world.Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0, 0}},
-			Ceiling:      world.Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0, 0}},
-		},
-	}
-	return ch
-}
 
 // makeSharedEdgeAPortal turns the A/B shared edge into a reciprocal portal pair.
 func makeSharedEdgeAPortal(ch *world.Chunk) {
@@ -94,7 +40,7 @@ func sectorEdges(s *world.Sector) [][2]int {
 }
 
 func TestPlanEdgeSplitSnapsPointOntoEdge(t *testing.T) {
-	ch := splitTestChunk()
+	ch := leveltest.SplitChunk()
 
 	// Click 0.5 units off the shared edge, 2 units up from point 1.
 	plan, ok := planEdgeSplit(ch, 10.5, 2, 4)
@@ -110,7 +56,7 @@ func TestPlanEdgeSplitSnapsPointOntoEdge(t *testing.T) {
 }
 
 func TestPlanEdgeSplitCoversBothSharingSectors(t *testing.T) {
-	ch := splitTestChunk()
+	ch := leveltest.SplitChunk()
 
 	plan, ok := planEdgeSplit(ch, 10.5, 2, 4)
 	if !ok {
@@ -149,7 +95,7 @@ func TestPlanEdgeSplitRejectsBadClicks(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ch := splitTestChunk()
+			ch := leveltest.SplitChunk()
 			if _, ok := planEdgeSplit(ch, tc.wx, tc.wz, tc.threshold); ok {
 				t.Error("planEdgeSplit accepted the click, want rejection")
 			}
@@ -158,7 +104,7 @@ func TestPlanEdgeSplitRejectsBadClicks(t *testing.T) {
 }
 
 func TestApplyEdgeSplitWallHalvesInheritProperties(t *testing.T) {
-	ch := splitTestChunk()
+	ch := leveltest.SplitChunk()
 
 	// Give the wall about to be split a thoroughly non-default set of properties.
 	orig := world.Wall{
@@ -239,7 +185,7 @@ func TestApplyEdgeSplitWallHalvesInheritProperties(t *testing.T) {
 }
 
 func TestApplyEdgeSplitKeepsSharedPortalReciprocal(t *testing.T) {
-	ch := splitTestChunk()
+	ch := leveltest.SplitChunk()
 	makeSharedEdgeAPortal(ch)
 
 	plan, ok := planEdgeSplit(ch, 10.5, 2, 4)
@@ -276,7 +222,7 @@ func TestApplyEdgeSplitKeepsSharedPortalReciprocal(t *testing.T) {
 }
 
 func TestApplyEdgeSplitOnUnsharedEdgeTouchesOneSector(t *testing.T) {
-	ch := splitTestChunk()
+	ch := leveltest.SplitChunk()
 
 	// Sector A's edge 0 runs (0,0)→(10,0) and belongs to A alone.
 	plan, ok := planEdgeSplit(ch, 4, 0.3, 4)
@@ -297,7 +243,7 @@ func TestApplyEdgeSplitOnUnsharedEdgeTouchesOneSector(t *testing.T) {
 }
 
 func TestInsertSectorVertexLerpsVertexOffsets(t *testing.T) {
-	ch := splitTestChunk()
+	ch := leveltest.SplitChunk()
 	// Slope the floor along edge 1: vertex 1 sits at 0, vertex 2 at 4.
 	ch.Sectors[0].Floor.VertexOffsets = []float32{0, 0, 4, 0}
 

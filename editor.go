@@ -14,6 +14,7 @@ package main
 // The editor owns all input while active; normal gameplay logic is bypassed.
 
 import (
+	"foundry/internal/collision"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"foundry/internal/hooks"
@@ -900,7 +901,7 @@ func EditorLoadLevel(path string) error {
 	// Entity meshes are the one thing in a level that is uploaded per *entity*
 	// rather than per surface, so the outgoing level's have to be released
 	// explicitly — overwriting the struct would drop the handles, not free them.
-	DeleteEntities(Editor.level)
+	collision.DeleteEntities(Editor.level)
 	DeleteVolumes(Editor.level)
 
 	// Replace the level contents in-place (Editor.level points to main's level)
