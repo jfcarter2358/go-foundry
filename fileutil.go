@@ -4,6 +4,7 @@ package main
 // logic, shared across the editor and texture-editor code.
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -103,4 +104,66 @@ func relAssetPath(p string) string {
 		return p
 	}
 	return filepath.ToSlash(rel)
+}
+
+// scriptsDirName is the folder .flang scripts live in, alongside textures/,
+// models/ and entities/.
+const scriptsDirName = "scripts"
+
+// scriptExt is the extension a flang source file carries.
+const scriptExt = ".flang"
+
+// scriptsDir returns the absolute path to the scripts folder.
+func scriptsDir() string {
+	return filepath.Join(executablePath, scriptsDirName)
+}
+
+// scriptPath resolves a script name — as written in a level or an entity
+// definition, with or without its extension — to an absolute path.
+func scriptPath(name string) string {
+	if name == "" {
+		return ""
+	}
+	if !strings.HasSuffix(name, scriptExt) {
+		name += scriptExt
+	}
+	// A name may already be rooted at the scripts folder ("scripts/door.flang"),
+	// which is how the docs and every example write it.
+	name = strings.TrimPrefix(filepath.ToSlash(name), scriptsDirName+"/")
+	return filepath.Join(scriptsDir(), filepath.FromSlash(name))
+}
+
+// ScanScriptFiles lists every .flang file under the scripts folder, including
+// ones in subdirectories, as slash-separated paths relative to that folder.
+//
+// Recursive where the other Scan* helpers are flat, because scripts are the one
+// asset kind the language explicitly expects to be organised into folders — see
+// SCRIPTING.md on import().
+func ScanScriptFiles() []string {
+	return ScanScriptFilesIn(scriptsDir())
+}
+
+// ScanScriptFilesIn is ScanScriptFiles rooted at an explicit directory, for
+// tests and tooling that read the source tree rather than an installed build.
+func ScanScriptFilesIn(root string) []string {
+	var out []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), scriptExt) {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil
+	}
+	sort.Strings(out)
+	return out
 }

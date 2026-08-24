@@ -29,6 +29,12 @@ func applyUVTransform(vertices [][]float32, offset mgl32.Vec2, scale mgl32.Vec2,
 
 // Wall is a rendered, optionally-collidable edge between two 2D points.
 type Wall struct {
+	// ID is the wall's stable identity — how a script addresses it
+	// (`@sector.edge.<id>`). It belongs to the polygon *edge* rather than to
+	// this record: converting the edge to a portal carries the ID across, so
+	// the address survives the conversion. See sector_edge_id.go.
+	ID                  string
+	ScriptData          // tags, attributes and the attached script
 	StartPoint          mgl32.Vec2
 	EndPoint            mgl32.Vec2
 	Texture             string

@@ -73,7 +73,7 @@ var Program uint32
 var KeyStates []uint8
 var event sdl.Event
 var WinTitle string = "Foundry Engine"
-var WinWidth, WinHeight int32 = 800, 600
+var WinWidth, WinHeight int32 = 1600, 900
 var WinHalfHeight int32 = WinHeight / 2
 var WinHalfWidth int32 = WinWidth / 2
 var Window *sdl.Window
@@ -146,14 +146,21 @@ func main() {
 	// startup crashes are visible on Windows (where the console closes instantly).
 	logPath := filepath.Join(executablePath, "foundry.log")
 	logFile, ferr := os.Create(logPath)
+	var logSinks io.Writer = os.Stderr
 	if ferr != nil {
 		log.Printf("WARNING: could not create log file %s: %v — logging to stderr only", logPath, ferr)
 	} else {
-		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+		logSinks = io.MultiWriter(os.Stderr, logFile)
+		log.SetOutput(logSinks)
 		// os.File writes are unbuffered; entries reach the file even after os.Exit.
 	}
 	log.SetFlags(log.Ltime | log.Lmsgprefix)
 	log.SetPrefix("[foundry] ")
+
+	// Everything logged from here on is also readable in the log window, and a
+	// script's own output joins the same sinks. Installed after the prefix and
+	// flags are set, because the tee has to strip exactly what they add.
+	InstallLogCapture(logSinks)
 
 	textureNames = ScanTextures(filepath.Join(executablePath, "textures"))
 	log.Printf("scanned %d textures", len(textureNames))
@@ -186,15 +193,16 @@ func main() {
 	// afterwards. See antialias.go for why this is window-level MSAA rather
 	// than an offscreen resolve pass, and why the request is tiered.
 	Window, Context, err = CreateAntiAliasedWindow(WinTitle, WinWidth, WinHeight,
-		sdl.WINDOW_OPENGL|sdl.WINDOW_RESIZABLE|sdl.WINDOW_FULLSCREEN_DESKTOP)
+		sdl.WINDOW_OPENGL|sdl.WINDOW_RESIZABLE)
 	if err != nil {
 		log.Fatalf("CreateAntiAliasedWindow: %v", err)
 	}
 	defer Window.Destroy()
 	defer sdl.GLDeleteContext(Context)
-	// Starting in borderless-fullscreen mode reports the desktop resolution
-	// here rather than the 800x600 requested above; pick that up now so the
-	// viewport/projection setup below uses the real window size.
+	// The window manager can hand back a size other than the one requested
+	// above (scaling, tiling, a size clamped to the display); pick up what we
+	// actually got so the viewport/projection setup below uses the real one.
+	// F11 (ToggleFullscreen, input.go) still switches to borderless fullscreen.
 	WinWidth, WinHeight = Window.GetSize()
 	WinHalfWidth = WinWidth / 2
 	WinHalfHeight = WinHeight / 2
@@ -478,6 +486,12 @@ func main() {
 			}
 		}
 
+		// The script event loop, immediately after the world has settled: this
+		// frame's overlaps produce this frame's `enter`, and whatever a handler
+		// writes lands before the frame draws. `!Editor.Active` is the same play
+		// gate EntityUpdate takes.
+		ScriptTick(&level, DeltaTime, !Editor.Active)
+
 		// --- Debug stats: update CPU & memory ---
 		DebugUpdateCPU()
 		DebugUpdateMemory()
@@ -491,11 +505,18 @@ func main() {
 		// context is current, so this frame's draw calls already see them.
 		DrainTextureUploads()
 
+		// Geometry rebuilds and texture loads the script tick deferred. They
+		// cannot happen inside the tick — reloadSector ends in gl.* calls — so
+		// they are applied here, where the main context is current, coalesced so
+		// a hundred writes to one height cost one rebuild.
+		DrainScriptWork(&level)
+
 		// Likewise for a model editor asking to open the texture editor on a
 		// freshly unwrapped atlas: creating a window from inside another
 		// window's draw would insert into the map being ranged over and leave
 		// the wrong GL context current. See modelPendingTexEditor.
 		DrainModelTexEditorRequest()
+		DrainWindowOpens()
 
 		// Per-frame water shader inputs: animation clock and the view position
 		// the fresnel/specular terms are measured against.
@@ -680,6 +701,18 @@ func main() {
 			// up in the shot the player spawns into.
 			if Editor.Active && level.Spawn != nil {
 				drawOrQueue(&level.Spawn.Geometry, level.Spawn.ModelMatrix(), false)
+			}
+
+			// Volumes are regions rather than objects: invisible during play,
+			// and drawn here as wireframe cages so an author can see what they
+			// are placing. Same rule as the spawn marker.
+			//
+			// An entity with no mesh yet gets the same treatment, for the same
+			// reason: it has to be visible to be worked on, and invisible once
+			// the editor is closed.
+			if Editor.Active {
+				RenderVolumes(&level, &frustum)
+				RenderEntityMarkers(&level, &frustum)
 			}
 
 			if !editorWire {

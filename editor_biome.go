@@ -53,7 +53,7 @@ func finishBiomeSectorDraw(ch *Chunk) {
 			}
 		}
 		bs := BiomeSector{
-			ID:     nextBiomeSectorID(ch),
+			ID:     nextBiomeSectorID(Editor.level, ch),
 			Points: pts,
 			Brush:  defaultBiomeBrush(BiomeGrass),
 

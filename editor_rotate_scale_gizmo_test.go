@@ -98,23 +98,34 @@ func TestPickScaleHandlePrefersTheCentre(t *testing.T) {
 	}
 }
 
-// Rotate and scale are defined against the selection's own centre, so they have
-// nothing to act on when the selection is a single anchor. The spawn marker and
-// a whole chunk move and nothing else.
-func TestRotateAndScaleNeedAVertexSelection(t *testing.T) {
-	defer saveEditorSelection()()
+// gizmo3DSpawnSelection selects a lone spawn marker at the origin, the case
+// that has a facing to turn but no size to spread.
+func gizmo3DSpawnSelection(t *testing.T) {
+	t.Helper()
 	setupGizmoView()
 	Editor.Mode = Mode3D
 	Editor.level = &Level{Spawn: &SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
 	Editor.SelectedVertices = nil
 	Editor.SpawnSelected = true
 	Editor.GizmoKind = gizmoKindSpawn
+	Editor.GizmoTool = editorToolMove
+	Editor.SnapToGrid = false
+	Editor.SpawnPlacementMode = false
+	Editor.ExtrusionMode = false
+}
+
+// Scale is defined against the selection's own size, which a single anchor does
+// not have. Rotate only needs a facing, and the spawn marker's facing is the
+// whole point of it.
+func TestScaleNeedsAnExtentButRotateOnlyNeedsAFacing(t *testing.T) {
+	defer saveEditorSelection()()
+	gizmo3DSpawnSelection(t)
 
 	if _, ok := translateGizmoOrigin(); !ok {
 		t.Fatal("move offered no gizmo for the selected spawn marker")
 	}
-	if _, ok := rotateGizmoOrigin(); ok {
-		t.Error("rotate offered a pivot for a single anchor")
+	if _, ok := rotateGizmoOrigin(); !ok {
+		t.Error("rotate offered no pivot for the spawn marker")
 	}
 	if _, ok := scaleGizmoOrigin(); ok {
 		t.Error("scale offered a centre for a single anchor")
@@ -123,8 +134,43 @@ func TestRotateAndScaleNeedAVertexSelection(t *testing.T) {
 		t.Error("move should always have something to act on")
 	}
 	Editor.GizmoTool = editorToolRotate
+	if !editorToolActsOnSelection() {
+		t.Error("rotate refused the spawn marker")
+	}
+	Editor.GizmoTool = editorToolScale
 	if editorToolActsOnSelection() {
-		t.Error("rotate reported something to act on with no vertices selected")
+		t.Error("scale reported something to act on for a marker with no size")
+	}
+}
+
+// The marker turns in place, and the drag snapshot it turns from is the
+// rotation captured at mouse-down rather than the position the move drag uses.
+func TestGizmoRotateTurnsTheSpawnMarkerInPlace(t *testing.T) {
+	defer saveEditorSelection()()
+	gizmo3DSpawnSelection(t)
+	s := Editor.level.Spawn
+	s.Position = mgl32.Vec3{2, 1, 3}
+	s.Rotation = mgl32.Vec3{}
+	start := s.Position
+
+	if !captureGizmoDragStart() {
+		t.Fatal("the drag refused to start on the spawn marker")
+	}
+	if Editor.GizmoDragStartRot != (mgl32.Vec3{}) {
+		t.Errorf("snapshotted rotation = %v, want zero", Editor.GizmoDragStartRot)
+	}
+	applyRotationToSelection(mgl32.Vec3{0, 1, 0}, s.Position, math.Pi/2)
+
+	if s.Position != start {
+		t.Errorf("the marker moved while rotating: %v", s.Position)
+	}
+	if abs32(s.Rotation.Y()-float32(math.Pi/2)) > 1e-5 {
+		t.Errorf("rotation: got %v, want Y=pi/2", s.Rotation)
+	}
+	// The arrow the author sees and the direction gameplay reads are the same
+	// vector, so a quarter turn about Y has to swing the facing from +X to -Z.
+	if d := SpawnDirection(s); !vecNear(d, mgl32.Vec3{0, 0, -1}, 1e-5) {
+		t.Errorf("facing after the turn = %v, want {0 0 -1}", d)
 	}
 }
 

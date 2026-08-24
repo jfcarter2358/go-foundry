@@ -209,17 +209,12 @@ func TestEntityFromRawAppliesOverrides(t *testing.T) {
 func TestEntityFromRawRejectsBadReferences(t *testing.T) {
 	def := testDef(t)
 
-	// A level places definitions, so a typeless instance is an authoring error
-	// rather than something to guess at.
-	if _, err := entityFromRaw(RawEntity{ID: "x"}, lookup(def)); err == nil {
-		t.Error("an instance with no type was accepted")
-	}
 	if _, err := entityFromRaw(RawEntity{Type: "ghost", ID: "x"}, lookup(def)); err == nil {
 		t.Error("an unknown type was accepted")
 	}
-	// Overriding an attachment the type does not have is a mistake worth
-	// reporting: silently ignoring it would leave the author's edit doing
-	// nothing with no sign why.
+	// An entry that names an attachment the type does not have, and gives it no
+	// mesh of its own, is an override of something that is not there. Silently
+	// ignoring it would leave the author's edit doing nothing with no sign why.
 	_, err := entityFromRaw(RawEntity{
 		Type:   "barrel",
 		ID:     "x",
@@ -227,6 +222,81 @@ func TestEntityFromRawRejectsBadReferences(t *testing.T) {
 	}, lookup(def))
 	if err == nil {
 		t.Error("an override for a nonexistent attachment was accepted")
+	}
+}
+
+// A level may place an entity with no type at all — the editor's blank entity.
+// It carries its whole description, so nothing is looked up and nothing is
+// inherited.
+func TestEntityFromRawAcceptsATypelessInstance(t *testing.T) {
+	def := testDef(t)
+
+	e, err := entityFromRaw(RawEntity{
+		ID:       "crate_01",
+		Position: RawVec3{X: 1, Y: 2, Z: 3},
+		Models: []RawEntityModel{{
+			Name: "body",
+			Path: "models/box.obj",
+		}},
+	}, lookup(def))
+	if err != nil {
+		t.Fatalf("entityFromRaw: %v", err)
+	}
+	if e.Type != "" {
+		t.Errorf("type: got %q, want none", e.Type)
+	}
+	if !e.Visible || !e.HasBounds() {
+		t.Errorf("a blank entity should arrive visible and clickable: %+v", e)
+	}
+	if len(e.Models) != 1 || e.Models[0].Path != "models/box.obj" || !e.Models[0].Visible {
+		t.Errorf("models: %+v", e.Models)
+	}
+
+	// And it round-trips without a definition to lean on.
+	back, err := entityFromRaw(entityToRaw(&e, nil), lookup(def))
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	if back.Type != "" || len(back.Models) != 1 || back.Models[0].Path != "models/box.obj" {
+		t.Errorf("drifted: %+v", back)
+	}
+	if back.Position != e.Position || back.BoundHalfY != e.BoundHalfY {
+		t.Errorf("placement drifted: got %+v, want %+v", back, e)
+	}
+}
+
+// An instance may swap an attachment's mesh, and may add one the definition
+// does not have. Both used to be refused; both are what the editor's model
+// picker writes.
+func TestEntityModelPathOverrides(t *testing.T) {
+	def := testDef(t)
+	e := def.Instantiate("barrel_01")
+
+	e.Model("lid").Path = "models/rock.obj"
+	e.Models = append(e.Models, EntityModel{
+		Name:    "hat",
+		Path:    "models/box.obj",
+		Visible: true,
+	})
+
+	raw := entityToRaw(&e, def)
+	if len(raw.Models) != 2 {
+		t.Fatalf("models written: %+v", raw.Models)
+	}
+
+	back, err := entityFromRaw(raw, lookup(def))
+	if err != nil {
+		t.Fatalf("entityFromRaw: %v", err)
+	}
+	if m := back.Model("lid"); m == nil || m.Path != "models/rock.obj" {
+		t.Errorf("swapped mesh did not survive: %+v", m)
+	}
+	if m := back.Model("hat"); m == nil || m.Path != "models/box.obj" {
+		t.Errorf("added attachment did not survive: %+v", m)
+	}
+	// The definition itself is untouched — an instance's mesh is the instance's.
+	if def.Models[0].Path == "models/rock.obj" {
+		t.Error("the override reached the definition")
 	}
 }
 
@@ -585,37 +655,5 @@ func TestEntityCollisionOverrideRoundTrips(t *testing.T) {
 	}
 	if back.Collision != e.Collision {
 		t.Errorf("drifted: got %+v, want %+v", back.Collision, e.Collision)
-	}
-}
-
-// The shipped definitions are the catalog on a fresh checkout, and they are
-// also the worked examples of the flags — a rock that turned out to be movable
-// would teach the wrong thing.
-func TestShippedEntityDefsCollisionFlags(t *testing.T) {
-	prev := executablePath
-	executablePath = "resources"
-	ReloadEntityDefs()
-	t.Cleanup(func() {
-		executablePath = prev
-		ReloadEntityDefs()
-	})
-
-	box, err := LoadEntityDef("box")
-	if err != nil {
-		t.Skipf("no shipped box definition: %v", err)
-	}
-	if !box.Collision.World || !box.Collision.Gravity || !box.Collision.Movable {
-		t.Errorf("box should be a solid falling crate: %+v", box.Collision)
-	}
-
-	rock, err := LoadEntityDef("rock")
-	if err != nil {
-		t.Skipf("no shipped rock definition: %v", err)
-	}
-	if rock.Collision.Movable {
-		t.Errorf("rock should be immovable scenery: %+v", rock.Collision)
-	}
-	if !rock.Collision.Entities {
-		t.Error("rock should still opt in to entity collision — solidity is mutual")
 	}
 }

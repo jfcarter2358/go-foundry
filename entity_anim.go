@@ -28,6 +28,13 @@ import (
 // pose is evaluated against, and re-reading the file every frame is not an
 // option.
 type EntityAnim struct {
+	// wrapped and finished record the transitions the last Update crossed, for
+	// the scripting engine's :anim_start: and :anim_end: events. Set here rather
+	// than derived by a watcher because this is the only place that sees the
+	// clock cross a boundary; EntityModel.Update reads and clears them.
+	wrapped  bool
+	finished bool
+
 	Doc     *ModelDoc
 	Clip    int // index into Doc.Animations; -1 when nothing is playing
 	Time    float32
@@ -44,11 +51,34 @@ type EntityAnim struct {
 	Palette []mgl32.Mat4
 }
 
+// animUnavailable explains why doc cannot be animated, or "" when it can.
+//
+// The three conditions are separate on purpose. "This will not animate" is a
+// useless thing to be told when a rig is half-built, and the three ways to
+// half-build one — bones but no weights, weights but no keys, keys but no bones
+// — are indistinguishable from the outside and have completely different fixes.
+// newEntityAnim used to fold them into one boolean; the reason is now carried
+// through to the log window and the script editor, so the message names the step
+// that is missing rather than the outcome.
+func animUnavailable(doc *ModelDoc) string {
+	switch {
+	case doc == nil:
+		return "the model file did not load"
+	case len(doc.Bones) == 0:
+		return "the model has no armature, so there are no bones to pose"
+	case !doc.hasSkin():
+		return "no vertex in the model is weighted to a bone, so a pose would move nothing"
+	case !doc.hasAnimation():
+		return "the model has an armature but no clip with any keyframes"
+	}
+	return ""
+}
+
 // newEntityAnim prepares playback state for a rigged, animated document.
 // Returns nil for a model that has no motion to play, so the per-frame tick can
-// skip it with a single nil check.
+// skip it with a single nil check. animUnavailable says why.
 func newEntityAnim(doc *ModelDoc) *EntityAnim {
-	if doc == nil || len(doc.Bones) == 0 || !doc.hasSkin() || !doc.hasAnimation() {
+	if animUnavailable(doc) != "" {
 		return nil
 	}
 	a := &EntityAnim{
@@ -121,10 +151,18 @@ func (a *EntityAnim) update(dt float32) {
 	d := c.duration()
 	switch {
 	case a.Loop:
+		// A wrap is a cycle boundary: the clip ended and began again, which is
+		// what makes footstep and cycle-counting scripts writable.
+		if d > 0 && (a.Time >= d || a.Time < 0) {
+			a.wrapped = true
+		}
 		a.Time = c.wrapClipTime(a.Time)
 	case a.Time >= d:
 		// A one-shot settles on its final pose and stops, rather than holding a
 		// clock that grows without bound.
+		if a.Playing {
+			a.finished = true
+		}
 		a.Time = d
 		a.Playing = false
 	}

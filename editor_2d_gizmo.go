@@ -68,8 +68,9 @@ func gizmo2DSuppressed() bool {
 }
 
 // gizmo2DOrigin returns where the gizmo sits, or false when there is nothing
-// for it to act on. Rotate and scale need a set of points with an extent to
-// swing or spread; the spawn marker is a single anchor and only moves.
+// for it to act on. Scale needs a set of points with an extent to spread, or
+// something with a size of its own; the spawn marker has neither, but it does
+// have a facing, so it moves and turns.
 func gizmo2DOrigin() (mgl32.Vec2, bool) {
 	if gizmo2DSuppressed() || !editorToolActsOnSelection() {
 		return mgl32.Vec2{}, false
@@ -172,6 +173,7 @@ func editor2DGizmoMouseDown(t sdl.MouseButtonEvent) bool {
 	Editor.Gizmo2DStartPts = selectedVerticesWorld()
 	if s := activeGizmoSpawn(); s != nil {
 		Editor.Gizmo2DStartSpawn = s.Position
+		Editor.Gizmo2DStartSpawnRot = s.Rotation
 	}
 	if e := activeGizmoEntity(); e != nil {
 		Editor.Gizmo2DStartEntity = e.Position
@@ -252,6 +254,10 @@ func editor2DGizmoMouseMove(mx, my int32) {
 			gizmo2DRotateEntity(e, delta)
 			return
 		}
+		if s := activeGizmoSpawn(); s != nil {
+			gizmo2DRotateSpawn(s, delta)
+			return
+		}
 		gizmo2DApply(func(p mgl32.Vec2) mgl32.Vec2 { return rotateXZAbout(p, origin, delta) })
 
 	case editorToolScale:
@@ -330,6 +336,15 @@ func gizmo2DApply(fn func(mgl32.Vec2) mgl32.Vec2) {
 func gizmo2DRotateEntity(e *Entity, delta float32) {
 	r := Editor.Gizmo2DStartEntityRot
 	e.Rotation = mgl32.Vec3{r.X(), wrapAngle(r.Y() - delta), r.Z()}
+}
+
+// gizmo2DRotateSpawn swings the spawn marker's facing by a map-space angle.
+// Only the yaw moves: the map has no pitch to drag, so a spawn aimed up or down
+// keeps the pitch it was given in the 3D view or the panel. The sign is the
+// entity's, and for the same reason gizmo2DRotateEntity gives.
+func gizmo2DRotateSpawn(s *SpawnPoint, delta float32) {
+	r := Editor.Gizmo2DStartSpawnRot
+	s.Rotation = mgl32.Vec3{r.X(), wrapAngle(r.Y() - delta), r.Z()}
 }
 
 // gizmo2DScaleEntity resizes the entity in place. The map can only reach X and

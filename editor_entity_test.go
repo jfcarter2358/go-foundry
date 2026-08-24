@@ -175,7 +175,7 @@ func TestGizmo2DScaleLeavesHeightAlone(t *testing.T) {
 
 func TestEditorToolActsOnEntitySelection(t *testing.T) {
 	// Rotate and scale need something with an orientation or a size. An entity
-	// has both; a spawn marker has neither.
+	// has both; nothing selected has neither.
 	entityEditorLevel(t)
 	Editor.GizmoTool = editorToolRotate
 	if !editorToolActsOnSelection() {

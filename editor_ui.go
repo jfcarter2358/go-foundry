@@ -288,6 +288,65 @@ func textureCombo(label string, tex *string, allowEmpty bool) bool {
 	return changed
 }
 
+// modelFileNames lists what a model picker can offer: every .fmdl and .obj
+// under models/, written as the install-relative paths an attachment stores.
+//
+// Both extensions are offered because both load (loadModelDocument picks the
+// reader), and an author who has only ever exported OBJs should not have to
+// round-trip through the model editor to hang one on an entity.
+func modelFileNames() []string {
+	files := append(ScanModelFiles(), ScanOBJFiles()...)
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, modelsDirName+"/"+f)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// modelFileCombo draws a picker over those files, writing the chosen path into
+// *path and reporting whether it changed.
+//
+// "(none)" is always offered: an attachment with no mesh is legitimate — it is
+// what one on a freshly placed entity starts as — and clearing the path is how
+// a model is taken off again. A path that is not among the files is still shown
+// as the selection, so a level authored against a mesh since renamed says so
+// rather than silently reverting to something that happens to exist.
+//
+// The directory is scanned only while the dropdown is open. That is a syscall
+// per frame for the few frames a menu is down, and it means the list is always
+// what is on disk rather than what was on disk when the panel first drew.
+func modelFileCombo(label string, path *string) bool {
+	preview := *path
+	if preview == "" {
+		preview = "(none)"
+	}
+	if !imgui.BeginCombo(label, preview) {
+		return false
+	}
+	defer imgui.EndCombo()
+
+	changed := false
+	if imgui.SelectableV("(none)", *path == "", 0, imgui.Vec2{}) && *path != "" {
+		*path = ""
+		changed = true
+	}
+	known := false
+	for _, n := range modelFileNames() {
+		if n == *path {
+			known = true
+		}
+		if imgui.SelectableV(n, n == *path, 0, imgui.Vec2{}) && n != *path {
+			*path = n
+			changed = true
+		}
+	}
+	if !known && *path != "" {
+		imgui.SelectableV(*path+" (missing)", true, 0, imgui.Vec2{})
+	}
+	return changed
+}
+
 // waterControls draws the wave and reflection settings for a water surface.
 //
 // Edits are pushed straight to the already-uploaded Geometry rather than going
@@ -667,54 +726,31 @@ func EditorDrawUI() {
 		imgui.WindowFlagsNoTitleBar|imgui.WindowFlagsNoResize|
 			imgui.WindowFlagsNoMove|imgui.WindowFlagsNoScrollbar)
 
-	// Mode toggle buttons — snapshot mode before rendering so Push/Pop stay matched
+	// Snapshot mode before rendering so Push/Pop stay matched. The main window
+	// is always the 3D view now — the sector map has a window of its own — so
+	// there is no 2D/3D toggle here, and this button is the only way into it.
 	currentMode := Editor.Mode
 
 	// Remember the toolbar's first line so the Exit button can be placed on it
 	// no matter where the cursor ends up after the mode-specific widgets.
 	toolbarY := imgui.CursorPosY()
 
-	if currentMode == Mode3D {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
-	}
-	if imgui.Button("3D Mode [Tab]") && Editor.Mode != Mode3D {
-		Editor.Mode = Mode3D
-	}
-	if currentMode == Mode3D {
-		imgui.PopStyleColor()
-	}
-
-	imgui.SameLine()
-	if currentMode == Mode2D {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
-	}
-	if imgui.Button("2D Mode [Tab]") && Editor.Mode != Mode2D {
-		if Editor2DPoppedOut() {
-			// The 2D view has its own window; raise it rather than taking
-			// this one over with a second copy.
-			OpenEditor2DWindow()
-		} else {
-			Editor.Mode = Mode2D
-		}
-	}
-	if currentMode == Mode2D {
-		imgui.PopStyleColor()
-	}
-
-	imgui.SameLine()
 	// Snapshot before the button: clicking it opens the window, so re-testing
 	// Editor2DPoppedOut() afterwards would pop a color that was never pushed
 	// and unbalance imgui's global style stack (it asserts on the next
 	// push/pop anywhere). Same reason drawToolsPanel latches its selection.
-	poppedOut := Editor2DPoppedOut()
-	if poppedOut {
+	editor2DOpen := Editor2DPoppedOut()
+	if editor2DOpen {
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
 	}
 	if imgui.Button("2D Window") {
 		OpenEditor2DWindow()
 	}
-	if poppedOut {
+	if editor2DOpen {
 		imgui.PopStyleColor()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Open the top-down sector map in its own window.")
 	}
 
 	imgui.SameLine()
@@ -748,11 +784,40 @@ func EditorDrawUI() {
 		imgui.PopStyleColor()
 	}
 
+	imgui.SameLine()
+	// Latched before the button, for the same reason "Model" above is.
+	scriptOpen := ScriptEditorOpen()
+	if scriptOpen {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
+	}
+	if imgui.Button("Script") {
+		OpenScriptEditorWindow()
+	}
+	if scriptOpen {
+		imgui.PopStyleColor()
+	}
+
+	imgui.SameLine()
+	logOpen := LogWindowOpen()
+	if logOpen {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
+	}
+	if imgui.Button("Log") {
+		OpenLogWindow()
+	}
+	if logOpen {
+		imgui.PopStyleColor()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Live script output, errors and engine messages.")
+	}
+
 	// View controls: what a click selects and which gizmo acts on it. Both are
 	// shared by the 3D viewport and the 2D map — same state, same shortcuts —
 	// so the two are driven the same way and a selection made in one is legible
-	// in the other. (Shading and the camera below are 3D's alone.)
-	if currentMode == Mode3D || currentMode == Mode2D {
+	// in the other. (The map's copy is in its own toolbar; shading and the
+	// camera below are 3D's alone.)
+	if currentMode == Mode3D {
 		imgui.SameLine()
 		imgui.Separator()
 		for _, mode := range editorSelModes {
@@ -975,12 +1040,6 @@ func EditorDrawUI() {
 		EditorDirLightIndicator()
 		// Last, so the popup opens over the panel as well as the viewport.
 		editor3DContextMenu()
-	} else if Editor.Mode == Mode2D {
-		Editor2DPanel()
-		// After the panel — it sets the selection the indicator reads.
-		EditorDirLightIndicator()
-		// Last, so the popup opens over the panel as well as the map.
-		Editor2DContextMenu()
 	} else if Editor.Mode == ModeSurface2D {
 		Surface2DPanel()
 	}
@@ -1032,6 +1091,7 @@ func Editor2DPanel() {
 
 	// ---- Entities ----
 	editorEntitySection(lvl)
+	editorVolumeSection(lvl)
 	editorEntityProperties(lvl)
 
 	if ch != nil {
@@ -1289,9 +1349,16 @@ func convertEdge(ch *Chunk, s *Sector, fromKind string, idx int, toKind string) 
 		}
 	}
 
+	// The edge keeps its ID across the conversion. This is the whole reason
+	// identity lives on the edge rather than on the wall or portal record: a
+	// script addressing @sector.edge.<id> must not lose its target because the
+	// author turned that edge into a doorway.
+	ensureEdgeIDs(s)
+	edgeID := s.EdgeIDs[polyIdx]
+
 	if fromKind == "wall" && idx < len(s.Walls) {
 		w := s.Walls[idx]
-		p := Portal{StartPoint: w.StartPoint, EndPoint: w.EndPoint, Visible: true, DoubleSided: w.DoubleSided}
+		p := Portal{ID: edgeID, StartPoint: w.StartPoint, EndPoint: w.EndPoint, Visible: true, DoubleSided: w.DoubleSided}
 		s.Walls = append(s.Walls[:idx], s.Walls[idx+1:]...)
 		// Insert portal at the correct position
 		s.Portals = append(s.Portals, Portal{})
@@ -1302,7 +1369,7 @@ func convertEdge(ch *Chunk, s *Sector, fromKind string, idx int, toKind string) 
 	} else if fromKind == "portal" && idx < len(s.Portals) {
 		p := s.Portals[idx]
 		_ = ensureTextureLoaded("concrete")
-		w := Wall{StartPoint: p.StartPoint, EndPoint: p.EndPoint, Texture: "concrete", Collision: true, Visible: true, Pinned: true, DoubleSided: p.DoubleSided, Alpha: 1.0}
+		w := Wall{ID: edgeID, StartPoint: p.StartPoint, EndPoint: p.EndPoint, Texture: "concrete", Collision: true, Visible: true, Pinned: true, DoubleSided: p.DoubleSided, Alpha: 1.0}
 		s.Portals = append(s.Portals[:idx], s.Portals[idx+1:]...)
 		// Insert wall at the correct position
 		s.Walls = append(s.Walls, Wall{})
@@ -1313,6 +1380,7 @@ func convertEdge(ch *Chunk, s *Sector, fromKind string, idx int, toKind string) 
 	}
 
 	s.EdgeKinds[polyIdx] = toKind
+	syncEdgeRecordIDs(s)
 	_ = reloadSector(ch, s)
 }
 

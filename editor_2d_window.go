@@ -1,12 +1,13 @@
 package main
 
-// editor_2d_window.go — the 2D sector editor popped out into its own OS
-// window, the same way the texture editor does (texture_editor_ui.go).
+// editor_2d_window.go — the 2D sector editor, which lives in an OS window of
+// its own, the same way the texture editor does (texture_editor_ui.go).
 //
-// Motivation: in the main window the 2D map is drawn on top of the live 3D
-// render, so only one of the two views can be looked at. Popped out, the map
-// gets its own window cleared to black and the main window stays in 3D mode,
-// so both are usable side by side on two screens.
+// Motivation: the 2D map used to be drawn on top of the live 3D render in the
+// main window, so only one of the two views could be looked at and Tab flipped
+// between them. It now lives here and nowhere else: the map gets its own
+// window cleared to black, the main window is always the 3D view, and both are
+// usable side by side on two screens.
 //
 // Nothing here duplicates the 2D editor itself — the window reuses
 // Editor2DRender / Editor2DPanel / Editor2DHandleClick unchanged. What it
@@ -24,12 +25,13 @@ import (
 	"log"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-// editor2DWindow is the popped-out 2D editor window; nil when the 2D editor
-// lives in the main window.
+// editor2DWindow is the 2D sector editor's window; nil when it is not open,
+// which is also when there is no 2D editing going on at all.
 var editor2DWindow *UIWindow
 
 const (
@@ -38,9 +40,9 @@ const (
 )
 
 // editor2DViewportSize returns the pixel size of the surface the 2D map is
-// drawn into: the pop-out window when one is open, the main window otherwise.
-// Only one of the two ever draws the map — OpenEditor2DWindow takes the main
-// window out of Mode2D — so a single answer is unambiguous.
+// drawn into — this window, whenever it is open. The main-window fallback is
+// only there for the headless tests, which drive the 2D handlers directly
+// without ever opening a window.
 func editor2DViewportSize() (w, h float32) {
 	if editor2DWindow != nil {
 		return float32(editor2DWindow.W), float32(editor2DWindow.H)
@@ -48,12 +50,13 @@ func editor2DViewportSize() (w, h float32) {
 	return float32(WinWidth), float32(WinHeight)
 }
 
-// Editor2DPoppedOut reports whether the 2D editor currently has its own window.
+// Editor2DPoppedOut reports whether the 2D sector editor is open, which — now
+// that the map has no home in the main window — is the same question as
+// whether the 2D editor is available at all.
 func Editor2DPoppedOut() bool { return editor2DWindow != nil }
 
-// OpenEditor2DWindow pops the 2D sector editor out into its own window, or
-// raises it if it is already open. The main window drops back to 3D mode so
-// the two views show different things.
+// OpenEditor2DWindow opens the 2D sector editor in its own window, or raises
+// it if it is already open. This is the only way into the 2D map.
 func OpenEditor2DWindow() {
 	if editor2DWindow != nil {
 		editor2DWindow.Win.Raise()
@@ -69,13 +72,13 @@ func OpenEditor2DWindow() {
 	w.HandleEvent = editor2DWindowHandleEvent
 	editor2DWindow = w
 
-	if Editor.Mode == Mode2D {
-		Editor.Mode = Mode3D
-	}
+	// Open the map on whatever the 3D camera is looking at, the way Tab used
+	// to when the two views shared the main window.
+	Editor.Pan2D = mgl32.Vec2{Cam.Position.X(), Cam.Position.Z()}
 }
 
-// CloseEditor2DWindow asks for the pop-out to go away at the end of the
-// frame; 2D editing returns to the main window on the next Tab. Safe to call
+// CloseEditor2DWindow asks for the 2D editor to go away at the end of the
+// frame; the main window keeps showing the 3D view either way. Safe to call
 // from inside the window's own Draw (see UIWindow.CloseRequested).
 func CloseEditor2DWindow() {
 	if editor2DWindow != nil {
@@ -83,26 +86,25 @@ func CloseEditor2DWindow() {
 	}
 }
 
-// onEditor2DWindowClose runs when the window goes away — via the "Pop In"
-// button, the OS close button, or the editor being switched off. Popping in
-// means the 2D view returns to the main window, so the main window takes
-// Mode2D back unless the editor is on its way out entirely.
+// onEditor2DWindowClose runs when the window goes away — via the "Close"
+// button, the OS close button, or the editor being switched off. There is
+// nothing to hand back: the main window was already in 3D and stays there.
 func onEditor2DWindowClose() {
 	editor2DWindow = nil
-	if Editor.Active && Editor.Mode == Mode3D {
-		Editor.Mode = Mode2D
-	}
 }
 
 // withEditor2DMode runs fn with Editor.Mode forced to Mode2D, restoring the
-// previous mode afterwards. Every shared editor entry point the pop-out calls
-// (panels, click handlers, delete) branches on Editor.Mode, but the main
-// window is in Mode3D while the pop-out is open.
+// previous mode afterwards. Every shared editor entry point this window calls
+// (panels, click handlers, delete) branches on Editor.Mode, and Mode2D is this
+// window's alone — the main window stays in Mode3D throughout.
 //
 // If fn leaves a *different* mode behind, it wasn't stale state — it was a
 // panel button asking for another workspace ("Edit Floor Surface", "Switch to
 // 3D Editor"). Those all render in the main window, so the request is handed
 // to it rather than undone.
+//
+// Outside these brackets Mode2D is never the main window's mode; see
+// editorSyncMainWindowMode.
 func withEditor2DMode(fn func()) {
 	prev := Editor.Mode
 	Editor.Mode = Mode2D
@@ -116,20 +118,23 @@ func withEditor2DMode(fn func()) {
 	fn()
 }
 
-// editorSyncPoppedOutMode keeps the main window out of Mode2D while the 2D
-// editor owns a window of its own — otherwise both would draw the map, and
-// the screen↔world math (editor2DViewportSize) can only be right for one of
-// them. Called at the top of the main window's per-frame editor entry points,
-// so every path that sets Mode2D behind our back (undo restoring a mode,
-// leaving the surface editor, a shared panel button) lands back in 3D.
-func editorSyncPoppedOutMode() {
-	if Editor2DPoppedOut() && Editor.Mode == Mode2D {
+// editorSyncMainWindowMode keeps the main window out of Mode2D. The map is
+// this window's alone — the main window has no code left to draw or drive it,
+// and the screen↔world math (editor2DViewportSize) answers for this one — so a
+// main window in Mode2D would show a blank 3D view with no side panel.
+//
+// Called at the top of the main window's per-frame editor entry points, so
+// every path that sets Mode2D behind our back (undo restoring a mode, leaving
+// the surface editor into the mode it was entered from) lands back in 3D
+// rather than having to be individually taught the rule.
+func editorSyncMainWindowMode() {
+	if Editor.Mode == Mode2D {
 		Editor.Mode = Mode3D
 	}
 }
 
 // withMainGLContext runs fn with the *main* window's GL context current, then
-// hands the pop-out's back.
+// hands this window's back.
 //
 // Editing from this window is not purely CPU work: dragging a vertex, drawing
 // a sector, painting a biome or undoing any of it rebuilds level geometry,
@@ -152,7 +157,7 @@ func withMainGLContext(fn func()) {
 	fn()
 }
 
-// editor2DWindowFocused reports whether the pop-out currently owns keyboard
+// editor2DWindowFocused reports whether this window currently owns keyboard
 // input, which is what decides whether WASD pans the map here or flies the
 // camera in the main window.
 func editor2DWindowFocused() bool {
@@ -162,7 +167,7 @@ func editor2DWindowFocused() bool {
 
 // ---------- per-frame ----------
 
-// drawEditor2DWindow renders one frame of the pop-out: the map through the
+// drawEditor2DWindow renders one frame of the 2D editor: the map through the
 // gizmo line renderer, then this window's ImGui layer. Called by
 // RenderSecondaryWindows with the window's GL/imgui contexts current and its
 // framebuffer already cleared to black.
@@ -194,9 +199,9 @@ func drawEditor2DWindow() {
 }
 
 // editor2DWindowPan applies WASD panning while this window has focus.
-// EditorTick does the same for the main window, but only for the mode it is
-// actually in — and it skips input entirely when the main window is
-// unfocused, so the two never both act on a keypress.
+// EditorTick flies the main window's camera on the same keys, but it skips
+// input entirely when the main window is unfocused, so the two never both act
+// on a keypress.
 func editor2DWindowPan() {
 	if !editor2DWindowFocused() || imgui.CurrentIO().WantCaptureKeyboard() || KeyStates == nil {
 		return
@@ -216,9 +221,9 @@ func editor2DWindowPan() {
 	}
 }
 
-// editor2DWindowToolbar draws the pop-out's slim top bar. The main window's
-// toolbar keeps owning level-wide actions (save/load, mode switching); this
-// one only carries what is 2D-specific plus the way back in.
+// editor2DWindowToolbar draws this window's slim top bar. The main window's
+// toolbar keeps owning level-wide actions (save/load, the other editors); this
+// one only carries what is 2D-specific plus the way out.
 func editor2DWindowToolbar() {
 	w := editor2DWindow
 	if w == nil {
@@ -259,9 +264,9 @@ func editor2DWindowToolbar() {
 	imgui.Separator()
 	editorGizmoToolButtons()
 
-	const popInBtnWidth = 90
-	imgui.SetCursorPos(imgui.Vec2{X: float32(w.W) - popInBtnWidth - 8, Y: toolbarY})
-	if imgui.ButtonV("Pop In", imgui.Vec2{X: popInBtnWidth, Y: 0}) {
+	const closeBtnWidth = 90
+	imgui.SetCursorPos(imgui.Vec2{X: float32(w.W) - closeBtnWidth - 8, Y: toolbarY})
+	if imgui.ButtonV("Close", imgui.Vec2{X: closeBtnWidth, Y: 0}) {
 		CloseEditor2DWindow()
 	}
 
@@ -270,9 +275,9 @@ func editor2DWindowToolbar() {
 
 // ---------- input ----------
 
-// editor2DWindowHandleEvent is the pop-out's input path: the Mode2D branches
-// of EditorHandleEvent (editor.go), minus everything that belongs to the
-// other modes. Runs with this window's imgui context current, so the
+// editor2DWindowHandleEvent is this window's input path: what used to be the
+// Mode2D branches of EditorHandleEvent (editor.go), minus everything that
+// belongs to the main window's modes. Runs with this window's imgui context current, so the
 // WantCapture* checks refer to its own panels.
 func editor2DWindowHandleEvent(event sdl.Event) {
 	w := editor2DWindow
@@ -320,13 +325,8 @@ func editor2DWindowInput(event sdl.Event) {
 		switch t.Keysym.Scancode {
 		case sdl.SCANCODE_DELETE:
 			EditorDeleteSelected()
-		case sdl.SCANCODE_TAB:
-			// Tab is "switch view" everywhere else in the editor; here the
-			// other view is the main window, so hand focus back to it.
-			Window.Raise()
-
 		// The selection unit and the gizmo tool, on the same keys the main
-		// window binds them to (editor.go). The pop-out has its own event loop,
+		// window binds them to (editor.go). This window has its own event loop,
 		// so without these the map would show modes it could not switch.
 		case sdl.SCANCODE_1:
 			editorSetSelMode(editorSelPoint)

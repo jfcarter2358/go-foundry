@@ -82,6 +82,15 @@ func (g *Geometry) applyWaterUniforms() {
 		g.Water.ReflectColor.X(), g.Water.ReflectColor.Y(), g.Water.ReflectColor.Z())
 }
 
+// geometryUploadsEnabled gates the GPU half of Geometry.Load. It is true in the
+// running engine and always will be; tests turn it off so that editor operations
+// which rebuild geometry as a side effect can be exercised without a window.
+//
+// The split is real rather than a test affordance: the CPU half computes the
+// mesh, its normals and its bounds, all of which non-rendering code legitimately
+// reads. Only the upload needs a context.
+var geometryUploadsEnabled = true
+
 // Load uploads vertices (indexed by indices) to the GPU.
 // vertices: slice of [X,Y,Z,U,V] vertex definitions.
 // indices: triangle list referencing vertices.
@@ -134,6 +143,15 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	}
 
 	g.Model = mgl32.Ident4()
+
+	// Everything above builds the mesh on the CPU; everything below hands it to
+	// the GPU. Only the second half needs a live GL context, which is what lets
+	// the editor's structural operations — splitting an edge, merging sectors —
+	// be exercised headlessly. See withoutGeometryUploads in the tests.
+	if !geometryUploadsEnabled {
+		return nil
+	}
+
 	g.ModelUniform = gl.GetUniformLocation(Program, gl.Str("model\x00"))
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &g.Model[0])
 
@@ -275,4 +293,27 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])
 	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
+}
+
+// DrawLinesWithTransform renders the geometry as a line list rather than as
+// triangles, using a caller-supplied model matrix.
+//
+// Editor markers that describe a region rather than a surface — a volume's cage
+// (volume_render.go) — want lines: a translucent solid would sort into the
+// transparent pass and fight with the water already there, and two overlapping
+// regions drawn as solids are unreadable where two drawn as wireframes are not.
+func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
+	if len(g.Vertices) == 0 {
+		return
+	}
+	gl.UseProgram(Program)
+	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
+	gl.Uniform1f(AlphaUniform, g.Alpha)
+	gl.Uniform1i(SmoothUniform, 0)
+	gl.Uniform1i(IsWaterUniform, 0)
+	applySkinUniforms(&worldSkinUniforms, Program, nil)
+	gl.BindVertexArray(g.Vao)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])
+	gl.DrawArrays(gl.LINES, 0, int32(len(g.Vertices)/5))
 }

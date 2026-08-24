@@ -76,6 +76,11 @@ func levelToRaw(level *Level) (RawLevel, error) {
 		raw.Entities = append(raw.Entities, entityToRaw(&level.Entities[i], entityDefFor(&level.Entities[i])))
 	}
 
+	for i := range level.Volumes {
+		raw.Volumes = append(raw.Volumes, volumeToRaw(&level.Volumes[i]))
+	}
+
+	raw.Scripts = append([]string(nil), level.Scripts...)
 	raw.Lights = lightsToRaw(level.Lights)
 	return raw, nil
 }
@@ -99,11 +104,12 @@ func entityDefFor(e *Entity) *EntityDef {
 // the chunk's origin/rotation/scale so the YAML stores chunk-local coords.
 func chunkToRaw(ch *Chunk) (RawChunk, error) {
 	rc := RawChunk{
-		ID:       ch.ID,
-		Points:   make(map[string]Point),
-		Origin:   RawChunkOrigin{X: ch.Origin.X(), Y: ch.Origin.Y(), Z: ch.Origin.Z()},
-		Rotation: ch.Rotation,
-		Scale:    ch.Scale,
+		ID:            ch.ID,
+		RawScriptData: scriptDataToRaw(ch.ScriptData),
+		Points:        make(map[string]Point),
+		Origin:        RawChunkOrigin{X: ch.Origin.X(), Y: ch.Origin.Y(), Z: ch.Origin.Z()},
+		Rotation:      ch.Rotation,
+		Scale:         ch.Scale,
 	}
 	if rc.Scale == 0 {
 		rc.Scale = 1
@@ -124,8 +130,10 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 		floorOffsets := trimTrailingZeros(s.Floor.VertexOffsets)
 		ceilOffsets := trimTrailingZeros(s.Ceiling.VertexOffsets)
 		rs := RawSector{
-			ID: s.ID,
+			ID:            s.ID,
+			RawScriptData: scriptDataToRaw(s.ScriptData),
 			Floor: RawFloor{
+				RawScriptData: scriptDataToRaw(s.Floor.ScriptData),
 				Enabled:       s.Floor.Enabled,
 				Hidden:        s.Floor.Hidden,
 				Height:        s.Floor.Height,
@@ -144,6 +152,7 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				SmoothAngle:   s.Floor.SmoothAngle,
 			},
 			Ceiling: RawCeiling{
+				RawScriptData: scriptDataToRaw(s.Ceiling.ScriptData),
 				Enabled:       s.Ceiling.Enabled,
 				Height:        s.Ceiling.Height,
 				VertexOffsets: ceilOffsets,
@@ -181,10 +190,13 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 			if ei < len(s.EdgeKinds) {
 				kind = s.EdgeKinds[ei]
 			}
+			edgeID := edgeIDAt(s, ei)
 
 			if kind == "wall" && wallIdx < len(s.Walls) {
 				w := &s.Walls[wallIdx]
 				rs.Edges = append(rs.Edges, RawEdge{
+					ID:            edgeID,
+					RawScriptData: scriptDataToRaw(w.ScriptData),
 					From:          fromName,
 					To:            toName,
 					Kind:          "wall",
@@ -208,20 +220,23 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 			} else if kind == "portal" && portalIdx < len(s.Portals) {
 				p := &s.Portals[portalIdx]
 				rs.Edges = append(rs.Edges, RawEdge{
-					From:        fromName,
-					To:          toName,
-					Kind:        "portal",
-					ToSector:    p.ToSector,
-					DrawGap:     p.DrawGap,
-					GapTexture:  p.GapTexture,
-					Hidden:      !p.Visible,
-					DoubleSided: boolPtrIfFalse(p.DoubleSided),
-					Alpha:       float32PtrIfNotOne(p.Alpha),
+					ID:            edgeID,
+					RawScriptData: scriptDataToRaw(p.ScriptData),
+					From:          fromName,
+					To:            toName,
+					Kind:          "portal",
+					ToSector:      p.ToSector,
+					DrawGap:       p.DrawGap,
+					GapTexture:    p.GapTexture,
+					Hidden:        !p.Visible,
+					DoubleSided:   boolPtrIfFalse(p.DoubleSided),
+					Alpha:         float32PtrIfNotOne(p.Alpha),
 				})
 				portalIdx++
 			} else {
 				// Fallback: emit a bare wall edge so data is not lost
 				rs.Edges = append(rs.Edges, RawEdge{
+					ID:   edgeID,
 					From: fromName,
 					To:   toName,
 					Kind: "wall",
@@ -408,6 +423,8 @@ func lightsToRaw(ls LightSet) RawLights {
 		dl.SyncDirection()
 		yaw, pitch := dl.Yaw, dl.Pitch
 		rl.Directional = append(rl.Directional, RawDirLight{
+			ID:            dl.ID,
+			RawScriptData: scriptDataToRaw(dl.ScriptData),
 			Direction: struct {
 				X float32 `yaml:"x"`
 				Y float32 `yaml:"y"`
@@ -423,6 +440,8 @@ func lightsToRaw(ls LightSet) RawLights {
 	}
 	for _, pl := range ls.Points {
 		rl.Point = append(rl.Point, RawPointLight{
+			ID:            pl.ID,
+			RawScriptData: scriptDataToRaw(pl.ScriptData),
 			Position: struct {
 				X float32 `yaml:"x"`
 				Y float32 `yaml:"y"`

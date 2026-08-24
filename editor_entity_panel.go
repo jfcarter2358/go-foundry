@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -64,31 +65,42 @@ func editorEntityEngineToggles() {
 	editorTextWrapped("Entities only move while the editor is closed.")
 }
 
-// editorEntityCatalog draws the definition picker and the place button.
-func editorEntityCatalog() {
-	if len(Editor.EntityDefNames) == 0 {
-		imgui.Text(fmt.Sprintf("No entity definitions in %s/.", entitiesDirName))
-		imgui.Text("Each is a .yaml file describing one type.")
-		if imgui.Button("Rescan##entdefs") {
-			editorRefreshEntityDefs()
-		}
-		return
-	}
+// entityBlankCatalogLabel names the catalog's first entry: not a definition,
+// but the absence of one.
+const entityBlankCatalogLabel = "(blank entity)"
 
+// editorEntityCatalog draws the picker and the place button.
+//
+// The list always starts with the blank entry, and starts *on* it: placing
+// something and then deciding what it is, in the panel, is the usual way an
+// entity gets made. Definition files under entities/ follow it for the types
+// that have earned a file of their own — see entity_def.go on when that is.
+func editorEntityCatalog() {
 	name := editorSelectedDefName()
-	if imgui.BeginCombo("Type##entdef", name) {
+
+	preview := entityBlankCatalogLabel
+	if name != "" {
+		preview = name
+	}
+	if imgui.BeginCombo("Type##entdef", preview) {
+		if imgui.SelectableV(entityBlankCatalogLabel, name == "", 0, imgui.Vec2{}) {
+			Editor.EntityDefIdx = 0
+		}
 		for i, n := range Editor.EntityDefNames {
-			if imgui.SelectableV(n, int32(i) == Editor.EntityDefIdx, 0, imgui.Vec2{}) {
-				Editor.EntityDefIdx = int32(i)
+			if imgui.SelectableV(n, n == name, 0, imgui.Vec2{}) {
+				Editor.EntityDefIdx = int32(i + 1)
 			}
 		}
 		imgui.EndCombo()
 	}
 
-	// The description is the definition author's one-line note about what the
-	// type is for — worth showing, but not worth failing the picker over, so a
-	// definition that will not load simply shows why instead.
-	if def, err := LoadEntityDef(name); err == nil {
+	if name == "" {
+		editorTextWrapped("No model and no type: a box you place and then " +
+			"describe here. The level file carries all of it.")
+	} else if def, err := LoadEntityDef(name); err == nil {
+		// The description is the definition author's one-line note about what
+		// the type is for — worth showing, but not worth failing the picker
+		// over, so a definition that will not load simply shows why instead.
 		if def.Description != "" {
 			editorTextWrapped(def.Description)
 		}
@@ -98,7 +110,8 @@ func editorEntityCatalog() {
 
 	imgui.InputTextV("ID##newent", &Editor.NewEntityID, 0, nil)
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Leave blank to name it after its type.\nA number is appended if the name is taken.")
+		imgui.SetTooltip("Leave blank to name it after its type, or \"" + blankEntityID + "\"\n" +
+			"for a blank one. A number is appended if the name is taken.")
 	}
 
 	if imgui.Button("Place Entity##entplace") {
@@ -116,6 +129,10 @@ func editorEntityCatalog() {
 	if imgui.Button("Reload Definitions##entdefs") {
 		editorRefreshEntityDefs()
 		editorSetStatus("Rescanned %s/", entitiesDirName)
+	}
+	if len(Editor.EntityDefNames) == 0 && imgui.IsItemHovered() {
+		imgui.SetTooltip("Nothing in " + entitiesDirName + "/ yet. A definition is a\n" +
+			".yaml file describing one type; entities do not need one.")
 	}
 }
 
@@ -170,6 +187,8 @@ func editorEntityProperties(lvl *Level) {
 	imgui.Separator()
 	editorEntityAttributes(e)
 	imgui.Separator()
+	editorEntityScript(e)
+	imgui.Separator()
 	editorEntityModels(e)
 	imgui.Separator()
 	editorEntityActions(e)
@@ -193,8 +212,15 @@ func editorEntityIdentity(lvl *Level, e *Entity) {
 	}
 	if e.Type != "" {
 		imgui.Text("Type: " + e.Type)
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Stamped from " + entitiesDirName + "/" + e.Type + ".yaml.\n" +
+				"The level stores only what differs from it.")
+		}
 	} else {
-		imgui.Text("Type: (none — written out in full)")
+		imgui.Text("Type: (none)")
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("A blank entity: everything below is its own,\nand the level writes all of it.")
+		}
 	}
 	imgui.Checkbox("Visible##entvis", &e.Visible)
 	if e.CurrentChunk != "" || e.CurrentSector != "" {
@@ -334,88 +360,32 @@ func editorEntityCollisionSection(e *Entity) {
 	if !EntityEntityCollisionEnabled && e.Collision.Entities {
 		editorTextWrapped("Entity collision is switched off engine-wide.")
 	}
-	editorTextWrapped("These belong on the type. Set them in " +
-		entitiesDirName + "/" + valueOrDash(e.Type) + ".yaml and every one placed gets them.")
-}
-
-// valueOrDash is orDash for a type name used inside a path.
-func valueOrDash(s string) string {
-	if s == "" {
-		return "<type>"
+	if e.Type != "" {
+		editorTextWrapped("These belong on the type. Set them in " +
+			entitiesDirName + "/" + e.Type + ".yaml and every one placed gets them.")
 	}
-	return s
 }
 
 // ---------- tags ----------
 
-// editorEntityTags draws the tag list and the add row. Tags are what a script's
-// `#tag` addresses, so the list is kept sorted — normalizeTags does that on
-// every add.
+// editorEntityTags and editorEntityAttributes are thin wrappers over the shared
+// rows in editor_script_panel.go. An entity's tags and attributes are merged
+// from its definition rather than held in a ScriptData, so it cannot use
+// editorScriptDataUI wholesale — but the widgets themselves are the same ones a
+// volume or a sector gets, and there is no reason for two copies of them.
 func editorEntityTags(e *Entity) {
-	if !imgui.CollapsingHeaderV("Tags##enttags", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
-	for _, t := range e.Tags {
-		imgui.Text("#" + t)
-		imgui.SameLine()
-		if imgui.Button("x##enttag" + t) {
-			EditorPushUndo()
-			e.RemoveTag(t)
-			// The list being iterated has just been rewritten; leave now and
-			// draw the rest of it next frame.
-			return
-		}
-	}
-	if len(e.Tags) == 0 {
-		imgui.Text("(none)")
-	}
-
-	imgui.InputTextV("##newtag", &Editor.NewTagText, 0, nil)
-	imgui.SameLine()
-	if imgui.Button("Add Tag##enttagadd") && Editor.NewTagText != "" {
-		EditorPushUndo()
-		e.AddTag(Editor.NewTagText)
-		Editor.NewTagText = ""
-	}
+	editorTagsUI(&e.Tags, "ent", "Tags")
 }
 
-// ---------- attributes ----------
-
-// editorEntityAttributes draws the attribute table and the add row.
 func editorEntityAttributes(e *Entity) {
-	if !imgui.CollapsingHeaderV("Attributes##entattrs", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
+	editorAttributesUI(&e.Attributes, "ent", "Attributes", strconv.Quote(e.ID))
+}
 
-	for _, name := range e.Attributes.AttrNames() {
-		if editorEntityAttributeRow(e, name) {
-			// The set was rewritten under the iteration; resume next frame.
-			return
-		}
-	}
-	if len(e.Attributes) == 0 {
-		imgui.Text("(none)")
-	}
-
-	imgui.Separator()
-	imgui.InputTextV("Name##newattr", &Editor.NewAttrName, 0, nil)
-	if imgui.BeginCombo("Type##newattr", string(attrTypeNames[editorNewAttrTypeIdx()])) {
-		for i, t := range attrTypeNames {
-			if imgui.SelectableV(string(t), int32(i) == Editor.NewAttrType, 0, imgui.Vec2{}) {
-				Editor.NewAttrType = int32(i)
-			}
-		}
-		imgui.EndCombo()
-	}
-	if imgui.Button("Add Attribute##entattradd") && Editor.NewAttrName != "" {
-		if _, exists := e.Attributes[Editor.NewAttrName]; exists {
-			editorSetStatus("%q already has an attribute called %q", e.ID, Editor.NewAttrName)
-		} else {
-			EditorPushUndo()
-			e.SetAttr(Editor.NewAttrName, zeroAttr(attrTypeNames[editorNewAttrTypeIdx()]))
-			Editor.NewAttrName = ""
-		}
-	}
+// editorEntityScript draws the entity's script picker. An instance's script
+// starts as its definition's and may be overridden or detached here; saving
+// writes only the difference.
+func editorEntityScript(e *Entity) {
+	editorScriptUI(&e.Script, &e.ScriptParams, "ent", strconv.Quote(e.ID))
 }
 
 // editorNewAttrTypeIdx keeps the add row's type index in range, so a value left
@@ -428,104 +398,94 @@ func editorNewAttrTypeIdx() int {
 	return i
 }
 
-// editorEntityAttributeRow draws one attribute: its type combo, its value
-// editor and its delete button. Reports whether the set was structurally
-// changed, which ends the caller's iteration for this frame.
-func editorEntityAttributeRow(e *Entity, name string) bool {
-	v := e.Attributes[name]
-	imgui.PushID("attr_" + name)
-	defer imgui.PopID()
-
-	imgui.Text(name)
-	imgui.SameLine()
-	if imgui.Button("x##del") {
-		EditorPushUndo()
-		e.DeleteAttr(name)
-		return true
-	}
-
-	imgui.SetNextItemWidth(90)
-	if imgui.BeginCombo("##type", string(v.Type)) {
-		for _, t := range attrTypeNames {
-			if imgui.SelectableV(string(t), t == v.Type, 0, imgui.Vec2{}) && t != v.Type {
-				// Converted rather than reset: picking float after typing 25
-				// should not throw the 25 away. See convertAttr.
-				e.SetAttr(name, convertAttr(v, t))
-			}
-		}
-		imgui.EndCombo()
-	}
-	imgui.SameLine()
-	editorEntityAttributeValue(e, name, v)
-	return false
-}
-
-// editorEntityAttributeValue draws the value editor matching an attribute's
-// type.
-func editorEntityAttributeValue(e *Entity, name string, v AttrValue) {
-	switch v.Type {
-	case AttrInt:
-		n := int32(v.I)
-		imgui.SetNextItemWidth(-1)
-		if imgui.DragIntV("##val", &n, 1, -1<<30, 1<<30, "%d", 0) {
-			e.SetAttr(name, IntAttr(int64(n)))
-		}
-	case AttrFloat:
-		f := float32(v.F)
-		imgui.SetNextItemWidth(-1)
-		if imgui.DragFloatV("##val", &f, 0.01, -1e9, 1e9, "%.4f", 0) {
-			e.SetAttr(name, FloatAttr(float64(f)))
-		}
-	case AttrBool:
-		b := v.B
-		if imgui.Checkbox("##val", &b) {
-			e.SetAttr(name, BoolAttr(b))
-		}
-	case AttrString:
-		str := v.S
-		imgui.SetNextItemWidth(-1)
-		if imgui.InputTextV("##val", &str, 0, nil) {
-			e.SetAttr(name, StringAttr(str))
-		}
-	}
-}
-
 // ---------- models ----------
 
-// editorEntityModels draws each attachment's transform, texture and animations.
+// editorEntityModels draws the attachment list: what each one wears, where it
+// sits, and what it can play.
 func editorEntityModels(e *Entity) {
 	if !imgui.CollapsingHeaderV("Models##entmodels", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
 	if len(e.Models) == 0 {
-		editorTextWrapped("This entity's type declares no models. " +
-			"Attachments come from the definition — add one there.")
-		return
+		editorTextWrapped("No models. An entity with none is still a position " +
+			"with attributes on it, which is all a trigger or a script anchor needs.")
 	}
 	for i := range e.Models {
-		editorEntityModelSection(e, &e.Models[i], i)
+		if editorEntityModelSection(e, i) {
+			return // the list was rewritten; resume next frame
+		}
 	}
+
+	if imgui.Button("Add Model##entmodeladd") {
+		editorEntityAddModel(e)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A new attachment with no mesh yet.\nPick one for it below.")
+	}
+	imgui.SameLine()
 	if imgui.Button("Reload Models##entreload") {
 		reloadActiveEntityModels()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Re-read every attachment from disk — after editing\nits .fmdl in the model editor, say.")
 	}
+
+	if e.Type != "" {
+		editorTextWrapped("This entity has a type, so what is changed here is " +
+			"stored in the level as an override on " + e.Type + ". Change " +
+			entitiesDirName + "/" + e.Type + ".yaml instead and every one placed gets it.")
+	}
 }
 
-// editorEntityModelSection draws one attachment.
-func editorEntityModelSection(e *Entity, m *EntityModel, idx int) {
+// editorEntityModelSection draws one attachment. Reports whether the list was
+// structurally changed, which is the caller's cue to stop walking it.
+func editorEntityModelSection(e *Entity, idx int) bool {
+	m := &e.Models[idx]
 	imgui.PushID(fmt.Sprintf("entmodel%d", idx))
 	defer imgui.PopID()
 
 	if !imgui.CollapsingHeaderV(m.Name+"##hdr", imgui.TreeNodeFlagsDefaultOpen) {
-		return
+		return false
 	}
 
-	imgui.Text("Path: " + orDash(m.Path))
-	if !m.HasGeometry() {
+	// The attachment's name is how a script asks for an animation on this model
+	// rather than another, so it is editable and has to stay unique. The delete
+	// button rides beside it, the same shape an animation row has.
+	name := m.Name
+	imgui.SetNextItemWidth(-90)
+	if imgui.InputTextV("##mname", &name, imgui.InputTextFlagsEnterReturnsTrue, nil) {
+		switch {
+		case name == "":
+			editorSetStatus("An attachment needs a name")
+		case name != m.Name && e.Model(name) != nil:
+			editorSetStatus("This entity already has an attachment called %q", name)
+		default:
+			EditorPushUndo()
+			m.Name = name
+		}
+	}
+	imgui.SameLine()
+	if imgui.Button("x##mdel") {
+		editorEntityRemoveModel(e, idx)
+		return true
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Remove this attachment.")
+	}
+
+	// The mesh. Changing it is the point of this section — an entity placed
+	// blank has nothing until one is picked here, and one that outgrew its
+	// first mesh swaps it without being deleted and placed again.
+	prev := m.Path
+	if modelFileCombo("Model##mpath", &m.Path) {
+		editorEntitySetModelPath(e, m, prev, m.Path)
+	}
+	if m.Path == "" {
+		editorTextWrapped("No mesh: this attachment draws nothing.")
+	} else if !m.HasGeometry() {
 		editorTextWrapped("Nothing uploaded — the file is missing, empty, or failed to load.")
 	}
+
 	imgui.Checkbox("Visible##mvis", &m.Visible)
 
 	// Texture: an override on the model document's own. "(none)" clears it back
@@ -562,6 +522,7 @@ func editorEntityModelSection(e *Entity, m *EntityModel, idx int) {
 	}
 
 	editorEntityAnimations(e, m)
+	return false
 }
 
 // editorEntityAnimations draws an attachment's named animations, plus the

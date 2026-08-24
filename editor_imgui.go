@@ -51,17 +51,18 @@ func ImGuiInit() {
 	imguiContext = imgui.CreateContext(nil)
 	io := imgui.CurrentIO()
 	io.SetIniFilename("") // disable imgui.ini writes
-	mapImGuiKeys(io)
+	imguiConfigureIO(io)
 
 	imguiCreateDeviceObjects()
 	sharedFontAtlas = io.Fonts()
 }
 
-// mapImGuiKeys wires SDL scancodes to imgui key indices. Shared by the main
-// window's ImGuiInit and every secondary UIWindow's imgui context
-// (window.go) — both need the same mapping since each context has its own
-// IO.
-func mapImGuiKeys(io imgui.IO) {
+// imguiConfigureIO wires SDL scancodes to imgui key indices and gives the
+// context the system clipboard. Shared by the main window's ImGuiInit and every
+// secondary UIWindow's imgui context (window.go) — both need the same setup,
+// since each context has its own IO, and a window that got one half of this and
+// not the other would be the sort of bug nobody looks for.
+func imguiConfigureIO(io imgui.IO) {
 	io.KeyMap(imgui.KeyTab, int(sdl.SCANCODE_TAB))
 	io.KeyMap(imgui.KeyLeftArrow, int(sdl.SCANCODE_LEFT))
 	io.KeyMap(imgui.KeyRightArrow, int(sdl.SCANCODE_RIGHT))
@@ -87,6 +88,11 @@ func mapImGuiKeys(io imgui.IO) {
 	io.KeyCtrl(int(sdl.SCANCODE_LCTRL), int(sdl.SCANCODE_RCTRL))
 	io.KeyShift(int(sdl.SCANCODE_LSHIFT), int(sdl.SCANCODE_RSHIFT))
 	io.KeyAlt(int(sdl.SCANCODE_LALT), int(sdl.SCANCODE_RALT))
+
+	// Without this, ImGui falls back to a clipboard of its own that never
+	// leaves the process — Ctrl+C here would be invisible to every other
+	// program on the desktop. See editor_clipboard.go.
+	io.SetClipboard(sdlClipboard{})
 }
 
 // ImGuiShutdown destroys all OpenGL resources and the imgui context.

@@ -21,9 +21,15 @@ package main
 //	attributes  merged by name over the definition's, so an instance changes the
 //	            one value it cares about
 //	models      matched by attachment name; an override adjusts that
-//	            attachment's texture, transform and visibility, and cannot add
-//	            or remove attachments — what models a thing has is part of what
-//	            it is
+//	            attachment's mesh, texture, transform and visibility. An
+//	            attachment the definition does not have is one the instance
+//	            added, and is written out in full
+//
+// A level may also place an entity with no type at all. That is what the
+// editor's "blank entity" is: a thing authored where it stands, carrying its
+// whole description in the level rather than referencing a definition. It is
+// the quick path — place something, give it a mesh, move on — and a definition
+// is what it becomes once a second level wants the same thing.
 //
 // Everything else on an instance (position, rotation, scale, velocity, angular
 // velocity) is the instance's alone: a definition has no position, because a
@@ -161,17 +167,19 @@ type RawEntityDef struct {
 	Collision   *RawEntityCollision     `yaml:"collision,omitempty"`
 	Models      []RawEntityModel        `yaml:"models,omitempty"`
 	Attributes  map[string]RawAttribute `yaml:"attributes,omitempty"`
+	Script      string                  `yaml:"script,omitempty"`      // .flang file driving this type's behaviour
+	Params      map[string]RawAttribute `yaml:"params,omitempty"`      // defaults for that script's `param` declarations
 	Description string                  `yaml:"description,omitempty"` // author's note; shown in the editor's picker
 }
 
 // RawEntity is the YAML form of one entity *instance* in a level file.
 //
-// Type is required: a level places definitions, it does not author entities.
-// Anything a level wants that no definition offers is a new definition, which
-// is a file the level then references — and which every other level can then
-// place too.
+// Type names the definition this instance is stamped from, and is optional: an
+// entity with no type is authored entirely in the level, and every field below
+// is then its own rather than an override. With a type, only the fields that
+// differ from the definition are written — see entityToRaw.
 type RawEntity struct {
-	Type            string                  `yaml:"type"`
+	Type            string                  `yaml:"type,omitempty"`
 	ID              string                  `yaml:"id"`
 	Position        RawVec3                 `yaml:"position"`
 	Rotation        RawVec3                 `yaml:"rotation,omitempty"`
@@ -181,8 +189,13 @@ type RawEntity struct {
 	Tags            []string                `yaml:"tags,omitempty"`    // unioned with the definition's
 	Visible         *bool                   `yaml:"visible,omitempty"` // nil = follow the definition
 	Attributes      map[string]RawAttribute `yaml:"attributes,omitempty"`
+	Params          map[string]RawAttribute `yaml:"params,omitempty"`    // script params, overlaid on the definition's
 	Collision       *RawEntityCollision     `yaml:"collision,omitempty"` // per-flag overrides
 	Models          []RawEntityModel        `yaml:"models,omitempty"`    // per-attachment overrides, matched by name
+	// Script overrides the definition's. A pointer so the three cases stay
+	// distinct: absent follows the type, "" detaches the script this instance
+	// would otherwise have inherited, and a name replaces it.
+	Script *string `yaml:"script,omitempty"`
 
 	// Bounds overrides. Pointers throughout, so an absent field means "follow
 	// the definition" rather than "zero" — an extent of zero is a *disabled*
@@ -203,6 +216,9 @@ type EntityDef struct {
 	Name        string
 	Description string
 	Tags        []string
+	// Script is the .flang file driving this type's behaviour, relative to the
+	// scripts root. An instance may override it — see RawEntity.Script.
+	Script string
 
 	BoundingKind BoundingType
 	BoundHalfX   float32
@@ -218,6 +234,9 @@ type EntityDef struct {
 	// any number of placed entities.
 	Models     []EntityModel
 	Attributes AttrSet
+	// Params are the type's defaults for its script's `param` declarations. An
+	// instance overrides them one name at a time.
+	Params AttrSet
 }
 
 // vec3FromRawPtr reads an optional vector, falling back to def when absent.
@@ -279,6 +298,23 @@ func entityAnimationsFromRaw(raw []RawEntityAnimation) []EntityAnimation {
 	return out
 }
 
+// entityModelToRaw is entityModelFromRaw's inverse: an attachment written out
+// in full, for a definition file and for the instances that own their
+// attachments outright rather than overriding a definition's.
+func entityModelToRaw(m *EntityModel) RawEntityModel {
+	return RawEntityModel{
+		Name:       m.Name,
+		Path:       relAssetPath(m.Path),
+		Texture:    m.Texture,
+		Offset:     vec3ToRawPtr(m.Offset),
+		Rotation:   vec3ToRawPtr(m.Rotation),
+		Scale:      vec3ToRawPtr(m.Scale),
+		Alpha:      m.Alpha,
+		Visible:    boolPtrIfFalse(m.Visible),
+		Animations: entityAnimationsToRaw(m.Animations),
+	}
+}
+
 // entityAnimationsToRaw is entityAnimationsFromRaw's inverse.
 func entityAnimationsToRaw(anims []EntityAnimation) []RawEntityAnimation {
 	if len(anims) == 0 {
@@ -312,10 +348,15 @@ func entityDefFromRaw(raw RawEntityDef, name string) (*EntityDef, error) {
 	if err != nil {
 		return nil, fmt.Errorf("entity definition %q: %w", id, err)
 	}
+	params, err := attrsFromRaw(raw.Params)
+	if err != nil {
+		return nil, fmt.Errorf("entity definition %q: %w", id, err)
+	}
 
 	def := &EntityDef{
 		Name:         id,
 		Description:  raw.Description,
+		Script:       raw.Script,
 		Tags:         normalizeTags(raw.Tags),
 		BoundingKind: boundingKindFromName(raw.Bounding),
 		BoundHalfX:   raw.BoundHalfX,
@@ -325,6 +366,7 @@ func entityDefFromRaw(raw RawEntityDef, name string) (*EntityDef, error) {
 		Visible:      boolDefault(raw.Visible, true),
 		Collision:    entityCollisionFromRaw(DefaultEntityCollision(), raw.Collision),
 		Attributes:   attrs,
+		Params:       params,
 	}
 
 	seen := map[string]bool{}
@@ -350,6 +392,7 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 	raw := RawEntityDef{
 		ID:          def.Name,
 		Description: def.Description,
+		Script:      def.Script,
 		Tags:        def.Tags,
 		Bounding:    boundingTypeName(def.BoundingKind),
 		BoundHalfX:  def.BoundHalfX,
@@ -359,20 +402,10 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 		Visible:     boolPtrIfFalse(def.Visible),
 		Collision:   entityCollisionToRaw(def.Collision, DefaultEntityCollision()),
 		Attributes:  attrsToRaw(def.Attributes),
+		Params:      attrsToRaw(def.Params),
 	}
 	for i := range def.Models {
-		m := &def.Models[i]
-		raw.Models = append(raw.Models, RawEntityModel{
-			Name:       m.Name,
-			Path:       relAssetPath(m.Path),
-			Texture:    m.Texture,
-			Offset:     vec3ToRawPtr(m.Offset),
-			Rotation:   vec3ToRawPtr(m.Rotation),
-			Scale:      vec3ToRawPtr(m.Scale),
-			Alpha:      m.Alpha,
-			Visible:    boolPtrIfFalse(m.Visible),
-			Animations: entityAnimationsToRaw(m.Animations),
-		})
+		raw.Models = append(raw.Models, entityModelToRaw(&def.Models[i]))
 	}
 	return raw
 }
@@ -398,7 +431,9 @@ func (d *EntityDef) Instantiate(id string) Entity {
 		BoundOffset:  d.BoundOffset,
 		Visible:      d.Visible,
 		Collision:    d.Collision,
+		Script:       d.Script,
 		Attributes:   d.Attributes.Clone(),
+		ScriptParams: d.Params.Clone(),
 	}
 	for i := range d.Models {
 		e.Models = append(e.Models, d.Models[i].templateCopy())
@@ -431,10 +466,16 @@ func (m *EntityModel) templateCopy() EntityModel {
 // fields the override actually mentions are touched — see RawEntityModel's note
 // on why the vectors are pointers.
 //
-// Path is deliberately not overridable: which mesh an attachment is comes from
-// the definition, and an instance swapping it would make the type a lie. A
-// different mesh is a different type.
+// Path is overridable like everything else. It used to not be, on the grounds
+// that a different mesh is a different type; in practice the first thing an
+// author does with a placed thing is decide what it looks like, and making that
+// a trip through a definition file cost more than the purity was worth. An
+// instance that swaps its mesh is one the level writes the path for, and the
+// definition it came from is unchanged for everyone else.
 func applyModelOverride(m *EntityModel, r RawEntityModel) {
+	if r.Path != "" {
+		m.Path = r.Path
+	}
 	if r.Texture != "" {
 		m.Texture = r.Texture
 	}
@@ -468,22 +509,33 @@ func applyModelOverride(m *EntityModel, r RawEntityModel) {
 // without touching the filesystem, and so the level loader can resolve against
 // a preloaded set.
 func entityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity, error) {
-	if r.Type == "" {
-		return Entity{}, fmt.Errorf("entity %q: no type — a level places entity definitions, so `type:` is required", r.ID)
-	}
-	def, err := lookup(r.Type)
-	if err != nil {
-		return Entity{}, fmt.Errorf("entity %q: %w", r.ID, err)
-	}
-
 	id := r.ID
 	if id == "" {
 		// An entity with no ID cannot be addressed by a script, but it is still
 		// a perfectly good piece of scenery — name it after its type rather
 		// than refusing the level. The loader de-duplicates afterwards.
 		id = r.Type
+		if id == "" {
+			id = blankEntityID
+		}
 	}
-	e := def.Instantiate(id)
+
+	// No type is not an error: the entity is authored in the level, and every
+	// field below is its own rather than an override of a definition's.
+	var def *EntityDef
+	if r.Type != "" {
+		d, err := lookup(r.Type)
+		if err != nil {
+			return Entity{}, fmt.Errorf("entity %q: %w", id, err)
+		}
+		def = d
+	}
+
+	e := NewBlankEntity(id)
+	if def != nil {
+		e = def.Instantiate(id)
+	}
+	e.Type = r.Type
 
 	e.Position = mgl32.Vec3{r.Position.X, r.Position.Y, r.Position.Z}
 	e.Rotation = mgl32.Vec3{r.Rotation.X, r.Rotation.Y, r.Rotation.Z}
@@ -493,6 +545,11 @@ func entityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 	e.Tags = mergeTags(e.Tags, r.Tags)
 	if r.Visible != nil {
 		e.Visible = *r.Visible
+	}
+	// A nil Script means "whatever the definition said"; a non-nil one replaces
+	// it, including with "" to detach the type's script from this instance.
+	if r.Script != nil {
+		e.Script = *r.Script
 	}
 
 	e.Collision = entityCollisionFromRaw(e.Collision, r.Collision)
@@ -519,13 +576,31 @@ func entityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 	}
 	e.Attributes = mergeAttrs(e.Attributes, over)
 
-	for _, rm := range r.Models {
-		m := e.Model(rm.Name)
-		if m == nil {
+	paramOver, err := attrsFromRaw(r.Params)
+	if err != nil {
+		return Entity{}, fmt.Errorf("entity %q: %w", id, err)
+	}
+	e.ScriptParams = mergeAttrs(e.ScriptParams, paramOver)
+
+	for i, rm := range r.Models {
+		if m := e.Model(rm.Name); m != nil && rm.Name != "" {
+			applyModelOverride(m, rm)
+			continue
+		}
+		// An attachment the definition has no counterpart for. With a mesh it
+		// is one the instance added — every attachment on a typeless entity
+		// arrives this way — so it is appended rather than refused. Without
+		// one there is nothing to attach and nothing to draw, so the entry is
+		// an override of something that is not there and the level says so.
+		if rm.Path == "" {
 			return Entity{}, fmt.Errorf("entity %q: override for model %q, which type %q does not have",
 				id, rm.Name, r.Type)
 		}
-		applyModelOverride(m, rm)
+		m := entityModelFromRaw(rm)
+		if m.Name == "" {
+			m.Name = fmt.Sprintf("model_%d", i+1)
+		}
+		e.Models = append(e.Models, m)
 	}
 	return e, nil
 }
@@ -557,11 +632,26 @@ func entityToRaw(e *Entity, def *EntityDef) RawEntity {
 		r.Tags = e.Tags
 		r.Visible = boolPtrIfFalse(e.Visible)
 		r.Attributes = attrsToRaw(e.Attributes)
+		r.Params = attrsToRaw(e.ScriptParams)
 		r.Bounding = boundingTypeName(e.BoundingKind)
 		r.BoundHalfX, r.BoundHalfY, r.BoundHalfZ = &e.BoundHalfX, &e.BoundHalfY, &e.BoundHalfZ
 		r.BoundOffset = vec3ToRawPtr(e.BoundOffset)
 		r.Collision = entityCollisionToRaw(e.Collision, DefaultEntityCollision())
+		if e.Script != "" {
+			s := e.Script
+			r.Script = &s
+		}
+		for i := range e.Models {
+			r.Models = append(r.Models, entityModelToRaw(&e.Models[i]))
+		}
 		return r
+	}
+
+	// Only write the script when it differs from the type's, so an instance that
+	// never overrode one keeps tracking the definition.
+	if e.Script != def.Script {
+		s := e.Script
+		r.Script = &s
 	}
 
 	r.Tags = tagsBeyond(def.Tags, e.Tags)
@@ -572,6 +662,7 @@ func entityToRaw(e *Entity, def *EntityDef) RawEntity {
 	r.Collision = entityCollisionToRaw(e.Collision, def.Collision)
 	writeBoundsOverride(&r, e, def)
 	r.Attributes = attrsToRaw(attrsBeyond(def.Attributes, e.Attributes))
+	r.Params = attrsToRaw(attrsBeyond(def.Params, e.ScriptParams))
 	for i := range e.Models {
 		if o, ok := modelOverride(def, &e.Models[i]); ok {
 			r.Models = append(r.Models, o)
@@ -656,14 +747,19 @@ func modelOverride(def *EntityDef, m *EntityModel) (RawEntityModel, bool) {
 		}
 	}
 	if base == nil {
-		// An attachment the definition no longer has. It cannot be re-created
-		// on load (path is not overridable), so there is nothing useful to
-		// write — the definition has moved on and this instance follows it.
-		return RawEntityModel{}, false
+		// An attachment the definition does not have: one this instance added,
+		// or one a definition since dropped. Either way nothing in the
+		// definition would restore it, so it is written out in full and loads
+		// back as an attachment of its own.
+		return entityModelToRaw(m), true
 	}
 
 	o := RawEntityModel{Name: m.Name}
 	changed := false
+	if m.Path != base.Path {
+		o.Path = relAssetPath(m.Path)
+		changed = true
+	}
 	if m.Texture != base.Texture {
 		o.Texture = m.Texture
 		changed = true

@@ -37,6 +37,40 @@ type KeybindSection struct {
 // editor_extrusion.go and editor_biome.go.
 var keybindSections = []KeybindSection{
 	{
+		Title:  "Script log",
+		Active: LogWindowOpen,
+		Binds: []Keybind{
+			{"Space", "Pause / resume the view (the log keeps filling)"},
+			{"Ctrl+L", "Clear the buffer"},
+			{"Ctrl+F", "Jump to the filter box"},
+			{"Esc", "Close the window"},
+		},
+	},
+	{
+		Title:  "Script editor",
+		Active: ScriptEditorOpen,
+		Binds: []Keybind{
+			{"Ctrl+S / Ctrl+Shift+S", "Save / save as"},
+			{"Ctrl+O", "Open a script"},
+			{"Ctrl+N", "New script"},
+			{"Ctrl+R", "Reload every script from disk"},
+			{"Esc", "Close the window (the buffer is kept)"},
+		},
+	},
+	{
+		Title:  "Texture editor",
+		Active: TextureEditorOpen,
+		Binds: []Keybind{
+			{"Ctrl+Z / Ctrl+Y", "Undo / redo (Ctrl+Shift+Z redoes too)"},
+			{"Left click / drag", "Paint with the current tool"},
+			{"Middle-drag", "Pan the canvas"},
+			{"Mouse wheel", "Zoom the canvas"},
+			{"Click a swatch", "Set the primary colour"},
+			{"Right-click a swatch", "Set the secondary colour"},
+			{"Double-click a swatch", "Edit that palette slot's colour"},
+		},
+	},
+	{
 		Title:  "Model editor",
 		Active: ModelEditorOpen,
 		Binds: []Keybind{
@@ -96,6 +130,7 @@ var keybindSections = []KeybindSection{
 			{"Left Shift", "Fly down (gravity off)"},
 			{"Arrow keys", "Turn / look"},
 			{"Mouse", "Look (cursor is captured)"},
+			{"E", "Interact with whatever you are standing in (fires :interact:)"},
 			{"0", "Toggle gravity (fly mode)"},
 			{"8", "Toggle entity-vs-world collision (engine-wide)"},
 			{"9", "Toggle entity-vs-entity collision (engine-wide)"},
@@ -108,7 +143,6 @@ var keybindSections = []KeybindSection{
 			{"Ctrl+Z", "Undo"},
 			{"Ctrl+Y / Ctrl+Shift+Z", "Redo"},
 			{"Delete", "Delete the current selection"},
-			{"Tab", "Switch between the 3D and 2D views"},
 		},
 	},
 	{
@@ -132,8 +166,11 @@ var keybindSections = []KeybindSection{
 		},
 	},
 	{
-		Title:  "Editor — 2D sector map",
-		Active: func() bool { return Editor.Active && Editor.Mode == Mode2D },
+		Title: "Editor — 2D sector map (its own window)",
+		// The map only exists in its own window, and Editor.Mode says Mode2D
+		// only inside that window's draw brackets — never while the reference
+		// is being rendered — so the section keys off the window instead.
+		Active: func() bool { return Editor.Active && Editor2DPoppedOut() },
 		Binds: []Keybind{
 			{"W / A / S / D", "Pan the map"},
 			{"Middle-drag", "Pan the map"},
@@ -142,12 +179,11 @@ var keybindSections = []KeybindSection{
 			{"Shift+Left click", "Split the nearest edge, else drop a free point"},
 			{"Ctrl+Left click", "Connect two points"},
 			{"Right click", "Remove the point under the cursor, else deselect"},
-			{"Tab", "Back to the 3D view (raises it when popped out)"},
 		},
 	},
 	{
 		Title:  "Editor — biome brush (2D)",
-		Active: func() bool { return Editor.Active && Editor.Mode == Mode2D && Editor.BiomeLayerActive },
+		Active: func() bool { return Editor.Active && Editor2DPoppedOut() && Editor.BiomeLayerActive },
 		Binds: []Keybind{
 			{"Left click", "Add a polygon point; click the first point to close"},
 			{"Right click", "Undo the last point while drawing, else delete a sector"},

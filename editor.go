@@ -2,9 +2,14 @@ package main
 
 // editor.go — core level editor state machine.
 //
-// Toggle with the tilde (~) key. Two sub-modes:
-//   Mode3D : fly-around chunk/light/spawn editing
-//   Mode2D : top-down orthographic sector editor for the active chunk
+// Toggle with the tilde (~) key. The main window is always the 3D view:
+//   Mode3D        : fly-around chunk/light/spawn editing
+//   ModeSurface2D : the 2D surface editor, entered from a wall/floor/ceiling
+//
+// Mode2D — the top-down sector map — is no longer one of the main window's
+// views. It lives in a window of its own (editor_2d_window.go), opened from
+// the toolbar's "2D Window" button, and is only ever the current mode inside
+// that window's withEditor2DMode brackets.
 //
 // The editor owns all input while active; normal gameplay logic is bypassed.
 
@@ -23,7 +28,7 @@ type EditorMode int
 const (
 	ModeGame      EditorMode = iota // editor inactive — normal gameplay
 	Mode3D                          // 3D fly-around editor
-	Mode2D                          // 2D top-down sector editor (+ biome painting)
+	Mode2D                          // 2D top-down sector editor (+ biome painting); pop-out window only
 	ModeSurface2D                   // 2D surface editor for extrusions/terrain
 )
 
@@ -80,10 +85,11 @@ type Gizmo2DState struct {
 	Gizmo2DCenter mgl32.Vec2 // selection centre in world XZ at mouse-down
 	// Gizmo2DStartS is the measure the drag is an offset from, in its tool's
 	// unit: world units along the axis, radians, or a scale reference.
-	Gizmo2DStartS     float32
-	Gizmo2DStartWorld mgl32.Vec2   // cursor position in world XZ at mouse-down
-	Gizmo2DStartPts   []mgl32.Vec3 // per selected vertex: world position at mouse-down
-	Gizmo2DStartSpawn mgl32.Vec3   // spawn-point position at mouse-down
+	Gizmo2DStartS        float32
+	Gizmo2DStartWorld    mgl32.Vec2   // cursor position in world XZ at mouse-down
+	Gizmo2DStartPts      []mgl32.Vec3 // per selected vertex: world position at mouse-down
+	Gizmo2DStartSpawn    mgl32.Vec3   // spawn-point position at mouse-down
+	Gizmo2DStartSpawnRot mgl32.Vec3   // spawn-point rotation at mouse-down
 	// The selected entity's own transform at mouse-down. Kept apart from the
 	// 3D gizmo's snapshot of the same thing for the reason this whole struct
 	// is: the map can be a window of its own, so a drag can be in progress in
@@ -207,6 +213,21 @@ type EditorState struct {
 	NewAttrName string
 	NewAttrType int32
 
+	// ScriptFileNames is the .flang catalog, rescanned rather than watched —
+	// see editorRefreshScriptFiles. nil means "never scanned"; empty means
+	// "scanned, folder is empty".
+	ScriptFileNames []string
+
+	// --- Volumes ---
+	// ActiveVolumeIdx indexes level.Volumes; -1 = none selected. An index for
+	// the same reason ActiveEntityIdx is one: undo replaces the level wholesale.
+	ActiveVolumeIdx int
+	// VolumePlacementMode is true when the next left-click drops a new volume
+	// into the level.
+	VolumePlacementMode bool
+	// NewVolumeID is the ID field of the placement row, empty for "volume".
+	NewVolumeID string
+
 	// Chunk creation dialog
 	NewChunkID   string
 	ShowNewChunk bool
@@ -325,6 +346,8 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.ActiveEntityIdx = -1
 	Editor.EntityPlacementMode = false
 	Editor.EntityPlaceType = ""
+	Editor.ActiveVolumeIdx = -1
+	Editor.VolumePlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
@@ -385,8 +408,8 @@ func panelHandleResize(event sdl.Event) bool {
 }
 
 // panelHandleResizeAt is panelHandleResize against a window of width viewW —
-// the popped-out 2D editor (editor_2d_window.go) hosts the same panel in a
-// window of its own size. Editor.PanelWidth is shared: the panel is the same
+// the 2D sector editor (editor_2d_window.go) hosts the same panel in a window
+// of its own size. Editor.PanelWidth is shared: the panel is the same
 // width wherever it is drawn, and only one window can be dragging it at once.
 func panelHandleResizeAt(event sdl.Event, viewW int32) bool {
 	edge := int32(float32(viewW) - Editor.PanelWidth)
@@ -450,6 +473,11 @@ func EditorToggle() {
 		// The pop-out only makes sense while the editor is up.
 		CloseEditor2DWindow()
 
+		// Snapshot before play so a script cannot permanently change the
+		// authored level — see script_play.go.
+		PlaySessionBegin(Editor.level)
+		ScriptRuntimeLoad(Editor.level)
+		ScriptEventsReset()
 		GravityEnabled = true
 		Editor.Active = false
 		Editor.Mode = ModeGame
@@ -463,6 +491,11 @@ func EditorToggle() {
 		SetMouseLock(false)
 
 		// Enter 3D fly mode (gravity off)
+		// Put the level back if a script wrote to it, then drop everything the
+		// runtime remembered about objects that have just been re-instantiated.
+		PlaySessionEnd(Editor.level)
+		ScriptRuntimeReset(Editor.level)
+		ScriptEventsReset()
 		GravityEnabled = false
 		IsOnGround = false
 		JumpRequested = false
@@ -480,7 +513,7 @@ func EditorToggle() {
 // EditorHandleEvent processes one SDL event for the editor.
 // Returns true if the editor consumed the event (game should ignore it).
 func EditorHandleEvent(event sdl.Event) bool {
-	editorSyncPoppedOutMode()
+	editorSyncMainWindowMode()
 
 	// Check panel resize before ImGui so the drag handle takes priority.
 	if panelHandleResize(event) {
@@ -498,10 +531,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 		}
 		// Extrusion placement mode intercepts keys next
 		if Editor.ExtrusionMode && editorExtrusionHandleKey(t) {
-			return true
-		}
-		// Biome sector polygon placement intercepts keys next
-		if Editor.Mode == Mode2D && biomeHandleKey(t) {
 			return true
 		}
 		if t.Type != sdl.KEYDOWN {
@@ -528,25 +557,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 		}
 
 		switch t.Keysym.Scancode {
-		case sdl.SCANCODE_TAB:
-			// Toggle 2D / 3D sub-mode (surface mode is separate)
-			if Editor.Mode == Mode3D {
-				if Editor2DPoppedOut() {
-					// The 2D view already has a window; the main one stays 3D.
-					editor2DWindow.Win.Raise()
-					return true
-				}
-				Editor.Mode = Mode2D
-				Editor.Pan2D = mgl32.Vec2{Cam.Position.X(), Cam.Position.Z()}
-			} else if Editor.Mode == Mode2D {
-				Editor.Mode = Mode3D
-			}
-			// Tab in surface mode is handled by surface2D event handler
-			// Always keep cursor free in editor — both modes need visible mouse
-			// for selection, clicking edges, and placing vertices.
-			SetMouseLock(false)
-			return true
-
 		case sdl.SCANCODE_DELETE:
 			if !imgui.CurrentIO().WantCaptureKeyboard() {
 				EditorDeleteSelected()
@@ -590,14 +600,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 		case sdl.SCANCODE_C:
 			if editorSelKeysActive() {
 				editorSetGizmoTool(editorToolScale)
-				return true
-			}
-		// J joins the picked points into edges — the map's replacement for the
-		// ctrl+click chain that used to draw them one at a time. Shift+J also
-		// closes the loop, which is what turns an outline into a sector.
-		case sdl.SCANCODE_J:
-			if Editor.Mode == Mode2D && !imgui.CurrentIO().WantCaptureKeyboard() {
-				EditorJoinSelectedPoints(sdl.GetModState()&sdl.KMOD_SHIFT != 0)
 				return true
 			}
 		case sdl.SCANCODE_Z:
@@ -649,8 +651,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 				} else {
 					Editor3DHandleClick(t)
 				}
-			} else if Editor.Mode == Mode2D {
-				Editor2DHandleClick(t)
 			}
 		} else if t.Type == sdl.MOUSEBUTTONUP {
 			if t.Button == sdl.ButtonLeft && editorGizmoDragging() {
@@ -668,8 +668,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 				// camera would stay stuck to the mouse.
 				Editor.MiddleDragging3D = false
 				Editor.PanDragging3D = false
-			} else if Editor.Mode == Mode2D {
-				Editor2DHandleRelease(t)
 			}
 		}
 
@@ -700,8 +698,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 			Editor.LastDragY = t.Y
 		} else if Editor.Mode == Mode3D && Cam.MouseLock {
 			// 3D fly: handled by existing HandleEvent (mouse look)
-		} else if Editor.Mode == Mode2D {
-			Editor2DHandleMouseMove(t)
 		}
 
 	case sdl.MouseWheelEvent:
@@ -715,10 +711,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 			}
 			return true
 		}
-		if Editor.Mode == Mode2D && !imgui.CurrentIO().WantCaptureMouse() {
-			Editor2DZoom(t.Y)
-			return true
-		}
 		if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureMouse() {
 			editorCamZoom(t.Y)
 			return true
@@ -728,8 +720,9 @@ func EditorHandleEvent(event sdl.Event) bool {
 	return consumed
 }
 
-// EditorTick is called every frame when the editor is active.
-// In 3D mode it handles fly-camera input; in 2D mode it handles pan.
+// EditorTick is called every frame when the editor is active. It drives the
+// main window's fly/orbit camera; the sector map's WASD pan belongs to the
+// window that owns it (editor2DWindowPan).
 func EditorTick(keyStates []uint8) {
 	now := sdl.GetTicks()
 	// dt := float32(now-Editor.LastTick) / 1000.0
@@ -787,27 +780,12 @@ func EditorTick(keyStates []uint8) {
 		Editor.NavRight = false
 		Editor.NavUp = false
 		Editor.NavDown = false
-	} else if Editor.Mode == Mode2D {
-		// Pan with WASD in 2D
-		panSpeed := float32(5.0) / Editor.Zoom2D * 10
-		if keyStates[sdl.SCANCODE_W] != 0 {
-			Editor.Pan2D[1] -= panSpeed
-		}
-		if keyStates[sdl.SCANCODE_S] != 0 {
-			Editor.Pan2D[1] += panSpeed
-		}
-		if keyStates[sdl.SCANCODE_A] != 0 {
-			Editor.Pan2D[0] -= panSpeed
-		}
-		if keyStates[sdl.SCANCODE_D] != 0 {
-			Editor.Pan2D[0] += panSpeed
-		}
 	}
 }
 
 // EditorRender draws all editor overlays, then the ImGui UI.
 func EditorRender() {
-	editorSyncPoppedOutMode()
+	editorSyncMainWindowMode()
 
 	dt := DeltaTime
 
@@ -823,12 +801,8 @@ func EditorRender() {
 		GizmoFlush(projView)
 	}
 
-	// --- 2D orthographic sector map ---
-	if Editor.Mode == Mode2D {
-		gl.Disable(gl.DEPTH_TEST)
-		Editor2DRender()
-		gl.Enable(gl.DEPTH_TEST)
-	}
+	// The 2D sector map is not drawn here: it has its own window, which draws
+	// it into its own framebuffer (editor_2d_window.go).
 
 	// --- 2D surface editor ---
 	if Editor.Mode == ModeSurface2D {
@@ -840,10 +814,6 @@ func EditorRender() {
 	// --- ImGui UI ---
 	ImGuiNewFrame(dt)
 	EditorDrawUI()
-	if Editor.Mode == Mode2D {
-		Editor2DRenderBiomeOverlay()
-		Editor2DRenderLabels()
-	}
 	if Editor.Mode == ModeSurface2D {
 		Surface2DRenderLabels()
 	}
@@ -893,6 +863,12 @@ func EditorDeleteSelected() {
 	// Entity deletion
 	if activeEntity() != nil {
 		deleteActiveEntity()
+		return
+	}
+
+	// Volume deletion
+	if activeVolume() != nil {
+		deleteActiveVolume()
 	}
 }
 
@@ -908,12 +884,18 @@ func EditorLoadLevel(path string) error {
 	// rather than per surface, so the outgoing level's have to be released
 	// explicitly — overwriting the struct would drop the handles, not free them.
 	DeleteEntities(Editor.level)
+	DeleteVolumes(Editor.level)
 
 	// Replace the level contents in-place (Editor.level points to main's level)
 	*Editor.level = newLevel
 
 	// Upload lights to GPU
 	UploadLights(Editor.level.Lights)
+
+	// The new level's scripts. Everything the old level's runtime remembered
+	// describes objects that no longer exist.
+	ScriptRuntimeLoad(Editor.level)
+	ScriptEventsReset()
 
 	// The player is engine-owned, so opening a level does not replace it — it
 	// only moves it onto the new level's spawn point (or leaves it be when
@@ -932,6 +914,8 @@ func EditorLoadLevel(path string) error {
 	Editor.SpawnSelected = false
 	Editor.ActiveEntityIdx = -1
 	Editor.EntityPlacementMode = false
+	Editor.ActiveVolumeIdx = -1
+	Editor.VolumePlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1

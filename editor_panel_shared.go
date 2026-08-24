@@ -123,19 +123,16 @@ func editorChunkPropertiesSection(lvl *Level) {
 				ch.Scale = sc
 			}
 
-			// Jump to whichever sub-mode isn't the current one, centred on
-			// this chunk.
+			// Jump to the other editor, centred on this chunk. From the
+			// sector map that means handing focus back to the main window's
+			// 3D view (withEditor2DMode notices the mode change and raises
+			// it); from the 3D view it means opening the map's window.
 			if Editor.Mode == Mode2D {
 				if imgui.Button("Switch to 3D Editor") {
 					Editor.Mode = Mode3D
 				}
 			} else if imgui.Button("Switch to Sector Editor") {
-				if Editor2DPoppedOut() {
-					// The sector editor is a window of its own right now.
-					OpenEditor2DWindow()
-				} else {
-					Editor.Mode = Mode2D
-				}
+				OpenEditor2DWindow()
 				Editor.Pan2D = mgl32.Vec2{
 					(ch.MinBound.X() + ch.MaxBound.X()) / 2,
 					(ch.MinBound.Z() + ch.MaxBound.Z()) / 2,
@@ -265,4 +262,32 @@ func editorEdgeKindCombo(ch *Chunk, s *Sector, idSuffix string) {
 func editorSetStatus(format string, args ...any) {
 	Editor.StatusMsg = fmt.Sprintf(format, args...)
 	Editor.StatusTime = sdl.GetTicks()
+}
+
+// editorTextColored draws text in a colour. This imgui binding has no
+// TextColored of its own, so it is the style-stack version — pushed and popped
+// around one call so the stack cannot be left unbalanced.
+func editorTextColored(col imgui.Vec4, s string) {
+	imgui.PushStyleColor(imgui.StyleColorText, col)
+	imgui.Text(s)
+	imgui.PopStyleColor()
+}
+
+// editorTextMuted draws de-emphasised text, for a status line or an aside.
+func editorTextMuted(s string) {
+	editorTextColored(imgui.Vec4{X: 0.6, Y: 0.6, Z: 0.6, W: 1}, s)
+}
+
+// editorTextMutedWrapped is editorTextMuted for an aside long enough to need
+// wrapping — a file path, or a list of names.
+func editorTextMutedWrapped(s string) {
+	editorTextWrappedColored(imgui.Vec4{X: 0.6, Y: 0.6, Z: 0.6, W: 1}, s)
+}
+
+// editorTextWrappedColored is the two together, for a diagnostic long enough to
+// need wrapping and important enough to need a colour.
+func editorTextWrappedColored(col imgui.Vec4, s string) {
+	imgui.PushStyleColor(imgui.StyleColorText, col)
+	editorTextWrapped(s)
+	imgui.PopStyleColor()
 }

@@ -27,6 +27,7 @@ const (
 	gizmoKindSpawn    = "spawn"
 	gizmoKindChunk    = "chunk"
 	gizmoKindEntity   = "entity"
+	gizmoKindVolume   = "volume"
 )
 
 const (
@@ -68,6 +69,11 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindEntity:
 		if e := activeGizmoEntity(); e != nil {
 			return e.Position, true
+		}
+
+	case gizmoKindVolume:
+		if v := activeGizmoVolume(); v != nil {
+			return v.Position, true
 		}
 
 	case gizmoKindChunk:
@@ -153,7 +159,8 @@ func pickTranslateAxis(mx, my int32) int {
 // click already means something else. The arms are hidden in these states, so
 // they must not be clickable either.
 func gizmoSuppressed() bool {
-	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode || Editor.ExtrusionMode
+	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode ||
+		Editor.VolumePlacementMode || Editor.ExtrusionMode
 }
 
 // translateGizmoMouseDown starts an axis drag if the click grabbed an arm.
@@ -229,7 +236,10 @@ func captureGizmoDragStart() bool {
 		if s == nil {
 			return false
 		}
+		// The rotation goes in the snapshot too: the marker has no size, but it
+		// does have a facing, and the rotate drag starts from it.
 		Editor.GizmoDragStartPos = s.Position
+		Editor.GizmoDragStartRot = s.Rotation
 		EditorPushUndo()
 		return true
 
@@ -244,6 +254,20 @@ func captureGizmoDragStart() bool {
 		Editor.GizmoDragStartPos = e.Position
 		Editor.GizmoDragStartRot = e.Rotation
 		Editor.GizmoDragStartScale = e.effectiveScale()
+		EditorPushUndo()
+		return true
+
+	case gizmoKindVolume:
+		v := activeGizmoVolume()
+		if v == nil {
+			return false
+		}
+		// A volume has no scale of its own — its size is its half-extents — so
+		// the scale snapshot is left at identity and the scale gizmo resizes the
+		// extents directly.
+		Editor.GizmoDragStartPos = v.Position
+		Editor.GizmoDragStartRot = v.Rotation
+		Editor.GizmoDragStartScale = mgl32.Vec3{v.HalfX, v.HalfY, v.HalfZ}
 		EditorPushUndo()
 		return true
 
@@ -296,6 +320,12 @@ func translateGizmoMouseMove(mx, my int32) {
 	case gizmoKindEntity:
 		if e := activeGizmoEntity(); e != nil {
 			e.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		}
+	case gizmoKindVolume:
+		if v := activeGizmoVolume(); v != nil {
+			// No cage rebuild: it is built in volume-local space, so moving one
+			// only changes the matrix it is drawn with.
+			v.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindChunk:
 		if ch := activeChunk(); ch != nil {
@@ -494,10 +524,9 @@ func renderTranslateGizmo(mx, my int32) {
 // of each other: a rotate ring passes through the tips of the move arms, and
 // every click near the end of an axis would be a coin toss.
 //
-// Rotate and scale act only on a vertex selection. Move is the only one that
-// means anything for the other two targets: the spawn marker and a whole chunk
-// are single anchors with no extent, so there is nothing there to turn about
-// itself or spread apart.
+// Scale acts only on things with a size of their own. Rotate additionally acts
+// on anything with a facing to rewrite — an entity, a volume, the spawn marker.
+// A chunk has neither, so move is the only tool that means anything for it.
 
 // editorGizmoDragging reports whether a drag is in progress. A drag owns the
 // mouse until release.

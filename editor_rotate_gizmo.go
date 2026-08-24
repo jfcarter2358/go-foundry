@@ -96,12 +96,13 @@ func pickRotateRing(mx, my int32) int {
 }
 
 // rotateGizmoOrigin returns the pivot the rings sit on: the centre of the
-// selected vertices, or an entity's own position.
+// selected vertices, or the position of whatever single thing is selected.
 //
 // The two rotate in different senses. A vertex selection has an extent, so
-// turning it moves the points themselves; an entity is a single anchor with an
-// orientation, so turning it rewrites that orientation and leaves it where it
-// is. A spawn marker and a chunk have neither, so they get no rings at all.
+// turning it moves the points themselves; an entity, a volume or the spawn
+// marker is a single anchor with an orientation, so turning it rewrites that
+// orientation and leaves it where it is. A chunk has neither an extent to swing
+// nor an orientation to rewrite, so it gets no rings at all.
 func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 	switch gizmoEffectiveKind() {
 	case gizmoKindVertices:
@@ -109,6 +110,14 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindEntity:
 		if e := activeGizmoEntity(); e != nil {
 			return e.Position, true
+		}
+	case gizmoKindVolume:
+		if v := activeGizmoVolume(); v != nil {
+			return v.Position, true
+		}
+	case gizmoKindSpawn:
+		if s := activeGizmoSpawn(); s != nil {
+			return s.Position, true
 		}
 	}
 	return mgl32.Vec3{}, false
@@ -183,6 +192,17 @@ func rotateGizmoMouseMove(mx, my int32) {
 func applyRotationToSelection(axis, origin mgl32.Vec3, delta float32) {
 	if e := activeGizmoEntity(); e != nil {
 		e.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
+		return
+	}
+	if v := activeGizmoVolume(); v != nil {
+		v.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
+		return
+	}
+	if sp := activeGizmoSpawn(); sp != nil {
+		// The marker's facing is derived from its rotation (SpawnDirection), so
+		// turning it here is all it takes for the arrow and the direction the
+		// player will look to follow the drag together.
+		sp.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
 		return
 	}
 	setSelectedVertexWorld(rotationTransform(axis, origin, delta))

@@ -7,6 +7,8 @@ package main
 // they were deleted in favor of the language's builtin min/max — see
 // RESTRUCTURE_PROPOSAL.md §2.)
 
+import "math"
+
 // abs32 returns the absolute value of a float32.
 func abs32(x float32) float32 {
 	if x < 0 {
@@ -33,4 +35,12 @@ func floor32(x float32) float32 {
 		i--
 	}
 	return float32(i)
+}
+
+// circlePoint returns the cosine and sine of step i of n around a full circle.
+// Shared by the wireframe cage builders, which each need a ring of points and
+// would otherwise repeat the same two lines of trigonometry.
+func circlePoint(i, n int) (cos, sin float32) {
+	a := 2 * math.Pi * float64(i) / float64(n)
+	return float32(math.Cos(a)), float32(math.Sin(a))
 }

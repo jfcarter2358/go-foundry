@@ -8,6 +8,7 @@ import (
 
 // Floor represents a sector's floor surface.
 type Floor struct {
+	ScriptData          // tags, attributes and the attached script
 	Enabled             bool
 	Hidden              bool // if true, the floor's own texture/geometry is not drawn (or shadow-cast); Enabled/collision/terrain are unaffected. Default false = visible — e.g. for a floor fully covered by a biome ground patch (see biome_ground.go) where the structural texture would otherwise show through at the patch's edges.
 	Height              float32
@@ -43,6 +44,7 @@ func (f *Floor) VertexHeight(i int) float32 {
 
 // Ceiling represents a sector's ceiling surface.
 type Ceiling struct {
+	ScriptData          // tags, attributes and the attached script
 	Enabled             bool
 	Height              float32
 	VertexOffsets       []float32 // per-vertex Y delta from Height; len must equal len(sector.PointIndices)
@@ -82,14 +84,22 @@ func (c *Ceiling) VertexHeight(i int) float32 {
 // EdgeKinds[i] = "wall" or "portal" for polygon edge i→i+1 (same order as PointIndices).
 type Sector struct {
 	ID           string
+	ScriptData            // tags, attributes and the attached script
 	PointIndices []int    // indices into containing Chunk.Points
 	EdgeKinds    []string // len == len(PointIndices); "wall" or "portal" for each edge
-	Walls        []Wall
-	Portals      []Portal
-	Floor        Floor
-	Ceiling      Ceiling
-	MinBound     mgl32.Vec2
-	MaxBound     mgl32.Vec2
+	// EdgeIDs is index-aligned with PointIndices and EdgeKinds, holding each
+	// polygon edge's stable identity — the same arrangement Chunk.PointNames
+	// has with Chunk.Points, and for the same reason: Walls and Portals are two
+	// separately-compacted slices whose indices shift under nearly every edit,
+	// so a name bound to the ring position is the only durable handle. Scripts
+	// address an edge by it; see sector_edge_id.go.
+	EdgeIDs  []string
+	Walls    []Wall
+	Portals  []Portal
+	Floor    Floor
+	Ceiling  Ceiling
+	MinBound mgl32.Vec2
+	MaxBound mgl32.Vec2
 }
 
 // WorldAABB returns the sector's world-space bounds: its XZ polygon AABB

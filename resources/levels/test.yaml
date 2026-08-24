@@ -238,14 +238,12 @@ chunks:
           # West: cross-chunk opening to upper floor
           - { from: SH, to: SF, kind: wall,   texture: concrete, collision: false, hidden: true }
 
-entities:
-  - id: player
-    position: { x: 0.0, y: 0.5, z: -10.0 }
-    model: ""
-    bounding: aabb
-    bound_half_x: 0.3
-    bound_half_y: 0.9
-    bound_half_z: 0.3
+# Where the player starts. This used to be an entity called "player" carrying
+# the player's own half-extents, from before the spawn point was a thing of its
+# own; it is the same place, said the way the loader now reads it.
+spawn:
+  position: { x: 0.0, y: 0.5, z: -10.0 }
+  rotation: { x: 0.0, y: 0.0, z: 0.0 }
 
 # ============================================================
 # Lights

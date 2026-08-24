@@ -140,7 +140,7 @@ func (e *Entity) updateLocation(lvl *Level) {
 // UpdateAnimations advances every attachment's clip.
 func (e *Entity) UpdateAnimations(dt float32) {
 	for i := range e.Models {
-		e.Models[i].Update(dt)
+		e.Models[i].Update(dt, e.ID)
 	}
 }
 
@@ -154,11 +154,19 @@ func (e *Entity) PlayAnimation(model, animation string) bool {
 		if m == nil {
 			return false
 		}
-		return m.Play(animation)
+		if !m.Play(animation) {
+			return false
+		}
+		// The clip has begun. Emitted here rather than in EntityModel.Play
+		// because an attachment has no way back to its entity, and a clip
+		// restarted from its own end has no clock change for Update to notice.
+		recordAnimEvent(AnimEvent{Entity: e.ID, Model: m.Name, Animation: animation})
+		return true
 	}
 	any := false
 	for i := range e.Models {
 		if e.Models[i].Play(animation) {
+			recordAnimEvent(AnimEvent{Entity: e.ID, Model: e.Models[i].Name, Animation: animation})
 			any = true
 		}
 	}

@@ -69,8 +69,9 @@ func spawnRotationFromCamera() mgl32.Vec3 {
 
 // ---------- panel ----------
 
-// editorSpawnPointSection draws the spawn point's properties: where it is,
-// where it faces, and the two "match the fly camera" shortcuts.
+// editorSpawnPointSection draws the spawn point's properties: where it is, its
+// rotation and the facing that falls out of it, and the two "match the fly
+// camera" shortcuts.
 func editorSpawnPointSection(lvl *Level) {
 	s := lvl.Spawn
 	if s == nil {
@@ -82,6 +83,17 @@ func editorSpawnPointSection(lvl *Level) {
 		s.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
 	}
 
+	// The Euler triple is what the marker actually stores, and the same three
+	// world-axis channels the rotate gizmo drags, so typing a number here and
+	// dragging a ring in the viewport reach the same field.
+	rot := vec3ToDegrees(s.Rotation)
+	if editorDragFloat3Step("Rotation (deg)##spawnrot", &rot, -360, 360, "%.1f", 1) {
+		s.Rotation = vec3FromDegrees(rot)
+	}
+
+	// The facing the rotation works out to, which is what gameplay reads. It is
+	// derived rather than editable: the pitch clamp lives in SpawnYawPitch, so a
+	// marker aimed straight up shows the angle the player will actually get.
 	yaw, pitch := SpawnYawPitch(s)
 	imgui.Text(fmt.Sprintf("Facing: yaw %.1f°  pitch %.1f°",
 		yaw*180/math.Pi, pitch*180/math.Pi))

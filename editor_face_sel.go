@@ -101,6 +101,7 @@ func setFaceSelection(sels []faceSel) {
 	clearVertexSelection()
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
+	editorClearVolumeSelection()
 	Editor.GizmoKind = gizmoKindNone
 	syncActiveFace()
 }

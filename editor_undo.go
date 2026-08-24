@@ -50,7 +50,19 @@ var levelRedoStack boundedStack[RawLevel]
 
 // EditorPushUndo snapshots the current level state onto the undo stack and
 // clears the redo stack. Call immediately BEFORE a structural mutation.
+// inPlaySession reports whether a play session is currently open. Undo is
+// refused while one is: a snapshot taken over script-mutated state would poison
+// the stack permanently, and leaving play restores the level underneath it
+// anyway.
+//
+// Gated on the session rather than on !Editor.Active, which is also true before
+// the editor has ever been opened — including in every headless test.
+func inPlaySession() bool { return playSession.valid }
+
 func EditorPushUndo() {
+	if inPlaySession() {
+		return
+	}
 	if Editor.level == nil {
 		return
 	}
@@ -75,6 +87,9 @@ func EditorCanRedo() bool { return levelRedoStack.len() > 0 }
 // EditorUndo restores the most recently pushed snapshot, moving the current
 // state onto the redo stack.
 func EditorUndo() {
+	if inPlaySession() {
+		return
+	}
 	if Editor.level == nil || levelUndoStack.len() == 0 {
 		return
 	}
@@ -87,6 +102,9 @@ func EditorUndo() {
 
 // EditorRedo re-applies the most recently undone snapshot.
 func EditorRedo() {
+	if inPlaySession() {
+		return
+	}
 	if Editor.level == nil || levelRedoStack.len() == 0 {
 		return
 	}
@@ -99,23 +117,36 @@ func EditorRedo() {
 
 // restoreLevelSnapshot rebuilds runtime level state from raw and resets
 // editor selection/drag state so stale indices can't crash the UI.
-func restoreLevelSnapshot(raw RawLevel) {
+// applyRawLevel rebuilds lvl from a raw snapshot, in place.
+//
+// Split out of restoreLevelSnapshot because three different things need exactly
+// this and nothing else: undo, redo, and the end of a play session
+// (script_play.go). The parts they do *not* share — resetting the editor's
+// selection, and moving the player to the spawn — are the caller's to decide.
+func applyRawLevel(raw RawLevel, lvl *Level) error {
 	newLevel, err := rawToLevel(raw)
 	if err != nil {
-		return
+		return err
 	}
 	// Built before the swap so a failed rebuild leaves the current level intact,
 	// released after it so the outgoing entities' GPU buffers do not leak — see
 	// EditorLoadLevel's note.
-	DeleteEntities(Editor.level)
-	*Editor.level = newLevel
+	DeleteEntities(lvl)
+	DeleteVolumes(lvl)
+	*lvl = newLevel
 
-	UploadLights(Editor.level.Lights)
+	UploadLights(lvl.Lights)
+	LoadVolumes(lvl)
 
-	// The player is engine-owned and survives the snapshot swap; only its
-	// position follows the restored spawn point.
-	ApplySpawnPoint(Editor.level)
+	// Every ref a script holds now points at an object that has been
+	// re-instantiated, so anything the runtime remembered about them is stale.
+	ScriptRuntimeLoad(lvl)
+	return nil
+}
 
+// editorResetSelectionState clears every selection, drag and mode that names
+// something by index. A snapshot swap invalidates all of them at once.
+func editorResetSelectionState() {
 	if Editor.ActiveChunkIdx >= len(Editor.level.Chunks) {
 		Editor.ActiveChunkIdx = len(Editor.level.Chunks) - 1
 	}
@@ -129,7 +160,9 @@ func restoreLevelSnapshot(raw RawLevel) {
 	Editor.SelectedFaces = nil
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
+	editorClearVolumeSelection()
 	Editor.EntityPlacementMode = false
+	Editor.VolumePlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
@@ -152,10 +185,24 @@ func restoreLevelSnapshot(raw RawLevel) {
 	Editor.SurfaceDragPt = -1
 
 	// The surface editor targets a specific wall/floor/ceiling by index;
-	// those indices are no longer trustworthy after a snapshot swap.
+	// those indices are no longer trustworthy after a snapshot swap. Drop back
+	// to the 3D view rather than the sector map — the surface editor draws in
+	// the main window, and the map no longer has a home there.
 	if Editor.Mode == ModeSurface2D {
-		Editor.Mode = Mode2D
+		Editor.Mode = Mode3D
 	}
+}
+
+// restoreLevelSnapshot applies an undo/redo snapshot: rebuild the level, put the
+// player on the restored spawn, and clear the editor's selection.
+func restoreLevelSnapshot(raw RawLevel) {
+	if err := applyRawLevel(raw, Editor.level); err != nil {
+		return
+	}
+	// The player is engine-owned and survives the snapshot swap; only its
+	// position follows the restored spawn point.
+	ApplySpawnPoint(Editor.level)
+	editorResetSelectionState()
 
 	Editor.StatusMsg = "Undo/redo applied"
 	Editor.StatusTime = sdl.GetTicks()

@@ -104,6 +104,11 @@ type EntityModel struct {
 	// re-reading the file every frame is not an option. Nil for static models,
 	// which is what keeps a level of props from holding every mesh twice.
 	Doc *ModelDoc
+	// AnimBlocked is why Anim is nil, in words, or "" when it is not nil.
+	// Recorded at Load because that is the only moment the document is in hand:
+	// afterwards a static model has dropped it, and "no armature" and "no skin
+	// weights" are indistinguishable from an EntityModel alone.
+	AnimBlocked string
 }
 
 // effectiveScale treats the zero value as identity.
@@ -194,6 +199,19 @@ func (m *EntityModel) Load(ownerID string) error {
 	return nil
 }
 
+// SetTexture changes what the attachment draws with, both for the next reload
+// (the override) and right now (the uploaded submeshes).
+//
+// Patching the submeshes is the whole of the live change: every draw call binds
+// Textures[g.Texture] afresh, so a name swap needs no re-upload of the mesh and
+// no reload of the model — see the note above pendingUpload in texture.go.
+func (m *EntityModel) SetTexture(texture string) {
+	m.Texture = texture
+	for i := range m.Submeshes {
+		m.Submeshes[i].Texture = texture
+	}
+}
+
 // Delete releases the attachment's GPU buffers and drops its playback state.
 // Reloading without this would leak the previous upload's VAO/VBO.
 func (m *EntityModel) Delete() {
@@ -203,6 +221,7 @@ func (m *EntityModel) Delete() {
 	m.Submeshes = nil
 	m.Anim = nil
 	m.Doc = nil
+	m.AnimBlocked = ""
 }
 
 // HasGeometry reports whether this attachment has anything uploaded to draw.
@@ -228,6 +247,7 @@ func (m *EntityModel) SetAlpha(a float32) {
 // is something to pose. A static model's document is dropped here.
 func (m *EntityModel) initAnimation(doc *ModelDoc) {
 	m.Anim = newEntityAnim(doc)
+	m.AnimBlocked = animUnavailable(doc)
 	if m.Anim != nil {
 		m.Doc = doc
 	}
@@ -330,8 +350,32 @@ func (m *EntityModel) Playing() string {
 	return ""
 }
 
-// Update advances this attachment's animation clock.
-func (m *EntityModel) Update(dt float32) { m.Anim.Update(dt) }
+// Update advances this attachment's animation clock and reports any clip
+// transition it crossed, named the way the game knows the animation rather than
+// the way the .fmdl does.
+//
+// entityID is what the event is addressed to. It is threaded down rather than
+// looked up because an attachment has no way back to its entity, and adding one
+// would be a cycle for the sake of one string.
+func (m *EntityModel) Update(dt float32, entityID string) {
+	if m.Anim == nil {
+		return
+	}
+	name := m.Playing()
+	m.Anim.Update(dt)
+
+	if m.Anim.wrapped {
+		m.Anim.wrapped = false
+		// A looping clip emits end-then-start per cycle, in that order: the
+		// cycle that just closed, then the one that opened.
+		recordAnimEvent(AnimEvent{Entity: entityID, Model: m.Name, Animation: name, Ended: true})
+		recordAnimEvent(AnimEvent{Entity: entityID, Model: m.Name, Animation: name})
+	}
+	if m.Anim.finished {
+		m.Anim.finished = false
+		recordAnimEvent(AnimEvent{Entity: entityID, Model: m.Name, Animation: name, Ended: true})
+	}
+}
 
 // ---------- helpers ----------
 
@@ -360,6 +404,18 @@ func uniqueModelName(e *Entity, base string) string {
 			return name
 		}
 	}
+}
+
+// modelNameForPath is the attachment name a newly picked mesh suggests: the
+// file's own name, so an entity wearing models/barrel.fmdl has an attachment
+// called "barrel" rather than "model_2".
+func modelNameForPath(path string) string {
+	base := filepath.Base(filepath.ToSlash(path))
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	if base == "" || base == "." {
+		return "model"
+	}
+	return base
 }
 
 // uniqueAnimationName is uniqueModelName for an attachment's animation list.

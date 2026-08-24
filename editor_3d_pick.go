@@ -2,12 +2,12 @@ package main
 
 // editor_3d_pick.go — 3D-mode click picking.
 //
-// One ray cast resolves every clickable thing in the world — the spawn point
-// and the sector faces (walls, floors, ceilings) — into a single
-// closest hit, so a click always selects whatever is actually nearest the
-// camera along the ray. Sector faces and primitives are tested against their
-// real triangles rather than their bounding boxes so that curved or thin
-// geometry does not steal clicks from the surface behind it.
+// One ray cast resolves every clickable thing in the world — the spawn point,
+// the entities, the volumes and the sector faces (walls, floors, ceilings) —
+// into a single closest hit, so a click always selects whatever is actually
+// nearest the camera along the ray. Sector faces and primitives are tested
+// against their real triangles rather than their bounding boxes so that curved
+// or thin geometry does not steal clicks from the surface behind it.
 //
 // On top of that, sector vertices get screen-space handle boxes that appear
 // when the cursor is near them; clicking inside a box selects that vertex,
@@ -35,6 +35,7 @@ const (
 	panelFocusVertex  = "vertex"
 	panelFocusWater   = "water"
 	panelFocusEntity  = "entity"
+	panelFocusVolume  = "volume"
 )
 
 // ---------- pick result ----------
@@ -50,6 +51,7 @@ const (
 	pickCeiling pickKind = "ceiling"
 	pickWater   pickKind = "water"
 	pickEntity  pickKind = "entity"
+	pickVolume  pickKind = "volume"
 )
 
 // pickHit is the closest thing found along a picking ray. Which index fields
@@ -57,6 +59,7 @@ const (
 //
 //	spawn      → none; the level has at most one spawn point
 //	entity     → idx = index into level.Entities
+//	volume     → idx = index into level.Volumes
 //	wall       → chunkIdx + sectorIdx + idx = wall index within that sector
 //	floor/ceil → chunkIdx + sectorIdx
 //	water      → chunkIdx + idx = surface index within that chunk
@@ -252,6 +255,15 @@ func pick3D(sx, sy int32) pickHit {
 			if t := pickModelT(origin, dir, w.Geometry.Vertices, w.ModelMatrix()); t < float32(math.MaxFloat32) {
 				hit.consider(t, pickWater, ci, -1, wi)
 			}
+		}
+	}
+
+	// Volumes, tested last so that a tie goes to the world: hit.consider keeps
+	// the first hit at a given distance, and a region drawn as a wireframe cage
+	// should not win against a surface it happens to sit flush with.
+	for vi := range lvl.Volumes {
+		if t := pickVolumeRayT(origin, dir, &lvl.Volumes[vi]); t < float32(math.MaxFloat32) {
+			hit.consider(t, pickVolume, -1, -1, vi)
 		}
 	}
 
@@ -568,6 +580,7 @@ func setVertexSelection(sels []vertexSel) {
 	Editor.SelectedVertices = sels
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
+	editorClearVolumeSelection()
 	clearFaceSelection()
 
 	if len(sels) == 0 {
@@ -694,6 +707,7 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	// Drawn whatever the cursor is doing: the selection does not stop existing
 	// because the pointer moved onto the panel.
 	drawSelectedFaceOutline()
+	drawSelectedVolumeOutline()
 
 	if offWorld {
 		// Nothing is under the cursor, so no handle reads as hovered and the

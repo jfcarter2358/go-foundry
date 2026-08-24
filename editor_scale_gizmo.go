@@ -32,6 +32,10 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 		if e := activeGizmoEntity(); e != nil {
 			return e.Position, true
 		}
+	case gizmoKindVolume:
+		if v := activeGizmoVolume(); v != nil {
+			return v.Position, true
+		}
 	}
 	return mgl32.Vec3{}, false
 }
@@ -169,6 +173,17 @@ func applyScaleToSelection(origin, factors mgl32.Vec3) {
 			entityScaleClamp(s.Y() * factors.Y()),
 			entityScaleClamp(s.Z() * factors.Z()),
 		}
+		return
+	}
+	if v := activeGizmoVolume(); v != nil {
+		// The snapshot holds the starting half-extents rather than a scale, so
+		// dragging resizes the region itself. That does change the cage's shape,
+		// which is the one gizmo operation on a volume that needs a rebuild.
+		h := Editor.GizmoDragStartScale
+		v.HalfX = entityScaleClamp(h.X() * factors.X())
+		v.HalfY = entityScaleClamp(h.Y() * factors.Y())
+		v.HalfZ = entityScaleClamp(h.Z() * factors.Z())
+		_ = v.Load()
 		return
 	}
 	setSelectedVertexWorld(scaleTransform(origin, factors))

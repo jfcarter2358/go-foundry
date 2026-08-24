@@ -33,6 +33,7 @@ const (
 	sel3DSurface // a sector's floor, ceiling, wall or portal
 	sel3DSpawn
 	sel3DEntity
+	sel3DVolume
 )
 
 func editor3DSelection() editor3DSelKind {
@@ -45,6 +46,8 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DSpawn
 	case activeEntity() != nil:
 		return sel3DEntity
+	case activeVolume() != nil:
+		return sel3DVolume
 	case len(Editor.SelectedVertices) > 0:
 		return sel3DVertices
 	case Editor.ActiveSurface != "":
@@ -69,6 +72,10 @@ func editor3DSelectionSummary() string {
 			return fmt.Sprintf("Entity %s (%s)", e.ID, e.Type)
 		}
 		return fmt.Sprintf("Entity %s", e.ID)
+
+	case sel3DVolume:
+		v := activeVolume()
+		return fmt.Sprintf("Volume %s (%s)", v.ID, volumeShapeName(v.Shape))
 
 	case sel3DVertices:
 		if n := len(Editor.SelectedVertices); n > 1 {
@@ -430,7 +437,7 @@ func editor3DSelectSectorRing() {
 // editor3DCanSnap reports whether the selection is something snapping can move.
 func editor3DCanSnap() bool {
 	switch editor3DSelection() {
-	case sel3DVertices, sel3DSpawn, sel3DEntity:
+	case sel3DVertices, sel3DSpawn, sel3DEntity, sel3DVolume:
 		return Editor.StepSize > 0
 	}
 	return false
@@ -463,6 +470,15 @@ func editor3DSnapSelectionToGrid() {
 		EditorPushUndo()
 		e.Position = snapVec3(e.Position, step)
 		editorSetStatus("Snapped entity %q to the grid", e.ID)
+
+	case sel3DVolume:
+		// The position only. A volume's size is its half-extents, and rounding
+		// those onto the grid as well would resize a trigger someone asked to
+		// have moved.
+		v := activeVolume()
+		EditorPushUndo()
+		v.Position = snapVec3(v.Position, step)
+		editorSetStatus("Snapped volume %q to the grid", v.ID)
 	}
 }
 

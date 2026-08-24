@@ -46,7 +46,8 @@ func TestKeybindSplitSectionsCoversEverything(t *testing.T) {
 
 func TestKeybindActiveSectionsFollowMode(t *testing.T) {
 	saved := Editor
-	defer func() { Editor = saved }()
+	savedWin := editor2DWindow
+	defer func() { Editor, editor2DWindow = saved, savedWin }()
 
 	activeTitles := func() map[string]bool {
 		out := map[string]bool{}
@@ -64,20 +65,29 @@ func TestKeybindActiveSectionsFollowMode(t *testing.T) {
 		t.Errorf("editor closed: expected gameplay only, got %v", got)
 	}
 
+	// The sector map lives in its own window, and Editor.Mode never says
+	// Mode2D outside that window's draw brackets — so the map's sections key
+	// off the window being open, not off the mode.
 	Editor = EditorState{}
 	Editor.Active = true
-	Editor.Mode = Mode2D
+	editor2DWindow = &UIWindow{}
 	got := activeTitles()
-	if !got["Editor — 2D sector map"] || !got["Editor — any mode"] {
-		t.Errorf("2D mode: expected the 2D and shared editor sections, got %v", got)
+	if !got["Editor — 2D sector map (its own window)"] || !got["Editor — any mode"] {
+		t.Errorf("2D window open: expected the 2D and shared editor sections, got %v", got)
 	}
 	if got["Gameplay"] || got["Editor — biome brush (2D)"] {
-		t.Errorf("2D mode: gameplay/biome sections should be inactive, got %v", got)
+		t.Errorf("2D window open: gameplay/biome sections should be inactive, got %v", got)
 	}
 
 	Editor.BiomeLayerActive = true
 	if !activeTitles()["Editor — biome brush (2D)"] {
 		t.Error("biome layer active: expected the biome brush section to light up")
+	}
+
+	// Closing the window takes the map's sections with it.
+	editor2DWindow = nil
+	if activeTitles()["Editor — 2D sector map (its own window)"] {
+		t.Error("2D window closed: the sector map section should be inactive")
 	}
 
 	// Global sections have no predicate and apply everywhere.

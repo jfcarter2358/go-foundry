@@ -63,9 +63,20 @@ var (
 	texEditorSaveAsName       string
 	texEditorShowMismatch     bool
 	texEditorPendingOpen      *texEditorState
-	texEditorPaletteEditIdx   uint8
 	texEditorStatusMsg        string
 	texEditorStatusTime       uint32
+)
+
+// Palette-editing state. The picked colour is applied to the in-memory palette
+// live, so the canvas and any bound world texture track the slider, but it is
+// only written to textures/palette.pal once the popup closes — a colour picker
+// drag would otherwise rewrite the file every frame it moved.
+var (
+	texEditorPaletteEditIdx    uint8
+	texEditorPaletteEditOpen   bool       // OpenPopup on the next frame, outside the swatch ID scope
+	texEditorPaletteEditActive bool       // the popup is up; persist when it goes away
+	texEditorPaletteEditOrig   color.RGBA // the slot's colour before this edit, for Revert/Cancel
+	texEditorPaletteEditCol    [4]float32 // staging value the picker writes into
 )
 
 var texEditorSizeOptions = []int32{64, 128, 256, 512, 1024}
@@ -76,6 +87,11 @@ func texEditorStatus(msg string) {
 }
 
 // ---------- window lifecycle ----------
+
+// TextureEditorOpen reports whether the texture editor window is up. Used by
+// the F1 keybinding reference (keybindings.go) to foreground this window's
+// shortcuts while it has focus.
+func TextureEditorOpen() bool { return texEditorWindow != nil }
 
 // OpenTextureEditor opens the texture editor window, creating it (and a
 // blank starting document, if none is open yet) on first use, or just
@@ -90,6 +106,7 @@ func OpenTextureEditor() {
 		log.Printf("open texture editor: %v", err)
 		return
 	}
+	w.HandleEvent = texEditorHandleEvent
 	texEditorWindow = w
 	if activeTexEditor == nil {
 		if ed, err := NewTexEditorDoc("untitled", 512, 512); err == nil {
@@ -175,33 +192,84 @@ func texEditorRefreshPreview() {
 	ed.previewDirty = false
 }
 
-// texEditorHandleShortcuts drives Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y undo-redo for
-// the active document. Gated on WantTextInput rather than the broader
-// WantCaptureKeyboard (unlike the main editor's equivalent in editor.go) —
-// this whole window is built out of imgui widgets, so WantCaptureKeyboard is
-// true almost all the time; WantTextInput narrows it to "a text field (layer
-// name, texture name, ...) actually has focus", which is the only case where
-// Ctrl+Z should be left to the OS/imgui text-edit undo instead.
-func texEditorHandleShortcuts() {
+// ---------- keyboard shortcuts ----------
+
+// texEditorShortcut names the action a key chord maps to in this window.
+type texEditorShortcut int
+
+const (
+	texShortcutNone texEditorShortcut = iota
+	texShortcutUndo
+	texShortcutRedo
+)
+
+// texEditorShortcutFor resolves one key chord to an action. Split out from the
+// SDL handler below so the mapping is testable without a window: everything
+// here is a pure function of the chord.
+//
+// typing is "a text field (layer name, texture name, ...) actually has focus",
+// the one case where Ctrl+Z belongs to imgui's own text-edit undo instead. It
+// is deliberately narrower than the WantCaptureKeyboard check the other
+// windows use — this window is built entirely out of imgui widgets, so
+// WantCaptureKeyboard is true almost all the time and would swallow every
+// shortcut.
+func texEditorShortcutFor(sc sdl.Scancode, ctrl, shift, typing bool) texEditorShortcut {
+	if !ctrl || typing {
+		return texShortcutNone
+	}
+	switch sc {
+	case sdl.SCANCODE_Z:
+		if shift {
+			return texShortcutRedo
+		}
+		return texShortcutUndo
+	case sdl.SCANCODE_Y:
+		return texShortcutRedo
+	}
+	return texShortcutNone
+}
+
+// texEditorHandleEvent runs this window's keyboard shortcuts: Ctrl+Z undo,
+// Ctrl+Shift+Z / Ctrl+Y redo, matching the main editor (editor.go) and the
+// 2D/model windows.
+//
+// Wired as the UIWindow's HandleEvent, so it reads SDL events directly —
+// routed by RouteWindowEvent with this window's imgui context current, after
+// imgui has already seen them. Polling imgui's own key state instead does not
+// work here: this backend feeds io.KeysDown by SDL scancode (imguiConfigureIO in
+// editor_imgui.go), so IsKeyPressed takes a scancode, not the imgui.Key enum
+// that names the mapping.
+func texEditorHandleEvent(event sdl.Event) {
+	t, ok := event.(sdl.KeyboardEvent)
+	if !ok || t.Type != sdl.KEYDOWN {
+		return
+	}
 	ed := activeTexEditor
 	if ed == nil {
 		return
 	}
-	io := imgui.CurrentIO()
-	if io.WantTextInput() {
-		return
-	}
-	if !io.KeyCtrlPressed() {
-		return
-	}
-	switch {
-	case imgui.IsKeyPressedV(imgui.KeyZ, false) && io.KeyShiftPressed():
-		ed.Redo()
-	case imgui.IsKeyPressedV(imgui.KeyZ, false):
+	mods := sdl.GetModState()
+	switch texEditorShortcutFor(t.Keysym.Scancode,
+		mods&sdl.KMOD_CTRL != 0, mods&sdl.KMOD_SHIFT != 0, imgui.CurrentIO().WantTextInput()) {
+	case texShortcutUndo:
+		// An undo mid-drag would restore texels the still-open stroke is about
+		// to snapshot over, so close the gesture first.
+		texEditorFinishStroke(ed)
 		ed.Undo()
-	case imgui.IsKeyPressedV(imgui.KeyY, false):
+	case texShortcutRedo:
+		texEditorFinishStroke(ed)
 		ed.Redo()
 	}
+}
+
+// texEditorFinishStroke commits an in-progress paint gesture, if any, so an
+// undo taken while the mouse is still down operates on a settled document.
+func texEditorFinishStroke(ed *texEditorState) {
+	if !texEditorPainting {
+		return
+	}
+	ed.EndStroke()
+	texEditorPainting = false
 }
 
 // ---------- top-level layout ----------
@@ -212,7 +280,6 @@ func drawTextureEditorUI() {
 		return
 	}
 	texEditorRefreshPreview()
-	texEditorHandleShortcuts()
 
 	imgui.SetNextWindowPos(imgui.Vec2{X: 0, Y: 0})
 	imgui.SetNextWindowSize(imgui.Vec2{X: float32(w.W), Y: float32(w.H)})
@@ -550,12 +617,14 @@ func drawPalettePanel() {
 		if imgui.ButtonV("##swatch", imgui.Vec2{X: cell, Y: cell}) {
 			ed.PrimaryIdx = uint8(i)
 		}
-		if imgui.IsItemHovered() && imgui.IsMouseClicked(1) {
-			ed.SecondaryIdx = uint8(i)
-		}
-		if imgui.IsItemHovered() && imgui.IsMouseDoubleClicked(0) {
-			texEditorPaletteEditIdx = uint8(i)
-			imgui.OpenPopup("Edit Palette Color")
+		if imgui.IsItemHovered() {
+			if imgui.IsMouseClicked(1) {
+				ed.SecondaryIdx = uint8(i)
+			}
+			if imgui.IsMouseDoubleClicked(0) {
+				texEditorBeginPaletteEdit(uint8(i))
+			}
+			imgui.SetTooltip(fmt.Sprintf("Slot %d — %d, %d, %d, %d\nClick: primary   Right-click: secondary   Double-click: edit", i, c.R, c.G, c.B, c.A))
 		}
 		imgui.PopStyleColor()
 		imgui.PopID()
@@ -564,29 +633,18 @@ func drawPalettePanel() {
 
 	imgui.Text(fmt.Sprintf("Primary: %d   Secondary: %d", ed.PrimaryIdx, ed.SecondaryIdx))
 
-	if imgui.BeginPopup("Edit Palette Color") {
-		idx := texEditorPaletteEditIdx
-		c := texdoc.GlobalPalette[idx]
-		col := [4]float32{float32(c.R) / 255, float32(c.G) / 255, float32(c.B) / 255, float32(c.A) / 255}
-		imgui.Text(fmt.Sprintf("Slot %d", idx))
-		if imgui.ColorEdit4("Color", &col) {
-			newC := color.RGBA{
-				R: uint8(clamp01(col[0]) * 255), G: uint8(clamp01(col[1]) * 255),
-				B: uint8(clamp01(col[2]) * 255), A: uint8(clamp01(col[3]) * 255),
-			}
-			if err := SetPaletteColor(idx, newC); err != nil {
-				texEditorStatus(err.Error())
-			}
-			// Live-doc palette carries its own copy (see the palette-mismatch
-			// flow) — keep it in lockstep with the global one it was authored
-			// against so this document doesn't immediately count as mismatched.
-			if ed != nil {
-				ed.Doc.Pal[idx] = newC
-				ed.previewDirty = true
-			}
-		}
-		imgui.EndPopup()
+	// An explicit button beside the double-click: the grid gives no hint that
+	// a swatch is editable at all, and at 14px a double-click is fiddly.
+	editorPushDisabled(ed.PrimaryIdx == 0)
+	if imgui.Button("Edit Color...") {
+		texEditorBeginPaletteEdit(ed.PrimaryIdx)
 	}
+	editorPopDisabled()
+
+	// OpenPopup has to happen out here, after the grid has popped its
+	// per-swatch ID: a popup opened under one ID stack and begun under
+	// another never appears, which is why the double-click did nothing.
+	drawTexEditorPaletteColorPopup()
 
 	imgui.Separator()
 	if imgui.Button("Rebuild All Textures") {
@@ -597,6 +655,106 @@ func drawPalettePanel() {
 			texEditorStatus(fmt.Sprintf("Rebuilt with %d error(s): %v", len(errs), errs[0]))
 		}
 	}
+}
+
+// texEditorBeginPaletteEdit arms the colour popup for slot idx, snapshotting
+// the colour it starts on so Revert/Cancel have something to go back to.
+func texEditorBeginPaletteEdit(idx uint8) {
+	if idx == 0 {
+		// Slot 0 is the transparent slot by convention: it is what the eraser
+		// writes and what every fresh layer is made of, so a document that
+		// gave it a colour would come back with its erased areas painted in.
+		texEditorStatus("Slot 0 is the transparent slot and can't be recoloured")
+		return
+	}
+	texEditorPaletteEditIdx = idx
+	texEditorPaletteEditOrig = texdoc.GlobalPalette[idx]
+	texEditorPaletteEditCol = texEditorColorToVec4(texEditorPaletteEditOrig)
+	texEditorPaletteEditOpen = true
+}
+
+// texEditorApplyPaletteColor writes c into the global palette and into the open
+// document's own copy of it, in memory only. Indices never move on a palette
+// edit, so no art has to be re-quantised — the next flatten picks the new
+// colour up on its own.
+func texEditorApplyPaletteColor(idx uint8, c color.RGBA) {
+	texdoc.GlobalPalette[idx] = c
+	if ed := activeTexEditor; ed != nil {
+		// The document carries its own copy of the palette it was authored
+		// against (see the mismatch dialog) — keep it in lockstep so editing a
+		// slot doesn't immediately make the open document count as mismatched.
+		ed.Doc.Pal[idx] = c
+		ed.previewDirty = true
+	}
+}
+
+// texEditorCommitPaletteColor persists the edited slot to textures/palette.pal.
+func texEditorCommitPaletteColor() {
+	idx := texEditorPaletteEditIdx
+	c := texdoc.GlobalPalette[idx]
+	if c == texEditorPaletteEditOrig {
+		return
+	}
+	if err := SetPaletteColor(idx, c); err != nil {
+		texEditorStatus(fmt.Sprintf("Palette save failed: %v", err))
+		return
+	}
+	texEditorStatus(fmt.Sprintf("Slot %d saved — run Rebuild All Textures to repaint art already on disk", idx))
+}
+
+func drawTexEditorPaletteColorPopup() {
+	if texEditorPaletteEditOpen {
+		imgui.OpenPopup("Edit Palette Color")
+		texEditorPaletteEditOpen = false
+		texEditorPaletteEditActive = true
+	}
+	if !imgui.BeginPopup("Edit Palette Color") {
+		// Dismissed by clicking away rather than through a button: keep the
+		// edit and write it out, the same way every other live-edit widget in
+		// the editor commits on release.
+		if texEditorPaletteEditActive {
+			texEditorPaletteEditActive = false
+			texEditorCommitPaletteColor()
+		}
+		return
+	}
+	idx := texEditorPaletteEditIdx
+	imgui.Text(fmt.Sprintf("Palette slot %d", idx))
+	if imgui.ColorPicker4V("##palcolor", &texEditorPaletteEditCol,
+		imgui.ColorPickerFlagsAlphaBar|imgui.ColorPickerFlagsAlphaPreviewHalf|imgui.ColorPickerFlagsNoLabel) {
+		texEditorApplyPaletteColor(idx, texEditorVec4ToColor(texEditorPaletteEditCol))
+	}
+	imgui.PushTextWrapPosV(imgui.CursorPosX() + 260)
+	imgui.Text("The palette is global: this recolours every texel on this slot, in this document and in the world, as you drag. Art already saved to disk keeps the old colour until Rebuild All Textures.")
+	imgui.PopTextWrapPos()
+	if imgui.Button("Done##palcolor") {
+		texEditorPaletteEditActive = false
+		texEditorCommitPaletteColor()
+		imgui.CloseCurrentPopup()
+	}
+	imgui.SameLine()
+	if imgui.Button("Revert##palcolor") {
+		texEditorApplyPaletteColor(idx, texEditorPaletteEditOrig)
+		texEditorPaletteEditCol = texEditorColorToVec4(texEditorPaletteEditOrig)
+	}
+	imgui.SameLine()
+	if imgui.Button("Cancel##palcolor") {
+		texEditorApplyPaletteColor(idx, texEditorPaletteEditOrig)
+		// Cleared before the close so the "dismissed by clicking away" branch
+		// above doesn't then write the reverted colour back out.
+		texEditorPaletteEditActive = false
+		imgui.CloseCurrentPopup()
+	}
+	imgui.EndPopup()
+}
+
+func texEditorColorToVec4(c color.RGBA) [4]float32 {
+	return [4]float32{float32(c.R) / 255, float32(c.G) / 255, float32(c.B) / 255, float32(c.A) / 255}
+}
+
+func texEditorVec4ToColor(v [4]float32) color.RGBA {
+	q := func(f float32) uint8 { return uint8(clamp01(f)*255 + 0.5) }
+	return color.RGBA{R: q(v[0]), G: q(v[1]), B: q(v[2]), A: q(v[3])}
 }
 
 // ---------- layers panel ----------

@@ -141,9 +141,16 @@ func Editor2DRender() {
 				}
 				y := s.Ceiling.VertexHeight(vi)
 				gp := mgl32.Vec3{pt.X(), y, pt.Y()}
-				crossSz := screenToWorldSize(4, ortho)
-				GizmoLine(gp.Sub(mgl32.Vec3{crossSz * 1.4, 0, 0}), gp.Add(mgl32.Vec3{crossSz * 1.4, 0, 0}), col)
-				GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz * 1.4}), gp.Add(mgl32.Vec3{0, 0, crossSz * 1.4}), col)
+				// Drawn as a diagonal X, not a second upright cross. Seen from
+				// above the two marks share a screen position and differ only
+				// in height, so an upright one laid over the floor's covered it
+				// line for line — and being both longer and drawn second, it
+				// won every pixel. A selected corner in a sector therefore
+				// stayed dim blue however it was picked, which is why only free
+				// points looked as though selecting them did anything.
+				d := screenToWorldSize(4, ortho) * 1.1
+				GizmoLine(gp.Sub(mgl32.Vec3{d, 0, d}), gp.Add(mgl32.Vec3{d, 0, d}), col)
+				GizmoLine(gp.Sub(mgl32.Vec3{d, 0, -d}), gp.Add(mgl32.Vec3{d, 0, -d}), col)
 			}
 		}
 	}
@@ -637,6 +644,7 @@ func insertSectorVertex(ch *Chunk, s *Sector, ei, newPtIdx int, t float32) {
 	for len(s.EdgeKinds) < nPts {
 		s.EdgeKinds = append(s.EdgeKinds, "wall")
 	}
+	ensureEdgeIDs(s)
 
 	// Split the wall/portal covering edge ei while the indices are still the
 	// pre-insert ones.
@@ -692,6 +700,12 @@ func insertSectorVertex(ch *Chunk, s *Sector, ei, newPtIdx int, t float32) {
 	newKinds[ei+1] = s.EdgeKinds[ei]
 	copy(newKinds[ei+2:], s.EdgeKinds[ei+1:])
 	s.EdgeKinds = newKinds
+
+	// The first half keeps the split edge's ID — splitSectorEdgeNear leaves that
+	// half selected as "the wall the user clicked", so it has to stay the same
+	// object as far as a script is concerned. The second half is new.
+	insertEdgeID(s, ei)
+	syncEdgeRecordIDs(s)
 }
 
 // splitWall divides w at newPt, which must lie on the segment at parameter t
@@ -886,14 +900,17 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	// Sector A: posA..posB (inclusive)
 	var indicesA []int
 	var edgeKindsA []string
+	var edgeIDsA []string
 	var wallsA []Wall
 	var portalsA []Portal
+	ensureEdgeIDs(s)
 	for i := posA; i <= posB; i++ {
 		indicesA = append(indicesA, s.PointIndices[i])
 	}
 	for i := posA; i < posB; i++ {
 		ek := s.EdgeKinds[i]
 		edgeKindsA = append(edgeKindsA, ek)
+		edgeIDsA = append(edgeIDsA, s.EdgeIDs[i])
 		kind, kIdx := edgeKindAndIndex(s, i)
 		if kind == "wall" && kIdx < len(s.Walls) {
 			wallsA = append(wallsA, s.Walls[kIdx])
@@ -903,6 +920,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	}
 	// New closing edge for sector A (posB → posA): wall
 	edgeKindsA = append(edgeKindsA, "wall")
+	edgeIDsA = append(edgeIDsA, "")
 	ptB := ch.Points[s.PointIndices[posB]]
 	ptA := ch.Points[s.PointIndices[posA]]
 	wallsA = append(wallsA, Wall{StartPoint: ptB, EndPoint: ptA, Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0})
@@ -910,6 +928,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	// Sector B: posB..n-1, 0..posA (wrapping, inclusive)
 	var indicesB []int
 	var edgeKindsB []string
+	var edgeIDsB []string
 	var wallsB []Wall
 	var portalsB []Portal
 	for i := posB; i < n; i++ {
@@ -923,6 +942,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 		ei := i % n
 		ek := s.EdgeKinds[ei]
 		edgeKindsB = append(edgeKindsB, ek)
+		edgeIDsB = append(edgeIDsB, s.EdgeIDs[ei])
 		kind, kIdx := edgeKindAndIndex(s, ei)
 		if kind == "wall" && kIdx < len(s.Walls) {
 			wallsB = append(wallsB, s.Walls[kIdx])
@@ -933,6 +953,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	for i := 0; i < posA; i++ {
 		ek := s.EdgeKinds[i]
 		edgeKindsB = append(edgeKindsB, ek)
+		edgeIDsB = append(edgeIDsB, s.EdgeIDs[i])
 		kind, kIdx := edgeKindAndIndex(s, i)
 		if kind == "wall" && kIdx < len(s.Walls) {
 			wallsB = append(wallsB, s.Walls[kIdx])
@@ -942,6 +963,7 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 	}
 	// New closing edge for sector B (posA → posB): wall
 	edgeKindsB = append(edgeKindsB, "wall")
+	edgeIDsB = append(edgeIDsB, "")
 	wallsB = append(wallsB, Wall{StartPoint: ptA, EndPoint: ptB, Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0})
 
 	// Distribute vertex offsets
@@ -954,20 +976,30 @@ func splitSector(ch *Chunk, sectorIdx, posA, posB int) {
 		ID:           s.ID,
 		PointIndices: indicesA,
 		EdgeKinds:    edgeKindsA,
+		EdgeIDs:      edgeIDsA,
 		Walls:        wallsA,
 		Portals:      portalsA,
 		Floor:        Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsA},
 		Ceiling:      Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsA},
 	}
 	sectorB := Sector{
-		ID:           s.ID + "_split",
+		ID:           uniqueSectorID(ch, s.ID+"_split"),
 		PointIndices: indicesB,
 		EdgeKinds:    edgeKindsB,
+		EdgeIDs:      edgeIDsB,
 		Walls:        wallsB,
 		Portals:      portalsB,
 		Floor:        Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsB},
 		Ceiling:      Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsB},
 	}
+
+	// Both halves inherit edge IDs from the sector they came from, and each gains
+	// one freshly-minted closing wall. Edge IDs are sector-scoped, so the two
+	// halves carrying the same names is correct — they are different sectors.
+	ensureEdgeIDs(&sectorA)
+	ensureEdgeIDs(&sectorB)
+	syncEdgeRecordIDs(&sectorA)
+	syncEdgeRecordIDs(&sectorB)
 
 	// Replace original sector with A, append B
 	ch.Sectors[sectorIdx] = sectorA
@@ -1085,6 +1117,7 @@ func removeSectorPoint(ch *Chunk, s *Sector, pi int) {
 	// remove the corresponding wall/portal.
 	prevEdge := (pos - 1 + n) % n
 	currEdge := pos
+	ensureEdgeIDs(s)
 
 	// Remove the wall/portal for currEdge (pos→pos+1)
 	if currEdge < len(s.EdgeKinds) {
@@ -1096,10 +1129,12 @@ func removeSectorPoint(ch *Chunk, s *Sector, pi int) {
 		}
 	}
 
-	// Remove from EdgeKinds
+	// Remove from EdgeKinds. The surviving edge is prevEdge, which keeps its own
+	// ID — the two edges merge into the one the user did not delete.
 	if currEdge < len(s.EdgeKinds) {
 		s.EdgeKinds = append(s.EdgeKinds[:currEdge], s.EdgeKinds[currEdge+1:]...)
 	}
+	removeEdgeID(s, currEdge)
 
 	// Remove from PointIndices
 	s.PointIndices = append(s.PointIndices[:pos], s.PointIndices[pos+1:]...)
@@ -1114,57 +1149,94 @@ func removeSectorPoint(ch *Chunk, s *Sector, pi int) {
 
 	// Update the surviving edge's endpoints
 	_ = prevEdge
+	syncEdgeRecordIDs(s)
 	rebuildSectorEdgePoints(ch, s)
 	_ = reloadSector(ch, s)
 }
 
-// tryCreateSectorFromPendingEdges checks if pending edges form a closed polygon
-// and creates a new sector if so. Reports whether a sector was created.
+// tryCreateSectorFromPendingEdges checks if pending edges alone form a closed
+// polygon and creates a new sector if so. Reports whether a sector was created.
 func tryCreateSectorFromPendingEdges(ch *Chunk) bool {
-	if len(Editor.PendingEdges) < 3 {
+	return closePendingLoop(ch, nil)
+}
+
+// closePendingLoop looks for a closed outline among the pending edges and turns
+// it into a sector.
+//
+// links are pairs the join was asked to connect that already had a wall or a
+// portal between them (editor_2d_join.go). They draw nothing — the edge is
+// there — but they are still sides of the outline the user traced, and without
+// them a sector drawn against an existing one can never close: its shared side
+// contributes no pending edge, so the search finds a chain and not a loop.
+//
+// Only this run's links count. Existing walls are not a general shortcut for
+// the search to wander through, or a single pending edge between two far-apart
+// sectors could "close" a loop around geometry nobody pointed at.
+func closePendingLoop(ch *Chunk, links [][2]int) bool {
+	polyIndices := pendingLoopPolygon(links)
+	if polyIndices == nil {
 		return false
 	}
 
-	// Build adjacency from pending edges
-	adj := map[int][]int{}
+	// Drop the edges the outline used. Links are not in the pending set, so the
+	// sides that were already walls are left exactly as they were.
+	usedEdgeSet := make(map[[2]int]bool)
+	for i := range polyIndices {
+		a := polyIndices[i]
+		b := polyIndices[(i+1)%len(polyIndices)]
+		usedEdgeSet[[2]int{a, b}] = true
+		usedEdgeSet[[2]int{b, a}] = true
+	}
+	var remaining [][2]int
 	for _, e := range Editor.PendingEdges {
-		adj[e[0]] = append(adj[e[0]], e[1])
-		adj[e[1]] = append(adj[e[1]], e[0])
+		if !usedEdgeSet[e] && !usedEdgeSet[[2]int{e[1], e[0]}] {
+			remaining = append(remaining, e)
+		}
+	}
+	Editor.PendingEdges = remaining
+
+	createSectorFromPolygon(ch, polyIndices)
+	return true
+}
+
+// pendingLoopPolygon returns the ring of chunk points a closed outline walks,
+// or nil if the pending edges and links do not close one. Split out from
+// closePendingLoop because it is the whole of the decision and needs no level
+// to make it — which is what lets it be tested without a GL context to rebuild
+// the sector into.
+func pendingLoopPolygon(links [][2]int) []int {
+	// An outline needs three sides, and at least one of them has to be new —
+	// otherwise this is a ring that already exists.
+	if len(Editor.PendingEdges) == 0 || len(Editor.PendingEdges)+len(links) < 3 {
+		return nil
 	}
 
-	// Try to find a cycle starting from the last added edge's first vertex
-	lastEdge := Editor.PendingEdges[len(Editor.PendingEdges)-1]
-	start := lastEdge[0]
-	target := lastEdge[1]
-
-	// DFS from target to find a path back to start (excluding direct edge)
-	visited := map[int]bool{target: true, start: true}
-	path := []int{target}
-	if cycle := dfsFindPath(adj, path, start, visited); cycle != nil {
-		// Found a cycle: start + cycle forms the polygon
-		polyIndices := append([]int{start}, cycle...)
-
-		// Remove the used edges from pending
-		usedEdgeSet := make(map[[2]int]bool)
-		for i := 0; i < len(polyIndices); i++ {
-			a := polyIndices[i]
-			b := polyIndices[(i+1)%len(polyIndices)]
-			usedEdgeSet[[2]int{a, b}] = true
-			usedEdgeSet[[2]int{b, a}] = true
-		}
-		var remaining [][2]int
-		for _, e := range Editor.PendingEdges {
-			if !usedEdgeSet[e] && !usedEdgeSet[[2]int{e[1], e[0]}] {
-				remaining = append(remaining, e)
-			}
-		}
-		Editor.PendingEdges = remaining
-
-		// Create sector from polygon
-		createSectorFromPolygon(ch, polyIndices)
-		return true
+	adj := map[int][]int{}
+	connect := func(a, b int) {
+		adj[a] = append(adj[a], b)
+		adj[b] = append(adj[b], a)
 	}
-	return false
+	for _, e := range Editor.PendingEdges {
+		connect(e[0], e[1])
+	}
+	for _, e := range links {
+		if !pendingEdgeExists(e[0], e[1]) {
+			connect(e[0], e[1])
+		}
+	}
+
+	// Seed from a pending edge, newest first: the loop has to contain a side
+	// that was actually drawn, and the most recent one is what closed it. Older
+	// seeds are tried too, so an outline finished across several joins still
+	// closes.
+	for i := len(Editor.PendingEdges) - 1; i >= 0; i-- {
+		start, target := Editor.PendingEdges[i][0], Editor.PendingEdges[i][1]
+		visited := map[int]bool{target: true, start: true}
+		if cycle := dfsFindPath(adj, []int{target}, start, visited); cycle != nil {
+			return append([]int{start}, cycle...)
+		}
+	}
+	return nil
 }
 
 // dfsFindPath searches for a path from the last element of path to target through adj.
@@ -1242,13 +1314,15 @@ func createSectorFromPolygon(ch *Chunk, polyIndices []int) {
 	_ = ensureTextureLoaded(ceilTex)
 
 	sector := Sector{
-		ID:           fmt.Sprintf("sector_%d", len(ch.Sectors)),
+		ID:           uniqueSectorID(ch, fmt.Sprintf("sector_%d", len(ch.Sectors))),
 		PointIndices: polyIndices,
 		EdgeKinds:    edgeKinds,
 		Walls:        walls,
 		Floor:        Floor{Enabled: true, Height: floorH, Texture: floorTex, DoubleSided: true, Alpha: 1.0},
 		Ceiling:      Ceiling{Enabled: true, Height: ceilH, Texture: ceilTex, DoubleSided: true, Alpha: 1.0},
 	}
+	ensureEdgeIDs(&sector)
+	syncEdgeRecordIDs(&sector)
 	ch.Sectors = append(ch.Sectors, sector)
 	ch.InferPortalsAndReload()
 	Editor.ActiveSectorIdx = len(ch.Sectors) - 1
@@ -1328,7 +1402,9 @@ func convertPortalsToWalls(ch *Chunk, s *Sector, targetSectorID string) {
 				wallIdx++
 			}
 		}
+		// Same edge, different kind — the ID goes with it.
 		newWall := Wall{
+			ID:          edgeIDAt(s, ei),
 			StartPoint:  p.StartPoint,
 			EndPoint:    p.EndPoint,
 			Texture:     "concrete",
@@ -1347,6 +1423,7 @@ func convertPortalsToWalls(ch *Chunk, s *Sector, targetSectorID string) {
 		changed = true
 	}
 	if changed {
+		syncEdgeRecordIDs(s)
 		rebuildSectorEdgePoints(ch, s)
 	}
 }
@@ -1456,8 +1533,16 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 	// A's edges: positions (eA+1), (eA+2), ..., (eA-1) — nA-1 edges (skip portal at eA)
 	// B's edges: positions (eB+1), (eB+2), ..., (eB-1) — nB-1 edges (skip portal at eB)
 	mergedEdgeKinds := make([]string, 0, mergedN)
+	mergedEdgeIDs := make([]string, 0, mergedN)
 	mergedWalls := make([]Wall, 0)
 	mergedPortals := make([]Portal, 0)
+
+	// Edge IDs are sector-scoped, so A's and B's sets can overlap. A's edges are
+	// collected first and keep their names; dedupeSectorEdgeIDs below suffixes
+	// any of B's that clash. The merged sector keeps A's ID, so A's addresses
+	// staying put is the behaviour an author would expect.
+	ensureEdgeIDs(sA)
+	ensureEdgeIDs(sB)
 
 	removedIDs := map[string]bool{sA.ID: true, sB.ID: true}
 
@@ -1468,18 +1553,22 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 		if pos < len(sA.EdgeKinds) {
 			ek = sA.EdgeKinds[pos]
 		}
+		edgeID := edgeIDAt(sA, pos)
 		kind, kIdx := edgeKindAndIndex(sA, pos)
 		if kind == "wall" && kIdx < len(sA.Walls) {
 			w := sA.Walls[kIdx]
 			// Portal to the other merged sector becomes a wall
 			mergedEdgeKinds = append(mergedEdgeKinds, ek)
+			mergedEdgeIDs = append(mergedEdgeIDs, edgeID)
 			mergedWalls = append(mergedWalls, w)
 		} else if kind == "portal" && kIdx < len(sA.Portals) {
 			p := sA.Portals[kIdx]
 			if removedIDs[p.ToSector] {
 				// Portal between the two merging sectors → convert to wall
 				mergedEdgeKinds = append(mergedEdgeKinds, "wall")
+				mergedEdgeIDs = append(mergedEdgeIDs, edgeID)
 				mergedWalls = append(mergedWalls, Wall{
+					ID:          edgeID,
 					StartPoint:  p.StartPoint,
 					EndPoint:    p.EndPoint,
 					Texture:     "concrete",
@@ -1490,6 +1579,7 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 				})
 			} else {
 				mergedEdgeKinds = append(mergedEdgeKinds, "portal")
+				mergedEdgeIDs = append(mergedEdgeIDs, edgeID)
 				mergedPortals = append(mergedPortals, p)
 			}
 		}
@@ -1498,15 +1588,19 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 	// Collect B's edges (skip portal at eB)
 	for i := 1; i < nB; i++ {
 		pos := (eB + i) % nB
+		edgeID := edgeIDAt(sB, pos)
 		kind, kIdx := edgeKindAndIndex(sB, pos)
 		if kind == "wall" && kIdx < len(sB.Walls) {
 			mergedEdgeKinds = append(mergedEdgeKinds, "wall")
+			mergedEdgeIDs = append(mergedEdgeIDs, edgeID)
 			mergedWalls = append(mergedWalls, sB.Walls[kIdx])
 		} else if kind == "portal" && kIdx < len(sB.Portals) {
 			p := sB.Portals[kIdx]
 			if removedIDs[p.ToSector] {
 				mergedEdgeKinds = append(mergedEdgeKinds, "wall")
+				mergedEdgeIDs = append(mergedEdgeIDs, edgeID)
 				mergedWalls = append(mergedWalls, Wall{
+					ID:          edgeID,
 					StartPoint:  p.StartPoint,
 					EndPoint:    p.EndPoint,
 					Texture:     "concrete",
@@ -1517,6 +1611,7 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 				})
 			} else {
 				mergedEdgeKinds = append(mergedEdgeKinds, "portal")
+				mergedEdgeIDs = append(mergedEdgeIDs, edgeID)
 				mergedPortals = append(mergedPortals, p)
 			}
 		}
@@ -1539,6 +1634,7 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 		ID:           sA.ID,
 		PointIndices: mergedIndices,
 		EdgeKinds:    mergedEdgeKinds,
+		EdgeIDs:      mergedEdgeIDs,
 		Walls:        mergedWalls,
 		Portals:      mergedPortals,
 		Floor:        Floor{Enabled: sA.Floor.Enabled, Hidden: sA.Floor.Hidden, Height: sA.Floor.Height, Texture: sA.Floor.Texture, Terrain: sA.Floor.Terrain, DoubleSided: sA.Floor.DoubleSided, Alpha: sA.Floor.Alpha, VertexOffsets: mergedFloorOff},
@@ -1547,6 +1643,8 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 
 	// Replace A with the merged sector
 	ch.Sectors[siA] = merged
+	dedupeSectorEdgeIDs(&ch.Sectors[siA])
+	syncEdgeRecordIDs(&ch.Sectors[siA])
 	rebuildSectorEdgePoints(ch, &ch.Sectors[siA])
 	_ = reloadSector(ch, &ch.Sectors[siA])
 

@@ -128,8 +128,25 @@ func detailFromRaw(r *RawDetail) DetailSpec {
 	return d
 }
 
+// RawVolume is the YAML representation of a scriptable region (see volume.go).
+type RawVolume struct {
+	ID            string `yaml:"id"`
+	RawScriptData `yaml:",inline"`
+	Shape         string  `yaml:"shape,omitempty"` // box (default) | sphere | cylinder
+	Position      RawVec3 `yaml:"position"`
+	Rotation      RawVec3 `yaml:"rotation,omitempty"`
+	Half          RawVec3 `yaml:"half"`
+	Enabled       *bool   `yaml:"enabled,omitempty"` // default true when absent
+}
+
 // RawEdge describes one edge (wall or portal) in a sector's edge list.
 type RawEdge struct {
+	// ID is the edge's stable identity, how a script addresses it. Absent in
+	// files written before scripting existed — the loader then derives one from
+	// the point-name pair, so an older level migrates silently and gains real
+	// IDs on its next save. See sector_edge_id.go.
+	ID            string `yaml:"id,omitempty"`
+	RawScriptData `yaml:",inline"`
 	From          string            `yaml:"from"`
 	To            string            `yaml:"to"`
 	Kind          string            `yaml:"kind"`
@@ -155,6 +172,7 @@ type RawEdge struct {
 
 // RawFloor is the YAML representation of a sector floor.
 type RawFloor struct {
+	RawScriptData `yaml:",inline"`
 	Enabled       bool              `yaml:"enabled"`
 	Hidden        bool              `yaml:"hidden,omitempty"` // texture/geometry hidden; Enabled/collision unaffected
 	Height        float32           `yaml:"height"`
@@ -175,6 +193,7 @@ type RawFloor struct {
 
 // RawCeiling is the YAML representation of a sector ceiling.
 type RawCeiling struct {
+	RawScriptData `yaml:",inline"`
 	Enabled       bool              `yaml:"enabled"`
 	Height        float32           `yaml:"height"`
 	Texture       string            `yaml:"texture"`
@@ -194,10 +213,11 @@ type RawCeiling struct {
 
 // RawSector is the YAML representation of one sector.
 type RawSector struct {
-	ID      string     `yaml:"id"`
-	Floor   RawFloor   `yaml:"floor"`
-	Ceiling RawCeiling `yaml:"ceiling"`
-	Edges   []RawEdge  `yaml:"edges"`
+	ID            string `yaml:"id"`
+	RawScriptData `yaml:",inline"`
+	Floor         RawFloor   `yaml:"floor"`
+	Ceiling       RawCeiling `yaml:"ceiling"`
+	Edges         []RawEdge  `yaml:"edges"`
 }
 
 // RawWater is the YAML representation of a water surface's wave and reflection
@@ -228,13 +248,14 @@ type RawChunkOrigin struct {
 // Points use {x, y} which map to world (X, Z) — Y-up convention.
 // Origin, Rotation, and Scale are optional editor-set transforms baked in at load time.
 type RawChunk struct {
-	ID           string           `yaml:"id"`
-	Points       map[string]Point `yaml:"points"`
-	Sectors      []RawSector      `yaml:"sectors"`
-	Origin       RawChunkOrigin   `yaml:"origin"`
-	Rotation     float32          `yaml:"rotation"`
-	Scale        float32          `yaml:"scale"`
-	BiomeSectors []RawBiomeSector `yaml:"biome_sectors,omitempty"`
+	ID            string `yaml:"id"`
+	RawScriptData `yaml:",inline"`
+	Points        map[string]Point `yaml:"points"`
+	Sectors       []RawSector      `yaml:"sectors"`
+	Origin        RawChunkOrigin   `yaml:"origin"`
+	Rotation      float32          `yaml:"rotation"`
+	Scale         float32          `yaml:"scale"`
+	BiomeSectors  []RawBiomeSector `yaml:"biome_sectors,omitempty"`
 }
 
 // RawBiomeSector is the YAML representation of a user-drawn biome-paint
@@ -347,7 +368,9 @@ type RawGlobalLight struct {
 // pointers so an absent pair is distinguishable from a deliberate 0/0, which
 // would otherwise be indistinguishable from "derive from direction".
 type RawDirLight struct {
-	Direction struct {
+	ID            string `yaml:"id,omitempty"` // stable identity for scripts; minted on load when absent
+	RawScriptData `yaml:",inline"`
+	Direction     struct {
 		X float32 `yaml:"x"`
 		Y float32 `yaml:"y"`
 		Z float32 `yaml:"z"`
@@ -362,7 +385,9 @@ type RawDirLight struct {
 
 // RawPointLight is the YAML representation of a point light.
 type RawPointLight struct {
-	Position struct {
+	ID            string `yaml:"id,omitempty"` // stable identity for scripts; minted on load when absent
+	RawScriptData `yaml:",inline"`
+	Position      struct {
 		X float32 `yaml:"x"`
 		Y float32 `yaml:"y"`
 		Z float32 `yaml:"z"`
@@ -394,8 +419,17 @@ type RawLights struct {
 // would otherwise have to be re-parented mid-frame, and its saved position is
 // world-space for exactly the same reason.
 type RawLevel struct {
-	Chunks   []RawChunk  `yaml:"chunks"`
-	Spawn    *RawSpawn   `yaml:"spawn,omitempty"`
+	Chunks []RawChunk `yaml:"chunks"`
+	Spawn  *RawSpawn  `yaml:"spawn,omitempty"`
+	// Scripts are the level's own handlers, where `@self` is the level. Game
+	// rules that belong to no single object live here — a win condition, a
+	// spawn director — and it is a list because rules split by topic across
+	// files far more naturally than one object's behaviour does.
+	Scripts []string `yaml:"scripts,omitempty"`
+	// Volumes are the level's scriptable regions (volume.go). They sit at the
+	// level rather than in a chunk because a trigger can span a doorway between
+	// two of them, and its authored position is world-space.
+	Volumes  []RawVolume `yaml:"volumes,omitempty"`
 	Entities []RawEntity `yaml:"entities,omitempty"`
 	Lights   RawLights   `yaml:"lights"`
 }

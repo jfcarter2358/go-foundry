@@ -79,7 +79,7 @@ func editor3DOpenContextMenu(mx, my int32) {
 // editor3DPlacementArmed reports whether a left-click would currently place
 // something rather than select it.
 func editor3DPlacementArmed() bool {
-	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode
+	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode || Editor.VolumePlacementMode
 }
 
 // editor3DPointAt is where the cursor's ray meets the world — the surface it
@@ -123,6 +123,8 @@ func editor3DContextMenuItems() []ctxMenuItem {
 		items = append(items, editor3DVertexMenuItems()...)
 	case sel3DEntity:
 		items = append(items, editor3DEntityMenuItems()...)
+	case sel3DVolume:
+		items = append(items, editor3DVolumeMenuItems()...)
 	default:
 		items = append(items, editor3DEmptyMenuItems()...)
 	}
@@ -295,11 +297,65 @@ func editor3DEntityMenuItems() []ctxMenuItem {
 	}
 }
 
+// ---------- volume ----------
+
+func editor3DVolumeMenuItems() []ctxMenuItem {
+	v := activeVolume()
+	if v == nil {
+		return nil
+	}
+	shapes := make([]ctxMenuItem, 0, len(volumeShapeNames))
+	for i := range volumeShapeNames {
+		kind := VolumeShape(i)
+		shapes = append(shapes, ctxMenuItem{
+			Label:   volumeShapeNames[i],
+			Checked: kind == v.Shape,
+			Do:      func() { editor3DSetVolumeShape(kind) },
+		})
+	}
+	return []ctxMenuItem{
+		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusVolume) },
+			Tooltip: "Open the volume's section: transform, shape, tags,\nattributes and the script it runs."},
+		{Label: "Move here", Do: func() { editor3DMoveVolumeTo(editor3DMenuPoint) },
+			Tooltip: "Put it where the ray under the cursor met the world."},
+		{Label: "Shape", Sub: shapes},
+		{Label: "Enabled", Checked: v.Enabled, Do: editor3DToggleVolumeEnabled,
+			Tooltip: "A disabled volume contains nothing, so it fires no events.\nIt stays visible and selectable here."},
+		{Label: "Duplicate", Do: duplicateActiveVolume},
+		{Separator: true},
+		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid},
+		{Label: "Delete", Shortcut: "Del", Do: EditorDeleteSelected},
+	}
+}
+
+// editor3DSetVolumeShape switches the selected volume's shape, rebuilding the
+// cage that draws it — the menu's half of the panel's shape combo, going
+// through the same rebuild so the two cannot disagree.
+func editor3DSetVolumeShape(kind VolumeShape) {
+	v := activeVolume()
+	if v == nil || v.Shape == kind {
+		return
+	}
+	EditorPushUndo()
+	v.Shape = kind
+	rebuildActiveVolumeCage()
+}
+
+// editor3DToggleVolumeEnabled arms or disarms the selected volume.
+func editor3DToggleVolumeEnabled() {
+	v := activeVolume()
+	if v == nil {
+		return
+	}
+	EditorPushUndo()
+	v.Enabled = !v.Enabled
+}
+
 // ---------- nothing selected ----------
 
 func editor3DEmptyMenuItems() []ctxMenuItem {
 	return []ctxMenuItem{
-		{Label: "Click a face, an entity, the spawn point, a vertex or an edge to select it"},
+		{Label: "Click a face, an entity, a volume, the spawn point, a vertex or an edge to select it"},
 	}
 }
 
@@ -326,6 +382,8 @@ func editor3DSharedMenuItems() []ctxMenuItem {
 		{Label: spawnLabel, Do: func() { editor3DAddSpawnPointAt(editor3DMenuPoint) },
 			Tooltip: "Dropped where the ray under the cursor met the world.\nA level has one spawn point, so this moves an existing one."},
 		editorAddEntityMenuItem(editor3DMenuPoint),
+		{Label: "Add volume here", Do: func() { editor3DAddVolumeAt(editor3DMenuPoint) },
+			Tooltip: "A one-unit box trigger where the cursor met the world.\nGive it a script in the Volumes panel."},
 		{Label: "Select", Sub: modes},
 		{Label: "Wireframe", Shortcut: "Z", Checked: Editor.Wireframe,
 			Do:      func() { editorSetWireframe(!Editor.Wireframe) },

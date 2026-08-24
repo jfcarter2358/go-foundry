@@ -48,14 +48,21 @@ An entity carries:
 Every part beyond the transform is optional. An entity with no models is a
 perfectly good trigger volume or script anchor; one with no attributes is a prop.
 
-### Definitions and instances
+### Blank entities and definitions
 
-An entity has two halves, in two files.
+An entity is authored one of two ways, and starts as the first.
 
-**What it is** lives in a definition under `resources/entities/<name>.yaml`: its
-models, its bounds, its default attributes, the tags that classify it. **Where it
-is** lives in the level that places it, as an *instance* naming that definition by
-type.
+A **blank entity** is the editor's default placement: a box with an ID, no model
+and stock defaults, dropped where you click and described from there in the
+properties panel — pick a mesh, set the bounds, add attributes. It has no `type`,
+and the level file carries all of it. Nothing ships in `resources/entities/`,
+because nothing has to.
+
+A **definition** is what a blank entity becomes when a second level wants the same
+thing. It has two halves, in two files: **what it is** lives under
+`resources/entities/<name>.yaml` — its models, its bounds, its default attributes,
+the tags that classify it — and **where it is** lives in the level that places it,
+as an *instance* naming that definition by `type`.
 
 The split is what makes a type editable — giving every barrel in the game a second
 animation is one file, not a search across every level that ever placed one — and
@@ -64,11 +71,10 @@ restating the mesh, the rig and the bounding box each time.
 
 An instance may override what it needs to. Tags **union** with the definition's,
 attributes are **merged by name** over it, and model attachments are matched by
-name so an instance can adjust one attachment's texture, transform or visibility.
-An instance cannot change *which* mesh an attachment is: that is part of what the
-type is, and a different mesh is a different type. Saving writes only the
-difference, so a level that has not overridden something keeps tracking the
-definition rather than freezing a copy of it.
+name so an instance can adjust one attachment's mesh, texture, transform or
+visibility — and may add an attachment of its own, which the level then writes out
+in full. Saving writes only the difference, so a level that has not overridden
+something keeps tracking the definition rather than freezing a copy of it.
 
 ### Motion
 
@@ -193,11 +199,13 @@ walked out of the chunk it was authored in would otherwise have to be re-parente
 mid-frame, and its saved position is world-space for the same reason. Which chunk
 and sector an entity is currently in is derived every frame, never authored.
 
-Each entry names a definition by `type` and gives its placement:
+Each entry gives a placement, and optionally names a definition by `type`. With
+no type it is a blank entity, and every field below is its own rather than an
+override:
 
 ```yaml
 entities:
-  - type: barrel          # resources/entities/barrel.yaml
+  - type: barrel          # optional; resources/entities/barrel.yaml
     id: barrel_01         # unique in the level; how a script says @barrel_01
     position: {x: 4, y: 0, z: 2}
     rotation: {x: 0, y: 1.57, z: 0}
@@ -209,6 +217,7 @@ entities:
     models:               # matched by attachment name
       - name: lid
         texture: gold
+        path: models/lid_gilded.fmdl   # an instance may swap the mesh too
     collision:            # per-flag override; unmentioned flags follow the type
       movable: false
 ```
@@ -244,7 +253,59 @@ attributes:
 
 ## Scripting language
 
-**Currently out of scope for v1, ignore**
+Levels are scripted in **flang** — see SCRIPTING.md for the language itself. What
+matters at this level of the design is where it sits.
+
+The language lives in `internal/flang` and knows nothing about Foundry: an object
+is an opaque handle, a value is one of eleven flang types, and everything it can
+do to a world goes through one `Host` interface. That is what lets the whole
+language — lexer, parser, dispatcher, interpreter, standard library — be built
+and tested with no window, no GL context and no level.
+
+The engine side is the other half of that interface. A handle is a *path of
+stable names* rather than a pointer or an index, because the level is rebuilt
+wholesale by undo and by a reload: `Level.Entities` is a slice of values, so any
+pointer dies on the next append, and one Ctrl+Z invalidates every index in the
+world at once. Names survive all of it. Making them survive is why chunks,
+sectors, edges, lights and volumes all now carry IDs that no edit can shift.
+
+Scripts run once per frame during play, immediately after the world has settled,
+so an event describes what happened rather than what was about to. Messages are
+queued and drained to a fixpoint within the frame — a `hit → damage → die →
+open_door` chain resolves in one frame rather than three variable-length ones —
+with four independent limits so a bad script cannot hang the game.
+
+Play never changes the authored level. Entering play snapshots it and leaving
+restores it, gated on a script having actually written something, so a session
+that changed nothing costs nothing to leave.
+
+## Volumes
+
+A **volume** is a region of space a script can react to: a shape, an ID, and a
+script. It is never drawn outside the editor, never collides, and never moves on
+its own. All it does is answer "is this point inside", which is what `enter`,
+`exit` and `interact` resolve through.
+
+A model-less entity could have served, and nearly did — it already has an ID,
+tags, attributes and a bounding volume. But an entity also carries velocity,
+gravity, four collision flags, model attachments and a definition it came from,
+none of which a trigger has any use for. "Make a box entity, then turn off three
+flags and give it no models" is a rule to remember rather than a thing to place,
+and it puts triggers in the same list as the crates. A volume is the smaller
+idea, so it gets the smaller type.
+
+Volumes sit at the level rather than in a chunk, for the same reason entities do:
+a trigger can span a doorway between two of them.
+
+In the editor a volume is a wireframe cage that can be clicked in the 3D
+viewport, which gives it the same translate, rotate and scale gizmos an entity
+gets — the scale one dragging its half-extents, since a region's size *is* its
+extents and it has no scale factor of its own. The click tests the ray against
+the real solid rather than the box around it, so a sphere and a cylinder are
+picked where they look picked. A volume the camera is standing inside is skipped
+by the picker on purpose: a room-sized trigger would otherwise sit in front of
+every surface in the room it wraps and swallow every click meant for one, and
+the panel's list is still there to select it from.
 
 ## Animations
 

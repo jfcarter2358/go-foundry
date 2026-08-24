@@ -15,6 +15,8 @@ package main
 // and every accessor here bounds-checks it.
 
 import (
+	"strings"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -72,18 +74,23 @@ func activeGizmoEntity() *Entity {
 func editorRefreshEntityDefs() {
 	ReloadEntityDefs()
 	Editor.EntityDefNames = ScanEntityDefs()
-	if int(Editor.EntityDefIdx) >= len(Editor.EntityDefNames) {
+	// Index 0 is the blank entry, so the last definition sits at len(), not
+	// len()-1. A selection past that is one whose file has gone, and falls back
+	// to blank rather than to some other author's type.
+	if int(Editor.EntityDefIdx) > len(Editor.EntityDefNames) {
 		Editor.EntityDefIdx = 0
 	}
 }
 
 // editorSelectedDefName returns the definition name the catalog is pointing at,
-// or "" when there are none.
+// or "" for the blank entry.
+//
+// Index 0 is always blank rather than the first definition, so the catalog
+// opens on "place something and edit it here" — the common case, and the only
+// one that works on a checkout with no definitions in it at all. The
+// definitions, when there are any, follow from index 1.
 func editorSelectedDefName() string {
-	if len(Editor.EntityDefNames) == 0 {
-		return ""
-	}
-	i := int(Editor.EntityDefIdx)
+	i := int(Editor.EntityDefIdx) - 1
 	if i < 0 || i >= len(Editor.EntityDefNames) {
 		return ""
 	}
@@ -92,19 +99,20 @@ func editorSelectedDefName() string {
 
 // ---------- placement ----------
 
-// editorArmEntityPlacement puts the editor into placement mode for a type. The
-// next left-click in either view drops one.
+// editorArmEntityPlacement puts the editor into placement mode. The next
+// left-click in either view drops one entity of typeName, or a blank entity
+// when typeName is empty.
 func editorArmEntityPlacement(typeName string) {
-	if typeName == "" {
-		editorSetStatus("No entity definitions found in %s", entitiesDirName)
-		return
-	}
 	Editor.EntityPlaceType = typeName
 	Editor.EntityPlacementMode = true
 }
 
-// placeEntityAt instantiates the armed definition at pos, selects it, and
-// leaves placement mode. Reports whether one was placed.
+// placeEntityAt drops the armed entity at pos, selects it, and leaves placement
+// mode. Reports whether one was placed.
+//
+// With no type armed it places a blank entity — a box with an ID and nothing
+// else, authored from here on in the panel. With one, it stamps that
+// definition.
 //
 // Placement mode is cleared even when the placement fails: leaving it armed
 // after a definition that cannot load would arm every subsequent click on a
@@ -113,19 +121,27 @@ func placeEntityAt(pos mgl32.Vec3) bool {
 	typeName := Editor.EntityPlaceType
 	Editor.EntityPlacementMode = false
 	lvl := Editor.level
-	if lvl == nil || typeName == "" {
+	if lvl == nil {
 		return false
 	}
 
-	def, err := LoadEntityDef(typeName)
-	if err != nil {
-		editorSetStatus("Entity %s: %v", typeName, err)
-		return false
+	var def *EntityDef
+	if typeName != "" {
+		d, err := LoadEntityDef(typeName)
+		if err != nil {
+			editorSetStatus("Entity %s: %v", typeName, err)
+			return false
+		}
+		def = d
 	}
 
 	EditorPushUndo()
 	id := uniqueEntityID(lvl, entityPlacementID(typeName))
-	e := def.Instantiate(id)
+	e := NewBlankEntity(id)
+	if def != nil {
+		e = def.Instantiate(id)
+		e.Type = typeName
+	}
 	e.Position = pos
 	if err := e.Load(); err != nil {
 		// A model that will not load costs the entity its mesh, not its
@@ -135,16 +151,24 @@ func placeEntityAt(pos mgl32.Vec3) bool {
 	}
 	lvl.Entities = append(lvl.Entities, e)
 	editorSelectEntity(len(lvl.Entities) - 1)
-	editorSetStatus("Placed %s %q", typeName, id)
+	if def == nil {
+		editorSetStatus("Placed entity %q — pick a model for it in the panel", id)
+	} else {
+		editorSetStatus("Placed %s %q", typeName, id)
+	}
 	return true
 }
 
 // entityPlacementID returns the base ID a newly placed entity gets: whatever
-// the panel's ID field holds, or the type name. uniqueEntityID makes it unique
-// afterwards, so "barrel" placed three times gives barrel, barrel_2, barrel_3.
+// the panel's ID field holds, or the type name, or plain "entity" for a blank
+// one. uniqueEntityID makes it unique afterwards, so "barrel" placed three
+// times gives barrel, barrel_2, barrel_3.
 func entityPlacementID(typeName string) string {
 	if Editor.NewEntityID != "" {
 		return Editor.NewEntityID
+	}
+	if typeName == "" {
+		return blankEntityID
 	}
 	return typeName
 }
@@ -200,6 +224,73 @@ func deleteActiveEntity() {
 	lvl.Entities = append(lvl.Entities[:idx:idx], lvl.Entities[idx+1:]...)
 	editorClearEntitySelection()
 	editorSetStatus("Deleted entity %q", id)
+}
+
+// ---------- model attachments ----------
+
+// editorEntityAddModel hangs a new attachment on the entity, with no mesh yet.
+//
+// Attachments used to come only from a definition, which meant a thing had to
+// have a .yaml file before it could have a shape. It does not: this is how a
+// blank entity gets its first model, and how anything grows a second one.
+func editorEntityAddModel(e *Entity) {
+	if e == nil {
+		return
+	}
+	EditorPushUndo()
+	e.Models = append(e.Models, EntityModel{
+		Name:    uniqueModelName(e, defaultModelName),
+		Visible: true,
+	})
+}
+
+// defaultModelName is what a new attachment is called before it has a mesh to
+// take a name from — see editorEntitySetModelPath.
+const defaultModelName = "model"
+
+// editorEntityRemoveModel drops one attachment, releasing its GPU buffers.
+func editorEntityRemoveModel(e *Entity, idx int) {
+	if e == nil || idx < 0 || idx >= len(e.Models) {
+		return
+	}
+	EditorPushUndo()
+	e.Models[idx].Delete()
+	e.Models = append(e.Models[:idx:idx], e.Models[idx+1:]...)
+}
+
+// editorEntitySetModelPath points an attachment at a different mesh and uploads
+// it. prev is what the path was before the picker wrote to it, so the undo
+// snapshot is taken of the state being left rather than the one arrived at.
+//
+// An attachment still carrying the placeholder name it was created with is
+// renamed after its new mesh, so the common case — add one, pick a mesh — ends
+// up with "barrel" rather than "model" without anyone typing it. A name that
+// has been chosen is left alone: scripts address attachments by name, and
+// renaming one out from under a script is not a thing to do quietly.
+func editorEntitySetModelPath(e *Entity, m *EntityModel, prev, next string) {
+	m.Path = prev
+	EditorPushUndo()
+	m.Path = next
+
+	if next != "" && isPlaceholderModelName(m.Name) {
+		m.Name = uniqueModelName(e, modelNameForPath(next))
+	}
+	if err := m.Load(e.ID); err != nil {
+		editorSetStatus("Entity %s: %v", e.ID, err)
+		return
+	}
+	if next == "" {
+		editorSetStatus("Cleared %s's model %q", e.ID, m.Name)
+		return
+	}
+	editorSetStatus("%s: %s is now %s", e.ID, m.Name, next)
+}
+
+// isPlaceholderModelName reports whether a name is one editorEntityAddModel
+// made up rather than one an author chose.
+func isPlaceholderModelName(name string) bool {
+	return name == "" || name == defaultModelName ||
+		strings.HasPrefix(name, defaultModelName+"_")
 }
 
 // ---------- reload ----------
@@ -281,9 +372,9 @@ func editorAddEntityMenuItem(pos mgl32.Vec3) ctxMenuItem {
 	name := editorSelectedDefName()
 	if name == "" {
 		return ctxMenuItem{
-			Label:    "Add entity here",
-			Disabled: true,
-			Tooltip:  "No definitions found in " + entitiesDirName + "/.",
+			Label:   "Add entity here",
+			Do:      func() { editor3DAddEntityAt("", pos) },
+			Tooltip: "A blank entity with no model, where the cursor met\nthe world. Give it one in the Entities panel.",
 		}
 	}
 	return ctxMenuItem{

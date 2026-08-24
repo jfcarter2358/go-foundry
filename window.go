@@ -105,7 +105,7 @@ func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWind
 	ctx.SetCurrent()
 	io := imgui.CurrentIO()
 	io.SetIniFilename("")
-	mapImGuiKeys(io)
+	imguiConfigureIO(io)
 
 	uw := &UIWindow{
 		Win: win, GL: glCtx, Ctx: ctx, ID: id, W: w, H: h,
@@ -277,4 +277,48 @@ func eventWindowID(event sdl.Event) (uint32, bool) {
 		return t.WindowID, true
 	}
 	return 0, false
+}
+
+// ---------- deferred opens ----------
+
+// pendingWindowOpens are open requests parked by code running inside some
+// window's own Draw.
+//
+// A window cannot be opened from there. NewUIWindow creates a GL context and an
+// imgui context, makes each current in turn, and then restores *the main
+// window's* — so the caller, which was mid-frame on its own context, carries on
+// issuing imgui calls against a context that has no frame in progress. That is
+// a segfault on the very next widget, not a subtle corruption. Creating the
+// window also inserts into the map RenderSecondaryWindows is ranging over.
+//
+// So the request is parked and drained from the main loop, where the main
+// context is genuinely current and nothing is iterating the registry. This
+// generalises what modelPendingTexEditor did for one case: the hazard applies to
+// any window opening any other, and a shared door is one place to get it right
+// rather than several places to get it wrong.
+var pendingWindowOpens []func()
+
+// RequestWindowOpen asks the main loop to run open at the top of the next frame.
+//
+// Safe to call from inside any window's Draw or event handler. Code that is
+// already on the main window's frame — the editor's own toolbar — can call the
+// Open function directly; this is for everywhere else.
+func RequestWindowOpen(open func()) {
+	if open == nil {
+		return
+	}
+	pendingWindowOpens = append(pendingWindowOpens, open)
+}
+
+// DrainWindowOpens runs every parked open request. Called once per frame from
+// the main loop with the main GL and imgui contexts current.
+func DrainWindowOpens() {
+	if len(pendingWindowOpens) == 0 {
+		return
+	}
+	reqs := pendingWindowOpens
+	pendingWindowOpens = nil
+	for _, open := range reqs {
+		open()
+	}
 }

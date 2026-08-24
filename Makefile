@@ -6,7 +6,8 @@ linux:
 
 windows:
 	rm -rf /mnt/c/Users/jcart/OneDrive/Documents/Foundry/resources
-	cp -r resources/* /mnt/c/Users/jcart/OneDrive/Documents/Foundry
+	cp -r resources/shaders /mnt/c/Users/jcart/OneDrive/Documents/Foundry
+	cp -r resources/textures /mnt/c/Users/jcart/OneDrive/Documents/Foundry
 	cp resources/SDL2.dll /mnt/c/Users/jcart/OneDrive/Documents/Foundry/SDL2.dll
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc go build -x -v -o /mnt/c/Users/jcart/OneDrive/Documents/Foundry/foundry.exe *.go
 

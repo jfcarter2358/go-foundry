@@ -79,18 +79,22 @@ func editorSetGizmoTool(t editorGizmoTool) {
 }
 
 // editorToolActsOnSelection reports whether the current tool has anything to
-// act on. Rotate and scale are defined against the selection's own centre, so
-// they need a set of points to spread out or swing around; the spawn marker and
-// a whole chunk are single anchors with no extent of their own, and only move.
+// act on. Scale is defined against the selection's own size, so it needs a set
+// of points to spread out or something with a scale of its own; a whole chunk
+// has neither and only moves.
 func editorToolActsOnSelection() bool {
 	if Editor.GizmoTool == editorToolMove {
 		return true
 	}
 	// Rotate and scale need something with an orientation or a size. A vertex
 	// selection has an extent to swing and spread; an entity has its own
-	// rotation and scale, which the two tools rewrite in place. A spawn marker
-	// and a chunk have neither.
-	return len(Editor.SelectedVertices) > 0 || activeGizmoEntity() != nil
+	// rotation and scale, which the two tools rewrite in place.
+	if len(Editor.SelectedVertices) > 0 || activeGizmoEntity() != nil {
+		return true
+	}
+	// The spawn marker is the in-between case: no size to spread, but a facing
+	// that is the whole point of it, so it turns and does not scale.
+	return Editor.GizmoTool == editorToolRotate && activeGizmoSpawn() != nil
 }
 
 // editorSelKeysActive reports whether the selection-unit and gizmo-tool

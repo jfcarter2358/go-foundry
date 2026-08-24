@@ -19,6 +19,7 @@ import (
 // lets a point keep its identity when the editor drags it.
 type Chunk struct {
 	ID           string
+	ScriptData                // tags, attributes and the attached script
 	Points       []mgl32.Vec2 // shared point pool; sectors reference by index
 	Sectors      []Sector
 	MinBound     mgl32.Vec3
@@ -70,12 +71,13 @@ func (ch *Chunk) RemovePoint(pi int) {
 // level; in-chunk portal ToSector references are remapped to the new IDs.
 func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 	cp := Chunk{
-		ID:       newID,
-		MinBound: ch.MinBound,
-		MaxBound: ch.MaxBound,
-		Origin:   ch.Origin,
-		Rotation: ch.Rotation,
-		Scale:    ch.Scale,
+		ID:         newID,
+		ScriptData: cloneScriptData(ch.ScriptData),
+		MinBound:   ch.MinBound,
+		MaxBound:   ch.MaxBound,
+		Origin:     ch.Origin,
+		Rotation:   ch.Rotation,
+		Scale:      ch.Scale,
 	}
 
 	cp.Points = append([]mgl32.Vec2(nil), ch.Points...)
@@ -116,12 +118,16 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 
 func cloneSector(s *Sector, idSuffix string, sectorIDRemap map[string]string) Sector {
 	out := Sector{
-		ID:       s.ID + idSuffix,
-		MinBound: s.MinBound,
-		MaxBound: s.MaxBound,
+		ID:         s.ID + idSuffix,
+		ScriptData: cloneScriptData(s.ScriptData),
+		MinBound:   s.MinBound,
+		MaxBound:   s.MaxBound,
 	}
 	out.PointIndices = append([]int(nil), s.PointIndices...)
 	out.EdgeKinds = append([]string(nil), s.EdgeKinds...)
+	// Edge IDs are scoped to their sector, so a clone keeps them as they are —
+	// unlike the sector ID itself, which is level-scoped and takes the suffix.
+	out.EdgeIDs = append([]string(nil), s.EdgeIDs...)
 
 	out.Walls = make([]Wall, len(s.Walls))
 	for i := range s.Walls {
@@ -140,6 +146,7 @@ func cloneSector(s *Sector, idSuffix string, sectorIDRemap map[string]string) Se
 
 func cloneWall(w *Wall) Wall {
 	out := *w
+	out.ScriptData = cloneScriptData(w.ScriptData)
 	out.Geometry = Geometry{}
 	out.Extrusions = cloneExtrusions(w.Extrusions)
 	out.TerrainPoints = append([]TerrainPoint(nil), w.TerrainPoints...)
@@ -148,6 +155,7 @@ func cloneWall(w *Wall) Wall {
 
 func clonePortal(p *Portal, sectorIDRemap map[string]string) Portal {
 	out := *p
+	out.ScriptData = cloneScriptData(p.ScriptData)
 	out.FloorGap = Geometry{}
 	out.CeilGap = Geometry{}
 	if remapped, ok := sectorIDRemap[p.ToSector]; ok {
@@ -158,6 +166,7 @@ func clonePortal(p *Portal, sectorIDRemap map[string]string) Portal {
 
 func cloneFloor(f *Floor) Floor {
 	out := *f
+	out.ScriptData = cloneScriptData(f.ScriptData)
 	out.Geometry = Geometry{}
 	out.VertexOffsets = append([]float32(nil), f.VertexOffsets...)
 	out.Extrusions = cloneExtrusions(f.Extrusions)
@@ -171,6 +180,7 @@ func cloneFloor(f *Floor) Floor {
 
 func cloneCeiling(c *Ceiling) Ceiling {
 	out := *c
+	out.ScriptData = cloneScriptData(c.ScriptData)
 	out.Geometry = Geometry{}
 	out.VertexOffsets = append([]float32(nil), c.VertexOffsets...)
 	out.Extrusions = cloneExtrusions(c.Extrusions)
@@ -258,10 +268,12 @@ func (ch *Chunk) InferPortals() {
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
 		n := len(s.PointIndices)
+		ensureEdgeIDs(s)
 
 		var newWalls []Wall
 		var newPortals []Portal
 		newEdgeKinds := make([]string, n)
+		newEdgeIDs := make([]string, n)
 
 		wallIdx, portalIdx := 0, 0
 		for ei := 0; ei < n; ei++ {
@@ -272,16 +284,23 @@ func (ch *Chunk) InferPortals() {
 			if ei < len(s.EdgeKinds) {
 				kind = s.EdgeKinds[ei]
 			}
+			// The edge's ID is the one thing that survives whatever this loop
+			// decides the edge should become.
+			edgeID := s.EdgeIDs[ei]
+			newEdgeIDs[ei] = edgeID
 
 			revOwner, hasReverse := edgeOwner[edgeKey{b, a}]
 			isShared := hasReverse && revOwner != si
 
 			if kind == "wall" && wallIdx < len(s.Walls) {
 				if isShared && !s.Walls[wallIdx].Pinned {
-					// Promote wall → portal
+					// Promote wall → portal. The ID carries across: this is the
+					// same edge, and a script addressing it must not lose it
+					// because the engine changed the edge's kind underneath.
 					w := s.Walls[wallIdx]
 					newEdgeKinds[ei] = "portal"
 					newPortals = append(newPortals, Portal{
+						ID:          edgeID,
 						StartPoint:  w.StartPoint,
 						EndPoint:    w.EndPoint,
 						ToSector:    ch.Sectors[revOwner].ID,
@@ -290,12 +309,15 @@ func (ch *Chunk) InferPortals() {
 						DoubleSided: w.DoubleSided,
 					})
 				} else {
+					w := s.Walls[wallIdx]
+					w.ID = edgeID
 					newEdgeKinds[ei] = "wall"
-					newWalls = append(newWalls, s.Walls[wallIdx])
+					newWalls = append(newWalls, w)
 				}
 				wallIdx++
 			} else if kind == "portal" && portalIdx < len(s.Portals) {
 				p := s.Portals[portalIdx]
+				p.ID = edgeID
 				if isShared {
 					// Update target in case sector IDs shifted
 					p.ToSector = ch.Sectors[revOwner].ID
@@ -304,13 +326,28 @@ func (ch *Chunk) InferPortals() {
 				newPortals = append(newPortals, p)
 				portalIdx++
 			} else {
-				// Fallback: edge kind/index mismatch — default to wall
-				log.Printf("InferPortals: sector %q edge %d: kind %q but no matching wall/portal entry; defaulting to wall", s.ID, ei, kind)
+				// Kind/record mismatch. Emit a blank wall rather than nothing:
+				// dropping the edge would leave Walls one short of the ring and
+				// silently shift every record after it, which is far worse than
+				// an untextured wall the author can see and fix.
+				log.Printf("InferPortals: sector %q edge %d (%q): kind %q but no matching wall/portal entry; substituting a blank wall",
+					s.ID, ei, edgeID, kind)
 				newEdgeKinds[ei] = "wall"
+				newWalls = append(newWalls, Wall{
+					ID:          edgeID,
+					StartPoint:  ch.Points[a],
+					EndPoint:    ch.Points[b],
+					Collision:   true,
+					Visible:     true,
+					DoubleSided: true,
+					Alpha:       1.0,
+					UVScale:     mgl32.Vec2{1, 1},
+				})
 			}
 		}
 
 		s.EdgeKinds = newEdgeKinds
+		s.EdgeIDs = newEdgeIDs
 		s.Walls = newWalls
 		s.Portals = newPortals
 	}

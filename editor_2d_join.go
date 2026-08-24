@@ -22,8 +22,13 @@ package main
 //
 // The work per pair is what the old ctrl+click did: two points already on one
 // sector's boundary split that sector in two, and anything else becomes a
-// pending edge that turns into a sector as soon as the pending set closes a
-// loop (tryCreateSectorFromPendingEdges).
+// pending edge that turns into a sector as soon as the outline closes a loop
+// (closePendingLoop).
+//
+// A pair that is already a wall draws nothing — but it is still a side of the
+// outline, and a room traced against an existing one shares one. Those are
+// carried along as links so the loop can close through them; without that the
+// pending edges are forever a chain, and the sector never gets made.
 
 import "fmt"
 
@@ -170,11 +175,18 @@ func EditorJoinSelectedPoints(closeLoop bool) int {
 		return 0
 	}
 
+	// Sides of the outline that are already walls draw nothing, but they are
+	// still sides: a sector traced against an existing one shares one, and the
+	// pending set alone could never close around it. Noted before anything is
+	// applied, since a split partway through the run would make later pairs
+	// look pre-connected when they were not.
+	var links [][2]int
 	any := false
 	for _, pair := range pairs {
 		if joinPairPending(ch, pair[0], pair[1]) {
 			any = true
-			break
+		} else if pair[0] != pair[1] && pointsAdjacentInAnySector(ch, pair[0], pair[1]) {
+			links = append(links, pair)
 		}
 	}
 	if !any {
@@ -183,13 +195,23 @@ func EditorJoinSelectedPoints(closeLoop bool) int {
 	}
 
 	EditorPushUndo()
+	sectorsBefore := len(ch.Sectors)
 	joined := 0
 	for _, pair := range pairs {
 		if joinPointPair(ch, pair[0], pair[1]) {
 			joined++
 		}
 	}
-	editorSetStatus("Joined %d edge(s)", joined)
+	// One more attempt with the shared sides in hand. It cannot go inside
+	// joinPointPair: an outline whose last pair is a wall it already had adds
+	// no pending edge, so nothing there would ever ask again.
+	closePendingLoop(ch, links)
+
+	if made := len(ch.Sectors) - sectorsBefore; made > 0 {
+		editorSetStatus("Joined %d edge(s), created %d sector(s)", joined, made)
+	} else {
+		editorSetStatus("Joined %d edge(s)", joined)
+	}
 	return joined
 }
 

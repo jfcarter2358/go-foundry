@@ -82,23 +82,48 @@ func TestGizmo2DStandsDownForTheBiomeLayer(t *testing.T) {
 	}
 }
 
-// Rotate and scale spread or swing a selection about its own centre, which a
-// lone spawn marker has no extent to do. Only move offers it handles.
-func TestGizmo2DOffersOnlyMoveForTheSpawnMarker(t *testing.T) {
+// Scale spreads a selection about its own centre, which a lone spawn marker has
+// no extent to do. Move and rotate both mean something for it: where it stands,
+// and which way it looks.
+func TestGizmo2DOffersMoveAndRotateForTheSpawnMarker(t *testing.T) {
 	defer saveEditorSelection()()
 	setupGizmo2DView(t)
 	selectTestChunk(t)
 	Editor.level.Spawn = &SpawnPoint{Position: mgl32.Vec3{2, 0, 3}}
 	Editor.SpawnSelected = true
 
-	if _, ok := gizmo2DOrigin(); !ok {
-		t.Fatal("move offered no gizmo for the selected spawn marker")
-	}
-	for _, tool := range []editorGizmoTool{editorToolRotate, editorToolScale} {
+	for _, tool := range []editorGizmoTool{editorToolMove, editorToolRotate} {
 		Editor.GizmoTool = tool
-		if _, ok := gizmo2DOrigin(); ok {
-			t.Errorf("%v offered a gizmo for a single anchor", tool)
+		if _, ok := gizmo2DOrigin(); !ok {
+			t.Errorf("%v offered no gizmo for the selected spawn marker", tool)
 		}
+	}
+	Editor.GizmoTool = editorToolScale
+	if _, ok := gizmo2DOrigin(); ok {
+		t.Error("scale offered a gizmo for a marker with no size")
+	}
+}
+
+// The map has no pitch to drag, so turning the marker up here moves its yaw and
+// leaves an aimed-up or aimed-down spawn as it was.
+func TestGizmo2DRotateSpawnMovesOnlyTheYaw(t *testing.T) {
+	defer saveEditorSelection()()
+	s := &SpawnPoint{Position: mgl32.Vec3{2, 0, 3}, Rotation: mgl32.Vec3{0, 0.25, 0.4}}
+	Editor.Gizmo2DStartSpawnRot = s.Rotation
+	start := s.Position
+
+	gizmo2DRotateSpawn(s, 0.5)
+
+	if s.Position != start {
+		t.Errorf("the marker moved while rotating: %v", s.Position)
+	}
+	// The map measures angles the other way round from a Y Euler rotation, so
+	// a positive map delta subtracts from the yaw.
+	if abs32(s.Rotation.Y()-(0.25-0.5)) > 1e-5 {
+		t.Errorf("yaw: got %v, want %v", s.Rotation.Y(), 0.25-0.5)
+	}
+	if s.Rotation.X() != 0 || abs32(s.Rotation.Z()-0.4) > 1e-6 {
+		t.Errorf("the map drag disturbed pitch or roll: %v", s.Rotation)
 	}
 }
 

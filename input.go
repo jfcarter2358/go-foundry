@@ -167,6 +167,14 @@ func HandleEvent(event sdl.Event) {
 			switch t.Keysym.Scancode {
 			case sdl.SCANCODE_F11:
 				ToggleFullscreen()
+			case sdl.SCANCODE_E:
+				// The interact key. Recorded as an edge rather than read as a
+				// level, so holding it fires once — SCRIPTING.md's `:interact:`
+				// is a press, not a state.
+				if !Editor.Active {
+					ScriptInteractRequest()
+				}
+
 			case sdl.SCANCODE_GRAVE: // tilde (~) key toggles level editor
 				EditorToggle()
 			case sdl.SCANCODE_SPACE:

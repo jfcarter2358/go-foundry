@@ -249,6 +249,14 @@ func ResolveEntityCollisions(lvl *Level, player *Entity) []int {
 		for b := a + 1; b < len(idx); b++ {
 			ea, eb := &lvl.Entities[idx[a]], &lvl.Entities[idx[b]]
 			movedA, movedB := resolveEntityOverlap(ea, eb)
+			if movedA || movedB {
+				// The pair, not just the fact that something moved: the
+				// scripting engine's `collide` event needs to know *what* was
+				// hit, and this is the only place that knows. Recorded rather
+				// than returned so the resolver's signature stays about
+				// physics — see collisionPairs.
+				recordCollisionPair(ea.ID, eb.ID)
+			}
 			if movedA {
 				moved[idx[a]] = true
 			}
@@ -262,7 +270,11 @@ func ResolveEntityCollisions(lvl *Level, player *Entity) []int {
 	// crate is solid to walk into and — if it is movable — to shove.
 	if player != nil && player.HasBounds() {
 		for _, i := range idx {
-			if _, movedE := resolveEntityOverlap(player, &lvl.Entities[i]); movedE {
+			movedP, movedE := resolveEntityOverlap(player, &lvl.Entities[i])
+			if movedP || movedE {
+				recordCollisionPair(player.ID, lvl.Entities[i].ID)
+			}
+			if movedE {
 				moved[i] = true
 			}
 		}

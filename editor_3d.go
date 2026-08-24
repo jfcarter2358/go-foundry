@@ -39,15 +39,19 @@ func screenRay(sx, sy int32) (origin, dir mgl32.Vec3) {
 	return Cam.Position, dir
 }
 
-// rayAABBIntersect tests a ray against an AABB. Returns true and the hit
-// distance if there is an intersection.
-func rayAABBIntersect(origin, dir, aabbMin, aabbMax mgl32.Vec3) (bool, float32) {
-	tmin := float32(math.Inf(-1))
-	tmax := float32(math.Inf(1))
+// raySlabRange returns the range of distances along a ray that lie inside an
+// AABB, as the classic slab test. ok is false when the ray misses the box
+// altogether; a range that starts at a negative distance is the ray's origin
+// being inside it, which is a thing callers want to tell apart from a hit.
+func raySlabRange(origin, dir, aabbMin, aabbMax mgl32.Vec3) (tmin, tmax float32, ok bool) {
+	tmin = float32(math.Inf(-1))
+	tmax = float32(math.Inf(1))
 	for i := 0; i < 3; i++ {
 		if math.Abs(float64(dir[i])) < 1e-6 {
+			// Parallel to this pair of planes: either between them for the
+			// whole ray, or never.
 			if origin[i] < aabbMin[i] || origin[i] > aabbMax[i] {
-				return false, 0
+				return 0, 0, false
 			}
 			continue
 		}
@@ -63,17 +67,141 @@ func rayAABBIntersect(origin, dir, aabbMin, aabbMax mgl32.Vec3) (bool, float32) 
 			tmax = t2
 		}
 		if tmin > tmax {
-			return false, 0
+			return 0, 0, false
 		}
 	}
-	if tmax < 0 {
+	return tmin, tmax, true
+}
+
+// rayAABBIntersect tests a ray against an AABB. Returns true and the hit
+// distance if there is an intersection — the exit distance when the origin is
+// inside the box, so that a hit is still reported from within.
+func rayAABBIntersect(origin, dir, aabbMin, aabbMax mgl32.Vec3) (bool, float32) {
+	tmin, tmax, ok := raySlabRange(origin, dir, aabbMin, aabbMax)
+	if !ok || tmax < 0 {
 		return false, 0
 	}
-	t := tmin
-	if t < 0 {
-		t = tmax
+	if tmin < 0 {
+		return true, tmax
 	}
-	return true, t
+	return true, tmin
+}
+
+// rayShapeRange is the ray-cast counterpart of shapeContainsPoint: the range of
+// distances along a ray that lie inside one of the three bounding solids. It
+// takes the same arguments so the two agree on what a shape is — rotated by its
+// Euler angles, inscribed in the box its half-extents describe — and so a
+// picked region is the same region a script tests points against.
+//
+// t0 negative means the ray's origin is inside the solid. ok is false when the
+// ray misses, or when the extents describe no solid at all.
+func rayShapeRange(origin, dir, center, rotation, half mgl32.Vec3, kind BoundingType) (t0, t1 float32, ok bool) {
+	if half.X() <= 0 || half.Y() <= 0 || half.Z() <= 0 {
+		return 0, 0, false
+	}
+	o := origin.Sub(center)
+	d := dir
+	if rotation != (mgl32.Vec3{}) {
+		// The inverse of a rotation is its transpose, the same shortcut
+		// shapeContainsPoint takes. Being orthonormal it leaves lengths alone,
+		// so the distances that come back are directly comparable with every
+		// other hit measured in world space.
+		inv := eulerMatrixYXZ(rotation).Transpose()
+		o4 := inv.Mul4x1(o.Vec4(0))
+		d4 := inv.Mul4x1(d.Vec4(0))
+		o = mgl32.Vec3{o4.X(), o4.Y(), o4.Z()}
+		d = mgl32.Vec3{d4.X(), d4.Y(), d4.Z()}
+	}
+	switch kind {
+	case BoundingSphere:
+		// Dividing through by the half-extents turns the ellipsoid into the
+		// unit sphere. Origin and direction are scaled together, which leaves
+		// the ray parameter untouched — the roots are still world distances.
+		return rayUnitSphereRange(shapeNormalize(o, half), shapeNormalize(d, half))
+	case BoundingCylinder:
+		return rayCylinderRange(o, d, half)
+	default:
+		return raySlabRange(o, d, half.Mul(-1), half)
+	}
+}
+
+// shapeNormalize divides a vector through by the half-extents, which is what
+// maps an inscribed ellipsoid or elliptical cylinder onto its unit form.
+func shapeNormalize(v, half mgl32.Vec3) mgl32.Vec3 {
+	return mgl32.Vec3{v.X() / half.X(), v.Y() / half.Y(), v.Z() / half.Z()}
+}
+
+// rayUnitSphereRange solves a ray against the unit sphere at the origin.
+func rayUnitSphereRange(o, d mgl32.Vec3) (float32, float32, bool) {
+	return solveQuadratic(d.Dot(d), 2*o.Dot(d), o.Dot(o)-1)
+}
+
+// rayCylinderRange solves a ray against an upright cylinder — a unit circle in
+// XZ once divided by the half-extents, capped by a slab on Y, matching the
+// cylinder shapeContainsPoint describes.
+func rayCylinderRange(o, d, half mgl32.Vec3) (float32, float32, bool) {
+	ox, oz := o.X()/half.X(), o.Z()/half.Z()
+	dx, dz := d.X()/half.X(), d.Z()/half.Z()
+
+	a := dx*dx + dz*dz
+	c := ox*ox + oz*oz - 1
+	var t0, t1 float32
+	if a < 1e-12 {
+		// Running straight up the axis: the ray never crosses the side, so it
+		// is within the circle for its whole length or for none of it.
+		if c > 0 {
+			return 0, 0, false
+		}
+		t0, t1 = float32(math.Inf(-1)), float32(math.Inf(1))
+	} else {
+		var hit bool
+		if t0, t1, hit = solveQuadratic(a, 2*(ox*dx+oz*dz), c); !hit {
+			return 0, 0, false
+		}
+	}
+
+	if math.Abs(float64(d.Y())) < 1e-6 {
+		if abs32(o.Y()) > half.Y() {
+			return 0, 0, false
+		}
+		return t0, t1, true
+	}
+	ty0 := (-half.Y() - o.Y()) / d.Y()
+	ty1 := (half.Y() - o.Y()) / d.Y()
+	if ty0 > ty1 {
+		ty0, ty1 = ty1, ty0
+	}
+	if ty0 > t0 {
+		t0 = ty0
+	}
+	if ty1 < t1 {
+		t1 = ty1
+	}
+	if t0 > t1 {
+		return 0, 0, false
+	}
+	return t0, t1, true
+}
+
+// solveQuadratic returns the real roots of a·t² + b·t + c, smaller first. ok is
+// false when there are none, and when a is too small for the equation to be a
+// quadratic at all — what a degenerate ray means is the shape's business, not
+// this function's.
+func solveQuadratic(a, b, c float32) (float32, float32, bool) {
+	if abs32(a) < 1e-12 {
+		return 0, 0, false
+	}
+	disc := b*b - 4*a*c
+	if disc < 0 {
+		return 0, 0, false
+	}
+	sq := float32(math.Sqrt(float64(disc)))
+	t0 := (-b - sq) / (2 * a)
+	t1 := (-b + sq) / (2 * a)
+	if t0 > t1 {
+		t0, t1 = t1, t0
+	}
+	return t0, t1, true
 }
 
 // rayTriangleIntersect tests a ray against a triangle (two-sided) using Möller–Trumbore.
@@ -144,6 +272,16 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	if Editor.VolumePlacementMode {
+		// A volume is a region rather than something that rests on a surface, so
+		// it is centred a little above where the click landed — a trigger flush
+		// with the floor would have half of itself underneath it.
+		pos := editor3DPointAt(t.X, t.Y)
+		pos[1] += 1.0
+		placeVolumeAt(pos)
+		return
+	}
+
 	// What a click means is the selection mode's call. Point and edge mode each
 	// own the click outright: hitting nothing there clears the selection rather
 	// than falling through to the surface behind, which is what makes the modes
@@ -189,6 +327,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	// works in, and one sector is selected wherever it was clicked.
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
+	editorClearVolumeSelection()
 	clearVertexSelection()
 	clearFaceSelection()
 	Editor.ActiveBiomeSectorIdx = -1
@@ -207,6 +346,13 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	case pickEntity:
 		Editor.ActiveSectorIdx = -1
 		editorSelectEntity(hit.idx)
+
+	case pickVolume:
+		// The same gizmos an entity gets: a volume has a position, an
+		// orientation and a size, and the scale gizmo drags its half-extents
+		// (applyScaleToSelection) rather than a scale factor it does not have.
+		Editor.ActiveSectorIdx = -1
+		editorSelectVolume(hit.idx)
 
 	case pickWater:
 		// A water plane has no properties of its own — everything about it is
@@ -231,6 +377,7 @@ func editor3DClearSelection() {
 	clearVertexSelection()
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
+	editorClearVolumeSelection()
 	clearFaceSelection()
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveBiomeSectorIdx = -1
@@ -554,6 +701,7 @@ func Editor3DPanel() {
 
 	// --- Entities: the catalog, the level's list, and the selected one ---
 	editorEntitySection(lvl)
+	editorVolumeSection(lvl)
 	editorEntityProperties(lvl)
 
 	// --- Water plane clicked in the viewport ---
@@ -570,6 +718,9 @@ func Editor3DPanel() {
 			if imgui.CollapsingHeaderV("Sector: "+s3d.ID, imgui.TreeNodeFlagsDefaultOpen) {
 				imgui.InputText("ID##sid3d", &s3d.ID)
 				editorFaceSelectionNote()
+				// The sector's own tags, attributes and script. Its floor,
+				// ceiling and edges each carry their own set below.
+				editorScriptDataUI(&s3d.ScriptData, "sec3d", "This sector")
 				editorFocusOpen(panelFocusFloor)
 				if imgui.TreeNode("Floor##3df") {
 					editorFocusScroll(panelFocusFloor)
@@ -598,6 +749,7 @@ func Editor3DPanel() {
 					_ = reloadSector(sch, s3d)
 				}
 				editorDetailPanel("Floor", &s3d.Floor.Detail)
+				editorScriptDataUI(&s3d.Floor.ScriptData, "floor3d", "This floor")
 				editorFocusOpen(panelFocusCeiling)
 				if imgui.TreeNode("Ceiling##3dc") {
 					editorFocusScroll(panelFocusCeiling)
@@ -625,6 +777,7 @@ func Editor3DPanel() {
 					_ = reloadSector(sch, s3d)
 				}
 				editorDetailPanel("Ceiling", &s3d.Ceiling.Detail)
+				editorScriptDataUI(&s3d.Ceiling.ScriptData, "ceil3d", "This ceiling")
 				if Editor.ActiveEdgeIdx >= 0 {
 					imgui.Separator()
 					editorEdgeKindCombo(sch, s3d, "3d")
@@ -634,7 +787,12 @@ func Editor3DPanel() {
 					imgui.Separator()
 					editorFocusScroll(panelFocusWall)
 					w := &s3d.Walls[Editor.ActiveEdgeIdx]
-					imgui.Text(fmt.Sprintf("Wall #%d", Editor.ActiveEdgeIdx))
+					// The ID rather than the index: the index shifts under
+					// nearly every edit, and the ID is what a script addresses.
+					imgui.Text("Wall " + edgeIDDisplay(w.ID))
+					if imgui.IsItemHovered() {
+						imgui.SetTooltip("A script reaches this edge as @" + s3d.ID + ".edge." + w.ID)
+					}
 					changed := false
 					changed = textureCombo("Texture##wt3d", &w.Texture, false) || changed
 					changed = imgui.Checkbox("Collision##wc3d", &w.Collision) || changed
@@ -661,11 +819,15 @@ func Editor3DPanel() {
 					}
 					// Detail sub-panel
 					editorDetailPanel("Wall", &w.Detail)
+					editorScriptDataUI(&w.ScriptData, "wall3d", "This wall")
 				} else if Editor.ActiveEdgeKind == "portal" && Editor.ActiveEdgeIdx >= 0 &&
 					Editor.ActiveEdgeIdx < len(s3d.Portals) {
 					imgui.Separator()
 					p3d := &s3d.Portals[Editor.ActiveEdgeIdx]
-					imgui.Text(fmt.Sprintf("Portal #%d", Editor.ActiveEdgeIdx))
+					imgui.Text("Portal " + edgeIDDisplay(p3d.ID))
+					if imgui.IsItemHovered() {
+						imgui.SetTooltip("A script reaches this edge as @" + s3d.ID + ".edge." + p3d.ID)
+					}
 					changed := false
 					changed = imgui.InputText("To Sector##pts3d", &p3d.ToSector) || changed
 					changed = imgui.Checkbox("Draw Gap##pdg3d", &p3d.DrawGap) || changed

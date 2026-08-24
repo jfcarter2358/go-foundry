@@ -15,6 +15,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
+	"log"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -624,22 +625,74 @@ func biomeSeed(s *BiomeSector) mgl32.Vec2 {
 	return mgl32.Vec2{a * 1000, b * 1000}
 }
 
-// nextBiomeSectorID returns a default ID unique within ch's existing biome
-// sectors (IDs only need to be unique per chunk, not level-wide).
-func nextBiomeSectorID(ch *Chunk) string {
+// nextBiomeSectorID returns a default ID no biome sector anywhere in lvl is
+// using. IDs used to only need to be unique per chunk, since they were just
+// cache keys; they are level-wide now because a script addresses a biome sector
+// by `@id` with no chunk qualifier, exactly as it addresses a sector.
+//
+// lvl may be nil, in which case only ch is checked — enough for a chunk being
+// built outside a level.
+func nextBiomeSectorID(lvl *Level, ch *Chunk) string {
 	for n := len(ch.BiomeSectors); ; n++ {
 		id := fmt.Sprintf("biome_%d", n)
-		if !biomeSectorIDTaken(ch, id) {
+		if !biomeSectorIDTaken(lvl, ch, id) {
 			return id
 		}
 	}
 }
 
-func biomeSectorIDTaken(ch *Chunk, id string) bool {
+// biomeSectorIDTaken reports whether id is in use by any biome sector in lvl, or
+// in ch when lvl is nil.
+func biomeSectorIDTaken(lvl *Level, ch *Chunk, id string) bool {
+	if lvl == nil {
+		return biomeSectorIDTakenInChunk(ch, id)
+	}
+	for ci := range lvl.Chunks {
+		if biomeSectorIDTakenInChunk(&lvl.Chunks[ci], id) {
+			return true
+		}
+	}
+	// ch may not be part of lvl yet.
+	return biomeSectorIDTakenInChunk(ch, id)
+}
+
+func biomeSectorIDTakenInChunk(ch *Chunk, id string) bool {
+	if ch == nil {
+		return false
+	}
 	for i := range ch.BiomeSectors {
 		if ch.BiomeSectors[i].ID == id {
 			return true
 		}
 	}
 	return false
+}
+
+// resolveBiomeSectorIDCollisions makes every biome sector ID in lvl distinct,
+// renaming duplicates. Levels authored while IDs were only chunk-unique can
+// legitimately hold the same name twice; this is what makes them addressable.
+func resolveBiomeSectorIDCollisions(lvl *Level) {
+	if lvl == nil {
+		return
+	}
+	seen := map[string]bool{}
+	for ci := range lvl.Chunks {
+		ch := &lvl.Chunks[ci]
+		for bi := range ch.BiomeSectors {
+			id := ch.BiomeSectors[bi].ID
+			if id == "" {
+				id = fmt.Sprintf("biome_%d", bi)
+			}
+			if seen[id] {
+				fresh := id
+				for n := 2; seen[fresh]; n++ {
+					fresh = fmt.Sprintf("%s_%d", id, n)
+				}
+				log.Printf("level: biome sector ID %q is used more than once; renaming one to %q", id, fresh)
+				id = fresh
+			}
+			seen[id] = true
+			ch.BiomeSectors[bi].ID = id
+		}
+	}
 }

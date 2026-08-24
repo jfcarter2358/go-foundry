@@ -48,36 +48,42 @@
 - [x] Models
 - [x] Model bones
 - [x] Animations
+- [x] Volumes (scriptable regions; box/sphere/cylinder, tags, attributes)
+- [x] Script editor
+- [x] Log window (live script output, errors with positions, engine log)
+- [x] Scripting (flang: `internal/flang`, `@id`/`#tag`, attributes and properties, messages, events, hot reload)
+- [x] Script parameters (`param name type`, bound per object in the editor, read as `@name`)
+- [x] Object collision physics (push-apart; no restitution or friction yet)
 
 ## TODO
 
 ### Editor
 
-- [ ] Script editor
+- [ ] Debugger
 - [ ] UI builder
 - [ ] Re-do top bar
 - [ ] Re-organize 3D editor settings panel
 - [ ] Configurable editor keybindings
+- [ ] All windows should have the exit button on the top
+- [ ] New windows should open on top of the existing even in fullscreen mode
 
 ### Engine
 
-- [/] Scripting
+
 - [ ] Animated textures
 - [ ] Sprites
 - [ ] Particles
 - [ ] Skeleton sockets
-- [ ] Volumes
 - [ ] Vehicles
 - [ ] Physics engine
 - [ ] Texture transparency
 - [ ] Texture blending
 - [ ] Trees
 - [ ] Configurable keybindings
-- [x] Object collision physics (push-apart; no restitution or friction yet)
 - [ ] Water reflections
 - [ ] Music and Sound Effects
 - [ ] Volumetric displacement (e.g. sand, snow)
-- [ ] Re-do wall extrusions
+- [ ] Re-do wall extrusion setup to be like the model editor
 
 ### Follow-on from entities
 
@@ -88,12 +94,12 @@ path. What is left is what deliberately was not built with them:
 - [x] Entity-against-world and entity-against-entity collision, as per-type
       toggles (`collision: {world, entities, gravity, movable}`) with engine-wide
       master switches on 8 and 9 — no scripting needed
-- [ ] `enter`/`exit`/`interact` events over the overlap tests
+- [x] `enter`/`exit`/`interact` events over the overlap tests, plus `collide`,
+      `spawn`, `destroy`, `tick` and the two animation events
 - [ ] Shape-aware push-apart. Overlaps resolve on the world AABB whatever the
       `bounding` kind is, so a sphere pushes apart as a box.
 - [ ] Restitution/friction, and more than one solver iteration per frame
-- [ ] Scripting: `@id` and `#tag` addressing, and reading/writing attributes.
-      `EntitiesContaining` and `FindEntitiesByTag` are the queries it needs.
+- [x] Scripting: `@id` and `#tag` addressing, and reading/writing attributes
 - [ ] Animation blending between clips (a switch is a hard cut today)
 - [ ] Editing entity *definitions* in the editor. The panel edits an instance;
       changing the type still means editing its YAML and pressing Reload.

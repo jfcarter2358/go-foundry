@@ -9,10 +9,13 @@ package main
 // paint are still the only things that describe the world's shape. An entity
 // sits in that world and moves through it.
 //
-// Entities are not authored inline. A level places *instances* of definitions
-// that live in resources/entities/*.yaml (entity_def.go), which is what makes
-// "every barrel in the game gains 10 health" a one-file edit rather than a
-// search across every level.
+// An entity is authored one of two ways. The quick one is a *blank* entity:
+// the editor places it, and the level file carries its whole description —
+// mesh, bounds, attributes and all. The other is an *instance* of a definition
+// under resources/entities/*.yaml (entity_def.go), which is what makes "every
+// barrel in the game gains 10 health" a one-file edit rather than a search
+// across every level. A definition is what a blank entity becomes once a second
+// level wants the same thing; nothing has to start as one.
 //
 // The player is the exception at the other end: it is created by the engine
 // (NewPlayer) rather than read from anywhere, carries no models because the
@@ -20,7 +23,6 @@ package main
 
 import (
 	"sort"
-	"strconv"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -116,9 +118,20 @@ type Entity struct {
 	// legitimate: an invisible entity is still a position with attributes on it.
 	Models []EntityModel
 
+	// Script is the .flang file driving this entity's behaviour, resolved from
+	// the definition and optionally overridden per instance. Empty means the
+	// entity has no behaviour of its own.
+	Script string
+
 	// Attributes are user-defined values the engine only stores — see
 	// entity_attr.go.
 	Attributes AttrSet
+
+	// ScriptParams answers the script's top-level `param` declarations — see
+	// script_params.go. Merged from the definition and overlaid per instance,
+	// exactly like Attributes, which is what lets one entity type ship a
+	// scripted behaviour whose wiring each placed copy fills in for itself.
+	ScriptParams AttrSet
 
 	// Collision is what this entity takes part in physically — see
 	// entity_collision.go. All off by default: an entity that suddenly became
@@ -153,6 +166,44 @@ func NewPlayer(pos mgl32.Vec3) *Entity {
 		// the flag — but it is movable, which is what lets a solid entity push
 		// it back out. See entity_collision.go.
 		Collision: EntityCollision{Movable: true},
+	}
+}
+
+// blankEntityID is what a blank entity is called when nothing else names it.
+const blankEntityID = "entity"
+
+// blankEntityHalfExtent is the half-size of the box a blank entity arrives
+// with, in world units. It exists so the thing can be seen and clicked the
+// moment it is placed — an entity with no mesh *and* no volume is one the
+// editor can place and then never find again.
+const blankEntityHalfExtent = float32(0.5)
+
+// NewBlankEntity returns an entity that belongs to no definition: what the
+// editor places when its catalog is on "blank entity".
+//
+// It has no models on purpose. Which mesh a thing wears is the first decision
+// an author makes about it, and a default would be a guess to undo rather than
+// a head start — so the attachment list starts empty and the panel's model
+// picker is where it fills. Everything else gets a value the entity is usable
+// with: a half-metre box resting on its origin, visible, and inert until its
+// collision flags are ticked.
+func NewBlankEntity(id string) Entity {
+	if id == "" {
+		id = blankEntityID
+	}
+	return Entity{
+		ID:           id,
+		Scale:        mgl32.Vec3{1, 1, 1},
+		BoundingKind: BoundingAABB,
+		BoundHalfX:   blankEntityHalfExtent,
+		BoundHalfY:   blankEntityHalfExtent,
+		BoundHalfZ:   blankEntityHalfExtent,
+		// Position is an entity's base rather than its centre, so the box is
+		// lifted to rest on it — the same convention every shipped definition
+		// and the spawn marker use.
+		BoundOffset: mgl32.Vec3{0, blankEntityHalfExtent, 0},
+		Visible:     true,
+		Collision:   DefaultEntityCollision(),
 	}
 }
 
@@ -297,32 +348,42 @@ func (e *Entity) ContainsPoint(p mgl32.Vec3) bool {
 	if !e.HasBounds() {
 		return false
 	}
-	d := p.Sub(e.BoundCenter())
-	if e.Rotation != (mgl32.Vec3{}) {
-		// The inverse of a rotation is its transpose, so this is the forward
-		// matrix read the other way round rather than a matrix inversion.
-		inv := eulerMatrixYXZ(e.Rotation).Transpose().Mul4x1(d.Vec4(0))
-		d = mgl32.Vec3{inv.X(), inv.Y(), inv.Z()}
-	}
-	h := e.BoundHalfExtents()
-	if h.X() <= 0 || h.Y() <= 0 || h.Z() <= 0 {
+	return shapeContainsPoint(p, e.BoundCenter(), e.Rotation, e.BoundHalfExtents(), e.BoundingKind)
+}
+
+// shapeContainsPoint is the containment test itself, independent of what owns
+// the volume — entities and volumes (volume.go) describe their bounds the same
+// way and so share one implementation of what "inside" means.
+//
+// The point is moved into the volume's own space rather than the volume being
+// moved into the world's, so a rotated cylinder stays a cylinder instead of
+// degenerating into the conservative sphere WorldAABB has to use.
+func shapeContainsPoint(p, center, rotation, half mgl32.Vec3, kind BoundingType) bool {
+	if half.X() <= 0 || half.Y() <= 0 || half.Z() <= 0 {
 		return false
 	}
-	switch e.BoundingKind {
+	d := p.Sub(center)
+	if rotation != (mgl32.Vec3{}) {
+		// The inverse of a rotation is its transpose, so this is the forward
+		// matrix read the other way round rather than a matrix inversion.
+		inv := eulerMatrixYXZ(rotation).Transpose().Mul4x1(d.Vec4(0))
+		d = mgl32.Vec3{inv.X(), inv.Y(), inv.Z()}
+	}
+	switch kind {
 	case BoundingSphere:
 		// Normalised against each axis, so a non-uniform "sphere" is the
 		// ellipsoid inscribed in the same box rather than silently round.
-		nx, ny, nz := d.X()/h.X(), d.Y()/h.Y(), d.Z()/h.Z()
+		nx, ny, nz := d.X()/half.X(), d.Y()/half.Y(), d.Z()/half.Z()
 		return nx*nx+ny*ny+nz*nz <= 1
 	case BoundingCylinder:
 		// Upright: a circular cross-section in XZ, flat caps in Y.
-		if d.Y() < -h.Y() || d.Y() > h.Y() {
+		if d.Y() < -half.Y() || d.Y() > half.Y() {
 			return false
 		}
-		nx, nz := d.X()/h.X(), d.Z()/h.Z()
+		nx, nz := d.X()/half.X(), d.Z()/half.Z()
 		return nx*nx+nz*nz <= 1
 	default:
-		return abs32(d.X()) <= h.X() && abs32(d.Y()) <= h.Y() && abs32(d.Z()) <= h.Z()
+		return abs32(d.X()) <= half.X() && abs32(d.Y()) <= half.Y() && abs32(d.Z()) <= half.Z()
 	}
 }
 
@@ -432,6 +493,27 @@ func (e *Entity) Model(name string) *EntityModel {
 	return nil
 }
 
+// SetTexture reskins the named attachment, or every attachment when model is
+// "". It reports whether it found anything to reskin.
+//
+// The caller is responsible for the texture being resident — see
+// ScriptRuntime.markTextureDirty. Nothing here can load it, because uploading
+// is GL work and this is called from the script tick.
+func (e *Entity) SetTexture(model, texture string) bool {
+	if model != "" {
+		m := e.Model(model)
+		if m == nil {
+			return false
+		}
+		m.SetTexture(texture)
+		return true
+	}
+	for i := range e.Models {
+		e.Models[i].SetTexture(texture)
+	}
+	return len(e.Models) > 0
+}
+
 // Load uploads every model attachment to the GPU. Attachments that fail are
 // reported but do not stop the rest: one missing .fmdl should cost that
 // attachment, not the whole entity.
@@ -501,13 +583,9 @@ func uniqueEntityID(lvl *Level, base string) string {
 	if base == "" {
 		base = "entity"
 	}
-	if FindEntity(lvl, base) == nil {
-		return base
-	}
-	for n := 2; ; n++ {
-		id := base + "_" + strconv.Itoa(n)
-		if FindEntity(lvl, id) == nil {
-			return id
-		}
-	}
+	// Checked against every addressable kind, not just entities: SCRIPTING.md
+	// promises `@id` never needs qualifying, which only holds if one name means
+	// one object across sectors, volumes, lights and the rest. See
+	// uniqueLevelID in identity.go.
+	return uniqueLevelID(lvl, base)
 }

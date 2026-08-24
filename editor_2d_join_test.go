@@ -334,3 +334,111 @@ func TestFreePointsMoveWithTheSelection(t *testing.T) {
 	nearVec2(t, "free point 6", ch.Points[6], mgl32.Vec2{2, 23})
 	nearVec2(t, "free point 7", ch.Points[7], mgl32.Vec2{12, 23})
 }
+
+// ---------- closing an outline against geometry that is already there ----------
+
+// A sector drawn against an existing one shares a side with it, and that side
+// draws nothing: the wall is already there. The outline still has to close, so
+// the shared side is handed to the search as a link — without it the pending
+// edges are a chain, never a loop, and the new sector can never be made.
+func TestCloseLoopAcrossASharedWall(t *testing.T) {
+	defer saveEditorSelection()()
+	ch := joinTestChunk(t)
+	// Sector A's side 3→0 runs down x=0; two free points put a room beside it.
+	ch.Points = append(ch.Points, mgl32.Vec2{-10, 0}, mgl32.Vec2{-10, 10})
+	for len(ch.PointNames) < len(ch.Points) {
+		ch.PointNames = append(ch.PointNames, "")
+	}
+	Editor.PendingEdges = [][2]int{{3, 10}, {10, 9}, {9, 0}}
+
+	got := pendingLoopPolygon([][2]int{{0, 3}})
+	if got == nil {
+		t.Fatal("the outline did not close over the wall it shares with sector A")
+	}
+	if !sameRing(got, []int{9, 0, 3, 10}) {
+		t.Errorf("closed on ring %v, want the four corners of the new room", got)
+	}
+}
+
+// Without the shared side there is nothing to close through, and the chain has
+// to stay pending — a loop must not be invented out of edges nobody drew.
+func TestChainWithoutItsSharedWallStaysOpen(t *testing.T) {
+	defer saveEditorSelection()()
+	joinTestChunk(t)
+	Editor.PendingEdges = [][2]int{{3, 10}, {10, 9}, {9, 0}}
+
+	if got := pendingLoopPolygon(nil); got != nil {
+		t.Errorf("closed a ring %v out of an open chain", got)
+	}
+}
+
+// The shared side can be the last pair the join applies, which draws nothing
+// and so never asks whether the outline closed. The run has to ask once more
+// on its own behalf.
+func TestCloseLoopWhenTheSharedWallIsPickedLast(t *testing.T) {
+	defer saveEditorSelection()()
+	ch := joinTestChunk(t)
+	ch.Points = append(ch.Points, mgl32.Vec2{-10, 0}, mgl32.Vec2{-10, 10})
+	for len(ch.PointNames) < len(ch.Points) {
+		ch.PointNames = append(ch.PointNames, "")
+	}
+	// Picked 3 → 10 → 9 → 0, so the closing pair (0,3) is sector A's own wall.
+	selectPoints(ch, 3, 10, 9, 0)
+
+	pairs := planPointJoin(editorSelectedChunkPoints(), true)
+	var links [][2]int
+	for _, p := range pairs {
+		if !joinPairPending(ch, p[0], p[1]) && pointsAdjacentInAnySector(ch, p[0], p[1]) {
+			links = append(links, p)
+		}
+	}
+	if len(links) != 1 || !samePair(links[0], [2]int{0, 3}) {
+		t.Fatalf("links = %v, want just sector A's wall 0–3", links)
+	}
+	for _, p := range pairs {
+		joinPointPair(ch, p[0], p[1])
+	}
+	if got := pendingLoopPolygon(links); got == nil {
+		t.Errorf("outline left open, pending = %v", Editor.PendingEdges)
+	}
+}
+
+// Links are this run's shared sides, not a general licence to route through
+// existing walls: an outline needs a side that was actually drawn.
+func TestLinksAloneDoNotCloseALoop(t *testing.T) {
+	defer saveEditorSelection()()
+	joinTestChunk(t)
+	Editor.PendingEdges = nil
+
+	if got := pendingLoopPolygon([][2]int{{0, 1}, {1, 2}, {2, 3}, {3, 0}}); got != nil {
+		t.Errorf("made a ring %v out of walls that already exist", got)
+	}
+}
+
+// sameRing reports whether two point lists walk the same cycle, from any
+// starting corner and in either direction.
+func sameRing(got, want []int) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	n := len(want)
+	for _, dir := range []int{1, -1} {
+		for off := 0; off < n; off++ {
+			ok := true
+			for i := 0; i < n; i++ {
+				if got[i] != want[((off+dir*i)%n+n)%n] {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func samePair(a, b [2]int) bool {
+	return a == b || a == [2]int{b[1], b[0]}
+}

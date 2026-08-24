@@ -252,7 +252,8 @@ func editorFrameSelection() {
 
 // editorSelectionBounds is the world AABB of the current selection, in the same
 // priority order the panel shows it: vertices, then the spawn point, then the
-// selected entity, then the water body, then the sector, then the active chunk.
+// selected entity, then the selected volume, then the water body, then the
+// sector, then the active chunk.
 func editorSelectionBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 	lvl := Editor.level
 	if lvl == nil {
@@ -290,6 +291,13 @@ func editorSelectionBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 		// No authored volume to frame, so frame the point it sits at and let
 		// the caller's minimum radius decide how close that ends up.
 		return e.Position, e.Position, true
+	}
+
+	if v := activeVolume(); v != nil {
+		if vmin, vmax, ok := v.WorldAABB(); ok {
+			return vmin, vmax, true
+		}
+		return v.Position, v.Position, true
 	}
 
 	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {

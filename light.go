@@ -9,7 +9,7 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-const MaxDirLights   = 4
+const MaxDirLights = 4
 const MaxPointLights = 8
 
 // GlobalLight is a uniform ambient light applied equally to all surfaces.
@@ -26,6 +26,8 @@ type GlobalLight struct {
 // direction uniform and the shadow matrix permanently. Angles cannot express a
 // zero-length vector, so the light stays valid no matter what is typed.
 type DirectionalLight struct {
+	ID             string     // stable identity; how a script addresses this light
+	ScriptData                // tags, attributes and the attached script
 	Direction      mgl32.Vec3 // derived unit vector — set via SyncDirection, never edited directly
 	Yaw            float32    // degrees about +Y; 0 = toward +X, 90 = toward +Z
 	Pitch          float32    // degrees of elevation; -90 = straight down, +90 = straight up
@@ -81,6 +83,8 @@ func DirLightYawPitch(d mgl32.Vec3) (yaw, pitch float32) {
 
 // PointLight is a positional light with a quadratic radius-based falloff.
 type PointLight struct {
+	ID             string // stable identity; how a script addresses this light
+	ScriptData            // tags, attributes and the attached script
 	Position       mgl32.Vec3
 	Color          mgl32.Vec3
 	Brightness     float32

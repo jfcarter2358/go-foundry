@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -26,6 +27,10 @@ import (
 type Level struct {
 	Chunks []Chunk
 	Spawn  *SpawnPoint
+	// Scripts are the level's own .flang handlers — see RawLevel.Scripts.
+	Scripts []string
+	// Volumes are the level's scriptable regions (volume.go).
+	Volumes []Volume
 	// Entities are the level's placed dynamic objects (entity.go). They live on
 	// the level rather than in a chunk because they move — see RawLevel's note.
 	Entities []Entity
@@ -45,11 +50,16 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		sc = rc.Scale
 	}
 	origin := mgl32.Vec3{rc.Origin.X, rc.Origin.Y, rc.Origin.Z}
+	chunkScript, err := scriptDataFromRaw(rc.RawScriptData, "chunk "+rc.ID)
+	if err != nil {
+		return Chunk{}, nil, err
+	}
 	chunk := Chunk{
-		ID:       rc.ID,
-		Origin:   origin,
-		Rotation: rc.Rotation,
-		Scale:    sc,
+		ID:         rc.ID,
+		ScriptData: chunkScript,
+		Origin:     origin,
+		Rotation:   rc.Rotation,
+		Scale:      sc,
 	}
 
 	cos32 := float32(math.Cos(float64(rc.Rotation)))
@@ -159,9 +169,24 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		if ceilUVScale == (mgl32.Vec2{}) {
 			ceilUVScale = mgl32.Vec2{1, 1}
 		}
+		sectorScript, err := scriptDataFromRaw(rs.RawScriptData, "sector "+rs.ID)
+		if err != nil {
+			return Chunk{}, nil, err
+		}
+		floorScript, err := scriptDataFromRaw(rs.Floor.RawScriptData, "sector "+rs.ID+" floor")
+		if err != nil {
+			return Chunk{}, nil, err
+		}
+		ceilScript, err := scriptDataFromRaw(rs.Ceiling.RawScriptData, "sector "+rs.ID+" ceiling")
+		if err != nil {
+			return Chunk{}, nil, err
+		}
+
 		sector := Sector{
-			ID: rs.ID,
+			ID:         rs.ID,
+			ScriptData: sectorScript,
 			Floor: Floor{
+				ScriptData:    floorScript,
 				Enabled:       rs.Floor.Enabled,
 				Hidden:        rs.Floor.Hidden,
 				Height:        rs.Floor.Height,
@@ -179,6 +204,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				SmoothAngle:   rs.Floor.SmoothAngle,
 			},
 			Ceiling: Ceiling{
+				ScriptData:    ceilScript,
 				Enabled:       rs.Ceiling.Enabled,
 				Height:        rs.Ceiling.Height,
 				Texture:       rs.Ceiling.Texture,
@@ -241,6 +267,19 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			start := chunk.Points[fromIdx]
 			end := chunk.Points[toIdx]
 
+			// The edge's stable ID. Computed here, before the winding-reversal
+			// fixup below, because reversal turns edge A→B into B→A — deriving
+			// the migration name afterwards would rename every edge of a
+			// clockwise-authored sector on its next save.
+			edgeID := edge.ID
+			if edgeID == "" {
+				edgeID = migrateEdgeID(edge.From, edge.To)
+			}
+			edgeScript, err := scriptDataFromRaw(edge.RawScriptData, "sector "+rs.ID+" edge "+edgeID)
+			if err != nil {
+				return Chunk{}, nil, err
+			}
+
 			switch edge.Kind {
 			case "wall":
 				if edge.Texture != "" {
@@ -251,6 +290,8 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 					wallUVScale = mgl32.Vec2{1, 1}
 				}
 				sector.Walls = append(sector.Walls, Wall{
+					ID:            edgeID,
+					ScriptData:    edgeScript,
 					StartPoint:    start,
 					EndPoint:      end,
 					Texture:       edge.Texture,
@@ -270,8 +311,11 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 					SmoothAngle:   edge.SmoothAngle,
 				})
 				sector.EdgeKinds = append(sector.EdgeKinds, "wall")
+				sector.EdgeIDs = append(sector.EdgeIDs, edgeID)
 			case "portal":
 				sector.Portals = append(sector.Portals, Portal{
+					ID:          edgeID,
+					ScriptData:  edgeScript,
 					StartPoint:  start,
 					EndPoint:    end,
 					ToSector:    edge.ToSector,
@@ -282,8 +326,14 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 					Alpha:       float32Default(edge.Alpha, 1.0),
 				})
 				sector.EdgeKinds = append(sector.EdgeKinds, "portal")
+				sector.EdgeIDs = append(sector.EdgeIDs, edgeID)
 			}
 		}
+
+		// A file can carry duplicate IDs (hand-edited, or two edges migrating to
+		// the same point pair in a malformed ring). Resolve them here so the
+		// invariant holds from the moment the sector exists.
+		dedupeSectorEdgeIDs(&sector)
 
 		sectorPts := SectorPoints(&chunk, &sector)
 
@@ -297,17 +347,25 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			n := len(sector.PointIndices)
 			type edgeRec struct {
 				kind   string
+				id     string
 				wall   Wall
 				portal Portal
 			}
 			recs := make([]edgeRec, n)
 			wi, pi := 0, 0
 			for i := 0; i < n; i++ {
+				// IDs were computed from the unordered point pair above, so they
+				// ride the permutation unchanged — an edge keeps its name even
+				// though its direction flips.
+				id := ""
+				if i < len(sector.EdgeIDs) {
+					id = sector.EdgeIDs[i]
+				}
 				if i < len(sector.EdgeKinds) && sector.EdgeKinds[i] == "portal" {
-					recs[i] = edgeRec{kind: "portal", portal: sector.Portals[pi]}
+					recs[i] = edgeRec{kind: "portal", id: id, portal: sector.Portals[pi]}
 					pi++
 				} else {
-					recs[i] = edgeRec{kind: "wall", wall: sector.Walls[wi]}
+					recs[i] = edgeRec{kind: "wall", id: id, wall: sector.Walls[wi]}
 					wi++
 				}
 			}
@@ -319,11 +377,13 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			sector.PointIndices = newPointIndices
 
 			newEdgeKinds := make([]string, n)
+			newEdgeIDs := make([]string, n)
 			newWalls := make([]Wall, 0, len(sector.Walls))
 			newPortals := make([]Portal, 0, len(sector.Portals))
 			for i := 0; i < n; i++ {
 				rec := recs[((n-2-i)%n+n)%n]
 				newEdgeKinds[i] = rec.kind
+				newEdgeIDs[i] = rec.id
 				if rec.kind == "portal" {
 					rec.portal.StartPoint, rec.portal.EndPoint = rec.portal.EndPoint, rec.portal.StartPoint
 					newPortals = append(newPortals, rec.portal)
@@ -333,10 +393,12 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				}
 			}
 			sector.EdgeKinds = newEdgeKinds
+			sector.EdgeIDs = newEdgeIDs
 			sector.Walls = newWalls
 			sector.Portals = newPortals
 			sectorPts = SectorPoints(&chunk, &sector)
 		}
+		syncEdgeRecordIDs(&sector)
 
 		nPts := len(sector.PointIndices)
 		sector.Floor.VertexOffsets = make([]float32, nPts)
@@ -496,17 +558,26 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 // all geometry to the GPU. Texture loading is driven from this function via the
 // global textureNames map and executablePath variable.
 func LoadLevel(levelPath string) (Level, error) {
-	data, err := os.ReadFile(levelPath)
+	raw, err := readRawLevelFile(levelPath)
 	if err != nil {
 		return Level{}, err
 	}
+	return rawToLevel(raw)
+}
 
+// readRawLevelFile parses a level file into its Raw form without touching the
+// GPU. Split from LoadLevel so anything that only wants to inspect a level's
+// authored shape — validation, migration checks, tooling — can do so headlessly.
+func readRawLevelFile(levelPath string) (RawLevel, error) {
+	data, err := os.ReadFile(levelPath)
+	if err != nil {
+		return RawLevel{}, err
+	}
 	var raw RawLevel
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return Level{}, err
+		return RawLevel{}, err
 	}
-
-	return rawToLevel(raw)
+	return raw, nil
 }
 
 // blankRawLevel returns a minimal valid RawLevel: a single four-walled room
@@ -577,7 +648,10 @@ func rawToLightSet(rl RawLights) LightSet {
 		if ss == 0 && rd.CastShadows {
 			ss = 0.5 // default to half-strength shadows
 		}
+		dlScript, _ := scriptDataFromRaw(rd.RawScriptData, "directional light "+rd.ID)
 		dl := DirectionalLight{
+			ID:             rd.ID,
+			ScriptData:     dlScript,
 			Color:          mgl32.Vec3{rd.Color.R, rd.Color.G, rd.Color.B},
 			Brightness:     rd.Brightness,
 			CastShadows:    rd.CastShadows,
@@ -598,7 +672,10 @@ func rawToLightSet(rl RawLights) LightSet {
 		if ss == 0 && rp.CastShadows {
 			ss = 0.5
 		}
+		plScript, _ := scriptDataFromRaw(rp.RawScriptData, "point light "+rp.ID)
 		ls.Points = append(ls.Points, PointLight{
+			ID:             rp.ID,
+			ScriptData:     plScript,
 			Position:       mgl32.Vec3{rp.Position.X, rp.Position.Y, rp.Position.Z},
 			Color:          mgl32.Vec3{rp.Color.R, rp.Color.G, rp.Color.B},
 			Brightness:     rp.Brightness,
@@ -607,6 +684,10 @@ func rawToLightSet(rl RawLights) LightSet {
 			ShadowStrength: ss,
 		})
 	}
+	// Lights predate having identity, so most levels arrive with none. Mint them
+	// here rather than at every use site, so a light is addressable the moment it
+	// exists.
+	assignLightIDs(&ls)
 	return ls
 }
 
@@ -627,6 +708,16 @@ func rawToLevel(raw RawLevel) (Level, error) {
 		level.Chunks = append(level.Chunks, chunk)
 	}
 
+	// Chunk and sector IDs are how a script addresses geometry, so they have to
+	// name exactly one thing. Nothing enforced that before scripting existed, and
+	// the editor could mint duplicates, so resolve them here — renaming with a
+	// warning rather than rejecting, since a level authored under the old rules
+	// should still open.
+	level.Scripts = append([]string(nil), raw.Scripts...)
+
+	resolveLevelIDCollisions(level.Chunks)
+	resolveBiomeSectorIDCollisions(&level)
+
 	// The player spawn: one optional marker per level, not a placed object.
 	if raw.Spawn != nil {
 		spawn := &SpawnPoint{
@@ -639,7 +730,8 @@ func rawToLevel(raw RawLevel) (Level, error) {
 		level.Spawn = spawn
 	}
 
-	// Entities: instances of the definitions under resources/entities/.
+	// Entities: blank ones authored in the level, and instances of the
+	// definitions under resources/entities/.
 	//
 	// A bad entity fails the load rather than being skipped. An entity that
 	// quietly vanished would take its attributes and its ID with it, and the
@@ -657,6 +749,21 @@ func rawToLevel(raw RawLevel) (Level, error) {
 			return Level{}, fmt.Errorf("entity %q load: %w", e.ID, err)
 		}
 		level.Entities = append(level.Entities, e)
+	}
+
+	// Volumes: scriptable regions, with the same ID guarantee entities get.
+	for _, rv := range raw.Volumes {
+		v, err := volumeFromRaw(rv)
+		if err != nil {
+			return Level{}, err
+		}
+		v.ID = uniqueVolumeID(&level, v.ID)
+		if err := v.Load(); err != nil {
+			// A cage that would not build is a missing authoring aid, not a
+			// broken level — the volume still works.
+			log.Printf("volume %q: marker load: %v", v.ID, err)
+		}
+		level.Volumes = append(level.Volumes, v)
 	}
 
 	// Convert lights

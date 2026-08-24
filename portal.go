@@ -6,6 +6,11 @@ import "github.com/go-gl/mathgl/mgl32"
 // When DrawGap is true, gap-fill walls are generated at load time to cover
 // any height difference between this sector and the adjacent one.
 type Portal struct {
+	// ID is the portal's stable identity, shared with the Wall it would become
+	// if converted back — identity belongs to the edge, not to the record
+	// currently occupying it. See sector_edge_id.go.
+	ID          string
+	ScriptData  // tags, attributes and the attached script
 	StartPoint  mgl32.Vec2
 	EndPoint    mgl32.Vec2
 	ToSector    string
