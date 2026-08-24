@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"foundry/internal/gfx"
 	"foundry/internal/platform"
+	"foundry/internal/uiwin"
 	"log"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -34,7 +35,7 @@ import (
 
 // editor2DWindow is the 2D sector editor's window; nil when it is not open,
 // which is also when there is no 2D editing going on at all.
-var editor2DWindow *UIWindow
+var editor2DWindow *uiwin.UIWindow
 
 const (
 	editor2DWindowW = int32(1280)
@@ -64,7 +65,7 @@ func OpenEditor2DWindow() {
 		editor2DWindow.Win.Raise()
 		return
 	}
-	w, err := NewUIWindow("2D Sector Editor", editor2DWindowW, editor2DWindowH,
+	w, err := uiwin.NewUIWindow("2D Sector Editor", editor2DWindowW, editor2DWindowH,
 		drawEditor2DWindow, onEditor2DWindowClose)
 	if err != nil {
 		log.Printf("open 2D editor window: %v", err)

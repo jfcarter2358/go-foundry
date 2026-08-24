@@ -10,6 +10,7 @@ package main
 // register.
 
 import (
+	"foundry/internal/uiwin"
 	"log"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -22,7 +23,7 @@ const (
 )
 
 // scriptEditorWindow is nil when the editor is closed.
-var scriptEditorWindow *UIWindow
+var scriptEditorWindow *uiwin.UIWindow
 
 // activeScript is the open document. It outlives the window, so closing and
 // reopening resumes where the author left off — the same choice the texture and
@@ -47,7 +48,7 @@ func OpenScriptEditorWindow() {
 		activeScript = NewScriptDoc()
 		activeScript.reparseNow(Editor.level)
 	}
-	w, err := NewUIWindow("Script Editor", scriptWindowW, scriptWindowH,
+	w, err := uiwin.NewUIWindow("Script Editor", scriptWindowW, scriptWindowH,
 		drawScriptEditorWindow, onScriptEditorClose)
 	if err != nil {
 		log.Printf("open script editor window: %v", err)

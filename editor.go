@@ -23,6 +23,7 @@ import (
 	"foundry/internal/platform"
 	"foundry/internal/render"
 	"foundry/internal/script"
+	"foundry/internal/uiwin"
 	"foundry/internal/world"
 	"math"
 
@@ -842,7 +843,7 @@ func EditorRender() {
 	// so it is available in every editor mode too — frame time and draw counts
 	// matter most while you are building the thing that costs them.
 	render.DebugRenderOverlay()
-	KeybindHelpRender()
+	uiwin.KeybindHelpRender()
 	imguibackend.ImGuiRender()
 }
 

@@ -1,5 +1,7 @@
 package main
 
+import "foundry/internal/uiwin"
+
 // keybindings.go — what the F1 overlay says.
 //
 // The bindings themselves live where they are handled (input.go, editor.go and
@@ -11,136 +13,136 @@ package main
 // Those predicates read editor state, which is why the table is here rather
 // than beside the overlay that draws it (keybind_help.go).
 
-func init() { keybindSections = keybindSectionTable }
+func init() { uiwin.KeybindSections = keybindSectionTable }
 
-var keybindSectionTable = []KeybindSection{
+var keybindSectionTable = []uiwin.KeybindSection{
 	{
 		Title:  "Script log",
 		Active: LogWindowOpen,
-		Binds: []Keybind{
-			{"Space", "Pause / resume the view (the log keeps filling)"},
-			{"Ctrl+L", "Clear the buffer"},
-			{"Ctrl+F", "Jump to the filter box"},
-			{"Esc", "Close the window"},
+		Binds: []uiwin.Keybind{
+			{Keys: "Space", Desc: "Pause / resume the view (the log keeps filling)"},
+			{Keys: "Ctrl+L", Desc: "Clear the buffer"},
+			{Keys: "Ctrl+F", Desc: "Jump to the filter box"},
+			{Keys: "Esc", Desc: "Close the window"},
 		},
 	},
 	{
 		Title:  "Script editor",
 		Active: ScriptEditorOpen,
-		Binds: []Keybind{
-			{"Ctrl+S / Ctrl+Shift+S", "Save / save as"},
-			{"Ctrl+O", "Open a script"},
-			{"Ctrl+N", "New script"},
-			{"Ctrl+R", "Reload every script from disk"},
-			{"Esc", "Close the window (the buffer is kept)"},
+		Binds: []uiwin.Keybind{
+			{Keys: "Ctrl+S / Ctrl+Shift+S", Desc: "Save / save as"},
+			{Keys: "Ctrl+O", Desc: "Open a script"},
+			{Keys: "Ctrl+N", Desc: "New script"},
+			{Keys: "Ctrl+R", Desc: "Reload every script from disk"},
+			{Keys: "Esc", Desc: "Close the window (the buffer is kept)"},
 		},
 	},
 	{
 		Title:  "Texture editor",
 		Active: TextureEditorOpen,
-		Binds: []Keybind{
-			{"Ctrl+Z / Ctrl+Y", "Undo / redo (Ctrl+Shift+Z redoes too)"},
-			{"Left click / drag", "Paint with the current tool"},
-			{"Middle-drag", "Pan the canvas"},
-			{"Mouse wheel", "Zoom the canvas"},
-			{"Click a swatch", "Set the primary colour"},
-			{"Right-click a swatch", "Set the secondary colour"},
-			{"Double-click a swatch", "Edit that palette slot's colour"},
+		Binds: []uiwin.Keybind{
+			{Keys: "Ctrl+Z / Ctrl+Y", Desc: "Undo / redo (Ctrl+Shift+Z redoes too)"},
+			{Keys: "Left click / drag", Desc: "Paint with the current tool"},
+			{Keys: "Middle-drag", Desc: "Pan the canvas"},
+			{Keys: "Mouse wheel", Desc: "Zoom the canvas"},
+			{Keys: "Click a swatch", Desc: "Set the primary colour"},
+			{Keys: "Right-click a swatch", Desc: "Set the secondary colour"},
+			{Keys: "Double-click a swatch", Desc: "Edit that palette slot's colour"},
 		},
 	},
 	{
 		Title:  "Model editor",
 		Active: ModelEditorOpen,
-		Binds: []Keybind{
-			{"1 / 2 / 3 / 4", "Vertex / edge / face / bone select"},
-			{"G / R / C", "Move / rotate / scale gizmo (C again: local axes)"},
-			{"E / Shift+E", "Extrude (again: re-aim along the normal) / always extrude"},
-			{"V", "Toggle orbit and fly camera"},
-			{"Z", "Toggle wireframe"},
-			{"F", "Frame the model"},
-			{"P", "Toggle pose mode"},
-			{"Delete", "Delete the selected bones or faces"},
-			{"Ctrl+Z / Ctrl+Y", "Undo / redo"},
-			{"Tab", "Hand focus back to the main window"},
+		Binds: []uiwin.Keybind{
+			{Keys: "1 / 2 / 3 / 4", Desc: "Vertex / edge / face / bone select"},
+			{Keys: "G / R / C", Desc: "Move / rotate / scale gizmo (C again: local axes)"},
+			{Keys: "E / Shift+E", Desc: "Extrude (again: re-aim along the normal) / always extrude"},
+			{Keys: "V", Desc: "Toggle orbit and fly camera"},
+			{Keys: "Z", Desc: "Toggle wireframe"},
+			{Keys: "F", Desc: "Frame the model"},
+			{Keys: "P", Desc: "Toggle pose mode"},
+			{Keys: "Delete", Desc: "Delete the selected bones or faces"},
+			{Keys: "Ctrl+Z / Ctrl+Y", Desc: "Undo / redo"},
+			{Keys: "Tab", Desc: "Hand focus back to the main window"},
 		},
 	},
 	{
 		Title:  "Model editor — pose mode",
 		Active: func() bool { return ModelEditorOpen() && modelPoseMode },
-		Binds: []Keybind{
-			{"I", "Key every posed bone at the playhead"},
-			{"Space", "Play / pause"},
-			{"Left / Right", "Step one frame"},
-			{"Delete", "Delete the selected keyframes"},
-			{"Alt+G / Alt+R / Alt+S", "Clear translation / rotation / scale"},
-			{"G / R / C", "Pose the selected bones (scale runs on the bone's own axes)"},
-			{"Click a diamond", "Select that keyframe (Ctrl to add)"},
-			{"Click / drag the timeline", "Scrub the playhead"},
+		Binds: []uiwin.Keybind{
+			{Keys: "I", Desc: "Key every posed bone at the playhead"},
+			{Keys: "Space", Desc: "Play / pause"},
+			{Keys: "Left / Right", Desc: "Step one frame"},
+			{Keys: "Delete", Desc: "Delete the selected keyframes"},
+			{Keys: "Alt+G / Alt+R / Alt+S", Desc: "Clear translation / rotation / scale"},
+			{Keys: "G / R / C", Desc: "Pose the selected bones (scale runs on the bone's own axes)"},
+			{Keys: "Click a diamond", Desc: "Select that keyframe (Ctrl to add)"},
+			{Keys: "Click / drag the timeline", Desc: "Scrub the playhead"},
 		},
 	},
 	{
 		Title: "Global",
-		Binds: []Keybind{
-			{"F1", "Toggle this keybinding reference"},
-			{"F3", "Toggle debug overlay (FPS, memory, counts)"},
-			{"F10", "Toggle anti-aliasing"},
-			{"F11", "Toggle fullscreen"},
-			{"~ / `", "Toggle the level editor"},
-			{"Esc", "Close this reference"},
+		Binds: []uiwin.Keybind{
+			{Keys: "F1", Desc: "Toggle this keybinding reference"},
+			{Keys: "F3", Desc: "Toggle debug overlay (FPS, memory, counts)"},
+			{Keys: "F10", Desc: "Toggle anti-aliasing"},
+			{Keys: "F11", Desc: "Toggle fullscreen"},
+			{Keys: "~ / `", Desc: "Toggle the level editor"},
+			{Keys: "Esc", Desc: "Close this reference"},
 		},
 	},
 	{
 		Title: "Biome lighting cost switches",
-		Binds: []Keybind{
-			{"F5", "Biome scatter receives shadows on/off"},
-			{"F6", "Rock / moss shadow casting on/off"},
-			{"F7", "Foliage shadow casting on/off"},
-			{"F8", "Cycle how many cascades scatter casts into"},
-			{"F9", "Cycle how many LOD tiers cast real shadows"},
+		Binds: []uiwin.Keybind{
+			{Keys: "F5", Desc: "Biome scatter receives shadows on/off"},
+			{Keys: "F6", Desc: "Rock / moss shadow casting on/off"},
+			{Keys: "F7", Desc: "Foliage shadow casting on/off"},
+			{Keys: "F8", Desc: "Cycle how many cascades scatter casts into"},
+			{Keys: "F9", Desc: "Cycle how many LOD tiers cast real shadows"},
 		},
 	},
 	{
 		Title:  "Gameplay",
 		Active: func() bool { return !Editor.Active },
-		Binds: []Keybind{
-			{"W / A / S / D", "Move"},
-			{"Space", "Jump (gravity on) / fly up (gravity off)"},
-			{"Left Shift", "Fly down (gravity off)"},
-			{"Arrow keys", "Turn / look"},
-			{"Mouse", "Look (cursor is captured)"},
-			{"E", "Interact with whatever you are standing in (fires :interact:)"},
-			{"0", "Toggle gravity (fly mode)"},
-			{"8", "Toggle entity-vs-world collision (engine-wide)"},
-			{"9", "Toggle entity-vs-entity collision (engine-wide)"},
+		Binds: []uiwin.Keybind{
+			{Keys: "W / A / S / D", Desc: "Move"},
+			{Keys: "Space", Desc: "Jump (gravity on) / fly up (gravity off)"},
+			{Keys: "Left Shift", Desc: "Fly down (gravity off)"},
+			{Keys: "Arrow keys", Desc: "Turn / look"},
+			{Keys: "Mouse", Desc: "Look (cursor is captured)"},
+			{Keys: "E", Desc: "Interact with whatever you are standing in (fires :interact:)"},
+			{Keys: "0", Desc: "Toggle gravity (fly mode)"},
+			{Keys: "8", Desc: "Toggle entity-vs-world collision (engine-wide)"},
+			{Keys: "9", Desc: "Toggle entity-vs-entity collision (engine-wide)"},
 		},
 	},
 	{
 		Title:  "Editor — any mode",
 		Active: func() bool { return Editor.Active },
-		Binds: []Keybind{
-			{"Ctrl+Z", "Undo"},
-			{"Ctrl+Y / Ctrl+Shift+Z", "Redo"},
-			{"Delete", "Delete the current selection"},
+		Binds: []uiwin.Keybind{
+			{Keys: "Ctrl+Z", Desc: "Undo"},
+			{Keys: "Ctrl+Y / Ctrl+Shift+Z", Desc: "Redo"},
+			{Keys: "Delete", Desc: "Delete the current selection"},
 		},
 	},
 	{
 		Title:  "Editor — 3D view",
 		Active: func() bool { return Editor.Active && Editor.Mode == Mode3D },
-		Binds: []Keybind{
-			{"1 / 2 / 3", "Point / edge / face select"},
-			{"Z", "Toggle wireframe"},
-			{"V", "Toggle orbit and fly camera"},
-			{"F", "Frame the selection"},
-			{"W / A / S / D", "Fly the camera (orbit: slide the pivot)"},
-			{"Space / Left Shift", "Up / down"},
-			{"Right-drag / Middle-drag", "Look around, or orbit the pivot"},
-			{"Shift+Middle-drag", "Pan"},
-			{"Mouse wheel", "Dolly in fly, zoom the orbit radius"},
-			{"Left click", "Select whatever the current mode picks"},
-			{"Left click (handle)", "Pick a point/edge; repeat clicks cycle overlaps"},
-			{"Ctrl+Left click", "Add every point/edge under the cursor"},
-			{"Left click (armed)", "Place the spawn point ahead of the camera"},
-			{"Drag gizmo arm", "Translate the selection along that axis"},
+		Binds: []uiwin.Keybind{
+			{Keys: "1 / 2 / 3", Desc: "Point / edge / face select"},
+			{Keys: "Z", Desc: "Toggle wireframe"},
+			{Keys: "V", Desc: "Toggle orbit and fly camera"},
+			{Keys: "F", Desc: "Frame the selection"},
+			{Keys: "W / A / S / D", Desc: "Fly the camera (orbit: slide the pivot)"},
+			{Keys: "Space / Left Shift", Desc: "Up / down"},
+			{Keys: "Right-drag / Middle-drag", Desc: "Look around, or orbit the pivot"},
+			{Keys: "Shift+Middle-drag", Desc: "Pan"},
+			{Keys: "Mouse wheel", Desc: "Dolly in fly, zoom the orbit radius"},
+			{Keys: "Left click", Desc: "Select whatever the current mode picks"},
+			{Keys: "Left click (handle)", Desc: "Pick a point/edge; repeat clicks cycle overlaps"},
+			{Keys: "Ctrl+Left click", Desc: "Add every point/edge under the cursor"},
+			{Keys: "Left click (armed)", Desc: "Place the spawn point ahead of the camera"},
+			{Keys: "Drag gizmo arm", Desc: "Translate the selection along that axis"},
 		},
 	},
 	{
@@ -149,48 +151,48 @@ var keybindSectionTable = []KeybindSection{
 		// only inside that window's draw brackets — never while the reference
 		// is being rendered — so the section keys off the window instead.
 		Active: func() bool { return Editor.Active && Editor2DPoppedOut() },
-		Binds: []Keybind{
-			{"W / A / S / D", "Pan the map"},
-			{"Middle-drag", "Pan the map"},
-			{"Mouse wheel", "Zoom"},
-			{"Left click / drag", "Select and move a vertex"},
-			{"Shift+Left click", "Split the nearest edge, else drop a free point"},
-			{"Ctrl+Left click", "Connect two points"},
-			{"Right click", "Remove the point under the cursor, else deselect"},
+		Binds: []uiwin.Keybind{
+			{Keys: "W / A / S / D", Desc: "Pan the map"},
+			{Keys: "Middle-drag", Desc: "Pan the map"},
+			{Keys: "Mouse wheel", Desc: "Zoom"},
+			{Keys: "Left click / drag", Desc: "Select and move a vertex"},
+			{Keys: "Shift+Left click", Desc: "Split the nearest edge, else drop a free point"},
+			{Keys: "Ctrl+Left click", Desc: "Connect two points"},
+			{Keys: "Right click", Desc: "Remove the point under the cursor, else deselect"},
 		},
 	},
 	{
 		Title:  "Editor — biome brush (2D)",
 		Active: func() bool { return Editor.Active && Editor2DPoppedOut() && Editor.BiomeLayerActive },
-		Binds: []Keybind{
-			{"Left click", "Add a polygon point; click the first point to close"},
-			{"Right click", "Undo the last point while drawing, else delete a sector"},
-			{"Enter", "Finish the polygon"},
-			{"Esc", "Cancel the polygon"},
+		Binds: []uiwin.Keybind{
+			{Keys: "Left click", Desc: "Add a polygon point; click the first point to close"},
+			{Keys: "Right click", Desc: "Undo the last point while drawing, else delete a sector"},
+			{Keys: "Enter", Desc: "Finish the polygon"},
+			{Keys: "Esc", Desc: "Cancel the polygon"},
 		},
 	},
 	{
 		Title:  "Editor — 2D surface editor",
 		Active: func() bool { return Editor.Active && Editor.Mode == ModeSurface2D },
-		Binds: []Keybind{
-			{"Middle-drag", "Pan"},
-			{"Mouse wheel", "Zoom"},
-			{"Left click / drag", "Select and move a point"},
-			{"Shift+Left click", "Place a point (starts an extrusion if idle)"},
-			{"Right click", "Delete the nearest terrain point"},
-			{"Enter", "Finalize the pending extrusion"},
-			{"Delete / Backspace", "Drop the last pending point"},
-			{"Esc", "Cancel placement, else leave the surface editor"},
+		Binds: []uiwin.Keybind{
+			{Keys: "Middle-drag", Desc: "Pan"},
+			{Keys: "Mouse wheel", Desc: "Zoom"},
+			{Keys: "Left click / drag", Desc: "Select and move a point"},
+			{Keys: "Shift+Left click", Desc: "Place a point (starts an extrusion if idle)"},
+			{Keys: "Right click", Desc: "Delete the nearest terrain point"},
+			{Keys: "Enter", Desc: "Finalize the pending extrusion"},
+			{Keys: "Delete / Backspace", Desc: "Drop the last pending point"},
+			{Keys: "Esc", Desc: "Cancel placement, else leave the surface editor"},
 		},
 	},
 	{
 		Title:  "Editor — extrusion placement",
 		Active: func() bool { return Editor.Active && Editor.ExtrusionMode },
-		Binds: []Keybind{
-			{"Left click", "Place a polygon point on the wall plane"},
-			{"Tab", "Switch between the outer and inner polygon"},
-			{"Enter", "Finalize the extrusion"},
-			{"Esc", "Cancel"},
+		Binds: []uiwin.Keybind{
+			{Keys: "Left click", Desc: "Place a polygon point on the wall plane"},
+			{Keys: "Tab", Desc: "Switch between the outer and inner polygon"},
+			{Keys: "Enter", Desc: "Finalize the extrusion"},
+			{Keys: "Esc", Desc: "Cancel"},
 		},
 	},
 }

@@ -15,6 +15,7 @@ package main
 
 import (
 	"foundry/internal/script"
+	"foundry/internal/uiwin"
 	"log"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -27,7 +28,7 @@ const (
 )
 
 // logWindow is nil when the window is closed.
-var logWindow *UIWindow
+var logWindow *uiwin.UIWindow
 
 // LogWindowOpen reports whether the window is up.
 func LogWindowOpen() bool { return logWindow != nil }
@@ -38,7 +39,7 @@ func OpenLogWindow() {
 		logWindow.Win.Raise()
 		return
 	}
-	w, err := NewUIWindow("Script Log", logWindowW, logWindowH,
+	w, err := uiwin.NewUIWindow("Script Log", logWindowW, logWindowH,
 		drawLogWindow, onLogWindowClose)
 	if err != nil {
 		log.Printf("open log window: %v", err)

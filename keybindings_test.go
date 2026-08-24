@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"foundry/internal/uiwin"
+	"testing"
+)
 
 // The overlay's whole value is being accurate, so guard the two things that
 // silently rot: a section whose rows are malformed, and the two-column split
@@ -8,7 +11,7 @@ import "testing"
 
 func TestKeybindSectionsWellFormed(t *testing.T) {
 	seen := map[string]bool{}
-	for _, s := range keybindSections {
+	for _, s := range uiwin.KeybindSections {
 		if s.Title == "" {
 			t.Error("section with empty title")
 		}
@@ -28,18 +31,18 @@ func TestKeybindSectionsWellFormed(t *testing.T) {
 }
 
 func TestKeybindSplitSectionsCoversEverything(t *testing.T) {
-	left, right := keybindSplitSections(keybindSections)
-	if len(left)+len(right) != len(keybindSections) {
-		t.Fatalf("split lost sections: %d + %d != %d", len(left), len(right), len(keybindSections))
+	left, right := uiwin.KeybindSplitSections(uiwin.KeybindSections)
+	if len(left)+len(right) != len(uiwin.KeybindSections) {
+		t.Fatalf("split lost sections: %d + %d != %d", len(left), len(right), len(uiwin.KeybindSections))
 	}
 	if len(left) == 0 || len(right) == 0 {
 		t.Fatalf("split left a column empty: %d / %d", len(left), len(right))
 	}
-	joined := append(append([]KeybindSection{}, left...), right...)
+	joined := append(append([]uiwin.KeybindSection{}, left...), right...)
 	for i := range joined {
-		if joined[i].Title != keybindSections[i].Title {
+		if joined[i].Title != uiwin.KeybindSections[i].Title {
 			t.Fatalf("split reordered sections at %d: got %q want %q",
-				i, joined[i].Title, keybindSections[i].Title)
+				i, joined[i].Title, uiwin.KeybindSections[i].Title)
 		}
 	}
 }
@@ -51,7 +54,7 @@ func TestKeybindActiveSectionsFollowMode(t *testing.T) {
 
 	activeTitles := func() map[string]bool {
 		out := map[string]bool{}
-		for _, s := range keybindSections {
+		for _, s := range uiwin.KeybindSections {
 			if s.Active == nil || s.Active() {
 				out[s.Title] = true
 			}
@@ -70,7 +73,7 @@ func TestKeybindActiveSectionsFollowMode(t *testing.T) {
 	// off the window being open, not off the mode.
 	Editor = EditorState{}
 	Editor.Active = true
-	editor2DWindow = &UIWindow{}
+	editor2DWindow = &uiwin.UIWindow{}
 	got := activeTitles()
 	if !got["Editor — 2D sector map (its own window)"] || !got["Editor — any mode"] {
 		t.Errorf("2D window open: expected the 2D and shared editor sections, got %v", got)
@@ -135,8 +138,8 @@ func TestKeybindHelpTarget(t *testing.T) {
 		{"unknown focused window is ignored", texID, 99, open(texID), texID},
 	}
 	for _, c := range cases {
-		if got := keybindHelpTarget(c.current, c.focused, mainID, c.valid); got != c.want {
-			t.Errorf("%s: keybindHelpTarget(%d, %d) = %d, want %d", c.name, c.current, c.focused, got, c.want)
+		if got := uiwin.KeybindHelpTarget(c.current, c.focused, mainID, c.valid); got != c.want {
+			t.Errorf("%s: uiwin.KeybindHelpTarget(%d, %d) = %d, want %d", c.name, c.current, c.focused, got, c.want)
 		}
 	}
 }

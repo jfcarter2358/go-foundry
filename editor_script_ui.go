@@ -28,6 +28,7 @@ import (
 	"foundry/internal/flang"
 	"foundry/internal/imguibackend"
 	"foundry/internal/script"
+	"foundry/internal/uiwin"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
@@ -136,7 +137,7 @@ func drawScriptEditorMenuBar() {
 		// Deferred: this runs inside this window's own Draw, and opening a
 		// window there would hand our imgui context away mid-frame. See
 		// RequestWindowOpen.
-		RequestWindowOpen(OpenLogWindow)
+		uiwin.RequestWindowOpen(OpenLogWindow)
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Open the log window: script output, and where errors happened.")

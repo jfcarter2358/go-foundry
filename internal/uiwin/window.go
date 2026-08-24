@@ -1,4 +1,4 @@
-package main
+package uiwin
 
 // window.go — secondary OS windows sharing the main GL context.
 //
@@ -284,7 +284,7 @@ func eventWindowID(event sdl.Event) (uint32, bool) {
 
 // ---------- deferred opens ----------
 
-// pendingWindowOpens are open requests parked by code running inside some
+// PendingWindowOpens are open requests parked by code running inside some
 // window's own Draw.
 //
 // A window cannot be opened from there. NewUIWindow creates a GL context and an
@@ -299,7 +299,7 @@ func eventWindowID(event sdl.Event) (uint32, bool) {
 // generalises what modelPendingTexEditor did for one case: the hazard applies to
 // any window opening any other, and a shared door is one place to get it right
 // rather than several places to get it wrong.
-var pendingWindowOpens []func()
+var PendingWindowOpens []func()
 
 // RequestWindowOpen asks the main loop to run open at the top of the next frame.
 //
@@ -310,17 +310,17 @@ func RequestWindowOpen(open func()) {
 	if open == nil {
 		return
 	}
-	pendingWindowOpens = append(pendingWindowOpens, open)
+	PendingWindowOpens = append(PendingWindowOpens, open)
 }
 
 // DrainWindowOpens runs every parked open request. Called once per frame from
 // the main loop with the main GL and imgui contexts current.
 func DrainWindowOpens() {
-	if len(pendingWindowOpens) == 0 {
+	if len(PendingWindowOpens) == 0 {
 		return
 	}
-	reqs := pendingWindowOpens
-	pendingWindowOpens = nil
+	reqs := PendingWindowOpens
+	PendingWindowOpens = nil
 	for _, open := range reqs {
 		open()
 	}

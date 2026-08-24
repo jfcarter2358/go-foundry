@@ -24,6 +24,7 @@ import (
 	"foundry/internal/gizmo"
 	"foundry/internal/model"
 	"foundry/internal/platform"
+	"foundry/internal/uiwin"
 	"log"
 	"math"
 
@@ -44,7 +45,7 @@ const (
 )
 
 // modelEditorWindow is the pop-out; nil when the model editor is closed.
-var modelEditorWindow *UIWindow
+var modelEditorWindow *uiwin.UIWindow
 
 // modelDoc is the mesh being edited. It outlives the window, so popping the
 // editor in and out again returns to the same model rather than a fresh cube.
@@ -222,7 +223,7 @@ func OpenModelEditorWindow() {
 		modelDoc = model.NewCubeDoc()
 		modelCam.frame(modelDoc)
 	}
-	w, err := NewUIWindow("Model Editor", modelWindowW, modelWindowH,
+	w, err := uiwin.NewUIWindow("Model Editor", modelWindowW, modelWindowH,
 		drawModelEditorWindow, onModelEditorClose)
 	if err != nil {
 		log.Printf("open model editor window: %v", err)

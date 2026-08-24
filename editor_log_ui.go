@@ -22,6 +22,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 	"foundry/internal/script"
+	"foundry/internal/uiwin"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -337,7 +338,7 @@ func logWindowOpenAt(pos flang.Pos) {
 	// Deferred for the same reason the script editor's Log button is: this runs
 	// inside this window's Draw, and opening one from there would hand our
 	// context away mid-frame.
-	RequestWindowOpen(func() {
+	uiwin.RequestWindowOpen(func() {
 		OpenScriptEditorWindow()
 		scriptEditorOpenFile(name)
 		scriptEditorStatus("From the log: line %d", line)

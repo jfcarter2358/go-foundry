@@ -1,4 +1,4 @@
-package main
+package uiwin
 
 // keybind_help.go — the F1 keybinding reference overlay.
 //
@@ -19,7 +19,7 @@ import (
 
 // keybindSections is the reference the overlay draws, installed by
 // keybindings.go. Empty here so this file builds with no editor at all.
-var keybindSections []KeybindSection
+var KeybindSections []KeybindSection
 
 // KeybindHelpVisible controls whether the F1 keybinding overlay is drawn.
 var KeybindHelpVisible = false
@@ -62,15 +62,15 @@ func KeybindHelpUpdateFocus(mainID uint32) {
 			focused = id
 		}
 	}
-	keybindHelpWindow = keybindHelpTarget(keybindHelpWindow, focused, mainID, func(id uint32) bool {
+	keybindHelpWindow = KeybindHelpTarget(keybindHelpWindow, focused, mainID, func(id uint32) bool {
 		return id == mainID || UIWindowByID(id) != nil
 	})
 }
 
-// keybindHelpTarget resolves the overlay's window: the focused one when it is
+// KeybindHelpTarget resolves the overlay's window: the focused one when it is
 // a window we still own, else the one it is already in (unless that window has
 // since closed), else the main window.
-func keybindHelpTarget(current, focused, mainID uint32, valid func(uint32) bool) uint32 {
+func KeybindHelpTarget(current, focused, mainID uint32, valid func(uint32) bool) uint32 {
 	if focused != 0 && valid(focused) {
 		return focused
 	}
@@ -191,7 +191,7 @@ func keybindHelpRender(w, h float32) {
 		// Two balanced columns — the full list is far taller than a screen in
 		// one column, and scrolling a reference you opened mid-task is worse
 		// than reading it.
-		left, right := keybindSplitSections(keybindSections)
+		left, right := KeybindSplitSections(KeybindSections)
 		imgui.ColumnsV(2, "##keybind_cols", false)
 		for _, s := range left {
 			keybindDrawSection(s)
@@ -210,9 +210,9 @@ func keybindHelpRender(w, h float32) {
 	}
 }
 
-// keybindSplitSections balances the sections across two columns by row count,
+// KeybindSplitSections balances the sections across two columns by row count,
 // keeping display order within each column.
-func keybindSplitSections(secs []KeybindSection) (left, right []KeybindSection) {
+func KeybindSplitSections(secs []KeybindSection) (left, right []KeybindSection) {
 	total := 0
 	for _, s := range secs {
 		total += keybindSectionRows(s)

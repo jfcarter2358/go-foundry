@@ -12,6 +12,7 @@ import (
 	"foundry/internal/render"
 	"foundry/internal/script"
 	"foundry/internal/texture"
+	"foundry/internal/uiwin"
 	"foundry/internal/world"
 	_ "image/png"
 	"io"
@@ -124,7 +125,7 @@ func main() {
 	platform.WinWidth, platform.WinHeight = platform.Window.GetSize()
 	platform.WinHalfWidth = platform.WinWidth / 2
 	platform.WinHalfHeight = platform.WinHeight / 2
-	if MainWindowID, err = platform.Window.GetID(); err != nil {
+	if uiwin.MainWindowID, err = platform.Window.GetID(); err != nil {
 		log.Fatalf("Window.GetID: %v", err)
 	}
 
@@ -287,13 +288,13 @@ func main() {
 			// window — ahead of the routing below, so a secondary window's own
 			// handler can't eat F1 first — and swallows the Escape that closes
 			// it before a sub-editor can read it as "cancel".
-			if KeybindHelpHandleEvent(event) {
+			if uiwin.KeybindHelpHandleEvent(event) {
 				continue
 			}
 			// A secondary UIWindow (texture editor, etc.) owns its own imgui
 			// context; route its events there instead of into the 3D
 			// editor/gameplay handlers, which know nothing about it.
-			if RouteWindowEvent(event, MainWindowID) {
+			if uiwin.RouteWindowEvent(event, uiwin.MainWindowID) {
 				continue
 			}
 			if Editor.Active {
@@ -305,7 +306,7 @@ func main() {
 		platform.KeyStates = sdl.GetKeyboardState()
 
 		// Point the F1 reference at the focused window before anything draws.
-		KeybindHelpUpdateFocus(MainWindowID)
+		uiwin.KeybindHelpUpdateFocus(uiwin.MainWindowID)
 
 		if Editor.Active {
 			// Editor owns camera and input; gameplay logic is bypassed.
@@ -434,7 +435,7 @@ func main() {
 		// window's draw would insert into the map being ranged over and leave
 		// the wrong GL context current. See modelPendingTexEditor.
 		DrainModelTexEditorRequest()
-		DrainWindowOpens()
+		uiwin.DrainWindowOpens()
 
 		// Per-frame water shader inputs: animation clock and the view position
 		// the fresnel/specular terms are measured against.
@@ -712,10 +713,10 @@ func main() {
 		// Draw debug overlay and keybinding reference (both use ImGui,
 		// independent of the editor — when it is active, EditorRender has
 		// already drawn them inside its own frame).
-		if (render.DebugOverlayVisible || KeybindHelpVisibleIn(MainWindowID)) && !Editor.Active {
+		if (render.DebugOverlayVisible || uiwin.KeybindHelpVisibleIn(uiwin.MainWindowID)) && !Editor.Active {
 			imguibackend.ImGuiNewFrame(platform.DeltaTime)
 			render.DebugRenderOverlay()
-			KeybindHelpRender()
+			uiwin.KeybindHelpRender()
 			imguibackend.ImGuiRender()
 		}
 
@@ -724,6 +725,6 @@ func main() {
 		// Secondary windows (texture editor, etc.) render last, each in its
 		// own GL/imgui context, restoring the main ones before the next
 		// iteration touches world GL state again.
-		RenderSecondaryWindows(platform.DeltaTime)
+		uiwin.RenderSecondaryWindows(platform.DeltaTime)
 	}
 }

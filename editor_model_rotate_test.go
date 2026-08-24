@@ -4,6 +4,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/model"
 	"foundry/internal/modeltest"
+	"foundry/internal/uiwin"
 	"math"
 	"testing"
 
@@ -15,7 +16,7 @@ import (
 func withModelViewport(t *testing.T) {
 	t.Helper()
 	prevWin, prevCam, prevTool, prevWire := modelEditorWindow, modelCam, modelGizmoTool, modelWireframe
-	modelEditorWindow = &UIWindow{W: 1280, H: 800}
+	modelEditorWindow = &uiwin.UIWindow{W: 1280, H: 800}
 	modelCam = modelCamera{Dist: 4, Yaw: mgl32.DegToRad(35), Pitch: mgl32.DegToRad(-25)}
 	modelInvalidateVisibility()
 	t.Cleanup(func() {

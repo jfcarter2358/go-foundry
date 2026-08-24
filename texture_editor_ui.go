@@ -28,11 +28,12 @@ import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/texdoc"
 	"foundry/internal/texture"
+	"foundry/internal/uiwin"
 )
 
 var (
 	activeTexEditor  *texture.TexEditorState
-	texEditorWindow  *UIWindow
+	texEditorWindow  *uiwin.UIWindow
 	texEditorPreview uint32 // flattened-preview GL texture, shown on the canvas
 	texEditorChecker uint32 // small tiled checkerboard behind the canvas
 )
@@ -106,7 +107,7 @@ func OpenTextureEditor() {
 		texEditorWindow.Win.Raise()
 		return
 	}
-	w, err := NewUIWindow("Texture Editor", 1000, 700, drawTextureEditorUI, onTextureEditorClose)
+	w, err := uiwin.NewUIWindow("Texture Editor", 1000, 700, drawTextureEditorUI, onTextureEditorClose)
 	if err != nil {
 		log.Printf("open texture editor: %v", err)
 		return
