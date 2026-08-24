@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/model"
 	"math"
 	"testing"
 
@@ -11,20 +12,20 @@ import (
 // along none of the world axes. That is the case the feature exists for: on an
 // axis-aligned face the world arms already do the right thing, and a test on
 // one could not tell the two modes apart.
-func tiltedQuadDoc() *ModelDoc {
-	m := &ModelDoc{
+func tiltedQuadDoc() *model.ModelDoc {
+	m := &model.ModelDoc{
 		Verts: []mgl32.Vec3{{0, 0, 0}, {1, 0, 0}, {1, 1, 1}, {0, 1, 1}},
-		Faces: []ModelFace{{
+		Faces: []model.ModelFace{{
 			Verts: []int{0, 1, 2, 3},
 			UVs:   []mgl32.Vec2{{0, 0}, {1, 0}, {1, 1}, {0, 1}},
 		}},
 	}
-	m.invalidate()
+	m.Invalidate()
 	return m
 }
 
 // selectTiltedFace installs the tilted quad with its one face selected.
-func selectTiltedFace(t *testing.T) *ModelDoc {
+func selectTiltedFace(t *testing.T) *model.ModelDoc {
 	t.Helper()
 	m := tiltedQuadDoc()
 	withModelDoc(t, m)

@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_obj.go — Wavefront OBJ import and export for the model editor.
 //
@@ -172,7 +172,7 @@ func LoadOBJMesh(path string) (*ModelDoc, error) {
 
 	doc.Verts = positions
 	doc.Path = "" // an imported OBJ has no .fmdl home yet; Save prompts for one
-	doc.invalidate()
+	doc.Invalidate()
 	return doc, nil
 }
 
@@ -241,7 +241,7 @@ func SaveOBJ(m *ModelDoc, path string) error {
 		f := &m.Faces[fi]
 		faceLines.WriteString("f")
 		for i, v := range f.Verts {
-			uv := f.uvAt(i)
+			uv := f.UvAt(i)
 			fmt.Fprintf(&b, "vt %s %s\n", objF(uv.X()), objF(uv.Y()))
 			fmt.Fprintf(&faceLines, " %d/%d", v+1, vtIdx)
 			vtIdx++
@@ -284,9 +284,9 @@ func objSafeName(s string) string {
 	return strings.Join(strings.Fields(s), "_")
 }
 
-// objExt is the interchange format's extension, shared by the model editor's
+// ObjExt is the interchange format's extension, shared by the model editor's
 // import/export dialogs and the level editor's model catalog.
-const objExt = ".obj"
+const ObjExt = ".obj"
 
 // ScanOBJFiles lists the .obj files available to the import dialog.
-func ScanOBJFiles() []string { return fileutil.ScanFilesByExt(modelsDir(), objExt) }
+func ScanOBJFiles() []string { return fileutil.ScanFilesByExt(ModelsDir(), ObjExt) }

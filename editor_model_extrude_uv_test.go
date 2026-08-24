@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/model"
 	"math"
 	"testing"
 
@@ -10,7 +11,7 @@ import (
 // uvVSpan is the V range a face's mapping covers. Zero means the texture is
 // stretched infinitely along V — and that no V scale can ever fix it, since
 // scaling zero leaves zero.
-func uvVSpan(f *ModelFace) float32 {
+func uvVSpan(f *model.ModelFace) float32 {
 	if len(f.UVs) == 0 {
 		return 0
 	}
@@ -23,7 +24,7 @@ func uvVSpan(f *ModelFace) float32 {
 }
 
 func TestExtrudeByDistanceGivesSidesRealV(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	top := cubeTopFace(t, m)
 
 	_, sides := m.ExtrudeFaces([]int{top}, 2)
@@ -45,7 +46,7 @@ func TestExtrudeByDistanceGivesSidesRealV(t *testing.T) {
 
 // The reported bug: press E, drag out the depth, then try to scale V.
 func TestInteractiveExtrudeSidesFollowTheDrag(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
@@ -78,7 +79,7 @@ func TestInteractiveExtrudeSidesFollowTheDrag(t *testing.T) {
 }
 
 func TestScalingVOnAnExtrudedSideActuallyScales(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
@@ -109,7 +110,7 @@ func TestScalingVOnAnExtrudedSideActuallyScales(t *testing.T) {
 }
 
 func TestPendingExtrudeExpiresWithTheSelection(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
@@ -141,9 +142,9 @@ func TestRefreshSkipsFacesThatAreNotQuads(t *testing.T) {
 	// A subdivided side is no longer the four-cornered quad the U-along-edge,
 	// V-across-depth convention describes, so the refresh has to leave anything
 	// that is not a quad exactly as it found it.
-	m := &ModelDoc{
+	m := &model.ModelDoc{
 		Verts: []mgl32.Vec3{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}},
-		Faces: []ModelFace{{
+		Faces: []model.ModelFace{{
 			Verts: []int{0, 1, 2},
 			UVs:   []mgl32.Vec2{{0, 0}, {3, 0}, {0, 7}},
 		}},

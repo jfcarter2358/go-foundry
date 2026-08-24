@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_skin.go — binding vertices to bones.
 //
@@ -22,11 +22,11 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// modelMaxInfluences caps how many bones may move one vertex. Four is what a
+// ModelMaxInfluences caps how many bones may move one vertex. Four is what a
 // GPU skinning shader can carry in a single vec4 of weights and a single vec4
 // of indices, so keeping the data inside that budget now means the eventual
 // hardware skinning path does not have to re-prune every model it loads.
-const modelMaxInfluences = 4
+const ModelMaxInfluences = 4
 
 // ModelVertexWeight binds one vertex to one bone.
 type ModelVertexWeight struct {
@@ -36,7 +36,7 @@ type ModelVertexWeight struct {
 
 // weightsFor returns vertex vi's influences, or nil when it is unbound. The
 // slice is the live one — callers that keep it must copy.
-func (m *ModelDoc) weightsFor(vi int) []ModelVertexWeight {
+func (m *ModelDoc) WeightsFor(vi int) []ModelVertexWeight {
 	if vi < 0 || vi >= len(m.Weights) {
 		return nil
 	}
@@ -46,12 +46,12 @@ func (m *ModelDoc) weightsFor(vi int) []ModelVertexWeight {
 // VertexWeights returns a copy of vertex vi's influences, for callers that want
 // to read them without risking a write to the document.
 func (m *ModelDoc) VertexWeights(vi int) []ModelVertexWeight {
-	return append([]ModelVertexWeight(nil), m.weightsFor(vi)...)
+	return append([]ModelVertexWeight(nil), m.WeightsFor(vi)...)
 }
 
 // WeightOf returns how much bone bi moves vertex vi; 0 when unbound.
 func (m *ModelDoc) WeightOf(vi, bi int) float32 {
-	for _, w := range m.weightsFor(vi) {
+	for _, w := range m.WeightsFor(vi) {
 		if w.Bone == bi {
 			return w.Weight
 		}
@@ -62,7 +62,7 @@ func (m *ModelDoc) WeightOf(vi, bi int) float32 {
 // ensureWeights grows the weight table to match the vertex pool. Every entry
 // point that can add vertices calls this, so the two arrays are the same length
 // whenever anything reads them.
-func (m *ModelDoc) ensureWeights() {
+func (m *ModelDoc) EnsureWeights() {
 	if len(m.Weights) == len(m.Verts) {
 		return
 	}
@@ -80,7 +80,7 @@ func (m *ModelDoc) ensureWeights() {
 // what keeps Verts and Weights the same length without each of them having to
 // remember to append to both.
 func (m *ModelDoc) addVertex(p mgl32.Vec3, ws []ModelVertexWeight) int {
-	m.ensureWeights()
+	m.EnsureWeights()
 	m.Verts = append(m.Verts, p)
 	m.Weights = append(m.Weights, ws)
 	return len(m.Verts) - 1
@@ -88,7 +88,7 @@ func (m *ModelDoc) addVertex(p mgl32.Vec3, ws []ModelVertexWeight) int {
 
 // hasSkin reports whether any vertex is bound to a bone. Used to skip the
 // deform path entirely on an unskinned model.
-func (m *ModelDoc) hasSkin() bool {
+func (m *ModelDoc) HasSkin() bool {
 	for _, ws := range m.Weights {
 		if len(ws) > 0 {
 			return true
@@ -115,7 +115,7 @@ func cloneWeights(src [][]ModelVertexWeight) [][]ModelVertexWeight {
 // ---------- normalisation ----------
 
 // normalizeWeights merges duplicate bones, drops non-positive weights, keeps
-// only the strongest modelMaxInfluences of them and rescales the survivors to
+// only the strongest ModelMaxInfluences of them and rescales the survivors to
 // sum to 1.
 //
 // Summing to 1 is what makes a fully-weighted vertex rigid: with weights that
@@ -153,8 +153,8 @@ func normalizeWeights(ws []ModelVertexWeight) []ModelVertexWeight {
 		}
 		return out[i].Bone < out[j].Bone
 	})
-	if len(out) > modelMaxInfluences {
-		out = out[:modelMaxInfluences]
+	if len(out) > ModelMaxInfluences {
+		out = out[:ModelMaxInfluences]
 	}
 	var total float32
 	for _, w := range out {
@@ -222,10 +222,10 @@ func (m *ModelDoc) remapWeightBones(remap []int) {
 // evenly rather than silently overriding. Assigning at 1.0 to an unbound vertex
 // makes it rigid to this bone, which is the common case.
 func (m *ModelDoc) AssignVertsToBone(verts []int, bi int, weight float32) int {
-	if !m.validBone(bi) || weight <= 0 {
+	if !m.ValidBone(bi) || weight <= 0 {
 		return 0
 	}
-	m.ensureWeights()
+	m.EnsureWeights()
 	count := 0
 	for _, vi := range verts {
 		if vi < 0 || vi >= len(m.Weights) {
@@ -251,7 +251,7 @@ func (m *ModelDoc) AssignVertsToBone(verts []int, bi int, weight float32) int {
 
 // RemoveVertsFromBone unbinds the given vertices from bone bi.
 func (m *ModelDoc) RemoveVertsFromBone(verts []int, bi int) int {
-	m.ensureWeights()
+	m.EnsureWeights()
 	count := 0
 	for _, vi := range verts {
 		if vi < 0 || vi >= len(m.Weights) || len(m.Weights[vi]) == 0 {
@@ -291,7 +291,7 @@ func (m *ModelDoc) VertsBoundTo(bi int) []int {
 
 // ClearWeights unbinds the given vertices from every bone.
 func (m *ModelDoc) ClearWeights(verts []int) {
-	m.ensureWeights()
+	m.EnsureWeights()
 	for _, vi := range verts {
 		if vi >= 0 && vi < len(m.Weights) {
 			m.Weights[vi] = nil
@@ -323,7 +323,7 @@ func (m *ModelDoc) AutoWeightVerts(verts []int) int {
 	if len(m.Bones) == 0 {
 		return 0
 	}
-	m.ensureWeights()
+	m.EnsureWeights()
 	count := 0
 	dists := make([]float32, len(m.Bones))
 	for _, vi := range verts {
@@ -374,16 +374,16 @@ func (m *ModelDoc) AutoWeightVerts(verts []int) int {
 // to run this on a partly-weighted model: the parts nobody has assigned yet
 // simply do not move.
 func (m *ModelDoc) SkinFrom(restBones []ModelBone, restVerts []mgl32.Vec3) {
-	if len(m.Bones) == 0 || !m.hasSkin() {
+	if len(m.Bones) == 0 || !m.HasSkin() {
 		return
 	}
-	m.ensureWeights()
-	if skinVerts(m.BoneDeltas(restBones), m.Weights, restVerts, m.Verts) {
-		m.touch()
+	m.EnsureWeights()
+	if SkinVerts(m.BoneDeltas(restBones), m.Weights, restVerts, m.Verts) {
+		m.Touch()
 	}
 }
 
-// skinVerts is the linear blend itself, factored out of SkinFrom so the two
+// SkinVerts is the linear blend itself, factored out of SkinFrom so the two
 // sources of deltas share one implementation: a rest-skeleton drag passes
 // BoneDeltas, an animated pose passes PoseDeltas (model_pose.go). It reports
 // whether anything moved.
@@ -391,7 +391,7 @@ func (m *ModelDoc) SkinFrom(restBones []ModelBone, restVerts []mgl32.Vec3) {
 // out may be restVerts itself, which is the in-place case SkinFrom uses. Only
 // bound vertices are written, so an out that starts as a copy of restVerts comes
 // back complete — the unbound parts of a partly-rigged model simply stay put.
-func skinVerts(deltas []mgl32.Mat4, weights [][]ModelVertexWeight, restVerts, out []mgl32.Vec3) bool {
+func SkinVerts(deltas []mgl32.Mat4, weights [][]ModelVertexWeight, restVerts, out []mgl32.Vec3) bool {
 	moved := false
 	for vi := range out {
 		if vi >= len(weights) || vi >= len(restVerts) {

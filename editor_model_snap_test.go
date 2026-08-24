@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/model"
 	"math"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestAxisMovedIsInertWhenSnappingIsOff(t *testing.T) {
 }
 
 func TestSnappedDragLandsEveryVertexOnTheGrid(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	// Push each corner off the grid by a different amount, so a snap applied
 	// to the selection's centroid could not put them all back on it.
 	for i := range m.Verts {
@@ -61,7 +62,7 @@ func TestSnappedDragLandsEveryVertexOnTheGrid(t *testing.T) {
 }
 
 func TestNudgeMovesASelectionRigidlyOntoTheGrid(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	// Shove the whole cube off the grid so snapping has something to correct.
 	for i := range m.Verts {
 		m.Verts[i] = m.Verts[i].Add(mgl32.Vec3{0, 0.03, 0})
@@ -100,7 +101,7 @@ func TestNudgeMovesASelectionRigidlyOntoTheGrid(t *testing.T) {
 }
 
 func TestNudgeWithoutSnappingMovesTheFullStep(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withGridSnap(t, false, 0.1)
 

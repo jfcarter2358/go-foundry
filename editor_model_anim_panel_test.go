@@ -14,6 +14,7 @@ package main
 // an unbalanced frame aborts here rather than in front of the user.
 
 import (
+	"foundry/internal/model"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -67,7 +68,7 @@ func TestAnimPanelBalancesItsImguiStacks(t *testing.T) {
 		{"a keyed and posed bone", func() {
 			modelPoseMode = true
 			modelSelection.Bones = []int{idx[1]}
-			modelPoseSet(idx[1], ModelBonePose{
+			modelPoseSet(idx[1], model.ModelBonePose{
 				Rot:   mgl32.QuatRotate(0.4, mgl32.Vec3{1, 0, 0}),
 				Scale: mgl32.Vec3{1, 1, 1},
 			})
@@ -128,7 +129,7 @@ func TestAnimPanelBalancesWithNoArmature(t *testing.T) {
 	prevDoc, prevMode := modelDoc, modelPoseMode
 	t.Cleanup(func() { modelDoc, modelPoseMode = prevDoc, prevMode })
 
-	modelDoc = NewCubeDoc()
+	modelDoc = model.NewCubeDoc()
 	for _, mode := range []bool{false, true} {
 		modelPoseMode = mode
 		imguiTestFrame(t, modelAnimSection)

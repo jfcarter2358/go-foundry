@@ -14,6 +14,7 @@ package main
 // baked into a keyframe.
 
 import (
+	"foundry/internal/model"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -22,7 +23,7 @@ import (
 // modelPoseDrag is the pose as it stood at mouse-down. Every motion event
 // applies to this, never to the live pose.
 var modelPoseDrag struct {
-	Pose ModelPose
+	Pose model.ModelPose
 	// Local is each selected bone's pose-space frame, captured once at
 	// mouse-down. Recomputing it per event would chase the bone as it moved and
 	// make the drag accelerate away from the cursor.
@@ -31,10 +32,10 @@ var modelPoseDrag struct {
 
 // modelPoseGizmoCapture snapshots the pose at the start of a drag.
 func modelPoseGizmoCapture() {
-	modelPoseDrag.Pose = modelPose.clone()
+	modelPoseDrag.Pose = modelPose.Clone()
 	modelPoseDrag.Local = map[int]mgl32.Mat4{}
 	for _, bi := range modelSelection.Bones {
-		if modelDoc != nil && modelDoc.validBone(bi) {
+		if modelDoc != nil && modelDoc.ValidBone(bi) {
 			modelPoseDrag.Local[bi] = modelPoseBoneLocal(bi)
 		}
 	}
@@ -42,17 +43,17 @@ func modelPoseGizmoCapture() {
 
 // modelPoseGizmoRelease drops the snapshot.
 func modelPoseGizmoRelease() {
-	modelPoseDrag.Pose = ModelPose{}
+	modelPoseDrag.Pose = model.ModelPose{}
 	modelPoseDrag.Local = nil
 }
 
 // modelPoseDragBone returns bone bi's captured channels and frame.
-func modelPoseDragBone(bi int) (ModelBonePose, mgl32.Mat4, bool) {
+func modelPoseDragBone(bi int) (model.ModelBonePose, mgl32.Mat4, bool) {
 	local, ok := modelPoseDrag.Local[bi]
 	if !ok {
-		return ModelBonePose{}, mgl32.Ident4(), false
+		return model.ModelBonePose{}, mgl32.Ident4(), false
 	}
-	return modelPoseDrag.Pose.bone(bi), local, true
+	return modelPoseDrag.Pose.Bone(bi), local, true
 }
 
 // ---------- move ----------
@@ -81,8 +82,8 @@ func modelPoseMoveApply(axis int, delta float32) {
 		if modelDoc.Bones[bi].Connected {
 			continue
 		}
-		rest.Trans = rest.Trans.Add(xformDir(local.Inv(), world))
-		modelPose.set(bi, rest)
+		rest.Trans = rest.Trans.Add(model.XformDir(local.Inv(), world))
+		modelPose.Set(bi, rest)
 		moved = true
 	}
 	if moved {
@@ -97,7 +98,7 @@ func modelPoseAnyMovable() bool {
 		return false
 	}
 	for _, bi := range modelSelection.Bones {
-		if modelDoc.validBone(bi) && !modelDoc.Bones[bi].Connected {
+		if modelDoc.ValidBone(bi) && !modelDoc.Bones[bi].Connected {
 			return true
 		}
 	}
@@ -130,7 +131,7 @@ func modelPoseRotateApply(worldAxis mgl32.Vec3, delta float32) {
 			continue
 		}
 		// The world axis, expressed in the frame the channel lives in.
-		axis := xformDir(local.Inv(), worldAxis)
+		axis := model.XformDir(local.Inv(), worldAxis)
 		if axis.Len() < 1e-6 {
 			continue
 		}
@@ -138,8 +139,8 @@ func modelPoseRotateApply(worldAxis mgl32.Vec3, delta float32) {
 		// dragging the X ring always means the same axis however the bone has
 		// already been rotated. Post-multiplying would compound in the bone's
 		// *current* frame and make the ring's meaning drift mid-drag.
-		rest.Rot = mgl32.QuatRotate(delta, axis.Normalize()).Mul(rest.rot()).Normalize()
-		modelPose.set(bi, rest)
+		rest.Rot = mgl32.QuatRotate(delta, axis.Normalize()).Mul(rest.EffectiveRot()).Normalize()
+		modelPose.Set(bi, rest)
 		moved = true
 	}
 	if moved {
@@ -166,7 +167,7 @@ func modelPoseScaleAxes() ([3]mgl32.Vec3, bool) {
 	if !ok {
 		return worldBasis(), false
 	}
-	x, y, z, _, valid := boneBasisAxes(b)
+	x, y, z, _, valid := model.BoneBasisAxes(b)
 	if !valid {
 		return worldBasis(), false
 	}
@@ -187,13 +188,13 @@ func modelPoseScaleApply(s mgl32.Vec3) {
 		if !ok {
 			continue
 		}
-		base := rest.scale()
+		base := rest.EffectiveScale()
 		rest.Scale = mgl32.Vec3{
 			float32(math.Max(float64(base.X()*s.X()), minScale)),
 			float32(math.Max(float64(base.Y()*s.Y()), minScale)),
 			float32(math.Max(float64(base.Z()*s.Z()), minScale)),
 		}
-		modelPose.set(bi, rest)
+		modelPose.Set(bi, rest)
 		moved = true
 	}
 	if moved {

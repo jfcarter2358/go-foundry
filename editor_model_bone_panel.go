@@ -15,6 +15,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/imguibackend"
+	"foundry/internal/model"
 	"math"
 	"strings"
 
@@ -46,7 +47,7 @@ func modelBoneDisplayOrder() []int {
 		}
 	}
 	for bi := range modelDoc.Bones {
-		if !modelDoc.validBone(modelDoc.Bones[bi].Parent) {
+		if !modelDoc.ValidBone(modelDoc.Bones[bi].Parent) {
 			walk(bi)
 		}
 	}
@@ -267,14 +268,14 @@ func modelBoneProperties(bi int) {
 // so the combo simply reports the refusal in the status line.
 func modelBoneParentCombo(bi int) {
 	current := "(root)"
-	if p := modelDoc.Bones[bi].Parent; modelDoc.validBone(p) {
+	if p := modelDoc.Bones[bi].Parent; modelDoc.ValidBone(p) {
 		current = modelDoc.Bones[p].Name
 	}
 	if !imgui.BeginCombo("Parent##modelboneparent", current) {
 		return
 	}
 	if imgui.SelectableV("(root)", modelDoc.Bones[bi].Parent < 0, 0, imgui.Vec2{}) {
-		modelReparentBone(bi, modelBoneNoParent)
+		modelReparentBone(bi, model.ModelBoneNoParent)
 	}
 	for other := range modelDoc.Bones {
 		if other == bi {

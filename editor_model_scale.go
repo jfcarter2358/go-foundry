@@ -283,7 +283,7 @@ func modelBoneScaleApply(origin mgl32.Vec3, s mgl32.Vec3, basis [3]mgl32.Vec3) {
 		modelDoc.SetBoneHead(bi, head)
 		modelDoc.Bones[bi].Tail = tail
 	}
-	modelDoc.syncConnectedBones()
+	modelDoc.SyncConnectedBones()
 	if modelBoneDeform {
 		modelDoc.SkinFrom(modelBoneDrag.Bones, modelBoneDrag.Verts)
 	}

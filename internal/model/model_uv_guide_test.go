@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"image/color"
@@ -164,8 +164,12 @@ func TestAtlasGuideDistantSquaresDiffer(t *testing.T) {
 
 // Every atlas size the dialog offers must produce a real checker — in
 // particular the smallest, where the square size is clamped to the image.
+//
+// The list is spelled out rather than read from the dialog (texEditorSizeOptions
+// in texture_editor_ui.go): this package must not depend on the UI, and a new
+// size added there failing here is exactly the reminder that is wanted.
 func TestAtlasGuideWorksAtEverySize(t *testing.T) {
-	for _, s := range texEditorSizeOptions {
+	for _, s := range []int32{64, 128, 256, 512, 1024} {
 		size := int(s)
 		pat := AtlasGuidePattern(size, size)
 		if len(pat) != size*size {
@@ -196,7 +200,7 @@ func TestAtlasGuideHandlesDegenerateSizes(t *testing.T) {
 	}
 }
 
-// fillAtlasGuide must write the guide into the layer it is given and leave the
+// FillAtlasGuide must write the guide into the layer it is given and leave the
 // document's other layers alone — the Paint layer above it has to stay empty.
 func TestFillAtlasGuideWritesOnlyItsLayer(t *testing.T) {
 	doc, err := texdoc.NewTexDoc("t", 64, 64, texdoc.GlobalPalette)
@@ -206,7 +210,7 @@ func TestFillAtlasGuideWritesOnlyItsLayer(t *testing.T) {
 	if err := doc.AddLayer("Paint"); err != nil {
 		t.Fatal(err)
 	}
-	fillAtlasGuide(doc, 0)
+	FillAtlasGuide(doc, 0)
 
 	nonZero := 0
 	for _, idx := range doc.Layers[0].Idx {
@@ -215,7 +219,7 @@ func TestFillAtlasGuideWritesOnlyItsLayer(t *testing.T) {
 		}
 	}
 	if nonZero == 0 {
-		t.Error("guide layer is still empty after fillAtlasGuide")
+		t.Error("guide layer is still empty after FillAtlasGuide")
 	}
 	for _, idx := range doc.Layers[1].Idx {
 		if idx != 0 {
@@ -230,9 +234,9 @@ func TestFillAtlasGuideIgnoresBadLayer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fillAtlasGuide(doc, -1)
-	fillAtlasGuide(doc, 99)
-	fillAtlasGuide(nil, 0)
+	FillAtlasGuide(doc, -1)
+	FillAtlasGuide(doc, 99)
+	FillAtlasGuide(nil, 0)
 	for _, idx := range doc.Layers[0].Idx {
 		if idx != 0 {
 			t.Fatal("a bad layer index wrote to layer 0")
@@ -247,7 +251,7 @@ func TestAtlasGuideFlattensOpaque(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fillAtlasGuide(doc, 0)
+	FillAtlasGuide(doc, 0)
 	flat := doc.Flatten()
 	for i, idx := range flat.Pix {
 		if doc.Pal[idx].A != 255 {

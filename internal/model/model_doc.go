@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_doc.go — ModelDoc, the model editor's mesh document.
 //
@@ -38,7 +38,7 @@ type ModelFace struct {
 
 // clone returns a deep copy; the slices must not be shared with the original or
 // an edit to one face would silently rewrite another.
-func (f ModelFace) clone() ModelFace {
+func (f ModelFace) Clone() ModelFace {
 	c := f
 	c.Verts = append([]int(nil), f.Verts...)
 	c.UVs = append([]mgl32.Vec2(nil), f.UVs...)
@@ -53,7 +53,7 @@ func (f ModelFace) clone() ModelFace {
 type ModelDoc struct {
 	ID string
 	// Texture is the one image the whole model is painted with — the same
-	// logical name Wall.Texture holds. Empty means defaultModelTexture.
+	// logical name Wall.Texture holds. Empty means DefaultModelTexture.
 	//
 	// One texture per model, rather than one per face, because the two ways of
 	// texturing a mesh answer different questions and only one of them scales.
@@ -91,10 +91,10 @@ type ModelDoc struct {
 	rev uint64
 }
 
-// defaultModelTexture is what an untextured document is drawn with. It is a
+// DefaultModelTexture is what an untextured document is drawn with. It is a
 // real entry in textures/, so a fresh cube looks like something rather than
 // binding texture 0 and rendering black.
-const defaultModelTexture = "default"
+const DefaultModelTexture = "default"
 
 // TextureName is the document's texture, resolved through the empty-means-
 // default rule. Every consumer that is about to *use* the name — compiling
@@ -102,23 +102,23 @@ const defaultModelTexture = "default"
 // the fallback lives in one place; ModelDoc.Texture stays empty on disk.
 func (m *ModelDoc) TextureName() string {
 	if m.Texture == "" {
-		return defaultModelTexture
+		return DefaultModelTexture
 	}
 	return m.Texture
 }
 
-// SetTexture repoints the whole model at tex. Passing defaultModelTexture
+// SetTexture repoints the whole model at tex. Passing DefaultModelTexture
 // stores it as the empty string, so "never chosen" and "chosen the default"
 // serialise the same way and a round-trip cannot invent a change.
 func (m *ModelDoc) SetTexture(tex string) {
-	if tex == defaultModelTexture {
+	if tex == DefaultModelTexture {
 		tex = ""
 	}
 	if m.Texture == tex {
 		return
 	}
 	m.Texture = tex
-	m.touch()
+	m.Touch()
 }
 
 // Rev returns the document's edit counter.
@@ -132,21 +132,21 @@ func (m *ModelDoc) Clone() *ModelDoc {
 		Texture:     m.Texture,
 		Verts:       append([]mgl32.Vec3(nil), m.Verts...),
 		Faces:       make([]ModelFace, len(m.Faces)),
-		Bones:       cloneBones(m.Bones),
+		Bones:       CloneBones(m.Bones),
 		Weights:     cloneWeights(m.Weights),
 		Animations:  cloneClips(m.Animations),
 		SmoothAngle: m.SmoothAngle,
 		Path:        m.Path,
 	}
 	for i := range m.Faces {
-		c.Faces[i] = m.Faces[i].clone()
+		c.Faces[i] = m.Faces[i].Clone()
 	}
 	return c
 }
 
 // touch marks the document as needing a GPU rebuild. Topology edits must use
 // invalidate instead, which also drops the cached adjacency.
-func (m *ModelDoc) touch() {
+func (m *ModelDoc) Touch() {
 	m.dirty = true
 	m.rev++
 }
@@ -154,8 +154,8 @@ func (m *ModelDoc) touch() {
 // invalidate marks the document dirty *and* discards the derived adjacency
 // index. Anything that adds, removes or rewires a face or vertex must call this
 // — a stale adjacency map would hand out indices that no longer exist.
-func (m *ModelDoc) invalidate() {
-	m.touch()
+func (m *ModelDoc) Invalidate() {
+	m.Touch()
 	m.adj = nil
 }
 
@@ -213,21 +213,21 @@ func NewCubeDoc() *ModelDoc {
 			UVs:   append([]mgl32.Vec2(nil), unitUV...),
 		})
 	}
-	m.invalidate()
+	m.Invalidate()
 	return m
 }
 
 // ---------- topology ----------
 
-// edgeKey identifies an undirected edge. A is always the smaller index, so the
+// EdgeKey identifies an undirected edge. A is always the smaller index, so the
 // same edge reached from either of its two faces produces the same key.
-type edgeKey struct{ A, B int }
+type EdgeKey struct{ A, B int }
 
-func makeEdgeKey(a, b int) edgeKey {
+func MakeEdgeKey(a, b int) EdgeKey {
 	if a > b {
 		a, b = b, a
 	}
-	return edgeKey{a, b}
+	return EdgeKey{a, b}
 }
 
 // modelAdjacency is the derived "what touches what" index. A half-edge
@@ -236,8 +236,8 @@ func makeEdgeKey(a, b int) edgeKey {
 // far harder to get subtly wrong.
 type modelAdjacency struct {
 	vertFaces map[int][]int     // vertex index -> face indices touching it
-	edgeFaces map[edgeKey][]int // edge -> face indices; len 1 = boundary, 2 = interior
-	edges     []edgeKey         // deterministic order, for edge selection/picking
+	edgeFaces map[EdgeKey][]int // edge -> face indices; len 1 = boundary, 2 = interior
+	edges     []EdgeKey         // deterministic order, for edge selection/picking
 }
 
 // adjacency returns the topology index, rebuilding it if a topology edit has
@@ -248,18 +248,18 @@ func (m *ModelDoc) adjacency() *modelAdjacency {
 	}
 	a := &modelAdjacency{
 		vertFaces: make(map[int][]int, len(m.Verts)),
-		edgeFaces: make(map[edgeKey][]int, len(m.Faces)*4),
+		edgeFaces: make(map[EdgeKey][]int, len(m.Faces)*4),
 	}
 	for fi := range m.Faces {
 		f := &m.Faces[fi]
 		n := len(f.Verts)
 		for i, v := range f.Verts {
 			a.vertFaces[v] = append(a.vertFaces[v], fi)
-			e := makeEdgeKey(v, f.Verts[(i+1)%n])
+			e := MakeEdgeKey(v, f.Verts[(i+1)%n])
 			a.edgeFaces[e] = append(a.edgeFaces[e], fi)
 		}
 	}
-	a.edges = make([]edgeKey, 0, len(a.edgeFaces))
+	a.edges = make([]EdgeKey, 0, len(a.edgeFaces))
 	for e := range a.edgeFaces {
 		a.edges = append(a.edges, e)
 	}
@@ -277,14 +277,14 @@ func (m *ModelDoc) adjacency() *modelAdjacency {
 }
 
 // Edges returns the mesh's unique edges in a stable order.
-func (m *ModelDoc) Edges() []edgeKey { return m.adjacency().edges }
+func (m *ModelDoc) Edges() []EdgeKey { return m.adjacency().edges }
 
 // FacesAtVertex returns the indices of the faces touching vertex vi.
 func (m *ModelDoc) FacesAtVertex(vi int) []int { return m.adjacency().vertFaces[vi] }
 
 // FacesAtEdge returns the indices of the faces sharing edge e — one for a
 // boundary edge, two for an interior one.
-func (m *ModelDoc) FacesAtEdge(e edgeKey) []int { return m.adjacency().edgeFaces[e] }
+func (m *ModelDoc) FacesAtEdge(e EdgeKey) []int { return m.adjacency().edgeFaces[e] }
 
 // ---------- geometry queries ----------
 
@@ -364,7 +364,7 @@ func faceUVCentroid(f *ModelFace) mgl32.Vec2 {
 // with PerpAxis (detail_render.go) picking a stable first axis. This is the
 // same trick computeFaceBasis uses for procedural detail, but on indexed data
 // rather than a flat vertex buffer.
-func (m *ModelDoc) faceTriangles(fi int) [][3]int {
+func (m *ModelDoc) FaceTriangles(fi int) [][3]int {
 	if fi < 0 || fi >= len(m.Faces) {
 		return nil
 	}
@@ -447,8 +447,8 @@ type modelSubmesh struct {
 // Normals are not computed here: Smooth rides on the submesh and Geometry.Load
 // runs ComputeSmoothNormals itself, welding across the whole submesh, which is
 // what makes a subdivided sphere shade as one surface.
-func (m *ModelDoc) modelSubmeshes() []modelSubmesh {
-	return m.modelSubmeshesFrom(m.Verts)
+func (m *ModelDoc) ModelSubmeshes() []modelSubmesh {
+	return m.ModelSubmeshesFrom(m.Verts)
 }
 
 // modelSubmeshesFrom compiles the mesh using a caller-supplied vertex array
@@ -457,13 +457,13 @@ func (m *ModelDoc) modelSubmeshes() []modelSubmesh {
 // The model editor's pose mode passes its CPU-skinned positions here: the
 // document goes on holding the rest mesh — so save, undo and every mesh op stay
 // untouched by posing — while what reaches the GPU is the deformed shape.
-func (m *ModelDoc) modelSubmeshesFrom(verts []mgl32.Vec3) []modelSubmesh {
+func (m *ModelDoc) ModelSubmeshesFrom(verts []mgl32.Vec3) []modelSubmesh {
 	g := &modelSubmesh{Texture: m.TextureName()}
-	skinned := len(m.Bones) > 0 && m.hasSkin()
+	skinned := len(m.Bones) > 0 && m.HasSkin()
 
 	for fi := range m.Faces {
 		f := &m.Faces[fi]
-		tris := m.faceTriangles(fi)
+		tris := m.FaceTriangles(fi)
 		if len(tris) == 0 {
 			continue
 		}
@@ -487,7 +487,7 @@ func (m *ModelDoc) modelSubmeshesFrom(verts []mgl32.Vec3) []modelSubmesh {
 			g.Vertices = append(g.Vertices, []float32{p.X(), p.Y(), p.Z(), uv.X(), uv.Y()})
 			g.SrcVerts = append(g.SrcVerts, vi)
 			if skinned {
-				idx, wt := skinAttrsFor(m.weightsFor(vi))
+				idx, wt := SkinAttrsFor(m.WeightsFor(vi))
 				g.SkinIdx = append(g.SkinIdx, idx)
 				g.SkinWt = append(g.SkinWt, wt)
 			}
@@ -503,16 +503,16 @@ func (m *ModelDoc) modelSubmeshesFrom(verts []mgl32.Vec3) []modelSubmesh {
 	return []modelSubmesh{*g}
 }
 
-// skinAttrsFor packs one vertex's influences into the fixed vec4 pair the
+// SkinAttrsFor packs one vertex's influences into the fixed vec4 pair the
 // shader reads, padding with zero weight. An unbound vertex gets all-zero
 // weights, which skinMatrix (skin_common.glsl) resolves to the identity — so
 // the unrigged parts of a partly-bound model stay where they are, exactly as
 // they do on the CPU path.
-func skinAttrsFor(ws []ModelVertexWeight) (idx, wt []float32) {
-	idx = make([]float32, modelMaxInfluences)
-	wt = make([]float32, modelMaxInfluences)
+func SkinAttrsFor(ws []ModelVertexWeight) (idx, wt []float32) {
+	idx = make([]float32, ModelMaxInfluences)
+	wt = make([]float32, ModelMaxInfluences)
 	for i, w := range ws {
-		if i >= modelMaxInfluences {
+		if i >= ModelMaxInfluences {
 			break
 		}
 		idx[i] = float32(w.Bone)

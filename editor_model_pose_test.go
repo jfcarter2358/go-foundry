@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/model"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -39,9 +40,9 @@ func withPoseEditor(t *testing.T) [3]int {
 func TestPoseModeLeavesTheDocumentAtRest(t *testing.T) {
 	idx := withPoseEditor(t)
 	restVerts := append([]mgl32.Vec3(nil), modelDoc.Verts...)
-	restBones := cloneBones(modelDoc.Bones)
+	restBones := model.CloneBones(modelDoc.Bones)
 
-	modelPoseSet(idx[0], ModelBonePose{
+	modelPoseSet(idx[0], model.ModelBonePose{
 		Rot:   mgl32.QuatRotate(mgl32.DegToRad(45), mgl32.Vec3{1, 0, 0}),
 		Scale: mgl32.Vec3{1, 1, 1},
 	})
@@ -76,7 +77,7 @@ func TestPoseModeLeavesTheDocumentAtRest(t *testing.T) {
 
 func TestLeavingPoseModeShowsTheRestMeshAgain(t *testing.T) {
 	idx := withPoseEditor(t)
-	modelPoseSet(idx[0], ModelBonePose{
+	modelPoseSet(idx[0], model.ModelBonePose{
 		Rot:   mgl32.QuatRotate(mgl32.DegToRad(45), mgl32.Vec3{1, 0, 0}),
 		Scale: mgl32.Vec3{1, 1, 1},
 	})
@@ -109,20 +110,20 @@ func TestPoseModeForcesBoneSelection(t *testing.T) {
 func TestUndoRestoresThePoseNotJustTheDocument(t *testing.T) {
 	idx := withPoseEditor(t)
 	ModelPushUndo()
-	modelPoseSet(idx[0], ModelBonePose{
+	modelPoseSet(idx[0], model.ModelBonePose{
 		Rot:   mgl32.QuatRotate(mgl32.DegToRad(60), mgl32.Vec3{1, 0, 0}),
 		Scale: mgl32.Vec3{1, 1, 1},
 	})
-	if modelPose.bone(idx[0]).isIdentity() {
+	if modelPose.Bone(idx[0]).IsIdentity() {
 		t.Fatal("the pose edit did not take")
 	}
 
 	ModelUndo()
-	if !modelPose.bone(idx[0]).isIdentity() {
+	if !modelPose.Bone(idx[0]).IsIdentity() {
 		t.Error("undo left the bone posed")
 	}
 	ModelRedo()
-	if modelPose.bone(idx[0]).isIdentity() {
+	if modelPose.Bone(idx[0]).IsIdentity() {
 		t.Error("redo did not restore the pose")
 	}
 }
@@ -130,7 +131,7 @@ func TestUndoRestoresThePoseNotJustTheDocument(t *testing.T) {
 func TestKeyPoseKeysOnlyPosedBones(t *testing.T) {
 	idx := withPoseEditor(t)
 	modelPoseClip = modelDoc.AddClip("walk")
-	modelPoseSet(idx[1], ModelBonePose{
+	modelPoseSet(idx[1], model.ModelBonePose{
 		Rot:   mgl32.QuatRotate(mgl32.DegToRad(30), mgl32.Vec3{1, 0, 0}),
 		Scale: mgl32.Vec3{1, 1, 1},
 	})
@@ -158,21 +159,21 @@ func TestScrubbingAndPlaybackAgree(t *testing.T) {
 	c.Duration = 1
 	c.FPS = 10
 	c.Loop = false
-	c.SetKey(idx[0], 0, identBonePose())
-	c.SetKey(idx[0], 1, ModelBonePose{
+	c.SetKey(idx[0], 0, model.IdentBonePose())
+	c.SetKey(idx[0], 1, model.ModelBonePose{
 		Rot:   mgl32.QuatRotate(mgl32.DegToRad(90), mgl32.Vec3{1, 0, 0}),
 		Scale: mgl32.Vec3{1, 1, 1},
 	})
 
 	modelPoseSetTime(0.5)
-	scrubbed := modelPose.bone(idx[0]).rot()
+	scrubbed := modelPose.Bone(idx[0]).EffectiveRot()
 
 	modelPoseSetTime(0)
 	modelPosePlaying = true
 	for i := 0; i < 5; i++ {
 		modelPoseTick(0.1)
 	}
-	played := modelPose.bone(idx[0]).rot()
+	played := modelPose.Bone(idx[0]).EffectiveRot()
 
 	if !vec3Close(scrubbed.V, played.V, 1e-4) {
 		t.Errorf("scrubbing and playback disagree at 0.5s: %v vs %v", scrubbed.V, played.V)
@@ -184,15 +185,15 @@ func TestPlaybackStopsAtTheEndOfAOneShot(t *testing.T) {
 	modelPoseClip = modelDoc.AddClip("hit")
 	c := modelActiveClip()
 	c.Duration, c.Loop = 0.5, false
-	c.SetKey(idx[0], 0, identBonePose())
+	c.SetKey(idx[0], 0, model.IdentBonePose())
 
 	modelPosePlaying = true
 	modelPoseTick(1)
 	if modelPosePlaying {
 		t.Error("a one-shot kept playing past its end")
 	}
-	if modelPoseTime != c.duration() {
-		t.Errorf("playhead settled at %v, want the clip end %v", modelPoseTime, c.duration())
+	if modelPoseTime != c.EffectiveDuration() {
+		t.Errorf("playhead settled at %v, want the clip end %v", modelPoseTime, c.EffectiveDuration())
 	}
 }
 
@@ -201,14 +202,14 @@ func TestPlaybackLoops(t *testing.T) {
 	modelPoseClip = modelDoc.AddClip("walk")
 	c := modelActiveClip()
 	c.Duration, c.Loop = 0.5, true
-	c.SetKey(idx[0], 0, identBonePose())
+	c.SetKey(idx[0], 0, model.IdentBonePose())
 
 	modelPosePlaying = true
 	modelPoseTick(0.6)
 	if !modelPosePlaying {
 		t.Error("a looping clip stopped at its end")
 	}
-	if modelPoseTime >= c.duration() {
+	if modelPoseTime >= c.EffectiveDuration() {
 		t.Errorf("playhead did not wrap: %v", modelPoseTime)
 	}
 }
@@ -226,7 +227,7 @@ func TestPoseTranslationSkipsConnectedBones(t *testing.T) {
 	modelPoseMoveApply(0, 1)
 	modelPoseGizmoRelease()
 
-	if !modelPose.bone(idx[1]).isIdentity() {
+	if !modelPose.Bone(idx[1]).IsIdentity() {
 		t.Error("a connected bone was translated; the joint would come apart")
 	}
 
@@ -235,7 +236,7 @@ func TestPoseTranslationSkipsConnectedBones(t *testing.T) {
 	modelPoseGizmoCapture()
 	modelPoseMoveApply(0, 1)
 	modelPoseGizmoRelease()
-	if modelPose.bone(idx[0]).isIdentity() {
+	if modelPose.Bone(idx[0]).IsIdentity() {
 		t.Error("the root bone did not translate")
 	}
 }
@@ -256,21 +257,21 @@ func TestPoseScaleUsesTheBonesOwnAxes(t *testing.T) {
 
 func TestClearChannelDropsOnlyThatChannel(t *testing.T) {
 	idx := withPoseEditor(t)
-	modelPoseSet(idx[0], ModelBonePose{
+	modelPoseSet(idx[0], model.ModelBonePose{
 		Trans: mgl32.Vec3{1, 0, 0},
 		Rot:   mgl32.QuatRotate(0.5, mgl32.Vec3{0, 0, 1}),
 		Scale: mgl32.Vec3{1, 2, 1},
 	})
 	modelPoseClearChannel([]int{idx[0]}, false, true, false)
 
-	bp := modelPose.bone(idx[0])
-	if mgl32.Abs(mgl32.Abs(bp.rot().W)-1) > 1e-6 {
+	bp := modelPose.Bone(idx[0])
+	if mgl32.Abs(mgl32.Abs(bp.EffectiveRot().W)-1) > 1e-6 {
 		t.Error("rotation was not cleared")
 	}
 	if bp.Trans.Len() < 0.5 {
 		t.Error("clearing the rotation also dropped the translation")
 	}
-	if mgl32.Abs(bp.scale().Y()-2) > 1e-6 {
+	if mgl32.Abs(bp.EffectiveScale().Y()-2) > 1e-6 {
 		t.Error("clearing the rotation also dropped the scale")
 	}
 }
@@ -354,7 +355,7 @@ func TestRenameReadBackSurvivesUniquifying(t *testing.T) {
 // ---------- keyframe selection ----------
 
 // keyedPoseEditor sets up a clip with two bones keyed at two times each.
-func keyedPoseEditor(t *testing.T) ([3]int, *ModelClip) {
+func keyedPoseEditor(t *testing.T) ([3]int, *model.ModelClip) {
 	t.Helper()
 	idx := withPoseEditor(t)
 	t.Cleanup(modelClearKeySelection)
@@ -362,8 +363,8 @@ func keyedPoseEditor(t *testing.T) ([3]int, *ModelClip) {
 	c := modelActiveClip()
 	c.Duration, c.FPS = 1, 10
 	for _, bi := range []int{idx[0], idx[1]} {
-		c.SetKey(bi, 0, identBonePose())
-		c.SetKey(bi, 0.5, ModelBonePose{
+		c.SetKey(bi, 0, model.IdentBonePose())
+		c.SetKey(bi, 0.5, model.ModelBonePose{
 			Rot:   mgl32.QuatRotate(0.3, mgl32.Vec3{1, 0, 0}),
 			Scale: mgl32.Vec3{1, 1, 1},
 		})
@@ -468,7 +469,7 @@ func TestSummaryKeySelectionCoversEveryBone(t *testing.T) {
 	var refs []modelKeyRef
 	for i := range c.Tracks {
 		for _, k := range c.Tracks[i].Keys {
-			if geom.Abs32(k.Time-0.5) <= modelKeyEpsilon {
+			if geom.Abs32(k.Time-0.5) <= model.ModelKeyEpsilon {
 				refs = append(refs, modelKeyRef{Bone: c.Tracks[i].Bone, Time: k.Time})
 			}
 		}
@@ -500,7 +501,7 @@ func TestTimelinePickKeyFindsTheDiamondUnderTheCursor(t *testing.T) {
 	l := modelTimelineLayout{
 		x0: 100, x1: 500, top: 0,
 		lanes: modelKeyedBoneIndices(),
-		dur:   c.duration(), fps: c.fps(),
+		dur:   c.EffectiveDuration(), fps: c.EffectiveFPS(),
 	}
 	l.span = l.x1 - l.x0
 
@@ -516,7 +517,7 @@ func TestTimelinePickKeyFindsTheDiamondUnderTheCursor(t *testing.T) {
 	}
 	at := imgui.Vec2{X: l.timeToX(0.5), Y: l.laneY(lane)}
 	refs, ok := modelTimelinePickKey(l, c, at)
-	if !ok || len(refs) != 1 || refs[0].Bone != idx[1] || geom.Abs32(refs[0].Time-0.5) > modelKeyEpsilon {
+	if !ok || len(refs) != 1 || refs[0].Bone != idx[1] || geom.Abs32(refs[0].Time-0.5) > model.ModelKeyEpsilon {
 		t.Fatalf("hit test missed the diamond: ok=%v refs=%+v", ok, refs)
 	}
 

@@ -97,3 +97,20 @@ func PerpAxis(n mgl32.Vec3) mgl32.Vec3 {
 	}
 	return mgl32.Vec3{1, 0, 0}.Cross(n)
 }
+
+// WrapAngle folds a difference of two atan2 results into (-pi, pi].
+//
+// Every rotate gizmo needs it — the map, the 3D view and the model editor —
+// which is why it is here rather than beside any one of them.
+// Without it, dragging across the ±pi seam would read as a near-full turn in
+// the opposite direction and the selection would snap right round.
+func WrapAngle(a float32) float32 {
+	const twoPi = 2 * math.Pi
+	for a > math.Pi {
+		a -= twoPi
+	}
+	for a <= -math.Pi {
+		a += twoPi
+	}
+	return a
+}

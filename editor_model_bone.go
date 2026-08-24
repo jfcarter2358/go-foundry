@@ -20,6 +20,7 @@ package main
 import (
 	"foundry/internal/geom"
 	"foundry/internal/gizmo"
+	"foundry/internal/model"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -232,7 +233,7 @@ func modelBoneClick(mx, my int32, additive bool) bool {
 // mesh each frame instead of deforming an already-deformed one and compounding
 // the error.
 var modelBoneDrag struct {
-	Bones []ModelBone
+	Bones []model.ModelBone
 	Verts []mgl32.Vec3
 }
 
@@ -261,7 +262,7 @@ func modelBoneGizmoCapture() {
 	if modelDoc == nil {
 		return
 	}
-	modelBoneDrag.Bones = cloneBones(modelDoc.Bones)
+	modelBoneDrag.Bones = model.CloneBones(modelDoc.Bones)
 	modelBoneDrag.Verts = append([]mgl32.Vec3(nil), modelDoc.Verts...)
 }
 
@@ -281,7 +282,7 @@ func modelBoneGizmoApply(axis int, delta float32) {
 		}
 		modelPlaceBoneJoint(bi, modelBoneDrag.Bones[bi], axis, delta)
 	}
-	modelDoc.syncConnectedBones()
+	modelDoc.SyncConnectedBones()
 	if modelBoneDeform {
 		modelDoc.SkinFrom(modelBoneDrag.Bones, modelBoneDrag.Verts)
 	}
@@ -294,7 +295,7 @@ func modelBoneGizmoApply(axis int, delta float32) {
 // alternative — snapping both ends independently — would quietly change the
 // bone's length every time it crossed a grid line, and a bone's length is the
 // scale of everything it deforms.
-func modelPlaceBoneJoint(bi int, rest ModelBone, axis int, delta float32) {
+func modelPlaceBoneJoint(bi int, rest model.ModelBone, axis int, delta float32) {
 	switch modelSelection.BoneJoint {
 	case modelBoneHead:
 		modelDoc.SetBoneHead(bi, axisMoved(rest.Head, axis, delta))
@@ -318,7 +319,7 @@ func modelBoneGizmoRelease() {
 // modelNudgeBone offsets one bone the way the gizmo would, honouring which
 // joint the selection is pointed at. The caller brackets it with modelBoneEdit.
 func modelNudgeBone(bi, axis int, delta float32) {
-	if modelDoc == nil || !modelDoc.validBone(bi) {
+	if modelDoc == nil || !modelDoc.ValidBone(bi) {
 		return
 	}
 	modelPlaceBoneJoint(bi, modelDoc.Bones[bi], axis, delta)
@@ -331,7 +332,7 @@ func modelBoneEdit(fn func()) {
 	if modelDoc == nil {
 		return
 	}
-	rest := cloneBones(modelDoc.Bones)
+	rest := model.CloneBones(modelDoc.Bones)
 	restVerts := append([]mgl32.Vec3(nil), modelDoc.Verts...)
 	fn()
 	if modelBoneDeform {
@@ -391,12 +392,12 @@ func drawModelBones() {
 // which end is the head, how long the bone is and, through the ring, which way
 // its roll has twisted the deform basis. All three matter when the same
 // skeleton is later driven by animation data.
-func drawBoneOctahedron(b ModelBone, col mgl32.Vec3) {
+func drawBoneOctahedron(b model.ModelBone, col mgl32.Vec3) {
 	length := b.Tail.Sub(b.Head).Len()
 	if length < 1e-6 {
 		return
 	}
-	basis := boneMatrix(b)
+	basis := model.BoneMatrix(b)
 	r := length * 0.1
 
 	var ring [4]mgl32.Vec3

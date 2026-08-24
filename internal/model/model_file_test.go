@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"os"
@@ -196,12 +196,12 @@ func TestSaveModelOmitsPerFaceTexture(t *testing.T) {
 // way, or a load/save round-trip would invent a change.
 func TestDefaultTextureRoundTripsAsEmpty(t *testing.T) {
 	m := NewCubeDoc()
-	m.SetTexture(defaultModelTexture)
+	m.SetTexture(DefaultModelTexture)
 	if m.Texture != "" {
 		t.Errorf("Texture = %q, want empty", m.Texture)
 	}
-	if got := m.TextureName(); got != defaultModelTexture {
-		t.Errorf("TextureName() = %q, want %q", got, defaultModelTexture)
+	if got := m.TextureName(); got != DefaultModelTexture {
+		t.Errorf("TextureName() = %q, want %q", got, DefaultModelTexture)
 	}
 	if raw := modelDocToRaw(m); raw.Texture != "" {
 		t.Errorf("raw.Texture = %q, want empty", raw.Texture)

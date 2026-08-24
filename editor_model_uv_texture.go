@@ -37,6 +37,7 @@ import (
 
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
+	"foundry/internal/model"
 	"foundry/internal/texdoc"
 	"foundry/internal/texture"
 )
@@ -68,7 +69,7 @@ func modelOpenUnwrapDialog() {
 		return
 	}
 	name := modelDoc.Texture
-	if name == "" || name == defaultModelTexture {
+	if name == "" || name == model.DefaultModelTexture {
 		name = modelUnwrapSuggestedName()
 	}
 	modelUnwrapDialog.Show = true
@@ -271,7 +272,7 @@ func modelUnwrapToTexture(name string, size int, angleDeg, padTexels float32) er
 	// wearing an atlas it is no longer laid out for.
 	ModelPushUndo()
 
-	islands, err := modelDoc.AtlasUnwrap(modelAllFaceIndices(), AtlasUnwrapOptions{
+	islands, err := modelDoc.AtlasUnwrap(modelAllFaceIndices(), model.AtlasUnwrapOptions{
 		AngleLimit: angleDeg * math.Pi / 180,
 		PaddingUV:  pad,
 		Aspect:     1, // the atlas is square; see the size options
@@ -319,7 +320,7 @@ func modelBuildAtlasTexture(name string, size int) (*texture.TexEditorState, err
 		return nil, err
 	}
 	doc.Layers[0].Name = "UV Guide"
-	fillAtlasGuide(doc, 0)
+	model.FillAtlasGuide(doc, 0)
 	if err := doc.AddLayer("Paint"); err != nil {
 		return nil, err
 	}
@@ -417,7 +418,7 @@ func modelUVLayoutFor(tex string) [][]mgl32.Vec2 {
 		}
 		loop := make([]mgl32.Vec2, len(f.Verts))
 		for i := range f.Verts {
-			loop[i] = f.uvAt(i)
+			loop[i] = f.UvAt(i)
 		}
 		out = append(out, loop)
 	}

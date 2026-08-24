@@ -1,6 +1,9 @@
 package main
 
-import "foundry/internal/gfx"
+import (
+	"foundry/internal/gfx"
+	"foundry/internal/model"
+)
 
 // editor_model_actions.go — the model editor's selection-scoped operations.
 //
@@ -32,7 +35,7 @@ func modelSelectAll() {
 	case modelSelVertex:
 		modelSelection.Verts = modelAllVertIndices()
 	case modelSelEdge:
-		modelSelection.Edges = append([]edgeKey(nil), modelDoc.Edges()...)
+		modelSelection.Edges = append([]model.EdgeKey(nil), modelDoc.Edges()...)
 	case modelSelFace:
 		modelSelection.Faces = modelAllFaceIndices()
 	case modelSelBone:
@@ -185,7 +188,7 @@ func modelFlipSelectedFaceUV(flipU, flipV bool) {
 // mode, where the gizmo's notion of "selected vertices" is deliberately empty.
 
 func modelAssignSelectedToBone(bi int) {
-	if modelDoc == nil || !modelDoc.validBone(bi) {
+	if modelDoc == nil || !modelDoc.ValidBone(bi) {
 		return
 	}
 	verts := modelSelectedMeshVerts()
@@ -199,7 +202,7 @@ func modelAssignSelectedToBone(bi int) {
 }
 
 func modelRemoveSelectedFromBone(bi int) {
-	if modelDoc == nil || !modelDoc.validBone(bi) {
+	if modelDoc == nil || !modelDoc.ValidBone(bi) {
 		return
 	}
 	verts := modelSelectedMeshVerts()
@@ -227,7 +230,7 @@ func modelClearSelectedWeights() {
 // modelSelectBoneVerts replaces the mesh selection with the points a bone
 // moves, switching to vertex mode to show them.
 func modelSelectBoneVerts(bi int) {
-	if modelDoc == nil || !modelDoc.validBone(bi) {
+	if modelDoc == nil || !modelDoc.ValidBone(bi) {
 		return
 	}
 	modelSelection.Mode = modelSelVertex
@@ -250,7 +253,7 @@ func modelAutoWeightAll() {
 // modelBoneWeightedCount is how many points a bone moves, shown on the menu row
 // that selects them.
 func modelBoneWeightedCount(bi int) int {
-	if modelDoc == nil || !modelDoc.validBone(bi) {
+	if modelDoc == nil || !modelDoc.ValidBone(bi) {
 		return 0
 	}
 	return len(modelDoc.VertsBoundTo(bi))
@@ -259,10 +262,10 @@ func modelBoneWeightedCount(bi int) int {
 // ---------- bones ----------
 
 // modelReparentBone hangs bi off parent, or makes it a root with
-// modelBoneNoParent. A cycle is refused by SetBoneParent, and the undo entry
+// ModelBoneNoParent. A cycle is refused by SetBoneParent, and the undo entry
 // goes back with it.
 func modelReparentBone(bi, parent int) {
-	if modelDoc == nil || !modelDoc.validBone(bi) {
+	if modelDoc == nil || !modelDoc.ValidBone(bi) {
 		return
 	}
 	connected := modelDoc.Bones[bi].Connected
@@ -287,7 +290,7 @@ func modelReparentBone(bi, parent int) {
 
 // modelSetBoneConnected welds a bone's head to its parent's tail, or unwelds it.
 func modelSetBoneConnected(bi int, connected bool) {
-	if modelDoc == nil || !modelDoc.validBone(bi) || modelDoc.Bones[bi].Parent < 0 {
+	if modelDoc == nil || !modelDoc.ValidBone(bi) || modelDoc.Bones[bi].Parent < 0 {
 		return
 	}
 	ModelPushUndo()

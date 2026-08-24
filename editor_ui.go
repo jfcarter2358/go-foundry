@@ -10,6 +10,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
+	"foundry/internal/model"
 	"foundry/internal/platform"
 	"math"
 	"path/filepath"
@@ -253,10 +254,10 @@ func textureCombo(label string, tex *string, allowEmpty bool) bool {
 // reader), and an author who has only ever exported OBJs should not have to
 // round-trip through the model editor to hang one on an entity.
 func modelFileNames() []string {
-	files := append(ScanModelFiles(), ScanOBJFiles()...)
+	files := append(model.ScanModelFiles(), model.ScanOBJFiles()...)
 	names := make([]string, 0, len(files))
 	for _, f := range files {
-		names = append(names, modelsDirName+"/"+f)
+		names = append(names, model.ModelsDirName+"/"+f)
 	}
 	sort.Strings(names)
 	return names

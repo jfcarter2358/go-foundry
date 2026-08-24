@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/model"
 	"math"
 	"testing"
 
@@ -97,7 +98,7 @@ func TestFlyMoveIgnoredInOrbitMode(t *testing.T) {
 
 func TestFrameFitsTheDocument(t *testing.T) {
 	c := modelCamera{Fly: true, Pos: mgl32.Vec3{100, 100, 100}}
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	m.MoveVerts([]int{0, 1, 2, 3, 4, 5, 6, 7}, mgl32.Vec3{10, 0, 0})
 
 	c.frame(m)
@@ -115,7 +116,7 @@ func TestFrameFitsTheDocument(t *testing.T) {
 
 	// An empty document has no extent to frame; fall back rather than divide by
 	// zero.
-	c.frame(&ModelDoc{})
+	c.frame(&model.ModelDoc{})
 	if c.Dist <= 0 || c.Target != (mgl32.Vec3{}) {
 		t.Errorf("framing an empty document gave Target %v Dist %v", c.Target, c.Dist)
 	}

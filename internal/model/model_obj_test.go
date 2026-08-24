@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"os"
@@ -176,7 +176,7 @@ func TestLoadOBJMeshOnShippedModels(t *testing.T) {
 		}
 		tris := 0
 		for fi := range doc.Faces {
-			tris += len(doc.faceTriangles(fi))
+			tris += len(doc.FaceTriangles(fi))
 		}
 		if tris != c.tris {
 			t.Errorf("%s: %d triangles, want %d", c.name, tris, c.tris)

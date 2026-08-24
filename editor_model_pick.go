@@ -11,6 +11,7 @@ package main
 
 import (
 	"foundry/internal/gizmo"
+	"foundry/internal/model"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -50,7 +51,7 @@ func (m modelSelMode) String() string {
 type modelSelectionState struct {
 	Mode  modelSelMode
 	Verts []int
-	Edges []edgeKey
+	Edges []model.EdgeKey
 	Faces []int
 
 	Bones     []int
@@ -248,7 +249,7 @@ func modelPickFace(mx, my int32) (int, bool) {
 	bestT := float32(math.MaxFloat32)
 	for fi := range modelDoc.Faces {
 		f := &modelDoc.Faces[fi]
-		for _, tri := range modelDoc.faceTriangles(fi) {
+		for _, tri := range modelDoc.FaceTriangles(fi) {
 			a := modelDoc.Verts[f.Verts[tri[0]]]
 			b := modelDoc.Verts[f.Verts[tri[1]]]
 			c := modelDoc.Verts[f.Verts[tri[2]]]
@@ -308,16 +309,16 @@ func modelPickVertex(mx, my int32) (int, bool) {
 
 // modelPickEdge returns the edge whose screen-space segment the cursor is
 // nearest, within modelPickPx.
-func modelPickEdge(mx, my int32) (edgeKey, bool) {
+func modelPickEdge(mx, my int32) (model.EdgeKey, bool) {
 	w, h, ok := modelViewport()
 	if !ok || modelDoc == nil {
-		return edgeKey{}, false
+		return model.EdgeKey{}, false
 	}
 	modelUpdateVisibility()
 	projView := modelProjView()
 	camPos := modelCam.position()
 
-	var best edgeKey
+	var best model.EdgeKey
 	found := false
 	bestD := modelPickPx
 	bestDepth := float32(math.MaxFloat32)
@@ -403,9 +404,9 @@ func toggleInt(sel []int, v int, additive bool) []int {
 	return append(sel, v)
 }
 
-func toggleEdge(sel []edgeKey, e edgeKey, additive bool) []edgeKey {
+func toggleEdge(sel []model.EdgeKey, e model.EdgeKey, additive bool) []model.EdgeKey {
 	if !additive {
-		return []edgeKey{e}
+		return []model.EdgeKey{e}
 	}
 	for i, x := range sel {
 		if x == e {

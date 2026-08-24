@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_anim.go — keyframed animation clips.
 //
@@ -49,11 +49,11 @@ const modelDefaultClipFPS = float32(24)
 // modelDefaultClipDuration is how long a new clip runs, in seconds.
 const modelDefaultClipDuration = float32(1)
 
-// modelKeyEpsilon is how close two key times must be to count as the same key.
+// ModelKeyEpsilon is how close two key times must be to count as the same key.
 // Half a frame at 120fps: fine enough never to merge keys an animator placed on
 // adjacent frames, coarse enough that re-keying the frame you are parked on
 // replaces the key instead of stacking a second one a float wobble away.
-const modelKeyEpsilon = float32(1.0 / 240.0)
+const ModelKeyEpsilon = float32(1.0 / 240.0)
 
 // ModelBoneKey is one bone's pose at one instant. The embedded ModelBonePose
 // carries the same zero-value tolerance the pose type documents, so a key
@@ -65,7 +65,7 @@ type ModelBoneKey struct {
 }
 
 // ModelBoneTrack is one bone's channel through a clip. Keys are kept ascending
-// by Time with no two within modelKeyEpsilon, which is what lets sample binary
+// by Time with no two within ModelKeyEpsilon, which is what lets sample binary
 // search rather than scan.
 type ModelBoneTrack struct {
 	Bone int
@@ -83,9 +83,9 @@ type ModelClip struct {
 
 // ---------- sampling ----------
 
-// duration returns the clip's length, falling back to its last key so a clip
+// EffectiveDuration returns the clip's length, falling back to its last key so a clip
 // whose duration was never set still plays rather than collapsing to frame 0.
-func (c *ModelClip) duration() float32 {
+func (c *ModelClip) EffectiveDuration() float32 {
 	if c == nil {
 		return 0
 	}
@@ -103,17 +103,17 @@ func (c *ModelClip) duration() float32 {
 	return last
 }
 
-// fps returns the authoring frame rate, defaulted.
-func (c *ModelClip) fps() float32 {
+// EffectiveFPS returns the authoring frame rate, defaulted.
+func (c *ModelClip) EffectiveFPS() float32 {
 	if c == nil || c.FPS <= 0 {
 		return modelDefaultClipFPS
 	}
 	return c.FPS
 }
 
-// frameCount is how many whole frames the timeline shows.
-func (c *ModelClip) frameCount() int {
-	n := int(c.duration()*c.fps() + 0.5)
+// FrameCount is how many whole frames the timeline shows.
+func (c *ModelClip) FrameCount() int {
+	n := int(c.EffectiveDuration()*c.EffectiveFPS() + 0.5)
 	if n < 1 {
 		return 1
 	}
@@ -124,9 +124,9 @@ func (c *ModelClip) frameCount() int {
 // boneCount and filled with identities first — a bone with no track in this clip
 // stays at rest rather than keeping whatever the previous sample left there.
 func (c *ModelClip) SampleInto(p *ModelPose, boneCount int, t float32) {
-	p.resize(boneCount)
+	p.Resize(boneCount)
 	for i := range p.Bones {
-		p.Bones[i] = identBonePose()
+		p.Bones[i] = IdentBonePose()
 	}
 	if c == nil {
 		return
@@ -147,7 +147,7 @@ func (tr *ModelBoneTrack) sample(t float32) ModelBonePose {
 	n := len(tr.Keys)
 	switch {
 	case n == 0:
-		return identBonePose()
+		return IdentBonePose()
 	case t <= tr.Keys[0].Time:
 		return tr.Keys[0].normalized()
 	case t >= tr.Keys[n-1].Time:
@@ -160,20 +160,20 @@ func (tr *ModelBoneTrack) sample(t float32) ModelBonePose {
 		return b.normalized()
 	}
 	u := (t - a.Time) / span
-	sa, sb := a.scale(), b.scale()
+	sa, sb := a.EffectiveScale(), b.EffectiveScale()
 	return ModelBonePose{
 		Trans: a.Trans.Add(b.Trans.Sub(a.Trans).Mul(u)),
 		// QuatSlerp normalises its inputs and takes the shortest path, so a key
 		// stored as the negated-but-equivalent quaternion cannot send the bone
 		// the long way round.
-		Rot:   mgl32.QuatSlerp(a.rot(), b.rot(), u),
+		Rot:   mgl32.QuatSlerp(a.EffectiveRot(), b.EffectiveRot(), u),
 		Scale: sa.Add(sb.Sub(sa).Mul(u)),
 	}
 }
 
 // wrapClipTime folds t into the clip, looping or clamping.
-func (c *ModelClip) wrapClipTime(t float32) float32 {
-	d := c.duration()
+func (c *ModelClip) WrapClipTime(t float32) float32 {
+	d := c.EffectiveDuration()
 	if d <= 0 {
 		return 0
 	}
@@ -190,7 +190,7 @@ func (c *ModelClip) wrapClipTime(t float32) float32 {
 // ---------- editing ----------
 
 // trackFor returns bone bi's track, or nil.
-func (c *ModelClip) trackFor(bi int) *ModelBoneTrack {
+func (c *ModelClip) TrackFor(bi int) *ModelBoneTrack {
 	for i := range c.Tracks {
 		if c.Tracks[i].Bone == bi {
 			return &c.Tracks[i]
@@ -201,7 +201,7 @@ func (c *ModelClip) trackFor(bi int) *ModelBoneTrack {
 
 // ensureTrack returns bone bi's track, creating an empty one if needed.
 func (c *ModelClip) ensureTrack(bi int) *ModelBoneTrack {
-	if tr := c.trackFor(bi); tr != nil {
+	if tr := c.TrackFor(bi); tr != nil {
 		return tr
 	}
 	c.Tracks = append(c.Tracks, ModelBoneTrack{Bone: bi})
@@ -209,7 +209,7 @@ func (c *ModelClip) ensureTrack(bi int) *ModelBoneTrack {
 }
 
 // SetKey keys bone bi at time t, replacing any key already within
-// modelKeyEpsilon so re-keying the frame the playhead is parked on overwrites
+// ModelKeyEpsilon so re-keying the frame the playhead is parked on overwrites
 // rather than stacking.
 func (c *ModelClip) SetKey(bi int, t float32, bp ModelBonePose) {
 	if bi < 0 {
@@ -221,7 +221,7 @@ func (c *ModelClip) SetKey(bi int, t float32, bp ModelBonePose) {
 	tr := c.ensureTrack(bi)
 	key := ModelBoneKey{Time: t, ModelBonePose: bp.normalized()}
 	for i := range tr.Keys {
-		if geom.Abs32(tr.Keys[i].Time-t) <= modelKeyEpsilon {
+		if geom.Abs32(tr.Keys[i].Time-t) <= ModelKeyEpsilon {
 			tr.Keys[i] = key
 			return
 		}
@@ -239,7 +239,7 @@ func (c *ModelClip) DeleteKey(bi int, t float32) bool {
 		}
 		tr := &c.Tracks[i]
 		for k := range tr.Keys {
-			if geom.Abs32(tr.Keys[k].Time-t) > modelKeyEpsilon {
+			if geom.Abs32(tr.Keys[k].Time-t) > ModelKeyEpsilon {
 				continue
 			}
 			tr.Keys = append(tr.Keys[:k], tr.Keys[k+1:]...)
@@ -266,12 +266,12 @@ func (c *ModelClip) ClearBone(bi int) bool {
 
 // HasKeyAt reports whether bone bi is keyed at t.
 func (c *ModelClip) HasKeyAt(bi int, t float32) bool {
-	tr := c.trackFor(bi)
+	tr := c.TrackFor(bi)
 	if tr == nil {
 		return false
 	}
 	for _, k := range tr.Keys {
-		if geom.Abs32(k.Time-t) <= modelKeyEpsilon {
+		if geom.Abs32(k.Time-t) <= ModelKeyEpsilon {
 			return true
 		}
 	}
@@ -286,7 +286,7 @@ func (c *ModelClip) KeyTimes() []float32 {
 		for _, k := range c.Tracks[i].Keys {
 			dup := false
 			for _, t := range out {
-				if geom.Abs32(t-k.Time) <= modelKeyEpsilon {
+				if geom.Abs32(t-k.Time) <= ModelKeyEpsilon {
 					dup = true
 					break
 				}
@@ -302,7 +302,7 @@ func (c *ModelClip) KeyTimes() []float32 {
 
 // clone deep-copies the clip; the key slices must not be shared or editing one
 // snapshot would rewrite another.
-func (c ModelClip) clone() ModelClip {
+func (c ModelClip) Clone() ModelClip {
 	out := c
 	out.Tracks = make([]ModelBoneTrack, len(c.Tracks))
 	for i, tr := range c.Tracks {
@@ -317,7 +317,7 @@ func cloneClips(src []ModelClip) []ModelClip {
 	}
 	out := make([]ModelClip, len(src))
 	for i, c := range src {
-		out[i] = c.clone()
+		out[i] = c.Clone()
 	}
 	return out
 }
@@ -389,7 +389,7 @@ func (m *ModelDoc) DuplicateClip(i int) int {
 	if i < 0 || i >= len(m.Animations) {
 		return -1
 	}
-	dup := m.Animations[i].clone()
+	dup := m.Animations[i].Clone()
 	dup.Name = m.uniqueClipName(m.Animations[i].Name)
 	m.Animations = append(m.Animations, dup)
 	return len(m.Animations) - 1
@@ -420,7 +420,7 @@ func (m *ModelDoc) RenameClip(i int, name string) {
 
 // hasAnimation reports whether the document carries any keyed motion. Used to
 // skip the runtime's whole skinning path on a static model.
-func (m *ModelDoc) hasAnimation() bool {
+func (m *ModelDoc) HasAnimation() bool {
 	for i := range m.Animations {
 		for j := range m.Animations[i].Tracks {
 			if len(m.Animations[i].Tracks[j].Keys) > 0 {

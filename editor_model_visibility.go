@@ -22,6 +22,8 @@ package main
 // costs nothing to recheck.
 
 import (
+	"foundry/internal/model"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -50,7 +52,7 @@ var modelVis struct {
 	// as revision because undo swaps in a different document whose own counter
 	// is unrelated to the one it replaced.
 	valid     bool
-	doc       *ModelDoc
+	doc       *model.ModelDoc
 	rev       uint64
 	eye       mgl32.Vec3
 	wireframe bool
@@ -77,7 +79,7 @@ func modelVertexVisible(vi int) bool {
 // modelEdgeVisible reports whether edge e can be seen. An edge counts as
 // visible when either endpoint is: an edge running behind an occluder but
 // emerging at one end is still something the user can see and aim at.
-func modelEdgeVisible(e edgeKey) bool {
+func modelEdgeVisible(e model.EdgeKey) bool {
 	return modelWireframe || modelVertexVisible(e.A) || modelVertexVisible(e.B)
 }
 
@@ -98,7 +100,7 @@ func modelCollectTris() []modelTri {
 	out := make([]modelTri, 0, len(modelDoc.Faces)*2)
 	for fi := range modelDoc.Faces {
 		f := &modelDoc.Faces[fi]
-		for _, t := range modelDoc.faceTriangles(fi) {
+		for _, t := range modelDoc.FaceTriangles(fi) {
 			va, vb, vc := f.Verts[t[0]], f.Verts[t[1]], f.Verts[t[2]]
 			out = append(out, modelTri{
 				a:     modelDoc.Verts[va],

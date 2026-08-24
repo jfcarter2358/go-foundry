@@ -145,13 +145,13 @@ func modelAnimClipControls() {
 		modelAnimRenameBuf = modelDoc.Animations[modelPoseClip].Name
 	}
 
-	dur := c.duration()
+	dur := c.EffectiveDuration()
 	if editorDragFloat("Duration (s)##modelanimdur", &dur, 0.05, 600, "%.2f") {
 		ModelPushUndo()
 		c.Duration = dur
 		modelPoseSetTime(modelPoseTime) // re-clamp the playhead into the new range
 	}
-	fps := c.fps()
+	fps := c.EffectiveFPS()
 	if editorDragFloat("FPS##modelanimfps", &fps, 1, 120, "%.0f") {
 		ModelPushUndo()
 		c.FPS = fps
@@ -197,15 +197,15 @@ func modelAnimTransport() {
 	imgui.SameLine()
 	if imgui.Button(">|##modelanimend") {
 		modelPosePlaying = false
-		modelPoseSetFrame(c.frameCount())
+		modelPoseSetFrame(c.FrameCount())
 	}
 
 	frame := int32(modelPoseFrame())
-	if imgui.SliderInt("Frame##modelanimframe", &frame, 0, int32(c.frameCount())) {
+	if imgui.SliderInt("Frame##modelanimframe", &frame, 0, int32(c.FrameCount())) {
 		modelPosePlaying = false
 		modelPoseSetFrame(int(frame))
 	}
-	imgui.Text(fmt.Sprintf("%.3fs of %.3fs", modelPoseTime, c.duration()))
+	imgui.Text(fmt.Sprintf("%.3fs of %.3fs", modelPoseTime, c.EffectiveDuration()))
 }
 
 // modelTogglePlayback starts or stops the playhead, entering pose mode first —
@@ -284,7 +284,7 @@ func modelDeleteKeyAtPlayhead() {
 	if c == nil {
 		return
 	}
-	t := float32(modelPoseFrame()) / c.fps()
+	t := float32(modelPoseFrame()) / c.EffectiveFPS()
 	targets := modelSelection.Bones
 	if len(targets) == 0 {
 		targets = modelKeyedBoneIndices()

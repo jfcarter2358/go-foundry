@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/model"
 	"math"
 	"testing"
 
@@ -26,7 +27,7 @@ func scaleHandleMouse(t *testing.T, axis int, frac float32) (int32, int32) {
 }
 
 // selectTopFace sets up a face selection with the scale tool active.
-func selectTopFaceForScale(t *testing.T, m *ModelDoc) int {
+func selectTopFaceForScale(t *testing.T, m *model.ModelDoc) int {
 	t.Helper()
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
@@ -38,7 +39,7 @@ func selectTopFaceForScale(t *testing.T, m *ModelDoc) int {
 }
 
 func TestScaleHandlesArePickable(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	selectTopFaceForScale(t, m)
 
@@ -51,7 +52,7 @@ func TestScaleHandlesArePickable(t *testing.T) {
 }
 
 func TestScaleCentreGrabsTheUniformHandle(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	selectTopFaceForScale(t, m)
 
@@ -67,7 +68,7 @@ func TestScaleCentreGrabsTheUniformHandle(t *testing.T) {
 }
 
 func TestScaleAlongOneAxisLeavesTheOthers(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	top := selectTopFaceForScale(t, m)
 	origin, _ := modelGizmoOrigin()
@@ -105,7 +106,7 @@ func TestScaleAlongOneAxisLeavesTheOthers(t *testing.T) {
 }
 
 func TestUniformScaleGrowsEveryAxisTogether(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	top := selectTopFaceForScale(t, m)
 	origin, _ := modelGizmoOrigin()
@@ -135,7 +136,7 @@ func TestUniformScaleGrowsEveryAxisTogether(t *testing.T) {
 }
 
 func TestScaleSnapsToTenths(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	top := selectTopFaceForScale(t, m)
 	withGridSnap(t, true, 0.25)
@@ -160,7 +161,7 @@ func TestScaleSnapsToTenths(t *testing.T) {
 }
 
 func TestScaleNeverMirrorsThroughZero(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	top := selectTopFaceForScale(t, m)
 	origin, _ := modelGizmoOrigin()
@@ -226,7 +227,7 @@ func TestScaleLengthensABoneFromItsHead(t *testing.T) {
 }
 
 func TestSwitchingAwayCancelsAScaleDrag(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	selectTopFaceForScale(t, m)
 

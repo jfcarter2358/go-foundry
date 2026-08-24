@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/model"
 	"math"
 	"testing"
 
@@ -157,7 +158,7 @@ func TestLocalScaleThickensAlongTheNormal(t *testing.T) {
 }
 
 func TestWorldScaleIsUnchangedByTheNewFrameCode(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withScaleFrame(t, false)
 	top := selectTopFaceForScale(t, m)

@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_ops.go — the model editor's mesh operations.
 //
@@ -20,7 +20,7 @@ import (
 
 // uvAt returns the face's UV for corner i, or the zero UV when the face carries
 // fewer UVs than vertices (which a hand-written .fmdl or a UV-less OBJ can do).
-func (f *ModelFace) uvAt(i int) mgl32.Vec2 {
+func (f *ModelFace) UvAt(i int) mgl32.Vec2 {
 	if i < 0 || i >= len(f.UVs) {
 		return mgl32.Vec2{}
 	}
@@ -53,7 +53,7 @@ func (m *ModelDoc) VertsOfFaces(faces []int) []int {
 }
 
 // VertsOfEdges returns the unique endpoints of the given edges, ascending.
-func (m *ModelDoc) VertsOfEdges(edges []edgeKey) []int {
+func (m *ModelDoc) VertsOfEdges(edges []EdgeKey) []int {
 	seen := map[int]bool{}
 	for _, e := range edges {
 		if e.A >= 0 && e.A < len(m.Verts) {
@@ -91,7 +91,7 @@ func (m *ModelDoc) MoveVerts(verts []int, delta mgl32.Vec3) {
 	}
 	// Positions only — the topology is untouched, so the adjacency index stays
 	// valid and only the GPU buffers need rebuilding.
-	m.touch()
+	m.Touch()
 }
 
 // SetVertPos moves one vertex to an absolute position.
@@ -100,7 +100,7 @@ func (m *ModelDoc) SetVertPos(v int, p mgl32.Vec3) {
 		return
 	}
 	m.Verts[v] = p
-	m.touch()
+	m.Touch()
 }
 
 // SetFaceSmooth toggles smooth shading on the given faces.
@@ -108,7 +108,7 @@ func (m *ModelDoc) SetFaceSmooth(faces []int, smooth bool) {
 	for fi := range m.faceSet(faces) {
 		m.Faces[fi].Smooth = smooth
 	}
-	m.touch()
+	m.Touch()
 }
 
 // ---------- extrude ----------
@@ -142,7 +142,7 @@ func (m *ModelDoc) ExtrudeFaces(faces []int, dist float32) (caps, sides []int) {
 		return nil, nil
 	}
 	selList := sortedKeys(sel)
-	m.ensureWeights()
+	m.EnsureWeights()
 
 	// Average normal of the selection. Read before any mutation.
 	var avg mgl32.Vec3
@@ -165,14 +165,14 @@ func (m *ModelDoc) ExtrudeFaces(faces []int, dist float32) (caps, sides []int) {
 		a, b int
 		face int
 	}
-	edgeCount := map[edgeKey]int{}
+	edgeCount := map[EdgeKey]int{}
 	var directed []dirEdge
 	for _, fi := range selList {
 		f := &m.Faces[fi]
 		n := len(f.Verts)
 		for i := 0; i < n; i++ {
 			a, b := f.Verts[i], f.Verts[(i+1)%n]
-			edgeCount[makeEdgeKey(a, b)]++
+			edgeCount[MakeEdgeKey(a, b)]++
 			directed = append(directed, dirEdge{a, b, fi})
 		}
 	}
@@ -199,7 +199,7 @@ func (m *ModelDoc) ExtrudeFaces(faces []int, dist float32) (caps, sides []int) {
 	// the corner order RefreshExtrudeSideUVs relies on to tell the edge from
 	// the depth.
 	for _, de := range directed {
-		if edgeCount[makeEdgeKey(de.a, de.b)] != 1 {
+		if edgeCount[MakeEdgeKey(de.a, de.b)] != 1 {
 			continue // interior to the selection
 		}
 		src := &m.Faces[de.face]
@@ -220,7 +220,7 @@ func (m *ModelDoc) ExtrudeFaces(faces []int, dist float32) (caps, sides []int) {
 		}
 	}
 
-	m.invalidate()
+	m.Invalidate()
 	m.RefreshExtrudeSideUVs(sides)
 	return selList, sides
 }
@@ -260,7 +260,7 @@ func (m *ModelDoc) RefreshExtrudeSideUVs(faces []int) {
 		changed = true
 	}
 	if changed {
-		m.touch()
+		m.Touch()
 	}
 }
 
@@ -293,8 +293,8 @@ func (m *ModelDoc) SubdivideFaces(faces []int) []int {
 	// finds the midpoint of an edge whose own face is processed later. A corner
 	// edge that already carries T-junction points is skipped: pass 2 splits it
 	// at one of those instead of inventing a vertex on top of them.
-	m.ensureWeights()
-	edgeMid := map[edgeKey]int{}
+	m.EnsureWeights()
+	edgeMid := map[EdgeKey]int{}
 	for fi := range sel {
 		f := &m.Faces[fi]
 		spans := m.faceCornerSpans(f)
@@ -305,12 +305,12 @@ func (m *ModelDoc) SubdivideFaces(faces []int) []int {
 			}
 			a := f.Verts[s.corner]
 			b := f.Verts[spans[(i+1)%n].corner]
-			e := makeEdgeKey(a, b)
+			e := MakeEdgeKey(a, b)
 			if _, ok := edgeMid[e]; ok {
 				continue
 			}
 			edgeMid[e] = m.addVertex(m.Verts[a].Add(m.Verts[b]).Mul(0.5),
-				blendWeights(m.weightsFor(a), m.weightsFor(b)))
+				blendWeights(m.WeightsFor(a), m.WeightsFor(b)))
 		}
 	}
 
@@ -326,13 +326,13 @@ func (m *ModelDoc) SubdivideFaces(faces []int) []int {
 			}
 			continue
 		}
-		f := m.Faces[fi].clone()
+		f := m.Faces[fi].Clone()
 		insertMidpoints(&f, edgeMid)
 		out = append(out, f)
 	}
 	m.Faces = out
 
-	m.invalidate()
+	m.Invalidate()
 	return newSel
 }
 
@@ -417,10 +417,10 @@ func onStraightEdge(p, v, q mgl32.Vec3) bool {
 // around a centre vertex (a triangle instead splits 1-to-4 without a centre).
 // New midpoints come from edgeMid, which the caller has already populated for
 // every corner edge that did not already carry a T-junction point.
-func (m *ModelDoc) splitFace(fi int, edgeMid map[edgeKey]int) []ModelFace {
+func (m *ModelDoc) splitFace(fi int, edgeMid map[EdgeKey]int) []ModelFace {
 	f := &m.Faces[fi]
 	if len(f.Verts) < 3 {
-		return []ModelFace{f.clone()}
+		return []ModelFace{f.Clone()}
 	}
 	spans := m.faceCornerSpans(f)
 	n := len(spans)
@@ -435,13 +435,13 @@ func (m *ModelDoc) splitFace(fi int, edgeMid map[edgeKey]int) []ModelFace {
 	for i, s := range spans {
 		next := spans[(i+1)%n]
 		if len(s.inner) == 0 {
-			midV[i] = edgeMid[makeEdgeKey(f.Verts[s.corner], f.Verts[next.corner])]
-			midUV[i] = f.uvAt(s.corner).Add(f.uvAt(next.corner)).Mul(0.5)
+			midV[i] = edgeMid[MakeEdgeKey(f.Verts[s.corner], f.Verts[next.corner])]
+			midUV[i] = f.UvAt(s.corner).Add(f.UvAt(next.corner)).Mul(0.5)
 			continue
 		}
 		k := m.nearestOnEdgeToMidpoint(f, s.inner, f.Verts[s.corner], f.Verts[next.corner])
 		midV[i] = f.Verts[s.inner[k]]
-		midUV[i] = f.uvAt(s.inner[k])
+		midUV[i] = f.UvAt(s.inner[k])
 		head[i], tail[i] = s.inner[:k], s.inner[k+1:]
 	}
 
@@ -453,7 +453,7 @@ func (m *ModelDoc) splitFace(fi int, edgeMid map[edgeKey]int) []ModelFace {
 	walk := func(verts []int, uvs []mgl32.Vec2, idxs []int) ([]int, []mgl32.Vec2) {
 		for _, li := range idxs {
 			verts = append(verts, f.Verts[li])
-			uvs = append(uvs, f.uvAt(li))
+			uvs = append(uvs, f.UvAt(li))
 		}
 		return verts, uvs
 	}
@@ -465,7 +465,7 @@ func (m *ModelDoc) splitFace(fi int, edgeMid map[edgeKey]int) []ModelFace {
 		for i := 0; i < 3; i++ {
 			prev := (i + 2) % 3
 			verts := []int{f.Verts[spans[i].corner]}
-			uvs := []mgl32.Vec2{f.uvAt(spans[i].corner)}
+			uvs := []mgl32.Vec2{f.UvAt(spans[i].corner)}
 			verts, uvs = walk(verts, uvs, head[i])
 			verts = append(verts, midV[i], midV[prev])
 			uvs = append(uvs, midUV[i], midUV[prev])
@@ -487,8 +487,8 @@ func (m *ModelDoc) splitFace(fi int, edgeMid map[edgeKey]int) []ModelFace {
 	corners := make([][]ModelVertexWeight, 0, n)
 	for _, s := range spans {
 		centrePos = centrePos.Add(m.Verts[f.Verts[s.corner]])
-		centreUV = centreUV.Add(f.uvAt(s.corner))
-		corners = append(corners, m.weightsFor(f.Verts[s.corner]))
+		centreUV = centreUV.Add(f.UvAt(s.corner))
+		corners = append(corners, m.WeightsFor(f.Verts[s.corner]))
 	}
 	centre := m.addVertex(centrePos.Mul(1/float32(n)), blendWeights(corners...))
 	centreUV = centreUV.Mul(1 / float32(n))
@@ -497,7 +497,7 @@ func (m *ModelDoc) splitFace(fi int, edgeMid map[edgeKey]int) []ModelFace {
 	for i := 0; i < n; i++ {
 		prev := (i - 1 + n) % n
 		verts := []int{f.Verts[spans[i].corner]}
-		uvs := []mgl32.Vec2{f.uvAt(spans[i].corner)}
+		uvs := []mgl32.Vec2{f.UvAt(spans[i].corner)}
 		verts, uvs = walk(verts, uvs, head[i])
 		verts = append(verts, midV[i], centre, midV[prev])
 		uvs = append(uvs, midUV[i], centreUV, midUV[prev])
@@ -526,7 +526,7 @@ func (m *ModelDoc) nearestOnEdgeToMidpoint(f *ModelFace, inner []int, a, b int) 
 // insertMidpoints rewrites an unselected face's loop to include any midpoints
 // created on its edges, keeping the mesh watertight. UVs interpolate linearly,
 // which is exact because the midpoint is exactly halfway along the edge.
-func insertMidpoints(f *ModelFace, edgeMid map[edgeKey]int) {
+func insertMidpoints(f *ModelFace, edgeMid map[EdgeKey]int) {
 	n := len(f.Verts)
 	if n < 3 || len(edgeMid) == 0 {
 		return
@@ -537,10 +537,10 @@ func insertMidpoints(f *ModelFace, edgeMid map[edgeKey]int) {
 	for i := 0; i < n; i++ {
 		j := (i + 1) % n
 		verts = append(verts, f.Verts[i])
-		uvs = append(uvs, f.uvAt(i))
-		if mid, ok := edgeMid[makeEdgeKey(f.Verts[i], f.Verts[j])]; ok {
+		uvs = append(uvs, f.UvAt(i))
+		if mid, ok := edgeMid[MakeEdgeKey(f.Verts[i], f.Verts[j])]; ok {
 			verts = append(verts, mid)
-			uvs = append(uvs, f.uvAt(i).Add(f.uvAt(j)).Mul(0.5))
+			uvs = append(uvs, f.UvAt(i).Add(f.UvAt(j)).Mul(0.5))
 			changed = true
 		}
 	}
@@ -565,12 +565,12 @@ func (m *ModelDoc) CatmullClark() {
 	if len(m.Faces) == 0 {
 		return
 	}
-	m.ensureWeights()
+	m.EnsureWeights()
 	adj := m.adjacency()
 	nVerts := len(m.Verts)
 	nEdges := len(adj.edges)
 
-	edgeIdx := make(map[edgeKey]int, nEdges)
+	edgeIdx := make(map[EdgeKey]int, nEdges)
 	for i, e := range adj.edges {
 		edgeIdx[e] = i
 	}
@@ -663,12 +663,12 @@ func (m *ModelDoc) CatmullClark() {
 		weights = append(weights, m.VertexWeights(v))
 	}
 	for _, e := range adj.edges {
-		weights = append(weights, blendWeights(m.weightsFor(e.A), m.weightsFor(e.B)))
+		weights = append(weights, blendWeights(m.WeightsFor(e.A), m.WeightsFor(e.B)))
 	}
 	for fi := range m.Faces {
 		loop := make([][]ModelVertexWeight, 0, len(m.Faces[fi].Verts))
 		for _, v := range m.Faces[fi].Verts {
-			loop = append(loop, m.weightsFor(v))
+			loop = append(loop, m.WeightsFor(v))
 		}
 		weights = append(weights, blendWeights(loop...))
 	}
@@ -687,15 +687,15 @@ func (m *ModelDoc) CatmullClark() {
 		for i := 0; i < n; i++ {
 			prev := (i - 1 + n) % n
 			next := (i + 1) % n
-			eNext := edgeBase + edgeIdx[makeEdgeKey(f.Verts[i], f.Verts[next])]
-			ePrev := edgeBase + edgeIdx[makeEdgeKey(f.Verts[prev], f.Verts[i])]
+			eNext := edgeBase + edgeIdx[MakeEdgeKey(f.Verts[i], f.Verts[next])]
+			ePrev := edgeBase + edgeIdx[MakeEdgeKey(f.Verts[prev], f.Verts[i])]
 			out = append(out, ModelFace{
 				Verts: []int{f.Verts[i], eNext, faceBase + fi, ePrev},
 				UVs: []mgl32.Vec2{
-					f.uvAt(i),
-					f.uvAt(i).Add(f.uvAt(next)).Mul(0.5),
+					f.UvAt(i),
+					f.UvAt(i).Add(f.UvAt(next)).Mul(0.5),
 					faceUV,
-					f.uvAt(prev).Add(f.uvAt(i)).Mul(0.5),
+					f.UvAt(prev).Add(f.UvAt(i)).Mul(0.5),
 				},
 				Smooth: f.Smooth,
 			})
@@ -705,7 +705,7 @@ func (m *ModelDoc) CatmullClark() {
 	m.Verts = verts
 	m.Faces = out
 	m.Weights = weights
-	m.invalidate()
+	m.Invalidate()
 }
 
 // ---------- delete ----------
@@ -732,7 +732,7 @@ func (m *ModelDoc) DeleteFaces(faces []int) {
 			used[v] = true
 		}
 	}
-	m.ensureWeights()
+	m.EnsureWeights()
 	remap := make(map[int]int, len(used))
 	verts := make([]mgl32.Vec3, 0, len(used))
 	weights := make([][]ModelVertexWeight, 0, len(used))
@@ -750,5 +750,5 @@ func (m *ModelDoc) DeleteFaces(faces []int) {
 	m.Verts = verts
 	m.Faces = kept
 	m.Weights = weights
-	m.invalidate()
+	m.Invalidate()
 }

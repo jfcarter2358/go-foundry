@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"foundry/internal/gfx"
@@ -17,7 +17,7 @@ func clipChain(t *testing.T) (*ModelDoc, [3]int, *ModelClip) {
 	m, idx := boneChain(t)
 	ci := m.AddClip("walk")
 	c := m.Clip(ci)
-	c.SetKey(idx[0], 0, identBonePose())
+	c.SetKey(idx[0], 0, IdentBonePose())
 	c.SetKey(idx[0], 1, ModelBonePose{
 		Rot:   mgl32.QuatRotate(mgl32.DegToRad(90), mgl32.Vec3{1, 0, 0}),
 		Scale: mgl32.Vec3{1, 1, 1},
@@ -27,13 +27,13 @@ func clipChain(t *testing.T) (*ModelDoc, [3]int, *ModelClip) {
 
 func TestClipSampleHoldsTheEndKeys(t *testing.T) {
 	m, idx, c := clipChain(t)
-	pose := newModelPose(len(m.Bones))
+	pose := NewModelPose(len(m.Bones))
 
 	// Before the first key and after the last, the track holds rather than
 	// extrapolating — a clip sampled a hair past its end settles on its final
 	// pose instead of swinging on.
 	c.SampleInto(&pose, len(m.Bones), -5)
-	if !pose.Bones[idx[0]].isIdentity() {
+	if !pose.Bones[idx[0]].IsIdentity() {
 		t.Error("sampling before the first key did not hold it")
 	}
 	c.SampleInto(&pose, len(m.Bones), 99)
@@ -46,10 +46,10 @@ func TestClipSampleHoldsTheEndKeys(t *testing.T) {
 
 func TestClipSampleHitsKeysExactly(t *testing.T) {
 	m, idx, c := clipChain(t)
-	pose := newModelPose(len(m.Bones))
+	pose := NewModelPose(len(m.Bones))
 
 	c.SampleInto(&pose, len(m.Bones), 0)
-	if !pose.Bones[idx[0]].isIdentity() {
+	if !pose.Bones[idx[0]].IsIdentity() {
 		t.Errorf("t=0 gave %+v, want the rest pose", pose.Bones[idx[0]])
 	}
 	c.SampleInto(&pose, len(m.Bones), 1)
@@ -61,10 +61,10 @@ func TestClipSampleHitsKeysExactly(t *testing.T) {
 
 func TestClipSampleSlerpsHalfway(t *testing.T) {
 	m, idx, c := clipChain(t)
-	pose := newModelPose(len(m.Bones))
+	pose := NewModelPose(len(m.Bones))
 	c.SampleInto(&pose, len(m.Bones), 0.5)
 
-	got := pose.Bones[idx[0]].rot()
+	got := pose.Bones[idx[0]].EffectiveRot()
 	if l := got.Len(); mgl32.Abs(l-1) > 1e-5 {
 		t.Errorf("midpoint quaternion has length %v, wanted unit — a non-unit rotation scales the bone", l)
 	}
@@ -85,31 +85,31 @@ func TestClipSampleSlerpsHalfway(t *testing.T) {
 
 func TestClipSampleLeavesUnkeyedBonesAtRest(t *testing.T) {
 	m, idx, c := clipChain(t)
-	pose := newModelPose(len(m.Bones))
+	pose := NewModelPose(len(m.Bones))
 	// Dirty the pose first, so a sample that forgot to reset would show it.
 	pose.Bones[idx[2]].Trans = mgl32.Vec3{9, 9, 9}
 	c.SampleInto(&pose, len(m.Bones), 0.5)
-	if !pose.Bones[idx[2]].isIdentity() {
+	if !pose.Bones[idx[2]].IsIdentity() {
 		t.Errorf("an unkeyed bone kept a stale pose: %+v", pose.Bones[idx[2]])
 	}
 }
 
 func TestSetKeyReplacesWithinEpsilonAndStaysSorted(t *testing.T) {
 	m, idx, c := clipChain(t)
-	tr := c.trackFor(idx[0])
+	tr := c.TrackFor(idx[0])
 	if len(tr.Keys) != 2 {
 		t.Fatalf("track has %d keys, want 2", len(tr.Keys))
 	}
 
 	// Re-keying the frame the playhead is parked on replaces rather than stacks.
-	c.SetKey(idx[0], modelKeyEpsilon/2, ModelBonePose{Trans: mgl32.Vec3{1, 0, 0}, Scale: mgl32.Vec3{1, 1, 1}})
-	tr = c.trackFor(idx[0])
+	c.SetKey(idx[0], ModelKeyEpsilon/2, ModelBonePose{Trans: mgl32.Vec3{1, 0, 0}, Scale: mgl32.Vec3{1, 1, 1}})
+	tr = c.TrackFor(idx[0])
 	if len(tr.Keys) != 2 {
 		t.Errorf("re-keying within epsilon stacked a key: %d keys", len(tr.Keys))
 	}
 
-	c.SetKey(idx[0], 0.5, identBonePose())
-	tr = c.trackFor(idx[0])
+	c.SetKey(idx[0], 0.5, IdentBonePose())
+	tr = c.TrackFor(idx[0])
 	if len(tr.Keys) != 3 {
 		t.Fatalf("insert gave %d keys, want 3", len(tr.Keys))
 	}
@@ -126,7 +126,7 @@ func TestDeleteKeyDropsAnEmptiedTrack(t *testing.T) {
 	if !c.DeleteKey(idx[0], 0) || !c.DeleteKey(idx[0], 1) {
 		t.Fatal("DeleteKey refused a key that exists")
 	}
-	if c.trackFor(idx[0]) != nil {
+	if c.TrackFor(idx[0]) != nil {
 		t.Error("an emptied track was left behind; it would show as a blank timeline lane")
 	}
 	if c.DeleteKey(idx[0], 0) {
@@ -140,8 +140,8 @@ func TestDeleteBonesRemapsAnimationTracks(t *testing.T) {
 	m, idx := boneChain(t)
 	ci := m.AddClip("walk")
 	c := m.Clip(ci)
-	c.SetKey(idx[1], 0, identBonePose())
-	c.SetKey(idx[2], 0, identBonePose())
+	c.SetKey(idx[1], 0, IdentBonePose())
+	c.SetKey(idx[2], 0, IdentBonePose())
 	tailName := m.Bones[idx[2]].Name
 
 	// Delete the root; the other two shuffle down by one.
@@ -169,7 +169,7 @@ func TestDeleteBonesRemapsAnimationTracks(t *testing.T) {
 func TestDeleteBonesDropsTracksForDeletedBones(t *testing.T) {
 	m, idx := boneChain(t)
 	c := m.Clip(m.AddClip("walk"))
-	c.SetKey(idx[0], 0, identBonePose())
+	c.SetKey(idx[0], 0, IdentBonePose())
 
 	m.DeleteBones([]int{idx[0]})
 	if n := len(m.Clip(0).Tracks); n != 0 {
@@ -181,7 +181,7 @@ func TestMergeShiftsAnimationTracks(t *testing.T) {
 	dst, _ := boneChain(t)
 	src, sidx := boneChain(t)
 	c := src.Clip(src.AddClip("walk"))
-	c.SetKey(sidx[0], 0, identBonePose())
+	c.SetKey(sidx[0], 0, IdentBonePose())
 
 	boneBase := len(dst.Bones)
 	dst.Merge(src, mgl32.Vec3{5, 0, 0})
@@ -214,7 +214,7 @@ func TestFmdlRoundTripsAnimations(t *testing.T) {
 	m.Animations[0].FPS = 30
 	m.AssignVertsToBone(modelAllVerts(m), idx[0], 1)
 
-	path := filepath.Join(t.TempDir(), "anim"+modelExt)
+	path := filepath.Join(t.TempDir(), "anim"+ModelExt)
 	if err := SaveModel(m, path); err != nil {
 		t.Fatalf("SaveModel: %v", err)
 	}
@@ -230,12 +230,12 @@ func TestFmdlRoundTripsAnimations(t *testing.T) {
 	if c.Name != "walk" || c.FPS != 30 || !c.Loop {
 		t.Errorf("clip metadata lost: %+v", ModelClip{Name: c.Name, Duration: c.Duration, FPS: c.FPS, Loop: c.Loop})
 	}
-	if c.duration() != 1 {
-		t.Errorf("duration = %v, want 1", c.duration())
+	if c.EffectiveDuration() != 1 {
+		t.Errorf("duration = %v, want 1", c.EffectiveDuration())
 	}
 
 	// The track must have come back bound to the same bone, resolved by name.
-	tr := c.trackFor(got.BoneIndexByName(m.Bones[idx[0]].Name))
+	tr := c.TrackFor(got.BoneIndexByName(m.Bones[idx[0]].Name))
 	if tr == nil {
 		t.Fatal("the track did not survive the round trip")
 	}
@@ -244,10 +244,10 @@ func TestFmdlRoundTripsAnimations(t *testing.T) {
 	}
 
 	// And sampling the loaded clip must agree with the original.
-	before, after := newModelPose(len(m.Bones)), newModelPose(len(got.Bones))
+	before, after := NewModelPose(len(m.Bones)), NewModelPose(len(got.Bones))
 	m.Animations[0].SampleInto(&before, len(m.Bones), 0.5)
 	c.SampleInto(&after, len(got.Bones), 0.5)
-	a, b := before.Bones[idx[0]].rot(), after.Bones[idx[0]].rot()
+	a, b := before.Bones[idx[0]].EffectiveRot(), after.Bones[idx[0]].EffectiveRot()
 	if !vec3Close(a.V, b.V, 1e-5) || mgl32.Abs(a.W-b.W) > 1e-5 {
 		t.Errorf("sampled rotation changed across the round trip: %v/%v -> %v/%v", a.V, a.W, b.V, b.W)
 	}
@@ -257,7 +257,7 @@ func TestFmdlRoundTripsAnimations(t *testing.T) {
 // should not write a vector of zeroes and a vector of ones on every key.
 func TestFmdlOmitsRestChannels(t *testing.T) {
 	m, _, _ := clipChain(t)
-	path := filepath.Join(t.TempDir(), "anim"+modelExt)
+	path := filepath.Join(t.TempDir(), "anim"+ModelExt)
 	if err := SaveModel(m, path); err != nil {
 		t.Fatalf("SaveModel: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestLoadRejectsAnArmatureTooBigForTheShader(t *testing.T) {
 		}
 	}
 	c := m.Clip(m.AddClip("walk"))
-	c.SetKey(0, 0, identBonePose())
+	c.SetKey(0, 0, IdentBonePose())
 
 	if err := validateRawModel(modelDocToRaw(m)); err == nil {
 		t.Errorf("validation accepted %d bones; the shader palette holds %d", len(m.Bones), gfx.MaxSkinBones)
@@ -317,7 +317,7 @@ func TestLoadRejectsAnArmatureTooBigForTheShader(t *testing.T) {
 
 func TestUnanimatedModelStillSavesWithoutAnAnimationsBlock(t *testing.T) {
 	m, _ := boneChain(t)
-	path := filepath.Join(t.TempDir(), "plain"+modelExt)
+	path := filepath.Join(t.TempDir(), "plain"+ModelExt)
 	if err := SaveModel(m, path); err != nil {
 		t.Fatalf("SaveModel: %v", err)
 	}

@@ -21,6 +21,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/model"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -302,14 +303,14 @@ func modelBoneMenuItems() []ctxMenuItem {
 // listed too and refused by SetBoneParent, the same as the panel's combo — see
 // modelBoneParentCombo for why filtering them out is not worth a second pass.
 func modelBoneParentMenuItems(bi int) []ctxMenuItem {
-	if modelDoc == nil || !modelDoc.validBone(bi) {
+	if modelDoc == nil || !modelDoc.ValidBone(bi) {
 		return nil
 	}
 	parent := modelDoc.Bones[bi].Parent
 	items := []ctxMenuItem{{
 		Label:   "(root)",
 		Checked: parent < 0,
-		Do:      func() { modelReparentBone(bi, modelBoneNoParent) },
+		Do:      func() { modelReparentBone(bi, model.ModelBoneNoParent) },
 	}}
 	for _, other := range modelBoneDisplayOrder() {
 		if other == bi {
@@ -410,8 +411,8 @@ func modelViewMenuItems() []ctxMenuItem {
 			Do:      func() { modelSetScaleLocal(!modelScaleLocal) }},
 	)
 
-	add := make([]ctxMenuItem, 0, len(modelPrimitiveKinds)+2)
-	for _, k := range modelPrimitiveKinds {
+	add := make([]ctxMenuItem, 0, len(model.ModelPrimitiveKinds)+2)
+	for _, k := range model.ModelPrimitiveKinds {
 		kind := k
 		add = append(add, ctxMenuItem{
 			Label: kind.String(),

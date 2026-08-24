@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_primitives.go — primitive shapes as editable meshes, and merging one
 // document into another.
@@ -44,8 +44,8 @@ func (k ModelPrimitiveKind) String() string {
 	}
 }
 
-// modelPrimitiveKinds is the palette order shown in the panel.
-var modelPrimitiveKinds = []ModelPrimitiveKind{
+// ModelPrimitiveKinds is the palette order shown in the panel.
+var ModelPrimitiveKinds = []ModelPrimitiveKind{
 	ModelPrimBox, ModelPrimPlane, ModelPrimCylinder, ModelPrimCone, ModelPrimSphere,
 }
 
@@ -83,7 +83,7 @@ func newPlaneDoc() *ModelDoc {
 			UVs:   []mgl32.Vec2{{0, 0}, {0, 1}, {1, 1}, {1, 0}},
 		}},
 	}
-	m.invalidate()
+	m.Invalidate()
 	return m
 }
 
@@ -253,7 +253,7 @@ func (m *ModelDoc) orientFacesOutward() {
 		}
 		reverseFaceLoop(f)
 	}
-	m.invalidate()
+	m.Invalidate()
 }
 
 // reverseFaceLoop flips a face's winding, keeping each corner's UV with its
@@ -293,8 +293,8 @@ func (m *ModelDoc) Merge(other *ModelDoc, offset mgl32.Vec3) []int {
 	if other == nil || len(other.Verts) == 0 {
 		return nil
 	}
-	m.ensureWeights()
-	other.ensureWeights()
+	m.EnsureWeights()
+	other.EnsureWeights()
 	base := len(m.Verts)
 	boneBase := len(m.Bones)
 	for i, p := range other.Verts {
@@ -317,7 +317,7 @@ func (m *ModelDoc) Merge(other *ModelDoc, offset mgl32.Vec3) []int {
 	// bone array, so they need the same boneBase shift the weights and parents
 	// just got — see the invariants in model_anim.go's header.
 	for _, c := range other.Animations {
-		c = c.clone()
+		c = c.Clone()
 		c.Name = m.uniqueClipName(c.Name)
 		for ti := range c.Tracks {
 			c.Tracks[ti].Bone += boneBase
@@ -326,14 +326,14 @@ func (m *ModelDoc) Merge(other *ModelDoc, offset mgl32.Vec3) []int {
 	}
 	added := make([]int, 0, len(other.Faces))
 	for i := range other.Faces {
-		f := other.Faces[i].clone()
+		f := other.Faces[i].Clone()
 		for j := range f.Verts {
 			f.Verts[j] += base
 		}
 		added = append(added, len(m.Faces))
 		m.Faces = append(m.Faces, f)
 	}
-	m.invalidate()
+	m.Invalidate()
 	return added
 }
 

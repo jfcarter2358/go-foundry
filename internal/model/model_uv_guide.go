@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_uv_guide.go — the checker pattern a freshly unwrapped atlas starts as.
 //
@@ -152,12 +152,12 @@ func AtlasGuidePattern(w, h int) []color.RGBA {
 	return out
 }
 
-// fillAtlasGuide writes the checker guide into layer li of d.
+// FillAtlasGuide writes the checker guide into layer li of d.
 //
 // One QuantCache for the whole fill: the pattern is a few dozen distinct
 // colours repeated over up to a million texels, so memoising the nearest-slot
 // search turns a per-texel 256-entry scan into a map hit.
-func fillAtlasGuide(d *texdoc.TexDoc, li int) {
+func FillAtlasGuide(d *texdoc.TexDoc, li int) {
 	if d == nil || li < 0 || li >= len(d.Layers) {
 		return
 	}

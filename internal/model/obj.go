@@ -1,4 +1,4 @@
-package main
+package model
 
 // obj.go — the flat-buffer OBJ helper.
 //
@@ -23,10 +23,10 @@ func LoadOBJ(path string) ([]float32, error) {
 	var out []float32
 	for fi := range doc.Faces {
 		f := &doc.Faces[fi]
-		for _, tri := range doc.faceTriangles(fi) {
+		for _, tri := range doc.FaceTriangles(fi) {
 			for _, li := range tri {
 				p := doc.Verts[f.Verts[li]]
-				uv := f.uvAt(li)
+				uv := f.UvAt(li)
 				out = append(out, p.X(), p.Y(), p.Z(), uv.X(), uv.Y())
 			}
 		}

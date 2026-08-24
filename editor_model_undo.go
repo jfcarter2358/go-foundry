@@ -1,5 +1,7 @@
 package main
 
+import "foundry/internal/model"
+
 // editor_model_undo.go — undo/redo for the model editor.
 //
 // This reuses boundedStack[T] (editor_undo.go) but snapshots *ModelDoc directly
@@ -25,14 +27,14 @@ var (
 // back on the clip the edit was made in. Keyframes need nothing extra: they live
 // in ModelDoc.Animations, which Clone already deep-copies.
 type modelSnapshot struct {
-	Doc  *ModelDoc
-	Pose ModelPose
+	Doc  *model.ModelDoc
+	Pose model.ModelPose
 	Clip int
 }
 
 // modelTakeSnapshot captures the editor's undoable state.
 func modelTakeSnapshot() modelSnapshot {
-	return modelSnapshot{Doc: modelDoc.Clone(), Pose: modelPose.clone(), Clip: modelPoseClip}
+	return modelSnapshot{Doc: modelDoc.Clone(), Pose: modelPose.Clone(), Clip: modelPoseClip}
 }
 
 // ModelPushUndo snapshots the document and clears the redo stack. Call
@@ -92,7 +94,7 @@ func ModelClearUndoHistory() {
 // renumbered the faces the selection referred to.
 func modelRestore(snap modelSnapshot) {
 	modelDoc = snap.Doc
-	modelDoc.invalidate() // schedules the GPU rebuild in the next Draw
+	modelDoc.Invalidate() // schedules the GPU rebuild in the next Draw
 	modelClearSelection()
 	modelClearPendingExtrude()
 	// The UV panel caches the selection's UVs; a restored document has
@@ -100,7 +102,7 @@ func modelRestore(snap modelSnapshot) {
 	modelUVInvalidate()
 
 	modelPose = snap.Pose
-	modelPose.resize(len(modelDoc.Bones))
+	modelPose.Resize(len(modelDoc.Bones))
 	modelPoseClip = snap.Clip
 	if modelPoseClip >= len(modelDoc.Animations) {
 		modelPoseClip = len(modelDoc.Animations) - 1

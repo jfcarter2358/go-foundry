@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_bone.go — the model editor's skeleton.
 //
@@ -12,7 +12,7 @@ package main
 // placement, but the segment is the one that survives editing: dragging a tail
 // changes the bone's direction *and* its length, and doing that to a matrix
 // means decomposing it, editing one factor and recomposing — losing the roll
-// every time the direction passes through the pole. boneMatrix (below) derives
+// every time the direction passes through the pole. BoneMatrix (below) derives
 // the matrix on demand, which is the direction that never loses information.
 //
 // Parent indices are NOT required to be sorted before their children. Keeping
@@ -32,8 +32,8 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// modelBoneNoParent is the Parent value of a root bone.
-const modelBoneNoParent = -1
+// ModelBoneNoParent is the Parent value of a root bone.
+const ModelBoneNoParent = -1
 
 // ModelBone is one segment of the armature, in model space.
 //
@@ -44,7 +44,7 @@ const modelBoneNoParent = -1
 // may sit anywhere — the offset arm hanging off a spine, say.
 type ModelBone struct {
 	Name      string
-	Parent    int // index into ModelDoc.Bones, or modelBoneNoParent
+	Parent    int // index into ModelDoc.Bones, or ModelBoneNoParent
 	Head      mgl32.Vec3
 	Tail      mgl32.Vec3
 	Roll      float32 // radians about the bone axis; orients the deform basis
@@ -57,11 +57,11 @@ type ModelBone struct {
 func (m *ModelDoc) BoneCount() int { return len(m.Bones) }
 
 // validBone reports whether bi indexes an existing bone.
-func (m *ModelDoc) validBone(bi int) bool { return bi >= 0 && bi < len(m.Bones) }
+func (m *ModelDoc) ValidBone(bi int) bool { return bi >= 0 && bi < len(m.Bones) }
 
 // BoneLength returns the head-to-tail distance of bone bi.
 func (m *ModelDoc) BoneLength(bi int) float32 {
-	if !m.validBone(bi) {
+	if !m.ValidBone(bi) {
 		return 0
 	}
 	return m.Bones[bi].Tail.Sub(m.Bones[bi].Head).Len()
@@ -82,11 +82,11 @@ func (m *ModelDoc) BoneChildren(bi int) []int {
 // step cap makes it total even on a cycle, which validation forbids but a
 // hand-edited file can still contain.
 func (m *ModelDoc) BoneDepth(bi int) int {
-	if !m.validBone(bi) {
+	if !m.ValidBone(bi) {
 		return 0
 	}
 	d := 0
-	for p := m.Bones[bi].Parent; m.validBone(p) && d <= len(m.Bones); p = m.Bones[p].Parent {
+	for p := m.Bones[bi].Parent; m.ValidBone(p) && d <= len(m.Bones); p = m.Bones[p].Parent {
 		d++
 	}
 	return d
@@ -113,7 +113,7 @@ func (m *ModelDoc) boneOrder() []int {
 // the cycle guard every reparent goes through.
 func (m *ModelDoc) boneIsDescendant(bi, bj int) bool {
 	steps := 0
-	for p := bi; m.validBone(p) && steps <= len(m.Bones); p = m.Bones[p].Parent {
+	for p := bi; m.ValidBone(p) && steps <= len(m.Bones); p = m.Bones[p].Parent {
 		if p == bj {
 			return true
 		}
@@ -179,7 +179,7 @@ func (m *ModelDoc) AddBone(head, tail mgl32.Vec3) int {
 	}
 	m.Bones = append(m.Bones, ModelBone{
 		Name:   m.uniqueBoneName(defaultBoneName),
-		Parent: modelBoneNoParent,
+		Parent: ModelBoneNoParent,
 		Head:   head,
 		Tail:   tail,
 	})
@@ -194,7 +194,7 @@ func (m *ModelDoc) AddBone(head, tail mgl32.Vec3) int {
 // is what makes the chain behave like one — dragging a joint moves both the
 // bone that ends there and the bone that starts there.
 func (m *ModelDoc) ExtrudeBone(bi int) int {
-	if !m.validBone(bi) {
+	if !m.ValidBone(bi) {
 		return -1
 	}
 	parent := m.Bones[bi]
@@ -229,7 +229,7 @@ func (m *ModelDoc) ExtrudeBone(bi int) int {
 func (m *ModelDoc) DeleteBones(bones []int) {
 	del := make(map[int]bool, len(bones))
 	for _, bi := range bones {
-		if m.validBone(bi) {
+		if m.ValidBone(bi) {
 			del[bi] = true
 		}
 	}
@@ -243,7 +243,7 @@ func (m *ModelDoc) DeleteBones(bones []int) {
 			continue
 		}
 		b := &m.Bones[i]
-		for steps := 0; m.validBone(b.Parent) && del[b.Parent] && steps <= len(m.Bones); steps++ {
+		for steps := 0; m.ValidBone(b.Parent) && del[b.Parent] && steps <= len(m.Bones); steps++ {
 			b.Parent = m.Bones[b.Parent].Parent
 			b.Connected = false
 		}
@@ -267,34 +267,34 @@ func (m *ModelDoc) DeleteBones(bones []int) {
 	m.Bones = kept
 	m.remapWeightBones(remap)
 	m.remapAnimBones(remap)
-	m.syncConnectedBones()
+	m.SyncConnectedBones()
 }
 
-// SetBoneParent reparents child under parent (modelBoneNoParent for a root).
+// SetBoneParent reparents child under parent (ModelBoneNoParent for a root).
 // Returns false when the move would create a cycle, which is the one thing
 // boneOrder and every pose walk rely on being impossible.
 func (m *ModelDoc) SetBoneParent(child, parent int, connected bool) bool {
-	if !m.validBone(child) {
+	if !m.ValidBone(child) {
 		return false
 	}
-	if parent == modelBoneNoParent {
-		m.Bones[child].Parent = modelBoneNoParent
+	if parent == ModelBoneNoParent {
+		m.Bones[child].Parent = ModelBoneNoParent
 		m.Bones[child].Connected = false
 		return true
 	}
-	if !m.validBone(parent) || m.boneIsDescendant(parent, child) {
+	if !m.ValidBone(parent) || m.boneIsDescendant(parent, child) {
 		return false
 	}
 	m.Bones[child].Parent = parent
 	m.Bones[child].Connected = connected
-	m.syncConnectedBones()
+	m.SyncConnectedBones()
 	return true
 }
 
 // RenameBone gives bone bi a unique name. An empty name falls back to the
 // default stem rather than being stored, so no bone is ever nameless.
 func (m *ModelDoc) RenameBone(bi int, name string) {
-	if !m.validBone(bi) {
+	if !m.ValidBone(bi) {
 		return
 	}
 	name = strings.TrimSpace(name)
@@ -316,42 +316,42 @@ func (m *ModelDoc) RenameBone(bi int, name string) {
 // parent's tail too — otherwise the chain would come apart at exactly the point
 // the user grabbed to shape it.
 func (m *ModelDoc) SetBoneHead(bi int, p mgl32.Vec3) {
-	if !m.validBone(bi) {
+	if !m.ValidBone(bi) {
 		return
 	}
 	b := &m.Bones[bi]
-	if b.Connected && m.validBone(b.Parent) {
+	if b.Connected && m.ValidBone(b.Parent) {
 		m.Bones[b.Parent].Tail = p
 	}
 	b.Head = p
-	m.syncConnectedBones()
+	m.SyncConnectedBones()
 }
 
 // SetBoneTail moves bone bi's tail, dragging the heads of any bones connected
 // to it.
 func (m *ModelDoc) SetBoneTail(bi int, p mgl32.Vec3) {
-	if !m.validBone(bi) {
+	if !m.ValidBone(bi) {
 		return
 	}
 	m.Bones[bi].Tail = p
-	m.syncConnectedBones()
+	m.SyncConnectedBones()
 }
 
 // MoveBone offsets a whole bone. Connected children keep their heads on this
 // bone's tail and so stretch to follow, which is the same behaviour as dragging
 // the tail alone.
 func (m *ModelDoc) MoveBone(bi int, delta mgl32.Vec3) {
-	if !m.validBone(bi) {
+	if !m.ValidBone(bi) {
 		return
 	}
 	m.SetBoneHead(bi, m.Bones[bi].Head.Add(delta))
 	m.Bones[bi].Tail = m.Bones[bi].Tail.Add(delta)
-	m.syncConnectedBones()
+	m.SyncConnectedBones()
 }
 
 // SetBoneRoll sets the twist of the deform basis about the bone axis.
 func (m *ModelDoc) SetBoneRoll(bi int, roll float32) {
-	if m.validBone(bi) {
+	if m.ValidBone(bi) {
 		m.Bones[bi].Roll = roll
 	}
 }
@@ -359,18 +359,18 @@ func (m *ModelDoc) SetBoneRoll(bi int, roll float32) {
 // syncConnectedBones restores the invariant that a connected bone's head is its
 // parent's tail. Walking parents-first matters: a joint moved at the top of a
 // chain has to reach the bottom in one pass.
-func (m *ModelDoc) syncConnectedBones() {
+func (m *ModelDoc) SyncConnectedBones() {
 	for _, bi := range m.boneOrder() {
 		b := &m.Bones[bi]
-		if b.Connected && m.validBone(b.Parent) {
+		if b.Connected && m.ValidBone(b.Parent) {
 			b.Head = m.Bones[b.Parent].Tail
 		}
 	}
 }
 
-// cloneBones deep-copies the armature. ModelBone holds no slices, so a plain
+// CloneBones deep-copies the armature. ModelBone holds no slices, so a plain
 // copy of the backing array is a complete snapshot.
-func cloneBones(src []ModelBone) []ModelBone {
+func CloneBones(src []ModelBone) []ModelBone {
 	if src == nil {
 		return nil
 	}
@@ -379,7 +379,7 @@ func cloneBones(src []ModelBone) []ModelBone {
 
 // ---------- the deform basis ----------
 
-// boneMatrix maps bone space to model space: the origin sits at the head, +Y
+// BoneMatrix maps bone space to model space: the origin sits at the head, +Y
 // runs along the bone and is scaled by its length, and X/Z are the roll-rotated
 // perpendicular axes.
 //
@@ -391,8 +391,8 @@ func cloneBones(src []ModelBone) []ModelBone {
 // Length rides in the Y scale rather than being normalised away so that
 // stretching a bone stretches what it deforms — pull a tail and the assigned
 // vertices follow it out instead of sliding along a fixed-length segment.
-func boneMatrix(b ModelBone) mgl32.Mat4 {
-	x, y, z, length, ok := boneBasisAxes(b)
+func BoneMatrix(b ModelBone) mgl32.Mat4 {
+	x, y, z, length, ok := BoneBasisAxes(b)
 	if !ok {
 		// Degenerate: no direction to build a basis from, so the bone is a pure
 		// translation. Invertible, which is all the delta below needs.
@@ -408,14 +408,14 @@ func boneMatrix(b ModelBone) mgl32.Mat4 {
 	}
 }
 
-// boneBasisAxes returns the bone's orthonormal axes and its length. +Y runs
+// BoneBasisAxes returns the bone's orthonormal axes and its length. +Y runs
 // head-to-tail; X and Z are the roll-rotated perpendicular pair. ok is false for
 // a zero-length bone, which has no direction to build a basis from.
 //
-// Split out of boneMatrix because model_pose.go needs the same axes *without*
-// the length folded into Y — see boneRestBasis for why posing cannot use the
+// Split out of BoneMatrix because model_pose.go needs the same axes *without*
+// the length folded into Y — see BoneRestBasis for why posing cannot use the
 // scaled form.
-func boneBasisAxes(b ModelBone) (x, y, z mgl32.Vec3, length float32, ok bool) {
+func BoneBasisAxes(b ModelBone) (x, y, z mgl32.Vec3, length float32, ok bool) {
 	dir := b.Tail.Sub(b.Head)
 	length = dir.Len()
 	if length < 1e-6 {
@@ -449,10 +449,10 @@ func boneBasisAxes(b ModelBone) (x, y, z mgl32.Vec3, length float32, ok bool) {
 
 // BoneMatrix returns bone bi's rest basis, or the identity for a bad index.
 func (m *ModelDoc) BoneMatrix(bi int) mgl32.Mat4 {
-	if !m.validBone(bi) {
+	if !m.ValidBone(bi) {
 		return mgl32.Ident4()
 	}
-	return boneMatrix(m.Bones[bi])
+	return BoneMatrix(m.Bones[bi])
 }
 
 // boneDelta returns the transform taking a bone from its rest placement to its
@@ -463,7 +463,7 @@ func (m *ModelDoc) BoneMatrix(bi int) mgl32.Mat4 {
 // takes deltas, so the editor's drag path and a future animation player feed it
 // through the same door.
 func boneDelta(rest, now ModelBone) mgl32.Mat4 {
-	return boneMatrix(now).Mul4(boneMatrix(rest).Inv())
+	return BoneMatrix(now).Mul4(BoneMatrix(rest).Inv())
 }
 
 // BoneDeltas returns one delta per bone against the given rest pose. Bones with
@@ -498,7 +498,7 @@ func closestPointOnSegment3D(p, a, b mgl32.Vec3) (mgl32.Vec3, float32) {
 
 // distToBone returns the distance from p to bone bi's segment.
 func (m *ModelDoc) distToBone(p mgl32.Vec3, bi int) float32 {
-	if !m.validBone(bi) {
+	if !m.ValidBone(bi) {
 		return float32(math.MaxFloat32)
 	}
 	_, d := closestPointOnSegment3D(p, m.Bones[bi].Head, m.Bones[bi].Tail)

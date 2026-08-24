@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"math"
@@ -135,7 +135,7 @@ func TestSetBoneParentRejectsCycles(t *testing.T) {
 	if m.SetBoneParent(idx[0], idx[2], false) {
 		t.Error("parenting the root under its own grandchild was accepted")
 	}
-	if m.Bones[idx[0]].Parent != modelBoneNoParent {
+	if m.Bones[idx[0]].Parent != ModelBoneNoParent {
 		t.Errorf("root parent = %d after a refused reparent", m.Bones[idx[0]].Parent)
 	}
 	if m.SetBoneParent(idx[0], idx[0], false) {
@@ -146,11 +146,11 @@ func TestSetBoneParentRejectsCycles(t *testing.T) {
 func TestSetBoneParentDetachesToRoot(t *testing.T) {
 	m, idx := boneChain(t)
 
-	if !m.SetBoneParent(idx[2], modelBoneNoParent, false) {
+	if !m.SetBoneParent(idx[2], ModelBoneNoParent, false) {
 		t.Fatal("detaching to root was refused")
 	}
 	b := m.Bones[idx[2]]
-	if b.Parent != modelBoneNoParent || b.Connected {
+	if b.Parent != ModelBoneNoParent || b.Connected {
 		t.Errorf("detached bone = parent %d connected %v", b.Parent, b.Connected)
 	}
 }
@@ -178,7 +178,7 @@ func TestBoneOrderPutsParentsFirst(t *testing.T) {
 
 func TestBoneMatrixIsAnOrthonormalFrameAlongTheBone(t *testing.T) {
 	b := ModelBone{Head: mgl32.Vec3{1, 2, 3}, Tail: mgl32.Vec3{1, 2, 5}} // 2 long, +Z
-	mat := boneMatrix(b)
+	mat := BoneMatrix(b)
 
 	origin := mat.Mul4x1(mgl32.Vec4{0, 0, 0, 1})
 	if !vec3Close(mgl32.Vec3{origin.X(), origin.Y(), origin.Z()}, b.Head, 1e-6) {
@@ -210,12 +210,12 @@ func TestBoneRollTwistsTheFrameButNotTheBone(t *testing.T) {
 	rolled := b
 	rolled.Roll = float32(math.Pi / 2)
 
-	tip := boneMatrix(rolled).Mul4x1(mgl32.Vec4{0, 1, 0, 1})
+	tip := BoneMatrix(rolled).Mul4x1(mgl32.Vec4{0, 1, 0, 1})
 	if !vec3Close(mgl32.Vec3{tip.X(), tip.Y(), tip.Z()}, b.Tail, 1e-6) {
 		t.Errorf("roll moved the bone itself: tip = %v", tip)
 	}
-	plain := boneMatrix(b).Mul4x1(mgl32.Vec4{1, 0, 0, 0})
-	turned := boneMatrix(rolled).Mul4x1(mgl32.Vec4{1, 0, 0, 0})
+	plain := BoneMatrix(b).Mul4x1(mgl32.Vec4{1, 0, 0, 0})
+	turned := BoneMatrix(rolled).Mul4x1(mgl32.Vec4{1, 0, 0, 0})
 	pv := mgl32.Vec3{plain.X(), plain.Y(), plain.Z()}
 	tv := mgl32.Vec3{turned.X(), turned.Y(), turned.Z()}
 	if math.Abs(float64(pv.Dot(tv))) > 1e-5 {
@@ -225,7 +225,7 @@ func TestBoneRollTwistsTheFrameButNotTheBone(t *testing.T) {
 
 func TestBoneDeltaIsIdentityWhenNothingMoved(t *testing.T) {
 	m, _ := boneChain(t)
-	for i, d := range m.BoneDeltas(cloneBones(m.Bones)) {
+	for i, d := range m.BoneDeltas(CloneBones(m.Bones)) {
 		for j := 0; j < 16; j++ {
 			want := float32(0)
 			if j%5 == 0 {
@@ -240,7 +240,7 @@ func TestBoneDeltaIsIdentityWhenNothingMoved(t *testing.T) {
 
 func TestCloneBonesIsIndependent(t *testing.T) {
 	m, idx := boneChain(t)
-	snap := cloneBones(m.Bones)
+	snap := CloneBones(m.Bones)
 
 	m.SetBoneTail(idx[0], mgl32.Vec3{5, 5, 5})
 

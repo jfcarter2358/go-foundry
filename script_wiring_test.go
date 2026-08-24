@@ -15,17 +15,18 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
+	"foundry/internal/model"
 )
 
 // riggedDoc is a model with an armature and a "press" clip, but no skin weights
 // — the half-built rig that newEntityAnim refuses.
-func riggedDoc(t *testing.T) *ModelDoc {
+func riggedDoc(t *testing.T) *model.ModelDoc {
 	t.Helper()
 	m, idx := boneChain(t)
 	ci := m.AddClip("press")
 	c := m.Clip(ci)
-	c.SetKey(idx[0], 0, identBonePose())
-	c.SetKey(idx[0], 1, identBonePose())
+	c.SetKey(idx[0], 0, model.IdentBonePose())
+	c.SetKey(idx[0], 1, model.IdentBonePose())
 	return m
 }
 
@@ -52,11 +53,11 @@ func buttonEntity(t *testing.T, declared ...EntityAnimation) Entity {
 func TestAnimUnavailableNamesTheMissingStep(t *testing.T) {
 	cases := []struct {
 		name string
-		doc  func(t *testing.T) *ModelDoc
+		doc  func(t *testing.T) *model.ModelDoc
 		want string
 	}{
-		{"no document", func(*testing.T) *ModelDoc { return nil }, "did not load"},
-		{"no armature", func(*testing.T) *ModelDoc { return NewCubeDoc() }, "no armature"},
+		{"no document", func(*testing.T) *model.ModelDoc { return nil }, "did not load"},
+		{"no armature", func(*testing.T) *model.ModelDoc { return model.NewCubeDoc() }, "no armature"},
 		{"no skin weights", riggedDoc, "weighted to a bone"},
 	}
 	for _, tc := range cases {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/model"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -9,7 +10,7 @@ import (
 // withModelDoc installs a document for the duration of a test and restores the
 // editor globals afterwards, so tests do not leak selection state into each
 // other.
-func withModelDoc(t *testing.T, m *ModelDoc) {
+func withModelDoc(t *testing.T, m *model.ModelDoc) {
 	t.Helper()
 	prevDoc, prevSel := modelDoc, modelSelection
 	// The pending extrude is face indices into the old document; left in place
@@ -27,7 +28,7 @@ func withModelDoc(t *testing.T, m *ModelDoc) {
 }
 
 func TestSelModeFaceToVertsAndBack(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 
 	modelSelection.Mode = modelSelFace
@@ -46,7 +47,7 @@ func TestSelModeFaceToVertsAndBack(t *testing.T) {
 }
 
 func TestSelModePartialCoverageDoesNotSelectFace(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 
 	// Three of face 0's four corners. A face is selected only when it is fully
@@ -61,7 +62,7 @@ func TestSelModePartialCoverageDoesNotSelectFace(t *testing.T) {
 }
 
 func TestSelModeVertsToEdges(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 
 	f := m.Faces[0]
@@ -77,7 +78,7 @@ func TestSelModeVertsToEdges(t *testing.T) {
 }
 
 func TestSelectedVertsResolvesEveryMode(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 
 	modelSelection.Mode = modelSelFace
@@ -87,7 +88,7 @@ func TestSelectedVertsResolvesEveryMode(t *testing.T) {
 	}
 
 	modelSelection.Mode = modelSelEdge
-	modelSelection.Edges = []edgeKey{makeEdgeKey(m.Faces[0].Verts[0], m.Faces[0].Verts[1])}
+	modelSelection.Edges = []model.EdgeKey{model.MakeEdgeKey(m.Faces[0].Verts[0], m.Faces[0].Verts[1])}
 	if got := len(modelSelectedVerts()); got != 2 {
 		t.Errorf("edge mode resolved to %d verts, want 2", got)
 	}
@@ -125,7 +126,7 @@ func TestToggleIntDoesNotAliasCallerSlice(t *testing.T) {
 }
 
 func TestModelUndoRedoRoundTrip(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	prevU, prevR := modelUndoStack, modelRedoStack
 	modelUndoStack, modelRedoStack = boundedStack[modelSnapshot]{}, boundedStack[modelSnapshot]{}
@@ -157,7 +158,7 @@ func TestModelUndoRedoRoundTrip(t *testing.T) {
 }
 
 func TestModelPushUndoSnapshotsIndependently(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	prevU, prevR := modelUndoStack, modelRedoStack
 	modelUndoStack, modelRedoStack = boundedStack[modelSnapshot]{}, boundedStack[modelSnapshot]{}

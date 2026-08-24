@@ -198,7 +198,7 @@ func modelRotateMouseMove(mx, my int32) {
 	if !ok {
 		return
 	}
-	delta := modelWrapAngle(angle - modelGizmo.StartAngle)
+	delta := geom.WrapAngle(angle - modelGizmo.StartAngle)
 	if Editor.SnapToGrid {
 		delta = snapValue(delta, mgl32.DegToRad(modelRotateSnapDeg))
 	}
@@ -219,20 +219,6 @@ func modelRotateMouseMove(mx, my int32) {
 		modelDoc.SetVertPos(v, origin.Add(rot.Mul3x1(start.Sub(origin))))
 	}
 	modelAfterMeshMove()
-}
-
-// modelWrapAngle folds a difference of two atan2 results into (-pi, pi].
-// Without it, dragging across the ±pi seam would read as a near-full turn in
-// the opposite direction and the selection would snap right round.
-func modelWrapAngle(a float32) float32 {
-	const twoPi = 2 * math.Pi
-	for a > math.Pi {
-		a -= twoPi
-	}
-	for a <= -math.Pi {
-		a += twoPi
-	}
-	return a
 }
 
 // modelBoneRotateApply turns the selected bones about origin.
@@ -267,7 +253,7 @@ func modelBoneRotateApply(axis mgl32.Vec3, delta float32, origin mgl32.Vec3, rot
 			modelDoc.Bones[bi].Roll = rest.Roll + delta*axis.Dot(dir.Normalize())
 		}
 	}
-	modelDoc.syncConnectedBones()
+	modelDoc.SyncConnectedBones()
 	if modelBoneDeform {
 		modelDoc.SkinFrom(modelBoneDrag.Bones, modelBoneDrag.Verts)
 	}

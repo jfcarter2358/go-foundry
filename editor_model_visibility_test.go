@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/model"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -13,7 +14,7 @@ import (
 // of six corners, and the seventh is the near corner in the middle of it. So
 // "hidden" is one vertex out of eight — not the four furthest away, which is
 // the tempting and wrong guess, because two of the four sit on the silhouette.
-func cubeFarthestCorner(m *ModelDoc) int {
+func cubeFarthestCorner(m *model.ModelDoc) int {
 	eye := modelCam.position()
 	far, farDist := -1, float32(-1)
 	for vi, p := range m.Verts {
@@ -25,7 +26,7 @@ func cubeFarthestCorner(m *ModelDoc) int {
 }
 
 func TestSolidShadingHidesTheFarCorner(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	modelWireframe = false
@@ -52,7 +53,7 @@ func TestSolidShadingHidesTheFarCorner(t *testing.T) {
 }
 
 func TestWireframeMakesEverythingVisible(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	modelSetWireframe(true)
@@ -71,7 +72,7 @@ func TestWireframeMakesEverythingVisible(t *testing.T) {
 }
 
 // cornerScreenPos is where a vertex lands in the viewport.
-func cornerScreenPos(t *testing.T, m *ModelDoc, vi int) (int32, int32) {
+func cornerScreenPos(t *testing.T, m *model.ModelDoc, vi int) (int32, int32) {
 	t.Helper()
 	w, h, _ := modelViewport()
 	sp, ok := projectToScreenIn(modelProjView(), m.Verts[vi], w, h)
@@ -82,7 +83,7 @@ func cornerScreenPos(t *testing.T, m *ModelDoc, vi int) (int32, int32) {
 }
 
 func TestSolidShadingRefusesToPickTheHiddenCorner(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	modelWireframe = false
@@ -109,7 +110,7 @@ func TestSolidShadingRefusesToPickTheHiddenCorner(t *testing.T) {
 }
 
 func TestWireframeReachesTheHiddenCorner(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	modelWireframe = false
@@ -129,7 +130,7 @@ func TestWireframeReachesTheHiddenCorner(t *testing.T) {
 }
 
 func TestEdgeIsVisibleWhenEitherEndIs(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	modelWireframe = false
@@ -149,7 +150,7 @@ func TestEdgeIsVisibleWhenEitherEndIs(t *testing.T) {
 }
 
 func TestVisibilityCacheTracksTheEyeAndTheMesh(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	modelWireframe = false
@@ -185,7 +186,7 @@ func TestVisibilityCacheTracksTheEyeAndTheMesh(t *testing.T) {
 }
 
 func TestVisibilityFallsBackOnDenseMeshes(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	for i := 0; i < 3; i++ {
 		m.CatmullClark()
 	}

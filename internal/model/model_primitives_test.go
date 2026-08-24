@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"fmt"
@@ -94,7 +94,7 @@ func TestPrimitiveSegmentsClamped(t *testing.T) {
 }
 
 func TestPrimitivesHaveFullUVs(t *testing.T) {
-	for _, kind := range modelPrimitiveKinds {
+	for _, kind := range ModelPrimitiveKinds {
 		m := NewPrimitiveDoc(kind, 8)
 		for i, f := range m.Faces {
 			if len(f.UVs) != len(f.Verts) {
@@ -166,7 +166,7 @@ func TestPrimitiveKindNames(t *testing.T) {
 	// The palette buttons are labelled from String(); a duplicate would give
 	// two buttons the same ImGui ID.
 	seen := map[string]bool{}
-	for _, k := range modelPrimitiveKinds {
+	for _, k := range ModelPrimitiveKinds {
 		name := fmt.Sprint(k)
 		if name == "" || seen[name] {
 			t.Errorf("primitive kind %d has a missing or duplicate name %q", int(k), name)

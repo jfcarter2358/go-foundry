@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/gfx"
+	"foundry/internal/model"
 	"strings"
 	"testing"
 )
@@ -28,10 +29,10 @@ func TestSkinShaderMatchesGoBoneLimit(t *testing.T) {
 }
 
 // TestSkinShaderCarriesTheInfluenceBudget checks the vec4 pair matches
-// modelMaxInfluences, which is what normalizeWeights prunes to.
+// ModelMaxInfluences, which is what normalizeWeights prunes to.
 func TestSkinShaderCarriesTheInfluenceBudget(t *testing.T) {
-	if modelMaxInfluences != 4 {
-		t.Fatalf("modelMaxInfluences is %d; skin_common.glsl carries influences in a vec4", modelMaxInfluences)
+	if model.ModelMaxInfluences != 4 {
+		t.Fatalf("ModelMaxInfluences is %d; skin_common.glsl carries influences in a vec4", model.ModelMaxInfluences)
 	}
 	src := readBiomeShader(t, "skin_common.glsl")
 	for _, decl := range []string{"in vec4 boneIdx", "in vec4 boneWt"} {
@@ -92,22 +93,22 @@ func TestModelEditorShaderDoesNotSkin(t *testing.T) {
 
 // TestSkinAttrsForPacksInfluences covers the CPU side of the same contract.
 func TestSkinAttrsForPacksInfluences(t *testing.T) {
-	idx, wt := skinAttrsFor([]ModelVertexWeight{{Bone: 3, Weight: 0.25}, {Bone: 7, Weight: 0.75}})
-	if len(idx) != modelMaxInfluences || len(wt) != modelMaxInfluences {
-		t.Fatalf("packed %d/%d values, want %d each", len(idx), len(wt), modelMaxInfluences)
+	idx, wt := model.SkinAttrsFor([]model.ModelVertexWeight{{Bone: 3, Weight: 0.25}, {Bone: 7, Weight: 0.75}})
+	if len(idx) != model.ModelMaxInfluences || len(wt) != model.ModelMaxInfluences {
+		t.Fatalf("packed %d/%d values, want %d each", len(idx), len(wt), model.ModelMaxInfluences)
 	}
 	if idx[0] != 3 || wt[0] != 0.25 || idx[1] != 7 || wt[1] != 0.75 {
 		t.Errorf("influences did not survive packing: %v / %v", idx, wt)
 	}
 	// The tail must be zero *weight*, which is what the shader treats as absent.
-	for i := 2; i < modelMaxInfluences; i++ {
+	for i := 2; i < model.ModelMaxInfluences; i++ {
 		if wt[i] != 0 {
 			t.Errorf("slot %d has weight %v, want 0", i, wt[i])
 		}
 	}
 
 	// An unbound vertex must pack to all-zero weights, not to bone 0 at 1.
-	idx, wt = skinAttrsFor(nil)
+	idx, wt = model.SkinAttrsFor(nil)
 	for i := range wt {
 		if wt[i] != 0 || idx[i] != 0 {
 			t.Errorf("an unbound vertex packed to %v / %v, want zeroes", idx, wt)
@@ -119,8 +120,8 @@ func TestSkinAttrsForPacksInfluences(t *testing.T) {
 // TestSubmeshesCarrySkinAttributesOnlyWhenRigged keeps the extra buffers off
 // every wall in the level.
 func TestSubmeshesCarrySkinAttributesOnlyWhenRigged(t *testing.T) {
-	plain := NewCubeDoc()
-	for _, sub := range plain.modelSubmeshes() {
+	plain := model.NewCubeDoc()
+	for _, sub := range plain.ModelSubmeshes() {
 		if sub.SkinIdx != nil || sub.SkinWt != nil {
 			t.Error("an unrigged model produced skinning attributes")
 		}
@@ -131,14 +132,14 @@ func TestSubmeshesCarrySkinAttributesOnlyWhenRigged(t *testing.T) {
 
 	rigged, idx := boneChain(t)
 	rigged.AssignVertsToBone(modelAllVerts(rigged), idx[0], 1)
-	for _, sub := range rigged.modelSubmeshes() {
+	for _, sub := range rigged.ModelSubmeshes() {
 		if len(sub.SkinIdx) != len(sub.Vertices) || len(sub.SkinWt) != len(sub.Vertices) {
 			t.Fatalf("rigged submesh has %d/%d skin records for %d vertices",
 				len(sub.SkinIdx), len(sub.SkinWt), len(sub.Vertices))
 		}
 		// Every record must describe the vertex it sits beside.
 		for i, src := range sub.SrcVerts {
-			want, _ := skinAttrsFor(rigged.weightsFor(src))
+			want, _ := model.SkinAttrsFor(rigged.WeightsFor(src))
 			for j := range want {
 				if sub.SkinIdx[i][j] != want[j] {
 					t.Fatalf("record %d (vertex %d) bound to the wrong bone: %v, want %v",

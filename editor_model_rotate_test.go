@@ -1,6 +1,8 @@
 package main
 
 import (
+	"foundry/internal/geom"
+	"foundry/internal/model"
 	"math"
 	"testing"
 
@@ -54,7 +56,7 @@ func grabRing(t *testing.T, axis int) {
 }
 
 func TestRotateRingIsPickable(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	modelGizmoTool = modelToolRotate
@@ -70,7 +72,7 @@ func TestRotateRingIsPickable(t *testing.T) {
 }
 
 func TestRotateTurnsTheSelectionAboutItsCentre(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	withGridSnap(t, false, 0.1)
@@ -115,7 +117,7 @@ func TestRotateTurnsTheSelectionAboutItsCentre(t *testing.T) {
 }
 
 func TestRotateSnapsToFifteenDegrees(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	withGridSnap(t, true, 0.25)
@@ -138,7 +140,7 @@ func TestRotateSnapsToFifteenDegrees(t *testing.T) {
 	// Angle turned, measured in the XZ plane the Y ring lives in.
 	a0 := math.Atan2(float64(start.Z()), float64(start.X()))
 	a1 := math.Atan2(float64(now.Z()), float64(now.X()))
-	deg := float64(modelWrapAngle(float32(a1-a0))) * 180 / math.Pi
+	deg := float64(geom.WrapAngle(float32(a1-a0))) * 180 / math.Pi
 	steps := deg / modelRotateSnapDeg
 	if math.Abs(steps-math.Round(steps)) > 1e-3 {
 		t.Errorf("turned %.4f degrees, which is not a multiple of %d", deg, modelRotateSnapDeg)
@@ -175,7 +177,7 @@ func TestRotateSwingsABoneAboutItsHead(t *testing.T) {
 }
 
 func TestRotateAboutABonesOwnAxisBecomesRoll(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	// A bone lying along +X, so the X ring turns it about its own axis.
 	bi := m.AddBone(mgl32.Vec3{0, 0, 0}, mgl32.Vec3{1, 0, 0})
 	withModelDoc(t, m)
@@ -206,14 +208,14 @@ func TestRotateAboutABonesOwnAxisBecomesRoll(t *testing.T) {
 func TestWrapAngleFoldsTheSeam(t *testing.T) {
 	// Crossing from just under +pi to just over -pi is a small step, not a
 	// near-full turn the other way.
-	got := modelWrapAngle(float32(-math.Pi+0.05) - float32(math.Pi-0.05))
+	got := geom.WrapAngle(float32(-math.Pi+0.05) - float32(math.Pi-0.05))
 	if math.Abs(float64(got)-0.1) > 1e-5 {
 		t.Errorf("wrapped to %v, want about 0.1", got)
 	}
 }
 
 func TestSwitchingToolsCancelsADragInProgress(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	modelGizmoTool = modelToolRotate

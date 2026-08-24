@@ -25,13 +25,14 @@ package main
 // alternative — writing the pose into the document and restoring it on the way
 // out — puts the user's file one crash away from being a posed mesh.
 //
-// Deformation here is CPU (skinVerts, model_skin.go). The runtime skins on the
+// Deformation here is CPU (SkinVerts, model_skin.go). The runtime skins on the
 // GPU instead (model_skin_gpu.go); the editor's copy is the one that has to hand
 // ordinary []mgl32.Vec3 back to the wireframe and the picking code, and at one
 // mesh and editor framerates there is nothing to gain from the hardware path.
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/model"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
@@ -44,11 +45,11 @@ var (
 
 	// modelPose is the pose being edited: what the gizmos write and what "Key
 	// Pose" reads.
-	modelPose ModelPose
+	modelPose model.ModelPose
 
 	// The evaluated pose. Rebuilt by modelPoseEvaluate whenever the pose, the
 	// armature or the mesh changes.
-	modelPoseBones []ModelBone
+	modelPoseBones []model.ModelBone
 	modelPoseVerts []mgl32.Vec3
 
 	// modelPoseClip is the clip being authored, an index into
@@ -79,12 +80,12 @@ func modelSetPoseMode(on bool) {
 		// The document never changed, but the GPU buffers hold the posed mesh;
 		// ask for a rebuild from the rest vertices.
 		if modelDoc != nil {
-			modelDoc.touch()
+			modelDoc.Touch()
 		}
 		return
 	}
 	if modelDoc != nil {
-		modelPose.resize(len(modelDoc.Bones))
+		modelPose.Resize(len(modelDoc.Bones))
 		if modelPoseClip < 0 && len(modelDoc.Animations) > 0 {
 			modelPoseClip = 0
 		}
@@ -111,7 +112,7 @@ func modelPoseEvaluate() {
 		modelPoseBones, modelPoseVerts = nil, nil
 		return
 	}
-	modelPose.resize(len(modelDoc.Bones))
+	modelPose.Resize(len(modelDoc.Bones))
 	deltas := modelDoc.PoseDeltas(modelPose)
 	modelPoseBones = modelDoc.PosedBones(deltas)
 
@@ -122,8 +123,8 @@ func modelPoseEvaluate() {
 		modelPoseVerts = make([]mgl32.Vec3, len(modelDoc.Verts))
 	}
 	copy(modelPoseVerts, modelDoc.Verts)
-	modelDoc.ensureWeights()
-	skinVerts(deltas, modelDoc.Weights, modelDoc.Verts, modelPoseVerts)
+	modelDoc.EnsureWeights()
+	model.SkinVerts(deltas, modelDoc.Weights, modelDoc.Verts, modelPoseVerts)
 
 	// touch, not invalidate: the topology is the document's, unchanged. Only the
 	// positions the GPU holds are stale.
@@ -136,7 +137,7 @@ func modelPoseEvaluate() {
 	// normals. At one model and editor framerates the rebuild is not worth
 	// trading correct shading for; if a heavy character ever makes it matter,
 	// the fast path has to skin the normal buffer too.
-	modelDoc.touch()
+	modelDoc.Touch()
 }
 
 // ---------- what the viewport reads ----------
@@ -153,7 +154,7 @@ func modelPoseEvaluate() {
 // reading modelDoc, because the rest document is what those act on.
 
 // modelDisplayBones returns the armature as the viewport should show it.
-func modelDisplayBones() []ModelBone {
+func modelDisplayBones() []model.ModelBone {
 	if modelPoseActive() && len(modelPoseBones) == len(modelDoc.Bones) {
 		return modelPoseBones
 	}
@@ -175,10 +176,10 @@ func modelDisplayVerts() []mgl32.Vec3 {
 }
 
 // modelDisplayBone returns one posed bone.
-func modelDisplayBone(bi int) (ModelBone, bool) {
+func modelDisplayBone(bi int) (model.ModelBone, bool) {
 	bones := modelDisplayBones()
 	if bi < 0 || bi >= len(bones) {
-		return ModelBone{}, false
+		return model.ModelBone{}, false
 	}
 	return bones[bi], true
 }
@@ -192,27 +193,27 @@ func modelDisplayBone(bi int) (ModelBone, bool) {
 // nothing to a channel expressed in the bone's own space, and converting through
 // the bone's rest basis alone would ignore everything its parents are doing.
 func modelPoseBoneLocal(bi int) mgl32.Mat4 {
-	if modelDoc == nil || !modelDoc.validBone(bi) {
+	if modelDoc == nil || !modelDoc.ValidBone(bi) {
 		return mgl32.Ident4()
 	}
-	rest := boneRestBasis(modelDoc.Bones[bi])
+	rest := model.BoneRestBasis(modelDoc.Bones[bi])
 	parent := modelDoc.Bones[bi].Parent
-	if !modelDoc.validBone(parent) {
+	if !modelDoc.ValidBone(parent) {
 		return rest
 	}
 	posed := modelDoc.PoseMatrices(modelPose)
 	if parent >= len(posed) {
 		return rest
 	}
-	return posed[parent].Mul4(boneRestBasis(modelDoc.Bones[parent]).Inv().Mul4(rest))
+	return posed[parent].Mul4(model.BoneRestBasis(modelDoc.Bones[parent]).Inv().Mul4(rest))
 }
 
 // modelPoseSet writes one bone's channels and re-evaluates.
-func modelPoseSet(bi int, bp ModelBonePose) {
-	if modelDoc == nil || !modelDoc.validBone(bi) {
+func modelPoseSet(bi int, bp model.ModelBonePose) {
+	if modelDoc == nil || !modelDoc.ValidBone(bi) {
 		return
 	}
-	modelPose.set(bi, bp)
+	modelPose.Set(bi, bp)
 	modelPoseEvaluate()
 }
 
@@ -221,14 +222,14 @@ func modelPoseReset() {
 	if modelDoc == nil {
 		return
 	}
-	modelPose = newModelPose(len(modelDoc.Bones))
+	modelPose = model.NewModelPose(len(modelDoc.Bones))
 	modelPoseEvaluate()
 }
 
 // modelPoseResetBones returns the given bones to rest, leaving the others posed.
 func modelPoseResetBones(bones []int) {
 	for _, bi := range bones {
-		modelPose.set(bi, identBonePose())
+		modelPose.Set(bi, model.IdentBonePose())
 	}
 	modelPoseEvaluate()
 }
@@ -238,7 +239,7 @@ func modelPoseResetBones(bones []int) {
 // at once.
 func modelPoseClearChannel(bones []int, trans, rot, scale bool) {
 	for _, bi := range bones {
-		bp := modelPose.bone(bi)
+		bp := modelPose.Bone(bi)
 		if trans {
 			bp.Trans = mgl32.Vec3{}
 		}
@@ -248,7 +249,7 @@ func modelPoseClearChannel(bones []int, trans, rot, scale bool) {
 		if scale {
 			bp.Scale = mgl32.Vec3{1, 1, 1}
 		}
-		modelPose.set(bi, bp)
+		modelPose.Set(bi, bp)
 	}
 	modelPoseEvaluate()
 }
@@ -256,7 +257,7 @@ func modelPoseClearChannel(bones []int, trans, rot, scale bool) {
 // ---------- the clip being authored ----------
 
 // modelActiveClip returns the clip the timeline is showing, or nil.
-func modelActiveClip() *ModelClip {
+func modelActiveClip() *model.ModelClip {
 	if modelDoc == nil {
 		return nil
 	}
@@ -293,7 +294,7 @@ func modelPoseSetTime(t float32) {
 		modelPoseTime = 0
 		return
 	}
-	modelPoseTime = geom.ClampValue(t, 0, c.duration())
+	modelPoseTime = geom.ClampValue(t, 0, c.EffectiveDuration())
 	modelPoseSampleClip()
 }
 
@@ -303,7 +304,7 @@ func modelPoseFrame() int {
 	if c == nil {
 		return 0
 	}
-	return int(modelPoseTime*c.fps() + 0.5)
+	return int(modelPoseTime*c.EffectiveFPS() + 0.5)
 }
 
 // modelPoseSetFrame parks the playhead on a whole frame. Keys are placed at
@@ -317,7 +318,7 @@ func modelPoseSetFrame(frame int) {
 	if frame < 0 {
 		frame = 0
 	}
-	modelPoseSetTime(float32(frame) / c.fps())
+	modelPoseSetTime(float32(frame) / c.EffectiveFPS())
 }
 
 // modelPoseStepFrame nudges the playhead by whole frames, wrapping on a looping
@@ -327,7 +328,7 @@ func modelPoseStepFrame(delta int) {
 	if c == nil {
 		return
 	}
-	n := c.frameCount()
+	n := c.FrameCount()
 	f := modelPoseFrame() + delta
 	switch {
 	case f < 0:
@@ -358,9 +359,9 @@ func modelPoseTick(dt float32) {
 		return
 	}
 	modelPoseTime += dt
-	if d := c.duration(); modelPoseTime >= d {
+	if d := c.EffectiveDuration(); modelPoseTime >= d {
 		if c.Loop {
-			modelPoseTime = c.wrapClipTime(modelPoseTime)
+			modelPoseTime = c.WrapClipTime(modelPoseTime)
 		} else {
 			modelPoseTime = d
 			modelPosePlaying = false
@@ -383,13 +384,13 @@ func modelKeyBones(bones []int) int {
 	if c == nil || modelDoc == nil {
 		return 0
 	}
-	t := float32(modelPoseFrame()) / c.fps()
+	t := float32(modelPoseFrame()) / c.EffectiveFPS()
 	n := 0
 	for _, bi := range bones {
-		if !modelDoc.validBone(bi) {
+		if !modelDoc.ValidBone(bi) {
 			continue
 		}
-		c.SetKey(bi, t, modelPose.bone(bi))
+		c.SetKey(bi, t, modelPose.Bone(bi))
 		n++
 	}
 	return n
@@ -401,7 +402,7 @@ func modelKeyBones(bones []int) int {
 func modelPosedBoneIndices() []int {
 	var out []int
 	for bi := range modelPose.Bones {
-		if !modelPose.Bones[bi].isIdentity() {
+		if !modelPose.Bones[bi].IsIdentity() {
 			out = append(out, bi)
 		}
 	}

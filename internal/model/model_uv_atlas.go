@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_uv_atlas.go — flattening a whole model into one texture's worth of UVs.
 //
@@ -163,7 +163,7 @@ func (m *ModelDoc) AtlasUnwrap(faces []int, opts AtlasUnwrapOptions) (int, error
 			f.UVs = uvs
 		}
 	}
-	m.touch()
+	m.Touch()
 	return len(islands), nil
 }
 

@@ -10,7 +10,11 @@ package main
 // Pressing C again, once the scale tool is already up, swaps the arms onto a
 // frame derived from what is selected, and pressing it again swaps back.
 
-import "github.com/go-gl/mathgl/mgl32"
+import (
+	"foundry/internal/model"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
 
 // modelScaleLocal is the switch itself: false is the world frame, true the
 // selection's own. It is a mode rather than per-selection state, because it
@@ -69,7 +73,7 @@ func modelFaceBasis(faces []int) ([3]mgl32.Vec3, bool) {
 }
 
 // modelEdgeBasis builds a frame from the first selected edge.
-func modelEdgeBasis(edges []edgeKey) ([3]mgl32.Vec3, bool) {
+func modelEdgeBasis(edges []model.EdgeKey) ([3]mgl32.Vec3, bool) {
 	for _, e := range edges {
 		if e.A < 0 || e.A >= len(modelDoc.Verts) || e.B < 0 || e.B >= len(modelDoc.Verts) {
 			continue

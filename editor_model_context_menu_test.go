@@ -7,6 +7,7 @@ package main
 // panel's button would.
 
 import (
+	"foundry/internal/model"
 	"strings"
 	"testing"
 
@@ -76,7 +77,7 @@ func mustMenuPrefix(t *testing.T, items []ctxMenuItem, prefix string) ctxMenuIte
 }
 
 func TestContextMenuFaceModeOffersFaceOps(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelMenuState(t)
 	modelSelection.Mode = modelSelFace
@@ -94,7 +95,7 @@ func TestContextMenuFaceModeOffersFaceOps(t *testing.T) {
 }
 
 func TestContextMenuGreysOutFaceOpsWithNothingSelected(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelMenuState(t)
 	modelSelection.Mode = modelSelFace
@@ -117,7 +118,7 @@ func TestContextMenuGreysOutFaceOpsWithNothingSelected(t *testing.T) {
 }
 
 func TestContextMenuVertexModeDropsFaceOps(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelMenuState(t)
 	modelSelection.Mode = modelSelVertex
@@ -136,7 +137,7 @@ func TestContextMenuVertexModeDropsFaceOps(t *testing.T) {
 }
 
 func TestContextMenuAssignsPointsToTheBoneClicked(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelMenuState(t)
 	spine := m.AddBone(mgl32.Vec3{}, mgl32.Vec3{0, 1, 0})
@@ -165,14 +166,14 @@ func TestContextMenuAssignsPointsToTheBoneClicked(t *testing.T) {
 }
 
 func TestContextMenuEdgeModeAssignsThroughItsVertices(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelMenuState(t)
 	arm := m.AddBone(mgl32.Vec3{}, mgl32.Vec3{0, 1, 0})
 
 	e := m.Edges()[0]
 	modelSelection.Mode = modelSelEdge
-	modelSelection.Edges = []edgeKey{e}
+	modelSelection.Edges = []model.EdgeKey{e}
 
 	items := modelContextMenuItems()
 	assign := mustMenuPrefix(t, items, "Assign 2 point(s) to bone")
@@ -186,7 +187,7 @@ func TestContextMenuEdgeModeAssignsThroughItsVertices(t *testing.T) {
 }
 
 func TestContextMenuBoneModeOffersArmatureActions(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelMenuState(t)
 	root := m.AddBone(mgl32.Vec3{}, mgl32.Vec3{0, 1, 0})
@@ -238,7 +239,7 @@ func TestContextMenuBoneModeOffersArmatureActions(t *testing.T) {
 }
 
 func TestContextMenuPoseModeSwapsInKeyframeActions(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelMenuState(t)
 	m.AddBone(mgl32.Vec3{}, mgl32.Vec3{0, 1, 0})
@@ -265,7 +266,7 @@ func TestContextMenuPoseModeSwapsInKeyframeActions(t *testing.T) {
 }
 
 func TestContextMenuHeadingNamesTheSelection(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelMenuState(t)
 	modelSelection.Mode = modelSelFace
@@ -281,7 +282,7 @@ func TestContextMenuHeadingNamesTheSelection(t *testing.T) {
 }
 
 func TestSelectAllFollowsTheMode(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelMenuState(t)
 	m.AddBone(mgl32.Vec3{}, mgl32.Vec3{0, 1, 0})
@@ -316,7 +317,7 @@ func TestSelectAllFollowsTheMode(t *testing.T) {
 // ---------- the gesture ----------
 
 func TestRightClickOpensTheMenuAndRightDragDoesNot(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	withModelMenuState(t)
@@ -347,7 +348,7 @@ func TestRightClickOpensTheMenuAndRightDragDoesNot(t *testing.T) {
 }
 
 func TestRightClickSelectsUnderTheCursorOnlyWhenNothingIsSelected(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelViewport(t)
 	withModelMenuState(t)
@@ -398,7 +399,7 @@ func TestRightClickSelectsUnderTheCursorOnlyWhenNothingIsSelected(t *testing.T) 
 // nothing selected at all, which is when someone is most likely to be reaching
 // for "give this model a texture".
 func TestContextMenuDocumentRowsIgnoreSelection(t *testing.T) {
-	m := NewCubeDoc()
+	m := model.NewCubeDoc()
 	withModelDoc(t, m)
 	withModelMenuState(t)
 

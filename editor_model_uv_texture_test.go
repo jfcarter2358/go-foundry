@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/model"
 	"strings"
 	"testing"
 
@@ -42,7 +43,7 @@ func TestModelUnwrapSuggestedNameIsAlwaysUsable(t *testing.T) {
 	defer func() { modelDoc = prev }()
 
 	for _, id := range []string{"crate", "my model", "!!!", ""} {
-		modelDoc = NewCubeDoc()
+		modelDoc = model.NewCubeDoc()
 		modelDoc.ID = id
 		got := modelUnwrapSuggestedName()
 		if got == "" {
@@ -62,7 +63,7 @@ func TestModelUVLayoutOnlyForTheModelsOwnTexture(t *testing.T) {
 	prev := modelDoc
 	defer func() { modelDoc = prev }()
 
-	modelDoc = NewCubeDoc()
+	modelDoc = model.NewCubeDoc()
 	modelDoc.SetTexture("crate_atlas")
 
 	if got := modelUVLayoutFor("crate_atlas"); len(got) != 6 {
@@ -77,8 +78,8 @@ func TestModelUVLayoutOnlyForTheModelsOwnTexture(t *testing.T) {
 
 	// An untextured model still answers to the default name, matching what the
 	// renderer binds.
-	modelDoc = NewCubeDoc()
-	if got := modelUVLayoutFor(defaultModelTexture); len(got) != 6 {
+	modelDoc = model.NewCubeDoc()
+	if got := modelUVLayoutFor(model.DefaultModelTexture); len(got) != 6 {
 		t.Errorf("default-texture layout loops = %d, want 6", len(got))
 	}
 }
@@ -89,10 +90,10 @@ func TestModelUVLayoutReflectsLiveUVs(t *testing.T) {
 	prev := modelDoc
 	defer func() { modelDoc = prev }()
 
-	modelDoc = NewCubeDoc()
+	modelDoc = model.NewCubeDoc()
 	modelDoc.Faces[0].UVs[0] = mgl32.Vec2{0.125, 0.875}
 
-	loops := modelUVLayoutFor(defaultModelTexture)
+	loops := modelUVLayoutFor(model.DefaultModelTexture)
 	if len(loops) == 0 {
 		t.Fatal("no loops")
 	}
@@ -106,14 +107,14 @@ func TestModelUVLayoutSkipsDegenerateFaces(t *testing.T) {
 	prev := modelDoc
 	defer func() { modelDoc = prev }()
 
-	modelDoc = NewCubeDoc()
-	modelDoc.Faces = append(modelDoc.Faces, ModelFace{
+	modelDoc = model.NewCubeDoc()
+	modelDoc.Faces = append(modelDoc.Faces, model.ModelFace{
 		Verts: []int{0, 1},
 		UVs:   make([]mgl32.Vec2, 2),
 	})
-	modelDoc.invalidate()
+	modelDoc.Invalidate()
 
-	if got := modelUVLayoutFor(defaultModelTexture); len(got) != 6 {
+	if got := modelUVLayoutFor(model.DefaultModelTexture); len(got) != 6 {
 		t.Errorf("layout loops = %d, want 6 (the two-vertex face must be skipped)", len(got))
 	}
 }

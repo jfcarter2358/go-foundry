@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_pose.go — posing the armature.
 //
@@ -9,9 +9,9 @@ package main
 // a rotating limb *shorten* between keyframes: interpolating two endpoint
 // positions cuts across the arc the bone actually sweeps.
 //
-// ---------- why this does not use boneMatrix ----------
+// ---------- why this does not use BoneMatrix ----------
 //
-// boneMatrix (model_bone.go) folds the bone's length into its Y scale, which is
+// BoneMatrix (model_bone.go) folds the bone's length into its Y scale, which is
 // exactly right for the editor's rest-drag path: `boneDelta` compares two rest
 // placements, and a length difference between them *is* a stretch the mesh
 // should follow.
@@ -19,7 +19,7 @@ package main
 // It is wrong for pose composition. Applying a rotation R inside a basis carrying
 // a non-uniform scale S produces S·R·S⁻¹ — a shear, not a rotation — so a posed
 // limb would skew instead of swinging. Pose channels therefore live in
-// boneRestBasis: the same origin, direction and roll, with no length scale. The
+// BoneRestBasis: the same origin, direction and roll, with no length scale. The
 // bone's length does not vanish; it moves into its children's local offsets,
 // which is what makes a pose scale along Y stretch the bone *and* push whatever
 // hangs off its tail out with it.
@@ -30,7 +30,7 @@ package main
 // ModelBonePose would therefore annihilate whatever it multiplied, so
 // ModelBonePose.matrix treats a zero rotation and a zero scale as identity and
 // every constructor here fills identities explicitly. Anything that grows a pose
-// must go through newModelPose or ModelPose.resize.
+// must go through NewModelPose or ModelPose.Resize.
 
 import (
 	"foundry/internal/geom"
@@ -39,11 +39,11 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// boneRestBasis maps pose space to model space: origin at the head, orthonormal,
-// +Y along the bone. This is boneMatrix without the length in the Y scale — see
+// BoneRestBasis maps pose space to model space: origin at the head, orthonormal,
+// +Y along the bone. This is BoneMatrix without the length in the Y scale — see
 // the file header for why the difference matters.
-func boneRestBasis(b ModelBone) mgl32.Mat4 {
-	x, y, z, _, ok := boneBasisAxes(b)
+func BoneRestBasis(b ModelBone) mgl32.Mat4 {
+	x, y, z, _, ok := BoneBasisAxes(b)
 	if !ok {
 		return mgl32.Translate3D(b.Head.X(), b.Head.Y(), b.Head.Z())
 	}
@@ -59,7 +59,7 @@ func boneRestBasis(b ModelBone) mgl32.Mat4 {
 // ---------- the pose ----------
 
 // ModelBonePose is one bone's departure from its rest placement, in the bone's
-// own rest space (boneRestBasis). Trans slides the bone, Rot swings it about its
+// own rest space (BoneRestBasis). Trans slides the bone, Rot swings it about its
 // head, and Scale stretches what it deforms — Y along the bone's length, which
 // is the axis an animator reaches for.
 type ModelBonePose struct {
@@ -68,36 +68,36 @@ type ModelBonePose struct {
 	Scale mgl32.Vec3
 }
 
-// identBonePose is the rest placement: no offset, no rotation, no stretch.
-func identBonePose() ModelBonePose {
+// IdentBonePose is the rest placement: no offset, no rotation, no stretch.
+func IdentBonePose() ModelBonePose {
 	return ModelBonePose{Rot: mgl32.QuatIdent(), Scale: mgl32.Vec3{1, 1, 1}}
 }
 
 // isIdentity reports whether the bone is at rest. Drives what the .fmdl writer
 // omits and which bones "Key Pose" bothers to key.
-func (p ModelBonePose) isIdentity() bool {
+func (p ModelBonePose) IsIdentity() bool {
 	const eps = 1e-6
 	if p.Trans.Len() > eps {
 		return false
 	}
-	if s := p.scale(); mgl32.Abs(s.X()-1) > eps || mgl32.Abs(s.Y()-1) > eps || mgl32.Abs(s.Z()-1) > eps {
+	if s := p.EffectiveScale(); mgl32.Abs(s.X()-1) > eps || mgl32.Abs(s.Y()-1) > eps || mgl32.Abs(s.Z()-1) > eps {
 		return false
 	}
 	// A quaternion and its negation are the same rotation, so compare |w| rather
 	// than w: a pose that accumulated a turn past 2pi is still the identity.
-	return mgl32.Abs(mgl32.Abs(p.rot().W)-1) <= eps
+	return mgl32.Abs(mgl32.Abs(p.EffectiveRot().W)-1) <= eps
 }
 
-// rot returns the rotation, reading a zero value as the identity.
-func (p ModelBonePose) rot() mgl32.Quat {
+// EffectiveRot returns the rotation, reading a zero value as the identity.
+func (p ModelBonePose) EffectiveRot() mgl32.Quat {
 	if p.Rot.W == 0 && p.Rot.V == (mgl32.Vec3{}) {
 		return mgl32.QuatIdent()
 	}
 	return p.Rot
 }
 
-// scale returns the scale, reading a zero value as no stretch.
-func (p ModelBonePose) scale() mgl32.Vec3 {
+// EffectiveScale returns the scale, reading a zero value as no stretch.
+func (p ModelBonePose) EffectiveScale() mgl32.Vec3 {
 	if p.Scale == (mgl32.Vec3{}) {
 		return mgl32.Vec3{1, 1, 1}
 	}
@@ -107,15 +107,15 @@ func (p ModelBonePose) scale() mgl32.Vec3 {
 // normalized returns the pose with its zero-value fields filled in and its
 // rotation renormalised — the form everything downstream can assume.
 func (p ModelBonePose) normalized() ModelBonePose {
-	return ModelBonePose{Trans: p.Trans, Rot: p.rot().Normalize(), Scale: p.scale()}
+	return ModelBonePose{Trans: p.Trans, Rot: p.EffectiveRot().Normalize(), Scale: p.EffectiveScale()}
 }
 
 // matrix is the local transform: translate, then rotate about the head, then
 // scale. Scale is innermost so stretching does not drag the bone off its joint.
 func (p ModelBonePose) matrix() mgl32.Mat4 {
-	s := p.scale()
+	s := p.EffectiveScale()
 	return mgl32.Translate3D(p.Trans.X(), p.Trans.Y(), p.Trans.Z()).
-		Mul4(p.rot().Mat4()).
+		Mul4(p.EffectiveRot().Mat4()).
 		Mul4(mgl32.Scale3D(s.X(), s.Y(), s.Z()))
 }
 
@@ -123,18 +123,18 @@ func (p ModelBonePose) matrix() mgl32.Mat4 {
 // ModelDoc.Bones.
 type ModelPose struct{ Bones []ModelBonePose }
 
-// newModelPose returns a rest pose for an n-bone armature.
-func newModelPose(n int) ModelPose {
+// NewModelPose returns a rest pose for an n-bone armature.
+func NewModelPose(n int) ModelPose {
 	p := ModelPose{Bones: make([]ModelBonePose, n)}
 	for i := range p.Bones {
-		p.Bones[i] = identBonePose()
+		p.Bones[i] = IdentBonePose()
 	}
 	return p
 }
 
 // clone deep-copies the pose. ModelBonePose holds no slices, so copying the
 // backing array is a complete snapshot.
-func (p ModelPose) clone() ModelPose {
+func (p ModelPose) Clone() ModelPose {
 	if p.Bones == nil {
 		return ModelPose{}
 	}
@@ -143,7 +143,7 @@ func (p ModelPose) clone() ModelPose {
 
 // resize grows or shrinks the pose to match an armature of n bones, filling any
 // new entries with the identity rather than the zero value.
-func (p *ModelPose) resize(n int) {
+func (p *ModelPose) Resize(n int) {
 	if len(p.Bones) == n {
 		return
 	}
@@ -154,7 +154,7 @@ func (p *ModelPose) resize(n int) {
 	grown := make([]ModelBonePose, n)
 	copy(grown, p.Bones)
 	for i := len(p.Bones); i < n; i++ {
-		grown[i] = identBonePose()
+		grown[i] = IdentBonePose()
 	}
 	p.Bones = grown
 }
@@ -162,7 +162,7 @@ func (p *ModelPose) resize(n int) {
 // isRest reports whether every bone is at its rest placement.
 func (p ModelPose) isRest() bool {
 	for _, b := range p.Bones {
-		if !b.isIdentity() {
+		if !b.IsIdentity() {
 			return false
 		}
 	}
@@ -171,21 +171,21 @@ func (p ModelPose) isRest() bool {
 
 // bone returns bone bi's channels, or the identity when the pose is shorter than
 // the armature — which happens for a frame or two whenever a bone is added.
-func (p ModelPose) bone(bi int) ModelBonePose {
+func (p ModelPose) Bone(bi int) ModelBonePose {
 	if bi < 0 || bi >= len(p.Bones) {
-		return identBonePose()
+		return IdentBonePose()
 	}
 	return p.Bones[bi]
 }
 
 // set writes bone bi's channels, growing the pose if it has fallen behind the
 // armature.
-func (p *ModelPose) set(bi int, bp ModelBonePose) {
+func (p *ModelPose) Set(bi int, bp ModelBonePose) {
 	if bi < 0 {
 		return
 	}
 	if bi >= len(p.Bones) {
-		p.resize(bi + 1)
+		p.Resize(bi + 1)
 	}
 	p.Bones[bi] = bp
 }
@@ -195,7 +195,7 @@ func (p *ModelPose) set(bi int, bp ModelBonePose) {
 // PoseMatrices returns one model-space matrix per bone: where the pose puts that
 // bone's space.
 //
-//	restLocal[i] = boneRestBasis(parent)⁻¹ · boneRestBasis(i)
+//	restLocal[i] = BoneRestBasis(parent)⁻¹ · BoneRestBasis(i)
 //	posed[i]     = posed[parent] · restLocal[i] · pose[i]
 //
 // The walk is boneOrder()'s, because ModelDoc.Bones is deliberately not sorted
@@ -209,17 +209,17 @@ func (m *ModelDoc) PoseMatrices(p ModelPose) []mgl32.Mat4 {
 	rest := make([]mgl32.Mat4, n)
 	for i := range m.Bones {
 		posed[i] = mgl32.Ident4()
-		rest[i] = boneRestBasis(m.Bones[i])
+		rest[i] = BoneRestBasis(m.Bones[i])
 	}
 	for _, bi := range m.boneOrder() {
 		parent := m.Bones[bi].Parent
 		local := rest[bi]
 		base := mgl32.Ident4()
-		if m.validBone(parent) {
+		if m.ValidBone(parent) {
 			local = rest[parent].Inv().Mul4(rest[bi])
 			base = posed[parent]
 		}
-		posed[bi] = base.Mul4(local).Mul4(p.bone(bi).matrix())
+		posed[bi] = base.Mul4(local).Mul4(p.Bone(bi).matrix())
 	}
 	return posed
 }
@@ -228,13 +228,13 @@ func (m *ModelDoc) PoseMatrices(p ModelPose) []mgl32.Mat4 {
 // each bone's rest space to where the pose puts it.
 //
 // This is the same quantity boneDelta produces for a rest-skeleton drag, so it
-// feeds skinVerts (model_skin.go) through the same door — as that file's header
+// feeds SkinVerts (model_skin.go) through the same door — as that file's header
 // promised it would.
 func (m *ModelDoc) PoseDeltas(p ModelPose) []mgl32.Mat4 {
 	posed := m.PoseMatrices(p)
 	out := make([]mgl32.Mat4, len(posed))
 	for i := range posed {
-		out[i] = posed[i].Mul4(boneRestBasis(m.Bones[i]).Inv())
+		out[i] = posed[i].Mul4(BoneRestBasis(m.Bones[i]).Inv())
 	}
 	return out
 }
@@ -244,7 +244,7 @@ func (m *ModelDoc) PoseDeltas(p ModelPose) []mgl32.Mat4 {
 // connected child's head sits on its parent's tail in the parent's rest space,
 // so composing through the parent carries it along.
 func (m *ModelDoc) PosedBones(deltas []mgl32.Mat4) []ModelBone {
-	out := cloneBones(m.Bones)
+	out := CloneBones(m.Bones)
 	for i := range out {
 		if i >= len(deltas) {
 			break
@@ -263,8 +263,8 @@ func xformPoint(m mgl32.Mat4, p mgl32.Vec3) mgl32.Vec3 {
 	return mgl32.Vec3{v.X(), v.Y(), v.Z()}
 }
 
-// xformDir applies a 4x4 to a direction (w = 0), so translation is ignored.
-func xformDir(m mgl32.Mat4, v mgl32.Vec3) mgl32.Vec3 {
+// XformDir applies a 4x4 to a direction (w = 0), so translation is ignored.
+func XformDir(m mgl32.Mat4, v mgl32.Vec3) mgl32.Vec3 {
 	r := m.Mul4x1(mgl32.Vec4{v.X(), v.Y(), v.Z(), 0})
 	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
 }
@@ -282,19 +282,19 @@ func posedRoll(rest ModelBone, d mgl32.Mat4, head, tail mgl32.Vec3) float32 {
 	}
 	dir = dir.Normalize()
 
-	restX, _, _, _, ok := boneBasisAxes(rest)
+	restX, _, _, _, ok := BoneBasisAxes(rest)
 	if !ok {
 		return rest.Roll
 	}
-	x := xformDir(d, restX)
+	x := XformDir(d, restX)
 	if x.Len() < 1e-6 {
 		return rest.Roll
 	}
 	x = x.Normalize()
 
-	// The untwisted pair boneBasisAxes would build for this direction, before any
+	// The untwisted pair BoneBasisAxes would build for this direction, before any
 	// roll: u from PerpAxis, w = u x dir. It writes a roll of r as
-	// u*cos(r) - w*sin(r) (right-handed about +Y — see boneBasisAxes), so the
+	// u*cos(r) - w*sin(r) (right-handed about +Y — see BoneBasisAxes), so the
 	// angle back out is an atan2 carrying the same negation.
 	u := geom.PerpAxis(dir)
 	if u.Len() < 1e-6 {

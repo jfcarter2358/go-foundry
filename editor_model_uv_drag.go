@@ -35,7 +35,7 @@ func identityUVTransform() modelUVTransform {
 	return modelUVTransform{Scale: mgl32.Vec2{1, 1}}
 }
 
-func (t modelUVTransform) isIdentity() bool {
+func (t modelUVTransform) IsIdentity() bool {
 	return t.Offset == (mgl32.Vec2{}) && t.Scale == (mgl32.Vec2{1, 1}) && t.Rotation == 0
 }
 
@@ -121,7 +121,7 @@ func modelUVApply(faces []int) {
 			}
 		}
 	}
-	modelDoc.touch()
+	modelDoc.Touch()
 }
 
 // modelUVInvalidate forces a recapture, so an operation that rewrote UVs behind

@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"math"
@@ -141,7 +141,7 @@ func TestAtlasUnwrapKeepsUniformTexelDensity(t *testing.T) {
 			{Verts: []int{4, 5, 6, 7}, UVs: make([]mgl32.Vec2, 4)},
 		},
 	}
-	m.invalidate()
+	m.Invalidate()
 	if _, err := m.AtlasUnwrap([]int{0, 1}, AtlasUnwrapOptions{PaddingUV: -1}); err != nil {
 		t.Fatalf("AtlasUnwrap: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestAtlasUnwrapIslandIsContinuousAcrossInteriorEdges(t *testing.T) {
 			{Verts: []int{1, 4, 5, 2}, UVs: make([]mgl32.Vec2, 4)},
 		},
 	}
-	m.invalidate()
+	m.Invalidate()
 	n, err := m.AtlasUnwrap([]int{0, 1}, AtlasUnwrapOptions{})
 	if err != nil {
 		t.Fatalf("AtlasUnwrap: %v", err)
@@ -244,7 +244,7 @@ func TestAtlasUnwrapRejectsUnprojectableMesh(t *testing.T) {
 		Verts: []mgl32.Vec3{{0, 0, 0}, {1, 0, 0}},
 		Faces: []ModelFace{{Verts: []int{0, 1}, UVs: make([]mgl32.Vec2, 2)}},
 	}
-	m.invalidate()
+	m.Invalidate()
 	if _, err := m.AtlasUnwrap([]int{0}, AtlasUnwrapOptions{}); err == nil {
 		t.Error("unwrapping a mesh with no projectable face reported success")
 	}
@@ -258,7 +258,7 @@ func TestAtlasUnwrapLeavesDegenerateFacesAlone(t *testing.T) {
 		Verts: []int{0, 1},
 		UVs:   []mgl32.Vec2{{0.25, 0.5}, {0.75, 0.5}},
 	})
-	m.invalidate()
+	m.Invalidate()
 	if _, err := m.AtlasUnwrap(modelAllFaceIndicesOf(m), AtlasUnwrapOptions{}); err != nil {
 		t.Fatalf("AtlasUnwrap: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestAtlasUnwrapLeavesDegenerateFacesAlone(t *testing.T) {
 // Unwrapping must never leave a NaN behind: a NaN UV is not caught by a
 // 0..1 range check and renders as a garbage texel or nothing at all.
 func TestAtlasUnwrapProducesNoNaN(t *testing.T) {
-	for _, kind := range modelPrimitiveKinds {
+	for _, kind := range ModelPrimitiveKinds {
 		m := NewPrimitiveDoc(kind, 8)
 		if _, err := m.AtlasUnwrap(modelAllFaceIndicesOf(m), AtlasUnwrapOptions{}); err != nil {
 			t.Fatalf("%s: %v", kind, err)
@@ -294,7 +294,7 @@ func TestAtlasUnwrapAspectCompensatesNonSquareTexture(t *testing.T) {
 			Verts: []mgl32.Vec3{{0, 0, 0}, {1, 0, 0}, {1, 0, 1}, {0, 0, 1}},
 			Faces: []ModelFace{{Verts: []int{0, 1, 2, 3}, UVs: make([]mgl32.Vec2, 4)}},
 		}
-		m.invalidate()
+		m.Invalidate()
 		return m
 	}
 	m := square()

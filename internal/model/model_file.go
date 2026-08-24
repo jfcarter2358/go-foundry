@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_file.go — the .fmdl model document format.
 //
@@ -27,21 +27,21 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-const modelsDirName = "models"
+const ModelsDirName = "models"
 
-// modelExt is the native document extension; modelsDir is where the editor's
+// ModelExt is the native document extension; ModelsDir is where the editor's
 // open/save dialogs look.
-const modelExt = ".fmdl"
+const ModelExt = ".fmdl"
 
-func modelsDir() string { return filepath.Join(fileutil.ExecutablePath, modelsDirName) }
+func ModelsDir() string { return filepath.Join(fileutil.ExecutablePath, ModelsDirName) }
 
-func modelPath(name string) string { return filepath.Join(modelsDir(), name+modelExt) }
+func ModelPath(name string) string { return filepath.Join(ModelsDir(), name+ModelExt) }
 
 // RawModel is the on-disk form of a ModelDoc.
 type RawModel struct {
 	ID string `yaml:"id"`
 	// Texture is the one image the model is painted with. Omitted when the
-	// document never chose one, which loads back as defaultModelTexture.
+	// document never chose one, which loads back as DefaultModelTexture.
 	Texture     string           `yaml:"texture,omitempty"`
 	SmoothAngle float32          `yaml:"smooth_angle,omitempty"`
 	Vertices    [][]float32      `yaml:"vertices"`
@@ -179,7 +179,7 @@ func modelDocToRaw(m *ModelDoc) RawModel {
 		c := &m.Animations[ci]
 		rc := RawModelClip{
 			Name:     c.Name,
-			Duration: c.duration(),
+			Duration: c.EffectiveDuration(),
 			FPS:      c.FPS,
 			Loop:     boolPtrIfTrue(c.Loop),
 		}
@@ -206,10 +206,10 @@ func rawKeyFrom(k ModelBoneKey) RawModelKey {
 	if k.Trans.Len() > eps {
 		out.Trans = []float32{k.Trans.X(), k.Trans.Y(), k.Trans.Z()}
 	}
-	if q := k.rot(); geom.Abs32(geom.Abs32(q.W)-1) > eps {
+	if q := k.EffectiveRot(); geom.Abs32(geom.Abs32(q.W)-1) > eps {
 		out.Rot = []float32{q.V.X(), q.V.Y(), q.V.Z(), q.W}
 	}
-	if sc := k.scale(); geom.Abs32(sc.X()-1) > eps || geom.Abs32(sc.Y()-1) > eps || geom.Abs32(sc.Z()-1) > eps {
+	if sc := k.EffectiveScale(); geom.Abs32(sc.X()-1) > eps || geom.Abs32(sc.Y()-1) > eps || geom.Abs32(sc.Z()-1) > eps {
 		out.Scale = []float32{sc.X(), sc.Y(), sc.Z()}
 	}
 	return out
@@ -268,7 +268,7 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 		// document's texture. A file that used several is flattened to the
 		// first, which is lossy — but the alternative is refusing to open it,
 		// and the UVs it carries are still the ones that were authored.
-		if raw.Texture == "" && m.Texture == "" && rf.Texture != "" && rf.Texture != defaultModelTexture {
+		if raw.Texture == "" && m.Texture == "" && rf.Texture != "" && rf.Texture != DefaultModelTexture {
 			m.Texture = rf.Texture
 		}
 		m.Faces[i] = f
@@ -278,7 +278,7 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 	for i, rb := range raw.Bones {
 		b := ModelBone{
 			Name:      rb.Name,
-			Parent:    modelBoneNoParent,
+			Parent:    ModelBoneNoParent,
 			Head:      mgl32.Vec3{rb.Head[0], rb.Head[1], rb.Head[2]},
 			Tail:      mgl32.Vec3{rb.Tail[0], rb.Tail[1], rb.Tail[2]},
 			Roll:      rb.Roll,
@@ -295,7 +295,7 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 
 	// Materialised at full length whatever the file held, so every caller can
 	// index Weights by vertex without a length check of its own.
-	m.ensureWeights()
+	m.EnsureWeights()
 	for _, bind := range raw.Weights {
 		if bind.Vert < 0 || bind.Vert >= len(m.Weights) {
 			continue
@@ -336,7 +336,7 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 		m.Animations = append(m.Animations, c)
 	}
 
-	m.invalidate()
+	m.Invalidate()
 	return m
 }
 
@@ -344,7 +344,7 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 // renormalising the rotation — a hand-written quaternion is rarely unit-length,
 // and a non-unit one would scale the bone it drives.
 func modelKeyFromRaw(rk RawModelKey) ModelBoneKey {
-	k := ModelBoneKey{Time: rk.Time, ModelBonePose: identBonePose()}
+	k := ModelBoneKey{Time: rk.Time, ModelBonePose: IdentBonePose()}
 	if len(rk.Trans) >= 3 {
 		k.Trans = mgl32.Vec3{rk.Trans[0], rk.Trans[1], rk.Trans[2]}
 	}
@@ -553,7 +553,7 @@ func LoadModel(path string) (*ModelDoc, error) {
 }
 
 // ScanModelFiles lists the .fmdl documents available to the open dialog.
-func ScanModelFiles() []string { return fileutil.ScanFilesByExt(modelsDir(), modelExt) }
+func ScanModelFiles() []string { return fileutil.ScanFilesByExt(ModelsDir(), ModelExt) }
 
 func trimModelExt(name string) string {
 	return name[:len(name)-len(filepath.Ext(name))]

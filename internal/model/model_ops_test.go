@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"testing"
@@ -358,7 +358,7 @@ func TestMoveVertsAndSelectionHelpers(t *testing.T) {
 		}
 	}
 
-	edges := []edgeKey{makeEdgeKey(verts[0], verts[1])}
+	edges := []EdgeKey{MakeEdgeKey(verts[0], verts[1])}
 	if got := m.VertsOfEdges(edges); len(got) != 2 {
 		t.Errorf("VertsOfEdges returned %v, want 2 endpoints", got)
 	}

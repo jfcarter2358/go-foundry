@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"math"
@@ -57,7 +57,7 @@ func TestNewCubeDocNormalsPointOutward(t *testing.T) {
 
 func TestFaceTrianglesQuad(t *testing.T) {
 	m := NewCubeDoc()
-	tris := m.faceTriangles(0)
+	tris := m.FaceTriangles(0)
 	if len(tris) != 2 {
 		t.Fatalf("quad triangulated into %d triangles, want 2", len(tris))
 	}
@@ -82,7 +82,7 @@ func TestFaceTrianglesConcaveNgon(t *testing.T) {
 			UVs:   make([]mgl32.Vec2, 6),
 		}},
 	}
-	tris := m.faceTriangles(0)
+	tris := m.FaceTriangles(0)
 	if len(tris) != 4 {
 		t.Fatalf("hexagon triangulated into %d triangles, want n-2 = 4", len(tris))
 	}
@@ -128,7 +128,7 @@ func TestModelSubmeshesAreOneGroup(t *testing.T) {
 	m := NewCubeDoc()
 	m.SetTexture("brick")
 
-	subs := m.modelSubmeshes()
+	subs := m.ModelSubmeshes()
 	if len(subs) != 1 {
 		t.Fatalf("submeshes = %d, want 1", len(subs))
 	}
@@ -159,8 +159,8 @@ func TestModelSubmeshesAreOneGroup(t *testing.T) {
 // texture 0 and draws the mesh black.
 func TestModelSubmeshFallsBackToDefaultTexture(t *testing.T) {
 	m := NewCubeDoc()
-	if got := m.modelSubmeshes()[0].Texture; got != defaultModelTexture {
-		t.Errorf("submesh texture = %q, want %q", got, defaultModelTexture)
+	if got := m.ModelSubmeshes()[0].Texture; got != DefaultModelTexture {
+		t.Errorf("submesh texture = %q, want %q", got, DefaultModelTexture)
 	}
 }
 
@@ -168,19 +168,19 @@ func TestModelSubmeshFallsBackToDefaultTexture(t *testing.T) {
 // renderer has no zero-vertex Geometry to upload.
 func TestModelSubmeshesEmptyMesh(t *testing.T) {
 	m := &ModelDoc{ID: "empty"}
-	if subs := m.modelSubmeshes(); len(subs) != 0 {
+	if subs := m.ModelSubmeshes(); len(subs) != 0 {
 		t.Errorf("submeshes = %d, want 0 for an empty mesh", len(subs))
 	}
 }
 
 func TestModelSubmeshSmoothFlagPropagates(t *testing.T) {
 	m := NewCubeDoc()
-	subs := m.modelSubmeshes()
+	subs := m.ModelSubmeshes()
 	if subs[0].Smooth {
 		t.Error("submesh smooth before any face asked for it")
 	}
 	m.SetFaceSmooth([]int{2}, true)
-	subs = m.modelSubmeshes()
+	subs = m.ModelSubmeshes()
 	if !subs[0].Smooth {
 		t.Error("submesh not marked smooth after a face enabled smoothing")
 	}

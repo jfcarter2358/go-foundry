@@ -1,6 +1,7 @@
-package main
+package model
 
 import (
+	"foundry/internal/geom"
 	"math"
 	"testing"
 
@@ -28,15 +29,15 @@ func TestIdentityPoseLeavesEverythingAtRest(t *testing.T) {
 	m.AutoWeightVerts(modelAllVerts(m))
 	rest := append([]mgl32.Vec3(nil), m.Verts...)
 
-	deltas := m.PoseDeltas(newModelPose(len(m.Bones)))
+	deltas := m.PoseDeltas(NewModelPose(len(m.Bones)))
 	for _, bi := range idx {
 		if !mat4Close(deltas[bi], mgl32.Ident4(), 1e-5) {
 			t.Errorf("bone %d: identity pose produced a non-identity delta:\n%v", bi, deltas[bi])
 		}
 	}
 
-	if skinVerts(deltas, m.Weights, rest, m.Verts) {
-		// skinVerts reports movement whenever it wrote a bound vertex, so the
+	if SkinVerts(deltas, m.Weights, rest, m.Verts) {
+		// SkinVerts reports movement whenever it wrote a bound vertex, so the
 		// meaningful check is that the positions are unchanged.
 		for i := range m.Verts {
 			if !vec3Close(m.Verts[i], rest[i], 1e-5) {
@@ -56,7 +57,7 @@ func TestIdentityPoseLeavesEverythingAtRest(t *testing.T) {
 func TestPosingAParentCarriesItsChildren(t *testing.T) {
 	m, idx := boneChain(t)
 
-	pose := newModelPose(len(m.Bones))
+	pose := NewModelPose(len(m.Bones))
 	pose.Bones[idx[0]].Rot = localRot(mgl32.DegToRad(35), mgl32.Vec3{1, 0, 0})
 	deltas := m.PoseDeltas(pose)
 
@@ -73,7 +74,7 @@ func TestPosingAParentCarriesItsChildren(t *testing.T) {
 func TestPoseKeepsConnectedJointsWelded(t *testing.T) {
 	m, idx := boneChain(t)
 
-	pose := newModelPose(len(m.Bones))
+	pose := NewModelPose(len(m.Bones))
 	pose.Bones[idx[0]].Rot = localRot(mgl32.DegToRad(50), mgl32.Vec3{1, 0, 0})
 	pose.Bones[idx[1]].Rot = localRot(mgl32.DegToRad(-30), mgl32.Vec3{0, 0, 1})
 	pose.Bones[idx[2]].Scale = mgl32.Vec3{1, 1.5, 1}
@@ -91,11 +92,11 @@ func TestPoseKeepsConnectedJointsWelded(t *testing.T) {
 }
 
 // TestPoseScaleStretchesTheBoneAndMovesItsChildren covers the reason pose space
-// drops the length from boneRestBasis: the stretch has to reach the children.
+// drops the length from BoneRestBasis: the stretch has to reach the children.
 func TestPoseScaleStretchesTheBoneAndMovesItsChildren(t *testing.T) {
 	m, idx := boneChain(t)
 
-	pose := newModelPose(len(m.Bones))
+	pose := NewModelPose(len(m.Bones))
 	pose.Bones[idx[0]].Scale = mgl32.Vec3{1, 2, 1}
 	posed := m.PosedBones(m.PoseDeltas(pose))
 
@@ -125,10 +126,10 @@ func TestPoseScaleStretchesBoundVertices(t *testing.T) {
 	}
 	rest := append([]mgl32.Vec3(nil), m.Verts...)
 
-	pose := newModelPose(len(m.Bones))
+	pose := NewModelPose(len(m.Bones))
 	pose.Bones[bi].Scale = mgl32.Vec3{1, 3, 1}
 	out := append([]mgl32.Vec3(nil), rest...)
-	skinVerts(m.PoseDeltas(pose), m.Weights, rest, out)
+	SkinVerts(m.PoseDeltas(pose), m.Weights, rest, out)
 
 	// The bone runs from y=-0.5 to y=+0.5 and scales about its head, so a rigid
 	// vertex at the far end travels from +0.5 to -0.5 + 3*1 = +2.5.
@@ -158,7 +159,7 @@ func TestPoseEvaluatesChildrenBeforeParentsInTheArray(t *testing.T) {
 		t.Fatal("SetBoneParent refused a valid reparent")
 	}
 
-	pose := newModelPose(len(m.Bones))
+	pose := NewModelPose(len(m.Bones))
 	pose.Bones[parent].Rot = localRot(mgl32.DegToRad(40), mgl32.Vec3{1, 0, 0})
 	deltas := m.PoseDeltas(pose)
 
@@ -177,7 +178,7 @@ func TestPosedBonesRecoversRoll(t *testing.T) {
 	bi := m.AddBone(mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 	m.SetBoneRoll(bi, 0.3)
 
-	pose := newModelPose(len(m.Bones))
+	pose := NewModelPose(len(m.Bones))
 	// A rotation about the bone's own axis is pure twist: the endpoints do not
 	// move, so Roll is the only place it can be recorded.
 	const twist = float32(0.4)
@@ -187,14 +188,14 @@ func TestPosedBonesRecoversRoll(t *testing.T) {
 	if !vec3Close(posed[bi].Head, m.Bones[bi].Head, 1e-5) || !vec3Close(posed[bi].Tail, m.Bones[bi].Tail, 1e-5) {
 		t.Fatalf("a pure twist moved the bone: %v -> %v", m.Bones[bi], posed[bi])
 	}
-	got := modelWrapAngle(posed[bi].Roll - m.Bones[bi].Roll)
+	got := geom.WrapAngle(posed[bi].Roll - m.Bones[bi].Roll)
 	if mgl32.Abs(got-twist) > 1e-4 {
 		t.Errorf("recovered twist = %v, want %v", got, twist)
 	}
 }
 
 // TestBoneRollTurnsTheSameWayAsEveryOtherRotation pins the convention
-// boneBasisAxes documents: Roll is a right-handed turn about the bone's +Y, so
+// BoneBasisAxes documents: Roll is a right-handed turn about the bone's +Y, so
 // setting Roll and posing a rotation about the bone axis twist the same way.
 // They used to disagree, which also mis-signed modelBoneRotateApply.
 func TestBoneRollTurnsTheSameWayAsEveryOtherRotation(t *testing.T) {
@@ -203,10 +204,10 @@ func TestBoneRollTurnsTheSameWayAsEveryOtherRotation(t *testing.T) {
 	rolled := b
 	rolled.Roll = r
 
-	// The X axis boneRestBasis builds for a rolled bone must match the one a
+	// The X axis BoneRestBasis builds for a rolled bone must match the one a
 	// right-handed rotation of r about +Y produces from the unrolled basis.
-	fromRoll := xformDir(boneRestBasis(rolled), mgl32.Vec3{1, 0, 0})
-	fromQuat := xformDir(boneRestBasis(b).Mul4(localRot(r, mgl32.Vec3{0, 1, 0}).Mat4()), mgl32.Vec3{1, 0, 0})
+	fromRoll := XformDir(BoneRestBasis(rolled), mgl32.Vec3{1, 0, 0})
+	fromQuat := XformDir(BoneRestBasis(b).Mul4(localRot(r, mgl32.Vec3{0, 1, 0}).Mat4()), mgl32.Vec3{1, 0, 0})
 	if !vec3Close(fromRoll, fromQuat, 1e-5) {
 		t.Errorf("Roll and a pose rotation twist opposite ways: %v vs %v", fromRoll, fromQuat)
 	}
@@ -217,7 +218,7 @@ func TestBoneRollTurnsTheSameWayAsEveryOtherRotation(t *testing.T) {
 // multiplied.
 func TestBonePoseZeroValueIsRest(t *testing.T) {
 	var zero ModelBonePose
-	if !zero.isIdentity() {
+	if !zero.IsIdentity() {
 		t.Error("a zero-valued ModelBonePose is not reported as rest")
 	}
 	if !mat4Close(zero.matrix(), mgl32.Ident4(), 1e-6) {
@@ -243,40 +244,40 @@ func TestBonePoseIsIdentityDetectsEachChannel(t *testing.T) {
 		{"scale", ModelBonePose{Rot: mgl32.QuatIdent(), Scale: mgl32.Vec3{1, 1.01, 1}}},
 	}
 	for _, c := range cases {
-		if c.pose.isIdentity() {
+		if c.pose.IsIdentity() {
 			t.Errorf("%s: isIdentity missed a posed channel", c.name)
 		}
 	}
 	// A full turn is the identity rotation with w = -1, which a naive w == 1
 	// test would call posed.
 	full := ModelBonePose{Rot: localRot(2*float32(math.Pi), mgl32.Vec3{1, 0, 0}), Scale: mgl32.Vec3{1, 1, 1}}
-	if !full.isIdentity() {
+	if !full.IsIdentity() {
 		t.Error("a full turn was not recognised as the rest rotation")
 	}
 }
 
 func TestPoseResizeFillsIdentities(t *testing.T) {
-	p := newModelPose(1)
-	p.resize(3)
+	p := NewModelPose(1)
+	p.Resize(3)
 	if len(p.Bones) != 3 {
 		t.Fatalf("resize gave %d bones, want 3", len(p.Bones))
 	}
 	for i, b := range p.Bones {
-		if !b.isIdentity() {
+		if !b.IsIdentity() {
 			t.Errorf("bone %d was not filled with the identity: %+v", i, b)
 		}
 	}
-	p.resize(2)
+	p.Resize(2)
 	if len(p.Bones) != 2 {
 		t.Errorf("shrink gave %d bones, want 2", len(p.Bones))
 	}
 }
 
 func TestBoneRestBasisIsOrthonormal(t *testing.T) {
-	// The whole reason pose space exists: boneMatrix folds the length into Y,
+	// The whole reason pose space exists: BoneMatrix folds the length into Y,
 	// which would turn a pose rotation into a shear.
 	b := ModelBone{Head: mgl32.Vec3{1, 2, 3}, Tail: mgl32.Vec3{1, 5, 3}, Roll: 0.7}
-	basis := boneRestBasis(b)
+	basis := BoneRestBasis(b)
 	cols := [3]mgl32.Vec3{
 		{basis[0], basis[1], basis[2]},
 		{basis[4], basis[5], basis[6]},
@@ -284,7 +285,7 @@ func TestBoneRestBasisIsOrthonormal(t *testing.T) {
 	}
 	for i, c := range cols {
 		if mgl32.Abs(c.Len()-1) > 1e-5 {
-			t.Errorf("axis %d has length %v, want 1 (boneMatrix's Y scale leaked in)", i, c.Len())
+			t.Errorf("axis %d has length %v, want 1 (BoneMatrix's Y scale leaked in)", i, c.Len())
 		}
 	}
 	for i := 0; i < 3; i++ {
@@ -292,10 +293,10 @@ func TestBoneRestBasisIsOrthonormal(t *testing.T) {
 			t.Errorf("axes %d and %d are not perpendicular (dot %v)", i, (i+1)%3, d)
 		}
 	}
-	// boneMatrix, by contrast, must still carry the length — the rest-drag path
+	// BoneMatrix, by contrast, must still carry the length — the rest-drag path
 	// depends on it.
-	scaled := boneMatrix(b)
+	scaled := BoneMatrix(b)
 	if y := (mgl32.Vec3{scaled[4], scaled[5], scaled[6]}); mgl32.Abs(y.Len()-3) > 1e-5 {
-		t.Errorf("boneMatrix Y axis has length %v, want the bone length 3", y.Len())
+		t.Errorf("BoneMatrix Y axis has length %v, want the bone length 3", y.Len())
 	}
 }

@@ -248,7 +248,7 @@ func editor2DGizmoMouseMove(mx, my int32) {
 			return
 		}
 		angle := float32(math.Atan2(float64(rel.Y()), float64(rel.X())))
-		delta := modelWrapAngle(angle - Editor.Gizmo2DStartS)
+		delta := geom.WrapAngle(angle - Editor.Gizmo2DStartS)
 		if Editor.SnapToGrid {
 			delta = snapValue(delta, mgl32.DegToRad(modelRotateSnapDeg))
 		}

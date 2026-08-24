@@ -83,7 +83,7 @@ func modelEditorRebuild() {
 	}
 	// The displayed vertices, so pose mode uploads the deformed mesh while the
 	// document goes on holding the rest one (editor_model_pose.go).
-	for _, sub := range modelDoc.modelSubmeshesFrom(modelDisplayVerts()) {
+	for _, sub := range modelDoc.ModelSubmeshesFrom(modelDisplayVerts()) {
 		if len(sub.Indices) == 0 {
 			continue
 		}

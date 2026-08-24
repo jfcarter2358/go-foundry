@@ -10,6 +10,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/imguibackend"
+	"foundry/internal/model"
 	"math"
 	"path/filepath"
 
@@ -105,7 +106,7 @@ func modelEditorMenuBar() {
 // ---------- file actions ----------
 
 func modelNewDocument() {
-	modelDoc = NewCubeDoc()
+	modelDoc = model.NewCubeDoc()
 	modelCam.frame(modelDoc)
 	modelClearSelection()
 	ModelClearUndoHistory()
@@ -123,7 +124,7 @@ func modelDoSave() {
 		modelShowSaveAsDialog = true
 		return
 	}
-	if err := SaveModel(modelDoc, modelDoc.Path); err != nil {
+	if err := model.SaveModel(modelDoc, modelDoc.Path); err != nil {
 		modelSetStatus("Save failed: %v", err)
 		return
 	}
@@ -133,16 +134,16 @@ func modelDoSave() {
 func modelDialogs() {
 	imguibackend.WithModalPopup("Open Model##modelopen", &modelShowOpenDialog, func() {
 		if modelFileList == nil {
-			modelFileList = ScanModelFiles()
+			modelFileList = model.ScanModelFiles()
 		}
 		if len(modelFileList) == 0 {
-			imgui.Text(fmt.Sprintf("No %s files in %s", modelExt, modelsDir()))
+			imgui.Text(fmt.Sprintf("No %s files in %s", model.ModelExt, model.ModelsDir()))
 		}
 		for _, name := range modelFileList {
 			if !imgui.Selectable(name) {
 				continue
 			}
-			doc, err := LoadModel(filepath.Join(modelsDir(), name))
+			doc, err := model.LoadModel(filepath.Join(model.ModelsDir(), name))
 			if err != nil {
 				modelSetStatus("Open failed: %v", err)
 			} else {
@@ -158,12 +159,12 @@ func modelDialogs() {
 	})
 
 	imguibackend.WithModalPopup("Save Model As##modelsaveas", &modelShowSaveAsDialog, func() {
-		imgui.Text(fmt.Sprintf("Saved to %s", modelsDir()))
+		imgui.Text(fmt.Sprintf("Saved to %s", model.ModelsDir()))
 		imgui.InputText("Name##modelsaveasname", &modelSaveAsName)
 		imgui.Separator()
 		if imgui.Button("Save##modelsaveasok") && modelSaveAsName != "" && modelDoc != nil {
-			path := modelPath(modelSaveAsName)
-			if err := SaveModel(modelDoc, path); err != nil {
+			path := model.ModelPath(modelSaveAsName)
+			if err := model.SaveModel(modelDoc, path); err != nil {
 				modelSetStatus("Save failed: %v", err)
 			} else {
 				modelDoc.ID = modelSaveAsName
@@ -181,16 +182,16 @@ func modelDialogs() {
 
 	imguibackend.WithModalPopup("Import OBJ##modelimport", &modelShowImportDialog, func() {
 		if modelOBJList == nil {
-			modelOBJList = ScanOBJFiles()
+			modelOBJList = model.ScanOBJFiles()
 		}
 		if len(modelOBJList) == 0 {
-			imgui.Text(fmt.Sprintf("No .obj files in %s", modelsDir()))
+			imgui.Text(fmt.Sprintf("No .obj files in %s", model.ModelsDir()))
 		}
 		for _, name := range modelOBJList {
 			if !imgui.Selectable(name) {
 				continue
 			}
-			doc, err := LoadOBJMesh(filepath.Join(modelsDir(), name))
+			doc, err := model.LoadOBJMesh(filepath.Join(model.ModelsDir(), name))
 			if err != nil {
 				modelSetStatus("Import failed: %v", err)
 			} else {
@@ -207,14 +208,14 @@ func modelDialogs() {
 
 	imguibackend.WithModalPopup("Merge Model##modelmerge", &modelShowMergeDialog, func() {
 		if modelFileList == nil {
-			modelFileList = ScanModelFiles()
+			modelFileList = model.ScanModelFiles()
 		}
 		imgui.Text("Appends to the current model.")
 		for _, name := range modelFileList {
 			if !imgui.Selectable(name) {
 				continue
 			}
-			other, err := LoadModel(filepath.Join(modelsDir(), name))
+			other, err := model.LoadModel(filepath.Join(model.ModelsDir(), name))
 			if err != nil {
 				modelSetStatus("Merge failed: %v", err)
 			} else {
@@ -232,14 +233,14 @@ func modelDialogs() {
 
 	imguibackend.WithModalPopup("Merge OBJ##modelmergeobj", &modelShowMergeOBJDialog, func() {
 		if modelOBJList == nil {
-			modelOBJList = ScanOBJFiles()
+			modelOBJList = model.ScanOBJFiles()
 		}
 		imgui.Text("Appends to the current model.")
 		for _, name := range modelOBJList {
 			if !imgui.Selectable(name) {
 				continue
 			}
-			other, err := LoadOBJMesh(filepath.Join(modelsDir(), name))
+			other, err := model.LoadOBJMesh(filepath.Join(model.ModelsDir(), name))
 			if err != nil {
 				modelSetStatus("Merge failed: %v", err)
 			} else {
@@ -256,12 +257,12 @@ func modelDialogs() {
 	})
 
 	imguibackend.WithModalPopup("Export OBJ##modelexport", &modelShowExportDialog, func() {
-		imgui.Text(fmt.Sprintf("Written to %s, with a sibling .mtl", modelsDir()))
+		imgui.Text(fmt.Sprintf("Written to %s, with a sibling .mtl", model.ModelsDir()))
 		imgui.InputText("Name##modelexportname", &modelExportName)
 		imgui.Separator()
 		if imgui.Button("Export##modelexportok") && modelExportName != "" && modelDoc != nil {
-			path := filepath.Join(modelsDir(), modelExportName+objExt)
-			if err := SaveOBJ(modelDoc, path); err != nil {
+			path := filepath.Join(model.ModelsDir(), modelExportName+model.ObjExt)
+			if err := model.SaveOBJ(modelDoc, path); err != nil {
 				modelSetStatus("Export failed: %v", err)
 			} else {
 				modelOBJList = nil
@@ -279,7 +280,7 @@ func modelDialogs() {
 // modelAdoptDocument swaps in a freshly loaded or imported document. The undo
 // history goes with the old one: its snapshots describe a mesh that is no
 // longer open, so restoring one would silently replace the new model.
-func modelAdoptDocument(doc *ModelDoc) {
+func modelAdoptDocument(doc *model.ModelDoc) {
 	modelDoc = doc
 	modelClearSelection()
 	ModelClearUndoHistory()
@@ -715,7 +716,7 @@ func modelAddSection() {
 	}
 
 	imgui.Text("Adds to the current model:")
-	for i, kind := range modelPrimitiveKinds {
+	for i, kind := range model.ModelPrimitiveKinds {
 		if i > 0 && i%3 != 0 {
 			imgui.SameLine()
 		}
@@ -724,9 +725,9 @@ func modelAddSection() {
 		}
 	}
 
-	segs := int32(ModelPrimitiveSegments)
+	segs := int32(model.ModelPrimitiveSegments)
 	if imgui.SliderInt("Segments##modelprimseg", &segs, 3, 64) {
-		ModelPrimitiveSegments = int(segs)
+		model.ModelPrimitiveSegments = int(segs)
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Radial resolution for cylinder, cone and sphere.")
@@ -750,11 +751,11 @@ func modelAddSection() {
 // modelAddPrimitive drops a new primitive into the document, in front of the
 // camera so it lands where the user is looking rather than at the origin under
 // whatever is already there.
-func modelAddPrimitive(kind ModelPrimitiveKind) {
+func modelAddPrimitive(kind model.ModelPrimitiveKind) {
 	if modelDoc == nil {
 		return
 	}
-	prim := NewPrimitiveDoc(kind, ModelPrimitiveSegments)
+	prim := model.NewPrimitiveDoc(kind, model.ModelPrimitiveSegments)
 	ModelPushUndo()
 	added := modelDoc.Merge(prim, modelAddPosition())
 	modelAdoptAddition(added)
@@ -838,7 +839,7 @@ func modelUVSection() {
 		modelUVApply(faces)
 	}
 
-	imguibackend.EditorPushDisabled(x.isIdentity())
+	imguibackend.EditorPushDisabled(x.IsIdentity())
 	if imgui.Button("Reset transform##modeluvreset") {
 		modelUVEdit.Xform = identityUVTransform()
 		modelUVApply(faces)
@@ -880,7 +881,7 @@ func modelUVSection() {
 					editorDragFloat(fmt.Sprintf("V %d##modeluvcv%d", i, i), &uv[1], 0, 0, "%.3f") {
 					ModelPushUndo()
 					f.UVs[i] = mgl32.Vec2{uv[0], uv[1]}
-					modelDoc.touch()
+					modelDoc.Touch()
 					modelUVInvalidate()
 				}
 			}

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"foundry/internal/geom"
 	"foundry/internal/imguibackend"
+	"foundry/internal/model"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
@@ -47,7 +48,7 @@ var modelSelectedKeys []modelKeyRef
 
 func modelKeySelected(bone int, t float32) bool {
 	for _, k := range modelSelectedKeys {
-		if k.Bone == bone && geom.Abs32(k.Time-t) <= modelKeyEpsilon {
+		if k.Bone == bone && geom.Abs32(k.Time-t) <= model.ModelKeyEpsilon {
 			return true
 		}
 	}
@@ -67,7 +68,7 @@ func modelSelectKey(refs []modelKeyRef, additive bool) {
 		if modelKeySelected(r.Bone, r.Time) {
 			kept := modelSelectedKeys[:0]
 			for _, k := range modelSelectedKeys {
-				if k.Bone == r.Bone && geom.Abs32(k.Time-r.Time) <= modelKeyEpsilon {
+				if k.Bone == r.Bone && geom.Abs32(k.Time-r.Time) <= model.ModelKeyEpsilon {
 					continue
 				}
 				kept = append(kept, k)
@@ -235,11 +236,11 @@ func modelTimelineTransportRow() {
 	imgui.SameLine()
 	if imgui.Button(">|##tl") {
 		modelPosePlaying = false
-		modelPoseSetFrame(c.frameCount())
+		modelPoseSetFrame(c.FrameCount())
 	}
 
 	imgui.SameLine()
-	imgui.Text(fmt.Sprintf("  %s   frame %d / %d", c.Name, modelPoseFrame(), c.frameCount()))
+	imgui.Text(fmt.Sprintf("  %s   frame %d / %d", c.Name, modelPoseFrame(), c.FrameCount()))
 
 	imgui.SameLine()
 	imguibackend.EditorPushDisabled(len(modelSelectedKeys) == 0)
@@ -285,8 +286,8 @@ func modelTimelineCanvas() {
 		x0:    origin.X + modelTimelineGutterW,
 		x1:    origin.X + avail.X - modelTimelinePad,
 		top:   origin.Y,
-		dur:   c.duration(),
-		fps:   c.fps(),
+		dur:   c.EffectiveDuration(),
+		fps:   c.EffectiveFPS(),
 		lanes: lanes,
 	}
 	l.span = l.x1 - l.x0
@@ -302,7 +303,7 @@ func modelTimelineCanvas() {
 	imgui.EndChild()
 }
 
-func modelTimelineDraw(l modelTimelineLayout, c *ModelClip, origin imgui.Vec2, width, height float32) {
+func modelTimelineDraw(l modelTimelineLayout, c *model.ModelClip, origin imgui.Vec2, width, height float32) {
 	dl := imgui.WindowDrawList()
 	bg := imgui.PackedColorFromVec4(imgui.Vec4{X: 0.11, Y: 0.11, Z: 0.13, W: 1})
 	gutter := imgui.PackedColorFromVec4(imgui.Vec4{X: 0.15, Y: 0.15, Z: 0.18, W: 1})
@@ -317,7 +318,7 @@ func modelTimelineDraw(l modelTimelineLayout, c *ModelClip, origin imgui.Vec2, w
 	dl.AddRectFilled(origin, imgui.Vec2{X: origin.X + modelTimelineGutterW, Y: origin.Y + height}, gutter)
 
 	// Frame ruler, thinned so a long clip does not draw a solid bar.
-	frames := c.frameCount()
+	frames := c.FrameCount()
 	step := 1
 	for frames/step > 40 {
 		step *= 2
@@ -344,7 +345,7 @@ func modelTimelineDraw(l modelTimelineLayout, c *ModelClip, origin imgui.Vec2, w
 	for i, bi := range l.lanes {
 		y := l.laneY(i)
 		name := fmt.Sprintf("Bone %d", bi)
-		if modelDoc.validBone(bi) {
+		if modelDoc.ValidBone(bi) {
 			name = modelDoc.Bones[bi].Name
 		}
 		nameCol := textCol
@@ -354,7 +355,7 @@ func modelTimelineDraw(l modelTimelineLayout, c *ModelClip, origin imgui.Vec2, w
 		dl.AddText(imgui.Vec2{X: origin.X + 12, Y: y - 7}, nameCol, name)
 		dl.AddLine(imgui.Vec2{X: l.x0, Y: y}, imgui.Vec2{X: l.x1, Y: y}, laneCol)
 
-		if tr := c.trackFor(bi); tr != nil {
+		if tr := c.TrackFor(bi); tr != nil {
 			for _, k := range tr.Keys {
 				col := keyCol
 				if modelKeySelected(bi, k.Time) {
@@ -371,11 +372,11 @@ func modelTimelineDraw(l modelTimelineLayout, c *ModelClip, origin imgui.Vec2, w
 }
 
 // modelSummaryKeySelected reports whether every bone keyed at t is selected.
-func modelSummaryKeySelected(c *ModelClip, t float32) bool {
+func modelSummaryKeySelected(c *model.ModelClip, t float32) bool {
 	any := false
 	for i := range c.Tracks {
 		for _, k := range c.Tracks[i].Keys {
-			if geom.Abs32(k.Time-t) > modelKeyEpsilon {
+			if geom.Abs32(k.Time-t) > model.ModelKeyEpsilon {
 				continue
 			}
 			any = true
@@ -393,7 +394,7 @@ func modelSummaryKeySelected(c *ModelClip, t float32) bool {
 // Diamonds are tested before the scrub so a click aimed at a key is never read
 // as "move the playhead near it", which is the difference between being able to
 // delete a key and not.
-func modelTimelineHandleInput(l modelTimelineLayout, c *ModelClip, held bool) {
+func modelTimelineHandleInput(l modelTimelineLayout, c *model.ModelClip, held bool) {
 	mouse := imgui.MousePos()
 	if imgui.IsMouseClicked(0) {
 		// SDL's modifier state rather than imgui's: this window reads its mouse
@@ -425,7 +426,7 @@ func modelTimelineHandleInput(l modelTimelineLayout, c *ModelClip, held bool) {
 
 // modelTimelinePickKey returns the keyframes under the cursor: one for a bone
 // lane, or every bone keyed at that instant for the summary lane.
-func modelTimelinePickKey(l modelTimelineLayout, c *ModelClip, mouse imgui.Vec2) ([]modelKeyRef, bool) {
+func modelTimelinePickKey(l modelTimelineLayout, c *model.ModelClip, mouse imgui.Vec2) ([]modelKeyRef, bool) {
 	const rowSlop = modelTimelineLaneH / 2
 
 	// Summary lane.
@@ -437,7 +438,7 @@ func modelTimelinePickKey(l modelTimelineLayout, c *ModelClip, mouse imgui.Vec2)
 		var refs []modelKeyRef
 		for i := range c.Tracks {
 			for _, k := range c.Tracks[i].Keys {
-				if geom.Abs32(k.Time-best) <= modelKeyEpsilon {
+				if geom.Abs32(k.Time-best) <= model.ModelKeyEpsilon {
 					refs = append(refs, modelKeyRef{Bone: c.Tracks[i].Bone, Time: k.Time})
 				}
 			}
@@ -449,7 +450,7 @@ func modelTimelinePickKey(l modelTimelineLayout, c *ModelClip, mouse imgui.Vec2)
 		if geom.Abs32(mouse.Y-l.laneY(i)) > rowSlop {
 			continue
 		}
-		tr := c.trackFor(bi)
+		tr := c.TrackFor(bi)
 		if tr == nil {
 			return nil, false
 		}

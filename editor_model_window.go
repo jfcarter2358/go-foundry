@@ -22,6 +22,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/model"
 	"foundry/internal/platform"
 	"log"
 	"math"
@@ -47,7 +48,7 @@ var modelEditorWindow *UIWindow
 
 // modelDoc is the mesh being edited. It outlives the window, so popping the
 // editor in and out again returns to the same model rather than a fresh cube.
-var modelDoc *ModelDoc
+var modelDoc *model.ModelDoc
 
 // modelCam is the model editor's view. Pitch starts slightly downward so a
 // fresh cube reads as a solid rather than edge-on.
@@ -158,7 +159,7 @@ func (c *modelCamera) setFly(fly bool) {
 // frame points the camera at the whole document, so an imported model is
 // visible whatever scale it was authored at. Always lands in orbit mode: the
 // point of framing is to look at the object as a whole.
-func (c *modelCamera) frame(m *ModelDoc) {
+func (c *modelCamera) frame(m *model.ModelDoc) {
 	c.Fly = false
 	if m == nil || len(m.Verts) == 0 {
 		c.Target = mgl32.Vec3{}
@@ -218,7 +219,7 @@ func OpenModelEditorWindow() {
 		return
 	}
 	if modelDoc == nil {
-		modelDoc = NewCubeDoc()
+		modelDoc = model.NewCubeDoc()
 		modelCam.frame(modelDoc)
 	}
 	w, err := NewUIWindow("Model Editor", modelWindowW, modelWindowH,
@@ -248,7 +249,7 @@ func CloseModelEditorWindow() {
 func onModelEditorClose() {
 	modelEditorFreeGeometry()
 	if modelDoc != nil {
-		modelDoc.invalidate()
+		modelDoc.Invalidate()
 	}
 	modelEditorWindow = nil
 }
@@ -272,7 +273,7 @@ func drawModelEditorWindow() {
 		return
 	}
 	if modelDoc == nil {
-		modelDoc = NewCubeDoc()
+		modelDoc = model.NewCubeDoc()
 		modelCam.frame(modelDoc)
 	}
 	if err := modelEditorEnsureProgram(); err != nil {

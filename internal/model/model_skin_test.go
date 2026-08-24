@@ -1,4 +1,4 @@
-package main
+package model
 
 import (
 	"math"
@@ -48,19 +48,19 @@ func TestAssignSplitsAVertexBetweenTwoBones(t *testing.T) {
 
 func TestNormalizeKeepsTheStrongestInfluences(t *testing.T) {
 	var raw []ModelVertexWeight
-	for i := 0; i < modelMaxInfluences+2; i++ {
+	for i := 0; i < ModelMaxInfluences+2; i++ {
 		raw = append(raw, ModelVertexWeight{Bone: i, Weight: float32(10 - i)})
 	}
 
 	ws := normalizeWeights(raw)
 
-	if len(ws) != modelMaxInfluences {
-		t.Fatalf("kept %d influences, want %d", len(ws), modelMaxInfluences)
+	if len(ws) != ModelMaxInfluences {
+		t.Fatalf("kept %d influences, want %d", len(ws), ModelMaxInfluences)
 	}
 	var total float32
 	for _, w := range ws {
 		total += w.Weight
-		if w.Bone >= modelMaxInfluences {
+		if w.Bone >= ModelMaxInfluences {
 			t.Errorf("a weaker influence (bone %d) survived the prune", w.Bone)
 		}
 	}
@@ -71,13 +71,13 @@ func TestNormalizeKeepsTheStrongestInfluences(t *testing.T) {
 
 func TestAssignStaysInsideTheInfluenceBudget(t *testing.T) {
 	m := NewCubeDoc()
-	for i := 0; i < modelMaxInfluences+2; i++ {
+	for i := 0; i < ModelMaxInfluences+2; i++ {
 		bi := m.AddBone(mgl32.Vec3{}, mgl32.Vec3{0, float32(i + 1), 0})
 		m.AssignVertsToBone([]int{0}, bi, 1)
 	}
 	ws := m.VertexWeights(0)
-	if len(ws) != modelMaxInfluences {
-		t.Fatalf("vertex kept %d influences, want %d", len(ws), modelMaxInfluences)
+	if len(ws) != ModelMaxInfluences {
+		t.Fatalf("vertex kept %d influences, want %d", len(ws), ModelMaxInfluences)
 	}
 	var total float32
 	for _, w := range ws {
@@ -95,7 +95,7 @@ func TestSkinFromMovesBoundVertsAndLeavesTheRest(t *testing.T) {
 	top := []int{4, 5, 6, 7}
 	m.AssignVertsToBone(top, bi, 1)
 
-	rest := cloneBones(m.Bones)
+	rest := CloneBones(m.Bones)
 	restVerts := append([]mgl32.Vec3(nil), m.Verts...)
 	m.MoveBone(bi, mgl32.Vec3{2, 0, 0})
 	m.SkinFrom(rest, restVerts)
@@ -120,7 +120,7 @@ func TestSkinFromBlendsPartialWeights(t *testing.T) {
 	m.AssignVertsToBone([]int{0}, moving, 1)
 	m.AssignVertsToBone([]int{0}, still, 1) // 50/50
 
-	rest := cloneBones(m.Bones)
+	rest := CloneBones(m.Bones)
 	restVerts := append([]mgl32.Vec3(nil), m.Verts...)
 	m.MoveBone(moving, mgl32.Vec3{4, 0, 0})
 	m.SkinFrom(rest, restVerts)
@@ -137,11 +137,11 @@ func TestSkinFromStretchesWithTheBone(t *testing.T) {
 	m := NewCubeDoc()
 	bi := m.AddBone(mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 	m.Verts = append(m.Verts, mgl32.Vec3{0, 1, 0}) // sits exactly on the tail
-	m.ensureWeights()
+	m.EnsureWeights()
 	vi := len(m.Verts) - 1
 	m.AssignVertsToBone([]int{vi}, bi, 1)
 
-	rest := cloneBones(m.Bones)
+	rest := CloneBones(m.Bones)
 	restVerts := append([]mgl32.Vec3(nil), m.Verts...)
 	m.SetBoneTail(bi, mgl32.Vec3{0, 3, 0}) // three times as long
 	m.SkinFrom(rest, restVerts)
@@ -153,7 +153,7 @@ func TestSkinFromStretchesWithTheBone(t *testing.T) {
 
 func TestSkinFromIsAbsoluteNotIncremental(t *testing.T) {
 	m, bi := skinnedCube(t)
-	rest := cloneBones(m.Bones)
+	rest := CloneBones(m.Bones)
 	restVerts := append([]mgl32.Vec3(nil), m.Verts...)
 
 	// Two applications from the same snapshot, as a gizmo drag does across
@@ -450,7 +450,7 @@ func TestValidateRejectsBrokenArmatures(t *testing.T) {
 func TestSaveAndLoadModelWithBones(t *testing.T) {
 	m, idx := boneChain(t)
 	m.AssignVertsToBone([]int{0, 1, 2}, idx[2], 1)
-	path := filepath.Join(t.TempDir(), "rig"+modelExt)
+	path := filepath.Join(t.TempDir(), "rig"+ModelExt)
 
 	if err := SaveModel(m, path); err != nil {
 		t.Fatalf("save: %v", err)

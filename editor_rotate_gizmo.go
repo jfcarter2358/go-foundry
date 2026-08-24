@@ -15,6 +15,7 @@ package main
 // the write-back differ, and both live here.
 
 import (
+	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"math"
@@ -177,7 +178,7 @@ func rotateGizmoMouseMove(mx, my int32) {
 	if !ok {
 		return
 	}
-	delta := modelWrapAngle(angle - Editor.GizmoDragStartS)
+	delta := geom.WrapAngle(angle - Editor.GizmoDragStartS)
 	if Editor.SnapToGrid {
 		delta = snapValue(delta, mgl32.DegToRad(modelRotateSnapDeg))
 	}

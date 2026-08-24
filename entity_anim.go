@@ -18,6 +18,8 @@ package main
 // and both shadow passes read it from there.
 
 import (
+	"foundry/internal/model"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -35,7 +37,7 @@ type EntityAnim struct {
 	wrapped  bool
 	finished bool
 
-	Doc     *ModelDoc
+	Doc     *model.ModelDoc
 	Clip    int // index into Doc.Animations; -1 when nothing is playing
 	Time    float32
 	Speed   float32
@@ -44,7 +46,7 @@ type EntityAnim struct {
 
 	// pose is reused across frames rather than allocated per frame: a level of
 	// animated entities would otherwise churn one slice each, every frame.
-	pose ModelPose
+	pose model.ModelPose
 	// Palette is the bone palette every submesh points at. Its backing array is
 	// never reallocated after newEntityAnim, which is what makes those shared
 	// slice headers safe.
@@ -60,15 +62,15 @@ type EntityAnim struct {
 // newEntityAnim used to fold them into one boolean; the reason is now carried
 // through to the log window and the script editor, so the message names the step
 // that is missing rather than the outcome.
-func animUnavailable(doc *ModelDoc) string {
+func animUnavailable(doc *model.ModelDoc) string {
 	switch {
 	case doc == nil:
 		return "the model file did not load"
 	case len(doc.Bones) == 0:
 		return "the model has no armature, so there are no bones to pose"
-	case !doc.hasSkin():
+	case !doc.HasSkin():
 		return "no vertex in the model is weighted to a bone, so a pose would move nothing"
-	case !doc.hasAnimation():
+	case !doc.HasAnimation():
 		return "the model has an armature but no clip with any keyframes"
 	}
 	return ""
@@ -77,7 +79,7 @@ func animUnavailable(doc *ModelDoc) string {
 // newEntityAnim prepares playback state for a rigged, animated document.
 // Returns nil for a model that has no motion to play, so the per-frame tick can
 // skip it with a single nil check. animUnavailable says why.
-func newEntityAnim(doc *ModelDoc) *EntityAnim {
+func newEntityAnim(doc *model.ModelDoc) *EntityAnim {
 	if animUnavailable(doc) != "" {
 		return nil
 	}
@@ -85,7 +87,7 @@ func newEntityAnim(doc *ModelDoc) *EntityAnim {
 		Doc:     doc,
 		Clip:    -1,
 		Speed:   1,
-		pose:    newModelPose(len(doc.Bones)),
+		pose:    model.NewModelPose(len(doc.Bones)),
 		Palette: make([]mgl32.Mat4, len(doc.Bones)),
 	}
 	a.restPalette()
@@ -101,7 +103,7 @@ func (a *EntityAnim) restPalette() {
 }
 
 // clip returns the playing clip, or nil.
-func (a *EntityAnim) clip() *ModelClip {
+func (a *EntityAnim) clip() *model.ModelClip {
 	if a == nil || a.Doc == nil {
 		return nil
 	}
@@ -148,7 +150,7 @@ func (a *EntityAnim) update(dt float32) {
 		return
 	}
 	a.Time += dt
-	d := c.duration()
+	d := c.EffectiveDuration()
 	switch {
 	case a.Loop:
 		// A wrap is a cycle boundary: the clip ended and began again, which is
@@ -156,7 +158,7 @@ func (a *EntityAnim) update(dt float32) {
 		if d > 0 && (a.Time >= d || a.Time < 0) {
 			a.wrapped = true
 		}
-		a.Time = c.wrapClipTime(a.Time)
+		a.Time = c.WrapClipTime(a.Time)
 	case a.Time >= d:
 		// A one-shot settles on its final pose and stops, rather than holding a
 		// clock that grows without bound.

@@ -1,4 +1,4 @@
-package main
+package model
 
 // model_uv.go — per-face UV document operations.
 //
@@ -73,7 +73,7 @@ func (m *ModelDoc) ModelPlanarUnwrap(faces []int, fitUnit bool) {
 		}
 		f.UVs = uvs
 	}
-	m.touch()
+	m.Touch()
 }
 
 // ModelFlipUV mirrors the given faces' UVs about the centre of their current
@@ -105,5 +105,5 @@ func (m *ModelDoc) ModelFlipUV(faces []int, flipU, flipV bool) {
 			f.UVs[i] = mgl32.Vec2{nu, nv}
 		}
 	}
-	m.touch()
+	m.Touch()
 }

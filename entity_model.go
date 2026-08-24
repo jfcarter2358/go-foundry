@@ -21,6 +21,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
+	"foundry/internal/model"
 	"log"
 	"path/filepath"
 	"strings"
@@ -106,7 +107,7 @@ type EntityModel struct {
 	// Doc is kept past Load only when there is an armature to pose against;
 	// re-reading the file every frame is not an option. Nil for static models,
 	// which is what keeps a level of props from holding every mesh twice.
-	Doc *ModelDoc
+	Doc *model.ModelDoc
 	// AnimBlocked is why Anim is nil, in words, or "" when it is not nil.
 	// Recorded at Load because that is the only moment the document is in hand:
 	// afterwards a static model has dropped it, and "no armature" and "no skin
@@ -172,7 +173,7 @@ func (m *EntityModel) Load(ownerID string) error {
 
 	m.initAnimation(doc)
 
-	for _, sub := range doc.modelSubmeshes() {
+	for _, sub := range doc.ModelSubmeshes() {
 		if len(sub.Indices) == 0 {
 			continue
 		}
@@ -248,7 +249,7 @@ func (m *EntityModel) SetAlpha(a float32) {
 
 // initAnimation prepares playback state, and keeps the document only when there
 // is something to pose. A static model's document is dropped here.
-func (m *EntityModel) initAnimation(doc *ModelDoc) {
+func (m *EntityModel) initAnimation(doc *model.ModelDoc) {
 	m.Anim = newEntityAnim(doc)
 	m.AnimBlocked = animUnavailable(doc)
 	if m.Anim != nil {
@@ -384,11 +385,11 @@ func (m *EntityModel) Update(dt float32, entityID string) {
 
 // loadModelDocument reads a model file into the editable document form, picking
 // the reader by extension.
-func loadModelDocument(path string) (*ModelDoc, error) {
-	if strings.EqualFold(filepath.Ext(path), modelExt) {
-		return LoadModel(path)
+func loadModelDocument(path string) (*model.ModelDoc, error) {
+	if strings.EqualFold(filepath.Ext(path), model.ModelExt) {
+		return model.LoadModel(path)
 	}
-	return LoadOBJMesh(path)
+	return model.LoadOBJMesh(path)
 }
 
 // uniqueModelName returns base, or base with a numeric suffix no attachment on
