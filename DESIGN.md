@@ -251,6 +251,71 @@ attributes:
   health: {type: int, value: 25}
 ```
 
+## Package layout
+
+The engine is a tree of packages under `internal/`, layered so that nothing
+imports upward. `internal/layering_test.go` asserts the direction per package
+through `go list -deps`, and fails on the first import that runs the wrong way —
+Go itself will not complain until two packages reach for each other, by which
+point the cycle is someone else's problem to unpick.
+
+Bottom to top:
+
+```
+cmd/foundry           main(), and runtime.LockOSThread() before anything else
+cmd/gentextures       the texture generator
+cmd/flang             the language, standalone
+
+internal/strutil      one string measure
+internal/fileutil     asset paths, atomic writes, directory scans
+internal/platform     the window, GL context, key state, frame clock
+internal/geom         scalar maths, Point, triangulation, smooth normals
+internal/texdoc       the layered texture document (pure data)
+internal/flang        the scripting language (pure; see below)
+internal/gfx          Geometry and its draw path, the shader program and its
+                      uniforms, the texture registry, GPU skinning, the camera
+internal/gizmo        immediate-mode line/wireframe drawing
+internal/imguibackend ImGui/SDL/GL plumbing, clipboard, shared widget idioms
+internal/hooks        write-only buffers engine code drops script facts into
+internal/texture      .ftex/.pal I/O, the global palette, the editing session
+internal/model        the .fmdl document: meshes, bones, skinning, poses, UVs
+internal/world        the level data model — chunks, sectors, walls, entities,
+                      volumes, biomes, lights. One package because the types are
+                      mutually recursive.
+internal/detail       the CPU port of the displacement shader, user presets
+internal/biome        how biome paint drapes over the floor beneath it
+internal/collision    the resolver: player, world, entity-against-entity
+internal/render       every GPU pass — shadows, scatter, detail, culling, AA
+internal/script       the engine side of scripting: Host, refs, messages, verbs
+internal/levelio      the YAML boundary, and the play-session snapshot
+internal/uiwin        multi-window plumbing, the F1 keybinding overlay
+internal/textureui    the texture editor's ImGui window
+internal/editor       the level and model editors
+internal/app          the render loop, input, the keybinding table
+```
+
+Test-only packages sit outside that order: `internal/testenv` (repository root,
+the GPU-upload seam), `internal/leveltest` and `internal/modeltest` (fixtures
+more than one package's tests build on), and `internal/gltest` (a real GL
+context for the shader smoke tests). A test helper cannot cross a package
+boundary without becoming part of that package's API, which is what these are
+for.
+
+Three rules the layout rests on:
+
+- **A shared helper belongs below everything that shares it.** Most of what made
+  the flat layout tangled was general-purpose code filed under whichever caller
+  needed it first — geometry rebuilds and Raw↔runtime conversion under
+  `editor_`, CPU maths inside the renderers that used it.
+- **Where a lower layer genuinely needs something above it, it declares a
+  function variable and the owner installs it.** `world.CurrentLevel`,
+  `hooks.EditorActive` and `textureui.UVGuideForTexture` are the three; each
+  defaults to "not available", which is correct for a shipped game and for every
+  test. `internal/flang`'s `Host` is the same inversion at full size.
+- **Data lives with the data, effects stay up.** `internal/texdoc` holds the
+  texture document and `internal/texture` the file format and GPU upload;
+  `internal/world` holds the level and `internal/levelio` the YAML.
+
 ## Scripting language
 
 Levels are scripted in **flang** — see SCRIPTING.md for the language itself. What

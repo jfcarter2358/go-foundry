@@ -1,4 +1,18 @@
-# Foundry — Structure Analysis & Restructuring Proposal
+# Foundry — Structure Analysis & Restructuring Proposal (superseded)
+
+> **Archived.** This document proposed the package split; the split has since
+> landed. The current layout, and the rules it rests on, are in DESIGN.md under
+> "Package layout" — read that instead.
+>
+> Kept for its analysis of the flat layout and for the reasoning behind the
+> phasing, both of which held up. Two things it got wrong, worth knowing if you
+> mine it for anything else: it filed the Raw↔runtime conversion under the
+> editor, which would have made the editor an import-cycle hub, and it assumed
+> the level data model could be split into several packages, when in fact the
+> types are mutually recursive and had to stay together as `internal/world`.
+>
+> Every file:line reference below is against a 71-file snapshot from
+> 2026-08-17 and no longer resolves.
 
 *Written by an automated pass over the repo on 2026-08-17. All file:line references were pulled from the code at that point in time — re-check line numbers if the referenced file has since changed.*
 
