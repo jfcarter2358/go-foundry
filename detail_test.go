@@ -149,7 +149,11 @@ func TestDispNormalIsFaceConstant(t *testing.T) {
 	// it on the (0,0)-(2,2) diagonal into two triangles at different tilts.
 	v := func(x, y, z float32) []float32 { return []float32{x, y, z, 0, 0} }
 	var verts []float32
-	tri := func(a, b, c []float32) { verts = append(verts, a...); verts = append(verts, b...); verts = append(verts, c...) }
+	tri := func(a, b, c []float32) {
+		verts = append(verts, a...)
+		verts = append(verts, b...)
+		verts = append(verts, c...)
+	}
 	p00, p20, p22, p02 := v(0, 0, 0), v(2, 0, 0), v(2, 1, 2), v(0, 0, 2)
 	tri(p00, p20, p22)
 	tri(p00, p22, p02)
@@ -190,7 +194,11 @@ func TestComputeFaceBasis(t *testing.T) {
 	// Triangle-fan quad (0,0)-(2,0)-(2,3)-(0,3) at y=1; 5 floats/vertex [x,y,z,u,v].
 	v := func(x, z float32) []float32 { return []float32{x, 1, z, 0, 0} }
 	var verts []float32
-	tri := func(a, b, c []float32) { verts = append(verts, a...); verts = append(verts, b...); verts = append(verts, c...) }
+	tri := func(a, b, c []float32) {
+		verts = append(verts, a...)
+		verts = append(verts, b...)
+		verts = append(verts, c...)
+	}
 	p00, p20, p23, p03 := v(0, 0), v(2, 0), v(2, 3), v(0, 3)
 	tri(p00, p20, p23)
 	tri(p00, p23, p03)
@@ -225,7 +233,11 @@ func TestComputeFaceBasis(t *testing.T) {
 func TestComputeBoundaryEdges(t *testing.T) {
 	v := func(x, z float32) []float32 { return []float32{x, 1, z, 0, 0} }
 	var verts []float32
-	tri := func(a, b, c []float32) { verts = append(verts, a...); verts = append(verts, b...); verts = append(verts, c...) }
+	tri := func(a, b, c []float32) {
+		verts = append(verts, a...)
+		verts = append(verts, b...)
+		verts = append(verts, c...)
+	}
 	p00, p20, p23, p03 := v(0, 0), v(2, 0), v(2, 3), v(0, 3)
 	tri(p00, p20, p23) // shares diagonal p00-p23
 	tri(p00, p23, p03)

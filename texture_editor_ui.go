@@ -22,6 +22,7 @@ import (
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/texdoc"
 )
 
@@ -477,7 +478,7 @@ func drawTexEditorImportDialog() {
 		imgui.Text("Import as a new single-layer document (quantised to the current palette):")
 		for _, n := range names {
 			if imgui.SelectableV(n, false, 0, imgui.Vec2{}) {
-				path := filepath.Join(executablePath, textureNames[n])
+				path := filepath.Join(fileutil.ExecutablePath, textureNames[n])
 				ed, err := ImportTexEditorDoc(path)
 				if err != nil {
 					texEditorStatus(fmt.Sprintf("Import failed: %v", err))

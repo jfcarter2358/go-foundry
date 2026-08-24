@@ -11,11 +11,12 @@ import (
 	"os"
 	"testing"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 )
 
 func TestShippedScriptsParse(t *testing.T) {
-	names := ScanScriptFilesIn("resources/scripts")
+	names := fileutil.ScanScriptFilesIn("resources/scripts")
 	if len(names) == 0 {
 		t.Skip("no scripts shipped")
 	}

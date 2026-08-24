@@ -37,6 +37,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -54,7 +55,7 @@ const (
 	entityDefExt    = ".yaml"
 )
 
-func entityDefsDir() string { return filepath.Join(executablePath, entitiesDirName) }
+func entityDefsDir() string { return filepath.Join(fileutil.ExecutablePath, entitiesDirName) }
 
 func entityDefPath(name string) string {
 	return filepath.Join(entityDefsDir(), name+entityDefExt)
@@ -304,7 +305,7 @@ func entityAnimationsFromRaw(raw []RawEntityAnimation) []EntityAnimation {
 func entityModelToRaw(m *EntityModel) RawEntityModel {
 	return RawEntityModel{
 		Name:       m.Name,
-		Path:       relAssetPath(m.Path),
+		Path:       fileutil.RelAssetPath(m.Path),
 		Texture:    m.Texture,
 		Offset:     vec3ToRawPtr(m.Offset),
 		Rotation:   vec3ToRawPtr(m.Rotation),
@@ -757,7 +758,7 @@ func modelOverride(def *EntityDef, m *EntityModel) (RawEntityModel, bool) {
 	o := RawEntityModel{Name: m.Name}
 	changed := false
 	if m.Path != base.Path {
-		o.Path = relAssetPath(m.Path)
+		o.Path = fileutil.RelAssetPath(m.Path)
 		changed = true
 	}
 	if m.Texture != base.Texture {
@@ -887,7 +888,7 @@ func SaveEntityDef(def *EntityDef) error {
 	if err != nil {
 		return err
 	}
-	if err := writeFileAtomic(entityDefPath(def.Name), data); err != nil {
+	if err := fileutil.WriteFileAtomic(entityDefPath(def.Name), data); err != nil {
 		return err
 	}
 	// The file on disk is now what was just written, so the cache entry for it
@@ -901,7 +902,7 @@ func SaveEntityDef(def *EntityDef) error {
 // ScanEntityDefs lists the definition names available to place, sorted. Used by
 // the editor's entity catalog.
 func ScanEntityDefs() []string {
-	files := scanFilesByExt(entityDefsDir(), entityDefExt)
+	files := fileutil.ScanFilesByExt(entityDefsDir(), entityDefExt)
 	names := make([]string, 0, len(files))
 	for _, f := range files {
 		names = append(names, strings.TrimSuffix(f, entityDefExt))

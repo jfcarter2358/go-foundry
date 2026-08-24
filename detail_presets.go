@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -53,7 +54,7 @@ func snapshotDetailPresets() map[string]DetailSpec {
 
 // detailPresetsDir is the on-disk home of user presets.
 func detailPresetsDir() string {
-	return filepath.Join(executablePath, detailPresetsDirName)
+	return filepath.Join(fileutil.ExecutablePath, detailPresetsDirName)
 }
 
 // LoadDetailPresets merges every preset file in <exe>/detail_presets into
@@ -127,7 +128,7 @@ func SaveDetailPreset(name string, d DetailSpec) error {
 	if err != nil {
 		return fmt.Errorf("yaml marshal: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(dir, name+".yaml"), data); err != nil {
+	if err := fileutil.WriteFileAtomic(filepath.Join(dir, name+".yaml"), data); err != nil {
 		return err
 	}
 

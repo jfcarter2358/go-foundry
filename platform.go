@@ -33,11 +33,6 @@ var WinHalfWidth int32 = WinWidth / 2
 var Window *sdl.Window
 var Context sdl.GLContext
 
-// executablePath is the directory containing the game executable. Asset paths
-// are resolved against it rather than against the working directory, which is
-// whatever the launcher happened to set.
-var executablePath string
-
 // DeltaTime is the elapsed time in seconds since the last frame.
 // Clamped to [0.001, 0.05] to prevent physics instability.
 var DeltaTime float32 = 1.0 / 60.0

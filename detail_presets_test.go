@@ -1,27 +1,28 @@
 package main
 
 import (
+	"foundry/internal/fileutil"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// withTempPresetDir points executablePath at a scratch directory and clears the
+// withTempPresetDir points fileutil.ExecutablePath at a scratch directory and clears the
 // user-preset registry, so preset tests never touch the real dist/ tree or leak
 // state into each other.
 func withTempPresetDir(t *testing.T) {
 	t.Helper()
-	prevPath := executablePath
+	prevPath := fileutil.ExecutablePath
 	prevSet := detailUserPresets
 	prevNames := detailUserPresetNames
 	prevPresets := snapshotDetailPresets()
 
-	executablePath = t.TempDir()
+	fileutil.ExecutablePath = t.TempDir()
 	detailUserPresets = map[string]bool{}
 	detailUserPresetNames = nil
 
 	t.Cleanup(func() {
-		executablePath = prevPath
+		fileutil.ExecutablePath = prevPath
 		detailUserPresets = prevSet
 		detailUserPresetNames = prevNames
 		detailPresets = prevPresets

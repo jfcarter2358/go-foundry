@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/fileutil"
 	_ "image/png"
 	"io"
 	"log"
@@ -46,11 +47,11 @@ func main() {
 		// Can't get path — write to stderr only and exit.
 		log.Fatalf("os.Executable: %v", err)
 	}
-	executablePath = filepath.Dir(executable)
+	fileutil.ExecutablePath = filepath.Dir(executable)
 
 	// [SCENARIO 1/4/5] Open a persistent log file next to the executable so
 	// startup crashes are visible on Windows (where the console closes instantly).
-	logPath := filepath.Join(executablePath, "foundry.log")
+	logPath := filepath.Join(fileutil.ExecutablePath, "foundry.log")
 	logFile, ferr := os.Create(logPath)
 	var logSinks io.Writer = os.Stderr
 	if ferr != nil {
@@ -68,7 +69,7 @@ func main() {
 	// flags are set, because the tee has to strip exactly what they add.
 	InstallLogCapture(logSinks)
 
-	textureNames = ScanTextures(filepath.Join(executablePath, "textures"))
+	textureNames = ScanTextures(filepath.Join(fileutil.ExecutablePath, "textures"))
 	log.Printf("scanned %d textures", len(textureNames))
 
 	// Merge the user's saved detail presets in over the compiled-in ones.
@@ -86,7 +87,7 @@ func main() {
 		}
 	}()
 
-	log.Printf("executable directory: %s", executablePath)
+	log.Printf("executable directory: %s", fileutil.ExecutablePath)
 
 	if err = sdl.Init(sdl.INIT_EVERYTHING); err != nil {
 		log.Fatalf("sdl.Init: %v", err)
@@ -145,8 +146,8 @@ func main() {
 
 	// [SCENARIO 4] Check that shader files actually exist on disk before
 	// attempting to load them — catches stale/missing dist files immediately.
-	vShaderFull := filepath.Join(executablePath, vertexShaderPath)
-	fShaderFull := filepath.Join(executablePath, fragmentShaderPath)
+	vShaderFull := filepath.Join(fileutil.ExecutablePath, vertexShaderPath)
+	fShaderFull := filepath.Join(fileutil.ExecutablePath, fragmentShaderPath)
 	for _, p := range []string{vShaderFull, fShaderFull} {
 		if info, serr := os.Stat(p); serr != nil {
 			log.Printf("MISSING shader file: %s (%v)", p, serr)
@@ -165,10 +166,10 @@ func main() {
 	gl.UseProgram(Program)
 
 	// Initialize shadow mapping pipeline (depth-only shaders + FBOs).
-	svShaderFull := filepath.Join(executablePath, shadowVertShaderPath)
-	sfShaderFull := filepath.Join(executablePath, shadowFragShaderPath)
-	scvShaderFull := filepath.Join(executablePath, shadowCubeVertPath)
-	scfShaderFull := filepath.Join(executablePath, shadowCubeFragPath)
+	svShaderFull := filepath.Join(fileutil.ExecutablePath, shadowVertShaderPath)
+	sfShaderFull := filepath.Join(fileutil.ExecutablePath, shadowFragShaderPath)
+	scvShaderFull := filepath.Join(fileutil.ExecutablePath, shadowCubeVertPath)
+	scfShaderFull := filepath.Join(fileutil.ExecutablePath, shadowCubeFragPath)
 	if err := InitShadows(svShaderFull, sfShaderFull, scvShaderFull, scfShaderFull); err != nil {
 		log.Fatalf("InitShadows: %v", err)
 	}
@@ -202,7 +203,7 @@ func main() {
 
 	// Start with a blank in-memory level rather than loading one from disk;
 	// the user can save it (or open an existing level) from the editor.
-	levelsDir := filepath.Join(executablePath, "levels")
+	levelsDir := filepath.Join(fileutil.ExecutablePath, "levels")
 	levelPath := filepath.Join(levelsDir, "untitled.yaml")
 	log.Printf("starting with blank level")
 	level, err := NewBlankLevel()

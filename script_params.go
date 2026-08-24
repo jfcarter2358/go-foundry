@@ -27,6 +27,7 @@ package main
 import (
 	"sort"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 )
 
@@ -58,12 +59,12 @@ func scriptParamCacheGet(path string) []*flang.ParamDecl {
 		return decls
 	}
 	var decls []*flang.ParamDecl
-	if src, err := readScriptFile(scriptPath(path)); err == nil {
+	if src, err := readScriptFile(fileutil.ScriptPath(path)); err == nil {
 		// Linked rather than merely parsed, so a param an imported library
 		// declares shows up in the panel too — which is the point of libraries.
 		// Diagnostics are dropped here: a broken script's errors belong in the
 		// log window, not in a panel that is only asking what it can configure.
-		if prog, _ := flang.Link(scriptPath(path), src, scriptLoader{}); prog != nil {
+		if prog, _ := flang.Link(fileutil.ScriptPath(path), src, scriptLoader{}); prog != nil {
 			decls = prog.ParamList()
 		}
 	}

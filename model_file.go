@@ -11,11 +11,12 @@ package main
 //
 // The schema follows level_schema.go's conventions: pointer fields with
 // omitempty where "absent" and "false/zero" must stay distinguishable, and
-// writeFileAtomic (fileutil.go) for the write so a crash mid-save cannot leave
+// fileutil.WriteFileAtomic (fileutil.go) for the write so a crash mid-save cannot leave
 // a half-written model behind.
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +31,7 @@ const modelsDirName = "models"
 // open/save dialogs look.
 const modelExt = ".fmdl"
 
-func modelsDir() string { return filepath.Join(executablePath, modelsDirName) }
+func modelsDir() string { return filepath.Join(fileutil.ExecutablePath, modelsDirName) }
 
 func modelPath(name string) string { return filepath.Join(modelsDir(), name+modelExt) }
 
@@ -522,7 +523,7 @@ func SaveModel(m *ModelDoc, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create model directory: %w", err)
 	}
-	if err := writeFileAtomic(path, data); err != nil {
+	if err := fileutil.WriteFileAtomic(path, data); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
@@ -550,7 +551,7 @@ func LoadModel(path string) (*ModelDoc, error) {
 }
 
 // ScanModelFiles lists the .fmdl documents available to the open dialog.
-func ScanModelFiles() []string { return scanFilesByExt(modelsDir(), modelExt) }
+func ScanModelFiles() []string { return fileutil.ScanFilesByExt(modelsDir(), modelExt) }
 
 func trimModelExt(name string) string {
 	return name[:len(name)-len(filepath.Ext(name))]

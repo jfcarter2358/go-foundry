@@ -17,6 +17,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"foundry/internal/fileutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -252,16 +253,16 @@ func SaveOBJ(m *ModelDoc, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create export directory: %w", err)
 	}
-	if err := writeFileAtomic(path, []byte(b.String())); err != nil {
+	if err := fileutil.WriteFileAtomic(path, []byte(b.String())); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 
 	var mtl strings.Builder
 	mtl.WriteString("# exported by Foundry model editor\n")
 	fmt.Fprintf(&mtl, "newmtl %s\nKd 1.000 1.000 1.000\nmap_Kd %s/%s.png\n\n",
-		tex, texturesDirName, tex)
+		tex, fileutil.TexturesDirName, tex)
 	mtlPath := filepath.Join(filepath.Dir(path), mtlName)
-	if err := writeFileAtomic(mtlPath, []byte(mtl.String())); err != nil {
+	if err := fileutil.WriteFileAtomic(mtlPath, []byte(mtl.String())); err != nil {
 		return fmt.Errorf("write %s: %w", mtlPath, err)
 	}
 	return nil
@@ -288,4 +289,4 @@ func objSafeName(s string) string {
 const objExt = ".obj"
 
 // ScanOBJFiles lists the .obj files available to the import dialog.
-func ScanOBJFiles() []string { return scanFilesByExt(modelsDir(), objExt) }
+func ScanOBJFiles() []string { return fileutil.ScanFilesByExt(modelsDir(), objExt) }

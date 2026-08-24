@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"log"
 	"path/filepath"
 	"strings"
@@ -69,7 +70,7 @@ type EntityModel struct {
 	// names to override this attachment's transform. Unique per entity.
 	Name string
 	// Path is the model file, stored relative to the install root (see
-	// relAssetPath). Both .fmdl and .obj are accepted.
+	// fileutil.RelAssetPath). Both .fmdl and .obj are accepted.
 	Path string
 	// Texture overrides the model document's own texture. Empty keeps whatever
 	// the model was authored with, which is the usual case — the override is
@@ -156,7 +157,7 @@ func (m *EntityModel) Load(ownerID string) error {
 	if m.Path == "" {
 		return nil
 	}
-	doc, err := loadModelDocument(resolveAssetPath(m.Path))
+	doc, err := loadModelDocument(fileutil.ResolveAssetPath(m.Path))
 	if err != nil {
 		return fmt.Errorf("entity %q model %q: %w", ownerID, m.Name, err)
 	}

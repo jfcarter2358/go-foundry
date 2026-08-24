@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"strings"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -193,7 +194,7 @@ var scriptIssueColor = imgui.Vec4{X: 1, Y: 0.78, Z: 0.35, W: 1}
 // drawScriptEditorFileList lists the scripts folder and the level's attachments.
 func drawScriptEditorFileList() {
 	if imgui.Button("Rescan##scriptfiles") || scriptEditorFiles == nil {
-		scriptEditorFiles = ScanScriptFiles()
+		scriptEditorFiles = fileutil.ScanScriptFiles()
 		if scriptEditorFiles == nil {
 			// Distinguish "scanned, found nothing" from "never scanned", so an
 			// empty folder is not rescanned every frame.
@@ -207,7 +208,7 @@ func drawScriptEditorFileList() {
 		return
 	}
 	for _, name := range scriptEditorFiles {
-		path := scriptsDirName + "/" + name
+		path := fileutil.ScriptsDirName + "/" + name
 		selected := activeScript != nil && activeScript.Path == path
 		label := name
 		if selected && activeScript.Dirty() {
@@ -795,7 +796,7 @@ func drawScriptEditorNewDialog() {
 
 func drawScriptEditorOpenDialog() {
 	withModalPopup("Open Script", &scriptEditorShowOpen, func() {
-		files := ScanScriptFiles()
+		files := fileutil.ScanScriptFiles()
 		if len(files) == 0 {
 			imgui.Text("No scripts in resources/scripts/.")
 		}

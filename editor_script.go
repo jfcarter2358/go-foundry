@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 )
 
@@ -181,14 +182,14 @@ func (d *scriptDoc) Save(path string) error {
 	if path == "" {
 		return errScriptNoPath
 	}
-	if !strings.HasSuffix(path, scriptExt) {
-		path += scriptExt
+	if !strings.HasSuffix(path, fileutil.ScriptExt) {
+		path += fileutil.ScriptExt
 	}
-	full := scriptPath(path)
-	if err := writeFileAtomic(full, []byte(d.Text)); err != nil {
+	full := fileutil.ScriptPath(path)
+	if err := fileutil.WriteFileAtomic(full, []byte(d.Text)); err != nil {
 		return err
 	}
-	d.Path = scriptsDirName + "/" + strings.TrimPrefix(filepath.ToSlash(path), scriptsDirName+"/")
+	d.Path = fileutil.ScriptsDirName + "/" + strings.TrimPrefix(filepath.ToSlash(path), fileutil.ScriptsDirName+"/")
 	d.saved = d.Text
 	d.reparseNow(Editor.level)
 	// The saved file is what every object panel reads its `param` rows from, and
@@ -200,12 +201,12 @@ func (d *scriptDoc) Save(path string) error {
 // OpenScriptDoc reads a script into a new document. name is as a level writes
 // it — with or without the scripts/ prefix and the extension.
 func OpenScriptDoc(name string) (*scriptDoc, error) {
-	src, err := readScriptFile(scriptPath(name))
+	src, err := readScriptFile(fileutil.ScriptPath(name))
 	if err != nil {
 		return nil, err
 	}
 	d := &scriptDoc{
-		Path:       scriptsDirName + "/" + strings.TrimPrefix(strings.TrimSuffix(filepath.ToSlash(name), scriptExt), scriptsDirName+"/") + scriptExt,
+		Path:       fileutil.ScriptsDirName + "/" + strings.TrimPrefix(strings.TrimSuffix(filepath.ToSlash(name), fileutil.ScriptExt), fileutil.ScriptsDirName+"/") + fileutil.ScriptExt,
 		Text:       string(src),
 		diagLines:  map[int][]flang.Error{},
 		issueLines: map[int][]ScriptIssue{},
@@ -262,7 +263,7 @@ func scriptScopeNames(f *flang.File, fromPath string) (funcs, params map[string]
 			params[d.Name] = true
 		}
 		for _, imp := range file.Imports {
-			resolved, err := resolveScriptImport(scriptPath(path), imp.Path)
+			resolved, err := resolveScriptImport(fileutil.ScriptPath(path), imp.Path)
 			if err != nil {
 				ok = false
 				continue

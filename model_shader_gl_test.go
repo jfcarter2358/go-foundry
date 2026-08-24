@@ -14,6 +14,7 @@ package main
 // Skipped by default so plain `go test ./...` stays headless-safe.
 
 import (
+	"foundry/internal/fileutil"
 	"os"
 	"runtime"
 	"testing"
@@ -97,9 +98,9 @@ func TestModelShadersCompile(t *testing.T) {
 func TestSkinnedShadersCompileAndLink(t *testing.T) {
 	glTestContext(t)
 
-	prevExe := executablePath
-	executablePath = "resources"
-	t.Cleanup(func() { executablePath = prevExe })
+	prevExe := fileutil.ExecutablePath
+	fileutil.ExecutablePath = "resources"
+	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
 
 	if _, err := skinCommonSource(); err != nil {
 		t.Fatalf("skin_common.glsl did not load: %v", err)

@@ -1,4 +1,4 @@
-package main
+package fileutil
 
 // fileutil.go — generic file-system helpers with no level/texture-specific
 // logic, shared across the editor and texture-editor code.
@@ -11,11 +11,16 @@ import (
 	"strings"
 )
 
-// writeFileAtomic writes data to path via a temporary file in the same
+// ExecutablePath is the directory containing the game executable. Asset paths
+// are resolved against it rather than against the working directory, which is
+// whatever the launcher happened to set.
+var ExecutablePath string
+
+// WriteFileAtomic writes data to path via a temporary file in the same
 // directory followed by a rename, so an interrupted or failing write can never
 // leave a truncated file behind. The previous contents are retained as
 // path+".bak".
-func writeFileAtomic(path string, data []byte) error {
+func WriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -53,9 +58,9 @@ func writeFileAtomic(path string, data []byte) error {
 	return os.Rename(tmpName, path)
 }
 
-// scanFilesByExt returns the sorted filenames in dir whose name ends in ext
+// ScanFilesByExt returns the sorted filenames in dir whose name ends in ext
 // (e.g. ".yaml"), skipping subdirectories. Returns nil if dir can't be read.
-func scanFilesByExt(dir, ext string) []string {
+func ScanFilesByExt(dir, ext string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -71,11 +76,11 @@ func scanFilesByExt(dir, ext string) []string {
 	return files
 }
 
-// resolveAssetPath makes a stored asset path absolute against the executable
+// ResolveAssetPath makes a stored asset path absolute against the executable
 // directory.
 //
 // Entity definitions store model paths relative to the install root so a
-// definition stays portable between machines and platforms (relAssetPath strips
+// definition stays portable between machines and platforms (RelAssetPath strips
 // the prefix on save). Handing that relative path straight to os.Open would
 // instead resolve it against the working directory, which only happens to be
 // the install root when the game is launched from inside it — "make run-linux"
@@ -84,53 +89,53 @@ func scanFilesByExt(dir, ext string) []string {
 //
 // An absolute path is left alone: it is either already resolved or points
 // somewhere outside the install root on purpose.
-func resolveAssetPath(p string) string {
+func ResolveAssetPath(p string) string {
 	if p == "" || filepath.IsAbs(p) {
 		return p
 	}
-	return filepath.Join(executablePath, p)
+	return filepath.Join(ExecutablePath, p)
 }
 
-// relAssetPath is resolveAssetPath's inverse, used when writing a path back to
+// RelAssetPath is ResolveAssetPath's inverse, used when writing a path back to
 // YAML. A path that does not live under the executable directory is written as
 // it is — there is nothing shorter that would still find it — and the result is
 // slash-separated so a definition saved on Windows still loads on Linux.
-func relAssetPath(p string) string {
-	if p == "" || executablePath == "" {
+func RelAssetPath(p string) string {
+	if p == "" || ExecutablePath == "" {
 		return p
 	}
-	rel, err := filepath.Rel(executablePath, p)
+	rel, err := filepath.Rel(ExecutablePath, p)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return p
 	}
 	return filepath.ToSlash(rel)
 }
 
-// scriptsDirName is the folder .flang scripts live in, alongside textures/,
+// ScriptsDirName is the folder .flang scripts live in, alongside textures/,
 // models/ and entities/.
-const scriptsDirName = "scripts"
+const ScriptsDirName = "scripts"
 
-// scriptExt is the extension a flang source file carries.
-const scriptExt = ".flang"
+// ScriptExt is the extension a flang source file carries.
+const ScriptExt = ".flang"
 
-// scriptsDir returns the absolute path to the scripts folder.
-func scriptsDir() string {
-	return filepath.Join(executablePath, scriptsDirName)
+// ScriptsDir returns the absolute path to the scripts folder.
+func ScriptsDir() string {
+	return filepath.Join(ExecutablePath, ScriptsDirName)
 }
 
-// scriptPath resolves a script name — as written in a level or an entity
+// ScriptPath resolves a script name — as written in a level or an entity
 // definition, with or without its extension — to an absolute path.
-func scriptPath(name string) string {
+func ScriptPath(name string) string {
 	if name == "" {
 		return ""
 	}
-	if !strings.HasSuffix(name, scriptExt) {
-		name += scriptExt
+	if !strings.HasSuffix(name, ScriptExt) {
+		name += ScriptExt
 	}
 	// A name may already be rooted at the scripts folder ("scripts/door.flang"),
 	// which is how the docs and every example write it.
-	name = strings.TrimPrefix(filepath.ToSlash(name), scriptsDirName+"/")
-	return filepath.Join(scriptsDir(), filepath.FromSlash(name))
+	name = strings.TrimPrefix(filepath.ToSlash(name), ScriptsDirName+"/")
+	return filepath.Join(ScriptsDir(), filepath.FromSlash(name))
 }
 
 // ScanScriptFiles lists every .flang file under the scripts folder, including
@@ -140,7 +145,7 @@ func scriptPath(name string) string {
 // asset kind the language explicitly expects to be organised into folders — see
 // SCRIPTING.md on import().
 func ScanScriptFiles() []string {
-	return ScanScriptFilesIn(scriptsDir())
+	return ScanScriptFilesIn(ScriptsDir())
 }
 
 // ScanScriptFilesIn is ScanScriptFiles rooted at an explicit directory, for
@@ -151,7 +156,7 @@ func ScanScriptFilesIn(root string) []string {
 		if err != nil {
 			return nil
 		}
-		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), scriptExt) {
+		if d.IsDir() || !strings.EqualFold(filepath.Ext(path), ScriptExt) {
 			return nil
 		}
 		rel, relErr := filepath.Rel(root, path)
@@ -174,6 +179,6 @@ func ScanScriptFilesIn(root string) []string {
 // GPU uploader needs the directory too, and it has no business depending on
 // the .ftex reader.
 
-const texturesDirName = "textures"
+const TexturesDirName = "textures"
 
-func texturesDir() string { return filepath.Join(executablePath, texturesDirName) }
+func TexturesDir() string { return filepath.Join(ExecutablePath, TexturesDirName) }

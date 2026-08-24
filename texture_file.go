@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/texdoc"
 )
 
@@ -50,9 +51,9 @@ const (
 	fpalFileLen   = 4 + 2 + texdoc.TexPaletteSz*4
 )
 
-func palettePath() string           { return filepath.Join(texturesDir(), "palette.pal") }
-func ftexPath(name string) string   { return filepath.Join(texturesDir(), name+".ftex") }
-func texPNGPath(name string) string { return filepath.Join(texturesDir(), name+".png") }
+func palettePath() string           { return filepath.Join(fileutil.TexturesDir(), "palette.pal") }
+func ftexPath(name string) string   { return filepath.Join(fileutil.TexturesDir(), name+".ftex") }
+func texPNGPath(name string) string { return filepath.Join(fileutil.TexturesDir(), name+".png") }
 
 // ---------- palette ----------
 
@@ -65,7 +66,7 @@ func WritePalette(path string, pal *texdoc.TexPalette) error {
 		off := 6 + i*4
 		buf[off], buf[off+1], buf[off+2], buf[off+3] = c.R, c.G, c.B, c.A
 	}
-	return writeFileAtomic(path, buf)
+	return fileutil.WriteFileAtomic(path, buf)
 }
 
 // ReadPalette reads and validates an FPAL file.
@@ -180,7 +181,7 @@ func WriteTexDoc(path string, d *texdoc.TexDoc) error {
 		buf.Write(compressed.Bytes())
 	}
 
-	return writeFileAtomic(path, buf.Bytes())
+	return fileutil.WriteFileAtomic(path, buf.Bytes())
 }
 
 // ReadTexDoc reads and validates a .ftex file from path.
@@ -289,7 +290,7 @@ func SaveTexDoc(d *texdoc.TexDoc, name string) error {
 	if err := texdoc.ValidTexSize(d.W, d.H); err != nil {
 		return err
 	}
-	dir := texturesDir()
+	dir := fileutil.TexturesDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
@@ -305,7 +306,7 @@ func SaveTexDoc(d *texdoc.TexDoc, name string) error {
 	if err := png.Encode(&pngBuf, flat); err != nil {
 		return fmt.Errorf("encode png: %w", err)
 	}
-	if err := writeFileAtomic(texPNGPath(name), pngBuf.Bytes()); err != nil {
+	if err := fileutil.WriteFileAtomic(texPNGPath(name), pngBuf.Bytes()); err != nil {
 		return err
 	}
 
@@ -353,7 +354,7 @@ func ImportPNG(path string) (*texdoc.TexDoc, error) {
 // ScanFtexFiles returns sorted logical names (without extension) of .ftex
 // files in <exe>/textures.
 func ScanFtexFiles() []string {
-	files := scanFilesByExt(texturesDir(), ".ftex")
+	files := fileutil.ScanFilesByExt(fileutil.TexturesDir(), ".ftex")
 	names := make([]string, len(files))
 	for i, f := range files {
 		names[i] = strings.TrimSuffix(f, ".ftex")

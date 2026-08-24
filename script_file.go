@@ -9,6 +9,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,7 @@ import (
 func readScriptFile(path string) ([]byte, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read %s: %w", relAssetPath(path), err)
+		return nil, fmt.Errorf("cannot read %s: %w", fileutil.RelAssetPath(path), err)
 	}
 	return src, nil
 }
@@ -29,13 +30,13 @@ func resolveScriptImport(fromFile, importPath string) (string, error) {
 	if importPath == "" {
 		return "", fmt.Errorf("import needs a path")
 	}
-	if !strings.HasSuffix(importPath, scriptExt) {
-		importPath += scriptExt
+	if !strings.HasSuffix(importPath, fileutil.ScriptExt) {
+		importPath += fileutil.ScriptExt
 	}
 	dir := filepath.Dir(fromFile)
 	resolved := filepath.Clean(filepath.Join(dir, filepath.FromSlash(importPath)))
 
-	root := scriptsDir()
+	root := fileutil.ScriptsDir()
 	rel, err := filepath.Rel(root, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("import %q leaves the scripts folder", importPath)

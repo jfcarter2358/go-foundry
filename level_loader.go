@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"log"
 	"math"
 	"os"
@@ -535,7 +536,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 
 // LoadLevel reads a YAML level file, converts it to runtime types, and uploads
 // all geometry to the GPU. Texture loading is driven from this function via the
-// global textureNames map and executablePath variable.
+// global textureNames map and fileutil.ExecutablePath variable.
 func LoadLevel(levelPath string) (Level, error) {
 	raw, err := readRawLevelFile(levelPath)
 	if err != nil {
@@ -757,7 +758,7 @@ func rawToLevel(raw RawLevel) (Level, error) {
 		if !ok {
 			return Level{}, fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 		}
-		if err := LoadTexture(name, filepath.Join(executablePath, path)); err != nil {
+		if err := LoadTexture(name, filepath.Join(fileutil.ExecutablePath, path)); err != nil {
 			return Level{}, err
 		}
 	}

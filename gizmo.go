@@ -13,6 +13,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -50,8 +51,8 @@ var gizmoBuf []float32
 func GizmoInit() {
 	var err error
 	GizmoProgram, err = compileProgramFromFiles(
-		filepath.Join(executablePath, "shaders/gizmo_vert.glsl"),
-		filepath.Join(executablePath, "shaders/gizmo_frag.glsl"),
+		filepath.Join(fileutil.ExecutablePath, "shaders/gizmo_vert.glsl"),
+		filepath.Join(fileutil.ExecutablePath, "shaders/gizmo_frag.glsl"),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("gizmo shader: %v", err))

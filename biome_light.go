@@ -21,6 +21,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"path/filepath"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -153,7 +154,7 @@ func (b *BiomeShadowSettings) castRangeFor(sectorRange, mapReach float32) float3
 // biomeShaderPath resolves a shader file inside the running executable's
 // shaders directory.
 func biomeShaderPath(name string) string {
-	return filepath.Join(executablePath, "shaders", name)
+	return filepath.Join(fileutil.ExecutablePath, "shaders", name)
 }
 
 // biomeLightSnippet returns biome_light.glsl prefixed with the defines that fix

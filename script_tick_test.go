@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-gl/mathgl/mgl32"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 )
 
@@ -26,12 +27,12 @@ import (
 // of withTempTextureDir.
 func withTempScriptDir(t *testing.T) string {
 	t.Helper()
-	prev := executablePath
+	prev := fileutil.ExecutablePath
 	dir := t.TempDir()
-	executablePath = dir
-	t.Cleanup(func() { executablePath = prev })
+	fileutil.ExecutablePath = dir
+	t.Cleanup(func() { fileutil.ExecutablePath = prev })
 
-	root := filepath.Join(dir, scriptsDirName)
+	root := filepath.Join(dir, fileutil.ScriptsDirName)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func writeScript(t *testing.T, root, name, src string) string {
 	if err := os.WriteFile(full, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return scriptsDirName + "/" + name
+	return fileutil.ScriptsDirName + "/" + name
 }
 
 // tickTestLevel builds a level with a scripted crate and a scripted trigger.

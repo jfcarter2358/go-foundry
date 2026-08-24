@@ -39,7 +39,7 @@ var (
 		UV       uint32
 		Color    uint32
 	}
-	imguiFontTexture uint32
+	imguiFontTexture             uint32
 	imguiVAO, imguiVBO, imguiEBO uint32
 )
 

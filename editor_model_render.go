@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"log"
 	"path/filepath"
 
@@ -49,8 +50,8 @@ func modelEditorEnsureProgram() error {
 		return nil
 	}
 	p, err := compileProgramFromFiles(
-		filepath.Join(executablePath, "shaders/model_vert.glsl"),
-		filepath.Join(executablePath, "shaders/model_frag.glsl"),
+		filepath.Join(fileutil.ExecutablePath, "shaders/model_vert.glsl"),
+		filepath.Join(fileutil.ExecutablePath, "shaders/model_frag.glsl"),
 	)
 	if err != nil {
 		return fmt.Errorf("model editor shader: %w", err)

@@ -21,6 +21,7 @@ import (
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 )
 
@@ -189,7 +190,7 @@ func editorScriptUI(script *string, params *AttrSet, idSuffix, owner string) {
 			*script = ""
 		}
 		for _, name := range Editor.ScriptFileNames {
-			path := scriptsDirName + "/" + name
+			path := fileutil.ScriptsDirName + "/" + name
 			if imgui.SelectableV(name, *script == path, 0, imgui.Vec2{}) && *script != path {
 				EditorPushUndo()
 				*script = path
@@ -372,7 +373,7 @@ func editorScriptParamScalarValue(cur AttrValue) (AttrValue, bool) {
 // from the Rescan button — a script written while the editor was running should
 // not need a restart to become selectable.
 func editorRefreshScriptFiles() {
-	Editor.ScriptFileNames = ScanScriptFiles()
+	Editor.ScriptFileNames = fileutil.ScanScriptFiles()
 	// A rescan is also the moment to forget what each file declared: the reason
 	// to press it is that the folder changed under the editor.
 	ScriptParamsInvalidate("")

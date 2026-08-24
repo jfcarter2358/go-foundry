@@ -10,19 +10,20 @@ import (
 	"path/filepath"
 	"testing"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/texdoc"
 )
 
-// withTempTextureDir points executablePath at a scratch dir so file-format
+// withTempTextureDir points fileutil.ExecutablePath at a scratch dir so file-format
 // tests never touch the real textures/ tree, matching withTempPresetDir's
 // pattern in detail_presets_test.go.
 func withTempTextureDir(t *testing.T) {
 	t.Helper()
-	prev := executablePath
+	prev := fileutil.ExecutablePath
 	prevPal := texdoc.GlobalPalette
-	executablePath = t.TempDir()
+	fileutil.ExecutablePath = t.TempDir()
 	t.Cleanup(func() {
-		executablePath = prev
+		fileutil.ExecutablePath = prev
 		texdoc.GlobalPalette = prevPal
 	})
 }

@@ -230,7 +230,7 @@ func TestGroundPatchShadesLikeTheStructuralFloor(t *testing.T) {
 	// cubemaps, and the cascade cross-fade, so a shadow edge lands in the same
 	// place on the patch and on the floor. Asserted against the Go source
 	// rather than by calling biomeLightSnippet, which resolves shader paths
-	// relative to executablePath and so needs a running binary.
+	// relative to fileutil.ExecutablePath and so needs a running binary.
 	ground, err := os.ReadFile("biome_ground.go")
 	if err != nil {
 		t.Fatalf("read biome_ground.go: %v", err)

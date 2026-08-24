@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -262,11 +263,11 @@ func drawLogEntry(e LogEntry) {
 // logShortSource trims a script path down to what is worth reading in a column
 // that repeats it on every line.
 func logShortSource(path string) string {
-	s := strings.TrimPrefix(path, scriptsDirName+"/")
+	s := strings.TrimPrefix(path, fileutil.ScriptsDirName+"/")
 	if i := strings.LastIndex(s, "/"); i >= 0 && len(s) > 24 {
 		s = s[i+1:]
 	}
-	return strings.TrimSuffix(s, scriptExt)
+	return strings.TrimSuffix(s, fileutil.ScriptExt)
 }
 
 // logWindowEntries returns what to draw, honouring pause.
@@ -329,8 +330,8 @@ func logEmptyMessage(total int) string {
 // InputTextMultiline, which has no cursor placement of its own, and pretending
 // otherwise would be a worse lie than saying where to look.
 func logWindowOpenAt(pos flang.Pos) {
-	name := strings.TrimPrefix(pos.File, scriptsDir()+"/")
-	name = strings.TrimPrefix(name, scriptsDirName+"/")
+	name := strings.TrimPrefix(pos.File, fileutil.ScriptsDir()+"/")
+	name = strings.TrimPrefix(name, fileutil.ScriptsDirName+"/")
 	line := pos.Line
 	// Deferred for the same reason the script editor's Log button is: this runs
 	// inside this window's Draw, and opening one from there would hand our

@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -24,7 +25,7 @@ import (
 
 // ScanLevelFiles returns sorted filenames of .yaml files in dir.
 func ScanLevelFiles(dir string) []string {
-	return scanFilesByExt(dir, ".yaml")
+	return fileutil.ScanFilesByExt(dir, ".yaml")
 }
 
 // WriteBlankLevel writes a minimal valid level YAML to path.
@@ -34,7 +35,7 @@ func WriteBlankLevel(path string) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, data)
+	return fileutil.WriteFileAtomic(path, data)
 }
 
 // SaveLevel serialises level to YAML and writes it to path. The level is
@@ -52,7 +53,7 @@ func SaveLevel(level *Level, path string) error {
 	if err != nil {
 		return fmt.Errorf("yaml marshal: %w", err)
 	}
-	return writeFileAtomic(path, data)
+	return fileutil.WriteFileAtomic(path, data)
 }
 
 // levelToRaw converts the runtime Level into its serialisable form.
@@ -588,7 +589,7 @@ func SaveChunk(ch *Chunk, path string) error {
 	if err != nil {
 		return fmt.Errorf("yaml marshal: %w", err)
 	}
-	return writeFileAtomic(path, data)
+	return fileutil.WriteFileAtomic(path, data)
 }
 
 // LoadChunkFromFile reads a standalone chunk YAML file.
@@ -673,7 +674,7 @@ func ImportChunkIntoLevel(lvl *Level, path string) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 		}
-		if err := LoadTexture(name, filepath.Join(executablePath, tpath)); err != nil {
+		if err := LoadTexture(name, filepath.Join(fileutil.ExecutablePath, tpath)); err != nil {
 			return "", err
 		}
 	}

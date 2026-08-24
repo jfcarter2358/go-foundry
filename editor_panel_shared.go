@@ -10,6 +10,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"path/filepath"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -88,7 +89,7 @@ func editorChunkListSection(lvl *Level) {
 			}
 		}
 		if imgui.Button("Import Chunk") {
-			files, _ := filepath.Glob(filepath.Join(executablePath, "chunks", "*.yaml"))
+			files, _ := filepath.Glob(filepath.Join(fileutil.ExecutablePath, "chunks", "*.yaml"))
 			Editor.ImportChunkFiles = nil
 			for _, f := range files {
 				Editor.ImportChunkFiles = append(Editor.ImportChunkFiles, filepath.Base(f))
@@ -165,7 +166,7 @@ func editorChunkPopups(lvl *Level) {
 		imgui.InputText("Filename", &Editor.SaveChunkName)
 		if imgui.Button("Save") && Editor.SaveChunkName != "" {
 			ch := &lvl.Chunks[Editor.ActiveChunkIdx]
-			path := filepath.Join(executablePath, "chunks", Editor.SaveChunkName+".yaml")
+			path := filepath.Join(fileutil.ExecutablePath, "chunks", Editor.SaveChunkName+".yaml")
 			if err := SaveChunk(ch, path); err != nil {
 				Editor.StatusMsg = fmt.Sprintf("Save chunk error: %v", err)
 			} else {
@@ -213,7 +214,7 @@ func editorChunkPopups(lvl *Level) {
 			}
 			if imgui.Button("Import") {
 				EditorPushUndo()
-				path := filepath.Join(executablePath, "chunks", Editor.ImportChunkFiles[Editor.ImportChunkIdx])
+				path := filepath.Join(fileutil.ExecutablePath, "chunks", Editor.ImportChunkFiles[Editor.ImportChunkIdx])
 				chunkID, err := ImportChunkIntoLevel(lvl, path)
 				if err != nil {
 					Editor.StatusMsg = fmt.Sprintf("Import error: %v", err)

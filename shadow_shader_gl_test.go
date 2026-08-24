@@ -13,6 +13,7 @@ package main
 //	FOUNDRY_GL_TEST=1 go test -run TestShadowSamplingShadersCompile .
 
 import (
+	"foundry/internal/fileutil"
 	"testing"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -36,9 +37,9 @@ func compileBiomeStages(vertPath, fragPath, vertSnippet, fragSnippet string) err
 func TestShadowSamplingShadersCompile(t *testing.T) {
 	glTestContext(t)
 
-	prevExe := executablePath
-	executablePath = "resources"
-	t.Cleanup(func() { executablePath = prevExe })
+	prevExe := fileutil.ExecutablePath
+	fileutil.ExecutablePath = "resources"
+	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
 
 	// The scene shader: 5x5 PCF in a fragment stage.
 	if err := LoadProgram("resources/shaders/vertex.glsl", "resources/shaders/fragment.glsl"); err != nil {

@@ -182,7 +182,7 @@ func genRock(rng *rand.Rand) {
 			n := noise(x, y)
 			v := uint8(90 + n*80)
 			// crack pattern: diagonal lines
-			crack := ((x + y*2) % 13) == 0 || ((x*2+y) % 17) == 0
+			crack := ((x+y*2)%13) == 0 || ((x*2+y)%17) == 0
 			if crack {
 				v = uint8(math.Max(0, float64(v)-50))
 			}

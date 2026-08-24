@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"sort"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -261,7 +262,7 @@ func (rt *ScriptRuntime) loadUnit(path string) *scriptUnit {
 	u := &scriptUnit{path: path}
 	rt.units[path] = u
 
-	full := scriptPath(path)
+	full := fileutil.ScriptPath(path)
 	src, err := readScriptFile(full)
 	if err != nil {
 		u.errs = flang.ErrorList{{Pos: flang.Pos{File: path}, Msg: err.Error()}}

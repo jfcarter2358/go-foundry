@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"image"
 	"image/draw"
 	"log"
@@ -68,7 +69,7 @@ func ensureTextureLoaded(name string) error {
 	if !ok {
 		return fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 	}
-	return LoadTexture(name, filepath.Join(executablePath, path))
+	return LoadTexture(name, filepath.Join(fileutil.ExecutablePath, path))
 }
 
 // ---------- texture editor GPU sync ----------
@@ -162,20 +163,20 @@ func UpdateTextureFromRGBA(name string, img *image.RGBA) error {
 // (editor_ui.go) and ensureTextureLoaded both rebuild/resolve from this map
 // on every use, so a single insert is all requirement 7 needs.
 func RegisterTexture(name string) {
-	textureNames[name] = texturesDirName + "/" + name + ".png"
+	textureNames[name] = fileutil.TexturesDirName + "/" + name + ".png"
 }
 
-// textureNames maps logical texture names to paths relative to executablePath.
+// textureNames maps logical texture names to paths relative to fileutil.ExecutablePath.
 // Populated at startup by ScanTextures.
 var textureNames map[string]string
 
-// ScanTextures walks texturesDir and returns a map from logical name
-// (filename without extension) to the relative path "textures/<file>".
-func ScanTextures(texturesDir string) map[string]string {
+// ScanTextures walks dir and returns a map from logical name (filename without
+// extension) to the relative path "textures/<file>".
+func ScanTextures(dir string) map[string]string {
 	result := make(map[string]string)
-	entries, err := os.ReadDir(texturesDir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		log.Printf("WARNING: could not scan textures directory %s: %v", texturesDir, err)
+		log.Printf("WARNING: could not scan textures directory %s: %v", dir, err)
 		return result
 	}
 	for _, e := range entries {

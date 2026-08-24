@@ -19,6 +19,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/fileutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -63,7 +64,7 @@ var detail detailRenderer
 // DetailInit compiles the detail programs and builds the rock template mesh.
 // Must be called once with the GL context current (see EditorInit).
 func DetailInit() {
-	shaderDir := filepath.Join(executablePath, "shaders")
+	shaderDir := filepath.Join(fileutil.ExecutablePath, "shaders")
 	sp := func(name string) string { return filepath.Join(shaderDir, name) }
 
 	dispShared := mustReadShader(sp("detail_common.glsl"))
