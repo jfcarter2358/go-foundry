@@ -1,4 +1,4 @@
-package main
+package biome
 
 // biome_displace.go — bridges painted BiomeSectors to a covering floor's
 // procedural displacement detail (go/detail_cpu.go), so Grass/Sand/
@@ -36,17 +36,17 @@ const (
 	defaultMaxSlope = float32(90)
 )
 
-// slopeFeatherDegrees is how many degrees on either side of
+// SlopeFeatherDegrees is how many degrees on either side of
 // [MinSlopeAngle,MaxSlopeAngle] the coverage smoothsteps across, so the
 // biome layer thins out gradually instead of stopping in a hard, visible
 // ring around the qualifying area.
-const slopeFeatherDegrees = float32(4)
+const SlopeFeatherDegrees = float32(4)
 
 // biomeFollowsDisplacement reports whether kind's ground patch / scatter
 // should conform to (and be slope-gated by) a covering floor's procedural
 // displacement, rather than always sitting on the flat structural floor.
 // Scoped to the kinds that plausibly grow over broken/rocky ground.
-func biomeFollowsDisplacement(kind int32) bool {
+func BiomeFollowsDisplacement(kind int32) bool {
 	switch kind {
 	case world.BiomeGrass, world.BiomeRock, world.BiomeSand, world.BiomeMoss:
 		return true
@@ -62,14 +62,14 @@ func biomeFollowsDisplacement(kind int32) bool {
 //
 // They take kind so a future kind-specific default has one obvious home, and
 // so call sites read the same as the rest of the brush's resolvers.
-func resolvedMinSlope(kind int32, v float32) float32 {
+func ResolvedMinSlope(kind int32, v float32) float32 {
 	if v > 0 {
 		return v
 	}
 	return defaultMinSlope
 }
 
-func resolvedMaxSlope(kind int32, v float32) float32 {
+func ResolvedMaxSlope(kind int32, v float32) float32 {
 	if v > 0 {
 		return v
 	}
@@ -78,7 +78,7 @@ func resolvedMaxSlope(kind int32, v float32) float32 {
 
 // slopeCoverage returns how fully a surface with normal n is covered by a
 // brush of kind restricted to [minAngle,maxAngle] degrees from world-up,
-// smoothstepped slopeFeatherDegrees on either side of the range. 1 = fully
+// smoothstepped SlopeFeatherDegrees on either side of the range. 1 = fully
 // covered, 0 = fully excluded, in between across the transition band.
 //
 // n need NOT be unit length — it is normalized here. That is load-bearing, not
@@ -89,8 +89,8 @@ func resolvedMaxSlope(kind int32, v float32) float32 {
 // gating silently believed every sloped or terrain floor in the level was
 // perfectly level. Normalizing is a no-op for the already-unit detail normal.
 func slopeCoverage(kind int32, n mgl32.Vec3, minAngle, maxAngle float32) float32 {
-	minA := resolvedMinSlope(kind, minAngle)
-	maxA := resolvedMaxSlope(kind, maxAngle)
+	minA := ResolvedMinSlope(kind, minAngle)
+	maxA := ResolvedMaxSlope(kind, maxAngle)
 
 	l := n.Len()
 	if l < 1e-8 {
@@ -106,11 +106,11 @@ func slopeCoverage(kind int32, n mgl32.Vec3, minAngle, maxAngle float32) float32
 
 	lo := float32(1)
 	if minA > 0 {
-		lo = detail.Smoothstep32(minA-slopeFeatherDegrees, minA+slopeFeatherDegrees, angle)
+		lo = detail.Smoothstep32(minA-SlopeFeatherDegrees, minA+SlopeFeatherDegrees, angle)
 	}
 	hi := float32(1)
 	if maxA < 90 {
-		hi = 1 - detail.Smoothstep32(maxA-slopeFeatherDegrees, maxA+slopeFeatherDegrees, angle)
+		hi = 1 - detail.Smoothstep32(maxA-SlopeFeatherDegrees, maxA+SlopeFeatherDegrees, angle)
 	}
 	return geom.Clamp01(lo * hi)
 }
@@ -135,7 +135,7 @@ func slopeCoverage(kind int32, n mgl32.Vec3, minAngle, maxAngle float32) float32
 // made the slope sliders visibly do nothing at all, and stopping the layer at
 // an angle is the whole point of the feature. Keeping it one function is the
 // point. The two used to compute height separately and
-// disagree: the patch applied groundPatchYBias + groundDisplacement while the
+// disagree: the patch applied GroundPatchYBias + GroundDisplacement while the
 // scatter height did not, so every instance was planted on the bare floor
 // *underneath* the visible patch — floating where the patch noise rose,
 // sinking where it fell. Tall geometry (a 0.55 grass blade) hid it; a thin
@@ -148,8 +148,8 @@ func slopeCoverage(kind int32, n mgl32.Vec3, minAngle, maxAngle float32) float32
 // returns a real normal for those), and gating used to consult the detail
 // normal only — so on an ordinary ramp or sculpted terrain the slope sliders
 // did nothing at all.
-func biomeSurfaceAt(level *world.Level, brush *world.BiomeBrush, seed mgl32.Vec2, wx, wz float32) (height, coverage float32) {
-	flat, rawNormal, sector := floorHeightNormalUnderLevel(level, wx, wz)
+func BiomeSurfaceAt(level *world.Level, brush *world.BiomeBrush, seed mgl32.Vec2, wx, wz float32) (height, coverage float32) {
+	flat, rawNormal, sector := FloorHeightNormalUnderLevel(level, wx, wz)
 
 	// InterpolateSurfaceHeight's normal is an un-normalized cross product (see
 	// slopeCoverage's note); rotateNormalBetween needs unit inputs to derive a
@@ -160,7 +160,7 @@ func biomeSurfaceAt(level *world.Level, brush *world.BiomeBrush, seed mgl32.Vec2
 	}
 
 	base, normal := flat, structuralNormal
-	follows := sector != nil && biomeFollowsDisplacement(brush.Kind)
+	follows := sector != nil && BiomeFollowsDisplacement(brush.Kind)
 	if follows && sector.Floor.Detail.HasDisplace() {
 		dh, dn := detail.DetailSurfaceAt(&sector.Floor, wx, wz, flat)
 		base = dh
@@ -179,7 +179,7 @@ func biomeSurfaceAt(level *world.Level, brush *world.BiomeBrush, seed mgl32.Vec2
 	if follows {
 		coverage = slopeCoverage(brush.Kind, normal, brush.MinSlopeAngle, brush.MaxSlopeAngle)
 	}
-	return base + groundPatchYBias + groundDisplacement(brush.Kind, brush, seed, wx, wz), coverage
+	return base + GroundPatchYBias + GroundDisplacement(brush.Kind, brush, seed, wx, wz), coverage
 }
 
 // rotateNormalBetween applies the minimal rotation that takes unit vector
@@ -209,14 +209,14 @@ func rotateNormalBetween(from, to, n mgl32.Vec3) mgl32.Vec3 {
 // from. Both are needed by the water plane too, which has to sit at the same
 // height the ground would have — so neither can live in the ground mesher.
 
-// groundDisplacement returns the extra vertical offset (beyond the
+// GroundDisplacement returns the extra vertical offset (beyond the
 // structural floor height) baked into the ground patch at world (wx,wz),
 // keyed by the painting kind — this is the "volumetric displacement" Sand
 // asked for, and the subtler unevenness every other land kind gets so its
 // patch doesn't look like a flat cutout.
-func groundDisplacement(kind int32, brush *world.BiomeBrush, seed mgl32.Vec2, wx, wz float32) float32 {
+func GroundDisplacement(kind int32, brush *world.BiomeBrush, seed mgl32.Vec2, wx, wz float32) float32 {
 	freq := brush.GroundFrequency
-	oct := clampOctaves(brush.GroundOctaves)
+	oct := ClampOctaves(brush.GroundOctaves)
 
 	switch kind {
 	case world.BiomeSand:
@@ -274,23 +274,23 @@ func groundDisplacement(kind int32, brush *world.BiomeBrush, seed mgl32.Vec2, wx
 	}
 }
 
-// groundPatchYBias lifts the patch a hair above the structural floor it
+// GroundPatchYBias lifts the patch a hair above the structural floor it
 // conforms to, avoiding z-fighting between the two coincident surfaces.
-const groundPatchYBias = float32(0.015)
+const GroundPatchYBias = float32(0.015)
 
 // biomeMeshPoints builds the point cloud buildGroundPatchMesh/
-// buildBiomeWaterMesh both triangulate: sector s's polygon boundary
+// BuildBiomeWaterMesh both triangulate: sector s's polygon boundary
 // (densified so long edges get their own points to snap to, see
-// densifyPolygon) followed by an interior grid of points strictly inside it.
+// DensifyPolygon) followed by an interior grid of points strictly inside it.
 // Returns the densified boundary too — DelaunayTriangulate needs it both as
 // input points and as the inside/outside test polygon.
-func biomeMeshPoints(s *world.BiomeSector) (boundary, allPts []mgl32.Vec2) {
-	boundary = ccwPolygon(s.Points)
+func BiomeMeshPoints(s *world.BiomeSector) (boundary, allPts []mgl32.Vec2) {
+	boundary = CcwPolygon(s.Points)
 	if len(boundary) < 3 {
 		return nil, nil
 	}
 	min, max := s.Bounds()
-	nx, nz := groundPatchGridDims(min, max)
+	nx, nz := GroundPatchGridDims(min, max)
 	cellX := (max.X() - min.X()) / float32(nx)
 	cellZ := (max.Y() - min.Y()) / float32(nz)
 	cell := cellX
@@ -300,7 +300,7 @@ func biomeMeshPoints(s *world.BiomeSector) (boundary, allPts []mgl32.Vec2) {
 	if cell <= 0 {
 		cell = groundPatchCellSize
 	}
-	boundary = densifyPolygon(boundary, cell)
+	boundary = DensifyPolygon(boundary, cell)
 
 	allPts = make([]mgl32.Vec2, 0, len(boundary)+nx*nz)
 	allPts = append(allPts, boundary...)
@@ -328,7 +328,7 @@ func biomeMeshPoints(s *world.BiomeSector) (boundary, allPts []mgl32.Vec2) {
 // assume CCW. BiomeSector.Points is normalized to CCW when a sector is first
 // drawn (finishBiomeSectorDraw), but nothing re-checks it after a vertex is
 // dragged, so this is a defensive re-check rather than a known-redundant one.
-func ccwPolygon(pts []mgl32.Vec2) []mgl32.Vec2 {
+func CcwPolygon(pts []mgl32.Vec2) []mgl32.Vec2 {
 	if world.SignedArea2D(pts) >= 0 {
 		return pts
 	}
@@ -339,10 +339,10 @@ func ccwPolygon(pts []mgl32.Vec2) []mgl32.Vec2 {
 	return out
 }
 
-// clampOctaves clamps a user-supplied octave count into groundFBM's sane
+// ClampOctaves clamps a user-supplied octave count into groundFBM's sane
 // range, defaulting a non-positive (unset) value to 1 — callers that need a
 // kind-specific default override this afterward when brush.GroundOctaves<=0.
-func clampOctaves(n int32) int {
+func ClampOctaves(n int32) int {
 	if n < 1 {
 		n = 1
 	}
@@ -352,7 +352,7 @@ func clampOctaves(n int32) int {
 	return int(n)
 }
 
-// densifyPolygon inserts evenly-spaced intermediate points along every edge
+// DensifyPolygon inserts evenly-spaced intermediate points along every edge
 // of pts so no segment exceeds maxSeg, preserving the polygon's exact shape
 // (every inserted point is exactly collinear with the edge it splits) and
 // winding order.
@@ -364,7 +364,7 @@ func clampOctaves(n int32) int {
 // boundary edge through a long diagonal as a staircase of grid-aligned
 // chords to nearby interior points instead of the actual polygon edge. Extra
 // points ON that edge give it points to snap to along its own line instead.
-func densifyPolygon(pts []mgl32.Vec2, maxSeg float32) []mgl32.Vec2 {
+func DensifyPolygon(pts []mgl32.Vec2, maxSeg float32) []mgl32.Vec2 {
 	if len(pts) < 2 || maxSeg <= 0 {
 		return pts
 	}
@@ -411,10 +411,10 @@ func groundFBM(x, z float32, octaves int) float32 {
 // geometry (triangle count matters) rather than a texture sample.
 const groundPatchCellSize = float32(2.0)
 
-// groundPatchGridDims picks the (cells-per-axis) grid resolution covering
+// GroundPatchGridDims picks the (cells-per-axis) grid resolution covering
 // [min,max] at ~groundPatchCellSize world units per cell, capped at
-// groundPatchMaxDim.
-func groundPatchGridDims(lo, hi mgl32.Vec2) (nx, nz int) {
+// GroundPatchMaxDim.
+func GroundPatchGridDims(lo, hi mgl32.Vec2) (nx, nz int) {
 	sizeX := hi.X() - lo.X()
 	sizeZ := hi.Y() - lo.Y()
 	if sizeX < groundPatchCellSize {
@@ -425,21 +425,21 @@ func groundPatchGridDims(lo, hi mgl32.Vec2) (nx, nz int) {
 	}
 	nx = int(sizeX/groundPatchCellSize) + 1
 	nz = int(sizeZ/groundPatchCellSize) + 1
-	nx = max(1, min(nx, groundPatchMaxDim))
-	nz = max(1, min(nz, groundPatchMaxDim))
+	nx = max(1, min(nx, GroundPatchMaxDim))
+	nz = max(1, min(nz, GroundPatchMaxDim))
 	return
 }
 
-// densifyPolygonMaxStepsPerEdge caps how many extra points densifyPolygon
+// densifyPolygonMaxStepsPerEdge caps how many extra points DensifyPolygon
 // inserts along any one edge — a safety valve against a pathologically long
 // edge with a tiny maxSeg blowing up the triangulation's point count.
 const densifyPolygonMaxStepsPerEdge = 200
 
-// groundPatchMaxDim caps the interior sample grid's cells-per-axis, bounding
+// GroundPatchMaxDim caps the interior sample grid's cells-per-axis, bounding
 // triangle count for a huge sector the same way the scatter passes bound
 // instance count. Lower than a pure-grid approach would need, since
 // Bowyer-Watson triangulation (see buildGroundPatchMesh) costs more per point.
-const groundPatchMaxDim = 64
+const GroundPatchMaxDim = 64
 
 // groundValueNoise is bilinearly-interpolated value noise built from
 // groundHash, smoothstepped for a soft (not blocky) result.

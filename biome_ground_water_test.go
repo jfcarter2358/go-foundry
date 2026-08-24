@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/biome"
 	"foundry/internal/geom"
 	"foundry/internal/world"
 	"math"
@@ -200,19 +201,19 @@ func TestWildflowerMeshHasBloomAndCenterParts(t *testing.T) {
 }
 
 // TestGroundPatchGridDimsCapped checks the grid resolution is bounded by
-// groundPatchMaxDim regardless of how large the sector's AABB is — the same
+// biome.GroundPatchMaxDim regardless of how large the sector's AABB is — the same
 // bounded-cost guarantee the scatter passes give via their camera ring.
 func TestGroundPatchGridDimsCapped(t *testing.T) {
-	nx, nz := groundPatchGridDims(mgl32.Vec2{0, 0}, mgl32.Vec2{10000, 10000})
-	if nx > groundPatchMaxDim || nz > groundPatchMaxDim {
-		t.Fatalf("grid dims (%d,%d) exceed cap %d", nx, nz, groundPatchMaxDim)
+	nx, nz := biome.GroundPatchGridDims(mgl32.Vec2{0, 0}, mgl32.Vec2{10000, 10000})
+	if nx > biome.GroundPatchMaxDim || nz > biome.GroundPatchMaxDim {
+		t.Fatalf("grid dims (%d,%d) exceed cap %d", nx, nz, biome.GroundPatchMaxDim)
 	}
 	if nx < 1 || nz < 1 {
 		t.Fatalf("grid dims (%d,%d) must be at least 1", nx, nz)
 	}
 
 	// A tiny sector still gets at least one cell, not zero.
-	nx2, nz2 := groundPatchGridDims(mgl32.Vec2{0, 0}, mgl32.Vec2{0.01, 0.01})
+	nx2, nz2 := biome.GroundPatchGridDims(mgl32.Vec2{0, 0}, mgl32.Vec2{0.01, 0.01})
 	if nx2 < 1 || nz2 < 1 {
 		t.Fatalf("tiny sector grid dims (%d,%d) must be at least 1", nx2, nz2)
 	}
@@ -228,7 +229,7 @@ func TestGroundDisplacementBounded(t *testing.T) {
 	seed := mgl32.Vec2{1.7, 4.2}
 	for x := float32(0); x < 40; x += 3.3 {
 		for z := float32(0); z < 40; z += 4.1 {
-			d := groundDisplacement(world.BiomeSand, brush, seed, x, z)
+			d := biome.GroundDisplacement(world.BiomeSand, brush, seed, x, z)
 			// Regression guard: dunes must be mounds rising from the floor,
 			// never valleys dipping below it — a negative displacement here
 			// used to sink the sand patch below the actual structural floor.
@@ -238,7 +239,7 @@ func TestGroundDisplacementBounded(t *testing.T) {
 			if d > 0.7 { // amp 0.5 + up to 15% ripple headroom
 				t.Fatalf("sand displacement %.3f at (%.1f,%.1f) exceeds expected bound", d, x, z)
 			}
-			d2 := groundDisplacement(world.BiomeGrass, brush, seed, x, z)
+			d2 := biome.GroundDisplacement(world.BiomeGrass, brush, seed, x, z)
 			if d2 < -0.1 || d2 > 0.1 {
 				t.Fatalf("grass ground displacement %.3f at (%.1f,%.1f) exceeds expected bound", d2, x, z)
 			}
@@ -248,7 +249,7 @@ func TestGroundDisplacementBounded(t *testing.T) {
 
 // TestGroundDisplacementRespectsConfiguredAmplitude checks a brush's
 // GroundAmplitude actually bounds the non-Sand displacement — the panel
-// slider only has meaning if this actually reaches groundDisplacement.
+// slider only has meaning if this actually reaches biome.GroundDisplacement.
 func TestGroundDisplacementRespectsConfiguredAmplitude(t *testing.T) {
 	seed := mgl32.Vec2{2.1, 0.6}
 	small := &world.BiomeBrush{GroundAmplitude: 0.02, GroundFrequency: 0.3, GroundOctaves: 2}
@@ -258,7 +259,7 @@ func TestGroundDisplacementRespectsConfiguredAmplitude(t *testing.T) {
 		m := float32(0)
 		for x := float32(0); x < 30; x += 1.7 {
 			for z := float32(0); z < 30; z += 2.3 {
-				if d := groundDisplacement(kind, brush, seed, x, z); geom.Abs32(d) > m {
+				if d := biome.GroundDisplacement(kind, brush, seed, x, z); geom.Abs32(d) > m {
 					m = geom.Abs32(d)
 				}
 			}
@@ -278,13 +279,13 @@ func TestGroundDisplacementRespectsConfiguredAmplitude(t *testing.T) {
 	}
 }
 
-// TestClampOctavesRange checks clampOctaves keeps groundFBM's octave count in
+// TestClampOctavesRange checks biome.ClampOctaves keeps groundFBM's octave count in
 // its supported [1,6] range regardless of input.
 func TestClampOctavesRange(t *testing.T) {
 	cases := map[int32]int{-5: 1, 0: 1, 1: 1, 3: 3, 6: 6, 100: 6}
 	for in, want := range cases {
-		if got := clampOctaves(in); got != want {
-			t.Errorf("clampOctaves(%d) = %d, want %d", in, got, want)
+		if got := biome.ClampOctaves(in); got != want {
+			t.Errorf("biome.ClampOctaves(%d) = %d, want %d", in, got, want)
 		}
 	}
 }
@@ -326,7 +327,7 @@ func TestResolveGroundUVScale(t *testing.T) {
 // structural floor's Surface.UVScale), which is what lets a patch be dialed to
 // tile identically to the floor it's painted over.
 func TestBuildGroundPatchMeshUsesGroundUVScale(t *testing.T) {
-	lvl := &world.Level{} // no chunks: floorHeightUnderLevel falls back to 0 everywhere
+	lvl := &world.Level{} // no chunks: biome.FloorHeightUnderLevel falls back to 0 everywhere
 	s := &world.BiomeSector{
 		ID:     "gpuv",
 		Points: []mgl32.Vec2{{0, 0}, {8, 0}, {8, 8}, {0, 8}},
@@ -389,7 +390,7 @@ func TestBuildGroundPatchMeshStaysInsidePolygon(t *testing.T) {
 		Points: []mgl32.Vec2{{0, 0}, {8, 0}, {8, 8}, {0, 8}},
 		Brush:  world.BiomeBrush{Kind: world.BiomeGrass},
 	}
-	lvl := &world.Level{} // no chunks: floorHeightUnderLevel falls back to 0 everywhere
+	lvl := &world.Level{} // no chunks: biome.FloorHeightUnderLevel falls back to 0 everywhere
 
 	verts := buildGroundPatchMesh(lvl, s)
 	if len(verts) == 0 {
@@ -449,13 +450,13 @@ func TestBuildGroundPatchMeshFollowsDiagonalEdge(t *testing.T) {
 	}
 }
 
-// TestDensifyPolygonRespectsMaxSegAndShape checks densifyPolygon inserts
+// TestDensifyPolygonRespectsMaxSegAndShape checks biome.DensifyPolygon inserts
 // intermediate points so no edge segment exceeds maxSeg, without moving any
 // original vertex or changing the polygon's shape (every inserted point is
 // exactly on the line between the two vertices it was inserted between).
 func TestDensifyPolygonRespectsMaxSegAndShape(t *testing.T) {
 	pts := []mgl32.Vec2{{0, 0}, {10, 0}, {10, 10}, {0, 10}}
-	out := densifyPolygon(pts, 3)
+	out := biome.DensifyPolygon(pts, 3)
 
 	if len(out) <= len(pts) {
 		t.Fatalf("expected extra points for maxSeg=3 on 10-unit edges, got %d (started with %d)", len(out), len(pts))
@@ -488,7 +489,7 @@ func TestCcwPolygonFlipsClockwiseInput(t *testing.T) {
 	if world.SignedArea2D(ccw) <= 0 {
 		t.Fatal("test polygon should already be CCW")
 	}
-	if got := ccwPolygon(ccw); world.SignedArea2D(got) <= 0 {
+	if got := biome.CcwPolygon(ccw); world.SignedArea2D(got) <= 0 {
 		t.Fatal("ccwPolygon flipped an already-CCW polygon")
 	}
 
@@ -496,7 +497,7 @@ func TestCcwPolygonFlipsClockwiseInput(t *testing.T) {
 	if world.SignedArea2D(cw) >= 0 {
 		t.Fatal("test polygon should be CW")
 	}
-	if got := ccwPolygon(cw); world.SignedArea2D(got) <= 0 {
+	if got := biome.CcwPolygon(cw); world.SignedArea2D(got) <= 0 {
 		t.Fatal("ccwPolygon did not fix a CW polygon")
 	}
 }
@@ -512,7 +513,7 @@ func TestBuildBiomeWaterMeshIsFlat(t *testing.T) {
 	}
 	centroid := mgl32.Vec2{15, 15}
 
-	verts, indices := buildBiomeWaterMesh(s, centroid)
+	verts, indices := biome.BuildBiomeWaterMesh(s, centroid)
 	if len(verts) == 0 || len(indices) == 0 {
 		t.Fatal("expected a non-empty water mesh for a 10x10 square sector")
 	}
@@ -541,7 +542,7 @@ func TestBuildBiomeWaterMeshIsFlat(t *testing.T) {
 
 // TestBiomeWaterCentroidAndFloor checks the reference point/height used to
 // place the companion water primitive follows the structural floor at the
-// polygon's center, matching floorHeightUnderLevel's own contract.
+// polygon's center, matching biome.FloorHeightUnderLevel's own contract.
 func TestBiomeWaterCentroidAndFloor(t *testing.T) {
 	ch := world.Chunk{
 		Points: []mgl32.Vec2{{-4, -4}, {4, -4}, {4, 4}, {-4, 4}},
@@ -554,7 +555,7 @@ func TestBiomeWaterCentroidAndFloor(t *testing.T) {
 	lvl := &world.Level{Chunks: []world.Chunk{ch}}
 	s := &world.BiomeSector{Points: []mgl32.Vec2{{-2, -2}, {2, -2}, {2, 2}, {-2, 2}}}
 
-	centroid, floorY := biomeWaterCentroidAndFloor(lvl, s)
+	centroid, floorY := biome.BiomeWaterCentroidAndFloor(lvl, s)
 	if centroid != (mgl32.Vec2{0, 0}) {
 		t.Fatalf("centroid = %v, want (0,0)", centroid)
 	}

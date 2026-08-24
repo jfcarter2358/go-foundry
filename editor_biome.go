@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/biome"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
@@ -309,7 +310,7 @@ func Editor2DRenderBiomeOverlay() {
 		// A triangle fan from Points[0] only fills correctly for convex
 		// polygons; concave sectors need real ear-clip triangulation or the
 		// fan bulges outside the boundary. EarClip assumes CCW input.
-		poly := ccwPolygon(bs.Points)
+		poly := biome.CcwPolygon(bs.Points)
 		tris := geom.EarClip(poly)
 		for i := 0; i+2 < len(tris); i += 3 {
 			ax, ay := worldToScreen(poly[tris[i]].X(), poly[tris[i]].Y())
@@ -659,7 +660,7 @@ func biomeFadeSection(bs *world.BiomeSector) {
 // Hidden entirely for the kinds that never follow displacement
 // (Wildflower/Cattail/Water), since the fields would do nothing for them.
 func biomeSlopeSection(bs *world.BiomeSector) {
-	if !biomeFollowsDisplacement(bs.Brush.Kind) {
+	if !biome.BiomeFollowsDisplacement(bs.Brush.Kind) {
 		return
 	}
 
@@ -672,8 +673,8 @@ func biomeSlopeSection(bs *world.BiomeSector) {
 
 	// Resolve through the same "0 means the default" path the renderer uses, so
 	// the sliders show the values actually in effect rather than a misleading 0.
-	minA := resolvedMinSlope(bs.Brush.Kind, bs.Brush.MinSlopeAngle)
-	maxA := resolvedMaxSlope(bs.Brush.Kind, bs.Brush.MaxSlopeAngle)
+	minA := biome.ResolvedMinSlope(bs.Brush.Kind, bs.Brush.MinSlopeAngle)
+	maxA := biome.ResolvedMaxSlope(bs.Brush.Kind, bs.Brush.MaxSlopeAngle)
 
 	changed := false
 	if imgui.SliderFloat("Min Angle##bsslopemin", &minA, 0, 90) {

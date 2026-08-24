@@ -24,6 +24,7 @@ package main
 // the main game shader's state.
 
 import (
+	"foundry/internal/biome"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
@@ -131,12 +132,12 @@ func resolveGroundUVScale(brush *world.BiomeBrush) mgl32.Vec2 {
 // groundVertexStride) for sector s: a Delaunay triangulation of the sector's
 // own (densified) polygon boundary plus an interior sample grid — see
 // biomeMeshPoints — height-conformed to the structural floor plus
-// groundDisplacement. Because the triangulation's boundary points sit
+// biome.GroundDisplacement. Because the triangulation's boundary points sit
 // exactly on the polygon's edges, the mesh's outer edge follows the painted
 // shape precisely rather than the axis-aligned staircase a grid-quad clip
 // would give a diagonal edge.
 func buildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
-	boundary, allPts := biomeMeshPoints(s)
+	boundary, allPts := biome.BiomeMeshPoints(s)
 	if len(allPts) == 0 {
 		return nil
 	}
@@ -150,8 +151,8 @@ func buildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
 	coverage := make([]float32, len(allPts))
 	for i, p := range allPts {
 		// biomeSurfaceAt is the shared definition of where this sector's
-		// terrain is — it already folds in groundPatchYBias and
-		// groundDisplacement, and follows a covering floor's actual displaced
+		// terrain is — it already folds in biome.GroundPatchYBias and
+		// biome.GroundDisplacement, and follows a covering floor's actual displaced
 		// surface for Grass/Rock/Sand/Moss, so the patch drapes over
 		// rock-outcrop bumps instead of sitting at the flat floor height
 		// underneath them. The scatter height texture calls the exact same
@@ -163,7 +164,7 @@ func buildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
 		// of it. Doing it in the fragment stage rather than by dropping
 		// triangles here keeps the cutoff on the true slope contour instead of
 		// quantizing it to this mesh's ~2-world-unit triangulation.
-		heights[i], coverage[i] = biomeSurfaceAt(level, &s.Brush, seed, p.X(), p.Y())
+		heights[i], coverage[i] = biome.BiomeSurfaceAt(level, &s.Brush, seed, p.X(), p.Y())
 	}
 
 	uvScale := resolveGroundUVScale(&s.Brush)

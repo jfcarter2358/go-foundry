@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/biome"
 	"foundry/internal/geom"
 	"foundry/internal/world"
 	"math"
@@ -49,8 +50,8 @@ func TestBiomeSurfaceAtFollowsDisplacedFloor(t *testing.T) {
 	diverged, sawPartialCoverage := false, false
 	for x := float32(-12); x <= 12; x += 0.7 {
 		for z := float32(-12); z <= 12; z += 0.9 {
-			h, cov := biomeSurfaceAt(displaced, grass, testSeed, x, z)
-			flatH, flatCov := biomeSurfaceAt(plain, grass, testSeed, x, z)
+			h, cov := biome.BiomeSurfaceAt(displaced, grass, testSeed, x, z)
+			flatH, flatCov := biome.BiomeSurfaceAt(plain, grass, testSeed, x, z)
 			if geom.Abs32(h-flatH) > 1e-4 {
 				diverged = true
 			}
@@ -77,8 +78,8 @@ func TestBiomeSurfaceAtFollowsDisplacedFloor(t *testing.T) {
 	cattail := &world.BiomeBrush{Kind: world.BiomeCattail}
 	for x := float32(-12); x <= 12; x += 1.9 {
 		for z := float32(-12); z <= 12; z += 2.3 {
-			h, cov := biomeSurfaceAt(displaced, cattail, testSeed, x, z)
-			flatH, _ := biomeSurfaceAt(plain, cattail, testSeed, x, z)
+			h, cov := biome.BiomeSurfaceAt(displaced, cattail, testSeed, x, z)
+			flatH, _ := biome.BiomeSurfaceAt(plain, cattail, testSeed, x, z)
 			if h != flatH {
 				t.Fatalf("Cattail height at (%.1f,%.1f) = %v over a displaced floor but %v over a flat one — it must not follow displacement", x, z, h, flatH)
 			}
@@ -92,7 +93,7 @@ func TestBiomeSurfaceAtFollowsDisplacedFloor(t *testing.T) {
 // TestGroundPatchMeshMatchesScatterHeight is the regression test for the
 // reported bug: moss scattered as "discs floating in thin air". The ground
 // patch mesh and the scatter height texture computed their heights separately
-// and disagreed — the patch added groundPatchYBias + groundDisplacement while
+// and disagreed — the patch added biome.GroundPatchYBias + biome.GroundDisplacement while
 // the scatter height used the bare floor — so every instance was planted
 // under the visible patch, floating wherever the patch noise rose. Tall grass
 // blades hid it; a short moss clump did not.
@@ -116,7 +117,7 @@ func TestGroundPatchMeshMatchesScatterHeight(t *testing.T) {
 
 		for i := 0; i < len(verts); i += groundVertexStride {
 			x, y, z := verts[i], verts[i+1], verts[i+2]
-			want, _ := biomeSurfaceAt(lvl, &s.Brush, seed, x, z)
+			want, _ := biome.BiomeSurfaceAt(lvl, &s.Brush, seed, x, z)
 			if geom.Abs32(y-want) > 1e-4 {
 				t.Fatalf("kind %d: ground patch vertex at (%.3f,%.3f) sits at y=%.5f but scatter would be planted at y=%.5f — "+
 					"the patch and the scatter height must come from the same surface", kind, x, z, y, want)
@@ -160,7 +161,7 @@ func TestGroundPatchIsSlopeGated(t *testing.T) {
 	// A steep floor: two corners raised 12 over a 16-unit span (~37 degrees).
 	lvl := flatFloorAt(0, []float32{0, 0, 12, 12})
 
-	_, N, _ := floorHeightNormalUnderLevel(lvl, 0, 0)
+	_, N, _ := biome.FloorHeightNormalUnderLevel(lvl, 0, 0)
 	angle := float32(math.Acos(float64(N.Normalize().Y()))) * 180 / math.Pi
 	if angle < 20 {
 		t.Fatalf("fixture is only %.1f degrees; expected a steep floor", angle)
@@ -183,13 +184,13 @@ func TestGroundPatchIsSlopeGated(t *testing.T) {
 
 	// Ceiling well below the terrain's angle: excluded everywhere, so
 	// ground_frag.glsl discards the whole patch.
-	if lo, hi := groundPatchCoverageRange(t, newPatch(0, angle-slopeFeatherDegrees-3)); lo != 0 || hi != 0 {
+	if lo, hi := groundPatchCoverageRange(t, newPatch(0, angle-biome.SlopeFeatherDegrees-3)); lo != 0 || hi != 0 {
 		t.Errorf("patch coverage with a ceiling below the terrain's %.1f degrees = %v..%v, want all 0 — "+
 			"the ground patch is not honouring the slope range", angle, lo, hi)
 	}
 
 	// Floor (minimum) well above it: also excluded everywhere.
-	if lo, hi := groundPatchCoverageRange(t, newPatch(angle+slopeFeatherDegrees+3, 90)); lo != 0 || hi != 0 {
+	if lo, hi := groundPatchCoverageRange(t, newPatch(angle+biome.SlopeFeatherDegrees+3, 90)); lo != 0 || hi != 0 {
 		t.Errorf("patch coverage with a minimum above the terrain's %.1f degrees = %v..%v, want all 0", angle, lo, hi)
 	}
 
@@ -217,7 +218,7 @@ func TestBiomeSurfaceAtIncludesGroundPatchOffsets(t *testing.T) {
 	sawAbove, sawBelow, differsFromFloor := false, false, false
 	for x := float32(-10); x <= 10; x += 0.6 {
 		for z := float32(-10); z <= 10; z += 0.8 {
-			h, _ := biomeSurfaceAt(lvl, &brush, testSeed, x, z)
+			h, _ := biome.BiomeSurfaceAt(lvl, &brush, testSeed, x, z)
 			if geom.Abs32(h-5) > 1e-4 {
 				differsFromFloor = true
 			}
@@ -228,13 +229,13 @@ func TestBiomeSurfaceAtIncludesGroundPatchOffsets(t *testing.T) {
 				sawBelow = true
 			}
 			// Bias plus the kind's noise amplitude bounds how far it can stray.
-			if bound := groundPatchYBias + brush.GroundAmplitude + 1e-4; geom.Abs32(h-5) > bound {
+			if bound := biome.GroundPatchYBias + brush.GroundAmplitude + 1e-4; geom.Abs32(h-5) > bound {
 				t.Fatalf("height %v at (%.1f,%.1f) strays further from the floor than bias+amplitude (%v)", h, x, z, bound)
 			}
 		}
 	}
 	if !differsFromFloor {
-		t.Fatal("height equals the bare floor everywhere — groundPatchYBias/groundDisplacement are not being applied")
+		t.Fatal("height equals the bare floor everywhere — biome.GroundPatchYBias/biome.GroundDisplacement are not being applied")
 	}
 	if !sawAbove || !sawBelow {
 		t.Errorf("ground noise should push the surface both above and below the floor (above=%v below=%v)", sawAbove, sawBelow)
@@ -254,8 +255,8 @@ func TestBiomeSurfaceAtIgnoresDisplaceOffFace(t *testing.T) {
 	brush := &world.BiomeBrush{Kind: world.BiomeGrass}
 	for x := float32(-8); x <= 8; x += 2.1 {
 		for z := float32(-8); z <= 8; z += 2.7 {
-			h, cov := biomeSurfaceAt(scatterOnly, brush, testSeed, x, z)
-			want, _ := biomeSurfaceAt(plain, brush, testSeed, x, z)
+			h, cov := biome.BiomeSurfaceAt(scatterOnly, brush, testSeed, x, z)
+			want, _ := biome.BiomeSurfaceAt(plain, brush, testSeed, x, z)
 			if h != want {
 				t.Fatalf("height at (%.1f,%.1f) = %v over a Displace=false face, want the undisplaced %v", x, z, h, want)
 			}
@@ -319,4 +320,15 @@ func rockySpec() *world.DetailSpec {
 		Noise: true, NoiseAmplitude: 0.2, NoiseFrequency: 1.2, NoiseOctaves: 4, NoiseTessLevel: 24,
 	}
 	return d
+}
+
+func flatFloorAt(height float32, offsets []float32) *world.Level {
+	return &world.Level{Chunks: []world.Chunk{{
+		Points: []mgl32.Vec2{{-8, -8}, {8, -8}, {8, 8}, {-8, 8}},
+		Sectors: []world.Sector{{
+			ID:           "s0",
+			PointIndices: []int{0, 1, 2, 3},
+			Floor:        world.Floor{Enabled: true, Height: height, VertexOffsets: offsets},
+		}},
+	}}}
 }

@@ -1,4 +1,4 @@
-package main
+package biome
 
 // biome_water.go — auto-manages a companion water plane for every Water-kind
 // BiomeSector, filling the painted polygon.
@@ -95,24 +95,24 @@ func syncChunkWaterSurfaces(level *world.Level, ch *world.Chunk) {
 	}
 }
 
-// biomeWaterCentroidAndFloor returns the sector's polygon-AABB center and the
+// BiomeWaterCentroidAndFloor returns the sector's polygon-AABB center and the
 // structural floor height sampled there — the water plane's reference
 // position (its surface then sits WaterDepth below that floor height).
-func biomeWaterCentroidAndFloor(level *world.Level, s *world.BiomeSector) (mgl32.Vec2, float32) {
+func BiomeWaterCentroidAndFloor(level *world.Level, s *world.BiomeSector) (mgl32.Vec2, float32) {
 	min, max := s.Bounds()
 	c := mgl32.Vec2{(min.X() + max.X()) / 2, (min.Y() + max.Y()) / 2}
-	return c, floorHeightUnderLevel(level, c.X(), c.Y())
+	return c, FloorHeightUnderLevel(level, c.X(), c.Y())
 }
 
-// buildBiomeWaterMesh returns an indexed, double-sided, flat XZ grid mesh
+// BuildBiomeWaterMesh returns an indexed, double-sided, flat XZ grid mesh
 // (vertex format [X,Y,Z,U,V], local to centroid) covering sector s's polygon,
 // using the same Delaunay-triangulated point cloud as the ground patch
 // (biome_ground.go's biomeMeshPoints) so the water's footprint follows the
 // painted polygon exactly (no grid-diagonal staircase) and lines up with its
 // lakebed. UV tiles from world position so the texture doesn't re-stretch as
 // the sector is edited.
-func buildBiomeWaterMesh(s *world.BiomeSector, centroid mgl32.Vec2) ([][]float32, []int) {
-	boundary, allPts := biomeMeshPoints(s)
+func BuildBiomeWaterMesh(s *world.BiomeSector, centroid mgl32.Vec2) ([][]float32, []int) {
+	boundary, allPts := BiomeMeshPoints(s)
 	if len(allPts) == 0 {
 		return nil, nil
 	}
@@ -149,12 +149,12 @@ const biomeWaterAlpha = float32(0.75)
 // rebuildBiomeWaterSurface (re)generates w's geometry and water params from
 // sector s, in place.
 func rebuildBiomeWaterSurface(level *world.Level, s *world.BiomeSector, w *world.WaterSurface) {
-	centroid, floorY := biomeWaterCentroidAndFloor(level, s)
+	centroid, floorY := BiomeWaterCentroidAndFloor(level, s)
 	depth := s.Brush.WaterDepth
 	if depth <= 0 {
 		depth = world.DefaultWaterDepth
 	}
-	verts, indices := buildBiomeWaterMesh(s, centroid)
+	verts, indices := BuildBiomeWaterMesh(s, centroid)
 
 	w.Position = mgl32.Vec3{centroid.X(), floorY - depth, centroid.Y()}
 	w.Alpha = biomeWaterAlpha

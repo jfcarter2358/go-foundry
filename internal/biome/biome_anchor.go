@@ -1,4 +1,4 @@
-package main
+package biome
 
 // biome_anchor.go — carrying painted biome polygons along when the floor under
 // them is edited.
@@ -31,9 +31,9 @@ import (
 
 // pointMove records one chunk point an edit has already moved: its index, and
 // where it was before the move.
-type pointMove struct {
-	pointIdx int
-	from     mgl32.Vec2
+type PointMove struct {
+	PointIdx int
+	From     mgl32.Vec2
 }
 
 // sectorWarp is one sector's shape before and after an edit, index-aligned.
@@ -44,17 +44,17 @@ type sectorWarp struct {
 // carryBiomesWithPoints re-fits the biome polygons draped over ch to the new
 // positions of the points in moves — which the caller has already written into
 // ch.Points — and marks every polygon it changes for a mesh rebuild.
-func carryBiomesWithPoints(ch *world.Chunk, moves []pointMove) {
+func CarryBiomesWithPoints(ch *world.Chunk, moves []PointMove) {
 	if ch == nil || len(moves) == 0 {
 		return
 	}
 	was := make(map[int]mgl32.Vec2, len(moves))
 	for _, m := range moves {
-		if m.pointIdx < 0 || m.pointIdx >= len(ch.Points) {
+		if m.PointIdx < 0 || m.PointIdx >= len(ch.Points) {
 			continue
 		}
-		if m.from != ch.Points[m.pointIdx] {
-			was[m.pointIdx] = m.from
+		if m.From != ch.Points[m.PointIdx] {
+			was[m.PointIdx] = m.From
 		}
 	}
 	if len(was) == 0 {
@@ -110,7 +110,7 @@ func warpPoint(v mgl32.Vec2, warps []sectorWarp) (mgl32.Vec2, bool) {
 		if !geom.PointInPolygon(v, w.before) {
 			continue
 		}
-		coords := meanValueCoords(v, w.before)
+		coords := MeanValueCoords(v, w.before)
 		if coords == nil {
 			return v, false
 		}
@@ -123,7 +123,7 @@ func warpPoint(v mgl32.Vec2, warps []sectorWarp) (mgl32.Vec2, bool) {
 	return v, false
 }
 
-// meanValueCoords returns Floater's mean value coordinates of v with respect to
+// MeanValueCoords returns Floater's mean value coordinates of v with respect to
 // poly: weights that sum to 1 and reproduce v as Σ wᵢ·polyᵢ, and go on placing
 // the point the same way relative to the polygon once the polygon is deformed.
 // Returns nil when the polygon is too small or too degenerate to bind to.
@@ -132,7 +132,7 @@ func warpPoint(v mgl32.Vec2, warps []sectorWarp) (mgl32.Vec2, bool) {
 // edge i→i+1 and rᵢ is the distance from v to vertex i. The half-angle tangent
 // comes from the cross and dot products of the two spokes without a trig call:
 // tan(α/2) = (1-cos α)/sin α = (rᵢrⱼ - sᵢ·sⱼ) / (sᵢ × sⱼ).
-func meanValueCoords(v mgl32.Vec2, poly []mgl32.Vec2) []float32 {
+func MeanValueCoords(v mgl32.Vec2, poly []mgl32.Vec2) []float32 {
 	n := len(poly)
 	if n < 3 {
 		return nil
@@ -194,20 +194,20 @@ func meanValueCoords(v mgl32.Vec2, poly []mgl32.Vec2) []float32 {
 // patch mesher and the water plane alike, so it sits with the biome data
 // rather than inside any one of them.
 
-// floorHeightUnderLevel returns the structural floor height (accounting for
+// FloorHeightUnderLevel returns the structural floor height (accounting for
 // terrain-mode slope/displacement, via the same code path player collision
 // uses) at world XZ (wx,wz), or 0 over open ground with no sector.
-func floorHeightUnderLevel(level *world.Level, wx, wz float32) float32 {
-	h, _, _ := floorHeightNormalUnderLevel(level, wx, wz)
+func FloorHeightUnderLevel(level *world.Level, wx, wz float32) float32 {
+	h, _, _ := FloorHeightNormalUnderLevel(level, wx, wz)
 	return h
 }
 
-// floorHeightNormalUnderLevel is floorHeightUnderLevel's full form: also
+// FloorHeightNormalUnderLevel is FloorHeightUnderLevel's full form: also
 // returns the flat floor's normal and the owning Sector (nil over open
 // ground with no sector), so callers that need to know about e.g. that
 // sector's procedural displacement detail (biome_displace.go) don't have to
 // re-run the same chunk/sector search.
-func floorHeightNormalUnderLevel(level *world.Level, wx, wz float32) (float32, mgl32.Vec3, *world.Sector) {
+func FloorHeightNormalUnderLevel(level *world.Level, wx, wz float32) (float32, mgl32.Vec3, *world.Sector) {
 	if level == nil {
 		return 0, mgl32.Vec3{0, 1, 0}, nil
 	}

@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/biome"
 	"foundry/internal/detail"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
@@ -1198,7 +1199,7 @@ func editor2DSectorSections(ch *world.Chunk) {
 					pIdx := s.PointIndices[vi]
 					was := ch.Points[pIdx]
 					ch.Points[pIdx] = mgl32.Vec2{x, z}
-					carryBiomesWithPoints(ch, []pointMove{{pointIdx: pIdx, from: was}})
+					biome.CarryBiomesWithPoints(ch, []biome.PointMove{{PointIdx: pIdx, From: was}})
 				}
 				rebuildSectorEdgePoints(ch, s)
 				reloadSectorsUsingPoint(ch, s.PointIndices[vi])

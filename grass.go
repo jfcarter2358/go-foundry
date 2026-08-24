@@ -34,6 +34,7 @@ package main
 // own GL program and VAOs, never touching the main game shader's state.
 
 import (
+	"foundry/internal/biome"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
@@ -942,7 +943,7 @@ func (br *biomeRenderer) ensureBiomeHeight(level *world.Level, s *world.BiomeSec
 		for tx := 0; tx < w; tx++ {
 			u := float32(tx) / float32(w-1)
 			wx := min.X() + u*size.X()
-			height, coverage := biomeSurfaceAt(level, &s.Brush, seed, wx, wz)
+			height, coverage := biome.BiomeSurfaceAt(level, &s.Brush, seed, wx, wz)
 			i := (ty*w + tx) * 2
 			data[i] = height
 			data[i+1] = coverage

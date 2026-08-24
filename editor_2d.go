@@ -20,6 +20,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/biome"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"foundry/internal/world"
@@ -448,7 +449,7 @@ func Editor2DHandleMouseMove(t sdl.MouseMotionEvent) {
 					pIdx := s.PointIndices[vi]
 					was := ch.Points[pIdx]
 					ch.Points[pIdx] = mgl32.Vec2{wx, wz}
-					carryBiomesWithPoints(ch, []pointMove{{pointIdx: pIdx, from: was}})
+					biome.CarryBiomesWithPoints(ch, []biome.PointMove{{PointIdx: pIdx, From: was}})
 					// Rebuild all sectors that share this point
 					reloadSectorsUsingPoint(ch, pIdx)
 				}

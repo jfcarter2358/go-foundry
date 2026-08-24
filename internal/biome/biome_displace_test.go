@@ -1,4 +1,4 @@
-package main
+package biome
 
 import (
 	"foundry/internal/geom"
@@ -10,17 +10,29 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// allBiomeKinds is every paintable kind, so the "every kind" tests below can't
+// silently stop covering everything when a new one is appended. The root
+// package's biome tests carry the same list and a guard that it stays complete;
+// a test helper cannot cross a package boundary without becoming API.
+// testSeed is an arbitrary but fixed per-sector scatter seed.
+var testSeed = mgl32.Vec2{3.5, 11.25}
+
+var allBiomeKinds = []int32{
+	world.BiomeGrass, world.BiomeRock, world.BiomeWildflower, world.BiomeCattail,
+	world.BiomeSand, world.BiomeWater, world.BiomeMoss,
+}
+
 // TestBiomeFollowsDisplacement pins which kinds conform to (and are
 // slope-gated by) a covering face's procedural displacement, versus the ones
 // deliberately left on the flat structural floor.
 func TestBiomeFollowsDisplacement(t *testing.T) {
 	for _, k := range []int32{world.BiomeGrass, world.BiomeSand, world.BiomeRock, world.BiomeMoss} {
-		if !biomeFollowsDisplacement(k) {
+		if !BiomeFollowsDisplacement(k) {
 			t.Errorf("kind %d should follow displacement", k)
 		}
 	}
 	for _, k := range []int32{world.BiomeWildflower, world.BiomeCattail, world.BiomeWater} {
-		if biomeFollowsDisplacement(k) {
+		if BiomeFollowsDisplacement(k) {
 			t.Errorf("kind %d should not follow displacement", k)
 		}
 	}
@@ -95,10 +107,10 @@ func TestGroundTextureForMoss(t *testing.T) {
 // and terrain floors instead of only procedurally-displaced ones.
 func TestResolvedSlopeDefaultsGateNothing(t *testing.T) {
 	for _, k := range allBiomeKinds {
-		if got := resolvedMinSlope(k, 0); got != 0 {
+		if got := ResolvedMinSlope(k, 0); got != 0 {
 			t.Errorf("resolvedMinSlope(kind %d, 0) = %v, want 0 (unset must not restrict)", k, got)
 		}
-		if got := resolvedMaxSlope(k, 0); got != 90 {
+		if got := ResolvedMaxSlope(k, 0); got != 90 {
 			t.Errorf("resolvedMaxSlope(kind %d, 0) = %v, want 90 (unset must not restrict)", k, got)
 		}
 		// The full range must cover every possible surface orientation.
@@ -110,10 +122,10 @@ func TestResolvedSlopeDefaultsGateNothing(t *testing.T) {
 	}
 
 	// Explicit values win over the defaults.
-	if got := resolvedMinSlope(world.BiomeRock, 12); got != 12 {
+	if got := ResolvedMinSlope(world.BiomeRock, 12); got != 12 {
 		t.Errorf("resolvedMinSlope(Rock, 12) = %v, want 12", got)
 	}
-	if got := resolvedMaxSlope(world.BiomeGrass, 55); got != 55 {
+	if got := ResolvedMaxSlope(world.BiomeGrass, 55); got != 55 {
 		t.Errorf("resolvedMaxSlope(Grass, 55) = %v, want 55", got)
 	}
 }
@@ -216,8 +228,8 @@ func TestSlopeCoverageFeathersNotSteps(t *testing.T) {
 	if at <= 0 || at >= 1 {
 		t.Fatalf("coverage exactly at the max angle = %v, want a partial value (feathered edge)", at)
 	}
-	inside := slopeCoverage(world.BiomeGrass, normalAtAngle(float64(maxA-slopeFeatherDegrees-1)), 0, maxA)
-	outside := slopeCoverage(world.BiomeGrass, normalAtAngle(float64(maxA+slopeFeatherDegrees+1)), 0, maxA)
+	inside := slopeCoverage(world.BiomeGrass, normalAtAngle(float64(maxA-SlopeFeatherDegrees-1)), 0, maxA)
+	outside := slopeCoverage(world.BiomeGrass, normalAtAngle(float64(maxA+SlopeFeatherDegrees+1)), 0, maxA)
 	if inside != 1 {
 		t.Errorf("coverage well inside the range = %v, want 1", inside)
 	}
@@ -273,9 +285,9 @@ func TestBiomeSurfaceAtLevelFloorStaysFullyCovered(t *testing.T) {
 		if k == world.BiomeSand {
 			amp = brush.SandHeight * 1.15 // dunes + the ripple layer's 15% headroom
 		}
-		bound := groundPatchYBias + amp + 1e-4
+		bound := GroundPatchYBias + amp + 1e-4
 
-		h, cov := biomeSurfaceAt(lvl, &brush, mgl32.Vec2{1, 2}, 0, 0)
+		h, cov := BiomeSurfaceAt(lvl, &brush, mgl32.Vec2{1, 2}, 0, 0)
 		if geom.Abs32(h-3) > bound {
 			t.Errorf("kind %d height over a level floor = %v, further than bias+amplitude (%v) from the floor at 3", k, h, bound)
 		}
@@ -297,7 +309,7 @@ func TestSlopeGatingAppliesToPlainSlopedFloor(t *testing.T) {
 	lvl := flatFloorAt(0, []float32{0, 0, 8, 8})
 
 	// Confirm the fixture really is sloped, or the rest proves nothing.
-	_, n, sector := floorHeightNormalUnderLevel(lvl, 0, 0)
+	_, n, sector := FloorHeightNormalUnderLevel(lvl, 0, 0)
 	if sector == nil {
 		t.Fatal("fixture sector not found under (0,0)")
 	}
@@ -314,25 +326,25 @@ func TestSlopeGatingAppliesToPlainSlopedFloor(t *testing.T) {
 	brush := world.DefaultBiomeBrush(world.BiomeMoss)
 
 	// Default (unset) range covers everything.
-	if _, cov := biomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 1 {
+	if _, cov := BiomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 1 {
 		t.Errorf("coverage with the default range = %v, want 1", cov)
 	}
 
 	// A ceiling below the ramp's angle must exclude it outright...
-	brush.MinSlopeAngle, brush.MaxSlopeAngle = 0, angle-slopeFeatherDegrees-2
-	if _, cov := biomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 0 {
+	brush.MinSlopeAngle, brush.MaxSlopeAngle = 0, angle-SlopeFeatherDegrees-2
+	if _, cov := BiomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 0 {
 		t.Errorf("coverage with max angle below the ramp's %.1f degrees = %v, want 0 — the slope sliders are not reaching a plainly sloped floor", angle, cov)
 	}
 
 	// ...and a ceiling above it must admit it.
-	brush.MinSlopeAngle, brush.MaxSlopeAngle = 0, angle+slopeFeatherDegrees+2
-	if _, cov := biomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 1 {
+	brush.MinSlopeAngle, brush.MaxSlopeAngle = 0, angle+SlopeFeatherDegrees+2
+	if _, cov := BiomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 1 {
 		t.Errorf("coverage with max angle above the ramp's %.1f degrees = %v, want 1", angle, cov)
 	}
 
 	// A floor (minimum) above the ramp's angle must exclude it too.
-	brush.MinSlopeAngle, brush.MaxSlopeAngle = angle+slopeFeatherDegrees+2, 90
-	if _, cov := biomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 0 {
+	brush.MinSlopeAngle, brush.MaxSlopeAngle = angle+SlopeFeatherDegrees+2, 90
+	if _, cov := BiomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 0 {
 		t.Errorf("coverage with min angle above the ramp's %.1f degrees = %v, want 0", angle, cov)
 	}
 }
@@ -377,8 +389,8 @@ func TestBiomeSurfaceAtNoSector(t *testing.T) {
 	lvl := &world.Level{}
 	for _, k := range []int32{world.BiomeGrass, world.BiomeMoss, world.BiomeWater} {
 		brush := world.DefaultBiomeBrush(k)
-		h, cov := biomeSurfaceAt(lvl, &brush, mgl32.Vec2{4, 5}, 5, 5)
-		if bound := groundPatchYBias + brush.GroundAmplitude + 1e-4; geom.Abs32(h) > bound {
+		h, cov := BiomeSurfaceAt(lvl, &brush, mgl32.Vec2{4, 5}, 5, 5)
+		if bound := GroundPatchYBias + brush.GroundAmplitude + 1e-4; geom.Abs32(h) > bound {
 			t.Errorf("kind %d height over open ground = %v, want within %v of 0", k, h, bound)
 		}
 		if cov != 1 {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/biome"
 	"foundry/internal/detail"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
@@ -442,7 +443,7 @@ func main() {
 			// (chunk.WaterSurfaces) in step before anything reads it this
 			// frame — the water draw loop below, and shadow/culling passes
 			// that walk chunk bounds.
-			SyncBiomeWaterSurfaces(&level)
+			biome.SyncBiomeWaterSurfaces(&level)
 
 			// Latch the biome wind clock before the shadow passes read it, so
 			// scatter sways identically in the depth maps and in the color pass and

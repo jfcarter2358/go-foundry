@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/biome"
 	"foundry/internal/geom"
 	"foundry/internal/world"
 	"testing"
@@ -87,10 +88,10 @@ func TestFloorHeightUnderLevel(t *testing.T) {
 	}
 	lvl := &world.Level{Chunks: []world.Chunk{ch}}
 
-	if h := floorHeightUnderLevel(lvl, 0, 0); h != 3 {
+	if h := biome.FloorHeightUnderLevel(lvl, 0, 0); h != 3 {
 		t.Fatalf("expected floor height 3 inside the sector, got %v", h)
 	}
-	if h := floorHeightUnderLevel(lvl, 100, 100); h != 0 {
+	if h := biome.FloorHeightUnderLevel(lvl, 100, 100); h != 0 {
 		t.Fatalf("expected 0 over open ground, got %v", h)
 	}
 }

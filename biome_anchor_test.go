@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/biome"
 	"foundry/internal/world"
 	"math"
 	"testing"
@@ -42,7 +43,7 @@ func TestMeanValueCoordsReproducePoint(t *testing.T) {
 	square := []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}}
 
 	// The centre of a square is an equal blend of its corners.
-	w := meanValueCoords(mgl32.Vec2{2, 2}, square)
+	w := biome.MeanValueCoords(mgl32.Vec2{2, 2}, square)
 	if w == nil {
 		t.Fatal("no coordinates for the centre of a square")
 	}
@@ -55,7 +56,7 @@ func TestMeanValueCoordsReproducePoint(t *testing.T) {
 	// Any interior point reconstructs, on a non-convex polygon too.
 	arrow := []mgl32.Vec2{{0, 0}, {6, 0}, {6, 6}, {3, 2}, {0, 6}}
 	for _, v := range []mgl32.Vec2{{1, 1}, {3, 0.5}, {5, 3}, {2.5, 1.5}} {
-		w := meanValueCoords(v, arrow)
+		w := biome.MeanValueCoords(v, arrow)
 		if w == nil {
 			t.Fatalf("no coordinates for %v", v)
 		}
@@ -73,14 +74,14 @@ func TestMeanValueCoordsReproducePoint(t *testing.T) {
 
 	// A vertex and a point on an edge are the degenerate cases the formula has
 	// to special-case rather than divide by zero on.
-	if w := meanValueCoords(square[1], square); w == nil || w[1] != 1 {
+	if w := biome.MeanValueCoords(square[1], square); w == nil || w[1] != 1 {
 		t.Fatalf("coordinates at a corner = %v, want all the weight on corner 1", w)
 	}
-	if w := meanValueCoords(mgl32.Vec2{2, 0}, square); w == nil ||
+	if w := biome.MeanValueCoords(mgl32.Vec2{2, 0}, square); w == nil ||
 		math.Abs(float64(w[0]-0.5)) > 1e-4 || math.Abs(float64(w[1]-0.5)) > 1e-4 {
 		t.Fatalf("coordinates mid-edge = %v, want half on each end of that edge", w)
 	}
-	if meanValueCoords(mgl32.Vec2{0, 0}, []mgl32.Vec2{{0, 0}, {1, 1}}) != nil {
+	if biome.MeanValueCoords(mgl32.Vec2{0, 0}, []mgl32.Vec2{{0, 0}, {1, 1}}) != nil {
 		t.Fatal("a two-point polygon should not bind")
 	}
 }
