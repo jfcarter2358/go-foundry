@@ -265,3 +265,45 @@ func (d *DetailSpec) clamp() {
 		d.Seed = 1
 	}
 }
+
+// detailToRaw lives here rather than with the rest of the level serialiser
+// because the user-preset store (detail_presets.go) writes DetailSpecs of its
+// own, with no level involved.
+
+// detailToRaw converts a face's DetailSpec to an optional RawDetail. A disabled
+// spec returns nil so the "detail" key is omitted from YAML entirely.
+func detailToRaw(d DetailSpec) *RawDetail {
+	if !d.Enabled {
+		return nil
+	}
+	waves := make([]RawDetailWave, 0, detailMaxWaves)
+	for _, w := range d.Waves {
+		waves = append(waves, RawDetailWave{
+			Enabled:   w.Enabled,
+			Amplitude: w.Amplitude,
+			Frequency: w.Frequency,
+			Rotation:  w.Rotation,
+			TessLevel: w.TessLevel,
+		})
+	}
+	return &RawDetail{
+		Preset:         d.Preset,
+		Seed:           d.Seed,
+		Displace:       d.Displace,
+		Waves:          waves,
+		Noise:          d.Noise,
+		NoiseAmplitude: d.NoiseAmplitude,
+		NoiseFrequency: d.NoiseFrequency,
+		NoiseOctaves:   d.NoiseOctaves,
+		NoiseTessLevel: d.NoiseTessLevel,
+		EdgeTaper:      d.EdgeTaper,
+		Scatter:        d.Scatter,
+		ScatterMesh:    d.ScatterMesh,
+		ScatterTex:     d.ScatterTex,
+		ScatterDensity: d.ScatterDensity,
+		ScatterSpacing: d.ScatterSpacing,
+		ScatterScale:   d.ScatterScale,
+		ScatterJitter:  d.ScatterJitter,
+		ScatterRange:   d.ScatterRange,
+	}
+}

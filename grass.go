@@ -890,34 +890,6 @@ func uploadRG32F(tex uint32, w, h int, data []float32, linear bool) {
 	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RG32F, int32(w), int32(h), 0, gl.RG, gl.FLOAT, gl.Ptr(data))
 }
 
-// floorHeightUnderLevel returns the structural floor height (accounting for
-// terrain-mode slope/displacement, via the same code path player collision
-// uses) at world XZ (wx,wz), or 0 over open ground with no sector.
-func floorHeightUnderLevel(level *Level, wx, wz float32) float32 {
-	h, _, _ := floorHeightNormalUnderLevel(level, wx, wz)
-	return h
-}
-
-// floorHeightNormalUnderLevel is floorHeightUnderLevel's full form: also
-// returns the flat floor's normal and the owning Sector (nil over open
-// ground with no sector), so callers that need to know about e.g. that
-// sector's procedural displacement detail (biome_displace.go) don't have to
-// re-run the same chunk/sector search.
-func floorHeightNormalUnderLevel(level *Level, wx, wz float32) (float32, mgl32.Vec3, *Sector) {
-	if level == nil {
-		return 0, mgl32.Vec3{0, 1, 0}, nil
-	}
-	xz := mgl32.Vec2{wx, wz}
-	for ci := range level.Chunks {
-		c := &level.Chunks[ci]
-		if s := FindSector(c, xz); s != nil {
-			h, n, _ := InterpolateSurfaceHeight(c, s, xz, true)
-			return h, n, s
-		}
-	}
-	return 0, mgl32.Vec3{0, 1, 0}, nil
-}
-
 // biomeHeightTexDims picks a texture resolution covering [min,max] at
 // ~biomeHeightTexelSize world units per texel, capped at biomeMaxTexDim.
 func biomeHeightTexDims(min, max mgl32.Vec2) (w, h int, size mgl32.Vec2) {
@@ -1001,27 +973,6 @@ func biomeLattice(rng, baseSpacing float32, cap int32) (gridN int32, spacing flo
 		}
 	}
 	return n, spacing
-}
-
-// biomeSectorRange returns the effective scatter radius for a brush, applying
-// the per-kind default when Range is left unset. Shared by the draw cases below
-// and by the shadow passes' culling, so both agree on how far a sector reaches.
-func biomeSectorRange(b *BiomeBrush) float32 {
-	if b.Range > 0 {
-		return b.Range
-	}
-	switch b.Kind {
-	case BiomeRock:
-		return defaultRockRange
-	case BiomeMoss:
-		return defaultMossRange
-	case BiomeWildflower:
-		return defaultWildflowerRange
-	case BiomeCattail:
-		return defaultCattailRange
-	default:
-		return defaultGrassRange
-	}
 }
 
 // resolvedBoundaryJitter applies the usual "0 means the kind's default"

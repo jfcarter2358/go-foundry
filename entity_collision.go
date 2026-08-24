@@ -52,42 +52,6 @@ const (
 	entityGroundEpsilon = float32(0.0001)
 )
 
-// EntityCollision is one entity's participation in all of the above.
-type EntityCollision struct {
-	// World resolves the entity against level geometry.
-	World bool
-	// Entities resolves it against other entities that also have this set, and
-	// against the player. Both sides must opt in — solidity is mutual, and an
-	// entity that could push something which could not push back would make
-	// which of the two moves depend on iteration order.
-	Entities bool
-	// Gravity makes it fall. Independent of World, though the two are usually
-	// set together: gravity with no world collision falls forever, which is a
-	// legitimate thing to want for a projectile.
-	Gravity bool
-	// Movable is whether a resolution may displace *this* entity. False makes
-	// it immovable scenery that pushes others and is never pushed itself —
-	// the boulder other things bounce off. Defaults to true.
-	Movable bool
-	// OnGround is whether the entity is standing on something — a floor, or
-	// another entity. Derived, never authored, never saved.
-	//
-	// It holds the state as of the end of the *previous* frame, and is what
-	// canDisplace consults. That one frame of lag is deliberate: the flag is
-	// both written and read during a frame's resolution, so reading the live
-	// value would make a stack settle differently depending on the order the
-	// level happens to list its boxes in. groundedNext is where this frame's
-	// answer accumulates until EntityUpdate commits it.
-	OnGround     bool
-	groundedNext bool
-}
-
-// DefaultEntityCollision is what a definition that says nothing gets: inert,
-// but movable, so turning a single flag on behaves the obvious way.
-func DefaultEntityCollision() EntityCollision {
-	return EntityCollision{Movable: true}
-}
-
 // collidesWithWorld / collidesWithEntities fold the master switch into the
 // per-entity flag, so no caller has to remember to check both.
 func (e *Entity) collidesWithWorld() bool {

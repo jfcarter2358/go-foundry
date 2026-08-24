@@ -13,34 +13,6 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// WaterParams controls the animated-water shader path. Enabled gates every
-// water effect in the shaders.
-//
-// Waves are evaluated from world XZ, not mesh UV, so a wave keeps the same
-// physical size whether it is on a 4-unit pond or a 400-unit lake — widening a
-// painted water sector makes it cover more area rather than stretching the
-// swell.
-type WaterParams struct {
-	Enabled       bool
-	WaveAmplitude float32    // peak vertical displacement, world units
-	WaveLength    float32    // world units per wave cycle
-	WaveSpeed     float32    // wave cycles per second
-	Reflectivity  float32    // 0 = plain texture, 1 = fully mirror-like at grazing angles
-	ReflectColor  mgl32.Vec3 // environment/sky colour mixed in by the fresnel term
-}
-
-// DefaultWaterParams returns the starting look for a newly painted water sector.
-func DefaultWaterParams() WaterParams {
-	return WaterParams{
-		Enabled:       true,
-		WaveAmplitude: 0.06,
-		WaveLength:    3.0,
-		WaveSpeed:     0.35,
-		Reflectivity:  0.45,
-		ReflectColor:  mgl32.Vec3{0.55, 0.72, 0.92},
-	}
-}
-
 // waterParamsFromRaw converts the YAML form, falling back to defaults when the
 // block is absent (sectors painted before these settings existed).
 func waterParamsFromRaw(rw *RawWater) WaterParams {

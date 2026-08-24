@@ -549,54 +549,6 @@ func reverseTransformPoint2D(world mgl32.Vec2, origin mgl32.Vec3, rotation, scal
 	return mgl32.Vec2{rx / scale, ry / scale}
 }
 
-// detailToRaw converts a face's DetailSpec to an optional RawDetail. A disabled
-// spec returns nil so the "detail" key is omitted from YAML entirely.
-func detailToRaw(d DetailSpec) *RawDetail {
-	if !d.Enabled {
-		return nil
-	}
-	waves := make([]RawDetailWave, 0, detailMaxWaves)
-	for _, w := range d.Waves {
-		waves = append(waves, RawDetailWave{
-			Enabled:   w.Enabled,
-			Amplitude: w.Amplitude,
-			Frequency: w.Frequency,
-			Rotation:  w.Rotation,
-			TessLevel: w.TessLevel,
-		})
-	}
-	return &RawDetail{
-		Preset:         d.Preset,
-		Seed:           d.Seed,
-		Displace:       d.Displace,
-		Waves:          waves,
-		Noise:          d.Noise,
-		NoiseAmplitude: d.NoiseAmplitude,
-		NoiseFrequency: d.NoiseFrequency,
-		NoiseOctaves:   d.NoiseOctaves,
-		NoiseTessLevel: d.NoiseTessLevel,
-		EdgeTaper:      d.EdgeTaper,
-		Scatter:        d.Scatter,
-		ScatterMesh:    d.ScatterMesh,
-		ScatterTex:     d.ScatterTex,
-		ScatterDensity: d.ScatterDensity,
-		ScatterSpacing: d.ScatterSpacing,
-		ScatterScale:   d.ScatterScale,
-		ScatterJitter:  d.ScatterJitter,
-		ScatterRange:   d.ScatterRange,
-	}
-}
-
-// boolPtrIfFalse returns a *bool pointer only when v is false (non-default).
-// When v is true (the default for DoubleSided), returns nil so the field is
-// omitted from YAML via omitempty.
-func boolPtrIfFalse(v bool) *bool {
-	if !v {
-		return &v
-	}
-	return nil
-}
-
 // float32PtrIfNotOne returns a *float32 pointer only when v differs from 1.0.
 // Returns nil when v == 1.0 so the field is omitted from YAML via omitempty.
 func float32PtrIfNotOne(v float32) *float32 {

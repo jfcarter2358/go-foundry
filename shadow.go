@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
 	"strings"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -180,14 +179,6 @@ func linkProgram(vertPath, fragPath string, out *uint32) error {
 	gl.DeleteShader(vs)
 	gl.DeleteShader(fs)
 	return nil
-}
-
-func readShaderFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return strings.ReplaceAll(strings.TrimRight(string(data), "\n"), "\r\n", "\n"), nil
 }
 
 // ---------- Directional cascade shadow maps ----------

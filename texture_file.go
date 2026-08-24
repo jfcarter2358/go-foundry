@@ -50,10 +50,6 @@ const (
 	fpalFileLen   = 4 + 2 + texdoc.TexPaletteSz*4
 )
 
-const texturesDirName = "textures"
-
-func texturesDir() string { return filepath.Join(executablePath, texturesDirName) }
-
 func palettePath() string           { return filepath.Join(texturesDir(), "palette.pal") }
 func ftexPath(name string) string   { return filepath.Join(texturesDir(), name+".ftex") }
 func texPNGPath(name string) string { return filepath.Join(texturesDir(), name+".png") }

@@ -123,16 +123,6 @@ func mustReadShader(path string) string {
 	return strings.ReplaceAll(strings.TrimRight(string(b), "\n"), "\r\n", "\n")
 }
 
-// injectAfterVersion inserts snippet immediately after the shader's first line
-// (the #version directive), so shared uniforms/functions are declared before use.
-func injectAfterVersion(src, snippet string) string {
-	idx := strings.Index(src, "\n")
-	if idx < 0 {
-		return src + "\n" + snippet
-	}
-	return src[:idx+1] + "\n" + snippet + "\n" + src[idx+1:]
-}
-
 func linkStages(shaders ...uint32) (uint32, error) {
 	prog := gl.CreateProgram()
 	for _, s := range shaders {
@@ -339,39 +329,6 @@ type basisEntry struct {
 
 var detailBasisCache = map[*Geometry]basisEntry{}
 
-// faceBasisFor returns the face's plane basis, caching by a fingerprint of the
-// vertex data so it only recomputes when the geometry actually changes. Both the
-// displacement and the scatter pass go through here, so they share one plane.
-func faceBasisFor(g *Geometry) faceBasis {
-	fp := geomFingerprint(g.Vertices)
-	if e, ok := detailBasisCache[g]; ok && e.fp == fp {
-		return e.basis
-	}
-	b := computeFaceBasis(g.Vertices)
-	detailBasisCache[g] = basisEntry{fp: fp, basis: b}
-	return b
-}
-
-// dispNormalFor is the unit normal the whole face displaces along: the average
-// plane normal, falling back to the geometry's own normal (then world up) for
-// degenerate faces where computeFaceBasis finds no area.
-func dispNormalFor(g *Geometry) mgl32.Vec3 {
-	if b := faceBasisFor(g); b.ok {
-		return b.n
-	}
-	if g.Normal.Len() > 1e-6 {
-		return g.Normal.Normalize()
-	}
-	return mgl32.Vec3{0, 1, 0}
-}
-
-func perpAxis(n mgl32.Vec3) mgl32.Vec3 {
-	if math.Abs(float64(n.Y())) < 0.9 {
-		return mgl32.Vec3{0, 1, 0}.Cross(n)
-	}
-	return mgl32.Vec3{1, 0, 0}.Cross(n)
-}
-
 // ---------- uniform setters ----------
 
 func setDispUniforms(p *progUniforms, d *DetailSpec, geo *Geometry) {
@@ -421,46 +378,6 @@ func setDispUniforms(p *progUniforms, d *DetailSpec, geo *Geometry) {
 	setDispBoundary(p, d.EdgeTaper, geo)
 }
 
-// dispNormalEps returns the central-difference step detailNormal() (see
-// detail_common.glsl) differentiates the displacement field over. It is tied to
-// the finest feature the spec can produce — the highest wave frequency, or the
-// top noise octave — because the step has to stay well inside one feature: too
-// wide and the shading smooths across the shape itself, too narrow and the
-// difference is lost in float noise. 1/20th of the shortest wavelength sits
-// comfortably between the two.
-func dispNormalEps(d *DetailSpec) float32 {
-	var maxFreq float32
-	for i := range d.Waves {
-		if w := d.Waves[i]; w.Enabled && w.Frequency > maxFreq {
-			maxFreq = w.Frequency
-		}
-	}
-	if d.Noise {
-		oct := d.NoiseOctaves
-		if oct < 1 {
-			oct = 1
-		}
-		if oct > 6 {
-			oct = 6
-		}
-		// d_fbm doubles the frequency each octave, so the last one is the sharpest.
-		if f := d.NoiseFrequency * float32(int(1)<<uint(oct-1)); f > maxFreq {
-			maxFreq = f
-		}
-	}
-	if maxFreq <= 0 {
-		return 0.05
-	}
-	eps := 0.05 / maxFreq
-	if eps < 0.001 {
-		eps = 0.001
-	}
-	if eps > 0.25 {
-		eps = 0.25
-	}
-	return eps
-}
-
 // detailMaxEdges must match DETAIL_MAX_EDGES in detail_common.glsl.
 const detailMaxEdges = 32
 
@@ -487,95 +404,6 @@ func setDispBoundary(p *progUniforms, taper float32, geo *Geometry) {
 }
 
 // ---------- boundary-edge detection (with per-Geometry cache) ----------
-
-type boundaryEntry struct {
-	fp    uint64
-	edges [][2]mgl32.Vec3
-}
-
-var detailBoundaryCache = map[*Geometry]boundaryEntry{}
-
-// boundaryEdgesFor returns the face's outer boundary edges (world space),
-// caching by a fingerprint of the vertex data so it only recomputes when the
-// geometry actually changes.
-func boundaryEdgesFor(g *Geometry) [][2]mgl32.Vec3 {
-	fp := geomFingerprint(g.Vertices)
-	if e, ok := detailBoundaryCache[g]; ok && e.fp == fp {
-		return e.edges
-	}
-	edges := computeBoundaryEdges(g.Vertices)
-	detailBoundaryCache[g] = boundaryEntry{fp: fp, edges: edges}
-	return edges
-}
-
-func geomFingerprint(v []float32) uint64 {
-	h := uint64(14695981039346656037)
-	mix := func(x uint32) { h ^= uint64(x); h *= 1099511628211 }
-	mix(uint32(len(v)))
-	step := len(v)/17 + 1
-	for i := 0; i < len(v); i += step {
-		mix(math.Float32bits(v[i]))
-	}
-	return h
-}
-
-// computeBoundaryEdges returns the mesh's boundary edges — those used by exactly
-// one triangle. For a triangle-fan floor this is the sector polygon perimeter;
-// for a wall quad it is the four quad edges; interior/shared edges (fan diagonals,
-// the quad diagonal) are excluded. Vertices are matched by quantized position so
-// the de-indexed triangle soup still shares edges.
-func computeBoundaryEdges(verts []float32) [][2]mgl32.Vec3 {
-	type rec struct {
-		a, b  mgl32.Vec3
-		count int
-	}
-	m := map[[6]int64]*rec{}
-	q := func(v mgl32.Vec3) [3]int64 {
-		return [3]int64{
-			int64(math.Round(float64(v.X()) * 1e4)),
-			int64(math.Round(float64(v.Y()) * 1e4)),
-			int64(math.Round(float64(v.Z()) * 1e4)),
-		}
-	}
-	less := func(a, b [3]int64) bool {
-		for i := 0; i < 3; i++ {
-			if a[i] != b[i] {
-				return a[i] < b[i]
-			}
-		}
-		return false
-	}
-	add := func(a, b mgl32.Vec3) {
-		qa, qb := q(a), q(b)
-		if qa == qb {
-			return // degenerate edge
-		}
-		if !less(qa, qb) {
-			qa, qb = qb, qa
-		}
-		k := [6]int64{qa[0], qa[1], qa[2], qb[0], qb[1], qb[2]}
-		if r, ok := m[k]; ok {
-			r.count++
-		} else {
-			m[k] = &rec{a: a, b: b, count: 1}
-		}
-	}
-	for ti := 0; ti+14 < len(verts); ti += 15 {
-		v0 := vtx(verts, ti)
-		v1 := vtx(verts, ti+5)
-		v2 := vtx(verts, ti+10)
-		add(v0, v1)
-		add(v1, v2)
-		add(v2, v0)
-	}
-	var out [][2]mgl32.Vec3
-	for _, r := range m {
-		if r.count == 1 {
-			out = append(out, [2]mgl32.Vec3{r.a, r.b})
-		}
-	}
-	return out
-}
 
 // setScatterUniforms sets the per-face scatter uniforms and returns the instance
 // count (gridNU*gridNV). Returns 0 when nothing should be drawn.

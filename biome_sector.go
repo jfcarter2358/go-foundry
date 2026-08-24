@@ -696,3 +696,24 @@ func resolveBiomeSectorIDCollisions(lvl *Level) {
 		}
 	}
 }
+
+// biomeSectorRange returns the effective scatter radius for a brush, applying
+// the per-kind default when Range is left unset. Shared by the draw cases below
+// and by the shadow passes' culling, so both agree on how far a sector reaches.
+func biomeSectorRange(b *BiomeBrush) float32 {
+	if b.Range > 0 {
+		return b.Range
+	}
+	switch b.Kind {
+	case BiomeRock:
+		return defaultRockRange
+	case BiomeMoss:
+		return defaultMossRange
+	case BiomeWildflower:
+		return defaultWildflowerRange
+	case BiomeCattail:
+		return defaultCattailRange
+	default:
+		return defaultGrassRange
+	}
+}

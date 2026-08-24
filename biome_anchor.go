@@ -182,3 +182,37 @@ func meanValueCoords(v mgl32.Vec2, poly []mgl32.Vec2) []float32 {
 	}
 	return w
 }
+
+// ---------- floor sampling ----------
+//
+// What a biome polygon drapes over. Used by the scatter renderer, the ground
+// patch mesher and the water plane alike, so it sits with the biome data
+// rather than inside any one of them.
+
+// floorHeightUnderLevel returns the structural floor height (accounting for
+// terrain-mode slope/displacement, via the same code path player collision
+// uses) at world XZ (wx,wz), or 0 over open ground with no sector.
+func floorHeightUnderLevel(level *Level, wx, wz float32) float32 {
+	h, _, _ := floorHeightNormalUnderLevel(level, wx, wz)
+	return h
+}
+
+// floorHeightNormalUnderLevel is floorHeightUnderLevel's full form: also
+// returns the flat floor's normal and the owning Sector (nil over open
+// ground with no sector), so callers that need to know about e.g. that
+// sector's procedural displacement detail (biome_displace.go) don't have to
+// re-run the same chunk/sector search.
+func floorHeightNormalUnderLevel(level *Level, wx, wz float32) (float32, mgl32.Vec3, *Sector) {
+	if level == nil {
+		return 0, mgl32.Vec3{0, 1, 0}, nil
+	}
+	xz := mgl32.Vec2{wx, wz}
+	for ci := range level.Chunks {
+		c := &level.Chunks[ci]
+		if s := FindSector(c, xz); s != nil {
+			h, n, _ := InterpolateSurfaceHeight(c, s, xz, true)
+			return h, n, s
+		}
+	}
+	return 0, mgl32.Vec3{0, 1, 0}, nil
+}

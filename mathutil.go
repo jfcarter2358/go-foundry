@@ -87,3 +87,13 @@ func vecMax(a, b mgl32.Vec3) mgl32.Vec3 {
 		float32(math.Max(float64(a.Z()), float64(b.Z()))),
 	}
 }
+
+// perpAxis builds an arbitrary unit vector perpendicular to n. Used wherever a
+// frame has to be completed from a single direction — face detail, UV
+// projection, bone rings.
+func perpAxis(n mgl32.Vec3) mgl32.Vec3 {
+	if math.Abs(float64(n.Y())) < 0.9 {
+		return mgl32.Vec3{0, 1, 0}.Cross(n)
+	}
+	return mgl32.Vec3{1, 0, 0}.Cross(n)
+}

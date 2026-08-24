@@ -76,3 +76,65 @@ func FindChunkAndSectorSH(sh *SpatialHash, chunks []Chunk, pos mgl32.Vec3) (*Chu
 	}
 	return nil, nil
 }
+
+// ---------- linear lookups ----------
+//
+// The spatial hash above is the fast path; these are the exhaustive scans it
+// falls back to, and the ones the editor uses when the hash has not been built.
+// They live here beside it rather than in collision.go: locating the sector
+// under a point is a world query, and plenty of callers that need one are not
+// resolving a collision.
+
+// FindChunk returns the chunk whose 3D AABB contains pos, or nil (O(N) scan).
+// Prefer FindChunkAndSector when you need both, as it uses PIP for correctness
+// when multiple chunk AABBs overlap.
+func FindChunk(chunks []Chunk, pos mgl32.Vec3) *Chunk {
+	for i := range chunks {
+		c := &chunks[i]
+		if pos.X() >= c.MinBound.X() && pos.X() <= c.MaxBound.X() &&
+			pos.Y() >= c.MinBound.Y() && pos.Y() <= c.MaxBound.Y() &&
+			pos.Z() >= c.MinBound.Z() && pos.Z() <= c.MaxBound.Z() {
+			return c
+		}
+	}
+	return nil
+}
+
+// FindSector returns the sector in chunk whose XZ polygon contains xz (ray-casting PIP).
+func FindSector(chunk *Chunk, xz mgl32.Vec2) *Sector {
+	if chunk == nil {
+		return nil
+	}
+	for i := range chunk.Sectors {
+		s := &chunk.Sectors[i]
+		if pointInPolygon(xz, SectorPoints(chunk, s)) {
+			return s
+		}
+	}
+	return nil
+}
+
+// FindChunkAndSector scans all chunks and returns the first (chunk, sector) pair
+// whose sector XZ polygon contains pos.  Unlike calling FindChunk+FindSector
+// separately this is correct even when chunk AABBs overlap, because it uses the
+// authoritative point-in-polygon test rather than the approximate AABB test.
+func FindChunkAndSector(chunks []Chunk, pos mgl32.Vec3) (*Chunk, *Sector) {
+	xz := mgl32.Vec2{pos.X(), pos.Z()}
+	for i := range chunks {
+		c := &chunks[i]
+		// Quick AABB reject (XZ + Y) before the more expensive PIP scan.
+		// The Y check enables vertically stacked chunks (rooms-over-rooms).
+		if pos.X() < c.MinBound.X() || pos.X() > c.MaxBound.X() ||
+			pos.Y() < c.MinBound.Y() || pos.Y() > c.MaxBound.Y() ||
+			pos.Z() < c.MinBound.Z() || pos.Z() > c.MaxBound.Z() {
+			continue
+		}
+		for j := range c.Sectors {
+			s := &c.Sectors[j]
+			if pointInPolygon(xz, SectorPoints(c, s)) {
+				return c, s
+			}
+		}
+	}
+	return nil, nil
+}

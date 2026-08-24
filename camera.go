@@ -116,3 +116,64 @@ func updateCamMatrix() {
 	}
 	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
 }
+
+// maxPitch prevents the camera from crossing vertical (avoids gimbal flip).
+const maxPitch = float32(math.Pi/2 - 0.01)
+
+// HandleInput applies this frame's held keys to the camera.
+//
+// It lives with the camera rather than with the rest of input handling because
+// that is all it touches, and because the editor's free-fly mode calls it too —
+// putting it in the application shell made the editor depend on the shell for
+// what is really a camera operation.
+func HandleInput(keyStates []uint8) {
+	// Scale movement and rotation by DeltaTime*60 so behavior is frame-rate independent
+	// while preserving the same feel as the original 60 FPS-tuned constants.
+	dtScale := DeltaTime * 60.0
+	moveSpeed := MovementSpeed * dtScale
+	rotSpeed := KeyRotationSpeed * dtScale
+
+	fMove := float32(0.0)
+	uMove := float32(0.0)
+	rMove := float32(0.0)
+
+	if keyStates[sdl.SCANCODE_W] != 0 {
+		fMove += moveSpeed
+	}
+	if keyStates[sdl.SCANCODE_A] != 0 {
+		rMove += moveSpeed
+	}
+	if keyStates[sdl.SCANCODE_S] != 0 {
+		fMove -= moveSpeed
+	}
+	if keyStates[sdl.SCANCODE_D] != 0 {
+		rMove -= moveSpeed
+	}
+	if keyStates[sdl.SCANCODE_SPACE] != 0 {
+		if !GravityEnabled {
+			uMove += moveSpeed // free-fly up
+		}
+		// jump is handled via KEYDOWN event in HandleEvent
+	}
+	if keyStates[sdl.SCANCODE_LSHIFT] != 0 {
+		if !GravityEnabled {
+			uMove -= moveSpeed // free-fly down
+		}
+	}
+	if keyStates[sdl.SCANCODE_LEFT] != 0 {
+		Cam.Yaw -= rotSpeed
+	}
+	if keyStates[sdl.SCANCODE_RIGHT] != 0 {
+		Cam.Yaw += rotSpeed
+	}
+	if keyStates[sdl.SCANCODE_UP] != 0 {
+		Cam.Pitch += rotSpeed
+	}
+	if keyStates[sdl.SCANCODE_DOWN] != 0 {
+		Cam.Pitch -= rotSpeed
+	}
+
+	MoveCamera(fMove, uMove, rMove)
+	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
+	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+}

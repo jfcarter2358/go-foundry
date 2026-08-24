@@ -317,3 +317,37 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 	gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])
 	gl.DrawArrays(gl.LINES, 0, int32(len(g.Vertices)/5))
 }
+
+// ---------- water ----------
+//
+// WaterParams is a field of Geometry, so it lives beside it rather than with
+// the WaterSurface primitive that also carries one. Reading the YAML form is
+// the level schema's job and stays in water_surface.go.
+
+// WaterParams controls the animated-water shader path. Enabled gates every
+// water effect in the shaders.
+//
+// Waves are evaluated from world XZ, not mesh UV, so a wave keeps the same
+// physical size whether it is on a 4-unit pond or a 400-unit lake — widening a
+// painted water sector makes it cover more area rather than stretching the
+// swell.
+type WaterParams struct {
+	Enabled       bool
+	WaveAmplitude float32    // peak vertical displacement, world units
+	WaveLength    float32    // world units per wave cycle
+	WaveSpeed     float32    // wave cycles per second
+	Reflectivity  float32    // 0 = plain texture, 1 = fully mirror-like at grazing angles
+	ReflectColor  mgl32.Vec3 // environment/sky colour mixed in by the fresnel term
+}
+
+// DefaultWaterParams returns the starting look for a newly painted water sector.
+func DefaultWaterParams() WaterParams {
+	return WaterParams{
+		Enabled:       true,
+		WaveAmplitude: 0.06,
+		WaveLength:    3.0,
+		WaveSpeed:     0.35,
+		Reflectivity:  0.45,
+		ReflectColor:  mgl32.Vec3{0.55, 0.72, 0.92},
+	}
+}

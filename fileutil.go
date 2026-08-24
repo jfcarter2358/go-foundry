@@ -167,3 +167,13 @@ func ScanScriptFilesIn(root string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// ---------- texture paths ----------
+//
+// Where textures live on disk. Here rather than in texture_file.go because the
+// GPU uploader needs the directory too, and it has no business depending on
+// the .ftex reader.
+
+const texturesDirName = "textures"
+
+func texturesDir() string { return filepath.Join(executablePath, texturesDirName) }

@@ -146,3 +146,29 @@ func CompileShader(source string, shaderType uint32) (uint32, error) {
 
 	return shader, nil
 }
+
+// Where the world shader's two stages are read from, relative to
+// executablePath. Named here rather than at the call site so a build that wants
+// to swap them has one place to do it.
+var vertexShaderPath = "shaders/vertex.glsl"
+var fragmentShaderPath = "shaders/fragment.glsl"
+
+// readShaderFile is shared by every program in the engine, not just the world
+// shader — the shadow, detail, gizmo and skinning programs all read through it.
+func readShaderFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return strings.ReplaceAll(strings.TrimRight(string(data), "\n"), "\r\n", "\n"), nil
+}
+
+// injectAfterVersion inserts snippet immediately after the shader's first line
+// (the #version directive), so shared uniforms/functions are declared before use.
+func injectAfterVersion(src, snippet string) string {
+	idx := strings.Index(src, "\n")
+	if idx < 0 {
+		return src + "\n" + snippet
+	}
+	return src[:idx+1] + "\n" + snippet + "\n" + src[idx+1:]
+}

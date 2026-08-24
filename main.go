@@ -33,8 +33,6 @@ type TransparentDraw struct {
 	DoubleSided bool
 }
 
-var vertexShaderPath = "shaders/vertex.glsl"
-var fragmentShaderPath = "shaders/fragment.glsl"
 var shadowVertShaderPath = "shaders/shadow_vert.glsl"
 var shadowFragShaderPath = "shaders/shadow_frag.glsl"
 var shadowCubeVertPath = "shaders/shadow_cube_vert.glsl"

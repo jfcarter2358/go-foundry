@@ -425,3 +425,20 @@ func delaunayTriangulate(points []mgl32.Vec2, boundary []mgl32.Vec2) []int {
 
 	return result
 }
+
+// pointInPolygon uses ray-casting to test if pt is inside polygon (XZ coordinates).
+func pointInPolygon(pt mgl32.Vec2, polygon []mgl32.Vec2) bool {
+	n := len(polygon)
+	inside := false
+	j := n - 1
+	for i := 0; i < n; i++ {
+		xi, yi := polygon[i].X(), polygon[i].Y()
+		xj, yj := polygon[j].X(), polygon[j].Y()
+		if ((yi > pt.Y()) != (yj > pt.Y())) &&
+			(pt.X() < (xj-xi)*(pt.Y()-yi)/(yj-yi)+xi) {
+			inside = !inside
+		}
+		j = i
+	}
+	return inside
+}

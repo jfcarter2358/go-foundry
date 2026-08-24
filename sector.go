@@ -425,3 +425,64 @@ func loadExtrusionGeometries(old []Geometry, bfList []ExtrusionBackFace, smooth 
 	}
 	return geoms, nil
 }
+
+// InterpolateSurfaceHeight is a query about a surface, not a collision: the
+// biome mesher and the editor both ask it with nothing colliding.
+// InterpolateSurfaceHeight finds which triangle of the sector's floor or
+// ceiling fan contains xz, then returns the barycentric-interpolated height
+// and the triangle's surface normal.  If floor is true it operates on the
+// floor surface, otherwise the ceiling.
+// Returns (height, normal, found).  When found is false the caller should
+// fall back to the flat base height.
+func InterpolateSurfaceHeight(chunk *Chunk, sector *Sector, xz mgl32.Vec2, floor bool) (float32, mgl32.Vec3, bool) {
+	// Use cached terrain mesh when available
+	if floor && sector.Floor.Terrain && len(sector.Floor.CollisionTris) > 0 {
+		return interpolateTerrainHeight(sector, xz, floor)
+	}
+	if !floor && sector.Ceiling.Terrain && len(sector.Ceiling.CollisionTris) > 0 {
+		return interpolateTerrainHeight(sector, xz, floor)
+	}
+
+	pts := SectorPoints(chunk, sector)
+	n := len(pts)
+	if n < 3 {
+		if floor {
+			return sector.Floor.Height, mgl32.Vec3{0, 1, 0}, false
+		}
+		return sector.Ceiling.Height, mgl32.Vec3{0, -1, 0}, false
+	}
+	// Triangle fan: hub = pts[0], triangles (0, i, i+1)
+	for i := 1; i < n-1; i++ {
+		inside, wA, wB, wC := pointInTriangle2D(xz, pts[0], pts[i], pts[i+1])
+		if !inside {
+			continue
+		}
+		var hA, hB, hC float32
+		if floor {
+			hA = sector.Floor.VertexHeight(0)
+			hB = sector.Floor.VertexHeight(i)
+			hC = sector.Floor.VertexHeight(i + 1)
+		} else {
+			hA = sector.Ceiling.VertexHeight(0)
+			hB = sector.Ceiling.VertexHeight(i)
+			hC = sector.Ceiling.VertexHeight(i + 1)
+		}
+		height := wA*hA + wB*hB + wC*hC
+		a3 := mgl32.Vec3{pts[0].X(), hA, pts[0].Y()}
+		b3 := mgl32.Vec3{pts[i].X(), hB, pts[i].Y()}
+		c3 := mgl32.Vec3{pts[i+1].X(), hC, pts[i+1].Y()}
+		normal := triangleNormal(a3, b3, c3)
+		// Ensure floor normals point upward, ceiling normals point downward
+		if floor && normal.Y() < 0 {
+			normal = normal.Mul(-1)
+		} else if !floor && normal.Y() > 0 {
+			normal = normal.Mul(-1)
+		}
+		return height, normal, true
+	}
+	// Fallback: point wasn't inside any fan triangle
+	if floor {
+		return sector.Floor.Height, mgl32.Vec3{0, 1, 0}, false
+	}
+	return sector.Ceiling.Height, mgl32.Vec3{0, -1, 0}, false
+}

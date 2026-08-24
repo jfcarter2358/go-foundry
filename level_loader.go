@@ -17,27 +17,6 @@ import (
 // back. loadRawChunk does the bulk of the work per chunk; LoadLevel and
 // NewBlankLevel are the top-level entry points.
 
-// ---------- Runtime types ----------
-
-// Level holds all loaded chunks, the player spawn point, and the lights.
-//
-// Spawn is a pointer so a level with no spawn authored stays distinguishable
-// from one whose spawn happens to sit at the origin; nil means "start the
-// player wherever the caller already had them".
-type Level struct {
-	Chunks []Chunk
-	Spawn  *SpawnPoint
-	// Scripts are the level's own .flang handlers — see RawLevel.Scripts.
-	Scripts []string
-	// Volumes are the level's scriptable regions (volume.go).
-	Volumes []Volume
-	// Entities are the level's placed dynamic objects (entity.go). They live on
-	// the level rather than in a chunk because they move — see RawLevel's note.
-	Entities []Entity
-	Lights   LightSet
-	Spatial  *SpatialHash // accelerated chunk/sector lookup; rebuilt after level load
-}
-
 // ---------- Loader ----------
 
 // loadRawChunk converts a single RawChunk into a runtime Chunk, uploading all
@@ -786,14 +765,6 @@ func rawToLevel(raw RawLevel) (Level, error) {
 	level.Spatial = BuildSpatialHash(level.Chunks, 8.0)
 
 	return level, nil
-}
-
-// boolDefault returns the value of a *bool, defaulting to def when nil.
-func boolDefault(p *bool, def bool) bool {
-	if p != nil {
-		return *p
-	}
-	return def
 }
 
 // float32Default returns the value of a *float32, defaulting to def when nil.
