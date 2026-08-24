@@ -4,6 +4,7 @@ import (
 	"foundry/internal/biome"
 	"foundry/internal/collision"
 	"foundry/internal/detail"
+	"foundry/internal/editor"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
@@ -246,12 +247,12 @@ func main() {
 	world.ApplySpawnPoint(&level)
 
 	// Init level editor (must be after LoadLevel and OpenGL context ready)
-	EditorInit(&level, levelPath, levelsDir)
+	editor.EditorInit(&level, levelPath, levelsDir)
 	defer imguibackend.ImGuiShutdown()
 
 	// Start directly in the 3D editor rather than play mode, since a fresh
 	// blank level has nothing to play.
-	EditorToggle()
+	editor.EditorToggle()
 
 	// Cache total sector count (constant after load) for debug stats.
 	totalSectors := 0
@@ -297,8 +298,8 @@ func main() {
 			if uiwin.RouteWindowEvent(event, uiwin.MainWindowID) {
 				continue
 			}
-			if Editor.Active {
-				EditorHandleEvent(event)
+			if editor.Editor.Active {
+				editor.EditorHandleEvent(event)
 			}
 			HandleEvent(event)
 		}
@@ -308,9 +309,9 @@ func main() {
 		// Point the F1 reference at the focused window before anything draws.
 		uiwin.KeybindHelpUpdateFocus(uiwin.MainWindowID)
 
-		if Editor.Active {
+		if editor.Editor.Active {
 			// Editor owns camera and input; gameplay logic is bypassed.
-			EditorTick(platform.KeyStates)
+			editor.EditorTick(platform.KeyStates)
 		} else {
 			// --- Input: let HandleInput update Cam.Position normally ---
 			preMovePos := gfx.Cam.Position
@@ -390,8 +391,8 @@ func main() {
 			playerPosBefore = world.PlayerEntity.Position
 			world.PlayerEntity.Collision.OnGround = false
 		}
-		collision.EntityUpdate(&level, platform.DeltaTime, !Editor.Active, world.PlayerEntity)
-		if !Editor.Active && world.PlayerEntity != nil {
+		collision.EntityUpdate(&level, platform.DeltaTime, !editor.Editor.Active, world.PlayerEntity)
+		if !editor.Editor.Active && world.PlayerEntity != nil {
 			if world.PlayerEntity.Collision.OnGround {
 				platform.IsOnGround = true
 			}
@@ -409,7 +410,7 @@ func main() {
 		// frame's overlaps produce this frame's `enter`, and whatever a handler
 		// writes lands before the frame draws. `!Editor.Active` is the same play
 		// gate EntityUpdate takes.
-		script.ScriptTick(&level, platform.DeltaTime, !Editor.Active)
+		script.ScriptTick(&level, platform.DeltaTime, !editor.Editor.Active)
 
 		// --- Debug stats: update CPU & memory ---
 		render.DebugUpdateCPU()
@@ -434,7 +435,7 @@ func main() {
 		// freshly unwrapped atlas: creating a window from inside another
 		// window's draw would insert into the map being ranged over and leave
 		// the wrong GL context current. See modelPendingTexEditor.
-		DrainModelTexEditorRequest()
+		editor.DrainModelTexEditorRequest()
 		uiwin.DrainWindowOpens()
 
 		// Per-frame water shader inputs: animation clock and the view position
@@ -471,7 +472,7 @@ func main() {
 			// displacement passes below are skipped rather than outlined —
 			// a wireframe field of grass blades is a solid mask, which is
 			// precisely what the mode exists to get rid of.
-			editorWire := Editor.Active && Editor.Mode == Mode3D && Editor.Wireframe
+			editorWire := editor.Editor.Active && editor.Editor.Mode == editor.Mode3D && editor.Editor.Wireframe
 			if editorWire {
 				gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
 			}
@@ -522,7 +523,7 @@ func main() {
 
 			for i := range level.Chunks {
 				chunk := &level.Chunks[i]
-				if Editor.Active {
+				if editor.Editor.Active {
 					// Editor mutations (vertex drag, extrusion/terrain edits,
 					// height changes) can move geometry
 					// outside the chunk's cached AABB without updating it. Keep
@@ -618,7 +619,7 @@ func main() {
 			// The spawn marker is an authoring aid, not level geometry: it
 			// exists to be seen and dragged in the editor and must never show
 			// up in the shot the player spawns into.
-			if Editor.Active && level.Spawn != nil {
+			if editor.Editor.Active && level.Spawn != nil {
 				drawOrQueue(&level.Spawn.Geometry, level.Spawn.ModelMatrix(), false)
 			}
 
@@ -629,9 +630,9 @@ func main() {
 			// An entity with no mesh yet gets the same treatment, for the same
 			// reason: it has to be visible to be worked on, and invisible once
 			// the editor is closed.
-			if Editor.Active {
+			if editor.Editor.Active {
 				render.RenderVolumes(&level, &frustum)
-				RenderEntityMarkers(&level, &frustum)
+				editor.RenderEntityMarkers(&level, &frustum)
 			}
 
 			if !editorWire {
@@ -706,14 +707,14 @@ func main() {
 		}
 
 		// Draw editor overlays and ImGui UI when editor is active
-		if Editor.Active {
-			EditorRender()
+		if editor.Editor.Active {
+			editor.EditorRender()
 		}
 
 		// Draw debug overlay and keybinding reference (both use ImGui,
 		// independent of the editor — when it is active, EditorRender has
 		// already drawn them inside its own frame).
-		if (render.DebugOverlayVisible || uiwin.KeybindHelpVisibleIn(uiwin.MainWindowID)) && !Editor.Active {
+		if (render.DebugOverlayVisible || uiwin.KeybindHelpVisibleIn(uiwin.MainWindowID)) && !editor.Editor.Active {
 			imguibackend.ImGuiNewFrame(platform.DeltaTime)
 			render.DebugRenderOverlay()
 			uiwin.KeybindHelpRender()

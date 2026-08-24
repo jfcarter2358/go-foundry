@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/editor"
 	"foundry/internal/textureui"
 	"foundry/internal/uiwin"
 )
@@ -21,7 +22,7 @@ func init() { uiwin.KeybindSections = keybindSectionTable }
 var keybindSectionTable = []uiwin.KeybindSection{
 	{
 		Title:  "Script log",
-		Active: LogWindowOpen,
+		Active: editor.LogWindowOpen,
 		Binds: []uiwin.Keybind{
 			{Keys: "Space", Desc: "Pause / resume the view (the log keeps filling)"},
 			{Keys: "Ctrl+L", Desc: "Clear the buffer"},
@@ -31,7 +32,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 	},
 	{
 		Title:  "Script editor",
-		Active: ScriptEditorOpen,
+		Active: editor.ScriptEditorOpen,
 		Binds: []uiwin.Keybind{
 			{Keys: "Ctrl+S / Ctrl+Shift+S", Desc: "Save / save as"},
 			{Keys: "Ctrl+O", Desc: "Open a script"},
@@ -55,7 +56,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 	},
 	{
 		Title:  "Model editor",
-		Active: ModelEditorOpen,
+		Active: editor.ModelEditorOpen,
 		Binds: []uiwin.Keybind{
 			{Keys: "1 / 2 / 3 / 4", Desc: "Vertex / edge / face / bone select"},
 			{Keys: "G / R / C", Desc: "Move / rotate / scale gizmo (C again: local axes)"},
@@ -71,7 +72,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 	},
 	{
 		Title:  "Model editor — pose mode",
-		Active: func() bool { return ModelEditorOpen() && modelPoseMode },
+		Active: func() bool { return editor.ModelEditorOpen() && editor.ModelPoseMode },
 		Binds: []uiwin.Keybind{
 			{Keys: "I", Desc: "Key every posed bone at the playhead"},
 			{Keys: "Space", Desc: "Play / pause"},
@@ -106,7 +107,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 	},
 	{
 		Title:  "Gameplay",
-		Active: func() bool { return !Editor.Active },
+		Active: func() bool { return !editor.Editor.Active },
 		Binds: []uiwin.Keybind{
 			{Keys: "W / A / S / D", Desc: "Move"},
 			{Keys: "Space", Desc: "Jump (gravity on) / fly up (gravity off)"},
@@ -121,7 +122,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 	},
 	{
 		Title:  "Editor — any mode",
-		Active: func() bool { return Editor.Active },
+		Active: func() bool { return editor.Editor.Active },
 		Binds: []uiwin.Keybind{
 			{Keys: "Ctrl+Z", Desc: "Undo"},
 			{Keys: "Ctrl+Y / Ctrl+Shift+Z", Desc: "Redo"},
@@ -130,7 +131,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 	},
 	{
 		Title:  "Editor — 3D view",
-		Active: func() bool { return Editor.Active && Editor.Mode == Mode3D },
+		Active: func() bool { return editor.Editor.Active && editor.Editor.Mode == editor.Mode3D },
 		Binds: []uiwin.Keybind{
 			{Keys: "1 / 2 / 3", Desc: "Point / edge / face select"},
 			{Keys: "Z", Desc: "Toggle wireframe"},
@@ -153,7 +154,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		// The map only exists in its own window, and Editor.Mode says Mode2D
 		// only inside that window's draw brackets — never while the reference
 		// is being rendered — so the section keys off the window instead.
-		Active: func() bool { return Editor.Active && Editor2DPoppedOut() },
+		Active: func() bool { return editor.Editor.Active && editor.Editor2DPoppedOut() },
 		Binds: []uiwin.Keybind{
 			{Keys: "W / A / S / D", Desc: "Pan the map"},
 			{Keys: "Middle-drag", Desc: "Pan the map"},
@@ -165,8 +166,10 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		},
 	},
 	{
-		Title:  "Editor — biome brush (2D)",
-		Active: func() bool { return Editor.Active && Editor2DPoppedOut() && Editor.BiomeLayerActive },
+		Title: "Editor — biome brush (2D)",
+		Active: func() bool {
+			return editor.Editor.Active && editor.Editor2DPoppedOut() && editor.Editor.BiomeLayerActive
+		},
 		Binds: []uiwin.Keybind{
 			{Keys: "Left click", Desc: "Add a polygon point; click the first point to close"},
 			{Keys: "Right click", Desc: "Undo the last point while drawing, else delete a sector"},
@@ -176,7 +179,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 	},
 	{
 		Title:  "Editor — 2D surface editor",
-		Active: func() bool { return Editor.Active && Editor.Mode == ModeSurface2D },
+		Active: func() bool { return editor.Editor.Active && editor.Editor.Mode == editor.ModeSurface2D },
 		Binds: []uiwin.Keybind{
 			{Keys: "Middle-drag", Desc: "Pan"},
 			{Keys: "Mouse wheel", Desc: "Zoom"},
@@ -190,7 +193,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 	},
 	{
 		Title:  "Editor — extrusion placement",
-		Active: func() bool { return Editor.Active && Editor.ExtrusionMode },
+		Active: func() bool { return editor.Editor.Active && editor.Editor.ExtrusionMode },
 		Binds: []uiwin.Keybind{
 			{Keys: "Left click", Desc: "Place a polygon point on the wall plane"},
 			{Keys: "Tab", Desc: "Switch between the outer and inner polygon"},

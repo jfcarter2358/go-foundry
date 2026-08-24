@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/editor"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
@@ -107,14 +108,14 @@ func HandleEvent(event sdl.Event) {
 				// The interact key. Recorded as an edge rather than read as a
 				// level, so holding it fires once — SCRIPTING.md's `:interact:`
 				// is a press, not a state.
-				if !Editor.Active {
+				if !editor.Editor.Active {
 					hooks.ScriptInteractRequest()
 				}
 
 			case sdl.SCANCODE_GRAVE: // tilde (~) key toggles level editor
-				EditorToggle()
+				editor.EditorToggle()
 			case sdl.SCANCODE_SPACE:
-				if !Editor.Active && platform.GravityEnabled && platform.IsOnGround {
+				if !editor.Editor.Active && platform.GravityEnabled && platform.IsOnGround {
 					platform.JumpRequested = true
 				}
 			case sdl.SCANCODE_F3:
@@ -141,7 +142,7 @@ func HandleEvent(event sdl.Event) {
 				// Window-level multisample anti-aliasing — see antialias.go.
 				render.ToggleAntiAlias()
 			case sdl.SCANCODE_0:
-				if !Editor.Active {
+				if !editor.Editor.Active {
 					platform.GravityEnabled = !platform.GravityEnabled
 					if !platform.GravityEnabled {
 						platform.IsOnGround = false
@@ -153,11 +154,11 @@ func HandleEvent(event sdl.Event) {
 				// gameplay ones: they say whether the engine honours the
 				// per-entity flags at all, which is how you tell "this entity
 				// is not solid" from "collision is off".
-				if !Editor.Active {
+				if !editor.Editor.Active {
 					world.EntityWorldCollisionEnabled = !world.EntityWorldCollisionEnabled
 				}
 			case sdl.SCANCODE_9:
-				if !Editor.Active {
+				if !editor.Editor.Active {
 					world.EntityEntityCollisionEnabled = !world.EntityEntityCollisionEnabled
 				}
 			}
