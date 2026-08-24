@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"foundry/internal/imguibackend"
+	"testing"
+)
 
 // The buffer's editing operations, checked without a window: what each one does
 // to the text, and where it leaves the caret. The ImGui side only carries these
@@ -172,8 +175,8 @@ func TestNormalizeClipboardText(t *testing.T) {
 		"trailing\r\n": "trailing\n",
 	}
 	for in, want := range cases {
-		if got := normalizeClipboardText(in); got != want {
-			t.Errorf("normalizeClipboardText(%q) = %q, want %q", in, got, want)
+		if got := imguibackend.NormalizeClipboardText(in); got != want {
+			t.Errorf("NormalizeClipboardText(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

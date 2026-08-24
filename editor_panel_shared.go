@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/imguibackend"
 	"path/filepath"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -147,7 +148,7 @@ func editorChunkPropertiesSection(lvl *Level) {
 // Must be called after the owning window's imgui.End().
 func editorChunkPopups(lvl *Level) {
 	// New chunk popup
-	withModalPopup("New Chunk", &Editor.ShowNewChunk, func() {
+	imguibackend.WithModalPopup("New Chunk", &Editor.ShowNewChunk, func() {
 		imgui.InputText("Chunk ID", &Editor.NewChunkID)
 		if imgui.Button("Create") && Editor.NewChunkID != "" {
 			EditorPushUndo()
@@ -162,7 +163,7 @@ func editorChunkPopups(lvl *Level) {
 	})
 
 	// Save chunk popup
-	withModalPopup("Save Chunk", &Editor.ShowSaveChunk, func() {
+	imguibackend.WithModalPopup("Save Chunk", &Editor.ShowSaveChunk, func() {
 		imgui.InputText("Filename", &Editor.SaveChunkName)
 		if imgui.Button("Save") && Editor.SaveChunkName != "" {
 			ch := &lvl.Chunks[Editor.ActiveChunkIdx]
@@ -182,7 +183,7 @@ func editorChunkPopups(lvl *Level) {
 	})
 
 	// Delete chunk confirmation popup
-	withModalPopup("Delete Chunk", &Editor.ShowDeleteChunk, func() {
+	imguibackend.WithModalPopup("Delete Chunk", &Editor.ShowDeleteChunk, func() {
 		chunkName := ""
 		if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 			chunkName = lvl.Chunks[Editor.ActiveChunkIdx].ID
@@ -200,7 +201,7 @@ func editorChunkPopups(lvl *Level) {
 	})
 
 	// Import chunk popup
-	withModalPopup("Import Chunk", &Editor.ShowImportChunk, func() {
+	imguibackend.WithModalPopup("Import Chunk", &Editor.ShowImportChunk, func() {
 		if len(Editor.ImportChunkFiles) == 0 {
 			imgui.Text("No chunk files found in chunks/")
 		} else {

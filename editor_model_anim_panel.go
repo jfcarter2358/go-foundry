@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/imguibackend"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -99,7 +100,7 @@ func modelAnimClipControls() {
 	}
 	c := modelActiveClip()
 	imgui.SameLine()
-	editorPushDisabled(c == nil)
+	imguibackend.EditorPushDisabled(c == nil)
 	if imgui.Button("Duplicate##modelanimdup") && c != nil {
 		ModelPushUndo()
 		if i := modelDoc.DuplicateClip(modelPoseClip); i >= 0 {
@@ -116,7 +117,7 @@ func modelAnimClipControls() {
 		modelClearKeySelection()
 		modelPoseSetTime(0)
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 
 	// Re-fetch: both buttons above mutate modelDoc.Animations, and the pointer
 	// taken before them does not survive it. Duplicate appends, which can move
@@ -226,7 +227,7 @@ func modelAnimKeyControls() {
 		return
 	}
 	posed := modelPosedBoneIndices()
-	editorPushDisabled(!modelPoseMode)
+	imguibackend.EditorPushDisabled(!modelPoseMode)
 	if imgui.Button("Key pose [I]##modelanimkeypose") {
 		modelKeyPose()
 	}
@@ -240,7 +241,7 @@ func modelAnimKeyControls() {
 		n := modelKeyBones(modelSelection.Bones)
 		modelSetStatus("Keyed %d bone(s) at frame %d", n, modelPoseFrame())
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 
 	if imgui.Button("Delete key##modelanimdelkey") {
 		// Selected keys first, playhead as the fallback — the same order the
@@ -254,12 +255,12 @@ func modelAnimKeyControls() {
 		modelSetStatus("Pose reset to rest")
 	}
 	imgui.SameLine()
-	editorPushDisabled(len(modelSelection.Bones) == 0)
+	imguibackend.EditorPushDisabled(len(modelSelection.Bones) == 0)
 	if imgui.Button("Reset bone##modelanimresetbone") {
 		ModelPushUndo()
 		modelPoseResetBones(modelSelection.Bones)
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 
 	imgui.Text(fmt.Sprintf("Posed: %d   Keyed bones: %d", len(posed), len(modelKeyedBoneIndices())))
 }

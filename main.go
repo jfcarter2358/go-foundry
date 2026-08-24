@@ -3,6 +3,7 @@ package main
 import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
 	_ "image/png"
 	"io"
@@ -237,7 +238,7 @@ func main() {
 
 	// Init level editor (must be after LoadLevel and OpenGL context ready)
 	EditorInit(&level, levelPath, levelsDir)
-	defer ImGuiShutdown()
+	defer imguibackend.ImGuiShutdown()
 
 	// Start directly in the 3D editor rather than play mode, since a fresh
 	// blank level has nothing to play.
@@ -704,10 +705,10 @@ func main() {
 		// independent of the editor — when it is active, EditorRender has
 		// already drawn them inside its own frame).
 		if (DebugOverlayVisible || KeybindHelpVisibleIn(MainWindowID)) && !Editor.Active {
-			ImGuiNewFrame(platform.DeltaTime)
+			imguibackend.ImGuiNewFrame(platform.DeltaTime)
 			DebugRenderOverlay()
 			KeybindHelpRender()
-			ImGuiRender()
+			imguibackend.ImGuiRender()
 		}
 
 		platform.Window.GLSwap()

@@ -9,6 +9,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/imguibackend"
 	"math"
 	"path/filepath"
 
@@ -54,21 +55,21 @@ func modelEditorMenuBar() {
 	}
 	imgui.SameLine()
 
-	editorPushDisabled(modelDoc == nil)
+	imguibackend.EditorPushDisabled(modelDoc == nil)
 	if imgui.Button("Save") {
 		modelDoSave()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 
-	editorPushDisabled(modelDoc == nil)
+	imguibackend.EditorPushDisabled(modelDoc == nil)
 	if imgui.Button("Save As...") {
 		if modelDoc != nil {
 			modelSaveAsName = modelDoc.ID
 		}
 		modelShowSaveAsDialog = true
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 
 	if imgui.Button("Import OBJ...") {
@@ -77,28 +78,28 @@ func modelEditorMenuBar() {
 	}
 	imgui.SameLine()
 
-	editorPushDisabled(modelDoc == nil)
+	imguibackend.EditorPushDisabled(modelDoc == nil)
 	if imgui.Button("Export OBJ...") {
 		if modelDoc != nil {
 			modelExportName = modelDoc.ID
 		}
 		modelShowExportDialog = true
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 
-	editorPushDisabled(!ModelCanUndo())
+	imguibackend.EditorPushDisabled(!ModelCanUndo())
 	if imgui.Button("Undo") {
 		ModelUndo()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 
-	editorPushDisabled(!ModelCanRedo())
+	imguibackend.EditorPushDisabled(!ModelCanRedo())
 	if imgui.Button("Redo") {
 		ModelRedo()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 }
 
 // ---------- file actions ----------
@@ -130,7 +131,7 @@ func modelDoSave() {
 }
 
 func modelDialogs() {
-	withModalPopup("Open Model##modelopen", &modelShowOpenDialog, func() {
+	imguibackend.WithModalPopup("Open Model##modelopen", &modelShowOpenDialog, func() {
 		if modelFileList == nil {
 			modelFileList = ScanModelFiles()
 		}
@@ -156,7 +157,7 @@ func modelDialogs() {
 		}
 	})
 
-	withModalPopup("Save Model As##modelsaveas", &modelShowSaveAsDialog, func() {
+	imguibackend.WithModalPopup("Save Model As##modelsaveas", &modelShowSaveAsDialog, func() {
 		imgui.Text(fmt.Sprintf("Saved to %s", modelsDir()))
 		imgui.InputText("Name##modelsaveasname", &modelSaveAsName)
 		imgui.Separator()
@@ -178,7 +179,7 @@ func modelDialogs() {
 		}
 	})
 
-	withModalPopup("Import OBJ##modelimport", &modelShowImportDialog, func() {
+	imguibackend.WithModalPopup("Import OBJ##modelimport", &modelShowImportDialog, func() {
 		if modelOBJList == nil {
 			modelOBJList = ScanOBJFiles()
 		}
@@ -204,7 +205,7 @@ func modelDialogs() {
 		}
 	})
 
-	withModalPopup("Merge Model##modelmerge", &modelShowMergeDialog, func() {
+	imguibackend.WithModalPopup("Merge Model##modelmerge", &modelShowMergeDialog, func() {
 		if modelFileList == nil {
 			modelFileList = ScanModelFiles()
 		}
@@ -229,7 +230,7 @@ func modelDialogs() {
 		}
 	})
 
-	withModalPopup("Merge OBJ##modelmergeobj", &modelShowMergeOBJDialog, func() {
+	imguibackend.WithModalPopup("Merge OBJ##modelmergeobj", &modelShowMergeOBJDialog, func() {
 		if modelOBJList == nil {
 			modelOBJList = ScanOBJFiles()
 		}
@@ -254,7 +255,7 @@ func modelDialogs() {
 		}
 	})
 
-	withModalPopup("Export OBJ##modelexport", &modelShowExportDialog, func() {
+	imguibackend.WithModalPopup("Export OBJ##modelexport", &modelShowExportDialog, func() {
 		imgui.Text(fmt.Sprintf("Written to %s, with a sibling .mtl", modelsDir()))
 		imgui.InputText("Name##modelexportname", &modelExportName)
 		imgui.Separator()
@@ -837,12 +838,12 @@ func modelUVSection() {
 		modelUVApply(faces)
 	}
 
-	editorPushDisabled(x.isIdentity())
+	imguibackend.EditorPushDisabled(x.isIdentity())
 	if imgui.Button("Reset transform##modeluvreset") {
 		modelUVEdit.Xform = identityUVTransform()
 		modelUVApply(faces)
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 
 	imgui.Separator()
 

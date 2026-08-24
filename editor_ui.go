@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
 	"math"
 	"path/filepath"
@@ -433,7 +434,7 @@ func editorDetailPresetSaveRow(surfaceLabel string, d *DetailSpec) bool {
 	if _, exists := detailPresets[clean]; exists && clean != "" {
 		label = "Update Preset"
 	}
-	editorPushDisabled(clean == "")
+	imguibackend.EditorPushDisabled(clean == "")
 	if imgui.Button(fmt.Sprintf("%s##%sdetPreSave", label, surfaceLabel)) && clean != "" {
 		if err := SaveDetailPreset(clean, *d); err != nil {
 			detailPresetSetStatus("Preset save failed: %v", err)
@@ -443,7 +444,7 @@ func editorDetailPresetSaveRow(surfaceLabel string, d *DetailSpec) bool {
 			changed = true
 		}
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 
 	// Only user presets are deletable; the built-ins are compiled in.
 	if detailUserPresets[clean] {
@@ -880,18 +881,18 @@ func EditorDrawUI() {
 	}
 	imgui.SameLine()
 
-	editorPushDisabled(!EditorCanUndo())
+	imguibackend.EditorPushDisabled(!EditorCanUndo())
 	if imgui.Button("Undo##lvl") {
 		EditorUndo()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 
-	editorPushDisabled(!EditorCanRedo())
+	imguibackend.EditorPushDisabled(!EditorCanRedo())
 	if imgui.Button("Redo##lvl") {
 		EditorRedo()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 
 	if imgui.Button("Save As...") {
@@ -910,7 +911,7 @@ func EditorDrawUI() {
 	}
 
 	// --- Level Picker popup ---
-	withModalPopup("Level Picker", &Editor.ShowLevelPicker, func() {
+	imguibackend.WithModalPopup("Level Picker", &Editor.ShowLevelPicker, func() {
 		imgui.Text("Select a level to open:")
 		imgui.Separator()
 		for _, f := range Editor.LevelFiles {
@@ -953,7 +954,7 @@ func EditorDrawUI() {
 	})
 
 	// --- Save As popup ---
-	withModalPopup("Save As", &Editor.ShowSaveAs, func() {
+	imguibackend.WithModalPopup("Save As", &Editor.ShowSaveAs, func() {
 		imgui.Text("Save level as:")
 		imgui.SetNextItemWidth(200)
 		imgui.InputText("##saveas", &Editor.SaveAsName)
@@ -1379,22 +1380,22 @@ func editorGizmoToolButtons() {
 // that lives only in a context menu is a workflow nobody finds.
 func editor2DJoinButtons() {
 	can := editorCanJoinPoints()
-	editorPushDisabled(!can)
+	imguibackend.EditorPushDisabled(!can)
 	if imgui.Button(editorJoinLabel(false) + "##join") {
 		EditorJoinSelectedPoints(false)
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("J — Draw an edge between each picked point and the next,\n" +
 			"in the order you picked them. Ctrl+click points to pick them.")
 	}
 
 	imgui.SameLine()
-	editorPushDisabled(!can)
+	imguibackend.EditorPushDisabled(!can)
 	if imgui.Button(editorJoinLabel(true) + "##joinclose") {
 		EditorJoinSelectedPoints(true)
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Shift+J — The same, plus the edge back to the first point,\n" +
 			"which closes the outline and turns it into a sector.")

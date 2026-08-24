@@ -1,4 +1,4 @@
-package main
+package imguibackend
 
 // clipboard.go — the system clipboard, handed to every ImGui context.
 //
@@ -9,7 +9,7 @@ package main
 // which is most of the point, since a script is usually being moved between the
 // editor and somewhere else.
 //
-// Registered per ImGui context (imguiConfigureIO), because imgui-go keys its
+// Registered per ImGui context (ImguiConfigureIO), because imgui-go keys its
 // clipboard registry by IO handle and every UIWindow has its own context.
 
 import (
@@ -19,15 +19,15 @@ import (
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-// sdlClipboard implements imgui.Clipboard against SDL.
-type sdlClipboard struct{}
+// SdlClipboard implements imgui.Clipboard against SDL.
+type SdlClipboard struct{}
 
 // Text returns what the clipboard holds, with its line endings normalised.
 //
 // Text copied out of a Windows program arrives with CRLF, and a stray carriage
 // return in a script is an invisible parse error — the kind that reads as "this
 // line looks fine and the compiler disagrees".
-func (sdlClipboard) Text() (string, error) {
+func (SdlClipboard) Text() (string, error) {
 	if !sdl.HasClipboardText() {
 		return "", nil
 	}
@@ -35,7 +35,7 @@ func (sdlClipboard) Text() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return normalizeClipboardText(s), nil
+	return NormalizeClipboardText(s), nil
 }
 
 // SetText puts text on the clipboard.
@@ -43,25 +43,25 @@ func (sdlClipboard) Text() (string, error) {
 // The error is logged rather than returned: ImGui's copy path has nowhere to
 // report one, and a clipboard that quietly did nothing is worth a line in the
 // log rather than silence.
-func (sdlClipboard) SetText(value string) {
+func (SdlClipboard) SetText(value string) {
 	if err := sdl.SetClipboardText(value); err != nil {
 		log.Printf("clipboard: %v", err)
 	}
 }
 
-// clipboardText is what the clipboard holds, or "" if it holds nothing this
+// ClipboardText is what the clipboard holds, or "" if it holds nothing this
 // code can use. The error is swallowed on purpose — every caller's answer to
 // "the clipboard could not be read" is "then there is nothing to paste".
-func clipboardText() string {
-	s, err := sdlClipboard{}.Text()
+func ClipboardText() string {
+	s, err := SdlClipboard{}.Text()
 	if err != nil {
 		return ""
 	}
 	return s
 }
 
-// normalizeClipboardText converts CRLF and lone CR line endings to LF.
-func normalizeClipboardText(s string) string {
+// NormalizeClipboardText converts CRLF and lone CR line endings to LF.
+func NormalizeClipboardText(s string) string {
 	if !strings.ContainsRune(s, '\r') {
 		return s
 	}

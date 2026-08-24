@@ -18,6 +18,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/gizmo"
+	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
 	"log"
 
@@ -101,13 +102,13 @@ func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWind
 
 	// win.GLCreateContext leaves glCtx current; imgui/device-object setup
 	// below runs against it. Pass the main context's already-built font
-	// atlas explicitly — see sharedFontAtlas (editor_imgui.go) for why nil
+	// atlas explicitly — see SharedFontAtlas (editor_imgui.go) for why nil
 	// asserts here despite the imgui-go doc comment suggesting it wouldn't.
-	ctx := imgui.CreateContext(&sharedFontAtlas)
+	ctx := imgui.CreateContext(&imguibackend.SharedFontAtlas)
 	ctx.SetCurrent()
 	io := imgui.CurrentIO()
 	io.SetIniFilename("")
-	imguiConfigureIO(io)
+	imguibackend.ImguiConfigureIO(io)
 
 	uw := &UIWindow{
 		Win: win, GL: glCtx, Ctx: ctx, ID: id, W: w, H: h,
@@ -125,7 +126,7 @@ func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWind
 	// Hand control back to the main window's context/imgui context — the
 	// caller is typically mid-frame on the main loop.
 	platform.Window.GLMakeCurrent(platform.Context)
-	imguiContext.SetCurrent()
+	imguibackend.ImguiContext.SetCurrent()
 
 	return uw, nil
 }
@@ -160,7 +161,7 @@ func CloseUIWindow(w *UIWindow) {
 
 	// Restore the main context so whatever runs next in the frame is correct.
 	platform.Window.GLMakeCurrent(platform.Context)
-	imguiContext.SetCurrent()
+	imguibackend.ImguiContext.SetCurrent()
 }
 
 // UIWindowByID returns the open secondary window with the given SDL window
@@ -196,7 +197,7 @@ func RenderSecondaryWindows(dt float32) {
 		// secondary window draws it inside its own frame.
 		KeybindHelpRenderInWindow(w)
 		imgui.Render()
-		imguiRenderDrawData(imgui.RenderedDrawData(), w.VAO, w.VBO, w.EBO)
+		imguibackend.ImguiRenderDrawData(imgui.RenderedDrawData(), w.VAO, w.VBO, w.EBO)
 
 		w.Win.GLSwap()
 
@@ -206,7 +207,7 @@ func RenderSecondaryWindows(dt float32) {
 	}
 
 	platform.Window.GLMakeCurrent(platform.Context)
-	imguiContext.SetCurrent()
+	imguibackend.ImguiContext.SetCurrent()
 
 	// Deferred closes happen only now that every context has finished its
 	// frame — CloseUIWindow destroys the imgui context the loop above was
@@ -225,7 +226,7 @@ func uiWindowNewFrame(w *UIWindow, dt float32) {
 	io := imgui.CurrentIO()
 	gx, gy, mbuttons := sdl.GetGlobalMouseState()
 	wx, wy := w.Win.GetPosition()
-	imguiNewFrameCommon(io, float32(gx-wx), float32(gy-wy), mbuttons, w.W, w.H, dt)
+	imguibackend.ImguiNewFrameCommon(io, float32(gx-wx), float32(gy-wy), mbuttons, w.W, w.H, dt)
 }
 
 // RouteWindowEvent dispatches an SDL event to the secondary window it names,
@@ -250,14 +251,14 @@ func RouteWindowEvent(event sdl.Event, mainWindowID uint32) bool {
 
 	w.Win.GLMakeCurrent(w.GL)
 	w.Ctx.SetCurrent()
-	ImGuiProcessEvent(event)
+	imguibackend.ImGuiProcessEvent(event)
 	if w.HandleEvent != nil {
 		// Runs with w's imgui context current, so WantCaptureMouse/Keyboard
 		// checks inside it refer to this window's UI, not the main one's.
 		w.HandleEvent(event)
 	}
 	platform.Window.GLMakeCurrent(platform.Context)
-	imguiContext.SetCurrent()
+	imguibackend.ImguiContext.SetCurrent()
 	return true
 }
 

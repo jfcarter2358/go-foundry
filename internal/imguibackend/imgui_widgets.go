@@ -1,4 +1,4 @@
-package main
+package imguibackend
 
 // imgui_widgets.go — ImGui idioms shared by every panel in the program.
 //
@@ -9,11 +9,11 @@ package main
 
 import "github.com/inkyblackness/imgui-go/v4"
 
-// editorPushDisabled visually dims and blocks input on the widgets drawn
-// until the matching editorPopDisabled. This imgui-go build has the
+// EditorPushDisabled visually dims and blocks input on the widgets drawn
+// until the matching EditorPopDisabled. This imgui-go build has the
 // BeginDisabled/EndDisabled API commented out, so combine PushItemFlag
 // (blocks interaction) with a dimmed alpha (visual feedback) instead.
-func editorPushDisabled(disabled bool) {
+func EditorPushDisabled(disabled bool) {
 	imgui.PushItemFlag(imgui.ItemFlagsDisabled, disabled)
 	alpha := float32(1.0)
 	if disabled {
@@ -22,18 +22,18 @@ func editorPushDisabled(disabled bool) {
 	imgui.PushStyleVarFloat(imgui.StyleVarAlpha, alpha)
 }
 
-func editorPopDisabled() {
+func EditorPopDisabled() {
 	imgui.PopStyleVar()
 	imgui.PopItemFlag()
 }
 
-// withModalPopup draws an auto-resizing modal popup titled title, opening it
+// WithModalPopup draws an auto-resizing modal popup titled title, opening it
 // (once) when *show is true. show is cleared immediately so the OpenPopup
 // call fires exactly once per request; body is only invoked while the popup
 // is actually open. This is the "if show { OpenPopup }; if Begin { body;
 // End }" shape every popup in the editor and texture editor used to
 // duplicate individually.
-func withModalPopup(title string, show *bool, body func()) {
+func WithModalPopup(title string, show *bool, body func()) {
 	if show != nil && *show {
 		imgui.OpenPopup(title)
 		*show = false

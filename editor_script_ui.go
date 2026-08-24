@@ -26,13 +26,14 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/imguibackend"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
 // Dialog flags, in the style the texture editor uses: a bool per dialog, raised
-// from wherever and consumed by withModalPopup at the end of the frame.
+// from wherever and consumed by WithModalPopup at the end of the frame.
 var (
 	scriptEditorShowNew    bool
 	scriptEditorShowOpen   bool
@@ -87,7 +88,7 @@ func drawScriptEditorWindow() {
 	drawScriptEditorDiagnostics()
 	imgui.EndChild()
 
-	// Dialogs are drawn unconditionally; withModalPopup opens whichever flag was
+	// Dialogs are drawn unconditionally; WithModalPopup opens whichever flag was
 	// raised this frame.
 	drawScriptEditorNewDialog()
 	drawScriptEditorOpenDialog()
@@ -111,11 +112,11 @@ func drawScriptEditorMenuBar() {
 	// clicking it changes the answer and re-testing afterwards would pop a style
 	// colour that was never pushed, unbalancing ImGui's global stack.
 	unsaved := activeScript != nil && activeScript.Dirty()
-	editorPushDisabled(!unsaved)
+	imguibackend.EditorPushDisabled(!unsaved)
 	if imgui.Button("Save") {
 		scriptEditorSave()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 
 	imgui.SameLine()
 	if imgui.Button("Save As") {
@@ -160,11 +161,11 @@ func drawScriptEditorMenuBar() {
 // operation. Everything else about scripts is gated on play.
 func drawScriptEditorRunButton() {
 	canRun := Editor.Active && activeScript != nil && !activeScript.HasErrors()
-	editorPushDisabled(!canRun)
+	imguibackend.EditorPushDisabled(!canRun)
 	if imgui.Button("Run on the editor level") {
 		scriptEditorRunOnEditorLevel()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Calls this script's `main` against the level you are editing.\n" +
 			"Pushes an undo entry first, so it can be taken back.")
@@ -522,12 +523,12 @@ func scriptBufferCallback(data imgui.InputTextCallbackData) int32 {
 func scriptApplyEdit(data imgui.InputTextCallbackData, op scriptEditOp) {
 	text := string(data.Buffer())
 	sel := scriptSel{Start: data.SelectionStart(), End: data.SelectionEnd()}
-	e, ok := scriptEditFor(op, text, sel, clipboardText())
+	e, ok := scriptEditFor(op, text, sel, imguibackend.ClipboardText())
 	if !ok {
 		return
 	}
 	if e.SetClip {
-		sdlClipboard{}.SetText(e.Clip)
+		imguibackend.SdlClipboard{}.SetText(e.Clip)
 	}
 	if e.End > e.Start {
 		data.DeleteBytes(e.Start, e.End-e.Start)
@@ -590,7 +591,7 @@ func drawScriptEditorBufferMenu() {
 // hand already on the mouse, and for saying that the shortcuts exist.
 func scriptEditorBufferMenuItems() []ctxMenuItem {
 	hasSel := !scriptBufSel.empty()
-	hasClip := clipboardText() != ""
+	hasClip := imguibackend.ClipboardText() != ""
 	return []ctxMenuItem{
 		{Label: "Cut", Shortcut: "Ctrl+X", Disabled: !hasSel,
 			Do: func() { scriptEditorRequest(scriptEditCut) }},
@@ -772,7 +773,7 @@ func scriptEditorRunOnEditorLevel() {
 // ---------- dialogs ----------
 
 func drawScriptEditorNewDialog() {
-	withModalPopup("New Script", &scriptEditorShowNew, func() {
+	imguibackend.WithModalPopup("New Script", &scriptEditorShowNew, func() {
 		imgui.Text("Name (relative to resources/scripts/)")
 		imgui.InputTextV("##newscriptname", &scriptEditorNewName, 0, nil)
 		if imgui.Button("Create") && scriptEditorNewName != "" {
@@ -795,7 +796,7 @@ func drawScriptEditorNewDialog() {
 }
 
 func drawScriptEditorOpenDialog() {
-	withModalPopup("Open Script", &scriptEditorShowOpen, func() {
+	imguibackend.WithModalPopup("Open Script", &scriptEditorShowOpen, func() {
 		files := fileutil.ScanScriptFiles()
 		if len(files) == 0 {
 			imgui.Text("No scripts in resources/scripts/.")
@@ -814,7 +815,7 @@ func drawScriptEditorOpenDialog() {
 }
 
 func drawScriptEditorSaveAsDialog() {
-	withModalPopup("Save Script As", &scriptEditorShowSaveAs, func() {
+	imguibackend.WithModalPopup("Save Script As", &scriptEditorShowSaveAs, func() {
 		imgui.Text("Name (relative to resources/scripts/)")
 		imgui.InputTextV("##saveasscriptname", &scriptEditorSaveAsName, 0, nil)
 		if imgui.Button("Save##saveasscript") && scriptEditorSaveAsName != "" {

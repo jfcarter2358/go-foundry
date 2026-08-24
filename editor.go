@@ -17,6 +17,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"foundry/internal/hooks"
+	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
 	"math"
 
@@ -388,7 +389,7 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.LastTick = sdl.GetTicks()
 	Editor.SavePath = levelPath
 
-	ImGuiInit()
+	imguibackend.ImGuiInit()
 	gizmo.GizmoInit()
 	GrassInit()
 	DetailInit()
@@ -536,7 +537,7 @@ func EditorHandleEvent(event sdl.Event) bool {
 	}
 
 	// Always feed into ImGui
-	consumed := ImGuiProcessEvent(event)
+	consumed := imguibackend.ImGuiProcessEvent(event)
 
 	switch t := event.(type) {
 	case sdl.KeyboardEvent:
@@ -827,7 +828,7 @@ func EditorRender() {
 	}
 
 	// --- ImGui UI ---
-	ImGuiNewFrame(dt)
+	imguibackend.ImGuiNewFrame(dt)
 	EditorDrawUI()
 	if Editor.Mode == ModeSurface2D {
 		Surface2DRenderLabels()
@@ -837,7 +838,7 @@ func EditorRender() {
 	// matter most while you are building the thing that costs them.
 	DebugRenderOverlay()
 	KeybindHelpRender()
-	ImGuiRender()
+	imguibackend.ImGuiRender()
 }
 
 // EditorDeleteSelected removes the current selection: a biome sector, an edge,

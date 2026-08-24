@@ -17,6 +17,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/geom"
+	"foundry/internal/imguibackend"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
@@ -241,11 +242,11 @@ func modelTimelineTransportRow() {
 	imgui.Text(fmt.Sprintf("  %s   frame %d / %d", c.Name, modelPoseFrame(), c.frameCount()))
 
 	imgui.SameLine()
-	editorPushDisabled(len(modelSelectedKeys) == 0)
+	imguibackend.EditorPushDisabled(len(modelSelectedKeys) == 0)
 	if imgui.Button("Delete key##tldel") {
 		modelDeleteSelectedKeys()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	if n := len(modelSelectedKeys); n > 0 {
 		imgui.SameLine()
 		imgui.Text(fmt.Sprintf("(%d selected)", n))

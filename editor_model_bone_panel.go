@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/imguibackend"
 	"math"
 	"strings"
 
@@ -137,21 +138,21 @@ func modelBoneSection() {
 	}
 	imgui.SameLine()
 
-	editorPushDisabled(active < 0)
+	imguibackend.EditorPushDisabled(active < 0)
 	if imgui.Button("Extrude##modelboneext") {
 		modelExtrudeSelectedBones()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("E in Bone mode — a connected child from this bone's tail.\nDrag the gizmo afterwards to place it.")
 	}
 	imgui.SameLine()
 
-	editorPushDisabled(active < 0)
+	imguibackend.EditorPushDisabled(active < 0)
 	if imgui.Button("Delete##modelbonedel") {
 		modelDeleteSelectedBones()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Children are kept and reparented, not deleted with it.")
 	}
@@ -218,11 +219,11 @@ func modelBoneProperties(bi int) {
 	modelBoneParentCombo(bi)
 
 	connected := b.Connected
-	editorPushDisabled(b.Parent < 0)
+	imguibackend.EditorPushDisabled(b.Parent < 0)
 	if imgui.Checkbox("Connected##modelboneconn", &connected) {
 		modelSetBoneConnected(bi, connected)
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("The head is welded to the parent's tail, so the\njoint between them moves as one.")
 	}
@@ -314,7 +315,7 @@ func modelBoneAssignment(active int) {
 		imgui.SetTooltip("1.0 binds the points rigidly to this bone.\nLess shares them with whatever else already claims them.")
 	}
 
-	editorPushDisabled(active < 0 || len(verts) == 0)
+	imguibackend.EditorPushDisabled(active < 0 || len(verts) == 0)
 	if imgui.Button("Assign##modelboneassign") {
 		modelAssignSelectedToBone(active)
 	}
@@ -326,13 +327,13 @@ func modelBoneAssignment(active int) {
 	if imgui.Button("Clear##modelboneclearw") {
 		modelClearSelectedWeights()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 
-	editorPushDisabled(active < 0)
+	imguibackend.EditorPushDisabled(active < 0)
 	if imgui.Button("Select assigned##modelbonesel") {
 		modelSelectBoneVerts(active)
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 	if imgui.Button("Auto weights##modelboneauto") {
 		modelAutoWeightAll()

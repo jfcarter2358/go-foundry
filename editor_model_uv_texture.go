@@ -36,6 +36,7 @@ import (
 	imgui "github.com/inkyblackness/imgui-go/v4"
 
 	"foundry/internal/gfx"
+	"foundry/internal/imguibackend"
 	"foundry/internal/texdoc"
 )
 
@@ -162,7 +163,7 @@ func modelTextureIsBoundForPainting() bool {
 // drawModelUnwrapDialog draws the form. Called once per frame from the model
 // editor's panel, like the editor's other modals.
 func drawModelUnwrapDialog() {
-	withModalPopup("Unwrap & Paint##modelunwrapdlg", &modelUnwrapDialog.Show, func() {
+	imguibackend.WithModalPopup("Unwrap & Paint##modelunwrapdlg", &modelUnwrapDialog.Show, func() {
 		d := &modelUnwrapDialog
 
 		imgui.Text("Flatten the mesh into one texture and paint it.")
@@ -206,7 +207,7 @@ func drawModelUnwrapDialog() {
 		}
 
 		imgui.Separator()
-		editorPushDisabled(name == "")
+		imguibackend.EditorPushDisabled(name == "")
 		if imgui.Button("Unwrap##modelunwrapok") {
 			size := int(texEditorSizeOptions[d.SizeIdx])
 			err := modelUnwrapToTexture(name, size, d.AngleDeg, d.PadTexels)
@@ -217,7 +218,7 @@ func drawModelUnwrapDialog() {
 				imgui.CloseCurrentPopup()
 			}
 		}
-		editorPopDisabled()
+		imguibackend.EditorPopDisabled()
 		imgui.SameLine()
 		if imgui.Button("Cancel##modelunwrapcancel") {
 			d.Err = ""

@@ -25,6 +25,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/imguibackend"
 	"foundry/internal/texdoc"
 )
 
@@ -239,7 +240,7 @@ func texEditorShortcutFor(sc sdl.Scancode, ctrl, shift, typing bool) texEditorSh
 // Wired as the UIWindow's HandleEvent, so it reads SDL events directly —
 // routed by RouteWindowEvent with this window's imgui context current, after
 // imgui has already seen them. Polling imgui's own key state instead does not
-// work here: this backend feeds io.KeysDown by SDL scancode (imguiConfigureIO in
+// work here: this backend feeds io.KeysDown by SDL scancode (ImguiConfigureIO in
 // editor_imgui.go), so IsKeyPressed takes a scancode, not the imgui.Key enum
 // that names the mapping.
 func texEditorHandleEvent(event sdl.Event) {
@@ -337,35 +338,35 @@ func drawTextureEditorMenuBar() {
 	}
 	imgui.SameLine()
 
-	editorPushDisabled(ed == nil)
+	imguibackend.EditorPushDisabled(ed == nil)
 	if imgui.Button("Save") {
 		texEditorDoSave()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 
-	editorPushDisabled(ed == nil)
+	imguibackend.EditorPushDisabled(ed == nil)
 	if imgui.Button("Save As...") {
 		if ed != nil {
 			texEditorSaveAsName = ed.Doc.Name
 		}
 		texEditorShowSaveAsDialog = true
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 
-	editorPushDisabled(ed == nil || !ed.CanUndo())
+	imguibackend.EditorPushDisabled(ed == nil || !ed.CanUndo())
 	if imgui.Button("Undo") {
 		ed.Undo()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 
-	editorPushDisabled(ed == nil || !ed.CanRedo())
+	imguibackend.EditorPushDisabled(ed == nil || !ed.CanRedo())
 	if imgui.Button("Redo") {
 		ed.Redo()
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
 
 	if ed != nil {
@@ -423,7 +424,7 @@ func texEditorDoOpen(name string) {
 }
 
 func drawTexEditorNewDialog() {
-	withModalPopup("New Texture", &texEditorShowNewDialog, func() {
+	imguibackend.WithModalPopup("New Texture", &texEditorShowNewDialog, func() {
 		imgui.Text("Name:")
 		imgui.SetNextItemWidth(200)
 		imgui.InputText("##newtexname", &texEditorNewName)
@@ -452,7 +453,7 @@ func drawTexEditorNewDialog() {
 }
 
 func drawTexEditorOpenDialog() {
-	withModalPopup("Open Texture", &texEditorShowOpenDialog, func() {
+	imguibackend.WithModalPopup("Open Texture", &texEditorShowOpenDialog, func() {
 		names := ScanFtexFiles()
 		if len(names) == 0 {
 			imgui.Text("No .ftex files found in textures/.")
@@ -471,7 +472,7 @@ func drawTexEditorOpenDialog() {
 }
 
 func drawTexEditorImportDialog() {
-	withModalPopup("Import PNG", &texEditorShowImportDialog, func() {
+	imguibackend.WithModalPopup("Import PNG", &texEditorShowImportDialog, func() {
 		names := make([]string, 0, len(gfx.TextureNames))
 		for n := range gfx.TextureNames {
 			names = append(names, n)
@@ -498,7 +499,7 @@ func drawTexEditorImportDialog() {
 }
 
 func drawTexEditorSaveAsDialog() {
-	withModalPopup("Save Texture As", &texEditorShowSaveAsDialog, func() {
+	imguibackend.WithModalPopup("Save Texture As", &texEditorShowSaveAsDialog, func() {
 		imgui.SetNextItemWidth(200)
 		imgui.InputText("##saveastexname", &texEditorSaveAsName)
 		if imgui.Button("Save##saveastex") && texEditorSaveAsName != "" {
@@ -519,7 +520,7 @@ func drawTexEditorSaveAsDialog() {
 }
 
 func drawTexEditorMismatchDialog() {
-	withModalPopup("Palette Mismatch", &texEditorShowMismatch, func() {
+	imguibackend.WithModalPopup("Palette Mismatch", &texEditorShowMismatch, func() {
 		imgui.Text("This file's embedded palette differs from the current global palette.")
 		if imgui.Button("Adopt file's palette globally") {
 			if err := AdoptDocPaletteGlobally(texEditorPendingOpen.Doc); err != nil {
@@ -638,11 +639,11 @@ func drawPalettePanel() {
 
 	// An explicit button beside the double-click: the grid gives no hint that
 	// a swatch is editable at all, and at 14px a double-click is fiddly.
-	editorPushDisabled(ed.PrimaryIdx == 0)
+	imguibackend.EditorPushDisabled(ed.PrimaryIdx == 0)
 	if imgui.Button("Edit Color...") {
 		texEditorBeginPaletteEdit(ed.PrimaryIdx)
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 
 	// OpenPopup has to happen out here, after the grid has popped its
 	// per-swatch ID: a popup opened under one ID stack and begun under
@@ -769,29 +770,29 @@ func drawLayersPanel() {
 	d := ed.Doc
 	imgui.Text(fmt.Sprintf("Layers (%d/%d)", len(d.Layers), texdoc.TexMaxLayers))
 
-	editorPushDisabled(len(d.Layers) >= texdoc.TexMaxLayers)
+	imguibackend.EditorPushDisabled(len(d.Layers) >= texdoc.TexMaxLayers)
 	if imgui.Button("Add") {
 		if err := ed.AddLayer(fmt.Sprintf("Layer %d", len(d.Layers)+1)); err != nil {
 			texEditorStatus(err.Error())
 		}
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
-	editorPushDisabled(len(d.Layers) >= texdoc.TexMaxLayers)
+	imguibackend.EditorPushDisabled(len(d.Layers) >= texdoc.TexMaxLayers)
 	if imgui.Button("Duplicate") {
 		if err := ed.DuplicateLayer(d.Active); err != nil {
 			texEditorStatus(err.Error())
 		}
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.SameLine()
-	editorPushDisabled(len(d.Layers) <= 1)
+	imguibackend.EditorPushDisabled(len(d.Layers) <= 1)
 	if imgui.Button("Delete") {
 		if err := ed.DeleteLayer(d.Active); err != nil {
 			texEditorStatus(err.Error())
 		}
 	}
-	editorPopDisabled()
+	imguibackend.EditorPopDisabled()
 	imgui.Separator()
 
 	// Bottom-first, matching storage order (index 0 = bottom).
@@ -829,21 +830,21 @@ func drawLayersPanel() {
 			ed.previewDirty = true
 		}
 
-		editorPushDisabled(i == len(d.Layers)-1)
+		imguibackend.EditorPushDisabled(i == len(d.Layers)-1)
 		if imgui.Button("Up") {
 			if err := ed.MoveLayer(i, true); err != nil {
 				texEditorStatus(err.Error())
 			}
 		}
-		editorPopDisabled()
+		imguibackend.EditorPopDisabled()
 		imgui.SameLine()
-		editorPushDisabled(i == 0)
+		imguibackend.EditorPushDisabled(i == 0)
 		if imgui.Button("Down") {
 			if err := ed.MoveLayer(i, false); err != nil {
 				texEditorStatus(err.Error())
 			}
 		}
-		editorPopDisabled()
+		imguibackend.EditorPopDisabled()
 
 		imgui.PopID()
 		imgui.Separator()

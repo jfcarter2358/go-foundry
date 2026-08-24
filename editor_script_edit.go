@@ -1,5 +1,7 @@
 package main
 
+import "foundry/internal/imguibackend"
+
 // editor_script_edit.go — cut, copy, paste and select-all in the script editor's
 // text area.
 //
@@ -111,7 +113,7 @@ func scriptEditFor(op scriptEditOp, text string, sel scriptSel, clip string) (sc
 			Sel: scriptSel{Start: sel.Start, End: sel.Start}}, true
 
 	case scriptEditPaste:
-		clip = normalizeClipboardText(clip)
+		clip = imguibackend.NormalizeClipboardText(clip)
 		if clip == "" {
 			return scriptEdit{}, false
 		}

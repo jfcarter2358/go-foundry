@@ -1,4 +1,4 @@
-package main
+package imguibackend
 
 // ImGui SDL2 + OpenGL 4.1 backend for the Foundry level editor.
 //
@@ -19,9 +19,9 @@ import (
 
 // ---------- globals ----------
 
-var imguiContext *imgui.Context
+var ImguiContext *imgui.Context
 
-// sharedFontAtlas is the main context's font atlas, captured once it's built
+// SharedFontAtlas is the main context's font atlas, captured once it's built
 // (ImGuiInit) and handed to every secondary UIWindow's CreateContext call
 // (window.go). Despite the imgui-go v4 doc comment ("all contexts share a
 // same FontAtlas by default"), a freshly created context does NOT actually
@@ -29,7 +29,7 @@ var imguiContext *imgui.Context
 // ("Font Atlas not built!"). Passing the main atlas explicitly is what
 // actually makes glyphs available (and shared, so imguiFontTexture stays a
 // single GL object every window's renderer can bind).
-var sharedFontAtlas imgui.FontAtlas
+var SharedFontAtlas imgui.FontAtlas
 
 // imgui OpenGL resources
 var (
@@ -50,21 +50,21 @@ var (
 // ImGuiInit creates the imgui context, maps keys, and uploads the font atlas.
 // Must be called after the OpenGL context is current.
 func ImGuiInit() {
-	imguiContext = imgui.CreateContext(nil)
+	ImguiContext = imgui.CreateContext(nil)
 	io := imgui.CurrentIO()
 	io.SetIniFilename("") // disable imgui.ini writes
-	imguiConfigureIO(io)
+	ImguiConfigureIO(io)
 
 	imguiCreateDeviceObjects()
-	sharedFontAtlas = io.Fonts()
+	SharedFontAtlas = io.Fonts()
 }
 
-// imguiConfigureIO wires SDL scancodes to imgui key indices and gives the
+// ImguiConfigureIO wires SDL scancodes to imgui key indices and gives the
 // context the system clipboard. Shared by the main window's ImGuiInit and every
 // secondary UIWindow's imgui context (window.go) — both need the same setup,
 // since each context has its own IO, and a window that got one half of this and
 // not the other would be the sort of bug nobody looks for.
-func imguiConfigureIO(io imgui.IO) {
+func ImguiConfigureIO(io imgui.IO) {
 	io.KeyMap(imgui.KeyTab, int(sdl.SCANCODE_TAB))
 	io.KeyMap(imgui.KeyLeftArrow, int(sdl.SCANCODE_LEFT))
 	io.KeyMap(imgui.KeyRightArrow, int(sdl.SCANCODE_RIGHT))
@@ -94,13 +94,13 @@ func imguiConfigureIO(io imgui.IO) {
 	// Without this, ImGui falls back to a clipboard of its own that never
 	// leaves the process — Ctrl+C here would be invisible to every other
 	// program on the desktop. See editor_clipboard.go.
-	io.SetClipboard(sdlClipboard{})
+	io.SetClipboard(SdlClipboard{})
 }
 
 // ImGuiShutdown destroys all OpenGL resources and the imgui context.
 func ImGuiShutdown() {
 	imguiDestroyDeviceObjects()
-	imguiContext.Destroy()
+	ImguiContext.Destroy()
 }
 
 // ---------- Per-frame ----------
@@ -117,13 +117,13 @@ func ImGuiNewFrame(dt float32) {
 	io := imgui.CurrentIO()
 	gx, gy, mbuttons := sdl.GetGlobalMouseState()
 	wx, wy := platform.Window.GetPosition()
-	imguiNewFrameCommon(io, float32(gx-wx), float32(gy-wy), mbuttons, platform.WinWidth, platform.WinHeight, dt)
+	ImguiNewFrameCommon(io, float32(gx-wx), float32(gy-wy), mbuttons, platform.WinWidth, platform.WinHeight, dt)
 }
 
-// imguiNewFrameCommon applies display size, delta time and mouse state to io
+// ImguiNewFrameCommon applies display size, delta time and mouse state to io
 // and starts the imgui frame. Shared by ImGuiNewFrame (main window) and
 // uiWindowNewFrame (window.go) so the two can't drift apart.
-func imguiNewFrameCommon(io imgui.IO, mouseX, mouseY float32, mbuttons sdl.ButtonMask, w, h int32, dt float32) {
+func ImguiNewFrameCommon(io imgui.IO, mouseX, mouseY float32, mbuttons sdl.ButtonMask, w, h int32, dt float32) {
 	io.SetDisplaySize(imgui.Vec2{X: float32(w), Y: float32(h)})
 	io.SetDeltaTime(dt)
 	io.SetMousePosition(imgui.Vec2{X: mouseX, Y: mouseY})
@@ -167,11 +167,11 @@ func ImGuiProcessEvent(event sdl.Event) bool {
 
 // ImGuiRender finalises the imgui frame and issues OpenGL draw calls for the
 // main window. Secondary windows go through RenderSecondaryWindows
-// (window.go), which calls imguiRenderDrawData directly with their own
+// (window.go), which calls ImguiRenderDrawData directly with their own
 // VAO/VBO/EBO and size.
 func ImGuiRender() {
 	imgui.Render()
-	imguiRenderDrawData(imgui.RenderedDrawData(), imguiVAO, imguiVBO, imguiEBO)
+	ImguiRenderDrawData(imgui.RenderedDrawData(), imguiVAO, imguiVBO, imguiEBO)
 }
 
 // ---------- OpenGL renderer ----------
@@ -262,13 +262,13 @@ func imguiDestroyDeviceObjects() {
 	}
 }
 
-// imguiRenderDrawData issues the GL draw calls for one imgui frame into
+// ImguiRenderDrawData issues the GL draw calls for one imgui frame into
 // whichever window's context is currently current, using that window's own
 // vao/vbo/ebo (VAOs are never shared across GL contexts). Framebuffer size
 // comes from drawData itself (set via io.SetDisplaySize before NewFrame), not
 // from WinWidth/WinHeight, so this already works unmodified for a secondary
 // window — only the vertex array/buffer objects need to vary per window.
-func imguiRenderDrawData(drawData imgui.DrawData, vao, vbo, ebo uint32) {
+func ImguiRenderDrawData(drawData imgui.DrawData, vao, vbo, ebo uint32) {
 	if !drawData.Valid() {
 		return
 	}
