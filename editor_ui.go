@@ -8,6 +8,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/geom"
+	"foundry/internal/platform"
 	"math"
 	"path/filepath"
 	"sort"
@@ -676,7 +677,7 @@ func EditorDrawUI() {
 
 	// ---- Top toolbar ----
 	imgui.SetNextWindowPos(imgui.Vec2{X: 0, Y: 0})
-	imgui.SetNextWindowSize(imgui.Vec2{X: float32(WinWidth), Y: 28})
+	imgui.SetNextWindowSize(imgui.Vec2{X: float32(platform.WinWidth), Y: 28})
 	imgui.BeginV("##toolbar", nil,
 		imgui.WindowFlagsNoTitleBar|imgui.WindowFlagsNoResize|
 			imgui.WindowFlagsNoMove|imgui.WindowFlagsNoScrollbar)
@@ -698,7 +699,7 @@ func EditorDrawUI() {
 	if editor2DOpen {
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
 	}
-	if imgui.Button("2D Window") {
+	if imgui.Button("2D platform.Window") {
 		OpenEditor2DWindow()
 	}
 	if editor2DOpen {
@@ -725,7 +726,7 @@ func EditorDrawUI() {
 	}
 
 	imgui.SameLine()
-	// Snapshot before the button, for the same reason "2D Window" above does:
+	// Snapshot before the button, for the same reason "2D platform.Window" above does:
 	// clicking it opens the window, so re-testing ModelEditorOpen() afterwards
 	// would pop a color that was never pushed.
 	modelOpen := ModelEditorOpen()
@@ -978,11 +979,11 @@ func EditorDrawUI() {
 
 	// ---- Exit button (top-right of the toolbar) ----
 	const exitBtnWidth = 60
-	imgui.SetCursorPos(imgui.Vec2{X: float32(WinWidth) - exitBtnWidth - 8, Y: toolbarY})
+	imgui.SetCursorPos(imgui.Vec2{X: float32(platform.WinWidth) - exitBtnWidth - 8, Y: toolbarY})
 	imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.6, Y: 0.15, Z: 0.15, W: 1})
 	imgui.PushStyleColor(imgui.StyleColorButtonHovered, imgui.Vec4{X: 0.8, Y: 0.2, Z: 0.2, W: 1})
 	if imgui.ButtonV("Exit", imgui.Vec2{X: exitBtnWidth, Y: 0}) {
-		Running = false
+		platform.Running = false
 	}
 	imgui.PopStyleColorV(2)
 

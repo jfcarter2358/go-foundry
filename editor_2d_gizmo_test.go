@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/platform"
 	"math"
 	"testing"
 
@@ -14,9 +15,9 @@ import (
 // in an 800x600 viewport.
 func setupGizmo2DView(t *testing.T) {
 	t.Helper()
-	prevW, prevH := WinWidth, WinHeight
+	prevW, prevH := platform.WinWidth, platform.WinHeight
 	prevPan, prevZoom, prevPanel := Editor.Pan2D, Editor.Zoom2D, Editor.PanelWidth
-	WinWidth, WinHeight = 800, 600
+	platform.WinWidth, platform.WinHeight = 800, 600
 	Editor.Pan2D = mgl32.Vec2{0, 0}
 	Editor.Zoom2D = 20
 	Editor.PanelWidth = 360
@@ -30,7 +31,7 @@ func setupGizmo2DView(t *testing.T) {
 	Editor.SnapToGrid = false
 	Editor.StepSize = 0.25
 	t.Cleanup(func() {
-		WinWidth, WinHeight = prevW, prevH
+		platform.WinWidth, platform.WinHeight = prevW, prevH
 		Editor.Pan2D, Editor.Zoom2D, Editor.PanelWidth = prevPan, prevZoom, prevPanel
 	})
 }

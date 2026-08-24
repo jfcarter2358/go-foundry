@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/platform"
 	"math"
 	"testing"
 
@@ -112,7 +113,7 @@ func TestEditorCamZoomPerMode(t *testing.T) {
 	}
 
 	editorSetFlyCam(true)
-	DeltaTime = 1.0 / 60
+	platform.DeltaTime = 1.0 / 60
 	before := Cam.Position
 	editorCamZoom(1)
 	moved := Cam.Position.Sub(before)

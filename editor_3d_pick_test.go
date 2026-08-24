@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/platform"
 	"math"
 	"testing"
 
@@ -26,12 +27,12 @@ func quadVerts(z, half float32) []float32 {
 // setupPickCamera points the camera down -Z from the origin and returns the
 // centre pixel, which therefore casts a ray straight down -Z.
 func setupPickCamera() (int32, int32) {
-	WinWidth, WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	platform.WinWidth, platform.WinHeight = 800, 600
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	Cam.Position = mgl32.Vec3{0, 0, 0}
 	Cam.Direction = mgl32.Vec3{0, 0, -1}
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, -1}, mgl32.Vec3{0, 1, 0})
-	return WinWidth / 2, WinHeight / 2
+	return platform.WinWidth / 2, platform.WinHeight / 2
 }
 
 func TestPickGeometryTReturnsNearestTriangle(t *testing.T) {
@@ -117,8 +118,8 @@ func TestPick3DClosestWins(t *testing.T) {
 // TestPick3DFloorAndCeiling checks that a floor and a ceiling are picked
 // separately, each resolving to its own sector face.
 func TestPick3DFloorAndCeiling(t *testing.T) {
-	WinWidth, WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	platform.WinWidth, platform.WinHeight = 800, 600
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	Cam.Position = mgl32.Vec3{0, 2, 0}
 
 	sector := Sector{ID: "s0"}
@@ -145,7 +146,7 @@ func TestPick3DFloorAndCeiling(t *testing.T) {
 	defer func() { Editor.level = prevLevel }()
 	Editor.level = &Level{Chunks: []Chunk{{ID: "c0", Sectors: []Sector{sector}}}}
 
-	mx, my := WinWidth/2, WinHeight/2
+	mx, my := platform.WinWidth/2, platform.WinHeight/2
 
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(mgl32.Vec3{0, -1, 0}), mgl32.Vec3{0, 0, -1})
 	if hit := pick3D(mx, my); hit.kind != pickFloor {
@@ -162,8 +163,8 @@ func TestPick3DFloorAndCeiling(t *testing.T) {
 // walks through every vertex under the cursor and wraps around. Two sectors
 // share chunk point 0, so its floor handle is really two candidates.
 func TestVertexHandleCycling(t *testing.T) {
-	WinWidth, WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	platform.WinWidth, platform.WinHeight = 800, 600
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	Cam.Position = mgl32.Vec3{0, 1, 6}
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 
@@ -242,8 +243,8 @@ func TestVertexHandleCycling(t *testing.T) {
 // TestVertexHandleRangeLimit checks that vertices beyond vertexHandleMaxDist get
 // no handle, so distant geometry cannot hijack a click.
 func TestVertexHandleRangeLimit(t *testing.T) {
-	WinWidth, WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	platform.WinWidth, platform.WinHeight = 800, 600
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 
 	sector := Sector{ID: "s0", PointIndices: []int{0}}
 	far := vertexHandleMaxDist * 3
@@ -258,7 +259,7 @@ func TestVertexHandleRangeLimit(t *testing.T) {
 	// In range: camera a few units away from the point.
 	Cam.Position = mgl32.Vec3{0, 0, -far + 5}
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, -far}, mgl32.Vec3{0, 1, 0})
-	mx, my := WinWidth/2, WinHeight/2
+	mx, my := platform.WinWidth/2, platform.WinHeight/2
 	if _, ok := pickVertexHandle(mx, my); !ok {
 		t.Fatal("vertex within range was not pickable")
 	}

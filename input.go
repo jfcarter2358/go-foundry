@@ -1,6 +1,8 @@
 package main
 
 import (
+	"foundry/internal/platform"
+
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
@@ -9,26 +11,26 @@ import (
 // RefreshWindowSize updates all engine state that depends on the window
 // dimensions: viewport, projection matrix, half-width/height, and mouse warp.
 func RefreshWindowSize() {
-	WinWidth, WinHeight = Window.GetSize()
-	WinHalfWidth = WinWidth / 2
-	WinHalfHeight = WinHeight / 2
-	gl.Viewport(0, 0, WinWidth, WinHeight)
-	if WinHeight < 1 {
-		WinHeight = 1
+	platform.WinWidth, platform.WinHeight = platform.Window.GetSize()
+	platform.WinHalfWidth = platform.WinWidth / 2
+	platform.WinHalfHeight = platform.WinHeight / 2
+	gl.Viewport(0, 0, platform.WinWidth, platform.WinHeight)
+	if platform.WinHeight < 1 {
+		platform.WinHeight = 1
 	}
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	gl.UniformMatrix4fv(ProjectionUniform, 1, false, &Projection[0])
 	if Cam.MouseLock {
-		Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
+		platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
 	}
 }
 
 // ToggleFullscreen switches between windowed and borderless fullscreen.
 func ToggleFullscreen() {
-	if Window.GetFlags()&sdl.WINDOW_FULLSCREEN_DESKTOP != 0 {
-		Window.SetFullscreen(uint32(0))
+	if platform.Window.GetFlags()&sdl.WINDOW_FULLSCREEN_DESKTOP != 0 {
+		platform.Window.SetFullscreen(uint32(0))
 	} else {
-		Window.SetFullscreen(uint32(sdl.WINDOW_FULLSCREEN_DESKTOP))
+		platform.Window.SetFullscreen(uint32(sdl.WINDOW_FULLSCREEN_DESKTOP))
 	}
 	RefreshWindowSize()
 }
@@ -36,7 +38,7 @@ func ToggleFullscreen() {
 func HandleEvent(event sdl.Event) {
 	switch t := event.(type) {
 	case sdl.QuitEvent:
-		Running = false
+		platform.Running = false
 
 	case sdl.MouseMotionEvent:
 		if !Cam.MouseLock {
@@ -47,13 +49,13 @@ func HandleEvent(event sdl.Event) {
 		// generates another MOUSEMOTION event whose position IS the centre
 		// (dx==0, dy==0), so we skip it here.  This avoids every pitfall of
 		// SDL relative-mouse mode on X11/WSL2.
-		dx := t.X - WinHalfWidth
-		dy := t.Y - WinHalfHeight
+		dx := t.X - platform.WinHalfWidth
+		dy := t.Y - platform.WinHalfHeight
 		if dx == 0 && dy == 0 {
 			break
 		}
-		Cam.Yaw += MouseRotationSpeed * float32(dx)
-		Cam.Pitch -= MouseRotationSpeed * float32(dy)
+		Cam.Yaw += platform.MouseRotationSpeed * float32(dx)
+		Cam.Pitch -= platform.MouseRotationSpeed * float32(dy)
 		if Cam.Pitch > maxPitch {
 			Cam.Pitch = maxPitch
 		}
@@ -66,7 +68,7 @@ func HandleEvent(event sdl.Event) {
 		Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
 		gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
 		// Return cursor to centre for next delta measurement.
-		Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
+		platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
 
 	case sdl.WindowEvent:
 		// A secondary UIWindow (texture editor, etc.) reports its own size/
@@ -74,7 +76,7 @@ func HandleEvent(event sdl.Event) {
 		// viewport and mouse-capture state. Its own close/resize/redraw are
 		// handled by RouteWindowEvent (window.go) before HandleEvent ever
 		// sees them — see the dispatch in main.go.
-		if mw, err := Window.GetID(); err != nil || t.WindowID != mw {
+		if mw, err := platform.Window.GetID(); err != nil || t.WindowID != mw {
 			break
 		}
 		switch t.Event {
@@ -108,8 +110,8 @@ func HandleEvent(event sdl.Event) {
 			case sdl.SCANCODE_GRAVE: // tilde (~) key toggles level editor
 				EditorToggle()
 			case sdl.SCANCODE_SPACE:
-				if !Editor.Active && GravityEnabled && IsOnGround {
-					JumpRequested = true
+				if !Editor.Active && platform.GravityEnabled && platform.IsOnGround {
+					platform.JumpRequested = true
 				}
 			case sdl.SCANCODE_F3:
 				DebugToggle()
@@ -132,14 +134,14 @@ func HandleEvent(event sdl.Event) {
 				// per-instance shadows — see BiomeShadowSettings.CastLODTiers.
 				BiomeShadows.CastLODTiers = BiomeShadows.CastLODTiers%3 + 1
 			case sdl.SCANCODE_F10:
-				// Window-level multisample anti-aliasing — see antialias.go.
+				// platform.Window-level multisample anti-aliasing — see antialias.go.
 				ToggleAntiAlias()
 			case sdl.SCANCODE_0:
 				if !Editor.Active {
-					GravityEnabled = !GravityEnabled
-					if !GravityEnabled {
-						IsOnGround = false
-						JumpRequested = false
+					platform.GravityEnabled = !platform.GravityEnabled
+					if !platform.GravityEnabled {
+						platform.IsOnGround = false
+						platform.JumpRequested = false
 					}
 				}
 			case sdl.SCANCODE_8:

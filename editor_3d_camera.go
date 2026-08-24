@@ -18,6 +18,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/platform"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -80,8 +81,8 @@ func editorCamEnter() {
 // change either way, and editorApplyCamAngles decides whether that turns the
 // head or swings the eye.
 func editorCamLook(dx, dy int32) {
-	Cam.Yaw += MouseRotationSpeed * float32(dx)
-	Cam.Pitch -= MouseRotationSpeed * float32(dy)
+	Cam.Yaw += platform.MouseRotationSpeed * float32(dx)
+	Cam.Pitch -= platform.MouseRotationSpeed * float32(dy)
 	Cam.Pitch = geom.ClampValue(Cam.Pitch, -maxPitch, maxPitch)
 	editorApplyCamAngles()
 }
@@ -128,9 +129,9 @@ func editorCamZoom(wheelY int32) {
 		return
 	}
 	if editorCam3D.Fly {
-		speed := MovementSpeed * DeltaTime * 60
+		speed := platform.MovementSpeed * platform.DeltaTime * 60
 		if speed <= 0 {
-			speed = MovementSpeed
+			speed = platform.MovementSpeed
 		}
 		Cam.Position = Cam.Position.Add(Cam.Direction.Mul(float32(wheelY) * speed * 4))
 		editorApplyCamAngles()
@@ -172,9 +173,9 @@ func editorCamMove(f, u, r float32) {
 // same set of keys read against editorCamMove, so they slide the pivot instead
 // of the eye.
 func editorOrbitKeys(keyStates []uint8) {
-	dtScale := DeltaTime * 60.0
-	moveSpeed := MovementSpeed * dtScale
-	rotSpeed := KeyRotationSpeed * dtScale
+	dtScale := platform.DeltaTime * 60.0
+	moveSpeed := platform.MovementSpeed * dtScale
+	rotSpeed := platform.KeyRotationSpeed * dtScale
 
 	var f, u, r float32
 	if keyStates[sdl.SCANCODE_W] != 0 {

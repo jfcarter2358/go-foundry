@@ -7,7 +7,7 @@ package main
 // VAO/VBO/EBO here. imguiShaderProgram and imguiFontTexture (editor_imgui.go)
 // stay package globals since they ARE shared GL objects, reused by every
 // window's renderer, and every imgui.Context shares the same default font
-// atlas (imgui-go v4 Context.go), so a secondary context's font glyphs sample
+// atlas (imgui-go v4 platform.Context.go), so a secondary context's font glyphs sample
 // that same texture correctly.
 //
 // Frame order lives in main.go: the main window renders and swaps first,
@@ -17,6 +17,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/platform"
 	"log"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -57,7 +58,7 @@ type UIWindow struct {
 // directly.
 var uiWindows = map[uint32]*UIWindow{}
 
-// MainWindowID is the SDL window ID of Window, the primary game/editor window.
+// MainWindowID is the SDL window ID of platform.Window, the primary game/editor window.
 // Set once at startup; anything that has to tell the main window apart from a
 // secondary one (event routing, the F1 overlay) compares against it.
 var MainWindowID uint32
@@ -122,7 +123,7 @@ func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWind
 
 	// Hand control back to the main window's context/imgui context — the
 	// caller is typically mid-frame on the main loop.
-	Window.GLMakeCurrent(Context)
+	platform.Window.GLMakeCurrent(platform.Context)
 	imguiContext.SetCurrent()
 
 	return uw, nil
@@ -157,7 +158,7 @@ func CloseUIWindow(w *UIWindow) {
 	w.Win.Destroy()
 
 	// Restore the main context so whatever runs next in the frame is correct.
-	Window.GLMakeCurrent(Context)
+	platform.Window.GLMakeCurrent(platform.Context)
 	imguiContext.SetCurrent()
 }
 
@@ -203,7 +204,7 @@ func RenderSecondaryWindows(dt float32) {
 		}
 	}
 
-	Window.GLMakeCurrent(Context)
+	platform.Window.GLMakeCurrent(platform.Context)
 	imguiContext.SetCurrent()
 
 	// Deferred closes happen only now that every context has finished its
@@ -254,7 +255,7 @@ func RouteWindowEvent(event sdl.Event, mainWindowID uint32) bool {
 		// checks inside it refer to this window's UI, not the main one's.
 		w.HandleEvent(event)
 	}
-	Window.GLMakeCurrent(Context)
+	platform.Window.GLMakeCurrent(platform.Context)
 	imguiContext.SetCurrent()
 	return true
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/platform"
 	"math"
 	"testing"
 
@@ -11,8 +12,8 @@ import (
 // aims the camera at the origin from +Z, and returns the level. Ceilings sit at
 // y=3 so ceiling and vertical edges stay well away from the clicked pixels.
 func setupEdgePickScene(points []mgl32.Vec2, sectors ...[]int) *Level {
-	WinWidth, WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	platform.WinWidth, platform.WinHeight = 800, 600
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	Cam.Position = mgl32.Vec3{0, 1, 6}
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 
@@ -185,7 +186,7 @@ func TestEdgeHandleRangeLimit(t *testing.T) {
 	// Out of range: same screen position, camera far away.
 	Cam.Position = mgl32.Vec3{0, 1, 6}
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
-	if got := edgeHandlesInPrism(WinWidth/2, WinHeight/2); len(got) != 0 {
+	if got := edgeHandlesInPrism(platform.WinWidth/2, platform.WinHeight/2); len(got) != 0 {
 		t.Fatalf("edge %.0f units away was pickable (limit %.0f)", far, vertexHandleMaxDist)
 	}
 }
@@ -194,8 +195,8 @@ func TestEdgeHandleRangeLimit(t *testing.T) {
 // pulled back from both endpoints far enough to clear their handle boxes on
 // screen, and it is thinner across than one of those boxes.
 func TestEdgePrismTrimAndThickness(t *testing.T) {
-	WinWidth, WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	platform.WinWidth, platform.WinHeight = 800, 600
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	Cam.Position = mgl32.Vec3{0, 0, 6}
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 	projView := Projection.Mul4(Cam.Matrix)

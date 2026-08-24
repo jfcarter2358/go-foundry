@@ -29,6 +29,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/platform"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -329,11 +330,11 @@ func Surface2DRenderLabels() {
 		case "terrain":
 			hint = "Shift+click to place terrain points — Esc to stop"
 		}
-		drawList.AddText(imgui.Vec2{X: 10, Y: float32(WinHeight) - 30}, col, hint)
+		drawList.AddText(imgui.Vec2{X: 10, Y: float32(platform.WinHeight) - 30}, col, hint)
 	} else {
 		hint := "Shift+click: new extrusion | Drag: move points | MMB: pan | Scroll: zoom"
 		col := imgui.PackedColorFromVec4(imgui.Vec4{X: 0.7, Y: 0.7, Z: 0.7, W: 0.8})
-		drawList.AddText(imgui.Vec2{X: 10, Y: float32(WinHeight) - 30}, col, hint)
+		drawList.AddText(imgui.Vec2{X: 10, Y: float32(platform.WinHeight) - 30}, col, hint)
 	}
 }
 
@@ -563,8 +564,8 @@ func Surface2DPanel() {
 		return
 	}
 
-	imgui.SetNextWindowPos(imgui.Vec2{X: float32(WinWidth) - Editor.PanelWidth, Y: 28})
-	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: float32(WinHeight) - 28})
+	imgui.SetNextWindowPos(imgui.Vec2{X: float32(platform.WinWidth) - Editor.PanelWidth, Y: 28})
+	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: float32(platform.WinHeight) - 28})
 	imgui.BeginV("Surface Editor", nil, imgui.WindowFlagsNoMove|imgui.WindowFlagsNoResize)
 
 	ch, s := surfaceSector()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/platform"
 	"math"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -55,11 +56,11 @@ func applyMouseLock(lock bool) {
 	Cam.MouseLock = lock
 	if lock {
 		sdl.ShowCursor(sdl.DISABLE)
-		Window.SetGrab(true)
-		Window.WarpMouseInWindow(WinHalfWidth, WinHalfHeight)
+		platform.Window.SetGrab(true)
+		platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
 	} else {
 		sdl.ShowCursor(sdl.ENABLE)
-		Window.SetGrab(false)
+		platform.Window.SetGrab(false)
 	}
 }
 
@@ -127,11 +128,11 @@ const maxPitch = float32(math.Pi/2 - 0.01)
 // putting it in the application shell made the editor depend on the shell for
 // what is really a camera operation.
 func HandleInput(keyStates []uint8) {
-	// Scale movement and rotation by DeltaTime*60 so behavior is frame-rate independent
+	// Scale movement and rotation by platform.DeltaTime*60 so behavior is frame-rate independent
 	// while preserving the same feel as the original 60 FPS-tuned constants.
-	dtScale := DeltaTime * 60.0
-	moveSpeed := MovementSpeed * dtScale
-	rotSpeed := KeyRotationSpeed * dtScale
+	dtScale := platform.DeltaTime * 60.0
+	moveSpeed := platform.MovementSpeed * dtScale
+	rotSpeed := platform.KeyRotationSpeed * dtScale
 
 	fMove := float32(0.0)
 	uMove := float32(0.0)
@@ -150,13 +151,13 @@ func HandleInput(keyStates []uint8) {
 		rMove -= moveSpeed
 	}
 	if keyStates[sdl.SCANCODE_SPACE] != 0 {
-		if !GravityEnabled {
+		if !platform.GravityEnabled {
 			uMove += moveSpeed // free-fly up
 		}
 		// jump is handled via KEYDOWN event in HandleEvent
 	}
 	if keyStates[sdl.SCANCODE_LSHIFT] != 0 {
-		if !GravityEnabled {
+		if !platform.GravityEnabled {
 			uMove -= moveSpeed // free-fly down
 		}
 	}

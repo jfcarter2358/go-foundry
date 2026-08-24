@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"foundry/internal/geom"
+	"foundry/internal/platform"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -24,8 +25,8 @@ import (
 // given screen pixel (sx, sy) using the current projection and camera matrices.
 func screenRay(sx, sy int32) (origin, dir mgl32.Vec3) {
 	// NDC
-	ndcX := (float32(sx)/float32(WinWidth))*2.0 - 1.0
-	ndcY := 1.0 - (float32(sy)/float32(WinHeight))*2.0
+	ndcX := (float32(sx)/float32(platform.WinWidth))*2.0 - 1.0
+	ndcY := 1.0 - (float32(sy)/float32(platform.WinHeight))*2.0
 
 	// Unproject through inverse projection
 	invProj := Projection.Inv()
@@ -148,7 +149,7 @@ func rayCylinderRange(o, d, half mgl32.Vec3) (float32, float32, bool) {
 	c := ox*ox + oz*oz - 1
 	var t0, t1 float32
 	if a < 1e-12 {
-		// Running straight up the axis: the ray never crosses the side, so it
+		// platform.Running straight up the axis: the ray never crosses the side, so it
 		// is within the circle for its whole length or for none of it.
 		if c > 0 {
 			return 0, 0, false
@@ -647,8 +648,8 @@ func Editor3DPanel() {
 		return
 	}
 
-	imgui.SetNextWindowPos(imgui.Vec2{X: float32(WinWidth) - Editor.PanelWidth, Y: 28})
-	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: float32(WinHeight) - 28})
+	imgui.SetNextWindowPos(imgui.Vec2{X: float32(platform.WinWidth) - Editor.PanelWidth, Y: 28})
+	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: float32(platform.WinHeight) - 28})
 	imgui.BeginV("3D Editor", nil, imgui.WindowFlagsNoMove|imgui.WindowFlagsNoResize)
 
 	// ---- Grid settings ----

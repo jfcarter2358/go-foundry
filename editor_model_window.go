@@ -14,12 +14,13 @@ package main
 //   - a camera and projection: modelCam below, because the global Cam is being
 //     driven by the main window every frame;
 //   - a picking ray: modelCamera.ray, since screenRay (editor_3d.go) reads the
-//     main window's WinWidth/WinHeight/Projection globals;
+//     main window's platform.WinWidth/platform.WinHeight/Projection globals;
 //   - GL object ownership: see the header of editor_model_render.go.
 
 import (
 	"fmt"
 	"foundry/internal/geom"
+	"foundry/internal/platform"
 	"log"
 	"math"
 
@@ -69,7 +70,7 @@ var modelMouseX, modelMouseY int32
 //
 // Yaw and Pitch are the *look* direction in radians, the same convention as the
 // global Cam (camera.go), which is what lets fly mode reuse DirectionFromAngles
-// and the editor's own MouseRotationSpeed/maxPitch. Orbit derives the eye from
+// and the editor's own platform.MouseRotationSpeed/maxPitch. Orbit derives the eye from
 // them (eye = Target - look*Dist), so switching modes never jumps the view.
 type modelCamera struct {
 	Target mgl32.Vec3 // orbit pivot
@@ -176,8 +177,8 @@ func (c *modelCamera) frame(m *ModelDoc) {
 // look applies a mouse-look delta, using the editor's own sensitivity and pitch
 // clamp so flying here feels identical to flying in the 3D view.
 func (c *modelCamera) look(dx, dy int32) {
-	c.Yaw += MouseRotationSpeed * float32(dx)
-	c.Pitch -= MouseRotationSpeed * float32(dy)
+	c.Yaw += platform.MouseRotationSpeed * float32(dx)
+	c.Pitch -= platform.MouseRotationSpeed * float32(dy)
 	c.Pitch = geom.ClampValue(c.Pitch, -maxPitch, maxPitch)
 }
 
@@ -280,7 +281,7 @@ func drawModelEditorWindow() {
 	// Playback before the rebuild check, so the frame it advances to is the
 	// frame this same frame uploads — otherwise every pose would show one frame
 	// late.
-	modelPoseTick(DeltaTime)
+	modelPoseTick(platform.DeltaTime)
 
 	// Rebuild once per frame at most, however many edits landed since the last
 	// one. The surface editor rebuilds per mouse-motion event; at mesh sizes
@@ -330,13 +331,13 @@ func drawModelEditorWindow() {
 	modelDialogs()
 }
 
-// modelFlySpeed is the per-frame fly distance, scaled by DeltaTime the same way
+// modelFlySpeed is the per-frame fly distance, scaled by platform.DeltaTime the same way
 // HandleInput (input.go) scales the 3D view's, so the two feel alike. Holding
 // shift is the usual "go faster".
 func modelFlySpeed() float32 {
-	speed := MovementSpeed * DeltaTime * 60
+	speed := platform.MovementSpeed * platform.DeltaTime * 60
 	if speed <= 0 {
-		speed = MovementSpeed
+		speed = platform.MovementSpeed
 	}
 	return speed
 }
@@ -347,7 +348,7 @@ func modelFlySpeed() float32 {
 // without the check a W held here would also drive the main window's camera.
 // EditorTick makes the mirror-image check for the same reason.
 func modelEditorFly() {
-	if !modelCam.Fly || !modelEditorFocused() || KeyStates == nil {
+	if !modelCam.Fly || !modelEditorFocused() || platform.KeyStates == nil {
 		return
 	}
 	if imgui.CurrentIO().WantCaptureKeyboard() {
@@ -357,32 +358,32 @@ func modelEditorFly() {
 	// Ctrl is the "go faster" modifier here rather than Shift, because Shift is
 	// spoken for: it descends, the same as the gameplay fly camera (input.go)
 	// and the F1 reference, so up and down are the same two keys everywhere.
-	if KeyStates[sdl.SCANCODE_LCTRL] != 0 || KeyStates[sdl.SCANCODE_RCTRL] != 0 {
+	if platform.KeyStates[sdl.SCANCODE_LCTRL] != 0 || platform.KeyStates[sdl.SCANCODE_RCTRL] != 0 {
 		speed *= 4
 	}
 
 	var f, u, r float32
-	if KeyStates[sdl.SCANCODE_W] != 0 {
+	if platform.KeyStates[sdl.SCANCODE_W] != 0 {
 		f += speed
 	}
-	if KeyStates[sdl.SCANCODE_S] != 0 {
+	if platform.KeyStates[sdl.SCANCODE_S] != 0 {
 		f -= speed
 	}
 	// The 3D view's A/D map to +right/-right through MoveCamera's right vector,
 	// which points camera-left; matching it keeps the strafe direction the same
 	// in both windows.
-	if KeyStates[sdl.SCANCODE_A] != 0 {
+	if platform.KeyStates[sdl.SCANCODE_A] != 0 {
 		r += speed
 	}
-	if KeyStates[sdl.SCANCODE_D] != 0 {
+	if platform.KeyStates[sdl.SCANCODE_D] != 0 {
 		r -= speed
 	}
-	if KeyStates[sdl.SCANCODE_SPACE] != 0 {
+	if platform.KeyStates[sdl.SCANCODE_SPACE] != 0 {
 		u += speed
 	}
 	// Not while panning: Shift+MMB is the pan gesture, and the user holding it
 	// to drag the view is not also asking to sink.
-	if !modelPanning && (KeyStates[sdl.SCANCODE_LSHIFT] != 0 || KeyStates[sdl.SCANCODE_RSHIFT] != 0) {
+	if !modelPanning && (platform.KeyStates[sdl.SCANCODE_LSHIFT] != 0 || platform.KeyStates[sdl.SCANCODE_RSHIFT] != 0) {
 		u -= speed
 	}
 	modelCam.move(f, u, r)
@@ -693,7 +694,7 @@ func modelEditorHandleKey(t sdl.KeyboardEvent) {
 	case sdl.SCANCODE_TAB:
 		// Tab is "switch view" throughout the editor; the other view from here
 		// is the main window, so hand focus back to it.
-		Window.Raise()
+		platform.Window.Raise()
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/platform"
 	"math"
 	"testing"
 
@@ -11,8 +12,8 @@ import (
 // setupGizmoView aims the camera at the origin from +Z so all three axis arms
 // are well separated on screen, and returns the projection×view matrix.
 func setupGizmoView() mgl32.Mat4 {
-	WinWidth, WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	platform.WinWidth, platform.WinHeight = 800, 600
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	Cam.Position = mgl32.Vec3{4, 3, 8}
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
 	return Projection.Mul4(Cam.Matrix)
@@ -41,7 +42,7 @@ func TestAxisParamAtMouse(t *testing.T) {
 	// An axis pointing straight at the camera has no usable mapping.
 	Cam.Position = mgl32.Vec3{0, 0, 5}
 	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
-	if _, ok := axisParamAtMouse(origin, gizmoAxes[2], WinWidth/2, WinHeight/2); ok {
+	if _, ok := axisParamAtMouse(origin, gizmoAxes[2], platform.WinWidth/2, platform.WinHeight/2); ok {
 		t.Fatal("edge-on axis should be rejected")
 	}
 }
@@ -189,8 +190,8 @@ func TestGizmoKindIsModeScoped(t *testing.T) {
 // re-select whatever vertex or edge lies under the gizmo and drop the selection
 // the user was about to move.
 func TestGizmoArmClickAlwaysConsumes(t *testing.T) {
-	WinWidth, WinHeight = 800, 600
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	platform.WinWidth, platform.WinHeight = 800, 600
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	// Straight down the Z axis: the blue arm projects onto the gizmo origin, so
 	// clicking there grabs an axis that axisParamAtMouse has to reject.
 	Cam.Position = mgl32.Vec3{0, 0, 5}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"foundry/internal/platform"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -11,16 +12,16 @@ import (
 // selection afterwards.
 func objectPickTestSetup(t *testing.T) {
 	t.Helper()
-	prevZoom, prevW, prevH := Editor.Zoom2D, WinWidth, WinHeight
+	prevZoom, prevW, prevH := Editor.Zoom2D, platform.WinWidth, platform.WinHeight
 	prevSpawn := Editor.SpawnSelected
 	prevFocus, prevGizmo := Editor.PanelFocus, Editor.GizmoKind
 	// 60 px/unit → the 6 px minimum half-extent is 0.1 world units, well under
 	// the object sizes the cases below use.
 	Editor.Zoom2D = 60
-	WinWidth, WinHeight = 1280, 720
+	platform.WinWidth, platform.WinHeight = 1280, 720
 	Editor.SpawnSelected = false
 	t.Cleanup(func() {
-		Editor.Zoom2D, WinWidth, WinHeight = prevZoom, prevW, prevH
+		Editor.Zoom2D, platform.WinWidth, platform.WinHeight = prevZoom, prevW, prevH
 		Editor.SpawnSelected = prevSpawn
 		Editor.PanelFocus, Editor.GizmoKind = prevFocus, prevGizmo
 	})

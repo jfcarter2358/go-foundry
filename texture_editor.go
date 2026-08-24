@@ -6,7 +6,7 @@ package main
 // texture.go (RegisterTexture, QueueTextureUpload) and texture_alpha.go
 // (UpdateTextureHasAlpha) — none of which call into GL themselves, so every
 // function here is unit-testable without a display. The actual GL upload
-// happens later, when the main loop drains the queue (texture.go). Window
+// happens later, when the main loop drains the queue (texture.go). platform.Window
 // creation and imgui drawing live in texture_editor_ui.go.
 
 import (

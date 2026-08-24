@@ -1,4 +1,4 @@
-package main
+package platform
 
 // platform.go — the window, the GL context, the keyboard, and the clock.
 //
@@ -35,7 +35,7 @@ var Context sdl.GLContext
 // DeltaTime is the elapsed time in seconds since the last frame.
 // Clamped to [0.001, 0.05] to prevent physics instability.
 var DeltaTime float32 = 1.0 / 60.0
-var lastFrameTick uint32
+var LastFrameTick uint32
 
 // ---------- movement tuning and gravity state ----------
 //

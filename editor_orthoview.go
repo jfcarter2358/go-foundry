@@ -7,7 +7,11 @@ package main
 // lives here once as orthoView and each view's own functions (editor2DOrtho,
 // surfaceOrtho, etc.) just supply their own pan/zoom and delegate.
 
-import "github.com/go-gl/mathgl/mgl32"
+import (
+	"foundry/internal/platform"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
 
 // orthoView is a pan/zoom pair describing one orthographic top-down camera,
 // plus the pixel size of the surface it is drawn into.
@@ -26,7 +30,7 @@ func (v orthoView) size() (w, h float32) {
 	if v.viewW > 0 && v.viewH > 0 {
 		return v.viewW, v.viewH
 	}
-	return float32(WinWidth), float32(WinHeight)
+	return float32(platform.WinWidth), float32(platform.WinHeight)
 }
 
 // ortho returns the projection×view matrix for this view.

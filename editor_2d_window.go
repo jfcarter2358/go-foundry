@@ -22,6 +22,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/platform"
 	"log"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -47,7 +48,7 @@ func editor2DViewportSize() (w, h float32) {
 	if editor2DWindow != nil {
 		return float32(editor2DWindow.W), float32(editor2DWindow.H)
 	}
-	return float32(WinWidth), float32(WinHeight)
+	return float32(platform.WinWidth), float32(platform.WinHeight)
 }
 
 // Editor2DPoppedOut reports whether the 2D sector editor is open, which — now
@@ -110,7 +111,7 @@ func withEditor2DMode(fn func()) {
 	Editor.Mode = Mode2D
 	defer func() {
 		if Editor.Mode != Mode2D {
-			Window.Raise()
+			platform.Window.Raise()
 			return
 		}
 		Editor.Mode = prev
@@ -152,7 +153,7 @@ func withMainGLContext(fn func()) {
 		fn()
 		return
 	}
-	Window.GLMakeCurrent(Context)
+	platform.Window.GLMakeCurrent(platform.Context)
 	defer w.Win.GLMakeCurrent(w.GL)
 	fn()
 }
@@ -203,20 +204,20 @@ func drawEditor2DWindow() {
 // input entirely when the main window is unfocused, so the two never both act
 // on a keypress.
 func editor2DWindowPan() {
-	if !editor2DWindowFocused() || imgui.CurrentIO().WantCaptureKeyboard() || KeyStates == nil {
+	if !editor2DWindowFocused() || imgui.CurrentIO().WantCaptureKeyboard() || platform.KeyStates == nil {
 		return
 	}
 	panSpeed := float32(5.0) / Editor.Zoom2D * 10
-	if KeyStates[sdl.SCANCODE_W] != 0 {
+	if platform.KeyStates[sdl.SCANCODE_W] != 0 {
 		Editor.Pan2D[1] -= panSpeed
 	}
-	if KeyStates[sdl.SCANCODE_S] != 0 {
+	if platform.KeyStates[sdl.SCANCODE_S] != 0 {
 		Editor.Pan2D[1] += panSpeed
 	}
-	if KeyStates[sdl.SCANCODE_A] != 0 {
+	if platform.KeyStates[sdl.SCANCODE_A] != 0 {
 		Editor.Pan2D[0] -= panSpeed
 	}
-	if KeyStates[sdl.SCANCODE_D] != 0 {
+	if platform.KeyStates[sdl.SCANCODE_D] != 0 {
 		Editor.Pan2D[0] += panSpeed
 	}
 }

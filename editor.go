@@ -8,12 +8,13 @@ package main
 //
 // Mode2D — the top-down sector map — is no longer one of the main window's
 // views. It lives in a window of its own (editor_2d_window.go), opened from
-// the toolbar's "2D Window" button, and is only ever the current mode inside
+// the toolbar's "2D platform.Window" button, and is only ever the current mode inside
 // that window's withEditor2DMode brackets.
 //
 // The editor owns all input while active; normal gameplay logic is bypassed.
 
 import (
+	"foundry/internal/platform"
 	"math"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -403,14 +404,14 @@ const panelMinWidth float32 = 250
 
 // panelLeftEdgeX returns the screen X coordinate of the panel's left edge.
 func panelLeftEdgeX() int32 {
-	return int32(float32(WinWidth) - Editor.PanelWidth)
+	return int32(float32(platform.WinWidth) - Editor.PanelWidth)
 }
 
 // panelHandleResize checks SDL mouse events for drag-resizing the main
 // window's side panel. Returns true if the event was consumed by the resize
 // handle.
 func panelHandleResize(event sdl.Event) bool {
-	return panelHandleResizeAt(event, WinWidth)
+	return panelHandleResizeAt(event, platform.WinWidth)
 }
 
 // panelHandleResizeAt is panelHandleResize against a window of width viewW —
@@ -484,7 +485,7 @@ func EditorToggle() {
 		PlaySessionBegin(Editor.level)
 		ScriptRuntimeLoad(Editor.level)
 		ScriptEventsReset()
-		GravityEnabled = true
+		platform.GravityEnabled = true
 		Editor.Active = false
 		Editor.Mode = ModeGame
 	} else {
@@ -507,9 +508,9 @@ func EditorToggle() {
 		}
 		ScriptRuntimeReset(Editor.level)
 		ScriptEventsReset()
-		GravityEnabled = false
-		IsOnGround = false
-		JumpRequested = false
+		platform.GravityEnabled = false
+		platform.IsOnGround = false
+		platform.JumpRequested = false
 
 		Editor.Active = true
 		Editor.Mode = Mode3D
@@ -746,7 +747,7 @@ func EditorTick(keyStates []uint8) {
 	// sdl.GetKeyboardState is global, not per-window: without this, typing in
 	// a secondary window (the texture editor, the popped-out 2D editor) would
 	// also fly the main window's camera.
-	if Window.GetFlags()&sdl.WINDOW_INPUT_FOCUS == 0 {
+	if platform.Window.GetFlags()&sdl.WINDOW_INPUT_FOCUS == 0 {
 		return
 	}
 
@@ -761,8 +762,8 @@ func EditorTick(keyStates []uint8) {
 		}
 
 		// Apply navigation button movement
-		dtScale := DeltaTime * 60.0
-		navSpeed := MovementSpeed * dtScale
+		dtScale := platform.DeltaTime * 60.0
+		navSpeed := platform.MovementSpeed * dtScale
 		if Editor.NavForward {
 			editorNavMove(Editor.Mode, navSpeed, 0, 0)
 		}
@@ -798,7 +799,7 @@ func EditorTick(keyStates []uint8) {
 func EditorRender() {
 	editorSyncMainWindowMode()
 
-	dt := DeltaTime
+	dt := platform.DeltaTime
 
 	// Which handles the camera can see is answered once per frame and cached
 	// for the rest of it, including the clicks that land before the next one

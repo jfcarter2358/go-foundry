@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/platform"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -214,7 +215,7 @@ func EditorDirLightIndicator() {
 
 	const pad float32 = 12
 	sz := dirLightIndicatorSize
-	x1 := float32(WinWidth) - Editor.PanelWidth - pad
+	x1 := float32(platform.WinWidth) - Editor.PanelWidth - pad
 	x0 := x1 - sz
 	y0 := 28 + pad
 	y1 := y0 + sz + 46 // extra room for the title, elevation view, and readout

@@ -18,6 +18,7 @@ package main
 
 import (
 	"foundry/internal/geom"
+	"foundry/internal/platform"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -142,8 +143,8 @@ func ApplySpawnPoint(lvl *Level) bool {
 	}
 	// Spawning mid-air is legitimate (a marker over a ledge), so let gravity
 	// re-establish ground contact rather than asserting it here.
-	IsOnGround = false
-	JumpRequested = false
+	platform.IsOnGround = false
+	platform.JumpRequested = false
 	return true
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"foundry/internal/fileutil"
+	"foundry/internal/platform"
 	_ "image/png"
 	"io"
 	"log"
@@ -99,22 +100,22 @@ func main() {
 	// part of the pixel format, so it has to be settled here and can't change
 	// afterwards. See antialias.go for why this is window-level MSAA rather
 	// than an offscreen resolve pass, and why the request is tiered.
-	Window, Context, err = CreateAntiAliasedWindow(WinTitle, WinWidth, WinHeight,
+	platform.Window, platform.Context, err = CreateAntiAliasedWindow(platform.WinTitle, platform.WinWidth, platform.WinHeight,
 		sdl.WINDOW_OPENGL|sdl.WINDOW_RESIZABLE)
 	if err != nil {
 		log.Fatalf("CreateAntiAliasedWindow: %v", err)
 	}
-	defer Window.Destroy()
-	defer sdl.GLDeleteContext(Context)
+	defer platform.Window.Destroy()
+	defer sdl.GLDeleteContext(platform.Context)
 	// The window manager can hand back a size other than the one requested
 	// above (scaling, tiling, a size clamped to the display); pick up what we
 	// actually got so the viewport/projection setup below uses the real one.
 	// F11 (ToggleFullscreen, input.go) still switches to borderless fullscreen.
-	WinWidth, WinHeight = Window.GetSize()
-	WinHalfWidth = WinWidth / 2
-	WinHalfHeight = WinHeight / 2
-	if MainWindowID, err = Window.GetID(); err != nil {
-		log.Fatalf("Window.GetID: %v", err)
+	platform.WinWidth, platform.WinHeight = platform.Window.GetSize()
+	platform.WinHalfWidth = platform.WinWidth / 2
+	platform.WinHalfHeight = platform.WinHeight / 2
+	if MainWindowID, err = platform.Window.GetID(); err != nil {
+		log.Fatalf("platform.Window.GetID: %v", err)
 	}
 
 	if err = gl.Init(); err != nil {
@@ -142,7 +143,7 @@ func main() {
 	gl.ClearColor(0.2, 0.2, 0.3, 1.0)
 	gl.ClearDepth(1)
 	gl.DepthFunc(gl.LEQUAL)
-	gl.Viewport(0, 0, int32(WinWidth), int32(WinHeight))
+	gl.Viewport(0, 0, int32(platform.WinWidth), int32(platform.WinHeight))
 
 	// [SCENARIO 4] Check that shader files actually exist on disk before
 	// attempting to load them — catches stale/missing dist files immediately.
@@ -174,7 +175,7 @@ func main() {
 		log.Fatalf("InitShadows: %v", err)
 	}
 
-	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	ProjectionUniform = gl.GetUniformLocation(Program, gl.Str("projection\x00"))
 	gl.UniformMatrix4fv(ProjectionUniform, 1, false, &Projection[0])
 
@@ -254,18 +255,18 @@ func main() {
 	sdl.PumpEvents()
 	for e := sdl.PollEvent(); e != nil; e = sdl.PollEvent() {
 	}
-	lastFrameTick = sdl.GetTicks()
+	platform.LastFrameTick = sdl.GetTicks()
 
-	for Running {
+	for platform.Running {
 		// Compute delta time (seconds), clamped to avoid spiral-of-death
 		now := sdl.GetTicks()
-		DeltaTime = float32(now-lastFrameTick) / 1000.0
-		lastFrameTick = now
-		if DeltaTime < 0.001 {
-			DeltaTime = 0.001
+		platform.DeltaTime = float32(now-platform.LastFrameTick) / 1000.0
+		platform.LastFrameTick = now
+		if platform.DeltaTime < 0.001 {
+			platform.DeltaTime = 0.001
 		}
-		if DeltaTime > 0.05 {
-			DeltaTime = 0.05
+		if platform.DeltaTime > 0.05 {
+			platform.DeltaTime = 0.05
 		}
 
 		sdl.PumpEvents()
@@ -291,18 +292,18 @@ func main() {
 			HandleEvent(event)
 		}
 
-		KeyStates = sdl.GetKeyboardState()
+		platform.KeyStates = sdl.GetKeyboardState()
 
 		// geom.Point the F1 reference at the focused window before anything draws.
 		KeybindHelpUpdateFocus(MainWindowID)
 
 		if Editor.Active {
 			// Editor owns camera and input; gameplay logic is bypassed.
-			EditorTick(KeyStates)
+			EditorTick(platform.KeyStates)
 		} else {
 			// --- Input: let HandleInput update Cam.Position normally ---
 			preMovePos := Cam.Position
-			HandleInput(KeyStates)
+			HandleInput(platform.KeyStates)
 
 			// --- Player entity update + collision ---
 			if PlayerEntity != nil {
@@ -311,19 +312,19 @@ func main() {
 
 				// Apply pending jump impulse before gravity so the jump
 				// frame isn't immediately reduced by one tick of gravity.
-				if JumpRequested {
-					PlayerEntity.Velocity[1] = JumpVelocity
-					JumpRequested = false
-					IsOnGround = false
+				if platform.JumpRequested {
+					PlayerEntity.Velocity[1] = platform.JumpVelocity
+					platform.JumpRequested = false
+					platform.IsOnGround = false
 				}
 
 				// Apply gravity: accelerate downward, clamp to terminal velocity.
-				// Scale by DeltaTime*60 to normalize to 60 FPS baseline.
-				dtScale := DeltaTime * 60.0
-				if GravityEnabled {
-					PlayerEntity.Velocity[1] -= GravityAccel * dtScale
-					if PlayerEntity.Velocity[1] < -MaxFallSpeed {
-						PlayerEntity.Velocity[1] = -MaxFallSpeed
+				// Scale by platform.DeltaTime*60 to normalize to 60 FPS baseline.
+				dtScale := platform.DeltaTime * 60.0
+				if platform.GravityEnabled {
+					PlayerEntity.Velocity[1] -= platform.GravityAccel * dtScale
+					if PlayerEntity.Velocity[1] < -platform.MaxFallSpeed {
+						PlayerEntity.Velocity[1] = -platform.MaxFallSpeed
 					}
 				}
 				newPlayerPos[1] += PlayerEntity.Velocity[1] * dtScale
@@ -336,12 +337,12 @@ func main() {
 				hitFloor, hitCeiling := ResolveFloorCollision(PlayerEntity, chunk, sector, &newPlayerPos)
 
 				// Landing/bonk: reset vertical velocity on floor or ceiling contact.
-				if GravityEnabled {
+				if platform.GravityEnabled {
 					if hitFloor {
 						PlayerEntity.Velocity[1] = 0
-						IsOnGround = true
+						platform.IsOnGround = true
 					} else {
-						IsOnGround = false
+						platform.IsOnGround = false
 					}
 					if hitCeiling && PlayerEntity.Velocity[1] > 0 {
 						PlayerEntity.Velocity[1] = 0
@@ -378,10 +379,10 @@ func main() {
 			playerPosBefore = PlayerEntity.Position
 			PlayerEntity.Collision.OnGround = false
 		}
-		EntityUpdate(&level, DeltaTime, !Editor.Active, PlayerEntity)
+		EntityUpdate(&level, platform.DeltaTime, !Editor.Active, PlayerEntity)
 		if !Editor.Active && PlayerEntity != nil {
 			if PlayerEntity.Collision.OnGround {
-				IsOnGround = true
+				platform.IsOnGround = true
 			}
 			// Being pushed out of a solid entity happens after the camera was
 			// placed on the player above, so put it back where the player now
@@ -397,13 +398,13 @@ func main() {
 		// frame's overlaps produce this frame's `enter`, and whatever a handler
 		// writes lands before the frame draws. `!Editor.Active` is the same play
 		// gate EntityUpdate takes.
-		ScriptTick(&level, DeltaTime, !Editor.Active)
+		ScriptTick(&level, platform.DeltaTime, !Editor.Active)
 
 		// --- Debug stats: update CPU & memory ---
 		DebugUpdateCPU()
 		DebugUpdateMemory()
-		DebugStats.FPS = 1.0 / DeltaTime
-		DebugStats.FrameTimeMs = DeltaTime * 1000.0
+		DebugStats.FPS = 1.0 / platform.DeltaTime
+		DebugStats.FrameTimeMs = platform.DeltaTime * 1000.0
 		DebugStats.ChunksLoaded = len(level.Chunks)
 		DebugStats.SectorsLoaded = totalSectors
 
@@ -702,17 +703,17 @@ func main() {
 		// independent of the editor — when it is active, EditorRender has
 		// already drawn them inside its own frame).
 		if (DebugOverlayVisible || KeybindHelpVisibleIn(MainWindowID)) && !Editor.Active {
-			ImGuiNewFrame(DeltaTime)
+			ImGuiNewFrame(platform.DeltaTime)
 			DebugRenderOverlay()
 			KeybindHelpRender()
 			ImGuiRender()
 		}
 
-		Window.GLSwap()
+		platform.Window.GLSwap()
 
 		// Secondary windows (texture editor, etc.) render last, each in its
 		// own GL/imgui context, restoring the main ones before the next
 		// iteration touches world GL state again.
-		RenderSecondaryWindows(DeltaTime)
+		RenderSecondaryWindows(platform.DeltaTime)
 	}
 }

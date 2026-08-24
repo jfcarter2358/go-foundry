@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"foundry/internal/platform"
 	"unsafe"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -114,8 +115,8 @@ func ImGuiShutdown() {
 func ImGuiNewFrame(dt float32) {
 	io := imgui.CurrentIO()
 	gx, gy, mbuttons := sdl.GetGlobalMouseState()
-	wx, wy := Window.GetPosition()
-	imguiNewFrameCommon(io, float32(gx-wx), float32(gy-wy), mbuttons, WinWidth, WinHeight, dt)
+	wx, wy := platform.Window.GetPosition()
+	imguiNewFrameCommon(io, float32(gx-wx), float32(gy-wy), mbuttons, platform.WinWidth, platform.WinHeight, dt)
 }
 
 // imguiNewFrameCommon applies display size, delta time and mouse state to io
@@ -264,7 +265,7 @@ func imguiDestroyDeviceObjects() {
 // whichever window's context is currently current, using that window's own
 // vao/vbo/ebo (VAOs are never shared across GL contexts). Framebuffer size
 // comes from drawData itself (set via io.SetDisplaySize before NewFrame), not
-// from WinWidth/WinHeight, so this already works unmodified for a secondary
+// from platform.WinWidth/platform.WinHeight, so this already works unmodified for a secondary
 // window — only the vertex array/buffer objects need to vary per window.
 func imguiRenderDrawData(drawData imgui.DrawData, vao, vbo, ebo uint32) {
 	if !drawData.Valid() {

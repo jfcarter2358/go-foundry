@@ -15,6 +15,7 @@ package main
 // ctrl+click selects all of them at once.
 
 import (
+	"foundry/internal/platform"
 	"math"
 	"sort"
 
@@ -314,7 +315,7 @@ func pickSurfaceT(origin, dir mgl32.Vec3, ch *Chunk, s *Sector, geo *Geometry,
 // prebuilt projection×view matrix. ok is false when the point is behind the
 // camera. (worldToScreen is the 2D editor's top-down map transform — unrelated.)
 func projectToScreen(projView mgl32.Mat4, p mgl32.Vec3) (mgl32.Vec2, bool) {
-	return projectToScreenIn(projView, p, WinWidth, WinHeight)
+	return projectToScreenIn(projView, p, platform.WinWidth, platform.WinHeight)
 }
 
 // projectToScreenIn is projectToScreen against an explicit viewport size, for
@@ -337,7 +338,7 @@ func projectToScreenIn(projView mgl32.Mat4, p mgl32.Vec3, viewW, viewH int32) (m
 // pixels vertically at point p, so a gizmo drawn with it keeps a constant
 // on-screen size regardless of distance.
 func worldSizeForPixels(p mgl32.Vec3, halfPx float32) float32 {
-	return worldSizeForPixelsIn(p, Cam.Position, halfPx, Projection.At(1, 1), WinHeight)
+	return worldSizeForPixelsIn(p, Cam.Position, halfPx, Projection.At(1, 1), platform.WinHeight)
 }
 
 // worldSizeForPixelsIn is worldSizeForPixels against an explicit camera,

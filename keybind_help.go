@@ -10,6 +10,8 @@ package main
 // keybindings.go fills the table in.
 
 import (
+	"foundry/internal/platform"
+
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -147,7 +149,7 @@ func KeybindHelpRender() {
 	if !KeybindHelpVisibleIn(MainWindowID) {
 		return
 	}
-	keybindHelpRender(float32(WinWidth), float32(WinHeight))
+	keybindHelpRender(float32(platform.WinWidth), float32(platform.WinHeight))
 }
 
 // KeybindHelpRenderInWindow draws the overlay inside a secondary window's
