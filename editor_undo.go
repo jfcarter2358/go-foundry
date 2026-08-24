@@ -13,6 +13,7 @@ package main
 // same path already used by "Open Level".
 
 import (
+	"foundry/internal/levelio"
 	"foundry/internal/script"
 	"foundry/internal/world"
 
@@ -71,7 +72,7 @@ func EditorPushUndo() {
 	if Editor.level == nil {
 		return
 	}
-	raw, err := levelToRaw(Editor.level)
+	raw, err := levelio.LevelToRaw(Editor.level)
 	if err != nil {
 		return
 	}
@@ -98,7 +99,7 @@ func EditorUndo() {
 	if Editor.level == nil || levelUndoStack.len() == 0 {
 		return
 	}
-	if cur, err := levelToRaw(Editor.level); err == nil {
+	if cur, err := levelio.LevelToRaw(Editor.level); err == nil {
 		levelRedoStack.push(cur)
 	}
 	prev, _ := levelUndoStack.pop()
@@ -113,7 +114,7 @@ func EditorRedo() {
 	if Editor.level == nil || levelRedoStack.len() == 0 {
 		return
 	}
-	if cur, err := levelToRaw(Editor.level); err == nil {
+	if cur, err := levelio.LevelToRaw(Editor.level); err == nil {
 		levelUndoStack.push(cur)
 	}
 	next, _ := levelRedoStack.pop()
@@ -174,7 +175,7 @@ func editorResetSelectionState() {
 // restoreLevelSnapshot applies an undo/redo snapshot: rebuild the level, put the
 // player on the restored spawn, and clear the editor's selection.
 func restoreLevelSnapshot(raw world.RawLevel) {
-	if err := applyRawLevel(raw, Editor.level); err != nil {
+	if err := levelio.ApplyRawLevel(raw, Editor.level); err != nil {
 		return
 	}
 	// The player is engine-owned and survives the snapshot swap; only its

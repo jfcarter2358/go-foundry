@@ -1,4 +1,4 @@
-package main
+package levelio
 
 // level_migration_test.go — edge IDs across the YAML round trip.
 //

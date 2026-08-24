@@ -1,4 +1,4 @@
-package main
+package levelio
 
 import (
 	"foundry/internal/script"
@@ -25,7 +25,7 @@ func PlaySessionBegin(lvl *world.Level) {
 	if lvl == nil {
 		return
 	}
-	raw, err := levelToRaw(lvl)
+	raw, err := LevelToRaw(lvl)
 	if err != nil {
 		// Without a snapshot there is no way back, so the honest thing is to
 		// say so rather than to let a script write into an unprotected level.
@@ -53,7 +53,7 @@ func PlaySessionEnd(lvl *world.Level) (restored bool) {
 	if lvl == nil || !script.PlaySession.Valid || !script.PlaySession.Dirty {
 		return false
 	}
-	if err := applyRawLevel(script.PlaySession.Authored, lvl); err != nil {
+	if err := ApplyRawLevel(script.PlaySession.Authored, lvl); err != nil {
 		script.ScriptLog.Errorf("", "could not restore the level after play: %v", err)
 		return false
 	}

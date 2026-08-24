@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"foundry/internal/fileutil"
 	"foundry/internal/imguibackend"
+	"foundry/internal/levelio"
 	"foundry/internal/world"
 	"path/filepath"
 
@@ -169,7 +170,7 @@ func editorChunkPopups(lvl *world.Level) {
 		if imgui.Button("Save") && Editor.SaveChunkName != "" {
 			ch := &lvl.Chunks[Editor.ActiveChunkIdx]
 			path := filepath.Join(fileutil.ExecutablePath, "chunks", Editor.SaveChunkName+".yaml")
-			if err := SaveChunk(ch, path); err != nil {
+			if err := levelio.SaveChunk(ch, path); err != nil {
 				Editor.StatusMsg = fmt.Sprintf("Save chunk error: %v", err)
 			} else {
 				Editor.StatusMsg = fmt.Sprintf("Saved chunk to %s", path)
@@ -217,7 +218,7 @@ func editorChunkPopups(lvl *world.Level) {
 			if imgui.Button("Import") {
 				EditorPushUndo()
 				path := filepath.Join(fileutil.ExecutablePath, "chunks", Editor.ImportChunkFiles[Editor.ImportChunkIdx])
-				chunkID, err := ImportChunkIntoLevel(lvl, path)
+				chunkID, err := levelio.ImportChunkIntoLevel(lvl, path)
 				if err != nil {
 					Editor.StatusMsg = fmt.Sprintf("Import error: %v", err)
 				} else {

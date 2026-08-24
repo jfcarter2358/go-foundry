@@ -1,4 +1,4 @@
-package main
+package levelio
 
 // smooth_save_test.go — smoothing and detail settings as *authored* data.
 //

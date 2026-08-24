@@ -1,4 +1,4 @@
-package main
+package levelio
 
 // level_save.go — serialise a runtime Level back to YAML.
 //
@@ -48,7 +48,7 @@ func WriteBlankLevel(path string) error {
 // validated before anything touches the filesystem: a level that would not load
 // back correctly is never written, so a bad save cannot destroy a good file.
 func SaveLevel(level *world.Level, path string) error {
-	raw, err := levelToRaw(level)
+	raw, err := LevelToRaw(level)
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func SaveLevel(level *world.Level, path string) error {
 }
 
 // levelToRaw converts the runtime Level into its serialisable form.
-func levelToRaw(level *world.Level) (world.RawLevel, error) {
+func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 	var raw world.RawLevel
 
 	for ci := range level.Chunks {
@@ -697,7 +697,7 @@ func ImportChunkIntoLevel(lvl *world.Level, path string) (string, error) {
 // this and nothing else: undo, redo, and the end of a play session
 // (script_play.go). The parts they do *not* share — resetting the editor's
 // selection, and moving the player to the spawn — are the caller's to decide.
-func applyRawLevel(raw world.RawLevel, lvl *world.Level) error {
+func ApplyRawLevel(raw world.RawLevel, lvl *world.Level) error {
 	newLevel, err := rawToLevel(raw)
 	if err != nil {
 		return err

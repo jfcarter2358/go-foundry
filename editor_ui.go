@@ -12,6 +12,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
+	"foundry/internal/levelio"
 	"foundry/internal/model"
 	"foundry/internal/platform"
 	"foundry/internal/world"
@@ -869,14 +870,14 @@ func EditorDrawUI() {
 	imgui.SameLine()
 
 	if imgui.Button("Open") {
-		Editor.LevelFiles = ScanLevelFiles(Editor.LevelsDir)
+		Editor.LevelFiles = levelio.ScanLevelFiles(Editor.LevelsDir)
 		Editor.NewLevelName = ""
 		Editor.ShowLevelPicker = true
 	}
 	imgui.SameLine()
 
 	if imgui.Button("Save") {
-		if err := SaveLevel(lvl, Editor.SavePath); err != nil {
+		if err := levelio.SaveLevel(lvl, Editor.SavePath); err != nil {
 			Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
 		} else {
 			Editor.StatusMsg = fmt.Sprintf("Saved to %s", Editor.SavePath)
@@ -941,7 +942,7 @@ func EditorDrawUI() {
 				name += ".yaml"
 			}
 			path := filepath.Join(Editor.LevelsDir, name)
-			if err := WriteBlankLevel(path); err != nil {
+			if err := levelio.WriteBlankLevel(path); err != nil {
 				Editor.StatusMsg = fmt.Sprintf("Create failed: %v", err)
 			} else if err := EditorLoadLevel(path); err != nil {
 				Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
@@ -968,7 +969,7 @@ func EditorDrawUI() {
 				name += ".yaml"
 			}
 			path := filepath.Join(Editor.LevelsDir, name)
-			if err := SaveLevel(lvl, path); err != nil {
+			if err := levelio.SaveLevel(lvl, path); err != nil {
 				Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
 			} else {
 				Editor.SavePath = path

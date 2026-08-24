@@ -7,6 +7,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
+	"foundry/internal/levelio"
 	"foundry/internal/platform"
 	"foundry/internal/render"
 	"foundry/internal/script"
@@ -216,7 +217,7 @@ func main() {
 	levelsDir := filepath.Join(fileutil.ExecutablePath, "levels")
 	levelPath := filepath.Join(levelsDir, "untitled.yaml")
 	log.Printf("starting with blank level")
-	level, err := NewBlankLevel()
+	level, err := levelio.NewBlankLevel()
 	if err != nil {
 		log.Fatalf("NewBlankLevel: %v", err)
 	}

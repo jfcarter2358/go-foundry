@@ -19,6 +19,7 @@ import (
 	"foundry/internal/gizmo"
 	"foundry/internal/hooks"
 	"foundry/internal/imguibackend"
+	"foundry/internal/levelio"
 	"foundry/internal/platform"
 	"foundry/internal/render"
 	"foundry/internal/script"
@@ -490,7 +491,7 @@ func EditorToggle() {
 
 		// Snapshot before play so a script cannot permanently change the
 		// authored level — see script_play.go.
-		PlaySessionBegin(Editor.level)
+		levelio.PlaySessionBegin(Editor.level)
 		script.ScriptRuntimeLoad(Editor.level)
 		script.ScriptEventsReset()
 		platform.GravityEnabled = true
@@ -511,7 +512,7 @@ func EditorToggle() {
 		// A restore re-instantiates every object, so every selection that
 		// names one by index is stale. PlaySessionEnd cannot clear them itself
 		// without reaching up into the editor — see its doc comment.
-		if PlaySessionEnd(Editor.level) {
+		if levelio.PlaySessionEnd(Editor.level) {
 			editorResetSelectionState()
 		}
 		script.ScriptRuntimeReset(Editor.level)
@@ -895,7 +896,7 @@ func EditorDeleteSelected() {
 // EditorLoadLevel loads a new level from the given YAML path, replacing the
 // current level contents. Editor selection state is reset.
 func EditorLoadLevel(path string) error {
-	newLevel, err := LoadLevel(path)
+	newLevel, err := levelio.LoadLevel(path)
 	if err != nil {
 		return err
 	}
