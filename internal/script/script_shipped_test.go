@@ -9,20 +9,23 @@ package script
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
+	"foundry/internal/testenv"
 )
 
 func TestShippedScriptsParse(t *testing.T) {
-	names := fileutil.ScanScriptFilesIn("resources/scripts")
+	dir := filepath.Join(testenv.RepoRoot(t), "resources", "scripts")
+	names := fileutil.ScanScriptFilesIn(dir)
 	if len(names) == 0 {
 		t.Skip("no scripts shipped")
 	}
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
-			src, err := os.ReadFile("resources/scripts/" + name)
+			src, err := os.ReadFile(filepath.Join(dir, name))
 			if err != nil {
 				t.Fatal(err)
 			}

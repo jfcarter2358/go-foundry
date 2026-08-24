@@ -2,6 +2,7 @@ package world
 
 import (
 	"foundry/internal/fileutil"
+	"foundry/internal/testenv"
 	"os"
 	"path/filepath"
 	"testing"
@@ -141,7 +142,7 @@ func TestSaveEntityDefRoundTrips(t *testing.T) {
 // catalog offers on a fresh checkout, so a typo in one is a broken catalog.
 func TestShippedEntityDefsLoad(t *testing.T) {
 	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = "resources"
+	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
 	ReloadEntityDefs()
 	t.Cleanup(func() {
 		fileutil.ExecutablePath = prev
@@ -162,7 +163,7 @@ func TestShippedEntityDefsLoad(t *testing.T) {
 			if m.Path == "" {
 				continue
 			}
-			if _, err := os.Stat(filepath.Join("resources", m.Path)); err != nil {
+			if _, err := os.Stat(filepath.Join(testenv.RepoRoot(t), "resources", m.Path)); err != nil {
 				t.Errorf("%s: model %q points at a file that is not there: %v", name, m.Name, err)
 			}
 		}

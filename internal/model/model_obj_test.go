@@ -1,6 +1,7 @@
 package model
 
 import (
+	"foundry/internal/testenv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,7 +163,7 @@ func TestLoadOBJMeshOnShippedModels(t *testing.T) {
 		{"rock.obj", 16, 16, 10, mgl32.Vec3{-0.5, -0.3, -0.5}, mgl32.Vec3{0.5, 0.5, 0.5}},
 	}
 	for _, c := range cases {
-		path := filepath.Join("resources", "models", c.name)
+		path := filepath.Join(testenv.RepoRoot(t), "resources", "models", c.name)
 		if _, err := os.Stat(path); err != nil {
 			t.Skipf("%s not present", path)
 		}

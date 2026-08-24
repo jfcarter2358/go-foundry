@@ -15,6 +15,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/testenv"
 	"foundry/internal/world"
+	"path/filepath"
 	"testing"
 )
 
@@ -185,9 +186,11 @@ func TestShippedTestLevelMigratesCleanly(t *testing.T) {
 	testenv.WithoutGeometryUploads(t)
 	// The level the editor actually opens. It predates edge IDs entirely, so this
 	// is the real migration, not a fixture of one.
-	raw, err := readRawLevelFile("resources/levels/test.yaml")
+	// Through testenv.RepoRoot: `go test` runs this package from its own
+	// directory, so a bare relative path silently turned this into a skip.
+	raw, err := readRawLevelFile(filepath.Join(testenv.RepoRoot(t), "resources", "levels", "test.yaml"))
 	if err != nil {
-		t.Skipf("test level unavailable: %v", err)
+		t.Fatalf("the shipped test level must load: %v", err)
 	}
 	for _, rc := range raw.Chunks {
 		ch, _, err := loadRawChunk(rc)
