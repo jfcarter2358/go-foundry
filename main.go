@@ -271,7 +271,7 @@ func main() {
 		sdl.PumpEvents()
 
 		// --- Process events first so mouse rotation is applied before movement ---
-		for event = sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
+		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
 			// The keybinding reference answers to F1 from every mode and every
 			// window — ahead of the routing below, so a secondary window's own
 			// handler can't eat F1 first — and swallows the Escape that closes

@@ -172,3 +172,47 @@ func injectAfterVersion(src, snippet string) string {
 	}
 	return src[:idx+1] + "\n" + snippet + "\n" + src[idx+1:]
 }
+
+// compileProgramFromFiles links a standalone program from a vertex/fragment
+// pair on disk. The gizmo and model-preview shaders both use it; the world
+// program has LoadProgram above, which also caches uniform locations.
+// compileProgramFromFiles loads two shader files and links a GL program
+// without touching the global Program variable.
+func compileProgramFromFiles(vertPath, fragPath string) (uint32, error) {
+	vb, err := os.ReadFile(vertPath)
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", vertPath, err)
+	}
+	fb, err := os.ReadFile(fragPath)
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", fragPath, err)
+	}
+	vertSrc := strings.TrimRight(string(vb), "\n")
+	fragSrc := strings.TrimRight(string(fb), "\n")
+
+	vert, err := CompileShader(vertSrc, gl.VERTEX_SHADER)
+	if err != nil {
+		return 0, err
+	}
+	frag, err := CompileShader(fragSrc, gl.FRAGMENT_SHADER)
+	if err != nil {
+		return 0, err
+	}
+	prog := gl.CreateProgram()
+	gl.AttachShader(prog, vert)
+	gl.AttachShader(prog, frag)
+	gl.LinkProgram(prog)
+	gl.DeleteShader(vert)
+	gl.DeleteShader(frag)
+
+	var status int32
+	gl.GetProgramiv(prog, gl.LINK_STATUS, &status)
+	if status == gl.FALSE {
+		var logLen int32
+		gl.GetProgramiv(prog, gl.INFO_LOG_LENGTH, &logLen)
+		infoLog := strings.Repeat("\x00", int(logLen+1))
+		gl.GetProgramInfoLog(prog, logLen, nil, gl.Str(infoLog))
+		return 0, fmt.Errorf("link failed: %s", infoLog)
+	}
+	return prog, nil
+}

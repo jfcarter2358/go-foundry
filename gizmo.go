@@ -15,9 +15,7 @@ import (
 	"fmt"
 	"foundry/internal/fileutil"
 	"math"
-	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -76,47 +74,6 @@ func GizmoInit() {
 	gl.VertexAttribPointerWithOffset(colAttr, 3, gl.FLOAT, false, stride, 3*4)
 
 	gl.BindVertexArray(0)
-}
-
-// compileProgramFromFiles loads two shader files and links a GL program
-// without touching the global Program variable.
-func compileProgramFromFiles(vertPath, fragPath string) (uint32, error) {
-	vb, err := os.ReadFile(vertPath)
-	if err != nil {
-		return 0, fmt.Errorf("read %s: %w", vertPath, err)
-	}
-	fb, err := os.ReadFile(fragPath)
-	if err != nil {
-		return 0, fmt.Errorf("read %s: %w", fragPath, err)
-	}
-	vertSrc := strings.TrimRight(string(vb), "\n")
-	fragSrc := strings.TrimRight(string(fb), "\n")
-
-	vert, err := CompileShader(vertSrc, gl.VERTEX_SHADER)
-	if err != nil {
-		return 0, err
-	}
-	frag, err := CompileShader(fragSrc, gl.FRAGMENT_SHADER)
-	if err != nil {
-		return 0, err
-	}
-	prog := gl.CreateProgram()
-	gl.AttachShader(prog, vert)
-	gl.AttachShader(prog, frag)
-	gl.LinkProgram(prog)
-	gl.DeleteShader(vert)
-	gl.DeleteShader(frag)
-
-	var status int32
-	gl.GetProgramiv(prog, gl.LINK_STATUS, &status)
-	if status == gl.FALSE {
-		var logLen int32
-		gl.GetProgramiv(prog, gl.INFO_LOG_LENGTH, &logLen)
-		infoLog := strings.Repeat("\x00", int(logLen+1))
-		gl.GetProgramInfoLog(prog, logLen, nil, gl.Str(infoLog))
-		return 0, fmt.Errorf("link failed: %s", infoLog)
-	}
-	return prog, nil
 }
 
 // GizmoLine queues a world-space line segment.

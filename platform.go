@@ -18,10 +18,9 @@ import "github.com/veandco/go-sdl2/sdl"
 // Running is cleared to leave the main loop.
 var Running = true
 
-// KeyStates is SDL's keyboard snapshot for this frame, indexed by scancode, and
-// event is the event being dispatched. Both are refreshed once per frame.
+// KeyStates is SDL's keyboard snapshot for this frame, refreshed once per frame
+// and indexed by scancode.
 var KeyStates []uint8
-var event sdl.Event
 
 // The main window and its GL context, and the dimensions every projection and
 // unprojection is built from. WinHalfWidth/WinHalfHeight are cached because the
