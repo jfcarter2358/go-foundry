@@ -33,6 +33,8 @@ func editorEntityCatalogSection() {
 		}
 		if imgui.Button("Place Selected") && Editor.SelectedDefIdx >= 0 {
 			Editor.PlacementMode = true
+			Editor.PrimPlacementMode = false
+			Editor.ModelPlacementMode = false
 		}
 		if Editor.PlacementMode {
 			imgui.SameLine()
@@ -46,8 +48,7 @@ func editorEntityCatalogSection() {
 func editorPrimitiveCatalogSection() {
 	// --- Primitive catalog ---
 	if imgui.CollapsingHeader("Primitive Catalog") {
-		primTypes := []string{"rect_prism", "sphere", "cylinder", "plane", "water"}
-		for _, pt := range primTypes {
+		for _, pt := range primitiveTypeNames {
 			selected := pt == Editor.PrimPlacementType
 			if imgui.SelectableV(pt, selected, 0, imgui.Vec2{}) {
 				Editor.PrimPlacementType = pt
@@ -56,6 +57,7 @@ func editorPrimitiveCatalogSection() {
 		if imgui.Button("Place Primitive") && Editor.PrimPlacementType != "" {
 			Editor.PrimPlacementMode = true
 			Editor.PlacementMode = false
+			Editor.ModelPlacementMode = false
 		}
 		if Editor.PrimPlacementMode {
 			imgui.SameLine()
@@ -92,10 +94,9 @@ func editorPrimitivePropertiesSection(lvl *Level) {
 				p := &ch.Primitives[Editor.ActivePrimitiveIdx]
 				imgui.InputText("ID##primid", &p.ID)
 
-				typeNames := []string{"rect_prism", "sphere", "cylinder", "plane", "water"}
 				currentType := int(p.Kind)
-				if imgui.BeginCombo("Type##primtype", typeNames[currentType]) {
-					for i, tn := range typeNames {
+				if imgui.BeginCombo("Type##primtype", primitiveTypeName(p.Kind)) {
+					for i, tn := range primitiveTypeNames {
 						if imgui.SelectableV(tn, i == currentType, 0, imgui.Vec2{}) {
 							p.Kind = PrimitiveType(i)
 							reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
@@ -127,54 +128,14 @@ func editorPrimitivePropertiesSection(lvl *Level) {
 					reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
 				}
 
-				textureCombo("Texture##primtex", &p.Texture, false)
-
-				if p.Kind == PrimitiveWater {
-					waterControls("prim", &p.Water, &p.Geometry)
-				}
-
-				if p.Kind == PrimitiveCylinder {
-					sides := int32(p.Sides)
-					if imgui.DragIntV("Sides##primsides", &sides, 1, 3, 64, "%d", 0) {
-						p.Sides = int(sides)
-						reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
-					}
-				}
-
-				imgui.Checkbox("Collision##primcol", &p.Collision)
-				if editorDragFloat("Alpha##prima", &p.Alpha, 0, 1, "%.2f") {
-					p.Geometry.Alpha = p.Alpha
-				}
-				if editorSmoothPanel("Primitive", &p.Smooth, &p.SmoothAngle) {
-					reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
-				}
-
-				if imgui.CollapsingHeader("Texture UV##primUVhdr") {
-					uvChanged := false
-					uvOff := [2]float32{p.UVOffset.X(), p.UVOffset.Y()}
-					if editorDragFloat("UV Offset U##primuvou", &uvOff[0], 0, 0, "%.3f") ||
-						editorDragFloat("UV Offset V##primuvov", &uvOff[1], 0, 0, "%.3f") {
-						p.UVOffset = mgl32.Vec2{uvOff[0], uvOff[1]}
-						uvChanged = true
-					}
-					uvSc := p.UVScale
-					if uvSc == (mgl32.Vec2{}) {
-						uvSc = mgl32.Vec2{1, 1}
-					}
-					uvScArr := [2]float32{uvSc.X(), uvSc.Y()}
-					if editorDragFloat("UV Scale U##primuvsu", &uvScArr[0], 0.01, 100, "%.3f") ||
-						editorDragFloat("UV Scale V##primuvsv", &uvScArr[1], 0.01, 100, "%.3f") {
-						p.UVScale = mgl32.Vec2{uvScArr[0], uvScArr[1]}
-						uvChanged = true
-					}
-					uvRotDeg := p.UVRotation * 180 / math.Pi
-					if editorDragFloat("UV Rotation (deg)##primuvrot", &uvRotDeg, -360, 360, "%.1f") {
-						p.UVRotation = uvRotDeg * math.Pi / 180
-						uvChanged = true
-					}
-					if uvChanged {
-						reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
-					}
+				// A spawn marker has no surface the user cares about: texture,
+				// alpha, smoothing, UV and collision are all meaningless on
+				// something that never renders outside the editor. Show the
+				// facing readout in their place.
+				if isSpawnPoint(p) {
+					editorSpawnPointSection(lvl, ch, p)
+				} else {
+					editorPrimitiveSurfaceControls(ch, p)
 				}
 
 				if imgui.Button("Delete Primitive") {
@@ -184,6 +145,61 @@ func editorPrimitivePropertiesSection(lvl *Level) {
 					Editor.ActivePrimitiveIdx = -1
 				}
 			}
+		}
+	}
+}
+
+// editorPrimitiveSurfaceControls draws the texture/appearance half of the
+// primitive property editor — everything that only makes sense on a primitive
+// that actually renders in the world.
+func editorPrimitiveSurfaceControls(ch *Chunk, p *Primitive) {
+	textureCombo("Texture##primtex", &p.Texture, false)
+
+	if p.Kind == PrimitiveWater {
+		waterControls("prim", &p.Water, &p.Geometry)
+	}
+
+	if p.Kind == PrimitiveCylinder {
+		sides := int32(p.Sides)
+		if imgui.DragIntV("Sides##primsides", &sides, 1, 3, 64, "%d", 0) {
+			p.Sides = int(sides)
+			reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
+		}
+	}
+
+	imgui.Checkbox("Collision##primcol", &p.Collision)
+	if editorDragFloat("Alpha##prima", &p.Alpha, 0, 1, "%.2f") {
+		p.Geometry.Alpha = p.Alpha
+	}
+	if editorSmoothPanel("Primitive", &p.Smooth, &p.SmoothAngle) {
+		reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
+	}
+
+	if imgui.CollapsingHeader("Texture UV##primUVhdr") {
+		uvChanged := false
+		uvOff := [2]float32{p.UVOffset.X(), p.UVOffset.Y()}
+		if editorDragFloat("UV Offset U##primuvou", &uvOff[0], 0, 0, "%.3f") ||
+			editorDragFloat("UV Offset V##primuvov", &uvOff[1], 0, 0, "%.3f") {
+			p.UVOffset = mgl32.Vec2{uvOff[0], uvOff[1]}
+			uvChanged = true
+		}
+		uvSc := p.UVScale
+		if uvSc == (mgl32.Vec2{}) {
+			uvSc = mgl32.Vec2{1, 1}
+		}
+		uvScArr := [2]float32{uvSc.X(), uvSc.Y()}
+		if editorDragFloat("UV Scale U##primuvsu", &uvScArr[0], 0.01, 100, "%.3f") ||
+			editorDragFloat("UV Scale V##primuvsv", &uvScArr[1], 0.01, 100, "%.3f") {
+			p.UVScale = mgl32.Vec2{uvScArr[0], uvScArr[1]}
+			uvChanged = true
+		}
+		uvRotDeg := p.UVRotation * 180 / math.Pi
+		if editorDragFloat("UV Rotation (deg)##primuvrot", &uvRotDeg, -360, 360, "%.1f") {
+			p.UVRotation = uvRotDeg * math.Pi / 180
+			uvChanged = true
+		}
+		if uvChanged {
+			reloadPrimitive(ch, Editor.ActivePrimitiveIdx)
 		}
 	}
 }
@@ -221,10 +237,54 @@ func editorEntityPropertiesSection(lvl *Level) {
 				e.Scale = mgl32.Vec3{sc[0], sc[1], sc[2]}
 			}
 
-			imgui.Text(fmt.Sprintf("Model: %s", filepath.Base(e.ModelPath)))
-			imgui.Text(fmt.Sprintf("Texture: %s", e.TexturePath))
+			if e.ModelPath == "" {
+				imgui.Text("Model: (none)")
+			} else {
+				imgui.Text(fmt.Sprintf("Model: %s", relAssetPath(e.ModelPath)))
+			}
+			// Changing the fallback texture has to go back through the model
+			// reader: which submesh it applies to is decided at load time, so
+			// nothing short of a reload repaints the untextured faces.
+			if textureCombo("Texture##enttex", &e.TexturePath, false) {
+				if err := e.Load(); err != nil {
+					editorSetStatus("Entity %q: %v", e.ID, err)
+				}
+			}
+			editorEntityAnimationControls(e)
+			if e.ModelPath != "" && imgui.Button("Reload Model##entreload") {
+				if err := e.Load(); err != nil {
+					editorSetStatus("Entity %q: %v", e.ID, err)
+				} else {
+					editorSetStatus("Reloaded %s", filepath.Base(e.ModelPath))
+				}
+			}
+
+			// Bounds are the entity's collision volume and its culling box —
+			// the mesh itself is never tested — so they are worth editing
+			// directly when a model's own origin makes the derived box a poor
+			// fit for what the player should bump into.
+			boundKinds := []string{"aabb", "sphere", "cylinder"}
+			if imgui.BeginCombo("Bounding##entbound", boundKinds[int(e.BoundingKind)]) {
+				for i, bk := range boundKinds {
+					if imgui.SelectableV(bk, i == int(e.BoundingKind), 0, imgui.Vec2{}) {
+						e.BoundingKind = BoundingType(i)
+					}
+				}
+				imgui.EndCombo()
+			}
+			half := [3]float32{e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ}
+			if editorDragFloat3("Bounds (half)##entbounds", &half, 0, 0, "%.3f") {
+				e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ = half[0], half[1], half[2]
+			}
+			if e.ModelPath != "" && imgui.Button("Fit Bounds to Model##entfit") {
+				if err := fitEntityBoundsToModel(e); err != nil {
+					editorSetStatus("Entity %q: %v", e.ID, err)
+				} else {
+					editorSetStatus("Fitted bounds of %q to its model", e.ID)
+				}
+			}
 			if editorDragFloat("Alpha##enta", &e.Alpha, 0, 1, "%.2f") {
-				e.Geometry.Alpha = e.Alpha
+				e.SetAlpha(e.Alpha)
 			}
 		}
 	}
@@ -441,6 +501,8 @@ func placeSelectedEntityAt(pos mgl32.Vec3) {
 		BoundHalfY:  def.BoundHalfY,
 		BoundHalfZ:  def.BoundHalfZ,
 		Visible:     def.Model != "",
+		// Set before Load, which starts playback on it.
+		Animation: def.Animation,
 	}
 	switch def.Bounding {
 	case "sphere":
@@ -468,19 +530,7 @@ func placeSelectedPrimitiveAt(pos mgl32.Vec3) {
 	}
 	ch := &lvl.Chunks[Editor.ActiveChunkIdx]
 
-	var kind PrimitiveType
-	switch Editor.PrimPlacementType {
-	case "sphere":
-		kind = PrimitiveSphere
-	case "cylinder":
-		kind = PrimitiveCylinder
-	case "plane":
-		kind = PrimitivePlane
-	case "water":
-		kind = PrimitiveWater
-	default:
-		kind = PrimitiveRectPrism
-	}
+	kind := primitiveKindFromName(Editor.PrimPlacementType)
 
 	prim := Primitive{
 		ID:       fmt.Sprintf("prim_%d", len(ch.Primitives)),
@@ -498,6 +548,16 @@ func placeSelectedPrimitiveAt(pos mgl32.Vec3) {
 		prim.Alpha = 0.75
 		prim.UVScale = mgl32.Vec2{4, 4}
 		prim.Water = DefaultWaterParams()
+	}
+	if kind == PrimitiveSpawnPoint {
+		// Face the way the placing camera faces, so the marker starts out
+		// pointing at whatever the user was looking at when they placed it.
+		// Yaw only: placing looks down at the floor, and a spawn that pitches
+		// the player's view at their own feet is never what was meant. Use the
+		// panel's "Face Camera" to take the pitch as well.
+		prim.ID = fmt.Sprintf("spawn_%d", len(ch.Primitives))
+		prim.Texture = "default"
+		prim.Rotation = mgl32.Vec3{0, -Cam.Yaw, 0}
 	}
 	_ = ensureTextureLoaded(prim.Texture)
 
@@ -518,6 +578,9 @@ func placeSelectedPrimitiveAt(pos mgl32.Vec3) {
 		prim.BoundHalfX = 0.5
 		prim.BoundHalfY = 0.5
 		prim.BoundHalfZ = 0.5
+	case PrimitiveSpawnPoint:
+		prim.BoundingKind = BoundingAABB
+		prim.BoundHalfX, prim.BoundHalfY, prim.BoundHalfZ = spawnPointBounds(prim.Scale)
 	case PrimitivePlane, PrimitiveWater:
 		prim.BoundingKind = BoundingAABB
 		prim.BoundHalfX = prim.Scale.X() / 2
@@ -552,5 +615,67 @@ func editorEdgeKindCombo(ch *Chunk, s *Sector, idSuffix string) {
 			}
 		}
 		imgui.EndCombo()
+	}
+}
+
+// editorEntityAnimationControls is the clip picker for a placed entity.
+//
+// Only drawn for a model that actually has clips: on the many static props in a
+// level it would be a permanently empty combo, and its absence is the clearest
+// possible statement that there is nothing to play.
+func editorEntityAnimationControls(e *Entity) {
+	clips := e.ClipNames()
+	if len(clips) == 0 {
+		return
+	}
+	imgui.Separator()
+
+	current := e.Animation
+	if current == "" {
+		current = "(rest pose)"
+	}
+	if imgui.BeginCombo("Animation##entanim", current) {
+		// The empty entry is how an entity is put back to its rest pose without
+		// having to clear a text field.
+		if imgui.SelectableV("(rest pose)", e.Animation == "", 0, imgui.Vec2{}) {
+			EditorPushUndo()
+			e.SetClip("")
+		}
+		for _, name := range clips {
+			if imgui.SelectableV(name, name == e.Animation, 0, imgui.Vec2{}) {
+				EditorPushUndo()
+				if !e.SetClip(name) {
+					editorSetStatus("Entity %q: no animation %q", e.ID, name)
+				}
+			}
+		}
+		imgui.EndCombo()
+	}
+	if e.Anim == nil {
+		return
+	}
+
+	speed := e.AnimationSpeed
+	if speed <= 0 {
+		speed = 1
+	}
+	if editorDragFloat("Speed##entanimspeed", &speed, 0.05, 10, "%.2f") {
+		e.AnimationSpeed = speed
+		e.Anim.Speed = speed
+	}
+	loop := e.Anim.Loop
+	if imgui.Checkbox("Loop##entanimloop", &loop) {
+		e.Anim.Loop = loop
+		// Stored as a pointer so "follow the clip's own flag" stays
+		// distinguishable from "explicitly off" in the level file.
+		v := loop
+		e.AnimationLoop = &v
+	}
+	playing := e.Anim.Playing
+	if imgui.Checkbox("Playing##entanimplaying", &playing) {
+		e.Anim.Playing = playing
+	}
+	if c := e.Anim.clip(); c != nil {
+		imgui.Text(fmt.Sprintf("%.2fs of %.2fs", e.Anim.Time, c.duration()))
 	}
 }

@@ -41,6 +41,14 @@ type GizmoState struct {
 	GizmoDragStartPos mgl32.Vec3   // primitive/entity position, or chunk origin, at mouse-down
 	GizmoDragPoints   []mgl32.Vec2 // per selected vertex: chunk point XZ at mouse-down
 	GizmoDragOffsets  []float32    // per selected vertex: height offset at mouse-down
+
+	// Scale-gizmo drag state (editor_scale_gizmo.go). GizmoDragTool is which
+	// tool owns the drag in progress, recorded at mouse-down so a tool switch
+	// cannot reinterpret a half-finished one; GizmoDragAxis holds the scale
+	// handle for it, which may be modelScaleUniformAxis rather than an axis.
+	GizmoDragTool       modelGizmoToolKind
+	GizmoDragStartScale mgl32.Vec3    // entity scale at mouse-down
+	GizmoScaleAxes      [3]mgl32.Vec3 // the entity's own axes, captured at mouse-down
 }
 
 // SurfaceEditorState is the per-surface (wall/floor/ceiling) UV-space 2D
@@ -68,7 +76,7 @@ type SceneryEditorState struct {
 	SceneryPrimitives    []Primitive // working set of primitives (not part of any level)
 	SceneryActivePrimIdx int         // selected primitive; -1 = none
 	SceneryPrimPlacement bool        // true: next left-click places a primitive
-	SceneryPrimPlaceType string      // "rect_prism", "sphere", "cylinder", "plane", "water"
+	SceneryPrimPlaceType string      // one of primitiveTypeNames (primitive.go)
 	SceneryFilePath      string      // current save path
 	SceneryID            string      // asset name
 	SceneryPrevMode      EditorMode  // mode to return to on exit
@@ -141,7 +149,16 @@ type EditorState struct {
 
 	// Primitive placement state
 	PrimPlacementMode bool   // true: next left-click places a primitive
-	PrimPlacementType string // "rect_prism", "sphere", "cylinder", "plane", "water"
+	PrimPlacementType string // one of primitiveTypeNames (primitive.go)
+
+	// Model catalog (files in <exe>/models, both .fmdl and .obj). Scanned on
+	// first use rather than at init so a model saved from the model editor
+	// mid-session is one Refresh away, not one restart.
+	ModelFiles            []string
+	ModelFilesScanned     bool
+	SelectedModelIdx      int    // selected entry in the model catalog; -1 = none
+	ModelPlacementMode    bool   // true: next left-click places the selected model
+	ModelPlacementTexture string // fallback texture for faces that name none
 
 	// Chunk creation dialog
 	NewChunkID   string
@@ -175,7 +192,8 @@ type EditorState struct {
 	// Draw a box around every selectable point instead of only the ones the
 	// cursor is near, so overlapping/hard-to-see points can be found. In 2D
 	// the box is each chunk point's click-proximity radius; in 3D it is every
-	// vertex handle within pick range of the camera.
+	// vertex handle within pick range of the camera, plus the edge prisms
+	// joining them.
 	ShowPointSelectRadius bool
 
 	// Point connection state for ctrl+click workflow
@@ -256,6 +274,7 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.ActivePrimitiveIdx = -1
 	Editor.SelectedDirLightIdx = -1
 	Editor.PrimPlacementMode = false
+	Editor.ModelPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
@@ -264,6 +283,7 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
+	Editor.GizmoDragTool = modelToolMove
 	Editor.ConnectFromIdx = -1
 	Editor.PendingEdges = nil
 	Editor.ActiveExtrusionIdx = -1
@@ -300,6 +320,12 @@ func EditorInit(level *Level, levelPath string, levelsDir string) {
 	Editor.BiomeDragVertexIdx = -1
 
 	Editor.EntityDefs = ScanEntityDefs(executablePath + "/entities")
+
+	// The model catalog itself is scanned lazily (editorModelCatalogSection),
+	// but its selection and fallback texture need valid starting values.
+	Editor.SelectedModelIdx = -1
+	Editor.ModelFilesScanned = false
+	Editor.ModelPlacementTexture = modelImportFallbackTexture
 }
 
 const panelGrabZone int32 = 6
@@ -366,12 +392,16 @@ func panelHandleResizeAt(event sdl.Event, viewW int32) bool {
 // EditorToggle turns the editor on or off (called on tilde keypress).
 func EditorToggle() {
 	if Editor.Active {
-		// Restore gameplay camera
-		Cam.Position = Editor.SavedCamPos
-		Cam.Yaw = Editor.SavedCamYaw
-		Cam.Pitch = Editor.SavedCamPitch
-		updateCamDirection()
-		updateCamMatrix()
+		// Entering gameplay puts the player on the level's spawn point. Only a
+		// level with no spawn marker falls back to restoring wherever the
+		// camera was before the editor was opened.
+		if !ApplySpawnPoint(Editor.level) {
+			Cam.Position = Editor.SavedCamPos
+			Cam.Yaw = Editor.SavedCamYaw
+			Cam.Pitch = Editor.SavedCamPitch
+			updateCamDirection()
+			updateCamMatrix()
+		}
 
 		// Re-enable mouse lock for gameplay
 		SetMouseLock(true)
@@ -493,6 +523,20 @@ func EditorHandleEvent(event sdl.Event) bool {
 			if !imgui.CurrentIO().WantCaptureKeyboard() {
 				EditorDeleteSelected()
 			}
+
+		// Gizmo tools, on the model editor's shortcuts so the two viewports
+		// answer to the same keys. Guarded on keyboard capture so typing a "g"
+		// into an ID field does not also swap the tool underneath the panel.
+		case sdl.SCANCODE_G:
+			if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureKeyboard() {
+				editorSetGizmoTool(modelToolMove)
+				return true
+			}
+		case sdl.SCANCODE_C:
+			if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureKeyboard() {
+				editorSetGizmoTool(modelToolScale)
+				return true
+			}
 		}
 
 	case sdl.MouseButtonEvent:
@@ -505,7 +549,7 @@ func EditorHandleEvent(event sdl.Event) bool {
 					Editor.MouseDragging3D = true
 					Editor.LastDragX = t.X
 					Editor.LastDragY = t.Y
-				} else if translateGizmoMouseDown(t) {
+				} else if editorGizmoMouseDown(t) {
 					// Grabbed an axis arm — the click must not re-select.
 				} else {
 					SceneryEditorHandleClick(t)
@@ -514,12 +558,16 @@ func EditorHandleEvent(event sdl.Event) bool {
 				Surface2DHandleClick(t)
 			} else if Editor.Mode == Mode3D {
 				if t.Button == sdl.ButtonRight {
+					// Right-drag turns the camera; a right-click that does not
+					// drag opens the context menu instead, which is what
+					// editor3DContextPressed is watching for.
 					Editor.MouseDragging3D = true
 					Editor.LastDragX = t.X
 					Editor.LastDragY = t.Y
+					editor3DContextPressed(t.X, t.Y)
 				} else if Editor.ExtrusionMode && editorExtrusionHandleClick(t) {
 					// Extrusion placement consumed the click
-				} else if translateGizmoMouseDown(t) {
+				} else if editorGizmoMouseDown(t) {
 					// Grabbed an axis arm — the click must not re-select.
 				} else {
 					Editor3DHandleClick(t)
@@ -528,8 +576,8 @@ func EditorHandleEvent(event sdl.Event) bool {
 				Editor2DHandleClick(t)
 			}
 		} else if t.Type == sdl.MOUSEBUTTONUP {
-			if t.Button == sdl.ButtonLeft && translateGizmoDragging() {
-				translateGizmoMouseUp()
+			if t.Button == sdl.ButtonLeft && editorGizmoDragging() {
+				editorGizmoMouseUp()
 				return true
 			}
 			if Editor.Mode == ModeScenery && t.Button == sdl.ButtonRight {
@@ -538,15 +586,20 @@ func EditorHandleEvent(event sdl.Event) bool {
 				Surface2DHandleRelease(t)
 			} else if Editor.Mode == Mode3D && t.Button == sdl.ButtonRight {
 				Editor.MouseDragging3D = false
+				editor3DContextReleased(t.X, t.Y)
 			} else if Editor.Mode == Mode2D {
 				Editor2DHandleRelease(t)
 			}
 		}
 
 	case sdl.MouseMotionEvent:
+		// Ahead of everything else, including the gizmo: a right-button gesture
+		// that travels is a camera turn, not a context click, and that has to
+		// be recorded whatever else the motion is doing.
+		editor3DContextMoved(t.X, t.Y)
 		// An axis drag owns the mouse until release.
-		if translateGizmoDragging() {
-			translateGizmoMouseMove(t.X, t.Y)
+		if editorGizmoDragging() {
+			editorGizmoMouseMove(t.X, t.Y)
 			return true
 		}
 		if Editor.Mode == ModeScenery && Editor.MouseDragging3D {
@@ -724,6 +777,11 @@ func EditorRender() {
 	if Editor.Mode == ModeSurface2D {
 		Surface2DRenderLabels()
 	}
+	// The F3 overlay is drawn here rather than in main.go's non-editor branch
+	// so it is available in every editor mode too — frame time and draw counts
+	// matter most while you are building the thing that costs them.
+	DebugRenderOverlay()
+	KeybindHelpRender()
 	ImGuiRender()
 }
 
@@ -835,6 +893,7 @@ func EditorLoadLevel(path string) error {
 	Editor.ActivePrimitiveIdx = -1
 	Editor.SelectedDirLightIdx = -1
 	Editor.PrimPlacementMode = false
+	Editor.ModelPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
@@ -843,6 +902,7 @@ func EditorLoadLevel(path string) error {
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
+	Editor.GizmoDragTool = modelToolMove
 	Editor.ConnectFromIdx = -1
 	Editor.PendingEdges = nil
 	Editor.ActiveExtrusionIdx = -1

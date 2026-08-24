@@ -31,6 +31,9 @@ type EntityDef struct {
 	BoundHalfX float32 `yaml:"bound_half_x"`
 	BoundHalfY float32 `yaml:"bound_half_y"`
 	BoundHalfZ float32 `yaml:"bound_half_z"`
+	// Animation is the clip a freshly placed entity starts on, so a prefab can
+	// ship already moving rather than needing the clip picked every time.
+	Animation string `yaml:"animation,omitempty"`
 }
 
 // ScanEntityDefs reads all .yaml files in entitiesDir and returns their definitions.
@@ -176,12 +179,25 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	if Editor.ModelPlacementMode {
+		spawnPos := Cam.Position.Add(Cam.Direction.Mul(4.0))
+		spawnPos[1] -= eyeHeight
+		placeSelectedModelAt(spawnPos)
+		return
+	}
+
 	// Vertex handles win over world geometry: they are small, deliberate
 	// targets drawn on top of everything. Repeated clicks on the same cluster
 	// cycle through every vertex under the cursor; ctrl+click takes them all.
 	// (Ctrl rather than shift — shift is held to fly downward.)
 	ctrlHeld := sdl.GetModState()&sdl.KMOD_CTRL != 0
 	if handleVertexClick(t.X, t.Y, ctrlHeld) {
+		return
+	}
+
+	// Edges come next, for the same reason and on the same terms — their
+	// prisms are pulled back from the corners, so points win the overlap.
+	if handleEdgeClick(t.X, t.Y, ctrlHeld) {
 		return
 	}
 
@@ -250,12 +266,24 @@ func moveChunk(ch *Chunk, newOrigin mgl32.Vec3) {
 		ch.Points[vi][0] += dx
 		ch.Points[vi][1] += dz
 	}
+	// A chunk carries its own paint: every biome polygon stored on it slides
+	// rigidly with the floor, including any part that spilled past a sector
+	// edge. (Per-vertex warping is for edits that change a sector's shape —
+	// see carryBiomesWithPoints — and would leave spilled paint behind here.)
+	for bi := range ch.BiomeSectors {
+		bs := &ch.BiomeSectors[bi]
+		for pi := range bs.Points {
+			bs.Points[pi] = bs.Points[pi].Add(mgl32.Vec2{dx, dz})
+		}
+		bs.HeightDirty = true
+		bs.GroundDirty = true
+	}
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
 		s.Floor.Height += dy
 		s.Ceiling.Height += dy
 		rebuildSectorEdgePoints(ch, s)
-		_ = s.Load(SectorPoints(ch, s))
+		_ = reloadSector(ch, s)
 	}
 	ch.RebuildGaps()
 	ch.MinBound = ch.MinBound.Add(delta)
@@ -432,14 +460,14 @@ func editor3DVertexPanel(lvl *Level) {
 				fOff := s.Floor.VertexOffsets[primary.vertIdx]
 				if editorDragFloat("Floor Offset##v3dfo", &fOff, -100, 100, "%.3f") {
 					s.Floor.VertexOffsets[primary.vertIdx] = fOff
-					_ = s.Load(SectorPoints(ch, s))
+					_ = reloadSector(ch, s)
 				}
 			}
 			if primary.vertIdx < len(s.Ceiling.VertexOffsets) {
 				cOff := s.Ceiling.VertexOffsets[primary.vertIdx]
 				if editorDragFloat("Ceil Offset##v3dco", &cOff, -100, 100, "%.3f") {
 					s.Ceiling.VertexOffsets[primary.vertIdx] = cOff
-					_ = s.Load(SectorPoints(ch, s))
+					_ = reloadSector(ch, s)
 				}
 			}
 			imgui.Text("Click the handle again to cycle overlapping vertices")
@@ -469,9 +497,10 @@ func Editor3DPanel() {
 	// ---- Navigation buttons ----
 	if imgui.CollapsingHeaderV("Navigation", imgui.TreeNodeFlagsDefaultOpen) {
 		imgui.Text("Right-click drag to rotate")
-		imgui.Text("Click a face, object or vertex to select it")
+		imgui.Text("Click a face, object, vertex or edge to select it")
+		imgui.Text("Right-click without dragging for its actions")
 		imgui.Text("Drag an R/G/B arm to move it along X/Y/Z")
-		imgui.Checkbox("Show All Point Boxes", &Editor.ShowPointSelectRadius)
+		imgui.Checkbox("Show All Point/Edge Boxes", &Editor.ShowPointSelectRadius)
 		imgui.Button("Fwd##nav")
 		if imgui.IsItemActive() {
 			Editor.NavForward = true
@@ -509,6 +538,9 @@ func Editor3DPanel() {
 	// --- Primitive catalog ---
 	editorPrimitiveCatalogSection()
 
+	// --- Model catalog ---
+	editorModelCatalogSection()
+
 	// --- Scenery import ---
 	editorSceneryImportSection()
 
@@ -543,7 +575,7 @@ func Editor3DPanel() {
 					imgui.Checkbox("Double Sided##fds3d", &s3d.Floor.DoubleSided)
 					changed = editorDragFloat("Alpha##fa3d", &s3d.Floor.Alpha, 0, 1, "%.2f") || changed
 					if changed {
-						_ = s3d.Load(SectorPoints(sch, s3d))
+						_ = reloadSector(sch, s3d)
 					}
 					imgui.TreePop()
 				}
@@ -551,12 +583,12 @@ func Editor3DPanel() {
 					EnterSurface2D("floor")
 				}
 				if editorUVControls("Floor", &s3d.Floor.UVOffset, &s3d.Floor.UVScale, &s3d.Floor.UVRotation) {
-					_ = s3d.Load(SectorPoints(sch, s3d))
+					_ = reloadSector(sch, s3d)
 				}
 				editorSurfaceExtrusionPanel(sch, s3d, "Floor", &s3d.Floor.Extrusions)
 				editorTerrainPanel(sch, s3d, "Floor", &s3d.Floor.Terrain, &s3d.Floor.TerrainPoints)
 				if editorSmoothPanel("Floor", &s3d.Floor.Smooth, &s3d.Floor.SmoothAngle) {
-					_ = s3d.Load(SectorPoints(sch, s3d))
+					_ = reloadSector(sch, s3d)
 				}
 				editorDetailPanel("Floor", &s3d.Floor.Detail)
 				editorFocusOpen(panelFocusCeiling)
@@ -570,7 +602,7 @@ func Editor3DPanel() {
 					imgui.Checkbox("Double Sided##cds3d", &s3d.Ceiling.DoubleSided)
 					changed = editorDragFloat("Alpha##ca3d", &s3d.Ceiling.Alpha, 0, 1, "%.2f") || changed
 					if changed {
-						_ = s3d.Load(SectorPoints(sch, s3d))
+						_ = reloadSector(sch, s3d)
 					}
 					imgui.TreePop()
 				}
@@ -578,12 +610,12 @@ func Editor3DPanel() {
 					EnterSurface2D("ceiling")
 				}
 				if editorUVControls("Ceiling", &s3d.Ceiling.UVOffset, &s3d.Ceiling.UVScale, &s3d.Ceiling.UVRotation) {
-					_ = s3d.Load(SectorPoints(sch, s3d))
+					_ = reloadSector(sch, s3d)
 				}
 				editorSurfaceExtrusionPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Extrusions)
 				editorTerrainPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Terrain, &s3d.Ceiling.TerrainPoints)
 				if editorSmoothPanel("Ceiling", &s3d.Ceiling.Smooth, &s3d.Ceiling.SmoothAngle) {
-					_ = s3d.Load(SectorPoints(sch, s3d))
+					_ = reloadSector(sch, s3d)
 				}
 				editorDetailPanel("Ceiling", &s3d.Ceiling.Detail)
 				if Editor.ActiveEdgeIdx >= 0 {
@@ -603,14 +635,14 @@ func Editor3DPanel() {
 					changed = imgui.Checkbox("Double Sided##wds3d", &w.DoubleSided) || changed
 					changed = editorDragFloat("Alpha##wa3d", &w.Alpha, 0, 1, "%.2f") || changed
 					if changed {
-						_ = s3d.Load(SectorPoints(sch, s3d))
+						_ = reloadSector(sch, s3d)
 					}
 					// Surface 2D editor button
 					if imgui.Button("Edit Wall Surface##wallSurf3d") {
 						EnterSurface2D("wall")
 					}
 					if editorUVControls("Wall", &w.UVOffset, &w.UVScale, &w.UVRotation) {
-						_ = s3d.Load(SectorPoints(sch, s3d))
+						_ = reloadSector(sch, s3d)
 					}
 					// Extrusion sub-panel
 					editorExtrusionPanel(sch, s3d, w)
@@ -618,7 +650,7 @@ func Editor3DPanel() {
 					editorTerrainPanel(sch, s3d, "Wall", &w.Terrain, &w.TerrainPoints)
 					// Smooth shading (rebuilds the wall: normals are made at upload)
 					if editorSmoothPanel("Wall", &w.Smooth, &w.SmoothAngle) {
-						_ = s3d.Load(SectorPoints(sch, s3d))
+						_ = reloadSector(sch, s3d)
 					}
 					// Detail sub-panel
 					editorDetailPanel("Wall", &w.Detail)
@@ -640,7 +672,7 @@ func Editor3DPanel() {
 					changed = imgui.Checkbox("Double Sided##pds3d", &p3d.DoubleSided) || changed
 					changed = editorDragFloat("Alpha##pa3d", &p3d.Alpha, 0, 1, "%.2f") || changed
 					if changed {
-						_ = s3d.Load(SectorPoints(sch, s3d))
+						_ = reloadSector(sch, s3d)
 						sch.RebuildGaps()
 					}
 				} else {
@@ -718,6 +750,9 @@ func reloadPrimitive(ch *Chunk, idx int) {
 		p.BoundHalfX = scale.X() / 2
 		p.BoundHalfY = 0.01
 		p.BoundHalfZ = scale.Z() / 2
+	case PrimitiveSpawnPoint:
+		p.BoundingKind = BoundingAABB
+		p.BoundHalfX, p.BoundHalfY, p.BoundHalfZ = spawnPointBounds(scale)
 	}
 
 	_ = p.Load()
@@ -777,7 +812,7 @@ func createChunkAtCamera(id string) {
 		MaxBound:   mgl32.Vec3{cx + halfSize, ceilH, cz + halfSize},
 		PointNames: []string{"A", "B", "C", "D"},
 	}
-	_ = sector.Load(SectorPoints(&chunk, &sector))
+	_ = reloadSector(&chunk, &sector)
 	chunk.Sectors[0] = sector
 
 	lvl.Chunks = append(lvl.Chunks, chunk)
@@ -805,7 +840,7 @@ func duplicateActiveChunk() {
 
 	for si := range clone.Sectors {
 		s := &clone.Sectors[si]
-		_ = s.Load(SectorPoints(&clone, s))
+		_ = reloadSector(&clone, s)
 	}
 	for pi := range clone.Primitives {
 		_ = clone.Primitives[pi].Load()

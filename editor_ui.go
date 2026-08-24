@@ -39,6 +39,31 @@ func editorPopDisabled() {
 	imgui.PopItemFlag()
 }
 
+// editorActiveToggleButton draws a button highlighted when active, and reports
+// whether it was clicked.
+//
+// The point of the helper is that `active` is a parameter, evaluated once. The
+// hazard it removes is real and has bitten: clicking a mode button flips the
+// very global the caller is testing, so code shaped like
+//
+//	if mode { PushStyleColor(...) }
+//	if Button(...) { mode = !mode }
+//	if mode { PopStyleColor() }   // pops a colour that was never pushed
+//
+// underflows ImGui's style stack, which asserts rather than degrading — and the
+// assert names imgui.h, not the panel that caused it. modelEditorToolbar
+// (editor_model_window.go) documents the same rule for its inline copies.
+func editorActiveToggleButton(label string, active bool) bool {
+	if active {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.85, Y: 0.55, Z: 0.1, W: 1})
+	}
+	clicked := imgui.Button(label)
+	if active {
+		imgui.PopStyleColor()
+	}
+	return clicked
+}
+
 // withModalPopup draws an auto-resizing modal popup titled title, opening it
 // (once) when *show is true. show is cleared immediately so the OpenPopup
 // call fires exactly once per request; body is only invoked while the popup
@@ -194,6 +219,18 @@ func editorDragFloat3(label string, values *[3]float32, min, max float32, format
 	return changed
 }
 
+// sortedTextureNames is the scanned texture list in a stable order, shared by
+// every picker that offers it — the combo below and the context menus, which
+// must not disagree about what exists or in what order.
+func sortedTextureNames() []string {
+	names := make([]string, 0, len(textureNames))
+	for n := range textureNames {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // textureCombo draws a dropdown of texture names discovered from the
 // textures/ directory (see ScanTextures in main.go) rather than a hard-coded
 // list. If the current value isn't among the scanned textures (e.g. a name
@@ -202,11 +239,7 @@ func editorDragFloat3(label string, values *[3]float32, min, max float32, format
 // When allowEmpty is true, a "(none)" entry lets the field be cleared.
 // Returns true if the selection changed.
 func textureCombo(label string, tex *string, allowEmpty bool) bool {
-	names := make([]string, 0, len(textureNames))
-	for n := range textureNames {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	names := sortedTextureNames()
 
 	preview := *tex
 	if preview == "" {
@@ -699,6 +732,45 @@ func EditorDrawUI() {
 	}
 
 	imgui.SameLine()
+	// Snapshot before the button, for the same reason "2D Window" above does:
+	// clicking it opens the window, so re-testing ModelEditorOpen() afterwards
+	// would pop a color that was never pushed.
+	modelOpen := ModelEditorOpen()
+	if modelOpen {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
+	}
+	if imgui.Button("Model") {
+		OpenModelEditorWindow()
+	}
+	if modelOpen {
+		imgui.PopStyleColor()
+	}
+
+	// Gizmo tool toggle. Only 3D mode has a gizmo to point at, and the pair
+	// mirrors the model editor's toolbar — same labels, same shortcuts — so the
+	// two viewports are driven the same way.
+	if currentMode == Mode3D {
+		imgui.SameLine()
+		imgui.Separator()
+		for _, tool := range editorGizmoTools {
+			imgui.SameLine()
+			active := editorGizmoTool == tool
+			if active {
+				imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.85, Y: 0.55, Z: 0.1, W: 1})
+			}
+			if imgui.Button(fmt.Sprintf("%s [%s]##gizmotool", tool, modelToolKey(tool))) {
+				editorSetGizmoTool(tool)
+			}
+			if active {
+				imgui.PopStyleColor()
+			}
+			if tool == modelToolScale && imgui.IsItemHovered() {
+				imgui.SetTooltip("Scales the selected model about its own origin.\nSelect a placed model first — nothing else here scales,\nso the move gizmo stays up until one is.")
+			}
+		}
+	}
+
+	imgui.SameLine()
 	imgui.Separator()
 	imgui.SameLine()
 
@@ -949,6 +1021,8 @@ func EditorDrawUI() {
 		Editor3DPanel()
 		// After the panel — it sets the selection the indicator reads.
 		EditorDirLightIndicator()
+		// Last, so the popup opens over the panel as well as the viewport.
+		editor3DContextMenu()
 	} else if Editor.Mode == Mode2D {
 		Editor2DPanel()
 		// After the panel — it sets the selection the indicator reads.
@@ -998,6 +1072,7 @@ func Editor2DPanel() {
 	imgui.Separator()
 	editorEntityCatalogSection()
 	editorPrimitiveCatalogSection()
+	editorModelCatalogSection()
 	editorSceneryImportSection()
 
 	// ---- Selected object properties ----
@@ -1061,7 +1136,7 @@ func editor2DSectorSections(ch *Chunk) {
 				imgui.Checkbox("Double Sided##fds", &s.Floor.DoubleSided)
 				changed = editorDragFloat("Alpha##fa", &s.Floor.Alpha, 0, 1, "%.2f") || changed
 				if changed {
-					_ = s.Load(SectorPoints(ch, s))
+					_ = reloadSector(ch, s)
 				}
 				imgui.TreePop()
 			}
@@ -1076,7 +1151,7 @@ func editor2DSectorSections(ch *Chunk) {
 				imgui.Checkbox("Double Sided##cds", &s.Ceiling.DoubleSided)
 				changed = editorDragFloat("Alpha##ca", &s.Ceiling.Alpha, 0, 1, "%.2f") || changed
 				if changed {
-					_ = s.Load(SectorPoints(ch, s))
+					_ = reloadSector(ch, s)
 				}
 				imgui.TreePop()
 			}
@@ -1087,24 +1162,24 @@ func editor2DSectorSections(ch *Chunk) {
 				EnterSurface2D("floor")
 			}
 			if editorUVControls("Floor2D", &s.Floor.UVOffset, &s.Floor.UVScale, &s.Floor.UVRotation) {
-				_ = s.Load(SectorPoints(ch, s))
+				_ = reloadSector(ch, s)
 			}
 			editorSurfaceExtrusionPanel(ch, s, "Floor2D", &s.Floor.Extrusions)
 			editorTerrainPanel(ch, s, "Floor2D", &s.Floor.Terrain, &s.Floor.TerrainPoints)
 			if editorSmoothPanel("Floor2D", &s.Floor.Smooth, &s.Floor.SmoothAngle) {
-				_ = s.Load(SectorPoints(ch, s))
+				_ = reloadSector(ch, s)
 			}
 			editorDetailPanel("Floor2D", &s.Floor.Detail)
 			if imgui.Button("Edit Ceiling Surface##ceilSurf2d") {
 				EnterSurface2D("ceiling")
 			}
 			if editorUVControls("Ceil2D", &s.Ceiling.UVOffset, &s.Ceiling.UVScale, &s.Ceiling.UVRotation) {
-				_ = s.Load(SectorPoints(ch, s))
+				_ = reloadSector(ch, s)
 			}
 			editorSurfaceExtrusionPanel(ch, s, "Ceil2D", &s.Ceiling.Extrusions)
 			editorTerrainPanel(ch, s, "Ceil2D", &s.Ceiling.Terrain, &s.Ceiling.TerrainPoints)
 			if editorSmoothPanel("Ceil2D", &s.Ceiling.Smooth, &s.Ceiling.SmoothAngle) {
-				_ = s.Load(SectorPoints(ch, s))
+				_ = reloadSector(ch, s)
 			}
 			editorDetailPanel("Ceil2D", &s.Ceiling.Detail)
 		}
@@ -1144,7 +1219,10 @@ func editor2DSectorSections(ch *Chunk) {
 			zChanged := editorDragFloat(fmt.Sprintf("Z##vz%d", vi), &z, -1e6, 1e6, "%.3f")
 			if xChanged || zChanged {
 				if vi < len(s.PointIndices) {
-					ch.Points[s.PointIndices[vi]] = mgl32.Vec2{x, z}
+					pIdx := s.PointIndices[vi]
+					was := ch.Points[pIdx]
+					ch.Points[pIdx] = mgl32.Vec2{x, z}
+					carryBiomesWithPoints(ch, []pointMove{{pointIdx: pIdx, from: was}})
 				}
 				rebuildSectorEdgePoints(ch, s)
 				reloadSectorsUsingPoint(ch, s.PointIndices[vi])
@@ -1155,7 +1233,7 @@ func editor2DSectorSections(ch *Chunk) {
 				fOff := s.Floor.VertexOffsets[vi]
 				if editorDragFloat(fmt.Sprintf("Floor Offset##fo%d", vi), &fOff, -100, 100, "%.3f") {
 					s.Floor.VertexOffsets[vi] = fOff
-					_ = s.Load(SectorPoints(ch, s))
+					_ = reloadSector(ch, s)
 				}
 			}
 			// Ceiling vertex offset
@@ -1163,7 +1241,7 @@ func editor2DSectorSections(ch *Chunk) {
 				cOff := s.Ceiling.VertexOffsets[vi]
 				if editorDragFloat(fmt.Sprintf("Ceil Offset##co%d", vi), &cOff, -100, 100, "%.3f") {
 					s.Ceiling.VertexOffsets[vi] = cOff
-					_ = s.Load(SectorPoints(ch, s))
+					_ = reloadSector(ch, s)
 				}
 			}
 		}
@@ -1198,7 +1276,7 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 		changed = imgui.Checkbox("Double Sided##wds", &w.DoubleSided) || changed
 		changed = editorDragFloat("Alpha##wa", &w.Alpha, 0, 1, "%.2f") || changed
 		if changed {
-			_ = s.Load(SectorPoints(ch, s))
+			_ = reloadSector(ch, s)
 			ch.RebuildGaps()
 		}
 		changed = false
@@ -1206,13 +1284,13 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 			EnterSurface2D("wall")
 		}
 		if editorUVControls("Wall2D", &w.UVOffset, &w.UVScale, &w.UVRotation) {
-			_ = s.Load(SectorPoints(ch, s))
+			_ = reloadSector(ch, s)
 		}
 		editorExtrusionPanel(ch, s, w)
 		editorTerrainPanel(ch, s, "Wall2D", &w.Terrain, &w.TerrainPoints)
 		// Smooth shading (rebuilds the wall: normals are made at upload)
 		if editorSmoothPanel("Wall2D", &w.Smooth, &w.SmoothAngle) {
-			_ = s.Load(SectorPoints(ch, s))
+			_ = reloadSector(ch, s)
 		}
 		editorDetailPanel("Wall2D", &w.Detail)
 	} else if kind == "portal" && idx < len(s.Portals) {
@@ -1229,7 +1307,7 @@ func editorEdgePanel(ch *Chunk, s *Sector) {
 	}
 
 	if changed {
-		_ = s.Load(SectorPoints(ch, s))
+		_ = reloadSector(ch, s)
 		ch.RebuildGaps()
 	}
 }
@@ -1280,7 +1358,7 @@ func convertEdge(ch *Chunk, s *Sector, fromKind string, idx int, toKind string) 
 	}
 
 	s.EdgeKinds[polyIdx] = toKind
-	_ = s.Load(SectorPoints(ch, s))
+	_ = reloadSector(ch, s)
 }
 
 // polyEdgeIdx returns the polygon edge index for the wall/portal at kind+idx.

@@ -144,6 +144,35 @@ func GizmoAABB(min, max mgl32.Vec3, color mgl32.Vec3) {
 	GizmoLine(mgl32.Vec3{x0, y0, z1}, mgl32.Vec3{x0, y1, z1}, color)
 }
 
+// GizmoOBB queues the 12 edges of an oriented box: the box centred on center
+// that extends half[i] along each of axes[i], which must be unit length and
+// mutually perpendicular. GizmoAABB is the world-axis-aligned special case.
+func GizmoOBB(center mgl32.Vec3, axes [3]mgl32.Vec3, half mgl32.Vec3, color mgl32.Vec3) {
+	corner := func(sx, sy, sz float32) mgl32.Vec3 {
+		return center.
+			Add(axes[0].Mul(sx * half[0])).
+			Add(axes[1].Mul(sy * half[1])).
+			Add(axes[2].Mul(sz * half[2]))
+	}
+	// The two faces perpendicular to axes[0]...
+	for _, sx := range [2]float32{-1, 1} {
+		a := corner(sx, -1, -1)
+		b := corner(sx, 1, -1)
+		c := corner(sx, 1, 1)
+		d := corner(sx, -1, 1)
+		GizmoLine(a, b, color)
+		GizmoLine(b, c, color)
+		GizmoLine(c, d, color)
+		GizmoLine(d, a, color)
+	}
+	// ...and the four rails joining them.
+	for _, sy := range [2]float32{-1, 1} {
+		for _, sz := range [2]float32{-1, 1} {
+			GizmoLine(corner(-1, sy, sz), corner(1, sy, sz), color)
+		}
+	}
+}
+
 // GizmoSphere queues three orthogonal rings approximating a sphere.
 func GizmoSphere(center mgl32.Vec3, radius float32, color mgl32.Vec3) {
 	const segs = 32

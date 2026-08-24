@@ -650,7 +650,7 @@ func ResolvePrimitiveCollision(entity *Entity, chunk *Chunk, sector *Sector, new
 	// Check current sector
 	for _, pi := range sector.PrimitiveIndices {
 		prim := &chunk.Primitives[pi]
-		if !prim.Collision {
+		if !primitiveCollides(prim) {
 			continue
 		}
 		tmp := primAsEntity(prim)
@@ -662,7 +662,7 @@ func ResolvePrimitiveCollision(entity *Entity, chunk *Chunk, sector *Sector, new
 	for _, adj := range getAdjacentSectors(chunk, sector) {
 		for _, pi := range adj.PrimitiveIndices {
 			prim := &chunk.Primitives[pi]
-			if !prim.Collision {
+			if !primitiveCollides(prim) {
 				continue
 			}
 			tmp := primAsEntity(prim)

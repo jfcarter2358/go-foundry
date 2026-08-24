@@ -52,4 +52,26 @@ Levels should be exported as YAML files containing the entity, chunk, and sector
 
 ## Animations
 
-**Currently out of scope for v1, ignore**
+Models carry their own armature and their own clips: a `.fmdl` holds a bone
+hierarchy, per-vertex skin weights, and any number of named animations, so the
+one file a level places is the whole thing. Nothing is shared between models,
+which costs some duplication and buys never having a rig and a mesh drift apart.
+
+A pose is one local transform per bone — translation, rotation, scale, in that
+bone's own rest space — composed down the hierarchy, so rotating a shoulder
+carries the elbow with it. Keyframes store those channels rather than posed bone
+placements: rotations interpolate as rotations (slerp), where interpolating
+endpoints would make a swinging limb visibly shorten between keys. Scale along a
+bone's own axis stretches both what it deforms and where its children sit.
+
+Clips are authored in the model editor's **pose mode**, which deforms the mesh
+for display without editing the document underneath it — the rest shape is what
+gets saved, whatever the viewport is showing. A timeline keys the bones that have
+actually been moved, so a clip only ever mentions the parts of the rig it drives.
+
+Deformation is linear blend skinning, capped at four influences per vertex. The
+editor runs it on the CPU, because its wireframe, its picking and its gizmos all
+want ordinary vertex positions to work from. The runtime runs it on the GPU: an
+entity uploads one bone-matrix palette per frame and the colour pass and both
+shadow passes read the same one, so a moving model and its shadow cannot
+disagree. Entities name the clip they play from the level file.

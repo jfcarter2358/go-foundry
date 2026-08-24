@@ -145,6 +145,12 @@ func linkProgram(vertPath, fragPath string, out *uint32) error {
 	if err != nil {
 		return err
 	}
+	// Both shadow passes skin, or an animated entity would cast the silhouette
+	// of its rest pose while the mesh moved.
+	vertSrc, err = injectSkinning(vertSrc)
+	if err != nil {
+		return err
+	}
 	fragSrc, err := readShaderFile(fragPath)
 	if err != nil {
 		return err
@@ -210,8 +216,24 @@ func EnsureCascadeArray(layers int32) {
 		gl.DEPTH_COMPONENT, gl.FLOAT, nil)
 	gl.TexParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
 	gl.TexParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	// Comparison sampling: the shaders bind this as a sampler2DArrayShadow and
+	// pass the fragment's own depth as the reference, so each tap comes back as
+	// the BILINEARLY FILTERED fraction of its four texels that the fragment is
+	// in front of, not a yes/no answer for one texel.
+	//
+	// That is what LINEAR filtering above is for. A depth texture sampled
+	// without compare mode averages stored depths and then compares once, which
+	// is meaningless — the average of "1 m away" and "40 m away" is a surface
+	// that isn't there — so every tap was effectively a hard nearest-texel test
+	// and shadow edges landed on texel boundaries. Close to the camera, where a
+	// cascade-0 texel is centimetres across but tens of screen pixels wide,
+	// those boundaries are the blocky staircase you see on a nearby model.
+	gl.TexParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE)
+	gl.TexParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL)
 	gl.TexParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_BORDER)
 	gl.TexParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_BORDER)
+	// Border depth 1.0 is the far plane, so a lookup that falls outside the
+	// cascade box compares as lit rather than shadowed.
 	borderColor := [4]float32{1, 1, 1, 1}
 	gl.TexParameterfv(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_BORDER_COLOR, &borderColor[0])
 	gl.BindTexture(gl.TEXTURE_2D_ARRAY, 0)
@@ -537,7 +559,7 @@ func RenderShadowPass(lights LightSet, level *Level, view, projection mgl32.Mat4
 			// caster behind the player can still drop a shadow into view, and
 			// the box already extends toward the light to include it.
 			cull := ExtractFrustum(lsm)
-			renderSceneShadow(level, Shadows.ModelUniform, &cull)
+			renderSceneShadow(level, Shadows.Program, &shadowSkinUniforms, Shadows.ModelUniform, &cull)
 			// Cast displaced/scattered detail (drawn via its own tess/instanced
 			// programs so bumps and rocks cast accurate shadows); restores Shadows.Program.
 			RenderDetailDirShadow(level, lsm, &cull)
@@ -607,7 +629,7 @@ func RenderPointShadowPass(lights LightSet, level *Level) {
 			gl.UniformMatrix4fv(Shadows.CubeLSMUniform, 1, false, &lsm[0])
 
 			cull := ExtractFrustum(lsm)
-			renderSceneShadow(level, Shadows.CubeModelUniform, &cull)
+			renderSceneShadow(level, Shadows.CubeProgram, &shadowCubeSkinUniforms, Shadows.CubeModelUniform, &cull)
 			// Cast displaced/scattered detail into this cube face; restores Shadows.CubeProgram.
 			RenderDetailCubeShadow(level, lsm, pl.Position, farPlane, &cull)
 			// Cast painted biome scatter into this cube face; restores Shadows.CubeProgram.
@@ -627,7 +649,10 @@ func RenderPointShadowPass(lights LightSet, level *Level) {
 // sectors, entities and primitives against it — for the cascade pass that is the
 // cascade's own light box, which is what keeps a large level from re-drawing
 // every sector once per cascade.
-func renderSceneShadow(level *Level, modelUniform int32, cull *Frustum) {
+// renderSceneShadow walks the level for one shadow pass. prog and skin identify
+// which program is bound: both passes share this walker but resolve the skinning
+// uniforms to different locations, so the cache cannot be a single global.
+func renderSceneShadow(level *Level, prog uint32, skin *skinUniforms, modelUniform int32, cull *Frustum) {
 	identity := mgl32.Ident4()
 	gl.UniformMatrix4fv(modelUniform, 1, false, &identity[0])
 
@@ -648,36 +673,36 @@ func renderSceneShadow(level *Level, modelUniform int32, cull *Frustum) {
 				// Displaced faces cast via the detail tess program instead (see
 				// RenderDetailDirShadow / RenderDetailCubeShadow), so skip the flat mesh.
 				if !sector.Floor.Detail.HasDisplace() {
-					drawGeometryShadow(&sector.Floor.Geometry)
+					drawGeometryShadow(&sector.Floor.Geometry, prog, skin)
 				}
 				for eg := range sector.Floor.ExtrusionGeometries {
-					drawGeometryShadow(&sector.Floor.ExtrusionGeometries[eg])
+					drawGeometryShadow(&sector.Floor.ExtrusionGeometries[eg], prog, skin)
 				}
 			}
 			if sector.Ceiling.Enabled {
 				if !sector.Ceiling.Detail.HasDisplace() {
-					drawGeometryShadow(&sector.Ceiling.Geometry)
+					drawGeometryShadow(&sector.Ceiling.Geometry, prog, skin)
 				}
 				for eg := range sector.Ceiling.ExtrusionGeometries {
-					drawGeometryShadow(&sector.Ceiling.ExtrusionGeometries[eg])
+					drawGeometryShadow(&sector.Ceiling.ExtrusionGeometries[eg], prog, skin)
 				}
 			}
 			for wi := range sector.Walls {
 				w := &sector.Walls[wi]
 				if w.Visible {
 					if !w.Detail.HasDisplace() {
-						drawGeometryShadow(&w.Geometry)
+						drawGeometryShadow(&w.Geometry, prog, skin)
 					}
 					for eg := range w.ExtrusionGeometries {
-						drawGeometryShadow(&w.ExtrusionGeometries[eg])
+						drawGeometryShadow(&w.ExtrusionGeometries[eg], prog, skin)
 					}
 				}
 			}
 			for pi := range sector.Portals {
 				p := &sector.Portals[pi]
 				if p.Visible && p.DrawGap {
-					drawGeometryShadow(&p.FloorGap)
-					drawGeometryShadow(&p.CeilGap)
+					drawGeometryShadow(&p.FloorGap, prog, skin)
+					drawGeometryShadow(&p.CeilGap, prog, skin)
 				}
 			}
 		}
@@ -696,7 +721,9 @@ func renderSceneShadow(level *Level, modelUniform int32, cull *Frustum) {
 		}
 		model := e.ModelMatrix()
 		gl.UniformMatrix4fv(modelUniform, 1, false, &model[0])
-		drawGeometryShadow(&e.Geometry)
+		for si := range e.Submeshes {
+			drawGeometryShadow(&e.Submeshes[si], prog, skin)
+		}
 	}
 
 	// Primitives (static procedural objects)
@@ -707,6 +734,11 @@ func renderSceneShadow(level *Level, modelUniform int32, cull *Frustum) {
 		}
 		for pi := range chunk.Primitives {
 			p := &chunk.Primitives[pi]
+			// A marker casting a shadow would darken the floor the player
+			// spawns on even though nothing is there.
+			if isSpawnPoint(p) {
+				continue
+			}
 			if cull != nil {
 				pMin, pMax := p.WorldAABB()
 				if !AABBInFrustum(*cull, pMin, pMax) {
@@ -715,15 +747,18 @@ func renderSceneShadow(level *Level, modelUniform int32, cull *Frustum) {
 			}
 			model := p.ModelMatrix()
 			gl.UniformMatrix4fv(modelUniform, 1, false, &model[0])
-			drawGeometryShadow(&p.Geometry)
+			drawGeometryShadow(&p.Geometry, prog, skin)
 		}
 	}
 }
 
-func drawGeometryShadow(g *Geometry) {
+func drawGeometryShadow(g *Geometry, prog uint32, skin *skinUniforms) {
 	if len(g.Vertices) == 0 || g.Alpha < 0.05 {
 		return
 	}
+	// The shadow passes deform from the same palette the colour pass uses, so an
+	// animated entity's silhouette tracks its mesh.
+	applySkinUniforms(skin, prog, g.BonePalette)
 	gl.BindVertexArray(g.Vao)
 	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
 }

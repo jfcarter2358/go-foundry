@@ -103,7 +103,7 @@ func TestGizmoDragEntity(t *testing.T) {
 	if !translateGizmoMouseDown(down) {
 		t.Fatal("mouse down on the X arm did not start a drag")
 	}
-	if !translateGizmoDragging() {
+	if !editorGizmoDragging() {
 		t.Fatal("drag did not register as in progress")
 	}
 
@@ -123,7 +123,7 @@ func TestGizmoDragEntity(t *testing.T) {
 	}
 
 	translateGizmoMouseUp()
-	if translateGizmoDragging() {
+	if editorGizmoDragging() {
 		t.Fatal("drag still in progress after mouse up")
 	}
 
@@ -195,5 +195,60 @@ func TestGizmoKindIsModeScoped(t *testing.T) {
 	origin, ok := translateGizmoOrigin()
 	if !ok || origin != (mgl32.Vec3{5, 6, 7}) {
 		t.Fatalf("scenery gizmo origin = %v (ok=%v), want {5 6 7}", origin, ok)
+	}
+}
+
+// TestGizmoArmClickAlwaysConsumes checks that a click on an axis arm belongs to
+// the gizmo even when the drag cannot start — an arm pointing at the camera has
+// no usable mouse mapping, and letting that click fall through to picking would
+// re-select whatever vertex or edge lies under the gizmo and drop the selection
+// the user was about to move.
+func TestGizmoArmClickAlwaysConsumes(t *testing.T) {
+	WinWidth, WinHeight = 800, 600
+	Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(WinWidth)/float32(WinHeight), 0.1, 1000.0)
+	// Straight down the Z axis: the blue arm projects onto the gizmo origin, so
+	// clicking there grabs an axis that axisParamAtMouse has to reject.
+	Cam.Position = mgl32.Vec3{0, 0, 5}
+	Cam.Matrix = mgl32.LookAtV(Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
+
+	restore := saveEditorSelection()
+	defer restore()
+	Editor.Mode = Mode3D
+	Editor.level = &Level{Chunks: []Chunk{{
+		ID:      "c0",
+		Points:  []mgl32.Vec2{{0, 0}, {2, 0}, {0, 2}},
+		Sectors: []Sector{{ID: "s0", PointIndices: []int{0, 1, 2}}},
+	}}}
+	Editor.SelectedVertices = []vertexSel{{chunkIdx: 0, sectorIdx: 0, vertIdx: 0, pointIdx: 0, isFloor: true}}
+	Editor.GizmoKind = gizmoKindVertices
+	Editor.GizmoDragging = false
+	Editor.GizmoDragAxis = -1
+
+	origin, ok := translateGizmoOrigin()
+	if !ok {
+		t.Fatal("no gizmo origin for the selected vertex")
+	}
+	screen, ok := projectToScreen(Projection.Mul4(Cam.Matrix), origin)
+	if !ok {
+		t.Fatal("gizmo origin did not project")
+	}
+	down := sdl.MouseButtonEvent{Button: sdl.ButtonLeft, X: int32(screen.X()), Y: int32(screen.Y())}
+
+	if !translateGizmoMouseDown(down) {
+		t.Fatal("a click on an axis arm fell through to selection")
+	}
+	if editorGizmoDragging() {
+		t.Fatal("an edge-on axis started a drag it cannot map the mouse onto")
+	}
+	if len(Editor.SelectedVertices) != 1 {
+		t.Fatalf("the selection changed under a gizmo click: %+v", Editor.SelectedVertices)
+	}
+
+	// With nothing selected there is no gizmo, so clicks must still reach the
+	// picker rather than being swallowed.
+	clearVertexSelection()
+	Editor.GizmoKind = gizmoKindNone
+	if translateGizmoMouseDown(down) {
+		t.Fatal("a click was consumed with no gizmo on screen")
 	}
 }

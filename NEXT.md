@@ -32,37 +32,44 @@
 - [x] Should start on empty world
 - [x] Detail shadow casting
 - [x] Multi-window mode
+- [x] Remove fake ground-contact shadows (dynamic shadows only)
+- [x] 3D mode edge selection
+- [x] Skeletal animation (pose mode, keyframes, GPU skinning)
 
 ## TODO
 
 ### Editor
 
-- [/] 3D mode edge selection
+- [x] 3D mode edge selection
 - [ ] Re-organize settings panel
-- [ ] Right click action menu
-- [ ] Model editor
-- [ ] Animation editor
+- [x] Model editor
+- [x] Animation editor
+- [ ] Re-do top bar
 - [ ] UI builder
 - [ ] Default entity definitions
 - [ ] Default sector settings
 - [ ] Configurable editor keybindings
+- [x] Right click action menu (3D editor and model editor)
 
 ### Engine
 
-- [/] Remove fake lighting
-- [ ] Models
-- [ ] Animations
+- [x] Models
+- [x] Model bones
+- [x] Animations
 - [ ] Animated textures
 - [ ] Sprites
 - [ ] Particles
+- [ ] Scripting engine
+- [ ] Skeleton sockets
+- [ ] Volumes
+- [ ] Vehicles
 - [ ] Texture transparency
 - [ ] Texture blending
 - [ ] Trees
-- [ ] Scripting engine
-- [ ] Volumes
-- [ ] Vehicles
 - [ ] Configurable keybindings
 - [ ] Object collision physics
 - [ ] Water reflections
 - [ ] Music and Sound Effects
 - [ ] Volumetric displacement (e.g. sand, snow)
+- [ ] 3D water plane
+- [ ] Re-do wall extrusions

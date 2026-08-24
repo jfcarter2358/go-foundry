@@ -31,10 +31,7 @@ func LoadTexture(name, file string) error {
 	gl.GenTextures(1, &texture)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, texture)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
-	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+	applyWorldTextureFilter()
 	gl.TexImage2D(
 		gl.TEXTURE_2D,
 		0,
@@ -45,6 +42,7 @@ func LoadTexture(name, file string) error {
 		gl.RGBA,
 		gl.UNSIGNED_BYTE,
 		gl.Ptr(rgba.Pix))
+	generateWorldMipmaps()
 
 	Textures[name] = texture
 	return nil
@@ -142,16 +140,19 @@ func UpdateTextureFromRGBA(name string, img *image.RGBA) error {
 		gl.GenTextures(1, &tex)
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, tex)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
-		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+		applyWorldTextureFilter()
 		Textures[name] = tex
 	} else {
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, tex)
 	}
 	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(img.Pix))
+	// Rebuild the mip chain from the new level 0 — see generateWorldMipmaps.
+	// This is on the texture editor's live-edit path (a brush drag re-uploads
+	// once per frame), but it is a GPU-side downsample of one texture, which
+	// is well under the cost of the flatten that produced img in the first
+	// place.
+	generateWorldMipmaps()
 	return nil
 }
 

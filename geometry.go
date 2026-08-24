@@ -29,16 +29,29 @@ type Geometry struct {
 	SmoothAngle                float32 // crease threshold in degrees; 0 = defaultSmoothAngle
 	Normals                    []float32
 	NormalAttribute            uint32
-	Model                      mgl32.Mat4
-	ModelUniform               int32
-	Normal                     mgl32.Vec3
-	Position                   mgl32.Vec3
-	Yaw                        float32
-	Alpha                      float32 // 0.0 = fully transparent, 1.0 = fully opaque
-	Water                      WaterParams
-	Vao                        uint32
-	Vbo                        uint32
-	Nbo                        uint32 // normal buffer; 0 when the surface is flat-shaded
+	// Skinning inputs, set before Load on a submesh built from a rigged model:
+	// four bone indices and four weights per *source* vertex, which Load
+	// de-indexes alongside Vertices. Nil on everything else, which is what keeps
+	// the extra buffers off every wall in the level.
+	SkinIdx, SkinWt [][]float32
+	skinIdx, skinWt []float32
+	Ibo, Wbo        uint32
+	// BonePalette is the per-frame pose, one delta per bone. The entity owns the
+	// backing array and updates it in place, so this slice header can be handed
+	// to every submesh once at load and never touched again — which is what lets
+	// the sorted transparent queue draw an animated entity without extra
+	// bookkeeping. Empty means "not skinned".
+	BonePalette  []mgl32.Mat4
+	Model        mgl32.Mat4
+	ModelUniform int32
+	Normal       mgl32.Vec3
+	Position     mgl32.Vec3
+	Yaw          float32
+	Alpha        float32 // 0.0 = fully transparent, 1.0 = fully opaque
+	Water        WaterParams
+	Vao          uint32
+	Vbo          uint32
+	Nbo          uint32 // normal buffer; 0 when the surface is flat-shaded
 }
 
 // smoothFlag returns the value of the shader's `smoothShading` uniform for this
@@ -79,6 +92,25 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 			return fmt.Errorf("Geometry.Load: index %d out of bounds (len=%d)", idx, len(vertices))
 		}
 		verts = append(verts, vertices[idx]...)
+	}
+
+	// The skin attributes are de-indexed in the same order, so record k of the
+	// vertex buffer and record k of these describe the same corner.
+	g.skinIdx, g.skinWt = nil, nil
+	if len(g.SkinIdx) > 0 && len(g.SkinWt) > 0 {
+		g.skinIdx = make([]float32, 0, len(indices)*4)
+		g.skinWt = make([]float32, 0, len(indices)*4)
+		for _, idx := range indices {
+			if idx < len(g.SkinIdx) && idx < len(g.SkinWt) {
+				g.skinIdx = append(g.skinIdx, g.SkinIdx[idx]...)
+				g.skinWt = append(g.skinWt, g.SkinWt[idx]...)
+			} else {
+				// Unreachable given the bounds check above, but a short buffer
+				// would silently bind the wrong bones rather than fail.
+				g.skinIdx = append(g.skinIdx, 0, 0, 0, 0)
+				g.skinWt = append(g.skinWt, 0, 0, 0, 0)
+			}
+		}
 	}
 
 	// Phase 0 fix: assign verts before using it in BufferData
@@ -142,8 +174,44 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 		}
 	}
 
+	// Skinning attributes get their own buffers in the same VAO, for the same
+	// reason normals do: Vertices stays the 5-float record that picking, the
+	// shadow passes and the detail renderer all index directly.
+	g.deleteSkinBuffers()
+	if len(g.skinIdx) > 0 {
+		g.loadSkinBuffer(&g.Ibo, "boneIdx", g.skinIdx)
+		g.loadSkinBuffer(&g.Wbo, "boneWt", g.skinWt)
+	}
+
 	return nil
 }
+
+// loadSkinBuffer uploads one vec4-per-vertex skinning attribute.
+func (g *Geometry) loadSkinBuffer(buf *uint32, attr string, data []float32) {
+	loc := gl.GetAttribLocation(Program, gl.Str(attr+"\x00"))
+	if loc < 0 {
+		return // shader was built without the skinning path
+	}
+	gl.GenBuffers(1, buf)
+	gl.BindBuffer(gl.ARRAY_BUFFER, *buf)
+	gl.BufferData(gl.ARRAY_BUFFER, len(data)*4, gl.Ptr(data), gl.STATIC_DRAW)
+	gl.EnableVertexAttribArray(uint32(loc))
+	gl.VertexAttribPointerWithOffset(uint32(loc), 4, gl.FLOAT, false, 4*4, 0)
+}
+
+func (g *Geometry) deleteSkinBuffers() {
+	if g.Ibo != 0 {
+		gl.DeleteBuffers(1, &g.Ibo)
+		g.Ibo = 0
+	}
+	if g.Wbo != 0 {
+		gl.DeleteBuffers(1, &g.Wbo)
+		g.Wbo = 0
+	}
+}
+
+// IsSkinned reports whether this submesh carries bone attributes.
+func (g *Geometry) IsSkinned() bool { return g.Ibo != 0 && g.Wbo != 0 }
 
 // Delete releases the GPU resources (VAO and VBO) held by this geometry.
 func (g *Geometry) Delete() {
@@ -159,6 +227,7 @@ func (g *Geometry) Delete() {
 		gl.DeleteBuffers(1, &g.Nbo)
 		g.Nbo = 0
 	}
+	g.deleteSkinBuffers()
 }
 
 // IsTransparent returns true if this geometry has a non-opaque alpha value,
@@ -181,6 +250,7 @@ func (g Geometry) Draw() {
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, g.smoothFlag())
 	g.applyWaterUniforms()
+	applySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
 
 	gl.BindVertexArray(g.Vao)
 
@@ -200,6 +270,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, g.smoothFlag())
 	g.applyWaterUniforms()
+	applySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])

@@ -76,8 +76,14 @@ func DebugRenderOverlay() {
 		return
 	}
 
-	// Position at top-left with some padding
-	imgui.SetNextWindowPosV(imgui.Vec2{X: 10, Y: 10}, imgui.ConditionAlways, imgui.Vec2{})
+	// Position at top-left with some padding. In the editor the full-width
+	// toolbar owns the first 28px, and an overlay parked on top of it would
+	// eat the clicks meant for the mode buttons — drop below it instead.
+	top := float32(10)
+	if Editor.Active {
+		top = 38
+	}
+	imgui.SetNextWindowPosV(imgui.Vec2{X: 10, Y: top}, imgui.ConditionAlways, imgui.Vec2{})
 	imgui.SetNextWindowBgAlpha(0.6)
 
 	flags := imgui.WindowFlagsNoDecoration |
@@ -103,7 +109,13 @@ func DebugRenderOverlay() {
 		imgui.Text(fmt.Sprintf("Chunks:       %d loaded / %d drawn", DebugStats.ChunksLoaded, DebugStats.ChunksDrawn))
 		imgui.Separator()
 
-		if PlayerEntity != nil {
+		// The editor flies a free camera and leaves PlayerEntity parked
+		// wherever gameplay left it, so reporting that as "Position" there
+		// would be a stale number next to a live one.
+		if Editor.Active {
+			c := Cam.Position
+			imgui.Text(fmt.Sprintf("Camera:       %.2f, %.2f, %.2f", c.X(), c.Y(), c.Z()))
+		} else if PlayerEntity != nil {
 			p := PlayerEntity.Position
 			imgui.Text(fmt.Sprintf("Position:     %.2f, %.2f, %.2f", p.X(), p.Y(), p.Z()))
 		} else {
@@ -113,9 +125,19 @@ func DebugRenderOverlay() {
 		imgui.Separator()
 
 		if AntiAliasGrantedSamples > 0 {
-			imgui.Text(fmt.Sprintf("Anti-aliasing: %s  (%dx, F10)", onOff(AntiAliasEnabled), AntiAliasGrantedSamples))
+			imgui.Text(fmt.Sprintf("Anti-aliasing: %s  (MSAA %dx of %dx, F10)",
+				onOff(AntiAliasEnabled), AntiAliasGrantedSamples, AntiAliasSamples))
 		} else {
 			imgui.Text("Anti-aliasing: unavailable (driver granted 0 samples)")
+		}
+		// Reported next to MSAA because it is the half of anti-aliasing MSAA
+		// can't do (see texture_filter.go), and because a driver silently
+		// refusing anisotropy looks exactly like distant ground being blurry
+		// for no reason.
+		if TextureAnisotropy > 1 {
+			imgui.Text(fmt.Sprintf("Texture filter: mipmaps + %.0fx aniso", TextureAnisotropy))
+		} else {
+			imgui.Text("Texture filter: mipmaps (anisotropic unavailable)")
 		}
 		imgui.Separator()
 

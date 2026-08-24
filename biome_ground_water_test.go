@@ -703,22 +703,18 @@ func TestGrassClumpRoundTrip(t *testing.T) {
 	}
 }
 
-// TestFadeAndFakeShadowRoundTrip pins the soft-edge and fake-ground-shadow
-// fields (BiomeBrush.RangeFadeFraction/EdgeFadeDistance/FakeShadowStrength/
-// FakeShadowSpread) surviving a save/load cycle, and — since every one is a
-// plain omitempty field whose zero value is the pre-existing hard-edged,
-// unshadowed look — that a sector saved before these existed loads back
-// completely unaffected.
-func TestFadeAndFakeShadowRoundTrip(t *testing.T) {
+// TestFadeRoundTrip pins the soft-edge fields (BiomeBrush.RangeFadeFraction/
+// EdgeFadeDistance) surviving a save/load cycle, and — since both are plain
+// omitempty fields whose zero value is the pre-existing hard-edged look —
+// that a sector saved before these existed loads back completely unaffected.
+func TestFadeRoundTrip(t *testing.T) {
 	set := RawBiomeSector{
 		ID:     "f0",
 		Points: []Point{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 1, Y: 1}},
 		Brush: RawBiomeBrush{
-			Kind:               BiomeGrass,
-			RangeFadeFraction:  0.5,
-			EdgeFadeDistance:   2.5,
-			FakeShadowStrength: 0.4,
-			FakeShadowSpread:   1.8,
+			Kind:              BiomeGrass,
+			RangeFadeFraction: 0.5,
+			EdgeFadeDistance:  2.5,
 			// BoundaryJitter's zero value means something different from its
 			// siblings above (see BiomeBrush's doc comment: "use the kind
 			// default", not "off") but the wire format doesn't care — it's
@@ -744,7 +740,7 @@ func TestFadeAndFakeShadowRoundTrip(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	for _, key := range []string{
-		"range_fade_fraction", "edge_fade_distance", "fake_shadow_strength", "fake_shadow_spread", "boundary_jitter",
+		"range_fade_fraction", "edge_fade_distance", "boundary_jitter",
 	} {
 		if strings.Contains(string(plain), key) {
 			t.Errorf("zero-valued brush wrote %q; the zero value must be omitted so old saves load unchanged:\n%s", key, plain)

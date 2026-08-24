@@ -184,13 +184,12 @@ func EvictBiomeHeightCache(id string) {
 }
 
 // EvictBiomeSectorCaches releases every GPU resource derived from sector id —
-// the scatter height texture, the ground patch mesh, the fake-shadow halo mesh,
-// and the companion water primitive (if any). Call from the editor whenever a
-// sector is deleted or its chunk is discarded.
+// the scatter height texture, the ground patch mesh, and the companion water
+// primitive (if any). Call from the editor whenever a sector is deleted or its
+// chunk is discarded.
 func EvictBiomeSectorCaches(id string) {
 	EvictBiomeHeightCache(id)
 	EvictGroundPatchCache(id)
-	EvictBiomeDecalCache(id)
 }
 
 // GrassInit compiles the biome shader programs and builds the template meshes.
@@ -258,7 +257,6 @@ func GrassInit() {
 	biomes.initialized = true
 
 	GroundInit()
-	DecalInit()
 }
 
 // rockMeshFor returns (building & caching if necessary) the rock template for the
@@ -1141,11 +1139,10 @@ func forEachScatterSector(level *Level, camPos mgl32.Vec3, castOnly bool, castCa
 	}
 }
 
-// RenderBiomes draws every chunk's painted biome sectors, in three layers:
+// RenderBiomes draws every chunk's painted biome sectors, in two layers:
 // first the conforming ground patch under every land kind (biome_ground.go),
 // then the GPU-instanced scatter (grass/rock/wildflower/cattail/moss) on top
-// of it, then the fake ground-contact shadow halo (biome_shadow_decal.go) over
-// both. Sand/Water sectors only render the ground pass — Sand has no scatter,
+// of it. Sand/Water sectors only render the ground pass — Sand has no scatter,
 // Water's surface is a separate companion primitive drawn by the normal
 // primitive pass. Moss only scatters when its own MossScatter toggle is on
 // (see (*BiomeBrush).Scatters) — otherwise it's ground-patch-only, like Sand.
@@ -1179,11 +1176,6 @@ func RenderBiomes(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame Sh
 	if started {
 		endBiomePass(Program)
 	}
-
-	// Fake ground-contact shadow halo (biome_shadow_decal.go) — drawn last so
-	// it darkens the ground patch and scatter already on screen rather than
-	// being covered up by them.
-	RenderBiomeShadowDecal(level, projView)
 }
 
 // RenderBiomeScatterDirShadow draws the biome scatter into the currently-bound

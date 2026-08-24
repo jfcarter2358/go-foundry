@@ -187,7 +187,7 @@ func surfaceTerrainPts() (*bool, *[]TerrainPoint) {
 func surfaceReload() {
 	ch, s := surfaceSector()
 	if ch != nil && s != nil {
-		_ = s.Load(SectorPoints(ch, s))
+		_ = reloadSector(ch, s)
 	}
 }
 

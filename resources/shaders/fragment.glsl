@@ -3,6 +3,17 @@
 uniform sampler2D tex;
 uniform float alpha; // per-geometry alpha multiplier (default 1.0)
 
+// Alpha-cutout anti-aliasing, set for the opaque pass only (see
+// AlphaSharpenUniform in main.go). Off (0) by default so any program that
+// links this shader without knowing about it — and the sorted transparent
+// pass, where alpha means blending, not coverage — behaves exactly as before.
+uniform int alphaSharpen;
+
+// Where a cutout's edge sits once mip filtering has turned its hard 0/255
+// alpha into a ramp: the level set that best reproduces the original
+// silhouette is the halfway point, not "any alpha at all".
+const float alphaCutoff = 0.5;
+
 // Water surface. isWater gates the whole path.
 uniform int   isWater;
 uniform float time;
@@ -35,7 +46,11 @@ uniform float dirLightBrightness[MAX_DIR_LIGHTS];
 // One array texture holds every cascade of every casting light — MAX_DIR_LIGHTS
 // * SHADOW_CASCADES separate sampler2Ds would blow the 16 fragment texture
 // units GL 4.1 guarantees.
-uniform sampler2DArray shadowMapArray;
+// A comparison sampler: each lookup passes the fragment's own depth as a
+// reference and gets back the fraction of the four filtered texels it is in
+// front of, so a tap is a smooth 0..1 rather than a per-texel yes/no. The
+// compare mode lives on the texture (EnsureCascadeArray in shadow.go).
+uniform sampler2DArrayShadow shadowMapArray;
 uniform mat4  cascadeMatrix[MAX_DIR_LIGHTS * SHADOW_CASCADES];
 uniform float cascadeBias[MAX_DIR_LIGHTS * SHADOW_CASCADES];
 uniform float cascadeSplit[SHADOW_CASCADES]; // view-space distance each cascade ends at
@@ -120,17 +135,22 @@ float sampleCascade(int matIdx, int layer, vec3 normal, vec3 lightDir) {
     float bias = base * (1.0 - cosTheta) * (1.0 - cosTheta) + base * 0.05;
     float currentDepth = projCoords.z;
 
-    // 5x5 PCF for softer edges
-    float shadow = 0.0;
+    // 5x5 PCF for softer edges. Every tap is itself bilinearly filtered by the
+    // comparison sampler, so the result is continuous across a texel rather
+    // than stepping from one whole texel to the next — which is what kept
+    // shadow edges on nearby geometry looking like a staircase of blocks, a
+    // cascade-0 texel being centimetres wide in the world but tens of pixels
+    // wide on screen when the surface is a couple of metres from the camera.
+    float ref = currentDepth - bias;
+    float lit = 0.0;
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMapArray, 0).xy);
     for (int x = -2; x <= 2; x++) {
         for (int y = -2; y <= 2; y++) {
-            float pcfDepth = texture(shadowMapArray,
-                vec3(projCoords.xy + vec2(x, y) * texelSize, float(layer))).r;
-            shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
+            lit += texture(shadowMapArray,
+                vec4(projCoords.xy + vec2(x, y) * texelSize, float(layer), ref));
         }
     }
-    return shadow / 25.0;
+    return 1.0 - lit / 25.0;
 }
 
 // Cascaded directional shadow lookup: pick the tightest cascade covering this
@@ -296,6 +316,29 @@ void main() {
     }
 
     float finalAlpha = texColor.a * alpha;
+
+    if (alphaSharpen != 0) {
+        // Re-derive a crisp, roughly one-pixel-wide edge from the soft alpha
+        // ramp mip filtering leaves behind, and hand that to
+        // alpha-to-coverage (SetAlphaToCoverage, antialias.go) as the
+        // fraction of the pixel the cutout actually covers.
+        //
+        // Without this, mipmapping and cutouts fight each other: distant mip
+        // levels average a foliage texture's alpha down below the cutoff over
+        // more and more of the shape, so it thins and eventually dissolves —
+        // the classic regression from turning mipmaps on over alpha-tested
+        // art. Rescaling by fwidth is what makes the edge's *screen-space*
+        // width constant instead of its texture-space width: distance is
+        // divided back out, so the silhouette stays put and only the last
+        // pixel of it is partially covered.
+        //
+        // On a fully opaque texel fwidth is 0, the division saturates, and
+        // the clamp pins coverage at 1 — ordinary opaque geometry is
+        // untouched by this path, which is why it can stay on for the whole
+        // opaque pass rather than being switched per surface.
+        finalAlpha = clamp((finalAlpha - alphaCutoff) / max(fwidth(finalAlpha), 1e-5) + 0.5, 0.0, 1.0);
+    }
+
     if (finalAlpha < 0.001) discard;
 
     vec3 surface = texColor.rgb * clamp(lighting, 0.0, 1.0);

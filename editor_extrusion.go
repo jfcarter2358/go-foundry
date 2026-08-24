@@ -94,7 +94,7 @@ func editorExtrusionPanel(ch *Chunk, s *Sector, w *Wall) {
 		changed = editorUVControls(fmt.Sprintf("WallExt%d", ei), &ext.UVOffset, &ext.UVScale, &ext.UVRotation) || changed
 
 		if changed {
-			_ = s.Load(SectorPoints(ch, s))
+			_ = reloadSector(ch, s)
 		}
 
 		imgui.TreePop()
@@ -104,7 +104,7 @@ func editorExtrusionPanel(ch *Chunk, s *Sector, w *Wall) {
 	if deleteIdx >= 0 {
 		EditorPushUndo()
 		w.Extrusions = append(w.Extrusions[:deleteIdx], w.Extrusions[deleteIdx+1:]...)
-		_ = s.Load(SectorPoints(ch, s))
+		_ = reloadSector(ch, s)
 	}
 }
 
@@ -161,7 +161,7 @@ func editorFinalizeExtrusion() {
 	}
 	EditorPushUndo()
 	w.Extrusions = append(w.Extrusions, ext)
-	_ = s.Load(SectorPoints(ch, s))
+	_ = reloadSector(ch, s)
 
 	editorCancelExtrusion()
 }
@@ -445,7 +445,7 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 		changed = editorUVControls(fmt.Sprintf("%sExt%d", surfaceLabel, ei), &ext.UVOffset, &ext.UVScale, &ext.UVRotation) || changed
 
 		if changed {
-			_ = s.Load(SectorPoints(ch, s))
+			_ = reloadSector(ch, s)
 		}
 		imgui.TreePop()
 	}
@@ -453,7 +453,7 @@ func editorSurfaceExtrusionPanel(ch *Chunk, s *Sector, surfaceLabel string, extr
 	if deleteIdx >= 0 {
 		EditorPushUndo()
 		*extrusions = append((*extrusions)[:deleteIdx], (*extrusions)[deleteIdx+1:]...)
-		_ = s.Load(SectorPoints(ch, s))
+		_ = reloadSector(ch, s)
 	}
 }
 
@@ -511,6 +511,6 @@ func editorTerrainPanel(ch *Chunk, s *Sector, surfaceLabel string, terrain *bool
 	}
 
 	if changed {
-		_ = s.Load(SectorPoints(ch, s))
+		_ = reloadSector(ch, s)
 	}
 }

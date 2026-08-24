@@ -203,7 +203,7 @@ type RawSector struct {
 // RawPrimitive is the YAML representation of a procedural 3D primitive.
 type RawPrimitive struct {
 	ID          string            `yaml:"id"`
-	Type        string            `yaml:"type"` // "rect_prism", "sphere", "cylinder", "plane", "water"
+	Type        string            `yaml:"type"` // one of primitiveTypeNames (primitive.go)
 	Position    RawEntityPosition `yaml:"position"`
 	Rotation    RawEntityPosition `yaml:"rotation"`
 	Scale       RawEntityPosition `yaml:"scale"`
@@ -320,13 +320,11 @@ type RawBiomeBrush struct {
 	// a surface's uv_scale; zero/absent = defaultGroundUVScale.
 	GroundUVScale Point `yaml:"ground_uv_scale,omitempty"`
 
-	// Soft edges and fake ground-contact shadow (see BiomeBrush's own doc
-	// comments). All zero-value-safe: a sector saved before these existed
-	// loads back with the exact old hard-edged, unshadowed look.
-	RangeFadeFraction  float32 `yaml:"range_fade_fraction,omitempty"`
-	EdgeFadeDistance   float32 `yaml:"edge_fade_distance,omitempty"`
-	FakeShadowStrength float32 `yaml:"fake_shadow_strength,omitempty"`
-	FakeShadowSpread   float32 `yaml:"fake_shadow_spread,omitempty"`
+	// Soft edges (see BiomeBrush's own doc comments). Both zero-value-safe: a
+	// sector saved before these existed loads back with the exact old
+	// hard-edged look.
+	RangeFadeFraction float32 `yaml:"range_fade_fraction,omitempty"`
+	EdgeFadeDistance  float32 `yaml:"edge_fade_distance,omitempty"`
 
 	// BoundaryJitter (see BiomeBrush's own doc comment) — 0 means "use
 	// defaultBoundaryJitter", not "off", so a sector saved before this existed
@@ -354,6 +352,12 @@ type RawEntity struct {
 	BoundHalfY float32           `yaml:"bound_half_y"`
 	BoundHalfZ float32           `yaml:"bound_half_z"`
 	Alpha      *float32          `yaml:"alpha,omitempty"` // nil = opaque (1.0)
+	// Animation names a clip inside the entity's .fmdl. Addressed by name so a
+	// model can gain and lose clips without every level that places it needing
+	// to be renumbered. Speed 0 means 1x; a nil Loop follows the clip's own flag.
+	Animation      string  `yaml:"animation,omitempty"`
+	AnimationSpeed float32 `yaml:"animation_speed,omitempty"`
+	AnimationLoop  *bool   `yaml:"animation_loop,omitempty"`
 }
 
 // RawColor is the YAML representation of an RGB color.

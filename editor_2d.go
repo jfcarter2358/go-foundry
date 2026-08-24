@@ -596,7 +596,9 @@ func Editor2DHandleMouseMove(t sdl.MouseMotionEvent) {
 			if Editor.DragIsFloor {
 				if vi < len(s.PointIndices) {
 					pIdx := s.PointIndices[vi]
+					was := ch.Points[pIdx]
 					ch.Points[pIdx] = mgl32.Vec2{wx, wz}
+					carryBiomesWithPoints(ch, []pointMove{{pointIdx: pIdx, from: was}})
 					// Rebuild all sectors that share this point
 					reloadSectorsUsingPoint(ch, pIdx)
 				}
@@ -638,7 +640,7 @@ func reloadSectorsUsingPoint(ch *Chunk, pointIdx int) {
 		for _, pIdx := range s.PointIndices {
 			if pIdx == pointIdx {
 				rebuildSectorEdgePoints(ch, s)
-				_ = s.Load(SectorPoints(ch, s))
+				_ = reloadSector(ch, s)
 				break
 			}
 		}
@@ -1281,7 +1283,7 @@ func removeSectorPoint(ch *Chunk, s *Sector, pi int) {
 	// Update the surviving edge's endpoints
 	_ = prevEdge
 	rebuildSectorEdgePoints(ch, s)
-	_ = s.Load(SectorPoints(ch, s))
+	_ = reloadSector(ch, s)
 }
 
 // tryCreateSectorFromPendingEdges checks if pending edges form a closed polygon
@@ -1455,13 +1457,18 @@ func removeSelectedEdge(ch *Chunk) {
 // Portals in other sectors that referenced the removed sector are converted to walls.
 func removeSectorKeepPoints(ch *Chunk, si int) {
 	removedID := ch.Sectors[si].ID
+	// Nothing reloads the sector that is going away, so mark the biomes over
+	// its footprint here: with the floor gone they have new heights (none) to
+	// bake, and would otherwise keep draping over a surface that no longer
+	// exists.
+	markBiomesDirtyOverBox(ch, ch.Sectors[si].MinBound, ch.Sectors[si].MaxBound)
 	ch.Sectors = append(ch.Sectors[:si], ch.Sectors[si+1:]...)
 
 	// Convert portals in remaining sectors that pointed to the removed sector into walls.
 	for i := range ch.Sectors {
 		convertPortalsToWalls(ch, &ch.Sectors[i], removedID)
 		rebuildSectorEdgePoints(ch, &ch.Sectors[i])
-		_ = ch.Sectors[i].Load(SectorPoints(ch, &ch.Sectors[i]))
+		_ = reloadSector(ch, &ch.Sectors[i])
 	}
 	ch.RebuildGaps()
 }
@@ -1709,7 +1716,7 @@ func mergeSectorsAtPortal(ch *Chunk, siA, portalIdx int) {
 	// Replace A with the merged sector
 	ch.Sectors[siA] = merged
 	rebuildSectorEdgePoints(ch, &ch.Sectors[siA])
-	_ = ch.Sectors[siA].Load(SectorPoints(ch, &ch.Sectors[siA]))
+	_ = reloadSector(ch, &ch.Sectors[siA])
 
 	// Remove B (adjust index if B comes before A)
 	if siB > siA {

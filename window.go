@@ -17,6 +17,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -56,6 +57,11 @@ type UIWindow struct {
 // directly.
 var uiWindows = map[uint32]*UIWindow{}
 
+// MainWindowID is the SDL window ID of Window, the primary game/editor window.
+// Set once at startup; anything that has to tell the main window apart from a
+// secondary one (event routing, the F1 overlay) compares against it.
+var MainWindowID uint32
+
 // NewUIWindow creates a new OS window sharing the main GL context, its own
 // imgui context, and per-window VAO/VBO/EBO. Must be called with the main GL
 // context current; restores it before returning. draw is invoked once per
@@ -63,6 +69,13 @@ var uiWindows = map[uint32]*UIWindow{}
 func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWindow, error) {
 	if err := sdl.GLSetAttribute(sdl.GL_SHARE_WITH_CURRENT_CONTEXT, 1); err != nil {
 		return nil, fmt.Errorf("GLSetAttribute(SHARE_WITH_CURRENT_CONTEXT): %w", err)
+	}
+	// Ask for a real depth buffer. Nothing else in the app sets GL_DEPTH_SIZE,
+	// and SDL's default of 16 bits is enough for the 2D editor and the texture
+	// editor because neither depth-tests at all. The model editor does, and at
+	// 16 bits a dense mesh z-fights against its own wireframe.
+	if err := sdl.GLSetAttribute(sdl.GL_DEPTH_SIZE, 24); err != nil {
+		log.Printf("WARNING: sdl.GLSetAttribute(GL_DEPTH_SIZE) for %q: %v", title, err)
 	}
 
 	win, err := sdl.CreateWindow(title, sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED,
@@ -177,6 +190,9 @@ func RenderSecondaryWindows(dt float32) {
 			w.Draw()
 		}
 		gizmoVAOOverride = 0
+		// The F1 reference belongs to whichever window has focus, so a
+		// secondary window draws it inside its own frame.
+		KeybindHelpRenderInWindow(w)
 		imgui.Render()
 		imguiRenderDrawData(imgui.RenderedDrawData(), w.VAO, w.VBO, w.EBO)
 

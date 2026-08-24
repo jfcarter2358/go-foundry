@@ -126,6 +126,13 @@ func gizmoArmLength(origin mgl32.Vec3) float32 {
 // edge-on for the mapping to be usable.
 func axisParamAtMouse(origin, axis mgl32.Vec3, mx, my int32) (float32, bool) {
 	rayO, rayD := screenRay(mx, my)
+	return axisParamForRay(rayO, rayD, origin, axis)
+}
+
+// axisParamForRay is axisParamAtMouse's body against an explicit ray, so a
+// window with its own camera (the model editor) gets the same axis-drag
+// mapping without going through the main window's screenRay.
+func axisParamForRay(rayO, rayD, origin, axis mgl32.Vec3) (float32, bool) {
 	b := rayD.Dot(axis)
 	if float32(math.Abs(float64(b))) > gizmoMinAxisDot {
 		return 0, false
@@ -172,12 +179,18 @@ func pickTranslateAxis(mx, my int32) int {
 // click already means something else. The arms are hidden in these states, so
 // they must not be clickable either.
 func gizmoSuppressed() bool {
-	return Editor.PlacementMode || Editor.PrimPlacementMode || Editor.ExtrusionMode ||
-		Editor.SceneryPrimPlacement
+	return Editor.PlacementMode || Editor.PrimPlacementMode || Editor.ModelPlacementMode ||
+		Editor.ExtrusionMode || Editor.SceneryPrimPlacement
 }
 
 // translateGizmoMouseDown starts an axis drag if the click grabbed an arm.
 // Returns true when the click was consumed, so it does not also re-select.
+//
+// An arm under the cursor consumes the click even when the drag cannot start —
+// an axis pointing almost straight at the camera, say. The arms are drawn on
+// top of everything and sit right where the selection's own handles are, so a
+// click aimed at one must never fall through to picking: throwing away the
+// selection the gizmo exists to move is never what that click meant.
 func translateGizmoMouseDown(t sdl.MouseButtonEvent) bool {
 	if t.Button != sdl.ButtonLeft || gizmoSuppressed() {
 		return false
@@ -188,17 +201,18 @@ func translateGizmoMouseDown(t sdl.MouseButtonEvent) bool {
 	}
 	origin, ok := translateGizmoOrigin()
 	if !ok {
-		return false
+		return true
 	}
 	s, ok := axisParamAtMouse(origin, gizmoAxes[axis], t.X, t.Y)
 	if !ok {
-		return false
+		return true
 	}
 
 	if !captureGizmoDragStart() {
-		return false
+		return true
 	}
 	Editor.GizmoDragging = true
+	Editor.GizmoDragTool = modelToolMove
 	Editor.GizmoDragAxis = axis
 	Editor.GizmoDragStartS = s
 	Editor.GizmoDragOrigin = origin
@@ -274,9 +288,6 @@ func captureGizmoDragStart() bool {
 	}
 	return false
 }
-
-// translateGizmoDragging reports whether an axis drag is in progress.
-func translateGizmoDragging() bool { return Editor.GizmoDragging }
 
 // translateGizmoMouseUp ends an axis drag.
 func translateGizmoMouseUp() {
@@ -367,15 +378,23 @@ func sectorOf(sel vertexSel) (*Chunk, *Sector) {
 // selected ones, which may not be the only users of a shared point.
 func setSelectedVertexPoints(fn func(i int, sel vertexSel, pt mgl32.Vec2) mgl32.Vec2) {
 	touched := map[[2]int]struct{}{}
+	moves := map[int][]pointMove{}
 	for i, sel := range Editor.SelectedVertices {
 		ch, _ := sectorOf(sel)
 		if ch == nil || sel.pointIdx < 0 || sel.pointIdx >= len(ch.Points) {
 			continue
 		}
-		ch.Points[sel.pointIdx] = fn(i, sel, ch.Points[sel.pointIdx])
+		was := ch.Points[sel.pointIdx]
+		ch.Points[sel.pointIdx] = fn(i, sel, was)
+		moves[sel.chunkIdx] = append(moves[sel.chunkIdx], pointMove{pointIdx: sel.pointIdx, from: was})
 		touched[[2]int{sel.chunkIdx, sel.pointIdx}] = struct{}{}
 	}
 	lvl := Editor.level
+	// Every point of this drag at once, so an edge drag warps its sector in one
+	// step rather than once per endpoint.
+	for ci, ms := range moves {
+		carryBiomesWithPoints(&lvl.Chunks[ci], ms)
+	}
 	for key := range touched {
 		ch := &lvl.Chunks[key[0]]
 		for si := range ch.Sectors {
@@ -402,7 +421,7 @@ func setSelectedVertexOffsets(fn func(i int, sel vertexSel, cur float32) float32
 	for key := range touched {
 		ch := &lvl.Chunks[key[0]]
 		s := &ch.Sectors[key[1]]
-		_ = s.Load(SectorPoints(ch, s))
+		_ = reloadSector(ch, s)
 		ch.RebuildGaps()
 	}
 }

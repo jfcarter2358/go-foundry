@@ -63,10 +63,9 @@ type groundRenderer struct {
 
 	cache map[string]groundEntry
 
-	uProjView, uTex     int32
-	uFakeShadowStrength int32
-	aPos, aNormal, aUV  uint32
-	aCoverage           uint32
+	uProjView, uTex    int32
+	aPos, aNormal, aUV uint32
+	aCoverage          uint32
 
 	initialized bool
 }
@@ -93,7 +92,6 @@ func GroundInit() {
 	p := groundPatches.program
 	groundPatches.uProjView = gl.GetUniformLocation(p, gl.Str("projView\x00"))
 	groundPatches.uTex = gl.GetUniformLocation(p, gl.Str("tex\x00"))
-	groundPatches.uFakeShadowStrength = gl.GetUniformLocation(p, gl.Str("fakeShadowStrength\x00"))
 
 	groundPatches.aPos = uint32(gl.GetAttribLocation(p, gl.Str("aPos\x00")))
 	groundPatches.aNormal = uint32(gl.GetAttribLocation(p, gl.Str("aNormal\x00")))
@@ -525,14 +523,6 @@ func RenderBiomeGround(level *Level, projView mgl32.Mat4, camPos mgl32.Vec3, fra
 			_ = ensureTextureLoaded(entry.texture)
 			gl.ActiveTexture(gl.TEXTURE0)
 			gl.BindTexture(gl.TEXTURE_2D, Textures[entry.texture])
-			// 0 for every kind that doesn't fake a ground-contact shadow
-			// (fakesGroundShadow) or has none painted (FakeShadowStrength==0) —
-			// see the uniform's doc comment in ground_frag.glsl.
-			strength := float32(0)
-			if fakesGroundShadow(s.Brush.Kind) {
-				strength = clamp01(s.Brush.FakeShadowStrength)
-			}
-			gl.Uniform1f(groundPatches.uFakeShadowStrength, strength)
 			gl.BindVertexArray(entry.vao)
 			gl.DrawArrays(gl.TRIANGLES, 0, entry.verts)
 		}

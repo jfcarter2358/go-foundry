@@ -8,7 +8,7 @@ layout(location = 0) in vec3 vert;
 out vec3 fragWorldPos;
 
 void main() {
-    vec4 worldPos = model * vec4(vert, 1.0);
+    vec4 worldPos = model * skinPosition(vert);
     fragWorldPos = worldPos.xyz;
     gl_Position = lightSpaceMatrix * worldPos;
 }

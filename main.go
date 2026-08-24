@@ -99,9 +99,17 @@ var Projection mgl32.Mat4
 // interpolated per-vertex normal when set, the flat screen-space derivative
 // facet when not. Every draw through Geometry sets it, so a smoothed surface
 // never leaks its setting onto the geometry drawn after it.
+//
+// AlphaSharpenUniform gates fragment.glsl's alpha-cutout anti-aliasing. Set
+// per pass rather than per draw — on for the opaque pass, where a fragment's
+// alpha is a coverage mask (SetAlphaToCoverage, antialias.go) and cutout
+// silhouettes want a one-pixel edge; off for the sorted transparent pass,
+// where alpha is blend weight and sharpening it would quantise real
+// translucency to opaque-or-gone.
 var ProjectionUniform int32
 var AlphaUniform int32
 var SmoothUniform int32
+var AlphaSharpenUniform int32
 
 // Water shader uniform locations. TimeUniform and CamPosUniform are set once
 // per frame; the rest are set per-draw from Geometry.Water.
@@ -172,30 +180,27 @@ func main() {
 	}
 	defer sdl.Quit()
 
-	// Must precede CreateWindow — the multisample buffer request is part of
-	// the pixel format the window's framebuffer is created with. See
-	// antialias.go's own doc comment for why this is the window-level MSAA
-	// approach rather than an offscreen resolve pass.
-	RequestAntiAliasWindow()
-
-	Window, err = sdl.CreateWindow(WinTitle, sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED,
-		WinWidth, WinHeight, sdl.WINDOW_OPENGL|sdl.WINDOW_RESIZABLE|sdl.WINDOW_FULLSCREEN_DESKTOP)
+	// Creates the window and its GL context together, at the highest MSAA
+	// sample count the platform actually accepts — the multisample buffer is
+	// part of the pixel format, so it has to be settled here and can't change
+	// afterwards. See antialias.go for why this is window-level MSAA rather
+	// than an offscreen resolve pass, and why the request is tiered.
+	Window, Context, err = CreateAntiAliasedWindow(WinTitle, WinWidth, WinHeight,
+		sdl.WINDOW_OPENGL|sdl.WINDOW_RESIZABLE|sdl.WINDOW_FULLSCREEN_DESKTOP)
 	if err != nil {
-		log.Fatalf("sdl.CreateWindow: %v", err)
+		log.Fatalf("CreateAntiAliasedWindow: %v", err)
 	}
 	defer Window.Destroy()
+	defer sdl.GLDeleteContext(Context)
 	// Starting in borderless-fullscreen mode reports the desktop resolution
 	// here rather than the 800x600 requested above; pick that up now so the
 	// viewport/projection setup below uses the real window size.
 	WinWidth, WinHeight = Window.GetSize()
 	WinHalfWidth = WinWidth / 2
 	WinHalfHeight = WinHeight / 2
-
-	Context, err = Window.GLCreateContext()
-	if err != nil {
-		log.Fatalf("Window.GLCreateContext: %v", err)
+	if MainWindowID, err = Window.GetID(); err != nil {
+		log.Fatalf("Window.GetID: %v", err)
 	}
-	defer sdl.GLDeleteContext(Context)
 
 	if err = gl.Init(); err != nil {
 		log.Fatalf("gl.Init: %v", err)
@@ -208,9 +213,15 @@ func main() {
 	log.Printf("GLSL version   : %s", gl.GoStr(gl.GetString(gl.SHADING_LANGUAGE_VERSION)))
 	log.Printf("GPU renderer   : %s", gl.GoStr(gl.GetString(gl.RENDERER)))
 
-	// Reads back what RequestAntiAliasWindow's request above actually got
+	// Reads back what CreateAntiAliasedWindow's request above actually got
 	// granted and applies AntiAliasEnabled's default (on) — see antialias.go.
 	ApplyAntiAliasGLState()
+
+	// Resolves the anisotropic filtering level for world textures. Must come
+	// before the first texture upload — LoadTexture reads it at upload time.
+	// See texture_filter.go for why mipmapping is the half of anti-aliasing
+	// MSAA above can't do.
+	InitTextureFiltering()
 
 	gl.Enable(gl.DEPTH_TEST)
 	gl.ClearColor(0.2, 0.2, 0.3, 1.0)
@@ -258,6 +269,9 @@ func main() {
 	SmoothUniform = gl.GetUniformLocation(Program, gl.Str("smoothShading\x00"))
 	gl.Uniform1i(SmoothUniform, 0) // default: flat facet normals
 
+	AlphaSharpenUniform = gl.GetUniformLocation(Program, gl.Str("alphaSharpen\x00"))
+	gl.Uniform1i(AlphaSharpenUniform, 0) // default: off; the opaque pass turns it on
+
 	TimeUniform = gl.GetUniformLocation(Program, gl.Str("time\x00"))
 	CamPosUniform = gl.GetUniformLocation(Program, gl.Str("camPos\x00"))
 	IsWaterUniform = gl.GetUniformLocation(Program, gl.Str("isWater\x00"))
@@ -304,6 +318,11 @@ func main() {
 		gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
 	}
 
+	// A spawn marker in the level overrides the player entity's authored
+	// position, so a level loaded straight into gameplay starts where the
+	// editor says it should.
+	ApplySpawnPoint(&level)
+
 	// Init level editor (must be after LoadLevel and OpenGL context ready)
 	EditorInit(&level, levelPath, levelsDir)
 	defer ImGuiShutdown()
@@ -342,12 +361,18 @@ func main() {
 		sdl.PumpEvents()
 
 		// --- Process events first so mouse rotation is applied before movement ---
-		mainWindowID, _ := Window.GetID()
 		for event = sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
+			// The keybinding reference answers to F1 from every mode and every
+			// window — ahead of the routing below, so a secondary window's own
+			// handler can't eat F1 first — and swallows the Escape that closes
+			// it before a sub-editor can read it as "cancel".
+			if KeybindHelpHandleEvent(event) {
+				continue
+			}
 			// A secondary UIWindow (texture editor, etc.) owns its own imgui
 			// context; route its events there instead of into the 3D
 			// editor/gameplay handlers, which know nothing about it.
-			if RouteWindowEvent(event, mainWindowID) {
+			if RouteWindowEvent(event, MainWindowID) {
 				continue
 			}
 			if Editor.Active {
@@ -357,6 +382,14 @@ func main() {
 		}
 
 		KeyStates = sdl.GetKeyboardState()
+
+		// Point the F1 reference at the focused window before anything draws.
+		KeybindHelpUpdateFocus(MainWindowID)
+
+		// Animated entities advance outside the editor/gameplay branch below, so a
+		// clip plays while the level editor is open too — an animation you cannot
+		// see while you are placing the entity is most of the way to useless.
+		UpdateEntityAnimations(&level, DeltaTime)
 
 		if Editor.Active {
 			// Editor owns camera and input; gameplay logic is bypassed.
@@ -489,6 +522,16 @@ func main() {
 			// --- Render ---
 			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
+			// Opaque pass: alpha means coverage here, so MSAA can reach the
+			// edges a discard would otherwise leave hard — alpha-cutout
+			// silhouettes (fragment.glsl's alphaSharpen) and the biome
+			// patch's slope contour (ground_frag.glsl). Both are turned back
+			// off below, before the transparent pass reads alpha as blend
+			// weight again. See antialias.go.
+			SetAlphaToCoverage(true)
+			gl.UseProgram(Program)
+			gl.Uniform1i(AlphaSharpenUniform, 1)
+
 			// Build frustum from current projection × camera matrices
 			projView := Projection.Mul4(Cam.Matrix)
 			frustum := ExtractFrustum(projView)
@@ -608,6 +651,12 @@ func main() {
 				// and one whose centre fell outside every sector never drew at all.
 				for pi := range chunk.Primitives {
 					prim := &chunk.Primitives[pi]
+					// The spawn marker is an authoring aid, not level geometry:
+					// it exists to be seen and dragged in the editor and must
+					// never show up in the shot the player spawns into.
+					if isSpawnPoint(prim) && !Editor.Active {
+						continue
+					}
 					if visibleSectors != nil && prim.SectorID != "" &&
 						connectedSectors[prim.SectorID] && !visibleSectors[prim.SectorID] {
 						continue
@@ -636,7 +685,13 @@ func main() {
 			for i := range level.Entities {
 				e := &level.Entities[i]
 				if e.Visible {
-					drawOrQueue(&e.Geometry, e.ModelMatrix(), false)
+					// One draw per material. drawOrQueue splits opaque from
+					// transparent per Geometry, so a model that mixes the two
+					// still sorts correctly.
+					model := e.ModelMatrix()
+					for si := range e.Submeshes {
+						drawOrQueue(&e.Submeshes[si], model, false)
+					}
 					entitiesDrawn++
 				}
 			}
@@ -650,6 +705,14 @@ func main() {
 			// Drawn after opaque geometry; reuses the main fragment shader so it
 			// receives shadows, and was rendered into the shadow maps above so it casts.
 			RenderDetailColor(&level, shadowFrame)
+
+			// End of the opaque pass — hand alpha back to blending. Done
+			// unconditionally rather than inside the transparent block below,
+			// so the editor overlays and ImGui that follow never inherit
+			// either setting on a frame with nothing transparent in it.
+			SetAlphaToCoverage(false)
+			gl.UseProgram(Program)
+			gl.Uniform1i(AlphaSharpenUniform, 0)
 
 			// --- Transparent pass: draw collected transparent geometry back-to-front ---
 			if len(transparentDraws) > 0 {
@@ -702,10 +765,13 @@ func main() {
 			EditorRender()
 		}
 
-		// Draw debug overlay (uses ImGui, independent of editor)
-		if DebugOverlayVisible && !Editor.Active {
+		// Draw debug overlay and keybinding reference (both use ImGui,
+		// independent of the editor — when it is active, EditorRender has
+		// already drawn them inside its own frame).
+		if (DebugOverlayVisible || KeybindHelpVisibleIn(MainWindowID)) && !Editor.Active {
 			ImGuiNewFrame(DeltaTime)
 			DebugRenderOverlay()
+			KeybindHelpRender()
 			ImGuiRender()
 		}
 

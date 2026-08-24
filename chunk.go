@@ -347,7 +347,7 @@ func (ch *Chunk) InferPortalsAndReload() {
 	ch.InferPortals()
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
-		_ = s.Load(SectorPoints(ch, s))
+		_ = reloadSector(ch, s)
 	}
 	ch.RebuildGaps()
 	ch.RecomputeBounds()

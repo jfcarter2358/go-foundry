@@ -69,7 +69,9 @@ uniform vec3  dirLightDir[MAX_DIR_LIGHTS];
 uniform vec3  dirLightColor[MAX_DIR_LIGHTS];
 uniform float dirLightBrightness[MAX_DIR_LIGHTS];
 
-uniform sampler2DArray shadowMapArray;
+// Comparison sampler, matching fragment.glsl's — see EnsureCascadeArray in
+// shadow.go for why the cascade array is sampled this way.
+uniform sampler2DArrayShadow shadowMapArray;
 uniform mat4  cascadeMatrix[MAX_DIR_LIGHTS * SHADOW_CASCADES];
 uniform float cascadeBias[MAX_DIR_LIGHTS * SHADOW_CASCADES];
 uniform float cascadeSplit[SHADOW_CASCADES];
@@ -99,10 +101,12 @@ float biomeViewDepth(vec3 worldPos) {
 // -1.0 when worldPos falls outside this cascade's box — the caller then falls
 // through to a wider cascade rather than reporting the point as lit.
 //
-// textureLod (not texture) because this block also compiles into a VERTEX
-// stage, where there are no implicit derivatives to pick a level from. The
-// cascade array has no mips, so lod 0 is what the fragment path would sample
-// anyway.
+// textureGrad with zero gradients (not plain texture) because this block also
+// compiles into a VERTEX stage, where there are no implicit derivatives to pick
+// a level from. The cascade array has no mips, so an explicit lod 0 is what the
+// fragment path would sample anyway — and textureGrad is the only explicit-lod
+// form GLSL defines for a sampler2DArrayShadow, textureLod having no such
+// overload.
 float biomeSampleCascade(int matIdx, int layer, vec3 worldPos, vec3 normal, vec3 lightDir) {
     vec4 posLS = cascadeMatrix[matIdx] * vec4(worldPos, 1.0);
     vec3 projCoords = posLS.xyz / posLS.w;
@@ -121,22 +125,24 @@ float biomeSampleCascade(int matIdx, int layer, vec3 worldPos, vec3 normal, vec3
     float currentDepth = projCoords.z;
 
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMapArray, 0).xy);
+    float ref = currentDepth - bias;
 
 #if BIOME_LIGHT_PCF == 0
-    float pcfDepth = textureLod(shadowMapArray, vec3(projCoords.xy, float(layer)), 0.0).r;
-    return (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
+    float lit = textureGrad(shadowMapArray,
+        vec4(projCoords.xy, float(layer), ref), vec2(0.0), vec2(0.0));
+    return 1.0 - lit;
 #else
-    float shadow = 0.0;
+    float lit = 0.0;
     float taps = 0.0;
     for (int x = -BIOME_LIGHT_PCF; x <= BIOME_LIGHT_PCF; x++) {
         for (int y = -BIOME_LIGHT_PCF; y <= BIOME_LIGHT_PCF; y++) {
-            float pcfDepth = textureLod(shadowMapArray,
-                vec3(projCoords.xy + vec2(x, y) * texelSize, float(layer)), 0.0).r;
-            shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
+            lit += textureGrad(shadowMapArray,
+                vec4(projCoords.xy + vec2(x, y) * texelSize, float(layer), ref),
+                vec2(0.0), vec2(0.0));
             taps += 1.0;
         }
     }
-    return shadow / taps;
+    return 1.0 - lit / taps;
 #endif
 }
 

@@ -215,12 +215,10 @@ func TestGroundPatchShadesLikeTheStructuralFloor(t *testing.T) {
 		t.Error("ground_frag.glsl must light the raw facet normal via biomeLighting; " +
 			"a perturbed normal makes the patch disagree with the floor it intersects")
 	}
-	// No private darkening term between the texture and the scene lighting.
-	// fakeShadowStrength is the one allowed multiplier, and it is allowed only
-	// because biome_shadow_decal.go paints the SAME strength onto the
-	// structural floor around the patch, so both surfaces darken together.
-	if !strings.Contains(frag, "vec3 color = tc.rgb * clamp(lighting, 0.0, 1.0) * (1.0 - fakeShadowStrength);") {
-		t.Error("ground_frag.glsl's final color is no longer texture * scene lighting * fakeShadowStrength")
+	// No private darkening term between the texture and the scene lighting:
+	// the patch is texture * scene lighting and nothing else.
+	if !strings.Contains(frag, "vec3 color = tc.rgb * clamp(lighting, 0.0, 1.0);") {
+		t.Error("ground_frag.glsl's final color is no longer texture * scene lighting")
 	}
 	for _, banned := range []string{"noise3", "hash13", "bumpN", "float ao"} {
 		if strings.Contains(frag, banned) {

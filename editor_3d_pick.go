@@ -142,9 +142,14 @@ func pick3D(sx, sy int32) pickHit {
 	// no model, such as the first-person player, is only its bounding box).
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]
-		if len(e.Geometry.Vertices) > 0 {
-			if t := pickModelT(origin, dir, e.Geometry.Vertices, e.ModelMatrix()); t < float32(math.MaxFloat32) {
-				hit.consider(t, pickEntity, -1, -1, i)
+		if e.HasGeometry() {
+			// Every submesh is part of the same object, so the nearest hit
+			// across all of them is the entity's hit.
+			model := e.ModelMatrix()
+			for si := range e.Submeshes {
+				if t := pickModelT(origin, dir, e.Submeshes[si].Vertices, model); t < float32(math.MaxFloat32) {
+					hit.consider(t, pickEntity, -1, -1, i)
+				}
 			}
 			continue
 		}
@@ -253,6 +258,13 @@ func pickSurfaceT(origin, dir mgl32.Vec3, ch *Chunk, s *Sector, geo *Geometry,
 // prebuilt projection×view matrix. ok is false when the point is behind the
 // camera. (worldToScreen is the 2D editor's top-down map transform — unrelated.)
 func projectToScreen(projView mgl32.Mat4, p mgl32.Vec3) (mgl32.Vec2, bool) {
+	return projectToScreenIn(projView, p, WinWidth, WinHeight)
+}
+
+// projectToScreenIn is projectToScreen against an explicit viewport size, for
+// callers that do not draw into the main window — the model editor pop-out has
+// its own dimensions and its own projection (editor_model_pick.go).
+func projectToScreenIn(projView mgl32.Mat4, p mgl32.Vec3, viewW, viewH int32) (mgl32.Vec2, bool) {
 	clip := projView.Mul4x1(mgl32.Vec4{p.X(), p.Y(), p.Z(), 1})
 	if clip.W() <= 1e-6 {
 		return mgl32.Vec2{}, false
@@ -260,8 +272,8 @@ func projectToScreen(projView mgl32.Mat4, p mgl32.Vec3) (mgl32.Vec2, bool) {
 	ndcX := clip.X() / clip.W()
 	ndcY := clip.Y() / clip.W()
 	return mgl32.Vec2{
-		(ndcX*0.5 + 0.5) * float32(WinWidth),
-		(1 - (ndcY*0.5 + 0.5)) * float32(WinHeight),
+		(ndcX*0.5 + 0.5) * float32(viewW),
+		(1 - (ndcY*0.5 + 0.5)) * float32(viewH),
 	}, true
 }
 
@@ -269,15 +281,22 @@ func projectToScreen(projView mgl32.Mat4, p mgl32.Vec3) (mgl32.Vec2, bool) {
 // pixels vertically at point p, so a gizmo drawn with it keeps a constant
 // on-screen size regardless of distance.
 func worldSizeForPixels(p mgl32.Vec3, halfPx float32) float32 {
-	f := Projection.At(1, 1)
-	if f <= 0 || WinHeight == 0 {
+	return worldSizeForPixelsIn(p, Cam.Position, halfPx, Projection.At(1, 1), WinHeight)
+}
+
+// worldSizeForPixelsIn is worldSizeForPixels against an explicit camera,
+// projection and viewport height, so a secondary window can size its handles
+// from its own view rather than the main window's. projYY is the projection
+// matrix's [1][1] term (the vertical focal scale).
+func worldSizeForPixelsIn(p, camPos mgl32.Vec3, halfPx, projYY float32, viewH int32) float32 {
+	if projYY <= 0 || viewH == 0 {
 		return 0.05
 	}
-	d := p.Sub(Cam.Position).Len()
+	d := p.Sub(camPos).Len()
 	if d < 0.01 {
 		d = 0.01
 	}
-	return d * halfPx * 2 / (float32(WinHeight) * f)
+	return d * halfPx * 2 / (float32(viewH) * projYY)
 }
 
 // ---------- vertex handles ----------
@@ -566,7 +585,7 @@ func gizmoBox(p mgl32.Vec3, halfPx float32, col mgl32.Vec3) {
 // the cursor crosses the side panel mid-drag.
 func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool) {
 	mx, my, _ := sdl.GetMouseState()
-	if !translateGizmoDragging() {
+	if !editorGizmoDragging() {
 		if gizmoSuppressed() || imgui.CurrentIO().WantCaptureMouse() || mx >= panelLeftEdgeX() {
 			// The cursor is off the world, so nothing is under it — but the
 			// show-all toggle still wants every box drawn, not least while the
@@ -580,8 +599,8 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	editorRenderHandleOverlays(projView, mx, my, withVertexHandles)
 }
 
-// editorRenderAllVertexBoxes draws every in-range vertex handle box with no
-// cursor under them — the show-all toggle's view while the pointer is over the
+// editorRenderAllVertexBoxes draws every in-range vertex handle box and edge
+// prism with no cursor under them — the show-all toggle's view while the pointer is over the
 // side panel. The translate gizmo stays hidden, matching the suppressed path
 // this stands in for.
 func editorRenderAllVertexBoxes(projView mgl32.Mat4) {
@@ -596,10 +615,12 @@ func editorRenderAllVertexBoxes(projView mgl32.Mat4) {
 	}()
 	// Far off-screen cursor: no handle reads as hovered.
 	drawVertexHandleBoxes(math.MinInt32/2, math.MinInt32/2, vertexHandleShowAllPx)
+	drawEdgeHandlePrisms(math.MinInt32/2, math.MinInt32/2, vertexHandleShowAllPx)
 }
 
-// editorRenderHandleOverlays draws the interactive handles — vertex boxes near
-// the cursor (3D mode only) and the translate gizmo — on top of the world.
+// editorRenderHandleOverlays draws the interactive handles — vertex boxes and
+// edge prisms near the cursor (3D mode only) and whichever gizmo the current
+// tool shows — on top of the world.
 //
 // Any gizmos queued so far are flushed first, then the overlays are drawn with
 // depth testing off so a handle is visible wherever it is clickable, including
@@ -620,10 +641,12 @@ func editorRenderHandleOverlays(projView mgl32.Mat4, mx, my int32, withVertexHan
 		if Editor.ShowPointSelectRadius {
 			showPx = vertexHandleShowAllPx
 		}
+		// Edges first, so a vertex box draws over the prisms it caps.
+		drawEdgeHandlePrisms(mx, my, showPx)
 		drawVertexHandleBoxes(mx, my, showPx)
 	}
 
-	renderTranslateGizmo(mx, my)
+	renderEditorGizmo(mx, my)
 }
 
 // drawVertexHandleBoxes queues the selection marks and the handle boxes for

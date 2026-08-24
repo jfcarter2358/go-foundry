@@ -619,11 +619,10 @@ func biomeLODSection(bs *BiomeSector) {
 	imgui.Text(fmt.Sprintf("Far tier spans Mid Dist to Draw Dist (%.0f).", rng))
 }
 
-// biomeFadeSection draws the soft-edge and fake-shadow controls: how the
-// scatter's two boundaries (the outer camera-ring and the sector's own painted
-// polygon) fade instead of cutting off hard, and — for the thin foliage kinds —
-// the fake ground-contact shadow that stands in for real per-instance casting.
-// See BiomeBrush's own doc comments for what each field does.
+// biomeFadeSection draws the soft-edge controls: how the scatter's two
+// boundaries (the outer camera-ring and the sector's own painted polygon) fade
+// instead of cutting off hard. See BiomeBrush's own doc comments for what each
+// field does.
 func biomeFadeSection(bs *BiomeSector) {
 	if !bs.Brush.Scatters() {
 		return
@@ -665,30 +664,6 @@ func biomeFadeSection(bs *BiomeSector) {
 	jitter := resolvedBoundaryJitter(&bs.Brush)
 	if imgui.SliderFloat("Jitter##bsbjit", &jitter, 0, 15) {
 		bs.Brush.BoundaryJitter = jitter
-	}
-
-	if !fakesGroundShadow(bs.Brush.Kind) {
-		return
-	}
-	imgui.Separator()
-	imgui.Text("Fake Ground Shadow — darkens the patch and nearby floor")
-	imgui.Text("in place of real (expensive) per-blade shadow casting.")
-	strength := bs.Brush.FakeShadowStrength
-	if imgui.SliderFloat("Strength##bsfsstr", &strength, 0, 1) {
-		bs.Brush.FakeShadowStrength = strength
-	}
-	if bs.Brush.FakeShadowStrength <= 0 {
-		imgui.Text("Off.")
-		return
-	}
-	spread := resolvedFakeShadowSpread(bs.Brush.FakeShadowSpread)
-	if imgui.SliderFloat("Spread##bsfsspread", &spread, 0.1, 6) {
-		bs.Brush.FakeShadowSpread = spread
-		// Unlike Strength (a plain per-draw uniform), Spread changes the halo
-		// MESH's own extent — ensureBiomeDecal already re-checks it against the
-		// cached build regardless, but GroundDirty keeps this in step with the
-		// ground patch rebuild it's drawn alongside.
-		bs.GroundDirty = true
 	}
 }
 

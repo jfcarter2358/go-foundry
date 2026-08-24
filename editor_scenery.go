@@ -129,19 +129,7 @@ func SceneryEditorHandleClick(t sdl.MouseButtonEvent) {
 		Editor.SceneryPrimPlacement = false
 		spawnPos := Cam.Position.Add(Cam.Direction.Mul(1.0))
 
-		var kind PrimitiveType
-		switch Editor.SceneryPrimPlaceType {
-		case "sphere":
-			kind = PrimitiveSphere
-		case "cylinder":
-			kind = PrimitiveCylinder
-		case "plane":
-			kind = PrimitivePlane
-		case "water":
-			kind = PrimitiveWater
-		default:
-			kind = PrimitiveRectPrism
-		}
+		kind := primitiveKindFromName(Editor.SceneryPrimPlaceType)
 
 		prim := Primitive{
 			ID:       fmt.Sprintf("prim_%d", len(Editor.SceneryPrimitives)),
@@ -304,8 +292,7 @@ func SceneryEditorPanel() {
 
 	// Primitive catalog
 	if imgui.CollapsingHeader("Primitive Catalog") {
-		primTypes := []string{"rect_prism", "sphere", "cylinder", "plane", "water"}
-		for _, pt := range primTypes {
+		for _, pt := range primitiveTypeNames {
 			selected := pt == Editor.SceneryPrimPlaceType
 			if imgui.SelectableV(pt, selected, 0, imgui.Vec2{}) {
 				Editor.SceneryPrimPlaceType = pt
@@ -338,10 +325,9 @@ func SceneryEditorPanel() {
 			p := &Editor.SceneryPrimitives[Editor.SceneryActivePrimIdx]
 			imgui.InputText("ID##scprimid", &p.ID)
 
-			typeNames := []string{"rect_prism", "sphere", "cylinder", "plane", "water"}
 			currentType := int(p.Kind)
-			if imgui.BeginCombo("Type##scprimtype", typeNames[currentType]) {
-				for i, tn := range typeNames {
+			if imgui.BeginCombo("Type##scprimtype", primitiveTypeName(p.Kind)) {
+				for i, tn := range primitiveTypeNames {
 					if imgui.SelectableV(tn, i == currentType, 0, imgui.Vec2{}) {
 						p.Kind = PrimitiveType(i)
 						reloadSceneryPrimitive(Editor.SceneryActivePrimIdx)
@@ -553,19 +539,7 @@ func rawToSceneryPrimitive(rp RawPrimitive) Primitive {
 		scale = mgl32.Vec3{1, 1, 1}
 	}
 
-	var kind PrimitiveType
-	switch rp.Type {
-	case "sphere":
-		kind = PrimitiveSphere
-	case "cylinder":
-		kind = PrimitiveCylinder
-	case "plane":
-		kind = PrimitivePlane
-	case "water":
-		kind = PrimitiveWater
-	default:
-		kind = PrimitiveRectPrism
-	}
+	kind := primitiveKindFromName(rp.Type)
 
 	sides := rp.Sides
 	if sides < 3 {
@@ -628,6 +602,9 @@ func rawToSceneryPrimitive(rp RawPrimitive) Primitive {
 		prim.BoundHalfX = scale.X() / 2
 		prim.BoundHalfY = 0.01
 		prim.BoundHalfZ = scale.Z() / 2
+	case PrimitiveSpawnPoint:
+		prim.BoundingKind = BoundingAABB
+		prim.BoundHalfX, prim.BoundHalfY, prim.BoundHalfZ = spawnPointBounds(scale)
 	}
 
 	return prim

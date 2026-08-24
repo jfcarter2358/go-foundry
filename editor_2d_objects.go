@@ -65,6 +65,11 @@ func Editor2DRenderObjects(lvl *Level, ch *Chunk) {
 		}
 		hx, hz := editor2DObjectHalfExtents(p.BoundHalfX, p.BoundHalfZ)
 		editor2DDrawFootprint(p.Position.X(), p.Position.Z(), hx, hz, col)
+		// A square footprint says nothing about facing, and facing is half of
+		// what a spawn point is — draw its heading on the map too.
+		if isSpawnPoint(p) {
+			editor2DDrawSpawnHeading(p, hx, hz, col)
+		}
 	}
 
 	// Entities are level-wide, not chunk-scoped.
@@ -166,10 +171,18 @@ func editor2DHandlePlacement(t sdl.MouseButtonEvent, ch *Chunk, wx, wz float32) 
 	if t.Button != sdl.ButtonLeft {
 		return false
 	}
-	if !Editor.PlacementMode && !Editor.PrimPlacementMode {
+	if !Editor.PlacementMode && !Editor.PrimPlacementMode && !Editor.ModelPlacementMode {
 		return false
 	}
 	y := editor2DFloorHeightAt(ch, wx, wz)
+
+	if Editor.ModelPlacementMode {
+		// Same floor alignment as an entity: a model's origin is its own
+		// author's choice, but resting it at floor height is what the 3D
+		// placement does, so the two sub-modes agree on where a click puts it.
+		placeSelectedModelAt(mgl32.Vec3{wx, y, wz})
+		return true
+	}
 
 	if Editor.PlacementMode {
 		// Entity origins are model-space bases, so the floor height puts the
@@ -182,7 +195,7 @@ func editor2DHandlePlacement(t sdl.MouseButtonEvent, ch *Chunk, wx, wz float32) 
 	// their default height to rest them on the floor. Planes and water are
 	// flat and stay at floor level.
 	switch Editor.PrimPlacementType {
-	case "plane", "water":
+	case "plane", "water", "spawn_point":
 	default:
 		y += 0.5
 	}

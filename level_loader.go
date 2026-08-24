@@ -434,19 +434,7 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 		worldZ := sin32*px + cos32*pz + origin.Z()
 		worldY := rp.Position.Y + origin.Y()
 
-		var kind PrimitiveType
-		switch rp.Type {
-		case "sphere":
-			kind = PrimitiveSphere
-		case "cylinder":
-			kind = PrimitiveCylinder
-		case "plane":
-			kind = PrimitivePlane
-		case "water":
-			kind = PrimitiveWater
-		default:
-			kind = PrimitiveRectPrism
-		}
+		kind := primitiveKindFromName(rp.Type)
 
 		sides := rp.Sides
 		if sides < 3 {
@@ -509,6 +497,9 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 			prim.BoundHalfX = scale.X() / 2
 			prim.BoundHalfY = 0.01
 			prim.BoundHalfZ = scale.Z() / 2
+		case PrimitiveSpawnPoint:
+			prim.BoundingKind = BoundingAABB
+			prim.BoundHalfX, prim.BoundHalfY, prim.BoundHalfZ = spawnPointBounds(scale)
 		}
 
 		if err := prim.Load(); err != nil {
@@ -584,11 +575,9 @@ func loadRawChunk(rc RawChunk) (Chunk, map[string]bool, error) {
 				GroundOctaves:   rb.Brush.GroundOctaves,
 				GroundUVScale:   mgl32.Vec2{rb.Brush.GroundUVScale.X, rb.Brush.GroundUVScale.Y},
 
-				RangeFadeFraction:  rb.Brush.RangeFadeFraction,
-				EdgeFadeDistance:   rb.Brush.EdgeFadeDistance,
-				FakeShadowStrength: rb.Brush.FakeShadowStrength,
-				FakeShadowSpread:   rb.Brush.FakeShadowSpread,
-				BoundaryJitter:     rb.Brush.BoundaryJitter,
+				RangeFadeFraction: rb.Brush.RangeFadeFraction,
+				EdgeFadeDistance:  rb.Brush.EdgeFadeDistance,
+				BoundaryJitter:    rb.Brush.BoundaryJitter,
 			},
 		}
 		for i, rp := range rb.Points {
@@ -746,13 +735,18 @@ func rawToLevel(raw RawLevel) (Level, error) {
 			Position:    mgl32.Vec3{re.Position.X, re.Position.Y, re.Position.Z},
 			Rotation:    mgl32.Vec3{re.Rotation.X, re.Rotation.Y, re.Rotation.Z},
 			Scale:       scale,
-			ModelPath:   re.Model,
+			ModelPath:   resolveAssetPath(re.Model),
 			TexturePath: re.Texture,
 			BoundHalfX:  re.BoundHalfX,
 			BoundHalfY:  re.BoundHalfY,
 			BoundHalfZ:  re.BoundHalfZ,
 			Alpha:       float32Default(re.Alpha, 1.0),
 			Visible:     re.Model != "",
+			// Set before Load: InitAnimation runs inside it and reads these to
+			// pick the starting clip.
+			Animation:      re.Animation,
+			AnimationSpeed: re.AnimationSpeed,
+			AnimationLoop:  re.AnimationLoop,
 		}
 		switch re.Bounding {
 		case "sphere":

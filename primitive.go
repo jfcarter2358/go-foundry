@@ -15,7 +15,46 @@ const (
 	PrimitiveCylinder
 	PrimitivePlane
 	PrimitiveWater
+	// PrimitiveSpawnPoint is the player-spawn marker (see spawn_point.go). It is
+	// a primitive so it inherits placement, picking, the gizmo and save/load, but
+	// it is never drawn outside the editor and never collides.
+	PrimitiveSpawnPoint
 )
+
+// primitiveTypeNames is the YAML/UI name of each PrimitiveType, indexed by the
+// type itself. Adding a kind means adding its name here and nowhere else: every
+// catalog, type combo, loader and saver reads the mapping through this slice and
+// the two helpers below, which is what keeps a new kind from silently loading as
+// a rect prism or panicking a combo that indexes by kind.
+var primitiveTypeNames = []string{
+	"rect_prism",
+	"sphere",
+	"cylinder",
+	"plane",
+	"water",
+	"spawn_point",
+}
+
+// primitiveTypeName returns the YAML/UI name of a primitive kind, falling back
+// to the default kind's name for anything out of range.
+func primitiveTypeName(k PrimitiveType) string {
+	if int(k) < 0 || int(k) >= len(primitiveTypeNames) {
+		return primitiveTypeNames[PrimitiveRectPrism]
+	}
+	return primitiveTypeNames[k]
+}
+
+// primitiveKindFromName is the inverse of primitiveTypeName. An unknown name
+// loads as a rect prism, the same lenient fallback the per-file switches it
+// replaces used, so a level written by a newer build still opens.
+func primitiveKindFromName(name string) PrimitiveType {
+	for i, n := range primitiveTypeNames {
+		if n == name {
+			return PrimitiveType(i)
+		}
+	}
+	return PrimitiveRectPrism
+}
 
 // WaterParams controls the animated-water shader path. Only meaningful on a
 // PrimitiveWater; Enabled gates every water effect in the shaders.
@@ -146,6 +185,8 @@ func (p *Primitive) Load() error {
 		vertices, indices = generatePlane()
 	case PrimitiveWater:
 		vertices, indices = generateWaterPlane(waterSubdiv)
+	case PrimitiveSpawnPoint:
+		vertices, indices = generateSpawnArrow()
 	}
 
 	// Apply UV offset, scale, and rotation to all vertices

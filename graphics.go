@@ -19,7 +19,14 @@ func LoadProgram(vertexShaderPath, fragmentShaderPath string) error {
 		return fmt.Errorf("read fragment shader: %w", err)
 	}
 
-	vertexSource := strings.ReplaceAll(strings.TrimRight(string(vertexShaderBytes), "\n"), "\r\n", "\n")
+	// The vertex stage gets the shared skinning source spliced in after its
+	// #version line, so an animated entity deforms on the GPU. Static geometry
+	// is unaffected: skinPosition is the identity until a draw call sets the
+	// `skinned` uniform (skin_common.glsl).
+	vertexSource, err := injectSkinning(strings.ReplaceAll(strings.TrimRight(string(vertexShaderBytes), "\n"), "\r\n", "\n"))
+	if err != nil {
+		return err
+	}
 	fragmentSource := strings.ReplaceAll(strings.TrimRight(string(fragmentShaderBytes), "\n"), "\r\n", "\n")
 
 	// [SCENARIO 1] Log shader source so the exact text sent to the driver is

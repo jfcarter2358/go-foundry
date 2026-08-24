@@ -35,17 +35,6 @@ in float vViewDepth;
 uniform sampler2D tex;
 uniform int receiveShadows; // BiomeShadows.Receive — see biome_light.go
 
-// Fake ground-contact shadow strength for whatever's scattered on THIS patch
-// (see BiomeBrush.FakeShadowStrength) — 0 for kinds that don't have one (Rock,
-// Sand, Water, or real per-instance casting already covering it). A flat
-// post-lighting darkening multiplier rather than a separate shadow term: cheap
-// (one uniform, one multiply, no samples), and "reasonable, not perfect" is
-// exactly the brief — see biome_shadow_decal.go for the halo that extends this
-// same idea onto the structural floor surrounding the patch, which is also what
-// keeps this term from breaking the match with the floor: the two surfaces are
-// darkened together, by the same painted strength, rather than only one of them.
-uniform float fakeShadowStrength;
-
 out vec4 outputColor;
 
 void main() {
@@ -55,7 +44,23 @@ void main() {
     // set and the structural floor shows through beyond it. Thresholded at the
     // midpoint of slopeCoverage's feather band, so the cutoff lands on the real
     // slope contour rather than on a patch-triangle edge.
-    if (vCoverage < 0.5) {
+    //
+    // Resolved to per-sample coverage rather than a bare discard. The contour
+    // this traces is a curve across the interior of a triangle, so MSAA can't
+    // see it at all — coverage samples only antialias where a *primitive*
+    // edge crosses the pixel, and here the primitive covers the pixel whole.
+    // That left the boundary between painted biome and structural floor a
+    // hard stair-step, and a conspicuous one: it wanders across open ground
+    // wherever the terrain passes through the brush's slope limit.
+    //
+    // Rescaling by fwidth turns vCoverage's crossing of the threshold into a
+    // ramp one pixel wide in screen space regardless of how gently the slope
+    // varies, and alpha-to-coverage (SetAlphaToCoverage, antialias.go) spends
+    // the pixel's MSAA samples across it. Fragments fully outside the range
+    // still discard outright, so the early-out and the depth-write behaviour
+    // are unchanged where it matters.
+    float cov = clamp((vCoverage - 0.5) / max(fwidth(vCoverage), 1e-5) + 0.5, 0.0, 1.0);
+    if (cov <= 0.0) {
         discard;
     }
 
@@ -64,6 +69,9 @@ void main() {
     vec4 tc = texture(tex, vUV);
 
     vec3 lighting = biomeLighting(vWorldPos, n, vViewDepth, receiveShadows != 0);
-    vec3 color = tc.rgb * clamp(lighting, 0.0, 1.0) * (1.0 - fakeShadowStrength);
-    outputColor = vec4(color, tc.a);
+    vec3 color = tc.rgb * clamp(lighting, 0.0, 1.0);
+    // Alpha carries the slope-cutoff coverage, not the texture's own — the
+    // patch is an opaque surface in the opaque pass, so alpha is read as a
+    // coverage mask (or ignored entirely when AA is off), never as blending.
+    outputColor = vec4(color, cov);
 }

@@ -261,11 +261,9 @@ func chunkToRaw(ch *Chunk) (RawChunk, error) {
 				GroundOctaves:   bs.Brush.GroundOctaves,
 				GroundUVScale:   Point{X: bs.Brush.GroundUVScale.X(), Y: bs.Brush.GroundUVScale.Y()},
 
-				RangeFadeFraction:  bs.Brush.RangeFadeFraction,
-				EdgeFadeDistance:   bs.Brush.EdgeFadeDistance,
-				FakeShadowStrength: bs.Brush.FakeShadowStrength,
-				FakeShadowSpread:   bs.Brush.FakeShadowSpread,
-				BoundaryJitter:     bs.Brush.BoundaryJitter,
+				RangeFadeFraction: bs.Brush.RangeFadeFraction,
+				EdgeFadeDistance:  bs.Brush.EdgeFadeDistance,
+				BoundaryJitter:    bs.Brush.BoundaryJitter,
 			},
 		}
 		if bs.Brush.Kind == BiomeWater {
@@ -400,19 +398,7 @@ func primitiveToRawCommon(p *Primitive) RawPrimitive {
 		sc = mgl32.Vec3{1, 1, 1}
 	}
 
-	var typeStr string
-	switch p.Kind {
-	case PrimitiveSphere:
-		typeStr = "sphere"
-	case PrimitiveCylinder:
-		typeStr = "cylinder"
-	case PrimitivePlane:
-		typeStr = "plane"
-	case PrimitiveWater:
-		typeStr = "water"
-	default:
-		typeStr = "rect_prism"
-	}
+	typeStr := primitiveTypeName(p.Kind)
 
 	uvSc := p.UVScale
 	if uvSc == (mgl32.Vec2{}) {
@@ -443,12 +429,9 @@ func entityToRaw(e *Entity) RawEntity {
 	if sc == (mgl32.Vec3{}) {
 		sc = mgl32.Vec3{1, 1, 1}
 	}
-	// Strip executablePath prefix from ModelPath for portability
-	modelPath := e.ModelPath
-	if len(executablePath) > 0 && len(modelPath) > len(executablePath)+1 {
-		rel := modelPath[len(executablePath)+1:]
-		modelPath = rel
-	}
+	// Model paths are written relative to the install root so the level stays
+	// portable; the loader resolves them back (fileutil.go).
+	modelPath := relAssetPath(e.ModelPath)
 	bKind := "aabb"
 	switch e.BoundingKind {
 	case BoundingSphere:
@@ -467,7 +450,11 @@ func entityToRaw(e *Entity) RawEntity {
 		BoundHalfX: e.BoundHalfX,
 		BoundHalfY: e.BoundHalfY,
 		BoundHalfZ: e.BoundHalfZ,
-		Alpha:      float32PtrIfNotOne(e.Alpha),
+
+		Animation:      e.Animation,
+		AnimationSpeed: e.AnimationSpeed,
+		AnimationLoop:  e.AnimationLoop,
+		Alpha:          float32PtrIfNotOne(e.Alpha),
 	}
 }
 

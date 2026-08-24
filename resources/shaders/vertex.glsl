@@ -48,7 +48,10 @@ float waterHeight(vec2 p) {
 
 void main() {
     fragTexCoord = vertTexCoord;
-    vec4 worldPos = model * vec4(vert, 1.0);
+    // skinPosition is the identity unless this draw call set `skinned`
+    // (skin_common.glsl), so every static surface takes the same path it always
+    // did.
+    vec4 worldPos = model * skinPosition(vert);
 
     // Vertical displacement only, so worldPos.xz still carries the undisplaced
     // surface coordinate the fragment stage needs to re-derive the normal.
@@ -63,7 +66,7 @@ void main() {
     // paid for on smoothed surfaces.
     fragNormal = vec3(0.0);
     if (smoothShading != 0) {
-        fragNormal = transpose(inverse(mat3(model))) * vertNormal;
+        fragNormal = transpose(inverse(mat3(model))) * skinNormal(vertNormal);
     }
 
     vec4 viewPos = camera * worldPos;

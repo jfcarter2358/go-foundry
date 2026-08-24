@@ -131,17 +131,6 @@ const (
 // painted/camera-ring edges.
 const biomeLODFadeFraction = float32(0.15)
 
-// defaultFakeShadowStrength/defaultFakeShadowSpread are the fake ground-contact
-// shadow's starting look (see BiomeBrush's own doc comment) on the kinds it
-// applies to by default. Strength is deliberately subtle — this is meant to
-// read as "something is sitting here", not as a real shadow's full darkening —
-// and Spread is short: it only needs to bridge the gap between a sector's own
-// ground patch and the surrounding structural floor, not throw a long shadow.
-const (
-	defaultFakeShadowStrength = float32(0.3)
-	defaultFakeShadowSpread   = float32(1.2)
-)
-
 // defaultBoundaryJitter is how far (world units) a sector's circular
 // range/LOD boundaries bulge by when BoundaryJitter is left unset. Modest
 // relative to even the shortest default range (Wildflower/Cattail's 40) —
@@ -400,25 +389,6 @@ type BiomeBrush struct {
 	// to be seen up close.
 	EdgeFadeDistance float32
 
-	// FakeShadowStrength/FakeShadowSpread fake the ground-contact shadow of
-	// Grass/Wildflower/Cattail scatter (biome_shadow_decal.go), which real
-	// per-instance shadow casting is deliberately kept off for by default
-	// (BiomeShadows.CastFoliage) — a blade thinner than a shadow texel aliases
-	// more than it convinces, and this reads as reasonable at a fraction of
-	// the cost: a darkening multiplier baked into the ground patch's own
-	// shading (biome_ground.go) plus a small halo mesh that extends the
-	// darkening out onto the STRUCTURAL floor surrounding the sector — the gap
-	// real per-instance casting's short range (BiomeShadows.CastRange) leaves.
-	//
-	// FakeShadowStrength 0..1, 0 = off (the zero value: existing sectors are
-	// unaffected; defaultBiomeBrush sets defaultFakeShadowStrength on the
-	// kinds it applies to). FakeShadowSpread is the halo's reach beyond the
-	// polygon edge in world units; 0 uses defaultFakeShadowSpread. Ignored for
-	// Rock (its real per-fragment bump/AO already reads as grounded) and for
-	// kinds that don't scatter at all.
-	FakeShadowStrength float32
-	FakeShadowSpread   float32
-
 	// BoundaryJitter (world units) bulges the scatter's circular boundaries —
 	// the outer camera-ring edge (Range) AND, for the kinds with LOD tiers
 	// (biomeLODTierCount==3: Grass/Wildflower/Cattail/Moss), the Near->Mid and
@@ -436,20 +406,6 @@ type BiomeBrush struct {
 	// math the clump jitter already pays unconditionally) and a perfectly
 	// circular pop-in line is not a look worth defaulting to.
 	BoundaryJitter float32
-}
-
-// fakesGroundShadow reports whether kind is one of the ones
-// FakeShadowStrength/FakeShadowSpread apply to — thin foliage without a
-// strong real silhouette, the same kind-set BiomeShadows.CastFoliage's real
-// casting covers. Rock/Moss are excluded: real casting is on for them by
-// default (BiomeShadows.CastRockMoss) and their per-fragment bump/AO already
-// reads as grounded, so a second darkening term would just double up.
-func fakesGroundShadow(kind int32) bool {
-	switch kind {
-	case BiomeGrass, BiomeWildflower, BiomeCattail:
-		return true
-	}
-	return false
 }
 
 // BiomeSector is a user-drawn polygon painted with one brush. Multiple
@@ -531,10 +487,6 @@ func defaultBiomeBrush(kind int32) BiomeBrush {
 		// kinds that actually read it below where a kind-specific default
 		// would differ, same pattern as GroundAmplitude etc. above.
 		RangeFadeFraction: defaultRangeFadeFraction,
-	}
-	if fakesGroundShadow(kind) {
-		b.FakeShadowStrength = defaultFakeShadowStrength
-		b.FakeShadowSpread = defaultFakeShadowSpread
 	}
 	switch kind {
 	case BiomeRock:
