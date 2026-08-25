@@ -43,6 +43,10 @@ var spawnArrowForward = mgl32.Vec3{1, 0, 0}
 type SpawnPoint struct {
 	Position mgl32.Vec3
 	Rotation mgl32.Vec3 // Euler angles (X, Y, Z) in radians
+	// Frame is the vehicle to start aboard, and Seat which of its seats. With
+	// Frame set, Position and Rotation are in that vehicle's coordinates.
+	Frame    string
+	Seat     string
 	Geometry gfx.Geometry
 }
 
@@ -134,14 +138,33 @@ func ApplySpawnPoint(lvl *Level) bool {
 	}
 
 	gfx.Cam.Yaw, gfx.Cam.Pitch = SpawnYawPitch(s)
-	gfx.Cam.Position = s.Position.Add(mgl32.Vec3{0, EyeHeight, 0})
-	gfx.UpdateCamDirection()
-	gfx.UpdateCamMatrix()
 
 	if PlayerEntity != nil {
 		PlayerEntity.Position = s.Position
 		PlayerEntity.Velocity = mgl32.Vec3{}
+		// Starting aboard is the same state mounting produces, so it is set the
+		// same way rather than through a second path: a frame, and optionally a
+		// seat. Position is already in that frame's coordinates.
+		PlayerEntity.Frame = s.Frame
+		PlayerEntity.Seat = ""
+		if s.Frame != "" {
+			if v := FindEntity(lvl, s.Frame); v != nil && v.IsVehicle() {
+				st := v.EnsureVehicleState()
+				st.AddOccupant(PlayerEntity.ID, s.Seat)
+				PlayerEntity.Seat = s.Seat
+			}
+		}
 	}
+
+	// The camera follows the player into whatever frame it landed in, so a
+	// spawn aboard a ship looks out of the ship rather than from where the ship
+	// happens to sit in world coordinates.
+	f := lvl.Frames.Frame(s.Frame)
+	gfx.Cam.Position = f.ToWorld(s.Position.Add(mgl32.Vec3{0, EyeHeight, 0}))
+	gfx.UpdateCamDirection()
+	gfx.Cam.Direction = f.DirToWorld(gfx.Cam.Direction)
+	gfx.Cam.Up = f.DirToWorld(gfx.WorldUp)
+	gfx.UpdateCamMatrix()
 	// Spawning mid-air is legitimate (a marker over a ledge), so let gravity
 	// re-establish ground contact rather than asserting it here.
 	platform.IsOnGround = false

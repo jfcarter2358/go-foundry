@@ -43,6 +43,7 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		Origin:     origin,
 		Rotation:   rc.Rotation,
 		Scale:      sc,
+		FrameOwner: rc.Frame,
 	}
 
 	cos32 := float32(math.Cos(float64(rc.Rotation)))
@@ -302,6 +303,7 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 					StartPoint:  start,
 					EndPoint:    end,
 					ToSector:    edge.ToSector,
+					ToFrame:     edge.ToFrame,
 					DrawGap:     edge.DrawGap,
 					GapTexture:  edge.GapTexture,
 					Visible:     !edge.Hidden,
@@ -706,6 +708,8 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 		spawn := &world.SpawnPoint{
 			Position: mgl32.Vec3{raw.Spawn.Position.X, raw.Spawn.Position.Y, raw.Spawn.Position.Z},
 			Rotation: mgl32.Vec3{raw.Spawn.Rotation.X, raw.Spawn.Rotation.Y, raw.Spawn.Rotation.Z},
+			Frame:    raw.Spawn.Frame,
+			Seat:     raw.Spawn.Seat,
 		}
 		if err := spawn.Load(); err != nil {
 			return world.Level{}, fmt.Errorf("spawn point load: %w", err)
@@ -766,7 +770,12 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 		}
 	}
 
-	level.Spatial = world.BuildSpatialHash(level.Chunks, 8.0)
+	if err := world.RebuildIndexes(&level); err != nil {
+		// A malformed frame graph is an authoring mistake with no sensible
+		// fallback: the geometry would be drawn somewhere the collision cannot
+		// find it. Refuse the level and say why.
+		return world.Level{}, err
+	}
 
 	return level, nil
 }

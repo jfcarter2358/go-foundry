@@ -35,10 +35,26 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		Active: editor.ScriptEditorOpen,
 		Binds: []uiwin.Keybind{
 			{Keys: "Ctrl+S / Ctrl+Shift+S", Desc: "Save / save as"},
-			{Keys: "Ctrl+O", Desc: "Open a script"},
+			{Keys: "Ctrl+O", Desc: "Open a script in a new tab"},
 			{Keys: "Ctrl+N", Desc: "New script"},
+			{Keys: "Ctrl+W", Desc: "Close the current tab (asks, if it is unsaved)"},
+			{Keys: "Ctrl+Tab", Desc: "Next tab (Ctrl+Shift+Tab: previous)"},
 			{Keys: "Ctrl+R", Desc: "Reload every script from disk"},
-			{Keys: "Esc", Desc: "Close the window (the buffer is kept)"},
+			{Keys: "Esc", Desc: "Close the window (every tab keeps its unsaved text)"},
+		},
+	},
+	{
+		Title:  "Script editor — the buffer",
+		Active: editor.ScriptEditorOpen,
+		Binds: []uiwin.Keybind{
+			{Keys: "Ctrl+X / C / V", Desc: "Cut / copy / paste, through the system clipboard"},
+			{Keys: "Ctrl+Z / Ctrl+Y", Desc: "Undo / redo"},
+			{Keys: "Ctrl+A", Desc: "Select all"},
+			{Keys: "Shift+arrows", Desc: "Extend the selection"},
+			{Keys: "Shift+click", Desc: "Extend the selection to the click"},
+			{Keys: "Double / triple click", Desc: "Select a word / a line"},
+			{Keys: "Tab", Desc: "Insert a tab (the buffer takes it, rather than moving on)"},
+			{Keys: "Right click", Desc: "Cut, copy, paste and select all as a menu"},
 		},
 	},
 	{
@@ -87,7 +103,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 	{
 		Title: "Global",
 		Binds: []uiwin.Keybind{
-			{Keys: "F1", Desc: "Toggle this keybinding reference"},
+			{Keys: "F1", Desc: "Toggle this reference: keybindings, events, the stdlib, properties"},
 			{Keys: "F3", Desc: "Toggle debug overlay (FPS, memory, counts)"},
 			{Keys: "F10", Desc: "Toggle anti-aliasing"},
 			{Keys: "F11", Desc: "Toggle fullscreen"},
@@ -114,10 +130,23 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "Left Shift", Desc: "Fly down (gravity off)"},
 			{Keys: "Arrow keys", Desc: "Turn / look"},
 			{Keys: "Mouse", Desc: "Look (cursor is captured)"},
-			{Keys: "E", Desc: "Interact with whatever you are standing in (fires :interact:)"},
+			{Keys: "E", Desc: "Sit / stand / get out of a vehicle, else interact (fires :interact:)"},
 			{Keys: "0", Desc: "Toggle gravity (fly mode)"},
 			{Keys: "8", Desc: "Toggle entity-vs-world collision (engine-wide)"},
 			{Keys: "9", Desc: "Toggle entity-vs-entity collision (engine-wide)"},
+		},
+	},
+	{
+		Title:  "Driving",
+		Active: func() bool { return !editor.Editor.Active },
+		Binds: []uiwin.Keybind{
+			{Keys: "E", Desc: "Take a seat within reach; press again to stand up or get out"},
+			{Keys: "W / S", Desc: "Throttle forward / back"},
+			{Keys: "A / D", Desc: "Steer"},
+			{Keys: "Space", Desc: "Brake"},
+			{Keys: "Q / E", Desc: "Roll (air and space)"},
+			{Keys: "L Shift / L Ctrl", Desc: "Pitch nose down / up (air and space)"},
+			{Keys: "Mouse", Desc: "Look around from the seat, within its limits"},
 		},
 	},
 	{

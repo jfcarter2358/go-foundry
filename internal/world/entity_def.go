@@ -171,6 +171,7 @@ type RawEntityDef struct {
 	Script      string                  `yaml:"script,omitempty"`      // .flang file driving this type's behaviour
 	Params      map[string]RawAttribute `yaml:"params,omitempty"`      // defaults for that script's `param` declarations
 	Description string                  `yaml:"description,omitempty"` // author's note; shown in the editor's picker
+	Vehicle     *RawVehicle             `yaml:"vehicle,omitempty"`     // see vehicle_def.go
 }
 
 // RawEntity is the YAML form of one entity *instance* in a level file.
@@ -197,6 +198,10 @@ type RawEntity struct {
 	// distinct: absent follows the type, "" detaches the script this instance
 	// would otherwise have inherited, and a name replaces it.
 	Script *string `yaml:"script,omitempty"`
+
+	// Vehicle overlays the definition's vehicle block — seats matched by name,
+	// drive tuning merged field by field. See MergeVehicle.
+	Vehicle *RawVehicle `yaml:"vehicle,omitempty"`
 
 	// Bounds overrides. Pointers throughout, so an absent field means "follow
 	// the definition" rather than "zero" — an extent of zero is a *disabled*
@@ -238,6 +243,11 @@ type EntityDef struct {
 	// Params are the type's defaults for its script's `param` declarations. An
 	// instance overrides them one name at a time.
 	Params AttrSet
+
+	// Vehicle is the authored vehicle block, nil for anything that is not one.
+	// Shared with every instance rather than copied: it is authored data that
+	// nothing mutates, and an instance override replaces the pointer wholesale.
+	Vehicle *VehicleSpec
 }
 
 // vec3FromRawPtr reads an optional vector, falling back to def when absent.
@@ -368,6 +378,7 @@ func entityDefFromRaw(raw RawEntityDef, name string) (*EntityDef, error) {
 		Collision:    entityCollisionFromRaw(DefaultEntityCollision(), raw.Collision),
 		Attributes:   attrs,
 		Params:       params,
+		Vehicle:      VehicleFromRaw(raw.Vehicle),
 	}
 
 	seen := map[string]bool{}
@@ -404,6 +415,7 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 		Collision:   entityCollisionToRaw(def.Collision, DefaultEntityCollision()),
 		Attributes:  attrsToRaw(def.Attributes),
 		Params:      attrsToRaw(def.Params),
+		Vehicle:     VehicleToRaw(def.Vehicle),
 	}
 	for i := range def.Models {
 		raw.Models = append(raw.Models, entityModelToRaw(&def.Models[i]))
@@ -435,6 +447,7 @@ func (d *EntityDef) Instantiate(id string) Entity {
 		Script:       d.Script,
 		Attributes:   d.Attributes.Clone(),
 		ScriptParams: d.Params.Clone(),
+		Vehicle:      d.Vehicle,
 	}
 	for i := range d.Models {
 		e.Models = append(e.Models, d.Models[i].TemplateCopy())
@@ -554,6 +567,7 @@ func EntityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 	}
 
 	e.Collision = entityCollisionFromRaw(e.Collision, r.Collision)
+	e.Vehicle = MergeVehicle(e.Vehicle, r.Vehicle)
 
 	if r.Bounding != "" {
 		e.BoundingKind = BoundingKindFromName(r.Bounding)
@@ -642,6 +656,7 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 			s := e.Script
 			r.Script = &s
 		}
+		r.Vehicle = VehicleToRaw(e.Vehicle)
 		for i := range e.Models {
 			r.Models = append(r.Models, entityModelToRaw(&e.Models[i]))
 		}
@@ -664,6 +679,12 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 	writeBoundsOverride(&r, e, def)
 	r.Attributes = attrsToRaw(attrsBeyond(def.Attributes, e.Attributes))
 	r.Params = attrsToRaw(attrsBeyond(def.Params, e.ScriptParams))
+	// The vehicle block is written whole or not at all. A per-field diff would
+	// have to invent a way to say "this seat was removed", and a seating plan is
+	// small enough that restating it costs less than that machinery would.
+	if !sameVehicle(def.Vehicle, e.Vehicle) {
+		r.Vehicle = VehicleToRaw(e.Vehicle)
+	}
 	for i := range e.Models {
 		if o, ok := modelOverride(def, &e.Models[i]); ok {
 			r.Models = append(r.Models, o)
@@ -909,4 +930,27 @@ func ScanEntityDefs() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// sameVehicle reports whether an instance's vehicle block is unchanged from its
+// definition's, so an untouched instance writes none.
+func sameVehicle(a, b *VehicleSpec) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a == b {
+		return true
+	}
+	if a.Mode != b.Mode || a.Interior != b.Interior || a.Drive != b.Drive {
+		return false
+	}
+	if len(a.Seats) != len(b.Seats) {
+		return false
+	}
+	for i := range a.Seats {
+		if a.Seats[i] != b.Seats[i] {
+			return false
+		}
+	}
+	return true
 }

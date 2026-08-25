@@ -157,6 +157,7 @@ type RawEdge struct {
 	Hidden        bool              `yaml:"hidden"`           // true = wall/portal not rendered (default false = visible)
 	Pinned        bool              `yaml:"pinned,omitempty"` // true = wall stays a wall even if shared with another sector
 	ToSector      string            `yaml:"to_sector"`
+	ToFrame       string            `yaml:"to_frame,omitempty"`
 	DrawGap       bool              `yaml:"draw_gap"`
 	GapTexture    string            `yaml:"gap_texture"`
 	DoubleSided   *bool             `yaml:"double_sided,omitempty"` // default true when absent
@@ -257,7 +258,13 @@ type RawChunk struct {
 	Origin        RawChunkOrigin        `yaml:"origin"`
 	Rotation      float32               `yaml:"rotation"`
 	Scale         float32               `yaml:"scale"`
-	BiomeSectors  []RawBiomeSector      `yaml:"biome_sectors,omitempty"`
+	// Frame names the entity whose local space this chunk's geometry is
+	// authored in — a vehicle interior, laid out around the origin and carried
+	// around the world by whatever owns it. Omitted is the ordinary case of a
+	// chunk baked into world space at load, which is every chunk written before
+	// frames existed.
+	Frame        string           `yaml:"frame,omitempty"`
+	BiomeSectors []RawBiomeSector `yaml:"biome_sectors,omitempty"`
 }
 
 // RawBiomeSector is the YAML representation of a user-drawn biome-paint
@@ -349,6 +356,14 @@ type RawVec3 struct {
 type RawSpawn struct {
 	Position RawVec3 `yaml:"position"`
 	Rotation RawVec3 `yaml:"rotation"`
+	// Frame names a vehicle to start aboard. With it set, Position and Rotation
+	// are that vehicle's local coordinates rather than the world's — a spawn
+	// inside a ship has to travel with the ship, or moving the ship moves the
+	// player out through its hull.
+	Frame string `yaml:"frame,omitempty"`
+	// Seat names which seat to start in. Only meaningful with Frame set; empty
+	// is standing on the deck.
+	Seat string `yaml:"seat,omitempty"`
 }
 
 // RawColor is the YAML representation of an RGB color.

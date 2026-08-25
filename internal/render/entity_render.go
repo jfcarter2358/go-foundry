@@ -35,12 +35,22 @@ func entityDrawable(e *world.Entity, m *world.EntityModel) bool {
 // what culling has to work from, and treating an absent one as zero-sized would
 // make an unbounded entity invisible everywhere except dead centre of the view.
 func EntityInFrustum(e *world.Entity, cull *Frustum) bool {
+	return EntityInFrustumOf(nil, e, cull)
+}
+
+// EntityInFrustumOf is the same test for an entity that may be riding in a
+// frame: its AABB is in that frame's coordinates and has to be carried into the
+// world before it can be compared against a world-space frustum.
+func EntityInFrustumOf(f *world.Frame, e *world.Entity, cull *Frustum) bool {
 	if cull == nil {
 		return true
 	}
 	min, max, ok := e.WorldAABB()
 	if !ok {
 		return true
+	}
+	if !f.IsWorld() {
+		min, max = TransformAABB(f.World, min, max)
 	}
 	return AABBInFrustum(*cull, min, max)
 }
@@ -58,10 +68,17 @@ func RenderEntities(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, 
 	}
 	for ei := range lvl.Entities {
 		e := &lvl.Entities[ei]
-		if !e.Visible || !EntityInFrustum(e, cull) {
+		frame := lvl.Frames.FrameFor(e)
+		if !e.Visible || !EntityInFrustumOf(frame, e, cull) {
 			continue
 		}
+		// An entity riding in a frame has its transform in that frame's
+		// coordinates, so the frame goes on the outside — the same composition
+		// the frame's own chunks get, one level further in.
 		world := e.ModelMatrix()
+		if !frame.IsWorld() {
+			world = frame.World.Mul4(world)
+		}
 		for mi := range e.Models {
 			m := &e.Models[mi]
 			if !entityDrawable(e, m) {
@@ -93,10 +110,17 @@ func RenderEntitiesShadow(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms,
 	drewAny := false
 	for ei := range lvl.Entities {
 		e := &lvl.Entities[ei]
-		if !e.Visible || !EntityInFrustum(e, cull) {
+		frame := lvl.Frames.FrameFor(e)
+		if !e.Visible || !EntityInFrustumOf(frame, e, cull) {
 			continue
 		}
+		// An entity riding in a frame has its transform in that frame's
+		// coordinates, so the frame goes on the outside — the same composition
+		// the frame's own chunks get, one level further in.
 		world := e.ModelMatrix()
+		if !frame.IsWorld() {
+			world = frame.World.Mul4(world)
+		}
 		for mi := range e.Models {
 			m := &e.Models[mi]
 			if !entityDrawable(e, m) {

@@ -25,6 +25,7 @@ import (
 
 	"github.com/go-gl/mathgl/mgl32"
 
+	"foundry/internal/collision"
 	"foundry/internal/flang"
 	"foundry/internal/world"
 )
@@ -279,6 +280,53 @@ func init() {
 			}
 			rt.cache = buildRefCache(rt.lvl)
 			return flang.BoolVal(removed), nil
+		},
+
+		"mount": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+			// mount(rider, vehicle, "seat"). The seat is optional: without one
+			// the rider comes aboard standing, which is what a cargo hold wants.
+			e, err := rt.verbEntity(args, 0, "mount")
+			if err != nil {
+				return nil, err
+			}
+			v, err := rt.verbEntity(args, 1, "mount")
+			if err != nil {
+				return nil, err
+			}
+			seat, _ := verbStrAt(args, 2)
+			if !v.IsVehicle() {
+				rt.warnAt(pos, "mount: %s is not a vehicle", v.ID)
+				return flang.BoolVal(false), nil
+			}
+			if seat != "" && v.Vehicle.Seat(seat) == nil {
+				rt.warnAt(pos, "mount: %s has no seat called %q", v.ID, seat)
+				return flang.BoolVal(false), nil
+			}
+			rt.markDirty()
+			ok := collision.Mount(rt.lvl, e, v, seat)
+			if ok {
+				rt.post(flang.RefVal{Kind: flang.RefEntity, A: v.ID}, "mount",
+					[]flang.Value{flang.RefVal{Kind: flang.RefEntity, A: e.ID}, flang.StrVal(seat)}, pos)
+			}
+			return flang.BoolVal(ok), nil
+		},
+
+		"dismount": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+			e, err := rt.verbEntity(args, 0, "dismount")
+			if err != nil {
+				return nil, err
+			}
+			if e.Frame == "" {
+				return flang.BoolVal(false), nil
+			}
+			seat := e.Seat
+			rt.markDirty()
+			v := collision.Dismount(rt.lvl, e)
+			if v != nil {
+				rt.post(flang.RefVal{Kind: flang.RefEntity, A: v.ID}, "dismount",
+					[]flang.Value{flang.RefVal{Kind: flang.RefEntity, A: e.ID}, flang.StrVal(seat)}, pos)
+			}
+			return flang.BoolVal(v != nil), nil
 		},
 
 		"after": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {

@@ -19,8 +19,11 @@ import "foundry/internal/imguibackend"
 // callback does the work a frame or two later (editor_script_ui.go).
 //
 // The keyboard shortcuts need none of this: ImGui implements Ctrl+X/C/V/A inside
-// the widget already. All they ever needed was a clipboard that reaches the rest
-// of the desktop, which is editor_clipboard.go.
+// the widget already, along with Ctrl+Z/Y and every Shift-selection. What they
+// needed was two things this file does not own — a clipboard that reaches the
+// rest of the desktop (imguibackend/clipboard.go), and the Ctrl and Shift flags
+// those shortcuts are all gated on actually being set, which for a long time
+// they were not (imguibackend.ImguiApplyModifiers).
 
 // scriptEditOp is one editing operation the buffer's context menu can ask for.
 type scriptEditOp int

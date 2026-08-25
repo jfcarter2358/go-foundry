@@ -422,7 +422,11 @@ func collisionTestLevel() *world.Level {
 		}
 	}
 	ch.RecomputeBounds()
-	return &world.Level{Chunks: []world.Chunk{ch}}
+	lvl := &world.Level{Chunks: []world.Chunk{ch}}
+	// Frames and the spatial hash are derived state every real level carries;
+	// building them here keeps the tests on the same path the engine uses.
+	_ = world.RebuildIndexes(lvl)
+	return lvl
 }
 
 func TestResolveEntityWorldRestsOnTheFloor(t *testing.T) {

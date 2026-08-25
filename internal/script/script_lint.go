@@ -50,6 +50,7 @@ type ScriptIssue struct {
 var scriptEventAtoms = []string{
 	"spawn", "destroy", "tick", "enter", "exit",
 	"collide", "interact", "anim_start", "anim_end",
+	"mount", "dismount", "portal_seal",
 }
 
 // linter carries what the checks share: the level, its index, and the lazily

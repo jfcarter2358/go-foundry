@@ -751,7 +751,9 @@ func DrainScriptWork(lvl *world.Level) {
 			ch.RecomputeBounds()
 		}
 		if footprintMoved {
-			lvl.Spatial = world.BuildSpatialHash(lvl.Chunks, 8.0)
+			if err := world.RebuildIndexes(lvl); err != nil {
+				ScriptLog.Warnf("", "%v", err)
+			}
 		}
 	}
 

@@ -117,6 +117,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 		Origin:        world.RawChunkOrigin{X: ch.Origin.X(), Y: ch.Origin.Y(), Z: ch.Origin.Z()},
 		Rotation:      ch.Rotation,
 		Scale:         ch.Scale,
+		Frame:         ch.FrameOwner,
 	}
 	if rc.Scale == 0 {
 		rc.Scale = 1
@@ -233,6 +234,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 					To:            toName,
 					Kind:          "portal",
 					ToSector:      p.ToSector,
+					ToFrame:       p.ToFrame,
 					DrawGap:       p.DrawGap,
 					GapTexture:    p.GapTexture,
 					Hidden:        !p.Visible,
@@ -413,6 +415,8 @@ func spawnToRaw(s *world.SpawnPoint) *world.RawSpawn {
 	return &world.RawSpawn{
 		Position: world.RawVec3{X: s.Position.X(), Y: s.Position.Y(), Z: s.Position.Z()},
 		Rotation: world.RawVec3{X: s.Rotation.X(), Y: s.Rotation.Y(), Z: s.Rotation.Z()},
+		Frame:    s.Frame,
+		Seat:     s.Seat,
 	}
 }
 
@@ -686,7 +690,9 @@ func ImportChunkIntoLevel(lvl *world.Level, path string) (string, error) {
 	}
 
 	lvl.Chunks = append(lvl.Chunks, chunk)
-	lvl.Spatial = world.BuildSpatialHash(lvl.Chunks, 8.0)
+	if err := world.RebuildIndexes(lvl); err != nil {
+		return "", err
+	}
 
 	return rc.ID, nil
 }

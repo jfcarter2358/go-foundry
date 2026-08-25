@@ -234,8 +234,7 @@ func Run() {
 	// resolved for; nothing draws it, since the view is from inside its head.
 	world.PlayerEntity = world.NewPlayer(gfx.Cam.Position.Sub(mgl32.Vec3{0, world.EyeHeight, 0}))
 	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
-	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
-	gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
+	gfx.UpdateCamMatrix()
 
 	// A spawn point in the level overrides that starting position, so a level
 	// loaded straight into gameplay starts where the editor says it should.
@@ -308,66 +307,66 @@ func Run() {
 			// Editor owns camera and input; gameplay logic is bypassed.
 			editor.EditorTick(platform.KeyStates)
 		} else {
-			// --- Input: let HandleInput update Cam.Position normally ---
-			preMovePos := gfx.Cam.Position
-			gfx.HandleInput(platform.KeyStates)
+			// --- Input -> player -> camera ---
+			// The keys say how far to move; the player is what moves, and the
+			// camera is placed on it afterwards. It used to run the other way
+			// round — move the camera, then difference it onto the player —
+			// which cannot survive the two living in different coordinate
+			// systems, and cost a re-sync every time anything else nudged the
+			// body.
+			// While the player is in a driver's seat these keys fill the
+			// vehicle's controls instead of the player's move intent.
+			intent := PlayerMoveIntent(&level, platform.KeyStates)
 
-			// --- Player entity update + collision ---
+			// Vehicles integrate before anything inside them resolves, and
+			// republish their frames as they go. A rider that resolved against
+			// last frame's transform would be shoved through the deck every
+			// time the ship pitched — this ordering is the fix, and it is why
+			// VehicleUpdate is here rather than folded into EntityUpdate.
+			collision.VehicleUpdate(&level, platform.DeltaTime, true)
+
 			if world.PlayerEntity != nil {
-				delta := gfx.Cam.Position.Sub(preMovePos)
-				newPlayerPos := world.PlayerEntity.Position.Add(delta)
+				onGround := collision.MovePlayer(
+					world.PlayerEntity, &level,
+					collision.PlayerMove{
+						Intent:       intent,
+						Jump:         platform.JumpRequested,
+						Gravity:      platform.GravityEnabled,
+						DTScale:      platform.DeltaTime * 60.0,
+						GravityAccel: platform.GravityAccel,
+						MaxFallSpeed: platform.MaxFallSpeed,
+						JumpVelocity: platform.JumpVelocity,
+					})
+				platform.JumpRequested = false
 
-				// Apply pending jump impulse before gravity so the jump
-				// frame isn't immediately reduced by one tick of gravity.
-				if platform.JumpRequested {
-					world.PlayerEntity.Velocity[1] = platform.JumpVelocity
-					platform.JumpRequested = false
-					platform.IsOnGround = false
+				// Standing in a frame portal's doorway hands the player over to
+				// the other side — the ship's ramp onto the hangar deck, or back
+				// again. Position, velocity and facing all go through the same
+				// relative transform, so nothing pops and nobody arrives walking
+				// sideways.
+				if c := collision.FindFramePortalCrossing(&level, world.PlayerEntity); c != nil && !c.Sealed {
+					gfx.Cam.Yaw = collision.CrossFramePortal(&level, world.PlayerEntity, c, gfx.Cam.Yaw)
 				}
-
-				// Apply gravity: accelerate downward, clamp to terminal velocity.
-				// Scale by DeltaTime*60 to normalize to 60 FPS baseline.
-				dtScale := platform.DeltaTime * 60.0
+				// Only meaningful with gravity on; free-fly leaves it alone
+				// rather than reporting a fall that is not happening.
 				if platform.GravityEnabled {
-					world.PlayerEntity.Velocity[1] -= platform.GravityAccel * dtScale
-					if world.PlayerEntity.Velocity[1] < -platform.MaxFallSpeed {
-						world.PlayerEntity.Velocity[1] = -platform.MaxFallSpeed
-					}
-				}
-				newPlayerPos[1] += world.PlayerEntity.Velocity[1] * dtScale
-
-				chunk, sector := world.FindChunkAndSectorSH(level.Spatial, level.Chunks, newPlayerPos)
-				newPlayerPos = collision.ResolveWallCollision(world.PlayerEntity, chunk, sector, newPlayerPos)
-				newPlayerPos = collision.ResolveSlopeCollision(world.PlayerEntity, chunk, sector, world.PlayerEntity.Position, newPlayerPos)
-				// Re-find sector after slope adjustment (player may have slid to a different sector)
-				chunk, sector = world.FindChunkAndSectorSH(level.Spatial, level.Chunks, newPlayerPos)
-				hitFloor, hitCeiling := collision.ResolveFloorCollision(world.PlayerEntity, chunk, sector, &newPlayerPos)
-
-				// Landing/bonk: reset vertical velocity on floor or ceiling contact.
-				if platform.GravityEnabled {
-					if hitFloor {
-						world.PlayerEntity.Velocity[1] = 0
-						platform.IsOnGround = true
-					} else {
-						platform.IsOnGround = false
-					}
-					if hitCeiling && world.PlayerEntity.Velocity[1] > 0 {
-						world.PlayerEntity.Velocity[1] = 0
-					}
+					platform.IsOnGround = onGround
 				}
 
-				world.PlayerEntity.Position = newPlayerPos
-				if chunk != nil {
-					world.PlayerEntity.CurrentChunk = chunk.ID
+				// Riding in a frame puts the camera in that frame's space, with
+				// its own up vector; on foot this falls through to the world
+				// placement it always had.
+				if !SeatedCamera(&level) {
+					gfx.Cam.Up = gfx.WorldUp
+					gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
+					gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
+					gfx.UpdateCamMatrix()
 				}
-				if sector != nil {
-					world.PlayerEntity.CurrentSector = sector.ID
-				} else {
-					world.PlayerEntity.CurrentSector = ""
-				}
-				gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
-				gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
-				gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
+			} else {
+				// No player yet: the intent still has to go somewhere, or the
+				// camera freezes on the loading frame.
+				gfx.Cam.Position = gfx.Cam.Position.Add(intent)
+				gfx.UpdateCamMatrix()
 			}
 		}
 
@@ -395,13 +394,33 @@ func Run() {
 			// placed on the player above, so put it back where the player now
 			// actually is.
 			if world.PlayerEntity.Position != playerPosBefore {
-				gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
-				gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
-				gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
+				if !SeatedCamera(&level) {
+					gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
+					gfx.UpdateCamMatrix()
+				}
 			}
 		}
 
 		// The script event loop, immediately after the world has settled: this
+		// Frames follow whatever carries them, so their transforms are recomputed
+		// once the entities that own them have finished moving — and before
+		// anything reads them. Everything downstream this frame (the script
+		// tick's world-space overlap tests, and every draw of a chunk that lives
+		// in a frame) sees where things actually are rather than where they were
+		// last frame.
+		//
+		// Walked parents-first inside RefreshFrames, so a nested frame composes
+		// against a parent that is already up to date.
+		world.RefreshFrames(&level, level.Frames)
+
+		// The interact key's vehicle half, before the script tick so a mount
+		// made this frame is visible to it. It consumes the press only when it
+		// actually did something, so `E` still reaches a scripted door when
+		// there is no seat within reach.
+		if !editor.Editor.Active {
+			VehicleInteractRequest(&level)
+		}
+
 		// frame's overlaps produce this frame's `enter`, and whatever a handler
 		// writes lands before the frame draws. `!Editor.Active` is the same play
 		// gate EntityUpdate takes.
@@ -526,10 +545,26 @@ func Run() {
 					// was just added.
 					chunk.RecomputeBounds()
 				}
-				if !render.AABBInFrustum(frustum, chunk.MinBound, chunk.MaxBound) {
+				chunkMin, chunkMax := chunk.WorldBounds()
+				if !render.AABBInFrustum(frustum, chunkMin, chunkMax) {
 					continue
 				}
 				chunksDrawn++
+
+				// A chunk in a frame is authored in that frame's coordinates and
+				// carried into the world by its transform; a world chunk was
+				// baked into world space at load and gets the identity. Passing
+				// it unconditionally is what keeps this one loop.
+				chunkModel := chunk.ModelMatrix()
+
+				// Everything below that asks "where is the camera" has to ask it
+				// in the chunk's own coordinates, or a backface test compares a
+				// world-space eye against frame-local geometry and culls the
+				// wrong half of a moving ship.
+				chunkCam := gfx.Cam.Position
+				if chunk.InFrame() {
+					chunkCam = level.Frames.Frame(chunk.FrameOwner).FromWorld(chunkCam)
+				}
 
 				// Portal visibility: only render sectors reachable through portals from the player's sector.
 				// Sectors disconnected from the portal graph (e.g. nested sectors with no shared
@@ -537,7 +572,7 @@ func Run() {
 				var visibleSectors map[string]bool
 				var connectedSectors map[string]bool
 				if world.PlayerEntity != nil && chunk.ID == world.PlayerEntity.CurrentChunk {
-					visibleSectors = render.PortalVisibleSectors(chunk, world.PlayerEntity.CurrentSector, gfx.Cam.Position)
+					visibleSectors = render.PortalVisibleSectors(chunk, world.PlayerEntity.CurrentSector, chunkCam)
 					connectedSectors = render.PortalConnectedSectors(chunk, world.PlayerEntity.CurrentSector)
 				}
 
@@ -549,6 +584,9 @@ func Run() {
 					}
 					sectorMin := mgl32.Vec3{sector.MinBound.X(), sector.Floor.Height, sector.MinBound.Y()}
 					sectorMax := mgl32.Vec3{sector.MaxBound.X(), sector.Ceiling.Height, sector.MaxBound.Y()}
+					if chunk.InFrame() {
+						sectorMin, sectorMax = render.TransformAABB(chunkModel, sectorMin, sectorMax)
+					}
 					if !render.AABBInFrustum(frustum, sectorMin, sectorMax) {
 						continue
 					}
@@ -557,37 +595,37 @@ func Run() {
 						// Displaced faces are drawn by RenderDetailColor via the tess
 						// program instead of the flat mesh (avoids z-fighting).
 						if !sector.Floor.Detail.HasDisplace() {
-							drawOrQueue(&sector.Floor.Geometry, identity, sector.Floor.DoubleSided)
+							drawOrQueue(&sector.Floor.Geometry, chunkModel, sector.Floor.DoubleSided)
 						}
 						for eg := range sector.Floor.ExtrusionGeometries {
-							drawOrQueue(&sector.Floor.ExtrusionGeometries[eg], identity, sector.Floor.DoubleSided)
+							drawOrQueue(&sector.Floor.ExtrusionGeometries[eg], chunkModel, sector.Floor.DoubleSided)
 						}
 					}
 					if sector.Ceiling.Enabled {
 						if !sector.Ceiling.Detail.HasDisplace() {
-							drawOrQueue(&sector.Ceiling.Geometry, identity, sector.Ceiling.DoubleSided)
+							drawOrQueue(&sector.Ceiling.Geometry, chunkModel, sector.Ceiling.DoubleSided)
 						}
 						for eg := range sector.Ceiling.ExtrusionGeometries {
-							drawOrQueue(&sector.Ceiling.ExtrusionGeometries[eg], identity, sector.Ceiling.DoubleSided)
+							drawOrQueue(&sector.Ceiling.ExtrusionGeometries[eg], chunkModel, sector.Ceiling.DoubleSided)
 						}
 					}
 					for k := range sector.Walls {
 						w := &sector.Walls[k]
-						if w.Visible && (w.DoubleSided || render.WallFacingCamera(*w, gfx.Cam.Position)) {
+						if w.Visible && (w.DoubleSided || render.WallFacingCamera(*w, chunkCam)) {
 							if !w.Detail.HasDisplace() {
-								drawOrQueue(&w.Geometry, identity, w.DoubleSided)
+								drawOrQueue(&w.Geometry, chunkModel, w.DoubleSided)
 							}
 							for eg := range w.ExtrusionGeometries {
-								drawOrQueue(&w.ExtrusionGeometries[eg], identity, w.DoubleSided)
+								drawOrQueue(&w.ExtrusionGeometries[eg], chunkModel, w.DoubleSided)
 							}
 						}
 					}
 					// Draw gap-fill geometry on portals connecting sectors at different heights.
 					for k := range sector.Portals {
 						p := &sector.Portals[k]
-						if p.Visible && p.DrawGap && (p.DoubleSided || render.PortalFacingCamera(p.StartPoint, p.EndPoint, gfx.Cam.Position)) {
-							drawOrQueue(&p.FloorGap, identity, p.DoubleSided)
-							drawOrQueue(&p.CeilGap, identity, p.DoubleSided)
+						if p.Visible && p.DrawGap && (p.DoubleSided || render.PortalFacingCamera(p.StartPoint, p.EndPoint, chunkCam)) {
+							drawOrQueue(&p.FloorGap, chunkModel, p.DoubleSided)
+							drawOrQueue(&p.CeilGap, chunkModel, p.DoubleSided)
 						}
 					}
 				}
@@ -615,7 +653,15 @@ func Run() {
 			// exists to be seen and dragged in the editor and must never show
 			// up in the shot the player spawns into.
 			if editor.Editor.Active && level.Spawn != nil {
-				drawOrQueue(&level.Spawn.Geometry, level.Spawn.ModelMatrix(), false)
+				// A spawn aboard a vehicle is authored in that vehicle's
+				// coordinates, so its marker draws under the same transform its
+				// geometry does — otherwise the arrow sits at the world origin
+				// while the player will start inside the ship.
+				m := level.Spawn.ModelMatrix()
+				if level.Spawn.Frame != "" {
+					m = level.Frames.Frame(level.Spawn.Frame).World.Mul4(m)
+				}
+				drawOrQueue(&level.Spawn.Geometry, m, false)
 			}
 
 			// Volumes are regions rather than objects: invisible during play,

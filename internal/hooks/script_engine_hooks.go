@@ -88,3 +88,33 @@ func ScriptInteractPressed() bool {
 	scriptInteractPressed = false
 	return out
 }
+
+// ---------- vehicle events ----------
+
+// VehicleEvent is one boarding or leaving, recorded by the engine so the script
+// tick can turn it into a message.
+//
+// A drain-once buffer for the same reason the collision pairs above are:
+// mounting happens in the collision package, which sits below scripting and
+// must not reach up into it. The engine records what happened; the tick decides
+// what it means.
+type VehicleEvent struct {
+	Atom     string // "mount" or "dismount"
+	Vehicle  string
+	Occupant string
+	Seat     string
+}
+
+var vehicleEvents []VehicleEvent
+
+// RecordVehicleEvent notes a boarding or a leaving.
+func RecordVehicleEvent(ev VehicleEvent) {
+	vehicleEvents = append(vehicleEvents, ev)
+}
+
+// TakeVehicleEvents returns and clears the events recorded since the last call.
+func TakeVehicleEvents() []VehicleEvent {
+	out := vehicleEvents
+	vehicleEvents = nil
+	return out
+}

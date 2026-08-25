@@ -25,11 +25,6 @@ const (
 // scriptEditorWindow is nil when the editor is closed.
 var scriptEditorWindow *uiwin.UIWindow
 
-// activeScript is the open document. It outlives the window, so closing and
-// reopening resumes where the author left off — the same choice the texture and
-// model editors make.
-var activeScript *scriptDoc
-
 // ScriptEditorOpen reports whether the window is up.
 func ScriptEditorOpen() bool { return scriptEditorWindow != nil }
 
@@ -38,16 +33,15 @@ func ScriptEditorOpen() bool { return scriptEditorWindow != nil }
 //
 // The editor always has something to edit: with nothing loaded it starts on a
 // working handler, the same way the model editor starts on a cube rather than on
-// a file dialog.
+// a file dialog. The open documents outlive the window, so closing and
+// reopening resumes on the same tabs — the same choice the texture and model
+// editors make.
 func OpenScriptEditorWindow() {
 	if scriptEditorWindow != nil {
 		scriptEditorWindow.Win.Raise()
 		return
 	}
-	if activeScript == nil {
-		activeScript = NewScriptDoc()
-		activeScript.reparseNow(Editor.level)
-	}
+	scriptEditorEnsureDoc()
 	w, err := uiwin.NewUIWindow("Script Editor", scriptWindowW, scriptWindowH,
 		drawScriptEditorWindow, onScriptEditorClose)
 	if err != nil {
@@ -56,6 +50,7 @@ func OpenScriptEditorWindow() {
 	}
 	w.ClearColor = [4]float32{0.11, 0.11, 0.13, 1}
 	w.HandleEvent = scriptEditorHandleEvent
+	w.FilterEvent = scriptEditorFilterEvent
 	// Assigned last: until this is set, ScriptEditorOpen has to keep saying no,
 	// or a Draw triggered during construction would find a half-built window.
 	scriptEditorWindow = w
@@ -70,10 +65,15 @@ func CloseScriptEditorWindow() {
 	}
 }
 
-// onScriptEditorClose runs with this window's GL context current. The document
-// stays in memory: closing the window is not the same as discarding unsaved work.
+// onScriptEditorClose runs with this window's GL context current. The documents
+// stay in memory: closing the window is not the same as discarding unsaved
+// work.
 func onScriptEditorClose() {
 	scriptEditorWindow = nil
+	// Nothing is drawn while the window is shut, so where the text was drawn
+	// last is about to be a stale answer the gutter would align itself to.
+	scriptBufTextValid = false
+	scriptBufActive = false
 }
 
 // scriptEditorFocused reports whether this window owns keyboard input.
@@ -112,6 +112,12 @@ func scriptEditorHandleEvent(event sdl.Event) {
 			scriptEditorShowNew = true
 		case sdl.SCANCODE_R:
 			scriptEditorReloadAll()
+		case sdl.SCANCODE_W:
+			scriptEditorCloseDoc(activeScript)
+		case sdl.SCANCODE_TAB:
+			// Safe while typing, despite the text area taking Tab: ImGui skips
+			// its insert-a-tab branch whenever Ctrl is down.
+			scriptEditorCycleTab(sdl.GetModState()&sdl.KMOD_SHIFT != 0)
 		}
 		return
 	}
@@ -121,4 +127,34 @@ func scriptEditorHandleEvent(event sdl.Event) {
 	if t.Keysym.Scancode == sdl.SCANCODE_ESCAPE {
 		CloseScriptEditorWindow()
 	}
+}
+
+// scriptEditorFilterEvent takes Escape away from ImGui while the buffer is
+// being typed in, and closes the window itself instead.
+//
+// ImGui's InputText treats Escape as "revert": it deactivates the field and
+// puts back the text it held when it was focused. In a one-line box for a
+// number that is a kindness. In a script buffer it silently discards every edit
+// since the file was last saved, which is the single most expensive keystroke
+// this editor had — and it cannot be undone afterwards, because the widget's
+// undo history is deactivated along with it.
+//
+// It has to happen here rather than in HandleEvent: by the time that runs,
+// ImGuiProcessEvent has already fed the key in and the revert has happened.
+// Only while the buffer is actually active, so Escape still closes a modal
+// dialog or a context menu — ImGui owns those, and owning them is right.
+func scriptEditorFilterEvent(event sdl.Event) bool {
+	t, ok := event.(sdl.KeyboardEvent)
+	// Only the press is taken. Letting the release through costs nothing —
+	// ImGui reads it as clearing a key it never saw pressed — and it means a
+	// buffer that became active between the two cannot be left holding an
+	// Escape that is down forever.
+	if !ok || t.Type != sdl.KEYDOWN ||
+		t.Keysym.Scancode != sdl.SCANCODE_ESCAPE || !scriptBufActive {
+		return false
+	}
+	// The documents are kept, so this loses nothing: reopening the editor comes
+	// back to the same tabs with the same unsaved text.
+	CloseScriptEditorWindow()
+	return true
 }

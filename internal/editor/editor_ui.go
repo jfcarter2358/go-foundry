@@ -718,17 +718,6 @@ func EditorDrawUI() {
 	}
 
 	imgui.SameLine()
-	if currentMode == ModeSurface2D {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.8, Y: 0.4, Z: 0.1, W: 1})
-	}
-	if imgui.Button("Surface") && Editor.Mode == ModeSurface2D {
-		exitSurface2D()
-	}
-	if currentMode == ModeSurface2D {
-		imgui.PopStyleColor()
-	}
-
-	imgui.SameLine()
 	if imgui.Button("Textures") {
 		textureui.OpenTextureEditor()
 	}

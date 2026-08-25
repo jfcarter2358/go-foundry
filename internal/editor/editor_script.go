@@ -15,7 +15,6 @@ package editor
 
 import (
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"foundry/internal/fileutil"
@@ -30,6 +29,14 @@ const scriptDocDebounceMS = 300
 
 // scriptDoc is one open script.
 type scriptDoc struct {
+	// id names this document to ImGui, and never changes. The buffer's widget
+	// state — its cursor, its selection, its undo stack — is keyed by widget
+	// ID, so two tabs sharing one would swap cursors as you switched between
+	// them, and Ctrl+Z in one would undo an edit made in the other. Path
+	// cannot do this job: Save As renames a document, and a tab whose ID
+	// changed would lose exactly that state at exactly the wrong moment.
+	id int
+
 	// Path is relative to the scripts root, as a level would write it. Empty
 	// means the buffer has never been saved.
 	Path string
@@ -65,9 +72,15 @@ type scriptDoc struct {
 	hlWidth float32
 }
 
+// scriptDocSeq hands out document IDs. Monotonic and never reused, so a
+// closed tab's widget state cannot be inherited by the next document opened.
+var scriptDocSeq int
+
 // NewScriptDoc returns an empty, unsaved document.
 func NewScriptDoc() *scriptDoc {
+	scriptDocSeq++
 	return &scriptDoc{
+		id:         scriptDocSeq,
 		Text:       scriptStarterText,
 		diagLines:  map[int][]flang.Error{},
 		issueLines: map[int][]script.ScriptIssue{},
@@ -97,6 +110,19 @@ end
 func (d *scriptDoc) Name() string {
 	if d.Path == "" {
 		return "(unsaved)"
+	}
+	return d.Path
+}
+
+// TabName is the document's name with its folders dropped — what a tab shows,
+// since a tab strip has room for `door.flang` and not for
+// `scripts/props/doors/door.flang`.
+func (d *scriptDoc) TabName() string {
+	if d.Path == "" {
+		return "(unsaved)"
+	}
+	if i := strings.LastIndex(d.Path, "/"); i >= 0 {
+		return d.Path[i+1:]
 	}
 	return d.Path
 }
@@ -207,7 +233,9 @@ func OpenScriptDoc(name string) (*scriptDoc, error) {
 	if err != nil {
 		return nil, err
 	}
+	scriptDocSeq++
 	d := &scriptDoc{
+		id:         scriptDocSeq,
 		Path:       fileutil.ScriptsDirName + "/" + strings.TrimPrefix(strings.TrimSuffix(filepath.ToSlash(name), fileutil.ScriptExt), fileutil.ScriptsDirName+"/") + fileutil.ScriptExt,
 		Text:       string(src),
 		diagLines:  map[int][]flang.Error{},
@@ -216,25 +244,6 @@ func OpenScriptDoc(name string) (*scriptDoc, error) {
 	d.saved = d.Text
 	d.reparseNow(Editor.level)
 	return d, nil
-}
-
-// scriptCompletions returns every name a script can call: the builtins, plus
-// whatever the buffer itself defines.
-//
-// Both halves come from a table rather than a list kept by hand — flang's
-// BuiltinNames and the parsed file's own functions — so a new builtin appears
-// here the day it is added.
-func scriptCompletions(d *scriptDoc) []string {
-	names := flang.BuiltinNames()
-	if d != nil {
-		if f, _ := flang.Parse(d.Name(), []byte(d.Text)); f != nil {
-			for _, g := range f.Funcs {
-				names = append(names, g.Name)
-			}
-		}
-	}
-	sort.Strings(names)
-	return names
 }
 
 // scriptScopeNames returns every name the buffer brings into scope: the function

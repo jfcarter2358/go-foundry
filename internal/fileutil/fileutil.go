@@ -4,6 +4,7 @@ package fileutil
 // logic, shared across the editor and texture-editor code.
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -171,6 +172,87 @@ func ScanScriptFilesIn(root string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ScanScriptDirs lists every folder under the scripts folder, as
+// slash-separated paths relative to it, deepest last.
+//
+// Separate from ScanScriptFiles because the script editor's tree has to be able
+// to show a folder that is still empty — a folder made a moment ago, to put the
+// next script in, is exactly the one that has nothing in it yet, and a tree
+// built only from file paths would make it disappear the instant it was
+// created.
+func ScanScriptDirs() []string { return ScanScriptDirsIn(ScriptsDir()) }
+
+// ScanScriptDirsIn is ScanScriptDirs rooted at an explicit directory.
+func ScanScriptDirsIn(root string) []string {
+	var out []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil || rel == "." {
+			return nil
+		}
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
+// MakeScriptDir creates a folder under the scripts folder. rel is
+// slash-separated and relative to it; intermediate folders are created too.
+func MakeScriptDir(rel string) error {
+	full, ok := scriptSubPath(rel)
+	if !ok {
+		return fmt.Errorf("%q is not a name inside the scripts folder", rel)
+	}
+	return os.MkdirAll(full, 0755)
+}
+
+// MoveScriptFile renames or moves a script within the scripts folder. Both
+// paths are relative to it, with or without the extension and the scripts/
+// prefix. It refuses to overwrite an existing file — organising scripts should
+// never be able to lose one.
+func MoveScriptFile(from, to string) error {
+	src, dst := ScriptPath(from), ScriptPath(to)
+	if src == "" || dst == "" {
+		return fmt.Errorf("a script move needs both a source and a destination")
+	}
+	if src == dst {
+		return nil
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("%s already exists", to)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	return os.Rename(src, dst)
+}
+
+// scriptSubPath resolves a slash-separated name to an absolute path under the
+// scripts folder, reporting false for anything that would escape it. `..` in a
+// folder name is a typo rather than an attack here, but a typo that creates a
+// directory beside resources/ is still worth not doing.
+func scriptSubPath(rel string) (string, bool) {
+	rel = strings.TrimPrefix(filepath.ToSlash(rel), ScriptsDirName+"/")
+	rel = strings.Trim(rel, "/")
+	if rel == "" {
+		return "", false
+	}
+	root := ScriptsDir()
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	inside, err := filepath.Rel(root, full)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return full, true
 }
 
 // ---------- texture paths ----------

@@ -214,6 +214,9 @@ func FloorHeightNormalUnderLevel(level *world.Level, wx, wz float32) (float32, m
 	xz := mgl32.Vec2{wx, wz}
 	for ci := range level.Chunks {
 		c := &level.Chunks[ci]
+		if c.InFrame() {
+			continue // not in world space; biome anchoring is a world query
+		}
 		if s := world.FindSector(c, xz); s != nil {
 			h, n, _ := world.InterpolateSurfaceHeight(c, s, xz, true)
 			return h, n, s

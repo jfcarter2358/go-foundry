@@ -31,6 +31,7 @@ type builtinFn func(in *Interp, args []Value, pos Pos) (Value, error)
 var worldVerbs = []string{
 	"player", "find", "move_to", "set_velocity",
 	"play_anim", "stop_anim", "set_texture", "spawn", "destroy", "after", "time",
+	"mount", "dismount",
 }
 
 var builtins map[string]builtinFn

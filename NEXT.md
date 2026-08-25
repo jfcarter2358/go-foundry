@@ -54,6 +54,8 @@
 - [x] Scripting (flang: `internal/flang`, `@id`/`#tag`, attributes and properties, messages, events, hot reload)
 - [x] Script parameters (`param name type`, bound per object in the editor, read as `@name`)
 - [x] Object collision physics (push-apart; no restitution or friction yet)
+- [x] Vehicles (seated and walkable-interior, 6DOF, nested frames, frame portals)
+- [x] Frames — moving coordinate systems that geometry and entities can live in
 
 ## TODO
 
@@ -74,7 +76,6 @@
 - [ ] Sprites
 - [ ] Particles
 - [ ] Skeleton sockets
-- [ ] Vehicles
 - [ ] Physics engine
 - [ ] Texture transparency
 - [ ] Texture blending
@@ -96,8 +97,10 @@ path. What is left is what deliberately was not built with them:
       master switches on 8 and 9 — no scripting needed
 - [x] `enter`/`exit`/`interact` events over the overlap tests, plus `collide`,
       `spawn`, `destroy`, `tick` and the two animation events
-- [ ] Shape-aware push-apart. Overlaps resolve on the world AABB whatever the
-      `bounding` kind is, so a sphere pushes apart as a box.
+- [x] Shape-aware push-apart (GJK/EPA over support functions; axis-aligned box
+      pairs keep their own tuned min-axis path)
+- [x] Swept collision — motion is split into steps no longer than the body, so
+      nothing passes through a wall it was moving too fast to be sampled against
 - [ ] Restitution/friction, and more than one solver iteration per frame
 - [x] Scripting: `@id` and `#tag` addressing, and reading/writing attributes
 - [ ] Animation blending between clips (a switch is a hard cut today)

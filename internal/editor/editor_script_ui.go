@@ -2,30 +2,31 @@ package editor
 
 // editor_script_ui.go — the script editor's ImGui.
 //
-// Three panes: a file list on the left, the buffer in the middle, and the
-// diagnostics underneath it. The diagnostics pane is the point of the whole
-// window — a script that will not parse fails silently at runtime, and a list of
-// exactly where and why is the difference between that being a two-second fix
-// and a hunt.
+// Four regions: a folder tree on the left (editor_script_tree.go), a tab strip
+// over the buffer (editor_script_tabs.go), the buffer itself with its line
+// numbers, and the diagnostics underneath. The diagnostics pane is the point of
+// the whole window — a script that will not parse fails silently at runtime, and
+// a list of exactly where and why is the difference between that being a
+// two-second fix and a hunt.
 //
-// The text area is an InputTextMultiline rather than a hand-rolled editor with a
-// gutter. A real gutter means owning the cursor, selection, clipboard and undo,
-// which is a text editor rather than a feature; clicking a diagnostic to see its
-// line, and a line-numbered error list beside the buffer, gets most of the value
-// for a fraction of the surface.
+// The language reference used to live below that pane, squeezed into whatever
+// height was left. It is now a tab of the F1 overlay, which has the room to say
+// what a builtin actually does rather than only that it exists — see
+// app/script_reference.go.
 //
-// The colouring keeps that bargain. The widget still owns everything it owned
-// before — it is drawn with its own glyphs made transparent and coloured ones
-// painted into its own child window over the top, so nothing about editing
-// changes. What that costs is scrolling, which has to move out to a window this
-// side owns; see drawScriptEditorText.
+// The text area is an InputTextMultiline rather than a hand-rolled editor. A
+// real one means owning the cursor, selection, clipboard and undo, which is a
+// text editor rather than a feature; what is added over the top is colour (the
+// widget's own glyphs drawn transparent, coloured ones painted into its own
+// child window) and a gutter beside it. Both depend on the widget never
+// scrolling itself — see drawScriptEditorText.
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"foundry/internal/fileutil"
-	"foundry/internal/flang"
 	"foundry/internal/imguibackend"
 	"foundry/internal/script"
 	"foundry/internal/uiwin"
@@ -37,12 +38,25 @@ import (
 // Dialog flags, in the style the texture editor uses: a bool per dialog, raised
 // from wherever and consumed by WithModalPopup at the end of the frame.
 var (
-	scriptEditorShowNew    bool
-	scriptEditorShowOpen   bool
-	scriptEditorShowSaveAs bool
-	scriptEditorNewName    string
-	scriptEditorSaveAsName string
-	scriptEditorFiles      []string
+	scriptEditorShowNew       bool
+	scriptEditorShowOpen      bool
+	scriptEditorShowSaveAs    bool
+	scriptEditorShowNewFolder bool
+	scriptEditorShowMove      bool
+	scriptEditorNewName       string
+	scriptEditorSaveAsName    string
+	scriptEditorNewFolderIn   string
+	scriptEditorNewFolderName string
+	scriptEditorMoveFrom      string
+	scriptEditorMoveTo        string
+
+	// scriptEditorFiles and scriptEditorDirs are the last scan of
+	// resources/scripts/. Nil means "never scanned"; empty means "scanned, and
+	// there is nothing there", which is what stops an empty folder being
+	// rescanned every frame.
+	scriptEditorFiles []string
+	scriptEditorDirs  []string
+
 	scriptEditorStatusMsg  string
 	scriptEditorStatusTime uint32
 )
@@ -53,6 +67,18 @@ func scriptEditorStatus(format string, args ...any) {
 	scriptEditorStatusTime = sdl.GetTicks()
 }
 
+// scriptEditorRescan re-reads the scripts folder, files and folders both.
+func scriptEditorRescan() {
+	scriptEditorFiles = fileutil.ScanScriptFiles()
+	if scriptEditorFiles == nil {
+		scriptEditorFiles = []string{}
+	}
+	scriptEditorDirs = fileutil.ScanScriptDirs()
+	if scriptEditorDirs == nil {
+		scriptEditorDirs = []string{}
+	}
+}
+
 // drawScriptEditorWindow renders one frame. Called by RenderSecondaryWindows
 // with this window's GL and ImGui contexts current.
 func drawScriptEditorWindow() {
@@ -60,11 +86,13 @@ func drawScriptEditorWindow() {
 	if w == nil {
 		return
 	}
-	if activeScript == nil {
-		activeScript = NewScriptDoc()
-		activeScript.reparseNow(Editor.level)
+	scriptEditorEnsureDoc()
+	for _, d := range scriptDocs {
+		// Every open document is reparsed, not only the visible one: the tab
+		// strip shows which of them have unsaved work, and the file tree marks
+		// the ones with problems.
+		d.Reparse(sdl.GetTicks(), Editor.level)
 	}
-	activeScript.Reparse(sdl.GetTicks(), Editor.level)
 
 	imgui.SetNextWindowPos(imgui.Vec2{X: 0, Y: 0})
 	imgui.SetNextWindowSize(imgui.Vec2{X: float32(w.W), Y: float32(w.H)})
@@ -78,7 +106,7 @@ func drawScriptEditorWindow() {
 	drawScriptEditorMenuBar()
 	imgui.Separator()
 
-	const sidebarW = 220
+	const sidebarW = 250
 	imgui.BeginChildV("##scriptfiles", imgui.Vec2{X: sidebarW, Y: 0}, true, 0)
 	drawScriptEditorFileList()
 	imgui.EndChild()
@@ -86,6 +114,7 @@ func drawScriptEditorWindow() {
 	imgui.SameLine()
 
 	imgui.BeginChildV("##scriptmain", imgui.Vec2{X: 0, Y: 0}, false, 0)
+	drawScriptEditorTabs()
 	drawScriptEditorBuffer()
 	drawScriptEditorDiagnostics()
 	imgui.EndChild()
@@ -95,6 +124,9 @@ func drawScriptEditorWindow() {
 	drawScriptEditorNewDialog()
 	drawScriptEditorOpenDialog()
 	drawScriptEditorSaveAsDialog()
+	drawScriptEditorNewFolderDialog()
+	drawScriptEditorMoveDialog()
+	drawScriptEditorCloseConfirm()
 
 	imgui.End()
 }
@@ -102,6 +134,7 @@ func drawScriptEditorWindow() {
 // drawScriptEditorMenuBar draws the file actions and the run/reload buttons.
 func drawScriptEditorMenuBar() {
 	if imgui.Button("New") {
+		scriptEditorNewName = ""
 		scriptEditorShowNew = true
 	}
 	imgui.SameLine()
@@ -194,72 +227,51 @@ func drawScriptEditorRunButton() {
 // means "will run and do nothing".
 var scriptIssueColor = imgui.Vec4{X: 1, Y: 0.78, Z: 0.35, W: 1}
 
-// drawScriptEditorFileList lists the scripts folder and the level's attachments.
-func drawScriptEditorFileList() {
-	if imgui.Button("Rescan##scriptfiles") || scriptEditorFiles == nil {
-		scriptEditorFiles = fileutil.ScanScriptFiles()
-		if scriptEditorFiles == nil {
-			// Distinguish "scanned, found nothing" from "never scanned", so an
-			// empty folder is not rescanned every frame.
-			scriptEditorFiles = []string{}
-		}
-	}
-	imgui.Separator()
-
-	if len(scriptEditorFiles) == 0 {
-		editorTextWrapped("No scripts yet. New creates one in resources/scripts/.")
-		return
-	}
-	for _, name := range scriptEditorFiles {
-		path := fileutil.ScriptsDirName + "/" + name
-		selected := activeScript != nil && activeScript.Path == path
-		label := name
-		if selected && activeScript.Dirty() {
-			label += " *"
-		}
-		if imgui.SelectableV(label, selected, 0, imgui.Vec2{}) && !selected {
-			scriptEditorOpenFile(name)
-		}
-		// A script the level actually uses is worth telling apart from one
-		// sitting in the folder unreferenced.
-		if diags := script.ScriptDiagnostics(path); len(diags) > 0 {
-			imgui.SameLine()
-			editorTextColored(imgui.Vec4{X: 1, Y: 0.4, Z: 0.4, W: 1}, "!")
-			if imgui.IsItemHovered() {
-				imgui.SetTooltip(diags.Error())
-			}
-		} else if issues := script.ScriptIssues(path); len(issues) > 0 {
-			// Only when it compiled: a script with parse errors has not been
-			// linted, and two markers on one row would say the same thing twice.
-			imgui.SameLine()
-			editorTextColored(scriptIssueColor, "?")
-			if imgui.IsItemHovered() {
-				imgui.SetTooltip(script.ScriptIssuesText(issues))
-			}
-		}
-	}
-}
-
-// drawScriptEditorBuffer draws the text area.
+// drawScriptEditorBuffer draws the gutter and the text area beside it.
 func drawScriptEditorBuffer() {
 	d := activeScript
-	header := d.Name()
-	if d.Dirty() {
-		header += "  (unsaved)"
-	}
-	imgui.Text(header)
 
-	// Leave room for the diagnostics pane below.
-	h := imgui.ContentRegionAvail().Y - 160
+	// Leave room for the diagnostics pane below — as much as it needs, and no
+	// more. With the reference moved out to F1 there is nothing under the
+	// buffer but problems, so a clean file gets the whole window instead of
+	// holding a third of it open for a list with nothing in it.
+	reserve := float32(2.4 * float64(imgui.TextLineHeightWithSpacing()))
+	if d.HasErrors() || d.HasIssues() {
+		reserve = 180
+	}
+	h := imgui.ContentRegionAvail().Y - reserve
 	if h < 120 {
 		h = 120
 	}
+
+	// The document names every widget under it, so two tabs cannot share a
+	// cursor, a selection or an undo stack — see scriptDoc.id.
+	imgui.PushID(fmt.Sprintf("scriptdoc%d", d.id))
+	defer imgui.PopID()
+
+	gutterW := scriptGutterWidth(len(d.Lines()))
+	top := imgui.CursorPos()
+
+	// The text pane is drawn first even though it sits to the right, because it
+	// is what decides the vertical scroll the gutter has to match. Drawing the
+	// gutter first would leave it a frame behind, which during a drag-scroll
+	// reads as the numbers sliding against their own lines.
+	imgui.SetCursorPos(imgui.Vec2{X: top.X + gutterW, Y: top.Y})
 	imgui.BeginChildV(scriptBufScrollID, imgui.Vec2{X: -1, Y: h}, true,
 		imgui.WindowFlagsHorizontalScrollbar)
 	drawScriptEditorText(d)
 	imgui.EndChild()
 
-	drawScriptEditorBufferMenu()
+	// Captured now: the buffer's context menu tests the rectangle the text pane
+	// occupied, and the gutter below would otherwise be the last item drawn.
+	bufMin, bufMax := imgui.ItemRectMin(), imgui.ItemRectMax()
+	below := imgui.CursorPos()
+
+	imgui.SetCursorPos(top)
+	drawScriptEditorGutter(d, gutterW, h)
+	imgui.SetCursorPos(below)
+
+	drawScriptEditorBufferMenu(bufMin, bufMax)
 	scriptEditorExpirePending()
 }
 
@@ -270,7 +282,89 @@ func drawScriptEditorBuffer() {
 const (
 	scriptBufScrollID = "##scriptscroll"
 	scriptBufID       = "##scriptbuffer"
+	scriptGutterID    = "##scriptgutter"
 )
+
+// scriptGutterWidth is how wide the line-number column has to be for a file of
+// n lines, measured in the font it will be drawn in rather than guessed from a
+// character count — the atlas is not necessarily monospaced.
+func scriptGutterWidth(n int) float32 {
+	digits := len(strconv.Itoa(max(n, 1)))
+	return imgui.CalcTextSize(strings.Repeat("0", digits), false, 0).X +
+		imgui.CurrentStyle().ItemSpacing().X*2 + 8
+}
+
+// scriptBufTextOrigin is where the first line of text was drawn last frame, in
+// screen coordinates, and scriptBufTextValid says whether it means anything
+// yet.
+//
+// The gutter takes its vertical alignment from this rather than recomputing it.
+// Getting a line's y from first principles means reproducing the text area's
+// own inset — the child's border, ImGui's frame padding, the outer window's
+// scroll — and any of the three drifting would show up as numbers that are
+// almost, but not quite, beside their lines. Reading back the one number the
+// text was actually drawn at cannot drift.
+var (
+	scriptBufTextOrigin imgui.Vec2
+	scriptBufTextValid  bool
+)
+
+// drawScriptEditorGutter draws the line numbers beside the buffer.
+//
+// A line with a parse error is numbered in red and one with a level-aware issue
+// in amber, which is the whole reason the gutter is worth more than a ruler: the
+// diagnostics pane says which lines are wrong, and this says where they are
+// while you scroll past them.
+func drawScriptEditorGutter(d *scriptDoc, w, h float32) {
+	// NoScrollWithMouse as well as NoScrollbar: the wheel over the numbers
+	// should move the text, and a gutter that scrolled independently of it
+	// would be worse than one that did not scroll at all.
+	imgui.BeginChildV(scriptGutterID, imgui.Vec2{X: w, Y: h}, false,
+		imgui.WindowFlagsNoScrollbar|imgui.WindowFlagsNoScrollWithMouse)
+	defer imgui.EndChild()
+
+	if !scriptBufTextValid {
+		return
+	}
+	lineH := imgui.TextLineHeight()
+	list := imgui.WindowDrawList()
+	winMin, winMax := imgui.WindowPos(), imgui.WindowPos().Plus(imgui.WindowSize())
+	right := winMax.X - imgui.CurrentStyle().ItemSpacing().X
+
+	muted := imgui.PackedColorFromVec4(imgui.Vec4{X: 0.45, Y: 0.49, Z: 0.56, W: 1})
+	errCol := imgui.PackedColorFromVec4(imgui.Vec4{X: 1, Y: 0.45, Z: 0.45, W: 1})
+	issueCol := imgui.PackedColorFromVec4(scriptIssueColor)
+	current := imgui.PackedColorFromVec4(imgui.CurrentStyle().Color(imgui.StyleColorText))
+
+	caretLine := scriptBufCaretLine
+	lines := len(d.Lines())
+	// Only the band the pane can actually show: a thousand-line file is a
+	// thousand AddText calls otherwise, every frame, for twenty visible rows.
+	first := int((winMin.Y - scriptBufTextOrigin.Y) / lineH)
+	last := int((winMax.Y-scriptBufTextOrigin.Y)/lineH) + 1
+
+	for i := max(first, 0); i <= min(last, lines-1); i++ {
+		y := scriptBufTextOrigin.Y + float32(i)*lineH
+		if y+lineH < winMin.Y || y > winMax.Y {
+			continue
+		}
+		num := strconv.Itoa(i + 1)
+		col := muted
+		switch {
+		case len(d.DiagnosticsOn(i+1)) > 0:
+			col = errCol
+		case len(d.IssuesOn(i+1)) > 0:
+			col = issueCol
+		case i == caretLine:
+			// The line the cursor is on, at full contrast: with the buffer
+			// scrolled, "where am I" is the question the gutter is asked most.
+			col = current
+		}
+		// Right-aligned, so the digits line up as the file grows past 99.
+		x := right - imgui.CalcTextSize(num, false, 0).X
+		list.AddText(imgui.Vec2{X: x, Y: y}, col, num)
+	}
+}
 
 // drawScriptEditorText draws the buffer, in colour.
 //
@@ -323,6 +417,7 @@ func drawScriptEditorText(d *scriptDoc) {
 		scriptBufferCallback)
 	imgui.PopStyleColor()
 	active := imgui.IsItemActive()
+	scriptBufActive = active
 
 	if changed {
 		// Before the overlay, not after: the widget has already drawn the new
@@ -360,7 +455,17 @@ func drawScriptEditorOverlay(lines [][]scriptHLChunk, size imgui.Vec2, lineH flo
 	defer imgui.EndChild()
 
 	list := imgui.WindowDrawList()
-	origin := imgui.WindowPos().Plus(imgui.CursorStartPos())
+
+	// Frame padding, and not only the cursor start: a multi-line InputText
+	// insets its text by exactly that much inside its child window before
+	// drawing a glyph. Without it the coloured text lands half a character to
+	// the left of the widget's own — which is invisible while reading, since
+	// the widget's glyphs are transparent, and unmissable the moment anything
+	// is selected: ImGui draws the selection over the real glyph positions, so
+	// a highlight appeared to start midway through its first character.
+	origin := imgui.WindowPos().Plus(imgui.CursorStartPos()).
+		Plus(imgui.CurrentStyle().FramePadding())
+	scriptBufTextOrigin, scriptBufTextValid = origin, true
 
 	for i := max(first, 0); i <= min(last, len(lines)-1); i++ {
 		x, y := origin.X, origin.Y+float32(i)*lineH
@@ -391,6 +496,7 @@ func drawScriptEditorCaret(list imgui.DrawList, lines [][]scriptHLChunk, origin 
 	if line < 0 {
 		return
 	}
+	scriptBufCaretLine = line
 	if (sdl.GetTicks()-scriptBufCaretAt)%1200 > 800 {
 		return
 	}
@@ -489,14 +595,20 @@ var (
 	// scriptBufWantFocus asks the text area for the keyboard focus next frame.
 	scriptBufWantFocus bool
 
+	// scriptBufActive is whether the text area held the keyboard on the last
+	// frame drawn. Read from the window's event filter, which runs between
+	// frames and so cannot ask ImGui directly — see scriptEditorFilterEvent.
+	scriptBufActive bool
+
 	// scriptBufCursor is where the cursor was as of the last frame the text
 	// area was active, scriptBufLastCursor is where it was when the buffer was
-	// last scrolled to follow it, and scriptBufCaretAt is when it last moved —
-	// which is what restarts the caret's blink. All three are only meaningful
-	// while the widget is active, which is the only time they are read.
+	// last scrolled to follow it, scriptBufCaretAt is when it last moved —
+	// which is what restarts the caret's blink — and scriptBufCaretLine is the
+	// line it landed on, which is what the gutter highlights.
 	scriptBufCursor     int
 	scriptBufLastCursor int
 	scriptBufCaretAt    uint32
+	scriptBufCaretLine  int
 )
 
 // scriptBufferCallback runs once per frame while the text area holds the
@@ -573,12 +685,14 @@ func scriptEditorExpirePending() {
 // be. InputTextMultiline draws into a child window, so for every click *inside*
 // the text the hovered window is that child rather than this one, and
 // IsItemHovered is false — the item is never hovered at the moment it matters.
-// Testing the rectangle the widget just occupied is what works instead.
-func drawScriptEditorBufferMenu() {
+// Testing the rectangle the widget occupied is what works instead, and that
+// rectangle is passed in rather than read from ImGui because the gutter is
+// drawn after the text pane and would otherwise be the item measured.
+func drawScriptEditorBufferMenu(bufMin, bufMax imgui.Vec2) {
 	const id = "##scriptbufmenu"
 	if imgui.IsMouseClicked(1) &&
 		imgui.IsWindowHoveredV(imgui.HoveredFlagsChildWindows) &&
-		vec2InRect(imgui.MousePos(), imgui.ItemRectMin(), imgui.ItemRectMax()) {
+		vec2InRect(imgui.MousePos(), bufMin, bufMax) {
 		imgui.OpenPopup(id)
 	}
 	if !imgui.BeginPopup(id) {
@@ -625,7 +739,8 @@ func drawScriptEditorDiagnostics() {
 
 	if !d.HasErrors() && !d.HasIssues() {
 		editorTextColored(imgui.Vec4{X: 0.5, Y: 0.9, Z: 0.5, W: 1}, "No problems.")
-		drawScriptEditorReference()
+		imgui.SameLine()
+		editorTextMuted("— F1 for the events, the standard library and every property.")
 		return
 	}
 
@@ -666,52 +781,6 @@ func drawScriptEditorProblem(id string, col imgui.Vec4, line, colno int, msg str
 	}
 }
 
-// drawScriptEditorReference lists what a script can call, when there is nothing
-// more urgent to show. Generated from flang's own table, so a builtin added to
-// the language appears here the same day.
-func drawScriptEditorReference() {
-	if !imgui.CollapsingHeader("Reference##scriptref") {
-		return
-	}
-	imgui.BeginChildV("##scriptrefbody", imgui.Vec2{X: 0, Y: 0}, true, 0)
-
-	imgui.Text("Functions")
-	editorTextWrapped(strings.Join(scriptCompletions(activeScript), ", "))
-	imgui.Separator()
-
-	imgui.Text("Events")
-	editorTextWrapped(":spawn:  :destroy:  :tick:  :enter:  :exit:  " +
-		":collide:  :interact:  :anim_start:  :anim_end:")
-	imgui.Separator()
-
-	imgui.Text("Properties")
-	for _, k := range scriptRefKindOrder {
-		names := script.PropertyNames(k.kind)
-		if len(names) == 0 {
-			continue
-		}
-		imgui.Text("  " + k.label)
-		editorTextWrapped("    " + strings.Join(names, ", "))
-	}
-	imgui.EndChild()
-}
-
-// scriptRefKindOrder is the order the reference lists object kinds. Fixed rather
-// than map order, so the panel does not shuffle between frames.
-var scriptRefKindOrder = []struct {
-	label string
-	kind  flang.Kind_
-}{
-	{"entity", flang.RefEntity},
-	{"volume", flang.RefVolume},
-	{"edge", flang.RefEdge},
-	{"floor", flang.RefFloor},
-	{"ceiling", flang.RefCeiling},
-	{"chunk", flang.RefChunk},
-	{"light", flang.RefLight},
-	{"biome", flang.RefBiome},
-}
-
 // ---------- actions ----------
 
 // scriptEditorSave writes the buffer and reloads whatever is using it.
@@ -729,28 +798,48 @@ func scriptEditorSave() {
 		return
 	}
 	scriptEditorStatus("Saved %s", d.Path)
-	// Hot reload: a script saved while the game is running should take effect
-	// without a restart, which is most of why an in-editor editor is worth
-	// having at all.
-	script.ScriptReload()
-	scriptEditorFiles = nil
+	scriptEditorAfterSave(d)
 }
 
-// scriptEditorOpenFile loads a script into the buffer.
+// scriptEditorAfterSave is what every successful write does next.
+//
+// Hot reload: a script saved while the game is running should take effect
+// without a restart, which is most of why an in-editor editor is worth having
+// at all.
+func scriptEditorAfterSave(*scriptDoc) {
+	script.ScriptReload()
+	scriptEditorRescan()
+}
+
+// scriptEditorOpenFile brings a script up in a tab, or switches to the tab it
+// is already in.
+//
+// name is relative to the scripts folder. Re-opening a file that is already
+// open must never re-read it: the tab may be holding unsaved edits, and
+// "clicked the file I am editing in the sidebar" would then mean discarding
+// them.
 func scriptEditorOpenFile(name string) {
+	path := fileutil.ScriptsDirName + "/" +
+		strings.TrimPrefix(strings.TrimSuffix(name, fileutil.ScriptExt), fileutil.ScriptsDirName+"/") +
+		fileutil.ScriptExt
+	if open := scriptDocForPath(path); open != nil {
+		scriptEditorShowDoc(open)
+		return
+	}
 	d, err := OpenScriptDoc(name)
 	if err != nil {
 		scriptEditorStatus("%v", err)
 		return
 	}
-	activeScript = d
+	scriptEditorAdoptEmptyTab(d)
+	scriptEditorShowDoc(d)
 	scriptEditorStatus("Opened %s", d.Path)
 }
 
 // scriptEditorReloadAll re-reads every script the level uses.
 func scriptEditorReloadAll() {
 	script.ScriptReload()
-	scriptEditorFiles = nil
+	scriptEditorRescan()
 	scriptEditorStatus("Reloaded all scripts")
 }
 
@@ -777,14 +866,16 @@ func scriptEditorRunOnEditorLevel() {
 func drawScriptEditorNewDialog() {
 	imguibackend.WithModalPopup("New Script", &scriptEditorShowNew, func() {
 		imgui.Text("Name (relative to resources/scripts/)")
+		editorTextMuted("A name with a / in it creates the folders it needs.")
 		imgui.InputTextV("##newscriptname", &scriptEditorNewName, 0, nil)
 		if imgui.Button("Create") && scriptEditorNewName != "" {
 			d := NewScriptDoc()
 			if err := d.Save(scriptEditorNewName); err != nil {
 				scriptEditorStatus("%v", err)
 			} else {
-				activeScript = d
-				scriptEditorFiles = nil
+				scriptEditorAdoptEmptyTab(d)
+				scriptEditorShowDoc(d)
+				scriptEditorRescan()
 				scriptEditorStatus("Created %s", d.Path)
 			}
 			scriptEditorNewName = ""
@@ -819,14 +910,14 @@ func drawScriptEditorOpenDialog() {
 func drawScriptEditorSaveAsDialog() {
 	imguibackend.WithModalPopup("Save Script As", &scriptEditorShowSaveAs, func() {
 		imgui.Text("Name (relative to resources/scripts/)")
+		editorTextMuted("A name with a / in it creates the folders it needs.")
 		imgui.InputTextV("##saveasscriptname", &scriptEditorSaveAsName, 0, nil)
 		if imgui.Button("Save##saveasscript") && scriptEditorSaveAsName != "" {
 			if err := activeScript.Save(scriptEditorSaveAsName); err != nil {
 				scriptEditorStatus("%v", err)
 			} else {
 				scriptEditorStatus("Saved %s", activeScript.Path)
-				script.ScriptReload()
-				scriptEditorFiles = nil
+				scriptEditorAfterSave(activeScript)
 			}
 			scriptEditorSaveAsName = ""
 			imgui.CloseCurrentPopup()
@@ -836,4 +927,84 @@ func drawScriptEditorSaveAsDialog() {
 			imgui.CloseCurrentPopup()
 		}
 	})
+}
+
+// drawScriptEditorNewFolderDialog makes a folder in the scripts tree.
+func drawScriptEditorNewFolderDialog() {
+	imguibackend.WithModalPopup("New Folder", &scriptEditorShowNewFolder, func() {
+		where := scriptEditorNewFolderIn
+		if where == "" {
+			where = "resources/scripts/"
+		} else {
+			where += "/"
+		}
+		imgui.Text("New folder in " + where)
+		imgui.InputTextV("##newfoldername", &scriptEditorNewFolderName, 0, nil)
+		if imgui.Button("Create##newfolder") && scriptEditorNewFolderName != "" {
+			rel := strings.Trim(scriptEditorNewFolderName, "/")
+			if scriptEditorNewFolderIn != "" {
+				rel = scriptEditorNewFolderIn + "/" + rel
+			}
+			if err := fileutil.MakeScriptDir(rel); err != nil {
+				scriptEditorStatus("%v", err)
+			} else {
+				scriptEditorRescan()
+				scriptEditorStatus("Created %s/", rel)
+			}
+			scriptEditorNewFolderName = ""
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##newfolder") {
+			imgui.CloseCurrentPopup()
+		}
+	})
+}
+
+// drawScriptEditorMoveDialog moves or renames a script.
+//
+// A move is a rename with a folder in it, so there is one dialog rather than
+// two — and one place where the open tab has to be told its file went somewhere
+// else, which is the part that would be forgotten in the second.
+func drawScriptEditorMoveDialog() {
+	imguibackend.WithModalPopup("Move or rename", &scriptEditorShowMove, func() {
+		imgui.Text("Moving " + scriptEditorMoveFrom)
+		editorTextMuted("Give it a new path, relative to resources/scripts/.")
+		imgui.InputTextV("##movescriptto", &scriptEditorMoveTo, 0, nil)
+		if imgui.Button("Move") && scriptEditorMoveTo != "" {
+			scriptEditorMoveFile(scriptEditorMoveFrom, scriptEditorMoveTo)
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##movescript") {
+			imgui.CloseCurrentPopup()
+		}
+	})
+}
+
+// scriptEditorMoveFile renames a script on disk and repoints whatever was
+// looking at it.
+//
+// The levels and entity definitions that name the old path are *not* rewritten,
+// and the status line says so: they live outside the scripts folder, a script
+// can be named by several of them, and a move that silently edited level files
+// would be a far bigger operation than the one that was asked for. The lint
+// pass reports the dangling reference the next time the level is opened.
+func scriptEditorMoveFile(from, to string) {
+	if !strings.HasSuffix(to, fileutil.ScriptExt) {
+		to += fileutil.ScriptExt
+	}
+	if err := fileutil.MoveScriptFile(from, to); err != nil {
+		scriptEditorStatus("%v", err)
+		return
+	}
+	oldPath := fileutil.ScriptsDirName + "/" + from
+	newPath := fileutil.ScriptsDirName + "/" + strings.TrimPrefix(to, fileutil.ScriptsDirName+"/")
+	if d := scriptDocForPath(oldPath); d != nil {
+		d.Path = newPath
+	}
+	script.ScriptParamsInvalidate(oldPath)
+	script.ScriptReload()
+	scriptEditorRescan()
+	scriptEditorStatus("Moved to %s — anything that named the old path still does", newPath)
 }

@@ -99,6 +99,29 @@ type Entity struct {
 	// a script reveals later. It does not affect bounds or attributes.
 	Visible bool
 
+	// Vehicle is the authored vehicle block, nil for everything that is not one
+	// — see vehicle.go. VState is its runtime half, created on first tick and
+	// never serialised.
+	Vehicle *VehicleSpec
+	VState  *VehicleState
+
+	// Seat is which seat of Frame's vehicle this entity occupies. Empty while
+	// aboard means standing on the deck rather than strapped into anything, so
+	// the two fields together say aboard-and-seated, aboard-and-walking, or not
+	// aboard at all.
+	Seat string
+
+	// Frame names the entity whose local space Position, Rotation and Velocity
+	// are expressed in — empty for the ordinary case of world space. An entity
+	// aboard a vehicle stores its position in that vehicle's coordinates, which
+	// is what makes it carried perfectly rather than dragged along: it does not
+	// move at all while the thing under it does.
+	//
+	// Anything comparing this entity's position against one in another frame has
+	// to go through FrameSet.WorldPosition first. A local position and a world
+	// one are not numbers that can be subtracted.
+	Frame string
+
 	// Where the entity currently is, refreshed by EntityUpdate. Derived state,
 	// never authored and never saved.
 	CurrentSector string
@@ -179,7 +202,21 @@ func (e *Entity) ModelMatrix() mgl32.Mat4 {
 	s := e.EffectiveScale()
 	T := mgl32.Translate3D(e.Position.X(), e.Position.Y(), e.Position.Z())
 	S := mgl32.Scale3D(s.X(), s.Y(), s.Z())
-	return T.Mul4(EulerMatrixYXZ(e.Rotation)).Mul4(S)
+	return T.Mul4(e.RotationMatrix()).Mul4(S)
+}
+
+// RotationMatrix is the entity's orientation.
+//
+// A vehicle's quaternion is authoritative when it has one: Euler angles cannot
+// express a tumbling body without gimbal lock, and Entity.Rotation is only kept
+// in step with it so scripts, the panel and the saved file keep working on the
+// field they already know. Everything else has no quaternion and reads its
+// Euler triple, exactly as before.
+func (e *Entity) RotationMatrix() mgl32.Mat4 {
+	if e.VState != nil && e.VState.Started {
+		return e.VState.Orient.Mat4()
+	}
+	return EulerMatrixYXZ(e.Rotation)
 }
 
 // EulerMatrixYXZ composes an Euler triple the one way everything here agrees
@@ -203,8 +240,8 @@ func (e *Entity) BoundCenter() mgl32.Vec3 {
 		e.BoundOffset.Y() * s.Y(),
 		e.BoundOffset.Z() * s.Z(),
 	}
-	if e.Rotation != (mgl32.Vec3{}) {
-		r := EulerMatrixYXZ(e.Rotation).Mul4x1(off.Vec4(0))
+	if e.Rotation != (mgl32.Vec3{}) || e.VState != nil {
+		r := e.RotationMatrix().Mul4x1(off.Vec4(0))
 		off = mgl32.Vec3{r.X(), r.Y(), r.Z()}
 	}
 	return e.Position.Add(off)
@@ -580,7 +617,9 @@ func (e *Entity) Integrate(dt float32) {
 // that a future entity-aware collision pass would start from. It narrows the
 // same way the player already does, through the same spatial hash.
 func (e *Entity) UpdateLocation(lvl *Level) {
-	chunk, sector := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, e.Position)
+	// Searched in the entity's own frame: its position is expressed there, and
+	// a frame's chunks are not in the world index at all.
+	chunk, sector := lvl.Frames.FrameFor(e).ChunkAndSectorAt(lvl, e.Position)
 	if chunk != nil {
 		e.CurrentChunk = chunk.ID
 	} else {
@@ -724,17 +763,21 @@ const (
 
 // EntitiesContaining is a spatial query, not a physics step — it is what a
 // script means by "who is standing in this volume".
-// EntitiesContaining returns every entity whose bounding volume holds p — the
-// query behind the scripting engine's `enter`/`exit` events, and what an
-// "interact" key press resolves through.
+// EntitiesContaining returns every entity whose bounding volume holds the
+// world-space point p — the query behind the scripting engine's `enter`/`exit`
+// events, and what an "interact" key press resolves through.
 func EntitiesContaining(lvl *Level, p mgl32.Vec3) []*Entity {
 	if lvl == nil {
 		return nil
 	}
 	var out []*Entity
 	for i := range lvl.Entities {
-		if lvl.Entities[i].ContainsPoint(p) {
-			out = append(out, &lvl.Entities[i])
+		e := &lvl.Entities[i]
+		// p is world-space; an entity in a frame describes its volume in that
+		// frame's coordinates, so the point is carried in rather than the volume
+		// carried out — a rotated volume stays the shape it was authored as.
+		if e.ContainsPoint(lvl.Frames.FrameFor(e).FromWorld(p)) {
+			out = append(out, e)
 		}
 	}
 	return out

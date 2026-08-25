@@ -1,0 +1,176 @@
+package flang
+
+// builtin_doc.go — what each library function is, in one line.
+//
+// Kept beside the table it describes rather than in the editor that shows it,
+// for the reason builtin.go gives for being a map: the reference, the
+// completion list and the "did you mean" message all read one table, so a
+// builtin added to the language cannot be missing from any of them by accident.
+// TestBuiltinDocsCoverTable makes that mechanical — a new entry in `builtins`
+// with no line here fails the build's tests, and a line here naming a function
+// that does not exist fails it too.
+//
+// The summaries are deliberately one line. This is the list you read to
+// remember which of `get` and `has` you wanted; SCRIPTING.md is where the
+// paragraphs live.
+
+import "sort"
+
+// BuiltinDoc is one library function's reference entry.
+//
+// Sig is written the way a call is written, including the argument names, since
+// "which argument is the separator" is most of what a reader wants from a
+// signature. Ret is the type the call evaluates to.
+type BuiltinDoc struct {
+	Group   string
+	Name    string
+	Sig     string
+	Ret     string
+	Summary string
+}
+
+// Builtin groups, in the order the reference lists them. Roughly the order a
+// script needs them in: talking to the log, then arithmetic, then the data, and
+// only then the engine.
+const (
+	GroupOutput     = "Output"
+	GroupMath       = "Math"
+	GroupStrings    = "Strings"
+	GroupContainers = "Lists and dicts"
+	GroupVectors    = "Vectors"
+	GroupConvert    = "Conversion"
+	GroupWorld      = "World"
+)
+
+// builtinGroupOrder fixes the order groups are shown in.
+var builtinGroupOrder = []string{
+	GroupOutput, GroupMath, GroupStrings, GroupContainers,
+	GroupVectors, GroupConvert, GroupWorld,
+}
+
+// BuiltinGroups returns the group names in display order.
+func BuiltinGroups() []string {
+	out := make([]string, len(builtinGroupOrder))
+	copy(out, builtinGroupOrder)
+	return out
+}
+
+// BuiltinDocs returns every library function's entry, grouped in display order
+// and alphabetical within a group.
+func BuiltinDocs() []BuiltinDoc {
+	rank := map[string]int{}
+	for i, g := range builtinGroupOrder {
+		rank[g] = i
+	}
+	out := make([]BuiltinDoc, len(builtinDocs))
+	copy(out, builtinDocs)
+	sort.SliceStable(out, func(i, j int) bool {
+		if a, b := rank[out[i].Group], rank[out[j].Group]; a != b {
+			return a < b
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// BuiltinDocsIn returns one group's entries, alphabetically.
+func BuiltinDocsIn(group string) []BuiltinDoc {
+	var out []BuiltinDoc
+	for _, d := range BuiltinDocs() {
+		if d.Group == group {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// builtinDocs is the table. Unsorted here — BuiltinDocs orders it — so entries
+// can be kept beside the implementation they describe.
+var builtinDocs = []BuiltinDoc{
+	// ---- output ----
+	{GroupOutput, "log", "log(v, ...)", "null",
+		"Write the values, concatenated, to the log window and the terminal."},
+
+	// ---- maths ----
+	{GroupMath, "abs", "abs(n)", "int|float", "Magnitude. An int stays an int."},
+	{GroupMath, "floor", "floor(n)", "int", "Round down to an int."},
+	{GroupMath, "ceil", "ceil(n)", "int", "Round up to an int."},
+	{GroupMath, "round", "round(n)", "int", "Round to the nearest int, halves away from zero."},
+	{GroupMath, "sqrt", "sqrt(n)", "float", "Square root."},
+	{GroupMath, "sin", "sin(radians)", "float", "Sine. Angles are radians throughout."},
+	{GroupMath, "cos", "cos(radians)", "float", "Cosine."},
+	{GroupMath, "tan", "tan(radians)", "float", "Tangent."},
+	{GroupMath, "atan2", "atan2(y, x)", "float",
+		"The angle of the vector (x, y), in radians, quadrant included."},
+	{GroupMath, "pi", "pi()", "float", "3.14159…"},
+	{GroupMath, "min", "min(a, b, ...)", "int|float",
+		"The smallest argument, returned as the value that was passed in."},
+	{GroupMath, "max", "max(a, b, ...)", "int|float", "The largest argument."},
+	{GroupMath, "clamp", "clamp(n, lo, hi)", "int|float",
+		"n held between lo and hi; a clamped int is still an int, so it is still an index."},
+
+	// ---- strings ----
+	{GroupStrings, "upper", "upper(s)", "str", "Uppercased."},
+	{GroupStrings, "lower", "lower(s)", "str", "Lowercased."},
+	{GroupStrings, "trim", "trim(s)", "str", "Leading and trailing whitespace removed."},
+	{GroupStrings, "split", "split(s, sep)", "list", "Cut s at every sep."},
+	{GroupStrings, "join", "join(list, sep)", "str", "The elements written out, sep between them."},
+	{GroupStrings, "replace", "replace(s, old, new)", "str", "Every occurrence of old replaced."},
+	{GroupStrings, "starts_with", "starts_with(s, prefix)", "bool", "Prefix test."},
+	{GroupStrings, "ends_with", "ends_with(s, suffix)", "bool", "Suffix test."},
+	{GroupStrings, "format", "format(template, v, ...)", "str",
+		"Each `{}` in the template replaced, left to right. Not printf: a `{}` with no value left is left alone."},
+
+	// ---- containers ----
+	{GroupContainers, "len", "len(x)", "int", "The length of a str, list, tuple or dict."},
+	{GroupContainers, "append", "append(list, v, ...)", "list",
+		"Add to the end, in place. The list is returned too — a list is a reference, so both are the same object."},
+	{GroupContainers, "remove", "remove(list|dict, v)", "bool",
+		"Drop the first matching element, or the named key. False if it was not there."},
+	{GroupContainers, "contains", "contains(str|list|tuple, v)", "bool",
+		"Membership, or substring for a str."},
+	{GroupContainers, "has", "has(dict, key)", "bool", "Whether the key is present, whatever its value."},
+	{GroupContainers, "get", "get(dict, key, fallback?)", "any",
+		"The value, or the fallback, or null. Never an error, so a missing key need not be checked twice."},
+	{GroupContainers, "keys", "keys(dict)", "list", "The keys, sorted — so iterating twice gives the same order twice."},
+	{GroupContainers, "values", "values(dict)", "list", "The values, in key order."},
+	{GroupContainers, "sort", "sort(list)", "list",
+		"Sort a list of numbers or a list of strings, in place. A mixed list is an error."},
+
+	// ---- vectors ----
+	{GroupVectors, "dot", "dot(a, b)", "float", "Dot product."},
+	{GroupVectors, "cross", "cross(a, b)", "vec", "Cross product."},
+	{GroupVectors, "length", "length(v)", "float", "Magnitude of a vec."},
+	{GroupVectors, "normalize", "normalize(v)", "vec", "The same direction, length 1."},
+	{GroupVectors, "distance", "distance(a, b)", "float",
+		"Between two vecs — or between two objects, which is the commoner reading in a script and is accepted too."},
+
+	// ---- conversion ----
+	{GroupConvert, "str", "str(v)", "str", "How the value prints."},
+	{GroupConvert, "int", "int(v)", "int", "From an int, float, bool or str. A str that is not a number is an error."},
+	{GroupConvert, "float", "float(v)", "float", "From any number or a numeric str."},
+	{GroupConvert, "type", "type(v)", "atom", "The value's type, as an atom: `:int:`, `:list:`, `:ref:`…"},
+
+	// ---- world ----
+	{GroupWorld, "player", "player()", "ref",
+		"The player entity. Null in the editor and before the level finishes loading."},
+	{GroupWorld, "time", "time()", "float", "Seconds of play time since the level loaded."},
+	{GroupWorld, "find", "find(tag)", "list",
+		"Every object in the level carrying that tag. Empty, with a warning in the log, if none does."},
+	{GroupWorld, "move_to", "move_to(ref, vec)", "null", "Put the object at a position, ignoring collision."},
+	{GroupWorld, "set_velocity", "set_velocity(ref, vec)", "null", "Set an entity's velocity."},
+	{GroupWorld, "spawn", "spawn(type, vec)", "ref",
+		"Create an entity from an entity type. It exists only for this play session."},
+	{GroupWorld, "destroy", "destroy(ref)", "bool",
+		"Remove an entity or a volume, posting `:destroy:` first. Geometry cannot be destroyed."},
+	{GroupWorld, "play_anim", "play_anim(ref, name)  ·  play_anim(ref, model, name)", "bool",
+		"Play the animation by the name the entity gives it — not the clip name inside the .fmdl."},
+	{GroupWorld, "stop_anim", "stop_anim(ref)", "bool", "Stop whatever is playing on the entity."},
+	{GroupWorld, "set_texture", "set_texture(ref, name)  ·  set_texture(ref, model, name)", "bool",
+		"Reskin an edge, a floor, a ceiling, or an entity's model attachments."},
+	{GroupWorld, "after", "after(ms, atom, ...)", "null",
+		"Post the message to whoever is running, that many milliseconds of play time from now."},
+	{GroupWorld, "mount", "mount(ref, vehicle, seat?)", "bool",
+		"Put something aboard a vehicle; without a seat it stands on the deck. Posts `:mount:` to the vehicle."},
+	{GroupWorld, "dismount", "dismount(ref)", "bool", "Take it back off, posting `:dismount:` to the vehicle."},
+}

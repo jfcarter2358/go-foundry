@@ -1,6 +1,7 @@
 package world
 
 import (
+	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"log"
 
@@ -30,6 +31,23 @@ type Chunk struct {
 	Scale        float32       // uniform XZ scale applied at load time (0 = 1.0)
 	PointNames   []string      // index-aligned with Points; "" = unnamed
 	BiomeSectors []BiomeSector // user-drawn biome-paint polygons, owned by this chunk
+
+	// FrameOwner names the entity whose local space this chunk's geometry is
+	// authored in — a vehicle's interior, laid out around the origin and driven
+	// around the world by whatever carries it. Empty is the ordinary case: a
+	// chunk baked into world space at load, which is every chunk that existed
+	// before frames did.
+	//
+	// A frame-owned chunk is deliberately kept out of the world spatial hash.
+	// Its geometry sits around its own origin, so indexing it by those
+	// coordinates would have a player standing at world (0,0) fall into a ship
+	// parked a mile away.
+	FrameOwner string
+
+	// Xform is runtime-only (never serialized, never cloned): where this chunk's
+	// frame currently is, refreshed every tick by RefreshFrames. Identity for a
+	// world chunk, which is what lets every draw call pass it unconditionally.
+	Xform mgl32.Mat4
 
 	// WaterSurfaces is runtime-only (never serialized, never cloned): the
 	// companion water planes auto-managed from Water-kind BiomeSectors (see
@@ -457,4 +475,48 @@ func SignedArea2D(pts []mgl32.Vec2) float32 {
 		area += pts[i].X()*pts[j].Y() - pts[j].X()*pts[i].Y()
 	}
 	return area / 2
+}
+
+// InFrame reports whether this chunk's geometry is authored in a moving frame
+// rather than in world space.
+func (ch *Chunk) InFrame() bool { return ch.FrameOwner != "" }
+
+// ModelMatrix is the transform to draw this chunk's geometry with. It is the
+// identity for a world chunk, whose geometry was already baked into world space
+// at load.
+func (ch *Chunk) ModelMatrix() mgl32.Mat4 {
+	if ch.Xform == (mgl32.Mat4{}) {
+		return mgl32.Ident4()
+	}
+	return ch.Xform
+}
+
+// WorldBounds is the chunk's AABB in world space: MinBound/MaxBound carried
+// through its frame and re-fitted.
+//
+// A rotated box does not stay a box, so the eight corners are transformed and
+// re-bounded rather than the two extremes being transformed in place — which
+// would produce a box that is not even the right size, let alone conservative.
+func (ch *Chunk) WorldBounds() (min, max mgl32.Vec3) {
+	if !ch.InFrame() {
+		return ch.MinBound, ch.MaxBound
+	}
+	m := ch.ModelMatrix()
+	h := ch.MaxBound.Sub(ch.MinBound).Mul(0.5)
+	c := ch.MinBound.Add(h)
+	for i := 0; i < 8; i++ {
+		corner := mgl32.Vec3{
+			h.X() * CornerSign(i, 0),
+			h.Y() * CornerSign(i, 1),
+			h.Z() * CornerSign(i, 2),
+		}
+		r := m.Mul4x1(c.Add(corner).Vec4(1))
+		p := mgl32.Vec3{r.X(), r.Y(), r.Z()}
+		if i == 0 {
+			min, max = p, p
+			continue
+		}
+		min, max = geom.VecMin(min, p), geom.VecMax(max, p)
+	}
+	return min, max
 }

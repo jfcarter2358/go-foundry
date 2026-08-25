@@ -16,6 +16,12 @@ type Camera struct {
 	Direction mgl32.Vec3
 	Yaw       float32
 	Pitch     float32
+	// Up is the camera's up vector. It is WorldUp on foot, and the frame's
+	// rotated up when the viewer is riding something that can pitch or roll —
+	// gfx cannot see a frame, so whoever owns the viewer writes it here.
+	// The zero value reads as WorldUp so a Camera that never sets it behaves
+	// exactly as it did before there was one.
+	Up        mgl32.Vec3
 	MouseLock bool
 	// MouseLockWanted is the lock state the current mode asks for.  MouseLock
 	// itself is dropped temporarily whenever the window loses focus; on regaining
@@ -79,9 +85,9 @@ func LoadCamera(position mgl32.Vec3, pitch, yaw float32) {
 	//      measure delta as (t.X - halfW, t.Y - halfH)
 	SetMouseLock(true)
 
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
+	Cam.Up = WorldUp
 	Cam.Uniform = gl.GetUniformLocation(Program, gl.Str("camera\x00"))
-	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+	UpdateCamMatrix()
 }
 
 func MoveCamera(f, u, r float32) {
@@ -107,8 +113,22 @@ func UpdateCamDirection() {
 	}
 }
 
+// CamUp is the up vector to build the view matrix with: Cam.Up when it has
+// been set, WorldUp otherwise. The fallback is what lets every caller that
+// predates a tiltable camera keep working untouched.
+func CamUp() mgl32.Vec3 {
+	if Cam.Up == (mgl32.Vec3{}) {
+		return WorldUp
+	}
+	return Cam.Up
+}
+
+// UpdateCamMatrix rebuilds the view matrix from Cam.Position/Direction/Up and
+// uploads it. This is the only place the gameplay/editor view matrix is built —
+// the sites that used to inline LookAtV all route through here, which is what
+// keeps the up vector from silently disagreeing between them.
 func UpdateCamMatrix() {
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), mgl32.Vec3{0, 1, 0})
+	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), CamUp())
 	if Program == 0 {
 		// No world shader, so nowhere to upload to. Only a headless test gets
 		// here — a GL call with no context current segfaults in the driver
@@ -127,7 +147,27 @@ const MaxPitch = float32(math.Pi/2 - 0.01)
 // that is all it touches, and because the editor's free-fly mode calls it too —
 // putting it in the application shell made the editor depend on the shell for
 // what is really a camera operation.
+//
+// This is the free-fly spelling: the camera *is* the thing being moved.
+// Gameplay uses MoveIntent instead and moves the player, because a body and the
+// eyes riding it stop agreeing the moment the body is standing on something
+// that can rotate.
 func HandleInput(keyStates []uint8) {
+	Cam.Position = Cam.Position.Add(MoveIntent(keyStates))
+	UpdateCamMatrix()
+}
+
+// MoveIntent reads this frame's keys and returns the displacement they ask for,
+// without applying it.
+//
+// Look keys are applied directly — a rotation is not a displacement, and
+// nothing downstream wants to defer it — and Cam.Direction is refreshed before
+// the basis is built so a turn takes effect on the same frame it was made.
+//
+// The returned vector is in the camera's own yaw-relative basis with WorldUp as
+// its vertical, which is world space while the viewer is standing on the world.
+// A caller whose viewer is standing in a rotating frame rotates it first.
+func MoveIntent(keyStates []uint8) mgl32.Vec3 {
 	// Scale movement and rotation by DeltaTime*60 so behavior is frame-rate independent
 	// while preserving the same feel as the original 60 FPS-tuned constants.
 	dtScale := platform.DeltaTime * 60.0
@@ -174,7 +214,8 @@ func HandleInput(keyStates []uint8) {
 		Cam.Pitch -= rotSpeed
 	}
 
-	MoveCamera(fMove, uMove, rMove)
-	Cam.Matrix = mgl32.LookAtV(Cam.Position, Cam.Position.Add(Cam.Direction), WorldUp)
-	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+	Cam.Direction = DirectionFromAngles(Cam.Yaw, Cam.Pitch)
+	forward := mgl32.Vec3{Cam.Direction.X(), 0.0, Cam.Direction.Z()}
+	right := mgl32.Vec3{Cam.Direction.Z(), 0.0, -Cam.Direction.X()}
+	return forward.Mul(fMove).Add(WorldUp.Mul(uMove)).Add(right.Mul(rMove))
 }

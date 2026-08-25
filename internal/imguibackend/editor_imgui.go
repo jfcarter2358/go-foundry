@@ -87,14 +87,51 @@ func ImguiConfigureIO(io imgui.IO) {
 	io.KeyMap(imgui.KeyX, int(sdl.SCANCODE_X))
 	io.KeyMap(imgui.KeyY, int(sdl.SCANCODE_Y))
 	io.KeyMap(imgui.KeyZ, int(sdl.SCANCODE_Z))
-	io.KeyCtrl(int(sdl.SCANCODE_LCTRL), int(sdl.SCANCODE_RCTRL))
-	io.KeyShift(int(sdl.SCANCODE_LSHIFT), int(sdl.SCANCODE_RSHIFT))
-	io.KeyAlt(int(sdl.SCANCODE_LALT), int(sdl.SCANCODE_RALT))
+	// The modifiers are deliberately NOT set here — see ImguiApplyModifiers,
+	// which has to run every frame rather than once.
 
 	// Without this, ImGui falls back to a clipboard of its own that never
 	// leaves the process — Ctrl+C here would be invisible to every other
 	// program on the desktop. See editor_clipboard.go.
 	io.SetClipboard(SdlClipboard{})
+}
+
+// ImguiApplyModifiers refreshes Ctrl / Shift / Alt on io from SDL's live
+// modifier state. Called once per frame per context, from ImguiNewFrameCommon.
+//
+// This looks like it belongs beside the KeyMap calls above, and does not.
+// imgui-go's io.KeyCtrl(left, right) is not a mapping: its wrapper evaluates
+// `KeysDown[left] || KeysDown[right]` and assigns the answer to io.KeyCtrl at
+// the moment it is called. Called once at startup, as it used to be, the flag
+// latches false for the life of the process — and every editing shortcut ImGui
+// implements inside a text field is gated on exactly these three flags. Ctrl+C,
+// Ctrl+X, Ctrl+V, Ctrl+Z, Ctrl+Y, Ctrl+A, Shift+arrow selection and
+// Shift+click range selection were all dead for that one reason.
+//
+// The modifier keys are seeded from sdl.GetModState rather than from whichever
+// key events this window happened to receive. GetModState is process-global, so
+// a Ctrl pressed while another window had focus — or released over the desktop,
+// where no window sees the key-up — is still read correctly here; a modifier
+// stuck down is a worse failure than one that arrives a frame late.
+func ImguiApplyModifiers(io imgui.IO) {
+	mod := sdl.GetModState()
+	hold := func(sc sdl.Scancode, down bool) {
+		if down {
+			io.KeyPress(int(sc))
+		} else {
+			io.KeyRelease(int(sc))
+		}
+	}
+	hold(sdl.SCANCODE_LCTRL, mod&sdl.KMOD_LCTRL != 0)
+	hold(sdl.SCANCODE_RCTRL, mod&sdl.KMOD_RCTRL != 0)
+	hold(sdl.SCANCODE_LSHIFT, mod&sdl.KMOD_LSHIFT != 0)
+	hold(sdl.SCANCODE_RSHIFT, mod&sdl.KMOD_RSHIFT != 0)
+	hold(sdl.SCANCODE_LALT, mod&sdl.KMOD_LALT != 0)
+	hold(sdl.SCANCODE_RALT, mod&sdl.KMOD_RALT != 0)
+
+	io.KeyCtrl(int(sdl.SCANCODE_LCTRL), int(sdl.SCANCODE_RCTRL))
+	io.KeyShift(int(sdl.SCANCODE_LSHIFT), int(sdl.SCANCODE_RSHIFT))
+	io.KeyAlt(int(sdl.SCANCODE_LALT), int(sdl.SCANCODE_RALT))
 }
 
 // ImGuiShutdown destroys all OpenGL resources and the imgui context.
@@ -130,6 +167,7 @@ func ImguiNewFrameCommon(io imgui.IO, mouseX, mouseY float32, mbuttons sdl.Butto
 	io.SetMouseButtonDown(0, mbuttons&sdl.ButtonLMask != 0)
 	io.SetMouseButtonDown(1, mbuttons&sdl.ButtonRMask != 0)
 	io.SetMouseButtonDown(2, mbuttons&sdl.ButtonMMask != 0)
+	ImguiApplyModifiers(io)
 	imgui.NewFrame()
 }
 

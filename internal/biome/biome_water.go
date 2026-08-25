@@ -40,6 +40,11 @@ func SyncBiomeWaterSurfaces(level *world.Level) {
 		return
 	}
 	for ci := range level.Chunks {
+		// Water surfaces are world-space meshes with no model matrix, like the
+		// rest of the biome pipeline — see the note in RenderBiomes.
+		if level.Chunks[ci].InFrame() {
+			continue
+		}
 		syncChunkWaterSurfaces(level, &level.Chunks[ci])
 	}
 }

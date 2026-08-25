@@ -87,6 +87,7 @@ func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	postSectorEvents(rt, lvl)
 	postCollideEvents(rt)
 	postAnimEvents(rt)
+	postVehicleEvents(rt)
 	postInteractEvent(rt, lvl)
 	postTimerEvents(rt)
 	postTickEvents(rt, lvl, dt)
@@ -189,16 +190,22 @@ func movers(lvl *world.Level) []flang.RefVal {
 	return out
 }
 
-// moverPosition returns where a mover currently is.
+// moverPosition returns where a mover currently is, in world space.
+//
+// World space specifically: an entity riding in a frame stores its position in
+// that frame's coordinates, and comparing those against a container somewhere
+// else in the level would be subtracting two numbers that do not describe the
+// same space. Every containment test below is in world coordinates for that
+// reason.
 func moverPosition(lvl *world.Level, r flang.RefVal) (mgl32.Vec3, bool) {
 	if r.A == "player" {
 		if world.PlayerEntity == nil {
 			return mgl32.Vec3{}, false
 		}
-		return world.PlayerEntity.Position, true
+		return lvl.Frames.WorldPosition(world.PlayerEntity), true
 	}
 	if e := world.FindEntity(lvl, r.A); e != nil {
-		return e.Position, true
+		return lvl.Frames.WorldPosition(e), true
 	}
 	return mgl32.Vec3{}, false
 }
@@ -229,6 +236,8 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 			continue
 		}
 		vv := v
+		// Volumes are level-scoped and always world-space, so the point arrives
+		// in the coordinates the volume is already in.
 		containers = append(containers, container{
 			ref:      flang.RefVal{Kind: flang.RefVolume, A: v.ID},
 			test:     func(p mgl32.Vec3) bool { return vv.ContainsPoint(p) },
@@ -241,9 +250,14 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 			continue
 		}
 		ee := e
+		// An entity in a frame describes its volume in that frame's
+		// coordinates, so the world-space point is carried in rather than the
+		// volume carried out — which keeps a rotated volume the shape it was
+		// authored as.
+		ef := lvl.Frames.FrameFor(e)
 		containers = append(containers, container{
 			ref:      flang.RefVal{Kind: flang.RefEntity, A: e.ID},
-			test:     func(p mgl32.Vec3) bool { return ee.ContainsPoint(p) },
+			test:     func(p mgl32.Vec3) bool { return ee.ContainsPoint(ef.FromWorld(p)) },
 			scripted: true,
 		})
 	}
@@ -349,7 +363,9 @@ func postInteractEvent(rt *ScriptRuntime, lvl *world.Level) {
 	if !pressed || world.PlayerEntity == nil || lvl == nil {
 		return
 	}
-	p := world.PlayerEntity.Position
+	// World space, so a player riding in a frame is compared against the level's
+	// volumes on the same terms as one standing on the ground.
+	p := lvl.Frames.WorldPosition(world.PlayerEntity)
 	player := flang.RefVal{Kind: flang.RefEntity, A: "player"}
 
 	best := flang.RefVal{}
@@ -367,7 +383,7 @@ func postInteractEvent(rt *ScriptRuntime, lvl *world.Level) {
 	}
 	for _, e := range world.EntitiesContaining(lvl, p) {
 		if e.Script != "" {
-			consider(flang.RefVal{Kind: flang.RefEntity, A: e.ID}, e.BoundCenter())
+			consider(flang.RefVal{Kind: flang.RefEntity, A: e.ID}, lvl.Frames.WorldBoundCenter(e))
 		}
 	}
 	if best.Kind != flang.RefNone {
@@ -405,3 +421,23 @@ func scriptAddTimer(delayMS float64, to flang.RefVal, atom string, args []flang.
 
 // scriptElapsed is play time in seconds, which is what `time()` returns.
 func scriptElapsed() float64 { return scriptEvents.elapsed }
+
+// postVehicleEvents turns this frame's boardings into messages.
+//
+// Posted to the *vehicle*, following the shape every other engine event has:
+// the atom, then a ref to whatever caused it, then whatever else the event is
+// about. The vehicle is the thing with a script worth writing here — "someone
+// got in" is the door's business, not the passenger's.
+func postVehicleEvents(rt *ScriptRuntime) {
+	for _, ev := range hooks.TakeVehicleEvents() {
+		_ = rt.post(
+			flang.RefVal{Kind: flang.RefEntity, A: ev.Vehicle},
+			ev.Atom,
+			[]flang.Value{
+				flang.RefVal{Kind: flang.RefEntity, A: ev.Occupant},
+				flang.StrVal(ev.Seat),
+			},
+			flang.Pos{},
+		)
+	}
+}

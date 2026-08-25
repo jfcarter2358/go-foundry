@@ -255,6 +255,16 @@ func RenderBiomeGround(level *world.Level, projView mgl32.Mat4, camPos mgl32.Vec
 	started := false
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
+		// Biome paint and procedural detail are world-space passes: they build
+		// their meshes and instance transforms directly in world coordinates,
+		// with no model matrix anywhere in the pipeline. A chunk in a frame
+		// would have its grass left standing where the ship used to be.
+		//
+		// A vehicle interior is a built environment rather than terrain, so
+		// there is nothing to lose here — the editor refuses to paint one.
+		if ch.InFrame() {
+			continue
+		}
 		for si := range ch.BiomeSectors {
 			s := &ch.BiomeSectors[si]
 			if len(s.Points) < 3 {

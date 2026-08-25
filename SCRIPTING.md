@@ -453,12 +453,13 @@ editor's reference panel. The core surface:
 
 | Object | Properties |
 | --- | --- |
-| entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · read-only: `type` `current_sector` `current_chunk` |
+| entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · read-only: `type` `current_sector` `current_chunk` `frame` `seat` |
+| vehicle | `vehicle_throttle` `vehicle_steer` `vehicle_pitch` `vehicle_roll` · tuning: `vehicle_max_speed` `vehicle_accel` `vehicle_brake` `vehicle_turn_rate` `vehicle_pitch_rate` `vehicle_roll_rate` `vehicle_drag` · read-only: `vehicle_speed` `vehicle_driver` |
 | volume | `position` `rotation` `half` `shape` `enabled` |
 | edge | `kind` `texture` `collision` `visible` `pinned` `double_sided` `terrain` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · portals also: `to_sector` `draw_gap` `gap_texture` |
 | floor | `enabled` `hidden` `height` `texture` `terrain` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` |
 | ceiling | as floor, without `hidden` |
-| chunk | `origin` `rotation` `scale` |
+| chunk | `origin` `rotation` `scale` `frame` — all read-only |
 | light | `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` |
 | biome | `kind` `density` `range` `color` `ground_texture` |
 
@@ -548,6 +549,8 @@ The engine posts these without being asked.
 | `:interact:` | entity, volume | `src ref` | The interact key was pressed while inside its bounds |
 | `:anim_start:` | entity | `src ref, model str, anim str` | A clip began, including each loop wrap |
 | `:anim_end:` | entity | `src ref, model str, anim str` | A clip finished, or a looping one wrapped |
+| `:mount:` | vehicle | `src ref, seat str` | Something came aboard; `seat` is empty if it is standing |
+| `:dismount:` | vehicle | `src ref, seat str` | …and left again; `seat` is the one it was in |
 
 `model` is the attachment's name and `anim` is the animation's name as the game
 calls it — never the underlying `.fmdl` clip name. A looping clip emits an
@@ -568,6 +571,30 @@ after(1000, :damage:, @self, 5)
 
 Posts the message to `@self` after the given number of milliseconds of play time.
 Timers do not survive a level reload.
+
+### Vehicles
+
+```
+mount(@player, @shuttle, "pilot")   -- seat optional; without it they stand aboard
+dismount(@player)
+```
+
+Both return a `bool`. `mount` refuses a seat that does not exist, an entity that
+is not a vehicle, and anything that would put a frame inside itself — a ship
+cannot be driven into its own hangar. Both post `:mount:` / `:dismount:` to the
+vehicle, so a door script hears about a boarding it did not arrange.
+
+An entity's `frame` property is a `ref` to the vehicle it is riding in, or
+`null`, and `seat` is which seat it occupies — empty while standing on the deck.
+Reading a `vehicle_*` property of something that is not a vehicle gives zero
+rather than an error, since asking a crate how fast it is going is a fair
+question with a dull answer. *Writing* one is reported, because a script
+steering a barrel is not doing what its author thinks.
+
+The drive tuning is writable during play. "An engine model tuned by attributes"
+has to mean tunable while running, or it is a hard-coded model with a
+configuration file — a script that makes a car handle differently in the rain
+needs those numbers to move.
 
 ---
 
@@ -727,6 +754,42 @@ neither value is knowable before it runs. Issues never block a run — a script
 shared between levels will legitimately name objects this one does not have — and
 they are re-checked whenever scripts reload, so the same list appears in the log
 window when a level loads.
+
+---
+
+## The script editor
+
+`Scripts` on the editor toolbar, or the arrow beside a script name in any object
+panel, opens it.
+
+**Tabs.** Every script you open gets one, and they stay open — reading one file
+while writing another does not cost you your place in either. `Ctrl+W` closes the
+current tab (asking first, if it has unsaved edits), `Ctrl+Tab` and
+`Ctrl+Shift+Tab` move between them, and the `+` at the end of the strip opens a
+scratch buffer that has never been saved. A tab with unsaved work is marked.
+
+**Folders.** The sidebar is the real folder tree under `resources/scripts/`, so a
+folder here is the folder `import("shared/math.flang")` resolves through. *New
+Folder* makes one — including an empty one, which then stays visible until you
+put something in it — and right-clicking a script offers *Move or rename*, which
+takes a whole path, so moving a file into a folder and renaming it are the same
+operation. Nothing that *names* the old path is rewritten: levels and entity
+definitions live outside the scripts folder, and the lint pass reports the
+dangling reference the next time that level is opened.
+
+**The buffer** is a normal text field with syntax colouring painted over it and
+numbered lines beside it. A line with a parse error is numbered in red and one
+with an issue in amber, so a problem stays findable while you scroll past it.
+Cut, copy and paste use the system clipboard, `Ctrl+Z` / `Ctrl+Y` undo and redo,
+`Shift` with the arrow keys or with a click extends the selection, and `Tab`
+inserts a tab rather than moving on. `Esc` closes the window; every tab keeps its
+unsaved text, and reopening the editor comes back to exactly where you were.
+
+**F1** opens the reference: the keybindings, every event the engine posts, every
+standard-library function with its signature and what it returns, and every
+property of every object kind with whether a script may write it. It is generated
+from the same tables the language itself uses, so it cannot describe a version of
+flang that is not the one running.
 
 ---
 

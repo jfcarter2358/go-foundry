@@ -648,17 +648,33 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 // uniforms to different locations, so the cache cannot be a single global.
 func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
 	identity := mgl32.Ident4()
-	gl.UniformMatrix4fv(modelUniform, 1, false, &identity[0])
+	// The model matrix used to be uploaded once, here, because every piece of
+	// world geometry was baked into world space. A chunk in a frame is not, so
+	// the upload moved inside the loop — but it is tracked rather than re-sent
+	// per chunk, since a level of static geometry would otherwise pay for a
+	// uniform upload per chunk to say nothing changed.
+	current := identity
+	gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
 
 	for ci := range level.Chunks {
 		chunk := &level.Chunks[ci]
-		if cull != nil && !AABBInFrustum(*cull, chunk.MinBound, chunk.MaxBound) {
-			continue
+		if cull != nil {
+			chunkMin, chunkMax := chunk.WorldBounds()
+			if !AABBInFrustum(*cull, chunkMin, chunkMax) {
+				continue
+			}
+		}
+		if m := chunk.ModelMatrix(); m != current {
+			current = m
+			gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
 		}
 		for si := range chunk.Sectors {
 			sector := &chunk.Sectors[si]
 			if cull != nil {
 				secMin, secMax := sector.WorldAABB()
+				if chunk.InFrame() {
+					secMin, secMax = TransformAABB(current, secMin, secMax)
+				}
 				if !AABBInFrustum(*cull, secMin, secMax) {
 					continue
 				}
@@ -700,6 +716,13 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 				}
 			}
 		}
+	}
+
+	// Put the identity back before the entity walk, which sets its own matrices
+	// and restores the identity when it is done — leaving a frame's transform
+	// bound here would apply a ship's motion to every entity in the level.
+	if current != identity {
+		gl.UniformMatrix4fv(modelUniform, 1, false, &identity[0])
 	}
 
 	// Placed entities, after the world walk: they are the only thing here that

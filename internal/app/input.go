@@ -70,8 +70,7 @@ func HandleEvent(event sdl.Event) {
 		// Recompute direction immediately so movement this frame uses the
 		// correct look direction (no one-frame rotation lag).
 		gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
-		gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), gfx.WorldUp)
-		gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
+		gfx.UpdateCamMatrix()
 		// Return cursor to centre for next delta measurement.
 		platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
 

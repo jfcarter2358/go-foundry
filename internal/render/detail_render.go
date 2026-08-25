@@ -236,6 +236,16 @@ func forEachDetailFace(level *world.Level, cull *Frustum, fn func(f detailFace))
 
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
+		// Biome paint and procedural detail are world-space passes: they build
+		// their meshes and instance transforms directly in world coordinates,
+		// with no model matrix anywhere in the pipeline. A chunk in a frame
+		// would have its grass left standing where the ship used to be.
+		//
+		// A vehicle interior is a built environment rather than terrain, so
+		// there is nothing to lose here — the editor refuses to paint one.
+		if ch.InFrame() {
+			continue
+		}
 		if cull != nil && !AABBInFrustum(*cull, ch.MinBound, ch.MaxBound) {
 			continue
 		}

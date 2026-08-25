@@ -116,15 +116,21 @@ keypress.
 **What this is not: a physics engine.** There is no restitution, no friction, no
 angular response and no solver iteration. Each frame, everything falls and moves,
 then the whole set is separated at once, then anything a separation displaced is
-settled back against the world. An overlap is pushed apart along whichever axis
-it is shallowest on, which is what makes something dropped onto something else
-settle on top rather than squirt out sideways.
+settled back against the world. An overlap is pushed apart along its **minimum
+translation vector** — the shortest way out — which is what makes something
+dropped onto something else settle on top rather than squirt out sideways.
+
+For two axis-aligned boxes that is whichever of the three axes they overlap
+least on, and that case keeps its own arithmetic: it is by far the most common,
+and every stack in every existing level is tuned against it. Anything rotated or
+round goes through **GJK/EPA** instead, over the support functions in
+`internal/collision/shape.go`. One pair of routines covers every combination of
+box, oriented box, ellipsoid and cylinder, including the ones with no tidy closed
+form — which is what a hull that can pitch and roll needs.
 
 Three details earn their keep, all of them about stacks settling exactly rather
 than sagging a little further every frame:
 
-- Volumes are compared as **boxes** whatever their `bounding` kind. The kinds
-  refine `ContainsPoint`, which is the query scripts ask, not the push-apart.
 - An entity resting on the ground **cannot be pushed downward**. Splitting an
   overlap evenly is right for two things floating into each other, but the moment
   one is on the floor, half the separation goes into pressing it through that
@@ -139,6 +145,160 @@ than sagging a little further every frame:
 The ground flag an entity exposes is last frame's, deliberately: it is written
 and read during the same pass, and reading the live value would make the result
 depend on the order the level lists its entities in.
+
+### Moving quickly
+
+Every resolver here is *positional*: it looks at where a body ended up and
+pushes it back out. That holds while a frame's movement is small against the
+body, and fails completely when it is not — a step that clears a wall and leaves
+the sector in one go lands somewhere the sector lookup returns nothing for, so
+nothing resolves and the body keeps going.
+
+So a move is **split into steps no longer than half the body's smallest
+half-extent**, and the ordinary resolve chain runs on each. That is deliberately
+not a second collision routine: the resolvers stay the only description of what a
+wall does, and at walking speed the split produces exactly one step and exactly
+the arithmetic it always did. Only something fast enough to need it pays for it.
+
+Past a ceiling on the number of steps the *displacement* is shortened rather
+than the step count being clamped, which imposes a speed limit — for the player,
+around 38 units a frame — and fails in the recoverable direction. Clamping the
+count instead would hand back steps larger than the body at precisely the speeds
+where going through a wall is most likely.
+
+`SweepHit` is the general shape-against-shape form, by conservative advancement
+over `Distance`: measure the gap, advance by no more than the gap, repeat. A step
+is never longer than the clearance, so there is no step size an obstacle can hide
+between.
+
+## Frames
+
+Until vehicles there was one coordinate system: the world. Every chunk's
+geometry is baked into it at load, and every entity's position is expressed in
+it. A **frame** is a second one — a rigid transform, carried by an entity that
+moves, that geometry and other entities can live in.
+
+The transform is the trivial part. What earns the idea is that a body inside a
+frame stores its position **in that frame's coordinates**, so the whole existing
+collision path — which takes a chunk, a sector and a position, and knows nothing
+about which space they are in — resolves a player walking around a moving ship
+with no change at all. Local gravity is local −Y. A rider is carried exactly,
+because nothing had to carry it: it never moved.
+
+A chunk names its frame with `frame: <entity id>`, and its geometry is authored
+around that frame's origin. An entity names one the same way. Nothing else
+changes shape:
+
+- A frame-owned chunk is **kept out of the world spatial hash**. Its geometry
+  sits around its own origin, so indexing it by those coordinates would have a
+  player standing at world (0,0) fall into a ship parked a mile away. Each frame
+  is searched by scanning its own handful of chunks instead — usually one, which
+  is shorter than the hash lookup it would replace.
+- A frame's transform **ignores its owner's scale**. A frame is a place to
+  stand, not a model: scaling one would scale the deck without scaling the body
+  walking on it.
+- Frames **nest**, which is how a shuttle in a carrier's hangar works. Nothing
+  downstream sees the nesting — render and collision only ever get a final
+  matrix and a local space — but building the transforms does, so parents are
+  always resolved before children, a frame may not end up inside itself, and the
+  chain is depth-limited.
+
+Three things are deliberately not in a frame. **Biome paint and procedural
+detail** build their meshes and instance transforms directly in world
+coordinates with no model matrix anywhere in the pipeline, so a framed chunk
+would leave its grass standing where the ship used to be; a vehicle interior is
+a built environment rather than terrain, and the editor refuses to paint one.
+And **two entities in different frames do not collide**: comparing their volumes
+would be subtracting numbers that do not mean the same thing, and the one pair
+that is always cross-frame is a rider against the hull carrying it — which it is
+inside by definition, so resolving that overlap would eject it through the wall.
+
+Anything that compares positions across frames — a script's `enter`, an
+`interact` press, a volume test — converts to world space first. That is what
+`FrameSet.WorldPosition` is for, and a local position and a world one are
+otherwise not numbers that can be subtracted.
+
+## Vehicles
+
+A vehicle is an **entity with a `vehicle:` block**, not a type of its own. An
+entity already carries an ID, tags, attributes, a script and its parameters, a
+transform, a velocity, bounds, collision flags and model attachments with
+animations — which is the whole of what a vehicle needs before anything
+vehicle-specific starts. This is the inverse of the argument for `Volume`: a
+volume is a *smaller* idea than an entity so it gets its own type, and a vehicle
+is a strictly larger one, so it extends rather than duplicates. Scripting
+therefore needs no new ref kind, and `@id` and `#tag` reach vehicles already.
+
+```yaml
+vehicle:
+  mode: air              # ground | air | water | space
+  interior: shuttle_deck # a chunk with `frame: shuttle`; omit for seat-only
+  seats:
+    - name: pilot
+      driver: true       # sitting here hands over the movement keys
+      position: {x: 0, y: 0, z: -3}   # vehicle-local, the occupant's feet
+      eye: 0.7
+      exit: {x: 3, y: 0, z: -3}       # where they are put down on leaving
+      yaw_limit: 1.2                  # look cone; omit for unrestricted
+  drive:
+    max_speed: 40        # every field optional; unmentioned ones keep the
+    accel: 14            # mode's defaults, and all are script-writable
+```
+
+### Orientation
+
+`Entity.Rotation` is an Euler triple, which cannot express a tumbling body
+without gimbal lock — and integrating an angular velocity *as* Euler rates is
+wrong even before it locks. So a vehicle's **quaternion is authoritative**, and
+`Entity.Rotation` is written back from it each frame so scripts, the editor
+panel and the saved file keep working on the field they already know. Nothing
+else in the engine learns quaternions.
+
+Ground and water vehicles are flattened to a yaw every frame. Their *body* may
+tilt to the surface for looks, but the frame an occupant stands in keeps its own
+up, or walking around a cabin would fight the terrain.
+
+### Riding
+
+Being aboard is two fields: a **frame**, and optionally a **seat**. Seated pins
+the occupant to the seat every frame — a seat is a constraint, not a starting
+position — and standing lets them walk the deck. Sitting down and standing up
+are the same entity changing one string, which is what makes the two authored
+modes one system rather than two.
+
+Mounting is a **change of frame, not a teleport**: the occupant's position is
+converted out of whatever space it was in and into the vehicle's, so it ends
+where it started in the world and is carried from then on.
+
+### Frame portals
+
+A portal whose `to_frame:` names another frame joins two spaces that move
+relative to each other — a shuttle's ramp onto a hangar deck, or onto the ground
+(`to_frame: world`, a reserved name, since `""` already means "does not cross
+frames"). Crossing carries position, velocity **and** facing through the relative
+transform; converting all three is what makes it seamless, since converting only
+the position leaves the walker arriving sideways.
+
+**Frames must be gravity-aligned to be joined.** Every resolver here is
+XZ-planar: it assumes down is −Y, a footprint is a 2D polygon and a height is a
+scalar. Two frames only reconcile inside those assumptions while their up
+vectors agree, because then the relative transform is a yaw and a translation —
+and a yaw-rotated polygon is still a polygon. A ship resting on a deck qualifies,
+and so does one flying straight and level. A barrel-rolling ship does not, and
+while misaligned the portal **seals**: it resolves as a solid wall, so nobody
+walks out of a doorway that is currently pointing at the sky. Lifting the rule
+would mean making collision non-planar, which is a rewrite of the engine's
+oldest assumption rather than a feature.
+
+Cross-frame *visibility* falls back to frustum-only culling. Portal culling only
+ever removes sectors the frustum already accepted, so the far side is still
+drawn — the engine just does not get to skip anything behind it.
+
+### What this is not
+
+There is no inertia tensor and no torque. Controls are **rates**: a vehicle turns
+as fast as its tuning says, which is what makes an arcade drive model
+predictable to author against. A hull striking a wall stops; it does not spin.
 
 ### The player
 

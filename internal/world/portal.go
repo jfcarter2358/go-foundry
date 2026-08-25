@@ -13,11 +13,17 @@ type Portal struct {
 	// ID is the portal's stable identity, shared with the Wall it would become
 	// if converted back — identity belongs to the edge, not to the record
 	// currently occupying it. See sector_edge_id.go.
-	ID          string
-	ScriptData  // tags, attributes and the attached script
-	StartPoint  mgl32.Vec2
-	EndPoint    mgl32.Vec2
-	ToSector    string
+	ID         string
+	ScriptData // tags, attributes and the attached script
+	StartPoint mgl32.Vec2
+	EndPoint   mgl32.Vec2
+	ToSector   string
+	// ToFrame names the frame the target sector lives in, when it is not this
+	// chunk's own. That is what makes a portal a *frame portal*: a shuttle's
+	// ramp opening onto a hangar deck, joining two spaces that move relative to
+	// each other. Empty is the ordinary intra-chunk portal, which is every
+	// portal that existed before frames did.
+	ToFrame     string
 	DrawGap     bool         // fill height-difference gaps with wall geometry
 	GapTexture  string       // texture for gap walls (falls back to sector floor texture)
 	Visible     bool         // if false, gap-fill geometry is not drawn (default true)

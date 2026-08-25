@@ -62,20 +62,46 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 	// uphill movement from downhill.
 	oldCenter := center.Sub(e.Position.Sub(oldPos))
 
-	chunk, sector := world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, center)
-	if sector == nil {
-		// Outside every sector there is nothing to resolve against. The entity
-		// is left where it is rather than being pulled to the nearest floor:
-		// an entity over open space is a legitimate thing to be.
-		return false
-	}
+	// Everything below is in the entity's own frame. Its position, its bounds
+	// and the chunks it resolves against are all expressed there, which is why
+	// the resolvers need no idea that frames exist.
+	frame := lvl.Frames.FrameFor(e)
 
-	pos := ResolveWallCollision(&proxy, chunk, sector, center)
-	pos = ResolveSlopeCollision(&proxy, chunk, sector, oldCenter, pos)
-	// Sliding along a slope can carry the entity into a different sector, so
-	// the floor it lands on has to be looked up again from where it ended.
-	chunk, sector = world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, pos)
-	hitFloor, hitCeiling := resolveEntityFloorCeiling(&proxy, chunk, sector, &pos)
+	// Walk the frame's travel rather than only resolving where it ended. An
+	// entity that moved farther than its own width in one frame would otherwise
+	// be looked up somewhere past everything it should have hit — and past every
+	// sector, where there is nothing to resolve against at all. Anything moving
+	// at ordinary speed takes exactly one step and this is the same single
+	// resolve it always was.
+	travel := center.Sub(oldCenter)
+	steps, travel := SweepPlan(h, travel)
+	stepTravel := travel.Mul(1 / float32(steps))
+
+	pos := oldCenter
+	var hitFloor, hitCeiling bool
+	for i := 0; i < steps; i++ {
+		stepFrom := pos
+		pos = pos.Add(stepTravel)
+
+		chunk, sector := frame.ChunkAndSectorAt(lvl, pos)
+		if sector == nil {
+			// Outside every sector there is nothing to resolve against. The
+			// entity is left where it is rather than being pulled to the
+			// nearest floor: an entity over open space is a legitimate thing
+			// to be.
+			continue
+		}
+
+		pos = ResolveWallCollision(&proxy, chunk, sector, pos)
+		pos = ResolveSlopeCollision(&proxy, chunk, sector, stepFrom, pos)
+		// Sliding along a slope can carry the entity into a different sector,
+		// so the floor it lands on has to be looked up again from where it
+		// ended.
+		chunk, sector = frame.ChunkAndSectorAt(lvl, pos)
+		f, c := resolveEntityFloorCeiling(&proxy, chunk, sector, &pos)
+		hitFloor = hitFloor || f
+		hitCeiling = hitCeiling || c
+	}
 
 	e.Position = e.Position.Add(pos.Sub(center))
 
@@ -165,6 +191,21 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 	for a := 0; a < len(idx); a++ {
 		for b := a + 1; b < len(idx); b++ {
 			ea, eb := &lvl.Entities[idx[a]], &lvl.Entities[idx[b]]
+			if ea.Frame != eb.Frame {
+				// Two entities in different frames describe their volumes in
+				// different coordinate systems, and comparing those boxes
+				// directly would be subtracting numbers that do not mean the
+				// same thing.
+				//
+				// Skipping rather than converting is also what the common case
+				// wants: the one pair that is always cross-frame is a rider
+				// against the vehicle carrying it, and a rider is *inside* that
+				// hull by definition — resolving the overlap would eject it
+				// through the wall. Two solid things in genuinely different
+				// frames not colliding is a real gap, and the place to close it
+				// is where a frame portal already has to reconcile two spaces.
+				continue
+			}
 			movedA, movedB := resolveEntityOverlap(ea, eb)
 			if movedA || movedB {
 				// The pair, not just the fact that something moved: the
@@ -187,6 +228,9 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 	// crate is solid to walk into and — if it is movable — to shove.
 	if player != nil && player.HasBounds() {
 		for _, i := range idx {
+			if player.Frame != lvl.Entities[i].Frame {
+				continue // different coordinate systems — see the note above
+			}
 			movedP, movedE := resolveEntityOverlap(player, &lvl.Entities[i])
 			if movedP || movedE {
 				hooks.RecordCollisionPair(player.ID, lvl.Entities[i].ID)
@@ -209,11 +253,14 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 // resolveEntityOverlap separates two overlapping entities and reports which of
 // them it moved.
 //
-// The push is the minimum translation along whichever axis the boxes overlap
-// least, which is what makes something dropped on top of something else settle
-// on it rather than squirting out sideways. The volumes are compared as boxes
-// whatever their BoundingKind: the kinds refine ContainsPoint, which is the
-// query scripts ask, not the push-apart.
+// The push is the minimum translation vector: the shortest displacement that
+// takes the two apart. For two axis-aligned boxes that is the smallest of the
+// three axis overlaps, which is what makes something dropped on top of
+// something else settle on it rather than squirting out sideways — and that
+// case keeps its own arithmetic below, both because it is by far the most
+// common and because every stack in every existing level is already tuned
+// against it. Anything rotated or round goes through GJK/EPA instead, where the
+// MTV is the same idea without the assumption that it lies along an axis.
 func resolveEntityOverlap(a, b *world.Entity) (movedA, movedB bool) {
 	// A pair with nothing that can move has nothing to resolve, and checking
 	// first skips the box maths for every static-against-static pair.
@@ -229,7 +276,50 @@ func resolveEntityOverlap(a, b *world.Entity) (movedA, movedB bool) {
 		return false, false
 	}
 
-	var overlap mgl32.Vec3
+	// Boxes first, always. Every shape here is inside its CollisionAABB, so an
+	// axis that separates the boxes separates the shapes — and this rejects the
+	// overwhelming majority of pairs without building a shape at all, which
+	// matters in a routine that runs over every participating pair every frame.
+	overlap, touching := boxOverlaps(amin, amax, bmin, bmax)
+	if !touching {
+		return false, false
+	}
+
+	sep, ok := separationFor(a, b, overlap)
+	if !ok {
+		return false, false
+	}
+
+	// What each is actually free to give way to. Movability is the authored
+	// half; the other half is that nothing standing on solid ground can be
+	// pushed down through it, which is what lets a stack settle exactly instead
+	// of sinking a little further every frame — see canDisplace.
+	aPush := allowedPush(a, sep)
+	bPush := allowedPush(b, sep.Mul(-1))
+	aFree := aPush != (mgl32.Vec3{})
+	bFree := bPush != (mgl32.Vec3{})
+
+	switch {
+	case aFree && bFree:
+		// Neither has a mass, so neither has a claim to stay put: split it.
+		entityPushOut(a, aPush.Mul(0.5))
+		entityPushOut(b, bPush.Mul(0.5))
+		return true, true
+	case aFree:
+		entityPushOut(a, aPush)
+		return true, false
+	case bFree:
+		entityPushOut(b, bPush)
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// boxOverlaps reports how deeply two boxes interpenetrate on each axis, and
+// whether they interpenetrate at all. A non-positive overlap on any axis is a
+// separating axis, and one is enough.
+func boxOverlaps(amin, amax, bmin, bmax mgl32.Vec3) (overlap mgl32.Vec3, touching bool) {
 	for k := 0; k < 3; k++ {
 		lo, hi := amin[k], bmin[k]
 		if hi > lo {
@@ -241,47 +331,79 @@ func resolveEntityOverlap(a, b *world.Entity) (movedA, movedB bool) {
 		}
 		overlap[k] = hiA - lo
 		if overlap[k] <= 0 {
-			return false, false // separated on this axis, so not touching
+			return overlap, false
 		}
 	}
+	return overlap, true
+}
 
-	axis := 0
-	for k := 1; k < 3; k++ {
-		if overlap[k] < overlap[axis] {
-			axis = k
+// separationFor returns the displacement a must make to come clear of b.
+//
+// The axis-aligned box case is answered from the overlap the broadphase already
+// computed, so the common path costs nothing beyond what it always did. Only a
+// pair that is actually rotated or round is worth the general solver.
+func separationFor(a, b *world.Entity, overlap mgl32.Vec3) (mgl32.Vec3, bool) {
+	if isAxisAlignedBox(a) && isAxisAlignedBox(b) {
+		axis := 0
+		for k := 1; k < 3; k++ {
+			if overlap[k] < overlap[axis] {
+				axis = k
+			}
+		}
+		// Push a away from b along that axis. Centres rather than positions,
+		// since a bound offset can put the two on opposite sides of their own
+		// origins.
+		dir := float32(1)
+		if a.BoundCenter()[axis] < b.BoundCenter()[axis] {
+			dir = -1
+		}
+		var sep mgl32.Vec3
+		sep[axis] = dir * overlap[axis]
+		return sep, true
+	}
+
+	sa, oka := ShapeFor(a)
+	sb, okb := ShapeFor(b)
+	if !oka || !okb {
+		return mgl32.Vec3{}, false
+	}
+	// Penetration's normal points from a toward b — the way b must go — so a
+	// goes the other way.
+	n, depth, ok := Penetration(sa, sb)
+	if !ok || depth <= 0 {
+		return mgl32.Vec3{}, false
+	}
+	return n.Mul(-depth), true
+}
+
+// isAxisAlignedBox reports whether an entity's volume is a plain box sitting
+// square to the world, which is the case the fast path is written for.
+func isAxisAlignedBox(e *world.Entity) bool {
+	return e.BoundingKind == world.BoundingAABB && e.Rotation == (mgl32.Vec3{})
+}
+
+// allowedPush trims a separation to the part the entity can actually take:
+// nothing at all if it is immovable, and nothing downward if it is resting on
+// something. Trimming per axis rather than refusing outright is what lets a
+// grounded entity still slide out of the way sideways when the shortest way out
+// of an overlap happens to point down and across.
+func allowedPush(e *world.Entity, push mgl32.Vec3) mgl32.Vec3 {
+	if !e.Collision.Movable {
+		return mgl32.Vec3{}
+	}
+	for axis := 0; axis < 3; axis++ {
+		if push[axis] == 0 {
+			continue
+		}
+		sign := float32(1)
+		if push[axis] < 0 {
+			sign = -1
+		}
+		if !canDisplace(e, axis, sign) {
+			push[axis] = 0
 		}
 	}
-
-	// Push a away from b along that axis. Centres rather than positions, since
-	// a bound offset can put the two on opposite sides of their own origins.
-	dir := float32(1)
-	if a.BoundCenter()[axis] < b.BoundCenter()[axis] {
-		dir = -1
-	}
-
-	// Which of the two this push is actually free to move. Movability is the
-	// authored half; the other half is that nothing standing on solid ground
-	// can be pushed down through it, which is what lets a stack settle exactly
-	// instead of sinking a little further every frame — see canDisplace.
-	aFree := a.Collision.Movable && canDisplace(a, axis, dir)
-	bFree := b.Collision.Movable && canDisplace(b, axis, -dir)
-
-	switch {
-	case aFree && bFree:
-		// Neither has a mass, so neither has a claim to stay put: split it.
-		half := overlap[axis] / 2
-		entityPushOut(a, axis, dir*half)
-		entityPushOut(b, axis, -dir*half)
-		return true, true
-	case aFree:
-		entityPushOut(a, axis, dir*overlap[axis])
-		return true, false
-	case bFree:
-		entityPushOut(b, axis, -dir*overlap[axis])
-		return false, true
-	default:
-		return false, false
-	}
+	return push
 }
 
 // canDisplace reports whether a push of the given sign along one axis is
@@ -298,24 +420,36 @@ func canDisplace(e *world.Entity, axis int, sign float32) bool {
 	return !(axis == 1 && sign < 0 && e.Collision.OnGround)
 }
 
-// entityPushOut displaces an entity along one axis and kills the velocity it
-// was closing with, so it stops pressing into what it hit instead of building
-// up speed against it forever.
-func entityPushOut(e *world.Entity, axis int, delta float32) {
-	e.Position[axis] += delta
-	// Only the component moving *into* the other body is cancelled. Zeroing the
-	// whole axis would also stop something already separating, which is what
-	// makes a stack of boxes stick together instead of settling.
-	if delta > 0 && e.Velocity[axis] < 0 {
-		e.Velocity[axis] = 0
-	}
-	if delta < 0 && e.Velocity[axis] > 0 {
-		e.Velocity[axis] = 0
+// entityPushOut displaces an entity and kills the velocity it was closing with,
+// so it stops pressing into what it hit instead of building up speed against it
+// forever.
+func entityPushOut(e *world.Entity, delta mgl32.Vec3) {
+	e.Position = e.Position.Add(delta)
+	for axis := 0; axis < 3; axis++ {
+		// Only the component moving *into* the other body is cancelled. Zeroing
+		// the whole axis would also stop something already separating, which is
+		// what makes a stack of boxes stick together instead of settling.
+		if delta[axis] > 0 && e.Velocity[axis] < 0 {
+			e.Velocity[axis] = 0
+		}
+		if delta[axis] < 0 && e.Velocity[axis] > 0 {
+			e.Velocity[axis] = 0
+		}
 	}
 	// Being pushed up off something counts as standing on it, which is what
-	// lets a third box stack on a second. Staged rather than applied, so the
-	// pair pass cannot see its own work — see OnGround.
-	if axis == 1 && delta > 0 {
+	// lets a third box stack on a second. "Up" has to mean predominantly up
+	// rather than merely not-down: a mostly-sideways separation with a sliver
+	// of lift in it is being squeezed out of a wall, not landing on a floor.
+	// Staged rather than applied, so the pair pass cannot see its own work —
+	// see OnGround.
+	if delta[1] > 0 && delta[1] >= abs32(delta[0]) && delta[1] >= abs32(delta[2]) {
 		e.Collision.GroundedNext = true
 	}
+}
+
+func abs32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

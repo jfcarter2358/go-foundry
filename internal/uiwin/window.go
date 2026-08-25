@@ -47,6 +47,17 @@ type UIWindow struct {
 	ClearColor  [4]float32
 	Draw        func()          // per-frame UI body; called with this window's imgui context current
 	HandleEvent func(sdl.Event) // optional: window-specific input, run after imgui sees the event
+	// FilterEvent is optional, and runs *before* imgui sees the event, with
+	// this window's imgui context current. Returning true consumes the event:
+	// neither imgui nor HandleEvent is given it.
+	//
+	// There is exactly one reason to want this rather than HandleEvent, and it
+	// is keys imgui acts on by itself. Escape inside an InputText reverts the
+	// field to what it held when it was focused — which for a script buffer
+	// means silently throwing away every edit since the last save — and by the
+	// time HandleEvent runs, imgui has already done it. The only way to have a
+	// different Escape is to take the key away first.
+	FilterEvent func(sdl.Event) bool
 	OnClose     func()
 	// CloseRequested asks for this window to be destroyed after the current
 	// frame. Set it instead of calling CloseUIWindow from inside Draw — the
@@ -251,6 +262,11 @@ func RouteWindowEvent(event sdl.Event, mainWindowID uint32) bool {
 
 	w.Win.GLMakeCurrent(w.GL)
 	w.Ctx.SetCurrent()
+	if w.FilterEvent != nil && w.FilterEvent(event) {
+		platform.Window.GLMakeCurrent(platform.Context)
+		imguibackend.ImguiContext.SetCurrent()
+		return true
+	}
 	imguibackend.ImGuiProcessEvent(event)
 	if w.HandleEvent != nil {
 		// Runs with w's imgui context current, so WantCaptureMouse/Keyboard

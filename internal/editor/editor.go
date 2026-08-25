@@ -794,8 +794,7 @@ func EditorTick(keyStates []uint8) {
 			editorNavMove(Editor.Mode, 0, -navSpeed, 0)
 		}
 		if Editor.NavForward || Editor.NavBack || Editor.NavLeft || Editor.NavRight || Editor.NavUp || Editor.NavDown {
-			gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(gfx.Cam.Direction), mgl32.Vec3{0, 1, 0})
-			gl.UniformMatrix4fv(gfx.Cam.Uniform, 1, false, &gfx.Cam.Matrix[0])
+			gfx.UpdateCamMatrix()
 		}
 		Editor.NavForward = false
 		Editor.NavBack = false

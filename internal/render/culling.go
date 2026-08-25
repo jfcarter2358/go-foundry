@@ -1,6 +1,7 @@
 package render
 
 import (
+	"foundry/internal/geom"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -109,6 +110,19 @@ func portalBFS(chunk *world.Chunk, startSectorID string, portalFilter func(p *wo
 			if p.ToSector == "" || result[p.ToSector] {
 				continue
 			}
+			if p.ToFrame != "" {
+				// A frame portal leads out of this chunk entirely, into a space
+				// that is moving relative to it. Walking the graph across that
+				// boundary would mean carrying a transform through the BFS and
+				// testing each sector's facing in its own coordinates.
+				//
+				// Not doing it costs nothing but efficiency: portal culling only
+				// ever *removes* sectors from what the frustum already accepted,
+				// so the far side simply falls back to frustum-only culling and
+				// is still drawn. You see the hangar through the open ramp; the
+				// engine just did not get to skip anything behind it.
+				continue
+			}
 			if portalFilter != nil && !portalFilter(p) {
 				continue
 			}
@@ -155,4 +169,32 @@ func WallFacingCamera(wall world.Wall, camPos mgl32.Vec3) bool {
 	toCamX := camPos.X() - mx
 	toCamZ := camPos.Z() - mz
 	return nx*toCamX+nz*toCamZ > 0
+}
+
+// TransformAABB carries an axis-aligned box through a transform and re-fits a
+// box around the result.
+//
+// A rotated box is not a box, so all eight corners are carried and re-bounded.
+// Transforming just the two extremes would produce a box that is not merely
+// loose but the wrong size — and a culling box that is too small hides geometry
+// that is on screen.
+func TransformAABB(m mgl32.Mat4, min, max mgl32.Vec3) (mgl32.Vec3, mgl32.Vec3) {
+	h := max.Sub(min).Mul(0.5)
+	c := min.Add(h)
+	var outMin, outMax mgl32.Vec3
+	for i := 0; i < 8; i++ {
+		corner := mgl32.Vec3{
+			h.X() * world.CornerSign(i, 0),
+			h.Y() * world.CornerSign(i, 1),
+			h.Z() * world.CornerSign(i, 2),
+		}
+		r := m.Mul4x1(c.Add(corner).Vec4(1))
+		p := mgl32.Vec3{r.X(), r.Y(), r.Z()}
+		if i == 0 {
+			outMin, outMax = p, p
+			continue
+		}
+		outMin, outMax = geom.VecMin(outMin, p), geom.VecMax(outMax, p)
+	}
+	return outMin, outMax
 }

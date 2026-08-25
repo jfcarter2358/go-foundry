@@ -27,6 +27,7 @@ package script
 //     constructors, so a script writing 0 to Alpha means transparent, not opaque.
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -65,6 +66,33 @@ func PropertyNames(kind flang.Kind_) []string {
 		out = append(out, n)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// PropertyDoc is one property's reference entry: what it is, and whether a
+// script may write it.
+type PropertyDoc struct {
+	Name     string
+	Doc      string
+	Writable bool
+}
+
+// PropertyDocs lists one kind's properties with their descriptions, sorted.
+//
+// The reference draws from this rather than from PropertyNames because a list
+// of bare names answers neither of the two questions actually asked of it —
+// what does `bounds` mean, and can I assign to it. Read-only is the interesting
+// half: a script that writes one of those is reported, not obeyed.
+func PropertyDocs(kind flang.Kind_) []PropertyDoc {
+	tbl, ok := propTables[kind]
+	if !ok {
+		return nil
+	}
+	out := make([]PropertyDoc, 0, len(tbl))
+	for name, acc := range tbl {
+		out = append(out, PropertyDoc{Name: name, Doc: acc.Doc, Writable: acc.Set != nil})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
@@ -282,6 +310,86 @@ func entityProps() map[string]propAccess {
 			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(e.CurrentChunk) }),
 			Doc: "read-only: the chunk the entity is in, refreshed each frame",
 		},
+
+		// ---------- riding ----------
+
+		"frame": {
+			Get: get(func(e *world.Entity) flang.Value {
+				if e.Frame == "" {
+					return flang.NullVal{}
+				}
+				return flang.RefVal{Kind: flang.RefEntity, A: e.Frame}
+			}),
+			Doc: "read-only: the vehicle this entity is riding in, or null",
+		},
+		"seat": {
+			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(e.Seat) }),
+			Doc: "read-only: which seat this entity occupies, empty when standing",
+		},
+
+		// ---------- driving ----------
+		//
+		// All of these read null or zero on an entity that is not a vehicle,
+		// rather than erroring: `@thing.prop.vehicle_speed` is a reasonable
+		// question to ask about something that might be one.
+
+		"vehicle_speed": {
+			Get: get(func(e *world.Entity) flang.Value {
+				flat := mgl32.Vec3{e.Velocity.X(), 0, e.Velocity.Z()}
+				return flang.FloatVal(float64(flat.Len()))
+			}),
+			Doc: "read-only: horizontal speed in units per second",
+		},
+		"vehicle_driver": {
+			Get: get(func(e *world.Entity) flang.Value {
+				id := e.Driver()
+				if id == "" {
+					return flang.NullVal{}
+				}
+				return flang.RefVal{Kind: flang.RefEntity, A: id}
+			}),
+			Doc: "read-only: whoever is in a seat that hands over the controls, or null",
+		},
+		"vehicle_throttle": {
+			Get: vehicleGet(func(e *world.Entity) float32 { return e.VState.Controls.Throttle }),
+			Set: vehicleSet("vehicle_throttle", func(e *world.Entity, f float32) {
+				e.VState.Controls.Throttle = clamp11(f)
+			}),
+			Doc: "throttle, -1 to 1",
+		},
+		"vehicle_steer": {
+			Get: vehicleGet(func(e *world.Entity) float32 { return e.VState.Controls.Steer }),
+			Set: vehicleSet("vehicle_steer", func(e *world.Entity, f float32) {
+				e.VState.Controls.Steer = clamp11(f)
+			}),
+			Doc: "steering, -1 to 1",
+		},
+		"vehicle_pitch": {
+			Get: vehicleGet(func(e *world.Entity) float32 { return e.VState.Controls.Pitch }),
+			Set: vehicleSet("vehicle_pitch", func(e *world.Entity, f float32) {
+				e.VState.Controls.Pitch = clamp11(f)
+			}),
+			Doc: "pitch control, -1 to 1",
+		},
+		"vehicle_roll": {
+			Get: vehicleGet(func(e *world.Entity) float32 { return e.VState.Controls.Roll }),
+			Set: vehicleSet("vehicle_roll", func(e *world.Entity, f float32) {
+				e.VState.Controls.Roll = clamp11(f)
+			}),
+			Doc: "roll control, -1 to 1",
+		},
+
+		// The drive tuning, writable while running. "Tuned by attributes" has to
+		// mean tunable during play, or it is a hard-coded model with a config
+		// file — a script that makes a car handle differently in the rain needs
+		// these to move.
+		"vehicle_max_speed":  driveProp("vehicle_max_speed", func(d *world.DriveSpec) *float32 { return &d.MaxSpeed }),
+		"vehicle_accel":      driveProp("vehicle_accel", func(d *world.DriveSpec) *float32 { return &d.Accel }),
+		"vehicle_brake":      driveProp("vehicle_brake", func(d *world.DriveSpec) *float32 { return &d.Brake }),
+		"vehicle_turn_rate":  driveProp("vehicle_turn_rate", func(d *world.DriveSpec) *float32 { return &d.TurnRate }),
+		"vehicle_pitch_rate": driveProp("vehicle_pitch_rate", func(d *world.DriveSpec) *float32 { return &d.PitchRate }),
+		"vehicle_roll_rate":  driveProp("vehicle_roll_rate", func(d *world.DriveSpec) *float32 { return &d.RollRate }),
+		"vehicle_drag":       driveProp("vehicle_drag", func(d *world.DriveSpec) *float32 { return &d.Drag }),
 	}
 }
 
@@ -400,3 +508,85 @@ func volumeProps() map[string]propAccess {
 type scriptMissingError struct{ what string }
 
 func (e *scriptMissingError) Error() string { return e.what + " no longer exists" }
+
+// ---------- vehicle property helpers ----------
+//
+// These exist because every vehicle property has the same two guards in front
+// of it: the ref has to resolve to an entity, and that entity has to actually be
+// a vehicle. Reading one of something that is not returns zero rather than
+// erroring — asking a crate how fast it is going is a fair question with a dull
+// answer — while *writing* one is a mistake worth reporting, because a script
+// steering a barrel is not doing what its author thinks.
+
+func vehicleGet(fn func(e *world.Entity) float32) func(*refCache, flang.RefVal) (flang.Value, bool) {
+	return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+		e := c.entityFor(r)
+		if e == nil {
+			return nil, false
+		}
+		if e.EnsureVehicleState() == nil {
+			return flang.FloatVal(0), true
+		}
+		return flang.FloatVal(float64(fn(e))), true
+	}
+}
+
+func vehicleSet(name string, fn func(e *world.Entity, f float32)) func(*refCache, flang.RefVal, flang.Value) error {
+	return func(c *refCache, r flang.RefVal, v flang.Value) error {
+		e := c.entityFor(r)
+		if e == nil {
+			return &scriptMissingError{r.String()}
+		}
+		f, ok := toFloat32(v)
+		if !ok {
+			return propErr(name, "number", v)
+		}
+		if e.EnsureVehicleState() == nil {
+			return fmt.Errorf("%s: %s is not a vehicle", name, r.String())
+		}
+		fn(e, f)
+		return nil
+	}
+}
+
+// driveProp builds a get/set pair for one field of the drive tuning.
+func driveProp(name string, field func(*world.DriveSpec) *float32) propAccess {
+	return propAccess{
+		Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+			e := c.entityFor(r)
+			if e == nil {
+				return nil, false
+			}
+			if e.Vehicle == nil {
+				return flang.FloatVal(0), true
+			}
+			return flang.FloatVal(float64(*field(&e.Vehicle.Drive))), true
+		},
+		Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+			e := c.entityFor(r)
+			if e == nil {
+				return &scriptMissingError{r.String()}
+			}
+			f, ok := toFloat32(v)
+			if !ok {
+				return propErr(name, "number", v)
+			}
+			if e.Vehicle == nil {
+				return fmt.Errorf("%s: %s is not a vehicle", name, r.String())
+			}
+			*field(&e.Vehicle.Drive) = f
+			return nil
+		},
+		Doc: "drive tuning, writable during play",
+	}
+}
+
+func clamp11(f float32) float32 {
+	if f < -1 {
+		return -1
+	}
+	if f > 1 {
+		return 1
+	}
+	return f
+}

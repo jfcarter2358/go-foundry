@@ -39,6 +39,27 @@ type KeybindSection struct {
 	Binds  []Keybind
 }
 
+// HelpPage is a tab of the reference beyond the keybindings — the engine's
+// events, the scripting standard library, the object properties.
+//
+// Draw renders the page's body with whichever imgui context is current, inside
+// a scrolling region the overlay has already opened. Like KeybindSections the
+// list is filled in from above (app/script_reference.go): this file knows how
+// to show a reference and deliberately not what is in one.
+//
+// It exists because the script editor had nowhere to put this. The window was
+// showing the whole language reference folded into the strip under the
+// diagnostics pane, which is where you look when something is wrong, and the
+// reference is what you read when nothing is. F1 is already the answer to
+// "what can I do here" everywhere else in the app.
+type HelpPage struct {
+	Title string
+	Draw  func()
+}
+
+// HelpPages are the extra tabs, in the order they are shown.
+var HelpPages []HelpPage
+
 // keybindHelpRestoreMouseLock remembers that the overlay released a captured
 // cursor, so closing it hands capture back.
 var keybindHelpRestoreMouseLock bool
@@ -165,11 +186,14 @@ func KeybindHelpRenderInWindow(uw *UIWindow) {
 // keybindHelpRender draws the reference centred in a viewport of the given
 // size, using whichever imgui context is current.
 func keybindHelpRender(w, h float32) {
-	winW := w * 0.82
-	if winW > 980 {
-		winW = 980
+	// Wider than it was, and a larger share of a small window: the reference
+	// now carries three-column tables of the standard library and the object
+	// properties, and a cramped one wraps every summary onto four lines.
+	winW := w * 0.90
+	if winW > 1100 {
+		winW = 1100
 	}
-	winH := h * 0.82
+	winH := h * 0.88
 
 	imgui.SetNextWindowPosV(imgui.Vec2{X: w / 2, Y: h / 2}, imgui.ConditionAlways, imgui.Vec2{X: 0.5, Y: 0.5})
 	imgui.SetNextWindowSizeV(imgui.Vec2{X: winW, Y: winH}, imgui.ConditionAlways)
@@ -183,24 +207,27 @@ func keybindHelpRender(w, h float32) {
 		imgui.WindowFlagsNoNav
 
 	open := true
-	if imgui.BeginV("Keybindings (F1)", &open, flags) {
-		imgui.Text("Bindings for the current mode are highlighted; the rest are dimmed.")
-		imgui.Separator()
-		imgui.Spacing()
-
-		// Two balanced columns — the full list is far taller than a screen in
-		// one column, and scrolling a reference you opened mid-task is worse
-		// than reading it.
-		left, right := KeybindSplitSections(KeybindSections)
-		imgui.ColumnsV(2, "##keybind_cols", false)
-		for _, s := range left {
-			keybindDrawSection(s)
+	if imgui.BeginV("Reference (F1)", &open, flags) {
+		if imgui.BeginTabBarV("##helptabs", imgui.TabBarFlagsFittingPolicyScroll) {
+			if imgui.BeginTabItem("Keybindings") {
+				keybindHelpDrawBindings()
+				imgui.EndTabItem()
+			}
+			for _, page := range HelpPages {
+				if page.Draw == nil {
+					continue
+				}
+				if imgui.BeginTabItem(page.Title) {
+					// Each page scrolls in its own region, so a long one
+					// cannot push the tab strip off the top of the overlay.
+					imgui.BeginChildV("##helppage", imgui.Vec2{}, false, 0)
+					page.Draw()
+					imgui.EndChild()
+					imgui.EndTabItem()
+				}
+			}
+			imgui.EndTabBar()
 		}
-		imgui.NextColumn()
-		for _, s := range right {
-			keybindDrawSection(s)
-		}
-		imgui.Columns()
 	}
 	imgui.End()
 
@@ -208,6 +235,30 @@ func keybindHelpRender(w, h float32) {
 	if !open {
 		KeybindHelpSetVisible(false)
 	}
+}
+
+// keybindHelpDrawBindings draws the keybinding tab: every section, in two
+// balanced columns.
+func keybindHelpDrawBindings() {
+	imgui.Text("Bindings for the current mode are highlighted; the rest are dimmed.")
+	imgui.Separator()
+	imgui.Spacing()
+
+	// Two balanced columns — the full list is far taller than a screen in one
+	// column, and scrolling a reference you opened mid-task is worse than
+	// reading it.
+	imgui.BeginChildV("##keybind_body", imgui.Vec2{}, false, 0)
+	left, right := KeybindSplitSections(KeybindSections)
+	imgui.ColumnsV(2, "##keybind_cols", false)
+	for _, s := range left {
+		keybindDrawSection(s)
+	}
+	imgui.NextColumn()
+	for _, s := range right {
+		keybindDrawSection(s)
+	}
+	imgui.Columns()
+	imgui.EndChild()
 }
 
 // KeybindSplitSections balances the sections across two columns by row count,

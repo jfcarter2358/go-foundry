@@ -184,6 +184,7 @@ func editorEntityProperties(lvl *world.Level) {
 	editorEntityBounds(e)
 	imgui.Separator()
 	editorEntityCollisionSection(e)
+	editorEntityVehicleSection(lvl, e)
 	imgui.Separator()
 	editorEntityTags(e)
 	imgui.Separator()
