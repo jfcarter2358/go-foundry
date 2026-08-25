@@ -197,6 +197,184 @@ func TestNewTexDocRejectsOversizedCanvas(t *testing.T) {
 	}
 }
 
+// ---------- animation stack (frames) ----------
+
+func TestNewDocStartsWithOneFrame(t *testing.T) {
+	pal := flattenPalette()
+	d := onePixelDoc(pal)
+	if d.FrameCount() != 1 {
+		t.Fatalf("FrameCount = %d, want 1", d.FrameCount())
+	}
+	if got := d.FPS(); got != 0 {
+		t.Errorf("FPS of a one-frame (unanimated) doc = %v, want 0", got)
+	}
+}
+
+func TestAddFrameGrowsStackAndFPS(t *testing.T) {
+	pal := flattenPalette()
+	d := onePixelDoc(pal)
+	if err := d.AddFrame(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddFrame(); err != nil {
+		t.Fatal(err)
+	}
+	if d.FrameCount() != 3 {
+		t.Fatalf("FrameCount = %d, want 3", d.FrameCount())
+	}
+	if got := d.FPS(); got != 3 {
+		t.Errorf("FPS = %v, want 3 (one frame count per second)", got)
+	}
+}
+
+func TestFrameEditsAreIsolatedPerFrame(t *testing.T) {
+	pal := flattenPalette()
+	d := onePixelDoc(pal)
+	d.Layers[0].Idx[0] = 1 // red, on frame 0
+	if err := d.AddFrame(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetActiveFrame(1); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Layers[0].Idx[0]; got != 0 {
+		t.Errorf("frame 1 started with texel = %d, want 0 (fresh, not inherited from frame 0)", got)
+	}
+	d.Layers[0].Idx[0] = 3 // blue, on frame 1
+
+	if got := d.FlattenFrame(0).Pix[0]; got != 1 {
+		t.Errorf("frame 0 flattened = %d, want 1 (red, unaffected by editing frame 1)", got)
+	}
+	if got := d.FlattenFrame(1).Pix[0]; got != 3 {
+		t.Errorf("frame 1 flattened = %d, want 3 (blue)", got)
+	}
+
+	if err := d.SetActiveFrame(0); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Layers[0].Idx[0]; got != 1 {
+		t.Errorf("after checking back out to frame 0, texel = %d, want 1 (preserved)", got)
+	}
+}
+
+func TestDuplicateFrameCopiesLayersIndependently(t *testing.T) {
+	pal := flattenPalette()
+	d := onePixelDoc(pal)
+	d.Layers[0].Idx[0] = 2
+	if err := d.DuplicateFrame(0); err != nil {
+		t.Fatal(err)
+	}
+	if d.FrameCount() != 2 {
+		t.Fatalf("FrameCount = %d, want 2", d.FrameCount())
+	}
+	if err := d.SetActiveFrame(1); err != nil {
+		t.Fatal(err)
+	}
+	d.Layers[0].Idx[0] = 5 // mutate the duplicate
+	if got := d.FlattenFrame(0).Pix[0]; got != 2 {
+		t.Errorf("original frame changed to %d after editing its duplicate, want unchanged 2", got)
+	}
+}
+
+func TestDeleteActiveFrameChecksOutAValidFrame(t *testing.T) {
+	pal := flattenPalette()
+	d := onePixelDoc(pal)
+	if err := d.AddFrame(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddFrame(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetActiveFrame(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.DeleteFrame(1); err != nil {
+		t.Fatal(err)
+	}
+	if d.FrameCount() != 2 {
+		t.Fatalf("FrameCount = %d, want 2", d.FrameCount())
+	}
+	// Deleting the checked-out frame must leave Layers/Active pointing at a
+	// real surviving frame, not the deleted one's now-orphaned data.
+	if d.Layers == nil || len(d.Layers) == 0 {
+		t.Fatal("Layers is empty after deleting the checked-out frame")
+	}
+}
+
+func TestDeleteFrameRejectsTheLastOne(t *testing.T) {
+	pal := flattenPalette()
+	d := onePixelDoc(pal)
+	if err := d.DeleteFrame(0); err == nil {
+		t.Error("DeleteFrame should refuse to delete the only remaining frame")
+	}
+}
+
+func TestMoveFrameSwapsOrder(t *testing.T) {
+	pal := flattenPalette()
+	d := onePixelDoc(pal)
+	d.Layers[0].Idx[0] = 1
+	if err := d.AddFrame(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetActiveFrame(1); err != nil {
+		t.Fatal(err)
+	}
+	d.Layers[0].Idx[0] = 3
+	if err := d.MoveFrame(0, true); err != nil { // frame 0 (red) moves after frame 1 (blue)
+		t.Fatal(err)
+	}
+	if got := d.FlattenFrame(0).Pix[0]; got != 3 {
+		t.Errorf("frame 0 after MoveFrame = %d, want 3 (blue, was frame 1)", got)
+	}
+	if got := d.FlattenFrame(1).Pix[0]; got != 1 {
+		t.Errorf("frame 1 after MoveFrame = %d, want 1 (red, was frame 0)", got)
+	}
+}
+
+func TestFrameLimit(t *testing.T) {
+	pal := flattenPalette()
+	d := onePixelDoc(pal)
+	for i := 1; i < texdoc.TexMaxFrames; i++ {
+		if err := d.AddFrame(); err != nil {
+			t.Fatalf("AddFrame %d: %v", i, err)
+		}
+	}
+	if d.FrameCount() != texdoc.TexMaxFrames {
+		t.Fatalf("frame count = %d, want %d", d.FrameCount(), texdoc.TexMaxFrames)
+	}
+	if err := d.AddFrame(); err == nil {
+		t.Error("AddFrame beyond the cap should fail")
+	}
+	if err := d.DuplicateFrame(0); err == nil {
+		t.Error("DuplicateFrame beyond the cap should fail")
+	}
+}
+
+func TestCloneTexDocCopiesEveryFrame(t *testing.T) {
+	pal := flattenPalette()
+	d := onePixelDoc(pal)
+	d.Layers[0].Idx[0] = 1
+	if err := d.AddFrame(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetActiveFrame(1); err != nil {
+		t.Fatal(err)
+	}
+	d.Layers[0].Idx[0] = 3
+
+	clone := texdoc.CloneTexDoc(d)
+	if clone.FrameCount() != 2 {
+		t.Fatalf("clone frame count = %d, want 2", clone.FrameCount())
+	}
+	clone.Layers[0].Idx[0] = 9 // mutate the clone's checked-out frame
+	if got := d.Layers[0].Idx[0]; got != 3 {
+		t.Errorf("original doc's frame 1 changed to %d after mutating the clone, want unchanged 3", got)
+	}
+	if got := clone.FlattenFrame(0).Pix[0]; got != 1 {
+		t.Errorf("clone frame 0 = %d, want 1 (copied from the original)", got)
+	}
+}
+
 func TestLayerLimits(t *testing.T) {
 	pal := flattenPalette()
 	d := onePixelDoc(pal)

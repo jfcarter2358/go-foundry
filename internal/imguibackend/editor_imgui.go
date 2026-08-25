@@ -154,16 +154,32 @@ func ImGuiNewFrame(dt float32) {
 	io := imgui.CurrentIO()
 	gx, gy, mbuttons := sdl.GetGlobalMouseState()
 	wx, wy := platform.Window.GetPosition()
-	ImguiNewFrameCommon(io, float32(gx-wx), float32(gy-wy), mbuttons, platform.WinWidth, platform.WinHeight, dt)
+	focused := platform.Window.GetFlags()&sdl.WINDOW_INPUT_FOCUS != 0
+	ImguiNewFrameCommon(io, float32(gx-wx), float32(gy-wy), mbuttons, focused, platform.WinWidth, platform.WinHeight, dt)
 }
 
 // ImguiNewFrameCommon applies display size, delta time and mouse state to io
 // and starts the imgui frame. Shared by ImGuiNewFrame (main window) and
 // uiWindowNewFrame (window.go) so the two can't drift apart.
-func ImguiNewFrameCommon(io imgui.IO, mouseX, mouseY float32, mbuttons sdl.ButtonMask, w, h int32, dt float32) {
+//
+// mbuttons comes from sdl.GetGlobalMouseState, which reports the physical
+// button state regardless of which OS window is under the cursor. Each open
+// window runs its own imgui context, and none of them knows about the others'
+// on-screen rectangles, so without the focused gate a click on the topmost
+// window would also register on any unfocused window whose (translated)
+// layout happens to have a widget under the same screen point — the same
+// global-state-leaking-into-the-wrong-window hazard the WINDOW_INPUT_FOCUS
+// checks elsewhere in this codebase guard against for keyboard input. Only
+// the window that actually owns input focus reports buttons as down; an
+// unfocused window still gets the mouse position (so hover/disabled styling
+// stays correct) but never sees a click it didn't receive.
+func ImguiNewFrameCommon(io imgui.IO, mouseX, mouseY float32, mbuttons sdl.ButtonMask, focused bool, w, h int32, dt float32) {
 	io.SetDisplaySize(imgui.Vec2{X: float32(w), Y: float32(h)})
 	io.SetDeltaTime(dt)
 	io.SetMousePosition(imgui.Vec2{X: mouseX, Y: mouseY})
+	if !focused {
+		mbuttons = 0
+	}
 	io.SetMouseButtonDown(0, mbuttons&sdl.ButtonLMask != 0)
 	io.SetMouseButtonDown(1, mbuttons&sdl.ButtonRMask != 0)
 	io.SetMouseButtonDown(2, mbuttons&sdl.ButtonMMask != 0)

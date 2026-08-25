@@ -153,6 +153,8 @@ type RawEdge struct {
 	To            string            `yaml:"to"`
 	Kind          string            `yaml:"kind"`
 	Texture       string            `yaml:"texture"`
+	BlendTexture  string            `yaml:"blend_texture,omitempty"`
+	BlendMask     string            `yaml:"blend_mask,omitempty"`
 	Collision     bool              `yaml:"collision"`
 	Hidden        bool              `yaml:"hidden"`           // true = wall/portal not rendered (default false = visible)
 	Pinned        bool              `yaml:"pinned,omitempty"` // true = wall stays a wall even if shared with another sector
@@ -180,6 +182,8 @@ type RawFloor struct {
 	Hidden        bool              `yaml:"hidden,omitempty"` // texture/geometry hidden; Enabled/collision unaffected
 	Height        float32           `yaml:"height"`
 	Texture       string            `yaml:"texture"`
+	BlendTexture  string            `yaml:"blend_texture,omitempty"`
+	BlendMask     string            `yaml:"blend_mask,omitempty"`
 	Terrain       bool              `yaml:"terrain"`
 	VertexOffsets []float32         `yaml:"vertex_offsets,omitempty"`
 	DoubleSided   *bool             `yaml:"double_sided,omitempty"` // default true when absent
@@ -200,6 +204,8 @@ type RawCeiling struct {
 	Enabled       bool              `yaml:"enabled"`
 	Height        float32           `yaml:"height"`
 	Texture       string            `yaml:"texture"`
+	BlendTexture  string            `yaml:"blend_texture,omitempty"`
+	BlendMask     string            `yaml:"blend_mask,omitempty"`
 	Terrain       bool              `yaml:"terrain,omitempty"`
 	VertexOffsets []float32         `yaml:"vertex_offsets,omitempty"`
 	DoubleSided   *bool             `yaml:"double_sided,omitempty"` // default true when absent

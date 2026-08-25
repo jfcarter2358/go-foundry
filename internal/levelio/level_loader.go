@@ -175,6 +175,8 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 				Hidden:        rs.Floor.Hidden,
 				Height:        rs.Floor.Height,
 				Texture:       rs.Floor.Texture,
+				BlendTexture:  rs.Floor.BlendTexture,
+				BlendMask:     rs.Floor.BlendMask,
 				Terrain:       rs.Floor.Terrain,
 				DoubleSided:   world.BoolDefault(rs.Floor.DoubleSided, true),
 				Alpha:         float32Default(rs.Floor.Alpha, 1.0),
@@ -192,6 +194,8 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 				Enabled:       rs.Ceiling.Enabled,
 				Height:        rs.Ceiling.Height,
 				Texture:       rs.Ceiling.Texture,
+				BlendTexture:  rs.Ceiling.BlendTexture,
+				BlendMask:     rs.Ceiling.BlendMask,
 				Terrain:       rs.Ceiling.Terrain,
 				DoubleSided:   world.BoolDefault(rs.Ceiling.DoubleSided, true),
 				Alpha:         float32Default(rs.Ceiling.Alpha, 1.0),
@@ -209,8 +213,20 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		if rs.Floor.Texture != "" {
 			texNeeded[rs.Floor.Texture] = true
 		}
+		if rs.Floor.BlendTexture != "" {
+			texNeeded[rs.Floor.BlendTexture] = true
+		}
+		if rs.Floor.BlendMask != "" {
+			texNeeded[rs.Floor.BlendMask] = true
+		}
 		if rs.Ceiling.Texture != "" {
 			texNeeded[rs.Ceiling.Texture] = true
+		}
+		if rs.Ceiling.BlendTexture != "" {
+			texNeeded[rs.Ceiling.BlendTexture] = true
+		}
+		if rs.Ceiling.BlendMask != "" {
+			texNeeded[rs.Ceiling.BlendMask] = true
 		}
 
 		// A sector's edges must form a closed ring visiting each point exactly
@@ -269,6 +285,12 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 				if edge.Texture != "" {
 					texNeeded[edge.Texture] = true
 				}
+				if edge.BlendTexture != "" {
+					texNeeded[edge.BlendTexture] = true
+				}
+				if edge.BlendMask != "" {
+					texNeeded[edge.BlendMask] = true
+				}
 				wallUVScale := mgl32.Vec2{edge.UVScale.X, edge.UVScale.Y}
 				if wallUVScale == (mgl32.Vec2{}) {
 					wallUVScale = mgl32.Vec2{1, 1}
@@ -279,6 +301,8 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 					StartPoint:    start,
 					EndPoint:      end,
 					Texture:       edge.Texture,
+					BlendTexture:  edge.BlendTexture,
+					BlendMask:     edge.BlendMask,
 					Collision:     edge.Collision,
 					Visible:       !edge.Hidden,
 					Pinned:        edge.Pinned,

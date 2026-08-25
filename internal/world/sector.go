@@ -16,6 +16,8 @@ type Floor struct {
 	Height              float32
 	VertexOffsets       []float32 // per-vertex Y delta from Height; len must equal len(sector.PointIndices)
 	Texture             string
+	BlendTexture        string  // optional second texture, mixed in by BlendMask's luminance
+	BlendMask           string  // grayscale mask texture; 0 = Texture, 1 = BlendTexture
 	Terrain             bool    // if true, use terrain displacement mesh
 	DoubleSided         bool    // if true, floor is rendered from both sides (default true)
 	Alpha               float32 // 0.0 = fully transparent, 1.0 = fully opaque
@@ -51,6 +53,8 @@ type Ceiling struct {
 	Height              float32
 	VertexOffsets       []float32 // per-vertex Y delta from Height; len must equal len(sector.PointIndices)
 	Texture             string
+	BlendTexture        string  // optional second texture, mixed in by BlendMask's luminance
+	BlendMask           string  // grayscale mask texture; 0 = Texture, 1 = BlendTexture
 	Terrain             bool    // if true, use terrain displacement mesh
 	DoubleSided         bool    // if true, ceiling is rendered from both sides (default true)
 	Alpha               float32 // 0.0 = fully transparent, 1.0 = fully opaque
@@ -345,6 +349,8 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 
 	// Propagate floor alpha to its geometry (extrusion geometries keep their own per-extrusion alpha)
 	s.Floor.Geometry.Alpha = s.Floor.Alpha
+	s.Floor.Geometry.BlendTexture = s.Floor.BlendTexture
+	s.Floor.Geometry.BlendMask = s.Floor.BlendMask
 
 	// Build ceiling geometry
 	if s.Ceiling.Enabled && len(points) >= 3 {
@@ -389,10 +395,14 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 
 	// Propagate ceiling alpha to its geometry (extrusion geometries keep their own per-extrusion alpha)
 	s.Ceiling.Geometry.Alpha = s.Ceiling.Alpha
+	s.Ceiling.Geometry.BlendTexture = s.Ceiling.BlendTexture
+	s.Ceiling.Geometry.BlendMask = s.Ceiling.BlendMask
 
 	// Propagate wall alpha to geometry (extrusion geometries keep their own per-extrusion alpha)
 	for i := range s.Walls {
 		s.Walls[i].Geometry.Alpha = s.Walls[i].Alpha
+		s.Walls[i].Geometry.BlendTexture = s.Walls[i].BlendTexture
+		s.Walls[i].Geometry.BlendMask = s.Walls[i].BlendMask
 	}
 
 	// Propagate portal alpha to gap geometry

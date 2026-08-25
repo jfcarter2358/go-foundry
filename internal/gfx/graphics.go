@@ -62,6 +62,28 @@ var (
 	ReflectColorUniform  int32
 )
 
+// Texture-blend shader uniform locations, set per-draw from Geometry's
+// BlendTexture/BlendMask — see applyBlendUniforms in geometry.go.
+//
+// BlendTexUnit/BlendMaskUnit are the fixed texture image units they bind to.
+// Unit 0 is the albedo (tex), unit render.CascadeTexUnit (1) is the
+// directional shadow cascade array, and world.MaxPointLights units after that
+// (2..9) are the point-light shadow cubemaps (see UploadPointShadowUniformsTo
+// in internal/render/shadow.go) — colliding with any of those binds a
+// differently-typed sampler to the same unit, which is invalid and silently
+// breaks every draw through this program. 10/11 sit safely past all of them,
+// still well inside GL 4.1's guaranteed minimum of 16 texture image units.
+const (
+	BlendTexUnit  = 10
+	BlendMaskUnit = 11
+)
+
+var (
+	HasBlendUniform  int32
+	BlendTexUniform  int32
+	BlendMaskUniform int32
+)
+
 func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
 	vertexShaderBytes, err := os.ReadFile(VertexShaderPath)
 	if err != nil {

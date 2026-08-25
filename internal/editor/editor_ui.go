@@ -1039,6 +1039,8 @@ func editor2DSectorSections(ch *world.Chunk) {
 				imgui.Checkbox("Hide Texture##fhid", &s.Floor.Hidden)
 				changed = editorDragFloat("Height##fh", &s.Floor.Height, 0, 0, "%.3f") || changed
 				changed = textureCombo("Texture##ft", &s.Floor.Texture, false) || changed
+				changed = textureCombo("Blend Texture##fbt", &s.Floor.BlendTexture, true) || changed
+				changed = textureCombo("Blend Mask##fbm", &s.Floor.BlendMask, true) || changed
 				changed = imgui.Checkbox("Terrain##fter", &s.Floor.Terrain) || changed
 				imgui.Checkbox("Double Sided##fds", &s.Floor.DoubleSided)
 				changed = editorDragFloat("Alpha##fa", &s.Floor.Alpha, 0, 1, "%.2f") || changed
@@ -1054,6 +1056,8 @@ func editor2DSectorSections(ch *world.Chunk) {
 				changed = imgui.Checkbox("Enabled##ce", &s.Ceiling.Enabled) || changed
 				changed = editorDragFloat("Height##ch", &s.Ceiling.Height, 0, 0, "%.3f") || changed
 				changed = textureCombo("Texture##ct", &s.Ceiling.Texture, false) || changed
+				changed = textureCombo("Blend Texture##cbt", &s.Ceiling.BlendTexture, true) || changed
+				changed = textureCombo("Blend Mask##cbm", &s.Ceiling.BlendMask, true) || changed
 				changed = imgui.Checkbox("Terrain##cter", &s.Ceiling.Terrain) || changed
 				imgui.Checkbox("Double Sided##cds", &s.Ceiling.DoubleSided)
 				changed = editorDragFloat("Alpha##ca", &s.Ceiling.Alpha, 0, 1, "%.2f") || changed
@@ -1157,6 +1161,8 @@ func editorEdgePanel(ch *world.Chunk, s *world.Sector) {
 	if kind == "wall" && idx < len(s.Walls) {
 		w := &s.Walls[idx]
 		changed = textureCombo("Texture##wt", &w.Texture, false) || changed
+		changed = textureCombo("Blend Texture##wbt", &w.BlendTexture, true) || changed
+		changed = textureCombo("Blend Mask##wbm", &w.BlendMask, true) || changed
 		changed = imgui.Checkbox("Collision##wc", &w.Collision) || changed
 		changed = imgui.Checkbox("Visible##wv", &w.Visible) || changed
 		// The wall mesh bakes DoubleSided in, so this needs the rebuild below —

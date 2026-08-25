@@ -194,6 +194,7 @@ func texEditorRefreshPreview() {
 	if ed.BoundTexture != "" {
 		gfx.UpdateTextureHasAlpha(ed.BoundTexture, &ed.Doc.Pal, flat)
 		gfx.QueueTextureUpload(ed.BoundTexture, rgba)
+		gfx.TouchAnimatedTexture(ed.BoundTexture)
 	}
 	ed.PreviewDirty = false
 }
@@ -300,6 +301,10 @@ func drawTextureEditorUI() {
 		imgui.End()
 		return
 	}
+
+	imgui.BeginChildV("##texeditor_frames", imgui.Vec2{X: 0, Y: 110}, true, 0)
+	drawFramesPanel()
+	imgui.EndChild()
 
 	imgui.BeginChildV("##texeditor_left", imgui.Vec2{X: 200, Y: 0}, true, 0)
 	drawToolsPanel()
@@ -763,6 +768,96 @@ func texEditorVec4ToColor(v [4]float32) color.RGBA {
 	return color.RGBA{R: q(v[0]), G: q(v[1]), B: q(v[2]), A: q(v[3])}
 }
 
+// ---------- frames panel (animation stack) ----------
+
+// drawFramesPanel draws the animation stack: one document, several frames,
+// each frame its own layer stack — the layers panel below always shows the
+// frame selected here. A single-frame document is simply not animated; the
+// strip still draws (with just "1" in it and every frame-count button
+// disabled) so turning a static texture into an animated one is just
+// clicking Add Frame, not a separate mode to switch into first.
+func drawFramesPanel() {
+	ed := ActiveTexEditor
+	d := ed.Doc
+	n := d.FrameCount()
+	active := d.ActiveFrameIndex()
+
+	imgui.Text(fmt.Sprintf("Frames (%d/%d)", n, texdoc.TexMaxFrames))
+	if fps := d.FPS(); fps > 0 {
+		imgui.SameLine()
+		imgui.Text(fmt.Sprintf("— animated, %.0f fps (one full cycle per second)", fps))
+	}
+
+	imguibackend.EditorPushDisabled(n >= texdoc.TexMaxFrames)
+	if imgui.Button("Add Frame") {
+		if err := ed.AddFrame(); err != nil {
+			texEditorStatus(err.Error())
+		}
+	}
+	imguibackend.EditorPopDisabled()
+	imgui.SameLine()
+	imguibackend.EditorPushDisabled(n >= texdoc.TexMaxFrames)
+	if imgui.Button("Duplicate Frame") {
+		if err := ed.DuplicateFrame(active); err != nil {
+			texEditorStatus(err.Error())
+		}
+	}
+	imguibackend.EditorPopDisabled()
+	imgui.SameLine()
+	imguibackend.EditorPushDisabled(n <= 1)
+	if imgui.Button("Delete Frame") {
+		if err := ed.DeleteFrame(active); err != nil {
+			texEditorStatus(err.Error())
+		}
+	}
+	imguibackend.EditorPopDisabled()
+	imgui.SameLine()
+	imguibackend.EditorPushDisabled(active == 0)
+	if imgui.Button("< Move##frameleft") {
+		if err := ed.MoveFrame(active, false); err != nil {
+			texEditorStatus(err.Error())
+		}
+	}
+	imguibackend.EditorPopDisabled()
+	imgui.SameLine()
+	imguibackend.EditorPushDisabled(active == n-1)
+	if imgui.Button("Move >##frameright") {
+		if err := ed.MoveFrame(active, true); err != nil {
+			texEditorStatus(err.Error())
+		}
+	}
+	imguibackend.EditorPopDisabled()
+
+	// The strip itself: one selectable button per frame, wrapping to the
+	// panel's actual width rather than a fixed count per row — the same
+	// width-driven wrap the palette grid uses (drawPalettePanel).
+	const btnW = float32(56)
+	const spacing = float32(4)
+	perRow := int((imgui.ContentRegionAvail().X + spacing) / (btnW + spacing))
+	if perRow < 1 {
+		perRow = 1
+	}
+	for i := 0; i < n; i++ {
+		if i%perRow != 0 {
+			imgui.SameLine()
+		}
+		imgui.PushID(fmt.Sprintf("texframe%d", i))
+		selected := i == active
+		if selected {
+			imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
+		}
+		if imgui.ButtonV(fmt.Sprintf("%d", i+1), imgui.Vec2{X: btnW, Y: 0}) {
+			if err := ed.SetActiveFrame(i); err != nil {
+				texEditorStatus(err.Error())
+			}
+		}
+		if selected {
+			imgui.PopStyleColor()
+		}
+		imgui.PopID()
+	}
+}
+
 // ---------- layers panel ----------
 
 var texEditorBlendNames = []string{"Normal", "Multiply", "Add", "Screen"}
@@ -770,7 +865,11 @@ var texEditorBlendNames = []string{"Normal", "Multiply", "Add", "Screen"}
 func drawLayersPanel() {
 	ed := ActiveTexEditor
 	d := ed.Doc
-	imgui.Text(fmt.Sprintf("Layers (%d/%d)", len(d.Layers), texdoc.TexMaxLayers))
+	if d.FrameCount() > 1 {
+		imgui.Text(fmt.Sprintf("Layers (%d/%d) — frame %d/%d", len(d.Layers), texdoc.TexMaxLayers, d.ActiveFrameIndex()+1, d.FrameCount()))
+	} else {
+		imgui.Text(fmt.Sprintf("Layers (%d/%d)", len(d.Layers), texdoc.TexMaxLayers))
+	}
 
 	imguibackend.EditorPushDisabled(len(d.Layers) >= texdoc.TexMaxLayers)
 	if imgui.Button("Add") {

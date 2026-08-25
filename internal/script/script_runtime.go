@@ -760,12 +760,30 @@ func DrainScriptWork(lvl *world.Level) {
 				if s.Floor.Texture != "" {
 					_ = gfx.EnsureTextureLoaded(s.Floor.Texture)
 				}
+				if s.Floor.BlendTexture != "" {
+					_ = gfx.EnsureTextureLoaded(s.Floor.BlendTexture)
+				}
+				if s.Floor.BlendMask != "" {
+					_ = gfx.EnsureTextureLoaded(s.Floor.BlendMask)
+				}
 				if s.Ceiling.Texture != "" {
 					_ = gfx.EnsureTextureLoaded(s.Ceiling.Texture)
+				}
+				if s.Ceiling.BlendTexture != "" {
+					_ = gfx.EnsureTextureLoaded(s.Ceiling.BlendTexture)
+				}
+				if s.Ceiling.BlendMask != "" {
+					_ = gfx.EnsureTextureLoaded(s.Ceiling.BlendMask)
 				}
 				for i := range s.Walls {
 					if s.Walls[i].Texture != "" {
 						_ = gfx.EnsureTextureLoaded(s.Walls[i].Texture)
+					}
+					if s.Walls[i].BlendTexture != "" {
+						_ = gfx.EnsureTextureLoaded(s.Walls[i].BlendTexture)
+					}
+					if s.Walls[i].BlendMask != "" {
+						_ = gfx.EnsureTextureLoaded(s.Walls[i].BlendMask)
 					}
 				}
 				beforeMin, beforeMax := s.MinBound, s.MaxBound

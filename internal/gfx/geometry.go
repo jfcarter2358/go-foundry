@@ -21,7 +21,12 @@ import (
 // their own rather than interleaved, so Vertices stays the 5-float record that
 // picking, the shadow passes and the detail renderer all index directly.
 type Geometry struct {
-	Texture                    string
+	Texture string
+	// BlendTexture/BlendMask, when both set, mix a second texture over
+	// Texture at draw time — see applyBlendUniforms. Empty (the default) means
+	// no blending, at no extra GPU cost.
+	BlendTexture               string
+	BlendMask                  string
 	TextureUniform             int32
 	TextureCoordinateAttribute uint32
 	Vertices                   []float32
@@ -81,6 +86,25 @@ func (g *Geometry) applyWaterUniforms() {
 	gl.Uniform1f(ReflectivityUniform, g.Water.Reflectivity)
 	gl.Uniform3f(ReflectColorUniform,
 		g.Water.ReflectColor.X(), g.Water.ReflectColor.Y(), g.Water.ReflectColor.Z())
+}
+
+// applyBlendUniforms pushes this geometry's second-texture blend state to the
+// shader. Every draw call sets it, including the disabled case, so a blended
+// surface never leaks its blendTex/blendMask binding onto the geometry drawn
+// after it. Mirrors applyWaterUniforms.
+func (g *Geometry) applyBlendUniforms() {
+	if g.BlendTexture == "" || g.BlendMask == "" {
+		gl.Uniform1i(HasBlendUniform, 0)
+		return
+	}
+	gl.Uniform1i(HasBlendUniform, 1)
+	gl.ActiveTexture(gl.TEXTURE0 + BlendTexUnit)
+	gl.BindTexture(gl.TEXTURE_2D, Textures[g.BlendTexture])
+	gl.Uniform1i(BlendTexUniform, BlendTexUnit)
+	gl.ActiveTexture(gl.TEXTURE0 + BlendMaskUnit)
+	gl.BindTexture(gl.TEXTURE_2D, Textures[g.BlendMask])
+	gl.Uniform1i(BlendMaskUniform, BlendMaskUnit)
+	gl.ActiveTexture(gl.TEXTURE0)
 }
 
 // GeometryUploadsEnabled gates the GPU half of Geometry.Load. It is true in the
@@ -269,6 +293,7 @@ func (g Geometry) Draw() {
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	g.applyWaterUniforms()
+	g.applyBlendUniforms()
 	ApplySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
 
 	gl.BindVertexArray(g.Vao)
@@ -289,6 +314,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	g.applyWaterUniforms()
+	g.applyBlendUniforms()
 	ApplySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)

@@ -56,8 +56,10 @@ func entrySize(e texUndoEntry) int {
 
 func docByteSize(d *texdoc.TexDoc) int {
 	n := 0
-	for _, l := range d.Layers {
-		n += len(l.Idx)
+	for _, f := range d.Frames() {
+		for _, l := range f.Layers {
+			n += len(l.Idx)
+		}
 	}
 	return n
 }
@@ -405,6 +407,61 @@ func (e *TexEditorState) MoveLayer(i int, up bool) error {
 	return nil
 }
 
+// ---------- structural frame (animation stack) ops ----------
+//
+// Same undo shape as the layer ops above: snapshot, attempt, record only on
+// success. SetActiveFrame is deliberately not here — switching frames is not
+// undoable, matching how switching the active layer within a frame isn't.
+
+func (e *TexEditorState) AddFrame() error {
+	before := texdoc.CloneTexDoc(e.Doc)
+	if err := e.Doc.AddFrame(); err != nil {
+		return err
+	}
+	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
+	e.PreviewDirty = true
+	return nil
+}
+
+func (e *TexEditorState) DuplicateFrame(i int) error {
+	before := texdoc.CloneTexDoc(e.Doc)
+	if err := e.Doc.DuplicateFrame(i); err != nil {
+		return err
+	}
+	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
+	e.PreviewDirty = true
+	return nil
+}
+
+func (e *TexEditorState) DeleteFrame(i int) error {
+	before := texdoc.CloneTexDoc(e.Doc)
+	if err := e.Doc.DeleteFrame(i); err != nil {
+		return err
+	}
+	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
+	e.PreviewDirty = true
+	return nil
+}
+
+func (e *TexEditorState) MoveFrame(i int, up bool) error {
+	before := texdoc.CloneTexDoc(e.Doc)
+	if err := e.Doc.MoveFrame(i, up); err != nil {
+		return err
+	}
+	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
+	e.PreviewDirty = true
+	return nil
+}
+
+// SetActiveFrame checks out frame i for editing. Not undoable; see above.
+func (e *TexEditorState) SetActiveFrame(i int) error {
+	if err := e.Doc.SetActiveFrame(i); err != nil {
+		return err
+	}
+	e.PreviewDirty = true
+	return nil
+}
+
 // ---------- GPU sync + persistence ----------
 
 // RgbaFromPaletted expands a flattened, on-palette image to plain RGBA for
@@ -416,9 +473,12 @@ func RgbaFromPaletted(p *image.Paletted) *image.RGBA {
 	return out
 }
 
-// SyncLiveTexture flattens the document and queues a GPU upload if it's
-// bound to a texture name, so every keystroke/brush stroke updates the world
-// live — requirement 6 covers editing, not just saving.
+// SyncLiveTexture flattens the checked-out frame and queues a GPU upload if
+// it's bound to a texture name, so every keystroke/brush stroke updates the
+// world live — requirement 6 covers editing, not just saving. Touches the
+// name with gfx (see TouchAnimatedTexture) so an animated texture's own
+// playback clock doesn't race this upload and overwrite the frame being
+// painted with a stale cached one.
 func (e *TexEditorState) SyncLiveTexture() {
 	if e.BoundTexture == "" {
 		return
@@ -426,11 +486,43 @@ func (e *TexEditorState) SyncLiveTexture() {
 	flat := e.Doc.Flatten()
 	gfx.UpdateTextureHasAlpha(e.BoundTexture, &e.Doc.Pal, flat)
 	gfx.QueueTextureUpload(e.BoundTexture, RgbaFromPaletted(flat))
+	gfx.TouchAnimatedTexture(e.BoundTexture)
+}
+
+// SyncAnimatedFrames registers name's frame stack with gfx so
+// AdvanceAnimatedTextures can cycle through it, or un-registers it if d is
+// back down to a single frame. Shared by Save (below) and
+// RebuildAllTextures (texture_palette.go), the two places a document's
+// frame count can change on disk.
+//
+// has-alpha is folded in here too, ORed across every frame rather than just
+// the checked-out one: Geometry.IsTransparent routes a whole surface into
+// the sorted blended pass or not, so it needs to know about transparency in
+// any frame the surface might be showing, not only the one last saved from.
+func SyncAnimatedFrames(d *texdoc.TexDoc, name string) {
+	if d.FrameCount() <= 1 {
+		gfx.UnregisterAnimatedTexture(name)
+		flat := d.Flatten()
+		gfx.UpdateTextureHasAlpha(name, &d.Pal, flat)
+		return
+	}
+	frames := make([]*image.RGBA, d.FrameCount())
+	hasAlpha := false
+	for i := range frames {
+		flat := d.FlattenFrame(i)
+		if gfx.ComputeHasAlpha(&d.Pal, flat) {
+			hasAlpha = true
+		}
+		frames[i] = RgbaFromPaletted(flat)
+	}
+	gfx.SetTextureHasAlpha(name, hasAlpha)
+	gfx.RegisterAnimatedTexture(name, frames)
 }
 
 // Save writes the document to <exe>/textures/<name>.{ftex,png}, registers it
 // so the 2D/3D editor's texture dropdowns can find it immediately
-// (requirement 7), and queues the flattened image for GPU upload.
+// (requirement 7), registers/unregisters its animation stack to match its
+// current frame count, and queues the flattened image for GPU upload.
 func (e *TexEditorState) Save(name string) error {
 	if err := SaveTexDoc(e.Doc, name); err != nil {
 		return err
@@ -438,6 +530,10 @@ func (e *TexEditorState) Save(name string) error {
 	gfx.RegisterTexture(name)
 	e.BoundTexture = name
 	e.SyncLiveTexture()
+	// After SyncLiveTexture, not before: that call's own has-alpha update
+	// only looks at the checked-out frame, and would otherwise immediately
+	// overwrite the flag this ORs across every frame in the stack.
+	SyncAnimatedFrames(e.Doc, name)
 	return nil
 }
 

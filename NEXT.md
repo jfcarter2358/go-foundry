@@ -56,13 +56,8 @@
 - [x] Object collision physics (push-apart; no restitution or friction yet)
 - [x] Vehicles (seated and walkable-interior, 6DOF, nested frames, frame portals)
 - [x] Frames — moving coordinate systems that geometry and entities can live in
-
-## TODO
-
-### Editor
-
-- [ ] Debugger
-- [ ] UI builder
+- [x] All windows should have the exit button on the top
+- [x] New windows should open on top of the existing even in fullscreen mode
 - [x] Re-do top bar
 - [x] Re-organize 3D editor settings panel
 - [x] Re-organize 2D editor settings panel
@@ -70,33 +65,6 @@
 - [x] Re-organize texture editor settings panel
 - [x] Re-organize script editor settings panel
 - [x] Re-organize log settings panel
-- [x] Configurable editor keybindings
-- [x] All windows should have the exit button on the top
-- [x] New windows should open on top of the existing even in fullscreen mode
-
-### Engine
-
-
-- [ ] Animated textures
-- [ ] Sprites
-- [ ] Particles
-- [ ] Skeleton sockets
-- [ ] Physics engine
-- [ ] Texture transparency
-- [ ] Texture blending
-- [ ] Trees
-- [ ] Configurable keybindings
-- [ ] Water reflections
-- [ ] Music and Sound Effects
-- [ ] Volumetric displacement (e.g. sand, snow)
-- [ ] Re-do wall extrusion setup to be like the model editor
-
-### Follow-on from entities
-
-Entities answered "how does an authored model get into a world" — a definition
-under `entities/`, placed as an instance by a level — and re-fed the GPU skinning
-path. What is left is what deliberately was not built with them:
-
 - [x] Entity-against-world and entity-against-entity collision, as per-type
       toggles (`collision: {world, entities, gravity, movable}`) with engine-wide
       master switches on 8 and 9 — no scripting needed
@@ -106,8 +74,38 @@ path. What is left is what deliberately was not built with them:
       pairs keep their own tuned min-axis path)
 - [x] Swept collision — motion is split into steps no longer than the body, so
       nothing passes through a wall it was moving too fast to be sampled against
-- [ ] Restitution/friction, and more than one solver iteration per frame
 - [x] Scripting: `@id` and `#tag` addressing, and reading/writing attributes
+- [x] Animated textures
+- [x] Texture transparency
+- [x] Texture blending
+
+## TODO
+
+> NOTE: `[/]` denotes an in-progress task
+
+### Editor
+
+- [ ] Debugger
+- [ ] UI builder
+- [ ] Configurable editor keybindings
+
+
+### Engine
+
+
+
+- [ ] Sprites
+- [ ] Particles
+- [ ] Skeleton sockets
+- [ ] Physics engine
+- [ ] Trees
+- [ ] Configurable keybindings
+- [ ] Water reflections
+- [ ] Music and Sound Effects
+- [ ] Volumetric displacement (e.g. sand, snow)
+- [ ] Re-do wall extrusion setup to be like the model editor
+- [ ] Restitution/friction, and more than one solver iteration per frame
 - [ ] Animation blending between clips (a switch is a hard cut today)
 - [ ] Editing entity *definitions* in the editor. The panel edits an instance;
       changing the type still means editing its YAML and pressing Reload.
+- [ ] Potentially change the max number of frames for animated textures as well as frame spacing/interpolation

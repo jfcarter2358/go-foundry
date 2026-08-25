@@ -10,6 +10,7 @@ package texture
 import (
 	"fmt"
 	"image/color"
+	"log"
 
 	"foundry/internal/gfx"
 	"foundry/internal/texdoc"
@@ -29,13 +30,13 @@ func AdoptDocPaletteGlobally(d *texdoc.TexDoc) error {
 	return WritePalette(palettePath(), &texdoc.GlobalPalette)
 }
 
-// RemapDocToGlobalPalette re-quantises d's layer indices from its own
-// (mismatched) palette onto the current global one, nearest colour per
+// RemapDocToGlobalPalette re-quantises every frame's layer indices from d's
+// own (mismatched) palette onto the current global one, nearest colour per
 // index, and adopts the global palette as its own.
 func RemapDocToGlobalPalette(d *texdoc.TexDoc) {
-	for i := range d.Layers {
-		d.Layers[i].Idx = texdoc.RemapIndices(&d.Pal, d.Layers[i].Idx, &texdoc.GlobalPalette)
-	}
+	d.EachLayer(func(l *texdoc.TexLayer) {
+		l.Idx = texdoc.RemapIndices(&d.Pal, l.Idx, &texdoc.GlobalPalette)
+	})
 	d.Pal = texdoc.GlobalPalette
 	d.MarkDirty()
 }
@@ -48,6 +49,33 @@ func RemapDocToGlobalPalette(d *texdoc.TexDoc) {
 func SetPaletteColor(idx uint8, c color.RGBA) error {
 	texdoc.GlobalPalette[idx] = c
 	return WritePalette(palettePath(), &texdoc.GlobalPalette)
+}
+
+// ScanAnimatedTextures walks every .ftex on disk and registers the ones with
+// more than one frame as animated textures the engine cycles through at
+// runtime (gfx.AdvanceAnimatedTextures) — called once at startup, alongside
+// gfx.ScanTextures, so a level can reference an animated texture without its
+// editor ever having been opened this session.
+//
+// Only reads and flattens a file once it's confirmed to actually be
+// animated: an ordinary static texture already has its <name>.png on disk
+// (that's what gfx.ScanTextures/EnsureTextureLoaded load), so decoding its
+// .ftex too at startup would just be wasted work repeated for every texture
+// in the game. A file that fails to parse is logged and skipped rather than
+// aborting startup over one bad asset — the same tolerance RebuildAllTextures
+// gives a batch of .ftex files below.
+func ScanAnimatedTextures() {
+	for _, name := range ScanFtexFiles() {
+		d, err := ReadTexDoc(FtexPath(name))
+		if err != nil {
+			log.Printf("WARNING: could not read %s.ftex for animation scan: %v", name, err)
+			continue
+		}
+		if d.FrameCount() <= 1 {
+			continue
+		}
+		SyncAnimatedFrames(d, name)
+	}
 }
 
 // RebuildAllTextures walks every .ftex on disk, re-flattens it against the
@@ -71,8 +99,8 @@ func RebuildAllTextures() []error {
 			continue
 		}
 		gfx.RegisterTexture(name)
+		SyncAnimatedFrames(d, name)
 		flat := d.Flatten()
-		gfx.UpdateTextureHasAlpha(name, &d.Pal, flat)
 		gfx.QueueTextureUpload(name, RgbaFromPaletted(flat))
 	}
 	return errs

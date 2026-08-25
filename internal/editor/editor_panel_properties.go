@@ -72,6 +72,8 @@ func editor3DSectorPropertiesSection(lvl *world.Level) {
 		imgui.Checkbox("Hide Texture##fhid3d", &s3d.Floor.Hidden)
 		changed = editorDragFloat("Height##fh3d", &s3d.Floor.Height, 0, 0, "%.3f") || changed
 		changed = textureCombo("Texture##ft3d", &s3d.Floor.Texture, false) || changed
+		changed = textureCombo("Blend Texture##fbt3d", &s3d.Floor.BlendTexture, true) || changed
+		changed = textureCombo("Blend Mask##fbm3d", &s3d.Floor.BlendMask, true) || changed
 		changed = imgui.Checkbox("Terrain##fter3d", &s3d.Floor.Terrain) || changed
 		imgui.Checkbox("Double Sided##fds3d", &s3d.Floor.DoubleSided)
 		changed = editorDragFloat("Alpha##fa3d", &s3d.Floor.Alpha, 0, 1, "%.2f") || changed
@@ -101,6 +103,8 @@ func editor3DSectorPropertiesSection(lvl *world.Level) {
 		changed = imgui.Checkbox("Enabled##ce3d", &s3d.Ceiling.Enabled) || changed
 		changed = editorDragFloat("Height##ch3d", &s3d.Ceiling.Height, 0, 0, "%.3f") || changed
 		changed = textureCombo("Texture##ct3d", &s3d.Ceiling.Texture, false) || changed
+		changed = textureCombo("Blend Texture##cbt3d", &s3d.Ceiling.BlendTexture, true) || changed
+		changed = textureCombo("Blend Mask##cbm3d", &s3d.Ceiling.BlendMask, true) || changed
 		changed = imgui.Checkbox("Terrain##cter3d", &s3d.Ceiling.Terrain) || changed
 		imgui.Checkbox("Double Sided##cds3d", &s3d.Ceiling.DoubleSided)
 		changed = editorDragFloat("Alpha##ca3d", &s3d.Ceiling.Alpha, 0, 1, "%.2f") || changed
@@ -140,6 +144,8 @@ func editor3DSectorPropertiesSection(lvl *world.Level) {
 		}
 		changed := false
 		changed = textureCombo("Texture##wt3d", &w.Texture, false) || changed
+		changed = textureCombo("Blend Texture##wbt3d", &w.BlendTexture, true) || changed
+		changed = textureCombo("Blend Mask##wbm3d", &w.BlendMask, true) || changed
 		changed = imgui.Checkbox("Collision##wc3d", &w.Collision) || changed
 		changed = imgui.Checkbox("Pinned##wp3d", &w.Pinned) || changed
 		if imgui.IsItemHovered() {

@@ -232,12 +232,15 @@ func RenderSecondaryWindows(dt float32) {
 // position minus this window's screen position — sdl.GetMouseState is
 // relative to whichever window has focus, which is wrong for any window that
 // doesn't, so both this and the main window's ImGuiNewFrame (editor_imgui.go)
-// use the global variant.
+// use the global variant. Button state is gated on w owning input focus (see
+// ImguiNewFrameCommon) so a click on the topmost window doesn't also fire a
+// widget underneath it in an unfocused window's own context.
 func uiWindowNewFrame(w *UIWindow, dt float32) {
 	io := imgui.CurrentIO()
 	gx, gy, mbuttons := sdl.GetGlobalMouseState()
 	wx, wy := w.Win.GetPosition()
-	imguibackend.ImguiNewFrameCommon(io, float32(gx-wx), float32(gy-wy), mbuttons, w.W, w.H, dt)
+	focused := w.Win.GetFlags()&sdl.WINDOW_INPUT_FOCUS != 0
+	imguibackend.ImguiNewFrameCommon(io, float32(gx-wx), float32(gy-wy), mbuttons, focused, w.W, w.H, dt)
 }
 
 // RouteWindowEvent dispatches an SDL event to the secondary window it names,

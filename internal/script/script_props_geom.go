@@ -167,6 +167,34 @@ func edgeProps() map[string]propAccess {
 			Tex:   true,
 			Doc:   "texture name, resolved against textures/",
 		},
+		"blend_texture": {
+			Get: wallGet(func(w *world.Wall) flang.Value { return flang.StrVal(w.BlendTexture) }),
+			Set: wallSet(func(w *world.Wall, v flang.Value) error {
+				s, ok := toStr(v)
+				if !ok {
+					return propErr("blend_texture", "str", v)
+				}
+				w.BlendTexture = s
+				return nil
+			}),
+			Dirty: true,
+			Tex:   true,
+			Doc:   "second texture mixed in by blend_mask's luminance; \"\" disables blending",
+		},
+		"blend_mask": {
+			Get: wallGet(func(w *world.Wall) flang.Value { return flang.StrVal(w.BlendMask) }),
+			Set: wallSet(func(w *world.Wall, v flang.Value) error {
+				s, ok := toStr(v)
+				if !ok {
+					return propErr("blend_mask", "str", v)
+				}
+				w.BlendMask = s
+				return nil
+			}),
+			Dirty: true,
+			Tex:   true,
+			Doc:   "grayscale mask texture: 0 = texture, 1 = blend_texture",
+		},
 		"double_sided": {
 			Get: wallGet(func(w *world.Wall) flang.Value { return flang.BoolVal(w.DoubleSided) }),
 			Set: wallSet(func(w *world.Wall, v flang.Value) error {
@@ -315,6 +343,56 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 			Dirty: true,
 			Tex:   true,
 			Doc:   "texture name",
+		},
+		"blend_texture": {
+			Get: getF(
+				func(f *world.Floor) flang.Value { return flang.StrVal(f.BlendTexture) },
+				func(c *world.Ceiling) flang.Value { return flang.StrVal(c.BlendTexture) }),
+			Set: setF(
+				func(f *world.Floor, v flang.Value) error {
+					s, ok := toStr(v)
+					if !ok {
+						return propErr("blend_texture", "str", v)
+					}
+					f.BlendTexture = s
+					return nil
+				},
+				func(c *world.Ceiling, v flang.Value) error {
+					s, ok := toStr(v)
+					if !ok {
+						return propErr("blend_texture", "str", v)
+					}
+					c.BlendTexture = s
+					return nil
+				}),
+			Dirty: true,
+			Tex:   true,
+			Doc:   "second texture mixed in by blend_mask's luminance; \"\" disables blending",
+		},
+		"blend_mask": {
+			Get: getF(
+				func(f *world.Floor) flang.Value { return flang.StrVal(f.BlendMask) },
+				func(c *world.Ceiling) flang.Value { return flang.StrVal(c.BlendMask) }),
+			Set: setF(
+				func(f *world.Floor, v flang.Value) error {
+					s, ok := toStr(v)
+					if !ok {
+						return propErr("blend_mask", "str", v)
+					}
+					f.BlendMask = s
+					return nil
+				},
+				func(c *world.Ceiling, v flang.Value) error {
+					s, ok := toStr(v)
+					if !ok {
+						return propErr("blend_mask", "str", v)
+					}
+					c.BlendMask = s
+					return nil
+				}),
+			Dirty: true,
+			Tex:   true,
+			Doc:   "grayscale mask texture: 0 = texture, 1 = blend_texture",
 		},
 		"enabled": {
 			Get: getF(

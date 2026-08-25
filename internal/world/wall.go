@@ -39,6 +39,8 @@ type Wall struct {
 	StartPoint          mgl32.Vec2
 	EndPoint            mgl32.Vec2
 	Texture             string
+	BlendTexture        string // optional second texture, mixed in by BlendMask's luminance
+	BlendMask           string // grayscale mask texture; 0 = Texture, 1 = BlendTexture
 	Collision           bool
 	Visible             bool    // if false, wall geometry is not drawn (default true)
 	Pinned              bool    // if true, InferPortals will not convert this wall to a portal

@@ -3,6 +3,15 @@
 uniform sampler2D tex;
 uniform float alpha; // per-geometry alpha multiplier (default 1.0)
 
+// Second-texture blending (texture "splatting"). When hasBlend is set, tex is
+// mixed with blendTex using blendMask's per-pixel luminance as the mix
+// factor (0 = tex, 1 = blendTex) — see applyBlendUniforms in geometry.go. Any
+// existing texture can serve as blendMask; it need not be literally
+// grayscale, since only luminance is read.
+uniform int       hasBlend;
+uniform sampler2D blendTex;
+uniform sampler2D blendMask;
+
 // Alpha-cutout anti-aliasing, set for the opaque pass only (see
 // AlphaSharpenUniform in main.go). Off (0) by default so any program that
 // links this shader without knowing about it — and the sorted transparent
@@ -276,6 +285,13 @@ void main() {
     if (isWater != 0) {
         vec2 uv2 = fragTexCoord * 1.7 - vec2(time * waveSpeed * 0.021, time * waveSpeed * 0.034);
         texColor = mix(texColor, texture(tex, uv2), 0.5);
+    }
+
+    if (hasBlend != 0) {
+        vec4 blendColor = texture(blendTex, uv);
+        vec3 maskColor = texture(blendMask, uv).rgb;
+        float maskLum = dot(maskColor, vec3(0.299, 0.587, 0.114));
+        texColor = mix(texColor, blendColor, maskLum);
     }
 
     // Start with global ambient contribution

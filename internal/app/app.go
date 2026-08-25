@@ -87,6 +87,11 @@ func Run() {
 	// every texture in the texture editor composites against.
 	texture.LoadGlobalPalette()
 
+	// Any .ftex with more than one frame plays back at runtime — see
+	// gfx.AdvanceAnimatedTextures below — whether or not its editor is ever
+	// opened this session.
+	texture.ScanAnimatedTextures()
+
 	// Catch any unexpected panic and write it to the log before exiting.
 	defer func() {
 		if r := recover(); r != nil {
@@ -204,6 +209,11 @@ func Run() {
 	gfx.ReflectivityUniform = gl.GetUniformLocation(gfx.Program, gl.Str("reflectivity\x00"))
 	gfx.ReflectColorUniform = gl.GetUniformLocation(gfx.Program, gl.Str("reflectColor\x00"))
 	gl.Uniform1i(gfx.IsWaterUniform, 0)
+
+	gfx.HasBlendUniform = gl.GetUniformLocation(gfx.Program, gl.Str("hasBlend\x00"))
+	gfx.BlendTexUniform = gl.GetUniformLocation(gfx.Program, gl.Str("blendTex\x00"))
+	gfx.BlendMaskUniform = gl.GetUniformLocation(gfx.Program, gl.Str("blendMask\x00"))
+	gl.Uniform1i(gfx.HasBlendUniform, 0) // default: no second texture
 
 	// Default camera position; overridden by the level's spawn point when it
 	// has one.
@@ -439,6 +449,13 @@ func Run() {
 		render.DebugStats.FrameTimeMs = platform.DeltaTime * 1000.0
 		render.DebugStats.ChunksLoaded = len(level.Chunks)
 		render.DebugStats.SectorsLoaded = totalSectors
+
+		// Animated textures (the texture editor's animation stack) advance on
+		// the same free-running clock as the water/biome-wind uniforms below,
+		// queuing a re-upload whenever a texture's clock crosses into its next
+		// frame — drained into the GL texture object right after, alongside
+		// every other queued texture edit.
+		gfx.AdvanceAnimatedTextures(float64(now) / 1000.0)
 
 		// Texture editor uploads (painted texels, saves) are queued rather
 		// than applied immediately; drain them now, while the main GL

@@ -58,3 +58,11 @@ func ComputeHasAlpha(pal *texdoc.TexPalette, img *image.Paletted) bool {
 func UpdateTextureHasAlpha(name string, pal *texdoc.TexPalette, img *image.Paletted) {
 	textureHasAlpha[name] = ComputeHasAlpha(pal, img)
 }
+
+// SetTextureHasAlpha directly records the has-alpha flag for name. Used by an
+// animated texture's save path, which has to OR ComputeHasAlpha across every
+// frame in the stack rather than record just the one image
+// UpdateTextureHasAlpha reads.
+func SetTextureHasAlpha(name string, has bool) {
+	textureHasAlpha[name] = has
+}

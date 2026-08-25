@@ -3,22 +3,31 @@ package texture
 // texture_file.go — on-disk format for layered texture documents (.ftex) and
 // the global palette (palette.pal). Pure I/O + encoding; no GL calls.
 //
-// <exe>/textures/<name>.ftex — little-endian:
+// <exe>/textures/<name>.ftex — little-endian, version 2:
 //   0    [4]byte  magic "FTEX"
-//   4    uint16   version = 1
+//   4    uint16   version = 2
 //   6    uint16   flags (reserved, 0)
 //   8    uint32   width   (1..1024)
 //   12   uint32   height  (1..1024)
-//   16   uint8    layerCount (1..8)
-//   17   [3]byte  padding
+//   16   uint16   frameCount (1..32) — the animation stack; 1 means "not animated"
+//   18   [2]byte  padding
 //   20   [1024]   palette: 256 x RGBA8, the table this document was authored against
-//   1044 ...      layers, bottom first:
-//                   uint16  nameLen, then name bytes (UTF-8)
-//                   uint8   blend
-//                   uint8   visible
-//                   float32 opacity
-//                   uint32  compressedLen
-//                   bytes   zlib(palette indices, rows top-to-bottom, W*H bytes)
+//   1044 ...      frameCount frame blocks, each:
+//                   uint8   layerCount (1..8)
+//                   [3]byte padding
+//                   ...     layerCount layers, bottom first:
+//                             uint16  nameLen, then name bytes (UTF-8)
+//                             uint8   blend
+//                             uint8   visible
+//                             float32 opacity
+//                             uint32  compressedLen
+//                             bytes   zlib(palette indices, rows top-to-bottom, W*H bytes)
+//
+// Version 1 (no frameCount — offset 16 is a single implicit frame's
+// layerCount directly, same layer records starting at 1044) still reads:
+// ReadTexDoc parses it into a one-frame document. Nothing has ever written a
+// version-1 file with more than one frame, so there is no "upgrade" step
+// beyond the version number itself — the next save just writes version 2.
 //
 // <exe>/textures/palette.pal — magic "FPAL", uint16 version, 256 x RGBA8.
 
@@ -42,12 +51,13 @@ import (
 )
 
 const (
-	ftexMagic   = "FTEX"
-	ftexVersion = uint16(1)
-	fpalMagic   = "FPAL"
-	fpalVersion = uint16(1)
+	ftexMagic    = "FTEX"
+	ftexVersion1 = uint16(1) // single implicit frame; still readable, no longer written
+	ftexVersion2 = uint16(2) // frameCount + repeated frame blocks
+	fpalMagic    = "FPAL"
+	fpalVersion  = uint16(1)
 
-	ftexHeaderLen = 4 + 2 + 2 + 4 + 4 + 1 + 3 + texdoc.TexPaletteSz*4 // 1044
+	ftexHeaderLen = 4 + 2 + 2 + 4 + 4 + 2 + 2 + texdoc.TexPaletteSz*4 // 1044, both versions
 	fpalFileLen   = 4 + 2 + texdoc.TexPaletteSz*4
 )
 
@@ -126,23 +136,63 @@ func writeF32(buf *bytes.Buffer, v float32) {
 	writeU32(buf, math.Float32bits(v))
 }
 
-// WriteTexDoc encodes d in the .ftex format and writes it to path.
+// writeLayer appends one layer record (the format shared by every frame
+// block, unchanged since version 1).
+func writeLayer(buf *bytes.Buffer, want int, layer texdoc.TexLayer) error {
+	if len(layer.Idx) != want {
+		return fmt.Errorf("layer %q has %d indices, want %d", layer.Name, len(layer.Idx), want)
+	}
+	nameBytes := []byte(layer.Name)
+	if len(nameBytes) > 0xFFFF {
+		return fmt.Errorf("layer name %q too long", layer.Name)
+	}
+	writeU16(buf, uint16(len(nameBytes)))
+	buf.Write(nameBytes)
+	buf.WriteByte(uint8(layer.Blend))
+	if layer.Visible {
+		buf.WriteByte(1)
+	} else {
+		buf.WriteByte(0)
+	}
+	writeF32(buf, layer.Opacity)
+
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	if _, err := zw.Write(layer.Idx); err != nil {
+		return err
+	}
+	if err := zw.Close(); err != nil {
+		return err
+	}
+	writeU32(buf, uint32(compressed.Len()))
+	buf.Write(compressed.Bytes())
+	return nil
+}
+
+// WriteTexDoc encodes d (every frame in its animation stack) in the .ftex
+// format and writes it to path. Always writes version 2.
 func WriteTexDoc(path string, d *texdoc.TexDoc) error {
 	if err := texdoc.ValidTexSize(d.W, d.H); err != nil {
 		return err
 	}
-	if len(d.Layers) < 1 || len(d.Layers) > texdoc.TexMaxLayers {
-		return fmt.Errorf("layer count %d out of range [1,%d]", len(d.Layers), texdoc.TexMaxLayers)
+	frames := d.Frames()
+	if len(frames) < 1 || len(frames) > texdoc.TexMaxFrames {
+		return fmt.Errorf("frame count %d out of range [1,%d]", len(frames), texdoc.TexMaxFrames)
+	}
+	for _, f := range frames {
+		if len(f.Layers) < 1 || len(f.Layers) > texdoc.TexMaxLayers {
+			return fmt.Errorf("layer count %d out of range [1,%d]", len(f.Layers), texdoc.TexMaxLayers)
+		}
 	}
 
 	var buf bytes.Buffer
 	buf.WriteString(ftexMagic)
-	writeU16(&buf, ftexVersion)
+	writeU16(&buf, ftexVersion2)
 	writeU16(&buf, 0) // flags
 	writeU32(&buf, uint32(d.W))
 	writeU32(&buf, uint32(d.H))
-	buf.WriteByte(uint8(len(d.Layers)))
-	buf.Write([]byte{0, 0, 0}) // padding
+	writeU16(&buf, uint16(len(frames)))
+	buf.Write([]byte{0, 0}) // padding
 	for _, c := range d.Pal {
 		buf.WriteByte(c.R)
 		buf.WriteByte(c.G)
@@ -151,34 +201,14 @@ func WriteTexDoc(path string, d *texdoc.TexDoc) error {
 	}
 
 	want := d.W * d.H
-	for _, layer := range d.Layers {
-		if len(layer.Idx) != want {
-			return fmt.Errorf("layer %q has %d indices, want %d", layer.Name, len(layer.Idx), want)
+	for _, f := range frames {
+		buf.WriteByte(uint8(len(f.Layers)))
+		buf.Write([]byte{0, 0, 0}) // padding
+		for _, layer := range f.Layers {
+			if err := writeLayer(&buf, want, layer); err != nil {
+				return err
+			}
 		}
-		nameBytes := []byte(layer.Name)
-		if len(nameBytes) > 0xFFFF {
-			return fmt.Errorf("layer name %q too long", layer.Name)
-		}
-		writeU16(&buf, uint16(len(nameBytes)))
-		buf.Write(nameBytes)
-		buf.WriteByte(uint8(layer.Blend))
-		if layer.Visible {
-			buf.WriteByte(1)
-		} else {
-			buf.WriteByte(0)
-		}
-		writeF32(&buf, layer.Opacity)
-
-		var compressed bytes.Buffer
-		zw := zlib.NewWriter(&compressed)
-		if _, err := zw.Write(layer.Idx); err != nil {
-			return err
-		}
-		if err := zw.Close(); err != nil {
-			return err
-		}
-		writeU32(&buf, uint32(compressed.Len()))
-		buf.Write(compressed.Bytes())
 	}
 
 	return fileutil.WriteFileAtomic(path, buf.Bytes())
@@ -199,6 +229,80 @@ func ReadTexDoc(path string) (*texdoc.TexDoc, error) {
 	return doc, nil
 }
 
+// readLayer parses one layer record starting at pos, returning the layer and
+// the position just past it. frameIdx/li name the layer in error messages —
+// version 1 has an implicit single frame (0).
+func readLayer(data []byte, pos, want, frameIdx, li int) (texdoc.TexLayer, int, error) {
+	if pos+2 > len(data) {
+		return texdoc.TexLayer{}, 0, fmt.Errorf(".ftex: truncated at frame %d layer %d name length", frameIdx, li)
+	}
+	nameLen := int(binary.LittleEndian.Uint16(data[pos : pos+2]))
+	pos += 2
+	if pos+nameLen > len(data) {
+		return texdoc.TexLayer{}, 0, fmt.Errorf(".ftex: truncated at frame %d layer %d name", frameIdx, li)
+	}
+	name := string(data[pos : pos+nameLen])
+	pos += nameLen
+
+	if pos+1+1+4+4 > len(data) {
+		return texdoc.TexLayer{}, 0, fmt.Errorf(".ftex: truncated at frame %d layer %d header", frameIdx, li)
+	}
+	blend := texdoc.TexBlend(data[pos])
+	pos++
+	visible := data[pos] != 0
+	pos++
+	opacity := math.Float32frombits(binary.LittleEndian.Uint32(data[pos : pos+4]))
+	pos += 4
+	compLen := int(binary.LittleEndian.Uint32(data[pos : pos+4]))
+	pos += 4
+	if compLen < 0 || pos+compLen > len(data) {
+		return texdoc.TexLayer{}, 0, fmt.Errorf(".ftex: truncated at frame %d layer %d payload", frameIdx, li)
+	}
+
+	zr, err := zlib.NewReader(bytes.NewReader(data[pos : pos+compLen]))
+	if err != nil {
+		return texdoc.TexLayer{}, 0, fmt.Errorf(".ftex: frame %d layer %d: %w", frameIdx, li, err)
+	}
+	idx := make([]uint8, want)
+	if _, err := io.ReadFull(zr, idx); err != nil {
+		zr.Close()
+		return texdoc.TexLayer{}, 0, fmt.Errorf(".ftex: frame %d layer %d: decompressed length != %d: %w", frameIdx, li, want, err)
+	}
+	var extra [1]byte
+	if n, _ := zr.Read(extra[:]); n != 0 {
+		zr.Close()
+		return texdoc.TexLayer{}, 0, fmt.Errorf(".ftex: frame %d layer %d decompresses to more than %d bytes", frameIdx, li, want)
+	}
+	zr.Close()
+	pos += compLen
+
+	return texdoc.TexLayer{Name: name, Visible: visible, Opacity: opacity, Blend: blend, Idx: idx}, pos, nil
+}
+
+// readFrame parses one frame block — a layerCount byte, 3 bytes padding,
+// then that many layer records — starting at pos.
+func readFrame(data []byte, pos, want, frameIdx int) (texdoc.TexFrame, int, error) {
+	if pos+4 > len(data) {
+		return texdoc.TexFrame{}, 0, fmt.Errorf(".ftex: truncated at frame %d header", frameIdx)
+	}
+	layerCount := data[pos]
+	if layerCount == 0 || layerCount > texdoc.TexMaxLayers {
+		return texdoc.TexFrame{}, 0, fmt.Errorf(".ftex: frame %d layer count %d out of range [1,%d]", frameIdx, layerCount, texdoc.TexMaxLayers)
+	}
+	pos += 4 // layerCount + 3 bytes padding
+
+	layers := make([]texdoc.TexLayer, 0, layerCount)
+	for li := 0; li < int(layerCount); li++ {
+		layer, next, err := readLayer(data, pos, want, frameIdx, li)
+		if err != nil {
+			return texdoc.TexFrame{}, 0, err
+		}
+		layers = append(layers, layer)
+		pos = next
+	}
+	return texdoc.TexFrame{Layers: layers, Active: 0}, pos, nil
+}
+
 func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 	if len(data) < ftexHeaderLen {
 		return nil, fmt.Errorf(".ftex: truncated header (got %d bytes, want at least %d)", len(data), ftexHeaderLen)
@@ -206,8 +310,9 @@ func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 	if string(data[0:4]) != ftexMagic {
 		return nil, fmt.Errorf(".ftex: bad magic %q", data[0:4])
 	}
-	if v := binary.LittleEndian.Uint16(data[4:6]); v != ftexVersion {
-		return nil, fmt.Errorf(".ftex: unsupported version %d", v)
+	version := binary.LittleEndian.Uint16(data[4:6])
+	if version != ftexVersion1 && version != ftexVersion2 {
+		return nil, fmt.Errorf(".ftex: unsupported version %d", version)
 	}
 	width := binary.LittleEndian.Uint32(data[8:12])
 	height := binary.LittleEndian.Uint32(data[12:16])
@@ -216,10 +321,6 @@ func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 	}
 	if err := texdoc.ValidTexSize(int(width), int(height)); err != nil {
 		return nil, fmt.Errorf(".ftex: %w", err)
-	}
-	layerCount := data[16]
-	if layerCount == 0 || layerCount > texdoc.TexMaxLayers {
-		return nil, fmt.Errorf(".ftex: layer count %d out of range [1,%d]", layerCount, texdoc.TexMaxLayers)
 	}
 
 	var pal texdoc.TexPalette
@@ -230,56 +331,45 @@ func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 	}
 
 	want := int(width) * int(height)
-	pos := ftexHeaderLen
-	layers := make([]texdoc.TexLayer, 0, layerCount)
-	for li := 0; li < int(layerCount); li++ {
-		if pos+2 > len(data) {
-			return nil, fmt.Errorf(".ftex: truncated at layer %d name length", li)
-		}
-		nameLen := int(binary.LittleEndian.Uint16(data[pos : pos+2]))
-		pos += 2
-		if pos+nameLen > len(data) {
-			return nil, fmt.Errorf(".ftex: truncated at layer %d name", li)
-		}
-		name := string(data[pos : pos+nameLen])
-		pos += nameLen
+	var frames []texdoc.TexFrame
 
-		if pos+1+1+4+4 > len(data) {
-			return nil, fmt.Errorf(".ftex: truncated at layer %d header", li)
+	if version == ftexVersion1 {
+		// No frameCount: offset 16 is the single implicit frame's layerCount
+		// directly (1 byte + 3 padding), and its layer records start right
+		// after the header, same as they always did.
+		layerCount := data[16]
+		if layerCount == 0 || layerCount > texdoc.TexMaxLayers {
+			return nil, fmt.Errorf(".ftex: layer count %d out of range [1,%d]", layerCount, texdoc.TexMaxLayers)
 		}
-		blend := texdoc.TexBlend(data[pos])
-		pos++
-		visible := data[pos] != 0
-		pos++
-		opacity := math.Float32frombits(binary.LittleEndian.Uint32(data[pos : pos+4]))
-		pos += 4
-		compLen := int(binary.LittleEndian.Uint32(data[pos : pos+4]))
-		pos += 4
-		if compLen < 0 || pos+compLen > len(data) {
-			return nil, fmt.Errorf(".ftex: truncated at layer %d payload", li)
+		pos := ftexHeaderLen
+		layers := make([]texdoc.TexLayer, 0, layerCount)
+		for li := 0; li < int(layerCount); li++ {
+			layer, next, err := readLayer(data, pos, want, 0, li)
+			if err != nil {
+				return nil, err
+			}
+			layers = append(layers, layer)
+			pos = next
 		}
-
-		zr, err := zlib.NewReader(bytes.NewReader(data[pos : pos+compLen]))
-		if err != nil {
-			return nil, fmt.Errorf(".ftex: layer %d: %w", li, err)
+		frames = []texdoc.TexFrame{{Layers: layers, Active: 0}}
+	} else {
+		frameCount := binary.LittleEndian.Uint16(data[16:18])
+		if frameCount == 0 || int(frameCount) > texdoc.TexMaxFrames {
+			return nil, fmt.Errorf(".ftex: frame count %d out of range [1,%d]", frameCount, texdoc.TexMaxFrames)
 		}
-		idx := make([]uint8, want)
-		if _, err := io.ReadFull(zr, idx); err != nil {
-			zr.Close()
-			return nil, fmt.Errorf(".ftex: layer %d: decompressed length != %d: %w", li, want, err)
+		pos := ftexHeaderLen
+		frames = make([]texdoc.TexFrame, 0, frameCount)
+		for fi := 0; fi < int(frameCount); fi++ {
+			frame, next, err := readFrame(data, pos, want, fi)
+			if err != nil {
+				return nil, err
+			}
+			frames = append(frames, frame)
+			pos = next
 		}
-		var extra [1]byte
-		if n, _ := zr.Read(extra[:]); n != 0 {
-			zr.Close()
-			return nil, fmt.Errorf(".ftex: layer %d decompresses to more than %d bytes", li, want)
-		}
-		zr.Close()
-		pos += compLen
-
-		layers = append(layers, texdoc.TexLayer{Name: name, Visible: visible, Opacity: opacity, Blend: blend, Idx: idx})
 	}
 
-	return &texdoc.TexDoc{W: int(width), H: int(height), Pal: pal, Layers: layers, Active: 0}, nil
+	return texdoc.NewTexDocFromFrames(int(width), int(height), pal, frames)
 }
 
 // SaveTexDoc writes both the .ftex source and the flattened PNG the engine

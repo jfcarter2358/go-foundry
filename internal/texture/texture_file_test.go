@@ -138,6 +138,104 @@ func TestFtexRoundTrip8Layers(t *testing.T) {
 	}
 }
 
+// TestFtexRoundTripMultipleFrames covers the version-2 format's actual new
+// content: several frames, each with its own layer stack, surviving a
+// write/read round trip independently of one another.
+func TestFtexRoundTripMultipleFrames(t *testing.T) {
+	withTempTextureDir(t)
+	pal := roundTripPalette()
+	d, err := texdoc.NewTexDoc("anim", 2, 2, pal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range d.Layers[0].Idx {
+		d.Layers[0].Idx[i] = 1
+	}
+	if err := d.AddFrame(); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetActiveFrame(1); err != nil {
+		t.Fatal(err)
+	}
+	for i := range d.Layers[0].Idx {
+		d.Layers[0].Idx[i] = 2
+	}
+	if err := d.AddLayer("extra"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddFrame(); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "anim.ftex")
+	if err := WriteTexDoc(path, d); err != nil {
+		t.Fatalf("WriteTexDoc: %v", err)
+	}
+	got, err := ReadTexDoc(path)
+	if err != nil {
+		t.Fatalf("ReadTexDoc: %v", err)
+	}
+	if got.FrameCount() != 3 {
+		t.Fatalf("frame count = %d, want 3", got.FrameCount())
+	}
+	frames := got.Frames()
+	if len(frames[0].Layers) != 1 || frames[0].Layers[0].Idx[0] != 1 {
+		t.Errorf("frame 0 = %+v, want a single layer of index 1", frames[0])
+	}
+	if len(frames[1].Layers) != 2 || frames[1].Layers[0].Idx[0] != 2 {
+		t.Errorf("frame 1 = %+v, want two layers, bottom index 2", frames[1])
+	}
+	if len(frames[2].Layers) != 1 {
+		t.Errorf("frame 2 has %d layers, want 1 (the fresh empty frame)", len(frames[2].Layers))
+	}
+	if got.FPS() != 3 {
+		t.Errorf("FPS = %v, want 3 (one frame count per second)", got.FPS())
+	}
+}
+
+// TestFtexReadsVersion1AsOneFrame pins the migration path: an old
+// single-frame file (no frameCount field at all) still opens today, as a
+// one-frame — i.e. not animated — document.
+func TestFtexReadsVersion1AsOneFrame(t *testing.T) {
+	withTempTextureDir(t)
+	d := roundTripDoc() // 8 layers, single (implicit) frame
+	path := filepath.Join(t.TempDir(), "old.ftex")
+	if err := WriteTexDoc(path, d); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rewrite the version-2 header (frameCount=1, since d only ever had one
+	// frame) back into the version-1 shape: a version number of 1 and the
+	// frame's layerCount sitting directly at offset 16, no frame wrapper.
+	binary.LittleEndian.PutUint16(data[4:6], 1)
+	frameHeader := data[ftexHeaderLen : ftexHeaderLen+4] // layerCount + 3 padding
+	copy(data[16:20], frameHeader)
+	v1 := append(append([]byte{}, data[:ftexHeaderLen]...), data[ftexHeaderLen+4:]...)
+	path = filepath.Join(t.TempDir(), "old_v1.ftex")
+	if err := os.WriteFile(path, v1, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadTexDoc(path)
+	if err != nil {
+		t.Fatalf("ReadTexDoc of a version-1 file: %v", err)
+	}
+	if got.FrameCount() != 1 {
+		t.Errorf("frame count = %d, want 1", got.FrameCount())
+	}
+	if len(got.Layers) != len(d.Layers) {
+		t.Fatalf("layer count = %d, want %d", len(got.Layers), len(d.Layers))
+	}
+	for i := range d.Layers {
+		if !bytes.Equal(got.Layers[i].Idx, d.Layers[i].Idx) {
+			t.Errorf("layer %d indices mismatch after version-1 read", i)
+		}
+	}
+}
+
 func TestFtexRejectsBadMagic(t *testing.T) {
 	withTempTextureDir(t)
 	path := filepath.Join(t.TempDir(), "bad.ftex")
@@ -172,10 +270,25 @@ func TestFtexRejectsLayerCountAboveMax(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	data[16] = texdoc.TexMaxLayers + 1
+	data[ftexHeaderLen] = texdoc.TexMaxLayers + 1 // frame 0's layerCount byte
 	os.WriteFile(path, data, 0644)
 	if _, err := ReadTexDoc(path); err == nil {
 		t.Error("ReadTexDoc accepted layerCount > texdoc.TexMaxLayers")
+	}
+}
+
+func TestFtexRejectsFrameCountAboveMax(t *testing.T) {
+	withTempTextureDir(t)
+	d := roundTripDoc()
+	path := filepath.Join(t.TempDir(), "f.ftex")
+	if err := WriteTexDoc(path, d); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	binary.LittleEndian.PutUint16(data[16:18], texdoc.TexMaxFrames+1)
+	os.WriteFile(path, data, 0644)
+	if _, err := ReadTexDoc(path); err == nil {
+		t.Error("ReadTexDoc accepted frameCount > texdoc.TexMaxFrames")
 	}
 }
 
