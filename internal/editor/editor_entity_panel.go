@@ -153,6 +153,9 @@ func editorEntityList(lvl *world.Level) {
 		if imgui.SelectableV(fmt.Sprintf("%s##ent%d", label, i), i == Editor.ActiveEntityIdx, 0, imgui.Vec2{}) {
 			clearVertexSelection()
 			editorClearSpawnSelection()
+			editorClearVolumeSelection()
+			editorClearChunkSelection()
+			editorClearLightSelection()
 			editorSelectEntity(i)
 		}
 	}

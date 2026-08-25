@@ -71,6 +71,21 @@ func editorActiveToggleButtonColor(label string, active bool, col imgui.Vec4) bo
 	return clicked
 }
 
+// editorToolbarGroupSep draws the vertical divider between two groups of
+// toolbar buttons: SameLine to stay on the current row, then Separator, which
+// Dear ImGui draws as a thin vertical bar rather than its usual horizontal
+// rule when it lands mid-row like this. Every toolbar in the editor — the main
+// window's, the 2D map's own, the model editor's — calls this between groups
+// rather than drawing the divider by hand, so "3D Window | Textures | Model"
+// and "Point | Edge | Face" read as the same kind of grouping wherever they
+// appear. A caller still needs its own SameLine before the first button of the
+// next group; this only draws the line between what came before and what
+// comes after.
+func editorToolbarGroupSep() {
+	imgui.SameLine()
+	imgui.Separator()
+}
+
 // snapValue rounds v to the nearest multiple of step.
 func snapValue(v, step float32) float32 {
 	if step <= 0 {
@@ -695,10 +710,7 @@ func EditorDrawUI() {
 	// there is no 2D/3D toggle here, and this button is the only way into it.
 	currentMode := Editor.Mode
 
-	// Remember the toolbar's first line so the Exit button can be placed on it
-	// no matter where the cursor ends up after the mode-specific widgets.
-	toolbarY := imgui.CursorPosY()
-
+	// ---- Group: sub-editor windows ----
 	// Snapshot before the button: clicking it opens the window, so re-testing
 	// Editor2DPoppedOut() afterwards would pop a color that was never pushed
 	// and unbalance imgui's global style stack (it asserts on the next
@@ -765,14 +777,15 @@ func EditorDrawUI() {
 		imgui.SetTooltip("Live script output, errors and engine messages.")
 	}
 
-	// View controls: what a click selects and which gizmo acts on it. Both are
-	// shared by the 3D viewport and the 2D map — same state, same shortcuts —
-	// so the two are driven the same way and a selection made in one is legible
-	// in the other. (The map's copy is in its own toolbar; shading and the
-	// camera below are 3D's alone.)
+	// The three groups below are what a click selects, which gizmo acts on it,
+	// and how the viewport itself looks — all 3D-only, since the 2D map has no
+	// shading or camera mode of its own and carries its own copy of the first
+	// two on its own toolbar (editor2DWindowToolbar), for the same reason: what
+	// a click selects and which gizmo acts on it are shared editor-wide state,
+	// so both toolbars offer them wherever the mouse happens to be.
 	if currentMode == Mode3D {
-		imgui.SameLine()
-		imgui.Separator()
+		// ---- Group: select mode ----
+		editorToolbarGroupSep()
 		for _, mode := range editorSelModes {
 			m := mode
 			imgui.SameLine()
@@ -785,12 +798,12 @@ func EditorDrawUI() {
 			}
 		}
 
-		imgui.SameLine()
-		imgui.Separator()
+		// ---- Group: gizmo tool ----
+		editorToolbarGroupSep()
 		editorGizmoToolButtons()
-	}
 
-	if currentMode == Mode3D {
+		// ---- Group: viewport display ----
+		editorToolbarGroupSep()
 		imgui.SameLine()
 		wire := Editor.Wireframe
 		if editorActiveToggleButtonColor(editorShadingLabel(), wire,
@@ -820,42 +833,22 @@ func EditorDrawUI() {
 		}
 	}
 
-	imgui.SameLine()
-	imgui.Separator()
-	imgui.SameLine()
-
-	// Chunk selector
-	imgui.Text("Chunk:")
-	imgui.SameLine()
-	chunkNames := make([]string, len(lvl.Chunks))
-	for i := range lvl.Chunks {
-		chunkNames[i] = lvl.Chunks[i].ID
+	// No chunk picker here — which chunk is active is a selection like any
+	// other, made in the Chunks list under Objects and reported on the panel's
+	// Context line, rather than in a second control out of reach of the list
+	// that owns it. This just keeps the index in bounds: RebuildIndexes and
+	// undo both replace lvl.Chunks wholesale, and every use of ActiveChunkIdx
+	// below assumes it still names something.
+	if Editor.ActiveChunkIdx < 0 && len(lvl.Chunks) > 0 {
+		Editor.ActiveChunkIdx = 0
 	}
-	if len(chunkNames) > 0 {
-		if Editor.ActiveChunkIdx < 0 {
-			Editor.ActiveChunkIdx = 0
-		}
-		if Editor.ActiveChunkIdx >= len(chunkNames) {
-			Editor.ActiveChunkIdx = len(chunkNames) - 1
-		}
-		currentName := chunkNames[Editor.ActiveChunkIdx]
-		imgui.SetNextItemWidth(150)
-		if imgui.BeginCombo("##chunk", currentName) {
-			for i, name := range chunkNames {
-				selected := i == Editor.ActiveChunkIdx
-				if imgui.SelectableV(name, selected, 0, imgui.Vec2{}) {
-					Editor.ActiveChunkIdx = i
-				}
-			}
-			imgui.EndCombo()
-		}
+	if Editor.ActiveChunkIdx >= len(lvl.Chunks) {
+		Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
 	}
 
+	// ---- Group: level ----
+	editorToolbarGroupSep()
 	imgui.SameLine()
-	imgui.Separator()
-	imgui.SameLine()
-
-	// Level toolbar
 	imgui.Text(fmt.Sprintf("Level: %s", filepath.Base(Editor.SavePath)))
 	imgui.SameLine()
 
@@ -974,15 +967,10 @@ func EditorDrawUI() {
 		}
 	})
 
-	// ---- Exit button (top-right of the toolbar) ----
-	const exitBtnWidth = 60
-	imgui.SetCursorPos(imgui.Vec2{X: float32(platform.WinWidth) - exitBtnWidth - 8, Y: toolbarY})
-	imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.6, Y: 0.15, Z: 0.15, W: 1})
-	imgui.PushStyleColor(imgui.StyleColorButtonHovered, imgui.Vec4{X: 0.8, Y: 0.2, Z: 0.2, W: 1})
-	if imgui.ButtonV("Exit", imgui.Vec2{X: exitBtnWidth, Y: 0}) {
-		platform.Running = false
-	}
-	imgui.PopStyleColorV(2)
+	// The toolbar has no Exit button. Quitting is the window's own close
+	// button, the same as every other window the editor opens — a red button
+	// sitting a few pixels from the mode toggles is a level lost to a misclick,
+	// and the title bar is where anyone looks for it anyway.
 
 	imgui.End()
 
@@ -998,19 +986,13 @@ func EditorDrawUI() {
 	}
 }
 
-// Editor2DPanel draws the 2D mode side panel.
+// Editor2DPanel draws the 2D mode side panel: Context, the map's own actions,
+// Objects, Properties, View, Editor — see editor_panel.go for the shared frame
+// this and Editor3DPanel both draw through.
 func Editor2DPanel() {
 	lvl := Editor.level
 	if lvl == nil {
 		return
-	}
-	// The chunk-scoped sections need an active chunk, but the chunk list and
-	// the level-wide sections (the spawn point, lights) must stay reachable
-	// without one — otherwise a level with no chunk selected offers no way
-	// back.
-	var ch *world.Chunk
-	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
-		ch = &lvl.Chunks[Editor.ActiveChunkIdx]
 	}
 
 	// Sized to whichever window is hosting the 2D view — the main one, or the
@@ -1020,50 +1002,7 @@ func Editor2DPanel() {
 	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: viewH - 28})
 	imgui.BeginV("2D Sector Editor", nil, imgui.WindowFlagsNoMove|imgui.WindowFlagsNoResize)
 
-	if ch != nil {
-		imgui.Text(fmt.Sprintf("Chunk: %s", ch.ID))
-	} else {
-		imgui.Text("Chunk: (none selected)")
-	}
-	imgui.Text(fmt.Sprintf("Zoom: %.0f px/unit", Editor.Zoom2D))
-	imgui.Text("Scroll: zoom | MMB drag: pan | Shift+click: add point")
-	imgui.Text(fmt.Sprintf("Select: %s [1/2/3] | Gizmo: %s [G/R/C]",
-		Editor.SelMode, Editor.GizmoTool))
-	imgui.Text("Ctrl+click: add to selection | RMB: menu")
-
-	editor2DJoinButtons()
-	imgui.Checkbox("Show All Point Boxes", &Editor.ShowPointSelectRadius)
-
-	// ---- Grid settings ----
-	imgui.Separator()
-	editorGridSettings()
-
-	// ---- Player spawn point ----
-	imgui.Separator()
-	editorSpawnSection(lvl)
-
-	// ---- Entities ----
-	editorEntitySection(lvl)
-	editorVolumeSection(lvl)
-	editorEntityProperties(lvl)
-
-	if ch != nil {
-		editor2DSectorSections(ch)
-
-		// ---- Biome painting ----
-		biomePanelSection()
-	}
-
-	// ---- Chunk list / properties ----
-	editorChunkListSection(lvl)
-	editorChunkPropertiesSection(lvl)
-
-	// ---- Light editor ----
-	imgui.Separator()
-	EditorLightPanel()
-
-	// Every section has had its chance to open and scroll itself.
-	Editor.PanelFocus = panelFocusNone
+	editorPanelBody(lvl, panelKind2D)
 
 	imgui.End()
 	editorChunkPopups(lvl)
@@ -1152,28 +1091,9 @@ func editor2DSectorSections(ch *world.Chunk) {
 			editorDetailPanel("Ceil2D", &s.Ceiling.Detail)
 		}
 
-		// ---- Floor/Ceiling vertex edit toggle ----
-		imgui.Separator()
-		editingFloor := Editor.EditFloorVerts
-		if editingFloor {
-			imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.4, Z: 0.9, W: 1})
-		}
-		if imgui.Button("Floor Verts") {
-			Editor.EditFloorVerts = true
-		}
-		if editingFloor {
-			imgui.PopStyleColor()
-		}
-		imgui.SameLine()
-		if !editingFloor {
-			imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.9, Y: 0.3, Z: 0.3, W: 1})
-		}
-		if imgui.Button("Ceiling Verts") {
-			Editor.EditFloorVerts = false
-		}
-		if !editingFloor {
-			imgui.PopStyleColor()
-		}
+		// The floor/ceiling corner-height toggle lives in the Map section
+		// (editor2DMapSection), above Objects — it is not a property of this
+		// sector, it decides what a click on any sector's corner reaches.
 
 		// ---- Selected vertex position and height ----
 		si := Editor.ActiveVertexSI

@@ -88,9 +88,10 @@ func logWindowHandleEvent(event sdl.Event) {
 	if imgui.CurrentIO().WantCaptureKeyboard() {
 		return
 	}
+	// Escape is deliberately not here: a window closed by a stray keypress is a
+	// window you have to keep re-opening, and the title bar's close button says
+	// what it does. Same rule as the script editor.
 	switch t.Keysym.Scancode {
-	case sdl.SCANCODE_ESCAPE:
-		CloseLogWindow()
 	case sdl.SCANCODE_SPACE:
 		// Pause is the one shortcut worth having bare: the moment something
 		// interesting scrolls past is the moment you want it to stop.

@@ -17,11 +17,12 @@ import (
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
 
-// editorVolumeSection draws the place button, the volume list, and the selected
-// volume's properties.
+// editorVolumeSection draws the place button and the volume list — the
+// Objects half. The selected volume's own fields are editorVolumePropertiesSection,
+// drawn separately under Properties, the same split editorEntitySection and
+// editorEntityProperties keep.
 func editorVolumeSection(lvl *world.Level) {
 	imgui.Separator()
-	editorFocusOpen(panelFocusVolume)
 	if !imgui.CollapsingHeaderV("Volumes", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
@@ -31,11 +32,22 @@ func editorVolumeSection(lvl *world.Level) {
 	editorVolumePlacement()
 	imgui.Separator()
 	editorVolumeList(lvl)
+}
 
-	if v := activeVolume(); v != nil {
-		imgui.Separator()
-		editorVolumeProperties(v)
+// editorVolumePropertiesSection draws the selected volume's fields. Nothing is
+// drawn when no volume is selected, so the caller can call it unconditionally.
+func editorVolumePropertiesSection() {
+	v := activeVolume()
+	if v == nil {
+		return
 	}
+	imgui.Separator()
+	editorFocusOpen(panelFocusVolume)
+	if !imgui.CollapsingHeaderV("Volume: "+v.ID, imgui.TreeNodeFlagsDefaultOpen) {
+		return
+	}
+	editorFocusScroll(panelFocusVolume)
+	editorVolumeProperties(v)
 }
 
 // editorVolumePlacement draws the ID field and the arm-placement button.
@@ -76,6 +88,11 @@ func editorVolumeList(lvl *world.Level) {
 			label += "  (disabled)"
 		}
 		if imgui.SelectableV(fmt.Sprintf("%s##vol%d", label, i), i == Editor.ActiveVolumeIdx, 0, imgui.Vec2{}) {
+			clearVertexSelection()
+			editorClearSpawnSelection()
+			editorClearEntitySelection()
+			editorClearChunkSelection()
+			editorClearLightSelection()
 			editorSelectVolume(i)
 		}
 	}

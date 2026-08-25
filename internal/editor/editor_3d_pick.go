@@ -40,6 +40,8 @@ const (
 	panelFocusWater   = "water"
 	panelFocusEntity  = "entity"
 	panelFocusVolume  = "volume"
+	panelFocusChunk   = "chunk"
+	panelFocusLight   = "light"
 )
 
 // ---------- pick result ----------

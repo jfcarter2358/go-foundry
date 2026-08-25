@@ -18,6 +18,11 @@ package editor
 // The tree itself is rebuilt from the scan rather than kept: the scan is a few
 // dozen strings, it changes whenever anything is saved, created or moved, and a
 // cached tree that could disagree with the folder is worth less than no cache.
+//
+// Scripts are dragged between folders. That is the same rename the Move dialog
+// performs — see scriptEditorMoveFile — so the two cannot disagree about what a
+// move does to an open tab or to the reference the level holds; dragging only
+// spares you typing a path you can see.
 
 import (
 	"sort"
@@ -149,8 +154,33 @@ func drawScriptEditorFileList() {
 
 	imgui.BeginChildV("##scripttree", imgui.Vec2{}, false, 0)
 	tree := buildScriptTree(scriptEditorFiles, scriptEditorDirs)
-	drawScriptTreeBody(tree)
+	drawScriptTreeRoot(tree)
 	imgui.EndChild()
+}
+
+// drawScriptTreeRoot draws the scripts folder itself, as the row everything
+// else hangs under.
+//
+// It exists for the drop. A script dragged out of a folder has to have
+// somewhere to land, and the top level of the scripts folder is otherwise not
+// an item at all — it is the blank space the folders are drawn in, and ImGui
+// can only hand a payload to something that was submitted as a widget.
+func drawScriptTreeRoot(n *scriptTreeNode) {
+	imgui.PushID("dir/")
+	defer imgui.PopID()
+
+	imgui.SetNextItemOpen(true, imgui.ConditionOnce)
+	open := imgui.TreeNodeV(fileutil.ScriptsDirName+"/", imgui.TreeNodeFlagsSpanAvailWidth)
+	scriptTreeDropTarget("")
+	drawScriptTreeFolderMenu(n)
+	imgui.SameLine()
+	editorTextMuted(scriptTreeCountLabel(n))
+
+	if !open {
+		return
+	}
+	drawScriptTreeBody(n)
+	imgui.TreePop()
 }
 
 // drawScriptTreeBody draws one folder's contents: its sub-folders, then its
@@ -176,11 +206,16 @@ func drawScriptTreeFolder(n *scriptTreeNode) {
 		// the sidebar showing where that file actually lives.
 		imgui.SetNextItemOpen(true, imgui.ConditionOnce)
 	}
-	// A plain tree node: one click anywhere on the row opens the folder, which
-	// is what a file list without drag-and-drop should do. SpanAvailWidth only
-	// widens the hit box to the row, so the click does not have to land on the
-	// name itself.
+	// A plain tree node: one click anywhere on the row opens the folder.
+	// SpanAvailWidth widens the hit box to the whole row, so neither the click
+	// nor a drop has to land on the name itself.
 	open := imgui.TreeNodeV(n.Name+"/", imgui.TreeNodeFlagsSpanAvailWidth)
+
+	// Immediately after the node, while it is still the item ImGui would hand a
+	// payload to. A collapsed folder opens if a drag is held over it, which is
+	// ImGui's own behaviour for tree nodes and the only way to drop into a
+	// sub-folder of something that is shut.
+	scriptTreeDropTarget(n.Path)
 
 	// Before the count, so the menu hangs off the folder's own row rather than
 	// off the text drawn beside it.
@@ -232,6 +267,7 @@ func drawScriptTreeFile(f scriptTreeFile) {
 	if imgui.SelectableV(label, current, 0, imgui.Vec2{}) {
 		scriptEditorOpenFile(f.Rel)
 	}
+	scriptTreeDragSource(f)
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip(path)
 	}
@@ -262,10 +298,10 @@ func drawScriptTreeFolderMenu(n *scriptTreeNode) {
 		return
 	}
 	ctxDrawMenuItems([]ctxMenuItem{
-		{Label: n.Path + "/"},
+		{Label: fileutil.ScriptsDirName + "/" + scriptTreeDirPrefix(n.Path)},
 		{Separator: true},
 		{Label: "New script here…", Do: func() {
-			scriptEditorNewName = n.Path + "/"
+			scriptEditorNewName = scriptTreeDirPrefix(n.Path)
 			scriptEditorShowNew = true
 		}},
 		{Label: "New folder here…", Do: func() {
@@ -294,8 +330,90 @@ func drawScriptTreeFileMenu(f scriptTreeFile, path string) {
 			scriptEditorMoveTo = f.Rel
 			scriptEditorShowMove = true
 		}},
+		{Separator: true},
+		// The one item here that cannot be taken back, so it is kept away from
+		// Open by a rule and asks before it acts.
+		{Label: "Delete…", Tooltip: "Remove the file from resources/scripts/.", Do: func() {
+			scriptEditorDeleteRel = f.Rel
+			scriptEditorShowDelete = true
+		}},
 	})
 	imgui.EndPopup()
+}
+
+// ---------- drag and drop ----------
+
+// scriptDragPayloadType is the type ImGui matches a dragged script against.
+// Nothing else in the app sets a payload, but the string is what stops a
+// dragged colour swatch or a future dragged anything from being read as a
+// script path.
+const scriptDragPayloadType = "FOUNDRY_SCRIPT"
+
+// scriptTreeDragSource makes the row just submitted the thing being dragged.
+//
+// The payload is the path relative to the scripts folder — the same string the
+// row was built from, and the one the move takes. Carrying the path rather than
+// an index into the tree matters: the tree is rebuilt every frame, and an index
+// into last frame's tree would point at a different file the moment anything
+// was saved mid-drag.
+func scriptTreeDragSource(f scriptTreeFile) {
+	if !imgui.BeginDragDropSource(imgui.DragDropFlagsNone) {
+		return
+	}
+	imgui.SetDragDropPayload(scriptDragPayloadType, []byte(f.Rel), imgui.ConditionAlways)
+	// What rides under the cursor. The full path rather than the name, because
+	// two folders holding a `main.flang` each is the normal case and the drag
+	// should say which one is in the air.
+	imgui.Text(f.Rel)
+	imgui.EndDragDropSource()
+}
+
+// scriptTreeDropTarget lets the row just submitted accept a dragged script,
+// moving it into dir. dir is slash-separated and relative to the scripts
+// folder, "" for the scripts folder itself.
+func scriptTreeDropTarget(dir string) {
+	if !imgui.BeginDragDropTarget() {
+		return
+	}
+	if data := imgui.AcceptDragDropPayload(scriptDragPayloadType, imgui.DragDropFlagsNone); data != nil {
+		if to, ok := scriptDropPath(string(data), dir); ok {
+			// The same call the Move dialog makes: it repoints the open tab,
+			// reloads and rescans, and says in the status line that whatever
+			// named the old path still does.
+			scriptEditorMoveFile(string(data), to)
+		}
+	}
+	imgui.EndDragDropTarget()
+}
+
+// scriptDropPath works out what a dragged script's path becomes when it is
+// dropped on a folder: its own name, in that folder.
+//
+// It reports false for the drop that would move a file into the folder it is
+// already in — which is most of the accidental ones, and which MoveScriptFile
+// would otherwise refuse as "already exists" and put in the status line as
+// though something had gone wrong.
+func scriptDropPath(rel, dir string) (string, bool) {
+	rel = strings.Trim(strings.TrimPrefix(rel, fileutil.ScriptsDirName+"/"), "/")
+	from, name := "", rel
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		from, name = rel[:i], rel[i+1:]
+	}
+	dir = strings.Trim(strings.TrimPrefix(dir, fileutil.ScriptsDirName+"/"), "/")
+	if name == "" || from == dir {
+		return "", false
+	}
+	return scriptTreeDirPrefix(dir) + name, true
+}
+
+// scriptTreeDirPrefix is what a name inside a folder is prefixed with: the
+// folder and a slash, or nothing at the root — where a leading slash would make
+// a path that reads as starting somewhere else entirely.
+func scriptTreeDirPrefix(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	return dir + "/"
 }
 
 // scriptTreeHolds reports whether a folder contains that path, at any depth.

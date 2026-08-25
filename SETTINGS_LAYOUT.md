@@ -1,33 +1,201 @@
-<!-- Need to add support for chunk scaling in X, Y, and Z> -->
-<!-- Need support for alpha floors/walls/ceilings -->
-<!-- if any item >
-
-<!-- if an object is clicked then it becomes selected, additionally control-click is available for multi-selection -->
-# Objects
-- Spawn Point <!-- Should be automatically placed at the origin -->
-## Chunks [+] [up arrow] <!-- [up arrow] is a utf-8 up arrow to import a chunk from an exported file, [+] is a button to create a new chunk -->
 <!--
-[x] is a button that deletes the chunk
-[+] is a button that duplicates the chunk
-[save icon] is a utf-8 save icon to export a chunk to a file
-[checkbox] toggles if the chunk exists in the level
+SETTINGS_LAYOUT.md — the proposed layout for the editor's panels.
+
+A design target, not a description of what is on screen today. It covers both
+editors and every mode in each, and the one rule that ties them together: a
+panel only ever shows what the current mode and the current selection can
+actually act on.
+
+Open items carried over from the first pass:
+  - Chunk scaling in X, Y and Z. A chunk still carries a single uniform scale.
+  - Alpha on floors / walls / ceilings. Built — every surface, gap and
+    extrusion has an Alpha, and it is laid out below.
+  - Still nowhere in any panel, though the level format already carries them:
+    level-wide scripts; the tags / attributes / script a chunk, a light and a
+    portal each hold; a portal's target frame; a wall's pinned flag.
+-->
+
+# Conventions
+
+<!--
+Widget vocabulary — the same marks mean the same thing in every section below.
+
+[x]             deletes the row's object
+[+]             duplicates the row's object; on a section header, creates one
+[Export]        exports the object to a file
+[Import]        imports an object from an exported file
+[Edit]          opens the object in its own editor
+[checkbox]      the object exists / is enabled in the level
+[eye]           the object is drawn; it still exists, still collides, still
+                scripts. Separate from [checkbox] because the two are separate
+                fields on every surface and every model attachment.
+[color picker]  swatch opening a picker, beside its R/G/B readouts
+[-] [Number Slider] [+] [=]
+                a number: step down, drag, step up, [=] to type it exactly
+<dropdown ...>  a combo over whatever the named catalog holds
+<textbox>       free text
+<readout>       derived, not editable
+
+Every label above is plain text, deliberately — the editor's font is the
+default ImGui bitmap font, which only has glyphs for Basic Latin and the Latin-1
+Supplement (up to U+00FF). An arrow, an em dash, or an icon glyph outside that
+range does not fall back to a blank space; it falls back to a literal "?",
+which reads as broken rather than as a missing icon. No control in any panel
+uses one.
+
+|               marks a toolbar group boundary below — drawn as an actual
+                vertical divider (a Separator, not a typed pipe character),
+                and the same divider in every toolbar the editor has: this
+                one, the sector map's own, and the model editor's.
+-->
+
+<!--
+Selection — a click selects; ctrl+click adds to the selection. Editing a
+property applies it to everything selected of that type, and relative
+positions / rotations / scales are respected as they are currently.
+
+Context — every section below carries the condition it appears under, and
+nothing else is drawn. A section with nothing to act on is absent, not empty
+and not greyed out. The one deliberate exception is the catalogs under
+Objects: they stay reachable with nothing selected, because they are how the
+first of anything gets placed.
+
+Order — every panel is one column, always in this order:
+
+    Context -> Objects -> Properties -> View -> Editor
+
+so a section keeps its place no matter which mode put it there, and the two
+editors read as the same panel with different middles.
+-->
+
+# Context <!-- top of every panel, in every mode, always visible -->
+Editor: <3D | Sector Map | Surface>
+Mode: <Point | Edge | Face> select
+Gizmo: <Move | Rotate | Scale>
+Selection: <n> <what is selected>
+Chunk: <active chunk ID>
+Status: <transient message from the last action>
+
+# Toolbar <!-- the strip above the viewport, in every window that has one -->
+<!--
+One row, always the same shape: a run of buttons, a | boundary, the next run.
+Every toolbar in the editor — this one, the sector map's own pop-out, the
+model editor's — is built from the same groups in the same left-to-right
+order wherever both happen to carry a given group, and divided the same way,
+so switching windows does not mean re-learning where things live.
+
+No Exit button anywhere. The window's own close button quits, the same as
+every other window the editor opens — a red button beside the mode toggles is
+a level lost to a misclick.
+-->
+
+## Main window
+Windows: [2D Window] [Textures] [Model] [Script] [Log]
+<!-- each window button is lit while its window is open -->
+| Select: [Point 1] [Edge 2] [Face 3]
+<!--
+Shared with the sector map's own toolbar below: what a click selects is one
+piece of editor-wide state, not a per-window setting, so both offer it.
+-->
+| Gizmo: [Move G] [Rotate R] [Scale C] <!-- shared with the sector map, same reason -->
+| Shading: [Solid/Wireframe Z] Camera: [Orbit/Fly V] <!-- 3D-only: the map has no shading or camera mode of its own -->
+| Level: <level file name> [Open] [Save] [Undo] [Redo] [Save As...]
+<!--
+No chunk picker here. Which chunk is active is a selection like any other, so
+it is made where every other selection is made — the Chunks list under Objects
+— and the panel's Context line reports it. A dropdown in the toolbar was a
+second way to select one thing, out of reach of the list that owns it and
+silently disagreeing with it.
+-->
+
+## Sector map (its own window)
+Select: [Point 1] [Edge 2] [Face 3]
+| Gizmo: [Move G] [Rotate R] [Scale C]
+<!--
+Nothing else. The chunk, the zoom, and the click hints this used to carry as
+plain text now live on the panel's Context line, which is always on screen —
+repeating them here was two places disagreeing the moment either one changed.
+The window's own Close button sits at the row's right edge.
+-->
+
+## Model editor (its own window)
+<!-- row 1: New / Open / Save / Save As / Import OBJ / Export OBJ / Undo / Redo, and Pop In at the right edge -->
+<document name>
+| Select: [Vertex 1] [Edge 2] [Face 3] [Bone 4]
+| Gizmo: [Move G] [Rotate R] [Scale C] <!-- plus a local-axes toggle beside Scale, when Scale is the active tool -->
+| Shading: [Solid/Wireframe Z] Camera: [Orbit/Fly V]
+
+---
+
+# 3D Editor
+
+<!--
+The main window. Fly or orbit through the level, click what you want, edit it
+on the right.
+
+What the panel shows is decided by two things at once: the select mode, which
+says what a click can land on, and the selection itself, which says which
+Properties sections appear.
+
+  Point select [1]   clicks land on sector corner handles
+                     -> Properties shows Vertex
+  Edge select  [2]   clicks land on the prism around a sector edge
+                     -> Properties shows Vertex, for the edge's two ends
+  Face select  [3]   clicks land on a wall, floor, ceiling, water plane,
+                     entity, volume or the spawn point
+                     -> Properties shows Sector / Entity / Volume / Water /
+                        Spawn, whichever was hit
+
+Objects, View and Editor are the same in all three modes. Switching between
+Point and Edge keeps the selection; crossing to or from Face clears it,
+because the other unit has no handles to explain it.
+-->
+
+## Objects
+
+- [checkbox] Spawn Point <!-- one per level; placed at the origin when the level is created. [checkbox] is whether the level has one at all -->
+  [Place / Move Spawn Point] <!-- arms the next viewport click -->
+
+### Chunks [+] [up arrow] <!-- [up arrow] imports a chunk from an exported file, [+] creates a new one at the camera -->
+<!--
+Clicking a row makes that chunk the active one — the one the sector map draws,
+the one a new sector joins, the one the biome layer paints. This list is the
+only place that happens; there is no picker in the toolbar.
+
+[x] deletes the chunk (asks first)
+[+] duplicates the chunk
+[save icon] exports the chunk to a file
+[checkbox] toggles whether the chunk exists in the level
 -->
 - [x] [save icon] [+] [checkbox] Chunk 1
 - [x] [save icon] [+] [checkbox] Chunk 2
 - [x] [save icon] [+] [checkbox] Chunk 3
-## Entities [+] [up arrow] <!-- [up arrow] is a utf-8 up arrow to import an entity from an exported file, [+] is a button to create a new entity -->
+
+### Entities [+] [up arrow] <!-- [up arrow] imports an entity definition, [+] places one of the picked type -->
+Type <dropdown of definitions under entities/, plus "(blank entity)"> [Reload Definitions]
+<!-- the picked definition's one-line description is shown under the dropdown -->
+ID <textbox> <!-- blank names it after its type; a number is appended if taken -->
+[Place Entity] <!-- arms the next viewport click; [Cancel] while armed -->
 <!--
-[x] is a button that deletes the entity
-[+] is a button that duplicates the entity
-[save icon] is a utf-8 save icon to export an entity to a file
-[checkbox] toggles if the entity exists within the level
+[x] deletes the entity
+[+] duplicates the entity
+[save icon] exports the entity to a file
+[checkbox] toggles whether the entity exists within the level
 -->
 - [x] [+] [save icon] [checkbox] Entity 1
 - [x] [+] [save icon] [checkbox] Entity 2
 - [x] [+] [save icon] [checkbox] Entity 3
-## Lights
-- [checkbox] Global Light <!-- always exists in the level can just be toggled on and off but not removed, the checkbox toggles this-->
-### Directional [+] <!-- [+] is a button to create a new directional light -->
+
+### Volumes [+] <!-- regions a script reacts to; never drawn during play and never solid -->
+ID <textbox> <!-- blank names it "volume"; made unique on placement -->
+[Place Volume] <!-- arms the next viewport click; [Cancel] while armed -->
+<!-- [checkbox] arms/disarms the volume — a disarmed one contains nothing, so it fires no events -->
+- [x] [+] [checkbox] Volume 1
+- [x] [+] [checkbox] Volume 2
+
+### Lights
+- [checkbox] Global Light <!-- always exists in the level, can be toggled on and off but not removed -->
+#### Directional [+] <!-- [+] creates a new directional light -->
 <!--
 [x] removes the light
 [+] duplicates the light
@@ -36,7 +204,7 @@
 - [x] [+] [checkbox] Light 1
 - [x] [+] [checkbox] Light 2
 - [x] [+] [checkbox] Light 3
-### Point [+]  <!-- [+] is a button to create a new point light -->
+#### Point [+] <!-- [+] creates a new point light at the camera -->
 <!--
 [x] removes the light
 [+] duplicates the light
@@ -45,19 +213,22 @@
 - [x] [+] [checkbox] Light 1
 - [x] [+] [checkbox] Light 2
 - [x] [+] [checkbox] Light 3
-### Scripts
+
+### Scripts [+] [up arrow] <!-- the level's own .flang handlers -->
 <!--
-[x] removes the script
+[x] removes the script from the level
 [+] duplicates the script
-[save icon] is a utf-8 save icon to export a script to a file
-[right arrow] is a utf-8 right arrow which opens the script in the script editor
+[save icon] exports the script to a file
+[right arrow] opens the script in the script editor
 -->
-- [x] [save icon] [+] Script 1
-- [x] [save icon] [+] Script 2
-- [x] [save icon] [+] Script 3
-# Properties <!-- editing any properties applies those properties to everything selected of that type, that being said the relative positions/rotations/scales are respected as they are currently if multiple objects are selected>
-## Transform
-<!-- position, rotation, and scale applied to any selected object -->
+- [x] [save icon] [+] [right arrow] Script 1
+- [x] [save icon] [+] [right arrow] Script 2
+- [x] [save icon] [+] [right arrow] Script 3
+[Rescan Scripts] [Reload All] <!-- re-read the folder / re-read every script the level uses -->
+
+## Properties <!-- editing any property applies it to everything selected of that type; relative positions/rotations/scales are respected when several objects are selected -->
+
+### Transform <!-- shown whenever the selection has a position; the gizmo drags the same fields -->
 X [-] [Number Slider] [+] [=]
 Y [-] [Number Slider] [+] [=]
 Z [-] [Number Slider] [+] [=]
@@ -67,66 +238,584 @@ Rotation Roll [-] [Number Slider] [+] [=]
 Scale X [-] [Number Slider] [+] [=]
 Scale Y [-] [Number Slider] [+] [=]
 Scale Z [-] [Number Slider] [+] [=]
-## Chunk <!-- only displayed if a chunk(s) is selected>
+<!--
+Rotation is shown in degrees and stored in radians, everywhere in both editors.
+Rows the selection cannot use are absent: a volume has no scale (its size is
+its half-extents), a point light has neither rotation nor scale, and a
+directional light has neither position nor scale.
+-->
+
+### Spawn Point <!-- only when the spawn marker is selected -->
+Facing: <yaw>°, <pitch>° <readout> <!-- what gameplay actually reads, after the pitch clamp -->
+[Face Camera] [Move To Camera] <!-- aim / place it where the fly camera is looking -->
+[Delete Spawn Point]
+
+### Chunk <!-- only when a chunk is selected -->
 ID: <ID1, ID2, ...>
-Sectors: <Sector count>
-## Sector <!-- only displayed if a sector(s), wall, ceiling, or floor is selected>
+Sectors: <sector count> <readout>
+Origin X/Y/Z [-] [Number Slider] [+] [=]
+Rotation Yaw [-] [Number Slider] [+] [=] <!-- Y-axis only; a chunk does not pitch or roll -->
+Scale X [-] [Number Slider] [+] [=] <!-- see the open item at the top: one uniform scale today -->
+Scale Y [-] [Number Slider] [+] [=]
+Scale Z [-] [Number Slider] [+] [=]
+Carried by <dropdown of vehicle entities, plus "(nothing — world chunk)"> <!-- the chunk is this vehicle's interior; sets both sides of the binding -->
+[Switch to Sector Editor] <!-- opens the map centred on this chunk -->
+#### Tags / Attributes / Script <!-- the shared scripting block; see Scripting, below -->
+
+### Sector <!-- only when a sector, wall, portal, ceiling or floor is selected -->
 ID: <ID1, ID2, ...>
-### [checkbox] Floor <!-- only displayed if a floor is selected, checkbox enables/disables sector floor(s)>
-Visible [checkbox]
+<!-- with more than one face selected, a note says which face the panel is editing and that the right-click menu edits them all -->
+
+#### [checkbox] Floor <!-- only when a floor is selected; [checkbox] enables/disables the sector floor(s) -->
+[eye] Visible <!-- hides the structural texture without disabling the floor — for one fully covered by a biome ground patch -->
 Height [-] [Number Slider] [+] [=]
 Texture <dropdown of available textures>
 Terrain [checkbox]
 Double Sided [checkbox]
 Alpha [-] [Number Slider] [+] [=]
-### [checkbox] Ceiling <!-- only displayed if a ceiling is selected, checkbox enables/disables sector ceiling(s)>
-Visible [checkbox]
+[Edit Floor Surface] <!-- enters the Surface Editor on this face -->
+##### Texture UV
+##### Extrusions
+##### Terrain
+##### Smooth Shading
+##### Detail
+##### Tags / Attributes / Script
+<!-- the six sub-panels above are identical on every face; laid out once under Surface Sub-Panels, below -->
+
+#### [checkbox] Ceiling <!-- only when a ceiling is selected; [checkbox] enables/disables the sector ceiling(s) -->
+[eye] Visible
 Height [-] [Number Slider] [+] [=]
 Texture <dropdown of available textures>
 Terrain [checkbox]
 Double Sided [checkbox]
 Alpha [-] [Number Slider] [+] [=]
-### [checkbox] Wall <!-- only displayed if a wall is selected, checkbox enables/disables wall(s) >
-Visible [checkbox]
-Height [-] [Number Slider] [+] [=]
+[Edit Ceiling Surface]
+##### Texture UV / Extrusions / Terrain / Smooth Shading / Detail / Tags / Attributes / Script
+
+#### [checkbox] Wall <!-- only when a wall is selected; [checkbox] enables/disables the wall(s) -->
+Wall <edge ID> <readout> <!-- the ID, not the index: a script reaches it as @sector.edge.<id>, and the index shifts under nearly every edit -->
+Kind <dropdown: wall, portal> <!-- converting carries the edge's ID across -->
+[eye] Visible
 Texture <dropdown of available textures>
+Collision [checkbox]
+Pinned [checkbox] <!-- portal inference will not convert this wall -->
 Terrain [checkbox]
 Double Sided [checkbox]
 Alpha [-] [Number Slider] [+] [=]
-## Entity <!-- Only displayed if an entity is selected -->
-ID: <ID1, ID2, ...>
-Model <dropdown of available models>
-Texture <dropdown of available textures>
-Tags <textbox with comma separated tags>
-### Bounding
-Method <dropdown of bounding methods, AABB, cylinder, sphere>
+[Edit Wall Surface]
+##### Texture UV / Extrusions / Terrain / Smooth Shading / Detail / Tags / Attributes / Script
+
+#### [checkbox] Portal <!-- only when a portal is selected -->
+Portal <edge ID> <readout>
+Kind <dropdown: wall, portal>
+To Sector <dropdown of sectors, or free text>
+To Frame <dropdown of frames, plus "(this chunk)"> <!-- a frame portal: a ramp opening onto a deck that moves relative to it -->
+Draw Gap [checkbox] <!-- fills the height difference between the two sectors -->
+Gap Texture <dropdown of available textures> <!-- only when Draw Gap is on -->
+[eye] Visible
+Double Sided [checkbox]
+Alpha [-] [Number Slider] [+] [=]
+##### Tags / Attributes / Script
+
+### Vertex <!-- only in Point or Edge select, with at least one handle picked -->
+Vertex #<n> (<Floor | Ceiling>) — <sector ID>
+<!-- with several picked the title is "<n> Vertices Selected", and editing a field collapses all of them onto it -->
+X [-] [Number Slider] [+] [=]
+Z [-] [Number Slider] [+] [=]
+Floor Offset [-] [Number Slider] [+] [=] <!-- per-vertex Y delta from the floor's height -->
+Ceiling Offset [-] [Number Slider] [+] [=]
+Height Offset [-] [Number Slider] [+] [=] <!-- replaces the two above on a multi-selection: each handle's own surface takes it -->
+[Snap To Grid] [Select This Sector's Vertices] [Deselect]
+
+### Entity <!-- only when an entity is selected -->
+ID <textbox> <!-- committed on Enter; a name already in use is refused rather than silently suffixed -->
+Type: <type name, or (none)> <readout> <!-- stamped from entities/<type>.yaml; the level stores only what differs -->
+[eye] Visible
+In: chunk <id> / sector <id> <readout>
+#### Bounding
+Method <dropdown of bounding methods: AABB, cylinder, sphere>
 Half X [-] [Number Slider] [+] [=]
 Half Y [-] [Number Slider] [+] [=]
 Half Z [-] [Number Slider] [+] [=]
-### Attributes
-- [x] [type dropdown] [name textbox] [default value textbox]
-- [x] [type dropdown] [name textbox] [default value textbox]
-- [x] [type dropdown] [name textbox] [default value textbox]
-### Scripts
-- [x] Script 1
-- [x] Script 2
-- [x] Script 3
-## Lights
-### Global  <!-- only visible if the global light is selected -->
+Centre Offset X/Y/Z [-] [Number Slider] [+] [=] <!-- where the volume sits relative to the entity's origin -->
+#### Motion <!-- carried forward every frame during play, not in the editor -->
+Velocity X/Y/Z (u/s) [-] [Number Slider] [+] [=]
+Angular Velocity X/Y/Z (deg/s) [-] [Number Slider] [+] [=]
+[Stop]
+#### Collision
+Collide with world [checkbox]
+Collide with entities [checkbox] <!-- both sides have to opt in -->
+Gravity [checkbox]
+Movable [checkbox] <!-- off makes it immovable scenery: it pushes and is never pushed -->
+Resting on ground <readout>
+<!--
+These belong on the type. The panel says so, and says when the engine-wide
+switches under Editor -> Engine are off, since that is the first thing to
+check when something that should be solid is not.
+-->
+#### Vehicle <!-- [Make this a vehicle] when the entity has no vehicle block -->
+Mode <dropdown: ground, air, water, space>
+Interior <dropdown of chunks, plus "(none — seat-only)"> <!-- the chunk that is this vehicle's deck; sets the chunk's owner too -->
+##### Seats [+]
+<!-- [x] removes the seat; [checkbox] makes it the driver's, taking it off whichever seat had it -->
+- [x] [checkbox] driver
+  Name <textbox>
+  Position X/Y/Z [-] [Number Slider] [+] [=] <!-- vehicle-local, the occupant's feet -->
+  Exit X/Y/Z [-] [Number Slider] [+] [=] <!-- vehicle-local, where they are put down on leaving -->
+  Yaw [-] [Number Slider] [+] [=] <!-- rest facing -->
+  Eye [-] [Number Slider] [+] [=] <!-- view height above the seat -->
+  Yaw Limit [-] [Number Slider] [+] [=] <!-- 0 = unrestricted -->
+  Pitch Limit [-] [Number Slider] [+] [=] <!-- 0 = unrestricted -->
+##### Drive
+Max Speed / Accel / Brake / Reverse [-] [Number Slider] [+] [=]
+Turn Rate / Pitch Rate / Roll Rate [-] [Number Slider] [+] [=]
+Drag / Angular Drag [-] [Number Slider] [+] [=]
+Lift [-] [Number Slider] [+] [=] <!-- air only -->
+Buoyancy [-] [Number Slider] [+] [=] <!-- water only -->
+Ground Stick / Max Climb [-] [Number Slider] [+] [=] <!-- ground and water only -->
+[Reset to defaults] <!-- the mode's defaults -->
+#### Models [+] <!-- [+] adds an attachment with no mesh yet -->
+<!-- [x] removes the attachment; [eye] hides it without removing it -->
+- [x] [eye] Model 1
+  Name <textbox> <!-- how a script asks for an animation on this model rather than another -->
+  Model <dropdown of available models> <!-- .fmdl and .obj under models/, plus "(none)" -->
+  Texture <dropdown of available textures> <!-- "(none)" falls back to what the mesh was authored with -->
+  Offset X/Y/Z [-] [Number Slider] [+] [=]
+  Rotation X/Y/Z (deg) [-] [Number Slider] [+] [=]
+  Scale X/Y/Z [-] [Number Slider] [+] [=]
+  Alpha [-] [Number Slider] [+] [=]
+  ##### Animations [+] <!-- only when the model has an armature and clips -->
+  <!-- [x] removes the animation -->
+  - [x] Animation 1
+    Clip <dropdown of the model's clips>
+    Speed [-] [Number Slider] [+] [=]
+    Loop <dropdown: follow clip, loop, once>
+    Autoplay [checkbox]
+    [Play] <!-- reads "(playing)" while it is -->
+  [Stop]
+[Reload Models] <!-- re-read every attachment from disk, after editing its .fmdl -->
+#### Tags <!-- merged from the definition, so an entity's are edited as their own set -->
+#### Attributes
+#### Script
+#### Actions
+[Duplicate] [Move To Camera] [Reset To Definition] [Delete Entity]
+<!-- Reset To Definition only when the entity has a type; it keeps only where it is -->
+
+### Volume <!-- only when a volume is selected -->
+ID <textbox> <!-- committed on Enter; an ID used by anything else in the level is refused -->
+[checkbox] Enabled <!-- a disabled volume contains nothing, so it fires no events; scripts flip this to arm a trigger -->
+Shape <dropdown of volume shapes>
+Half-extents X/Y/Z [-] [Number Slider] [+] [=] <!-- half the region's size on each axis: the box the shape is inscribed in -->
+#### Tags / Attributes / Script
+[Duplicate] [Delete]
+
+### Water <!-- only when a water plane is clicked, or its biome sector is selected -->
+<!-- shape and extent come from the painted polygon; they are edited in the sector map's biome layer -->
+Depth [-] [Number Slider] [+] [=]
+Wave Amplitude [-] [Number Slider] [+] [=]
+Wave Length [-] [Number Slider] [+] [=]
+Wave Speed [-] [Number Slider] [+] [=]
+Reflectivity [-] [Number Slider] [+] [=]
+[R:<num>] [G:<num>] [B:<num>] [color picker] Reflect Color
+
+### Lights
+#### Global <!-- only when the global light is selected -->
 [R:<num>] [G:<num>] [B:<num>] [color picker] Color
 Brightness [-] [Number slider] [+] [=]
-### Directional  <!-- only visible if a directional light(s) is selected, position + rotation come from the transform panel, scale does nothing -->
-Direction: <direction x>, <direction y>, <direction z>
+#### Directional <!-- only when a directional light is selected; it has no position and no scale -->
+Yaw (deg) [-] [Number slider] [+] [=] <!-- aimed by angle, not by vector: a vector edited one component at a time passes through zero -->
+Pitch (deg) [-] [Number slider] [+] [=]
+Direction: <direction x>, <direction y>, <direction z> <readout>
 [R:<num>] [G:<num>] [B:<num>] [color picker] Color
 Brightness [-] [Number slider] [+] [=]
 Cast shadows [checkbox]
-Shadow strength [-] [Number slider] [+] [=]
-### Point <!-- only visible if a point light(s) is selected, position comes from the transform panel, rotation and scale do nothing -->
-Color [R:<num>] [G:<num>] [B:<num>] [color picker]
+Shadow strength [-] [Number slider] [+] [=] <!-- only when Cast shadows is on -->
+<!-- a compass/elevation card in the corner of the viewport shows where the selected one points -->
+#### Point <!-- only when a point light is selected; position comes from the Transform block, rotation and scale do nothing -->
+[R:<num>] [G:<num>] [B:<num>] [color picker] Color
 Brightness [-] [Number slider] [+] [=]
 Radius [-] [Number Slider] [+] [=]
 Cast shadows [checkbox]
 Shadow strength [-] [Number slider] [+] [=]
-# Editor
+#### Tags / Attributes / Script <!-- a light is addressable, so it carries the same block everything else does -->
+
+## View
+Shading <dropdown: Solid, Wireframe> [Z]
+<!-- solid hides the far side of the world and only lets you click what you can see; wireframe draws it as lines and lets you click any of it -->
+Camera <dropdown: Orbit, Fly> [V]
+Show All Point/Edge Boxes [checkbox] <!-- wireframe already draws them all; this is the same for a solid view -->
+[Frame Selection] [F]
+[Fwd] [Back] [Left] [Right] [Up] [Down] <!-- hold to nudge the camera, for working without the keyboard -->
+
+## Editor
 Snap to grid [Checkbox]
 Snap Delta [Number Slider]
+
+---
+
+# 2D Editor — Sector Map
+
+<!--
+Its own window, opened from the toolbar. The top-down view of one chunk: the
+shared point pool, the sectors built out of it, and the biome polygons painted
+over it.
+
+The same select modes and the same gizmo tools as the 3D view, on the same
+state, so a selection made in one is legible in the other. What differs is
+what a click can reach: the map picks chunk points, wall and portal lines,
+sectors, entities, volumes and the spawn marker, but nothing that only exists
+in three dimensions.
+
+The map has one mode of its own — the biome layer — which replaces what a
+click does entirely. It gets its own section, below.
+-->
+
+## Context <!-- as above, plus what only the map has -->
+Zoom: <n> px/unit <readout>
+Editing: <Floor | Ceiling> corners <!-- which of a corner's two handles the map picks and drags -->
+Scroll: zoom | MMB drag: pan | Shift+click: add point | Ctrl+click: multi-select | RMB: menu
+
+## Map
+[Floor Verts] [Ceiling Verts] <!-- which height each corner handle carries; lit for the one in force -->
+[Join Points (n edges)] [J] <!-- draws an edge between each picked point and the next, in the order picked -->
+[Join & Close Loop (n edges)] [Shift+J] <!-- the same, plus the edge back to the first, which closes it into a sector -->
+[Discard n Unjoined Edge(s)] <!-- only when there are any; the points themselves stay -->
+[Add Point Here] [Delete n Points] [Clear Selection]
+Show All Point Boxes [checkbox]
+
+## Objects
+<!--
+Identical to the 3D editor's Objects block — the same spawn point, chunks,
+entities, volumes, lights and scripts, because both views edit the same level.
+The chunk list is what switches which chunk the map is drawing.
+-->
+
+## Properties
+
+### Sectors (<n>) <!-- the active chunk's sector list; selecting one opens the block below -->
+- Sector 1
+- Sector 2
+- Sector 3
+
+### Sector <!-- only when a sector is selected -->
+<!--
+The same Sector block the 3D editor draws, with the same Floor / Ceiling /
+Wall / Portal sub-blocks and the same six surface sub-panels. Two differences,
+both because the map is the view that owns the outline:
+
+  - Floor and Ceiling are both always available here, not only the face that
+    happened to be clicked.
+  - the Vertex block below edits a corner of the outline, in X and Z, which
+    is what the map is for.
+-->
+
+### Vertex <!-- only when a corner is selected -->
+Vertex #<n>
+X [-] [Number Slider] [+] [=]
+Z [-] [Number Slider] [+] [=]
+Floor Offset [-] [Number Slider] [+] [=]
+Ceil Offset [-] [Number Slider] [+] [=]
+
+### Edge <!-- only when a wall or portal line is selected; the same block the 3D editor draws -->
+
+### Entity / Volume / Spawn Point <!-- only when one is selected; the same blocks the 3D editor draws -->
+
+## View
+Show All Point Boxes [checkbox]
+Zoom [-] [Number Slider] [+] [=]
+[Frame Chunk]
+[Switch to 3D Editor]
+
+## Editor
+Snap to grid [Checkbox]
+Snap Delta [Number Slider]
+
+---
+
+# 2D Editor — Biome Layer
+
+<!--
+A mode of the sector map, not a window of its own. While it is on, the map
+draws, selects and edits biome polygons instead of structural geometry, and
+the structural sections above are replaced by these.
+
+A sector owns its brush outright: editing one only ever affects that one, and
+sectors may be drawn overlapping to layer looks together.
+
+Sub-modes:
+  idle      click selects a polygon, or grabs a vertex of the selected one;
+            right-click deletes the polygon under the cursor
+  drawing   click adds a point, click near the first (or Enter) closes it,
+            right-click undoes the last point, Esc cancels
+-->
+
+## Biome Sectors <!-- only while the biome layer is on -->
+Edit Biome Layer [checkbox] <!-- the switch into this mode; off, the section says so and shows nothing else -->
+[+ New Sector] [Refresh Heights]
+Placing sector (<n> pts) <readout> <!-- only while drawing -->
+[Finish] [Cancel] <!-- only while drawing -->
+<!-- [x] deletes the sector; [+] duplicates it -->
+- [x] [+] Sector 1 (Grass)
+- [x] [+] Sector 2 (Water)
+- [x] [+] Sector 3 (Rock)
+
+## Properties <!-- only when a biome sector is selected -->
+Selected: <ID> (<n> pts) <readout>
+Brush <dropdown: Grass, Rock, Wildflower, Cattail, Sand, Water, Moss>
+<!-- switching resets to that kind's defaults rather than carrying stale fields over -->
+Density [-] [Number Slider] [+] [=] <!-- only for kinds that scatter -->
+Draw Dist [-] [Number Slider] [+] [=] <!-- only for kinds that scatter -->
+[R:<num>] [G:<num>] [B:<num>] [color picker] Color <!-- every kind but Sand and Water -->
+
+### Grass <!-- only for the Grass brush -->
+Grass Height [-] [Number Slider] [+] [=]
+Blade Width [-] [Number Slider] [+] [=]
+Clumping [-] [Number Slider] [+] [=] <!-- 0 scatters evenly; above that, blades gather into tufts -->
+
+### Rock <!-- only for the Rock brush -->
+Rock Sides [-] [Number Slider] [+] [=]
+Rock Size [-] [Number Slider] [+] [=]
+
+### Wildflower <!-- only for the Wildflower brush -->
+Stem Height [-] [Number Slider] [+] [=]
+Stem Width [-] [Number Slider] [+] [=]
+Bloom Size [-] [Number Slider] [+] [=]
+Leaves [checkbox]
+Leaf Size [-] [Number Slider] [+] [=] <!-- only when Leaves is on -->
+Spike Bloom [checkbox] <!-- elongated and cattail-like, against a squat petal disc -->
+Random Bloom Colors [checkbox] <!-- off uses Color above directly; on picks a hue and tints it by Color -->
+Bloom Center [checkbox]
+[R:<num>] [G:<num>] [B:<num>] [color picker] Center Color <!-- only when Bloom Center is on -->
+
+### Cattail <!-- only for the Cattail brush -->
+Reed Height [-] [Number Slider] [+] [=]
+Reed Width [-] [Number Slider] [+] [=]
+Seed Head Size [-] [Number Slider] [+] [=]
+
+### Sand <!-- only for the Sand brush -->
+Dune Height [-] [Number Slider] [+] [=] <!-- volumetric displacement, no scatter — paint Rock on top for outcrops -->
+
+### Moss <!-- only for the Moss brush -->
+Scatter Clumps [checkbox] <!-- off is a ground patch only; this gates whether Density and Draw Dist mean anything -->
+Clump Size [-] [Number Slider] [+] [=] <!-- only when Scatter Clumps is on -->
+
+### Water <!-- only for the Water brush; auto-fills the painted area with a water plane -->
+<!-- the same block the 3D editor's Water section draws, reached there by clicking the plane -->
+Depth [-] [Number Slider] [+] [=]
+Wave Amplitude / Wave Length / Wave Speed / Reflectivity [-] [Number Slider] [+] [=]
+[R:<num>] [G:<num>] [B:<num>] [color picker] Reflect Color
+
+### Slope Range <!-- only for kinds that follow displacement: Grass, Rock, Sand, Moss -->
+<!-- scatter only appears where the ground's angle is in range; sloped, terrain and displaced floors all count -->
+Min Angle [-] [Number Slider] [+] [=]
+Max Angle [-] [Number Slider] [+] [=]
+
+### Level of Detail <!-- only for kinds that render three tiers -->
+<!-- mesh detail drops Near -> Mid -> Far with distance; only Near casts real per-instance shadows by default -->
+Near Dist [-] [Number Slider] [+] [=]
+Mid Dist [-] [Number Slider] [+] [=]
+Far tier spans Mid Dist to Draw Dist (<n>) <readout>
+
+### Soft Edges <!-- only for kinds that scatter -->
+Range Fade [-] [Number Slider] [+] [=] <!-- the outer camera-ring boundary; 0 is a hard cutoff at Draw Dist -->
+Edge Fade Dist [-] [Number Slider] [+] [=] <!-- the sector's own painted boundary; 0 is a hard cutoff at the polygon edge -->
+Boundary Jitter [-] [Number Slider] [+] [=] <!-- bulges Draw Dist and any LOD rings so the transition does not read as a circle -->
+
+### Ground <!-- every kind, including Water, whose patch is the lakebed under the surface -->
+Ground Texture <dropdown of available textures>
+Texture Scale U [-] [Number Slider] [+] [=] <!-- same world-XZ units as a structural floor's UV scale -->
+Texture Scale V [-] [Number Slider] [+] [=]
+Roughness [-] [Number Slider] [+] [=] <!-- absent for Sand, whose amplitude is Dune Height -->
+Detail Frequency [-] [Number Slider] [+] [=]
+Detail Octaves [-] [Number Slider] [+] [=]
+
+---
+
+# Surface Editor (2D)
+
+<!--
+A mode of the main window, entered from any floor, ceiling or wall — from its
+[Edit ... Surface] button, or from the face's right-click menu. Esc returns to
+whichever mode opened it.
+
+It is the surface's own flat view: the holes cut into it, and the points that
+give it its shape. One face at a time, deliberately — every coordinate here is
+in that face's UV space, and two faces do not share one.
+
+Sub-modes:
+  idle       drag an existing point
+  extrusion  shift+click places polygon points, Enter finishes, Esc cancels
+  terrain    shift+click places a terrain point, right-click deletes the
+             nearest, [Done] leaves
+-->
+
+## Context
+Surface: <wall | floor | ceiling> | Sector: <ID>
+Zoom: <n> px/unit <readout>
+[Back (Esc)]
+Edit Layer: [Both] [Outer] [Inner] <!-- which extrusion points may be dragged; the two are drawn cyan and magenta, joined by grey lines -->
+
+## Extrusions
+[+ New Extrusion] <!-- only when nothing else is being placed -->
+Placing extrusion (<n> pts) <readout> [Finish (Enter)] [Cancel (Esc)] <!-- only while placing -->
+<!-- [x] deletes the extrusion; [+] duplicates it -->
+- [x] [+] Ext #0 (<n> pts)
+  Depth [-] [Number Slider] [+] [=]
+  Texture <dropdown of available textures> <!-- "(none)" falls back to the face's -->
+  [eye] Visible
+  Back Visible [checkbox]
+  Alpha [-] [Number Slider] [+] [=]
+  Outer Shape <!-- U/V per point -->
+  Inner Shape <!-- U/V per point -->
+  Texture UV
+
+## Terrain
+Terrain Enabled [checkbox]
+[+ Place Terrain Points] <!-- only when nothing else is being placed -->
+Shift+click to place | Right-click to delete <readout> [Done] <!-- only while placing -->
+<n> points — click to select <readout>
+### Point #<n> <!-- only when one is selected -->
+U [-] [Number Slider] [+] [=]
+V [-] [Number Slider] [+] [=]
+Depth [-] [Number Slider] [+] [=]
+[Delete]
+
+## Editor
+Snap to grid [Checkbox]
+Snap Delta [Number Slider]
+
+---
+
+# Surface Sub-Panels
+
+<!--
+The six blocks every floor, ceiling and wall carries. Identical wherever the
+face was selected from — the 3D view or the sector map — so they are laid out
+once here rather than three times above.
+-->
+
+## Texture UV
+UV Offset U [-] [Number Slider] [+] [=]
+UV Offset V [-] [Number Slider] [+] [=]
+UV Scale U [-] [Number Slider] [+] [=]
+UV Scale V [-] [Number Slider] [+] [=]
+UV Rotation (deg) [-] [Number Slider] [+] [=]
+
+## Extrusions (<n>)
+<!-- the list and the per-extrusion fields the Surface Editor draws, reachable without leaving the face -->
+- [x] [+] Ext #0 (<n> pts)
+  Depth / Texture / Visible / Back Visible / Alpha / Outer Shape / Inner Shape / Texture UV
+
+## Terrain (<n> pts)
+Enabled [checkbox]
+[+ Add Point]
+- Point #0
+  U [-] [Number Slider] [+] [=]
+  V [-] [Number Slider] [+] [=]
+  Depth [-] [Number Slider] [+] [=]
+  [Delete]
+
+## Smooth Shading
+Smooth Shading [checkbox] <!-- weld the normals along shared edges, so neighbouring faces read as one curved surface -->
+Crease Angle (deg) [-] [Number Slider] [+] [=] <!-- only when Smooth Shading is on -->
+
+## Detail <!-- per-face procedural displacement and scatter -->
+Enabled [checkbox]
+Preset <dropdown of built-in and user presets, plus "(custom)">
+<textbox> [Save Preset | Update Preset] [Delete] <!-- only user presets are deletable; the built-ins are compiled in -->
+Seed <textbox> [Randomize]
+### Displace surface [checkbox]
+- Wave 1 [checkbox]
+  Amplitude / Frequency / Rotation (deg) / Tessellation [-] [Number Slider] [+] [=]
+- Wave 2 [checkbox]
+- Wave 3 [checkbox]
+Noise [checkbox]
+  Amplitude / Frequency / Octaves / Tessellation [-] [Number Slider] [+] [=]
+Effective tessellation: <n> <readout> <!-- tessellation is per-patch, so the active layers share the highest level -->
+Edge Taper [-] [Number Slider] [+] [=]
+### Scatter meshes [checkbox]
+Rock Texture <dropdown of available textures>
+Density / Spacing / Scale / Jitter / Draw Range [-] [Number Slider] [+] [=]
+
+## Tags / Attributes / Script <!-- see Scripting, below -->
+
+---
+
+# Scripting
+
+<!--
+Every addressable object carries the same three blocks: an entity, a volume, a
+sector, an edge, a floor, a ceiling, a chunk and a light. One layout, drawn
+wherever they appear, so there is one thing to learn.
+
+An entity's tags and attributes are merged from its definition rather than
+held on the instance, so they are edited as their own set — the widgets are
+the same, the storage is not.
+-->
+
+## Tags
+<!-- [x] removes the tag; the list is kept sorted, since a tag is what a script's #tag addresses -->
+- [x] #tag1
+- [x] #tag2
+<textbox> [Add Tag]
+
+## Attributes
+<!-- [x] removes the attribute; changing a type converts the value rather than resetting it -->
+- [x] [type dropdown] [name textbox] [default value textbox]
+- [x] [type dropdown] [name textbox] [default value textbox]
+- [x] [type dropdown] [name textbox] [default value textbox]
+Name <textbox>
+Type <dropdown of attribute types>
+[Add Attribute]
+
+## Script
+File <dropdown of .flang files under scripts/, plus "(none)"> [Rescan] [right arrow]
+<!-- a combo rather than a text field: a mistyped path is a script that silently never runs -->
+<owner> runs <path> <readout>
+### Parameters <!-- one row per `param` the attached script declares; absent when it declares none and none are bound -->
+@name <type> [x] <!-- [x] hands the parameter back to the script's default; "(default)" is shown instead when nothing is bound -->
+  <value editor matching the type; a `ref` is a dropdown of the level's IDs>
+<path> does not declare: <names> <readout> <!-- values left behind by a renamed param -->
+[Clear Unused]
+
+---
+
+# Editor Settings
+
+<!--
+The bottom block of every panel, in every mode, in both editors. Same
+controls, same place, whatever is being edited — these are about the editor
+rather than about the level, and hunting for them per mode is what the revamp
+is meant to stop.
+-->
+
+## Grid
+Snap to grid [Checkbox]
+Snap Delta [Number Slider]
+
+## Engine <!-- engine-wide switches, not level data; they do not save with the level -->
+Entity/world collision [checkbox] [8] <!-- each entity still has to opt in; this says whether the engine listens -->
+Entity/entity collision [checkbox] [9]
+Gravity [checkbox] [0]
+<!-- entities only move while the editor is closed; the panel says so -->
+
+## Rendering <!-- the biome shadow cost switches, today reachable only by function key -->
+Biome scatter receives shadows [checkbox] [F5]
+Rock / moss cast shadows [checkbox] [F6]
+Foliage casts shadows [checkbox] [F7] <!-- expensive: re-instances every blade into every cascade -->
+Cast Cascades [-] [Number Slider] [+] [=] [F8] <!-- how many cascades the scatter is drawn into, nearest first -->
+Cast LOD Tiers [-] [Number Slider] [+] [=] [F9] <!-- how many LOD tiers cast at all, nearest first -->
+Cast Range [-] [Number Slider] [+] [=] <!-- extra cap on the scatter ring for shadow passes; 0 = whatever the shadow map itself reaches -->
+Anti-aliasing [checkbox] [F10]
+Debug overlay [checkbox] [F3]
+Fullscreen [checkbox] [F11]
+
+## Panel
+Panel width [-] [Number Slider] [+] [=] <!-- also draggable from the panel's left edge -->
+[Keybindings (F1)]
+
+<!--
+Not covered here: the model editor, the texture editor, the script editor and
+the log. Each is its own window with its own document, rather than a mode of
+either level editor, and each deserves its own pass.
+-->

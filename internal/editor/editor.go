@@ -185,9 +185,21 @@ type EditorState struct {
 	// cleared by the panel once it has been applied.
 	PanelFocus string
 
-	// Directional light whose open tree node is showing in the light panel;
-	// -1 = none. Drives the on-screen direction indicator only.
-	SelectedDirLightIdx int
+	// SelectedLightKind is which light the panel's Lights properties block is
+	// showing: "" for none, or one of the lightKind* constants. Selecting a
+	// light is an ordinary selection now — made in the Objects list, read by
+	// Properties — rather than the side effect of an open tree node it used to
+	// be, which meant collapsing a section deselected what it was showing.
+	SelectedLightKind string
+	// SelectedLightIdx indexes Lights.Directional or Lights.Points, depending
+	// on SelectedLightKind. Ignored for the global light, of which there is one.
+	SelectedLightIdx int
+
+	// ChunkSelected is whether the active chunk is itself the selection — the
+	// state that gives it the gizmo and its properties section. Distinct from
+	// ActiveChunkIdx, which is always valid and names the chunk being *edited*:
+	// the map draws it, a new sector joins it, the biome layer paints it.
+	ChunkSelected bool
 
 	// Saved gameplay camera state (restored on editor exit)
 	SavedCamPos   mgl32.Vec3
@@ -358,7 +370,9 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.ActiveSurface = ""
 	Editor.SelectedFaces = nil
 	Editor.PanelFocus = ""
-	Editor.SelectedDirLightIdx = -1
+	Editor.SelectedLightKind = ""
+	Editor.SelectedLightIdx = -1
+	Editor.ChunkSelected = false
 	Editor.SpawnPlacementMode = false
 	Editor.SpawnSelected = false
 	Editor.ActiveEntityIdx = -1
@@ -931,7 +945,9 @@ func EditorLoadLevel(path string) error {
 	Editor.ActiveSurface = ""
 	Editor.SelectedFaces = nil
 	Editor.PanelFocus = ""
-	Editor.SelectedDirLightIdx = -1
+	Editor.SelectedLightKind = ""
+	Editor.SelectedLightIdx = -1
+	Editor.ChunkSelected = false
 	Editor.SpawnPlacementMode = false
 	Editor.SpawnSelected = false
 	Editor.ActiveEntityIdx = -1

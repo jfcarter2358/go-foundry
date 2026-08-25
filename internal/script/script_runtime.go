@@ -359,6 +359,42 @@ func ScriptIssues(path string) []ScriptIssue {
 	return nil
 }
 
+// ScriptUsage says how a script is reachable from the level that is loaded:
+// whether the level itself names it, and which other scripts import it. Both
+// are things worth knowing before deleting a file.
+//
+// It answers from the runtime's loaded units rather than by re-walking the
+// level, which is what makes the second half possible at all: an import is not
+// written anywhere in the level, only in the script that imports it, so the only
+// record of one is the linked program the runtime is holding.
+//
+// Paths are compared resolved. A level may name a script "door.flang" or
+// "scripts/door.flang" — ScriptPath reads both — and a delete that missed a
+// warning over a prefix would be the worst kind of miss.
+func ScriptUsage(path string) (named bool, importedBy []string) {
+	full := fileutil.ScriptPath(path)
+	if full == "" {
+		return false, nil
+	}
+	for p, u := range Scripts.units {
+		if fileutil.ScriptPath(p) == full {
+			named = true
+			continue
+		}
+		if u.prog == nil {
+			continue
+		}
+		for _, f := range u.prog.Files {
+			if f.Path == full {
+				importedBy = append(importedBy, p)
+				break
+			}
+		}
+	}
+	sort.Strings(importedBy)
+	return named, importedBy
+}
+
 // ScriptReload re-reads every script from disk, keeping the level in place. This
 // is what hot reload calls.
 func ScriptReload() {

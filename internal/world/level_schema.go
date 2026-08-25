@@ -377,6 +377,10 @@ type RawColor struct {
 type RawGlobalLight struct {
 	Color      RawColor `yaml:"color"`
 	Brightness float32  `yaml:"brightness"`
+	// Disabled, rather than Enabled, so the zero value is "on" — every level
+	// authored before the editor grew a switch for this has one, and none of
+	// them meant it to be dark. Same reasoning as RawFloor.Hidden.
+	Disabled bool `yaml:"disabled,omitempty"`
 }
 
 // RawDirLight is the YAML representation of a directional light.
@@ -398,6 +402,7 @@ type RawDirLight struct {
 	Brightness     float32  `yaml:"brightness"`
 	CastShadows    bool     `yaml:"cast_shadows"`
 	ShadowStrength float32  `yaml:"shadow_strength"`
+	Disabled       bool     `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
 }
 
 // RawPointLight is the YAML representation of a point light.
@@ -414,6 +419,7 @@ type RawPointLight struct {
 	Radius         float32  `yaml:"radius"`
 	CastShadows    bool     `yaml:"cast_shadows"`
 	ShadowStrength float32  `yaml:"shadow_strength"`
+	Disabled       bool     `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
 }
 
 // RawLights holds all light definitions from YAML.

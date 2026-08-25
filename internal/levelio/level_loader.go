@@ -627,6 +627,7 @@ func rawToLightSet(rl world.RawLights) world.LightSet {
 	ls.Global = world.GlobalLight{
 		Color:      mgl32.Vec3{rl.Global.Color.R, rl.Global.Color.G, rl.Global.Color.B},
 		Brightness: rl.Global.Brightness,
+		Disabled:   rl.Global.Disabled,
 	}
 	for _, rd := range rl.Directional {
 		ss := rd.ShadowStrength
@@ -641,6 +642,7 @@ func rawToLightSet(rl world.RawLights) world.LightSet {
 			Brightness:     rd.Brightness,
 			CastShadows:    rd.CastShadows,
 			ShadowStrength: ss,
+			Disabled:       rd.Disabled,
 		}
 		// Angles are authoritative when present; otherwise derive them from the
 		// direction vector, which is all pre-rotation levels stored.
@@ -667,6 +669,7 @@ func rawToLightSet(rl world.RawLights) world.LightSet {
 			Radius:         rp.Radius,
 			CastShadows:    rp.CastShadows,
 			ShadowStrength: ss,
+			Disabled:       rp.Disabled,
 		})
 	}
 	// Lights predate having identity, so most levels arrive with none. Mint them

@@ -773,17 +773,31 @@ folder here is the folder `import("shared/math.flang")` resolves through. *New
 Folder* makes one — including an empty one, which then stays visible until you
 put something in it — and right-clicking a script offers *Move or rename*, which
 takes a whole path, so moving a file into a folder and renaming it are the same
-operation. Nothing that *names* the old path is rewritten: levels and entity
-definitions live outside the scripts folder, and the lint pass reports the
-dangling reference the next time that level is opened.
+operation. Dragging a script onto a folder row does the same move without the
+typing; hold the drag over a closed folder to open it, and drop on the
+`scripts/` row at the top to bring a file back out to the top level. Nothing
+that *names* the old path is rewritten: levels and entity definitions live
+outside the scripts folder, and the lint pass reports the dangling reference the
+next time that level is opened.
+
+**Deleting.** *Delete* is on the same right-click menu, and is the one file
+action that asks first — it removes the file from disk for good. The
+confirmation says what will notice: whether this level names the script, and
+which other scripts import it, since an import is written in the importing
+script and nowhere the level could tell you about. An open tab on that file is
+closed with it, unsaved text and all, rather than left holding a buffer whose
+next save would quietly put the file back.
 
 **The buffer** is a normal text field with syntax colouring painted over it and
 numbered lines beside it. A line with a parse error is numbered in red and one
 with an issue in amber, so a problem stays findable while you scroll past it.
 Cut, copy and paste use the system clipboard, `Ctrl+Z` / `Ctrl+Y` undo and redo,
 `Shift` with the arrow keys or with a click extends the selection, and `Tab`
-inserts a tab rather than moving on. `Esc` closes the window; every tab keeps its
-unsaved text, and reopening the editor comes back to exactly where you were.
+inserts a tab rather than moving on. `Esc` does nothing at all — it is swallowed
+before ImGui can read it as "revert this field", which in a script buffer would
+throw away every edit since the last save. The window closes from its own close
+button and nothing else; every tab keeps its unsaved text, and reopening the
+editor comes back to exactly where you were.
 
 **F1** opens the reference: the keybindings, every event the engine posts, every
 standard-library function with its signature and what it returns, and every

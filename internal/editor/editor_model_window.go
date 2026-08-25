@@ -418,14 +418,17 @@ func modelEditorToolbar() {
 	}
 
 	// --- row 2: what the mouse is doing ---
+	// Grouped and divided the same way every other toolbar in the editor is
+	// (editorToolbarGroupSep) — the level editor's main window, the 2D map's
+	// own window — so this reads as the same kind of bar as those.
 	id := "(untitled)"
 	if modelDoc != nil && modelDoc.ID != "" {
 		id = modelDoc.ID
 	}
 	imgui.Text(id)
-	imgui.SameLine()
-	imgui.Text("|")
 
+	// ---- Group: select mode ----
+	editorToolbarGroupSep()
 	for _, mode := range []modelSelMode{modelSelVertex, modelSelEdge, modelSelFace, modelSelBone} {
 		imgui.SameLine()
 		// Latch the comparison before the button: clicking it changes the mode,
@@ -444,8 +447,8 @@ func modelEditorToolbar() {
 		}
 	}
 
-	imgui.SameLine()
-	imgui.Text("|")
+	// ---- Group: gizmo tool ----
+	editorToolbarGroupSep()
 	for _, tool := range modelGizmoTools {
 		imgui.SameLine()
 		active := modelGizmoTool == tool
@@ -482,8 +485,8 @@ func modelEditorToolbar() {
 		}
 	}
 
-	imgui.SameLine()
-	imgui.Text("|")
+	// ---- Group: viewport display ----
+	editorToolbarGroupSep()
 	imgui.SameLine()
 	if modelWireframe {
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.45, Z: 0.7, W: 1})

@@ -21,129 +21,145 @@ import (
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-// editorSpawnSection draws the level's player spawn point: the place/move
-// toggle when there is none, and its properties once there is.
+// editorOpenImportChunk scans chunks/ and raises the import dialog. The Chunks
+// list's ↑ button calls it; the dialog itself is drawn by editorChunkPopups.
+func editorOpenImportChunk() {
+	files, _ := filepath.Glob(filepath.Join(fileutil.ExecutablePath, "chunks", "*.yaml"))
+	Editor.ImportChunkFiles = nil
+	for _, f := range files {
+		Editor.ImportChunkFiles = append(Editor.ImportChunkFiles, filepath.Base(f))
+	}
+	Editor.ImportChunkIdx = 0
+	Editor.ShowImportChunk = true
+}
+
+// editorChunkPropertiesSection draws the selected chunk's identity, what it is
+// carried by, its scripting block and the jump to the other editor.
 //
-// One section rather than a catalog and a properties block, because a level has
-// exactly one spawn point — there is nothing to pick from, and "place" and
-// "move" are the same operation.
-func editorSpawnSection(lvl *world.Level) {
-	editorFocusOpen(panelFocusSpawn)
-	if !imgui.CollapsingHeaderV("Player Spawn", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
-	editorFocusScroll(panelFocusSpawn)
-
-	label := "Place Spawn Point"
-	if lvl.Spawn != nil {
-		label = "Move Spawn Point"
-	}
-	if imgui.Button(label + "##spawnplace") {
-		Editor.SpawnPlacementMode = true
-	}
-	if Editor.SpawnPlacementMode {
-		imgui.SameLine()
-		imgui.Text("Click to place...")
-	}
-
-	if lvl.Spawn == nil {
-		imgui.Text("This level has no spawn point.")
-		return
-	}
-	imgui.Separator()
-	editorSpawnPointSection(lvl)
-}
-
-// editorChunkListSection draws the chunk list plus the new/duplicate/save/
-// delete/import controls. The popups it opens are drawn by editorChunkPopups.
-func editorChunkListSection(lvl *world.Level) {
-	// --- Chunk list ---
-	imgui.Separator()
-	if imgui.CollapsingHeader("Chunks") {
-		for i := range lvl.Chunks {
-			ch := &lvl.Chunks[i]
-			selected := i == Editor.ActiveChunkIdx
-			if imgui.SelectableV(ch.ID, selected, 0, imgui.Vec2{}) {
-				// Selecting a chunk by name is the explicit "I want the whole
-				// chunk" action, so it takes the translate gizmo.
-				Editor.ActiveChunkIdx = i
-				editorClearSpawnSelection()
-				clearVertexSelection()
-				Editor.GizmoKind = gizmoKindChunk
-			}
-		}
-		if imgui.Button("New Chunk") {
-			Editor.ShowNewChunk = true
-		}
-		if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
-			imgui.SameLine()
-			if imgui.Button("Duplicate Chunk") {
-				EditorPushUndo()
-				duplicateActiveChunk()
-			}
-			imgui.SameLine()
-			if imgui.Button("Save Chunk") {
-				Editor.SaveChunkName = lvl.Chunks[Editor.ActiveChunkIdx].ID
-				Editor.ShowSaveChunk = true
-			}
-			imgui.SameLine()
-			if imgui.Button("Delete Chunk") {
-				Editor.ShowDeleteChunk = true
-			}
-		}
-		if imgui.Button("Import Chunk") {
-			files, _ := filepath.Glob(filepath.Join(fileutil.ExecutablePath, "chunks", "*.yaml"))
-			Editor.ImportChunkFiles = nil
-			for _, f := range files {
-				Editor.ImportChunkFiles = append(Editor.ImportChunkFiles, filepath.Base(f))
-			}
-			Editor.ImportChunkIdx = 0
-			Editor.ShowImportChunk = true
-		}
-	}
-}
-
-// editorChunkPropertiesSection draws the selected chunk's origin/rotation/scale
-// and the jump-to-the-other-sub-mode button.
+// Its origin, rotation and scale are not here: they are a transform, and the
+// panel has one Transform block that every selection with a position shares.
+// Shown only while the chunk is the selection — being the *active* chunk is not
+// the same thing, and a properties block that was always up was the panel's
+// loudest way of saying nothing.
 func editorChunkPropertiesSection(lvl *world.Level) {
-	// --- Selected chunk properties ---
-	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
-		imgui.Separator()
-		if imgui.CollapsingHeader("Chunk Properties") {
-			ch := &lvl.Chunks[Editor.ActiveChunkIdx]
-			imgui.Text(fmt.Sprintf("ID: %s", ch.ID))
-			imgui.Text(fmt.Sprintf("Sectors: %d", len(ch.Sectors)))
+	ch := selectedChunk()
+	if ch == nil {
+		return
+	}
+	imgui.Separator()
+	editorFocusOpen(panelFocusChunk)
+	if !imgui.CollapsingHeaderV("Chunk: "+ch.ID, imgui.TreeNodeFlagsDefaultOpen) {
+		return
+	}
+	editorFocusScroll(panelFocusChunk)
 
-			orig := [3]float32{ch.Origin.X(), ch.Origin.Y(), ch.Origin.Z()}
-			if editorDragFloat3("Origin", &orig, 0, 0, "%.3f") {
-				moveChunk(ch, mgl32.Vec3{orig[0], orig[1], orig[2]})
-			}
-			editorDragFloat("Rotation##chunkRot", &ch.Rotation, 0, 0, "%.3f")
-			sc := ch.Scale
-			if sc == 0 {
-				sc = 1
-			}
-			if editorDragFloat("Scale##chunkScale", &sc, 0.01, 100, "%.2f") {
-				ch.Scale = sc
-			}
-
-			// Jump to the other editor, centred on this chunk. From the
-			// sector map that means handing focus back to the main window's
-			// 3D view (withEditor2DMode notices the mode change and raises
-			// it); from the 3D view it means opening the map's window.
-			if Editor.Mode == Mode2D {
-				if imgui.Button("Switch to 3D Editor") {
-					Editor.Mode = Mode3D
-				}
-			} else if imgui.Button("Switch to Sector Editor") {
-				OpenEditor2DWindow()
-				Editor.Pan2D = mgl32.Vec2{
-					(ch.MinBound.X() + ch.MaxBound.X()) / 2,
-					(ch.MinBound.Z() + ch.MaxBound.Z()) / 2,
-				}
-			}
+	id := ch.ID
+	if imgui.InputTextV("ID##chunkid", &id, imgui.InputTextFlagsEnterReturnsTrue, nil) && id != ch.ID {
+		switch {
+		case id == "":
+			editorSetStatus("A chunk needs an ID")
+		case world.LevelIDTaken(lvl, id):
+			editorSetStatus("%q is already used by something else in this level", id)
+		default:
+			EditorPushUndo()
+			ch.ID = id
 		}
 	}
+	imgui.Text(fmt.Sprintf("Sectors: %d", len(ch.Sectors)))
+	imgui.Text(fmt.Sprintf("Points: %d", len(ch.Points)))
+	imgui.Text(fmt.Sprintf("Biome sectors: %d", len(ch.BiomeSectors)))
+
+	editorChunkFrameOwnerRow(lvl, ch)
+
+	// Jump to the other editor, centred on this chunk. From the sector map that
+	// means handing focus back to the main window's 3D view (withEditor2DMode
+	// notices the mode change and raises it); from the 3D view it means opening
+	// the map's window.
+	if Editor.Mode == Mode2D {
+		if imgui.Button("Switch to 3D Editor##chunkto3d") {
+			Editor.Mode = Mode3D
+		}
+	} else if imgui.Button("Switch to Sector Editor##chunkto2d") {
+		OpenEditor2DWindow()
+		Editor.Pan2D = mgl32.Vec2{
+			(ch.MinBound.X() + ch.MaxBound.X()) / 2,
+			(ch.MinBound.Z() + ch.MaxBound.Z()) / 2,
+		}
+	}
+
+	imgui.Separator()
+	editorScriptDataUI(&ch.ScriptData, "chunk", "This chunk")
+}
+
+// editorChunkFrameOwnerRow draws which vehicle carries this chunk as its
+// interior, and keeps both halves of that binding in step.
+//
+// A chunk names its frame owner and a vehicle names its interior; either one
+// alone is a level that loads wrong, so setting it from this side writes the
+// vehicle's half too — the same contract editorVehicleInteriorPicker keeps from
+// the other end.
+func editorChunkFrameOwnerRow(lvl *world.Level, ch *world.Chunk) {
+	label := ch.FrameOwner
+	if label == "" {
+		label = "(nothing — world chunk)"
+	}
+	if imgui.BeginCombo("Carried by##chunkframe", label) {
+		if imgui.SelectableV("(nothing — world chunk)", ch.FrameOwner == "", 0, imgui.Vec2{}) &&
+			ch.FrameOwner != "" {
+			EditorPushUndo()
+			editorSetChunkCarrier(lvl, ch, "")
+		}
+		for i := range lvl.Entities {
+			e := &lvl.Entities[i]
+			if e.Vehicle == nil {
+				continue
+			}
+			if imgui.SelectableV(e.ID, ch.FrameOwner == e.ID, 0, imgui.Vec2{}) && ch.FrameOwner != e.ID {
+				EditorPushUndo()
+				editorSetChunkCarrier(lvl, ch, e.ID)
+			}
+		}
+		imgui.EndCombo()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The vehicle whose deck this chunk's geometry is, authored\n" +
+			"around the origin and carried around the world by it.\n" +
+			"Biome paint and procedural detail do not work on one.")
+	}
+	if ch.FrameOwner != "" {
+		editorTextMutedWrapped("Authored around the origin in the 2D map, not where the vehicle sits. " +
+			"Bind a portal to `world` to walk in and out of it.")
+	}
+}
+
+// editorSetChunkCarrier binds ch to the vehicle owner (empty to unbind), taking
+// the binding off whatever held it and writing the vehicle's own Interior field.
+func editorSetChunkCarrier(lvl *world.Level, ch *world.Chunk, owner string) {
+	// Whoever used to carry this chunk stops naming it.
+	for i := range lvl.Entities {
+		if v := lvl.Entities[i].Vehicle; v != nil && v.Interior == ch.ID {
+			v.Interior = ""
+		}
+	}
+	// This chunk stops being carried, whatever it was carried by.
+	if ch.FrameOwner != "" {
+		ch.Xform = mgl32.Mat4{}
+	}
+	ch.FrameOwner = owner
+	if owner != "" {
+		// The new owner drops whatever else it was carrying: a vehicle has one
+		// interior, and two would be two decks in one hull.
+		for i := range lvl.Chunks {
+			if other := &lvl.Chunks[i]; other != ch && other.FrameOwner == owner {
+				other.FrameOwner = ""
+				other.Xform = mgl32.Mat4{}
+			}
+		}
+		if e := world.FindEntity(lvl, owner); e != nil && e.Vehicle != nil {
+			e.Vehicle.Interior = ch.ID
+		}
+	}
+	_ = world.RebuildIndexes(lvl)
 }
 
 // editorChunkPopups draws the modal popups opened from editorChunkListSection.

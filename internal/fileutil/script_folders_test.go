@@ -156,3 +156,60 @@ func TestMoveScriptFileOntoItselfIsANoop(t *testing.T) {
 		t.Fatalf("the file went missing: %v", err)
 	}
 }
+
+func TestDeleteScriptFile(t *testing.T) {
+	withTempScripts(t)
+	writeScriptFile(t, "doors/lift.flang", "-- lift\n")
+	writeScriptFile(t, "doors/latch.flang", "-- latch\n")
+
+	if err := DeleteScriptFile("doors/lift.flang"); err != nil {
+		t.Fatalf("DeleteScriptFile: %v", err)
+	}
+	if _, err := os.Stat(ScriptPath("doors/lift.flang")); err == nil {
+		t.Error("the file is still there")
+	}
+	// The folder and everything else in it survive: a delete is one file.
+	if _, err := os.Stat(ScriptPath("doors/latch.flang")); err != nil {
+		t.Errorf("the file beside it went too: %v", err)
+	}
+}
+
+// Same names the rest of the editor passes around — with and without the
+// prefix and the extension, since that is how levels write them.
+func TestDeleteScriptFileAcceptsPrefixedNames(t *testing.T) {
+	withTempScripts(t)
+	writeScriptFile(t, "a.flang", "-- a\n")
+
+	if err := DeleteScriptFile("scripts/a"); err != nil {
+		t.Fatalf("DeleteScriptFile: %v", err)
+	}
+	if _, err := os.Stat(ScriptPath("a.flang")); err == nil {
+		t.Error("the file is still there")
+	}
+}
+
+// The one operation that cannot be undone is the one that must not be talked
+// into touching anything outside the scripts folder — or into taking a whole
+// folder with it.
+func TestDeleteScriptFileRefusesWhatIsNotAScript(t *testing.T) {
+	root := withTempScripts(t)
+	outside := filepath.Join(ExecutablePath, "keep.flang")
+	if err := os.WriteFile(outside, []byte("-- keep\n"), 0644); err != nil {
+		t.Fatalf("write the file outside: %v", err)
+	}
+	if err := MakeScriptDir("doors"); err != nil {
+		t.Fatalf("MakeScriptDir: %v", err)
+	}
+
+	for _, name := range []string{"../keep.flang", "", "doors", "missing.flang"} {
+		if err := DeleteScriptFile(name); err == nil {
+			t.Errorf("DeleteScriptFile(%q) was allowed", name)
+		}
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("a file outside the scripts folder was deleted: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(root, "doors")); err != nil || !info.IsDir() {
+		t.Errorf("the folder was deleted: %v", err)
+	}
+}

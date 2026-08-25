@@ -512,7 +512,7 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 
 	shadowCount := 0
 	for i := 0; i < numDir; i++ {
-		if lights.Directional[i].CastShadows {
+		if lights.Directional[i].CastsShadows() {
 			shadowCount++
 		}
 	}
@@ -533,7 +533,7 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 	layer := int32(0)
 	for i := 0; i < numDir; i++ {
 		dl := lights.Directional[i]
-		if !dl.CastShadows {
+		if !dl.CastsShadows() {
 			continue
 		}
 		frame.Lights[i].BaseLayer = layer
@@ -578,7 +578,7 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 	shadowCount := 0
 	for _, pl := range lights.Points {
-		if pl.CastShadows {
+		if pl.CastsShadows() {
 			shadowCount++
 		}
 	}
@@ -598,7 +598,7 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 
 	mapIdx := 0
 	for _, pl := range lights.Points {
-		if !pl.CastShadows {
+		if !pl.CastsShadows() {
 			continue
 		}
 		if mapIdx >= len(Shadows.PointMaps) {
@@ -782,7 +782,7 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 			dl := lights.Directional[i]
 			strength = dl.ShadowStrength
 			cascades = frame.Lights[i].Cascades
-			if dl.CastShadows && frame.Lights[i].BaseLayer >= 0 {
+			if dl.CastsShadows() && frame.Lights[i].BaseLayer >= 0 {
 				layer = frame.Lights[i].BaseLayer
 				cast = 1
 			}
@@ -844,7 +844,7 @@ func UploadPointShadowUniformsTo(prog uint32, lights world.LightSet) {
 		pl := lights.Points[i]
 		castName := fmt.Sprintf("pointLightCastShadows[%d]\x00", i)
 		castVal := int32(0)
-		if pl.CastShadows {
+		if pl.CastsShadows() {
 			castVal = 1
 		}
 		gl.Uniform1i(uniformLoc(castName), castVal)
@@ -855,7 +855,7 @@ func UploadPointShadowUniformsTo(prog uint32, lights world.LightSet) {
 		farName := fmt.Sprintf("pointLightFarPlane[%d]\x00", i)
 		gl.Uniform1f(uniformLoc(farName), pl.Radius)
 
-		if pl.CastShadows && mapIdx < len(Shadows.PointMaps) {
+		if pl.CastsShadows() && mapIdx < len(Shadows.PointMaps) {
 			texUnit := baseUnit + int32(i)
 			gl.ActiveTexture(uint32(gl.TEXTURE0 + texUnit))
 			gl.BindTexture(gl.TEXTURE_CUBE_MAP, Shadows.PointMaps[mapIdx].Cubemap)

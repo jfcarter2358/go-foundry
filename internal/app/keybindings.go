@@ -27,7 +27,6 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "Space", Desc: "Pause / resume the view (the log keeps filling)"},
 			{Keys: "Ctrl+L", Desc: "Clear the buffer"},
 			{Keys: "Ctrl+F", Desc: "Jump to the filter box"},
-			{Keys: "Esc", Desc: "Close the window"},
 		},
 	},
 	{
@@ -40,7 +39,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "Ctrl+W", Desc: "Close the current tab (asks, if it is unsaved)"},
 			{Keys: "Ctrl+Tab", Desc: "Next tab (Ctrl+Shift+Tab: previous)"},
 			{Keys: "Ctrl+R", Desc: "Reload every script from disk"},
-			{Keys: "Esc", Desc: "Close the window (every tab keeps its unsaved text)"},
+			{Keys: "Drag a script", Desc: "Move it into the folder it is dropped on"},
 		},
 	},
 	{

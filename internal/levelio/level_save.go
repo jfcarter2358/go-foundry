@@ -426,6 +426,7 @@ func lightsToRaw(ls world.LightSet) world.RawLights {
 		Global: world.RawGlobalLight{
 			Color:      world.RawColor{R: ls.Global.Color.X(), G: ls.Global.Color.Y(), B: ls.Global.Color.Z()},
 			Brightness: ls.Global.Brightness,
+			Disabled:   ls.Global.Disabled,
 		},
 	}
 	for _, dl := range ls.Directional {
@@ -447,6 +448,7 @@ func lightsToRaw(ls world.LightSet) world.RawLights {
 			Brightness:     dl.Brightness,
 			CastShadows:    dl.CastShadows,
 			ShadowStrength: dl.ShadowStrength,
+			Disabled:       dl.Disabled,
 		})
 	}
 	for _, pl := range ls.Points {
@@ -463,6 +465,7 @@ func lightsToRaw(ls world.LightSet) world.RawLights {
 			Radius:         pl.Radius,
 			CastShadows:    pl.CastShadows,
 			ShadowStrength: pl.ShadowStrength,
+			Disabled:       pl.Disabled,
 		})
 	}
 	return rl

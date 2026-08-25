@@ -13,7 +13,6 @@ import (
 	"foundry/internal/uiwin"
 	"log"
 
-	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -86,10 +85,10 @@ func scriptEditorFocused() bool {
 
 // scriptEditorHandleEvent handles this window's keyboard shortcuts.
 //
-// Runs after ImGui has seen the event, with this window's context current — so
-// WantCaptureKeyboard refers to this window's widgets. That check matters more
-// here than anywhere else in the app: the text area wants nearly every key, and
-// a shortcut that fired while the author was typing would be maddening.
+// Every one of them is a Ctrl chord, and that is not an accident: the text area
+// wants nearly every bare key, and a shortcut that fired while the author was
+// typing would be maddening. ImGui skips its own handling of a key whenever
+// Ctrl is down, so a chord is safe mid-word in a way that no bare key is.
 func scriptEditorHandleEvent(event sdl.Event) {
 	t, ok := event.(sdl.KeyboardEvent)
 	if !ok || t.Type != sdl.KEYDOWN {
@@ -119,18 +118,15 @@ func scriptEditorHandleEvent(event sdl.Event) {
 			// its insert-a-tab branch whenever Ctrl is down.
 			scriptEditorCycleTab(sdl.GetModState()&sdl.KMOD_SHIFT != 0)
 		}
-		return
 	}
-	if imgui.CurrentIO().WantCaptureKeyboard() {
-		return
-	}
-	if t.Keysym.Scancode == sdl.SCANCODE_ESCAPE {
-		CloseScriptEditorWindow()
-	}
+	// No bare keys. Escape in particular does *not* close the window: this
+	// editor holds unsaved text, and a window that a hand resting on Escape can
+	// make disappear is a window you cannot trust to still be there. The title
+	// bar's close button is the way out, and it is the only one.
 }
 
 // scriptEditorFilterEvent takes Escape away from ImGui while the buffer is
-// being typed in, and closes the window itself instead.
+// being typed in, and does nothing with it.
 //
 // ImGui's InputText treats Escape as "revert": it deactivates the field and
 // puts back the text it held when it was focused. In a one-line box for a
@@ -153,8 +149,8 @@ func scriptEditorFilterEvent(event sdl.Event) bool {
 		t.Keysym.Scancode != sdl.SCANCODE_ESCAPE || !scriptBufActive {
 		return false
 	}
-	// The documents are kept, so this loses nothing: reopening the editor comes
-	// back to the same tabs with the same unsaved text.
-	CloseScriptEditorWindow()
+	// Swallowed and nothing more. Escape while writing a script means nothing
+	// in this editor, which is the whole point: the keystroke that used to
+	// throw the buffer away now does not do anything at all.
 	return true
 }

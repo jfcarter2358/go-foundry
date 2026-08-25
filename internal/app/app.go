@@ -240,6 +240,12 @@ func Run() {
 	// loaded straight into gameplay starts where the editor says it should.
 	world.ApplySpawnPoint(&level)
 
+	// The editor's settings panel offers fullscreen as a checkbox beside the
+	// rest of the window-level toggles, and sits below this package in the
+	// import graph — so hand it the toggle rather than have it reach up for
+	// one. See platform.ToggleFullscreenFunc.
+	platform.ToggleFullscreenFunc = ToggleFullscreen
+
 	// Init level editor (must be after LoadLevel and OpenGL context ready)
 	editor.EditorInit(&level, levelPath, levelsDir)
 	defer imguibackend.ImGuiShutdown()

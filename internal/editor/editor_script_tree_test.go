@@ -114,3 +114,49 @@ func TestScriptTreeHolds(t *testing.T) {
 		t.Error("an unsaved document is in no folder")
 	}
 }
+
+// Dropping a script on a folder is a move, and the move is worked out from two
+// strings — the dragged path and the folder's — so everything that can go wrong
+// with it goes wrong here rather than on screen.
+func TestScriptDropPath(t *testing.T) {
+	cases := []struct {
+		name, rel, dir, want string
+		ok                   bool
+	}{
+		{"root into a folder", "main.flang", "doors", "doors/main.flang", true},
+		{"folder to folder", "doors/lift.flang", "enemies", "enemies/lift.flang", true},
+		{"folder to a nested one", "doors/lift.flang", "doors/inner", "doors/inner/lift.flang", true},
+		{"back out to the root", "doors/inner/lift.flang", "", "lift.flang", true},
+		{"up one level", "doors/inner/lift.flang", "doors", "doors/lift.flang", true},
+		// The drop everyone makes by accident: onto the folder the file is
+		// already in. A rename to itself is not worth a status line.
+		{"already there", "doors/lift.flang", "doors", "", false},
+		{"already at the root", "main.flang", "", "", false},
+		// Both strings reach here from scans and from row IDs; a stray prefix
+		// or slash must not turn into a second scripts/ inside the path.
+		{"prefixed source", "scripts/doors/lift.flang", "enemies", "enemies/lift.flang", true},
+		{"prefixed folder", "doors/lift.flang", "scripts/enemies", "enemies/lift.flang", true},
+		{"trailing slash", "doors/lift.flang", "enemies/", "enemies/lift.flang", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := scriptDropPath(c.rel, c.dir)
+			if ok != c.ok || got != c.want {
+				t.Errorf("scriptDropPath(%q, %q) = %q, %v; want %q, %v",
+					c.rel, c.dir, got, ok, c.want, c.ok)
+			}
+		})
+	}
+}
+
+// The root's menu and its "new script here" both build a path from the folder,
+// and at the root that path must not start with a slash — a name like
+// "/main.flang" reads as somewhere else entirely.
+func TestScriptTreeDirPrefix(t *testing.T) {
+	if got := scriptTreeDirPrefix(""); got != "" {
+		t.Errorf("root prefix = %q, want empty", got)
+	}
+	if got := scriptTreeDirPrefix("doors/inner"); got != "doors/inner/" {
+		t.Errorf("prefix = %q, want %q", got, "doors/inner/")
+	}
+}

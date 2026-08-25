@@ -236,6 +236,32 @@ func MoveScriptFile(from, to string) error {
 	return os.Rename(src, dst)
 }
 
+// DeleteScriptFile removes a script from the scripts folder. rel is relative to
+// it, with or without the extension and the scripts/ prefix.
+//
+// Only ever a file, and only ever a `.flang` one. The rel that reaches here has
+// come from a row in the sidebar, so it is a script by construction — but this
+// is the one operation in the file that cannot be taken back, and "what the
+// caller passed was a folder" is not a thing worth finding out by recursing
+// into it.
+func DeleteScriptFile(rel string) error {
+	full := ScriptPath(rel)
+	if full == "" {
+		return fmt.Errorf("%q is not a name inside the scripts folder", rel)
+	}
+	if _, ok := scriptSubPath(rel); !ok {
+		return fmt.Errorf("%q is not a name inside the scripts folder", rel)
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s is a folder, not a script", rel)
+	}
+	return os.Remove(full)
+}
+
 // scriptSubPath resolves a slash-separated name to an absolute path under the
 // scripts folder, reporting false for anything that would escape it. `..` in a
 // folder name is a typo rather than an attack here, but a typo that creates a

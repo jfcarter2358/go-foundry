@@ -54,3 +54,29 @@ var JumpRequested = false
 const GravityAccel = float32(0.010) // downward acceleration per frame
 const MaxFallSpeed = float32(0.50)  // terminal fall speed per frame
 const JumpVelocity = float32(0.20)  // upward impulse on jump
+
+// ---------- fullscreen ----------
+//
+// The toggle itself lives in the app layer, because switching modes has to be
+// followed by rebuilding the projection from the new window size — which is
+// app's job, not this package's. The editor's settings panel sits below app in
+// the import graph and so cannot call it directly, so app installs it here.
+// Same inversion as world.CurrentLevel and hooks.EditorActive.
+
+// ToggleFullscreenFunc is installed by the app layer at startup. Nil until then.
+var ToggleFullscreenFunc func()
+
+// RequestToggleFullscreen switches between windowed and borderless fullscreen,
+// and does nothing when no app layer has installed the toggle (the editor's
+// unit tests, which have no window).
+func RequestToggleFullscreen() {
+	if ToggleFullscreenFunc != nil {
+		ToggleFullscreenFunc()
+	}
+}
+
+// IsFullscreen reports the window's current mode, so a checkbox can show it
+// rather than tracking a copy that drifts when F11 is pressed instead.
+func IsFullscreen() bool {
+	return Window != nil && Window.GetFlags()&sdl.WINDOW_FULLSCREEN_DESKTOP != 0
+}

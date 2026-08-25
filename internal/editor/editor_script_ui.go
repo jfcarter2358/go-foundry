@@ -49,6 +49,8 @@ var (
 	scriptEditorNewFolderName string
 	scriptEditorMoveFrom      string
 	scriptEditorMoveTo        string
+	scriptEditorShowDelete    bool
+	scriptEditorDeleteRel     string
 
 	// scriptEditorFiles and scriptEditorDirs are the last scan of
 	// resources/scripts/. Nil means "never scanned"; empty means "scanned, and
@@ -126,6 +128,7 @@ func drawScriptEditorWindow() {
 	drawScriptEditorSaveAsDialog()
 	drawScriptEditorNewFolderDialog()
 	drawScriptEditorMoveDialog()
+	drawScriptEditorDeleteConfirm()
 	drawScriptEditorCloseConfirm()
 
 	imgui.End()
@@ -1007,4 +1010,74 @@ func scriptEditorMoveFile(from, to string) {
 	script.ScriptReload()
 	scriptEditorRescan()
 	scriptEditorStatus("Moved to %s — anything that named the old path still does", newPath)
+}
+
+// drawScriptEditorDeleteConfirm asks before removing a script from disk.
+//
+// Everything else the sidebar does can be undone by doing it again — a move is
+// a move back, a folder is a folder. This cannot, so it is the one file action
+// with a confirmation, and the confirmation is where it says what will break:
+// the level that names the script keeps naming it, and a script that imports it
+// stops compiling the moment it is gone. Neither is a reason to refuse — a file
+// nothing uses yet is the usual thing to delete — but both are worth reading
+// before clicking.
+func drawScriptEditorDeleteConfirm() {
+	imguibackend.WithModalPopup("Delete script?", &scriptEditorShowDelete, func() {
+		rel := scriptEditorDeleteRel
+		if rel == "" {
+			imgui.CloseCurrentPopup()
+			return
+		}
+		path := fileutil.ScriptsDirName + "/" + rel
+		imgui.Text("Delete " + path + "?")
+		editorTextMuted("It is removed from disk. This cannot be undone.")
+
+		if d := scriptDocForPath(path); d != nil && d.Dirty() {
+			editorTextColored(scriptIssueColor,
+				"The open tab has unsaved changes. They go with it.")
+		}
+		if named, importedBy := script.ScriptUsage(path); named || len(importedBy) > 0 {
+			imgui.Separator()
+			if named {
+				editorTextColored(scriptIssueColor, "This level names this script.")
+			}
+			if len(importedBy) > 0 {
+				editorTextColored(scriptIssueColor,
+					"Imported by "+strings.Join(importedBy, ", ")+".")
+			}
+		}
+
+		imgui.Separator()
+		if imgui.Button("Delete##deletescript") {
+			scriptEditorDeleteFile(rel)
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##deletescript") {
+			imgui.CloseCurrentPopup()
+		}
+	})
+}
+
+// scriptEditorDeleteFile removes a script and forgets everything that was
+// holding it.
+//
+// The open tab is dropped rather than kept pointing at a file that is gone: a
+// buffer whose Save would silently recreate the file just deleted is a worse
+// answer than closing it, and the confirmation said as much. Reloading
+// afterwards is what turns "the level names a script that no longer exists"
+// into a diagnostic on the row rather than a surprise at play time.
+func scriptEditorDeleteFile(rel string) {
+	if err := fileutil.DeleteScriptFile(rel); err != nil {
+		scriptEditorStatus("%v", err)
+		return
+	}
+	path := fileutil.ScriptsDirName + "/" + rel
+	if d := scriptDocForPath(path); d != nil {
+		scriptEditorDropDoc(d)
+	}
+	script.ScriptParamsInvalidate(path)
+	script.ScriptReload()
+	scriptEditorRescan()
+	scriptEditorStatus("Deleted %s", path)
 }

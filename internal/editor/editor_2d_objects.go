@@ -173,6 +173,8 @@ func editor2DPickObject(lvl *world.Level, ch *world.Chunk, wx, wz float32) bool 
 		clearVertexSelection()
 		editorClearSpawnSelection()
 		editorClearVolumeSelection()
+		editorClearChunkSelection()
+		editorClearLightSelection()
 		Editor.ActiveEdgeIdx = -1
 		Editor.ActiveEdgeKind = ""
 		editorSelectEntity(idx)
@@ -193,6 +195,8 @@ func editor2DPickObject(lvl *world.Level, ch *world.Chunk, wx, wz float32) bool 
 	clearVertexSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
+	editorClearChunkSelection()
+	editorClearLightSelection()
 	Editor.ActiveEdgeIdx = -1
 	Editor.ActiveEdgeKind = ""
 	editorSelectSpawn()

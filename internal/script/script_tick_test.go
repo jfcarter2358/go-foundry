@@ -724,3 +724,74 @@ func DrainScriptWorkSettle(t *testing.T, lvl *world.Level) {
 	}
 	lvl.Spatial = world.BuildSpatialHash(lvl.Chunks, 8.0)
 }
+
+// ---------- what a delete would break ----------
+
+// The script editor asks ScriptUsage before deleting a file. It has to answer
+// for both ways a script is reachable — the level naming it, and another script
+// importing it — because only the first is written down anywhere the editor
+// could look for itself.
+func TestScriptUsageFindsNamedAndImported(t *testing.T) {
+	root := withTempScriptDir(t)
+	writeScript(t, root, "shared/helpers.flang", `def doubled(n int) -> int
+    return n * 2
+end`)
+	writeScript(t, root, "unused.flang", `def unused() -> int
+    return 1
+end`)
+	path := writeScript(t, root, "user.flang", `import("shared/helpers.flang")
+def on_spawn(:spawn:) -> null
+    @self.attr.value = doubled(21)
+end`)
+
+	lvl := tickTestLevel(t)
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
+		Attributes: world.AttrSet{"value": world.IntAttr(0)},
+	})
+	runTicks(t, lvl, 1)
+
+	named, importedBy := ScriptUsage(path)
+	if !named {
+		t.Error("the script the entity names was not reported as named")
+	}
+	if len(importedBy) != 0 {
+		t.Errorf("nothing imports it, but ScriptUsage says %v", importedBy)
+	}
+
+	named, importedBy = ScriptUsage("scripts/shared/helpers.flang")
+	if named {
+		t.Error("nothing in the level names the imported script")
+	}
+	if len(importedBy) != 1 || importedBy[0] != path {
+		t.Errorf("importedBy = %v, want just %s", importedBy, path)
+	}
+
+	// A file nothing has loaded is the ordinary thing to delete, and it must
+	// come back clean rather than being warned about.
+	if named, importedBy = ScriptUsage("scripts/unused.flang"); named || len(importedBy) != 0 {
+		t.Errorf("an unused script reported named=%v importedBy=%v", named, importedBy)
+	}
+}
+
+// A level may name a script with or without the scripts/ prefix — a warning
+// missed over a prefix is a file deleted out from under a level.
+func TestScriptUsageComparesResolvedPaths(t *testing.T) {
+	root := withTempScriptDir(t)
+	writeScript(t, root, "door.flang", `def on_spawn(:spawn:) -> null
+    @self.attr.value = 1
+end`)
+
+	lvl := tickTestLevel(t)
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: "door", Visible: true, Scale: mgl32.Vec3{1, 1, 1},
+		Attributes: world.AttrSet{"value": world.IntAttr(0)},
+	})
+	runTicks(t, lvl, 1)
+
+	for _, name := range []string{"door", "door.flang", "scripts/door.flang"} {
+		if named, _ := ScriptUsage(name); !named {
+			t.Errorf("ScriptUsage(%q) did not recognise the script the level names", name)
+		}
+	}
+}

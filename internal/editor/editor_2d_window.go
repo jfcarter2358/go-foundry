@@ -22,6 +22,7 @@ package editor
 
 import (
 	"fmt"
+	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/platform"
 	"foundry/internal/uiwin"
@@ -57,6 +58,37 @@ func editor2DViewportSize() (w, h float32) {
 // that the map has no home in the main window — is the same question as
 // whether the 2D editor is available at all.
 func Editor2DPoppedOut() bool { return Editor2DWindow != nil }
+
+// editor2DFrameActiveChunk centres the map on the active chunk and picks a
+// zoom that fits its whole footprint — the map's own "F", for whichever chunk
+// the Chunks list last selected rather than the current selection's bounds.
+func editor2DFrameActiveChunk() {
+	ch := activeChunk()
+	if ch == nil {
+		return
+	}
+	Editor.Pan2D = mgl32.Vec2{
+		(ch.MinBound.X() + ch.MaxBound.X()) / 2,
+		(ch.MinBound.Z() + ch.MaxBound.Z()) / 2,
+	}
+	spanX := ch.MaxBound.X() - ch.MinBound.X()
+	spanZ := ch.MaxBound.Z() - ch.MinBound.Z()
+	span := spanX
+	if spanZ > span {
+		span = spanZ
+	}
+	if span < 1 {
+		span = 1
+	}
+	viewW, viewH := editor2DViewportSize()
+	avail := viewW - Editor.PanelWidth
+	if viewH < avail {
+		avail = viewH
+	}
+	// A margin around the chunk so its edges are not flush against the panel
+	// or the window border.
+	Editor.Zoom2D = geom.ClampValue(avail*0.8/span, 2, 200)
+}
 
 // OpenEditor2DWindow opens the 2D sector editor in its own window, or raises
 // it if it is already open. This is the only way into the 2D map.
@@ -240,18 +272,15 @@ func editor2DWindowToolbar() {
 
 	toolbarY := imgui.CursorPosY()
 
-	if ch := activeChunk(); ch != nil {
-		imgui.Text(fmt.Sprintf("Chunk: %s", ch.ID))
-	} else {
-		imgui.Text("Chunk: (none selected)")
-	}
-	imgui.SameLine()
-	imgui.Text(fmt.Sprintf("| Zoom: %.0f px/unit", Editor.Zoom2D))
-	imgui.SameLine()
-	imgui.Text("| Shift+click: add point  Ctrl+click: multi-select  J: join  RMB: menu")
+	// The chunk, zoom, and click-hint text this row used to carry now live on
+	// the panel's Context line (editor_panel.go), which is always on screen and
+	// does not have to be read off a thin strip at the top of the window — so
+	// this toolbar is down to the two groups it shares with the main window's:
+	// what a click selects and which gizmo acts on it, in the same order and
+	// with the same divider (editorToolbarGroupSep) the main toolbar uses, so
+	// the two read as the same kind of bar.
 
-	imgui.SameLine()
-	imgui.Separator()
+	// ---- Group: select mode ----
 	for _, mode := range editorSelModes {
 		m := mode
 		imgui.SameLine()
@@ -263,8 +292,9 @@ func editor2DWindowToolbar() {
 			imgui.SetTooltip(editorSelModeTooltip(m))
 		}
 	}
-	imgui.SameLine()
-	imgui.Separator()
+
+	// ---- Group: gizmo tool ----
+	editorToolbarGroupSep()
 	editorGizmoToolButtons()
 
 	const closeBtnWidth = 90

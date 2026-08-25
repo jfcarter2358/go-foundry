@@ -276,6 +276,8 @@ func editor2DClearSelection() {
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
+	editorClearChunkSelection()
+	editorClearLightSelection()
 	Editor.ActiveSurface = ""
 	Editor.ActiveEdgeKind = ""
 	Editor.ActiveEdgeIdx = -1

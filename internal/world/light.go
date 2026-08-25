@@ -17,6 +17,26 @@ const MaxPointLights = 8
 type GlobalLight struct {
 	Color      mgl32.Vec3
 	Brightness float32
+	// Disabled switches the light off without losing what it was set to, which
+	// is what makes it answerable to a checkbox in the editor. Stored inverted
+	// so the zero value is "on": every level authored before the flag existed
+	// has one, and none of them meant it to be dark.
+	Disabled bool
+}
+
+// EffectiveBrightness is the brightness actually uploaded — zero while the
+// light is switched off.
+//
+// Every light kind switches off this way rather than by being left out of the
+// uniform arrays. The arrays are indexed, and a shadow-casting directional
+// light's cascade slots are allocated by that index (see RenderDirShadows), so
+// compacting the list to skip one would slide every light after it onto another
+// light's shadow map.
+func (g GlobalLight) EffectiveBrightness() float32 {
+	if g.Disabled {
+		return 0
+	}
+	return g.Brightness
 }
 
 // DirectionalLight is a light with a fixed direction and infinite range (like the sun).
@@ -36,7 +56,21 @@ type DirectionalLight struct {
 	Brightness     float32
 	CastShadows    bool
 	ShadowStrength float32 // 0.0 = no shadow darkening, 1.0 = fully dark shadows
+	Disabled       bool    // switched off; see GlobalLight.EffectiveBrightness
 }
+
+// EffectiveBrightness is zero while the light is switched off.
+func (dl DirectionalLight) EffectiveBrightness() float32 {
+	if dl.Disabled {
+		return 0
+	}
+	return dl.Brightness
+}
+
+// CastsShadows reports whether this light should be given shadow-map layers.
+// A switched-off light contributes no light, so rendering its cascades would
+// be pure cost for a shadow nothing casts.
+func (dl DirectionalLight) CastsShadows() bool { return dl.CastShadows && !dl.Disabled }
 
 // Default sun angles for a newly added directional light. Deliberately not
 // straight down (pitch -90), which flattens all shading and leaves yaw with no
@@ -92,7 +126,19 @@ type PointLight struct {
 	Radius         float32
 	CastShadows    bool
 	ShadowStrength float32 // 0.0 = no shadow darkening, 1.0 = fully dark shadows
+	Disabled       bool    // switched off; see GlobalLight.EffectiveBrightness
 }
+
+// EffectiveBrightness is zero while the light is switched off.
+func (pl PointLight) EffectiveBrightness() float32 {
+	if pl.Disabled {
+		return 0
+	}
+	return pl.Brightness
+}
+
+// CastsShadows reports whether this light should be given a shadow cubemap.
+func (pl PointLight) CastsShadows() bool { return pl.CastShadows && !pl.Disabled }
 
 // LightSet holds all lights in the scene.
 type LightSet struct {
@@ -132,7 +178,7 @@ func UploadLightsTo(prog uint32, ls LightSet, verbose bool) {
 
 	gl.Uniform3f(UniformLoc("globalLightColor\x00"),
 		ls.Global.Color[0], ls.Global.Color[1], ls.Global.Color[2])
-	gl.Uniform1f(UniformLoc("globalLightBrightness\x00"), ls.Global.Brightness)
+	gl.Uniform1f(UniformLoc("globalLightBrightness\x00"), ls.Global.EffectiveBrightness())
 
 	numDir := len(ls.Directional)
 	if numDir > MaxDirLights {
@@ -148,7 +194,7 @@ func UploadLightsTo(prog uint32, ls LightSet, verbose bool) {
 		colorName := fmt.Sprintf("dirLightColor[%d]\x00", i)
 		gl.Uniform3f(UniformLoc(colorName), d.Color[0], d.Color[1], d.Color[2])
 		brightnessName := fmt.Sprintf("dirLightBrightness[%d]\x00", i)
-		gl.Uniform1f(UniformLoc(brightnessName), d.Brightness)
+		gl.Uniform1f(UniformLoc(brightnessName), d.EffectiveBrightness())
 	}
 
 	numPoint := len(ls.Points)
@@ -163,7 +209,7 @@ func UploadLightsTo(prog uint32, ls LightSet, verbose bool) {
 		colorName := fmt.Sprintf("pointLightColor[%d]\x00", i)
 		gl.Uniform3f(UniformLoc(colorName), p.Color[0], p.Color[1], p.Color[2])
 		brightnessName := fmt.Sprintf("pointLightBrightness[%d]\x00", i)
-		gl.Uniform1f(UniformLoc(brightnessName), p.Brightness)
+		gl.Uniform1f(UniformLoc(brightnessName), p.EffectiveBrightness())
 		radiusName := fmt.Sprintf("pointLightRadius[%d]\x00", i)
 		gl.Uniform1f(UniformLoc(radiusName), p.Radius)
 	}

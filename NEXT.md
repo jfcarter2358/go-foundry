@@ -63,11 +63,16 @@
 
 - [ ] Debugger
 - [ ] UI builder
-- [ ] Re-do top bar
-- [ ] Re-organize 3D editor settings panel
-- [ ] Configurable editor keybindings
-- [ ] All windows should have the exit button on the top
-- [ ] New windows should open on top of the existing even in fullscreen mode
+- [x] Re-do top bar
+- [x] Re-organize 3D editor settings panel
+- [x] Re-organize 2D editor settings panel
+- [x] Re-organize model editor settings panel
+- [x] Re-organize texture editor settings panel
+- [x] Re-organize script editor settings panel
+- [x] Re-organize log settings panel
+- [x] Configurable editor keybindings
+- [x] All windows should have the exit button on the top
+- [x] New windows should open on top of the existing even in fullscreen mode
 
 ### Engine
 

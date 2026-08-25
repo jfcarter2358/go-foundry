@@ -333,6 +333,8 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
+	editorClearChunkSelection()
+	editorClearLightSelection()
 	clearVertexSelection()
 	clearFaceSelection()
 	Editor.ActiveBiomeSectorIdx = -1
@@ -383,6 +385,8 @@ func editor3DClearSelection() {
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
+	editorClearChunkSelection()
+	editorClearLightSelection()
 	clearFaceSelection()
 	Editor.ActiveSectorIdx = -1
 	Editor.ActiveBiomeSectorIdx = -1
@@ -644,7 +648,9 @@ func editor3DVertexPanel(lvl *world.Level) {
 	}
 }
 
-// Editor3DPanel draws the 3D-mode ImGui side panel.
+// Editor3DPanel draws the 3D-mode ImGui side panel: Context, Objects,
+// Properties, View, Editor — see editor_panel.go for the shared frame this and
+// Editor2DPanel both draw through.
 func Editor3DPanel() {
 	lvl := Editor.level
 	if lvl == nil {
@@ -655,222 +661,7 @@ func Editor3DPanel() {
 	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: float32(platform.WinHeight) - 28})
 	imgui.BeginV("3D Editor", nil, imgui.WindowFlagsNoMove|imgui.WindowFlagsNoResize)
 
-	// ---- Grid settings ----
-	editorGridSettings()
-
-	// ---- Navigation buttons ----
-	if imgui.CollapsingHeaderV("Navigation", imgui.TreeNodeFlagsDefaultOpen) {
-		imgui.Text("Right- or middle-drag to turn; shift+middle to pan")
-		imgui.Text("V flies or orbits, F frames the selection, wheel zooms")
-		imgui.Text("1/2/3 pick points, edges or faces; Z toggles wireframe")
-		imgui.Text("Ctrl+click adds to the selection, in all three modes")
-		imgui.Text("Right-click without dragging for the selection's actions")
-		imgui.Text("Drag an R/G/B arm to move it along X/Y/Z")
-		imgui.Checkbox("Show All Point/Edge Boxes", &Editor.ShowPointSelectRadius)
-		if imgui.IsItemHovered() {
-			imgui.SetTooltip("Wireframe already draws them all; this is the same\nfor a solid-shaded view.")
-		}
-		imgui.Button("Fwd##nav")
-		if imgui.IsItemActive() {
-			Editor.NavForward = true
-		}
-		imgui.SameLine()
-		imgui.Button("Back##nav")
-		if imgui.IsItemActive() {
-			Editor.NavBack = true
-		}
-		imgui.SameLine()
-		imgui.Button("Left##nav")
-		if imgui.IsItemActive() {
-			Editor.NavLeft = true
-		}
-		imgui.SameLine()
-		imgui.Button("Right##nav")
-		if imgui.IsItemActive() {
-			Editor.NavRight = true
-		}
-		imgui.SameLine()
-		imgui.Button("Up##nav")
-		if imgui.IsItemActive() {
-			Editor.NavUp = true
-		}
-		imgui.SameLine()
-		imgui.Button("Down##nav")
-		if imgui.IsItemActive() {
-			Editor.NavDown = true
-		}
-	}
-
-	// --- Player spawn point ---
-	editorSpawnSection(lvl)
-
-	// --- Entities: the catalog, the level's list, and the selected one ---
-	editorEntitySection(lvl)
-	editorVolumeSection(lvl)
-	editorEntityProperties(lvl)
-
-	// --- Water plane clicked in the viewport ---
-	editorWaterSection(lvl)
-
-	// --- Selected sector/edge properties (from 3D click) ---
-	if !Editor.SpawnSelected && Editor.ActiveSectorIdx >= 0 &&
-		Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
-		imgui.Separator()
-		sch := &lvl.Chunks[Editor.ActiveChunkIdx]
-		if Editor.ActiveSectorIdx < len(sch.Sectors) {
-			s3d := &sch.Sectors[Editor.ActiveSectorIdx]
-			editorFocusOpen(panelFocusFloor, panelFocusCeiling, panelFocusWall)
-			if imgui.CollapsingHeaderV("Sector: "+s3d.ID, imgui.TreeNodeFlagsDefaultOpen) {
-				imgui.InputText("ID##sid3d", &s3d.ID)
-				editorFaceSelectionNote()
-				// The sector's own tags, attributes and script. Its floor,
-				// ceiling and edges each carry their own set below.
-				editorScriptDataUI(&s3d.ScriptData, "sec3d", "This sector")
-				editorFocusOpen(panelFocusFloor)
-				if imgui.TreeNode("Floor##3df") {
-					editorFocusScroll(panelFocusFloor)
-					changed := false
-					changed = imgui.Checkbox("Enabled##fe3d", &s3d.Floor.Enabled) || changed
-					imgui.Checkbox("Hide Texture##fhid3d", &s3d.Floor.Hidden)
-					changed = editorDragFloat("Height##fh3d", &s3d.Floor.Height, 0, 0, "%.3f") || changed
-					changed = textureCombo("Texture##ft3d", &s3d.Floor.Texture, false) || changed
-					changed = imgui.Checkbox("Terrain##fter3d", &s3d.Floor.Terrain) || changed
-					imgui.Checkbox("Double Sided##fds3d", &s3d.Floor.DoubleSided)
-					changed = editorDragFloat("Alpha##fa3d", &s3d.Floor.Alpha, 0, 1, "%.2f") || changed
-					if changed {
-						_ = world.ReloadSector(sch, s3d)
-					}
-					imgui.TreePop()
-				}
-				if imgui.Button("Edit Floor Surface##floorSurf3d") {
-					EnterSurface2D("floor")
-				}
-				if editorUVControls("Floor", &s3d.Floor.UVOffset, &s3d.Floor.UVScale, &s3d.Floor.UVRotation) {
-					_ = world.ReloadSector(sch, s3d)
-				}
-				editorSurfaceExtrusionPanel(sch, s3d, "Floor", &s3d.Floor.Extrusions)
-				editorTerrainPanel(sch, s3d, "Floor", &s3d.Floor.Terrain, &s3d.Floor.TerrainPoints)
-				if editorSmoothPanel("Floor", &s3d.Floor.Smooth, &s3d.Floor.SmoothAngle) {
-					_ = world.ReloadSector(sch, s3d)
-				}
-				editorDetailPanel("Floor", &s3d.Floor.Detail)
-				editorScriptDataUI(&s3d.Floor.ScriptData, "floor3d", "This floor")
-				editorFocusOpen(panelFocusCeiling)
-				if imgui.TreeNode("Ceiling##3dc") {
-					editorFocusScroll(panelFocusCeiling)
-					changed := false
-					changed = imgui.Checkbox("Enabled##ce3d", &s3d.Ceiling.Enabled) || changed
-					changed = editorDragFloat("Height##ch3d", &s3d.Ceiling.Height, 0, 0, "%.3f") || changed
-					changed = textureCombo("Texture##ct3d", &s3d.Ceiling.Texture, false) || changed
-					changed = imgui.Checkbox("Terrain##cter3d", &s3d.Ceiling.Terrain) || changed
-					imgui.Checkbox("Double Sided##cds3d", &s3d.Ceiling.DoubleSided)
-					changed = editorDragFloat("Alpha##ca3d", &s3d.Ceiling.Alpha, 0, 1, "%.2f") || changed
-					if changed {
-						_ = world.ReloadSector(sch, s3d)
-					}
-					imgui.TreePop()
-				}
-				if imgui.Button("Edit Ceiling Surface##ceilSurf3d") {
-					EnterSurface2D("ceiling")
-				}
-				if editorUVControls("Ceiling", &s3d.Ceiling.UVOffset, &s3d.Ceiling.UVScale, &s3d.Ceiling.UVRotation) {
-					_ = world.ReloadSector(sch, s3d)
-				}
-				editorSurfaceExtrusionPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Extrusions)
-				editorTerrainPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Terrain, &s3d.Ceiling.TerrainPoints)
-				if editorSmoothPanel("Ceiling", &s3d.Ceiling.Smooth, &s3d.Ceiling.SmoothAngle) {
-					_ = world.ReloadSector(sch, s3d)
-				}
-				editorDetailPanel("Ceiling", &s3d.Ceiling.Detail)
-				editorScriptDataUI(&s3d.Ceiling.ScriptData, "ceil3d", "This ceiling")
-				if Editor.ActiveEdgeIdx >= 0 {
-					imgui.Separator()
-					editorEdgeKindCombo(sch, s3d, "3d")
-				}
-				if Editor.ActiveEdgeKind == "wall" && Editor.ActiveEdgeIdx >= 0 &&
-					Editor.ActiveEdgeIdx < len(s3d.Walls) {
-					imgui.Separator()
-					editorFocusScroll(panelFocusWall)
-					w := &s3d.Walls[Editor.ActiveEdgeIdx]
-					// The ID rather than the index: the index shifts under
-					// nearly every edit, and the ID is what a script addresses.
-					imgui.Text("Wall " + world.EdgeIDDisplay(w.ID))
-					if imgui.IsItemHovered() {
-						imgui.SetTooltip("A script reaches this edge as @" + s3d.ID + ".edge." + w.ID)
-					}
-					changed := false
-					changed = textureCombo("Texture##wt3d", &w.Texture, false) || changed
-					changed = imgui.Checkbox("Collision##wc3d", &w.Collision) || changed
-					changed = imgui.Checkbox("Visible##wv3d", &w.Visible) || changed
-					changed = imgui.Checkbox("Double Sided##wds3d", &w.DoubleSided) || changed
-					changed = editorDragFloat("Alpha##wa3d", &w.Alpha, 0, 1, "%.2f") || changed
-					if changed {
-						_ = world.ReloadSector(sch, s3d)
-					}
-					// Surface 2D editor button
-					if imgui.Button("Edit Wall Surface##wallSurf3d") {
-						EnterSurface2D("wall")
-					}
-					if editorUVControls("Wall", &w.UVOffset, &w.UVScale, &w.UVRotation) {
-						_ = world.ReloadSector(sch, s3d)
-					}
-					// Extrusion sub-panel
-					editorExtrusionPanel(sch, s3d, w)
-					// Terrain sub-panel
-					editorTerrainPanel(sch, s3d, "Wall", &w.Terrain, &w.TerrainPoints)
-					// Smooth shading (rebuilds the wall: normals are made at upload)
-					if editorSmoothPanel("Wall", &w.Smooth, &w.SmoothAngle) {
-						_ = world.ReloadSector(sch, s3d)
-					}
-					// Detail sub-panel
-					editorDetailPanel("Wall", &w.Detail)
-					editorScriptDataUI(&w.ScriptData, "wall3d", "This wall")
-				} else if Editor.ActiveEdgeKind == "portal" && Editor.ActiveEdgeIdx >= 0 &&
-					Editor.ActiveEdgeIdx < len(s3d.Portals) {
-					imgui.Separator()
-					p3d := &s3d.Portals[Editor.ActiveEdgeIdx]
-					imgui.Text("Portal " + world.EdgeIDDisplay(p3d.ID))
-					if imgui.IsItemHovered() {
-						imgui.SetTooltip("A script reaches this edge as @" + s3d.ID + ".edge." + p3d.ID)
-					}
-					changed := false
-					changed = imgui.InputText("To Sector##pts3d", &p3d.ToSector) || changed
-					changed = imgui.Checkbox("Draw Gap##pdg3d", &p3d.DrawGap) || changed
-					if p3d.DrawGap {
-						changed = textureCombo("Gap Texture##pgt3d", &p3d.GapTexture, true) || changed
-					}
-					changed = imgui.Checkbox("Visible##pv3d", &p3d.Visible) || changed
-					// The gap quad bakes DoubleSided in, so this needs the
-					// rebuild below — unlike floor/ceiling, which read the flag
-					// at draw time.
-					changed = imgui.Checkbox("Double Sided##pds3d", &p3d.DoubleSided) || changed
-					changed = editorDragFloat("Alpha##pa3d", &p3d.Alpha, 0, 1, "%.2f") || changed
-					if changed {
-						_ = world.ReloadSector(sch, s3d)
-						sch.RebuildGaps()
-					}
-				} else {
-					imgui.Text("Click a vertex handle to edit its position")
-				}
-			}
-		}
-	}
-
-	// --- Selected vertex properties (from a 3D handle click) ---
-	editor3DVertexPanel(lvl)
-
-	// --- Chunk list ---
-	editorChunkListSection(lvl)
-
-	// --- Selected chunk properties ---
-	editorChunkPropertiesSection(lvl)
-
-	// --- Light editor ---
-	imgui.Separator()
-	EditorLightPanel()
-
-	// Every section has had its chance to open and scroll itself.
-	Editor.PanelFocus = panelFocusNone
+	editorPanelBody(lvl, panelKind3D)
 
 	imgui.End()
 	editorChunkPopups(lvl)
