@@ -27,9 +27,9 @@ func shuttle(t *testing.T, mode world.VehicleMode) *world.Level {
 		BoundHalfX: 12, BoundHalfY: 5, BoundHalfZ: 6, Visible: true,
 		Collision: world.EntityCollision{Movable: true},
 		Vehicle: &world.VehicleSpec{
-			Mode:     mode,
-			Interior: "chunk",
-			Drive:    world.DefaultDriveSpec(mode),
+			Mode:      mode,
+			Interiors: []string{"chunk"},
+			Drive:     world.DefaultDriveSpec(mode),
 			Seats: []world.VehicleSeat{
 				{Name: "pilot", Driver: true, Position: mgl32.Vec3{5, 0, 5}, Eye: 0.7,
 					Exit: mgl32.Vec3{7, 0, 5}},
@@ -186,7 +186,7 @@ func TestGroundVehicleDrivesAndStops(t *testing.T) {
 	withCollisionMasters(t, true, true)
 	lvl := shuttle(t, world.VehicleGround)
 	v := world.FindEntity(lvl, "shuttle")
-	v.Vehicle.Interior = ""
+	v.Vehicle.Interiors = nil
 	v.Collision.World = false // no hull collision in this bare test level
 	st := v.EnsureVehicleState()
 

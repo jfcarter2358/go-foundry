@@ -231,8 +231,8 @@ therefore needs no new ref kind, and `@id` and `#tag` reach vehicles already.
 
 ```yaml
 vehicle:
-  mode: air              # ground | air | water | space
-  interior: shuttle_deck # a chunk with `frame: shuttle`; omit for seat-only
+  mode: air                                # ground | air | water | space
+  interiors: [shuttle_deck, shuttle_roof]  # chunks with `frame: shuttle`; omit for seat-only
   seats:
     - name: pilot
       driver: true       # sitting here hands over the movement keys

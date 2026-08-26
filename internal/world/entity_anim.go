@@ -47,6 +47,20 @@ type EntityAnim struct {
 	// pose is reused across frames rather than allocated per frame: a level of
 	// animated entities would otherwise churn one slice each, every frame.
 	pose model.ModelPose
+
+	// blendFrom, blendElapsed and blendDuration are a crossfade in progress:
+	// the pose the previous clip was showing at the instant this one started,
+	// how long that fade has been running, and how long it lasts. blending is
+	// false the rest of the time, which is what lets update skip the blend
+	// arithmetic on the common case of nothing mid-transition. blended is the
+	// buffer BlendPoses writes the mix into, kept persistent for the same
+	// reason pose is: reused rather than allocated every tick.
+	blending      bool
+	blendFrom     model.ModelPose
+	blendElapsed  float32
+	blendDuration float32
+	blended       model.ModelPose
+
 	// Palette is the bone palette every submesh points at. Its backing array is
 	// never reallocated after NewEntityAnim, which is what makes those shared
 	// slice headers safe.
@@ -110,20 +124,39 @@ func (a *EntityAnim) clip() *model.ModelClip {
 	return a.Doc.Clip(a.Clip)
 }
 
-// SetClip starts the named clip from the top. An empty name stops playback and
-// returns the entity to its rest pose. Reports whether the name resolved.
-func (a *EntityAnim) SetClip(name string) bool {
+// SetClip starts the named clip from the top, crossfading in from whatever
+// pose is currently on screen over blend seconds — 0 for the instant cut that
+// used to be the only option. An empty name stops playback and returns the
+// entity to its rest pose immediately; there is no clip left to keep sampling
+// once nothing is playing, so a fade-to-rest is not offered. Reports whether
+// the name resolved.
+func (a *EntityAnim) SetClip(name string, blend float32) bool {
 	if a == nil {
 		return false
 	}
 	if name == "" {
 		a.Clip, a.Playing, a.Time = -1, false, 0
+		a.blending = false
 		a.restPalette()
 		return true
 	}
 	ci := a.Doc.ClipIndexByName(name)
 	if ci < 0 {
 		return false
+	}
+	if blend > 0 && a.Clip >= 0 {
+		// Depart from whatever is actually being shown, mid-blend included: a
+		// second switch before the first crossfade finishes should bend the fade
+		// toward its new target, not snap to wherever the interrupted one had
+		// gotten to. currentPose is cloned because it returns an in-place buffer
+		// (pose or blended) that the very next update would otherwise overwrite
+		// out from under blendFrom.
+		a.blendFrom = a.currentPose().Clone()
+		a.blendElapsed = 0
+		a.blendDuration = blend
+		a.blending = true
+	} else {
+		a.blending = false
 	}
 	a.Clip = ci
 	a.Time = 0
@@ -133,6 +166,15 @@ func (a *EntityAnim) SetClip(name string) bool {
 	a.Loop = a.Doc.Animations[ci].Loop
 	a.update(0)
 	return true
+}
+
+// currentPose is what the last update actually put on screen: the blend in
+// progress if one is running, or the active clip's own sample otherwise.
+func (a *EntityAnim) currentPose() model.ModelPose {
+	if a.blending {
+		return a.blended
+	}
+	return a.pose
 }
 
 // Update advances the clock and rebuilds the palette.
@@ -146,6 +188,7 @@ func (a *EntityAnim) Update(dt float32) {
 func (a *EntityAnim) update(dt float32) {
 	c := a.clip()
 	if c == nil {
+		a.blending = false
 		a.restPalette()
 		return
 	}
@@ -170,7 +213,19 @@ func (a *EntityAnim) update(dt float32) {
 	}
 
 	c.SampleInto(&a.pose, len(a.Doc.Bones), a.Time)
-	deltas := a.Doc.PoseDeltas(a.pose)
+
+	shown := &a.pose
+	if a.blending {
+		a.blendElapsed += dt
+		if u := a.blendElapsed / a.blendDuration; u < 1 {
+			model.BlendPoses(&a.blended, a.blendFrom, a.pose, u)
+			shown = &a.blended
+		} else {
+			a.blending = false
+		}
+	}
+
+	deltas := a.Doc.PoseDeltas(*shown)
 	copy(a.Palette, deltas)
 }
 

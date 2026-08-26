@@ -22,14 +22,16 @@ import (
 )
 
 // VehicleUpdate advances every vehicle in the level by one frame and brings the
-// frames they carry up to date.
+// frames they carry up to date. It reports whether any vehicle actually
+// integrated, so a caller running a play session knows the authored level has
+// been touched and needs restoring on exit — see script.PlaySessionMarkDirty.
 //
 // motion is the same play gate EntityUpdate takes: in the editor a vehicle stays
 // exactly where it was placed, so an author can put one down and have it stay
 // put, while its animations keep running.
-func VehicleUpdate(lvl *world.Level, dt float32, motion bool) {
+func VehicleUpdate(lvl *world.Level, dt float32, motion bool) (moved bool) {
 	if lvl == nil {
-		return
+		return false
 	}
 	// Parents before children, so a shuttle in a hangar integrates against a
 	// carrier that has already moved this frame rather than one that has not.
@@ -39,7 +41,7 @@ func VehicleUpdate(lvl *world.Level, dt float32, motion bool) {
 	if lvl.Frames != nil {
 		for _, f := range lvl.Frames.Order() {
 			if e := world.FindEntity(lvl, f.OwnerID); e != nil && e.IsVehicle() {
-				driveOne(lvl, e, dt, motion)
+				moved = driveOne(lvl, e, dt, motion) || moved
 				seen[e.ID] = true
 			}
 		}
@@ -48,20 +50,21 @@ func VehicleUpdate(lvl *world.Level, dt float32, motion bool) {
 	// order at all. They still drive.
 	for _, v := range world.FindVehicles(lvl) {
 		if !seen[v.ID] {
-			driveOne(lvl, v, dt, motion)
+			moved = driveOne(lvl, v, dt, motion) || moved
 		}
 	}
 
 	// Republish every frame transform from the positions just written, before
 	// MovePlayer or EntityUpdate reads one.
 	world.RefreshFrames(lvl, lvl.Frames)
+	return moved
 }
 
-// driveOne integrates a single vehicle.
-func driveOne(lvl *world.Level, e *world.Entity, dt float32, motion bool) {
+// driveOne integrates a single vehicle, reporting whether it did.
+func driveOne(lvl *world.Level, e *world.Entity, dt float32, motion bool) bool {
 	st := e.EnsureVehicleState()
 	if st == nil || !motion || dt <= 0 {
-		return
+		return false
 	}
 	spec := e.Vehicle
 	d := spec.Drive
@@ -164,6 +167,7 @@ func driveOne(lvl *world.Level, e *world.Entity, dt float32, motion bool) {
 		}
 	}
 	e.UpdateLocation(lvl)
+	return true
 }
 
 // approachVec moves v toward want by at most step per call, per axis. Used for

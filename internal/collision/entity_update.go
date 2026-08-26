@@ -19,6 +19,13 @@ package collision
 // The player is not in this list: it is engine-owned and has its own resolve
 // path in the main loop. It does take part in entity-against-entity collision,
 // which is why EntityUpdate is handed a pointer to it.
+//
+// Vehicles are the same story. VehicleUpdate already fell, steered and
+// resolved them against the world before EntityUpdate ever runs — doing that
+// again here would move a vehicle by its velocity twice in one frame and
+// resolve it against the world twice, fighting its own steering and setting
+// its interior frame transform to two different answers a tick. They do still
+// take part in entity-against-entity collision below, same as the player.
 
 import (
 	"foundry/internal/world"
@@ -44,7 +51,7 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 	}
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]
-		if motion {
+		if motion && !e.IsVehicle() {
 			old := e.Position
 			e.ApplyGravity(dt)
 			e.Integrate(dt)

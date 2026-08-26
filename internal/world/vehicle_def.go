@@ -46,10 +46,15 @@ type RawDriveSpec struct {
 
 // RawVehicle is the YAML form of a vehicle block.
 type RawVehicle struct {
-	Mode     string           `yaml:"mode,omitempty"` // ground (default), air, water, space
-	Interior string           `yaml:"interior,omitempty"`
-	Seats    []RawVehicleSeat `yaml:"seats,omitempty"`
-	Drive    *RawDriveSpec    `yaml:"drive,omitempty"`
+	Mode string `yaml:"mode,omitempty"` // ground (default), air, water, space
+	// Interior is the legacy singular form of Interiors, from before a vehicle
+	// could carry more than one deck. Still read so an older level loads
+	// unchanged; never written — VehicleToRaw folds it into Interiors, so
+	// saving a level migrates it silently.
+	Interior  string           `yaml:"interior,omitempty"`
+	Interiors []string         `yaml:"interiors,omitempty"`
+	Seats     []RawVehicleSeat `yaml:"seats,omitempty"`
+	Drive     *RawDriveSpec    `yaml:"drive,omitempty"`
 }
 
 // vehicleSeatFromRaw converts one seat, defaulting the eye height to a seated
@@ -172,9 +177,12 @@ func VehicleFromRaw(r *RawVehicle) *VehicleSpec {
 	}
 	mode := VehicleModeFromName(r.Mode)
 	v := &VehicleSpec{
-		Mode:     mode,
-		Interior: r.Interior,
-		Drive:    applyRawDrive(DefaultDriveSpec(mode), r.Drive),
+		Mode:  mode,
+		Drive: applyRawDrive(DefaultDriveSpec(mode), r.Drive),
+	}
+	v.AddInterior(r.Interior)
+	for _, id := range r.Interiors {
+		v.AddInterior(id)
 	}
 	for _, rs := range r.Seats {
 		v.Seats = append(v.Seats, vehicleSeatFromRaw(rs))
@@ -188,8 +196,8 @@ func VehicleToRaw(v *VehicleSpec) *RawVehicle {
 		return nil
 	}
 	r := &RawVehicle{
-		Interior: v.Interior,
-		Drive:    driveToRaw(v.Drive, v.Mode),
+		Interiors: append([]string(nil), v.Interiors...),
+		Drive:     driveToRaw(v.Drive, v.Mode),
 	}
 	if v.Mode != VehicleGround {
 		r.Mode = VehicleModeName(v.Mode)
@@ -215,12 +223,20 @@ func MergeVehicle(base *VehicleSpec, over *RawVehicle) *VehicleSpec {
 	}
 	out := *base
 	out.Seats = append([]VehicleSeat(nil), base.Seats...)
+	out.Interiors = append([]string(nil), base.Interiors...)
 
 	if over.Mode != "" {
 		out.Mode = VehicleModeFromName(over.Mode)
 	}
-	if over.Interior != "" {
-		out.Interior = over.Interior
+	if over.Interior != "" || len(over.Interiors) > 0 {
+		// An instance that mentions the interior at all restates the whole
+		// list, the same as every other overlay here — there is no per-chunk
+		// identity to match against the way seats match by name.
+		out.Interiors = nil
+		out.AddInterior(over.Interior)
+		for _, id := range over.Interiors {
+			out.AddInterior(id)
+		}
 	}
 	out.Drive = applyRawDrive(out.Drive, over.Drive)
 

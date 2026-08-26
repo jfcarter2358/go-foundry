@@ -94,58 +94,83 @@ func editorEntityVehicleSection(lvl *world.Level, e *world.Entity) {
 	}
 }
 
-// editorVehicleInteriorPicker binds a chunk to the vehicle as its walkable
-// interior, and keeps that chunk's FrameOwner in step.
+// editorVehicleInteriorPicker binds chunks to the vehicle as its walkable
+// interior, and keeps each chunk's FrameOwner in step.
 //
-// The two halves have to move together: a chunk names its frame owner and a
-// vehicle names its interior, and either one alone is a level that loads wrong.
-// Setting it here writes both.
+// A vehicle can carry more than one chunk — a floor and a roof over the same
+// footprint, or a bridge and a separate cargo hold, all sharing one
+// FrameOwner. The two halves of each binding have to move together: a chunk
+// names its frame owner and a vehicle names its interiors, and either one
+// alone is a level that loads wrong. Setting it here writes both.
 func editorVehicleInteriorPicker(lvl *world.Level, e *world.Entity, v *world.VehicleSpec) {
-	label := v.Interior
-	if label == "" {
-		label = "(none — seat-only)"
+	imgui.Text("Interior")
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Chunks whose geometry is this vehicle's deck, authored\n" +
+			"around the origin and carried around the world by it. A vehicle\n" +
+			"may carry more than one — a floor and a roof, say.\n" +
+			"Biome paint and procedural detail do not work on one.")
 	}
-	if imgui.BeginCombo("Interior##entvehint", label) {
-		if imgui.Selectable("(none — seat-only)") {
-			EditorPushUndo()
-			clearInterior(lvl, e.ID)
-			v.Interior = ""
+	imgui.Indent()
+	removeID := ""
+	for _, id := range v.Interiors {
+		imgui.Text(id)
+		imgui.SameLine()
+		if imgui.Button("Remove##entvehintrm" + id) {
+			removeID = id
 		}
+	}
+	if removeID != "" {
+		EditorPushUndo()
+		unbindChunkFromVehicle(lvl, removeID)
+	}
+
+	label := "(add interior chunk)"
+	if imgui.BeginCombo("##entvehintadd", label) {
+		any := false
 		for ci := range lvl.Chunks {
 			ch := &lvl.Chunks[ci]
-			// A chunk already owned by someone else is not offered: two
+			if v.CarriesChunk(ch.ID) {
+				continue
+			}
+			// A chunk already owned by another vehicle is not offered: two
 			// vehicles cannot carry the same geometry.
 			if ch.FrameOwner != "" && ch.FrameOwner != e.ID {
 				continue
 			}
+			any = true
 			if imgui.Selectable(ch.ID) {
 				EditorPushUndo()
-				clearInterior(lvl, e.ID)
-				v.Interior = ch.ID
 				ch.FrameOwner = e.ID
+				v.AddInterior(ch.ID)
 				_ = world.RebuildIndexes(lvl)
 			}
 		}
+		if !any {
+			editorTextMuted("(no unowned chunks)")
+		}
 		imgui.EndCombo()
 	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("The chunk whose geometry is this vehicle's deck, authored\n" +
-			"around the origin and carried around the world by it.\n" +
-			"Biome paint and procedural detail do not work on one.")
-	}
-	if v.Interior != "" {
-		editorTextWrapped("The interior is authored around the origin in the 2D map, not where " +
-			"the vehicle sits. Bind a portal to `world` to walk in and out of it.")
+	imgui.Unindent()
+	if v.HasInterior() {
+		editorTextWrapped("Interiors are authored around the origin in the 2D map, not where " +
+			"the vehicle sits. Bind a portal to `world` to walk in and out of one.")
 	}
 }
 
-// clearInterior releases whatever chunk this vehicle currently owns.
-func clearInterior(lvl *world.Level, ownerID string) {
+// unbindChunkFromVehicle releases one chunk this vehicle owns, without
+// touching any of its other interior chunks.
+func unbindChunkFromVehicle(lvl *world.Level, chunkID string) {
 	for ci := range lvl.Chunks {
-		if lvl.Chunks[ci].FrameOwner == ownerID {
-			lvl.Chunks[ci].FrameOwner = ""
-			lvl.Chunks[ci].Xform = mgl32.Mat4{}
+		ch := &lvl.Chunks[ci]
+		if ch.ID != chunkID {
+			continue
 		}
+		if e := world.FindEntity(lvl, ch.FrameOwner); e != nil && e.Vehicle != nil {
+			e.Vehicle.RemoveInterior(chunkID)
+		}
+		ch.FrameOwner = ""
+		ch.Xform = mgl32.Mat4{}
+		break
 	}
 	_ = world.RebuildIndexes(lvl)
 }

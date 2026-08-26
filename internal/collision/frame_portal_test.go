@@ -35,7 +35,7 @@ func dockedLevel(t *testing.T) *world.Level {
 
 	lvl.Chunks = []world.Chunk{cabin, deck}
 	lvl.Entities = []world.Entity{{ID: "ship", Scale: mgl32.Vec3{1, 1, 1},
-		Vehicle: &world.VehicleSpec{Mode: world.VehicleSpace, Interior: "cabin",
+		Vehicle: &world.VehicleSpec{Mode: world.VehicleSpace, Interiors: []string{"cabin"},
 			Drive: world.DefaultDriveSpec(world.VehicleSpace)}}}
 	if err := world.RebuildIndexes(lvl); err != nil {
 		t.Fatalf("RebuildIndexes: %v", err)

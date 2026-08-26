@@ -190,6 +190,35 @@ func (p *ModelPose) Set(bi int, bp ModelBonePose) {
 	p.Bones[bi] = bp
 }
 
+// ---------- blending ----------
+
+// BlendPoses writes into dst the pose t of the way from a to b: lerp on
+// translation and scale, slerp on rotation, per bone — the same interpolation
+// ModelBoneTrack.sample uses to move between two keys within one clip, applied
+// here between two whole poses instead. dst is resized rather than replaced,
+// so a crossfade's per-frame call reuses one buffer instead of allocating a
+// fresh pose every tick.
+func BlendPoses(dst *ModelPose, a, b ModelPose, t float32) {
+	n := len(a.Bones)
+	if m := len(b.Bones); m > n {
+		n = m
+	}
+	dst.Resize(n)
+	for i := range dst.Bones {
+		dst.Bones[i] = blendBonePose(a.Bone(i), b.Bone(i), t)
+	}
+}
+
+// blendBonePose interpolates one bone's channels between two poses.
+func blendBonePose(a, b ModelBonePose, t float32) ModelBonePose {
+	sa, sb := a.EffectiveScale(), b.EffectiveScale()
+	return ModelBonePose{
+		Trans: a.Trans.Add(b.Trans.Sub(a.Trans).Mul(t)),
+		Rot:   mgl32.QuatSlerp(a.EffectiveRot(), b.EffectiveRot(), t),
+		Scale: sa.Add(sb.Sub(sa).Mul(t)),
+	}
+}
+
 // ---------- evaluation ----------
 
 // PoseMatrices returns one model-space matrix per bone: where the pose puts that

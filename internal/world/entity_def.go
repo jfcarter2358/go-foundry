@@ -40,6 +40,7 @@ import (
 	"foundry/internal/fileutil"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -65,11 +66,12 @@ func entityDefPath(name string) string {
 
 // RawEntityAnimation is the YAML form of one named animation on an attachment.
 type RawEntityAnimation struct {
-	Name     string  `yaml:"name"`
-	Clip     string  `yaml:"clip,omitempty"`  // empty = same name as the animation
-	Speed    float32 `yaml:"speed,omitempty"` // 0 = 1
-	Loop     *bool   `yaml:"loop,omitempty"`  // nil = follow the clip's own flag
-	Autoplay bool    `yaml:"autoplay,omitempty"`
+	Name      string   `yaml:"name"`
+	Clip      string   `yaml:"clip,omitempty"`  // empty = same name as the animation
+	Speed     float32  `yaml:"speed,omitempty"` // 0 = 1
+	Loop      *bool    `yaml:"loop,omitempty"`  // nil = follow the clip's own flag
+	BlendTime *float32 `yaml:"blend,omitempty"` // nil = DefaultAnimBlend, 0 = hard cut
+	Autoplay  bool     `yaml:"autoplay,omitempty"`
 }
 
 // RawEntityModel is the YAML form of one model attachment.
@@ -296,11 +298,12 @@ func entityAnimationsFromRaw(raw []RawEntityAnimation) []EntityAnimation {
 			continue
 		}
 		out = append(out, EntityAnimation{
-			Name:     r.Name,
-			Clip:     r.Clip,
-			Speed:    r.Speed,
-			Loop:     r.Loop,
-			Autoplay: r.Autoplay,
+			Name:      r.Name,
+			Clip:      r.Clip,
+			Speed:     r.Speed,
+			Loop:      r.Loop,
+			BlendTime: r.BlendTime,
+			Autoplay:  r.Autoplay,
 		})
 	}
 	if len(out) == 0 {
@@ -334,11 +337,12 @@ func entityAnimationsToRaw(anims []EntityAnimation) []RawEntityAnimation {
 	out := make([]RawEntityAnimation, 0, len(anims))
 	for _, a := range anims {
 		out = append(out, RawEntityAnimation{
-			Name:     a.Name,
-			Clip:     a.Clip,
-			Speed:    a.Speed,
-			Loop:     a.Loop,
-			Autoplay: a.Autoplay,
+			Name:      a.Name,
+			Clip:      a.Clip,
+			Speed:     a.Speed,
+			Loop:      a.Loop,
+			BlendTime: a.BlendTime,
+			Autoplay:  a.Autoplay,
 		})
 	}
 	return out
@@ -815,8 +819,8 @@ func modelOverride(def *EntityDef, m *EntityModel) (RawEntityModel, bool) {
 	return o, changed
 }
 
-// animationsEqual compares two animation lists, Loop pointers included by
-// value so two lists that mean the same thing compare equal.
+// animationsEqual compares two animation lists, Loop and BlendTime pointers
+// included by value so two lists that mean the same thing compare equal.
 func animationsEqual(a, b []EntityAnimation) bool {
 	if len(a) != len(b) {
 		return false
@@ -831,6 +835,13 @@ func animationsEqual(a, b []EntityAnimation) bool {
 		case a[i].Loop == nil || b[i].Loop == nil:
 			return false
 		case *a[i].Loop != *b[i].Loop:
+			return false
+		}
+		switch {
+		case a[i].BlendTime == nil && b[i].BlendTime == nil:
+		case a[i].BlendTime == nil || b[i].BlendTime == nil:
+			return false
+		case *a[i].BlendTime != *b[i].BlendTime:
 			return false
 		}
 	}
@@ -941,7 +952,7 @@ func sameVehicle(a, b *VehicleSpec) bool {
 	if a == b {
 		return true
 	}
-	if a.Mode != b.Mode || a.Interior != b.Interior || a.Drive != b.Drive {
+	if a.Mode != b.Mode || a.Drive != b.Drive || !slices.Equal(a.Interiors, b.Interiors) {
 		return false
 	}
 	if len(a.Seats) != len(b.Seats) {

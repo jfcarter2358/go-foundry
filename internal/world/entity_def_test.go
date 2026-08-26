@@ -110,6 +110,45 @@ func TestEntityAnimationDefaultsToItsOwnName(t *testing.T) {
 	if got := a.EffectiveSpeed(); got != 1 {
 		t.Errorf("speed: got %v, want 1", got)
 	}
+	if got := a.EffectiveBlend(); got != DefaultAnimBlend {
+		t.Errorf("blend: got %v, want the default %v", got, DefaultAnimBlend)
+	}
+	zero := float32(0)
+	a.BlendTime = &zero
+	if got := a.EffectiveBlend(); got != 0 {
+		t.Errorf("blend: got %v, want the explicit hard cut of 0", got)
+	}
+}
+
+func TestEntityDefParsesBlendTime(t *testing.T) {
+	const src = `
+id: mannequin
+bound_half_x: 0.4
+bound_half_y: 0.5
+bound_half_z: 0.4
+models:
+  - name: body
+    path: models/mannequin.fmdl
+    animations:
+      - name: walk
+      - name: teleport
+        blend: 0
+`
+	var raw RawEntityDef
+	if err := yaml.Unmarshal([]byte(src), &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	def, err := entityDefFromRaw(raw, "mannequin")
+	if err != nil {
+		t.Fatalf("entityDefFromRaw: %v", err)
+	}
+	anims := def.Models[0].Animations
+	if got := anims[0].BlendTime; got != nil {
+		t.Errorf("walk: BlendTime = %v, want nil (follow the default)", *got)
+	}
+	if got := anims[1].BlendTime; got == nil || *got != 0 {
+		t.Errorf("teleport: BlendTime = %v, want a pointer to 0", got)
+	}
 }
 
 func TestInstantiateSharesNothingWithDefinition(t *testing.T) {

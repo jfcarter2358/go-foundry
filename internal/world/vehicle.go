@@ -144,12 +144,56 @@ func DefaultDriveSpec(mode VehicleMode) DriveSpec {
 // VehicleSpec is the authored half of a vehicle.
 type VehicleSpec struct {
 	Mode VehicleMode
-	// Interior is the chunk whose geometry is authored in this vehicle's frame —
-	// the deck an occupant can stand up and walk around. Empty is a seat-only
-	// vehicle, which is a complete thing to be.
-	Interior string
-	Seats    []VehicleSeat
-	Drive    DriveSpec
+	// Interiors are the chunks whose geometry is authored in this vehicle's
+	// frame — the decks an occupant can stand up and walk around. A single
+	// vehicle can carry several: a bridge and a cargo hold, or a floor and a
+	// roof over the same footprint, are separate chunks sharing one
+	// FrameOwner. Empty is a seat-only vehicle, which is a complete thing to
+	// be.
+	Interiors []string
+	Seats     []VehicleSeat
+	Drive     DriveSpec
+}
+
+// HasInterior reports whether this vehicle has anywhere to stand, as opposed
+// to being seats only.
+func (v *VehicleSpec) HasInterior() bool { return v != nil && len(v.Interiors) > 0 }
+
+// CarriesChunk reports whether chunkID is one of this vehicle's interior
+// chunks.
+func (v *VehicleSpec) CarriesChunk(chunkID string) bool {
+	if v == nil {
+		return false
+	}
+	for _, id := range v.Interiors {
+		if id == chunkID {
+			return true
+		}
+	}
+	return false
+}
+
+// AddInterior binds a chunk to this vehicle as one more deck, if it is not
+// bound already.
+func (v *VehicleSpec) AddInterior(chunkID string) {
+	if v == nil || chunkID == "" || v.CarriesChunk(chunkID) {
+		return
+	}
+	v.Interiors = append(v.Interiors, chunkID)
+}
+
+// RemoveInterior unbinds a chunk from this vehicle, if it was one of its
+// decks.
+func (v *VehicleSpec) RemoveInterior(chunkID string) {
+	if v == nil {
+		return
+	}
+	for i, id := range v.Interiors {
+		if id == chunkID {
+			v.Interiors = append(v.Interiors[:i], v.Interiors[i+1:]...)
+			return
+		}
+	}
 }
 
 // Seat looks up a seat by name.

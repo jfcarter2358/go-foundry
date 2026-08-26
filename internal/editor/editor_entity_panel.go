@@ -627,6 +627,7 @@ func editorEntityAnimationRow(m *world.EntityModel, idx int, clips []string, pla
 	// Loop is tri-state: follow the clip, force on, force off. A plain checkbox
 	// cannot say "follow", and "follow" is the default worth keeping reachable.
 	editorEntityLoopCombo(a)
+	editorEntityBlendField(a)
 	imgui.Checkbox("Autoplay##autoplay", &a.Autoplay)
 
 	if playing == a.Name {
@@ -670,6 +671,29 @@ func editorEntityLoopCombo(a *world.EntityAnimation) {
 		a.Loop = &v
 	}
 	imgui.EndCombo()
+}
+
+// editorEntityBlendField draws the crossfade override: a checkbox for whether
+// this animation departs from DefaultAnimBlend at all, and — only when it
+// does — the seconds it uses instead. Unchecked is nil (follow the default);
+// checked at 0 is the explicit hard cut BlendTime documents.
+func editorEntityBlendField(a *world.EntityAnimation) {
+	custom := a.BlendTime != nil
+	if imgui.Checkbox("Custom blend##blendon", &custom) {
+		if custom {
+			v := world.DefaultAnimBlend
+			a.BlendTime = &v
+		} else {
+			a.BlendTime = nil
+		}
+	}
+	if a.BlendTime == nil {
+		return
+	}
+	v := *a.BlendTime
+	if editorDragFloatStep("Blend (s)##blend", &v, 0, 5, "%.2f", 0.01) {
+		*a.BlendTime = v
+	}
 }
 
 // ---------- actions ----------

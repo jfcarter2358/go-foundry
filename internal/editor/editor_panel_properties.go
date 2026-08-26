@@ -227,7 +227,7 @@ func editorPortalFrameCombo(lvl *world.Level, ch *world.Chunk, p *world.Portal) 
 	}
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]
-		if e.Vehicle == nil || e.Vehicle.Interior == "" || e.ID == ch.FrameOwner {
+		if e.Vehicle == nil || !e.Vehicle.HasInterior() || e.ID == ch.FrameOwner {
 			continue
 		}
 		if imgui.SelectableV(e.ID, p.ToFrame == e.ID, 0, imgui.Vec2{}) && p.ToFrame != e.ID {

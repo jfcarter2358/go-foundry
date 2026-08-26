@@ -236,7 +236,7 @@ func VehicleInteract(lvl *world.Level, e *world.Entity) bool {
 		if e.Frame == v.ID && e.Seat == s.Name {
 			// Already in this seat: the press means "get up", or "get out" if
 			// there is nowhere to stand.
-			if v.Vehicle.Interior != "" {
+			if v.Vehicle.HasInterior() {
 				return Stand(lvl, e)
 			}
 			return Dismount(lvl, e) != nil
@@ -250,7 +250,7 @@ func VehicleInteract(lvl *world.Level, e *world.Entity) bool {
 	if e.Frame != "" {
 		if e.Seat != "" {
 			v := world.FindEntity(lvl, e.Frame)
-			if v != nil && v.IsVehicle() && v.Vehicle.Interior != "" {
+			if v != nil && v.IsVehicle() && v.Vehicle.HasInterior() {
 				return Stand(lvl, e)
 			}
 		}

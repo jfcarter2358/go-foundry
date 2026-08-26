@@ -133,12 +133,15 @@ func editorChunkFrameOwnerRow(lvl *world.Level, ch *world.Chunk) {
 }
 
 // editorSetChunkCarrier binds ch to the vehicle owner (empty to unbind), taking
-// the binding off whatever held it and writing the vehicle's own Interior field.
+// the binding off whatever held it and writing the vehicle's own Interiors
+// list. A vehicle may carry more than one chunk this way — a floor and a roof
+// over the same footprint, say — so this only ever touches ch's own binding,
+// never another chunk's.
 func editorSetChunkCarrier(lvl *world.Level, ch *world.Chunk, owner string) {
 	// Whoever used to carry this chunk stops naming it.
 	for i := range lvl.Entities {
-		if v := lvl.Entities[i].Vehicle; v != nil && v.Interior == ch.ID {
-			v.Interior = ""
+		if v := lvl.Entities[i].Vehicle; v != nil {
+			v.RemoveInterior(ch.ID)
 		}
 	}
 	// This chunk stops being carried, whatever it was carried by.
@@ -147,16 +150,8 @@ func editorSetChunkCarrier(lvl *world.Level, ch *world.Chunk, owner string) {
 	}
 	ch.FrameOwner = owner
 	if owner != "" {
-		// The new owner drops whatever else it was carrying: a vehicle has one
-		// interior, and two would be two decks in one hull.
-		for i := range lvl.Chunks {
-			if other := &lvl.Chunks[i]; other != ch && other.FrameOwner == owner {
-				other.FrameOwner = ""
-				other.Xform = mgl32.Mat4{}
-			}
-		}
 		if e := world.FindEntity(lvl, owner); e != nil && e.Vehicle != nil {
-			e.Vehicle.Interior = ch.ID
+			e.Vehicle.AddInterior(ch.ID)
 		}
 	}
 	_ = world.RebuildIndexes(lvl)

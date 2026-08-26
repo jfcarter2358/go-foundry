@@ -339,7 +339,15 @@ func Run() {
 			// last frame's transform would be shoved through the deck every
 			// time the ship pitched — this ordering is the fix, and it is why
 			// VehicleUpdate is here rather than folded into EntityUpdate.
-			collision.VehicleUpdate(&level, platform.DeltaTime, true)
+			//
+			// Driving writes straight into the level's own entities rather than
+			// going through the script host, so it never trips the runtime's
+			// markDirty calls. Mark the play session dirty by hand whenever a
+			// vehicle actually moved, or leaving play would leave it wherever it
+			// was last driven instead of putting the level back.
+			if collision.VehicleUpdate(&level, platform.DeltaTime, true) {
+				script.PlaySessionMarkDirty()
+			}
 
 			if world.PlayerEntity != nil {
 				onGround := collision.MovePlayer(

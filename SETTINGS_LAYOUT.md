@@ -355,7 +355,7 @@ check when something that should be solid is not.
 -->
 #### Vehicle <!-- [Make this a vehicle] when the entity has no vehicle block -->
 Mode <dropdown: ground, air, water, space>
-Interior <dropdown of chunks, plus "(none — seat-only)"> <!-- the chunk that is this vehicle's deck; sets the chunk's owner too -->
+Interior <list of bound chunks, each with a [Remove]> <dropdown to add another unowned chunk> <!-- the chunk(s) that are this vehicle's decks — a floor and a roof can both bind here; sets each chunk's owner too -->
 ##### Seats [+]
 <!-- [x] removes the seat; [checkbox] makes it the driver's, taking it off whichever seat had it -->
 - [x] [checkbox] driver

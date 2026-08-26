@@ -78,6 +78,8 @@
 - [x] Animated textures
 - [x] Texture transparency
 - [x] Texture blending
+- [x] Animation blending between clips (crossfade on switch, configurable per
+      animation via `blend:`, default 0.15s, 0 for a hard cut)
 
 ## TODO
 
@@ -93,7 +95,6 @@
 ### Engine
 
 
-
 - [ ] Sprites
 - [ ] Particles
 - [ ] Skeleton sockets
@@ -105,7 +106,7 @@
 - [ ] Volumetric displacement (e.g. sand, snow)
 - [ ] Re-do wall extrusion setup to be like the model editor
 - [ ] Restitution/friction, and more than one solver iteration per frame
-- [ ] Animation blending between clips (a switch is a hard cut today)
 - [ ] Editing entity *definitions* in the editor. The panel edits an instance;
       changing the type still means editing its YAML and pressing Reload.
 - [ ] Potentially change the max number of frames for animated textures as well as frame spacing/interpolation
+- [ ] Exterior floors and ceilings

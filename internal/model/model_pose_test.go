@@ -273,6 +273,72 @@ func TestPoseResizeFillsIdentities(t *testing.T) {
 	}
 }
 
+// ---------- blending ----------
+
+func TestBlendPosesInterpolatesEachChannel(t *testing.T) {
+	a := NewModelPose(1)
+	b := NewModelPose(1)
+	a.Bones[0].Trans = mgl32.Vec3{0, 0, 0}
+	b.Bones[0].Trans = mgl32.Vec3{2, 0, 0}
+	a.Bones[0].Scale = mgl32.Vec3{1, 1, 1}
+	b.Bones[0].Scale = mgl32.Vec3{3, 1, 1}
+	a.Bones[0].Rot = mgl32.QuatIdent()
+	b.Bones[0].Rot = localRot(mgl32.DegToRad(90), mgl32.Vec3{0, 1, 0})
+
+	var out ModelPose
+	BlendPoses(&out, a, b, 0.5)
+
+	if want := (mgl32.Vec3{1, 0, 0}); !vec3Close(out.Bones[0].Trans, want, 1e-5) {
+		t.Errorf("trans at t=0.5 = %v, want %v", out.Bones[0].Trans, want)
+	}
+	if want := (mgl32.Vec3{2, 1, 1}); !vec3Close(out.Bones[0].Scale, want, 1e-5) {
+		t.Errorf("scale at t=0.5 = %v, want %v", out.Bones[0].Scale, want)
+	}
+	// Halfway between identity and a 90 degree turn is a 45 degree turn — slerp
+	// on the shortest arc, not a lerp of the raw quaternion components.
+	wantRot := localRot(mgl32.DegToRad(45), mgl32.Vec3{0, 1, 0})
+	if got := out.Bones[0].Rot; mgl32.Abs(got.W-wantRot.W) > 1e-5 || !vec3Close(got.V, wantRot.V, 1e-5) {
+		t.Errorf("rot at t=0.5 = %+v, want %+v", got, wantRot)
+	}
+}
+
+// TestBlendPosesAtTheEndpointsReproducesEachInput pins the boundary the
+// crossfade in EntityAnim relies on: t=0 must be indistinguishable from the
+// pose it is fading from, and t=1 from the one it is fading to, or a
+// crossfade would visibly jump at either end.
+func TestBlendPosesAtTheEndpointsReproducesEachInput(t *testing.T) {
+	a := NewModelPose(1)
+	a.Bones[0].Trans = mgl32.Vec3{1, 2, 3}
+	a.Bones[0].Rot = localRot(mgl32.DegToRad(20), mgl32.Vec3{1, 0, 0})
+	b := NewModelPose(1)
+	b.Bones[0].Trans = mgl32.Vec3{-1, 0, 4}
+	b.Bones[0].Rot = localRot(mgl32.DegToRad(-60), mgl32.Vec3{0, 0, 1})
+
+	var out ModelPose
+	BlendPoses(&out, a, b, 0)
+	if !mat4Close(out.Bones[0].matrix(), a.Bones[0].matrix(), 1e-5) {
+		t.Errorf("t=0 did not reproduce a: got %+v, want %+v", out.Bones[0], a.Bones[0])
+	}
+	BlendPoses(&out, a, b, 1)
+	if !mat4Close(out.Bones[0].matrix(), b.Bones[0].matrix(), 1e-5) {
+		t.Errorf("t=1 did not reproduce b: got %+v, want %+v", out.Bones[0], b.Bones[0])
+	}
+}
+
+// TestBlendPosesReusesTheDestinationBuffer pins the reason dst is a pointer:
+// a crossfade calls this every frame, and a fresh allocation each time would
+// undo the whole point of pose being a reused buffer.
+func TestBlendPosesReusesTheDestinationBuffer(t *testing.T) {
+	a, b := NewModelPose(2), NewModelPose(2)
+	var out ModelPose
+	BlendPoses(&out, a, b, 0.5)
+	backing := &out.Bones[0]
+	BlendPoses(&out, a, b, 0.7)
+	if &out.Bones[0] != backing {
+		t.Error("BlendPoses reallocated its destination on a same-size call")
+	}
+}
+
 func TestBoneRestBasisIsOrthonormal(t *testing.T) {
 	// The whole reason pose space exists: BoneMatrix folds the length into Y,
 	// which would turn a pose rotation into a shear.

@@ -45,10 +45,20 @@ type EntityAnimation struct {
 	// where looping is authored — an override exists for the case where one
 	// game wants a one-shot out of a clip authored to cycle.
 	Loop *bool
+	// BlendTime is how many seconds this animation crossfades in from whatever
+	// pose is showing when it starts. Nil follows DefaultAnimBlend; an explicit
+	// 0 forces a hard cut, for the rare transition — a ragdoll drop, a teleport
+	// — that should not soften.
+	BlendTime *float32
 	// Autoplay starts this animation when the entity loads. At most one per
 	// attachment is honoured (the first), since a model can only be in one pose.
 	Autoplay bool
 }
+
+// DefaultAnimBlend is the crossfade an animation gets when its own BlendTime
+// does not say otherwise — long enough to hide the pop of a hard cut, short
+// enough not to read as its own transition animation.
+const DefaultAnimBlend = float32(0.15)
 
 // effectiveClip returns the clip name this animation plays.
 func (a EntityAnimation) EffectiveClip() string {
@@ -64,6 +74,15 @@ func (a EntityAnimation) EffectiveSpeed() float32 {
 		return 1
 	}
 	return a.Speed
+}
+
+// EffectiveBlend returns the crossfade this animation starts with — see
+// BlendTime.
+func (a EntityAnimation) EffectiveBlend() float32 {
+	if a.BlendTime == nil {
+		return DefaultAnimBlend
+	}
+	return *a.BlendTime
 }
 
 // EntityModel is one model attached to an entity.
@@ -309,14 +328,14 @@ func (m *EntityModel) Play(name string) bool {
 		return false
 	}
 	if name == "" {
-		m.Anim.SetClip("")
+		m.Anim.SetClip("", 0)
 		return true
 	}
 	a := m.Animation(name)
 	if a == nil {
 		return false
 	}
-	if !m.Anim.SetClip(a.EffectiveClip()) {
+	if !m.Anim.SetClip(a.EffectiveClip(), a.EffectiveBlend()) {
 		return false
 	}
 	m.Anim.Speed = a.EffectiveSpeed()
@@ -329,7 +348,7 @@ func (m *EntityModel) Play(name string) bool {
 // Stop halts playback and returns the model to its rest pose.
 func (m *EntityModel) Stop() {
 	if m.Anim != nil {
-		m.Anim.SetClip("")
+		m.Anim.SetClip("", 0)
 	}
 }
 
