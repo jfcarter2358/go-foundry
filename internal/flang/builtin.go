@@ -35,6 +35,7 @@ var worldVerbs = []string{
 	"emit", "stop_emit", "burst", "spawn_effect",
 	"play", "stop", "play_sound", "play_sound_at", "play_music", "stop_music",
 	"attach", "detach",
+	"show_screen", "hide_screen", "screen", "widget", "focus", "load_level",
 }
 
 var builtins map[string]builtinFn

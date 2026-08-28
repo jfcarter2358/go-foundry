@@ -88,6 +88,25 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		},
 	},
 	{
+		Title:  "UI editor",
+		Active: editor.UIEditorOpen,
+		Binds: []uiwin.Keybind{
+			{Keys: "Click", Desc: "Select a widget; Alt+click selects its parent"},
+			{Keys: "Drag", Desc: "Move the selection; Alt suspends snapping"},
+			{Keys: "Drag a corner handle", Desc: "Resize"},
+			{Keys: "Drag an anchor marker", Desc: "Re-anchor without moving the widget"},
+			{Keys: "MMB drag", Desc: "Pan the canvas"},
+			{Keys: "Wheel", Desc: "Zoom about the cursor"},
+			{Keys: "F", Desc: "Frame the canvas"},
+			{Keys: "G / B", Desc: "Show / hide the grid, show / hide outlines"},
+			{Keys: "Ctrl+D", Desc: "Duplicate the selection"},
+			{Keys: "Delete / X", Desc: "Delete the selection"},
+			{Keys: "Ctrl+N / Ctrl+O / Ctrl+S", Desc: "New / open / save"},
+			{Keys: "Ctrl+Shift+S", Desc: "Save as"},
+			{Keys: "Ctrl+Z / Ctrl+Shift+Z", Desc: "Undo / redo"},
+		},
+	},
+	{
 		Title:  "Model editor",
 		Active: editor.ModelEditorOpen,
 		Binds: []uiwin.Keybind{

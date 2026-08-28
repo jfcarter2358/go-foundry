@@ -26,6 +26,10 @@ import (
 	"foundry/internal/uifont"
 )
 
+// Rect is ui.Rect, aliased so this package's own signatures do not have to
+// spell the import on every line. The same type, not a copy.
+type Rect = ui.Rect
+
 // Vertex is twenty bytes: position, texture coordinate, packed colour.
 //
 // The colour is one uint32 whose bytes are R, G, B, A in memory, uploaded as
@@ -310,4 +314,53 @@ func to255(v float32) uint8 {
 		return 255
 	}
 	return uint8(v*255 + 0.5)
+}
+
+// AppendTransformed copies another list's geometry into this one, translated
+// and scaled.
+//
+// This is how the UI editor puts a document into its canvas. The document is
+// built in its own units by the same code the game uses — that is the point of
+// the whole exercise — and the canvas's pan and zoom are applied here rather
+// than folded into the projection, because the overlays drawn alongside it are
+// specified in window pixels and must not move with it.
+//
+// The source's clip rects are transformed too, and intersected with whatever is
+// in force here, so a clipping panel inside the document still clips and still
+// cannot escape the canvas viewport.
+func (l *List) AppendTransformed(src *List, ox, oy, scale float32) {
+	if len(src.Idx) == 0 {
+		return
+	}
+	base := uint32(len(l.Verts))
+	for _, v := range src.Verts {
+		v.X = ox + v.X*scale
+		v.Y = oy + v.Y*scale
+		l.Verts = append(l.Verts, v)
+	}
+
+	here := l.Clip()
+	for _, cmd := range src.Cmds {
+		if cmd.IdxCount == 0 {
+			continue
+		}
+		clip := here.Intersect(Rect{
+			X: ox + cmd.Clip.X*scale,
+			Y: oy + cmd.Clip.Y*scale,
+			W: cmd.Clip.W * scale,
+			H: cmd.Clip.H * scale,
+		})
+		if clip.Empty() {
+			continue
+		}
+		l.Cmds = append(l.Cmds, Cmd{
+			Tex:       cmd.Tex,
+			Clip:      clip,
+			IdxOffset: len(l.Idx),
+			IdxCount:  cmd.IdxCount,
+		})
+		for _, i := range src.Idx[cmd.IdxOffset : cmd.IdxOffset+cmd.IdxCount] {
+			l.Idx = append(l.Idx, base+i)
+		}
+	}
 }

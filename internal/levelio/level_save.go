@@ -28,9 +28,13 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// ScanLevelFiles returns sorted filenames of .yaml files in dir.
+// ScanLevelFiles returns sorted filenames of level files in dir.
+//
+// Takes a directory rather than using LevelsDir because the editor's open
+// dialog is pointed at wherever it was launched with, which is not always the
+// one beside the executable.
 func ScanLevelFiles(dir string) []string {
-	return fileutil.ScanFilesByExt(dir, ".yaml")
+	return fileutil.ScanFilesByExt(dir, LevelExt)
 }
 
 // WriteBlankLevel writes a minimal valid level YAML to path.
@@ -106,6 +110,7 @@ func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 	raw.Music = world.MusicToRaw(level.Music)
 
 	raw.Scripts = append([]string(nil), level.Scripts...)
+	raw.UI = append([]string(nil), level.UI...)
 	raw.Lights = lightsToRaw(level.Lights)
 	return raw, nil
 }

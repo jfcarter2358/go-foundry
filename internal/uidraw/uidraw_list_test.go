@@ -372,3 +372,87 @@ func firstVertexY(t *testing.T, a *uifont.Atlas, box ui.Rect, v ui.VAlign) float
 	}
 	return l.Verts[0].Y
 }
+
+func TestAppendTransformedMovesAndScales(t *testing.T) {
+	var src List
+	src.Reset(rect(0, 0, 100, 100))
+	src.AddRect(rect(10, 20, 30, 40), 5, 0xFFFFFFFF)
+
+	dst := newList()
+	dst.AppendTransformed(&src, 200, 300, 2)
+
+	if quadsIn(dst) != 1 {
+		t.Fatalf("%d quads copied, want 1", quadsIn(dst))
+	}
+	v := dst.Verts[0]
+	if v.X != 200+10*2 || v.Y != 300+20*2 {
+		t.Errorf("top-left is %v,%v, want 220,340", v.X, v.Y)
+	}
+	if w := dst.Verts[2].X - v.X; w != 60 {
+		t.Errorf("width is %v, want 60", w)
+	}
+	if dst.Cmds[0].Tex != 5 {
+		t.Errorf("texture is %d, want the source's 5", dst.Cmds[0].Tex)
+	}
+}
+
+func TestAppendTransformedRemapsIndices(t *testing.T) {
+	// Indices are relative to the source's own vertex buffer; copying them
+	// unchanged would draw the destination's first quad over and over.
+	dst := newList()
+	dst.AddRect(rect(0, 0, 10, 10), 1, 0xFFFFFFFF)
+
+	var src List
+	src.Reset(rect(0, 0, 100, 100))
+	src.AddRect(rect(50, 50, 10, 10), 2, 0xFFFFFFFF)
+
+	dst.AppendTransformed(&src, 0, 0, 1)
+
+	last := dst.Cmds[len(dst.Cmds)-1]
+	for _, i := range dst.Idx[last.IdxOffset : last.IdxOffset+last.IdxCount] {
+		if i < 4 {
+			t.Fatalf("copied index %d points into the destination's own first quad", i)
+		}
+		if int(i) >= len(dst.Verts) {
+			t.Fatalf("copied index %d is past the end of %d vertices", i, len(dst.Verts))
+		}
+	}
+}
+
+func TestAppendTransformedIntersectsClips(t *testing.T) {
+	// A clipping panel inside the document still clips, and still cannot escape
+	// the canvas viewport it is being composited into.
+	var src List
+	src.Reset(rect(0, 0, 100, 100))
+	src.PushClip(rect(0, 0, 50, 50))
+	src.AddRect(rect(0, 0, 100, 100), 1, 0xFFFFFFFF)
+
+	dst := newList()
+	dst.PushClip(rect(0, 0, 60, 800))
+	dst.AppendTransformed(&src, 0, 0, 2)
+
+	last := dst.Cmds[len(dst.Cmds)-1]
+	// The source clip scales to 100 wide, then the destination's 60 wins.
+	if last.Clip.W != 60 {
+		t.Errorf("composited clip is %v wide, want the intersection at 60", last.Clip.W)
+	}
+	if last.Clip.H != 100 {
+		t.Errorf("composited clip is %v tall, want the scaled source at 100", last.Clip.H)
+	}
+}
+
+func TestAppendTransformedDropsFullyClippedCommands(t *testing.T) {
+	var src List
+	src.Reset(rect(0, 0, 100, 100))
+	src.AddRect(rect(0, 0, 100, 100), 1, 0xFFFFFFFF)
+
+	dst := newList()
+	dst.PushClip(rect(500, 500, 10, 10)) // nowhere near
+	before := len(dst.Cmds)
+	dst.AppendTransformed(&src, 0, 0, 1)
+	if len(dst.Cmds) != before {
+		t.Error("a command with no visible area was still issued")
+	}
+}
+
+func quadsIn(l *List) int { return len(l.Idx) / 6 }

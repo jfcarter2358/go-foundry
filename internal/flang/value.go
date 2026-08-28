@@ -151,6 +151,11 @@ const (
 	RefSprite
 	RefEmitter
 	RefSound
+	// A screen and one widget on it. Appended after the level kinds so that no
+	// existing constant shifts — a reordered enum would silently reinterpret a
+	// ref held anywhere it was written down.
+	RefScreen
+	RefWidget
 )
 
 var refKindNames = [...]string{
@@ -158,6 +163,7 @@ var refKindNames = [...]string{
 	RefEdge: "edge", RefFloor: "floor", RefCeiling: "ceiling",
 	RefEntity: "entity", RefVolume: "volume", RefLight: "light", RefBiome: "biome",
 	RefSprite: "sprite", RefEmitter: "emitter", RefSound: "sound",
+	RefScreen: "screen", RefWidget: "widget",
 }
 
 // String renders a ref kind as the atom `ref.kind` yields.
@@ -188,6 +194,10 @@ func (v RefVal) String() string {
 		return "@" + v.B
 	case RefBiome:
 		return "@" + v.B
+	case RefWidget:
+		// Screen and node, because a widget id is only unique within its
+		// screen and "@ok" would not say which "ok".
+		return "@" + v.A + "." + v.B
 	default:
 		return "@" + v.A
 	}
@@ -196,7 +206,11 @@ func (v RefVal) String() string {
 // ID returns the name a script would address this object by.
 func (v RefVal) ID() string {
 	switch v.Kind {
-	case RefSector, RefFloor, RefCeiling, RefBiome:
+	case RefSector, RefFloor, RefCeiling, RefBiome, RefWidget:
+		// These are all scoped by something that comes first in the path: a
+		// sector by its chunk, a widget by its screen. `ref.id` is the thing's
+		// own name, which is what a handler comparing `src.id` against a
+		// literal is asking for.
 		return v.B
 	case RefEdge:
 		return v.C

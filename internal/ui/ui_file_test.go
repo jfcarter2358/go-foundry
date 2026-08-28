@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/scriptdata"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -601,5 +602,97 @@ root:
 	}
 	if s.Root.Rect != DefaultRectXf() {
 		t.Errorf("root rect is %+v, want the full canvas", s.Root.Rect)
+	}
+}
+
+func TestScriptDataRoundTrips(t *testing.T) {
+	uiTempDir(t)
+
+	s := NewScreen("scripted")
+	s.Tags = []string{"menu", "ui"}
+	s.Script = "menus/pause.flang"
+	s.Attributes = scriptdata.AttrSet{"opened": scriptdata.IntAttr(3)}
+	s.ScriptParams = scriptdata.AttrSet{"target": scriptdata.StringAttr("door_1")}
+
+	btn := NewNode("btn", KindButton)
+	btn.Tags = []string{"clickable"}
+	btn.Script = "menus/button.flang"
+	btn.Attributes = scriptdata.AttrSet{"cost": scriptdata.FloatAttr(2.5)}
+	btn.ScriptParams = scriptdata.AttrSet{"locked": scriptdata.BoolAttr(true)}
+	s.Root.Children = []Node{btn}
+
+	path := UIPath("scripted")
+	if err := SaveScreen(s, path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := loadScreenBare(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if !reflect.DeepEqual(got.ScriptData, s.ScriptData) {
+		t.Errorf("the screen's script data changed:\n got %+v\nwant %+v", got.ScriptData, s.ScriptData)
+	}
+	gotBtn := got.Find("btn")
+	if gotBtn == nil {
+		t.Fatal("the button went missing")
+	}
+	if !reflect.DeepEqual(gotBtn.ScriptData, btn.ScriptData) {
+		t.Errorf("the button's script data changed:\n got %+v\nwant %+v", gotBtn.ScriptData, btn.ScriptData)
+	}
+}
+
+func TestUnscriptedDocumentWritesNoScriptKeys(t *testing.T) {
+	uiTempDir(t)
+	s := NewScreen("plain")
+	s.Root.Style.Color = mgl32.Vec4{1, 1, 1, 1}
+	s.Root.Children = []Node{NewNode("kid", KindPanel)}
+	if err := SaveScreen(s, UIPath("plain2")); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	data, _ := os.ReadFile(UIPath("plain2"))
+	for _, unwanted := range []string{"tags:", "attributes:", "script:", "params:"} {
+		if strings.Contains(string(data), unwanted) {
+			t.Errorf("an unscripted document wrote %q:\n%s", unwanted, data)
+		}
+	}
+}
+
+func TestAMalformedAttributeRefusesTheLoad(t *testing.T) {
+	// Silently dropping a value an author wrote is worse than refusing to open
+	// the screen: the script that reads it would just find nothing there.
+	uiTempDir(t)
+	writeYAML(t, "badattr", `
+id: badattr
+root:
+  id: root
+  kind: panel
+  children:
+    - id: n
+      kind: panel
+      attributes:
+        broken: {type: sasquatch, value: 3}
+`)
+	if _, err := loadScreenBare(UIPath("badattr")); err == nil {
+		t.Error("a screen with an unknown attribute type loaded anyway")
+	}
+}
+
+func TestCloneCopiesScriptData(t *testing.T) {
+	s := NewScreen("t")
+	n := NewNode("n", KindPanel)
+	n.Tags = []string{"a"}
+	n.Attributes = scriptdata.AttrSet{"x": scriptdata.IntAttr(1)}
+	s.Root.Children = []Node{n}
+
+	clone := s.Clone()
+	clone.Find("n").Tags[0] = "changed"
+	clone.Find("n").Attributes["x"] = scriptdata.IntAttr(99)
+
+	if s.Find("n").Tags[0] != "a" {
+		t.Error("clone shared the tag slice")
+	}
+	if v, _ := s.Find("n").Attributes["x"].Int(); v != 1 {
+		t.Error("clone shared the attribute map")
 	}
 }

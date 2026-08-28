@@ -647,6 +647,14 @@ type RawLevel struct {
 	// spawn director — and it is a list because rules split by topic across
 	// files far more naturally than one object's behaviour does.
 	Scripts []string `yaml:"scripts,omitempty"`
+	// UI are the .fui screens this level puts up when play starts, named
+	// without their extension. A list for the same reason Scripts is: a HUD and
+	// a compass and a subtitle bar are three documents, not one, and which of
+	// them a level wants is a per-level decision.
+	//
+	// Menus a script opens later are not listed here — show_screen names them
+	// directly. This is only what comes up with the level.
+	UI []string `yaml:"ui,omitempty"`
 	// Volumes are the level's scriptable regions (volume.go). They sit at the
 	// level rather than in a chunk because a trigger can span a doorway between
 	// two of them, and its authored position is world-space.

@@ -26,7 +26,10 @@ func init() {
 		flang.RefLight:   lightProps(),
 		flang.RefBiome:   biomeProps(),
 		flang.RefSprite:  spriteProps(),
+		flang.RefLevel:   levelProps(),
 		flang.RefEmitter: emitterProps(),
+		flang.RefScreen:  screenProps(),
+		flang.RefWidget:  widgetProps(),
 		flang.RefSound:   soundProps(),
 	}
 }

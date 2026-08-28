@@ -642,30 +642,70 @@ func rawToLightSet(rl world.RawLights) world.LightSet {
 
 // rawToLevel converts a parsed RawLevel into runtime types and uploads all
 // referenced geometry/textures to the GPU.
+// rawToLevel builds a runtime level from its authored form.
+//
+// The three expensive parts — the chunk loop, the level-scoped objects and the
+// texture loads — are separate functions rather than inline, because a level
+// load has two drivers: this one, which runs the whole thing in a single call,
+// and levelio_load_job.go, which runs it a slice at a time so a loading screen
+// can animate over it. Both call exactly these functions in exactly this order,
+// which is what makes the stepped load provably the same load.
 func rawToLevel(raw world.RawLevel) (world.Level, error) {
 	var level world.Level
 	texNeeded := map[string]bool{}
 
-	for _, rc := range raw.Chunks {
+	if _, err := loadChunkRange(raw, &level, texNeeded, 0, len(raw.Chunks)); err != nil {
+		return world.Level{}, err
+	}
+	if err := loadLevelObjects(raw, &level, texNeeded); err != nil {
+		return world.Level{}, err
+	}
+	names := textureLoadOrder(texNeeded)
+	if _, err := loadTextureRange(names, 0, len(names)); err != nil {
+		return world.Level{}, err
+	}
+	if err := finishLevel(&level); err != nil {
+		return world.Level{}, err
+	}
+	return level, nil
+}
+
+// loadChunkRange builds chunks [from, from+count) onto level, and reports where
+// the next call should resume.
+func loadChunkRange(raw world.RawLevel, level *world.Level, texNeeded map[string]bool, from, count int) (int, error) {
+	to := from + count
+	if to > len(raw.Chunks) {
+		to = len(raw.Chunks)
+	}
+	for i := from; i < to; i++ {
+		rc := raw.Chunks[i]
 		chunk, chunkTex, err := loadRawChunk(rc)
 		if err != nil {
-			return world.Level{}, err
+			return i, err
 		}
 		for t := range chunkTex {
 			texNeeded[t] = true
 		}
 		level.Chunks = append(level.Chunks, chunk)
 	}
+	return to, nil
+}
 
+// loadLevelObjects builds everything that sits at the level rather than in a
+// chunk: the spawn, entities, volumes, sprites, emitters, sounds, music and
+// lights. One step rather than several — together they are a fraction of a
+// chunk's cost, and splitting them would buy nothing but seams.
+func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[string]bool) error {
 	// Chunk and sector IDs are how a script addresses geometry, so they have to
 	// name exactly one thing. Nothing enforced that before scripting existed, and
 	// the editor could mint duplicates, so resolve them here — renaming with a
 	// warning rather than rejecting, since a level authored under the old rules
 	// should still open.
 	level.Scripts = append([]string(nil), raw.Scripts...)
+	level.UI = append([]string(nil), raw.UI...)
 
 	world.ResolveLevelIDCollisions(level.Chunks)
-	world.ResolveBiomeSectorIDCollisions(&level)
+	world.ResolveBiomeSectorIDCollisions(level)
 
 	// The player spawn: one optional marker per level, not a placed object.
 	if raw.Spawn != nil {
@@ -676,7 +716,7 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 			Seat:     raw.Spawn.Seat,
 		}
 		if err := spawn.Load(); err != nil {
-			return world.Level{}, fmt.Errorf("spawn point load: %w", err)
+			return fmt.Errorf("spawn point load: %w", err)
 		}
 		level.Spawn = spawn
 	}
@@ -691,13 +731,13 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 	for _, re := range raw.Entities {
 		e, err := world.EntityFromRaw(re, world.LoadEntityDef)
 		if err != nil {
-			return world.Level{}, err
+			return err
 		}
 		// IDs address entities from scripts, so a level with two of the same
 		// gets the duplicate renamed rather than made unreachable.
-		e.ID = world.UniqueEntityID(&level, e.ID)
+		e.ID = world.UniqueEntityID(level, e.ID)
 		if err := e.Load(); err != nil {
-			return world.Level{}, fmt.Errorf("entity %q load: %w", e.ID, err)
+			return fmt.Errorf("entity %q load: %w", e.ID, err)
 		}
 		level.Entities = append(level.Entities, e)
 	}
@@ -706,9 +746,9 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 	for _, rv := range raw.Volumes {
 		v, err := world.VolumeFromRaw(rv)
 		if err != nil {
-			return world.Level{}, err
+			return err
 		}
-		v.ID = world.UniqueVolumeID(&level, v.ID)
+		v.ID = world.UniqueVolumeID(level, v.ID)
 		if err := v.Load(); err != nil {
 			// A cage that would not build is a missing authoring aid, not a
 			// broken level — the volume still works.
@@ -726,9 +766,9 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 	for _, rs := range raw.Sprites {
 		sp, err := world.SpriteFromRaw(rs)
 		if err != nil {
-			return world.Level{}, err
+			return err
 		}
-		sp.ID = world.UniqueSpriteID(&level, sp.ID)
+		sp.ID = world.UniqueSpriteID(level, sp.ID)
 		if err := sp.EnsureSpriteTexture(); err != nil {
 			log.Printf("sprite %q: texture %q: %v", sp.ID, sp.Texture, err)
 		}
@@ -744,9 +784,9 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 	for _, rem := range raw.Emitters {
 		em, err := world.EmitterFromRaw(rem)
 		if err != nil {
-			return world.Level{}, err
+			return err
 		}
-		em.ID = world.UniqueEmitterID(&level, em.ID)
+		em.ID = world.UniqueEmitterID(level, em.ID)
 		if err := em.Load(); err != nil {
 			log.Printf("emitter %q: effect %q: %v", em.ID, em.Effect, err)
 		} else {
@@ -770,9 +810,9 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 	for _, rs := range raw.Sounds {
 		sd, err := world.SoundFromRaw(rs)
 		if err != nil {
-			return world.Level{}, err
+			return err
 		}
-		sd.ID = world.UniqueSoundID(&level, sd.ID)
+		sd.ID = world.UniqueSoundID(level, sd.ID)
 		if sd.Clip != "" {
 			if _, err := audio.ClipFor(sd.Clip); err != nil {
 				log.Printf("sound %q: clip %q: %v", sd.ID, sd.Clip, err)
@@ -790,29 +830,56 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 
 	// Convert lights
 	level.Lights = rawToLightSet(raw.Lights)
+	return nil
+}
 
-	// Load all textures referenced by this level
+// textureLoadOrder is the textures a level needs and does not already have, in
+// a stable order so a stepped load makes the same progress twice running.
+func textureLoadOrder(texNeeded map[string]bool) []string {
+	out := make([]string, 0, len(texNeeded))
 	for name := range texNeeded {
+		if _, already := gfx.Textures[name]; already {
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// loadTextureRange uploads names [from, from+count), and reports where to
+// resume.
+func loadTextureRange(names []string, from, count int) (int, error) {
+	to := from + count
+	if to > len(names) {
+		to = len(names)
+	}
+	for i := from; i < to; i++ {
+		name := names[i]
 		if _, already := gfx.Textures[name]; already {
 			continue
 		}
 		path, ok := gfx.TextureNames[name]
 		if !ok {
-			return world.Level{}, fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
+			return i, fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 		}
 		if err := gfx.LoadTexture(name, filepath.Join(fileutil.ExecutablePath, path)); err != nil {
-			return world.Level{}, err
+			return i, err
 		}
 	}
+	return to, nil
+}
 
-	if err := world.RebuildIndexes(&level); err != nil {
+// finishLevel builds the spatial hash and the frame graph, which need every
+// object in place.
+func finishLevel(level *world.Level) error {
+	if err := world.RebuildIndexes(level); err != nil {
 		// A malformed frame graph is an authoring mistake with no sensible
 		// fallback: the geometry would be drawn somewhere the collision cannot
 		// find it. Refuse the level and say why.
-		return world.Level{}, err
+		return err
 	}
-
-	return level, nil
+	return nil
 }
 
 // loadOpenings converts a surface's holes. Points come across verbatim: an

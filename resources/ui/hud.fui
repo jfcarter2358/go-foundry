@@ -1,0 +1,58 @@
+# hud.fui — the player HUD.
+#
+# Authored against the 1920x1080 reference resolution, so every number below is
+# in those units and scales with the window. Nothing here is modal, pausing or
+# cursor-releasing: a HUD is a view, and it takes no input at all.
+
+id: hud
+canvas: {ref_w: 1920, ref_h: 1080, match: 0.5}
+
+root:
+  id: root
+  kind: panel
+  color: {r: 0, g: 0, b: 0, a: 0}
+  children:
+    # Health, pinned to the bottom-left corner so it stays put at any aspect.
+    - id: health_back
+      kind: bar
+      anchor_min: {x: 0, y: 1}
+      anchor_max: {x: 0, y: 1}
+      offset: [40, -96, -340, 56]
+      color: {r: 0.05, g: 0.06, b: 0.08, a: 0.85}
+      value:
+        bind: "@player.attr.health"
+        bind_max: "@player.attr.health_max"
+        max: 100
+        value: 100
+        fill_color: {r: 0.78, g: 0.24, b: 0.24, a: 1}
+
+    - id: health_text
+      kind: text
+      anchor_min: {x: 0, y: 1}
+      anchor_max: {x: 0, y: 1}
+      offset: [52, -92, -352, 60]
+      text:
+        bind: "@player.attr.health"
+        format: "%.0f"
+        value: "100"
+        size: 24
+        h_align: left
+
+    - id: health_label
+      kind: text
+      anchor_min: {x: 0, y: 1}
+      anchor_max: {x: 0, y: 1}
+      offset: [40, -126, -240, 92]
+      text:
+        value: "HEALTH"
+        size: 16
+        color: {r: 0.58, g: 0.61, b: 0.66, a: 1}
+
+    # A centred crosshair: a fixed 4x4 dot, so it stays crisp rather than
+    # growing with the window.
+    - id: crosshair
+      kind: panel
+      anchor_min: {x: 0.5, y: 0.5}
+      anchor_max: {x: 0.5, y: 0.5}
+      offset: [-2, -2, -2, -2]
+      color: {r: 1, g: 1, b: 1, a: 0.65}

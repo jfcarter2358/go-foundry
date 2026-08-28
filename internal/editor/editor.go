@@ -27,6 +27,7 @@ import (
 	"foundry/internal/render"
 	"foundry/internal/script"
 	"foundry/internal/textureui"
+	"foundry/internal/ui"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
 
@@ -579,6 +580,20 @@ func EditorToggle() {
 		levelio.PlaySessionBegin(Editor.level)
 		script.ScriptRuntimeLoad(Editor.level)
 		script.ScriptEventsReset()
+
+		// The level's own screens come up with it. A menu a script opens later
+		// is not in this list — show_screen names it directly — so this is only
+		// what the level says it starts with.
+		//
+		// Reset first: leaving play already cleared the stack, but entering it
+		// twice without a level change must not stack two copies of the HUD.
+		ui.Game.Reset()
+		ui.InvalidateAllScreens()
+		for _, name := range Editor.level.UI {
+			if _, err := ui.Game.Show(name); err != nil {
+				editorSetStatus("UI screen %q: %v", name, err)
+			}
+		}
 		platform.GravityEnabled = true
 		Editor.Active = false
 		Editor.Mode = ModeGame
@@ -602,6 +617,12 @@ func EditorToggle() {
 		}
 		script.ScriptRuntimeReset(Editor.level)
 		script.ScriptEventsReset()
+
+		// Whatever the player had open goes with the play session. A menu left
+		// on the stack would draw over the editor, and its bound widgets would
+		// be reading a level that has just been put back.
+		ui.Game.Reset()
+
 		platform.GravityEnabled = false
 		platform.IsOnGround = false
 		platform.JumpRequested = false

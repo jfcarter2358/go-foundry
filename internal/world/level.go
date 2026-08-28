@@ -18,6 +18,9 @@ type Level struct {
 	Spawn  *SpawnPoint
 	// Scripts are the level's own .flang handlers — see RawLevel.Scripts.
 	Scripts []string
+	// UI are the .fui screens this level puts up when play starts — see
+	// RawLevel.UI.
+	UI []string
 	// Volumes are the level's scriptable regions (volume.go).
 	Volumes []Volume
 	// Entities are the level's placed dynamic objects (entity.go). They live on

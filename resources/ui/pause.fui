@@ -1,0 +1,66 @@
+# pause.fui — the pause menu.
+#
+# Modal, pausing and cursor-releasing: the three input semantics, all set. That
+# combination is what makes this a menu rather than an overlay, and there is no
+# fourth thing to configure — Escape closes it because it is the topmost modal
+# screen, not because anything here says so.
+
+id: pause
+canvas: {ref_w: 1920, ref_h: 1080, match: 0.5}
+modal: true
+pauses: true
+shows_cursor: true
+initial_focus: resume
+
+root:
+  id: root
+  kind: panel
+  color: {r: 0, g: 0, b: 0, a: 0}
+  children:
+    # A full-screen scrim. Blocks so that a click on the empty space beside the
+    # menu does not fall through to whatever is behind it.
+    - id: scrim
+      kind: panel
+      blocks: true
+      color: {r: 0.02, g: 0.03, b: 0.05, a: 0.72}
+
+    - id: panel
+      kind: panel
+      anchor_min: {x: 0.5, y: 0.5}
+      anchor_max: {x: 0.5, y: 0.5}
+      offset: [-200, -170, -200, -170]
+      color: {r: 0.10, g: 0.11, b: 0.13, a: 0.96}
+      children:
+        - id: title
+          kind: text
+          anchor_min: {x: 0, y: 0}
+          anchor_max: {x: 1, y: 0}
+          offset: [0, 24, 0, -84]
+          text: {value: "Paused", size: 34, h_align: center}
+
+        - id: resume
+          kind: button
+          anchor_min: {x: 0, y: 0}
+          anchor_max: {x: 1, y: 0}
+          offset: [32, 110, 32, -166]
+          action: resume
+          text: {value: "Resume", size: 22, h_align: center}
+          nav: {down: settings}
+
+        - id: settings
+          kind: button
+          anchor_min: {x: 0, y: 0}
+          anchor_max: {x: 1, y: 0}
+          offset: [32, 180, 32, -236]
+          action: open_settings
+          text: {value: "Settings", size: 22, h_align: center}
+          nav: {up: resume, down: quit}
+
+        - id: quit
+          kind: button
+          anchor_min: {x: 0, y: 0}
+          anchor_max: {x: 1, y: 0}
+          offset: [32, 250, 32, -306]
+          action: quit_game
+          text: {value: "Quit", size: 22, h_align: center}
+          nav: {up: settings}

@@ -629,6 +629,119 @@ attributes:
   health: {type: int, value: 25}
 ```
 
+
+## User interface
+
+There was none until recently: every pixel of UI in the engine was Dear ImGui,
+which is an editor tool. A shipped game could not draw a main menu, a loading
+screen or a health bar.
+
+The runtime UI is native. A game build links no ImGui at all, and the same pass
+that draws a HUD over the world draws the UI editor's canvas — so what an author
+sees while authoring is what ships, because there is one implementation of it.
+
+### The three packages, and why there are three
+
+`internal/uifont` bakes a `.ttf` into a glyph atlas and lays text out against
+it. Pure CPU, and below `internal/gfx` as well as everything above it, because
+the layout solve *measures* text: a label that auto-sizes and a paragraph that
+wraps both need metrics before a rect can be decided. Metrics are data, so they
+sit with the data rather than arriving through a function variable.
+
+`internal/ui` is the `.fui` document, the layout solve, hit testing, directional
+navigation and the screen stack. No GL, no level, no ImGui. That is the same
+split `internal/particle` makes and for the same reason: the editor's live
+preview and the running game have to drive one solver, so it must sit below
+both.
+
+`internal/uidraw` is the screen-space pass. Above `gfx`, below `world` — every
+entry point in `internal/render` takes a `*world.Level`, and a UI that needed a
+level could not draw a main menu before one had loaded, nor the loading screen
+covering that load.
+
+### Anchors, not a layout engine
+
+A widget is placed by four anchors in 0..1 of its parent's rect and four pixel
+offsets inward from the rect those anchors describe. One representation for both
+the pinned and the stretched case: Unity keeps `anchoredPosition`+`sizeDelta`
+for one and `offsetMin`/`offsetMax` for the other, and most of the confusion
+`RectTransform` is famous for comes from the two disagreeing. The spelling an
+author wants for a pinned axis — a position and a size — is a derived accessor,
+not a second stored field.
+
+There is no flexbox and no constraint solver. The solve is one depth-first walk
+with parents before children, because an anchor is measured against a parent
+that is already solved. Two rules in it are invisible until they are wrong:
+children anchor to their parent's *solved* rect rather than its clip rect, so a
+list inside a partly-off-screen panel keeps its positions; and clip rects
+intersect rather than replace, so a nested panel cannot draw outside its
+grandparent.
+
+The one control that makes anchors usable rather than terrifying is
+`SetAnchorsPreservingRect`: dragging an anchor handle re-expresses *where a node
+is* in terms of a different parent-relative origin, and does not move it. It has
+a test over every pair of the twelve presets.
+
+### One shader, no mode uniform
+
+A solid fill samples a 1x1 white texture, and a glyph page is white RGB with
+coverage in alpha. So a flat rectangle, an image and a letter all come out of
+`Color * texture(Tex, UV)` — which means they also batch together whenever the
+clip allows. A HUD is three to eight draw calls; a menu with one atlas and one
+font is two.
+
+The batching key is `(texture, scissor rect)`, which is exactly the two things
+the shader cannot vary per vertex. The vertex is twenty bytes and the GL state
+save-and-restore is cribbed from `imguibackend.ImguiRenderDrawData`, deliberately:
+that renderer has already had every scissor and state-leak bug beaten into it.
+
+Pixel snapping happens at draw time rather than in the solve, and snaps *edges*
+rather than origin-and-size — rounding a position and a width independently
+opens a one-pixel seam between abutting elements that appears and vanishes as a
+window resizes. Keeping it out of the solve means hit testing, anchor drags and
+the editor's numeric readouts all work on stable continuous numbers.
+
+### There is no application-state enum
+
+A HUD is a non-modal, non-pausing screen at the bottom of the stack. A pause
+menu is a modal, pausing, cursor-releasing screen pushed on top of it. A loading
+screen is the same thing pushed by the load job. One mechanism, three uses —
+which is why "is the game paused" is a question about the stack rather than a
+variable somebody has to remember to set.
+
+Input reaches the stack as intents (pointer moved, navigate down, activate)
+rather than as SDL events, so `internal/ui` never learns which device asked.
+A gamepad is a translation layer in `internal/app` and no change at all in the
+UI itself.
+
+### Bindings are pulled, not pushed
+
+A widget's document says `bind: "@player.attr.health"`, and the stack polls it
+once a tick. Under a push model every place that changes health — the collision
+resolver, a damage script, a pickup, the restore that runs when play ends — has
+to remember to update the bar, and the one that forgets produces a HUD that is
+wrong in a way no test catches. A pull expresses the relationship once, in the
+document, where the editor can show it and where there is exactly one place for
+it to be wrong.
+
+The precedence is unambiguous and it has to be: a script writing to a widget the
+document binds is *refused*, with a message naming the binding. Letting both
+write would make the winner depend on frame timing, which is not something
+anyone can debug.
+
+### The loading screen
+
+`levelio.LoadJob` is a level load split into steps the frame loop pumps. Not a
+goroutine — loading ends in `gl.*` calls, and the GL context belongs to the main
+thread, the same constraint `DrainScriptWork` exists for. Not "draw one frame
+then load" either, which gives exactly one static frame with a bar that never
+moves.
+
+It runs the same four functions `rawToLevel` does, in the same order. That is
+the whole safety argument for having two drivers over one loader, and there is a
+test asserting the stepped load builds an identical level to the synchronous
+one.
+
 ## Package layout
 
 The engine is a tree of packages under `internal/`, layered so that nothing
@@ -649,7 +762,10 @@ internal/fileutil     asset paths, atomic writes, directory scans
 internal/platform     the window, GL context, key state, frame clock
 internal/geom         scalar maths, Point, triangulation, smooth normals
 internal/texdoc       the layered texture document (pure data)
+internal/scriptdata   tags, attributes, script and params — the triple both a
+                      level object and a UI widget carry
 internal/flang        the scripting language (pure; see below)
+internal/uifont       .ttf into a glyph atlas, and text layout against it
 internal/gfx          Geometry and its draw path, the shader program and its
                       uniforms, the texture registry, GPU skinning, the camera
 internal/gizmo        immediate-mode line/wireframe drawing
@@ -658,6 +774,9 @@ internal/hooks        write-only buffers engine code drops script facts into
 internal/texture      .ftex/.pal I/O, the global palette, the editing session
 internal/model        the .fmdl document: meshes, bones, skinning, poses, UVs
 internal/particle     the .fpar effect document and the CPU particle simulation
+internal/ui           the .fui screen document, the anchor layout solve, hit
+                      testing and the screen stack. No GL, no level.
+internal/uidraw       the screen-space pass: batching, nine-slice, the UI shader
 internal/audio        clips, the voice pool and the software mixer; no level,
                       no GL, and deliberately no camera either
 internal/world        the level data model — chunks, sectors, walls, entities,

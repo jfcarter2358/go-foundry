@@ -556,6 +556,20 @@ The engine posts these without being asked.
 | `:anim_end:` | entity | `src ref, model str, anim str` | A clip finished, or a looping one wrapped |
 | `:mount:` | vehicle | `src ref, seat str` | Something came aboard; `seat` is empty if it is standing |
 | `:dismount:` | vehicle | `src ref, seat str` | …and left again; `seat` is the one it was in |
+| `:click:` | widget, then its screen | `src ref` | A button, toggle or slider was activated, by pointer or navigation key |
+| `:hover:` | widget, then its screen | `src ref` | The pointer or the navigation highlight entered it |
+| `:unhover:` | widget, then its screen | `src ref` | …and left again |
+| `:change:` | widget, then its screen | `src ref, value` | A slider, toggle or field's value changed; `value` follows the kind |
+| `:submit:` | widget, then its screen | `src ref, text str` | Enter was pressed in a text field |
+| `:cancel:` | screen | — | Escape was pressed while this screen was the topmost modal one |
+| `:shown:` | screen | — | The screen was put on the stack |
+| `:hidden:` | screen | — | …and taken off it |
+
+A UI event goes to the widget, or to its **screen** when the widget carries no
+script of its own. One level of bubbling, not the whole ancestor chain: a
+widget's owner is its screen, and routing through every panel in between would
+make where a handler runs depend on the layout. `src.id` is the widget's own id
+either way, so one handler on a screen can serve every button on it.
 
 `model` is the attachment's name and `anim` is the animation's name as the game
 calls it — never the underlying `.fmdl` clip name. A looping clip emits an
@@ -622,6 +636,9 @@ needs those numbers to move.
 `after(ms, atom, ...)` `emit(emitter)` `stop_emit(emitter)`
 `burst(emitter, count)` `spawn_effect(name, vec)` `attach(obj, carrier)`
 `detach(obj)`
+
+**UI** — `show_screen(name)` `hide_screen(screen)` `screen(name)`
+`widget(screen, id)` `focus(widget)` `load_level(name)`
 
 `spawn` returns a `ref` to the new entity. Entities spawned during play exist only
 for that play session.
@@ -845,6 +862,39 @@ Attaching to a **frame** is the vehicle case, and a frame exists once something
 is parented to that vehicle — not merely because an entity carries a vehicle
 spec. Naming one that does not exist warns and points at the entity of the same
 name, which is usually what was meant.
+
+### Screens and widgets
+
+A `.fui` screen is addressed like anything else. `@pause` is a screen that is
+up; `@ok` is a widget, when exactly one screen on the stack has one by that
+name. Two screens both carrying an `ok` is the ordinary case — two copies of one
+prefab — so a name that matches more than one is **refused** rather than guessed
+at, and `widget(@pause, "ok")` says which.
+
+```
+show_screen("pause")               -- put it up, or raise it if it is already
+hide_screen(@pause)                -- or hide_screen("pause")
+screen("pause")                    -- the screen, if it is up; null otherwise
+widget(screen("pause"), "ok")      -- one widget on it
+focus(widget(@pause, "resume"))    -- move keyboard and gamepad focus
+load_level("canyon")               -- covered by the `loading` screen
+```
+
+A screen and a widget carry the same tags, attributes, script and params any
+level object does, so `#dimmable.prop.alpha = 0.5` reaches widgets, and a button
+gets its behaviour the same way a door does.
+
+**A widget whose document declares a binding is read-only to scripts.** Writing
+`@hud.hp.prop.text` on a label bound to `@player.attr.health` is refused, and
+the message names the binding — because the fix is to write *that* instead. A
+script write and the binding poll racing each other would be decided by frame
+timing, which is not something anyone can debug. A widget with no binding is the
+script's to write.
+
+Level changes go through `load_level`, which records a request rather than
+loading at the call: loading tears down the runtime executing the script making
+it. The frame loop does the work between frames, covered by the `loading` screen,
+and `@level.prop.load_progress` is what that screen's bar binds to.
 
 ### Where output goes
 

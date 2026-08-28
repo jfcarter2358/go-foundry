@@ -111,7 +111,7 @@ a level lost to a misclick.
 -->
 
 ## Main window
-Windows: [2D Window] [Textures] [Model] [Script] [Particles] [Log]
+Windows: [2D Window] [Textures] [Model] [Script] [Particles] [UI] [Log]
 <!-- each window button is lit while its window is open -->
 | Select: [Point 1] [Edge 2] [Face 3]
 <!--
@@ -219,6 +219,92 @@ double-click opens a picker. Stops are tracked by their position on the curve
 rather than by index, because dragging one past its neighbour re-sorts the list.
 -->
 
+## UI editor (its own window)
+[New] [Open] [Save] [Save As] | [Undo] [Redo] | <screen name, * while unsaved> | [Pop In]
+[checkbox] Grid  [checkbox] Outlines  [checkbox] Safe area | <resolution dropdown> | [Data: Sample|Literal|Live] | <status line>
+<!--
+Three columns under the toolbar: the hierarchy on the left, the canvas in the
+middle, the properties on the right. The canvas is a live preview drawn by the
+same screen-space pass the game uses, laid out by the same solver - so a screen
+that looks right here looks right in the level, for the reason the particle
+editor's preview drives the game's simulation.
+
+The resolution dropdown is the size the document is laid out at, which is not
+this window's size: the numbers on the panel have to be the numbers the game
+will use.
+
+Data decides what bound widgets read. Sample invents plausible values that
+*move*, because the only way to see whether a fill direction or a nine-slice
+works is to watch one change. Literal turns bindings off, so every widget shows
+what the document says. Live reads the level the script runtime has.
+-->
+
+### Hierarchy <!-- left column -->
+[checkbox] <node id>  <kind>   <!-- the checkbox is Visible -->
+[+ Add] [^] [v] [x]            <!-- order is draw order; there is no z field -->
+<!--
+Right-click a row for Duplicate / Move up / Move down / Wrap in panel / Delete,
+or Add child. Drag a row onto another to reparent it. Nodes spliced in from an
+include are shown muted and cannot be selected: editing one would write the
+change into a file that is not the one being edited.
+-->
+
+### Widget <!-- right column, one group per subject, matching the level panel's ordering -->
+#### Identity
+ID <textbox>, Kind <readout>
+[checkbox] Visible, [checkbox] Enabled, [checkbox] Blocks input
+[-] Alpha [+] [=]   <!-- multiplied down the whole subtree -->
+#### Rect
+<the anchor preset grid: nine corner/edge/centre pins, then stretch-x, stretch-y, stretch>
+Anchor min / max, then per axis either Pos+Size or the two insets
+<!-- whichever spelling fits how that axis is anchored; showing both at once is
+     where RectTransform's reputation comes from -->
+Pivot X / Y, Rotation <!-- leaf kinds only -->, Scale X / Y, [checkbox] Clip children
+#### Style
+[color picker] Color, Texture <dropdown>, UV X / Y / W / H
+Slice left / top / right / bottom <!-- in texels of the source image -->
+Fit <dropdown: stretch | fit | fill | tile>
+#### States <!-- collapsed; interactive kinds only -->
+[checkbox] Hover / [checkbox] Press / [checkbox] Disabled, each with a colour and a texture
+<!-- unset states are derived by tinting, so a button nobody styled still responds -->
+#### Text <!-- text, button, input, toggle -->
+Text <textbox>, Font <dropdown>, Size, [color picker] Color
+Align <dropdown>, Vertical <dropdown>, [checkbox] Wrap
+Bind <textbox>, Format <textbox>, <readout of what it currently shows>
+#### Value <!-- bar, slider, toggle -->
+Value / Min / Max / Step, Fills <dropdown: lr | rl | bt | tb>
+[color picker] Fill color, Fill texture <dropdown>
+Bind <textbox>, Bind max <textbox>
+#### Navigation <!-- collapsed; interactive kinds only -->
+Up / Down / Left / Right <dropdown over the screen's node ids>, Action <textbox>
+#### Include <!-- include kind only -->
+Source <dropdown over .fui files> [Edit], then a row per {{param}}
+#### Actions
+[Duplicate] [Wrap in panel] [Delete]
+
+### Screen <!-- the same column, when the root is selected: the root is the canvas -->
+#### Screen
+ID <textbox>
+#### Canvas
+Scale <dropdown: screen | pixel>, Reference width / height, Match width/height
+[checkbox] Snap to pixels
+#### Input
+[checkbox] Modal, [checkbox] Pauses the game, [checkbox] Shows the cursor
+Initial focus <dropdown>
+
+### Theme <!-- a tab beside Properties, editing the one theme every screen reads -->
+Font <dropdown>, Default size, [color picker] Text, [color picker] Muted text
+[color picker] Panel, Panel texture <dropdown>, Slice left / top / right / bottom
+[color picker] Normal / Hover / Press / Disabled
+[color picker] Bar background / Bar fill / Accent
+[Save theme] [Revert] [Defaults]
+<!--
+A tab rather than a window: the theme is one small file every screen reads, and
+a second tool would mean a second place to remember to save. Edits are visible in
+the preview immediately, which is the only way to see what a colour does to a
+real screen; Revert puts the file's version back.
+-->
+
 ## Explorer <!-- one tree over everything the level contains, in a scroll box of its own so Properties stays on screen -->
 [Add...] <!-- the one menu that creates anything; see below -->
 Click in the view to place <what> [Cancel] <!-- only while a placement is armed -->
@@ -283,6 +369,14 @@ Rotation is shown in degrees and stored in radians, everywhere in both editors.
 Rows the selection cannot use are absent: a volume has no scale (its size is
 its half-extents), a point light has neither rotation nor scale, and a
 directional light has neither position nor scale.
+-->
+
+### UI screens <!-- level-scoped: not a property of anything placed -->
+<one row per screen: <name> [Edit] [x]>
+[Add screen] [New screen]
+<!--
+The .fui screens this level puts up when play starts. A menu a script opens
+later is not listed here - show_screen names it directly.
 -->
 
 ### Spawn Point <!-- only when the spawn marker is selected -->

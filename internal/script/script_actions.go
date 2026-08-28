@@ -360,7 +360,7 @@ func init() {
 	// The particle, attach and audio verbs live in their own files and their
 	// own maps, so each surface can be read in one place; they are merged in
 	// here so there is still exactly one table the runtime looks in.
-	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs, audioVerbs} {
+	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs, audioVerbs, uiVerbs} {
 		for name, fn := range group {
 			if _, clash := scriptVerbs[name]; clash {
 				panic("script: two implementations of the verb " + name)

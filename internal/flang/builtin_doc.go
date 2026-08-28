@@ -197,4 +197,17 @@ var builtinDocs = []BuiltinDoc{
 		"Make a sprite or an emitter ride an entity, a bone of one of its models, or a named frame. Its `position` becomes an offset in that space; it is not moved to keep it where it was."},
 	{GroupWorld, "detach", "detach(obj)", "bool",
 		"Put a sprite or an emitter back in world space, leaving it where it currently is. False if it was riding nothing."},
+
+	{GroupWorld, "show_screen", "show_screen(name)", "ref",
+		"Put a .fui screen on the stack, or raise it if it is already up. Returns the screen."},
+	{GroupWorld, "hide_screen", "hide_screen(screen)", "bool",
+		"Take a screen off the stack. Takes a screen ref or a name; false if it was not up."},
+	{GroupWorld, "screen", "screen(name)", "ref|null",
+		"The screen with that name if it is on the stack, or null."},
+	{GroupWorld, "widget", "widget(screen, id)", "ref|null",
+		"One widget inside a screen, by the id the UI editor gives it."},
+	{GroupWorld, "focus", "focus(widget)", "bool",
+		"Move keyboard and gamepad focus to a widget. False if it is hidden, disabled or gone."},
+	{GroupWorld, "load_level", "load_level(name)", "bool",
+		"Ask for a level to be loaded, covered by the `loading` screen. It happens between frames, not at the call, because loading tears down the runtime running the script."},
 }

@@ -13,9 +13,6 @@ package uidraw
 // the whole reason a screen looks the same in both.
 
 import (
-	"fmt"
-	"strings"
-
 	"foundry/internal/gfx"
 	"foundry/internal/ui"
 	"foundry/internal/uifont"
@@ -332,24 +329,4 @@ func minF(a, b float32) float32 {
 		return a
 	}
 	return b
-}
-
-// FormatBound spells a bound value the way a widget's format string asks.
-//
-// Kept here rather than in internal/ui because it is presentation: the document
-// stores the verb, the binding stores the number, and turning one into the
-// other is the drawing layer's business. A verb that does not match what the
-// binding produced yields Go's own error text rather than an empty label, so a
-// mistake in a format string is visible on screen where it was made.
-func FormatBound(format string, num float64, str string, isNum bool) string {
-	if format == "" {
-		if isNum {
-			return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%.2f", num), "0"), ".")
-		}
-		return str
-	}
-	if isNum {
-		return fmt.Sprintf(format, num)
-	}
-	return fmt.Sprintf(format, str)
 }

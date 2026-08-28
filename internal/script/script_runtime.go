@@ -29,6 +29,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
+	"foundry/internal/ui"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -191,6 +192,12 @@ func ScriptRuntimeReset(lvl *world.Level) {
 	rt.warnedAt = map[string]bool{}
 	rt.fanout = map[string]int{}
 	rt.self = flang.RefVal{}
+
+	// Nothing may evaluate a binding against a level that is being replaced, or
+	// load a script for a screen shown after the runtime has gone.
+	ClearUIBindings(uiStack)
+	ui.OnScreenShown = nil
+	InvalidateBindingCache()
 	rt.stats = ScriptStats{}
 }
 
@@ -203,6 +210,24 @@ func ScriptRuntimeLoad(lvl *world.Level) {
 	}
 	for _, path := range Scripts.scriptPaths() {
 		Scripts.loadUnit(path)
+	}
+
+	// The UI's two connections to the runtime, both installed here so that they
+	// come and go with the play session.
+	//
+	// A screen shown later by show_screen is not in the level's list, so
+	// nothing would otherwise know to read its script. Loading on demand is
+	// file I/O, which a tick may do — the thing it may not do is touch GL.
+	InstallUIBindings(uiStack)
+	ui.OnScreenShown = func(sc *ui.Screen) {
+		if sc == nil {
+			return
+		}
+		Scripts.loadUnit(sc.Script)
+		sc.Root.Walk(func(_, n *ui.Node) bool {
+			Scripts.loadUnit(n.Script)
+			return true
+		})
 	}
 }
 
@@ -256,6 +281,33 @@ func (rt *ScriptRuntime) scriptPaths() []string {
 		for i := range rt.lvl.Lights.Points {
 			add(rt.lvl.Lights.Points[i].Script)
 		}
+		// The screens the level puts up, and every scripted widget on them.
+		// Read from disk rather than from the stack, because this runs at load
+		// time, before play has begun and before anything has been shown.
+		//
+		// A screen a script opens later with show_screen is not in this list;
+		// ui.OnScreenShown loads it on demand instead. Enumerating every .fui
+		// on disk here would parse the whole UI folder for a level that uses
+		// one screen out of it.
+		for _, name := range rt.lvl.UI {
+			sc, err := ui.LoadScreen(ui.UIPath(name))
+			if err != nil {
+				continue
+			}
+			add(sc.Script)
+			sc.Root.Walk(func(_, n *ui.Node) bool { add(n.Script); return true })
+		}
+	}
+
+	// And whatever is already up. Normally nothing is — entering play clears
+	// the stack before the runtime loads — but a ScriptReload with a menu open
+	// must not drop that menu's handlers, which is exactly when someone is
+	// reloading scripts.
+	if uiStack != nil {
+		for _, sc := range uiStack.Screens() {
+			add(sc.Script)
+			sc.Root.Walk(func(_, n *ui.Node) bool { add(n.Script); return true })
+		}
 	}
 	out := make([]string, 0, len(seen))
 	for p := range seen {
@@ -267,6 +319,12 @@ func (rt *ScriptRuntime) scriptPaths() []string {
 
 // loadUnit parses one script and everything it imports.
 func (rt *ScriptRuntime) loadUnit(path string) *scriptUnit {
+	// An object with no script of its own is the ordinary case — nearly every
+	// wall in a level, and nearly every widget on a screen — so callers hand
+	// the empty path straight through rather than each testing for it.
+	if path == "" {
+		return nil
+	}
 	if u, ok := rt.units[path]; ok {
 		return u
 	}

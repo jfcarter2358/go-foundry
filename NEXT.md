@@ -133,7 +133,7 @@
 ### Editor
 
 - [ ] Debugger
-- [ ] UI builder
+- [x] UI builder
 - [ ] Configurable editor keybindings
 
 
@@ -154,3 +154,4 @@
 - [ ] Configurable step height that player can walk over
 - [ ] Bump maps
 - [ ] Normal maps
+- [ ] UI load/play videos

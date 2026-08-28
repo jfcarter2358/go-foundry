@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/scriptdata"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"gopkg.in/yaml.v2"
@@ -194,6 +195,8 @@ type RawNode struct {
 	Nav     *RawNav     `yaml:"nav,omitempty"`
 	Include *RawInclude `yaml:"include,omitempty"`
 
+	RawScriptData `yaml:",inline"`
+
 	Children []RawNode `yaml:"children,omitempty"`
 }
 
@@ -205,7 +208,53 @@ type RawScreen struct {
 	Pauses       bool       `yaml:"pauses,omitempty"`
 	ShowsCursor  bool       `yaml:"shows_cursor,omitempty"`
 	InitialFocus string     `yaml:"initial_focus,omitempty"`
-	Root         RawNode    `yaml:"root"`
+
+	RawScriptData `yaml:",inline"`
+
+	Root RawNode `yaml:"root"`
+}
+
+// RawScriptData is the tags/attributes/script/params block, spelled exactly as
+// a level object writes it — the same keys mean the same things, so an author
+// who has scripted a door has already scripted a button.
+//
+// Embedded inline rather than nested under a "script:" key so that a widget's
+// three lines sit beside its other properties rather than in a sub-block of
+// their own.
+type RawScriptData struct {
+	Tags         []string                           `yaml:"tags,omitempty"`
+	Attributes   map[string]scriptdata.RawAttribute `yaml:"attributes,omitempty"`
+	Script       string                             `yaml:"script,omitempty"`
+	ScriptParams map[string]scriptdata.RawAttribute `yaml:"params,omitempty"`
+}
+
+// rawToScriptData converts the block, reporting a malformed attribute rather
+// than dropping it: silently losing a value an author wrote is worse than
+// refusing to open the screen.
+func rawToScriptData(raw RawScriptData, what string) (scriptdata.ScriptData, error) {
+	attrs, err := scriptdata.AttrsFromRaw(raw.Attributes)
+	if err != nil {
+		return scriptdata.ScriptData{}, fmt.Errorf("%s: %w", what, err)
+	}
+	params, err := scriptdata.AttrsFromRaw(raw.ScriptParams)
+	if err != nil {
+		return scriptdata.ScriptData{}, fmt.Errorf("%s: %w", what, err)
+	}
+	return scriptdata.ScriptData{
+		Tags:         scriptdata.NormalizeTags(raw.Tags),
+		Attributes:   attrs,
+		Script:       raw.Script,
+		ScriptParams: params,
+	}, nil
+}
+
+func scriptDataToRaw(d scriptdata.ScriptData) RawScriptData {
+	return RawScriptData{
+		Tags:         scriptdata.NormalizeTags(d.Tags),
+		Attributes:   scriptdata.AttrsToRaw(d.Attributes),
+		Script:       d.Script,
+		ScriptParams: scriptdata.AttrsToRaw(d.ScriptParams),
+	}
 }
 
 // ---------- reading ----------
@@ -221,9 +270,48 @@ func LoadScreen(path string) (*Screen, error) {
 	if err != nil {
 		return nil, err
 	}
-	resolveIncludes(&s.Root, []string{path}, 0)
+	s.includes = resolveIncludes(&s.Root, []string{path}, 0)
 	return s, nil
 }
+
+// ---------- the loaded-screen cache ----------
+
+// screenCache holds one parsed copy of each screen. Show hands out a Clone of
+// it rather than the cached instance itself: two stacks showing the same screen
+// — the game's and the editor's preview — must not share solved rects, bound
+// values or a toggle's state.
+var screenCache = map[string]*Screen{}
+
+func cachedScreenClone(name string) (*Screen, error) {
+	s, ok := screenCache[name]
+	if !ok {
+		var err error
+		s, err = LoadScreen(UIPath(name))
+		if err != nil {
+			return nil, err
+		}
+		screenCache[name] = s
+	}
+	return s.Clone(), nil
+}
+
+// InvalidateScreen drops a screen from the cache, along with every cached
+// screen that includes it — saving a prefab has to reach the menus using it,
+// not just the prefab's own entry.
+func InvalidateScreen(name string) {
+	delete(screenCache, name)
+	for cached, s := range screenCache {
+		for _, inc := range s.includes {
+			if inc == name {
+				delete(screenCache, cached)
+				break
+			}
+		}
+	}
+}
+
+// InvalidateAllScreens empties the cache.
+func InvalidateAllScreens() { screenCache = map[string]*Screen{} }
 
 // loadScreenBare reads one document without touching its includes.
 func loadScreenBare(path string) (*Screen, error) {
@@ -256,6 +344,10 @@ func rawToScreen(raw RawScreen) *Screen {
 		InitialFocus: raw.InitialFocus,
 		Root:         rawToNode(raw.Root),
 	}
+	// A malformed attribute has already failed validation by the time this
+	// runs, so the error here cannot fire; taking the value and dropping it
+	// keeps the conversion total.
+	s.ScriptData, _ = rawToScriptData(raw.RawScriptData, "screen "+raw.ID)
 	normalizeRoot(&s.Root)
 	return s
 }
@@ -328,6 +420,8 @@ func rawToNode(raw RawNode) Node {
 		}
 	}
 
+	n.ScriptData, _ = rawToScriptData(raw.RawScriptData, "node "+raw.ID)
+
 	n.Action = raw.Action
 	if nv := raw.Nav; nv != nil {
 		n.Nav = Nav{Up: nv.Up, Down: nv.Down, Left: nv.Left, Right: nv.Right}
@@ -393,7 +487,10 @@ func screenToRaw(s *Screen) RawScreen {
 		Pauses:       s.Pauses,
 		ShowsCursor:  s.ShowsCursor,
 		InitialFocus: s.InitialFocus,
-		Root:         nodeToRaw(&s.Root),
+
+		RawScriptData: scriptDataToRaw(s.ScriptData),
+
+		Root: nodeToRaw(&s.Root),
 	}
 }
 
@@ -445,6 +542,8 @@ func nodeToRaw(n *Node) RawNode {
 		Action:  n.Action,
 		Nav:     navToRaw(n.Nav),
 		Include: includeToRaw(n.Include),
+
+		RawScriptData: scriptDataToRaw(n.ScriptData),
 	}
 
 	// An include's children belong to the document it came from.
@@ -534,6 +633,9 @@ func validateRawScreen(raw RawScreen) error {
 	if raw.Root.ID == "" {
 		return fmt.Errorf("root node has no id")
 	}
+	if _, err := rawToScriptData(raw.RawScriptData, "screen "+raw.ID); err != nil {
+		return err
+	}
 	seen := map[string]bool{}
 	return validateRawNode(raw.Root, seen)
 }
@@ -548,6 +650,10 @@ func validateRawNode(raw RawNode, seen map[string]bool) error {
 		return fmt.Errorf("two nodes share the id %q", raw.ID)
 	}
 	seen[raw.ID] = true
+
+	if _, err := rawToScriptData(raw.RawScriptData, "node "+raw.ID); err != nil {
+		return err
+	}
 
 	kind := KindFromName(raw.Kind)
 	if raw.Kind != "" && KindName(kind) != raw.Kind {
@@ -579,45 +685,49 @@ func validateRawNode(raw RawNode, seen map[string]bool) error {
 
 // ---------- includes ----------
 
-// resolveIncludes splices every include node's source in, depth-first.
+// resolveIncludes splices every include node's source in, depth-first, and
+// reports every source name it reached.
 //
 // chain is the stack of document paths currently open, which is what detects a
 // cycle: a prefab that includes itself, directly or through two others, would
 // otherwise recurse until the stack ran out.
-func resolveIncludes(n *Node, chain []string, depth int) {
+func resolveIncludes(n *Node, chain []string, depth int) []string {
 	if n.Kind == KindInclude {
-		n.Children = spliceInclude(n, chain, depth)
-		return
+		var used []string
+		n.Children, used = spliceInclude(n, chain, depth)
+		return used
 	}
+	var used []string
 	for i := range n.Children {
-		resolveIncludes(&n.Children[i], chain, depth)
+		used = append(used, resolveIncludes(&n.Children[i], chain, depth)...)
 	}
+	return used
 }
 
-func spliceInclude(n *Node, chain []string, depth int) []Node {
+func spliceInclude(n *Node, chain []string, depth int) ([]Node, []string) {
 	if n.Include.Source == "" {
-		return nil
+		return nil, nil
 	}
 	path := UIPath(n.Include.Source)
 
 	if depth >= maxIncludeDepth {
 		logf("ui: %q: includes nested more than %d deep, stopping", n.ID, maxIncludeDepth)
-		return nil
+		return nil, nil
 	}
 	for _, open := range chain {
 		if open == path {
 			logf("ui: %q includes %q, which is already open — cycle ignored", n.ID, n.Include.Source)
-			return nil
+			return nil, nil
 		}
 	}
 
 	src, err := loadScreenBare(path)
 	if err != nil {
 		logf("ui: %q includes %q: %v", n.ID, n.Include.Source, err)
-		return nil
+		return nil, nil
 	}
 
-	resolveIncludes(&src.Root, append(chain, path), depth+1)
+	used := append([]string{n.Include.Source}, resolveIncludes(&src.Root, append(chain, path), depth+1)...)
 
 	out := make([]Node, 0, len(src.Root.Children))
 	for i := range src.Root.Children {
@@ -631,7 +741,7 @@ func spliceInclude(n *Node, chain []string, depth int) []Node {
 		markFromInclude(&c)
 		out = append(out, c)
 	}
-	return out
+	return out, used
 }
 
 func prefixIDs(n *Node, prefix string) {

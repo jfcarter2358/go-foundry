@@ -15,6 +15,7 @@ package script
 
 import (
 	"foundry/internal/flang"
+	"foundry/internal/ui"
 	"foundry/internal/world"
 )
 
@@ -33,10 +34,44 @@ type refCache struct {
 	biome    map[string][2]int // biome sector ID -> {chunk, biome}
 	dirLight map[string]int
 	ptLight  map[string]int
+
+	// ui is the screen stack as it stood at the top of this tick. Not indexed
+	// the way the level kinds are: a stack is a handful of screens with a
+	// handful of widgets each, and a map rebuilt every tick over that would
+	// cost more than the walk it saved.
+	ui *ui.Stack
+}
+
+// screenFor returns the screen a ref names, or nil.
+func (c *refCache) screenFor(r flang.RefVal) *ui.Screen {
+	if c.ui == nil || (r.Kind != flang.RefScreen && r.Kind != flang.RefWidget) {
+		return nil
+	}
+	return c.ui.Find(r.A)
+}
+
+// widgetFor returns the widget a ref names, or nil.
+func (c *refCache) widgetFor(r flang.RefVal) *ui.Node {
+	if r.Kind != flang.RefWidget {
+		return nil
+	}
+	s := c.screenFor(r)
+	if s == nil {
+		return nil
+	}
+	return s.Find(r.B)
 }
 
 // buildRefCache indexes lvl. Cheap enough to do every tick at the entity counts
 // a level holds.
+// uiStack is the screen stack refs resolve against.
+//
+// A variable rather than a direct reference to ui.Game so a test can point it
+// at a stack of its own without those screens leaking into the next test. The
+// editor's preview stack is deliberately never this one: scripts do not run
+// against a document being authored.
+var uiStack = &ui.Game
+
 func buildRefCache(lvl *world.Level) *refCache {
 	c := &refCache{
 		lvl:      lvl,
@@ -50,6 +85,7 @@ func buildRefCache(lvl *world.Level) *refCache {
 		biome:    map[string][2]int{},
 		dirLight: map[string]int{},
 		ptLight:  map[string]int{},
+		ui:       uiStack,
 	}
 	if lvl == nil {
 		return c
@@ -129,7 +165,64 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 	if idx, ok := c.biome[id]; ok {
 		return flang.RefVal{Kind: flang.RefBiome, A: c.lvl.Chunks[idx[0]].ID, B: id}, true
 	}
+	// The UI last, so a level object always wins a name it shares with a
+	// widget: the level is the thing an author names deliberately, and a widget
+	// id is scoped to its screen in a way a level id is not.
+	if r, ok := c.uiRefFor(id); ok {
+		return r, true
+	}
 	return flang.RefVal{}, false
+}
+
+// uiRefFor resolves a bare name against the screen stack: screens first, then
+// widgets across every screen that is up.
+//
+// A widget id that two visible screens both carry is refused rather than
+// guessed at. Two prefabs of the same menu are the ordinary case, and picking
+// whichever the walk reached first would make @ok mean a different button
+// depending on the order the screens were shown in.
+func (c *refCache) uiRefFor(id string) (flang.RefVal, bool) {
+	if c.ui == nil {
+		return flang.RefVal{}, false
+	}
+	for _, s := range c.ui.Screens() {
+		if s.ID == id {
+			return flang.RefVal{Kind: flang.RefScreen, A: id}, true
+		}
+	}
+
+	var found flang.RefVal
+	matches := 0
+	for _, s := range c.ui.Screens() {
+		if s.Find(id) != nil {
+			matches++
+			if matches == 1 {
+				found = flang.RefVal{Kind: flang.RefWidget, A: s.ID, B: id}
+			}
+		}
+	}
+	if matches == 1 {
+		return found, true
+	}
+	if matches > 1 {
+		return flang.RefVal{Kind: flang.RefNone, A: id}, false
+	}
+	return flang.RefVal{}, false
+}
+
+// uiRefIsAmbiguous reports whether a name matched more than one widget, so the
+// caller can say why nothing came back rather than just that nothing did.
+func (c *refCache) uiRefIsAmbiguous(id string) bool {
+	if c.ui == nil {
+		return false
+	}
+	matches := 0
+	for _, s := range c.ui.Screens() {
+		if s.Find(id) != nil {
+			matches++
+		}
+	}
+	return matches > 1
 }
 
 // ---------- ref to object ----------
@@ -306,6 +399,14 @@ func (c *refCache) scriptDataFor(r flang.RefVal) *world.ScriptData {
 		} else if p != nil {
 			return &p.ScriptData
 		}
+	case flang.RefScreen:
+		if s := c.screenFor(r); s != nil {
+			return &s.ScriptData
+		}
+	case flang.RefWidget:
+		if n := c.widgetFor(r); n != nil {
+			return &n.ScriptData
+		}
 	}
 	return nil
 }
@@ -338,6 +439,10 @@ func (c *refCache) alive(r flang.RefVal) bool {
 	case flang.RefLight:
 		d, p := c.lightFor(r)
 		return d != nil || p != nil
+	case flang.RefScreen:
+		return c.screenFor(r) != nil
+	case flang.RefWidget:
+		return c.widgetFor(r) != nil
 	}
 	return false
 }
@@ -419,6 +524,30 @@ func (c *refCache) refsWithTag(tag string) []flang.RefVal {
 			out = append(out, flang.RefVal{Kind: flang.RefLight, A: c.lvl.Lights.Points[i].ID})
 		}
 	}
+	// The UI last, and in stack-then-tree order, so a broadcast reaches the
+	// level before the screens over it and always in the same order.
+	out = append(out, c.uiRefsWithTag(tag)...)
+	return out
+}
+
+// uiRefsWithTag is the screen-stack half of refsWithTag.
+func (c *refCache) uiRefsWithTag(tag string) []flang.RefVal {
+	if c.ui == nil {
+		return nil
+	}
+	var out []flang.RefVal
+	for _, s := range c.ui.Screens() {
+		if s.HasTag(tag) {
+			out = append(out, flang.RefVal{Kind: flang.RefScreen, A: s.ID})
+		}
+		screen := s
+		s.Root.Walk(func(_, n *ui.Node) bool {
+			if n.HasTag(tag) {
+				out = append(out, flang.RefVal{Kind: flang.RefWidget, A: screen.ID, B: n.ID})
+			}
+			return true
+		})
+	}
 	return out
 }
 
@@ -471,6 +600,12 @@ func (c *refCache) allTags() []string {
 	}
 	for i := range c.lvl.Lights.Points {
 		add(c.lvl.Lights.Points[i].Tags)
+	}
+	if c.ui != nil {
+		for _, sc := range c.ui.Screens() {
+			add(sc.Tags)
+			sc.Root.Walk(func(_, n *ui.Node) bool { add(n.Tags); return true })
+		}
 	}
 	out := make([]string, 0, len(seen))
 	for t := range seen {

@@ -1,0 +1,47 @@
+# loading.fui — the screen shown while a level loads.
+#
+# Modal and pausing, but it does not ask for the cursor: there is nothing on it
+# to click, and releasing mouse-look only to re-capture it a second later is a
+# visible flicker.
+#
+# The bar binds to the load job's progress, which is a read-only level property
+# rather than something a script pushes — see levelio.LoadJob.
+
+id: loading
+canvas: {ref_w: 1920, ref_h: 1080, match: 0.5}
+modal: true
+pauses: true
+
+root:
+  id: root
+  kind: panel
+  color: {r: 0.02, g: 0.03, b: 0.05, a: 1}
+  children:
+    - id: title
+      kind: text
+      anchor_min: {x: 0.5, y: 0.5}
+      anchor_max: {x: 0.5, y: 0.5}
+      offset: [-300, -80, -300, 40]
+      text: {value: "Loading", size: 30, h_align: center}
+
+    - id: stage
+      kind: text
+      anchor_min: {x: 0.5, y: 0.5}
+      anchor_max: {x: 0.5, y: 0.5}
+      offset: [-300, 24, -300, -60]
+      text:
+        bind: "@level.prop.load_stage"
+        value: ""
+        size: 16
+        h_align: center
+        color: {r: 0.58, g: 0.61, b: 0.66, a: 1}
+
+    - id: bar
+      kind: bar
+      anchor_min: {x: 0.5, y: 0.5}
+      anchor_max: {x: 0.5, y: 0.5}
+      offset: [-300, 64, -300, -76]
+      color: {r: 0.08, g: 0.09, b: 0.11, a: 1}
+      value:
+        bind: "@level.prop.load_progress"
+        max: 1

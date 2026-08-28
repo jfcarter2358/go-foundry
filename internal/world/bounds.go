@@ -9,7 +9,6 @@ package world
 
 import (
 	"foundry/internal/geom"
-	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -94,28 +93,4 @@ func ShapeContainsPoint(p, center, rotation, half mgl32.Vec3, kind BoundingType)
 	default:
 		return geom.Abs32(d.X()) <= half.X() && geom.Abs32(d.Y()) <= half.Y() && geom.Abs32(d.Z()) <= half.Z()
 	}
-}
-
-// NormalizeTags sorts, de-duplicates and drops empties. Every path that sets a
-// tag list goes through it — loading, merging a definition with an instance,
-// the panel — so `#tag` membership never depends on authoring order and a saved
-// file never churns.
-func NormalizeTags(tags []string) []string {
-	if len(tags) == 0 {
-		return nil
-	}
-	seen := make(map[string]bool, len(tags))
-	out := make([]string, 0, len(tags))
-	for _, t := range tags {
-		if t == "" || seen[t] {
-			continue
-		}
-		seen[t] = true
-		out = append(out, t)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	sort.Strings(out)
-	return out
 }

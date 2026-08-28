@@ -18,6 +18,8 @@ package ui
 // ui_doc.go holds the runtime document: one screen, made of a tree of nodes.
 
 import (
+	"foundry/internal/scriptdata"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -411,6 +413,12 @@ type Node struct {
 	Nav     Nav
 	Include IncludeSpec
 
+	// The same tags/attributes/script/params a level object carries, so a
+	// widget is addressable from flang on exactly the same terms as an entity
+	// — and so the editor's Scripting panel works on one without a second
+	// implementation of it.
+	scriptdata.ScriptData
+
 	Children []Node
 
 	// ---- solved each frame, never serialised ----
@@ -455,6 +463,7 @@ func (n *Node) FromInclude() bool { return n.fromInclude }
 // mid-frame and restored later should not read as unsolved.
 func (n *Node) Clone() Node {
 	out := *n
+	out.ScriptData = scriptdata.CloneScriptData(n.ScriptData)
 	out.Include.Params = cloneStrMap(n.Include.Params)
 	out.Style.Hover = cloneState(n.Style.Hover)
 	out.Style.Press = cloneState(n.Style.Press)
@@ -549,14 +558,27 @@ type Screen struct {
 	// root is the canvas.
 	Root Node
 
+	// A screen carries its own script, where @self is the screen. Menu-wide
+	// behaviour — which button closes it, what Escape does — belongs to the
+	// screen rather than to any one widget on it.
+	scriptdata.ScriptData
+
 	// Path is where this was loaded from, empty until the first Save As. Not
 	// serialised: a document that has been copied elsewhere should not insist
 	// on its old home.
 	Path string
 
+	// includes are the screen names this document splices in, at any depth.
+	// Recorded so that saving a prefab can drop every cached screen that used
+	// it, rather than leaving stale copies of it on the next Show.
+	includes []string
+
 	dirty bool
 	rev   uint64
 }
+
+// Includes are the screen names this document splices in, at any depth.
+func (s *Screen) Includes() []string { return s.includes }
 
 // NewScreen is an empty screen with the default canvas and a bare root.
 func NewScreen(id string) *Screen {
@@ -569,6 +591,7 @@ func NewScreen(id string) *Screen {
 // Clone is a deep copy, used as the editor's undo snapshot.
 func (s *Screen) Clone() *Screen {
 	out := *s
+	out.ScriptData = scriptdata.CloneScriptData(s.ScriptData)
 	out.Root = s.Root.Clone()
 	return &out
 }

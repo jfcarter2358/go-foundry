@@ -54,6 +54,27 @@ type propAccess struct {
 // propTables maps each object kind to its properties.
 var propTables map[flang.Kind_]map[string]propAccess
 
+// PropertyKinds lists every kind that actually has properties, sorted.
+//
+// Exported so the F1 reference can assert it is showing all of them: it has
+// silently missed three before — see refKindOrder — and a property table nobody
+// can find is a feature nobody has.
+//
+// Kinds registered with an empty table are skipped. Sector has one so that
+// `@room.prop.x` says "no property x" rather than "a sector has no properties",
+// which is a different and less useful thing to be told; but there is nothing
+// there to list.
+func PropertyKinds() []flang.Kind_ {
+	out := make([]flang.Kind_, 0, len(propTables))
+	for k, tbl := range propTables {
+		if len(tbl) > 0 {
+			out = append(out, k)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 // PropertyNames lists the properties of one kind, sorted. The editor's reference
 // panel reads this rather than keeping its own copy.
 func PropertyNames(kind flang.Kind_) []string {

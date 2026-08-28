@@ -70,6 +70,7 @@ func editorPropertiesSection(lvl *world.Level, kind editorPanelKind) {
 	biomePanelSection()
 
 	editorSpawnPointSection(lvl)
+	editorLevelUISection(lvl)
 	editorEntityProperties(lvl)
 	editorVolumePropertiesSection()
 	editorSpritePropertiesSection()

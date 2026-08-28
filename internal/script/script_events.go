@@ -16,6 +16,7 @@ package script
 import (
 	"foundry/internal/flang"
 	"foundry/internal/hooks"
+	"foundry/internal/ui"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -89,6 +90,7 @@ func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	postAnimEvents(rt)
 	postVehicleEvents(rt)
 	postInteractEvent(rt, lvl)
+	postUIEvents(rt)
 	postTimerEvents(rt)
 	postTickEvents(rt, lvl, dt)
 }
@@ -168,6 +170,33 @@ func scriptedRefs(rt *ScriptRuntime, lvl *world.Level) []flang.RefVal {
 	}
 	if len(lvl.Scripts) > 0 {
 		out = append(out, flang.RefVal{Kind: flang.RefLevel})
+	}
+	out = append(out, scriptedUIRefs()...)
+	return out
+}
+
+// scriptedUIRefs is the screen-stack half of scriptedRefs.
+//
+// Only screens that are up, and only the ones with a script. A menu sitting in
+// resources/ui that nobody has opened must not be receiving :tick: sixty times
+// a second — that is a bug, not a feature, and it is the difference between a
+// screen stack and a list of files.
+func scriptedUIRefs() []flang.RefVal {
+	if uiStack == nil {
+		return nil
+	}
+	var out []flang.RefVal
+	for _, s := range uiStack.Screens() {
+		if s.Script != "" {
+			out = append(out, flang.RefVal{Kind: flang.RefScreen, A: s.ID})
+		}
+		screen := s
+		s.Root.Walk(func(_, n *ui.Node) bool {
+			if n.Script != "" {
+				out = append(out, flang.RefVal{Kind: flang.RefWidget, A: screen.ID, B: n.ID})
+			}
+			return true
+		})
 	}
 	return out
 }
@@ -366,6 +395,66 @@ func postAnimEvents(rt *ScriptRuntime) {
 			flang.StrVal(ev.Animation),
 		}, flang.Pos{})
 	}
+}
+
+// postUIEvents drains the buttons pressed, sliders dragged and screens opened
+// since the last tick.
+//
+// internal/ui works all of this out without knowing that scripts exist, and
+// records it in a hooks buffer; this is where it becomes a message. The
+// indirection is the point, and it is the same one the collision pairs and the
+// animation events use: input code stays about input.
+//
+// Each event goes to the widget, or to its screen when the widget carries no
+// script of its own. One level of bubbling — a widget's owner is its screen,
+// and a full routing chain through every panel in between would make where a
+// handler runs depend on the layout.
+func postUIEvents(rt *ScriptRuntime) {
+	for _, ev := range hooks.TakeUIEvents() {
+		target := uiWidgetRef(ev.Screen, ev.Widget)
+		if ev.Widget != "" && !rt.hasScript(target) {
+			target = flang.RefVal{Kind: flang.RefScreen, A: ev.Screen}
+		}
+		_ = rt.post(target, ev.Atom, uiEventArgs(ev), flang.Pos{})
+	}
+}
+
+// uiEventArgs is what each UI atom carries.
+//
+// A click carries the widget itself, so one handler can serve several buttons
+// and tell them apart. A change carries its new value, typed to match the
+// widget's kind, because the alternative is every handler reading the property
+// back and racing the next frame's poll.
+func uiEventArgs(ev hooks.UIEvent) []flang.Value {
+	src := uiWidgetRef(ev.Screen, ev.Widget)
+	switch ev.Atom {
+	case "cancel", "shown", "hidden":
+		return nil
+	case "change":
+		return []flang.Value{src, uiChangeValue(ev)}
+	case "submit":
+		return []flang.Value{src, flang.StrVal(ev.Str)}
+	}
+	return []flang.Value{src}
+}
+
+func uiChangeValue(ev hooks.UIEvent) flang.Value {
+	switch {
+	case ev.Str != "":
+		return flang.StrVal(ev.Str)
+	case ev.Bool:
+		return flang.BoolVal(true)
+	}
+	return flang.FloatVal(ev.Num)
+}
+
+// hasScript reports whether a ref names something with a handler of its own.
+func (rt *ScriptRuntime) hasScript(r flang.RefVal) bool {
+	if rt.cache == nil {
+		return false
+	}
+	d := rt.cache.scriptDataFor(r)
+	return d != nil && d.Script != ""
 }
 
 // postInteractEvent fires `:interact:` on whatever the player is standing in.

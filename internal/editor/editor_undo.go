@@ -197,3 +197,16 @@ func restoreLevelSnapshot(raw world.RawLevel) {
 	Editor.StatusMsg = "Undo/redo applied"
 	Editor.StatusTime = sdl.GetTicks()
 }
+
+// EditorAdoptLoadedLevel points the editor at a level that has just been
+// replaced under it.
+//
+// Called when the game loads a level while the editor is open on the same
+// struct: every selection the editor holds names an object by index, and a
+// replaced level has re-instantiated all of them. Exported because the loader
+// lives in internal/app, which cannot reach editorResetSelectionState — and
+// should not have to know what is in it.
+func EditorAdoptLoadedLevel() {
+	editorResetSelectionState()
+	EditorClearUndoHistory()
+}

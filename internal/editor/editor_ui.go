@@ -788,6 +788,24 @@ func EditorDrawUI() {
 	}
 
 	imgui.SameLine()
+	// Latched before the button, for the same reason "Particles" above is:
+	// re-testing after it unbalances imgui's global style stack, and the
+	// assertion then fires in a different window's context.
+	uiOpen := UIEditorOpen()
+	if uiOpen {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
+	}
+	if imgui.Button("UI") {
+		OpenUIEditorWindow()
+	}
+	if uiOpen {
+		imgui.PopStyleColor()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Author screens (.fui) — menus, HUDs and loading screens.\nAttach them to the level from Properties -> Level -> UI.")
+	}
+
+	imgui.SameLine()
 	logOpen := LogWindowOpen()
 	if logOpen {
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})

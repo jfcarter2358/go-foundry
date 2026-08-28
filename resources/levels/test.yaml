@@ -245,6 +245,11 @@ spawn:
   position: { x: 0.0, y: 0.5, z: -10.0 }
   rotation: { x: 0.0, y: 0.0, z: 0.0 }
 
+# The .fui screens this level puts up when play starts. A menu a script opens
+# later is not listed here — show_screen names it directly.
+ui:
+  - hud
+
 # ============================================================
 # Lights
 # ============================================================

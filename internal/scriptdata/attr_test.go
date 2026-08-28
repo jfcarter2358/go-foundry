@@ -1,4 +1,4 @@
-package world
+package scriptdata
 
 import "testing"
 
@@ -21,8 +21,8 @@ func TestAttrRoundTripPreservesTypeAndValue(t *testing.T) {
 		"zeroStr":   StringAttr(""),
 	}
 
-	raw := attrsToRaw(cases)
-	got, err := attrsFromRaw(raw)
+	raw := AttrsToRaw(cases)
+	got, err := AttrsFromRaw(raw)
 	if err != nil {
 		t.Fatalf("attrsFromRaw: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestAttrTypeInferredWhenAbsent(t *testing.T) {
 		{"str", "hello", AttrString},
 	}
 	for _, c := range cases {
-		got, err := attrFromRaw(c.name, RawAttribute{Value: c.in})
+		got, err := AttrFromRaw(c.name, RawAttribute{Value: c.in})
 		if err != nil {
 			t.Errorf("%s: %v", c.name, err)
 			continue
@@ -64,7 +64,7 @@ func TestAttrTypeInferredWhenAbsent(t *testing.T) {
 func TestAttrDeclaredTypeWinsOverWrittenForm(t *testing.T) {
 	// `{type: float, value: 40}` is what an author writes; YAML has no way to
 	// say 40.0. Refusing it would be pedantry, so it widens.
-	got, err := attrFromRaw("top_speed", RawAttribute{Type: "float", Value: 40})
+	got, err := AttrFromRaw("top_speed", RawAttribute{Type: "float", Value: 40})
 	if err != nil {
 		t.Fatalf("attrFromRaw: %v", err)
 	}
@@ -77,15 +77,15 @@ func TestAttrDeclaredTypeWinsOverWrittenForm(t *testing.T) {
 }
 
 func TestAttrRejectsUnknownTypeAndBadValue(t *testing.T) {
-	if _, err := attrFromRaw("x", RawAttribute{Type: "vector", Value: 1}); err == nil {
+	if _, err := AttrFromRaw("x", RawAttribute{Type: "vector", Value: 1}); err == nil {
 		t.Error("unknown type accepted")
 	}
-	if _, err := attrFromRaw("x", RawAttribute{Type: "int", Value: "not a number"}); err == nil {
+	if _, err := AttrFromRaw("x", RawAttribute{Type: "int", Value: "not a number"}); err == nil {
 		t.Error("unparseable int accepted")
 	}
 	// A whole attribute block fails the load rather than dropping the bad one,
 	// so a typo surfaces at load time instead of as a missing attribute later.
-	if _, err := attrsFromRaw(map[string]RawAttribute{
+	if _, err := AttrsFromRaw(map[string]RawAttribute{
 		"good": {Type: "int", Value: 1},
 		"bad":  {Type: "int", Value: "x"},
 	}); err == nil {
@@ -134,7 +134,7 @@ func TestMergeAttrsOverridesByName(t *testing.T) {
 	base := AttrSet{"health": IntAttr(25), "loot": IntAttr(10)}
 	over := AttrSet{"health": IntAttr(50), "unique": BoolAttr(true)}
 
-	got := mergeAttrs(base, over)
+	got := MergeAttrs(base, over)
 	if v := got["health"]; v != IntAttr(50) {
 		t.Errorf("health: got %+v, want the override", v)
 	}

@@ -160,12 +160,15 @@ var refKindOrder = []struct {
 	Label string
 	Kind  flang.Kind_
 }{
+	{"level", flang.RefLevel},
 	{"entity", flang.RefEntity},
 	{"volume", flang.RefVolume},
 	// Sprite, emitter and sound were absent here, so their property tables
 	// never reached the F1 reference even though PropertyDocs returns them —
 	// a feature nobody could find. Fixed alongside adding sounds rather than
 	// after, since the omission is what would have hidden the new kind too.
+	// There is now a test that will not let it happen again:
+	// TestReferenceListsEveryPropertyKind.
 	{"sprite", flang.RefSprite},
 	{"emitter", flang.RefEmitter},
 	{"sound", flang.RefSound},
@@ -175,6 +178,8 @@ var refKindOrder = []struct {
 	{"chunk", flang.RefChunk},
 	{"light", flang.RefLight},
 	{"biome", flang.RefBiome},
+	{"screen", flang.RefScreen},
+	{"widget", flang.RefWidget},
 }
 
 // drawPropertyReference lists what `.prop` reaches, per object kind.

@@ -323,34 +323,6 @@ func TestBuildDrawsBoundTextRatherThanTheAuthoredValue(t *testing.T) {
 	}
 }
 
-func TestFormatBound(t *testing.T) {
-	cases := []struct {
-		format string
-		num    float64
-		str    string
-		isNum  bool
-		want   string
-	}{
-		{"", 72, "", true, "72"},
-		{"", 72.5, "", true, "72.5"},
-		{"%.0f%%", 72.4, "", true, "72%"},
-		{"", 0, "hello", false, "hello"},
-		{"Hi %s", 0, "you", false, "Hi you"},
-	}
-	for _, tc := range cases {
-		if got := FormatBound(tc.format, tc.num, tc.str, tc.isNum); got != tc.want {
-			t.Errorf("FormatBound(%q, %v, %q, %v) = %q, want %q",
-				tc.format, tc.num, tc.str, tc.isNum, got, tc.want)
-		}
-	}
-	// A verb that does not match what the binding produced shows Go's own error
-	// text, so the mistake is visible on screen where it was made rather than
-	// silently rendering an empty label.
-	if got := FormatBound("%d", 0, "text", false); got == "" || got == "text" {
-		t.Errorf("a mismatched verb gave %q, want something visibly wrong", got)
-	}
-}
-
 func TestBuildHandlesANilScreen(t *testing.T) {
 	l := &List{}
 	l.Reset(ui.Rect{X: 0, Y: 0, W: 100, H: 100})

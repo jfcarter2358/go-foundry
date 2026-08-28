@@ -20,6 +20,11 @@ import (
 // directly or transitively.
 var upward = map[string][]string{
 	"geom": {"world", "gfx", "render", "editor", "app"},
+	// scriptdata is the tags/attributes/script/params triple, and the four
+	// scalars an attribute holds. Both a level object and a UI widget carry
+	// one, so it sits below both — it was in internal/world only because that
+	// was the only thing that needed it at the time.
+	"scriptdata": {"geom", "gfx", "flang", "ui", "world", "render", "editor", "app", "uiwin"},
 	// uifont bakes .ttf files into glyph atlases and lays text out against
 	// them. Pure CPU, and below gfx as well as everything above it: the layout
 	// solve in internal/ui measures text, so a font metric has to be reachable

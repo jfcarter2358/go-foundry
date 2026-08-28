@@ -15,6 +15,9 @@ import (
 	"foundry/internal/render"
 	"foundry/internal/script"
 	"foundry/internal/texture"
+	"foundry/internal/ui"
+	"foundry/internal/uidraw"
+	"foundry/internal/uifont"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
 	_ "image/png"
@@ -286,6 +289,20 @@ func Run() {
 	// one. See platform.ToggleFullscreenFunc.
 	platform.ToggleFullscreenFunc = ToggleFullscreen
 
+	// The runtime UI. Three installs and one GL init, all of them the same
+	// inversion the function variables above use: internal/ui and
+	// internal/uifont sit below the log window and below the script runtime, so
+	// the owner hands them what they need rather than reaching up for it.
+	ui.Logf = func(format string, args ...any) { log.Printf(format, args...) }
+	uifont.LogMissing = func(name string, err error) {
+		log.Printf("ui: font %q could not be loaded (%v); falling back to the built-in bitmap face", name, err)
+	}
+	ui.LoadActiveTheme()
+	if err := uidraw.Init(); err != nil {
+		log.Printf("ui renderer: %v", err)
+	}
+	defer uidraw.Delete()
+
 	// Init level editor (must be after LoadLevel and OpenGL context ready)
 	editor.EditorInit(&level, levelPath, levelsDir)
 	defer imguibackend.ImGuiShutdown()
@@ -293,6 +310,11 @@ func Run() {
 	// Start directly in the 3D editor rather than play mode, since a fresh
 	// blank level has nothing to play.
 	editor.EditorToggle()
+
+	// The running game's draw list, reused every frame so a steady HUD
+	// allocates nothing. One list rather than one per screen: the screens draw
+	// in sequence, never at once.
+	var gameUIList uidraw.List
 
 	// Cache total sector count (constant after load) for debug stats.
 	totalSectors := 0
@@ -338,6 +360,14 @@ func Run() {
 			if uiwin.RouteWindowEvent(event, uiwin.MainWindowID) {
 				continue
 			}
+			// The running game's UI. Ahead of gameplay so a click on a menu
+			// button is not also a shot, and behind the window router so a
+			// secondary editor window still owns its own input. Consuming the
+			// event is the whole of how gameplay input is gated — see
+			// ui_input.go.
+			if uiHandleEvent(event) {
+				continue
+			}
 			if editor.Editor.Active {
 				editor.EditorHandleEvent(event)
 			}
@@ -349,10 +379,28 @@ func Run() {
 		// Point the F1 reference at the focused window before anything draws.
 		uiwin.KeybindHelpUpdateFocus(uiwin.MainWindowID)
 
+		// A screen that wants a pointer releases mouse-look, and closing it
+		// gives capture back. Edge-triggered, so this joins the editor toggle
+		// and the focus handler as a third claimant rather than fighting them
+		// every frame.
+		uiApplyCursor()
+
+		// A level a script asked for, and one slice of building it. While a
+		// load is in flight the world does not tick — half of it belongs to the
+		// outgoing level and half to the incoming one — but the UI does, which
+		// is what lets the loading screen over it animate.
+		beginRequestedLevelLoad()
+		stepLevelLoad(&level)
+
+		// A pausing screen freezes the player, the vehicles and the entities.
+		// It does not freeze scripts: the menu's own handlers have to run, and
+		// so does anything a script is animating behind it.
+		uiPaused := !editor.Editor.Active && (ui.Game.Pauses() || levelLoadPending())
+
 		if editor.Editor.Active {
 			// Editor owns camera and input; gameplay logic is bypassed.
 			editor.EditorTick(platform.KeyStates)
-		} else {
+		} else if !uiPaused {
 			// --- Input -> player -> camera ---
 			// The keys say how far to move; the player is what moves, and the
 			// camera is placed on it afterwards. It used to run the other way
@@ -439,7 +487,7 @@ func Run() {
 			playerPosBefore = world.PlayerEntity.Position
 			world.PlayerEntity.Collision.OnGround = false
 		}
-		collision.EntityUpdate(&level, platform.DeltaTime, !editor.Editor.Active, world.PlayerEntity)
+		collision.EntityUpdate(&level, platform.DeltaTime, !editor.Editor.Active && !uiPaused, world.PlayerEntity)
 		if !editor.Editor.Active && world.PlayerEntity != nil {
 			if world.PlayerEntity.Collision.OnGround {
 				platform.IsOnGround = true
@@ -475,7 +523,7 @@ func Run() {
 		// that froze the moment the editor opened could not be placed by eye. The
 		// gate is handed over anyway so the simulation can tell play from
 		// authoring if it ever needs to.
-		world.EmitterUpdate(&level, platform.DeltaTime, !editor.Editor.Active)
+		world.EmitterUpdate(&level, platform.DeltaTime, !editor.Editor.Active && !uiPaused)
 
 		// The listener, published in the same slot and for the same reasons
 		// as the emitters above: after RefreshFrames, so anything riding a
@@ -505,7 +553,16 @@ func Run() {
 		// frame's overlaps produce this frame's `enter`, and whatever a handler
 		// writes lands before the frame draws. `!Editor.Active` is the same play
 		// gate EntityUpdate takes.
-		script.ScriptTick(&level, platform.DeltaTime, !editor.Editor.Active)
+		// The UI ticks after the world has settled, so a binding reads this
+		// frame's values, and before the script tick, so a click made this
+		// frame is already in the queue that tick drains to a fixpoint.
+		if !editor.Editor.Active {
+			ui.Game.Tick(platform.DeltaTime, float32(platform.WinWidth), float32(platform.WinHeight))
+		}
+
+		if !levelLoadPending() {
+			script.ScriptTick(&level, platform.DeltaTime, !editor.Editor.Active)
+		}
 
 		// --- Debug stats: update CPU & memory ---
 		render.DebugUpdateCPU()
@@ -525,6 +582,11 @@ func Run() {
 		// Texture editor uploads (painted texels, saves) are queued rather
 		// than applied immediately; drain them now, while the main GL
 		// context is current, so this frame's draw calls already see them.
+		// Glyph pages baked during the UI tick above. Queued here and drained
+		// on the next line, which is what makes a character seen for the first
+		// time this frame resident before it is drawn — see SyncFontAtlases.
+		uidraw.SyncFontAtlases()
+
 		gfx.DrainTextureUploads()
 
 		// Geometry rebuilds and texture loads the script tick deferred. They
@@ -883,6 +945,20 @@ func Run() {
 			render.DebugStats.ChunksDrawn = chunksDrawn
 			render.DebugStats.SectorsDrawn = sectorsDrawn
 			render.DebugStats.SectorsPortalCulled = sectorsPortalCulled
+		}
+
+		// --- Runtime UI ---
+		// Screen space, after everything in the world and before any imgui.
+		// Not drawn while the editor is active, for the same reason scripts do
+		// not run there: what is on screen in the editor is the level, not the
+		// game.
+		if !editor.Editor.Active {
+			// One pass per screen, bottom to top. Each has its own canvas and
+			// therefore its own scale, so they cannot share a projection.
+			for _, s := range ui.Game.Screens() {
+				uidraw.RenderScreen(&gameUIList, s, ui.Game.Interaction(),
+					platform.WinWidth, platform.WinHeight)
+			}
 		}
 
 		// Draw editor overlays and ImGui UI when editor is active

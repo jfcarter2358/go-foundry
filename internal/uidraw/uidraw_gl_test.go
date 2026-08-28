@@ -1,8 +1,12 @@
 package uidraw
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/gltest"
 	"foundry/internal/ui"
@@ -117,4 +121,80 @@ func assertNoGLError(t *testing.T, what string) {
 	if err := gl.GetError(); err != gl.NO_ERROR {
 		t.Errorf("%s raised GL error 0x%04x", what, err)
 	}
+}
+
+// TestShippedHUDRendersThroughTheRealPass is the end-to-end check for the whole
+// chain: the document on disk, the layout solve, the batcher, and a real GL
+// 4.1 context. It is the automatable half of "press play and see the HUD".
+func TestShippedHUDRendersThroughTheRealPass(t *testing.T) {
+	gltest.Context(t)
+	if err := Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(Delete)
+
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("no go.mod above the working directory")
+		}
+		dir = parent
+	}
+
+	prev := fileutil.ExecutablePath
+	fileutil.ExecutablePath = filepath.Join(dir, "resources")
+	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+
+	uifont.Reset()
+	t.Cleanup(uifont.Reset)
+	ui.LoadActiveTheme()
+
+	names := ui.ScanScreenFiles()
+	if len(names) == 0 {
+		t.Skip("no screens in resources/ui")
+	}
+
+	var st ui.Stack
+	// Sample data, so the bound widgets have something to draw rather than
+	// falling back to their placeholders.
+	st.Resolve = func(expr string) (ui.Value, bool) {
+		switch expr {
+		case "@player.attr.health":
+			return ui.NumValue(72), true
+		case "@player.attr.health_max":
+			return ui.NumValue(100), true
+		}
+		return ui.NumValue(0.4), true
+	}
+	for _, f := range names {
+		if _, err := st.Show(strings.TrimSuffix(f, ui.UIExt)); err != nil {
+			t.Fatalf("show %s: %v", f, err)
+		}
+	}
+
+	st.Tick(1.0/60, 1280, 720)
+	SyncFontAtlases()
+	gfx.DrainTextureUploads()
+
+	var l List
+	drew := 0
+	for _, s := range st.Screens() {
+		RenderScreen(&l, s, st.Interaction(), 1280, 720)
+		drew += len(l.Cmds)
+		if l.Empty() {
+			t.Errorf("%s produced no geometry", s.ID)
+		}
+	}
+	if drew == 0 {
+		t.Fatal("nothing was drawn at all")
+	}
+	t.Logf("%d shipped screens, %d draw calls on the last one", len(st.Screens()), len(l.Cmds))
+	assertNoGLError(t, "the shipped screens")
 }

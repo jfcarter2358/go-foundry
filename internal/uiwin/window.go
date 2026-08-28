@@ -20,6 +20,7 @@ import (
 	"foundry/internal/gizmo"
 	"foundry/internal/imguibackend"
 	"foundry/internal/platform"
+	"foundry/internal/uidraw"
 	"log"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -44,8 +45,12 @@ type UIWindow struct {
 	// exists: the buffers and the programs are shared objects, but a VAO never
 	// is — see render.SpriteVAOOverride.
 	SpriteVAO uint32
-	ID        uint32
-	W, H      int32
+	// UIVAO is this window's vertex array for the screen-space UI pass, which
+	// the UI editor's live preview draws through. Same reason again — see
+	// uidraw.VAOOverride.
+	UIVAO uint32
+	ID    uint32
+	W, H  int32
 	// ClearColor is the RGBA this window's framebuffer is cleared to each
 	// frame. Defaults to the editor's panel grey; the 2D editor window uses
 	// black so its map isn't drawn over a backdrop.
@@ -137,6 +142,7 @@ func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWind
 	gl.GenVertexArrays(1, &uw.VAO)
 	gl.GenVertexArrays(1, &uw.GizmoVAO)
 	gl.GenVertexArrays(1, &uw.SpriteVAO)
+	gl.GenVertexArrays(1, &uw.UIVAO)
 
 	uiWindows[uw.ID] = uw
 
@@ -168,6 +174,9 @@ func CloseUIWindow(w *UIWindow) {
 	}
 	if w.EBO != 0 {
 		gl.DeleteBuffers(1, &w.EBO)
+	}
+	if w.UIVAO != 0 {
+		gl.DeleteVertexArrays(1, &w.UIVAO)
 	}
 	if w.SpriteVAO != 0 {
 		gl.DeleteVertexArrays(1, &w.SpriteVAO)
@@ -207,12 +216,16 @@ func RenderSecondaryWindows(dt float32) {
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
 		uiWindowNewFrame(w, dt)
-		// Gizmo lines drawn by this window's Draw go through its own VAO.
+		// Gizmo lines and UI quads drawn by this window's Draw go through its
+		// own vertex arrays. Buffers, programs and textures are shared between
+		// contexts; vertex arrays never are.
 		gizmo.GizmoVAOOverride = w.GizmoVAO
+		uidraw.VAOOverride = w.UIVAO
 		if w.Draw != nil {
 			w.Draw()
 		}
 		gizmo.GizmoVAOOverride = 0
+		uidraw.VAOOverride = 0
 		// The F1 reference belongs to whichever window has focus, so a
 		// secondary window draws it inside its own frame.
 		KeybindHelpRenderInWindow(w)
