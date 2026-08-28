@@ -383,7 +383,7 @@ func rawToNode(raw RawNode) Node {
 	n.Clip = raw.Clip
 	n.Blocks = raw.Blocks
 
-	n.Style.Color = color4Default(raw.Color, mgl32.Vec4{1, 1, 1, 1})
+	n.Style.Color = color4Default(raw.Color, DefaultBackground(n.Kind))
 	n.Style.Texture = raw.Texture
 	n.Style.UV = uvDefault(raw.UV)
 	n.Style.Slice = quadDefault(raw.Slice)
@@ -527,7 +527,7 @@ func nodeToRaw(n *Node) RawNode {
 		Clip:    n.Clip,
 		Blocks:  n.Blocks,
 
-		Color:    color4PtrIfNot(n.Style.Color, mgl32.Vec4{1, 1, 1, 1}),
+		Color:    color4PtrIfNot(n.Style.Color, DefaultBackground(n.Kind)),
 		Texture:  n.Style.Texture,
 		UV:       uvPtrIfNotFull(n.Style.UV),
 		Slice:    quadIfAny(n.Style.Slice),

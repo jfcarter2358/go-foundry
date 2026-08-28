@@ -163,7 +163,11 @@ func uiNodeProperties(n *ui.Node) {
 	})
 
 	editorPropGroupOpen("Rect", func() { uiRectProperties(n) })
-	editorPropGroup("Style", 0, func() { uiStyleProperties(n) })
+	// Open, not collapsed. The background colour is the single most-edited
+	// property on any widget, and behind a shut header labelled "Style" it was
+	// unfindable — a label with a background nobody could explain reads as a
+	// renderer bug rather than as a colour someone can change.
+	editorPropGroupOpen("Style", func() { uiStyleProperties(n) })
 
 	if n.Kind.Interactive() {
 		editorPropGroup("States", 0, func() { uiStateProperties(n) })
@@ -312,11 +316,27 @@ func uiAxisProperties(n *ui.Node, horizontal bool) {
 }
 
 func uiStyleProperties(n *ui.Node) {
+	// Named for what it does to *this* kind. On an image it multiplies the
+	// texture; on everything else it fills the rect behind the widget, and
+	// calling that "Color" on a label — which already has a Text color — is how
+	// someone ends up unable to find the one that changes the box.
+	label := "Background##uicolor"
+	if n.Kind == ui.KindImage {
+		label = "Tint##uicolor"
+	}
 	col := [4]float32{n.Style.Color[0], n.Style.Color[1], n.Style.Color[2], n.Style.Color[3]}
-	if imgui.ColorEdit4V("Color##uicolor", &col, imgui.ColorEditFlagsAlphaBar) {
+	if imgui.ColorEdit4V(label, &col, imgui.ColorEditFlagsAlphaBar) {
 		uiBeginEdit("style.color")
 		n.Style.Color = mgl32.Vec4{col[0], col[1], col[2], col[3]}
 		uiEdited()
+	}
+	switch n.Kind {
+	case ui.KindText:
+		editorTextMuted("Fills the rect behind the text. Alpha 0 for none.")
+	case ui.KindImage:
+		editorTextMuted("Multiplies the texture. White leaves it alone.")
+	case ui.KindBar, ui.KindSlider:
+		editorTextMuted("The empty part of the bar. The filled part is under Value.")
 	}
 	if textureCombo("Texture##uitex", &n.Style.Texture, true) {
 		uiBeginEdit("style.texture")

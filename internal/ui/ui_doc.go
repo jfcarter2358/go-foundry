@@ -273,8 +273,31 @@ type Style struct {
 }
 
 // DefaultStyle is opaque white with no texture, covering the whole UV range.
-func DefaultStyle() Style {
-	return Style{Color: mgl32.Vec4{1, 1, 1, 1}, UV: mgl32.Vec4{0, 0, 1, 1}}
+func DefaultStyle() Style { return DefaultStyleFor(KindPanel) }
+
+// DefaultStyleFor is the look a node of a kind has before anyone styles it.
+func DefaultStyleFor(k Kind) Style {
+	return Style{Color: DefaultBackground(k), UV: mgl32.Vec4{0, 0, 1, 1}}
+}
+
+// DefaultBackground is the fill a node of a kind starts with.
+//
+// Transparent for a label and for an include, opaque white for everything else.
+// The difference is what the widget *is*: a panel is a rectangle you can see —
+// that is its whole job — but a label is a string, and putting a white box
+// behind every one is not what anyone means by "add some text". A label with an
+// opaque background it never asked for is also close to unfixable from the
+// panel, because the control that clears it does not look like it is about
+// backgrounds at all.
+//
+// An author who wants a background on a label sets one, and it is written to
+// the document precisely because it differs from this.
+func DefaultBackground(k Kind) mgl32.Vec4 {
+	switch k {
+	case KindText, KindInclude:
+		return mgl32.Vec4{1, 1, 1, 0}
+	}
+	return mgl32.Vec4{1, 1, 1, 1}
 }
 
 // TextSpec is the string a node shows and how.
@@ -438,7 +461,7 @@ func NewNode(id string, kind Kind) Node {
 		Visible: true,
 		Enabled: true,
 		Alpha:   1,
-		Style:   DefaultStyle(),
+		Style:   DefaultStyleFor(kind),
 		Text:    DefaultTextSpec(),
 		Value:   DefaultValueSpec(),
 	}

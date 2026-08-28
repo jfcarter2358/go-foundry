@@ -125,7 +125,7 @@ func (t *Theme) FontFor(spec TextSpec) (name string, size float32) {
 // calls it when adding a node; nothing at runtime does, because by then the
 // widget carries its own colours.
 func (t *Theme) StyleFor(k Kind) Style {
-	s := DefaultStyle()
+	s := DefaultStyleFor(k)
 	switch k {
 	case KindPanel:
 		s.Color = t.PanelColor

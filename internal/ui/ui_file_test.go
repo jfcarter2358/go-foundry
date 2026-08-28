@@ -696,3 +696,67 @@ func TestCloneCopiesScriptData(t *testing.T) {
 		t.Error("clone shared the attribute map")
 	}
 }
+
+// TestALabelHasNoBackgroundUntilAsked is the fix for a label that arrived with
+// an opaque white box behind it — which reads as a renderer bug rather than as
+// a colour anyone can change, and which the shipped HUD had on both its text
+// nodes.
+func TestALabelHasNoBackgroundUntilAsked(t *testing.T) {
+	uiTempDir(t)
+
+	if got := NewNode("l", KindText).Style.Color; got[3] != 0 {
+		t.Errorf("a new label's background is %v, want transparent", got)
+	}
+	if got := NewNode("p", KindPanel).Style.Color; got[3] == 0 {
+		t.Errorf("a new panel's background is %v; a panel is a rectangle you can see", got)
+	}
+
+	// And a document that says nothing about it agrees.
+	writeYAML(t, "bare", `
+id: bare
+root:
+  id: root
+  kind: panel
+  children:
+    - {id: label, kind: text, text: {value: hi}}
+    - {id: panel, kind: panel}
+`)
+	s, err := loadScreenBare(UIPath("bare"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Find("label").Style.Color; got[3] != 0 {
+		t.Errorf("a label with no color key loaded as %v, want transparent", got)
+	}
+	if got := s.Find("panel").Style.Color; got[3] == 0 {
+		t.Errorf("a panel with no color key loaded as %v", got)
+	}
+}
+
+func TestAnAuthoredLabelBackgroundSurvives(t *testing.T) {
+	// The other direction: a background someone did ask for has to round-trip,
+	// including one that happens to be the old default.
+	uiTempDir(t)
+
+	s := NewScreen("bg")
+	n := NewNode("l", KindText)
+	n.Style.Color = mgl32.Vec4{1, 1, 1, 1}
+	s.Root.Children = []Node{n}
+
+	path := UIPath("bg")
+	if err := SaveScreen(s, path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "color:") {
+		t.Errorf("an authored label background was not written:\n%s", data)
+	}
+
+	got, err := loadScreenBare(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := got.Find("l").Style.Color; c[3] != 1 {
+		t.Errorf("it came back as %v", c)
+	}
+}
