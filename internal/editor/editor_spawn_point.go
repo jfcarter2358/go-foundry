@@ -19,6 +19,7 @@ import (
 // editorSelectSpawn makes the spawn point the current selection, which is what
 // gives it the translate gizmo and opens its properties section.
 func editorSelectSpawn() {
+	editorClearObjectSelections()
 	Editor.SpawnSelected = true
 	Editor.GizmoKind = gizmoKindSpawn
 	Editor.PanelFocus = panelFocusSpawn
@@ -74,12 +75,29 @@ func spawnRotationFromCamera() mgl32.Vec3 {
 // editorSpawnPointSection draws the spawn point's properties: where it is, its
 // rotation and the facing that falls out of it, and the two "match the fly
 // camera" shortcuts.
+//
+// Selection-driven like every other properties block. It had been written and
+// then never wired into a panel, so the marker was the one object in the level
+// that could be selected, gizmo-dragged and deleted but never typed into.
 func editorSpawnPointSection(lvl *world.Level) {
 	s := lvl.Spawn
-	if s == nil {
+	if s == nil || !Editor.SpawnSelected {
 		return
 	}
 
+	imgui.Separator()
+	editorFocusOpen(panelFocusSpawn)
+	if !imgui.CollapsingHeaderV("Player Spawn##spawnhdr", imgui.TreeNodeFlagsDefaultOpen) {
+		return
+	}
+	editorFocusScroll(panelFocusSpawn)
+
+	editorPropGroupOpen("Transform##spawntfgrp", func() { editorSpawnTransform(s) })
+	editorPropGroup("Actions##spawnactions", 0, func() { editorSpawnActions(lvl, s) })
+}
+
+// editorSpawnTransform draws where the marker is and which way it faces.
+func editorSpawnTransform(s *world.SpawnPoint) {
 	pos := [3]float32{s.Position.X(), s.Position.Y(), s.Position.Z()}
 	if imgui.DragFloat3V("Position##spawn", &pos, 0.05, -1e6, 1e6, "%.2f", 0) {
 		s.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
@@ -100,9 +118,14 @@ func editorSpawnPointSection(lvl *world.Level) {
 	imgui.Text(fmt.Sprintf("Facing: yaw %.1f°  pitch %.1f°",
 		yaw*180/math.Pi, pitch*180/math.Pi))
 
-	// Authoring a spawn by flying to it and pressing a button is far easier than
-	// dialling in three Euler angles, so both shortcuts write the rotation that
-	// SpawnYawPitch reads straight back out.
+}
+
+// editorSpawnActions draws the camera shortcuts and the delete.
+//
+// Authoring a spawn by flying to it and pressing a button is far easier than
+// dialling in three Euler angles, so both shortcuts write the rotation that
+// SpawnYawPitch reads straight back out.
+func editorSpawnActions(lvl *world.Level, s *world.SpawnPoint) {
 	if imgui.Button("Face Camera##spawn") {
 		EditorPushUndo()
 		s.Rotation = spawnRotationFromCamera()

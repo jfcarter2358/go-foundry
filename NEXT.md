@@ -69,6 +69,12 @@
 - [x] Re-organize texture editor settings panel
 - [x] Re-organize script editor settings panel
 - [x] Re-organize log settings panel
+- [x] One Explorer tree over every object in the level, with the selected
+      object's properties under it and nothing else — replaces the six
+      always-open Objects sections and their per-row button rows
+- [x] Properties grouped by subject: everything about a floor (shape, UV,
+      skirt, detail, tags/attributes/script) folds away under Floor, and every
+      object type is grouped the same way
 - [x] Entity-against-world and entity-against-entity collision, as per-type
       toggles (`collision: {world, entities, gravity, movable}`) with engine-wide
       master switches on 8 and 9 — no scripting needed
@@ -84,13 +90,6 @@
 - [x] Texture blending
 - [x] Animation blending between clips (crossfade on switch, configurable per
       animation via `blend:`, default 0.15s, 0 for a hard cut)
-
-## TODO
-
-> NOTE: `[/]` denotes an in-progress task
-
-### Bugs
-
 - [x] Walking into a drawn gap that is taller than the player causes the player to walk through it
 - [x] On exit play the camera position in the 3D editor should be reset to when play was initiated
 - [x] Hitting play should not close my other editors
@@ -99,7 +98,19 @@
 - [x] Subdividing a wall surface face next to an already-subdivided one split it
       into five or six pieces instead of four
 - [x] Point lights could only be moved by "Move To Camera" — they now take the
-      translate gizmo in the 3D view and have typed coordinates in the panel
+      translate gizmo in the 3D view, are clickable in the viewport, and have
+      typed coordinates in the panel
+- [x] Ctrl+Z while shaping a surface dropped out of surface shaping mode
+- [x] A camera turn or gizmo drag released over the side panel never ended, so
+      the view stayed stuck to the mouse until an unrelated right-click
+
+
+## TODO
+
+> NOTE: `[/]` denotes an in-progress task
+
+### Bugs
+
 
 ### Editor
 

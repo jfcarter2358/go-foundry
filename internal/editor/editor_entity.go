@@ -39,6 +39,7 @@ func editorSelectEntity(idx int) {
 	if lvl == nil || idx < 0 || idx >= len(lvl.Entities) {
 		return
 	}
+	editorClearObjectSelections()
 	Editor.ActiveEntityIdx = idx
 	Editor.GizmoKind = gizmoKindEntity
 	Editor.PanelFocus = panelFocusEntity

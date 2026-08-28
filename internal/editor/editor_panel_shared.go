@@ -48,11 +48,20 @@ func editorChunkPropertiesSection(lvl *world.Level) {
 	}
 	imgui.Separator()
 	editorFocusOpen(panelFocusChunk)
-	if !imgui.CollapsingHeaderV("Chunk: "+ch.ID, imgui.TreeNodeFlagsDefaultOpen) {
+	if !imgui.CollapsingHeaderV("Chunk: "+ch.ID+"##chunkhdr", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
 	editorFocusScroll(panelFocusChunk)
 
+	editorPropGroupOpen("Identity##chunkidgrp", func() { editorChunkIdentity(lvl, ch) })
+	editorPropGroupOpen("Transform##chunktfgrp", func() { editorChunkTransform(ch) })
+	editorPropGroup("Carried By##chunkframegrp", 0, func() { editorChunkFrameOwnerRow(lvl, ch) })
+	editorScriptDataUI(&ch.ScriptData, "chunk", "This chunk")
+	editorPropGroup("Actions##chunkactions", 0, func() { editorChunkActions(ch) })
+}
+
+// editorChunkIdentity draws the chunk's ID and what it holds.
+func editorChunkIdentity(lvl *world.Level, ch *world.Chunk) {
 	id := ch.ID
 	if imgui.InputTextV("ID##chunkid", &id, imgui.InputTextFlagsEnterReturnsTrue, nil) && id != ch.ID {
 		switch {
@@ -68,19 +77,21 @@ func editorChunkPropertiesSection(lvl *world.Level) {
 	imgui.Text(fmt.Sprintf("Sectors: %d", len(ch.Sectors)))
 	imgui.Text(fmt.Sprintf("Points: %d", len(ch.Points)))
 	imgui.Text(fmt.Sprintf("Biome sectors: %d", len(ch.BiomeSectors)))
+}
 
-	editorChunkTransform(ch)
-	editorChunkFrameOwnerRow(lvl, ch)
-
-	// Jump to the other editor, centred on this chunk. From the sector map that
-	// means handing focus back to the main window's 3D view (withEditor2DMode
-	// notices the mode change and raises it); from the 3D view it means opening
-	// the map's window.
+// editorChunkActions draws the jump to the other editor, centred on this chunk.
+//
+// From the sector map that means handing focus back to the main window's 3D
+// view (withEditor2DMode notices the mode change and raises it); from the 3D
+// view it means opening the map's window.
+func editorChunkActions(ch *world.Chunk) {
 	if Editor.Mode == Mode2D {
 		if imgui.Button("Switch to 3D Editor##chunkto3d") {
 			Editor.Mode = Mode3D
 		}
-	} else if imgui.Button("Switch to Sector Editor##chunkto2d") {
+		return
+	}
+	if imgui.Button("Switch to Sector Editor##chunkto2d") {
 		OpenEditor2DWindow()
 		// Pan2D is a point on the map's plane, which IS this chunk's own local
 		// space (see editor2DAnchor) — so the chunk-local centre goes in as-is.
@@ -89,9 +100,6 @@ func editorChunkPropertiesSection(lvl *world.Level) {
 		center := ch.MinBound.Add(ch.MaxBound).Mul(0.5)
 		Editor.Pan2D = mgl32.Vec2{center.X(), center.Z()}
 	}
-
-	imgui.Separator()
-	editorScriptDataUI(&ch.ScriptData, "chunk", "This chunk")
 }
 
 // editorChunkTransform draws the chunk's live Origin/Rotation/Scale — the

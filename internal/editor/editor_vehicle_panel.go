@@ -19,10 +19,6 @@ import (
 // editorEntityVehicleSection draws the vehicle block, and the button that adds
 // one to an entity that has none.
 func editorEntityVehicleSection(lvl *world.Level, e *world.Entity) {
-	if !imgui.CollapsingHeaderV("Vehicle##entveh", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
-
 	if e.Vehicle == nil {
 		editorTextWrapped("Not a vehicle. Making one gives it seats to sit in and " +
 			"a drive model, and lets a chunk be bound to it as an interior.")

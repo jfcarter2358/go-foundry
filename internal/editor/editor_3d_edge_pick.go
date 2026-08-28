@@ -241,7 +241,7 @@ func collectEdgeHandles(mx, my int32, maxPx float32) []edgeHandle {
 
 // buildEdgeHandle resolves one edge into a handle, rejecting it when either
 // endpoint is out of range, the prism is degenerate, or the projected edge is
-// further than maxPx from the cursor.
+// further than maxPx from the cursor — the last of which handleShowsAll waives.
 func buildEdgeHandle(sel edgeSel, projView mgl32.Mat4, cursor mgl32.Vec2, maxPx float32) (edgeHandle, bool) {
 	va, vb, ok := edgeSelVertices(sel)
 	if !ok {
@@ -278,7 +278,7 @@ func buildEdgeHandle(sel edgeSel, projView mgl32.Mat4, cursor mgl32.Vec2, maxPx 
 		return edgeHandle{}, false
 	}
 	d := distToSegment2D(cursor.X(), cursor.Y(), sa.X(), sa.Y(), sb.X(), sb.Y())
-	if d > maxPx {
+	if d > maxPx && !handleShowsAll(maxPx) {
 		return edgeHandle{}, false
 	}
 

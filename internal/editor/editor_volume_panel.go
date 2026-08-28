@@ -2,37 +2,22 @@ package editor
 
 // editor_volume_panel.go — the Volumes section of the editor's side panel.
 //
-// Structurally this is the entity panel with the entity-specific parts removed:
-// a place button, a list, and the selected volume's properties. What is left
-// after taking out definitions, models, animations and collision flags is a
-// transform, a shape, and the tags/attributes/script every scriptable object
+// Structurally this is the entity panel with the entity-specific parts
+// removed: an Add-menu entry and the selected volume's properties. What is
+// left after taking out definitions, models, animations and collision flags is
+// a transform, a shape, and the tags/attributes/script every scriptable object
 // shares — which is most of the point of volumes being their own type.
+//
+// The level's volume list is in the Explorer (editor_panel_explorer.go), with
+// everything else the level contains.
 
 import (
-	"fmt"
 	"foundry/internal/world"
 	"strconv"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
-
-// editorVolumeSection draws the place button and the volume list — the
-// Objects half. The selected volume's own fields are editorVolumePropertiesSection,
-// drawn separately under Properties, the same split editorEntitySection and
-// editorEntityProperties keep.
-func editorVolumeSection(lvl *world.Level) {
-	imgui.Separator()
-	if !imgui.CollapsingHeaderV("Volumes", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
-
-	editorTextWrapped("Regions a script reacts to. Never drawn during play and never solid.")
-
-	editorVolumePlacement()
-	imgui.Separator()
-	editorVolumeList(lvl)
-}
 
 // editorVolumePropertiesSection draws the selected volume's fields. Nothing is
 // drawn when no volume is selected, so the caller can call it unconditionally.
@@ -43,72 +28,39 @@ func editorVolumePropertiesSection() {
 	}
 	imgui.Separator()
 	editorFocusOpen(panelFocusVolume)
-	if !imgui.CollapsingHeaderV("Volume: "+v.ID, imgui.TreeNodeFlagsDefaultOpen) {
+	if !imgui.CollapsingHeaderV("Volume: "+v.ID+"##volhdr", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
 	editorFocusScroll(panelFocusVolume)
 	editorVolumeProperties(v)
 }
 
-// editorVolumePlacement draws the ID field and the arm-placement button.
-func editorVolumePlacement() {
+// editorVolumeAddMenu draws the volume half of the Explorer's Add menu: the ID
+// to give the next one, and the row that arms placement.
+func editorVolumeAddMenu() {
+	imgui.SetNextItemWidth(160)
 	imgui.InputTextV("ID##newvol", &Editor.NewVolumeID, 0, nil)
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Leave empty to name it \"volume\".\nMade unique on placement.")
 	}
-
-	if Editor.VolumePlacementMode {
-		if imgui.Button("Cancel Placement##volplace") {
-			Editor.VolumePlacementMode = false
-		}
-		imgui.SameLine()
-		imgui.Text("Click in the viewport to place")
-		return
-	}
-	if imgui.Button("Place Volume##volplace") {
+	imgui.Separator()
+	if imgui.MenuItem("Place By Clicking") {
 		editorArmVolumePlacement()
 	}
-}
-
-// editorVolumeList draws every volume in the level as a selectable row.
-func editorVolumeList(lvl *world.Level) {
-	if lvl == nil || len(lvl.Volumes) == 0 {
-		imgui.Text("(none in this level)")
-		return
-	}
-	for i := range lvl.Volumes {
-		v := &lvl.Volumes[i]
-		label := v.ID
-		if label == "" {
-			label = "(unnamed)"
-		}
-		if !v.Enabled {
-			// A disarmed volume is still there and still selectable; saying so
-			// in the list saves hunting for why a trigger stopped firing.
-			label += "  (disabled)"
-		}
-		if imgui.SelectableV(fmt.Sprintf("%s##vol%d", label, i), i == Editor.ActiveVolumeIdx, 0, imgui.Vec2{}) {
-			clearVertexSelection()
-			editorClearSpawnSelection()
-			editorClearEntitySelection()
-			editorClearChunkSelection()
-			editorClearLightSelection()
-			editorSelectVolume(i)
-		}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Regions a script reacts to. Never drawn during play\nand never solid.")
 	}
 }
 
 // editorVolumeProperties draws the selected volume's editable state.
 func editorVolumeProperties(v *world.Volume) {
-	editorVolumeIdentity(v)
-	imgui.Separator()
-	editorVolumeTransform(v)
-	imgui.Separator()
-	editorVolumeShape(v)
-	imgui.Separator()
+	// The same groups an entity gets, in the same order, so the two blocks read
+	// as one panel with different middles.
+	editorPropGroupOpen("Identity##volidgrp", func() { editorVolumeIdentity(v) })
+	editorPropGroupOpen("Transform##voltfgrp", func() { editorVolumeTransform(v) })
+	editorPropGroupOpen("Shape##volshapegrp", func() { editorVolumeShape(v) })
 	editorScriptDataUI(&v.ScriptData, "vol", strconv.Quote(v.ID))
-	imgui.Separator()
-	editorVolumeActions(v)
+	editorPropGroup("Actions##volactions", 0, func() { editorVolumeActions(v) })
 }
 
 // editorVolumeIdentity draws the ID field and the enabled toggle.

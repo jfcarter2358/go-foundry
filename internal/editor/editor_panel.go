@@ -4,18 +4,19 @@ package editor
 //
 // Every panel is one column in one order:
 //
-//	Context -> Objects -> Properties -> View -> Editor
+//	Context -> Explorer -> Properties -> View -> Editor
 //
 // so a section keeps its place regardless of which mode put it there, and the
 // two editors read as the same panel with different middles. Context says what
-// is selected and in what mode; Objects is the level's contents and is always
-// reachable, because it is how the first of anything gets placed; Properties is
-// entirely selection-driven and draws nothing it cannot act on; View is about
-// the viewport; Editor is about the editor rather than the level.
+// is selected and in what mode; the Explorer is one tree over everything the
+// level contains, and is always reachable, because it is how the first of
+// anything gets placed and how any of it gets picked; Properties is entirely
+// selection-driven and draws the selected object's fields and nothing else;
+// View is about the viewport; Editor is about the editor rather than the level.
 //
-// Nothing here decides *what* a section holds — that is editor_panel_objects.go
-// and editor_panel_properties.go. This file decides the order, and which of the
-// two editors is asking.
+// Nothing here decides *what* a section holds — that is
+// editor_panel_explorer.go and editor_panel_properties.go. This file decides
+// the order, and which of the two editors is asking.
 //
 // See SETTINGS_LAYOUT.md for the layout this implements.
 
@@ -45,7 +46,7 @@ func editorPanelBody(lvl *world.Level, kind editorPanelKind) {
 	if kind == panelKind2D {
 		editor2DMapSection()
 	}
-	editorObjectsSection(lvl, kind)
+	editorExplorerSection(lvl, kind)
 	editorPropertiesSection(lvl, kind)
 	editorViewSection(kind)
 	editorSettingsSection()
@@ -83,7 +84,7 @@ func editorContextSection(lvl *world.Level, kind editorPanelKind) {
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("The chunk being edited: the map draws it, a new sector\n" +
-			"joins it, the biome layer paints it.\nPick another in Objects -> Chunks.")
+			"joins it, the biome layer paints it.\nPick another in the Explorer's Chunks list.")
 	}
 
 	if kind == panelKind2D {
@@ -176,38 +177,6 @@ func editorView3DControls() {
 		"zooms. WASD flies (orbit: slides the pivot), space and shift go up and down. " +
 		"1/2/3 pick points, edges or faces; ctrl+click adds to the selection; " +
 		"right-click without dragging opens the selection's actions.")
-
-	// Held rather than clicked, for working without the keyboard — the button
-	// reports being active, and EditorTick applies it.
-	imgui.Button("Fwd##nav")
-	if imgui.IsItemActive() {
-		Editor.NavForward = true
-	}
-	imgui.SameLine()
-	imgui.Button("Back##nav")
-	if imgui.IsItemActive() {
-		Editor.NavBack = true
-	}
-	imgui.SameLine()
-	imgui.Button("Left##nav")
-	if imgui.IsItemActive() {
-		Editor.NavLeft = true
-	}
-	imgui.SameLine()
-	imgui.Button("Right##nav")
-	if imgui.IsItemActive() {
-		Editor.NavRight = true
-	}
-	imgui.SameLine()
-	imgui.Button("Up##nav")
-	if imgui.IsItemActive() {
-		Editor.NavUp = true
-	}
-	imgui.SameLine()
-	imgui.Button("Down##nav")
-	if imgui.IsItemActive() {
-		Editor.NavDown = true
-	}
 }
 
 func editorView2DControls() {
@@ -345,6 +314,14 @@ func editorPanelSettings() {
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Also draggable from the panel's left edge.")
+	}
+	h := Editor.ExplorerHeight
+	if editorDragFloatStep("Explorer height##panelexph", &h, explorerMinHeight, 800, "%.0f", 5) {
+		Editor.ExplorerHeight = h
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How tall the Explorer's tree is before it scrolls.\n" +
+			"The rest of the panel is the selected object's properties.")
 	}
 	if imgui.Button("Keybindings  [F1]##panelkeys") {
 		uiwin.KeybindHelpToggle()

@@ -39,6 +39,7 @@ func editorSelectVolume(idx int) {
 	if lvl == nil || idx < 0 || idx >= len(lvl.Volumes) {
 		return
 	}
+	editorClearObjectSelections()
 	Editor.ActiveVolumeIdx = idx
 	Editor.GizmoKind = gizmoKindVolume
 	Editor.PanelFocus = panelFocusVolume

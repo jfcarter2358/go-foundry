@@ -38,30 +38,21 @@ func selectedChunk() *world.Chunk {
 // editorSelectChunk makes the chunk at idx both the active one and the
 // selection.
 //
-// Selections that only mean something inside a chunk go with the change: a
-// sector index, a face and a vertex handle are all positions in the chunk that
-// was active, and carrying them across would leave the panel editing whatever
-// happens to sit at that index in the new one. Entities and volumes are level-
-// scoped, so they are dropped for the ordinary reason instead — something else
-// is the selection now.
+// Everything else selected is dropped. Selections that only mean something
+// inside a chunk — a sector index, a face, a vertex handle — because they are
+// positions in a chunk and the chunk itself is what is being selected now;
+// entities, volumes and lights for the ordinary reason, that something else is
+// the selection.
 func editorSelectChunk(idx int) {
 	lvl := Editor.level
 	if lvl == nil || idx < 0 || idx >= len(lvl.Chunks) {
 		return
 	}
-	if idx != Editor.ActiveChunkIdx {
-		Editor.ActiveSectorIdx = -1
-		Editor.ActiveEdgeIdx = -1
-		Editor.ActiveEdgeKind = ""
-		Editor.ActiveBiomeSectorIdx = -1
-		Editor.BiomeDragVertexIdx = -1
-		clearVertexSelection()
-		clearFaceSelection()
-	}
-	editorClearSpawnSelection()
-	editorClearEntitySelection()
-	editorClearVolumeSelection()
-	editorClearLightSelection()
+	// editorClearObjectSelections drops what was picked inside a chunk as well
+	// — including when this chunk was already the active one. Keeping a sector
+	// selected under a selected chunk put two properties blocks up at once,
+	// neither of them wrong.
+	editorClearObjectSelections()
 
 	Editor.ActiveChunkIdx = idx
 	Editor.ChunkSelected = true

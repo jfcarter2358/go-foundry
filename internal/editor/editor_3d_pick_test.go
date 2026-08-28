@@ -295,6 +295,11 @@ func saveEditorSelection() func() {
 	gizmo2D := Editor.Gizmo2DState
 	editFloor := Editor.EditFloorVerts
 	dragSI, dragVI := Editor.DragVertexSI, Editor.DragVertexVI
+	chunkSel := Editor.ChunkSelected
+	entIdx, volIdx := Editor.ActiveEntityIdx, Editor.ActiveVolumeIdx
+	lightKind, lightIdx := Editor.SelectedLightKind, Editor.SelectedLightIdx
+	biomeLayer := Editor.BiomeLayerActive
+	focus := Editor.PanelFocus
 	return func() {
 		Editor.level = lvl
 		Editor.Mode = mode
@@ -314,6 +319,58 @@ func saveEditorSelection() func() {
 		Editor.Gizmo2DState = gizmo2D
 		Editor.EditFloorVerts = editFloor
 		Editor.DragVertexSI, Editor.DragVertexVI = dragSI, dragVI
+		Editor.ChunkSelected = chunkSel
+		Editor.ActiveEntityIdx, Editor.ActiveVolumeIdx = entIdx, volIdx
+		Editor.SelectedLightKind, Editor.SelectedLightIdx = lightKind, lightIdx
+		Editor.BiomeLayerActive = biomeLayer
+		Editor.PanelFocus = focus
 		editorVisReset()
+	}
+}
+
+// TestCollectHandlesShowAllIgnoresCursor covers the off-world draw path, which
+// asks for every handle while passing a cursor far outside the window so none
+// of them reads as hovered. Comparing against vertexHandleShowAllPx as a radius
+// rejected all of them instead, which emptied the viewport whenever a camera
+// drag carried the pointer over the side panel — turning right, but not left.
+func TestCollectHandlesShowAllIgnoresCursor(t *testing.T) {
+	setupPickCamera()
+
+	prevLevel, prevWire := Editor.level, Editor.Wireframe
+	defer func() { Editor.level = prevLevel; Editor.Wireframe = prevWire }()
+	// Wireframe so the occlusion test answers true without needing geometry.
+	Editor.Wireframe = true
+
+	// A unit square 5 units down -Z, well inside vertexHandleMaxDist.
+	sector := world.Sector{ID: "s0", PointIndices: []int{0, 1, 2, 3}}
+	sector.Floor.Height, sector.Ceiling.Height = 0, 2
+	Editor.level = &world.Level{Chunks: []world.Chunk{{
+		ID: "c0",
+		Points: []mgl32.Vec2{
+			{-1, -6}, {1, -6}, {1, -4}, {-1, -4},
+		},
+		Sectors: []world.Sector{sector},
+	}}}
+
+	const offWorld = math.MinInt32 / 2
+	for _, tc := range []struct {
+		name   string
+		mx, my int32
+	}{
+		{"cursor on the geometry", platform.WinWidth / 2, platform.WinHeight / 2},
+		{"cursor off the world", offWorld, offWorld},
+	} {
+		if got := len(collectVertexHandles(tc.mx, tc.my, vertexHandleShowAllPx)); got != 8 {
+			t.Errorf("%s: got %d vertex handles, want 8 (4 points × floor+ceiling)", tc.name, got)
+		}
+		if got := len(collectEdgeHandles(tc.mx, tc.my, vertexHandleShowAllPx)); got == 0 {
+			t.Errorf("%s: got no edge handles", tc.name)
+		}
+	}
+
+	// The cursor-proximity radius still filters: the same off-world cursor
+	// reaches nothing when show-all is not asked for.
+	if got := len(collectVertexHandles(offWorld, offWorld, vertexHandleShowPx)); got != 0 {
+		t.Errorf("proximity mode with an off-world cursor: got %d handles, want 0", got)
 	}
 }

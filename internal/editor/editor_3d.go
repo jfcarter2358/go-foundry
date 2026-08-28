@@ -400,37 +400,6 @@ func editor3DClearSelection() {
 	Editor.PanelFocus = panelFocusNone
 }
 
-// editorWaterSection shows the settings behind the water plane the user clicked.
-// The plane itself has nothing to edit — it is regenerated from its Water-kind
-// biome sector whenever that sector changes — so this is that sector's water
-// half, reached from the 3D view instead of from the 2D biome layer.
-func editorWaterSection(lvl *world.Level) {
-	// Shown whenever a water sector is the selection, however it was selected:
-	// clicking the plane here, or picking the sector in the 2D biome layer.
-	if Editor.ActiveBiomeSectorIdx < 0 ||
-		Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
-		return
-	}
-	ch := &lvl.Chunks[Editor.ActiveChunkIdx]
-	if Editor.ActiveBiomeSectorIdx < 0 || Editor.ActiveBiomeSectorIdx >= len(ch.BiomeSectors) {
-		return
-	}
-	bs := &ch.BiomeSectors[Editor.ActiveBiomeSectorIdx]
-	if bs.Brush.Kind != world.BiomeWater {
-		return
-	}
-
-	imgui.Separator()
-	editorFocusOpen(panelFocusWater)
-	if !imgui.CollapsingHeaderV("Water: "+bs.ID, imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
-	editorFocusScroll(panelFocusWater)
-	biomeWaterControls(ch, bs)
-	imgui.Text("Shape and extent come from the painted polygon —")
-	imgui.Text("edit those in the 2D view's biome layer.")
-}
-
 // editorWaterSectorFor resolves a water surface back to the biome sector that
 // produced it. The two are matched by ID, which is what biome_water.go's sync
 // keys on as well; -1 when the sector has since been deleted and the surface
@@ -629,7 +598,7 @@ func editor3DVertexPanel(lvl *world.Level) {
 
 	imgui.Separator()
 	editorFocusOpen(panelFocusVertex)
-	if imgui.CollapsingHeaderV(title, imgui.TreeNodeFlagsDefaultOpen) {
+	if imgui.CollapsingHeaderV(title+"##vertexhdr", imgui.TreeNodeFlagsDefaultOpen) {
 		editorFocusScroll(panelFocusVertex)
 
 		pt := ch.Points[pIdx]

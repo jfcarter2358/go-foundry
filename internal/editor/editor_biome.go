@@ -8,7 +8,7 @@ package editor
 // the existing wall-extrusion placement pattern (editor_extrusion.go): click
 // to add a point, click near the first point (or press Enter) to close the
 // polygon, Escape to cancel. Once drawn, a sector is selected (from the 2D
-// view or the side-panel list) and assigned a brush — the sector owns that
+// view or the Explorer) and assigned a brush — the sector owns that
 // brush outright, so editing it only ever affects that one sector, and
 // multiple sectors may be drawn overlapping to layer looks together.
 
@@ -77,7 +77,10 @@ func finishBiomeSectorDraw(ch *world.Chunk) {
 			GroundDirty: true,
 		}
 		ch.BiomeSectors = append(ch.BiomeSectors, bs)
-		Editor.ActiveBiomeSectorIdx = len(ch.BiomeSectors) - 1
+		// Through the shared entry point, so the new sector is the selection
+		// and its brush is what Properties opens on — drawing one and then
+		// having to find it in the list was the old flow.
+		editorSelectBiomeSector(Editor.ActiveChunkIdx, len(ch.BiomeSectors)-1)
 		Editor.StatusMsg = fmt.Sprintf("Added biome sector %s", bs.ID)
 		Editor.StatusTime = sdl.GetTicks()
 	}
@@ -197,8 +200,16 @@ func biomeHandleClick(t sdl.MouseButtonEvent) bool {
 		}
 	}
 
-	Editor.ActiveBiomeSectorIdx = biomeSectorAt(ch, lx, lz)
-	Editor.BiomeDragVertexIdx = -1
+	// Through the shared entry point, so picking paint drops whatever else was
+	// selected — the panel below shows one object's properties, and the map
+	// used to be able to add a biome sector to a selection it knew nothing
+	// about.
+	if idx := biomeSectorAt(ch, lx, lz); idx >= 0 {
+		editorSelectBiomeSector(Editor.ActiveChunkIdx, idx)
+	} else {
+		Editor.ActiveBiomeSectorIdx = -1
+		Editor.BiomeDragVertexIdx = -1
+	}
 	return true
 }
 
@@ -384,64 +395,18 @@ func Editor2DRenderBiomeOverlay() {
 
 // ---------- side panel ----------
 
-// biomePanelSection draws the biome-sector-layer controls inside the 2D side panel.
+// biomePanelSection draws the selected biome sector's brush.
+//
+// Selection-driven like every other properties block: the sector is picked in
+// the Explorer or by clicking it on the map, and nothing is drawn when none
+// is. The list, the layer toggle and the New Sector button that used to sit
+// above this — permanently, in the 2D panel, whether or not anything was
+// painted — are in the Explorer and the Map section now.
 func biomePanelSection() {
-	imgui.Separator()
-	if !imgui.CollapsingHeaderV("Biome Sectors", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
 	ch := activeChunk()
 	if ch == nil {
-		imgui.Text("No active chunk.")
 		return
 	}
-
-	imgui.Checkbox("Edit Biome Layer##biomelayer", &Editor.BiomeLayerActive)
-	if !Editor.BiomeLayerActive {
-		imgui.Text("Enable to draw/select biome sectors in the 2D view.")
-		return
-	}
-
-	if Editor.BiomeDrawing {
-		imgui.Text(fmt.Sprintf("Placing sector (%d pts)", len(Editor.BiomeDrawPoints)))
-		imgui.Text("Click: add point. Click near start / Enter: finish. Right-click: undo. Esc: cancel.")
-		if imgui.Button("Finish##biomefinish") {
-			finishBiomeSectorDraw(ch)
-		}
-		imgui.SameLine()
-		if imgui.Button("Cancel##biomecancel") {
-			Editor.BiomeDrawing = false
-			Editor.BiomeDrawPoints = nil
-		}
-		return
-	}
-
-	if imgui.Button("+ New Sector##biomenew") {
-		Editor.BiomeDrawing = true
-		Editor.BiomeDrawPoints = nil
-		Editor.ActiveBiomeSectorIdx = -1
-	}
-	imgui.SameLine()
-	if imgui.Button("Refresh Heights##biomerefresh") {
-		for i := range ch.BiomeSectors {
-			ch.BiomeSectors[i].HeightDirty = true
-			ch.BiomeSectors[i].GroundDirty = true
-		}
-	}
-
-	imgui.Separator()
-	imgui.Text(fmt.Sprintf("Sectors (%d)", len(ch.BiomeSectors)))
-	imgui.BeginChildV("##biomesectorlist", imgui.Vec2{X: 0, Y: 120}, true, 0)
-	for i := range ch.BiomeSectors {
-		bs := &ch.BiomeSectors[i]
-		label := fmt.Sprintf("%s (%s)##bs%d", bs.ID, biomeKindName(bs.Brush.Kind), i)
-		if imgui.SelectableV(label, i == Editor.ActiveBiomeSectorIdx, 0, imgui.Vec2{}) {
-			Editor.ActiveBiomeSectorIdx = i
-			Editor.BiomeDragVertexIdx = -1
-		}
-	}
-	imgui.EndChild()
-
 	idx := Editor.ActiveBiomeSectorIdx
 	if idx < 0 || idx >= len(ch.BiomeSectors) {
 		return
@@ -449,13 +414,30 @@ func biomePanelSection() {
 	bs := &ch.BiomeSectors[idx]
 
 	imgui.Separator()
-	imgui.Text(fmt.Sprintf("Selected: %s (%d pts)", bs.ID, len(bs.Points)))
-	if imgui.Button("Delete##biomedel") {
-		EditorPushUndo()
-		deleteBiomeSector(ch, idx)
+	editorFocusOpen(panelFocusBiome, panelFocusWater)
+	if !imgui.CollapsingHeaderV(fmt.Sprintf("Biome: %s##biomeprops", bs.ID),
+		imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
+	editorFocusScroll(panelFocusBiome, panelFocusWater)
+	editorTextMuted(fmt.Sprintf("%s, %d points", biomeKindName(bs.Brush.Kind), len(bs.Points)))
+	if !Editor.BiomeLayerActive {
+		editorTextMutedWrapped("The biome layer is off, so this polygon cannot be " +
+			"reshaped on the map. Turn it on under Map.")
+	}
 
+	// The brush itself first — which kind, and the handful of fields that kind
+	// actually reads. The four groups after it are the ones every kind shares
+	// and few sectors change.
+	editorPropGroupOpen("Brush##bsbrushgrp", func() { biomeBrushGroup(ch, bs) })
+	biomeSlopeSection(bs)
+	biomeLODSection(bs)
+	biomeFadeSection(bs)
+	biomeGroundSection(bs)
+}
+
+// biomeBrushGroup draws the kind picker and the fields that kind reads.
+func biomeBrushGroup(ch *world.Chunk, bs *world.BiomeSector) {
 	kinds := []string{"Grass", "Rock", "Wildflower", "Cattail", "Sand", "Water", "Moss"}
 	ki := int(bs.Brush.Kind)
 	if ki < 0 || ki >= len(kinds) {
@@ -619,11 +601,6 @@ func biomePanelSection() {
 			imgui.Text("Blades gather into plant-like tufts, arcing outward.")
 		}
 	}
-
-	biomeSlopeSection(bs)
-	biomeLODSection(bs)
-	biomeFadeSection(bs)
-	biomeGroundSection(bs)
 }
 
 // biomeLODSection draws the Near/Mid/Far distance-based LOD controls (see
@@ -636,11 +613,10 @@ func biomeLODSection(bs *world.BiomeSector) {
 		return
 	}
 
-	imgui.Separator()
-	if !imgui.CollapsingHeaderV("Level of Detail##bslod", 0) {
-		return
-	}
+	editorPropGroup("Level of Detail##bslod", 0, func() { biomeLODBody(bs) })
+}
 
+func biomeLODBody(bs *world.BiomeSector) {
 	imgui.Text("Mesh detail drops Near -> Mid -> Far with distance; only Near")
 	imgui.Text("casts real per-instance shadows by default (F9 changes that).")
 
@@ -670,11 +646,10 @@ func biomeFadeSection(bs *world.BiomeSector) {
 		return
 	}
 
-	imgui.Separator()
-	if !imgui.CollapsingHeaderV("Soft Edges##bsfade", 0) {
-		return
-	}
+	editorPropGroup("Soft Edges##bsfade", 0, func() { biomeFadeBody(bs) })
+}
 
+func biomeFadeBody(bs *world.BiomeSector) {
 	imgui.Text("Range Fade — the outer camera-ring boundary.")
 	rangeFrac := bs.Brush.RangeFadeFraction
 	if imgui.SliderFloat("Range Fade##bsrfade", &rangeFrac, 0, 1) {
@@ -720,10 +695,10 @@ func biomeSlopeSection(bs *world.BiomeSector) {
 		return
 	}
 
-	imgui.Separator()
-	if !imgui.CollapsingHeaderV("Slope Range##bsslope", 0) {
-		return
-	}
+	editorPropGroup("Slope Range##bsslope", 0, func() { biomeSlopeBody(bs) })
+}
+
+func biomeSlopeBody(bs *world.BiomeSector) {
 	imgui.Text("Scatter only appears where the ground's angle is in range.")
 	imgui.Text("0..90 covers everything. Sloped, terrain and displaced floors all count.")
 
@@ -768,10 +743,10 @@ func biomeSlopeSection(bs *world.BiomeSector) {
 func biomeGroundSection(bs *world.BiomeSector) {
 	def := world.DefaultBiomeBrush(bs.Brush.Kind)
 
-	imgui.Separator()
-	if !imgui.CollapsingHeaderV("Ground##bsground", 0) {
-		return
-	}
+	editorPropGroup("Ground##bsground", 0, func() { biomeGroundBody(bs, def) })
+}
+
+func biomeGroundBody(bs *world.BiomeSector, def world.BiomeBrush) {
 	if bs.Brush.Kind == world.BiomeWater {
 		imgui.Text("Lakebed (seen through the water surface)")
 	}

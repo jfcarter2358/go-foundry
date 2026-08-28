@@ -56,13 +56,34 @@ positions / rotations / scales are respected as they are currently.
 
 Context — every section below carries the condition it appears under, and
 nothing else is drawn. A section with nothing to act on is absent, not empty
-and not greyed out. The one deliberate exception is the catalogs under
-Objects: they stay reachable with nothing selected, because they are how the
-first of anything gets placed.
+and not greyed out. The one deliberate exception is the Explorer: it stays
+reachable with nothing selected, because it is how the first of anything gets
+placed and how any of it gets picked.
+
+Grouping — inside a Properties block, related fields are one collapsible
+group, and a group holds everything about its subject: a floor's group carries
+its height and texture, the mesh it is shaped with, its UV, its skirt, its
+smoothing, its procedural detail and its own tags/attributes/script, and folds
+all of it away as a unit. Nothing about the floor sits outside it and nothing
+belonging to another face sits inside it. A group is a tree node, not a framed
+header — the framed bar is the properties block itself, and groups indent under
+it. The group holding what the object *is* (Identity, Transform, Brush, Light)
+opens with the block; the rest start shut, and the one a fresh selection points
+at opens itself.
+
+Every object type is grouped the same way, so the blocks read as one panel with
+different middles: Identity, Transform, then whatever is particular to the
+type, then Scripting (Tags / Attributes / Script), then Actions.
+
+Exactly one thing is selected at a time. Picking a chunk, a sector, a biome
+sector, an entity, a volume, a light, a face, a vertex or the spawn point
+drops whatever was selected before it, so Properties below is always one
+object's fields — two blocks up at once, neither of them wrong, was the panel
+saying nothing loudly.
 
 Order — every panel is one column, always in this order:
 
-    Context -> Objects -> Properties -> View -> Editor
+    Context -> Explorer -> Properties -> View -> Editor
 
 so a section keeps its place no matter which mode put it there, and the two
 editors read as the same panel with different middles.
@@ -146,85 +167,54 @@ Properties sections appear.
                      -> Properties shows Sector / Entity / Volume / Water /
                         Spawn, whichever was hit
 
-Objects, View and Editor are the same in all three modes. Switching between
-Point and Edge keeps the selection; crossing to or from Face clears it,
-because the other unit has no handles to explain it.
+The Explorer, View and Editor are the same in all three modes. Switching
+between Point and Edge keeps the selection; crossing to or from Face clears
+it, because the other unit has no handles to explain it.
 -->
 
-## Objects
-
-- [checkbox] Spawn Point <!-- one per level; placed at the origin when the level is created. [checkbox] is whether the level has one at all -->
-  [Place / Move Spawn Point] <!-- arms the next viewport click -->
-
-### Chunks [+] [up arrow] <!-- [up arrow] imports a chunk from an exported file, [+] creates a new one at the camera -->
+## Explorer <!-- one tree over everything the level contains, in a scroll box of its own so Properties stays on screen -->
+[Add...] <!-- the one menu that creates anything; see below -->
+Click in the view to place <what> [Cancel] <!-- only while a placement is armed -->
 <!--
-Clicking a row makes that chunk the active one — the one the sector map draws,
-the one a new sector joins, the one the biome layer paints. This list is the
-only place that happens; there is no picker in the toolbar.
+A row is the selection and nothing else: click it and Properties below draws
+that object's fields, and only that object's. What acts on a row as a whole
+lives on its right-click menu, so it costs no line of the panel; what creates
+something lives on the one Add menu.
 
-[x] deletes the chunk (asks first)
-[+] duplicates the chunk
-[save icon] exports the chunk to a file
-[checkbox] toggles whether the chunk exists in the level
+The tree used to be six always-open sections, each with its own catalog, its
+own place button and a row of buttons beside every row — all of it on screen
+at once, in both editors, whether or not any of it was what was being worked
+on.
 -->
-- [x] [save icon] [+] [checkbox] Chunk 1
-- [x] [save icon] [+] [checkbox] Chunk 2
-- [x] [save icon] [+] [checkbox] Chunk 3
+- Player Spawn <!-- one per level; "(none)" when the level has none. Right-click: Move To Camera / Place By Clicking / Delete, or Add when there is none -->
+- Chunks (<n>) <!-- right-click a chunk: Duplicate / Export... / Delete -->
+  - Chunk 1 (active) <!-- clicking a row makes that chunk both active and selected; this list is the only place that happens, and the active one starts expanded -->
+    - Sectors (<n>) <!-- listed in both editors now, so a sector whose surfaces are all switched off is still reachable -->
+      - Sector 1
+    - Biome (<n>) <!-- the chunk's painted polygons, when it has any. Right-click: Delete -->
+      - bs1 (Grass)
+  - Chunk 2
+- Entities (<n>) <!-- right-click: Duplicate / Move To Camera / Delete -->
+  - Entity 1  (<type>)
+- Volumes (<n>) <!-- right-click: Enabled / Duplicate / Delete. A disarmed one reads "(disabled)" -->
+  - Volume 1
+- Lights (<n>) <!-- flat: the labels already say which kind each is. Right-click: Enabled / Duplicate / Delete -->
+  - Global Light <!-- always exists, can be switched off but not removed -->
+  - Light 1  (directional)
+  - Light 2  (point)
+- Scripts (<n>) <!-- the level's own .flang handlers. Clicking one opens it in the script editor; right-click: Remove From Level -->
+  - scripts/level.flang
 
-### Entities [+] [up arrow] <!-- [up arrow] imports an entity definition, [+] places one of the picked type -->
-Type <dropdown of definitions under entities/, plus "(blank entity)"> [Reload Definitions]
-<!-- the picked definition's one-line description is shown under the dropdown -->
-ID <textbox> <!-- blank names it after its type; a number is appended if taken -->
-[Place Entity] <!-- arms the next viewport click; [Cancel] while armed -->
-<!--
-[x] deletes the entity
-[+] duplicates the entity
-[save icon] exports the entity to a file
-[checkbox] toggles whether the entity exists within the level
--->
-- [x] [+] [save icon] [checkbox] Entity 1
-- [x] [+] [save icon] [checkbox] Entity 2
-- [x] [+] [save icon] [checkbox] Entity 3
-
-### Volumes [+] <!-- regions a script reacts to; never drawn during play and never solid -->
-ID <textbox> <!-- blank names it "volume"; made unique on placement -->
-[Place Volume] <!-- arms the next viewport click; [Cancel] while armed -->
-<!-- [checkbox] arms/disarms the volume — a disarmed one contains nothing, so it fires no events -->
-- [x] [+] [checkbox] Volume 1
-- [x] [+] [checkbox] Volume 2
-
-### Lights
-- [checkbox] Global Light <!-- always exists in the level, can be toggled on and off but not removed -->
-#### Directional [+] <!-- [+] creates a new directional light -->
-<!--
-[x] removes the light
-[+] duplicates the light
-[checkbox] enables/disables the light
--->
-- [x] [+] [checkbox] Light 1
-- [x] [+] [checkbox] Light 2
-- [x] [+] [checkbox] Light 3
-#### Point [+] <!-- [+] creates a new point light at the camera -->
-<!--
-[x] removes the light
-[+] duplicates the light
-[checkbox] enables/disables the light
--->
-- [x] [+] [checkbox] Light 1
-- [x] [+] [checkbox] Light 2
-- [x] [+] [checkbox] Light 3
-
-### Scripts [+] [up arrow] <!-- the level's own .flang handlers -->
-<!--
-[x] removes the script from the level
-[+] duplicates the script
-[save icon] exports the script to a file
-[right arrow] opens the script in the script editor
--->
-- [x] [save icon] [+] [right arrow] Script 1
-- [x] [save icon] [+] [right arrow] Script 2
-- [x] [save icon] [+] [right arrow] Script 3
-[Rescan Scripts] [Reload All] <!-- re-read the folder / re-read every script the level uses -->
+### Add... <!-- the menu behind the Explorer's one create button -->
+Chunk... <!-- names it, then places it at the camera -->
+Import Chunk... <!-- from a file in chunks/ -->
+Entity > ID <textbox>, then a row per definition under entities/ plus "(blank entity)"; picking one arms the next viewport click
+Volume > ID <textbox>, then Place By Clicking
+Directional Light <!-- greyed past the shader's limit -->
+Point Light <!-- at the camera; greyed past the shader's limit -->
+Biome Sector <!-- sector map only: draw its corners, then Enter -->
+Player Spawn <!-- only when the level has none -->
+Level Script > Rescan Folder, then a row per .flang the level is not already running
 
 ## Properties <!-- editing any property applies it to everything selected of that type; relative positions/rotations/scales are respected when several objects are selected -->
 
@@ -258,15 +248,24 @@ Rotation Yaw [-] [Number Slider] [+] [=] <!-- Y-axis only; a chunk does not pitc
 Scale X [-] [Number Slider] [+] [=] <!-- see the open item at the top: one uniform scale today -->
 Scale Y [-] [Number Slider] [+] [=]
 Scale Z [-] [Number Slider] [+] [=]
+#### Carried By
 Carried by <dropdown of vehicle entities, plus "(nothing — world chunk)"> <!-- the chunk is this vehicle's interior; sets both sides of the binding -->
+#### Scripting <!-- the shared Tags / Attributes / Script group; see Scripting, below -->
+#### Actions
 [Switch to Sector Editor] <!-- opens the map centred on this chunk -->
-#### Tags / Attributes / Script <!-- the shared scripting block; see Scripting, below -->
 
 ### Sector <!-- only when a sector, wall, portal, ceiling or floor is selected -->
 ID: <ID1, ID2, ...>
 <!-- with more than one face selected, a note says which face the panel is editing and that the right-click menu edits them all -->
 
-#### [checkbox] Floor <!-- only when a floor is selected; [checkbox] enables/disables the sector floor(s) -->
+<!--
+Both editors draw this block from one place, so a wall answers the same
+questions whichever window is asking; the map used to carry its own copy, and
+that copy had lost the Pinned flag, the portal's target frame and scripting
+altogether.
+-->
+
+#### Floor <!-- a group; the checkbox inside it enables/disables the sector floor(s) -->
 [eye] Visible <!-- hides the structural texture without disabling the floor — for one fully covered by a biome ground patch -->
 Height [-] [Number Slider] [+] [=]
 Texture <dropdown of available textures>
@@ -275,14 +274,12 @@ Double Sided [checkbox]
 Alpha [-] [Number Slider] [+] [=]
 [Edit Floor Surface] <!-- enters the Surface Editor on this face -->
 ##### Texture UV
-##### Extrusions
-##### Terrain
-##### Smooth Shading
+##### Floor Skirt <!-- floors only: what closes the band under a stacked floor -->
 ##### Detail
-##### Tags / Attributes / Script
-<!-- the six sub-panels above are identical on every face; laid out once under Surface Sub-Panels, below -->
+##### Scripting <!-- Tags / Attributes / Script -->
+<!-- the sub-groups above are identical on every face; laid out once under Surface Sub-Panels, below -->
 
-#### [checkbox] Ceiling <!-- only when a ceiling is selected; [checkbox] enables/disables the sector ceiling(s) -->
+#### Ceiling <!-- a group; the checkbox inside it enables/disables the sector ceiling(s) -->
 [eye] Visible
 Height [-] [Number Slider] [+] [=]
 Texture <dropdown of available textures>
@@ -290,9 +287,9 @@ Terrain [checkbox]
 Double Sided [checkbox]
 Alpha [-] [Number Slider] [+] [=]
 [Edit Ceiling Surface]
-##### Texture UV / Extrusions / Terrain / Smooth Shading / Detail / Tags / Attributes / Script
+##### Texture UV / Detail / Scripting
 
-#### [checkbox] Wall <!-- only when a wall is selected; [checkbox] enables/disables the wall(s) -->
+#### Wall <!-- a group; only when a wall is the selected edge -->
 Wall <edge ID> <readout> <!-- the ID, not the index: a script reaches it as @sector.edge.<id>, and the index shifts under nearly every edit -->
 Kind <dropdown: wall, portal> <!-- converting carries the edge's ID across -->
 [eye] Visible
@@ -303,9 +300,9 @@ Terrain [checkbox]
 Double Sided [checkbox]
 Alpha [-] [Number Slider] [+] [=]
 [Edit Wall Surface]
-##### Texture UV / Extrusions / Terrain / Smooth Shading / Detail / Tags / Attributes / Script
+##### Texture UV / Detail / Scripting
 
-#### [checkbox] Portal <!-- only when a portal is selected -->
+#### Portal <!-- only when a portal is selected -->
 Portal <edge ID> <readout>
 Kind <dropdown: wall, portal>
 To Sector <dropdown of sectors, or free text>
@@ -315,7 +312,9 @@ Gap Texture <dropdown of available textures> <!-- only when Draw Gap is on -->
 [eye] Visible
 Double Sided [checkbox]
 Alpha [-] [Number Slider] [+] [=]
-##### Tags / Attributes / Script
+##### Scripting
+
+#### Scripting <!-- the sector's own, after the faces that each carry theirs -->
 
 ### Vertex <!-- only in Point or Edge select, with at least one handle picked -->
 Vertex #<n> (<Floor | Ceiling>) — <sector ID>
@@ -409,7 +408,7 @@ Half-extents X/Y/Z [-] [Number Slider] [+] [=] <!-- half the region's size on ea
 #### Tags / Attributes / Script
 [Duplicate] [Delete]
 
-### Water <!-- only when a water plane is clicked, or its biome sector is selected -->
+### Water <!-- part of the biome brush block below, shown for the Water kind; reached by clicking the plane or the sector -->
 <!-- shape and extent come from the painted polygon; they are edited in the sector map's biome layer -->
 Depth [-] [Number Slider] [+] [=]
 Wave Amplitude [-] [Number Slider] [+] [=]
@@ -482,20 +481,19 @@ Scroll: zoom | MMB drag: pan | Shift+click: add point | Ctrl+click: multi-select
 [Discard n Unjoined Edge(s)] <!-- only when there are any; the points themselves stay -->
 [Add Point Here] [Delete n Points] [Clear Selection]
 Show All Point Boxes [checkbox]
+Edit Biome Layer [checkbox] <!-- the switch into the biome mode below; it is what a click reaches, not a property of anything -->
+[Refresh Heights] <!-- only with the layer on and something painted -->
 
-## Objects
+## Explorer
 <!--
-Identical to the 3D editor's Objects block — the same spawn point, chunks,
-entities, volumes, lights and scripts, because both views edit the same level.
-The chunk list is what switches which chunk the map is drawing.
+Identical to the 3D editor's Explorer — the same spawn point, chunks, sectors,
+biome sectors, entities, volumes, lights and scripts, because both views edit
+the same level. The chunk list is what switches which chunk the map is
+drawing, and each chunk's Sectors node is what the map's own sector list used
+to be.
 -->
 
 ## Properties
-
-### Sectors (<n>) <!-- the active chunk's sector list; selecting one opens the block below -->
-- Sector 1
-- Sector 2
-- Sector 3
 
 ### Sector <!-- only when a sector is selected -->
 <!--
@@ -549,18 +547,18 @@ Sub-modes:
             right-click undoes the last point, Esc cancels
 -->
 
-## Biome Sectors <!-- only while the biome layer is on -->
-Edit Biome Layer [checkbox] <!-- the switch into this mode; off, the section says so and shows nothing else -->
-[+ New Sector] [Refresh Heights]
-Placing sector (<n> pts) <readout> <!-- only while drawing -->
-[Finish] [Cancel] <!-- only while drawing -->
-<!-- [x] deletes the sector; [+] duplicates it -->
-- [x] [+] Sector 1 (Grass)
-- [x] [+] Sector 2 (Water)
-- [x] [+] Sector 3 (Rock)
+<!--
+The layer switch is under Map, the sectors are under the chunk that holds them
+in the Explorer, and a new one is drawn from the Explorer's Add menu — with
+the corner count and Finish/Cancel on the Explorer's placement banner while
+it is being drawn. What is left here is the selected sector's brush, which is
+a properties block like any other and is drawn in both editors: a water plane
+clicked in the 3D view selects the biome sector behind it.
+-->
 
 ## Properties <!-- only when a biome sector is selected -->
-Selected: <ID> (<n> pts) <readout>
+Biome: <ID> <!-- header -->
+<kind>, <n> points <readout>
 Brush <dropdown: Grass, Rock, Wildflower, Cattail, Sand, Water, Moss>
 <!-- switching resets to that kind's defaults rather than carrying stale fields over -->
 Density [-] [Number Slider] [+] [=] <!-- only for kinds that scatter -->
@@ -812,6 +810,7 @@ Fullscreen [checkbox] [F11]
 
 ## Panel
 Panel width [-] [Number Slider] [+] [=] <!-- also draggable from the panel's left edge -->
+Explorer height [-] [Number Slider] [+] [=] <!-- how tall the Explorer's tree is before it scrolls; the rest of the panel is the selection's properties -->
 [Keybindings (F1)]
 
 <!--

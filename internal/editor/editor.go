@@ -305,9 +305,6 @@ type EditorState struct {
 	// Point connection state for ctrl+click workflow
 	PendingEdges [][2]int // edges not yet part of a sector (chunk point indices)
 
-	// Navigation button state (reset each frame after applying)
-	NavForward, NavBack, NavLeft, NavRight, NavUp, NavDown bool
-
 	// --- Surface shaping (editor_surface.go) ---
 	SurfaceEditState
 
@@ -327,6 +324,13 @@ type EditorState struct {
 	// Side panel width (resizable by dragging the left edge)
 	PanelWidth    float32
 	PanelDragging bool
+
+	// ExplorerHeight is how tall the Explorer's scroll box is, in pixels. It
+	// is a box rather than a run of rows so that Properties below it stays on
+	// screen whatever the level holds — a hundred entities must not push the
+	// selected one's fields off the bottom — and it is settable because how
+	// much of the panel the tree deserves depends on the level.
+	ExplorerHeight float32
 
 	// Frame timing
 	LastTick uint32
@@ -402,6 +406,7 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	ExitSurfaceEdit()
 	Editor.Zoom2D = 20.0    // 20 px per world unit
 	Editor.PanelWidth = 360 // default side panel width
+	Editor.ExplorerHeight = 220
 	Editor.StepSize = 0.25
 	Editor.SnapToGrid = false
 	Editor.EditFloorVerts = true
@@ -704,8 +709,20 @@ func EditorHandleEvent(event sdl.Event) bool {
 		// clear the flag. The middle-button branch below has always carried a
 		// comment saying it was not gated; this is what makes that true, and
 		// for the right button and the gizmo as well.
-		if t.Type == sdl.MOUSEBUTTONUP && editorEndViewportDrag(t.Button) {
-			return true
+		if t.Type == sdl.MOUSEBUTTONUP {
+			// Only a left-button gesture consumes its release. A right-button
+			// one must fall through: every right-press arms the context menu
+			// (editor3DContextPressed), and it is the release that decides
+			// whether the gesture was a turn or a click.
+			if editorEndViewportDrag(t.Button) {
+				return true
+			}
+			// ...unless the gate below is about to swallow it, in which case
+			// the gesture is ended here rather than left armed for the next
+			// release to open a menu nobody asked for.
+			if t.Button == sdl.ButtonRight && imgui.CurrentIO().WantCaptureMouse() {
+				editor3DContextCancel()
+			}
 		}
 		if imgui.CurrentIO().WantCaptureMouse() {
 			break
@@ -814,37 +831,6 @@ func EditorTick(keyStates []uint8) {
 			// Free-fly using existing HandleInput (gravity is already off)
 			gfx.HandleInput(keyStates)
 		}
-
-		// Apply navigation button movement
-		dtScale := platform.DeltaTime * 60.0
-		navSpeed := platform.MovementSpeed * dtScale
-		if Editor.NavForward {
-			editorNavMove(Editor.Mode, navSpeed, 0, 0)
-		}
-		if Editor.NavBack {
-			editorNavMove(Editor.Mode, -navSpeed, 0, 0)
-		}
-		if Editor.NavLeft {
-			editorNavMove(Editor.Mode, 0, 0, navSpeed)
-		}
-		if Editor.NavRight {
-			editorNavMove(Editor.Mode, 0, 0, -navSpeed)
-		}
-		if Editor.NavUp {
-			editorNavMove(Editor.Mode, 0, navSpeed, 0)
-		}
-		if Editor.NavDown {
-			editorNavMove(Editor.Mode, 0, -navSpeed, 0)
-		}
-		if Editor.NavForward || Editor.NavBack || Editor.NavLeft || Editor.NavRight || Editor.NavUp || Editor.NavDown {
-			gfx.UpdateCamMatrix()
-		}
-		Editor.NavForward = false
-		Editor.NavBack = false
-		Editor.NavLeft = false
-		Editor.NavRight = false
-		Editor.NavUp = false
-		Editor.NavDown = false
 	}
 }
 
@@ -1012,16 +998,13 @@ func editorEndViewportDrag(button sdl.Button) bool {
 		}
 		return SurfaceEditHandleRelease()
 	case sdl.ButtonRight:
-		if Editor.Mode == Mode3D && Editor.MouseDragging3D {
-			Editor.MouseDragging3D = false
-			return true
-		}
+		// Cleared, but never reported as consumed: the caller has to go on to
+		// editor3DContextReleased, which is what turns a right-press that did
+		// not travel into a context menu.
+		Editor.MouseDragging3D = false
 	case sdl.ButtonMiddle:
-		if Editor.Mode == Mode3D && (Editor.MiddleDragging3D || Editor.PanDragging3D) {
-			Editor.MiddleDragging3D = false
-			Editor.PanDragging3D = false
-			return true
-		}
+		Editor.MiddleDragging3D = false
+		Editor.PanDragging3D = false
 	}
 	return false
 }

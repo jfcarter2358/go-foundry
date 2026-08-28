@@ -218,16 +218,6 @@ func editorOrbitKeys(keyStates []uint8) {
 	editorApplyCamAngles()
 }
 
-// editorNavMove is where the side panel's navigation buttons go. Only the 3D
-// view has an orbit mode to respect; every other mode always flies.
-func editorNavMove(mode EditorMode, f, u, r float32) {
-	if mode == Mode3D {
-		editorCamMove(f, u, r)
-		return
-	}
-	gfx.MoveCamera(f, u, r)
-}
-
 // ---------- framing ----------
 
 // editorFrameSelection points the camera at whatever is selected, falling back

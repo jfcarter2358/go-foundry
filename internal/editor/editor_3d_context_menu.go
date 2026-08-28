@@ -44,6 +44,12 @@ var editor3DMenuPoint mgl32.Vec3
 func editor3DContextPressed(mx, my int32) { editor3DRightPress.press(mx, my) }
 func editor3DContextMoved(mx, my int32)   { editor3DRightPress.motion(mx, my) }
 
+// editor3DContextCancel ends the gesture without opening anything — for a
+// right-release the viewport never sees, because the cursor finished over the
+// side panel. Without it the arm survives into the next gesture, and a later
+// release could open a menu no press asked for.
+func editor3DContextCancel() { editor3DRightPress.release() }
+
 // editor3DContextReleased ends the gesture, opening the menu when it was a
 // click rather than a camera turn. Returns whether it opened one.
 func editor3DContextReleased(mx, my int32) bool {

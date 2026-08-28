@@ -169,6 +169,14 @@ func UploadLights(ls LightSet) { UploadLightsTo(gfx.Program, ls, true) }
 // this binds it as the active program. verbose enables the informational log
 // (used only for the main program's initial upload).
 func UploadLightsTo(prog uint32, ls LightSet, verbose bool) {
+	// No program, nothing to upload to. Every uniform location on program 0 is
+	// -1, so the whole body below is already a no-op wherever a GL context does
+	// exist; without one — a headless load, an undo restore in a test — it is a
+	// crash in cgo instead. Answering "nothing to do" is the same answer, given
+	// earlier.
+	if prog == 0 {
+		return
+	}
 	gl.UseProgram(prog)
 	UniformLoc := func(name string) int32 { return ProgUniformLoc(prog, name) }
 	if verbose {

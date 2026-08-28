@@ -354,9 +354,14 @@ func waterControls(idSuffix string, w *gfx.WaterParams, g *gfx.Geometry) {
 // editorUVControls draws collapsible UV offset/scale/rotation controls.
 // Returns true if any value changed.
 func editorUVControls(label string, offset *mgl32.Vec2, scale *mgl32.Vec2, rotation *float32) bool {
-	if !imgui.CollapsingHeader(fmt.Sprintf("Texture UV##%sUV", label)) {
-		return false
-	}
+	changed := false
+	editorPropGroup(fmt.Sprintf("Texture UV##%sUV", label), 0, func() {
+		changed = editorUVControlsBody(label, offset, scale, rotation)
+	})
+	return changed
+}
+
+func editorUVControlsBody(label string, offset *mgl32.Vec2, scale *mgl32.Vec2, rotation *float32) bool {
 	changed := false
 	uvOff := [2]float32{offset.X(), offset.Y()}
 	if editorDragFloat(fmt.Sprintf("UV Offset U##%suvou", label), &uvOff[0], 0, 0, "%.3f") ||
@@ -493,10 +498,14 @@ func editorDetailPresetSaveRow(surfaceLabel string, d *world.DetailSpec) bool {
 // displacement + scatter). surfaceLabel disambiguates ImGui IDs across the
 // Floor/Ceiling/Wall panels. Returns true if any value changed.
 func editorDetailPanel(surfaceLabel string, d *world.DetailSpec) bool {
-	imgui.Separator()
-	if !imgui.CollapsingHeader(fmt.Sprintf("Detail##%sdet", surfaceLabel)) {
-		return false
-	}
+	changed := false
+	editorPropGroup(fmt.Sprintf("Detail##%sdet", surfaceLabel), 0, func() {
+		changed = editorDetailPanelBody(surfaceLabel, d)
+	})
+	return changed
+}
+
+func editorDetailPanelBody(surfaceLabel string, d *world.DetailSpec) bool {
 	changed := false
 	changed = imgui.Checkbox(fmt.Sprintf("Enabled##%sdetEn", surfaceLabel), &d.Enabled) || changed
 	if !d.Enabled {
@@ -1006,190 +1015,72 @@ func Editor2DPanel() {
 	editorChunkPopups(lvl)
 }
 
-// editor2DSectorSections draws the sector list and the selected sector's
-// properties, vertex, and edge editors for the active chunk.
-func editor2DSectorSections(ch *world.Chunk) {
-	// ---- Sector list ----
+// editor2DSectorSections draws the selected sector's properties and, under
+// them, the selected corner.
+//
+// The sector block itself is the one the 3D panel draws — see
+// editor_sector_panel.go — so the two editors cannot disagree about what a
+// wall or a floor carries. What is left here is the corner, which only the map
+// can pick: a position in the plan, and the two per-corner height offsets that
+// tilt the floor and the ceiling above it.
+func editor2DSectorSections(lvl *world.Level, ch *world.Chunk) {
+	if Editor.ActiveSectorIdx < 0 || Editor.ActiveSectorIdx >= len(ch.Sectors) {
+		return
+	}
+	s := &ch.Sectors[Editor.ActiveSectorIdx]
+
 	imgui.Separator()
-	if imgui.CollapsingHeader(fmt.Sprintf("Sectors (%d)", len(ch.Sectors))) {
-		for i := range ch.Sectors {
-			s := &ch.Sectors[i]
-			selected := i == Editor.ActiveSectorIdx
-			if imgui.SelectableV(s.ID, selected, 0, imgui.Vec2{}) {
-				Editor.ActiveSectorIdx = i
-				Editor.ActiveEdgeIdx = -1
-			}
-		}
+	editorFocusOpen(panelFocusSector, panelFocusFloor, panelFocusCeiling, panelFocusWall)
+	if !imgui.CollapsingHeaderV("Sector: "+s.ID+"##sechdr2d", imgui.TreeNodeFlagsDefaultOpen) {
+		return
 	}
-
-	// ---- Selected sector properties ----
-	if Editor.ActiveSectorIdx >= 0 && Editor.ActiveSectorIdx < len(ch.Sectors) {
-		imgui.Separator()
-		s := &ch.Sectors[Editor.ActiveSectorIdx]
-		sectorPts := world.SectorPoints(ch, s)
-		if imgui.CollapsingHeaderV("Sector: "+s.ID, imgui.TreeNodeFlagsDefaultOpen) {
-			imgui.InputText("Sector ID##sid", &s.ID)
-
-			// Floor
-			if imgui.TreeNode("Floor") {
-				changed := false
-				changed = imgui.Checkbox("Enabled##fe", &s.Floor.Enabled) || changed
-				imgui.Checkbox("Hide Texture##fhid", &s.Floor.Hidden)
-				changed = editorDragFloat("Height##fh", &s.Floor.Height, 0, 0, "%.3f") || changed
-				changed = textureCombo("Texture##ft", &s.Floor.Texture, false) || changed
-				changed = textureCombo("Blend Texture##fbt", &s.Floor.BlendTexture, true) || changed
-				changed = textureCombo("Blend Mask##fbm", &s.Floor.BlendMask, true) || changed
-				imgui.Checkbox("Double Sided##fds", &s.Floor.DoubleSided)
-				changed = editorDragFloat("Alpha##fa", &s.Floor.Alpha, 0, 1, "%.2f") || changed
-				if changed {
-					_ = world.ReloadSector(ch, s)
-				}
-				imgui.TreePop()
-			}
-
-			// Ceiling
-			if imgui.TreeNode("Ceiling") {
-				changed := false
-				changed = imgui.Checkbox("Enabled##ce", &s.Ceiling.Enabled) || changed
-				changed = editorDragFloat("Height##ch", &s.Ceiling.Height, 0, 0, "%.3f") || changed
-				changed = textureCombo("Texture##ct", &s.Ceiling.Texture, false) || changed
-				changed = textureCombo("Blend Texture##cbt", &s.Ceiling.BlendTexture, true) || changed
-				changed = textureCombo("Blend Mask##cbm", &s.Ceiling.BlendMask, true) || changed
-				imgui.Checkbox("Double Sided##cds", &s.Ceiling.DoubleSided)
-				changed = editorDragFloat("Alpha##ca", &s.Ceiling.Alpha, 0, 1, "%.2f") || changed
-				if changed {
-					_ = world.ReloadSector(ch, s)
-				}
-				imgui.TreePop()
-			}
-
-			// Floor/ceiling surface shaping + UV, smooth and detail panels —
-			// the same set the 3D panel offers. Shaping itself happens in the
-			// 3D view: it is done by dragging the mesh where it is, and the map
-			// has no depth to drag along.
-			editorSurfacePanel(ch, s, surfaceFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "floor"))
-			if editorUVControls("Floor2D", &s.Floor.UVOffset, &s.Floor.UVScale, &s.Floor.UVRotation) {
-				_ = world.ReloadSector(ch, s)
-			}
-			if editorSmoothPanel("Floor2D", &s.Floor.Smooth, &s.Floor.SmoothAngle) {
-				_ = world.ReloadSector(ch, s)
-			}
-			editorDetailPanel("Floor2D", &s.Floor.Detail)
-			editorSurfacePanel(ch, s, surfaceFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "ceiling"))
-			if editorUVControls("Ceil2D", &s.Ceiling.UVOffset, &s.Ceiling.UVScale, &s.Ceiling.UVRotation) {
-				_ = world.ReloadSector(ch, s)
-			}
-			if editorSmoothPanel("Ceil2D", &s.Ceiling.Smooth, &s.Ceiling.SmoothAngle) {
-				_ = world.ReloadSector(ch, s)
-			}
-			editorDetailPanel("Ceil2D", &s.Ceiling.Detail)
-		}
-
-		// The floor/ceiling corner-height toggle lives in the Map section
-		// (editor2DMapSection), above Objects — it is not a property of this
-		// sector, it decides what a click on any sector's corner reaches.
-
-		// ---- Selected vertex position and height ----
-		si := Editor.ActiveVertexSI
-		vi := Editor.ActiveVertexVI
-		if si == Editor.ActiveSectorIdx && si >= 0 && vi >= 0 && vi < len(sectorPts) {
-			imgui.Separator()
-			imgui.Text(fmt.Sprintf("Vertex #%d", vi))
-			x := sectorPts[vi].X()
-			z := sectorPts[vi].Y()
-			xChanged := editorDragFloat(fmt.Sprintf("X##vx%d", vi), &x, -1e6, 1e6, "%.3f")
-			zChanged := editorDragFloat(fmt.Sprintf("Z##vz%d", vi), &z, -1e6, 1e6, "%.3f")
-			if xChanged || zChanged {
-				if vi < len(s.PointIndices) {
-					pIdx := s.PointIndices[vi]
-					was := ch.Points[pIdx]
-					ch.Points[pIdx] = mgl32.Vec2{x, z}
-					biome.CarryBiomesWithPoints(ch, []biome.PointMove{{PointIdx: pIdx, From: was}})
-				}
-				rebuildSectorEdgePoints(ch, s)
-				reloadSectorsUsingPoint(ch, s.PointIndices[vi])
-			}
-
-			// Floor vertex offset
-			if vi < len(s.Floor.VertexOffsets) {
-				fOff := s.Floor.VertexOffsets[vi]
-				if editorDragFloat(fmt.Sprintf("Floor Offset##fo%d", vi), &fOff, -100, 100, "%.3f") {
-					s.Floor.VertexOffsets[vi] = fOff
-					_ = world.ReloadSector(ch, s)
-				}
-			}
-			// Ceiling vertex offset
-			if vi < len(s.Ceiling.VertexOffsets) {
-				cOff := s.Ceiling.VertexOffsets[vi]
-				if editorDragFloat(fmt.Sprintf("Ceil Offset##co%d", vi), &cOff, -100, 100, "%.3f") {
-					s.Ceiling.VertexOffsets[vi] = cOff
-					_ = world.ReloadSector(ch, s)
-				}
-			}
-		}
-
-		// ---- Selected edge properties ----
-		if Editor.ActiveEdgeIdx >= 0 {
-			imgui.Separator()
-			editorEdgePanel(ch, s)
-		}
-	}
+	editorFocusScroll(panelFocusSector)
+	editorSectorPropertiesBody(lvl, ch, s, "2d")
+	editor2DVertexGroup(ch, s)
 }
 
-// editorEdgePanel draws the property editor for the currently selected edge.
-func editorEdgePanel(ch *world.Chunk, s *world.Sector) {
-	kind := Editor.ActiveEdgeKind
-	idx := Editor.ActiveEdgeIdx
-
-	imgui.Text(fmt.Sprintf("Edge: %s #%d", kind, idx))
-
-	// Kind toggle
-	editorEdgeKindCombo(ch, s, "2d")
-
-	changed := false
-
-	if kind == "wall" && idx < len(s.Walls) {
-		w := &s.Walls[idx]
-		changed = textureCombo("Texture##wt", &w.Texture, false) || changed
-		changed = textureCombo("Blend Texture##wbt", &w.BlendTexture, true) || changed
-		changed = textureCombo("Blend Mask##wbm", &w.BlendMask, true) || changed
-		changed = imgui.Checkbox("Collision##wc", &w.Collision) || changed
-		changed = imgui.Checkbox("Visible##wv", &w.Visible) || changed
-		// The wall mesh bakes DoubleSided in, so this needs the rebuild below —
-		// unlike floor/ceiling, which read the flag at draw time.
-		changed = imgui.Checkbox("Double Sided##wds", &w.DoubleSided) || changed
-		changed = editorDragFloat("Alpha##wa", &w.Alpha, 0, 1, "%.2f") || changed
-		if changed {
-			_ = world.ReloadSector(ch, s)
-			ch.RebuildGaps()
-		}
-		changed = false
-		editorSurfacePanel(ch, s, edgeFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "wall", idx))
-		if editorUVControls("Wall2D", &w.UVOffset, &w.UVScale, &w.UVRotation) {
-			_ = world.ReloadSector(ch, s)
-		}
-		// Smooth shading (rebuilds the wall: normals are made at upload)
-		if editorSmoothPanel("Wall2D", &w.Smooth, &w.SmoothAngle) {
-			_ = world.ReloadSector(ch, s)
-		}
-		editorDetailPanel("Wall2D", &w.Detail)
-	} else if kind == "portal" && idx < len(s.Portals) {
-		p := &s.Portals[idx]
-		changed = imgui.InputText("To Sector##pts", &p.ToSector) || changed
-		changed = imgui.Checkbox("Draw Gap##pdg", &p.DrawGap) || changed
-		if p.DrawGap {
-			changed = textureCombo("Gap Texture##pgt", &p.GapTexture, true) || changed
-		}
-		changed = imgui.Checkbox("Visible##pv", &p.Visible) || changed
-		// Same as walls: the gap quad bakes DoubleSided in.
-		changed = imgui.Checkbox("Double Sided##pds", &p.DoubleSided) || changed
-		changed = editorDragFloat("Alpha##pa", &p.Alpha, 0, 1, "%.2f") || changed
+// editor2DVertexGroup draws the selected corner of the selected sector.
+func editor2DVertexGroup(ch *world.Chunk, s *world.Sector) {
+	si, vi := Editor.ActiveVertexSI, Editor.ActiveVertexVI
+	sectorPts := world.SectorPoints(ch, s)
+	if si != Editor.ActiveSectorIdx || si < 0 || vi < 0 || vi >= len(sectorPts) {
+		return
 	}
 
-	if changed {
-		_ = world.ReloadSector(ch, s)
-		ch.RebuildGaps()
-	}
+	editorFocusOpen(panelFocusVertex)
+	editorPropGroup(fmt.Sprintf("Corner %d##grpvert2d", vi), imgui.TreeNodeFlagsDefaultOpen, func() {
+		editorFocusScroll(panelFocusVertex)
+		x := sectorPts[vi].X()
+		z := sectorPts[vi].Y()
+		xChanged := editorDragFloat(fmt.Sprintf("X##vx%d", vi), &x, -1e6, 1e6, "%.3f")
+		zChanged := editorDragFloat(fmt.Sprintf("Z##vz%d", vi), &z, -1e6, 1e6, "%.3f")
+		if xChanged || zChanged {
+			if vi < len(s.PointIndices) {
+				pIdx := s.PointIndices[vi]
+				was := ch.Points[pIdx]
+				ch.Points[pIdx] = mgl32.Vec2{x, z}
+				biome.CarryBiomesWithPoints(ch, []biome.PointMove{{PointIdx: pIdx, From: was}})
+			}
+			rebuildSectorEdgePoints(ch, s)
+			reloadSectorsUsingPoint(ch, s.PointIndices[vi])
+		}
+
+		// The two per-corner height deltas, which is what makes a ramp.
+		if vi < len(s.Floor.VertexOffsets) {
+			fOff := s.Floor.VertexOffsets[vi]
+			if editorDragFloat(fmt.Sprintf("Floor Offset##fo%d", vi), &fOff, -100, 100, "%.3f") {
+				s.Floor.VertexOffsets[vi] = fOff
+				_ = world.ReloadSector(ch, s)
+			}
+		}
+		if vi < len(s.Ceiling.VertexOffsets) {
+			cOff := s.Ceiling.VertexOffsets[vi]
+			if editorDragFloat(fmt.Sprintf("Ceil Offset##co%d", vi), &cOff, -100, 100, "%.3f") {
+				s.Ceiling.VertexOffsets[vi] = cOff
+				_ = world.ReloadSector(ch, s)
+			}
+		}
+	})
 }
 
 // convertEdge converts an edge between wall and portal types.

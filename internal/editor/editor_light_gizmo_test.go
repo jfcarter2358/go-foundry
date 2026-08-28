@@ -8,6 +8,7 @@ package editor
 // the view you were lighting.
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/world"
 	"math"
 	"testing"
@@ -86,6 +87,41 @@ func TestClearingTheLightSelectionDropsTheGizmo(t *testing.T) {
 	}
 	if activeGizmoPointLight() != nil {
 		t.Error("activeGizmoPointLight still resolves after the selection was cleared")
+	}
+}
+
+// Dragging an axis arm moves the light along that world axis.
+func TestDraggingTheGizmoMovesTheLight(t *testing.T) {
+	defer saveEditorSelection()()
+	setupGizmoView()
+	lvl := lightTestLevel(mgl32.Vec3{0, 0, 0})
+	editorSelectLight(lightKindPoint, 0)
+
+	if !captureGizmoDragStart() {
+		t.Fatal("a drag on the light's gizmo could not start")
+	}
+	Editor.GizmoDragging = true
+	Editor.GizmoDragTool = editorToolMove
+	Editor.GizmoDragAxis = 0
+	Editor.GizmoDragOrigin = lvl.Lights.Points[0].Position
+	Editor.GizmoDragStartS = 0
+	Editor.SnapToGrid = false
+
+	// Aim at a point 3 units along X and map it back, exactly as the mouse path
+	// does (see TestAxisParamAtMouse).
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
+	target, ok := projectToScreen(projView, mgl32.Vec3{3, 0, 0})
+	if !ok {
+		t.Fatal("the drag target did not project")
+	}
+	translateGizmoMouseMove(int32(target.X()), int32(target.Y()))
+
+	got := lvl.Lights.Points[0].Position
+	if math.Abs(float64(got.X()-3)) > 0.1 {
+		t.Errorf("the light moved to %v, want ~(3,0,0)", got)
+	}
+	if got.Y() != 0 || got.Z() != 0 {
+		t.Errorf("an X-axis drag moved the light off the axis: %v", got)
 	}
 }
 

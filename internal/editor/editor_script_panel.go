@@ -32,9 +32,10 @@ import (
 // Tags are what a script's `#tag` addresses, so the list is kept sorted —
 // NormalizeTags does that on every add.
 func editorTagsUI(tags *[]string, idSuffix, header string) {
-	if !imgui.CollapsingHeaderV(header+"##tags"+idSuffix, imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
+	editorPropGroupOpen(header+"##tags"+idSuffix, func() { editorTagsUIBody(tags, idSuffix) })
+}
+
+func editorTagsUIBody(tags *[]string, idSuffix string) {
 	for _, t := range *tags {
 		imgui.Text("#" + t)
 		imgui.SameLine()
@@ -67,10 +68,12 @@ func editorTagsUI(tags *[]string, idSuffix, header string) {
 // editorAttributesUI draws an attribute table and its add row, editing the set
 // in place. owner names the object in the duplicate-name message.
 func editorAttributesUI(attrs *world.AttrSet, idSuffix, header, owner string) {
-	if !imgui.CollapsingHeaderV(header+"##attrs"+idSuffix, imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
+	editorPropGroupOpen(header+"##attrs"+idSuffix, func() {
+		editorAttributesUIBody(attrs, idSuffix, owner)
+	})
+}
 
+func editorAttributesUIBody(attrs *world.AttrSet, idSuffix, owner string) {
 	for _, name := range attrs.AttrNames() {
 		if editorAttributeRow(attrs, idSuffix, name) {
 			// The set was rewritten under the iteration; resume next frame.
@@ -174,10 +177,12 @@ func editorAttributeValue(attrs *world.AttrSet, name string, v world.AttrValue) 
 // The list is rescanned when the section is opened rather than watched, matching
 // how the entity catalog and the texture picker work.
 func editorScriptUI(scriptPath *string, params *world.AttrSet, idSuffix, owner string) {
-	if !imgui.CollapsingHeaderV("Script##script"+idSuffix, imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
+	editorPropGroupOpen("Script##script"+idSuffix, func() {
+		editorScriptUIBody(scriptPath, params, idSuffix, owner)
+	})
+}
 
+func editorScriptUIBody(scriptPath *string, params *world.AttrSet, idSuffix, owner string) {
 	if Editor.ScriptFileNames == nil {
 		editorRefreshScriptFiles()
 	}
@@ -389,8 +394,16 @@ func editorRefreshScriptFiles() {
 // editorScriptDataUI draws all three sections for an object that carries a
 // ScriptData — every scriptable thing except an entity, whose tags and
 // attributes are merged from its definition and so are edited separately.
+//
+// Under one "Scripting" group, because scripting is one subject: every
+// scriptable thing in the level carries three of these lists, and a sector —
+// which has a set of its own plus one per floor, ceiling, wall and portal —
+// was showing a dozen open tag/attribute/script bars before anything about the
+// geometry got a look in.
 func editorScriptDataUI(d *world.ScriptData, idSuffix, owner string) {
-	editorTagsUI(&d.Tags, idSuffix, "Tags")
-	editorAttributesUI(&d.Attributes, idSuffix, "Attributes", owner)
-	editorScriptUI(&d.Script, &d.ScriptParams, idSuffix, owner)
+	editorPropGroup("Scripting##scripting"+idSuffix, 0, func() {
+		editorTagsUI(&d.Tags, idSuffix, "Tags")
+		editorAttributesUI(&d.Attributes, idSuffix, "Attributes", owner)
+		editorScriptUI(&d.Script, &d.ScriptParams, idSuffix, owner)
+	})
 }

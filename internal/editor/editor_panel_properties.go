@@ -10,8 +10,8 @@ package editor
 // actually act on") lives here more than anywhere else in the panel.
 //
 // Order follows SETTINGS_LAYOUT.md: Chunk, then whatever the current editor's
-// own selection unit is (a 3D face/vertex, or the 2D sector map's sector list
-// and vertex/edge blocks), then Entity, Volume, and Lights.
+// own selection unit is (a 3D face/vertex, or the 2D sector map's vertex/edge
+// blocks), then the painted biome sector, Entity, Volume, and Lights.
 
 import (
 	"foundry/internal/world"
@@ -19,32 +19,67 @@ import (
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
 
+// editorPropGroup draws one collapsible group of related fields inside a
+// properties block, and runs body when it is open.
+//
+// Groups are what make a properties block readable: a sector's floor carries a
+// height, a texture, a mesh to shape, UV, a skirt, smoothing, procedural detail
+// and its own tags/attributes/script, and drawn flat that is thirty controls in
+// one column with nothing saying which of them are about the floor. One group
+// per thing, and every group folds away as a unit.
+//
+// A tree node rather than a collapsing header, because these nest: the framed
+// bar is the properties block itself, and what sits inside it is indented under
+// it rather than competing with it.
+//
+// label carries its own "##id" suffix wherever the visible text can change —
+// imgui derives a node's ID from its label, so a group titled after the thing
+// it edits would forget whether it was open every time that name changed.
+func editorPropGroup(label string, flags imgui.TreeNodeFlags, body func()) {
+	if !imgui.TreeNodeV(label, flags|imgui.TreeNodeFlagsSpanAvailWidth) {
+		return
+	}
+	body()
+	imgui.TreePop()
+}
+
+// editorPropGroupOpen is editorPropGroup for the group a block opens on — the
+// one holding what the object *is*, which is what someone who just selected it
+// came to see.
+func editorPropGroupOpen(label string, body func()) {
+	editorPropGroup(label, imgui.TreeNodeFlagsDefaultOpen, body)
+}
+
 // editorPropertiesSection draws every properties block, in order.
 func editorPropertiesSection(lvl *world.Level, kind editorPanelKind) {
 	editorChunkPropertiesSection(lvl)
 
 	if kind == panelKind2D {
 		if ch := activeChunk(); ch != nil {
-			editor2DSectorSections(ch)
-			biomePanelSection()
+			editor2DSectorSections(lvl, ch)
 		}
 	} else {
-		editorWaterSection(lvl)
 		editor3DSectorPropertiesSection(lvl)
 		editor3DVertexPanel(lvl)
 	}
+	// Both editors: a water plane clicked in the 3D view selects the biome
+	// sector that produced it, so the brush has to be reachable from there
+	// too — it used to be a water-only block of its own, which meant the same
+	// sector showed two different subsets of itself depending on which editor
+	// was asking.
+	biomePanelSection()
 
+	editorSpawnPointSection(lvl)
 	editorEntityProperties(lvl)
 	editorVolumePropertiesSection()
 	editorLightPropertiesSection(lvl)
 }
 
-// editor3DSectorPropertiesSection draws the selected sector's floor, ceiling
-// and edge — whatever a 3D click landed on. Extracted from Editor3DPanel's old
-// inline body so it can take its place in Properties like everything else here.
+// editor3DSectorPropertiesSection draws the selected sector — whatever a 3D
+// click landed on. The block itself is shared with the sector map's panel; see
+// editor_sector_panel.go.
 func editor3DSectorPropertiesSection(lvl *world.Level) {
-	if Editor.SpawnSelected || Editor.ActiveSectorIdx < 0 ||
-		!activeChunkIndexValid() {
+	if Editor.ActiveSectorIdx < 0 || !activeChunkIndexValid() {
 		return
 	}
 	sch := &lvl.Chunks[Editor.ActiveChunkIdx]
@@ -54,138 +89,12 @@ func editor3DSectorPropertiesSection(lvl *world.Level) {
 	s3d := &sch.Sectors[Editor.ActiveSectorIdx]
 
 	imgui.Separator()
-	editorFocusOpen(panelFocusFloor, panelFocusCeiling, panelFocusWall)
-	if !imgui.CollapsingHeaderV("Sector: "+s3d.ID, imgui.TreeNodeFlagsDefaultOpen) {
+	editorFocusOpen(panelFocusSector, panelFocusFloor, panelFocusCeiling, panelFocusWall)
+	if !imgui.CollapsingHeaderV("Sector: "+s3d.ID+"##sechdr3d", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
-	imgui.InputText("ID##sid3d", &s3d.ID)
-	editorFaceSelectionNote()
-	// The sector's own tags, attributes and script. Its floor, ceiling and
-	// edges each carry their own set below.
-	editorScriptDataUI(&s3d.ScriptData, "sec3d", "This sector")
-
-	editorFocusOpen(panelFocusFloor)
-	if imgui.TreeNode("Floor##3df") {
-		editorFocusScroll(panelFocusFloor)
-		changed := false
-		changed = imgui.Checkbox("Enabled##fe3d", &s3d.Floor.Enabled) || changed
-		imgui.Checkbox("Hide Texture##fhid3d", &s3d.Floor.Hidden)
-		changed = editorDragFloat("Height##fh3d", &s3d.Floor.Height, 0, 0, "%.3f") || changed
-		changed = textureCombo("Texture##ft3d", &s3d.Floor.Texture, false) || changed
-		changed = textureCombo("Blend Texture##fbt3d", &s3d.Floor.BlendTexture, true) || changed
-		changed = textureCombo("Blend Mask##fbm3d", &s3d.Floor.BlendMask, true) || changed
-		imgui.Checkbox("Double Sided##fds3d", &s3d.Floor.DoubleSided)
-		changed = editorDragFloat("Alpha##fa3d", &s3d.Floor.Alpha, 0, 1, "%.2f") || changed
-		if changed {
-			_ = world.ReloadSector(sch, s3d)
-		}
-		imgui.TreePop()
-	}
-	editorSurfacePanel(sch, s3d, surfaceFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "floor"))
-	if editorUVControls("Floor", &s3d.Floor.UVOffset, &s3d.Floor.UVScale, &s3d.Floor.UVRotation) {
-		_ = world.ReloadSector(sch, s3d)
-	}
-	editorSkirtPanel(sch, s3d)
-	if editorSmoothPanel("Floor", &s3d.Floor.Smooth, &s3d.Floor.SmoothAngle) {
-		_ = world.ReloadSector(sch, s3d)
-	}
-	editorDetailPanel("Floor", &s3d.Floor.Detail)
-	editorScriptDataUI(&s3d.Floor.ScriptData, "floor3d", "This floor")
-
-	editorFocusOpen(panelFocusCeiling)
-	if imgui.TreeNode("Ceiling##3dc") {
-		editorFocusScroll(panelFocusCeiling)
-		changed := false
-		changed = imgui.Checkbox("Enabled##ce3d", &s3d.Ceiling.Enabled) || changed
-		changed = editorDragFloat("Height##ch3d", &s3d.Ceiling.Height, 0, 0, "%.3f") || changed
-		changed = textureCombo("Texture##ct3d", &s3d.Ceiling.Texture, false) || changed
-		changed = textureCombo("Blend Texture##cbt3d", &s3d.Ceiling.BlendTexture, true) || changed
-		changed = textureCombo("Blend Mask##cbm3d", &s3d.Ceiling.BlendMask, true) || changed
-		imgui.Checkbox("Double Sided##cds3d", &s3d.Ceiling.DoubleSided)
-		changed = editorDragFloat("Alpha##ca3d", &s3d.Ceiling.Alpha, 0, 1, "%.2f") || changed
-		if changed {
-			_ = world.ReloadSector(sch, s3d)
-		}
-		imgui.TreePop()
-	}
-	editorSurfacePanel(sch, s3d, surfaceFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "ceiling"))
-	if editorUVControls("Ceiling", &s3d.Ceiling.UVOffset, &s3d.Ceiling.UVScale, &s3d.Ceiling.UVRotation) {
-		_ = world.ReloadSector(sch, s3d)
-	}
-	if editorSmoothPanel("Ceiling", &s3d.Ceiling.Smooth, &s3d.Ceiling.SmoothAngle) {
-		_ = world.ReloadSector(sch, s3d)
-	}
-	editorDetailPanel("Ceiling", &s3d.Ceiling.Detail)
-	editorScriptDataUI(&s3d.Ceiling.ScriptData, "ceil3d", "This ceiling")
-
-	if Editor.ActiveEdgeIdx >= 0 {
-		imgui.Separator()
-		editorEdgeKindCombo(sch, s3d, "3d")
-	}
-	switch {
-	case Editor.ActiveEdgeKind == "wall" && Editor.ActiveEdgeIdx >= 0 && Editor.ActiveEdgeIdx < len(s3d.Walls):
-		imgui.Separator()
-		editorFocusScroll(panelFocusWall)
-		w := &s3d.Walls[Editor.ActiveEdgeIdx]
-		// The ID rather than the index: the index shifts under nearly every
-		// edit, and the ID is what a script addresses.
-		imgui.Text("Wall " + world.EdgeIDDisplay(w.ID))
-		if imgui.IsItemHovered() {
-			imgui.SetTooltip("A script reaches this edge as @" + s3d.ID + ".edge." + w.ID)
-		}
-		changed := false
-		changed = textureCombo("Texture##wt3d", &w.Texture, false) || changed
-		changed = textureCombo("Blend Texture##wbt3d", &w.BlendTexture, true) || changed
-		changed = textureCombo("Blend Mask##wbm3d", &w.BlendMask, true) || changed
-		changed = imgui.Checkbox("Collision##wc3d", &w.Collision) || changed
-		changed = imgui.Checkbox("Pinned##wp3d", &w.Pinned) || changed
-		if imgui.IsItemHovered() {
-			imgui.SetTooltip("Portal inference will not convert this wall.")
-		}
-		changed = imgui.Checkbox("Visible##wv3d", &w.Visible) || changed
-		changed = imgui.Checkbox("Double Sided##wds3d", &w.DoubleSided) || changed
-		changed = editorDragFloat("Alpha##wa3d", &w.Alpha, 0, 1, "%.2f") || changed
-		if changed {
-			_ = world.ReloadSector(sch, s3d)
-		}
-		editorSurfacePanel(sch, s3d, edgeFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "wall", Editor.ActiveEdgeIdx))
-		if editorUVControls("Wall", &w.UVOffset, &w.UVScale, &w.UVRotation) {
-			_ = world.ReloadSector(sch, s3d)
-		}
-		if editorSmoothPanel("Wall", &w.Smooth, &w.SmoothAngle) {
-			_ = world.ReloadSector(sch, s3d)
-		}
-		editorDetailPanel("Wall", &w.Detail)
-		editorScriptDataUI(&w.ScriptData, "wall3d", "This wall")
-
-	case Editor.ActiveEdgeKind == "portal" && Editor.ActiveEdgeIdx >= 0 && Editor.ActiveEdgeIdx < len(s3d.Portals):
-		imgui.Separator()
-		p3d := &s3d.Portals[Editor.ActiveEdgeIdx]
-		imgui.Text("Portal " + world.EdgeIDDisplay(p3d.ID))
-		if imgui.IsItemHovered() {
-			imgui.SetTooltip("A script reaches this edge as @" + s3d.ID + ".edge." + p3d.ID)
-		}
-		changed := false
-		changed = imgui.InputText("To Sector##pts3d", &p3d.ToSector) || changed
-		changed = editorPortalFrameCombo(lvl, sch, p3d) || changed
-		changed = imgui.Checkbox("Draw Gap##pdg3d", &p3d.DrawGap) || changed
-		if p3d.DrawGap {
-			changed = textureCombo("Gap Texture##pgt3d", &p3d.GapTexture, true) || changed
-		}
-		changed = imgui.Checkbox("Visible##pv3d", &p3d.Visible) || changed
-		// The gap quad bakes DoubleSided in, so this needs the rebuild below —
-		// unlike floor/ceiling, which read the flag at draw time.
-		changed = imgui.Checkbox("Double Sided##pds3d", &p3d.DoubleSided) || changed
-		changed = editorDragFloat("Alpha##pa3d", &p3d.Alpha, 0, 1, "%.2f") || changed
-		if changed {
-			_ = world.ReloadSector(sch, s3d)
-			sch.RebuildGaps()
-		}
-		editorScriptDataUI(&p3d.ScriptData, "portal3d", "This portal")
-
-	default:
-		imgui.Text("Click a vertex handle to edit its position")
-	}
+	editorFocusScroll(panelFocusSector)
+	editorSectorPropertiesBody(lvl, sch, s3d, "3d")
 }
 
 // editorPortalFrameCombo draws the target-frame picker for a portal: which
@@ -226,8 +135,7 @@ func editorPortalFrameCombo(lvl *world.Level, ch *world.Chunk, p *world.Portal) 
 	return changed
 }
 
-// The 2D editor's own sector/vertex/edge properties (editor2DSectorSections,
-// editorEdgePanel) and the biome layer's (biomePanelSection) stay in their
-// existing homes — editor_ui.go and editor_biome.go — since they were already
-// factored out as their own functions. This file only wires them into the
-// shared Properties order above.
+// The sector block itself lives in editor_sector_panel.go, drawn by both
+// editors; the map's corner block (editor2DVertexGroup) stays in editor_ui.go
+// with the rest of the map's own drawing, and the biome brush in
+// editor_biome.go. This file wires them into the shared Properties order above.

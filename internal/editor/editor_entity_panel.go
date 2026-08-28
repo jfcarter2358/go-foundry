@@ -2,12 +2,14 @@ package editor
 
 // editor_entity_panel.go — the entity side of the editor's properties panel.
 //
-// Two sections, drawn by both the 3D and the 2D panel:
+// Two pieces, drawn by both the 3D and the 2D panel:
 //
-//	editorEntitySection    the catalog and the level's entity list — always up,
-//	                       because placing the first entity has to be reachable
-//	                       with nothing selected
+//	editorEntityAddMenu    the catalog, inside the Explorer's Add menu — the
+//	                       one place a new entity is asked for
 //	editorEntityProperties the selected entity's own fields
+//
+// The level's entity list is in the Explorer (editor_panel_explorer.go), with
+// everything else the level contains.
 //
 // Angles are shown in degrees throughout and stored in radians, the same
 // convention the light panel uses. Nobody authors a rotation in radians, and
@@ -23,17 +25,20 @@ import (
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
 
-// ---------- catalog + list ----------
+// ---------- the catalog ----------
 
-// editorEntitySection draws the definition catalog, the place button, and the
-// list of entities already in the level.
-func editorEntitySection(lvl *world.Level) {
-	imgui.Separator()
-	editorFocusOpen(panelFocusEntity)
-	if !imgui.CollapsingHeaderV("Entities", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
-
+// editorEntityAddMenu draws the entity half of the Explorer's Add menu: the ID
+// to give the next one, and the catalog of types to place.
+//
+// The catalog used to be a combo and a Place button sitting permanently in the
+// panel — five lines for a click that happens once a session. It is a menu of
+// types now, and picking one arms placement directly, so choosing the type and
+// asking for it are the same act rather than two controls that could disagree.
+//
+// EntityDefIdx is still written, because the viewport context menus' "Add
+// <type> here" reads it to name the type they would place
+// (editorAddEntityMenuItem).
+func editorEntityAddMenu() {
 	// Scanned on first open rather than at startup: the editor can be launched
 	// before any definition exists, and a catalog that was empty once would
 	// stay empty for the session.
@@ -41,94 +46,43 @@ func editorEntitySection(lvl *world.Level) {
 		editorRefreshEntityDefs()
 	}
 
-	editorEntityEngineToggles()
-	imgui.Separator()
-	editorEntityCatalog()
-	imgui.Separator()
-	editorEntityList(lvl)
-}
-
-// editorEntityEngineToggles draws the two engine-wide collision master
-// switches.
-//
-// They sit here rather than in a physics panel of their own because they are
-// the first thing to check when an entity that should be solid is not — having
-// them next to the per-entity flags is what makes "is it this entity, or is it
-// the engine" a glance rather than a hunt.
-func editorEntityEngineToggles() {
-	imgui.Checkbox("Entity/world collision  [8]##engworld", &world.EntityWorldCollisionEnabled)
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Engine-wide. Each entity still has to opt in;\nthis says whether the engine listens.")
-	}
-	imgui.Checkbox("Entity/entity collision  [9]##engent", &world.EntityEntityCollisionEnabled)
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Engine-wide. Each entity still has to opt in;\nthis says whether the engine listens.")
-	}
-	editorTextWrapped("Entities only move while the editor is closed.")
-}
-
-// entityBlankCatalogLabel names the catalog's first entry: not a definition,
-// but the absence of one.
-const entityBlankCatalogLabel = "(blank entity)"
-
-// editorEntityCatalog draws the picker and the place button.
-//
-// The list always starts with the blank entry, and starts *on* it: placing
-// something and then deciding what it is, in the panel, is the usual way an
-// entity gets made. Definition files under entities/ follow it for the types
-// that have earned a file of their own — see entity_def.go on when that is.
-func editorEntityCatalog() {
-	name := editorSelectedDefName()
-
-	preview := entityBlankCatalogLabel
-	if name != "" {
-		preview = name
-	}
-	if imgui.BeginCombo("Type##entdef", preview) {
-		if imgui.SelectableV(entityBlankCatalogLabel, name == "", 0, imgui.Vec2{}) {
-			Editor.EntityDefIdx = 0
-		}
-		for i, n := range Editor.EntityDefNames {
-			if imgui.SelectableV(n, n == name, 0, imgui.Vec2{}) {
-				Editor.EntityDefIdx = int32(i + 1)
-			}
-		}
-		imgui.EndCombo()
-	}
-
-	if name == "" {
-		editorTextWrapped("No model and no type: a box you place and then " +
-			"describe here. The level file carries all of it.")
-	} else if def, err := world.LoadEntityDef(name); err == nil {
-		// The description is the definition author's one-line note about what
-		// the type is for — worth showing, but not worth failing the picker
-		// over, so a definition that will not load simply shows why instead.
-		if def.Description != "" {
-			editorTextWrapped(def.Description)
-		}
-	} else {
-		editorTextWrapped(fmt.Sprintf("Cannot load: %v", err))
-	}
-
+	imgui.SetNextItemWidth(160)
 	imgui.InputTextV("ID##newent", &Editor.NewEntityID, 0, nil)
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Leave blank to name it after its type, or \"" + world.BlankEntityID + "\"\n" +
 			"for a blank one. A number is appended if the name is taken.")
 	}
+	imgui.Separator()
 
-	if imgui.Button("Place Entity##entplace") {
-		editorArmEntityPlacement(name)
+	if imgui.MenuItem(entityBlankCatalogLabel) {
+		Editor.EntityDefIdx = 0
+		editorArmEntityPlacement("")
 	}
-	if Editor.EntityPlacementMode {
-		imgui.SameLine()
-		imgui.Text("Click to place...")
-		imgui.SameLine()
-		if imgui.Button("Cancel##entplacecancel") {
-			Editor.EntityPlacementMode = false
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("No model and no type: a box you place and then\ndescribe in Properties. The level file carries all of it.")
+	}
+	for i, n := range Editor.EntityDefNames {
+		if imgui.MenuItem(n) {
+			Editor.EntityDefIdx = int32(i + 1)
+			editorArmEntityPlacement(n)
+		}
+		if !imgui.IsItemHovered() {
+			continue
+		}
+		// The definition author's one-line note about what the type is for —
+		// worth showing, but not worth failing the picker over, so a
+		// definition that will not load shows why instead.
+		if def, err := world.LoadEntityDef(n); err == nil {
+			if def.Description != "" {
+				imgui.SetTooltip(def.Description)
+			}
+		} else {
+			imgui.SetTooltip(fmt.Sprintf("Cannot load: %v", err))
 		}
 	}
-	imgui.SameLine()
-	if imgui.Button("Reload Definitions##entdefs") {
+
+	imgui.Separator()
+	if imgui.MenuItem("Rescan " + world.EntitiesDirName + "/") {
 		editorRefreshEntityDefs()
 		editorSetStatus("Rescanned %s/", world.EntitiesDirName)
 	}
@@ -138,28 +92,10 @@ func editorEntityCatalog() {
 	}
 }
 
-// editorEntityList draws every entity in the level as a selectable row.
-func editorEntityList(lvl *world.Level) {
-	if len(lvl.Entities) == 0 {
-		imgui.Text("This level has no entities.")
-		return
-	}
-	for i := range lvl.Entities {
-		e := &lvl.Entities[i]
-		label := e.ID
-		if e.Type != "" && e.Type != e.ID {
-			label = fmt.Sprintf("%s  (%s)", e.ID, e.Type)
-		}
-		if imgui.SelectableV(fmt.Sprintf("%s##ent%d", label, i), i == Editor.ActiveEntityIdx, 0, imgui.Vec2{}) {
-			clearVertexSelection()
-			editorClearSpawnSelection()
-			editorClearVolumeSelection()
-			editorClearChunkSelection()
-			editorClearLightSelection()
-			editorSelectEntity(i)
-		}
-	}
-}
+// entityBlankCatalogLabel names the catalog's first entry: not a definition,
+// but the absence of one. Placing something and then deciding what it is, in
+// Properties, is the usual way an entity gets made.
+const entityBlankCatalogLabel = "(blank entity)"
 
 // ---------- selected entity ----------
 
@@ -173,31 +109,34 @@ func editorEntityProperties(lvl *world.Level) {
 
 	imgui.Separator()
 	editorFocusOpen(panelFocusEntity)
-	if !imgui.CollapsingHeaderV("Entity: "+e.ID, imgui.TreeNodeFlagsDefaultOpen) {
+	if !imgui.CollapsingHeaderV("Entity: "+e.ID+"##enthdr", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
 	editorFocusScroll(panelFocusEntity)
 
-	editorEntityIdentity(lvl, e)
-	imgui.Separator()
-	editorEntityTransform(e)
-	imgui.Separator()
-	editorEntityMotion(e)
-	imgui.Separator()
-	editorEntityBounds(e)
-	imgui.Separator()
-	editorEntityCollisionSection(e)
-	editorEntityVehicleSection(lvl, e)
-	imgui.Separator()
-	editorEntityTags(e)
-	imgui.Separator()
-	editorEntityAttributes(e)
-	imgui.Separator()
-	editorEntityScript(e)
-	imgui.Separator()
-	editorEntityModels(e)
-	imgui.Separator()
-	editorEntityActions(e)
+	// One group per subject, each folding away as a unit. Identity and
+	// Transform open with the block because they are what someone who just
+	// clicked an entity came to read; the rest are a click away, which is what
+	// keeps a barrel with a script, four collision flags, a vehicle spec and
+	// three model attachments from filling the panel with nothing anyone asked
+	// for.
+	editorPropGroupOpen("Identity##entidgrp", func() { editorEntityIdentity(lvl, e) })
+	editorPropGroupOpen("Transform##enttfgrp", func() { editorEntityTransform(e) })
+	editorPropGroup("Motion##entmotion", 0, func() { editorEntityMotion(e) })
+	editorPropGroup("Bounds##entbounds", 0, func() { editorEntityBounds(e) })
+	editorPropGroup("Collision##entcol", 0, func() { editorEntityCollisionSection(e) })
+	editorPropGroup("Vehicle##entveh", 0, func() { editorEntityVehicleSection(lvl, e) })
+	editorPropGroup("Models##entmodels", 0, func() { editorEntityModels(e) })
+	// An entity's tags and attributes are merged from its definition rather
+	// than held in a ScriptData, so the three rows are assembled here instead
+	// of through editorScriptDataUI — under the same "Scripting" group name
+	// every other object uses.
+	editorPropGroup("Scripting##entscripting", 0, func() {
+		editorEntityTags(e)
+		editorEntityAttributes(e)
+		editorEntityScript(e)
+	})
+	editorPropGroup("Actions##entactions", 0, func() { editorEntityActions(e) })
 }
 
 // editorEntityIdentity draws the ID and the type it was instanced from.
@@ -269,9 +208,6 @@ func editorEntityTransform(e *world.Entity) {
 
 // editorEntityMotion draws velocity and angular velocity.
 func editorEntityMotion(e *world.Entity) {
-	if !imgui.CollapsingHeader("Motion##entmotion") {
-		return
-	}
 	editorTextWrapped("Carried forward every frame during play, not in the editor.")
 
 	vel := [3]float32{e.Velocity.X(), e.Velocity.Y(), e.Velocity.Z()}
@@ -293,10 +229,6 @@ func editorEntityMotion(e *world.Entity) {
 // editorEntityBounds draws the bounding volume: its shape, its size and where
 // it sits relative to the entity's origin.
 func editorEntityBounds(e *world.Entity) {
-	if !imgui.CollapsingHeader("Bounds##entbounds") {
-		return
-	}
-
 	if imgui.BeginCombo("Shape##entboundkind", world.BoundingTypeName(e.BoundingKind)) {
 		for i, n := range world.BoundingTypeNames {
 			if imgui.SelectableV(n, world.BoundingType(i) == e.BoundingKind, 0, imgui.Vec2{}) {
@@ -331,10 +263,6 @@ func editorEntityBounds(e *world.Entity) {
 // ticking a box on one instance is to wonder why the next one placed is not
 // solid too.
 func editorEntityCollisionSection(e *world.Entity) {
-	if !imgui.CollapsingHeaderV("Collision##entcol", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
-
 	imgui.Checkbox("Collide with world##entcolw", &e.Collision.World)
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Resolve against walls, floors, ceilings and slopes —\nthe same resolvers the player uses.")
@@ -409,9 +337,6 @@ func editorNewAttrTypeIdx() int {
 // editorEntityModels draws the attachment list: what each one wears, where it
 // sits, and what it can play.
 func editorEntityModels(e *world.Entity) {
-	if !imgui.CollapsingHeaderV("Models##entmodels", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
 	if len(e.Models) == 0 {
 		editorTextWrapped("No models. An entity with none is still a position " +
 			"with attributes on it, which is all a trigger or a script anchor needs.")
@@ -450,10 +375,14 @@ func editorEntityModelSection(e *world.Entity, idx int) bool {
 	imgui.PushID(fmt.Sprintf("entmodel%d", idx))
 	defer imgui.PopID()
 
-	if !imgui.CollapsingHeaderV(m.Name+"##hdr", imgui.TreeNodeFlagsDefaultOpen) {
-		return false
-	}
+	changed := false
+	editorPropGroupOpen(m.Name+"##hdr", func() { changed = editorEntityModelBody(e, m, idx) })
+	return changed
+}
 
+// editorEntityModelBody is one attachment's fields, inside its group. Reports
+// whether the attachment list was structurally changed.
+func editorEntityModelBody(e *world.Entity, m *world.EntityModel, idx int) bool {
 	// The attachment's name is how a script asks for an animation on this model
 	// rather than another, so it is editable and has to stay unique. The delete
 	// button rides beside it, the same shape an animation row has.
@@ -534,9 +463,10 @@ func editorEntityModelSection(e *world.Entity, idx int) bool {
 // editorEntityAnimations draws an attachment's named animations, plus the
 // playback controls that let a clip be previewed in the editor.
 func editorEntityAnimations(e *world.Entity, m *world.EntityModel) {
-	if !imgui.CollapsingHeaderV("Animations##manims", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
+	editorPropGroupOpen("Animations##manims", func() { editorEntityAnimationsBody(e, m) })
+}
+
+func editorEntityAnimationsBody(e *world.Entity, m *world.EntityModel) {
 	if m.Anim == nil {
 		editorTextWrapped("This model has no armature or no clips, so there is nothing to play.")
 		return

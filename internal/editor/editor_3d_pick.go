@@ -42,6 +42,8 @@ const (
 	panelFocusVolume  = "volume"
 	panelFocusChunk   = "chunk"
 	panelFocusLight   = "light"
+	panelFocusSector  = "sector"
+	panelFocusBiome   = "biome"
 )
 
 // ---------- pick result ----------
@@ -469,10 +471,21 @@ const (
 	// the cursor would hijack clicks meant for the geometry in front of it.
 	vertexHandleMaxDist float32 = 30
 	// vertexHandleShowAllPx replaces vertexHandleShowPx when the "show all
-	// vertex boxes" toggle is on — wider than any screen, so cursor proximity
-	// stops filtering and every in-range vertex draws its box.
+	// vertex boxes" toggle is on. It is a sentinel rather than a radius —
+	// handleShowsAll turns the cursor-proximity filter off entirely when it is
+	// passed, so every in-range vertex draws its box.
 	vertexHandleShowAllPx float32 = 1e6
 )
+
+// handleShowsAll reports whether showPx is the show-all sentinel and so asks
+// for every in-range handle rather than the ones near the cursor.
+//
+// This is a check rather than a comparison because the off-world draw path has
+// no cursor to be near: it passes one far outside the window so nothing reads
+// as hovered, and any *finite* radius — 1e6 included — then rejects every
+// handle for being billions of pixels away. That is what used to empty the
+// viewport the moment a camera drag carried the pointer over the side panel.
+func handleShowsAll(showPx float32) bool { return showPx >= vertexHandleShowAllPx }
 
 // vertexSel identifies one selected point. Selections are stored as indices
 // rather than pointers so they survive geometry rebuilds.
@@ -517,7 +530,8 @@ type vertexHandle struct {
 
 // collectVertexHandles returns every sector vertex handle within
 // vertexHandleMaxDist of the camera whose on-screen position is within maxPx of
-// (mx, my), nearest first.
+// (mx, my), nearest first. maxPx of vertexHandleShowAllPx drops that second
+// test altogether — see handleShowsAll.
 func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 	lvl := Editor.level
 	if lvl == nil {
@@ -554,7 +568,7 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 						continue
 					}
 					d := screen.Sub(cursor).Len()
-					if d > maxPx {
+					if d > maxPx && !handleShowsAll(maxPx) {
 						continue
 					}
 					sel := vertexSel{
@@ -679,11 +693,11 @@ func addVertexHandlesToSelection(sels []vertexSel) {
 // it drives ActiveVertexSI/VI (shared with the 2D editor) and the panel's
 // displayed values.
 func setVertexSelection(sels []vertexSel) {
+	// Cleared first, then assigned: editorClearObjectSelections empties this
+	// very list on its way past. sels is always a fresh slice by here — the
+	// ctrl+click path copies before calling — so nothing is lost to it.
+	editorClearObjectSelections()
 	Editor.SelectedVertices = sels
-	editorClearSpawnSelection()
-	editorClearEntitySelection()
-	editorClearVolumeSelection()
-	clearFaceSelection()
 
 	if len(sels) == 0 {
 		Editor.ActiveVertexSI = -1

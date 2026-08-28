@@ -99,11 +99,11 @@ func selectedFaceCount() int { return len(Editor.SelectedFaces) }
 // read, and it is the one an action takes its "before" value from when it has
 // to pick one (see editor3DToggleSurfaceFlag).
 func setFaceSelection(sels []faceSel) {
+	// Cleared first, then assigned: editorClearObjectSelections empties this
+	// very list on its way past. sels is always a fresh slice by here — the
+	// ctrl+click paths copy before calling — so nothing is lost to it.
+	editorClearObjectSelections()
 	Editor.SelectedFaces = sels
-	clearVertexSelection()
-	editorClearSpawnSelection()
-	editorClearEntitySelection()
-	editorClearVolumeSelection()
 	Editor.GizmoKind = gizmoKindNone
 	syncActiveFace()
 }
