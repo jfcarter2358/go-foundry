@@ -19,10 +19,21 @@ import (
 // upward lists, for each package, the packages it must never depend on —
 // directly or transitively.
 var upward = map[string][]string{
-	"geom":      {"world", "gfx", "render", "editor", "app"},
-	"gfx":       {"world", "render", "editor", "app", "uiwin"},
-	"world":     {"render", "collision", "script", "levelio", "editor", "app", "uiwin"},
-	"model":     {"world", "render", "editor", "app", "uiwin"},
+	"geom":  {"world", "gfx", "render", "editor", "app"},
+	"gfx":   {"world", "render", "editor", "app", "uiwin"},
+	"world": {"render", "collision", "script", "levelio", "editor", "app", "uiwin"},
+	"model": {"world", "render", "editor", "app", "uiwin"},
+	// particle sits at model's level: the .fpar document and the CPU
+	// simulation, with no idea what a level or a GPU is. internal/world
+	// imports it, which is what forbids the reverse.
+	"particle": {"world", "render", "collision", "editor", "app", "uiwin"},
+	// audio sits at particle's level: clips, a voice pool and a software
+	// mixer, with no idea what a level is. Its entry is stricter than
+	// particle's by one name — it must not reach gfx either. The listener is
+	// four plain vectors that internal/app copies out of gfx.Cam once a
+	// frame, and keeping gfx out is what makes the spatial maths a pure
+	// function a test can call with no camera and no GL context.
+	"audio":     {"gfx", "world", "render", "collision", "script", "levelio", "editor", "app", "uiwin"},
 	"texture":   {"world", "render", "editor", "app", "uiwin", "textureui"},
 	"detail":    {"render", "editor", "app", "uiwin"},
 	"biome":     {"render", "editor", "app", "uiwin"},

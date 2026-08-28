@@ -18,13 +18,15 @@ package render
 import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gltest"
+	"foundry/internal/testenv"
+	"path/filepath"
 	"testing"
 )
 
 func TestDetailBiomeGroundShadersCompile(t *testing.T) {
 	gltest.Context(t)
 	prevExe := fileutil.ExecutablePath
-	fileutil.ExecutablePath = "resources"
+	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
 	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
 
 	// GrassInit also compiles the ground-patch program (GroundInit); DetailInit

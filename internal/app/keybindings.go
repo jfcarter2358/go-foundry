@@ -70,6 +70,24 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		},
 	},
 	{
+		Title:  "Particle editor",
+		Active: editor.ParticleEditorOpen,
+		Binds: []uiwin.Keybind{
+			{Keys: "Space", Desc: "Play / pause the preview"},
+			{Keys: "R", Desc: "Restart the effect"},
+			{Keys: ".", Desc: "Step one frame"},
+			{Keys: "F", Desc: "Frame the camera"},
+			{Keys: "B", Desc: "Show / hide the emission shape"},
+			{Keys: "MMB drag / RMB drag", Desc: "Orbit"},
+			{Keys: "Shift+MMB drag", Desc: "Pan"},
+			{Keys: "Wheel", Desc: "Zoom"},
+			{Keys: "Click a ramp", Desc: "Add a stop; drag moves it, right-click deletes"},
+			{Keys: "Double-click a colour stop", Desc: "Edit that colour"},
+			{Keys: "Ctrl+N / Ctrl+O / Ctrl+S", Desc: "New / open / save"},
+			{Keys: "Ctrl+Z / Ctrl+Shift+Z", Desc: "Undo / redo"},
+		},
+	},
+	{
 		Title:  "Model editor",
 		Active: editor.ModelEditorOpen,
 		Binds: []uiwin.Keybind{

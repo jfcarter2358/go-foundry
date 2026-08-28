@@ -32,6 +32,8 @@ const (
 	gizmoKindChunk    = "chunk"
 	gizmoKindEntity   = "entity"
 	gizmoKindVolume   = "volume"
+	gizmoKindSprite   = "sprite"
+	gizmoKindEmitter  = "emitter"
 	gizmoKindLight    = "light"
 )
 
@@ -79,6 +81,20 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindVolume:
 		if v := activeGizmoVolume(); v != nil {
 			return v.Position, true
+		}
+
+	case gizmoKindEmitter:
+		if em := activeGizmoEmitter(); em != nil {
+			return em.Position, true
+		}
+
+	case gizmoKindSprite:
+		if sp := activeGizmoSprite(); sp != nil {
+			// The authored position, not the attached one: the gizmo drags what
+			// the panel shows and the level file stores. A sprite riding an
+			// entity is dragged in that entity's space, which is the only
+			// meaning a drag could have there.
+			return sp.Position, true
 		}
 
 	case gizmoKindLight:
@@ -289,6 +305,35 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindSprite:
+		sp := activeGizmoSprite()
+		if sp == nil {
+			return false
+		}
+		// Like a volume, a sprite has no scale factor — its size is its width
+		// and height — so the snapshot holds those and the scale gizmo resizes
+		// the quad directly. Z is unused and parked at 1 so a uniform drag
+		// cannot divide by zero.
+		Editor.GizmoDragStartPos = sp.Position
+		Editor.GizmoDragStartRot = sp.Rotation
+		Editor.GizmoDragStartScale = mgl32.Vec3{sp.Width, sp.Height, 1}
+		EditorPushUndo()
+		return true
+
+	case gizmoKindEmitter:
+		em := activeGizmoEmitter()
+		if em == nil {
+			return false
+		}
+		// Nothing to scale: an emitter's size is its effect's emission shape,
+		// which is the document's business rather than the placement's. The
+		// snapshot is left at identity so the scale gizmo is a no-op on it.
+		Editor.GizmoDragStartPos = em.Position
+		Editor.GizmoDragStartRot = em.Rotation
+		Editor.GizmoDragStartScale = mgl32.Vec3{1, 1, 1}
+		EditorPushUndo()
+		return true
+
 	case gizmoKindLight:
 		pl := activeGizmoPointLight()
 		if pl == nil {
@@ -369,6 +414,16 @@ func translateGizmoMouseMove(mx, my int32) {
 			// No cage rebuild: it is built in volume-local space, so moving one
 			// only changes the matrix it is drawn with.
 			v.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		}
+	case gizmoKindEmitter:
+		if em := activeGizmoEmitter(); em != nil {
+			em.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		}
+	case gizmoKindSprite:
+		if sp := activeGizmoSprite(); sp != nil {
+			// Nothing to rebuild at all: the sprite pass owns one shared quad
+			// and reads the position straight out of the level each frame.
+			sp.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindLight:
 		if pl := activeGizmoPointLight(); pl != nil {

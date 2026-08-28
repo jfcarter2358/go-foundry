@@ -25,6 +25,8 @@ func editorClearObjectSelections() {
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
+	editorClearSpriteSelection()
+	editorClearEmitterSelection()
 	editorClearChunkSelection()
 	editorClearLightSelection()
 	clearVertexSelection()

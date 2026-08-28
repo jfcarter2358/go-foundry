@@ -23,6 +23,11 @@ type Level struct {
 	// Entities are the level's placed dynamic objects (entity.go). They live on
 	// the level rather than in a chunk because they move — see RawLevel's note.
 	Entities []Entity
+	// Sprites are the level's camera-facing quads (sprite.go). Level-scoped for
+	// the same reason entities are — see RawLevel's note.
+	Sprites []Sprite
+	// Emitters are the level's placed particle effects (emitter.go).
+	Emitters []Emitter
 	Lights   LightSet
 	Spatial  *SpatialHash // accelerated chunk/sector lookup; rebuilt after level load
 	// Frames are the level's moving coordinate systems (frame.go). Built with

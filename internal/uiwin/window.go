@@ -39,8 +39,13 @@ type UIWindow struct {
 	// main context, so any window that draws gizmo lines binds this one
 	// instead — see GizmoVAOOverride.
 	GizmoVAO uint32
-	ID       uint32
-	W, H     int32
+	// SpriteVAO is this window's vertex array for the instanced sprite pass,
+	// which the particle editor's preview draws through. Same reason GizmoVAO
+	// exists: the buffers and the programs are shared objects, but a VAO never
+	// is — see render.SpriteVAOOverride.
+	SpriteVAO uint32
+	ID        uint32
+	W, H      int32
 	// ClearColor is the RGBA this window's framebuffer is cleared to each
 	// frame. Defaults to the editor's panel grey; the 2D editor window uses
 	// black so its map isn't drawn over a backdrop.
@@ -131,6 +136,7 @@ func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWind
 	gl.GenBuffers(1, &uw.EBO)
 	gl.GenVertexArrays(1, &uw.VAO)
 	gl.GenVertexArrays(1, &uw.GizmoVAO)
+	gl.GenVertexArrays(1, &uw.SpriteVAO)
 
 	uiWindows[uw.ID] = uw
 
@@ -162,6 +168,9 @@ func CloseUIWindow(w *UIWindow) {
 	}
 	if w.EBO != 0 {
 		gl.DeleteBuffers(1, &w.EBO)
+	}
+	if w.SpriteVAO != 0 {
+		gl.DeleteVertexArrays(1, &w.SpriteVAO)
 	}
 	if w.GizmoVAO != 0 {
 		gl.DeleteVertexArrays(1, &w.GizmoVAO)

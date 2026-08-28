@@ -28,6 +28,13 @@ var DebugStats struct {
 	SectorsDrawn        int
 	SectorsPortalCulled int
 	ChunksDrawn         int
+	// The sprite pass. Particles is how many quads the emitters put up this
+	// frame and SpriteDraws how many draw calls that took — the two numbers an
+	// author needs together, because one large batch and a thousand tiny ones
+	// cost very differently for the same particle count.
+	Particles   int
+	Sprites     int
+	SpriteDraws int
 }
 
 // cpuTracker holds state for per-frame CPU usage estimation.
@@ -107,6 +114,8 @@ func DebugRenderOverlay() {
 
 		imgui.Text(fmt.Sprintf("Sectors:      %d loaded / %d drawn / %d portal-culled", DebugStats.SectorsLoaded, DebugStats.SectorsDrawn, DebugStats.SectorsPortalCulled))
 		imgui.Text(fmt.Sprintf("Chunks:       %d loaded / %d drawn", DebugStats.ChunksLoaded, DebugStats.ChunksDrawn))
+		imgui.Text(fmt.Sprintf("Sprites:      %d quads / %d particles / %d draws",
+			DebugStats.Sprites, DebugStats.Particles, DebugStats.SpriteDraws))
 		imgui.Separator()
 
 		// The editor flies a free camera and leaves PlayerEntity parked

@@ -40,6 +40,8 @@ const (
 	panelFocusWater   = "water"
 	panelFocusEntity  = "entity"
 	panelFocusVolume  = "volume"
+	panelFocusSprite  = "sprite"
+	panelFocusEmitter = "emitter"
 	panelFocusChunk   = "chunk"
 	panelFocusLight   = "light"
 	panelFocusSector  = "sector"
@@ -60,6 +62,8 @@ const (
 	pickWater   pickKind = "water"
 	pickEntity  pickKind = "entity"
 	pickVolume  pickKind = "volume"
+	pickSprite  pickKind = "sprite"
+	pickEmitter pickKind = "emitter"
 	pickLight   pickKind = "light"
 )
 
@@ -290,6 +294,25 @@ func pick3D(sx, sy int32) pickHit {
 	for vi := range lvl.Volumes {
 		if t := pickVolumeRayT(origin, dir, &lvl.Volumes[vi]); t < float32(math.MaxFloat32) {
 			hit.consider(t, pickVolume, -1, -1, vi)
+		}
+	}
+
+	// Sprites, against the quad as it is currently oriented — the only thing
+	// the author can see to aim at. Tested here rather than with the world for
+	// the reason volumes are: a cutout sprite standing flush against a wall
+	// should not steal the click meant for the wall.
+	for si := range lvl.Sprites {
+		if t := pickSpriteRayT(origin, dir, lvl, &lvl.Sprites[si], gfx.Cam.Position); t < float32(math.MaxFloat32) {
+			hit.consider(t, pickSprite, -1, -1, si)
+		}
+	}
+
+	// Emitters, against the marker disc drawn for them. An emitter has no
+	// geometry of its own — what it produces is the whole of what you see — so
+	// the marker is the only thing there is to click.
+	for ei := range lvl.Emitters {
+		if t := pickEmitterRayT(origin, dir, lvl, &lvl.Emitters[ei], gfx.Cam.Position); t < float32(math.MaxFloat32) {
+			hit.consider(t, pickEmitter, -1, -1, ei)
 		}
 	}
 
@@ -831,6 +854,8 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	// because the pointer moved onto the panel.
 	drawSelectedFaceOutline()
 	drawSelectedVolumeOutline()
+	drawSelectedSpriteOutline(gfx.Cam.Position)
+	RenderEmitterMarkers(Editor.level, gfx.Cam.Position)
 
 	if offWorld {
 		// Nothing is under the cursor, so no handle reads as hovered and the

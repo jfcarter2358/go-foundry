@@ -716,6 +716,46 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 		level.Volumes = append(level.Volumes, v)
 	}
 
+	// Sprites: camera-facing quads, with the same ID guarantee.
+	//
+	// A sprite whose texture is missing falls back to the marker rather than
+	// failing the load — the same call the editor's texture picker makes when
+	// it shows a name as "(missing)". A quad in the wrong texture is a visible
+	// problem an author can fix; a level that will not open is not.
+	for _, rs := range raw.Sprites {
+		sp, err := world.SpriteFromRaw(rs)
+		if err != nil {
+			return world.Level{}, err
+		}
+		sp.ID = world.UniqueSpriteID(&level, sp.ID)
+		if err := sp.EnsureSpriteTexture(); err != nil {
+			log.Printf("sprite %q: texture %q: %v", sp.ID, sp.Texture, err)
+		}
+		level.Sprites = append(level.Sprites, sp)
+	}
+
+	// Emitters: placed particle effects, with the same ID guarantee.
+	//
+	// A missing or malformed .fpar is reported and the emitter kept, for the
+	// reason a volume with an unbuildable cage is kept: the placement is real
+	// level content and the author needs to see it to fix it. What they get is
+	// a marker in the editor and an emitter that emits nothing.
+	for _, rem := range raw.Emitters {
+		em, err := world.EmitterFromRaw(rem)
+		if err != nil {
+			return world.Level{}, err
+		}
+		em.ID = world.UniqueEmitterID(&level, em.ID)
+		if err := em.Load(); err != nil {
+			log.Printf("emitter %q: effect %q: %v", em.ID, em.Effect, err)
+		} else {
+			for i := range em.Doc.Layers {
+				texNeeded[em.Doc.Layers[i].Texture] = true
+			}
+		}
+		level.Emitters = append(level.Emitters, em)
+	}
+
 	// Convert lights
 	level.Lights = rawToLightSet(raw.Lights)
 

@@ -25,6 +25,8 @@ func init() {
 		flang.RefChunk:   chunkProps(),
 		flang.RefLight:   lightProps(),
 		flang.RefBiome:   biomeProps(),
+		flang.RefSprite:  spriteProps(),
+		flang.RefEmitter: emitterProps(),
 	}
 }
 

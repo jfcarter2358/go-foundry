@@ -190,3 +190,83 @@ func NearestName(name string, candidates []string) string {
 	}
 	return best
 }
+
+// ---------- attaching ----------
+
+// BoneProblem explains why `attach(obj, e, model, bone)` would bind to nothing,
+// or "" when it would bind.
+//
+// An empty model means "work it out", which is what the three-argument form of
+// the verb asks for: an entity with one attachment has an unambiguous answer,
+// and one with several does not — so that case is reported here rather than
+// guessed at, since picking the wrong turret is worse than saying so.
+//
+// The armature is checked but the *pose* is not. m.Anim is runtime state that
+// the editor's linter has no business requiring, and a bone with no pose falls
+// back to the entity's own transform rather than to nothing — a graceful
+// degradation, not a failure worth refusing the binding over.
+func (e *Entity) BoneProblem(model, bone string) string {
+	if e == nil {
+		return "there is no such entity"
+	}
+	if bone == "" {
+		return "no bone was named"
+	}
+	if model == "" {
+		switch len(e.Models) {
+		case 0:
+			return fmt.Sprintf("entity %q has no model attachments, so it has no bones to ride", e.ID)
+		case 1:
+			model = e.Models[0].Name
+		default:
+			return fmt.Sprintf("entity %q has several model attachments (%s), so the one holding %q has to be named too",
+				e.ID, namesOrNone(attachmentNames(e)), bone)
+		}
+	}
+	m := e.Model(model)
+	if m == nil {
+		return fmt.Sprintf("entity %q has no model attachment called %q; %s",
+			e.ID, model, hasAttachments(e))
+	}
+	if m.Doc == nil {
+		return fmt.Sprintf("attachment %q has no model loaded, so its bones are not known yet", m.Name)
+	}
+	if len(m.Doc.Bones) == 0 {
+		return fmt.Sprintf("attachment %q has no armature, so it has no bones to ride", m.Name)
+	}
+	if m.Doc.BoneIndexByName(bone) < 0 {
+		msg := fmt.Sprintf("attachment %q has no bone called %q; it has %s",
+			m.Name, bone, namesOrNone(boneNames(m)))
+		if near := NearestName(bone, boneNames(m)); near != "" {
+			msg += fmt.Sprintf(" — did you mean %q?", near)
+		}
+		return msg
+	}
+	return ""
+}
+
+// BoneModel resolves which attachment a bone binding names, filling in the
+// entity's only attachment when the caller did not say. It returns "" exactly
+// when BoneProblem would have something to report, so the two are always asked
+// in that order.
+func (e *Entity) BoneModel(model string) string {
+	if model != "" {
+		return model
+	}
+	if e != nil && len(e.Models) == 1 {
+		return e.Models[0].Name
+	}
+	return ""
+}
+
+// boneNames lists an attachment's bones, in the order the model holds them.
+func boneNames(m *EntityModel) []string {
+	if m == nil || m.Doc == nil {
+		return nil
+	}
+	out := make([]string, 0, len(m.Doc.Bones))
+	for i := range m.Doc.Bones {
+		out = append(out, m.Doc.Bones[i].Name)
+	}
+	return out
+}

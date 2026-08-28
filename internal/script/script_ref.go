@@ -25,6 +25,8 @@ type refCache struct {
 	lvl      *world.Level
 	entity   map[string]int    // entity ID -> index into lvl.Entities
 	volume   map[string]int    // volume ID -> index into lvl.Volumes
+	sprite   map[string]int    // sprite ID -> index into lvl.Sprites
+	emitter  map[string]int    // emitter ID -> index into lvl.Emitters
 	chunk    map[string]int    // chunk ID -> index into lvl.Chunks
 	sector   map[string][2]int // sector ID -> {chunk, sector}
 	biome    map[string][2]int // biome sector ID -> {chunk, biome}
@@ -39,6 +41,8 @@ func buildRefCache(lvl *world.Level) *refCache {
 		lvl:      lvl,
 		entity:   map[string]int{},
 		volume:   map[string]int{},
+		sprite:   map[string]int{},
+		emitter:  map[string]int{},
 		chunk:    map[string]int{},
 		sector:   map[string][2]int{},
 		biome:    map[string][2]int{},
@@ -53,6 +57,12 @@ func buildRefCache(lvl *world.Level) *refCache {
 	}
 	for i := range lvl.Volumes {
 		c.volume[lvl.Volumes[i].ID] = i
+	}
+	for i := range lvl.Sprites {
+		c.sprite[lvl.Sprites[i].ID] = i
+	}
+	for i := range lvl.Emitters {
+		c.emitter[lvl.Emitters[i].ID] = i
 	}
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
@@ -89,6 +99,12 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 	}
 	if _, ok := c.volume[id]; ok {
 		return flang.RefVal{Kind: flang.RefVolume, A: id}, true
+	}
+	if _, ok := c.sprite[id]; ok {
+		return flang.RefVal{Kind: flang.RefSprite, A: id}, true
+	}
+	if _, ok := c.emitter[id]; ok {
+		return flang.RefVal{Kind: flang.RefEmitter, A: id}, true
 	}
 	if idx, ok := c.sector[id]; ok {
 		return flang.RefVal{Kind: flang.RefSector, A: c.lvl.Chunks[idx[0]].ID, B: id}, true
@@ -134,6 +150,28 @@ func (c *refCache) volumeFor(r flang.RefVal) *world.Volume {
 
 // chunkFor returns the chunk a ref names, or nil. Sector, edge, floor, ceiling
 // and biome refs all carry their chunk in A, so this serves them too.
+// spriteFor resolves a sprite ref to the sprite itself.
+func (c *refCache) spriteFor(r flang.RefVal) *world.Sprite {
+	if c.lvl == nil || r.Kind != flang.RefSprite {
+		return nil
+	}
+	if i, ok := c.sprite[r.A]; ok && i < len(c.lvl.Sprites) {
+		return &c.lvl.Sprites[i]
+	}
+	return nil
+}
+
+// emitterFor resolves an emitter ref to the emitter itself.
+func (c *refCache) emitterFor(r flang.RefVal) *world.Emitter {
+	if c.lvl == nil || r.Kind != flang.RefEmitter {
+		return nil
+	}
+	if i, ok := c.emitter[r.A]; ok && i < len(c.lvl.Emitters) {
+		return &c.lvl.Emitters[i]
+	}
+	return nil
+}
+
 func (c *refCache) chunkFor(r flang.RefVal) *world.Chunk {
 	if c.lvl == nil {
 		return nil
@@ -206,6 +244,14 @@ func (c *refCache) scriptDataFor(r flang.RefVal) *world.ScriptData {
 		if v := c.volumeFor(r); v != nil {
 			return &v.ScriptData
 		}
+	case flang.RefSprite:
+		if sp := c.spriteFor(r); sp != nil {
+			return &sp.ScriptData
+		}
+	case flang.RefEmitter:
+		if e := c.emitterFor(r); e != nil {
+			return &e.ScriptData
+		}
 	case flang.RefSector:
 		if _, s := c.sectorFor(r); s != nil {
 			return &s.ScriptData
@@ -250,6 +296,10 @@ func (c *refCache) alive(r flang.RefVal) bool {
 		return c.entityFor(r) != nil
 	case flang.RefVolume:
 		return c.volumeFor(r) != nil
+	case flang.RefSprite:
+		return c.spriteFor(r) != nil
+	case flang.RefEmitter:
+		return c.emitterFor(r) != nil
 	case flang.RefChunk:
 		return c.chunkFor(r) != nil
 	case flang.RefSector, flang.RefFloor, flang.RefCeiling:
@@ -286,6 +336,16 @@ func (c *refCache) refsWithTag(tag string) []flang.RefVal {
 	for i := range c.lvl.Volumes {
 		if c.lvl.Volumes[i].HasTag(tag) {
 			out = append(out, flang.RefVal{Kind: flang.RefVolume, A: c.lvl.Volumes[i].ID})
+		}
+	}
+	for i := range c.lvl.Sprites {
+		if c.lvl.Sprites[i].HasTag(tag) {
+			out = append(out, flang.RefVal{Kind: flang.RefSprite, A: c.lvl.Sprites[i].ID})
+		}
+	}
+	for i := range c.lvl.Emitters {
+		if c.lvl.Emitters[i].HasTag(tag) {
+			out = append(out, flang.RefVal{Kind: flang.RefEmitter, A: c.lvl.Emitters[i].ID})
 		}
 	}
 	for ci := range c.lvl.Chunks {
@@ -350,6 +410,12 @@ func (c *refCache) allTags() []string {
 	}
 	for i := range c.lvl.Volumes {
 		add(c.lvl.Volumes[i].Tags)
+	}
+	for i := range c.lvl.Sprites {
+		add(c.lvl.Sprites[i].Tags)
+	}
+	for i := range c.lvl.Emitters {
+		add(c.lvl.Emitters[i].Tags)
 	}
 	for ci := range c.lvl.Chunks {
 		ch := &c.lvl.Chunks[ci]

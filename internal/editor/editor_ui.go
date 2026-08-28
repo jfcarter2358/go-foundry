@@ -772,6 +772,22 @@ func EditorDrawUI() {
 	}
 
 	imgui.SameLine()
+	// Latched before the button, for the same reason "Model" above is.
+	particleOpen := ParticleEditorOpen()
+	if particleOpen {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
+	}
+	if imgui.Button("Particles") {
+		OpenParticleEditorWindow()
+	}
+	if particleOpen {
+		imgui.PopStyleColor()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Author particle effects (.fpar). Place them in the\nlevel as emitters from Explorer -> Add -> Emitter.")
+	}
+
+	imgui.SameLine()
 	logOpen := LogWindowOpen()
 	if logOpen {
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})

@@ -9,4 +9,10 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 )
 
-require github.com/inkyblackness/imgui-go/v4 v4.7.0
+require (
+	github.com/hajimehoshi/go-mp3 v0.3.4
+	github.com/inkyblackness/imgui-go/v4 v4.7.0
+	github.com/jfreymuth/oggvorbis v1.0.5
+)
+
+require github.com/jfreymuth/vorbis v1.0.2 // indirect

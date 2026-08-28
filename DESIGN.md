@@ -368,6 +368,90 @@ writes `.fmdl` documents in `models/`. An entity definition is what places one i
 a world: an attachment names a model file, and the animations it declares name the
 clips inside that file.
 
+## Sprites and particles
+
+A **sprite** is one camera-facing textured quad placed in a level. A **particle
+emitter** is a placed instance of a `.fpar` effect, which simulates a pool of
+quads. They are one feature because at draw time they are the same thing — a
+textured, tinted, rolled quad turned to face the viewer — differing only in
+where the transform comes from: authored, or simulated.
+
+Both are level-scoped, beside entities and volumes, for the reason entities are:
+one attached to a moving carrier crosses chunks, and its authored position is
+world-space unless its `attach:` says otherwise. Both embed `ScriptData`, so
+`@id`, `#tag`, attributes and an attached script reach them on the same terms
+they reach everything else.
+
+### Blend mode picks the pass
+
+This is the part that is not merely a setting. A sprite's blend mode decides
+*which pass it draws in*, not only how it is sorted:
+
+- **cutout** draws inside the opaque pass, while the alpha-to-coverage that pass
+  already runs is still on. It writes depth, needs no sorting, and gets its
+  silhouette antialiased by MSAA for free. The right default for foliage and
+  anything solid-looking.
+- **alpha** draws after the world's own transparent pass, sorted back to front,
+  with no depth write.
+- **additive** draws last. It is order-independent, so it needs no sorting at
+  all — which is the real reason fire and sparks should use it.
+
+The existing transparent queue could not absorb this: it sorts one `Geometry` at
+a time, and a particle batch is thousands of quads under one draw.
+
+### The GPU path
+
+One static unit quad, one streamed per-instance buffer, one
+`glDrawArraysInstanced` per batch — where a batch is a (texture, blend,
+billboard, lit) tuple. **This is the engine's first use of per-instance vertex
+attributes.** Every other instanced draw here (biome scatter, detail scatter)
+derives placement procedurally from `gl_InstanceID`, which is a placement trick
+and cannot carry simulated state.
+
+`sprite_common.glsl` holds the billboard basis and is injected into all three
+vertex stages — colour, cascade depth, cubemap depth — so a quad casts the
+shadow of the quad you can see. That rule bites harder here than for grass,
+because a billboard's orientation depends on where it is being looked at *from*:
+in the depth passes the quad faces the **light**, not the camera, or it would be
+edge-on and cast nothing.
+
+### Why the simulation is on the CPU
+
+The engine targets GL 4.1 core: no compute shaders, no SSBOs. The alternative
+was transform feedback, which puts particle state somewhere neither collision,
+nor a script, nor a debugger can read it. Simulating on the CPU costs a per-frame
+walk and a buffer upload, and buys particles that can bounce off a floor and be
+asked where they are. At the pool sizes an effect actually uses, that walk is not
+the frame's problem; the fill rate of the quads is.
+
+Each layer's pool is preallocated and never grows: dead particles are
+swap-removed and emission stalls at the cap. A particle budget only means
+something if it is a ceiling rather than a suggestion.
+
+Collision reaches the world through a function variable
+(`particle.Collide`) that `internal/app` installs, because `internal/particle`
+sits below `internal/collision` — the same inversion `world.CurrentLevel` and
+`hooks.EditorActive` use. Nil means "no collision", which is correct for a
+headless test and for the particle editor before it swaps in its own ground
+plane.
+
+### The effect document
+
+One `.fpar` is one *effect*, made of layers — `torch.fpar` is flame plus smoke
+plus sparks, because that is the unit an author places and a script names. A
+layer carries its emission, its shape, its motion, its appearance, its collision
+and three ramps over a particle's normalised life (size, alpha, colour). Effects
+are authored in the **particle editor**, a pop-out window with a live preview
+that drives the same simulation and the same draw path the game does.
+
+### Attachment
+
+A sprite or an emitter can ride a frame (a vehicle), an entity, or a named bone
+inside one of that entity's model attachments. One `Attach` struct serves all
+three, resolved cheapest-first to a world matrix once a frame. Bone attachment
+reads the bone palette `EntityModel` already maintains for GPU skinning, so a
+flame on a swinging weapon, the weapon, and both their shadows cannot disagree.
+
 ## Level Composition
 
 Levels are composed of chunks. These chunks can be thought of as floors of a house. They are ultimately "one level" each (though stairs and ramps can be included, you just cannot have a sector that goes over top of another). Chunks can then be combined together to create the larger level, so you might stack the "second floor" chunk on top of the "first floor" chunk to create a two-story house
@@ -382,7 +466,7 @@ The main game loop will run physics/movement calculations in compute shaders whe
 
 ## Rendering
 
-Rendering should cull as many chunks/sectors/walls as possible _before_ rendering. The goal is to make the engine as performant as possible. Biome scatter uses GPU instancing.
+Rendering should cull as many chunks/sectors/walls as possible _before_ rendering. The goal is to make the engine as performant as possible. Biome scatter uses GPU instancing. So do sprites and particles, through a shared instanced billboard pass — the only one in the engine that uses per-instance vertex attributes rather than deriving placement from `gl_InstanceID`.
 
 ## Collision Checking
 
@@ -490,9 +574,12 @@ internal/imguibackend ImGui/SDL/GL plumbing, clipboard, shared widget idioms
 internal/hooks        write-only buffers engine code drops script facts into
 internal/texture      .ftex/.pal I/O, the global palette, the editing session
 internal/model        the .fmdl document: meshes, bones, skinning, poses, UVs
+internal/particle     the .fpar effect document and the CPU particle simulation
+internal/audio        clips, the voice pool and the software mixer; no level,
+                      no GL, and deliberately no camera either
 internal/world        the level data model — chunks, sectors, walls, entities,
-                      volumes, biomes, lights. One package because the types are
-                      mutually recursive.
+                      volumes, sprites, emitters, biomes, lights. One package
+                      because the types are mutually recursive.
 internal/detail       the CPU port of the displacement shader, user presets
 internal/biome        how biome paint drapes over the floor beneath it
 internal/collision    the resolver: player, world, entity-against-entity

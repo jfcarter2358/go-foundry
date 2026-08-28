@@ -20,6 +20,7 @@ package editor
 
 import (
 	"fmt"
+	"foundry/internal/gfx"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -132,6 +133,8 @@ func editor3DContextMenuItems() []ctxMenuItem {
 		items = append(items, editor3DEntityMenuItems()...)
 	case sel3DVolume:
 		items = append(items, editor3DVolumeMenuItems()...)
+	case sel3DSprite:
+		items = append(items, editor3DSpriteMenuItems()...)
 	default:
 		items = append(items, editor3DEmptyMenuItems()...)
 	}
@@ -403,5 +406,101 @@ func editor3DSharedMenuItems() []ctxMenuItem {
 		{Label: "Show all point/edge boxes", Checked: Editor.ShowPointSelectRadius,
 			Do:      func() { Editor.ShowPointSelectRadius = !Editor.ShowPointSelectRadius },
 			Tooltip: "Draw every vertex handle and edge prism in range, not\nonly the ones the cursor is near.\nWireframe already does this."},
+	}
+}
+
+// ---------- sprite ----------
+
+func editor3DSpriteMenuItems() []ctxMenuItem {
+	s := activeSprite()
+	if s == nil {
+		return nil
+	}
+
+	modes := make([]ctxMenuItem, 0, len(gfx.BillboardModeNames))
+	for i := range gfx.BillboardModeNames {
+		m := gfx.BillboardMode(i)
+		modes = append(modes, ctxMenuItem{
+			Label:   gfx.BillboardModeNames[i],
+			Checked: m == s.Billboard,
+			Tooltip: spriteBillboardHelp[i],
+			Do:      func() { editor3DSetSpriteBillboard(m) },
+		})
+	}
+	blends := make([]ctxMenuItem, 0, len(gfx.SpriteBlendNames))
+	for i := range gfx.SpriteBlendNames {
+		b := gfx.SpriteBlend(i)
+		blends = append(blends, ctxMenuItem{
+			Label:   gfx.SpriteBlendNames[i],
+			Checked: b == s.Blend,
+			Tooltip: spriteBlendHelp[i],
+			Do:      func() { editor3DSetSpriteBlend(b) },
+		})
+	}
+
+	return []ctxMenuItem{
+		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusSprite) },
+			Tooltip: "Open the sprite's section: transform, texture,\nbillboard and blend modes, and what it rides."},
+		{Label: "Move here", Do: func() { editor3DMoveSpriteTo(editor3DMenuPoint) },
+			Tooltip: "Put it where the ray under the cursor met the world."},
+		{Label: "Texture", Sub: ctxTextureMenuItems(s.Texture, editor3DSetSpriteTexture)},
+		{Label: "Billboard", Sub: modes},
+		{Label: "Blend", Sub: blends},
+		{Label: "Lit", Checked: s.Lit, Do: editor3DToggleSpriteLit,
+			Tooltip: "Take the scene's lights and shadows. Leave off for\nanything emissive."},
+		{Label: "Visible", Checked: s.Visible, Do: editor3DToggleSpriteVisible,
+			Tooltip: "A hidden sprite is not drawn, but stays selectable."},
+		{Label: "Duplicate", Do: duplicateActiveSprite},
+		{Separator: true},
+		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid},
+		{Label: "Delete", Shortcut: "Del", Do: EditorDeleteSelected},
+	}
+}
+
+// editor3DSetSpriteBillboard switches which way the selected sprite faces.
+func editor3DSetSpriteBillboard(m gfx.BillboardMode) {
+	s := activeSprite()
+	if s == nil || s.Billboard == m {
+		return
+	}
+	EditorPushUndo()
+	s.Billboard = m
+}
+
+// editor3DSetSpriteBlend switches which pass the selected sprite draws in.
+func editor3DSetSpriteBlend(b gfx.SpriteBlend) {
+	s := activeSprite()
+	if s == nil || s.Blend == b {
+		return
+	}
+	EditorPushUndo()
+	s.Blend = b
+}
+
+// editor3DSetSpriteTexture retextures the selected sprite, going through the
+// same load the panel's combo does so a missing texture is caught either way.
+func editor3DSetSpriteTexture(name string) {
+	s := activeSprite()
+	if s == nil || s.Texture == name {
+		return
+	}
+	EditorPushUndo()
+	s.Texture = name
+	if err := s.EnsureSpriteTexture(); err != nil {
+		editorSetStatus("Sprite %s: %v", s.ID, err)
+	}
+}
+
+func editor3DToggleSpriteLit() {
+	if s := activeSprite(); s != nil {
+		EditorPushUndo()
+		s.Lit = !s.Lit
+	}
+}
+
+func editor3DToggleSpriteVisible() {
+	if s := activeSprite(); s != nil {
+		EditorPushUndo()
+		s.Visible = !s.Visible
 	}
 }

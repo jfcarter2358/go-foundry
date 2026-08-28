@@ -35,6 +35,7 @@ import (
 
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
+	"foundry/internal/particle"
 	"foundry/internal/world"
 )
 
@@ -72,6 +73,9 @@ type linter struct {
 
 	defs     []string // entity definition names, scanned on first use
 	defsRead bool
+
+	effects     []string // particle effect names, scanned on first use
+	effectsRead bool
 
 	issues []ScriptIssue
 }
@@ -321,6 +325,10 @@ func (l *linter) call(c *flang.CallExpr) {
 		l.setTexture(c)
 	case "spawn":
 		l.spawn(c)
+	case "spawn_effect":
+		l.spawnEffect(c)
+	case "attach", "detach":
+		l.attach(c)
 	case "after":
 		l.after(c)
 	}
@@ -433,6 +441,100 @@ func (l *linter) spawn(c *flang.CallExpr) {
 		msg += fmt.Sprintf("; did you mean %q?", near)
 	}
 	l.add(c.Pos_, "%s", msg)
+}
+
+// spawnEffect flags a spawn_effect naming an effect that is not in particles/.
+// A typo'd effect name is the likeliest mistake with this verb, and at runtime
+// it is a log line during combat rather than something anyone reads.
+func (l *linter) spawnEffect(c *flang.CallExpr) {
+	if len(c.Args) == 0 {
+		return
+	}
+	name, ok := litString(c.Args[0])
+	if !ok {
+		return
+	}
+	effects := l.particleEffects()
+	if len(effects) == 0 || containsString(effects, name) {
+		return
+	}
+	msg := fmt.Sprintf("there is no particle effect called %q in particles/", name)
+	if near := world.NearestName(name, effects); near != "" {
+		msg += fmt.Sprintf("; did you mean %q?", near)
+	}
+	l.add(c.Pos_, "%s", msg)
+}
+
+// attach checks what is being bound and what it is being bound to, against
+// literal arguments. Both halves are worth catching before the run: attaching an
+// entity is a category error the verb can only refuse at runtime, and a
+// mistyped bone name binds to nothing in a way that looks exactly like an
+// effect that is simply not visible from where the author is standing.
+func (l *linter) attach(c *flang.CallExpr) {
+	name := "attach"
+	if id, ok := c.Fn.(*flang.IdentExpr); ok {
+		name = id.Name
+	}
+	if len(c.Args) == 0 {
+		return
+	}
+	if kind, known := l.kindOf(c.Args[0]); known {
+		switch kind {
+		case flang.RefSprite, flang.RefEmitter:
+		default:
+			l.add(c.Pos_, "%s: %s cannot be attached; only sprites and emitters ride things — an entity boards a vehicle with mount", name, aKind(kind))
+			return
+		}
+	}
+	if name == "detach" || len(c.Args) < 2 || len(c.Args) > 4 {
+		return
+	}
+	// A str in the carrier slot names a frame, and which frames exist is a
+	// property of the running level rather than of the file, so it is left to
+	// the runtime. Anything else has to be an entity.
+	if _, isStr := litString(c.Args[1]); !isStr {
+		if kind, known := l.kindOf(c.Args[1]); known && kind != flang.RefEntity {
+			l.add(c.Pos_, "attach: %s cannot be ridden; name an entity, or a frame as a string", aKind(kind))
+			return
+		}
+	}
+	if len(c.Args) < 3 {
+		return
+	}
+	e, ok := l.entityArg(c, 1)
+	if !ok {
+		return
+	}
+	model, bone := "", ""
+	if len(c.Args) == 3 {
+		if bone, ok = litString(c.Args[2]); !ok {
+			return
+		}
+	} else {
+		if model, ok = litString(c.Args[2]); !ok {
+			return
+		}
+		if bone, ok = litString(c.Args[3]); !ok {
+			return
+		}
+	}
+	if why := e.BoneProblem(model, bone); why != "" {
+		l.add(c.Pos_, "attach would bind to nothing: %s", why)
+	}
+}
+
+// particleEffects lists the .fpar documents, extension trimmed, since that is
+// how spawn_effect names one. Read once per lint, like entityDefs.
+func (l *linter) particleEffects() []string {
+	if !l.effectsRead {
+		files := particle.ScanParticleFiles()
+		l.effects = make([]string, 0, len(files))
+		for _, f := range files {
+			l.effects = append(l.effects, f[:len(f)-len(particle.ParticleExt)])
+		}
+		l.effectsRead = true
+	}
+	return l.effects
 }
 
 // after flags a timer whose atom this script never handles. `after` always

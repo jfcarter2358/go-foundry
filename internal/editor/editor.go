@@ -242,6 +242,34 @@ type EditorState struct {
 	// NewVolumeID is the ID field of the placement row, empty for "volume".
 	NewVolumeID string
 
+	// ActiveSpriteIdx indexes level.Sprites; -1 = none selected. An index for
+	// the reason ActiveVolumeIdx is one: undo replaces the level wholesale.
+	ActiveSpriteIdx int
+	// SpritePlacementMode is true when the next left-click drops a new sprite
+	// rather than selecting something.
+	SpritePlacementMode bool
+	// NewSpriteID is the ID field of the placement row, empty for "sprite".
+	NewSpriteID string
+	// NewSpriteTexture is the texture a freshly placed sprite takes. Empty
+	// falls back to world.DefaultSpriteTexture.
+	NewSpriteTexture string
+
+	// ActiveEmitterIdx indexes level.Emitters; -1 = none selected.
+	ActiveEmitterIdx int
+	// EmitterPlacementMode is true when the next left-click drops an emitter.
+	EmitterPlacementMode bool
+	// NewEmitterID is the ID field of the placement row, empty for "emitter".
+	NewEmitterID string
+	// NewEmitterEffect is the .fpar a freshly placed emitter names.
+	NewEmitterEffect string
+	// ParticleFileNames caches the .fpar list while a picker is open; nil
+	// forces a rescan, the same arrangement modelFileCombo uses.
+	ParticleFileNames []string
+	// ShowEmitterShapes outlines the selected emitter's emission volume in the
+	// viewport. Off by default: it is the answer to "why is this cone firing
+	// sideways", not something to have on while placing.
+	ShowEmitterShapes bool
+
 	// Chunk creation dialog
 	NewChunkID   string
 	ShowNewChunk bool
@@ -391,6 +419,10 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.EntityPlaceType = ""
 	Editor.ActiveVolumeIdx = -1
 	Editor.VolumePlacementMode = false
+	Editor.ActiveSpriteIdx = -1
+	Editor.SpritePlacementMode = false
+	Editor.ActiveEmitterIdx = -1
+	Editor.EmitterPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
@@ -424,6 +456,7 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	gizmo.GizmoInit()
 	render.GrassInit()
 	render.DetailInit()
+	render.SpriteInit()
 
 	// Biome sector layer defaults
 	Editor.BiomeLayerActive = false
@@ -910,6 +943,18 @@ func EditorDeleteSelected() {
 	// Volume deletion
 	if activeVolume() != nil {
 		deleteActiveVolume()
+		return
+	}
+
+	// Sprite deletion
+	if activeSprite() != nil {
+		deleteActiveSprite()
+		return
+	}
+
+	// Emitter deletion
+	if activeEmitter() != nil {
+		deleteActiveEmitter()
 	}
 }
 
@@ -959,6 +1004,10 @@ func EditorLoadLevel(path string) error {
 	Editor.EntityPlacementMode = false
 	Editor.ActiveVolumeIdx = -1
 	Editor.VolumePlacementMode = false
+	Editor.ActiveSpriteIdx = -1
+	Editor.SpritePlacementMode = false
+	Editor.ActiveEmitterIdx = -1
+	Editor.EmitterPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1

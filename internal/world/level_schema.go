@@ -141,6 +141,56 @@ type RawVolume struct {
 	Enabled       *bool   `yaml:"enabled,omitempty"` // default true when absent
 }
 
+// RawSprite is the YAML representation of a level sprite (sprite.go) — a
+// camera-facing textured quad.
+//
+// Nearly every field is optional, and the defaults are chosen so that the
+// smallest useful entry is an id, a position and a texture. Width/Height/Alpha
+// are pointers because 0 is never a meaningful authored value for them and
+// "absent" has to mean 1, not 0; Visible is a pointer for the usual reason
+// (absent means on, and a level that never mentioned it meant on).
+type RawSprite struct {
+	ID            string `yaml:"id"`
+	RawScriptData `yaml:",inline"`
+	Position      RawVec3    `yaml:"position"`
+	Rotation      RawVec3    `yaml:"rotation,omitempty"`
+	Width         *float32   `yaml:"width,omitempty"`  // default 1
+	Height        *float32   `yaml:"height,omitempty"` // default 1
+	Texture       string     `yaml:"texture,omitempty"`
+	Billboard     string     `yaml:"billboard,omitempty"` // full (default) | y-axis | fixed
+	Blend         string     `yaml:"blend,omitempty"`     // cutout (default) | alpha | additive
+	Tint          *RawColor  `yaml:"tint,omitempty"`      // default white
+	Alpha         *float32   `yaml:"alpha,omitempty"`     // default 1
+	Lit           bool       `yaml:"lit,omitempty"`
+	CastShadows   bool       `yaml:"cast_shadows,omitempty"`
+	Visible       *bool      `yaml:"visible,omitempty"` // default true when absent
+	SheetCols     int        `yaml:"sheet_cols,omitempty"`
+	SheetRows     int        `yaml:"sheet_rows,omitempty"`
+	Frame         int        `yaml:"frame,omitempty"`
+	Attach        *RawAttach `yaml:"attach,omitempty"`
+}
+
+// RawEmitter is the YAML representation of a placed particle effect
+// (emitter.go).
+//
+// Almost nothing is here, on purpose: what an effect IS lives in its .fpar
+// document, and this is only where one is placed and the handful of knobs worth
+// varying between two placements of the same effect. Nothing about the live
+// simulation is written — a level file says an explosion goes here, not where
+// its sparks currently are.
+type RawEmitter struct {
+	ID            string `yaml:"id"`
+	RawScriptData `yaml:",inline"`
+	Effect        string     `yaml:"effect"`
+	Position      RawVec3    `yaml:"position"`
+	Rotation      RawVec3    `yaml:"rotation,omitempty"`
+	Enabled       *bool      `yaml:"enabled,omitempty"`  // default true when absent
+	Emitting      *bool      `yaml:"emitting,omitempty"` // default true when absent
+	RateScale     *float32   `yaml:"rate_scale,omitempty"`
+	Tint          *RawColor  `yaml:"tint,omitempty"`
+	Attach        *RawAttach `yaml:"attach,omitempty"`
+}
+
 // RawEdge describes one edge (wall or portal) in a sector's edge list.
 type RawEdge struct {
 	// ID is the edge's stable identity, how a script addresses it. Absent in
@@ -550,5 +600,13 @@ type RawLevel struct {
 	// two of them, and its authored position is world-space.
 	Volumes  []RawVolume `yaml:"volumes,omitempty"`
 	Entities []RawEntity `yaml:"entities,omitempty"`
-	Lights   RawLights   `yaml:"lights"`
+	// Sprites are the level's camera-facing quads (sprite.go). They sit beside
+	// volumes and entities rather than in a chunk because one attached to a
+	// moving entity crosses chunks, and its authored position is world-space
+	// unless its `attach:` says otherwise.
+	Sprites []RawSprite `yaml:"sprites,omitempty"`
+	// Emitters are the level's placed particle effects (emitter.go), beside
+	// sprites for the same reasons.
+	Emitters []RawEmitter `yaml:"emitters,omitempty"`
+	Lights   RawLights    `yaml:"lights"`
 }

@@ -332,6 +332,16 @@ func LevelIDTaken(lvl *Level, id string) bool {
 			return true
 		}
 	}
+	for i := range lvl.Sprites {
+		if lvl.Sprites[i].ID == id {
+			return true
+		}
+	}
+	for i := range lvl.Emitters {
+		if lvl.Emitters[i].ID == id {
+			return true
+		}
+	}
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
 		if ch.ID == id {

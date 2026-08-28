@@ -225,6 +225,12 @@ func (rt *ScriptRuntime) scriptPaths() []string {
 		for i := range rt.lvl.Volumes {
 			add(rt.lvl.Volumes[i].Script)
 		}
+		for i := range rt.lvl.Sprites {
+			add(rt.lvl.Sprites[i].Script)
+		}
+		for i := range rt.lvl.Emitters {
+			add(rt.lvl.Emitters[i].Script)
+		}
 		for ci := range rt.lvl.Chunks {
 			ch := &rt.lvl.Chunks[ci]
 			add(ch.Script)

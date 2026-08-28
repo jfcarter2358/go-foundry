@@ -1,6 +1,7 @@
 package app
 
 import (
+	"foundry/internal/audio"
 	"foundry/internal/biome"
 	"foundry/internal/collision"
 	"foundry/internal/detail"
@@ -9,6 +10,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
 	"foundry/internal/levelio"
+	"foundry/internal/particle"
 	"foundry/internal/platform"
 	"foundry/internal/render"
 	"foundry/internal/script"
@@ -106,6 +108,22 @@ func Run() {
 		log.Fatalf("sdl.Init: %v", err)
 	}
 	defer sdl.Quit()
+
+	// Audio comes up right after SDL, because INIT_EVERYTHING above already
+	// started the audio subsystem — all that is left is to open a device.
+	//
+	// Deliberately not fatal. The engine log.Fatalf's on a GL failure because
+	// there is nothing to draw without GL; a game with no sound still runs,
+	// and a machine with no sound card (or a WSL2 session with no audio
+	// server) should reach the main menu rather than the log. Init has
+	// already logged whatever went wrong, and every audio call becomes a
+	// no-op from here.
+	//
+	// The defer is registered after sdl.Quit's and therefore runs before it,
+	// which is the ordering that matters: a queued write still in flight when
+	// SDL_Quit runs is a use-after-free down in C.
+	_ = audio.Init(audio.Config{})
+	defer audio.Shutdown()
 
 	// Creates the window and its GL context together, at the highest MSAA
 	// sample count the platform actually accepts — the multisample buffer is
@@ -249,6 +267,15 @@ func Run() {
 	// A spawn point in the level overrides that starting position, so a level
 	// loaded straight into gameplay starts where the editor says it should.
 	world.ApplySpawnPoint(&level)
+
+	// The particle simulation's world-collision seam. internal/particle sits
+	// below internal/collision and cannot import it, so the owner installs the
+	// function — the same inversion world.CurrentLevel and hooks.EditorActive
+	// use. Left nil, particles simply do not collide, which is what every test
+	// in that package runs with.
+	particle.Collide = func(from, to mgl32.Vec3, r float32) (mgl32.Vec3, mgl32.Vec3, bool) {
+		return collision.ParticleCollide(&level, from, to, r)
+	}
 
 	// The editor's settings panel offers fullscreen as a checkbox beside the
 	// rest of the window-level toggles, and sits below this package in the
@@ -436,6 +463,35 @@ func Run() {
 		// Walked parents-first inside RefreshFrames, so a nested frame composes
 		// against a parent that is already up to date.
 		world.RefreshFrames(&level, level.Frames)
+
+		// Particles, after the frames they may be riding have been republished and
+		// before the script tick, so a burst a script fires this frame lands at
+		// age 0 and draws this frame.
+		//
+		// Not gated on the editor being closed, unlike entity motion: an effect
+		// that froze the moment the editor opened could not be placed by eye. The
+		// gate is handed over anyway so the simulation can tell play from
+		// authoring if it ever needs to.
+		world.EmitterUpdate(&level, platform.DeltaTime, !editor.Editor.Active)
+
+		// The listener, published in the same slot and for the same reasons
+		// as the emitters above: after RefreshFrames, so anything riding a
+		// moving frame is read where it now actually is, and before the
+		// script tick, so a sound a script starts this frame is already
+		// audible in the block the mixer builds next.
+		//
+		// Not gated on the editor being closed, again like the emitters: a
+		// sound that went silent the moment the editor opened could not be
+		// placed by ear, which is most of how a positional sound gets placed.
+		//
+		// gfx.CamUp() rather than gfx.Cam.Up: the zero value there means "no
+		// tilt", and only the accessor knows that. The editor's fly camera is
+		// this same camera, which is what makes auditioning work.
+		audio.Publish(audio.Frame{
+			ListenerPos:     gfx.Cam.Position,
+			ListenerForward: gfx.Cam.Direction,
+			ListenerUp:      gfx.CamUp(),
+		})
 
 		// The interact key's vehicle half, before the script tick so a mount
 		// made this frame is visible to it. It consumes the press only when it
@@ -751,6 +807,13 @@ func Run() {
 				// Drawn after opaque geometry; reuses the main fragment shader so it
 				// receives shadows, and was rendered into the shadow maps above so it casts.
 				render.RenderDetailColor(&level, shadowFrame)
+
+				// --- Sprites, cutout only ---
+				// Inside the opaque block on purpose: a cutout sprite's alpha
+				// is coverage, so the alpha-to-coverage still switched on above
+				// antialiases its silhouette and it needs no sorting at all.
+				// The alpha and additive modes come after the transparent pass.
+				render.RenderSpritesOpaque(&level, projView, gfx.Cam.Position, &frustum, shadowFrame)
 			}
 
 			// End of the opaque pass — hand alpha back to blending. Done
@@ -799,6 +862,15 @@ func Run() {
 
 				gl.DepthMask(true)
 				gl.Disable(gl.BLEND)
+			}
+
+			// --- Sprites, alpha and additive ---
+			// After the world's transparent pass rather than inside it: a
+			// sprite batch is many quads under one draw, so it cannot join a
+			// queue that sorts one Geometry at a time — and additive quads want
+			// no sorting at all, which that queue has no way to express.
+			if !editorWire {
+				render.RenderSpritesTransparent(&level, projView, gfx.Cam.Position, &frustum, shadowFrame)
 			}
 
 			// Back to filled triangles before the editor overlays and ImGui,

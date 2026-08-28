@@ -32,6 +32,8 @@ var worldVerbs = []string{
 	"player", "find", "move_to", "set_velocity",
 	"play_anim", "stop_anim", "set_texture", "spawn", "destroy", "after", "time",
 	"mount", "dismount",
+	"emit", "stop_emit", "burst", "spawn_effect",
+	"attach", "detach",
 }
 
 var builtins map[string]builtinFn

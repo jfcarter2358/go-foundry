@@ -111,7 +111,7 @@ a level lost to a misclick.
 -->
 
 ## Main window
-Windows: [2D Window] [Textures] [Model] [Script] [Log]
+Windows: [2D Window] [Textures] [Model] [Script] [Particles] [Log]
 <!-- each window button is lit while its window is open -->
 | Select: [Point 1] [Edge 2] [Face 3]
 <!--
@@ -172,6 +172,53 @@ between Point and Edge keeps the selection; crossing to or from Face clears
 it, because the other unit has no handles to explain it.
 -->
 
+## Particle editor (its own window)
+[New] [Open] [Save] [Save As] | <effect name, * while unsaved> | [Pop In]
+[checkbox] Grid  [checkbox] Ground  [checkbox] Shape [B]  | [color picker] BG | <status line>
+<!--
+Three columns under the toolbar and one bar across the bottom. The left column
+is the layer list, the right the parameters for whichever layer is selected, and
+the middle is the live preview - which drives the same simulation and the same
+draw path the game does, so an effect that looks right here looks right in the
+level.
+-->
+
+### Layers <!-- left column -->
+[S] [M] <layer name> <!-- S solos (a view state, not saved), M mutes (saved with the effect) -->
+[+] [-] [^] [v] <!-- order is draw order -->
+<!-- right-click a row for Duplicate / Move up / Move down / Delete -->
+
+### Parameters <!-- right column, one group per stage of building an effect -->
+#### Effect <!-- the whole document rather than one layer -->
+ID <textbox>, Gravity, Seed <!-- the seed fixes every random draw, so the preview is reproducible -->
+#### Emission
+Rate /s, Duration, [checkbox] Loop, [checkbox] Prewarm, Max
+Bursts: a row of t / n per burst, [+ burst]
+#### Shape
+Kind <dropdown: point | sphere | hemisphere | box | cone | disc>
+Radius / Angle / Half extents / Thickness <!-- whichever the kind actually reads -->
+Direction <dropdown: shape | random | fixed>, Vector, Spread (deg)
+#### Initial <!-- min/max pairs on one row each, which is how they are read -->
+Life, Speed, Size, Rotation (deg), Rot speed (deg/s)
+#### Motion
+Gravity, Drag, Radial, Tangential, Turbulence, Turb freq
+[checkbox] Local space <!-- carry live particles when the emitter moves -->
+#### Appearance
+Texture, Sheet cols / rows, Frames <dropdown: over-life | random | static>
+Blend, Billboard, Tint, [checkbox] Lit, [checkbox] Cast shadows
+#### Collision <!-- collapsed: most effects are smoke and fire, which do not bounce -->
+Mode <dropdown: none | stop | bounce | kill>, Radius, Bounce, Friction
+
+### Transport and ramps <!-- the bar across the bottom -->
+[Play/Pause] [Restart] [Step] <speed dropdown> | t <clock> / <duration>   live <n> / <cap>
+[Size] [Alpha] [Color] <!-- one strip at a time; three stacked would leave the preview a letterbox -->
+<the active ramp, drawn as a canvas>
+<!--
+Click adds a stop, drag moves it, right-click deletes, and on the colour strip a
+double-click opens a picker. Stops are tracked by their position on the curve
+rather than by index, because dragging one past its neighbour re-sorts the list.
+-->
+
 ## Explorer <!-- one tree over everything the level contains, in a scroll box of its own so Properties stays on screen -->
 [Add...] <!-- the one menu that creates anything; see below -->
 Click in the view to place <what> [Cancel] <!-- only while a placement is armed -->
@@ -210,6 +257,8 @@ Chunk... <!-- names it, then places it at the camera -->
 Import Chunk... <!-- from a file in chunks/ -->
 Entity > ID <textbox>, then a row per definition under entities/ plus "(blank entity)"; picking one arms the next viewport click
 Volume > ID <textbox>, then Place By Clicking
+Sprite > ID <textbox>, Texture <dropdown>, then Place By Clicking <!-- lands standing on the surface clicked -->
+Emitter > ID <textbox>, Effect <dropdown of .fpar under particles/>, then Place By Clicking
 Directional Light <!-- greyed past the shader's limit -->
 Point Light <!-- at the camera; greyed past the shader's limit -->
 Biome Sector <!-- sector map only: draw its corners, then Enter -->
@@ -405,6 +454,46 @@ ID <textbox> <!-- committed on Enter; an ID used by anything else in the level i
 [checkbox] Enabled <!-- a disabled volume contains nothing, so it fires no events; scripts flip this to arm a trigger -->
 Shape <dropdown of volume shapes>
 Half-extents X/Y/Z [-] [Number Slider] [+] [=] <!-- half the region's size on each axis: the box the shape is inscribed in -->
+#### Tags / Attributes / Script
+[Duplicate] [Delete]
+
+### Sprite <!-- only when a sprite is selected -->
+ID <textbox> <!-- committed on Enter; an ID used by anything else in the level is refused -->
+[checkbox] Visible <!-- a hidden sprite stays selectable here and in the Explorer -->
+#### Transform
+Position X/Y/Z [-] [Number Slider] [+] [=] <!-- local to the carrier when attached -->
+Width [-] [Number Slider] [+] [=]
+Height [-] [Number Slider] [+] [=]
+Roll (deg) [-] [Number Slider] [+] [=] <!-- one field while billboarded; the full X/Y/Z triple only in Fixed, where the other two axes are actually read -->
+#### Appearance
+Texture <dropdown>
+Billboard <dropdown: full | y-axis | fixed> <!-- each option carries a line on what it is for; picking wrong is the usual way a sprite looks broken -->
+Blend <dropdown: cutout | alpha | additive> <!-- decides which pass it draws in, not merely how it sorts -->
+[R:<num>] [G:<num>] [B:<num>] [color picker] Tint
+Alpha [-] [Number Slider] [+] [=]
+[checkbox] Lit <!-- takes the scene's lights and shadows; off for anything emissive -->
+[checkbox] Casts shadow <!-- faces the light in the depth passes rather than the camera -->
+#### Sheet <!-- collapsed: most sprites use a whole texture -->
+Columns / Rows / Cell [-] [Number Slider] [+] [=]
+#### Attach <!-- collapsed; shared with emitters -->
+Frame / Entity / Model / Bone <dropdown each> <!-- cascading: each row is disabled until the one above is answered -->
+#### Tags / Attributes / Script
+[Duplicate] [Delete]
+
+### Emitter <!-- only when an emitter is selected -->
+ID <textbox>
+[checkbox] Enabled <!-- off stops the simulation dead; live particles vanish -->
+[checkbox] Emitting <!-- off stops new particles but lets the ones in flight finish; this is what stop_emit does -->
+#### Effect
+Effect <dropdown of .fpar> [Edit...] <!-- Edit opens the particle editor on this document -->
+<!-- a line naming the effect's layers and how many particles are live, or why it loaded nothing -->
+[Reload] [Restart]
+Rate scale [-] [Number Slider] [+] [=] <!-- multiplies every layer's rate -->
+[R:<num>] [G:<num>] [B:<num>] [color picker] Tint <!-- over every layer's own -->
+#### Transform
+Position X/Y/Z, Rotation X/Y/Z (deg) [-] [Number Slider] [+] [=] <!-- rotation aims the emission shape -->
+[checkbox] Show emission shape <!-- outlines the region particles are born in -->
+#### Attach <!-- the same block sprites get -->
 #### Tags / Attributes / Script
 [Duplicate] [Delete]
 

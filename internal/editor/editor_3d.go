@@ -277,6 +277,23 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	if Editor.SpritePlacementMode {
+		// On the surface the click is aimed at, like an entity — a sprite is a
+		// thing standing somewhere rather than a region, and placeSpriteAt
+		// lifts it by half its height so it stands on that surface rather than
+		// through it.
+		placeSpriteAt(editor3DPointAt(t.X, t.Y))
+		return
+	}
+
+	if Editor.EmitterPlacementMode {
+		// An emitter is a point, so it goes where the click landed — lifting it
+		// as a sprite is lifted would put a floor-level dust effect at knee
+		// height for no reason an author asked for.
+		placeEmitterAt(editor3DPointAt(t.X, t.Y))
+		return
+	}
+
 	if Editor.VolumePlacementMode {
 		// A volume is a region rather than something that rests on a surface, so
 		// it is centred a little above where the click landed — a trigger flush
@@ -360,6 +377,17 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		// (applyScaleToSelection) rather than a scale factor it does not have.
 		Editor.ActiveSectorIdx = -1
 		editorSelectVolume(hit.idx)
+
+	case pickSprite:
+		// The same gizmos a volume gets. Scale drags the quad's width and
+		// height (applyScaleToSelection), since a sprite's size is its extents
+		// and it has no scale factor of its own.
+		Editor.ActiveSectorIdx = -1
+		editorSelectSprite(hit.idx)
+
+	case pickEmitter:
+		Editor.ActiveSectorIdx = -1
+		editorSelectEmitter(hit.idx)
 
 	case pickLight:
 		// The Objects list is no longer the only way to reach a light: click

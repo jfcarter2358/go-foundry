@@ -631,13 +631,15 @@ actually stands up a real hidden GL 4.1 context via SDL and compiles/links
 every shader touched in this phase (previously only exercised for
 `vertex.glsl`/`model_vert.glsl`/`shadow_vert.glsl` and friends — nothing
 here compiled the tessellation or biome/ground programs before). One
-pre-existing wrinkle: `biomeShaderPath`/the hardcoded `"resources/shaders/…"`
-paths in the existing opt-in GL tests resolve relative to `fileutil
-.ExecutablePath`/the process CWD, which for `go test ./internal/render` is
-the package directory (`internal/render`), not the repo root — so these
-tests need either a `resources` symlink inside `internal/render` or to be
-run with that as CWD. This isn't new (the two pre-existing GL test files have
-the identical relative path), so it's noted here rather than fixed.
+pre-existing wrinkle, **since fixed**: `biomeShaderPath`/the hardcoded
+`"resources/shaders/…"` paths in the opt-in GL tests resolved relative to
+`fileutil.ExecutablePath`/the process CWD, which for `go test ./internal/render`
+is the package directory (`internal/render`), not the repo root — so these
+tests needed either a `resources` symlink inside `internal/render` or to be run
+with that as CWD. All three now set `fileutil.ExecutablePath` from
+`testenv.RepoRoot(t)`, which walks up to the go.mod and is what that helper
+exists for, so `FOUNDRY_GL_TEST=1 go test ./internal/render/` passes from
+anywhere with no symlink.
 
 Added `internal/render/detail_biome_shader_gl_test.go`
 (`TestDetailBiomeGroundShadersCompile`), mirroring

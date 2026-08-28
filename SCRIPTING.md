@@ -618,7 +618,9 @@ needs those numbers to move.
 **World** — `log(...)` `time()` `player()` `find(tag)` `distance(a, b)`
 `move_to(ref, vec)` `set_velocity(ref, vec)` `play_anim(ref, model, name)`
 `stop_anim(ref)` `set_texture(ref, name)` `spawn(type, vec)` `destroy(ref)`
-`after(ms, atom, ...)`
+`after(ms, atom, ...)` `emit(emitter)` `stop_emit(emitter)`
+`burst(emitter, count)` `spawn_effect(name, vec)` `attach(obj, carrier)`
+`detach(obj)`
 
 `spawn` returns a `ref` to the new entity. Entities spawned during play exist only
 for that play session.
@@ -662,6 +664,117 @@ The texture is uploaded, and any geometry it invalidates rebuilt, at the end of
 the frame; repeats within one tick are coalesced. A name with no matching `.png`
 in `textures/` is a warning in the log window naming the texture, and the object
 keeps drawing what it had.
+
+### Particles
+
+Four verbs drive particle emitters. The first two look like a pair and are not
+quite one:
+
+```
+emit(@fountain)        -- start it, switching it on if it was off
+stop_emit(@fountain)   -- stop NEW particles; the ones in flight finish
+```
+
+`stop_emit` deliberately leaves the plume alone, so a fountain drains rather than
+vanishing mid-air. To make everything disappear at once, write the property
+instead:
+
+```
+@fountain.prop.enabled = false
+```
+
+`burst` releases particles now, without waiting for a timed burst to come round.
+A third argument names one layer, so an effect with a flash and a smoke plume can
+have just the flash fired:
+
+```
+burst(@fountain, 40)
+burst(@torch, 12, "sparks")
+```
+
+`spawn_effect` is the one gameplay reaches for: an effect played once at a point
+that no level authored an emitter for. It returns a `ref` to the emitter it
+placed, and that emitter removes itself when its last particle dies — so a script
+firing one per impact does not fill the level with spent ones.
+
+```
+def on_collide(:collide:, other ref, at vec) -> null
+    spawn_effect("impact_sparks", at)
+end
+```
+
+Naming an effect with no matching `.fpar` in `particles/` is reported before the
+script runs, with a "did you mean" against what is there.
+
+An **emitter**'s properties are the placement's, not the effect's: `position`,
+`rotation`, `enabled`, `emitting`, `rate_scale`, `tint`, and the read-only
+`effect`, `live`, `attach` and `carrier`. The effect document itself is shared
+between every placement of it, so a script writing to it would change all of them
+— which is why there is no property that does.
+
+A **sprite**'s are `position`, `visible`, `texture`, `alpha`, `tint`, `size` and
+`frame`, plus the same read-only `attach` and `carrier`. `size` is a `vec` of
+width and height, whose `z` is unused.
+
+### Attaching
+
+A sprite or an emitter can **ride** something, so that smoke follows a ship, a
+flame follows the hand holding the torch, and dust follows a wheel. It is the
+same binding the editor's **Attach** panel authors, so an effect bound by a
+script and one bound by hand are the same effect.
+
+```
+attach(@smoke, @ship)                    -- ride an entity
+attach(@flame, @guard, "hand_r")         -- ride a bone of its only model
+attach(@flame, @tank, "turret", "muzzle") -- name the attachment too
+attach(@wake, "ship")                    -- ride a frame: a vehicle's own space
+detach(@smoke)                           -- back to world space
+```
+
+Only sprites and emitters. An **entity** boards a vehicle with `mount`, which has
+answers for collision, seats and being thrown off that this does not.
+
+The three-argument form reads the entity's only model attachment, which is how
+nearly every entity is authored; an entity with several is an error naming them
+rather than a guess, because riding the wrong turret looks like a placement
+mistake. A bone that is not in the armature is a warning with a "did you mean",
+before the run as well as during it.
+
+The two verbs are deliberately **not** mirror images, and this is the thing to
+know about them:
+
+- `attach` leaves `position` alone. Attached, a position is an offset in the
+  carrier's space — so `spawn_effect("fire", <0, 0, 0>)` followed by `attach`
+  puts the effect *on* the bone, which is the reason to reach for either one.
+- `detach` moves the object to wherever it currently is in the world, because a
+  local offset means nothing once there is nothing to be local to. A plume
+  released from a sinking ship stays over the water rather than snapping back to
+  the level origin. Rotation is left as authored.
+
+```
+def on_collide(:collide:, other ref, at vec) -> null
+    let e = spawn_effect("engine_fire", <0.0, 1.0, -2.0>)
+    attach(e, @self)              -- rides me, one unit up and two back
+end
+```
+
+Reading the binding back: `attach` is the name the editor shows —
+`"guard.body.hand_r"`, or empty in world space — and `carrier` is a `ref` to the
+entity being ridden, or `null`, so it compares against an address:
+
+```
+if @flame.prop.carrier == @guard
+    log("still in hand")
+end
+```
+
+Both are read-only. Binding takes up to three names and a diagnosis for each of
+them, which is more than an assignment can say.
+
+Attaching to a **frame** is the vehicle case, and a frame exists once something
+is parented to that vehicle — not merely because an entity carries a vehicle
+spec. Naming one that does not exist warns and points at the entity of the same
+name, which is usually what was meant.
 
 ### Where output goes
 
@@ -727,6 +840,7 @@ call, and a sentence naming the fix.
 | `play_anim did nothing` | No such attachment, a rig that cannot animate, an animation the entity never declared, or a declared animation pointing at a missing clip — it says which |
 | `set_texture did nothing` | The entity has no attachment by that name, or no attachments at all |
 | `destroy did nothing` | The ref names geometry, or something already gone |
+| `attach did nothing` | No bone by that name, a model with no armature, or an entity with several attachments and no say which |
 | `find(...) matched nothing` | No object carries that tag |
 | `player() is null` | There is no player — the editor, or before the level finished loading |
 | `nothing handled :atom:` | A `<-` or an `after` reached an object whose script has no clause for it |
@@ -748,6 +862,8 @@ and lists what it finds under the error pane, in amber:
 - `play_anim` and `set_texture` naming an attachment, animation or texture that
   is not there — the same sentences the runtime would log
 - `spawn` naming a type with no definition file
+- `attach` binding something that cannot ride, riding something that is not an
+  entity, or naming a bone the model does not have
 - an unknown property, or a call to a function nothing defines
 - `after` and `@self <- (...)` with an atom this script has no clause for
 - a handler for an atom that is *nearly* an engine event — `:intract:` for

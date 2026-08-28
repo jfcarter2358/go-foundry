@@ -16,6 +16,8 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/gltest"
+	"foundry/internal/testenv"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -40,11 +42,11 @@ func TestShadowSamplingShadersCompile(t *testing.T) {
 	gltest.Context(t)
 
 	prevExe := fileutil.ExecutablePath
-	fileutil.ExecutablePath = "resources"
+	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
 	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
 
 	// The scene shader: 5x5 PCF in a fragment stage.
-	if err := gfx.LoadProgram("resources/shaders/vertex.glsl", "resources/shaders/fragment.glsl"); err != nil {
+	if err := gfx.LoadProgram(repoShader(t, "vertex.glsl"), repoShader(t, "fragment.glsl")); err != nil {
 		t.Fatalf("world program: %v", err)
 	}
 

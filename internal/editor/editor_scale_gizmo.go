@@ -41,6 +41,17 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 		if v := activeGizmoVolume(); v != nil {
 			return v.Position, true
 		}
+	case gizmoKindSprite:
+		if sp := activeGizmoSprite(); sp != nil {
+			return sp.Position, true
+		}
+	case gizmoKindEmitter:
+		// Offered so the gizmo does not vanish when an emitter is selected, but
+		// applyScaleToSelection has no branch for one: an emitter's size is its
+		// effect's emission shape, edited in the particle editor.
+		if em := activeGizmoEmitter(); em != nil {
+			return em.Position, true
+		}
 	case gizmoKindChunk:
 		if ch := activeGizmoChunk(); ch != nil {
 			return ch.LocalToWorld(ch.MinBound.Add(ch.MaxBound).Mul(0.5)), true
@@ -204,6 +215,15 @@ func applyScaleToSelection(origin, factors mgl32.Vec3) {
 		v.HalfY = world.EntityScaleClamp(h.Y() * factors.Y())
 		v.HalfZ = world.EntityScaleClamp(h.Z() * factors.Z())
 		_ = v.Load()
+		return
+	}
+	if sp := activeGizmoSprite(); sp != nil {
+		// The snapshot holds width and height rather than a scale, so dragging
+		// resizes the quad itself. Z is ignored: a quad has no depth, and the
+		// Z handle drags nothing rather than silently driving the width.
+		h := Editor.GizmoDragStartScale
+		sp.Width = world.EntityScaleClamp(h.X() * factors.X())
+		sp.Height = world.EntityScaleClamp(h.Y() * factors.Y())
 		return
 	}
 	if ch := activeGizmoChunk(); ch != nil {

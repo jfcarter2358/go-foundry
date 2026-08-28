@@ -36,6 +36,8 @@ const (
 	sel3DSpawn
 	sel3DEntity
 	sel3DVolume
+	sel3DSprite
+	sel3DEmitter
 )
 
 func editor3DSelection() editor3DSelKind {
@@ -50,6 +52,10 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DEntity
 	case activeVolume() != nil:
 		return sel3DVolume
+	case activeSprite() != nil:
+		return sel3DSprite
+	case activeEmitter() != nil:
+		return sel3DEmitter
 	case len(Editor.SelectedVertices) > 0:
 		return sel3DVertices
 	case Editor.ActiveSurface != "":
@@ -78,6 +84,17 @@ func editor3DSelectionSummary() string {
 	case sel3DVolume:
 		v := activeVolume()
 		return fmt.Sprintf("Volume %s (%s)", v.ID, world.VolumeShapeName(v.Shape))
+
+	case sel3DSprite:
+		sp := activeSprite()
+		return fmt.Sprintf("Sprite %s (%s)", sp.ID, gfx.BillboardModeName(sp.Billboard))
+
+	case sel3DEmitter:
+		em := activeEmitter()
+		if em.Effect == "" {
+			return fmt.Sprintf("Emitter %s (no effect)", em.ID)
+		}
+		return fmt.Sprintf("Emitter %s (%s)", em.ID, em.Effect)
 
 	case sel3DVertices:
 		if n := len(Editor.SelectedVertices); n > 1 {
@@ -442,7 +459,7 @@ func editor3DSelectSectorRing() {
 // editor3DCanSnap reports whether the selection is something snapping can move.
 func editor3DCanSnap() bool {
 	switch editor3DSelection() {
-	case sel3DVertices, sel3DSpawn, sel3DEntity, sel3DVolume:
+	case sel3DVertices, sel3DSpawn, sel3DEntity, sel3DVolume, sel3DSprite, sel3DEmitter:
 		return Editor.StepSize > 0
 	}
 	return false
@@ -484,6 +501,21 @@ func editor3DSnapSelectionToGrid() {
 		EditorPushUndo()
 		v.Position = snapVec3(v.Position, step)
 		editorSetStatus("Snapped volume %q to the grid", v.ID)
+
+	case sel3DSprite:
+		// The position only, for the reason a volume's size is left alone: a
+		// sprite's size is its width and height, and rounding those onto the
+		// grid would resize a quad someone asked to have moved.
+		sp := activeSprite()
+		EditorPushUndo()
+		sp.Position = snapVec3(sp.Position, step)
+		editorSetStatus("Snapped sprite %q to the grid", sp.ID)
+
+	case sel3DEmitter:
+		em := activeEmitter()
+		EditorPushUndo()
+		em.Position = snapVec3(em.Position, step)
+		editorSetStatus("Snapped emitter %q to the grid", em.ID)
 	}
 }
 

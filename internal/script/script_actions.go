@@ -356,6 +356,18 @@ func init() {
 			return flang.NullVal{}, nil
 		},
 	}
+
+	// The particle and attach verbs live in their own files and their own maps,
+	// so each surface can be read in one place; they are merged in here so there
+	// is still exactly one table the runtime looks in.
+	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs} {
+		for name, fn := range group {
+			if _, clash := scriptVerbs[name]; clash {
+				panic("script: two implementations of the verb " + name)
+			}
+			scriptVerbs[name] = fn
+		}
+	}
 }
 
 // removeObject deletes whatever a ref names, reporting whether it found it.

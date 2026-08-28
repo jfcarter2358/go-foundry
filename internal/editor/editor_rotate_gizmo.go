@@ -122,6 +122,14 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 		if v := activeGizmoVolume(); v != nil {
 			return v.Position, true
 		}
+	case gizmoKindSprite:
+		if sp := activeGizmoSprite(); sp != nil {
+			return sp.Position, true
+		}
+	case gizmoKindEmitter:
+		if em := activeGizmoEmitter(); em != nil {
+			return em.Position, true
+		}
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {
 			return s.Position, true
@@ -215,6 +223,20 @@ func applyRotationToSelection(axis, origin mgl32.Vec3, delta float32) {
 	}
 	if v := activeGizmoVolume(); v != nil {
 		v.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
+		return
+	}
+	if em := activeGizmoEmitter(); em != nil {
+		// An emitter's rotation aims its emission shape, which is the whole
+		// reason the rotate gizmo is offered on something with no visible body.
+		em.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
+		return
+	}
+	if s := activeGizmoSprite(); s != nil {
+		// Meaningful on all three axes only when the sprite is not billboarded;
+		// in the other two modes the renderer reads Z alone, as a roll. The
+		// drag is allowed either way rather than being blocked, so switching a
+		// sprite to Fixed keeps whatever was already dialled in.
+		s.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
 		return
 	}
 	if sp := activeGizmoSpawn(); sp != nil {

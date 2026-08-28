@@ -562,6 +562,10 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 			// limited to the nearest cascades by BiomeShadows. Restores
 			// Shadows.Program.
 			RenderBiomeScatterDirShadow(level, lsm, c, frame.Splits[c], gfx.Cam.Position, BiomeWindTime, &cull)
+			// Cast shadow-casting sprites, turned to face the LIGHT rather than
+			// the camera — a camera-facing quad rendered from here would be
+			// edge-on and cast nothing. Restores Shadows.Program.
+			RenderSpriteDirShadow(level, lsm, dl.Direction, gfx.Cam.Position, &cull)
 			layer++
 		}
 	}
@@ -628,6 +632,10 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 			RenderDetailCubeShadow(level, lsm, pl.Position, farPlane, &cull)
 			// Cast painted biome scatter into this cube face; restores Shadows.CubeProgram.
 			RenderBiomeScatterCubeShadow(level, lsm, pl.Position, farPlane, gfx.Cam.Position, BiomeWindTime, &cull)
+			// Sprites into this cube face. A point light has a position, so the
+			// quads converge on it exactly as they converge on the eye in the
+			// colour pass. Restores Shadows.CubeProgram.
+			RenderSpriteCubeShadow(level, lsm, pl.Position, farPlane, &cull)
 		}
 		mapIdx++
 	}

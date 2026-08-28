@@ -86,6 +86,14 @@ func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 		raw.Volumes = append(raw.Volumes, world.VolumeToRaw(&level.Volumes[i]))
 	}
 
+	for i := range level.Sprites {
+		raw.Sprites = append(raw.Sprites, world.SpriteToRaw(&level.Sprites[i]))
+	}
+
+	for i := range level.Emitters {
+		raw.Emitters = append(raw.Emitters, world.EmitterToRaw(&level.Emitters[i]))
+	}
+
 	raw.Scripts = append([]string(nil), level.Scripts...)
 	raw.Lights = lightsToRaw(level.Lights)
 	return raw, nil

@@ -66,6 +66,8 @@ func editorExplorerSection(lvl *world.Level, kind editorPanelKind) {
 	editorExplorerChunkNodes(lvl)
 	editorExplorerEntityNodes(lvl)
 	editorExplorerVolumeNodes(lvl)
+	editorExplorerSpriteNodes(lvl)
+	editorExplorerEmitterNodes(lvl)
 	editorExplorerLightNodes(lvl)
 	editorExplorerScriptNodes(lvl)
 	imgui.EndChild()
@@ -673,6 +675,14 @@ func editorExplorerAddMenu(lvl *world.Level, kind editorPanelKind) {
 		editorVolumeAddMenu()
 		imgui.EndMenu()
 	}
+	if imgui.BeginMenu("Sprite") {
+		editorSpriteAddMenu()
+		imgui.EndMenu()
+	}
+	if imgui.BeginMenu("Emitter") {
+		editorEmitterAddMenu()
+		imgui.EndMenu()
+	}
 
 	imgui.Separator()
 	if imgui.MenuItemV("Directional Light", "", false,
@@ -740,5 +750,139 @@ func editorExplorerAddScriptMenu(lvl *world.Level) {
 	}
 	if offered == 0 {
 		editorTextMuted("(nothing left to add)")
+	}
+}
+
+// ---------- sprites ----------
+
+// editorExplorerSpriteNodes draws the level's sprites, one leaf each, with the
+// same per-row menu the volume rows carry.
+func editorExplorerSpriteNodes(lvl *world.Level) {
+	if !editorExplorerCategory(fmt.Sprintf("Sprites (%d)##sprites", len(lvl.Sprites)), panelFocusSprite) {
+		return
+	}
+	defer imgui.TreePop()
+
+	if len(lvl.Sprites) == 0 {
+		editorTextMuted("(none)")
+		return
+	}
+	del, dup := -1, -1
+	for i := range lvl.Sprites {
+		s := &lvl.Sprites[i]
+		label := s.ID
+		if label == "" {
+			label = "(unnamed)"
+		}
+		// What the row says beyond the name is what would otherwise send an
+		// author clicking through every sprite to find the one that is off, or
+		// the one riding the ship.
+		if !s.Visible {
+			label += "  (hidden)"
+		}
+		if !s.Attach.IsZero() {
+			label += "  [" + s.Attach.Describe() + "]"
+		}
+		if editorExplorerLeaf(fmt.Sprintf("%s##spr%d", label, i), i == Editor.ActiveSpriteIdx, panelFocusSprite) {
+			editorSelectSprite(i)
+		}
+		editorExplorerMenu(fmt.Sprintf("sprctx%d", i), func() {
+			visible := s.Visible
+			if imgui.MenuItemV("Visible", "", visible, true) {
+				EditorPushUndo()
+				s.Visible = !visible
+			}
+			if imgui.MenuItem("Duplicate") {
+				dup = i
+			}
+			imgui.Separator()
+			if imgui.MenuItem("Delete") {
+				del = i
+			}
+		})
+	}
+	if dup >= 0 {
+		editorSelectSprite(dup)
+		duplicateActiveSprite()
+	}
+	if del >= 0 {
+		editorSelectSprite(del)
+		deleteActiveSprite()
+	}
+}
+
+// ---------- emitters ----------
+
+// editorExplorerEmitterNodes draws the level's particle emitters.
+func editorExplorerEmitterNodes(lvl *world.Level) {
+	if !editorExplorerCategory(fmt.Sprintf("Emitters (%d)##emitters", len(lvl.Emitters)), panelFocusEmitter) {
+		return
+	}
+	defer imgui.TreePop()
+
+	if len(lvl.Emitters) == 0 {
+		editorTextMuted("(none)")
+		return
+	}
+	del, dup := -1, -1
+	for i := range lvl.Emitters {
+		e := &lvl.Emitters[i]
+		label := e.ID
+		if label == "" {
+			label = "(unnamed)"
+		}
+		// The effect it names, and any reason it is producing nothing. An
+		// emitter with a broken document looks exactly like one that is simply
+		// off, and the row is where that distinction is cheapest to make.
+		switch {
+		case e.Effect == "":
+			label += "  (no effect)"
+		case !e.Loaded():
+			label += "  (" + e.Effect + ": failed)"
+		default:
+			label += "  [" + e.Effect + "]"
+		}
+		if !e.Enabled {
+			label += "  (off)"
+		} else if !e.Emitting {
+			label += "  (not emitting)"
+		}
+		if !e.Attach.IsZero() {
+			label += "  <" + e.Attach.Describe() + ">"
+		}
+		if editorExplorerLeaf(fmt.Sprintf("%s##em%d", label, i), i == Editor.ActiveEmitterIdx, panelFocusEmitter) {
+			editorSelectEmitter(i)
+		}
+		editorExplorerMenu(fmt.Sprintf("emctx%d", i), func() {
+			enabled := e.Enabled
+			if imgui.MenuItemV("Enabled", "", enabled, true) {
+				EditorPushUndo()
+				e.Enabled = !enabled
+			}
+			emitting := e.Emitting
+			if imgui.MenuItemV("Emitting", "", emitting, true) {
+				EditorPushUndo()
+				e.Emitting = !emitting
+				e.SyncSystems()
+			}
+			if imgui.MenuItem("Restart") {
+				e.Reset()
+			}
+			if imgui.MenuItem("Duplicate") {
+				dup = i
+			}
+			imgui.Separator()
+			if imgui.MenuItem("Delete") {
+				del = i
+			}
+		})
+	}
+	if dup >= 0 {
+		editorSelectEmitter(dup)
+		duplicateActiveEmitter()
+	}
+	if del >= 0 {
+		editorSelectEmitter(del)
+		deleteActiveEmitter()
 	}
 }

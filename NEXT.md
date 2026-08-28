@@ -90,6 +90,14 @@
 - [x] Texture blending
 - [x] Animation blending between clips (crossfade on switch, configurable per
       animation via `blend:`, default 0.15s, 0 for a hard cut)
+- [x] Sprites — camera-facing quads placed in a level, in three blend modes
+      (cutout draws in the opaque pass and antialiases for free; alpha sorts;
+      additive is order-independent)
+- [x] Particles — `.fpar` effects authored in the particle editor and placed as
+      emitters, simulated on the CPU and drawn through the same instanced
+      billboard pass sprites use
+- [x] Skeleton sockets — sprites and emitters attach to a frame, an entity, or a
+      named bone inside one of its model attachments
 - [x] Walking into a drawn gap that is taller than the player causes the player to walk through it
 - [x] On exit play the camera position in the 3D editor should be reset to when play was initiated
 - [x] Hitting play should not close my other editors
@@ -122,14 +130,17 @@
 ### Engine
 
 
-- [ ] Sprites
-- [ ] Particles
-- [ ] Skeleton sockets
 - [ ] Physics engine
 - [ ] Trees
 - [ ] Configurable keybindings
 - [ ] Water reflections
-- [ ] Music and Sound Effects
+- [/] Music and Sound Effects. `internal/audio` is in: SDL2 output (no new
+      native library), pure-Go WAV/OGG/MP3 decoding, a voice pool with
+      priority stealing, distance attenuation, constant-power panning, cones
+      and doppler, and master/music/effects gains. `app.Run` opens the device
+      and publishes the listener each frame. Still to come: the placed
+      `Sound` level object and its editor panel, the flang verbs, and the
+      volume sliders in the settings panel.
 - [ ] Volumetric displacement (e.g. sand, snow)
 - [ ] Restitution/friction, and more than one solver iteration per frame
 - [ ] Editing entity *definitions* in the editor. The panel edits an instance;

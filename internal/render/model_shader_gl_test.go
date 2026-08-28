@@ -17,6 +17,8 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/gltest"
+	"foundry/internal/testenv"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -26,8 +28,8 @@ func TestModelShadersCompile(t *testing.T) {
 	gltest.Context(t)
 
 	prog, err := gfx.CompileProgramFromFiles(
-		"resources/shaders/model_vert.glsl",
-		"resources/shaders/model_frag.glsl",
+		repoShader(t, "model_vert.glsl"),
+		repoShader(t, "model_frag.glsl"),
 	)
 	if err != nil {
 		t.Fatalf("model editor shaders failed to build: %v", err)
@@ -66,7 +68,7 @@ func TestSkinnedShadersCompileAndLink(t *testing.T) {
 	gltest.Context(t)
 
 	prevExe := fileutil.ExecutablePath
-	fileutil.ExecutablePath = "resources"
+	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
 	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
 
 	if _, err := gfx.SkinCommonSource(); err != nil {
@@ -74,7 +76,7 @@ func TestSkinnedShadersCompileAndLink(t *testing.T) {
 	}
 
 	// The colour pass, through the real loader.
-	if err := gfx.LoadProgram("resources/shaders/vertex.glsl", "resources/shaders/fragment.glsl"); err != nil {
+	if err := gfx.LoadProgram(repoShader(t, "vertex.glsl"), repoShader(t, "fragment.glsl")); err != nil {
 		t.Fatalf("world program with skinning failed to build: %v", err)
 	}
 	for _, name := range []string{"skinned", "bones"} {
@@ -90,10 +92,10 @@ func TestSkinnedShadersCompileAndLink(t *testing.T) {
 
 	// Both shadow passes, through the same LinkProgram the engine uses.
 	var dirProg, cubeProg uint32
-	if err := LinkProgram("resources/shaders/shadow_vert.glsl", "resources/shaders/shadow_frag.glsl", &dirProg); err != nil {
+	if err := LinkProgram(repoShader(t, "shadow_vert.glsl"), repoShader(t, "shadow_frag.glsl"), &dirProg); err != nil {
 		t.Fatalf("cascade shadow program with skinning failed to build: %v", err)
 	}
-	if err := LinkProgram("resources/shaders/shadow_cube_vert.glsl", "resources/shaders/shadow_cube_frag.glsl", &cubeProg); err != nil {
+	if err := LinkProgram(repoShader(t, "shadow_cube_vert.glsl"), repoShader(t, "shadow_cube_frag.glsl"), &cubeProg); err != nil {
 		t.Fatalf("point shadow program with skinning failed to build: %v", err)
 	}
 	for _, p := range []struct {
