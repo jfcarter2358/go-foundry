@@ -361,6 +361,12 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		Editor.ActiveSectorIdx = -1
 		editorSelectVolume(hit.idx)
 
+	case pickLight:
+		// The Objects list is no longer the only way to reach a light: click
+		// its marker and the gizmo attaches to it, the same as an entity's.
+		Editor.ActiveSectorIdx = -1
+		editorSelectLight(lightKindPoint, hit.idx)
+
 	case pickWater:
 		// A water plane has no properties of its own — everything about it is
 		// derived from the Water-kind biome sector that produced it — so the
@@ -447,40 +453,60 @@ func editorWaterSectorFor(chunkIdx, surfaceIdx int) int {
 	return -1
 }
 
-// moveChunk shifts all shared points in a chunk by the delta to newOrigin,
-// rebuilds geometry, and updates the chunk's origin and AABB.
+// moveChunk places a chunk at newOrigin.
+//
+// That is the whole of it: Points, sector heights, biome paint and every other
+// per-chunk coordinate are chunk-local (see Chunk's own doc comment) and never
+// baked with Origin, so nothing about them needs touching when Origin changes
+// — they ride along automatically through Chunk.ModelMatrix, the same way the
+// structural mesh already does at render time. There is no geometry to reload
+// and no bounds to recompute, because none of it moved.
 func moveChunk(ch *world.Chunk, newOrigin mgl32.Vec3) {
-	delta := newOrigin.Sub(ch.Origin)
-	dx := delta.X()
-	dy := delta.Y()
-	dz := delta.Z()
-	for vi := range ch.Points {
-		ch.Points[vi][0] += dx
-		ch.Points[vi][1] += dz
-	}
-	// A chunk carries its own paint: every biome polygon stored on it slides
-	// rigidly with the floor, including any part that spilled past a sector
-	// edge. (Per-vertex warping is for edits that change a sector's shape —
-	// see carryBiomesWithPoints — and would leave spilled paint behind here.)
-	for bi := range ch.BiomeSectors {
-		bs := &ch.BiomeSectors[bi]
-		for pi := range bs.Points {
-			bs.Points[pi] = bs.Points[pi].Add(mgl32.Vec2{dx, dz})
-		}
-		bs.HeightDirty = true
-		bs.GroundDirty = true
-	}
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		s.Floor.Height += dy
-		s.Ceiling.Height += dy
-		rebuildSectorEdgePoints(ch, s)
-		_ = world.ReloadSector(ch, s)
-	}
-	ch.RebuildGaps()
-	ch.MinBound = ch.MinBound.Add(delta)
-	ch.MaxBound = ch.MaxBound.Add(delta)
 	ch.Origin = newOrigin
+	editorChunkTransformChanged()
+}
+
+// editorChunkTransformChanged re-buckets the spatial hash after a chunk's
+// Origin/Rotation/Scale has been written.
+//
+// The hash is keyed on world cells derived from each chunk's ModelMatrix, so a
+// transform edit invalidates it — without this the moved chunk drops out of
+// every world-space lookup (collision, entity location, the script location
+// verbs) until some unrelated edit rebuilds it. See RebuildSpatialHash. Cheap
+// enough to run on every frame of a drag.
+func editorChunkTransformChanged() {
+	world.RebuildSpatialHash(Editor.level)
+}
+
+// chunkWorldOBB describes ch's bounding box where it actually sits in the
+// world: its centre, the three unit axes of its own local frame carried out
+// through ModelMatrix, and its half-extents along those axes.
+//
+// An oriented box rather than a refitted world AABB on purpose — a refit of a
+// rotated chunk is looser than the chunk itself, so the outline would visibly
+// float off the geometry it is supposed to be outlining. Reading the basis out
+// of ModelMatrix's columns (rather than rebuilding it from Rotation/Scale)
+// keeps this correct for a frame-owned chunk too, whose matrix carries the
+// vehicle's own orientation on top of its own.
+func chunkWorldOBB(ch *world.Chunk) (center mgl32.Vec3, axes [3]mgl32.Vec3, half mgl32.Vec3) {
+	m := ch.ModelMatrix()
+	center = ch.LocalToWorld(ch.MinBound.Add(ch.MaxBound).Mul(0.5))
+	localHalf := ch.MaxBound.Sub(ch.MinBound).Mul(0.5)
+	for i := 0; i < 3; i++ {
+		col := mgl32.Vec3{m[i*4], m[i*4+1], m[i*4+2]}
+		l := col.Len()
+		if l < 1e-6 {
+			// Degenerate (zero-scaled) axis: keep a usable basis rather than
+			// dividing by zero, and let the extent collapse with it.
+			axes[i] = mgl32.Vec3{}
+			axes[i][i] = 1
+			half[i] = 0
+			continue
+		}
+		axes[i] = col.Mul(1 / l)
+		half[i] = localHalf[i] * l
+	}
+	return center, axes, half
 }
 
 // Editor3DRenderGizmos draws wireframe overlays for selected objects.
@@ -505,26 +531,37 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 		gizmo.GizmoAABB(smin, smax, col)
 	}
 
-	// Draw point light spheres
+	// Draw point light spheres. The selected one goes yellow, like every other
+	// selected object, so it is clear which light the translate gizmo's arms
+	// are attached to.
+	selKind, selIdx := Editor.SelectedLightKind, Editor.SelectedLightIdx
 	for i := range lvl.Lights.Points {
 		pl := &lvl.Lights.Points[i]
 		col := mgl32.Vec3{pl.Color.X(), pl.Color.Y(), pl.Color.Z()}
 		if col.Len() < 0.1 {
 			col = mgl32.Vec3{1, 0.8, 0.2}
 		}
-		gizmo.GizmoSphere(pl.Position, pl.Radius*0.1, col)
+		if selKind == lightKindPoint && selIdx == i {
+			col = yellow
+		}
+		// The same radius picking aims at, so what a click can reach is what
+		// the view draws — see pointLightMarkerRadius.
+		gizmo.GizmoSphere(pl.Position, pointLightMarkerRadius(pl), col)
 		gizmo.GizmoLine(pl.Position, pl.Position.Add(mgl32.Vec3{0, 0.3, 0}), col)
 	}
 
-	// Highlight selected chunk AABB
+	// Highlight the selected chunk's box, where the chunk actually is:
+	// MinBound/MaxBound are chunk-local, so they have to be carried out
+	// through the chunk's own placement or the outline sits at the world
+	// origin however far the chunk has been moved.
 	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 		ch := &lvl.Chunks[Editor.ActiveChunkIdx]
-		gizmo.GizmoAABB(ch.MinBound, ch.MaxBound, cyan)
+		center, axes, half := chunkWorldOBB(ch)
+		gizmo.GizmoOBB(center, axes, half, cyan)
 	}
 
-	// Extrusion gizmos
-	editorExtrusionRenderGizmos()
-	editorRenderExtrusionOutlines()
+	// The surface being shaped, if any: its wireframe, handles and drag arms.
+	drawSurfaceEditOverlay()
 
 	// The selected face's outline, the handles the current selection mode can
 	// act on, and the translate gizmo — drawn last and without depth testing,
@@ -675,17 +712,21 @@ func createChunkAtCamera(id string) {
 	cx := gfx.Cam.Position.X()
 	cz := gfx.Cam.Position.Z()
 	if Editor.Mode == Mode2D {
-		cx = Editor.Pan2D.X()
-		cz = Editor.Pan2D.Y()
+		// Pan2D is on the map's plane — the *currently active* chunk's local
+		// space (editor2DAnchor) — and Origin below is world. Using the pan
+		// raw would place the new chunk offset by the old chunk's placement.
+		cx, cz = editor2DFromPlane(Editor.Pan2D.X(), Editor.Pan2D.Y())
 	}
 	halfSize := float32(5.0)
 
-	// Build shared point pool
+	// Points are built around the chunk's own local origin, like every other
+	// chunk's authored geometry — the camera/pan position is carried by Origin
+	// instead of baked into them.
 	pts := []mgl32.Vec2{
-		{cx - halfSize, cz - halfSize},
-		{cx + halfSize, cz - halfSize},
-		{cx + halfSize, cz + halfSize},
-		{cx - halfSize, cz + halfSize},
+		{-halfSize, -halfSize},
+		{halfSize, -halfSize},
+		{halfSize, halfSize},
+		{-halfSize, halfSize},
 	}
 	floorH := float32(0.0)
 	ceilH := float32(4.0)
@@ -715,10 +756,11 @@ func createChunkAtCamera(id string) {
 
 	chunk := world.Chunk{
 		ID:         id,
+		Origin:     mgl32.Vec3{cx, 0, cz},
 		Points:     pts,
 		Sectors:    []world.Sector{sector},
-		MinBound:   mgl32.Vec3{cx - halfSize, floorH, cz - halfSize},
-		MaxBound:   mgl32.Vec3{cx + halfSize, ceilH, cz + halfSize},
+		MinBound:   mgl32.Vec3{-halfSize, floorH, -halfSize},
+		MaxBound:   mgl32.Vec3{halfSize, ceilH, halfSize},
 		PointNames: []string{"A", "B", "C", "D"},
 	}
 	_ = world.ReloadSector(&chunk, &sector)
@@ -753,8 +795,22 @@ func duplicateActiveChunk() {
 	}
 	clone.RebuildGaps()
 
+	// A duplicated vehicle interior keeps riding the same vehicle (Chunk.Clone
+	// copies FrameOwner), so the vehicle's own interior list has to name the
+	// copy too — editorChunkFrameOwnerRow keeps those two halves in step for
+	// every other binding and this one must not be the exception.
+	if clone.FrameOwner != "" {
+		if e := world.FindEntity(lvl, clone.FrameOwner); e != nil && e.Vehicle != nil {
+			e.Vehicle.AddInterior(clone.ID)
+		}
+	}
+
 	lvl.Chunks = append(lvl.Chunks, clone)
 	Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
+	// The new chunk needs bucketing, and a frame-owned one needs its Xform.
+	if err := world.RebuildIndexes(lvl); err != nil {
+		editorSetStatus("Duplicated %s, but frames are unhappy: %v", clone.ID, err)
+	}
 }
 
 // deleteActiveChunk removes the currently active chunk from the level after
@@ -776,17 +832,17 @@ func deleteActiveChunk() {
 		s := &ch.Sectors[si]
 		for wi := range s.Walls {
 			s.Walls[wi].Geometry.Delete()
-			for ei := range s.Walls[wi].ExtrusionGeometries {
-				s.Walls[wi].ExtrusionGeometries[ei].Delete()
+			for ei := range s.Walls[wi].SubmeshGeometries {
+				s.Walls[wi].SubmeshGeometries[ei].Delete()
 			}
 		}
 		s.Floor.Geometry.Delete()
-		for ei := range s.Floor.ExtrusionGeometries {
-			s.Floor.ExtrusionGeometries[ei].Delete()
+		for ei := range s.Floor.SubmeshGeometries {
+			s.Floor.SubmeshGeometries[ei].Delete()
 		}
 		s.Ceiling.Geometry.Delete()
-		for ei := range s.Ceiling.ExtrusionGeometries {
-			s.Ceiling.ExtrusionGeometries[ei].Delete()
+		for ei := range s.Ceiling.SubmeshGeometries {
+			s.Ceiling.SubmeshGeometries[ei].Delete()
 		}
 		for pi := range s.Portals {
 			s.Portals[pi].FloorGap.Delete()

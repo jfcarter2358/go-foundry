@@ -27,6 +27,7 @@ package editor
 
 import (
 	"foundry/internal/gfx"
+	"foundry/internal/render"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -129,27 +130,36 @@ func editorPointOccluded(eye, p mgl32.Vec3) bool {
 		return false
 	}
 
+	// eye/dir are world-space; every chunk's bounds and vertex buffers are
+	// chunk-local. Both the bounds rejects and the triangle tests below go
+	// through the chunk's own placement, or a moved chunk occludes from where
+	// it used to be — offering handles behind a wall and hiding ones in plain
+	// sight. The matrix is the identity for an unplaced chunk, which is what
+	// keeps this one walk.
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
-		if !segmentHitsAABB(eye, dir, limit, ch.MinBound, ch.MaxBound) {
+		model := ch.ModelMatrix()
+		cmin, cmax := ch.WorldBounds()
+		if !segmentHitsAABB(eye, dir, limit, cmin, cmax) {
 			continue
 		}
 
 		for seci := range ch.Sectors {
 			s := &ch.Sectors[seci]
 			smin, smax := editorSectorBounds(s)
+			smin, smax = render.TransformAABB(model, smin, smax)
 			if !segmentHitsAABB(eye, dir, limit, smin, smax) {
 				continue
 			}
 			if s.Floor.Enabled && !s.Floor.Hidden {
-				if geometryBlocks(eye, dir, limit, s.Floor.Geometry.Vertices) ||
-					geometriesBlock(eye, dir, limit, s.Floor.ExtrusionGeometries) {
+				if modelGeometryBlocks(eye, dir, limit, s.Floor.Geometry.Vertices, model) ||
+					modelGeometriesBlock(eye, dir, limit, s.Floor.SubmeshGeometries, model) {
 					return true
 				}
 			}
 			if s.Ceiling.Enabled {
-				if geometryBlocks(eye, dir, limit, s.Ceiling.Geometry.Vertices) ||
-					geometriesBlock(eye, dir, limit, s.Ceiling.ExtrusionGeometries) {
+				if modelGeometryBlocks(eye, dir, limit, s.Ceiling.Geometry.Vertices, model) ||
+					modelGeometriesBlock(eye, dir, limit, s.Ceiling.SubmeshGeometries, model) {
 					return true
 				}
 			}
@@ -158,8 +168,8 @@ func editorPointOccluded(eye, p mgl32.Vec3) bool {
 				if !w.Visible {
 					continue
 				}
-				if geometryBlocks(eye, dir, limit, w.Geometry.Vertices) ||
-					geometriesBlock(eye, dir, limit, w.ExtrusionGeometries) {
+				if modelGeometryBlocks(eye, dir, limit, w.Geometry.Vertices, model) ||
+					modelGeometriesBlock(eye, dir, limit, w.SubmeshGeometries, model) {
 					return true
 				}
 			}
@@ -169,9 +179,10 @@ func editorPointOccluded(eye, p mgl32.Vec3) bool {
 	return false
 }
 
-// editorSectorBounds is a sector's world AABB, grown vertically so a displaced
-// or extruded surface that pushes past the stored floor/ceiling heights still
-// gets its triangles tested.
+// editorSectorBounds is a sector's CHUNK-LOCAL AABB, grown vertically so a
+// displaced or extruded surface that pushes past the stored floor/ceiling
+// heights still gets its triangles tested. The caller carries it out through
+// the owning chunk's ModelMatrix before testing a world-space ray against it.
 func editorSectorBounds(s *world.Sector) (mgl32.Vec3, mgl32.Vec3) {
 	const margin = 2
 	lo, hi := s.Floor.Height, s.Ceiling.Height
@@ -217,16 +228,6 @@ func geometryBlocks(origin, dir mgl32.Vec3, limit float32, verts []float32) bool
 	return false
 }
 
-// geometriesBlock is geometryBlocks across a slice (a surface's extrusions).
-func geometriesBlock(origin, dir mgl32.Vec3, limit float32, geoms []gfx.Geometry) bool {
-	for i := range geoms {
-		if geometryBlocks(origin, dir, limit, geoms[i].Vertices) {
-			return true
-		}
-	}
-	return false
-}
-
 // modelGeometryBlocks is geometryBlocks against model-space vertices, the same
 // move pickModelT makes: the ray is rewritten in model space with its direction
 // transformed as a vector rather than renormalised, which leaves the parameter
@@ -247,4 +248,15 @@ func modelGeometryBlocks(origin, dir mgl32.Vec3, limit float32, verts []float32,
 		mgl32.Vec3{d4.X(), d4.Y(), d4.Z()},
 		limit, verts,
 	)
+}
+
+// modelGeometriesBlock is modelGeometryBlocks across a slice, the model-space
+// counterpart of geometriesBlock.
+func modelGeometriesBlock(origin, dir mgl32.Vec3, limit float32, geoms []gfx.Geometry, model mgl32.Mat4) bool {
+	for i := range geoms {
+		if modelGeometryBlocks(origin, dir, limit, geoms[i].Vertices, model) {
+			return true
+		}
+	}
+	return false
 }

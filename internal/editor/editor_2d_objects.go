@@ -221,14 +221,16 @@ func editor2DEntityAt(lvl *world.Level, wx, wz float32) (int, bool) {
 	return found, ok
 }
 
-// editor2DFloorHeightAt returns the floor height of the sector containing
-// (wx,wz), or 0 when the point is outside every sector. The spawn point is
-// placed relative to it so a click on a raised floor doesn't drop it through.
+// editor2DFloorHeightAt returns the world-space Y of the floor of the sector
+// containing world point (wx,wz), or 0 when the point is outside every
+// sector. The spawn point is placed relative to it so a click on a raised
+// floor doesn't drop it through.
 func editor2DFloorHeightAt(ch *world.Chunk, wx, wz float32) float32 {
+	lx, lz := chunkLocalXZ(ch, wx, wz)
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
-		if geom.PointInPolygon(mgl32.Vec2{wx, wz}, world.SectorPoints(ch, s)) {
-			return s.Floor.Height
+		if geom.PointInPolygon(mgl32.Vec2{lx, lz}, world.SectorPoints(ch, s)) {
+			return ch.LocalToWorld(mgl32.Vec3{lx, s.Floor.Height, lz}).Y()
 		}
 	}
 	return 0

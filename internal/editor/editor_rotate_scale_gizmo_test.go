@@ -38,7 +38,7 @@ func gizmo3DVertexSelection(t *testing.T) mgl32.Mat4 {
 	Editor.GizmoDragAxis = -1
 	Editor.SnapToGrid = false
 	Editor.SpawnPlacementMode = false
-	Editor.ExtrusionMode = false
+	Editor.SurfaceEditing = false
 	return projView
 }
 
@@ -113,7 +113,7 @@ func gizmo3DSpawnSelection(t *testing.T) {
 	Editor.GizmoTool = editorToolMove
 	Editor.SnapToGrid = false
 	Editor.SpawnPlacementMode = false
-	Editor.ExtrusionMode = false
+	Editor.SurfaceEditing = false
 }
 
 // Scale is defined against the selection's own size, which a single anchor does

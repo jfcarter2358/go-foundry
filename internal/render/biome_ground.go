@@ -25,7 +25,6 @@ package render
 
 import (
 	"foundry/internal/biome"
-	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 
@@ -51,9 +50,9 @@ type groundRenderer struct {
 
 	cache map[string]groundEntry
 
-	uProjView, uTex    int32
-	aPos, aNormal, aUV uint32
-	aCoverage          uint32
+	uProjView, uTex, uModel int32
+	aPos, aNormal, aUV      uint32
+	aCoverage               uint32
 
 	initialized bool
 }
@@ -80,6 +79,7 @@ func GroundInit() {
 	p := groundPatches.program
 	groundPatches.uProjView = gl.GetUniformLocation(p, gl.Str("projView\x00"))
 	groundPatches.uTex = gl.GetUniformLocation(p, gl.Str("tex\x00"))
+	groundPatches.uModel = gl.GetUniformLocation(p, gl.Str("model\x00"))
 
 	groundPatches.aPos = uint32(gl.GetAttribLocation(p, gl.Str("aPos\x00")))
 	groundPatches.aNormal = uint32(gl.GetAttribLocation(p, gl.Str("aNormal\x00")))
@@ -136,13 +136,12 @@ func ResolveGroundUVScale(brush *world.BiomeBrush) mgl32.Vec2 {
 // exactly on the polygon's edges, the mesh's outer edge follows the painted
 // shape precisely rather than the axis-aligned staircase a grid-quad clip
 // would give a diagonal edge.
-func BuildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
-	boundary, allPts := biome.BiomeMeshPoints(s)
-	if len(allPts) == 0 {
-		return nil
-	}
-	triIdx := geom.DelaunayTriangulate(allPts, boundary)
-	if len(triIdx) == 0 {
+func BuildGroundPatchMesh(level *world.Level, owner *world.Chunk, s *world.BiomeSector) []float32 {
+	// Cached on the polygon: this is rebuilt whenever the FLOOR under the paint
+	// moves, and the triangulation depends only on s.Points. See
+	// BiomeMeshTriangulation.
+	allPts, triIdx := biome.BiomeMeshTriangulation(s)
+	if len(allPts) == 0 || len(triIdx) == 0 {
 		return nil
 	}
 
@@ -164,7 +163,7 @@ func BuildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
 		// of it. Doing it in the fragment stage rather than by dropping
 		// triangles here keeps the cutoff on the true slope contour instead of
 		// quantizing it to this mesh's ~2-world-unit triangulation.
-		heights[i], coverage[i] = biome.BiomeSurfaceAt(level, &s.Brush, seed, p.X(), p.Y())
+		heights[i], coverage[i] = biome.BiomeSurfaceAt(level, owner, s.DrapeSector, &s.Brush, seed, p.X(), p.Y())
 	}
 
 	uvScale := ResolveGroundUVScale(&s.Brush)
@@ -203,13 +202,13 @@ func BuildGroundPatchMesh(level *world.Level, s *world.BiomeSector) []float32 {
 // This runs later in the frame than SyncBiomeWaterSurfaces (see main.go),
 // so it's the one that clears GroundDirty once built — by the time it does,
 // the water sync has already had its chance to see the sector dirty too.
-func ensureGroundPatch(level *world.Level, s *world.BiomeSector) groundEntry {
+func ensureGroundPatch(level *world.Level, owner *world.Chunk, s *world.BiomeSector) groundEntry {
 	e, ok := groundPatches.cache[s.ID]
 	tex := ResolveGroundTexture(&s.Brush)
 	if ok && !s.GroundDirty && e.texture == tex {
 		return e
 	}
-	verts := BuildGroundPatchMesh(level, s)
+	verts := BuildGroundPatchMesh(level, owner, s)
 	s.GroundDirty = false
 	if !ok {
 		gl.GenVertexArrays(1, &e.vao)
@@ -253,30 +252,31 @@ func RenderBiomeGround(level *world.Level, projView mgl32.Mat4, camPos mgl32.Vec
 	}
 
 	started := false
+	// Tracked the same way uploadDetailModel/uploadBiomeChunk track their own
+	// program's `model` uniform: an unmoved/unrotated/unscaled level of chunks
+	// then pays for exactly one upload (the initial identity), not one per
+	// sector.
+	current := mgl32.Ident4()
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
-		// Biome paint and procedural detail are world-space passes: they build
-		// their meshes and instance transforms directly in world coordinates,
-		// with no model matrix anywhere in the pipeline. A chunk in a frame
-		// would have its grass left standing where the ship used to be.
-		//
-		// A vehicle interior is a built environment rather than terrain, so
-		// there is nothing to lose here — the editor refuses to paint one.
-		if ch.InFrame() {
-			continue
-		}
 		for si := range ch.BiomeSectors {
 			s := &ch.BiomeSectors[si]
 			if len(s.Points) < 3 {
 				continue
 			}
-			entry := ensureGroundPatch(level, s)
+			entry := ensureGroundPatch(level, ch, s)
 			if entry.verts == 0 {
 				continue
 			}
 			if !started {
 				beginGroundPass(level, projView, frame)
+				current = mgl32.Ident4()
+				gl.UniformMatrix4fv(groundPatches.uModel, 1, false, &current[0])
 				started = true
+			}
+			if m := ch.ModelMatrix(); m != current {
+				current = m
+				gl.UniformMatrix4fv(groundPatches.uModel, 1, false, &current[0])
 			}
 			_ = gfx.EnsureTextureLoaded(entry.texture)
 			gl.ActiveTexture(gl.TEXTURE0)

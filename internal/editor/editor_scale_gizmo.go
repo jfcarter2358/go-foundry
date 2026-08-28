@@ -28,7 +28,7 @@ import (
 //
 // As with rotate, the two mean different things — a vertex selection spreads
 // its points apart, an entity rewrites its Scale and grows in place — and a
-// spawn marker and a chunk have no size to change at all.
+// spawn marker has no size to change at all.
 func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 	switch gizmoEffectiveKind() {
 	case gizmoKindVertices:
@@ -41,8 +41,20 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 		if v := activeGizmoVolume(); v != nil {
 			return v.Position, true
 		}
+	case gizmoKindChunk:
+		if ch := activeGizmoChunk(); ch != nil {
+			return ch.LocalToWorld(ch.MinBound.Add(ch.MaxBound).Mul(0.5)), true
+		}
 	}
 	return mgl32.Vec3{}, false
+}
+
+// gizmoChunkScales reports whether the current selection is a chunk — the one
+// kind whose scale is a single uniform factor (Chunk.Scale; see ModelMatrix),
+// not a per-axis Vec3. The three axis arms would have nothing of their own to
+// write back to, so only the uniform centre handle is offered at all.
+func gizmoChunkScales() bool {
+	return gizmoEffectiveKind() == gizmoKindChunk
 }
 
 // pickScaleHandle returns the handle a click at (mx, my) grabs: 0..2 for an
@@ -64,6 +76,9 @@ func pickScaleHandle(mx, my int32) int {
 	cursor := mgl32.Vec2{float32(mx), float32(my)}
 	if cursor.Sub(originScreen).Len() <= modelScaleUniformPx {
 		return modelScaleUniformAxis
+	}
+	if gizmoChunkScales() {
+		return -1
 	}
 
 	armLen := gizmoArmLength(origin) * modelScaleArmFrac
@@ -191,6 +206,13 @@ func applyScaleToSelection(origin, factors mgl32.Vec3) {
 		_ = v.Load()
 		return
 	}
+	if ch := activeGizmoChunk(); ch != nil {
+		// Only the uniform handle is ever offered (gizmoChunkScales), so
+		// factors.X()/.Y()/.Z() are always equal here.
+		ch.Scale = world.EntityScaleClamp(Editor.GizmoDragStartScale.X() * factors.X())
+		editorChunkTransformChanged()
+		return
+	}
 	setSelectedVertexWorld(scaleTransform(origin, factors))
 }
 
@@ -228,14 +250,16 @@ func renderScaleGizmo(mx, my int32) {
 	}
 
 	yellow := mgl32.Vec3{1, 1, 0}
-	for i, axis := range gizmoAxes {
-		col := gizmoAxisColors[i]
-		if i == hover {
-			col = yellow
+	if !gizmoChunkScales() {
+		for i, axis := range gizmoAxes {
+			col := gizmoAxisColors[i]
+			if i == hover {
+				col = yellow
+			}
+			tip := origin.Add(axis.Mul(armLen))
+			gizmo.GizmoLine(origin, tip, col)
+			gizmoBox(tip, modelScaleTipHalfPx, col)
 		}
-		tip := origin.Add(axis.Mul(armLen))
-		gizmo.GizmoLine(origin, tip, col)
-		gizmoBox(tip, modelScaleTipHalfPx, col)
 	}
 
 	// The centre handle. Neutral rather than any axis colour, because it is the

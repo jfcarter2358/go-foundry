@@ -297,24 +297,11 @@ func (m *ModelDoc) FacesAtEdge(e EdgeKey) []int { return m.adjacency().edgeFaces
 // instead, which is both stable under vertex reordering and what the
 // triangulation below wants to project onto.
 func (m *ModelDoc) faceNormal(f *ModelFace) mgl32.Vec3 {
-	var n mgl32.Vec3
-	cnt := len(f.Verts)
-	if cnt < 3 {
-		return n
+	pts := make([]mgl32.Vec3, len(f.Verts))
+	for i, vi := range f.Verts {
+		pts[i] = m.Verts[vi]
 	}
-	for i := 0; i < cnt; i++ {
-		a := m.Verts[f.Verts[i]]
-		b := m.Verts[f.Verts[(i+1)%cnt]]
-		n = n.Add(mgl32.Vec3{
-			(a.Y() - b.Y()) * (a.Z() + b.Z()),
-			(a.Z() - b.Z()) * (a.X() + b.X()),
-			(a.X() - b.X()) * (a.Y() + b.Y()),
-		})
-	}
-	if n.Len() < 1e-12 {
-		return mgl32.Vec3{}
-	}
-	return n.Normalize()
+	return geom.PolygonNormal3D(pts)
 }
 
 // FaceNormal returns the unit normal of face fi.
@@ -359,63 +346,20 @@ func faceUVCentroid(f *ModelFace) mgl32.Vec2 {
 // (0..len(f.Verts)-1), so callers can look up both the position and the UV of
 // each corner.
 //
-// triangulate.go's EarClip is a 2D routine, so the face is projected onto its
-// own best-fit plane first: a basis (u, v) perpendicular to the Newell normal,
-// with PerpAxis (detail_render.go) picking a stable first axis. This is the
-// same trick computeFaceBasis uses for procedural detail, but on indexed data
-// rather than a flat vertex buffer.
+// The flattening and clipping is geom.TriangulatePolygon3D, shared with a
+// level surface's SurfaceMesh so the two mesh editors cut an n-gon the same
+// way; this wrapper is only the lookup from face-local indices into the
+// document's vertex pool.
 func (m *ModelDoc) FaceTriangles(fi int) [][3]int {
 	if fi < 0 || fi >= len(m.Faces) {
 		return nil
 	}
 	f := &m.Faces[fi]
-	n := len(f.Verts)
-	if n < 3 {
-		return nil
-	}
-	if n == 3 {
-		return [][3]int{{0, 1, 2}}
-	}
-
-	nrm := m.faceNormal(f)
-	if nrm.Len() < 0.5 {
-		// Fully degenerate face (all vertices collinear or coincident). A fan
-		// keeps the triangle count right without inventing a plane.
-		return fanTriangles(n)
-	}
-	u := geom.PerpAxis(nrm)
-	if u.Len() < 1e-6 {
-		return fanTriangles(n)
-	}
-	u = u.Normalize()
-	v := nrm.Cross(u).Normalize()
-
-	origin := m.Verts[f.Verts[0]]
-	poly := make([]mgl32.Vec2, n)
+	pts := make([]mgl32.Vec3, len(f.Verts))
 	for i, vi := range f.Verts {
-		d := m.Verts[vi].Sub(origin)
-		poly[i] = mgl32.Vec2{d.Dot(u), d.Dot(v)}
+		pts[i] = m.Verts[vi]
 	}
-
-	flat := geom.EarClip(poly)
-	if len(flat) < 3 {
-		return fanTriangles(n)
-	}
-	tris := make([][3]int, 0, len(flat)/3)
-	for i := 0; i+2 < len(flat); i += 3 {
-		tris = append(tris, [3]int{flat[i], flat[i+1], flat[i+2]})
-	}
-	return tris
-}
-
-// fanTriangles is the fallback triangulation for a face whose plane could not be
-// determined. It never fails, and a degenerate face has zero area anyway.
-func fanTriangles(n int) [][3]int {
-	tris := make([][3]int, 0, n-2)
-	for i := 1; i < n-1; i++ {
-		tris = append(tris, [3]int{0, i, i + 1})
-	}
-	return tris
+	return geom.TriangulatePolygon3D(pts)
 }
 
 // ---------- compiling to GPU buffers ----------

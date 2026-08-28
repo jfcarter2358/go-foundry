@@ -43,8 +43,21 @@ func Editor2DRender() {
 	ch := &lvl.Chunks[Editor.ActiveChunkIdx]
 	ortho := editor2DOrtho()
 
-	// Draw background grid before any geometry
-	drawEditorGrid(editor2DView())
+	// ch.Points (and every height derived from Floor/Ceiling below) is
+	// chunk-local; the map itself, like the objects it shares a view with
+	// (Editor2DRenderObjects), draws in world space. wp3/wp are that one
+	// conversion — the full 3D form for a drawn point with a height, the flat
+	// XZ form for the crosses and boxes that are drawn at y=0 regardless.
+	wp3 := ch.LocalToWorld
+	wp := func(p mgl32.Vec2) mgl32.Vec2 {
+		w := wp3(mgl32.Vec3{p.X(), 0, p.Y()})
+		return mgl32.Vec2{w.X(), w.Z()}
+	}
+
+	// Draw background grid before any geometry. It is described on the map's
+	// own plane, so it is carried out to world space like everything else the
+	// line renderer is given — see editor2DOrtho's note on the anchor.
+	drawEditorGrid(editor2DView(), editor2DFromPlane)
 
 	white := mgl32.Vec3{1, 1, 1}
 	cyan := mgl32.Vec3{0, 1, 1}
@@ -57,22 +70,36 @@ func Editor2DRender() {
 	// Track which chunk points are used by any sector
 	usedPoints := make(map[int]bool)
 
-	for si := range ch.Sectors {
+	// Ghosted layers first, the layer being edited last, so its outlines and
+	// selection handles are never painted over — see layerDrawOrder.
+	for _, si := range layerDrawOrder(ch) {
 		s := &ch.Sectors[si]
 		nPts := len(s.PointIndices)
 		if nPts < 2 {
 			continue
 		}
+		// Marked from every layer, drawn only from the visible ones: a point
+		// belonging to a hidden layer's sector is still not a free point, and
+		// drawing it as one would put a white cross on the map with nothing
+		// under it. See editor2DVertexCandidates, which draws the same line.
 		for _, idx := range s.PointIndices {
 			usedPoints[idx] = true
 		}
+		if !layerDrawn(s.Layer) {
+			continue
+		}
+		// An inactive layer is context, not something to be read in detail: its
+		// outline is drawn in the layer's ghost tint and its corner crosses are
+		// left off entirely, since a cross that cannot be picked is only clutter
+		// over the ones that can.
+		ghost := !layerEditable(s.Layer)
 
 		// Draw floor edges (walls = white, portals = cyan, selected = yellow)
 		for ei := 0; ei < nPts; ei++ {
 			a := ch.Points[s.PointIndices[ei]]
 			b := ch.Points[s.PointIndices[(ei+1)%nPts]]
-			pa := mgl32.Vec3{a.X(), s.Floor.Height, a.Y()}
-			pb := mgl32.Vec3{b.X(), s.Floor.Height, b.Y()}
+			pa := wp3(mgl32.Vec3{a.X(), s.Floor.Height, a.Y()})
+			pb := wp3(mgl32.Vec3{b.X(), s.Floor.Height, b.Y()})
 
 			kind := "wall"
 			if ei < len(s.EdgeKinds) {
@@ -101,7 +128,10 @@ func Editor2DRender() {
 			if isSelected {
 				col = yellow
 			}
-			gizmo.GizmoLine(pa, pb, col)
+			gizmo.GizmoLine(pa, pb, layerTint(s.Layer, col))
+		}
+		if ghost {
+			continue // no corner crosses on a layer that cannot be picked
 		}
 
 		// Draw floor vertex dots (red crosses) — bright when editing floor, dim otherwise
@@ -122,7 +152,7 @@ func Editor2DRender() {
 				col = yellow
 			}
 			y := s.Floor.VertexHeight(vi)
-			gp := mgl32.Vec3{pt.X(), y, pt.Y()}
+			gp := wp3(mgl32.Vec3{pt.X(), y, pt.Y()})
 			crossSz := screenToWorldSize(4, ortho)
 			gizmo.GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), col)
 			gizmo.GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), col)
@@ -144,7 +174,7 @@ func Editor2DRender() {
 					col = yellow
 				}
 				y := s.Ceiling.VertexHeight(vi)
-				gp := mgl32.Vec3{pt.X(), y, pt.Y()}
+				gp := wp3(mgl32.Vec3{pt.X(), y, pt.Y()})
 				// Drawn as a diagonal X, not a second upright cross. Seen from
 				// above the two marks share a screen position and differ only
 				// in height, so an upright one laid over the floor's covered it
@@ -166,7 +196,7 @@ func Editor2DRender() {
 		magenta := mgl32.Vec3{1, 0.2, 1}
 		r := screenToWorldSize(editor2DSelectRadius, ortho)
 		for _, pt := range ch.Points {
-			x, z := pt.X(), pt.Y()
+			x, z := wp(pt).X(), wp(pt).Y()
 			c00 := mgl32.Vec3{x - r, 0, z - r}
 			c10 := mgl32.Vec3{x + r, 0, z - r}
 			c11 := mgl32.Vec3{x + r, 0, z + r}
@@ -189,7 +219,7 @@ func Editor2DRender() {
 		if isVertexSelected(freePointSel(Editor.ActiveChunkIdx, pi)) {
 			col = yellow
 		}
-		gp := mgl32.Vec3{pt.X(), 0, pt.Y()}
+		gp := wp3(mgl32.Vec3{pt.X(), 0, pt.Y()})
 		crossSz := screenToWorldSize(5, ortho)
 		gizmo.GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), col)
 		gizmo.GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), col)
@@ -200,7 +230,7 @@ func Editor2DRender() {
 		if e[0] < len(ch.Points) && e[1] < len(ch.Points) {
 			a := ch.Points[e[0]]
 			b := ch.Points[e[1]]
-			gizmo.GizmoLine(mgl32.Vec3{a.X(), 0, a.Y()}, mgl32.Vec3{b.X(), 0, b.Y()}, green)
+			gizmo.GizmoLine(wp3(mgl32.Vec3{a.X(), 0, a.Y()}), wp3(mgl32.Vec3{b.X(), 0, b.Y()}), green)
 		}
 	}
 
@@ -209,6 +239,9 @@ func Editor2DRender() {
 
 	// Biome sector layer (always visible, dim when not the active tool).
 	Editor2DRenderBiomeSectors(ch)
+
+	// Holes cut through the layer's floors and ceilings.
+	Editor2DRenderOpenings(ch)
 
 	// Last, so its handles sit on top of everything they act on.
 	mx, my := editor2DCursor()
@@ -232,7 +265,13 @@ func Editor2DRenderLabels() {
 		if len(s.PointIndices) < 1 {
 			continue
 		}
-		// Compute centroid
+		// Only the layer being edited is labelled. A stack's sectors share a
+		// centroid, so labelling all of them writes every name at the same
+		// screen position, on top of each other.
+		if !layerEditable(s.Layer) {
+			continue
+		}
+		// Compute centroid, in world space like worldToScreen expects.
 		var cx, cz float32
 		for _, pIdx := range s.PointIndices {
 			pt := ch.Points[pIdx]
@@ -242,7 +281,8 @@ func Editor2DRenderLabels() {
 		n := float32(len(s.PointIndices))
 		cx /= n
 		cz /= n
-		sx, sy := worldToScreen(cx, cz)
+		wcx, wcz := chunkWorldXZ(ch, cx, cz)
+		sx, sy := worldToScreen(wcx, wcz)
 		drawList.AddText(imgui.Vec2{X: sx - 20, Y: sy - 6}, imgui.PackedColorFromVec4(imgui.Vec4{X: 1, Y: 1, Z: 0.5, W: 0.9}), s.ID)
 	}
 }
@@ -256,24 +296,135 @@ func editor2DView() orthoView {
 	return orthoView{pan: Editor.Pan2D, zoom: Editor.Zoom2D, viewW: vw, viewH: vh}
 }
 
-// editor2DOrtho returns the orthographic projection×view matrix for the 2D map.
+// ---------- the map's anchor ----------
+//
+// The 2D map is an authoring view of ONE chunk's own layout, so its plane IS
+// that chunk's local space: the chunk's local origin sits at the map's origin,
+// its local axes are the map's axes, and dragging the chunk's Origin (or
+// rotating or scaling it) moves the chunk through the WORLD without moving its
+// layout on this map. Placing a chunk and laying it out are different jobs and
+// the map is the one for laying it out.
+//
+// That is done by anchoring the VIEW rather than by converting what is drawn:
+// every coordinate handed to or returned from worldToScreen/screenToWorld, and
+// every point queued into the gizmo line renderer, stays in true world space —
+// which is what the hit tests, the 2D gizmo, the spawn point, the entities and
+// the lights all already speak, and what the 3D editor speaks too. Only the
+// projection knows about the anchor.
+
+// editor2DAnchor is the active chunk's ModelMatrix — the transform the map's
+// plane is pinned to. The identity when there is no active chunk.
+func editor2DAnchor() mgl32.Mat4 {
+	lvl := Editor.level
+	if lvl == nil || Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
+		return mgl32.Ident4()
+	}
+	return lvl.Chunks[Editor.ActiveChunkIdx].ModelMatrix()
+}
+
+// editor2DAnchorScale is the active chunk's uniform scale, the factor between a
+// distance on the map's plane and the same distance in the world.
+func editor2DAnchorScale() float32 {
+	lvl := Editor.level
+	if lvl == nil || Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
+		return 1
+	}
+	if sc := lvl.Chunks[Editor.ActiveChunkIdx].Scale; sc != 0 {
+		return sc
+	}
+	return 1
+}
+
+// editor2DToPlane carries a world XZ point onto the map's plane (the active
+// chunk's local space). Y is dropped rather than carried: Chunk.Rotation is
+// Y-only and Chunk.Scale is uniform, so a point's local X/Z depend only on its
+// world X/Z — no height is needed to place it on the map.
+func editor2DToPlane(wx, wz float32) (px, pz float32) {
+	m := editor2DAnchor()
+	if m == mgl32.Ident4() {
+		return wx, wz
+	}
+	r := m.Inv().Mul4x1(mgl32.Vec4{wx, 0, wz, 1})
+	return r.X(), r.Z()
+}
+
+// editor2DFromPlane is editor2DToPlane's inverse: a point on the map's plane
+// back out to world XZ.
+func editor2DFromPlane(px, pz float32) (wx, wz float32) {
+	m := editor2DAnchor()
+	if m == mgl32.Ident4() {
+		return px, pz
+	}
+	r := m.Mul4x1(mgl32.Vec4{px, 0, pz, 1})
+	return r.X(), r.Z()
+}
+
+// editor2DOrtho returns the orthographic projection×view matrix for the 2D map:
+// the plane's own ortho, composed with the inverse of the anchor so that the
+// world-space points queued into the gizmo renderer land in the active chunk's
+// local frame.
 func editor2DOrtho() mgl32.Mat4 {
-	return editor2DView().ortho()
+	m := editor2DAnchor()
+	if m == mgl32.Ident4() {
+		return editor2DView().ortho()
+	}
+	return editor2DView().ortho().Mul4(m.Inv())
 }
 
 // screenToWorldSize converts a pixel distance to world units at current zoom.
+// The plane is the active chunk's local space, so the raw conversion yields
+// LOCAL units; the anchor's scale carries them back out to world units, which
+// is what the name promises and what every caller (object half-extents, gizmo
+// arm lengths, click radii via chunkLocalSize) measures against.
 func screenToWorldSize(screenPx float32, _ mgl32.Mat4) float32 {
-	return editor2DView().screenToWorldSize(screenPx)
+	return editor2DView().screenToWorldSize(screenPx) * editor2DAnchorScale()
 }
 
 // worldToScreen converts a world XZ point to screen pixel coordinates.
 func worldToScreen(wx, wz float32) (sx, sy float32) {
-	return editor2DView().worldToScreen(wx, wz)
+	px, pz := editor2DToPlane(wx, wz)
+	return editor2DView().worldToScreen(px, pz)
 }
 
 // screenToWorld converts screen pixels to world XZ.
 func screenToWorld(sx, sy int32) (wx, wz float32) {
-	return editor2DView().screenToWorld(sx, sy)
+	px, pz := editor2DView().screenToWorld(sx, sy)
+	return editor2DFromPlane(px, pz)
+}
+
+// screenToChunkLocal converts screen pixels to ch's own local XZ — the space
+// Chunk.Points, wall StartPoint/EndPoint, and BiomeSector.Points all live in.
+// Every 2D-map operation that compares against or writes into those (as
+// opposed to placing a level-scoped thing like the spawn point or an entity,
+// which stays in screenToWorld's true world XZ) goes through this instead.
+func screenToChunkLocal(ch *world.Chunk, sx, sy int32) (lx, lz float32) {
+	wx, wz := screenToWorld(sx, sy)
+	return chunkLocalXZ(ch, wx, wz)
+}
+
+// chunkLocalXZ carries a world XZ point into ch's own local space.
+func chunkLocalXZ(ch *world.Chunk, wx, wz float32) (lx, lz float32) {
+	p := ch.WorldToLocal(mgl32.Vec3{wx, 0, wz})
+	return p.X(), p.Z()
+}
+
+// chunkWorldXZ carries a chunk-local XZ point into world space — chunkLocalXZ's
+// inverse, for drawing ch's own points against the map's world-space view.
+func chunkWorldXZ(ch *world.Chunk, lx, lz float32) (wx, wz float32) {
+	p := ch.LocalToWorld(mgl32.Vec3{lx, 0, lz})
+	return p.X(), p.Z()
+}
+
+// chunkLocalSize rescales a world-space distance (a click radius, typically)
+// into ch's own local units by its uniform Scale — rotation and translation
+// never change a distance, but a scaled chunk's local geometry is smaller or
+// larger than it looks in the world by exactly that factor.
+func chunkLocalSize(ch *world.Chunk, worldSize float32) float32 {
+	sc := ch.Scale
+	if sc == 0 {
+		sc = 1
+	}
+	return worldSize / sc
 }
 
 // findChunkPointNear returns the index of the chunk point nearest to (wx,wz)
@@ -312,6 +463,10 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 	}
 	ch := &lvl.Chunks[Editor.ActiveChunkIdx]
 	wx, wz := screenToWorld(t.X, t.Y)
+	// The structural tools below (splitting an edge, adding/picking a point)
+	// compare against ch.Points, which is chunk-local; placement (spawn/entity)
+	// below stays in wx,wz — a level-scoped position, not this chunk's.
+	lx, lz := chunkLocalXZ(ch, wx, wz)
 	mods := sdl.GetModState()
 	shiftHeld := mods&sdl.KMOD_SHIFT != 0
 	ctrlHeld := mods&sdl.KMOD_CTRL != 0
@@ -319,6 +474,13 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 	// An armed placement is an explicit request and outranks every other
 	// tool, including the biome brush.
 	if editor2DHandlePlacement(t, ch, wx, wz) {
+		return
+	}
+
+	// The opening tool, then the biome brush: both are polygon-drawing tools
+	// that take a bare click, and only one can ever be armed at a time (see
+	// EditorBeginOpening).
+	if openingHandleClick(t) {
 		return
 	}
 
@@ -339,7 +501,19 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
-	threshold := screenToWorldSize(editor2DSelectRadius, editor2DOrtho())
+	// An existing opening's corner, after the gizmo and before the map's own
+	// picking — see openingHandleGrab for why it sits exactly here. Modified
+	// clicks are left alone: shift splits an edge and ctrl extends a selection,
+	// and neither has anything to say about a hole.
+	if !shiftHeld && !ctrlHeld && openingHandleGrab(t) {
+		return
+	}
+
+	// Every threshold below is compared against chunk-local distances, so a
+	// pixel-derived world-space radius is rescaled by the chunk's own uniform
+	// Scale — a room scaled 2× has to be clicked within twice the local radius
+	// to cover the same screen distance.
+	threshold := chunkLocalSize(ch, screenToWorldSize(editor2DSelectRadius, editor2DOrtho()))
 
 	// --- Right-click: the context menu ---
 	//
@@ -363,11 +537,11 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 
 	// --- Shift+click: split the nearest edge, else place a new free point ---
 	if shiftHeld {
-		if splitSectorEdgeNear(ch, wx, wz, threshold*2) {
+		if splitSectorEdgeNear(ch, lx, lz, threshold*2) {
 			return
 		}
 		EditorPushUndo()
-		ch.AddPoint(mgl32.Vec2{wx, wz})
+		ch.AddPoint(mgl32.Vec2{lx, lz})
 		return
 	}
 
@@ -383,18 +557,18 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 	// through to the sector behind, which is what makes the modes predictable.
 	switch Editor.SelMode {
 	case editorSelPoint:
-		if !editor2DHandlePointClick(ch, wx, wz, threshold, ctrlHeld, true) && !ctrlHeld {
+		if !editor2DHandlePointClick(ch, lx, lz, threshold, ctrlHeld, true) && !ctrlHeld {
 			editor2DClearSelection()
 		}
 		return
 	case editorSelEdge:
-		if !editor2DHandleEdgeClick(ch, wx, wz, threshold*2, ctrlHeld) && !ctrlHeld {
+		if !editor2DHandleEdgeClick(ch, lx, lz, threshold*2, ctrlHeld) && !ctrlHeld {
 			editor2DClearSelection()
 		}
 		return
 	}
 
-	if !editor2DHandleFaceClick(lvl, ch, wx, wz, threshold, ctrlHeld) && !ctrlHeld {
+	if !editor2DHandleFaceClick(lvl, ch, lx, lz, threshold, ctrlHeld) && !ctrlHeld {
 		editor2DClearSelection()
 	}
 }
@@ -402,6 +576,7 @@ func Editor2DHandleClick(t sdl.MouseButtonEvent) {
 // Editor2DHandleRelease processes mouse button release to stop vertex dragging.
 func Editor2DHandleRelease(t sdl.MouseButtonEvent) {
 	biomeHandleRelease(t)
+	openingHandleRelease(t)
 	if t.Button == sdl.ButtonLeft {
 		editor2DGizmoMouseUp()
 		Editor.DragVertexSI = -1
@@ -436,19 +611,27 @@ func Editor2DHandleMouseMove(t sdl.MouseMotionEvent) {
 	// Biome brush: track cursor and paint while the button is held.
 	biomeHandleMouseMove(t)
 
+	// An opening's corner being dragged owns the mouse: it is a drag over the
+	// same floor the chunk-point drag below works on, and running both would
+	// move a hole and the sector under it at once.
+	if openingDraggingVertex() {
+		openingHandleMouseMove(t)
+		return
+	}
+
 	// Vertex drag
 	if Editor.DragVertexSI >= 0 && Editor.DragVertexVI >= 0 &&
 		Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 		ch := &lvl.Chunks[Editor.ActiveChunkIdx]
 		if Editor.DragVertexSI < len(ch.Sectors) {
 			s := &ch.Sectors[Editor.DragVertexSI]
-			wx, wz := screenToWorld(t.X, t.Y)
+			lx, lz := screenToChunkLocal(ch, t.X, t.Y)
 			vi := Editor.DragVertexVI
 			if Editor.DragIsFloor {
 				if vi < len(s.PointIndices) {
 					pIdx := s.PointIndices[vi]
 					was := ch.Points[pIdx]
-					ch.Points[pIdx] = mgl32.Vec2{wx, wz}
+					ch.Points[pIdx] = mgl32.Vec2{lx, lz}
 					biome.CarryBiomesWithPoints(ch, []biome.PointMove{{PointIdx: pIdx, From: was}})
 					// Rebuild all sectors that share this point
 					reloadSectorsUsingPoint(ch, pIdx)
@@ -533,13 +716,18 @@ type edgeSplitPlan struct {
 // matching reverse edges, so splitting one side alone would make InferPortals
 // demote both halves back to walls.
 func planEdgeSplit(ch *world.Chunk, wx, wz, threshold float32) (edgeSplitPlan, bool) {
-	// Nearest edge across all sectors, not merely the first within threshold.
+	// Nearest edge across all sectors on the layer being edited, not merely the
+	// first within threshold. Only the SEARCH is layer-filtered — which edge the
+	// author pointed at is a question about what they can see and click. The
+	// propagation below deliberately is not: an edge shared with a sector on
+	// another layer has to be split on both sides or the two rings disagree
+	// about a point they both hold.
 	bestSI, bestEI := -1, -1
 	bestDist := threshold
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
 		nPts := len(s.PointIndices)
-		if nPts < 3 {
+		if nPts < 3 || !layerEditable(s.Layer) {
 			continue
 		}
 		for ei := 0; ei < nPts; ei++ {
@@ -698,6 +886,25 @@ func InsertSectorVertex(ch *world.Chunk, s *world.Sector, ei, newPtIdx int, t fl
 	s.Floor.VertexOffsets = interpOffset(s.Floor.VertexOffsets)
 	s.Ceiling.VertexOffsets = interpOffset(s.Ceiling.VertexOffsets)
 
+	// The floor and ceiling meshes now have an outline corner they know nothing
+	// about. Rebinding alone would leave the surface spanning the straight edge
+	// the sector no longer has — a visible crack down the join — so a matching
+	// point is spliced into every face ring that ran between the two corners it
+	// went between. See InsertSurfaceBoundaryCorner.
+	insertMeshCorner := func(mesh *world.SurfaceMesh, offsets []float32, base float32) {
+		if mesh.IsEmpty() {
+			return
+		}
+		depth := float32(0)
+		if ei+1 < len(offsets) {
+			depth = offsets[ei+1]
+		}
+		_ = base
+		world.InsertSurfaceBoundaryCorner(mesh, ei, (ei+1)%nPts, ei+1, newPt, depth)
+	}
+	insertMeshCorner(&s.Floor.Mesh, s.Floor.VertexOffsets, s.Floor.Height)
+	insertMeshCorner(&s.Ceiling.Mesh, s.Ceiling.VertexOffsets, s.Ceiling.Height)
+
 	// Insert EdgeKind for the new edge (same kind as the edge being split)
 	newKinds := make([]string, len(s.EdgeKinds)+1)
 	copy(newKinds, s.EdgeKinds[:ei+1])
@@ -715,8 +922,8 @@ func InsertSectorVertex(ch *world.Chunk, s *world.Sector, ei, newPtIdx int, t fl
 // splitWall divides w at newPt, which must lie on the segment at parameter t
 // (0 = StartPoint, 1 = EndPoint). Both halves inherit every property of the
 // original — texture, collision, visibility, pinning, UV transform, procedural
-// detail — so the split is invisible until one half is edited. Extrusions and
-// terrain points go to whichever half now covers them.
+// detail — so the split is invisible until one half is edited. Whatever shape
+// the wall's surface mesh carries goes to whichever half now covers it.
 func splitWall(w world.Wall, newPt mgl32.Vec2, t float32) (first, second world.Wall) {
 	splitU := w.EndPoint.Sub(w.StartPoint).Len() * t
 
@@ -724,18 +931,16 @@ func splitWall(w world.Wall, newPt mgl32.Vec2, t float32) (first, second world.W
 	second = w
 	// Geometry holds live GL handles; both halves get fresh ones from Load.
 	first.Geometry = gfx.Geometry{}
-	first.ExtrusionGeometries = nil
+	first.SubmeshGeometries = nil
 	second.Geometry = gfx.Geometry{}
-	second.ExtrusionGeometries = nil
+	second.SubmeshGeometries = nil
 
 	first.EndPoint = newPt
 	second.StartPoint = newPt
 
-	// Wall U/V is measured in world units from StartPoint (see
-	// buildWallWithExtrusions), so the second half's features shift back by the
-	// split distance rather than being rescaled.
-	first.Extrusions, second.Extrusions = splitExtrusionsAtU(w.Extrusions, splitU)
-	first.TerrainPoints, second.TerrainPoints = splitTerrainPointsAtU(w.TerrainPoints, splitU)
+	// Wall U is measured in world units from StartPoint, so the second half's
+	// shape shifts back by the split distance rather than being rescaled.
+	first.Mesh, second.Mesh = world.SplitWallSurfaceMesh(&w.Mesh, splitU)
 	return first, second
 }
 
@@ -751,31 +956,6 @@ func splitPortal(p world.Portal, newPt mgl32.Vec2) (first, second world.Portal) 
 
 	first.EndPoint = newPt
 	second.StartPoint = newPt
-	return first, second
-}
-
-// splitExtrusionsAtU distributes a wall's extrusions between the two halves of
-// a wall split at splitU units from StartPoint. An extrusion that straddles the
-// split can't span two walls, so each half gets the part of it on that side,
-// clamped to the seam; U on the second half is rebased to its own StartPoint.
-func splitExtrusionsAtU(exts []world.Extrusion, splitU float32) (first, second []world.Extrusion) {
-	for _, ext := range exts {
-		minU, maxU := extrusionURange(ext)
-		switch {
-		case maxU <= splitU:
-			first = append(first, ext)
-		case minU >= splitU:
-			second = append(second, offsetExtrusionU(ext, -splitU))
-		default:
-			// Skip a sliver too thin to trianglate into anything meaningful.
-			if splitU-minU > minSplitSegLen {
-				first = append(first, clampExtrusionU(ext, minU, splitU))
-			}
-			if maxU-splitU > minSplitSegLen {
-				second = append(second, offsetExtrusionU(clampExtrusionU(ext, splitU, maxU), -splitU))
-			}
-		}
-	}
 	return first, second
 }
 
@@ -835,22 +1015,6 @@ func clampExtrusionU(ext world.Extrusion, lo, hi float32) world.Extrusion {
 	out.Outer = clamp(ext.Outer)
 	out.Inner = clamp(ext.Inner)
 	return out
-}
-
-// splitTerrainPointsAtU distributes a wall's terrain points between the two
-// halves of a wall split at splitU units from StartPoint, rebasing U for the
-// second half. A point sitting on the seam goes to both halves so the two
-// displacement meshes agree there.
-func splitTerrainPointsAtU(pts []world.TerrainPoint, splitU float32) (first, second []world.TerrainPoint) {
-	for _, p := range pts {
-		if p.U <= splitU+minSplitSegLen {
-			first = append(first, p)
-		}
-		if p.U >= splitU-minSplitSegLen {
-			second = append(second, world.TerrainPoint{U: p.U - splitU, V: p.V, Depth: p.Depth})
-		}
-	}
-	return first, second
 }
 
 // sectorVertexPos returns the position within s.PointIndices that holds chunk point index pi, or -1.
@@ -967,8 +1131,8 @@ func splitSector(ch *world.Chunk, sectorIdx, posA, posB int) {
 		EdgeIDs:      edgeIDsA,
 		Walls:        wallsA,
 		Portals:      portalsA,
-		Floor:        world.Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsA},
-		Ceiling:      world.Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsA},
+		Floor:        world.Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsA},
+		Ceiling:      world.Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsA},
 	}
 	sectorB := world.Sector{
 		ID:           world.UniqueSectorID(ch, s.ID+"_split"),
@@ -977,8 +1141,8 @@ func splitSector(ch *world.Chunk, sectorIdx, posA, posB int) {
 		EdgeIDs:      edgeIDsB,
 		Walls:        wallsB,
 		Portals:      portalsB,
-		Floor:        world.Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, Terrain: s.Floor.Terrain, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsB},
-		Ceiling:      world.Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, Terrain: s.Ceiling.Terrain, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsB},
+		Floor:        world.Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsB},
+		Ceiling:      world.Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsB},
 	}
 
 	// Both halves inherit edge IDs from the sector they came from, and each gains
@@ -1135,6 +1299,12 @@ func removeSectorPoint(ch *world.Chunk, s *world.Sector, pi int) {
 		s.Ceiling.VertexOffsets = append(s.Ceiling.VertexOffsets[:pos], s.Ceiling.VertexOffsets[pos+1:]...)
 	}
 
+	// The surface meshes lose the same corner, and every later binding shifts
+	// down one. Leaving them would have each mesh's boundary points snapping to
+	// whatever corner inherited their index — see RemoveSurfaceBoundaryCorner.
+	world.RemoveSurfaceBoundaryCorner(&s.Floor.Mesh, pos)
+	world.RemoveSurfaceBoundaryCorner(&s.Ceiling.Mesh, pos)
+
 	// Update the surviving edge's endpoints
 	_ = prevEdge
 	world.SyncEdgeRecordIDs(s)
@@ -1246,6 +1416,21 @@ func dfsFindPath(adj map[int][]int, path []int, target int, visited map[int]bool
 	return nil
 }
 
+// textureReferenceSector picks the sector a new one should inherit textures
+// from: one already on the same layer when there is one, else the chunk's
+// first. nil for an empty chunk.
+func textureReferenceSector(ch *world.Chunk, layer int) *world.Sector {
+	for si := range ch.Sectors {
+		if ch.Sectors[si].Layer == layer {
+			return &ch.Sectors[si]
+		}
+	}
+	if len(ch.Sectors) > 0 {
+		return &ch.Sectors[0]
+	}
+	return nil
+}
+
 // createSectorFromPolygon creates a new sector from the given chunk point indices.
 func createSectorFromPolygon(ch *world.Chunk, polyIndices []int) {
 	// Ensure CCW winding
@@ -1277,17 +1462,17 @@ func createSectorFromPolygon(ch *world.Chunk, polyIndices []int) {
 		edgeKinds[i] = "wall"
 	}
 
-	// Default properties
-	floorH := float32(0)
-	ceilH := float32(4)
+	// Default properties. The heights come from the layer being drawn on, not
+	// from an existing sector: copying sector 0's heights is right on a chunk
+	// with one layer and exactly wrong on a stacked one, where a sector drawn
+	// on the ledge would arrive buried inside the ground floor. Textures still
+	// come from a neighbour, since those have nothing to do with height —
+	// preferring one already on this layer so a new sector matches its own
+	// storey rather than the ground.
+	layer, floorH, ceilH := newSectorLayerDefaults(ch)
 	floorTex := "stone_floor"
 	ceilTex := "concrete"
-
-	// Copy from first sector if available
-	if len(ch.Sectors) > 0 {
-		ref := &ch.Sectors[0]
-		floorH = ref.Floor.Height
-		ceilH = ref.Ceiling.Height
+	if ref := textureReferenceSector(ch, layer); ref != nil {
 		if ref.Floor.Texture != "" {
 			floorTex = ref.Floor.Texture
 		}
@@ -1303,6 +1488,7 @@ func createSectorFromPolygon(ch *world.Chunk, polyIndices []int) {
 
 	sector := world.Sector{
 		ID:           world.UniqueSectorID(ch, fmt.Sprintf("sector_%d", len(ch.Sectors))),
+		Layer:        layer,
 		PointIndices: polyIndices,
 		EdgeKinds:    edgeKinds,
 		Walls:        walls,
@@ -1355,7 +1541,8 @@ func removeSectorKeepPoints(ch *world.Chunk, si int) {
 	// its footprint here: with the floor gone they have new heights (none) to
 	// bake, and would otherwise keep draping over a surface that no longer
 	// exists.
-	world.MarkBiomesDirtyOverBox(ch, ch.Sectors[si].MinBound, ch.Sectors[si].MaxBound)
+	world.MarkBiomesDirtyOverSector(ch, &ch.Sectors[si],
+		ch.Sectors[si].MinBound, ch.Sectors[si].MaxBound)
 	ch.Sectors = append(ch.Sectors[:si], ch.Sectors[si+1:]...)
 
 	// Convert portals in remaining sectors that pointed to the removed sector into walls.
@@ -1625,8 +1812,8 @@ func mergeSectorsAtPortal(ch *world.Chunk, siA, portalIdx int) {
 		EdgeIDs:      mergedEdgeIDs,
 		Walls:        mergedWalls,
 		Portals:      mergedPortals,
-		Floor:        world.Floor{Enabled: sA.Floor.Enabled, Hidden: sA.Floor.Hidden, Height: sA.Floor.Height, Texture: sA.Floor.Texture, Terrain: sA.Floor.Terrain, DoubleSided: sA.Floor.DoubleSided, Alpha: sA.Floor.Alpha, VertexOffsets: mergedFloorOff},
-		Ceiling:      world.Ceiling{Enabled: sA.Ceiling.Enabled, Height: sA.Ceiling.Height, Texture: sA.Ceiling.Texture, Terrain: sA.Ceiling.Terrain, DoubleSided: sA.Ceiling.DoubleSided, Alpha: sA.Ceiling.Alpha, VertexOffsets: mergedCeilOff},
+		Floor:        world.Floor{Enabled: sA.Floor.Enabled, Hidden: sA.Floor.Hidden, Height: sA.Floor.Height, Texture: sA.Floor.Texture, DoubleSided: sA.Floor.DoubleSided, Alpha: sA.Floor.Alpha, VertexOffsets: mergedFloorOff},
+		Ceiling:      world.Ceiling{Enabled: sA.Ceiling.Enabled, Height: sA.Ceiling.Height, Texture: sA.Ceiling.Texture, DoubleSided: sA.Ceiling.DoubleSided, Alpha: sA.Ceiling.Alpha, VertexOffsets: mergedCeilOff},
 	}
 
 	// Replace A with the merged sector
@@ -1681,7 +1868,25 @@ func dist2D(ax, ay, bx, by float32) float32 {
 
 // drawEditorGrid draws a background grid with lines every 5 units and
 // more distinctive lines at the x and z axes.
-func drawEditorGrid(v orthoView) {
+// drawEditorGrid draws the background grid for an orthographic view.
+//
+// toWorld carries a point from the view's own plane into whatever space the
+// line renderer's matrix expects. The 2D map passes the active chunk's
+// placement, because its projection is anchored to that chunk (see
+// editor2DOrtho) while the grid is naturally described in plane coordinates —
+// which keeps the grid, and the snapping that lands on it, aligned to the
+// chunk's own local axes rather than to the world's. nil means the two spaces
+// are the same, which is the surface/UV view's case.
+func drawEditorGrid(v orthoView, toWorld func(px, pz float32) (float32, float32)) {
+	if toWorld == nil {
+		toWorld = func(px, pz float32) (float32, float32) { return px, pz }
+	}
+	line := func(ax, az, bx, bz float32, col mgl32.Vec3) {
+		wax, waz := toWorld(ax, az)
+		wbx, wbz := toWorld(bx, bz)
+		gizmo.GizmoLine(mgl32.Vec3{wax, 0, waz}, mgl32.Vec3{wbx, 0, wbz}, col)
+	}
+
 	gridColor := mgl32.Vec3{0.2, 0.2, 0.2}
 	axisColor := mgl32.Vec3{0.4, 0.4, 0.4}
 
@@ -1700,14 +1905,12 @@ func drawEditorGrid(v orthoView) {
 	startZ := float32(math.Floor(float64(minZ/gridStep))) * gridStep
 	endZ := float32(math.Ceil(float64(maxZ/gridStep))) * gridStep
 
-	y := float32(0)
-
 	for x := startX; x <= endX; x += gridStep {
 		col := gridColor
 		if math.Abs(float64(x)) < 0.01 {
 			col = axisColor
 		}
-		gizmo.GizmoLine(mgl32.Vec3{x, y, minZ}, mgl32.Vec3{x, y, maxZ}, col)
+		line(x, minZ, x, maxZ, col)
 	}
 
 	for z := startZ; z <= endZ; z += gridStep {
@@ -1715,6 +1918,6 @@ func drawEditorGrid(v orthoView) {
 		if math.Abs(float64(z)) < 0.01 {
 			col = axisColor
 		}
-		gizmo.GizmoLine(mgl32.Vec3{minX, y, z}, mgl32.Vec3{maxX, y, z}, col)
+		line(minX, z, maxX, z, col)
 	}
 }

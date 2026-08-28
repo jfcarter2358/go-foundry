@@ -413,8 +413,34 @@ type BiomeBrush struct {
 // sectors may overlap; each is rendered as its own instanced pass.
 type BiomeSector struct {
 	ID     string
-	Points []mgl32.Vec2 // world-space polygon (CCW), independent of structural geometry
+	Points []mgl32.Vec2 // chunk-local polygon (CCW), independent of structural geometry
 	Brush  BiomeBrush
+
+	// DrapeSector is the ID of the structural sector this paint was drawn
+	// over — which surface it belongs to, recorded at paint time.
+	//
+	// Everything else about where the paint sits is derived from its polygon,
+	// and that is right: a polygon can span several sectors and spill past
+	// their edges, so the surface under any given vertex is a per-point
+	// question (see biome.DrapeTarget). What derivation cannot recover is
+	// which of two surfaces STACKED at the same XZ was meant — a mezzanine
+	// over a floor, grass on a terrace with a basement beneath it. Both look
+	// identical from above, which is the only view the paint was drawn in.
+	// So that one bit is recorded rather than guessed.
+	//
+	// Empty means unbound: paint from before this existed, or paint whose
+	// sector has since been deleted. DrapeTarget then falls back to its
+	// heuristic (lowest floor wins), so this is an optional refinement, never
+	// a requirement. Sector IDs are unique level-wide (see identity.go), so no
+	// chunk ID is needed alongside it.
+	DrapeSector string
+
+	// Layer is which of the owning chunk's authoring bands this paint was drawn
+	// on, so the 2D map can hide the paint belonging to layers it is not
+	// showing. Like Sector.Layer it is editor-only — which surface the paint
+	// actually drapes onto is DrapeSector's job, and that is resolved
+	// geometrically. See layer.go.
+	Layer int
 
 	// HeightDirty is runtime-only (never serialized): true whenever Points
 	// has changed since the last render, so the renderer knows to rebuild
@@ -544,7 +570,10 @@ func GroundTextureFor(kind int32) string {
 	}
 }
 
-// Bounds returns the world-XZ AABB of the sector's polygon.
+// Bounds returns the CHUNK-LOCAL XZ AABB of the sector's polygon, the same
+// space Points is stored in. Anything comparing it against something from a
+// different chunk has to carry both out through their owners' ModelMatrix
+// first — see MarkBiomesDirtyOverBox.
 func (s *BiomeSector) Bounds() (min, max mgl32.Vec2) {
 	if len(s.Points) == 0 {
 		return

@@ -194,6 +194,7 @@ func EvictBiomeHeightCache(id string) {
 func EvictBiomeSectorCaches(id string) {
 	EvictBiomeHeightCache(id)
 	EvictGroundPatchCache(id)
+	biome.EvictMeshCache(id)
 }
 
 // GrassInit compiles the biome shader programs and builds the template meshes.
@@ -922,7 +923,7 @@ func biomeHeightTexDims(min, max mgl32.Vec2) (w, h int, size mgl32.Vec2) {
 // rocks/clumps drop onto, .g is the slope-coverage factor (0..1) the vertex
 // shader multiplies into density so instances thin out and vanish past the
 // brush's slope range instead of floating on/embedding in a cliff face.
-func (br *biomeRenderer) ensureBiomeHeight(level *world.Level, s *world.BiomeSector) biomeHeightEntry {
+func (br *biomeRenderer) ensureBiomeHeight(level *world.Level, owner *world.Chunk, s *world.BiomeSector) biomeHeightEntry {
 	e, ok := br.heightCache[s.ID]
 	if ok && !s.HeightDirty {
 		return e
@@ -943,7 +944,7 @@ func (br *biomeRenderer) ensureBiomeHeight(level *world.Level, s *world.BiomeSec
 		for tx := 0; tx < w; tx++ {
 			u := float32(tx) / float32(w-1)
 			wx := min.X() + u*size.X()
-			height, coverage := biome.BiomeSurfaceAt(level, &s.Brush, seed, wx, wz)
+			height, coverage := biome.BiomeSurfaceAt(level, owner, s.DrapeSector, &s.Brush, seed, wx, wz)
 			i := (ty*w + tx) * 2
 			data[i] = height
 			data[i+1] = coverage
@@ -989,14 +990,34 @@ func ResolvedBoundaryJitter(b *world.BiomeBrush) float32 {
 }
 
 // biomeScatterBounds returns the world box a sector's scatter can occupy this
-// frame: its polygon bounds clipped to the camera ring (the scatter exists only
-// within rng of the camera, however large the painted sector is), spanning the
-// owning chunk vertically since instances are planted on that chunk's floors.
-// Used to cull whole sectors out of a shadow cascade.
+// frame: its polygon bounds (carried out to world space through ch's
+// ModelMatrix) clipped to the camera ring (the scatter exists only within rng
+// of the camera, however large the painted sector is), spanning the owning
+// chunk vertically since instances are planted on that chunk's floors. Used to
+// cull whole sectors out of a shadow cascade.
 func biomeScatterBounds(ch *world.Chunk, s *world.BiomeSector, camPos mgl32.Vec3, rng float32) (mgl32.Vec3, mgl32.Vec3) {
 	pmin, pmax := s.Bounds()
-	minX, maxX := pmin.X(), pmax.X()
-	minZ, maxZ := pmin.Y(), pmax.Y()
+	lo := mgl32.Vec3{pmin.X(), 0, pmin.Y()}
+	hi := mgl32.Vec3{pmax.X(), 0, pmax.Y()}
+	wmin, wmax := TransformAABB(ch.ModelMatrix(), lo, hi)
+
+	// rng (and MaxStemHeight below) arrive as the brush's authored figures,
+	// which the shader spends in the chunk's LOCAL frame — biomePlace builds
+	// its lattice around camXZ = ch.WorldToLocal(camPos) and compares against
+	// `range` without rescaling (see biome_scatter_common.glsl). So a local
+	// radius of rng covers rng*Scale world units, and this box — which is in
+	// world space, and whose whole job is to agree with what the shader will
+	// actually draw — has to be widened to match. forEachScatterSector's own
+	// doc says the two MUST agree; at Scale > 1 they did not, and the shadow
+	// passes dropped sectors whose scatter genuinely reached the cascade.
+	scale := ch.Scale
+	if scale == 0 {
+		scale = 1
+	}
+	rng *= scale
+
+	minX, maxX := wmin.X(), wmax.X()
+	minZ, maxZ := wmin.Z(), wmax.Z()
 	if v := camPos.X() - rng; v > minX {
 		minX = v
 	}
@@ -1010,9 +1031,11 @@ func biomeScatterBounds(ch *world.Chunk, s *world.BiomeSector, camPos mgl32.Vec3
 		maxZ = v
 	}
 	// MaxStemHeight bounds any instance's reach above the surface it sits on;
-	// the chunk's own span already covers where that surface can be.
-	return mgl32.Vec3{minX, ch.MinBound.Y() - world.MaxStemHeight, minZ},
-		mgl32.Vec3{maxX, ch.MaxBound.Y() + world.MaxStemHeight, maxZ}
+	// the chunk's own world span already covers where that surface can be.
+	stem := world.MaxStemHeight * scale
+	chMin, chMax := ch.WorldBounds()
+	return mgl32.Vec3{minX, chMin.Y() - stem, minZ},
+		mgl32.Vec3{maxX, chMax.Y() + stem, maxZ}
 }
 
 // biomeCastOuterBound returns the outer world-unit bound the CASTING tiers of
@@ -1055,19 +1078,9 @@ func biomeCastOuterBound(b *world.BiomeBrush) float32 {
 // castRange uniform in renderBiomeSector — the two MUST agree, or an instance
 // culled out of the box here could still think it belongs in a map it was
 // never drawn into, or vice versa.
-func forEachScatterSector(level *world.Level, camPos mgl32.Vec3, castOnly bool, castCap float32, cull *Frustum, fn func(*world.BiomeSector)) {
+func forEachScatterSector(level *world.Level, camPos mgl32.Vec3, castOnly bool, castCap float32, cull *Frustum, fn func(ch *world.Chunk, s *world.BiomeSector)) {
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
-		// Biome paint and procedural detail are world-space passes: they build
-		// their meshes and instance transforms directly in world coordinates,
-		// with no model matrix anywhere in the pipeline. A chunk in a frame
-		// would have its grass left standing where the ship used to be.
-		//
-		// A vehicle interior is a built environment rather than terrain, so
-		// there is nothing to lose here — the editor refuses to paint one.
-		if ch.InFrame() {
-			continue
-		}
 		for si := range ch.BiomeSectors {
 			s := &ch.BiomeSectors[si]
 			if !s.Brush.Scatters() || len(s.Points) < 3 || s.Brush.Density <= 0 {
@@ -1099,7 +1112,7 @@ func forEachScatterSector(level *world.Level, camPos mgl32.Vec3, castOnly bool, 
 					continue
 				}
 			}
-			fn(s)
+			fn(ch, s)
 		}
 	}
 }
@@ -1124,16 +1137,21 @@ func RenderBiomes(level *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3, fr
 
 	p := &biomes.color
 	started := false
-	forEachScatterSector(level, camPos, false, 0, nil, func(s *world.BiomeSector) {
+	model := mgl32.Ident4()
+	forEachScatterSector(level, camPos, false, 0, nil, func(ch *world.Chunk, s *world.BiomeSector) {
 		if !started {
 			uploadBiomeLighting(p.prog, level, frame)
 			pv := projView
 			gl.UniformMatrix4fv(p.U("projView"), 1, false, &pv[0])
 			beginBiomePass(p, camPos, timeSec)
+			model = mgl32.Ident4()
+			gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
+			gl.Uniform2f(p.U("camXZ"), camPos.X(), camPos.Z())
 			started = true
 		}
+		uploadBiomeChunk(p, &model, ch, camPos)
 		for tier := 0; tier < world.BiomeLODTierCount(s.Brush.Kind); tier++ {
-			renderBiomeSector(level, s, p, tier, false, 0)
+			renderBiomeSector(level, ch, s, p, tier, false, 0)
 		}
 	})
 
@@ -1160,14 +1178,19 @@ func RenderBiomeScatterDirShadow(level *world.Level, lsm mgl32.Mat4, cascade int
 
 	p := &biomes.shadow
 	started := false
-	forEachScatterSector(level, camPos, true, cascadeSplit, cull, func(s *world.BiomeSector) {
+	model := mgl32.Ident4()
+	forEachScatterSector(level, camPos, true, cascadeSplit, cull, func(ch *world.Chunk, s *world.BiomeSector) {
 		if !started {
 			gl.UseProgram(p.prog)
 			m := lsm
 			gl.UniformMatrix4fv(p.U("lightSpaceMatrix"), 1, false, &m[0])
 			beginBiomePass(p, camPos, timeSec)
+			model = mgl32.Ident4()
+			gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
+			gl.Uniform2f(p.U("camXZ"), camPos.X(), camPos.Z())
 			started = true
 		}
+		uploadBiomeChunk(p, &model, ch, camPos)
 		// Only the tiers BiomeShadows.CastLODTiers allows in cast at all —
 		// each with its own (cheaper, for Mid/Far) mesh, never Near's. See
 		// BiomeShadowSettings.CastLODTiers's own doc comment.
@@ -1179,7 +1202,7 @@ func RenderBiomeScatterDirShadow(level *world.Level, lsm mgl32.Mat4, cascade int
 			tiers = kindTiers
 		}
 		for tier := 0; tier < tiers; tier++ {
-			renderBiomeSector(level, s, p, tier, true, cascadeSplit)
+			renderBiomeSector(level, ch, s, p, tier, true, cascadeSplit)
 		}
 	})
 
@@ -1200,7 +1223,8 @@ func RenderBiomeScatterCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos m
 
 	p := &biomes.cube
 	started := false
-	forEachScatterSector(level, camPos, true, farPlane, cull, func(s *world.BiomeSector) {
+	model := mgl32.Ident4()
+	forEachScatterSector(level, camPos, true, farPlane, cull, func(ch *world.Chunk, s *world.BiomeSector) {
 		if !started {
 			gl.UseProgram(p.prog)
 			m := lsm
@@ -1208,8 +1232,12 @@ func RenderBiomeScatterCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos m
 			gl.Uniform3f(p.U("lightPos"), lightPos.X(), lightPos.Y(), lightPos.Z())
 			gl.Uniform1f(p.U("farPlane"), farPlane)
 			beginBiomePass(p, camPos, timeSec)
+			model = mgl32.Ident4()
+			gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
+			gl.Uniform2f(p.U("camXZ"), camPos.X(), camPos.Z())
 			started = true
 		}
+		uploadBiomeChunk(p, &model, ch, camPos)
 		// See RenderBiomeScatterDirShadow's matching comment on
 		// BiomeShadows.CastLODTiers.
 		tiers := BiomeShadows.CastLODTiers
@@ -1220,7 +1248,7 @@ func RenderBiomeScatterCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos m
 			tiers = kindTiers
 		}
 		for tier := 0; tier < tiers; tier++ {
-			renderBiomeSector(level, s, p, tier, true, farPlane)
+			renderBiomeSector(level, ch, s, p, tier, true, farPlane)
 		}
 	})
 
@@ -1230,18 +1258,45 @@ func RenderBiomeScatterCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos m
 }
 
 // beginBiomePass uploads the placement uniforms shared by every sector this
-// frame — the camera ring and the wind clock. p must already be the active
+// frame — the camera position and the wind clock. p must already be the active
 // program. Lighting is not touched here: the depth passes have none, and the
 // color pass gets it from uploadBiomeLighting.
+//
+// camXZ (the camera-ring lattice origin) is deliberately NOT uploaded here —
+// unlike camPos (rock specular; wants the true world camera always), it has
+// to ride the same chunk-local frame as the sector polygon/height texture
+// it's tested against, so it's carried in step with `model` by
+// uploadBiomeChunk instead. Callers upload an initial identity `model` +
+// world-space camXZ right after this, matching an unmoved chunk exactly, then
+// let uploadBiomeChunk take over as the chunk loop runs.
 //
 // The wind clock matters in the depth passes too. A blade sways in the color
 // pass and would stand still in the shadow map without it, so its shadow would
 // detach from it every time the wind moved.
 func beginBiomePass(p *progUniforms, camPos mgl32.Vec3, timeSec float32) {
-	gl.Uniform2f(p.U("camXZ"), camPos.X(), camPos.Z())
 	gl.Uniform3f(p.U("camPos"), camPos.X(), camPos.Y(), camPos.Z())
 	gl.Uniform1f(p.U("time"), timeSec)
 	gl.Uniform1i(p.U("heightTex"), 0)
+}
+
+// uploadBiomeChunk uploads p's per-chunk `model` and `camXZ` uniforms, but
+// only when ch's ModelMatrix differs from *current — mirroring
+// uploadDetailModel's change-tracking (detail_render.go) so a level of
+// unmoved/unrotated/unscaled chunks pays for one upload per program per frame,
+// not one per sector. camXZ is the camera position carried into ch's own
+// local space (WorldToLocal), matching the frame every uniform
+// renderBiomeSector uploads (polyPts, heightOrigin/Size) already lives in;
+// `model` carries the shader's own final placed position/normal back out to
+// world space (see biome_vert.glsl and friends).
+func uploadBiomeChunk(p *progUniforms, current *mgl32.Mat4, ch *world.Chunk, camPos mgl32.Vec3) {
+	m := ch.ModelMatrix()
+	if m == *current {
+		return
+	}
+	*current = m
+	gl.UniformMatrix4fv(p.U("model"), 1, false, &m[0])
+	local := ch.WorldToLocal(camPos)
+	gl.Uniform2f(p.U("camXZ"), local.X(), local.Z())
 }
 
 // biomeLODBounds resolves sector s's three LOD boundaries — the Near->Mid and
@@ -1265,8 +1320,8 @@ func biomeLODBounds(s *world.BiomeSector) (lod1, lod2, rng float32) {
 // depth passes, which is the point — the three programs share their
 // placement code (biome_scatter_common.glsl) and must be fed identically for
 // a blade's shadow to land on the blade.
-func renderBiomeSector(level *world.Level, s *world.BiomeSector, p *progUniforms, tier int, shadowPass bool, castCap float32) {
-	entry := biomes.ensureBiomeHeight(level, s)
+func renderBiomeSector(level *world.Level, owner *world.Chunk, s *world.BiomeSector, p *progUniforms, tier int, shadowPass bool, castCap float32) {
+	entry := biomes.ensureBiomeHeight(level, owner, s)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, entry.tex)
 	gl.Uniform2f(p.U("heightOrigin"), entry.origin.X(), entry.origin.Y())

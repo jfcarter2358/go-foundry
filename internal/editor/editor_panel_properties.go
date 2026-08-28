@@ -74,7 +74,6 @@ func editor3DSectorPropertiesSection(lvl *world.Level) {
 		changed = textureCombo("Texture##ft3d", &s3d.Floor.Texture, false) || changed
 		changed = textureCombo("Blend Texture##fbt3d", &s3d.Floor.BlendTexture, true) || changed
 		changed = textureCombo("Blend Mask##fbm3d", &s3d.Floor.BlendMask, true) || changed
-		changed = imgui.Checkbox("Terrain##fter3d", &s3d.Floor.Terrain) || changed
 		imgui.Checkbox("Double Sided##fds3d", &s3d.Floor.DoubleSided)
 		changed = editorDragFloat("Alpha##fa3d", &s3d.Floor.Alpha, 0, 1, "%.2f") || changed
 		if changed {
@@ -82,14 +81,11 @@ func editor3DSectorPropertiesSection(lvl *world.Level) {
 		}
 		imgui.TreePop()
 	}
-	if imgui.Button("Edit Floor Surface##floorSurf3d") {
-		EnterSurface2D("floor")
-	}
+	editorSurfacePanel(sch, s3d, surfaceFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "floor"))
 	if editorUVControls("Floor", &s3d.Floor.UVOffset, &s3d.Floor.UVScale, &s3d.Floor.UVRotation) {
 		_ = world.ReloadSector(sch, s3d)
 	}
-	editorSurfaceExtrusionPanel(sch, s3d, "Floor", &s3d.Floor.Extrusions)
-	editorTerrainPanel(sch, s3d, "Floor", &s3d.Floor.Terrain, &s3d.Floor.TerrainPoints)
+	editorSkirtPanel(sch, s3d)
 	if editorSmoothPanel("Floor", &s3d.Floor.Smooth, &s3d.Floor.SmoothAngle) {
 		_ = world.ReloadSector(sch, s3d)
 	}
@@ -105,7 +101,6 @@ func editor3DSectorPropertiesSection(lvl *world.Level) {
 		changed = textureCombo("Texture##ct3d", &s3d.Ceiling.Texture, false) || changed
 		changed = textureCombo("Blend Texture##cbt3d", &s3d.Ceiling.BlendTexture, true) || changed
 		changed = textureCombo("Blend Mask##cbm3d", &s3d.Ceiling.BlendMask, true) || changed
-		changed = imgui.Checkbox("Terrain##cter3d", &s3d.Ceiling.Terrain) || changed
 		imgui.Checkbox("Double Sided##cds3d", &s3d.Ceiling.DoubleSided)
 		changed = editorDragFloat("Alpha##ca3d", &s3d.Ceiling.Alpha, 0, 1, "%.2f") || changed
 		if changed {
@@ -113,14 +108,10 @@ func editor3DSectorPropertiesSection(lvl *world.Level) {
 		}
 		imgui.TreePop()
 	}
-	if imgui.Button("Edit Ceiling Surface##ceilSurf3d") {
-		EnterSurface2D("ceiling")
-	}
+	editorSurfacePanel(sch, s3d, surfaceFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "ceiling"))
 	if editorUVControls("Ceiling", &s3d.Ceiling.UVOffset, &s3d.Ceiling.UVScale, &s3d.Ceiling.UVRotation) {
 		_ = world.ReloadSector(sch, s3d)
 	}
-	editorSurfaceExtrusionPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Extrusions)
-	editorTerrainPanel(sch, s3d, "Ceiling", &s3d.Ceiling.Terrain, &s3d.Ceiling.TerrainPoints)
 	if editorSmoothPanel("Ceiling", &s3d.Ceiling.Smooth, &s3d.Ceiling.SmoothAngle) {
 		_ = world.ReloadSector(sch, s3d)
 	}
@@ -157,14 +148,10 @@ func editor3DSectorPropertiesSection(lvl *world.Level) {
 		if changed {
 			_ = world.ReloadSector(sch, s3d)
 		}
-		if imgui.Button("Edit Wall Surface##wallSurf3d") {
-			EnterSurface2D("wall")
-		}
+		editorSurfacePanel(sch, s3d, edgeFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "wall", Editor.ActiveEdgeIdx))
 		if editorUVControls("Wall", &w.UVOffset, &w.UVScale, &w.UVRotation) {
 			_ = world.ReloadSector(sch, s3d)
 		}
-		editorExtrusionPanel(sch, s3d, w)
-		editorTerrainPanel(sch, s3d, "Wall", &w.Terrain, &w.TerrainPoints)
 		if editorSmoothPanel("Wall", &w.Smooth, &w.SmoothAngle) {
 			_ = world.ReloadSector(sch, s3d)
 		}

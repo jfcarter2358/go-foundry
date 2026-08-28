@@ -58,6 +58,7 @@ const (
 	pickWater   pickKind = "water"
 	pickEntity  pickKind = "entity"
 	pickVolume  pickKind = "volume"
+	pickLight   pickKind = "light"
 )
 
 // pickHit is the closest thing found along a picking ray. Which index fields
@@ -66,6 +67,7 @@ const (
 //	spawn      → none; the level has at most one spawn point
 //	entity     → idx = index into level.Entities
 //	volume     → idx = index into level.Volumes
+//	light      → idx = index into level.Lights.Points
 //	wall       → chunkIdx + sectorIdx + idx = wall index within that sector
 //	floor/ceil → chunkIdx + sectorIdx
 //	water      → chunkIdx + idx = surface index within that chunk
@@ -113,6 +115,18 @@ func pickGeometriesT(origin, dir mgl32.Vec3, geoms []gfx.Geometry) float32 {
 	best := float32(math.MaxFloat32)
 	for i := range geoms {
 		if t := pickGeometryT(origin, dir, geoms[i].Vertices); t < best {
+			best = t
+		}
+	}
+	return best
+}
+
+// pickGeometriesModelT is pickGeometriesT with a model transform, for a slice
+// of extrusion geometries belonging to a chunk that may be moved/rotated/scaled.
+func pickGeometriesModelT(origin, dir mgl32.Vec3, geoms []gfx.Geometry, model mgl32.Mat4) float32 {
+	best := float32(math.MaxFloat32)
+	for i := range geoms {
+		if t := pickModelT(origin, dir, geoms[i].Vertices, model); t < best {
 			best = t
 		}
 	}
@@ -215,6 +229,10 @@ func pick3D(sx, sy int32) pickHit {
 
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
+		// Wall/floor/ceiling geometry is chunk-local, same as the production
+		// renderer's own vertex buffers (app.go) — carried into world space by
+		// this same matrix there, so picking has to go through it too.
+		model := ch.ModelMatrix()
 
 		// Sector faces.
 		for seci := range ch.Sectors {
@@ -226,8 +244,8 @@ func pick3D(sx, sy int32) pickHit {
 			// walls at chunk boundaries resolve to the one the user can see.
 			for wi := range s.Walls {
 				w := &s.Walls[wi]
-				t := pickGeometryT(origin, dir, w.Geometry.Vertices)
-				if et := pickGeometriesT(origin, dir, w.ExtrusionGeometries); et < t {
+				t := pickModelT(origin, dir, w.Geometry.Vertices, model)
+				if et := pickGeometriesModelT(origin, dir, w.SubmeshGeometries, model); et < t {
 					t = et
 				}
 				hit.consider(t, pickWall, ci, seci, wi)
@@ -237,12 +255,12 @@ func pick3D(sx, sy int32) pickHit {
 			// opening to whatever is behind it.
 
 			if s.Floor.Enabled {
-				t := pickSurfaceT(origin, dir, ch, s, &s.Floor.Geometry, s.Floor.ExtrusionGeometries,
+				t := pickSurfaceT(origin, dir, ch, s, &s.Floor.Geometry, s.Floor.SubmeshGeometries,
 					s.Floor.VertexHeight, false)
 				hit.consider(t, pickFloor, ci, seci, -1)
 			}
 			if s.Ceiling.Enabled {
-				t := pickSurfaceT(origin, dir, ch, s, &s.Ceiling.Geometry, s.Ceiling.ExtrusionGeometries,
+				t := pickSurfaceT(origin, dir, ch, s, &s.Ceiling.Geometry, s.Ceiling.SubmeshGeometries,
 					s.Ceiling.VertexHeight, true)
 				hit.consider(t, pickCeiling, ci, seci, -1)
 			}
@@ -258,7 +276,7 @@ func pick3D(sx, sy int32) pickHit {
 			if len(w.Geometry.Vertices) == 0 {
 				continue
 			}
-			if t := pickModelT(origin, dir, w.Geometry.Vertices, w.ModelMatrix()); t < float32(math.MaxFloat32) {
+			if t := pickModelT(origin, dir, w.Geometry.Vertices, model.Mul4(w.ModelMatrix())); t < float32(math.MaxFloat32) {
 				hit.consider(t, pickWater, ci, -1, wi)
 			}
 		}
@@ -273,10 +291,71 @@ func pick3D(sx, sy int32) pickHit {
 		}
 	}
 
+	// Point lights, against the marker sphere Editor3DRenderGizmos draws for
+	// them.
+	//
+	// A marker under the cursor wins outright rather than competing on distance
+	// with the world, because that is how it is drawn: the gizmo buffer is
+	// flushed with the depth test off, so a light is visible through whatever
+	// it sits inside. Lights are hung under ceiling slabs and inside lamp
+	// fittings as a matter of course, and one you can see but cannot click is
+	// the whole complaint. The marker is small — eight pixels at its smallest
+	// (pointLightMarkerRadius) — so a click that lands on one is not ambiguous
+	// about what it meant.
+	bestLight, bestLightT := -1, float32(math.MaxFloat32)
+	for li := range lvl.Lights.Points {
+		if t := pickPointLightT(origin, dir, &lvl.Lights.Points[li]); t < bestLightT {
+			bestLight, bestLightT = li, t
+		}
+	}
+	if bestLight >= 0 {
+		return pickHit{kind: pickLight, t: bestLightT, chunkIdx: -1, sectorIdx: -1, idx: bestLight}
+	}
+
 	if hit.kind == pickNone {
 		hit.t = 0
 	}
 	return hit
+}
+
+// pointLightMarkerRadius is the world radius of a point light's clickable
+// marker: the sphere the 3D view draws for it (Editor3DRenderGizmos), widened
+// to a minimum on-screen size so a light with a small radius, or one far across
+// the level, is still something a click can land on.
+func pointLightMarkerRadius(pl *world.PointLight) float32 {
+	r := pl.Radius * 0.1
+	if min := worldSizeForPixels(pl.Position, pointLightPickPx); r < min {
+		r = min
+	}
+	return r
+}
+
+// pointLightPickPx is that minimum, in screen pixels — the same order as the
+// gizmo's own grab boxes, so aiming at a light feels like aiming at a handle.
+const pointLightPickPx float32 = 8
+
+// pickPointLightT returns the distance at which the ray meets a point light's
+// marker sphere, or +Inf when it misses.
+func pickPointLightT(origin, dir mgl32.Vec3, pl *world.PointLight) float32 {
+	oc := origin.Sub(pl.Position)
+	r := pointLightMarkerRadius(pl)
+	// dir is unit length, so the quadratic's leading coefficient is 1.
+	b := oc.Dot(dir)
+	c := oc.Dot(oc) - r*r
+	disc := b*b - c
+	if disc < 0 {
+		return float32(math.MaxFloat32)
+	}
+	root := float32(math.Sqrt(float64(disc)))
+	// The near intersection, unless the eye is inside the sphere, where the far
+	// one is the only hit in front of it.
+	if t := -b - root; t > 0 {
+		return t
+	}
+	if t := -b + root; t > 0 {
+		return t
+	}
+	return float32(math.MaxFloat32)
 }
 
 // pickSurfaceT ray-tests a floor or ceiling. The uploaded mesh is used when it
@@ -286,8 +365,9 @@ func pick3D(sx, sy int32) pickHit {
 func pickSurfaceT(origin, dir mgl32.Vec3, ch *world.Chunk, s *world.Sector, geo *gfx.Geometry,
 	extrusions []gfx.Geometry, heightAt func(int) float32, reversed bool) float32 {
 
-	best := pickGeometryT(origin, dir, geo.Vertices)
-	if et := pickGeometriesT(origin, dir, extrusions); et < best {
+	model := ch.ModelMatrix()
+	best := pickModelT(origin, dir, geo.Vertices, model)
+	if et := pickGeometriesModelT(origin, dir, extrusions, model); et < best {
 		best = et
 	}
 	if len(geo.Vertices) > 0 {
@@ -298,6 +378,19 @@ func pickSurfaceT(origin, dir mgl32.Vec3, ch *world.Chunk, s *world.Sector, geo 
 	if len(pts) < 3 {
 		return best
 	}
+
+	// The fan triangles below are built straight from chunk-local points, so
+	// the ray is moved into that same space once — mirroring pickModelT — rather
+	// than transforming every triangle out to world space.
+	inv := model.Inv()
+	if inv == (mgl32.Mat4{}) {
+		return best
+	}
+	o4 := inv.Mul4x1(mgl32.Vec4{origin.X(), origin.Y(), origin.Z(), 1})
+	d4 := inv.Mul4x1(mgl32.Vec4{dir.X(), dir.Y(), dir.Z(), 0})
+	lOrigin := mgl32.Vec3{o4.X(), o4.Y(), o4.Z()}
+	lDir := mgl32.Vec3{d4.X(), d4.Y(), d4.Z()}
+
 	for i := 1; i < len(pts)-1; i++ {
 		a := mgl32.Vec3{pts[0].X(), heightAt(0), pts[0].Y()}
 		b := mgl32.Vec3{pts[i].X(), heightAt(i), pts[i].Y()}
@@ -305,7 +398,7 @@ func pickSurfaceT(origin, dir mgl32.Vec3, ch *world.Chunk, s *world.Sector, geo 
 		if reversed {
 			b, c = c, b
 		}
-		if h, t, front := rayTriangleIntersect(origin, dir, a, b, c); h {
+		if h, t, front := rayTriangleIntersect(lOrigin, lDir, a, b, c); h {
 			if eff := effectivePickT(t, front); eff < best {
 				best = eff
 			}
@@ -448,7 +541,10 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 					if isFloor {
 						y = s.Floor.VertexHeight(vi)
 					}
-					pos := mgl32.Vec3{pt.X(), y, pt.Y()}
+					// pt/y are chunk-local; every consumer below (screen
+					// projection, camera distance, the eventual selection) wants
+					// world space.
+					pos := ch.LocalToWorld(mgl32.Vec3{pt.X(), y, pt.Y()})
 					depth := pos.Sub(gfx.Cam.Position).Len()
 					if depth > vertexHandleMaxDist {
 						continue
@@ -622,8 +718,15 @@ func clearVertexSelection() {
 }
 
 // vertexSelPos returns the world position of a selected vertex handle. A free
-// point sits at y=0, which is where the 2D map draws it — it has no floor or
-// ceiling to take a height from until it is part of a sector.
+// point sits at local y=0, which is where the 2D map draws it — it has no
+// floor or ceiling to take a height from until it is part of a sector.
+//
+// This is the one place that reads a chunk point as a position everything else
+// (the gizmos, the selection centre, the 2D map's own gizmo) treats as world —
+// see editor_sel_transform.go's own doc comment. ch.LocalToWorld is the whole
+// of what makes a chunk's own Origin/Rotation/Scale transparent to all of that
+// code: fix the read (and writeSelectedVertexWorld's matching write) here, and
+// nothing downstream needs to know a chunk can move at all.
 func vertexSelPos(sel vertexSel) (mgl32.Vec3, bool) {
 	lvl := Editor.level
 	if lvl == nil || sel.chunkIdx < 0 || sel.chunkIdx >= len(lvl.Chunks) {
@@ -635,7 +738,7 @@ func vertexSelPos(sel vertexSel) (mgl32.Vec3, bool) {
 			return mgl32.Vec3{}, false
 		}
 		pt := ch.Points[sel.pointIdx]
-		return mgl32.Vec3{pt.X(), 0, pt.Y()}, true
+		return ch.LocalToWorld(mgl32.Vec3{pt.X(), 0, pt.Y()}), true
 	}
 	if sel.sectorIdx >= len(ch.Sectors) {
 		return mgl32.Vec3{}, false
@@ -653,7 +756,7 @@ func vertexSelPos(sel vertexSel) (mgl32.Vec3, bool) {
 	if sel.isFloor {
 		y = s.Floor.VertexHeight(sel.vertIdx)
 	}
-	return mgl32.Vec3{pt.X(), y, pt.Y()}, true
+	return ch.LocalToWorld(mgl32.Vec3{pt.X(), y, pt.Y()}), true
 }
 
 // selectedVerticesCenter returns the average position of the selected vertex

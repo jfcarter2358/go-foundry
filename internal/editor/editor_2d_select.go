@@ -53,11 +53,18 @@ func editor2DVertexCandidates(ch *world.Chunk, wx, wz, threshold float32) []vert
 	used := make([]bool, len(ch.Points))
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
+		// `used` is filled from every layer, not only the editable one: a point
+		// held by a hidden layer's sector still belongs to something, and
+		// offering it as a free point would invite a Join that quietly reuses
+		// the ledge's corner. Only the CANDIDATE list is layer-filtered.
 		for vi, pIdx := range s.PointIndices {
 			if pIdx < 0 || pIdx >= len(ch.Points) {
 				continue
 			}
 			used[pIdx] = true
+			if !layerEditable(s.Layer) {
+				continue
+			}
 			pt := ch.Points[pIdx]
 			d := dist2D(wx, wz, pt.X(), pt.Y())
 			if d >= threshold {
@@ -103,7 +110,7 @@ func editor2DEdgeCandidates(ch *world.Chunk, wx, wz, threshold float32) []edgeSe
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
 		n := len(s.PointIndices)
-		if n < 2 {
+		if n < 2 || !layerEditable(s.Layer) {
 			continue
 		}
 		for ei := 0; ei < n; ei++ {
@@ -222,6 +229,10 @@ func editor2DHandleEdgeClick(ch *world.Chunk, wx, wz, threshold float32, addToSe
 // can name: a wall or portal edge, the spawn marker, or a sector interior. This
 // is the map's original ladder minus its vertex rung, which point mode now
 // owns. Returns false when the click landed on none of them.
+//
+// wx, wz are ch-local, like every other structural hit-test in this file —
+// except the object fallback: the spawn marker and entities are level-scoped,
+// not this chunk's, so that one call alone gets its world-space point back.
 func editor2DHandleFaceClick(lvl *world.Level, ch *world.Chunk, wx, wz, threshold float32, addToSelection bool) bool {
 	if f, ok := editor2DFaceAt(ch, wx, wz, threshold); ok {
 		editorSelectFace(f, addToSelection)
@@ -229,7 +240,23 @@ func editor2DHandleFaceClick(lvl *world.Level, ch *world.Chunk, wx, wz, threshol
 	}
 	// Nothing to add an object to: the spawn marker and the entities are not
 	// faces, so a ctrl+click that reaches one is a plain selection of it.
-	return editor2DPickObject(lvl, ch, wx, wz)
+	worldX, worldZ := chunkWorldXZ(ch, wx, wz)
+	if editor2DPickObject(lvl, ch, worldX, worldZ) {
+		return true
+	}
+
+	// Last: a ghosted layer. Clicking a sector you can plainly see, on a layer
+	// the map is not editing, moves the map to that layer rather than doing
+	// nothing — otherwise reaching the ledge means first knowing which index it
+	// is on. It comes last so it can never shadow a real hit on the active
+	// layer, and it only changes the active layer, leaving the follow-up click
+	// to select whatever it lands on.
+	if l := layerOfSectorAt(ch, wx, wz); l >= 0 {
+		editorSetActiveLayer(l)
+		editorSetStatus("layer: %s", ch.LayerAt(l).Name)
+		return true
+	}
+	return false
 }
 
 // editor2DFaceAt resolves what face a map click lands on: a wall or portal
@@ -253,6 +280,9 @@ func editor2DFaceAt(ch *world.Chunk, wx, wz, threshold float32) (faceSel, bool) 
 
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
+		if !layerEditable(s.Layer) {
+			continue
+		}
 		if !geom.PointInPolygon(mgl32.Vec2{wx, wz}, world.SectorPoints(ch, s)) {
 			continue
 		}
@@ -305,18 +335,20 @@ func editor2DHasSelection() bool {
 		Editor.ActiveEntityIdx >= 0 || Editor.ActiveSurface != ""
 }
 
-// editor2DSelectAt selects whatever is under (wx,wz) in the current mode,
-// without arming a drag. This is the context menu's "open it on what I pointed
-// at" — it deliberately skips the placement, biome and gizmo branches a real
-// click goes through, since none of them are what a right-click means.
+// editor2DSelectAt selects whatever is under world point (wx,wz) in the
+// current mode, without arming a drag. This is the context menu's "open it on
+// what I pointed at" — it deliberately skips the placement, biome and gizmo
+// branches a real click goes through, since none of them are what a
+// right-click means.
 func editor2DSelectAt(lvl *world.Level, ch *world.Chunk, wx, wz float32) {
-	threshold := screenToWorldSize(editor2DSelectRadius, editor2DOrtho())
+	threshold := chunkLocalSize(ch, screenToWorldSize(editor2DSelectRadius, editor2DOrtho()))
+	lx, lz := chunkLocalXZ(ch, wx, wz)
 	switch Editor.SelMode {
 	case editorSelPoint:
-		editor2DHandlePointClick(ch, wx, wz, threshold, false, false)
+		editor2DHandlePointClick(ch, lx, lz, threshold, false, false)
 	case editorSelEdge:
-		editor2DHandleEdgeClick(ch, wx, wz, threshold*2, false)
+		editor2DHandleEdgeClick(ch, lx, lz, threshold*2, false)
 	default:
-		editor2DHandleFaceClick(lvl, ch, wx, wz, threshold, false)
+		editor2DHandleFaceClick(lvl, ch, lx, lz, threshold, false)
 	}
 }

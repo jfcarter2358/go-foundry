@@ -21,7 +21,6 @@ import (
 	"foundry/internal/render"
 	"foundry/internal/script"
 	"foundry/internal/world"
-	"math"
 	"os"
 	"path/filepath"
 
@@ -107,8 +106,9 @@ func entityDefFor(e *world.Entity) *world.EntityDef {
 	return def
 }
 
-// chunkToRaw serialises one chunk. It reverse-transforms points by removing
-// the chunk's origin/rotation/scale so the YAML stores chunk-local coords.
+// chunkToRaw serialises one chunk. Points are already chunk-local at runtime,
+// same as the YAML they round-trip to — Origin/Rotation/Scale is carried
+// alongside them as plain fields, not baked in or out.
 func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 	rc := world.RawChunk{
 		ID:            ch.ID,
@@ -118,6 +118,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 		Rotation:      ch.Rotation,
 		Scale:         ch.Scale,
 		Frame:         ch.FrameOwner,
+		Layers:        chunkLayersToRaw(ch),
 	}
 	if rc.Scale == 0 {
 		rc.Scale = 1
@@ -128,8 +129,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 	// keeps its identity and cannot collide with an unrelated point.
 	names := chunkPointNames(ch)
 	for i, name := range names {
-		local := reverseTransformPoint2D(ch.Points[i], ch.Origin, ch.Rotation, ch.Scale)
-		rc.Points[name] = geom.Point{X: local.X(), Y: local.Y()}
+		rc.Points[name] = geom.Point{X: ch.Points[i].X(), Y: ch.Points[i].Y()}
 	}
 
 	for si := range ch.Sectors {
@@ -140,6 +140,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 		rs := world.RawSector{
 			ID:            s.ID,
 			RawScriptData: world.ScriptDataToRaw(s.ScriptData),
+			Layer:         s.Layer,
 			Floor: world.RawFloor{
 				RawScriptData: world.ScriptDataToRaw(s.Floor.ScriptData),
 				Enabled:       s.Floor.Enabled,
@@ -149,11 +150,12 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 				Texture:       s.Floor.Texture,
 				BlendTexture:  s.Floor.BlendTexture,
 				BlendMask:     s.Floor.BlendMask,
-				Terrain:       s.Floor.Terrain,
 				DoubleSided:   world.BoolPtrIfFalse(s.Floor.DoubleSided),
 				Alpha:         float32PtrIfNotOne(s.Floor.Alpha),
-				Extrusions:    saveExtrusions(s.Floor.Extrusions, ch, true),
-				TerrainPoints: saveTerrainPts(s.Floor.TerrainPoints, ch, true),
+				Mesh:          world.SurfaceMeshToRaw(&s.Floor.Mesh),
+				Openings:      saveOpenings(s.Floor.Openings),
+				Skirt:         s.Floor.Skirt,
+				SkirtTexture:  s.Floor.SkirtTexture,
 				UVOffset:      geom.Point{X: s.Floor.UVOffset.X(), Y: s.Floor.UVOffset.Y()},
 				UVScale:       geom.Point{X: s.Floor.UVScale.X(), Y: s.Floor.UVScale.Y()},
 				UVRotation:    s.Floor.UVRotation,
@@ -169,11 +171,10 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 				Texture:       s.Ceiling.Texture,
 				BlendTexture:  s.Ceiling.BlendTexture,
 				BlendMask:     s.Ceiling.BlendMask,
-				Terrain:       s.Ceiling.Terrain,
 				DoubleSided:   world.BoolPtrIfFalse(s.Ceiling.DoubleSided),
 				Alpha:         float32PtrIfNotOne(s.Ceiling.Alpha),
-				Extrusions:    saveExtrusions(s.Ceiling.Extrusions, ch, true),
-				TerrainPoints: saveTerrainPts(s.Ceiling.TerrainPoints, ch, true),
+				Mesh:          world.SurfaceMeshToRaw(&s.Ceiling.Mesh),
+				Openings:      saveOpenings(s.Ceiling.Openings),
 				UVOffset:      geom.Point{X: s.Ceiling.UVOffset.X(), Y: s.Ceiling.UVOffset.Y()},
 				UVScale:       geom.Point{X: s.Ceiling.UVScale.X(), Y: s.Ceiling.UVScale.Y()},
 				UVRotation:    s.Ceiling.UVRotation,
@@ -220,9 +221,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 					Pinned:        w.Pinned,
 					DoubleSided:   world.BoolPtrIfFalse(w.DoubleSided),
 					Alpha:         float32PtrIfNotOne(w.Alpha),
-					Extrusions:    saveExtrusions(w.Extrusions, ch, false),
-					WallTerrain:   w.Terrain,
-					TerrainPoints: saveTerrainPts(w.TerrainPoints, ch, false),
+					Mesh:          world.SurfaceMeshToRaw(&w.Mesh),
 					UVOffset:      geom.Point{X: w.UVOffset.X(), Y: w.UVOffset.Y()},
 					UVScale:       geom.Point{X: w.UVScale.X(), Y: w.UVScale.Y()},
 					UVRotation:    w.UVRotation,
@@ -262,12 +261,14 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 		rc.Sectors = append(rc.Sectors, rs)
 	}
 
-	// Serialize biome sectors with reverse-transformed (chunk-local) points.
+	// Serialize biome sectors — points are already chunk-local at runtime.
 	for bi := range ch.BiomeSectors {
 		bs := &ch.BiomeSectors[bi]
 		rb := world.RawBiomeSector{
-			ID:     bs.ID,
-			Points: make([]geom.Point, len(bs.Points)),
+			ID:          bs.ID,
+			DrapeSector: bs.DrapeSector,
+			Layer:       bs.Layer,
+			Points:      make([]geom.Point, len(bs.Points)),
 			Brush: world.RawBiomeBrush{
 				Kind:         bs.Brush.Kind,
 				Density:      bs.Brush.Density,
@@ -321,8 +322,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 			}
 		}
 		for i, wp := range bs.Points {
-			local := reverseTransformPoint2D(wp, ch.Origin, ch.Rotation, ch.Scale)
-			rb.Points[i] = geom.Point{X: local.X(), Y: local.Y()}
+			rb.Points[i] = geom.Point{X: wp.X(), Y: wp.Y()}
 		}
 		rc.BiomeSectors = append(rc.BiomeSectors, rb)
 	}
@@ -339,6 +339,27 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 // from a counter that started at zero on every save while ch.PointNames already
 // held E0, E1, … from the previous save, so re-saving an edited level silently
 // overwrote unrelated points and scrambled the geometry on the next load.
+// chunkLayersToRaw emits a chunk's authoring-band metadata, and nothing at all
+// for a chunk that only uses the ground layer.
+//
+// The emptiness test is what keeps this out of every existing level file: a
+// chunk with one band whose sectors all sit on it has nothing worth recording,
+// since Chunk.LayerAt would synthesize exactly the same thing on load. Only a
+// chunk that actually stacks geometry — or one whose bands were named or
+// re-heighted by hand — writes a layers block.
+func chunkLayersToRaw(ch *world.Chunk) []world.RawChunkLayer {
+	if len(ch.Layers) == 0 && ch.LayerCount() <= 1 {
+		return nil
+	}
+	n := ch.LayerCount()
+	out := make([]world.RawChunkLayer, n)
+	for i := 0; i < n; i++ {
+		l := ch.LayerAt(i)
+		out[i] = world.RawChunkLayer{Name: l.Name, BaseY: l.BaseY, CeilY: l.CeilY}
+	}
+	return out
+}
+
 func chunkPointNames(ch *world.Chunk) []string {
 	names := make([]string, len(ch.Points))
 	used := make(map[string]bool, len(ch.Points))
@@ -481,7 +502,28 @@ func lightsToRaw(ls world.LightSet) world.RawLights {
 
 // saveExtrusions converts runtime extrusions to raw YAML form.
 // If transformXZ is true, reverse-transforms U/V as world XZ → chunk-local.
-func saveExtrusions(exts []world.Extrusion, ch *world.Chunk, transformXZ bool) []world.RawExtrusion {
+// saveOpenings writes a surface's holes. Points go out chunk-local, exactly as
+// they are held — see loadOpenings for the other half.
+func saveOpenings(openings []world.Opening) []world.RawOpening {
+	if len(openings) == 0 {
+		return nil
+	}
+	out := make([]world.RawOpening, len(openings))
+	for i := range openings {
+		ro := world.RawOpening{
+			ID:     openings[i].ID,
+			Link:   openings[i].Link,
+			Points: make([]geom.Point, len(openings[i].Points)),
+		}
+		for j, p := range openings[i].Points {
+			ro.Points[j] = geom.Point{X: p.X(), Y: p.Y()}
+		}
+		out[i] = ro
+	}
+	return out
+}
+
+func saveExtrusions(exts []world.Extrusion) []world.RawExtrusion {
 	if len(exts) == 0 {
 		return nil
 	}
@@ -498,20 +540,10 @@ func saveExtrusions(exts []world.Extrusion, ch *world.Chunk, transformXZ bool) [
 			Alpha:       float32PtrIfNotOne(ext.Alpha),
 		}
 		for _, p := range ext.Outer {
-			if transformXZ {
-				local := reverseTransformPoint2D(mgl32.Vec2{p.U, p.V}, ch.Origin, ch.Rotation, ch.Scale)
-				re.Outer = append(re.Outer, world.RawExtrusionPoint{U: local.X(), V: local.Y()})
-			} else {
-				re.Outer = append(re.Outer, world.RawExtrusionPoint{U: p.U, V: p.V})
-			}
+			re.Outer = append(re.Outer, world.RawExtrusionPoint{U: p.U, V: p.V})
 		}
 		for _, p := range ext.Inner {
-			if transformXZ {
-				local := reverseTransformPoint2D(mgl32.Vec2{p.U, p.V}, ch.Origin, ch.Rotation, ch.Scale)
-				re.Inner = append(re.Inner, world.RawExtrusionPoint{U: local.X(), V: local.Y()})
-			} else {
-				re.Inner = append(re.Inner, world.RawExtrusionPoint{U: p.U, V: p.V})
-			}
+			re.Inner = append(re.Inner, world.RawExtrusionPoint{U: p.U, V: p.V})
 		}
 		out = append(out, re)
 	}
@@ -519,54 +551,15 @@ func saveExtrusions(exts []world.Extrusion, ch *world.Chunk, transformXZ bool) [
 }
 
 // saveTerrainPts converts runtime terrain points to raw YAML form.
-func saveTerrainPts(pts []world.TerrainPoint, ch *world.Chunk, transformXZ bool) []world.RawTerrainPoint {
+func saveTerrainPts(pts []world.TerrainPoint) []world.RawTerrainPoint {
 	if len(pts) == 0 {
 		return nil
 	}
 	var out []world.RawTerrainPoint
 	for _, tp := range pts {
-		if transformXZ {
-			local := reverseTransformPoint2D(mgl32.Vec2{tp.U, tp.V}, ch.Origin, ch.Rotation, ch.Scale)
-			out = append(out, world.RawTerrainPoint{U: local.X(), V: local.Y(), Depth: tp.Depth})
-		} else {
-			out = append(out, world.RawTerrainPoint{U: tp.U, V: tp.V, Depth: tp.Depth})
-		}
+		out = append(out, world.RawTerrainPoint{U: tp.U, V: tp.V, Depth: tp.Depth})
 	}
 	return out
-}
-
-// ---------- coordinate helpers ----------
-
-// transformPoint2D applies scale → Y-rotation → origin offset to a 2D (XZ) point.
-func transformPoint2D(pt mgl32.Vec2, origin mgl32.Vec3, rotation, scale float32) mgl32.Vec2 {
-	if scale == 0 {
-		scale = 1
-	}
-	x := pt.X() * scale
-	y := pt.Y() * scale
-	cos := float32(math.Cos(float64(rotation)))
-	sin := float32(math.Sin(float64(rotation)))
-	return mgl32.Vec2{
-		cos*x - sin*y + origin.X(),
-		sin*x + cos*y + origin.Z(),
-	}
-}
-
-// reverseTransformPoint2D inverts the chunk transform to recover local coords.
-func reverseTransformPoint2D(world mgl32.Vec2, origin mgl32.Vec3, rotation, scale float32) mgl32.Vec2 {
-	if scale == 0 {
-		scale = 1
-	}
-	// Undo origin
-	x := world.X() - origin.X()
-	y := world.Y() - origin.Z()
-	// Undo rotation (rotate by -rotation)
-	cos := float32(math.Cos(float64(-rotation)))
-	sin := float32(math.Sin(float64(-rotation)))
-	rx := cos*x - sin*y
-	ry := sin*x + cos*y
-	// Undo scale
-	return mgl32.Vec2{rx / scale, ry / scale}
 }
 
 // float32PtrIfNotOne returns a *float32 pointer only when v differs from 1.0.
@@ -624,9 +617,15 @@ func LoadChunkFromFile(path string) (world.RawChunk, error) {
 	return rc, nil
 }
 
-// ImportChunkIntoLevel loads a chunk from a YAML file and appends it to the level.
-// It resolves ID conflicts by appending numeric suffixes.
-func ImportChunkIntoLevel(lvl *world.Level, path string) (string, error) {
+// ImportChunkIntoLevel loads a chunk from a YAML file and appends it to the
+// level at target, in world space. It resolves ID conflicts by appending
+// numeric suffixes.
+//
+// The imported file's own Origin is discarded in favor of target: it was
+// authored relative to whatever level it came from, which has no meaning in
+// this one, and keeping it would as likely as not land the import on top of
+// existing geometry.
+func ImportChunkIntoLevel(lvl *world.Level, path string, target mgl32.Vec3) (string, error) {
 	rc, err := LoadChunkFromFile(path)
 	if err != nil {
 		return "", err
@@ -684,6 +683,7 @@ func ImportChunkIntoLevel(lvl *world.Level, path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("load chunk %q: %w", rc.ID, err)
 	}
+	chunk.Origin = target
 
 	for name := range texNeeded {
 		if _, already := gfx.Textures[name]; already {

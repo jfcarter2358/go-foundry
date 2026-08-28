@@ -356,6 +356,40 @@ func TestBiomeScatterBoundsClipsToCameraRing(t *testing.T) {
 	}
 }
 
+// TestBiomeScatterBoundsComposesChunkTransform is the Phase 4 regression for
+// biomeScatterBounds (see HANDOFF.md): a moved chunk's cull box must shift by
+// exactly its Origin, the same invariant
+// TestMovePlayerTreatsChunkOriginTheSameAsShiftedPoints (internal/collision)
+// proves for player movement. Before this fix, the sector's chunk-local
+// polygon bounds were clipped against the world-space camera position
+// directly — correct only for an identity chunk.
+func TestBiomeScatterBoundsComposesChunkTransform(t *testing.T) {
+	origin := mgl32.Vec3{200, 5, 300}
+	ch := &world.Chunk{
+		Origin: origin, Rotation: 0, Scale: 1,
+		MinBound: mgl32.Vec3{-100, 0, -100}, MaxBound: mgl32.Vec3{100, 10, 100},
+	}
+	s := &world.BiomeSector{Points: []mgl32.Vec2{{0, 0}, {200, 0}, {200, 200}, {0, 200}}}
+
+	// Same camera-relative-to-sector geometry as the identity case above
+	// (camera at the sector's center, ring radius 30), just carried out to
+	// world space by the chunk's Origin.
+	camPos := mgl32.Vec3{100, 0, 100}.Add(origin)
+	bmin, bmax := biomeScatterBounds(ch, s, camPos, 30)
+	wantMinX, wantMaxX := 70+origin.X(), 130+origin.X()
+	wantMinZ, wantMaxZ := 70+origin.Z(), 130+origin.Z()
+	if bmin.X() != wantMinX || bmax.X() != wantMaxX || bmin.Z() != wantMinZ || bmax.Z() != wantMaxZ {
+		t.Errorf("ring clip on a moved chunk = X[%v,%v] Z[%v,%v], want X[%v,%v] Z[%v,%v]",
+			bmin.X(), bmax.X(), bmin.Z(), bmax.Z(), wantMinX, wantMaxX, wantMinZ, wantMaxZ)
+	}
+
+	wantMinY := ch.MinBound.Y() + origin.Y() - world.MaxStemHeight
+	wantMaxY := ch.MaxBound.Y() + origin.Y() + world.MaxStemHeight
+	if bmin.Y() != wantMinY || bmax.Y() != wantMaxY {
+		t.Errorf("vertical span on a moved chunk = [%v,%v], want [%v,%v]", bmin.Y(), bmax.Y(), wantMinY, wantMaxY)
+	}
+}
+
 func TestResolvedBoundaryJitter(t *testing.T) {
 	b := &world.BiomeBrush{}
 	if got := ResolvedBoundaryJitter(b); got != world.DefaultBoundaryJitter {

@@ -95,7 +95,7 @@ func TestKeybindActiveSectionsFollowMode(t *testing.T) {
 	}
 
 	// Global sections have no predicate and apply everywhere.
-	for _, mode := range []editor.EditorMode{editor.Mode3D, editor.Mode2D, editor.ModeSurface2D} {
+	for _, mode := range []editor.EditorMode{editor.Mode3D, editor.Mode2D} {
 		editor.Editor = editor.EditorState{}
 		editor.Editor.Active = true
 		editor.Editor.Mode = mode

@@ -91,7 +91,7 @@ func TestEditor3DMenuOffersTheWallsOwnActions(t *testing.T) {
 	if items[0].Label != "Wall #0 — sector s0" {
 		t.Fatalf("heading is %q, want the wall named", items[0].Label)
 	}
-	for _, label := range []string{"Texture", "Edit wall in 2D", "Visible", "Collision",
+	for _, label := range []string{"Texture", "Shape wall", "Visible", "Collision",
 		"Smooth", "Convert to portal", "Select this sector's vertices"} {
 		if it := mustMenuItem(t, items, label); it.Disabled {
 			t.Errorf("%q should be live on a wall", label)
@@ -114,7 +114,7 @@ func TestEditor3DMenuFloorDropsTheEdgeOnlyRows(t *testing.T) {
 		t.Fatalf("heading is %q", items[0].Label)
 	}
 	mustMenuItem(t, items, "Enabled")
-	mustMenuItem(t, items, "Edit floor in 2D")
+	mustMenuItem(t, items, "Shape floor")
 	if _, ok := findMenuItem(items, "Convert to portal"); ok {
 		t.Error("a floor is not an edge and cannot become a portal")
 	}
@@ -133,7 +133,7 @@ func TestEditor3DMenuPortalGreysOutWhatItLacks(t *testing.T) {
 	if it := mustMenuItem(t, items, "Smooth"); !it.Disabled {
 		t.Error("a portal has no smoothing")
 	}
-	if it := mustMenuItem(t, items, "Edit portal in 2D"); !it.Disabled {
+	if it := mustMenuItem(t, items, "Shape portal"); !it.Disabled {
 		t.Error("a portal has no 2D surface view")
 	}
 	mustMenuItem(t, items, "Gap texture")
@@ -151,7 +151,7 @@ func TestEditor3DMenuSpawnBlock(t *testing.T) {
 	for _, label := range []string{"Properties", "Face the camera", "Snap to grid", "Delete"} {
 		mustMenuItem(t, items, label)
 	}
-	if _, ok := findMenuItem(items, "Edit wall in 2D"); ok {
+	if _, ok := findMenuItem(items, "Shape wall"); ok {
 		t.Error("surface rows have no business in the spawn menu")
 	}
 }

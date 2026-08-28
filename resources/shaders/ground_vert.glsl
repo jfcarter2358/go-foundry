@@ -1,9 +1,10 @@
 #version 410
 
 // ground_vert.glsl — conforming ground-patch mesh underneath a painted biome
-// sector (see biome_ground.go). Geometry is fully baked on the CPU (already
-// height-conformed and displaced), so this stage just transforms it — all the
-// per-pixel detail (bump, AO) and all the lighting happen in ground_frag.glsl.
+// sector (see biome_ground.go). Geometry is fully baked on the CPU, chunk-local
+// (already height-conformed and displaced), so this stage's own job is just
+// carrying it out to world space via `model` — all the per-pixel detail (bump,
+// AO) and all the lighting happen in ground_frag.glsl.
 
 in vec3 aPos;
 in vec3 aNormal;
@@ -16,6 +17,7 @@ in vec2 aUV;
 in float aCoverage;
 
 uniform mat4 projView;
+uniform mat4 model;
 
 out vec3 vWorldPos;
 out vec3 vNormal;
@@ -28,10 +30,13 @@ out float vCoverage;
 out float vViewDepth;
 
 void main() {
-    vWorldPos = aPos;
-    vNormal = aNormal;
+    vec4 worldPos = model * vec4(aPos, 1.0);
+    vWorldPos = worldPos.xyz;
+    // Inverse-transpose rather than mat3(model), same reason vertex.glsl uses
+    // it — safe even though Chunk.Scale is uniform today.
+    vNormal = transpose(inverse(mat3(model))) * aNormal;
     vUV = aUV;
     vCoverage = aCoverage;
-    vViewDepth = biomeViewDepth(aPos);
-    gl_Position = projView * vec4(aPos, 1.0);
+    vViewDepth = biomeViewDepth(vWorldPos);
+    gl_Position = projView * worldPos;
 }

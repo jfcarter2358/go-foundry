@@ -201,9 +201,9 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 			Tooltip: "Opens the side panel on the first selected face. The panel\nedits that one; these rows edit all of them."},
 		{Label: all(textureLabel), Disabled: r.Texture == nil,
 			Sub: ctxTextureMenuItems(texture, editor3DSetSurfaceTexture)},
-		{Label: fmt.Sprintf("Edit %s in 2D", r.kind), Disabled: r.kind == "portal" || multi,
-			Do:      editor3DEditSurfaceIn2D,
-			Tooltip: "The surface's own 2D view: extrusions, terrain points and\nthe holes cut into it. One surface at a time."},
+		{Label: fmt.Sprintf("Shape %s", r.kind), Disabled: r.kind == "portal" || multi,
+			Do:      editor3DShapeSurface,
+			Tooltip: "Edit this surface as a mesh, in place: place and connect points,\nextrude faces into bumps and recesses, open holes. One surface at a time."},
 		{Separator: true},
 		{Label: all(onLabel), Checked: on, Disabled: r.On == nil,
 			Do: func() { editor3DToggleSurfaceFlag(func(r surface3DRefs) *bool { return r.On }) }},
@@ -214,9 +214,6 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 			Do: func() { editor3DToggleSurfaceFlag(func(r surface3DRefs) *bool { return r.DoubleSided }) }},
 		{Label: all("Collision"), Checked: r.Collision != nil && *r.Collision, Disabled: r.Collision == nil,
 			Do: func() { editor3DToggleSurfaceFlag(func(r surface3DRefs) *bool { return r.Collision }) }},
-		{Label: all("Terrain"), Checked: r.Terrain != nil && *r.Terrain, Disabled: r.Terrain == nil,
-			Do:      func() { editor3DToggleSurfaceFlag(func(r surface3DRefs) *bool { return r.Terrain }) },
-			Tooltip: "Drive the surface's shape from its terrain points\ninstead of keeping it flat."},
 	}
 	if multi {
 		// A mixed selection has no single "before" value, so the ticks above

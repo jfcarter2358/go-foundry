@@ -34,27 +34,29 @@ type Wall struct {
 	// (`@sector.edge.<id>`). It belongs to the polygon *edge* rather than to
 	// this record: converting the edge to a portal carries the ID across, so
 	// the address survives the conversion. See sector_edge_id.go.
-	ID                  string
-	ScriptData          // tags, attributes and the attached script
-	StartPoint          mgl32.Vec2
-	EndPoint            mgl32.Vec2
-	Texture             string
-	BlendTexture        string // optional second texture, mixed in by BlendMask's luminance
-	BlendMask           string // grayscale mask texture; 0 = Texture, 1 = BlendTexture
-	Collision           bool
-	Visible             bool    // if false, wall geometry is not drawn (default true)
-	Pinned              bool    // if true, InferPortals will not convert this wall to a portal
-	DoubleSided         bool    // if true, wall is rendered from both sides (default true)
-	Terrain             bool    // if true, use terrain displacement mesh
-	Alpha               float32 // 0.0 = fully transparent, 1.0 = fully opaque
-	Extrusions          []Extrusion
-	TerrainPoints       []TerrainPoint
-	UVOffset            mgl32.Vec2 // UV translation
-	UVScale             mgl32.Vec2 // UV scale; zero = {1,1}
-	UVRotation          float32    // UV rotation in radians
-	Detail              DetailSpec // per-face procedural detail (rocks); disabled by default
-	Smooth              bool       // shade from interpolated vertex normals (see smooth.go)
-	SmoothAngle         float32    // crease threshold in degrees; 0 = DefaultSmoothAngle
-	Geometry            gfx.Geometry
-	ExtrusionGeometries []gfx.Geometry
+	ID           string
+	ScriptData   // tags, attributes and the attached script
+	StartPoint   mgl32.Vec2
+	EndPoint     mgl32.Vec2
+	Texture      string
+	BlendTexture string // optional second texture, mixed in by BlendMask's luminance
+	BlendMask    string // grayscale mask texture; 0 = Texture, 1 = BlendTexture
+	Collision    bool
+	Visible      bool    // if false, wall geometry is not drawn (default true)
+	Pinned       bool    // if true, InferPortals will not convert this wall to a portal
+	DoubleSided  bool    // if true, wall is rendered from both sides (default true)
+	Alpha        float32 // 0.0 = fully transparent, 1.0 = fully opaque
+	// Mesh is the wall's editable geometry: the shape an author gave it in the
+	// 3D editor's surface mode. The zero value is the flat quad, which is what
+	// nearly every wall is, so carrying the field costs nothing until somebody
+	// shapes it. See surface_mesh.go.
+	Mesh              SurfaceMesh
+	UVOffset          mgl32.Vec2 // UV translation
+	UVScale           mgl32.Vec2 // UV scale; zero = {1,1}
+	UVRotation        float32    // UV rotation in radians
+	Detail            DetailSpec // per-face procedural detail (rocks); disabled by default
+	Smooth            bool       // shade from interpolated vertex normals (see smooth.go)
+	SmoothAngle       float32    // crease threshold in degrees; 0 = DefaultSmoothAngle
+	Geometry          gfx.Geometry
+	SubmeshGeometries []gfx.Geometry
 }

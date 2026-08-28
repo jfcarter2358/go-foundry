@@ -148,8 +148,11 @@ func slopeCoverage(kind int32, n mgl32.Vec3, minAngle, maxAngle float32) float32
 // returns a real normal for those), and gating used to consult the detail
 // normal only — so on an ordinary ramp or sculpted terrain the slope sliders
 // did nothing at all.
-func BiomeSurfaceAt(level *world.Level, brush *world.BiomeBrush, seed mgl32.Vec2, wx, wz float32) (height, coverage float32) {
-	flat, rawNormal, sector := FloorHeightNormalUnderLevel(level, wx, wz)
+// owner is the chunk the biome sector was painted on, and (wx,wz) is in that
+// chunk's local space — see FloorHeightNormalUnderLevel for why the owning
+// chunk decides which floor this resolves to.
+func BiomeSurfaceAt(level *world.Level, owner *world.Chunk, drape string, brush *world.BiomeBrush, seed mgl32.Vec2, wx, wz float32) (height, coverage float32) {
+	flat, rawNormal, sector := FloorHeightNormalUnderLevel(level, owner, drape, wx, wz)
 
 	// InterpolateSurfaceHeight's normal is an un-normalized cross product (see
 	// slopeCoverage's note); rotateNormalBetween needs unit inputs to derive a

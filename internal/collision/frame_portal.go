@@ -83,7 +83,10 @@ func FindFramePortalCrossing(lvl *world.Level, e *world.Entity) *FramePortalCros
 	if chunk == nil || sector == nil {
 		return nil
 	}
-	xz := mgl32.Vec2{e.Position.X(), e.Position.Z()}
+	// Portal StartPoint/EndPoint are chunk-local; e.Position is only carried as
+	// far as chunk's frame (see chunkLocal's own doc comment).
+	local := chunkLocal(chunk, e.Position)
+	xz := mgl32.Vec2{local.X(), local.Z()}
 
 	for i := range sector.Portals {
 		p := &sector.Portals[i]
@@ -182,7 +185,7 @@ func ResolveSealedPortals(lvl *world.Level, e *world.Entity, pos mgl32.Vec3) mgl
 		return pos
 	}
 	frame := lvl.Frames.FrameFor(e)
-	_, sector := frame.ChunkAndSectorAt(lvl, pos)
+	chunk, sector := frame.ChunkAndSectorAt(lvl, pos)
 	if sector == nil {
 		return pos
 	}
@@ -197,7 +200,11 @@ func ResolveSealedPortals(lvl *world.Level, e *world.Entity, pos mgl32.Vec3) mgl
 	}
 	const epsilon = float32(0.001)
 
-	xz := mgl32.Vec2{pos.X(), pos.Z()}
+	// Segment endpoints are chunk-local (they come straight from portal
+	// StartPoint/EndPoint), so pos is carried in the same step as
+	// FindFramePortalCrossing's own lookup above.
+	local := chunkLocal(chunk, pos)
+	xz := mgl32.Vec2{local.X(), local.Z()}
 	for _, seg := range segs {
 		closest, dist := closestPointOnSegment2D(xz, seg[0], seg[1])
 		if dist >= radius+epsilon {
@@ -214,5 +221,5 @@ func ResolveSealedPortals(lvl *world.Level, e *world.Entity, pos mgl32.Vec3) mgl
 		away = away.Normalize()
 		xz = closest.Add(away.Mul(radius + epsilon))
 	}
-	return mgl32.Vec3{xz.X(), pos.Y(), xz.Y()}
+	return chunkWorld(chunk, mgl32.Vec3{xz.X(), local.Y(), xz.Y()})
 }

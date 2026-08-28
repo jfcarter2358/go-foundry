@@ -332,7 +332,7 @@ func TestBuildGroundPatchMeshUsesGroundUVScale(t *testing.T) {
 		Points: []mgl32.Vec2{{0, 0}, {8, 0}, {8, 8}, {0, 8}},
 		Brush:  world.BiomeBrush{Kind: world.BiomeGrass, GroundUVScale: mgl32.Vec2{2, 0.5}},
 	}
-	verts := BuildGroundPatchMesh(lvl, s)
+	verts := BuildGroundPatchMesh(lvl, nil, s) // no chunks, so no owning chunk
 	if len(verts) == 0 {
 		t.Fatal("expected a non-empty ground patch mesh")
 	}
@@ -346,7 +346,7 @@ func TestBuildGroundPatchMeshUsesGroundUVScale(t *testing.T) {
 
 	// Unset scale falls back to the 1x1 default tiling.
 	legacy := &world.BiomeSector{ID: "gpuv2", Points: s.Points, Brush: world.BiomeBrush{Kind: world.BiomeGrass}}
-	lverts := BuildGroundPatchMesh(lvl, legacy)
+	lverts := BuildGroundPatchMesh(lvl, nil, legacy)
 	if len(lverts) == 0 {
 		t.Fatal("expected a non-empty ground patch mesh for the unset-scale sector")
 	}
@@ -391,7 +391,7 @@ func TestBuildGroundPatchMeshStaysInsidePolygon(t *testing.T) {
 	}
 	lvl := &world.Level{} // no chunks: biome.FloorHeightUnderLevel falls back to 0 everywhere
 
-	verts := BuildGroundPatchMesh(lvl, s)
+	verts := BuildGroundPatchMesh(lvl, nil, s)
 	if len(verts) == 0 {
 		t.Fatal("expected a non-empty ground patch mesh for an 8x8 square sector")
 	}
@@ -426,7 +426,7 @@ func TestBuildGroundPatchMeshFollowsDiagonalEdge(t *testing.T) {
 	}
 	lvl := &world.Level{}
 
-	verts := BuildGroundPatchMesh(lvl, s)
+	verts := BuildGroundPatchMesh(lvl, nil, s)
 	if len(verts) == 0 {
 		t.Fatal("expected a non-empty mesh for the right-triangle sector")
 	}
@@ -554,7 +554,7 @@ func TestBiomeWaterCentroidAndFloor(t *testing.T) {
 	lvl := &world.Level{Chunks: []world.Chunk{ch}}
 	s := &world.BiomeSector{Points: []mgl32.Vec2{{-2, -2}, {2, -2}, {2, 2}, {-2, 2}}}
 
-	centroid, floorY := biome.BiomeWaterCentroidAndFloor(lvl, s)
+	centroid, floorY := biome.BiomeWaterCentroidAndFloor(lvl, &lvl.Chunks[0], s)
 	if centroid != (mgl32.Vec2{0, 0}) {
 		t.Fatalf("centroid = %v, want (0,0)", centroid)
 	}

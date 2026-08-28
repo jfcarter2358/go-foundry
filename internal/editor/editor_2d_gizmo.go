@@ -96,8 +96,11 @@ func pickGizmo2DHandle(mx, my int32) int {
 	if !ok {
 		return -1
 	}
-	v := editor2DView()
-	ox, oy := v.worldToScreen(origin.X(), origin.Y())
+	// worldToScreen, not the raw orthoView's: origin and the arm tips below are
+	// world-space, and the map's projection is anchored to the active chunk
+	// (see editor2DOrtho), so the anchored wrapper is the one that agrees with
+	// where these are actually drawn.
+	ox, oy := worldToScreen(origin.X(), origin.Y())
 	cursor := mgl32.Vec2{float32(mx), float32(my)}
 	centreD := cursor.Sub(mgl32.Vec2{ox, oy}).Len()
 
@@ -127,7 +130,7 @@ func pickGizmo2DHandle(mx, my int32) int {
 	bestD := gizmo2DPickPx
 	for _, axis := range gizmo2DAxes {
 		tip := origin.Add(gizmo2DAxisDir(axis).Mul(armLen))
-		tx, ty := v.worldToScreen(tip.X(), tip.Y())
+		tx, ty := worldToScreen(tip.X(), tip.Y())
 		if d := distToSegment2D(cursor.X(), cursor.Y(), ox, oy, tx, ty); d <= bestD {
 			bestD = d
 			best = axis

@@ -115,7 +115,6 @@ func TestApplyEdgeSplitWallHalvesInheritProperties(t *testing.T) {
 		Visible:     false,
 		Pinned:      true,
 		DoubleSided: false,
-		Terrain:     false,
 		Alpha:       0.42,
 		UVOffset:    mgl32.Vec2{0.25, 0.5},
 		UVScale:     mgl32.Vec2{2, 3},
@@ -153,10 +152,10 @@ func TestApplyEdgeSplitWallHalvesInheritProperties(t *testing.T) {
 		// Endpoints and geometry legitimately differ; everything else must not.
 		got.StartPoint, got.EndPoint = want.StartPoint, want.EndPoint
 		got.Geometry, want.Geometry = gfx.Geometry{}, gfx.Geometry{}
-		got.ExtrusionGeometries, want.ExtrusionGeometries = nil, nil
+		got.SubmeshGeometries, want.SubmeshGeometries = nil, nil
 		if got.Texture != want.Texture || got.Collision != want.Collision ||
 			got.Visible != want.Visible || got.Pinned != want.Pinned ||
-			got.DoubleSided != want.DoubleSided || got.Terrain != want.Terrain ||
+			got.DoubleSided != want.DoubleSided ||
 			got.Alpha != want.Alpha || got.UVOffset != want.UVOffset ||
 			got.UVScale != want.UVScale || got.UVRotation != want.UVRotation ||
 			got.Detail.Enabled != want.Detail.Enabled {
@@ -264,90 +263,101 @@ func TestInsertSectorVertexLerpsVertexOffsets(t *testing.T) {
 	}
 }
 
-func TestSplitWallDividesExtrusionsAtSplitPoint(t *testing.T) {
-	rect := func(u0, u1 float32) []world.ExtrusionPoint {
-		return []world.ExtrusionPoint{{U: u0, V: 1}, {U: u1, V: 1}, {U: u1, V: 2}, {U: u0, V: 2}}
+// wallMeshWithPatches builds a wall mesh carrying one square face per U range,
+// so a split can be checked by which faces landed on which side.
+func wallMeshWithPatches(ranges [][2]float32) world.SurfaceMesh {
+	var m world.SurfaceMesh
+	for i, r := range ranges {
+		a := m.AddPoint(r[0], 1, 0)
+		b := m.AddPoint(r[1], 1, 0)
+		c := m.AddPoint(r[1], 2, 0)
+		d := m.AddPoint(r[0], 2, 0)
+		m.Faces = append(m.Faces, world.SurfaceFace{
+			Verts:   []int{a, b, c, d},
+			Texture: []string{"left", "right", "straddle"}[i%3],
+		})
 	}
+	return m
+}
+
+// faceURange is the U extent of one face of a mesh.
+func faceURange(m *world.SurfaceMesh, fi int) (float32, float32) {
+	f := m.Faces[fi]
+	minU, maxU := m.Points[f.Verts[0]].U, m.Points[f.Verts[0]].U
+	for _, v := range f.Verts[1:] {
+		u := m.Points[v].U
+		if u < minU {
+			minU = u
+		}
+		if u > maxU {
+			maxU = u
+		}
+	}
+	return minU, maxU
+}
+
+func TestSplitWallDividesItsMeshAtTheSplitPoint(t *testing.T) {
 	w := world.Wall{
 		StartPoint: mgl32.Vec2{0, 0},
 		EndPoint:   mgl32.Vec2{10, 0},
-		Extrusions: []world.Extrusion{
-			{Outer: rect(0.5, 1.5), Inner: rect(0.5, 1.5), Texture: "left"},
-			{Outer: rect(5, 6), Inner: rect(5, 6), Texture: "right"},
-			{Outer: rect(2, 4), Inner: rect(2, 4), Texture: "straddle"},
-		},
+		Mesh:       wallMeshWithPatches([][2]float32{{0.5, 1.5}, {5, 6}}),
 	}
 
 	// Split 3 units along a 10-unit wall.
 	first, second := splitWall(w, mgl32.Vec2{3, 0}, 0.3)
 
-	// Wall U/V is in world units from StartPoint, so the first half keeps its
-	// extrusions as-is and the second half's rebase to its own start.
-	wantFirst := [][2]float32{{0.5, 1.5}, {2, 3}}
-	wantSecond := [][2]float32{{2, 3}, {0, 1}}
-	assertURanges(t, "first half", first.Extrusions, wantFirst)
-	assertURanges(t, "second half", second.Extrusions, wantSecond)
-
-	// The straddling extrusion is clamped to the seam on each side rather than
-	// dropped or duplicated whole.
-	if got := first.Extrusions[1].Texture; got != "straddle" {
-		t.Errorf("first half extrusion 1 texture = %q, want %q", got, "straddle")
+	if len(first.Mesh.Faces) != 1 {
+		t.Fatalf("first half has %d faces, want the one left of the seam", len(first.Mesh.Faces))
 	}
-	if got := second.Extrusions[1].Texture; got != "straddle" {
-		t.Errorf("second half extrusion 1 texture = %q, want %q", got, "straddle")
+	if len(second.Mesh.Faces) != 1 {
+		t.Fatalf("second half has %d faces, want the one right of the seam", len(second.Mesh.Faces))
+	}
+	if got := first.Mesh.Faces[0].Texture; got != "left" {
+		t.Errorf("first half kept the %q face, want left", got)
+	}
+	if got := second.Mesh.Faces[0].Texture; got != "right" {
+		t.Errorf("second half kept the %q face, want right", got)
+	}
+
+	// A wall's U is measured from its own start point, so the first half keeps
+	// its coordinates and the second half's rebase to the seam.
+	if lo, hi := faceURange(&first.Mesh, 0); absF(lo-0.5) > 1e-4 || absF(hi-1.5) > 1e-4 {
+		t.Errorf("first half face U range = [%v,%v], want [0.5,1.5]", lo, hi)
+	}
+	if lo, hi := faceURange(&second.Mesh, 0); absF(lo-2) > 1e-4 || absF(hi-3) > 1e-4 {
+		t.Errorf("second half face U range = [%v,%v], want [2,3] (rebased to the seam)", lo, hi)
 	}
 }
 
-func TestSplitWallDropsSliverExtrusionSides(t *testing.T) {
-	rect := func(u0, u1 float32) []world.ExtrusionPoint {
-		return []world.ExtrusionPoint{{U: u0, V: 1}, {U: u1, V: 1}, {U: u1, V: 2}, {U: u0, V: 2}}
-	}
-	// Straddles the 3.0 seam by only 0.001 units on the far side.
+func TestSplitWallSendsAStraddlingFaceWhole(t *testing.T) {
+	// A shape crossing the seam goes entirely to the side its centre is on.
+	// Slicing it would leave two half-doorways in two meshes, neither of which
+	// could be dragged as one — see SplitWallSurfaceMesh.
 	w := world.Wall{
 		StartPoint: mgl32.Vec2{0, 0},
 		EndPoint:   mgl32.Vec2{10, 0},
-		Extrusions: []world.Extrusion{{Outer: rect(1, 3.001), Inner: rect(1, 3.001)}},
+		Mesh:       wallMeshWithPatches([][2]float32{{2, 4}}),
 	}
-
 	first, second := splitWall(w, mgl32.Vec2{3, 0}, 0.3)
-	if len(first.Extrusions) != 1 {
-		t.Errorf("first half has %d extrusions, want 1", len(first.Extrusions))
+
+	total := len(first.Mesh.Faces) + len(second.Mesh.Faces)
+	if total != 1 {
+		t.Fatalf("the straddling face ended up as %d faces, want exactly 1", total)
 	}
-	if len(second.Extrusions) != 0 {
-		t.Errorf("second half has %d extrusions, want 0 (sliver too thin to keep)", len(second.Extrusions))
+	// Centroid U is 3, exactly on the seam, so it goes to the first half.
+	if len(first.Mesh.Faces) != 1 {
+		t.Error("a face centred on the seam should go to the first half")
 	}
 }
 
-func TestSplitWallDividesTerrainPoints(t *testing.T) {
-	w := world.Wall{
-		StartPoint: mgl32.Vec2{0, 0},
-		EndPoint:   mgl32.Vec2{10, 0},
-		Terrain:    true,
-		TerrainPoints: []world.TerrainPoint{
-			{U: 1, V: 2, Depth: 0.5},
-			{U: 7, V: 2, Depth: -0.5},
-			{U: 3, V: 1, Depth: 0.25},
-		},
-	}
-
+func TestSplitWallOfAFlatWallStaysFlat(t *testing.T) {
+	// A wall nobody has shaped has no mesh at all, and splitting it must not
+	// invent one — that is what keeps a level of plain rooms free of meshes
+	// that say nothing.
+	w := world.Wall{StartPoint: mgl32.Vec2{0, 0}, EndPoint: mgl32.Vec2{10, 0}}
 	first, second := splitWall(w, mgl32.Vec2{3, 0}, 0.3)
-
-	// U=1 goes left, U=7 goes right rebased to 4, and the point on the seam goes
-	// to both halves so the two displacement meshes agree there.
-	if len(first.TerrainPoints) != 2 {
-		t.Fatalf("first half terrain points = %+v, want 2", first.TerrainPoints)
-	}
-	if len(second.TerrainPoints) != 2 {
-		t.Fatalf("second half terrain points = %+v, want 2", second.TerrainPoints)
-	}
-	if absF(first.TerrainPoints[0].U-1) > 1e-4 || absF(first.TerrainPoints[1].U-3) > 1e-4 {
-		t.Errorf("first half Us = %v, %v; want 1, 3", first.TerrainPoints[0].U, first.TerrainPoints[1].U)
-	}
-	if absF(second.TerrainPoints[0].U-4) > 1e-4 || absF(second.TerrainPoints[1].U) > 1e-4 {
-		t.Errorf("second half Us = %v, %v; want 4, 0", second.TerrainPoints[0].U, second.TerrainPoints[1].U)
-	}
-	if first.TerrainPoints[1].Depth != 0.25 || second.TerrainPoints[1].Depth != 0.25 {
-		t.Error("seam terrain point lost its depth on one side")
+	if !first.Mesh.IsEmpty() || !second.Mesh.IsEmpty() {
+		t.Error("splitting a flat wall produced a mesh")
 	}
 }
 
@@ -396,20 +406,6 @@ func TestSegmentParam2D(t *testing.T) {
 				t.Errorf("segmentParam2D = %v, want %v", got, tc.want)
 			}
 		})
-	}
-}
-
-func assertURanges(t *testing.T, label string, exts []world.Extrusion, want [][2]float32) {
-	t.Helper()
-	if len(exts) != len(want) {
-		t.Fatalf("%s has %d extrusions, want %d", label, len(exts), len(want))
-	}
-	for i, ext := range exts {
-		minU, maxU := extrusionURange(ext)
-		if absF(minU-want[i][0]) > 1e-4 || absF(maxU-want[i][1]) > 1e-4 {
-			t.Errorf("%s extrusion %d U range = [%v,%v], want [%v,%v]",
-				label, i, minU, maxU, want[i][0], want[i][1])
-		}
 	}
 }
 

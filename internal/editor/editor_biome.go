@@ -36,10 +36,18 @@ func activeChunk() *world.Chunk {
 }
 
 // biomeSectorAt returns the index of the topmost (last-drawn) BiomeSector in
-// ch containing world point (wx,wz), or -1.
-func biomeSectorAt(ch *world.Chunk, wx, wz float32) int {
-	pt := mgl32.Vec2{wx, wz}
+// ch containing ch-local point (lx,lz), or -1.
+//
+// Paint on a layer the map is not editing is skipped, for the same reason its
+// structural sectors are: grass painted on the ground and grass painted on the
+// ledge above it are the same polygon from directly overhead, and picking
+// whichever was drawn last is not a choice the author made.
+func biomeSectorAt(ch *world.Chunk, lx, lz float32) int {
+	pt := mgl32.Vec2{lx, lz}
 	for i := len(ch.BiomeSectors) - 1; i >= 0; i-- {
+		if !layerEditable(ch.BiomeSectors[i].Layer) {
+			continue
+		}
 		if geom.PointInPolygon(pt, ch.BiomeSectors[i].Points) {
 			return i
 		}
@@ -59,9 +67,11 @@ func finishBiomeSectorDraw(ch *world.Chunk) {
 			}
 		}
 		bs := world.BiomeSector{
-			ID:     world.NextBiomeSectorID(Editor.level, ch),
-			Points: pts,
-			Brush:  world.DefaultBiomeBrush(world.BiomeGrass),
+			ID:          world.NextBiomeSectorID(Editor.level, ch),
+			Points:      pts,
+			Brush:       world.DefaultBiomeBrush(world.BiomeGrass),
+			DrapeSector: biomeDrapeSectorFor(ch, pts),
+			Layer:       activeLayer(),
 
 			HeightDirty: true,
 			GroundDirty: true,
@@ -73,6 +83,39 @@ func finishBiomeSectorDraw(ch *world.Chunk) {
 	}
 	Editor.BiomeDrawing = false
 	Editor.BiomeDrawPoints = nil
+}
+
+// biomeDrapeSectorFor records which structural surface a freshly-drawn
+// polygon was drawn over, so that two sectors stacked at the same XZ can be
+// told apart later — from above they look identical, and above is the only
+// view this was drawn in. See BiomeSector.DrapeSector.
+//
+// The selected sector wins when the polygon's centre actually lies on it: the
+// user picked it, and on stacked geometry that pick is the only statement of
+// which level they meant. Otherwise the centre resolves the ordinary way, so
+// painting without a selection still binds to something sensible. "" when the
+// centre is over open ground, which leaves the paint unbound — a legitimate
+// state, not a failure.
+func biomeDrapeSectorFor(ch *world.Chunk, pts []mgl32.Vec2) string {
+	if ch == nil || len(pts) == 0 {
+		return ""
+	}
+	var c mgl32.Vec2
+	for _, p := range pts {
+		c = c.Add(p)
+	}
+	c = c.Mul(1 / float32(len(pts)))
+
+	if Editor.ActiveSectorIdx >= 0 && Editor.ActiveSectorIdx < len(ch.Sectors) {
+		s := &ch.Sectors[Editor.ActiveSectorIdx]
+		if world.PointInSector(ch, s, c) {
+			return s.ID
+		}
+	}
+	if _, s := world.DrapeTarget(Editor.level, ch, "", c.X(), c.Y()); s != nil {
+		return s.ID
+	}
+	return ""
 }
 
 // deleteBiomeSector removes ch.BiomeSectors[idx] and evicts its cached GPU
@@ -103,8 +146,11 @@ func biomeHandleClick(t sdl.MouseButtonEvent) bool {
 	if ch == nil {
 		return true
 	}
-	wx, wz := screenToWorld(t.X, t.Y)
-	threshold := screenToWorldSize(editor2DSelectRadius, editor2DOrtho())
+	// BiomeSector.Points is chunk-local, like structural sector points, so
+	// every comparison/write below (and Editor.BiomeDrawPoints, committed
+	// straight into it by finishBiomeSectorDraw) works in that space too.
+	lx, lz := screenToChunkLocal(ch, t.X, t.Y)
+	threshold := chunkLocalSize(ch, screenToWorldSize(editor2DSelectRadius, editor2DOrtho()))
 
 	if Editor.BiomeDrawing {
 		if t.Button == sdl.ButtonRight {
@@ -117,18 +163,18 @@ func biomeHandleClick(t sdl.MouseButtonEvent) bool {
 			return true
 		}
 		if len(Editor.BiomeDrawPoints) >= 3 &&
-			dist2D(wx, wz, Editor.BiomeDrawPoints[0].X(), Editor.BiomeDrawPoints[0].Y()) < threshold {
+			dist2D(lx, lz, Editor.BiomeDrawPoints[0].X(), Editor.BiomeDrawPoints[0].Y()) < threshold {
 			finishBiomeSectorDraw(ch)
 			return true
 		}
 		if len(Editor.BiomeDrawPoints) < world.BiomeMaxPolyVerts {
-			Editor.BiomeDrawPoints = append(Editor.BiomeDrawPoints, mgl32.Vec2{wx, wz})
+			Editor.BiomeDrawPoints = append(Editor.BiomeDrawPoints, mgl32.Vec2{lx, lz})
 		}
 		return true
 	}
 
 	if t.Button == sdl.ButtonRight {
-		if idx := biomeSectorAt(ch, wx, wz); idx >= 0 {
+		if idx := biomeSectorAt(ch, lx, lz); idx >= 0 {
 			EditorPushUndo()
 			deleteBiomeSector(ch, idx)
 		}
@@ -143,7 +189,7 @@ func biomeHandleClick(t sdl.MouseButtonEvent) bool {
 	if Editor.ActiveBiomeSectorIdx >= 0 && Editor.ActiveBiomeSectorIdx < len(ch.BiomeSectors) {
 		bs := &ch.BiomeSectors[Editor.ActiveBiomeSectorIdx]
 		for vi, p := range bs.Points {
-			if dist2D(wx, wz, p.X(), p.Y()) < threshold {
+			if dist2D(lx, lz, p.X(), p.Y()) < threshold {
 				EditorPushUndo() // snapshot at drag start, not per-frame during the drag
 				Editor.BiomeDragVertexIdx = vi
 				return true
@@ -151,7 +197,7 @@ func biomeHandleClick(t sdl.MouseButtonEvent) bool {
 		}
 	}
 
-	Editor.ActiveBiomeSectorIdx = biomeSectorAt(ch, wx, wz)
+	Editor.ActiveBiomeSectorIdx = biomeSectorAt(ch, lx, lz)
 	Editor.BiomeDragVertexIdx = -1
 	return true
 }
@@ -173,8 +219,8 @@ func biomeHandleMouseMove(t sdl.MouseMotionEvent) {
 	if vi < 0 || vi >= len(bs.Points) {
 		return
 	}
-	wx, wz := screenToWorld(t.X, t.Y)
-	bs.Points[vi] = mgl32.Vec2{wx, wz}
+	lx, lz := screenToChunkLocal(ch, t.X, t.Y)
+	bs.Points[vi] = mgl32.Vec2{lx, lz}
 	bs.HeightDirty = true
 	bs.GroundDirty = true
 }
@@ -239,31 +285,40 @@ func Editor2DRenderBiomeSectors(ch *world.Chunk) {
 	const y = float32(0.12)
 	yellow := mgl32.Vec3{1, 1, 0}
 	green := mgl32.Vec3{0.2, 0.9, 0.2}
+	// bs.Points and Editor.BiomeDrawPoints are chunk-local; the map draws in
+	// world space, like Editor2DRender's own wp3.
+	wp3 := func(local mgl32.Vec2) mgl32.Vec3 {
+		return ch.LocalToWorld(mgl32.Vec3{local.X(), y, local.Y()})
+	}
 
 	for si := range ch.BiomeSectors {
 		bs := &ch.BiomeSectors[si]
 		n := len(bs.Points)
-		if n < 2 {
+		if n < 2 || !layerDrawn(bs.Layer) {
 			continue
 		}
 		col := biomeSectorColor(bs.Brush.Kind)
 		if !Editor.BiomeLayerActive {
 			col = col.Mul(0.45)
 		}
-		selected := si == Editor.ActiveBiomeSectorIdx
+		selected := si == Editor.ActiveBiomeSectorIdx && layerEditable(bs.Layer)
 		if selected {
 			col = yellow
+		} else {
+			// Paint on another storey is context, exactly as a structural
+			// sector's outline is — see layerTint.
+			col = layerTint(bs.Layer, col)
 		}
 		for i := 0; i < n; i++ {
 			a := bs.Points[i]
 			b := bs.Points[(i+1)%n]
-			gizmo.GizmoLine(mgl32.Vec3{a.X(), y, a.Y()}, mgl32.Vec3{b.X(), y, b.Y()}, col)
+			gizmo.GizmoLine(wp3(a), wp3(b), col)
 		}
 		if Editor.BiomeLayerActive && selected {
 			ortho := editor2DOrtho()
 			crossSz := screenToWorldSize(5, ortho)
 			for _, p := range bs.Points {
-				gp := mgl32.Vec3{p.X(), y, p.Y()}
+				gp := wp3(p)
 				gizmo.GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), yellow)
 				gizmo.GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), yellow)
 			}
@@ -274,12 +329,12 @@ func Editor2DRenderBiomeSectors(ch *world.Chunk) {
 		pts := Editor.BiomeDrawPoints
 		for i := 0; i < len(pts)-1; i++ {
 			a, b := pts[i], pts[i+1]
-			gizmo.GizmoLine(mgl32.Vec3{a.X(), y, a.Y()}, mgl32.Vec3{b.X(), y, b.Y()}, green)
+			gizmo.GizmoLine(wp3(a), wp3(b), green)
 		}
 		ortho := editor2DOrtho()
 		crossSz := screenToWorldSize(5, ortho)
 		for _, p := range pts {
-			gp := mgl32.Vec3{p.X(), y, p.Y()}
+			gp := wp3(p)
 			gizmo.GizmoLine(gp.Sub(mgl32.Vec3{crossSz, 0, 0}), gp.Add(mgl32.Vec3{crossSz, 0, 0}), green)
 			gizmo.GizmoLine(gp.Sub(mgl32.Vec3{0, 0, crossSz}), gp.Add(mgl32.Vec3{0, 0, crossSz}), green)
 		}
@@ -314,9 +369,9 @@ func Editor2DRenderBiomeOverlay() {
 		poly := biome.CcwPolygon(bs.Points)
 		tris := geom.EarClip(poly)
 		for i := 0; i+2 < len(tris); i += 3 {
-			ax, ay := worldToScreen(poly[tris[i]].X(), poly[tris[i]].Y())
-			bx, by := worldToScreen(poly[tris[i+1]].X(), poly[tris[i+1]].Y())
-			cx, cy := worldToScreen(poly[tris[i+2]].X(), poly[tris[i+2]].Y())
+			ax, ay := worldToScreen(chunkWorldXZ(ch, poly[tris[i]].X(), poly[tris[i]].Y()))
+			bx, by := worldToScreen(chunkWorldXZ(ch, poly[tris[i+1]].X(), poly[tris[i+1]].Y()))
+			cx, cy := worldToScreen(chunkWorldXZ(ch, poly[tris[i+2]].X(), poly[tris[i+2]].Y()))
 			dl.AddTriangleFilled(
 				imgui.Vec2{X: ax, Y: ay},
 				imgui.Vec2{X: bx, Y: by},

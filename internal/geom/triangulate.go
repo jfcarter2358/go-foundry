@@ -182,23 +182,27 @@ func mergeHoles(outer []mgl32.Vec2, holes [][]mgl32.Vec2) []mgl32.Vec2 {
 		return outer
 	}
 
-	// Sort holes by maximum X of any vertex (descending) for deterministic bridging
+	// Sort holes by the minimum X of any vertex, ascending. bridgeHole works
+	// from a hole's leftmost point, so taking the leftmost hole first means each
+	// bridge is cut into an outline that no later bridge has yet complicated —
+	// and it makes the merge deterministic, which matters because the vertex
+	// order it produces is what every caller indexes into.
 	type holeEntry struct {
 		idx  int
-		maxX float32
+		minX float32
 	}
 	entries := make([]holeEntry, len(holes))
 	for i, h := range holes {
-		mx := float32(-math.MaxFloat32)
+		mx := float32(math.MaxFloat32)
 		for _, p := range h {
-			if p.X() > mx {
+			if p.X() < mx {
 				mx = p.X()
 			}
 		}
-		entries[i] = holeEntry{idx: i, maxX: mx}
+		entries[i] = holeEntry{idx: i, minX: mx}
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].maxX > entries[j].maxX
+		return entries[i].minX < entries[j].minX
 	})
 
 	merged := make([]mgl32.Vec2, len(outer))
@@ -212,42 +216,125 @@ func mergeHoles(outer []mgl32.Vec2, holes [][]mgl32.Vec2) []mgl32.Vec2 {
 	return merged
 }
 
-// bridgeHole connects a single hole polygon into the outer polygon by finding
-// the mutually-visible vertex pair and inserting a bridge (two coincident edges).
+// findHoleBridge returns the index of the outer-polygon vertex that can see
+// hole[holeIdx], which must be the hole's leftmost vertex.
+//
+// The naive answer — the nearest outer vertex whose connecting segment does not
+// properly cross an edge — is wrong, and wrong in a way that only shows up on
+// symmetric shapes: a square hole centred in a square floor picks a corner
+// whose bridge runs diagonally *through the hole itself*, touching two hole
+// vertices without properly crossing either edge. The merged polygon is then
+// self-intersecting and EarClip returns nothing, so the surface silently
+// vanishes. A doorway centred in a wall is exactly that shape.
+//
+// This is the standard construction instead (Eberly; the same one earcut uses):
+// cast a ray left from the hole's leftmost point, take the edge it first hits,
+// and bridge to that edge's left-hand endpoint — with a correction for the case
+// where another vertex of the outer polygon blocks the view, in which case the
+// one subtending the smallest angle with the ray is used. That vertex is
+// mutually visible by construction rather than by a test that can miss.
+func findHoleBridge(outer []mgl32.Vec2, hole []mgl32.Vec2, holeIdx int) int {
+	h := hole[holeIdx]
+	n := len(outer)
+	qx := float32(-math.MaxFloat32)
+	best := -1
+
+	for i := 0; i < n; i++ {
+		a := outer[i]
+		b := outer[(i+1)%n]
+		// Only edges the leftward ray from h can cross, and never a horizontal
+		// one, which the ray runs along rather than through.
+		if a.Y() == b.Y() {
+			continue
+		}
+		if h.Y() > a.Y() && h.Y() > b.Y() {
+			continue
+		}
+		if h.Y() < a.Y() && h.Y() < b.Y() {
+			continue
+		}
+		x := a.X() + (h.Y()-a.Y())*(b.X()-a.X())/(b.Y()-a.Y())
+		if x > h.X() || x <= qx {
+			continue
+		}
+		qx = x
+		// The endpoint on the left is the one the bridge can reach without
+		// crossing the edge it came from.
+		if a.X() < b.X() {
+			best = i
+		} else {
+			best = (i + 1) % n
+		}
+		if x == h.X() {
+			return best
+		}
+	}
+	if best < 0 {
+		return -1
+	}
+
+	// A vertex of the outer polygon lying in the triangle (h, intersection,
+	// candidate) stands between the two. The one at the smallest angle to the
+	// ray is visible from h, so take it instead.
+	m := outer[best]
+	tanMin := float32(math.MaxFloat32)
+	for i := 0; i < n; i++ {
+		p := outer[i]
+		if p.X() > h.X() || p.X() < m.X() || p.X() == h.X() {
+			continue
+		}
+		var ax, ay, cx, cy float32
+		if h.Y() < m.Y() {
+			ax, ay, cx, cy = h.X(), h.Y(), qx, h.Y()
+		} else {
+			ax, ay, cx, cy = qx, h.Y(), h.X(), h.Y()
+		}
+		if !pointInTriangle(p, mgl32.Vec2{ax, ay}, m, mgl32.Vec2{cx, cy}) {
+			continue
+		}
+		den := h.X() - p.X()
+		if den == 0 {
+			continue
+		}
+		tan := float32(math.Abs(float64(h.Y()-p.Y()))) / den
+		if tan < tanMin || (tan == tanMin && p.X() > m.X()) {
+			m = p
+			tanMin = tan
+			best = i
+		}
+	}
+	return best
+}
+
+// bridgeHole connects a single hole polygon into the outer polygon, inserting a
+// bridge (two coincident edges) at the mutually-visible vertex pair
+// findHoleBridge picks out.
 func bridgeHole(outer []mgl32.Vec2, hole []mgl32.Vec2) []mgl32.Vec2 {
-	// Find the rightmost vertex of the hole
+	if len(hole) < 3 || len(outer) < 3 {
+		return outer
+	}
+	// The leftmost vertex of the hole, which is what findHoleBridge's leftward
+	// ray is cast from. Ties break on Y so the choice is deterministic.
 	holeIdx := 0
 	for i, p := range hole {
-		if p.X() > hole[holeIdx].X() {
+		if p.X() < hole[holeIdx].X() || (p.X() == hole[holeIdx].X() && p.Y() < hole[holeIdx].Y()) {
 			holeIdx = i
 		}
 	}
-	holePoint := hole[holeIdx]
-
-	// Find the closest visible vertex on the outer polygon
-	bestDist := float32(math.MaxFloat32)
-	bestIdx := 0
-	for i, p := range outer {
-		dx := p.X() - holePoint.X()
-		dy := p.Y() - holePoint.Y()
-		dist := dx*dx + dy*dy
-		if dist < bestDist {
-			// Check that the bridge segment doesn't intersect any edge
-			if !segmentIntersectsPolygon(outer, holePoint, p) &&
-				!segmentIntersectsPolygon(hole, holePoint, p) {
-				bestDist = dist
-				bestIdx = i
-			}
-		}
+	bestIdx := findHoleBridge(outer, hole, holeIdx)
+	if bestIdx < 0 {
+		// The hole is not inside the outer polygon at all. Leaving the outline
+		// uncut is the honest failure: something visible and wrong beats a
+		// self-intersecting polygon that triangulates into nothing.
+		return outer
 	}
 
-	// Build merged polygon: walk outer up to bestIdx, bridge to hole,
-	// walk entire hole, bridge back to outer, continue outer.
-	//
-	// The bridge creates two pairs of nearly-coincident vertices (one pair
-	// at the outer bridge point, one at the hole bridge point). We offset
-	// each duplicate perpendicular to the bridge direction so EarClip
-	// sees distinct vertices and can triangulate normally.
+	// The bridge creates two pairs of coincident vertices (one at the outer
+	// bridge point, one at the hole's). Each duplicate is offset perpendicular
+	// to the bridge so EarClip sees distinct vertices and its ear test does not
+	// reject every candidate on a zero-area sliver. The offset is far below any
+	// tolerance a caller samples with, so the duplicates still read as their
+	// originals to anything looking a point up by position.
 	outerBridge := outer[bestIdx]
 	holeBridge := hole[holeIdx]
 	bridgeDir := mgl32.Vec2{
@@ -263,7 +350,7 @@ func bridgeHole(outer []mgl32.Vec2, hole []mgl32.Vec2) []mgl32.Vec2 {
 		perpX = 0
 		perpY = 1
 	}
-	const eps = 1e-4
+	const eps = 1e-5
 	offX := perpX * eps
 	offY := perpY * eps
 

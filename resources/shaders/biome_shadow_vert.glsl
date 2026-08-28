@@ -18,11 +18,14 @@ layout(location = 1) in vec3  aNormal;
 layout(location = 2) in float aParam;
 
 uniform mat4 lightSpaceMatrix;
+uniform mat4 model;
 
 void main() {
     if (!biomePlace(gl_InstanceID, aLocal, aNormal, aParam)) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
     }
-    gl_Position = lightSpaceMatrix * vec4(bWorldPos, 1.0);
+    // bWorldPos is chunk-local (see biome_vert.glsl's matching comment);
+    // model carries it out to world space in one step.
+    gl_Position = lightSpaceMatrix * model * vec4(bWorldPos, 1.0);
 }

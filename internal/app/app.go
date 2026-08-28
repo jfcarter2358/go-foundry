@@ -547,7 +547,19 @@ func Run() {
 			identity := mgl32.Ident4()
 			drawOrQueue := func(g *gfx.Geometry, model mgl32.Mat4, doubleSided bool) {
 				if g.IsTransparent() {
-					pos := model.Mul4x1(mgl32.Vec4{g.Position.X(), g.Position.Y(), g.Position.Z(), 1})
+					// The mesh's own origin carried out by model — NOT
+					// model * g.Position. A geometry's vertices are stored
+					// relative to the position it was loaded with, and every
+					// caller's model matrix already contains that same
+					// translation (water: chunkModel*Translate(w.Position) with
+					// g.Position == w.Position; an entity attachment:
+					// world*LocalMatrix() which opens with Translate(m.Offset)
+					// and g.Position == m.Offset; the spawn marker likewise).
+					// Multiplying it in again put the sort key at twice the
+					// offset, so translucent water and attachments sorted
+					// against a position nothing occupies. Structural geometry
+					// loads at the zero vector, so this is bit-identical there.
+					pos := model.Mul4x1(mgl32.Vec4{0, 0, 0, 1})
 					dx := pos.X() - gfx.Cam.Position.X()
 					dy := pos.Y() - gfx.Cam.Position.Y()
 					dz := pos.Z() - gfx.Cam.Position.Z()
@@ -582,27 +594,37 @@ func Run() {
 				}
 				chunksDrawn++
 
-				// A chunk in a frame is authored in that frame's coordinates and
-				// carried into the world by its transform; a world chunk was
-				// baked into world space at load and gets the identity. Passing
-				// it unconditionally is what keeps this one loop.
+				// Every chunk's geometry is authored in its own local space and
+				// carried into the world (or into an owning frame's space) by
+				// ModelMatrix; the identity for an unmoved, unrotated,
+				// unscaled chunk is what keeps this one loop.
 				chunkModel := chunk.ModelMatrix()
 
 				// Everything below that asks "where is the camera" has to ask it
-				// in the chunk's own coordinates, or a backface test compares a
-				// world-space eye against frame-local geometry and culls the
-				// wrong half of a moving ship.
+				// in the chunk's own local coordinates, or a backface test
+				// compares a world-space eye against local geometry and culls
+				// the wrong side of a moved or rotated chunk.
 				chunkCam := gfx.Cam.Position
-				if chunk.InFrame() {
-					chunkCam = level.Frames.Frame(chunk.FrameOwner).FromWorld(chunkCam)
+				if chunkModel != identity {
+					r := chunkModel.Inv().Mul4x1(chunkCam.Vec4(1))
+					chunkCam = mgl32.Vec3{r.X(), r.Y(), r.Z()}
 				}
 
 				// Portal visibility: only render sectors reachable through portals from the player's sector.
 				// Sectors disconnected from the portal graph (e.g. nested sectors with no shared
 				// edges) bypass portal culling and fall through to frustum-only culling.
+				//
+				// Off in the editor. The BFS starts at the PLAYER's sector but
+				// tests portal facing against the camera, and in the editor
+				// those are two unrelated places: the body stands wherever play
+				// last left it while the eye flies anywhere it likes. Sectors
+				// then dropped out of the set as the view moved — geometry
+				// simply stopping being drawn as the camera passed through it.
+				// A free camera has no room to be in, so there is nothing for
+				// this pass to cull from.
 				var visibleSectors map[string]bool
 				var connectedSectors map[string]bool
-				if world.PlayerEntity != nil && chunk.ID == world.PlayerEntity.CurrentChunk {
+				if !editor.Editor.Active && world.PlayerEntity != nil && chunk.ID == world.PlayerEntity.CurrentChunk {
 					visibleSectors = render.PortalVisibleSectors(chunk, world.PlayerEntity.CurrentSector, chunkCam)
 					connectedSectors = render.PortalConnectedSectors(chunk, world.PlayerEntity.CurrentSector)
 				}
@@ -613,31 +635,43 @@ func Run() {
 						sectorsPortalCulled++
 						continue
 					}
-					sectorMin := mgl32.Vec3{sector.MinBound.X(), sector.Floor.Height, sector.MinBound.Y()}
-					sectorMax := mgl32.Vec3{sector.MaxBound.X(), sector.Ceiling.Height, sector.MaxBound.Y()}
-					if chunk.InFrame() {
-						sectorMin, sectorMax = render.TransformAABB(chunkModel, sectorMin, sectorMax)
-					}
+					// WorldAABB, not a hand-built Floor.Height..Ceiling.Height
+					// box: LocalAABB widens that range by per-vertex offsets,
+					// terrain points, extrusions and wall tops, and this pass
+					// has to agree with the shadow (shadow.go) and detail
+					// (detail_render.go) passes, which both cull the same
+					// sector against exactly that. Culling against a tighter
+					// box here dropped sectors whose extrusion was on screen
+					// while their shadow was still being drawn.
+					sectorMin, sectorMax := sector.WorldAABB(chunk)
 					if !render.AABBInFrustum(frustum, sectorMin, sectorMax) {
 						continue
 					}
 					sectorsDrawn++
+					// The skirt closes the band under this sector's floor —
+					// a storey's slab edge, or the face under an overhang. It
+					// is drawn whatever the floor itself is doing: a Hidden
+					// floor still has a slab, and a displaced one still needs
+					// its edge. See world/skirt.go.
+					if world.SkirtDrawable(sector) {
+						drawOrQueue(&sector.Floor.SkirtGeometry, chunkModel, true)
+					}
 					if sector.Floor.Enabled && !sector.Floor.Hidden {
 						// Displaced faces are drawn by RenderDetailColor via the tess
 						// program instead of the flat mesh (avoids z-fighting).
 						if !sector.Floor.Detail.HasDisplace() {
 							drawOrQueue(&sector.Floor.Geometry, chunkModel, sector.Floor.DoubleSided)
 						}
-						for eg := range sector.Floor.ExtrusionGeometries {
-							drawOrQueue(&sector.Floor.ExtrusionGeometries[eg], chunkModel, sector.Floor.DoubleSided)
+						for eg := range sector.Floor.SubmeshGeometries {
+							drawOrQueue(&sector.Floor.SubmeshGeometries[eg], chunkModel, sector.Floor.DoubleSided)
 						}
 					}
 					if sector.Ceiling.Enabled {
 						if !sector.Ceiling.Detail.HasDisplace() {
 							drawOrQueue(&sector.Ceiling.Geometry, chunkModel, sector.Ceiling.DoubleSided)
 						}
-						for eg := range sector.Ceiling.ExtrusionGeometries {
-							drawOrQueue(&sector.Ceiling.ExtrusionGeometries[eg], chunkModel, sector.Ceiling.DoubleSided)
+						for eg := range sector.Ceiling.SubmeshGeometries {
+							drawOrQueue(&sector.Ceiling.SubmeshGeometries[eg], chunkModel, sector.Ceiling.DoubleSided)
 						}
 					}
 					for k := range sector.Walls {
@@ -646,8 +680,8 @@ func Run() {
 							if !w.Detail.HasDisplace() {
 								drawOrQueue(&w.Geometry, chunkModel, w.DoubleSided)
 							}
-							for eg := range w.ExtrusionGeometries {
-								drawOrQueue(&w.ExtrusionGeometries[eg], chunkModel, w.DoubleSided)
+							for eg := range w.SubmeshGeometries {
+								drawOrQueue(&w.SubmeshGeometries[eg], chunkModel, w.DoubleSided)
 							}
 						}
 					}
@@ -668,11 +702,11 @@ func Run() {
 				// one small sector left the frustum.
 				for wi := range chunk.WaterSurfaces {
 					w := &chunk.WaterSurfaces[wi]
-					wmin, wmax := w.WorldAABB()
+					wmin, wmax := w.WorldAABB(chunk)
 					if !render.AABBInFrustum(frustum, wmin, wmax) {
 						continue
 					}
-					drawOrQueue(&w.Geometry, w.ModelMatrix(), true)
+					drawOrQueue(&w.Geometry, chunkModel.Mul4(w.ModelMatrix()), true)
 				}
 			}
 

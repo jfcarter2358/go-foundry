@@ -10,6 +10,7 @@ layout(location = 1) in vec3  aNormal;
 layout(location = 2) in float aParam;
 
 uniform mat4 lightSpaceMatrix;
+uniform mat4 model;
 
 out vec3 fragWorldPos;
 
@@ -19,6 +20,9 @@ void main() {
         fragWorldPos = vec3(0.0);
         return;
     }
-    fragWorldPos = bWorldPos;
-    gl_Position = lightSpaceMatrix * vec4(bWorldPos, 1.0);
+    // bWorldPos is chunk-local (see biome_vert.glsl's matching comment);
+    // model carries it out to world space in one step.
+    vec4 worldPos = model * vec4(bWorldPos, 1.0);
+    fragWorldPos = worldPos.xyz;
+    gl_Position = lightSpaceMatrix * worldPos;
 }

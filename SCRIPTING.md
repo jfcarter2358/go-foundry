@@ -456,8 +456,8 @@ editor's reference panel. The core surface:
 | entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · read-only: `type` `current_sector` `current_chunk` `frame` `seat` |
 | vehicle | `vehicle_throttle` `vehicle_steer` `vehicle_pitch` `vehicle_roll` · tuning: `vehicle_max_speed` `vehicle_accel` `vehicle_brake` `vehicle_turn_rate` `vehicle_pitch_rate` `vehicle_roll_rate` `vehicle_drag` · read-only: `vehicle_speed` `vehicle_driver` |
 | volume | `position` `rotation` `half` `shape` `enabled` |
-| edge | `kind` `texture` `collision` `visible` `pinned` `double_sided` `terrain` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · portals also: `to_sector` `draw_gap` `gap_texture` |
-| floor | `enabled` `hidden` `height` `texture` `terrain` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` |
+| edge | `kind` `texture` `collision` `visible` `pinned` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · portals also: `to_sector` `draw_gap` `gap_texture` |
+| floor | `enabled` `hidden` `height` `texture` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · read-only: `shaped` |
 | ceiling | as floor, without `hidden` |
 | chunk | `origin` `rotation` `scale` `frame` — all read-only |
 | light | `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` |
@@ -467,10 +467,14 @@ An entity's `texture` is its attachments' skin: reading it reports what the firs
 attachment draws with, and writing it reskins them all. `set_texture` is the same
 write, plus the form that names one attachment of several.
 
+`shaped` reports whether a surface carries an editor-authored mesh (a bump, a
+recess, a hole) rather than being flat. It replaced the writable `terrain` flag,
+which chose between two representations that no longer both exist — see
+`internal/world/surface_mesh.go`.
+
 Writing an unknown property is an error naming the closest valid one. Some writes
-(heights, textures, terrain flags) rebuild geometry; the engine defers that to the
-end of the frame and coalesces repeats, so writing a height in a loop costs one
-rebuild.
+(heights, textures) rebuild geometry; the engine defers that to the end of the
+frame and coalesces repeats, so writing a height in a loop costs one rebuild.
 
 ---
 

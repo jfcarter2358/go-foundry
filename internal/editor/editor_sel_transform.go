@@ -119,7 +119,12 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 		if key[1] < 0 || key[1] >= len(ch.Points) {
 			continue
 		}
-		want := a.sum.Mul(1 / float32(a.N))
+		// fn (and the accumulation above) worked in world space, same as
+		// vertexSelPos read it; carry the averaged target back into this
+		// chunk's own local space before it touches ch.Points.
+		wantWorld := a.sum.Mul(1 / float32(a.N))
+		wantLocal3 := ch.WorldToLocal(mgl32.Vec3{wantWorld.X(), 0, wantWorld.Y()})
+		want := mgl32.Vec2{wantLocal3.X(), wantLocal3.Z()}
 		was := ch.Points[key[1]]
 		// Exact, not approximate: every drag is applied absolutely from its
 		// mouse-down snapshot, so a still cursor recomputes the identical value
@@ -138,7 +143,7 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 		if !resolved[i] {
 			continue
 		}
-		_, s := sectorOf(sel)
+		ch, s := sectorOf(sel)
 		if s == nil {
 			continue
 		}
@@ -146,7 +151,9 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 		if sel.isFloor {
 			base = s.Floor.Height
 		}
-		want := targets[i].Y() - base
+		// targets[i] is world space (fn works there, like vertexSelPos reads
+		// it); Height and the offset it anchors are chunk-local.
+		want := ch.WorldToLocal(targets[i]).Y() - base
 		if vertexOffset(s, sel) == want {
 			continue
 		}

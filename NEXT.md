@@ -27,6 +27,10 @@
 - [x] Remove fake ground-contact shadows (dynamic shadows only)
 - [x] 3D mode edge selection
 - [x] Skeletal animation (pose mode, keyframes, GPU skinning)
+- [x] Surface meshes — one editable mesh per wall/floor/ceiling, shaped in the 3D
+      editor with the model editor's gestures (extrude, inset, subdivide,
+      connect, open). Replaces extrusions, terrain points and per-surface
+      displacement; old levels migrate on load
 - [x] Remove entities/primitives from levels, and the scenery editor
 - [x] Entities, reintroduced: reusable definitions in `entities/`, instances
       placed in a level, several named model attachments each with its own
@@ -85,6 +89,18 @@
 
 > NOTE: `[/]` denotes an in-progress task
 
+### Bugs
+
+- [x] Walking into a drawn gap that is taller than the player causes the player to walk through it
+- [x] On exit play the camera position in the 3D editor should be reset to when play was initiated
+- [x] Hitting play should not close my other editors
+- [x] The current layer should always be displayed on top of the other layers so its selections are visible
+- [x] Moving through geometry in the 3D editor causes some of it to just stop being displayed
+- [x] Subdividing a wall surface face next to an already-subdivided one split it
+      into five or six pieces instead of four
+- [x] Point lights could only be moved by "Move To Camera" — they now take the
+      translate gizmo in the 3D view and have typed coordinates in the panel
+
 ### Editor
 
 - [ ] Debugger
@@ -104,9 +120,9 @@
 - [ ] Water reflections
 - [ ] Music and Sound Effects
 - [ ] Volumetric displacement (e.g. sand, snow)
-- [ ] Re-do wall extrusion setup to be like the model editor
 - [ ] Restitution/friction, and more than one solver iteration per frame
 - [ ] Editing entity *definitions* in the editor. The panel edits an instance;
       changing the type still means editing its YAML and pressing Reload.
 - [ ] Potentially change the max number of frames for animated textures as well as frame spacing/interpolation
 - [ ] Exterior floors and ceilings
+- [ ] Configurable step height that player can walk over

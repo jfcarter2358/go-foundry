@@ -18,7 +18,6 @@ package biome
 // beneath it.
 
 import (
-	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 
@@ -40,11 +39,6 @@ func SyncBiomeWaterSurfaces(level *world.Level) {
 		return
 	}
 	for ci := range level.Chunks {
-		// Water surfaces are world-space meshes with no model matrix, like the
-		// rest of the biome pipeline — see the note in RenderBiomes.
-		if level.Chunks[ci].InFrame() {
-			continue
-		}
 		syncChunkWaterSurfaces(level, &level.Chunks[ci])
 	}
 }
@@ -90,7 +84,7 @@ func syncChunkWaterSurfaces(level *world.Level, ch *world.Chunk) {
 		}
 		w := &ch.WaterSurfaces[idx]
 		if isNew || s.GroundDirty || w.Geometry.Vao == 0 {
-			rebuildBiomeWaterSurface(level, s, w)
+			rebuildBiomeWaterSurface(level, ch, s, w)
 			// Fold the new/changed plane into the chunk's cull bounds right
 			// away — outside the editor nothing else recomputes them
 			// per-frame (see main.go), and a lake at a chunk's edge could
@@ -103,10 +97,10 @@ func syncChunkWaterSurfaces(level *world.Level, ch *world.Chunk) {
 // BiomeWaterCentroidAndFloor returns the sector's polygon-AABB center and the
 // structural floor height sampled there — the water plane's reference
 // position (its surface then sits WaterDepth below that floor height).
-func BiomeWaterCentroidAndFloor(level *world.Level, s *world.BiomeSector) (mgl32.Vec2, float32) {
+func BiomeWaterCentroidAndFloor(level *world.Level, owner *world.Chunk, s *world.BiomeSector) (mgl32.Vec2, float32) {
 	min, max := s.Bounds()
 	c := mgl32.Vec2{(min.X() + max.X()) / 2, (min.Y() + max.Y()) / 2}
-	return c, FloorHeightUnderLevel(level, c.X(), c.Y())
+	return c, FloorHeightUnderLevel(level, owner, s.DrapeSector, c.X(), c.Y())
 }
 
 // BuildBiomeWaterMesh returns an indexed, double-sided, flat XZ grid mesh
@@ -117,12 +111,10 @@ func BiomeWaterCentroidAndFloor(level *world.Level, s *world.BiomeSector) (mgl32
 // lakebed. UV tiles from world position so the texture doesn't re-stretch as
 // the sector is edited.
 func BuildBiomeWaterMesh(s *world.BiomeSector, centroid mgl32.Vec2) ([][]float32, []int) {
-	boundary, allPts := BiomeMeshPoints(s)
-	if len(allPts) == 0 {
-		return nil, nil
-	}
-	triIdx := geom.DelaunayTriangulate(allPts, boundary)
-	if len(triIdx) == 0 {
+	// Shares the ground patch's cached triangulation — same polygon, same point
+	// cloud, and the lakebed underneath is meshed from it too.
+	allPts, triIdx := BiomeMeshTriangulation(s)
+	if len(allPts) == 0 || len(triIdx) == 0 {
 		return nil, nil
 	}
 
@@ -153,8 +145,8 @@ const biomeWaterAlpha = float32(0.75)
 
 // rebuildBiomeWaterSurface (re)generates w's geometry and water params from
 // sector s, in place.
-func rebuildBiomeWaterSurface(level *world.Level, s *world.BiomeSector, w *world.WaterSurface) {
-	centroid, floorY := BiomeWaterCentroidAndFloor(level, s)
+func rebuildBiomeWaterSurface(level *world.Level, owner *world.Chunk, s *world.BiomeSector, w *world.WaterSurface) {
+	centroid, floorY := BiomeWaterCentroidAndFloor(level, owner, s)
 	depth := s.Brush.WaterDepth
 	if depth <= 0 {
 		depth = world.DefaultWaterDepth

@@ -132,20 +132,26 @@ func TestBiomeFollowsWholeSectorMove(t *testing.T) {
 	wantPoint(t, ch.BiomeSectors[0].Points[1], mgl32.Vec2{50, 50}, "paint outside the sector")
 }
 
-// TestChunkMoveCarriesAllItsPaint checks that moving a whole chunk slides every
-// biome polygon on it, spilled paint included — the one case that is a rigid
-// translation rather than a per-vertex warp.
-func TestChunkMoveCarriesAllItsPaint(t *testing.T) {
+// TestChunkMoveLeavesItsPaintAlone checks moveChunk's whole point: a chunk's
+// points — biome paint included, spilled paint too — are chunk-local and never
+// baked with its placement, so moving it (changing Origin) touches none of
+// them. They ride along automatically through Chunk.ModelMatrix, the same way
+// its structural geometry does; there is no separate "carry" step left to do.
+func TestChunkMoveLeavesItsPaintAlone(t *testing.T) {
 	restore := saveEditorSelection()
 	defer restore()
 	ch := anchorTestLevel()
+	before0, before1 := ch.BiomeSectors[0].Points[0], ch.BiomeSectors[0].Points[1]
 
 	moveChunk(ch, ch.Origin.Add(mgl32.Vec3{5, 2, -3}))
 
-	wantPoint(t, ch.BiomeSectors[0].Points[0], mgl32.Vec2{7, -1}, "paint inside the sector")
-	wantPoint(t, ch.BiomeSectors[0].Points[1], mgl32.Vec2{55, 47}, "paint outside the sector")
-	if !ch.BiomeSectors[0].HeightDirty || !ch.BiomeSectors[0].GroundDirty {
-		t.Fatal("carried paint was not marked for a rebuild")
+	wantPoint(t, ch.BiomeSectors[0].Points[0], before0, "paint inside the sector")
+	wantPoint(t, ch.BiomeSectors[0].Points[1], before1, "paint outside the sector")
+	if ch.BiomeSectors[0].HeightDirty || ch.BiomeSectors[0].GroundDirty {
+		t.Error("moveChunk touched nothing about the paint's local shape; it should not have marked a rebuild")
+	}
+	if ch.Origin != (mgl32.Vec3{5, 2, -3}) {
+		t.Errorf("ch.Origin = %v, want {5 2 -3}", ch.Origin)
 	}
 }
 

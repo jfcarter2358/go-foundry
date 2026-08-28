@@ -191,11 +191,17 @@ func mustScatterProgram(vertPath, fragPath, shared string) uint32 {
 
 // ---------- face iteration ----------
 
-// detailFace is a resolved detail-bearing face for rendering.
+// detailFace is a resolved detail-bearing face for rendering. model is the
+// owning chunk's ModelMatrix, carried along so the render loop can upload it
+// without recomputing it once per face (and can skip the upload entirely
+// when it hasn't changed since the last face — see the `current`-tracking
+// pattern in RenderDetailColor/DirShadow/CubeShadow, mirroring
+// renderSceneShadow's).
 type detailFace struct {
-	spec *world.DetailSpec
-	geo  *gfx.Geometry
-	tex  string
+	model mgl32.Mat4
+	spec  *world.DetailSpec
+	geo   *gfx.Geometry
+	tex   string
 }
 
 // detailPad returns a conservative distance the spec can push geometry beyond
@@ -236,35 +242,30 @@ func forEachDetailFace(level *world.Level, cull *Frustum, fn func(f detailFace))
 
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
-		// Biome paint and procedural detail are world-space passes: they build
-		// their meshes and instance transforms directly in world coordinates,
-		// with no model matrix anywhere in the pipeline. A chunk in a frame
-		// would have its grass left standing where the ship used to be.
-		//
-		// A vehicle interior is a built environment rather than terrain, so
-		// there is nothing to lose here — the editor refuses to paint one.
-		if ch.InFrame() {
-			continue
-		}
-		if cull != nil && !AABBInFrustum(*cull, ch.MinBound, ch.MaxBound) {
-			continue
+		model := ch.ModelMatrix()
+		if cull != nil {
+			chunkMin, chunkMax := ch.WorldBounds()
+			if !AABBInFrustum(*cull, chunkMin, chunkMax) {
+				continue
+			}
 		}
 		for si := range ch.Sectors {
 			s := &ch.Sectors[si]
 			var secMin, secMax mgl32.Vec3
 			if cull != nil {
-				secMin, secMax = s.WorldAABB()
+				lo, hi := s.LocalAABB()
+				secMin, secMax = TransformAABB(model, lo, hi)
 			}
 			if s.Floor.Enabled && !s.Floor.Hidden && s.Floor.Detail.Enabled && visible(secMin, secMax, &s.Floor.Detail) {
-				fn(detailFace{&s.Floor.Detail, &s.Floor.Geometry, s.Floor.Texture})
+				fn(detailFace{model, &s.Floor.Detail, &s.Floor.Geometry, s.Floor.Texture})
 			}
 			if s.Ceiling.Enabled && s.Ceiling.Detail.Enabled && visible(secMin, secMax, &s.Ceiling.Detail) {
-				fn(detailFace{&s.Ceiling.Detail, &s.Ceiling.Geometry, s.Ceiling.Texture})
+				fn(detailFace{model, &s.Ceiling.Detail, &s.Ceiling.Geometry, s.Ceiling.Texture})
 			}
 			for wi := range s.Walls {
 				w := &s.Walls[wi]
 				if w.Visible && w.Detail.Enabled && visible(secMin, secMax, &w.Detail) {
-					fn(detailFace{&w.Detail, &w.Geometry, w.Texture})
+					fn(detailFace{model, &w.Detail, &w.Geometry, w.Texture})
 				}
 			}
 		}
@@ -401,6 +402,17 @@ func setScatterUniforms(p *progUniforms, d *world.DetailSpec, b detail.FaceBasis
 	return int32(gridNU * gridNV)
 }
 
+// uploadDetailModel uploads model to p's "model" uniform only when it differs
+// from *current, mirroring renderSceneShadow's model-tracking so a level of
+// unmoved/unrotated/unscaled chunks doesn't pay for a uniform upload per face.
+func uploadDetailModel(p *progUniforms, current *mgl32.Mat4, model mgl32.Mat4) {
+	if model == *current {
+		return
+	}
+	*current = model
+	gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
+}
+
 // detailAlbedo returns a valid GL texture handle for name, falling back to a
 // known-loaded texture so an unloaded scatter texture never binds unit 0 to 0.
 func detailAlbedo(name, fallback string) uint32 {
@@ -444,10 +456,13 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 		gl.Uniform1i(p.U("tex"), 0)
 		gl.Uniform1f(p.U("alpha"), 1.0)
 		gl.PatchParameteri(gl.PATCH_VERTICES, 3)
+		model := mgl32.Ident4()
+		gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasDisplace() || len(f.geo.Vertices) == 0 {
 				return
 			}
+			uploadDetailModel(p, &model, f.model)
 			setDispUniforms(p, f.spec, f.geo)
 			gl.ActiveTexture(gl.TEXTURE0)
 			gl.BindTexture(gl.TEXTURE_2D, detailAlbedo(f.tex, "default"))
@@ -467,6 +482,8 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 		gl.Uniform1i(p.U("tex"), 0)
 		gl.Uniform1f(p.U("alpha"), 1.0)
 		gl.BindVertexArray(detailRender.rockVAO)
+		model := mgl32.Ident4()
+		gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasScatter() || len(f.geo.Vertices) == 0 {
 				return
@@ -475,6 +492,7 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 			if !b.Ok {
 				return
 			}
+			uploadDetailModel(p, &model, f.model)
 			inst := setScatterUniforms(p, f.spec, b)
 			if inst <= 0 {
 				return
@@ -508,10 +526,13 @@ func RenderDetailDirShadow(level *world.Level, lsm mgl32.Mat4, cull *Frustum) {
 		gl.UseProgram(p.prog)
 		gl.UniformMatrix4fv(p.U("lightSpaceMatrix"), 1, false, &lsm[0])
 		gl.PatchParameteri(gl.PATCH_VERTICES, 3)
+		model := mgl32.Ident4()
+		gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasDisplace() || len(f.geo.Vertices) == 0 {
 				return
 			}
+			uploadDetailModel(p, &model, f.model)
 			setDispUniforms(p, f.spec, f.geo)
 			gl.BindVertexArray(f.geo.Vao)
 			gl.DrawArrays(gl.PATCHES, 0, int32(len(f.geo.Vertices)/5))
@@ -522,6 +543,8 @@ func RenderDetailDirShadow(level *world.Level, lsm mgl32.Mat4, cull *Frustum) {
 		gl.UseProgram(p.prog)
 		gl.UniformMatrix4fv(p.U("lightSpaceMatrix"), 1, false, &lsm[0])
 		gl.BindVertexArray(detailRender.rockVAO)
+		model := mgl32.Ident4()
+		gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasScatter() || len(f.geo.Vertices) == 0 {
 				return
@@ -530,6 +553,7 @@ func RenderDetailDirShadow(level *world.Level, lsm mgl32.Mat4, cull *Frustum) {
 			if !b.Ok {
 				return
 			}
+			uploadDetailModel(p, &model, f.model)
 			inst := setScatterUniforms(p, f.spec, b)
 			if inst > 0 {
 				gl.DrawArraysInstanced(gl.TRIANGLES, 0, detailRender.rockVerts, inst)
@@ -556,10 +580,13 @@ func RenderDetailCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.V
 		gl.Uniform3f(p.U("lightPos"), lightPos.X(), lightPos.Y(), lightPos.Z())
 		gl.Uniform1f(p.U("farPlane"), farPlane)
 		gl.PatchParameteri(gl.PATCH_VERTICES, 3)
+		model := mgl32.Ident4()
+		gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasDisplace() || len(f.geo.Vertices) == 0 {
 				return
 			}
+			uploadDetailModel(p, &model, f.model)
 			setDispUniforms(p, f.spec, f.geo)
 			gl.BindVertexArray(f.geo.Vao)
 			gl.DrawArrays(gl.PATCHES, 0, int32(len(f.geo.Vertices)/5))
@@ -572,6 +599,8 @@ func RenderDetailCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.V
 		gl.Uniform3f(p.U("lightPos"), lightPos.X(), lightPos.Y(), lightPos.Z())
 		gl.Uniform1f(p.U("farPlane"), farPlane)
 		gl.BindVertexArray(detailRender.rockVAO)
+		model := mgl32.Ident4()
+		gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
 		forEachDetailFace(level, cull, func(f detailFace) {
 			if !f.spec.HasScatter() || len(f.geo.Vertices) == 0 {
 				return
@@ -580,6 +609,7 @@ func RenderDetailCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.V
 			if !b.Ok {
 				return
 			}
+			uploadDetailModel(p, &model, f.model)
 			inst := setScatterUniforms(p, f.spec, b)
 			if inst > 0 {
 				gl.DrawArraysInstanced(gl.TRIANGLES, 0, detailRender.rockVerts, inst)

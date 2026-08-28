@@ -191,10 +191,50 @@ func entityProps() map[string]propAccess {
 		}
 	}
 
+	// Entity.Position is stored in the entity's OWN frame — an entity riding a
+	// vehicle moves with it without its stored position changing. The property
+	// has always been documented world-space, and every other position a
+	// script can see (volumes, lights, and now sectors and refPosition's
+	// entity arm) genuinely is, so these two convert rather than the doc
+	// being weakened: a script comparing @a.prop.position against
+	// @b.prop.position must be comparing numbers that can be subtracted.
+	// Both conversions are the identity for an entity in no frame, which is
+	// every entity in a level with no vehicles.
+	frameGet := func(c *refCache, e *world.Entity) mgl32.Vec3 {
+		if c.lvl == nil {
+			return e.Position
+		}
+		return c.lvl.Frames.WorldPosition(e)
+	}
+	frameSet := func(c *refCache, e *world.Entity, p mgl32.Vec3) {
+		if c.lvl == nil {
+			e.Position = p
+			return
+		}
+		e.Position = c.lvl.Frames.FrameFor(e).FromWorld(p)
+	}
+
 	return map[string]propAccess{
 		"position": {
-			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.Position) }),
-			Set: set(vecSet("position", func(e *world.Entity, p mgl32.Vec3) { e.Position = p })),
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				e := c.entityFor(r)
+				if e == nil {
+					return nil, false
+				}
+				return vecValue(frameGet(c, e)), true
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				e := c.entityFor(r)
+				if e == nil {
+					return &scriptMissingError{r.String()}
+				}
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("position", "vec", v)
+				}
+				frameSet(c, e, p)
+				return nil
+			},
 			Doc: "world-space position",
 		},
 		"rotation": {

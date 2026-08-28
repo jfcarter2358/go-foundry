@@ -2,10 +2,10 @@
 // (after the #version line) into every scatter vertex stage (color + shadow).
 // Places rock instances over a face's plane, deterministically from a seed.
 
-uniform vec3  faceOrigin; // world position of the face's (u=0,v=0) corner
-uniform vec3  faceU;      // unit in-plane axis (world)
-uniform vec3  faceV;      // unit in-plane axis (world), perpendicular to faceU
-uniform vec3  faceNrm;    // unit face normal (world)
+uniform vec3  faceOrigin; // chunk-local position of the face's (u=0,v=0) corner
+uniform vec3  faceU;      // unit in-plane axis (chunk-local)
+uniform vec3  faceV;      // unit in-plane axis (chunk-local), perpendicular to faceU
+uniform vec3  faceNrm;    // unit face normal (chunk-local)
 uniform float faceUMax;   // face extent along faceU (world units)
 uniform float faceVMax;   // face extent along faceV (world units)
 uniform float sSpacing;   // lattice spacing (world units)
@@ -21,10 +21,12 @@ vec2 s_hash22(vec2 p) {
     return fract(sin(p) * 43758.5453);
 }
 
-// scatterPlaceN computes the world position of local rock vertex `local` for
-// instance `id`, and rotates the vertex's local normal `localNrm` into world
-// space with it. Returns false when the instance is culled (empty slot / thinned
-// by density / outside the face rectangle).
+// scatterPlaceN computes the chunk-local position of local rock vertex `local`
+// for instance `id`, and rotates the vertex's local normal `localNrm` into that
+// same chunk-local space with it — the caller's `model` uniform carries the
+// result out to world space (or the owning frame's space) in one step, same as
+// every other detail/biome shader. Returns false when the instance is culled
+// (empty slot / thinned by density / outside the face rectangle).
 bool scatterPlaceN(int id, vec3 local, vec3 localNrm, out vec3 outWorld, out vec3 outNormal) {
     outNormal = faceNrm;
 

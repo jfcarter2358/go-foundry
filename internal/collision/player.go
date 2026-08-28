@@ -54,7 +54,8 @@ type PlayerMove struct {
 // flag rather than setting it, because whether "on the ground" is meaningful at
 // all depends on gravity being on, and that is the caller's question.
 //
-// The resolve order — walls, then slopes, then a re-find, then the floor/ceiling
+// The resolve order — walls, then slopes, then the two entry refusals, then a
+// re-find, then the floor/ceiling
 // clamp — is the order the resolvers were written against and is load-bearing.
 // The re-find in the middle is not redundant: sliding along a slope can carry
 // the player into a different sector, and clamping against the one it started
@@ -118,11 +119,28 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 		stepFrom := newPos
 		newPos = newPos.Add(stepDisp)
 
+		// The resolvers below work in the found chunk's own local space (see
+		// chunkLocal); newPos/stepFrom stay in the player's frame everywhere else.
 		chunk, sector = frame.ChunkAndSectorAt(lvl, newPos)
-		newPos = ResolveWallCollision(p, chunk, sector, newPos)
-		newPos = ResolveSlopeCollision(p, chunk, sector, stepFrom, newPos)
+		localPos := ResolveWallCollision(p, chunk, sector, chunkLocal(chunk, newPos))
+		localPos = ResolveSlopeCollision(p, chunk, sector, chunkLocal(chunk, stepFrom), localPos)
+		// Third horizontal constraint, alongside walls and steep slopes: the
+		// outside of a ceiling. Without it a body walking off a height into a
+		// lower room's roof is admitted and then yanked down to under that
+		// ceiling by ResolveFloorCollision — a teleport that reads as falling
+		// through the world. See ResolveCeilingEntry.
+		localPos = ResolveCeilingEntry(p, chunk, sector, chunkLocal(chunk, stepFrom), localPos)
+		// Fourth: the inside of a floor. A portal draws a riser between two
+		// sectors at different heights but is not a wall, so without this the
+		// body walks through that riser and is clamped up onto the floor behind
+		// it. See ResolveStepEntry.
+		localPos = ResolveStepEntry(p, chunk, sector, chunkLocal(chunk, stepFrom), localPos)
+		newPos = chunkWorld(chunk, localPos)
+
 		chunk, sector = frame.ChunkAndSectorAt(lvl, newPos)
-		hitFloor, hitCeiling := ResolveFloorCollision(p, chunk, sector, &newPos)
+		localPos = chunkLocal(chunk, newPos)
+		hitFloor, hitCeiling := ResolveFloorCollision(p, chunk, sector, &localPos)
+		newPos = chunkWorld(chunk, localPos)
 
 		// Landing and bonking: kill vertical velocity on contact either way.
 		// Checked per step so a fast fall stops on the frame it arrives rather

@@ -32,9 +32,10 @@ const editor2DCtxPopupID = "##editor2dctxmenu"
 // for the menu and the frame that draws it.
 var editor2DRightPress ctxGesture
 
-// editor2DMenuPoint is the world XZ the menu was opened on — where "add point
-// here" puts one, and which point "Delete point" means. Recorded at the click
-// because the menu is drawn a frame later, by which time the cursor has moved.
+// editor2DMenuPoint is the active chunk's own local XZ the menu was opened on
+// — where "add point here" puts one, and which point "Delete point" means.
+// Recorded at the click because the menu is drawn a frame later, by which
+// time the cursor has moved.
 var editor2DMenuPoint mgl32.Vec2
 
 // editor2DMenuPointIdx is the chunk point the menu was opened on, or -1.
@@ -55,9 +56,10 @@ func editor2DContextPressed(mx, my int32) {
 		return
 	}
 	wx, wz := screenToWorld(mx, my)
-	editor2DMenuPoint = mgl32.Vec2{wx, wz}
-	editor2DMenuPointIdx = findChunkPointNear(ch, wx, wz,
-		screenToWorldSize(editor2DSelectRadius, editor2DOrtho()))
+	lx, lz := chunkLocalXZ(ch, wx, wz)
+	editor2DMenuPoint = mgl32.Vec2{lx, lz}
+	editor2DMenuPointIdx = findChunkPointNear(ch, lx, lz,
+		chunkLocalSize(ch, screenToWorldSize(editor2DSelectRadius, editor2DOrtho())))
 
 	if !editor2DHasSelection() {
 		editor2DSelectAt(Editor.level, ch, wx, wz)
@@ -156,15 +158,16 @@ func editor2DEntityMenuItems() []ctxMenuItem {
 	}
 }
 
-// editor2DMenuWorldPoint lifts the menu's XZ point to a world position, taking
-// its height from the floor under it — the map has no height of its own, and
-// dropping an entity to y=0 under a raised floor would bury it.
+// editor2DMenuWorldPoint lifts the menu's chunk-local XZ point to a world
+// position, taking its height from the floor under it — the map has no height
+// of its own, and dropping an entity to y=0 under a raised floor would bury it.
 func editor2DMenuWorldPoint() mgl32.Vec3 {
-	y := float32(0)
-	if ch := activeChunk(); ch != nil {
-		y = editor2DFloorHeightAt(ch, editor2DMenuPoint.X(), editor2DMenuPoint.Y())
+	ch := activeChunk()
+	if ch == nil {
+		return mgl32.Vec3{editor2DMenuPoint.X(), 0, editor2DMenuPoint.Y()}
 	}
-	return mgl32.Vec3{editor2DMenuPoint.X(), y, editor2DMenuPoint.Y()}
+	wx, wz := chunkWorldXZ(ch, editor2DMenuPoint.X(), editor2DMenuPoint.Y())
+	return mgl32.Vec3{wx, editor2DFloorHeightAt(ch, wx, wz), wz}
 }
 
 // ---------- joining ----------
@@ -288,7 +291,22 @@ func editor2DSharedMenuItems() []ctxMenuItem {
 	if !Editor.EditFloorVerts {
 		heightLabel = "Editing ceiling corners"
 	}
-	return []ctxMenuItem{
+
+	// Openings, offered only where there is one. Removing a hole is the one
+	// thing about it that needs a place to be done from — cutting it has the
+	// panel's tool, and there is nothing else to edit on a polygon the gizmo
+	// does not own.
+	var openings []ctxMenuItem
+	if ch := activeChunk(); ch != nil && openingAt(ch, editor2DMenuPoint.X(), editor2DMenuPoint.Y()) {
+		pt := editor2DMenuPoint
+		openings = []ctxMenuItem{
+			{Label: "Remove opening", Do: func() { EditorDeleteOpeningAt(ch, pt.X(), pt.Y()) },
+				Tooltip: "Fill this hole back in. The surface is retriangulated solid."},
+			{Separator: true},
+		}
+	}
+
+	return append(openings, []ctxMenuItem{
 		editorAddEntityMenuItem(editor2DMenuWorldPoint()),
 		{Label: "Select", Sub: modes},
 		{Label: "Gizmo", Sub: tools},
@@ -299,5 +317,5 @@ func editor2DSharedMenuItems() []ctxMenuItem {
 			Do: func() { Editor.SnapToGrid = !Editor.SnapToGrid }},
 		{Label: "Show all point boxes", Checked: Editor.ShowPointSelectRadius,
 			Do: func() { Editor.ShowPointSelectRadius = !Editor.ShowPointSelectRadius }},
-	}
+	}...)
 }

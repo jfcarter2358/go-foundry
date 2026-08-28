@@ -287,7 +287,7 @@ func TestBiomeSurfaceAtLevelFloorStaysFullyCovered(t *testing.T) {
 		}
 		bound := GroundPatchYBias + amp + 1e-4
 
-		h, cov := BiomeSurfaceAt(lvl, &brush, mgl32.Vec2{1, 2}, 0, 0)
+		h, cov := BiomeSurfaceAt(lvl, &lvl.Chunks[0], "", &brush, mgl32.Vec2{1, 2}, 0, 0)
 		if geom.Abs32(h-3) > bound {
 			t.Errorf("kind %d height over a level floor = %v, further than bias+amplitude (%v) from the floor at 3", k, h, bound)
 		}
@@ -309,7 +309,7 @@ func TestSlopeGatingAppliesToPlainSlopedFloor(t *testing.T) {
 	lvl := flatFloorAt(0, []float32{0, 0, 8, 8})
 
 	// Confirm the fixture really is sloped, or the rest proves nothing.
-	_, n, sector := FloorHeightNormalUnderLevel(lvl, 0, 0)
+	_, n, sector := FloorHeightNormalUnderLevel(lvl, &lvl.Chunks[0], "", 0, 0)
 	if sector == nil {
 		t.Fatal("fixture sector not found under (0,0)")
 	}
@@ -326,25 +326,25 @@ func TestSlopeGatingAppliesToPlainSlopedFloor(t *testing.T) {
 	brush := world.DefaultBiomeBrush(world.BiomeMoss)
 
 	// Default (unset) range covers everything.
-	if _, cov := BiomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 1 {
+	if _, cov := BiomeSurfaceAt(lvl, &lvl.Chunks[0], "", &brush, testSeed, 0, 0); cov != 1 {
 		t.Errorf("coverage with the default range = %v, want 1", cov)
 	}
 
 	// A ceiling below the ramp's angle must exclude it outright...
 	brush.MinSlopeAngle, brush.MaxSlopeAngle = 0, angle-SlopeFeatherDegrees-2
-	if _, cov := BiomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 0 {
+	if _, cov := BiomeSurfaceAt(lvl, &lvl.Chunks[0], "", &brush, testSeed, 0, 0); cov != 0 {
 		t.Errorf("coverage with max angle below the ramp's %.1f degrees = %v, want 0 — the slope sliders are not reaching a plainly sloped floor", angle, cov)
 	}
 
 	// ...and a ceiling above it must admit it.
 	brush.MinSlopeAngle, brush.MaxSlopeAngle = 0, angle+SlopeFeatherDegrees+2
-	if _, cov := BiomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 1 {
+	if _, cov := BiomeSurfaceAt(lvl, &lvl.Chunks[0], "", &brush, testSeed, 0, 0); cov != 1 {
 		t.Errorf("coverage with max angle above the ramp's %.1f degrees = %v, want 1", angle, cov)
 	}
 
 	// A floor (minimum) above the ramp's angle must exclude it too.
 	brush.MinSlopeAngle, brush.MaxSlopeAngle = angle+SlopeFeatherDegrees+2, 90
-	if _, cov := BiomeSurfaceAt(lvl, &brush, testSeed, 0, 0); cov != 0 {
+	if _, cov := BiomeSurfaceAt(lvl, &lvl.Chunks[0], "", &brush, testSeed, 0, 0); cov != 0 {
 		t.Errorf("coverage with min angle above the ramp's %.1f degrees = %v, want 0", angle, cov)
 	}
 }
@@ -389,7 +389,8 @@ func TestBiomeSurfaceAtNoSector(t *testing.T) {
 	lvl := &world.Level{}
 	for _, k := range []int32{world.BiomeGrass, world.BiomeMoss, world.BiomeWater} {
 		brush := world.DefaultBiomeBrush(k)
-		h, cov := BiomeSurfaceAt(lvl, &brush, mgl32.Vec2{4, 5}, 5, 5)
+		// No chunks at all, so there is no owning chunk to pass.
+		h, cov := BiomeSurfaceAt(lvl, nil, "", &brush, mgl32.Vec2{4, 5}, 5, 5)
 		if bound := GroundPatchYBias + brush.GroundAmplitude + 1e-4; geom.Abs32(h) > bound {
 			t.Errorf("kind %d height over open ground = %v, want within %v of 0", k, h, bound)
 		}

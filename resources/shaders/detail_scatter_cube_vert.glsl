@@ -9,6 +9,7 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in float aParam;
 
 uniform mat4 lightSpaceMatrix;
+uniform mat4 model;
 
 out vec3 fragWorldPos;
 
@@ -19,6 +20,7 @@ void main() {
         fragWorldPos = vec3(0.0);
         return;
     }
-    fragWorldPos = w;
-    gl_Position = lightSpaceMatrix * vec4(w, 1.0);
+    vec4 worldPos = model * vec4(w, 1.0);
+    fragWorldPos = worldPos.xyz;
+    gl_Position = lightSpaceMatrix * worldPos;
 }

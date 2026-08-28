@@ -11,6 +11,7 @@ package editor
 import (
 	"fmt"
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
 	"foundry/internal/levelio"
 	"foundry/internal/world"
@@ -33,11 +34,10 @@ func editorOpenImportChunk() {
 	Editor.ShowImportChunk = true
 }
 
-// editorChunkPropertiesSection draws the selected chunk's identity, what it is
-// carried by, its scripting block and the jump to the other editor.
+// editorChunkPropertiesSection draws the selected chunk's identity, its live
+// placement, what it is carried by, its scripting block and the jump to the
+// other editor.
 //
-// Its origin, rotation and scale are not here: they are a transform, and the
-// panel has one Transform block that every selection with a position shares.
 // Shown only while the chunk is the selection — being the *active* chunk is not
 // the same thing, and a properties block that was always up was the panel's
 // loudest way of saying nothing.
@@ -69,6 +69,7 @@ func editorChunkPropertiesSection(lvl *world.Level) {
 	imgui.Text(fmt.Sprintf("Points: %d", len(ch.Points)))
 	imgui.Text(fmt.Sprintf("Biome sectors: %d", len(ch.BiomeSectors)))
 
+	editorChunkTransform(ch)
 	editorChunkFrameOwnerRow(lvl, ch)
 
 	// Jump to the other editor, centred on this chunk. From the sector map that
@@ -81,14 +82,46 @@ func editorChunkPropertiesSection(lvl *world.Level) {
 		}
 	} else if imgui.Button("Switch to Sector Editor##chunkto2d") {
 		OpenEditor2DWindow()
-		Editor.Pan2D = mgl32.Vec2{
-			(ch.MinBound.X() + ch.MaxBound.X()) / 2,
-			(ch.MinBound.Z() + ch.MaxBound.Z()) / 2,
-		}
+		// Pan2D is a point on the map's plane, which IS this chunk's own local
+		// space (see editor2DAnchor) — so the chunk-local centre goes in as-is.
+		// Carrying it out to world first would pan the view off the chunk by
+		// exactly its Origin.
+		center := ch.MinBound.Add(ch.MaxBound).Mul(0.5)
+		Editor.Pan2D = mgl32.Vec2{center.X(), center.Z()}
 	}
 
 	imgui.Separator()
 	editorScriptDataUI(&ch.ScriptData, "chunk", "This chunk")
+}
+
+// editorChunkTransform draws the chunk's live Origin/Rotation/Scale — the
+// same fields the translate/rotate/scale gizmos drag (editor_translate_gizmo.go
+// and friends), for typing an exact value instead of eyeballing a drag.
+// Rotation is a single Y-axis angle and Scale a single uniform factor (see
+// Chunk.ModelMatrix), not the three-component fields an entity gets.
+func editorChunkTransform(ch *world.Chunk) {
+	// Each write re-buckets the spatial hash, the same as the gizmos do — see
+	// editorChunkTransformChanged.
+	pos := [3]float32{ch.Origin.X(), ch.Origin.Y(), ch.Origin.Z()}
+	if editorDragFloat3("Origin##chunkorigin", &pos, 0, 0, "%.3f") {
+		ch.Origin = mgl32.Vec3{pos[0], pos[1], pos[2]}
+		editorChunkTransformChanged()
+	}
+
+	rotDeg := mgl32.RadToDeg(ch.Rotation)
+	if editorDragFloat("Rotation (deg)##chunkrot", &rotDeg, -360, 360, "%.1f") {
+		ch.Rotation = mgl32.DegToRad(rotDeg)
+		editorChunkTransformChanged()
+	}
+
+	sc := ch.Scale
+	if sc == 0 {
+		sc = 1
+	}
+	if editorDragFloat("Scale##chunkscale", &sc, 0, 100, "%.3f") {
+		ch.Scale = world.EntityScaleClamp(sc)
+		editorChunkTransformChanged()
+	}
 }
 
 // editorChunkFrameOwnerRow draws which vehicle carries this chunk as its
@@ -229,7 +262,15 @@ func editorChunkPopups(lvl *world.Level) {
 			if imgui.Button("Import") {
 				EditorPushUndo()
 				path := filepath.Join(fileutil.ExecutablePath, "chunks", Editor.ImportChunkFiles[Editor.ImportChunkIdx])
-				chunkID, err := levelio.ImportChunkIntoLevel(lvl, path)
+				// Land the import wherever the active sub-mode is looking at —
+				// the same "here" createChunkAtCamera uses — rather than at
+				// whatever Origin the source file happened to carry, which was
+				// authored relative to a different level entirely.
+				target := mgl32.Vec3{gfx.Cam.Position.X(), 0, gfx.Cam.Position.Z()}
+				if Editor.Mode == Mode2D {
+					target = mgl32.Vec3{Editor.Pan2D.X(), 0, Editor.Pan2D.Y()}
+				}
+				chunkID, err := levelio.ImportChunkIntoLevel(lvl, path, target)
 				if err != nil {
 					Editor.StatusMsg = fmt.Sprintf("Import error: %v", err)
 				} else {

@@ -427,7 +427,7 @@ func RebuildIndexes(lvl *Level) error {
 	if lvl == nil {
 		return nil
 	}
-	lvl.Spatial = BuildSpatialHash(lvl.Chunks, 8.0)
+	RebuildSpatialHash(lvl)
 	fs, err := BuildFrames(lvl)
 	if err != nil {
 		lvl.Frames = &FrameSet{byID: map[string]*Frame{}}

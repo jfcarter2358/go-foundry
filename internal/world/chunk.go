@@ -9,9 +9,15 @@ import (
 )
 
 // Chunk is a top-level spatial grouping of sectors.
-// MinBound/MaxBound are 3D AABBs (Y-up) used for frustum culling.
-// Origin, Rotation, and Scale are editor-set transforms baked into sector
-// geometry at load time.
+//
+// Points, MinBound/MaxBound, Sector bounds, BiomeSector points, and every
+// other per-chunk coordinate are chunk-LOCAL, always — authored around the
+// chunk's own origin, the same way a frame-owned chunk's geometry always has
+// been. Origin/Rotation/Scale is this chunk's own live placement, a
+// counterpart to a frame's Xform: ModelMatrix() is the one place that carries
+// local coordinates into world space (or into an owning frame's space, for a
+// frame-owned chunk — see FrameOwner below). Nothing else needs to know
+// whether a chunk has moved.
 //
 // PointNames is index-aligned with Points and carries each point's YAML name so
 // SaveLevel can round-trip it. It must be maintained by every mutation of the
@@ -22,21 +28,30 @@ import (
 type Chunk struct {
 	ID           string
 	ScriptData                // tags, attributes and the attached script
-	Points       []mgl32.Vec2 // shared point pool; sectors reference by index
+	Points       []mgl32.Vec2 // shared point pool, chunk-local; sectors reference by index
 	Sectors      []Sector
-	MinBound     mgl32.Vec3
+	MinBound     mgl32.Vec3 // chunk-local; see WorldBounds for the world-space AABB
 	MaxBound     mgl32.Vec3
-	Origin       mgl32.Vec3    // world-space offset applied to all points at load time
-	Rotation     float32       // Y-axis rotation in radians applied at load time
-	Scale        float32       // uniform XZ scale applied at load time (0 = 1.0)
+	Origin       mgl32.Vec3    // this chunk's live translation; see ModelMatrix
+	Rotation     float32       // this chunk's live Y-axis rotation, in radians; see ModelMatrix
+	Scale        float32       // this chunk's live uniform scale (0 = 1.0); see ModelMatrix
 	PointNames   []string      // index-aligned with Points; "" = unnamed
 	BiomeSectors []BiomeSector // user-drawn biome-paint polygons, owned by this chunk
 
+	// Layers is the metadata for this chunk's authoring bands — the "levels"
+	// sectors are drawn on, which is how one chunk holds geometry that overlaps
+	// in XZ. Indexed by Sector.Layer / BiomeSector.Layer.
+	//
+	// May be shorter than the highest layer index in use, or absent entirely:
+	// a sector's Layer is the durable fact and this is metadata layered over
+	// it, synthesized on demand for any band that lacks an entry. Read it
+	// through LayerAt/LayerCount rather than indexing directly. See layer.go.
+	Layers []ChunkLayer
+
 	// FrameOwner names the entity whose local space this chunk's geometry is
-	// authored in — a vehicle's interior, laid out around the origin and driven
-	// around the world by whatever carries it. Empty is the ordinary case: a
-	// chunk baked into world space at load, which is every chunk that existed
-	// before frames did.
+	// authored in — a vehicle's interior, carried around the world by whatever
+	// owns it. Empty is the ordinary case: a chunk placed directly in world
+	// space by its own Origin/Rotation/Scale, with no carrier.
 	//
 	// A frame-owned chunk is deliberately kept out of the world spatial hash.
 	// Its geometry sits around its own origin, so indexing it by those
@@ -44,9 +59,11 @@ type Chunk struct {
 	// parked a mile away.
 	FrameOwner string
 
-	// Xform is runtime-only (never serialized, never cloned): where this chunk's
-	// frame currently is, refreshed every tick by RefreshFrames. Identity for a
-	// world chunk, which is what lets every draw call pass it unconditionally.
+	// Xform is runtime-only (never serialized, never cloned): where this
+	// chunk's frame currently is, refreshed every tick by RefreshFrames.
+	// Identity for a chunk with no FrameOwner. ModelMatrix composes this with
+	// the chunk's own Origin/Rotation/Scale, so a frame-owned chunk keeps its
+	// authored placement within the frame even as the frame itself moves.
 	Xform mgl32.Mat4
 
 	// WaterSurfaces is runtime-only (never serialized, never cloned): the
@@ -97,6 +114,15 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 		Origin:     ch.Origin,
 		Rotation:   ch.Rotation,
 		Scale:      ch.Scale,
+		// FrameOwner rides along with Origin/Rotation/Scale because it is part
+		// of the same answer to "where is this chunk". Dropping it turned a
+		// copy of a vehicle interior into a world chunk whose geometry — still
+		// authored around the ship's local origin — was then read as world
+		// geometry at (0,0,0). Xform is deliberately NOT copied: it is
+		// runtime-only and RefreshFrames owns it (ModelMatrix treats the zero
+		// value as "not yet refreshed" and falls back to the local placement).
+		FrameOwner: ch.FrameOwner,
+		Layers:     append([]ChunkLayer(nil), ch.Layers...),
 	}
 
 	cp.Points = append([]mgl32.Vec2(nil), ch.Points...)
@@ -119,10 +145,22 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 		cp.BiomeSectors = make([]BiomeSector, len(ch.BiomeSectors))
 		for bi := range ch.BiomeSectors {
 			src := &ch.BiomeSectors[bi]
+			// The drape binding names a sector, and every sector in this clone
+			// was just renamed — so it is remapped alongside the portal
+			// targets. Left un-remapped it would point at the ORIGINAL
+			// chunk's surface, which is a different height in a different
+			// place. A binding to something outside this chunk (spilled
+			// paint) is not in the map and stays as it is.
+			drape := src.DrapeSector
+			if to, ok := sectorIDRemap[drape]; ok {
+				drape = to
+			}
 			cp.BiomeSectors[bi] = BiomeSector{
 				ID:          src.ID + idSuffix,
+				DrapeSector: drape,
 				Points:      append([]mgl32.Vec2(nil), src.Points...),
 				Brush:       src.Brush,
+				Layer:       src.Layer,
 				HeightDirty: true,
 				GroundDirty: true,
 			}
@@ -141,6 +179,7 @@ func cloneSector(s *Sector, idSuffix string, sectorIDRemap map[string]string) Se
 		ScriptData: CloneScriptData(s.ScriptData),
 		MinBound:   s.MinBound,
 		MaxBound:   s.MaxBound,
+		Layer:      s.Layer,
 	}
 	out.PointIndices = append([]int(nil), s.PointIndices...)
 	out.EdgeKinds = append([]string(nil), s.EdgeKinds...)
@@ -167,8 +206,8 @@ func cloneWall(w *Wall) Wall {
 	out := *w
 	out.ScriptData = CloneScriptData(w.ScriptData)
 	out.Geometry = gfx.Geometry{}
-	out.Extrusions = cloneExtrusions(w.Extrusions)
-	out.TerrainPoints = append([]TerrainPoint(nil), w.TerrainPoints...)
+	out.Mesh = w.Mesh.Clone()
+	out.SubmeshGeometries = make([]gfx.Geometry, len(w.SubmeshGeometries))
 	return out
 }
 
@@ -188,12 +227,13 @@ func cloneFloor(f *Floor) Floor {
 	out.ScriptData = CloneScriptData(f.ScriptData)
 	out.Geometry = gfx.Geometry{}
 	out.VertexOffsets = append([]float32(nil), f.VertexOffsets...)
-	out.Extrusions = cloneExtrusions(f.Extrusions)
-	out.TerrainPoints = append([]TerrainPoint(nil), f.TerrainPoints...)
+	out.Mesh = f.Mesh.Clone()
+	out.Openings = CloneOpenings(f.Openings)
+	out.SkirtGeometry = gfx.Geometry{} // derived; RebuildSkirts rebuilds it
 	out.CollisionPts = append([]mgl32.Vec2(nil), f.CollisionPts...)
 	out.CollisionDepths = append([]float32(nil), f.CollisionDepths...)
 	out.CollisionTris = append([]int(nil), f.CollisionTris...)
-	out.ExtrusionGeometries = make([]gfx.Geometry, len(f.ExtrusionGeometries))
+	out.SubmeshGeometries = make([]gfx.Geometry, len(f.SubmeshGeometries))
 	return out
 }
 
@@ -202,12 +242,12 @@ func cloneCeiling(c *Ceiling) Ceiling {
 	out.ScriptData = CloneScriptData(c.ScriptData)
 	out.Geometry = gfx.Geometry{}
 	out.VertexOffsets = append([]float32(nil), c.VertexOffsets...)
-	out.Extrusions = cloneExtrusions(c.Extrusions)
-	out.TerrainPoints = append([]TerrainPoint(nil), c.TerrainPoints...)
+	out.Mesh = c.Mesh.Clone()
+	out.Openings = CloneOpenings(c.Openings)
 	out.CollisionPts = append([]mgl32.Vec2(nil), c.CollisionPts...)
 	out.CollisionDepths = append([]float32(nil), c.CollisionDepths...)
 	out.CollisionTris = append([]int(nil), c.CollisionTris...)
-	out.ExtrusionGeometries = make([]gfx.Geometry, len(c.ExtrusionGeometries))
+	out.SubmeshGeometries = make([]gfx.Geometry, len(c.SubmeshGeometries))
 	return out
 }
 
@@ -224,14 +264,15 @@ func cloneExtrusions(src []Extrusion) []Extrusion {
 	return out
 }
 
-// RecomputeBounds re-derives the chunk's world-space AABB (used for
-// frustum-culling the whole chunk before descending into per-sector culling)
-// from its current sectors and water surfaces. Sector.Load keeps each sector's own
-// bounds accurate, but nothing else rolls that up to the chunk level, so any
-// editor operation that adds/removes/moves a sector without going through
-// InferPortalsAndReload leaves MinBound/MaxBound stale — geometry added
-// outside the original bounds then gets frustum-culled along with the rest of
-// the chunk even when it's on screen.
+// RecomputeBounds re-derives the chunk's local AABB (MinBound/MaxBound; see
+// WorldBounds for the world-space box used to frustum-cull the whole chunk
+// before descending into per-sector culling) from its current sectors and
+// water surfaces. Sector.Load keeps each sector's own bounds accurate, but
+// nothing else rolls that up to the chunk level, so any editor operation that
+// adds/removes/moves a sector without going through InferPortalsAndReload
+// leaves MinBound/MaxBound stale — geometry added outside the original bounds
+// then gets frustum-culled along with the rest of the chunk even when it's on
+// screen.
 func (ch *Chunk) RecomputeBounds() {
 	if len(ch.Sectors) == 0 && len(ch.WaterSurfaces) == 0 {
 		return
@@ -255,11 +296,11 @@ func (ch *Chunk) RecomputeBounds() {
 	}
 
 	for si := range ch.Sectors {
-		extend(ch.Sectors[si].WorldAABB())
+		extend(ch.Sectors[si].LocalAABB())
 	}
 
 	for wi := range ch.WaterSurfaces {
-		extend(ch.WaterSurfaces[wi].WorldAABB())
+		extend(ch.WaterSurfaces[wi].LocalAABB())
 	}
 }
 
@@ -272,15 +313,23 @@ func (ch *Chunk) RecomputeBounds() {
 func (ch *Chunk) InferPortals() {
 	type edgeKey struct{ a, b int }
 
-	// Map each directed edge to its owning sector index.
-	edgeOwner := map[edgeKey]int{}
+	// Map each directed edge to EVERY sector that walks it, not just one.
+	//
+	// A single owner was enough while a chunk was one storey deep, because only
+	// one sector could ever run along a given edge in a given direction. Layers
+	// broke that: a building with two floors subdivided the same way has a
+	// ground-floor sector and a first-floor sector walking the identical edge,
+	// and keeping only the last one seen made a downstairs room's doorway open
+	// onto a room upstairs — with the wall between them gone, and the floor
+	// query folding in a height from the wrong storey.
+	edgeOwners := map[edgeKey][]int{}
 	for si := range ch.Sectors {
 		s := &ch.Sectors[si]
 		n := len(s.PointIndices)
 		for ei := 0; ei < n; ei++ {
 			a := s.PointIndices[ei]
 			b := s.PointIndices[(ei+1)%n]
-			edgeOwner[edgeKey{a, b}] = si
+			edgeOwners[edgeKey{a, b}] = append(edgeOwners[edgeKey{a, b}], si)
 		}
 	}
 
@@ -308,8 +357,7 @@ func (ch *Chunk) InferPortals() {
 			edgeID := s.EdgeIDs[ei]
 			newEdgeIDs[ei] = edgeID
 
-			revOwner, hasReverse := edgeOwner[edgeKey{b, a}]
-			isShared := hasReverse && revOwner != si
+			revOwner, isShared := pickPortalNeighbour(ch, si, edgeOwners[edgeKey{b, a}])
 
 			if kind == "wall" && wallIdx < len(s.Walls) {
 				if isShared && !s.Walls[wallIdx].Pinned {
@@ -372,6 +420,61 @@ func (ch *Chunk) InferPortals() {
 	}
 }
 
+// pickPortalNeighbour chooses which of the sectors walking the reverse of an
+// edge is actually on the other side of it.
+//
+// Sharing an edge in plan is not enough once a chunk has storeys: the ground
+// floor and the floor above it are drawn over the same lines from above, and
+// two rooms that share a wall on one storey share it on both. What separates a
+// doorway from a coincidence is HEIGHT — a portal joins two spaces a body could
+// pass between, so the two sectors' vertical extents have to overlap.
+//
+// Where several candidates still overlap (a mezzanine open to the hall it looks
+// over, say), the one sharing the most vertical extent wins, since that is the
+// one the edge is most of a doorway into.
+func pickPortalNeighbour(ch *Chunk, si int, candidates []int) (int, bool) {
+	s := &ch.Sectors[si]
+	lo, hi := sectorSpan(s)
+
+	best, bestOverlap := -1, float32(0)
+	for _, ci := range candidates {
+		if ci == si {
+			continue
+		}
+		clo, chi := sectorSpan(&ch.Sectors[ci])
+		overlap := minFloat32(hi, chi) - maxFloat32(lo, clo)
+		if overlap <= 0 {
+			continue // stacked, not adjacent: no way through
+		}
+		if best < 0 || overlap > bestOverlap {
+			best, bestOverlap = ci, overlap
+		}
+	}
+	return best, best >= 0
+}
+
+// sectorSpan is the vertical extent a body could occupy in a sector: its floor
+// up to whatever caps it. A sector with no ceiling is capped by its wall tops
+// rather than treated as infinite, so an open-air sector does not overlap
+// everything stacked above it.
+func sectorSpan(s *Sector) (lo, hi float32) {
+	return s.Floor.Height, s.wallTopBase()
+}
+
+func minFloat32(a, b float32) float32 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxFloat32(a, b float32) float32 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // InferPortalsAndReload runs InferPortals, then reloads geometry for every
 // sector and rebuilds gap walls. Use this after editor operations that add
 // or modify sectors.
@@ -388,6 +491,11 @@ func (ch *Chunk) InferPortalsAndReload() {
 // RebuildGaps regenerates portal gap geometry for all sectors in this chunk.
 // Call after changing DrawGap, GapTexture, or floor/ceiling heights.
 func (ch *Chunk) RebuildGaps() {
+	// Skirts are the other half of the same job — cross-sector geometry no
+	// single sector's own surfaces cover — so they are rebuilt here rather than
+	// needing every one of this method's callers taught about them separately.
+	defer ch.RebuildSkirts()
+
 	sectorByID := map[string]*Sector{}
 	for i := range ch.Sectors {
 		sectorByID[ch.Sectors[i].ID] = &ch.Sectors[i]
@@ -481,29 +589,134 @@ func SignedArea2D(pts []mgl32.Vec2) float32 {
 // rather than in world space.
 func (ch *Chunk) InFrame() bool { return ch.FrameOwner != "" }
 
-// ModelMatrix is the transform to draw this chunk's geometry with. It is the
-// identity for a world chunk, whose geometry was already baked into world space
-// at load.
-func (ch *Chunk) ModelMatrix() mgl32.Mat4 {
-	if ch.Xform == (mgl32.Mat4{}) {
-		return mgl32.Ident4()
+// chunkLocalMatrix builds the transform a chunk's own Origin/Rotation/Scale
+// describe: translate, then rotate about Y, then a uniform scale. Scale of 0
+// means "not set" (1.0), the same convention the YAML loader has always used.
+//
+// The scale is uniform on purpose, not XZ-only: a chunk's local geometry
+// (points, and floor/ceiling Height baked straight into vertex Y) is one
+// coordinate space, and one matrix carries all of it into the parent space
+// together. Scaling Y independently would need Height pulled back out and
+// rescaled by hand wherever geometry is built — this way it falls out for
+// free from composing a single matrix.
+func chunkLocalMatrix(origin mgl32.Vec3, rotation, scale float32) mgl32.Mat4 {
+	sc := scale
+	if sc == 0 {
+		sc = 1
 	}
-	return ch.Xform
+	T := mgl32.Translate3D(origin.X(), origin.Y(), origin.Z())
+	R := mgl32.HomogRotate3DY(rotation)
+	S := mgl32.Scale3D(sc, sc, sc)
+	return T.Mul4(R).Mul4(S)
+}
+
+// LocalPlacementMatrix is this chunk's own Origin/Rotation/Scale, without an
+// owning frame's transform layered on — the piece of ModelMatrix a chunk
+// contributes on its own. FindChunkAndSectorAmong uses exactly this: its
+// caller has already carried the query position out of the frame, so only the
+// chunk's own placement within that frame remains to undo.
+func (ch *Chunk) LocalPlacementMatrix() mgl32.Mat4 {
+	return chunkLocalMatrix(ch.Origin, ch.Rotation, ch.Scale)
+}
+
+// ModelMatrix is the transform this chunk's local geometry is drawn/collided
+// through: its own Origin/Rotation/Scale, composed under its owning frame's
+// live Xform when it has one. Points, MinBound/MaxBound, sector bounds and
+// every other per-chunk coordinate are chunk-local; this is the one matrix
+// that carries them into world space (or into the frame's space, for a
+// frame-owned chunk — RefreshFrames only ever updates Xform, never this).
+// Xform is runtime-only and its zero value is the ZERO matrix, not the
+// identity — so a frame-owned chunk whose frames have not been refreshed is
+// treated as if it were unframed rather than composed against a singular
+// matrix. Without that guard such a chunk collapses to a point
+// (LocalToWorld returns the origin for every vertex) and, worse,
+// WorldToLocal inverts a singular matrix and hands back NaN, which then
+// spreads silently through collision and picking. RebuildIndexes leaves
+// exactly this state behind whenever BuildFrames fails — a chunk bound to a
+// missing owner or a cycle — and three editor call sites ignore that error.
+// Falling back to the chunk's own authored placement keeps the level usable.
+func (ch *Chunk) ModelMatrix() mgl32.Mat4 {
+	local := ch.LocalPlacementMatrix()
+	if ch.InFrame() && ch.Xform != (mgl32.Mat4{}) {
+		return ch.Xform.Mul4(local)
+	}
+	return local
+}
+
+// LocalToWorld carries a point out of this chunk's local space, through
+// ModelMatrix.
+func (ch *Chunk) LocalToWorld(p mgl32.Vec3) mgl32.Vec3 {
+	m := ch.ModelMatrix()
+	if m == mgl32.Ident4() {
+		return p
+	}
+	r := m.Mul4x1(p.Vec4(1))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+}
+
+// WorldToLocal carries a point into this chunk's local space — the inverse of
+// LocalToWorld/ModelMatrix. Every collision or spatial-hash lookup that tests
+// a world position against chunk-local geometry (Points, MinBound/MaxBound,
+// SectorPoints) goes through this first, so it is testing in the same space
+// that geometry is actually expressed in.
+func (ch *Chunk) WorldToLocal(p mgl32.Vec3) mgl32.Vec3 {
+	m := ch.ModelMatrix()
+	if m == mgl32.Ident4() {
+		return p
+	}
+	r := m.Inv().Mul4x1(p.Vec4(1))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+}
+
+// LocalToWorldDirection carries a direction — not a point — out of this
+// chunk's local space. WorldToLocalDirection's inverse; see its own doc
+// comment for why a direction needs its own conversion rather than
+// LocalToWorld's.
+func (ch *Chunk) LocalToWorldDirection(d mgl32.Vec3) mgl32.Vec3 {
+	m := ch.ModelMatrix()
+	if m == mgl32.Ident4() {
+		return d
+	}
+	r := m.Mul4x1(d.Vec4(0))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+}
+
+// WorldToLocalDirection carries a direction — not a point — into this chunk's
+// local space: the rotation and scale WorldToLocal applies, without the
+// translation a direction has no business being offset by (the W=0 in the
+// homogeneous multiply is what drops it). Used wherever an offset or a delta,
+// rather than a position, needs to cross into a chunk's own space — an
+// axis-constrained drag, say, where dragging one world unit along X should
+// move a 2×-scaled chunk's own geometry by half a local unit, in whichever
+// local direction its own rotation carries world X to.
+func (ch *Chunk) WorldToLocalDirection(d mgl32.Vec3) mgl32.Vec3 {
+	m := ch.ModelMatrix()
+	if m == mgl32.Ident4() {
+		return d
+	}
+	r := m.Inv().Mul4x1(d.Vec4(0))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
 }
 
 // WorldBounds is the chunk's AABB in world space: MinBound/MaxBound carried
-// through its frame and re-fitted.
+// through ModelMatrix and re-fitted.
+func (ch *Chunk) WorldBounds() (min, max mgl32.Vec3) {
+	return transformAABB(ch.ModelMatrix(), ch.MinBound, ch.MaxBound)
+}
+
+// transformAABB carries a local axis-aligned box through m and re-fits it.
 //
 // A rotated box does not stay a box, so the eight corners are transformed and
 // re-bounded rather than the two extremes being transformed in place — which
 // would produce a box that is not even the right size, let alone conservative.
-func (ch *Chunk) WorldBounds() (min, max mgl32.Vec3) {
-	if !ch.InFrame() {
-		return ch.MinBound, ch.MaxBound
+// m == identity is the common case (an unmoved, unrotated, unscaled chunk),
+// short-circuited so most callers never pay for the corner loop.
+func transformAABB(m mgl32.Mat4, lo, hi mgl32.Vec3) (min, max mgl32.Vec3) {
+	if m == mgl32.Ident4() {
+		return lo, hi
 	}
-	m := ch.ModelMatrix()
-	h := ch.MaxBound.Sub(ch.MinBound).Mul(0.5)
-	c := ch.MinBound.Add(h)
+	h := hi.Sub(lo).Mul(0.5)
+	c := lo.Add(h)
 	for i := 0; i < 8; i++ {
 		corner := mgl32.Vec3{
 			h.X() * CornerSign(i, 0),
@@ -519,4 +732,86 @@ func (ch *Chunk) WorldBounds() (min, max mgl32.Vec3) {
 		min, max = geom.VecMin(min, p), geom.VecMax(max, p)
 	}
 	return min, max
+}
+
+// ---------- who borders whom ----------
+
+// SectorBorder is one sector's view through one of its portal edges: the sector
+// on the far side, and the edge itself so a caller can test which way it faces.
+type SectorBorder struct {
+	To         int // index into ch.Sectors
+	Start, End mgl32.Vec2
+}
+
+// SectorBorderGraph lists, for every sector, the sectors it can see through and
+// the edge it sees through them.
+//
+// This is deliberately NOT a walk of each sector's Portals. A portal records ONE
+// ToSector, and one edge can genuinely border two sectors once a chunk has
+// storeys: a stairwell shaft running the full height of a building shares its
+// south edge with the ground-floor room at the bottom and the first-floor room
+// at the top. InferPortals has to choose one of them — that field is a single
+// reference and cannot say "both" — so whichever it picks, the other is left
+// out of the visibility graph and gets culled away while plainly in view. That
+// is the corner of an upper floor blinking out as you turn on the spot at the
+// top of the stairs.
+//
+// Seeing through an edge does not care which of the two the portal happened to
+// name, so this answers geometrically: every sector walking the reverse edge
+// whose vertical extent overlaps. Only edges that are portals are followed, so
+// a pinned wall — a building's shell, shared with the open ground outside it —
+// stays opaque.
+//
+// Built in one pass over every edge rather than by rescanning the sector list
+// per edge: the visibility walk runs once a frame over the player's chunk, and
+// the quadratic version was fine for a handful of sectors and would not have
+// stayed fine.
+func (ch *Chunk) SectorBorderGraph() [][]SectorBorder {
+	type edgeKey struct{ a, b int }
+	owners := map[edgeKey][]int{}
+	for si := range ch.Sectors {
+		s := &ch.Sectors[si]
+		n := len(s.PointIndices)
+		for ei := 0; ei < n; ei++ {
+			a := s.PointIndices[ei]
+			b := s.PointIndices[(ei+1)%n]
+			owners[edgeKey{a, b}] = append(owners[edgeKey{a, b}], si)
+		}
+	}
+
+	out := make([][]SectorBorder, len(ch.Sectors))
+	for si := range ch.Sectors {
+		s := &ch.Sectors[si]
+		n := len(s.PointIndices)
+		if n < 3 {
+			continue
+		}
+		lo, hi := sectorSpan(s)
+		for ei := 0; ei < n; ei++ {
+			if ei >= len(s.EdgeKinds) || s.EdgeKinds[ei] != "portal" {
+				continue
+			}
+			// A portal out of this chunk leads into a space moving relative to
+			// it; the visibility walk does not cross those, so it is not
+			// offered one here either.
+			if _, pi := EdgeKindAndIndex(s, ei); pi < len(s.Portals) && s.Portals[pi].ToFrame != "" {
+				continue
+			}
+			a := s.PointIndices[ei]
+			b := s.PointIndices[(ei+1)%n]
+			for _, ci := range owners[edgeKey{b, a}] {
+				if ci == si {
+					continue
+				}
+				clo, chi := sectorSpan(&ch.Sectors[ci])
+				if minFloat32(hi, chi)-maxFloat32(lo, clo) <= 0 {
+					continue // stacked, not adjacent: no way through
+				}
+				out[si] = append(out[si], SectorBorder{
+					To: ci, Start: ch.Points[a], End: ch.Points[b],
+				})
+			}
+		}
+	}
+	return out
 }

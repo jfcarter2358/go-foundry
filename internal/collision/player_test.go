@@ -9,6 +9,7 @@ package collision
 
 import (
 	"foundry/internal/world"
+	"math"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -193,6 +194,101 @@ func TestMovePlayerIsIndependentOfWhereTheChunkSits(t *testing.T) {
 	}
 	if a.CurrentSector != b.CurrentSector {
 		t.Errorf("ended in different sectors: %q vs %q", a.CurrentSector, b.CurrentSector)
+	}
+}
+
+// TestMovePlayerTreatsChunkOriginTheSameAsShiftedPoints is the same invariant
+// as TestMovePlayerIsIndependentOfWhereTheChunkSits, but placing the chunk via
+// its live Origin (Chunk.ModelMatrix) rather than by rewriting its points —
+// the two must agree exactly, since a moved chunk's collision no longer comes
+// from where its points sit but from chunkLocal/chunkWorld carrying the
+// player's position into and out of that chunk's own local space around each
+// resolve. This is the specific gap that made the spatial hash alone
+// insufficient: finding the right chunk is not the same as resolving against
+// it in the right space.
+func TestMovePlayerTreatsChunkOriginTheSameAsShiftedPoints(t *testing.T) {
+	const dx, dz = float32(1000), float32(-750)
+
+	shifted := collisionTestLevel()
+	shiftChunkXZ(&shifted.Chunks[0], dx, dz)
+	if err := world.RebuildIndexes(shifted); err != nil {
+		t.Fatal(err)
+	}
+
+	placed := collisionTestLevel()
+	placed.Chunks[0].Origin = mgl32.Vec3{dx, 0, dz}
+	if err := world.RebuildIndexes(placed); err != nil {
+		t.Fatal(err)
+	}
+
+	a := newTestPlayer(mgl32.Vec3{5 + dx, 6, 5 + dz})
+	b := newTestPlayer(mgl32.Vec3{5 + dx, 6, 5 + dz})
+
+	steps := []mgl32.Vec3{
+		{0, 0, 0}, {step, 0, 0}, {step, 0, step / 2}, {0, 0, step},
+		{-step, 0, step / 2}, {0, 0, 0}, {step, 0, -step},
+	}
+	for i := 0; i < 120; i++ {
+		s := steps[i%len(steps)]
+		ga := MovePlayer(a, shifted, walkMove(s))
+		gb := MovePlayer(b, placed, walkMove(s))
+		if ga != gb {
+			t.Fatalf("step %d: ground flags diverged (shifted=%v origin=%v)", i, ga, gb)
+		}
+	}
+
+	if !vecNear(a.Position, b.Position, 1e-3) {
+		t.Errorf("moving via shifted points ended at %v, moving via Origin ended at %v", a.Position, b.Position)
+	}
+	if a.CurrentSector != b.CurrentSector {
+		t.Errorf("ended in different sectors: %q (shifted) vs %q (Origin)", a.CurrentSector, b.CurrentSector)
+	}
+}
+
+// TestMovePlayerTreatsChunkOriginAndRotationTheSameAsShiftedRotatedPoints
+// exercises the resolvers' rotation path specifically: a translation-only
+// Origin never touches chunkLocal/chunkWorld's inverse-rotate step, so this is
+// the one that actually proves wall pushes and floor sampling work in a
+// rotated chunk's own local space, not just its translated one.
+func TestMovePlayerTreatsChunkOriginAndRotationTheSameAsShiftedRotatedPoints(t *testing.T) {
+	rotated := collisionTestLevel()
+	rotated.Chunks[0].Rotation = float32(math.Pi / 2)
+	if err := world.RebuildIndexes(rotated); err != nil {
+		t.Fatal(err)
+	}
+
+	// The unrotated level's own points, carried through the same rotation the
+	// chunk now applies live — so a in the plain level and b in the rotated one
+	// start, and stay, at the same physical place relative to the room.
+	ch := &rotated.Chunks[0]
+	worldStart := ch.LocalToWorld(mgl32.Vec3{5, 6, 5})
+
+	plain := collisionTestLevel()
+	a := newTestPlayer(mgl32.Vec3{5, 6, 5})
+	b := newTestPlayer(worldStart)
+
+	steps := []mgl32.Vec3{
+		{0, 0, 0}, {step, 0, 0}, {step, 0, step / 2}, {0, 0, step},
+		{-step, 0, step / 2}, {0, 0, 0}, {step, 0, -step},
+	}
+	for i := 0; i < 120; i++ {
+		s := steps[i%len(steps)]
+		// Rotate the intent along with the chunk, or "walk +X" in the plain
+		// level would ask the rotated one to walk into a different wall.
+		rs := ch.LocalToWorld(s).Sub(ch.LocalToWorld(mgl32.Vec3{}))
+		ga := MovePlayer(a, plain, walkMove(s))
+		gb := MovePlayer(b, rotated, walkMove(rs))
+		if ga != gb {
+			t.Fatalf("step %d: ground flags diverged (plain=%v rotated=%v)", i, ga, gb)
+		}
+	}
+
+	want := ch.LocalToWorld(a.Position)
+	if !vecNear(b.Position, want, 1e-3) {
+		t.Errorf("the rotated walk ended at %v, want %v (the plain walk carried through the rotation)", b.Position, want)
+	}
+	if a.CurrentSector != b.CurrentSector {
+		t.Errorf("ended in different sectors: %q (plain) vs %q (rotated)", a.CurrentSector, b.CurrentSector)
 	}
 }
 

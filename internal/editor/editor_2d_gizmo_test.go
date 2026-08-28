@@ -25,7 +25,7 @@ func setupGizmo2DView(t *testing.T) {
 	Editor.Mode = Mode2D
 	Editor.BiomeLayerActive = false
 	Editor.SpawnPlacementMode = false
-	Editor.ExtrusionMode = false
+	Editor.SurfaceEditing = false
 	Editor.GizmoTool = editorToolMove
 	Editor.Gizmo2DDragging = false
 	Editor.Gizmo2DAxis = -1

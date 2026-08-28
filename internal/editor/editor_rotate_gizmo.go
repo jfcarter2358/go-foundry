@@ -73,9 +73,13 @@ func pickRotateRing(mx, my int32) int {
 	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
 	radius := gizmoArmLength(origin)
 
+	chunkOnly := gizmoChunkRotates()
 	best := -1
 	bestD := gizmoPickPx
 	for i, axis := range gizmoAxes {
+		if chunkOnly && i != 1 {
+			continue
+		}
 		u, v := modelRingBasis(axis)
 		var prev mgl32.Vec2
 		havePrev := false
@@ -103,10 +107,9 @@ func pickRotateRing(mx, my int32) int {
 // selected vertices, or the position of whatever single thing is selected.
 //
 // The two rotate in different senses. A vertex selection has an extent, so
-// turning it moves the points themselves; an entity, a volume or the spawn
-// marker is a single anchor with an orientation, so turning it rewrites that
-// orientation and leaves it where it is. A chunk has neither an extent to swing
-// nor an orientation to rewrite, so it gets no rings at all.
+// turning it moves the points themselves; an entity, a volume, the spawn
+// marker or a chunk is a single anchor with an orientation, so turning it
+// rewrites that orientation and leaves it where it is.
 func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 	switch gizmoEffectiveKind() {
 	case gizmoKindVertices:
@@ -123,8 +126,20 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 		if s := activeGizmoSpawn(); s != nil {
 			return s.Position, true
 		}
+	case gizmoKindChunk:
+		if ch := activeGizmoChunk(); ch != nil {
+			return ch.LocalToWorld(ch.MinBound.Add(ch.MaxBound).Mul(0.5)), true
+		}
 	}
 	return mgl32.Vec3{}, false
+}
+
+// gizmoChunkRotates reports whether the current selection is a chunk — the
+// one kind whose rotation is a single Y-axis scalar (Chunk.Rotation; see
+// ModelMatrix), not a full Euler triple. The X/Z rings would have nothing to
+// write back to, so only Y is offered at all.
+func gizmoChunkRotates() bool {
+	return gizmoEffectiveKind() == gizmoKindChunk
 }
 
 // ---------- the drag ----------
@@ -209,6 +224,13 @@ func applyRotationToSelection(axis, origin mgl32.Vec3, delta float32) {
 		sp.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
 		return
 	}
+	if ch := activeGizmoChunk(); ch != nil {
+		// Only the Y ring is ever offered (gizmoChunkRotates), so axis is
+		// always Y here; eulerRotatedAbout still does the wrap correctly.
+		ch.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta).Y()
+		editorChunkTransformChanged()
+		return
+	}
 	setSelectedVertexWorld(rotationTransform(axis, origin, delta))
 }
 
@@ -263,7 +285,11 @@ func renderRotateGizmo(mx, my int32) {
 	}
 
 	yellow := mgl32.Vec3{1, 1, 0}
+	chunkOnly := gizmoChunkRotates()
 	for i, axis := range gizmoAxes {
+		if chunkOnly && i != 1 {
+			continue
+		}
 		col := gizmoAxisColors[i]
 		if i == hover {
 			col = yellow

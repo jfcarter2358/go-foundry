@@ -32,9 +32,17 @@
 // the stem, so it bends in the wind by how high off the ground it sits.
 // Rocks don't use it.
 
-// Camera-centered instancing ring.
-uniform vec2  camXZ;    // camera world XZ
-uniform vec3  camPos;   // camera world position (rock specular)
+// Camera-centered instancing ring. camXZ is the camera position carried into
+// the OWNING CHUNK's own local space (see uploadBiomeChunk in grass.go) —
+// every uniform the lattice is tested against below (polyPts, heightTex) is
+// chunk-local too, so the whole placement pipeline runs self-consistently in
+// that one frame; only the FINAL placed bWorldPos/bNormal get carried back
+// out to true world space, by the `model` uniform each vertex stage applies
+// once it returns. camPos (a separate value — the real, un-carried world
+// camera position) is for the fragment stage's rock specular only and is
+// never referenced by anything in this file.
+uniform vec2  camXZ;
+uniform vec3  camPos;
 uniform float spacing;  // lattice spacing (world units) between scatter slots
 uniform int   gridN;    // slots per side (instanceCount == gridN*gridN)
 uniform float range;    // max spawn radius from camera THIS draw call covers
@@ -164,8 +172,9 @@ const float CLUMP_SHORT = 0.55; // height multiplier at its rim
 const float BIOME_ROOT_AO = 0.55; // lighting multiplier at the very base of a stem
 const float BIOME_TUFT_AO = 0.78; // extra multiplier at the middle of a full clump
 
-// Per-sector polygon mask (the sector's own drawn points, world XZ). Tested
-// directly instead of sampling a rasterized coverage texture.
+// Per-sector polygon mask (the sector's own drawn points, chunk-local XZ —
+// same frame as camXZ above). Tested directly instead of sampling a
+// rasterized coverage texture.
 const int MAX_POLY = 64;
 uniform vec2 polyPts[MAX_POLY];
 uniform int  numPolyPts;
@@ -190,9 +199,14 @@ uniform vec2 seed;
 uniform vec3 tintColor; // paint color: multiplies the kind's base color(s)
 
 // ---- biomePlace outputs (valid only when it returned true) ----
-vec3  bWorldPos;   // this vertex's final world position
+// Despite the name, bWorldPos/bNormal are chunk-local here (the frame every
+// other uniform above is in) — each caller's own vertex stage applies `model`
+// to carry them out to true world space once biomePlace returns. The name is
+// kept because that's what it becomes by the time anything downstream reads
+// it as a varying.
+vec3  bWorldPos;   // this vertex's final position
 vec3  bBasePt;     // the instance's root point on the ground
-vec3  bNormal;     // world normal — rock: warped facet; foliage: up
+vec3  bNormal;     // normal — rock: warped facet; foliage: up
 vec3  bBaseColor;  // unlit albedo for this vertex
 float bAO;         // fake self-shadow occlusion multiplier (see BIOME_ROOT_AO)
 
@@ -230,10 +244,10 @@ float valueNoise2(vec2 p) {
     return mix(nx0, nx1, f.y); // ~[0,1]
 }
 
-// Bilinear (height, slope-coverage) at a world XZ, sampled from this
+// Bilinear (height, slope-coverage) at a chunk-local XZ, sampled from this
 // sector's cached height/coverage texture — see the heightTex uniform doc.
-vec2 sampleHeightCoverage(vec2 world) {
-    vec2 uv = (world - heightOrigin) / heightSize;
+vec2 sampleHeightCoverage(vec2 local) {
+    vec2 uv = (local - heightOrigin) / heightSize;
     return textureLod(heightTex, uv, 0.0).rg;
 }
 

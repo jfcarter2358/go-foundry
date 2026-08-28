@@ -311,17 +311,23 @@ func editorSelectionBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 			id := ch.BiomeSectors[Editor.ActiveBiomeSectorIdx].ID
 			for wi := range ch.WaterSurfaces {
 				if ch.WaterSurfaces[wi].ID == id {
-					wmin, wmax := ch.WaterSurfaces[wi].WorldAABB()
+					wmin, wmax := ch.WaterSurfaces[wi].WorldAABB(ch)
 					return wmin, wmax, true
 				}
 			}
 		}
+		// Both of these are chunk-local (Sector.MinBound/MaxBound and
+		// Chunk.MinBound/MaxBound alike), and this function's whole contract is
+		// world-space bounds — so they go out through the chunk's own placement
+		// or "frame selection" flies the camera to where the chunk would be if
+		// it had never been moved.
 		if Editor.ActiveSectorIdx >= 0 && Editor.ActiveSectorIdx < len(ch.Sectors) {
 			s := &ch.Sectors[Editor.ActiveSectorIdx]
-			return mgl32.Vec3{s.MinBound.X(), s.Floor.Height, s.MinBound.Y()},
-				mgl32.Vec3{s.MaxBound.X(), s.Ceiling.Height, s.MaxBound.Y()}, true
+			smin, smax := s.WorldAABB(ch)
+			return smin, smax, true
 		}
-		return ch.MinBound, ch.MaxBound, true
+		lo, hi := ch.WorldBounds()
+		return lo, hi, true
 	}
 
 	return mgl32.Vec3{}, mgl32.Vec3{}, false
@@ -334,4 +340,40 @@ func editorCameraLabel() string {
 		return "Fly [V]"
 	}
 	return "Orbit [V]"
+}
+
+// editorCamState is the whole of the 3D view's camera: the global eye and look
+// that every render pass reads, plus the orbit half kept here. Saved and put
+// back as a unit — see EditorToggle, which restores the view an author left
+// when they pressed Play.
+type editorCamState struct {
+	pos    mgl32.Vec3
+	yaw    float32
+	pitch  float32
+	fly    bool
+	target mgl32.Vec3
+	dist   float32
+	valid  bool
+}
+
+// editorCamSave captures the current view.
+func editorCamSave() editorCamState {
+	return editorCamState{
+		pos: gfx.Cam.Position, yaw: gfx.Cam.Yaw, pitch: gfx.Cam.Pitch,
+		fly: editorCam3D.Fly, target: editorCam3D.Target, dist: editorCam3D.Dist,
+		valid: true,
+	}
+}
+
+// editorCamRestore puts a saved view back, and reports whether there was one.
+// An unset state restores nothing, so the first entry into the editor still
+// falls through to editorCamEnter.
+func editorCamRestore(s editorCamState) bool {
+	if !s.valid {
+		return false
+	}
+	gfx.Cam.Position, gfx.Cam.Yaw, gfx.Cam.Pitch = s.pos, s.yaw, s.pitch
+	editorCam3D.Fly, editorCam3D.Target, editorCam3D.Dist = s.fly, s.target, s.dist
+	editorApplyCamAngles()
+	return true
 }

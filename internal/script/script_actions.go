@@ -100,6 +100,15 @@ func init() {
 				return nil, fmt.Errorf("move_to takes an object and a vec")
 			}
 			rt.markDirty()
+			// The vec a script hands move_to is world-space (it is routinely
+			// another object's position), but Entity.Position is stored in the
+			// entity's own frame — so an entity riding a vehicle would be sent
+			// to the world coordinate reinterpreted as a position inside the
+			// ship. Identity for an entity in no frame. Matches the position
+			// property, which converts the same way.
+			if rt.lvl != nil {
+				p = rt.lvl.Frames.FrameFor(e).FromWorld(p)
+			}
 			e.Position = p
 			return flang.NullVal{}, nil
 		},

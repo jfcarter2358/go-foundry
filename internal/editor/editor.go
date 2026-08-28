@@ -4,7 +4,10 @@ package editor
 //
 // Toggle with the tilde (~) key. The main window is always the 3D view:
 //   Mode3D        : fly-around chunk/light/spawn editing
-//   ModeSurface2D : the 2D surface editor, entered from a wall/floor/ceiling
+//
+// Shaping a surface is not a mode: it is a sub-state of the 3D view, in which
+// the selection modes retarget from the sector's topology to one face's mesh.
+// See editor_surface.go.
 //
 // Mode2D — the top-down sector map — is no longer one of the main window's
 // views. It lives in a window of its own (editor_2d_window.go), opened from
@@ -26,9 +29,7 @@ import (
 	"foundry/internal/textureui"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
-	"math"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
@@ -38,10 +39,9 @@ import (
 type EditorMode int
 
 const (
-	ModeGame      EditorMode = iota // editor inactive — normal gameplay
-	Mode3D                          // 3D fly-around editor
-	Mode2D                          // 2D top-down sector editor (+ biome painting); pop-out window only
-	ModeSurface2D                   // 2D surface editor for extrusions/terrain
+	ModeGame EditorMode = iota // editor inactive — normal gameplay
+	Mode3D                     // 3D fly-around editor
+	Mode2D                     // 2D top-down sector editor (+ biome painting); pop-out window only
 )
 
 // GizmoState is the 3D viewport's gizmo interaction state — embedded
@@ -109,24 +109,6 @@ type Gizmo2DState struct {
 	Gizmo2DStartEntity      mgl32.Vec3
 	Gizmo2DStartEntityRot   mgl32.Vec3
 	Gizmo2DStartEntityScale mgl32.Vec3
-}
-
-// SurfaceEditorState is the per-surface (wall/floor/ceiling) UV-space 2D
-// editor's state (editor_surface2d.go) — embedded in EditorState, see
-// GizmoState's doc comment above for why.
-type SurfaceEditorState struct {
-	SurfaceKind        string                 // "wall", "floor", "ceiling"
-	SurfacePan         mgl32.Vec2             // pan center in surface coords (U,V or X,Z)
-	SurfaceZoom        float32                // pixels per surface unit
-	SurfaceEditLayer   string                 // "both", "outer", "inner" — which extrusion points are draggable
-	SurfacePlacing     string                 // "extrusion", "terrain", "" (none)
-	SurfacePendingPts  []world.ExtrusionPoint // polygon vertices being placed
-	SurfaceDragPt      int                    // index of point being dragged; -1 = none
-	SurfaceDragKind    string                 // "outer", "inner", "terrain" — what's being dragged
-	SurfaceDragExtIdx  int                    // extrusion index for outer/inner drag
-	SurfaceLastMouse   [2]int32               // for pan
-	SurfacePrevMode    EditorMode             // mode to return to on Escape
-	ActiveTerrainPtIdx int                    // selected terrain point index; -1 = none
 }
 
 // BiomeLayerState is the 2D biome-sector polygon layer's state
@@ -206,6 +188,14 @@ type EditorState struct {
 	SavedCamYaw   float32
 	SavedCamPitch float32
 
+	// Where the 3D view was looking when Play was pressed, restored when play
+	// ends. Without it the editor camera was left wherever the player happened
+	// to walk to, so a test run of a doorway dumped the author on the far side
+	// of the level with no way back to what they were working on. The orbit
+	// half of the camera (editor_3d_camera.go) is saved with it, or coming back
+	// would restore the eye and leave the pivot behind.
+	PlayCam editorCamState
+
 	// Spawn-point placement state: true when the next left-click drops (or
 	// moves) the level's spawn marker.
 	SpawnPlacementMode bool
@@ -281,6 +271,30 @@ type EditorState struct {
 	// In 2D mode, whether the floor vertices (true) or ceiling vertices (false) are being edited
 	EditFloorVerts bool
 
+	// ActiveLayer is which of the active chunk's authoring layers the 2D map is
+	// editing — the only one it hit-tests, and the one a newly drawn sector
+	// joins. LayerView is how much of the rest of the stack is drawn around it
+	// (the layerView* constants). Read the layer through activeLayer(), which
+	// clamps it to the chunk; see editor_2d_layers.go.
+	ActiveLayer int
+	LayerView   int
+
+	// OpeningDrawing is true while the floor/ceiling-opening tool is armed and
+	// collecting the hole's corners; OpeningDrawPoints are the ones placed so
+	// far, chunk-local. See editor_2d_opening.go.
+	OpeningDrawing    bool
+	OpeningDrawPoints []mgl32.Vec2
+
+	// An in-progress drag of an existing opening's corner. OpeningDragSector is
+	// -1 when nothing is being dragged; the other three are only meaningful
+	// while it is not. OpeningDragFloor latches which surface the grabbed hole
+	// belongs to, so flipping the Floor/Ceiling switch mid-drag cannot move the
+	// corner onto the other surface's hole.
+	OpeningDragSector int
+	OpeningDragIdx    int
+	OpeningDragVertex int
+	OpeningDragFloor  bool
+
 	// Draw a box around every selectable point instead of only the ones the
 	// cursor is near, so overlapping/hard-to-see points can be found. In 2D
 	// the box is each chunk point's click-proximity radius; in 3D it is every
@@ -294,15 +308,8 @@ type EditorState struct {
 	// Navigation button state (reset each frame after applying)
 	NavForward, NavBack, NavLeft, NavRight, NavUp, NavDown bool
 
-	// Extrusion editing state (legacy 3D placement — kept for compatibility)
-	ExtrusionMode      bool                   // placing extrusion vertices
-	PendingOuter       []world.ExtrusionPoint // outer polygon being placed
-	PendingInner       []world.ExtrusionPoint // inner polygon being placed
-	PlacingInner       bool                   // false=placing outer, true=placing inner
-	ActiveExtrusionIdx int                    // selected extrusion on active wall; -1 = none
-
-	// --- Surface 2D editor ---
-	SurfaceEditorState
+	// --- Surface shaping (editor_surface.go) ---
+	SurfaceEditState
 
 	// Right-click drag rotation state (3D mode)
 	MouseDragging3D bool
@@ -392,21 +399,19 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.Gizmo2DAxis = -1
 	Editor.Gizmo2DDragging = false
 	Editor.PendingEdges = nil
-	Editor.ActiveExtrusionIdx = -1
-	Editor.ExtrusionMode = false
-	Editor.PendingOuter = nil
-	Editor.PendingInner = nil
-	Editor.PlacingInner = false
-	Editor.SurfaceZoom = 40.0
-	Editor.SurfaceDragPt = -1
-	Editor.ActiveTerrainPtIdx = -1
-	Editor.SurfacePlacing = ""
-	Editor.SurfaceEditLayer = "both"
+	ExitSurfaceEdit()
 	Editor.Zoom2D = 20.0    // 20 px per world unit
 	Editor.PanelWidth = 360 // default side panel width
 	Editor.StepSize = 0.25
 	Editor.SnapToGrid = false
 	Editor.EditFloorVerts = true
+	Editor.ActiveLayer = 0
+	Editor.LayerView = layerViewStack
+	Editor.OpeningDrawing = false
+	Editor.OpeningDrawPoints = nil
+	Editor.OpeningDragSector = -1
+	Editor.OpeningDragIdx = -1
+	Editor.OpeningDragVertex = -1
 	Editor.LastTick = sdl.GetTicks()
 	Editor.SavePath = levelPath
 
@@ -488,6 +493,11 @@ func panelHandleResizeAt(event sdl.Event, viewW int32) bool {
 // EditorToggle turns the editor on or off (called on tilde keypress).
 func EditorToggle() {
 	if Editor.Active {
+		// Remember the view before gameplay moves it, so leaving play puts the
+		// author back where they pressed Play rather than wherever the player
+		// walked to.
+		Editor.PlayCam = editorCamSave()
+
 		// Entering gameplay puts the player on the level's spawn point. Only a
 		// level with no spawn marker falls back to restoring wherever the
 		// camera was before the editor was opened.
@@ -502,8 +512,10 @@ func EditorToggle() {
 		// Re-enable mouse lock for gameplay
 		gfx.SetMouseLock(true)
 
-		// The pop-out only makes sense while the editor is up.
-		CloseEditor2DWindow()
+		// The other editors are left open. Closing them on Play threw away a
+		// window layout the author had arranged, for a mode they are coming
+		// straight back out of; the 2D map goes read-only for the duration
+		// instead (drawEditor2DWindow).
 
 		// Snapshot before play so a script cannot permanently change the
 		// authored level — see script_play.go.
@@ -539,11 +551,21 @@ func EditorToggle() {
 
 		Editor.Active = true
 		Editor.Mode = Mode3D
-		Editor.Pan2D = mgl32.Vec2{gfx.Cam.Position.X(), gfx.Cam.Position.Z()}
-		// Re-derive the orbit pivot from where the player left the camera, so
-		// an orbit carried over from the last editing session does not yank the
-		// view back to somewhere they have since walked away from.
-		editorCamEnter()
+		// Back to the view Play was pressed from. Only the very first entry
+		// into the editor has none saved, and that one adopts wherever the
+		// camera is — re-deriving the orbit pivot from it, so an orbit left
+		// over from a previous session does not yank the view somewhere the
+		// author has since walked away from.
+		if !editorCamRestore(Editor.PlayCam) {
+			editorCamEnter()
+		}
+		// World camera -> the map's plane, which is the active chunk's own
+		// local space (editor2DAnchor). Copying the world XZ straight in would
+		// open the map offset by that chunk's placement. Read after the camera
+		// is back, so the map re-centres on the restored view rather than on
+		// where the player stopped.
+		px, pz := editor2DToPlane(gfx.Cam.Position.X(), gfx.Cam.Position.Z())
+		Editor.Pan2D = mgl32.Vec2{px, pz}
 	}
 }
 
@@ -562,12 +584,10 @@ func EditorHandleEvent(event sdl.Event) bool {
 
 	switch t := event.(type) {
 	case sdl.KeyboardEvent:
-		// Surface 2D mode intercepts keys first
-		if Editor.Mode == ModeSurface2D && surface2DHandleKey(t) {
-			return true
-		}
-		// Extrusion placement mode intercepts keys next
-		if Editor.ExtrusionMode && editorExtrusionHandleKey(t) {
+		// Shaping a surface intercepts keys first, so the digits address the
+		// mesh's points, edges and faces rather than the sector's while one is
+		// being worked on.
+		if !imgui.CurrentIO().WantCaptureKeyboard() && surfaceEditHandleKey(t) {
 			return true
 		}
 		if t.Type != sdl.KEYDOWN {
@@ -609,6 +629,21 @@ func EditorHandleEvent(event sdl.Event) bool {
 		// are shared between them (editor_3d_view.go, editor_sel_tool.go), so
 		// binding them to the 3D view alone would leave the 2D map able to show
 		// a mode it could not switch.
+		// PgUp/PgDn walk the active chunk's authoring layers — the 2D map's
+		// equivalent of picking a storey. Bound only in the map because that is
+		// the view layers exist to disambiguate; the 3D view draws the whole
+		// stack at once and has depth to tell it apart.
+		case sdl.SCANCODE_PAGEUP:
+			if Editor.Mode == Mode2D && editorSelKeysActive() {
+				editorStepLayer(1)
+				return true
+			}
+		case sdl.SCANCODE_PAGEDOWN:
+			if Editor.Mode == Mode2D && editorSelKeysActive() {
+				editorStepLayer(-1)
+				return true
+			}
+
 		case sdl.SCANCODE_1:
 			if editorSelKeysActive() {
 				editorSetSelMode(editorSelPoint)
@@ -658,13 +693,25 @@ func EditorHandleEvent(event sdl.Event) bool {
 		}
 
 	case sdl.MouseButtonEvent:
+		// A release ends the drag its button owns wherever the cursor happens
+		// to be — ahead of the WantCaptureMouse gate below, not behind it.
+		//
+		// ImGui claims the mouse whenever the cursor is over one of its
+		// windows, so gating a release the way a press is gated meant a
+		// gesture that started on the viewport and finished over the side
+		// panel never ended. Motion is not gated, so the camera went on
+		// turning with the mouse until an unrelated right-click happened to
+		// clear the flag. The middle-button branch below has always carried a
+		// comment saying it was not gated; this is what makes that true, and
+		// for the right button and the gizmo as well.
+		if t.Type == sdl.MOUSEBUTTONUP && editorEndViewportDrag(t.Button) {
+			return true
+		}
 		if imgui.CurrentIO().WantCaptureMouse() {
 			break
 		}
 		if t.Type == sdl.MOUSEBUTTONDOWN {
-			if Editor.Mode == ModeSurface2D {
-				Surface2DHandleClick(t)
-			} else if Editor.Mode == Mode3D {
+			if Editor.Mode == Mode3D {
 				if t.Button == sdl.ButtonRight {
 					// Right-drag turns the camera; a right-click that does not
 					// drag opens the context menu instead, which is what
@@ -681,8 +728,8 @@ func EditorHandleEvent(event sdl.Event) bool {
 					Editor.PanDragging3D = sdl.GetModState()&sdl.KMOD_SHIFT != 0
 					Editor.LastDragX = t.X
 					Editor.LastDragY = t.Y
-				} else if Editor.ExtrusionMode && editorExtrusionHandleClick(t) {
-					// Extrusion placement consumed the click
+				} else if SurfaceEditHandleClick(t, sdl.GetModState()&sdl.KMOD_CTRL != 0) {
+					// Shaping a surface owns every click in the viewport.
 				} else if editorGizmoMouseDown(t) {
 					// Grabbed an axis arm — the click must not re-select.
 				} else {
@@ -690,21 +737,11 @@ func EditorHandleEvent(event sdl.Event) bool {
 				}
 			}
 		} else if t.Type == sdl.MOUSEBUTTONUP {
-			if t.Button == sdl.ButtonLeft && editorGizmoDragging() {
-				editorGizmoMouseUp()
-				return true
-			}
-			if Editor.Mode == ModeSurface2D {
-				Surface2DHandleRelease(t)
-			} else if Editor.Mode == Mode3D && t.Button == sdl.ButtonRight {
-				Editor.MouseDragging3D = false
+			// The drag itself was already ended above. What is left is the
+			// context menu, which is about the viewport and so stays behind the
+			// gate — a right-click released over the panel must not open it.
+			if Editor.Mode == Mode3D && t.Button == sdl.ButtonRight {
 				editor3DContextReleased(t.X, t.Y)
-			} else if Editor.Mode == Mode3D && t.Button == sdl.ButtonMiddle {
-				// Not gated on WantCaptureMouse: releasing over the side panel
-				// must still end a drag that began on the viewport, or the
-				// camera would stay stuck to the mouse.
-				Editor.MiddleDragging3D = false
-				Editor.PanDragging3D = false
 			}
 		}
 
@@ -718,9 +755,11 @@ func EditorHandleEvent(event sdl.Event) bool {
 			editorGizmoMouseMove(t.X, t.Y)
 			return true
 		}
-		if Editor.Mode == ModeSurface2D {
-			Surface2DHandleMouseMove(t)
-		} else if Editor.Mode == Mode3D && (Editor.MouseDragging3D || Editor.MiddleDragging3D) {
+		// A surface drag owns the mouse until release, the same as an axis drag.
+		if SurfaceEditHandleMotion(t.X, t.Y) {
+			return true
+		}
+		if Editor.Mode == Mode3D && (Editor.MouseDragging3D || Editor.MiddleDragging3D) {
 			dx := t.X - Editor.LastDragX
 			dy := t.Y - Editor.LastDragY
 			// One rotation path for both camera modes: the angles change either
@@ -738,16 +777,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 		}
 
 	case sdl.MouseWheelEvent:
-		if Editor.Mode == ModeSurface2D && !imgui.CurrentIO().WantCaptureMouse() {
-			Editor.SurfaceZoom *= float32(math.Pow(1.1, float64(t.Y)))
-			if Editor.SurfaceZoom < 2 {
-				Editor.SurfaceZoom = 2
-			}
-			if Editor.SurfaceZoom > 500 {
-				Editor.SurfaceZoom = 500
-			}
-			return true
-		}
 		if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureMouse() {
 			editorCamZoom(t.Y)
 			return true
@@ -840,19 +869,9 @@ func EditorRender() {
 	// The 2D sector map is not drawn here: it has its own window, which draws
 	// it into its own framebuffer (editor_2d_window.go).
 
-	// --- 2D surface editor ---
-	if Editor.Mode == ModeSurface2D {
-		gl.Disable(gl.DEPTH_TEST)
-		Surface2DRender()
-		gl.Enable(gl.DEPTH_TEST)
-	}
-
 	// --- ImGui UI ---
 	imguibackend.ImGuiNewFrame(dt)
 	EditorDrawUI()
-	if Editor.Mode == ModeSurface2D {
-		Surface2DRenderLabels()
-	}
 	// The F3 overlay is drawn here rather than in main.go's non-editor branch
 	// so it is available in every editor mode too — frame time and draw counts
 	// matter most while you are building the thing that costs them.
@@ -965,11 +984,7 @@ func EditorLoadLevel(path string) error {
 	Editor.Gizmo2DAxis = -1
 	Editor.Gizmo2DDragging = false
 	Editor.PendingEdges = nil
-	Editor.ActiveExtrusionIdx = -1
-	Editor.ExtrusionMode = false
-	Editor.PendingOuter = nil
-	Editor.PendingInner = nil
-	Editor.PlacingInner = false
+	ExitSurfaceEdit()
 	Editor.BiomeDrawing = false
 	Editor.BiomeDrawPoints = nil
 	Editor.ActiveBiomeSectorIdx = -1
@@ -979,4 +994,44 @@ func EditorLoadLevel(path string) error {
 	EditorClearUndoHistory()
 
 	return nil
+}
+
+// editorEndViewportDrag ends whatever viewport drag the released button owns,
+// and reports whether one was in progress.
+//
+// Called for every release, including the ones ImGui would otherwise swallow —
+// see the note at its call site in EditorHandleEvent. Only drag STATE is ended
+// here: a release also opens the 3D context menu, and that is about the
+// viewport rather than about ending a gesture, so it stays where it was.
+func editorEndViewportDrag(button sdl.Button) bool {
+	switch button {
+	case sdl.ButtonLeft:
+		if editorGizmoDragging() {
+			editorGizmoMouseUp()
+			return true
+		}
+		return SurfaceEditHandleRelease()
+	case sdl.ButtonRight:
+		if Editor.Mode == Mode3D && Editor.MouseDragging3D {
+			Editor.MouseDragging3D = false
+			return true
+		}
+	case sdl.ButtonMiddle:
+		if Editor.Mode == Mode3D && (Editor.MiddleDragging3D || Editor.PanDragging3D) {
+			Editor.MiddleDragging3D = false
+			Editor.PanDragging3D = false
+			return true
+		}
+	}
+	return false
+}
+
+// EditorEndDrags drops every in-progress viewport drag at once. The window
+// layer calls it when the main window loses focus: an alt-tab away mid-turn
+// takes the button-up with it, and the drag would otherwise still be running
+// when focus came back.
+func EditorEndDrags() {
+	editorEndViewportDrag(sdl.ButtonLeft)
+	editorEndViewportDrag(sdl.ButtonRight)
+	editorEndViewportDrag(sdl.ButtonMiddle)
 }

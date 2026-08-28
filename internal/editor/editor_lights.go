@@ -53,16 +53,37 @@ func editorSelectLight(kind string, idx int) {
 	Editor.SelectedLightKind = kind
 	Editor.SelectedLightIdx = idx
 	Editor.PanelFocus = panelFocusLight
+
+	// Only a point light gets the gizmo: it is the only light with a position.
+	// The global light is everywhere and a directional light is a direction, so
+	// there is nothing at a place for arms to be drawn around.
+	if kind == lightKindPoint {
+		Editor.GizmoKind = gizmoKindLight
+	} else if Editor.GizmoKind == gizmoKindLight {
+		Editor.GizmoKind = gizmoKindNone
+	}
 }
 
-// editorClearLightSelection drops the light from the selection.
-//
-// No gizmo to take with it: a point light's position is dragged through the
-// ordinary translate gizmo only once it is the selection, and a directional
-// light has no position at all.
+// editorClearLightSelection drops the light from the selection, taking the
+// gizmo with it so it cannot keep dragging a light that is no longer selected.
 func editorClearLightSelection() {
 	Editor.SelectedLightKind = lightKindNone
 	Editor.SelectedLightIdx = -1
+	if Editor.GizmoKind == gizmoKindLight {
+		Editor.GizmoKind = gizmoKindNone
+	}
+}
+
+// activeGizmoPointLight returns the point light the gizmo is attached to, or
+// nil. The gizmo kind is checked as well as the selection, the same guard
+// activeGizmoVolume applies, so a stale selection left by another tool cannot
+// silently be dragged.
+func activeGizmoPointLight() *world.PointLight {
+	if Editor.GizmoKind != gizmoKindLight {
+		return nil
+	}
+	pl, _ := selectedPointLight()
+	return pl
 }
 
 // selectedDirLight returns the selected directional light and its index, or
@@ -488,6 +509,15 @@ func editorPointLightProperties(lvl *world.Level) {
 		if editorDragFloat(fmt.Sprintf("Shadow Strength##pt%d", i), &pl.ShadowStrength, 0, 1, "%.2f") {
 			changed = true
 		}
+	}
+	// Position, typed. The translate gizmo in the 3D view edits the same three
+	// numbers — a light was previously only movable by the "Move To Camera"
+	// button below, which meant flying the camera to wherever you wanted the
+	// light and losing the view you were lighting.
+	pos := [3]float32{pl.Position.X(), pl.Position.Y(), pl.Position.Z()}
+	if editorDragFloat3Step(fmt.Sprintf("Position##ptpos%d", i), &pos, 0, 0, "%.3f", 0.05) {
+		pl.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
+		changed = true
 	}
 	if imgui.Button(fmt.Sprintf("Move To Camera##pt%d", i)) {
 		EditorPushUndo()

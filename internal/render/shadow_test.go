@@ -220,21 +220,30 @@ func TestFrustumSliceCornersSpanTheSlice(t *testing.T) {
 	}
 }
 
-func TestSectorWorldAABBIncludesOffsetsAndExtrusions(t *testing.T) {
+func TestSectorLocalAABBIncludesOffsetsAndSurfaceMeshes(t *testing.T) {
 	s := world.Sector{
 		MinBound: mgl32.Vec2{-4, -6},
 		MaxBound: mgl32.Vec2{4, 6},
 		Floor: world.Floor{
 			Height:        0,
 			VertexOffsets: []float32{0, -1.5, 0.5},
-			Extrusions:    []world.Extrusion{{Depth: 3}},
+			// A pit carved into the floor: the box has to reach its bottom, or
+			// the sector is culled while you can still see down into it.
+			Mesh: world.SurfaceMesh{
+				Points: []world.SurfacePoint{
+					{U: -1, V: -1, Depth: -3, Boundary: world.SurfaceFree},
+					{U: 1, V: -1, Depth: -3, Boundary: world.SurfaceFree},
+					{U: 0, V: 1, Depth: -3, Boundary: world.SurfaceFree},
+				},
+				Faces: []world.SurfaceFace{{Verts: []int{0, 1, 2}}},
+			},
 		},
 		Ceiling: world.Ceiling{
 			Height:        5,
 			VertexOffsets: []float32{0, 2.25, 0},
 		},
 	}
-	min, max := s.WorldAABB()
+	min, max := s.LocalAABB()
 
 	if min.X() != -4 || min.Z() != -6 || max.X() != 4 || max.Z() != 6 {
 		t.Errorf("XZ bounds = %v..%v, want (-4,-6)..(4,6)", min, max)

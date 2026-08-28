@@ -87,6 +87,10 @@ func HandleEvent(event sdl.Event) {
 		case sdl.WINDOWEVENT_FOCUS_LOST:
 			// Release capture but remember whether the current mode wanted it.
 			gfx.ApplyMouseLock(false)
+			// The button-up that would have ended a drag goes to whatever took
+			// focus, so end them here instead — otherwise a camera turn
+			// interrupted by an alt-tab is still running on the way back.
+			editor.EditorEndDrags()
 		case sdl.WINDOWEVENT_SIZE_CHANGED:
 			RefreshWindowSize()
 		case sdl.WINDOWEVENT_FOCUS_GAINED:

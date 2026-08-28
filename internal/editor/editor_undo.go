@@ -80,6 +80,17 @@ func EditorPushUndo() {
 	levelRedoStack.clear()
 }
 
+// EditorPopUndo discards the entry EditorPushUndo just added, for an operation
+// that turned out to be a no-op.
+//
+// Every mesh op has to push its undo entry *before* it knows whether it will do
+// anything — the check is inside the op — so without this an author would build
+// up a stack of undo steps that restore the level to exactly what it already
+// was, and pressing Ctrl+Z would appear to do nothing several times over.
+func EditorPopUndo() {
+	levelUndoStack.pop()
+}
+
 // EditorClearUndoHistory discards all undo/redo state. Called when a
 // different level is loaded so undo can't reach across files.
 func EditorClearUndoHistory() {
@@ -151,25 +162,19 @@ func editorResetSelectionState() {
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
 	Editor.PendingEdges = nil
-	Editor.ActiveExtrusionIdx = -1
-	Editor.ExtrusionMode = false
-	Editor.PendingOuter = nil
-	Editor.PendingInner = nil
-	Editor.PlacingInner = false
 	Editor.BiomeDrawing = false
 	Editor.BiomeDrawPoints = nil
 	Editor.ActiveBiomeSectorIdx = -1
 	Editor.BiomeDragVertexIdx = -1
-	Editor.ActiveTerrainPtIdx = -1
-	Editor.SurfaceDragPt = -1
 
-	// The surface editor targets a specific wall/floor/ceiling by index;
-	// those indices are no longer trustworthy after a snapshot swap. Drop back
-	// to the 3D view rather than the sector map — the surface editor draws in
-	// the main window, and the map no longer has a home there.
-	if Editor.Mode == ModeSurface2D {
-		Editor.Mode = Mode3D
-	}
+	// Surface shaping holds point, edge and face indices into the shaped
+	// surface's mesh, and none of those are trustworthy after a snapshot swap —
+	// the restored mesh may have a different number of faces entirely. Only
+	// those go: which face is being shaped is a chunk/sector/face name, which
+	// the snapshot restores intact, so shaping continues over it. See
+	// surfaceEditResumeAfterSnapshot, which also drops the mode when the face
+	// really has gone.
+	surfaceEditResumeAfterSnapshot()
 }
 
 // restoreLevelSnapshot applies an undo/redo snapshot: rebuild the level, put the

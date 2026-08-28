@@ -92,13 +92,18 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 			continue
 		}
 
-		pos = ResolveWallCollision(&proxy, chunk, sector, pos)
-		pos = ResolveSlopeCollision(&proxy, chunk, sector, stepFrom, pos)
+		// The resolvers below work in chunk's own local space (see chunkLocal);
+		// pos/stepFrom stay in the entity's frame everywhere else.
+		localPos := ResolveWallCollision(&proxy, chunk, sector, chunkLocal(chunk, pos))
+		localPos = ResolveSlopeCollision(&proxy, chunk, sector, chunkLocal(chunk, stepFrom), localPos)
+		pos = chunkWorld(chunk, localPos)
 		// Sliding along a slope can carry the entity into a different sector,
 		// so the floor it lands on has to be looked up again from where it
 		// ended.
 		chunk, sector = frame.ChunkAndSectorAt(lvl, pos)
-		f, c := resolveEntityFloorCeiling(&proxy, chunk, sector, &pos)
+		localPos = chunkLocal(chunk, pos)
+		f, c := resolveEntityFloorCeiling(&proxy, chunk, sector, &localPos)
+		pos = chunkWorld(chunk, localPos)
 		hitFloor = hitFloor || f
 		hitCeiling = hitCeiling || c
 	}
@@ -127,10 +132,14 @@ func resolveEntityFloorCeiling(proxy *world.Entity, chunk *world.Chunk, sector *
 	}
 	xz := mgl32.Vec2{pos[0], pos[2]}
 
-	minY := sectorFloorHeightAt(chunk, sector, xz) + proxy.BoundHalfY
-	if pos[1] <= minY+world.EntityGroundEpsilon {
-		pos[1] = minY
-		hitFloor = true
+	// No floor at all under the point means an opening (see opening.go): a
+	// placed entity over a hatch falls through it exactly as the player does.
+	if floorH, ok := sectorFloorHeightAt(chunk, sector, xz); ok {
+		minY := floorH + proxy.BoundHalfY
+		if pos[1] <= minY+world.EntityGroundEpsilon {
+			pos[1] = minY
+			hitFloor = true
+		}
 	}
 	// Applied after the floor, so in a gap thinner than the entity the ceiling
 	// wins. That is the recoverable way round: something pressed down into a

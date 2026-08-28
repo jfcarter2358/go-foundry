@@ -3,7 +3,7 @@ package biome
 // biome_anchor.go — carrying painted biome polygons along when the floor under
 // them is edited.
 //
-// A BiomeSector's polygon is stored in world space, deliberately independent of
+// A BiomeSector's polygon is stored chunk-local, deliberately independent of
 // structural geometry (see BiomeSector.Points): paint can span several sectors,
 // spill past their edges, and outlive the sector it was painted on. That
 // independence is right for storage and wrong for editing — dragging a wall in
@@ -37,7 +37,11 @@ type PointMove struct {
 }
 
 // sectorWarp is one sector's shape before and after an edit, index-aligned.
+// sector identifies which sector it came from, so a biome vertex can be
+// checked against the one it actually drapes on rather than against whichever
+// warped polygon happens to contain it in XZ.
 type sectorWarp struct {
+	sector        *world.Sector
 	before, after []mgl32.Vec2
 }
 
@@ -78,21 +82,72 @@ func CarryBiomesWithPoints(ch *world.Chunk, moves []PointMove) {
 			}
 		}
 		if moved {
-			warps = append(warps, sectorWarp{before: before, after: after})
+			warps = append(warps, sectorWarp{sector: s, before: before, after: after})
 		}
 	}
 	if len(warps) == 0 {
 		return
 	}
 
-	world.ForEachBiomeSector(ch, func(bs *world.BiomeSector) {
+	// The level the drape resolution needs, via the same seam
+	// ForEachBiomeSector reads (level_context.go). nil outside the editor,
+	// where nothing edits geometry anyway.
+	lvl := world.CurrentLevel()
+
+	// Containment as it was BEFORE this edit: the caller has already written
+	// the moved points, so ch's warped sectors have to be tested against their
+	// recorded `before` shape. Everything else is untouched and answers from
+	// live geometry (allocation-free, which matters — this runs per biome
+	// vertex per mouse-move).
+	wasInside := func(c *world.Chunk, s *world.Sector, xz mgl32.Vec2) bool {
+		if c == ch {
+			for i := range warps {
+				if warps[i].sector == s {
+					return geom.PointInPolygon(xz, warps[i].before)
+				}
+			}
+		}
+		return world.PointInSector(c, s, xz)
+	}
+
+	world.ForEachBiomeSector(ch, func(owner *world.Chunk, bs *world.BiomeSector) {
+		// warps are in ch's local space (they were built from ch's own
+		// SectorPoints). A biome sector painted on a DIFFERENT chunk stores
+		// its points in that chunk's local space, so it has to be carried
+		// into ch's frame to be tested and warped, and carried back to be
+		// stored — comparing the two raw would warp paint by an edit it is
+		// nowhere near in the world, the same mismatch MarkBiomesDirtyOverBox
+		// documents. toEdit/fromEdit collapse to the identity for the
+		// overwhelmingly common owner == ch case, which is also the only case
+		// that existed before chunks had live transforms.
+		toEdit, fromEdit := crossChunkPointMap(owner, ch)
 		changed := false
 		for i, v := range bs.Points {
-			moved, ok := warpPoint(v, warps)
-			if !ok || moved == v {
+			// A vertex follows only the floor it is actually DRAPED on, and
+			// DrapeTarget is the single definition of which floor that is —
+			// the same one the height sample uses, so the two can never
+			// disagree about a given point.
+			//
+			// Comparing the resolved SECTOR (not just its chunk) is what
+			// separates two stacked sectors of one chunk: editing a mezzanine
+			// leaves the floor's paint alone, and editing the floor leaves the
+			// mezzanine's alone. Chunk-level comparison alone could not tell
+			// those apart. Across chunks it is the same test that stops a
+			// platform floating overhead from hauling painted ground around
+			// (and re-baking its height texture on every mouse-move).
+			_, drape := world.DrapeTargetWith(lvl, owner, bs.DrapeSector, v, wasInside)
+			if drape == nil || !warpedSector(warps, drape) {
 				continue
 			}
-			bs.Points[i] = moved
+			moved, ok := warpPoint(toEdit(v), warps)
+			if !ok {
+				continue
+			}
+			back := fromEdit(moved)
+			if back == v {
+				continue
+			}
+			bs.Points[i] = back
 			changed = true
 		}
 		if changed {
@@ -100,6 +155,38 @@ func CarryBiomesWithPoints(ch *world.Chunk, moves []PointMove) {
 			bs.GroundDirty = true
 		}
 	})
+}
+
+// warpedSector reports whether s is one of the sectors this edit is reshaping.
+func warpedSector(warps []sectorWarp, s *world.Sector) bool {
+	for i := range warps {
+		if warps[i].sector == s {
+			return true
+		}
+	}
+	return false
+}
+
+// crossChunkPointMap returns the pair of XZ conversions carrying a point from
+// owner's local space into edited's, and back. Both are the identity when the
+// two are the same chunk (or either is nil), so the ordinary same-chunk edit
+// pays nothing.
+func crossChunkPointMap(owner, edited *world.Chunk) (toEdited, fromEdited func(mgl32.Vec2) mgl32.Vec2) {
+	identity := func(p mgl32.Vec2) mgl32.Vec2 { return p }
+	if owner == nil || edited == nil || owner == edited {
+		return identity, identity
+	}
+	toEdited = func(p mgl32.Vec2) mgl32.Vec2 {
+		w := owner.LocalToWorld(mgl32.Vec3{p.X(), 0, p.Y()})
+		l := edited.WorldToLocal(w)
+		return mgl32.Vec2{l.X(), l.Z()}
+	}
+	fromEdited = func(p mgl32.Vec2) mgl32.Vec2 {
+		w := edited.LocalToWorld(mgl32.Vec3{p.X(), 0, p.Y()})
+		l := owner.WorldToLocal(w)
+		return mgl32.Vec2{l.X(), l.Z()}
+	}
+	return toEdited, fromEdited
 }
 
 // warpPoint carries v through the first warp whose pre-edit polygon contains
@@ -196,31 +283,45 @@ func MeanValueCoords(v mgl32.Vec2, poly []mgl32.Vec2) []float32 {
 
 // FloorHeightUnderLevel returns the structural floor height (accounting for
 // terrain-mode slope/displacement, via the same code path player collision
-// uses) at world XZ (wx,wz), or 0 over open ground with no sector.
-func FloorHeightUnderLevel(level *world.Level, wx, wz float32) float32 {
-	h, _, _ := FloorHeightNormalUnderLevel(level, wx, wz)
+// uses) at owner-local XZ (wx,wz), or 0 over open ground with no sector. See
+// FloorHeightNormalUnderLevel for what owner means and why it matters.
+func FloorHeightUnderLevel(level *world.Level, owner *world.Chunk, drape string, wx, wz float32) float32 {
+	h, _, _ := FloorHeightNormalUnderLevel(level, owner, drape, wx, wz)
 	return h
 }
 
 // FloorHeightNormalUnderLevel is FloorHeightUnderLevel's full form: also
-// returns the flat floor's normal and the owning Sector (nil over open
-// ground with no sector), so callers that need to know about e.g. that
-// sector's procedural displacement detail (biome_displace.go) don't have to
-// re-run the same chunk/sector search.
-func FloorHeightNormalUnderLevel(level *world.Level, wx, wz float32) (float32, mgl32.Vec3, *world.Sector) {
-	if level == nil {
+// returns the flat floor's normal and the Sector resolved by DrapeTarget (nil
+// over open ground), so callers that need to know about e.g. that sector's
+// procedural displacement detail (biome_displace.go) don't have to re-run the
+// same search.
+//
+// owner is the chunk the asking biome sector was painted on and (wx,wz) is in
+// THAT chunk's local space; the height and normal come back in that space too,
+// carried across when the resolved sector belongs to a different chunk.
+func FloorHeightNormalUnderLevel(level *world.Level, owner *world.Chunk, drape string, wx, wz float32) (float32, mgl32.Vec3, *world.Sector) {
+	c, s := world.DrapeTarget(level, owner, drape, wx, wz)
+	if s == nil {
 		return 0, mgl32.Vec3{0, 1, 0}, nil
 	}
 	xz := mgl32.Vec2{wx, wz}
-	for ci := range level.Chunks {
-		c := &level.Chunks[ci]
-		if c.InFrame() {
-			continue // not in world space; biome anchoring is a world query
-		}
-		if s := world.FindSector(c, xz); s != nil {
-			h, n, _ := world.InterpolateSurfaceHeight(c, s, xz, true)
-			return h, n, s
+	cxz := world.DrapePointIn(owner, c, xz)
+	h, n, _ := world.InterpolateSurfaceHeight(c, s, cxz, true)
+
+	// Both come back in c's local space and the caller measures everything in
+	// owner's. The normal goes through the direction form (no translation) and
+	// is renormalized, since a scale difference between the two chunks would
+	// otherwise change its length and the slope gating downstream reads its
+	// angle.
+	if owner != nil && c != owner && owner.ModelMatrix() != c.ModelMatrix() {
+		w := c.LocalToWorld(mgl32.Vec3{cxz.X(), h, cxz.Y()})
+		h = owner.WorldToLocal(w).Y()
+		n = owner.WorldToLocalDirection(c.LocalToWorldDirection(n))
+		if l := n.Len(); l > 1e-8 {
+			n = n.Mul(1 / l)
+		} else {
+			n = mgl32.Vec3{0, 1, 0}
 		}
 	}
-	return 0, mgl32.Vec3{0, 1, 0}, nil
+	return h, n, s
 }

@@ -67,6 +67,10 @@ func editor2DFrameActiveChunk() {
 	if ch == nil {
 		return
 	}
+	// Chunk-local bounds, used directly and deliberately: Pan2D is a position
+	// on the map's plane, and that plane IS the active chunk's local space
+	// (see editor2DAnchor). Carrying these out to world space first would
+	// pan the view off the chunk by exactly its Origin.
 	Editor.Pan2D = mgl32.Vec2{
 		(ch.MinBound.X() + ch.MaxBound.X()) / 2,
 		(ch.MinBound.Z() + ch.MaxBound.Z()) / 2,
@@ -108,8 +112,11 @@ func OpenEditor2DWindow() {
 	Editor2DWindow = w
 
 	// Open the map on whatever the 3D camera is looking at, the way Tab used
-	// to when the two views shared the main window.
-	Editor.Pan2D = mgl32.Vec2{gfx.Cam.Position.X(), gfx.Cam.Position.Z()}
+	// to when the two views shared the main window. The camera is world-space
+	// and Pan2D is a point on the map's plane (the active chunk's own local
+	// space — see editor2DAnchor), so it is carried across rather than copied.
+	px, pz := editor2DToPlane(gfx.Cam.Position.X(), gfx.Cam.Position.Z())
+	Editor.Pan2D = mgl32.Vec2{px, pz}
 }
 
 // CloseEditor2DWindow asks for the 2D editor to go away at the end of the
@@ -207,10 +214,25 @@ func editor2DWindowFocused() bool {
 // RenderSecondaryWindows with the window's GL/imgui contexts current and its
 // framebuffer already cleared to black.
 func drawEditor2DWindow() {
-	if Editor.level == nil || !Editor.Active {
+	if Editor.level == nil {
 		return
 	}
 	withEditor2DMode(func() {
+		// While play is running the map is a view, not an editor. Pressing Play
+		// used to close this window outright, which threw away a layout the
+		// author had arranged for a mode they come straight back out of; the
+		// map stays on screen instead, and every way of changing the level
+		// through it is switched off. The level during play is a scratch copy
+		// (levelio.PlaySessionBegin) that is thrown away on exit, so an edit
+		// made here would silently vanish.
+		if !Editor.Active {
+			gl.Disable(gl.DEPTH_TEST)
+			Editor2DRender()
+			gl.Enable(gl.DEPTH_TEST)
+			editor2DWindowPlayNotice()
+			return
+		}
+
 		editor2DWindowPan()
 
 		// Map geometry first, so the ImGui panels below land on top of it.
@@ -231,6 +253,23 @@ func drawEditor2DWindow() {
 			Editor2DContextMenu()
 		})
 	})
+}
+
+// editor2DWindowPlayNotice replaces the toolbar and side panel while play is
+// running, so the window says why none of its controls are there rather than
+// looking as though it has broken.
+func editor2DWindowPlayNotice() {
+	w := Editor2DWindow
+	if w == nil {
+		return
+	}
+	imgui.SetNextWindowPos(imgui.Vec2{X: 0, Y: 0})
+	imgui.SetNextWindowSize(imgui.Vec2{X: float32(w.W), Y: 28})
+	imgui.BeginV("##editor2d_playbar", nil,
+		imgui.WindowFlagsNoTitleBar|imgui.WindowFlagsNoResize|
+			imgui.WindowFlagsNoMove|imgui.WindowFlagsNoScrollbar)
+	imgui.Text("Playing — the map is read-only until you leave play mode.")
+	imgui.End()
 }
 
 // editor2DWindowPan applies WASD panning while this window has focus.
@@ -317,6 +356,12 @@ func editor2DWindowHandleEvent(event sdl.Event) {
 	if w == nil || Editor.level == nil {
 		return
 	}
+	// Read-only during play — see drawEditor2DWindow. Every branch below either
+	// edits the level or moves a selection that would be restored out from
+	// under it when play ends.
+	if !Editor.Active {
+		return
+	}
 	// The side panel's drag-to-resize edge takes priority over map input.
 	if panelHandleResizeAt(event, w.W) {
 		return
@@ -333,7 +378,10 @@ func editor2DWindowInput(event sdl.Event) {
 
 	switch t := event.(type) {
 	case sdl.KeyboardEvent:
-		// Biome polygon placement intercepts keys first, as in the main window.
+		// Polygon placement tools intercept keys first, as in the main window.
+		if openingHandleKey(t) {
+			return
+		}
 		if biomeHandleKey(t) {
 			return
 		}
@@ -369,6 +417,13 @@ func editor2DWindowInput(event sdl.Event) {
 			editorSetSelMode(editorSelFace)
 		case sdl.SCANCODE_J:
 			EditorJoinSelectedPoints(mods&sdl.KMOD_SHIFT != 0)
+		// Walk the chunk's authoring layers — see editor_2d_layers.go. This is
+		// the window layers exist for, so the binding matters more here than in
+		// the main window that also carries it.
+		case sdl.SCANCODE_PAGEUP:
+			editorStepLayer(1)
+		case sdl.SCANCODE_PAGEDOWN:
+			editorStepLayer(-1)
 		case sdl.SCANCODE_G:
 			editorSetGizmoTool(editorToolMove)
 		case sdl.SCANCODE_R:

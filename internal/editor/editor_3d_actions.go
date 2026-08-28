@@ -157,7 +157,6 @@ type surface3DRefs struct {
 	On          *bool // Enabled on a floor/ceiling, Visible on a wall/portal
 	DoubleSided *bool
 	Collision   *bool
-	Terrain     *bool
 }
 
 // editor3DSurfaceRefs resolves the primary selected surface — the one the side
@@ -182,17 +181,17 @@ func editor3DSurfaceRefsFor(sel faceSel) (surface3DRefs, bool) {
 	switch sel.kind {
 	case "floor":
 		r.Texture, r.Smooth = &s.Floor.Texture, &s.Floor.Smooth
-		r.On, r.DoubleSided, r.Terrain = &s.Floor.Enabled, &s.Floor.DoubleSided, &s.Floor.Terrain
+		r.On, r.DoubleSided = &s.Floor.Enabled, &s.Floor.DoubleSided
 	case "ceiling":
 		r.Texture, r.Smooth = &s.Ceiling.Texture, &s.Ceiling.Smooth
-		r.On, r.DoubleSided, r.Terrain = &s.Ceiling.Enabled, &s.Ceiling.DoubleSided, &s.Ceiling.Terrain
+		r.On, r.DoubleSided = &s.Ceiling.Enabled, &s.Ceiling.DoubleSided
 	case "wall":
 		if sel.idx < 0 || sel.idx >= len(s.Walls) {
 			return surface3DRefs{}, false
 		}
 		w := &s.Walls[sel.idx]
 		r.Texture, r.Smooth = &w.Texture, &w.Smooth
-		r.On, r.DoubleSided, r.Collision, r.Terrain = &w.Visible, &w.DoubleSided, &w.Collision, &w.Terrain
+		r.On, r.DoubleSided, r.Collision = &w.Visible, &w.DoubleSided, &w.Collision
 	case "portal":
 		if sel.idx < 0 || sel.idx >= len(s.Portals) {
 			return surface3DRefs{}, false
@@ -386,14 +385,18 @@ func editor3DConvertSelectedEdge(to string) {
 	editorSetStatus("Converted %d edge(s) to %s", len(refs), to)
 }
 
-// editor3DEditSurfaceIn2D opens the selected surface in the 2D surface editor —
-// the panel's "Edit ... Surface" buttons, from the viewport.
-func editor3DEditSurfaceIn2D() {
+// editor3DShapeSurface starts shaping the selected surface — the panel's
+// "Shape Surface" button, from the viewport.
+func editor3DShapeSurface() {
 	r, ok := editor3DSurfaceRefs()
 	if !ok || r.kind == "portal" {
 		return
 	}
-	EnterSurface2D(r.kind)
+	idx := -1
+	if r.kind == "wall" {
+		idx = Editor.ActiveEdgeIdx
+	}
+	EnterSurfaceEdit(edgeFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, r.kind, idx))
 }
 
 // ---------- vertices ----------

@@ -80,13 +80,15 @@ func editorOutlineFace(sel faceSel, col mgl32.Vec3) {
 	pts := world.SectorPoints(ch, s)
 	switch sel.kind {
 	case "floor":
-		editorOutlineSurface(pts, s.Floor.VertexHeight, gfx.WorldUp, col)
+		// Y-only chunk rotation never tips "up"/"down" over, so these two stay
+		// valid world directions regardless of ch's own orientation.
+		editorOutlineSurface(ch, pts, s.Floor.VertexHeight, gfx.WorldUp, col)
 	case "ceiling":
-		editorOutlineSurface(pts, s.Ceiling.VertexHeight, gfx.WorldUp.Mul(-1), col)
+		editorOutlineSurface(ch, pts, s.Ceiling.VertexHeight, gfx.WorldUp.Mul(-1), col)
 	case "wall":
 		if sel.idx >= 0 && sel.idx < len(s.Walls) {
 			w := &s.Walls[sel.idx]
-			editorOutlineUprightQuad(pts, w.StartPoint, w.EndPoint,
+			editorOutlineUprightQuad(ch, pts, w.StartPoint, w.EndPoint,
 				s.Floor.VertexHeight, s.WallTopHeight, col)
 		}
 	case "portal":
@@ -95,7 +97,7 @@ func editorOutlineFace(sel faceSel, col mgl32.Vec3) {
 		// to 3D should show which one.
 		if sel.idx >= 0 && sel.idx < len(s.Portals) {
 			p := &s.Portals[sel.idx]
-			editorOutlineUprightQuad(pts, p.StartPoint, p.EndPoint,
+			editorOutlineUprightQuad(ch, pts, p.StartPoint, p.EndPoint,
 				s.Floor.VertexHeight, s.WallTopHeight, col)
 		}
 	}
@@ -103,14 +105,15 @@ func editorOutlineFace(sel faceSel, col mgl32.Vec3) {
 
 // editorOutlineSurface outlines a sector's floor or ceiling: its polygon at the
 // per-vertex heights of that surface, closed, with a stub along the way it
-// faces.
-func editorOutlineSurface(pts []mgl32.Vec2, heightAt func(int) float32, normal, col mgl32.Vec3) {
+// faces. pts/heightAt are chunk-local, like everywhere else; ch carries each
+// drawn point into world space.
+func editorOutlineSurface(ch *world.Chunk, pts []mgl32.Vec2, heightAt func(int) float32, normal, col mgl32.Vec3) {
 	n := len(pts)
 	if n < 2 {
 		return
 	}
 	at := func(i int) mgl32.Vec3 {
-		return mgl32.Vec3{pts[i].X(), heightAt(i), pts[i].Y()}
+		return ch.LocalToWorld(mgl32.Vec3{pts[i].X(), heightAt(i), pts[i].Y()})
 	}
 	var sum mgl32.Vec3
 	for i := 0; i < n; i++ {
@@ -123,26 +126,29 @@ func editorOutlineSurface(pts []mgl32.Vec2, heightAt func(int) float32, normal, 
 
 // editorOutlineUprightQuad outlines the vertical quad spanning p1 → p2 between
 // two height functions — the shape a wall occupies, and a portal's gap fill.
+// pts/p1/p2/bottom/top are chunk-local; ch carries the drawn quad and its
+// outward normal into world space.
 //
 // The endpoints are looked up in the sector's own points to find which vertex
 // heights apply, exactly as the wall mesh is built. FindVertexIdx returns -1
 // for a point that is not one of them, and VertexHeight reads that as "no
 // offset" — the same fallback the mesh itself lands on.
-func editorOutlineUprightQuad(pts []mgl32.Vec2, p1, p2 mgl32.Vec2, bottom, top func(int) float32, col mgl32.Vec3) {
+func editorOutlineUprightQuad(ch *world.Chunk, pts []mgl32.Vec2, p1, p2 mgl32.Vec2, bottom, top func(int) float32, col mgl32.Vec3) {
 	i1, i2 := world.FindVertexIdx(pts, p1), world.FindVertexIdx(pts, p2)
-	a := mgl32.Vec3{p1.X(), bottom(i1), p1.Y()}
-	b := mgl32.Vec3{p2.X(), bottom(i2), p2.Y()}
-	c := mgl32.Vec3{p2.X(), top(i2), p2.Y()}
-	d := mgl32.Vec3{p1.X(), top(i1), p1.Y()}
+	a := ch.LocalToWorld(mgl32.Vec3{p1.X(), bottom(i1), p1.Y()})
+	b := ch.LocalToWorld(mgl32.Vec3{p2.X(), bottom(i2), p2.Y()})
+	c := ch.LocalToWorld(mgl32.Vec3{p2.X(), top(i2), p2.Y()})
+	d := ch.LocalToWorld(mgl32.Vec3{p1.X(), top(i1), p1.Y()})
 	for _, e := range [4][2]mgl32.Vec3{{a, b}, {b, c}, {c, d}, {d, a}} {
 		gizmo.GizmoLine(e[0], e[1], col)
 	}
 
 	// Outward normal: the left-hand normal of the run, which is the convention
-	// WallFacingCamera (culling.go) already reads walls with.
+	// WallFacingCamera (culling.go) already reads walls with. Computed in local
+	// space from the local run, then carried out like everything else here.
 	dx, dz := p2.X()-p1.X(), p2.Y()-p1.Y()
 	center := a.Add(b).Add(c).Add(d).Mul(0.25)
-	editorFaceNormalStub(center, mgl32.Vec3{-dz, 0, dx}, col)
+	editorFaceNormalStub(center, ch.LocalToWorldDirection(mgl32.Vec3{-dz, 0, dx}), col)
 }
 
 // editorOutlineWaterSurface outlines the water plane of the selected Water-kind
@@ -168,7 +174,9 @@ func editorOutlineWaterSurface(ch *world.Chunk) {
 		// outline and no height to guess at.
 		return
 	}
-	editorOutlineSurface(bs.Points, func(int) float32 { return y }, gfx.WorldUp, modelFaceSelColor)
+	// y is WaterSurface.Position.Y(), chunk-local like everything else
+	// editorOutlineSurface draws — ch.LocalToWorld carries it out correctly.
+	editorOutlineSurface(ch, bs.Points, func(int) float32 { return y }, gfx.WorldUp, modelFaceSelColor)
 }
 
 // editorFaceNormalStub draws the short line out of a face's middle that says

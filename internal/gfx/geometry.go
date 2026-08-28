@@ -15,7 +15,13 @@ import (
 
 // Geometry holds GPU-side vertex data and associated handles.
 // Vertex format: 5 floats per vertex [X, Y, Z, U, V].
-// All geometry is stored in world space; model matrix is always identity.
+//
+// Vertices are stored in whatever space their owner authored them in — for
+// everything hanging off a Chunk that means CHUNK-LOCAL, carried into the
+// world by the model matrix the draw call supplies (Chunk.ModelMatrix). This
+// type does not know or care which; it never had a "geometry is world space,
+// model is always identity" guarantee to give, and since chunk transforms
+// became live it would be wrong if it did.
 //
 // Smooth surfaces additionally carry Normals — one per vertex, in a buffer of
 // their own rather than interleaved, so Vertices stays the 5-float record that
@@ -51,13 +57,19 @@ type Geometry struct {
 	Model        mgl32.Mat4
 	ModelUniform int32
 	Normal       mgl32.Vec3
-	Position     mgl32.Vec3
-	Yaw          float32
-	Alpha        float32 // 0.0 = fully transparent, 1.0 = fully opaque
-	Water        WaterParams
-	Vao          uint32
-	Vbo          uint32
-	Nbo          uint32 // normal buffer; 0 when the surface is flat-shaded
+	// Position is the point this mesh's vertices were built relative to, kept
+	// as a record of that. Nothing reads it: the caller's model matrix already
+	// carries the same translation, so anything wanting the mesh's location in
+	// space takes it from there (see the transparent sort key in app.go, which
+	// used to multiply this in a second time and sorted at twice the offset).
+	// Do not reintroduce it into a transform.
+	Position mgl32.Vec3
+	Yaw      float32
+	Alpha    float32 // 0.0 = fully transparent, 1.0 = fully opaque
+	Water    WaterParams
+	Vao      uint32
+	Vbo      uint32
+	Nbo      uint32 // normal buffer; 0 when the surface is flat-shaded
 }
 
 // SmoothFlag returns the value of the shader's `smoothShading` uniform for this

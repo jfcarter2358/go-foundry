@@ -11,6 +11,7 @@ layout(location = 2) in float aParam;
 
 uniform mat4 projection;
 uniform mat4 camera;
+uniform mat4 model;
 
 out vec2 fragTexCoord;
 out vec3 fragWorldPos;
@@ -29,13 +30,17 @@ void main() {
         return;
     }
     fragTexCoord = aLocal.xz * 0.5 + 0.5;
-    fragWorldPos = w;
+    // w and n are chunk-local (see detail_scatter_common.glsl); model carries
+    // the placed instance out to world space in one step, same as vertex.glsl.
+    vec4 worldPos = model * vec4(w, 1.0);
+    fragWorldPos = worldPos.xyz;
     // The rock template carries one normal per facet, so this matches the flat
     // normal the fragment stage would derive — but without the derivative, and
-    // it follows the mesh if it ever gains smoothed normals.
-    fragNormal = n;
+    // it follows the mesh if it ever gains smoothed normals. Inverse-transpose
+    // for the same non-uniform-scale-safety reason vertex.glsl uses it.
+    fragNormal = transpose(inverse(mat3(model))) * n;
 
-    vec4 viewPos = camera * vec4(w, 1.0);
+    vec4 viewPos = camera * worldPos;
     fragViewDepth = -viewPos.z;
     gl_Position = projection * viewPos;
 }

@@ -60,7 +60,7 @@ func TestWaterSurfaceAABBCoversFullExtent(t *testing.T) {
 		BoundHalfY: 0.1,
 		BoundHalfZ: 40,
 	}
-	min, max := w.WorldAABB()
+	min, max := w.LocalAABB()
 	if min.X() != -15 || max.X() != 35 {
 		t.Errorf("X bounds = [%g,%g], want [-15,35]", min.X(), max.X())
 	}
@@ -79,14 +79,14 @@ func TestWaterSurfaceAABBIncludesWaveCrests(t *testing.T) {
 		BoundHalfZ: 5,
 		Water:      gfx.WaterParams{Enabled: true, WaveAmplitude: 0.4},
 	}
-	min, max := w.WorldAABB()
+	min, max := w.LocalAABB()
 	if max.Y() < 0.5-1e-6 || min.Y() > -0.5+1e-6 {
 		t.Errorf("Y bounds = [%g,%g], want at least ±0.5 (0.1 half + 0.4 crest)",
 			min.Y(), max.Y())
 	}
 
 	w.Water.Enabled = false
-	flatMin, flatMax := w.WorldAABB()
+	flatMin, flatMax := w.LocalAABB()
 	if flatMax.Y() >= max.Y() || flatMin.Y() <= min.Y() {
 		t.Error("disabling waves did not shrink the bounds back to the mesh")
 	}

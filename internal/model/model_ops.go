@@ -227,7 +227,8 @@ func (m *ModelDoc) ExtrudeFaces(faces []int, dist float32) (caps, sides []int) {
 
 // RefreshExtrudeSideUVs regenerates extrusion side quads' UVs from where their
 // corners actually are: U along the shared edge, V across the depth. That is
-// the same convention buildWallWithExtrusions uses for extrusion sides, so a
+// the same convention SurfaceMesh.RefreshSurfaceSideUVs uses for a level
+// surface's extrusion sides, so a
 // texture reads consistently between a wall and a model.
 //
 // It has to be re-derivable rather than computed once, because an interactive

@@ -12,6 +12,48 @@ import (
 // normalY/|normal| < this value are considered too steep to walk on.
 const MaxSlopeCos = float32(0.7071)
 
+// chunkLocal and chunkWorld bridge the one gap left once a chunk can carry its
+// own Origin/Rotation/Scale: everything in this package resolves a position
+// against whichever chunks its frame owns (player.go, entity_collision.go,
+// frame_portal.go), and that position arrives already carried out of the
+// frame — via Frame.FromWorld, one layer up — but not yet out of the specific
+// chunk's own placement within that frame. Points, walls and portals
+// (SectorPoints and friends) are chunk-local; a wall push or floor sample has
+// to run in that same space, so every resolver call in this package converts
+// in with chunkLocal, computes, and converts back out with chunkWorld.
+//
+// This is deliberately chunk.LocalPlacementMatrix, not the full ModelMatrix:
+// an owning frame's Xform was already divided out by the caller that found
+// chunk in the first place (Frame.ChunkAndSectorAt), so undoing it again here
+// would double-subtract it. For an ordinary (non-frame) chunk the two matrices
+// are the same thing, since ModelMatrix only layers Xform on top when the
+// chunk is frame-owned — so this is exactly WorldToLocal/LocalToWorld for the
+// overwhelmingly common case, and only diverges for a frame-owned chunk that
+// also has its own local placement.
+func chunkLocal(chunk *world.Chunk, p mgl32.Vec3) mgl32.Vec3 {
+	if chunk == nil {
+		return p
+	}
+	m := chunk.LocalPlacementMatrix()
+	if m == mgl32.Ident4() {
+		return p
+	}
+	r := m.Inv().Mul4x1(p.Vec4(1))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+}
+
+func chunkWorld(chunk *world.Chunk, p mgl32.Vec3) mgl32.Vec3 {
+	if chunk == nil {
+		return p
+	}
+	m := chunk.LocalPlacementMatrix()
+	if m == mgl32.Ident4() {
+		return p
+	}
+	r := m.Mul4x1(p.Vec4(1))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+}
+
 // closestPointOnSegment2D returns the point on segment (a,b) closest to p
 // and the distance from p to that point.
 func closestPointOnSegment2D(p, a, b mgl32.Vec2) (mgl32.Vec2, float32) {
@@ -36,29 +78,6 @@ func closestPointOnSegment2DWithT(p, a, b mgl32.Vec2) (mgl32.Vec2, float32, floa
 	}
 	closest := a.Add(ab.Mul(t))
 	return closest, closest.Sub(p).Len(), t
-}
-
-// adjustHeightForExtrusions checks if xz falls inside any floor/ceiling
-// extrusion's outer polygon and offsets the height by the extrusion depth.
-// For floors (floor=true): the extruded area is lower (height - depth).
-// For ceilings (floor=false): the extruded area is higher (height + depth).
-func adjustHeightForExtrusions(xz mgl32.Vec2, height float32, extrusions []world.Extrusion, floor bool) float32 {
-	for _, ext := range extrusions {
-		if len(ext.Outer) < 3 {
-			continue
-		}
-		poly := make([]mgl32.Vec2, len(ext.Outer))
-		for i, p := range ext.Outer {
-			poly[i] = mgl32.Vec2{p.U, p.V}
-		}
-		if geom.PointInPolygon(xz, poly) {
-			if floor {
-				return height - ext.Depth
-			}
-			return height + ext.Depth
-		}
-	}
-	return height
 }
 
 // ResolveSlopeCollision prevents the entity from walking up floor slopes that
@@ -104,48 +123,156 @@ func ResolveSlopeCollision(entity *world.Entity, chunk *world.Chunk, sector *wor
 	}
 }
 
-// playerInWallExtrusion returns true if the entity's vertical extent fits
-// entirely within one of the wall's extrusion openings at the given u position.
-// u is the distance along the wall, ceilH is the interpolated ceiling height
-// at this position. Extrusion V is distance from ceiling downward, so world
+// ResolveCeilingEntry stops a body walking sideways into a sector whose ceiling
+// is below its feet — onto the OUTSIDE of that ceiling, where there is nothing
+// to stand on.
+//
+// Without it the body is admitted and then rescued by the ceiling clamp in
+// ResolveFloorCollision, which yanks it down to just under the ceiling in a
+// single frame. That clamp is right for the case it was written for — a jump
+// inside a room, where the body is under the ceiling and meets it going up —
+// but it is applied wherever the body happens to be, and a body arriving from
+// above the ceiling is not bonking its head on anything. It is standing on top
+// of a roof and being teleported into the room beneath.
+//
+// The rule is the whole of it: if the body's FEET are at or above the target
+// sector's ceiling, the body is entirely above that surface and the move is
+// refused. A ceiling's upper face is a wall when approached from outside, the
+// same way a floor's underside already is.
+//
+// Only the horizontal component is refused, so falling is untouched: a body
+// dropping through a hatch is moving in Y, and the sector below a proper hatch
+// has its own opening there anyway (see world/opening.go), which makes
+// sectorCeilingHeightAt report no ceiling at all.
+//
+// oldPos is where the body was before this step, in the same chunk-local space
+// as newPos — the same contract ResolveSlopeCollision takes.
+func ResolveCeilingEntry(entity *world.Entity, chunk *world.Chunk, sector *world.Sector, oldPos, newPos mgl32.Vec3) mgl32.Vec3 {
+	if chunk == nil || sector == nil || entity == nil {
+		return newPos
+	}
+	// A move with no horizontal component cannot be an entry: whatever this is,
+	// it is falling or rising, and the vertical clamps own it.
+	if newPos.X() == oldPos.X() && newPos.Z() == oldPos.Z() {
+		return newPos
+	}
+	if ceilingAdmits(chunk, sector, oldPos, newPos) {
+		return newPos
+	}
+	// Blocked. Try each axis on its own before giving up, so a body walking
+	// diagonally at the edge slides along it instead of sticking — the same
+	// courtesy the wall resolver extends. Each candidate is resolved against
+	// whatever sector IT lands in, which need not be the one that refused.
+	slideX := mgl32.Vec3{newPos.X(), newPos.Y(), oldPos.Z()}
+	if ceilingAdmitsAt(chunk, oldPos, slideX) {
+		return slideX
+	}
+	slideZ := mgl32.Vec3{oldPos.X(), newPos.Y(), newPos.Z()}
+	if ceilingAdmitsAt(chunk, oldPos, slideZ) {
+		return slideZ
+	}
+	// Refuse the horizontal move outright, keeping whatever vertical motion it
+	// had — a body denied entry is still falling if it was falling.
+	return mgl32.Vec3{oldPos.X(), newPos.Y(), oldPos.Z()}
+}
+
+// ceilingAdmits reports whether a body travelling from oldPos may enter dest.
+//
+// The test is between two SURFACES — the floor the body is standing on and the
+// ceiling it would be walking under — never the body's own height. Its
+// instantaneous Y is no use here: gravity has already pulled it a fraction of a
+// unit down the frame this runs in, so a body standing squarely on a roof
+// measures as being a hair underneath it, and any test against feet-versus-
+// ceiling reads exactly backwards. The surfaces do not move.
+func ceilingAdmits(chunk *world.Chunk, dest *world.Sector, oldPos, newPos mgl32.Vec3) bool {
+	newXZ := mgl32.Vec2{newPos.X(), newPos.Z()}
+	ceilH, ok := sectorCeilingHeightAt(chunk, dest, newXZ)
+	if !ok {
+		return true // open sky, or a hole cut through the ceiling here
+	}
+
+	oldXZ := mgl32.Vec2{oldPos.X(), oldPos.Z()}
+	if world.PointInSector(chunk, dest, oldXZ) {
+		// Already inside: this is not an entry, and the ceiling above is the
+		// body's own. Jumping into it is a head bonk, which is the clamp's job
+		// and must not stop the body moving horizontally — otherwise a room
+		// with little headroom would freeze anything that jumped in it.
+		return true
+	}
+
+	from := world.FindSectorAt(chunk, oldXZ, oldPos.Y())
+	if from == nil {
+		return true
+	}
+	standing, ok := sectorFloorHeightAt(chunk, from, oldXZ)
+	if !ok {
+		return true // over a hole: falling, and the clamps can have it
+	}
+	// The floor being left is at or above the ceiling being entered, so the
+	// body is not stepping into that room — it is stepping onto its roof.
+	return standing < ceilH-ceilingEntryEpsilon
+}
+
+// ceilingAdmitsAt is ceilingAdmits for a candidate whose destination sector is
+// not already known. A candidate in no sector is admitted: there is no ceiling
+// there to be on top of, and whether it is a legal place to stand is not this
+// resolver's question.
+func ceilingAdmitsAt(chunk *world.Chunk, oldPos, pos mgl32.Vec3) bool {
+	s := world.FindSectorAt(chunk, mgl32.Vec2{pos.X(), pos.Z()}, pos.Y())
+	if s == nil {
+		return true
+	}
+	return ceilingAdmits(chunk, s, oldPos, pos)
+}
+
+// ceilingEntryEpsilon decides which way exact equality falls, and "on the roof"
+// is the safe answer: a floor level with the ceiling beside it is the shape
+// this resolver exists for — an unfinished staircase topping out at the ceiling
+// of the room it climbs past — and a body there has no headroom to enter with.
+const ceilingEntryEpsilon = float32(1e-3)
+
+// wallWindowAdmits reports whether the entity's vertical extent fits entirely
+// inside one of the wall's pass-through windows at the given u position — a
+// doorway, an arch, a crawlspace.
+//
+// A window is a face of the wall's surface mesh marked Hole (SurfaceWallWindows).
+// The wall's collision plane itself stays flat: the mesh can push the wall's
+// visible surface in and out as far as an author likes, and what stops a body
+// is still the wall's straight segment on the 2D map, with these windows
+// punched through it. Bumps you walk into, holes you walk through.
+//
+// That is the same contract DetailSpec's displacement already ships with, and
+// it is what keeps wall collision a segment test rather than a swept query
+// against an arbitrary mesh. It also means an author cannot accidentally make a
+// wall passable by shaping it — only by opening it.
+//
+// u is the distance along the wall, ceilH the interpolated wall top at this
+// position. A window's V is distance from the wall top downward, so world
 // Y = ceilH - V.
-func playerInWallExtrusion(wall *world.Wall, entityMinY, entityMaxY, u, ceilH float32) bool {
-	for _, ext := range wall.Extrusions {
-		if len(ext.Outer) < 3 {
+func wallWindowAdmits(windows [][]mgl32.Vec2, entityMinY, entityMaxY, u, ceilH float32) bool {
+	for _, poly := range windows {
+		if len(poly) < 3 {
 			continue
 		}
-		// Build UV polygon from extrusion outer points
-		poly := make([]mgl32.Vec2, len(ext.Outer))
-		for i, p := range ext.Outer {
-			poly[i] = mgl32.Vec2{p.U, p.V}
-		}
-
-		// Compute V range of the opening
-		minV := ext.Outer[0].V
-		maxV := ext.Outer[0].V
-		for _, p := range ext.Outer[1:] {
-			if p.V < minV {
-				minV = p.V
+		minV, maxV := poly[0].Y(), poly[0].Y()
+		for _, p := range poly[1:] {
+			if p.Y() < minV {
+				minV = p.Y()
 			}
-			if p.V > maxV {
-				maxV = p.V
+			if p.Y() > maxV {
+				maxV = p.Y()
 			}
 		}
+		openingMaxY := ceilH - minV // top of the window
+		openingMinY := ceilH - maxV // bottom of it
 
-		// Convert V to world Y: worldY = ceilH - V
-		openingMaxY := ceilH - minV // top of opening
-		openingMinY := ceilH - maxV // bottom of opening
-
-		// Quick reject: entity doesn't fit vertically.
-		// Use a small tolerance so that gravity-induced dip below the floor
-		// (before ResolveFloorCollision runs) doesn't block doorway pass-through.
+		// Quick reject: the entity does not fit vertically. The tolerance keeps
+		// a gravity-induced dip below the floor — which happens before
+		// ResolveFloorCollision runs — from blocking a doorway.
 		const vEps = float32(0.1)
 		if entityMinY < openingMinY-vEps || entityMaxY > openingMaxY+vEps {
 			continue
 		}
-
-		// Check if u is within the extrusion's horizontal extent using
-		// point-in-polygon at the entity's center V
 		entityCenterV := ceilH - (entityMinY+entityMaxY)/2
 		if geom.PointInPolygon(mgl32.Vec2{u, entityCenterV}, poly) {
 			return true
@@ -202,11 +329,11 @@ func resolveWallsForSector(
 			continue
 		}
 
-		// Check if entity fits inside a wall extrusion opening
-		if len(wall.Extrusions) > 0 {
+		// Check whether the entity fits through a doorway cut in the wall.
+		if windows := world.SurfaceWallWindows(&wall.Mesh); len(windows) > 0 {
 			wallLen := wall.EndPoint.Sub(wall.StartPoint).Len()
 			u := t * wallLen
-			if playerInWallExtrusion(&wall, entityMinY, entityMaxY, u, ceilH) {
+			if wallWindowAdmits(windows, entityMinY, entityMaxY, u, ceilH) {
 				continue
 			}
 		}
@@ -261,49 +388,58 @@ func ResolveWallCollision(entity *world.Entity, chunk *world.Chunk, sector *worl
 // sector's, plus any portal-adjacent sector whose polygon also covers the
 // point. Extrusions are folded in, so a raised step reads as floor.
 //
+// ok is false when there is no floor under xz at all — every surface that
+// covers the point has an opening there (see opening.go). That is what makes a
+// stairwell a stairwell rather than a decal: a body over the hole is clamped by
+// nothing and falls, and the sector lookup hands it to whatever is below as
+// soon as it drops past that floor's height.
+//
+// An adjacent sector is judged on its OWN openings, not this one's. Two sectors
+// sharing a portal each cover part of the boundary, and a hole cut in one of
+// them should not be filled in by the other unless that other genuinely has
+// floor there.
+//
 // Split out of ResolveFloorCollision because entity world collision needs the
 // same query with a different clamp — see resolveEntityFloorCeiling
 // (entity_collision.go). The "highest wins" rule is what keeps something
 // standing on a portal boundary from sinking into the lower of the two floors.
-func sectorFloorHeightAt(chunk *world.Chunk, sector *world.Sector, xz mgl32.Vec2) float32 {
-	floorH, _, _ := world.InterpolateSurfaceHeight(chunk, sector, xz, true)
-	if len(sector.Floor.Extrusions) > 0 {
-		floorH = adjustHeightForExtrusions(xz, floorH, sector.Floor.Extrusions, true)
+func sectorFloorHeightAt(chunk *world.Chunk, sector *world.Sector, xz mgl32.Vec2) (float32, bool) {
+	var floorH float32
+	found := false
+	if !world.SurfaceIsOpenAt(sector.Floor.Openings, xz) {
+		floorH, _, _ = world.InterpolateSurfaceHeight(chunk, sector, xz, true)
+		found = true
 	}
 	for _, adj := range getAdjacentSectors(chunk, sector) {
+		if world.SurfaceIsOpenAt(adj.Floor.Openings, xz) {
+			continue
+		}
 		if !geom.PointInPolygon(xz, world.SectorPoints(chunk, adj)) {
 			continue
 		}
 		adjFloorH, _, _ := world.InterpolateSurfaceHeight(chunk, adj, xz, true)
-		if len(adj.Floor.Extrusions) > 0 {
-			adjFloorH = adjustHeightForExtrusions(xz, adjFloorH, adj.Floor.Extrusions, true)
-		}
-		if adjFloorH > floorH {
-			floorH = adjFloorH
+		if !found || adjFloorH > floorH {
+			floorH, found = adjFloorH, true
 		}
 	}
-	return floorH
+	return floorH, found
 }
 
 // sectorCeilingHeightAt is sectorFloorHeightAt's mirror: the lowest ceiling over
 // xz, and whether there is one at all. A sector with no ceiling is open sky, not
-// a ceiling at height zero.
+// a ceiling at height zero — and neither is a ceiling with a hole cut in it,
+// which is what lets a body climb a stair up through the storey above.
 func sectorCeilingHeightAt(chunk *world.Chunk, sector *world.Sector, xz mgl32.Vec2) (float32, bool) {
-	if !sector.Ceiling.Enabled {
+	if !sector.Ceiling.Enabled || world.SurfaceIsOpenAt(sector.Ceiling.Openings, xz) {
 		return 0, false
 	}
 	ceilH, _, _ := world.InterpolateSurfaceHeight(chunk, sector, xz, false)
-	if len(sector.Ceiling.Extrusions) > 0 {
-		ceilH = adjustHeightForExtrusions(xz, ceilH, sector.Ceiling.Extrusions, false)
-	}
 	for _, adj := range getAdjacentSectors(chunk, sector) {
-		if !adj.Ceiling.Enabled || !geom.PointInPolygon(xz, world.SectorPoints(chunk, adj)) {
+		if !adj.Ceiling.Enabled || world.SurfaceIsOpenAt(adj.Ceiling.Openings, xz) ||
+			!geom.PointInPolygon(xz, world.SectorPoints(chunk, adj)) {
 			continue
 		}
 		adjCeilH, _, _ := world.InterpolateSurfaceHeight(chunk, adj, xz, false)
-		if len(adj.Ceiling.Extrusions) > 0 {
-			adjCeilH = adjustHeightForExtrusions(xz, adjCeilH, adj.Ceiling.Extrusions, false)
-		}
 		if adjCeilH < ceilH {
 			ceilH = adjCeilH
 		}
@@ -330,10 +466,16 @@ func ResolveFloorCollision(entity *world.Entity, chunk *world.Chunk, sector *wor
 	hitFloor, hitCeiling := false, false
 	xz := mgl32.Vec2{pos[0], pos[2]}
 
-	minY := sectorFloorHeightAt(chunk, sector, xz) + entity.BoundHalfY
-	if pos[1] <= minY {
-		pos[1] = minY
-		hitFloor = true
+	// No floor under the point means an opening: nothing to land on, so the
+	// body keeps whatever vertical motion it had and MovePlayer's caller is
+	// told it is not on the ground. Falling through the hole is then the
+	// ordinary fall it already was.
+	if floorH, ok := sectorFloorHeightAt(chunk, sector, xz); ok {
+		minY := floorH + entity.BoundHalfY
+		if pos[1] <= minY {
+			pos[1] = minY
+			hitFloor = true
+		}
 	}
 
 	if ceilH, ok := sectorCeilingHeightAt(chunk, sector, xz); ok {
@@ -363,3 +505,108 @@ func SegmentIntersect2D(a1, a2, b1, b2 mgl32.Vec2) (bool, float32) {
 	}
 	return false, 0
 }
+
+// ResolveStepEntry stops a body walking into a riser it has no way to climb —
+// the vertical face a portal's gap fill draws between two floors at different
+// heights (world.RebuildGaps).
+//
+// A portal is not a wall, so nothing in resolveWallsForSector ever looks at it,
+// and the riser under it was geometry only. Walking at a shoulder-high step
+// therefore admitted the body into the sector on the far side, where
+// ResolveFloorCollision immediately clamped it up onto that floor: the body
+// passed straight through the wall it was looking at and arrived on top of it.
+//
+// The rule is the mirror of ResolveCeilingEntry's. That one refuses a move onto
+// the OUTSIDE of a ceiling; this one refuses a move into the INSIDE of a floor.
+// A body may enter a sector whose floor is above the one it is leaving only
+// while that floor is within its own reach — no higher than its head. A shorter
+// riser is a step, and stepping up onto it is the behaviour this engine has
+// always had; a taller one is a wall.
+//
+// Reach is measured from the higher of two things, and both are needed:
+//
+//   - the floor being left, because the body's instantaneous Y is a fraction of
+//     a unit below it by the time this runs (gravity has already been applied
+//     this frame) — the same reason ceilingAdmits weighs surfaces rather than
+//     the body;
+//   - the body's own feet, so a jump onto a ledge is still admitted at the top
+//     of its arc. Without that this resolver would seal off every ledge higher
+//     than a step, which is exactly the geometry jumping exists for.
+//
+// The body's own height is the threshold because it is the only figure the
+// engine currently has; NEXT.md's "configurable step height that player can
+// walk over" is the field that belongs here when it exists, and nothing else
+// about this resolver changes when it arrives.
+//
+// oldPos is where the body was before this step, in the same chunk-local space
+// as newPos — the contract ResolveSlopeCollision and ResolveCeilingEntry take.
+func ResolveStepEntry(entity *world.Entity, chunk *world.Chunk, sector *world.Sector, oldPos, newPos mgl32.Vec3) mgl32.Vec3 {
+	if chunk == nil || sector == nil || entity == nil {
+		return newPos
+	}
+	// No horizontal component means this is a fall or a rise, and the vertical
+	// clamps own it.
+	if newPos.X() == oldPos.X() && newPos.Z() == oldPos.Z() {
+		return newPos
+	}
+	if stepAdmits(entity, chunk, sector, oldPos, newPos) {
+		return newPos
+	}
+	// Blocked. Each axis on its own before giving up, so a body walking
+	// diagonally into the riser slides along it rather than sticking — the same
+	// courtesy the wall and ceiling resolvers extend.
+	slideX := mgl32.Vec3{newPos.X(), newPos.Y(), oldPos.Z()}
+	if stepAdmitsAt(entity, chunk, oldPos, slideX) {
+		return slideX
+	}
+	slideZ := mgl32.Vec3{oldPos.X(), newPos.Y(), newPos.Z()}
+	if stepAdmitsAt(entity, chunk, oldPos, slideZ) {
+		return slideZ
+	}
+	return mgl32.Vec3{oldPos.X(), newPos.Y(), oldPos.Z()}
+}
+
+// stepAdmits reports whether a body travelling from oldPos may enter dest,
+// given how far above its own footing that sector's floor is.
+func stepAdmits(entity *world.Entity, chunk *world.Chunk, dest *world.Sector, oldPos, newPos mgl32.Vec3) bool {
+	newXZ := mgl32.Vec2{newPos.X(), newPos.Z()}
+	destFloor, ok := sectorFloorHeightAt(chunk, dest, newXZ)
+	if !ok {
+		return true // a hole where it is going: falling through is not entering
+	}
+
+	oldXZ := mgl32.Vec2{oldPos.X(), oldPos.Z()}
+	if world.PointInSector(chunk, dest, oldXZ) {
+		return true // already inside; this is not an entry
+	}
+
+	from := world.FindSectorAt(chunk, oldXZ, oldPos.Y())
+	if from == nil {
+		return true
+	}
+	reach, ok := sectorFloorHeightAt(chunk, from, oldXZ)
+	if !ok {
+		return true // over a hole: falling, and the clamps can have it
+	}
+	if feet := newPos.Y() - entity.BoundHalfY; feet > reach {
+		reach = feet
+	}
+	return destFloor <= reach+entity.BoundHalfY*2+stepEntryEpsilon
+}
+
+// stepAdmitsAt is stepAdmits for a candidate whose destination sector is not
+// already known. A candidate in no sector is admitted: there is no floor there
+// to be shut out by.
+func stepAdmitsAt(entity *world.Entity, chunk *world.Chunk, oldPos, pos mgl32.Vec3) bool {
+	s := world.FindSectorAt(chunk, mgl32.Vec2{pos.X(), pos.Z()}, pos.Y())
+	if s == nil {
+		return true
+	}
+	return stepAdmits(entity, chunk, s, oldPos, pos)
+}
+
+// stepEntryEpsilon decides which way exact equality falls, and "admit" is the
+// safe answer here: a riser of exactly the body's height is the boundary case
+// the report describes, and refusing it would also refuse a body standing on a
+// floor level with the one it is walking onto once rounding is involved.
+const stepEntryEpsilon = float32(1e-3)

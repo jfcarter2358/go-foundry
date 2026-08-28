@@ -351,6 +351,16 @@ func (h *levelHost) refPosition(r flang.RefVal) (mgl32.Vec3, bool) {
 	switch r.Kind {
 	case flang.RefEntity:
 		if e := h.entityFor(r); e != nil {
+			// Entity.Position is stored in the entity's own frame (a vehicle
+			// interior rides its ship), so it needs the same treatment the
+			// sector arm below gets: FrameSet.WorldPosition's own doc spells
+			// out that a local position and a world one are not numbers that
+			// can be subtracted, which is exactly what the distance verbs
+			// calling this do. script_events.go's moverPosition already went
+			// through it; this did not.
+			if lvl := h.lvl(); lvl != nil {
+				return lvl.Frames.WorldPosition(e), true
+			}
 			return e.Position, true
 		}
 	case flang.RefVolume:
@@ -362,9 +372,15 @@ func (h *levelHost) refPosition(r flang.RefVal) (mgl32.Vec3, bool) {
 			return p.Position, true
 		}
 	case flang.RefSector, flang.RefFloor, flang.RefCeiling:
-		if _, s := c.sectorFor(r); s != nil {
+		if ch, s := c.sectorFor(r); s != nil {
+			// MinBound/MaxBound and Floor.Height are chunk-local; every other
+			// arm of this switch returns a genuine world position, and the
+			// distance/movement verbs that call this compare them against each
+			// other. Without the conversion a script measuring from an entity
+			// to a sector on a moved chunk gets the distance to where that
+			// chunk would be if it had never been placed.
 			mid := s.MinBound.Add(s.MaxBound).Mul(0.5)
-			return mgl32.Vec3{mid.X(), s.Floor.Height, mid.Y()}, true
+			return ch.LocalToWorld(mgl32.Vec3{mid.X(), s.Floor.Height, mid.Y()}), true
 		}
 	}
 	return mgl32.Vec3{}, false

@@ -32,6 +32,7 @@ layout(location = 1) in vec3  aNormal;  // template normal (rock lighting; folia
 layout(location = 2) in float aParam;   // see the aParam-encoding note in biome_scatter_common.glsl
 
 uniform mat4 projView;
+uniform mat4 model;
 
 // BiomeShadows.Receive (biome_light.go). Off skips the cascade lookup entirely
 // so its cost can be measured against zero rather than estimated.
@@ -62,9 +63,18 @@ void main() {
         return;
     }
 
-    vWorldPos = bWorldPos;
-    vNormal = bNormal;
-    vViewDepth = biomeViewDepth(bWorldPos);
+    // bWorldPos/bNormal are chunk-local (biomePlace's own lattice runs in the
+    // owning chunk's local frame — see biome_scatter_common.glsl and the
+    // camXZ uniform's doc comment); model carries them out to world space in
+    // one step, same as vertex.glsl, before anything below touches lighting
+    // or shadows, both of which need true world-space inputs.
+    vec4 worldPos4 = model * vec4(bWorldPos, 1.0);
+    vec3 worldPos = worldPos4.xyz;
+    vec3 worldNormal = transpose(inverse(mat3(model))) * bNormal;
+
+    vWorldPos = worldPos;
+    vNormal = worldNormal;
+    vViewDepth = biomeViewDepth(worldPos);
 
     if (shapeKind == 1) {
         // Rock/moss: hand everything to biome_frag.glsl, which needs the
@@ -76,11 +86,11 @@ void main() {
         // light with its cascade shadow, every point light in range — resolved
         // here and interpolated. Same uniforms and same math as the floor
         // underneath, so a blade and the ground it stands on agree.
-        vec3 lightPos = bWorldPos + vec3(0.0, BIOME_FOLIAGE_SHADOW_LIFT, 0.0);
-        vec3 lighting = biomeLighting(lightPos, bNormal, vViewDepth, receiveShadows != 0);
+        vec3 lightPos = worldPos + vec3(0.0, BIOME_FOLIAGE_SHADOW_LIFT, 0.0);
+        vec3 lighting = biomeLighting(lightPos, worldNormal, vViewDepth, receiveShadows != 0);
         vColor = bBaseColor * clamp(lighting, 0.0, 1.0) * bAO;
         vBaseColor = vec3(0.0);
     }
 
-    gl_Position = projView * vec4(bWorldPos, 1.0);
+    gl_Position = projView * worldPos4;
 }

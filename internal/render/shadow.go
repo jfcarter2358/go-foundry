@@ -649,10 +649,10 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
 	identity := mgl32.Ident4()
 	// The model matrix used to be uploaded once, here, because every piece of
-	// world geometry was baked into world space. A chunk in a frame is not, so
-	// the upload moved inside the loop — but it is tracked rather than re-sent
-	// per chunk, since a level of static geometry would otherwise pay for a
-	// uniform upload per chunk to say nothing changed.
+	// geometry was pre-baked into world space. Chunk geometry is chunk-local
+	// now, so the upload moved inside the loop — but it is tracked rather than
+	// re-sent per chunk, since a level of unmoved, unrotated, unscaled chunks
+	// would otherwise pay for a uniform upload per chunk to say nothing changed.
 	current := identity
 	gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
 
@@ -671,13 +671,16 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 		for si := range chunk.Sectors {
 			sector := &chunk.Sectors[si]
 			if cull != nil {
-				secMin, secMax := sector.WorldAABB()
-				if chunk.InFrame() {
-					secMin, secMax = TransformAABB(current, secMin, secMax)
-				}
+				secMin, secMax := sector.LocalAABB()
+				secMin, secMax = TransformAABB(current, secMin, secMax)
 				if !AABBInFrustum(*cull, secMin, secMax) {
 					continue
 				}
+			}
+			// The skirt is solid geometry closing the band under the floor,
+			// so it casts like a wall would. See world/skirt.go.
+			if world.SkirtDrawable(sector) {
+				drawGeometryShadow(&sector.Floor.SkirtGeometry, prog, skin)
 			}
 			if sector.Floor.Enabled && !sector.Floor.Hidden {
 				// Displaced faces cast via the detail tess program instead (see
@@ -685,16 +688,16 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 				if !sector.Floor.Detail.HasDisplace() {
 					drawGeometryShadow(&sector.Floor.Geometry, prog, skin)
 				}
-				for eg := range sector.Floor.ExtrusionGeometries {
-					drawGeometryShadow(&sector.Floor.ExtrusionGeometries[eg], prog, skin)
+				for eg := range sector.Floor.SubmeshGeometries {
+					drawGeometryShadow(&sector.Floor.SubmeshGeometries[eg], prog, skin)
 				}
 			}
 			if sector.Ceiling.Enabled {
 				if !sector.Ceiling.Detail.HasDisplace() {
 					drawGeometryShadow(&sector.Ceiling.Geometry, prog, skin)
 				}
-				for eg := range sector.Ceiling.ExtrusionGeometries {
-					drawGeometryShadow(&sector.Ceiling.ExtrusionGeometries[eg], prog, skin)
+				for eg := range sector.Ceiling.SubmeshGeometries {
+					drawGeometryShadow(&sector.Ceiling.SubmeshGeometries[eg], prog, skin)
 				}
 			}
 			for wi := range sector.Walls {
@@ -703,8 +706,8 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 					if !w.Detail.HasDisplace() {
 						drawGeometryShadow(&w.Geometry, prog, skin)
 					}
-					for eg := range w.ExtrusionGeometries {
-						drawGeometryShadow(&w.ExtrusionGeometries[eg], prog, skin)
+					for eg := range w.SubmeshGeometries {
+						drawGeometryShadow(&w.SubmeshGeometries[eg], prog, skin)
 					}
 				}
 			}

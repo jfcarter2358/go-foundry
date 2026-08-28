@@ -78,11 +78,11 @@ func PortalFacingCamera(start, end mgl32.Vec2, camPos mgl32.Vec3) bool {
 	return nx*toCamX+nz*toCamZ > 0
 }
 
-// portalBFS performs a BFS from startSectorID through portals and returns the
-// set of reachable sector IDs. If portalFilter is non-nil, only portals for
-// which portalFilter returns true are traversed.
+// portalBFS performs a BFS from startSectorID through sector borders and
+// returns the set of reachable sector IDs. If edgeFilter is non-nil, only
+// borders whose edge it accepts are traversed.
 // Returns nil if startSectorID is empty or not found.
-func portalBFS(chunk *world.Chunk, startSectorID string, portalFilter func(p *world.Portal) bool) map[string]bool {
+func portalBFS(chunk *world.Chunk, startSectorID string, edgeFilter func(start, end mgl32.Vec2) bool) map[string]bool {
 	if startSectorID == "" {
 		return nil
 	}
@@ -97,6 +97,9 @@ func portalBFS(chunk *world.Chunk, startSectorID string, portalFilter func(p *wo
 		return nil
 	}
 
+	// One pass over the chunk's edges, reused for every step of the walk.
+	borders := chunk.SectorBorderGraph()
+
 	result := map[string]bool{startSectorID: true}
 	queue := []int{startIdx}
 
@@ -105,29 +108,42 @@ func portalBFS(chunk *world.Chunk, startSectorID string, portalFilter func(p *wo
 		queue = queue[1:]
 		sec := &chunk.Sectors[idx]
 
-		for k := range sec.Portals {
-			p := &sec.Portals[k]
-			if p.ToSector == "" || result[p.ToSector] {
+		// Borders rather than sec.Portals: one edge can front two sectors once
+		// a chunk has storeys — a stairwell shaft borders the ground-floor room
+		// at the bottom of its south edge and the upper room at the top — and a
+		// portal's single ToSector can only name one of them. Walking the
+		// portals directly left the other out of the visibility set, so it was
+		// culled while plainly in view. See Chunk.SectorBorders, which also
+		// skips frame portals and never follows a pinned wall.
+		for _, b := range borders[idx] {
+			toID := chunk.Sectors[b.To].ID
+			if result[toID] {
 				continue
 			}
-			if p.ToFrame != "" {
-				// A frame portal leads out of this chunk entirely, into a space
-				// that is moving relative to it. Walking the graph across that
-				// boundary would mean carrying a transform through the BFS and
-				// testing each sector's facing in its own coordinates.
-				//
-				// Not doing it costs nothing but efficiency: portal culling only
-				// ever *removes* sectors from what the frustum already accepted,
-				// so the far side simply falls back to frustum-only culling and
-				// is still drawn. You see the hangar through the open ramp; the
-				// engine just did not get to skip anything behind it.
+			if edgeFilter != nil && !edgeFilter(b.Start, b.End) {
 				continue
 			}
-			if portalFilter != nil && !portalFilter(p) {
+			result[toID] = true
+			queue = append(queue, b.To)
+		}
+
+		// Openings are the vertical edges of the same graph (world/opening.go).
+		// Without them, standing on a mezzanine and looking down the stairwell
+		// culls the hall underneath: it is connected to nothing the BFS can
+		// reach, so it is not in `result`, and the caller's portal test throws
+		// it away before the frustum ever sees it.
+		//
+		// They are traversed unconditionally, where an edge portal is filtered
+		// by which way it faces. A hole in a floor faces up and down at once, so
+		// the facing test an edge portal uses has nothing to say about it —
+		// and being wrong in this direction only means drawing a sector the
+		// frustum would then have to reject, rather than losing one.
+		for _, op := range openingNeighbours(chunk, sec) {
+			if result[op] {
 				continue
 			}
-			result[p.ToSector] = true
-			if ni, ok := idToIdx[p.ToSector]; ok {
+			result[op] = true
+			if ni, ok := idToIdx[op]; ok {
 				queue = append(queue, ni)
 			}
 		}
@@ -136,13 +152,29 @@ func portalBFS(chunk *world.Chunk, startSectorID string, portalFilter func(p *wo
 	return result
 }
 
+// openingNeighbours lists the sectors reachable from sec through the holes in
+// its floor and ceiling.
+func openingNeighbours(chunk *world.Chunk, sec *world.Sector) []string {
+	var out []string
+	add := func(openings []world.Opening, isFloor bool) {
+		for i := range openings {
+			if t := world.OpeningTarget(chunk, sec, &openings[i], isFloor); t != nil {
+				out = append(out, t.ID)
+			}
+		}
+	}
+	add(sec.Floor.Openings, true)
+	add(sec.Ceiling.Openings, false)
+	return out
+}
+
 // PortalVisibleSectors performs a BFS from startSectorID through camera-facing
 // portals and returns the set of sector IDs reachable (and therefore visible).
 // Returns nil if startSectorID is empty or not found, signalling the caller to
 // fall back to frustum-only culling.
 func PortalVisibleSectors(chunk *world.Chunk, startSectorID string, camPos mgl32.Vec3) map[string]bool {
-	return portalBFS(chunk, startSectorID, func(p *world.Portal) bool {
-		return PortalFacingCamera(p.StartPoint, p.EndPoint, camPos)
+	return portalBFS(chunk, startSectorID, func(start, end mgl32.Vec2) bool {
+		return PortalFacingCamera(start, end, camPos)
 	})
 }
 

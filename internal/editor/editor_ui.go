@@ -981,8 +981,6 @@ func EditorDrawUI() {
 		EditorDirLightIndicator()
 		// Last, so the popup opens over the panel as well as the viewport.
 		editor3DContextMenu()
-	} else if Editor.Mode == ModeSurface2D {
-		Surface2DPanel()
 	}
 }
 
@@ -1041,7 +1039,6 @@ func editor2DSectorSections(ch *world.Chunk) {
 				changed = textureCombo("Texture##ft", &s.Floor.Texture, false) || changed
 				changed = textureCombo("Blend Texture##fbt", &s.Floor.BlendTexture, true) || changed
 				changed = textureCombo("Blend Mask##fbm", &s.Floor.BlendMask, true) || changed
-				changed = imgui.Checkbox("Terrain##fter", &s.Floor.Terrain) || changed
 				imgui.Checkbox("Double Sided##fds", &s.Floor.DoubleSided)
 				changed = editorDragFloat("Alpha##fa", &s.Floor.Alpha, 0, 1, "%.2f") || changed
 				if changed {
@@ -1058,7 +1055,6 @@ func editor2DSectorSections(ch *world.Chunk) {
 				changed = textureCombo("Texture##ct", &s.Ceiling.Texture, false) || changed
 				changed = textureCombo("Blend Texture##cbt", &s.Ceiling.BlendTexture, true) || changed
 				changed = textureCombo("Blend Mask##cbm", &s.Ceiling.BlendMask, true) || changed
-				changed = imgui.Checkbox("Terrain##cter", &s.Ceiling.Terrain) || changed
 				imgui.Checkbox("Double Sided##cds", &s.Ceiling.DoubleSided)
 				changed = editorDragFloat("Alpha##ca", &s.Ceiling.Alpha, 0, 1, "%.2f") || changed
 				if changed {
@@ -1067,28 +1063,22 @@ func editor2DSectorSections(ch *world.Chunk) {
 				imgui.TreePop()
 			}
 
-			// Floor/ceiling surface editors + UV, extrusion, terrain, smooth
-			// and detail panels — the same set the 3D panel offers.
-			if imgui.Button("Edit Floor Surface##floorSurf2d") {
-				EnterSurface2D("floor")
-			}
+			// Floor/ceiling surface shaping + UV, smooth and detail panels —
+			// the same set the 3D panel offers. Shaping itself happens in the
+			// 3D view: it is done by dragging the mesh where it is, and the map
+			// has no depth to drag along.
+			editorSurfacePanel(ch, s, surfaceFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "floor"))
 			if editorUVControls("Floor2D", &s.Floor.UVOffset, &s.Floor.UVScale, &s.Floor.UVRotation) {
 				_ = world.ReloadSector(ch, s)
 			}
-			editorSurfaceExtrusionPanel(ch, s, "Floor2D", &s.Floor.Extrusions)
-			editorTerrainPanel(ch, s, "Floor2D", &s.Floor.Terrain, &s.Floor.TerrainPoints)
 			if editorSmoothPanel("Floor2D", &s.Floor.Smooth, &s.Floor.SmoothAngle) {
 				_ = world.ReloadSector(ch, s)
 			}
 			editorDetailPanel("Floor2D", &s.Floor.Detail)
-			if imgui.Button("Edit Ceiling Surface##ceilSurf2d") {
-				EnterSurface2D("ceiling")
-			}
+			editorSurfacePanel(ch, s, surfaceFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "ceiling"))
 			if editorUVControls("Ceil2D", &s.Ceiling.UVOffset, &s.Ceiling.UVScale, &s.Ceiling.UVRotation) {
 				_ = world.ReloadSector(ch, s)
 			}
-			editorSurfaceExtrusionPanel(ch, s, "Ceil2D", &s.Ceiling.Extrusions)
-			editorTerrainPanel(ch, s, "Ceil2D", &s.Ceiling.Terrain, &s.Ceiling.TerrainPoints)
 			if editorSmoothPanel("Ceil2D", &s.Ceiling.Smooth, &s.Ceiling.SmoothAngle) {
 				_ = world.ReloadSector(ch, s)
 			}
@@ -1174,14 +1164,10 @@ func editorEdgePanel(ch *world.Chunk, s *world.Sector) {
 			ch.RebuildGaps()
 		}
 		changed = false
-		if imgui.Button("Edit Wall Surface##wallSurf2d") {
-			EnterSurface2D("wall")
-		}
+		editorSurfacePanel(ch, s, edgeFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, "wall", idx))
 		if editorUVControls("Wall2D", &w.UVOffset, &w.UVScale, &w.UVRotation) {
 			_ = world.ReloadSector(ch, s)
 		}
-		editorExtrusionPanel(ch, s, w)
-		editorTerrainPanel(ch, s, "Wall2D", &w.Terrain, &w.TerrainPoints)
 		// Smooth shading (rebuilds the wall: normals are made at upload)
 		if editorSmoothPanel("Wall2D", &w.Smooth, &w.SmoothAngle) {
 			_ = world.ReloadSector(ch, s)

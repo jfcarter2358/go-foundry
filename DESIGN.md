@@ -18,9 +18,60 @@ objects:
           - name: ceiling
             description: The ceiling is a convex polygon created by following the edges of the sector along the top which can be optionally displayed and optionally checked for collision
           - name: floor
-            description: The floor is a convex polygon created by following the edges of the sector along the bottom which can be optionally displayed and optionally checked for collision. Additionally, floors can have the `terrain` attribute set to `true` which means that they now have a web of triangles inside of them that can have their points manipulated to create varied terrain within the sector.
+            description: The floor is a convex polygon created by following the edges of the sector along the bottom which can be optionally displayed and optionally checked for collision. Like every other surface it can carry a **surface mesh** — an editable web of points and faces, shaped in the 3D editor, which is how terrain, steps, pits and holes are all authored. See "Surface meshes" below.
       - name: biome sector
         description: A polygon painted over a chunk's floors that clothes them — GPU-instanced scatter (grass, rocks, wildflowers, cattails, moss), a conforming textured ground patch, or, for the Water kind, an animated water surface filling the polygon. Biome sectors are decoration and never take part in collision.
+
+## Surface meshes
+
+Every wall, floor and ceiling is flat until somebody shapes it. When they do, it
+grows a **surface mesh**: a shared pool of points and a set of n-gon faces
+indexing into them — the same representation the model editor runs on, and
+edited with the same gestures. Select a face in the 3D view, press Tab, and the
+selection modes retarget from the sector's topology to that surface's own:
+`1`/`2`/`3` pick its points, edges and faces, `E` extrudes, `I` insets, `C`
+connects two points into a new edge, `H` opens a face as a hole.
+
+This replaced four separate mechanisms — per-vertex height offsets, Delaunay
+"terrain" points, `Extrusion` prisms, and floor/ceiling `Opening` polygons —
+three of which could not be combined with each other, and none of which could be
+applied twice. An `Extrusion` was a single prism, so there was no way to put a
+bump on the floor of a recess or a bevel on a hole's rim. Extruding a mesh face
+is a topological operation that can be applied to its own output, so both fall
+out for free.
+
+Two things make it work as part of a *level* rather than as a free-floating mesh:
+
+- **Points are parametric, not positional.** A point is `(U, V)` in the face's
+  own space — along/down for a wall, chunk-local X/Z for a floor — plus a
+  `Depth` along the face's depth axis. A `SurfaceFrame` converts that to world
+  space using the sector's *current* geometry, so the mesh rides the surface:
+  change the ceiling height and the wall's mesh stretches with it. Free 3D
+  positions would be orphaned the moment anybody dragged a corner on the map.
+- **The outline belongs to the sector, not to the mesh.** Points bound to an
+  outline corner are re-derived on every rebuild and cannot be dragged across
+  the surface. Sectors share corners with their neighbours and must stay convex
+  for portal culling, so a mesh that owned its own outline would let the three
+  faces meeting at a corner drift apart. When the outline itself changes — a
+  wall split, a corner inserted or deleted — `RemapSurfaceMesh` carries the
+  interior across rather than discarding the shape.
+
+Collision follows the mesh for floors and ceilings: the height query reads the
+same triangles that were drawn, so a bump you can see is a bump you walk up. A
+**wall's collision plane stays flat** — the mesh moves what you see, and what
+stops you is still the wall's segment on the 2D map, with the mesh's `Hole`
+faces punched through it as pass-through windows. Bumps you walk into; holes you
+walk through. That is the same contract procedural detail already ships with,
+and it keeps wall collision a segment test rather than a swept mesh query.
+
+`Opening` survives alongside this, because it is not a shape but a *connection*:
+it pairs two faces of one slab, is walked by the portal-culling BFS, and is what
+lets a body fall between storeys. Surface meshes cut geometry; openings connect
+sectors.
+
+Levels written before surface meshes existed load unchanged — the loader
+migrates `extrusions:` and `terrain_points:` into a mesh once, and the writer
+emits only meshes from then on.
 
 A level also carries one optional **spawn point**: the position and facing gameplay starts the player at. It is a property of the level rather than an object in it — there is exactly one, it is never drawn outside the editor, and it never collides.
 
@@ -335,7 +386,7 @@ Rendering should cull as many chunks/sectors/walls as possible _before_ renderin
 
 ## Collision Checking
 
-The player carries an axis-aligned bounding box, and everything it is resolved against is level geometry. First it works out which world chunk it is in; once it knows that, the chunk's spatial index gives it the sector. If the sector has `terrain == true`, a 'top-down' check figures out which terrain triangle the player is over and the collision is resolved against that triangle and any applicable edges. Walls, floors, ceilings, slopes and wall extrusions are each resolved in turn.
+The player carries an axis-aligned bounding box, and everything it is resolved against is level geometry. First it works out which world chunk it is in; once it knows that, the chunk's spatial index gives it the sector. If the floor carries a surface mesh, a 'top-down' check figures out which of its triangles the player is over and the collision is resolved against that triangle and any applicable edges. Walls, floors, ceilings, slopes and the openings cut through walls are each resolved in turn.
 
 An entity with `collision.world` set goes through those same resolvers. It is
 handed to them as a *proxy* placed at its bounding volume's centre with that

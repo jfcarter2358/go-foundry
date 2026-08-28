@@ -32,6 +32,7 @@ const (
 	gizmoKindChunk    = "chunk"
 	gizmoKindEntity   = "entity"
 	gizmoKindVolume   = "volume"
+	gizmoKindLight    = "light"
 )
 
 const (
@@ -80,11 +81,17 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 			return v.Position, true
 		}
 
+	case gizmoKindLight:
+		if pl := activeGizmoPointLight(); pl != nil {
+			return pl.Position, true
+		}
+
 	case gizmoKindChunk:
-		if ch := activeChunk(); ch != nil {
+		if ch := activeGizmoChunk(); ch != nil {
 			// The chunk's Origin field can sit far from its geometry, so anchor
-			// the gizmo on the middle of the chunk's bounds instead.
-			return ch.MinBound.Add(ch.MaxBound).Mul(0.5), true
+			// the gizmo on the middle of the chunk's bounds instead — carried into
+			// world space, since MinBound/MaxBound are chunk-local.
+			return ch.LocalToWorld(ch.MinBound.Add(ch.MaxBound).Mul(0.5)), true
 		}
 	}
 	return mgl32.Vec3{}, false
@@ -97,6 +104,13 @@ func activeGizmoSpawn() *world.SpawnPoint {
 		return nil
 	}
 	return Editor.level.Spawn
+}
+
+// activeGizmoChunk returns the chunk when it is the selection, or nil — the
+// same "is this actually selected, not merely active" gate the other
+// activeGizmoX functions apply, via selectedChunk (editor_chunk.go).
+func activeGizmoChunk() *world.Chunk {
+	return selectedChunk()
 }
 
 // gizmoArmLength returns the world length of an arm at the gizmo's distance, so
@@ -164,7 +178,7 @@ func pickTranslateAxis(mx, my int32) int {
 // they must not be clickable either.
 func gizmoSuppressed() bool {
 	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode ||
-		Editor.VolumePlacementMode || Editor.ExtrusionMode
+		Editor.VolumePlacementMode || Editor.SurfaceEditing
 }
 
 // translateGizmoMouseDown starts an axis drag if the click grabbed an arm.
@@ -275,12 +289,37 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindLight:
+		pl := activeGizmoPointLight()
+		if pl == nil {
+			return false
+		}
+		// Position only. A point light is a position and a radius — it has no
+		// orientation to rotate and no size the scale gizmo could act on, so
+		// the rotate and scale tools simply do not match this kind.
+		Editor.GizmoDragStartPos = pl.Position
+		EditorPushUndo()
+		return true
+
 	case gizmoKindChunk:
-		ch := activeChunk()
+		ch := activeGizmoChunk()
 		if ch == nil {
 			return false
 		}
+		// All three snapshotted, as for an entity/volume: the same capture
+		// serves the rotate and scale drags, which start from the chunk's own
+		// Rotation/Scale rather than from a point cloud. Rotation is Y-only
+		// (chunk.go's ModelMatrix has no X/Z rotation to speak of) and Scale is
+		// uniform, so only one component of each carries real information —
+		// but packing them into the same Vec3 fields every other kind uses
+		// keeps this one case, not a parallel set of scalar fields.
+		sc := ch.Scale
+		if sc == 0 {
+			sc = 1
+		}
 		Editor.GizmoDragStartPos = ch.Origin
+		Editor.GizmoDragStartRot = mgl32.Vec3{0, ch.Rotation, 0}
+		Editor.GizmoDragStartScale = mgl32.Vec3{sc, sc, sc}
 		EditorPushUndo()
 		return true
 	}
@@ -331,8 +370,17 @@ func translateGizmoMouseMove(mx, my int32) {
 			// only changes the matrix it is drawn with.
 			v.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
+	case gizmoKindLight:
+		if pl := activeGizmoPointLight(); pl != nil {
+			pl.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+			// Straight to the shader, per drag event: a light whose uniform is
+			// only refreshed on mouse-up would be dragged with the lighting
+			// left behind, which is the one thing you are watching while you
+			// move it.
+			world.UploadLights(Editor.level.Lights)
+		}
 	case gizmoKindChunk:
-		if ch := activeChunk(); ch != nil {
+		if ch := activeGizmoChunk(); ch != nil {
 			moveChunk(ch, axisMoved(Editor.GizmoDragStartPos, axis, delta))
 		}
 	}
@@ -432,27 +480,66 @@ func dragVerticesAlongAxis(axis int, delta float32) {
 			if i >= len(Editor.GizmoDragOffsets) {
 				return cur
 			}
-			return gizmoSnapOffset(sel, Editor.GizmoDragOffsets[i]+delta)
+			// delta is a world Y distance; VertexOffsets are chunk-local, so a
+			// scaled chunk's vertices would otherwise rise at the wrong rate.
+			// Only the vertical component of the carried direction is taken:
+			// Chunk.Rotation is Y-only so it never tilts world up, and a
+			// frame that does tilt has no single local axis this drag maps to
+			// anyway (the same reasoning the XZ path below spells out).
+			d := delta
+			if ch, _ := sectorOf(sel); ch != nil {
+				d = ch.WorldToLocalDirection(mgl32.Vec3{0, delta, 0}).Y()
+			}
+			return gizmoSnapOffset(sel, Editor.GizmoDragOffsets[i]+d)
 		})
 		return
 	}
-	// Chunk.Points is XZ: component 0 is world X, component 1 world Z.
+	// Chunk.Points is XZ: component 0 is chunk-local X, component 1 chunk-local
+	// Z — the same thing as world X/Z only for a chunk with no rotation (the
+	// overwhelming common case, and the only one any shipped level uses), which
+	// is why that case keeps the exact old per-component behavior: the other
+	// axis is left completely untouched rather than passed through a snap it
+	// was never asked for. A rotated chunk has no single local axis a world
+	// drag corresponds to — world X moves it diagonally in its own local
+	// frame — so both components go through WorldToLocalDirection and get
+	// snapped together instead.
 	comp := 0
 	if axis == 2 {
 		comp = 1
 	}
+	worldDelta := gizmoAxes[axis].Mul(delta)
 	setSelectedVertexPoints(func(i int, sel vertexSel, pt mgl32.Vec2) mgl32.Vec2 {
 		if i >= len(Editor.GizmoDragPoints) {
 			return pt
 		}
 		out := Editor.GizmoDragPoints[i]
-		out[comp] = gizmoSnap(out[comp] + delta)
-		return out
+		ch, _ := sectorOf(sel)
+		// The fast path leaves the untouched axis exactly alone, which is what
+		// keeps grid-snap honest for the ordinary case (see this function's
+		// own note). It is only legal when a world-space delta IS a local one
+		// — i.e. the whole ModelMatrix is the identity, not merely Rotation
+		// == 0. A scaled chunk moves at the wrong rate through it (one world
+		// unit is 1/Scale local units), and a frame-owned chunk can be rotated
+		// in the world by its vehicle while its own Rotation is still 0, which
+		// sends a world-X drag diagonally through its local space.
+		if ch == nil || ch.ModelMatrix() == mgl32.Ident4() {
+			out[comp] = gizmoSnap(out[comp] + delta)
+			return out
+		}
+		local := ch.WorldToLocalDirection(worldDelta)
+		return mgl32.Vec2{gizmoSnap(out.X() + local.X()), gizmoSnap(out.Y() + local.Z())}
 	})
 }
 
-// gizmoSnapOffset snaps a vertex height offset so the resulting world height —
-// not the offset itself — lands on the grid.
+// gizmoSnapOffset snaps a vertex height offset so the resulting height — not
+// the offset itself — lands on the grid.
+//
+// The grid it lands on is the CHUNK'S, not the world's: base and offset are
+// both chunk-local, so `base+offset` is a local height. That is the right
+// grid to snap an authored vertex to (it is the one the 2D map draws and the
+// one every other authored height in the chunk shares), but it is not the
+// world grid unless the chunk is unmoved and unscaled — the previous comment
+// here claimed the world one.
 func gizmoSnapOffset(sel vertexSel, offset float32) float32 {
 	_, s := sectorOf(sel)
 	if s == nil {

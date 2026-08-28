@@ -44,10 +44,8 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		Rotation:   rc.Rotation,
 		Scale:      sc,
 		FrameOwner: rc.Frame,
+		Layers:     loadChunkLayers(rc.Layers),
 	}
-
-	cos32 := float32(math.Cos(float64(rc.Rotation)))
-	sin32 := float32(math.Sin(float64(rc.Rotation)))
 
 	// Sort so the point pool is built in a deterministic order — Go map
 	// iteration is randomised, which would otherwise shuffle point indices on
@@ -62,12 +60,8 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 	pointNameToIdx := make(map[string]int, len(names))
 	for _, name := range names {
 		rp := rc.Points[name]
-		x := rp.X * sc
-		y := rp.Y * sc
-		tx := cos32*x - sin32*y + origin.X()
-		tz := sin32*x + cos32*y + origin.Z()
 		pointNameToIdx[name] = len(chunk.Points)
-		chunk.Points = append(chunk.Points, mgl32.Vec2{tx, tz})
+		chunk.Points = append(chunk.Points, mgl32.Vec2{rp.X, rp.Y})
 		chunk.PointNames = append(chunk.PointNames, name)
 	}
 
@@ -92,58 +86,6 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 	}
 
 	for _, rs := range rc.Sectors {
-		loadExtrusions := func(raws []world.RawExtrusion, transformXZ bool) []world.Extrusion {
-			var out []world.Extrusion
-			for _, re := range raws {
-				extUVScale := mgl32.Vec2{re.UVScale.X, re.UVScale.Y}
-				if extUVScale == (mgl32.Vec2{}) {
-					extUVScale = mgl32.Vec2{1, 1}
-				}
-				ext := world.Extrusion{
-					Depth:       re.Depth,
-					Texture:     re.Texture,
-					Visible:     world.BoolDefault(re.Visible, true),
-					BackVisible: world.BoolDefault(re.BackVisible, true),
-					UVOffset:    mgl32.Vec2{re.UVOffset.X, re.UVOffset.Y},
-					UVScale:     extUVScale,
-					UVRotation:  re.UVRotation,
-					Alpha:       float32Default(re.Alpha, 1.0),
-				}
-				if re.Texture != "" {
-					texNeeded[re.Texture] = true
-				}
-				for _, rp := range re.Outer {
-					if transformXZ {
-						tp := transformPoint2D(mgl32.Vec2{rp.U, rp.V}, origin, rc.Rotation, sc)
-						ext.Outer = append(ext.Outer, world.ExtrusionPoint{U: tp.X(), V: tp.Y()})
-					} else {
-						ext.Outer = append(ext.Outer, world.ExtrusionPoint{U: rp.U, V: rp.V})
-					}
-				}
-				for _, rp := range re.Inner {
-					if transformXZ {
-						tp := transformPoint2D(mgl32.Vec2{rp.U, rp.V}, origin, rc.Rotation, sc)
-						ext.Inner = append(ext.Inner, world.ExtrusionPoint{U: tp.X(), V: tp.Y()})
-					} else {
-						ext.Inner = append(ext.Inner, world.ExtrusionPoint{U: rp.U, V: rp.V})
-					}
-				}
-				out = append(out, ext)
-			}
-			return out
-		}
-		loadTerrainPts := func(raws []world.RawTerrainPoint, transformXZ bool) []world.TerrainPoint {
-			var out []world.TerrainPoint
-			for _, rtp := range raws {
-				if transformXZ {
-					tp := transformPoint2D(mgl32.Vec2{rtp.U, rtp.V}, origin, rc.Rotation, sc)
-					out = append(out, world.TerrainPoint{U: tp.X(), V: tp.Y(), Depth: rtp.Depth})
-				} else {
-					out = append(out, world.TerrainPoint{U: rtp.U, V: rtp.V, Depth: rtp.Depth})
-				}
-			}
-			return out
-		}
 
 		floorUVScale := mgl32.Vec2{rs.Floor.UVScale.X, rs.Floor.UVScale.Y}
 		if floorUVScale == (mgl32.Vec2{}) {
@@ -169,44 +111,43 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		sector := world.Sector{
 			ID:         rs.ID,
 			ScriptData: sectorScript,
+			Layer:      rs.Layer,
 			Floor: world.Floor{
-				ScriptData:    floorScript,
-				Enabled:       rs.Floor.Enabled,
-				Hidden:        rs.Floor.Hidden,
-				Height:        rs.Floor.Height,
-				Texture:       rs.Floor.Texture,
-				BlendTexture:  rs.Floor.BlendTexture,
-				BlendMask:     rs.Floor.BlendMask,
-				Terrain:       rs.Floor.Terrain,
-				DoubleSided:   world.BoolDefault(rs.Floor.DoubleSided, true),
-				Alpha:         float32Default(rs.Floor.Alpha, 1.0),
-				Extrusions:    loadExtrusions(rs.Floor.Extrusions, true),
-				TerrainPoints: loadTerrainPts(rs.Floor.TerrainPoints, true),
-				UVOffset:      mgl32.Vec2{rs.Floor.UVOffset.X, rs.Floor.UVOffset.Y},
-				UVScale:       floorUVScale,
-				UVRotation:    rs.Floor.UVRotation,
-				Detail:        world.DetailFromRaw(rs.Floor.Detail),
-				Smooth:        rs.Floor.Smooth,
-				SmoothAngle:   rs.Floor.SmoothAngle,
+				ScriptData:   floorScript,
+				Enabled:      rs.Floor.Enabled,
+				Hidden:       rs.Floor.Hidden,
+				Height:       rs.Floor.Height,
+				Texture:      rs.Floor.Texture,
+				BlendTexture: rs.Floor.BlendTexture,
+				BlendMask:    rs.Floor.BlendMask,
+				DoubleSided:  world.BoolDefault(rs.Floor.DoubleSided, true),
+				Alpha:        float32Default(rs.Floor.Alpha, 1.0),
+				Openings:     loadOpenings(rs.Floor.Openings),
+				Skirt:        rs.Floor.Skirt,
+				SkirtTexture: rs.Floor.SkirtTexture,
+				UVOffset:     mgl32.Vec2{rs.Floor.UVOffset.X, rs.Floor.UVOffset.Y},
+				UVScale:      floorUVScale,
+				UVRotation:   rs.Floor.UVRotation,
+				Detail:       world.DetailFromRaw(rs.Floor.Detail),
+				Smooth:       rs.Floor.Smooth,
+				SmoothAngle:  rs.Floor.SmoothAngle,
 			},
 			Ceiling: world.Ceiling{
-				ScriptData:    ceilScript,
-				Enabled:       rs.Ceiling.Enabled,
-				Height:        rs.Ceiling.Height,
-				Texture:       rs.Ceiling.Texture,
-				BlendTexture:  rs.Ceiling.BlendTexture,
-				BlendMask:     rs.Ceiling.BlendMask,
-				Terrain:       rs.Ceiling.Terrain,
-				DoubleSided:   world.BoolDefault(rs.Ceiling.DoubleSided, true),
-				Alpha:         float32Default(rs.Ceiling.Alpha, 1.0),
-				Extrusions:    loadExtrusions(rs.Ceiling.Extrusions, true),
-				TerrainPoints: loadTerrainPts(rs.Ceiling.TerrainPoints, true),
-				UVOffset:      mgl32.Vec2{rs.Ceiling.UVOffset.X, rs.Ceiling.UVOffset.Y},
-				UVScale:       ceilUVScale,
-				UVRotation:    rs.Ceiling.UVRotation,
-				Detail:        world.DetailFromRaw(rs.Ceiling.Detail),
-				Smooth:        rs.Ceiling.Smooth,
-				SmoothAngle:   rs.Ceiling.SmoothAngle,
+				ScriptData:   ceilScript,
+				Enabled:      rs.Ceiling.Enabled,
+				Height:       rs.Ceiling.Height,
+				Texture:      rs.Ceiling.Texture,
+				BlendTexture: rs.Ceiling.BlendTexture,
+				BlendMask:    rs.Ceiling.BlendMask,
+				DoubleSided:  world.BoolDefault(rs.Ceiling.DoubleSided, true),
+				Alpha:        float32Default(rs.Ceiling.Alpha, 1.0),
+				Openings:     loadOpenings(rs.Ceiling.Openings),
+				UVOffset:     mgl32.Vec2{rs.Ceiling.UVOffset.X, rs.Ceiling.UVOffset.Y},
+				UVScale:      ceilUVScale,
+				UVRotation:   rs.Ceiling.UVRotation,
+				Detail:       world.DetailFromRaw(rs.Ceiling.Detail),
+				Smooth:       rs.Ceiling.Smooth,
+				SmoothAngle:  rs.Ceiling.SmoothAngle,
 			},
 		}
 
@@ -296,27 +237,24 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 					wallUVScale = mgl32.Vec2{1, 1}
 				}
 				sector.Walls = append(sector.Walls, world.Wall{
-					ID:            edgeID,
-					ScriptData:    edgeScript,
-					StartPoint:    start,
-					EndPoint:      end,
-					Texture:       edge.Texture,
-					BlendTexture:  edge.BlendTexture,
-					BlendMask:     edge.BlendMask,
-					Collision:     edge.Collision,
-					Visible:       !edge.Hidden,
-					Pinned:        edge.Pinned,
-					DoubleSided:   world.BoolDefault(edge.DoubleSided, true),
-					Terrain:       edge.WallTerrain,
-					Alpha:         float32Default(edge.Alpha, 1.0),
-					Extrusions:    loadExtrusions(edge.Extrusions, false),
-					TerrainPoints: loadTerrainPts(edge.TerrainPoints, false),
-					UVOffset:      mgl32.Vec2{edge.UVOffset.X, edge.UVOffset.Y},
-					UVScale:       wallUVScale,
-					UVRotation:    edge.UVRotation,
-					Detail:        world.DetailFromRaw(edge.Detail),
-					Smooth:        edge.Smooth,
-					SmoothAngle:   edge.SmoothAngle,
+					ID:           edgeID,
+					ScriptData:   edgeScript,
+					StartPoint:   start,
+					EndPoint:     end,
+					Texture:      edge.Texture,
+					BlendTexture: edge.BlendTexture,
+					BlendMask:    edge.BlendMask,
+					Collision:    edge.Collision,
+					Visible:      !edge.Hidden,
+					Pinned:       edge.Pinned,
+					DoubleSided:  world.BoolDefault(edge.DoubleSided, true),
+					Alpha:        float32Default(edge.Alpha, 1.0),
+					UVOffset:     mgl32.Vec2{edge.UVOffset.X, edge.UVOffset.Y},
+					UVScale:      wallUVScale,
+					UVRotation:   edge.UVRotation,
+					Detail:       world.DetailFromRaw(edge.Detail),
+					Smooth:       edge.Smooth,
+					SmoothAngle:  edge.SmoothAngle,
 				})
 				sector.EdgeKinds = append(sector.EdgeKinds, "wall")
 				sector.EdgeIDs = append(sector.EdgeIDs, edgeID)
@@ -433,13 +371,8 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 				minFloor = h
 			}
 		}
-		for _, tp := range sector.Floor.TerrainPoints {
-			if h := sector.Floor.Height + tp.Depth; h < minFloor {
-				minFloor = h
-			}
-		}
-		for _, ext := range sector.Floor.Extrusions {
-			if h := sector.Floor.Height - ext.Depth; h < minFloor {
+		if d, ok := rawSurfaceMinDepth(rs.Floor.Mesh, rs.Floor.TerrainPoints, rs.Floor.Extrusions, true); ok {
+			if h := sector.Floor.Height + d; h < minFloor {
 				minFloor = h
 			}
 		}
@@ -449,13 +382,8 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 				maxCeil = h
 			}
 		}
-		for _, tp := range sector.Ceiling.TerrainPoints {
-			if h := sector.Ceiling.Height + tp.Depth; h > maxCeil {
-				maxCeil = h
-			}
-		}
-		for _, ext := range sector.Ceiling.Extrusions {
-			if h := sector.Ceiling.Height + ext.Depth; h > maxCeil {
+		if d, ok := rawSurfaceMaxDepth(rs.Ceiling.Mesh, rs.Ceiling.TerrainPoints, rs.Ceiling.Extrusions, false); ok {
+			if h := sector.Ceiling.Height + d; h > maxCeil {
 				maxCeil = h
 			}
 		}
@@ -471,8 +399,15 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 
 	chunk.InferPortals()
 
+	// Surface meshes are built here rather than in the struct literals above
+	// because a mesh needs a SurfaceFrame, and a frame needs the sector's
+	// points, heights and walls to be final — which they are not until
+	// InferPortals has decided which edges are walls at all.
 	for si := range chunk.Sectors {
 		s := &chunk.Sectors[si]
+		if si < len(rc.Sectors) {
+			loadSectorSurfaceMeshes(&chunk, s, rawSectorByID(rc.Sectors, s.ID), rc.Points)
+		}
 		sectorPts := world.SectorPoints(&chunk, s)
 		if err := s.Load(sectorPts); err != nil {
 			return world.Chunk{}, nil, fmt.Errorf("sector %q load: %w", s.ID, err)
@@ -505,11 +440,12 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 	// it. Water surfaces are folded in later, by SyncBiomeWaterSurfaces.
 	chunk.RecomputeBounds()
 
-	// Biome sector polygons — points are chunk-local, re-derived to world
-	// space using the same transform already applied to structural points.
+	// Biome sector polygons — points are chunk-local, same as structural points.
 	for _, rb := range rc.BiomeSectors {
 		bs := world.BiomeSector{
 			ID:          rb.ID,
+			DrapeSector: rb.DrapeSector,
+			Layer:       rb.Layer,
 			Points:      make([]mgl32.Vec2, len(rb.Points)),
 			HeightDirty: true,
 			GroundDirty: true,
@@ -555,7 +491,7 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 			},
 		}
 		for i, rp := range rb.Points {
-			bs.Points[i] = transformPoint2D(mgl32.Vec2{rp.X, rp.Y}, origin, rc.Rotation, sc)
+			bs.Points[i] = mgl32.Vec2{rp.X, rp.Y}
 		}
 		chunk.BiomeSectors = append(chunk.BiomeSectors, bs)
 	}
@@ -805,6 +741,40 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 	}
 
 	return level, nil
+}
+
+// loadOpenings converts a surface's holes. Points come across verbatim: an
+// opening is authored chunk-local, exactly like the sector outline it is cut
+// into, and travels into world space through the chunk's own ModelMatrix along
+// with everything else.
+func loadOpenings(raw []world.RawOpening) []world.Opening {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]world.Opening, len(raw))
+	for i, ro := range raw {
+		op := world.Opening{ID: ro.ID, Link: ro.Link, Points: make([]mgl32.Vec2, len(ro.Points))}
+		for j, rp := range ro.Points {
+			op.Points[j] = mgl32.Vec2{rp.X, rp.Y}
+		}
+		out[i] = op
+	}
+	return out
+}
+
+// loadChunkLayers converts a chunk's authoring-band metadata, or returns nil
+// for a chunk that has none — the ordinary case, and every chunk written before
+// layers existed. Chunk.LayerAt synthesizes bands for whatever is missing, so
+// there is nothing to fill in here.
+func loadChunkLayers(raw []world.RawChunkLayer) []world.ChunkLayer {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]world.ChunkLayer, len(raw))
+	for i, rl := range raw {
+		out[i] = world.ChunkLayer{Name: rl.Name, BaseY: rl.BaseY, CeilY: rl.CeilY}
+	}
+	return out
 }
 
 // float32Default returns the value of a *float32, defaulting to def when nil.

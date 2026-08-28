@@ -196,13 +196,22 @@ func detailNormalAt(d *world.DetailSpec, N mgl32.Vec3, edges [][2]mgl32.Vec3, ep
 	return N
 }
 
-// DetailSurfaceAt returns the displaced world height and unit normal for fl
-// at world XZ (wx,wz), given the flat floor's own height baseHeight (from
+// DetailSurfaceAt returns the displaced height and unit normal for fl at
+// (wx,wz), given the flat floor's own height baseHeight (from
 // InterpolateSurfaceHeight — used as the Y component fed into the wave/noise
 // field, matching the GPU's own use of the undisplaced vertex position).
 // Callers must check fl.Detail.HasDisplace() first; an unconfigured spec
 // would just return (baseHeight, {0,1,0}) here, which is a legitimate but
 // pointless answer to bother computing.
+//
+// Every coordinate here — in, out, and the wave/noise field itself — is
+// CHUNK-LOCAL, matching fl.Geometry's own vertex buffer (which is what
+// DispNormalFor and BoundaryEdgesFor read). That is what keeps this
+// self-consistent without ever seeing a chunk: local positions are only ever
+// compared against local ones, and the pattern rides the chunk's transform
+// rather than staying pinned to the world, which is what you want when a
+// chunk moves. Callers passing world coordinates would silently get detail
+// sampled from the wrong place on a moved chunk.
 func DetailSurfaceAt(fl *world.Floor, wx, wz, baseHeight float32) (height float32, normal mgl32.Vec3) {
 	d := &fl.Detail
 	N := DispNormalFor(&fl.Geometry)

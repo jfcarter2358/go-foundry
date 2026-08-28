@@ -50,8 +50,8 @@ func TestBiomeSurfaceAtFollowsDisplacedFloor(t *testing.T) {
 	diverged, sawPartialCoverage := false, false
 	for x := float32(-12); x <= 12; x += 0.7 {
 		for z := float32(-12); z <= 12; z += 0.9 {
-			h, cov := biome.BiomeSurfaceAt(displaced, grass, testSeed, x, z)
-			flatH, flatCov := biome.BiomeSurfaceAt(plain, grass, testSeed, x, z)
+			h, cov := biome.BiomeSurfaceAt(displaced, &displaced.Chunks[0], "", grass, testSeed, x, z)
+			flatH, flatCov := biome.BiomeSurfaceAt(plain, &plain.Chunks[0], "", grass, testSeed, x, z)
 			if geom.Abs32(h-flatH) > 1e-4 {
 				diverged = true
 			}
@@ -78,8 +78,8 @@ func TestBiomeSurfaceAtFollowsDisplacedFloor(t *testing.T) {
 	cattail := &world.BiomeBrush{Kind: world.BiomeCattail}
 	for x := float32(-12); x <= 12; x += 1.9 {
 		for z := float32(-12); z <= 12; z += 2.3 {
-			h, cov := biome.BiomeSurfaceAt(displaced, cattail, testSeed, x, z)
-			flatH, _ := biome.BiomeSurfaceAt(plain, cattail, testSeed, x, z)
+			h, cov := biome.BiomeSurfaceAt(displaced, &displaced.Chunks[0], "", cattail, testSeed, x, z)
+			flatH, _ := biome.BiomeSurfaceAt(plain, &plain.Chunks[0], "", cattail, testSeed, x, z)
 			if h != flatH {
 				t.Fatalf("Cattail height at (%.1f,%.1f) = %v over a displaced floor but %v over a flat one — it must not follow displacement", x, z, h, flatH)
 			}
@@ -109,7 +109,7 @@ func TestGroundPatchMeshMatchesScatterHeight(t *testing.T) {
 			Points: []mgl32.Vec2{{-10, -10}, {10, -10}, {10, 10}, {-10, 10}},
 			Brush:  world.DefaultBiomeBrush(kind),
 		}
-		verts := BuildGroundPatchMesh(lvl, s)
+		verts := BuildGroundPatchMesh(lvl, &lvl.Chunks[0], s)
 		if len(verts) == 0 {
 			t.Fatalf("kind %d produced an empty ground patch mesh", kind)
 		}
@@ -117,7 +117,7 @@ func TestGroundPatchMeshMatchesScatterHeight(t *testing.T) {
 
 		for i := 0; i < len(verts); i += GroundVertexStride {
 			x, y, z := verts[i], verts[i+1], verts[i+2]
-			want, _ := biome.BiomeSurfaceAt(lvl, &s.Brush, seed, x, z)
+			want, _ := biome.BiomeSurfaceAt(lvl, &lvl.Chunks[0], "", &s.Brush, seed, x, z)
 			if geom.Abs32(y-want) > 1e-4 {
 				t.Fatalf("kind %d: ground patch vertex at (%.3f,%.3f) sits at y=%.5f but scatter would be planted at y=%.5f — "+
 					"the patch and the scatter height must come from the same surface", kind, x, z, y, want)
@@ -161,7 +161,7 @@ func TestGroundPatchIsSlopeGated(t *testing.T) {
 	// A steep floor: two corners raised 12 over a 16-unit span (~37 degrees).
 	lvl := flatFloorAt(0, []float32{0, 0, 12, 12})
 
-	_, N, _ := biome.FloorHeightNormalUnderLevel(lvl, 0, 0)
+	_, N, _ := biome.FloorHeightNormalUnderLevel(lvl, &lvl.Chunks[0], "", 0, 0)
 	angle := float32(math.Acos(float64(N.Normalize().Y()))) * 180 / math.Pi
 	if angle < 20 {
 		t.Fatalf("fixture is only %.1f degrees; expected a steep floor", angle)
@@ -174,7 +174,7 @@ func TestGroundPatchIsSlopeGated(t *testing.T) {
 			Brush:  world.DefaultBiomeBrush(world.BiomeMoss),
 		}
 		s.Brush.MinSlopeAngle, s.Brush.MaxSlopeAngle = minA, maxA
-		return BuildGroundPatchMesh(lvl, s)
+		return BuildGroundPatchMesh(lvl, &lvl.Chunks[0], s)
 	}
 
 	// Permissive: fully covered everywhere.
@@ -201,7 +201,7 @@ func TestGroundPatchIsSlopeGated(t *testing.T) {
 		Brush:  world.DefaultBiomeBrush(world.BiomeCattail),
 	}
 	s.Brush.MinSlopeAngle, s.Brush.MaxSlopeAngle = 80, 90
-	if lo, hi := groundPatchCoverageRange(t, BuildGroundPatchMesh(lvl, s)); lo != 1 || hi != 1 {
+	if lo, hi := groundPatchCoverageRange(t, BuildGroundPatchMesh(lvl, &lvl.Chunks[0], s)); lo != 1 || hi != 1 {
 		t.Errorf("Cattail patch coverage = %v..%v, want all 1 (it never follows displacement)", lo, hi)
 	}
 }
@@ -218,7 +218,7 @@ func TestBiomeSurfaceAtIncludesGroundPatchOffsets(t *testing.T) {
 	sawAbove, sawBelow, differsFromFloor := false, false, false
 	for x := float32(-10); x <= 10; x += 0.6 {
 		for z := float32(-10); z <= 10; z += 0.8 {
-			h, _ := biome.BiomeSurfaceAt(lvl, &brush, testSeed, x, z)
+			h, _ := biome.BiomeSurfaceAt(lvl, &lvl.Chunks[0], "", &brush, testSeed, x, z)
 			if geom.Abs32(h-5) > 1e-4 {
 				differsFromFloor = true
 			}
@@ -255,8 +255,8 @@ func TestBiomeSurfaceAtIgnoresDisplaceOffFace(t *testing.T) {
 	brush := &world.BiomeBrush{Kind: world.BiomeGrass}
 	for x := float32(-8); x <= 8; x += 2.1 {
 		for z := float32(-8); z <= 8; z += 2.7 {
-			h, cov := biome.BiomeSurfaceAt(scatterOnly, brush, testSeed, x, z)
-			want, _ := biome.BiomeSurfaceAt(plain, brush, testSeed, x, z)
+			h, cov := biome.BiomeSurfaceAt(scatterOnly, &scatterOnly.Chunks[0], "", brush, testSeed, x, z)
+			want, _ := biome.BiomeSurfaceAt(plain, &plain.Chunks[0], "", brush, testSeed, x, z)
 			if h != want {
 				t.Fatalf("height at (%.1f,%.1f) = %v over a Displace=false face, want the undisplaced %v", x, z, h, want)
 			}

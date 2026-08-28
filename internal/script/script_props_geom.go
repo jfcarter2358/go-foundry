@@ -441,29 +441,15 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 				}),
 			Doc: "0.0 fully transparent, 1.0 opaque",
 		},
-		"terrain": {
+		// "shaped" replaces "terrain", which used to switch a surface between a
+		// flat plane and a Delaunay displacement mesh. There is only one
+		// representation now — a SurfaceMesh, which a flat surface simply does
+		// not carry — so there is no mode left to set, only a fact to read.
+		"shaped": {
 			Get: getF(
-				func(f *world.Floor) flang.Value { return flang.BoolVal(f.Terrain) },
-				func(c *world.Ceiling) flang.Value { return flang.BoolVal(c.Terrain) }),
-			Set: setF(
-				func(f *world.Floor, v flang.Value) error {
-					b, ok := toBool(v)
-					if !ok {
-						return propErr("terrain", "bool", v)
-					}
-					f.Terrain = b
-					return nil
-				},
-				func(c *world.Ceiling, v flang.Value) error {
-					b, ok := toBool(v)
-					if !ok {
-						return propErr("terrain", "bool", v)
-					}
-					c.Terrain = b
-					return nil
-				}),
-			Dirty: true,
-			Doc:   "use the terrain displacement mesh",
+				func(f *world.Floor) flang.Value { return flang.BoolVal(!f.Mesh.IsEmpty()) },
+				func(c *world.Ceiling) flang.Value { return flang.BoolVal(!c.Mesh.IsEmpty()) }),
+			Doc: "read-only: true when the surface has been shaped in the editor",
 		},
 		"smooth": {
 			Get: getF(
