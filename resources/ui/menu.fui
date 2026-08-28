@@ -1,0 +1,97 @@
+# menu.fui — the main menu.
+#
+# The same three input semantics the pause menu sets, and for the same reason:
+# modal so nothing behind it reads input, pausing so the level does not run
+# while it is up, and cursor-releasing so there is a pointer to click with.
+#
+# It is deliberately NOT a full-screen opaque panel. The level it sits over is
+# already loaded and frozen behind it, so the scrim is translucent and the beach
+# is the menu's backdrop — which is also why the buttons are a narrow column
+# rather than a slab: there is a view to keep.
+#
+# The two buttons carry no `action:`. A click posts `:click:` to the widget and
+# then to this screen, and scripts/menu.flang decides what the id means — the
+# routing SCRIPTING.md documents, and the one place the behaviour lives.
+
+id: menu
+canvas: {ref_w: 1920, ref_h: 1080, match: 0.5}
+modal: true
+pauses: true
+shows_cursor: true
+initial_focus: play
+script: scripts/menu.flang
+
+root:
+  id: root
+  kind: panel
+  color: {r: 0, g: 0, b: 0, a: 0}
+  children:
+    # Blocks so a click on the view beside the buttons does not fall through to
+    # the frozen level behind.
+    - id: scrim
+      kind: panel
+      blocks: true
+      color: {r: 0.02, g: 0.03, b: 0.05, a: 0.55}
+
+    - id: title
+      kind: text
+      anchor_min: {x: 0.5, y: 0.5}
+      anchor_max: {x: 0.5, y: 0.5}
+      offset: [-560, -330, -560, 190]
+      text:
+        value: "FOUNDRY"
+        size: 96
+        h_align: center
+        v_align: middle
+        color: {r: 0.96, g: 0.94, b: 0.89, a: 1}
+
+    - id: rule
+      kind: panel
+      anchor_min: {x: 0.5, y: 0.5}
+      anchor_max: {x: 0.5, y: 0.5}
+      offset: [-230, -176, -230, 172]
+      color: {r: 0.82, g: 0.66, b: 0.38, a: 0.9}
+
+    - id: tagline
+      kind: text
+      anchor_min: {x: 0.5, y: 0.5}
+      anchor_max: {x: 0.5, y: 0.5}
+      offset: [-560, -148, -560, 116]
+      text:
+        value: "LANDFALL"
+        size: 22
+        h_align: center
+        color: {r: 0.62, g: 0.66, b: 0.70, a: 1}
+
+    - id: play
+      kind: button
+      anchor_min: {x: 0.5, y: 0.5}
+      anchor_max: {x: 0.5, y: 0.5}
+      offset: [-190, -20, -190, -52]
+      color: {r: 0.13, g: 0.15, b: 0.18, a: 0.94}
+      hover: {color: {r: 0.22, g: 0.26, b: 0.31, a: 0.96}}
+      press: {color: {r: 0.09, g: 0.10, b: 0.12, a: 1}}
+      text: {value: "Play", size: 30, h_align: center, v_align: middle}
+      nav: {down: quit}
+
+    - id: quit
+      kind: button
+      anchor_min: {x: 0.5, y: 0.5}
+      anchor_max: {x: 0.5, y: 0.5}
+      offset: [-190, 72, -190, -144]
+      color: {r: 0.13, g: 0.15, b: 0.18, a: 0.94}
+      hover: {color: {r: 0.32, g: 0.19, b: 0.19, a: 0.96}}
+      press: {color: {r: 0.09, g: 0.10, b: 0.12, a: 1}}
+      text: {value: "Quit", size: 30, h_align: center, v_align: middle}
+      nav: {up: play}
+
+    - id: hint
+      kind: text
+      anchor_min: {x: 0.5, y: 1}
+      anchor_max: {x: 0.5, y: 1}
+      offset: [-560, -70, -560, 32]
+      text:
+        value: "WASD to move    Mouse to look    Space to jump"
+        size: 18
+        h_align: center
+        color: {r: 0.48, g: 0.52, b: 0.57, a: 1}

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"foundry/internal/editor"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
@@ -90,7 +89,7 @@ func HandleEvent(event sdl.Event) {
 			// The button-up that would have ended a drag goes to whatever took
 			// focus, so end them here instead — otherwise a camera turn
 			// interrupted by an alt-tab is still running on the way back.
-			editor.EditorEndDrags()
+			devEndDrags()
 		case sdl.WINDOWEVENT_SIZE_CHANGED:
 			RefreshWindowSize()
 		case sdl.WINDOWEVENT_FOCUS_GAINED:
@@ -111,14 +110,26 @@ func HandleEvent(event sdl.Event) {
 				// The interact key. Recorded as an edge rather than read as a
 				// level, so holding it fires once — SCRIPTING.md's `:interact:`
 				// is a press, not a state.
-				if !editor.Editor.Active {
+				if !devActive() {
 					hooks.ScriptInteractRequest()
 				}
 
+			case sdl.SCANCODE_ESCAPE:
+				// The pause menu. Escape reaches this handler only when the
+				// screen stack did not take it, which is precisely when there
+				// is no modal screen up to close — so this is the "open" half
+				// of the pair and internal/ui owns the "close" half. See
+				// uiOpenPauseMenu.
+				if !devActive() {
+					uiOpenPauseMenu()
+				}
+
 			case sdl.SCANCODE_GRAVE: // tilde (~) key toggles level editor
-				editor.EditorToggle()
+				// A release build has no editor to toggle; devToggle is a stub
+				// there and the key does nothing.
+				devToggle()
 			case sdl.SCANCODE_SPACE:
-				if !editor.Editor.Active && platform.GravityEnabled && platform.IsOnGround {
+				if !devActive() && platform.GravityEnabled && platform.IsOnGround {
 					platform.JumpRequested = true
 				}
 			case sdl.SCANCODE_F3:
@@ -145,7 +156,7 @@ func HandleEvent(event sdl.Event) {
 				// Window-level multisample anti-aliasing — see antialias.go.
 				render.ToggleAntiAlias()
 			case sdl.SCANCODE_0:
-				if !editor.Editor.Active {
+				if !devActive() {
 					platform.GravityEnabled = !platform.GravityEnabled
 					if !platform.GravityEnabled {
 						platform.IsOnGround = false
@@ -157,11 +168,11 @@ func HandleEvent(event sdl.Event) {
 				// gameplay ones: they say whether the engine honours the
 				// per-entity flags at all, which is how you tell "this entity
 				// is not solid" from "collision is off".
-				if !editor.Editor.Active {
+				if !devActive() {
 					world.EntityWorldCollisionEnabled = !world.EntityWorldCollisionEnabled
 				}
 			case sdl.SCANCODE_9:
-				if !editor.Editor.Active {
+				if !devActive() {
 					world.EntityEntityCollisionEnabled = !world.EntityEntityCollisionEnabled
 				}
 			}

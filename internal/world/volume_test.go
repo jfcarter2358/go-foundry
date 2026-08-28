@@ -202,3 +202,51 @@ func TestScriptDataTagsAndAttributes(t *testing.T) {
 		t.Error("DeleteAttr did not report what it did")
 	}
 }
+
+func TestVolumeIsLevelTrigger(t *testing.T) {
+	// All three conditions are load-bearing: a disarmed trigger, or one with no
+	// extents, contains nothing, and one with no target is an ordinary volume.
+	base := testVolume(VolumeBox)
+	base.LoadLevel = "canyon"
+
+	if !base.IsLevelTrigger() {
+		t.Error("an armed, bounded volume with a target is not a level trigger")
+	}
+
+	off := base
+	off.Enabled = false
+	if off.IsLevelTrigger() {
+		t.Error("a disabled volume is still a level trigger")
+	}
+
+	flat := base
+	flat.HalfY = 0
+	if flat.IsLevelTrigger() {
+		t.Error("an unauthored volume is still a level trigger")
+	}
+
+	plain := testVolume(VolumeBox)
+	if plain.IsLevelTrigger() {
+		t.Error("a volume with no target is a level trigger")
+	}
+}
+
+func TestVolumeLoadLevelRoundTrips(t *testing.T) {
+	v := testVolume(VolumeBox)
+	v.LoadLevel = "canyon"
+
+	back, err := VolumeFromRaw(VolumeToRaw(&v))
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	if back.LoadLevel != "canyon" {
+		t.Errorf("load_level came back %q, want %q", back.LoadLevel, "canyon")
+	}
+
+	// And an ordinary volume writes no key at all, so adding this changed no
+	// existing level file.
+	plain := testVolume(VolumeBox)
+	if raw := VolumeToRaw(&plain); raw.LoadLevel != "" {
+		t.Errorf("a volume with no target wrote load_level %q", raw.LoadLevel)
+	}
+}

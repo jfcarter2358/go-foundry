@@ -17,7 +17,6 @@ import (
 	"log"
 
 	"foundry/internal/collision"
-	"foundry/internal/editor"
 	"foundry/internal/hooks"
 	"foundry/internal/levelio"
 	"foundry/internal/render"
@@ -94,6 +93,7 @@ func stepLevelLoad(level *world.Level) {
 func installLevel(level *world.Level, built *world.Level) {
 	collision.DeleteEntities(level)
 	render.DeleteVolumes(level)
+	world.ReleaseLevelGeometry(level)
 
 	*level = *built
 
@@ -115,6 +115,7 @@ func installLevel(level *world.Level, built *world.Level) {
 	}
 
 	// The editor is pointed at the same level struct, so its selections name
-	// objects that have just been replaced.
-	editor.EditorAdoptLoadedLevel()
+	// objects that have just been replaced. A stub in a release build, which
+	// has no selections to re-point.
+	devAdoptLoadedLevel()
 }

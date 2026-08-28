@@ -1,3 +1,7 @@
+// Development-build only, alongside the tables it checks (script_reference.go).
+
+//go:build !release
+
 package app
 
 // script_reference_ui_test.go — the F1 reference must show every property table

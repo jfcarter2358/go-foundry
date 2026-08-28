@@ -1,0 +1,21 @@
+-- menu.flang — what the main menu's buttons do.
+--
+-- The screen carries this rather than each button carrying its own: a click
+-- posts `:click:` to the widget, and then to the screen when the widget has no
+-- script of its own (SCRIPTING.md, Events). One handler, one place to look, and
+-- `src.id` tells the two buttons apart.
+--
+-- Play does not load anything. The level is already up and frozen behind the
+-- menu — `pauses: true` in menu.fui is what froze it — so starting the game is
+-- taking the menu off the stack, and nothing else. Hiding it also gives
+-- mouse-look its cursor back, because `shows_cursor` stops being asked for.
+
+def on_click(:click:, src ref) when src.id == "play" -> null
+    hide_screen("menu")
+on_click(:click:, src ref) when src.id == "quit"
+    quit_game()
+on_click(:click:, src ref)
+    -- Any other widget on this screen. Nothing to do, and deliberately not an
+    -- error: a decorative button added later should not take the menu down.
+    return
+end

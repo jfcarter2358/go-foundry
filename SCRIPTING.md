@@ -455,11 +455,11 @@ editor's reference panel. The core surface:
 | --- | --- |
 | entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · read-only: `type` `current_sector` `current_chunk` `frame` `seat` |
 | vehicle | `vehicle_throttle` `vehicle_steer` `vehicle_pitch` `vehicle_roll` · tuning: `vehicle_max_speed` `vehicle_accel` `vehicle_brake` `vehicle_turn_rate` `vehicle_pitch_rate` `vehicle_roll_rate` `vehicle_drag` · read-only: `vehicle_speed` `vehicle_driver` |
-| volume | `position` `rotation` `half` `shape` `enabled` |
+| volume | `position` `rotation` `half` `shape` `enabled` `load_level` |
 | edge | `kind` `texture` `collision` `visible` `pinned` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · portals also: `to_sector` `draw_gap` `gap_texture` |
 | floor | `enabled` `hidden` `height` `texture` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · read-only: `shaped` |
 | ceiling | as floor, without `hidden` |
-| chunk | `origin` `rotation` `scale` `frame` — all read-only |
+| chunk | `enabled` · read-only: `origin` `rotation` `scale` `frame` |
 | light | `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` |
 | biome | `kind` `density` `range` `color` `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` |
@@ -472,6 +472,24 @@ write, plus the form that names one attachment of several.
 recess, a hole) rather than being flat. It replaced the writable `terrain` flag,
 which chose between two representations that no longer both exist — see
 `internal/world/surface_mesh.go`.
+
+A chunk's `enabled` is how a level streams. Writing `false` takes the chunk out
+of the world completely: nothing draws it, nothing collides with it, it leaves
+the spatial hash, and its vertex buffers are released. Writing `true` builds it
+again from the same authored data the loader reads. A chunk stays addressable by
+name either way — that is what lets one be switched back on — and a level file
+can start one switched off with `disabled: true`, in which case it is never
+uploaded at all until something asks for it.
+
+```
+@east_wing.prop.enabled = true     -- stream the next area in
+@west_wing.prop.enabled = false    -- and drop the one behind
+```
+
+The buffers are freed and rebuilt between frames rather than at the write, for
+the same reason `load_level` is deferred: a script tick runs before the frame's
+GL work. Nothing has to be sequenced around that — the flag is what everything
+reads.
 
 Writing an unknown property is an error naming the closest valid one. Some writes
 (heights, textures) rebuild geometry; the engine defers that to the end of the
@@ -638,7 +656,7 @@ needs those numbers to move.
 `detach(obj)`
 
 **UI** — `show_screen(name)` `hide_screen(screen)` `screen(name)`
-`widget(screen, id)` `focus(widget)` `load_level(name)`
+`widget(screen, id)` `focus(widget)` `load_level(name)` `quit_game()`
 
 `spawn` returns a `ref` to the new entity. Entities spawned during play exist only
 for that play session.
@@ -878,6 +896,7 @@ screen("pause")                    -- the screen, if it is up; null otherwise
 widget(screen("pause"), "ok")      -- one widget on it
 focus(widget(@pause, "resume"))    -- move keyboard and gamepad focus
 load_level("canyon")               -- covered by the `loading` screen
+quit_game()                        -- end the game after this frame
 ```
 
 A screen and a widget carry the same tags, attributes, script and params any
@@ -895,6 +914,51 @@ Level changes go through `load_level`, which records a request rather than
 loading at the call: loading tears down the runtime executing the script making
 it. The frame loop does the work between frames, covered by the `loading` screen,
 and `@level.prop.load_progress` is what that screen's bar binds to.
+
+`quit_game` is deferred for the same reason and one more: the window and the GL
+context belong to the main thread, and the frame loop is the only place that may
+end them. It takes no arguments, and the call returns — the process leaves at the
+top of the next frame, not inside the handler.
+
+### Level exits
+
+The commonest level change needs no script at all. A **volume** carrying a
+`load_level` is an exit: walk the player into it and the named level loads,
+through exactly the path the verb takes. It is set in the editor, under the
+volume's **Level Exit** group, from a list of the levels that exist.
+
+```yaml
+volumes:
+  - id: cave_mouth
+    position: {x: 40, y: 0, z: -12}
+    half: {x: 2, y: 3, z: 1}
+    load_level: caves
+```
+
+Only the **player** takes an exit — a guard on patrol crossing it does not end
+the level — and only while the volume is `enabled`, so a locked door is a
+disarmed trigger and unlocking it is `@cave_mouth.prop.enabled = true`. It fires
+on the way in, once, not every frame the player stands inside.
+
+Place the destination's `spawn:` clear of its own exit back. The player arrives
+*inside* a volume they were not in a moment ago, which is an entry like any
+other — two levels whose spawns sit in each other's exits will bounce between
+themselves.
+
+An exit may also carry a script. Its `:enter:` handler runs in the frame the
+load is requested, before the load starts, which is where "save what the player
+was carrying, then move on" belongs. `load_level` is what to write instead when
+the destination is a decision rather than a fact:
+
+```
+def on_enter(:enter:, other ref) -> null
+    if @self.attr.key_found
+        load_level("vault")
+    else
+        show_screen("locked")
+    end
+end
+```
 
 ### Where output goes
 

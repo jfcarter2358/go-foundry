@@ -5,11 +5,9 @@ import (
 	"foundry/internal/biome"
 	"foundry/internal/collision"
 	"foundry/internal/detail"
-	"foundry/internal/editor"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
-	"foundry/internal/imguibackend"
-	"foundry/internal/levelio"
+	"foundry/internal/hooks"
 	"foundry/internal/particle"
 	"foundry/internal/platform"
 	"foundry/internal/render"
@@ -18,7 +16,6 @@ import (
 	"foundry/internal/ui"
 	"foundry/internal/uidraw"
 	"foundry/internal/uifont"
-	"foundry/internal/uiwin"
 	"foundry/internal/world"
 	_ "image/png"
 	"io"
@@ -62,9 +59,18 @@ func Run() {
 	}
 	fileutil.ExecutablePath = filepath.Dir(executable)
 
-	// [SCENARIO 1/4/5] Open a persistent log file next to the executable so
-	// startup crashes are visible on Windows (where the console closes instantly).
-	logPath := filepath.Join(fileutil.ExecutablePath, "foundry.log")
+	// What this binary is: the engine, or a particular game. A release build
+	// reads its manifest here — before the log is opened, because the manifest
+	// is what says where the log belongs — and holds any failure until
+	// startupVerify below has somewhere to report it. See startup_release.go.
+	startupConfigure()
+
+	// [SCENARIO 1/4/5] Open a persistent log file in the writable state
+	// directory so startup crashes are visible on Windows (where the console
+	// closes instantly). That is beside the executable in a development build
+	// and the per-user data directory in an installed one — an installed game
+	// cannot write into its own install directory. See fileutil.StatePath.
+	logPath := fileutil.StatePath("foundry.log")
 	logFile, ferr := os.Create(logPath)
 	var logSinks io.Writer = os.Stderr
 	if ferr != nil {
@@ -76,6 +82,9 @@ func Run() {
 	}
 	log.SetFlags(log.Ltime | log.Lmsgprefix)
 	log.SetPrefix("[foundry] ")
+
+	// Anything startupConfigure could not report for want of a log.
+	startupVerify()
 
 	// Everything logged from here on is also readable in the log window, and a
 	// script's own output joins the same sinks. Installed after the prefix and
@@ -143,6 +152,10 @@ func Run() {
 	}
 	defer platform.Window.Destroy()
 	defer sdl.GLDeleteContext(platform.Context)
+	// Fullscreen, when the game asks to open that way. Ahead of the size
+	// read-back below so the projection is built from the size the window
+	// actually ended up with.
+	startupApplyWindow()
 	// The window manager can hand back a size other than the one requested
 	// above (scaling, tiling, a size clamped to the display); pick up what we
 	// actually got so the viewport/projection setup below uses the real one.
@@ -150,9 +163,11 @@ func Run() {
 	platform.WinWidth, platform.WinHeight = platform.Window.GetSize()
 	platform.WinHalfWidth = platform.WinWidth / 2
 	platform.WinHalfHeight = platform.WinHeight / 2
-	if uiwin.MainWindowID, err = platform.Window.GetID(); err != nil {
+	mainWindowID, err := platform.Window.GetID()
+	if err != nil {
 		log.Fatalf("Window.GetID: %v", err)
 	}
+	devSetMainWindowID(mainWindowID)
 
 	if err = gl.Init(); err != nil {
 		log.Fatalf("gl.Init: %v", err)
@@ -243,14 +258,14 @@ func Run() {
 	// has one.
 	gfx.LoadCamera(mgl32.Vec3{0, world.EyeHeight, 3}, 0.0, float32(math.Pi/2.0))
 
-	// Start with a blank in-memory level rather than loading one from disk;
-	// the user can save it (or open an existing level) from the editor.
-	levelsDir := filepath.Join(fileutil.ExecutablePath, "levels")
-	levelPath := filepath.Join(levelsDir, "untitled.yaml")
-	log.Printf("starting with blank level")
-	level, err := levelio.NewBlankLevel()
+	// What the engine comes up on. A development build starts on a blank
+	// in-memory level with the editor over it; a release build opens the level
+	// its manifest names, with no editor to open one from. See startup_dev.go
+	// and startup_release.go.
+	log.Printf("%s", startupDescribeLevel())
+	level, levelPath, levelsDir, err := startupLevel()
 	if err != nil {
-		log.Fatalf("NewBlankLevel: %v", err)
+		log.Fatalf("startup level: %v", err)
 	}
 	log.Printf("level loaded: %d chunk(s), %d dir light(s), %d point light(s)",
 		len(level.Chunks),
@@ -303,24 +318,20 @@ func Run() {
 	}
 	defer uidraw.Delete()
 
-	// Init level editor (must be after LoadLevel and OpenGL context ready)
-	editor.EditorInit(&level, levelPath, levelsDir)
-	defer imguibackend.ImGuiShutdown()
+	// Init level editor (must be after LoadLevel and OpenGL context ready).
+	// A release build has no editor: both of these are stubs there, and
+	// startupEnterGame below does the work EditorToggle's play half does here.
+	devInit(&level, levelPath, levelsDir)
+	defer devShutdown()
 
-	// Start directly in the 3D editor rather than play mode, since a fresh
-	// blank level has nothing to play.
-	editor.EditorToggle()
+	// Into gameplay, for the build that has nowhere else to go. After the theme
+	// and the UI renderer above, because it puts the game's first screens up.
+	startupEnterGame(&level)
 
 	// The running game's draw list, reused every frame so a steady HUD
 	// allocates nothing. One list rather than one per screen: the screens draw
 	// in sequence, never at once.
 	var gameUIList uidraw.List
-
-	// Cache total sector count (constant after load) for debug stats.
-	totalSectors := 0
-	for i := range level.Chunks {
-		totalSectors += len(level.Chunks[i].Sectors)
-	}
 
 	log.Printf("startup complete — entering game loop")
 
@@ -351,13 +362,7 @@ func Run() {
 			// window — ahead of the routing below, so a secondary window's own
 			// handler can't eat F1 first — and swallows the Escape that closes
 			// it before a sub-editor can read it as "cancel".
-			if uiwin.KeybindHelpHandleEvent(event) {
-				continue
-			}
-			// A secondary UIWindow (texture editor, etc.) owns its own imgui
-			// context; route its events there instead of into the 3D
-			// editor/gameplay handlers, which know nothing about it.
-			if uiwin.RouteWindowEvent(event, uiwin.MainWindowID) {
+			if devRouteEvent(event) {
 				continue
 			}
 			// The running game's UI. Ahead of gameplay so a click on a menu
@@ -368,8 +373,8 @@ func Run() {
 			if uiHandleEvent(event) {
 				continue
 			}
-			if editor.Editor.Active {
-				editor.EditorHandleEvent(event)
+			if devActive() {
+				devHandleEvent(event)
 			}
 			HandleEvent(event)
 		}
@@ -377,13 +382,22 @@ func Run() {
 		platform.KeyStates = sdl.GetKeyboardState()
 
 		// Point the F1 reference at the focused window before anything draws.
-		uiwin.KeybindHelpUpdateFocus(uiwin.MainWindowID)
+		devUpdateFocus()
 
 		// A screen that wants a pointer releases mouse-look, and closing it
 		// gives capture back. Edge-triggered, so this joins the editor toggle
 		// and the focus handler as a third claimant rather than fighting them
 		// every frame.
 		uiApplyCursor()
+
+		// A script asking to leave, drained here for the same reason the level
+		// load below is: quitting from inside a script would free the runtime
+		// executing the call. Ahead of everything else this frame, so a menu's
+		// Quit button does not also pay for a world tick and a draw.
+		if hooks.TakeQuitRequest() {
+			platform.Running = false
+			break
+		}
 
 		// A level a script asked for, and one slice of building it. While a
 		// load is in flight the world does not tick — half of it belongs to the
@@ -395,11 +409,11 @@ func Run() {
 		// A pausing screen freezes the player, the vehicles and the entities.
 		// It does not freeze scripts: the menu's own handlers have to run, and
 		// so does anything a script is animating behind it.
-		uiPaused := !editor.Editor.Active && (ui.Game.Pauses() || levelLoadPending())
+		uiPaused := !devActive() && (ui.Game.Pauses() || levelLoadPending())
 
-		if editor.Editor.Active {
+		if devActive() {
 			// Editor owns camera and input; gameplay logic is bypassed.
-			editor.EditorTick(platform.KeyStates)
+			devTick(platform.KeyStates)
 		} else if !uiPaused {
 			// --- Input -> player -> camera ---
 			// The keys say how far to move; the player is what moves, and the
@@ -487,8 +501,8 @@ func Run() {
 			playerPosBefore = world.PlayerEntity.Position
 			world.PlayerEntity.Collision.OnGround = false
 		}
-		collision.EntityUpdate(&level, platform.DeltaTime, !editor.Editor.Active && !uiPaused, world.PlayerEntity)
-		if !editor.Editor.Active && world.PlayerEntity != nil {
+		collision.EntityUpdate(&level, platform.DeltaTime, !devActive() && !uiPaused, world.PlayerEntity)
+		if !devActive() && world.PlayerEntity != nil {
 			if world.PlayerEntity.Collision.OnGround {
 				platform.IsOnGround = true
 			}
@@ -523,7 +537,7 @@ func Run() {
 		// that froze the moment the editor opened could not be placed by eye. The
 		// gate is handed over anyway so the simulation can tell play from
 		// authoring if it ever needs to.
-		world.EmitterUpdate(&level, platform.DeltaTime, !editor.Editor.Active && !uiPaused)
+		world.EmitterUpdate(&level, platform.DeltaTime, !devActive() && !uiPaused)
 
 		// The listener, published in the same slot and for the same reasons
 		// as the emitters above: after RefreshFrames, so anything riding a
@@ -538,7 +552,7 @@ func Run() {
 		// gfx.CamUp() rather than gfx.Cam.Up: the zero value there means "no
 		// tilt", and only the accessor knows that. The editor's fly camera is
 		// this same camera, which is what makes auditioning work.
-		world.SoundUpdate(&level, platform.DeltaTime, !editor.Editor.Active,
+		world.SoundUpdate(&level, platform.DeltaTime, !devActive(),
 			gfx.Cam.Position, gfx.Cam.Direction, gfx.CamUp())
 		world.MusicUpdate(&level)
 
@@ -546,7 +560,7 @@ func Run() {
 		// made this frame is visible to it. It consumes the press only when it
 		// actually did something, so `E` still reaches a scripted door when
 		// there is no seat within reach.
-		if !editor.Editor.Active {
+		if !devActive() {
 			VehicleInteractRequest(&level)
 		}
 
@@ -556,12 +570,12 @@ func Run() {
 		// The UI ticks after the world has settled, so a binding reads this
 		// frame's values, and before the script tick, so a click made this
 		// frame is already in the queue that tick drains to a fixpoint.
-		if !editor.Editor.Active {
+		if !devActive() {
 			ui.Game.Tick(platform.DeltaTime, float32(platform.WinWidth), float32(platform.WinHeight))
 		}
 
 		if !levelLoadPending() {
-			script.ScriptTick(&level, platform.DeltaTime, !editor.Editor.Active)
+			script.ScriptTick(&level, platform.DeltaTime, !devActive())
 		}
 
 		// --- Debug stats: update CPU & memory ---
@@ -569,8 +583,19 @@ func Run() {
 		render.DebugUpdateMemory()
 		render.DebugStats.FPS = 1.0 / platform.DeltaTime
 		render.DebugStats.FrameTimeMs = platform.DeltaTime * 1000.0
-		render.DebugStats.ChunksLoaded = len(level.Chunks)
-		render.DebugStats.SectorsLoaded = totalSectors
+		// Counted per frame rather than cached at load: a chunk switched off by
+		// a script has had its geometry released, and an overlay that still
+		// counted it would be reporting the level file rather than what is
+		// actually resident. (The cached version was also left behind by
+		// load_level, which replaces the level wholesale.)
+		render.DebugStats.ChunksLoaded, render.DebugStats.SectorsLoaded = 0, 0
+		for i := range level.Chunks {
+			if !level.Chunks[i].IsEnabled() {
+				continue
+			}
+			render.DebugStats.ChunksLoaded++
+			render.DebugStats.SectorsLoaded += len(level.Chunks[i].Sectors)
+		}
 
 		// Animated textures (the texture editor's animation stack) advance on
 		// the same free-running clock as the water/biome-wind uniforms below,
@@ -599,8 +624,7 @@ func Run() {
 		// freshly unwrapped atlas: creating a window from inside another
 		// window's draw would insert into the map being ranged over and leave
 		// the wrong GL context current. See modelPendingTexEditor.
-		editor.DrainModelTexEditorRequest()
-		uiwin.DrainWindowOpens()
+		devDrainWork()
 
 		// Per-frame water shader inputs: animation clock and the view position
 		// the fresnel/specular terms are measured against.
@@ -609,6 +633,17 @@ func Run() {
 		gl.Uniform3f(gfx.CamPosUniform, gfx.Cam.Position.X(), gfx.Cam.Position.Y(), gfx.Cam.Position.Z())
 
 		{
+			// Chunks a script switched on or off last tick get their geometry
+			// built or released here, where the GL context is current and no
+			// pass is mid-way through reading it. A change means the set of
+			// chunks that exist has moved, so the spatial hash and the frames
+			// built from it are rebuilt to match.
+			if world.SyncChunkGeometry(&level) {
+				if err := world.RebuildIndexes(&level); err != nil {
+					log.Printf("chunk enable: %v", err)
+				}
+			}
+
 			// Keep every Water-kind biome sector's companion water surface
 			// (chunk.WaterSurfaces) in step before anything reads it this
 			// frame — the water draw loop below, and shadow/culling passes
@@ -636,7 +671,7 @@ func Run() {
 			// displacement passes below are skipped rather than outlined —
 			// a wireframe field of grass blades is a solid mask, which is
 			// precisely what the mode exists to get rid of.
-			editorWire := editor.Editor.Active && editor.Editor.Mode == editor.Mode3D && editor.Editor.Wireframe
+			editorWire := devWireframe()
 			if editorWire {
 				gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
 			}
@@ -699,7 +734,14 @@ func Run() {
 
 			for i := range level.Chunks {
 				chunk := &level.Chunks[i]
-				if editor.Editor.Active {
+				if !chunk.IsEnabled() {
+					// Switched off, and its buffers are gone with it — see
+					// world/chunk_enable.go. The 2D map still draws it from its
+					// points, which is how an author gets at a chunk a level
+					// starts with disabled.
+					continue
+				}
+				if devActive() {
 					// Editor mutations (vertex drag, extrusion/terrain edits,
 					// height changes) can move geometry
 					// outside the chunk's cached AABB without updating it. Keep
@@ -743,7 +785,7 @@ func Run() {
 				// this pass to cull from.
 				var visibleSectors map[string]bool
 				var connectedSectors map[string]bool
-				if !editor.Editor.Active && world.PlayerEntity != nil && chunk.ID == world.PlayerEntity.CurrentChunk {
+				if !devActive() && world.PlayerEntity != nil && chunk.ID == world.PlayerEntity.CurrentChunk {
 					visibleSectors = render.PortalVisibleSectors(chunk, world.PlayerEntity.CurrentSector, chunkCam)
 					connectedSectors = render.PortalConnectedSectors(chunk, world.PlayerEntity.CurrentSector)
 				}
@@ -836,7 +878,7 @@ func Run() {
 			// The spawn marker is an authoring aid, not level geometry: it
 			// exists to be seen and dragged in the editor and must never show
 			// up in the shot the player spawns into.
-			if editor.Editor.Active && level.Spawn != nil {
+			if devActive() && level.Spawn != nil {
 				// A spawn aboard a vehicle is authored in that vehicle's
 				// coordinates, so its marker draws under the same transform its
 				// geometry does — otherwise the arrow sits at the world origin
@@ -855,9 +897,9 @@ func Run() {
 			// An entity with no mesh yet gets the same treatment, for the same
 			// reason: it has to be visible to be worked on, and invisible once
 			// the editor is closed.
-			if editor.Editor.Active {
+			if devActive() {
 				render.RenderVolumes(&level, &frustum)
-				editor.RenderEntityMarkers(&level, &frustum)
+				devRenderMarkers(&level, &frustum)
 			}
 
 			if !editorWire {
@@ -952,7 +994,7 @@ func Run() {
 		// Not drawn while the editor is active, for the same reason scripts do
 		// not run there: what is on screen in the editor is the level, not the
 		// game.
-		if !editor.Editor.Active {
+		if !devActive() {
 			// One pass per screen, bottom to top. Each has its own canvas and
 			// therefore its own scale, so they cannot share a projection.
 			for _, s := range ui.Game.Screens() {
@@ -962,18 +1004,15 @@ func Run() {
 		}
 
 		// Draw editor overlays and ImGui UI when editor is active
-		if editor.Editor.Active {
-			editor.EditorRender()
+		if devActive() {
+			devRender()
 		}
 
 		// Draw debug overlay and keybinding reference (both use ImGui,
 		// independent of the editor — when it is active, EditorRender has
 		// already drawn them inside its own frame).
-		if (render.DebugOverlayVisible || uiwin.KeybindHelpVisibleIn(uiwin.MainWindowID)) && !editor.Editor.Active {
-			imguibackend.ImGuiNewFrame(platform.DeltaTime)
-			render.DebugRenderOverlay()
-			uiwin.KeybindHelpRender()
-			imguibackend.ImGuiRender()
+		if !devActive() {
+			devRenderOverlays(platform.DeltaTime)
 		}
 
 		platform.Window.GLSwap()
@@ -981,6 +1020,6 @@ func Run() {
 		// Secondary windows (texture editor, etc.) render last, each in its
 		// own GL/imgui context, restoring the main ones before the next
 		// iteration touches world GL state again.
-		uiwin.RenderSecondaryWindows(platform.DeltaTime)
+		devRenderSecondaryWindows(platform.DeltaTime)
 	}
 }

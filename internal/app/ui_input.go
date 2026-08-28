@@ -14,12 +14,32 @@ package app
 // also a shot.
 
 import (
-	"foundry/internal/editor"
+	"log"
+
 	"foundry/internal/gfx"
 	"foundry/internal/ui"
 
 	"github.com/veandco/go-sdl2/sdl"
 )
+
+// pauseScreenName is the screen Escape puts up during play. A project without
+// one gets no pause menu and the key does nothing, which is the same way the
+// loading screen is optional (see level_load.go).
+const pauseScreenName = "pause"
+
+// uiOpenPauseMenu puts the pause screen up. Called from the gameplay key
+// handler, which Escape only reaches when the stack did not consume it — and
+// the stack consumes Escape exactly when a modal screen is up, closing the
+// topmost one (Stack.Cancel).
+//
+// So the two halves are symmetric without either knowing about the other:
+// Escape with nothing up opens the pause menu, and Escape with it up closes it
+// again. Nothing here has to track whether the menu is showing.
+func uiOpenPauseMenu() {
+	if _, err := ui.Game.Show(pauseScreenName); err != nil {
+		log.Printf("pause screen: %v", err)
+	}
+}
 
 // uiHandleEvent offers one SDL event to the running game's screen stack, and
 // reports whether the UI consumed it.
@@ -31,15 +51,21 @@ func uiHandleEvent(event sdl.Event) bool {
 	// run outside it: what is on screen in the editor is the level, not the
 	// game. The UI editor's own preview is a separate stack in a separate
 	// window.
-	if editor.Editor.Active {
+	if devActive() {
 		return false
 	}
 
+	// The cases below are VALUE types, not pointers. sdl.PollEvent hands back
+	// what goEvent builds, and goEvent returns values — so a `case
+	// *sdl.MouseButtonEvent` matches nothing at all, and the symptom is not a
+	// compile error or a panic but a UI that silently never sees an event.
+	// Every other event handler in the engine (editor.go, uiwin/window.go,
+	// input.go) switches on values for the same reason.
 	switch t := event.(type) {
-	case *sdl.MouseMotionEvent:
+	case sdl.MouseMotionEvent:
 		return ui.Game.PointerMove(float32(t.X), float32(t.Y))
 
-	case *sdl.MouseButtonEvent:
+	case sdl.MouseButtonEvent:
 		if t.Button != sdl.ButtonLeft {
 			return ui.Game.CapturesInput()
 		}
@@ -48,13 +74,13 @@ func uiHandleEvent(event sdl.Event) bool {
 		}
 		return ui.Game.PointerUp(float32(t.X), float32(t.Y))
 
-	case *sdl.MouseWheelEvent:
+	case sdl.MouseWheelEvent:
 		return ui.Game.Wheel(float32(t.Y))
 
-	case *sdl.TextInputEvent:
+	case sdl.TextInputEvent:
 		return ui.Game.TypeText(t.GetText())
 
-	case *sdl.KeyboardEvent:
+	case sdl.KeyboardEvent:
 		if t.State != sdl.PRESSED {
 			// Key-up is consumed alongside its key-down, so a key pressed over
 			// a menu does not release into gameplay when the menu closes.
@@ -65,7 +91,7 @@ func uiHandleEvent(event sdl.Event) bool {
 	return false
 }
 
-func uiHandleKey(t *sdl.KeyboardEvent) bool {
+func uiHandleKey(t sdl.KeyboardEvent) bool {
 	if dir, ok := uiNavDir(t.Keysym.Scancode); ok {
 		return ui.Game.Navigate(dir)
 	}
@@ -132,10 +158,10 @@ var uiCursorReleased bool
 // uiApplyCursor releases or re-takes mouse-look when what the stack wants
 // changes.
 func uiApplyCursor() {
-	want := !editor.Editor.Active && ui.Game.WantsCursor()
+	want := !devActive() && ui.Game.WantsCursor()
 	if want == uiCursorReleased {
 		return
 	}
 	uiCursorReleased = want
-	gfx.SetMouseLock(!want && !editor.Editor.Active)
+	gfx.SetMouseLock(!want && !devActive())
 }

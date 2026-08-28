@@ -531,7 +531,33 @@ func chunkProps() map[string]propAccess {
 			return fn(ch), true
 		}
 	}
+	set := func(fn func(ch *world.Chunk, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+		return func(c *refCache, r flang.RefVal, v flang.Value) error {
+			ch := c.chunkFor(r)
+			if ch == nil {
+				return &scriptMissingError{r.String()}
+			}
+			return fn(ch, v)
+		}
+	}
 	return map[string]propAccess{
+		"enabled": {
+			Get: get(func(ch *world.Chunk) flang.Value { return flang.BoolVal(ch.IsEnabled()) }),
+			// Only the flag is written here. Releasing or rebuilding the
+			// chunk's buffers is gl.* work, which a script tick is not allowed
+			// to do — the frame loop's SyncChunkGeometry picks the change up
+			// between frames and rebuilds the spatial hash with it. See
+			// world/chunk_enable.go.
+			Set: set(func(ch *world.Chunk, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("enabled", "bool", v)
+				}
+				ch.Disabled = !b
+				return nil
+			}),
+			Doc: "a disabled chunk is not drawn, not collided with, and its geometry is unloaded",
+		},
 		"origin": {
 			Get: get(func(ch *world.Chunk) flang.Value { return vecValue(ch.Origin) }),
 			Doc: "read-only: the offset baked into this chunk's points at load",

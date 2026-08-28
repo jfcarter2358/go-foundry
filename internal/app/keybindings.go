@@ -1,3 +1,9 @@
+// Development-build only: the F1 reference describes the editor, and a release
+// build has neither the editor nor the overlay that draws this. See
+// devtools_dev.go.
+
+//go:build !release
+
 package app
 
 import (

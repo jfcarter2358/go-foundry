@@ -259,6 +259,9 @@ func RenderBiomeGround(level *world.Level, projView mgl32.Mat4, camPos mgl32.Vec
 	current := mgl32.Ident4()
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
+		if !ch.IsEnabled() {
+			continue // switched off; see world/chunk_enable.go
+		}
 		for si := range ch.BiomeSectors {
 			s := &ch.BiomeSectors[si]
 			if len(s.Points) < 3 {

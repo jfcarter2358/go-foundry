@@ -393,8 +393,12 @@ type EditorState struct {
 	// Level picker dialog
 	ShowLevelPicker bool
 	LevelFiles      []string
-	NewLevelName    string
-	LevelsDir       string
+	// VolLevelComboOpen is last frame's state of the volume panel's "Load
+	// Level" dropdown, so the levels folder is re-read as it opens rather than
+	// on every frame it is held open. See editorVolumeLevelExit.
+	VolLevelComboOpen bool
+	NewLevelName      string
+	LevelsDir         string
 
 	// Save As dialog
 	ShowSaveAs bool
@@ -1017,6 +1021,9 @@ func EditorLoadLevel(path string) error {
 	// explicitly — overwriting the struct would drop the handles, not free them.
 	collision.DeleteEntities(Editor.level)
 	render.DeleteVolumes(Editor.level)
+	// And everything the chunks own — walls, floors, portal gaps, skirts, water
+	// planes and the biome caches over them. Same reason as the two above.
+	world.ReleaseLevelGeometry(Editor.level)
 
 	// Replace the level contents in-place (Editor.level points to main's level)
 	*Editor.level = newLevel

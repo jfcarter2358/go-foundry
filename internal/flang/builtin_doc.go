@@ -210,4 +210,6 @@ var builtinDocs = []BuiltinDoc{
 		"Move keyboard and gamepad focus to a widget. False if it is hidden, disabled or gone."},
 	{GroupWorld, "load_level", "load_level(name)", "bool",
 		"Ask for a level to be loaded, covered by the `loading` screen. It happens between frames, not at the call, because loading tears down the runtime running the script."},
+	{GroupWorld, "quit_game", "quit_game()", "bool",
+		"Ask for the game to end. Like load_level it happens between frames, not at the call: the window and the GL context belong to the main thread, and only the frame loop may end them."},
 }

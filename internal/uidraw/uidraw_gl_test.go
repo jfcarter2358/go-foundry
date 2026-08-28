@@ -198,3 +198,34 @@ func TestShippedHUDRendersThroughTheRealPass(t *testing.T) {
 	t.Logf("%d shipped screens, %d draw calls on the last one", len(st.Screens()), len(l.Cmds))
 	assertNoGLError(t, "the shipped screens")
 }
+
+// TestGlyphPagesReachTheGPUWithNoWorldUploads is the regression test for text
+// drawing as black boxes.
+//
+// The UI's upload queue and the world's are drained by the same call, and a
+// frame that edits no world texture leaves the world's empty — which is nearly
+// every frame. If the empty world queue can short-circuit the drain, the glyph
+// page never reaches the GPU, gfx.Textures has no entry for it, and every text
+// command binds texture 0: the default texture object, which samples opaque
+// black.
+func TestGlyphPagesReachTheGPUWithNoWorldUploads(t *testing.T) {
+	gltest.Context(t)
+	if err := Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(Delete)
+
+	uifont.Reset()
+	t.Cleanup(uifont.Reset)
+
+	atlas := uifont.Face("", 22)
+	delete(gfx.Textures, atlas.TexName)
+
+	SyncFontAtlases()
+	gfx.DrainTextureUploads() // nothing queued on the world side
+
+	if gfx.Textures[atlas.TexName] == 0 {
+		t.Fatalf("glyph page %q never reached the GPU; text would draw as black boxes", atlas.TexName)
+	}
+	assertNoGLError(t, "the glyph page upload")
+}

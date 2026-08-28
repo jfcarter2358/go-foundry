@@ -562,6 +562,21 @@ func volumeProps() map[string]propAccess {
 			}),
 			Doc: "a disabled volume contains nothing, so it fires no events",
 		},
+		"load_level": {
+			Get: get(func(v *world.Volume) flang.Value { return flang.StrVal(v.LoadLevel) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				s, ok := toStr(v)
+				if !ok {
+					return propErr("load_level", "str", v)
+				}
+				vol.LoadLevel = s
+				return nil
+			}),
+			// Writable so a hub level can re-point the same door at whichever
+			// area the player last unlocked, rather than needing one volume per
+			// destination stacked in the same doorway.
+			Doc: "the level the player walks into this volume to load; \"\" for an ordinary volume",
+		},
 	}
 }
 

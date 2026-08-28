@@ -138,6 +138,9 @@ func editorPointOccluded(eye, p mgl32.Vec3) bool {
 	// keeps this one walk.
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
+		if !ch.IsEnabled() {
+			continue // draws nothing, so it occludes nothing
+		}
 		model := ch.ModelMatrix()
 		cmin, cmax := ch.WorldBounds()
 		if !segmentHitsAABB(eye, dir, limit, cmin, cmax) {

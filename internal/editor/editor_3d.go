@@ -835,31 +835,10 @@ func deleteActiveChunk() {
 	}
 	ch := &lvl.Chunks[idx]
 
-	// Release all GPU resources owned by the chunk.
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		for wi := range s.Walls {
-			s.Walls[wi].Geometry.Delete()
-			for ei := range s.Walls[wi].SubmeshGeometries {
-				s.Walls[wi].SubmeshGeometries[ei].Delete()
-			}
-		}
-		s.Floor.Geometry.Delete()
-		for ei := range s.Floor.SubmeshGeometries {
-			s.Floor.SubmeshGeometries[ei].Delete()
-		}
-		s.Ceiling.Geometry.Delete()
-		for ei := range s.Ceiling.SubmeshGeometries {
-			s.Ceiling.SubmeshGeometries[ei].Delete()
-		}
-		for pi := range s.Portals {
-			s.Portals[pi].FloorGap.Delete()
-			s.Portals[pi].CeilGap.Delete()
-		}
-	}
-	for wi := range ch.WaterSurfaces {
-		ch.WaterSurfaces[wi].Geometry.Delete()
-	}
+	// Release every GPU resource the chunk owns — the same pass that unloading
+	// a disabled chunk runs, so a delete and a disable free exactly the same
+	// set and neither can drift from the other. See world/chunk_enable.go.
+	ch.ReleaseGeometry()
 
 	// Remove the chunk from the level.
 	lvl.Chunks = append(lvl.Chunks[:idx], lvl.Chunks[idx+1:]...)

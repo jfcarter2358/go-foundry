@@ -132,6 +132,14 @@ func scriptedRefs(rt *ScriptRuntime, lvl *world.Level) []flang.RefVal {
 		if ch.Script != "" {
 			out = append(out, flang.RefVal{Kind: flang.RefChunk, A: ch.ID})
 		}
+		// A switched-off chunk keeps its own script — that is how one can turn
+		// itself back on — but nothing inside it fires. Its sectors describe
+		// geometry that is not loaded and not in the spatial hash, so a
+		// `:tick:` there would be reacting to a room that is not in the world.
+		// See world/chunk_enable.go.
+		if !ch.IsEnabled() {
+			continue
+		}
 		for si := range ch.Sectors {
 			s := &ch.Sectors[si]
 			if s.Script != "" {
@@ -271,21 +279,26 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 		ref      flang.RefVal
 		test     func(mgl32.Vec3) bool
 		scripted bool
+		// loadLevel is the level this container is an exit to, or empty. See
+		// world.Volume.LoadLevel — it is why a container can be worth walking
+		// even when nothing is listening for its `:enter:`.
+		loadLevel string
 	}
 	var containers []container
 
 	for i := range lvl.Volumes {
 		v := &lvl.Volumes[i]
-		if v.Script == "" {
+		if v.Script == "" && !v.IsLevelTrigger() {
 			continue
 		}
 		vv := v
 		// Volumes are level-scoped and always world-space, so the point arrives
 		// in the coordinates the volume is already in.
 		containers = append(containers, container{
-			ref:      flang.RefVal{Kind: flang.RefVolume, A: v.ID},
-			test:     func(p mgl32.Vec3) bool { return vv.ContainsPoint(p) },
-			scripted: true,
+			ref:       flang.RefVal{Kind: flang.RefVolume, A: v.ID},
+			test:      func(p mgl32.Vec3) bool { return vv.ContainsPoint(p) },
+			scripted:  v.Script != "",
+			loadLevel: v.LoadLevel,
 		})
 	}
 	for i := range lvl.Entities {
@@ -317,8 +330,19 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 			}
 			pair := overlapPair{container: c.ref, other: m}
 			now[pair] = true
-			if !scriptEvents.overlaps[pair] {
+			if scriptEvents.overlaps[pair] {
+				continue
+			}
+			if c.scripted {
 				_ = rt.post(c.ref, "enter", []flang.Value{m}, flang.Pos{})
+			}
+			// A level exit, taken only by the player: see Volume.LoadLevel.
+			// The request is recorded rather than acted on, exactly as the
+			// `load_level` verb does — the frame loop starts the load between
+			// frames, which leaves the `:enter:` posted just above free to run
+			// first, in the level that is still standing.
+			if c.loadLevel != "" && m.Kind == flang.RefEntity && m.A == "player" {
+				hooks.RequestLevelLoad(c.loadLevel)
 			}
 		}
 	}

@@ -1,0 +1,227 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"foundry/internal/game"
+)
+
+// The prune is the one part of packing that can produce a broken install rather
+// than a large one, so what is guarded here is reachability in both directions:
+// that a live asset survives however the content happens to name it, and that a
+// dead one does not.
+
+// writeTree lays out a synthetic content root and returns its path.
+func writeTree(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for name, body := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func keepSet(t *testing.T, root string, m game.Manifest) map[string]bool {
+	t.Helper()
+	idx, err := indexAssets(root, contentDirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reachable(root, idx, manifestRoots(m))
+}
+
+// The five naming shapes the engine's own resolvers accept, each in the
+// position content actually writes it in.
+func TestEveryWayAnAssetIsNamedIsFollowed(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"ui/theme.fth":   "font: title\n",
+		"ui/loading.fui": "id: loading\n",
+		"ui/pause.fui":   "id: pause\nscript: scripts/pause.flang\n",
+		"levels/start.yaml": `
+ui: [hud]
+chunks:
+  - sectors:
+      - floor: {texture: grass}
+sprites:
+  - texture: sprites/spark.png
+entities:
+  - type: crate
+volumes:
+  - load_level: cellar
+scripts: [doors/sliding]
+`,
+		"ui/hud.fui":                  "id: hud\n",
+		"textures/grass.png":          "PNG",
+		"textures/sprites/spark.png":  "PNG",
+		"entities/crate.yaml":         "name: crate\nmodel: models/crate.fmdl\n",
+		"models/crate.fmdl":           "textures: [wood]\n",
+		"textures/wood.png":           "PNG",
+		"levels/cellar.yaml":          "chunks: []\n",
+		"scripts/doors/sliding.flang": "def main() -> null\n  play_sound(\"click\")\nend\n",
+		"scripts/pause.flang":         "def main() -> null\n  return\nend\n",
+		"sounds/click.wav":            "RIFF",
+		"textures/default.png":        "PNG",
+	})
+
+	keep := keepSet(t, root, game.Manifest{Title: "T", StartLevel: "start"})
+
+	for _, want := range []string{
+		"levels/start.yaml",           // the manifest's start level, by name
+		"ui/hud.fui",                  // a screen named bare in the level's ui list
+		"textures/grass.png",          // a texture named bare
+		"textures/sprites/spark.png",  // and one named by install-relative path
+		"entities/crate.yaml",         // an entity by type name
+		"models/crate.fmdl",           // a model by path, from inside the entity
+		"textures/wood.png",           // a texture named from inside the model
+		"levels/cellar.yaml",          // a level a volume exits into
+		"scripts/doors/sliding.flang", // a script named relative to scripts/
+		"sounds/click.wav",            // a sound named from inside that script
+		"ui/theme.fth",                // and the roots named from Go, not from content
+		"ui/loading.fui",
+		"ui/pause.fui",
+	} {
+		if !keep[want] {
+			t.Errorf("%s was pruned but is reachable", want)
+		}
+	}
+}
+
+func TestUnreachableAssetsArePruned(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"ui/theme.fth":         "\n",
+		"ui/loading.fui":       "\n",
+		"textures/default.png": "PNG",
+		"levels/start.yaml":    "chunks: []\n",
+		// None of these are named from anywhere.
+		"levels/scratch.yaml": "chunks: []\n",
+		"textures/unused.png": "PNG",
+		"ui/oldmenu.fui":      "\n",
+		"sounds/unused.wav":   "RIFF",
+	})
+
+	keep := keepSet(t, root, game.Manifest{Title: "T", StartLevel: "start"})
+
+	for _, gone := range []string{"levels/scratch.yaml", "textures/unused.png", "ui/oldmenu.fui", "sounds/unused.wav"} {
+		if keep[gone] {
+			t.Errorf("%s was kept but nothing reaches it", gone)
+		}
+	}
+}
+
+// A start screen is a root like the start level is, and a menu is exactly the
+// screen most likely to be reachable from nothing else.
+func TestStartScreenIsARoot(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"ui/theme.fth":         "\n",
+		"ui/loading.fui":       "\n",
+		"textures/default.png": "PNG",
+		"levels/start.yaml":    "chunks: []\n",
+		"ui/menu.fui":          "background: menu_bg\n",
+		"textures/menu_bg.png": "PNG",
+	})
+
+	keep := keepSet(t, root, game.Manifest{Title: "T", StartLevel: "start", StartScreen: "menu"})
+	if !keep["ui/menu.fui"] {
+		t.Error("the manifest's start screen was pruned")
+	}
+	if !keep["textures/menu_bg.png"] {
+		t.Error("a texture named only by the start screen was pruned")
+	}
+}
+
+// Content references each other in cycles all the time — a level whose script
+// loads that same level, two screens that open one another. The walk has to
+// terminate.
+func TestCyclesTerminate(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"ui/theme.fth":         "\n",
+		"ui/loading.fui":       "\n",
+		"textures/default.png": "PNG",
+		"levels/start.yaml":    "scripts: [loop]\n",
+		"scripts/loop.flang":   "def main() -> null\n  load_level(\"start\")\nend\n",
+	})
+
+	keep := keepSet(t, root, game.Manifest{Title: "T", StartLevel: "start"})
+	if !keep["scripts/loop.flang"] {
+		t.Error("the level's script was pruned")
+	}
+}
+
+// The output directory is deleted before it is written, and this tool runs from
+// Makefiles with paths built by concatenation.
+func TestDangerousOutputIsRefused(t *testing.T) {
+	if err := refuseDangerousOutput("/"); err == nil {
+		t.Error("a filesystem root was accepted as -out")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if err := refuseDangerousOutput(home); err == nil {
+			t.Error("the home directory was accepted as -out")
+		}
+	}
+
+	// A directory with contents that are plainly not an install tree.
+	occupied := t.TempDir()
+	if err := os.WriteFile(filepath.Join(occupied, "thesis.txt"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseDangerousOutput(occupied); err == nil {
+		t.Error("a directory of unrelated files was accepted as -out")
+	}
+
+	// One this tool made before is fine to empty again.
+	installed := t.TempDir()
+	if err := os.WriteFile(filepath.Join(installed, game.FileName), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseDangerousOutput(installed); err != nil {
+		t.Errorf("an existing install tree was refused: %v", err)
+	}
+
+	// And one that does not exist yet is the normal case.
+	if err := refuseDangerousOutput(filepath.Join(t.TempDir(), "new")); err != nil {
+		t.Errorf("a fresh path was refused: %v", err)
+	}
+}
+
+func TestExecutableIsNamedAfterTheGame(t *testing.T) {
+	for _, tc := range []struct{ title, exe, want string }{
+		{"Bob's Quest", "build/foundry", "bobs-quest"},
+		{"Bob's Quest", "build/foundry.exe", "bobs-quest.exe"},
+		{"  Deep   Space  ", "foundry", "deep-space"},
+		{"日本語", "foundry", "foundry"}, // nothing ASCII survives: fall back
+	} {
+		if got := defaultExeName(game.Manifest{Title: tc.title}, tc.exe); got != tc.want {
+			t.Errorf("defaultExeName(%q, %q) = %q, want %q", tc.title, tc.exe, got, tc.want)
+		}
+	}
+}
+
+// A content tree carries the runtime libraries for every platform the project
+// ships to; a pack carries only the ones its own platform can load.
+func TestPlatformLibrariesAreFilteredByTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name, goos string
+		want       bool
+	}{
+		{"SDL2.dll", "windows", true},
+		{"SDL2.dll", "linux", false},
+		{"libSDL2.dylib", "darwin", true},
+		{"libSDL2.dylib", "windows", false},
+		{"game.yaml", "linux", true},
+		{"game.yaml", "windows", true},
+		{"LICENSE", "linux", true},
+		{"CHANGELOG.md", "windows", true},
+	} {
+		if got := belongsOnPlatform(tc.name, tc.goos); got != tc.want {
+			t.Errorf("belongsOnPlatform(%q, %q) = %v, want %v", tc.name, tc.goos, got, tc.want)
+		}
+	}
+}

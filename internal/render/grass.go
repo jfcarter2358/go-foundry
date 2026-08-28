@@ -261,6 +261,12 @@ func GrassInit() {
 
 	biomes.initialized = true
 
+	// The world package releases a chunk's biome-derived GPU resources when the
+	// chunk is switched off, but it sits below this one and cannot name these
+	// caches. Installed here rather than at package init because there is
+	// nothing to evict until the caches exist. See world/chunk_enable.go.
+	world.EvictBiomeCaches = EvictBiomeSectorCaches
+
 	GroundInit()
 }
 
@@ -1081,6 +1087,9 @@ func biomeCastOuterBound(b *world.BiomeBrush) float32 {
 func forEachScatterSector(level *world.Level, camPos mgl32.Vec3, castOnly bool, castCap float32, cull *Frustum, fn func(ch *world.Chunk, s *world.BiomeSector)) {
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
+		if !ch.IsEnabled() {
+			continue // switched off; see world/chunk_enable.go
+		}
 		for si := range ch.BiomeSectors {
 			s := &ch.BiomeSectors[si]
 			if !s.Brush.Scatters() || len(s.Points) < 3 || s.Brush.Density <= 0 {

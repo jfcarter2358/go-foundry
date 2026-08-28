@@ -237,6 +237,12 @@ func pick3D(sx, sy int32) pickHit {
 
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
+		if !ch.IsEnabled() {
+			// Not drawn and not loaded, so there is nothing under the cursor
+			// to hit — picking one would select an invisible wall out of empty
+			// space. See world/chunk_enable.go.
+			continue
+		}
 		// Wall/floor/ceiling geometry is chunk-local, same as the production
 		// renderer's own vertex buffers (app.go) — carried into world space by
 		// this same matrix there, so picking has to go through it too.
@@ -576,6 +582,9 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 	var out []vertexHandle
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
+		if !ch.IsEnabled() {
+			continue // not drawn, so no handles; see world/chunk_enable.go
+		}
 		for seci := range ch.Sectors {
 			s := &ch.Sectors[seci]
 			for vi, pIdx := range s.PointIndices {

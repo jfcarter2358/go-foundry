@@ -51,6 +51,23 @@ type Volume struct {
 	// having to move or delete it. A disabled volume contains nothing.
 	Enabled bool
 
+	// LoadLevel names the level to load when the player walks in — the level
+	// exit, which is the one thing enough volumes do that making it an authored
+	// field beats making everyone write the same three-line script. Empty is
+	// the ordinary case: a volume that only does what its script says.
+	//
+	// The name is what `load_level` takes, and it goes through exactly that:
+	// a request the frame loop picks up between frames, covered by the
+	// `loading` screen. A volume may carry both this and a script, and the
+	// script's `:enter:` still runs — it fires in the same frame the load is
+	// requested, before the load starts, which is where a "save the player's
+	// progress" handler belongs.
+	//
+	// Only the PLAYER triggers it. A patrolling guard crossing the exit should
+	// not end the level, and there is no reading of "a player entered" that
+	// includes them.
+	LoadLevel string
+
 	// Geometry is the editor's wireframe box. Runtime-only, never serialized —
 	// a volume is invisible during play.
 	Geometry gfx.Geometry
@@ -152,6 +169,14 @@ func (v *Volume) WorldAABB() (min, max mgl32.Vec3, ok bool) {
 
 // ---------- level lookup ----------
 
+// IsLevelTrigger reports whether the volume is an exit: an armed, bounded
+// region that names a level to load. All three matter — a disarmed or
+// unauthored trigger contains nothing, and one with no target is an ordinary
+// scripted volume.
+func (v *Volume) IsLevelTrigger() bool {
+	return v.LoadLevel != "" && v.Enabled && v.HasBounds()
+}
+
 // FindVolume returns the level volume with the given ID, or nil. This is what a
 // script's `@id` resolves through for volumes.
 func FindVolume(lvl *Level, id string) *Volume {
@@ -239,6 +264,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		HalfY:      r.Half.Y,
 		HalfZ:      r.Half.Z,
 		Enabled:    BoolDefault(r.Enabled, true),
+		LoadLevel:  r.LoadLevel,
 	}, nil
 }
 
@@ -252,6 +278,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		Rotation:      RawVec3{X: v.Rotation.X(), Y: v.Rotation.Y(), Z: v.Rotation.Z()},
 		Half:          RawVec3{X: v.HalfX, Y: v.HalfY, Z: v.HalfZ},
 		Enabled:       BoolPtrIfFalse(v.Enabled),
+		LoadLevel:     v.LoadLevel,
 	}
 }
 

@@ -666,6 +666,9 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 
 	for ci := range level.Chunks {
 		chunk := &level.Chunks[ci]
+		if !chunk.IsEnabled() {
+			continue // switched off; see world/chunk_enable.go
+		}
 		if cull != nil {
 			chunkMin, chunkMax := chunk.WorldBounds()
 			if !AABBInFrustum(*cull, chunkMin, chunkMax) {

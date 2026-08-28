@@ -242,6 +242,9 @@ func forEachDetailFace(level *world.Level, cull *Frustum, fn func(f detailFace))
 
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
+		if !ch.IsEnabled() {
+			continue // switched off; see world/chunk_enable.go
+		}
 		model := ch.ModelMatrix()
 		if cull != nil {
 			chunkMin, chunkMax := ch.WorldBounds()

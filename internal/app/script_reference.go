@@ -1,3 +1,8 @@
+// Development-build only: the language reference is drawn with imgui into the
+// F1 overlay, and a release build has neither. See devtools_dev.go.
+
+//go:build !release
+
 package app
 
 // script_reference.go — the language reference tabs of the F1 overlay.

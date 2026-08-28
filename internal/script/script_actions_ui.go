@@ -114,6 +114,24 @@ var uiVerbs = map[string]scriptVerb{
 		return flang.BoolVal(true), nil
 	},
 
+	// quit_game is here for the same reason load_level is: it exists for a menu
+	// screen's last button, and there is nowhere else in the language it would
+	// be reached from.
+	//
+	// It takes no arguments and cannot fail, so unlike everything else in this
+	// file it has no warning to write — a quit that did nothing is not a state
+	// the process survives long enough to be in.
+	"quit_game": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if len(args) != 0 {
+			return nil, verbArgErr("quit_game", "no arguments")
+		}
+		// A request rather than a call, for load_level's reason and one more:
+		// the window and the GL context belong to the main thread, and the
+		// frame loop is the only place that may end them.
+		hooks.RequestQuit()
+		return flang.BoolVal(true), nil
+	},
+
 	"focus": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
 		if len(args) != 1 {
 			return nil, verbArgErr("focus", "one widget")

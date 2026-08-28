@@ -139,6 +139,9 @@ type RawVolume struct {
 	Rotation      RawVec3 `yaml:"rotation,omitempty"`
 	Half          RawVec3 `yaml:"half"`
 	Enabled       *bool   `yaml:"enabled,omitempty"` // default true when absent
+	// LoadLevel makes the volume a level exit: the named level is loaded when
+	// the player walks in, with no script involved. See Volume.LoadLevel.
+	LoadLevel string `yaml:"load_level,omitempty"`
 }
 
 // RawSprite is the YAML representation of a level sprite (sprite.go) — a
@@ -388,7 +391,13 @@ type RawChunk struct {
 	// authored in — a vehicle interior, carried around the world by whatever
 	// owns it. Omitted is the ordinary case: a chunk placed directly in world
 	// space by its own Origin/Rotation/Scale, with no carrier.
-	Frame        string           `yaml:"frame,omitempty"`
+	Frame string `yaml:"frame,omitempty"`
+	// Disabled starts the chunk switched off: not drawn, not collided with, and
+	// never uploaded in the first place — which is what makes it worth writing
+	// for a level that streams its areas in. A script turns it back on with
+	// `@id.prop.enabled = true`. See Chunk.Disabled for why it is spelled this
+	// way round.
+	Disabled     bool             `yaml:"disabled,omitempty"`
 	BiomeSectors []RawBiomeSector `yaml:"biome_sectors,omitempty"`
 	// Layers names this chunk's authoring bands and gives each the heights a
 	// sector drawn on it starts at. Purely editor metadata — a sector's own

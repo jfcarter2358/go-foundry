@@ -44,6 +44,13 @@ func SyncBiomeWaterSurfaces(level *world.Level) {
 }
 
 func syncChunkWaterSurfaces(level *world.Level, ch *world.Chunk) {
+	// A disabled chunk had its water planes released with the rest of its
+	// geometry; rebuilding them here would put an ocean back over an area that
+	// is not being drawn. They come back the first frame it is switched on,
+	// because that is what this pass does every frame anyway.
+	if !ch.IsEnabled() {
+		return
+	}
 	if len(ch.BiomeSectors) == 0 && len(ch.WaterSurfaces) == 0 {
 		return
 	}

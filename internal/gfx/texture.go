@@ -112,9 +112,11 @@ func QueueTextureUpload(name string, img *image.RGBA) {
 // DrainTextureUploads uploads every queued image and clears the queue. Must
 // be called with the main GL context current.
 func DrainTextureUploads() {
-	if len(pendingTextureUploads) == 0 {
-		return
-	}
+	// The two queues drain independently. An early return on an empty world
+	// queue used to take the UI's with it, which starved the glyph pages in
+	// every frame that happened not to edit a texture — and an atlas that
+	// never reaches the GPU draws as gfx.Textures' zero value, which is the
+	// default texture object: a black box per glyph.
 	for _, u := range pendingTextureUploads {
 		if err := UpdateTextureFromRGBA(u.Name, u.Img); err != nil {
 			log.Printf("texture upload %q: %v", u.Name, err)

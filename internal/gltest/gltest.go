@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"testing"
 
+	"foundry/internal/gfx"
+
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -50,5 +52,16 @@ func Context(t *testing.T) {
 	}
 	if err := gl.Init(); err != nil {
 		t.Fatalf("gl.Init: %v", err)
+	}
+
+	// Every test gets its own context and none are shared, so the GL names the
+	// registry is holding were minted in a context this one cannot reach:
+	// binding one is GL_INVALID_OPERATION, not a stale image. Clearing the
+	// registry makes the next upload mint a name here instead.
+	for name := range gfx.Textures {
+		delete(gfx.Textures, name)
+	}
+	for name := range gfx.TextureSizes {
+		delete(gfx.TextureSizes, name)
 	}
 }

@@ -63,6 +63,16 @@
 - [x] Model bones
 - [x] Animations
 - [x] Volumes (scriptable regions; box/sphere/cylinder, tags, attributes)
+- [x] Level load triggers — a volume carrying `load_level:` is the level exit:
+      the player walking in loads that level, through the same deferred request
+      `load_level` records, with no script needed. Only the player takes one,
+      only while it is `enabled`, and a script attached to the same volume still
+      gets its `:enter:` in the frame before the load starts
+- [x] Enabling and disabling chunks — `@chunk.prop.enabled`, or `disabled: true`
+      in the level file. A disabled chunk is not drawn, not collided with, out
+      of the spatial hash and has its vertex buffers released; one authored
+      disabled is never built at all. That makes the chunk the unit a level
+      streams by: switch the next area on, drop the one behind
 - [x] Script editor
 - [x] Log window (live script output, errors with positions, engine log)
 - [x] Scripting (flang: `internal/flang`, `@id`/`#tag`, attributes and properties, messages, events, hot reload)
@@ -121,6 +131,15 @@
 - [x] Ctrl+Z while shaping a surface dropped out of surface shaping mode
 - [x] A camera turn or gizmo drag released over the side panel never ended, so
       the view stayed stuck to the mouse until an unrelated right-click
+- [x] Release builds and installers. `-tags release` compiles the engine without
+      the editor, the four sub-editors or imgui (`internal/app/devtools_*.go` is
+      the seam; `make release-check` proves they are gone); `game.yaml` names the
+      start level, the start screen and the window; settings and logs move to the
+      per-user data directory so an installed game never writes into its own
+      install; `cmd/foundrypack` stages a tree with only the assets the game can
+      reach from its manifest; NSIS makes a Windows Setup.exe and
+      `packaging/linux` a .deb or a tarball with an installer in it. See
+      docs/RELEASE.md
 
 
 ## TODO
@@ -155,4 +174,5 @@
 - [ ] Bump maps
 - [ ] Normal maps
 - [ ] UI load/play videos
-- [ ] Level load triggers
+- [ ] Distance fog
+- [ ] Skybox

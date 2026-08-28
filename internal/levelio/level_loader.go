@@ -45,7 +45,14 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		Rotation:   rc.Rotation,
 		Scale:      sc,
 		FrameOwner: rc.Frame,
-		Layers:     loadChunkLayers(rc.Layers),
+		Disabled:   rc.Disabled,
+		// A chunk authored disabled is not built at all — the geometry passes
+		// below are skipped and it is marked unloaded, which is exactly the
+		// state ReleaseGeometry would have left it in. That is the point of
+		// writing `disabled: true` into a level: the area costs nothing until
+		// a script switches it on, and world.SetChunkEnabled builds it then.
+		Unloaded: rc.Disabled,
+		Layers:   loadChunkLayers(rc.Layers),
 	}
 
 	// Sort so the point pool is built in a deterministic order — Go map
@@ -409,6 +416,12 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		if si < len(rc.Sectors) {
 			loadSectorSurfaceMeshes(&chunk, s, rawSectorByID(rc.Sectors, s.ID), rc.Points)
 		}
+		if chunk.Disabled {
+			// Surface meshes above are authored data and are read either way;
+			// only the upload is skipped. ReloadGeometry runs exactly this for
+			// every sector when the chunk is switched on.
+			continue
+		}
 		sectorPts := world.SectorPoints(&chunk, s)
 		if err := s.Load(sectorPts); err != nil {
 			return world.Chunk{}, nil, fmt.Errorf("sector %q load: %w", s.ID, err)
@@ -434,12 +447,15 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 			}
 		}
 	}
-	chunk.RebuildGaps()
+	if !chunk.Disabled {
+		chunk.RebuildGaps()
 
-	// Bounds so far come only from the chunk's points; roll up the sectors' own
-	// bounds so geometry reaching past the point pool isn't frustum-culled with
-	// it. Water surfaces are folded in later, by SyncBiomeWaterSurfaces.
-	chunk.RecomputeBounds()
+		// Bounds so far come only from the chunk's points; roll up the sectors'
+		// own bounds so geometry reaching past the point pool isn't
+		// frustum-culled with it. Water surfaces are folded in later, by
+		// SyncBiomeWaterSurfaces.
+		chunk.RecomputeBounds()
+	}
 
 	// Biome sector polygons — points are chunk-local, same as structural points.
 	for _, rb := range rc.BiomeSectors {

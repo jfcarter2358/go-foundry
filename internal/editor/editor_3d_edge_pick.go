@@ -202,6 +202,9 @@ func collectEdgeHandles(mx, my int32, maxPx float32) []edgeHandle {
 	var out []edgeHandle
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
+		if !ch.IsEnabled() {
+			continue // not drawn, so no handles; see world/chunk_enable.go
+		}
 		for seci := range ch.Sectors {
 			s := &ch.Sectors[seci]
 			n := len(s.PointIndices)

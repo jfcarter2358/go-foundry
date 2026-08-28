@@ -15,15 +15,15 @@ package audio
 
 import (
 	"log"
-	"os"
-	"path/filepath"
 
 	"foundry/internal/fileutil"
 
 	"gopkg.in/yaml.v2"
 )
 
-// settingsFileName is the file beside the executable.
+// settingsFileName is the file in the writable state directory — beside the
+// executable in a development build, and under the per-user data directory in
+// an installed one. See fileutil.StatePath.
 const settingsFileName = "audio.yaml"
 
 // rawSettings is the on-disk shape. Pointers so that a file written before a
@@ -37,14 +37,17 @@ type rawSettings struct {
 }
 
 func settingsPath() string {
-	return filepath.Join(fileutil.ExecutablePath, settingsFileName)
+	return fileutil.StatePath(settingsFileName)
 }
 
 // LoadSettings reads the saved gains. A missing file is the normal first-run
 // case and is silent; a malformed one is logged and ignored, because starting
 // the game at default volume is a better outcome than refusing to start.
 func LoadSettings() {
-	data, err := os.ReadFile(settingsPath())
+	// ReadState rather than os.ReadFile: a project may ship an audio.yaml in
+	// the install directory to launch at a chosen mix, and the player's own
+	// copy — once they have moved a slider — takes over from it.
+	data, err := fileutil.ReadState(settingsFileName)
 	if err != nil {
 		return
 	}

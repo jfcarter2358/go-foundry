@@ -543,6 +543,30 @@ Chunks are defined by their floor and ceiling sector maps, which are a 2d map de
 
 Sectors have textures and their positions are baked into an optimized BSP-tree for collision checks
 
+### Switching a chunk off
+
+A chunk carries an `Enabled` flag (stored as `Disabled`, so the zero value is
+"on"), and it is the unit a level streams by. Disabled means three things at
+once, and all three have to hold or the flag is a lie: nothing draws it, nothing
+collides with it — it is left out of the spatial hash, which collision, entity
+location and the script location verbs all resolve through — and its vertex
+buffers are released. A level file may start a chunk disabled with `disabled:
+true`, in which case the loader never builds it in the first place.
+
+The chunk is the right unit because it is already every other system's unit:
+sectors, biome paint and portal gaps belong to one, the renderer culls by one,
+the hash buckets by one, and a script can already address one by name. So "load
+the next area" is `@east_wing.prop.enabled = true` rather than a second, parallel
+notion of a region.
+
+The flag and the residency are deliberately two things. Writing the flag is
+cheap and happens anywhere — a script handler, the editor panel, an undo —
+while releasing and rebuilding buffers is `gl.*` work that has to happen on the
+main thread between frames. `world.SyncChunkGeometry` reconciles the two once a
+frame and rebuilds the level indexes when the set of chunks that exist has
+moved. It is the same split `DrainScriptWork` exists for. See
+`internal/world/chunk_enable.go`.
+
 ## Game Loop
 
 The main game loop will run physics/movement calculations in compute shaders wherever possible to improve performance. Additionally it will host the script event loop once that is eventually implemented.
@@ -627,6 +651,23 @@ models:
         autoplay: true
 attributes:
   health: {type: int, value: 25}
+```
+
+A chunk may carry `disabled: true` to start switched off, and a volume may carry
+`load_level:` to be the level exit. Both keys are omitted unless set, so no
+existing level file changed when either was added:
+
+```yaml
+chunks:
+  - id: east_wing
+    disabled: true        # not built, not drawn, not solid, until a script asks
+    # ...
+
+volumes:
+  - id: cave_mouth
+    position: {x: 40, y: 0, z: -12}
+    half: {x: 2, y: 3, z: 1}
+    load_level: caves     # the player walking in loads levels/caves.yaml
 ```
 
 
@@ -861,6 +902,17 @@ idea, so it gets the smaller type.
 
 Volumes sit at the level rather than in a chunk, for the same reason entities do:
 a trigger can span a doorway between two of them.
+
+A volume may also carry a `LoadLevel`, which makes it the **level exit**: the
+player walking in loads that level, through the same deferred request the
+`load_level` verb records. It is the one thing enough volumes do that an
+authored field beats making every author write the same three-line script, and
+it is a field on the existing type rather than a fourth kind of object, because
+everything else an exit needs — a shape to stand in, an `enabled` flag to lock
+it behind, an ID a script can re-point it by — a volume already has. Only the
+player takes one; there is no reading of "a player entered" that includes the
+guard on patrol. A trigger that carries a script as well still gets its
+`:enter:`, in the frame before the load starts.
 
 In the editor a volume is a wireframe cage that can be clicked in the 3D
 viewport, which gives it the same translate, rotate and scale gizmos an entity

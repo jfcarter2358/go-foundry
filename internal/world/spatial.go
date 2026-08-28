@@ -76,6 +76,13 @@ func BuildSpatialHash(chunks []Chunk, cellSize float32) *SpatialHash {
 		if c.InFrame() {
 			continue
 		}
+		// A disabled chunk is not in the world: leaving it out here is what
+		// makes collision, entity location and the script location verbs all
+		// walk straight through it, since every one of them resolves through
+		// this hash. See chunk_enable.go.
+		if !c.IsEnabled() {
+			continue
+		}
 		for si := range c.Sectors {
 			s := &c.Sectors[si]
 			wmin, wmax := s.WorldAABB(c)
@@ -259,6 +266,9 @@ func FindChunk(chunks []Chunk, pos mgl32.Vec3) *Chunk {
 		if c.InFrame() {
 			continue // not in world space; see Chunk.FrameOwner
 		}
+		if !c.IsEnabled() {
+			continue // switched off; see chunk_enable.go
+		}
 		// pos carried into this chunk's own local space, where MinBound/MaxBound
 		// live — exact for a rotated chunk too, unlike testing against its
 		// (necessarily looser) axis-aligned world bounds would be.
@@ -319,6 +329,9 @@ func FindChunkAndSector(chunks []Chunk, pos mgl32.Vec3) (*Chunk, *Sector) {
 		if c.InFrame() {
 			continue // not in world space; see Chunk.FrameOwner
 		}
+		if !c.IsEnabled() {
+			continue // switched off; see chunk_enable.go
+		}
 		// pos carried into this chunk's own local space, the same space
 		// MinBound/MaxBound and SectorPoints are expressed in.
 		local := c.WorldToLocal(pos)
@@ -369,6 +382,9 @@ func FindChunkAndSectorAmong(chunks []Chunk, idx []int, pos mgl32.Vec3) (*Chunk,
 			continue
 		}
 		c := &chunks[ci]
+		if !c.IsEnabled() {
+			continue // switched off; see chunk_enable.go
+		}
 		local := pos
 		lm := c.LocalPlacementMatrix()
 		if lm != mgl32.Ident4() {

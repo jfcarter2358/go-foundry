@@ -3,7 +3,20 @@
 # Modal, pausing and cursor-releasing: the three input semantics, all set. That
 # combination is what makes this a menu rather than an overlay, and there is no
 # fourth thing to configure — Escape closes it because it is the topmost modal
-# screen, not because anything here says so.
+# screen, not because anything here says so. Escape *opens* it from the other
+# side of the same seam, in the gameplay key handler (app/ui_input.go).
+#
+# Every button writes its own `color:`, `hover:` and `press:`, and has to: a
+# widget's colour is a plain value on the node rather than a fallback, so one
+# left unwritten is DefaultBackground — opaque WHITE, with DefaultTextSpec's
+# white label on top of it. The theme's button palette is what the UI EDITOR
+# stamps into a widget it creates, not a draw-time default (ui_theme.go's
+# header), so a hand-written screen has to stamp it in itself. The values below
+# are that palette.
+#
+# The buttons carry no `action:`. A click posts `:click:` to the widget and then
+# to this screen, and scripts/pause.flang decides what each id means — the
+# routing SCRIPTING.md documents, and the one place the behaviour lives.
 
 id: pause
 canvas: {ref_w: 1920, ref_h: 1080, match: 0.5}
@@ -11,6 +24,7 @@ modal: true
 pauses: true
 shows_cursor: true
 initial_focus: resume
+script: scripts/pause.flang
 
 root:
   id: root
@@ -28,7 +42,7 @@ root:
       kind: panel
       anchor_min: {x: 0.5, y: 0.5}
       anchor_max: {x: 0.5, y: 0.5}
-      offset: [-200, -170, -200, -170]
+      offset: [-200, -205, -200, -205]
       color: {r: 0.10, g: 0.11, b: 0.13, a: 0.96}
       children:
         - id: title
@@ -43,24 +57,47 @@ root:
           anchor_min: {x: 0, y: 0}
           anchor_max: {x: 1, y: 0}
           offset: [32, 110, 32, -166]
-          action: resume
+          color: {r: 0.18, g: 0.20, b: 0.24, a: 1}
+          hover: {color: {r: 0.25, g: 0.29, b: 0.35, a: 1}}
+          press: {color: {r: 0.13, g: 0.15, b: 0.18, a: 1}}
           text: {value: "Resume", size: 22, h_align: center}
-          nav: {down: settings}
+          nav: {down: to_menu}
 
+        # Disabled, and deliberately still here: there is no settings screen in
+        # resources/ui yet, and the engine's own settings panel is imgui — it
+        # does not exist at all in a release build. Give it a `settings.fui`,
+        # drop the `enabled: false`, and add a clause for its id in
+        # scripts/pause.flang.
         - id: settings
           kind: button
+          enabled: false
           anchor_min: {x: 0, y: 0}
           anchor_max: {x: 1, y: 0}
           offset: [32, 180, 32, -236]
-          action: open_settings
-          text: {value: "Settings", size: 22, h_align: center}
+          color: {r: 0.18, g: 0.20, b: 0.24, a: 1}
+          hover: {color: {r: 0.25, g: 0.29, b: 0.35, a: 1}}
+          press: {color: {r: 0.13, g: 0.15, b: 0.18, a: 1}}
+          disabled: {color: {r: 0.15, g: 0.16, b: 0.18, a: 0.6}}
+          text: {value: "Settings", size: 22, h_align: center, color: {r: 0.48, g: 0.51, b: 0.55, a: 1}}
+
+        - id: to_menu
+          kind: button
+          anchor_min: {x: 0, y: 0}
+          anchor_max: {x: 1, y: 0}
+          offset: [32, 250, 32, -306]
+          color: {r: 0.18, g: 0.20, b: 0.24, a: 1}
+          hover: {color: {r: 0.25, g: 0.29, b: 0.35, a: 1}}
+          press: {color: {r: 0.13, g: 0.15, b: 0.18, a: 1}}
+          text: {value: "Quit to Menu", size: 22, h_align: center}
           nav: {up: resume, down: quit}
 
         - id: quit
           kind: button
           anchor_min: {x: 0, y: 0}
           anchor_max: {x: 1, y: 0}
-          offset: [32, 250, 32, -306]
-          action: quit_game
-          text: {value: "Quit", size: 22, h_align: center}
-          nav: {up: settings}
+          offset: [32, 320, 32, -376]
+          color: {r: 0.22, g: 0.15, b: 0.15, a: 1}
+          hover: {color: {r: 0.34, g: 0.20, b: 0.20, a: 1}}
+          press: {color: {r: 0.16, g: 0.11, b: 0.11, a: 1}}
+          text: {value: "Quit Game", size: 22, h_align: center}
+          nav: {up: to_menu}

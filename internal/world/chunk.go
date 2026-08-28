@@ -48,6 +48,22 @@ type Chunk struct {
 	// through LayerAt/LayerCount rather than indexing directly. See layer.go.
 	Layers []ChunkLayer
 
+	// Disabled takes the chunk out of the world entirely: nothing draws it,
+	// nothing collides with it, and its vertex buffers are released. It is what
+	// a streaming script toggles as the player moves between areas — see
+	// chunk_enable.go, which owns both this flag and Unloaded.
+	//
+	// Disabled rather than Enabled so the zero value is "on": every chunk
+	// written before this existed, and every one a test or an import builds by
+	// hand, means to be part of the level.
+	Disabled bool
+
+	// Unloaded is runtime-only (never serialized, never cloned): whether the
+	// chunk's geometry has actually been released yet. It trails Disabled by up
+	// to a frame, because writing the flag may happen anywhere while freeing
+	// buffers is gl.* work — SyncChunkGeometry is what closes the gap.
+	Unloaded bool
+
 	// FrameOwner names the entity whose local space this chunk's geometry is
 	// authored in — a vehicle's interior, carried around the world by whatever
 	// owns it. Empty is the ordinary case: a chunk placed directly in world
@@ -122,7 +138,12 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 		// runtime-only and RefreshFrames owns it (ModelMatrix treats the zero
 		// value as "not yet refreshed" and falls back to the local placement).
 		FrameOwner: ch.FrameOwner,
-		Layers:     append([]ChunkLayer(nil), ch.Layers...),
+		// Disabled rides along for the same reason FrameOwner does: it is part
+		// of the answer to "is this chunk in the world". Unloaded deliberately
+		// does NOT — the copy has no buffers of its own yet, and the caller is
+		// already required to re-upload its geometry (see this method's doc).
+		Disabled: ch.Disabled,
+		Layers:   append([]ChunkLayer(nil), ch.Layers...),
 	}
 
 	cp.Points = append([]mgl32.Vec2(nil), ch.Points...)

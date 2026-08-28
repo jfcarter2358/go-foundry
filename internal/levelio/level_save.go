@@ -142,6 +142,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 		Rotation:      ch.Rotation,
 		Scale:         ch.Scale,
 		Frame:         ch.FrameOwner,
+		Disabled:      ch.Disabled,
 		Layers:        chunkLayersToRaw(ch),
 	}
 	if rc.Scale == 0 {
@@ -746,6 +747,10 @@ func ApplyRawLevel(raw world.RawLevel, lvl *world.Level) error {
 	// EditorLoadLevel's note.
 	collision.DeleteEntities(lvl)
 	render.DeleteVolumes(lvl)
+	// And the chunks' own buffers. An undo, a redo and the restore at the end
+	// of a play session all come through here, so leaking here leaks the whole
+	// level's geometry once per Ctrl+Z.
+	world.ReleaseLevelGeometry(lvl)
 	// Every voice the outgoing level held names a placement that is about to
 	// stop existing. Without this, undoing the placement of a sound leaves it
 	// playing forever with nothing left to switch it off — the audio version

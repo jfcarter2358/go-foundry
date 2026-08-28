@@ -74,6 +74,24 @@ func editorChunkIdentity(lvl *world.Level, ch *world.Chunk) {
 			ch.ID = id
 		}
 	}
+	enabled := ch.IsEnabled()
+	if imgui.Checkbox("Enabled##chunkenabled", &enabled) {
+		EditorPushUndo()
+		// Straight through SetChunkEnabled rather than by writing the flag: the
+		// panel runs on the main thread with the GL context current, so the
+		// buffers can be released or rebuilt now and the author sees the chunk
+		// vanish or come back on this frame rather than the next. The spatial
+		// hash is rebuilt because disabled chunks are left out of it.
+		if world.SetChunkEnabled(ch, enabled) {
+			editorChunkTransformChanged()
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A disabled chunk is not drawn, not solid, and its geometry\n" +
+			"is unloaded. It stays on the sector map, and a script switches\n" +
+			"it back on with `@" + ch.ID + ".prop.enabled = true`.")
+	}
+
 	imgui.Text(fmt.Sprintf("Sectors: %d", len(ch.Sectors)))
 	imgui.Text(fmt.Sprintf("Points: %d", len(ch.Points)))
 	imgui.Text(fmt.Sprintf("Biome sectors: %d", len(ch.BiomeSectors)))

@@ -1,3 +1,7 @@
+// Development-build only, alongside the table it checks (keybindings.go).
+
+//go:build !release
+
 package app
 
 import (

@@ -231,12 +231,19 @@ func editorExplorerChunkNodes(lvl *world.Level) {
 	}
 	defer imgui.TreePop()
 
-	remove, duplicate, export := -1, -1, -1
+	remove, duplicate, export, toggle := -1, -1, -1, -1
 	for i := range lvl.Chunks {
 		ch := &lvl.Chunks[i]
 		imgui.PushID(fmt.Sprintf("chunk%d", i))
 
 		label := ch.ID
+		if !ch.IsEnabled() {
+			// A disabled chunk draws nothing in the 3D view, so this row and
+			// the sector map are the only places it is visible at all — say so
+			// rather than leaving the author looking for geometry that will
+			// never appear. See world/chunk_enable.go.
+			label += "  (disabled)"
+		}
 		if i == Editor.ActiveChunkIdx {
 			label += "  (active)"
 		}
@@ -263,6 +270,10 @@ func editorExplorerChunkNodes(lvl *world.Level) {
 			editorSelectChunk(i)
 		}
 		editorExplorerMenu("chunkctx", func() {
+			if imgui.MenuItemV("Enabled", "", ch.IsEnabled(), true) {
+				toggle = i
+			}
+			imgui.Separator()
 			if imgui.MenuItem("Duplicate") {
 				duplicate = i
 			}
@@ -285,6 +296,12 @@ func editorExplorerChunkNodes(lvl *world.Level) {
 
 	// Acted on outside the loop: each rewrites the slice being walked.
 	switch {
+	case toggle >= 0:
+		EditorPushUndo()
+		ch := &lvl.Chunks[toggle]
+		if world.SetChunkEnabled(ch, !ch.IsEnabled()) {
+			editorChunkTransformChanged()
+		}
 	case export >= 0:
 		Editor.ActiveChunkIdx = export
 		Editor.SaveChunkName = lvl.Chunks[export].ID

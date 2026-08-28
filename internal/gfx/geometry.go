@@ -285,6 +285,22 @@ func (g *Geometry) Delete() {
 	g.deleteSkinBuffers()
 }
 
+// Unload releases the GPU handles AND drops the CPU-side vertex data, leaving
+// a zero-length mesh that Draw skips.
+//
+// Delete alone is not enough for anything that is going away rather than being
+// re-uploaded in place: Vertices is a full copy of the mesh in ordinary Go
+// memory — the shadow, picking and detail passes all index it — so a chunk
+// unloaded with Delete would free its buffers and keep its megabytes. See
+// Chunk.ReleaseGeometry, which is the caller this exists for.
+func (g *Geometry) Unload() {
+	g.Delete()
+	g.Vertices = nil
+	g.Normals = nil
+	g.SkinIdx, g.SkinWt = nil, nil
+	g.BonePalette = nil
+}
+
 // IsTransparent returns true if this geometry has a non-opaque alpha value,
 // or its texture has any semi-transparent texel (see texture_alpha.go). Both
 // route the surface into the sorted, back-to-front blended pass instead of

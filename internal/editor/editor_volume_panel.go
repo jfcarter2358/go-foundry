@@ -12,8 +12,10 @@ package editor
 // everything else the level contains.
 
 import (
+	"foundry/internal/levelio"
 	"foundry/internal/world"
 	"strconv"
+	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -59,6 +61,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroupOpen("Identity##volidgrp", func() { editorVolumeIdentity(v) })
 	editorPropGroupOpen("Transform##voltfgrp", func() { editorVolumeTransform(v) })
 	editorPropGroupOpen("Shape##volshapegrp", func() { editorVolumeShape(v) })
+	editorPropGroupOpen("Level Exit##volexitgrp", func() { editorVolumeLevelExit(v) })
 	editorScriptDataUI(&v.ScriptData, "vol", strconv.Quote(v.ID))
 	editorPropGroup("Actions##volactions", 0, func() { editorVolumeActions(v) })
 }
@@ -129,6 +132,49 @@ func editorVolumeShape(v *world.Volume) {
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Half the region's size on each axis — the box the shape is inscribed in.")
+	}
+}
+
+// editorVolumeLevelExit draws the level this volume sends the player to.
+//
+// A combo over the levels that actually exist rather than a free-text field:
+// the name is resolved at the moment the player walks in, so a typo shows up as
+// a trigger that silently does nothing, in play, in whichever room the author
+// was not looking at. "(none)" is the ordinary case and comes first.
+func editorVolumeLevelExit(v *world.Volume) {
+	current := v.LoadLevel
+	if current == "" {
+		current = "(none)"
+	}
+	open := imgui.BeginCombo("Load Level##volloadlevel", current)
+	// Re-read the folder as the list drops down rather than on every frame it
+	// is held open — it fills the same cache the Open dialog uses, refreshed at
+	// the one moment it could be stale.
+	if open && !Editor.VolLevelComboOpen {
+		Editor.LevelFiles = levelio.ScanLevelFiles(Editor.LevelsDir)
+	}
+	Editor.VolLevelComboOpen = open
+	if open {
+		if imgui.SelectableV("(none)", v.LoadLevel == "", 0, imgui.Vec2{}) && v.LoadLevel != "" {
+			EditorPushUndo()
+			v.LoadLevel = ""
+		}
+		for _, f := range Editor.LevelFiles {
+			name := strings.TrimSuffix(f, levelio.LevelExt)
+			if imgui.SelectableV(name, name == v.LoadLevel, 0, imgui.Vec2{}) && name != v.LoadLevel {
+				EditorPushUndo()
+				v.LoadLevel = name
+			}
+		}
+		imgui.EndCombo()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Walking the player into this volume loads that level,\n" +
+			"covered by the `loading` screen. No script needed.\n" +
+			"Only the player triggers it, and only while the volume is enabled.")
+	}
+	if v.LoadLevel != "" && v.Script != "" {
+		imgui.Text("Its script still gets `enter`, before the load starts.")
 	}
 }
 
