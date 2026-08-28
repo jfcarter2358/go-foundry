@@ -265,6 +265,22 @@ type EditorState struct {
 	// ParticleFileNames caches the .fpar list while a picker is open; nil
 	// forces a rescan, the same arrangement modelFileCombo uses.
 	ParticleFileNames []string
+	// ActiveSoundIdx indexes level.Sounds; -1 = none selected.
+	ActiveSoundIdx int
+	// SoundPlacementMode is true when the next left-click drops a sound.
+	SoundPlacementMode bool
+	// NewSoundID is the ID field of the placement row, empty for "sound".
+	NewSoundID string
+	// NewSoundClip is the clip a freshly placed sound names.
+	NewSoundClip string
+	// SoundFileNames caches the sounds/ list while a picker is open; nil
+	// forces a rescan, so a clip added while the editor is open shows up.
+	SoundFileNames []string
+	// ShowSoundRanges draws the selected sound's reference and maximum
+	// distances. On by default: the two distances are the whole of how a
+	// positional sound is authored and they are invisible otherwise.
+	ShowSoundRanges bool
+
 	// ShowEmitterShapes outlines the selected emitter's emission volume in the
 	// viewport. Off by default: it is the answer to "why is this cone firing
 	// sideways", not something to have on while placing.
@@ -423,6 +439,9 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.SpritePlacementMode = false
 	Editor.ActiveEmitterIdx = -1
 	Editor.EmitterPlacementMode = false
+	Editor.ActiveSoundIdx = -1
+	Editor.SoundPlacementMode = false
+	Editor.ShowSoundRanges = true
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
@@ -952,6 +971,12 @@ func EditorDeleteSelected() {
 		return
 	}
 
+	// Sound deletion
+	if activeSound() != nil {
+		deleteActiveSound()
+		return
+	}
+
 	// Emitter deletion
 	if activeEmitter() != nil {
 		deleteActiveEmitter()
@@ -1008,6 +1033,9 @@ func EditorLoadLevel(path string) error {
 	Editor.SpritePlacementMode = false
 	Editor.ActiveEmitterIdx = -1
 	Editor.EmitterPlacementMode = false
+	Editor.ActiveSoundIdx = -1
+	Editor.SoundPlacementMode = false
+	Editor.ShowSoundRanges = true
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1

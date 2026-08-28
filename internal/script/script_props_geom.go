@@ -27,6 +27,7 @@ func init() {
 		flang.RefBiome:   biomeProps(),
 		flang.RefSprite:  spriteProps(),
 		flang.RefEmitter: emitterProps(),
+		flang.RefSound:   soundProps(),
 	}
 }
 

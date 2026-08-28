@@ -34,6 +34,7 @@ const (
 	gizmoKindVolume   = "volume"
 	gizmoKindSprite   = "sprite"
 	gizmoKindEmitter  = "emitter"
+	gizmoKindSound    = "sound"
 	gizmoKindLight    = "light"
 )
 
@@ -86,6 +87,14 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindEmitter:
 		if em := activeGizmoEmitter(); em != nil {
 			return em.Position, true
+		}
+
+	case gizmoKindSound:
+		if sd := activeGizmoSound(); sd != nil {
+			// The authored position, not the world one: the gizmo drags what
+			// the panel shows and the level file stores, so an attached sound
+			// is dragged in its carrier's space.
+			return sd.Position, true
 		}
 
 	case gizmoKindSprite:
@@ -320,6 +329,19 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindSound:
+		sd := activeGizmoSound()
+		if sd == nil {
+			return false
+		}
+		// Nothing to scale: how far a sound carries is its two distances,
+		// which are numbers in the panel rather than a shape to drag.
+		Editor.GizmoDragStartPos = sd.Position
+		Editor.GizmoDragStartRot = sd.Rotation
+		Editor.GizmoDragStartScale = mgl32.Vec3{1, 1, 1}
+		EditorPushUndo()
+		return true
+
 	case gizmoKindEmitter:
 		em := activeGizmoEmitter()
 		if em == nil {
@@ -418,6 +440,10 @@ func translateGizmoMouseMove(mx, my int32) {
 	case gizmoKindEmitter:
 		if em := activeGizmoEmitter(); em != nil {
 			em.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		}
+	case gizmoKindSound:
+		if sd := activeGizmoSound(); sd != nil {
+			sd.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindSprite:
 		if sp := activeGizmoSprite(); sp != nil {

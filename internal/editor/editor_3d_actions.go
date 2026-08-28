@@ -38,6 +38,7 @@ const (
 	sel3DVolume
 	sel3DSprite
 	sel3DEmitter
+	sel3DSound
 )
 
 func editor3DSelection() editor3DSelKind {
@@ -56,6 +57,8 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DSprite
 	case activeEmitter() != nil:
 		return sel3DEmitter
+	case activeSound() != nil:
+		return sel3DSound
 	case len(Editor.SelectedVertices) > 0:
 		return sel3DVertices
 	case Editor.ActiveSurface != "":
@@ -95,6 +98,13 @@ func editor3DSelectionSummary() string {
 			return fmt.Sprintf("Emitter %s (no effect)", em.ID)
 		}
 		return fmt.Sprintf("Emitter %s (%s)", em.ID, em.Effect)
+
+	case sel3DSound:
+		sd := activeSound()
+		if sd.Clip == "" {
+			return fmt.Sprintf("Sound %s (no clip)", sd.ID)
+		}
+		return fmt.Sprintf("Sound %s (%s)", sd.ID, sd.Clip)
 
 	case sel3DVertices:
 		if n := len(Editor.SelectedVertices); n > 1 {
@@ -459,7 +469,7 @@ func editor3DSelectSectorRing() {
 // editor3DCanSnap reports whether the selection is something snapping can move.
 func editor3DCanSnap() bool {
 	switch editor3DSelection() {
-	case sel3DVertices, sel3DSpawn, sel3DEntity, sel3DVolume, sel3DSprite, sel3DEmitter:
+	case sel3DVertices, sel3DSpawn, sel3DEntity, sel3DVolume, sel3DSprite, sel3DEmitter, sel3DSound:
 		return Editor.StepSize > 0
 	}
 	return false
@@ -516,6 +526,12 @@ func editor3DSnapSelectionToGrid() {
 		EditorPushUndo()
 		em.Position = snapVec3(em.Position, step)
 		editorSetStatus("Snapped emitter %q to the grid", em.ID)
+
+	case sel3DSound:
+		sd := activeSound()
+		EditorPushUndo()
+		sd.Position = snapVec3(sd.Position, step)
+		editorSetStatus("Snapped sound %q to the grid", sd.ID)
 	}
 }
 

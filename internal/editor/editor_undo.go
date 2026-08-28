@@ -153,10 +153,12 @@ func editorResetSelectionState() {
 	editorClearVolumeSelection()
 	editorClearSpriteSelection()
 	editorClearEmitterSelection()
+	editorClearSoundSelection()
 	Editor.EntityPlacementMode = false
 	Editor.VolumePlacementMode = false
 	Editor.SpritePlacementMode = false
 	Editor.EmitterPlacementMode = false
+	Editor.SoundPlacementMode = false
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1

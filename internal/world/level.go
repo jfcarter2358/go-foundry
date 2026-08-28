@@ -28,8 +28,12 @@ type Level struct {
 	Sprites []Sprite
 	// Emitters are the level's placed particle effects (emitter.go).
 	Emitters []Emitter
-	Lights   LightSet
-	Spatial  *SpatialHash // accelerated chunk/sector lookup; rebuilt after level load
+	// Sounds are the level's placed sound sources (sound.go).
+	Sounds []Sound
+	// Music is the level's global track, or nil when it has none.
+	Music   *Music
+	Lights  LightSet
+	Spatial *SpatialHash // accelerated chunk/sector lookup; rebuilt after level load
 	// Frames are the level's moving coordinate systems (frame.go). Built with
 	// Spatial, from the same structural information, and refreshed every tick.
 	// Nil is the world-only case and reads as "no frames", not as an error.

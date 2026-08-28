@@ -94,6 +94,17 @@ func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 		raw.Emitters = append(raw.Emitters, world.EmitterToRaw(&level.Emitters[i]))
 	}
 
+	// One-shot sounds are skipped for the reason Emitter.OneShot is never
+	// serialized: a level file places lasting sounds, and the ones a script
+	// fired per impact are not level content.
+	for i := range level.Sounds {
+		if level.Sounds[i].OneShot {
+			continue
+		}
+		raw.Sounds = append(raw.Sounds, world.SoundToRaw(&level.Sounds[i]))
+	}
+	raw.Music = world.MusicToRaw(level.Music)
+
 	raw.Scripts = append([]string(nil), level.Scripts...)
 	raw.Lights = lightsToRaw(level.Lights)
 	return raw, nil
@@ -730,6 +741,12 @@ func ApplyRawLevel(raw world.RawLevel, lvl *world.Level) error {
 	// EditorLoadLevel's note.
 	collision.DeleteEntities(lvl)
 	render.DeleteVolumes(lvl)
+	// Every voice the outgoing level held names a placement that is about to
+	// stop existing. Without this, undoing the placement of a sound leaves it
+	// playing forever with nothing left to switch it off — the audio version
+	// of the leaked GPU buffers the two calls above exist to prevent.
+	world.StopAllSounds(lvl)
+	world.StopMusic(lvl, 0)
 	*lvl = newLevel
 
 	world.UploadLights(lvl.Lights)

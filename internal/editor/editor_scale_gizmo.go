@@ -52,6 +52,12 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 		if em := activeGizmoEmitter(); em != nil {
 			return em.Position, true
 		}
+	case gizmoKindSound:
+		// Offered on the same terms and for the same reason: a sound's reach
+		// is its two distances, which are numbers in the panel.
+		if sd := activeGizmoSound(); sd != nil {
+			return sd.Position, true
+		}
 	case gizmoKindChunk:
 		if ch := activeGizmoChunk(); ch != nil {
 			return ch.LocalToWorld(ch.MinBound.Add(ch.MaxBound).Mul(0.5)), true

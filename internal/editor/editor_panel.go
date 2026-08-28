@@ -22,6 +22,8 @@ package editor
 
 import (
 	"fmt"
+
+	"foundry/internal/audio"
 	"foundry/internal/platform"
 	"foundry/internal/render"
 	"foundry/internal/uiwin"
@@ -214,6 +216,10 @@ func editorSettingsSection() {
 		editorEngineSettings()
 		imgui.TreePop()
 	}
+	if imgui.TreeNode("Audio##editoraudio") {
+		editorAudioSettings()
+		imgui.TreePop()
+	}
 	if imgui.TreeNode("Rendering##editorrender") {
 		editorRenderingSettings()
 		imgui.TreePop()
@@ -332,3 +338,61 @@ func editorPanelSettings() {
 // [-]/drag/[+]/[=] widget) lives in editor_ui.go — the surface editor's panel
 // draws only that part of the Editor block, so it stays its own function
 // rather than folding into editorSettingsSection here.
+
+// editorAudioSettings draws the three gains.
+//
+// Engine-wide rather than level data, so it sits with the other switches under
+// Editor Settings rather than in a properties block. Unlike the rest of them
+// these persist: they are written to <exe>/audio.yaml when a slider is
+// released, because a player who turns the music down expects it to stay down.
+//
+// Every label is Basic Latin. The default ImGui bitmap font renders anything
+// else as a literal "?", which SETTINGS_LAYOUT.md is explicit about.
+func editorAudioSettings() {
+	if !audio.Available() {
+		// A section with nothing to act on says so in one line rather than
+		// being greyed out, the way the rendering block reports a window that
+		// was not granted multisampling.
+		editorTextMutedWrapped("No audio device. Sliders would have nothing to act on.")
+		return
+	}
+
+	master := audio.MasterGain()
+	if editorDragFloatStep("Master gain##audmaster", &master, 0, 1, "%.2f", 0.05) {
+		audio.SetMasterGain(master)
+	}
+	editorSaveAudioSettingsOnRelease()
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Multiplies everything, music included.")
+	}
+
+	music := audio.MusicGain()
+	if editorDragFloatStep("Music gain##audmusic", &music, 0, 1, "%.2f", 0.05) {
+		audio.SetMusicGain(music)
+	}
+	editorSaveAudioSettingsOnRelease()
+
+	effects := audio.EffectsGain()
+	if editorDragFloatStep("Effects gain##audsfx", &effects, 0, 1, "%.2f", 0.05) {
+		audio.SetEffectsGain(effects)
+	}
+	editorSaveAudioSettingsOnRelease()
+
+	// The mixer's own numbers, which are the only way to tell "the clip is
+	// silent" from "the sound is not playing at all" without guessing.
+	st := audio.Snapshot()
+	editorTextMuted(fmt.Sprintf("%d voice(s), peak %.2f", st.Voices, st.Peak))
+	if st.Underruns > 0 {
+		editorTextMutedWrapped(fmt.Sprintf("%d underrun(s): the mixer fell behind the device.", st.Underruns))
+	}
+}
+
+// editorSaveAudioSettingsOnRelease writes the gains once a drag ends, rather
+// than on every frame of it — a drag is one file write, not two hundred.
+func editorSaveAudioSettingsOnRelease() {
+	if imgui.IsItemDeactivatedAfterEdit() {
+		if err := audio.SaveSettings(); err != nil {
+			editorSetStatus("Could not save audio settings: %v", err)
+		}
+	}
+}

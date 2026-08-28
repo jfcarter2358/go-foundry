@@ -231,6 +231,9 @@ func (rt *ScriptRuntime) scriptPaths() []string {
 		for i := range rt.lvl.Emitters {
 			add(rt.lvl.Emitters[i].Script)
 		}
+		for i := range rt.lvl.Sounds {
+			add(rt.lvl.Sounds[i].Script)
+		}
 		for ci := range rt.lvl.Chunks {
 			ch := &rt.lvl.Chunks[ci]
 			add(ch.Script)

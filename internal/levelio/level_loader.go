@@ -2,6 +2,7 @@ package levelio
 
 import (
 	"fmt"
+	"foundry/internal/audio"
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
@@ -754,6 +755,37 @@ func rawToLevel(raw world.RawLevel) (world.Level, error) {
 			}
 		}
 		level.Emitters = append(level.Emitters, em)
+	}
+
+	// Sounds: placed sound sources, with the same ID guarantee.
+	//
+	// A missing or unreadable clip is reported and the sound kept, on exactly
+	// the emitter rule above: the placement is real level content and the
+	// author needs to see it in order to fix it. What they get is a marker in
+	// the editor and a sound that makes none.
+	//
+	// Preloading here rather than on first play matters because decoding is
+	// disk I/O measured in tens of milliseconds, and doing it inside the frame
+	// that first triggers the sound is a visible hitch.
+	for _, rs := range raw.Sounds {
+		sd, err := world.SoundFromRaw(rs)
+		if err != nil {
+			return world.Level{}, err
+		}
+		sd.ID = world.UniqueSoundID(&level, sd.ID)
+		if sd.Clip != "" {
+			if _, err := audio.ClipFor(sd.Clip); err != nil {
+				log.Printf("sound %q: clip %q: %v", sd.ID, sd.Clip, err)
+			}
+		}
+		level.Sounds = append(level.Sounds, sd)
+	}
+
+	level.Music = world.MusicFromRaw(raw.Music)
+	if level.Music != nil && level.Music.Track != "" {
+		if _, err := audio.ClipFor(level.Music.Track); err != nil {
+			log.Printf("music %q: %v", level.Music.Track, err)
+		}
 	}
 
 	// Convert lights

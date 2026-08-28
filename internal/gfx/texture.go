@@ -47,6 +47,7 @@ func LoadTexture(name, file string) error {
 	generateWorldMipmaps()
 
 	Textures[name] = texture
+	noteTextureSize(name, int32(rgba.Rect.Size().X), int32(rgba.Rect.Size().Y))
 	return nil
 }
 
@@ -120,6 +121,7 @@ func DrainTextureUploads() {
 		}
 	}
 	pendingTextureUploads = pendingTextureUploads[:0]
+	drainUITextureUploads()
 }
 
 // UpdateTextureFromRGBA uploads img into the GL texture object already
@@ -131,10 +133,10 @@ func UpdateTextureFromRGBA(name string, img *image.RGBA) error {
 	w := int32(img.Rect.Dx())
 	h := int32(img.Rect.Dy())
 	if w <= 0 || h <= 0 {
-		return fmt.Errorf("UpdateTextureFromRGBA %q: empty image", name)
+		return errEmptyImage(name)
 	}
 	if img.Stride != img.Rect.Size().X*4 {
-		return fmt.Errorf("UpdateTextureFromRGBA %q: unsupported stride", name)
+		return errBadStride(name)
 	}
 
 	tex, ok := Textures[name]
@@ -155,6 +157,7 @@ func UpdateTextureFromRGBA(name string, img *image.RGBA) error {
 	// is well under the cost of the flatten that produced img in the first
 	// place.
 	generateWorldMipmaps()
+	noteTextureSize(name, w, h)
 	return nil
 }
 
@@ -191,4 +194,15 @@ func ScanTextures(dir string) map[string]string {
 		result[logical] = "textures/" + name
 	}
 	return result
+}
+
+// errEmptyImage and errBadStride are the two ways an RGBA upload can be
+// rejected, shared by the world and UI paths so both refuse the same things in
+// the same words.
+func errEmptyImage(name string) error {
+	return fmt.Errorf("texture upload %q: empty image", name)
+}
+
+func errBadStride(name string) error {
+	return fmt.Errorf("texture upload %q: unsupported stride, want tightly packed RGBA", name)
 }

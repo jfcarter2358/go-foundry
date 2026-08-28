@@ -371,6 +371,24 @@ func (h *levelHost) refPosition(r flang.RefVal) (mgl32.Vec3, bool) {
 		if _, p := c.lightFor(r); p != nil {
 			return p.Position, true
 		}
+	// Sprites, emitters and sounds all carry an Attach and so all have a
+	// world position that is not their stored one. None of the three was
+	// here, which meant every verb taking "an object or a vec" quietly
+	// refused them; `play_sound("clank", @torch)` is the first place that
+	// became visible, and adding only sounds would have left the same hole
+	// with one more kind in it.
+	case flang.RefSprite:
+		if sp := c.spriteFor(r); sp != nil {
+			return sp.WorldPosition(h.lvl()), true
+		}
+	case flang.RefEmitter:
+		if e := c.emitterFor(r); e != nil {
+			return e.WorldPosition(h.lvl()), true
+		}
+	case flang.RefSound:
+		if sd := c.soundFor(r); sd != nil {
+			return sd.WorldPosition(h.lvl()), true
+		}
 	case flang.RefSector, flang.RefFloor, flang.RefCeiling:
 		if ch, s := c.sectorFor(r); s != nil {
 			// MinBound/MaxBound and Floor.Height are chunk-local; every other

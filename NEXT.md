@@ -2,6 +2,16 @@
 
 ## Done
 
+- [x] Music and sound effects. `internal/audio` is the mixer: SDL2 output with
+      no new native library, pure-Go WAV/OGG/MP3 decoding, a 32-voice pool with
+      priority stealing and declick ramps, distance attenuation, constant-power
+      panning, cones and doppler. `world.Sound` is the placed source — attachable
+      to a frame, entity or bone like a sprite — with an editor panel, range
+      rings, picking, undo and YAML round-trip; `world.Music` is the level's
+      global track. Scripts get `play`, `stop`, `play_sound`, `play_sound_at`,
+      `play_music` and `stop_music`, and a `sound` ref with the placement's
+      properties. Master/music/effects gains live in the settings panel and are
+      the first setting in the engine that survives a restart.
 - [x] Directional lights
 - [x] Global lights
 - [x] Point lights
@@ -134,13 +144,7 @@
 - [ ] Trees
 - [ ] Configurable keybindings
 - [ ] Water reflections
-- [/] Music and Sound Effects. `internal/audio` is in: SDL2 output (no new
-      native library), pure-Go WAV/OGG/MP3 decoding, a voice pool with
-      priority stealing, distance attenuation, constant-power panning, cones
-      and doppler, and master/music/effects gains. `app.Run` opens the device
-      and publishes the listener each frame. Still to come: the placed
-      `Sound` level object and its editor panel, the flang verbs, and the
-      volume sliders in the settings panel.
+
 - [ ] Volumetric displacement (e.g. sand, snow)
 - [ ] Restitution/friction, and more than one solver iteration per frame
 - [ ] Editing entity *definitions* in the editor. The panel edits an instance;
@@ -148,3 +152,5 @@
 - [ ] Potentially change the max number of frames for animated textures as well as frame spacing/interpolation
 - [ ] Exterior floors and ceilings
 - [ ] Configurable step height that player can walk over
+- [ ] Bump maps
+- [ ] Normal maps

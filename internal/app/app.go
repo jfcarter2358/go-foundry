@@ -124,6 +124,9 @@ func Run() {
 	// SDL_Quit runs is a use-after-free down in C.
 	_ = audio.Init(audio.Config{})
 	defer audio.Shutdown()
+	// The saved gains, after the device is up so a slider that was left at
+	// zero silences the mixer rather than being overwritten by it.
+	audio.LoadSettings()
 
 	// Creates the window and its GL context together, at the highest MSAA
 	// sample count the platform actually accepts — the multisample buffer is
@@ -487,11 +490,9 @@ func Run() {
 		// gfx.CamUp() rather than gfx.Cam.Up: the zero value there means "no
 		// tilt", and only the accessor knows that. The editor's fly camera is
 		// this same camera, which is what makes auditioning work.
-		audio.Publish(audio.Frame{
-			ListenerPos:     gfx.Cam.Position,
-			ListenerForward: gfx.Cam.Direction,
-			ListenerUp:      gfx.CamUp(),
-		})
+		world.SoundUpdate(&level, platform.DeltaTime, !editor.Editor.Active,
+			gfx.Cam.Position, gfx.Cam.Direction, gfx.CamUp())
+		world.MusicUpdate(&level)
 
 		// The interact key's vehicle half, before the script tick so a mount
 		// made this frame is visible to it. It consumes the press only when it

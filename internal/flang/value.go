@@ -150,13 +150,14 @@ const (
 	RefBiome
 	RefSprite
 	RefEmitter
+	RefSound
 )
 
 var refKindNames = [...]string{
 	RefNone: "none", RefLevel: "level", RefChunk: "chunk", RefSector: "sector",
 	RefEdge: "edge", RefFloor: "floor", RefCeiling: "ceiling",
 	RefEntity: "entity", RefVolume: "volume", RefLight: "light", RefBiome: "biome",
-	RefSprite: "sprite", RefEmitter: "emitter",
+	RefSprite: "sprite", RefEmitter: "emitter", RefSound: "sound",
 }
 
 // String renders a ref kind as the atom `ref.kind` yields.

@@ -644,11 +644,27 @@ func (l *linter) levelNames() []string {
 	for i := range l.lvl.Volumes {
 		out = append(out, l.lvl.Volumes[i].ID)
 	}
+	// Sprites, emitters and sounds were missing from this list, so `@torch`
+	// naming a real emitter still produced "did you mean" against a set that
+	// could not contain it. Adding sounds without fixing the other two would
+	// have left the same bug in place with one more kind in it.
+	for i := range l.lvl.Sprites {
+		out = append(out, l.lvl.Sprites[i].ID)
+	}
+	for i := range l.lvl.Emitters {
+		out = append(out, l.lvl.Emitters[i].ID)
+	}
+	for i := range l.lvl.Sounds {
+		out = append(out, l.lvl.Sounds[i].ID)
+	}
 	for ci := range l.lvl.Chunks {
 		ch := &l.lvl.Chunks[ci]
 		out = append(out, ch.ID)
 		for si := range ch.Sectors {
 			out = append(out, ch.Sectors[si].ID)
+		}
+		for bi := range ch.BiomeSectors {
+			out = append(out, ch.BiomeSectors[bi].ID)
 		}
 	}
 	for i := range l.lvl.Lights.Directional {

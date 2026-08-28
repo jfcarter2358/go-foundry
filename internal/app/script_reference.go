@@ -162,6 +162,13 @@ var refKindOrder = []struct {
 }{
 	{"entity", flang.RefEntity},
 	{"volume", flang.RefVolume},
+	// Sprite, emitter and sound were absent here, so their property tables
+	// never reached the F1 reference even though PropertyDocs returns them —
+	// a feature nobody could find. Fixed alongside adding sounds rather than
+	// after, since the omission is what would have hidden the new kind too.
+	{"sprite", flang.RefSprite},
+	{"emitter", flang.RefEmitter},
+	{"sound", flang.RefSound},
 	{"edge", flang.RefEdge},
 	{"floor", flang.RefFloor},
 	{"ceiling", flang.RefCeiling},

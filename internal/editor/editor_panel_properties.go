@@ -74,6 +74,7 @@ func editorPropertiesSection(lvl *world.Level, kind editorPanelKind) {
 	editorVolumePropertiesSection()
 	editorSpritePropertiesSection()
 	editorEmitterPropertiesSection()
+	editorSoundPropertiesSection()
 	editorLightPropertiesSection(lvl)
 }
 

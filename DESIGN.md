@@ -446,11 +446,94 @@ that drives the same simulation and the same draw path the game does.
 
 ### Attachment
 
-A sprite or an emitter can ride a frame (a vehicle), an entity, or a named bone
+A sprite, an emitter or a sound can ride a frame (a vehicle), an entity, or a named bone
 inside one of that entity's model attachments. One `Attach` struct serves all
 three, resolved cheapest-first to a world matrix once a frame. Bone attachment
 reads the bone palette `EntityModel` already maintains for GPU skinning, so a
 flame on a swinging weapon, the weapon, and both their shadows cannot disagree.
+
+## Audio
+
+Two problems that look like one. **Music** has no position: it plays at the same
+level wherever the listener stands, and switching track is a crossfade. **A
+positional sound** is somewhere — a torch, an engine, an NPC talking — and gets
+quieter and pans as the listener moves and turns. The engine treats them as the
+same voice on different buses, which is why there is one mixer rather than two
+subsystems.
+
+**The split is the particle split.** `internal/audio` owns clips, the voice pool
+and the mixer, and has no idea what a level is; `world.Sound` is the placement
+that says where, and carries only the knobs worth varying between two placements
+of the same recording. Everything else about how a sound behaves is a property
+of the file, not of the level entry — the same rule that keeps a `.fpar` out of
+the emitter that names it.
+
+`internal/audio`'s entry in the layering table is one name stricter than
+`internal/particle`'s: it must not reach `internal/gfx` either. The listener is
+four plain vectors that `internal/app` copies out of `gfx.Cam` once a frame, and
+keeping the camera out is what makes the spatial maths a pure function a test
+can call with no GL context and no window.
+
+### Why the mixer is written in Go
+
+SDL2 is already linked and `sdl.Init(sdl.INIT_EVERYTHING)` already starts the
+audio subsystem, so output costs no new native library — which matters, because
+the Windows cross-build copies its DLLs by hand. SDL_mixer would have added
+`SDL2_mixer.dll` plus a codec DLL each, and its positional support is a coarse
+angle-and-distance pan rather than a per-source model. OpenAL Soft would have
+given real HRTF at the cost of another cgo dependency, another DLL, and a mix
+that cannot be tested.
+
+So the engine opens a device with `sdl.OpenAudioDevice` and pushes blocks with
+`sdl.QueueAudio`, and does the mixing itself. go-sdl2 declares
+`AudioSpec.Callback` as a raw C function pointer with no Go wrapper, so a
+callback-driven device would have needed an `//export`ed cgo shim and would run
+the whole mixer on a thread the Go scheduler does not own; pushing costs a
+little latency and buys ordinary Go code. Decoding is pure Go for the same
+reason — WAV is parsed here rather than through `sdl.LoadWAV`, which wraps
+SDL-allocated memory in a hand-built slice header and never frees it.
+
+The payoff is that the parts that can be wrong are testable. Distance
+attenuation, the constant-power pan, cones, doppler, voice stealing and the
+declick ramp are all ordinary functions asserted against ordinary numbers, with
+no device attached. Only one test in the engine opens real hardware, and it is
+opt-in behind `FOUNDRY_AUDIO_TEST=1`.
+
+### The listener, and one sign convention
+
+The listener is `gfx.Cam` — position, direction and `gfx.CamUp()`. The editor's
+fly camera is the same camera, which is what makes auditioning a placed sound
+work at all.
+
+The one trap is handedness. The engine's right vector is written inline in
+`gfx.MoveCamera` as `{Dir.Z, 0, -Dir.X}`, and for a direction from
+`DirectionFromAngles` that is `Up x Forward`, not `Forward x Up` — the engine is
+Y-up but left-handed about it. Taking the textbook cross product puts every
+sound in the game on the wrong side of the listener, reads as correct on the
+page, and is caught by exactly one test.
+
+### Two threads
+
+The mixer runs on its own goroutine, so a long frame produces slightly stale
+positions rather than a gap. The game thread never blocks on it. Discrete events
+— start this, stop that — go down a buffered channel with a non-blocking send,
+where a full channel drops the command and counts it rather than stalling the
+render loop. Continuous state — where everything is this frame, where the
+listener is — is published as one immutable snapshot through an atomic pointer,
+so the newest always wins and a burst of one-shots cannot leave a stale listener
+queued behind it.
+
+### The voice pool
+
+Fixed at 32. When it is full a new sound steals the quietest voice of equal or
+lower priority, and is **dropped** if there is none: cutting off the sound the
+player is listening to in order to start a quieter one is a worse outcome than
+losing the new one, and it is what makes a busy scene sound broken rather than
+merely busy. Sustained voices are capped separately, so a script bug that starts
+a loop every frame cannot eat the pool.
+
+Every stop ramps over a few milliseconds rather than cutting. A waveform cut at
+a non-zero sample is a step, and a step is a click.
 
 ## Level Composition
 

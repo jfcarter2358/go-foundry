@@ -294,6 +294,13 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	if Editor.SoundPlacementMode {
+		// A point too, on the emitter's reasoning: a sound placed on a stream
+		// belongs at the stream, not floating above it.
+		placeSoundAt(editor3DPointAt(t.X, t.Y))
+		return
+	}
+
 	if Editor.VolumePlacementMode {
 		// A volume is a region rather than something that rests on a surface, so
 		// it is centred a little above where the click landed — a trigger flush
@@ -388,6 +395,10 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	case pickEmitter:
 		Editor.ActiveSectorIdx = -1
 		editorSelectEmitter(hit.idx)
+
+	case pickSound:
+		Editor.ActiveSectorIdx = -1
+		editorSelectSound(hit.idx)
 
 	case pickLight:
 		// The Objects list is no longer the only way to reach a light: click

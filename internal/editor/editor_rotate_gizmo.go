@@ -130,6 +130,10 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 		if em := activeGizmoEmitter(); em != nil {
 			return em.Position, true
 		}
+	case gizmoKindSound:
+		if sd := activeGizmoSound(); sd != nil {
+			return sd.Position, true
+		}
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {
 			return s.Position, true
@@ -229,6 +233,13 @@ func applyRotationToSelection(axis, origin mgl32.Vec3, delta float32) {
 		// An emitter's rotation aims its emission shape, which is the whole
 		// reason the rotate gizmo is offered on something with no visible body.
 		em.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
+		return
+	}
+	if sd := activeGizmoSound(); sd != nil {
+		// A sound's rotation aims its cone, for the emitter's reason. It means
+		// nothing on an omnidirectional one, which is why the panel draws the
+		// cone controls before it is worth reaching for this.
+		sd.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
 		return
 	}
 	if s := activeGizmoSprite(); s != nil {

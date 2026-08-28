@@ -42,6 +42,7 @@ const (
 	panelFocusVolume  = "volume"
 	panelFocusSprite  = "sprite"
 	panelFocusEmitter = "emitter"
+	panelFocusSound   = "sound"
 	panelFocusChunk   = "chunk"
 	panelFocusLight   = "light"
 	panelFocusSector  = "sector"
@@ -64,6 +65,7 @@ const (
 	pickVolume  pickKind = "volume"
 	pickSprite  pickKind = "sprite"
 	pickEmitter pickKind = "emitter"
+	pickSound   pickKind = "sound"
 	pickLight   pickKind = "light"
 )
 
@@ -313,6 +315,14 @@ func pick3D(sx, sy int32) pickHit {
 	for ei := range lvl.Emitters {
 		if t := pickEmitterRayT(origin, dir, lvl, &lvl.Emitters[ei], gfx.Cam.Position); t < float32(math.MaxFloat32) {
 			hit.consider(t, pickEmitter, -1, -1, ei)
+		}
+	}
+
+	// Sounds, against their marker disc, for the same reason: a sound has
+	// nothing to see except the marker drawn for it.
+	for si := range lvl.Sounds {
+		if t := pickSoundRayT(origin, dir, lvl, &lvl.Sounds[si], gfx.Cam.Position); t < float32(math.MaxFloat32) {
+			hit.consider(t, pickSound, -1, -1, si)
 		}
 	}
 
@@ -856,6 +866,7 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	drawSelectedVolumeOutline()
 	drawSelectedSpriteOutline(gfx.Cam.Position)
 	RenderEmitterMarkers(Editor.level, gfx.Cam.Position)
+	RenderSoundMarkers(Editor.level, gfx.Cam.Position)
 
 	if offWorld {
 		// Nothing is under the cursor, so no handle reads as hovered and the

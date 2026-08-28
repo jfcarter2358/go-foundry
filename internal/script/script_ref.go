@@ -27,6 +27,7 @@ type refCache struct {
 	volume   map[string]int    // volume ID -> index into lvl.Volumes
 	sprite   map[string]int    // sprite ID -> index into lvl.Sprites
 	emitter  map[string]int    // emitter ID -> index into lvl.Emitters
+	sound    map[string]int    // sound ID -> index into lvl.Sounds
 	chunk    map[string]int    // chunk ID -> index into lvl.Chunks
 	sector   map[string][2]int // sector ID -> {chunk, sector}
 	biome    map[string][2]int // biome sector ID -> {chunk, biome}
@@ -43,6 +44,7 @@ func buildRefCache(lvl *world.Level) *refCache {
 		volume:   map[string]int{},
 		sprite:   map[string]int{},
 		emitter:  map[string]int{},
+		sound:    map[string]int{},
 		chunk:    map[string]int{},
 		sector:   map[string][2]int{},
 		biome:    map[string][2]int{},
@@ -63,6 +65,9 @@ func buildRefCache(lvl *world.Level) *refCache {
 	}
 	for i := range lvl.Emitters {
 		c.emitter[lvl.Emitters[i].ID] = i
+	}
+	for i := range lvl.Sounds {
+		c.sound[lvl.Sounds[i].ID] = i
 	}
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
@@ -105,6 +110,9 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 	}
 	if _, ok := c.emitter[id]; ok {
 		return flang.RefVal{Kind: flang.RefEmitter, A: id}, true
+	}
+	if _, ok := c.sound[id]; ok {
+		return flang.RefVal{Kind: flang.RefSound, A: id}, true
 	}
 	if idx, ok := c.sector[id]; ok {
 		return flang.RefVal{Kind: flang.RefSector, A: c.lvl.Chunks[idx[0]].ID, B: id}, true
@@ -168,6 +176,17 @@ func (c *refCache) emitterFor(r flang.RefVal) *world.Emitter {
 	}
 	if i, ok := c.emitter[r.A]; ok && i < len(c.lvl.Emitters) {
 		return &c.lvl.Emitters[i]
+	}
+	return nil
+}
+
+// soundFor resolves a sound ref to the sound itself.
+func (c *refCache) soundFor(r flang.RefVal) *world.Sound {
+	if c.lvl == nil || r.Kind != flang.RefSound {
+		return nil
+	}
+	if i, ok := c.sound[r.A]; ok && i < len(c.lvl.Sounds) {
+		return &c.lvl.Sounds[i]
 	}
 	return nil
 }
@@ -252,6 +271,10 @@ func (c *refCache) scriptDataFor(r flang.RefVal) *world.ScriptData {
 		if e := c.emitterFor(r); e != nil {
 			return &e.ScriptData
 		}
+	case flang.RefSound:
+		if sd := c.soundFor(r); sd != nil {
+			return &sd.ScriptData
+		}
 	case flang.RefSector:
 		if _, s := c.sectorFor(r); s != nil {
 			return &s.ScriptData
@@ -300,6 +323,8 @@ func (c *refCache) alive(r flang.RefVal) bool {
 		return c.spriteFor(r) != nil
 	case flang.RefEmitter:
 		return c.emitterFor(r) != nil
+	case flang.RefSound:
+		return c.soundFor(r) != nil
 	case flang.RefChunk:
 		return c.chunkFor(r) != nil
 	case flang.RefSector, flang.RefFloor, flang.RefCeiling:
@@ -346,6 +371,11 @@ func (c *refCache) refsWithTag(tag string) []flang.RefVal {
 	for i := range c.lvl.Emitters {
 		if c.lvl.Emitters[i].HasTag(tag) {
 			out = append(out, flang.RefVal{Kind: flang.RefEmitter, A: c.lvl.Emitters[i].ID})
+		}
+	}
+	for i := range c.lvl.Sounds {
+		if c.lvl.Sounds[i].HasTag(tag) {
+			out = append(out, flang.RefVal{Kind: flang.RefSound, A: c.lvl.Sounds[i].ID})
 		}
 	}
 	for ci := range c.lvl.Chunks {
@@ -416,6 +446,9 @@ func (c *refCache) allTags() []string {
 	}
 	for i := range c.lvl.Emitters {
 		add(c.lvl.Emitters[i].Tags)
+	}
+	for i := range c.lvl.Sounds {
+		add(c.lvl.Sounds[i].Tags)
 	}
 	for ci := range c.lvl.Chunks {
 		ch := &c.lvl.Chunks[ci]

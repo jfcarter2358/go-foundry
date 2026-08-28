@@ -23,6 +23,7 @@ package editor
 
 import (
 	"fmt"
+	"foundry/internal/audio"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
@@ -68,6 +69,7 @@ func editorExplorerSection(lvl *world.Level, kind editorPanelKind) {
 	editorExplorerVolumeNodes(lvl)
 	editorExplorerSpriteNodes(lvl)
 	editorExplorerEmitterNodes(lvl)
+	editorExplorerSoundNodes(lvl)
 	editorExplorerLightNodes(lvl)
 	editorExplorerScriptNodes(lvl)
 	imgui.EndChild()
@@ -683,6 +685,10 @@ func editorExplorerAddMenu(lvl *world.Level, kind editorPanelKind) {
 		editorEmitterAddMenu()
 		imgui.EndMenu()
 	}
+	if imgui.BeginMenu("Sound") {
+		editorSoundAddMenu()
+		imgui.EndMenu()
+	}
 
 	imgui.Separator()
 	if imgui.MenuItemV("Directional Light", "", false,
@@ -885,4 +891,91 @@ func editorExplorerEmitterNodes(lvl *world.Level) {
 		editorSelectEmitter(del)
 		deleteActiveEmitter()
 	}
+}
+
+// editorExplorerSoundNodes draws the level's placed sounds.
+func editorExplorerSoundNodes(lvl *world.Level) {
+	if !editorExplorerCategory(fmt.Sprintf("Sounds (%d)##sounds", len(lvl.Sounds)), panelFocusSound) {
+		return
+	}
+	defer imgui.TreePop()
+
+	if len(lvl.Sounds) == 0 {
+		editorTextMuted("(none)")
+		return
+	}
+	del, dup := -1, -1
+	for i := range lvl.Sounds {
+		sd := &lvl.Sounds[i]
+		label := sd.ID
+		if label == "" {
+			label = "(unnamed)"
+		}
+		// The clip it names, and any reason it is silent. A sound with a
+		// broken clip looks exactly like one that is simply off, and the row
+		// is where that distinction is cheapest to make.
+		switch {
+		case sd.Clip == "":
+			label += "  (no clip)"
+		case !soundClipLoads(sd.Clip):
+			label += "  (" + sd.Clip + ": failed)"
+		default:
+			label += "  [" + sd.Clip + "]"
+		}
+		if !sd.Enabled {
+			label += "  (off)"
+		} else if !sd.Playing {
+			label += "  (stopped)"
+		}
+		if !sd.Attach.IsZero() {
+			label += "  <" + sd.Attach.Describe() + ">"
+		}
+		if editorExplorerLeaf(fmt.Sprintf("%s##snd%d", label, i), i == Editor.ActiveSoundIdx, panelFocusSound) {
+			editorSelectSound(i)
+		}
+		editorExplorerMenu(fmt.Sprintf("sndctx%d", i), func() {
+			enabled := sd.Enabled
+			if imgui.MenuItemV("Enabled", "", enabled, true) {
+				EditorPushUndo()
+				sd.Enabled = !enabled
+			}
+			playing := sd.Playing
+			if imgui.MenuItemV("Playing", "", playing, true) {
+				EditorPushUndo()
+				sd.Playing = !playing
+			}
+			looping := sd.Loop
+			if imgui.MenuItemV("Loop", "", looping, true) {
+				EditorPushUndo()
+				sd.Loop = !looping
+			}
+			if imgui.MenuItemV("Audition", "", false, sd.Clip != "") {
+				editorSelectSound(i)
+				auditionActiveSound()
+			}
+			if imgui.MenuItem("Duplicate") {
+				dup = i
+			}
+			imgui.Separator()
+			if imgui.MenuItem("Delete") {
+				del = i
+			}
+		})
+	}
+	if dup >= 0 {
+		editorSelectSound(dup)
+		duplicateActiveSound()
+	}
+	if del >= 0 {
+		editorSelectSound(del)
+		deleteActiveSound()
+	}
+}
+
+// soundClipLoads reports whether a clip is readable, for the row label. The
+// clip cache remembers failures, so asking once a frame per sound costs a map
+// lookup rather than a decode attempt.
+func soundClipLoads(name string) bool {
+	_, err := audio.ClipFor(name)
+	return err == nil
 }

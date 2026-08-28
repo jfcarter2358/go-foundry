@@ -462,6 +462,7 @@ editor's reference panel. The core surface:
 | chunk | `origin` `rotation` `scale` `frame` — all read-only |
 | light | `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` |
 | biome | `kind` `density` `range` `color` `ground_texture` |
+| sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` |
 
 An entity's `texture` is its attachments' skin: reading it reports what the first
 attachment draws with, and writing it reskins them all. `set_texture` is the same
@@ -716,9 +717,78 @@ A **sprite**'s are `position`, `visible`, `texture`, `alpha`, `tint`, `size` and
 `frame`, plus the same read-only `attach` and `carrier`. `size` is a `vec` of
 width and height, whose `z` is unused.
 
+### Audio
+
+Sound comes in two kinds and the verbs follow the split. A **placed sound** is
+level content — a torch, a stream, an engine — with a position, a loudness and
+a distance it carries. A **one-shot** is gameplay: an impact, a footstep, a
+door, at a place no author could have known about ahead of time.
+
+`play` and `stop` drive a sound the level already places:
+
+```
+play(@waterfall)   -- start it, switching it on if it was off
+stop(@waterfall)   -- stop it, without giving up the placement
+```
+
+`stop` deliberately leaves the placement alone, so a machine switched off can be
+switched back on. To give up the voice entirely, write the property instead:
+
+```
+@waterfall.prop.enabled = false
+```
+
+`play_sound` and `play_sound_at` are what gameplay reaches for. Both place a
+sound that removes itself once it has finished, so a script firing one per
+impact does not fill the level with spent ones — the same arrangement
+`spawn_effect` makes for particles. Both return a `ref` to what they placed.
+
+```
+play_sound("clank", @door)              -- at an object
+play_sound_at("thud", <3.0, 0.0, 4.0>)  -- at a point
+play_sound_at("thud", at, 0.5)          -- quieter
+```
+
+The commonest use is an impact handler, where the collision already hands you
+the place:
+
+```
+def on_collide(:collide:, other ref, at vec) -> null
+    play_sound_at("impact", at)
+end
+```
+
+`play_music` and `stop_music` drive the level's global track, which has no
+position and answers to the music slider rather than the effects one:
+
+```
+play_music("cavern")        -- crossfades over one second
+play_music("cavern", 4.0)   -- over four
+stop_music(2.0)
+```
+
+`play_music` returns `false` when the named track is already playing, so a
+handler that sets the track every tick does not restart it every tick.
+
+A **sound**'s properties are the placement's, not the clip's: `position`,
+`enabled`, `playing`, `loop`, `gain`, `pitch`, `bus`, and the three that decide
+how far it carries — `ref_distance` (full gain within this radius),
+`max_distance` (silent beyond it) and `rolloff`. `clip` is read-only for the
+reason `effect` is on an emitter: changing it means reading a file from disk,
+and a tick must not do file I/O. `sounding` is read-only and reports whether
+the mixer is actually playing it, which is not the same as `playing` — a sound
+can be switched on and still be inaudible because it is out of range or because
+there is no audio device.
+
+The field is `gain`, not `volume`. `volume` is already a level object type.
+
+Naming a clip with no matching file in `sounds/` is reported once and the
+placement kept, exactly as a missing `.fpar` is: the placement is real level
+content and the author needs to see it in order to fix it.
+
 ### Attaching
 
-A sprite or an emitter can **ride** something, so that smoke follows a ship, a
+A sprite, an emitter or a sound can **ride** something, so that smoke follows a ship, a
 flame follows the hand holding the torch, and dust follows a wheel. It is the
 same binding the editor's **Attach** panel authors, so an effect bound by a
 script and one bound by hand are the same effect.

@@ -587,6 +587,58 @@ type RawLights struct {
 // because they move: an entity that walked out of the chunk it was authored in
 // would otherwise have to be re-parented mid-frame, and its saved position is
 // world-space for exactly the same reason.
+// RawSound is a placed sound source (sound.go).
+//
+// Every optional key follows level_schema.go's two conventions: a pointer
+// where "absent" and "zero" must stay distinguishable — a Gain of 0 is a muted
+// sound and is not the same as an unwritten gain — and a name string rather
+// than an enum int for Bus and Atten, so a reordered enum cannot silently
+// reinterpret an old file.
+type RawSound struct {
+	ID            string `yaml:"id"`
+	RawScriptData `yaml:",inline"`
+	// Clip names a file under sounds/, without the extension.
+	Clip     string  `yaml:"clip"`
+	Position RawVec3 `yaml:"position"`
+	Rotation RawVec3 `yaml:"rotation,omitempty"`
+
+	Enabled *bool `yaml:"enabled,omitempty"` // default true when absent
+	Playing *bool `yaml:"playing,omitempty"` // default true when absent
+	Loop    *bool `yaml:"loop,omitempty"`    // default true when absent
+
+	Gain  *float32 `yaml:"gain,omitempty"`  // default 1
+	Pitch *float32 `yaml:"pitch,omitempty"` // default 1
+	Bus   string   `yaml:"bus,omitempty"`   // default "effects"
+
+	RefDistance *float32 `yaml:"ref_distance,omitempty"`
+	MaxDistance *float32 `yaml:"max_distance,omitempty"`
+	Rolloff     *float32 `yaml:"rolloff,omitempty"`
+	Atten       string   `yaml:"atten,omitempty"` // default "inverse"
+
+	// The cone angles are total widths in radians. Plain floats with a plain
+	// omitempty: absent means 0, and 0 genuinely means omnidirectional.
+	ConeInner     float32 `yaml:"cone_inner,omitempty"`
+	ConeOuter     float32 `yaml:"cone_outer,omitempty"`
+	ConeOuterGain float32 `yaml:"cone_outer_gain,omitempty"`
+
+	Attach *RawAttach `yaml:"attach,omitempty"`
+}
+
+// RawMusic is the level's global track.
+//
+// It follows RawSpawn's shape rather than the list shape the other placed
+// objects take: there is at most one, it has no ID, and it is written under a
+// top-level key. A level with no music writes no `music:` block at all, which
+// is why Level.Music is a pointer.
+type RawMusic struct {
+	// Track names a file under sounds/, without the extension.
+	Track string   `yaml:"track"`
+	Gain  *float32 `yaml:"gain,omitempty"` // default 1
+	Loop  *bool    `yaml:"loop,omitempty"` // default true
+	// Fade is the crossfade in seconds when a script switches track.
+	Fade float32 `yaml:"fade,omitempty"`
+}
+
 type RawLevel struct {
 	Chunks []RawChunk `yaml:"chunks"`
 	Spawn  *RawSpawn  `yaml:"spawn,omitempty"`
@@ -608,5 +660,10 @@ type RawLevel struct {
 	// Emitters are the level's placed particle effects (emitter.go), beside
 	// sprites for the same reasons.
 	Emitters []RawEmitter `yaml:"emitters,omitempty"`
-	Lights   RawLights    `yaml:"lights"`
+	// Sounds are the level's placed sound sources (sound.go), beside emitters
+	// for the same reasons — one attached to a moving entity crosses chunks.
+	Sounds []RawSound `yaml:"sounds,omitempty"`
+	// Music is the level's global track, if it has one.
+	Music  *RawMusic `yaml:"music,omitempty"`
+	Lights RawLights `yaml:"lights"`
 }

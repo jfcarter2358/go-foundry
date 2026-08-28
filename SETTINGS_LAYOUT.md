@@ -259,6 +259,7 @@ Entity > ID <textbox>, then a row per definition under entities/ plus "(blank en
 Volume > ID <textbox>, then Place By Clicking
 Sprite > ID <textbox>, Texture <dropdown>, then Place By Clicking <!-- lands standing on the surface clicked -->
 Emitter > ID <textbox>, Effect <dropdown of .fpar under particles/>, then Place By Clicking
+Sound > ID <textbox>, Clip <dropdown of .wav/.ogg/.mp3 under sounds/>, then Place By Clicking
 Directional Light <!-- greyed past the shader's limit -->
 Point Light <!-- at the camera; greyed past the shader's limit -->
 Biome Sector <!-- sector map only: draw its corners, then Enter -->
@@ -496,6 +497,32 @@ Position X/Y/Z, Rotation X/Y/Z (deg) [-] [Number Slider] [+] [=] <!-- rotation a
 #### Attach <!-- the same block sprites get -->
 #### Tags / Attributes / Script
 [Duplicate] [Delete]
+
+### Sound <!-- only when a sound is selected -->
+ID <textbox>
+[checkbox] Enabled <!-- off gives up the voice entirely -->
+[checkbox] Playing <!-- off stops the sound but keeps the placement; this is what the stop verb does -->
+[checkbox] Loop <!-- on for ambience; off plays once -->
+#### Clip
+Clip <dropdown of .wav/.ogg/.mp3 under sounds/>
+<!-- a line naming the clip's length, rate and channel count, or why it loaded nothing -->
+Gain [-] [Number Slider] [+] [=] <!-- named gain, not volume: Volume is a level object type -->
+Pitch [-] [Number Slider] [+] [=] <!-- clamped to what the mixer resamples cleanly -->
+Bus <dropdown: effects, music> <!-- which of the player's sliders it answers to -->
+#### Transform
+Position X/Y/Z, Rotation X/Y/Z (deg) [-] [Number Slider] [+] [=] <!-- rotation aims the cone -->
+#### Attenuation <!-- how far it carries; the substance of the panel -->
+Ref distance [-] [Number Slider] [+] [=] <!-- full gain within this radius -->
+Max distance [-] [Number Slider] [+] [=] <!-- silent beyond it, and skipped by the mixer -->
+Rolloff [-] [Number Slider] [+] [=]
+Falloff <dropdown: inverse, linear, exponential>
+[checkbox] Show ranges <!-- draws the two distances as rings; the only way to place a sound by eye -->
+#### Cone <!-- collapsed by default; most sounds are omnidirectional -->
+Inner (deg) / Outer (deg) [-] [Number Slider] [+] [=] <!-- total widths, not half-angles -->
+Outside gain [-] [Number Slider] [+] [=]
+#### Attach <!-- the same block sprites and emitters get -->
+#### Tags / Attributes / Script
+[Audition] [Duplicate] [Delete] <!-- Audition plays it at the camera, ignoring distance -->
 
 ### Water <!-- part of the biome brush block below, shown for the Water kind; reached by clicking the plane or the sector -->
 <!-- shape and extent come from the painted polygon; they are edited in the sector map's biome layer -->
@@ -885,6 +912,13 @@ Entity/world collision [checkbox] [8] <!-- each entity still has to opt in; this
 Entity/entity collision [checkbox] [9]
 Gravity [checkbox] [0]
 <!-- entities only move while the editor is closed; the panel says so -->
+
+## Audio <!-- the only settings in this block that persist; written to <exe>/audio.yaml when a slider is released -->
+Master gain [-] [Number Slider] [+] [=] <!-- multiplies everything, music included -->
+Music gain [-] [Number Slider] [+] [=]
+Effects gain [-] [Number Slider] [+] [=]
+<!-- a line reporting live voices and the last block's peak, and any underruns -->
+<!-- with no audio device the whole group is replaced by one line saying so -->
 
 ## Rendering <!-- the biome shadow cost switches, today reachable only by function key -->
 Biome scatter receives shadows [checkbox] [F5]

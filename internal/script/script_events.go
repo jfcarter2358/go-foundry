@@ -120,6 +120,11 @@ func scriptedRefs(rt *ScriptRuntime, lvl *world.Level) []flang.RefVal {
 			out = append(out, flang.RefVal{Kind: flang.RefEmitter, A: lvl.Emitters[i].ID})
 		}
 	}
+	for i := range lvl.Sounds {
+		if lvl.Sounds[i].Script != "" {
+			out = append(out, flang.RefVal{Kind: flang.RefSound, A: lvl.Sounds[i].ID})
+		}
+	}
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
 		if ch.Script != "" {
