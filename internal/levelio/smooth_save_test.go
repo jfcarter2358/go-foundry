@@ -9,40 +9,46 @@ package levelio
 import (
 	"foundry/internal/detail"
 	"foundry/internal/world"
+
+	"github.com/go-gl/mathgl/mgl32"
 	"testing"
 )
 
-// Smoothing is a per-surface authored setting, so it has to survive a save.
+// Smoothing is a per-face authored setting, so it has to survive a save.
 func TestSmoothSavesPerSurface(t *testing.T) {
-	ch := squareChunk()
-	s := &ch.Sectors[0]
-	s.Floor.Smooth, s.Floor.SmoothAngle = true, 35
-	s.Walls[2].Smooth, s.Walls[2].SmoothAngle = true, 80
+	ch := world.Chunk{
+		ID:      "main",
+		Scale:   1,
+		Brushes: []world.Brush{world.NewBoxBrush("room", mgl32.Vec3{5, 2, 5}, mgl32.Vec3{5, 2, 5}, "concrete")},
+	}
+	b := &ch.Brushes[0]
+	b.Faces[0].Smooth, b.Faces[0].SmoothAngle = true, 35
+	b.Faces[2].Smooth, b.Faces[2].SmoothAngle = true, 80
 
 	rc, err := chunkToRaw(&ch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rs := rc.Sectors[0]
+	rb := rc.Brushes[0]
 
-	if !rs.Floor.Smooth || rs.Floor.SmoothAngle != 35 {
-		t.Errorf("floor = (%v, %v), want (true, 35)", rs.Floor.Smooth, rs.Floor.SmoothAngle)
+	if !rb.Faces[0].Smooth || rb.Faces[0].SmoothAngle != 35 {
+		t.Errorf("face 0 = (%v, %v), want (true, 35)", rb.Faces[0].Smooth, rb.Faces[0].SmoothAngle)
 	}
-	if rs.Ceiling.Smooth {
-		t.Error("ceiling picked up the floor's smoothing")
+	if rb.Faces[1].Smooth {
+		t.Error("face 1 picked up face 0's smoothing")
 	}
 
 	var smoothed []int
-	for i, e := range rs.Edges {
-		if e.Smooth {
+	for i, f := range rb.Faces {
+		if f.Smooth {
 			smoothed = append(smoothed, i)
-			if e.SmoothAngle != 80 {
-				t.Errorf("edge %d angle = %v, want 80", i, e.SmoothAngle)
-			}
 		}
 	}
-	if len(smoothed) != 1 || smoothed[0] != 2 {
-		t.Errorf("smoothed edges = %v, want [2]", smoothed)
+	if len(smoothed) != 2 || smoothed[0] != 0 || smoothed[1] != 2 {
+		t.Errorf("smoothed faces = %v, want [0 2]", smoothed)
+	}
+	if rb.Faces[2].SmoothAngle != 80 {
+		t.Errorf("face 2 angle = %v, want 80", rb.Faces[2].SmoothAngle)
 	}
 }
 

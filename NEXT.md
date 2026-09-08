@@ -398,6 +398,14 @@
       facing arrow, which was hand-rolled from a cosine and a sine, turned out
       to spin the opposite way to `world.SeatMatrix` — it is drawn through that
       matrix now
+- [x] Configurable step height that player can walk over
+- [x] Should be able to set entity velocity from scripts
+- [x] Can't shift click between two points in the editor to select everything between them
+- [x] Update after to use the message post format so I can post it to whoever I like
+- [x] Use ?param for referencing params instead of @param
+- [x] UI builder
+- [x] Entity editor
+- [x] Closing the main editor should close all other windows
 
 ## TODO
 
@@ -409,11 +417,10 @@
 ### Editor
 
 - [ ] Debugger
-- [x] UI builder
 - [ ] Configurable editor keybindings
-- [x] Entity editor
 - [ ] Audio mixer
-- [ ] Closing the main editor should close all other windows
+- [ ] Bounding box view
+- [ ] Gizmo in 3D editor to edit texture UVs
 
 
 ### Engine
@@ -425,9 +432,4 @@
 - [ ] Volumetric displacement (e.g. sand, snow)
 - [ ] Restitution/friction, and more than one solver iteration per frame
 - [ ] Potentially change the max number of frames for animated textures as well as frame spacing/interpolation
-- [ ] Exterior floors and ceilings
-- [x] Configurable step height that player can walk over
-- [ ] Should be able to set entity velocity from scripts
-- [ ] Can't shift click between two points in the editor to select everything between them
-- [x] Update after to use the message post format so I can post it to whoever I like
-- [x] Use ?param for referencing params instead of @param
+- [ ] Volumes are brushes instead of boxes only

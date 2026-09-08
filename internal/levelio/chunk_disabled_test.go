@@ -22,28 +22,24 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// disabledChunkLevel is one square sector in one chunk, whose disabled state
-// the caller chooses.
+// disabledChunkLevel is one box brush in one chunk, whose disabled state the
+// caller chooses.
 const disabledChunkLevelYAML = `chunks:
   - id: area
     disabled: %DISABLED%
     origin: {x: 0, y: 0, z: 0}
     rotation: 0
     scale: 1
-    points:
-      P0: {x: 0, y: 0}
-      P1: {x: 10, y: 0}
-      P2: {x: 10, y: 10}
-      P3: {x: 0, y: 10}
-    sectors:
+    brushes:
       - id: room
-        floor: {enabled: true, height: 0, texture: default}
-        ceiling: {enabled: true, height: 4, texture: default}
-        edges:
-          - {from: P0, to: P1, kind: wall, texture: default, collision: true}
-          - {from: P1, to: P2, kind: wall, texture: default, collision: true}
-          - {from: P2, to: P3, kind: wall, texture: default, collision: true}
-          - {from: P3, to: P0, kind: wall, texture: default, collision: true}
+        verts: [0,0,0, 10,0,0, 0,4,0, 10,4,0, 0,0,10, 10,0,10, 0,4,10, 10,4,10]
+        faces:
+          - {indices: [0,4,6,2], texture: default}
+          - {indices: [5,1,3,7], texture: default}
+          - {indices: [0,1,5,4], texture: default}
+          - {indices: [2,6,7,3], texture: default}
+          - {indices: [1,0,2,3], texture: default}
+          - {indices: [4,5,7,6], texture: default}
 `
 
 // withStubTextures registers the one texture the fixture names, so the loader's
@@ -72,12 +68,9 @@ func writeDisabledChunkLevel(t *testing.T, disabled string) string {
 	return path
 }
 
-func sectorHasMesh(s *world.Sector) bool {
-	if len(s.Floor.Geometry.Vertices) > 0 || len(s.Ceiling.Geometry.Vertices) > 0 {
-		return true
-	}
-	for wi := range s.Walls {
-		if len(s.Walls[wi].Geometry.Vertices) > 0 {
+func brushHasMesh(b *world.Brush) bool {
+	for fi := range b.Faces {
+		if len(b.Faces[fi].Geometry.Vertices) > 0 {
 			return true
 		}
 	}
@@ -92,7 +85,7 @@ func TestDisabledChunkIsNeverBuiltAtLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enabled load: %v", err)
 	}
-	if !sectorHasMesh(&on.Chunks[0].Sectors[0]) {
+	if !brushHasMesh(&on.Chunks[0].Brushes[0]) {
 		t.Fatal("the fixture builds no geometry even when enabled")
 	}
 
@@ -107,19 +100,19 @@ func TestDisabledChunkIsNeverBuiltAtLoad(t *testing.T) {
 	if !ch.Unloaded {
 		t.Error("a chunk loaded disabled is not marked unloaded, so nothing would ever build it")
 	}
-	if sectorHasMesh(&ch.Sectors[0]) {
+	if brushHasMesh(&ch.Brushes[0]) {
 		t.Error("a chunk loaded disabled uploaded its geometry anyway")
 	}
 
-	// The sectors themselves are still there to be switched on — the skipped
+	// The brushes themselves are still there to be switched on — the skipped
 	// work is the upload, not the parse.
-	if len(ch.Sectors) != 1 || len(ch.Points) != 4 {
-		t.Fatalf("got %d sectors and %d points, want 1 and 4", len(ch.Sectors), len(ch.Points))
+	if len(ch.Brushes) != 1 || len(ch.Brushes[0].Verts) != 8 {
+		t.Fatalf("got %d brushes and %d verts, want 1 and 8", len(ch.Brushes), len(ch.Brushes[0].Verts))
 	}
 	if !world.SetChunkEnabled(ch, true) {
 		t.Fatal("switching the chunk on reported no change")
 	}
-	if !sectorHasMesh(&ch.Sectors[0]) {
+	if !brushHasMesh(&ch.Brushes[0]) {
 		t.Error("switching the chunk on built no geometry")
 	}
 }

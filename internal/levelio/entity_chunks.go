@@ -105,7 +105,7 @@ func LoadChunkForEntity(entityID string, a *world.EntityChunk) (world.Chunk, map
 	// Prefixing by the chunk's own ID is the same shape ImportChunkIntoLevel's
 	// suffixing has, and keeps the qualified name readable in the Explorer.
 	if entityID != "" {
-		prefixSectorIDs(&rc, rc.ID+".")
+		prefixBrushIDs(&rc, rc.ID+".")
 	}
 
 	ch, tex, err := BuildChunkFromRaw(rc)
@@ -116,24 +116,16 @@ func LoadChunkForEntity(entityID string, a *world.EntityChunk) (world.Chunk, map
 	return ch, tex, nil
 }
 
-// prefixSectorIDs renames every sector in the chunk, carrying in-chunk portal
-// references along with them. A portal naming a sector outside this chunk is
-// left alone — it was not one of the names being rewritten.
-func prefixSectorIDs(rc *world.RawChunk, prefix string) {
+// prefixBrushIDs renames every brush in the chunk, so two placements of the
+// same attachment do not both claim a name. Brush IDs are level-unique and
+// nothing else references one by name inside a chunk, so unlike the sector
+// version this replaces there is nothing to remap alongside them.
+func prefixBrushIDs(rc *world.RawChunk, prefix string) {
 	if prefix == "" {
 		return
 	}
-	remap := make(map[string]string, len(rc.Sectors))
-	for i := range rc.Sectors {
-		remap[rc.Sectors[i].ID] = prefix + rc.Sectors[i].ID
-	}
-	for i := range rc.Sectors {
-		rc.Sectors[i].ID = remap[rc.Sectors[i].ID]
-		for j := range rc.Sectors[i].Edges {
-			if to, ok := remap[rc.Sectors[i].Edges[j].ToSector]; ok {
-				rc.Sectors[i].Edges[j].ToSector = to
-			}
-		}
+	for i := range rc.Brushes {
+		rc.Brushes[i].ID = prefix + rc.Brushes[i].ID
 	}
 }
 

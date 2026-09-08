@@ -8,7 +8,6 @@ package levelio
 // level_save.go's top-of-function comments.
 
 import (
-	"foundry/internal/geom"
 	"foundry/internal/testenv"
 	"foundry/internal/world"
 	"strings"
@@ -21,25 +20,14 @@ import (
 // placedRawChunk builds a chunk with a non-identity Origin/Rotation/Scale, the
 // case the old bake/unbake path existed for.
 func placedRawChunk() world.RawChunk {
+	room := world.NewHollowRoom("room", mgl32.Vec3{0, 0, 0}, mgl32.Vec3{10, 4, 10}, 0.5, "concrete")
+	brushes := make([]world.RawBrush, 0, len(room))
+	for i := range room {
+		brushes = append(brushes, world.BrushToRaw(&room[i]))
+	}
 	return world.RawChunk{
-		ID: "placed",
-		Points: map[string]geom.Point{
-			"A": {X: 0, Y: 0},
-			"B": {X: 10, Y: 0},
-			"C": {X: 10, Y: 10},
-			"D": {X: 0, Y: 10},
-		},
-		Sectors: []world.RawSector{{
-			ID:      "room",
-			Floor:   world.RawFloor{Enabled: true, Height: 1, Texture: "concrete"},
-			Ceiling: world.RawCeiling{Enabled: true, Height: 4, Texture: "concrete"},
-			Edges: []world.RawEdge{
-				{From: "A", To: "B", Kind: "wall", Texture: "concrete"},
-				{From: "B", To: "C", Kind: "wall", Texture: "concrete"},
-				{From: "C", To: "D", Kind: "wall", Texture: "concrete"},
-				{From: "D", To: "A", Kind: "wall", Texture: "concrete"},
-			},
-		}},
+		ID:       "placed",
+		Brushes:  brushes,
 		Origin:   world.RawChunkOrigin{X: 50, Y: 3, Z: -20},
 		Rotation: 0.4,
 		Scale:    2.5,
@@ -64,19 +52,16 @@ func TestLoadRawChunkDoesNotBakeOriginIntoPoints(t *testing.T) {
 		t.Errorf("ch.Rotation/Scale = %v/%v, want 0.4/2.5", ch.Rotation, ch.Scale)
 	}
 
-	want := map[string]mgl32.Vec2{
-		"A": {0, 0}, "B": {10, 0}, "C": {10, 10}, "D": {0, 10},
-	}
-	if len(ch.Points) != len(want) {
-		t.Fatalf("got %d points, want %d", len(ch.Points), len(want))
-	}
-	for i, name := range ch.PointNames {
-		wp, ok := want[name]
-		if !ok {
-			t.Fatalf("unexpected point name %q", name)
-		}
-		if ch.Points[i] != wp {
-			t.Errorf("point %q = %v, want %v (unchanged from the file — Origin/Rotation/Scale must not be baked in)", name, ch.Points[i], wp)
+	// The brush verts are exactly what the file said, in chunk-local space:
+	// the placement rides on ModelMatrix rather than being baked into them.
+	want := placedRawChunk()
+	for bi := range ch.Brushes {
+		for vi, v := range ch.Brushes[bi].Verts {
+			wx, wy, wz := want.Brushes[bi].Verts[vi*3], want.Brushes[bi].Verts[vi*3+1], want.Brushes[bi].Verts[vi*3+2]
+			if v != (mgl32.Vec3{wx, wy, wz}) {
+				t.Errorf("brush %d vert %d = %v, want %v (unchanged from the file — Origin/Rotation/Scale must not be baked in)",
+					bi, vi, v, mgl32.Vec3{wx, wy, wz})
+			}
 		}
 	}
 }
@@ -111,9 +96,12 @@ func TestChunkOriginRotationScaleSurviveSaveLoadRoundTrip(t *testing.T) {
 		t.Errorf("placement changed across the round trip: %v/%v/%v then %v/%v/%v",
 			first.Origin, first.Rotation, first.Scale, second.Origin, second.Rotation, second.Scale)
 	}
-	for i := range first.Points {
-		if first.Points[i] != second.Points[i] {
-			t.Errorf("point %d drifted across the round trip: %v then %v", i, first.Points[i], second.Points[i])
+	for bi := range first.Brushes {
+		for vi := range first.Brushes[bi].Verts {
+			if first.Brushes[bi].Verts[vi] != second.Brushes[bi].Verts[vi] {
+				t.Errorf("brush %d vert %d drifted across the round trip: %v then %v",
+					bi, vi, first.Brushes[bi].Verts[vi], second.Brushes[bi].Verts[vi])
+			}
 		}
 	}
 }
@@ -180,19 +168,21 @@ func TestAStillChunkWritesNoVelocityKey(t *testing.T) {
 // editor's move/rotate/scale gizmos and the renderer both rely on.
 func TestChunkModelMatrixPlacesLoadedGeometryInWorldSpace(t *testing.T) {
 	testenv.WithoutGeometryUploads(t)
+	box := world.NewBoxBrush("b", mgl32.Vec3{3, 0, 4}, mgl32.Vec3{1, 1, 1}, "concrete")
 	ch, _, err := loadRawChunk(world.RawChunk{
-		ID:     "placed",
-		Points: map[string]geom.Point{"A": {X: 3, Y: 4}},
-		Origin: world.RawChunkOrigin{X: 100, Y: 0, Z: 200},
-		Scale:  1,
+		ID:      "placed",
+		Brushes: []world.RawBrush{world.BrushToRaw(&box)},
+		Origin:  world.RawChunkOrigin{X: 100, Y: 0, Z: 200},
+		Scale:   1,
 	})
 	if err != nil {
 		t.Fatalf("loadRawChunk: %v", err)
 	}
 
-	local := ch.Points[0]
+	lo, hi := ch.Brushes[0].LocalAABB()
+	local := lo.Add(hi).Mul(0.5)
 	m := ch.ModelMatrix()
-	r := m.Mul4x1(mgl32.Vec3{local.X(), 0, local.Y()}.Vec4(1))
+	r := m.Mul4x1(local.Vec4(1))
 	got := mgl32.Vec2{r.X(), r.Z()}
 	want := mgl32.Vec2{103, 204}
 	if got != want {
@@ -200,64 +190,7 @@ func TestChunkModelMatrixPlacesLoadedGeometryInWorldSpace(t *testing.T) {
 	}
 }
 
-// ---------- the drape binding ----------
-
-// TestBiomeDrapeSectorSurvivesSaveLoadRoundTrip pins the persisted half of the
-// drape binding. It exists precisely because it cannot be re-derived: two
-// sectors stacked at the same XZ look identical from above, so a level that
-// lost this on save would silently fall back to "lowest wins" and move the
-// paint to a different surface than the one it was drawn on.
-func TestBiomeDrapeSectorSurvivesSaveLoadRoundTrip(t *testing.T) {
-	testenv.WithoutGeometryUploads(t)
-
-	raw := placedRawChunk()
-	raw.BiomeSectors = []world.RawBiomeSector{{
-		ID: "grass",
-		Points: []geom.Point{
-			{X: 2, Y: 2}, {X: 8, Y: 2}, {X: 8, Y: 8}, {X: 2, Y: 8},
-		},
-		Brush:       world.RawBiomeBrush{Kind: world.BiomeGrass, Density: 1},
-		DrapeSector: "room",
-	}}
-
-	ch, _, err := loadRawChunk(raw)
-	if err != nil {
-		t.Fatalf("loadRawChunk: %v", err)
-	}
-	if got := ch.BiomeSectors[0].DrapeSector; got != "room" {
-		t.Fatalf("after load, DrapeSector = %q, want %q", got, "room")
-	}
-
-	back, err := chunkToRaw(&ch)
-	if err != nil {
-		t.Fatalf("chunkToRaw: %v", err)
-	}
-	if got := back.BiomeSectors[0].DrapeSector; got != "room" {
-		t.Errorf("after save, DrapeSector = %q, want %q", got, "room")
-	}
-}
-
-// Unbound paint must stay unbound, and the field must stay out of the YAML so
-// a level written before the binding existed round-trips unchanged.
-func TestUnboundBiomeDrapeSectorStaysEmpty(t *testing.T) {
-	testenv.WithoutGeometryUploads(t)
-
-	raw := placedRawChunk()
-	raw.BiomeSectors = []world.RawBiomeSector{{
-		ID:     "grass",
-		Points: []geom.Point{{X: 2, Y: 2}, {X: 8, Y: 2}, {X: 8, Y: 8}},
-		Brush:  world.RawBiomeBrush{Kind: world.BiomeGrass, Density: 1},
-	}}
-
-	ch, _, err := loadRawChunk(raw)
-	if err != nil {
-		t.Fatalf("loadRawChunk: %v", err)
-	}
-	back, err := chunkToRaw(&ch)
-	if err != nil {
-		t.Fatalf("chunkToRaw: %v", err)
-	}
-	if got := back.BiomeSectors[0].DrapeSector; got != "" {
-		t.Errorf("unbound paint came back bound to %q", got)
-	}
-}
+// TODO(brush migration, Phase 5): the biome drape-binding round-trip tests
+// lived here. A scatter Volume has no drape binding to persist — it is placed
+// where it is placed — so what replaces them is a round-trip of
+// Volume.BiomeScatter once that field exists.

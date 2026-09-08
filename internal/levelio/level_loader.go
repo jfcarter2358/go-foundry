@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"foundry/internal/audio"
 	"foundry/internal/fileutil"
-	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 	"log"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -47,501 +45,53 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		Velocity:   mgl32.Vec3{rc.Velocity.X, rc.Velocity.Y, rc.Velocity.Z},
 		FrameOwner: rc.Frame,
 		Disabled:   rc.Disabled,
-		// A chunk authored disabled is not built at all — the geometry passes
-		// below are skipped and it is marked unloaded, which is exactly the
+		// A chunk authored disabled is not built at all — the geometry pass
+		// below is skipped and it is marked unloaded, which is exactly the
 		// state ReleaseGeometry would have left it in. That is the point of
 		// writing `disabled: true` into a level: the area costs nothing until
 		// a script switches it on, and world.SetChunkEnabled builds it then.
 		Unloaded: rc.Disabled,
-		Layers:   loadChunkLayers(rc.Layers),
 	}
 
-	// Sort so the point pool is built in a deterministic order — Go map
-	// iteration is randomised, which would otherwise shuffle point indices on
-	// every load and make saved files churn between runs.
-	names := make([]string, 0, len(rc.Points))
-	for name := range rc.Points {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	chunk.PointNames = make([]string, 0, len(names))
-	pointNameToIdx := make(map[string]int, len(names))
-	for _, name := range names {
-		rp := rc.Points[name]
-		pointNameToIdx[name] = len(chunk.Points)
-		chunk.Points = append(chunk.Points, mgl32.Vec2{rp.X, rp.Y})
-		chunk.PointNames = append(chunk.PointNames, name)
-	}
-
-	for i, pt := range chunk.Points {
-		if i == 0 {
-			chunk.MinBound = mgl32.Vec3{pt.X(), float32(math.MaxFloat32), pt.Y()}
-			chunk.MaxBound = mgl32.Vec3{pt.X(), -float32(math.MaxFloat32), pt.Y()}
-		} else {
-			if pt.X() < chunk.MinBound.X() {
-				chunk.MinBound[0] = pt.X()
-			}
-			if pt.Y() < chunk.MinBound.Z() {
-				chunk.MinBound[2] = pt.Y()
-			}
-			if pt.X() > chunk.MaxBound.X() {
-				chunk.MaxBound[0] = pt.X()
-			}
-			if pt.Y() > chunk.MaxBound.Z() {
-				chunk.MaxBound[2] = pt.Y()
-			}
-		}
-	}
-
-	for _, rs := range rc.Sectors {
-
-		floorUVScale := mgl32.Vec2{rs.Floor.UVScale.X, rs.Floor.UVScale.Y}
-		if floorUVScale == (mgl32.Vec2{}) {
-			floorUVScale = mgl32.Vec2{1, 1}
-		}
-		ceilUVScale := mgl32.Vec2{rs.Ceiling.UVScale.X, rs.Ceiling.UVScale.Y}
-		if ceilUVScale == (mgl32.Vec2{}) {
-			ceilUVScale = mgl32.Vec2{1, 1}
-		}
-		sectorScript, err := world.ScriptDataFromRaw(rs.RawScriptData, "sector "+rs.ID)
+	for _, rb := range rc.Brushes {
+		b, err := world.BrushFromRaw(rb)
 		if err != nil {
 			return world.Chunk{}, nil, err
 		}
-		floorScript, err := world.ScriptDataFromRaw(rs.Floor.RawScriptData, "sector "+rs.ID+" floor")
-		if err != nil {
-			return world.Chunk{}, nil, err
+		if len(b.Verts) < 4 {
+			return world.Chunk{}, nil, fmt.Errorf(
+				"brush %q: %d verts; a solid needs at least four", b.ID, len(b.Verts))
 		}
-		ceilScript, err := world.ScriptDataFromRaw(rs.Ceiling.RawScriptData, "sector "+rs.ID+" ceiling")
-		if err != nil {
-			return world.Chunk{}, nil, err
-		}
-
-		sector := world.Sector{
-			ID:         rs.ID,
-			ScriptData: sectorScript,
-			Layer:      rs.Layer,
-			Floor: world.Floor{
-				ScriptData:   floorScript,
-				Enabled:      rs.Floor.Enabled,
-				Hidden:       rs.Floor.Hidden,
-				Height:       rs.Floor.Height,
-				Texture:      rs.Floor.Texture,
-				BlendTexture: rs.Floor.BlendTexture,
-				BlendMask:    rs.Floor.BlendMask,
-				DoubleSided:  world.BoolDefault(rs.Floor.DoubleSided, true),
-				Alpha:        float32Default(rs.Floor.Alpha, 1.0),
-				Openings:     loadOpenings(rs.Floor.Openings),
-				Skirt:        rs.Floor.Skirt,
-				SkirtTexture: rs.Floor.SkirtTexture,
-				Slab:         world.SlabFromRaw(rs.Floor.Slab),
-				UVOffset:     mgl32.Vec2{rs.Floor.UVOffset.X, rs.Floor.UVOffset.Y},
-				UVScale:      floorUVScale,
-				UVRotation:   rs.Floor.UVRotation,
-				Detail:       world.DetailFromRaw(rs.Floor.Detail),
-				Smooth:       rs.Floor.Smooth,
-				SmoothAngle:  rs.Floor.SmoothAngle,
-			},
-			Ceiling: world.Ceiling{
-				ScriptData:   ceilScript,
-				Enabled:      rs.Ceiling.Enabled,
-				Height:       rs.Ceiling.Height,
-				Texture:      rs.Ceiling.Texture,
-				BlendTexture: rs.Ceiling.BlendTexture,
-				BlendMask:    rs.Ceiling.BlendMask,
-				DoubleSided:  world.BoolDefault(rs.Ceiling.DoubleSided, true),
-				Alpha:        float32Default(rs.Ceiling.Alpha, 1.0),
-				Openings:     loadOpenings(rs.Ceiling.Openings),
-				Slab:         world.SlabFromRaw(rs.Ceiling.Slab),
-				UVOffset:     mgl32.Vec2{rs.Ceiling.UVOffset.X, rs.Ceiling.UVOffset.Y},
-				UVScale:      ceilUVScale,
-				UVRotation:   rs.Ceiling.UVRotation,
-				Detail:       world.DetailFromRaw(rs.Ceiling.Detail),
-				Smooth:       rs.Ceiling.Smooth,
-				SmoothAngle:  rs.Ceiling.SmoothAngle,
-			},
-		}
-
-		if rs.Floor.Texture != "" {
-			texNeeded[rs.Floor.Texture] = true
-		}
-		if rs.Floor.BlendTexture != "" {
-			texNeeded[rs.Floor.BlendTexture] = true
-		}
-		if rs.Floor.BlendMask != "" {
-			texNeeded[rs.Floor.BlendMask] = true
-		}
-		if rs.Ceiling.Texture != "" {
-			texNeeded[rs.Ceiling.Texture] = true
-		}
-		if rs.Ceiling.BlendTexture != "" {
-			texNeeded[rs.Ceiling.BlendTexture] = true
-		}
-		if rs.Ceiling.BlendMask != "" {
-			texNeeded[rs.Ceiling.BlendMask] = true
-		}
-		// A slab names its own textures (slab.go); an unlisted one loads as
-		// white, which is what a retextured underside would have come back as.
-		for _, sl := range []*world.RawSlab{rs.Floor.Slab, rs.Ceiling.Slab} {
-			if sl == nil {
-				continue
+		for fi := range b.Faces {
+			f := &b.Faces[fi]
+			for _, vi := range f.Indices {
+				if vi < 0 || vi >= len(b.Verts) {
+					return world.Chunk{}, nil, fmt.Errorf(
+						"brush %q: face names vertex %d, which it does not have", b.ID, vi)
+				}
 			}
-			for _, tex := range []string{sl.Texture, sl.BlendTexture, sl.BlendMask, sl.RimTexture} {
+			for _, tex := range []string{f.Texture, f.BlendTexture, f.BlendMask} {
 				if tex != "" {
 					texNeeded[tex] = true
 				}
 			}
-		}
-
-		// A sector's edges must form a closed ring visiting each point exactly
-		// once. Silently de-duplicating a repeated name (as this used to do)
-		// produces a sector with fewer vertices than edges, which desynchronises
-		// Walls/Portals from EdgeKinds and yields degenerate, overlapping
-		// geometry. Reject the file instead so the damage is visible.
-		pointSeen := make(map[string]bool, len(rs.Edges))
-		for ei, e := range rs.Edges {
-			if pointSeen[e.From] {
-				return world.Chunk{}, nil, fmt.Errorf(
-					"sector %q: point %q appears more than once in the edge ring", rs.ID, e.From)
-			}
-			pointSeen[e.From] = true
-
-			next := rs.Edges[(ei+1)%len(rs.Edges)]
-			if e.To != next.From {
-				return world.Chunk{}, nil, fmt.Errorf(
-					"sector %q: edge %d ends at %q but edge %d starts at %q — edges must form a closed ring",
-					rs.ID, ei, e.To, (ei+1)%len(rs.Edges), next.From)
-			}
-
-			idx, ok := pointNameToIdx[e.From]
-			if !ok {
-				return world.Chunk{}, nil, fmt.Errorf(
-					"sector %q: edge references unknown point %q", rs.ID, e.From)
-			}
-			sector.PointIndices = append(sector.PointIndices, idx)
-		}
-
-		for _, edge := range rs.Edges {
-			fromIdx, okFrom := pointNameToIdx[edge.From]
-			toIdx, okTo := pointNameToIdx[edge.To]
-			if !okFrom || !okTo {
-				return world.Chunk{}, nil, fmt.Errorf("sector %q: edge references unknown point: %s->%s",
-					rs.ID, edge.From, edge.To)
-			}
-			start := chunk.Points[fromIdx]
-			end := chunk.Points[toIdx]
-
-			// The edge's stable ID. Computed here, before the winding-reversal
-			// fixup below, because reversal turns edge A→B into B→A — deriving
-			// the migration name afterwards would rename every edge of a
-			// clockwise-authored sector on its next save.
-			edgeID := edge.ID
-			if edgeID == "" {
-				edgeID = world.MigrateEdgeID(edge.From, edge.To)
-			}
-			edgeScript, err := world.ScriptDataFromRaw(edge.RawScriptData, "sector "+rs.ID+" edge "+edgeID)
-			if err != nil {
-				return world.Chunk{}, nil, err
-			}
-
-			switch edge.Kind {
-			case "wall":
-				if edge.Texture != "" {
-					texNeeded[edge.Texture] = true
-				}
-				if edge.BlendTexture != "" {
-					texNeeded[edge.BlendTexture] = true
-				}
-				if edge.BlendMask != "" {
-					texNeeded[edge.BlendMask] = true
-				}
-				wallUVScale := mgl32.Vec2{edge.UVScale.X, edge.UVScale.Y}
-				if wallUVScale == (mgl32.Vec2{}) {
-					wallUVScale = mgl32.Vec2{1, 1}
-				}
-				sector.Walls = append(sector.Walls, world.Wall{
-					ID:           edgeID,
-					ScriptData:   edgeScript,
-					StartPoint:   start,
-					EndPoint:     end,
-					Texture:      edge.Texture,
-					BlendTexture: edge.BlendTexture,
-					BlendMask:    edge.BlendMask,
-					Collision:    edge.Collision,
-					Visible:      !edge.Hidden,
-					Pinned:       edge.Pinned,
-					DoubleSided:  world.BoolDefault(edge.DoubleSided, true),
-					Alpha:        float32Default(edge.Alpha, 1.0),
-					UVOffset:     mgl32.Vec2{edge.UVOffset.X, edge.UVOffset.Y},
-					UVScale:      wallUVScale,
-					UVRotation:   edge.UVRotation,
-					Detail:       world.DetailFromRaw(edge.Detail),
-					Smooth:       edge.Smooth,
-					SmoothAngle:  edge.SmoothAngle,
-				})
-				sector.EdgeKinds = append(sector.EdgeKinds, "wall")
-				sector.EdgeIDs = append(sector.EdgeIDs, edgeID)
-			case "portal":
-				sector.Portals = append(sector.Portals, world.Portal{
-					ID:          edgeID,
-					ScriptData:  edgeScript,
-					StartPoint:  start,
-					EndPoint:    end,
-					ToSector:    edge.ToSector,
-					ToFrame:     edge.ToFrame,
-					DrawGap:     edge.DrawGap,
-					GapTexture:  edge.GapTexture,
-					Visible:     !edge.Hidden,
-					DoubleSided: world.BoolDefault(edge.DoubleSided, true),
-					Alpha:       float32Default(edge.Alpha, 1.0),
-				})
-				sector.EdgeKinds = append(sector.EdgeKinds, "portal")
-				sector.EdgeIDs = append(sector.EdgeIDs, edgeID)
+			if f.Detail.Enabled && f.Detail.ScatterTex != "" {
+				texNeeded[f.Detail.ScatterTex] = true
 			}
 		}
-
-		// A file can carry duplicate IDs (hand-edited, or two edges migrating to
-		// the same point pair in a malformed ring). Resolve them here so the
-		// invariant holds from the moment the sector exists.
-		world.DedupeSectorEdgeIDs(&sector)
-
-		sectorPts := world.SectorPoints(&chunk, &sector)
-
-		reversed := world.SignedArea2D(sectorPts) < 0
-		if reversed {
-			// Reversing vertex order shifts which polygon edge is which: new
-			// edge i is the reverse of old edge (n-2-i) mod n, not old edge
-			// (n-1-i) — a plain array-reverse of EdgeKinds/Walls/Portals
-			// misaligns edge kinds against the reversed points. Rebuild the
-			// per-edge kind/wall/portal records in the correct new order.
-			n := len(sector.PointIndices)
-			type edgeRec struct {
-				kind   string
-				id     string
-				wall   world.Wall
-				portal world.Portal
-			}
-			recs := make([]edgeRec, n)
-			wi, pi := 0, 0
-			for i := 0; i < n; i++ {
-				// IDs were computed from the unordered point pair above, so they
-				// ride the permutation unchanged — an edge keeps its name even
-				// though its direction flips.
-				id := ""
-				if i < len(sector.EdgeIDs) {
-					id = sector.EdgeIDs[i]
-				}
-				if i < len(sector.EdgeKinds) && sector.EdgeKinds[i] == "portal" {
-					recs[i] = edgeRec{kind: "portal", id: id, portal: sector.Portals[pi]}
-					pi++
-				} else {
-					recs[i] = edgeRec{kind: "wall", id: id, wall: sector.Walls[wi]}
-					wi++
-				}
-			}
-
-			newPointIndices := make([]int, n)
-			for i := 0; i < n; i++ {
-				newPointIndices[i] = sector.PointIndices[n-1-i]
-			}
-			sector.PointIndices = newPointIndices
-
-			newEdgeKinds := make([]string, n)
-			newEdgeIDs := make([]string, n)
-			newWalls := make([]world.Wall, 0, len(sector.Walls))
-			newPortals := make([]world.Portal, 0, len(sector.Portals))
-			for i := 0; i < n; i++ {
-				rec := recs[((n-2-i)%n+n)%n]
-				newEdgeKinds[i] = rec.kind
-				newEdgeIDs[i] = rec.id
-				if rec.kind == "portal" {
-					rec.portal.StartPoint, rec.portal.EndPoint = rec.portal.EndPoint, rec.portal.StartPoint
-					newPortals = append(newPortals, rec.portal)
-				} else {
-					rec.wall.StartPoint, rec.wall.EndPoint = rec.wall.EndPoint, rec.wall.StartPoint
-					newWalls = append(newWalls, rec.wall)
-				}
-			}
-			sector.EdgeKinds = newEdgeKinds
-			sector.EdgeIDs = newEdgeIDs
-			sector.Walls = newWalls
-			sector.Portals = newPortals
-			sectorPts = world.SectorPoints(&chunk, &sector)
-		}
-		world.SyncEdgeRecordIDs(&sector)
-
-		nPts := len(sector.PointIndices)
-		sector.Floor.VertexOffsets = make([]float32, nPts)
-		for i := 0; i < nPts && i < len(rs.Floor.VertexOffsets); i++ {
-			sector.Floor.VertexOffsets[i] = rs.Floor.VertexOffsets[i]
-		}
-		sector.Ceiling.VertexOffsets = make([]float32, nPts)
-		for i := 0; i < nPts && i < len(rs.Ceiling.VertexOffsets); i++ {
-			sector.Ceiling.VertexOffsets[i] = rs.Ceiling.VertexOffsets[i]
-		}
-		if reversed {
-			for i, j := 0, len(sector.Floor.VertexOffsets)-1; i < j; i, j = i+1, j-1 {
-				sector.Floor.VertexOffsets[i], sector.Floor.VertexOffsets[j] = sector.Floor.VertexOffsets[j], sector.Floor.VertexOffsets[i]
-			}
-			for i, j := 0, len(sector.Ceiling.VertexOffsets)-1; i < j; i, j = i+1, j-1 {
-				sector.Ceiling.VertexOffsets[i], sector.Ceiling.VertexOffsets[j] = sector.Ceiling.VertexOffsets[j], sector.Ceiling.VertexOffsets[i]
-			}
-		}
-
-		minFloor := sector.Floor.Height
-		for _, off := range rs.Floor.VertexOffsets {
-			if h := sector.Floor.Height + off; h < minFloor {
-				minFloor = h
-			}
-		}
-		if d, ok := rawSurfaceMinDepth(rs.Floor.Mesh, rs.Floor.TerrainPoints, rs.Floor.Extrusions, true); ok {
-			if h := sector.Floor.Height + d; h < minFloor {
-				minFloor = h
-			}
-		}
-		maxCeil := sector.Ceiling.Height
-		for _, off := range rs.Ceiling.VertexOffsets {
-			if h := sector.Ceiling.Height + off; h > maxCeil {
-				maxCeil = h
-			}
-		}
-		if d, ok := rawSurfaceMaxDepth(rs.Ceiling.Mesh, rs.Ceiling.TerrainPoints, rs.Ceiling.Extrusions, false); ok {
-			if h := sector.Ceiling.Height + d; h > maxCeil {
-				maxCeil = h
-			}
-		}
-		if minFloor < chunk.MinBound.Y() {
-			chunk.MinBound[1] = minFloor
-		}
-		if maxCeil > chunk.MaxBound.Y() {
-			chunk.MaxBound[1] = maxCeil
-		}
-
-		chunk.Sectors = append(chunk.Sectors, sector)
+		chunk.Brushes = append(chunk.Brushes, b)
 	}
 
-	chunk.InferPortals()
-
-	// Surface meshes are built here rather than in the struct literals above
-	// because a mesh needs a SurfaceFrame, and a frame needs the sector's
-	// points, heights and walls to be final — which they are not until
-	// InferPortals has decided which edges are walls at all.
-	for si := range chunk.Sectors {
-		s := &chunk.Sectors[si]
-		if si < len(rc.Sectors) {
-			loadSectorSurfaceMeshes(&chunk, s, rawSectorByID(rc.Sectors, s.ID), rc.Points)
-		}
-		if chunk.Disabled {
-			// Surface meshes above are authored data and are read either way;
-			// only the upload is skipped. ReloadGeometry runs exactly this for
-			// every sector when the chunk is switched on.
-			continue
-		}
-		sectorPts := world.SectorPoints(&chunk, s)
-		if err := s.Load(sectorPts); err != nil {
-			return world.Chunk{}, nil, fmt.Errorf("sector %q load: %w", s.ID, err)
-		}
-	}
-
-	// Collect gap textures so they get registered/uploaded; the actual gap
-	// geometry is built by RebuildGaps (chunk.go), which every other caller
-	// that (re)builds portal gaps also uses — see chunk.go's own doc comment.
-	sectorHere := map[string]bool{}
-	for si := range chunk.Sectors {
-		sectorHere[chunk.Sectors[si].ID] = true
-	}
-	for si := range chunk.Sectors {
-		s := &chunk.Sectors[si]
-		for pi := range s.Portals {
-			p := &s.Portals[pi]
-			if !p.DrawGap {
-				continue
-			}
-			// RebuildGaps needs the far sector's heights to know how tall the
-			// gap is, so a target it cannot resolve is a gap that is silently
-			// never drawn — an open hole where a step or a door should be,
-			// with nothing on screen or in the file to say why. Said once, at
-			// load: the rebuild itself runs every frame a script moves a
-			// surface. A frame portal has no ToSector by design.
-			if p.ToFrame == "" && !sectorHere[p.ToSector] {
-				log.Printf("chunk %q: sector %q edge %q draws a gap into sector %q, which this chunk does not have; the gap will not be drawn",
-					chunk.ID, s.ID, world.EdgeIDDisplay(p.ID), p.ToSector)
-			}
-			tex := p.GapTexture
-			if tex == "" {
-				tex = s.Floor.Texture
-			}
-			if tex != "" {
-				texNeeded[tex] = true
+	// A disabled chunk is authored, indexed and addressable but never built —
+	// see Chunk.Unloaded above.
+	if !rc.Disabled {
+		for bi := range chunk.Brushes {
+			if err := chunk.Brushes[bi].Load(); err != nil {
+				return world.Chunk{}, nil, fmt.Errorf("brush %q: %w", chunk.Brushes[bi].ID, err)
 			}
 		}
 	}
-	if !chunk.Disabled {
-		chunk.RebuildGaps()
-
-		// Bounds so far come only from the chunk's points; roll up the sectors'
-		// own bounds so geometry reaching past the point pool isn't
-		// frustum-culled with it. Water surfaces are folded in later, by
-		// SyncBiomeWaterSurfaces.
-		chunk.RecomputeBounds()
-	}
-
-	// Biome sector polygons — points are chunk-local, same as structural points.
-	for _, rb := range rc.BiomeSectors {
-		bs := world.BiomeSector{
-			ID:          rb.ID,
-			DrapeSector: rb.DrapeSector,
-			Layer:       rb.Layer,
-			Points:      make([]mgl32.Vec2, len(rb.Points)),
-			HeightDirty: true,
-			GroundDirty: true,
-			Brush: world.BiomeBrush{
-				Kind:         rb.Brush.Kind,
-				Density:      rb.Brush.Density,
-				Range:        rb.Brush.Range,
-				Color:        mgl32.Vec3{rb.Brush.Color.R, rb.Brush.Color.G, rb.Brush.Color.B},
-				GrassHeight:  rb.Brush.GrassHeight,
-				GrassWidth:   rb.Brush.GrassWidth,
-				HeadScale:    rb.Brush.HeadScale,
-				GrassClump:   rb.Brush.GrassClump,
-				LOD1Distance: rb.Brush.LOD1Distance,
-				LOD2Distance: rb.Brush.LOD2Distance,
-				RockSides:    rb.Brush.RockSides,
-				RockScale:    rb.Brush.RockScale,
-				SandHeight:   rb.Brush.SandHeight,
-				WaterDepth:   rb.Brush.WaterDepth,
-				HideLakebed:  rb.Brush.HideLakebed,
-				Water:        world.WaterParamsFromRaw(rb.Brush.Water),
-
-				MossScatter:   rb.Brush.MossScatter,
-				MinSlopeAngle: rb.Brush.MinSlopeAngle,
-				MaxSlopeAngle: rb.Brush.MaxSlopeAngle,
-
-				BloomSpike:      rb.Brush.BloomSpike,
-				BloomCenter:     rb.Brush.BloomCenter,
-				BloomSolidColor: rb.Brush.BloomSolidColor,
-				CenterColor: mgl32.Vec3{
-					rb.Brush.CenterColor.R, rb.Brush.CenterColor.G, rb.Brush.CenterColor.B,
-				},
-				StemLeaves: rb.Brush.StemLeaves,
-				LeafScale:  rb.Brush.LeafScale,
-
-				GroundTexture:   rb.Brush.GroundTexture,
-				GroundAmplitude: rb.Brush.GroundAmplitude,
-				GroundFrequency: rb.Brush.GroundFrequency,
-				GroundOctaves:   rb.Brush.GroundOctaves,
-				GroundUVScale:   mgl32.Vec2{rb.Brush.GroundUVScale.X, rb.Brush.GroundUVScale.Y},
-
-				RangeFadeFraction: rb.Brush.RangeFadeFraction,
-				EdgeFadeDistance:  rb.Brush.EdgeFadeDistance,
-				BoundaryJitter:    rb.Brush.BoundaryJitter,
-			},
-		}
-		for i, rp := range rb.Points {
-			bs.Points[i] = mgl32.Vec2{rp.X, rp.Y}
-		}
-		chunk.BiomeSectors = append(chunk.BiomeSectors, bs)
-	}
+	chunk.RecomputeBounds()
 
 	return chunk, texNeeded, nil
 }
@@ -579,31 +129,10 @@ func blankRawLevel() world.RawLevel {
 	return world.RawLevel{
 		Chunks: []world.RawChunk{{
 			ID: "default",
-			Points: map[string]geom.Point{
-				"A": {X: -4, Y: -4},
-				"B": {X: 4, Y: -4},
-				"C": {X: 4, Y: 4},
-				"D": {X: -4, Y: 4},
-			},
-			Sectors: []world.RawSector{{
-				ID: "room",
-				Floor: world.RawFloor{
-					Enabled: true,
-					Height:  0,
-					Texture: "default",
-				},
-				Ceiling: world.RawCeiling{
-					Enabled: true,
-					Height:  4,
-					Texture: "default",
-				},
-				Edges: []world.RawEdge{
-					{From: "A", To: "B", Kind: "wall", Texture: "default", Collision: true},
-					{From: "B", To: "C", Kind: "wall", Texture: "default", Collision: true},
-					{From: "C", To: "D", Kind: "wall", Texture: "default", Collision: true},
-					{From: "D", To: "A", Kind: "wall", Texture: "default", Collision: true},
-				},
-			}},
+			// A hollow 8x8x4 room: six brushes, each a thin slab, enclosing
+			// somewhere to stand. A single solid box would be a block, not a
+			// room — see world.NewHollowRoom, which this mirrors.
+			Brushes: blankRoomBrushes(),
 		}},
 		Lights: world.RawLights{
 			Global: world.RawGlobalLight{Color: world.RawColor{R: 1, G: 1, B: 1}, Brightness: 0.3},
@@ -751,7 +280,6 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	level.UI = append([]string(nil), raw.UI...)
 
 	world.ResolveLevelIDCollisions(level.Chunks)
-	world.ResolveBiomeSectorIDCollisions(level)
 
 	// The player spawn: one optional marker per level, not a placed object.
 	if raw.Spawn != nil {
@@ -972,45 +500,21 @@ func finishLevel(level *world.Level) error {
 	}
 	return nil
 }
-
-// loadOpenings converts a surface's holes. Points come across verbatim: an
-// opening is authored chunk-local, exactly like the sector outline it is cut
-// into, and travels into world space through the chunk's own ModelMatrix along
-// with everything else.
-func loadOpenings(raw []world.RawOpening) []world.Opening {
-	if len(raw) == 0 {
-		return nil
-	}
-	out := make([]world.Opening, len(raw))
-	for i, ro := range raw {
-		op := world.Opening{ID: ro.ID, Link: ro.Link, Points: make([]mgl32.Vec2, len(ro.Points))}
-		for j, rp := range ro.Points {
-			op.Points[j] = mgl32.Vec2{rp.X, rp.Y}
-		}
-		out[i] = op
-	}
-	return out
-}
-
-// loadChunkLayers converts a chunk's authoring-band metadata, or returns nil
-// for a chunk that has none — the ordinary case, and every chunk written before
-// layers existed. Chunk.LayerAt synthesizes bands for whatever is missing, so
-// there is nothing to fill in here.
-func loadChunkLayers(raw []world.RawChunkLayer) []world.ChunkLayer {
-	if len(raw) == 0 {
-		return nil
-	}
-	out := make([]world.ChunkLayer, len(raw))
-	for i, rl := range raw {
-		out[i] = world.ChunkLayer{Name: rl.Name, BaseY: rl.BaseY, CeilY: rl.CeilY}
-	}
-	return out
-}
-
-// float32Default returns the value of a *float32, defaulting to def when nil.
 func float32Default(p *float32, def float32) float32 {
 	if p != nil {
 		return *p
 	}
 	return def
+}
+
+// blankRoomBrushes is the starter level's room, in its YAML form: the six
+// brushes world.NewHollowRoom would build, converted straight back to Raw so
+// the file written matches what the loader would produce.
+func blankRoomBrushes() []world.RawBrush {
+	room := world.NewHollowRoom("room", mgl32.Vec3{-4, 0, -4}, mgl32.Vec3{4, 4, 4}, 0.5, "default")
+	out := make([]world.RawBrush, 0, len(room))
+	for i := range room {
+		out = append(out, world.BrushToRaw(&room[i]))
+	}
+	return out
 }

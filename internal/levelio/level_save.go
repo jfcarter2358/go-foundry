@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"foundry/internal/collision"
 	"foundry/internal/fileutil"
-	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/render"
 	"foundry/internal/script"
@@ -142,332 +141,49 @@ func entityDefFor(e *world.Entity) *world.EntityDef {
 	}
 	return def
 }
-
-// chunkToRaw serialises one chunk. Points are already chunk-local at runtime,
-// same as the YAML they round-trip to — Origin/Rotation/Scale is carried
-// alongside them as plain fields, not baked in or out.
+// chunkToRaw converts a runtime Chunk back into its YAML form.
 func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 	rc := world.RawChunk{
 		ID:            ch.ID,
 		RawScriptData: world.ScriptDataToRaw(ch.ScriptData),
-		Points:        make(map[string]geom.Point),
 		Origin:        world.RawChunkOrigin{X: ch.Origin.X(), Y: ch.Origin.Y(), Z: ch.Origin.Z()},
 		Rotation:      ch.Rotation,
 		Scale:         ch.Scale,
 		Velocity:      world.RawVec3{X: ch.Velocity.X(), Y: ch.Velocity.Y(), Z: ch.Velocity.Z()},
 		Frame:         ch.FrameOwner,
 		Disabled:      ch.Disabled,
-		Layers:        chunkLayersToRaw(ch),
 	}
-	if rc.Scale == 0 {
-		rc.Scale = 1
+	rc.Brushes = make([]world.RawBrush, 0, len(ch.Brushes))
+	for bi := range ch.Brushes {
+		rc.Brushes = append(rc.Brushes, world.BrushToRaw(&ch.Brushes[bi]))
 	}
-
-	// Name every point in the pool by index, then emit the live pool. Names are
-	// bound to point indices, never to coordinates, so a point the editor moved
-	// keeps its identity and cannot collide with an unrelated point.
-	names := chunkPointNames(ch)
-	for i, name := range names {
-		rc.Points[name] = geom.Point{X: ch.Points[i].X(), Y: ch.Points[i].Y()}
-	}
-
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		// Only save non-zero VertexOffsets to keep YAML clean
-		floorOffsets := trimTrailingZeros(s.Floor.VertexOffsets)
-		ceilOffsets := trimTrailingZeros(s.Ceiling.VertexOffsets)
-		rs := world.RawSector{
-			ID:            s.ID,
-			RawScriptData: world.ScriptDataToRaw(s.ScriptData),
-			Layer:         s.Layer,
-			Floor: world.RawFloor{
-				RawScriptData: world.ScriptDataToRaw(s.Floor.ScriptData),
-				Enabled:       s.Floor.Enabled,
-				Hidden:        s.Floor.Hidden,
-				Height:        s.Floor.Height,
-				VertexOffsets: floorOffsets,
-				Texture:       s.Floor.Texture,
-				BlendTexture:  s.Floor.BlendTexture,
-				BlendMask:     s.Floor.BlendMask,
-				DoubleSided:   world.BoolPtrIfFalse(s.Floor.DoubleSided),
-				Alpha:         float32PtrIfNotOne(s.Floor.Alpha),
-				Mesh:          world.SurfaceMeshToRaw(&s.Floor.Mesh),
-				Openings:      saveOpenings(s.Floor.Openings),
-				Skirt:         s.Floor.Skirt,
-				SkirtTexture:  s.Floor.SkirtTexture,
-				Slab:          world.SlabToRaw(s.Floor.Slab),
-				UVOffset:      geom.Point{X: s.Floor.UVOffset.X(), Y: s.Floor.UVOffset.Y()},
-				UVScale:       geom.Point{X: s.Floor.UVScale.X(), Y: s.Floor.UVScale.Y()},
-				UVRotation:    s.Floor.UVRotation,
-				Detail:        world.DetailToRaw(s.Floor.Detail),
-				Smooth:        s.Floor.Smooth,
-				SmoothAngle:   s.Floor.SmoothAngle,
-			},
-			Ceiling: world.RawCeiling{
-				RawScriptData: world.ScriptDataToRaw(s.Ceiling.ScriptData),
-				Enabled:       s.Ceiling.Enabled,
-				Height:        s.Ceiling.Height,
-				VertexOffsets: ceilOffsets,
-				Texture:       s.Ceiling.Texture,
-				BlendTexture:  s.Ceiling.BlendTexture,
-				BlendMask:     s.Ceiling.BlendMask,
-				DoubleSided:   world.BoolPtrIfFalse(s.Ceiling.DoubleSided),
-				Alpha:         float32PtrIfNotOne(s.Ceiling.Alpha),
-				Mesh:          world.SurfaceMeshToRaw(&s.Ceiling.Mesh),
-				Openings:      saveOpenings(s.Ceiling.Openings),
-				Slab:          world.SlabToRaw(s.Ceiling.Slab),
-				UVOffset:      geom.Point{X: s.Ceiling.UVOffset.X(), Y: s.Ceiling.UVOffset.Y()},
-				UVScale:       geom.Point{X: s.Ceiling.UVScale.X(), Y: s.Ceiling.UVScale.Y()},
-				UVRotation:    s.Ceiling.UVRotation,
-				Detail:        world.DetailToRaw(s.Ceiling.Detail),
-				Smooth:        s.Ceiling.Smooth,
-				SmoothAngle:   s.Ceiling.SmoothAngle,
-			},
-		}
-
-		// Reconstruct edges from Walls and Portals in polygon order,
-		// using EdgeKinds index-based matching (robust against float drift).
-		nPts := len(s.PointIndices)
-		wallIdx, portalIdx := 0, 0
-		for ei := 0; ei < nPts; ei++ {
-			fromIdx := s.PointIndices[ei]
-			toIdx := s.PointIndices[(ei+1)%nPts]
-			if fromIdx < 0 || fromIdx >= len(names) || toIdx < 0 || toIdx >= len(names) {
-				return world.RawChunk{}, fmt.Errorf(
-					"sector %q: edge %d references point index out of range (pool has %d points)",
-					s.ID, ei, len(names))
-			}
-			fromName := names[fromIdx]
-			toName := names[toIdx]
-
-			kind := "wall"
-			if ei < len(s.EdgeKinds) {
-				kind = s.EdgeKinds[ei]
-			}
-			edgeID := world.EdgeIDAt(s, ei)
-
-			if kind == "wall" && wallIdx < len(s.Walls) {
-				w := &s.Walls[wallIdx]
-				rs.Edges = append(rs.Edges, world.RawEdge{
-					ID:            edgeID,
-					RawScriptData: world.ScriptDataToRaw(w.ScriptData),
-					From:          fromName,
-					To:            toName,
-					Kind:          "wall",
-					Texture:       w.Texture,
-					BlendTexture:  w.BlendTexture,
-					BlendMask:     w.BlendMask,
-					Collision:     w.Collision,
-					Hidden:        !w.Visible,
-					Pinned:        w.Pinned,
-					DoubleSided:   world.BoolPtrIfFalse(w.DoubleSided),
-					Alpha:         float32PtrIfNotOne(w.Alpha),
-					Mesh:          world.SurfaceMeshToRaw(&w.Mesh),
-					UVOffset:      geom.Point{X: w.UVOffset.X(), Y: w.UVOffset.Y()},
-					UVScale:       geom.Point{X: w.UVScale.X(), Y: w.UVScale.Y()},
-					UVRotation:    w.UVRotation,
-					Detail:        world.DetailToRaw(w.Detail),
-					Smooth:        w.Smooth,
-					SmoothAngle:   w.SmoothAngle,
-				})
-				wallIdx++
-			} else if kind == "portal" && portalIdx < len(s.Portals) {
-				p := &s.Portals[portalIdx]
-				rs.Edges = append(rs.Edges, world.RawEdge{
-					ID:            edgeID,
-					RawScriptData: world.ScriptDataToRaw(p.ScriptData),
-					From:          fromName,
-					To:            toName,
-					Kind:          "portal",
-					ToSector:      p.ToSector,
-					ToFrame:       p.ToFrame,
-					DrawGap:       p.DrawGap,
-					GapTexture:    p.GapTexture,
-					Hidden:        !p.Visible,
-					DoubleSided:   world.BoolPtrIfFalse(p.DoubleSided),
-					Alpha:         float32PtrIfNotOne(p.Alpha),
-				})
-				portalIdx++
-			} else {
-				// Fallback: emit a bare wall edge so data is not lost
-				rs.Edges = append(rs.Edges, world.RawEdge{
-					ID:   edgeID,
-					From: fromName,
-					To:   toName,
-					Kind: "wall",
-				})
-			}
-		}
-
-		rc.Sectors = append(rc.Sectors, rs)
-	}
-
-	// Serialize biome sectors — points are already chunk-local at runtime.
-	for bi := range ch.BiomeSectors {
-		bs := &ch.BiomeSectors[bi]
-		rb := world.RawBiomeSector{
-			ID:          bs.ID,
-			DrapeSector: bs.DrapeSector,
-			Layer:       bs.Layer,
-			Points:      make([]geom.Point, len(bs.Points)),
-			Brush: world.RawBiomeBrush{
-				Kind:         bs.Brush.Kind,
-				Density:      bs.Brush.Density,
-				Range:        bs.Brush.Range,
-				Color:        world.RawColor{R: bs.Brush.Color.X(), G: bs.Brush.Color.Y(), B: bs.Brush.Color.Z()},
-				GrassHeight:  bs.Brush.GrassHeight,
-				GrassWidth:   bs.Brush.GrassWidth,
-				HeadScale:    bs.Brush.HeadScale,
-				GrassClump:   bs.Brush.GrassClump,
-				LOD1Distance: bs.Brush.LOD1Distance,
-				LOD2Distance: bs.Brush.LOD2Distance,
-				RockSides:    bs.Brush.RockSides,
-				RockScale:    bs.Brush.RockScale,
-				SandHeight:   bs.Brush.SandHeight,
-				WaterDepth:   bs.Brush.WaterDepth,
-				HideLakebed:  bs.Brush.HideLakebed,
-
-				MossScatter:   bs.Brush.MossScatter,
-				MinSlopeAngle: bs.Brush.MinSlopeAngle,
-				MaxSlopeAngle: bs.Brush.MaxSlopeAngle,
-
-				BloomSpike:      bs.Brush.BloomSpike,
-				BloomCenter:     bs.Brush.BloomCenter,
-				BloomSolidColor: bs.Brush.BloomSolidColor,
-				CenterColor: world.RawColor{
-					R: bs.Brush.CenterColor.X(), G: bs.Brush.CenterColor.Y(), B: bs.Brush.CenterColor.Z(),
-				},
-				StemLeaves: bs.Brush.StemLeaves,
-				LeafScale:  bs.Brush.LeafScale,
-
-				GroundTexture:   bs.Brush.GroundTexture,
-				GroundAmplitude: bs.Brush.GroundAmplitude,
-				GroundFrequency: bs.Brush.GroundFrequency,
-				GroundOctaves:   bs.Brush.GroundOctaves,
-				GroundUVScale:   geom.Point{X: bs.Brush.GroundUVScale.X(), Y: bs.Brush.GroundUVScale.Y()},
-
-				RangeFadeFraction: bs.Brush.RangeFadeFraction,
-				EdgeFadeDistance:  bs.Brush.EdgeFadeDistance,
-				BoundaryJitter:    bs.Brush.BoundaryJitter,
-			},
-		}
-		if bs.Brush.Kind == world.BiomeWater {
-			water := bs.Brush.Water
-			rb.Brush.Water = &world.RawWater{
-				WaveAmplitude: water.WaveAmplitude,
-				WaveLength:    water.WaveLength,
-				WaveSpeed:     water.WaveSpeed,
-				Reflectivity:  water.Reflectivity,
-				ReflectColor: world.RawColor3{
-					R: water.ReflectColor.X(), G: water.ReflectColor.Y(), B: water.ReflectColor.Z(),
-				},
-			}
-		}
-		for i, wp := range bs.Points {
-			rb.Points[i] = geom.Point{X: wp.X(), Y: wp.Y()}
-		}
-		rc.BiomeSectors = append(rc.BiomeSectors, rb)
-	}
-
 	return rc, nil
 }
-
-// chunkPointNames returns a YAML point name for every entry in ch.Points,
-// index-aligned with that slice. Names recorded in ch.PointNames are preserved;
-// unnamed slots (points the editor added) get a fresh "E<n>" chosen so it cannot
-// collide with a name already in use.
-//
-// The collision check is the point of this function. Names used to be minted
-// from a counter that started at zero on every save while ch.PointNames already
-// held E0, E1, … from the previous save, so re-saving an edited level silently
-// overwrote unrelated points and scrambled the geometry on the next load.
-// chunkLayersToRaw emits a chunk's authoring-band metadata, and nothing at all
-// for a chunk that only uses the ground layer.
-//
-// The emptiness test is what keeps this out of every existing level file: a
-// chunk with one band whose sectors all sit on it has nothing worth recording,
-// since Chunk.LayerAt would synthesize exactly the same thing on load. Only a
-// chunk that actually stacks geometry — or one whose bands were named or
-// re-heighted by hand — writes a layers block.
-func chunkLayersToRaw(ch *world.Chunk) []world.RawChunkLayer {
-	if len(ch.Layers) == 0 && ch.LayerCount() <= 1 {
-		return nil
-	}
-	n := ch.LayerCount()
-	out := make([]world.RawChunkLayer, n)
-	for i := 0; i < n; i++ {
-		l := ch.LayerAt(i)
-		out[i] = world.RawChunkLayer{Name: l.Name, BaseY: l.BaseY, CeilY: l.CeilY}
-	}
-	return out
-}
-
-func chunkPointNames(ch *world.Chunk) []string {
-	names := make([]string, len(ch.Points))
-	used := make(map[string]bool, len(ch.Points))
-
-	for i := range ch.Points {
-		if i >= len(ch.PointNames) {
-			break
-		}
-		if n := ch.PointNames[i]; n != "" && !used[n] {
-			names[i] = n
-			used[n] = true
-		}
-	}
-
-	ctr := 0
-	for i := range names {
-		for names[i] == "" {
-			n := fmt.Sprintf("E%d", ctr)
-			ctr++
-			if !used[n] {
-				names[i] = n
-				used[n] = true
-			}
-		}
-	}
-	return names
-}
-
-// validateRawChunk checks the invariants loadRawChunk depends on: every edge
-// references a defined point, and each sector's edges form a closed ring that
-// visits each point exactly once. Callers abort the write on error, so a
-// serialisation bug can never overwrite a good level file with a broken one.
+// validateRawChunk checks a chunk's brushes are well-formed before it is
+// written: a face may only name verts the brush actually has, and a solid
+// needs at least four of them. The loader checks the same two things on the
+// way in — this is the writer's half, so a level is never saved in a shape it
+// could not load back.
 func validateRawChunk(rc *world.RawChunk) error {
-	for si := range rc.Sectors {
-		s := &rc.Sectors[si]
-		if len(s.Edges) == 0 {
-			continue
+	for bi := range rc.Brushes {
+		b := &rc.Brushes[bi]
+		nVerts := len(b.Verts) / 3
+		if nVerts < 4 {
+			return fmt.Errorf("chunk %q brush %q: %d verts; a solid needs at least four",
+				rc.ID, b.ID, nVerts)
 		}
-		seen := make(map[string]bool, len(s.Edges))
-		for ei, e := range s.Edges {
-			if _, ok := rc.Points[e.From]; !ok {
-				return fmt.Errorf("chunk %q sector %q: edge %d references undefined point %q",
-					rc.ID, s.ID, ei, e.From)
-			}
-			if _, ok := rc.Points[e.To]; !ok {
-				return fmt.Errorf("chunk %q sector %q: edge %d references undefined point %q",
-					rc.ID, s.ID, ei, e.To)
-			}
-			if seen[e.From] {
-				return fmt.Errorf("chunk %q sector %q: point %q appears more than once in the edge ring",
-					rc.ID, s.ID, e.From)
-			}
-			seen[e.From] = true
-
-			nextIdx := (ei + 1) % len(s.Edges)
-			if next := s.Edges[nextIdx]; e.To != next.From {
-				return fmt.Errorf(
-					"chunk %q sector %q: edge %d ends at %q but edge %d starts at %q — edges must form a closed ring",
-					rc.ID, s.ID, ei, e.To, nextIdx, next.From)
+		for fi := range b.Faces {
+			for _, vi := range b.Faces[fi].Indices {
+				if vi < 0 || vi >= nVerts {
+					return fmt.Errorf("chunk %q brush %q: face %d names vertex %d, which it does not have",
+						rc.ID, b.ID, fi, vi)
+				}
 			}
 		}
 	}
 	return nil
 }
 
-// validateRawLevel runs validateRawChunk over every chunk in a level.
 func validateRawLevel(raw *world.RawLevel) error {
 	for ci := range raw.Chunks {
 		if err := validateRawChunk(&raw.Chunks[ci]); err != nil {
@@ -539,73 +255,6 @@ func lightsToRaw(ls world.LightSet) world.RawLights {
 	}
 	return rl
 }
-
-// ---------- extrusion/terrain save helpers ----------
-
-// saveExtrusions converts runtime extrusions to raw YAML form.
-// If transformXZ is true, reverse-transforms U/V as world XZ → chunk-local.
-// saveOpenings writes a surface's holes. Points go out chunk-local, exactly as
-// they are held — see loadOpenings for the other half.
-func saveOpenings(openings []world.Opening) []world.RawOpening {
-	if len(openings) == 0 {
-		return nil
-	}
-	out := make([]world.RawOpening, len(openings))
-	for i := range openings {
-		ro := world.RawOpening{
-			ID:     openings[i].ID,
-			Link:   openings[i].Link,
-			Points: make([]geom.Point, len(openings[i].Points)),
-		}
-		for j, p := range openings[i].Points {
-			ro.Points[j] = geom.Point{X: p.X(), Y: p.Y()}
-		}
-		out[i] = ro
-	}
-	return out
-}
-
-func saveExtrusions(exts []world.Extrusion) []world.RawExtrusion {
-	if len(exts) == 0 {
-		return nil
-	}
-	var out []world.RawExtrusion
-	for _, ext := range exts {
-		re := world.RawExtrusion{
-			Depth:       ext.Depth,
-			Texture:     ext.Texture,
-			Visible:     world.BoolPtrIfFalse(ext.Visible),
-			BackVisible: world.BoolPtrIfFalse(ext.BackVisible),
-			UVOffset:    geom.Point{X: ext.UVOffset.X(), Y: ext.UVOffset.Y()},
-			UVScale:     geom.Point{X: ext.UVScale.X(), Y: ext.UVScale.Y()},
-			UVRotation:  ext.UVRotation,
-			Alpha:       float32PtrIfNotOne(ext.Alpha),
-		}
-		for _, p := range ext.Outer {
-			re.Outer = append(re.Outer, world.RawExtrusionPoint{U: p.U, V: p.V})
-		}
-		for _, p := range ext.Inner {
-			re.Inner = append(re.Inner, world.RawExtrusionPoint{U: p.U, V: p.V})
-		}
-		out = append(out, re)
-	}
-	return out
-}
-
-// saveTerrainPts converts runtime terrain points to raw YAML form.
-func saveTerrainPts(pts []world.TerrainPoint) []world.RawTerrainPoint {
-	if len(pts) == 0 {
-		return nil
-	}
-	var out []world.RawTerrainPoint
-	for _, tp := range pts {
-		out = append(out, world.RawTerrainPoint{U: tp.U, V: tp.V, Depth: tp.Depth})
-	}
-	return out
-}
-
-// float32PtrIfNotOne returns a *float32 pointer only when v differs from 1.0.
-// Returns nil when v == 1.0 so the field is omitted from YAML via omitempty.
 func float32PtrIfNotOne(v float32) *float32 {
 	if v != 1.0 {
 		return &v
@@ -674,11 +323,11 @@ func ImportChunkIntoLevel(lvl *world.Level, path string, target mgl32.Vec3) (str
 	}
 
 	existingIDs := map[string]bool{}
-	existingSectorIDs := map[string]bool{}
+	existingBrushIDs := map[string]bool{}
 	for i := range lvl.Chunks {
 		existingIDs[lvl.Chunks[i].ID] = true
-		for j := range lvl.Chunks[i].Sectors {
-			existingSectorIDs[lvl.Chunks[i].Sectors[j].ID] = true
+		for j := range lvl.Chunks[i].Brushes {
+			existingBrushIDs[lvl.Chunks[i].Brushes[j].ID] = true
 		}
 	}
 
@@ -693,32 +342,24 @@ func ImportChunkIntoLevel(lvl *world.Level, path string, target mgl32.Vec3) (str
 		rc.ID = rc.ID + suffix
 	}
 
-	if suffix != "" {
-		for si := range rc.Sectors {
-			oldID := rc.Sectors[si].ID
-			rc.Sectors[si].ID = oldID + suffix
-			for ei := range rc.Sectors[si].Edges {
-				if rc.Sectors[si].Edges[ei].ToSector == oldID {
-					rc.Sectors[si].Edges[ei].ToSector = oldID + suffix
+	// Brush IDs are level-unique, so an imported chunk's brushes are suffixed
+	// alongside the chunk itself. Nothing inside a chunk references a brush by
+	// name, so unlike the sector version this replaces there is nothing to
+	// remap afterwards — a brush that collides with one already in the level
+	// is renamed and that is the whole of it.
+	for bi := range rc.Brushes {
+		id := rc.Brushes[bi].ID + suffix
+		if suffix == "" && existingBrushIDs[id] {
+			for n := 1; ; n++ {
+				candidate := fmt.Sprintf("%s_%d", rc.Brushes[bi].ID, n)
+				if !existingBrushIDs[candidate] {
+					id = candidate
+					break
 				}
 			}
 		}
-		// Remap portal ToSector references that point to other sectors in the chunk
-		sectorOldIDs := map[string]bool{}
-		for si := range rc.Sectors {
-			sectorOldIDs[rc.Sectors[si].ID] = true
-		}
-		for si := range rc.Sectors {
-			for ei := range rc.Sectors[si].Edges {
-				e := &rc.Sectors[si].Edges[ei]
-				if e.Kind == "portal" && !sectorOldIDs[e.ToSector] {
-					candidate := e.ToSector + suffix
-					if sectorOldIDs[candidate] {
-						e.ToSector = candidate
-					}
-				}
-			}
-		}
+		rc.Brushes[bi].ID = id
+		existingBrushIDs[id] = true
 	}
 
 	chunk, texNeeded, err := loadRawChunk(rc)

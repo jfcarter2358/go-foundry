@@ -2,7 +2,6 @@ package app
 
 import (
 	"foundry/internal/audio"
-	"foundry/internal/biome"
 	"foundry/internal/collision"
 	"foundry/internal/detail"
 	"foundry/internal/fileutil"
@@ -692,11 +691,9 @@ func Run() {
 				}
 			}
 
-			// Keep every Water-kind biome sector's companion water surface
-			// (chunk.WaterSurfaces) in step before anything reads it this
-			// frame — the water draw loop below, and shadow/culling passes
-			// that walk chunk bounds.
-			biome.SyncBiomeWaterSurfaces(&level)
+			// TODO(brush migration, Phase 5): the Water-kind biome sector's
+			// companion water surface was synced here before anything read it
+			// this frame. It comes back with scatter volumes.
 
 			// Latch the biome wind clock before the shadow passes read it, so
 			// scatter sways identically in the depth maps and in the color pass and

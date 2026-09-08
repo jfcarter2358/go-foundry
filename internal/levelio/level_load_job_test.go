@@ -116,8 +116,8 @@ func TestSteppedLoadMatchesTheSynchronousOne(t *testing.T) {
 				if got.Chunks[i].ID != want.Chunks[i].ID {
 					t.Errorf("chunk %d is %q, want %q", i, got.Chunks[i].ID, want.Chunks[i].ID)
 				}
-				if a, b := len(got.Chunks[i].Sectors), len(want.Chunks[i].Sectors); a != b {
-					t.Errorf("chunk %q has %d sectors, want %d", got.Chunks[i].ID, a, b)
+				if a, b := len(got.Chunks[i].Brushes), len(want.Chunks[i].Brushes); a != b {
+					t.Errorf("chunk %q has %d brushes, want %d", got.Chunks[i].ID, a, b)
 				}
 			}
 			if !reflect.DeepEqual(got.UI, want.UI) {

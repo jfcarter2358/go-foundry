@@ -25,6 +25,18 @@ import (
 
 // withChunkFile points the install root at a temporary directory and writes one
 // standalone chunk file into chunks/, returning its name.
+// squareRawChunk is one hollow 10x10x4 room in raw form — the fixture the
+// migration tests used to share, rebuilt on brushes. The bool it used to take
+// chose the sector's winding, which brushes have no equivalent of.
+func squareRawChunk(_ bool) world.RawChunk {
+	room := world.NewHollowRoom("room", mgl32.Vec3{0, 0, 0}, mgl32.Vec3{10, 4, 10}, 0.5, "concrete")
+	brushes := make([]world.RawBrush, 0, len(room))
+	for i := range room {
+		brushes = append(brushes, world.BrushToRaw(&room[i]))
+	}
+	return world.RawChunk{ID: "chunk", Brushes: brushes}
+}
+
 func withChunkFile(t *testing.T, name string) string {
 	t.Helper()
 	testenv.WithoutGeometryUploads(t)
@@ -111,7 +123,7 @@ func TestTwoInstancesGetDistinctChunkIDs(t *testing.T) {
 		t.Errorf("both decks are called %q", lvl.Chunks[0].ID)
 	}
 	// Sector IDs too: they are what a script and the portal graph address.
-	a, b := lvl.Chunks[0].Sectors[0].ID, lvl.Chunks[1].Sectors[0].ID
+	a, b := lvl.Chunks[0].Brushes[0].ID, lvl.Chunks[1].Brushes[0].ID
 	if a == b {
 		t.Errorf("both decks' sectors are called %q", a)
 	}
