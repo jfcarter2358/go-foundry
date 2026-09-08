@@ -5,6 +5,12 @@ import (
 	"foundry/internal/fileutil"
 	"image"
 	"image/draw"
+	// The PNG decoder, registered for image.Decode above. It belongs HERE, in
+	// the package that decodes, rather than in whichever main happens to be
+	// running: a tool that reads a level without going through internal/app —
+	// the level compiler — otherwise gets "image: unknown format" from a file
+	// that is a perfectly good PNG.
+	_ "image/png"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,6 +18,17 @@ import (
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
+
+// TextureUploadsEnabled gates the GPU half of LoadTexture, exactly as
+// GeometryUploadsEnabled gates Geometry.Load's. True in the running engine;
+// turned off by headless tooling — the level compiler's command-line entry
+// point, and the tests — so that a level can be read all the way through
+// without a window.
+//
+// The name and the decoded size are still recorded when it is off, because they
+// are what a caller with no context actually wants: which textures a level
+// references, and how big they are.
+var TextureUploadsEnabled = true
 
 func LoadTexture(name, file string) error {
 	imgFile, err := os.Open(file)
@@ -29,25 +46,36 @@ func LoadTexture(name, file string) error {
 	}
 	draw.Draw(rgba, rgba.Bounds(), img, image.Point{0, 0}, draw.Src)
 
+	// Everything above is the decode, which any tool that only wants to know a
+	// texture's size can do; everything below hands it to the GPU. The split
+	// mirrors Geometry.Load's — see TextureUploadsEnabled.
 	var texture uint32
-	gl.GenTextures(1, &texture)
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, texture)
-	applyWorldTextureFilter()
-	gl.TexImage2D(
-		gl.TEXTURE_2D,
-		0,
-		gl.RGBA,
-		int32(rgba.Rect.Size().X),
-		int32(rgba.Rect.Size().Y),
-		0,
-		gl.RGBA,
-		gl.UNSIGNED_BYTE,
-		gl.Ptr(rgba.Pix))
-	generateWorldMipmaps()
+	if TextureUploadsEnabled {
+		gl.GenTextures(1, &texture)
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, texture)
+		applyWorldTextureFilter()
+		gl.TexImage2D(
+			gl.TEXTURE_2D,
+			0,
+			gl.RGBA,
+			int32(rgba.Rect.Size().X),
+			int32(rgba.Rect.Size().Y),
+			0,
+			gl.RGBA,
+			gl.UNSIGNED_BYTE,
+			gl.Ptr(rgba.Pix))
+		generateWorldMipmaps()
+	}
 
 	Textures[name] = texture
 	noteTextureSize(name, int32(rgba.Rect.Size().X), int32(rgba.Rect.Size().Y))
+
+	if !TextureUploadsEnabled {
+		// The normal map's own load would upload too, and a headless caller has
+		// no use for one.
+		return nil
+	}
 
 	// Every path that puts a texture on the GPU comes through here, so this is
 	// the one place a texture's normal map has to be picked up — see

@@ -143,6 +143,21 @@ func CompileLevel(lvl *world.Level, opt compile.Options) (*CompiledLevel, error)
 	}, nil
 }
 
+// CompileLevelFile reads a level from disk with no GL context and compiles it.
+//
+// The entry point for the command-line compiler and for anything else running
+// as a build step. It goes through the real loader (LoadLevelHeadless), so the
+// level it compiles is exactly the one the engine would have loaded — prefabs
+// stamped, entity decks materialised, IDs uniqued — rather than a second,
+// simpler reading of the same file that would eventually disagree with it.
+func CompileLevelFile(path string, opt compile.Options) (*CompiledLevel, error) {
+	lvl, err := LoadLevelHeadless(path)
+	if err != nil {
+		return nil, err
+	}
+	return CompileLevel(&lvl, opt)
+}
+
 // uncompiledChunks keeps the raw chunks whose geometry the compile did not
 // take, matched back to the level by ID.
 //

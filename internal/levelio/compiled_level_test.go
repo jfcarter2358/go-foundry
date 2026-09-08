@@ -15,20 +15,20 @@ import (
 	"testing"
 
 	"foundry/internal/compile"
+	"foundry/internal/gfx"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// sealedLevel is a shell with somewhere to stand in it, plus a moving chunk and
-// a switched-off one so the partition has something to get wrong.
+// sealedLevel is a shell with somewhere to stand in it, plus a chunk that is
+// switched off — which the compile must leave authored rather than baking, or
+// there is nothing left for a script to switch on.
 func sealedLevel() *world.Level {
 	room := world.NewHollowRoom("room", mgl32.Vec3{-4, 0, -4}, mgl32.Vec3{4, 4, 4}, 0.5, "concrete")
 	return &world.Level{
 		Chunks: []world.Chunk{
 			{ID: "static", Scale: 1, Brushes: room},
-			{ID: "ship", Scale: 1, FrameOwner: "dropship",
-				Brushes: world.NewHollowRoom("hold", mgl32.Vec3{40, 0, 0}, mgl32.Vec3{44, 4, 4}, 0.5, "metal")},
 			{ID: "later", Scale: 1, Disabled: true,
 				Brushes: []world.Brush{world.NewBoxBrush("block", mgl32.Vec3{80, 0, 0}, mgl32.Vec3{1, 1, 1}, "concrete")}},
 		},
@@ -37,9 +37,24 @@ func sealedLevel() *world.Level {
 	}
 }
 
+// sealedLevelWithShip adds a frame-owned chunk, whose geometry moves and so
+// cannot be baked into a world-space list.
+//
+// Only the in-memory tests use it: a frame owner has to name an entity that
+// exists, and standing up a dropship on disk would make these tests about
+// entity definitions rather than about the compile.
+func sealedLevelWithShip() *world.Level {
+	lvl := sealedLevel()
+	lvl.Chunks = append(lvl.Chunks, world.Chunk{
+		ID: "ship", Scale: 1, FrameOwner: "dropship",
+		Brushes: world.NewHollowRoom("hold", mgl32.Vec3{40, 0, 0}, mgl32.Vec3{44, 4, 4}, 0.5, "hull_plate"),
+	})
+	return lvl
+}
+
 func compileFixture(t *testing.T) *CompiledLevel {
 	t.Helper()
-	c, err := CompileLevel(sealedLevel(), compile.DefaultOptions())
+	c, err := CompileLevel(sealedLevelWithShip(), compile.DefaultOptions())
 	if err != nil {
 		t.Fatalf("CompileLevel: %v", err)
 	}
@@ -140,5 +155,61 @@ func TestTheCompiledFileSitsBesideItsLevel(t *testing.T) {
 	}
 	if got, want := CompiledPath("/levels/canyon"), "/levels/canyon"+CompiledExt; got != want {
 		t.Errorf("CompiledPath without an extension = %q, want %q", got, want)
+	}
+}
+
+// The command-line compiler's path, end to end: a level file on disk becomes a
+// compiled level, with no GL context anywhere.
+//
+// Through the real loader rather than a second reading of the file, which is
+// the point — a level that compiles has to be the same level that loads.
+func TestALevelFileCompilesWithNoWindow(t *testing.T) {
+	withResourcesRoot(t)
+
+	path := filepath.Join(t.TempDir(), "headless"+LevelExt)
+	if err := SaveLevel(sealedLevel(), path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	c, err := CompileLevelFile(path, compile.DefaultOptions())
+	if err != nil {
+		t.Fatalf("CompileLevelFile: %v", err)
+	}
+	if len(c.Faces) == 0 {
+		t.Fatal("a level with a room in it compiled to no faces")
+	}
+	if c.Stats.InteriorLeaves == 0 {
+		t.Error("a sealed room compiled to no interior cells; the void fill swallowed the level")
+	}
+	if len(c.Stats.Leaks) != 0 {
+		t.Errorf("a sealed level reported leaks: %v", c.Stats.Leaks)
+	}
+	// The uploads went back on afterwards, or every level loaded after this one
+	// in the same process would be invisible.
+	if !gfx.GeometryUploadsEnabled || !gfx.TextureUploadsEnabled {
+		t.Error("the headless load left the upload switches off")
+	}
+}
+
+// A level with a hole in its shell compiles to something correct and useless,
+// and says so rather than failing.
+func TestALeakingLevelStillCompilesAndReportsIt(t *testing.T) {
+	withResourcesRoot(t)
+
+	lvl := sealedLevel()
+	// Take the ceiling away, which is the whole roof of the only room.
+	ch := &lvl.Chunks[0]
+	ch.Brushes = append(ch.Brushes[:1], ch.Brushes[2:]...)
+
+	path := filepath.Join(t.TempDir(), "leaky"+LevelExt)
+	if err := SaveLevel(lvl, path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	c, err := CompileLevelFile(path, compile.DefaultOptions())
+	if err != nil {
+		t.Fatalf("a leaking level failed to compile rather than reporting the leak: %v", err)
+	}
+	if len(c.Stats.Leaks) == 0 {
+		t.Error("a room with no roof reported no leaks")
 	}
 }

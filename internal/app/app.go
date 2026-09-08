@@ -17,7 +17,6 @@ import (
 	"foundry/internal/uifont"
 	"foundry/internal/video"
 	"foundry/internal/world"
-	_ "image/png"
 	"io"
 	"log"
 	"math"

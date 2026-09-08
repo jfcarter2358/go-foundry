@@ -969,6 +969,24 @@ func EditorDrawUI() {
 	}
 	imgui.SameLine()
 
+	// Compile. Beside Save rather than in a menu because the one thing it
+	// answers — is this level sealed — is a question an author wants answered
+	// while the walls are still fresh, not at package time.
+	if imgui.Button("Compile") {
+		msg, err := EditorCompileLevel()
+		if err != nil {
+			Editor.StatusMsg = fmt.Sprintf("Compile failed: %v", err)
+		} else {
+			Editor.StatusMsg = msg
+		}
+		Editor.StatusTime = sdl.GetTicks()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Build the level's BSP, visibility and baked lighting,\n" +
+			"and write it beside the level file. Reports leaks.")
+	}
+	imgui.SameLine()
+
 	// Status message (shown for 3 seconds after save/load)
 	if Editor.StatusMsg != "" {
 		if sdl.GetTicks()-Editor.StatusTime < 3000 {
