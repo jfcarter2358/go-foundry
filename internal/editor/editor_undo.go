@@ -65,7 +65,37 @@ var levelRedoStack boundedStack[world.RawLevel]
 // the editor has ever been opened — including in every headless test.
 func inPlaySession() bool { return script.PlaySession.Valid }
 
+// editorUndoRedirect diverts EditorPushUndo to a document editor's own undo
+// stack for the duration of that editor's panel.
+//
+// The tags, attributes and script-parameter widgets in editor_script_panel.go
+// are shared by every object that has any — a sector, a volume, an entity — and
+// they push undo themselves, which is right: the caller cannot know whether the
+// user actually changed anything inside them. The entity editor reuses those
+// same widgets on a *definition*, which is not in the level at all, so their
+// push has to land somewhere else. Setting this around the panel is what does
+// that, and it is a redirect rather than a parameter because threading an undo
+// callback through eight widget signatures would change every existing call
+// site to say the thing they already mean by default.
+//
+// Safe as a global because only one window's Draw runs at a time, and the
+// setter clears it with a defer.
+var editorUndoRedirect func()
+
+// withUndoRedirect runs body with pushes going to push instead of the level's
+// undo stack.
+func withUndoRedirect(push func(), body func()) {
+	prev := editorUndoRedirect
+	editorUndoRedirect = push
+	defer func() { editorUndoRedirect = prev }()
+	body()
+}
+
 func EditorPushUndo() {
+	if editorUndoRedirect != nil {
+		editorUndoRedirect()
+		return
+	}
 	if inPlaySession() {
 		return
 	}
@@ -154,6 +184,10 @@ func editorResetSelectionState() {
 	editorClearSpriteSelection()
 	editorClearEmitterSelection()
 	editorClearSoundSelection()
+	// The brush is deliberately not disarmed here: an undo of a stamp is part
+	// of scattering, and putting the tool away after every Ctrl+Z would be its
+	// own annoyance. Only the *selection* is stale after a snapshot swap.
+	editorClearScenerySelection()
 	Editor.EntityPlacementMode = false
 	Editor.VolumePlacementMode = false
 	Editor.SpritePlacementMode = false

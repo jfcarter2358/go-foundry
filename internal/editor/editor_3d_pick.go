@@ -36,17 +36,24 @@ const (
 	panelFocusWall    = "wall"
 	panelFocusFloor   = "floor"
 	panelFocusCeiling = "ceiling"
-	panelFocusVertex  = "vertex"
-	panelFocusWater   = "water"
-	panelFocusEntity  = "entity"
-	panelFocusVolume  = "volume"
-	panelFocusSprite  = "sprite"
-	panelFocusEmitter = "emitter"
-	panelFocusSound   = "sound"
-	panelFocusChunk   = "chunk"
-	panelFocusLight   = "light"
-	panelFocusSector  = "sector"
-	panelFocusBiome   = "biome"
+	// A slab face's own section, nested inside its surface's. Distinct from
+	// panelFocusFloor so that clicking the underside of a floor opens the
+	// Underside group rather than leaving it folded away inside an opened
+	// Floor group, which is exactly as useless as not opening anything.
+	panelFocusFloorSlab   = "floor_slab"
+	panelFocusCeilingSlab = "ceiling_slab"
+	panelFocusVertex      = "vertex"
+	panelFocusWater       = "water"
+	panelFocusEntity      = "entity"
+	panelFocusVolume      = "volume"
+	panelFocusSprite      = "sprite"
+	panelFocusEmitter     = "emitter"
+	panelFocusSound       = "sound"
+	panelFocusChunk       = "chunk"
+	panelFocusLight       = "light"
+	panelFocusSector      = "sector"
+	panelFocusBiome       = "biome"
+	panelFocusScenery     = "scenery"
 )
 
 // ---------- pick result ----------
@@ -58,15 +65,23 @@ const (
 	pickNone    pickKind = ""
 	pickSpawn   pickKind = "spawn"
 	pickWall    pickKind = "wall"
+	pickPortal  pickKind = "portal"
 	pickFloor   pickKind = "floor"
 	pickCeiling pickKind = "ceiling"
-	pickWater   pickKind = "water"
-	pickEntity  pickKind = "entity"
-	pickVolume  pickKind = "volume"
-	pickSprite  pickKind = "sprite"
-	pickEmitter pickKind = "emitter"
-	pickSound   pickKind = "sound"
-	pickLight   pickKind = "light"
+	// A slab's far face and rim: the underside of a floor, the top of a
+	// ceiling. Their own kinds rather than the surface's, because the whole
+	// point of giving a floor thickness is being able to texture what you see
+	// from underneath separately from what you walk on. See world/slab.go.
+	pickFloorSlab   pickKind = "floor_slab"
+	pickCeilingSlab pickKind = "ceiling_slab"
+	pickWater       pickKind = "water"
+	pickEntity      pickKind = "entity"
+	pickVolume      pickKind = "volume"
+	pickSprite      pickKind = "sprite"
+	pickEmitter     pickKind = "emitter"
+	pickSound       pickKind = "sound"
+	pickLight       pickKind = "light"
+	pickScenery     pickKind = "scenery"
 )
 
 // pickHit is the closest thing found along a picking ray. Which index fields
@@ -77,6 +92,7 @@ const (
 //	volume     → idx = index into level.Volumes
 //	light      → idx = index into level.Lights.Points
 //	wall       → chunkIdx + sectorIdx + idx = wall index within that sector
+//	portal     → chunkIdx + sectorIdx + idx = portal index within that sector
 //	floor/ceil → chunkIdx + sectorIdx
 //	water      → chunkIdx + idx = surface index within that chunk
 type pickHit struct {
@@ -265,8 +281,36 @@ func pick3D(sx, sy int32) pickHit {
 				hit.consider(t, pickWall, ci, seci, wi)
 			}
 
-			// Portals are deliberately not hit-tested: clicks pass through the
-			// opening to whatever is behind it.
+			// Portals — their gap fill only. The opening itself is still not
+			// hit-tested: a click passes through it to whatever is behind,
+			// which is the whole point of an opening. What is tested is the
+			// geometry that CLOSES one — the riser and the ceiling filler
+			// RebuildGaps draws where two sectors' floors or ceilings differ
+			// (world/chunk.go). That geometry is drawn, carries a texture and
+			// has a properties panel, so it has to be clickable.
+			//
+			// It was not, and the shape that made that hurt is the vertical
+			// door: a short sector with its floor raised and its ceiling
+			// lowered until they meet. Every visible face of it is gap fill,
+			// owned by the *neighbouring* sectors' portals rather than by the
+			// door's own, so there was nothing in the 3D view to click and no
+			// way to reach the gap texture except by finding the right edge on
+			// the 2D map.
+			//
+			// A gap present but not Visible is still picked, the same way a
+			// hidden wall and a hidden floor are: turning the flag back on is
+			// one of the things a click is for.
+			for pi := range s.Portals {
+				p := &s.Portals[pi]
+				if len(p.FloorGap.Vertices) == 0 && len(p.CeilGap.Vertices) == 0 {
+					continue // an open portal; clicks pass through
+				}
+				t := pickModelT(origin, dir, p.FloorGap.Vertices, model)
+				if ct := pickModelT(origin, dir, p.CeilGap.Vertices, model); ct < t {
+					t = ct
+				}
+				hit.consider(t, pickPortal, ci, seci, pi)
+			}
 
 			if s.Floor.Enabled {
 				t := pickSurfaceT(origin, dir, ch, s, &s.Floor.Geometry, s.Floor.SubmeshGeometries,
@@ -277,6 +321,16 @@ func pick3D(sx, sy int32) pickHit {
 				t := pickSurfaceT(origin, dir, ch, s, &s.Ceiling.Geometry, s.Ceiling.SubmeshGeometries,
 					s.Ceiling.VertexHeight, true)
 				hit.consider(t, pickCeiling, ci, seci, -1)
+			}
+			// Slabs are tested against their real triangles only — there is no
+			// flat fallback of the kind pickSurfaceT keeps for a surface whose
+			// geometry has not been uploaded, because a slab with no geometry
+			// is a slab with no thickness, and there is nothing there to click.
+			if s.Floor.Enabled {
+				hit.consider(pickSlabT(origin, dir, &s.Floor.Slab, model), pickFloorSlab, ci, seci, -1)
+			}
+			if s.Ceiling.Enabled {
+				hit.consider(pickSlabT(origin, dir, &s.Ceiling.Slab, model), pickCeilingSlab, ci, seci, -1)
 			}
 		}
 
@@ -312,6 +366,16 @@ func pick3D(sx, sy int32) pickHit {
 	for si := range lvl.Sprites {
 		if t := pickSpriteRayT(origin, dir, lvl, &lvl.Sprites[si], gfx.Cam.Position); t < float32(math.MaxFloat32) {
 			hit.consider(t, pickSprite, -1, -1, si)
+		}
+	}
+
+	// Scenery, tested with the world rather than after it: a prop is a solid
+	// thing standing in the level, so a rock in front of a wall should win the
+	// click on distance exactly as the wall in front of another wall does.
+	// Volumes and sprites are tested afterwards precisely because they are not.
+	for si := range lvl.Scenery {
+		if t := pickSceneryRayT(origin, dir, &lvl.Scenery[si]); t < float32(math.MaxFloat32) {
+			hit.consider(t, pickScenery, -1, -1, si)
 		}
 	}
 
@@ -397,6 +461,25 @@ func pickPointLightT(origin, dir mgl32.Vec3, pl *world.PointLight) float32 {
 		return t
 	}
 	return float32(math.MaxFloat32)
+}
+
+// pickSlabT ray-tests one surface's slab: its far face, that face's
+// per-texture submeshes, and the rim around the edge.
+//
+// The rim is included so that clicking the exposed edge of a thick floor —
+// often the only part of it in view from inside the room above — selects the
+// slab rather than falling through to whatever is behind it. A Hidden far face
+// is still picked, the same way a hidden wall and a hidden floor are: turning
+// the flag back on is one of the things a click is for.
+func pickSlabT(origin, dir mgl32.Vec3, sl *world.Slab, model mgl32.Mat4) float32 {
+	best := pickModelT(origin, dir, sl.Geometry.Vertices, model)
+	if t := pickGeometriesModelT(origin, dir, sl.SubmeshGeometries, model); t < best {
+		best = t
+	}
+	if t := pickModelT(origin, dir, sl.RimGeometry.Vertices, model); t < best {
+		best = t
+	}
+	return best
 }
 
 // pickSurfaceT ray-tests a floor or ceiling. The uploaded mesh is used when it
@@ -874,6 +957,10 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	drawSelectedFaceOutline()
 	drawSelectedVolumeOutline()
 	drawSelectedSpriteOutline(gfx.Cam.Position)
+	drawSelectedSceneryOutline()
+	// The brush's footprint ring, on the same terms: it says where the next
+	// stamp lands, which is exactly the thing the panel cannot show.
+	DrawBrushGhostOutline()
 	RenderEmitterMarkers(Editor.level, gfx.Cam.Position)
 	RenderSoundMarkers(Editor.level, gfx.Cam.Position)
 

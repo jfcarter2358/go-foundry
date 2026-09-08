@@ -114,6 +114,11 @@ type Interp struct {
 	depth  int
 	steps  int
 
+	// rng is the state behind `random` and `random_range`; see random.go for
+	// why it is here rather than in a package-level source, and why it is not
+	// math/rand.
+	rng uint64
+
 	// debugHook, when set, is called before each statement. It is the seam a
 	// debugger attaches to; see the note at the top of the file.
 	debugHook func(s Stmt, env *Env)
@@ -135,6 +140,7 @@ func NewInterp(prog *Program, host Host, limits Limits) (*Interp, ErrorList) {
 		globals: NewEnv(nil),
 		host:    host,
 		limits:  limits.withDefaults(),
+		rng:     newRandomSeed(),
 	}
 	var errs ErrorList
 	if prog != nil {
@@ -597,14 +603,14 @@ func (in *Interp) assignTo(target Expr, val Value, env *Env) error {
 		return in.errorf(t.Pos_, "a tag is not assignable on its own; write #%s.attr.<name> or #%s.prop.<name>",
 			t.Name, t.Name)
 
+	case *ParamExpr:
+		// A param is what the *level* said, so a script writing one would be
+		// arguing with its own configuration. Point at the two places that
+		// state actually belongs.
+		return in.errorf(t.Pos_, "?%s is a script parameter, which the level sets; write @self.attr.<name> or @self.state[\"%s\"] for state the script owns",
+			t.Name, t.Name)
+
 	case *AddrExpr:
-		if _, isParam := in.params[t.Name]; isParam {
-			// A param is what the *level* said, so a script writing one would
-			// be arguing with its own configuration. Point at the two places
-			// that state actually belongs.
-			return in.errorf(t.Pos_, "@%s is a script parameter, which the level sets; write @self.attr.<name> or @self.state[\"%s\"] for state the script owns",
-				t.Name, t.Name)
-		}
 		return in.errorf(t.Pos_, "an object is not assignable on its own; write @%s.attr.<name> or @%s.prop.<name>",
 			t.Name, t.Name)
 	}
@@ -631,6 +637,9 @@ func (in *Interp) setIndex(container, idx, val Value, pos Pos) error {
 		}
 		c.M[string(k)] = val
 		return nil
+	}
+	if _, isVec := container.(VecVal); isVec {
+		return in.errorf(pos, "a vec is a value, so nothing in it can be assigned; build a new one, like v = <1.0, v.y, v.z>")
 	}
 	return in.errorf(pos, "cannot index %s", typeName(container))
 }
@@ -714,6 +723,9 @@ func (in *Interp) evalExpr(e Expr, env *Env) (Value, error) {
 	case *TagExpr:
 		return in.evalTag(x, env)
 
+	case *ParamExpr:
+		return in.evalParam(x, env)
+
 	case *MemberExpr:
 		return in.evalMember(x, env)
 	}
@@ -737,6 +749,33 @@ func (in *Interp) evalVec(x *VecLit, env *Env) (Value, error) {
 		out[i] = f
 	}
 	return out, nil
+}
+
+// vecComponent reads `v.x`, `v.y` or `v.z`.
+//
+// Read-only, and deliberately so. A vec is a value, not a container — Add and
+// the rest hand back new ones, and a vec read out of a property is a copy — so
+// `@self.prop.position.y = 1.0` would write to that copy and be a silent no-op
+// on the object. Rebuilding the whole vec is the one spelling that always means
+// what it looks like, and assignVecComponent says so.
+func vecComponent(in *Interp, v VecVal, name string, pos Pos) (Value, error) {
+	if i := vecAxis(name); i >= 0 {
+		return FloatVal(v[i]), nil
+	}
+	return nil, in.errorf(pos, "a vec has components x, y and z, not %q", name)
+}
+
+// vecAxis maps a component name to its index, or -1.
+func vecAxis(name string) int {
+	switch name {
+	case "x":
+		return 0
+	case "y":
+		return 1
+	case "z":
+		return 2
+	}
+	return -1
 }
 
 func (in *Interp) evalUnary(x *UnaryExpr, env *Env) (Value, error) {
@@ -1012,6 +1051,12 @@ func (in *Interp) evalIndex(x *IndexExpr, env *Env) (Value, error) {
 				int64(n), len(c))
 		}
 		return StrVal(c[n : n+1]), nil
+	}
+	if _, isVec := container.(VecVal); isVec {
+		// One spelling for one idea: a vec's three components are named, not
+		// numbered, so `v[0]` is pointed at `v.x` rather than quietly allowed
+		// as a second way to write it.
+		return nil, in.errorf(x.Pos_, "a vec is not indexed; write v.x, v.y or v.z")
 	}
 	return nil, in.errorf(x.Pos_, "cannot index %s", typeName(container))
 }

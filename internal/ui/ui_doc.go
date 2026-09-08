@@ -33,6 +33,7 @@ type Kind int
 const (
 	KindPanel   Kind = iota // a rect with a background — the container
 	KindImage               // a textured quad
+	KindVideo               // a quad showing the current frame of a video file
 	KindText                // a string
 	KindButton              // a panel with a label and per-state visuals
 	KindBar                 // a background and a fill: progress, health, loading
@@ -46,6 +47,7 @@ const (
 var KindNames = []string{
 	"panel",
 	"image",
+	"video",
 	"text",
 	"button",
 	"bar",
@@ -89,7 +91,26 @@ func (k Kind) Interactive() bool {
 // oriented scissor rect, and GL scissor cannot express one. Leaf-only still
 // covers what is actually wanted — a spinning loading indicator, a tilted
 // banner — at no cost to the rest of the system.
-func (k Kind) Leaf() bool { return k == KindImage || k == KindText }
+func (k Kind) Leaf() bool {
+	switch k {
+	case KindImage, KindVideo, KindText:
+		return true
+	}
+	return false
+}
+
+// LeafKindNames lists the rotatable kinds, for the message a document that
+// rotates something else is refused with. Derived rather than written out, so
+// adding a leaf kind cannot leave the error naming the old list.
+func LeafKindNames() []string {
+	var out []string
+	for i := range KindNames {
+		if Kind(i).Leaf() {
+			out = append(out, KindNames[i])
+		}
+	}
+	return out
+}
 
 // Rect is a solved rectangle in canvas units. The origin is top-left and Y
 // increases downwards, matching the ortho projection uidraw builds and the
@@ -277,7 +298,22 @@ func DefaultStyle() Style { return DefaultStyleFor(KindPanel) }
 
 // DefaultStyleFor is the look a node of a kind has before anyone styles it.
 func DefaultStyleFor(k Kind) Style {
-	return Style{Color: DefaultBackground(k), UV: mgl32.Vec4{0, 0, 1, 1}}
+	return Style{Color: DefaultBackground(k), UV: mgl32.Vec4{0, 0, 1, 1}, Fill: DefaultFill(k)}
+}
+
+// DefaultFill is how a node of a kind fits its picture into its rect before
+// anyone chooses.
+//
+// Letterbox for a video, stretch for everything else. A video has an aspect
+// ratio it was shot at and a widget has one the layout gave it, and the two are
+// only ever equal by accident; stretching is the one answer that is visibly
+// wrong every time. An image is usually authored to fit the box it goes in, so
+// the same reasoning does not apply to it.
+func DefaultFill(k Kind) FillMode {
+	if k == KindVideo {
+		return FillFit
+	}
+	return FillStretch
 }
 
 // DefaultBackground is the fill a node of a kind starts with.
@@ -296,6 +332,12 @@ func DefaultBackground(k Kind) mgl32.Vec4 {
 	switch k {
 	case KindText, KindInclude:
 		return mgl32.Vec4{1, 1, 1, 0}
+	case KindVideo:
+		// Black, because on a video the background is what the letterbox bars
+		// are made of. White bars down the sides of a clip read as the widget
+		// being broken, and they are the first thing anyone would see, since a
+		// widget's rect matching its film's aspect ratio is a coincidence.
+		return mgl32.Vec4{0, 0, 0, 1}
 	}
 	return mgl32.Vec4{1, 1, 1, 1}
 }
@@ -397,6 +439,170 @@ func (v ValueSpec) Fraction() float32 {
 	return clamp01(f)
 }
 
+// VideoSpec is the clip a video node shows, and the transport it plays under.
+//
+// The authored half — which file, whether it starts by itself, whether it loops
+// — is four fields and is what the .fui carries. The rest is where playback has
+// got to, and it is unexported for TextSpec's reason: a document is cloned
+// every time a screen is shown, and a clone that came with somebody else's
+// playhead in it would be a cutscene that started half way through the second
+// time it was watched.
+//
+// Nothing here decodes. internal/video owns the file and the clock, and the two
+// are joined by VideoDriver — the same shape as the resolver a binding is
+// evaluated through, and for the same reason: a package that has never heard of
+// a GPU cannot be the one holding a decoded frame.
+type VideoSpec struct {
+	// Source is a name under resources/video, without the extension.
+	Source string
+	// AutoPlay starts the clip the first time the widget is ticked. Off, the
+	// widget sits on the first frame until something says `playing: true` —
+	// which is what a cutscene triggered by a script wants.
+	AutoPlay bool
+	Loop     bool
+	Muted    bool
+	// Volume scales the soundtrack, 0 to 1, on top of the music slider.
+	Volume float32
+
+	// ---- transport, never serialised ----
+
+	// playing is what the widget wants; the driver makes it so and reports
+	// back. Separate from the player's own state because the widget exists
+	// before the player does — a screen ticked once before its file is opened
+	// still has to remember that it was told to play.
+	playing bool
+	// started records that AutoPlay has been acted on, so pausing a clip that
+	// autoplayed does not have it start again on the next tick.
+	started bool
+
+	seekTo  float32
+	seeking bool
+
+	// tex is the name the driver registered this widget's current frame under.
+	// It lives on the node because the draw walk has a node and nothing else:
+	// the key it was built from belongs to the stack, which by then is three
+	// call frames away and in another package.
+	tex string
+
+	time     float32
+	duration float32
+	ended    bool
+	// justEnded is the edge, held for the stack to turn into an event on the
+	// same tick. A flag rather than a return value because the driver reports
+	// the level — "this clip is at its end" — and only the stack knows which
+	// screen the widget is on and therefore who to tell.
+	justEnded bool
+}
+
+// DefaultVideoSpec is a stopped, unmuted clip at full volume playing once.
+func DefaultVideoSpec() VideoSpec { return VideoSpec{Volume: 1} }
+
+// VideoTransport is everything a driver needs in order to make a player match a
+// widget: what to play, and how it should be running right now.
+type VideoTransport struct {
+	Source  string
+	Loop    bool
+	Muted   bool
+	Volume  float32
+	Playing bool
+
+	// Seek is a position the widget has been told to jump to since the last
+	// tick, valid only when Seeking. A one-shot rather than a level, because
+	// "go to 0" repeated every frame would pin a playing clip to its first
+	// frame forever.
+	Seek    float32
+	Seeking bool
+}
+
+// TakeVideoTransport reads a video node's wanted state, applying AutoPlay the
+// first time and consuming any pending seek.
+//
+// Named Take because it consumes: calling it twice in one frame loses the seek,
+// which is why only a driver calls it.
+func (n *Node) TakeVideoTransport() VideoTransport {
+	v := &n.Video
+	if !v.started {
+		v.started = true
+		v.playing = v.AutoPlay
+	}
+	t := VideoTransport{
+		Source:  v.Source,
+		Loop:    v.Loop,
+		Muted:   v.Muted,
+		Volume:  v.Volume,
+		Playing: v.playing,
+		Seek:    v.seekTo,
+		Seeking: v.seeking,
+	}
+	v.seeking = false
+	return t
+}
+
+// NoteVideo records where the driver's player actually got to.
+//
+// The rising edge of `ended` is latched rather than reported, because the
+// driver does not know which screen the node is on and so cannot post the
+// `:finished:` event itself. The stack reads the latch on the same tick.
+func (n *Node) NoteVideo(time, duration float32, playing, ended bool) {
+	v := &n.Video
+	v.time, v.duration = time, duration
+	if ended && !v.ended {
+		v.justEnded = true
+	}
+	v.ended = ended
+	v.playing = playing
+}
+
+// VideoTexture is the name this widget's current frame is registered under, or
+// empty before a driver has produced one.
+func (n *Node) VideoTexture() string { return n.Video.tex }
+
+// NoteVideoTexture records that name. Called by the driver, alongside
+// NoteVideo.
+func (n *Node) NoteVideoTexture(name string) { n.Video.tex = name }
+
+// VideoPlaying reports whether the clip is running.
+func (n *Node) VideoPlaying() bool { return n.Video.playing }
+
+// SetVideoPlaying starts or stops the clip. Starting one that has run out
+// rewinds it, which is the only reading of "play this" that does anything.
+func (n *Node) SetVideoPlaying(on bool) {
+	n.Video.started = true
+	if on && n.Video.ended {
+		n.SeekVideo(0)
+	}
+	n.Video.playing = on
+}
+
+// VideoJustEnded reports and clears the "reached the end on this tick" latch.
+func (n *Node) VideoJustEnded() bool {
+	if !n.Video.justEnded {
+		return false
+	}
+	n.Video.justEnded = false
+	return true
+}
+
+// VideoTime is where playback has got to, in seconds.
+func (n *Node) VideoTime() float32 { return n.Video.time }
+
+// SeekVideo queues a jump to a position in seconds, applied on the next tick.
+// The reported time moves immediately so that a script reading it back in the
+// same tick sees where it asked to be rather than where it was.
+func (n *Node) SeekVideo(sec float32) {
+	if sec < 0 {
+		sec = 0
+	}
+	n.Video.seekTo, n.Video.seeking = sec, true
+	n.Video.time, n.Video.ended, n.Video.justEnded = sec, false, false
+}
+
+// VideoDuration is how long the clip runs, or zero before it has been opened.
+func (n *Node) VideoDuration() float32 { return n.Video.duration }
+
+// VideoEnded reports whether a non-looping clip has run out.
+func (n *Node) VideoEnded() bool { return n.Video.ended }
+
 // Nav names the node focus moves to in each direction. An empty entry falls
 // back to the geometric search in ui_nav.go.
 type Nav struct{ Up, Down, Left, Right string }
@@ -432,6 +638,7 @@ type Node struct {
 	Style   Style
 	Text    TextSpec
 	Value   ValueSpec
+	Video   VideoSpec
 	Action  string // the atom posted on activation; empty uses the kind's default
 	Nav     Nav
 	Include IncludeSpec
@@ -464,6 +671,7 @@ func NewNode(id string, kind Kind) Node {
 		Style:   DefaultStyleFor(kind),
 		Text:    DefaultTextSpec(),
 		Value:   DefaultValueSpec(),
+		Video:   DefaultVideoSpec(),
 	}
 }
 

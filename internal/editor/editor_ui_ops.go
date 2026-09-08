@@ -55,6 +55,11 @@ func uiDefaultRectFor(n *ui.Node, kind ui.Kind) {
 		w, h = 260, 24
 	case ui.KindPanel, ui.KindImage, ui.KindInclude:
 		w, h = 320, 200
+	case ui.KindVideo:
+		// Sixteen by nine, because that is what a video is. A square default
+		// would letterbox every clip anyone dropped into it and read as the
+		// fit mode being wrong.
+		w, h = 356, 200
 	}
 	n.Rect.AnchorMin = [2]float32{0, 0}
 	n.Rect.AnchorMax = [2]float32{0, 0}

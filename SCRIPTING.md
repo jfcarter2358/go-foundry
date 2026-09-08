@@ -71,6 +71,11 @@ Keywords are reserved: `def`, `end`, `return`, `if`, `elif`, `else`, `for`, `in`
 `while`, `break`, `continue`, `when`, `and`, `or`, `not`, `true`, `false`, `null`,
 `import`, `param`.
 
+Three sigils prefix a name, and each reaches somewhere different: `@name` is an
+object in the level, `#name` is a tag across it, and `?name` is a
+[parameter](#parameters) the level bound for this object. They share no
+namespace, so the same word may be all three at once.
+
 Whitespace and newlines are insignificant except that a comment ends at a newline.
 Blocks are delimited by keywords, never by indentation.
 
@@ -90,11 +95,11 @@ way between a level and a script.
 | `bool` | `true`, `false` | |
 | `null` | `null` | The absent value. What a handler returns when it has nothing to say, what a missing `dict` key yields, and what `<-` evaluates to. |
 | `atom` | `:damage:` | A literal name used as an enum or an event tag. Lowercase letters and underscores only, colons on both sides. |
-| `ref` | — | An opaque handle to a world object. Produced by `@id`, `#tag` and `@self`; never written as a literal. Comparable with `==`. |
+| `ref` | — | An opaque handle to a world object. Produced by `@id`, `#tag`, `@self` and a `ref` [parameter](#parameters); never written as a literal. Comparable with `==`. |
 | `list` | `[1, "two", :three:]` | Ordered, any element types, growable. |
 | `dict` | `{"key": val, "other": 2}` | String keys, any value types. |
 | `tuple` | `(a, b, c)` | Fixed length. A one-tuple is `(x,)` — plain `(x)` is grouping. |
-| `vec` | `<1.0, 2.0, 3.0>` | Three floats with vector operations built in. |
+| `vec` | `<1.0, 2.0, 3.0>` | Three floats with vector operations built in. Components are read with `.x`, `.y` and `.z`. |
 
 Compound types (`list`, `dict`, `tuple`, `vec`) are things scripts build at
 runtime, not things a level authors. A level only ever writes the four scalars.
@@ -113,6 +118,31 @@ f(1, 2)             -- call; `(` follows the name `f`
 ```
 
 `<-` is always one token and is never read as `<` followed by `-`.
+
+### Vector components
+
+`v.x`, `v.y` and `v.z` read a vec's three floats. They are always `float`,
+whatever built the vec, so arithmetic on one never falls into integer division.
+
+```
+p = @self.prop.position
+if p.y < 0.0
+    log("below the floor")
+end
+```
+
+They are **read-only**, and there is no `v[0]`. A vec is a value rather than a
+container — every operator on one hands back a new vec, and the vec a property
+gives you is a copy — so `@self.prop.position.y = 1.0` would write to that copy
+and quietly do nothing to the entity. Build a new vec instead, which is the one
+spelling that always means what it looks like:
+
+```
+p = @self.prop.position
+@self.prop.position = <p.x, p.y + 1.0, p.z>
+```
+
+Both mistakes say this rather than failing obscurely.
 
 ---
 
@@ -225,6 +255,13 @@ A clause may carry `when <expr>`, evaluated after the head matches. If it is
 false, matching continues with the next clause. A guard may call only pure
 built-in functions — it may not send messages or mutate anything.
 
+`random()` and `random_range` are built in but are **not** pure, and nothing
+stops a guard calling one. Doing so is a bug that looks like a haunting: the
+dispatcher evaluates a guard while it is deciding which clause to run, so the
+roll a guard makes is not the roll its body sees, and a clause that declined can
+be reached anyway on the next message. Roll in the body and keep the answer in
+`@self.state`.
+
 If every clause declines, what happens depends on how the function was reached.
 A **call** that no clause accepts is an error, the same as calling one whose head
 never fitted. A **message** that no clause accepts is ignored, the same as
@@ -268,8 +305,8 @@ So in the example above, `fib(0)` is matched over `fib(n int)` when `n` is `0`.
 | --- | --- |
 | `@self` | a `ref` to the object this script is attached to |
 | `@some_id` | a `ref` to the object with that ID, or `null` |
-| `@some_param` | whatever the level bound to a declared [parameter](#parameters) |
 | `#some_tag` | a `list` of `ref` for every object carrying that tag |
+| `?some_param` | whatever the level bound to a declared [parameter](#parameters) |
 | `@player` | a `ref` to the player |
 | `@level` | a `ref` to the level itself |
 
@@ -281,8 +318,8 @@ A `ref` is a first-class value: store it in a `list`, use it as a `dict` value,
 compare two with `==`, and pass it in a message.
 
 `ref.id` gives the ID as a `str`. `ref.kind` gives an atom — `:entity:`,
-`:volume:`, `:sector:`, `:edge:`, `:floor:`, `:ceiling:`, `:chunk:`, `:light:`,
-`:biome:` or `:level:`.
+`:model:`, `:volume:`, `:sector:`, `:edge:`, `:floor:`, `:ceiling:`, `:chunk:`,
+`:light:`, `:biome:` or `:level:`.
 
 ### Reaching a sector's parts
 
@@ -295,6 +332,14 @@ compare two with `==`, and pass it in a message.
 @sec.edges            -- every edge, in ring order
 
 @chunk.sector.<sector id>
+```
+
+### Reaching an entity's attachments
+
+```
+@guard.model.<attachment name>   -- one model attachment
+@guard.models                    -- every attachment, in the order the entity holds them
+@guard.model.body.entity         -- back to the entity carrying it
 ```
 
 **Identity belongs to the edge, not to the wall or portal occupying it.** An edge
@@ -314,7 +359,12 @@ ring. Never store an edge index.
 
 A script that names the object it acts on is a script for exactly one object.
 `param` is how a script stays generic: it declares a value the **level** supplies,
-per object, and reads it back as `@name`.
+per object, and reads it back as `?name`.
+
+The sigil is `?` and not `@` because the two ask different questions. `@door`
+asserts that this level contains an object called `door`; `?door` asks the level
+what it wired *this* object's `door` to, and the answer need not be an object at
+all.
 
 ```
 param target ref
@@ -322,15 +372,18 @@ param drop float = 3.0
 param latching bool = true
 
 def on_interact(:interact:, src ref) -> null
-    if @target == null
+    if ?target == null
         return
     end
-    @target.floor.prop.height = @target.floor.prop.height - @drop
+    ?target.floor.prop.height = ?target.floor.prop.height - ?drop
 end
 ```
 
 Twenty buttons share that one file. Each one's Script panel in the 3D editor says
 which door *it* opens, how far that door drops, and whether it latches.
+
+That is an excerpt; `resources/scripts/button.flang` is the whole of it, latching
+included, and is the file to copy.
 
 A declaration is `param <name> <type>` with an optional `= <literal>` default, at
 the top level of a file. The type is one of `ref`, `int`, `float`, `bool` or
@@ -340,14 +393,17 @@ a `dict`. Anything compound belongs in [`@self.state`](#state).
 
 Reading one:
 
-- **`@name` is the parameter**, not an object called `name`. A declaration
-  shadows the world: the script declared the name, and the level it happens to be
-  running in did not.
+- **`?name` is the parameter and `@name` never is.** The two namespaces are
+  separate, so a script may declare `param door ref` in a level that also has an
+  object called `door` without either one shadowing the other.
 - **Unbound falls back** to the declaration's default, and then to `null`. So
-  `if @target == null` is the check to write for a param nobody wired up.
+  `if ?target == null` is the check to write for a param nobody wired up.
 - **A `ref` param stores the ID** of the object it names, and resolves it on every
   read. A param pointing at something that does not exist yet starts working the
   moment it does; one pointing at something deleted reads as `null`.
+- **An undeclared `?name` is an error**, not a `null` — unlike `@name`, there is
+  nothing else it could be, and the set of declarations is closed when the script
+  loads.
 - **A param is read-only.** It is what the level said, and a script writing one
   would be arguing with its own configuration. Use `@self.attr.<name>` for state
   the script owns, or `@self.state[...]` for state that need not be saved.
@@ -454,19 +510,80 @@ editor's reference panel. The core surface:
 | Object | Properties |
 | --- | --- |
 | entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · read-only: `type` `current_sector` `current_chunk` `frame` `seat` |
+| model | `texture` `visible` `alpha` `offset` `rotation` `scale` · read-only: `path` |
 | vehicle | `vehicle_throttle` `vehicle_steer` `vehicle_pitch` `vehicle_roll` · tuning: `vehicle_max_speed` `vehicle_accel` `vehicle_brake` `vehicle_turn_rate` `vehicle_pitch_rate` `vehicle_roll_rate` `vehicle_drag` · read-only: `vehicle_speed` `vehicle_driver` |
-| volume | `position` `rotation` `half` `shape` `enabled` `load_level` |
+| volume | `position` `rotation` `half` `shape` `enabled` `load_level` `fog` `fog_color` `fog_density` `fog_max_opacity` |
 | edge | `kind` `texture` `collision` `visible` `pinned` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · portals also: `to_sector` `draw_gap` `gap_texture` |
-| floor | `enabled` `hidden` `height` `texture` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · read-only: `shaped` |
+| floor | `enabled` `hidden` `height` `texture` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · slab: `thickness` `slab_texture` `slab_rim_texture` `slab_hidden` `slab_rim_across_portals` · read-only: `shaped` `world_height` `slab_shaped` |
 | ceiling | as floor, without `hidden` |
-| chunk | `enabled` · read-only: `origin` `rotation` `scale` `frame` |
+| chunk | `enabled` `origin` `velocity` · read-only: `rotation` `scale` |
 | light | `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` |
-| biome | `kind` `density` `range` `color` `ground_texture` |
+| biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` |
+| level | `step_height` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
+
+A surface's `height` is **chunk-local**: the authored number, and the one the
+level file stores, so `height = height + 1` on a placed chunk round-trips.
+`world_height` is its read-only world-space companion — the same value carried
+through the chunk's placement — which is what to compare against a player's or an
+entity's Y, since those are world-space:
+
+```
+if @crate.prop.position.y - @room.floor.prop.world_height < 0.1
+    -- the crate is resting on the floor, wherever that chunk has been put
+end
+```
+
+The two agree on a chunk that has never been moved or scaled, so a level that
+places nothing can use either.
+
+`thickness` is how far a surface's *far side* sits from it — down from a floor,
+up from a ceiling — and 0, the default, is the bare plane a surface has always
+been. Writing it grows an underside (or a top side) and a rim round the edge,
+both textured by `slab_texture` and `slab_rim_texture`, which fall back to the
+surface's own texture when left empty. `height` still names the side you walk on,
+so raising a floor carries its slab with it and only `thickness` changes how
+deep it is.
+
+A slab is **solid**: its underside stops a body from below, so a thick mezzanine
+over an open hall can no longer be walked or jumped through. `slab_shaped` reads
+whether the far side has been given a shape of its own in the editor rather than
+following the surface.
+
+The rim is skipped across a portal edge by default, since the slab continues
+into the sector next door there and the neighbour's own rim would sit in the
+same place. `slab_rim_across_portals` builds it there anyway, for a slab that
+needs a sealed edge even where the level would otherwise carry it through.
+
+A Water biome sector's surface has the same pair, for the same reason.
+`water_depth` is the authored number the level file stores — how far *below* the
+floor sampled under the polygon the surface sits, so increasing it lowers the
+water and a negative value lifts it above that floor and floods flat ground.
+`water_level` is its world-space companion, which is the one to animate against
+anything else in the world:
+
+```
+def on_tick(:tick:, dt float) when @lake.prop.water_level < 12 -> null
+    @lake.prop.water_level += 0.4 * dt
+end
+```
+
+`water_level` is unavailable — reads fail, writes error — until the plane has
+actually been built, which means the owning chunk is switched on and at least
+one frame has passed since the sector was painted. `water_depth` is always
+readable, so a script that runs before anything has drawn should use that.
+`lakebed` turns off the ground patch drawn under the surface, for water lying on
+a floor that is already textured and detailed.
+
+Writing an entity's `position` places it outright: nothing is swept, nothing is
+resolved, and an entity written into a wall is in the wall until something moves
+it out. That is what makes it the tool for a teleport or a respawn, and the wrong
+one for a step — give a `velocity` and let the collision pass do its work.
 
 An entity's `texture` is its attachments' skin: reading it reports what the first
-attachment draws with, and writing it reskins them all. `set_texture` is the same
-write, plus the form that names one attachment of several.
+attachment draws with, and writing it reskins them all. One attachment of several
+is addressed rather than passed: `@tank.model.turret.prop.texture = "rusted"`.
+See **Model attachments** below.
 
 `shaped` reports whether a surface carries an editor-authored mesh (a bump, a
 recess, a hole) rather than being flat. It replaced the writable `terrain` flag,
@@ -490,6 +607,141 @@ The buffers are freed and rebuilt between frames rather than at the write, for
 the same reason `load_level` is deferred: a script tick runs before the frame's
 GL work. Nothing has to be sequenced around that — the flag is what everything
 reads.
+
+A chunk's `origin` is where it sits, and writing it moves the chunk with
+everything authored in it — its sectors, its floors and ceilings, its biome
+paint, the lot. Nothing is rebuilt and nothing is re-baked: every per-chunk
+coordinate is chunk-local and is carried into world space through the chunk's
+placement, so a move costs one re-bucketing of the spatial hash and no geometry
+work at all. It applies at the write, unlike `enabled`, so a location verb later
+in the same tick already answers from the new footprint:
+
+```
+-- a platform that slides back and forth across the shaft
+def on_tick(:tick:, dt float) -> null
+    p = @lift.prop.origin
+    @lift.prop.origin = <p.x, p.y + 2.0 * dt, p.z>
+end
+```
+
+A body standing on it is not carried along just by colliding with it — that
+still leaves it behind. An entity pinned to the chunk with its own
+`attached_chunk` moves the same distance instead (`Entity.AttachedChunk` in
+DESIGN.md); an interior meant to be properly ridden — walked around inside,
+crossed in and out of — still belongs to a vehicle's frame rather than to a
+moved chunk (see `frame:` in DESIGN.md). And the surface heights a script
+reads back are still the authored, chunk-local numbers; `world_height` is the
+one that reports where the floor has actually ended up. `rotation` and `scale`
+stay read-only: only the placement's translation may be written.
+
+A chunk's `velocity` is the same move without the handler. It is world units per
+second, added to the origin every frame of play by the engine itself, so the
+lift above is one write rather than a `:tick:` clause:
+
+```
+@lift.prop.velocity = <0.0, 2.0, 0.0>    -- up, and it keeps going
+@lift.prop.velocity = <0.0, 0.0, 0.0>    -- stop it wherever it got to
+```
+
+Nothing damps it and nothing stops it — what should slow a platform down is a
+rule the game has, exactly as with an entity's own `velocity`. Writing it moves
+nothing at that instant: it is a rate, and the move it causes happens on the
+next tick, which is also what re-buckets the spatial hash. It is authored state
+like any other, so a chunk can carry a `velocity:` in the level file and be
+moving from the moment the level loads, and leaving play puts every platform
+back where the author left it. A chunk switched off with `enabled` does not
+drift while it is out of the world.
+
+The two ways of moving a chunk compose: `velocity` carries it and a write to
+`origin` teleports it, which is how a lift that has reached the top goes back to
+the bottom. Being carried is still something only a frame does — a body standing
+on either kind of moving chunk is left where it was.
+
+`@level.prop.step_height` is how tall a riser the player walks up rather than
+being stopped by the wall the height difference makes, in world units. It is the
+level's `player: step_height:` block (see DESIGN.md's Level format), and a script
+may write it at any time — the movement code asks the level for it once per
+frame rather than caching it, so the next step the player takes is the first one
+that uses the new value:
+
+```
+-- on a volume covering the crawlspace
+def on_enter(:enter:, other ref) -> null
+    @level.prop.step_height = 0.2    -- in here even a kerb stops you
+end
+
+def on_exit(:exit:, other ref) -> null
+    @level.prop.step_height = 0      -- 0 hands it back to the default
+end
+```
+
+Writing `0` — or anything negative — restores the default rather than freezing
+the player in place: the default is the player's own height, and a body that
+could not step at all would be stopped by the seam between two floors that
+differ by a rounding error. Reading always reports the height actually in force,
+so a level that never set one reads its default rather than `0`.
+
+A script's writes are not saved. They act on the level in memory, and the editor
+restores its snapshot when a play session ends, so `step_height` in the level
+file stays what the Player block set.
+
+### Sky
+
+The level's sky (see "Sky and fog" in DESIGN.md) is the same idea: a
+level-scoped block a script can reach with `sky_*` properties, and a level
+with no sky yet gets one at the defaults the moment any of them is written —
+the same shortcut a plain volume gets the moment a script writes `fog_*` on
+it.
+
+```
+@level.prop.sky_kind = :cubemap:
+@level.prop.sky_cubemap = "dusk"       -- fills all six faces from one name
+@level.prop.sky_tint = <0.9, 0.75, 0.7>
+@level.prop.sky_intensity = 1.2
+@level.prop.sky_rotation = 45
+```
+
+`sky_cubemap` is the editor's own "fill from base name" button as a property:
+writing `"dusk"` sets all six faces to `dusk_px`, `dusk_nx`, and so on, and
+switches `sky_kind` to `:cubemap:` in the same write. Reading it back
+reconstructs the base name from the six faces it finds, or `""` when they were
+set by hand and do not agree on one.
+
+`@level.prop.sky = false` removes the level's sky entirely — the same gesture
+as unchecking "This level has a sky" in the Environment panel — and `= true`
+restores it at the defaults if it had none. There is no separate on/off field
+the way fog has `Enabled`: a sky either exists or it does not.
+
+**Easing between two skies.** A straight property write snaps: the very next
+frame draws the new state whole. `ease_sky(seconds)` is what turns the *next*
+batch of `sky_*` writes into a blend instead — kind, art, colours, tint,
+rotation, all of it — cross-fading from whatever the sky looked like the
+instant `ease_sky` ran to whatever it is written to look like afterward:
+
+```
+def on_enter(:enter:, other ref) -> null
+    ease_sky(3)                             -- the next writes blend over 3s
+    @level.prop.sky_cubemap = "dusk"
+    @level.prop.sky_tint = <0.85, 0.7, 0.65>
+end
+```
+
+This is one call rather than a property on each of the `sky_*` fields, because
+a cubemap cannot be cross-faded by lerping its numbers the way a colour can —
+sky_frag.glsl evaluates the sky twice, once for the state being eased away
+from and once for the state being eased toward, and mixes the two finished
+colours. `ease_sky` is what arms that second evaluation; the ordinary
+properties are what still say what the destination looks like.
+
+A duration of `0` or less cancels a blend already in progress instead of
+arming one — whatever it was easing toward is what the sky snaps to — and
+`ease_sky` returns `false` in that case so a script can tell "eased" from
+"snapped". Calling it again before an earlier ease has finished does not
+splice the two together: the new one starts from wherever the first one was
+*heading*, not from the partway point the screen was actually showing, which
+costs one visible snap if a level eases the sky faster than its own transition
+finishes. Nothing calls `ease_sky` on every tick, so this is not a case worth
+budgeting for.
 
 Writing an unknown property is an error naming the closest valid one. Some writes
 (heights, textures) rebuild geometry; the engine defers that to the end of the
@@ -519,7 +771,8 @@ are what turn a resolved overlap into game behaviour.
 ```
 
 The right-hand side is a tuple whose **first element must be an atom** naming the
-message. It is posted to the target's box and delivered later in the same frame.
+message. It is posted to the target's box and delivered later in the same frame,
+or after a delay when the right-hand side is an `after` — see [Timers](#timers).
 `<-` is a statement; it evaluates to `null` and cannot be used as a value.
 
 `#tag <- ...` snapshots the tag's members at send time and posts one message to
@@ -602,12 +855,20 @@ ignored — as is one whose clauses are all guarded and every guard declines. Se
 ### Timers
 
 ```
-after(500, :open_done:)
-after(1000, :damage:, @self, 5)
+@self <- after(500, :open_done:)
+@door <- after(1000, :damage:, @self, 5)
+#lamps <- after(250, :flicker:)
 ```
 
-Posts the message to `@self` after the given number of milliseconds of play time.
-Timers do not survive a level reload.
+A timer is a send with a delay on it: everything about `<-` still holds — the
+target may be an object, a tag, a list or `null`, a tag is snapshotted when the
+timer is set rather than when it fires, and delivery is asynchronous — except
+that the message waits that many milliseconds of play time first. Pausing the
+game pauses the wait, and timers do not survive a level reload. A message whose
+target has been destroyed by the time it comes due is dropped.
+
+`after` exists only inside a send. Written on its own it has nobody to deliver
+to, and the compiler says so rather than scheduling something that goes nowhere.
 
 ### Vehicles
 
@@ -623,6 +884,15 @@ vehicle, so a door script hears about a boarding it did not arrange.
 
 An entity's `frame` property is a `ref` to the vehicle it is riding in, or
 `null`, and `seat` is which seat it occupies — empty while standing on the deck.
+
+A rider stores its position, and so its velocity, in the vehicle's coordinates
+— that is what carries it perfectly instead of dragging it along. Scripts never
+see those coordinates: the `position` and `velocity` properties read and write
+world space, and convert at the boundary. So
+`@crate.prop.velocity = <3.0, 0.0, 0.0>` sends the crate east whichever way the
+ship is pointing, and the conversion is the identity for anything that is not
+aboard something.
+
 Reading a `vehicle_*` property of something that is not a vehicle gives zero
 rather than an error, since asking a crate how fast it is going is a fair
 question with a dull answer. *Writing* one is reported, because a script
@@ -640,6 +910,27 @@ needs those numbers to move.
 **Math** — `abs` `floor` `ceil` `round` `sqrt` `min` `max` `clamp` `sin` `cos`
 `tan` `atan2` `pi()` `random()` `random_range(lo, hi)`
 
+`random()` is a `float` in `[0, 1)`. `random_range` keeps the type it was given,
+the way `min`, `max` and `clamp` do — two `int` bounds give an `int`, a `float`
+anywhere gives a `float` — and **both ends are included**, so `random_range(1, 6)`
+is the six faces of a die and not five of them. An inverted or empty range hands
+back the low bound rather than erroring, since that is an author who typed one
+number into both places.
+
+```
+if random() < 0.25            -- a quarter of the time
+    play_sound("creak", @self)
+end
+spark = random_range(1, 6)    -- an int, 1 to 6
+drift = random_range(-0.5, 0.5)
+```
+
+The sequence differs from run to run: a game whose loot is the same every
+playthrough is not random in the sense anyone means. It is a generator written
+out in `internal/flang/random.go` rather than `math/rand`, so a pinned seed
+reproduces exactly across builds — `(*Interp).SeedRandom` is what pins one, for
+a replay, a test, or a bug report that has to happen twice.
+
 **Strings** — `len` `upper` `lower` `split` `join` `trim` `replace` `contains`
 `starts_with` `ends_with` `format`
 
@@ -648,10 +939,12 @@ needs those numbers to move.
 
 **Vectors** — `dot` `cross` `length` `normalize` `distance`
 
+Components are members rather than functions: `v.x`, `v.y`, `v.z`.
+
 **World** — `log(...)` `time()` `player()` `find(tag)` `distance(a, b)`
-`move_to(ref, vec)` `set_velocity(ref, vec)` `play_anim(ref, model, name)`
-`stop_anim(ref)` `set_texture(ref, name)` `spawn(type, vec)` `destroy(ref)`
-`after(ms, atom, ...)` `emit(emitter)` `stop_emit(emitter)`
+`play_anim(ref, model, name)` `stop_anim(ref)` `spawn(type, vec)` `destroy(ref)`
+`hitscan(atom)` `hitscan(atom, options)`
+`emit(emitter)` `stop_emit(emitter)`
 `burst(emitter, count)` `spawn_effect(name, vec)` `attach(obj, carrier)`
 `detach(obj)`
 
@@ -681,25 +974,135 @@ play_anim(@guard, "walk")                 -- every attachment that has "walk"
 play_anim(@tank, "turret", "traverse")    -- one attachment of several
 ```
 
-`set_texture` reskins whatever it is given — an edge, a floor, a ceiling, or every
-model attachment of an entity — with a texture name resolved against `textures/`.
-Like `play_anim` it has a three-argument form, `set_texture(ref, model, name)`,
-which reskins one attachment of an entity that has several. It returns whether it
-found anything to reskin, so naming an attachment the entity does not have is
-`false` rather than an error; naming an object with no texture at all *is* an
-error.
+A reskin is a property write, not a verb — `texture` is a field of the thing
+wearing it, and there is no reason to spell reading it and writing it two
+different ways. Everything that has a texture has the property: an edge, a floor,
+a ceiling, an entity, and one attachment of an entity.
 
 ```
-set_texture(@door_wall, "steel")        -- a wall
-set_texture(@room.floor, "wet_stone")   -- a floor
-set_texture(@guard, "armour_red")       -- every attachment
-set_texture(@tank, "turret", "rusted")  -- one attachment
+@door_wall.prop.texture = "steel"              -- a wall
+@room.floor.prop.texture = "wet_stone"         -- a floor
+@guard.prop.texture = "armour_red"             -- every attachment
+@tank.model.turret.prop.texture = "rusted"     -- one attachment
 ```
+
+The name is resolved against `textures/`. Writing the texture of something that
+has none — a light, a volume — is the ordinary "no property called `texture`"
+error, and writing one on an entity with no attachments loaded is a warning
+rather than an error: the write was legal, it just reskinned nothing.
 
 The texture is uploaded, and any geometry it invalidates rebuilt, at the end of
 the frame; repeats within one tick are coalesced. A name with no matching `.png`
 in `textures/` is a warning in the log window naming the texture, and the object
 keeps drawing what it had.
+
+### Model attachments
+
+An entity is a list of model attachments, not one mesh, so `@guard.model.body` is
+how a script names one of them. It is a ref like any other: it has properties, it
+can be held in a variable, and `@guard.model.body.entity` steps back out to the
+entity carrying it.
+
+```
+@tank.model.turret.prop.texture = "rusted"
+@guard.model.helmet.prop.visible = false
+@ghost.model.body.prop.alpha = 0.3
+
+for m in @wreck.models          -- every attachment of the entity
+    m.prop.visible = false
+end
+```
+
+`offset`, `rotation` and `scale` are the attachment's transform relative to its
+entity, so a script can nod a head or slide a hatch without touching the entity
+itself. Naming an attachment the entity does not have is an error, the way any
+address that resolves to nothing is, and the message names both the entity and
+the attachment it looked for.
+
+### Hitscan
+
+`hitscan` casts a ray from the **reticle** — the centre of the screen, which is
+exactly where the camera looks — out along the player's view, and posts what it
+met back to the caster as a message named by the atom you hand it.
+
+```
+def on_interact(:interact:, src ref) -> null
+    hitscan(:shot:)
+end
+
+def on_shot(:shot:, hit, at vec) -> null
+    spawn_effect("impact_sparks", at)
+    if hit != null
+        hit <- (:damage:, @self, 10)
+    end
+end
+```
+
+It answers with a message rather than a return value for the reason every other
+engine answer is one: a shot is a thing that happened, and the handler for "I
+hit something" is the same shape whether the cause was a script or the world.
+The message carries two arguments whatever the options say:
+
+| Argument | What it is |
+| --- | --- |
+| `hit` | A `ref` to the nearest object hit, or `null` if the ray met nothing. With `"all": true` it is instead a `list` of refs, nearest first, which is empty rather than `null` when nothing was hit. |
+| `at` | A `vec`: where the ray *stopped* — the surface it ran into, or the far end of its range when nothing stopped it. Useful even when `hit` is `null`, which is what a shot into the sky is; `at.y` is how a handler tells a headshot from a hit in the leg. |
+
+The two shapes `hit` takes never stand in for one another, so a handler's clause
+head says which mode it was written for: `def on_shot(:shot:, hit, at vec)` for
+the nearest, `def on_shot(:shot:, hits list, at vec)` for the line of fire.
+
+Bodies do **not** stop the ray — only the level's own shape does. That is what
+makes the two modes answer two different questions: the first hit is what a
+weapon wants, and the whole list is what a rail gun through a corridor of guards
+wants. A cast that stopped at the first entity could answer the first and not the
+second.
+
+What comes back is addressed the way everything else is. An entity or a volume
+is its own ref; a wall is the edge ref `@sector.edge.<id>` produces, and a floor
+or ceiling is its sector's — so `hit.prop.texture = "scorched"` works on whatever
+the shot landed on.
+
+#### Options
+
+The optional second argument is a `dict`. Every key is optional; an unknown one
+is a typo rather than something to ignore, and is reported with a suggestion —
+before the script runs, when the dict is written out literally.
+
+| Option | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `all` | `bool` | `false` | Report every object in the line of fire instead of the nearest one. Changes `hit` from a ref to a list. |
+| `range` | number | `1000.0` | How far the ray travels, in world units. |
+| `entities` | `bool` | `true` | Entities can be hit. |
+| `volumes` | `bool` | `false` | Trigger volumes can be hit. Off by default because a level's rooms are routinely wrapped in one, and including them would make nearly every shot report the room before what was standing in it. |
+| `geometry` | `bool` | `true` | Walls, floors and ceilings stop the ray and can be hit. Clearing it is what makes a cast see through walls. |
+| `visible_only` | `bool` | `false` | Report only what is drawn: entities and walls whose `visible` property is set. |
+| `tag` | `str` | — | Report only objects carrying this tag. |
+| `ignore` | `ref` or `list` | — | Refs the ray passes straight through, blocking included. A `null` in the list is skipped, so `{"ignore": @maybe_gone}` needs no guard. |
+
+```
+hitscan(:shot:, {"all": true, "range": 40.0})          -- everything within 40 units
+hitscan(:shot:, {"tag": "enemy", "visible_only": true}) -- tagged, and drawn
+hitscan(:shot:, {"geometry": false})                    -- straight through the walls
+hitscan(:shot:, {"ignore": @shield})                    -- as if the shield were not there
+```
+
+The division between the two kinds of option is what makes them compose.
+`range`, `ignore` and `geometry` are **physical**: they change where the ray
+goes and what ends it. `tag` and `visible_only` are **reporting** filters,
+applied after the ray has already been stopped — so a wall carrying no tag still
+ends a tag-filtered cast rather than letting it shoot through the room.
+
+Two things are worth knowing about what is tested. A body — an entity, a volume,
+a solid scenery prop — is met at its **bounding volume**, the same one `:enter:`
+and the collision resolver work in, so a shot and a shove agree about where a
+thing is and an animated model's hitbox does not wander. Geometry is met at its
+real triangles, so a sloped floor and a shaped wall are hit where they are drawn.
+Solid scenery stops a shot and reports nothing, because nothing in the language
+addresses a scenery placement by name; the `at` vec still says where it landed.
+
+There is no player in the editor or before a level has finished loading, so a
+cast then does nothing and says so in the log.
 
 ### Particles
 
@@ -920,6 +1323,49 @@ context belong to the main thread, and the frame loop is the only place that may
 end them. It takes no arguments, and the call returns — the process leaves at the
 top of the next frame, not inside the handler.
 
+### Video
+
+A `video` widget plays a clip from `video/` — an AVI of motion-JPEG frames, or
+an animated GIF. Its transport is properties rather than verbs, on the rule the
+rest of the UI follows: showing a screen is something that *happens*, but
+whether a film is playing is a fact about the widget.
+
+```
+@intro.film.prop.playing = true    -- start it; on a finished clip, start again
+@intro.film.prop.time = 12.5       -- seek, in seconds
+@intro.film.prop.loop = true
+@intro.film.prop.muted = true
+@intro.film.prop.volume = 0.6      -- on top of the music slider
+@intro.film.prop.video = "outro"   -- a different clip, from its start
+```
+
+`prop.time` and `prop.duration` are readable too, which is what a progress bar
+binds to. A clip that has not been opened yet reports a duration of zero, and so
+does one whose file will not read — a screen author cannot tell those apart
+either, so they read the same.
+
+A clip that reaches its end posts `:finished:` to the widget, or to its screen
+when the widget carries no script — the same one level of bubbling every UI
+event takes. A looping clip never posts it, because it has no end to reach.
+
+```
+def on_finished(:finished:, src) -> null
+    hide_screen(@intro)
+    load_level("chapter1")
+end
+```
+
+Autoplay is a property of the document rather than something a script has to
+remember: a widget with `autoplay: true` starts on the first tick after its
+screen goes up, which is what a cutscene screen wants and is one line the
+handler does not have to contain. Pausing an autoplaying clip sticks — it does
+not restart itself on the next tick.
+
+A hidden video keeps playing. A HUD element faded out for a second and a
+background loop behind a menu both expect to come back where they would have
+been; stopping the world while nobody is looking is the behaviour nobody can
+predict. `@bg.film.prop.playing = false` is how to stop one, and it says so.
+
 ### Level exits
 
 The commonest level change needs no script at all. A **volume** carrying a
@@ -959,6 +1405,47 @@ def on_enter(:enter:, other ref) -> null
     end
 end
 ```
+
+### Fog volumes
+
+A volume may also be **full of fog**. Give one a `fog:` block and the region
+fills with it: fog the player can see, walk into and lose sight of things in,
+bounded by the volume's shape rather than by a distance from the camera the way
+the level's `fog:` is.
+
+```yaml
+volumes:
+  - id: cellar_damp
+    position: {x: 12, y: 1, z: -4}
+    half: {x: 6, y: 2, z: 6}
+    fog:
+      color: {r: 0.55, g: 0.58, b: 0.6}
+      density: 0.2          # per world unit travelled INSIDE the region
+      max_opacity: 1
+```
+
+`density` is per world unit of the view ray that was *inside* the shape, which is
+what makes the same number mean the same thing on a doorway and on a ravine —
+and what makes a bank read as a body of fog: looking along its length is thick,
+looking across it is thin, and walking in fills the screen.
+
+A script switches one the way it switches anything else. The fog is put out by
+disabling the *volume* too, since a disabled volume contains nothing:
+
+```
+@cellar_damp.prop.fog = false          -- switch the fog off, keep the numbers
+@cellar_damp.prop.fog_density = 0.5    -- thicken it
+@cellar_damp.prop.enabled = false      -- fog out AND the trigger disarmed
+```
+
+Writing any `fog_*` property on a volume that has no fog block gives it one at
+the defaults, so a script can fill a plain trigger without the level having to
+pre-author an invisible fog on it. Switching `fog` *off* on one is the exception
+and leaves it alone — there was nothing to switch.
+
+A fog volume is still a volume, so it still fires `enter` and `exit`. "The player
+is in the fog" is usually exactly the event a level wants when there is fog to be
+in.
 
 ### Where output goes
 
@@ -1022,12 +1509,13 @@ call, and a sentence naming the fix.
 | Warning | What it means |
 | --- | --- |
 | `play_anim did nothing` | No such attachment, a rig that cannot animate, an animation the entity never declared, or a declared animation pointing at a missing clip — it says which |
-| `set_texture did nothing` | The entity has no attachment by that name, or no attachments at all |
+| `writing @x.prop.texture did nothing` | The entity has no model attachments, so there was nothing to reskin |
 | `destroy did nothing` | The ref names geometry, or something already gone |
 | `attach did nothing` | No bone by that name, a model with no armature, or an entity with several attachments and no say which |
 | `find(...) matched nothing` | No object carries that tag |
 | `player() is null` | There is no player — the editor, or before the level finished loading |
-| `nothing handled :atom:` | A `<-` or an `after` reached an object whose script has no clause for it |
+| `hitscan did nothing` | There is no player to cast from, so no answering message was posted |
+| `nothing handled :atom:` | A `<-`, prompt or delayed, reached an object whose script has no clause for it |
 
 Warnings are logged once per distinct message per load, so a broken call in a
 `:tick:` handler costs one line rather than sixty a second. Reloading the script
@@ -1043,13 +1531,15 @@ what is in the level. The script editor checks the buffer against the open level
 and lists what it finds under the error pane, in amber:
 
 - `@name` and `#tag` that match nothing, with the nearest name that does
-- `play_anim` and `set_texture` naming an attachment, animation or texture that
-  is not there — the same sentences the runtime would log
+- `play_anim` naming an attachment or animation that is not there, and a
+  `texture` write naming a texture that is not there or an entity with nothing
+  to reskin — the same sentences the runtime would log
 - `spawn` naming a type with no definition file
 - `attach` binding something that cannot ride, riding something that is not an
   entity, or naming a bone the model does not have
 - an unknown property, or a call to a function nothing defines
-- `after` and `@self <- (...)` with an atom this script has no clause for
+- `@self <- (...)`, delayed or not, with an atom this script has no clause for
+- `after` written as a plain call, with no target to deliver to
 - a handler for an atom that is *nearly* an engine event — `:intract:` for
   `:interact:`
 
@@ -1102,6 +1592,52 @@ before ImGui can read it as "revert this field", which in a script buffer would
 throw away every edit since the last save. The window closes from its own close
 button and nothing else; every tab keeps its unsaved text, and reopening the
 editor comes back to exactly where you were.
+
+**Completion.** A list of what can go where the caret is opens as you type, and
+what it offers depends on what you have written:
+
+| After | It offers |
+| --- | --- |
+| a name | this function's variables and parameters, this file's `def`s, what it imports, the standard library, then the keywords |
+| `@` | `self`, `player`, `level`, and every object id in the open level, each with its kind |
+| `#` | every tag anything in the level carries |
+| `?` | this file's `param` names, then those its imports declare |
+| `:` | every event the engine posts, then every atom this file already mentions |
+| `.` | `prop`, `attr`, `state`, `id`, `kind`, and the structural steps the object in hand actually has |
+| `.prop.` | that kind's properties, with what each means and whether a script may write it |
+| `.attr.` | the attributes that object is carrying |
+| `.prop.<a vec>.` | `x`, `y`, `z` |
+| `param name ` / `-> ` / a `def` head | the type names that belong there |
+
+**Typing is the only thing that opens the list.** A caret that arrives by arrow
+key, by click or by a scroll never does — moving between lines would otherwise
+cost an `Esc` on every line that happened to end in a word — and moving off a
+word closes it again. While you are typing, a name opens the list after one
+character, and `@`, `#`, `?`, `:` and `.` open it with nothing typed at all,
+since only one kind of thing can follow any of them. `Ctrl+Space` opens it anywhere,
+keystroke or not. `Up` and `Down` move, `Tab` accepts, `Enter` accepts too — except when
+the selected row is already exactly what is typed, where it stays a newline —
+clicking a row accepts that one, and `Esc` dismisses the list for the word you
+are on. Accepting a function brings its parentheses, and accepting an atom brings
+its closing colon, in both cases only if they are not already there. `Ctrl+Z`
+takes a completion back the way it takes back typing.
+
+The lists are the engine's own. The builtins and keywords come from the
+language's tables, the properties from the engine's property table, and the ids,
+tags and attributes from the level that is open — so a completion list cannot
+describe a version of flang, or a level, that is not the one in front of you.
+It also means `@` offers nothing useful with no level loaded, which is the honest
+answer rather than a stale one — while `?` still does, since a file's parameters
+are declared in the file.
+
+The kind of an object is what narrows `.prop.` to one list, and that is only
+knowable when the chain starts from a name the level has: `@door.prop.` offers an
+entity's properties, `@sec.floor.prop.` a floor's, and `src.prop.` — where `src`
+is a handler's parameter, and no amount of reading the file will say what the
+level will pass — offers the union of every kind's, each row labelled with the
+kind it belongs to. Picking one that does not apply is not silently wrong: the
+[issues](#issues-before-anything-runs) pass names the kind and the property on
+the next parse.
 
 **F1** opens the reference: the keybindings, every event the engine posts, every
 standard-library function with its signature and what it returns, and every
@@ -1222,8 +1758,9 @@ stmt        = assign | send | if | for | while
             | "break" | "continue" | "return" [ expr ] | expr ;
 assign      = lvalue ( "=" | "+=" | "-=" | "*=" | "/=" ) expr ;
 lvalue      = ident | postfix ;
-send        = target "<-" tuple ;
-target      = "@" ident | "#" ident | postfix ;
+send        = target "<-" ( tuple | after ) ;
+after       = "after" "(" expr "," expr { "," expr } ")" ;
+target      = "@" ident | "#" ident | "?" ident | postfix ;
 
 if          = "if" expr block { "elif" expr block } [ "else" block ] "end" ;
 for         = "for" ident "in" expr block "end" ;
@@ -1239,7 +1776,7 @@ multiplicative = unary { ( "*" | "/" | "%" ) unary } ;
 unary       = [ "-" | "not" ] postfix ;
 postfix     = primary { "." ident | "[" expr "]" | "(" [ args ] ")" } ;
 primary     = literal | atom | vec | list | dict | tuple
-            | ident | "@" ident | "#" ident | "(" expr ")" ;
+            | ident | "@" ident | "#" ident | "?" ident | "(" expr ")" ;
 
 literal     = int | float | string | "true" | "false" | "null" ;
 atom        = ":" lowername ":" ;

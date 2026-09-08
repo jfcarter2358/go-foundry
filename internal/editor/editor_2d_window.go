@@ -188,8 +188,18 @@ func editorSyncMainWindowMode() {
 //
 // The imgui context is left alone — it is independent of the GL one, so
 // WantCaptureMouse/Keyboard inside fn still refer to this window's UI.
-func withMainGLContext(fn func()) {
-	w := Editor2DWindow
+func withMainGLContext(fn func()) { withMainGLFrom(Editor2DWindow, fn) }
+
+// withMainGLFrom is withMainGLContext for any secondary window: run fn against
+// the main window's GL context, then hand w's back.
+//
+// Split out because the hazard is not the 2D map's. Any window that mutates
+// *level* state from inside its own Draw hits it — the entity editor re-stamps
+// every placed instance of a type when the type is saved, and a mesh uploaded
+// under that window's context would give the level entities VAO names the main
+// window cannot draw. A nil window means the caller is already on the main
+// context and fn simply runs.
+func withMainGLFrom(w *uiwin.UIWindow, fn func()) {
 	if w == nil {
 		fn()
 		return

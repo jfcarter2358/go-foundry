@@ -20,6 +20,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/ui"
 	"foundry/internal/uifont"
+	"foundry/internal/video"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -104,6 +105,7 @@ func Init() error {
 	gl.GenVertexArrays(1, &vao)
 
 	createWhitePixel()
+	InstallVideoDriver()
 	initialised = true
 	return nil
 }
@@ -274,6 +276,14 @@ func Delete() {
 	gl.DeleteBuffers(1, &ebo)
 	gl.DeleteTextures(1, &whiteTex)
 	gl.DeleteProgram(program)
+	// Every video player holds a file handle and possibly a voice, and the
+	// textures they were feeding are about to be orphaned by the context going
+	// away. Closing them here keeps shutdown symmetric with Init.
+	video.CloseAll()
+	for name := range uploaded {
+		gfx.ReleaseTexture(name)
+		delete(uploaded, name)
+	}
 	vao, vbo, ebo, whiteTex, program = 0, 0, 0, 0, 0
 	initialised = false
 }

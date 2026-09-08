@@ -331,6 +331,9 @@ on.
   - Entity 1  (<type>)
 - Volumes (<n>) <!-- right-click: Enabled / Duplicate / Delete. A disarmed one reads "(disabled)" -->
   - Volume 1
+- Scenery (<n>) <!-- placed static models. Right-click: Solid / Use As Brush / Duplicate / Delete. A row reads "(no mesh)" when the model would not load, "(not solid)" when collision is off -->
+  - rock_01
+  <!-- capped at 200 rows plus the selected one, then "(N more - click one in the 3D view to select it)": a brush makes hundreds, and a tree that draws all of them costs more per frame than the rest of the panel put together -->
 - Lights (<n>) <!-- flat: the labels already say which kind each is. Right-click: Enabled / Duplicate / Delete -->
   - Global Light <!-- always exists, can be switched off but not removed -->
   - Light 1  (directional)
@@ -344,6 +347,7 @@ Import Chunk... <!-- from a file in chunks/ -->
 Entity > ID <textbox>, then a row per definition under entities/ plus "(blank entity)"; picking one arms the next viewport click
 Volume > ID <textbox>, then Place By Clicking
 Sprite > ID <textbox>, Texture <dropdown>, then Place By Clicking <!-- lands standing on the surface clicked -->
+Scenery > Model <dropdown of .fmdl/.obj under models/>, then Start/Stop Brushing <!-- no "Place By Clicking" row: picking a model IS arming the brush, and the brush is not a one-shot -->
 Emitter > ID <textbox>, Effect <dropdown of .fpar under particles/>, then Place By Clicking
 Sound > ID <textbox>, Clip <dropdown of .wav/.ogg/.mp3 under sounds/>, then Place By Clicking
 Directional Light <!-- greyed past the shader's limit -->
@@ -384,6 +388,20 @@ Facing: <yaw>°, <pitch>° <readout> <!-- what gameplay actually reads, after th
 [Face Camera] [Move To Camera] <!-- aim / place it where the fly camera is looking -->
 [Delete Spawn Point]
 
+### Player <!-- level-scoped: the player is engine-owned, so nothing in the viewport opens this -->
+#### Movement
+[checkbox] This level sets a step height
+Step height [-] [Number Slider] [+] [=] <!-- only when the checkbox is ticked -->
+<!--
+How tall a riser the player walks up rather than being stopped by it. Unticked
+writes no `player:` block at all and follows the engine's default, the player's
+own height - which is the same gesture the Sky and Fog groups open with, and for
+the same reason: a level that never cared must not freeze today's number into
+its file. Unticking is a return to the default, not a way to say "no stepping":
+zero clearance would be refused by the seam between two floors that differ by a
+rounding error.
+-->
+
 ### Chunk <!-- only when a chunk is selected -->
 ID: <ID1, ID2, ...>
 Sectors: <sector count> <readout>
@@ -392,6 +410,9 @@ Rotation Yaw [-] [Number Slider] [+] [=] <!-- Y-axis only; a chunk does not pitc
 Scale X [-] [Number Slider] [+] [=] <!-- see the open item at the top: one uniform scale today -->
 Scale Y [-] [Number Slider] [+] [=]
 Scale Z [-] [Number Slider] [+] [=]
+#### Motion <!-- carried forward every frame during play, not in the editor; nothing standing on the chunk rides it -->
+Velocity X/Y/Z (u/s) [-] [Number Slider] [+] [=]
+[Stop]
 #### Carried By
 Carried by <dropdown of vehicle entities, plus "(nothing — world chunk)"> <!-- the chunk is this vehicle's interior; sets both sides of the binding -->
 #### Scripting <!-- the shared Tags / Attributes / Script group; see Scripting, below -->
@@ -574,6 +595,28 @@ Columns / Rows / Cell [-] [Number Slider] [+] [=]
 Frame / Entity / Model / Bone <dropdown each> <!-- cascading: each row is disabled until the one above is answered -->
 #### Tags / Attributes / Script
 [Duplicate] [Delete]
+
+### Scenery <!-- only when a placed prop is selected -->
+ID <textbox> <!-- committed on Enter; an ID used by anything else in the level is refused -->
+#### Identity
+Model <dropdown of .fmdl/.obj under models/>
+[Reload] [Use As Brush] <!-- Use As Brush arms the brush with this prop's model, facing and size -->
+#### Transform
+Position X/Y/Z, Rotation X/Y/Z (deg), Scale X/Y/Z [-] [Number Slider] [+] [=] <!-- a real per-axis scale on the model, unlike a volume's or a sprite's extents -->
+#### Collision
+[checkbox] Solid <!-- stops the player and any entity that collides with the world -->
+<!-- a line giving the box read off the model, or saying the mesh is flat/unloaded and collides with nothing. Nothing here is editable: a prop's bounds are its model's -->
+[Duplicate] [Delete]
+<!-- No tags, attributes or script: a prop that needs behaviour is an entity, not scenery -->
+
+### Scenery Brush <!-- whenever the brush has a model; NOT selection-driven, because it describes the next click rather than anything selected -->
+Model <dropdown of .fmdl/.obj under models/>
+[Start] / [Stop] <!-- armed, the brush survives the click that uses it: every click places another copy until Escape -->
+Yaw (deg) [-] [Number Slider] [+] [=] <!-- or [ and ] in the 3D view, 15-degree steps, 5 with Shift -->
+Scale [-] [Number Slider] [+] [=] <!-- uniform; or - and = in the 3D view -->
+[checkbox] Random yaw per copy <!-- each stamp gets its own facing; the ghost keeps the yaw above -->
+[checkbox] Solid <!-- the collision flag each copy takes -->
+<!-- a line giving how many props are in the level and how many the current view drew -->
 
 ### Emitter <!-- only when an emitter is selected -->
 ID <textbox>

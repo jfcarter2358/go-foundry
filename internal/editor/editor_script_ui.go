@@ -132,6 +132,12 @@ func drawScriptEditorWindow() {
 	drawScriptEditorCloseConfirm()
 
 	imgui.End()
+
+	// Last, and outside every window: the completion list is painted into the
+	// foreground draw list rather than built out of widgets, so that it can
+	// overhang the buffer's child window without ImGui taking the keyboard
+	// focus off the text area. See editor_script_complete_ui.go.
+	drawScriptComplPopup()
 }
 
 // drawScriptEditorMenuBar draws the file actions and the run/reload buttons.
@@ -225,6 +231,11 @@ func drawScriptEditorRunButton() {
 	}
 }
 
+// scriptDiagSel is which problems are selected for copying. See
+// editor_row_select.go — the log window uses the same model, so a run of errors
+// is picked out the same way in both places.
+var scriptDiagSel rowSelection
+
 // scriptIssueColor is the amber the level-aware checks are drawn in: distinct
 // from the red a parse error gets, because one means "cannot run" and the other
 // means "will run and do nothing".
@@ -267,7 +278,11 @@ func drawScriptEditorBuffer() {
 
 	// Captured now: the buffer's context menu tests the rectangle the text pane
 	// occupied, and the gutter below would otherwise be the last item drawn.
+	// Kept in package state as well, because the completion popup is painted
+	// after every window has been drawn and has to know whether the caret it
+	// hangs under is still on screen.
 	bufMin, bufMax := imgui.ItemRectMin(), imgui.ItemRectMax()
+	scriptBufRectMin, scriptBufRectMax = bufMin, bufMax
 	below := imgui.CursorPos()
 
 	imgui.SetCursorPos(top)
@@ -310,6 +325,11 @@ func scriptGutterWidth(n int) float32 {
 var (
 	scriptBufTextOrigin imgui.Vec2
 	scriptBufTextValid  bool
+
+	// scriptBufRectMin and scriptBufRectMax are where the text pane was last
+	// drawn, in screen coordinates — the buffer's context menu and the
+	// completion popup both test against it.
+	scriptBufRectMin, scriptBufRectMax imgui.Vec2
 )
 
 // drawScriptEditorGutter draws the line numbers beside the buffer.
@@ -412,6 +432,10 @@ func drawScriptEditorText(d *scriptDoc) {
 	// coloured ones go over the top. This takes the caret with it — ImGui draws
 	// that in the text colour too — so drawScriptEditorOverlay draws that as
 	// well.
+	// Asked before the widget runs, because the widget is what destroys the
+	// evidence — see scriptBufShiftClicked.
+	scriptBufExtend = scriptBufShiftClicked()
+
 	imgui.PushStyleColor(imgui.StyleColorText, imgui.Vec4{})
 	text := d.Text
 	changed := imgui.InputTextMultilineV(scriptBufID, &text, size,
@@ -422,7 +446,12 @@ func drawScriptEditorText(d *scriptDoc) {
 	active := imgui.IsItemActive()
 	scriptBufActive = active
 
-	if changed {
+	// The text is compared as well as the widget's own answer consulted. An
+	// edit made from inside the callback — a paste, a completion — reaches the
+	// buffer without necessarily being reported as a change, and a document
+	// left holding the old string would push it straight back into the widget
+	// on the next frame, undoing the splice.
+	if changed || text != d.Text {
 		// Before the overlay, not after: the widget has already drawn the new
 		// text this frame, and painting the previous frame's colouring over it
 		// would be a frame of visible nonsense on every keystroke.
@@ -433,6 +462,15 @@ func drawScriptEditorText(d *scriptDoc) {
 	drawScriptEditorOverlay(lines, size, lineH, textCol, active)
 	if active {
 		scriptBufFollowCaret(lines, origin.Plus(framePad).Plus(winPad), lineH, view)
+		// After the overlay, which is where the caret's screen position is
+		// worked out, and after the follow: a list anchored to a caret the
+		// scroll had not yet caught up with would appear a line adrift.
+		scriptComplUpdate(d)
+	} else {
+		// The list belongs to a buffer that is being typed in. Clicking away —
+		// to a tab, to the tree, to a dialog — is the ordinary way to abandon a
+		// half-typed name, and the popup has to go with it.
+		scriptComplClose()
 	}
 }
 
@@ -485,6 +523,7 @@ func drawScriptEditorOverlay(lines [][]scriptHLChunk, size imgui.Vec2, lineH flo
 
 	if active {
 		drawScriptEditorCaret(list, lines, origin, lineH, textCol)
+		scriptComplSetAnchor(lines, origin, lineH)
 	}
 }
 
@@ -612,7 +651,64 @@ var (
 	scriptBufLastCursor int
 	scriptBufCaretAt    uint32
 	scriptBufCaretLine  int
+
+	// scriptBufAnchor is the fixed end of the selection — stb_textedit's
+	// select_start, the point a selection was begun from and the point a
+	// shift-click extends away from. It is kept on this side because the click
+	// destroys it before anything here can read it; see scriptBufShiftClicked.
+	scriptBufAnchor int
+
+	// scriptBufExtend says that this frame's click was a shift-click, raised
+	// before the widget is drawn and consumed by the callback.
+	scriptBufExtend bool
 )
+
+// scriptBufShiftClicked reports whether this frame's left click is a shift-click
+// inside the text area — the gesture that should extend the selection to where
+// it landed rather than collapse it there.
+//
+// It has to be asked before the widget is drawn, because ImGui 1.85's InputText
+// has no shift-click of its own: every plain click goes to stb_textedit_click,
+// which drops the anchor and starts a fresh empty selection, and it does that
+// well before the callback from which this side can reach the selection at all.
+// So the gesture is spotted here and the anchor is put back afterwards.
+//
+// Only while the widget already held the keyboard, because only then is there a
+// cursor to extend from: shift-clicking into a buffer that was not being edited
+// has nothing to anchor to, and behaves as an ordinary click.
+//
+// Double-clicks are left alone. This ImGui selects the whole buffer on one, and
+// a shift-double-click that fought that would land somewhere between the two.
+func scriptBufShiftClicked() bool {
+	return scriptBufActive &&
+		imgui.IsMouseClicked(0) && !imgui.IsMouseDoubleClicked(0) &&
+		(imgui.IsKeyDown(int(sdl.SCANCODE_LSHIFT)) ||
+			imgui.IsKeyDown(int(sdl.SCANCODE_RSHIFT))) &&
+		imgui.IsWindowHoveredV(imgui.HoveredFlagsChildWindows)
+}
+
+// scriptExtendSelection re-anchors the selection after a shift-click, and
+// returns what it left behind.
+//
+// By the time this runs the click has been dealt with: the widget's cursor is
+// where the mouse landed and its selection is empty. Restoring the anchor turns
+// that into a selection running from wherever the selection was last grown from
+// to the click.
+func scriptExtendSelection(data imgui.InputTextCallbackData) scriptSel {
+	n := len(data.Buffer())
+	anchor := min(max(scriptBufAnchor, 0), n)
+	cursor := data.CursorPos()
+	if anchor == cursor {
+		return scriptSel{Start: cursor, End: cursor}
+	}
+	// Only the anchor moves; the cursor is left exactly where the click put it.
+	// ImGui reads a selection bound back as "collapsed here" when it matches
+	// the cursor, so the moving end has to stay the one the widget already
+	// agrees with — the same ordering scriptApplyEdit depends on.
+	data.SetSelectionStart(anchor)
+	data.SetSelectionEnd(cursor)
+	return scriptSel{Start: anchor, End: cursor}
+}
 
 // scriptBufferCallback runs once per frame while the text area holds the
 // keyboard focus. It is the only place the widget's selection can be read or
@@ -620,8 +716,28 @@ var (
 // applying whatever the context menu parked.
 func scriptBufferCallback(data imgui.InputTextCallbackData) int32 {
 	sel := scriptSel{Start: data.SelectionStart(), End: data.SelectionEnd()}
+	if scriptBufExtend {
+		scriptBufExtend = false
+		sel = scriptExtendSelection(data)
+	}
+	// Remembered unordered, because which end is fixed is the whole point: a
+	// second shift-click has to grow from the same place the first one did,
+	// not from where the first one landed.
+	scriptBufAnchor = sel.Start
+	if sel.Start == sel.End {
+		scriptBufAnchor = data.CursorPos()
+	}
 	scriptBufSel = sel.ordered(len(data.Buffer()))
 	scriptBufCursor = data.CursorPos()
+
+	// A completion accepted by Tab, Enter or a click on a row. Parked rather
+	// than spliced where it was picked, for the reason scriptEditorRequest
+	// gives: this callback is the only place the widget's buffer can be
+	// reached.
+	if scriptComplState.accept >= 0 {
+		scriptComplApply(data)
+		return 0
+	}
 
 	if scriptBufPending == scriptEditNone {
 		return 0
@@ -741,6 +857,7 @@ func drawScriptEditorDiagnostics() {
 	imgui.Separator()
 
 	if !d.HasErrors() && !d.HasIssues() {
+		scriptDiagSel.clearSel()
 		editorTextColored(imgui.Vec4{X: 0.5, Y: 0.9, Z: 0.5, W: 1}, "No problems.")
 		imgui.SameLine()
 		editorTextMuted("— F1 for the events, the standard library and every property.")
@@ -758,30 +875,101 @@ func drawScriptEditorDiagnostics() {
 		editorTextColored(scriptIssueColor,
 			fmt.Sprintf("%d issue(s) — this parses, but the open level cannot do it", len(d.Issues)))
 	}
+	drawScriptEditorDiagCopyButton()
 
 	imgui.BeginChildV("##scriptdiags", imgui.Vec2{X: 0, Y: 0}, true, 0)
+	scriptDiagSel.begin()
 	lines := d.Lines()
 	for i, e := range d.Diags {
-		drawScriptEditorProblem(fmt.Sprintf("diag%d", i),
-			imgui.Vec4{X: 1, Y: 0.6, Z: 0.6, W: 1}, e.Pos.Line, e.Pos.Col, e.Msg, lines)
+		drawScriptEditorProblem(fmt.Sprintf("diag%d:%d:%d", i, e.Pos.Line, e.Pos.Col),
+			imgui.Vec4{X: 1, Y: 0.6, Z: 0.6, W: 1}, "error",
+			e.Pos.Line, e.Pos.Col, e.Msg, lines)
 	}
 	for i, s := range d.Issues {
-		drawScriptEditorProblem(fmt.Sprintf("issue%d", i),
-			scriptIssueColor, s.Pos.Line, s.Pos.Col, s.Msg, lines)
+		drawScriptEditorProblem(fmt.Sprintf("issue%d:%d:%d", i, s.Pos.Line, s.Pos.Col),
+			scriptIssueColor, "issue", s.Pos.Line, s.Pos.Col, s.Msg, lines)
+	}
+	scriptDiagSel.end()
+	if imgui.BeginPopupContextWindowV("##diagmenu", imgui.PopupFlagsMouseButtonRight) {
+		ctxDrawMenuItems(scriptDiagSel.menuItems(scriptEditorDiagCopied))
+		imgui.EndPopup()
 	}
 	imgui.EndChild()
+}
+
+// drawScriptEditorDiagCopyButton puts Copy beside the count.
+//
+// Right-aligned rather than next to the heading because the heading's width
+// changes with the numbers in it, and a button that moves as you fix errors is
+// a button you have to look for every time.
+func drawScriptEditorDiagCopyButton() {
+	const width = 60
+	imgui.SameLine()
+	at := imgui.CursorPos()
+	imgui.SetCursorPos(imgui.Vec2{X: at.X + imgui.ContentRegionAvail().X - width, Y: at.Y})
+	if n := scriptDiagSel.count(); imgui.ButtonV("Copy", imgui.Vec2{X: width}) {
+		if n == 0 {
+			scriptEditorDiagCopied(scriptDiagSel.copyAll())
+		} else {
+			scriptEditorDiagCopied(scriptDiagSel.copySelected())
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Copy the selected problems, or all of them if none are selected.  Ctrl+C\n" +
+			"Click one to select it, shift-click for a run, ctrl-click to add one.")
+	}
+}
+
+// scriptEditorDiagCopied is the status line a copy leaves behind. The clipboard
+// is invisible, so an action with nothing to show for itself reads as one that
+// did not happen.
+func scriptEditorDiagCopied(n int) {
+	if n == 0 {
+		scriptEditorStatus("Nothing to copy")
+		return
+	}
+	scriptEditorStatus("Copied %s to the clipboard", plural(n, "line"))
 }
 
 // drawScriptEditorProblem draws one row of the pane: the message, then the line
 // it is about underneath, so the two are read together rather than by scrolling
 // between them.
-func drawScriptEditorProblem(id string, col imgui.Vec4, line, colno int, msg string, lines []string) {
-	imgui.PushID(id)
-	defer imgui.PopID()
-	editorTextWrappedColored(col, fmt.Sprintf("%d:%d  %s", line, colno, msg))
+//
+// Both go under one selectable, because the pair is one problem and copying
+// half of it would be no use. Its height has to be worked out before the text
+// is drawn — the selectable comes first so the text lands on top of it — so the
+// wrapped message is measured with the same call ImGui itself wraps by.
+func drawScriptEditorProblem(id string, col imgui.Vec4, kind string, line, colno int, msg string, lines []string) {
+	head := fmt.Sprintf("%d:%d  %s", line, colno, msg)
+	var src string
 	if line >= 1 && line <= len(lines) {
-		editorTextMuted("    " + strings.TrimRight(lines[line-1], " \t"))
+		src = strings.TrimRight(lines[line-1], " \t")
 	}
+
+	height := imgui.CalcTextSize(head, false, imgui.ContentRegionAvail().X).Y
+	if src != "" {
+		height += imgui.CurrentStyle().ItemSpacing().Y + rowLineHeight()
+	}
+
+	scriptDiagSel.row(id, scriptEditorProblemCopyText(kind, line, colno, msg), height, func() {
+		imgui.PushID(id)
+		defer imgui.PopID()
+		editorTextWrappedColored(col, head)
+		if src != "" {
+			editorTextMuted("    " + src)
+		}
+	})
+}
+
+// scriptEditorProblemCopyText renders one problem for the clipboard, in the
+// file:line:col: kind: message shape every compiler uses — so a pasted problem
+// is something an editor or a grep can still find its way back to.
+func scriptEditorProblemCopyText(kind string, line, colno int, msg string) string {
+	path := "<unsaved>"
+	if activeScript != nil && activeScript.Path != "" {
+		path = activeScript.Path
+	}
+	return fmt.Sprintf("%s:%d:%d: %s: %s", path, line, colno, kind, msg)
 }
 
 // ---------- actions ----------

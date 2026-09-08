@@ -116,8 +116,9 @@ func drawEventReference() {
 		"every object carrying that tag; one with no clause for `:damage:` ignores it, as does one " +
 		"whose clauses are all guarded and every guard declines.")
 	imgui.Spacing()
-	refText(refMutedColor, "after(500, :open_done:)          -- to whoever is running, 500ms of play time from now")
-	refText(refMutedColor, "after(1000, :damage:, @self, 5)  -- with arguments")
+	refText(refMutedColor, "@self <- after(500, :open_done:)         -- to yourself, 500ms of play time from now")
+	refText(refMutedColor, "@door <- after(1000, :damage:, @self, 5) -- to someone else, with arguments")
+	refText(refMutedColor, "#lamps <- after(250, :flicker:)          -- to every object carrying the tag")
 }
 
 // ---------- standard library ----------
@@ -152,9 +153,28 @@ func drawStdlibReference() {
 		imgui.EndTable()
 	}
 
+	refHeading("hitscan options")
+	refWrapped("`hitscan`'s optional second argument is a dict of these. An unknown key is a typo " +
+		"rather than something to ignore, so it is reported with a suggestion — before the script " +
+		"runs when the dict is written out literally.")
+	if imgui.BeginTableV("##hitscan_opts", 2, refTableFlags, imgui.Vec2{}, 0) {
+		imgui.TableSetupColumnV("Option", imgui.TableColumnFlagsWidthStretch, 1.0, 0)
+		imgui.TableSetupColumnV("What it does", imgui.TableColumnFlagsWidthStretch, 3.6, 0)
+		imgui.TableHeadersRow()
+		for _, name := range script.HitscanOptionNames() {
+			imgui.TableNextRow()
+			imgui.TableSetColumnIndex(0)
+			refText(refNameColor, name)
+			imgui.TableSetColumnIndex(1)
+			refWrapped(script.HitscanOptionSummary(name))
+		}
+		imgui.EndTable()
+	}
+
 	refHeading("Not functions")
 	refWrapped("`import(\"shared/helpers.flang\")` and `param name type` are statements the parser " +
-		"reads at the top of a file, not calls. See SCRIPTING.md.")
+		"reads at the top of a file, not calls. A declared param is read back as `?name` — `@name` " +
+		"is an object in the level, and the two are separate namespaces. See SCRIPTING.md.")
 }
 
 // ---------- properties ----------
@@ -167,6 +187,7 @@ var refKindOrder = []struct {
 }{
 	{"level", flang.RefLevel},
 	{"entity", flang.RefEntity},
+	{"model", flang.RefModel},
 	{"volume", flang.RefVolume},
 	// Sprite, emitter and sound were absent here, so their property tables
 	// never reached the F1 reference even though PropertyDocs returns them —

@@ -37,7 +37,8 @@ const (
 	ClassType     // a type name, where a type is what the grammar expects
 	ClassAtom     // :spawn:
 	ClassBuiltin  // a library function, where it is being called
-	ClassAddress  // @id, @param, #tag
+	ClassAddress  // @id, #tag
+	ClassParam    // ?name — a script parameter
 	ClassOperator // punctuation
 	ClassInvalid  // what nothing else would accept
 )
@@ -47,6 +48,7 @@ var className = map[Class]string{
 	ClassPlain: "plain", ClassComment: "comment", ClassString: "string",
 	ClassNumber: "number", ClassKeyword: "keyword", ClassType: "type",
 	ClassAtom: "atom", ClassBuiltin: "builtin", ClassAddress: "address",
+	ClassParam:    "param",
 	ClassOperator: "operator", ClassInvalid: "invalid",
 }
 
@@ -109,7 +111,9 @@ func (h *highlighter) step() {
 	case r == ':':
 		h.scanColon(start)
 	case r == '@' || r == '#':
-		h.scanAddress(start, w)
+		h.scanAddress(start, w, ClassAddress)
+	case r == '?':
+		h.scanAddress(start, w, ClassParam)
 	case isIdentStart(r):
 		h.scanIdent(start)
 	default:
@@ -220,14 +224,17 @@ func (h *highlighter) scanColon(start int) {
 	h.literal()
 }
 
-// scanAddress reads `@name` or `#tag` as one span, sigil included: the sigil is
-// what makes the name an address rather than a variable, and colouring them
-// apart would only say that twice.
-func (h *highlighter) scanAddress(start, sigilWidth int) {
+// scanAddress reads a sigil and the name after it as one span, sigil included:
+// the sigil is what makes the name an address rather than a variable, and
+// colouring them apart would only say that twice.
+//
+// class is what the sigil makes it — `@` and `#` reach the level, `?` reaches
+// the binding the level supplied — which is the distinction worth a colour.
+func (h *highlighter) scanAddress(start, sigilWidth int, class Class) {
 	h.pos += sigilWidth
 	if r, _ := utf8.DecodeRuneInString(h.src[h.pos:]); isIdentStart(r) {
 		h.skipIdent()
-		h.emit(start, h.pos, ClassAddress)
+		h.emit(start, h.pos, class)
 	} else {
 		h.emit(start, h.pos, ClassOperator)
 	}

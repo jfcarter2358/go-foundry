@@ -38,6 +38,27 @@ type Chunk struct {
 	PointNames   []string      // index-aligned with Points; "" = unnamed
 	BiomeSectors []BiomeSector // user-drawn biome-paint polygons, owned by this chunk
 
+	// Velocity is chunk units per second, added to Origin every tick of play
+	// (AdvanceChunks, chunk_motion.go) — a lift that rises, a barge that
+	// drifts, a wall that closes in, with nothing writing the origin every
+	// frame to do it. Authored state the engine carries forward, exactly like
+	// an entity's own Velocity: nothing damps it and nothing stops it, because
+	// what should slow a platform down is a rule the game has rather than one
+	// the engine invents.
+	//
+	// It is in the same space as Origin — world for an ordinary chunk, the
+	// carrier's for a frame-owned one — so a moving chunk inside a moving ship
+	// moves within the ship.
+	//
+	// A body standing on it is not carried just by colliding with it — that
+	// still leaves it behind, exactly as before. An entity can be pinned to
+	// this chunk explicitly instead, via its own AttachedChunk: see
+	// CarryAttachedEntities, which every writer of Origin (this one included)
+	// is expected to call. An interior meant to be properly ridden — walked
+	// around inside, crossed through a portal — belongs to a frame (FrameOwner
+	// below) and a vehicle, not this.
+	Velocity mgl32.Vec3
+
 	// Layers is the metadata for this chunk's authoring bands — the "levels"
 	// sectors are drawn on, which is how one chunk holds geometry that overlaps
 	// in XZ. Indexed by Sector.Layer / BiomeSector.Layer.
@@ -75,12 +96,45 @@ type Chunk struct {
 	// parked a mile away.
 	FrameOwner string
 
+	// FromEntity is runtime-only (never serialized, never cloned): the entity
+	// whose *definition* brought this chunk into the level, as one of its chunk
+	// attachments (entity_chunk.go). Empty for a chunk the level file authored.
+	//
+	// It is what keeps the two kinds apart at save time. A materialised chunk is
+	// the definition's content, not the level's, so LevelToRaw skips it — a
+	// level that wrote one out would freeze a copy of the ship's hull into
+	// itself and stop tracking the file every other level places.
+	//
+	// Not copied by Clone: a duplicated chunk is a new piece of level geometry
+	// that no entity owns, and carrying the binding over would produce a second
+	// chunk claiming to be the same attachment.
+	FromEntity string
+
 	// Xform is runtime-only (never serialized, never cloned): where this
 	// chunk's frame currently is, refreshed every tick by RefreshFrames.
 	// Identity for a chunk with no FrameOwner. ModelMatrix composes this with
 	// the chunk's own Origin/Rotation/Scale, so a frame-owned chunk keeps its
 	// authored placement within the frame even as the frame itself moves.
 	Xform mgl32.Mat4
+
+	// FrameScale is runtime-only alongside Xform (never serialized, never
+	// cloned): the scale of the entity whose frame this chunk rides in,
+	// republished every tick by RefreshFrames. 0 — what every unframed chunk
+	// carries — reads as 1. Clear the two together with ClearFrameTransform.
+	//
+	// It is a field of its own rather than a factor folded into Xform because
+	// the two are read in different spaces. Xform places the frame in the
+	// world; this scales the chunk's geometry *within* that frame, which is the
+	// space collision resolves in — the resolvers work from
+	// LocalPlacementMatrix, having already had Xform divided out by the caller
+	// that found the chunk. Folded into Xform, a ship scaled up would draw a
+	// bigger hold with the deck a body walks on left exactly where it was.
+	//
+	// Scaling the carried geometry rather than the frame itself is also why a
+	// rider is not scaled: the frame stays a rigid place to stand, so someone
+	// boarding a ship scaled 2x keeps their own size and finds a hold twice as
+	// big. See FrameLocalMatrix.
+	FrameScale float32
 
 	// WaterSurfaces is runtime-only (never serialized, never cloned): the
 	// companion water planes auto-managed from Water-kind BiomeSectors (see
@@ -130,13 +184,18 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 		Origin:     ch.Origin,
 		Rotation:   ch.Rotation,
 		Scale:      ch.Scale,
+		// Velocity rides along with the placement it is a rate of change of: a
+		// copy of a moving platform is another moving platform, not one that
+		// has stopped dead where the original happened to be.
+		Velocity: ch.Velocity,
 		// FrameOwner rides along with Origin/Rotation/Scale because it is part
 		// of the same answer to "where is this chunk". Dropping it turned a
 		// copy of a vehicle interior into a world chunk whose geometry — still
 		// authored around the ship's local origin — was then read as world
 		// geometry at (0,0,0). Xform is deliberately NOT copied: it is
 		// runtime-only and RefreshFrames owns it (ModelMatrix treats the zero
-		// value as "not yet refreshed" and falls back to the local placement).
+		// value as "not yet refreshed" and falls back to the local placement),
+		// and FrameScale is left behind with it for the same reason.
 		FrameOwner: ch.FrameOwner,
 		// Disabled rides along for the same reason FrameOwner does: it is part
 		// of the answer to "is this chunk in the world". Unloaded deliberately
@@ -251,6 +310,13 @@ func cloneFloor(f *Floor) Floor {
 	out.Mesh = f.Mesh.Clone()
 	out.Openings = CloneOpenings(f.Openings)
 	out.SkirtGeometry = gfx.Geometry{} // derived; RebuildSkirts rebuilds it
+	out.Slab.Geometry = gfx.Geometry{} // derived; Sector.Load rebuilds it
+	out.Slab.RimGeometry = gfx.Geometry{}
+	out.Slab.SubmeshGeometries = make([]gfx.Geometry, len(f.Slab.SubmeshGeometries))
+	out.Slab.Mesh = f.Slab.Mesh.Clone()
+	out.Slab.CollisionPts = append([]mgl32.Vec2(nil), f.Slab.CollisionPts...)
+	out.Slab.CollisionDepths = append([]float32(nil), f.Slab.CollisionDepths...)
+	out.Slab.CollisionTris = append([]int(nil), f.Slab.CollisionTris...)
 	out.CollisionPts = append([]mgl32.Vec2(nil), f.CollisionPts...)
 	out.CollisionDepths = append([]float32(nil), f.CollisionDepths...)
 	out.CollisionTris = append([]int(nil), f.CollisionTris...)
@@ -265,6 +331,13 @@ func cloneCeiling(c *Ceiling) Ceiling {
 	out.VertexOffsets = append([]float32(nil), c.VertexOffsets...)
 	out.Mesh = c.Mesh.Clone()
 	out.Openings = CloneOpenings(c.Openings)
+	out.Slab.Geometry = gfx.Geometry{} // derived; Sector.Load rebuilds it
+	out.Slab.RimGeometry = gfx.Geometry{}
+	out.Slab.SubmeshGeometries = make([]gfx.Geometry, len(c.Slab.SubmeshGeometries))
+	out.Slab.Mesh = c.Slab.Mesh.Clone()
+	out.Slab.CollisionPts = append([]mgl32.Vec2(nil), c.Slab.CollisionPts...)
+	out.Slab.CollisionDepths = append([]float32(nil), c.Slab.CollisionDepths...)
+	out.Slab.CollisionTris = append([]int(nil), c.Slab.CollisionTris...)
 	out.CollisionPts = append([]mgl32.Vec2(nil), c.CollisionPts...)
 	out.CollisionDepths = append([]float32(nil), c.CollisionDepths...)
 	out.CollisionTris = append([]int(nil), c.CollisionTris...)
@@ -395,6 +468,12 @@ func (ch *Chunk) InferPortals() {
 						DrawGap:     true,
 						Visible:     w.Visible,
 						DoubleSided: w.DoubleSided,
+						// Opaque, the same default the loader gives a portal
+						// whose file says nothing. Leaving it zero made the
+						// gap fully transparent the moment ReloadSector
+						// propagated it (sector.go), which reads as a gap that
+						// simply stopped being drawn.
+						Alpha: 1.0,
 					})
 				} else {
 					w := s.Walls[wallIdx]
@@ -464,7 +543,7 @@ func pickPortalNeighbour(ch *Chunk, si int, candidates []int) (int, bool) {
 		}
 		clo, chi := sectorSpan(&ch.Sectors[ci])
 		overlap := minFloat32(hi, chi) - maxFloat32(lo, clo)
-		if overlap <= 0 {
+		if overlap <= 0 && !spanCollapsedInside(lo, hi, clo, chi) {
 			continue // stacked, not adjacent: no way through
 		}
 		if best < 0 || overlap > bestOverlap {
@@ -472,6 +551,38 @@ func pickPortalNeighbour(ch *Chunk, si int, candidates []int) (int, bool) {
 		}
 	}
 	return best, best >= 0
+}
+
+// spanCollapsedInside reports whether one of two vertical spans has closed to
+// nothing — or turned inside out — within the other.
+//
+// A door can be built as a sector's own moving surface: the dropship's is its
+// doorway's ceiling coming down (chunks/dropship_hold.yaml), and the same trick
+// works with a floor coming up. Either way the sector collapses to zero height
+// as the leaf seats, and inverts if the moving surface travels past the fixed
+// one. Its span can then never overlap a neighbour's by more than nothing,
+// which the ranking above would read as "stacked, no way through": the doorway
+// would stop being anyone's portal neighbour for as long as it was shut.
+//
+// That is not a cosmetic mis-ranking. InferPortals repairs a portal's ToSector
+// only for an edge it believes is shared, so a doorway saved shut came back
+// with its target never updated — and RebuildGaps skips a portal whose target
+// names nothing, which is a door whose leaf is not drawn at all, in a level
+// that reloads that way every time.
+//
+// A sector is not a different room because it is shut. What separates the two
+// cases is whether the collapsed span sits INSIDE the neighbour's, rather than
+// at or beyond its end — a storey stacked on another still meets it exactly at
+// the slab, and still has no way through.
+func spanCollapsedInside(lo, hi, clo, chi float32) bool {
+	inside := func(lo, hi, x float32) bool { return x > lo && x < hi }
+	if chi <= clo {
+		return inside(lo, hi, minFloat32(clo, chi)) || inside(lo, hi, maxFloat32(clo, chi))
+	}
+	if hi <= lo {
+		return inside(clo, chi, minFloat32(lo, hi)) || inside(clo, chi, maxFloat32(lo, hi))
+	}
+	return false
 }
 
 // sectorSpan is the vertical extent a body could occupy in a sector: its floor
@@ -525,9 +636,13 @@ func (ch *Chunk) RebuildGaps() {
 		s := &ch.Sectors[si]
 		for pi := range s.Portals {
 			p := &s.Portals[pi]
-			// Clear existing gap geometry
-			p.FloorGap.Vertices = nil
-			p.CeilGap.Vertices = nil
+			// Clear existing gap geometry. Unload rather than dropping the
+			// vertices on the floor: a gap that stops existing — the floor a
+			// script is animating passing its neighbour's — would otherwise
+			// leave its VAO and VBO allocated with nothing left holding the
+			// handles. Load re-uploads either way.
+			p.FloorGap.Unload()
+			p.CeilGap.Unload()
 
 			if !p.DrawGap {
 				continue
@@ -586,6 +701,19 @@ func buildGapQuad(start, end mgl32.Vec2, lo1, lo2, hi1, hi2, segLen float32) ([]
 	return [][]float32{a, b, c, d}, []int{0, 1, 2, 2, 3, 0}
 }
 
+// reverseTriangleWinding turns every triangle in an index buffer round in
+// place, so the geometry it describes faces the other way.
+//
+// Buffers are flat triples throughout (Geometry.Load de-indexes them in this
+// order), so swapping the first and last of each triple is the whole job. A
+// trailing partial triple is left alone rather than dropped: it is already
+// malformed, and this is not the place that would notice.
+func reverseTriangleWinding(indices []int) {
+	for i := 0; i+2 < len(indices); i += 3 {
+		indices[i], indices[i+2] = indices[i+2], indices[i]
+	}
+}
+
 // edgeHeights returns a sector surface's height at the two endpoints of an edge,
 // honoring per-vertex offsets. Endpoints that aren't sector vertices fall back
 // to the surface's flat height.
@@ -636,8 +764,58 @@ func chunkLocalMatrix(origin mgl32.Vec3, rotation, scale float32) mgl32.Mat4 {
 // contributes on its own. FindChunkAndSectorAmong uses exactly this: its
 // caller has already carried the query position out of the frame, so only the
 // chunk's own placement within that frame remains to undo.
+// It carries the owning entity's scale (FrameScale) as well as the chunk's own,
+// which is what makes a ship's hold grow with the ship: the geometry a rider
+// walks on is expressed in this space, so a factor applied here reaches the
+// drawn floor and the collided one together.
 func (ch *Chunk) LocalPlacementMatrix() mgl32.Mat4 {
-	return chunkLocalMatrix(ch.Origin, ch.Rotation, ch.Scale)
+	local := chunkLocalMatrix(ch.Origin, ch.Rotation, ch.Scale)
+	k := ch.EffectiveFrameScale()
+	if k == 1 {
+		return local
+	}
+	// Outside the chunk's own placement, so the owner's scale carries Origin
+	// along with the geometry: an attachment a metre forward of a ship's centre
+	// sits two metres forward once the ship is twice the size.
+	return mgl32.Scale3D(k, k, k).Mul4(local)
+}
+
+// EffectiveScale is the chunk's own authored scale, with the zero value read as
+// 1 — a chunk that never mentioned a scale is full size, not a point.
+func (ch *Chunk) EffectiveScale() float32 {
+	if ch.Scale == 0 {
+		return 1
+	}
+	return ch.Scale
+}
+
+// EffectiveFrameScale is the same for the scale its frame owner contributes.
+func (ch *Chunk) EffectiveFrameScale() float32 {
+	if ch.FrameScale == 0 {
+		return 1
+	}
+	return ch.FrameScale
+}
+
+// PlacementScale is the whole factor between this chunk's local units and the
+// units of the space it is placed in — its own scale and its frame owner's
+// together.
+//
+// Anything converting a *distance* across that boundary rather than a point —
+// a click radius, a scatter range, the 2D map's ruler — has to go through this
+// rather than reading Scale directly, or it is off by the owner's factor on
+// every chunk an entity carries.
+func (ch *Chunk) PlacementScale() float32 {
+	return ch.EffectiveScale() * ch.EffectiveFrameScale()
+}
+
+// ClearFrameTransform drops the runtime placement a frame published onto this
+// chunk, for when the chunk stops being carried. The two fields go together: a
+// stale FrameScale left behind would keep resizing geometry no entity owns any
+// more, and unlike Xform it has no "not yet refreshed" fallback to hide it.
+func (ch *Chunk) ClearFrameTransform() {
+	ch.Xform = mgl32.Mat4{}
+	ch.FrameScale = 0
 }
 
 // ModelMatrix is the transform this chunk's local geometry is drawn/collided

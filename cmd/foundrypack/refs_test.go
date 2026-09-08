@@ -225,3 +225,66 @@ func TestPlatformLibrariesAreFilteredByTarget(t *testing.T) {
 		}
 	}
 }
+
+// A normal map is never named by any content file: the engine derives its
+// name from the albedo's and loads it alongside. So it has to answer to the
+// albedo's names here, or a release ships every texture with its relief
+// pruned away — a failure that would only show up as "the game looks flatter
+// than the editor did".
+func TestNormalMapsRideAlongWithTheirAlbedo(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"ui/theme.fth":         "\n",
+		"ui/loading.fui":       "\n",
+		"ui/pause.fui":         "\n",
+		"textures/default.png": "PNG",
+		"levels/start.yaml":    "chunks: [{walls: [{texture: brick}]}]\n",
+		"textures/brick.png":   "PNG",
+		// Named by nothing; reachable only through brick.
+		"textures/brick_normal.png": "PNG",
+		// And one whose albedo nothing reaches, which must still be pruned.
+		"textures/unused.png":        "PNG",
+		"textures/unused_normal.png": "PNG",
+	})
+
+	keep := keepSet(t, root, game.Manifest{Title: "T", StartLevel: "start"})
+
+	if !keep["textures/brick_normal.png"] {
+		t.Error("a reachable texture's normal map was pruned")
+	}
+	if keep["textures/unused_normal.png"] {
+		t.Error("an unreachable texture's normal map was kept")
+	}
+}
+
+// A ship's hull is reached from the entity type that carries it, not from any
+// level — the one reference chain that runs through chunks/ (entity_chunk.go).
+func TestCarriedChunkGeometryIsFollowed(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"ui/theme.fth":         "\n",
+		"ui/loading.fui":       "\n",
+		"textures/default.png": "PNG",
+		"levels/start.yaml":    "entities:\n  - type: shuttle\n",
+		"entities/shuttle.yaml": `
+id: shuttle
+chunks:
+  - name: hull
+    file: shuttle_hull
+`,
+		"chunks/shuttle_hull.yaml": "sectors:\n  - floor: {texture: deckplate}\n",
+		"textures/deckplate.png":   "PNG",
+		// Nothing names this one.
+		"chunks/scratch.yaml": "sectors: []\n",
+	})
+
+	keep := keepSet(t, root, game.Manifest{Title: "T", StartLevel: "start"})
+
+	if !keep["chunks/shuttle_hull.yaml"] {
+		t.Error("the chunk an entity type carries was pruned; the ship would have no floor")
+	}
+	if !keep["textures/deckplate.png"] {
+		t.Error("a texture named only from inside a carried chunk was pruned")
+	}
+	if keep["chunks/scratch.yaml"] {
+		t.Error("an unreferenced chunk was kept")
+	}
+}

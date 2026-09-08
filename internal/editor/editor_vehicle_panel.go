@@ -165,7 +165,7 @@ func unbindChunkFromVehicle(lvl *world.Level, chunkID string) {
 			e.Vehicle.RemoveInterior(chunkID)
 		}
 		ch.FrameOwner = ""
-		ch.Xform = mgl32.Mat4{}
+		ch.ClearFrameTransform()
 		break
 	}
 	_ = world.RebuildIndexes(lvl)

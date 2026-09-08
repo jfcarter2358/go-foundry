@@ -64,6 +64,23 @@ var HelpPages []HelpPage
 // cursor, so closing it hands capture back.
 var keybindHelpRestoreMouseLock bool
 
+// keybindHelpDrawnIn is the SDL window ID the overlay was last drawn into, or
+// 0 while it is closed. It is how the overlay knows it is *arriving* somewhere
+// — on that frame it asks imgui to bring it to the front.
+//
+// The flag alone is not enough. NoFocusOnAppearing (below) stops imgui both
+// focusing and raising the window when it reappears, so after the first close
+// the overlay kept whatever depth it had in the window stack: anything clicked
+// since — the script editor's full-window root, say — sat on top of it, and F1
+// looked like it had done nothing at all. First open worked only because a
+// window imgui has never seen starts at the front.
+//
+// Tracking the window rather than only the open/closed edge also covers
+// carrying an open reference between windows: each one has its own imgui
+// context, so appearing in a second window is another arrival with the same
+// problem.
+var keybindHelpDrawnIn uint32
+
 // keybindHelpWindow is the SDL window ID the overlay draws into. There is one
 // overlay, shown in whichever window has keyboard focus — the model editor and
 // the 2D/texture editors are separate OS windows, and a reference that opened
@@ -127,6 +144,9 @@ func KeybindHelpSetVisible(visible bool) {
 		}
 		return
 	}
+	// Closing forgets where it was drawn, so the next open is an arrival
+	// again even if it lands in the same window.
+	keybindHelpDrawnIn = 0
 	if keybindHelpRestoreMouseLock {
 		keybindHelpRestoreMouseLock = false
 		gfx.SetMouseLock(true)
@@ -164,6 +184,17 @@ var (
 	keybindIdleTextColor    = imgui.Vec4{X: 0.55, Y: 0.55, Z: 0.58, W: 1}
 )
 
+// keybindHelpArriving reports whether this is the overlay's first frame in the
+// window with the given ID — the frame it has to be raised on — and records
+// the window so the frames after it are not.
+func keybindHelpArriving(id uint32) bool {
+	if keybindHelpDrawnIn == id {
+		return false
+	}
+	keybindHelpDrawnIn = id
+	return true
+}
+
 // KeybindHelpRender draws the overlay in the main window. Must be called
 // between ImGuiNewFrame and ImGuiRender; a no-op when the focused window is a
 // secondary one, which draws it itself via KeybindHelpRenderInWindow.
@@ -171,7 +202,7 @@ func KeybindHelpRender() {
 	if !KeybindHelpVisibleIn(MainWindowID) {
 		return
 	}
-	keybindHelpRender(float32(platform.WinWidth), float32(platform.WinHeight))
+	keybindHelpRender(MainWindowID, float32(platform.WinWidth), float32(platform.WinHeight))
 }
 
 // KeybindHelpRenderInWindow draws the overlay inside a secondary window's
@@ -180,12 +211,14 @@ func KeybindHelpRenderInWindow(uw *UIWindow) {
 	if !KeybindHelpVisibleIn(uw.ID) {
 		return
 	}
-	keybindHelpRender(float32(uw.W), float32(uw.H))
+	keybindHelpRender(uw.ID, float32(uw.W), float32(uw.H))
 }
 
 // keybindHelpRender draws the reference centred in a viewport of the given
-// size, using whichever imgui context is current.
-func keybindHelpRender(w, h float32) {
+// size, using whichever imgui context is current. id is the SDL window that
+// context belongs to, so the overlay can tell an arrival from a frame it has
+// already been drawing in.
+func keybindHelpRender(id uint32, w, h float32) {
 	// Wider than it was, and a larger share of a small window: the reference
 	// now carries three-column tables of the standard library and the object
 	// properties, and a cramped one wraps every summary onto four lines.
@@ -198,6 +231,14 @@ func keybindHelpRender(w, h float32) {
 	imgui.SetNextWindowPosV(imgui.Vec2{X: w / 2, Y: h / 2}, imgui.ConditionAlways, imgui.Vec2{X: 0.5, Y: 0.5})
 	imgui.SetNextWindowSizeV(imgui.Vec2{X: winW, Y: winH}, imgui.ConditionAlways)
 	imgui.SetNextWindowBgAlpha(0.93)
+
+	// Raise it on the frame it arrives in this window. SetNextWindowFocus is
+	// an explicit request rather than the appearing heuristic, so it is
+	// honoured despite NoFocusOnAppearing; the flag still keeps the overlay
+	// from stealing focus on any later frame.
+	if keybindHelpArriving(id) {
+		imgui.SetNextWindowFocus()
+	}
 
 	flags := imgui.WindowFlagsNoResize |
 		imgui.WindowFlagsNoMove |

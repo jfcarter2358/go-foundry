@@ -86,6 +86,47 @@ const (
 	DefaultWaterDepth = float32(0.6) // how far below the surrounding floor the water surface sits
 )
 
+// WaterDepthLimit bounds how far a water surface can be moved from the floor
+// it was sampled against, in either direction. It is a sanity rail on the
+// depth slider and the height gizmo, not a physical constraint.
+const WaterDepthLimit = float32(100)
+
+// waterDepthEpsilon is the smallest magnitude NormalizeWaterDepth will hand
+// back for a level that was asked for exactly at the floor. See its doc.
+const waterDepthEpsilon = float32(0.0005)
+
+// ResolvedWaterDepth applies the "0 means the default" convention (SandHeight,
+// HeadScale, the slope range, ... all follow it) to WaterDepth.
+//
+// Unlike those, WaterDepth is meaningful when NEGATIVE: depth is measured
+// downward from the floor sampled under the sector, so a negative one lifts
+// the surface ABOVE that floor — flooding flat ground rather than filling a
+// dug basin. Only exactly 0 is the sentinel, which is why this tests == 0
+// rather than the <= 0 the other resolvers use.
+func ResolvedWaterDepth(v float32) float32 {
+	if v == 0 {
+		return DefaultWaterDepth
+	}
+	return v
+}
+
+// NormalizeWaterDepth prepares a depth for STORING in BiomeBrush.WaterDepth:
+// it clamps to +/-WaterDepthLimit and nudges an exact 0 aside, since 0 is
+// ResolvedWaterDepth's "use the default" sentinel and would otherwise make a
+// slider or gizmo drag jump to DefaultWaterDepth as it passed the floor.
+// The nudge is far below what any of the "%.2f" readouts can show.
+func NormalizeWaterDepth(v float32) float32 {
+	if v > WaterDepthLimit {
+		v = WaterDepthLimit
+	} else if v < -WaterDepthLimit {
+		v = -WaterDepthLimit
+	}
+	if v == 0 {
+		return waterDepthEpsilon
+	}
+	return v
+}
+
 // Default ground-patch terrain shaping (biome_ground.go's groundDisplacement)
 // — GroundAmplitude/GroundFrequency/GroundOctaves are the user-configurable
 // generalization of what used to be fixed constants. Sand's amplitude stays
@@ -326,9 +367,19 @@ type BiomeBrush struct {
 
 	// Water: auto-manages a companion water plane filling the painted polygon
 	// (see biome_water.go). WaterDepth is how far below the surrounding floor
-	// the water surface sits; 0 uses DefaultWaterDepth.
-	WaterDepth float32
-	Water      gfx.WaterParams
+	// the water surface sits; negative lifts it above that floor, and 0 uses
+	// DefaultWaterDepth (see ResolvedWaterDepth / NormalizeWaterDepth).
+	//
+	// HideLakebed drops the ground patch a Water sector otherwise renders
+	// underneath its surface, for water lying on ground that is already
+	// dressed — a floor with its own texture and procedural detail, or another
+	// biome painted over the same area — where a second drape only z-fights
+	// with what is already there. Plain bool with the pre-existing look (a
+	// lakebed) as the zero value, so nothing painted before this existed
+	// changes. Ignored by every other kind: their patch IS the biome.
+	WaterDepth  float32
+	HideLakebed bool
+	Water       gfx.WaterParams
 
 	// Moss: always a ground patch (moss texture); MossScatter additionally
 	// turns on a dense low-clump scatter on top, reusing Density/Range/Color
@@ -451,10 +502,24 @@ type BiomeSector struct {
 	// GroundDirty is runtime-only, mirroring HeightDirty for the two other
 	// sector-derived meshes: the ground patch (biome_ground.go, every land
 	// kind) and the companion water plane (biome_water.go, Water kind only). Kept separate from HeightDirty so a param change that only
-	// affects one of those (e.g. WaterDepth) doesn't force a height-texture
+	// affects one of those doesn't force a height-texture
 	// rebuild, and vice versa — but every call site that sets one currently
 	// sets both, since points/kind changes affect all three.
 	GroundDirty bool
+
+	// WaterLevelDirty is runtime-only, and is GroundDirty's cheap sibling for
+	// the one edit that moves the water plane without reshaping it: a change
+	// to WaterDepth slides the surface up or down, and the mesh it slides is
+	// built flat at local y=0 and placed by WaterSurface.Position, so nothing
+	// about the triangles changes.
+	//
+	// Worth its own flag because this is the edit that happens continuously —
+	// a height gizmo drag, or a script raising a flood a frame at a time —
+	// and routing it through GroundDirty would retriangulate the polygon,
+	// re-upload the vertex buffer AND rebuild the lakebed patch (which does
+	// not depend on the depth at all) on every one of those frames.
+	// SyncBiomeWaterSurfaces is the only consumer, and clears it.
+	WaterLevelDirty bool
 }
 
 // IsScatterKind reports whether kind is *structurally* capable of spawning
@@ -602,15 +667,15 @@ func (s *BiomeSector) Bounds() (min, max mgl32.Vec2) {
 // e.g. tall grass and short grass painted over the same area don't land on
 // identical spots.
 //
-// GrassClump, StemLeaves, LeafScale and GroundUVScale are deliberately NOT
-// hashed in. Folding any of them in would reshuffle the scatter of every
+// GrassClump, StemLeaves, LeafScale, GroundUVScale and HideLakebed are
+// deliberately NOT hashed in. Folding any of them in would reshuffle the scatter of every
 // already-authored sector the moment the field existed — and for the slider-
 // driven ones it would additionally teleport the whole lattice while you drag,
 // hiding the very effect you're tuning. None of them changes WHERE anything
 // scatters, only
 // what the scattered thing (or, for GroundUVScale, the patch underneath it)
-// looks like, and sector IDs already decorrelate overlapping sectors on their
-// own.
+// looks like — HideLakebed only decides whether that patch is drawn at all —
+// and sector IDs already decorrelate overlapping sectors on their own.
 func BiomeSeed(s *BiomeSector) mgl32.Vec2 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(s.ID))

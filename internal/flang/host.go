@@ -68,7 +68,15 @@ type Host interface {
 	// are asynchronous, and the runtime drains the queue.
 	Post(to RefVal, atom string, args []Value, pos Pos) error
 
-	// Action performs a named engine verb — move_to, play_anim, spawn. The bool
+	// PostAfter queues a message delayed by that many milliseconds of play
+	// time — the `target <- after(ms, :atom:)` form.
+	//
+	// Its own method rather than a delay argument on Post, because what a host
+	// needs to honour it is different in kind: a queue that outlives the frame,
+	// counted in play time so that pausing the game pauses the timer.
+	PostAfter(to RefVal, atom string, args []Value, delayMS float64, pos Pos) error
+
+	// Action performs a named engine verb — play_anim, spawn, destroy. The bool
 	// is false when the host does not implement that verb, which lets the
 	// builtin table stay in this package while the verbs live in the engine.
 	Action(name string, args []Value, pos Pos) (Value, bool, error)

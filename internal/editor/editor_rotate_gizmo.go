@@ -114,6 +114,11 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 	switch gizmoEffectiveKind() {
 	case gizmoKindVertices:
 		return selectedVerticesCenter()
+	case gizmoKindFace:
+		// A face turns in the vertex sense, not the entity one: it has an
+		// extent made of corners, and swinging them about its own middle is
+		// what turning a wall or a floor can mean.
+		return selectedFacesCenter()
 	case gizmoKindEntity:
 		if e := activeGizmoEntity(); e != nil {
 			return e.Position, true
@@ -125,6 +130,10 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindSprite:
 		if sp := activeGizmoSprite(); sp != nil {
 			return sp.Position, true
+		}
+	case gizmoKindScenery:
+		if sc := activeGizmoScenery(); sc != nil {
+			return sc.Position, true
 		}
 	case gizmoKindEmitter:
 		if em := activeGizmoEmitter(); em != nil {
@@ -227,6 +236,10 @@ func applyRotationToSelection(axis, origin mgl32.Vec3, delta float32) {
 	}
 	if v := activeGizmoVolume(); v != nil {
 		v.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
+		return
+	}
+	if sc := activeGizmoScenery(); sc != nil {
+		sc.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
 		return
 	}
 	if em := activeGizmoEmitter(); em != nil {

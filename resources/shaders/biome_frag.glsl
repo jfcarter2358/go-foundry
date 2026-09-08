@@ -105,5 +105,9 @@ void main() {
         color += dirLightColor[i] * dirLightBrightness[i] * spec;
     }
 
+    // After the specular, so a distant rock's glint fades with the rock rather
+    // than surviving it. See fog.glsl.
+    color = applyFog(color, vWorldPos);
+
     outputColor = vec4(color, 1.0);
 }

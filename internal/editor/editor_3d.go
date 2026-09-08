@@ -262,6 +262,12 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	// The brush first, and it does not disarm: it is the one tool here meant to
+	// be used many clicks running. See editor_scenery.go.
+	if editorBrushHandleClick() {
+		return
+	}
+
 	if Editor.SpawnPlacementMode {
 		// 4m in front of the camera, at the floor the camera is standing on.
 		pos := gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(4.0))
@@ -357,6 +363,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
+	editorClearScenerySelection()
 	editorClearChunkSelection()
 	editorClearLightSelection()
 	clearVertexSelection()
@@ -392,6 +399,13 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		Editor.ActiveSectorIdx = -1
 		editorSelectSprite(hit.idx)
 
+	case pickScenery:
+		// Move, rotate and scale, all three meaning what they say: a prop's
+		// scale is a real per-axis factor on the model, unlike a volume's or a
+		// sprite's, so the scale gizmo needs no special case for it.
+		Editor.ActiveSectorIdx = -1
+		editorSelectScenery(hit.idx)
+
 	case pickEmitter:
 		Editor.ActiveSectorIdx = -1
 		editorSelectEmitter(hit.idx)
@@ -410,10 +424,9 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		// A water plane has no properties of its own — everything about it is
 		// derived from the Water-kind biome sector that produced it — so the
 		// click selects that sector and the panel shows its water settings.
-		Editor.ActiveChunkIdx = hit.chunkIdx
-		Editor.ActiveSectorIdx = -1
-		Editor.ActiveBiomeSectorIdx = editorWaterSectorFor(hit.chunkIdx, hit.idx)
-		Editor.PanelFocus = panelFocusWater
+		// It does get one gizmo: the height the surface sits at is the single
+		// thing about it the polygon does not decide (editor_water.go).
+		editorSelectWater(hit.chunkIdx, hit.idx)
 
 	default:
 		// Click on empty space — deselect.
@@ -427,9 +440,11 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 // selected.
 func editor3DClearSelection() {
 	clearVertexSelection()
+	editorClearWaterSelection()
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
+	editorClearScenerySelection()
 	editorClearChunkSelection()
 	editorClearLightSelection()
 	clearFaceSelection()
@@ -470,7 +485,12 @@ func editorWaterSectorFor(chunkIdx, surfaceIdx int) int {
 // structural mesh already does at render time. There is no geometry to reload
 // and no bounds to recompute, because none of it moved.
 func moveChunk(ch *world.Chunk, newOrigin mgl32.Vec3) {
+	delta := newOrigin.Sub(ch.Origin)
 	ch.Origin = newOrigin
+	// Carries anything riding this chunk (Entity.AttachedChunk) along with
+	// it, the same as a moving chunk does during play — see
+	// CarryAttachedEntities.
+	world.CarryAttachedEntities(Editor.level, ch, delta)
 	editorChunkTransformChanged()
 }
 
@@ -887,7 +907,7 @@ func editorFaceSelectionNote() {
 		return
 	}
 	if n == 1 {
-		imgui.Text("Selected face: " + Editor.ActiveSurface)
+		imgui.Text("Selected face: " + editor3DKindLabel(Editor.ActiveSurface))
 		return
 	}
 	imgui.Text(fmt.Sprintf("%d faces selected — fields below are the first one's", n))

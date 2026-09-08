@@ -82,6 +82,20 @@ func editorEntityAddMenu() {
 	}
 
 	imgui.Separator()
+	if imgui.MenuItem("New Type...") {
+		// The window that authors a definition. Straight to a blank one: the
+		// catalog is where a type is *placed*, and "there isn't one yet" is the
+		// answer this row exists for.
+		OpenEntityEditorOn("")
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Open the entity editor on a new type — models,\ncarried chunk geometry, a script and a vehicle block.")
+	}
+	if name := editorSelectedDefName(); name != "" {
+		if imgui.MenuItem("Edit " + name + "...") {
+			OpenEntityEditorOn(name)
+		}
+	}
 	if imgui.MenuItem("Rescan " + world.EntitiesDirName + "/") {
 		editorRefreshEntityDefs()
 		editorSetStatus("Rescanned %s/", world.EntitiesDirName)
@@ -121,12 +135,13 @@ func editorEntityProperties(lvl *world.Level) {
 	// three model attachments from filling the panel with nothing anyone asked
 	// for.
 	editorPropGroupOpen("Identity##entidgrp", func() { editorEntityIdentity(lvl, e) })
-	editorPropGroupOpen("Transform##enttfgrp", func() { editorEntityTransform(e) })
+	editorPropGroupOpen("Transform##enttfgrp", func() { editorEntityTransform(lvl, e) })
 	editorPropGroup("Motion##entmotion", 0, func() { editorEntityMotion(e) })
 	editorPropGroup("Bounds##entbounds", 0, func() { editorEntityBounds(e) })
 	editorPropGroup("Collision##entcol", 0, func() { editorEntityCollisionSection(e) })
 	editorPropGroup("Vehicle##entveh", 0, func() { editorEntityVehicleSection(lvl, e) })
 	editorPropGroup("Models##entmodels", 0, func() { editorEntityModels(e) })
+	editorPropGroup("Chunks##entchunks", 0, func() { editorEntityChunks(lvl, e) })
 	// An entity's tags and attributes are merged from its definition rather
 	// than held in a ScriptData, so the three rows are assembled here instead
 	// of through editorScriptDataUI — under the same "Scripting" group name
@@ -152,7 +167,9 @@ func editorEntityIdentity(lvl *world.Level, e *world.Entity) {
 		case id != e.ID && world.FindEntity(lvl, id) != nil:
 			editorSetStatus("There is already an entity called %q", id)
 		default:
-			e.ID = id
+			// Not a plain assignment: an entity's carried chunks are named and
+			// framed after its ID, so they are rebuilt around the new one.
+			editorRenameEntity(lvl, e, id)
 		}
 	}
 	if e.Type != "" {
@@ -161,10 +178,30 @@ func editorEntityIdentity(lvl *world.Level, e *world.Entity) {
 			imgui.SetTooltip("Stamped from " + world.EntitiesDirName + "/" + e.Type + ".yaml.\n" +
 				"The level stores only what differs from it.")
 		}
+		imgui.SameLine()
+		if imgui.Button("Edit Type##entedittype") {
+			// The window that edits the *definition*, so a change reaches every
+			// instance rather than this one. Deferred, because opening a window
+			// from inside another window's Draw is not allowed — see
+			// uiwin.RequestWindowOpen.
+			OpenEntityEditorOn(e.Type)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Open " + e.Type + " in the entity editor. Saving there\n" +
+				"re-stamps every instance of it in this level.")
+		}
 	} else {
 		imgui.Text("Type: (none)")
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("A blank entity: everything below is its own,\nand the level writes all of it.")
+		}
+		imgui.SameLine()
+		if imgui.Button("Make Type##entmaketype") {
+			OpenEntityEditorFrom(e)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Open this entity in the entity editor as a new type,\n" +
+				"so a second level can place the same thing.")
 		}
 	}
 	imgui.Checkbox("Visible##entvis", &e.Visible)
@@ -184,7 +221,7 @@ func orDash(s string) string {
 }
 
 // editorEntityTransform draws position, rotation and scale.
-func editorEntityTransform(e *world.Entity) {
+func editorEntityTransform(lvl *world.Level, e *world.Entity) {
 	pos := [3]float32{e.Position.X(), e.Position.Y(), e.Position.Z()}
 	if editorDragFloat3("Position##entpos", &pos, 0, 0, "%.3f") {
 		e.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
@@ -203,6 +240,51 @@ func editorEntityTransform(e *world.Entity) {
 			world.EntityScaleClamp(scv[1]),
 			world.EntityScaleClamp(scv[2]),
 		}
+	}
+
+	editorEntityAttachedChunkCombo(lvl, e)
+}
+
+// editorEntityAttachedChunkCombo lets an entity ride a chunk — see
+// Entity.AttachedChunk. Every chunk in the level is offered; one in a
+// different space than this entity still selects, but a note below says so,
+// since nothing else here would tell an author their pick will not carry it.
+func editorEntityAttachedChunkCombo(lvl *world.Level, e *world.Entity) {
+	label := e.AttachedChunk
+	if label == "" {
+		label = "(none)"
+	}
+	if imgui.BeginCombo("Attached Chunk##entattachchunk", label) {
+		if imgui.SelectableV("(none)", e.AttachedChunk == "", 0, imgui.Vec2{}) {
+			e.AttachedChunk = ""
+		}
+		for i := range lvl.Chunks {
+			id := lvl.Chunks[i].ID
+			if imgui.SelectableV(id, e.AttachedChunk == id, 0, imgui.Vec2{}) {
+				e.AttachedChunk = id
+			}
+		}
+		imgui.EndCombo()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Rides this chunk: moving it — by hand here, by\nVelocity in play — carries this entity the same distance.")
+	}
+
+	if e.AttachedChunk == "" {
+		return
+	}
+	var attached *world.Chunk
+	for i := range lvl.Chunks {
+		if lvl.Chunks[i].ID == e.AttachedChunk {
+			attached = &lvl.Chunks[i]
+			break
+		}
+	}
+	switch {
+	case attached == nil:
+		editorTextWrapped("No chunk has this ID — the attachment does nothing.")
+	case attached.FrameOwner != e.Frame:
+		editorTextWrapped("This entity and the attached chunk are in different spaces, so it will not be carried.")
 	}
 }
 
@@ -363,8 +445,8 @@ func editorEntityModels(e *world.Entity) {
 
 	if e.Type != "" {
 		editorTextWrapped("This entity has a type, so what is changed here is " +
-			"stored in the level as an override on " + e.Type + ". Change " +
-			world.EntitiesDirName + "/" + e.Type + ".yaml instead and every one placed gets it.")
+			"stored in the level as an override on " + e.Type + ". Edit the type " +
+			"instead — Identity -> Edit Type — and every one placed gets it.")
 	}
 }
 
@@ -692,5 +774,96 @@ func editorDragFloat3Step(label string, values *[3]float32, min, max float32, fo
 		}
 	}
 	imgui.PopID()
+	return changed
+}
+
+// ---------- carried chunks ----------
+
+// editorEntityChunks draws the entity's chunk attachments: the world geometry
+// it carries with it (world/entity_chunk.go).
+//
+// Deliberately thinner than the entity editor's version of the same list. This
+// panel edits one placement, and the reason to touch an attachment from here is
+// to move a deck a few centimetres or to switch one off — laying out a ship's
+// interior is what the other window is for, and the note at the bottom says so.
+func editorEntityChunks(lvl *world.Level, e *world.Entity) {
+	if len(e.Chunks) == 0 {
+		editorTextWrapped("None. A chunk attachment gives the entity floors to stand on " +
+			"and walls to bump into, carried wherever it goes — a ship's hold, a lift car.")
+	}
+	for i := range e.Chunks {
+		if editorEntityChunkRow(lvl, e, i) {
+			return // the list was rewritten; resume next frame
+		}
+	}
+
+	if imgui.Button("Add Chunk##entchunkadd") {
+		EditorPushUndo()
+		e.Chunks = append(e.Chunks, world.EntityChunk{
+			Name:  world.UniqueEntityChunkName(e, "chunk"),
+			Scale: 1,
+		})
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A new attachment with no chunk file yet.\nPick one for it below.")
+	}
+
+	if e.Type != "" {
+		editorTextWrapped("This entity has a type, so a change here is stored in the level " +
+			"as an override on " + e.Type + " — and chunk attachments override as a whole " +
+			"list, not field by field. Edit the type instead unless this one placement " +
+			"really is different.")
+	}
+}
+
+// editorEntityChunkRow draws one attachment. Reports whether the list was
+// structurally changed, which ends the caller's iteration for this frame.
+func editorEntityChunkRow(lvl *world.Level, e *world.Entity, idx int) bool {
+	c := &e.Chunks[idx]
+	imgui.PushID(fmt.Sprintf("entchunk%d", idx))
+	defer imgui.PopID()
+
+	changed := false
+	editorPropGroupOpen(c.Name+"##hdr", func() {
+		imgui.Text("Chunk: " + world.EntityChunkID(e.ID, c.Name))
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("The ID this deck has in the level, and what a script\naddresses it by.")
+		}
+		imgui.SameLine()
+		if imgui.Button("x##cdel") {
+			EditorPushUndo()
+			e.Chunks = append(e.Chunks[:idx:idx], e.Chunks[idx+1:]...)
+			editorMaterializeEntityChunks(lvl, e)
+			changed = true
+			return
+		}
+
+		file := c.File
+		if entityChunkFileCombo("File##cfile", &file) {
+			EditorPushUndo()
+			c.File = file
+			editorMaterializeEntityChunks(lvl, e)
+		}
+
+		off := [3]float32{c.Offset.X(), c.Offset.Y(), c.Offset.Z()}
+		if editorDragFloat3Step("Offset##coff", &off, -10000, 10000, "%.3f", 0.05) {
+			c.Offset = mgl32.Vec3{off[0], off[1], off[2]}
+			editorMaterializeEntityChunks(lvl, e)
+		}
+		rot := mgl32.RadToDeg(c.Rotation)
+		if editorDragFloatStep("Rotation (deg)##crot", &rot, -360, 360, "%.1f", 1) {
+			c.Rotation = mgl32.DegToRad(rot)
+			editorMaterializeEntityChunks(lvl, e)
+		}
+		scale := c.EffectiveScale()
+		if editorDragFloatStep("Scale##cscale", &scale, 0.01, 100, "%.3f", 0.01) {
+			c.Scale = scale
+			editorMaterializeEntityChunks(lvl, e)
+		}
+		if imgui.Checkbox("Starts disabled##cdis", &c.Disabled) {
+			EditorPushUndo()
+			editorMaterializeEntityChunks(lvl, e)
+		}
+	})
 	return changed
 }

@@ -142,6 +142,23 @@ type RawVolume struct {
 	// LoadLevel makes the volume a level exit: the named level is loaded when
 	// the player walks in, with no script involved. See Volume.LoadLevel.
 	LoadLevel string `yaml:"load_level,omitempty"`
+	// Fog fills the region with fog. Absent is the ordinary case — a volume
+	// that is only a trigger. See Volume.Fog.
+	Fog *RawVolumeFog `yaml:"fog,omitempty"`
+}
+
+// RawVolumeFog is the fog filling a volume (volume_fog.go).
+//
+// Disabled rather than Enabled, so the zero value is "on": the block only
+// exists because someone added fog, and `fog: {}` meaning no fog would be a
+// trap. Same reasoning as RawFog.Disabled, which this deliberately mirrors — an
+// author who has written one should be able to guess the other.
+type RawVolumeFog struct {
+	Disabled bool `yaml:"disabled,omitempty"`
+
+	Color      *RawColor `yaml:"color,omitempty"`
+	Density    *float32  `yaml:"density,omitempty"`     // per world unit inside
+	MaxOpacity *float32  `yaml:"max_opacity,omitempty"` // default 1
 }
 
 // RawSprite is the YAML representation of a level sprite (sprite.go) — a
@@ -171,6 +188,26 @@ type RawSprite struct {
 	SheetRows     int        `yaml:"sheet_rows,omitempty"`
 	Frame         int        `yaml:"frame,omitempty"`
 	Attach        *RawAttach `yaml:"attach,omitempty"`
+}
+
+// RawScenery is the YAML representation of a placed static model
+// (scenery.go).
+//
+// Deliberately the shortest entry in the format. Bounds are not here because
+// they are read off the model, and neither tags, attributes nor a script are,
+// because a prop that needs any of those is an entity — see scenery.go.
+type RawScenery struct {
+	ID string `yaml:"id"`
+	// Model is the mesh file, install-relative: "models/barrel.fmdl".
+	Model    string  `yaml:"model"`
+	Position RawVec3 `yaml:"position"`
+	Rotation RawVec3 `yaml:"rotation,omitempty"`
+	// Scale is a pointer so an unwritten key means {1,1,1} rather than
+	// collapsing the model to nothing.
+	Scale *RawVec3 `yaml:"scale,omitempty"`
+	// Solid defaults to true when absent — scenery exists mostly to be walked
+	// around, so the flag is written only to switch collision off.
+	Solid *bool `yaml:"solid,omitempty"`
 }
 
 // RawEmitter is the YAML representation of a placed particle effect
@@ -253,14 +290,17 @@ type RawFloor struct {
 	// Skirt closes the band between this floor and whatever is under it — a
 	// storey's slab edge, or the face under an overhang. "" (the default) draws
 	// nothing, so a level that never asked for one round-trips unchanged.
-	Skirt        string     `yaml:"skirt,omitempty"`
-	SkirtTexture string     `yaml:"skirt_texture,omitempty"`
-	UVOffset     geom.Point `yaml:"uv_offset,omitempty"`
-	UVScale      geom.Point `yaml:"uv_scale,omitempty"`
-	UVRotation   float32    `yaml:"uv_rotation,omitempty"`
-	Detail       *RawDetail `yaml:"detail,omitempty"`
-	Smooth       bool       `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
-	SmoothAngle  float32    `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
+	Skirt        string `yaml:"skirt,omitempty"`
+	SkirtTexture string `yaml:"skirt_texture,omitempty"`
+	// Slab is the floor's thickness — the underside it grows and the rim round
+	// it. Absent is the plane; see slab.go.
+	Slab        *RawSlab   `yaml:"slab,omitempty"`
+	UVOffset    geom.Point `yaml:"uv_offset,omitempty"`
+	UVScale     geom.Point `yaml:"uv_scale,omitempty"`
+	UVRotation  float32    `yaml:"uv_rotation,omitempty"`
+	Detail      *RawDetail `yaml:"detail,omitempty"`
+	Smooth      bool       `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
+	SmoothAngle float32    `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
 }
 
 // RawCeiling is the YAML representation of a sector ceiling.
@@ -281,12 +321,40 @@ type RawCeiling struct {
 	Extrusions    []RawExtrusion    `yaml:"extrusions,omitempty"`
 	Openings      []RawOpening      `yaml:"openings,omitempty"` // holes cut through the surface; see Opening
 	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
-	UVOffset      geom.Point        `yaml:"uv_offset,omitempty"`
-	UVScale       geom.Point        `yaml:"uv_scale,omitempty"`
-	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
-	Detail        *RawDetail        `yaml:"detail,omitempty"`
-	Smooth        bool              `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
-	SmoothAngle   float32           `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
+	// Slab is the ceiling's thickness — the top side it grows and the rim
+	// round it. Absent is the plane; see slab.go.
+	Slab        *RawSlab   `yaml:"slab,omitempty"`
+	UVOffset    geom.Point `yaml:"uv_offset,omitempty"`
+	UVScale     geom.Point `yaml:"uv_scale,omitempty"`
+	UVRotation  float32    `yaml:"uv_rotation,omitempty"`
+	Detail      *RawDetail `yaml:"detail,omitempty"`
+	Smooth      bool       `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
+	SmoothAngle float32    `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
+}
+
+// RawSlab is the YAML representation of a floor's or a ceiling's thickness (see
+// slab.go). Absent means the surface is the bare plane it has always been, so a
+// level that never asked for a slab round-trips byte-identically.
+type RawSlab struct {
+	Thickness    float32 `yaml:"thickness"`
+	Hidden       bool    `yaml:"hidden,omitempty"`
+	Texture      string  `yaml:"texture,omitempty"` // "" = the surface's own
+	BlendTexture string  `yaml:"blend_texture,omitempty"`
+	BlendMask    string  `yaml:"blend_mask,omitempty"`
+	RimTexture   string  `yaml:"rim_texture,omitempty"` // "" = texture
+	// RimAcrossPortals builds the rim over portal edges as well as ordinary
+	// ones — off by default because a portal's neighbour draws the same band
+	// in the same place (see slab.go). On is for an author who wants a slab's
+	// edge sealed even where it would normally continue into another sector.
+	RimAcrossPortals bool       `yaml:"rim_across_portals,omitempty"`
+	DoubleSided      bool       `yaml:"double_sided,omitempty"`
+	UVOffset         geom.Point `yaml:"uv_offset,omitempty"`
+	UVScale          geom.Point `yaml:"uv_scale,omitempty"`
+	UVRotation       float32    `yaml:"uv_rotation,omitempty"`
+	// Mesh is the far face's own shape. Absent means it mirrors the surface's,
+	// which is what nearly every slab does — so shaping one costs a level file
+	// nothing until somebody actually does it.
+	Mesh *RawSurfaceMesh `yaml:"mesh,omitempty"`
 }
 
 // RawSurfaceMesh is the YAML representation of a surface's editable mesh (see
@@ -387,6 +455,11 @@ type RawChunk struct {
 	Origin        RawChunkOrigin        `yaml:"origin"`
 	Rotation      float32               `yaml:"rotation"`
 	Scale         float32               `yaml:"scale"`
+	// Velocity is world units per second added to Origin during play, for a
+	// chunk that moves on its own — a lift, a barge, a closing wall. Omitted
+	// for the still chunk every level is mostly made of, so a level written
+	// before it existed round-trips byte-identical. See Chunk.Velocity.
+	Velocity RawVec3 `yaml:"velocity,omitempty"`
 	// Frame names the entity whose local space this chunk's geometry is
 	// authored in — a vehicle interior, carried around the world by whatever
 	// owns it. Omitted is the ordinary case: a chunk placed directly in world
@@ -454,6 +527,11 @@ type RawBiomeBrush struct {
 	SandHeight float32   `yaml:"sand_height,omitempty"`
 	WaterDepth float32   `yaml:"water_depth,omitempty"`
 	Water      *RawWater `yaml:"water,omitempty"` // Water kind only; absent = DefaultWaterParams
+
+	// Water kind only: drop the lakebed patch under the surface. Plain
+	// omitempty bool for the same reason as MossScatter below — the zero value
+	// (lakebed shown) is the pre-existing look, so no migration is needed.
+	HideLakebed bool `yaml:"hide_lakebed,omitempty"`
 
 	// Moss kind only: whether the optional clump scatter rides on top of the
 	// ground patch. Plain omitempty bool — the meaningful default (patch
@@ -677,10 +755,80 @@ type RawLevel struct {
 	// Emitters are the level's placed particle effects (emitter.go), beside
 	// sprites for the same reasons.
 	Emitters []RawEmitter `yaml:"emitters,omitempty"`
+	// Scenery are the level's placed static models (scenery.go). Level-scoped
+	// rather than chunk-scoped for the volumes' reason: a prop is placed in
+	// world space, and a chunk boundary is not something an author aims at
+	// while scattering rocks along a path.
+	Scenery []RawScenery `yaml:"scenery,omitempty"`
 	// Sounds are the level's placed sound sources (sound.go), beside emitters
 	// for the same reasons — one attached to a moving entity crosses chunks.
 	Sounds []RawSound `yaml:"sounds,omitempty"`
 	// Music is the level's global track, if it has one.
-	Music  *RawMusic `yaml:"music,omitempty"`
-	Lights RawLights `yaml:"lights"`
+	Music *RawMusic `yaml:"music,omitempty"`
+	// Sky and Fog are the level's environment (sky.go, fog.go). Pointers, and
+	// beside Music rather than inside Lights, for the same two reasons: there
+	// is at most one of each and it belongs to no object, and a level that has
+	// never had one must write no block at all — an absent `sky:` is what keeps
+	// every level authored before this looking exactly as it did.
+	Sky *RawSky `yaml:"sky,omitempty"`
+	Fog *RawFog `yaml:"fog,omitempty"`
+	// Player is this level's tuning for the body it starts (player_settings.go).
+	// A pointer for the reason Sky and Fog are: the player is engine-owned, so
+	// a level that never wanted to say anything about it writes no block at all
+	// and gets exactly the movement every level had before the block existed.
+	Player *RawPlayer `yaml:"player,omitempty"`
+	Lights RawLights  `yaml:"lights"`
+}
+
+// RawPlayer is the level's `player:` block — see PlayerSettings.
+//
+// Every key is a pointer so that absent and zero stay distinct, the way
+// RawEntity's bounds overrides are: the block exists the moment an author sets
+// one number in it, and the keys they did not touch must keep following the
+// engine's default rather than being frozen at zero by having been written out.
+type RawPlayer struct {
+	// StepHeight is the tallest riser the player walks up rather than being
+	// stopped by, in world units. Absent or non-positive means the body's own
+	// height.
+	StepHeight *float32 `yaml:"step_height,omitempty"`
+}
+
+// RawSky is the level's sky (sky.go).
+//
+// Faces is a flat six-element list in GL face order rather than six named keys,
+// because that is the order the upload wants and a named-key block invites
+// exactly one of them to be misspelled and silently absent. Writing the names
+// out at all — rather than a base name the engine expands — is what lets
+// cmd/foundrypack see which textures the level reaches; a base name indexes
+// nothing.
+type RawSky struct {
+	Kind  string   `yaml:"kind,omitempty"`  // gradient (default) | cubemap
+	Faces []string `yaml:"faces,omitempty"` // +X, -X, +Y, -Y, +Z, -Z
+
+	Zenith  *RawColor `yaml:"zenith,omitempty"`
+	Horizon *RawColor `yaml:"horizon,omitempty"`
+	Ground  *RawColor `yaml:"ground,omitempty"`
+
+	Tint      *RawColor `yaml:"tint,omitempty"`
+	Intensity *float32  `yaml:"intensity,omitempty"` // default 1
+	Rotation  float32   `yaml:"rotation,omitempty"`  // degrees about +Y
+}
+
+// RawFog is the level's distance fog (fog.go).
+//
+// Disabled, rather than Enabled, so the zero value is "on" — the block only
+// exists because someone added fog, and `fog: {}` meaning no fog would be a
+// trap. Same reasoning as RawGlobalLight.Disabled.
+type RawFog struct {
+	Mode     string `yaml:"mode,omitempty"` // linear (default) | exp | exp2
+	Disabled bool   `yaml:"disabled,omitempty"`
+
+	Color   *RawColor `yaml:"color,omitempty"`
+	Start   float32   `yaml:"start,omitempty"`
+	End     *float32  `yaml:"end,omitempty"`     // linear only
+	Density *float32  `yaml:"density,omitempty"` // exp/exp2 only
+
+	MaxOpacity *float32 `yaml:"max_opacity,omitempty"` // default 1
+	SkyBlend   *float32 `yaml:"sky_blend,omitempty"`
+	SkyFalloff *float32 `yaml:"sky_falloff,omitempty"`
 }

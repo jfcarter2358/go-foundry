@@ -1074,3 +1074,23 @@ func glslFloatConst(t *testing.T, shader, name string) float64 {
 	}
 	return v
 }
+
+// TestGroundPatchVisibleOnlyWaterCanHideIt guards the asymmetry: for every
+// land kind the patch IS the biome, so nothing may switch it off. Water is the
+// one kind whose patch is scenery underneath something else, so it is the one
+// kind the toggle applies to — and a HideLakebed left over on a sector whose
+// brush was switched to another kind must be ignored, not obeyed.
+func TestGroundPatchVisibleOnlyWaterCanHideIt(t *testing.T) {
+	for _, kind := range allBiomeKinds {
+		hidden := world.BiomeBrush{Kind: kind, HideLakebed: true}
+		got := BiomeGroundPatchVisible(&hidden)
+		want := kind != world.BiomeWater
+		if got != want {
+			t.Errorf("kind %d with HideLakebed: visible = %v, want %v", kind, got, want)
+		}
+		shown := world.BiomeBrush{Kind: kind}
+		if !BiomeGroundPatchVisible(&shown) {
+			t.Errorf("kind %d without HideLakebed: patch is not drawn", kind)
+		}
+	}
+}

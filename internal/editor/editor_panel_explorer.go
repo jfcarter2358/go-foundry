@@ -68,6 +68,7 @@ func editorExplorerSection(lvl *world.Level, kind editorPanelKind) {
 	editorExplorerEntityNodes(lvl)
 	editorExplorerVolumeNodes(lvl)
 	editorExplorerSpriteNodes(lvl)
+	editorExplorerSceneryNodes(lvl)
 	editorExplorerEmitterNodes(lvl)
 	editorExplorerSoundNodes(lvl)
 	editorExplorerLightNodes(lvl)
@@ -97,6 +98,11 @@ func editorExplorerPlacementBanner() {
 	case Editor.SpawnPlacementMode:
 		label = "Click in the view to place the spawn point"
 		cancel = func() { Editor.SpawnPlacementMode = false }
+	case Editor.BrushActive:
+		// Worded as a mode rather than as a single click, because it is one:
+		// the brush stays armed and every click places another copy.
+		label = "Brushing " + Editor.BrushModel + " — click to place, Escape to stop"
+		cancel = editorDisarmBrush
 	case Editor.BiomeDrawing:
 		label = fmt.Sprintf("Drawing a biome sector: %d corners (Enter to finish)",
 			len(Editor.BiomeDrawPoints))
@@ -244,6 +250,14 @@ func editorExplorerChunkNodes(lvl *world.Level) {
 			// never appear. See world/chunk_enable.go.
 			label += "  (disabled)"
 		}
+		if ch.FromEntity != "" {
+			// Not the level's geometry: an entity type's, materialised here
+			// when the entity was placed (world/entity_chunk.go). Saying so
+			// matters because editing it is editing nothing durable — the
+			// chunk is rebuilt from the definition on every load, and the
+			// level file never mentions it.
+			label += "  (from " + ch.FromEntity + ")"
+		}
 		if i == Editor.ActiveChunkIdx {
 			label += "  (active)"
 		}
@@ -280,9 +294,18 @@ func editorExplorerChunkNodes(lvl *world.Level) {
 			if imgui.MenuItem("Export...") {
 				export = i
 			}
-			imgui.Separator()
-			if imgui.MenuItem("Delete") {
-				remove = i
+			if ch.FromEntity != "" {
+				// Deleting one here would be undone by the next load, which
+				// rebuilds it from the definition. The place to remove a deck
+				// is the type that carries it.
+				if imgui.MenuItem("Edit Carrying Type...") {
+					editorOpenTypeCarrying(lvl, ch.FromEntity)
+				}
+			} else {
+				imgui.Separator()
+				if imgui.MenuItem("Delete") {
+					remove = i
+				}
 			}
 		})
 		if open {
@@ -328,14 +351,46 @@ func editorExplorerSectorNodes(ch *world.Chunk, chunkIdx int) {
 	if !editorExplorerCategory(fmt.Sprintf("Sectors (%d)##sectors", len(ch.Sectors)), panelFocusSector) {
 		return
 	}
+	remove := -1
 	for i := range ch.Sectors {
 		selected := chunkIdx == Editor.ActiveChunkIdx && i == Editor.ActiveSectorIdx &&
 			!Editor.ChunkSelected
 		if editorExplorerLeaf(fmt.Sprintf("%s##sec%d", ch.Sectors[i].ID, i), selected, panelFocusSector) {
 			editorSelectSector(chunkIdx, i)
 		}
+		editorExplorerMenu(fmt.Sprintf("secctx%d", i), func() {
+			if imgui.MenuItem("Delete") {
+				remove = i
+			}
+		})
+	}
+	// Acted on outside the loop: it rewrites the slice being walked.
+	if remove >= 0 {
+		EditorPushUndo()
+		deleteSector(ch, chunkIdx, remove)
 	}
 	imgui.TreePop()
+}
+
+// deleteSector removes one sector from a chunk, keeping its chunk points as
+// free vertices — the same bargain the map's Delete-on-a-wall-edge makes
+// (removeSectorKeepPoints), because the points are usually shared with the
+// neighbours that are staying.
+//
+// The selection goes with it: the indices above the removed sector all shift
+// down, so a stale ActiveSectorIdx would point at the wrong room rather than
+// at nothing.
+func deleteSector(ch *world.Chunk, chunkIdx, si int) {
+	if si < 0 || si >= len(ch.Sectors) {
+		return
+	}
+	removeSectorKeepPoints(ch, si)
+	if chunkIdx == Editor.ActiveChunkIdx {
+		Editor.ActiveSectorIdx = -1
+		Editor.ActiveEdgeIdx = -1
+		Editor.ActiveEdgeKind = ""
+		clearVertexSelection()
+	}
 }
 
 // editorExplorerBiomeNodes draws a chunk's painted biome sectors.
@@ -698,6 +753,10 @@ func editorExplorerAddMenu(lvl *world.Level, kind editorPanelKind) {
 		editorSpriteAddMenu()
 		imgui.EndMenu()
 	}
+	if imgui.BeginMenu("Scenery") {
+		editorSceneryAddMenu()
+		imgui.EndMenu()
+	}
 	if imgui.BeginMenu("Emitter") {
 		editorEmitterAddMenu()
 		imgui.EndMenu()
@@ -833,6 +892,97 @@ func editorExplorerSpriteNodes(lvl *world.Level) {
 		deleteActiveSprite()
 	}
 }
+
+// ---------- scenery ----------
+
+// editorExplorerSceneryNodes draws the level's placed props.
+//
+// A brush makes hundreds of these, so the list is capped: past the cap the rows
+// stop and a line says how many were not drawn. An Explorer that renders two
+// thousand tree nodes costs more per frame than everything else in the panel
+// put together, and scrolling to prop 1,700 was never how one gets selected —
+// clicking it in the viewport is.
+func editorExplorerSceneryNodes(lvl *world.Level) {
+	if !editorExplorerCategory(fmt.Sprintf("Scenery (%d)##scenery", len(lvl.Scenery)), panelFocusScenery) {
+		return
+	}
+	defer imgui.TreePop()
+
+	if len(lvl.Scenery) == 0 {
+		editorTextMuted("(none)")
+		return
+	}
+	shown := len(lvl.Scenery)
+	if shown > explorerSceneryRowCap {
+		shown = explorerSceneryRowCap
+	}
+	// The rows to draw: the first `shown`, plus the selection when it is past
+	// them. Appended rather than extending the window, so selecting prop 1,700
+	// draws 201 rows instead of 1,700 — otherwise the cap would be no cap at
+	// all for exactly the level it exists for.
+	rows := make([]int, 0, shown+1)
+	for i := 0; i < shown; i++ {
+		rows = append(rows, i)
+	}
+	if Editor.ActiveSceneryIdx >= shown && Editor.ActiveSceneryIdx < len(lvl.Scenery) {
+		rows = append(rows, Editor.ActiveSceneryIdx)
+	}
+
+	del, dup := -1, -1
+	for _, i := range rows {
+		sc := &lvl.Scenery[i]
+		label := sc.ID
+		if label == "" {
+			label = "(unnamed)"
+		}
+		// What the row says beyond the name is what would otherwise send an
+		// author clicking through a field of rocks to find the one that is
+		// wrong: the model that would not load, and the one you can walk
+		// through.
+		if !sc.HasGeometry() {
+			label += "  (no mesh)"
+		} else if !sc.Solid {
+			label += "  (not solid)"
+		}
+		if editorExplorerLeaf(fmt.Sprintf("%s##sc%d", label, i), i == Editor.ActiveSceneryIdx, panelFocusScenery) {
+			editorSelectScenery(i)
+		}
+		editorExplorerMenu(fmt.Sprintf("scctx%d", i), func() {
+			solid := sc.Solid
+			if imgui.MenuItemV("Solid", "", solid, true) {
+				EditorPushUndo()
+				sc.Solid = !solid
+			}
+			if imgui.MenuItem("Use As Brush") {
+				Editor.BrushRotation = sc.Rotation
+				Editor.BrushScale = sc.EffectiveScale().X()
+				Editor.BrushSolid = sc.Solid
+				editorArmBrush(sc.Model)
+			}
+			if imgui.MenuItem("Duplicate") {
+				dup = i
+			}
+			imgui.Separator()
+			if imgui.MenuItem("Delete") {
+				del = i
+			}
+		})
+	}
+	if n := len(lvl.Scenery) - len(rows); n > 0 {
+		editorTextMuted(fmt.Sprintf("(%d more — click one in the 3D view to select it)", n))
+	}
+	if dup >= 0 {
+		editorSelectScenery(dup)
+		duplicateActiveScenery()
+	}
+	if del >= 0 {
+		editorSelectScenery(del)
+		deleteActiveScenery()
+	}
+}
+
+// explorerSceneryRowCap is how many prop rows the tree will draw — see above.
+const explorerSceneryRowCap = 200
 
 // ---------- emitters ----------
 
@@ -995,4 +1145,20 @@ func editorExplorerSoundNodes(lvl *world.Level) {
 func soundClipLoads(name string) bool {
 	_, err := audio.ClipFor(name)
 	return err == nil
+}
+
+// editorOpenTypeCarrying opens the entity editor on whatever type brought a
+// materialised chunk into this level, or on the entity itself when it is a
+// blank one authored in the level rather than an instance of a type.
+func editorOpenTypeCarrying(lvl *world.Level, entityID string) {
+	e := world.FindEntity(lvl, entityID)
+	if e == nil {
+		editorSetStatus("No entity called %q carries that chunk any more", entityID)
+		return
+	}
+	if e.Type == "" {
+		OpenEntityEditorFrom(e)
+		return
+	}
+	OpenEntityEditorOn(e.Type)
 }

@@ -57,6 +57,7 @@ func DebugRenderOverlay() {
 		imgui.Text(fmt.Sprintf("Chunks:       %d loaded / %d drawn", DebugStats.ChunksLoaded, DebugStats.ChunksDrawn))
 		imgui.Text(fmt.Sprintf("Sprites:      %d quads / %d particles / %d draws",
 			DebugStats.Sprites, DebugStats.Particles, DebugStats.SpriteDraws))
+		imgui.Text(fmt.Sprintf("Scenery:      %d drawn", DebugStats.Scenery))
 		imgui.Separator()
 
 		// The editor flies a free camera and leaves PlayerEntity parked
@@ -66,8 +67,23 @@ func DebugRenderOverlay() {
 			c := gfx.Cam.Position
 			imgui.Text(fmt.Sprintf("Camera:       %.2f, %.2f, %.2f", c.X(), c.Y(), c.Z()))
 		} else if world.PlayerEntity != nil {
-			p := world.PlayerEntity.Position
+			pe := world.PlayerEntity
+			p := pe.Position
 			imgui.Text(fmt.Sprintf("Position:     %.2f, %.2f, %.2f", p.X(), p.Y(), p.Z()))
+			// A rider stores its position in its frame's coordinates, so that
+			// number is not a place in the world at all — on a ship's deck it
+			// reads as a wild coordinate with no way to tell it is not one.
+			// The eye is the same point carried out, so report both.
+			if pe.Frame != "" {
+				c := gfx.Cam.Position
+				imgui.Text(fmt.Sprintf("  world (eye):%.2f, %.2f, %.2f", c.X(), c.Y(), c.Z()))
+			}
+			imgui.Text(fmt.Sprintf("Frame:        %s%s", frameLabel(pe.Frame), seatLabel(pe.Seat)))
+			// The pair portal-visibility culling starts its search from, which
+			// is what makes them worth a line: when they change, so does the
+			// set of sectors drawn, and a value that alternates between two
+			// answers on alternate frames is a strobing interior.
+			imgui.Text(fmt.Sprintf("Standing in:  %s / %s", orNone(pe.CurrentChunk), orNone(pe.CurrentSector)))
 		} else {
 			imgui.Text("Position:     N/A")
 		}
@@ -113,4 +129,27 @@ func onOff(b bool) string {
 		return "ON "
 	}
 	return "OFF"
+}
+
+// frameLabel names the coordinate system the player's position is expressed in.
+// The world frame is stored as "", which is not a thing to show anyone.
+func frameLabel(id string) string {
+	if id == "" {
+		return "world"
+	}
+	return id
+}
+
+func seatLabel(seat string) string {
+	if seat == "" {
+		return ""
+	}
+	return "  seat=" + seat
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

@@ -51,6 +51,13 @@ var (
 	texEditorDragStart [2]int
 )
 
+// Bump-channel view state. texEditorBumpShowNormal swaps the canvas between
+// the height field being painted and the normal map derived from it — the
+// height is what the brush writes, the normal map is what the engine
+// samples, and being able to see the second while painting the first is how
+// you tell whether the strength is anywhere near right.
+var texEditorBumpShowNormal bool
+
 // texEditorShowUVLayout draws the open model's UV islands over the canvas, so a
 // texture unwrapped from a mesh can be painted region by region instead of
 // blind. On by default: the overlay only appears at all when the model editor
@@ -188,15 +195,32 @@ func texEditorRefreshPreview() {
 
 	flat := ed.Doc.Flatten()
 	rgba := texture.RgbaFromPaletted(flat)
+
+	// The canvas shows whichever channel is being painted. On the bump
+	// channel that is the height field or the normal map derived from it —
+	// never the albedo, which would leave a brush stroke with nothing visible
+	// happening under it.
+	shown := rgba
+	if ed.Doc.Channel() == texdoc.ChanBump {
+		if texEditorBumpShowNormal {
+			shown = ed.Doc.NormalMap()
+		} else {
+			shown = ed.Doc.HeightImageFrame(ed.Doc.ActiveFrameIndex())
+		}
+	}
 	gl.BindTexture(gl.TEXTURE_2D, texEditorPreview)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, int32(ed.Doc.W), int32(ed.Doc.H), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(rgba.Pix))
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, int32(ed.Doc.W), int32(ed.Doc.H), 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(shown.Pix))
 
 	if ed.BoundTexture != "" {
 		gfx.UpdateTextureHasAlpha(ed.BoundTexture, &ed.Doc.Pal, flat)
 		gfx.QueueTextureUpload(ed.BoundTexture, rgba)
 		gfx.TouchAnimatedTexture(ed.BoundTexture)
+		if ed.BumpDirty {
+			texture.SyncLiveNormalMap(ed.Doc, ed.BoundTexture)
+		}
 	}
 	ed.PreviewDirty = false
+	ed.BumpDirty = false
 }
 
 // ---------- keyboard shortcuts ----------
@@ -309,7 +333,13 @@ func drawTextureEditorUI() {
 	imgui.BeginChildV("##texeditor_left", imgui.Vec2{X: 200, Y: 0}, true, 0)
 	drawToolsPanel()
 	imgui.Separator()
-	drawPalettePanel()
+	drawChannelPanel()
+	imgui.Separator()
+	if ActiveTexEditor.Doc.Channel() == texdoc.ChanBump {
+		drawHeightPanel()
+	} else {
+		drawPalettePanel()
+	}
 	imgui.EndChild()
 
 	imgui.SameLine()
@@ -599,6 +629,122 @@ func drawToolsPanel() {
 	}
 }
 
+// ---------- channel panel ----------
+
+// drawChannelPanel picks which of the document's two layer stacks the tools
+// paint on, and carries the bump channel's own settings.
+//
+// The two channels share every tool, every layer control and the whole undo
+// stack — a height field is painted with the same brush, line and fill a
+// colour is, because it is the same kind of thing: one byte per texel. All
+// that changes is what the byte means and what the canvas shows.
+func drawChannelPanel() {
+	ed := ActiveTexEditor
+	d := ed.Doc
+
+	imgui.Text("Channel")
+	for _, c := range []struct {
+		name string
+		ch   texdoc.TexChannel
+	}{{"Color", texdoc.ChanColor}, {"Bump", texdoc.ChanBump}} {
+		// Same push/pop-before-the-click discipline as the tool buttons: the
+		// selection must be read once, before the click can change it, or the
+		// style stack unbalances.
+		selected := d.Channel() == c.ch
+		if selected {
+			imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
+		}
+		if imgui.ButtonV(c.name, imgui.Vec2{X: 88, Y: 0}) && !selected {
+			ed.SetChannel(c.ch)
+		}
+		if selected {
+			imgui.PopStyleColor()
+		}
+		if c.ch == texdoc.ChanColor {
+			imgui.SameLine()
+		}
+	}
+
+	if d.Channel() != texdoc.ChanBump {
+		if d.HasBump() {
+			imgui.PushTextWrapPos()
+			imgui.Text("This texture has a bump map.")
+			imgui.PopTextWrapPos()
+		}
+		return
+	}
+
+	imgui.PushTextWrapPos()
+	imgui.Text("Painting height: lighter is higher. The engine samples the normal map derived from it, not the height itself.")
+	imgui.PopTextWrapPos()
+
+	strength := d.BumpStrength()
+	imgui.SetNextItemWidth(-1)
+	if imgui.SliderFloat("##bumpstrength", &strength, 0.25, texdoc.MaxBumpStrength) {
+		ed.SetBumpStrength(strength)
+	}
+	imgui.Text(fmt.Sprintf("Strength %.2f", d.BumpStrength()))
+
+	if imgui.Checkbox("Show normal map", &texEditorBumpShowNormal) {
+		ed.PreviewDirty = true
+	}
+
+	if imgui.Button("Delete Bump Map") {
+		ed.DisableBump()
+		texEditorStatus("Bump map deleted (Ctrl+Z to bring it back) — save to remove it from the world")
+	}
+}
+
+// ---------- height panel ----------
+
+// drawHeightPanel replaces the palette grid while the bump channel is being
+// painted. A height is not a palette index — the bump channel stores the
+// value straight, which is what keeps it out of reach of a palette edit or a
+// remap — so it gets a grayscale ramp of its own rather than 256 swatches
+// that happen to have colours in them.
+func drawHeightPanel() {
+	ed := ActiveTexEditor
+	imgui.Text("Height")
+
+	const cell = float32(14)
+	spacing := float32(2)
+	imgui.PushStyleVarVec2(imgui.StyleVarItemSpacing, imgui.Vec2{X: spacing, Y: spacing})
+	perRow := int((imgui.ContentRegionAvail().X + spacing) / (cell + spacing))
+	if perRow < 1 {
+		perRow = 1
+	}
+	// 32 stops rather than all 256: the ramp is a coarse picker, and the
+	// slider below reaches every value in between.
+	const stops = 32
+	for i := 0; i < stops; i++ {
+		if i%perRow != 0 {
+			imgui.SameLine()
+		}
+		v := uint8(i * 255 / (stops - 1))
+		g := float32(v) / 255
+		imgui.PushID(fmt.Sprintf("heightstop%d", i))
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: g, Y: g, Z: g, W: 1})
+		if imgui.ButtonV("##hstop", imgui.Vec2{X: cell, Y: cell}) {
+			ed.BumpIdx = v
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip(fmt.Sprintf("Height %d", v))
+		}
+		imgui.PopStyleColor()
+		imgui.PopID()
+	}
+	imgui.PopStyleVar()
+
+	h := int32(ed.BumpIdx)
+	imgui.SetNextItemWidth(-1)
+	if imgui.SliderInt("##heightvalue", &h, 0, 255) {
+		ed.BumpIdx = uint8(h)
+	}
+	imgui.PushTextWrapPos()
+	imgui.Text(fmt.Sprintf("Height %d. 0 is \"nothing here\" — it lets the layers below show through, the way palette slot 0 does on the color channel. The eraser writes it.", ed.BumpIdx))
+	imgui.PopTextWrapPos()
+}
+
 // ---------- palette panel ----------
 
 func drawPalettePanel() {
@@ -862,18 +1008,34 @@ func drawFramesPanel() {
 
 var texEditorBlendNames = []string{"Normal", "Multiply", "Add", "Screen"}
 
+// texEditorLayerNoun names a new layer after the channel it lands on, so a
+// document's two stacks don't both fill up with "Layer 3".
+func texEditorLayerNoun(d *texdoc.TexDoc) string {
+	if d.Channel() == texdoc.ChanBump {
+		return "Height"
+	}
+	return "Layer"
+}
+
 func drawLayersPanel() {
 	ed := ActiveTexEditor
 	d := ed.Doc
+	// Each channel has its own layer stack in each frame, so the heading has
+	// to say which one is on screen — otherwise switching channels looks like
+	// the layers were silently replaced.
+	channel := "Color"
+	if d.Channel() == texdoc.ChanBump {
+		channel = "Bump"
+	}
 	if d.FrameCount() > 1 {
-		imgui.Text(fmt.Sprintf("Layers (%d/%d) — frame %d/%d", len(d.Layers), texdoc.TexMaxLayers, d.ActiveFrameIndex()+1, d.FrameCount()))
+		imgui.Text(fmt.Sprintf("%s layers (%d/%d) — frame %d/%d", channel, len(d.Layers), texdoc.TexMaxLayers, d.ActiveFrameIndex()+1, d.FrameCount()))
 	} else {
-		imgui.Text(fmt.Sprintf("Layers (%d/%d)", len(d.Layers), texdoc.TexMaxLayers))
+		imgui.Text(fmt.Sprintf("%s layers (%d/%d)", channel, len(d.Layers), texdoc.TexMaxLayers))
 	}
 
 	imguibackend.EditorPushDisabled(len(d.Layers) >= texdoc.TexMaxLayers)
 	if imgui.Button("Add") {
-		if err := ed.AddLayer(fmt.Sprintf("Layer %d", len(d.Layers)+1)); err != nil {
+		if err := ed.AddLayer(fmt.Sprintf("%s %d", texEditorLayerNoun(d), len(d.Layers)+1)); err != nil {
 			texEditorStatus(err.Error())
 		}
 	}
@@ -905,6 +1067,7 @@ func drawLayersPanel() {
 		if imgui.Checkbox("##vis", &visible) {
 			l.Visible = visible
 			ed.PreviewDirty = true
+			ed.BumpDirty = true
 		}
 		imgui.SameLine()
 		selected := i == d.Active
@@ -922,6 +1085,7 @@ func drawLayersPanel() {
 		if imgui.SliderFloat("Opacity##op", &opacity, 0, 1) {
 			l.Opacity = opacity
 			ed.PreviewDirty = true
+			ed.BumpDirty = true
 		}
 
 		blend := int32(l.Blend)
@@ -929,6 +1093,7 @@ func drawLayersPanel() {
 		if imgui.Combo("Blend##bl", &blend, texEditorBlendNames) {
 			l.Blend = texdoc.TexBlend(blend)
 			ed.PreviewDirty = true
+			ed.BumpDirty = true
 		}
 
 		imguibackend.EditorPushDisabled(i == len(d.Layers)-1)
@@ -1085,9 +1250,13 @@ func drawTexEditorUVLayout(dl imgui.DrawList, topLeft imgui.Vec2, canvasW, canva
 func texEditorHandlePaintInput(ed *texture.TexEditorState, tx, ty int, active bool) {
 	leftDown := imgui.IsMouseDown(0) && active
 
+	// The tools write whatever the checked-out channel's picker is loaded
+	// with: a palette index on the color channel, a height on the bump one.
+	paintIdx := ed.PaintIndex()
+
 	switch ed.Tool {
 	case texture.ToolBrush, texture.ToolEraser, texture.ToolSpray:
-		idx := ed.PrimaryIdx
+		idx := paintIdx
 		if ed.Tool == texture.ToolEraser {
 			idx = 0
 		}
@@ -1109,7 +1278,7 @@ func texEditorHandlePaintInput(ed *texture.TexEditorState, tx, ty int, active bo
 	case texture.ToolFill:
 		if leftDown && !texEditorPainting {
 			ed.BeginStroke()
-			ed.Fill(tx, ty, ed.PrimaryIdx)
+			ed.Fill(tx, ty, paintIdx)
 			ed.EndStroke()
 			texEditorPainting = true // one fill per mouse-down, not per frame
 		} else if !leftDown {
@@ -1125,9 +1294,9 @@ func texEditorHandlePaintInput(ed *texture.TexEditorState, tx, ty int, active bo
 		} else if texEditorPainting {
 			ed.BeginStroke()
 			if ed.Tool == texture.ToolLine {
-				ed.StampLine(texEditorDragStart[0], texEditorDragStart[1], tx, ty, ed.PrimaryIdx)
+				ed.StampLine(texEditorDragStart[0], texEditorDragStart[1], tx, ty, paintIdx)
 			} else {
-				ed.StampRect(texEditorDragStart[0], texEditorDragStart[1], tx, ty, ed.PrimaryIdx, false)
+				ed.StampRect(texEditorDragStart[0], texEditorDragStart[1], tx, ty, paintIdx, false)
 			}
 			ed.EndStroke()
 			texEditorPainting = false
@@ -1136,7 +1305,7 @@ func texEditorHandlePaintInput(ed *texture.TexEditorState, tx, ty int, active bo
 	case texture.ToolEyedropper:
 		if leftDown {
 			if idx, ok := ed.Eyedropper(tx, ty); ok {
-				ed.PrimaryIdx = idx
+				ed.SetPaintIndex(idx)
 			}
 		}
 	}

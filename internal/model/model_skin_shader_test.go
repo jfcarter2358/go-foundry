@@ -81,13 +81,31 @@ func TestSkinIsGatedOnTheUniformNotTheWeights(t *testing.T) {
 	}
 }
 
-// TestModelEditorShaderDoesNotSkin pins the CPU/GPU split: the editor deforms on
-// the CPU into the array its wireframe and picking read, so a second
-// implementation in model_vert.glsl would be a second thing to keep in step.
-func TestModelEditorShaderDoesNotSkin(t *testing.T) {
+// TestModelEditorShaderUsesSharedSkinning pins the one-implementation rule.
+//
+// model_vert.glsl is the headlight shader both the model editor and the entity
+// editor draw through, and the second of those previews an entity's attachments
+// straight from the buffers EntityModel.Load uploaded — which are rigged. So it
+// deforms on the GPU, and it must do that by *calling* skin_common.glsl rather
+// than by growing a copy of it: two implementations of linear blend skinning is
+// exactly what the shared file exists to prevent.
+//
+// The model editor is unaffected. It still deforms its own document on the CPU,
+// into the array its wireframe and picking read, and simply never turns the
+// `skinned` uniform on — see modelSkinUniforms.
+func TestModelEditorShaderUsesSharedSkinning(t *testing.T) {
 	src := testenv.RepoFile(t, "resources", "shaders", "model_vert.glsl")
-	if strings.Contains(src, "skinPosition") {
-		t.Error("model_vert.glsl skins; the model editor is supposed to deform on the CPU")
+	for _, call := range []string{"skinPosition(", "skinNormal("} {
+		if !strings.Contains(src, call) {
+			t.Errorf("model_vert.glsl does not call %s — a rigged attachment would preview in its rest pose", call)
+		}
+	}
+	// Declaring either helper here rather than calling the shared one is the
+	// failure this test is really for.
+	for _, decl := range []string{"vec4 skinPosition", "vec3 skinNormal", "mat4 skinMatrix"} {
+		if strings.Contains(src, decl) {
+			t.Errorf("model_vert.glsl defines %s itself; it must come from skin_common.glsl", decl)
+		}
 	}
 }
 

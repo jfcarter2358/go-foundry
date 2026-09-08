@@ -127,6 +127,7 @@ var scriptHLPalette = map[flang.Class]imgui.Vec4{
 	flang.ClassAtom:     {X: 0.94, Y: 0.44, Z: 0.47, W: 1},
 	flang.ClassBuiltin:  {X: 1.00, Y: 0.80, Z: 0.42, W: 1},
 	flang.ClassAddress:  {X: 0.54, Y: 0.87, Z: 1.00, W: 1},
+	flang.ClassParam:    {X: 0.45, Y: 0.87, Z: 0.76, W: 1},
 	flang.ClassOperator: {X: 0.62, Y: 0.68, Z: 0.75, W: 1},
 	flang.ClassInvalid:  {X: 1.00, Y: 0.35, Z: 0.35, W: 1},
 }

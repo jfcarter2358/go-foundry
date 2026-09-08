@@ -251,6 +251,35 @@ ui:
   - hud
 
 # ============================================================
+# Environment
+# ============================================================
+# Both blocks are optional; a level that omits them renders as every level did
+# before skies and fog existed. Gradient rather than `kind: cubemap` here
+# because it needs no art — six textures under textures/ and a `faces:` list
+# would swap the same block over to a real skybox.
+#
+# The fog colour is deliberately the sky's own horizon stop. That is the pairing
+# that makes distance fog read as air rather than as a grey wash: sky_blend then
+# pulls the same colour down into the horizon, so the ground and the sky arrive
+# at the same place and the join between them stops being the most visible edge
+# on screen.
+sky:
+  kind: gradient
+  zenith:  { r: 0.24, g: 0.44, b: 0.82 }
+  horizon: { r: 0.74, g: 0.83, b: 0.92 }
+  ground:  { r: 0.16, g: 0.15, b: 0.14 }
+  intensity: 1.0
+
+fog:
+  mode: linear
+  color: { r: 0.74, g: 0.83, b: 0.92 }
+  start: 30.0        # the courtyard and the building stay clear
+  end:   180.0       # the hilltop at Z=-48 is well inside this
+  max_opacity: 0.95  # a hair short of 1, so the ridge keeps a silhouette
+  sky_blend: 0.7
+  sky_falloff: 4.0
+
+# ============================================================
 # Lights
 # ============================================================
 lights:

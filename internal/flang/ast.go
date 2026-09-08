@@ -240,14 +240,22 @@ type AssignStmt struct {
 	Pos_   Pos
 }
 
-// SendStmt is `target <- (:atom:, args...)`.
+// SendStmt is `target <- (:atom:, args...)`, or `target <- after(ms, :atom:,
+// args...)` when the message is on a timer.
 //
 // Msg is kept as a tuple expression rather than being split into an atom and
 // arguments, because the atom may be computed — `@d <- (pick(), 1)` is legal —
 // and the runtime resolves it when the message is posted.
+//
+// Delay holds the `after` form's millisecond expression and is nil for an
+// immediate send. The parser strips the `after(...)` wrapper and leaves the
+// message as the same tuple the immediate form writes by hand, so everything
+// that walks a send — the linter's `@self` atom check, the interpreter's target
+// resolution — sees one shape whether or not there is a delay on it.
 type SendStmt struct {
 	Target Expr
 	Msg    Expr
+	Delay  Expr // nil for an immediate send
 	Pos_   Pos
 }
 
@@ -383,6 +391,17 @@ type TagExpr struct {
 	Pos_ Pos
 }
 
+// ParamExpr is `?name` — one declared script parameter, as the level bound it.
+//
+// Spelled with its own sigil rather than sharing `@` because the two ask
+// different questions: `@` names an object in the level, `?` names a value the
+// level was asked to supply. A `ref` param answers with an object, which is why
+// the confusion was possible at all, but a `float` one never did.
+type ParamExpr struct {
+	Name string
+	Pos_ Pos
+}
+
 // UnaryExpr is `-x` or `not x`.
 type UnaryExpr struct {
 	Op   Kind
@@ -433,6 +452,7 @@ func (e *TupleLit) Position() Pos   { return e.Pos_ }
 func (e *IdentExpr) Position() Pos  { return e.Pos_ }
 func (e *AddrExpr) Position() Pos   { return e.Pos_ }
 func (e *TagExpr) Position() Pos    { return e.Pos_ }
+func (e *ParamExpr) Position() Pos  { return e.Pos_ }
 func (e *UnaryExpr) Position() Pos  { return e.Pos_ }
 func (e *BinaryExpr) Position() Pos { return e.Pos_ }
 func (e *CallExpr) Position() Pos   { return e.Pos_ }
@@ -452,6 +472,7 @@ func (*TupleLit) exprNode()   {}
 func (*IdentExpr) exprNode()  {}
 func (*AddrExpr) exprNode()   {}
 func (*TagExpr) exprNode()    {}
+func (*ParamExpr) exprNode()  {}
 func (*UnaryExpr) exprNode()  {}
 func (*BinaryExpr) exprNode() {}
 func (*CallExpr) exprNode()   {}
@@ -485,10 +506,12 @@ func exprText(e Expr) string {
 		return "@" + v.Name
 	case *TagExpr:
 		return "#" + v.Name
+	case *ParamExpr:
+		return "?" + v.Name
 	case *UnaryExpr:
 		return v.Op.String() + exprText(v.X)
 	case nil:
-		return "?"
+		return "<missing>"
 	}
 	return "…"
 }

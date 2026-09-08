@@ -18,11 +18,13 @@ package app
 
 import (
 	"foundry/internal/editor"
+	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
 	"foundry/internal/render"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
 
+	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -51,9 +53,19 @@ func devInit(level *world.Level, levelPath, levelsDir string) {
 	editor.EditorToggle()
 }
 
-// devShutdown tears down imgui. Deferred by Run, so it runs on the way out of
-// the frame loop while the GL context is still alive.
-func devShutdown() { imguibackend.ImGuiShutdown() }
+// devShutdown closes any sub-editor window still open and then tears down
+// imgui. Deferred by Run, so it runs on the way out of the frame loop while the
+// GL context is still alive — which is what each window's OnClose needs to free
+// its own GL objects.
+//
+// The windows go first, and they go at all, because they are separate OS
+// windows: closing the 3D editor has to close the 2D map, the script editor and
+// the rest with it rather than leaving them on screen with no frame loop behind
+// them.
+func devShutdown() {
+	uiwin.CloseAllUIWindows()
+	imguibackend.ImGuiShutdown()
+}
 
 // devToggle is the tilde key.
 func devToggle() { editor.EditorToggle() }
@@ -79,6 +91,13 @@ func devAdoptLoadedLevel() { editor.EditorAdoptLoadedLevel() }
 // their own. Called only when devActive.
 func devRenderMarkers(lvl *world.Level, cull *render.Frustum) {
 	editor.RenderEntityMarkers(lvl, cull)
+}
+
+// devRenderBrushGhost draws the scenery brush's translucent preview through the
+// frame loop's own drawOrQueue, so it sorts against the world's transparent
+// surfaces rather than blending over them. Called only when devActive.
+func devRenderBrushGhost(draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSided bool)) {
+	editor.RenderSceneryGhost(draw)
 }
 
 // devDrainWork applies the work the sub-editors deferred out of their own draw

@@ -147,3 +147,62 @@ func TestJumpingOntoALedgeIsStillAdmitted(t *testing.T) {
 			p.Position.X(), p.Position.Y())
 	}
 }
+
+// The level gets the last word on how tall a step is. A one-unit riser is
+// walked up by default (above), and the same geometry stops the body once the
+// level says its step height is half a unit.
+func TestALevelStepHeightShorterThanTheRiserBlocksIt(t *testing.T) {
+	lvl := stepLevel(t, 1)
+	lvl.Player.StepHeight = 0.5
+	p := newTestPlayer(mgl32.Vec3{5, 2, 10})
+	if !settle(p, lvl, 400) {
+		t.Fatalf("never landed on the west floor; y=%v", p.Position.Y())
+	}
+	walkEast(p, lvl)
+
+	if p.Position.X() >= 20 {
+		t.Errorf("walked to x=%v, through a 1-unit riser the level capped stepping at 0.5",
+			p.Position.X())
+	}
+	if got, want := p.Position.Y(), float32(0)+p.BoundHalfY; !nearly(got, want) {
+		t.Errorf("ended at y=%v, want the west floor at %v — it was lifted up the riser", got, want)
+	}
+}
+
+// The other half of that pair: a riser inside the configured height is still a
+// step. Without this the setting could be "satisfied" by refusing everything.
+func TestARiserInsideTheLevelStepHeightIsStillClimbed(t *testing.T) {
+	lvl := stepLevel(t, 0.25)
+	lvl.Player.StepHeight = 0.5
+	p := newTestPlayer(mgl32.Vec3{5, 2, 10})
+	if !settle(p, lvl, 400) {
+		t.Fatalf("never landed on the west floor; y=%v", p.Position.Y())
+	}
+	walkEast(p, lvl)
+
+	if p.Position.X() <= 20 {
+		t.Errorf("stopped at x=%v; a 0.25-unit riser is inside a 0.5 step height", p.Position.X())
+	}
+	if got, want := p.Position.Y(), float32(0.25)+p.BoundHalfY; !nearly(got, want) {
+		t.Errorf("ended at y=%v, want the east floor at %v", got, want)
+	}
+}
+
+// A level that raises the step height climbs what the default refuses, which is
+// the setting's other direction and the one a parkour-shaped game wants.
+func TestALevelStepHeightTallerThanTheBodyIsClimbed(t *testing.T) {
+	lvl := stepLevel(t, 2.5)
+	lvl.Player.StepHeight = 3
+	p := newTestPlayer(mgl32.Vec3{5, 2, 10})
+	if !settle(p, lvl, 400) {
+		t.Fatalf("never landed on the west floor; y=%v", p.Position.Y())
+	}
+	walkEast(p, lvl)
+
+	if p.Position.X() <= 20 {
+		t.Errorf("stopped at x=%v; a 2.5-unit riser is inside a 3-unit step height", p.Position.X())
+	}
+	if got, want := p.Position.Y(), float32(2.5)+p.BoundHalfY; !nearly(got, want) {
+		t.Errorf("ended at y=%v, want the east floor at %v", got, want)
+	}
+}

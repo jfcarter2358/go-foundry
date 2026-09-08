@@ -66,10 +66,9 @@ type linter struct {
 	inScope map[string]bool
 	// handled is the set of atoms this script has a clause for, for `after`.
 	handled map[string]bool
-	// params is every name the script declares with `param`. `@name` for one of
-	// those is bound by the level rather than by an object called `name`, so it
-	// is exempt from the does-this-exist check — the linter is reading the file,
-	// and the file is deliberately silent about which object it will be given.
+	// params is every name the script declares with `param`, plus its imports'.
+	// It is what `?name` is checked against, and what tells an `@name` that
+	// should have been a `?name` from one that is simply missing.
 	params map[string]bool
 
 	defs     []string // entity definition names, scanned on first use
@@ -168,6 +167,7 @@ func (l *linter) stmt(s flang.Stmt) {
 	case *flang.AssignStmt:
 		l.expr(t.Target)
 		l.expr(t.Value)
+		l.assign(t)
 	case *flang.SendStmt:
 		l.expr(t.Target)
 		l.expr(t.Msg)
@@ -233,6 +233,8 @@ func (l *linter) expr(e flang.Expr) {
 		l.addr(t)
 	case *flang.TagExpr:
 		l.tag(t)
+	case *flang.ParamExpr:
+		l.param(t)
 	}
 }
 
@@ -249,12 +251,14 @@ func (l *linter) addr(x *flang.AddrExpr) {
 		// @level always resolves, and @player exists during play.
 		return
 	}
-	if l.params[x.Name] {
-		// A script parameter: which object it names is the level's answer, not
-		// this file's, and it may differ for every object running the script.
+	if _, ok := l.cache.refFor(x.Name); ok {
 		return
 	}
-	if _, ok := l.cache.refFor(x.Name); ok {
+	if l.params[x.Name] {
+		// Declared, just not with the sigil that reads it. `@` asks the level
+		// for an object — and the check above says there is no such object — so
+		// this is the wrong sigil rather than a missing binding.
+		l.add(x.Pos_, "%s is a script parameter, not an object id; write ?%s", x.Name, x.Name)
 		return
 	}
 	msg := fmt.Sprintf("nothing in this level is called %q, so @%s is null", x.Name, x.Name)
@@ -262,6 +266,33 @@ func (l *linter) addr(x *flang.AddrExpr) {
 		msg += fmt.Sprintf("; did you mean @%s?", near)
 	}
 	l.add(x.Pos_, "%s", msg)
+}
+
+// param flags `?name` for a parameter the script never declares.
+//
+// Unlike an object, there is nothing else the name could be: the declarations
+// are in this file and its imports, so the set is fully known here. Checked with
+// no level, because none is needed.
+func (l *linter) param(x *flang.ParamExpr) {
+	if l.params == nil || l.params[x.Name] {
+		return
+	}
+	msg := fmt.Sprintf("no `param %s` is declared, so ?%s is an error at runtime", x.Name, x.Name)
+	if near := world.NearestName(x.Name, l.paramNames()); near != "" {
+		msg += fmt.Sprintf("; did you mean ?%s?", near)
+	}
+	l.add(x.Pos_, "%s", msg)
+}
+
+// paramNames lists the declared parameters in a stable order, for "did you
+// mean".
+func (l *linter) paramNames() []string {
+	out := make([]string, 0, len(l.params))
+	for n := range l.params {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // tag flags `#tag` that nothing carries.
@@ -322,8 +353,6 @@ func (l *linter) call(c *flang.CallExpr) {
 	switch name.Name {
 	case "play_anim":
 		l.playAnim(c)
-	case "set_texture":
-		l.setTexture(c)
 	case "spawn":
 		l.spawn(c)
 	case "spawn_effect":
@@ -331,7 +360,9 @@ func (l *linter) call(c *flang.CallExpr) {
 	case "attach", "detach":
 		l.attach(c)
 	case "after":
-		l.after(c)
+		l.afterCall(c)
+	case "hitscan":
+		l.hitscan(c)
 	}
 	l.knownFunc(name)
 }
@@ -375,35 +406,48 @@ func (l *linter) playAnim(c *flang.CallExpr) {
 	}
 }
 
-// setTexture checks the attachment exists and the texture is on disk.
-func (l *linter) setTexture(c *flang.CallExpr) {
-	if len(c.Args) < 2 || len(c.Args) > 3 {
-		return
-	}
-	if name, ok := litString(c.Args[len(c.Args)-1]); ok {
-		l.textureExists(name, c.Pos_)
-	}
-	kind, known := l.kindOf(c.Args[0])
-	if known && len(c.Args) == 2 {
-		switch kind {
-		case flang.RefEntity, flang.RefEdge, flang.RefFloor, flang.RefCeiling:
-		default:
-			l.add(c.Pos_, "set_texture: a %s has no texture; name an entity, an edge, a floor or a ceiling", kind)
-			return
-		}
-	}
-	e, ok := l.entityArg(c, 0)
+// assign is the per-property checking of a write, which is what a reskin now
+// is: `@guard.prop.texture = "rust"`, or `@guard.model.body.prop.texture` for
+// one attachment of several.
+//
+// The same two questions the `set_texture` verb used to answer at author time —
+// is there a .png behind that name, and is there anything here to reskin — with
+// the advantage that they are now asked of the *only* way to write a texture
+// rather than of one of two.
+func (l *linter) assign(a *flang.AssignStmt) {
+	target, ok := a.Target.(*flang.MemberExpr)
 	if !ok {
 		return
 	}
+	inner, ok := target.X.(*flang.MemberExpr)
+	if !ok || inner.Name != "prop" || target.Name != "texture" {
+		return
+	}
+	if name, ok := litString(a.Value); ok {
+		l.textureExists(name, a.Pos_)
+	}
+	// Only an entity or one of its attachments can be reskinned into nothing:
+	// a wall always has a face to wear the texture. Which attachment is what
+	// the ref says, and a ref the source does not pin down is not checked.
+	base := inner.X
 	model := ""
-	if len(c.Args) == 3 {
-		if model, ok = litString(c.Args[1]); !ok {
+	if kind, known := l.kindOf(base); known && kind == flang.RefModel {
+		m, ok := base.(*flang.MemberExpr)
+		if !ok {
 			return
 		}
+		model = m.Name
+		base = m.X
+		if b, ok := base.(*flang.MemberExpr); ok && b.Name == "model" {
+			base = b.X
+		}
+	}
+	e, ok := l.entityExpr(base)
+	if !ok {
+		return
 	}
 	if why := e.TextureProblem(model); why != "" {
-		l.add(c.Pos_, "set_texture would do nothing: %s", why)
+		l.add(a.Pos_, "writing texture would do nothing: %s", why)
 	}
 }
 
@@ -538,13 +582,43 @@ func (l *linter) particleEffects() []string {
 	return l.effects
 }
 
-// after flags a timer whose atom this script never handles. `after` always
-// addresses @self, so the handler can only be here.
-func (l *linter) after(c *flang.CallExpr) {
+// afterCall flags an `after` written as a plain call. The parser lifts the form
+// the language actually has — `@self <- after(500, :open_done:)` — out of the
+// send it belongs to, so a call still standing here is one nobody addressed, and
+// scheduling a message with no target cannot mean anything.
+func (l *linter) afterCall(c *flang.CallExpr) {
+	l.add(c.Pos_, "after schedules a message, so it needs a target: `@self <- after(500, :open_done:)`")
+}
+
+// hitscan flags the two mistakes a cast can make that are visible without
+// running it: answering with an atom this script has no clause for, and naming
+// an option that does not exist.
+//
+// The options are checked only when they are written as a literal dict, which
+// is how every call anyone writes spells them — a dict built at runtime is
+// checked when the verb runs and cannot be checked before.
+func (l *linter) hitscan(c *flang.CallExpr) {
+	if len(c.Args) == 0 {
+		return
+	}
+	l.selfAtom(c.Args[0], c.Pos_)
 	if len(c.Args) < 2 {
 		return
 	}
-	l.selfAtom(c.Args[1], c.Pos_)
+	d, ok := c.Args[1].(*flang.DictLit)
+	if !ok {
+		return
+	}
+	for _, k := range d.Keys {
+		if _, known := hitscanOptions[k]; known {
+			continue
+		}
+		msg := fmt.Sprintf("hitscan has no option called %q", k)
+		if near := world.NearestName(k, HitscanOptionNames()); near != "" {
+			msg += fmt.Sprintf("; did you mean %q?", near)
+		}
+		l.add(d.Pos_, "%s", msg)
+	}
 }
 
 // selfAtom flags an atom sent to @self that no clause in this file matches. The
@@ -565,10 +639,19 @@ func (l *linter) selfAtom(msg flang.Expr, pos flang.Pos) {
 // entityArg resolves argument i to an entity in the level, when it is written as
 // a literal address that names one.
 func (l *linter) entityArg(c *flang.CallExpr, i int) (*world.Entity, bool) {
-	if l.lvl == nil || i >= len(c.Args) {
+	if i >= len(c.Args) {
 		return nil, false
 	}
-	addr, ok := c.Args[i].(*flang.AddrExpr)
+	return l.entityExpr(c.Args[i])
+}
+
+// entityExpr is entityArg for an expression that is not an argument — the base
+// of a property write, which is where a reskin is now written.
+func (l *linter) entityExpr(e flang.Expr) (*world.Entity, bool) {
+	if l.lvl == nil {
+		return nil, false
+	}
+	addr, ok := e.(*flang.AddrExpr)
 	if !ok {
 		return nil, false
 	}
@@ -577,20 +660,14 @@ func (l *linter) entityArg(c *flang.CallExpr, i int) (*world.Entity, bool) {
 	if addr.Name == "self" || addr.Name == "player" || addr.Name == "level" {
 		return nil, false
 	}
-	if l.params[addr.Name] {
-		// The level supplies this one. Checked explicitly rather than left to
-		// the lookup below: a param that happens to share a name with an object
-		// in this level would otherwise be checked against the wrong entity.
-		return nil, false
-	}
 	r, ok := l.cache.refFor(addr.Name)
 	if !ok || r.Kind != flang.RefEntity {
 		// A name that resolves to nothing is already reported by addr(), and one
-		// that resolves to a volume is reported by the verb's own kind check.
+		// that resolves to a volume is reported by the caller's own kind check.
 		return nil, false
 	}
-	e := l.cache.entityFor(r)
-	return e, e != nil
+	ent := l.cache.entityFor(r)
+	return ent, ent != nil
 }
 
 // kindOf returns the kind of object an expression names, when that is knowable
@@ -609,25 +686,41 @@ func (l *linter) kindOf(e flang.Expr) (flang.Kind_, bool) {
 		case "self":
 			return flang.RefNone, false
 		}
-		if l.params[t.Name] {
-			// Whatever the level bound, which is not knowable from here — and a
-			// guess would make the property check reject valid code.
-			return flang.RefNone, false
-		}
 		r, ok := l.cache.refFor(t.Name)
 		return r.Kind, ok
+	case *flang.ParamExpr:
+		// Whatever the level bound, which is not knowable from here — and a
+		// guess would make the property check reject valid code.
+		return flang.RefNone, false
 	case *flang.MemberExpr:
-		// `@sec.floor` and `@sec.ceil` are the two structural steps that change
-		// the kind; everything else is a value.
+		// The structural steps that change the kind: a sector's floor and
+		// ceiling, and an entity's model attachments. Everything else is a
+		// value, or a step that keeps the kind it started with.
 		base, ok := l.kindOf(t.X)
-		if !ok || base != flang.RefSector {
+		if !ok {
 			return flang.RefNone, false
 		}
-		switch t.Name {
-		case "floor":
-			return flang.RefFloor, true
-		case "ceil", "ceiling":
-			return flang.RefCeiling, true
+		switch base {
+		case flang.RefSector:
+			switch t.Name {
+			case "floor":
+				return flang.RefFloor, true
+			case "ceil", "ceiling":
+				return flang.RefCeiling, true
+			}
+		case flang.RefEntity:
+			if t.Name == "model" {
+				// The pending half of `@guard.model.<name>`; the name is the
+				// next step, which lands in the RefModel case below.
+				return flang.RefModel, true
+			}
+		case flang.RefModel:
+			// Either the attachment name completing that pending ref, or the
+			// step back out to the entity. Nothing else follows a model.
+			if t.Name == "entity" {
+				return flang.RefEntity, true
+			}
+			return flang.RefModel, true
 		}
 	}
 	return flang.RefNone, false

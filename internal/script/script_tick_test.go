@@ -410,7 +410,7 @@ end`)
 func TestTimerDeliversAfterItsDelay(t *testing.T) {
 	root := withTempScriptDir(t)
 	path := writeScript(t, root, "timer.flang", `def on_spawn(:spawn:) -> null
-    after(100.0, :later:)
+    @self <- after(100.0, :later:)
 end
 def on_later(:later:) -> null
     @self.attr.fired = 1
@@ -439,6 +439,42 @@ end`)
 	}
 	if a, _ := lvl.Entities[0].Attr("fired"); a.I != 1 {
 		t.Errorf("the timer did not fire: %v", a.I)
+	}
+}
+
+// The point of the send form: a timer can be aimed at something other than the
+// object that set it, so one script can arrange another's behaviour later.
+func TestTimerDeliversToAnotherObject(t *testing.T) {
+	root := withTempScriptDir(t)
+	sender := writeScript(t, root, "sender.flang", `def on_spawn(:spawn:) -> null
+    @crate <- after(100.0, :later:)
+end`)
+	receiver := writeScript(t, root, "receiver.flang", `def on_later(:later:) -> null
+    @self.attr.fired = 1
+end`)
+
+	lvl := tickTestLevel(t)
+	lvl.Entities = append(lvl.Entities,
+		world.Entity{
+			ID: "crate", Script: receiver, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
+			Attributes: world.AttrSet{"fired": world.IntAttr(0)},
+		},
+		world.Entity{
+			ID: "clock", Script: sender, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
+		},
+	)
+
+	prevRT := *Scripts
+	prevEv := scriptEvents
+	t.Cleanup(func() { *Scripts = prevRT; scriptEvents = prevEv })
+	ScriptEventsReset()
+	ScriptRuntimeLoad(lvl)
+
+	for i := 0; i < 11; i++ {
+		ScriptTick(lvl, 1.0/60.0, true)
+	}
+	if a, _ := lvl.Entities[0].Attr("fired"); a.I != 1 {
+		t.Errorf("the crate never heard the timer the clock set: %v", a.I)
 	}
 }
 

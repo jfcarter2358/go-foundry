@@ -329,10 +329,7 @@ func editor2DAnchorScale() float32 {
 	if lvl == nil || Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
 		return 1
 	}
-	if sc := lvl.Chunks[Editor.ActiveChunkIdx].Scale; sc != 0 {
-		return sc
-	}
-	return 1
+	return lvl.Chunks[Editor.ActiveChunkIdx].PlacementScale()
 }
 
 // editor2DToPlane carries a world XZ point onto the map's plane (the active
@@ -420,11 +417,7 @@ func chunkWorldXZ(ch *world.Chunk, lx, lz float32) (wx, wz float32) {
 // never change a distance, but a scaled chunk's local geometry is smaller or
 // larger than it looks in the world by exactly that factor.
 func chunkLocalSize(ch *world.Chunk, worldSize float32) float32 {
-	sc := ch.Scale
-	if sc == 0 {
-		sc = 1
-	}
-	return worldSize / sc
+	return worldSize / ch.PlacementScale()
 }
 
 // findChunkPointNear returns the index of the chunk point nearest to (wx,wz)
@@ -904,6 +897,12 @@ func InsertSectorVertex(ch *world.Chunk, s *world.Sector, ei, newPtIdx int, t fl
 	}
 	insertMeshCorner(&s.Floor.Mesh, s.Floor.VertexOffsets, s.Floor.Height)
 	insertMeshCorner(&s.Ceiling.Mesh, s.Ceiling.VertexOffsets, s.Ceiling.Height)
+	// A slab's far face has boundary points bound to this same outline once it
+	// has been shaped independently, so it needs the corner too — otherwise the
+	// underside keeps spanning the straight edge the sector no longer has.
+	// An unshaped slab has no mesh and insertMeshCorner leaves it alone.
+	insertMeshCorner(&s.Floor.Slab.Mesh, s.Floor.VertexOffsets, s.Floor.Height)
+	insertMeshCorner(&s.Ceiling.Slab.Mesh, s.Ceiling.VertexOffsets, s.Ceiling.Height)
 
 	// Insert EdgeKind for the new edge (same kind as the edge being split)
 	newKinds := make([]string, len(s.EdgeKinds)+1)
@@ -1131,8 +1130,8 @@ func splitSector(ch *world.Chunk, sectorIdx, posA, posB int) {
 		EdgeIDs:      edgeIDsA,
 		Walls:        wallsA,
 		Portals:      portalsA,
-		Floor:        world.Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsA},
-		Ceiling:      world.Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsA},
+		Floor:        world.Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, Slab: s.Floor.Slab.Authored(), VertexOffsets: floorOffsA},
+		Ceiling:      world.Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, Slab: s.Ceiling.Slab.Authored(), VertexOffsets: ceilOffsA},
 	}
 	sectorB := world.Sector{
 		ID:           world.UniqueSectorID(ch, s.ID+"_split"),
@@ -1141,8 +1140,8 @@ func splitSector(ch *world.Chunk, sectorIdx, posA, posB int) {
 		EdgeIDs:      edgeIDsB,
 		Walls:        wallsB,
 		Portals:      portalsB,
-		Floor:        world.Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, VertexOffsets: floorOffsB},
-		Ceiling:      world.Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, VertexOffsets: ceilOffsB},
+		Floor:        world.Floor{Enabled: s.Floor.Enabled, Hidden: s.Floor.Hidden, Height: s.Floor.Height, Texture: s.Floor.Texture, DoubleSided: s.Floor.DoubleSided, Alpha: s.Floor.Alpha, Slab: s.Floor.Slab.Authored(), VertexOffsets: floorOffsB},
+		Ceiling:      world.Ceiling{Enabled: s.Ceiling.Enabled, Height: s.Ceiling.Height, Texture: s.Ceiling.Texture, DoubleSided: s.Ceiling.DoubleSided, Alpha: s.Ceiling.Alpha, Slab: s.Ceiling.Slab.Authored(), VertexOffsets: ceilOffsB},
 	}
 
 	// Both halves inherit edge IDs from the sector they came from, and each gains
@@ -1812,8 +1811,8 @@ func mergeSectorsAtPortal(ch *world.Chunk, siA, portalIdx int) {
 		EdgeIDs:      mergedEdgeIDs,
 		Walls:        mergedWalls,
 		Portals:      mergedPortals,
-		Floor:        world.Floor{Enabled: sA.Floor.Enabled, Hidden: sA.Floor.Hidden, Height: sA.Floor.Height, Texture: sA.Floor.Texture, DoubleSided: sA.Floor.DoubleSided, Alpha: sA.Floor.Alpha, VertexOffsets: mergedFloorOff},
-		Ceiling:      world.Ceiling{Enabled: sA.Ceiling.Enabled, Height: sA.Ceiling.Height, Texture: sA.Ceiling.Texture, DoubleSided: sA.Ceiling.DoubleSided, Alpha: sA.Ceiling.Alpha, VertexOffsets: mergedCeilOff},
+		Floor:        world.Floor{Enabled: sA.Floor.Enabled, Hidden: sA.Floor.Hidden, Height: sA.Floor.Height, Texture: sA.Floor.Texture, DoubleSided: sA.Floor.DoubleSided, Alpha: sA.Floor.Alpha, Slab: sA.Floor.Slab.Authored(), VertexOffsets: mergedFloorOff},
+		Ceiling:      world.Ceiling{Enabled: sA.Ceiling.Enabled, Height: sA.Ceiling.Height, Texture: sA.Ceiling.Texture, DoubleSided: sA.Ceiling.DoubleSided, Alpha: sA.Ceiling.Alpha, Slab: sA.Ceiling.Slab.Authored(), VertexOffsets: mergedCeilOff},
 	}
 
 	// Replace A with the merged sector

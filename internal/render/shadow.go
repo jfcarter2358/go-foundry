@@ -711,6 +711,21 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 					drawGeometryShadow(&sector.Ceiling.SubmeshGeometries[eg], prog, skin)
 				}
 			}
+			// A slab is solid geometry closing the far side of a surface, so
+			// it casts like the surface does. A Hidden far face is skipped and
+			// its rim is not, which is the same split the colour pass makes.
+			for _, sl := range [...]*world.Slab{&sector.Floor.Slab, &sector.Ceiling.Slab} {
+				if !world.SlabDrawable(sl) {
+					continue
+				}
+				if !sl.Hidden {
+					drawGeometryShadow(&sl.Geometry, prog, skin)
+					for eg := range sl.SubmeshGeometries {
+						drawGeometryShadow(&sl.SubmeshGeometries[eg], prog, skin)
+					}
+				}
+				drawGeometryShadow(&sl.RimGeometry, prog, skin)
+			}
 			for wi := range sector.Walls {
 				w := &sector.Walls[wi]
 				if w.Visible {
@@ -743,6 +758,9 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 	// needs a model matrix of its own, and RenderEntitiesShadow puts the
 	// identity back when it is done.
 	RenderEntitiesShadow(level, prog, skin, modelUniform, cull)
+	// And the scenery, which needs a matrix of its own for the same reason and
+	// restores the identity for the same one.
+	RenderSceneryShadow(level, prog, skin, modelUniform, cull)
 }
 
 func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {

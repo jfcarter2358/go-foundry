@@ -73,6 +73,67 @@ Levels written before surface meshes existed load unchanged — the loader
 migrates `extrusions:` and `terrain_points:` into a mesh once, and the writer
 emits only meshes from then on.
 
+### Thickness
+
+A floor or a ceiling is a plane by default, and from the room below a mezzanine
+that reads as a sheet of nothing. Give one a **thickness** and it becomes a
+slab: a second face offset away from the room — down from a floor, up from a
+ceiling — plus a rim round the perimeter joining the two. The far face is a
+selectable face in its own right, with its own texture, blend slots, UV and
+double-sidedness, because what you see from underneath a floor is rarely what
+you want to walk on.
+
+By default the far face is built from the *same* surface mesh and the same
+openings as the surface it hangs off, through a frame whose heights are shifted
+by the thickness — a constant offset of the shape above it. Carving a pit into a
+floor dips its underside with it, and cutting a stairwell through takes the hole
+all the way down. That is what nearly every slab wants, and it costs the level
+file nothing.
+
+It is a default rather than a rule, because a slab whose two faces must stay
+parallel cannot be a vaulted ceiling under a flat roof, or a floor with joists
+beneath it. Shaping the far face gives it a mesh of its own and detaches the
+two; a button in its panel empties that mesh and puts it back to following.
+Shaping *starts* from whatever the mirror was showing rather than from a flat
+ring, so a carved floor's underside begins with the carve — the two frames share
+a parameter space, so the surface's mesh transfers verbatim. The perimeter stays
+pinned either way: boundary points belong to the sector outline, so the rim
+always meets both faces at their corners however the interiors are shaped.
+
+Two consequences worth writing down. The offset frame keeps the surface's own
+winding, so `SyncSurfaceBoundary` — which rewrites boundary points on every
+rebuild — cannot renumber the corners of the mesh the two share; the far face is
+turned to look outward by reversing its triangles instead. And the rim skips
+**portal** edges, because across a portal the slab is not exposed: it continues
+into the sector next door, whose own rim would land in the same place and
+z-fight with it. Where the two floors are at different heights, the riser the
+portal already draws is what fills the step.
+
+Alpha and smoothing are the surface's rather than the slab's: it is the same
+piece of material, and a half-transparent floor over an opaque underside is not
+a solid that could exist. Thickness 0 is the default, builds nothing and writes
+nothing, so every level that predates it is unchanged.
+
+**A slab is solid.** Before it, what stopped a body walking under a mezzanine
+was the *ceiling of the room down there*, so a mezzanine over an open hall had
+nothing underneath it at all and a body could rise straight through the floor
+above. A slab's underside is now a hard limit in its own right, folded into the
+one query every clamp in `internal/collision` already went through
+(`sectorCeilingHeightAt`) so the player, placed entities, particles, portal
+entry and step entry all get it from one place. It is asked relative to the
+*floor of the sector doing the asking* rather than to the body's own Y: a slab
+above that floor is overhead for anyone in the sector whatever they are doing
+vertically, and a stateless question keeps a head-bonk from depending on which
+frame it lands in. A surface's openings cut the whole solid, so a stairwell
+stays climbable. The consequence worth stating: giving a mezzanine thickness
+means you can no longer jump up through it, which is the point, and is opt-in
+per surface.
+
+Ceiling slabs have no collision of their own. A ceiling's underside *is* the
+ceiling, already the head-stop it always was, and the top of a ceiling slab can
+only be reached from a sector above it — whose own floor is what a body there
+stands on.
+
 A level also carries one optional **spawn point**: the position and facing gameplay starts the player at. It is a property of the level rather than an object in it — there is exactly one, it is never drawn outside the editor, and it never collides.
 
 ## Entities
@@ -245,9 +306,18 @@ changes shape:
   player standing at world (0,0) fall into a ship parked a mile away. Each frame
   is searched by scanning its own handful of chunks instead — usually one, which
   is shorter than the hash lookup it would replace.
-- A frame's transform **ignores its owner's scale**. A frame is a place to
-  stand, not a model: scaling one would scale the deck without scaling the body
-  walking on it.
+- A frame's transform **ignores its owner's scale**, but the geometry it
+  carries does not. A frame is a place to stand, not a model: putting the scale
+  in the frame would stretch everything stored in its coordinates — a rider's
+  position, and the rider's own drawn model with it — while the bounding volumes
+  the resolvers work in are not in the frame's units at all. So the owner's
+  scale is published onto each owned chunk instead (`Chunk.FrameScale`), where
+  it scales that chunk's own geometry inside the frame. Scale a ship 2x and its
+  hold is twice as big, drawn and collided alike, while the player who walks
+  into it stays their own size. It is a single uniform factor — the mean of the
+  entity's three axis magnitudes — because a chunk's scale has only ever been
+  uniform, and a walkable slope, the 2D map's projection and a click radius all
+  depend on that.
 - Frames **nest**, which is how a shuttle in a carrier's hangar works. Nothing
   downstream sees the nesting — render and collision only ever get a final
   matrix and a local space — but building the transforms does, so parents are
@@ -345,6 +415,64 @@ Cross-frame *visibility* falls back to frustum-only culling. Portal culling only
 ever removes sectors the frustum already accepted, so the far side is still
 drawn — the engine just does not get to skip anything behind it.
 
+**The two halves must overlap.** A crossing fires on *proximity* — an occupant
+within `portalCrossingBand` (0.6) of the line is handed over, rather than being
+tracked across it — so the far side has to be somewhere they can stand the
+moment they arrive. Two portals authored in the same place therefore do not
+work: crossing at 0.6 short of the line puts the walker 0.6 outside the sector
+they were entering, in no sector at all. What works is a ship's threshold
+reaching *past* the deck's portal line and the deck reaching past the ship's, by
+more than the band each — the ship's boarding tunnel lying on the hangar floor,
+with the two lines a couple of metres apart and both floors present in between.
+The band is a radius rather than a slab, so the same applies across the doorway:
+an occupant off the *end* of the segment crosses too, and the far sector has to
+be wider than the segment by the band. `resources/chunks/dropship_hold.yaml` and
+`resources/levels/dropship_demo.yaml` are the worked example.
+
+**A doorway nothing was authored to meet is resolved by containment.** All of
+the above describes a *dock*: both halves written into the level, the ship
+parked where the level expected it. That cannot describe a ship that sets down
+wherever the pilot puts it, because the level would have had to guess the spot.
+So the moving side's half stands on its own. A **doorway sector** — one carrying
+a portal that names another frame — is the boundary, and which side of it an
+occupant is on is settled by where they are standing rather than by how close
+they are to a line: standing inside a ship's doorway sector is being aboard that
+ship, and being aboard while inside none of its sectors is having stepped off
+it. Nothing is authored in the level at all; the ship's own `to_frame:` edge is
+the whole declaration, and it works at any position and any yaw.
+
+Containment rather than proximity, because proximity needs two lines. It fires
+while the occupant is still short of the one they are crossing, which is only
+safe when the far side reaches past it — and a single shared boundary has
+nothing to reach past, so a band around it claims the same ground from both
+sides. Containment cannot fail that way: inside a sector and inside no sector
+cannot both be true, so the two directions are antisymmetric by construction.
+What it gives up is tunnelling protection, since there is no "before the line"
+to hand anyone over at. A doorway sector therefore has to be deeper than one
+step of whatever walks through it — the shipped vestibule is 3.3m against a walk
+of a few centimetres a tick — and a projectile-speed body would pass straight
+through. A dock, which has both halves, still gets the proximity rule.
+
+A frame with no doorway at all is **sealed** in a second sense: it keeps its
+occupants however far they wander off its floors, so a hold with a gap in the
+deck does not quietly empty itself into the world. And a seat is exempt from the
+stepped-off rule entirely — a seat is a constraint rather than a place, and one
+authored outside the interior's own sectors (a cockpit on a nose) would
+otherwise read as its occupant having walked off the deck on every tick.
+
+**A crossing has to go deeper than the way back.** Overlap the two halves by
+*less* than the band and both sides claim the same ground: the occupant is within
+the band of the line they are leaving and, once carried over, within the band of
+the line that leads straight back, so the two spaces trade them across once a
+tick. The movement looks fine — what oscillates is `CurrentChunk`, which is where
+portal-visibility culling starts its search, so each interior is culled on
+alternate frames and the screen strobes between the two. A crossing therefore
+only fires when it leaves the occupant *farther* from the return line than they
+currently are from the line they are crossing. The test is antisymmetric, so the
+reverse crossing cannot also pass; geometry that follows the overlap rule above
+satisfies it on every crossing, and geometry that does not holds at the doorway
+until a step carries the occupant far enough in to settle.
+
 ### What this is not
 
 There is no inertia tensor and no torque. Controls are **rates**: a vehicle turns
@@ -360,6 +488,29 @@ saved. Its world collision is the main loop's own resolve path rather than the
 `world` flag, but it does take part in entity-against-entity collision on the same
 terms as anything else — so a solid crate is solid to walk into, and a movable one
 is solid to shove.
+
+**The interact key is a press, not a state.** `E` is recorded on its down edge
+and read once, and the vehicle half (`VehicleInteractRequest`) takes it from
+there rather than testing the key every tick. That is not tidiness: the
+precedence in `VehicleInteract` says a seated occupant with somewhere to stand
+gets up and one aboard-and-standing with a seat in reach sits down, so running
+it per frame simply alternates between the two. Nothing about the occupant
+moves, because sitting and standing both put them at the seat — it shows up only
+in the view, where a seated eye sits at the seat's own `eye` and a standing one
+at the engine's eye height, so the camera hops between the two every frame. A
+press the vehicle half had no use for is handed back rather than swallowed, so
+`E` still reaches a scripted `:interact:` when there is no seat within reach.
+
+**The camera is placed last, after `RefreshFrames`.** A rider stores its position
+in coordinates that move, so where the eye goes depends on which transform those
+coordinates are current for — and the room around it is drawn through exactly
+that transform. The frame loop's last movers run after the player has moved (the
+entity pass, and a vehicle's own world collision), and `RefreshFrames` is what
+publishes their result, so `PlacePlayerCamera` is called after it and nowhere
+else. Placed any earlier, the eye is computed from where the ship *was* while its
+interior draws from where it *is*: the two disagree by however far the ship
+travelled that tick, every tick, which reads on screen as the interior strobing
+against whatever is outside it rather than as anything moving.
 
 ## Models
 
@@ -543,6 +694,41 @@ Chunks are defined by their floor and ceiling sector maps, which are a 2d map de
 
 Sectors have textures and their positions are baked into an optimized BSP-tree for collision checks
 
+### A chunk that moves
+
+A chunk carries a `Velocity` in world units per second, and `world.AdvanceChunks`
+adds it to the chunk's `Origin` once per tick of play — a lift that rises, a
+barge that drifts, a blast wall that closes. Plain Euler integration with no
+damping, the same deal an entity's own velocity gets: what should slow a
+platform down is a rule the game has rather than one the engine invents.
+
+Only the origin moves. Points, sector heights and biome paint are all
+chunk-local and are carried into world space through `ModelMatrix`, so a moving
+chunk rebuilds no geometry at all — the one thing that has to follow it is the
+spatial hash, whose keys are world cells, and a chunk that moved is re-bucketed
+at the top of the tick before anything resolves against it. Gameplay only, like
+entity motion: a platform that slid away from where it was just placed would
+make placing one impossible.
+
+An entity does not ride a moving chunk just by standing on it — a body left to
+collision alone slides out from under it exactly as before. An entity can be
+pinned to one explicitly, though: `Entity.AttachedChunk` names a chunk, and
+whenever that chunk's `Origin` moves — `AdvanceChunks` during play, or the
+editor's own chunk-move paths — the entity's `Position` moves the same
+distance (`world.CarryAttachedEntities`). It is a plain translation, not a
+change of coordinate system the way a frame is: the entity's `Position` stays
+in whatever space it already occupied, so the two have to agree on that space
+(a world chunk carries a world-space entity, a frame-owned chunk carries an
+entity riding that same frame) or the attachment silently does nothing.
+Rotating or scaling the chunk leaves an attached entity exactly where it
+stood, the same translation-only scope `Velocity` itself has. An interior
+meant to be properly ridden — walked around inside, crossed in and out of
+through a portal — still belongs to a vehicle (see `frame:`); this is for the
+simpler case of something fixed to a moving platform. A disabled chunk does
+not move either: it is out of the world entirely, and a streaming level
+should not find its switched-off areas had wandered off before it switched
+them back on.
+
 ### Switching a chunk off
 
 A chunk carries an `Enabled` flag (stored as `Disabled`, so the zero value is
@@ -575,6 +761,183 @@ The main game loop will run physics/movement calculations in compute shaders whe
 
 Rendering should cull as many chunks/sectors/walls as possible _before_ rendering. The goal is to make the engine as performant as possible. Biome scatter uses GPU instancing. So do sprites and particles, through a shared instanced billboard pass — the only one in the engine that uses per-instance vertex attributes rather than deriving placement from `gl_InstanceID`.
 
+## Bump and normal maps
+
+Relief belongs to the material, not to the surface wearing it. A texture
+document carries a second layer stack — the *bump channel* — beside its colour
+one, and a wall, floor, model or detail patch gets relief simply by using that
+texture. Nothing in a level file mentions normal maps, and there is no
+per-surface toggle: painting a height field into `brick.ftex` lights every
+brick in the game, which is the whole reason to author it once.
+
+### The artist paints a height, not a normal
+
+The bump channel stores one *height* byte per texel, not the three channels of
+a tangent-space normal. A brush stroke then means "this bit is higher", which
+is a thing a person can draw; the three channels of a normal map are not, and
+nothing in a 256-colour indexed painter could express them anyway. The normal
+map is derived from the height field with a Sobel gradient at save time and
+written out beside the albedo as `<name>_normal.png`.
+
+Height bytes are not palette indices, which is why the two channels do not
+share storage: a palette edit or a remap walks the colour layers only
+(`TexDoc.EachLayer`), and cannot reach into a height field and quantise it into
+nonsense. Zero is the one convention they do share — on a colour layer slot 0
+is transparent, on a height layer 0 means "nothing here" and lets the stack
+below show through, so a stroke on a new layer does not flatten everything
+around it.
+
+The gradient is taken with *wrapped* sampling coordinates. World textures tile,
+so the texel past the right edge really is the texel at the left edge, and
+clamping there would draw a ridge of false relief down every tile seam.
+
+Bump strength is baked into the derived map rather than sent to the shader as a
+uniform. The renderer then needs to know nothing about it, and every pass that
+samples a normal map — the world program, the detail tessellation and scatter
+programs, whatever comes next — gets the same relief without each one having to
+look a per-texture value up per draw.
+
+### No tangent attributes
+
+Every mesh in the engine shares one five-float `[X, Y, Z, U, V]` vertex record.
+Adding a tangent to it would mean touching every builder, every buffer and
+every shadow pass — for something the fragment stage can recover exactly:
+`dFdx`/`dFdy` of world position and UV *are* dp/du and dp/dv, which is what a
+tangent frame is. `fragment.glsl` reconstructs the frame per fragment
+(`cotangentFrame`). The cost is one frame per pixel instead of one per vertex;
+the gain is that a normal map works on every surface in the engine the day it
+lands, including the procedurally displaced ones that have no authored UVs to
+hang a tangent off.
+
+Shadow lookups keep shading off the *geometric* normal rather than the bumped
+one. Their slope-scaled bias describes how far the geometry is tilted away from
+the light; feeding it a per-texel normal makes the bias flicker texel to texel
+and stipples acne across an otherwise clean surface. Water is skipped entirely
+— it derives its normal from the wave field, and a tangent frame on a surface
+that is displacing under the fragment would not describe it anyway.
+
+### The name is the binding
+
+A normal map is an ordinary entry in the texture registry under a derived name
+(`<name>_normal`), so the upload queue, the animated-texture clock and live
+editing all work on it unchanged — an animated texture gets an animated normal
+map riding the same playback clock. `gfx.LoadTexture` is the single point every
+path that puts a texture on the GPU goes through, so picking the companion up
+there is what makes "the PNG is beside the albedo, so the surface has relief"
+true everywhere without a caller having to remember. The same suffix is
+filtered out of `ScanTextures`, so a normal map never appears as a texture in
+its own right in the editor's pickers, and taught to the release packer, which
+would otherwise prune every one of them as unreferenced.
+
+Three passes deliberately do not sample one. Water derives its normal from the
+wave field. Biome foliage already perturbs its normal from a procedural noise
+field of its own (`biome_frag.glsl`), and the ground patch is deliberately
+without any surface-detail term (`ground_frag.glsl`). Sprites and particles are
+camera-facing billboards, where a tangent frame describes the screen rather
+than a surface.
+
+## Sky and fog
+
+The two ends of "what is behind and between things". Both are level-scoped and
+both are optional: a level with no `sky:` and no `fog:` block renders exactly as
+it did before either existed, which is what let them be added without touching a
+single existing level file.
+
+**The sky** is one cube, drawn once, in `internal/render/sky.go`. What makes it
+cheap is *where in the frame it sits* rather than anything about the geometry.
+`sky_vert.glsl` writes `gl_Position = p.xyww`, forcing every vertex to depth 1.0,
+and the pass runs **after** the whole opaque pass — so the engine's global
+`GL_LEQUAL` depth test discards the sky everywhere the world already drew, and it
+costs one fragment per *uncovered* pixel rather than one per pixel on screen. It
+runs **before** the transparent pass, because translucent water and alpha sprites
+have to blend against it.
+
+It has two modes behind one uniform rather than two programs. `cubemap` is the
+skybox proper: six textures, named individually in the level file (not derived
+from a base name — a base name indexes nothing, and `cmd/foundrypack` finds the
+textures a game reaches by scanning content for tokens). `gradient` is three
+colours up the dome and no art at all, and it is the mode most levels want,
+because "the horizon should stop being a flat grey wall" is a lighting decision
+rather than an art request. A cubemap that will not load — a missing face, or the
+half-filled state an author is in while picking them — falls back to the gradient
+rather than to nothing.
+
+Every field is also a scriptable `@level.prop.sky_*` property (see SCRIPTING.md),
+and a script's `ease_sky(seconds)` can cross-fade between two complete sky
+states — kind, art, colour, tint, rotation, all of it — rather than only
+snapping between them. A colour lerps; a `kind` cannot, so the blend happens
+one level down from there: `sky_frag.glsl` evaluates the sky twice, once for
+the state a script is easing away from and once for the state it authored
+afterward, and mixes the two finished colours (`skyLook`, called with each
+state's own uniforms). `world.Sky` carries at most one such blend at a time —
+a runtime-only `TransitionFrom` snapshot plus an elapsed/duration pair
+`SkyUpdate` advances once a frame, the same way `AdvanceChunks` and
+`EmitterUpdate` are what make time pass for theirs — so calling `ease_sky`
+again before an earlier one finishes retargets it rather than queuing a second.
+
+**Fog** is declared exactly once, in `resources/shaders/fog.glsl`, and spliced
+into the `#version` line of every stage that shades: the world shader, the two
+detail programs that reuse its fragment stage, the biome scatter and ground
+patch, sprites, and the sky. This is the same trick `biome_light.glsl` plays with
+the lighting uniforms, and for a sharper reason. Fog that disagreed between
+passes would not read as a fog bug — it would read as the *passes* disagreeing
+about where things are: a wall fading into the distance with the grass in front
+of it staying crisp looks like broken terrain, not a missing `#include`. One
+declaration, one `world.UploadFogTo`, five programs — and, since fog volumes were
+added below, one splice that carried them everywhere too.
+
+Two details in that file are not arbitrary. Distance is **radial** from the eye,
+not the view-axis depth fixed-function fog used — planar depth makes the fog on a
+stationary object change as the camera turns its head, which reads as the world
+breathing. And an **additive** sprite is attenuated (`applyFogAdditive`) rather
+than mixed toward the fog colour, because the framebuffer under it already holds
+the fog; mixing would add the fog twice and make a distant spark brighter than a
+near one.
+
+The two features meet at the horizon. Fog carries a `sky_blend`, which is how
+much of the fog colour the sky takes near the horizon and how tightly that is
+confined to it. Without it, the ground fades to the fog while the sky behind it
+stays crisp, and the join becomes the most conspicuous edge on screen — at
+exactly the distance the fog was added to hide. For the same reason the colour
+buffer is cleared per frame from the level rather than to a fixed slate blue
+(`render.WorldClearColor`): with fog and no sky, geometry that faded into a
+contrasting background would fade into a silhouette rather than into nothing.
+
+**Fog volumes** are the other half of the idea: fog that has a position. The
+level's `fog:` is the air of the whole level and has none, which is exactly why
+it cannot do a cellar that is damp while the courtyard outside is clear, or a
+ravine holding a bank the road above it does not. So a volume may carry a `fog:`
+block of its own, and the region fills with it.
+
+The term is not a distance. It is the **length of the view ray inside the
+region**, run through the same exponential extinction — which is what makes a
+bank behave like a body of fog rather than like a sticker: looking along its
+length is thick and across it is thin, a wall past its far face is fogged by
+exactly its depth, and walking in fills the screen because the segment now starts
+at the eye. Every shape is solved in a normalized space where it is the unit box,
+sphere or cylinder, so one intersection routine per shape covers every size and
+orientation; the ray direction is carried through that same matrix *without*
+being renormalized, which is what keeps the span in world units instead of in
+half-extents.
+
+It lives in `fog.glsl` beside the distance fog rather than in a pass of its own,
+because `applyFog` is already the one entry point every shading stage calls — so
+the banks reach the walls, the grass, the scattered rock, the sprites and the sky
+without a single call site changing. `UploadFogTo` takes the level's volumes
+alongside its fog for the same reason: two upload functions would be five places
+to remember the second one, and a pass that had the distance fog and not the
+volumes looks completely correct until an author places a bank and it stops at
+the edge of the grass. The sky takes volumes at full strength rather than the
+horizon share it takes of distance fog — a volume is bounded, so the ray leaves
+it, and standing inside a bank under a crisp sky is the most obvious way for one
+to stop reading as fog.
+
+The shader carries eight, and a level with more drops the extras in level order,
+the same truncation `MaxPointLights` does. A fog volume is still an ordinary
+volume: it fires `enter` and `exit`, a script can thicken it or put it out, and
+disabling the volume does both — a region that kept fogging after being switched
+off would be half there.
+
 ## Collision Checking
 
 The player carries an axis-aligned bounding box, and everything it is resolved against is level geometry. First it works out which world chunk it is in; once it knows that, the chunk's spatial index gives it the sector. If the floor carries a surface mesh, a 'top-down' check figures out which of its triangles the player is over and the collision is resolved against that triangle and any applicable edges. Walls, floors, ceilings, slopes and the openings cut through walls are each resolved in turn.
@@ -584,6 +947,14 @@ handed to them as a *proxy* placed at its bounding volume's centre with that
 volume's scaled extents, because that is the shape they are written against —
 an entity's own position is its base, and its bounds can be offset from it
 besides. Whatever the resolvers do to the proxy is applied back as a delta.
+
+How tall a riser the player walks up rather than being stopped by is the
+level's to say — the `player:` block under Level format, resolved once per frame by
+`MovePlayer` and enforced by `ResolveStepEntry`. It defaults to the body's own
+height, which is what the engine used before it was configurable. The allowance
+is measured from the higher of the floor being left and the body's own feet, so
+raising or lowering it changes what walking reaches without sealing off ledges
+that a jump clears.
 
 The floor and ceiling clamp is the one part entities do not share. The player's
 `ResolveFloorCollision` is internally asymmetric — its floor treats the position
@@ -653,6 +1024,55 @@ attributes:
   health: {type: int, value: 25}
 ```
 
+The level's environment is two more optional top-level blocks. Both are omitted
+entirely unless set, so no existing level file changed when they were added:
+
+```yaml
+sky:
+  kind: cubemap           # gradient (default) | cubemap
+  faces:                  # cubemap only; +X, -X, +Y, -Y, +Z, -Z, in GL's order
+    [dusk_px, dusk_nx, dusk_py, dusk_ny, dusk_pz, dusk_nz]
+  zenith:  {r: 0.25, g: 0.45, b: 0.85}   # gradient only, and the three stops
+  horizon: {r: 0.72, g: 0.82, b: 0.92}   # are kept when the kind is switched
+  ground:  {r: 0.18, g: 0.17, b: 0.16}
+  tint: {r: 1, g: 1, b: 1}   # multiplies whichever mode produced the colour
+  intensity: 1
+  rotation: 45            # degrees about +Y; lines art up with the level's sun
+
+fog:
+  mode: linear            # linear (default) | exp | exp2
+  disabled: false         # switched off but kept, the way a light is
+  color: {r: 0.62, g: 0.68, b: 0.76}
+  start: 40               # world units, every mode
+  end: 400                # linear only
+  density: 0.006          # exp/exp2 only
+  max_opacity: 1          # below 1 leaves a landmark as a silhouette
+  sky_blend: 0.7          # how much fog the sky takes at the horizon
+  sky_falloff: 4
+```
+
+Both are edited in the Environment block of the editor's properties panel, where
+the checkbox at the top of each group is what creates and destroys the block —
+turning fog *off* is a different gesture from deleting it, and keeps the numbers.
+
+The player is the one body in a level nothing authors — the engine builds it,
+no `entities:` entry describes it, nothing saves it — so its tuning has nowhere
+to live but a top-level block of its own, edited in the Player block of the same
+panel:
+
+```yaml
+player:
+  step_height: 0.5      # world units; the tallest riser walked up rather than
+                        # stopped by. Omitted means the player's own height,
+                        # which is what the engine did before the block existed.
+```
+
+Every key in it is optional and the block is omitted entirely unless set, so no
+existing level file changed when it was added. A non-positive `step_height`
+reads as the default rather than as "no stepping at all": a body that could not
+step would be stopped by the seam between two floors that differ by a rounding
+error.
+
 A chunk may carry `disabled: true` to start switched off, and a volume may carry
 `load_level:` to be the level exit. Both keys are omitted unless set, so no
 existing level file changed when either was added:
@@ -663,11 +1083,23 @@ chunks:
     disabled: true        # not built, not drawn, not solid, until a script asks
     # ...
 
+  - id: lift
+    velocity: {x: 0, y: 2, z: 0}   # world units/second, added to origin during play
+    # ...
+
 volumes:
   - id: cave_mouth
     position: {x: 40, y: 0, z: -12}
     half: {x: 2, y: 3, z: 1}
     load_level: caves     # the player walking in loads levels/caves.yaml
+
+  - id: cellar_damp
+    position: {x: 12, y: 1, z: -4}
+    half: {x: 6, y: 2, z: 6}
+    fog:                  # the region fills with fog; see Sky and fog
+      color: {r: 0.55, g: 0.58, b: 0.6}
+      density: 0.2        # per world unit travelled INSIDE the region
+      max_opacity: 1
 ```
 
 
@@ -769,6 +1201,72 @@ The precedence is unambiguous and it has to be: a script writing to a widget the
 document binds is *refused*, with a message naming the binding. Letting both
 write would make the winner depend on frame timing, which is not something
 anyone can debug.
+
+### Video
+
+A `video` widget shows a decoded frame the way an `image` widget shows a
+texture. The decoding is `internal/video`, which sits where `internal/audio`
+sits and under the same rule: no GL, no level, no window. A frame comes out as
+an `image.RGBA` and getting it onto a texture is somebody else's job — which is
+what lets a test push a four-minute clip through the player in a millisecond
+with no context current.
+
+Two formats, both read by the standard library, and no new native dependency:
+an AVI carrying motion-JPEG frames and PCM audio, and an animated GIF. What is
+deliberately absent is a modern inter-frame codec. H.264 or VP9 means either
+cgo — which this engine has spent real effort not having — or a decoder that
+would be a larger program than the renderer beside it. Motion-JPEG pays for
+that in file size and nothing else: every frame is a keyframe, so seeking is a
+division rather than a hunt backwards for the last I-frame, and the encode is
+one line:
+
+```
+ffmpeg -i in.mp4 -c:v mjpeg -q:v 3 -c:a pcm_s16le out.avi
+```
+
+The `idx1` index at the end of an AVI is ignored even though that is what it is
+for. Two generations of muxer wrote its offsets relative to two different bases
+— the file, and the `movi` list — and a file written against the other
+convention indexes to garbage. Walking `movi` costs one pass at open and cannot
+be wrong.
+
+**A widget describes; a player plays.** The `.fui` carries four fields — which
+clip, autoplay, loop, muted, volume — and the playhead is not among them. A
+document is cloned every time a screen is shown, and a clone carrying somebody
+else's playhead would be a cutscene that started half way through the second
+time it was watched. The player lives in a registry keyed by stack, screen and
+widget, and it is closed by a generation sweep once a frame in which nobody
+asked for it: a hidden screen, a deleted widget and a stack reset all reach it
+by the same route. The join between the two is `ui.VideoDriver`, a function
+variable `internal/uidraw` installs — the same inversion the binding resolver
+uses, for the same reason.
+
+The frame reaches the GPU through the queue the glyph pages use, under a name
+starting `@video/` that no scanned asset can collide with, and only when the
+player's revision has moved. That last part is not an optimisation detail: a
+twelve-frames-a-second animation on a 144 Hz display would otherwise re-upload
+eight megabytes a hundred and forty-four times a second, and a *paused* one
+would too.
+
+The soundtrack is demuxed into an `audio.Clip` and played on the music bus. Not
+a second mixer: a cutscene whose audio ignored the master volume would be a bug
+reported as "the settings do nothing". Seeking it needs no mixer support at all
+— a `Clip` is immutable and its samples are never written, so playing from four
+seconds in is a second `Clip` sharing the tail of the first.
+
+The clock is accumulated wall-clock time rather than the audio device's cursor.
+Making the soundtrack the master would be more correct in principle and is what
+a media player does; it needs the mixer to publish a live sample position, and
+it buys accuracy nothing here can perceive. `Advance` is fed real elapsed
+seconds, so a frame hitch moves picture and sound by the same amount.
+
+Two defaults are kind-specific because a video is not an image. Its background
+is black and its fill mode is *fit*: a widget's rect matching its film's aspect
+ratio is a coincidence, so there will be bars, and white ones read as a
+rendering fault. For the same reason the picture is drawn untinted where an
+image is tinted by `Style.Color` — one colour cannot be both the bars and a tint
+on the picture between them, and bars is the half every clip needs. The node's
+alpha still applies, so fading a video in and out works.
 
 ### The loading screen
 
@@ -913,6 +1411,15 @@ it behind, an ID a script can re-point it by — a volume already has. Only the
 player takes one; there is no reading of "a player entered" that includes the
 guard on patrol. A trigger that carries a script as well still gets its
 `:enter:`, in the frame before the load starts.
+
+A volume may also carry a `Fog`, which fills the region with fog — the one thing
+a volume can be that the player sees. It is a field on the existing type for the
+same reason `LoadLevel` is: a shape, a rotation, half-extents, an `enabled` flag
+a script can flip, a cage to author it against and the gizmos to size it are all
+things a volume already has, and a separate type would have been those six copied
+so the seventh could be new. What it looks like is in the Sky and fog section
+above; a fog volume still fires `enter` and `exit`, which is usually the event a
+level wants when there is fog to be in.
 
 In the editor a volume is a wireframe cage that can be clicked in the 3D
 viewport, which gives it the same translate, rotate and scale gizmos an entity

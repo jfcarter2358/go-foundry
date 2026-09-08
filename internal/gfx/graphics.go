@@ -71,8 +71,9 @@ var (
 // (2..9) are the point-light shadow cubemaps (see UploadPointShadowUniformsTo
 // in internal/render/shadow.go) — colliding with any of those binds a
 // differently-typed sampler to the same unit, which is invalid and silently
-// breaks every draw through this program. 10/11 sit safely past all of them,
-// still well inside GL 4.1's guaranteed minimum of 16 texture image units.
+// breaks every draw through this program. 10/11 sit safely past all of them
+// (and NormalMapUnit takes 12), still well inside GL 4.1's guaranteed minimum
+// of 16 texture image units.
 const (
 	BlendTexUnit  = 10
 	BlendMaskUnit = 11
@@ -82,6 +83,16 @@ var (
 	HasBlendUniform  int32
 	BlendTexUniform  int32
 	BlendMaskUniform int32
+)
+
+// Normal-map shader uniform locations, set per-draw from the geometry's
+// texture name — see applyNormalUniforms in geometry.go and NormalMapUnit in
+// texture_normal.go. Like the blend pair, both are set on every draw
+// including the "no map" case, so a normal-mapped surface never leaves its
+// binding on the geometry drawn after it.
+var (
+	HasNormalMapUniform int32
+	NormalMapUniform    int32
 )
 
 func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
@@ -102,7 +113,14 @@ func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
 	if err != nil {
 		return err
 	}
-	fragmentSource := strings.ReplaceAll(strings.TrimRight(string(fragmentShaderBytes), "\n"), "\r\n", "\n")
+	// And the fragment stage gets the shared fog source, for the same reason and
+	// on the same terms: fragment.glsl calls applyFog, and every other program
+	// that shades world geometry compiles this same file, so there is one fog
+	// model in the engine rather than one per pass. See fog_shader.go.
+	fragmentSource, err := InjectFog(strings.ReplaceAll(strings.TrimRight(string(fragmentShaderBytes), "\n"), "\r\n", "\n"))
+	if err != nil {
+		return err
+	}
 
 	// [SCENARIO 1] Log shader source so the exact text sent to the driver is
 	// visible in foundry.log when a compile failure occurs.
@@ -201,17 +219,48 @@ func InjectAfterVersion(src, snippet string) string {
 // CompileProgramFromFiles loads two shader files and links a GL program
 // without touching the global Program variable.
 func CompileProgramFromFiles(vertPath, fragPath string) (uint32, error) {
+	vertSrc, fragSrc, err := readProgramSources(vertPath, fragPath)
+	if err != nil {
+		return 0, err
+	}
+	return CompileProgramFromSources(vertSrc, fragSrc)
+}
+
+// CompileProgramWithSkinning is CompileProgramFromFiles with skin_common.glsl
+// spliced into the vertex stage — for a standalone program whose vertex shader
+// calls skinPosition/skinNormal.
+//
+// Separate from CompileProgramFromFiles rather than always injecting, because
+// the gizmo program neither has the call nor wants the uniforms.
+func CompileProgramWithSkinning(vertPath, fragPath string) (uint32, error) {
+	vertSrc, fragSrc, err := readProgramSources(vertPath, fragPath)
+	if err != nil {
+		return 0, err
+	}
+	skinned, err := InjectSkinning(vertSrc)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", vertPath, err)
+	}
+	return CompileProgramFromSources(skinned, fragSrc)
+}
+
+// readProgramSources reads and normalises a vertex/fragment pair.
+func readProgramSources(vertPath, fragPath string) (string, string, error) {
 	vb, err := os.ReadFile(vertPath)
 	if err != nil {
-		return 0, fmt.Errorf("read %s: %w", vertPath, err)
+		return "", "", fmt.Errorf("read %s: %w", vertPath, err)
 	}
 	fb, err := os.ReadFile(fragPath)
 	if err != nil {
-		return 0, fmt.Errorf("read %s: %w", fragPath, err)
+		return "", "", fmt.Errorf("read %s: %w", fragPath, err)
 	}
-	vertSrc := strings.TrimRight(string(vb), "\n")
-	fragSrc := strings.TrimRight(string(fb), "\n")
+	return strings.TrimRight(string(vb), "\n"), strings.TrimRight(string(fb), "\n"), nil
+}
 
+// CompileProgramFromSources links a standalone program from source already in
+// hand — the shared tail of both loaders above, and the door for anything that
+// has to preprocess a stage before compiling it.
+func CompileProgramFromSources(vertSrc, fragSrc string) (uint32, error) {
 	vert, err := CompileShader(vertSrc, gl.VERTEX_SHADER)
 	if err != nil {
 		return 0, err

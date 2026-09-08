@@ -48,6 +48,14 @@ func LoadTexture(name, file string) error {
 
 	Textures[name] = texture
 	noteTextureSize(name, int32(rgba.Rect.Size().X), int32(rgba.Rect.Size().Y))
+
+	// Every path that puts a texture on the GPU comes through here, so this is
+	// the one place a texture's normal map has to be picked up — see
+	// ensureNormalMapLoaded. A decode failure is worth saying out loud but not
+	// worth failing the albedo over: the surface draws, just flat.
+	if err := ensureNormalMapLoaded(name); err != nil {
+		log.Printf("WARNING: %v", err)
+	}
 	return nil
 }
 
@@ -193,6 +201,13 @@ func ScanTextures(dir string) map[string]string {
 			continue
 		}
 		logical := strings.TrimSuffix(name, filepath.Ext(name))
+		if IsNormalMapName(logical) {
+			// A normal map is reached through its albedo (ensureNormalMapLoaded),
+			// never named on its own. Leaving it out of this map keeps it out of
+			// every texture picker and every "unknown texture" check that reads
+			// through it.
+			continue
+		}
 		result[logical] = "textures/" + name
 	}
 	return result

@@ -50,7 +50,7 @@ func editorVolumeAddMenu() {
 		editorArmVolumePlacement()
 	}
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Regions a script reacts to. Never drawn during play\nand never solid.")
+		imgui.SetTooltip("Regions a script reacts to. Never solid, and not drawn\nduring play unless given fog to hold.")
 	}
 }
 
@@ -61,6 +61,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroupOpen("Identity##volidgrp", func() { editorVolumeIdentity(v) })
 	editorPropGroupOpen("Transform##voltfgrp", func() { editorVolumeTransform(v) })
 	editorPropGroupOpen("Shape##volshapegrp", func() { editorVolumeShape(v) })
+	editorPropGroup("Fog##volfoggrp", 0, func() { editorVolumeFog(v) })
 	editorPropGroupOpen("Level Exit##volexitgrp", func() { editorVolumeLevelExit(v) })
 	editorScriptDataUI(&v.ScriptData, "vol", strconv.Quote(v.ID))
 	editorPropGroup("Actions##volactions", 0, func() { editorVolumeActions(v) })
@@ -175,6 +176,81 @@ func editorVolumeLevelExit(v *world.Volume) {
 	}
 	if v.LoadLevel != "" && v.Script != "" {
 		imgui.Text("Its script still gets `enter`, before the load starts.")
+	}
+}
+
+// editorVolumeFog draws the region's fog: the checkbox that creates and destroys
+// the block, then what it looks like.
+//
+// The checkbox is the same gesture the Environment panel's fog group uses, and
+// deliberately so — an author who has filled a level with fog should recognise
+// the control that fills one room with it. Ticking it off DELETES the fog;
+// turning the fog off while keeping the numbers is the "Enabled" line below,
+// which is the distinction the level fog draws too.
+func editorVolumeFog(v *world.Volume) {
+	has := v.Fog != nil
+	if imgui.Checkbox("This volume is full of fog##volfogon", &has) {
+		EditorPushUndo()
+		if has {
+			f := world.DefaultVolumeFog()
+			// Start it agreeing with the level's fog when there is one, for the
+			// reason the level fog starts agreeing with the sky: a bank whose
+			// colour fights the air around it is the commonest way for a first
+			// attempt to look wrong, and matching is right often enough to be
+			// the default rather than a button.
+			if lvl := Editor.level; lvl != nil && lvl.Fog != nil {
+				f.Color = lvl.Fog.Color
+			}
+			v.Fog = &f
+			editorSetStatus("Volume %q now fills with fog", v.ID)
+		} else {
+			v.Fog = nil
+			editorSetStatus("Removed the fog from volume %q", v.ID)
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The region fills with fog the player can see and walk into.\n" +
+			"Thickness follows how far the view travels INSIDE the shape,\n" +
+			"so a bank reads as deep along its length and thin across it.")
+	}
+	if v.Fog == nil {
+		return
+	}
+
+	f := v.Fog
+	on := f.Enabled
+	if imgui.Checkbox("Enabled##volfogen", &on) {
+		EditorPushUndo()
+		f.Enabled = on
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Switches the fog off while keeping these numbers.\nThe volume's own Enabled puts it out too, and disarms the trigger with it.")
+	}
+
+	editorSkyColor("Colour##volfogcol", &f.Color)
+	if lvl := Editor.level; lvl != nil && lvl.Fog != nil {
+		imgui.SameLine()
+		if imgui.Button("Match level fog##volfogmatch") {
+			EditorPushUndo()
+			f.Color = lvl.Fog.Color
+			editorSetStatus("Fog colour matched to the level's fog")
+		}
+	}
+
+	editorDragFloatStep("Density##volfogdens", &f.Density, 0, world.VolumeFogMaxDensity, "%.3f", 0.01)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Per world unit travelled inside the region, so it means the\n" +
+			"same thing whatever size the volume is. At 0.15 a 10-unit\n" +
+			"crossing is about three-quarters fog.")
+	}
+
+	editorDragFloatStep("Max opacity##volfogmax", &f.MaxOpacity, 0, 1, "%.2f", 0.05)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Caps the blend, so a thick bank can still leave what is\nstanding in it as a silhouette rather than erasing it.")
+	}
+
+	if !v.Enabled {
+		imgui.Text("The volume is disabled, so the fog is not drawn.")
 	}
 }
 

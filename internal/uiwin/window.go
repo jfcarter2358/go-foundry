@@ -193,6 +193,28 @@ func CloseUIWindow(w *UIWindow) {
 	imguibackend.ImguiContext.SetCurrent()
 }
 
+// CloseAllUIWindows closes every open secondary window, running each one's
+// OnClose with its own context current, exactly as if the author had closed
+// them by hand.
+//
+// This is what makes the main window's close button mean "quit": the sub
+// editors are separate OS windows, so closing the 3D view leaves them on
+// screen — and, worse, alive with the frame loop gone. The main loop's exit
+// path calls this so the whole editor goes away together.
+func CloseAllUIWindows() {
+	// Anything parked would open a sub-editor with nothing behind it — the
+	// drain that would have run it is a frame that is never coming.
+	PendingWindowOpens = nil
+	// A snapshot rather than the map itself: CloseUIWindow deletes as it goes.
+	open := make([]*UIWindow, 0, len(uiWindows))
+	for _, w := range uiWindows {
+		open = append(open, w)
+	}
+	for _, w := range open {
+		CloseUIWindow(w)
+	}
+}
+
 // UIWindowByID returns the open secondary window with the given SDL window
 // ID, or nil if none matches (i.e. the event belongs to the main window).
 func UIWindowByID(id uint32) *UIWindow { return uiWindows[id] }

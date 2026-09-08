@@ -113,6 +113,7 @@ const (
 	cmdStop
 	cmdStopAll
 	cmdSetLoop
+	cmdSetGain
 )
 
 type command struct {
@@ -122,6 +123,9 @@ type command struct {
 	flag bool
 	// fade is the stop ramp in seconds; 0 takes the default declick.
 	fade float32
+	// gain is cmdSetGain's new level, already clamped away from the zero
+	// sentinel by SetGain.
+	gain float32
 }
 
 // ---------- the voice ----------
@@ -312,6 +316,15 @@ func (m *mixer) apply(c command) {
 	case cmdSetLoop:
 		if i, ok := m.byID[c.id]; ok {
 			m.voices[i].loop = c.flag
+		}
+
+	case cmdSetGain:
+		// Written into params rather than into a field of its own, so that a
+		// voice which is *also* in the per-frame snapshot — a placed sound —
+		// has its level overwritten by the next publish. Only a voice nobody
+		// republishes, which is what a video's soundtrack is, keeps it.
+		if i, ok := m.byID[c.id]; ok {
+			m.voices[i].params.Gain = c.gain
 		}
 	}
 }

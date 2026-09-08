@@ -16,6 +16,7 @@ import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/ui"
 	"foundry/internal/uiwin"
+	"foundry/internal/video"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -180,6 +181,9 @@ func uiNodeProperties(n *ui.Node) {
 	case ui.KindBar, ui.KindSlider, ui.KindToggle:
 		editorPropGroupOpen("Value", func() { uiValueProperties(n) })
 	}
+	if n.Kind == ui.KindVideo {
+		editorPropGroupOpen("Video", func() { uiVideoProperties(n) })
+	}
 	if n.Kind.Interactive() {
 		editorPropGroup("Navigation", 0, func() { uiNavProperties(n) })
 	}
@@ -337,6 +341,8 @@ func uiStyleProperties(n *ui.Node) {
 		editorTextMuted("Multiplies the texture. White leaves it alone.")
 	case ui.KindBar, ui.KindSlider:
 		editorTextMuted("The empty part of the bar. The filled part is under Value.")
+	case ui.KindVideo:
+		editorTextMuted("Shows before the first frame, and behind the letterbox bars.")
 	}
 	if textureCombo("Texture##uitex", &n.Style.Texture, true) {
 		uiBeginEdit("style.texture")
@@ -362,11 +368,21 @@ func uiStyleProperties(n *ui.Node) {
 			}
 		}
 
+	}
+
+	// Outside the texture block, because a video has a picture without having a
+	// texture name: the fit mode is the difference between a letterboxed film
+	// and a stretched one, and hiding it behind a field a video never fills
+	// left it unreachable on the one kind that most needs it.
+	if n.Style.Texture != "" || n.Kind == ui.KindVideo {
 		fill := int32(n.Style.Fill)
 		if imgui.Combo("Fit##uifill", &fill, ui.FillModeNames) {
 			uiBeginEdit("style.fill")
 			n.Style.Fill = ui.FillMode(fill)
 			uiEdited()
+		}
+		if n.Kind == ui.KindVideo {
+			editorTextMuted("Fit letterboxes, fill crops, stretch distorts. Tile does nothing here.")
 		}
 	}
 }
@@ -545,6 +561,81 @@ func uiValueProperties(n *ui.Node) {
 	if bound {
 		editorTextMuted("Showing: " + fmtF(n.Value.Current()) + " / " + fmtF(n.Value.Ceiling()))
 	}
+}
+
+// uiVideoProperties is the clip a video widget plays, and a transport for
+// watching it here rather than having to launch the game to find out whether it
+// is the right take.
+//
+// The transport buttons write through Node's setters rather than to the fields
+// directly, so the preview stack's driver picks them up on its next tick — the
+// same path a script's `playing: true` takes. Nothing in the editor talks to a
+// player, and that is what stops the preview and the game from being two
+// different implementations of "play".
+func uiVideoProperties(n *ui.Node) {
+	if videoFileCombo("Clip##uividsrc", &n.Video.Source) {
+		uiBeginEdit("video.source")
+		n.SeekVideo(0)
+		uiEdited()
+	}
+	if n.Video.Source == "" {
+		editorTextMutedWrapped("Nothing chosen. Drop an .avi (motion-JPEG) or an animated .gif into " +
+			video.VideoDirName + "/ beside sounds/.")
+		return
+	}
+
+	if imgui.Checkbox("Autoplay##uividauto", &n.Video.AutoPlay) {
+		uiBeginEdit("video.autoplay")
+		uiEdited()
+	}
+	editorTextMuted("Off, the widget sits on the first frame until a script says otherwise.")
+	if imgui.Checkbox("Loop##uividloop", &n.Video.Loop) {
+		uiBeginEdit("video.loop")
+		uiEdited()
+	}
+	if imgui.Checkbox("Muted##uividmute", &n.Video.Muted) {
+		uiBeginEdit("video.muted")
+		uiEdited()
+	}
+	if editorDragFloat("Volume", &n.Video.Volume, 0, 1, "%.2f") {
+		uiBeginEdit("video.volume")
+		uiEdited()
+	}
+	editorTextMuted("Multiplied by the music slider, which is the bus a soundtrack plays on.")
+
+	imgui.Separator()
+
+	// The transport is not an edit: starting a clip to look at it is not a
+	// change to the document, and pushing an undo snapshot for it would fill
+	// the history with entries that restore nothing.
+	label := "Play##uividplay"
+	if n.VideoPlaying() {
+		label = "Pause##uividplay"
+	}
+	if imgui.Button(label) {
+		n.SetVideoPlaying(!n.VideoPlaying())
+	}
+	imgui.SameLine()
+	if imgui.Button("Restart##uividrestart") {
+		n.SeekVideo(0)
+		n.SetVideoPlaying(true)
+	}
+	imgui.SameLine()
+	if imgui.Button("Rewind##uividrewind") {
+		n.SeekVideo(0)
+		n.SetVideoPlaying(false)
+	}
+
+	pos := n.VideoTime()
+	dur := n.VideoDuration()
+	if dur <= 0 {
+		editorTextMuted("Not opened yet, or the file will not read — see the log.")
+		return
+	}
+	if editorDragFloat("Time", &pos, 0, dur, "%.2f") {
+		n.SeekVideo(pos)
+	}
+	editorTextMuted(fmtF(pos) + " / " + fmtF(dur) + " s")
 }
 
 func uiNavProperties(n *ui.Node) {

@@ -290,3 +290,21 @@ func scriptSubPath(rel string) (string, bool) {
 const TexturesDirName = "textures"
 
 func TexturesDir() string { return filepath.Join(ExecutablePath, TexturesDirName) }
+
+// NormalMapSuffix is appended to a texture's logical name to get its normal
+// map's: brick -> brick_normal, sampled from textures/brick_normal.png.
+//
+// The convention lives here, with the rest of the texture path rules, rather
+// than in gfx with the code that uses it: the release packer has to know it
+// too (a normal map is never named by any content file, so it would otherwise
+// be pruned as unreachable), and a packaging tool has no business importing an
+// OpenGL binding to learn a string.
+const NormalMapSuffix = "_normal"
+
+// NormalMapName is the logical texture name a texture's normal map lives
+// under.
+func NormalMapName(name string) string { return name + NormalMapSuffix }
+
+// IsNormalMapName reports whether name is a normal map's rather than an
+// albedo's.
+func IsNormalMapName(name string) bool { return strings.HasSuffix(name, NormalMapSuffix) }

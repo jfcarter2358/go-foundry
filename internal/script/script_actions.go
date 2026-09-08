@@ -90,43 +90,6 @@ func init() {
 			return flang.FloatVal(float64(a.Sub(b).Len())), nil
 		},
 
-		"move_to": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
-			e, err := rt.verbEntity(args, 0, "move_to")
-			if err != nil {
-				return nil, err
-			}
-			p, ok := verbVec(args, 1)
-			if !ok {
-				return nil, fmt.Errorf("move_to takes an object and a vec")
-			}
-			rt.markDirty()
-			// The vec a script hands move_to is world-space (it is routinely
-			// another object's position), but Entity.Position is stored in the
-			// entity's own frame — so an entity riding a vehicle would be sent
-			// to the world coordinate reinterpreted as a position inside the
-			// ship. Identity for an entity in no frame. Matches the position
-			// property, which converts the same way.
-			if rt.lvl != nil {
-				p = rt.lvl.Frames.FrameFor(e).FromWorld(p)
-			}
-			e.Position = p
-			return flang.NullVal{}, nil
-		},
-
-		"set_velocity": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
-			e, err := rt.verbEntity(args, 0, "set_velocity")
-			if err != nil {
-				return nil, err
-			}
-			v, ok := verbVec(args, 1)
-			if !ok {
-				return nil, fmt.Errorf("set_velocity takes an object and a vec")
-			}
-			rt.markDirty()
-			e.Velocity = v
-			return flang.NullVal{}, nil
-		},
-
 		"play_anim": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
 			e, err := rt.verbEntity(args, 0, "play_anim")
 			if err != nil {
@@ -165,66 +128,6 @@ func init() {
 			}
 			e.StopAnimations()
 			return flang.NullVal{}, nil
-		},
-
-		// set_texture reskins whatever a ref names. Two spellings, mirroring
-		// play_anim's: (ref, texture) covers a wall, a floor, a ceiling or every
-		// attachment of an entity, and (ref, model, texture) targets one
-		// attachment of an entity with several.
-		//
-		// A wall's texture is also `@w.prop.texture`; the verb exists because
-		// an entity's models are not one property, and because "change this
-		// thing's texture" should read the same whatever the thing is.
-		"set_texture": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
-			if len(args) < 2 || len(args) > 3 {
-				return nil, fmt.Errorf("set_texture takes (object, texture) or (object, model, texture)")
-			}
-			r, ok := args[0].(flang.RefVal)
-			if !ok {
-				return nil, fmt.Errorf("set_texture takes an object, not a %s", flang.TypeOf(args[0]))
-			}
-			name, err := verbStr(args, len(args)-1, "set_texture")
-			if err != nil {
-				return nil, err
-			}
-			if len(args) == 3 {
-				if r.Kind != flang.RefEntity {
-					return nil, fmt.Errorf("only an entity has models; set_texture on a %s takes two arguments", r.Kind)
-				}
-				model, _ := verbStrAt(args, 1)
-				e := rt.host.entityFor(r)
-				if e == nil {
-					return nil, fmt.Errorf("set_texture: %s is not an entity that exists", r)
-				}
-				rt.markDirty()
-				rt.markTextureDirty(name)
-				if ok := e.SetTexture(model, name); !ok {
-					rt.warnAt(pos, "set_texture did nothing: %s", e.TextureProblem(model))
-					return flang.BoolVal(false), nil
-				}
-				return flang.BoolVal(true), nil
-			}
-			switch r.Kind {
-			case flang.RefEntity, flang.RefEdge, flang.RefFloor, flang.RefCeiling:
-				if e := rt.host.entityFor(r); e != nil {
-					// The property setter reskins every attachment and cannot
-					// report "there were none", so the check happens here. A ref
-					// that resolves to no entity is left to SetProp, which
-					// errors — that is not a silent no-op and needs no warning.
-					if why := e.TextureProblem(""); why != "" {
-						rt.warnAt(pos, "set_texture did nothing: %s", why)
-						return flang.BoolVal(false), nil
-					}
-				}
-				// Through the property table, so the reskin queues the same
-				// texture load and the same deferred rebuild a write to
-				// `.prop.texture` would.
-				if err := rt.host.SetProp(r, "texture", flang.StrVal(name)); err != nil {
-					return nil, err
-				}
-				return flang.BoolVal(true), nil
-			}
-			return nil, fmt.Errorf("a %s has no texture; name an entity, an edge, a floor or a ceiling", r.Kind)
 		},
 
 		"spawn": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
@@ -338,29 +241,41 @@ func init() {
 			return flang.BoolVal(v != nil), nil
 		},
 
-		"after": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
-			if len(args) < 2 {
-				return nil, fmt.Errorf("after takes a delay in milliseconds and an atom")
-			}
-			ms, ok := verbNum(args, 0)
+		// ease_sky is play_music's own trick applied to the sky: it does not
+		// itself change a single field, it arms a blend that whatever `sky_*`
+		// properties get written next will be eased INTO rather than snapped
+		// to, over the given number of seconds. See world.Sky.BeginTransition
+		// and SCRIPTING.md's "Sky" section for the two-line pattern this is
+		// meant to be called in.
+		"ease_sky": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+			seconds, ok := verbNum(args, 0)
 			if !ok {
-				return nil, fmt.Errorf("after's delay is a number of milliseconds")
+				return nil, fmt.Errorf("ease_sky takes a number of seconds")
 			}
-			atom, ok := args[1].(flang.AtomVal)
-			if !ok {
-				return nil, fmt.Errorf("after takes an atom, not a %s", flang.TypeOf(args[1]))
+			if rt.lvl == nil {
+				return flang.BoolVal(false), nil
 			}
-			// Addressed to whoever is running, which is what makes `after` read
-			// as "remind me" rather than "tell someone".
-			scriptAddTimer(ms, rt.self, string(atom), args[2:], pos)
-			return flang.NullVal{}, nil
+			rt.markDirty()
+			if rt.lvl.Sky == nil {
+				// Nothing to ease FROM but the level's default look, which is
+				// exactly what a script adding a sky for the first time and
+				// easing it in wants — the same auto-vivify the sky_* props
+				// give a level that has none yet.
+				sk := world.DefaultSky()
+				rt.lvl.Sky = &sk
+			}
+			rt.lvl.Sky.BeginTransition(float32(seconds))
+			// True only when this call actually armed a blend: `seconds <= 0`
+			// is BeginTransition's cancel spelling, and a script checking the
+			// result should be able to tell "eased" from "snapped".
+			return flang.BoolVal(seconds > 0), nil
 		},
 	}
 
 	// The particle, attach and audio verbs live in their own files and their
 	// own maps, so each surface can be read in one place; they are merged in
 	// here so there is still exactly one table the runtime looks in.
-	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs, audioVerbs, uiVerbs} {
+	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs, audioVerbs, uiVerbs, hitscanVerbs} {
 		for name, fn := range group {
 			if _, clash := scriptVerbs[name]; clash {
 				panic("script: two implementations of the verb " + name)

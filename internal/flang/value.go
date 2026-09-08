@@ -156,6 +156,9 @@ const (
 	// ref held anywhere it was written down.
 	RefScreen
 	RefWidget
+	// RefModel is one attachment of an entity — `@guard.model.body`. Appended
+	// for the same reason the screen kinds were.
+	RefModel
 )
 
 var refKindNames = [...]string{
@@ -164,6 +167,7 @@ var refKindNames = [...]string{
 	RefEntity: "entity", RefVolume: "volume", RefLight: "light", RefBiome: "biome",
 	RefSprite: "sprite", RefEmitter: "emitter", RefSound: "sound",
 	RefScreen: "screen", RefWidget: "widget",
+	RefModel: "model",
 }
 
 // String renders a ref kind as the atom `ref.kind` yields.
@@ -198,6 +202,10 @@ func (v RefVal) String() string {
 		// Screen and node, because a widget id is only unique within its
 		// screen and "@ok" would not say which "ok".
 		return "@" + v.A + "." + v.B
+	case RefModel:
+		// Entity and attachment, for the same reason: "body" names an
+		// attachment of something, never a thing in the level.
+		return "@" + v.A + ".model." + v.B
 	default:
 		return "@" + v.A
 	}
@@ -206,7 +214,7 @@ func (v RefVal) String() string {
 // ID returns the name a script would address this object by.
 func (v RefVal) ID() string {
 	switch v.Kind {
-	case RefSector, RefFloor, RefCeiling, RefBiome, RefWidget:
+	case RefSector, RefFloor, RefCeiling, RefBiome, RefWidget, RefModel:
 		// These are all scoped by something that comes first in the path: a
 		// sector by its chunk, a widget by its screen. `ref.id` is the thing's
 		// own name, which is what a handler comparing `src.id` against a

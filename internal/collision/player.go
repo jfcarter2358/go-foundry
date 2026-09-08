@@ -109,6 +109,13 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 	// Split the move so no single step outruns the body. At walking speed this
 	// is one step and the arithmetic below is exactly what it always was; only
 	// something moving fast enough to step past a wall pays for more.
+	// How tall a riser this body walks up is the level's to say, not this
+	// package's — see world.PlayerSettings. Resolved once here rather than per
+	// substep because it cannot change inside a frame, and because it is the
+	// only thing in this loop that has to ask the level a question about the
+	// player rather than about the geometry under it.
+	stepHeight := lvl.Player.EffectiveStepHeight(p)
+
 	steps, disp := SweepPlan(p.BoundHalfExtents(), disp)
 	stepDisp := disp.Mul(1 / float32(steps))
 
@@ -134,7 +141,7 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 		// sectors at different heights but is not a wall, so without this the
 		// body walks through that riser and is clamped up onto the floor behind
 		// it. See ResolveStepEntry.
-		localPos = ResolveStepEntry(p, chunk, sector, chunkLocal(chunk, stepFrom), localPos)
+		localPos = ResolveStepEntry(p, chunk, sector, chunkLocal(chunk, stepFrom), localPos, stepHeight)
 		newPos = chunkWorld(chunk, localPos)
 
 		chunk, sector = frame.ChunkAndSectorAt(lvl, newPos)

@@ -82,6 +82,21 @@ func logWindowHandleEvent(event sdl.Event) {
 			script.ScriptLog.Clear()
 		case sdl.SCANCODE_F:
 			logWindowFocusFilter = true
+		case sdl.SCANCODE_C:
+			// Guarded on the filter box: Ctrl+C in a text field means copy the
+			// text in the field, and taking that away to copy the list instead
+			// would be a surprise every time.
+			if !imgui.CurrentIO().WantCaptureKeyboard() {
+				if n := logRowSel.copySelected(); n > 0 {
+					logWindowSetStatus("Copied %s.", plural(n, "line"))
+				} else {
+					logWindowSetStatus("Nothing selected — click a line, or Ctrl+A for all of them.")
+				}
+			}
+		case sdl.SCANCODE_A:
+			if !imgui.CurrentIO().WantCaptureKeyboard() {
+				logRowSel.selectAll()
+			}
 		}
 		return
 	}

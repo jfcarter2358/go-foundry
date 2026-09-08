@@ -13,6 +13,7 @@ import (
 	"foundry/internal/uiwin"
 	"log"
 
+	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -73,6 +74,7 @@ func onScriptEditorClose() {
 	// last is about to be a stale answer the gutter would align itself to.
 	scriptBufTextValid = false
 	scriptBufActive = false
+	scriptComplClose()
 }
 
 // scriptEditorFocused reports whether this window owns keyboard input.
@@ -117,6 +119,22 @@ func scriptEditorHandleEvent(event sdl.Event) {
 			// Safe while typing, despite the text area taking Tab: ImGui skips
 			// its insert-a-tab branch whenever Ctrl is down.
 			scriptEditorCycleTab(sdl.GetModState()&sdl.KMOD_SHIFT != 0)
+		case sdl.SCANCODE_C, sdl.SCANCODE_A:
+			// The two chords the problems pane wants are the two the text area
+			// already owns, so they only reach the pane when no text field is
+			// taking the keyboard. ImGui has had the event by the time this
+			// runs, which is what makes that test the right one: if the buffer
+			// wanted it, it has already had it.
+			if imgui.CurrentIO().WantCaptureKeyboard() {
+				break
+			}
+			if t.Keysym.Scancode == sdl.SCANCODE_A {
+				scriptDiagSel.selectAll()
+				break
+			}
+			if scriptDiagSel.count() > 0 {
+				scriptEditorDiagCopied(scriptDiagSel.copySelected())
+			}
 		}
 	}
 	// No bare keys. Escape in particular does *not* close the window: this
@@ -140,6 +158,23 @@ func scriptEditorHandleEvent(event sdl.Event) {
 // Only while the buffer is actually active, so Escape still closes a modal
 // dialog or a context menu — ImGui owns those, and owning them is right.
 func scriptEditorFilterEvent(event sdl.Event) bool {
+	// The completion list first, and for the same reason: every key it uses —
+	// Up, Down, Tab, Enter, Escape — is a key the text area also wants, and by
+	// the time HandleEvent runs the widget has already moved the caret or
+	// inserted a newline. Its mouse goes through here too, because the list is
+	// painted rather than built out of widgets and ImGui does not know it is
+	// on screen to hit-test against.
+	if scriptBufActive {
+		if k, ok := event.(sdl.KeyboardEvent); ok && k.Type == sdl.KEYDOWN {
+			if scriptComplHandleKey(k) {
+				return true
+			}
+		}
+		if scriptComplHandleMouse(event) {
+			return true
+		}
+	}
+
 	t, ok := event.(sdl.KeyboardEvent)
 	// Only the press is taken. Letting the release through costs nothing —
 	// ImGui reads it as clearing a key it never saw pressed — and it means a

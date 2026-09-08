@@ -1,11 +1,12 @@
 package flang
 
-// param_test.go — `param` declarations and the `@name` reads that use them.
+// param_test.go — `param` declarations and the `?name` reads that use them.
 //
-// The behaviour worth pinning down is the precedence chain: what the host bound
-// beats the declared default, which beats null, and a declared name beats an
-// object that happens to share it. Everything else about params is storage,
-// which is the engine's half.
+// The behaviour worth pinning down is the precedence chain — what the host bound
+// beats the declared default, which beats null — and the separation of the two
+// sigils: `?name` is the declaration and `@name` is the level's object, and a
+// word may be both at once without either winning. Everything else about params
+// is storage, which is the engine's half.
 
 import (
 	"strings"
@@ -94,7 +95,7 @@ func TestParamReadsBoundValue(t *testing.T) {
 param speed float = 2.0
 
 def main() -> float
-    return @speed
+    return ?speed
 end
 `)
 	if got := callMain(t, in); got != FloatVal(2.0) {
@@ -106,14 +107,14 @@ end
 	}
 }
 
-// A param with no default and no binding is null, so `if @door == null` is the
+// A param with no default and no binding is null, so `if ?door == null` is the
 // check an author writes — and it has to be writable without throwing.
 func TestParamWithoutDefaultIsNull(t *testing.T) {
 	in, _ := paramInterp(t, `
 param door ref
 
 def main() -> bool
-    return @door == null
+    return ?door == null
 end
 `)
 	if got := callMain(t, in); got != BoolVal(true) {
@@ -129,7 +130,7 @@ func TestRefParamResolvesFromID(t *testing.T) {
 param door ref
 
 def main() -> ref
-    return @door
+    return ?door
 end
 `)
 	h.SetParam("door", StrVal("front_door"))
@@ -151,7 +152,7 @@ func TestRefParamAcceptsRefValue(t *testing.T) {
 param door ref
 
 def main() -> ref
-    return @door
+    return ?door
 end
 `)
 	o := h.AddObject("front_door", RefEntity)
@@ -167,7 +168,7 @@ func TestRefParamEmptyStringIsNull(t *testing.T) {
 param door ref
 
 def main() -> ref
-    return @door
+    return ?door
 end
 `)
 	h.SetParam("door", StrVal(""))
@@ -176,20 +177,69 @@ end
 	}
 }
 
-// The declaration wins over the world. A script that declares `door` is asking
-// the level a question; an object that happens to be called `door` is not the
-// answer to it.
-func TestParamShadowsWorldName(t *testing.T) {
+// The two sigils are two namespaces. Before `?` existed a declaration shadowed
+// the world, which meant a script could not name an object whose id happened to
+// match one of its own tunables; now neither hides the other.
+func TestParamAndObjectDoNotShadowEachOther(t *testing.T) {
 	in, h := paramInterp(t, `
 param speed float = 1.0
 
-def main() -> float
+def param_read() -> float
+    return ?speed
+end
+
+def object_read() -> ref
     return @speed
 end
 `)
-	h.AddObject("speed", RefEntity)
-	if got := callMain(t, in); got != FloatVal(1.0) {
-		t.Errorf("got %v, want the param's 1.0", got)
+	o := h.AddObject("speed", RefEntity)
+	v, err := in.Call("param_read", nil, Pos{})
+	if err != nil || v != FloatVal(1.0) {
+		t.Errorf("?speed = %v (err %v), want the param's 1.0", v, err)
+	}
+	v, err = in.Call("object_read", nil, Pos{})
+	if err != nil || v != o.Ref {
+		t.Errorf("@speed = %v (err %v), want the object", v, err)
+	}
+}
+
+// `@name` for a declared param, in a level with no such object, is the mistake
+// the old shared sigil left behind. It says which sigil to write rather than
+// reading null and behaving like a param nobody wired up.
+func TestAddrNamingAParamPointsAtTheSigil(t *testing.T) {
+	in, _ := paramInterp(t, `
+param speed float = 1.0
+
+def main() -> ref
+    return @speed
+end
+`)
+	_, err := in.Call("main", nil, Pos{})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "?speed") {
+		t.Errorf("error %q should name the sigil to write", err)
+	}
+}
+
+// An undeclared `?name` is an error rather than a null: unlike an object there
+// is nothing else it could be, and the set of declarations is closed at link
+// time.
+func TestUndeclaredParamErrors(t *testing.T) {
+	in, _ := paramInterp(t, `
+param speed float = 1.0
+
+def main() -> float
+    return ?spede
+end
+`)
+	_, err := in.Call("main", nil, Pos{})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "?speed") {
+		t.Errorf("error %q should list what is declared", err)
 	}
 }
 
@@ -201,7 +251,7 @@ func TestParamTypeMismatchErrors(t *testing.T) {
 param speed float = 1.0
 
 def main() -> float
-    return @speed
+    return ?speed
 end
 `)
 	h.SetParam("speed", StrVal("fast"))
@@ -221,7 +271,7 @@ func TestParamIsNotAssignable(t *testing.T) {
 param speed float = 1.0
 
 def main() -> null
-    @speed = 3.0
+    ?speed = 3.0
 end
 `))
 	if len(errs) > 0 {
@@ -235,7 +285,7 @@ end
 		t.Fatal("expected an error")
 	}
 	if !strings.Contains(err.Error(), "script parameter") {
-		t.Errorf("error %q should say what @speed is", err)
+		t.Errorf("error %q should say what ?speed is", err)
 	}
 }
 

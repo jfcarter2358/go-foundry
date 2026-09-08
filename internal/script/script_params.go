@@ -7,8 +7,8 @@ package script
 // The whole point of `param door ref` is that the *file* stays generic and the
 // *placement* carries the wiring: twenty buttons share one button.flang, and
 // each one's panel says which door it opens. Inside the script the binding reads
-// as `@door`, which is the same spelling as any other object address — the
-// script never has to know whether the name came from the level or from itself.
+// as `?door` — its own sigil, because a param is a question put to the level and
+// `@door` is an assertion that the level contains an object of that name.
 //
 // Three pieces meet here:
 //

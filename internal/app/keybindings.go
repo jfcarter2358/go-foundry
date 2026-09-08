@@ -63,6 +63,20 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		},
 	},
 	{
+		Title:  "Script editor — completion",
+		Active: editor.ScriptEditorOpen,
+		Binds: []uiwin.Keybind{
+			{Keys: "Type a name", Desc: "Opens the list; `@`, `#`, `:` and `.` open it at once"},
+			{Keys: "Arrow keys", Desc: "Never open it — moving the caret about leaves them alone"},
+			{Keys: "Ctrl+Space", Desc: "Open the list without typing"},
+			{Keys: "Up / Down", Desc: "Move the selection (Page Up / Page Down by ten)"},
+			{Keys: "Tab", Desc: "Accept the selected row"},
+			{Keys: "Enter", Desc: "Accept it too, unless it is already exactly what is typed"},
+			{Keys: "Click a row", Desc: "Accept that one"},
+			{Keys: "Esc", Desc: "Dismiss the list for this word"},
+		},
+	},
+	{
 		Title:  "Texture editor",
 		Active: textureui.TextureEditorOpen,
 		Binds: []uiwin.Keybind{
@@ -108,6 +122,24 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "Ctrl+D", Desc: "Duplicate the selection"},
 			{Keys: "Delete / X", Desc: "Delete the selection"},
 			{Keys: "Ctrl+N / Ctrl+O / Ctrl+S", Desc: "New / open / save"},
+			{Keys: "Ctrl+Shift+S", Desc: "Save as"},
+			{Keys: "Ctrl+Z / Ctrl+Shift+Z", Desc: "Undo / redo"},
+		},
+	},
+	{
+		Title:  "Entity editor",
+		Active: editor.EntityEditorOpen,
+		Binds: []uiwin.Keybind{
+			{Keys: "MMB drag / RMB drag", Desc: "Orbit (mouse-look in fly mode)"},
+			{Keys: "Shift+MMB drag", Desc: "Pan"},
+			{Keys: "Wheel", Desc: "Zoom"},
+			{Keys: "V", Desc: "Orbit / fly camera"},
+			{Keys: "WASD / Q / E", Desc: "Fly (Shift to go faster)"},
+			{Keys: "F", Desc: "Frame the whole type"},
+			{Keys: "G / B", Desc: "Show / hide the grid, show / hide the bounds cage"},
+			{Keys: "Space", Desc: "Play / pause the attachment animations"},
+			{Keys: "Delete / X", Desc: "Remove the selected model, chunk or seat"},
+			{Keys: "Ctrl+N / Ctrl+O / Ctrl+S", Desc: "New / open / save the type"},
 			{Keys: "Ctrl+Shift+S", Desc: "Save as"},
 			{Keys: "Ctrl+Z / Ctrl+Shift+Z", Desc: "Undo / redo"},
 		},
@@ -218,6 +250,17 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "Ctrl+Left click", Desc: "Add every point/edge under the cursor"},
 			{Keys: "Left click (armed)", Desc: "Place the spawn point ahead of the camera"},
 			{Keys: "Drag gizmo arm", Desc: "Translate the selection along that axis"},
+		},
+	},
+	{
+		Title:  "Editor — scenery brush (3D)",
+		Active: func() bool { return editor.Editor.Active && editor.Editor.BrushActive },
+		Binds: []uiwin.Keybind{
+			{Keys: "Left click", Desc: "Place a copy where the ghost is; the brush stays armed"},
+			{Keys: "[ / ]", Desc: "Turn the ghost by 15 degrees (5 with Shift)"},
+			{Keys: "- / =", Desc: "Shrink / grow the ghost"},
+			{Keys: "Esc", Desc: "Put the brush away"},
+			{Keys: "Ctrl+Z", Desc: "Take back the last copy placed"},
 		},
 	},
 	{

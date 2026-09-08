@@ -45,6 +45,11 @@ import (
 // against the world. Separating as each entity moved would make the result
 // depend on the order the level lists them in; skipping the settle would let a
 // push shove something through a wall.
+//
+// Placed scenery is separated before the entity pass rather than inside it
+// (scenery_collision.go). A prop is level furniture, so an entity shoved out of
+// one should then be separated from whatever else it landed against, and not
+// the other way round.
 func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entity) {
 	if lvl == nil {
 		return
@@ -64,6 +69,20 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 	}
 	if !motion {
 		return
+	}
+
+	// Scenery, before the entity pass: a prop is level furniture, so an entity
+	// shoved out of one should then be separated from whatever else it landed
+	// against, rather than the other way round.
+	for _, i := range ResolveSceneryCollisions(lvl, player) {
+		e := &lvl.Entities[i]
+		if !e.CollidesWithWorld() {
+			continue
+		}
+		if resolveEntityWorld(lvl, e, e.Position) {
+			e.Collision.GroundedNext = true
+		}
+		e.UpdateLocation(lvl)
 	}
 
 	for _, i := range ResolveEntityCollisions(lvl, player) {

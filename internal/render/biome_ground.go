@@ -101,6 +101,16 @@ func EvictGroundPatchCache(id string) {
 	delete(groundPatches.cache, id)
 }
 
+// BiomeGroundPatchVisible reports whether brush's sector draws a ground patch
+// at all. Every land kind always does — the patch IS the biome there. Water is
+// the one kind whose patch is scenery underneath something else (the lakebed
+// seen through the surface), so it is the one kind that can turn it off, for
+// water lying on ground that is already dressed and would only z-fight with a
+// second drape.
+func BiomeGroundPatchVisible(brush *world.BiomeBrush) bool {
+	return !(brush.Kind == world.BiomeWater && brush.HideLakebed)
+}
+
 // ResolveGroundTexture returns the texture to paint on brush's ground patch:
 // brush.GroundTexture when the user picked one, else the kind's default
 // (GroundTextureFor).
@@ -265,6 +275,19 @@ func RenderBiomeGround(level *world.Level, projView mgl32.Mat4, camPos mgl32.Vec
 		for si := range ch.BiomeSectors {
 			s := &ch.BiomeSectors[si]
 			if len(s.Points) < 3 {
+				continue
+			}
+			if !BiomeGroundPatchVisible(&s.Brush) {
+				// A Water sector with its lakebed switched off. Clearing the
+				// dirty flag here is what ensureGroundPatch would otherwise
+				// have done, and it has to happen either way: the water sync
+				// (biome_water.go) rebuilds on GroundDirty and has already run
+				// this frame, so leaving it set would rebuild the plane's mesh
+				// every frame forever. The cached patch goes with it rather
+				// than sitting on GPU memory nothing draws — ensureGroundPatch
+				// rebuilds from a missing entry when the lakebed comes back.
+				s.GroundDirty = false
+				EvictGroundPatchCache(s.ID)
 				continue
 			}
 			entry := ensureGroundPatch(level, ch, s)

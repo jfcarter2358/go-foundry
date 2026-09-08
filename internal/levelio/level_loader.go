@@ -44,6 +44,7 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		Origin:     origin,
 		Rotation:   rc.Rotation,
 		Scale:      sc,
+		Velocity:   mgl32.Vec3{rc.Velocity.X, rc.Velocity.Y, rc.Velocity.Z},
 		FrameOwner: rc.Frame,
 		Disabled:   rc.Disabled,
 		// A chunk authored disabled is not built at all — the geometry passes
@@ -133,6 +134,7 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 				Openings:     loadOpenings(rs.Floor.Openings),
 				Skirt:        rs.Floor.Skirt,
 				SkirtTexture: rs.Floor.SkirtTexture,
+				Slab:         world.SlabFromRaw(rs.Floor.Slab),
 				UVOffset:     mgl32.Vec2{rs.Floor.UVOffset.X, rs.Floor.UVOffset.Y},
 				UVScale:      floorUVScale,
 				UVRotation:   rs.Floor.UVRotation,
@@ -150,6 +152,7 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 				DoubleSided:  world.BoolDefault(rs.Ceiling.DoubleSided, true),
 				Alpha:        float32Default(rs.Ceiling.Alpha, 1.0),
 				Openings:     loadOpenings(rs.Ceiling.Openings),
+				Slab:         world.SlabFromRaw(rs.Ceiling.Slab),
 				UVOffset:     mgl32.Vec2{rs.Ceiling.UVOffset.X, rs.Ceiling.UVOffset.Y},
 				UVScale:      ceilUVScale,
 				UVRotation:   rs.Ceiling.UVRotation,
@@ -176,6 +179,18 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		}
 		if rs.Ceiling.BlendMask != "" {
 			texNeeded[rs.Ceiling.BlendMask] = true
+		}
+		// A slab names its own textures (slab.go); an unlisted one loads as
+		// white, which is what a retextured underside would have come back as.
+		for _, sl := range []*world.RawSlab{rs.Floor.Slab, rs.Ceiling.Slab} {
+			if sl == nil {
+				continue
+			}
+			for _, tex := range []string{sl.Texture, sl.BlendTexture, sl.BlendMask, sl.RimTexture} {
+				if tex != "" {
+					texNeeded[tex] = true
+				}
+			}
 		}
 
 		// A sector's edges must form a closed ring visiting each point exactly
@@ -431,12 +446,26 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 	// Collect gap textures so they get registered/uploaded; the actual gap
 	// geometry is built by RebuildGaps (chunk.go), which every other caller
 	// that (re)builds portal gaps also uses — see chunk.go's own doc comment.
+	sectorHere := map[string]bool{}
+	for si := range chunk.Sectors {
+		sectorHere[chunk.Sectors[si].ID] = true
+	}
 	for si := range chunk.Sectors {
 		s := &chunk.Sectors[si]
 		for pi := range s.Portals {
 			p := &s.Portals[pi]
 			if !p.DrawGap {
 				continue
+			}
+			// RebuildGaps needs the far sector's heights to know how tall the
+			// gap is, so a target it cannot resolve is a gap that is silently
+			// never drawn — an open hole where a step or a door should be,
+			// with nothing on screen or in the file to say why. Said once, at
+			// load: the rebuild itself runs every frame a script moves a
+			// surface. A frame portal has no ToSector by design.
+			if p.ToFrame == "" && !sectorHere[p.ToSector] {
+				log.Printf("chunk %q: sector %q edge %q draws a gap into sector %q, which this chunk does not have; the gap will not be drawn",
+					chunk.ID, s.ID, world.EdgeIDDisplay(p.ID), p.ToSector)
 			}
 			tex := p.GapTexture
 			if tex == "" {
@@ -481,6 +510,7 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 				RockScale:    rb.Brush.RockScale,
 				SandHeight:   rb.Brush.SandHeight,
 				WaterDepth:   rb.Brush.WaterDepth,
+				HideLakebed:  rb.Brush.HideLakebed,
 				Water:        world.WaterParamsFromRaw(rb.Brush.Water),
 
 				MossScatter:   rb.Brush.MossScatter,
@@ -758,6 +788,21 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 		level.Entities = append(level.Entities, e)
 	}
 
+	// The geometry those entities carry (world/entity_chunk.go). Materialised
+	// after every entity exists, not inside the loop above, because a chunk's
+	// ID is uniqued against the level and an entity placed later could
+	// otherwise take a name one placed earlier had already been given.
+	//
+	// A deck that will not load is reported and skipped, unlike a bad entity:
+	// the entity is what a script addresses and what carries the attributes, so
+	// losing it silently would be invisible, while losing one of its floors is
+	// a hole you can see.
+	for i := range level.Entities {
+		for _, err := range MaterializeEntityChunks(level, &level.Entities[i], texNeeded) {
+			log.Printf("%v", err)
+		}
+	}
+
 	// Volumes: scriptable regions, with the same ID guarantee entities get.
 	for _, rv := range raw.Volumes {
 		v, err := world.VolumeFromRaw(rv)
@@ -813,6 +858,22 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 		level.Emitters = append(level.Emitters, em)
 	}
 
+	// Scenery: static props, with the same ID guarantee.
+	//
+	// A model that will not load costs the placement its mesh, not its
+	// existence — the same rule an entity attachment follows. What the author
+	// gets is a reported error and a prop that draws nothing, which is fixable;
+	// a level that refuses to open over one missing rock is not.
+	for _, rsc := range raw.Scenery {
+		sc := world.SceneryFromRaw(rsc)
+		sc.ID = world.UniqueSceneryID(level, sc.ID)
+		if err := sc.Load(); err != nil {
+			// Load's own error already names the placement and the model.
+			log.Printf("%v", err)
+		}
+		level.Scenery = append(level.Scenery, sc)
+	}
+
 	// Sounds: placed sound sources, with the same ID guarantee.
 	//
 	// A missing or unreadable clip is reported and the sound kept, on exactly
@@ -843,6 +904,20 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 			log.Printf("music %q: %v", level.Music.Track, err)
 		}
 	}
+
+	// The environment (sky.go, fog.go). No preload: the sky's six faces are
+	// uploaded lazily by the pass that binds them (RenderSky), because unlike a
+	// sound clip there is no first-use hitch to hide — the sky is drawn on the
+	// very first frame of the level or never.
+	level.Sky = world.SkyFromRaw(raw.Sky)
+	level.Fog = world.FogFromRaw(raw.Fog)
+
+	// The player's own tuning (player_settings.go). Assigned unconditionally,
+	// including for a level with no `player:` block: this loader fills a Level
+	// that may be carrying the previous level's settings, and a level that says
+	// nothing must get the engine's defaults rather than whatever the level
+	// before it happened to ask for.
+	level.Player = world.PlayerSettingsFromRaw(raw.Player)
 
 	// Convert lights
 	level.Lights = rawToLightSet(raw.Lights)

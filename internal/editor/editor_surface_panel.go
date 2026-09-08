@@ -15,6 +15,7 @@ package editor
 import (
 	"fmt"
 	"foundry/internal/world"
+	"strings"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -46,7 +47,8 @@ func editorSurfacePanel(ch *world.Chunk, s *world.Sector, sel faceSel) {
 	}
 
 	imgui.PushStyleColor(imgui.StyleColorText, imgui.Vec4{X: 0, Y: 1, Z: 0.5, W: 1})
-	imgui.Text(fmt.Sprintf("Shaping %s — %d points, %d faces", sel.kind, len(mesh.Points), len(mesh.Faces)))
+	imgui.Text(fmt.Sprintf("Shaping %s — %d points, %d faces",
+		strings.ToLower(editor3DKindLabel(sel.kind)), len(mesh.Points), len(mesh.Faces)))
 	imgui.PopStyleColor()
 	if Editor.SurfaceStatus != "" {
 		imgui.Text(Editor.SurfaceStatus)

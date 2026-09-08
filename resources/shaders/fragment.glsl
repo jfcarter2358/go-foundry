@@ -12,6 +12,15 @@ uniform int       hasBlend;
 uniform sampler2D blendTex;
 uniform sampler2D blendMask;
 
+// Normal (bump) mapping. When hasNormalMap is set, normalMap holds a
+// tangent-space normal, RGB-encoded as n * 0.5 + 0.5, derived from the height
+// field painted on the texture's bump channel in the texture editor (see
+// texdoc/bump.go). Off (0) by default, so a program that links this shader
+// without knowing about it — and every texture with no <name>_normal.png
+// beside it — shades exactly as it did before.
+uniform int       hasNormalMap;
+uniform sampler2D normalMap;
+
 // Alpha-cutout anti-aliasing, set for the opaque pass only (see
 // AlphaSharpenUniform in main.go). Off (0) by default so any program that
 // links this shader without knowing about it — and the sorted transparent
@@ -120,6 +129,31 @@ vec3 waterNormal(vec2 p) {
     float hD = waterHeight(p - vec2(0.0, e));
     float hU = waterHeight(p + vec2(0.0, e));
     return normalize(vec3(hL - hR, 2.0 * e, hD - hU));
+}
+
+// Tangent frame reconstructed from screen-space derivatives, rather than from
+// per-vertex tangent attributes.
+//
+// Every mesh in the engine — walls, floors, surface meshes, skinned models,
+// tessellated detail patches, scattered rock instances — shares one 5-float
+// [X,Y,Z,U,V] vertex record (see Geometry in geometry.go). Adding a tangent to
+// it would mean touching every builder, every buffer and every shadow pass for
+// something the fragment stage can recover exactly here: dp/du and dp/dv are
+// what a tangent frame *is*, and dFdx/dFdy of position and UV give them.
+//
+// The cost is one frame per fragment instead of one per vertex; the gain is
+// that a normal map works on every surface in the engine the day it lands,
+// including the procedurally displaced ones that have no authored UVs to hang
+// a tangent off.
+mat3 cotangentFrame(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2) {
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    // Scale both axes by the same factor so the frame stays orthonormal-ish
+    // rather than stretching the normal along whichever axis is denser.
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    return mat3(T * invmax, B * invmax, N);
 }
 
 // 5x5 PCF sample of a single cascade layer. Returns occlusion in 0..1, or -1.0
@@ -251,9 +285,17 @@ float calcPointShadow(int lightIdx, vec3 fragPos) {
 }
 
 void main() {
+    // Screen-space derivatives, taken once at the top of main and outside every
+    // branch: derivatives are only defined under uniform control flow, and
+    // gl_FrontFacing below is anything but.
+    vec3 dPdx = dFdx(fragWorldPos);
+    vec3 dPdy = dFdy(fragWorldPos);
+    vec2 dUVdx = dFdx(fragTexCoord);
+    vec2 dUVdy = dFdy(fragTexCoord);
+
     // Flat facet normal from screen-space position derivatives. Correct for a
     // flat surface and the fallback whenever no better normal is available.
-    vec3 faceNormal = normalize(cross(dFdx(fragWorldPos), dFdy(fragWorldPos)));
+    vec3 faceNormal = normalize(cross(dPdx, dPdy));
 
     vec3 normal;
     if (isWater != 0) {
@@ -272,6 +314,14 @@ void main() {
     if (!gl_FrontFacing) {
         normal = -normal;
     }
+
+    // The shape of the surface, before any normal map perturbs it. The shadow
+    // lookups keep shading off this one: their slope-scaled bias describes how
+    // far the *geometry* is tilted away from the light, and feeding it a
+    // per-texel bumped normal would make the bias flicker texel to texel and
+    // stipple acne across an otherwise clean surface. Same reasoning as the
+    // flat-normal shadow term in biome_frag.glsl.
+    vec3 geoNormal = normal;
 
     vec2 uv = fragTexCoord;
     if (isWater != 0) {
@@ -294,6 +344,19 @@ void main() {
         texColor = mix(texColor, blendColor, maskLum);
     }
 
+    // Normal mapping, on everything but water — water derives its normal from
+    // the wave field, which is the whole point of that path, and a tangent
+    // frame built on a surface that is displacing under the fragment would not
+    // describe it anyway. Both conditions are uniforms, so the texture() call
+    // inside stays under uniform control flow.
+    if (hasNormalMap != 0 && isWater == 0) {
+        mat3 tbn = cotangentFrame(normal, dPdx, dPdy, dUVdx, dUVdy);
+        vec3 tangentNormal = texture(normalMap, uv).xyz * 2.0 - 1.0;
+        if (dot(tangentNormal, tangentNormal) > 1e-6) {
+            normal = normalize(tbn * tangentNormal);
+        }
+    }
+
     // Start with global ambient contribution
     vec3 lighting = globalLightColor * globalLightBrightness;
 
@@ -304,7 +367,7 @@ void main() {
         vec3 contrib = dirLightColor[i] * dirLightBrightness[i] * diff;
 
         if (dirLightCastShadows[i]) {
-            float shadow = calcDirShadow(i, normal, ldir);
+            float shadow = calcDirShadow(i, geoNormal, ldir);
             // Shadow strength: 0 = no darkening, 1 = full shadow
             contrib *= (1.0 - shadow * dirLightShadowStrength[i]);
         }
@@ -381,6 +444,11 @@ void main() {
         // Grazing angles also read as more opaque, matching the reflection.
         finalAlpha = clamp(finalAlpha + fresnel * (1.0 - finalAlpha) * 0.5, 0.0, 1.0);
     }
+
+    // Distance fog, last: it acts on the shaded result, so a fogged surface
+    // loses its own lighting along with its colour rather than glowing through
+    // the fog. See fog.glsl, injected above this file's own #version line.
+    surface = applyFog(surface, fragWorldPos);
 
     outputColor = vec4(surface, finalAlpha);
 }

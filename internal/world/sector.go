@@ -49,6 +49,12 @@ type Floor struct {
 	SkirtTexture  string // empty = the floor's own texture
 	SkirtGeometry gfx.Geometry
 
+	// Slab is the floor's thickness: a second face this far *below* it and a
+	// rim joining the two, so the floor reads as a solid from underneath
+	// rather than as a sheet. Thickness 0 (the default) is the plane every
+	// level had before, and writes nothing to the file. See slab.go.
+	Slab Slab
+
 	// Collision cache for terrain mode (populated by Sector.Load)
 	CollisionPts    []mgl32.Vec2 // boundary + terrain points in XZ
 	CollisionDepths []float32    // depth offset per point (relative to Height)
@@ -92,6 +98,10 @@ type Ceiling struct {
 	// whatever is above it. The floor's own Openings field, mirrored — see
 	// opening.go.
 	Openings []Opening
+
+	// Slab is the ceiling's thickness: a second face this far *above* it and a
+	// rim joining the two. The floor's own Slab field, mirrored — see slab.go.
+	Slab Slab
 
 	// Collision cache for terrain mode (populated by Sector.Load)
 	CollisionPts    []mgl32.Vec2 // boundary + terrain points in XZ
@@ -164,6 +174,27 @@ func (s *Sector) LocalAABB() (min, max mgl32.Vec3) {
 			minFloor = h
 		}
 	}
+	// A thick floor hangs its underside and rim below all of that (slab.go),
+	// and a box that stopped at the floor plane would cull the sector away
+	// while the slab was still on screen — and, worse, while it was still
+	// casting, since the shadow pass culls against this same box.
+	//
+	// An unshaped slab mirrors the floor, so dropping everything above by the
+	// thickness covers it exactly. A shaped one has a depth range of its own
+	// and is measured directly.
+	if sl := &s.Floor.Slab; sl.HasThickness() {
+		if !sl.Shaped() {
+			minFloor -= sl.Thickness
+		} else {
+			base := s.Floor.Height - sl.Thickness
+			if base < minFloor {
+				minFloor = base
+			}
+			if d, ok := sl.Mesh.MinDepth(); ok && base+d < minFloor {
+				minFloor = base + d
+			}
+		}
+	}
 
 	maxCeil := s.Ceiling.Height
 	for _, off := range s.Ceiling.VertexOffsets {
@@ -174,6 +205,19 @@ func (s *Sector) LocalAABB() (min, max mgl32.Vec3) {
 	if d, ok := s.Ceiling.Mesh.MaxDepth(); ok {
 		if h := s.Ceiling.Height + d; h > maxCeil {
 			maxCeil = h
+		}
+	}
+	if sl := &s.Ceiling.Slab; sl.HasThickness() {
+		if !sl.Shaped() {
+			maxCeil += sl.Thickness
+		} else {
+			base := s.Ceiling.Height + sl.Thickness
+			if base > maxCeil {
+				maxCeil = base
+			}
+			if d, ok := sl.Mesh.MaxDepth(); ok && base+d > maxCeil {
+				maxCeil = base + d
+			}
 		}
 	}
 
@@ -391,6 +435,26 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 	s.Floor.Geometry.BlendTexture = s.Floor.BlendTexture
 	s.Floor.Geometry.BlendMask = s.Floor.BlendMask
 
+	// The floor's slab, after the floor itself: its rim reads the collision
+	// cache the block above has just filled, which is how an opening's rim
+	// follows a shaped surface rather than its base plane. See slab.go.
+	if s.Floor.Enabled {
+		if err := s.loadSlab(points, slabBuild{
+			Slab:     &s.Floor.Slab,
+			Frame:    s.FloorFrame(points),
+			Mesh:     &s.Floor.Mesh,
+			Openings: s.Floor.Openings,
+			Texture:  s.Floor.Texture,
+			Alpha:    s.Floor.Alpha,
+			Smooth:   s.Floor.Smooth, SmoothAngle: s.Floor.SmoothAngle,
+			Down: true,
+		}); err != nil {
+			return err
+		}
+	} else {
+		s.Floor.Slab.Unload()
+	}
+
 	// Build ceiling geometry
 	if s.Ceiling.Enabled && len(points) >= 3 {
 		frame := s.CeilingFrame(points)
@@ -419,6 +483,22 @@ func (s *Sector) Load(points []mgl32.Vec2) error {
 	s.Ceiling.Geometry.BlendTexture = s.Ceiling.BlendTexture
 	s.Ceiling.Geometry.BlendMask = s.Ceiling.BlendMask
 
+	if s.Ceiling.Enabled {
+		if err := s.loadSlab(points, slabBuild{
+			Slab:     &s.Ceiling.Slab,
+			Frame:    s.CeilingFrame(points),
+			Mesh:     &s.Ceiling.Mesh,
+			Openings: s.Ceiling.Openings,
+			Texture:  s.Ceiling.Texture,
+			Alpha:    s.Ceiling.Alpha,
+			Smooth:   s.Ceiling.Smooth, SmoothAngle: s.Ceiling.SmoothAngle,
+		}); err != nil {
+			return err
+		}
+	} else {
+		s.Ceiling.Slab.Unload()
+	}
+
 	// Propagate wall alpha to geometry (submeshes keep their own face alpha)
 	for i := range s.Walls {
 		s.Walls[i].Geometry.Alpha = s.Walls[i].Alpha
@@ -445,6 +525,12 @@ type surfaceBuild struct {
 	Frame       SurfaceFrame
 	Mesh        *SurfaceMesh
 	DoubleSided bool
+	// Reverse turns every built triangle round before it is uploaded, so the
+	// surface faces the other way. Only a slab's far face asks for it: it is
+	// built from the frame and mesh of the surface it hangs off (slab.go), and
+	// that frame's winding cannot be flipped without renumbering the corners of
+	// a mesh the two share.
+	Reverse     bool
 	Openings    []Opening
 	Texture     string
 	UVOffset    mgl32.Vec2
@@ -464,6 +550,12 @@ type surfaceBuild struct {
 // step with the others and none of which could be combined.
 func loadSurfaceGeometry(b surfaceBuild) error {
 	verts, indices, subs := BuildSurfaceMesh(b.Frame, b.Mesh, b.DoubleSided, b.Openings)
+	if b.Reverse {
+		reverseTriangleWinding(indices)
+		for i := range subs {
+			reverseTriangleWinding(subs[i].Indices)
+		}
+	}
 	ApplyUVTransform(verts, b.UVOffset, b.UVScale, b.UVRotation)
 	b.Geometry.Smooth, b.Geometry.SmoothAngle = b.Smooth, b.SmoothAngle
 	if err := b.Geometry.Load(verts, indices, b.Texture, mgl32.Vec3{0, 0, 0}); err != nil {
@@ -580,21 +672,27 @@ func InterpolateSurfaceHeight(chunk *Chunk, sector *Sector, xz mgl32.Vec2, floor
 // own mesh — the same triangles that were drawn, so what a body stands on and
 // what the eye sees are the same surface. Returns (height, normal, found).
 func interpolateSurfaceMeshHeight(sector *Sector, xz mgl32.Vec2, floor bool) (float32, mgl32.Vec3, bool) {
-	var pts []mgl32.Vec2
-	var depths []float32
-	var tris []int
-	var baseH float32
 	if floor {
-		pts = sector.Floor.CollisionPts
-		depths = sector.Floor.CollisionDepths
-		tris = sector.Floor.CollisionTris
-		baseH = sector.Floor.Height
-	} else {
-		pts = sector.Ceiling.CollisionPts
-		depths = sector.Ceiling.CollisionDepths
-		tris = sector.Ceiling.CollisionTris
-		baseH = sector.Ceiling.Height
+		return InterpolateTriMeshHeight(sector.Floor.CollisionPts, sector.Floor.CollisionDepths,
+			sector.Floor.CollisionTris, sector.Floor.Height, xz, true)
 	}
+	return InterpolateTriMeshHeight(sector.Ceiling.CollisionPts, sector.Ceiling.CollisionDepths,
+		sector.Ceiling.CollisionTris, sector.Ceiling.Height, xz, false)
+}
+
+// InterpolateTriMeshHeight is the triangle search itself, over a collision
+// cache SurfaceCollisionMesh filled: (pts, depths, tris) index-parallel, with
+// depths relative to baseH.
+//
+// Separate from the Sector accessor above because a sector's floor and ceiling
+// are no longer the only surfaces with one of these — a slab's far face carries
+// its own when it has been shaped independently (slab.go), and it is queried
+// the same way. up orients the normal, which is all it is for.
+//
+// Returns (height, normal, found); when found is false the caller falls back to
+// the flat base height.
+func InterpolateTriMeshHeight(pts []mgl32.Vec2, depths []float32, tris []int, baseH float32,
+	xz mgl32.Vec2, up bool) (float32, mgl32.Vec3, bool) {
 
 	for i := 0; i+2 < len(tris); i += 3 {
 		ai, bi, ci := tris[i], tris[i+1], tris[i+2]
@@ -614,16 +712,15 @@ func interpolateSurfaceMeshHeight(sector *Sector, xz mgl32.Vec2, floor bool) (fl
 		b3 := mgl32.Vec3{pts[bi].X(), hB, pts[bi].Y()}
 		c3 := mgl32.Vec3{pts[ci].X(), hC, pts[ci].Y()}
 		normal := geom.TriangleNormal(a3, b3, c3)
-		if floor && normal.Y() < 0 {
+		if up && normal.Y() < 0 {
 			normal = normal.Mul(-1)
-		} else if !floor && normal.Y() > 0 {
+		} else if !up && normal.Y() > 0 {
 			normal = normal.Mul(-1)
 		}
 		return height, normal, true
 	}
 
-	// Fallback
-	if floor {
+	if up {
 		return baseH, mgl32.Vec3{0, 1, 0}, false
 	}
 	return baseH, mgl32.Vec3{0, -1, 0}, false

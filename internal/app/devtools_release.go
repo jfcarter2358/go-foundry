@@ -17,9 +17,11 @@ package app
 // predicate right.
 
 import (
+	"foundry/internal/gfx"
 	"foundry/internal/render"
 	"foundry/internal/world"
 
+	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -49,6 +51,8 @@ func devRenderOverlays(dt float32)         {}
 func devRenderSecondaryWindows(dt float32) {}
 
 func devRenderMarkers(lvl *world.Level, cull *render.Frustum) {}
+
+func devRenderBrushGhost(draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSided bool)) {}
 
 // devRouteEvent consumes nothing: with no F1 reference and no secondary
 // windows, every event belongs to the game.

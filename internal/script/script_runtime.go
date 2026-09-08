@@ -667,6 +667,11 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 		u.interp.ResetSteps()
 		_, matched, err := u.interp.CallAtom(m.atom, m.args, m.pos)
 		if err != nil {
+			// A clause that matched and then failed *was* the handler. Leaving
+			// anyMatched false filed the "defines no clause" warning below on
+			// top of the real error, which contradicts it and sends the author
+			// looking for a clause that is sitting right there.
+			anyMatched = true
 			rt.recordFailure(u, err)
 			continue
 		}

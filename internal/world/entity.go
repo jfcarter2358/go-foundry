@@ -74,6 +74,13 @@ type Entity struct {
 	// legitimate: an invisible entity is still a position with attributes on it.
 	Models []EntityModel
 
+	// Chunks are the entity's world-geometry attachments — sectors carried
+	// around by it rather than fixed in the level (see entity_chunk.go). Each
+	// one is materialised into the level as a frame-owned chunk when the entity
+	// is placed or the level is loaded, which is what makes a ship with a
+	// walkable hold a *type* rather than a level's hand-wiring.
+	Chunks []EntityChunk
+
 	// Script is the .flang file driving this entity's behaviour, resolved from
 	// the definition and optionally overridden per instance. Empty means the
 	// entity has no behaviour of its own.
@@ -121,6 +128,26 @@ type Entity struct {
 	// to go through FrameSet.WorldPosition first. A local position and a world
 	// one are not numbers that can be subtracted.
 	Frame string
+
+	// AttachedChunk names a chunk this entity rides: whenever that chunk's
+	// Origin moves — a lift rising, a barge drifting, someone dragging it in
+	// the editor — this entity's Position moves the same distance. See
+	// CarryAttachedEntities.
+	//
+	// This is a plain translation, not a change of coordinate system the way
+	// Frame is: Position stays in whatever space it already was, and nothing
+	// here gives the entity a socket, a seat, or a way to cross a frame
+	// portal. A chunk that only rotates or scales leaves an attached entity
+	// exactly where it stood — Chunk.Velocity itself only ever moves an
+	// Origin, and this follows the same scope.
+	//
+	// The entity and the chunk have to agree on which space they are placed
+	// in: a world chunk carries a world-space entity (Frame == ""), and a
+	// frame-owned chunk carries an entity riding that same frame (Frame ==
+	// the chunk's FrameOwner). Attached across that boundary, it silently
+	// does nothing — the same "unresolvable name reads as not attached"
+	// convention every other named binding in this engine follows (Attach).
+	AttachedChunk string
 
 	// Where the entity currently is, refreshed by EntityUpdate. Derived state,
 	// never authored and never saved.
@@ -537,6 +564,33 @@ func EntityScaleClamp(v float32) float32 {
 		return EntityScaleMin
 	}
 	return v
+}
+
+// EntityFrameScale is the single factor the *geometry* an entity carries —
+// its chunk attachments, and any level chunk hand-bound to it as an interior —
+// follows when the entity is scaled: the mean of its three axis magnitudes.
+//
+// One factor rather than three because a chunk's scale has only ever been
+// uniform (Chunk.Scale), and a good deal is built on that: a walkable slope
+// survives a uniform scale unchanged, the 2D map projects a chunk's plane with
+// one ruler, and a click radius converts into local units by one division.
+// Stretching a chunk per-axis would skew all three at once and say nothing
+// about it. The mean is exact for the uniform case, which is what "make this
+// ship bigger" actually is, and a reasonable middle for the rest.
+//
+// Magnitudes because a negative scale mirrors a model but cannot mirror a
+// place: a flipped chunk would invert its winding and read its floors as
+// ceilings.
+func EntityFrameScale(e *Entity) float32 {
+	if e == nil {
+		return 1
+	}
+	s := e.EffectiveScale()
+	k := (geom.Abs32(s.X()) + geom.Abs32(s.Y()) + geom.Abs32(s.Z())) / 3
+	if k < EntityScaleMin {
+		return EntityScaleMin
+	}
+	return k
 }
 
 // PlayerEntity points to the entity with ID "player" in the current level.

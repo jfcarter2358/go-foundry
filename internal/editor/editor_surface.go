@@ -36,6 +36,7 @@ package editor
 import (
 	"fmt"
 	"foundry/internal/world"
+	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
@@ -159,7 +160,10 @@ func EnterSurfaceEdit(sel faceSel) {
 	}
 	if mesh.IsEmpty() {
 		EditorPushUndo()
-		*mesh = world.SeedSurfaceMesh(frame)
+		// Not SeedSurfaceMesh directly: a slab's far face starts from whatever
+		// it was mirroring, so shaping a carved floor's underside begins with
+		// the carve rather than throwing it away. See SeedSurfaceMeshFor.
+		*mesh = s.SeedSurfaceMeshFor(sel.kind, sel.idx, frame)
 		_ = world.ReloadSector(ch, s)
 	}
 
@@ -168,7 +172,8 @@ func EnterSurfaceEdit(sel faceSel) {
 	Editor.SurfaceMode = surfaceSelFace
 	clearSurfaceSelection()
 	setFaceSelection([]faceSel{sel})
-	surfaceSetStatus("Shaping %s — [1] points [2] edges [3] faces, E extrude, I inset, B subdivide, C connect, Esc done", sel.kind)
+	surfaceSetStatus("Shaping %s — [1] points [2] edges [3] faces, E extrude, I inset, B subdivide, C connect, Esc done",
+		strings.ToLower(editor3DKindLabel(sel.kind)))
 }
 
 // ExitSurfaceEdit leaves surface mode, keeping the level face selected so the

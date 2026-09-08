@@ -169,6 +169,7 @@ type RawEntityDef struct {
 	Visible     *bool                   `yaml:"visible,omitempty"` // default true when absent
 	Collision   *RawEntityCollision     `yaml:"collision,omitempty"`
 	Models      []RawEntityModel        `yaml:"models,omitempty"`
+	Chunks      []RawEntityChunk        `yaml:"chunks,omitempty"` // see entity_chunk.go
 	Attributes  map[string]RawAttribute `yaml:"attributes,omitempty"`
 	Script      string                  `yaml:"script,omitempty"`      // .flang file driving this type's behaviour
 	Params      map[string]RawAttribute `yaml:"params,omitempty"`      // defaults for that script's `param` declarations
@@ -183,19 +184,29 @@ type RawEntityDef struct {
 // is then its own rather than an override. With a type, only the fields that
 // differ from the definition are written — see EntityToRaw.
 type RawEntity struct {
-	Type            string                  `yaml:"type,omitempty"`
-	ID              string                  `yaml:"id"`
-	Position        RawVec3                 `yaml:"position"`
-	Rotation        RawVec3                 `yaml:"rotation,omitempty"`
-	Scale           *RawVec3                `yaml:"scale,omitempty"`
-	Velocity        RawVec3                 `yaml:"velocity,omitempty"`
-	AngularVelocity RawVec3                 `yaml:"angular_velocity,omitempty"`
-	Tags            []string                `yaml:"tags,omitempty"`    // unioned with the definition's
-	Visible         *bool                   `yaml:"visible,omitempty"` // nil = follow the definition
-	Attributes      map[string]RawAttribute `yaml:"attributes,omitempty"`
-	Params          map[string]RawAttribute `yaml:"params,omitempty"`    // script params, overlaid on the definition's
-	Collision       *RawEntityCollision     `yaml:"collision,omitempty"` // per-flag overrides
-	Models          []RawEntityModel        `yaml:"models,omitempty"`    // per-attachment overrides, matched by name
+	Type            string   `yaml:"type,omitempty"`
+	ID              string   `yaml:"id"`
+	Position        RawVec3  `yaml:"position"`
+	Rotation        RawVec3  `yaml:"rotation,omitempty"`
+	Scale           *RawVec3 `yaml:"scale,omitempty"`
+	Velocity        RawVec3  `yaml:"velocity,omitempty"`
+	AngularVelocity RawVec3  `yaml:"angular_velocity,omitempty"`
+	// AttachedChunk is which chunk this instance rides — see
+	// Entity.AttachedChunk. Instance-only: a definition cannot name a level's
+	// chunk, since it does not know which level it will be placed in.
+	AttachedChunk string                  `yaml:"attached_chunk,omitempty"`
+	Tags          []string                `yaml:"tags,omitempty"`    // unioned with the definition's
+	Visible       *bool                   `yaml:"visible,omitempty"` // nil = follow the definition
+	Attributes    map[string]RawAttribute `yaml:"attributes,omitempty"`
+	Params        map[string]RawAttribute `yaml:"params,omitempty"`    // script params, overlaid on the definition's
+	Collision     *RawEntityCollision     `yaml:"collision,omitempty"` // per-flag overrides
+	Models        []RawEntityModel        `yaml:"models,omitempty"`    // per-attachment overrides, matched by name
+	// Chunks is this instance's world-geometry attachments. Written whole or
+	// not at all, the way the vehicle block is and for the same reason: a
+	// per-field diff would have to invent a way to say "this deck was removed",
+	// and the list is short enough that restating it costs less than that
+	// machinery would.
+	Chunks []RawEntityChunk `yaml:"chunks,omitempty"`
 	// Script overrides the definition's. A pointer so the three cases stay
 	// distinct: absent follows the type, "" detaches the script this instance
 	// would otherwise have inherited, and a name replaces it.
@@ -240,7 +251,12 @@ type EntityDef struct {
 	// Models are attachment templates. They hold no GPU state — Instantiate
 	// copies them and the copy is what gets loaded — so one definition can back
 	// any number of placed entities.
-	Models     []EntityModel
+	Models []EntityModel
+	// Chunks are the type's world-geometry attachments. Like Models they hold
+	// no GPU state — the level materialises a chunk per attachment per instance
+	// (levelio/entity_chunks.go) — so one definition can back any number of
+	// placed ships.
+	Chunks     []EntityChunk
 	Attributes AttrSet
 	// Params are the type's defaults for its script's `param` declarations. An
 	// instance overrides them one name at a time.
@@ -399,6 +415,12 @@ func entityDefFromRaw(raw RawEntityDef, name string) (*EntityDef, error) {
 		seen[m.Name] = true
 		def.Models = append(def.Models, m)
 	}
+
+	chunks, err := entityChunksFromRaw(raw.Chunks)
+	if err != nil {
+		return nil, fmt.Errorf("entity definition %q: %w", id, err)
+	}
+	def.Chunks = chunks
 	return def, nil
 }
 
@@ -424,6 +446,7 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 	for i := range def.Models {
 		raw.Models = append(raw.Models, entityModelToRaw(&def.Models[i]))
 	}
+	raw.Chunks = entityChunksToRaw(def.Chunks)
 	return raw
 }
 
@@ -452,6 +475,7 @@ func (d *EntityDef) Instantiate(id string) Entity {
 		Attributes:   d.Attributes.Clone(),
 		ScriptParams: d.Params.Clone(),
 		Vehicle:      d.Vehicle,
+		Chunks:       cloneEntityChunks(d.Chunks),
 	}
 	for i := range d.Models {
 		e.Models = append(e.Models, d.Models[i].TemplateCopy())
@@ -560,6 +584,7 @@ func EntityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 	e.Scale = vec3FromRawPtr(r.Scale, mgl32.Vec3{1, 1, 1})
 	e.Velocity = mgl32.Vec3{r.Velocity.X, r.Velocity.Y, r.Velocity.Z}
 	e.AngularVelocity = mgl32.Vec3{r.AngularVelocity.X, r.AngularVelocity.Y, r.AngularVelocity.Z}
+	e.AttachedChunk = r.AttachedChunk
 	e.Tags = mergeTags(e.Tags, r.Tags)
 	if r.Visible != nil {
 		e.Visible = *r.Visible
@@ -621,6 +646,18 @@ func EntityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 		}
 		e.Models = append(e.Models, m)
 	}
+
+	// Chunk attachments replace the definition's wholesale rather than merging
+	// per name — see RawEntity.Chunks. An instance that mentions none keeps the
+	// type's, which is the case that matters: a level places a shuttle and gets
+	// the shuttle's decks without restating them.
+	if len(r.Chunks) > 0 {
+		chunks, err := entityChunksFromRaw(r.Chunks)
+		if err != nil {
+			return Entity{}, fmt.Errorf("entity %q: %w", id, err)
+		}
+		e.Chunks = chunks
+	}
 	return e, nil
 }
 
@@ -639,6 +676,7 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 		Rotation:        RawVec3{X: e.Rotation.X(), Y: e.Rotation.Y(), Z: e.Rotation.Z()},
 		Velocity:        RawVec3{X: e.Velocity.X(), Y: e.Velocity.Y(), Z: e.Velocity.Z()},
 		AngularVelocity: RawVec3{X: e.AngularVelocity.X(), Y: e.AngularVelocity.Y(), Z: e.AngularVelocity.Z()},
+		AttachedChunk:   e.AttachedChunk,
 	}
 	if s := e.Scale; s != (mgl32.Vec3{1, 1, 1}) && s != (mgl32.Vec3{}) {
 		r.Scale = &RawVec3{X: s.X(), Y: s.Y(), Z: s.Z()}
@@ -664,6 +702,7 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 		for i := range e.Models {
 			r.Models = append(r.Models, entityModelToRaw(&e.Models[i]))
 		}
+		r.Chunks = entityChunksToRaw(e.Chunks)
 		return r
 	}
 
@@ -693,6 +732,10 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 		if o, ok := modelOverride(def, &e.Models[i]); ok {
 			r.Models = append(r.Models, o)
 		}
+	}
+	// Whole list or nothing, exactly as the vehicle block above.
+	if !entityChunksEqual(def.Chunks, e.Chunks) {
+		r.Chunks = entityChunksToRaw(e.Chunks)
 	}
 	return r
 }

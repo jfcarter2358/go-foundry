@@ -16,6 +16,7 @@ import (
 	"foundry/internal/ui"
 	"foundry/internal/uidraw"
 	"foundry/internal/uifont"
+	"foundry/internal/video"
 	"foundry/internal/world"
 	_ "image/png"
 	"io"
@@ -226,6 +227,14 @@ func Run() {
 		log.Fatalf("InitShadows: %v", err)
 	}
 
+	// Every pass that draws level content: biome scatter and ground patches,
+	// procedural face detail, sprites and particles, and the sky. Here rather
+	// than in EditorInit because none of them is an authoring aid, and a
+	// release build has no EditorInit to be stood up from — see
+	// render.InitWorldPasses, which exists because that is exactly how they
+	// came to be missing from shipped games.
+	render.InitWorldPasses()
+
 	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	gfx.ProjectionUniform = gl.GetUniformLocation(gfx.Program, gl.Str("projection\x00"))
 	gl.UniformMatrix4fv(gfx.ProjectionUniform, 1, false, &gfx.Projection[0])
@@ -253,6 +262,10 @@ func Run() {
 	gfx.BlendTexUniform = gl.GetUniformLocation(gfx.Program, gl.Str("blendTex\x00"))
 	gfx.BlendMaskUniform = gl.GetUniformLocation(gfx.Program, gl.Str("blendMask\x00"))
 	gl.Uniform1i(gfx.HasBlendUniform, 0) // default: no second texture
+
+	gfx.HasNormalMapUniform = gl.GetUniformLocation(gfx.Program, gl.Str("hasNormalMap\x00"))
+	gfx.NormalMapUniform = gl.GetUniformLocation(gfx.Program, gl.Str("normalMap\x00"))
+	gl.Uniform1i(gfx.HasNormalMapUniform, 0) // default: flat, no relief
 
 	// Default camera position; overridden by the level's spawn point when it
 	// has one.
@@ -304,11 +317,12 @@ func Run() {
 	// one. See platform.ToggleFullscreenFunc.
 	platform.ToggleFullscreenFunc = ToggleFullscreen
 
-	// The runtime UI. Three installs and one GL init, all of them the same
-	// inversion the function variables above use: internal/ui and
-	// internal/uifont sit below the log window and below the script runtime, so
-	// the owner hands them what they need rather than reaching up for it.
+	// The runtime UI. Four installs and one GL init, all of them the same
+	// inversion the function variables above use: internal/ui, internal/uifont
+	// and internal/video sit below the log window and below the script runtime,
+	// so the owner hands them what they need rather than reaching up for it.
 	ui.Logf = func(format string, args ...any) { log.Printf(format, args...) }
+	video.Logf = func(format string, args ...any) { log.Printf(format, args...) }
 	uifont.LogMissing = func(name string, err error) {
 		log.Printf("ui: font %q could not be loaded (%v); falling back to the built-in bitmap face", name, err)
 	}
@@ -426,6 +440,21 @@ func Run() {
 			// vehicle's controls instead of the player's move intent.
 			intent := PlayerMoveIntent(&level, platform.KeyStates)
 
+			// Chunks that carry a velocity move first, before anything
+			// resolves against them: a lift, a barge, a closing wall. Doing it
+			// here means the vehicle pass, the player's own move and the
+			// entity pass below all see the geometry where it is this frame
+			// rather than where it was last frame, and the re-bucketing it
+			// does is already paid for by the time a location verb asks.
+			//
+			// Marked dirty for the same reason driving is: this writes the
+			// level's own authored state without going through the script
+			// host, so leaving play would otherwise leave every platform
+			// wherever it had drifted to.
+			if world.AdvanceChunks(&level, platform.DeltaTime) {
+				script.PlaySessionMarkDirty()
+			}
+
 			// Vehicles integrate before anything inside them resolves, and
 			// republish their frames as they go. A rider that resolved against
 			// last frame's transform would be shoved through the deck every
@@ -469,15 +498,10 @@ func Run() {
 					platform.IsOnGround = onGround
 				}
 
-				// Riding in a frame puts the camera in that frame's space, with
-				// its own up vector; on foot this falls through to the world
-				// placement it always had.
-				if !SeatedCamera(&level) {
-					gfx.Cam.Up = gfx.WorldUp
-					gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
-					gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
-					gfx.UpdateCamMatrix()
-				}
+				// The camera is NOT placed here. It goes on after
+				// RefreshFrames below, once every mover this tick has finished
+				// and the frames a rider's coordinates are expressed in are
+				// current — see PlacePlayerCamera.
 			} else {
 				// No player yet: the intent still has to go somewhere, or the
 				// camera freezes on the loading frame.
@@ -496,24 +520,13 @@ func Run() {
 		// ground flag is cleared first and read back after, since being pushed
 		// up onto an entity is the same as landing on a floor as far as jumping
 		// is concerned.
-		playerPosBefore := mgl32.Vec3{}
 		if world.PlayerEntity != nil {
-			playerPosBefore = world.PlayerEntity.Position
 			world.PlayerEntity.Collision.OnGround = false
 		}
 		collision.EntityUpdate(&level, platform.DeltaTime, !devActive() && !uiPaused, world.PlayerEntity)
 		if !devActive() && world.PlayerEntity != nil {
 			if world.PlayerEntity.Collision.OnGround {
 				platform.IsOnGround = true
-			}
-			// Being pushed out of a solid entity happens after the camera was
-			// placed on the player above, so put it back where the player now
-			// actually is.
-			if world.PlayerEntity.Position != playerPosBefore {
-				if !SeatedCamera(&level) {
-					gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
-					gfx.UpdateCamMatrix()
-				}
 			}
 		}
 
@@ -528,6 +541,21 @@ func Run() {
 		// Walked parents-first inside RefreshFrames, so a nested frame composes
 		// against a parent that is already up to date.
 		world.RefreshFrames(&level, level.Frames)
+
+		// The camera, now that the frames are current. This is the whole reason
+		// it is not placed up beside the move: a rider stores its position in a
+		// frame's coordinates, and reading them against last tick's transform
+		// puts the eye wherever the ship was rather than where it is — while
+		// the hold around it draws from the transform just published here. Any
+		// motion the vehicle picked up after the move (its own world collision,
+		// an entity push) then shows up as the interior jumping by that much,
+		// every frame.
+		//
+		// It also fixes up being shoved out of a solid entity by EntityUpdate,
+		// which is why that no longer needs a re-place of its own.
+		if !devActive() && !uiPaused {
+			PlacePlayerCamera(&level)
+		}
 
 		// Particles, after the frames they may be riding have been republished and
 		// before the script tick, so a burst a script fires this frame lands at
@@ -556,6 +584,11 @@ func Run() {
 			gfx.Cam.Position, gfx.Cam.Direction, gfx.CamUp())
 		world.MusicUpdate(&level)
 
+		// Advances a script's ease_sky the same way the lines above advance
+		// everything else time-based: RenderSky only ever reads lvl.Sky, so
+		// this is what makes the transition's blend actually move.
+		world.SkyUpdate(&level, platform.DeltaTime, !devActive() && !uiPaused)
+
 		// The interact key's vehicle half, before the script tick so a mount
 		// made this frame is visible to it. It consumes the press only when it
 		// actually did something, so `E` still reaches a scripted door when
@@ -570,6 +603,14 @@ func Run() {
 		// The UI ticks after the world has settled, so a binding reads this
 		// frame's values, and before the script tick, so a click made this
 		// frame is already in the queue that tick drains to a fixpoint.
+		// Video players whose widget went away last frame are closed here, at
+		// the top of the frame rather than after the tick below. The UI editor
+		// previews its own document from a secondary window, which renders at
+		// the very end of the frame — a sweep between the two ticks would close
+		// the players one of them is still using and reopen the files a
+		// microsecond later.
+		uidraw.SweepVideos()
+
 		if !devActive() {
 			ui.Game.Tick(platform.DeltaTime, float32(platform.WinWidth), float32(platform.WinHeight))
 		}
@@ -632,6 +673,13 @@ func Run() {
 		gl.Uniform1f(gfx.TimeUniform, float32(now)/1000.0)
 		gl.Uniform3f(gfx.CamPosUniform, gfx.Cam.Position.X(), gfx.Cam.Position.Y(), gfx.Cam.Position.Z())
 
+		// Fog, for the same reason and on the same schedule: the distance fog is
+		// measured radially from the eye and the volumes are intersected against
+		// a ray from it, so there is no "unchanged" frame to skip either way.
+		// The other four programs that shade world geometry get theirs from
+		// their own per-frame lighting upload — see world.UploadFogTo.
+		world.UploadFog(level.Fog, level.Volumes)
+
 		{
 			// Chunks a script switched on or off last tick get their geometry
 			// built or released here, where the GL context is current and no
@@ -662,6 +710,12 @@ func Run() {
 			render.UploadPointShadowUniforms(level.Lights)
 
 			// --- Render ---
+			// What is behind everything: the sky's own horizon, the fog colour
+			// when there is fog and no sky, and the engine's slate blue when
+			// there is neither. Set per frame rather than at startup because it
+			// is level content and the level changes under it. See
+			// render.WorldClearColor.
+			render.ApplyWorldClearColor(&level)
 			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
 			// The 3D editor's wireframe shading (editor_3d_view.go). Drawing
@@ -835,6 +889,24 @@ func Run() {
 							drawOrQueue(&sector.Ceiling.SubmeshGeometries[eg], chunkModel, sector.Ceiling.DoubleSided)
 						}
 					}
+					// A slab is the far side of a surface it has already been
+					// decided to draw: the underside of the floor, the top of
+					// the ceiling, and the rim round either. Its rim is forced
+					// double-sided the same way a skirt's is — it is a band of
+					// solid geometry an author never picks a facing for. See
+					// world/slab.go.
+					for _, sl := range [...]*world.Slab{&sector.Floor.Slab, &sector.Ceiling.Slab} {
+						if !world.SlabDrawable(sl) {
+							continue
+						}
+						if !sl.Hidden {
+							drawOrQueue(&sl.Geometry, chunkModel, sl.DoubleSided)
+							for eg := range sl.SubmeshGeometries {
+								drawOrQueue(&sl.SubmeshGeometries[eg], chunkModel, sl.DoubleSided)
+							}
+						}
+						drawOrQueue(&sl.RimGeometry, chunkModel, true)
+					}
 					for k := range sector.Walls {
 						w := &sector.Walls[k]
 						if w.Visible && (w.DoubleSided || render.WallFacingCamera(*w, chunkCam)) {
@@ -875,6 +947,9 @@ func Run() {
 			// of the world and draw in gameplay as well as in the editor.
 			render.RenderEntities(&level, &frustum, drawOrQueue)
 
+			// Placed scenery — the same story, one matrix simpler.
+			render.RenderScenery(&level, &frustum, drawOrQueue)
+
 			// The spawn marker is an authoring aid, not level geometry: it
 			// exists to be seen and dragged in the editor and must never show
 			// up in the shot the player spawns into.
@@ -900,6 +975,10 @@ func Run() {
 			if devActive() {
 				render.RenderVolumes(&level, &frustum)
 				devRenderMarkers(&level, &frustum)
+				// The scenery brush's preview. Queued rather than drawn, so a
+				// translucent ghost sorts against the world it is being placed
+				// into instead of blending over the top of it.
+				devRenderBrushGhost(drawOrQueue)
 			}
 
 			if !editorWire {
@@ -928,6 +1007,17 @@ func Run() {
 			render.SetAlphaToCoverage(false)
 			gl.UseProgram(gfx.Program)
 			gl.Uniform1i(gfx.AlphaSharpenUniform, 0)
+
+			// --- Sky ---
+			// Exactly here, and the position is the whole optimisation: after
+			// every pass that writes depth, so the depth test discards the sky
+			// wherever the world already drew and it costs only the pixels
+			// nothing covered; and before the transparent pass, which has to
+			// blend against it. Skipped in wireframe for the reason the scatter
+			// is — a filled sky drawn as lines is neither.
+			if !editorWire {
+				render.RenderSky(&level)
+			}
 
 			// --- Transparent pass: draw collected transparent geometry back-to-front ---
 			if len(transparentDraws) > 0 {

@@ -374,3 +374,87 @@ func TestCollectHandlesShowAllIgnoresCursor(t *testing.T) {
 		t.Errorf("proximity mode with an off-world cursor: got %d handles, want 0", got)
 	}
 }
+
+// TestPick3DPortalGapFill covers the rule that split portals in two: an open
+// portal is a hole and a click goes through it, but the gap fill that closes
+// one is drawn geometry and a click lands on it.
+//
+// The shape this exists for is the vertical door — a sector whose floor is
+// raised and ceiling lowered until they meet — whose every visible face is gap
+// fill owned by the neighbouring sector's portal. Without this the door could
+// be built but never clicked, and its gap texture was reachable only by
+// finding the right edge on the 2D map.
+func TestPick3DPortalGapFill(t *testing.T) {
+	mx, my := setupPickCamera()
+
+	prevLevel := Editor.level
+	defer func() { Editor.level = prevLevel }()
+
+	// A portal at z=-3 with a wall 7 units behind it. Whether the click stops
+	// at the portal or carries on to the wall is the whole question.
+	newLevel := func(withGap bool) *world.Level {
+		wall := world.Wall{Visible: true}
+		wall.Geometry.Vertices = quadVerts(-10, 4)
+		p := world.Portal{ID: "door", ToSector: "s0", DrawGap: true, Visible: true}
+		if withGap {
+			p.FloorGap.Vertices = quadVerts(-3, 4)
+		}
+		return &world.Level{
+			Chunks: []world.Chunk{{
+				ID: "c0",
+				Sectors: []world.Sector{{
+					ID:      "s0",
+					Walls:   []world.Wall{wall},
+					Portals: []world.Portal{p},
+				}},
+			}},
+		}
+	}
+
+	Editor.level = newLevel(false)
+	if hit := pick3D(mx, my); hit.kind != pickWall {
+		t.Fatalf("open portal: got kind=%q, want the click to pass through to the wall", hit.kind)
+	}
+
+	Editor.level = newLevel(true)
+	hit := pick3D(mx, my)
+	if hit.kind != pickPortal || hit.sectorIdx != 0 || hit.idx != 0 {
+		t.Fatalf("gap fill: got kind=%q sector=%d idx=%d, want portal 0 of sector 0",
+			hit.kind, hit.sectorIdx, hit.idx)
+	}
+	if math.Abs(float64(hit.t-3)) > 1e-3 {
+		t.Fatalf("gap fill hit at t=%v, want ~3", hit.t)
+	}
+
+	// And it has to arrive as a face selection, or the properties panel never
+	// opens on the gap texture the click was aimed at.
+	f, ok := faceSelFromHit(hit)
+	if !ok || f.kind != "portal" || f.idx != 0 {
+		t.Fatalf("faceSelFromHit(%+v) = %+v, %v; want the portal face", hit, f, ok)
+	}
+	if !faceSelValid(f) {
+		t.Fatal("portal face selection does not name live geometry")
+	}
+}
+
+// TestPick3DPortalCeilingGap is the other half of a shut door: the filler
+// hanging from the ceiling, on a portal with no floor riser at all.
+func TestPick3DPortalCeilingGap(t *testing.T) {
+	mx, my := setupPickCamera()
+
+	prevLevel := Editor.level
+	defer func() { Editor.level = prevLevel }()
+
+	p := world.Portal{ID: "door", ToSector: "s0", DrawGap: true, Visible: true}
+	p.CeilGap.Vertices = quadVerts(-5, 4)
+	Editor.level = &world.Level{
+		Chunks: []world.Chunk{{
+			ID:      "c0",
+			Sectors: []world.Sector{{ID: "s0", Portals: []world.Portal{p}}},
+		}},
+	}
+
+	if hit := pick3D(mx, my); hit.kind != pickPortal || hit.idx != 0 {
+		t.Fatalf("ceiling filler: got kind=%q idx=%d, want portal 0", hit.kind, hit.idx)
+	}
+}

@@ -15,6 +15,7 @@ package editor
 // and every accessor here bounds-checks it.
 
 import (
+	"foundry/internal/levelio"
 	"foundry/internal/world"
 	"strings"
 
@@ -152,6 +153,9 @@ func placeEntityAt(pos mgl32.Vec3) bool {
 		editorSetStatus("Entity %s: %v", id, err)
 	}
 	lvl.Entities = append(lvl.Entities, e)
+	// The geometry the type carries, if any (world/entity_chunk.go). Placed
+	// after the append so the entity is in the level the chunks are bound to.
+	editorMaterializeEntityChunks(lvl, &lvl.Entities[len(lvl.Entities)-1])
 	editorSelectEntity(len(lvl.Entities) - 1)
 	if def == nil {
 		editorSetStatus("Placed entity %q — pick a model for it in the panel", id)
@@ -199,12 +203,16 @@ func duplicateActiveEntity() {
 	for i := range src.Models {
 		e.Models = append(e.Models, src.Models[i].TemplateCopy())
 	}
+	// Chunk attachments are plain data, but the copy needs its own slice: the
+	// two entities' attachment lists are edited independently from here on.
+	e.Chunks = append([]world.EntityChunk(nil), src.Chunks...)
 	e.Position = src.Position.Add(mgl32.Vec3{entityDuplicateOffset, 0, entityDuplicateOffset})
 	if err := e.Load(); err != nil {
 		editorSetStatus("Entity %s: %v", e.ID, err)
 	}
 
 	lvl.Entities = append(lvl.Entities, e)
+	editorMaterializeEntityChunks(lvl, &lvl.Entities[len(lvl.Entities)-1])
 	editorSelectEntity(len(lvl.Entities) - 1)
 	editorSetStatus("Duplicated entity %q", e.ID)
 }
@@ -223,6 +231,10 @@ func deleteActiveEntity() {
 	EditorPushUndo()
 	id := lvl.Entities[idx].ID
 	lvl.Entities[idx].Delete()
+	// The chunks this entity brought with it go with it. Without this they
+	// would stay in the level with a FrameOwner naming an entity that is gone,
+	// which BuildFrames reports as an error and refuses the whole level over.
+	editorReleaseEntityChunks(lvl, id)
 	lvl.Entities = append(lvl.Entities[:idx:idx], lvl.Entities[idx+1:]...)
 	editorClearEntitySelection()
 	editorSetStatus("Deleted entity %q", id)
@@ -344,6 +356,10 @@ func reapplyEntityDefinition() {
 		editorSetStatus("Entity %s: %v", e.ID, err)
 		return
 	}
+	editorSyncEntityChunks(lvl, e)
+	if err := world.RebuildIndexes(lvl); err != nil {
+		editorSetStatus("Entity %s: %v", e.ID, err)
+	}
 	editorSetStatus("Reset %q to definition %s", e.ID, def.Name)
 }
 
@@ -384,4 +400,52 @@ func editorAddEntityMenuItem(pos mgl32.Vec3) ctxMenuItem {
 		Do:      func() { editor3DAddEntityAt(name, pos) },
 		Tooltip: "Places the type selected in the Entities panel,\nwhere the cursor met the world.",
 	}
+}
+
+// ---------- carried geometry ----------
+
+// editorMaterializeEntityChunks builds the level chunks an entity's chunk
+// attachments describe, and refreshes the indexes those chunks belong to.
+//
+// Split from editorSyncEntityChunks (editor_entity_editor_io.go) so the common
+// case — an entity that has just been placed and has nothing to drop first —
+// does not walk the chunk list twice.
+func editorMaterializeEntityChunks(lvl *world.Level, e *world.Entity) {
+	if lvl == nil || e == nil || len(e.Chunks) == 0 {
+		return
+	}
+	editorSyncEntityChunks(lvl, e)
+	// A materialised chunk is geometry the player can stand on and a frame the
+	// entity carries, and neither exists until the indexes are rebuilt.
+	if err := world.RebuildIndexes(lvl); err != nil {
+		editorSetStatus("Entity %s: %v", e.ID, err)
+	}
+}
+
+// editorReleaseEntityChunks drops every chunk materialised from the named
+// entity, and rebuilds the indexes without them.
+func editorReleaseEntityChunks(lvl *world.Level, id string) {
+	if lvl == nil || levelio.DropEntityChunks(lvl, id) == 0 {
+		return
+	}
+	if err := world.RebuildIndexes(lvl); err != nil {
+		editorSetStatus("%v", err)
+	}
+}
+
+// editorRenameEntity changes an entity's ID, taking its carried chunks with it.
+//
+// A materialised chunk's ID and its FrameOwner are both built from the entity's
+// ID, so a rename that touched only the entity would leave chunks bound to a
+// frame owner that no longer exists — which BuildFrames refuses the level over.
+// Rebuilding them is cheaper than trying to rewrite the two fields in place,
+// and it is the same path every other change to the attachment list takes.
+func editorRenameEntity(lvl *world.Level, e *world.Entity, id string) {
+	if lvl == nil || e == nil || id == e.ID {
+		return
+	}
+	EditorPushUndo()
+	editorReleaseEntityChunks(lvl, e.ID)
+	e.ID = id
+	editorMaterializeEntityChunks(lvl, e)
 }

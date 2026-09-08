@@ -33,6 +33,11 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 	switch gizmoEffectiveKind() {
 	case gizmoKindVertices:
 		return selectedVerticesCenter()
+	case gizmoKindFace:
+		// As with rotate: the corners spread about the face's own centre, so a
+		// wall gets wider and taller and a floor grows outward. Nothing is
+		// resized, because a corner has no size.
+		return selectedFacesCenter()
 	case gizmoKindEntity:
 		if e := activeGizmoEntity(); e != nil {
 			return e.Position, true
@@ -44,6 +49,10 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindSprite:
 		if sp := activeGizmoSprite(); sp != nil {
 			return sp.Position, true
+		}
+	case gizmoKindScenery:
+		if sc := activeGizmoScenery(); sc != nil {
+			return sc.Position, true
 		}
 	case gizmoKindEmitter:
 		// Offered so the gizmo does not vanish when an emitter is selected, but
@@ -209,6 +218,17 @@ func applyScaleToSelection(origin, factors mgl32.Vec3) {
 			world.EntityScaleClamp(s.X() * factors.X()),
 			world.EntityScaleClamp(s.Y() * factors.Y()),
 			world.EntityScaleClamp(s.Z() * factors.Z()),
+		}
+		return
+	}
+	if sc := activeGizmoScenery(); sc != nil {
+		// A real scale factor on the model, so the snapshot is a scale and the
+		// drag multiplies it — the entity case above, not the volume one below.
+		st := Editor.GizmoDragStartScale
+		sc.Scale = mgl32.Vec3{
+			world.EntityScaleClamp(st.X() * factors.X()),
+			world.EntityScaleClamp(st.Y() * factors.Y()),
+			world.EntityScaleClamp(st.Z() * factors.Z()),
 		}
 		return
 	}

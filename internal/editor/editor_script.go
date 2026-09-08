@@ -15,6 +15,7 @@ package editor
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"foundry/internal/fileutil"
@@ -62,6 +63,14 @@ type scriptDoc struct {
 	// dirtyAt is when the buffer last changed, for the debounce. Zero means the
 	// diagnostics are current.
 	dirtyAt uint32
+
+	// scopeFuncs and scopeParams are the names this file's imports bring into
+	// scope, kept from the last parse. The completion list reads them: walking
+	// the import graph means opening other files, which is not work to do on a
+	// keystroke, and a name an import declares does not change while this
+	// buffer is being typed into.
+	scopeFuncs  []string
+	scopeParams []string
 
 	// hlSrc, hlLines and hlWidth are the colouring cache: the text it was made
 	// from, the classified lines, and the width of the longest one. Keyed on
@@ -177,13 +186,33 @@ func (d *scriptDoc) reparseNow(lvl *world.Level) {
 	// recovery managed to build, which is noise on top of the real errors.
 	d.Issues = nil
 	d.issueLines = map[int][]script.ScriptIssue{}
+	scope, params := scriptScopeNames(f, name)
+	d.scopeFuncs, d.scopeParams = sortedKeys(scope), sortedKeys(params)
 	if len(errs) == 0 {
-		scope, params := scriptScopeNames(f, name)
 		d.Issues = script.LintScript(lvl, f, scope, params)
 		for _, s := range d.Issues {
 			d.issueLines[s.Pos.Line] = append(d.issueLines[s.Pos.Line], s)
 		}
 	}
+}
+
+// ScopeFuncs returns the function names this file's imports bring into scope,
+// as of the last parse.
+func (d *scriptDoc) ScopeFuncs() []string { return d.scopeFuncs }
+
+// ScopeParams returns the parameter names this file's imports declare, as of
+// the last parse. A script's own are read live from the buffer instead — see
+// scriptComplScanFile.
+func (d *scriptDoc) ScopeParams() []string { return d.scopeParams }
+
+// sortedKeys renders a name set as a stable list.
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // DiagnosticsOn returns the diagnostics for one 1-based line.

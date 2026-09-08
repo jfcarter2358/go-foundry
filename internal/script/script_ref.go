@@ -228,8 +228,22 @@ func (c *refCache) uiRefIsAmbiguous(id string) bool {
 // ---------- ref to object ----------
 
 // entity returns the entity a ref names, or nil.
+//
+// The player is engine-owned and not in Level.Entities, so it needs the same
+// case levelHost.entityFor carries. Both have to have it: the host's is what
+// `@player.attr.x` and the movement verbs go through, and THIS one is what
+// every property getter and setter goes through (entityProps builds them all
+// over a *refCache). Without it `@player.prop.position` — a documented address
+// and a documented property — reported "@player has no property", which reads
+// as the property being wrong rather than the lookup.
 func (c *refCache) entityFor(r flang.RefVal) *world.Entity {
-	if c.lvl == nil || r.Kind != flang.RefEntity {
+	if r.Kind != flang.RefEntity {
+		return nil
+	}
+	if r.A == "player" {
+		return world.PlayerEntity
+	}
+	if c.lvl == nil {
 		return nil
 	}
 	if i, ok := c.entity[r.A]; ok && i < len(c.lvl.Entities) {
@@ -316,18 +330,27 @@ func (c *refCache) sectorFor(r flang.RefVal) (*world.Chunk, *world.Sector) {
 
 // biomeFor returns the biome sector a ref names.
 func (c *refCache) biomeFor(r flang.RefVal) *world.BiomeSector {
+	_, bs := c.biomeOwnerFor(r)
+	return bs
+}
+
+// biomeOwnerFor is biomeFor with the chunk the sector was painted on. A biome
+// sector's own coordinates — its polygon, and the height of the water plane
+// derived from it — are all chunk-local, so anything answering in world space
+// needs the placement too.
+func (c *refCache) biomeOwnerFor(r flang.RefVal) (*world.Chunk, *world.BiomeSector) {
 	if c.lvl == nil || r.Kind != flang.RefBiome {
-		return nil
+		return nil, nil
 	}
 	idx, ok := c.biome[r.B]
 	if !ok || idx[0] >= len(c.lvl.Chunks) {
-		return nil
+		return nil, nil
 	}
 	ch := &c.lvl.Chunks[idx[0]]
 	if idx[1] >= len(ch.BiomeSectors) {
-		return nil
+		return nil, nil
 	}
-	return &ch.BiomeSectors[idx[1]]
+	return ch, &ch.BiomeSectors[idx[1]]
 }
 
 // lightFor returns the light a ref names. The two kinds are returned separately
@@ -443,6 +466,8 @@ func (c *refCache) alive(r flang.RefVal) bool {
 		return c.screenFor(r) != nil
 	case flang.RefWidget:
 		return c.widgetFor(r) != nil
+	case flang.RefModel:
+		return c.modelFor(r) != nil
 	}
 	return false
 }

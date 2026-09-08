@@ -31,6 +31,7 @@ func init() {
 		flang.RefScreen:  screenProps(),
 		flang.RefWidget:  widgetProps(),
 		flang.RefSound:   soundProps(),
+		flang.RefModel:   modelProps(),
 	}
 }
 
@@ -325,6 +326,35 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 			Dirty: true,
 			Doc:   "the surface's base Y",
 		},
+		"world_height": {
+			// `height` is chunk-local — the authored number, and the one that
+			// has to stay writable, or `height = height + 1` on a placed chunk
+			// would stop round-tripping. This is its world-space companion, for
+			// the comparison an author actually wants to write: a surface's Y
+			// against a player's or an entity's, both of which are world-space.
+			//
+			// Carried through the chunk's ModelMatrix rather than by adding
+			// Origin.Y, so a scaled chunk (Height is baked into vertex Y and
+			// scaled with everything else) and a frame-owned one riding a
+			// vehicle both answer correctly. Rotation is about Y and so does
+			// not affect it — which is exactly why a single scalar is still a
+			// meaningful answer here.
+			Get: func(cache *refCache, r flang.RefVal) (flang.Value, bool) {
+				ch, s := cache.sectorFor(r)
+				if ch == nil || s == nil {
+					return nil, false
+				}
+				h := s.Floor.Height
+				if !isFloor {
+					h = s.Ceiling.Height
+				}
+				return flang.FloatVal(ch.LocalToWorld(mgl32.Vec3{0, h, 0}).Y()), true
+			},
+			// No Set, which is what makes SetProp report it read-only. Two
+			// writable heights would let a script set them against each other,
+			// and only one of them is what the level file stores.
+			Doc: "read-only: `height` carried into world space by the chunk's placement",
+		},
 		"texture": {
 			Get: getF(
 				func(f *world.Floor) flang.Value { return flang.StrVal(f.Texture) },
@@ -483,6 +513,120 @@ func surfaceProps(isFloor bool) map[string]propAccess {
 		},
 	}
 
+	// The slab: how thick the surface is and what its far side is textured
+	// with (world/slab.go). Reached through one accessor rather than the
+	// getF/setF pair above, because a Slab is the *same type* on a floor and on
+	// a ceiling — the only part of these two structs that is.
+	slabAt := func(cache *refCache, r flang.RefVal) (*world.Slab, bool) {
+		sf, ok := at(cache, r)
+		if !ok {
+			return nil, false
+		}
+		if sf.f != nil {
+			return &sf.f.Slab, true
+		}
+		return &sf.c.Slab, true
+	}
+	slabGet := func(fn func(*world.Slab) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+		return func(cache *refCache, r flang.RefVal) (flang.Value, bool) {
+			sl, ok := slabAt(cache, r)
+			if !ok {
+				return nil, false
+			}
+			return fn(sl), true
+		}
+	}
+	slabSet := func(fn func(*world.Slab, flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+		return func(cache *refCache, r flang.RefVal, v flang.Value) error {
+			sl, ok := slabAt(cache, r)
+			if !ok {
+				return &scriptMissingError{r.String()}
+			}
+			return fn(sl, v)
+		}
+	}
+
+	tbl["thickness"] = propAccess{
+		Get: slabGet(func(sl *world.Slab) flang.Value { return flang.FloatVal(sl.Thickness) }),
+		Set: slabSet(func(sl *world.Slab, v flang.Value) error {
+			t, ok := toFloat32(v)
+			if !ok {
+				return propErr("thickness", "float", v)
+			}
+			// Clamped rather than rejected, for the same reason the panel's
+			// control is: a negative thickness is a solid turned inside out,
+			// and a script computing one off a moving value should end up with
+			// no slab rather than with an error mid-frame.
+			if t < 0 {
+				t = 0
+			}
+			sl.Thickness = t
+			return nil
+		}),
+		Dirty: true,
+		Doc:   "how far the surface's far side sits from it: down from a floor, up from a ceiling. 0 = no slab",
+	}
+	tbl["slab_texture"] = propAccess{
+		Get: slabGet(func(sl *world.Slab) flang.Value { return flang.StrVal(sl.Texture) }),
+		Set: slabSet(func(sl *world.Slab, v flang.Value) error {
+			t, ok := toStr(v)
+			if !ok {
+				return propErr("slab_texture", "str", v)
+			}
+			sl.Texture = t
+			return nil
+		}),
+		Dirty: true,
+		Tex:   true,
+		Doc:   "the far side's texture; \"\" takes the surface's own",
+	}
+	tbl["slab_rim_texture"] = propAccess{
+		Get: slabGet(func(sl *world.Slab) flang.Value { return flang.StrVal(sl.RimTexture) }),
+		Set: slabSet(func(sl *world.Slab, v flang.Value) error {
+			t, ok := toStr(v)
+			if !ok {
+				return propErr("slab_rim_texture", "str", v)
+			}
+			sl.RimTexture = t
+			return nil
+		}),
+		Dirty: true,
+		Tex:   true,
+		Doc:   "the slab's edge band texture; \"\" takes slab_texture",
+	}
+	tbl["slab_shaped"] = propAccess{
+		Get: slabGet(func(sl *world.Slab) flang.Value { return flang.BoolVal(sl.Shaped()) }),
+		// No Set, like `shaped`: a mesh is not something a script can author,
+		// and "false" would have to mean "throw the author's shape away".
+		Doc: "read-only: true when the far side has been shaped in the editor, and so no longer follows the surface",
+	}
+	tbl["slab_hidden"] = propAccess{
+		Get: slabGet(func(sl *world.Slab) flang.Value { return flang.BoolVal(sl.Hidden) }),
+		Set: slabSet(func(sl *world.Slab, v flang.Value) error {
+			b, ok := toBool(v)
+			if !ok {
+				return propErr("slab_hidden", "bool", v)
+			}
+			sl.Hidden = b
+			return nil
+		}),
+		Dirty: true,
+		Doc:   "stop drawing the far side, keeping the rim",
+	}
+	tbl["slab_rim_across_portals"] = propAccess{
+		Get: slabGet(func(sl *world.Slab) flang.Value { return flang.BoolVal(sl.RimAcrossPortals) }),
+		Set: slabSet(func(sl *world.Slab, v flang.Value) error {
+			b, ok := toBool(v)
+			if !ok {
+				return propErr("slab_rim_across_portals", "bool", v)
+			}
+			sl.RimAcrossPortals = b
+			return nil
+		}),
+		Dirty: true,
+		Doc:   "build the rim over portal edges too, instead of skipping them",
+	}
+
 	if isFloor {
 		// A floor's Hidden suppresses its texture without disabling it —
 		// collision and terrain are unaffected. A ceiling has no equivalent.
@@ -531,13 +675,16 @@ func chunkProps() map[string]propAccess {
 			return fn(ch), true
 		}
 	}
-	set := func(fn func(ch *world.Chunk, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+	// The cache is handed to the setter as well as the chunk: a write that
+	// moves a chunk has to re-bucket the level's spatial hash, and the cache is
+	// where the setter can reach the level from.
+	set := func(fn func(c *refCache, ch *world.Chunk, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
 		return func(c *refCache, r flang.RefVal, v flang.Value) error {
 			ch := c.chunkFor(r)
 			if ch == nil {
 				return &scriptMissingError{r.String()}
 			}
-			return fn(ch, v)
+			return fn(c, ch, v)
 		}
 	}
 	return map[string]propAccess{
@@ -548,7 +695,7 @@ func chunkProps() map[string]propAccess {
 			// to do — the frame loop's SyncChunkGeometry picks the change up
 			// between frames and rebuilds the spatial hash with it. See
 			// world/chunk_enable.go.
-			Set: set(func(ch *world.Chunk, v flang.Value) error {
+			Set: set(func(_ *refCache, ch *world.Chunk, v flang.Value) error {
 				b, ok := toBool(v)
 				if !ok {
 					return propErr("enabled", "bool", v)
@@ -560,15 +707,63 @@ func chunkProps() map[string]propAccess {
 		},
 		"origin": {
 			Get: get(func(ch *world.Chunk) flang.Value { return vecValue(ch.Origin) }),
-			Doc: "read-only: the offset baked into this chunk's points at load",
+			// Writing it is the whole of moving a chunk. Points, sector
+			// heights, biome paint and every other per-chunk coordinate are
+			// chunk-local and never baked with Origin (see world.Chunk), so
+			// they ride along through ModelMatrix with no geometry to rebuild
+			// — which is exactly what the editor's own move does. Any entity
+			// with AttachedChunk naming this chunk rides along too, by the
+			// same distance (world.CarryAttachedEntities).
+			//
+			// What does not ride along is the spatial hash: its keys are world
+			// cells derived from ModelMatrix, so a moved chunk drops out of
+			// every world-space lookup until it is re-bucketed. Done here
+			// rather than deferred like `enabled` is, because re-bucketing is
+			// pure CPU (~40us on a 56-sector level, the same call the editor
+			// makes on every frame of a drag) where releasing vertex buffers is
+			// gl.* work. Deferring it would leave the rest of this tick's
+			// location verbs answering from the chunk's old footprint.
+			Set: set(func(c *refCache, ch *world.Chunk, v flang.Value) error {
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("origin", "vec", v)
+				}
+				if p == ch.Origin {
+					// A script animating one chunk writes this every frame;
+					// one holding it still should not pay for a rehash.
+					return nil
+				}
+				delta := p.Sub(ch.Origin)
+				ch.Origin = p
+				world.CarryAttachedEntities(c.lvl, ch, delta)
+				world.RebuildSpatialHash(c.lvl)
+				return nil
+			}),
+			Doc: "this chunk's placement: writing it moves the chunk and everything authored in it",
+		},
+		"velocity": {
+			Get: get(func(ch *world.Chunk) flang.Value { return vecValue(ch.Velocity) }),
+			// No re-bucketing here, unlike `origin`: writing a rate moves
+			// nothing this instant. The move it produces happens in
+			// world.AdvanceChunks at the top of the next tick, which re-buckets
+			// the hash itself once every mover has been integrated.
+			Set: set(func(_ *refCache, ch *world.Chunk, v flang.Value) error {
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("velocity", "vec", v)
+				}
+				ch.Velocity = p
+				return nil
+			}),
+			Doc: "units per second added to this chunk's origin during play; the engine keeps it moving",
 		},
 		"rotation": {
 			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.Rotation) }),
-			Doc: "read-only: Y rotation baked in at load",
+			Doc: "read-only: this chunk's Y rotation, in radians",
 		},
 		"scale": {
 			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.Scale) }),
-			Doc: "read-only: uniform XZ scale baked in at load",
+			Doc: "read-only: this chunk's uniform scale",
 		},
 	}
 }
@@ -810,5 +1005,104 @@ func biomeProps() map[string]propAccess {
 			Get: get(func(b *world.BiomeSector) flang.Value { return flang.StrVal(b.Brush.GroundTexture) }),
 			Doc: "read-only: the ground patch's texture",
 		},
+		"water_depth": {
+			Get: get(func(b *world.BiomeSector) flang.Value {
+				// The resolved value, not the raw field: a sector that never
+				// had a depth written stores 0, and reporting that back would
+				// have `water_depth = water_depth + 1` move the surface to
+				// 1 below the floor rather than 1 below where it is.
+				return flang.FloatVal(world.ResolvedWaterDepth(b.Brush.WaterDepth))
+			}),
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				b := c.biomeFor(r)
+				if b == nil {
+					return &scriptMissingError{r.String()}
+				}
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("water_depth", "float", v)
+				}
+				b.Brush.WaterDepth = world.NormalizeWaterDepth(f)
+				// The surface's height is its mesh's placement, so the plane
+				// has to be moved — SyncBiomeWaterSurfaces watches this flag
+				// and runs every frame. Not GroundDirty: a script raising a
+				// flood writes this on every one of those frames, and none of
+				// them reshapes the polygon or its lakebed.
+				b.WaterLevelDirty = true
+				return nil
+			},
+			Doc: "Water only: how far below the floor under the sector the surface sits (negative lifts it above)",
+		},
+		"water_level": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				ch, b := c.biomeOwnerFor(r)
+				w := waterSurfaceFor(ch, b)
+				if w == nil {
+					return nil, false
+				}
+				return flang.FloatVal(ch.LocalToWorld(w.Position).Y()), true
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				ch, b := c.biomeOwnerFor(r)
+				w := waterSurfaceFor(ch, b)
+				if w == nil {
+					return &scriptMissingError{r.String() + " has no water surface"}
+				}
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("water_level", "float", v)
+				}
+				// The floor the depth is measured from, recovered from the
+				// plane the last rebuild produced rather than re-sampled: the
+				// two agree by construction (Position.Y = floor - depth), and
+				// this keeps the property from needing the biome package's
+				// floor lookup.
+				floorY := w.Position.Y() + world.ResolvedWaterDepth(b.Brush.WaterDepth)
+				// Through the chunk's placement, so the level written is the
+				// world one the caller asked for. The plane's own X/Z go along
+				// for the ride so a rotated or scaled chunk converts exactly.
+				want := ch.LocalToWorld(w.Position)
+				want[1] = f
+				b.Brush.WaterDepth = world.NormalizeWaterDepth(floorY - ch.WorldToLocal(want).Y())
+				b.WaterLevelDirty = true
+				return nil
+			},
+			Doc: "Water only: the surface's height in world space; unavailable until the plane has been built",
+		},
+		"lakebed": {
+			Get: get(func(b *world.BiomeSector) flang.Value { return flang.BoolVal(!b.Brush.HideLakebed) }),
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				b := c.biomeFor(r)
+				if b == nil {
+					return &scriptMissingError{r.String()}
+				}
+				on, ok := toBool(v)
+				if !ok {
+					return propErr("lakebed", "bool", v)
+				}
+				// Stored inverted so the zero value is "shown" (see
+				// BiomeBrush.HideLakebed); no rebuild — RenderBiomeGround
+				// reads the flag per frame and drops the patch's draw.
+				b.Brush.HideLakebed = !on
+				return nil
+			},
+			Doc: "Water only: whether the ground patch under the surface is drawn",
+		},
 	}
+}
+
+// waterSurfaceFor returns the companion water plane b's sector produced, or
+// nil — before the first SyncBiomeWaterSurfaces after the sector was painted,
+// for a sector of any other kind, and for a chunk switched off (which releases
+// its planes; see world/chunk_enable.go).
+func waterSurfaceFor(ch *world.Chunk, b *world.BiomeSector) *world.WaterSurface {
+	if ch == nil || b == nil || b.Brush.Kind != world.BiomeWater {
+		return nil
+	}
+	for i := range ch.WaterSurfaces {
+		if ch.WaterSurfaces[i].ID == b.ID {
+			return &ch.WaterSurfaces[i]
+		}
+	}
+	return nil
 }

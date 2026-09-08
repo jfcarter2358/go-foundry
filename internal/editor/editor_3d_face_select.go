@@ -85,6 +85,23 @@ func editorOutlineFace(sel faceSel, col mgl32.Vec3) {
 		editorOutlineSurface(ch, pts, s.Floor.VertexHeight, gfx.WorldUp, col)
 	case "ceiling":
 		editorOutlineSurface(ch, pts, s.Ceiling.VertexHeight, gfx.WorldUp.Mul(-1), col)
+	case "floor_slab", "ceiling_slab":
+		// The far face, at the surface's own corner heights offset by the
+		// thickness — and its normal stub pointing the way the face looks,
+		// which is the opposite of the surface it hangs off. Outlining the
+		// surface itself would put the mark on the wrong side of the slab and
+		// make the two selections indistinguishable.
+		sl := faceSelSlab(s, sel.kind)
+		if sl == nil || !sl.HasThickness() {
+			return
+		}
+		if sel.kind == "floor_slab" {
+			editorOutlineSurface(ch, pts, slabHeightAt(s.Floor.VertexHeight, -sl.Thickness),
+				gfx.WorldUp.Mul(-1), col)
+		} else {
+			editorOutlineSurface(ch, pts, slabHeightAt(s.Ceiling.VertexHeight, sl.Thickness),
+				gfx.WorldUp, col)
+		}
 	case "wall":
 		if sel.idx >= 0 && sel.idx < len(s.Walls) {
 			w := &s.Walls[sel.idx]
@@ -92,15 +109,22 @@ func editorOutlineFace(sel faceSel, col mgl32.Vec3) {
 				s.Floor.VertexHeight, s.WallTopHeight, col)
 		}
 	case "portal":
-		// Not reachable from a 3D click — pick3D lets clicks pass through an
-		// opening — but the 2D map selects portal edges, and switching back
-		// to 3D should show which one.
+		// The whole opening, floor to wall top, not just the gap fill the
+		// click may have landed on: the selection is the portal, and its two
+		// gap quads are the top and bottom of that same span. Reached either
+		// by clicking gap fill in 3D or by picking the edge on the 2D map.
 		if sel.idx >= 0 && sel.idx < len(s.Portals) {
 			p := &s.Portals[sel.idx]
 			editorOutlineUprightQuad(ch, pts, p.StartPoint, p.EndPoint,
 				s.Floor.VertexHeight, s.WallTopHeight, col)
 		}
 	}
+}
+
+// slabHeightAt is a surface's per-vertex height function shifted by dy — the
+// heights of its slab's far face, in the shape editorOutlineSurface takes.
+func slabHeightAt(heightAt func(int) float32, dy float32) func(int) float32 {
+	return func(i int) float32 { return heightAt(i) + dy }
 }
 
 // editorOutlineSurface outlines a sector's floor or ceiling: its polygon at the

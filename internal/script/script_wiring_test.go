@@ -212,11 +212,15 @@ func TestPlayAnimWarnsWhenItDoesNothing(t *testing.T) {
 	wantOneWarning(t, got, "play_anim did nothing", "has no animation called \"button_press\"")
 }
 
-func TestSetTextureWarnsOnAnAttachmentThatIsNotThere(t *testing.T) {
+// A reskin that lands on nothing is still a legal write — the ref resolved and
+// the property took the value — so it warns rather than erroring, the way the
+// verb it replaced did. Naming an attachment that is not there is a different
+// case: that ref resolves to nothing and is an error, which is what
+// TestModelRefForAnUnknownAttachmentIsReported covers.
+func TestTextureWriteWarnsWhenThereIsNothingToReskin(t *testing.T) {
 	lvl := hostTestLevel(t)
-	lvl.Entities = append(lvl.Entities, buttonEntity(t))
-	got := warningsFrom(t, lvl, "", `    set_texture(@button, "lid", "rust")`)
-	wantOneWarning(t, got, "set_texture did nothing", "no model attachment called \"lid\"")
+	got := warningsFrom(t, lvl, "", `    @crate.prop.texture = "rust"`)
+	wantOneWarning(t, got, "did nothing", "no model attachments")
 }
 
 func TestDestroyWarnsWhenTheRefIsNotDestroyable(t *testing.T) {
@@ -281,7 +285,11 @@ func lintSource(t *testing.T, lvl *world.Level, src string) []ScriptIssue {
 	for _, g := range f.Funcs {
 		scope[g.Name] = true
 	}
-	return LintScript(lvl, f, scope, nil)
+	params := map[string]bool{}
+	for _, d := range f.Params {
+		params[d.Name] = true
+	}
+	return LintScript(lvl, f, scope, params)
 }
 
 // wantOneIssue asserts a single issue mentioning each substring.
@@ -297,9 +305,36 @@ func wantOneIssue(t *testing.T, got []ScriptIssue, want ...string) {
 	}
 }
 
+// `?name` for a parameter the file never declares cannot be anything else, so
+// unlike `@name` it is worth an issue with no level open at all.
+func TestLintFlagsAnUndeclaredParam(t *testing.T) {
+	got := lintSource(t, nil, `
+param drop float = 3.0
+
+def main() -> float
+    return ?dorp
+end
+`)
+	wantOneIssue(t, got, "no `param dorp`", "did you mean ?drop?")
+}
+
+// The sigils used to be shared, so a `@name` that is a declared param and not a
+// level id gets told which one to write rather than the generic "nothing is
+// called that".
+func TestLintPointsAParamAtItsOwnSigil(t *testing.T) {
+	got := lintSource(t, &world.Level{}, `
+param target ref
+
+def main() -> ref
+    return @target
+end
+`)
+	wantOneIssue(t, got, "script parameter", "write ?target")
+}
+
 func TestLintFlagsANameTheLevelDoesNotHave(t *testing.T) {
 	lvl := hostTestLevel(t)
-	got := lintSource(t, lvl, script(`    move_to(@crat, <0, 0, 0>)`))
+	got := lintSource(t, lvl, script(`    destroy(@crat)`))
 	wantOneIssue(t, got, `nothing in this level is called "crat"`, "did you mean @crate?")
 }
 
@@ -316,6 +351,42 @@ func TestLintFlagsAnUndeclaredAnimationBeforeItRuns(t *testing.T) {
 	wantOneIssue(t, got, "play_anim would do nothing", "Add Animation")
 }
 
+// The check the `set_texture` verb used to carry, now asked of the write that
+// replaced it — a reskin of an entity with nothing to reskin.
+func TestLintFlagsATextureWriteThatWouldDoNothing(t *testing.T) {
+	lvl := hostTestLevel(t)
+	got := lintSource(t, lvl, script(`    @crate.prop.texture = "rust"`))
+	wantOneIssue(t, got, "writing texture would do nothing", "no model attachments")
+}
+
+// The same check through a model ref, which is where the attachment name lives
+// now that it is not an argument.
+func TestLintFlagsATextureWriteOnAnAttachmentThatIsNotThere(t *testing.T) {
+	lvl := hostTestLevel(t)
+	lvl.Entities = append(lvl.Entities, buttonEntity(t))
+	got := lintSource(t, lvl, script(`    @button.model.lid.prop.texture = "rust"`))
+	wantOneIssue(t, got, "writing texture would do nothing", `no model attachment called "lid"`)
+}
+
+// An attachment that *is* there is not flagged: the check has to be quiet on
+// the code it exists to protect.
+func TestLintLeavesAGoodTextureWriteAlone(t *testing.T) {
+	lvl := hostTestLevel(t)
+	lvl.Entities = append(lvl.Entities, buttonEntity(t))
+	if got := lintSource(t, lvl, script(`    @button.model.button.prop.texture = "rust"`)); len(got) != 0 {
+		t.Errorf("a write to an attachment that exists was flagged: %v", got)
+	}
+}
+
+// A model ref's properties are its own, so the unknown-property check has to
+// know what kind `@button.model.button` is.
+func TestLintFlagsAnUnknownModelProperty(t *testing.T) {
+	lvl := hostTestLevel(t)
+	lvl.Entities = append(lvl.Entities, buttonEntity(t))
+	got := lintSource(t, lvl, script(`    @button.model.button.prop.visble = false`))
+	wantOneIssue(t, got, `a model has no property called "visble"`, `did you mean "visible"?`)
+}
+
 func TestLintFlagsAnUnknownProperty(t *testing.T) {
 	lvl := hostTestLevel(t)
 	got := lintSource(t, lvl, script(`    @crate.prop.visble = false`))
@@ -324,14 +395,30 @@ func TestLintFlagsAnUnknownProperty(t *testing.T) {
 
 func TestLintFlagsAnUnknownFunction(t *testing.T) {
 	lvl := hostTestLevel(t)
-	got := lintSource(t, lvl, script(`    move_too(@crate, <0, 0, 0>)`))
-	wantOneIssue(t, got, `nothing defines a function called "move_too"`, `did you mean "move_to"?`)
+	got := lintSource(t, lvl, script(`    destory(@crate)`))
+	wantOneIssue(t, got, `nothing defines a function called "destory"`, `did you mean "destroy"?`)
 }
 
 func TestLintFlagsATimerNothingHandles(t *testing.T) {
 	lvl := hostTestLevel(t)
-	got := lintSource(t, lvl, script(`    after(500, :open_done:)`))
+	got := lintSource(t, lvl, script(`    @self <- after(500, :open_done:)`))
 	wantOneIssue(t, got, "sends :open_done: to itself", "defines no clause for it")
+}
+
+// A timer aimed somewhere else is not this script's business: the clause that
+// handles it lives on whatever the send names, which the linter cannot read.
+func TestLintLeavesATimerSentElsewhereAlone(t *testing.T) {
+	lvl := hostTestLevel(t)
+	got := lintSource(t, lvl, script(`    @crate <- after(500, :open_done:)`))
+	if len(got) != 0 {
+		t.Fatalf("wanted no issues, got %v", got)
+	}
+}
+
+func TestLintFlagsAnAfterWithNoTarget(t *testing.T) {
+	lvl := hostTestLevel(t)
+	got := lintSource(t, lvl, script(`    after(500, :open_done:)`))
+	wantOneIssue(t, got, "after schedules a message, so it needs a target")
 }
 
 func TestLintFlagsAHandlerForANearMissEvent(t *testing.T) {
@@ -369,7 +456,7 @@ end`
 // Without a level there is nothing to check names against, and guessing would
 // flag every script opened before a level loads.
 func TestLintSkipsLevelChecksWithoutALevel(t *testing.T) {
-	if got := lintSource(t, nil, script(`    move_to(@anything, <0, 0, 0>)`)); len(got) != 0 {
+	if got := lintSource(t, nil, script(`    destroy(@anything)`)); len(got) != 0 {
 		t.Fatalf("linting with no level produced issues: %v", got)
 	}
 }
@@ -539,7 +626,7 @@ end`)
 func TestLoadingAScriptLogsItsIssues(t *testing.T) {
 	root := withTempScriptDir(t)
 	path := writeScript(t, root, "button.flang", `def on_interact(:interact:, src ref) -> null
-    move_to(@nothing_called_this, <0, 0, 0>)
+    destroy(@nothing_called_this)
 end`)
 
 	lvl := tickTestLevel(t)
@@ -558,4 +645,43 @@ end`)
 		}
 	}
 	t.Fatal("loading a script with a bad name logged nothing")
+}
+
+// A handler that matched and then failed is not a missing handler. The runtime
+// used to file "defines no clause whose first parameter is :x:" alongside the
+// real error, which contradicts it: the clause is there, its body is what broke.
+func TestAHandlerThatErrorsIsNotReportedAsMissing(t *testing.T) {
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "boom.flang", `def on_spawn(:spawn:) -> null
+    @self <- (:go:,)
+end
+
+def go(:go:) -> null
+    @chunk.prop.nonesuch = <0.0, 1.0, 0.0>
+end`)
+
+	// The property has to be one a chunk really does not have, and to stay one:
+	// the point of the fixture is a handler that matched and then failed. It
+	// used to write `velocity`, which is a chunk property now (chunk_motion.go)
+	// and so stopped failing at all.
+
+	lvl := tickTestLevel(t)
+	lvl.Entities = append(lvl.Entities,
+		world.Entity{ID: "boom", Script: path, Visible: true, Scale: mgl32.Vec3{1, 1, 1}, Attributes: world.AttrSet{}})
+
+	ring := withScriptLog(t, 64)
+	runTicks(t, lvl, 2)
+
+	sawError := false
+	for _, e := range ring.Snapshot() {
+		if e.Level == LogWarn && strings.Contains(e.Text, "nothing handled :go:") {
+			t.Errorf("a handler that errored was reported as missing: %q", e.Text)
+		}
+		if e.Level == LogError && strings.Contains(e.Text, `no property "nonesuch"`) {
+			sawError = true
+		}
+	}
+	if !sawError {
+		t.Fatal("the real error never reached the log, so the test proves nothing")
+	}
 }

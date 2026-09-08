@@ -16,6 +16,7 @@ import (
 	"foundry/internal/model"
 	"foundry/internal/platform"
 	"foundry/internal/textureui"
+	"foundry/internal/video"
 	"foundry/internal/world"
 	"math"
 	"path/filepath"
@@ -263,6 +264,47 @@ func textureCombo(label string, tex *string, allowEmpty bool) bool {
 			imgui.SelectableV(*tex+" (missing)", true, 0, imgui.Vec2{})
 		}
 		imgui.EndCombo()
+	}
+	return changed
+}
+
+// videoFileCombo lists what is under video/.
+//
+// The rescan-on-close rule is soundFileCombo's: a clip dropped in while the
+// editor is open has to appear without a restart, and rescanning every frame
+// would be a directory read per frame of a menu nobody has opened.
+func videoFileCombo(label string, clip *string) bool {
+	preview := *clip
+	if preview == "" {
+		preview = "(none)"
+	}
+	changed := false
+	if imgui.BeginCombo(label, preview) {
+		if Editor.VideoFileNames == nil {
+			Editor.VideoFileNames = video.ScanVideoNames()
+		}
+		if imgui.SelectableV("(none)", *clip == "", 0, imgui.Vec2{}) && *clip != "" {
+			*clip = ""
+			changed = true
+		}
+		known := false
+		for _, n := range Editor.VideoFileNames {
+			if n == *clip {
+				known = true
+			}
+			if imgui.SelectableV(n, n == *clip, 0, imgui.Vec2{}) && n != *clip {
+				*clip = n
+				changed = true
+			}
+		}
+		if !known && *clip != "" {
+			// A screen authored against a clip since renamed says so, rather
+			// than silently reverting to whatever happens to be first.
+			imgui.SelectableV(*clip+" (missing)", true, 0, imgui.Vec2{})
+		}
+		imgui.EndCombo()
+	} else {
+		Editor.VideoFileNames = nil
 	}
 	return changed
 }
@@ -760,6 +802,23 @@ func EditorDrawUI() {
 
 	imgui.SameLine()
 	// Latched before the button, for the same reason "Model" above is.
+	entityOpen := EntityEditorOpen()
+	if entityOpen {
+		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
+	}
+	if imgui.Button("Entity") {
+		OpenEntityEditorWindow()
+	}
+	if entityOpen {
+		imgui.PopStyleColor()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Author entity types (" + world.EntitiesDirName + "/*.yaml) — models,\n" +
+			"carried chunk geometry, a script and a vehicle block.\nPlace them from Explorer -> Add -> Entity.")
+	}
+
+	imgui.SameLine()
+	// Latched before the button, for the same reason "Model" above is.
 	scriptOpen := ScriptEditorOpen()
 	if scriptOpen {
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
@@ -1148,7 +1207,7 @@ func convertEdge(ch *world.Chunk, s *world.Sector, fromKind string, idx int, toK
 
 	if fromKind == "wall" && idx < len(s.Walls) {
 		w := s.Walls[idx]
-		p := world.Portal{ID: edgeID, StartPoint: w.StartPoint, EndPoint: w.EndPoint, Visible: true, DoubleSided: w.DoubleSided}
+		p := world.Portal{ID: edgeID, StartPoint: w.StartPoint, EndPoint: w.EndPoint, Visible: true, DoubleSided: w.DoubleSided, Alpha: 1.0}
 		s.Walls = append(s.Walls[:idx], s.Walls[idx+1:]...)
 		// Insert portal at the correct position
 		s.Portals = append(s.Portals, world.Portal{})
@@ -1172,6 +1231,9 @@ func convertEdge(ch *world.Chunk, s *world.Sector, fromKind string, idx int, toK
 	s.EdgeKinds[polyIdx] = toKind
 	world.SyncEdgeRecordIDs(s)
 	_ = world.ReloadSector(ch, s)
+	// An edge that has just become a portal has no gap geometry yet, and one
+	// that has just become a wall still has the gap it had as a portal.
+	ch.RebuildGaps()
 }
 
 // polyEdgeIdx returns the polygon edge index for the wall/portal at kind+idx.

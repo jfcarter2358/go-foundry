@@ -19,7 +19,10 @@ package flang
 // index assignment. Treating it as a mode would have spelled it `.state.open`,
 // which is neither what SCRIPTING.md writes nor what a dict wants.
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // accessMode is what a member step after `.attr` or `.prop` means.
 type accessMode int
@@ -52,17 +55,54 @@ func (in *Interp) evalAddr(x *AddrExpr, env *Env) (Value, error) {
 		}
 		return self, nil
 	}
-	if decl, ok := in.params[x.Name]; ok {
-		return in.paramValue(decl, x.Pos_)
-	}
 	r, ok := in.host.Resolve(x.Name)
 	if !ok {
+		if _, isParam := in.params[x.Name]; isParam {
+			// The sigils used to be shared, so this is the one shape worth a
+			// message rather than a null: the name is declared, just not with
+			// the sigil that reads it. An object of the same name still wins
+			// above, because `@` asks the level for an object and there is one.
+			return nil, in.errorf(x.Pos_, "@%s names an object, and nothing in the level is called %q; %s is a script parameter, so write ?%s",
+				x.Name, x.Name, x.Name, x.Name)
+		}
 		// A missing object is null rather than an error: a script that checks
 		// `if @door == null` is doing the right thing, and making the check
 		// itself throw would leave no way to write it.
 		return NullVal{}, nil
 	}
 	return r, nil
+}
+
+// evalParam resolves `?name` — one declared script parameter.
+//
+// A name with no declaration is an error rather than a null, because unlike an
+// object there is nothing else it could be: params are declared in this program
+// and the set is closed at link time.
+func (in *Interp) evalParam(x *ParamExpr, env *Env) (Value, error) {
+	decl, ok := in.params[x.Name]
+	if !ok {
+		if names := in.paramNames(); len(names) > 0 {
+			return nil, in.errorf(x.Pos_, "?%s: no parameter is declared with that name; this script has %s",
+				x.Name, strings.Join(names, ", "))
+		}
+		return nil, in.errorf(x.Pos_, "?%s: this script declares no parameters; add `param %s <type>` at the top level",
+			x.Name, x.Name)
+	}
+	if in.host == nil {
+		return nil, in.errorf(x.Pos_, "?%s: there is no world here", x.Name)
+	}
+	return in.paramValue(decl, x.Pos_)
+}
+
+// paramNames lists the declared parameters, for the message a misspelt `?name`
+// gets. Sorted so the list does not depend on map order.
+func (in *Interp) paramNames() []string {
+	out := make([]string, 0, len(in.params))
+	for n := range in.params {
+		out = append(out, "?"+n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // paramValue reads one declared parameter: what the level bound, else the
@@ -244,8 +284,11 @@ func (in *Interp) readAccess(base pathBase, mode accessMode, name string, pos Po
 }
 
 // readStructural reads a step that is part of an object's shape rather than its
-// data: `ref.id`, `ref.kind`, `@sec.floor`, `@sec.edge`.
+// data: `ref.id`, `ref.kind`, `@sec.floor`, `@sec.edge`, `v.x`.
 func (in *Interp) readStructural(recv Value, name string, pos Pos) (Value, error) {
+	if v, ok := recv.(VecVal); ok {
+		return vecComponent(in, v, name, pos)
+	}
 	r, ok := recv.(RefVal)
 	if !ok {
 		if _, isNull := recv.(NullVal); isNull {
@@ -283,6 +326,9 @@ func (in *Interp) readStructural(recv Value, name string, pos Pos) (Value, error
 func (in *Interp) assignMember(x *MemberExpr, val Value, env *Env) error {
 	inner, ok := x.X.(*MemberExpr)
 	if !ok || modeOf(inner.Name) == modeNone {
+		if err := in.assignVecComponent(x, env); err != nil {
+			return err
+		}
 		return in.errorf(x.Pos_,
 			"only attributes and properties can be assigned; write .attr.%s, .prop.%s, or .state[%q]",
 			x.Name, x.Name, x.Name)
@@ -320,13 +366,57 @@ func (in *Interp) assignMember(x *MemberExpr, val Value, env *Env) error {
 	return firstErr
 }
 
+// assignVecComponent returns the error for `v.y = 1.0`, or nil when the target
+// is not a vec component and the caller should report its own.
+//
+// A vec is a value: the one a property hands back is a copy, so a write to a
+// component of it would land on the copy and change nothing on the object. That
+// is the failure worth catching by name — the generic "only attributes and
+// properties can be assigned" would send the author looking for a property
+// called `y`.
+func (in *Interp) assignVecComponent(x *MemberExpr, env *Env) error {
+	if vecAxis(x.Name) < 0 {
+		return nil
+	}
+	// The base is re-evaluated only to classify the error, and only on a path
+	// that is already failing.
+	v, err := in.evalExpr(x.X, env)
+	if err != nil {
+		return nil
+	}
+	if _, isVec := v.(VecVal); !isVec {
+		return nil
+	}
+	return in.errorf(x.Pos_,
+		"a vec component cannot be assigned — a vec is a value, so the one you have is a copy. "+
+			"Build a new one instead: v = <v.x, 1.0, v.z>")
+}
+
 // ---------- sending ----------
 
 // execSend posts a message. It does not deliver it: `<-` is asynchronous, and
 // the runtime drains the queue — see SCRIPTING.md's execution model.
+//
+// A send carrying a delay is posted on a timer instead, which is the same
+// asynchrony with a longer wait in it.
 func (in *Interp) execSend(st *SendStmt, env *Env) error {
 	if in.host == nil {
 		return in.errorf(st.Pos_, "there is no world here to send to")
+	}
+
+	// The delay is written first inside `after(...)`, so it is evaluated first.
+	delayMS := 0.0
+	if st.Delay != nil {
+		d, err := in.evalExpr(st.Delay, env)
+		if err != nil {
+			return err
+		}
+		f, ok := numeric(d)
+		if !ok {
+			return in.errorf(st.Delay.Position(),
+				"after's delay is a number of milliseconds, not %s", typeName(d))
+		}
+		delayMS = f
 	}
 
 	msg, err := in.evalExpr(st.Msg, env)
@@ -348,7 +438,13 @@ func (in *Interp) execSend(st *SendStmt, env *Env) error {
 		return err
 	}
 	for _, r := range targets {
-		if err := in.host.Post(r, string(atom), args, st.Pos_); err != nil {
+		var err error
+		if st.Delay != nil {
+			err = in.host.PostAfter(r, string(atom), args, delayMS, st.Pos_)
+		} else {
+			err = in.host.Post(r, string(atom), args, st.Pos_)
+		}
+		if err != nil {
 			return in.errorf(st.Pos_, "%s", err.Error())
 		}
 	}

@@ -10,6 +10,7 @@ package app
 import (
 	"foundry/internal/collision"
 	"foundry/internal/gfx"
+	"foundry/internal/hooks"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -114,6 +115,34 @@ func SeatedCamera(lvl *world.Level) bool {
 	return true
 }
 
+// PlacePlayerCamera puts the camera on the player, wherever the player is.
+//
+// It MUST run after world.RefreshFrames, and the frame loop calls it there for
+// that reason. A rider's position is stored in coordinates that move, so the
+// camera is only meaningful alongside the transform those coordinates are
+// current for — and the geometry it is about to look at is drawn through
+// exactly that transform. Placed any earlier, the camera is computed from the
+// frame's position before the tick's last movers (EntityUpdate, and world
+// collision on the vehicle itself) have had their say, while the hold around it
+// is drawn from after: the eye and the room it is standing in disagree by
+// however far the ship travelled this tick, every tick.
+//
+// On foot none of that applies and this is the world placement it always was.
+func PlacePlayerCamera(lvl *world.Level) {
+	if world.PlayerEntity == nil {
+		return
+	}
+	// Riding in a frame puts the camera in that frame's space, with its own up
+	// vector; on foot this falls through.
+	if SeatedCamera(lvl) {
+		return
+	}
+	gfx.Cam.Up = gfx.WorldUp
+	gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
+	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
+	gfx.UpdateCamMatrix()
+}
+
 // clampLookToSeat holds the view inside a seat's cone. A zero limit means
 // unrestricted, which is what a passenger in an open vehicle wants.
 func clampLookToSeat(s *world.VehicleSeat) {
@@ -172,9 +201,31 @@ func PlayerMoveIntent(lvl *world.Level, keys []uint8) mgl32.Vec3 {
 
 // VehicleInteractRequest is the interact key's vehicle half, run before the
 // script tick so a mount this frame is visible to it.
+//
+// It is a PRESS, taken from the edge the input handler recorded — not a state
+// read once a frame. Without that gate this fires every tick for as long as the
+// player is aboard with a seat in reach, and VehicleInteract's own precedence
+// then alternates: seated with somewhere to stand means stand up, aboard and
+// standing with a seat in reach means sit down. Sit, stand, sit, stand, sixty
+// times a second. Nothing about the position moves — Sit and Stand both put the
+// occupant at the seat — so it shows up only in the view, because a seated eye
+// sits at the seat's own Eye and a standing one at world.EyeHeight: the camera
+// hops a metre up and down every frame, in and out of the deck it is standing
+// on, which reads as the interior strobing against whatever is outside the hull.
+//
+// A press that did nothing is handed back rather than swallowed, so `E` still
+// reaches a scripted door when there is no seat within reach — the contract
+// collision.VehicleInteract's own doc comment describes.
 func VehicleInteractRequest(lvl *world.Level) bool {
 	if world.PlayerEntity == nil {
 		return false
 	}
-	return collision.VehicleInteract(lvl, world.PlayerEntity)
+	if !hooks.ScriptInteractPressed() {
+		return false
+	}
+	if collision.VehicleInteract(lvl, world.PlayerEntity) {
+		return true
+	}
+	hooks.ScriptInteractRequest()
+	return false
 }

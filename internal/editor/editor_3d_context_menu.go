@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
+	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
@@ -87,7 +88,8 @@ func editor3DOpenContextMenu(mx, my int32) {
 // editor3DPlacementArmed reports whether a left-click would currently place
 // something rather than select it.
 func editor3DPlacementArmed() bool {
-	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode || Editor.VolumePlacementMode
+	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode ||
+		Editor.VolumePlacementMode || Editor.BrushActive
 }
 
 // editor3DPointAt is where the cursor's ray meets the world — the surface it
@@ -135,6 +137,8 @@ func editor3DContextMenuItems() []ctxMenuItem {
 		items = append(items, editor3DVolumeMenuItems()...)
 	case sel3DSprite:
 		items = append(items, editor3DSpriteMenuItems()...)
+	case sel3DScenery:
+		items = append(items, editor3DSceneryMenuItems()...)
 	default:
 		items = append(items, editor3DEmptyMenuItems()...)
 	}
@@ -210,9 +214,12 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 			Tooltip: "Opens the side panel on the first selected face. The panel\nedits that one; these rows edit all of them."},
 		{Label: all(textureLabel), Disabled: r.Texture == nil,
 			Sub: ctxTextureMenuItems(texture, editor3DSetSurfaceTexture)},
-		{Label: fmt.Sprintf("Shape %s", r.kind), Disabled: r.kind == "portal" || multi,
-			Do:      editor3DShapeSurface,
-			Tooltip: "Edit this surface as a mesh, in place: place and connect points,\nextrude faces into bumps and recesses, open holes. One surface at a time."},
+		{Label: fmt.Sprintf("Shape %s", strings.ToLower(editor3DKindLabel(r.kind))),
+			Disabled: r.kind == "portal" || multi,
+			Do:       editor3DShapeSurface,
+			Tooltip: "Edit this surface as a mesh, in place: place and connect points,\n" +
+				"extrude faces into bumps and recesses, open holes. One surface at a time.\n" +
+				"Shaping a slab's far face detaches it from the surface it was following."},
 		{Separator: true},
 		{Label: all(onLabel), Checked: on, Disabled: r.On == nil,
 			Do: func() { editor3DToggleSurfaceFlag(func(r surface3DRefs) *bool { return r.On }) }},
@@ -265,6 +272,10 @@ func editor3DSurfaceFocus(kind string) string {
 		return panelFocusFloor
 	case "ceiling":
 		return panelFocusCeiling
+	case "floor_slab":
+		return panelFocusFloorSlab
+	case "ceiling_slab":
+		return panelFocusCeilingSlab
 	default:
 		return panelFocusWall
 	}
@@ -391,6 +402,7 @@ func editor3DSharedMenuItems() []ctxMenuItem {
 		editorAddEntityMenuItem(editor3DMenuPoint),
 		{Label: "Add volume here", Do: func() { editor3DAddVolumeAt(editor3DMenuPoint) },
 			Tooltip: "A one-unit box trigger where the cursor met the world.\nGive it a script in the Volumes panel."},
+		editorSceneryBrushMenuItem(),
 		{Label: "Select", Sub: modes},
 		{Label: "Wireframe", Shortcut: "Z", Checked: Editor.Wireframe,
 			Do:      func() { editorSetWireframe(!Editor.Wireframe) },
@@ -406,6 +418,34 @@ func editor3DSharedMenuItems() []ctxMenuItem {
 		{Label: "Show all point/edge boxes", Checked: Editor.ShowPointSelectRadius,
 			Do:      func() { Editor.ShowPointSelectRadius = !Editor.ShowPointSelectRadius },
 			Tooltip: "Draw every vertex handle and edge prism in range, not\nonly the ones the cursor is near.\nWireframe already does this."},
+	}
+}
+
+// ---------- scenery ----------
+
+func editor3DSceneryMenuItems() []ctxMenuItem {
+	sc := activeScenery()
+	if sc == nil {
+		return nil
+	}
+	return []ctxMenuItem{
+		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusScenery) },
+			Tooltip: "Open the prop's section: transform, model and collision."},
+		{Label: "Move here", Do: func() { editor3DMoveSceneryTo(editor3DMenuPoint) },
+			Tooltip: "Put it where the ray under the cursor met the world."},
+		{Label: "Use as brush", Do: func() {
+			Editor.BrushRotation = sc.Rotation
+			Editor.BrushScale = sc.EffectiveScale().X()
+			Editor.BrushSolid = sc.Solid
+			editorArmBrush(sc.Model)
+		},
+			Tooltip: "Arm the brush with this prop's model, facing and size -\nthe fastest way to make thirty more of one you like."},
+		{Label: "Solid", Checked: sc.Solid, Do: editor3DToggleScenerySolid,
+			Tooltip: "Stops the player and world-colliding entities.\nThe volume is the model's own bounding box."},
+		{Label: "Duplicate", Do: duplicateActiveScenery},
+		{Separator: true},
+		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid},
+		{Label: "Delete", Shortcut: "Del", Do: EditorDeleteSelected},
 	}
 }
 

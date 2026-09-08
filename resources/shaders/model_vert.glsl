@@ -11,6 +11,15 @@
 // Attribute locations are pinned to match vertex.glsl so that a VAO built by
 // Geometry.Load (which resolves its attribute indices against the world
 // program) is equally valid here.
+//
+// skin_common.glsl is spliced in above this line by the Go side, and the
+// skinning it supplies is *off* unless a draw call turns it on. The model
+// editor never does — it skins on the CPU, into the vertex array its wireframe
+// and picking already read — but the entity editor previews an entity's
+// attachments straight from the buffers EntityModel.Load uploaded, and those
+// are rigged. Both windows use this one program, so both must call
+// gfx.ApplySkinUniforms on every draw: `skinned` is program state, and a static
+// mesh drawn after an animated one would otherwise bend around its bones.
 
 uniform mat4 projection;
 uniform mat4 view;
@@ -29,13 +38,13 @@ out vec3 fragNormal;
 out vec3 fragWorldPos;
 
 void main() {
-    vec4 world = model * vec4(vert, 1.0);
+    vec4 world = model * skinPosition(vert);
     fragWorldPos = world.xyz;
     fragTexCoord = vertTexCoord;
 
     fragNormal = vec3(0.0);
     if (smoothShading != 0) {
-        fragNormal = transpose(inverse(mat3(model))) * vertNormal;
+        fragNormal = transpose(inverse(mat3(model))) * skinNormal(vertNormal);
     }
 
     gl_Position = projection * view * world;

@@ -313,5 +313,5 @@ var oneCharOps = map[rune]Kind{
 	'(': LParen, ')': RParen,
 	'[': LBracket, ']': RBracket,
 	'{': LBrace, '}': RBrace,
-	'@': At, '#': Hash,
+	'@': At, '#': Hash, '?': Question,
 }

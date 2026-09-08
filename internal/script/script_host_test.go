@@ -236,6 +236,35 @@ func TestEntityPropertiesReachTheRightFields(t *testing.T) {
 	}
 }
 
+func TestVecPropertyComponentsAreReadable(t *testing.T) {
+	// A vec property is a copy, so reading a component of one has to work at
+	// the end of a real property chain — `@crate.prop.position.y` — and
+	// rebuilding is what stands in for writing one back.
+	lvl := hostTestLevel(t)
+	lvl.Entities[0].Position = mgl32.Vec3{1, 2, 3}
+	runScript(t, lvl, "crate", script(`    p = @crate.prop.position
+    @crate.attr.height = p.y
+    @crate.prop.position = <p.x, p.y + 10.0, p.z>`))
+
+	e := &lvl.Entities[0]
+	if a, ok := e.Attr("height"); !ok || a.F != 2 {
+		t.Errorf("position.y read as %v", a)
+	}
+	if e.Position != (mgl32.Vec3{1, 12, 3}) {
+		t.Errorf("position is %v, want the rebuilt vec", e.Position)
+	}
+}
+
+func TestWritingAVecPropertyComponentIsRefused(t *testing.T) {
+	// It would land on the copy the property handed back and change nothing on
+	// the entity, so it says so rather than doing nothing.
+	lvl := hostTestLevel(t)
+	err := runScriptErr(t, lvl, "crate", script(`    @crate.prop.position.y = 9.0`))
+	if !strings.Contains(err.Error(), "a vec is a value") {
+		t.Errorf("diagnostic does not explain the problem: %v", err)
+	}
+}
+
 func TestReadOnlyPropertyIsRefused(t *testing.T) {
 	// Writing on_ground would be overwritten by EntityUpdate on the very next
 	// frame, which is worse than refusing.
@@ -372,10 +401,10 @@ func TestSectorEdgesList(t *testing.T) {
 
 // ---------- verbs ----------
 
-func TestMoveToAndSetVelocity(t *testing.T) {
+func TestPositionAndVelocityProperties(t *testing.T) {
 	lvl := hostTestLevel(t)
-	runScript(t, lvl, "crate", script(`    move_to(@crate, <5.0, 0.0, 5.0>)
-    set_velocity(@crate, <0.0, 1.0, 0.0>)`))
+	runScript(t, lvl, "crate", script(`    @crate.prop.position = <5.0, 0.0, 5.0>
+    @crate.prop.velocity = <0.0, 1.0, 0.0>`))
 
 	e := &lvl.Entities[0]
 	if e.Position != (mgl32.Vec3{5, 0, 5}) {
@@ -386,9 +415,9 @@ func TestMoveToAndSetVelocity(t *testing.T) {
 	}
 }
 
-func TestSetTextureOnASurface(t *testing.T) {
+func TestTexturePropertyOnASurface(t *testing.T) {
 	lvl := hostTestLevel(t)
-	runScript(t, lvl, "", script(`    set_texture(@room.floor, "brick")`))
+	runScript(t, lvl, "", script(`    @room.floor.prop.texture = "brick"`))
 
 	if got := lvl.Chunks[0].Sectors[0].Floor.Texture; got != "brick" {
 		t.Errorf("floor texture is %q, want brick", got)
@@ -403,11 +432,13 @@ func TestSetTextureOnASurface(t *testing.T) {
 	}
 }
 
-func TestSetTextureReskinsEveryAttachment(t *testing.T) {
+// An entity's own texture property is every attachment at once, which is what
+// makes the per-attachment ref worth having.
+func TestTexturePropertyReskinsEveryAttachment(t *testing.T) {
 	lvl := hostTestLevel(t)
 	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}, {Name: "lid"}}
 
-	runScript(t, lvl, "crate", script(`    set_texture(@crate, "rust")`))
+	runScript(t, lvl, "crate", script(`    @crate.prop.texture = "rust"`))
 
 	for _, m := range lvl.Entities[0].Models {
 		if m.Texture != "rust" {
@@ -423,14 +454,16 @@ func TestSetTextureReskinsEveryAttachment(t *testing.T) {
 	}
 }
 
-func TestSetTextureTargetsOneAttachment(t *testing.T) {
+// One attachment of several, addressed rather than passed as an argument.
+func TestModelTexturePropertyTargetsOneAttachment(t *testing.T) {
 	lvl := hostTestLevel(t)
 	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}, {Name: "lid"}}
 
-	got := runScript(t, lvl, "crate", script(`    return set_texture(@crate, "lid", "rust")`))
+	got := runScript(t, lvl, "crate", script(`    @crate.model.lid.prop.texture = "rust"
+    return @crate.model.lid.prop.texture`))
 
-	if !flang.Equal(got, flang.BoolVal(true)) {
-		t.Errorf("got %v, want true", got)
+	if !flang.Equal(got, flang.StrVal("rust")) {
+		t.Errorf("got %v, want \"rust\"", got)
 	}
 	if lvl.Entities[0].Models[0].Texture != "" {
 		t.Errorf("body was reskinned too: %q", lvl.Entities[0].Models[0].Texture)
@@ -438,24 +471,61 @@ func TestSetTextureTargetsOneAttachment(t *testing.T) {
 	if lvl.Entities[0].Models[1].Texture != "rust" {
 		t.Errorf("lid wears %q, want rust", lvl.Entities[0].Models[1].Texture)
 	}
-}
-
-func TestSetTextureOnAnUnknownAttachmentIsFalse(t *testing.T) {
-	// False rather than an error: a script reskinning "turret" on an entity
-	// type that has none is a miss, not a broken script.
-	lvl := hostTestLevel(t)
-	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}}
-	got := runScript(t, lvl, "crate", script(`    return set_texture(@crate, "turret", "rust")`))
-	if !flang.Equal(got, flang.BoolVal(false)) {
-		t.Errorf("got %v, want false", got)
+	if !Scripts.dirtyTex["rust"] {
+		t.Errorf("rust was not queued for upload")
 	}
 }
 
-func TestSetTextureRefusesSomethingWithoutOne(t *testing.T) {
+// An attachment that does not exist is a ref that resolves to nothing, and the
+// error names the address — which is more than the verb's bare `false` said.
+func TestModelRefForAnUnknownAttachmentIsReported(t *testing.T) {
 	lvl := hostTestLevel(t)
-	err := runScriptErr(t, lvl, "", script(`    set_texture(@lamp, "brick")`))
-	if !strings.Contains(err.Error(), "no texture") {
-		t.Errorf("got %v", err)
+	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}}
+	err := runScriptErr(t, lvl, "crate", script(`    @crate.model.turret.prop.texture = "rust"`))
+	if err == nil || !strings.Contains(err.Error(), "turret") {
+		t.Errorf("got %v, want an error naming the attachment that is not there", err)
+	}
+}
+
+// The property table is what refuses a texture on something that has none, so
+// the refusal now names the kind rather than the verb.
+func TestTexturePropertyRefusesSomethingWithoutOne(t *testing.T) {
+	lvl := hostTestLevel(t)
+	err := runScriptErr(t, lvl, "", script(`    @lamp.prop.texture = "brick"`))
+	if err == nil || !strings.Contains(err.Error(), "no property") {
+		t.Errorf("got %v, want a light to report that it has no texture property", err)
+	}
+}
+
+// `models` is the whole list, so a script can reskin, hide or move every
+// attachment without naming any of them.
+func TestEntityModelsListsEveryAttachment(t *testing.T) {
+	lvl := hostTestLevel(t)
+	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}, {Name: "lid"}}
+
+	got := runScript(t, lvl, "crate", script(`    for m in @crate.models
+        m.prop.visible = false
+    end
+    return len(@crate.models)`))
+
+	if !flang.Equal(got, flang.IntVal(2)) {
+		t.Errorf("got %v attachments, want 2", got)
+	}
+	for _, m := range lvl.Entities[0].Models {
+		if m.Visible {
+			t.Errorf("attachment %s is still visible", m.Name)
+		}
+	}
+}
+
+// The step back out, so a handler holding an attachment can reach the thing it
+// is attached to — the same move `@edge.sector` makes.
+func TestModelRefStepsBackToItsEntity(t *testing.T) {
+	lvl := hostTestLevel(t)
+	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}}
+	got := runScript(t, lvl, "crate", script(`    return @crate.model.body.entity.id`))
+	if !flang.Equal(got, flang.StrVal("crate")) {
+		t.Errorf("got %v, want \"crate\"", got)
 	}
 }
 
@@ -469,6 +539,44 @@ func TestEntityTextureProperty(t *testing.T) {
 	}
 	if !Scripts.dirtyTex["rust"] {
 		t.Errorf("rust was not queued for upload")
+	}
+}
+
+// The rest of an attachment's surface: what used to have no way to be written
+// at all, since only its texture ever had a verb.
+func TestModelPropertiesCoverTheAttachmentsOwnState(t *testing.T) {
+	lvl := hostTestLevel(t)
+	lvl.Entities[0].Models = []world.EntityModel{{Name: "body", Path: "models/crate.fmdl", Visible: true}}
+
+	got := runScript(t, lvl, "crate", script(`    @crate.model.body.prop.alpha = 0.25
+    @crate.model.body.prop.offset = <0.0, 1.5, 0.0>
+    @crate.model.body.prop.scale = <2.0, 2.0, 2.0>
+    return @crate.model.body.prop.path`))
+
+	if !flang.Equal(got, flang.StrVal("models/crate.fmdl")) {
+		t.Errorf("path = %v", got)
+	}
+	m := &lvl.Entities[0].Models[0]
+	if m.Alpha != 0.25 {
+		t.Errorf("alpha = %v, want 0.25", m.Alpha)
+	}
+	if m.Offset != (mgl32.Vec3{0, 1.5, 0}) {
+		t.Errorf("offset = %v, want <0,1.5,0>", m.Offset)
+	}
+	if m.Scale != (mgl32.Vec3{2, 2, 2}) {
+		t.Errorf("scale = %v, want <2,2,2>", m.Scale)
+	}
+}
+
+// An attachment that never mentioned alpha is opaque, so the property has to
+// report 1 rather than the 0 the field holds — the trap the entity's own
+// zero-value properties document.
+func TestModelAlphaReadsOpaqueWhenItWasNeverSet(t *testing.T) {
+	lvl := hostTestLevel(t)
+	lvl.Entities[0].Models = []world.EntityModel{{Name: "body"}}
+	got := runScript(t, lvl, "crate", script(`    return @crate.model.body.prop.alpha`))
+	if !flang.Equal(got, flang.FloatVal(1)) {
+		t.Errorf("alpha = %v, want 1.0", got)
 	}
 }
 
@@ -590,5 +698,34 @@ func TestPropertyNamesAreSorted(t *testing.T) {
 		if names[i-1] > names[i] {
 			t.Fatalf("PropertyNames is not sorted: %v", names)
 		}
+	}
+}
+
+// `@player` is a documented address and an entity's properties are a documented
+// surface, but the two only met through levelHost.entityFor — and every
+// property getter and setter goes through the refCache's instead, which knew
+// nothing about the engine-owned player. Reading one reported "@player has no
+// property", which points at the property rather than at the lookup.
+func TestPlayerPropertiesAreReachable(t *testing.T) {
+	lvl := hostTestLevel(t)
+
+	prev := world.PlayerEntity
+	world.PlayerEntity = world.NewPlayer(mgl32.Vec3{3, 1, 4})
+	world.PlayerEntity.Frame = "shuttle"
+	t.Cleanup(func() { world.PlayerEntity = prev })
+
+	runScript(t, lvl, "crate", script(`    p = @player.prop.position
+    @crate.attr.px = p.x
+    @crate.attr.riding = @player.prop.frame.id
+    @player.prop.position = <5.0, 1.0, 6.0>`))
+
+	if got, _ := lvl.Entities[0].Attr("px"); got.F != 3 {
+		t.Errorf("read the player's x as %v, want 3", got.F)
+	}
+	if got, _ := lvl.Entities[0].Attr("riding"); got.S != "shuttle" {
+		t.Errorf("read the player's frame as %q, want the shuttle", got.S)
+	}
+	if world.PlayerEntity.Position != (mgl32.Vec3{5, 1, 6}) {
+		t.Errorf("writing a player property did not reach it: %v", world.PlayerEntity.Position)
 	}
 }

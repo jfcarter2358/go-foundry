@@ -749,6 +749,18 @@ func biomeGroundSection(bs *world.BiomeSector) {
 func biomeGroundBody(bs *world.BiomeSector, def world.BiomeBrush) {
 	if bs.Brush.Kind == world.BiomeWater {
 		imgui.Text("Lakebed (seen through the water surface)")
+		// Only Water can switch its patch off — for every other kind the patch
+		// IS the biome. Stored inverted from the checkbox so the zero value
+		// stays "shown" (see BiomeBrush.HideLakebed).
+		show := !bs.Brush.HideLakebed
+		if imgui.Checkbox("Show Lakebed##bslakebed", &show) {
+			bs.Brush.HideLakebed = !show
+		}
+		if bs.Brush.HideLakebed {
+			editorTextMutedWrapped("Off: the water lies straight on the floor beneath it, " +
+				"with whatever texture and detail that floor already has.")
+			return
+		}
 	}
 
 	// ensureGroundPatch already rebuilds whenever the resolved texture no
@@ -805,12 +817,20 @@ func biomeGroundBody(bs *world.BiomeSector, def world.BiomeBrush) {
 // different route: clicking the water plane itself (editorWaterSection,
 // editor_3d.go), which lands on the sector that produced it.
 func biomeWaterControls(ch *world.Chunk, bs *world.BiomeSector) {
-	if bs.Brush.WaterDepth <= 0 {
+	// Only exactly 0 is the "use the default" sentinel, so this seeds an unset
+	// brush without also snapping a deliberately-negative depth back to it.
+	if bs.Brush.WaterDepth == 0 {
 		bs.Brush.WaterDepth = world.DefaultWaterDepth
 	}
-	if editorDragFloat("Depth##bswd", &bs.Brush.WaterDepth, 0.05, 20, "%.2f") {
-		bs.GroundDirty = true // moves the plane's Y — needs a mesh rebuild
+	depth := bs.Brush.WaterDepth
+	if editorDragFloat("Depth##bswd", &depth, -world.WaterDepthLimit, world.WaterDepthLimit, "%.2f") {
+		bs.Brush.WaterDepth = world.NormalizeWaterDepth(depth)
+		// Slides the plane, does not reshape it — see WaterLevelDirty.
+		bs.WaterLevelDirty = true
 	}
+	editorTextMutedWrapped("How far below the floor under this sector the surface sits. " +
+		"Negative lifts it above that floor, flooding flat ground. " +
+		"The Move gizmo drags the same value in the 3D view.")
 	if !bs.Brush.Water.Enabled {
 		bs.Brush.Water = gfx.DefaultWaterParams()
 	}

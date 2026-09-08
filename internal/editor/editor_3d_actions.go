@@ -37,6 +37,7 @@ const (
 	sel3DEntity
 	sel3DVolume
 	sel3DSprite
+	sel3DScenery
 	sel3DEmitter
 	sel3DSound
 )
@@ -55,6 +56,8 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DVolume
 	case activeSprite() != nil:
 		return sel3DSprite
+	case activeScenery() != nil:
+		return sel3DScenery
 	case activeEmitter() != nil:
 		return sel3DEmitter
 	case activeSound() != nil:
@@ -91,6 +94,13 @@ func editor3DSelectionSummary() string {
 	case sel3DSprite:
 		sp := activeSprite()
 		return fmt.Sprintf("Sprite %s (%s)", sp.ID, gfx.BillboardModeName(sp.Billboard))
+
+	case sel3DScenery:
+		sc := activeScenery()
+		if sc.Model == "" {
+			return fmt.Sprintf("Scenery %s (no model)", sc.ID)
+		}
+		return fmt.Sprintf("Scenery %s (%s)", sc.ID, world.ModelNameForPath(sc.Model))
 
 	case sel3DEmitter:
 		em := activeEmitter()
@@ -134,8 +144,16 @@ func editor3DSelectionSummary() string {
 // editor3DKindLabel capitalises a one-word kind name ("wall" → "Wall") for
 // display in the menu's heading.
 func editor3DKindLabel(s string) string {
-	if s == "" {
+	switch s {
+	case "":
 		return s
+	// A slab face is named for the side of the surface it is, not for the
+	// underscored kind string the selection carries — "Floor_slab" in a menu
+	// heading would be the schema leaking into the window.
+	case "floor_slab":
+		return "Floor underside"
+	case "ceiling_slab":
+		return "Ceiling top side"
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
 }
@@ -212,6 +230,16 @@ func editor3DSurfaceRefsFor(sel faceSel) (surface3DRefs, bool) {
 	case "ceiling":
 		r.Texture, r.Smooth = &s.Ceiling.Texture, &s.Ceiling.Smooth
 		r.On, r.DoubleSided = &s.Ceiling.Enabled, &s.Ceiling.DoubleSided
+	case "floor_slab", "ceiling_slab":
+		sl := faceSelSlab(s, sel.kind)
+		if sl == nil {
+			return surface3DRefs{}, false
+		}
+		// No On: a slab is switched on by having a thickness, and there is no
+		// flag to toggle. Smooth is nil for the same reason it is inherited
+		// rather than stored — see world.Slab. Hidden is the closest thing to a
+		// visibility toggle a slab has, and it is in the panel.
+		r.Texture, r.DoubleSided = &sl.Texture, &sl.DoubleSided
 	case "wall":
 		if sel.idx < 0 || sel.idx >= len(s.Walls) {
 			return surface3DRefs{}, false
@@ -469,7 +497,8 @@ func editor3DSelectSectorRing() {
 // editor3DCanSnap reports whether the selection is something snapping can move.
 func editor3DCanSnap() bool {
 	switch editor3DSelection() {
-	case sel3DVertices, sel3DSpawn, sel3DEntity, sel3DVolume, sel3DSprite, sel3DEmitter, sel3DSound:
+	case sel3DVertices, sel3DSpawn, sel3DEntity, sel3DVolume, sel3DSprite,
+		sel3DScenery, sel3DEmitter, sel3DSound:
 		return Editor.StepSize > 0
 	}
 	return false
@@ -520,6 +549,15 @@ func editor3DSnapSelectionToGrid() {
 		EditorPushUndo()
 		sp.Position = snapVec3(sp.Position, step)
 		editorSetStatus("Snapped sprite %q to the grid", sp.ID)
+
+	case sel3DScenery:
+		// The position only, on the volume's rule: a prop's scale is a factor
+		// on its model, and rounding that onto the world grid would resize
+		// something someone asked to have moved.
+		sc := activeScenery()
+		EditorPushUndo()
+		sc.Position = snapVec3(sc.Position, step)
+		editorSetStatus("Snapped scenery %q to the grid", sc.ID)
 
 	case sel3DEmitter:
 		em := activeEmitter()

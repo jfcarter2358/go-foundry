@@ -29,6 +29,7 @@ import (
 	"regexp"
 	"strings"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/game"
 )
 
@@ -108,6 +109,13 @@ func referenceNames(slash string) []string {
 	if i := strings.IndexByte(slash, '/'); i >= 0 {
 		inner := slash[i+1:]
 		names = append(names, inner, strings.TrimSuffix(inner, filepath.Ext(inner)))
+	}
+	// A normal map is never named by content: the engine derives its name from
+	// the albedo's and loads it alongside (gfx.ensureNormalMapLoaded). So it
+	// answers to the albedo's names too — otherwise every texture's relief
+	// would be pruned out of a release for looking unreferenced.
+	if base := strings.TrimSuffix(stem, fileutil.NormalMapSuffix); base != stem {
+		names = append(names, base, dir+"/"+base, base+filepath.Ext(base))
 	}
 	return names
 }

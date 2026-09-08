@@ -31,10 +31,22 @@ type Level struct {
 	Sprites []Sprite
 	// Emitters are the level's placed particle effects (emitter.go).
 	Emitters []Emitter
+	// Scenery are the level's placed static models (scenery.go) — one mesh, a
+	// transform and a collision flag, and nothing a script can address.
+	Scenery []Scenery
 	// Sounds are the level's placed sound sources (sound.go).
 	Sounds []Sound
 	// Music is the level's global track, or nil when it has none.
-	Music   *Music
+	Music *Music
+	// Sky and Fog are the level's environment (sky.go, fog.go), or nil when it
+	// has neither — which is what a level authored before they existed has, and
+	// is why they are pointers rather than zero-valued structs.
+	Sky *Sky
+	Fog *Fog
+	// Player is the level's tuning for the engine-owned player it starts
+	// (player_settings.go). A value rather than a pointer, because there is
+	// always a player and its zero value is the engine's own defaults.
+	Player  PlayerSettings
 	Lights  LightSet
 	Spatial *SpatialHash // accelerated chunk/sector lookup; rebuilt after level load
 	// Frames are the level's moving coordinate systems (frame.go). Built with

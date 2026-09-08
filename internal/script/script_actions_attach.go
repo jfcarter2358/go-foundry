@@ -117,7 +117,7 @@ var attachVerbs = map[string]scriptVerb{
 		// Two spellings for a bone: (obj, entity, bone) reads the entity's only
 		// attachment, which is how nearly every entity is authored, and
 		// (obj, entity, model, bone) names one of several — the same pair
-		// play_anim and set_texture offer, for the same reason.
+		// play_anim offers, for the same reason.
 		model, bone := "", ""
 		switch len(args) {
 		case 2:

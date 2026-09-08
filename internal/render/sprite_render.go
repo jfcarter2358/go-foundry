@@ -646,6 +646,7 @@ func uploadSpriteInstances(insts []SpriteInstance) {
 // sprite-specific light path to keep in step with the main shader's.
 func uploadSpriteLighting(prog uint32, lvl *world.Level, frame ShadowFrame) {
 	world.UploadLightsTo(prog, lvl.Lights, false)
+	world.UploadFogTo(prog, lvl.Fog, lvl.Volumes)
 	UploadShadowUniformsTo(prog, lvl.Lights, frame)
 	UploadPointShadowUniformsTo(prog, lvl.Lights)
 

@@ -14,9 +14,11 @@ import (
 	"strings"
 	"testing"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"foundry/internal/testenv"
+	"foundry/internal/world"
 )
 
 // withResidentTextures marks every shipped texture as already uploaded, so a
@@ -41,6 +43,21 @@ func withResidentTextures(t *testing.T) {
 	}
 }
 
+// withResourcesRoot points the install root at resources/, so a level that
+// places an entity finds the type's definition, its chunk attachments and its
+// script where a real run would. Without it a shipped level with entities in it
+// fails to load here and nowhere else.
+func withResourcesRoot(t *testing.T) {
+	t.Helper()
+	prev := fileutil.ExecutablePath
+	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
+	world.ReloadEntityDefs()
+	t.Cleanup(func() {
+		fileutil.ExecutablePath = prev
+		world.ReloadEntityDefs()
+	})
+}
+
 // shippedLevels are the level files that come with the engine.
 func shippedLevels(t *testing.T) []string {
 	t.Helper()
@@ -59,6 +76,7 @@ func shippedLevels(t *testing.T) []string {
 func TestSteppedLoadMatchesTheSynchronousOne(t *testing.T) {
 	testenv.WithoutGeometryUploads(t)
 	withResidentTextures(t)
+	withResourcesRoot(t)
 
 	for _, path := range shippedLevels(t) {
 		t.Run(strings.TrimSuffix(filepath.Base(path), LevelExt), func(t *testing.T) {

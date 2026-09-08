@@ -7,6 +7,7 @@ package script
 // standing in.
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -137,28 +138,68 @@ func TestEntityPositionPropRoundTripsThroughItsFrame(t *testing.T) {
 	}
 }
 
-// move_to takes a world vec — routinely another object's position — so it has
-// to carry it into the target's own frame.
-func TestMoveToCarriesIntoTheEntitysFrame(t *testing.T) {
-	offset := mgl32.Vec3{0, 30, 0}
-	lvl := framedLevel(t, offset)
-
+// Nothing above may disturb the ordinary no-frame case: the conversion has to
+// be the identity for a level with no vehicles in it, which is most of them.
+func TestPositionPropUnchangedWithoutAFrame(t *testing.T) {
+	lvl := hostTestLevel(t)
 	runScript(t, lvl, "",
-		"def main() -> null\n    move_to(@crate, <0.0,30.0,0.0>)\n    return null\nend")
-
-	if !vecClose(lvl.Entities[0].Position, mgl32.Vec3{}, 1e-4) {
-		t.Errorf("move_to stored %v; the world target equals the frame's own origin, "+
-			"so the frame-local position should be zero", lvl.Entities[0].Position)
+		"def main() -> null\n    @crate.prop.position = <1.0,2.0,3.0>\n    return null\nend")
+	if !vecClose(lvl.Entities[0].Position, mgl32.Vec3{1, 2, 3}, 1e-4) {
+		t.Errorf("position written on an unframed entity stored %v, want <1,2,3>",
+			lvl.Entities[0].Position)
 	}
 }
 
-// Nothing above may disturb the ordinary no-frame case.
-func TestMoveToUnchangedWithoutAFrame(t *testing.T) {
+// Velocity is stored in the entity's frame, because it is integrated onto a
+// position that is. The property is world space, so a script can aim one
+// entity at another without knowing either is aboard a ship.
+func TestEntityVelocityPropIsWorldSpace(t *testing.T) {
+	lvl := framedLevel(t, mgl32.Vec3{50, 0, 0})
+	// Yaw the ship a quarter turn: its local +X points along world -Z.
+	lvl.Frames.Frame("ship").Rot = mgl32.QuatRotate(math.Pi/2, mgl32.Vec3{0, 1, 0})
+	lvl.Entities[0].Velocity = mgl32.Vec3{2, 0, 0} // 2 u/s down the ship's own +X
+
+	got := runScript(t, lvl, "",
+		"def main() -> null\n    return @crate.prop.velocity\nend")
+	v, ok := got.(flang.VecVal)
+	if !ok {
+		t.Fatalf("velocity prop returned %T, want a vec", got)
+	}
+	if !vecClose(vec3Of(v), mgl32.Vec3{0, 0, -2}, 1e-4) {
+		t.Errorf("velocity of a frame-parented entity = %v, want <0,0,-2> (its world velocity)",
+			vec3Of(v))
+	}
+}
+
+// Writing it back stores the frame-local value, and reads back as what was
+// written — a rider pushed along world +X keeps going that way whatever the
+// ship's heading.
+func TestEntityVelocityPropRoundTripsThroughItsFrame(t *testing.T) {
+	lvl := framedLevel(t, mgl32.Vec3{50, 0, -20})
+	lvl.Frames.Frame("ship").Rot = mgl32.QuatRotate(math.Pi/2, mgl32.Vec3{0, 1, 0})
+
+	runScript(t, lvl, "",
+		"def main() -> null\n    @crate.prop.velocity = <3.0,0.0,0.0>\n    return null\nend")
+
+	if !vecClose(lvl.Entities[0].Velocity, mgl32.Vec3{0, 0, 3}, 1e-4) {
+		t.Errorf("stored velocity = %v, want the world <3,0,0> carried into the yawed frame <0,0,3>",
+			lvl.Entities[0].Velocity)
+	}
+	got := runScript(t, lvl, "",
+		"def main() -> null\n    return @crate.prop.velocity\nend")
+	if v := got.(flang.VecVal); !vecClose(vec3Of(v), mgl32.Vec3{3, 0, 0}, 1e-4) {
+		t.Errorf("read back %v, want the <3,0,0> that was written", vec3Of(v))
+	}
+}
+
+// Nothing above may disturb the ordinary no-frame case: the conversion has to
+// be the identity for a level with no vehicles in it, which is most of them.
+func TestVelocityPropUnchangedWithoutAFrame(t *testing.T) {
 	lvl := hostTestLevel(t)
 	runScript(t, lvl, "",
-		"def main() -> null\n    move_to(@crate, <1.0,2.0,3.0>)\n    return null\nend")
-	if !vecClose(lvl.Entities[0].Position, mgl32.Vec3{1, 2, 3}, 1e-4) {
-		t.Errorf("move_to on an unframed entity stored %v, want <1,2,3>", lvl.Entities[0].Position)
+		"def main() -> null\n    @crate.prop.velocity = <1.0,2.0,3.0>\n    return null\nend")
+	if !vecClose(lvl.Entities[0].Velocity, mgl32.Vec3{1, 2, 3}, 1e-4) {
+		t.Errorf("velocity written on an unframed entity stored %v, want <1,2,3>", lvl.Entities[0].Velocity)
 	}
 }
 

@@ -71,9 +71,16 @@ func editorPropertiesSection(lvl *world.Level, kind editorPanelKind) {
 
 	editorSpawnPointSection(lvl)
 	editorLevelUISection(lvl)
+	editorEnvironmentSection(lvl)
+	editorPlayerSection(lvl)
 	editorEntityProperties(lvl)
 	editorVolumePropertiesSection()
 	editorSpritePropertiesSection()
+	editorSceneryPropertiesSection()
+	// Not selection-driven, unlike everything around it: the brush block is
+	// about the *next* click rather than about anything selected, which is why
+	// it draws whenever the brush has a model — see editor_scenery_panel.go.
+	editorSceneryBrushSection()
 	editorEmitterPropertiesSection()
 	editorSoundPropertiesSection()
 	editorLightPropertiesSection(lvl)
@@ -93,7 +100,8 @@ func editor3DSectorPropertiesSection(lvl *world.Level) {
 	s3d := &sch.Sectors[Editor.ActiveSectorIdx]
 
 	imgui.Separator()
-	editorFocusOpen(panelFocusSector, panelFocusFloor, panelFocusCeiling, panelFocusWall)
+	editorFocusOpen(panelFocusSector, panelFocusFloor, panelFocusCeiling, panelFocusWall,
+		panelFocusFloorSlab, panelFocusCeilingSlab)
 	if !imgui.CollapsingHeaderV("Sector: "+s3d.ID+"##sechdr3d", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}

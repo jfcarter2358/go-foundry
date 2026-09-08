@@ -1,0 +1,113 @@
+# Volumes
+
+A volume is a region of space a script can react to: a shape, an ID, and a
+script. It is never drawn outside the editor, never collides, and never moves on
+its own. All it does is answer "is this point inside".
+
+Use one for anything a model-less entity would have done — a trigger, a script
+anchor, a level exit, a region of fog. It is the smaller idea, so it is the
+smaller type: no velocity, no gravity, no collision flags, no models.
+
+## Placing one
+
+`Add... > Volume`, give it an ID, then click in the viewport.
+
+| Field | |
+| --- | --- |
+| **ID** | committed on Enter; an ID used by anything else in the level is refused |
+| **Enabled** | a disabled volume contains nothing, so it fires no events |
+| **Shape** | `box`, `sphere`, `cylinder` |
+| **Half-extents X/Y/Z** | half the region's size on each axis |
+
+A volume is a wireframe cage in the 3D view. Click it to select it, then use the
+translate, rotate and scale gizmos — scale drags the half-extents, since a
+region's size *is* its extents.
+
+Clicking tests against the real solid, so a sphere is picked where it looks
+picked. A volume the camera is standing inside is skipped by the picker on
+purpose, or a room-sized trigger would swallow every click in the room it wraps.
+Select it from the Explorer instead.
+
+## Events
+
+Give it a script and it gets:
+
+| | |
+| --- | --- |
+| `:enter:` | `other ref` — something's origin entered the region |
+| `:exit:` | `other ref` — and left |
+| `:interact:` | `src ref` — the interact key was pressed inside it |
+| `:spawn:` `:destroy:` `:tick:` | as everything else |
+
+```
+def on_enter(:enter:, other ref) -> null
+    if other == @player
+        play_music("tension", 2.0)
+    end
+end
+```
+
+Disabling a volume disarms it. That is how a locked door works — the trigger is
+there, switched off, and unlocking it is
+`@cave_mouth.prop.enabled = true`.
+
+## Level exits
+
+A volume carrying a **level exit** loads that level when the player walks in.
+Set it in the volume's **Level Exit** group, from a list of the levels that
+exist. No script needed.
+
+- Only the **player** takes one. A guard on patrol crossing it does not end the
+  level.
+- Only while the volume is **enabled**.
+- It fires once, on the way in, not every frame the player stands inside.
+
+**Place the destination's spawn clear of its own exit back.** The player arrives
+inside a volume they were not in a moment ago, which is an entry like any other —
+two levels whose spawns sit in each other's exits bounce between themselves
+forever.
+
+An exit may carry a script as well. Its `:enter:` handler runs in the frame the
+load is requested, before the load starts, which is where "save what the player
+was carrying, then move on" belongs.
+
+Write `load_level("vault")` in a script instead when the destination is a
+decision rather than a fact:
+
+```
+def on_enter(:enter:, other ref) -> null
+    if @self.attr.key_found
+        load_level("vault")
+    else
+        show_screen("locked")
+    end
+end
+```
+
+## Fog volumes
+
+A volume may be full of fog — the one thing a volume can be that the player sees.
+See [Sky and fog](08-sky-and-fog.md).
+
+The short version: open the volume's **Fog** group, set a colour and a density.
+Density is per world unit travelled *inside* the region, so the same number means
+the same thing on a doorway and on a ravine. It still fires `:enter:` and
+`:exit:`, which is usually the event you want when there is fog to be in.
+
+## Tags, attributes, parameters
+
+A volume carries the same scripting block everything else does. Parameters are
+the reason twenty trigger volumes can share one script file:
+
+```yaml
+volumes:
+  - id: button_north
+    script: scripts/button.flang
+    params:
+      target: {type: str,   value: door_north}
+      drop:   {type: float, value: 6.0}
+```
+
+The Script section of the panel lists every parameter the attached script
+declares, one row each, with a picker over the level's IDs for a `ref`. See
+[Scripting](18-scripting.md).

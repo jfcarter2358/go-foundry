@@ -123,6 +123,73 @@ func TestVectorOperations(t *testing.T) {
 	}
 }
 
+func TestVectorComponents(t *testing.T) {
+	cases := []struct {
+		src  string
+		want Value
+	}{
+		{"<1.0, 2.0, 3.0>.x", FloatVal(1)},
+		{"<1.0, 2.0, 3.0>.y", FloatVal(2)},
+		{"<1.0, 2.0, 3.0>.z", FloatVal(3)},
+		// A component is a float whatever built the vec, so arithmetic on one
+		// does not silently become integer division.
+		{"(<1.0, 2.0, 3.0> + <1.0, 1.0, 1.0>).y", FloatVal(3)},
+		{"normalize(<0.0, 5.0, 0.0>).y", FloatVal(1)},
+		// Rebuilding from components is the spelling that stands in for
+		// assignment, so it has to read cleanly.
+		{"<<1.0, 2.0, 3.0>.x, 9.0, <1.0, 2.0, 3.0>.z>", VecVal{1, 9, 3}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.src, func(t *testing.T) {
+			got := run(t, expr(tc.src))
+			if !Equal(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+			if got.Type() != tc.want.Type() {
+				t.Errorf("got type %s, want %s", got.Type(), tc.want.Type())
+			}
+		})
+	}
+}
+
+func TestVectorComponentMistakesSayWhatToWrite(t *testing.T) {
+	// The three ways to get this wrong, each pointed at the one spelling that
+	// works. A vec is a value, so nothing in it can be written to.
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			"a component that does not exist",
+			expr("<1.0, 2.0, 3.0>.w"),
+			`components x, y and z, not "w"`,
+		},
+		{
+			"indexing instead of naming",
+			expr("<1.0, 2.0, 3.0>[0]"),
+			"write v.x, v.y or v.z",
+		},
+		{
+			"assigning a component",
+			"def main() -> null\n    v = <1.0, 2.0, 3.0>\n    v.y = 9.0\nend",
+			"a vec is a value",
+		},
+		{
+			"assigning through an index",
+			"def main() -> null\n    v = <1.0, 2.0, 3.0>\n    v[1] = 9.0\nend",
+			"build a new one",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := runErr(t, tc.src, nil); !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q\n  does not mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestOnlyFalseAndNullAreFalsey(t *testing.T) {
 	// A language where `if count` silently means "is it non-zero" is one where
 	// forgetting a comparison is invisible.
@@ -661,6 +728,69 @@ func TestBroadcastPostsOnePerMember(t *testing.T) {
 	}
 }
 
+// A timer is a send with a delay on it, so it reaches the host as a post that
+// happens to say how long to wait — the target is whoever the send named, not
+// whoever set it.
+func TestDelayedSendCarriesItsDelayAndTarget(t *testing.T) {
+	h := NewMapHost()
+	h.AddObject("crate", RefEntity)
+	h.AddObject("door", RefVolume)
+	h.SetSelf("door")
+
+	runWithHost(t, `def main() -> null
+    @crate <- after(500, :damage:, 20)
+end`, h)
+
+	if len(h.Posted) != 1 {
+		t.Fatalf("got %d messages, want 1", len(h.Posted))
+	}
+	m := h.Posted[0]
+	if m.To.ID() != "crate" || m.Atom != "damage" || m.DelayMS != 500 {
+		t.Errorf("posted %+v", m)
+	}
+}
+
+// A broadcast timer snapshots the tag the same way a prompt one does: the
+// members are resolved when the timer is set, not when it comes due.
+func TestDelayedBroadcastPostsOnePerMember(t *testing.T) {
+	h := NewMapHost()
+	h.AddObject("a", RefEntity, "lamps")
+	h.AddObject("b", RefEntity, "lamps")
+	h.SetSelf("a")
+
+	runWithHost(t, "def main() -> null\n    #lamps <- after(250, :flicker:)\nend", h)
+	if len(h.Posted) != 2 {
+		t.Fatalf("got %d messages, want 2", len(h.Posted))
+	}
+	for _, m := range h.Posted {
+		if m.DelayMS != 250 {
+			t.Errorf("posted %+v, want a 250ms delay", m)
+		}
+	}
+}
+
+func TestDelayNeedsToBeANumber(t *testing.T) {
+	h := NewMapHost()
+	h.AddObject("crate", RefEntity)
+	h.SetSelf("crate")
+	err := runErr(t, "def main() -> null\n    @crate <- after(\"soon\", :ping:)\nend", h)
+	if !strings.Contains(err.Error(), "milliseconds") {
+		t.Errorf("error does not explain the delay: %v", err)
+	}
+}
+
+// `after` is a send, so a bare call is a mistake the language can name rather
+// than a verb some host might implement.
+func TestBareAfterIsAnError(t *testing.T) {
+	h := NewMapHost()
+	h.AddObject("crate", RefEntity)
+	h.SetSelf("crate")
+	err := runErr(t, "def main() -> null\n    after(500, :ping:)\nend", h)
+	if !strings.Contains(err.Error(), "@self <- after") {
+		t.Errorf("error does not show the send form: %v", err)
+	}
+}
+
 func TestSendingToNothingIsDropped(t *testing.T) {
 	// An object may legitimately have been destroyed since the sender last
 	// looked, so this must not be fatal.
@@ -844,10 +974,10 @@ end`, h)
 func TestWorldVerbReachesTheHost(t *testing.T) {
 	h := NewMapHost()
 	h.AddObject("crate", RefEntity)
-	h.Verbs["move_to"] = func(args []Value, pos Pos) (Value, error) { return NullVal{}, nil }
+	h.Verbs["spawn"] = func(args []Value, pos Pos) (Value, error) { return NullVal{}, nil }
 
-	runWithHost(t, "def main() -> null\n    move_to(@crate, <1.0, 0.0, 0.0>)\nend", h)
-	if len(h.Actions) != 1 || h.Actions[0].Name != "move_to" {
+	runWithHost(t, "def main() -> null\n    spawn(@crate, <1.0, 0.0, 0.0>)\nend", h)
+	if len(h.Actions) != 1 || h.Actions[0].Name != "spawn" {
 		t.Fatalf("actions: %+v", h.Actions)
 	}
 	if len(h.Actions[0].Args) != 2 {

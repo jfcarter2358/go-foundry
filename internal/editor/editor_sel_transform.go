@@ -26,13 +26,14 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// selectedVerticesWorld snapshots the world position of every selected vertex,
-// in selection order. Entries whose indices no longer resolve are left at the
-// origin so the slice stays parallel with Editor.SelectedVertices — the drags
-// index into it by selection position.
+// selectedVerticesWorld snapshots the world position of every vertex handle the
+// gizmo is dragging, in selection order. Entries whose indices no longer
+// resolve are left at the origin so the slice stays parallel with
+// gizmoVertexSels — the drags index into it by position.
 func selectedVerticesWorld() []mgl32.Vec3 {
-	out := make([]mgl32.Vec3, len(Editor.SelectedVertices))
-	for i, sel := range Editor.SelectedVertices {
+	sels := gizmoVertexSels()
+	out := make([]mgl32.Vec3, len(sels))
+	for i, sel := range sels {
 		if pos, ok := vertexSelPos(sel); ok {
 			out[i] = pos
 		}
@@ -88,10 +89,14 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 		sum mgl32.Vec2
 		N   int
 	}
-	targets := make([]mgl32.Vec3, len(Editor.SelectedVertices))
-	resolved := make([]bool, len(Editor.SelectedVertices))
+	// Whatever the gizmo is dragging: the vertex selection, or the handles a
+	// face selection is built from (editor_face_gizmo.go). Both are the same
+	// list of handles by the time they get here.
+	sels := gizmoVertexSels()
+	targets := make([]mgl32.Vec3, len(sels))
+	resolved := make([]bool, len(sels))
 	accum := map[[2]int]*xzAccum{}
-	for i, sel := range Editor.SelectedVertices {
+	for i, sel := range sels {
 		cur, ok := vertexSelPos(sel)
 		if !ok {
 			continue
@@ -139,7 +144,7 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 
 	// Pass three: the per-vertex height offset, which is the only per-vertex
 	// height control a sector has.
-	for i, sel := range Editor.SelectedVertices {
+	for i, sel := range sels {
 		if !resolved[i] {
 			continue
 		}

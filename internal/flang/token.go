@@ -10,7 +10,10 @@ package flang
 // reaches back. This follows the internal/texdoc precedent — see
 // RESTRUCTURE_PROPOSAL.md §5 Phase B.
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // Kind identifies a token's lexical class.
 type Kind int
@@ -78,6 +81,7 @@ const (
 	RBrace   // }
 	At       // @
 	Hash     // #
+	Question // ?
 )
 
 // kindNames is how each kind reads in an error message. Indexed by the kind, so
@@ -95,7 +99,7 @@ var kindNames = map[Kind]string{
 	Eq: "==", NotEq: "!=", Lt: "<", LtEq: "<=", Gt: ">", GtEq: ">=",
 	Send: "<-", Arrow: "->", Dot: ".", Comma: ",", Colon: ":",
 	LParen: "(", RParen: ")", LBracket: "[", RBracket: "]",
-	LBrace: "{", RBrace: "}", At: "@", Hash: "#",
+	LBrace: "{", RBrace: "}", At: "@", Hash: "#", Question: "?",
 }
 
 // String renders a kind for diagnostics.
@@ -129,6 +133,35 @@ var typeNames = map[string]bool{
 
 // IsTypeName reports whether s names a flang type.
 func IsTypeName(s string) bool { return typeNames[s] }
+
+// KeywordNames returns every reserved word, sorted.
+//
+// Exported for the same reason BuiltinNames is: the script editor's completion
+// list reads this table rather than keeping a copy of it, so a keyword added to
+// the language is offerable on the day it is added and cannot be forgotten.
+func KeywordNames() []string {
+	out := make([]string, 0, len(keywords))
+	for k := range keywords {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TypeNames returns every name that may be written where the grammar expects a
+// type — a parameter's second position or a return type — sorted.
+//
+// Wider than ParamTypes on purpose: that is the subset a *level* can store, and
+// this is the subset the *language* will parse. A completion list offered while
+// writing `def f(xs list)` wants this one.
+func TypeNames() []string {
+	out := make([]string, 0, len(typeNames))
+	for n := range typeNames {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Pos is a source position. File is carried on every position rather than being
 // implied by context, because an imported file's errors have to name themselves

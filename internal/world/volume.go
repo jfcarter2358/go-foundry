@@ -2,11 +2,14 @@ package world
 
 // volume.go — Volume, a region of space a script can react to.
 //
-// A volume is a shape, an ID, and a script. It is never drawn outside the
-// editor, never collides, and never moves on its own. All it does is answer
-// "is this point inside", which is what the `enter`, `exit` and `interact`
-// events resolve through — a doorway that opens, a room that dims the lights, a
-// pit that kills.
+// A volume is a shape, an ID, and a script. It never collides and never moves on
+// its own. Mostly what it does is answer "is this point inside", which is what
+// the `enter`, `exit` and `interact` events resolve through — a doorway that
+// opens, a room that dims the lights, a pit that kills.
+//
+// The one thing a volume can be that the player sees is fog: give it a Fog and
+// the region fills with it, still invisible as a trigger but no longer invisible
+// as a place. See volume_fog.go.
 //
 // A model-less entity could serve, and for a while the plan was that it should:
 // it already has an ID, tags, attributes and a bounding volume. But an entity
@@ -68,8 +71,15 @@ type Volume struct {
 	// includes them.
 	LoadLevel string
 
-	// Geometry is the editor's wireframe box. Runtime-only, never serialized —
-	// a volume is invisible during play.
+	// Fog fills the region with fog when set — see volume_fog.go. nil is the
+	// ordinary case: a volume that is only a trigger. It is a pointer for the
+	// reason Level.Fog is, so a volume that never had fog writes no `fog:` key
+	// and does not acquire one by being re-saved.
+	Fog *VolumeFog
+
+	// Geometry is the editor's wireframe cage. Runtime-only, never serialized —
+	// the cage is an authoring aid and is not drawn during play, whatever else
+	// the volume does.
 	Geometry gfx.Geometry
 }
 
@@ -265,6 +275,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		HalfZ:      r.Half.Z,
 		Enabled:    BoolDefault(r.Enabled, true),
 		LoadLevel:  r.LoadLevel,
+		Fog:        VolumeFogFromRaw(r.Fog),
 	}, nil
 }
 
@@ -279,6 +290,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		Half:          RawVec3{X: v.HalfX, Y: v.HalfY, Z: v.HalfZ},
 		Enabled:       BoolPtrIfFalse(v.Enabled),
 		LoadLevel:     v.LoadLevel,
+		Fog:           VolumeFogToRaw(v.Fog),
 	}
 }
 

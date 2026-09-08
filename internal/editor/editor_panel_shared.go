@@ -55,6 +55,7 @@ func editorChunkPropertiesSection(lvl *world.Level) {
 
 	editorPropGroupOpen("Identity##chunkidgrp", func() { editorChunkIdentity(lvl, ch) })
 	editorPropGroupOpen("Transform##chunktfgrp", func() { editorChunkTransform(ch) })
+	editorPropGroup("Motion##chunkmotiongrp", 0, func() { editorChunkMotion(ch) })
 	editorPropGroup("Carried By##chunkframegrp", 0, func() { editorChunkFrameOwnerRow(lvl, ch) })
 	editorScriptDataUI(&ch.ScriptData, "chunk", "This chunk")
 	editorPropGroup("Actions##chunkactions", 0, func() { editorChunkActions(ch) })
@@ -130,8 +131,9 @@ func editorChunkTransform(ch *world.Chunk) {
 	// editorChunkTransformChanged.
 	pos := [3]float32{ch.Origin.X(), ch.Origin.Y(), ch.Origin.Z()}
 	if editorDragFloat3("Origin##chunkorigin", &pos, 0, 0, "%.3f") {
-		ch.Origin = mgl32.Vec3{pos[0], pos[1], pos[2]}
-		editorChunkTransformChanged()
+		// moveChunk rather than a plain assignment, so typing an exact origin
+		// carries attached entities the same as dragging the gizmo does.
+		moveChunk(ch, mgl32.Vec3{pos[0], pos[1], pos[2]})
 	}
 
 	rotDeg := mgl32.RadToDeg(ch.Rotation)
@@ -147,6 +149,28 @@ func editorChunkTransform(ch *world.Chunk) {
 	if editorDragFloat("Scale##chunkscale", &sc, 0, 100, "%.3f") {
 		ch.Scale = world.EntityScaleClamp(sc)
 		editorChunkTransformChanged()
+	}
+}
+
+// editorChunkMotion draws the chunk's velocity — the one thing about a chunk
+// that changes without anybody dragging it. Carried forward by
+// world.AdvanceChunks during play only, so a platform stays exactly where it
+// was placed while the editor is open, the same deal an entity's own velocity
+// gets (editorEntityMotion).
+//
+// No re-bucketing on the write: this is a rate, and the move it causes happens
+// in the tick that integrates it.
+func editorChunkMotion(ch *world.Chunk) {
+	editorTextWrapped("Carried forward every frame during play, not in the editor. " +
+		"Nothing standing on the chunk is carried along with it.")
+
+	vel := [3]float32{ch.Velocity.X(), ch.Velocity.Y(), ch.Velocity.Z()}
+	if editorDragFloat3Step("Velocity (u/s)##chunkvel", &vel, -1000, 1000, "%.3f", 0.05) {
+		ch.Velocity = mgl32.Vec3{vel[0], vel[1], vel[2]}
+	}
+
+	if imgui.Button("Stop##chunkstopmotion") {
+		ch.Velocity = mgl32.Vec3{}
 	}
 }
 
@@ -205,7 +229,7 @@ func editorSetChunkCarrier(lvl *world.Level, ch *world.Chunk, owner string) {
 	}
 	// This chunk stops being carried, whatever it was carried by.
 	if ch.FrameOwner != "" {
-		ch.Xform = mgl32.Mat4{}
+		ch.ClearFrameTransform()
 	}
 	ch.FrameOwner = owner
 	if owner != "" {

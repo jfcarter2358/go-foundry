@@ -569,6 +569,13 @@ func (p *parser) parseSimpleStmt() Stmt {
 		if msg == nil {
 			return nil
 		}
+		if delay, rest, isAfter := splitAfter(msg); isAfter {
+			if rest == nil {
+				p.errorf(msg.Position(), "after takes a delay in milliseconds and a message, like after(500, :open_done:)")
+				return &SendStmt{Target: x, Msg: &TupleLit{Pos_: msg.Position()}, Pos_: pos}
+			}
+			return &SendStmt{Target: x, Msg: rest, Delay: delay, Pos_: pos}
+		}
 		if _, ok := msg.(*TupleLit); !ok {
 			// The first element names the message, so a send always carries a
 			// tuple. `@d <- (:open:,)` is the one-element form.
@@ -580,11 +587,37 @@ func (p *parser) parseSimpleStmt() Stmt {
 	return &ExprStmt{X: x, Pos_: pos}
 }
 
+// splitAfter recognises the delayed send `target <- after(ms, :atom:, args...)`
+// and takes it apart into the delay and the message the timer will carry.
+//
+// `after` is spelled as a call because that is how it reads, but it is not one:
+// there is no value a delay could evaluate to, and the whole point of the form
+// is that the send around it says who the message goes to. Recognising it here
+// means the rest of the compiler never meets it — a delayed send is an ordinary
+// send that happens to be holding a delay.
+//
+// ok is true as soon as the name matches, so a malformed `after` is reported as
+// a bad timer rather than mistaken for a message that is not a tuple.
+func splitAfter(msg Expr) (delay Expr, rest *TupleLit, ok bool) {
+	call, isCall := msg.(*CallExpr)
+	if !isCall {
+		return nil, nil, false
+	}
+	name, isName := call.Fn.(*IdentExpr)
+	if !isName || name.Name != "after" {
+		return nil, nil, false
+	}
+	if len(call.Args) < 2 {
+		return nil, nil, true
+	}
+	return call.Args[0], &TupleLit{Elems: call.Args[1:], Pos_: call.Args[1].Position()}, true
+}
+
 // isAssignable reports whether e can be the target of an assignment: a local, or
 // a path into an object.
 func isAssignable(e Expr) bool {
 	switch e.(type) {
-	case *IdentExpr, *MemberExpr, *IndexExpr, *AddrExpr, *TagExpr:
+	case *IdentExpr, *MemberExpr, *IndexExpr, *AddrExpr, *TagExpr, *ParamExpr:
 		return true
 	}
 	return false
@@ -640,7 +673,7 @@ func (p *parser) startsExpr() bool {
 	switch p.kind() {
 	case Int, Float, String, Atom, Ident,
 		KwTrue, KwFalse, KwNull, KwNot,
-		Minus, Lt, LParen, LBracket, LBrace, At, Hash:
+		Minus, Lt, LParen, LBracket, LBrace, At, Hash, Question:
 		return true
 	}
 	return false
@@ -817,6 +850,16 @@ func (p *parser) parsePrimary() Expr {
 		}
 		p.advance()
 		return &TagExpr{Name: n.Text, Pos_: t.Pos}
+
+	case Question:
+		p.advance()
+		n := p.cur()
+		if n.Kind != Ident {
+			p.errorf(n.Pos, "expected a parameter name after `?`, found %s", n)
+			return &ParamExpr{Pos_: t.Pos}
+		}
+		p.advance()
+		return &ParamExpr{Name: n.Text, Pos_: t.Pos}
 
 	case Lt:
 		// Prefix position: a vec literal.

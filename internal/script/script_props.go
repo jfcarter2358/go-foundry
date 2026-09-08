@@ -48,7 +48,15 @@ type propAccess struct {
 	// before anything draws with it. Loading is GL work and cannot happen in
 	// the tick, so SetProp queues the name for DrainScriptWork.
 	Tex bool
-	Doc string
+	// Warn explains, after a successful write, why that write changed nothing
+	// visible — an entity reskinned when it has no models loaded, say. Empty
+	// for the ordinary case, and nil for a property that cannot fail quietly.
+	//
+	// A write is not a call, so there is no position to report it against; the
+	// linter catches the literal case at author time, where there is one. An
+	// unpositioned warning is still worth more than silence — see warnFor.
+	Warn func(c *refCache, r flang.RefVal) string
+	Doc  string
 }
 
 // propTables maps each object kind to its properties.
@@ -235,6 +243,25 @@ func entityProps() map[string]propAccess {
 		e.Position = c.lvl.Frames.FrameFor(e).FromWorld(p)
 	}
 
+	// Velocity is integrated straight onto Position, so it is stored in the
+	// same frame — and the same argument applies twice over: a script setting
+	// a velocity is almost always aiming it at something (a direction to a
+	// target, a world axis), and a rider's Y is not the ship's Y once the ship
+	// rolls. A direction is a rotation only, which is why these use the Dir
+	// pair rather than the point one; identity outside a frame either way.
+	frameDirGet := func(c *refCache, e *world.Entity, d mgl32.Vec3) mgl32.Vec3 {
+		if c.lvl == nil {
+			return d
+		}
+		return c.lvl.Frames.FrameFor(e).DirToWorld(d)
+	}
+	frameDirSet := func(c *refCache, e *world.Entity, d mgl32.Vec3) mgl32.Vec3 {
+		if c.lvl == nil {
+			return d
+		}
+		return c.lvl.Frames.FrameFor(e).DirFromWorld(d)
+	}
+
 	return map[string]propAccess{
 		"position": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
@@ -256,7 +283,7 @@ func entityProps() map[string]propAccess {
 				frameSet(c, e, p)
 				return nil
 			},
-			Doc: "world-space position",
+			Doc: "world-space position; writing it places the entity outright, with no collision check",
 		},
 		"rotation": {
 			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.Rotation) }),
@@ -273,9 +300,26 @@ func entityProps() map[string]propAccess {
 			Doc: "per-axis scale; clamped away from zero",
 		},
 		"velocity": {
-			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.Velocity) }),
-			Set: set(vecSet("velocity", func(e *world.Entity, p mgl32.Vec3) { e.Velocity = p })),
-			Doc: "world units per second",
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				e := c.entityFor(r)
+				if e == nil {
+					return nil, false
+				}
+				return vecValue(frameDirGet(c, e, e.Velocity)), true
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				e := c.entityFor(r)
+				if e == nil {
+					return &scriptMissingError{r.String()}
+				}
+				d, ok := toVec3(v)
+				if !ok {
+					return propErr("velocity", "vec", v)
+				}
+				e.Velocity = frameDirSet(c, e, d)
+				return nil
+			},
+			Doc: "world-space velocity, in units per second",
 		},
 		"angular_velocity": {
 			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.AngularVelocity) }),
@@ -291,7 +335,7 @@ func entityProps() map[string]propAccess {
 			// An entity is a list of attachments, so there is no single texture
 			// to report. The first one is what the property means, and writing
 			// reskins them all; a script that wants one attachment of several
-			// calls set_texture(ref, model, name).
+			// writes @entity.model.<name>.prop.texture instead.
 			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(entityTextureName(e)) }),
 			Set: set(func(e *world.Entity, v flang.Value) error {
 				s, ok := toStr(v)
@@ -304,6 +348,16 @@ func entityProps() map[string]propAccess {
 			// No rebuild: an entity's mesh is unchanged by a reskin, and every
 			// draw resolves the name afresh.
 			Tex: true,
+			// Reskinning an entity with no attachments loaded is not an error —
+			// the ref resolved and the write was legal — but it is almost
+			// always a mistake, and silence is what made it hard to find.
+			Warn: func(c *refCache, r flang.RefVal) string {
+				e := c.entityFor(r)
+				if e == nil {
+					return ""
+				}
+				return e.TextureProblem("")
+			},
 			Doc: "texture every attachment draws with, resolved against textures/",
 		},
 		"bounding": {
@@ -577,7 +631,90 @@ func volumeProps() map[string]propAccess {
 			// destination stacked in the same doorway.
 			Doc: "the level the player walks into this volume to load; \"\" for an ordinary volume",
 		},
+		"fog": {
+			Get: get(func(v *world.Volume) flang.Value { return flang.BoolVal(v.Fog != nil && v.Fog.Enabled) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("fog", "bool", v)
+				}
+				return volumeFogSet(vol, b, func(f *world.VolumeFog) { f.Enabled = b })
+			}),
+			Doc: "whether the region is filled with fog",
+		},
+		"fog_color": {
+			Get: get(func(v *world.Volume) flang.Value { return vecValue(volumeFogOf(v).Color) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("fog_color", "vec", v)
+				}
+				return volumeFogSet(vol, true, func(f *world.VolumeFog) { f.Color = p })
+			}),
+			Doc: "the fog's colour as a vec of r, g, b",
+		},
+		"fog_density": {
+			Get: get(func(v *world.Volume) flang.Value { return flang.FloatVal(volumeFogOf(v).Density) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				f32, ok := toFloat32(v)
+				if !ok {
+					return propErr("fog_density", "number", v)
+				}
+				return volumeFogSet(vol, true, func(f *world.VolumeFog) { f.Density = f32 })
+			}),
+			Doc: "fog thickness per world unit travelled inside the region",
+		},
+		"fog_max_opacity": {
+			Get: get(func(v *world.Volume) flang.Value { return flang.FloatVal(volumeFogOf(v).MaxOpacity) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				f32, ok := toFloat32(v)
+				if !ok {
+					return propErr("fog_max_opacity", "number", v)
+				}
+				return volumeFogSet(vol, true, func(f *world.VolumeFog) { f.MaxOpacity = f32 })
+			}),
+			Doc: "ceiling on how much the fog can hide, 0 to 1",
+		},
 	}
+}
+
+// ---------- volume fog property helpers ----------
+//
+// A volume's fog is a pointer, and a volume authored as a plain trigger has
+// none. Reading one of those is a fair question with a dull answer, so it
+// returns the defaults rather than erroring — the same shape the vehicle
+// helpers below use.
+
+// volumeFogOf is the volume's fog, or a default one to read fields off. The
+// returned value is a COPY when the volume has no fog, so nothing written
+// through it reaches the level by accident.
+func volumeFogOf(v *world.Volume) world.VolumeFog {
+	if v.Fog == nil {
+		return world.DefaultVolumeFog()
+	}
+	return *v.Fog
+}
+
+// volumeFogSet applies fn to the volume's fog, creating one at the defaults if
+// there was none.
+//
+// Creating rather than erroring, because the alternative is that a level has to
+// author an invisible fog on every volume a script might ever want to fill —
+// and `@cellar.prop.fog = true` on a plain volume has exactly one sensible
+// reading. create is false only for the write that turns fog OFF: switching off
+// fog that was never there should leave the volume as it found it rather than
+// giving it a switched-off block that the next save would then write out.
+func volumeFogSet(v *world.Volume, create bool, fn func(*world.VolumeFog)) error {
+	if v.Fog == nil {
+		if !create {
+			return nil
+		}
+		f := world.DefaultVolumeFog()
+		v.Fog = &f
+	}
+	fn(v.Fog)
+	v.Fog.Clamp()
+	return nil
 }
 
 // scriptMissingError is what a write to a vanished object produces.

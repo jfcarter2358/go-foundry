@@ -33,7 +33,7 @@ type MapHost struct {
 	Posted []PostedMsg
 
 	// Actions records world verbs the script called, so a test can check that
-	// `move_to` was reached without needing something to move.
+	// `spawn` was reached without needing a world to spawn into.
 	Actions []ActionCall
 
 	// Verbs are the world verbs this host implements. A verb not listed reports
@@ -49,12 +49,14 @@ type MapHost struct {
 	Params map[string]Value
 }
 
-// PostedMsg is one queued message.
+// PostedMsg is one queued message. DelayMS is zero for an immediate send and
+// the timer's delay for one sent through `after`.
 type PostedMsg struct {
-	To   RefVal
-	Atom string
-	Args []Value
-	Pos  Pos
+	To      RefVal
+	Atom    string
+	Args    []Value
+	DelayMS float64
+	Pos     Pos
 }
 
 // ActionCall is one world verb invocation.
@@ -207,6 +209,13 @@ func (h *MapHost) Member(r RefVal, name string) (Value, bool) { return nil, fals
 
 func (h *MapHost) Post(to RefVal, atom string, args []Value, pos Pos) error {
 	h.Posted = append(h.Posted, PostedMsg{To: to, Atom: atom, Args: args, Pos: pos})
+	return nil
+}
+
+// PostAfter records the delay and nothing else: there is no clock here, so a
+// test asserts that the timer was set rather than waiting for it to fire.
+func (h *MapHost) PostAfter(to RefVal, atom string, args []Value, delayMS float64, pos Pos) error {
+	h.Posted = append(h.Posted, PostedMsg{To: to, Atom: atom, Args: args, DelayMS: delayMS, Pos: pos})
 	return nil
 }
 

@@ -35,6 +35,35 @@ func noteTextureSize(name string, w, h int32) {
 	TextureSizes[name] = [2]float32{float32(w), float32(h)}
 }
 
+// ReleaseTexture deletes a texture object and forgets its name and size.
+//
+// Nothing that comes off disk needs this — a texture loaded from textures/ is
+// resident for the life of the process, which is why nothing else in here
+// deletes. A video's frame buffer is the exception: it is created when a screen
+// showing that widget goes up and is dead the moment the widget does, and a
+// process that opened a dozen cutscenes over an evening would otherwise be
+// holding a dozen full-resolution textures nothing can ever draw again.
+//
+// Must be called with a GL context current. Texture objects are shared between
+// this engine's contexts, so any of them will do.
+func ReleaseTexture(name string) {
+	tex, ok := Textures[name]
+	if !ok {
+		return
+	}
+	gl.DeleteTextures(1, &tex)
+	delete(Textures, name)
+	delete(TextureSizes, name)
+	for i := range pendingUITextureUploads {
+		if pendingUITextureUploads[i].Name == name {
+			// A queued upload would otherwise recreate the texture on the next
+			// drain, under a name nothing is looking for any more.
+			pendingUITextureUploads = append(pendingUITextureUploads[:i], pendingUITextureUploads[i+1:]...)
+			break
+		}
+	}
+}
+
 // pendingUITextureUploads is the UI's own queue, drained by the same
 // DrainTextureUploads the world's is. Separate from that queue only because the
 // filter state differs; see QueueUITextureUpload.

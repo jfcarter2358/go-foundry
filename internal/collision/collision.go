@@ -425,26 +425,47 @@ func sectorFloorHeightAt(chunk *world.Chunk, sector *world.Sector, xz mgl32.Vec2
 	return floorH, found
 }
 
-// sectorCeilingHeightAt is sectorFloorHeightAt's mirror: the lowest ceiling over
-// xz, and whether there is one at all. A sector with no ceiling is open sky, not
-// a ceiling at height zero — and neither is a ceiling with a hole cut in it,
-// which is what lets a body climb a stair up through the storey above.
+// sectorCeilingHeightAt is sectorFloorHeightAt's mirror: the lowest hard limit
+// over xz, and whether there is one at all. A sector with no ceiling is open
+// sky, not a ceiling at height zero — and neither is a ceiling with a hole cut
+// in it, which is what lets a body climb a stair up through the storey above.
+//
+// Two things can be that limit. The sector's own ceiling (or an adjacent
+// sector's, whichever hangs lower) is the one this has always answered with.
+// The other is the *underside of a thick floor overhead*: a slab is solid, and
+// before slabs existed a mezzanine over an open hall had nothing underneath it
+// at all, so a body could rise straight through the floor above. See
+// world/slab.go, which owns that rule; a surface with no thickness contributes
+// nothing, so nothing that predates it changes.
+//
+// The slab is asked about relative to this sector's own floor rather than to
+// the body: a slab hanging above that floor is overhead for anyone in the
+// sector whatever they are doing vertically, and asking the same question at
+// every height is what keeps a head-bonk from depending on which frame it is.
 func sectorCeilingHeightAt(chunk *world.Chunk, sector *world.Sector, xz mgl32.Vec2) (float32, bool) {
-	if !sector.Ceiling.Enabled || world.SurfaceIsOpenAt(sector.Ceiling.Openings, xz) {
-		return 0, false
-	}
-	ceilH, _, _ := world.InterpolateSurfaceHeight(chunk, sector, xz, false)
-	for _, adj := range getAdjacentSectors(chunk, sector) {
-		if !adj.Ceiling.Enabled || world.SurfaceIsOpenAt(adj.Ceiling.Openings, xz) ||
-			!geom.PointInPolygon(xz, world.SectorPoints(chunk, adj)) {
-			continue
+	ceilH := float32(0)
+	found := false
+
+	if sector.Ceiling.Enabled && !world.SurfaceIsOpenAt(sector.Ceiling.Openings, xz) {
+		ceilH, _, _ = world.InterpolateSurfaceHeight(chunk, sector, xz, false)
+		found = true
+		for _, adj := range getAdjacentSectors(chunk, sector) {
+			if !adj.Ceiling.Enabled || world.SurfaceIsOpenAt(adj.Ceiling.Openings, xz) ||
+				!geom.PointInPolygon(xz, world.SectorPoints(chunk, adj)) {
+				continue
+			}
+			adjCeilH, _, _ := world.InterpolateSurfaceHeight(chunk, adj, xz, false)
+			if adjCeilH < ceilH {
+				ceilH = adjCeilH
+			}
 		}
-		adjCeilH, _, _ := world.InterpolateSurfaceHeight(chunk, adj, xz, false)
-		if adjCeilH < ceilH {
-			ceilH = adjCeilH
-		}
 	}
-	return ceilH, true
+
+	floorH, _, _ := world.InterpolateSurfaceHeight(chunk, sector, xz, true)
+	if under, ok := world.SlabCeilingAt(chunk, xz, floorH); ok && (!found || under < ceilH) {
+		ceilH, found = under, true
+	}
+	return ceilH, found
 }
 
 // ResolveFloorCollision clamps pos.Y so the entity rests on the sector floor
@@ -519,7 +540,8 @@ func SegmentIntersect2D(a1, a2, b1, b2 mgl32.Vec2) (bool, float32) {
 // The rule is the mirror of ResolveCeilingEntry's. That one refuses a move onto
 // the OUTSIDE of a ceiling; this one refuses a move into the INSIDE of a floor.
 // A body may enter a sector whose floor is above the one it is leaving only
-// while that floor is within its own reach — no higher than its head. A shorter
+// while that floor is within its own reach — no higher than the level's step
+// height above its footing, which defaults to the body's own height. A shorter
 // riser is a step, and stepping up onto it is the behaviour this engine has
 // always had; a taller one is a wall.
 //
@@ -533,14 +555,17 @@ func SegmentIntersect2D(a1, a2, b1, b2 mgl32.Vec2) (bool, float32) {
 //     of its arc. Without that this resolver would seal off every ledge higher
 //     than a step, which is exactly the geometry jumping exists for.
 //
-// The body's own height is the threshold because it is the only figure the
-// engine currently has; NEXT.md's "configurable step height that player can
-// walk over" is the field that belongs here when it exists, and nothing else
-// about this resolver changes when it arrives.
+// stepHeight is how far that reach extends — the level's `player:` block sets
+// it (world.PlayerSettings), and MovePlayer resolves it before calling here, so
+// what arrives is already a concrete number of world units rather than a
+// "follow the default" sentinel. Non-positive is treated as no allowance at all
+// rather than being second-guessed: the fallback to the body's own height is
+// PlayerSettings.EffectiveStepHeight's decision to make, once, and re-making it
+// here would mean two places could disagree about it.
 //
 // oldPos is where the body was before this step, in the same chunk-local space
 // as newPos — the contract ResolveSlopeCollision and ResolveCeilingEntry take.
-func ResolveStepEntry(entity *world.Entity, chunk *world.Chunk, sector *world.Sector, oldPos, newPos mgl32.Vec3) mgl32.Vec3 {
+func ResolveStepEntry(entity *world.Entity, chunk *world.Chunk, sector *world.Sector, oldPos, newPos mgl32.Vec3, stepHeight float32) mgl32.Vec3 {
 	if chunk == nil || sector == nil || entity == nil {
 		return newPos
 	}
@@ -549,26 +574,27 @@ func ResolveStepEntry(entity *world.Entity, chunk *world.Chunk, sector *world.Se
 	if newPos.X() == oldPos.X() && newPos.Z() == oldPos.Z() {
 		return newPos
 	}
-	if stepAdmits(entity, chunk, sector, oldPos, newPos) {
+	if stepAdmits(entity, chunk, sector, oldPos, newPos, stepHeight) {
 		return newPos
 	}
 	// Blocked. Each axis on its own before giving up, so a body walking
 	// diagonally into the riser slides along it rather than sticking — the same
 	// courtesy the wall and ceiling resolvers extend.
 	slideX := mgl32.Vec3{newPos.X(), newPos.Y(), oldPos.Z()}
-	if stepAdmitsAt(entity, chunk, oldPos, slideX) {
+	if stepAdmitsAt(entity, chunk, oldPos, slideX, stepHeight) {
 		return slideX
 	}
 	slideZ := mgl32.Vec3{oldPos.X(), newPos.Y(), newPos.Z()}
-	if stepAdmitsAt(entity, chunk, oldPos, slideZ) {
+	if stepAdmitsAt(entity, chunk, oldPos, slideZ, stepHeight) {
 		return slideZ
 	}
 	return mgl32.Vec3{oldPos.X(), newPos.Y(), oldPos.Z()}
 }
 
 // stepAdmits reports whether a body travelling from oldPos may enter dest,
-// given how far above its own footing that sector's floor is.
-func stepAdmits(entity *world.Entity, chunk *world.Chunk, dest *world.Sector, oldPos, newPos mgl32.Vec3) bool {
+// given how far above its own footing that sector's floor is and how far up it
+// is allowed to reach.
+func stepAdmits(entity *world.Entity, chunk *world.Chunk, dest *world.Sector, oldPos, newPos mgl32.Vec3, stepHeight float32) bool {
 	newXZ := mgl32.Vec2{newPos.X(), newPos.Z()}
 	destFloor, ok := sectorFloorHeightAt(chunk, dest, newXZ)
 	if !ok {
@@ -591,22 +617,22 @@ func stepAdmits(entity *world.Entity, chunk *world.Chunk, dest *world.Sector, ol
 	if feet := newPos.Y() - entity.BoundHalfY; feet > reach {
 		reach = feet
 	}
-	return destFloor <= reach+entity.BoundHalfY*2+stepEntryEpsilon
+	return destFloor <= reach+stepHeight+stepEntryEpsilon
 }
 
 // stepAdmitsAt is stepAdmits for a candidate whose destination sector is not
 // already known. A candidate in no sector is admitted: there is no floor there
 // to be shut out by.
-func stepAdmitsAt(entity *world.Entity, chunk *world.Chunk, oldPos, pos mgl32.Vec3) bool {
+func stepAdmitsAt(entity *world.Entity, chunk *world.Chunk, oldPos, pos mgl32.Vec3, stepHeight float32) bool {
 	s := world.FindSectorAt(chunk, mgl32.Vec2{pos.X(), pos.Z()}, pos.Y())
 	if s == nil {
 		return true
 	}
-	return stepAdmits(entity, chunk, s, oldPos, pos)
+	return stepAdmits(entity, chunk, s, oldPos, pos, stepHeight)
 }
 
 // stepEntryEpsilon decides which way exact equality falls, and "admit" is the
-// safe answer here: a riser of exactly the body's height is the boundary case
+// safe answer here: a riser of exactly the step height is the boundary case
 // the report describes, and refusing it would also refuse a body standing on a
 // floor level with the one it is walking onto once rounding is involved.
 const stepEntryEpsilon = float32(1e-3)

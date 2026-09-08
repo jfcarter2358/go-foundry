@@ -26,6 +26,27 @@ import (
 // scripts at all.
 var OnScreenShown func(*Screen)
 
+// VideoDriver advances the clip behind one video node and reports where it got
+// to. internal/uidraw installs it: opening the file, decoding a frame and
+// getting that frame onto a texture are all things this package must not know
+// how to do, and the alternative to a function variable is an import that runs
+// the wrong way.
+//
+// key names the player. It is built here rather than by the driver because only
+// the stack knows which stack a node is on — the game's and the UI editor's
+// preview can both have a screen called "cutscene" up at once, and one player
+// serving both would have them fighting over one playhead.
+//
+// Nil is correct for a headless test and for the editor before its renderer has
+// initialised. A video node with no driver is a widget showing nothing, which is
+// exactly what it looks like before its first frame decodes anyway.
+var VideoDriver func(key string, n *Node, dt float32)
+
+// nextStackScope numbers stacks. A counter rather than a name because a stack
+// is not addressable by one: there are exactly two in the process and neither
+// is anything an author writes down.
+var nextStackScope uint64
+
 // Stack is the screens currently up, bottom to top.
 type Stack struct {
 	screens []*Screen
@@ -42,6 +63,11 @@ type Stack struct {
 	Load func(name string) (*Screen, error)
 
 	fbW, fbH float32
+
+	// scopeID distinguishes this stack's video players from another stack's.
+	// Assigned on first use rather than at construction, because Game is a
+	// zero-value package variable and there is nowhere to construct it.
+	scopeID uint64
 }
 
 // Game is the running game's stack. The UI editor holds its own.
@@ -208,11 +234,42 @@ func (st *Stack) Tick(dt, fbW, fbH float32) {
 		s.Root.Walk(func(_, n *Node) bool {
 			bindText(st.Resolve, n)
 			bindValue(st.Resolve, n)
+			if n.Kind == KindVideo {
+				st.tickVideo(s, n, dt)
+			}
 			return true
 		})
 		s.Solve(fbW, fbH)
 	}
 	st.dropStaleTargets()
+}
+
+// tickVideo drives one video node's player and posts `:finished:` when a
+// non-looping clip runs out.
+//
+// A hidden video keeps playing. That is deliberate: a HUD element faded out for
+// a second and a background loop behind a menu both expect to come back where
+// they would have been, and "stop the world while you cannot see it" is the
+// behaviour nobody can predict. A video that should stop when it is hidden is a
+// script writing `playing: false`, which is one line and says so.
+func (st *Stack) tickVideo(s *Screen, n *Node, dt float32) {
+	if VideoDriver == nil {
+		return
+	}
+	VideoDriver(st.videoKey(s, n), n, dt)
+	if n.VideoJustEnded() {
+		hooks.RecordUIEvent(hooks.UIEvent{Atom: "finished", Screen: s.ID, Widget: n.ID})
+	}
+}
+
+// videoKey names one widget's player, uniquely across every stack in the
+// process.
+func (st *Stack) videoKey(s *Screen, n *Node) string {
+	if st.scopeID == 0 {
+		nextStackScope++
+		st.scopeID = nextStackScope
+	}
+	return itoa(int(st.scopeID)) + "/" + s.ID + "/" + n.ID
 }
 
 // dropStaleTargets forgets a hover, press or focus whose widget has gone —

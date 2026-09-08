@@ -105,3 +105,21 @@ func EdgeIDChunk(t *testing.T) *world.Chunk {
 	ch.Sectors = []world.Sector{s}
 	return ch
 }
+
+// LoadGeometry builds the CPU mesh for every sector in ch — the walls, floors
+// and ceilings a triangle test needs.
+//
+// Sector.Load is what a level load calls, and Geometry.Load's upload half is
+// gated on gfx.GeometryUploadsEnabled, so this leaves real vertices behind with
+// no GL context. Anything testing against what is *drawn* rather than against
+// the sector's numbers has to come through here first.
+func LoadGeometry(t *testing.T, ch *world.Chunk) {
+	t.Helper()
+	testenv.WithoutGeometryUploads(t)
+	for si := range ch.Sectors {
+		s := &ch.Sectors[si]
+		if err := s.Load(world.SectorPoints(ch, s)); err != nil {
+			t.Fatalf("loading sector %q: %v", s.ID, err)
+		}
+	}
+}

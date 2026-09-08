@@ -317,3 +317,177 @@ func TestNewTexEditorDocRejectsOversizedCanvas(t *testing.T) {
 		t.Error("NewTexEditorDoc accepted width > texdoc.TexMaxDim")
 	}
 }
+
+// ---------- bump channel ----------
+
+// TestUndoGoesBackToTheChannelItWasPaintedOn is the whole reason a paint undo
+// entry records a channel: the two stacks share one undo stack, and applying a
+// height stroke's bytes to a colour layer would repaint the albedo with
+// heights.
+func TestUndoGoesBackToTheChannelItWasPaintedOn(t *testing.T) {
+	ed := newTestEditor(t, 4, 4)
+	ed.BeginStroke()
+	ed.StampBrush(1, 1, 5) // a colour texel
+	ed.EndStroke()
+
+	ed.Doc.SetChannel(texdoc.ChanBump)
+	ed.BeginStroke()
+	ed.StampBrush(2, 2, 180) // a height
+	ed.EndStroke()
+
+	// Switch away before undoing — the case that used to write to whatever
+	// happened to be checked out.
+	ed.Doc.SetChannel(texdoc.ChanColor)
+	ed.Undo()
+
+	if ed.Doc.Channel() != texdoc.ChanBump {
+		t.Fatalf("undo left channel %v checked out, want the bump channel it was painted on", ed.Doc.Channel())
+	}
+	if got := ed.Doc.Layers[0].Idx[2*4+2]; got != 0 {
+		t.Errorf("height texel = %d after undo, want 0", got)
+	}
+	ed.Doc.SetChannel(texdoc.ChanColor)
+	if got := ed.Doc.Layers[0].Idx[1*4+1]; got != 5 {
+		t.Errorf("colour texel = %d, want 5 — the undo reached the wrong channel", got)
+	}
+}
+
+// TestUndoGoesBackToTheFrameItWasPaintedOn is the same property for the
+// animation stack, which the channel bookkeeping made it natural to record.
+func TestUndoGoesBackToTheFrameItWasPaintedOn(t *testing.T) {
+	ed := newTestEditor(t, 4, 4)
+	if err := ed.AddFrame(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ed.SetActiveFrame(1); err != nil {
+		t.Fatal(err)
+	}
+	ed.BeginStroke()
+	ed.StampBrush(0, 0, 3)
+	ed.EndStroke()
+
+	if err := ed.SetActiveFrame(0); err != nil {
+		t.Fatal(err)
+	}
+	ed.Undo()
+
+	if got := ed.Doc.ActiveFrameIndex(); got != 1 {
+		t.Fatalf("undo left frame %d checked out, want frame 1", got)
+	}
+	if got := ed.Doc.Layers[0].Idx[0]; got != 0 {
+		t.Errorf("frame 1 texel = %d after undo, want 0", got)
+	}
+}
+
+// TestRedoAfterAChannelUndo round-trips the pair, since redo shares the same
+// checkout path.
+func TestRedoAfterAChannelUndo(t *testing.T) {
+	ed := newTestEditor(t, 4, 4)
+	ed.Doc.SetChannel(texdoc.ChanBump)
+	ed.BeginStroke()
+	ed.StampBrush(1, 1, 99)
+	ed.EndStroke()
+
+	ed.Doc.SetChannel(texdoc.ChanColor)
+	ed.Undo()
+	ed.Doc.SetChannel(texdoc.ChanColor)
+	ed.Redo()
+
+	if ed.Doc.Channel() != texdoc.ChanBump {
+		t.Fatalf("redo left channel %v checked out", ed.Doc.Channel())
+	}
+	if got := ed.Doc.Layers[0].Idx[1*4+1]; got != 99 {
+		t.Errorf("height texel = %d after redo, want 99", got)
+	}
+}
+
+// TestPaintIndexIsPerChannel — the brush must not lose its colour because the
+// artist went to touch up the height field.
+func TestPaintIndexIsPerChannel(t *testing.T) {
+	ed := newTestEditor(t, 2, 2)
+	ed.SetPaintIndex(12)
+	ed.Doc.SetChannel(texdoc.ChanBump)
+	if got := ed.PaintIndex(); got == 12 {
+		t.Error("the bump channel inherited the colour channel's palette index")
+	}
+	ed.SetPaintIndex(200)
+	ed.Doc.SetChannel(texdoc.ChanColor)
+	if got := ed.PaintIndex(); got != 12 {
+		t.Errorf("colour paint index = %d after painting the bump channel, want 12", got)
+	}
+}
+
+// TestDeletingTheBumpMapIsUndoable — it throws away every frame's height
+// layers at once, which is the most destructive single action in the editor.
+func TestDeletingTheBumpMapIsUndoable(t *testing.T) {
+	ed := newTestEditor(t, 4, 4)
+	ed.SetChannel(texdoc.ChanBump)
+	ed.BeginStroke()
+	ed.StampBrush(2, 2, 140)
+	ed.EndStroke()
+
+	ed.DisableBump()
+	if ed.Doc.HasBump() {
+		t.Fatal("DisableBump did nothing")
+	}
+
+	ed.Undo()
+	if !ed.Doc.HasBump() {
+		t.Fatal("undo did not bring the bump channel back")
+	}
+	ed.Doc.SetChannel(texdoc.ChanBump)
+	if got := ed.Doc.Layers[0].Idx[2*4+2]; got != 140 {
+		t.Errorf("height texel = %d after undoing the delete, want 140", got)
+	}
+}
+
+// TestCreatingTheBumpChannelIsUndoable: switching channels is a view change,
+// but the switch that *creates* the channel changes the document, so it takes
+// a snapshot like every other structural op.
+func TestCreatingTheBumpChannelIsUndoable(t *testing.T) {
+	ed := newTestEditor(t, 2, 2)
+	if ed.CanUndo() {
+		t.Fatal("precondition: fresh editor has undo history")
+	}
+	ed.SetChannel(texdoc.ChanBump)
+	if !ed.CanUndo() {
+		t.Fatal("creating the bump channel recorded no undo step")
+	}
+	ed.SetChannel(texdoc.ChanColor)
+	if ed.CanUndo() {
+		// Switching back is a view change and must not have pushed anything.
+		if len(ed.undoStack) != 1 {
+			t.Errorf("undo stack has %d entries, want 1 — switching channels is not an edit", len(ed.undoStack))
+		}
+	}
+	ed.Undo()
+	if ed.Doc.HasBump() {
+		t.Error("undo did not remove the bump channel it created")
+	}
+}
+
+// TestBumpDirtyGatesTheNormalMapDerivation: painting colour must not make the
+// UI re-derive a normal map, which is a Sobel over the whole canvas.
+func TestBumpDirtyGatesTheNormalMapDerivation(t *testing.T) {
+	ed := newTestEditor(t, 4, 4)
+	ed.BumpDirty = false
+
+	ed.BeginStroke()
+	ed.StampBrush(1, 1, 3) // colour
+	ed.EndStroke()
+	if ed.BumpDirty {
+		t.Error("a colour stroke marked the height field dirty")
+	}
+	if !ed.PreviewDirty {
+		t.Error("a colour stroke did not mark the preview dirty")
+	}
+
+	ed.SetChannel(texdoc.ChanBump)
+	ed.BumpDirty = false
+	ed.BeginStroke()
+	ed.StampBrush(1, 1, 90)
+	ed.EndStroke()
+	if !ed.BumpDirty {
+		t.Error("a height stroke did not mark the height field dirty")
+	}
+}

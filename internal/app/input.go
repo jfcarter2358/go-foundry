@@ -83,6 +83,14 @@ func HandleEvent(event sdl.Event) {
 			break
 		}
 		switch t.Event {
+		case sdl.WINDOWEVENT_CLOSE:
+			// The main window is the game and the 3D editor both, so its close
+			// button means "quit" — and quitting takes the sub-editor windows
+			// with it (devShutdown). SDL only synthesises a QuitEvent when the
+			// *last* window goes, so with a 2D map or a script editor open this
+			// is the only notice we get; without this case the close button did
+			// nothing at all whenever a sub-editor was on screen.
+			platform.Running = false
 		case sdl.WINDOWEVENT_FOCUS_LOST:
 			// Release capture but remember whether the current mode wanted it.
 			gfx.ApplyMouseLock(false)

@@ -27,7 +27,17 @@ import (
 func TestModelShadersCompile(t *testing.T) {
 	gltest.Context(t)
 
-	prog, err := gfx.CompileProgramFromFiles(
+	// The splice below reads skin_common.glsl relative to the install root, so
+	// the root has to be the repo's resources/ for the duration.
+	prevExe := fileutil.ExecutablePath
+	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
+
+	// With skinning spliced in, which is how both editors compile it: the
+	// vertex stage calls skinPosition/skinNormal, so the raw file does not
+	// compile on its own and never did once the entity editor's rigged preview
+	// needed the GPU path.
+	prog, err := gfx.CompileProgramWithSkinning(
 		repoShader(t, "model_vert.glsl"),
 		repoShader(t, "model_frag.glsl"),
 	)
@@ -46,9 +56,20 @@ func TestModelShadersCompile(t *testing.T) {
 		}
 	}
 
+	// The skinning uniforms have to be there too, or ApplySkinUniforms writes
+	// to -1 and an animated attachment previews in its rest pose.
+	for _, name := range []string{"skinned", "bones"} {
+		if loc := gl.GetUniformLocation(prog, gl.Str(name+"\x00")); loc < 0 {
+			t.Errorf("skinning uniform %q not found in the linked program", name)
+		}
+	}
+
 	// Attribute locations must match vertex.glsl's, since Geometry.Load builds
-	// its VAO against the world program's indices.
-	for name, want := range map[string]int32{"vert": 0, "vertTexCoord": 1, "vertNormal": 2} {
+	// its VAO against the world program's indices — the bone attributes
+	// included, since an entity attachment's VAO carries those two as well.
+	for name, want := range map[string]int32{
+		"vert": 0, "vertTexCoord": 1, "vertNormal": 2, "boneIdx": 3, "boneWt": 4,
+	} {
 		if got := gl.GetAttribLocation(prog, gl.Str(name+"\x00")); got != want {
 			t.Errorf("attribute %q at location %d, want %d (must match vertex.glsl)", name, got, want)
 		}

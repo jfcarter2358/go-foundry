@@ -116,11 +116,13 @@ func (ch *Chunk) ReleaseGeometry() {
 		}
 		s.Floor.SubmeshGeometries = nil
 		s.Floor.SkirtGeometry.Unload()
+		s.Floor.Slab.Unload()
 		s.Ceiling.Geometry.Unload()
 		for ei := range s.Ceiling.SubmeshGeometries {
 			s.Ceiling.SubmeshGeometries[ei].Unload()
 		}
 		s.Ceiling.SubmeshGeometries = nil
+		s.Ceiling.Slab.Unload()
 		for pi := range s.Portals {
 			s.Portals[pi].FloorGap.Unload()
 			s.Portals[pi].CeilGap.Unload()
@@ -165,7 +167,7 @@ func (ch *Chunk) ReloadGeometry() {
 }
 
 // ReleaseLevelGeometry frees everything the level's chunks own on the GPU, plus
-// the spawn marker.
+// the spawn marker and the placed scenery.
 //
 // For replacing a running level with another — a level trigger firing, the
 // editor opening a file. Overwriting the Level struct drops the handles rather
@@ -175,7 +177,9 @@ func (ch *Chunk) ReloadGeometry() {
 //
 // Entities and volumes are released by their own passes beside this one; they
 // are held per-object rather than per-chunk, and the packages that own them sit
-// above this one.
+// above this one. Scenery is held per-object too, but this package owns it, so
+// it is freed here rather than by a fourth call every level swap has to
+// remember to make.
 func ReleaseLevelGeometry(lvl *Level) {
 	if lvl == nil {
 		return
@@ -186,4 +190,8 @@ func ReleaseLevelGeometry(lvl *Level) {
 	if lvl.Spawn != nil {
 		lvl.Spawn.Delete()
 	}
+	// Scenery is uploaded per placement rather than per surface, so it has to
+	// be released explicitly — overwriting the level struct would drop the
+	// handles rather than free them.
+	DeleteScenery(lvl)
 }

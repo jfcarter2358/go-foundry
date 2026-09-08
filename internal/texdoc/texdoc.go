@@ -44,11 +44,18 @@ type TexLayer struct {
 }
 
 // TexFrame is one entry in a TexDoc's animation stack: its own independent
-// layer stack (collapsed to a single image by Flatten/FlattenFrame when the
-// texture is used), plus which of its layers is active for editing.
+// layer stacks (collapsed to a single image by Flatten/FlattenFrame when the
+// texture is used), plus which of their layers is active for editing.
+//
+// There are two stacks, not one: Layers is the colour channel (palette
+// indices) and Bump the height channel the normal map is derived from (see
+// bump.go). Bump is nil on a document with no bump channel, which is every
+// document until somebody paints one.
 type TexFrame struct {
-	Layers []TexLayer // index 0 = bottom
-	Active int
+	Layers     []TexLayer // colour, index 0 = bottom
+	Active     int
+	Bump       []TexLayer // heights, index 0 = bottom; nil when there is no bump channel
+	BumpActive int
 }
 
 // TexDoc is a layered texture source document, animated over one or more
@@ -71,12 +78,18 @@ type TexDoc struct {
 	Name        string
 	W, H        int
 	Pal         TexPalette // copy of the palette this document was authored against
-	Layers      []TexLayer // the checked-out frame's layers; see frames
+	Layers      []TexLayer // the checked-out frame+channel's layers; see frames
 	Active      int        // active layer index within Layers
 	frames      []TexFrame
 	activeFrame int
-	Path        string // .ftex path; "" until first save
-	dirty       bool
+	channel     TexChannel // which of the checked-out frame's two stacks Layers is
+	// Bump channel state. bumpEnabled is what makes the channel exist at all
+	// — see EnableBump/DisableBump in bump.go — and bumpStrength is baked into
+	// the normal map the save path derives.
+	bumpEnabled  bool
+	bumpStrength float32
+	Path         string // .ftex path; "" until first save
+	dirty        bool
 }
 
 // ValidTexSize is the single place canvas dimensions are checked, so a
@@ -104,14 +117,15 @@ func NewTexDoc(name string, w, h int, pal TexPalette) (*TexDoc, error) {
 	}
 	layers := []TexLayer{emptyLayer(w, h)}
 	return &TexDoc{
-		Name:        name,
-		W:           w,
-		H:           h,
-		Pal:         pal,
-		Layers:      layers,
-		Active:      0,
-		frames:      []TexFrame{{Layers: layers, Active: 0}},
-		activeFrame: 0,
+		Name:         name,
+		W:            w,
+		H:            h,
+		Pal:          pal,
+		Layers:       layers,
+		Active:       0,
+		frames:       []TexFrame{{Layers: layers, Active: 0}},
+		activeFrame:  0,
+		bumpStrength: DefaultBumpStrength,
 	}, nil
 }
 
@@ -119,29 +133,76 @@ func NewTexDoc(name string, w, h int, pal TexPalette) (*TexDoc, error) {
 // stack — the .ftex reader's entry point (texture_file.go), which parses
 // every frame's layers itself and has no other way to populate the
 // unexported frames/activeFrame bookkeeping. frames must be non-empty; frame
-// 0 is checked out.
-func NewTexDocFromFrames(w, h int, pal TexPalette, frames []TexFrame) (*TexDoc, error) {
+// 0's colour channel is checked out.
+//
+// bumpStrength is only meaningful when the frames carry bump layers; a file
+// written before the bump channel existed passes 0 and gets the default,
+// which nothing then reads because there is no height field to scale.
+func NewTexDocFromFrames(w, h int, pal TexPalette, frames []TexFrame, bumpStrength float32) (*TexDoc, error) {
 	if err := ValidTexSize(w, h); err != nil {
 		return nil, err
 	}
 	if len(frames) == 0 {
 		return nil, fmt.Errorf("a texture document needs at least one frame")
 	}
-	return &TexDoc{
-		W:      w,
-		H:      h,
-		Pal:    pal,
-		Layers: frames[0].Layers,
-		Active: frames[0].Active,
-		frames: frames,
-	}, nil
+	bump := false
+	for i := range frames {
+		if len(frames[i].Bump) > 0 {
+			bump = true
+			break
+		}
+	}
+	d := &TexDoc{
+		W:            w,
+		H:            h,
+		Pal:          pal,
+		frames:       frames,
+		bumpEnabled:  bump,
+		bumpStrength: clampBumpStrength(bumpStrength),
+	}
+	// A file that carries a bump channel in some frames but not others (only
+	// reachable by hand-editing one) gets the missing ones filled in, so
+	// every frame's two stacks are always both present or both absent.
+	if bump {
+		for i := range d.frames {
+			if len(d.frames[i].Bump) == 0 {
+				d.frames[i].Bump = []TexLayer{emptyBumpLayer(w, h)}
+				d.frames[i].BumpActive = 0
+			}
+		}
+	}
+	d.checkout(0, ChanColor)
+	return d, nil
+}
+
+// checkout points Layers/Active at frame i's channel c, creating that
+// frame's height stack if the document has a bump channel and this frame
+// somehow doesn't. Callers must sync() whatever was checked out before.
+func (d *TexDoc) checkout(i int, c TexChannel) {
+	d.activeFrame = i
+	d.channel = c
+	f := &d.frames[i]
+	if c == ChanBump {
+		if len(f.Bump) == 0 {
+			f.Bump = []TexLayer{emptyBumpLayer(d.W, d.H)}
+			f.BumpActive = 0
+		}
+		d.Layers, d.Active = f.Bump, f.BumpActive
+		return
+	}
+	d.Layers, d.Active = f.Layers, f.Active
 }
 
 // sync writes the checked-out frame (Layers/Active) back into its slot in
 // frames, so every frame in frames is current. Called by anything that needs
 // to see every frame rather than just the one being edited.
 func (d *TexDoc) sync() {
-	d.frames[d.activeFrame] = TexFrame{Layers: d.Layers, Active: d.Active}
+	f := &d.frames[d.activeFrame]
+	if d.channel == ChanBump {
+		f.Bump, f.BumpActive = d.Layers, d.Active
+		return
+	}
+	f.Layers, f.Active = d.Layers, d.Active
 }
 
 // Frames returns every frame in the animation stack, the checked-out one
@@ -180,9 +241,7 @@ func (d *TexDoc) SetActiveFrame(i int) error {
 		return nil
 	}
 	d.sync()
-	d.activeFrame = i
-	d.Layers = d.frames[i].Layers
-	d.Active = d.frames[i].Active
+	d.checkout(i, d.channel)
 	return nil
 }
 
@@ -193,19 +252,39 @@ func (d *TexDoc) AddFrame() error {
 		return fmt.Errorf("cannot add frame: already at the %d-frame cap", TexMaxFrames)
 	}
 	d.sync()
-	d.frames = append(d.frames, TexFrame{Layers: []TexLayer{emptyLayer(d.W, d.H)}, Active: 0})
+	f := TexFrame{Layers: []TexLayer{emptyLayer(d.W, d.H)}, Active: 0}
+	if d.bumpEnabled {
+		f.Bump = []TexLayer{emptyBumpLayer(d.W, d.H)}
+	}
+	d.frames = append(d.frames, f)
 	d.dirty = true
 	return nil
 }
 
-// cloneFrame deep-copies f, including every layer's index buffer.
+// cloneFrame deep-copies f — both channels, including every layer's index
+// buffer.
 func cloneFrame(f TexFrame) TexFrame {
-	cp := TexFrame{Layers: make([]TexLayer, len(f.Layers)), Active: f.Active}
-	for i, l := range f.Layers {
-		cp.Layers[i] = l
-		cp.Layers[i].Idx = append([]uint8(nil), l.Idx...)
+	return TexFrame{
+		Layers:     cloneLayers(f.Layers),
+		Active:     f.Active,
+		Bump:       cloneLayers(f.Bump),
+		BumpActive: f.BumpActive,
 	}
-	return cp
+}
+
+// cloneLayers deep-copies one layer stack, preserving nil (which is how a
+// document with no bump channel is told apart from one whose height stack
+// happens to be empty).
+func cloneLayers(src []TexLayer) []TexLayer {
+	if src == nil {
+		return nil
+	}
+	out := make([]TexLayer, len(src))
+	for i, l := range src {
+		out[i] = l
+		out[i].Idx = append([]uint8(nil), l.Idx...)
+	}
+	return out
 }
 
 // DuplicateFrame copies frame i and inserts the copy directly after it.
@@ -243,11 +322,11 @@ func (d *TexDoc) DeleteFrame(i int) error {
 	d.frames = append(d.frames[:i], d.frames[i+1:]...)
 	switch {
 	case deletingActive:
-		if d.activeFrame >= len(d.frames) {
-			d.activeFrame = len(d.frames) - 1
+		next := d.activeFrame
+		if next >= len(d.frames) {
+			next = len(d.frames) - 1
 		}
-		d.Layers = d.frames[d.activeFrame].Layers
-		d.Active = d.frames[d.activeFrame].Active
+		d.checkout(next, d.channel)
 	case d.activeFrame > i:
 		d.activeFrame--
 	}
@@ -280,11 +359,16 @@ func (d *TexDoc) MoveFrame(i int, up bool) error {
 	return nil
 }
 
-// EachLayer calls fn once per layer in every frame of the animation stack,
-// the checked-out frame included, with a pointer into the document's own
-// storage — a palette remap (the one existing whole-document layer walk) is
-// the reason this exists: it has to reach layers no matter which frame is
+// EachLayer calls fn once per COLOUR layer in every frame of the animation
+// stack, the checked-out frame included, with a pointer into the document's
+// own storage — a palette remap (the one existing whole-document layer walk)
+// is the reason this exists: it has to reach layers no matter which frame is
 // active, and reach the checked-out one for real, not a stale copy.
+//
+// Bump layers are deliberately not walked. Their bytes are heights, not
+// palette indices (see bump.go), so putting them through a palette remap
+// would silently rewrite the height field into whatever the nearest colour
+// happened to map to.
 func (d *TexDoc) EachLayer(fn func(l *TexLayer)) {
 	d.sync()
 	for fi := range d.frames {
@@ -292,9 +376,11 @@ func (d *TexDoc) EachLayer(fn func(l *TexLayer)) {
 			fn(&d.frames[fi].Layers[li])
 		}
 	}
-	// The checked-out frame's Layers slice aliases the same backing array as
-	// d.frames[d.activeFrame].Layers (sync() just copied the slice header),
-	// so mutations fn made above are already visible through d.Layers too.
+	// When the colour channel is the checked-out one, its Layers slice aliases
+	// the same backing array as d.frames[d.activeFrame].Layers (sync() just
+	// copied the slice header), so mutations fn made above are already visible
+	// through d.Layers too. When the bump channel is checked out, d.Layers
+	// points at the height stack, which this walk does not touch either way.
 }
 
 // CloneTexDoc deep-copies d, including every frame and each of their layers'
@@ -307,8 +393,7 @@ func CloneTexDoc(d *TexDoc) *TexDoc {
 	for i, f := range d.frames {
 		cp.frames[i] = cloneFrame(f)
 	}
-	cp.Layers = cp.frames[cp.activeFrame].Layers
-	cp.Active = cp.frames[cp.activeFrame].Active
+	cp.checkout(cp.activeFrame, cp.channel)
 	return &cp
 }
 
@@ -522,10 +607,14 @@ func (d *TexDoc) flattenLayers(layers []TexLayer) *image.Paletted {
 	return out
 }
 
-// Flatten composites the checked-out frame — see FlattenFrame for any other
-// frame in the stack.
+// Flatten composites the checked-out frame's COLOUR channel — see
+// FlattenFrame for any other frame in the stack. It goes through
+// FlattenFrame rather than reading d.Layers directly because d.Layers is the
+// checked-out *channel*: while the bump channel is being painted it holds
+// heights, and flattening those as palette indices would upload the height
+// field to the world as if it were the albedo.
 func (d *TexDoc) Flatten() *image.Paletted {
-	return d.flattenLayers(d.Layers)
+	return d.FlattenFrame(d.activeFrame)
 }
 
 // FlattenFrame composites frame i of the animation stack, whether or not it

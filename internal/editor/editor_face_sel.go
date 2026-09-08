@@ -26,8 +26,34 @@ import "foundry/internal/world"
 type faceSel struct {
 	chunkIdx  int
 	sectorIdx int
-	kind      string // "floor", "ceiling", "wall", "portal"
-	idx       int    // index into Sector.Walls or .Portals; -1 for floor/ceiling
+	kind      string // "floor", "ceiling", "floor_slab", "ceiling_slab", "wall", "portal"
+	idx       int    // index into Sector.Walls or .Portals; -1 for the horizontal faces
+}
+
+// faceSelSlab resolves a slab face — the underside of a floor, the top of a
+// ceiling — to the Slab it names, or nil for every other kind. One lookup
+// rather than a two-arm switch at each of the half-dozen places that needs it.
+func faceSelSlab(s *world.Sector, kind string) *world.Slab {
+	switch kind {
+	case "floor_slab":
+		return &s.Floor.Slab
+	case "ceiling_slab":
+		return &s.Ceiling.Slab
+	}
+	return nil
+}
+
+// slabFaceKind is the slab face belonging to a surface kind, and "" for a kind
+// that has no slab. Its inverse, in effect: the panel and the menu both start
+// from the surface and want the face hanging off it.
+func slabFaceKind(surfaceKind string) string {
+	switch surfaceKind {
+	case "floor":
+		return "floor_slab"
+	case "ceiling":
+		return "ceiling_slab"
+	}
+	return ""
 }
 
 // surfaceFaceSel names a floor or ceiling, which a sector has at most one of.
@@ -67,6 +93,12 @@ func faceSelValid(f faceSel) bool {
 	switch f.kind {
 	case "floor", "ceiling":
 		return true
+	case "floor_slab", "ceiling_slab":
+		// A slab that has been thinned back to nothing is not a face any more:
+		// there is no geometry to outline and nothing in the viewport that
+		// could have been clicked to reach it.
+		sl := faceSelSlab(s, f.kind)
+		return sl != nil && sl.HasThickness()
 	case "wall":
 		return f.idx >= 0 && f.idx < len(s.Walls)
 	case "portal":
@@ -104,7 +136,6 @@ func setFaceSelection(sels []faceSel) {
 	// ctrl+click paths copy before calling — so nothing is lost to it.
 	editorClearObjectSelections()
 	Editor.SelectedFaces = sels
-	Editor.GizmoKind = gizmoKindNone
 	syncActiveFace()
 }
 
@@ -158,13 +189,26 @@ func pruneFaceSelection() {
 // the outline and the surface actions were all written against. Everything that
 // touches Editor.SelectedFaces ends here, which is what keeps the mirror from
 // drifting out of step with the list.
+//
+// The gizmo is part of that mirror. A selected face is something the move,
+// rotate and scale tools can act on — through the corner handles it is built
+// from, see editor_face_gizmo.go — so the kind is set here rather than at each
+// of the several places a face can be picked from.
 func syncActiveFace() {
 	if len(Editor.SelectedFaces) == 0 {
 		Editor.ActiveSurface = ""
 		Editor.ActiveEdgeKind = ""
 		Editor.ActiveEdgeIdx = -1
+		// Only our own kind is cleared: this runs from
+		// editorClearObjectSelections, which every other selection calls on its
+		// way to setting a kind of its own, and from editorClearObjectSelection,
+		// which deliberately leaves a live vertex selection alone.
+		if Editor.GizmoKind == gizmoKindFace {
+			Editor.GizmoKind = gizmoKindNone
+		}
 		return
 	}
+	Editor.GizmoKind = gizmoKindFace
 	primary := Editor.SelectedFaces[0]
 	Editor.ActiveChunkIdx = primary.chunkIdx
 	Editor.ActiveSectorIdx = primary.sectorIdx
@@ -186,22 +230,47 @@ func faceSelPanelFocus(f faceSel) string {
 		return panelFocusFloor
 	case "ceiling":
 		return panelFocusCeiling
+	case "floor_slab":
+		return panelFocusFloorSlab
+	case "ceiling_slab":
+		return panelFocusCeilingSlab
 	default:
 		return panelFocusWall
 	}
 }
 
+// slabPanelFocus is the panel section a surface's slab group answers to, and ""
+// for a surface that has no slab.
+func slabPanelFocus(surfaceKind string) string {
+	switch surfaceKind {
+	case "floor":
+		return panelFocusFloorSlab
+	case "ceiling":
+		return panelFocusCeilingSlab
+	}
+	return ""
+}
+
 // faceSelFromHit turns a 3D pick into the face it named. False for everything
 // that is not a sector face — the spawn marker, an entity, a water plane, or a
 // miss — none of which a face selection can hold.
+//
+// A portal arrives here only when the click landed on its gap fill; pick3D
+// lets a click through an opening that is actually open.
 func faceSelFromHit(hit pickHit) (faceSel, bool) {
 	switch hit.kind {
 	case pickWall:
 		return edgeFaceSel(hit.chunkIdx, hit.sectorIdx, "wall", hit.idx), true
+	case pickPortal:
+		return edgeFaceSel(hit.chunkIdx, hit.sectorIdx, "portal", hit.idx), true
 	case pickFloor:
 		return surfaceFaceSel(hit.chunkIdx, hit.sectorIdx, "floor"), true
 	case pickCeiling:
 		return surfaceFaceSel(hit.chunkIdx, hit.sectorIdx, "ceiling"), true
+	case pickFloorSlab:
+		return surfaceFaceSel(hit.chunkIdx, hit.sectorIdx, "floor_slab"), true
+	case pickCeilingSlab:
+		return surfaceFaceSel(hit.chunkIdx, hit.sectorIdx, "ceiling_slab"), true
 	}
 	return faceSel{}, false
 }

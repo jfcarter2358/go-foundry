@@ -1,0 +1,39 @@
+-- button.flang — one file, twenty buttons.
+--
+-- The parameters example from SCRIPTING.md, as a script that actually runs.
+-- What makes it reusable is that it names nothing in the level: `target` is
+-- whichever sector THIS button was wired to in its Script panel, `drop` is how
+-- far it lowers that sector's floor, and `latching` is whether pressing it
+-- again puts the floor back. Twenty buttons share the file and no two of them
+-- have to share a behaviour.
+--
+-- The latch is kept in `@self.state` rather than in an attribute because it is
+-- bookkeeping rather than level data. The floor's height is the real state
+-- here, and the level file already records that; a saved `down` flag could only
+-- ever disagree with it.
+
+param target ref
+param drop float = 3.0
+param latching bool = true
+
+def on_interact(:interact:, src ref) -> null
+    if ?target == null
+        -- Nobody has wired this one up yet, or the sector it named is gone. An
+        -- unbound `ref` param reads null and so does a dangling one, which is
+        -- why this is the check to write rather than trusting the panel.
+        return
+    end
+
+    if @self.state["down"] == true
+        if not ?latching
+            -- Momentary: it opened the way once, and that is all it does.
+            return
+        end
+        ?target.floor.prop.height = ?target.floor.prop.height + ?drop
+        @self.state["down"] = false
+        return
+    end
+
+    ?target.floor.prop.height = ?target.floor.prop.height - ?drop
+    @self.state["down"] = true
+end

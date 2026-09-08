@@ -65,6 +65,10 @@ func buildNode(l *List, s *ui.Screen, n *ui.Node, in *ui.Interaction, alpha, sca
 
 	drawBackground(l, n, r, col, tex, uv)
 
+	if n.Kind == ui.KindVideo {
+		drawVideoFrame(l, n, r, a)
+	}
+
 	switch n.Kind {
 	case ui.KindBar:
 		drawFill(l, n, r, a)
@@ -170,6 +174,35 @@ func fitRect(r ui.Rect, mode ui.FillMode, tex string, uv *[4]float32) ui.Rect {
 		uv[3] *= keep
 	}
 	return r
+}
+
+// drawVideoFrame paints the picture over the node's background.
+//
+// Over, not instead of. The background is what shows before the first frame has
+// decoded and, under the default fit mode, what the letterbox bars are made of
+// — so a video widget's Style.Color is its bars, and it defaults to black for
+// that reason.
+//
+// Which is also why the frame itself is drawn white rather than tinted by
+// Style.Color the way an image is: one colour cannot be both the bars and a
+// tint on the picture between them, and of the two, bars is the one every clip
+// needs. The node's alpha still applies, so fading a video in and out works.
+//
+// A frame that has not reached the GPU yet leaves the background alone rather
+// than drawing an untextured quad, which would be a white rectangle flashing
+// for one frame at the start of every clip.
+func drawVideoFrame(l *List, n *ui.Node, r ui.Rect, alpha float32) {
+	name := n.VideoTexture()
+	if alpha <= 0 || name == "" {
+		return
+	}
+	id, ok := gfx.Textures[name]
+	if !ok {
+		return
+	}
+	uv := [4]float32{0, 0, 1, 1}
+	l.AddImage(fitRect(r, n.Style.Fill, name, &uv), id, uv,
+		PackColor([4]float32{1, 1, 1, alpha}))
 }
 
 // drawFill paints the filled portion of a bar or slider, growing from the edge

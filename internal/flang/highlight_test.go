@@ -107,6 +107,23 @@ func TestHighlightAddresses(t *testing.T) {
 	checkClass(t, src, "state", ClassPlain)
 }
 
+// A parameter has its own colour, because it has its own sigil: `@door` reaches
+// the level and `?door` reaches what the level bound, and a reader who cannot
+// tell them apart at a glance is back where the shared sigil left them.
+func TestHighlightParamsAreNotAddresses(t *testing.T) {
+	src := "param door ref\n\ndef main() -> null\n    ?door.ceil.prop.height = 1.0\n    @door <- (:open:,)\nend"
+	checkClass(t, src, "?door", ClassParam)
+	checkClass(t, src, "@door", ClassAddress)
+	checkClass(t, src, "param", ClassKeyword)
+	checkClass(t, src, "ref", ClassType)
+}
+
+// A `?` with no name after it is punctuation, not a half-coloured parameter —
+// the same rule `@` and `#` follow, so a line being typed never flickers.
+func TestHighlightBareQuestionIsOperator(t *testing.T) {
+	checkClass(t, "x = ? ", "?", ClassOperator)
+}
+
 func TestHighlightAtomAgainstSeparator(t *testing.T) {
 	src := `x = {"k": :on:}`
 	checkClass(t, src, `": :`, ClassString) // the string, up to its quote

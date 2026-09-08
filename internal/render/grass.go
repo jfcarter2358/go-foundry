@@ -1016,10 +1016,10 @@ func biomeScatterBounds(ch *world.Chunk, s *world.BiomeSector, camPos mgl32.Vec3
 	// actually draw — has to be widened to match. forEachScatterSector's own
 	// doc says the two MUST agree; at Scale > 1 they did not, and the shadow
 	// passes dropped sectors whose scatter genuinely reached the cascade.
-	scale := ch.Scale
-	if scale == 0 {
-		scale = 1
-	}
+	// PlacementScale, not Scale: a chunk an entity carries is scaled by that
+	// entity too, and a local range converts by the whole factor or the box
+	// disagrees with the shader on exactly the entity's share of it.
+	scale := ch.PlacementScale()
 	rng *= scale
 
 	minX, maxX := wmin.X(), wmax.X()

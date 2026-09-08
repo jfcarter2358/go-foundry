@@ -119,6 +119,15 @@ func (g *Geometry) applyBlendUniforms() {
 	gl.ActiveTexture(gl.TEXTURE0)
 }
 
+// applyNormalUniforms binds this geometry's normal map, if its texture has
+// one. Which textures do is a property of the art, not of the surface (see
+// texture_normal.go), so unlike the blend pair there is nothing per-geometry
+// to configure: painting a bump channel into brick.ftex gives every brick
+// wall in the game relief at once.
+func (g *Geometry) applyNormalUniforms() {
+	BindNormalMap(g.Texture, HasNormalMapUniform, NormalMapUniform)
+}
+
 // GeometryUploadsEnabled gates the GPU half of Geometry.Load. It is true in the
 // running engine and always will be; tests turn it off so that editor operations
 // which rebuild geometry as a side effect can be exercised without a window.
@@ -175,6 +184,18 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 		g.Normals = geom.ComputeSmoothNormals(vertices, indices, g.SmoothAngle)
 	}
 
+	// Reloading in place is the normal case — an editor drag, a script
+	// animating a floor — and the handles below are generated fresh every
+	// time, so the previous upload has to go back to the driver here or every
+	// rebuild strands a VAO and a VBO. A script animating one sector's floor
+	// rebuilds every gap in its chunk on every frame (RebuildGaps), which turns
+	// that into thousands of orphaned objects in a few seconds. Done before the
+	// empty-mesh return below, so a surface that rebuilds to nothing releases
+	// what it had rather than keeping it alive with no way left to reach it.
+	if GeometryUploadsEnabled {
+		g.Delete()
+	}
+
 	if len(g.Vertices) == 0 {
 		return nil
 	}
@@ -210,12 +231,8 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	gl.EnableVertexAttribArray(g.TextureCoordinateAttribute)
 	gl.VertexAttribPointerWithOffset(g.TextureCoordinateAttribute, 2, gl.FLOAT, false, 5*4, 3*4)
 
-	// Smooth surfaces get a second buffer in the same VAO. Reloading a surface
-	// runs Load again, so release the previous one first.
-	if g.Nbo != 0 {
-		gl.DeleteBuffers(1, &g.Nbo)
-		g.Nbo = 0
-	}
+	// Smooth surfaces get a second buffer in the same VAO. The previous one was
+	// released above, with the rest of the old upload.
 	if len(g.Normals) > 0 {
 		if loc := gl.GetAttribLocation(Program, gl.Str("vertNormal\x00")); loc >= 0 {
 			g.NormalAttribute = uint32(loc)
@@ -232,7 +249,6 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	// Skinning attributes get their own buffers in the same VAO, for the same
 	// reason normals do: Vertices stays the 5-float record that picking, the
 	// shadow passes and the detail renderer all index directly.
-	g.deleteSkinBuffers()
 	if len(g.skinIdx) > 0 {
 		g.loadSkinBuffer(&g.Ibo, "boneIdx", g.skinIdx)
 		g.loadSkinBuffer(&g.Wbo, "boneWt", g.skinWt)
@@ -322,6 +338,7 @@ func (g Geometry) Draw() {
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	g.applyWaterUniforms()
 	g.applyBlendUniforms()
+	g.applyNormalUniforms()
 	ApplySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
 
 	gl.BindVertexArray(g.Vao)
@@ -343,6 +360,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	g.applyWaterUniforms()
 	g.applyBlendUniforms()
+	g.applyNormalUniforms()
 	ApplySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
@@ -366,6 +384,7 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, 0)
 	gl.Uniform1i(IsWaterUniform, 0)
+	gl.Uniform1i(HasNormalMapUniform, 0)
 	ApplySkinUniforms(&worldSkinUniforms, Program, nil)
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)

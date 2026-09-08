@@ -17,6 +17,7 @@ package editor
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"foundry/internal/fileutil"
@@ -25,6 +26,7 @@ import (
 	"foundry/internal/uiwin"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
+	"github.com/veandco/go-sdl2/sdl"
 )
 
 // Window state. Package-level in the style of the texture and script editors:
@@ -45,7 +47,27 @@ var (
 	// lastSeq is the newest entry drawn, so autoscroll only fires when something
 	// has actually arrived rather than on every frame.
 	logWindowLastSeq uint64
+
+	// logRowSel is which lines are selected for copying. See
+	// editor_row_select.go — the problems pane uses the same model.
+	logRowSel rowSelection
+
+	// status is the transient line the toolbar leaves behind. Copying is the
+	// only action in this window with nothing to show for itself: the clipboard
+	// is invisible, and an action with no feedback reads as one that did not
+	// happen.
+	logWindowStatus     string
+	logWindowStatusTime uint32
 )
+
+// logWindowStatusHold is how long the status line stays up.
+const logWindowStatusHold = 4000
+
+// logWindowSetStatus posts the transient line.
+func logWindowSetStatus(format string, args ...any) {
+	logWindowStatus = fmt.Sprintf(format, args...)
+	logWindowStatusTime = sdl.GetTicks()
+}
 
 // levelColors are the row colours, indexed by level. Info is left near the
 // default text colour: most lines are info, and colouring them all would mean
@@ -121,6 +143,21 @@ func drawLogToolbar() {
 	}
 
 	imgui.SameLine()
+	// Copy is a button as well as a chord because the selection is made with
+	// the mouse, and reaching for the keyboard to take what you just clicked on
+	// is the kind of small friction that stops people using a feature at all.
+	if n := logRowSel.count(); imgui.Button("Copy") {
+		if n == 0 {
+			logWindowSetStatus("Nothing selected — click a line, or right-click for Copy all.")
+		} else {
+			logWindowSetStatus("Copied %s.", plural(logRowSel.copySelected(), "line"))
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Copy the selected lines.  Ctrl+C\nClick a line to select it, shift-click for a run,\nctrl-click to add one. Right-click for the rest.")
+	}
+
+	imgui.SameLine()
 	imgui.Text("  |  ")
 	imgui.SameLine()
 	imgui.Checkbox("info", &logWindowShowInfo)
@@ -175,7 +212,20 @@ func drawLogCounters() {
 	if d := script.ScriptLog.Dropped(); d > 0 {
 		parts = append(parts, fmt.Sprintf("%d evicted", d))
 	}
+	if n := logRowSel.count(); n > 0 {
+		parts = append(parts, fmt.Sprintf("%s selected", plural(n, "line")))
+	}
 	editorTextMuted(strings.Join(parts, "   ·   "))
+
+	if logWindowStatus != "" {
+		if sdl.GetTicks()-logWindowStatusTime > logWindowStatusHold {
+			logWindowStatus = ""
+		} else {
+			imgui.SameLine()
+			editorTextColored(imgui.Vec4{X: 0.55, Y: 0.85, Z: 0.6, W: 1},
+				"   "+logWindowStatus)
+		}
+	}
 
 	if !Editor.Active {
 		return
@@ -194,6 +244,7 @@ func drawLogList() {
 	imgui.BeginChildV("##loglist", imgui.Vec2{X: 0, Y: 0}, true,
 		imgui.WindowFlagsHorizontalScrollbar)
 
+	logRowSel.begin()
 	shown := 0
 	for _, e := range entries {
 		if !logEntryVisible(e) {
@@ -202,9 +253,11 @@ func drawLogList() {
 		shown++
 		drawLogEntry(e)
 	}
+	logRowSel.end()
 	if shown == 0 {
 		editorTextMuted(logEmptyMessage(len(entries)))
 	}
+	drawLogRowMenu()
 
 	// Autoscroll, and the rule that makes it usable: scrolling up releases it,
 	// scrolling back to the bottom takes it again. Only re-pinned when something
@@ -227,39 +280,88 @@ func drawLogList() {
 }
 
 // drawLogEntry draws one row.
+//
+// The whole line is one selectable, drawn underneath rather than around the
+// text so the position button on an error keeps taking its own clicks. The row
+// is as tall as that button when it has one, because a selectable shorter than
+// its contents leaves a stripe of unclickable row between every pair of lines.
 func drawLogEntry(e script.LogEntry) {
 	col, ok := levelColors[e.Level]
 	if !ok {
 		col = levelColors[script.LogInfo]
 	}
 
-	// Timestamp in seconds since start: an absolute clock is no use for reading
-	// what happened in the last two seconds, which is what this window is for.
-	editorTextMuted(fmt.Sprintf("%7.2f", float64(e.Time)/1000.0))
-	imgui.SameLine()
-
-	if e.Source != "" {
-		editorTextMuted(logShortSource(e.Source))
-		imgui.SameLine()
-	}
-
+	height := rowLineHeight()
 	if e.HasPos() {
-		// A positioned error is clickable: the message and the line it refers to
-		// belong together, and making someone go and find it is half a message.
-		imgui.PushID(fmt.Sprintf("logentry%d", e.Seq))
-		imgui.PushStyleColor(imgui.StyleColorText, col)
-		if imgui.Button(fmt.Sprintf("%s:%d", logShortSource(e.Pos.File), e.Pos.Line)) {
-			logWindowOpenAt(e.Pos)
-		}
-		imgui.PopStyleColor()
-		imgui.PopID()
-		if imgui.IsItemHovered() {
-			imgui.SetTooltip("Open this script in the script editor")
-		}
-		imgui.SameLine()
+		height = rowFrameHeight()
 	}
 
-	editorTextColored(col, e.Text)
+	logRowSel.row(strconv.FormatUint(e.Seq, 10), logEntryCopyText(e), height, func() {
+		// Timestamp in seconds since start: an absolute clock is no use for
+		// reading what happened in the last two seconds, which is what this
+		// window is for.
+		editorTextMuted(fmt.Sprintf("%7.2f", float64(e.Time)/1000.0))
+		imgui.SameLine()
+
+		if e.Source != "" {
+			editorTextMuted(logShortSource(e.Source))
+			imgui.SameLine()
+		}
+
+		if e.HasPos() {
+			// A positioned error is clickable: the message and the line it
+			// refers to belong together, and making someone go and find it is
+			// half a message.
+			imgui.PushID(fmt.Sprintf("logentry%d", e.Seq))
+			imgui.PushStyleColor(imgui.StyleColorText, col)
+			if imgui.Button(fmt.Sprintf("%s:%d", logShortSource(e.Pos.File), e.Pos.Line)) {
+				logWindowOpenAt(e.Pos)
+			}
+			imgui.PopStyleColor()
+			imgui.PopID()
+			if imgui.IsItemHovered() {
+				imgui.SetTooltip("Open this script in the script editor")
+			}
+			imgui.SameLine()
+		}
+
+		editorTextColored(col, e.Text)
+	})
+}
+
+// logEntryCopyText renders one entry for the clipboard.
+//
+// Not the string on screen: the window drops the level because colour says it,
+// and shortens the source because the column repeats it, but a line pasted into
+// a bug report has neither the colour nor the column and needs both back. The
+// shape is the usual file:line: message so a paste stays greppable.
+func logEntryCopyText(e script.LogEntry) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%7.2f  %-5s", float64(e.Time)/1000.0, e.Level)
+	if e.Source != "" {
+		fmt.Fprintf(&b, "  %s", e.Source)
+	}
+	if e.HasPos() {
+		fmt.Fprintf(&b, "  %s:%d:%d:", e.Pos.File, e.Pos.Line, e.Pos.Col)
+	}
+	b.WriteString("  ")
+	b.WriteString(e.Text)
+	return b.String()
+}
+
+// drawLogRowMenu is the list's right-click menu. Inside the child window rather
+// than outside it so a right-click anywhere in the list raises it, including
+// the empty space below the last line where "Copy all" is the only thing worth
+// offering.
+func drawLogRowMenu() {
+	if !imgui.BeginPopupContextWindowV("##logrowmenu", imgui.PopupFlagsMouseButtonRight) {
+		return
+	}
+	items := logRowSel.menuItems(func(n int) {
+		logWindowSetStatus("Copied %s.", plural(n, "line"))
+	})
+	ctxDrawMenuItems(items)
+	imgui.EndPopup()
 }
 
 // logShortSource trims a script path down to what is worth reading in a column

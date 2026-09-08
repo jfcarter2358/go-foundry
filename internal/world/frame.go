@@ -70,6 +70,14 @@ type Frame struct {
 	Inv   mgl32.Mat4
 	Rot   mgl32.Quat
 
+	// OwnerScale is how big the entity carrying this frame is, as the single
+	// factor its geometry follows (EntityFrameScale). 0 reads as 1.
+	//
+	// Deliberately absent from World, Inv and Rot, which stay rigid: it is
+	// republished onto every owned chunk as Chunk.FrameScale and scales that
+	// chunk's geometry *inside* the frame instead. See FrameLocalMatrix.
+	OwnerScale float32
+
 	// ChunkIdx are the chunks whose geometry is authored in this frame.
 	ChunkIdx []int
 }
@@ -219,7 +227,7 @@ func BuildFrames(lvl *Level) (*FrameSet, error) {
 		}
 		f := fs.byID[owner]
 		if f == nil {
-			f = &Frame{OwnerID: owner, World: mgl32.Ident4(), Inv: mgl32.Ident4(), Rot: mgl32.QuatIdent()}
+			f = &Frame{OwnerID: owner, World: mgl32.Ident4(), Inv: mgl32.Ident4(), Rot: mgl32.QuatIdent(), OwnerScale: 1}
 			fs.byID[owner] = f
 		}
 		f.ChunkIdx = append(f.ChunkIdx, ci)
@@ -235,6 +243,7 @@ func BuildFrames(lvl *Level) (*FrameSet, error) {
 			return nil, fmt.Errorf("chunk frame owner %q: no entity in this level has that ID", id)
 		}
 		f.Parent = owner.Frame
+		f.OwnerScale = EntityFrameScale(owner)
 	}
 
 	order, err := frameOrder(fs.byID)
@@ -336,9 +345,15 @@ func RefreshFrames(lvl *Level, fs *FrameSet) {
 		f.World = fs.parentTransform(lvl, f.Parent, 0).Mul4(local)
 		f.Inv = f.World.Inv()
 		f.Rot = mgl32.Mat4ToQuat(rotationOnly(f.World))
+		f.OwnerScale = EntityFrameScale(owner)
 
+		// Both halves of the placement, every tick: the frame's rigid transform,
+		// and how big its owner currently is. Scaling an entity in the editor is
+		// a plain field write, so republishing the scale here is what makes the
+		// geometry it carries follow the drag rather than waiting for a reload.
 		for _, ci := range f.ChunkIdx {
 			lvl.Chunks[ci].Xform = f.World
+			lvl.Chunks[ci].FrameScale = f.OwnerScale
 		}
 	}
 }
@@ -378,11 +393,16 @@ func (f *Frame) WorldMatrix() mgl32.Mat4 {
 // FrameLocalMatrix is the transform an entity contributes as a frame carrier:
 // its translation and rotation, and deliberately not its scale.
 //
-// Scale is left out because a frame is a place to stand, not a model. Scaling
-// one would scale the geometry a body walks on without scaling the body, so a
-// half-size ship would have a player's head through its ceiling — and the
-// bounding volumes the resolvers work in are not expressed in the frame's units
-// at all.
+// Scale is left out because a frame is a place to stand, not a model. Everything
+// expressed in a frame's coordinates would take it: a rider's stored position,
+// and the rider's own drawn model with it, while the bounding volumes the
+// resolvers work in are not in the frame's units at all. A half-size ship would
+// then have a player's head through its ceiling.
+//
+// The entity's scale does reach the geometry it carries — it is published onto
+// each owned chunk as Chunk.FrameScale, which scales that chunk's own geometry
+// inside the frame. So a ship scaled 2x has a hold twice as big in world space
+// and in collision alike, while the player who walks into it stays their size.
 func FrameLocalMatrix(e *Entity) mgl32.Mat4 {
 	T := mgl32.Translate3D(e.Position.X(), e.Position.Y(), e.Position.Z())
 	return T.Mul4(e.RotationMatrix())

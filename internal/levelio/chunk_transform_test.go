@@ -11,9 +11,11 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/testenv"
 	"foundry/internal/world"
+	"strings"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
+	"gopkg.in/yaml.v2"
 )
 
 // placedRawChunk builds a chunk with a non-identity Origin/Rotation/Scale, the
@@ -113,6 +115,62 @@ func TestChunkOriginRotationScaleSurviveSaveLoadRoundTrip(t *testing.T) {
 		if first.Points[i] != second.Points[i] {
 			t.Errorf("point %d drifted across the round trip: %v then %v", i, first.Points[i], second.Points[i])
 		}
+	}
+}
+
+// TestChunkVelocitySurvivesSaveLoadRoundTrip pins the authored half of a moving
+// chunk. It is a rate rather than a placement, so nothing about the geometry
+// records it — a level that lost it on save would reload with every lift and
+// barge standing still.
+func TestChunkVelocitySurvivesSaveLoadRoundTrip(t *testing.T) {
+	testenv.WithoutGeometryUploads(t)
+	rc := placedRawChunk()
+	rc.Velocity = world.RawVec3{X: 0, Y: 1.5, Z: -0.25}
+
+	first, _, err := loadRawChunk(rc)
+	if err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+	if first.Velocity != (mgl32.Vec3{0, 1.5, -0.25}) {
+		t.Fatalf("loaded Velocity = %v, want {0 1.5 -0.25}", first.Velocity)
+	}
+
+	raw, err := chunkToRaw(&first)
+	if err != nil {
+		t.Fatalf("chunkToRaw: %v", err)
+	}
+	if raw.Velocity != rc.Velocity {
+		t.Errorf("saved Velocity = %v, want %v", raw.Velocity, rc.Velocity)
+	}
+
+	second, _, err := loadRawChunk(raw)
+	if err != nil {
+		t.Fatalf("second load: %v", err)
+	}
+	if second.Velocity != first.Velocity {
+		t.Errorf("velocity changed across the round trip: %v then %v", first.Velocity, second.Velocity)
+	}
+}
+
+// TestAStillChunkWritesNoVelocityKey keeps `velocity:` out of every level that
+// has no moving chunk in it — the omitempty half of the field, and what stops
+// this from churning every file in the project the first time it is saved.
+func TestAStillChunkWritesNoVelocityKey(t *testing.T) {
+	testenv.WithoutGeometryUploads(t)
+	ch, _, err := loadRawChunk(placedRawChunk())
+	if err != nil {
+		t.Fatalf("loadRawChunk: %v", err)
+	}
+	raw, err := chunkToRaw(&ch)
+	if err != nil {
+		t.Fatalf("chunkToRaw: %v", err)
+	}
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(out), "velocity") {
+		t.Errorf("a still chunk serialised a velocity key:\n%s", out)
 	}
 }
 

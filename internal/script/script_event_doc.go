@@ -75,6 +75,8 @@ var eventDocs = []EventDoc{
 		"A slider, toggle or text field's value changed. value is a float, a bool or a str, following the widget's kind."},
 	{":submit:", "widget, then its screen", "src ref, text str",
 		"Enter was pressed in a text field."},
+	{":finished:", "widget, then its screen", "src ref",
+		"A video widget reached the end of its clip. Never fires for a looping one, which has no end to reach."},
 	{":cancel:", "screen", "—",
 		"Escape was pressed while this screen was the topmost modal one. The screen closes either way."},
 	{":shown:", "screen", "—",

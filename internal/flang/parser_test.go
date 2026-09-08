@@ -140,7 +140,7 @@ func TestVecVersusComparison(t *testing.T) {
 func TestVecAsCallArgument(t *testing.T) {
 	// The case that made the rule necessary: a vec where an argument is expected.
 	call, ok := firstValue(t, `def f() -> null
-  return move_to(@door, <1.0, 0.0, 0.0>)
+  return spawn(@door, <1.0, 0.0, 0.0>)
 end`).(*CallExpr)
 	if !ok {
 		t.Fatalf("got %T, want a call", call)
@@ -322,6 +322,64 @@ end`))
 	}
 	if at, ok := tup.Elems[0].(*AtomLit); !ok || at.Name != "open" {
 		t.Errorf("message does not begin with the atom :open:")
+	}
+}
+
+// The delayed form is taken apart in the parser, so what the rest of the
+// compiler meets is an ordinary send carrying a delay — no `after` call
+// survives to be evaluated.
+func TestParseDelayedSend(t *testing.T) {
+	body := firstBody(t, mustParse(t, `def f() -> null
+    @door <- after(500, :open:, @self, 20)
+end`))
+	s, ok := body[0].(*SendStmt)
+	if !ok {
+		t.Fatalf("got %T, want a send", body[0])
+	}
+	if a, ok := s.Target.(*AddrExpr); !ok || a.Name != "door" {
+		t.Errorf("target is %T, want @door", s.Target)
+	}
+	if n, ok := s.Delay.(*IntLit); !ok || n.Value != 500 {
+		t.Fatalf("delay is %v, want 500", s.Delay)
+	}
+	tup, ok := s.Msg.(*TupleLit)
+	if !ok {
+		t.Fatalf("message is %T, want a tuple", s.Msg)
+	}
+	if len(tup.Elems) != 3 {
+		t.Errorf("message has %d elements, want 3", len(tup.Elems))
+	}
+	if at, ok := tup.Elems[0].(*AtomLit); !ok || at.Name != "open" {
+		t.Errorf("message does not begin with the atom :open:")
+	}
+}
+
+// A one-message timer still reads as a send of a one-tuple, without the comma
+// the literal form needs.
+func TestParseDelayedSendWithNoArguments(t *testing.T) {
+	body := firstBody(t, mustParse(t, "def f() -> null\n  #lamps <- after(250, :flicker:)\nend"))
+	s, ok := body[0].(*SendStmt)
+	if !ok {
+		t.Fatalf("got %T, want a send", body[0])
+	}
+	if tag, ok := s.Target.(*TagExpr); !ok || tag.Name != "lamps" {
+		t.Errorf("target is %T, want #lamps", s.Target)
+	}
+	tup, ok := s.Msg.(*TupleLit)
+	if !ok || len(tup.Elems) != 1 {
+		t.Fatalf("message is %v, want a one-tuple", s.Msg)
+	}
+}
+
+// An `after` with nothing to schedule is reported as a broken timer, not
+// mistaken for a message that failed to be a tuple.
+func TestDelayedSendNeedsAnAtom(t *testing.T) {
+	errs := parseErrs(t, "def f() -> null\n  @door <- after(500)\nend")
+	if len(errs) == 0 {
+		t.Fatal("a message-less after produced no diagnostic")
+	}
+	if !strings.Contains(errs[0].Msg, "after") {
+		t.Errorf("diagnostic does not mention after: %q", errs[0].Msg)
 	}
 }
 

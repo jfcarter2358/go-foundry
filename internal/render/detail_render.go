@@ -79,21 +79,21 @@ func DetailInit() {
 	// --- Displacement (tessellation) programs ---
 	detailRender.dispColor = mk(mustTessProgram(
 		sp("detail_vert.glsl"), sp("detail.tesc"), sp("detail.tese"),
-		sp("fragment.glsl"), dispShared))
+		sp("fragment.glsl"), dispShared, true))
 	detailRender.dispShadow = mk(mustTessProgram(
 		sp("detail_vert.glsl"), sp("detail.tesc"), sp("detail_shadow.tese"),
-		sp("shadow_frag.glsl"), dispShared))
+		sp("shadow_frag.glsl"), dispShared, false))
 	detailRender.dispCube = mk(mustTessProgram(
 		sp("detail_vert.glsl"), sp("detail.tesc"), sp("detail_shadow_cube.tese"),
-		sp("shadow_cube_frag.glsl"), dispShared))
+		sp("shadow_cube_frag.glsl"), dispShared, false))
 
 	// --- Scatter (instanced) programs ---
 	detailRender.scatColor = mk(mustScatterProgram(
-		sp("detail_scatter_vert.glsl"), sp("fragment.glsl"), scatShared))
+		sp("detail_scatter_vert.glsl"), sp("fragment.glsl"), scatShared, true))
 	detailRender.scatShadow = mk(mustScatterProgram(
-		sp("detail_scatter_shadow_vert.glsl"), sp("shadow_frag.glsl"), scatShared))
+		sp("detail_scatter_shadow_vert.glsl"), sp("shadow_frag.glsl"), scatShared, false))
 	detailRender.scatCube = mk(mustScatterProgram(
-		sp("detail_scatter_cube_vert.glsl"), sp("shadow_cube_frag.glsl"), scatShared))
+		sp("detail_scatter_cube_vert.glsl"), sp("shadow_cube_frag.glsl"), scatShared, false))
 
 	// Rock template mesh (reuse the biome rock builder); attribute layout matches
 	// the explicit locations in the scatter vertex shaders (0=aLocal, 1=aNormal,
@@ -149,7 +149,13 @@ func linkStages(shaders ...uint32) (uint32, error) {
 	return prog, nil
 }
 
-func mustTessProgram(vertPath, tescPath, tesePath, fragPath, shared string) uint32 {
+// mustTessProgram and mustScatterProgram take `fogged` rather than deciding for
+// themselves, because the same helper links both the colour programs (whose
+// fragment stage IS fragment.glsl, and which therefore call applyFog) and the
+// two depth-only ones (shadow_frag.glsl / shadow_cube_frag.glsl, which write a
+// depth and nothing else). Splicing fog into a depth stage would compile and
+// cost nothing, but it would also be a lie about what that stage does.
+func mustTessProgram(vertPath, tescPath, tesePath, fragPath, shared string, fogged bool) uint32 {
 	vs, err := gfx.CompileShader(gfx.InjectAfterVersion(mustReadShader(vertPath), shared), gl.VERTEX_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("detail vert %s: %v", vertPath, err))
@@ -162,7 +168,7 @@ func mustTessProgram(vertPath, tescPath, tesePath, fragPath, shared string) uint
 	if err != nil {
 		panic(fmt.Sprintf("detail tese %s: %v", tesePath, err))
 	}
-	fs, err := gfx.CompileShader(mustReadShader(fragPath), gl.FRAGMENT_SHADER)
+	fs, err := gfx.CompileShader(detailFragSource(fragPath, fogged), gl.FRAGMENT_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("detail frag %s: %v", fragPath, err))
 	}
@@ -173,20 +179,31 @@ func mustTessProgram(vertPath, tescPath, tesePath, fragPath, shared string) uint
 	return prog
 }
 
-func mustScatterProgram(vertPath, fragPath, shared string) uint32 {
+func mustScatterProgram(vertPath, fragPath, shared string, fogged bool) uint32 {
 	vs, err := gfx.CompileShader(gfx.InjectAfterVersion(mustReadShader(vertPath), shared), gl.VERTEX_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("detail scatter vert %s: %v", vertPath, err))
 	}
-	fs, err := gfx.CompileShader(mustReadShader(fragPath), gl.FRAGMENT_SHADER)
+	fs, err := gfx.CompileShader(detailFragSource(fragPath, fogged), gl.FRAGMENT_SHADER)
 	if err != nil {
 		panic(fmt.Sprintf("detail scatter frag %s: %v", fragPath, err))
 	}
+
 	prog, err := linkStages(vs, fs)
 	if err != nil {
 		panic(fmt.Sprintf("detail scatter program (%s): %v", vertPath, err))
 	}
 	return prog
+}
+
+// detailFragSource reads a fragment stage and splices fog.glsl in when that
+// stage shades. See mustTessProgram's note.
+func detailFragSource(fragPath string, fogged bool) string {
+	src := mustReadShader(fragPath)
+	if !fogged {
+		return src
+	}
+	return gfx.MustInjectFog(src)
 }
 
 // ---------- face iteration ----------
@@ -416,16 +433,28 @@ func uploadDetailModel(p *progUniforms, current *mgl32.Mat4, model mgl32.Mat4) {
 	gl.UniformMatrix4fv(p.U("model"), 1, false, &model[0])
 }
 
-// detailAlbedo returns a valid GL texture handle for name, falling back to a
-// known-loaded texture so an unloaded scatter texture never binds unit 0 to 0.
-func detailAlbedo(name, fallback string) uint32 {
+// detailAlbedoName resolves the texture a detail draw should sample, falling
+// back to a known-loaded one so an unloaded scatter texture never binds unit 0
+// to 0. Resolution stops at the name rather than the handle because the normal
+// map is keyed off the albedo's name and has to follow the same fallback.
+func detailAlbedoName(name, fallback string) string {
 	if h, ok := gfx.Textures[name]; ok && h != 0 {
-		return h
+		return name
 	}
 	if h, ok := gfx.Textures[fallback]; ok && h != 0 {
-		return h
+		return fallback
 	}
-	return gfx.Textures["default"]
+	return "default"
+}
+
+// bindDetailTexture binds a detail draw's albedo to unit 0 and its normal map,
+// if the art has one, to gfx.NormalMapUnit — so a displaced or scattered
+// surface picks up relief on exactly the same terms as an ordinary wall.
+func bindDetailTexture(p *progUniforms, name, fallback string) {
+	resolved := detailAlbedoName(name, fallback)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[resolved])
+	gfx.BindNormalMap(resolved, p.U("hasNormalMap"), p.U("normalMap"))
 }
 
 // ---------- render entry points ----------
@@ -451,6 +480,7 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 	if haveD {
 		p := &detailRender.dispColor
 		world.UploadLightsTo(p.prog, level.Lights, false)
+		world.UploadFogTo(p.prog, level.Fog, level.Volumes)
 		UploadShadowUniformsTo(p.prog, level.Lights, frame)
 		UploadPointShadowUniformsTo(p.prog, level.Lights)
 		gl.UseProgram(p.prog)
@@ -467,8 +497,7 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 			}
 			uploadDetailModel(p, &model, f.model)
 			setDispUniforms(p, f.spec, f.geo)
-			gl.ActiveTexture(gl.TEXTURE0)
-			gl.BindTexture(gl.TEXTURE_2D, detailAlbedo(f.tex, "default"))
+			bindDetailTexture(p, f.tex, "default")
 			gl.BindVertexArray(f.geo.Vao)
 			gl.DrawArrays(gl.PATCHES, 0, int32(len(f.geo.Vertices)/5))
 		})
@@ -477,6 +506,7 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 	if haveS {
 		p := &detailRender.scatColor
 		world.UploadLightsTo(p.prog, level.Lights, false)
+		world.UploadFogTo(p.prog, level.Fog, level.Volumes)
 		UploadShadowUniformsTo(p.prog, level.Lights, frame)
 		UploadPointShadowUniformsTo(p.prog, level.Lights)
 		gl.UseProgram(p.prog)
@@ -504,8 +534,7 @@ func RenderDetailColor(level *world.Level, frame ShadowFrame) {
 			// template's normals are per-facet, so this shades them exactly as
 			// the derivative path does, just without the derivative.
 			gl.Uniform1i(p.U("smoothShading"), f.geo.SmoothFlag())
-			gl.ActiveTexture(gl.TEXTURE0)
-			gl.BindTexture(gl.TEXTURE_2D, detailAlbedo(f.spec.ScatterTex, f.tex))
+			bindDetailTexture(p, f.spec.ScatterTex, f.tex)
 			gl.DrawArraysInstanced(gl.TRIANGLES, 0, detailRender.rockVerts, inst)
 		})
 	}

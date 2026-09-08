@@ -138,6 +138,20 @@ type RawValue struct {
 	BindMax string `yaml:"bind_max,omitempty"`
 }
 
+// RawVideo is a video node's clip and how it plays.
+//
+// Volume is a pointer because its default is one: a plain float could not
+// express a video authored silent, which is a thing somebody sets deliberately
+// on a background loop. Muted is the switch for "silent for now"; volume zero
+// is "this clip has no soundtrack worth hearing".
+type RawVideo struct {
+	Source   string   `yaml:"source,omitempty"`
+	AutoPlay bool     `yaml:"autoplay,omitempty"`
+	Loop     bool     `yaml:"loop,omitempty"`
+	Muted    bool     `yaml:"muted,omitempty"`
+	Volume   *float32 `yaml:"volume,omitempty"`
+}
+
 // RawNav is the four hand-wired focus links.
 type RawNav struct {
 	Up    string `yaml:"up,omitempty"`
@@ -190,6 +204,7 @@ type RawNode struct {
 
 	Text  *RawText  `yaml:"text,omitempty"`
 	Value *RawValue `yaml:"value,omitempty"`
+	Video *RawVideo `yaml:"video,omitempty"`
 
 	Action  string      `yaml:"action,omitempty"`
 	Nav     *RawNav     `yaml:"nav,omitempty"`
@@ -387,7 +402,7 @@ func rawToNode(raw RawNode) Node {
 	n.Style.Texture = raw.Texture
 	n.Style.UV = uvDefault(raw.UV)
 	n.Style.Slice = quadDefault(raw.Slice)
-	n.Style.Fill = FillMode(nameIndex(FillModeNames, raw.Fill, int(FillStretch)))
+	n.Style.Fill = FillMode(nameIndex(FillModeNames, raw.Fill, int(DefaultFill(n.Kind))))
 	n.Style.Hover = rawToState(raw.Hover)
 	n.Style.Press = rawToState(raw.Press)
 	n.Style.Disabled = rawToState(raw.Disabled)
@@ -403,6 +418,15 @@ func rawToNode(raw RawNode) Node {
 			Wrap:   t.Wrap,
 			Bind:   t.Bind,
 			Format: t.Format,
+		}
+	}
+	if vd := raw.Video; vd != nil {
+		n.Video = VideoSpec{
+			Source:   vd.Source,
+			AutoPlay: vd.AutoPlay,
+			Loop:     vd.Loop,
+			Muted:    vd.Muted,
+			Volume:   clamp01(f32Default(vd.Volume, 1)),
 		}
 	}
 	if v := raw.Value; v != nil {
@@ -531,13 +555,14 @@ func nodeToRaw(n *Node) RawNode {
 		Texture:  n.Style.Texture,
 		UV:       uvPtrIfNotFull(n.Style.UV),
 		Slice:    quadIfAny(n.Style.Slice),
-		Fill:     nameIfNot(FillModeNames[n.Style.Fill], FillModeNames[FillStretch]),
+		Fill:     nameIfNot(FillModeNames[n.Style.Fill], FillModeNames[DefaultFill(n.Kind)]),
 		Hover:    stateToRaw(n.Style.Hover),
 		Press:    stateToRaw(n.Style.Press),
 		Disabled: stateToRaw(n.Style.Disabled),
 
 		Text:  textToRaw(n.Text),
 		Value: valueToRaw(n.Value),
+		Video: videoToRaw(n.Video),
 
 		Action:  n.Action,
 		Nav:     navToRaw(n.Nav),
@@ -610,6 +635,20 @@ func valueToRaw(v ValueSpec) *RawValue {
 	return &raw
 }
 
+func videoToRaw(v VideoSpec) *RawVideo {
+	raw := RawVideo{
+		Source:   v.Source,
+		AutoPlay: v.AutoPlay,
+		Loop:     v.Loop,
+		Muted:    v.Muted,
+		Volume:   f32PtrIfNot(v.Volume, 1),
+	}
+	if raw == (RawVideo{}) {
+		return nil
+	}
+	return &raw
+}
+
 func navToRaw(nv Nav) *RawNav {
 	if nv == (Nav{}) {
 		return nil
@@ -662,8 +701,8 @@ func validateRawNode(raw RawNode, seen map[string]bool) error {
 	if raw.Rotation != 0 && !kind.Leaf() {
 		// A rotated container would need oriented-box hit testing and an
 		// oriented scissor rect, and GL scissor cannot express one.
-		return fmt.Errorf("node %q is a %s: only %s and %s may be rotated",
-			raw.ID, KindName(kind), KindNames[KindImage], KindNames[KindText])
+		return fmt.Errorf("node %q is a %s: only %s may be rotated",
+			raw.ID, KindName(kind), strings.Join(LeafKindNames(), ", "))
 	}
 	if raw.Rotation != 0 && raw.Clip {
 		return fmt.Errorf("node %q cannot both clip and rotate", raw.ID)
@@ -763,8 +802,9 @@ func prefixIDs(n *Node, prefix string) {
 	})
 }
 
-// substituteParams replaces {{name}} in the three fields a prefab is worth
-// parameterising: what it says, what it is drawn with, and what it does.
+// substituteParams replaces {{name}} in the fields a prefab is worth
+// parameterising: what it says, what it is drawn with, what it plays, and what
+// it does.
 //
 // Deliberately not every field. A general override mechanism needs a serialised
 // diff and a three-way merge against a prefab that has since changed, which is
@@ -776,6 +816,7 @@ func substituteParams(n *Node, params map[string]string) {
 	n.Walk(func(_, c *Node) bool {
 		c.Text.Value = expand(c.Text.Value, params)
 		c.Style.Texture = expand(c.Style.Texture, params)
+		c.Video.Source = expand(c.Video.Source, params)
 		c.Action = expand(c.Action, params)
 		return true
 	})

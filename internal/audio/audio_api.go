@@ -47,12 +47,24 @@ type PlayOptions struct {
 // load, or when the pool is full of higher-priority sounds. A zero handle is
 // safe to pass to every other function here, so callers do not need to check.
 func Play(o PlayOptions) VoiceID {
-	d := active.Load()
-	if d == nil {
-		return 0
-	}
 	clip, err := ClipFor(o.Clip)
 	if err != nil || clip == nil {
+		return 0
+	}
+	return PlayClip(clip, o)
+}
+
+// PlayClip starts a sound from a clip the caller is already holding, rather
+// than from a name under sounds/. o.Clip is ignored.
+//
+// It exists for internal/video: a video's soundtrack is demuxed out of the
+// video file itself, so it has no entry under sounds/ and nothing in the clip
+// registry could ever resolve its name. Everything else about the voice — the
+// bus, the gain, the pool and the priority — is identical, which is the point
+// of routing it through here rather than giving video its own mixer.
+func PlayClip(clip *Clip, o PlayOptions) VoiceID {
+	d := active.Load()
+	if d == nil || clip == nil {
 		return 0
 	}
 
@@ -121,6 +133,33 @@ func stopWithFade(id VoiceID, seconds float32) {
 func StopAll() {
 	if d := active.Load(); d != nil {
 		d.send(command{kind: cmdStopAll})
+	}
+}
+
+// SilentGain is the level SetGain treats as silence.
+//
+// Not zero, because a zero gain reaching the mixer is the "unset" sentinel a
+// voice published with no explicit level takes as full volume — see mixVoice.
+// A ten-thousandth of unity is 80 dB down, which is below the noise floor of
+// any source this engine will play, and it keeps one meaning for zero rather
+// than two. Genuine silence, for good, is Stop.
+const SilentGain = 0.0001
+
+// SetGain changes a live voice's level.
+//
+// The sibling of SetLoop, and it exists for the same kind of caller: something
+// holding a long voice whose loudness is a property the player can change
+// while it plays — a video's volume slider, a muted cutscene. A gain below
+// SilentGain is clamped up to it.
+func SetGain(id VoiceID, gain float32) {
+	if id == 0 {
+		return
+	}
+	if gain < SilentGain {
+		gain = SilentGain
+	}
+	if d := active.Load(); d != nil {
+		d.send(command{kind: cmdSetGain, id: id, gain: gain})
 	}
 }
 

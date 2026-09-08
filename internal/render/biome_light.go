@@ -186,7 +186,17 @@ func biomeLightSnippet(pcf int, pointShadows, cascadeBlend bool) string {
 	if cascadeBlend {
 		src += "#define BIOME_LIGHT_CASCADE_BLEND 1\n"
 	}
-	return src + mustReadShader(biomeShaderPath("biome_light.glsl"))
+	// fog.glsl rides along with the lighting block, for exactly the reason the
+	// lighting block exists: every stage that gets this snippet is a stage that
+	// SHADES — the scatter, the ground patch, sprites — and every one of them
+	// has to fade at the same rate as the wall behind it or the fog reads as
+	// the passes disagreeing about distance. Handing it out here rather than at
+	// the three call sites is what makes that structural instead of remembered.
+	//
+	// The depth-only programs are the ones that do NOT ask for this snippet
+	// (see GrassInit), so they do not pick fog up either.
+	return src + mustReadShader(biomeShaderPath("biome_light.glsl")) +
+		"\n" + mustReadShader(biomeShaderPath("fog.glsl"))
 }
 
 // biomeScatterSnippet returns the shared instance placement/shaping code, which
@@ -228,6 +238,7 @@ func mustBiomeProgram(vertPath, fragPath, vertSnippet, fragSnippet string) uint3
 // and the Receive toggle.
 func uploadBiomeLighting(prog uint32, level *world.Level, frame ShadowFrame) {
 	world.UploadLightsTo(prog, level.Lights, false)
+	world.UploadFogTo(prog, level.Fog, level.Volumes)
 	UploadShadowUniformsTo(prog, level.Lights, frame)
 	UploadPointShadowUniformsTo(prog, level.Lights)
 

@@ -92,7 +92,13 @@ func main() {
 var alwaysDirs = []string{"shaders", "fonts", "detail_presets"}
 
 // contentDirs are the directories a prune walks. Order is display order.
-var contentDirs = []string{"levels", "ui", "scripts", "entities", "models", "textures", "particles", "sounds"}
+//
+// chunks/ is here because an entity definition may carry world geometry by
+// naming a file in it (world/entity_chunk.go) — a ship's hull is reached from
+// entities/shuttle.yaml, not from any level. The token scan follows that name
+// like any other, and the chunk file is itself YAML, so the textures inside it
+// come along transitively.
+var contentDirs = []string{"levels", "chunks", "ui", "scripts", "entities", "models", "textures", "particles", "sounds", "video"}
 
 type packer struct {
 	src      string

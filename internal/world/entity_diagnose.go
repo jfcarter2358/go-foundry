@@ -2,8 +2,8 @@ package world
 
 // entity_diagnose.go — why an entity did not do what a script asked it to.
 //
-// `play_anim` and `set_texture` report success as a bool, and a bool is a
-// terrible thing to be handed when the answer is no. There are four distinct
+// `play_anim` reports success as a bool, and a bool is a terrible thing to be
+// handed when the answer is no. There are four distinct
 // ways for `play_anim(@button, "button", "button_press")` to come back false —
 // no attachment by that name, an attachment that cannot animate at all, an
 // animation the entity never declared, and a declared animation pointing at a
@@ -110,8 +110,8 @@ func (m *EntityModel) AnimationProblem(animation string) string {
 	return ""
 }
 
-// TextureProblem explains why `set_texture(e, model, …)` would reskin nothing,
-// or "" when it would.
+// TextureProblem explains why writing an entity's or an attachment's `texture`
+// property would reskin nothing, or "" when it would.
 func (e *Entity) TextureProblem(model string) string {
 	if e == nil {
 		return "there is no such entity"

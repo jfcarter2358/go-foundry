@@ -74,6 +74,9 @@ func ScanAnimatedTextures() {
 		if d.FrameCount() <= 1 {
 			continue
 		}
+		// Registers the animated normal map alongside the animated albedo. A
+		// static texture needs nothing here either way: its <name>_normal.png
+		// is already on disk and gfx.LoadTexture picks it up with the albedo.
 		SyncAnimatedFrames(d, name)
 	}
 }
@@ -99,6 +102,7 @@ func RebuildAllTextures() []error {
 			continue
 		}
 		gfx.RegisterTexture(name)
+		SyncLiveNormalMap(d, name)
 		SyncAnimatedFrames(d, name)
 		flat := d.Flatten()
 		gfx.QueueTextureUpload(name, RgbaFromPaletted(flat))

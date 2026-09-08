@@ -31,12 +31,12 @@ var upward = map[string][]string{
 	// from a package that has never heard of a GPU. Metrics are data, so they
 	// sit with the data rather than arriving through a function variable.
 	"uifont": {"gfx", "world", "render", "editor", "app", "uiwin"},
-	"gfx":    {"world", "render", "editor", "app", "uiwin", "uifont", "ui", "uidraw"},
+	"gfx":    {"world", "render", "editor", "app", "uiwin", "uifont", "ui", "uidraw", "video"},
 	// ui is the .fui document, the anchor layout solve, hit testing and the
 	// screen stack, with no idea what a GPU or a level is. It is the same split
 	// particle makes and for the same reason: the UI editor's live preview and
 	// the running game must drive one solver, so it has to sit below both.
-	"ui": {"gfx", "uidraw", "world", "render", "collision", "script", "levelio", "editor", "app", "uiwin"},
+	"ui": {"gfx", "uidraw", "video", "world", "render", "collision", "script", "levelio", "editor", "app", "uiwin"},
 	// uidraw is the screen-space pass. Above gfx, below world: every entry point
 	// in internal/render takes a *world.Level, and a UI that needed a level
 	// could not draw a main menu before one had loaded, nor the loading screen
@@ -54,7 +54,15 @@ var upward = map[string][]string{
 	// four plain vectors that internal/app copies out of gfx.Cam once a
 	// frame, and keeping gfx out is what makes the spatial maths a pure
 	// function a test can call with no camera and no GL context.
-	"audio":     {"gfx", "world", "render", "collision", "script", "levelio", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
+	"audio": {"gfx", "world", "render", "collision", "script", "levelio", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
+	// video sits just above audio, and is otherwise held to audio's rules: a
+	// decoded frame is an image.RGBA and getting one onto a texture is
+	// somebody else's job, which is what keeps every decision in it testable
+	// with no GL context. It is allowed to reach audio, and only audio,
+	// because a video's soundtrack has to go through the one mixer with the
+	// one set of gain sliders — a cutscene that ignored the music slider
+	// would be a bug reported as "the settings do nothing".
+	"video":     {"gfx", "world", "render", "collision", "script", "levelio", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
 	"texture":   {"world", "render", "editor", "app", "uiwin", "textureui", "ui", "uidraw", "uifont"},
 	"detail":    {"render", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
 	"biome":     {"render", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},

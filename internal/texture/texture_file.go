@@ -3,16 +3,21 @@ package texture
 // texture_file.go — on-disk format for layered texture documents (.ftex) and
 // the global palette (palette.pal). Pure I/O + encoding; no GL calls.
 //
-// <exe>/textures/<name>.ftex — little-endian, version 2:
+// <exe>/textures/<name>.ftex — little-endian, version 3:
 //   0    [4]byte  magic "FTEX"
-//   4    uint16   version = 2
-//   6    uint16   flags (reserved, 0)
+//   4    uint16   version = 3
+//   6    uint16   flags — bit 0 (ftexFlagBump) = the document has a bump channel
 //   8    uint32   width   (1..1024)
 //   12   uint32   height  (1..1024)
 //   16   uint16   frameCount (1..32) — the animation stack; 1 means "not animated"
 //   18   [2]byte  padding
 //   20   [1024]   palette: 256 x RGBA8, the table this document was authored against
-//   1044 ...      frameCount frame blocks, each:
+//   1044 float32  bumpStrength (version 3 only)
+//   1048 ...      frameCount frame blocks, each:
+//                   one layer block: the frame's colour layers
+//                   one layer block: the frame's height layers — only when
+//                                    ftexFlagBump is set
+//                 where a layer block is:
 //                   uint8   layerCount (1..8)
 //                   [3]byte padding
 //                   ...     layerCount layers, bottom first:
@@ -21,13 +26,17 @@ package texture
 //                             uint8   visible
 //                             float32 opacity
 //                             uint32  compressedLen
-//                             bytes   zlib(palette indices, rows top-to-bottom, W*H bytes)
+//                             bytes   zlib(one byte per texel, rows top-to-bottom,
+//                                          W*H bytes — palette indices on a colour
+//                                          layer, heights on a height layer)
 //
-// Version 1 (no frameCount — offset 16 is a single implicit frame's
-// layerCount directly, same layer records starting at 1044) still reads:
-// ReadTexDoc parses it into a one-frame document. Nothing has ever written a
-// version-1 file with more than one frame, so there is no "upgrade" step
-// beyond the version number itself — the next save just writes version 2.
+// Version 2 is version 3 without the bumpStrength word and with only the
+// colour layer block per frame (so its frame blocks start at 1044). Version 1
+// has no frameCount either — offset 16 is a single implicit frame's
+// layerCount directly, with its layer records starting at 1044. Both still
+// read: ReadTexDoc parses them into a document with no bump channel. There is
+// no "upgrade" step beyond the version number itself — the next save writes
+// version 3.
 //
 // <exe>/textures/palette.pal — magic "FPAL", uint16 version, 256 x RGBA8.
 
@@ -47,6 +56,7 @@ import (
 	"strings"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"foundry/internal/texdoc"
 )
 
@@ -54,16 +64,35 @@ const (
 	ftexMagic    = "FTEX"
 	ftexVersion1 = uint16(1) // single implicit frame; still readable, no longer written
 	ftexVersion2 = uint16(2) // frameCount + repeated frame blocks
+	ftexVersion3 = uint16(3) // + bumpStrength and an optional per-frame height block
 	fpalMagic    = "FPAL"
 	fpalVersion  = uint16(1)
 
-	ftexHeaderLen = 4 + 2 + 2 + 4 + 4 + 2 + 2 + texdoc.TexPaletteSz*4 // 1044, both versions
+	// ftexFlagBump marks a version-3 file as carrying a bump channel: one
+	// extra layer block per frame, holding heights rather than palette
+	// indices. Clear on every file the earlier versions wrote, which is what
+	// makes the flag safe to read out of their reserved flags word.
+	ftexFlagBump = uint16(1 << 0)
+
+	ftexHeaderLen = 4 + 2 + 2 + 4 + 4 + 2 + 2 + texdoc.TexPaletteSz*4 // 1044, every version
+	// ftexV3BodyOff is where a version-3 file's first frame block starts: past
+	// the header and the bumpStrength word. Versions 1 and 2 have no such word
+	// and start their bodies at ftexHeaderLen.
+	ftexV3BodyOff = ftexHeaderLen + 4
 	fpalFileLen   = 4 + 2 + texdoc.TexPaletteSz*4
 )
 
 func palettePath() string           { return filepath.Join(fileutil.TexturesDir(), "palette.pal") }
 func FtexPath(name string) string   { return filepath.Join(fileutil.TexturesDir(), name+".ftex") }
 func texPNGPath(name string) string { return filepath.Join(fileutil.TexturesDir(), name+".png") }
+
+// texNormalPNGPath is where the normal map derived from a document's bump
+// channel lands: beside the albedo, under the name gfx resolves it by. The
+// engine never looks at the .ftex — it samples this PNG, exactly as it
+// samples <name>.png for the albedo.
+func texNormalPNGPath(name string) string {
+	return filepath.Join(fileutil.TexturesDir(), gfx.NormalMapName(name)+".png")
+}
 
 // ---------- palette ----------
 
@@ -169,8 +198,22 @@ func writeLayer(buf *bytes.Buffer, want int, layer texdoc.TexLayer) error {
 	return nil
 }
 
-// WriteTexDoc encodes d (every frame in its animation stack) in the .ftex
-// format and writes it to path. Always writes version 2.
+// writeLayerBlock appends one layer block: the count byte, its padding, and
+// every layer record. Shared by a frame's colour and height stacks, which are
+// the same shape on disk and differ only in what the bytes mean.
+func writeLayerBlock(buf *bytes.Buffer, want int, layers []texdoc.TexLayer) error {
+	buf.WriteByte(uint8(len(layers)))
+	buf.Write([]byte{0, 0, 0}) // padding
+	for _, layer := range layers {
+		if err := writeLayer(buf, want, layer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WriteTexDoc encodes d (every frame in its animation stack, both channels)
+// in the .ftex format and writes it to path. Always writes version 3.
 func WriteTexDoc(path string, d *texdoc.TexDoc) error {
 	if err := texdoc.ValidTexSize(d.W, d.H); err != nil {
 		return err
@@ -179,16 +222,25 @@ func WriteTexDoc(path string, d *texdoc.TexDoc) error {
 	if len(frames) < 1 || len(frames) > texdoc.TexMaxFrames {
 		return fmt.Errorf("frame count %d out of range [1,%d]", len(frames), texdoc.TexMaxFrames)
 	}
+	hasBump := d.HasBump()
 	for _, f := range frames {
 		if len(f.Layers) < 1 || len(f.Layers) > texdoc.TexMaxLayers {
 			return fmt.Errorf("layer count %d out of range [1,%d]", len(f.Layers), texdoc.TexMaxLayers)
 		}
+		if hasBump && (len(f.Bump) < 1 || len(f.Bump) > texdoc.TexMaxLayers) {
+			return fmt.Errorf("height layer count %d out of range [1,%d]", len(f.Bump), texdoc.TexMaxLayers)
+		}
+	}
+
+	flags := uint16(0)
+	if hasBump {
+		flags |= ftexFlagBump
 	}
 
 	var buf bytes.Buffer
 	buf.WriteString(ftexMagic)
-	writeU16(&buf, ftexVersion2)
-	writeU16(&buf, 0) // flags
+	writeU16(&buf, ftexVersion3)
+	writeU16(&buf, flags)
 	writeU32(&buf, uint32(d.W))
 	writeU32(&buf, uint32(d.H))
 	writeU16(&buf, uint16(len(frames)))
@@ -199,15 +251,18 @@ func WriteTexDoc(path string, d *texdoc.TexDoc) error {
 		buf.WriteByte(c.B)
 		buf.WriteByte(c.A)
 	}
+	writeF32(&buf, d.BumpStrength())
 
 	want := d.W * d.H
 	for _, f := range frames {
-		buf.WriteByte(uint8(len(f.Layers)))
-		buf.Write([]byte{0, 0, 0}) // padding
-		for _, layer := range f.Layers {
-			if err := writeLayer(&buf, want, layer); err != nil {
-				return err
-			}
+		if err := writeLayerBlock(&buf, want, f.Layers); err != nil {
+			return err
+		}
+		if !hasBump {
+			continue
+		}
+		if err := writeLayerBlock(&buf, want, f.Bump); err != nil {
+			return err
 		}
 	}
 
@@ -279,15 +334,15 @@ func readLayer(data []byte, pos, want, frameIdx, li int) (texdoc.TexLayer, int, 
 	return texdoc.TexLayer{Name: name, Visible: visible, Opacity: opacity, Blend: blend, Idx: idx}, pos, nil
 }
 
-// readFrame parses one frame block — a layerCount byte, 3 bytes padding,
+// readLayerBlock parses one layer block — a layerCount byte, 3 bytes padding,
 // then that many layer records — starting at pos.
-func readFrame(data []byte, pos, want, frameIdx int) (texdoc.TexFrame, int, error) {
+func readLayerBlock(data []byte, pos, want, frameIdx int) ([]texdoc.TexLayer, int, error) {
 	if pos+4 > len(data) {
-		return texdoc.TexFrame{}, 0, fmt.Errorf(".ftex: truncated at frame %d header", frameIdx)
+		return nil, 0, fmt.Errorf(".ftex: truncated at frame %d header", frameIdx)
 	}
 	layerCount := data[pos]
 	if layerCount == 0 || layerCount > texdoc.TexMaxLayers {
-		return texdoc.TexFrame{}, 0, fmt.Errorf(".ftex: frame %d layer count %d out of range [1,%d]", frameIdx, layerCount, texdoc.TexMaxLayers)
+		return nil, 0, fmt.Errorf(".ftex: frame %d layer count %d out of range [1,%d]", frameIdx, layerCount, texdoc.TexMaxLayers)
 	}
 	pos += 4 // layerCount + 3 bytes padding
 
@@ -295,12 +350,31 @@ func readFrame(data []byte, pos, want, frameIdx int) (texdoc.TexFrame, int, erro
 	for li := 0; li < int(layerCount); li++ {
 		layer, next, err := readLayer(data, pos, want, frameIdx, li)
 		if err != nil {
-			return texdoc.TexFrame{}, 0, err
+			return nil, 0, err
 		}
 		layers = append(layers, layer)
 		pos = next
 	}
-	return texdoc.TexFrame{Layers: layers, Active: 0}, pos, nil
+	return layers, pos, nil
+}
+
+// readFrame parses one frame block: the colour layer block, then the height
+// layer block when the file's flags say the document carries one.
+func readFrame(data []byte, pos, want, frameIdx int, hasBump bool) (texdoc.TexFrame, int, error) {
+	layers, pos, err := readLayerBlock(data, pos, want, frameIdx)
+	if err != nil {
+		return texdoc.TexFrame{}, 0, err
+	}
+	frame := texdoc.TexFrame{Layers: layers, Active: 0}
+	if hasBump {
+		bump, next, err := readLayerBlock(data, pos, want, frameIdx)
+		if err != nil {
+			return texdoc.TexFrame{}, 0, err
+		}
+		frame.Bump = bump
+		pos = next
+	}
+	return frame, pos, nil
 }
 
 func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
@@ -311,9 +385,11 @@ func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 		return nil, fmt.Errorf(".ftex: bad magic %q", data[0:4])
 	}
 	version := binary.LittleEndian.Uint16(data[4:6])
-	if version != ftexVersion1 && version != ftexVersion2 {
+	if version != ftexVersion1 && version != ftexVersion2 && version != ftexVersion3 {
 		return nil, fmt.Errorf(".ftex: unsupported version %d", version)
 	}
+	flags := binary.LittleEndian.Uint16(data[6:8])
+	hasBump := version == ftexVersion3 && flags&ftexFlagBump != 0
 	width := binary.LittleEndian.Uint32(data[8:12])
 	height := binary.LittleEndian.Uint32(data[12:16])
 	if width == 0 || height == 0 {
@@ -332,6 +408,7 @@ func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 
 	want := int(width) * int(height)
 	var frames []texdoc.TexFrame
+	var bumpStrength float32
 
 	if version == ftexVersion1 {
 		// No frameCount: offset 16 is the single implicit frame's layerCount
@@ -358,9 +435,16 @@ func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 			return nil, fmt.Errorf(".ftex: frame count %d out of range [1,%d]", frameCount, texdoc.TexMaxFrames)
 		}
 		pos := ftexHeaderLen
+		if version == ftexVersion3 {
+			if ftexV3BodyOff > len(data) {
+				return nil, fmt.Errorf(".ftex: truncated at bump strength")
+			}
+			bumpStrength = math.Float32frombits(binary.LittleEndian.Uint32(data[pos:ftexV3BodyOff]))
+			pos = ftexV3BodyOff
+		}
 		frames = make([]texdoc.TexFrame, 0, frameCount)
 		for fi := 0; fi < int(frameCount); fi++ {
-			frame, next, err := readFrame(data, pos, want, fi)
+			frame, next, err := readFrame(data, pos, want, fi, hasBump)
 			if err != nil {
 				return nil, err
 			}
@@ -369,13 +453,16 @@ func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 		}
 	}
 
-	return texdoc.NewTexDocFromFrames(int(width), int(height), pal, frames)
+	return texdoc.NewTexDocFromFrames(int(width), int(height), pal, frames, bumpStrength)
 }
 
-// SaveTexDoc writes both the .ftex source and the flattened PNG the engine
-// uses to <exe>/textures/<name>.{ftex,png}. It does not touch the GPU or the
-// texture registry — see RegisterTexture/QueueTextureUpload in go,
-// called by the editor immediately after a successful save.
+// SaveTexDoc writes the .ftex source, the flattened PNG the engine samples as
+// the albedo, and — when the document carries a bump channel — the normal map
+// derived from its height field, to
+// <exe>/textures/<name>.{ftex,png} and <exe>/textures/<name>_normal.png. It
+// does not touch the GPU or the texture registry — see
+// RegisterTexture/QueueTextureUpload in gfx, called by the editor immediately
+// after a successful save.
 func SaveTexDoc(d *texdoc.TexDoc, name string) error {
 	if err := texdoc.ValidTexSize(d.W, d.H); err != nil {
 		return err
@@ -400,8 +487,37 @@ func SaveTexDoc(d *texdoc.TexDoc, name string) error {
 		return err
 	}
 
+	if err := writeNormalMapPNG(d, name); err != nil {
+		return err
+	}
+
 	d.ClearDirty()
 	return nil
+}
+
+// writeNormalMapPNG writes (or removes) <name>_normal.png to match the
+// document's bump channel.
+//
+// The removal half matters as much as the writing half: the renderer decides
+// a texture is normal-mapped purely by whether that file loaded, so a
+// leftover map from a bump channel the artist has since deleted would keep
+// lighting the surface as if the relief were still there. Only the frame
+// being edited is written for an animated document — the whole stack goes to
+// the GPU through SyncAnimatedFrames, and the PNG is what a cold start loads
+// before any .ftex has been read.
+func writeNormalMapPNG(d *texdoc.TexDoc, name string) error {
+	path := texNormalPNGPath(name)
+	if !d.HasBump() {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale normal map: %w", err)
+		}
+		return nil
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, d.NormalMap()); err != nil {
+		return fmt.Errorf("encode normal map png: %w", err)
+	}
+	return fileutil.WriteFileAtomic(path, buf.Bytes())
 }
 
 // ImportPNG loads an existing PNG (or other image.Decode-able file) as a
@@ -433,12 +549,18 @@ func ImportPNG(path string) (*texdoc.TexDoc, error) {
 		}
 	}
 
-	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	return &texdoc.TexDoc{
-		Name: name, W: w, H: h, Pal: texdoc.GlobalPalette,
+	// Built through the constructor rather than as a struct literal: a TexDoc
+	// carries unexported frame/channel bookkeeping, and one assembled by hand
+	// has an empty animation stack that every whole-document operation
+	// (Flatten included) indexes into.
+	d, err := texdoc.NewTexDocFromFrames(w, h, texdoc.GlobalPalette, []texdoc.TexFrame{{
 		Layers: []texdoc.TexLayer{{Name: "Layer 1", Visible: true, Opacity: 1, Blend: texdoc.BlendNormal, Idx: idx}},
-		Active: 0,
-	}, nil
+	}}, 0)
+	if err != nil {
+		return nil, err
+	}
+	d.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	return d, nil
 }
 
 // ScanFtexFiles returns sorted logical names (without extension) of .ftex

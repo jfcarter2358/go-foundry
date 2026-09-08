@@ -11,8 +11,8 @@ package editor
 //
 // So each face is one group that folds away as a unit, holding everything about
 // that face and nothing about any other — the plain fields directly, and the
-// bigger subjects (Shape, Texture UV, Skirt, Detail, Scripting) as groups
-// within it.
+// bigger subjects (Shape, Texture UV, Underside/Top Side, Skirt, Detail,
+// Scripting) as groups within it.
 //
 // Both editors draw through here. The 2D panel used to carry its own copy of
 // all of this, and the copies had drifted: the map's edge block had no Pinned
@@ -38,6 +38,7 @@ type sectorFace struct {
 	kind        string // "floor" or "ceiling"
 	label       string // "Floor" or "Ceiling"
 	focus       string // the panelFocus* a click on this face asks the panel for
+	slab        *world.Slab
 	script      *world.ScriptData
 	enabled     *bool
 	hidden      *bool // nil for a ceiling, which has no such field
@@ -58,6 +59,7 @@ type sectorFace struct {
 func sectorFloorFace(f *world.Floor) sectorFace {
 	return sectorFace{
 		kind: "floor", label: "Floor", focus: panelFocusFloor,
+		slab:   &f.Slab,
 		script: &f.ScriptData, enabled: &f.Enabled, hidden: &f.Hidden,
 		height: &f.Height, texture: &f.Texture, blendTex: &f.BlendTexture,
 		blendMask: &f.BlendMask, doubleSided: &f.DoubleSided, alpha: &f.Alpha,
@@ -69,6 +71,7 @@ func sectorFloorFace(f *world.Floor) sectorFace {
 func sectorCeilingFace(c *world.Ceiling) sectorFace {
 	return sectorFace{
 		kind: "ceiling", label: "Ceiling", focus: panelFocusCeiling,
+		slab:   &c.Slab,
 		script: &c.ScriptData, enabled: &c.Enabled,
 		height: &c.Height, texture: &c.Texture, blendTex: &c.BlendTexture,
 		blendMask: &c.BlendMask, doubleSided: &c.DoubleSided, alpha: &c.Alpha,
@@ -99,7 +102,9 @@ func editorSectorSurfaceGroup(ch *world.Chunk, s *world.Sector, f sectorFace, id
 	id := f.kind + idSuffix
 	uvID := f.label + idSuffix
 
-	editorFocusOpen(f.focus)
+	// The slab's focus opens this group too: the Underside group lives inside
+	// it, and opening the inner one alone would leave it hidden.
+	editorFocusOpen(f.focus, slabPanelFocus(f.kind))
 	editorPropGroup(f.label+"##grp"+id, 0, func() {
 		editorFocusScroll(f.focus)
 
@@ -125,12 +130,19 @@ func editorSectorSurfaceGroup(ch *world.Chunk, s *world.Sector, f sectorFace, id
 		}
 		if changed {
 			_ = world.ReloadSector(ch, s)
+			// Gap walls span this surface's height and fall back to its
+			// texture, so they are as stale as the surface is — the same
+			// pairing the wall and portal groups below make. Without it,
+			// dragging a floor's Height left the riser into the next sector at
+			// the height it used to be.
+			ch.RebuildGaps()
 		}
 
 		editorSurfacePanel(ch, s, surfaceFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, f.kind))
 		if editorUVControls(uvID, f.uvOffset, f.uvScale, f.uvRotation) {
 			_ = world.ReloadSector(ch, s)
 		}
+		editorSlabPanel(ch, s, f.slab, f.kind, idSuffix)
 		if f.kind == "floor" {
 			editorSkirtPanel(ch, s)
 		}

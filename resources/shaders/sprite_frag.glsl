@@ -49,6 +49,16 @@ void main() {
                              biomeViewDepth(fragWorldPos), receiveShadows != 0);
     }
 
+    // Fog, before the blend-mode branch so every mode is fogged, but by the
+    // rule that mode needs: an additive sprite draws over a framebuffer that
+    // already holds the fog behind it, so it is swallowed by the fog rather
+    // than mixed toward it. See applyFogAdditive in fog.glsl.
+    if (blendMode == 2) {
+        rgb = applyFogAdditive(rgb, fragWorldPos);
+    } else {
+        rgb = applyFog(rgb, fragWorldPos);
+    }
+
     if (blendMode == 0) {
         // Cutout. Discard first so the depth buffer never records a hole, then
         // convert what survives into a coverage ramp one pixel wide. fwidth is

@@ -71,6 +71,12 @@ func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
+		if ch.FromEntity != "" {
+			// An entity definition's own geometry, materialised into this level
+			// when the entity was placed. It belongs to the definition and is
+			// rebuilt from it on every load — see Chunk.FromEntity.
+			continue
+		}
 		rc, err := chunkToRaw(ch)
 		if err != nil {
 			return world.RawLevel{}, fmt.Errorf("chunk %q: %w", ch.ID, err)
@@ -98,6 +104,10 @@ func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 		raw.Emitters = append(raw.Emitters, world.EmitterToRaw(&level.Emitters[i]))
 	}
 
+	for i := range level.Scenery {
+		raw.Scenery = append(raw.Scenery, world.SceneryToRaw(&level.Scenery[i]))
+	}
+
 	// One-shot sounds are skipped for the reason Emitter.OneShot is never
 	// serialized: a level file places lasting sounds, and the ones a script
 	// fired per impact are not level content.
@@ -108,6 +118,9 @@ func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 		raw.Sounds = append(raw.Sounds, world.SoundToRaw(&level.Sounds[i]))
 	}
 	raw.Music = world.MusicToRaw(level.Music)
+	raw.Sky = world.SkyToRaw(level.Sky)
+	raw.Fog = world.FogToRaw(level.Fog)
+	raw.Player = world.PlayerSettingsToRaw(level.Player)
 
 	raw.Scripts = append([]string(nil), level.Scripts...)
 	raw.UI = append([]string(nil), level.UI...)
@@ -141,6 +154,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 		Origin:        world.RawChunkOrigin{X: ch.Origin.X(), Y: ch.Origin.Y(), Z: ch.Origin.Z()},
 		Rotation:      ch.Rotation,
 		Scale:         ch.Scale,
+		Velocity:      world.RawVec3{X: ch.Velocity.X(), Y: ch.Velocity.Y(), Z: ch.Velocity.Z()},
 		Frame:         ch.FrameOwner,
 		Disabled:      ch.Disabled,
 		Layers:        chunkLayersToRaw(ch),
@@ -181,6 +195,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 				Openings:      saveOpenings(s.Floor.Openings),
 				Skirt:         s.Floor.Skirt,
 				SkirtTexture:  s.Floor.SkirtTexture,
+				Slab:          world.SlabToRaw(s.Floor.Slab),
 				UVOffset:      geom.Point{X: s.Floor.UVOffset.X(), Y: s.Floor.UVOffset.Y()},
 				UVScale:       geom.Point{X: s.Floor.UVScale.X(), Y: s.Floor.UVScale.Y()},
 				UVRotation:    s.Floor.UVRotation,
@@ -200,6 +215,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 				Alpha:         float32PtrIfNotOne(s.Ceiling.Alpha),
 				Mesh:          world.SurfaceMeshToRaw(&s.Ceiling.Mesh),
 				Openings:      saveOpenings(s.Ceiling.Openings),
+				Slab:          world.SlabToRaw(s.Ceiling.Slab),
 				UVOffset:      geom.Point{X: s.Ceiling.UVOffset.X(), Y: s.Ceiling.UVOffset.Y()},
 				UVScale:       geom.Point{X: s.Ceiling.UVScale.X(), Y: s.Ceiling.UVScale.Y()},
 				UVRotation:    s.Ceiling.UVRotation,
@@ -309,6 +325,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 				RockScale:    bs.Brush.RockScale,
 				SandHeight:   bs.Brush.SandHeight,
 				WaterDepth:   bs.Brush.WaterDepth,
+				HideLakebed:  bs.Brush.HideLakebed,
 
 				MossScatter:   bs.Brush.MossScatter,
 				MinSlopeAngle: bs.Brush.MinSlopeAngle,

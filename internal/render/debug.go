@@ -38,6 +38,9 @@ var DebugStats struct {
 	Particles   int
 	Sprites     int
 	SpriteDraws int
+	// Scenery is how many placed props survived culling this frame — the one
+	// number that says whether a brush-scattered field is costing anything.
+	Scenery int
 }
 
 // cpuTracker holds state for per-frame CPU usage estimation.

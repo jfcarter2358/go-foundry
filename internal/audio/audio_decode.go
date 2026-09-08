@@ -206,6 +206,30 @@ func (d *wavDecoder) ReadFrames(dst []float32) (int, error) {
 	return frames, nil
 }
 
+// DecodePCMSamples converts a block of little-endian PCM into interleaved
+// float32 in [-1,1], the form a Clip holds.
+//
+// Exported for internal/video, whose soundtrack arrives as a run of raw
+// WAVEFORMATEX bytes demuxed out of an AVI rather than as a file this package
+// can open. The alternative was a second copy of decodeSample living over
+// there, which is how two subtly different ideas of what 8-bit PCM means end
+// up in one program.
+//
+// Trailing bytes that do not make a whole sample are dropped: a truncated file
+// is playable up to the truncation, which is the rule the WAV reader follows.
+func DecodePCMSamples(b []byte, bits int, isFloat bool) []float32 {
+	bps := bits / 8
+	if bps <= 0 {
+		return nil
+	}
+	n := len(b) / bps
+	out := make([]float32, n)
+	for i := 0; i < n; i++ {
+		out[i] = decodeSample(b[i*bps:], bits, isFloat)
+	}
+	return out
+}
+
 // decodeSample converts one little-endian sample to [-1,1].
 func decodeSample(b []byte, bits int, isFloat bool) float32 {
 	if isFloat {

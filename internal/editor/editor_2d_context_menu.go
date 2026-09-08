@@ -41,6 +41,11 @@ var editor2DMenuPoint mgl32.Vec2
 // editor2DMenuPointIdx is the chunk point the menu was opened on, or -1.
 var editor2DMenuPointIdx = -1
 
+// editor2DMenuSectorIdx is the sector the menu was opened inside, or -1 — which
+// sector "Delete Sector" means. Recorded at the click for the same reason the
+// point is: by the time the menu draws, the cursor has moved.
+var editor2DMenuSectorIdx = -1
+
 // ---------- input glue ----------
 
 // editor2DContextPressed opens the menu at (mx, my).
@@ -60,6 +65,7 @@ func editor2DContextPressed(mx, my int32) {
 	editor2DMenuPoint = mgl32.Vec2{lx, lz}
 	editor2DMenuPointIdx = findChunkPointNear(ch, lx, lz,
 		chunkLocalSize(ch, screenToWorldSize(editor2DSelectRadius, editor2DOrtho())))
+	editor2DMenuSectorIdx = editor2DSectorAt(ch, lx, lz)
 
 	if !editor2DHasSelection() {
 		editor2DSelectAt(Editor.level, ch, wx, wz)
@@ -97,6 +103,7 @@ func editor2DContextMenuItems() []ctxMenuItem {
 		items = append(items, editor2DJoinMenuItems()...)
 		items = append(items, ctxMenuItem{Separator: true})
 		items = append(items, editor2DPointMenuItems(ch)...)
+		items = append(items, editor2DSectorMenuItems(ch)...)
 	}
 	items = append(items, ctxMenuItem{Separator: true})
 	items = append(items, editor2DSharedMenuItems()...)
@@ -259,6 +266,77 @@ func editor2DDeleteSelectedPoints() {
 	}
 	editor2DMenuPointIdx = -1
 	editorSetStatus("Deleted %d point(s)", len(sorted))
+}
+
+// ---------- sectors ----------
+
+// editor2DSectorMenuItems is the room the menu was opened inside. It exists
+// because the map had no way to delete a whole sector: the only one was to
+// select one of its wall edges and press Delete, which is not a gesture anyone
+// finds without being told it.
+//
+// Absent when the click landed on bare map with no sector selected — a menu
+// opened over nothing should not offer to delete something.
+func editor2DSectorMenuItems(ch *world.Chunk) []ctxMenuItem {
+	si := editor2DMenuSector(ch)
+	if si < 0 {
+		return nil
+	}
+	label := ch.Sectors[si].ID
+	if label == "" {
+		label = "Sector"
+	}
+	return []ctxMenuItem{
+		{Separator: true},
+		{Label: "Delete " + label, Do: func() { editor2DDeleteSector(ch, si) },
+			Tooltip: "Removes the whole sector. Its corners stay as free points,\n" +
+				"and portals into it become walls."},
+	}
+}
+
+// editor2DMenuSector is the sector the delete row acts on: the one the menu was
+// opened inside, falling back to the selection. The fallback is what makes the
+// row reachable for a sector picked from the Explorer, whose interior may well
+// be off screen.
+func editor2DMenuSector(ch *world.Chunk) int {
+	if editor2DMenuSectorIdx >= 0 && editor2DMenuSectorIdx < len(ch.Sectors) {
+		return editor2DMenuSectorIdx
+	}
+	if Editor.ActiveSectorIdx >= 0 && Editor.ActiveSectorIdx < len(ch.Sectors) {
+		return Editor.ActiveSectorIdx
+	}
+	return -1
+}
+
+// editor2DSectorAt is the editable-layer sector whose polygon contains
+// chunk-local (lx,lz), or -1.
+//
+// Not editor2DFaceAt: that one answers with a face and prefers the edge lines
+// drawn across a sector, because a line is the more specific click target.
+// "Which room is the cursor in" is the plainer question, and it is the one the
+// delete row asks.
+func editor2DSectorAt(ch *world.Chunk, lx, lz float32) int {
+	xz := mgl32.Vec2{lx, lz}
+	for si := range ch.Sectors {
+		s := &ch.Sectors[si]
+		if layerEditable(s.Layer) && world.PointInSector(ch, s, xz) {
+			return si
+		}
+	}
+	return -1
+}
+
+// editor2DDeleteSector removes one sector through the Explorer's own path, so
+// the two menus leave the level in the same state.
+func editor2DDeleteSector(ch *world.Chunk, si int) {
+	if si < 0 || si >= len(ch.Sectors) {
+		return
+	}
+	name := ch.Sectors[si].ID
+	EditorPushUndo()
+	deleteSector(ch, Editor.ActiveChunkIdx, si)
+	editor2DMenuSectorIdx = -1
+	editorSetStatus("Deleted sector %s", name)
 }
 
 // ---------- shared ----------

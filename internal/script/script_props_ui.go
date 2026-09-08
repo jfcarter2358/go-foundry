@@ -167,9 +167,94 @@ func widgetProps() map[string]propAccess {
 			Tex: true,
 			Doc: "texture name, or empty for a flat colour",
 		},
+		"video": {
+			Get: get(func(n *ui.Node) flang.Value { return flang.StrVal(n.Video.Source) }),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				s, ok := toStr(v)
+				if !ok {
+					return propErr("video", "str", v)
+				}
+				// Pointing a widget at a different clip rewinds it. The
+				// alternative — keeping the playhead across a change of film —
+				// is not a thing anyone means, and it lands on whatever frame
+				// the new clip happens to have at that second.
+				n.Video.Source = s
+				n.SeekVideo(0)
+				return nil
+			}),
+			Doc: "the clip a video widget plays, named as it is under video/",
+		},
+		"playing": {
+			Get: get(func(n *ui.Node) flang.Value { return flang.BoolVal(n.VideoPlaying()) }),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("playing", "bool", v)
+				}
+				n.SetVideoPlaying(b)
+				return nil
+			}),
+			Doc: "a video's transport. Writing true to a finished clip starts it again",
+		},
+		"time": {
+			Get: get(func(n *ui.Node) flang.Value { return flang.FloatVal(float64(n.VideoTime())) }),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("time", "float", v)
+				}
+				n.SeekVideo(f)
+				return nil
+			}),
+			Doc: "how far into a video playback has got, in seconds. Writing it seeks",
+		},
+		"duration": {
+			Get: get(func(n *ui.Node) flang.Value { return flang.FloatVal(float64(n.VideoDuration())) }),
+			Doc: "how long a video runs, in seconds; zero until it has been opened",
+		},
+		"loop": {
+			Get: get(func(n *ui.Node) flang.Value { return flang.BoolVal(n.Video.Loop) }),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("loop", "bool", v)
+				}
+				n.Video.Loop = b
+				return nil
+			}),
+			Doc: "whether a video starts again when it reaches the end",
+		},
+		"muted": {
+			Get: get(func(n *ui.Node) flang.Value { return flang.BoolVal(n.Video.Muted) }),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("muted", "bool", v)
+				}
+				n.Video.Muted = b
+				return nil
+			}),
+			Doc: "silences a video's soundtrack without stopping it",
+		},
+		"volume": {
+			Get: get(func(n *ui.Node) flang.Value { return flang.FloatVal(float64(n.Video.Volume)) }),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("volume", "float", v)
+				}
+				// Named volume rather than gain, unlike everything in
+				// internal/audio: this is the widget's own level, the thing a
+				// player would call a volume, and it is multiplied by the music
+				// slider rather than replacing it.
+				n.Video.Volume = clamp01f(f)
+				return nil
+			}),
+			Doc: "a video's own level from 0 to 1, on top of the music slider",
+		},
 		"kind": {
 			Get: get(func(n *ui.Node) flang.Value { return flang.AtomVal(ui.KindName(n.Kind)) }),
-			Doc: "panel, image, text, button, bar, slider, toggle, input or include",
+			Doc: "panel, image, video, text, button, bar, slider, toggle, input or include",
 		},
 		"screen": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {

@@ -70,6 +70,11 @@ void main() {
 
     vec3 lighting = biomeLighting(vWorldPos, n, vViewDepth, receiveShadows != 0);
     vec3 color = tc.rgb * clamp(lighting, 0.0, 1.0);
+    // The same fog the structural floor under this patch takes — see fog.glsl.
+    // It has to be the same call, not a matching one: the patch INTERSECTS
+    // that floor, so anywhere both are visible a difference in fade shows up
+    // as two differently-distant floors.
+    color = applyFog(color, vWorldPos);
     // Alpha carries the slope-cutoff coverage, not the texture's own — the
     // patch is an opaque surface in the opaque pass, so alpha is read as a
     // coverage mask (or ignored entirely when AA is off), never as blending.

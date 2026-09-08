@@ -4,7 +4,7 @@ package flang
 //
 // Two halves. The pure builtins — maths, strings, lists, vectors — are
 // implemented here and need no world, which is what lets them be tested without
-// one. The world verbs — move_to, play_anim, spawn — are forwarded to the host,
+// one. The world verbs — play_anim, spawn, destroy — are forwarded to the host,
 // because what they mean is the engine's business and not the language's.
 //
 // The table is a map rather than a switch for the same reason the property
@@ -29,10 +29,11 @@ type builtinFn func(in *Interp, args []Value, pos Pos) (Value, error)
 // language knows the names exist — a missing implementation should say "this
 // engine does not provide play_anim", not "no function named play_anim".
 var worldVerbs = []string{
-	"player", "find", "move_to", "set_velocity",
-	"play_anim", "stop_anim", "set_texture", "spawn", "destroy", "after", "time",
-	"mount", "dismount",
+	"player", "find",
+	"play_anim", "stop_anim", "spawn", "destroy", "time",
+	"mount", "dismount", "ease_sky",
 	"emit", "stop_emit", "burst", "spawn_effect",
+	"hitscan",
 	"play", "stop", "play_sound", "play_sound_at", "play_music", "stop_music",
 	"attach", "detach",
 	"show_screen", "hide_screen", "screen", "widget", "focus", "load_level",
@@ -74,6 +75,39 @@ func init() {
 				return nil, err
 			}
 			return FloatVal(math.Atan2(y, x)), nil
+		},
+		"random": func(in *Interp, args []Value, pos Pos) (Value, error) {
+			if err := wantArgs(in, "random", args, 0, pos); err != nil {
+				return nil, err
+			}
+			return FloatVal(in.randomUnit()), nil
+		},
+		// random_range keeps the type it was given, the way min, max and clamp
+		// do: two ints are a die roll and want an int back, and a float bound
+		// anywhere means the answer is continuous. Both ends are included, so
+		// random_range(1, 6) is the six faces and not five of them.
+		"random_range": func(in *Interp, args []Value, pos Pos) (Value, error) {
+			if err := wantArgs(in, "random_range", args, 2, pos); err != nil {
+				return nil, err
+			}
+			loI, loInt := args[0].(IntVal)
+			hiI, hiInt := args[1].(IntVal)
+			if loInt && hiInt {
+				if hiI <= loI {
+					return loI, nil
+				}
+				return IntVal(in.randomIntBetween(int64(loI), int64(hiI))), nil
+			}
+			lo, hi, err := two(in, "random_range", args, pos)
+			if err != nil {
+				return nil, err
+			}
+			// An inverted or empty range is the author who typed one number
+			// into both places, not an error worth stopping a frame for.
+			if hi <= lo {
+				return FloatVal(lo), nil
+			}
+			return FloatVal(lo + (hi-lo)*in.randomUnit()), nil
 		},
 		"min": minmax("min", false),
 		"max": minmax("max", true),
@@ -420,7 +454,18 @@ func init() {
 		},
 	}
 
-	// The world verbs all forward to the host, so they share one body.
+	// `after` is the one builtin that cannot be called. It is a send —
+	// `@self <- after(500, :open_done:)` — and the parser takes that form apart
+	// before anything else sees it, so a surviving call is one written without
+	// a target. It stays in the table so that the name is known: the reference
+	// panel and completion list read this map, and "did you mean after?" is a
+	// better answer than "nothing defines a function called after".
+	builtins["after"] = func(in *Interp, args []Value, pos Pos) (Value, error) {
+		return nil, in.errorf(pos,
+			"after schedules a message and so has to be sent to whoever should receive it: `@self <- after(500, :open_done:)`")
+	}
+
+	// The remaining world verbs all forward to the host, so they share one body.
 	for _, name := range worldVerbs {
 		verb := name
 		builtins[verb] = func(in *Interp, args []Value, pos Pos) (Value, error) {

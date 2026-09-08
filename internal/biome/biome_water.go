@@ -90,14 +90,25 @@ func syncChunkWaterSurfaces(level *world.Level, ch *world.Chunk) {
 			idx = len(ch.WaterSurfaces) - 1
 		}
 		w := &ch.WaterSurfaces[idx]
-		if isNew || s.GroundDirty || w.Geometry.Vao == 0 {
+		switch {
+		case isNew || s.GroundDirty || w.Geometry.Vao == 0:
 			rebuildBiomeWaterSurface(level, ch, s, w)
 			// Fold the new/changed plane into the chunk's cull bounds right
 			// away — outside the editor nothing else recomputes them
 			// per-frame (see main.go), and a lake at a chunk's edge could
 			// otherwise sit outside stale bounds and never draw.
 			ch.RecomputeBounds()
+		case s.WaterLevelDirty:
+			// Depth only: slide the plane, keep the triangles. See
+			// BiomeSector.WaterLevelDirty — this is the path a gizmo drag and
+			// a script-driven flood take, once per frame each.
+			positionBiomeWaterSurface(level, ch, s, w)
+			ch.RecomputeBounds()
 		}
+		// Cleared whichever branch ran, including the full rebuild: it
+		// repositions too, so a level change coinciding with a reshape is
+		// already accounted for.
+		s.WaterLevelDirty = false
 	}
 }
 
@@ -150,27 +161,44 @@ const biomeWaterTexture = "water"
 // biomeWaterAlpha is how much of the lakebed shows through the surface.
 const biomeWaterAlpha = float32(0.75)
 
+// positionBiomeWaterSurface writes w's Position and cull half-extents from
+// sector s, and returns the polygon centroid the caller meshes against.
+//
+// This is the whole of what a depth change does, which is why it is separable
+// from the rebuild around it: the mesh is generated flat at local y=0 around
+// the centroid (BuildBiomeWaterMesh), so raising or lowering the surface only
+// moves the point it is drawn at.
+func positionBiomeWaterSurface(level *world.Level, owner *world.Chunk, s *world.BiomeSector, w *world.WaterSurface) mgl32.Vec2 {
+	centroid, floorY := BiomeWaterCentroidAndFloor(level, owner, s)
+	depth := world.ResolvedWaterDepth(s.Brush.WaterDepth)
+
+	w.Position = mgl32.Vec3{centroid.X(), floorY - depth, centroid.Y()}
+	// Kept in step for the record it is meant to be — nothing transforms by it
+	// (see gfx.Geometry.Position), but a stale one would misreport where these
+	// vertices were built.
+	w.Geometry.Position = w.Position
+
+	min, max := s.Bounds()
+	w.BoundHalfX = (max.X()-min.X())/2 + 1
+	// The box has to reach back to the lakebed the plane was offset from, and
+	// depth is signed (negative lifts the surface above that floor), so it is
+	// the MAGNITUDE of the offset that sizes the box either way.
+	w.BoundHalfY = absF32(depth) + 0.5
+	w.BoundHalfZ = (max.Y()-min.Y())/2 + 1
+	return centroid
+}
+
 // rebuildBiomeWaterSurface (re)generates w's geometry and water params from
 // sector s, in place.
 func rebuildBiomeWaterSurface(level *world.Level, owner *world.Chunk, s *world.BiomeSector, w *world.WaterSurface) {
-	centroid, floorY := BiomeWaterCentroidAndFloor(level, owner, s)
-	depth := s.Brush.WaterDepth
-	if depth <= 0 {
-		depth = world.DefaultWaterDepth
-	}
+	centroid := positionBiomeWaterSurface(level, owner, s, w)
 	verts, indices := BuildBiomeWaterMesh(s, centroid)
 
-	w.Position = mgl32.Vec3{centroid.X(), floorY - depth, centroid.Y()}
 	w.Alpha = biomeWaterAlpha
 	w.Water = s.Brush.Water
 	if !w.Water.Enabled {
 		w.Water = gfx.DefaultWaterParams()
 	}
-
-	min, max := s.Bounds()
-	w.BoundHalfX = (max.X()-min.X())/2 + 1
-	w.BoundHalfY = depth + 0.5
-	w.BoundHalfZ = (max.Y()-min.Y())/2 + 1
 
 	w.Geometry.Delete()
 	_ = gfx.EnsureTextureLoaded(biomeWaterTexture)
@@ -182,4 +210,12 @@ func rebuildBiomeWaterSurface(level *world.Level, owner *world.Chunk, s *world.B
 	_ = w.Geometry.Load(verts, indices, biomeWaterTexture, w.Position)
 	w.Geometry.Alpha = w.Alpha
 	w.Geometry.Water = w.Water
+}
+
+// absF32 is math.Abs without the float64 round trip.
+func absF32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

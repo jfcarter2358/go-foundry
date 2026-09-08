@@ -180,6 +180,11 @@ func (h *levelHost) SetProp(r flang.RefVal, name string, v flang.Value) error {
 		// with the main context current.
 		h.rt.markGeometryDirty(r)
 	}
+	if acc.Warn != nil {
+		if why := acc.Warn(h.cache(), r); why != "" {
+			h.rt.warnAt(flang.Pos{}, "writing %s.prop.%s did nothing: %s", r, name, why)
+		}
+	}
 	return nil
 }
 
@@ -292,6 +297,38 @@ func (h *levelHost) Member(r flang.RefVal, name string) (flang.Value, bool) {
 			return flang.RefVal{Kind: flang.RefSector, A: r.A, B: r.B}, true
 		}
 
+	case flang.RefEntity:
+		e := h.entityFor(r)
+		if e == nil {
+			return nil, false
+		}
+		switch name {
+		case "model":
+			// The pending half of `@guard.model.<name>`, the same shape
+			// `@sec.edge.<id>` uses: the accessor word is this step and the
+			// attachment name is the next.
+			return flang.RefVal{Kind: flang.RefModel, A: r.A}, true
+		case "models":
+			elems := make([]flang.Value, 0, len(e.Models))
+			for i := range e.Models {
+				elems = append(elems, flang.RefVal{Kind: flang.RefModel, A: r.A, B: e.Models[i].Name})
+			}
+			return flang.NewList(elems...), true
+		}
+
+	case flang.RefModel:
+		// A model ref with no name is that pending half; this step is the name.
+		if r.B == "" {
+			e := h.entityFor(flang.RefVal{Kind: flang.RefEntity, A: r.A})
+			if e == nil || e.Model(name) == nil {
+				return nil, false
+			}
+			return flang.RefVal{Kind: flang.RefModel, A: r.A, B: name}, true
+		}
+		if name == "entity" {
+			return flang.RefVal{Kind: flang.RefEntity, A: r.A}, true
+		}
+
 	case flang.RefLevel:
 		switch name {
 		case "entities":
@@ -326,6 +363,17 @@ func (h *levelHost) Post(to flang.RefVal, atom string, args []flang.Value, pos f
 		return fmt.Errorf("no script runtime")
 	}
 	return h.rt.post(to, atom, args, pos)
+}
+
+// PostAfter parks the message on the timer queue instead of the message queue.
+// The ref is kept rather than resolved: the object may be destroyed before the
+// timer comes due, and a message to something that has gone is dropped.
+func (h *levelHost) PostAfter(to flang.RefVal, atom string, args []flang.Value, delayMS float64, pos flang.Pos) error {
+	if h.rt == nil {
+		return fmt.Errorf("no script runtime")
+	}
+	scriptAddTimer(delayMS, to, atom, args, pos)
+	return nil
 }
 
 func (h *levelHost) Action(name string, args []flang.Value, pos flang.Pos) (flang.Value, bool, error) {

@@ -28,6 +28,7 @@ import (
 const (
 	gizmoKindNone     = ""
 	gizmoKindVertices = "vertices"
+	gizmoKindFace     = "face"
 	gizmoKindSpawn    = "spawn"
 	gizmoKindChunk    = "chunk"
 	gizmoKindEntity   = "entity"
@@ -35,7 +36,9 @@ const (
 	gizmoKindSprite   = "sprite"
 	gizmoKindEmitter  = "emitter"
 	gizmoKindSound    = "sound"
+	gizmoKindScenery  = "scenery"
 	gizmoKindLight    = "light"
+	gizmoKindWater    = "water"
 )
 
 const (
@@ -69,6 +72,9 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindVertices:
 		return selectedVerticesCenter()
 
+	case gizmoKindFace:
+		return selectedFacesCenter()
+
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {
 			return s.Position, true
@@ -82,6 +88,11 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindVolume:
 		if v := activeGizmoVolume(); v != nil {
 			return v.Position, true
+		}
+
+	case gizmoKindScenery:
+		if sc := activeGizmoScenery(); sc != nil {
+			return sc.Position, true
 		}
 
 	case gizmoKindEmitter:
@@ -109,6 +120,14 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindLight:
 		if pl := activeGizmoPointLight(); pl != nil {
 			return pl.Position, true
+		}
+
+	case gizmoKindWater:
+		if ch, _, w := activeGizmoWater(); w != nil {
+			// The surface's own Position, which is chunk-local like the sector
+			// it was derived from — carried out to world space, the same way
+			// editorOutlineWaterSurface draws the polygon around it.
+			return ch.LocalToWorld(w.Position), true
 		}
 
 	case gizmoKindChunk:
@@ -181,9 +200,13 @@ func pickTranslateAxis(mx, my int32) int {
 	armLen := gizmoArmLength(origin)
 	cursor := mgl32.Vec2{float32(mx), float32(my)}
 
+	yOnly := gizmoWaterMovesYOnly()
 	best := -1
 	bestD := gizmoPickPx
 	for i, axis := range gizmoAxes {
+		if yOnly && i != 1 {
+			continue
+		}
 		tipScreen, ok := projectToScreen(projView, origin.Add(axis.Mul(armLen)))
 		if !ok {
 			continue
@@ -203,7 +226,10 @@ func pickTranslateAxis(mx, my int32) int {
 // they must not be clickable either.
 func gizmoSuppressed() bool {
 	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode ||
-		Editor.VolumePlacementMode || Editor.SurfaceEditing
+		Editor.VolumePlacementMode || Editor.SurfaceEditing ||
+		// The brush too: its arms would sit over the ghost and swallow the
+		// click that was meant to stamp one.
+		Editor.BrushActive
 }
 
 // translateGizmoMouseDown starts an axis drag if the click grabbed an arm.
@@ -249,12 +275,17 @@ func captureGizmoDragStart() bool {
 	Editor.GizmoDragOffsets = nil
 
 	switch gizmoEffectiveKind() {
-	case gizmoKindVertices:
+	case gizmoKindVertices, gizmoKindFace:
+		// One case for both: a face drag is a drag of the handles the face is
+		// built from (editor_face_gizmo.go), and gizmoVertexSels is what says
+		// which those are. The snapshot below is parallel to that list, so
+		// every drag indexes into it the same way.
 		lvl := Editor.level
-		if lvl == nil || len(Editor.SelectedVertices) == 0 {
+		sels := gizmoVertexSels()
+		if lvl == nil || len(sels) == 0 {
 			return false
 		}
-		for _, sel := range Editor.SelectedVertices {
+		for _, sel := range sels {
 			pt := mgl32.Vec2{}
 			off := float32(0)
 			if sel.chunkIdx >= 0 && sel.chunkIdx < len(lvl.Chunks) {
@@ -342,6 +373,20 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindScenery:
+		sc := activeGizmoScenery()
+		if sc == nil {
+			return false
+		}
+		// All three, as an entity does: a prop's scale is a genuine per-axis
+		// factor on its model, so the scale gizmo drives it directly rather
+		// than standing in for extents the way a volume's does.
+		Editor.GizmoDragStartPos = sc.Position
+		Editor.GizmoDragStartRot = sc.Rotation
+		Editor.GizmoDragStartScale = sc.EffectiveScale()
+		EditorPushUndo()
+		return true
+
 	case gizmoKindEmitter:
 		em := activeGizmoEmitter()
 		if em == nil {
@@ -365,6 +410,20 @@ func captureGizmoDragStart() bool {
 		// orientation to rotate and no size the scale gizmo could act on, so
 		// the rotate and scale tools simply do not match this kind.
 		Editor.GizmoDragStartPos = pl.Position
+		EditorPushUndo()
+		return true
+
+	case gizmoKindWater:
+		ch, _, w := activeGizmoWater()
+		if w == nil {
+			return false
+		}
+		// Position only, and only its Y will move: a water plane's XZ is the
+		// centroid of the polygon that was painted, and its shape is that
+		// polygon — neither is something a gizmo could rewrite without editing
+		// the polygon itself, which is the map layer's job. Rotate and scale
+		// have no branch for this kind at all, so they simply show nothing.
+		Editor.GizmoDragStartPos = ch.LocalToWorld(w.Position)
 		EditorPushUndo()
 		return true
 
@@ -421,7 +480,7 @@ func translateGizmoMouseMove(mx, my int32) {
 	}
 
 	switch gizmoEffectiveKind() {
-	case gizmoKindVertices:
+	case gizmoKindVertices, gizmoKindFace:
 		dragVerticesAlongAxis(axis, delta)
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {
@@ -436,6 +495,12 @@ func translateGizmoMouseMove(mx, my int32) {
 			// No cage rebuild: it is built in volume-local space, so moving one
 			// only changes the matrix it is drawn with.
 			v.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		}
+	case gizmoKindScenery:
+		if sc := activeGizmoScenery(); sc != nil {
+			// Nothing to rebuild: the mesh is model-space and the draw reads
+			// the transform out of the level each frame.
+			sc.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindEmitter:
 		if em := activeGizmoEmitter(); em != nil {
@@ -459,6 +524,12 @@ func translateGizmoMouseMove(mx, my int32) {
 			// left behind, which is the one thing you are watching while you
 			// move it.
 			world.UploadLights(Editor.level.Lights)
+		}
+	case gizmoKindWater:
+		// Only the Y arm is ever offered (gizmoWaterMovesYOnly), so a drag can
+		// only be a height change.
+		if axis == 1 {
+			dragWaterLevel(delta)
 		}
 	case gizmoKindChunk:
 		if ch := activeGizmoChunk(); ch != nil {
@@ -504,15 +575,26 @@ func sectorOf(sel vertexSel) (*world.Chunk, *world.Sector) {
 func setSelectedVertexPoints(fn func(i int, sel vertexSel, pt mgl32.Vec2) mgl32.Vec2) {
 	touched := map[[2]int]struct{}{}
 	moves := map[int][]biome.PointMove{}
-	for i, sel := range Editor.SelectedVertices {
+	for i, sel := range gizmoVertexSels() {
 		ch, _ := sectorOf(sel)
 		if ch == nil || sel.pointIdx < 0 || sel.pointIdx >= len(ch.Points) {
+			continue
+		}
+		// A chunk point named twice — a corner whose floor and ceiling handles
+		// are both in the drag, or two faces meeting there — is written once.
+		// Every drag applies an absolute value from its own mouse-down
+		// snapshot, so the second write would land on the same coordinate
+		// anyway; what it would not do twice harmlessly is record a second
+		// PointMove, which carries the biome layer riding that point along at
+		// double the distance.
+		key := [2]int{sel.chunkIdx, sel.pointIdx}
+		if _, done := touched[key]; done {
 			continue
 		}
 		was := ch.Points[sel.pointIdx]
 		ch.Points[sel.pointIdx] = fn(i, sel, was)
 		moves[sel.chunkIdx] = append(moves[sel.chunkIdx], biome.PointMove{PointIdx: sel.pointIdx, From: was})
-		touched[[2]int{sel.chunkIdx, sel.pointIdx}] = struct{}{}
+		touched[key] = struct{}{}
 	}
 	lvl := Editor.level
 	// Every point of this drag at once, so an edge drag warps its sector in one
@@ -534,7 +616,7 @@ func setSelectedVertexPoints(fn func(i int, sel vertexSel, pt mgl32.Vec2) mgl32.
 // selected vertex through fn, then reloads the sectors that changed.
 func setSelectedVertexOffsets(fn func(i int, sel vertexSel, cur float32) float32) {
 	touched := map[[2]int]struct{}{}
-	for i, sel := range Editor.SelectedVertices {
+	for i, sel := range gizmoVertexSels() {
 		_, s := sectorOf(sel)
 		if s == nil {
 			continue
@@ -677,7 +759,11 @@ func renderTranslateGizmo(mx, my int32) {
 
 	armLen := gizmoArmLength(origin)
 	yellow := mgl32.Vec3{1, 1, 0}
+	yOnly := gizmoWaterMovesYOnly()
 	for i, axis := range gizmoAxes {
+		if yOnly && i != 1 {
+			continue
+		}
 		col := gizmoAxisColors[i]
 		if i == hover {
 			col = yellow
@@ -698,7 +784,9 @@ func renderTranslateGizmo(mx, my int32) {
 //
 // Scale acts only on things with a size of their own. Rotate additionally acts
 // on anything with a facing to rewrite — an entity, a volume, the spawn marker.
-// A chunk has neither, so move is the only tool that means anything for it.
+// A chunk has neither, so move is the only tool that means anything for it —
+// and so does a water plane, whose "move" is one arm writing back the depth
+// its owning sector holds (editor_water.go).
 
 // editorGizmoDragging reports whether a drag is in progress. A drag owns the
 // mouse until release.

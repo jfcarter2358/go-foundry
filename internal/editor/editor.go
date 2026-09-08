@@ -255,6 +255,30 @@ type EditorState struct {
 	// falls back to world.DefaultSpriteTexture.
 	NewSpriteTexture string
 
+	// --- Scenery and the brush (editor_scenery.go) ---
+	// ActiveSceneryIdx indexes level.Scenery; -1 = none selected. An index for
+	// the reason ActiveEntityIdx is one: undo replaces the level wholesale.
+	ActiveSceneryIdx int
+	// BrushActive is true while the scenery brush is armed. Unlike every
+	// *PlacementMode above it survives the click that uses it — placing props
+	// is a repeated action, and re-arming per rock is the workflow the brush
+	// exists to replace.
+	BrushActive bool
+	// BrushModel is the mesh the brush stamps, install-relative.
+	BrushModel string
+	// BrushRotation and BrushScale are what the ghost is turned and sized by,
+	// and what each stamp inherits. Scale is uniform: a prop scattered along a
+	// path wants to be bigger or smaller, not squashed, and per-axis scale is
+	// still there in the selected prop's own panel.
+	BrushRotation mgl32.Vec3
+	BrushScale    float32
+	// BrushRandomYaw gives every stamp its own facing — the difference between
+	// forty rocks and one rock forty times.
+	BrushRandomYaw bool
+	// BrushSolid is the collision flag a stamp takes. On by default, since
+	// scenery mostly exists to be walked around.
+	BrushSolid bool
+
 	// ActiveEmitterIdx indexes level.Emitters; -1 = none selected.
 	ActiveEmitterIdx int
 	// EmitterPlacementMode is true when the next left-click drops an emitter.
@@ -266,6 +290,12 @@ type EditorState struct {
 	// ParticleFileNames caches the .fpar list while a picker is open; nil
 	// forces a rescan, the same arrangement modelFileCombo uses.
 	ParticleFileNames []string
+	// SkyBaseName is the text in the sky panel's "fill from base name" popup —
+	// editor scratch, not level content: what it produces is six texture names
+	// written into the level, and the base itself is never saved. See
+	// editor_environment_panel.go.
+	SkyBaseName string
+
 	// ActiveSoundIdx indexes level.Sounds; -1 = none selected.
 	ActiveSoundIdx int
 	// SoundPlacementMode is true when the next left-click drops a sound.
@@ -277,6 +307,9 @@ type EditorState struct {
 	// SoundFileNames caches the sounds/ list while a picker is open; nil
 	// forces a rescan, so a clip added while the editor is open shows up.
 	SoundFileNames []string
+
+	// VideoFileNames does the same for video/, on the same terms.
+	VideoFileNames []string
 	// ShowSoundRanges draws the selected sound's reference and maximum
 	// distances. On by default: the two distances are the whole of how a
 	// positional sound is authored and they are invisible otherwise.
@@ -447,6 +480,11 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.ActiveSoundIdx = -1
 	Editor.SoundPlacementMode = false
 	Editor.ShowSoundRanges = true
+	Editor.ActiveSceneryIdx = -1
+	editorDisarmBrush()
+	Editor.BrushScale = 1
+	Editor.BrushSolid = true
+	Editor.BrushRotation = mgl32.Vec3{}
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1
@@ -478,9 +516,12 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 
 	imguibackend.ImGuiInit()
 	gizmo.GizmoInit()
-	render.GrassInit()
-	render.DetailInit()
-	render.SpriteInit()
+	// The world's render passes are NOT stood up here. They draw level content,
+	// so they belong to the engine's startup and are initialised by
+	// render.InitWorldPasses (internal/app) in both builds — calling them from
+	// here is what left a `-tags release` game with no scatter, detail, sprites
+	// or particles at all. Only authoring aids, like the gizmo above, belong in
+	// this function.
 
 	// Biome sector layer defaults
 	Editor.BiomeLayerActive = false
@@ -693,6 +734,15 @@ func EditorHandleEvent(event sdl.Event) bool {
 					return true
 				}
 			}
+		}
+
+		// The brush owns its keys while it is armed, ahead of everything below:
+		// [ and ] turn the ghost, - and = resize it, Escape puts it away. None
+		// of them is bound elsewhere in this editor, so nothing loses a
+		// shortcut to a tool that is only sometimes on.
+		if !imgui.CurrentIO().WantCaptureKeyboard() &&
+			editorBrushHandleKey(t.Keysym.Scancode, sdl.GetModState()&sdl.KMOD_SHIFT != 0) {
+			return true
 		}
 
 		switch t.Keysym.Scancode {
@@ -1002,6 +1052,12 @@ func EditorDeleteSelected() {
 		return
 	}
 
+	// Scenery deletion
+	if activeScenery() != nil {
+		deleteActiveScenery()
+		return
+	}
+
 	// Emitter deletion
 	if activeEmitter() != nil {
 		deleteActiveEmitter()
@@ -1064,6 +1120,8 @@ func EditorLoadLevel(path string) error {
 	Editor.ActiveSoundIdx = -1
 	Editor.SoundPlacementMode = false
 	Editor.ShowSoundRanges = true
+	Editor.ActiveSceneryIdx = -1
+	editorDisarmBrush()
 	Editor.DragVertexSI = -1
 	Editor.DragVertexVI = -1
 	Editor.ActiveVertexSI = -1

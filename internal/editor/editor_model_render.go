@@ -29,8 +29,21 @@ import (
 )
 
 // modelProgram is the editor's own shader (model_vert/frag.glsl). Programs are
-// shared between contexts, so this is compiled once and reused.
+// shared between contexts, so this is compiled once and reused — by the model
+// editor's window and by the entity editor's, which previews an entity's
+// attachments under the same headlight.
 var modelProgram uint32
+
+// modelSkinUniforms caches modelProgram's `skinned`/`bones` locations.
+//
+// The program carries the shared skinning path (skin_common.glsl) because the
+// entity editor draws rigged attachments straight from the buffers
+// EntityModel.Load uploaded. The model editor still deforms on the CPU and
+// never turns skinning on — but both windows draw through this one program, so
+// both must call gfx.ApplySkinUniforms every draw. `skinned` is program state:
+// a static mesh drawn after an animated one would otherwise be bent around that
+// entity's bones.
+var modelSkinUniforms gfx.SkinUniforms
 
 // modelUniforms caches modelProgram's uniform locations. Like the program, they
 // are program state and so are valid in any context.
@@ -51,7 +64,7 @@ func modelEditorEnsureProgram() error {
 	if modelProgram != 0 {
 		return nil
 	}
-	p, err := gfx.CompileProgramFromFiles(
+	p, err := gfx.CompileProgramWithSkinning(
 		filepath.Join(fileutil.ExecutablePath, "shaders/model_vert.glsl"),
 		filepath.Join(fileutil.ExecutablePath, "shaders/model_frag.glsl"),
 	)
@@ -144,6 +157,9 @@ func drawModelMesh(view, proj mgl32.Mat4, camPos mgl32.Vec3) {
 		if len(g.Vertices) == 0 {
 			continue
 		}
+		// Always nil here: the model editor's own mesh is already deformed on
+		// the CPU. The call is not optional even so — see modelSkinUniforms.
+		gfx.ApplySkinUniforms(&modelSkinUniforms, modelProgram, nil)
 		gl.Uniform1i(modelUniforms.smoothShading, g.SmoothFlag())
 		gl.BindVertexArray(g.Vao)
 		gl.ActiveTexture(gl.TEXTURE0)

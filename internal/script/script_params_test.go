@@ -48,10 +48,10 @@ func TestParamIsPerObject(t *testing.T) {
 param target ref
 
 def main() -> str
-    if @target == null
+    if ?target == null
         return "none"
     end
-    return @target.id
+    return ?target.id
 end
 `
 	if got := runScript(t, lvl, "button_a", src); got != flang.StrVal("door_north") {
@@ -72,7 +72,7 @@ func TestParamUnboundFallsBackToDefault(t *testing.T) {
 param drop float = 3.0
 
 def main() -> float
-    return @drop
+    return ?drop
 end
 `
 	if got := runScript(t, lvl, "button_a", src); got != flang.FloatVal(9.0) {
@@ -93,7 +93,7 @@ func TestRefParamReachesGeometry(t *testing.T) {
 param room ref
 
 def main() -> float
-    return @room.floor.prop.height
+    return ?room.floor.prop.height
 end
 `)
 	want := flang.FloatVal(float64(lvl.Chunks[0].Sectors[0].Floor.Height))
@@ -112,7 +112,7 @@ func TestRefParamToMissingObjectIsNull(t *testing.T) {
 param target ref
 
 def main() -> bool
-    return @target == null
+    return ?target == null
 end
 `)
 	if got != flang.BoolVal(true) {
@@ -127,11 +127,11 @@ func TestParamWriteFromScriptFails(t *testing.T) {
 param drop float = 3.0
 
 def main() -> null
-    @drop = 8.0
+    ?drop = 8.0
 end
 `)
 	if !strings.Contains(err.Error(), "script parameter") {
-		t.Errorf("error %q should say what @drop is", err)
+		t.Errorf("error %q should say what ?drop is", err)
 	}
 }
 

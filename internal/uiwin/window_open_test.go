@@ -83,3 +83,24 @@ func TestNilRequestIsIgnored(t *testing.T) {
 	}
 	DrainWindowOpens()
 }
+
+// TestCloseAllDropsParkedOpens covers the teardown half of the queue. Closing
+// the 3D editor closes every sub-editor with it, and a request parked by one of
+// them is waiting on a drain that will never run — worse, running it later would
+// open a window after the frame loop is gone.
+func TestCloseAllDropsParkedOpens(t *testing.T) {
+	prev := PendingWindowOpens
+	t.Cleanup(func() { PendingWindowOpens = prev })
+	PendingWindowOpens = nil
+
+	opened := 0
+	RequestWindowOpen(func() { opened++ })
+	CloseAllUIWindows()
+	if len(PendingWindowOpens) != 0 {
+		t.Fatalf("%d open requests survived the close", len(PendingWindowOpens))
+	}
+	DrainWindowOpens()
+	if opened != 0 {
+		t.Errorf("a parked open ran after every window was closed")
+	}
+}

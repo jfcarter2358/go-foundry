@@ -166,6 +166,16 @@ func editorPointOccluded(eye, p mgl32.Vec3) bool {
 					return true
 				}
 			}
+			for _, sl := range [...]*world.Slab{&s.Floor.Slab, &s.Ceiling.Slab} {
+				if sl.Hidden {
+					continue
+				}
+				if modelGeometryBlocks(eye, dir, limit, sl.Geometry.Vertices, model) ||
+					modelGeometriesBlock(eye, dir, limit, sl.SubmeshGeometries, model) ||
+					modelGeometryBlocks(eye, dir, limit, sl.RimGeometry.Vertices, model) {
+					return true
+				}
+			}
 			for wi := range s.Walls {
 				w := &s.Walls[wi]
 				if !w.Visible {
