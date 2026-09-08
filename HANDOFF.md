@@ -1,6 +1,6 @@
 # Handoff: sectors → Quake-style brushes
 
-Branch: `feature/jc/brush-editing` (branched off `main`, 11 commits in).
+Branch: `feature/jc/brush-editing` (branched off `main`, 13 commits in).
 Approved plan: `/home/jfcarter2358/.claude/plans/wild-churning-lollipop.md`
 (outside the repo — the decisions that matter are reproduced below, so this
 document stands on its own).
@@ -73,6 +73,8 @@ b1aa87f  scripting addresses brushes, not sectors
 9dbf841  the editor edits brushes
 d632705  the editor's tests
 6b32b7b  Phase 5 — frame doorways are volumes
+f1f87cc  handoff brought up to date
+a185ff4  Phase 4 — prefabs
 ```
 
 ## The data model, as built
@@ -128,7 +130,7 @@ The plan's phase numbering, with real status:
 | 1 | Core data model + level schema | **done** |
 | 2 | 3D brush editing tools | **done** |
 | 3 | Collision | **done** |
-| 4 | Prefabs | not started |
+| 4 | Prefabs | **done** |
 | 5 | Volumes | **half** — frame doorway done; biome scatter not started |
 | 6 | Streaming | done incidentally (chunk enable/reload walks brushes) |
 | 7 | Rendering traversal | **done** |
@@ -203,6 +205,33 @@ to be deeper than one step of whatever walks through it.
 **Biome scatter as a volume is not started.** That is the bigger half: the
 render pass, the ground patches, the scatter caches and the `@biome` script
 surface all went with `internal/biome`. See the regressions below.
+
+## What Phase 4 built
+
+A prefab is a reusable group linked by file: `world/prefab.go` holds the
+description, `levelio/prefabs.go` stamps it, `editor/editor_prefab.go` places
+and edits it. Structurally it is entity chunk attachments applied to a *file*
+rather than to a *type*, deliberately — the two are the same idea.
+
+A materialised instance becomes ordinary level objects tagged `FromPrefab`, so
+every downstream pass works on them unchanged. The one thing that must not
+happen is the saver writing the expansion out, which is what would freeze a copy
+and lose the link; that has two tests of its own.
+
+Decisions that are settled and should not be re-opened:
+
+- **A prefab is not a chunk.** A chunk is a streaming and frame-ownership
+  container — a property of *where* content is. A prefab is a property of *what*
+  it is, and a level wants both.
+- **The origin is the bottom centre** of what was selected, so a placement sits
+  on the ground rather than half-buried.
+- **Materialised last** in the load, so the level's own IDs win over a prefab's.
+- **Scale reaches everything with a size** — extents and radii, not just
+  geometry.
+- **Brushes, entities, volumes and point lights only.** Nothing non-structural;
+  scattering props is the scenery brush's job.
+
+---
 
 ## Known regressions — all marked `TODO(brush migration` in the source
 
