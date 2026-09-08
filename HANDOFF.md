@@ -1,13 +1,13 @@
 # Handoff: sectors → Quake-style brushes
 
-Branch: `feature/jc/brush-editing` (branched off `main`, 13 commits in).
+Branch: `feature/jc/brush-editing` (branched off `main`).
 Approved plan: `/home/jfcarter2358/.claude/plans/wild-churning-lollipop.md`
 (outside the repo — the decisions that matter are reproduced below, so this
 document stands on its own).
 
-> **Note:** this file replaces an older, unrelated `HANDOFF.md` (a completed
-> "live chunk transforms" effort). The old content is in git history at
-> `git show 6e4c4be:HANDOFF.md` if anyone wants it.
+**State: `go build ./...`, `go vet ./...` and `go test ./...` all pass.**
+Phases 1–8 are done. Phase 9 (the compile pipeline) is one stage in. Phase 10
+(cleanup and docs) is partial.
 
 ---
 
@@ -31,20 +31,16 @@ This is a hard cutover. There is no dual-format support and no converter.
 1. **Hard cutover.** The sector loader and every existing level are gone. No
    migration path. Levels get rebuilt by hand as brush levels.
 2. **Full BSP + PVS for release builds** (authentic id-software style), not
-   just frustum culling. That is Phase 9 and has not been started.
+   just frustum culling. That is Phase 9.
 3. **3D-only editing.** The 2D floorplan editor is deleted, not replaced with
    ortho viewports. Brushes are placed and shaped in the 3D view.
 4. **Two run modes.** In-editor play evaluates brushes live/uncompiled every
    frame (simple, always in sync, pays overdraw and O(n) collision); release
    builds load only a precompiled level and never link the raw brush loader.
    Hook this into the existing `devtools_dev.go` / `devtools_release.go` split.
-5. **Biome scatter becomes a Volume**, mirroring `Volume.Fog` — placed and
-   sized like a fog volume rather than painted as a polygon on a floor.
-6. **Prefabs** (reusable groups) are **live-linked by file reference**, like
-   `Scenery.Model` points at an `.fmdl`. Editing the source updates every
-   placed instance. They are called **Prefab**, deliberately *not* "chunk" —
-   `Chunk` keeps its existing meaning (streaming + frame-ownership container).
-   A prefab contains brushes, entities, volumes and point lights.
+5. **Biome scatter becomes a Volume**, mirroring `Volume.Fog`. **Done** — see
+   Phase 5 below.
+6. **Prefabs** are live-linked by file reference. **Done** — see Phase 4.
 7. **Baked lighting at compile time**, per-vertex (not lightmap atlases), so
    release builds skip most per-fragment light work for static geometry.
 8. **Brushes are explicit convex polyhedra** (authored vertex + face list, like
@@ -54,12 +50,22 @@ This is a hard cutover. There is no dual-format support and no converter.
 
 ---
 
-## Current state
+## Phase status
 
-`go build ./...` and `go test ./...` both pass. Every package builds and every
-test is green.
+| # | Phase | Status |
+|---|---|---|
+| 1 | Core data model + level schema | **done** |
+| 2 | 3D brush editing tools | **done** |
+| 3 | Collision | **done** |
+| 4 | Prefabs | **done** |
+| 5 | Volumes (frame doorway + scatter) | **done** |
+| 6 | Streaming | done incidentally (chunk enable/reload walks brushes) |
+| 7 | Rendering traversal | **done** |
+| 8 | Scripting | **done** (scaled down — see regressions) |
+| 9 | Compile pipeline (CSG + BSP + PVS + baked lighting) | **CSG done; the rest not started** |
+| 10 | Cleanup / docs | partial — see below |
 
-### Commits (oldest first)
+### Commits on this branch, migration only (oldest first)
 
 ```
 9d92e1d  internal/world core data model
@@ -73,11 +79,17 @@ b1aa87f  scripting addresses brushes, not sectors
 9dbf841  the editor edits brushes
 d632705  the editor's tests
 6b32b7b  Phase 5 — frame doorways are volumes
-f1f87cc  handoff brought up to date
+f1f87cc  handoff update
 a185ff4  Phase 4 — prefabs
+40e3985  handoff update
+6e966fc  prefab fixes (file cache, save-selection bug)
+db1edef  Phase 5 — scatter is a volume
+dfc101a  Phase 9 — CSG, the first compile stage
 ```
 
-## The data model, as built
+---
+
+## The data model
 
 `internal/world/brush.go` is the file to read first.
 
@@ -96,7 +108,7 @@ type BrushFace struct {
     UVOffset, UVScale mgl32.Vec2
     UVRotation, SmoothAngle float32
     Smooth      bool
-    Detail      DetailSpec // procedural rock displacement, unchanged from before
+    Detail      DetailSpec // procedural rock displacement + scatter
     Alpha       float32
     DoubleSided bool
     NoDraw      bool // invisible but still solid (a buried brush side)
@@ -106,9 +118,9 @@ type BrushFace struct {
 }
 ```
 
-Useful constructors already there: `NewBoxBrush`, `NewHollowRoom` (floor +
-ceiling + four walls — the editor's future "hollow" primitive, and what test
-fixtures use, since a single `NewBoxBrush` is a solid block with no interior).
+Constructors: `NewBoxBrush`, `NewHollowRoom` (floor + ceiling + four walls — the
+editor's "hollow" primitive and what test fixtures use, since a single
+`NewBoxBrush` is a solid block with no interior).
 
 `Chunk` keeps everything it had (`Origin/Rotation/Scale`, `FrameOwner`,
 streaming `Disabled` flag, spatial-hash bucketing) but its `Sectors`, `Points`,
@@ -119,28 +131,14 @@ share exact points for portals to line up; a brush owns its verts outright.
 Brush IDs are **level-unique** (`world/identity.go`), so a brush is addressed
 by a bare name everywhere — no chunk qualifier, unlike sector IDs.
 
----
-
-## What each phase means, and where it stands
-
-The plan's phase numbering, with real status:
-
-| # | Phase | Status |
-|---|---|---|
-| 1 | Core data model + level schema | **done** |
-| 2 | 3D brush editing tools | **done** |
-| 3 | Collision | **done** |
-| 4 | Prefabs | **done** |
-| 5 | Volumes | **half** — frame doorway done; biome scatter not started |
-| 6 | Streaming | done incidentally (chunk enable/reload walks brushes) |
-| 7 | Rendering traversal | **done** |
-| 8 | Scripting | **done** (scaled down — see regressions) |
-| 9 | Compile pipeline (CSG + BSP + PVS + baked lighting) | not started |
-| 10 | Cleanup / docs | partial — see below |
+`Volume` has grown three fields since the plan was written: `Frame` (the vehicle
+it rides), `Doorway` (Phase 5) and `Scatter` (Phase 5).
 
 ---
 
-## What the editor does now (Phase 2, as built)
+## What each finished phase built, and why it is the way it is
+
+### Phase 2 — the editing tools
 
 The 2D floorplan editor is gone and with it `Mode2D`, the biome layer state, the
 shared point pool, the chunk-point drag, the join tools and the layer stack.
@@ -157,7 +155,7 @@ point/edge/face selection modes already address exactly what an extrude acts on.
 The tools, in `editor_brush_tools.go` and `editor_brush_mesh.go`:
 
 - **Stamps**: box, wedge, cylinder — plus **hollow** (replaces a solid with the
-  six brushes of a room filling it) and **duplicate**. Convex by construction.
+  six brushes of a room filling it) and **duplicate**.
 - **Extrude (E)** slides one face along its own normal. Deliberately not a free
   direction: a bump on a wall is a *second brush*, the way it is in every
   id-lineage editor, because extruding sideways makes the solid concave.
@@ -168,57 +166,33 @@ The tools, in `editor_brush_tools.go` and `editor_brush_mesh.go`:
   *shared* edge and leaves the neighbouring face with a T-junction to repair.
 
 Each of the three preserves convexity outright. A **free vertex drag** is the
-one edit that genuinely can break it, and `warnIfSelectionBrokeConvexity`
-reports rather than refuses — an editor that will not let you pass through an
-invalid intermediate state is one you cannot shape anything in. Phase 9's
-compiler is where it becomes an error.
+one edit that can break it, and `warnIfSelectionBrokeConvexity` reports rather
+than refuses — an editor that will not let you pass through an invalid
+intermediate state is one you cannot shape anything in. Phase 9's compiler is
+where it should become an error.
 
 Brush edges are found by walking each face's index loop and keeping each
 undirected pair once, so the edge two faces share is one handle
-(`editor_3d_edge_pick.go`). The sector's floor/ceiling/vertical triple was an
-artifact of a 2D polygon with a height field.
+(`editor_3d_edge_pick.go`).
 
 `editor_sel_transform.go` collapsed: a brush vertex is a position, owned by one
 brush, so the write is a write. No shared-point averaging, no per-surface height
-offset, no `PointMove` for the biome layer to ride.
+offset, no `PointMove` for a biome layer to ride.
 
----
+### Phase 4 — prefabs
 
-## What Phase 5 has so far
-
-**Frame doorways are done.** `Volume.Doorway` (`world/volume_doorway.go`) marks
-a volume as the boundary between two frames, and `Volume.Frame` is which vehicle
-the volume rides. A doorway is authored on the *moving* side, because the ship
-knows where its own ramp is and nothing has to be authored on the ground —
-which is what lets a ship land where the pilot puts it.
-
-Of the two rules the old portal-edge doorway was resolved by, only **containment**
-survives, and it is the better one. Proximity to an authored line fires while
-the occupant is still short of it, so both sides claim the same ground and a
-walker in the overlap is traded back and forth once a tick (the screen strobing
-between the two interiors); the old file carried a whole "a crossing must go
-deeper than the way back" function to arbitrate that. Inside a volume and
-outside it cannot both be true, so that failure has no way to happen and the
-arbitration is gone. What is given up is tunnelling protection — a doorway has
-to be deeper than one step of whatever walks through it.
-
-**Biome scatter as a volume is not started.** That is the bigger half: the
-render pass, the ground patches, the scatter caches and the `@biome` script
-surface all went with `internal/biome`. See the regressions below.
-
-## What Phase 4 built
-
-A prefab is a reusable group linked by file: `world/prefab.go` holds the
-description, `levelio/prefabs.go` stamps it, `editor/editor_prefab.go` places
-and edits it. Structurally it is entity chunk attachments applied to a *file*
-rather than to a *type*, deliberately — the two are the same idea.
+A reusable group linked by file: `world/prefab.go` holds the description,
+`levelio/prefabs.go` stamps it, `editor/editor_prefab.go` places and edits it.
+Structurally it is entity chunk attachments applied to a *file* rather than to a
+*type* — the two are the same idea, and `levelio/entity_chunks.go` is worth
+reading alongside.
 
 A materialised instance becomes ordinary level objects tagged `FromPrefab`, so
 every downstream pass works on them unchanged. The one thing that must not
-happen is the saver writing the expansion out, which is what would freeze a copy
-and lose the link; that has two tests of its own.
+happen is the saver writing the expansion out, which would freeze a copy and
+lose the link; that has two tests of its own.
 
-Decisions that are settled and should not be re-opened:
+Settled, do not re-open:
 
 - **A prefab is not a chunk.** A chunk is a streaming and frame-ownership
   container — a property of *where* content is. A prefab is a property of *what*
@@ -231,109 +205,248 @@ Decisions that are settled and should not be re-opened:
 - **Brushes, entities, volumes and point lights only.** Nothing non-structural;
   scattering props is the scenery brush's job.
 
+`LoadPrefab` caches by resolved PATH (not name — the install root moves under
+tests). `SavePrefab` invalidates; so does the editor's explicit "Re-stamp from
+file", which exists for a file changed on disk.
+
+### Phase 5 — the two volume features
+
+**Frame doorways** (`world/volume_doorway.go`, `collision/frame_portal.go`).
+`Volume.Doorway` marks a volume as the boundary between two frames;
+`Volume.Frame` is which vehicle it rides. A doorway is authored on the *moving*
+side, so nothing has to be authored on the ground and a ship can land anywhere.
+
+Of the two rules the old portal-edge doorway used, only **containment**
+survives, and it is the better one: proximity to a line fires while the occupant
+is still short of it, so both sides claim the same ground and a walker gets
+traded back and forth once a tick unless a "crossings must go deeper" rule
+arbitrates. Inside a volume and outside it cannot both be true. What is given up
+is tunnelling protection — a doorway has to be deeper than one step.
+
+**Scatter** (`world/volume_scatter.go`, `render/scatter.go`,
+`render/scatter_mesh.go`, `internal/biome`). The old painted system did three
+things; only the scatter came back:
+
+- Ground patches are subsumed by `BrushFace.Detail` — the ground *is* geometry
+  now, so a second draped mesh over it would z-fight.
+- Water is **not replaced**. It needs a water volume, which is its own piece of
+  work. Nothing in the engine currently draws water.
+
+Two things changed and they are the whole difference from the painted version:
+the survival test is the volume's own shape (box/sphere/cylinder, four uniforms)
+instead of a ray-cast point-in-polygon against 64 uploaded points; and the
+height texture is baked by casting rays DOWN through the level's brushes
+(`internal/biome`) instead of looking up a sector's floor. Everything else — the
+lattice, the three LOD tiers, the wind clock, the boundary jitter, the
+three-program shadow plumbing — is unchanged, and the template meshes were never
+the part that knew about polygons.
+
+`RefBiome` was removed from `flang` rather than left as a hole: scatter is a
+property of a Volume, so nothing addresses a biome as an object. Safe because a
+ref kind is never serialised.
+
+---
+
+## Phase 9 — the compile pipeline. THIS IS THE NEXT WORK.
+
+`internal/compile` is new. It is pure Go, GL-free and fully tested, and the rest
+of the pipeline should keep that shape — the compiler is the one part of this
+engine that can be checked without a window.
+
+### What exists
+
+**`plane.go`** — the primitive every later stage needs: `Plane`,
+`SplitPolygon`, `ClipPolygon`, `ClassifyPolygon`, `PolygonArea`. CSG, the BSP
+and portal generation are all the same operation with different bookkeeping, so
+it is written once. Two decisions in it are load-bearing and must not be
+"simplified":
+
+- Classification is against `onPlaneEps`, not zero. Not defensive rounding: a
+  vertex exactly on a splitting plane classifies as a hair in front on one pass
+  and a hair behind on the next, and a BSP that keeps re-splitting a polygon it
+  has already split **does not terminate**.
+- A crossing edge's intersection point is computed ONCE and shared by both
+  halves. Computing it per half is the classic way to make a hairline crack that
+  only shows at certain camera angles.
+
+**`csg.go`** — `CSG(lvl) []Face` clips every solid brush face against every
+other solid brush and returns what sticks out. `Face` is world-space and carries
+its own points (not indices into a brush), because a compiled face may be one
+fragment of several and the source brush will not exist at run time.
+
+The interesting cases are surfaces that TOUCH rather than overlap, which is most
+of what a blocked-out level is. See `clipPlanesFor`'s doc comment — especially
+the third case, where the coplanar loser is clipped against the solid's *other*
+planes with the shared one **left out**. That is not an optimisation; clipping
+against all of them keeps the face whole (a polygon on a plane reads as in front
+of it) and dropping it whole is wrong the other way.
+
+Frame-owned chunks are left out entirely: a vehicle's interior moves, so it
+cannot be baked into a static world-space list — and it must not clip the static
+world either, or a parked ship carves a hole in the ground under it.
+
+### What is left, in order
+
+1. **BSP** (`bsp.go`). Build a binary space partition over the compiled faces'
+   planes; leaves are convex cells. Pick splitters by the usual balance-versus-
+   splits heuristic. `Plane.ClassifyPolygon` and `SplitPolygon` already do the
+   per-node work; the new part is the plane choice and the leaf bookkeeping.
+   Watch for: a coplanar face belongs to the NODE, not to either child.
+
+2. **Portals + PVS** (`pvs.go`). Generate portals by clipping each leaf's
+   boundary against its neighbours, then flood-fill visibility leaf-to-leaf. The
+   output is a bit array, one row per leaf. This is the expensive stage; a
+   naive implementation is fine to start, and the test should be a small level
+   whose answer can be reasoned about by hand.
+
+3. **Light bake** (`light.go`). Per-vertex, not lightmap atlases (decision 7).
+   For each compiled face vertex, sum the level's lights with a shadow ray
+   against the compiled faces. `Face.Light` is already declared and parallel to
+   `Face.Points`, waiting to be filled.
+
+4. **The compiled format** (`internal/levelio`, probably `compiled_level.go`).
+   Holds: the post-CSG faces with their baked light, the BSP tree, the PVS bit
+   array, and everything level-scoped that is not geometry (entities, volumes,
+   lights, spawn, scripts, UI — those can be the existing raw forms). Needs a
+   version stamp.
+
+5. **The dev/release split** (decision 4). `internal/app/devtools_dev.go` and
+   `devtools_release.go` are the existing seam and are deliberately thin
+   wrappers — read them first. A release build should load only the compiled
+   format and never link the raw brush loader. `TestTheEditorDoesNotStandUpThe
+   WorldPasses` in `internal/app` is the shape of the assertion that would
+   guard it.
+
+6. **Invoking it.** An editor button (compile the open level) and probably a
+   `cmd/` entry point for a build step.
+
+### One thing the compiler should also do
+
+`Brush.IsConvex` exists and the editor only *warns* when a drag breaks it. The
+compiler is where it should be an **error** — a concave brush makes CSG's
+"inside is behind every plane" rule wrong, and both collision and the BSP depend
+on it. That check belongs at the top of `CSG`.
+
 ---
 
 ## Known regressions — all marked `TODO(brush migration` in the source
 
 Grep for `TODO(brush migration` to find them. Summary:
 
-- **Biome scatter is gone entirely** — `internal/biome`, `render/grass.go`,
-  `render/biome_ground.go`, the paint editor, and the `@biome` script surface.
-  `render/biome_light.go` was deliberately **kept**: its shader-composition
-  helpers are shared with sprites and the detail passes.
 - **Scripts cannot move geometry.** `brushProps` exposes only `solid`. The
   shipped `resources/scripts/button.flang` example drives
-  `@target.floor.prop.height` and is now broken; the lift/animated-floor tests
-  were removed with the property. Brush faces have no ID, so there is no
-  `RefFace` and no per-face texture write from script either.
+  `@target.floor.prop.height` and is broken; the lift/animated-floor tests were
+  removed with the property. Brush faces have no ID, so there is no `RefFace`
+  and no per-face texture write from script either.
+- **Water is gone.** The Water biome kind auto-managed a companion plane;
+  nothing replaces it. `WaterParamsFromRaw` and the depth helpers survive in
+  `world/water_surface.go`, and `gfx.WaterParams` is intact.
 - **All shipped levels deleted** (`resources/levels/`, `resources/chunks/`) per
-  decision 1. There is nothing to load — the "New Level" path writes a hollow
-  8×8×4 room and that is the only content that exists.
-- **Water surfaces** are gone with biome (`WaterParamsFromRaw` and the depth
-  helpers survive in `world/water_surface.go`).
-- **The F1 reference lists no `biome` kind** and `render.InitWorldPasses` no
-  longer calls `GrassInit`. Both are asserted-on-absence rather than left red:
-  see the `TODO(brush migration, Phase 5)` markers in
-  `app/script_reference.go` and `app/world_passes_test.go`. Put both back with
-  the pass.
-- **Nothing places the dropship.** The entity type is intact and boarding works
-  again, but `resources/levels/dropship_demo.yaml` went with every other level.
-  Marked in `resources/entities/README.md`.
-
-*(Frame-portal boarding was on this list and is fixed — see Phase 5 above.)*
+  decision 1. There is nothing to load — the "New Level" path writes a chunk
+  holding one hollow room and that is the only content that exists. This is also
+  why nothing places the shipped dropship entity, which is otherwise intact and
+  whose boarding works again.
 
 ---
 
-## Gotchas learned the hard way — read before touching collision
+## Gotchas learned the hard way
+
+### Collision
 
 1. **GJK/EPA converges to a tolerance, not to zero.** Pushing a body out by
    exactly the reported penetration depth leaves a hairline of residual
    penetration that reports as still-touching next frame. `pushOutOfChunkBrushes`
-   adds a `separationEpsilon` (0.001) past the reported depth. The old wall
-   resolver had the same epsilon for the same reason. Several tests asserting
-   bit-exact rest positions had to be widened.
+   adds a `separationEpsilon` (0.001) past the reported depth.
 2. **A fast substep's raw target can land outside the chunk's AABB.** Brush
    chunks are tightly fitted where sector chunks were huge, so a body moving
    fast enough to try to push through an outer wall would look up "which chunk
-   am I in", get nil, and skip collision entirely for that substep — sailing
-   through. Both `MovePlayer` and `resolveEntityWorld` now fall back to the
-   chunk the body was *already standing in*.
-3. **Body shape for world collision is a `Cylinder`, not a `Box`.** That
-   matches what the old wall resolver did (it used
-   `radius = max(BoundHalfX, BoundHalfZ)` against wall segments), so corners
-   don't catch on walls. Don't "fix" this to a box without playtesting.
+   am I in", get nil, and skip collision entirely. Both `MovePlayer` and
+   `resolveEntityWorld` fall back to the chunk the body was already in.
+3. **Body shape for world collision is a `Cylinder`, not a `Box`.** Matches what
+   the old wall resolver did, so corners don't catch on walls. Don't "fix" this
+   without playtesting.
 4. **`Cylinder`/`OBB`/`Ellipsoid` need `Rot: mgl32.Ident4()` set explicitly.**
-   The zero value of `mgl32.Mat4` is the *zero* matrix, not the identity, and
-   `rotateInv` against it returns a zero vector — every support query silently
-   returns the same point.
-5. **`NewBoxBrush` is a solid block, not a room.** Test fixtures that want
-   somewhere to stand need `NewHollowRoom`. A fixture using a solid box for a
-   "room" will have a player resting on its outside.
-6. **Set `Chunk.ID` in fixtures.** An empty chunk ID makes `p.CurrentChunk`
-   come back `""` even when the lookup succeeded, which reads as a lookup bug
-   and is not one.
+   The zero value of `mgl32.Mat4` is the *zero* matrix, and `rotateInv` against
+   it returns a zero vector — every support query silently returns the same
+   point.
+5. **`NewBoxBrush` is a solid block, not a room.** Fixtures that want somewhere
+   to stand need `NewHollowRoom`.
+6. **Set `Chunk.ID` in fixtures.** An empty chunk ID makes `p.CurrentChunk` come
+   back `""` even when the lookup succeeded.
 7. **Sealed ceilings are real now.** A brush roof is solid geometry, so falling
-   onto a sealed room from outside lands you on the roof. The old sector
-   ceiling was a math plane that a falling body leaked through after one frame.
-   A test that dropped a player from y=400 into a sealed room was relying on
-   that quirk.
+   onto a sealed room from outside lands you on the roof.
+
+### Geometry and the compiler
+
+8. **An axis-facing plane's `D` is signed by its normal.** A box's `-X` face at
+   x=-1 and its `+X` face at x=+1 both have D=1. Test the x-intercept
+   (`D / N.X()`), not D. This cost a wrong test in the CSG work.
+9. **A face resting flush on another is the coplanar case, not the cutting
+   case.** A pillar standing exactly on a floor does not cut the floor — the two
+   coplanar surfaces resolve to one whole survivor. Only a pillar *sunk into*
+   the floor cuts it. Both have tests saying so.
+
+### Editor
+
+10. **`editorVisReset()` before an occlusion assertion.** The visibility cache is
+    keyed on the selection, so two tests asking about different world positions
+    must ask about different corners or the second reads the first's answer.
+11. **A vertex on the NEAR face is the self-occlusion case.** A corner on the
+    far side of a brush is genuinely behind its near face and correctly hidden.
 
 ---
 
-## Working conventions in this branch
+## Working conventions on this branch
 
-- **Commit per package**, with the package building and its tests green before
-  moving on. Commit messages explain *why* something went, not just what.
-- **Delete tests for deleted behaviour** rather than leaving them red. Several
-  test files were removed wholesale because their subject (openings, slabs,
-  surface meshes, portal culling, sector enter/exit events) no longer exists.
-- **Audit deletions by content, not filename.** Three files were nearly lost
-  this way — `attach.go` (sprite/emitter frame-riding, nothing to do with
-  sectors), `detail_test.go` and `water_test.go` (both generic). Check what a
-  file actually does before removing it because its name looks sector-ish.
-- Keep the `TODO(brush migration, Phase N)` marker format — it is how the
-  deferred work is tracked. Where a *test* is what would go red, put the marker
-  at the assertion and narrow it rather than deleting the test — see
-  `app/world_passes_test.go`, which lists the passes a build must stand up and
-  currently names three of four.
+- **Commit per package or per phase**, with the package building and its tests
+  green before moving on. Commit messages explain *why* something went, not just
+  what.
+- **Delete tests for deleted behaviour** rather than leaving them red. Where a
+  *test* is what would go red for deferred work, put a `TODO(brush migration,
+  Phase N)` marker at the assertion and narrow it rather than deleting it — see
+  the history of `app/world_passes_test.go`, which lists the passes a build must
+  stand up.
+- **Audit deletions by content, not filename.** Several files were nearly lost
+  this way — `attach.go` (sprite/emitter frame-riding), `detail_test.go`,
+  `water_test.go`. `activeChunk()` and `distToSegment2D` *were* lost with
+  `editor_biome.go` and `editor_3d_edge_pick.go` and had to be recovered from
+  git; both were generic helpers that happened to live in a doomed file.
 - **Prefer deleting a rule to porting it.** Several things in the sector model
   existed only to paper over the sector model: the surface-shaping sub-mode, the
   crossing-hysteresis rule, the floor/ceiling ring halving, the shared-point
-  averaging in the vertex write-back. Each was correct, and each had nothing
-  left to be correct *about*. The commit messages say which and why, because
-  "where did X go" is the question a reader of this branch will have.
+  averaging in the vertex write-back. Each was correct, and each had nothing left
+  to be correct *about*.
+- **Stage explicit paths, never `git add -A`.** See below.
 
 ---
 
-## Unrelated: something deleted files from the working tree
+## Unresolved: something deleted files from the working tree
 
 `plan.md`, `river.yaml`, `render.test` and `SETTINGS_LAYOUT.md` are present in
 `HEAD` but missing from the working tree, and nothing in this migration removed
-them (all deletions here were under `internal/`, `docs/` and
-`resources/levels|chunks`). Several other agent sessions were running against
-this repo at the same time, which is the likely cause. Still unresolved, and
-still worth confirming with the user before anyone commits a sweeping
+them. Several other agent sessions were running against this repo at the same
+time, which is the likely cause.
+
+Still worth confirming with the user before anyone commits a sweeping
 `git add -A` — every commit on this branch has staged explicit paths for that
 reason.
 
-(`HANDOFF.md` was on that list and has since been restored and rewritten.)
+---
+
+## Phase 10 — cleanup and docs, what is left
+
+`docs/guide/README.md` carries a `TODO(brush migration, Phase 10)` note saying
+plainly that the sector-era chapters are stale and which have been rewritten.
+Rewritten so far: **06-scatter** (was 06-biomes), **12-vehicles-and-frames**,
+**22-prefabs** (new), and the two troubleshooting entries in
+**19-testing-and-debugging**.
+
+Still describing sectors, walls, portals, the 2D map and the surface-shaping
+sub-mode: **01-editor-basics**, **02-building-levels** (the big one — it is the
+chapter about the format that no longer exists), **03-shaping-surfaces** (should
+probably be folded into 02, since shaping is no longer a mode),
+**05-detail-and-smoothing**, **07-lighting**, **18-scripting** (the `@sec.edge`
+addressing is gone), **21-keybindings**.
+
+`resources/entities/README.md` has a `TODO(brush migration, Phase 10)` pointing
+at the deleted dropship level.
