@@ -21,6 +21,16 @@ func Abs32(x float32) float32 {
 	return x
 }
 
+// Sign32 is +1 for a positive value and -1 for zero or negative. Zero maps to
+// -1 rather than to 0 because every caller uses it to pick a side to push
+// toward, and "neither side" is not one of the answers.
+func Sign32(x float32) float32 {
+	if x > 0 {
+		return 1
+	}
+	return -1
+}
+
 // Clamp01 clamps v to [0,1].
 func Clamp01(v float32) float32 {
 	if v < 0 {

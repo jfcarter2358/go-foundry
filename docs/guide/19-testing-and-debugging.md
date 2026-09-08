@@ -104,10 +104,9 @@ is disabled.
 **A texture is missing.** Its name has no matching `.png` in `textures/`. The log
 names the texture and the object keeps drawing what it had.
 
-**A frame portal drops you into nothing, or the screen strobes.** The two halves
-do not overlap by enough. See
-[Vehicles and frames](12-vehicles-and-frames.md) — this is the rule that catches
-everyone.
+**You walk straight through a ship's ramp without boarding.** The doorway volume
+is shallower than one step, or it is disabled, or it is not riding the vehicle.
+See [Vehicles and frames](12-vehicles-and-frames.md).
 
 **A shipped build draws no menu.** A development build never reads `game.yaml`.
 `make release-linux` is how to see one.

@@ -94,41 +94,45 @@ entity that is not a vehicle, and anything that would put a frame inside itself.
 An entity's `frame` property is a ref to the vehicle it is riding, or `null`, and
 `seat` is which seat it occupies — empty while standing on the deck.
 
-## Frame portals — the way in
+## Frame doorways — the way in
 
-A doorway between a moving thing and the world is a **portal with a `to_frame:`**.
-Select the edge, set **Kind** to `portal`, and set **To Frame** to the vehicle's
-frame — or `world` for the ground.
+A doorway between a moving thing and the world is a **volume with a doorway**.
+Place a volume, set **Rides** to the vehicle under Transform, tick **This volume
+is a way in and out** under Frame Doorway, and leave **Opens onto** at `world`
+for the ground.
+
+The doorway is authored on the *moving* side — it rides the ship, because the
+ship is what knows where its own ramp is. Nothing has to be authored on the
+other side at all, which is what lets a ship set down wherever the pilot puts it
+rather than only in a dock the level guessed at.
 
 Crossing carries position, velocity **and** facing through the relative
 transform, so a walker arrives facing the way they were going.
 
-There are three rules, and levels break on the second one.
+Two rules.
 
 **1. Frames must be gravity-aligned to be joined.** A ship resting on a deck
 qualifies; so does one flying straight and level. A barrel-rolling ship does not,
-and while misaligned the portal **seals** — it resolves as a solid wall, so
-nobody walks out of a doorway currently pointing at the sky.
+and while misaligned the doorway **seals** — it resolves as solid, so nobody
+walks out of a hatch currently pointing at the sky.
 
-**2. The two halves must overlap, and by a real margin.** A crossing fires on
-proximity — within 0.6 units of the line — so the far side has to be somewhere
-you can stand the moment you arrive. Two portals authored in the same place *do
-not work*: you cross 0.6 short of the line and land 0.6 outside the sector you
-were entering, in no sector at all.
+**2. The doorway must be deeper than one step.** Which side of it you are on is
+settled by *containment*: standing in it is being aboard, and being aboard while
+outside all of the ship's chunks is having left. There is no "before" at which
+to hand you over early, so a body moving further in a tick than the volume is
+deep passes straight through it. Three metres against a walking pace is
+comfortable; a projectile-speed body is not something this catches.
 
-What works: the ship's threshold reaches *past* the deck's portal line and the
-deck reaches past the ship's, by more than 0.6 each, with both floors present in
-between. The band is a radius, so this applies across the doorway too — the far
-sector has to be wider than the segment by the same margin.
+Containment is why there is no third rule. The old portal-edge doorway fired on
+*proximity* — within 0.6 units of an authored line — which meant both sides
+claimed the same ground unless they overlapped by more than that, and a walker
+in the overlap got traded back and forth once a tick with the screen strobing
+between the two interiors. Inside a volume and outside it cannot both be true,
+so that failure has no way to happen here.
 
-**3. A crossing has to go deeper than the way back.** Overlap by *less* than the
-band and both sides claim the same ground, and the two spaces trade the walker
-back and forth once a tick. Movement looks fine; what you see is the screen
-strobing between the two interiors. Geometry following rule 2 satisfies this
-automatically.
-
-`resources/chunks/dropship_hold.yaml` and `resources/levels/dropship_demo.yaml`
-are the worked example. Read them before authoring an interior.
+The rest of the level authoring is unchanged: build the interior as brushes in a
+chunk, bind the chunk to the vehicle under **Carried By**, and put the doorway
+volume across the threshold.
 
 ## What does not go in a frame
 

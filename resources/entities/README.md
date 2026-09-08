@@ -43,14 +43,20 @@ ship. See `internal/world/entity_chunk.go`.
 ## What ships
 
 `dropship.yaml` is an assault shuttle with a hold you walk into and a powered
-blast door across the hatch, and it is the worked example of everything above:
-two model attachments, a chunk attachment for the inside, a script, and params
-the level binds. `resources/levels/dropship_demo.yaml` places one and drops it.
+blast door across the hatch: two model attachments, a chunk attachment for the
+inside, a script, and params the level binds.
 
-It is worth reading before writing a type of your own with an interior, because
-the way *in* to a moving thing is the part with a rule that is not obvious: the
-doorway is a frame portal, its two halves live in two different spaces, and they
-must not be in the same place. `chunks/dropship_hold.yaml` says why.
+The way *in* to a moving thing is the part with a rule that is not obvious. The
+doorway is a **volume** riding the ship, ticked as a frame doorway (see
+[Vehicles and frames](../../docs/guide/12-vehicles-and-frames.md)), and standing
+in it is being aboard. It has to be deeper than one step of whatever walks
+through it, because that is the whole of what decides which side you are on.
+
+> **TODO(brush migration, Phase 10):** every shipped level and chunk was deleted
+> in the sector→brush cutover, so the worked example this section used to point
+> at — `resources/levels/dropship_demo.yaml` and `chunks/dropship_hold.yaml` —
+> does not currently exist. The dropship *type* above is intact; what is missing
+> is a level placing it.
 
 ## The editor
 

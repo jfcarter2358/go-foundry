@@ -107,17 +107,33 @@ func DetailFromRaw(r *RawDetail) DetailSpec {
 type RawVolume struct {
 	ID            string `yaml:"id"`
 	RawScriptData `yaml:",inline"`
-	Shape         string  `yaml:"shape,omitempty"` // box (default) | sphere | cylinder
-	Position      RawVec3 `yaml:"position"`
-	Rotation      RawVec3 `yaml:"rotation,omitempty"`
-	Half          RawVec3 `yaml:"half"`
-	Enabled       *bool   `yaml:"enabled,omitempty"` // default true when absent
+	Shape         string `yaml:"shape,omitempty"` // box (default) | sphere | cylinder
+	// Frame is the vehicle the volume rides, or absent for the world. With it
+	// set, Position and Rotation are in that vehicle's coordinates — the same
+	// key, and the same meaning, a spawn point's `frame:` has.
+	Frame    string  `yaml:"frame,omitempty"`
+	Position RawVec3 `yaml:"position"`
+	Rotation RawVec3 `yaml:"rotation,omitempty"`
+	Half     RawVec3 `yaml:"half"`
+	Enabled  *bool   `yaml:"enabled,omitempty"` // default true when absent
 	// LoadLevel makes the volume a level exit: the named level is loaded when
 	// the player walks in, with no script involved. See Volume.LoadLevel.
 	LoadLevel string `yaml:"load_level,omitempty"`
 	// Fog fills the region with fog. Absent is the ordinary case — a volume
 	// that is only a trigger. See Volume.Fog.
 	Fog *RawVolumeFog `yaml:"fog,omitempty"`
+	// Doorway makes the volume a frame boundary. See Volume.Doorway.
+	Doorway *RawFrameDoorway `yaml:"doorway,omitempty"`
+}
+
+// RawFrameDoorway is the boundary between two frames (volume_doorway.go).
+//
+// One key, and it is optional: `doorway: {}` is a ramp onto the world, which is
+// what nearly every doorway is. That is deliberate — the block's presence is
+// the whole of what makes a volume a doorway, and requiring a target would mean
+// writing `to: world` on every ship in the game.
+type RawFrameDoorway struct {
+	To string `yaml:"to,omitempty"` // entity id, or absent/"world" for the world
 }
 
 // RawVolumeFog is the fog filling a volume (volume_fog.go).

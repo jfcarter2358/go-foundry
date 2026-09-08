@@ -39,6 +39,17 @@ type Volume struct {
 	// three a sector or a wall has, so `#tag` reaches volumes on equal terms.
 	ScriptData
 
+	// Frame is the vehicle this volume rides, or "" for the world. With it set,
+	// Position and Rotation are in that vehicle's coordinates — the same
+	// convention SpawnPoint.Frame and Entity.Frame use.
+	//
+	// A world-space volume was enough while every volume was a trigger bolted
+	// to the level. A doorway (see FrameDoorway) is bolted to a *ship*, and a
+	// trigger in a ship's hold — "the cargo is aboard", "someone is in the
+	// cockpit" — wants the same thing, so this is a property of volumes rather
+	// than of doorways.
+	Frame string
+
 	Position mgl32.Vec3
 	Rotation mgl32.Vec3 // Euler angles (X, Y, Z) in radians
 
@@ -70,6 +81,10 @@ type Volume struct {
 	// not end the level, and there is no reading of "a player entered" that
 	// includes them.
 	LoadLevel string
+
+	// Doorway makes the volume a frame doorway: standing in it is being aboard
+	// the frame it belongs to. See volume_doorway.go. nil is the ordinary case.
+	Doorway *FrameDoorway
 
 	// Fog fills the region with fog when set — see volume_fog.go. nil is the
 	// ordinary case: a volume that is only a trigger. It is a pointer for the
@@ -187,6 +202,19 @@ func (v *Volume) IsLevelTrigger() bool {
 	return v.LoadLevel != "" && v.Enabled && v.HasBounds()
 }
 
+// ContainsWorldPoint is ContainsPoint for a caller holding a world-space point,
+// carrying it into the volume's own frame first.
+//
+// The point is carried in rather than the volume carried out, for the reason
+// the entity trigger test gives: a rotated region stays the shape it was
+// authored as, where transforming its extents would not.
+func (v *Volume) ContainsWorldPoint(lvl *Level, p mgl32.Vec3) bool {
+	if v.Frame == "" {
+		return v.ContainsPoint(p)
+	}
+	return v.ContainsPoint(lvl.Frames.Frame(v.Frame).FromWorld(p))
+}
+
 // FindVolume returns the level volume with the given ID, or nil. This is what a
 // script's `@id` resolves through for volumes.
 func FindVolume(lvl *Level, id string) *Volume {
@@ -230,6 +258,23 @@ func VolumesContaining(lvl *Level, p mgl32.Vec3) []*Volume {
 	return out
 }
 
+// FrameDoorways returns every enabled doorway volume belonging to the named
+// frame, in level order. "" is the world's own doorways, of which there are
+// normally none — a doorway is authored on the moving side.
+func FrameDoorways(lvl *Level, frameID string) []*Volume {
+	if lvl == nil {
+		return nil
+	}
+	var out []*Volume
+	for i := range lvl.Volumes {
+		v := &lvl.Volumes[i]
+		if v.Doorway != nil && v.Enabled && v.HasBounds() && v.Frame == frameID {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // UniqueVolumeID returns base, or base with a numeric suffix that no volume in
 // lvl is already using — the same guarantee UniqueEntityID gives, and for the
 // same reason: two volumes sharing an ID would make `@id` ambiguous.
@@ -267,6 +312,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 	return Volume{
 		ID:         r.ID,
 		ScriptData: data,
+		Frame:      r.Frame,
 		Position:   mgl32.Vec3{r.Position.X, r.Position.Y, r.Position.Z},
 		Rotation:   mgl32.Vec3{r.Rotation.X, r.Rotation.Y, r.Rotation.Z},
 		Shape:      VolumeShapeFromName(r.Shape),
@@ -276,6 +322,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		Enabled:    BoolDefault(r.Enabled, true),
 		LoadLevel:  r.LoadLevel,
 		Fog:        VolumeFogFromRaw(r.Fog),
+		Doorway:    FrameDoorwayFromRaw(r.Doorway),
 	}, nil
 }
 
@@ -285,12 +332,14 @@ func VolumeToRaw(v *Volume) RawVolume {
 		ID:            v.ID,
 		RawScriptData: ScriptDataToRaw(v.ScriptData),
 		Shape:         VolumeShapeName(v.Shape),
+		Frame:         v.Frame,
 		Position:      RawVec3{X: v.Position.X(), Y: v.Position.Y(), Z: v.Position.Z()},
 		Rotation:      RawVec3{X: v.Rotation.X(), Y: v.Rotation.Y(), Z: v.Rotation.Z()},
 		Half:          RawVec3{X: v.HalfX, Y: v.HalfY, Z: v.HalfZ},
 		Enabled:       BoolPtrIfFalse(v.Enabled),
 		LoadLevel:     v.LoadLevel,
 		Fog:           VolumeFogToRaw(v.Fog),
+		Doorway:       FrameDoorwayToRaw(v.Doorway),
 	}
 }
 

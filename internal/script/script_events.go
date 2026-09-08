@@ -266,11 +266,14 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 			continue
 		}
 		vv := v
-		// Volumes are level-scoped and always world-space, so the point arrives
-		// in the coordinates the volume is already in.
+		// A volume is level-scoped, but not necessarily world-space: one riding
+		// a vehicle (a doorway, a trigger in a hold) describes its region in
+		// that vehicle's coordinates, so the world-space point is carried in.
+		// ContainsWorldPoint is the no-op it always was for a volume with no
+		// frame, which is nearly all of them.
 		containers = append(containers, container{
 			ref:       flang.RefVal{Kind: flang.RefVolume, A: v.ID},
-			test:      func(p mgl32.Vec3) bool { return vv.ContainsPoint(p) },
+			test:      func(p mgl32.Vec3) bool { return vv.ContainsWorldPoint(lvl, p) },
 			scripted:  v.Script != "",
 			loadLevel: v.LoadLevel,
 		})

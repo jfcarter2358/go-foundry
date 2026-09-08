@@ -12,6 +12,7 @@ package editor
 // everything else the level contains.
 
 import (
+	"foundry/internal/imguibackend"
 	"foundry/internal/levelio"
 	"foundry/internal/world"
 	"strconv"
@@ -62,6 +63,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroupOpen("Transform##voltfgrp", func() { editorVolumeTransform(v) })
 	editorPropGroupOpen("Shape##volshapegrp", func() { editorVolumeShape(v) })
 	editorPropGroup("Fog##volfoggrp", 0, func() { editorVolumeFog(v) })
+	editorPropGroup("Frame Doorway##voldoorgrp", 0, func() { editorVolumeDoorway(v) })
 	editorPropGroupOpen("Level Exit##volexitgrp", func() { editorVolumeLevelExit(v) })
 	editorScriptDataUI(&v.ScriptData, "vol", strconv.Quote(v.ID))
 	editorPropGroup("Actions##volactions", 0, func() { editorVolumeActions(v) })
@@ -97,6 +99,8 @@ func editorVolumeIdentity(v *world.Volume) {
 // editorVolumeTransform draws position and rotation. There is no scale — a
 // volume's size is its half-extents, edited under Shape.
 func editorVolumeTransform(v *world.Volume) {
+	editorVolumeFrameRow(v)
+
 	pos := [3]float32{v.Position.X(), v.Position.Y(), v.Position.Z()}
 	if editorDragFloat3("Position##volpos", &pos, 0, 0, "%.3f") {
 		v.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
@@ -106,6 +110,119 @@ func editorVolumeTransform(v *world.Volume) {
 	if editorDragFloat3Step("Rotation (deg)##volrot", &rot, -360, 360, "%.1f", 1) {
 		v.Rotation = vec3FromDegrees(rot)
 	}
+}
+
+// editorVolumeFrameRow draws which vehicle the volume rides, if any.
+//
+// It sits inside Transform rather than beside it because it is part of what the
+// position below it MEANS: with a frame set, Position and Rotation are that
+// vehicle's coordinates, and the same three numbers describe a different place.
+func editorVolumeFrameRow(v *world.Volume) {
+	lvl := Editor.level
+	if lvl == nil {
+		return
+	}
+	label := v.Frame
+	if label == "" {
+		label = "(nothing — world volume)"
+	}
+	if imgui.BeginCombo("Rides##volframe", label) {
+		if imgui.SelectableV("(nothing — world volume)", v.Frame == "", 0, imgui.Vec2{}) && v.Frame != "" {
+			EditorPushUndo()
+			v.Frame = ""
+		}
+		for i := range lvl.Entities {
+			e := &lvl.Entities[i]
+			if e.Vehicle == nil {
+				continue
+			}
+			if imgui.SelectableV(e.ID, v.Frame == e.ID, 0, imgui.Vec2{}) && v.Frame != e.ID {
+				EditorPushUndo()
+				v.Frame = e.ID
+			}
+		}
+		imgui.EndCombo()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The vehicle this region is bolted to. Its position and\n" +
+			"rotation below are then in that vehicle's coordinates,\n" +
+			"authored around the origin rather than where it sits.")
+	}
+}
+
+// editorVolumeDoorway draws the frame-doorway block: the checkbox that makes
+// the volume a boundary, and which frame it opens onto.
+//
+// A doorway is authored on the MOVING side — it rides the ship, and the ship is
+// what knows where its own ramp is — so the row is disabled until the volume has
+// a frame to ride. Saying that in place beats letting someone tick the box on a
+// world volume and wonder why nothing boards.
+func editorVolumeDoorway(v *world.Volume) {
+	lvl := Editor.level
+	if lvl == nil {
+		return
+	}
+	has := v.Doorway != nil
+	imguibackend.EditorPushDisabled(v.Frame == "" && !has)
+	if imgui.Checkbox("This volume is a way in and out##voldooron", &has) {
+		EditorPushUndo()
+		if has {
+			v.Doorway = &world.FrameDoorway{}
+			editorSetStatus("Volume %q is now a doorway onto the world", v.ID)
+		} else {
+			v.Doorway = nil
+			editorSetStatus("Volume %q is no longer a doorway", v.ID)
+		}
+	}
+	imguibackend.EditorPopDisabled()
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Standing in it is being aboard the vehicle above.\n" +
+			"Walking out of the vehicle's chunks entirely is leaving.\n" +
+			"Make it deeper than one step, or a fast walk passes through it.")
+	}
+	if v.Frame == "" && !has {
+		editorTextMutedWrapped("A doorway rides the vehicle it lets you into, so give this " +
+			"volume a frame under Transform first.")
+		return
+	}
+	if v.Doorway == nil {
+		return
+	}
+
+	label := v.Doorway.To
+	if label == "" {
+		label = "world"
+	}
+	if imgui.BeginCombo("Opens onto##voldoorto", label) {
+		if imgui.SelectableV("world", v.Doorway.To == "", 0, imgui.Vec2{}) && v.Doorway.To != "" {
+			EditorPushUndo()
+			v.Doorway.To = ""
+		}
+		for i := range lvl.Entities {
+			e := &lvl.Entities[i]
+			// A doorway onto the vehicle it is bolted to would be a way from a
+			// ship into itself.
+			if e.Vehicle == nil || e.ID == v.Frame {
+				continue
+			}
+			if imgui.SelectableV(e.ID, v.Doorway.To == e.ID, 0, imgui.Vec2{}) && v.Doorway.To != e.ID {
+				EditorPushUndo()
+				v.Doorway.To = e.ID
+			}
+		}
+		imgui.EndCombo()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The space on the other side. \"world\" is the ground, and is\n" +
+			"what a ramp almost always opens onto; naming a vehicle makes\n" +
+			"this a dock that only that one can be entered from.")
+	}
+	if v.Frame != "" && v.Doorway.To == world.FrameID(v.Frame) {
+		editorTextWrappedColored(imgui.Vec4{X: 1, Y: 0.55, Z: 0.3, W: 1},
+			"This doorway opens onto the vehicle it rides, so it leads nowhere.")
+	}
+	editorTextMutedWrapped("The two spaces have to be gravity-aligned to cross: while the " +
+		"vehicle is rolled or pitched more than a few degrees the doorway seals and reads as solid.")
 }
 
 // editorVolumeShape draws the shape combo and the half-extents.
