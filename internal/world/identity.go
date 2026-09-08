@@ -2,71 +2,62 @@ package world
 
 // identity.go — minting IDs that a script can address an object by.
 //
-// Chunks and sectors have carried string IDs since the level format existed, but
-// nothing ever checked them for collisions: the editor minted sector IDs from
-// `len(ch.Sectors)`, which repeats the moment a sector is deleted and another
-// created, and a sector split appended "_split" to a name that might already have
-// one. That was harmless while an ID was only ever a label. It stops being
-// harmless the moment `@id` has to resolve to exactly one object.
-//
-// The rule these enforce is the same one UniqueEntityID (entity.go) has always
-// enforced for entities, applied to the rest of the world:
+// Chunks and brushes carry string IDs. The rule these enforce is the same one
+// UniqueEntityID (entity.go) has always enforced for entities, applied to the
+// rest of the world:
 //
 //   - Chunk IDs are unique within a level.
-//   - Sector IDs are unique within a level, not merely within their chunk.
-//     Chunk.Clone already assumed as much when it rewrote a clone's sector IDs
-//     with a suffix, and Portal.ToSector is a bare sector ID with no chunk
-//     qualifier, so anything narrower would already have been ambiguous.
+//   - Brush IDs are unique within a level, not merely within their chunk.
+//     Chunk.Clone already assumes as much when it rewrites a clone's brush
+//     IDs with a suffix.
 //   - Light IDs are unique within a level's LightSet.
-//   - Edge IDs are unique within their sector (see sector_edge_id.go), because
-//     an edge is always addressed through the sector that owns it.
 
 import (
 	"fmt"
 	"log"
 )
 
-// sectorIDTakenIn reports whether any sector in ch other than the one at
-// exceptIdx already uses id. Pass -1 to check every sector.
-func sectorIDTakenIn(ch *Chunk, id string, exceptIdx int) bool {
-	for si := range ch.Sectors {
-		if si == exceptIdx {
+// brushIDTakenIn reports whether any brush in ch other than the one at
+// exceptIdx already uses id. Pass -1 to check every brush.
+func brushIDTakenIn(ch *Chunk, id string, exceptIdx int) bool {
+	for bi := range ch.Brushes {
+		if bi == exceptIdx {
 			continue
 		}
-		if ch.Sectors[si].ID == id {
+		if ch.Brushes[bi].ID == id {
 			return true
 		}
 	}
 	return false
 }
 
-// UniqueSectorID returns base, or base with a numeric suffix that no sector in
+// UniqueBrushID returns base, or base with a numeric suffix that no brush in
 // ch is using. Chunk-scoped because that is what the editor has in hand at a
-// mint site; uniqueSectorIDInLevel is the level-wide version the loader uses.
-func UniqueSectorID(ch *Chunk, base string) string {
+// mint site; uniqueBrushIDInLevel is the level-wide version the loader uses.
+func UniqueBrushID(ch *Chunk, base string) string {
 	if base == "" {
-		base = "sector"
+		base = "brush"
 	}
-	if !sectorIDTakenIn(ch, base, -1) {
+	if !brushIDTakenIn(ch, base, -1) {
 		return base
 	}
 	for n := 2; ; n++ {
 		id := fmt.Sprintf("%s_%d", base, n)
-		if !sectorIDTakenIn(ch, id, -1) {
+		if !brushIDTakenIn(ch, id, -1) {
 			return id
 		}
 	}
 }
 
-// sectorIDTakenInLevel reports whether any sector anywhere in chunks uses id,
-// ignoring the one at (exceptChunk, exceptSector).
-func sectorIDTakenInLevel(chunks []Chunk, id string, exceptChunk, exceptSector int) bool {
+// brushIDTakenInLevel reports whether any brush anywhere in chunks uses id,
+// ignoring the one at (exceptChunk, exceptBrush).
+func brushIDTakenInLevel(chunks []Chunk, id string, exceptChunk, exceptBrush int) bool {
 	for ci := range chunks {
-		for si := range chunks[ci].Sectors {
-			if ci == exceptChunk && si == exceptSector {
+		for bi := range chunks[ci].Brushes {
+			if ci == exceptChunk && bi == exceptBrush {
 				continue
 			}
-			if chunks[ci].Sectors[si].ID == id {
+			if chunks[ci].Brushes[bi].ID == id {
 				return true
 			}
 		}
@@ -74,18 +65,18 @@ func sectorIDTakenInLevel(chunks []Chunk, id string, exceptChunk, exceptSector i
 	return false
 }
 
-// uniqueSectorIDInLevel returns base, or base with a suffix no sector anywhere
+// uniqueBrushIDInLevel returns base, or base with a suffix no brush anywhere
 // in chunks is using.
-func uniqueSectorIDInLevel(chunks []Chunk, base string, exceptChunk, exceptSector int) string {
+func uniqueBrushIDInLevel(chunks []Chunk, base string, exceptChunk, exceptBrush int) string {
 	if base == "" {
-		base = "sector"
+		base = "brush"
 	}
-	if !sectorIDTakenInLevel(chunks, base, exceptChunk, exceptSector) {
+	if !brushIDTakenInLevel(chunks, base, exceptChunk, exceptBrush) {
 		return base
 	}
 	for n := 2; ; n++ {
 		id := fmt.Sprintf("%s_%d", base, n)
-		if !sectorIDTakenInLevel(chunks, id, exceptChunk, exceptSector) {
+		if !brushIDTakenInLevel(chunks, id, exceptChunk, exceptBrush) {
 			return id
 		}
 	}
@@ -229,9 +220,8 @@ func uniqueLightIDExcludingPoint(ls *LightSet, base string, exceptIdx int) strin
 	}
 }
 
-// ResolveLevelIDCollisions makes every chunk and sector ID in chunks distinct,
-// renaming duplicates and rewriting any Portal.ToSector that pointed at a
-// renamed sector.
+// ResolveLevelIDCollisions makes every chunk and brush ID in chunks distinct,
+// renaming duplicates.
 //
 // It renames rather than rejects: a level authored before uniqueness was
 // enforced should still open, with a warning telling the author what moved. A
@@ -252,43 +242,20 @@ func ResolveLevelIDCollisions(chunks []Chunk) {
 		chunks[ci].ID = id
 	}
 
-	// Sector renames have to be applied before portals are rewritten, because a
-	// portal in one chunk can target a sector in another.
-	renamed := map[string]string{}
-	seenSector := map[string]bool{}
+	seenBrush := map[string]bool{}
 	for ci := range chunks {
-		for si := range chunks[ci].Sectors {
-			id := chunks[ci].Sectors[si].ID
+		for bi := range chunks[ci].Brushes {
+			id := chunks[ci].Brushes[bi].ID
 			if id == "" {
-				id = fmt.Sprintf("sector_%d", si)
+				id = fmt.Sprintf("brush_%d", bi)
 			}
-			if seenSector[id] {
-				fresh := uniqueSectorIDInLevel(chunks, id, ci, si)
-				log.Printf("level: sector ID %q is used more than once; renaming one to %q", id, fresh)
-				renamed[id] = fresh
+			if seenBrush[id] {
+				fresh := uniqueBrushIDInLevel(chunks, id, ci, bi)
+				log.Printf("level: brush ID %q is used more than once; renaming one to %q", id, fresh)
 				id = fresh
 			}
-			seenSector[id] = true
-			chunks[ci].Sectors[si].ID = id
-		}
-	}
-
-	if len(renamed) == 0 {
-		return
-	}
-	// A portal names its target by bare sector ID. Only the *second* claimant of
-	// a name was renamed, so a portal that pointed at the first still resolves —
-	// but one that meant the second is now dangling, and there is no way to tell
-	// the two apart. Log it rather than guess.
-	for ci := range chunks {
-		for si := range chunks[ci].Sectors {
-			for pi := range chunks[ci].Sectors[si].Portals {
-				to := chunks[ci].Sectors[si].Portals[pi].ToSector
-				if _, was := renamed[to]; was {
-					log.Printf("level: portal in sector %q targets %q, which was ambiguous before renaming; verify it points where you meant",
-						chunks[ci].Sectors[si].ID, to)
-				}
-			}
+			seenBrush[id] = true
+			chunks[ci].Brushes[bi].ID = id
 		}
 	}
 }
@@ -306,7 +273,7 @@ var reservedLevelIDs = map[string]bool{
 }
 
 // LevelIDTaken reports whether id already names something in lvl — an entity, a
-// volume, a sector, a chunk, a light or a biome sector — or is reserved.
+// volume, a chunk, a brush or a light — or is reserved.
 //
 // SCRIPTING.md promises that `@id` never needs qualifying, which only holds if
 // one name means one object across every kind. Checking per-kind would let an
@@ -357,13 +324,8 @@ func LevelIDTaken(lvl *Level, id string) bool {
 		if ch.ID == id {
 			return true
 		}
-		for si := range ch.Sectors {
-			if ch.Sectors[si].ID == id {
-				return true
-			}
-		}
-		for bi := range ch.BiomeSectors {
-			if ch.BiomeSectors[bi].ID == id {
+		for bi := range ch.Brushes {
+			if ch.Brushes[bi].ID == id {
 				return true
 			}
 		}

@@ -201,26 +201,16 @@ func TestFrameChunksAreNotInTheWorldLookup(t *testing.T) {
 	// otherwise answer for a player standing at world (0,0).
 	lvl := frameLevel(t, "ship", mgl32.Vec3{500, 0, 500}, mgl32.Vec3{})
 	interior := &lvl.Chunks[1]
-	interior.Points = []mgl32.Vec2{{-2, -2}, {2, -2}, {2, 2}, {-2, 2}}
-	interior.PointNames = make([]string, 4)
-	interior.Sectors = []Sector{{
-		ID: "cabin", PointIndices: []int{0, 1, 2, 3},
-		EdgeKinds: []string{"wall", "wall", "wall", "wall"},
-		Floor:     Floor{Enabled: true}, Ceiling: Ceiling{Enabled: true, Height: 3},
-		MinBound: mgl32.Vec2{-2, -2}, MaxBound: mgl32.Vec2{2, 2},
-	}}
+	interior.Brushes = []Brush{NewBoxBrush("cabin", mgl32.Vec3{0, 1.5, 0}, mgl32.Vec3{2, 1.5, 2}, "")}
 	interior.RecomputeBounds()
 
 	lvl.Spatial = BuildSpatialHash(lvl.Chunks, 8)
 	origin := mgl32.Vec3{0, 1, 0}
-	if c, s := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, origin); c != nil || s != nil {
+	if c := FindChunkSH(lvl.Spatial, lvl.Chunks, origin); c != nil {
 		t.Errorf("the world lookup found frame geometry at the origin: chunk %v", c.ID)
 	}
 	if c := FindChunk(lvl.Chunks, origin); c != nil {
 		t.Errorf("the linear chunk scan found frame geometry at the origin: %v", c.ID)
-	}
-	if c, _ := FindChunkAndSector(lvl.Chunks, origin); c != nil {
-		t.Errorf("the linear sector scan found frame geometry at the origin: %v", c.ID)
 	}
 
 	// But the frame's own search does find it, in the frame's own coordinates.
@@ -229,12 +219,12 @@ func TestFrameChunksAreNotInTheWorldLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	RefreshFrames(lvl, fs)
-	c, s := fs.Frame("ship").ChunkAndSectorAt(lvl, origin)
-	if c == nil || s == nil {
+	c := fs.Frame("ship").ChunkAt(lvl, origin)
+	if c == nil {
 		t.Fatal("the frame's own search did not find its interior at its own origin")
 	}
-	if s.ID != "cabin" {
-		t.Errorf("found sector %q, want cabin", s.ID)
+	if c.ID != "interior" {
+		t.Errorf("found chunk %q, want interior", c.ID)
 	}
 }
 

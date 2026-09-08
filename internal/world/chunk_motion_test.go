@@ -19,22 +19,12 @@ import (
 func movingChunkLevel(t *testing.T, vel mgl32.Vec3) *Level {
 	t.Helper()
 	ch := Chunk{
-		ID:         "lift",
-		Points:     []mgl32.Vec2{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
-		PointNames: []string{"P0", "P1", "P2", "P3"},
-		MinBound:   mgl32.Vec3{0, 0, 0},
-		MaxBound:   mgl32.Vec3{10, 4, 10},
-		Scale:      1,
-		Velocity:   vel,
-		Sectors: []Sector{{
-			ID:           "A",
-			PointIndices: []int{0, 1, 2, 3},
-			EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
-			MinBound:     mgl32.Vec2{0, 0},
-			MaxBound:     mgl32.Vec2{10, 10},
-			Floor:        Floor{Enabled: true},
-			Ceiling:      Ceiling{Enabled: true, Height: 4},
-		}},
+		ID:       "lift",
+		MinBound: mgl32.Vec3{0, 0, 0},
+		MaxBound: mgl32.Vec3{10, 4, 10},
+		Scale:    1,
+		Velocity: vel,
+		Brushes:  []Brush{NewBoxBrush("A", mgl32.Vec3{5, 2, 5}, mgl32.Vec3{5, 2, 5}, "")},
 	}
 	lvl := &Level{Chunks: []Chunk{ch}}
 	RebuildSpatialHash(lvl)
@@ -75,15 +65,15 @@ func TestAdvanceChunksRewritesNoLocalGeometry(t *testing.T) {
 	// Same reason writing `origin` from a script rebuilds nothing: every
 	// per-chunk coordinate is chunk-local and rides out through ModelMatrix.
 	lvl := movingChunkLevel(t, mgl32.Vec3{0, 3, 0})
-	before := append([]mgl32.Vec2(nil), lvl.Chunks[0].Points...)
+	before := append([]mgl32.Vec3(nil), lvl.Chunks[0].Brushes[0].Verts...)
 	minB, maxB := lvl.Chunks[0].MinBound, lvl.Chunks[0].MaxBound
 
 	AdvanceChunks(lvl, 2)
 
 	ch := &lvl.Chunks[0]
 	for i := range before {
-		if ch.Points[i] != before[i] {
-			t.Fatalf("point %d moved to %v; chunk-local coordinates must not be rewritten", i, ch.Points[i])
+		if ch.Brushes[0].Verts[i] != before[i] {
+			t.Fatalf("vert %d moved to %v; chunk-local coordinates must not be rewritten", i, ch.Brushes[0].Verts[i])
 		}
 	}
 	if ch.MinBound != minB || ch.MaxBound != maxB {
@@ -98,16 +88,16 @@ func TestAdvanceChunksRebucketsTheSpatialHash(t *testing.T) {
 	lvl := movingChunkLevel(t, mgl32.Vec3{100, 0, 0})
 
 	inside := mgl32.Vec3{5, 1, 5}
-	if ch, _ := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, inside); ch == nil {
+	if ch := FindChunkSH(lvl.Spatial, lvl.Chunks, inside); ch == nil {
 		t.Fatal("fixture: the chunk is not findable at its own position to begin with")
 	}
 
 	AdvanceChunks(lvl, 1)
 
-	if ch, _ := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, inside.Add(mgl32.Vec3{100, 0, 0})); ch == nil {
+	if ch := FindChunkSH(lvl.Spatial, lvl.Chunks, inside.Add(mgl32.Vec3{100, 0, 0})); ch == nil {
 		t.Error("the moved chunk is not findable at its new position; the hash was not re-bucketed")
 	}
-	if ch, _ := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, inside); ch != nil {
+	if ch := FindChunkSH(lvl.Spatial, lvl.Chunks, inside); ch != nil {
 		t.Error("the chunk is still findable at the footprint it moved off")
 	}
 }

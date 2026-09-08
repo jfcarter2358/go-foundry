@@ -119,10 +119,10 @@ func TestVolumeLookupsAndUniqueIDs(t *testing.T) {
 		t.Error("UniqueVolumeID returned a name already in use")
 	}
 	// One name means one object across every kind, so a volume cannot take a
-	// sector's name either.
-	lvl.Chunks = []Chunk{{ID: "c", Sectors: []Sector{{ID: "hall"}}}}
+	// brush's name either.
+	lvl.Chunks = []Chunk{{ID: "c", Brushes: []Brush{{ID: "hall"}}}}
 	if got := UniqueVolumeID(lvl, "hall"); got == "hall" {
-		t.Error("a volume was allowed to reuse a sector's ID")
+		t.Error("a volume was allowed to reuse a brush's ID")
 	}
 	if got := UniqueVolumeID(lvl, "player"); got == "player" {
 		t.Error("a volume was allowed to take the reserved player ID")

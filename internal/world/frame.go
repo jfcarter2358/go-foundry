@@ -415,20 +415,20 @@ func rotationOnly(m mgl32.Mat4) mgl32.Mat4 {
 	return m
 }
 
-// ChunkAndSectorAt locates a position expressed in this frame's coordinates.
+// ChunkAt locates a position expressed in this frame's coordinates.
 //
 // The world frame goes through the spatial hash it has always used; a carried
 // frame scans its own handful of chunks. Both answer in the same coordinates
 // they were asked in, which is the whole reason the resolvers downstream need no
 // changes.
-func (f *Frame) ChunkAndSectorAt(lvl *Level, pos mgl32.Vec3) (*Chunk, *Sector) {
+func (f *Frame) ChunkAt(lvl *Level, pos mgl32.Vec3) *Chunk {
 	if lvl == nil {
-		return nil, nil
+		return nil
 	}
 	if f.IsWorld() {
-		return FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, pos)
+		return FindChunkSH(lvl.Spatial, lvl.Chunks, pos)
 	}
-	return FindChunkAndSectorAmong(lvl.Chunks, f.ChunkIdx, pos)
+	return FindChunkAmong(lvl.Chunks, f.ChunkIdx, pos)
 }
 
 // RebuildIndexes rebuilds a level's derived lookup structures: the world

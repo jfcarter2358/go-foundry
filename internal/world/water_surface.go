@@ -1,13 +1,17 @@
 package world
 
-// water_surface.go — the animated water plane.
+// water_surface.go — the wave/reflection parameters shared by anything that
+// draws an animated water plane.
 //
-// Water used to be one kind of placeable Primitive. Primitives are gone from
-// levels, and the only thing left that wants a water surface is a Water-kind
-// BiomeSector, which derives one from the polygon it paints (biome_water.go).
-// What survives here is the part that was never about placement: the wave and
-// reflection parameters the shaders read, and the runtime mesh that carries
-// them.
+// Water used to be one kind of placeable Primitive, and later something a
+// Water-kind BiomeSector derived automatically. Both are gone; what survives
+// here is the part that was never about placement — the parameters
+// themselves, and their YAML conversion.
+//
+// The runtime WaterSurface type that used to live beside this — a mesh
+// derived from a BiomeSector's polygon — goes with it. A brush-scattering
+// Volume will need its own water-plane derivation in its place; see
+// VolumeBiome (volume.go, planned).
 
 import (
 	"foundry/internal/gfx"
@@ -15,8 +19,54 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+// DefaultWaterDepth is how far below the surrounding ground a water surface
+// sits, when nothing overrides it.
+const DefaultWaterDepth = float32(0.6)
+
+// WaterDepthLimit bounds how far a water surface can be moved from the ground
+// it was sampled against, in either direction. It is a sanity rail on the
+// depth slider and the height gizmo, not a physical constraint.
+const WaterDepthLimit = float32(100)
+
+// waterDepthEpsilon is the smallest magnitude NormalizeWaterDepth will hand
+// back for a level that was asked for exactly at the ground. See its doc.
+const waterDepthEpsilon = float32(0.0005)
+
+// ResolvedWaterDepth applies the "0 means the default" convention (shared with
+// every other zero-value-means-default field in this engine) to a water
+// depth.
+//
+// Unlike most of those, a water depth is meaningful when NEGATIVE: depth is
+// measured downward from whatever ground it was sampled against, so a
+// negative one lifts the surface ABOVE that ground — flooding flat ground
+// rather than filling a dug basin. Only exactly 0 is the sentinel, which is
+// why this tests == 0 rather than the <= 0 other resolvers use.
+func ResolvedWaterDepth(v float32) float32 {
+	if v == 0 {
+		return DefaultWaterDepth
+	}
+	return v
+}
+
+// NormalizeWaterDepth prepares a depth for storing: it clamps to
+// +/-WaterDepthLimit and nudges an exact 0 aside, since 0 is
+// ResolvedWaterDepth's "use the default" sentinel and would otherwise make a
+// slider or gizmo drag jump to DefaultWaterDepth as it passed the ground. The
+// nudge is far below what any "%.2f" readout can show.
+func NormalizeWaterDepth(v float32) float32 {
+	if v > WaterDepthLimit {
+		v = WaterDepthLimit
+	} else if v < -WaterDepthLimit {
+		v = -WaterDepthLimit
+	}
+	if v == 0 {
+		return waterDepthEpsilon
+	}
+	return v
+}
+
 // WaterParamsFromRaw converts the YAML form, falling back to defaults when the
-// block is absent (sectors painted before these settings existed).
+// block is absent.
 func WaterParamsFromRaw(rw *RawWater) gfx.WaterParams {
 	if rw == nil {
 		return gfx.DefaultWaterParams()
@@ -29,62 +79,4 @@ func WaterParamsFromRaw(rw *RawWater) gfx.WaterParams {
 		Reflectivity:  rw.Reflectivity,
 		ReflectColor:  mgl32.Vec3{rw.ReflectColor.R, rw.ReflectColor.G, rw.ReflectColor.B},
 	}
-}
-
-// WaterSurface is one water plane derived from a Water-kind BiomeSector: a
-// runtime-only mesh with the wave parameters that drive it.
-//
-// It is deliberately not placeable and never serialized — everything about it
-// follows from the sector it belongs to, and biome_water.go rebuilds it from
-// there whenever that sector changes. ID matches the owning sector's, which is
-// how the sync finds the one to rebuild or drop.
-//
-// There is no rotation or scale of its own: the mesh is generated in local
-// proportions around Position, which is chunk-local like the sector's own
-// geometry — a second rotation/scale here would only be another way to say
-// something the polygon already says. The owning chunk's live
-// Origin/Rotation/Scale still applies: ModelMatrix/LocalAABB return
-// chunk-local results and the caller composes them with the owning chunk's
-// ModelMatrix (see the water draw loop in app.go).
-type WaterSurface struct {
-	ID       string
-	ChunkID  string
-	Position mgl32.Vec3
-	Water    gfx.WaterParams
-	Alpha    float32
-
-	// Half-extents of the plane, used for frustum culling. Culling tests the
-	// surface's own bounds rather than its owning sector's — a lake routinely
-	// extends past the structural sector its centre happens to land in.
-	BoundHalfX float32
-	BoundHalfY float32
-	BoundHalfZ float32
-
-	Geometry gfx.Geometry
-}
-
-// ModelMatrix builds the model matrix for this surface — a translation, since
-// the mesh already carries its own shape.
-func (w *WaterSurface) ModelMatrix() mgl32.Mat4 {
-	return mgl32.Translate3D(w.Position.X(), w.Position.Y(), w.Position.Z())
-}
-
-// LocalAABB returns the surface's chunk-local axis-aligned bounds, grown by
-// the wave amplitude so a crest cannot poke outside the box it is culled
-// against. See WorldAABB for the world-space box carried through the owning
-// chunk's transform.
-func (w *WaterSurface) LocalAABB() (mgl32.Vec3, mgl32.Vec3) {
-	h := mgl32.Vec3{w.BoundHalfX, w.BoundHalfY, w.BoundHalfZ}
-	if w.Water.Enabled {
-		h[1] += w.Water.WaveAmplitude
-	}
-	return w.Position.Sub(h), w.Position.Add(h)
-}
-
-// WorldAABB is LocalAABB carried through ch's ModelMatrix — the surface's
-// bounds in world space (or in ch's owning frame's space, for a frame-owned
-// chunk). ch must be the surface's own owning chunk.
-func (w *WaterSurface) WorldAABB(ch *Chunk) (mgl32.Vec3, mgl32.Vec3) {
-	lo, hi := w.LocalAABB()
-	return transformAABB(ch.ModelMatrix(), lo, hi)
 }

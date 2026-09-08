@@ -75,10 +75,10 @@ func TestScalingACarrierScalesTheChunkItCarries(t *testing.T) {
 	if f == nil {
 		t.Fatal("no frame was built for the chunk's owner")
 	}
-	if c, s := f.ChunkAndSectorAt(lvl, mgl32.Vec3{10, 12, 10}); c == nil || s == nil {
+	if c := f.ChunkAt(lvl, mgl32.Vec3{10, 12, 10}); c == nil {
 		t.Error("a point between the unscaled and scaled ceilings is outside the hold; Height must scale with the carrier")
 	}
-	if c, s := f.ChunkAndSectorAt(lvl, mgl32.Vec3{10, 20, 10}); c != nil && s != nil {
+	if c := f.ChunkAt(lvl, mgl32.Vec3{10, 20, 10}); c != nil {
 		t.Error("a point above the scaled ceiling resolved inside the hold")
 	}
 }

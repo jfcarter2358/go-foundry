@@ -15,51 +15,25 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// enableTestChunk builds one square sector with loaded geometry, GL-free.
+// enableTestChunk builds one box brush with loaded geometry, GL-free.
 func enableTestChunk(t *testing.T) *Chunk {
 	t.Helper()
 	testenv.WithoutGeometryUploads(t)
 
 	ch := &Chunk{
-		ID:         "room",
-		Points:     []mgl32.Vec2{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
-		PointNames: []string{"P0", "P1", "P2", "P3"},
-		MinBound:   mgl32.Vec3{0, -1, 0},
-		MaxBound:   mgl32.Vec3{10, 5, 10},
+		ID:       "room",
+		MinBound: mgl32.Vec3{0, -1, 0},
+		MaxBound: mgl32.Vec3{10, 5, 10},
+		Brushes:  []Brush{NewBoxBrush("A", mgl32.Vec3{5, 2, 5}, mgl32.Vec3{5, 2, 5}, "concrete")},
 	}
-	idx := []int{0, 1, 2, 3}
-	var walls []Wall
-	for i := range idx {
-		walls = append(walls, Wall{
-			StartPoint: ch.Points[idx[i]],
-			EndPoint:   ch.Points[idx[(i+1)%len(idx)]],
-			Texture:    "concrete",
-			Collision:  true,
-			Visible:    true,
-			Alpha:      1,
-		})
-	}
-	s := Sector{
-		ID:           "A",
-		PointIndices: idx,
-		EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
-		Walls:        walls,
-		Floor:        Floor{Enabled: true, Texture: "concrete", VertexOffsets: []float32{0, 0, 0, 0}},
-		Ceiling:      Ceiling{Enabled: true, Height: 4, Texture: "concrete", VertexOffsets: []float32{0, 0, 0, 0}},
-	}
-	ch.Sectors = []Sector{s}
 	ch.ReloadGeometry()
 	return ch
 }
 
 func chunkHasMeshes(ch *Chunk) bool {
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		if len(s.Floor.Geometry.Vertices) > 0 || len(s.Ceiling.Geometry.Vertices) > 0 {
-			return true
-		}
-		for wi := range s.Walls {
-			if len(s.Walls[wi].Geometry.Vertices) > 0 {
+	for bi := range ch.Brushes {
+		for fi := range ch.Brushes[bi].Faces {
+			if len(ch.Brushes[bi].Faces[fi].Geometry.Vertices) > 0 {
 				return true
 			}
 		}
@@ -122,8 +96,8 @@ func TestDisabledChunkIsNotFound(t *testing.T) {
 	chunks := []Chunk{*ch}
 	inside := mgl32.Vec3{5, 1, 5}
 
-	if c, s := FindChunkAndSector(chunks, inside); c == nil || s == nil {
-		t.Fatalf("fixture is not findable while enabled: chunk=%v sector=%v", c, s)
+	if c := FindChunk(chunks, inside); c == nil {
+		t.Fatalf("fixture is not findable while enabled: chunk=%v", c)
 	}
 	if sh := BuildSpatialHash(chunks, SpatialCellSize); len(sh.Cells) == 0 {
 		t.Fatal("fixture buckets into no cells while enabled")
@@ -131,9 +105,6 @@ func TestDisabledChunkIsNotFound(t *testing.T) {
 
 	chunks[0].Disabled = true
 
-	if c, s := FindChunkAndSector(chunks, inside); c != nil || s != nil {
-		t.Errorf("a disabled chunk was found by FindChunkAndSector: chunk=%v sector=%v", c, s)
-	}
 	if c := FindChunk(chunks, inside); c != nil {
 		t.Errorf("a disabled chunk was found by FindChunk: %v", c)
 	}
@@ -141,8 +112,8 @@ func TestDisabledChunkIsNotFound(t *testing.T) {
 	if len(sh.Cells) != 0 {
 		t.Errorf("a disabled chunk was bucketed into %d cells, want 0", len(sh.Cells))
 	}
-	if c, s := FindChunkAndSectorSH(sh, chunks, inside); c != nil || s != nil {
-		t.Errorf("a disabled chunk was found through the hash: chunk=%v sector=%v", c, s)
+	if c := FindChunkSH(sh, chunks, inside); c != nil {
+		t.Errorf("a disabled chunk was found through the hash: chunk=%v", c)
 	}
 }
 

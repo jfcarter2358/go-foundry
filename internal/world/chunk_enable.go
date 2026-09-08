@@ -31,12 +31,12 @@ package world
 // gl.* work that must happen on the main thread between frames. Separating them
 // is the same split DrainScriptWork exists for.
 
-// EvictBiomeCaches releases the GPU resources the renderer derives from a biome
-// sector — its scatter height texture, its ground patch mesh and its cached
-// triangulation. Installed by the render package (GrassInit), because those
-// caches live there and this package sits below it. The default does nothing,
-// which is correct headless and in every test.
-var EvictBiomeCaches = func(biomeSectorID string) {}
+// EvictBiomeCaches releases the GPU resources the renderer derives from a
+// biome scatter volume — its scatter height texture, its ground patch mesh
+// and its cached triangulation. Installed by the render package (GrassInit),
+// because those caches live there and this package sits below it. The
+// default does nothing, which is correct headless and in every test.
+var EvictBiomeCaches = func(volumeID string) {}
 
 // IsEnabled reports whether the chunk takes part in the world at all.
 func (ch *Chunk) IsEnabled() bool { return !ch.Disabled }
@@ -94,57 +94,23 @@ func SyncChunkGeometryFor(ch *Chunk) bool {
 }
 
 // ReleaseGeometry frees every GPU and CPU buffer the chunk owns and marks it
-// unloaded. The chunk itself stays in the level: its points, sectors, textures,
-// tags and script are what ReloadGeometry rebuilds from, and they are also what
-// the 2D map draws, so a disabled chunk is still visible to author and still
+// unloaded. The chunk itself stays in the level: its brushes, textures, tags
+// and script are what ReloadGeometry rebuilds from, and they are also what
+// the editor draws, so a disabled chunk is still visible to author and still
 // addressable by name.
 //
 // Safe to call twice; the second call finds nothing to free.
 func (ch *Chunk) ReleaseGeometry() {
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		for wi := range s.Walls {
-			s.Walls[wi].Geometry.Unload()
-			for ei := range s.Walls[wi].SubmeshGeometries {
-				s.Walls[wi].SubmeshGeometries[ei].Unload()
+	for bi := range ch.Brushes {
+		b := &ch.Brushes[bi]
+		for fi := range b.Faces {
+			f := &b.Faces[fi]
+			f.Geometry.Unload()
+			for si := range f.SubmeshGeometries {
+				f.SubmeshGeometries[si].Unload()
 			}
-			s.Walls[wi].SubmeshGeometries = nil
+			f.SubmeshGeometries = nil
 		}
-		s.Floor.Geometry.Unload()
-		for ei := range s.Floor.SubmeshGeometries {
-			s.Floor.SubmeshGeometries[ei].Unload()
-		}
-		s.Floor.SubmeshGeometries = nil
-		s.Floor.SkirtGeometry.Unload()
-		s.Floor.Slab.Unload()
-		s.Ceiling.Geometry.Unload()
-		for ei := range s.Ceiling.SubmeshGeometries {
-			s.Ceiling.SubmeshGeometries[ei].Unload()
-		}
-		s.Ceiling.SubmeshGeometries = nil
-		s.Ceiling.Slab.Unload()
-		for pi := range s.Portals {
-			s.Portals[pi].FloorGap.Unload()
-			s.Portals[pi].CeilGap.Unload()
-		}
-		// The terrain collision caches are rebuilt by Sector.Load along with
-		// the geometry, and on a large sector they are not small.
-		s.Floor.CollisionPts, s.Floor.CollisionDepths, s.Floor.CollisionTris = nil, nil, nil
-		s.Ceiling.CollisionPts, s.Ceiling.CollisionDepths, s.Ceiling.CollisionTris = nil, nil, nil
-	}
-	for wi := range ch.WaterSurfaces {
-		ch.WaterSurfaces[wi].Geometry.Unload()
-	}
-	// Water planes are wholly derived from the Water-kind biome sectors, so
-	// dropping them costs nothing: SyncBiomeWaterSurfaces rebuilds the list the
-	// first frame the chunk is back.
-	ch.WaterSurfaces = nil
-	for bi := range ch.BiomeSectors {
-		EvictBiomeCaches(ch.BiomeSectors[bi].ID)
-		// The renderer rebuilds both lazily, but only when it is told they are
-		// stale — and the eviction above is exactly that.
-		ch.BiomeSectors[bi].HeightDirty = true
-		ch.BiomeSectors[bi].GroundDirty = true
 	}
 	ch.Unloaded = true
 }
@@ -152,16 +118,15 @@ func (ch *Chunk) ReleaseGeometry() {
 // ReloadGeometry rebuilds everything ReleaseGeometry threw away, from the
 // chunk's own authored data.
 //
-// This is the same work the loader does after it has finished reading a chunk's
-// YAML, in the same order and through the same functions — ReloadSector per
-// sector, then the chunk-level passes that span more than one — so a chunk that
-// has been off and on again is the chunk the loader would have produced.
+// This is the same work the loader does after it has finished reading a
+// chunk's YAML, in the same order and through the same functions — Brush.Load
+// per brush, then the chunk-level passes that span more than one — so a
+// chunk that has been off and on again is the chunk the loader would have
+// produced.
 func (ch *Chunk) ReloadGeometry() {
-	for si := range ch.Sectors {
-		_ = ReloadSector(ch, &ch.Sectors[si])
+	for bi := range ch.Brushes {
+		_ = ch.Brushes[bi].Load()
 	}
-	// RebuildGaps rebuilds the skirts too; see its own doc comment.
-	ch.RebuildGaps()
 	ch.RecomputeBounds()
 	ch.Unloaded = false
 }

@@ -1,7 +1,7 @@
 package world
 
 // spatial_boundary_test.go — standing on the floor must count as being in the
-// room.
+// chunk.
 //
 // A chunk's vertical bounds are the extent of its geometry, so its lowest floor
 // *is* its MinBound.Y. A body resting on that floor therefore sits exactly on
@@ -11,8 +11,8 @@ package world
 // offset, and the sign of the leftover is a property of the level's coordinates
 // rather than of anything an author controls.
 //
-// What it breaks is quiet. CurrentSector goes empty, so a script's `:enter:`
-// and `:exit:` on a sector misfire for anything standing still — which is most
+// What it breaks is quiet. CurrentChunk goes empty, so anything that reads a
+// body's location misfires for anything standing still — which is most
 // things, most of the time.
 
 import (
@@ -22,22 +22,15 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// boundaryChunk is one 10×10 sector with its floor at y=0 and ceiling at y=8.
+// boundaryChunk is one 10×10 box brush with its floor at y=floorY and ceiling
+// at y=ceilY.
 func boundaryChunk(floorY, ceilY float32) *Chunk {
+	half := (ceilY - floorY) / 2
+	center := mgl32.Vec3{5, floorY + half, 5}
 	ch := &Chunk{
-		ID:         "room",
-		Points:     []mgl32.Vec2{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
-		PointNames: make([]string, 4),
+		ID:      "room",
+		Brushes: []Brush{NewBoxBrush("A", center, mgl32.Vec3{5, half, 5}, "")},
 	}
-	ch.Sectors = []Sector{{
-		ID:           "A",
-		PointIndices: []int{0, 1, 2, 3},
-		EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
-		Floor:        Floor{Enabled: true, Height: floorY, VertexOffsets: []float32{0, 0, 0, 0}},
-		Ceiling:      Ceiling{Enabled: true, Height: ceilY, VertexOffsets: []float32{0, 0, 0, 0}},
-		MinBound:     mgl32.Vec2{0, 0},
-		MaxBound:     mgl32.Vec2{10, 10},
-	}}
 	ch.RecomputeBounds()
 	return ch
 }
@@ -56,20 +49,20 @@ func TestAPointOnTheFloorIsInsideTheChunk(t *testing.T) {
 		lo := mgl32.Vec3{5, lvl.Chunks[0].MinBound.Y() + dy, 5}
 		hi := mgl32.Vec3{5, lvl.Chunks[0].MaxBound.Y() - dy, 5}
 
-		if c, s := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, lo); c == nil || s == nil {
-			t.Errorf("floor%+.0e: the spatial hash found chunk=%v sector=%v", dy, c != nil, s != nil)
+		if c := FindChunkSH(lvl.Spatial, lvl.Chunks, lo); c == nil {
+			t.Errorf("floor%+.0e: the spatial hash found nothing", dy)
 		}
-		if c, s := FindChunkAndSector(lvl.Chunks, lo); c == nil || s == nil {
-			t.Errorf("floor%+.0e: the linear scan found chunk=%v sector=%v", dy, c != nil, s != nil)
+		if c := FindChunk(lvl.Chunks, lo); c == nil {
+			t.Errorf("floor%+.0e: the linear scan found nothing", dy)
 		}
 		if c := FindChunk(lvl.Chunks, lo); c == nil {
 			t.Errorf("floor%+.0e: FindChunk found nothing", dy)
 		}
-		if c, s := frame.ChunkAndSectorAt(lvl, lo); c == nil || s == nil {
-			t.Errorf("floor%+.0e: the frame search found chunk=%v sector=%v", dy, c != nil, s != nil)
+		if c := frame.ChunkAt(lvl, lo); c == nil {
+			t.Errorf("floor%+.0e: the frame search found nothing", dy)
 		}
-		if c, s := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, hi); c == nil || s == nil {
-			t.Errorf("ceiling%+.0e: found chunk=%v sector=%v", dy, c != nil, s != nil)
+		if c := FindChunkSH(lvl.Spatial, lvl.Chunks, hi); c == nil {
+			t.Errorf("ceiling%+.0e: found nothing", dy)
 		}
 	}
 }
@@ -89,8 +82,8 @@ func TestTheFloorToleranceScalesWithTheCoordinate(t *testing.T) {
 		for i := 0; i < ulps; i++ {
 			y = nextDownFloat32(y)
 		}
-		if c, s := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, y3(y)); c == nil || s == nil {
-			t.Errorf("%d ulp below a floor at %v: chunk=%v sector=%v", ulps, base, c != nil, s != nil)
+		if c := FindChunkSH(lvl.Spatial, lvl.Chunks, y3(y)); c == nil {
+			t.Errorf("%d ulp below a floor at %v: found nothing", ulps, base)
 		}
 	}
 }
@@ -118,7 +111,7 @@ func TestStackedChunksStayDistinct(t *testing.T) {
 	lower.ID = "lower"
 	upper := boundaryChunk(4.5, 8.5)
 	upper.ID = "upper"
-	upper.Sectors[0].ID = "B"
+	upper.Brushes[0].ID = "B"
 
 	lvl := &Level{Chunks: []Chunk{*lower, *upper}}
 	if err := RebuildIndexes(lvl); err != nil {
@@ -133,7 +126,7 @@ func TestStackedChunksStayDistinct(t *testing.T) {
 		{4.6, "upper"}, {6, "upper"}, {8.5, "upper"},
 	}
 	for _, tc := range cases {
-		c, _ := FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{5, tc.y, 5})
+		c := FindChunkSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{5, tc.y, 5})
 		if c == nil {
 			t.Errorf("y=%v: found no chunk", tc.y)
 			continue

@@ -151,8 +151,13 @@ type Entity struct {
 
 	// Where the entity currently is, refreshed by EntityUpdate. Derived state,
 	// never authored and never saved.
-	CurrentSector string
-	CurrentChunk  string
+	//
+	// There is no CurrentBrush counterpart to the old CurrentSector: a brush
+	// is a solid, not a room, so "which brush is the entity in" is not a
+	// question that makes sense the way "which sector" did. "What region is
+	// this" becomes a Volume question (see volume.go) once Volumes take over
+	// the trigger-region role sectors used to play.
+	CurrentChunk string
 }
 
 // NewPlayer creates the engine-owned player at pos, which is the player's feet
@@ -665,24 +670,19 @@ func (e *Entity) Integrate(dt float32) {
 	}
 }
 
-// UpdateLocation refreshes which chunk and sector the entity is standing in.
+// UpdateLocation refreshes which chunk the entity is standing in.
 //
-// This is derived state that scripts read — which room is the guard in — and
-// that a future entity-aware collision pass would start from. It narrows the
-// same way the player already does, through the same spatial hash.
+// This is derived state that scripts read, and that a future entity-aware
+// collision pass would start from. It narrows the same way the player
+// already does, through the same spatial hash.
 func (e *Entity) UpdateLocation(lvl *Level) {
 	// Searched in the entity's own frame: its position is expressed there, and
 	// a frame's chunks are not in the world index at all.
-	chunk, sector := lvl.Frames.FrameFor(e).ChunkAndSectorAt(lvl, e.Position)
+	chunk := lvl.Frames.FrameFor(e).ChunkAt(lvl, e.Position)
 	if chunk != nil {
 		e.CurrentChunk = chunk.ID
 	} else {
 		e.CurrentChunk = ""
-	}
-	if sector != nil {
-		e.CurrentSector = sector.ID
-	} else {
-		e.CurrentSector = ""
 	}
 }
 
