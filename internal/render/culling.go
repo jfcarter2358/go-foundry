@@ -63,144 +63,41 @@ func AABBInFrustum(f Frustum, min, max mgl32.Vec3) bool {
 	return true
 }
 
-// PortalFacingCamera returns true when the portal opening's inward normal
-// (same left-hand convention as WallFacingCamera) points toward camPos.
-// Used to cull gap-fill geometry attached to portals.
-func PortalFacingCamera(start, end mgl32.Vec2, camPos mgl32.Vec3) bool {
-	dx := end.X() - start.X()
-	dz := end.Y() - start.Y()
-	nx := -dz
-	nz := dx
-	mx := (start.X() + end.X()) * 0.5
-	mz := (start.Y() + end.Y()) * 0.5
-	toCamX := camPos.X() - mx
-	toCamZ := camPos.Z() - mz
-	return nx*toCamX+nz*toCamZ > 0
+// Portal-graph visibility — the BFS through camera-facing sector portals and
+// floor/ceiling openings that used to narrow a chunk to the rooms actually
+// reachable from the one the camera stood in — went with sectors. A brush is
+// solid geometry rather than a room with doorways, so there is no graph to
+// walk at authoring time.
+//
+// What replaces it splits in two, and both halves are ahead of this point in
+// the migration: raw (in-editor) play frustum-culls each brush's own AABB,
+// which is what BrushInFrustum below is for, and a compiled level gets real
+// occlusion from the BSP/PVS the compile step builds (plan Phase 9).
+
+// BrushInFrustum reports whether a brush is at least partially inside the view
+// frustum, testing its world-space bounds — the brush counterpart of the
+// per-sector test the portal walk used to feed.
+func BrushInFrustum(f Frustum, ch *world.Chunk, b *world.Brush) bool {
+	min, max := b.WorldAABB(ch)
+	return AABBInFrustum(f, min, max)
 }
 
-// portalBFS performs a BFS from startSectorID through sector borders and
-// returns the set of reachable sector IDs. If edgeFilter is non-nil, only
-// borders whose edge it accepts are traversed.
-// Returns nil if startSectorID is empty or not found.
-func portalBFS(chunk *world.Chunk, startSectorID string, edgeFilter func(start, end mgl32.Vec2) bool) map[string]bool {
-	if startSectorID == "" {
-		return nil
+// BrushFaceFacingCamera reports whether a face's outward normal points toward
+// camPos, so a solid's back faces can be skipped. pos is in the same space the
+// face's own verts are — chunk-local — so the caller carries the camera in
+// rather than the geometry out.
+func BrushFaceFacingCamera(b *world.Brush, f *world.BrushFace, camLocal mgl32.Vec3) bool {
+	pts := b.FacePoints(f)
+	if len(pts) < 3 {
+		return true
 	}
-
-	idToIdx := make(map[string]int, len(chunk.Sectors))
-	for i := range chunk.Sectors {
-		idToIdx[chunk.Sectors[i].ID] = i
+	n := b.FaceNormal(f)
+	var mid mgl32.Vec3
+	for _, p := range pts {
+		mid = mid.Add(p)
 	}
-
-	startIdx, ok := idToIdx[startSectorID]
-	if !ok {
-		return nil
-	}
-
-	// One pass over the chunk's edges, reused for every step of the walk.
-	borders := chunk.SectorBorderGraph()
-
-	result := map[string]bool{startSectorID: true}
-	queue := []int{startIdx}
-
-	for len(queue) > 0 {
-		idx := queue[0]
-		queue = queue[1:]
-		sec := &chunk.Sectors[idx]
-
-		// Borders rather than sec.Portals: one edge can front two sectors once
-		// a chunk has storeys — a stairwell shaft borders the ground-floor room
-		// at the bottom of its south edge and the upper room at the top — and a
-		// portal's single ToSector can only name one of them. Walking the
-		// portals directly left the other out of the visibility set, so it was
-		// culled while plainly in view. See Chunk.SectorBorders, which also
-		// skips frame portals and never follows a pinned wall.
-		for _, b := range borders[idx] {
-			toID := chunk.Sectors[b.To].ID
-			if result[toID] {
-				continue
-			}
-			if edgeFilter != nil && !edgeFilter(b.Start, b.End) {
-				continue
-			}
-			result[toID] = true
-			queue = append(queue, b.To)
-		}
-
-		// Openings are the vertical edges of the same graph (world/opening.go).
-		// Without them, standing on a mezzanine and looking down the stairwell
-		// culls the hall underneath: it is connected to nothing the BFS can
-		// reach, so it is not in `result`, and the caller's portal test throws
-		// it away before the frustum ever sees it.
-		//
-		// They are traversed unconditionally, where an edge portal is filtered
-		// by which way it faces. A hole in a floor faces up and down at once, so
-		// the facing test an edge portal uses has nothing to say about it —
-		// and being wrong in this direction only means drawing a sector the
-		// frustum would then have to reject, rather than losing one.
-		for _, op := range openingNeighbours(chunk, sec) {
-			if result[op] {
-				continue
-			}
-			result[op] = true
-			if ni, ok := idToIdx[op]; ok {
-				queue = append(queue, ni)
-			}
-		}
-	}
-
-	return result
-}
-
-// openingNeighbours lists the sectors reachable from sec through the holes in
-// its floor and ceiling.
-func openingNeighbours(chunk *world.Chunk, sec *world.Sector) []string {
-	var out []string
-	add := func(openings []world.Opening, isFloor bool) {
-		for i := range openings {
-			if t := world.OpeningTarget(chunk, sec, &openings[i], isFloor); t != nil {
-				out = append(out, t.ID)
-			}
-		}
-	}
-	add(sec.Floor.Openings, true)
-	add(sec.Ceiling.Openings, false)
-	return out
-}
-
-// PortalVisibleSectors performs a BFS from startSectorID through camera-facing
-// portals and returns the set of sector IDs reachable (and therefore visible).
-// Returns nil if startSectorID is empty or not found, signalling the caller to
-// fall back to frustum-only culling.
-func PortalVisibleSectors(chunk *world.Chunk, startSectorID string, camPos mgl32.Vec3) map[string]bool {
-	return portalBFS(chunk, startSectorID, func(start, end mgl32.Vec2) bool {
-		return PortalFacingCamera(start, end, camPos)
-	})
-}
-
-// PortalConnectedSectors returns the set of all sector IDs reachable from
-// startSectorID through portals, ignoring camera direction. This identifies
-// which sectors participate in the portal graph so that disconnected sectors
-// (e.g. nested sectors with no shared edges) can bypass portal culling.
-// Returns nil if startSectorID is empty or not found.
-func PortalConnectedSectors(chunk *world.Chunk, startSectorID string) map[string]bool {
-	return portalBFS(chunk, startSectorID, nil)
-}
-
-// WallFacingCamera returns true when the wall's outward normal (left-hand normal
-// of its direction vector, CCW interior convention) points toward camPos.
-func WallFacingCamera(wall world.Wall, camPos mgl32.Vec3) bool {
-	dx := wall.EndPoint.X() - wall.StartPoint.X()
-	dz := wall.EndPoint.Y() - wall.StartPoint.Y()
-	// Left-hand normal of (dx, dz) in XZ plane
-	nx := -dz
-	nz := dx
-	// Midpoint of wall
-	mx := (wall.StartPoint.X() + wall.EndPoint.X()) * 0.5
-	mz := (wall.StartPoint.Y() + wall.EndPoint.Y()) * 0.5
-	toCamX := camPos.X() - mx
-	toCamZ := camPos.Z() - mz
-	return nx*toCamX+nz*toCamZ > 0
+	mid = mid.Mul(1 / float32(len(pts)))
+	return n.Dot(camLocal.Sub(mid)) > 0
 }
 
 // TransformAABB carries an axis-aligned box through a transform and re-fits a

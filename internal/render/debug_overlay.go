@@ -79,11 +79,7 @@ func DebugRenderOverlay() {
 				imgui.Text(fmt.Sprintf("  world (eye):%.2f, %.2f, %.2f", c.X(), c.Y(), c.Z()))
 			}
 			imgui.Text(fmt.Sprintf("Frame:        %s%s", frameLabel(pe.Frame), seatLabel(pe.Seat)))
-			// The pair portal-visibility culling starts its search from, which
-			// is what makes them worth a line: when they change, so does the
-			// set of sectors drawn, and a value that alternates between two
-			// answers on alternate frames is a strobing interior.
-			imgui.Text(fmt.Sprintf("Standing in:  %s / %s", orNone(pe.CurrentChunk), orNone(pe.CurrentSector)))
+			imgui.Text(fmt.Sprintf("Standing in:  %s", orNone(pe.CurrentChunk)))
 		} else {
 			imgui.Text("Position:     N/A")
 		}
@@ -107,18 +103,9 @@ func DebugRenderOverlay() {
 		}
 		imgui.Separator()
 
-		// Biome lighting cost switches. Reported here, next to the frame time,
-		// because that is the whole point of their being runtime-toggleable:
-		// flip one and read what it cost off the line above rather than
-		// guessing. Driven by keys (see input.go) rather than by checkboxes so
-		// they work with the mouse captured for camera look.
-		imgui.Text("--- Biome lighting ---")
-		imgui.Text(fmt.Sprintf("Receive shadows:  %s  (F5)", onOff(BiomeShadows.Receive)))
-		imgui.Text(fmt.Sprintf("Cast rock/moss:   %s  (F6)", onOff(BiomeShadows.CastRockMoss)))
-		imgui.Text(fmt.Sprintf("Cast foliage:     %s  (F7)", onOff(BiomeShadows.CastFoliage)))
-		imgui.Text(fmt.Sprintf("Cast cascades:    %d of %d  (F8)", BiomeShadows.CastCascades, ShadowCascades))
-		imgui.Text(fmt.Sprintf("Cast range:       %.0f", BiomeShadows.CastRange))
-		imgui.Text(fmt.Sprintf("Cast LOD tiers:   %d of 3  (F9)", BiomeShadows.CastLODTiers))
+		// TODO(brush migration, Phase 5): the biome lighting cost switches
+		// (F5-F9) reported here went with the biome renderer. They come back
+		// with scatter volumes.
 	}
 	imgui.End()
 }

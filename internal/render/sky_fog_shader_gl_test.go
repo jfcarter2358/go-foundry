@@ -24,7 +24,6 @@ import (
 	"foundry/internal/testenv"
 	"foundry/internal/world"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -100,7 +99,6 @@ func TestEveryShadingProgramGotTheFog(t *testing.T) {
 	withRepoResources(t)
 	t.Cleanup(DeleteSprites)
 
-	GrassInit()
 	DetailInit()
 	SpriteInit()
 	SkyInit()
@@ -109,8 +107,6 @@ func TestEveryShadingProgramGotTheFog(t *testing.T) {
 		name string
 		prog uint32
 	}{
-		{"biome scatter colour", biomes.color.prog},
-		{"biome ground patch", groundPatches.program},
 		{"detail displacement colour", detailRender.dispColor.prog},
 		{"detail scatter colour", detailRender.scatColor.prog},
 		{"sprite colour", sprites.color.prog},
@@ -186,8 +182,6 @@ func TestInitWorldPassesStandsUpEveryPass(t *testing.T) {
 		name  string
 		ready bool
 	}{
-		{"biome scatter", biomes.initialized},
-		{"biome ground patch", groundPatches.initialized},
 		{"procedural face detail", detailRender.initialized},
 		{"sprites and particles", sprites.ready},
 		{"sky", skyRender.initialized},
@@ -197,19 +191,10 @@ func TestInitWorldPassesStandsUpEveryPass(t *testing.T) {
 		}
 	}
 
-	// GrassInit is also where world.EvictBiomeCaches is installed, so a chunk
-	// switched off releases its biome GPU caches. A release build used to reach
-	// neither, and that leak had no symptom either.
-	//
-	// Compared by function pointer rather than against nil: the variable's
-	// default is a no-op function, not nil, so a nil check would pass whether
-	// or not anything ever replaced it.
-	got := reflect.ValueOf(world.EvictBiomeCaches).Pointer()
-	want := reflect.ValueOf(EvictBiomeSectorCaches).Pointer()
-	if got != want {
-		t.Error("world.EvictBiomeCaches is still the default no-op after InitWorldPasses; " +
-			"a disabled chunk would leak its biome GPU caches")
-	}
+	// TODO(brush migration, Phase 5): GrassInit was also where
+	// world.EvictBiomeCaches got installed, so a chunk switched off released
+	// its biome GPU caches. Both the pass and the hook come back with scatter
+	// volumes.
 }
 
 // A cubemap the level names but that is not on disk must not take the sky down

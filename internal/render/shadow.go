@@ -557,11 +557,6 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 			// Cast displaced/scattered detail (drawn via its own tess/instanced
 			// programs so bumps and rocks cast accurate shadows); restores Shadows.Program.
 			RenderDetailDirShadow(level, lsm, &cull)
-			// Cast painted biome scatter, re-instanced through its own placement
-			// code so a blade's shadow lands on the blade; gated per kind and
-			// limited to the nearest cascades by BiomeShadows. Restores
-			// Shadows.Program.
-			RenderBiomeScatterDirShadow(level, lsm, c, frame.Splits[c], gfx.Cam.Position, BiomeWindTime, &cull)
 			// Cast shadow-casting sprites, turned to face the LIGHT rather than
 			// the camera — a camera-facing quad rendered from here would be
 			// edge-on and cast nothing. Restores Shadows.Program.
@@ -630,8 +625,6 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 			renderSceneShadow(level, Shadows.CubeProgram, &gfx.ShadowCubeSkinUniforms, Shadows.CubeModelUniform, &cull)
 			// Cast displaced/scattered detail into this cube face; restores Shadows.CubeProgram.
 			RenderDetailCubeShadow(level, lsm, pl.Position, farPlane, &cull)
-			// Cast painted biome scatter into this cube face; restores Shadows.CubeProgram.
-			RenderBiomeScatterCubeShadow(level, lsm, pl.Position, farPlane, gfx.Cam.Position, BiomeWindTime, &cull)
 			// Sprites into this cube face. A point light has a position, so the
 			// quads converge on it exactly as they converge on the eye in the
 			// colour pass. Restores Shadows.CubeProgram.
@@ -679,69 +672,28 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 			current = m
 			gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
 		}
-		for si := range chunk.Sectors {
-			sector := &chunk.Sectors[si]
+		for bi := range chunk.Brushes {
+			brush := &chunk.Brushes[bi]
 			if cull != nil {
-				secMin, secMax := sector.LocalAABB()
-				secMin, secMax = TransformAABB(current, secMin, secMax)
-				if !AABBInFrustum(*cull, secMin, secMax) {
+				bMin, bMax := brush.LocalAABB()
+				bMin, bMax = TransformAABB(current, bMin, bMax)
+				if !AABBInFrustum(*cull, bMin, bMax) {
 					continue
 				}
 			}
-			// The skirt is solid geometry closing the band under the floor,
-			// so it casts like a wall would. See world/skirt.go.
-			if world.SkirtDrawable(sector) {
-				drawGeometryShadow(&sector.Floor.SkirtGeometry, prog, skin)
-			}
-			if sector.Floor.Enabled && !sector.Floor.Hidden {
+			for fi := range brush.Faces {
+				f := &brush.Faces[fi]
+				if f.NoDraw {
+					continue
+				}
 				// Displaced faces cast via the detail tess program instead (see
-				// RenderDetailDirShadow / RenderDetailCubeShadow), so skip the flat mesh.
-				if !sector.Floor.Detail.HasDisplace() {
-					drawGeometryShadow(&sector.Floor.Geometry, prog, skin)
+				// RenderDetailDirShadow / RenderDetailCubeShadow), so skip the
+				// flat mesh.
+				if !f.Detail.HasDisplace() {
+					drawGeometryShadow(&f.Geometry, prog, skin)
 				}
-				for eg := range sector.Floor.SubmeshGeometries {
-					drawGeometryShadow(&sector.Floor.SubmeshGeometries[eg], prog, skin)
-				}
-			}
-			if sector.Ceiling.Enabled {
-				if !sector.Ceiling.Detail.HasDisplace() {
-					drawGeometryShadow(&sector.Ceiling.Geometry, prog, skin)
-				}
-				for eg := range sector.Ceiling.SubmeshGeometries {
-					drawGeometryShadow(&sector.Ceiling.SubmeshGeometries[eg], prog, skin)
-				}
-			}
-			// A slab is solid geometry closing the far side of a surface, so
-			// it casts like the surface does. A Hidden far face is skipped and
-			// its rim is not, which is the same split the colour pass makes.
-			for _, sl := range [...]*world.Slab{&sector.Floor.Slab, &sector.Ceiling.Slab} {
-				if !world.SlabDrawable(sl) {
-					continue
-				}
-				if !sl.Hidden {
-					drawGeometryShadow(&sl.Geometry, prog, skin)
-					for eg := range sl.SubmeshGeometries {
-						drawGeometryShadow(&sl.SubmeshGeometries[eg], prog, skin)
-					}
-				}
-				drawGeometryShadow(&sl.RimGeometry, prog, skin)
-			}
-			for wi := range sector.Walls {
-				w := &sector.Walls[wi]
-				if w.Visible {
-					if !w.Detail.HasDisplace() {
-						drawGeometryShadow(&w.Geometry, prog, skin)
-					}
-					for eg := range w.SubmeshGeometries {
-						drawGeometryShadow(&w.SubmeshGeometries[eg], prog, skin)
-					}
-				}
-			}
-			for pi := range sector.Portals {
-				p := &sector.Portals[pi]
-				if p.Visible && p.DrawGap {
-					drawGeometryShadow(&p.FloorGap, prog, skin)
-					drawGeometryShadow(&p.CeilGap, prog, skin)
+				for eg := range f.SubmeshGeometries {
+					drawGeometryShadow(&f.SubmeshGeometries[eg], prog, skin)
 				}
 			}
 		}

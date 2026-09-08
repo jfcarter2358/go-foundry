@@ -117,18 +117,11 @@ func (b *BiomeShadowSettings) AnyCast() bool {
 	return (b.CastRockMoss || b.CastFoliage) && b.CastCascades > 0
 }
 
-// CastsKind reports whether brush kind should be drawn into shadow maps under
-// the current settings. Moss is grouped with Rock, matching the way it shares
-// Rock's shader path everywhere else (see renderBiomeSector).
-func (b *BiomeShadowSettings) CastsKind(kind int32) bool {
-	switch kind {
-	case world.BiomeRock, world.BiomeMoss:
-		return b.CastRockMoss
-	case world.BiomeGrass, world.BiomeWildflower, world.BiomeCattail:
-		return b.CastFoliage
-	}
-	return false
-}
+// TODO(brush migration, Phase 5): CastsKind gated shadow casting per scatter
+// kind (Rock/Moss vs foliage) off the world.Biome* constants, which went with
+// the biome package. It comes back with scatter volumes; the settings it read
+// (BiomeShadowSettings above) are kept because the shader plumbing in this
+// file is shared with sprite_render.go and the detail passes.
 
 // castRangeFor clamps a sector's own draw range for a shadow pass, in two
 // steps: first to mapReach — the shadow map actually being rendered into can't
@@ -246,4 +239,14 @@ func uploadBiomeLighting(prog uint32, level *world.Level, frame ShadowFrame) {
 	cam := gfx.Cam.Matrix
 	gl.UniformMatrix4fv(world.ProgUniformLoc(prog, "camera\x00"), 1, false, &cam[0])
 	gl.Uniform1i(world.ProgUniformLoc(prog, "receiveShadows\x00"), boolToInt32(BiomeShadows.Receive))
+}
+
+// boolToInt32 is the GL-uniform spelling of a bool. Moved here from the biome
+// renderer when that was removed; the shader plumbing in this file and in
+// sprite_render.go both want it.
+func boolToInt32(b bool) int32 {
+	if b {
+		return 1
+	}
+	return 0
 }

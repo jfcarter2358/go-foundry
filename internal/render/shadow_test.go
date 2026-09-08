@@ -220,38 +220,24 @@ func TestFrustumSliceCornersSpanTheSlice(t *testing.T) {
 	}
 }
 
-func TestSectorLocalAABBIncludesOffsetsAndSurfaceMeshes(t *testing.T) {
-	s := world.Sector{
-		MinBound: mgl32.Vec2{-4, -6},
-		MaxBound: mgl32.Vec2{4, 6},
-		Floor: world.Floor{
-			Height:        0,
-			VertexOffsets: []float32{0, -1.5, 0.5},
-			// A pit carved into the floor: the box has to reach its bottom, or
-			// the sector is culled while you can still see down into it.
-			Mesh: world.SurfaceMesh{
-				Points: []world.SurfacePoint{
-					{U: -1, V: -1, Depth: -3, Boundary: world.SurfaceFree},
-					{U: 1, V: -1, Depth: -3, Boundary: world.SurfaceFree},
-					{U: 0, V: 1, Depth: -3, Boundary: world.SurfaceFree},
-				},
-				Faces: []world.SurfaceFace{{Verts: []int{0, 1, 2}}},
-			},
-		},
-		Ceiling: world.Ceiling{
-			Height:        5,
-			VertexOffsets: []float32{0, 2.25, 0},
-		},
-	}
-	min, max := s.LocalAABB()
+// TestBrushLocalAABBCoversEveryVert is the culling box's contract: a brush is
+// culled against it, so it has to reach every vertex the brush has or a
+// corner disappears while it is still on screen.
+func TestBrushLocalAABBCoversEveryVert(t *testing.T) {
+	b := world.NewBoxBrush("b", mgl32.Vec3{0, 1, 0}, mgl32.Vec3{4, 5, 6}, "")
+	min, max := b.LocalAABB()
 
-	if min.X() != -4 || min.Z() != -6 || max.X() != 4 || max.Z() != 6 {
-		t.Errorf("XZ bounds = %v..%v, want (-4,-6)..(4,6)", min, max)
+	if min.X() != -4 || min.Y() != -4 || min.Z() != -6 {
+		t.Errorf("min = %v, want (-4,-4,-6)", min)
 	}
-	if min.Y() != -3 {
-		t.Errorf("min Y = %v, want -3 (floor extrusion)", min.Y())
+	if max.X() != 4 || max.Y() != 6 || max.Z() != 6 {
+		t.Errorf("max = %v, want (4,6,6)", max)
 	}
-	if max.Y() != 7.25 {
-		t.Errorf("max Y = %v, want 7.25 (ceiling vertex offset)", max.Y())
+	for _, v := range b.Verts {
+		if v.X() < min.X() || v.X() > max.X() ||
+			v.Y() < min.Y() || v.Y() > max.Y() ||
+			v.Z() < min.Z() || v.Z() > max.Z() {
+			t.Errorf("vert %v is outside the box %v..%v", v, min, max)
+		}
 	}
 }

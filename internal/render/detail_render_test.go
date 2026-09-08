@@ -14,14 +14,22 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+// detailBrush is a 10x10x10 box brush at the local origin whose first face
+// asks for procedural detail — one face, so the counts below stay readable.
+func detailBrush() world.Brush {
+	b := world.NewBoxBrush("d", mgl32.Vec3{}, mgl32.Vec3{5, 5, 5}, "concrete")
+	b.Faces[0].Detail = world.DetailSpec{Enabled: true}
+	for i := 1; i < len(b.Faces); i++ {
+		b.Faces[i].NoDraw = true
+	}
+	return b
+}
+
 func TestForEachDetailFaceComposesChunkTransform(t *testing.T) {
 	origin := mgl32.Vec3{500, 0, 0}
 	ch := world.Chunk{
 		Origin: origin, Scale: 1,
-		Sectors: []world.Sector{{
-			MinBound: mgl32.Vec2{-5, -5}, MaxBound: mgl32.Vec2{5, 5},
-			Floor: world.Floor{Enabled: true, Detail: world.DetailSpec{Enabled: true}},
-		}},
+		Brushes: []world.Brush{detailBrush()},
 	}
 	level := &world.Level{Chunks: []world.Chunk{ch}}
 

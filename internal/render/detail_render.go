@@ -99,13 +99,13 @@ func DetailInit() {
 	// the explicit locations in the scatter vertex shaders (0=aLocal, 1=aNormal,
 	// 2=aParam).
 	mesh := buildRockMesh(7)
-	detailRender.rockVerts = int32(len(mesh) / BiomeVertexStride)
+	detailRender.rockVerts = int32(len(mesh) / DetailVertexStride)
 	gl.GenVertexArrays(1, &detailRender.rockVAO)
 	gl.GenBuffers(1, &detailRender.rockVBO)
 	gl.BindVertexArray(detailRender.rockVAO)
 	gl.BindBuffer(gl.ARRAY_BUFFER, detailRender.rockVBO)
 	gl.BufferData(gl.ARRAY_BUFFER, len(mesh)*4, gl.Ptr(mesh), gl.STATIC_DRAW)
-	stride := int32(BiomeVertexStride * 4)
+	stride := int32(DetailVertexStride * 4)
 	gl.EnableVertexAttribArray(0)
 	gl.VertexAttribPointerWithOffset(0, 3, gl.FLOAT, false, stride, 0)
 	gl.EnableVertexAttribArray(1)
@@ -269,24 +269,19 @@ func forEachDetailFace(level *world.Level, cull *Frustum, fn func(f detailFace))
 				continue
 			}
 		}
-		for si := range ch.Sectors {
-			s := &ch.Sectors[si]
-			var secMin, secMax mgl32.Vec3
+		for bi := range ch.Brushes {
+			b := &ch.Brushes[bi]
+			var brushMin, brushMax mgl32.Vec3
 			if cull != nil {
-				lo, hi := s.LocalAABB()
-				secMin, secMax = TransformAABB(model, lo, hi)
+				lo, hi := b.LocalAABB()
+				brushMin, brushMax = TransformAABB(model, lo, hi)
 			}
-			if s.Floor.Enabled && !s.Floor.Hidden && s.Floor.Detail.Enabled && visible(secMin, secMax, &s.Floor.Detail) {
-				fn(detailFace{model, &s.Floor.Detail, &s.Floor.Geometry, s.Floor.Texture})
-			}
-			if s.Ceiling.Enabled && s.Ceiling.Detail.Enabled && visible(secMin, secMax, &s.Ceiling.Detail) {
-				fn(detailFace{model, &s.Ceiling.Detail, &s.Ceiling.Geometry, s.Ceiling.Texture})
-			}
-			for wi := range s.Walls {
-				w := &s.Walls[wi]
-				if w.Visible && w.Detail.Enabled && visible(secMin, secMax, &w.Detail) {
-					fn(detailFace{model, &w.Detail, &w.Geometry, w.Texture})
+			for fi := range b.Faces {
+				f := &b.Faces[fi]
+				if f.NoDraw || !f.Detail.Enabled || !visible(brushMin, brushMax, &f.Detail) {
+					continue
 				}
+				fn(detailFace{model, &f.Detail, &f.Geometry, f.Texture})
 			}
 		}
 	}
@@ -650,4 +645,67 @@ func RenderDetailCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.V
 	}
 	gl.BindVertexArray(0)
 	gl.UseProgram(Shadows.CubeProgram)
+}
+
+// ---------- the scatter template mesh ----------
+//
+// Moved here from the biome renderer when that was removed: the rock template
+// and its vertex layout are what the per-face detail SCATTER pipeline
+// instances across a face, which is a brush-face feature rather than a biome
+// one. Biome scatter reuses the same shape when it returns (plan Phase 5).
+
+// DetailVertexStride is floats per template vertex: aLocal(3) aNormal(3)
+// aParam(1).
+const DetailVertexStride = 7
+
+
+// buildRockMesh returns a small faceted rock/blob as a triangle list with
+// per-face normals for flat shading. It's a two-ring "barrel" over an n-gon
+// cross-section (top apex → upper ring → lower ring → bottom apex); each
+// ring's vertices are independently perturbed in both radius and height by a
+// few summed sine harmonics at different phases. A single equatorial wobble
+// (the old bipyramid) reads as a smooth "angular sphere" — two
+// independently-wobbled rings break that symmetry into a lumpier, more
+// rock-like silhouette. Per-instance variety on top of this shared template
+// comes from a further warp in the vertex shader keyed off each instance's
+// scatter hash, so no two scattered rocks are identical even though they
+// share one VAO — detail from the shader, not the geometry.
+func buildRockMesh(sides int) []float32 {
+	if sides < 3 {
+		sides = 3
+	}
+	top := mgl32.Vec3{0, 0.85, 0}
+	bot := mgl32.Vec3{0, -0.55, 0}
+
+	ring := func(y0, rBase float32, phaseOff float64) []mgl32.Vec3 {
+		pts := make([]mgl32.Vec3, sides)
+		for i := 0; i < sides; i++ {
+			a := float64(i)/float64(sides)*2*math.Pi + phaseOff
+			r := rBase * float32(1+0.22*math.Sin(a*3)+0.12*math.Sin(a*5+1.7))
+			y := y0 + float32(0.10*math.Sin(a*2+0.6)+0.06*math.Cos(a*4))
+			pts[i] = mgl32.Vec3{r * float32(math.Cos(a)), y, r * float32(math.Sin(a))}
+		}
+		return pts
+	}
+	upper := ring(0.25, 0.95, 0)
+	lower := ring(-0.15, 0.8, 1.1)
+
+	var v []float32
+	addFace := func(a, b, c mgl32.Vec3) {
+		n := b.Sub(a).Cross(c.Sub(a))
+		if n.Len() > 1e-6 {
+			n = n.Normalize()
+		}
+		for _, p := range [3]mgl32.Vec3{a, b, c} {
+			v = append(v, p.X(), p.Y(), p.Z(), n.X(), n.Y(), n.Z(), 0)
+		}
+	}
+	for i := 0; i < sides; i++ {
+		j := (i + 1) % sides
+		addFace(top, upper[i], upper[j])      // upper cap
+		addFace(upper[i], lower[i], upper[j]) // side band, tri 1
+		addFace(upper[j], lower[i], lower[j]) // side band, tri 2
+		addFace(bot, lower[j], lower[i])      // lower cap
+	}
+	return v
 }

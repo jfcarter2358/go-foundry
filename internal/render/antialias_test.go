@@ -3,7 +3,20 @@ package render
 import (
 	"strings"
 	"testing"
+
+	"foundry/internal/testenv"
 )
+
+// readShader reads one of the engine's .glsl files.
+//
+// Through testenv.RepoFile rather than a bare relative path: `go test` runs
+// this package from its own directory, so "resources/shaders/..." would only
+// have resolved while these tests lived in the root package. Moved here from
+// the biome render tests when those were removed.
+func readShader(t *testing.T, name string) string {
+	t.Helper()
+	return testenv.RepoFile(t, "resources", "shaders", name)
+}
 
 // TestAntiAliasSampleTiersTerminate pins the property that makes an 8x MSAA
 // request safe to ship: the fallback walk always ends somewhere that works.
@@ -35,7 +48,7 @@ func TestAntiAliasSampleTiersTerminate(t *testing.T) {
 // return -1 and every cutout would fade out at distance under mipmapping with
 // nothing to point at.
 func TestFragmentShaderSharpensCutoutsBehindUniform(t *testing.T) {
-	src := ReadBiomeShader(t, "fragment.glsl")
+	src := readShader(t, "fragment.glsl")
 	if !strings.Contains(src, "uniform int alphaSharpen;") {
 		t.Error("fragment.glsl does not declare `uniform int alphaSharpen` — AlphaSharpenUniform in main.go has nothing to bind to")
 	}
@@ -52,7 +65,7 @@ func TestFragmentShaderSharpensCutoutsBehindUniform(t *testing.T) {
 // through the interior of a triangle, so MSAA cannot see it on its own —
 // per-sample coverage is the only thing antialiasing it.
 func TestGroundShaderResolvesSlopeCutoffToCoverage(t *testing.T) {
-	src := ReadBiomeShader(t, "ground_frag.glsl")
+	src := readShader(t, "ground_frag.glsl")
 	if !strings.Contains(src, "fwidth(vCoverage)") {
 		t.Error("ground_frag.glsl does not rescale vCoverage by fwidth — the slope cutoff is back to a hard, aliased edge")
 	}

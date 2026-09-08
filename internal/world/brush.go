@@ -341,3 +341,87 @@ func NewBoxBrush(id string, center mgl32.Vec3, half mgl32.Vec3, texture string) 
 	}
 	return Brush{ID: id, Verts: verts, Faces: faces, Solid: true}
 }
+
+// ---------- serialization ----------
+
+// BrushFromRaw converts the YAML form. Follows the same conventions every
+// other FromRaw here does: an absent `solid:` is solid, an absent alpha is
+// opaque, and a zero UV scale reads as {1,1}.
+func BrushFromRaw(r RawBrush) (Brush, error) {
+	data, err := ScriptDataFromRaw(r.RawScriptData, "brush "+r.ID)
+	if err != nil {
+		return Brush{}, err
+	}
+	b := Brush{
+		ID:         r.ID,
+		ScriptData: data,
+		Solid:      BoolDefault(r.Solid, true),
+	}
+	// Verts arrive flattened, three floats per vertex; a trailing partial
+	// triple is a malformed file rather than a vertex, and is dropped.
+	b.Verts = make([]mgl32.Vec3, 0, len(r.Verts)/3)
+	for i := 0; i+2 < len(r.Verts); i += 3 {
+		b.Verts = append(b.Verts, mgl32.Vec3{r.Verts[i], r.Verts[i+1], r.Verts[i+2]})
+	}
+	b.Faces = make([]BrushFace, 0, len(r.Faces))
+	for _, rf := range r.Faces {
+		b.Faces = append(b.Faces, BrushFace{
+			Indices:      append([]int(nil), rf.Indices...),
+			Texture:      rf.Texture,
+			BlendTexture: rf.BlendTexture,
+			BlendMask:    rf.BlendMask,
+			UVOffset:     mgl32.Vec2{rf.UVOffset.X, rf.UVOffset.Y},
+			UVScale:      mgl32.Vec2{rf.UVScale.X, rf.UVScale.Y},
+			UVRotation:   rf.UVRotation,
+			Smooth:       rf.Smooth,
+			SmoothAngle:  rf.SmoothAngle,
+			Detail:       DetailFromRaw(rf.Detail),
+			Alpha:        float32Default(rf.Alpha, 1.0),
+			DoubleSided:  rf.DoubleSided,
+			NoDraw:       rf.NoDraw,
+			NoCollide:    rf.NoCollide,
+		})
+	}
+	return b, nil
+}
+
+// BrushToRaw is the inverse.
+func BrushToRaw(b *Brush) RawBrush {
+	out := RawBrush{
+		ID:            b.ID,
+		RawScriptData: ScriptDataToRaw(b.ScriptData),
+		Solid:         BoolPtrIfFalse(b.Solid),
+	}
+	out.Verts = make([]float32, 0, len(b.Verts)*3)
+	for _, v := range b.Verts {
+		out.Verts = append(out.Verts, v.X(), v.Y(), v.Z())
+	}
+	out.Faces = make([]RawBrushFace, 0, len(b.Faces))
+	for i := range b.Faces {
+		f := &b.Faces[i]
+		alpha := f.Alpha
+		var alphaPtr *float32
+		// Opaque is the default, so an opaque face writes no key at all and a
+		// level that never touched alpha round-trips unchanged.
+		if alpha != 1 {
+			alphaPtr = &alpha
+		}
+		out.Faces = append(out.Faces, RawBrushFace{
+			Indices:      append([]int(nil), f.Indices...),
+			Texture:      f.Texture,
+			BlendTexture: f.BlendTexture,
+			BlendMask:    f.BlendMask,
+			UVOffset:     geom.Point{X: f.UVOffset.X(), Y: f.UVOffset.Y()},
+			UVScale:      geom.Point{X: f.UVScale.X(), Y: f.UVScale.Y()},
+			UVRotation:   f.UVRotation,
+			Smooth:       f.Smooth,
+			SmoothAngle:  f.SmoothAngle,
+			Detail:       DetailToRaw(f.Detail),
+			Alpha:        alphaPtr,
+			DoubleSided:  f.DoubleSided,
+			NoDraw:       f.NoDraw,
+			NoCollide:    f.NoCollide,
+		})
+	}
+	return out
+}

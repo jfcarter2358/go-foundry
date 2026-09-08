@@ -8,32 +8,6 @@ import "foundry/internal/geom"
 // level_loader.go, split out from what used to be one 1200+-line level.go —
 // see RESTRUCTURE_PROPOSAL.md §5 Phase A.
 
-// RawExtrusionPoint is the YAML representation of a point in surface-local space.
-type RawExtrusionPoint struct {
-	U float32 `yaml:"u"`
-	V float32 `yaml:"v"`
-}
-
-// RawExtrusion is the YAML representation of a surface extrusion.
-type RawExtrusion struct {
-	Outer       []RawExtrusionPoint `yaml:"outer"`
-	Inner       []RawExtrusionPoint `yaml:"inner"`
-	Depth       float32             `yaml:"depth"`
-	Texture     string              `yaml:"texture,omitempty"`
-	Visible     *bool               `yaml:"visible,omitempty"`      // default true when absent
-	BackVisible *bool               `yaml:"back_visible,omitempty"` // default true when absent
-	UVOffset    geom.Point          `yaml:"uv_offset,omitempty"`
-	UVScale     geom.Point          `yaml:"uv_scale,omitempty"`
-	UVRotation  float32             `yaml:"uv_rotation,omitempty"`
-	Alpha       *float32            `yaml:"alpha,omitempty"` // default 1.0 when absent
-}
-
-// RawTerrainPoint is the YAML representation of a terrain displacement point.
-type RawTerrainPoint struct {
-	U     float32 `yaml:"u"`
-	V     float32 `yaml:"v"`
-	Depth float32 `yaml:"depth"`
-}
 
 // RawDetailWave is the YAML representation of one displacement wave layer.
 type RawDetailWave struct {
@@ -231,192 +205,51 @@ type RawEmitter struct {
 	Attach        *RawAttach `yaml:"attach,omitempty"`
 }
 
-// RawEdge describes one edge (wall or portal) in a sector's edge list.
-type RawEdge struct {
-	// ID is the edge's stable identity, how a script addresses it. Absent in
-	// files written before scripting existed — the loader then derives one from
-	// the point-name pair, so an older level migrates silently and gains real
-	// IDs on its next save. See sector_edge_id.go.
-	ID            string `yaml:"id,omitempty"`
-	RawScriptData `yaml:",inline"`
-	From          string          `yaml:"from"`
-	To            string          `yaml:"to"`
-	Kind          string          `yaml:"kind"`
-	Texture       string          `yaml:"texture"`
-	BlendTexture  string          `yaml:"blend_texture,omitempty"`
-	BlendMask     string          `yaml:"blend_mask,omitempty"`
-	Collision     bool            `yaml:"collision"`
-	Hidden        bool            `yaml:"hidden"`           // true = wall/portal not rendered (default false = visible)
-	Pinned        bool            `yaml:"pinned,omitempty"` // true = wall stays a wall even if shared with another sector
-	ToSector      string          `yaml:"to_sector"`
-	ToFrame       string          `yaml:"to_frame,omitempty"`
-	DrawGap       bool            `yaml:"draw_gap"`
-	GapTexture    string          `yaml:"gap_texture"`
-	DoubleSided   *bool           `yaml:"double_sided,omitempty"` // default true when absent
-	Alpha         *float32        `yaml:"alpha,omitempty"`        // nil = opaque (1.0)
-	Mesh          *RawSurfaceMesh `yaml:"mesh,omitempty"`
-	// Extrusions, WallTerrain and TerrainPoints are read-only legacy input: the
-	// loader migrates them into Mesh and the writer never emits them again.
-	Extrusions    []RawExtrusion    `yaml:"extrusions,omitempty"`
-	WallTerrain   bool              `yaml:"terrain,omitempty"`
-	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
-	UVOffset      geom.Point        `yaml:"uv_offset,omitempty"`
-	UVScale       geom.Point        `yaml:"uv_scale,omitempty"`
-	UVRotation    float32           `yaml:"uv_rotation,omitempty"`
-	Detail        *RawDetail        `yaml:"detail,omitempty"`
-	Smooth        bool              `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
-	SmoothAngle   float32           `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
-}
 
-// RawFloor is the YAML representation of a sector floor.
-type RawFloor struct {
-	RawScriptData `yaml:",inline"`
-	Enabled       bool            `yaml:"enabled"`
-	Hidden        bool            `yaml:"hidden,omitempty"` // texture/geometry hidden; Enabled/collision unaffected
-	Height        float32         `yaml:"height"`
-	Texture       string          `yaml:"texture"`
-	BlendTexture  string          `yaml:"blend_texture,omitempty"`
-	BlendMask     string          `yaml:"blend_mask,omitempty"`
-	Terrain       bool            `yaml:"terrain"`
-	VertexOffsets []float32       `yaml:"vertex_offsets,omitempty"`
-	DoubleSided   *bool           `yaml:"double_sided,omitempty"` // default true when absent
-	Alpha         *float32        `yaml:"alpha,omitempty"`        // nil = opaque (1.0)
-	Mesh          *RawSurfaceMesh `yaml:"mesh,omitempty"`
-	// Extrusions and TerrainPoints are read-only legacy input: the loader
-	// migrates them into Mesh and the writer never emits them again.
-	Extrusions    []RawExtrusion    `yaml:"extrusions,omitempty"`
-	Openings      []RawOpening      `yaml:"openings,omitempty"` // holes cut through the surface; see Opening
-	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
-	// Skirt closes the band between this floor and whatever is under it — a
-	// storey's slab edge, or the face under an overhang. "" (the default) draws
-	// nothing, so a level that never asked for one round-trips unchanged.
-	Skirt        string `yaml:"skirt,omitempty"`
-	SkirtTexture string `yaml:"skirt_texture,omitempty"`
-	// Slab is the floor's thickness — the underside it grows and the rim round
-	// it. Absent is the plane; see slab.go.
-	Slab        *RawSlab   `yaml:"slab,omitempty"`
-	UVOffset    geom.Point `yaml:"uv_offset,omitempty"`
-	UVScale     geom.Point `yaml:"uv_scale,omitempty"`
-	UVRotation  float32    `yaml:"uv_rotation,omitempty"`
-	Detail      *RawDetail `yaml:"detail,omitempty"`
-	Smooth      bool       `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
-	SmoothAngle float32    `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
-}
-
-// RawCeiling is the YAML representation of a sector ceiling.
-type RawCeiling struct {
-	RawScriptData `yaml:",inline"`
-	Enabled       bool            `yaml:"enabled"`
-	Height        float32         `yaml:"height"`
-	Texture       string          `yaml:"texture"`
-	BlendTexture  string          `yaml:"blend_texture,omitempty"`
-	BlendMask     string          `yaml:"blend_mask,omitempty"`
-	Terrain       bool            `yaml:"terrain,omitempty"`
-	VertexOffsets []float32       `yaml:"vertex_offsets,omitempty"`
-	DoubleSided   *bool           `yaml:"double_sided,omitempty"` // default true when absent
-	Alpha         *float32        `yaml:"alpha,omitempty"`        // nil = opaque (1.0)
-	Mesh          *RawSurfaceMesh `yaml:"mesh,omitempty"`
-	// Extrusions and TerrainPoints are read-only legacy input: the loader
-	// migrates them into Mesh and the writer never emits them again.
-	Extrusions    []RawExtrusion    `yaml:"extrusions,omitempty"`
-	Openings      []RawOpening      `yaml:"openings,omitempty"` // holes cut through the surface; see Opening
-	TerrainPoints []RawTerrainPoint `yaml:"terrain_points,omitempty"`
-	// Slab is the ceiling's thickness — the top side it grows and the rim
-	// round it. Absent is the plane; see slab.go.
-	Slab        *RawSlab   `yaml:"slab,omitempty"`
-	UVOffset    geom.Point `yaml:"uv_offset,omitempty"`
-	UVScale     geom.Point `yaml:"uv_scale,omitempty"`
-	UVRotation  float32    `yaml:"uv_rotation,omitempty"`
-	Detail      *RawDetail `yaml:"detail,omitempty"`
-	Smooth      bool       `yaml:"smooth,omitempty"`       // interpolate vertex normals instead of flat facets
-	SmoothAngle float32    `yaml:"smooth_angle,omitempty"` // crease threshold in degrees; 0 = default
-}
-
-// RawSlab is the YAML representation of a floor's or a ceiling's thickness (see
-// slab.go). Absent means the surface is the bare plane it has always been, so a
-// level that never asked for a slab round-trips byte-identically.
-type RawSlab struct {
-	Thickness    float32 `yaml:"thickness"`
-	Hidden       bool    `yaml:"hidden,omitempty"`
-	Texture      string  `yaml:"texture,omitempty"` // "" = the surface's own
-	BlendTexture string  `yaml:"blend_texture,omitempty"`
-	BlendMask    string  `yaml:"blend_mask,omitempty"`
-	RimTexture   string  `yaml:"rim_texture,omitempty"` // "" = texture
-	// RimAcrossPortals builds the rim over portal edges as well as ordinary
-	// ones — off by default because a portal's neighbour draws the same band
-	// in the same place (see slab.go). On is for an author who wants a slab's
-	// edge sealed even where it would normally continue into another sector.
-	RimAcrossPortals bool       `yaml:"rim_across_portals,omitempty"`
-	DoubleSided      bool       `yaml:"double_sided,omitempty"`
-	UVOffset         geom.Point `yaml:"uv_offset,omitempty"`
-	UVScale          geom.Point `yaml:"uv_scale,omitempty"`
-	UVRotation       float32    `yaml:"uv_rotation,omitempty"`
-	// Mesh is the far face's own shape. Absent means it mirrors the surface's,
-	// which is what nearly every slab does — so shaping one costs a level file
-	// nothing until somebody actually does it.
-	Mesh *RawSurfaceMesh `yaml:"mesh,omitempty"`
-}
-
-// RawSurfaceMesh is the YAML representation of a surface's editable mesh (see
-// surface_mesh.go). Absent means the surface is flat, which is what nearly all
-// of them are — so the common case costs a level file nothing.
+// RawBrush is the YAML representation of one brush: the level's unit of solid
+// geometry (see brush.go).
 //
-// Points are flat triples rather than a mapping per point because a shaped
-// surface has a lot of them and one line each is unreadable; faces name point
-// indices for the same reason. Both are written in the order the in-memory mesh
-// holds them, so a load/save round trip is byte-identical and a diff of a level
-// file shows only what actually changed.
-type RawSurfaceMesh struct {
-	// Points is [u, v, depth] per point, flattened.
-	Points []float32 `yaml:"points,flow"`
-	// Boundary is the outline corner each point mirrors, -1 for a free one.
-	// Index-parallel to the point triples.
-	Boundary []int            `yaml:"boundary,flow"`
-	Faces    []RawSurfaceFace `yaml:"faces"`
-}
-
-// RawSurfaceFace is one polygon of a surface mesh.
-type RawSurfaceFace struct {
-	Verts []int `yaml:"verts,flow"`
-	// UVs is [u, v] per corner, flattened; absent means the face derives its
-	// texture coordinates from the surface, which most faces do.
-	UVs []float32 `yaml:"uvs,flow,omitempty"`
-	// Holes are rings of point indices cut out of this face.
-	Holes   [][]int `yaml:"holes,omitempty"`
-	Texture string  `yaml:"texture,omitempty"`
-	Alpha   float32 `yaml:"alpha,omitempty"`
-	Hole    bool    `yaml:"hole,omitempty"`
-	Smooth  bool    `yaml:"smooth,omitempty"`
-}
-
-// RawOpening is the YAML representation of a hole cut through a floor or
-// ceiling (see Opening). Points are chunk-local {x, y} mapping to (X, Z), the
-// same convention RawChunk.Points uses, so a hole moves with its chunk.
-//
-// No far-side sector is recorded: what an opening leads to is derived from the
-// geometry every time it is asked (OpeningTarget), so there is no reference
-// here that could go stale.
-type RawOpening struct {
-	ID     string       `yaml:"id"`
-	Points []geom.Point `yaml:"points"`
-	// Link names the opening on the slab's other face — see Opening.Link.
-	// Omitted for a standalone hole.
-	Link string `yaml:"link,omitempty"`
-}
-
-// RawSector is the YAML representation of one sector.
-type RawSector struct {
+// Verts are flat [x, y, z] triples rather than a mapping per vertex because a
+// brush has a lot of them and one line each is unreadable; faces name vertex
+// indices for the same reason. Both are written in the order the in-memory
+// brush holds them, so a load/save round trip is byte-identical and a diff of
+// a level file shows only what actually changed.
+type RawBrush struct {
 	ID            string `yaml:"id"`
 	RawScriptData `yaml:",inline"`
-	Floor         RawFloor   `yaml:"floor"`
-	Ceiling       RawCeiling `yaml:"ceiling"`
-	Edges         []RawEdge  `yaml:"edges"`
-	// Layer is the chunk authoring band this sector was drawn on (see
-	// Sector.Layer and layer.go). Omitted for the ground layer, which is both
-	// the default and what every sector authored before layers existed is on —
-	// so adding this changed no existing save.
-	Layer int `yaml:"layer,omitempty"`
+	// Verts is [x, y, z] per vertex, flattened. Chunk-local.
+	Verts []float32      `yaml:"verts"`
+	Faces []RawBrushFace `yaml:"faces"`
+	// Solid is whether bodies collide with this brush. A pointer so the
+	// common case — a solid one — writes nothing and an explicitly
+	// non-solid one is distinguishable from a file written before the field
+	// existed.
+	Solid *bool `yaml:"solid,omitempty"`
 }
+
+// RawBrushFace is the YAML representation of one face of a brush.
+type RawBrushFace struct {
+	// Indices lists the face's corners as indices into the owning brush's
+	// Verts, in winding order (CCW seen from outside the solid).
+	Indices      []int      `yaml:"indices"`
+	Texture      string     `yaml:"texture"`
+	BlendTexture string     `yaml:"blend_texture,omitempty"`
+	BlendMask    string     `yaml:"blend_mask,omitempty"`
+	UVOffset     geom.Point `yaml:"uv_offset,omitempty"`
+	UVScale      geom.Point `yaml:"uv_scale,omitempty"`
+	UVRotation   float32    `yaml:"uv_rotation,omitempty"`
+	Smooth       bool       `yaml:"smooth,omitempty"`
+	SmoothAngle  float32    `yaml:"smooth_angle,omitempty"`
+	Detail       *RawDetail `yaml:"detail,omitempty"`
+	Alpha        *float32   `yaml:"alpha,omitempty"` // nil = opaque (1.0)
+	DoubleSided  bool       `yaml:"double_sided,omitempty"`
+	// NoDraw is a face with no geometry built at all — a brush side buried
+	// against a neighbour's. NoCollide is one that draws but does not stop
+	// anything, independent of the brush's own Solid flag.
+	NoDraw    bool `yaml:"nodraw,omitempty"`
+	NoCollide bool `yaml:"nocollide,omitempty"`
+}
+
 
 // RawWater is the YAML representation of a water surface's wave and reflection
 // settings. Absent means the defaults from DefaultWaterParams.
@@ -443,18 +276,16 @@ type RawChunkOrigin struct {
 }
 
 // RawChunk is the YAML representation of one chunk.
-// Points use {x, y} which map to chunk-local (X, Z) — Y-up convention.
 // Origin, Rotation, and Scale are this chunk's live placement transform (see
-// Chunk.ModelMatrix); Points and everything derived from them stay chunk-local
-// both on disk and at runtime.
+// Chunk.ModelMatrix); brush verts stay chunk-local both on disk and at
+// runtime.
 type RawChunk struct {
 	ID            string `yaml:"id"`
 	RawScriptData `yaml:",inline"`
-	Points        map[string]geom.Point `yaml:"points"`
-	Sectors       []RawSector           `yaml:"sectors"`
-	Origin        RawChunkOrigin        `yaml:"origin"`
-	Rotation      float32               `yaml:"rotation"`
-	Scale         float32               `yaml:"scale"`
+	Brushes       []RawBrush     `yaml:"brushes"`
+	Origin        RawChunkOrigin `yaml:"origin"`
+	Rotation      float32        `yaml:"rotation"`
+	Scale         float32        `yaml:"scale"`
 	// Velocity is world units per second added to Origin during play, for a
 	// chunk that moves on its own — a lift, a barge, a closing wall. Omitted
 	// for the still chunk every level is mostly made of, so a level written
@@ -470,110 +301,15 @@ type RawChunk struct {
 	// for a level that streams its areas in. A script turns it back on with
 	// `@id.prop.enabled = true`. See Chunk.Disabled for why it is spelled this
 	// way round.
-	Disabled     bool             `yaml:"disabled,omitempty"`
-	BiomeSectors []RawBiomeSector `yaml:"biome_sectors,omitempty"`
-	// Layers names this chunk's authoring bands and gives each the heights a
-	// sector drawn on it starts at. Purely editor metadata — a sector's own
-	// `layer:` is the durable fact — so it is omitted entirely for a chunk that
-	// only ever used the ground layer, and a chunk missing entries for bands
-	// its sectors do claim is valid (see Chunk.LayerAt).
-	Layers []RawChunkLayer `yaml:"layers,omitempty"`
+	Disabled bool `yaml:"disabled,omitempty"`
 }
 
-// RawChunkLayer is the YAML representation of one ChunkLayer.
-type RawChunkLayer struct {
-	Name  string  `yaml:"name,omitempty"`
-	BaseY float32 `yaml:"base_y"`
-	CeilY float32 `yaml:"ceil_y"`
-}
-
-// RawBiomeSector is the YAML representation of a user-drawn biome-paint
-// polygon (see BiomeSector). Points are chunk-local, like structural sector
-// points, so a sector moves with its chunk automatically — through the same
-// Chunk.ModelMatrix, with no separate handling of its own.
-type RawBiomeSector struct {
-	ID     string        `yaml:"id"`
-	Points []geom.Point  `yaml:"points"`
-	Brush  RawBiomeBrush `yaml:"brush"`
-	// DrapeSector records which structural surface this paint was drawn over,
-	// for the one case derivation cannot recover: two sectors stacked at the
-	// same XZ. Omitted when unbound, so a level written before it existed
-	// round-trips byte-identical. See BiomeSector.DrapeSector.
-	DrapeSector string `yaml:"drape_sector,omitempty"`
-	// Layer is the chunk authoring band this paint was drawn on; see
-	// RawSector.Layer, which it mirrors exactly.
-	Layer int `yaml:"layer,omitempty"`
-}
-
-// RawBiomeBrush is the YAML form of a BiomeBrush.
-type RawBiomeBrush struct {
-	Kind        int32    `yaml:"kind"`
-	Density     float32  `yaml:"density"`
-	Range       float32  `yaml:"range,omitempty"`
-	Color       RawColor `yaml:"color,omitempty"`
-	GrassHeight float32  `yaml:"grass_height,omitempty"`
-	GrassWidth  float32  `yaml:"grass_width,omitempty"`
-	HeadScale   float32  `yaml:"head_scale,omitempty"`  // wildflower bloom / cattail seed-head size
-	GrassClump  float32  `yaml:"grass_clump,omitempty"` // Grass only: 0 = even scatter, 1 = tight plant-like tufts
-
-	// LOD1Distance/LOD2Distance are the Near->Mid and Mid->Far mesh-detail
-	// boundaries (grass.go's three-tier scatter); 0 = the kind's default
-	// fraction of Range. See BiomeBrush's own doc comment.
-	LOD1Distance float32 `yaml:"lod1_distance,omitempty"`
-	LOD2Distance float32 `yaml:"lod2_distance,omitempty"`
-
-	RockSides  int32     `yaml:"rock_sides,omitempty"`
-	RockScale  float32   `yaml:"rock_scale,omitempty"`
-	SandHeight float32   `yaml:"sand_height,omitempty"`
-	WaterDepth float32   `yaml:"water_depth,omitempty"`
-	Water      *RawWater `yaml:"water,omitempty"` // Water kind only; absent = DefaultWaterParams
-
-	// Water kind only: drop the lakebed patch under the surface. Plain
-	// omitempty bool for the same reason as MossScatter below — the zero value
-	// (lakebed shown) is the pre-existing look, so no migration is needed.
-	HideLakebed bool `yaml:"hide_lakebed,omitempty"`
-
-	// Moss kind only: whether the optional clump scatter rides on top of the
-	// ground patch. Plain omitempty bool — the meaningful default (patch
-	// only) matches Go's zero value, same reasoning as RawFloor.Hidden.
-	MossScatter bool `yaml:"moss_scatter,omitempty"`
-
-	// Wildflower bloom options (see BiomeBrush's Bloom* fields). All plain
-	// omitempty bools for the same reason as MossScatter: every zero value
-	// is the pre-existing look, so blooms saved before these existed load
-	// back unchanged with no migration.
-	BloomSpike      bool     `yaml:"bloom_spike,omitempty"`
-	BloomCenter     bool     `yaml:"bloom_center,omitempty"`
-	BloomSolidColor bool     `yaml:"bloom_solid_color,omitempty"`
-	CenterColor     RawColor `yaml:"center_color,omitempty"`
-	StemLeaves      bool     `yaml:"stem_leaves,omitempty"` // Wildflower only: basal leaves around the stem
-	LeafScale       float32  `yaml:"leaf_scale,omitempty"`  // multiplier on those leaves; 0 = DefaultWildflowerLeafScale
-
-	// Slope gating over displaced faces (Grass/Sand/Rock/Moss); 0 = the
-	// kind's default (resolvedMinSlope/resolvedMaxSlope).
-	MinSlopeAngle float32 `yaml:"min_slope_angle,omitempty"`
-	MaxSlopeAngle float32 `yaml:"max_slope_angle,omitempty"`
-
-	// Ground patch (see BiomeBrush's own doc comment).
-	GroundTexture   string  `yaml:"ground_texture,omitempty"`
-	GroundAmplitude float32 `yaml:"ground_amplitude,omitempty"`
-	GroundFrequency float32 `yaml:"ground_frequency,omitempty"`
-	GroundOctaves   int32   `yaml:"ground_octaves,omitempty"`
-	// GroundUVScale tiles the patch texture (world XZ * scale), same units as
-	// a surface's uv_scale; zero/absent = DefaultGroundUVScale.
-	GroundUVScale geom.Point `yaml:"ground_uv_scale,omitempty"`
-
-	// Soft edges (see BiomeBrush's own doc comments). Both zero-value-safe: a
-	// sector saved before these existed loads back with the exact old
-	// hard-edged look.
-	RangeFadeFraction float32 `yaml:"range_fade_fraction,omitempty"`
-	EdgeFadeDistance  float32 `yaml:"edge_fade_distance,omitempty"`
-
-	// BoundaryJitter (see BiomeBrush's own doc comment) — 0 means "use
-	// DefaultBoundaryJitter", not "off", so a sector saved before this existed
-	// picks it up automatically rather than needing a resave to look right.
-	BoundaryJitter float32 `yaml:"boundary_jitter,omitempty"`
-}
+// TODO(brush migration, Phase 5): RawBiomeSector and RawBiomeBrush lived
+// here — the painted polygon and its kind/appearance. Biome scatter is being
+// rebuilt as a field on RawVolume (mirroring RawVolumeFog), so the schema for
+// it comes back there rather than under a chunk. RawChunkLayer went with
+// sector authoring layers, which brushes have no equivalent of: a brush sits
+// where its verts are, in three dimensions, rather than on a 2D band.
 
 // RawVec3 is a bare {x, y, z} triple in YAML.
 type RawVec3 struct {

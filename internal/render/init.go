@@ -31,7 +31,9 @@ package render
 // runtime condition worth limping through. SkyInit logs and disables itself
 // instead, because a level without its sky is still a level.
 func InitWorldPasses() {
-	GrassInit() // also stands up the ground-patch pass, and installs world.EvictBiomeCaches
+	// TODO(brush migration, Phase 5): GrassInit stood up the biome scatter and
+	// ground-patch passes here, and installed world.EvictBiomeCaches. It comes
+	// back with scatter volumes.
 	DetailInit()
 	SpriteInit()
 	SkyInit()
