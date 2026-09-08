@@ -30,8 +30,7 @@ type refCache struct {
 	emitter  map[string]int    // emitter ID -> index into lvl.Emitters
 	sound    map[string]int    // sound ID -> index into lvl.Sounds
 	chunk    map[string]int    // chunk ID -> index into lvl.Chunks
-	sector   map[string][2]int // sector ID -> {chunk, sector}
-	biome    map[string][2]int // biome sector ID -> {chunk, biome}
+	brush    map[string][2]int // brush ID -> {chunk, brush}
 	dirLight map[string]int
 	ptLight  map[string]int
 
@@ -81,8 +80,7 @@ func buildRefCache(lvl *world.Level) *refCache {
 		emitter:  map[string]int{},
 		sound:    map[string]int{},
 		chunk:    map[string]int{},
-		sector:   map[string][2]int{},
-		biome:    map[string][2]int{},
+		brush:    map[string][2]int{},
 		dirLight: map[string]int{},
 		ptLight:  map[string]int{},
 		ui:       uiStack,
@@ -108,11 +106,8 @@ func buildRefCache(lvl *world.Level) *refCache {
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
 		c.chunk[ch.ID] = ci
-		for si := range ch.Sectors {
-			c.sector[ch.Sectors[si].ID] = [2]int{ci, si}
-		}
-		for bi := range ch.BiomeSectors {
-			c.biome[ch.BiomeSectors[bi].ID] = [2]int{ci, bi}
+		for bi := range ch.Brushes {
+			c.brush[ch.Brushes[bi].ID] = [2]int{ci, bi}
 		}
 	}
 	for i := range lvl.Lights.Directional {
@@ -150,8 +145,11 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 	if _, ok := c.sound[id]; ok {
 		return flang.RefVal{Kind: flang.RefSound, A: id}, true
 	}
-	if idx, ok := c.sector[id]; ok {
-		return flang.RefVal{Kind: flang.RefSector, A: c.lvl.Chunks[idx[0]].ID, B: id}, true
+	if _, ok := c.brush[id]; ok {
+		// Brush IDs are level-unique (world/identity.go), so a brush ref is a
+		// bare name like an entity's — not scoped by its chunk the way a
+		// sector's used to be.
+		return flang.RefVal{Kind: flang.RefBrush, A: id}, true
 	}
 	if _, ok := c.chunk[id]; ok {
 		return flang.RefVal{Kind: flang.RefChunk, A: id}, true
@@ -162,9 +160,7 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 	if _, ok := c.ptLight[id]; ok {
 		return flang.RefVal{Kind: flang.RefLight, A: id}, true
 	}
-	if idx, ok := c.biome[id]; ok {
-		return flang.RefVal{Kind: flang.RefBiome, A: c.lvl.Chunks[idx[0]].ID, B: id}, true
-	}
+	// Biome scatter has no addressable object at the moment — see biomeFor.
 	// The UI last, so a level object always wins a name it shares with a
 	// widget: the level is the thing an author names deliberately, and a widget
 	// id is scoped to its screen in a way a level id is not.
@@ -308,50 +304,39 @@ func (c *refCache) chunkFor(r flang.RefVal) *world.Chunk {
 	return nil
 }
 
-// sectorFor returns the sector a ref names, along with its chunk.
-func (c *refCache) sectorFor(r flang.RefVal) (*world.Chunk, *world.Sector) {
-	if c.lvl == nil {
+// brushFor returns the brush a ref names.
+func (c *refCache) brushFor(r flang.RefVal) *world.Brush {
+	ch, b := c.brushOwnerFor(r)
+	_ = ch
+	return b
+}
+
+// brushOwnerFor is brushFor with the chunk the brush belongs to. A brush's
+// verts are chunk-local, so anything answering in world space needs the
+// placement too.
+func (c *refCache) brushOwnerFor(r flang.RefVal) (*world.Chunk, *world.Brush) {
+	if c.lvl == nil || r.Kind != flang.RefBrush {
 		return nil, nil
 	}
-	id := r.B
-	if r.Kind == flang.RefSector && id == "" {
-		id = r.A
-	}
-	idx, ok := c.sector[id]
+	idx, ok := c.brush[r.A]
 	if !ok || idx[0] >= len(c.lvl.Chunks) {
 		return nil, nil
 	}
 	ch := &c.lvl.Chunks[idx[0]]
-	if idx[1] >= len(ch.Sectors) {
+	if idx[1] >= len(ch.Brushes) {
 		return nil, nil
 	}
-	return ch, &ch.Sectors[idx[1]]
+	return ch, &ch.Brushes[idx[1]]
 }
 
-// biomeFor returns the biome sector a ref names.
-func (c *refCache) biomeFor(r flang.RefVal) *world.BiomeSector {
-	_, bs := c.biomeOwnerFor(r)
-	return bs
-}
-
-// biomeOwnerFor is biomeFor with the chunk the sector was painted on. A biome
-// sector's own coordinates — its polygon, and the height of the water plane
-// derived from it — are all chunk-local, so anything answering in world space
-// needs the placement too.
-func (c *refCache) biomeOwnerFor(r flang.RefVal) (*world.Chunk, *world.BiomeSector) {
-	if c.lvl == nil || r.Kind != flang.RefBiome {
-		return nil, nil
-	}
-	idx, ok := c.biome[r.B]
-	if !ok || idx[0] >= len(c.lvl.Chunks) {
-		return nil, nil
-	}
-	ch := &c.lvl.Chunks[idx[0]]
-	if idx[1] >= len(ch.BiomeSectors) {
-		return nil, nil
-	}
-	return ch, &ch.BiomeSectors[idx[1]]
-}
+// biomeFor returns the biome scatter object a ref names — currently never
+// anything.
+//
+// TODO(brush migration, Phase 5): biome paint moves from a chunk-owned
+// BiomeSector polygon to a level-owned Volume. RefBiome stays a parseable ref
+// kind meanwhile, resolving to nothing, rather than making every existing
+// `@biome` script a parse error before its replacement exists.
+func (c *refCache) biomeFor(r flang.RefVal) any { return nil }
 
 // lightFor returns the light a ref names. The two kinds are returned separately
 // because a directional light and a point light share only some properties.
@@ -391,26 +376,9 @@ func (c *refCache) scriptDataFor(r flang.RefVal) *world.ScriptData {
 		if sd := c.soundFor(r); sd != nil {
 			return &sd.ScriptData
 		}
-	case flang.RefSector:
-		if _, s := c.sectorFor(r); s != nil {
-			return &s.ScriptData
-		}
-	case flang.RefFloor:
-		if _, s := c.sectorFor(r); s != nil {
-			return &s.Floor.ScriptData
-		}
-	case flang.RefCeiling:
-		if _, s := c.sectorFor(r); s != nil {
-			return &s.Ceiling.ScriptData
-		}
-	case flang.RefEdge:
-		if _, s := c.sectorFor(r); s != nil {
-			if w := world.WallByEdgeID(s, r.C); w != nil {
-				return &w.ScriptData
-			}
-			if p := world.PortalByEdgeID(s, r.C); p != nil {
-				return &p.ScriptData
-			}
+	case flang.RefBrush:
+		if b := c.brushFor(r); b != nil {
+			return &b.ScriptData
 		}
 	case flang.RefChunk:
 		if ch := c.chunkFor(r); ch != nil {
@@ -451,14 +419,10 @@ func (c *refCache) alive(r flang.RefVal) bool {
 		return c.soundFor(r) != nil
 	case flang.RefChunk:
 		return c.chunkFor(r) != nil
-	case flang.RefSector, flang.RefFloor, flang.RefCeiling:
-		_, s := c.sectorFor(r)
-		return s != nil
-	case flang.RefEdge:
-		_, s := c.sectorFor(r)
-		return s != nil && world.PolyEdgeIdxByID(s, r.C) >= 0
+	case flang.RefBrush:
+		return c.brushFor(r) != nil
 	case flang.RefBiome:
-		return c.biomeFor(r) != nil
+		return false // nothing to resolve to until Phase 5; see biomeFor
 	case flang.RefLight:
 		d, p := c.lightFor(r)
 		return d != nil || p != nil
@@ -513,29 +477,9 @@ func (c *refCache) refsWithTag(tag string) []flang.RefVal {
 		if ch.HasTag(tag) {
 			out = append(out, flang.RefVal{Kind: flang.RefChunk, A: ch.ID})
 		}
-		for si := range ch.Sectors {
-			s := &ch.Sectors[si]
-			if s.HasTag(tag) {
-				out = append(out, flang.RefVal{Kind: flang.RefSector, A: ch.ID, B: s.ID})
-			}
-			if s.Floor.HasTag(tag) {
-				out = append(out, flang.RefVal{Kind: flang.RefFloor, A: ch.ID, B: s.ID})
-			}
-			if s.Ceiling.HasTag(tag) {
-				out = append(out, flang.RefVal{Kind: flang.RefCeiling, A: ch.ID, B: s.ID})
-			}
-			world.EnsureEdgeIDs(s)
-			for ei, id := range s.EdgeIDs {
-				kind, idx := world.EdgeKindAndIndex(s, ei)
-				var d *world.ScriptData
-				if kind == "wall" && idx < len(s.Walls) {
-					d = &s.Walls[idx].ScriptData
-				} else if kind == "portal" && idx < len(s.Portals) {
-					d = &s.Portals[idx].ScriptData
-				}
-				if d != nil && d.HasTag(tag) {
-					out = append(out, flang.RefVal{Kind: flang.RefEdge, A: ch.ID, B: s.ID, C: id})
-				}
+		for bi := range ch.Brushes {
+			if ch.Brushes[bi].HasTag(tag) {
+				out = append(out, flang.RefVal{Kind: flang.RefBrush, A: ch.Brushes[bi].ID})
 			}
 		}
 	}
@@ -607,17 +551,8 @@ func (c *refCache) allTags() []string {
 	for ci := range c.lvl.Chunks {
 		ch := &c.lvl.Chunks[ci]
 		add(ch.Tags)
-		for si := range ch.Sectors {
-			s := &ch.Sectors[si]
-			add(s.Tags)
-			add(s.Floor.Tags)
-			add(s.Ceiling.Tags)
-			for i := range s.Walls {
-				add(s.Walls[i].Tags)
-			}
-			for i := range s.Portals {
-				add(s.Portals[i].Tags)
-			}
+		for bi := range ch.Brushes {
+			add(ch.Brushes[bi].Tags)
 		}
 	}
 	for i := range c.lvl.Lights.Directional {

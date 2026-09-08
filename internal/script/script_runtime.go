@@ -121,10 +121,10 @@ type ScriptRuntime struct {
 	// state is per-object scratch, keyed by ref. Never saved; dropped on reload.
 	state map[flang.RefVal]*flang.DictVal
 
-	// dirtySectors are sectors whose geometry a property write invalidated.
+	// dirtyBrushes are brushes whose geometry a property write invalidated.
 	// Coalesced by ref, so writing a height a hundred times in one tick costs
 	// one rebuild.
-	dirtySectors map[flang.RefVal]bool
+	dirtyBrushes map[flang.RefVal]bool
 	dirtyVolumes map[string]bool
 	dirtyTex     map[string]bool
 
@@ -156,7 +156,7 @@ type ScriptRuntime struct {
 var Scripts = &ScriptRuntime{
 	units:        map[string]*scriptUnit{},
 	state:        map[flang.RefVal]*flang.DictVal{},
-	dirtySectors: map[flang.RefVal]bool{},
+	dirtyBrushes: map[flang.RefVal]bool{},
 	dirtyVolumes: map[string]bool{},
 	dirtyTex:     map[string]bool{},
 	warned:       map[flang.RefVal]bool{},
@@ -185,7 +185,7 @@ func ScriptRuntimeReset(lvl *world.Level) {
 	rt.queue = nil
 	rt.spill = nil
 	rt.state = map[flang.RefVal]*flang.DictVal{}
-	rt.dirtySectors = map[flang.RefVal]bool{}
+	rt.dirtyBrushes = map[flang.RefVal]bool{}
 	rt.dirtyVolumes = map[string]bool{}
 	rt.dirtyTex = map[string]bool{}
 	rt.warned = map[flang.RefVal]bool{}
@@ -262,17 +262,8 @@ func (rt *ScriptRuntime) scriptPaths() []string {
 		for ci := range rt.lvl.Chunks {
 			ch := &rt.lvl.Chunks[ci]
 			add(ch.Script)
-			for si := range ch.Sectors {
-				s := &ch.Sectors[si]
-				add(s.Script)
-				add(s.Floor.Script)
-				add(s.Ceiling.Script)
-				for i := range s.Walls {
-					add(s.Walls[i].Script)
-				}
-				for i := range s.Portals {
-					add(s.Portals[i].Script)
-				}
+			for bi := range ch.Brushes {
+				add(ch.Brushes[bi].Script)
 			}
 		}
 		for i := range rt.lvl.Lights.Directional {
@@ -529,11 +520,11 @@ func (rt *ScriptRuntime) stateFor(r flang.RefVal) *flang.DictVal {
 // restores the level. A session that wrote nothing costs nothing to leave.
 func (rt *ScriptRuntime) markDirty() { PlaySessionMarkDirty() }
 
-// markGeometryDirty queues a rebuild for whatever sector a ref belongs to.
+// markGeometryDirty queues a rebuild for whatever brush a ref belongs to.
 func (rt *ScriptRuntime) markGeometryDirty(r flang.RefVal) {
 	switch r.Kind {
-	case flang.RefSector, flang.RefFloor, flang.RefCeiling, flang.RefEdge:
-		rt.dirtySectors[flang.RefVal{Kind: flang.RefSector, A: r.A, B: r.B}] = true
+	case flang.RefBrush:
+		rt.dirtyBrushes[flang.RefVal{Kind: flang.RefBrush, A: r.A}] = true
 	case flang.RefVolume:
 		rt.dirtyVolumes[r.A] = true
 	}
@@ -810,77 +801,40 @@ func DrainScriptWork(lvl *world.Level) {
 		delete(rt.dirtyTex, name)
 	}
 
-	if len(rt.dirtySectors) > 0 {
+	if len(rt.dirtyBrushes) > 0 {
 		cache := buildRefCache(lvl)
-		// Chunk-level work is collected rather than done per sector: RebuildGaps
-		// and RecomputeBounds both cover the whole chunk, so running them once
-		// per dirty sector would repeat the same work for every sector in it.
+		// Chunk-level work is collected rather than done per brush:
+		// RecomputeBounds covers the whole chunk, so running it once per dirty
+		// brush would repeat the same work for every brush in it.
 		dirtyChunks := map[*world.Chunk]bool{}
-		// A script can change what a sector looks like, but nothing it can write
-		// moves the sector's XZ footprint — and the spatial hash is indexed by
-		// XZ alone. Rebuilding it every frame an animated floor moves would cost
-		// a whole-level structure for a change that cannot affect it, so it is
-		// rebuilt only if the footprint actually moved. Checked rather than
-		// assumed, so a property added later that *does* move one still works.
-		footprintMoved := false
 
-		for r := range rt.dirtySectors {
-			ch, s := cache.sectorFor(r)
-			if ch != nil && s != nil {
-				// Deliberately not InferPortalsAndReload: that renumbers edges,
-				// which would invalidate every address a script holds.
-				if s.Floor.Texture != "" {
-					_ = gfx.EnsureTextureLoaded(s.Floor.Texture)
-				}
-				if s.Floor.BlendTexture != "" {
-					_ = gfx.EnsureTextureLoaded(s.Floor.BlendTexture)
-				}
-				if s.Floor.BlendMask != "" {
-					_ = gfx.EnsureTextureLoaded(s.Floor.BlendMask)
-				}
-				if s.Ceiling.Texture != "" {
-					_ = gfx.EnsureTextureLoaded(s.Ceiling.Texture)
-				}
-				if s.Ceiling.BlendTexture != "" {
-					_ = gfx.EnsureTextureLoaded(s.Ceiling.BlendTexture)
-				}
-				if s.Ceiling.BlendMask != "" {
-					_ = gfx.EnsureTextureLoaded(s.Ceiling.BlendMask)
-				}
-				for i := range s.Walls {
-					if s.Walls[i].Texture != "" {
-						_ = gfx.EnsureTextureLoaded(s.Walls[i].Texture)
-					}
-					if s.Walls[i].BlendTexture != "" {
-						_ = gfx.EnsureTextureLoaded(s.Walls[i].BlendTexture)
-					}
-					if s.Walls[i].BlendMask != "" {
-						_ = gfx.EnsureTextureLoaded(s.Walls[i].BlendMask)
+		for r := range rt.dirtyBrushes {
+			ch, b := cache.brushOwnerFor(r)
+			if ch != nil && b != nil {
+				for fi := range b.Faces {
+					f := &b.Faces[fi]
+					for _, tex := range []string{f.Texture, f.BlendTexture, f.BlendMask} {
+						if tex != "" {
+							_ = gfx.EnsureTextureLoaded(tex)
+						}
 					}
 				}
-				beforeMin, beforeMax := s.MinBound, s.MaxBound
-				_ = world.ReloadSector(ch, s)
-				if s.MinBound != beforeMin || s.MaxBound != beforeMax {
-					footprintMoved = true
-				}
+				_ = b.Load()
 				dirtyChunks[ch] = true
 			}
-			delete(rt.dirtySectors, r)
+			delete(rt.dirtyBrushes, r)
 		}
 
 		for ch := range dirtyChunks {
-			ch.RebuildGaps()
-			// The chunk's Y bounds are what FindChunkAndSectorSH tells stacked
-			// chunks apart by. A floor a script raised past the recorded maximum
-			// would stop being found at all — the player would walk onto a lift
-			// and fall straight through it.
+			// The chunk's bounds are what FindChunkSH tells stacked chunks
+			// apart by. Geometry a script moved past the recorded maximum
+			// would stop being found at all — the player would walk onto a
+			// lift and fall straight through it.
 			ch.RecomputeBounds()
 		}
-		if footprintMoved {
-			if err := world.RebuildIndexes(lvl); err != nil {
-				ScriptLog.Warnf("", "%v", err)
-			}
-		}
+		// A brush's own verts are not something a script can currently write
+		// (brushProps exposes only `solid`), so the chunk footprint the
+		// spatial hash is keyed on cannot have moved; no RebuildIndexes here.
 	}
 
 	if len(rt.dirtyVolumes) > 0 {

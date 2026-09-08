@@ -417,10 +417,6 @@ func entityProps() map[string]propAccess {
 			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(e.Type) }),
 			Doc: "read-only: the definition this instance came from",
 		},
-		"current_sector": {
-			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(e.CurrentSector) }),
-			Doc: "read-only: the sector the entity is in, refreshed each frame",
-		},
 		"current_chunk": {
 			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(e.CurrentChunk) }),
 			Doc: "read-only: the chunk the entity is in, refreshed each frame",

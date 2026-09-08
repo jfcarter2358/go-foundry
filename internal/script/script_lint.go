@@ -701,13 +701,6 @@ func (l *linter) kindOf(e flang.Expr) (flang.Kind_, bool) {
 			return flang.RefNone, false
 		}
 		switch base {
-		case flang.RefSector:
-			switch t.Name {
-			case "floor":
-				return flang.RefFloor, true
-			case "ceil", "ceiling":
-				return flang.RefCeiling, true
-			}
 		case flang.RefEntity:
 			if t.Name == "model" {
 				// The pending half of `@guard.model.<name>`; the name is the
@@ -754,11 +747,8 @@ func (l *linter) levelNames() []string {
 	for ci := range l.lvl.Chunks {
 		ch := &l.lvl.Chunks[ci]
 		out = append(out, ch.ID)
-		for si := range ch.Sectors {
-			out = append(out, ch.Sectors[si].ID)
-		}
-		for bi := range ch.BiomeSectors {
-			out = append(out, ch.BiomeSectors[bi].ID)
+		for bi := range ch.Brushes {
+			out = append(out, ch.Brushes[bi].ID)
 		}
 	}
 	for i := range l.lvl.Lights.Directional {

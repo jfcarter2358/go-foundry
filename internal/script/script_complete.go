@@ -72,11 +72,8 @@ func CompletionRefs(lvl *world.Level) []CompletionRef {
 		for ci := range lvl.Chunks {
 			ch := &lvl.Chunks[ci]
 			add(ch.ID, flang.RefChunk)
-			for si := range ch.Sectors {
-				add(ch.Sectors[si].ID, flang.RefSector)
-			}
-			for bi := range ch.BiomeSectors {
-				add(ch.BiomeSectors[bi].ID, flang.RefBiome)
+			for bi := range ch.Brushes {
+				add(ch.Brushes[bi].ID, flang.RefBrush)
 			}
 		}
 		for i := range lvl.Lights.Directional {

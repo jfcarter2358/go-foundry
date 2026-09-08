@@ -195,12 +195,10 @@ func hitscanRef(h collision.RayHit) flang.RefVal {
 		return flang.RefVal{Kind: flang.RefEntity, A: h.ID}
 	case collision.RayHitVolume:
 		return flang.RefVal{Kind: flang.RefVolume, A: h.ID}
-	case collision.RayHitWall:
-		return flang.RefVal{Kind: flang.RefEdge, A: h.Chunk, B: h.Sector, C: h.ID}
-	case collision.RayHitFloor:
-		return flang.RefVal{Kind: flang.RefFloor, A: h.Chunk, B: h.Sector}
-	case collision.RayHitCeiling:
-		return flang.RefVal{Kind: flang.RefCeiling, A: h.Chunk, B: h.Sector}
+	case collision.RayHitBrush:
+		// A brush ID is level-unique, so the chunk it sits in is not part of
+		// the address the way a sector's chunk used to be.
+		return flang.RefVal{Kind: flang.RefBrush, A: h.ID}
 	}
 	return flang.RefVal{}
 }
@@ -292,17 +290,11 @@ func hitscanIgnore(o *hitscanOpts, v flang.Value) error {
 	return add(v)
 }
 
-// hitscanIgnoreKey is the name a ray-castable object is known by: an edge's own
-// ID, and otherwise the ref's leading name. A floor or ceiling has no ID of its
-// own, so ignoring one ignores its sector's surfaces — which is what
-// `{"ignore": @room.floor}` reads as anyway.
+// hitscanIgnoreKey is the name a ray-castable object is known by, which for
+// every kind a cast can meet — entity, volume, scenery, brush — is the ref's
+// leading name. Ignoring a brush ignores all of its faces, since a face has
+// no address of its own.
 func hitscanIgnoreKey(r flang.RefVal) string {
-	switch r.Kind {
-	case flang.RefEdge:
-		return r.C
-	case flang.RefFloor, flang.RefCeiling, flang.RefSector:
-		return r.B
-	}
 	return r.A
 }
 

@@ -215,86 +215,33 @@ func (h *levelHost) State(r flang.RefVal) *flang.DictVal {
 
 // ---------- structural members ----------
 
-// Member resolves the steps that are part of an object's shape: a sector's
-// floor, ceiling and edges, and a chunk's sectors.
+// Member resolves the steps that are part of an object's shape: a brush's
+// chunk, and a chunk's brushes.
 func (h *levelHost) Member(r flang.RefVal, name string) (flang.Value, bool) {
 	c := h.cache()
 	switch r.Kind {
-	case flang.RefSector:
-		// A sector ref with no id is the pending half of `@chunk.sector.<id>`.
-		if r.B == "" {
-			if _, ok := c.sector[name]; !ok {
+	case flang.RefBrush:
+		// A brush's faces are not addressable yet — they have no IDs of their
+		// own. See script_props_geom.go's brushProps.
+		if name == "chunk" {
+			ch, _ := c.brushOwnerFor(r)
+			if ch == nil {
 				return nil, false
 			}
-			return flang.RefVal{Kind: flang.RefSector, A: r.A, B: name}, true
-		}
-		_, s := c.sectorFor(r)
-		if s == nil {
-			return nil, false
-		}
-		switch name {
-		case "floor":
-			return flang.RefVal{Kind: flang.RefFloor, A: r.A, B: r.B}, true
-		case "ceil", "ceiling":
-			return flang.RefVal{Kind: flang.RefCeiling, A: r.A, B: r.B}, true
-		case "edges":
-			world.EnsureEdgeIDs(s)
-			elems := make([]flang.Value, 0, len(s.EdgeIDs))
-			for _, id := range s.EdgeIDs {
-				elems = append(elems, flang.RefVal{Kind: flang.RefEdge, A: r.A, B: r.B, C: id})
-			}
-			return flang.NewList(elems...), true
-		case "chunk":
-			return flang.RefVal{Kind: flang.RefChunk, A: r.A}, true
-		}
-		// `@sec.edge.<id>` and its two filtered spellings. The accessor word is
-		// this step and the id is the next, so this yields an edge ref with no
-		// id yet; the id step below completes it. A half-filled ref rather than
-		// a bespoke selector type keeps the whole chain resolvable by the
-		// ordinary member walk, with no special case in the interpreter.
-		//
-		// `.wall` and `.portal` resolve the same edge as `.edge`: which kind an
-		// edge currently is, is a property of it, and asking for a wall-only
-		// property of an edge that is presently a portal is what reports the
-		// mismatch.
-		if name == "edge" || name == "wall" || name == "portal" {
-			return flang.RefVal{Kind: flang.RefEdge, A: r.A, B: r.B}, true
-		}
-
-	case flang.RefEdge:
-		// An edge ref with no id is the pending half of `@sec.edge.<id>`; this
-		// step is the id.
-		if r.C == "" {
-			_, s := c.sectorFor(r)
-			if s == nil || world.PolyEdgeIdxByID(s, name) < 0 {
-				return nil, false
-			}
-			return flang.RefVal{Kind: flang.RefEdge, A: r.A, B: r.B, C: name}, true
-		}
-		if name == "sector" {
-			return flang.RefVal{Kind: flang.RefSector, A: r.A, B: r.B}, true
+			return flang.RefVal{Kind: flang.RefChunk, A: ch.ID}, true
 		}
 
 	case flang.RefChunk:
-		if name == "sector" {
-			// The pending half of `@chunk.sector.<id>`, for the same reason.
-			return flang.RefVal{Kind: flang.RefSector, A: r.A}, true
-		}
-		if name == "sectors" {
+		if name == "brushes" {
 			ch := c.chunkFor(r)
 			if ch == nil {
 				return nil, false
 			}
-			elems := make([]flang.Value, 0, len(ch.Sectors))
-			for si := range ch.Sectors {
-				elems = append(elems, flang.RefVal{Kind: flang.RefSector, A: ch.ID, B: ch.Sectors[si].ID})
+			elems := make([]flang.Value, 0, len(ch.Brushes))
+			for bi := range ch.Brushes {
+				elems = append(elems, flang.RefVal{Kind: flang.RefBrush, A: ch.Brushes[bi].ID})
 			}
 			return flang.NewList(elems...), true
-		}
-
-	case flang.RefFloor, flang.RefCeiling:
-		if name == "sector" {
-			return flang.RefVal{Kind: flang.RefSector, A: r.A, B: r.B}, true
 		}
 
 	case flang.RefEntity:
@@ -437,16 +384,16 @@ func (h *levelHost) refPosition(r flang.RefVal) (mgl32.Vec3, bool) {
 		if sd := c.soundFor(r); sd != nil {
 			return sd.WorldPosition(h.lvl()), true
 		}
-	case flang.RefSector, flang.RefFloor, flang.RefCeiling:
-		if ch, s := c.sectorFor(r); s != nil {
-			// MinBound/MaxBound and Floor.Height are chunk-local; every other
-			// arm of this switch returns a genuine world position, and the
-			// distance/movement verbs that call this compare them against each
-			// other. Without the conversion a script measuring from an entity
-			// to a sector on a moved chunk gets the distance to where that
-			// chunk would be if it had never been placed.
-			mid := s.MinBound.Add(s.MaxBound).Mul(0.5)
-			return ch.LocalToWorld(mgl32.Vec3{mid.X(), s.Floor.Height, mid.Y()}), true
+	case flang.RefBrush:
+		if ch, b := c.brushOwnerFor(r); b != nil {
+			// A brush's verts are chunk-local; every other arm of this switch
+			// returns a genuine world position, and the distance/movement
+			// verbs that call this compare them against each other. Without
+			// the conversion a script measuring to a brush on a moved chunk
+			// gets the distance to where that chunk would be if it had never
+			// been placed.
+			lo, hi := b.LocalAABB()
+			return ch.LocalToWorld(lo.Add(hi).Mul(0.5)), true
 		}
 	}
 	return mgl32.Vec3{}, false

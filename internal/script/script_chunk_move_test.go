@@ -27,8 +27,6 @@ func boundedTestLevel(t *testing.T) *world.Level {
 	ch := &lvl.Chunks[0]
 	ch.Scale = 1
 	ch.MinBound, ch.MaxBound = mgl32.Vec3{0, 0, 0}, mgl32.Vec3{10, 4, 10}
-	ch.Sectors[0].MinBound, ch.Sectors[0].MaxBound = mgl32.Vec2{0, 0}, mgl32.Vec2{10, 10}
-	ch.Sectors[0].Ceiling.Height = 4
 	world.RebuildSpatialHash(lvl)
 	return lvl
 }
@@ -60,17 +58,17 @@ func TestMovingAChunkCarriesItThroughTheSpatialHash(t *testing.T) {
 	lvl := boundedTestLevel(t)
 
 	inside := mgl32.Vec3{5, 1, 5}
-	if ch, _ := world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, inside); ch == nil {
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, inside); ch == nil {
 		t.Fatal("fixture: the chunk is not findable at its own position to begin with")
 	}
 
 	runScript(t, lvl, "", script("    @chunk.prop.origin = <200.0, 0.0, -100.0>"))
 
 	moved := inside.Add(mgl32.Vec3{200, 0, -100})
-	if ch, _ := world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, moved); ch == nil {
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, moved); ch == nil {
 		t.Error("the moved chunk is not findable at its new position; the hash was not re-bucketed")
 	}
-	if ch, _ := world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, inside); ch != nil {
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, inside); ch != nil {
 		t.Error("the chunk is still findable at the footprint it moved off")
 	}
 }
@@ -79,22 +77,19 @@ func TestMovingAChunkRewritesNoLocalGeometry(t *testing.T) {
 	// Nothing is re-baked, which is what makes a move free and what makes the
 	// authored numbers a script reads back afterwards still the authored ones.
 	lvl := boundedTestLevel(t)
-	pointsBefore := append([]mgl32.Vec2(nil), lvl.Chunks[0].Points...)
+	vertsBefore := append([]mgl32.Vec3(nil), lvl.Chunks[0].Brushes[0].Verts...)
 	minBefore, maxBefore := lvl.Chunks[0].MinBound, lvl.Chunks[0].MaxBound
 
 	runScript(t, lvl, "", script("    @chunk.prop.origin = <60.0, 0.0, 60.0>"))
 
 	ch := &lvl.Chunks[0]
-	for i := range pointsBefore {
-		if ch.Points[i] != pointsBefore[i] {
-			t.Fatalf("point %d moved to %v; chunk-local coordinates must not be rewritten", i, ch.Points[i])
+	for i := range vertsBefore {
+		if ch.Brushes[0].Verts[i] != vertsBefore[i] {
+			t.Fatalf("vert %d moved to %v; chunk-local coordinates must not be rewritten", i, ch.Brushes[0].Verts[i])
 		}
 	}
 	if ch.MinBound != minBefore || ch.MaxBound != maxBefore {
 		t.Errorf("chunk-local bounds became %v..%v; they are local and do not move", ch.MinBound, ch.MaxBound)
-	}
-	if h := ch.Sectors[0].Floor.Height; h != 0 {
-		t.Errorf("the floor's authored height became %v", h)
 	}
 	// The world-space companion is where the move shows up.
 	if got := ch.LocalToWorld(mgl32.Vec3{5, 0, 5}); got != (mgl32.Vec3{65, 0, 65}) {
@@ -138,7 +133,7 @@ func TestRewritingTheSameOriginKeepsTheHashUsable(t *testing.T) {
 	runScript(t, lvl, "", script("    @chunk.prop.origin = <40.0, 0.0, 0.0>"))
 	runScript(t, lvl, "", script("    @chunk.prop.origin = <40.0, 0.0, 0.0>"))
 
-	if ch, _ := world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{45, 1, 5}); ch == nil {
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{45, 1, 5}); ch == nil {
 		t.Error("the chunk is not findable after a second, identical write")
 	}
 }
@@ -175,13 +170,13 @@ func TestWritingChunkVelocityMovesNothingYet(t *testing.T) {
 	if lvl.Chunks[0].Origin != (mgl32.Vec3{}) {
 		t.Errorf("the chunk moved to %v on the write", lvl.Chunks[0].Origin)
 	}
-	if ch, _ := world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{5, 1, 5}); ch == nil {
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{5, 1, 5}); ch == nil {
 		t.Error("the chunk stopped being findable where it still is")
 	}
 
 	// One second of play later, it has moved and the hash has followed.
 	world.AdvanceChunks(lvl, 1)
-	if ch, _ := world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{15, 1, 5}); ch == nil {
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{15, 1, 5}); ch == nil {
 		t.Error("the chunk is not findable where a second of its velocity put it")
 	}
 }

@@ -8,7 +8,6 @@ package script
 
 import (
 	"math"
-	"strings"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -17,47 +16,50 @@ import (
 	"foundry/internal/world"
 )
 
-// sectorLevel is hostTestLevel with the room's bounds actually computed —
-// leveltest.EdgeIDChunk builds the sector by hand and never calls Load, so
-// MinBound/MaxBound would otherwise both be the zero vector and every
-// position derived from them would be the origin by accident.
-func sectorLevel(t *testing.T) *world.Level {
+// brushLevel is hostTestLevel with its chunk bounds computed. A brush's own
+// bounds come straight off its verts, so unlike the sector fixture this needs
+// no geometry load to have a position at all.
+func brushLevel(t *testing.T) *world.Level {
 	t.Helper()
 	lvl := hostTestLevel(t)
 	ch := &lvl.Chunks[0]
 	ch.Scale = 1
-	if err := world.ReloadSector(ch, &ch.Sectors[0]); err != nil {
-		t.Fatalf("ReloadSector: %v", err)
-	}
+	ch.RecomputeBounds()
 	return lvl
+}
+
+// roomCentre is the local centre of the brush @room names — what a position
+// verb reports for it, carried through the chunk's placement.
+func roomCentre(lvl *world.Level) mgl32.Vec3 {
+	lo, hi := lvl.Chunks[0].Brushes[0].LocalAABB()
+	return lo.Add(hi).Mul(0.5)
 }
 
 // A sector on a moved chunk has to report where it actually is. Its stored
 // MinBound/MaxBound/Floor.Height are chunk-local, so without the conversion
 // `distance` measures to where the chunk would be if it had never been placed.
-func TestSectorPositionIsWorldSpace(t *testing.T) {
-	lvl := sectorLevel(t)
+func TestBrushPositionIsWorldSpace(t *testing.T) {
+	lvl := brushLevel(t)
 	ch := &lvl.Chunks[0]
 
-	// The room spans local [0,10]², floor at 0 → local centre (5, 0, 5).
-	// Park an entity exactly on that centre in WORLD terms.
+	// Park an entity exactly on the brush's own centre, in WORLD terms.
 	origin := mgl32.Vec3{100, 0, 200}
 	ch.Origin = origin
-	lvl.Entities[0].Position = mgl32.Vec3{5, 0, 5}.Add(origin)
+	lvl.Entities[0].Position = roomCentre(lvl).Add(origin)
 
 	got := runScript(t, lvl, "",
 		"def main() -> null\n    return distance(@crate, @room)\nend")
 	if !flang.Equal(got, flang.FloatVal(0)) {
-		t.Errorf("distance from an entity to the sector it is standing on = %v, want 0 — "+
-			"the sector's chunk-local coordinates are being reported as world", got)
+		t.Errorf("distance from an entity to the brush it is standing on = %v, want 0 — "+
+			"the brush's chunk-local coordinates are being reported as world", got)
 	}
 }
 
 // The same level with the chunk left at the origin must be unaffected: the
 // conversion has to be the identity for content that has never been moved.
-func TestSectorPositionUnchangedForAnUnmovedChunk(t *testing.T) {
-	lvl := sectorLevel(t)
-	lvl.Entities[0].Position = mgl32.Vec3{5, 0, 5}
+func TestBrushPositionUnchangedForAnUnmovedChunk(t *testing.T) {
+	lvl := brushLevel(t)
+	lvl.Entities[0].Position = roomCentre(lvl)
 
 	got := runScript(t, lvl, "",
 		"def main() -> null\n    return distance(@crate, @room)\nend")
@@ -203,83 +205,11 @@ func TestVelocityPropUnchangedWithoutAFrame(t *testing.T) {
 	}
 }
 
-// ---------- floor/ceiling height ----------
-//
-// `height` is the authored, chunk-local value; `world_height` is its
-// world-space companion, so the natural comparison against a player's or
-// entity's Y can be written without mixing spaces.
+// The floor/ceiling `height`/`world_height` property pair is gone with
+// sectors: a brush's shape is its verts, not a height field, so there is no
+// single authored number for a script to read or write. See
+// script_props_geom.go's brushProps.
 
-func TestSurfaceHeightStaysChunkLocal(t *testing.T) {
-	lvl := sectorLevel(t)
-	lvl.Chunks[0].Origin = mgl32.Vec3{0, 40, 0}
-	lvl.Chunks[0].Sectors[0].Floor.Height = 3
-
-	got := runScript(t, lvl, "",
-		"def main() -> null\n    return @room.floor.prop.height\nend")
-	if !flang.Equal(got, flang.FloatVal(3)) {
-		t.Errorf("height = %v, want the authored local 3 — it must not silently "+
-			"become a world value, or `height = height + 1` stops round-tripping", got)
-	}
-}
-
-func TestSurfaceWorldHeightFollowsTheChunk(t *testing.T) {
-	lvl := sectorLevel(t)
-	lvl.Chunks[0].Sectors[0].Floor.Height = 3
-
-	// Lifted and scaled: world Y is origin.Y + height*scale.
-	lvl.Chunks[0].Origin = mgl32.Vec3{0, 40, 0}
-	lvl.Chunks[0].Scale = 2
-
-	got := runScript(t, lvl, "",
-		"def main() -> null\n    return @room.floor.prop.world_height\nend")
-	if !flang.Equal(got, flang.FloatVal(46)) {
-		t.Errorf("world_height = %v, want 46 (origin 40 + height 3 * scale 2)", got)
-	}
-}
-
-// On an unmoved chunk the two must agree, so a level that never places its
-// chunks can use either.
-func TestSurfaceWorldHeightMatchesHeightWhenUnmoved(t *testing.T) {
-	lvl := sectorLevel(t)
-	lvl.Chunks[0].Sectors[0].Ceiling.Height = 7
-
-	local := runScript(t, lvl, "",
-		"def main() -> null\n    return @room.ceiling.prop.height\nend")
-	world := runScript(t, lvl, "",
-		"def main() -> null\n    return @room.ceiling.prop.world_height\nend")
-	if !flang.Equal(local, world) {
-		t.Errorf("on an unmoved chunk height = %v but world_height = %v; they must agree", local, world)
-	}
-}
-
-// Ceilings get the companion too — surfaceProps builds one table for both.
-func TestCeilingHasWorldHeight(t *testing.T) {
-	lvl := sectorLevel(t)
-	lvl.Chunks[0].Origin = mgl32.Vec3{0, 10, 0}
-	lvl.Chunks[0].Sectors[0].Ceiling.Height = 4
-
-	got := runScript(t, lvl, "",
-		"def main() -> null\n    return @room.ceiling.prop.world_height\nend")
-	if !flang.Equal(got, flang.FloatVal(14)) {
-		t.Errorf("ceiling world_height = %v, want 14", got)
-	}
-}
-
-// Read-only: `height` remains the one writable height, so a script cannot set
-// the two against each other.
-func TestSurfaceWorldHeightIsReadOnly(t *testing.T) {
-	lvl := sectorLevel(t)
-	err := runScriptErr(t, lvl, "",
-		"def main() -> null\n    @room.floor.prop.world_height = 5.0\n    return null\nend")
-	if err == nil {
-		t.Fatal("assigning world_height succeeded; it is meant to be read-only")
-	}
-	if !strings.Contains(err.Error(), "read-only") {
-		t.Errorf("diagnostic does not say why the write was refused: %v", err)
-	}
-}
-
-// vec3Of narrows a script vec (float64 triple) to the engine's Vec3.
 func vec3Of(v flang.VecVal) mgl32.Vec3 {
 	return mgl32.Vec3{float32(v[0]), float32(v[1]), float32(v[2])}
 }

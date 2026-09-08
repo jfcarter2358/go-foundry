@@ -258,8 +258,8 @@ func ScriptRefTargets(lvl *world.Level) []ScriptRefTarget {
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
 		add(ch.ID, "chunk")
-		for si := range ch.Sectors {
-			add(ch.Sectors[si].ID, "sector")
+		for bi := range ch.Brushes {
+			add(ch.Brushes[bi].ID, "brush")
 		}
 	}
 	for i := range lvl.Lights.Directional {

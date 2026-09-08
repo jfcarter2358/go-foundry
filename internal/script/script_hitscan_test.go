@@ -25,7 +25,7 @@ import (
 // a shot. Both it and the player are engine globals, so both are put back.
 func aimingLevel(t *testing.T) *world.Level {
 	t.Helper()
-	ch := leveltest.EdgeIDChunk(t)
+	ch := leveltest.RoomChunk(t)
 	ch.ID = "chunk"
 	leveltest.LoadGeometry(t, ch)
 	lvl := &world.Level{Chunks: []world.Chunk{*ch}}
@@ -130,8 +130,8 @@ end`)
 	if got := attrStr(t, gun, "hit"); got != "near" {
 		t.Errorf("first hit = %q, want nearest first", got)
 	}
-	if got := attrStr(t, gun, "kind"); got != "edge" {
-		t.Errorf("last hit kind = %q, want the wall the ray stopped on", got)
+	if got := attrStr(t, gun, "kind"); got != "brush" {
+		t.Errorf("last hit kind = %q, want the brush the ray stopped on", got)
 	}
 }
 
@@ -198,17 +198,20 @@ end`
 	}
 }
 
-func TestHitscanWallHitIsTheEdgeAScriptAddresses(t *testing.T) {
-	// The ref a wall hit comes back as has to be the one `@sector.edge.<id>`
-	// produces, or a script cannot do anything with it.
+func TestHitscanBrushHitIsTheBrushAScriptAddresses(t *testing.T) {
+	// The ref a geometry hit comes back as has to be one a script can then use.
+	//
+	// TODO(brush migration): this used to write `hit.prop.texture` on the wall
+	// it hit. A texture lives on a brush FACE, and faces have no address yet
+	// (see script_props_geom.go's brushProps), so the write half of this comes
+	// back when they do.
 	root := withTempScriptDir(t)
 	path := writeScript(t, root, "gun.flang", `def on_spawn(:spawn:) -> null
     hitscan(:shot:)
 end
 def on_shot(:shot:, hit, at vec) -> null
     @self.attr.kind = hit.kind
-    hit.prop.texture = "scorched"
-    @self.attr.hit = hit.prop.texture
+    @self.attr.hit = hit.id
 end`)
 
 	lvl := aimingLevel(t)
@@ -217,11 +220,11 @@ end`)
 	runTicks(t, lvl, 2)
 
 	gun := &lvl.Entities[0]
-	if got := attrStr(t, gun, "kind"); got != "edge" {
-		t.Fatalf("kind = %q, want edge", got)
+	if got := attrStr(t, gun, "kind"); got != "brush" {
+		t.Fatalf("kind = %q, want brush", got)
 	}
-	if got := attrStr(t, gun, "hit"); got != "scorched" {
-		t.Errorf("writing through the wall ref gave %q", got)
+	if got := attrStr(t, gun, "hit"); got == "" {
+		t.Error("the brush hit reported no id")
 	}
 }
 

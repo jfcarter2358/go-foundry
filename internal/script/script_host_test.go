@@ -28,10 +28,11 @@ func hostTestLevel(t *testing.T) *world.Level {
 	t.Helper()
 	testenv.WithoutGeometryUploads(t)
 
-	ch := leveltest.EdgeIDChunk(t)
+	ch := leveltest.RoomChunk(t)
 	ch.ID = "chunk"
-	ch.Sectors[0].AddTag("room")
-	ch.Sectors[0].Floor.Texture = "concrete"
+	// The room's floor brush is the one the geometry-property tests address.
+	ch.Brushes[0].ID = "room"
+	ch.Brushes[0].AddTag("room")
 
 	lvl := &world.Level{Chunks: []world.Chunk{*ch}}
 
@@ -131,7 +132,7 @@ func TestRefsResolveAcrossEveryKind(t *testing.T) {
 	}{
 		{"crate", flang.RefEntity},
 		{"trigger", flang.RefVolume},
-		{"room", flang.RefSector},
+		{"room", flang.RefBrush},
 		{"chunk", flang.RefChunk},
 		{"lamp", flang.RefLight},
 		{"sun", flang.RefLight},
@@ -165,7 +166,7 @@ func TestTagsReachEveryKind(t *testing.T) {
 	}
 	// Geometry tags matter most: without them, `#tag` would be entity-only and
 	// half the spec would be unimplementable.
-	if got := rt.host.ResolveTag("room"); len(got) != 1 || got[0].Kind != flang.RefSector {
+	if got := rt.host.ResolveTag("room"); len(got) != 1 || got[0].Kind != flang.RefBrush {
 		t.Errorf("#room gave %v", got)
 	}
 }
@@ -201,8 +202,8 @@ func TestGeometryCarriesAttributes(t *testing.T) {
 	// A door is a wall, and a wall needs somewhere to keep `open_progress`.
 	lvl := hostTestLevel(t)
 	runScript(t, lvl, "", script(`    @room.attr.visits = 3`))
-	if a, ok := lvl.Chunks[0].Sectors[0].Attr("visits"); !ok || a.I != 3 {
-		t.Errorf("the sector's attribute did not stick: %v %v", a, ok)
+	if a, ok := lvl.Chunks[0].Brushes[0].Attr("visits"); !ok || a.I != 3 {
+		t.Errorf("the brush's attribute did not stick: %v %v", a, ok)
 	}
 }
 
@@ -283,42 +284,27 @@ func TestUnknownPropertySuggestsTheClosestName(t *testing.T) {
 	}
 }
 
-func TestEdgeVisibilityIsNotInverted(t *testing.T) {
-	// Wall.Visible is stored inverted from YAML's `hidden`. A script sees the
-	// runtime sense, and getting that backwards would hide every wall a script
-	// meant to show.
-	lvl := hostTestLevel(t)
-	id := lvl.Chunks[0].Sectors[0].EdgeIDs[0]
-	src := script(`    @room.edge.` + id + `.prop.visible = false`)
-	runScript(t, lvl, "", src)
-
-	if lvl.Chunks[0].Sectors[0].Walls[0].Visible {
-		t.Error("the wall is still visible after being hidden")
-	}
-}
-
-func TestFloorHeightWriteQueuesARebuild(t *testing.T) {
-	// Height is geometry-mutating, so the write must be recorded for
-	// DrainScriptWork rather than applied inline — ReloadSector is GL.
+func TestBrushPropertyWriteQueuesARebuild(t *testing.T) {
+	// A geometry-mutating write must be recorded for DrainScriptWork rather
+	// than applied inline — Brush.Load is GL.
 	lvl := hostTestLevel(t)
 	rt := bindRuntime(t, lvl)
 	r, _ := rt.host.Resolve("room")
-	floor := flang.RefVal{Kind: flang.RefFloor, A: r.A, B: r.B}
 
-	if err := rt.host.SetProp(floor, "height", flang.FloatVal(4)); err != nil {
+	if err := rt.host.SetProp(r, "solid", flang.BoolVal(false)); err != nil {
 		t.Fatal(err)
 	}
-	if lvl.Chunks[0].Sectors[0].Floor.Height != 4 {
-		t.Errorf("height is %v, want 4", lvl.Chunks[0].Sectors[0].Floor.Height)
+	if lvl.Chunks[0].Brushes[0].Solid {
+		t.Error("solid was not written")
 	}
-	if len(rt.dirtySectors) != 1 {
-		t.Errorf("got %d queued rebuilds, want 1", len(rt.dirtySectors))
+	if len(rt.dirtyBrushes) != 1 {
+		t.Errorf("got %d queued rebuilds, want 1", len(rt.dirtyBrushes))
 	}
 	// Writing it again must not queue a second: coalescing is what keeps a loop
-	// that sets a height every frame from costing a rebuild every frame.
-	_ = rt.host.SetProp(floor, "height", flang.FloatVal(5))
-	if len(rt.dirtySectors) != 1 {
-		t.Errorf("rebuilds did not coalesce: got %d", len(rt.dirtySectors))
+	// that sets a property every frame from costing a rebuild every frame.
+	_ = rt.host.SetProp(r, "solid", flang.BoolVal(true))
+	if len(rt.dirtyBrushes) != 1 {
+		t.Errorf("rebuilds did not coalesce: got %d", len(rt.dirtyBrushes))
 	}
 }
 
@@ -356,46 +342,24 @@ func TestTagBroadcastWritesEveryMember(t *testing.T) {
 
 // ---------- structural members ----------
 
-func TestSectorMembersResolve(t *testing.T) {
+func TestBrushMembersResolve(t *testing.T) {
 	lvl := hostTestLevel(t)
-	cases := []struct {
-		expr string
-		want flang.Kind_
-	}{
-		{"@room.floor", flang.RefFloor},
-		{"@room.ceil", flang.RefCeiling},
-		{"@room.chunk", flang.RefChunk},
+	got := runScript(t, lvl, "", "def main() -> null\n    return @room.chunk\nend")
+	r, ok := got.(flang.RefVal)
+	if !ok {
+		t.Fatalf("got %T", got)
 	}
-	for _, tc := range cases {
-		t.Run(tc.expr, func(t *testing.T) {
-			got := runScript(t, lvl, "", "def main() -> null\n    return "+tc.expr+"\nend")
-			r, ok := got.(flang.RefVal)
-			if !ok {
-				t.Fatalf("got %T", got)
-			}
-			if r.Kind != tc.want {
-				t.Errorf("got kind %s, want %s", r.Kind, tc.want)
-			}
-		})
+	if r.Kind != flang.RefChunk {
+		t.Errorf("got kind %s, want %s", r.Kind, flang.RefChunk)
 	}
 }
 
-func TestEdgeAddressingByStableID(t *testing.T) {
-	// The whole point of Phase 1: an address that survives the edits an author
-	// makes. Here it just has to resolve.
+func TestChunkBrushesList(t *testing.T) {
 	lvl := hostTestLevel(t)
-	id := lvl.Chunks[0].Sectors[0].EdgeIDs[2]
-	got := runScript(t, lvl, "", "def main() -> null\n    return @room.edge."+id+".prop.kind\nend")
-	if !flang.Equal(got, flang.AtomVal("wall")) {
-		t.Errorf("got %v, want :wall:", got)
-	}
-}
-
-func TestSectorEdgesList(t *testing.T) {
-	lvl := hostTestLevel(t)
-	got := runScript(t, lvl, "", "def main() -> null\n    return len(@room.edges)\nend")
-	if !flang.Equal(got, flang.IntVal(4)) {
-		t.Errorf("got %v, want 4", got)
+	got := runScript(t, lvl, "", "def main() -> null\n    return len(@chunk.brushes)\nend")
+	// NewHollowRoom builds six: a floor, a ceiling and four walls.
+	if !flang.Equal(got, flang.IntVal(6)) {
+		t.Errorf("got %v, want 6", got)
 	}
 }
 
@@ -412,23 +376,6 @@ func TestPositionAndVelocityProperties(t *testing.T) {
 	}
 	if e.Velocity != (mgl32.Vec3{0, 1, 0}) {
 		t.Errorf("velocity is %v", e.Velocity)
-	}
-}
-
-func TestTexturePropertyOnASurface(t *testing.T) {
-	lvl := hostTestLevel(t)
-	runScript(t, lvl, "", script(`    @room.floor.prop.texture = "brick"`))
-
-	if got := lvl.Chunks[0].Sectors[0].Floor.Texture; got != "brick" {
-		t.Errorf("floor texture is %q, want brick", got)
-	}
-	// Both halves of the deferral: the name has to be uploaded and the sector
-	// rebuilt, and neither can happen inside the tick.
-	if !Scripts.dirtyTex["brick"] {
-		t.Errorf("brick was not queued for upload")
-	}
-	if len(Scripts.dirtySectors) != 1 {
-		t.Errorf("got %d sectors queued for rebuild, want 1", len(Scripts.dirtySectors))
 	}
 }
 
@@ -449,8 +396,8 @@ func TestTexturePropertyReskinsEveryAttachment(t *testing.T) {
 		t.Errorf("rust was not queued for upload")
 	}
 	// A reskin changes no geometry, so it must not cost a rebuild.
-	if len(Scripts.dirtySectors) != 0 {
-		t.Errorf("an entity reskin queued %d sector rebuilds", len(Scripts.dirtySectors))
+	if len(Scripts.dirtyBrushes) != 0 {
+		t.Errorf("an entity reskin queued %d brush rebuilds", len(Scripts.dirtyBrushes))
 	}
 }
 

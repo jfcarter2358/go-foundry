@@ -60,8 +60,9 @@ func writeScript(t *testing.T, root, name, src string) string {
 func tickTestLevel(t *testing.T) *world.Level {
 	t.Helper()
 	testenv.WithoutGeometryUploads(t)
-	ch := leveltest.EdgeIDChunk(t)
+	ch := leveltest.RoomChunk(t)
 	ch.ID = "chunk"
+	ch.Brushes[0].ID = "room"
 	return &world.Level{Chunks: []world.Chunk{*ch}}
 }
 
@@ -354,11 +355,11 @@ end`)
 }
 
 func TestScriptWritesGeometryThroughTheDeferredQueue(t *testing.T) {
-	// A height write is GL work, so it must be recorded during the tick and
+	// A geometry write is GL work, so it must be recorded during the tick and
 	// applied by DrainScriptWork — never inline.
 	root := withTempScriptDir(t)
-	path := writeScript(t, root, "raise.flang", `def on_spawn(:spawn:) -> null
-    @room.floor.prop.height = 4.0
+	path := writeScript(t, root, "unsolid.flang", `def on_spawn(:spawn:) -> null
+    @room.prop.solid = false
 end`)
 
 	lvl := tickTestLevel(t)
@@ -371,14 +372,14 @@ end`)
 	ScriptRuntimeLoad(lvl)
 	ScriptTick(lvl, 1.0/60.0, true)
 
-	if lvl.Chunks[0].Sectors[0].Floor.Height != 4 {
-		t.Errorf("the floor height is %v, want 4", lvl.Chunks[0].Sectors[0].Floor.Height)
+	if lvl.Chunks[0].Brushes[0].Solid {
+		t.Error("the brush is still solid; the write did not land")
 	}
-	if len(Scripts.dirtySectors) != 1 {
-		t.Fatalf("got %d queued rebuilds, want 1", len(Scripts.dirtySectors))
+	if len(Scripts.dirtyBrushes) != 1 {
+		t.Fatalf("got %d queued rebuilds, want 1", len(Scripts.dirtyBrushes))
 	}
 	DrainScriptWork(lvl)
-	if len(Scripts.dirtySectors) != 0 {
+	if len(Scripts.dirtyBrushes) != 0 {
 		t.Error("DrainScriptWork left rebuilds queued")
 	}
 }
@@ -637,9 +638,7 @@ func TestPropertyCatalogueMatchesTheDocumentation(t *testing.T) {
 	mustHave := map[flang.Kind_][]string{
 		flang.RefEntity:  {"position", "rotation", "velocity", "visible", "on_ground"},
 		flang.RefVolume:  {"position", "half", "shape", "enabled"},
-		flang.RefEdge:    {"kind", "texture", "collision", "visible", "alpha"},
-		flang.RefFloor:   {"enabled", "hidden", "height", "texture"},
-		flang.RefCeiling: {"enabled", "height", "texture"},
+		flang.RefBrush:   {"solid"},
 		flang.RefLight:   {"color", "brightness", "cast_shadows"},
 	}
 	for kind, names := range mustHave {
@@ -650,116 +649,19 @@ func TestPropertyCatalogueMatchesTheDocumentation(t *testing.T) {
 			}
 		}
 	}
-	// A ceiling has no `hidden`; a floor does. The document says so, and a table
-	// that grew one would make the two disagree.
-	if _, ok := propTables[flang.RefCeiling]["hidden"]; ok {
-		t.Error("ceilings gained a `hidden` property; only floors have one")
-	}
 }
 
 // ---------- animating geometry ----------
-
-func TestDescendingFloorStaysFindable(t *testing.T) {
-	// A lift is the obvious thing to script, and it exercises the one path that
-	// rewrites geometry every frame.
-	//
-	// The bug this guards: FindChunkAndSectorSH tells stacked chunks apart by the
-	// chunk's Y bounds, and those are recorded when the level loads. A floor a
-	// script lowers past the recorded minimum stops being found at all — the
-	// player rides the lift down and falls out of the world.
-	//
-	// Downward rather than upward because a rising floor stays inside the bounds
-	// its own ceiling already established; going down is what leaves them.
-	root := withTempScriptDir(t)
-	path := writeScript(t, root, "lift.flang", `def on_tick(:tick:, dt float) -> null
-    h = @self.floor.prop.height
-    if h > -5.0
-        @self.floor.prop.height = h - 0.5
-    end
-end`)
-
-	lvl := tickTestLevel(t)
-	lvl.Chunks[0].Sectors[0].Script = path
-	// Settle the level the way loading would, so the bounds start honest.
-	DrainScriptWorkSettle(t, lvl)
-	if lvl.Chunks[0].MinBound.Y() > 0.01 {
-		t.Fatalf("the chunk starts at Y %v; the test assumes it starts at 0", lvl.Chunks[0].MinBound.Y())
-	}
-
-	prevRT := *Scripts
-	prevEv := scriptEvents
-	t.Cleanup(func() { *Scripts = prevRT; scriptEvents = prevEv })
-	ScriptEventsReset()
-	ScriptRuntimeLoad(lvl)
-
-	for i := 0; i < 20; i++ {
-		ScriptTick(lvl, 0.016, true)
-		DrainScriptWork(lvl)
-	}
-
-	h := lvl.Chunks[0].Sectors[0].Floor.Height
-	if h > -4.9 {
-		t.Fatalf("the floor only reached %v; the animation did not run", h)
-	}
-	if lvl.Chunks[0].MinBound.Y() > h+0.01 {
-		t.Errorf("the chunk's Y bounds stop at %v but its floor is at %v",
-			lvl.Chunks[0].MinBound.Y(), h)
-	}
-	if ch, s := world.FindChunkAndSectorSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{5, h + 0.1, 5}); ch == nil || s == nil {
-		t.Error("standing on the lowered floor finds no sector — the player would fall out of the world")
-	}
-}
-
-func TestAnimatingAFloorDoesNotRebuildTheSpatialHash(t *testing.T) {
-	// The hash is indexed by XZ alone, and nothing a script can write moves a
-	// sector's footprint. Rebuilding a whole-level structure every frame an
-	// animated floor moves would make the obvious thing to script the expensive
-	// thing to
-	root := withTempScriptDir(t)
-	path := writeScript(t, root, "lift.flang", `def on_tick(:tick:, dt float) -> null
-    @self.floor.prop.height = @self.floor.prop.height - 0.1
-end`)
-
-	lvl := tickTestLevel(t)
-	lvl.Chunks[0].Sectors[0].Script = path
-
-	prevRT := *Scripts
-	prevEv := scriptEvents
-	t.Cleanup(func() { *Scripts = prevRT; scriptEvents = prevEv })
-	ScriptEventsReset()
-	ScriptRuntimeLoad(lvl)
-
-	// One frame to settle: the hand-built test sector has no footprint recorded
-	// until something loads it, and that first genuine change is allowed to
-	// rebuild the hash.
-	ScriptTick(lvl, 0.016, true)
-	DrainScriptWork(lvl)
-	lvl.Spatial = world.BuildSpatialHash(lvl.Chunks, 8.0)
-	before := lvl.Spatial
-
-	for i := 0; i < 5; i++ {
-		ScriptTick(lvl, 0.016, true)
-		DrainScriptWork(lvl)
-	}
-	if lvl.Spatial != before {
-		t.Error("the spatial hash was rebuilt for a change that cannot affect it")
-	}
-}
-
-// DrainScriptWorkSettle brings a hand-built test level to the state loading
-// would have left it in: sector bounds computed, chunk bounds rolled up, and a
-// spatial hash over the result.
-func DrainScriptWorkSettle(t *testing.T, lvl *world.Level) {
-	t.Helper()
-	for ci := range lvl.Chunks {
-		ch := &lvl.Chunks[ci]
-		for si := range ch.Sectors {
-			_ = world.ReloadSector(ch, &ch.Sectors[si])
-		}
-		ch.RecomputeBounds()
-	}
-	lvl.Spatial = world.BuildSpatialHash(lvl.Chunks, 8.0)
-}
+//
+// TODO(brush migration): the lift tests that lived here drove
+// `@self.floor.prop.height` every tick — the obvious thing to script, and the
+// one path that rewrote geometry every frame. A brush's shape is its verts
+// rather than a height field and nothing in brushProps can move one yet, so
+// there is no equivalent to animate. Both the property and these tests come
+// back when brushes grow a way to be moved from a script; the invariants they
+// guarded (a chunk's Y bounds following geometry a script moved, and the
+// spatial hash NOT being rebuilt for a change that cannot move a footprint)
+// are the ones to rebuild them around.
 
 // ---------- what a delete would break ----------
 

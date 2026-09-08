@@ -140,10 +140,11 @@ const (
 	RefNone Kind_ = iota
 	RefLevel
 	RefChunk
-	RefSector
-	RefEdge
-	RefFloor
-	RefCeiling
+	// RefBrush is a piece of the level's solid geometry — the sectors/edges/
+	// floors/ceilings a ref used to be able to name are gone with them. A
+	// brush is addressed by its own (level-unique) ID, same as an entity or a
+	// volume, not scoped by its chunk the way a sector's ID used to be.
+	RefBrush
 	RefEntity
 	RefVolume
 	RefLight
@@ -162,8 +163,7 @@ const (
 )
 
 var refKindNames = [...]string{
-	RefNone: "none", RefLevel: "level", RefChunk: "chunk", RefSector: "sector",
-	RefEdge: "edge", RefFloor: "floor", RefCeiling: "ceiling",
+	RefNone: "none", RefLevel: "level", RefChunk: "chunk", RefBrush: "brush",
 	RefEntity: "entity", RefVolume: "volume", RefLight: "light", RefBiome: "biome",
 	RefSprite: "sprite", RefEmitter: "emitter", RefSound: "sound",
 	RefScreen: "screen", RefWidget: "widget",
@@ -188,14 +188,6 @@ func (v RefVal) String() string {
 		return "@?"
 	case RefLevel:
 		return "@level"
-	case RefEdge:
-		return "@" + v.B + ".edge." + v.C
-	case RefFloor:
-		return "@" + v.B + ".floor"
-	case RefCeiling:
-		return "@" + v.B + ".ceil"
-	case RefSector:
-		return "@" + v.B
 	case RefBiome:
 		return "@" + v.B
 	case RefWidget:
@@ -214,14 +206,12 @@ func (v RefVal) String() string {
 // ID returns the name a script would address this object by.
 func (v RefVal) ID() string {
 	switch v.Kind {
-	case RefSector, RefFloor, RefCeiling, RefBiome, RefWidget, RefModel:
+	case RefBiome, RefWidget, RefModel:
 		// These are all scoped by something that comes first in the path: a
-		// sector by its chunk, a widget by its screen. `ref.id` is the thing's
-		// own name, which is what a handler comparing `src.id` against a
-		// literal is asking for.
+		// widget by its screen, a model attachment by its entity. `ref.id` is
+		// the thing's own name, which is what a handler comparing `src.id`
+		// against a literal is asking for.
 		return v.B
-	case RefEdge:
-		return v.C
 	default:
 		return v.A
 	}

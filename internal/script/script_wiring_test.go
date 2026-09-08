@@ -225,7 +225,7 @@ func TestTextureWriteWarnsWhenThereIsNothingToReskin(t *testing.T) {
 
 func TestDestroyWarnsWhenTheRefIsNotDestroyable(t *testing.T) {
 	lvl := hostTestLevel(t)
-	got := warningsFrom(t, lvl, "", `    destroy(@room.floor)`)
+	got := warningsFrom(t, lvl, "", `    destroy(@room)`)
 	wantOneWarning(t, got, "destroy did nothing", "only entities and volumes")
 }
 

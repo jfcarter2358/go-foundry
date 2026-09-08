@@ -34,10 +34,6 @@ type scriptEventState struct {
 	// overlaps is last frame's containment set. `enter` is what appeared in it
 	// this frame and `exit` is what left.
 	overlaps map[overlapPair]bool
-	// sectorOf is each entity's last known sector, for the sector-scoped
-	// enter/exit pair. Entity.CurrentSector is already refreshed every frame by
-	// EntityUpdate, so this costs one string comparison per entity.
-	sectorOf map[string]string
 	// spawned tracks which objects have had `:spawn:` posted, so it fires once
 	// per object per session rather than every frame.
 	spawned map[flang.RefVal]bool
@@ -65,7 +61,6 @@ const timerIsScriptSend = true
 
 var scriptEvents = scriptEventState{
 	overlaps: map[overlapPair]bool{},
-	sectorOf: map[string]string{},
 	spawned:  map[flang.RefVal]bool{},
 }
 
@@ -74,7 +69,6 @@ var scriptEvents = scriptEventState{
 func ScriptEventsReset() {
 	scriptEvents = scriptEventState{
 		overlaps: map[overlapPair]bool{},
-		sectorOf: map[string]string{},
 		spawned:  map[flang.RefVal]bool{},
 	}
 }
@@ -85,7 +79,6 @@ func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 
 	postSpawnEvents(rt, lvl)
 	postOverlapEvents(rt, lvl)
-	postSectorEvents(rt, lvl)
 	postCollideEvents(rt)
 	postAnimEvents(rt)
 	postVehicleEvents(rt)
@@ -133,36 +126,17 @@ func scriptedRefs(rt *ScriptRuntime, lvl *world.Level) []flang.RefVal {
 			out = append(out, flang.RefVal{Kind: flang.RefChunk, A: ch.ID})
 		}
 		// A switched-off chunk keeps its own script — that is how one can turn
-		// itself back on — but nothing inside it fires. Its sectors describe
+		// itself back on — but nothing inside it fires. Its brushes describe
 		// geometry that is not loaded and not in the spatial hash, so a
 		// `:tick:` there would be reacting to a room that is not in the world.
 		// See world/chunk_enable.go.
 		if !ch.IsEnabled() {
 			continue
 		}
-		for si := range ch.Sectors {
-			s := &ch.Sectors[si]
-			if s.Script != "" {
-				out = append(out, flang.RefVal{Kind: flang.RefSector, A: ch.ID, B: s.ID})
-			}
-			if s.Floor.Script != "" {
-				out = append(out, flang.RefVal{Kind: flang.RefFloor, A: ch.ID, B: s.ID})
-			}
-			if s.Ceiling.Script != "" {
-				out = append(out, flang.RefVal{Kind: flang.RefCeiling, A: ch.ID, B: s.ID})
-			}
-			world.EnsureEdgeIDs(s)
-			for ei, id := range s.EdgeIDs {
-				kind, idx := world.EdgeKindAndIndex(s, ei)
-				script := ""
-				if kind == "wall" && idx < len(s.Walls) {
-					script = s.Walls[idx].Script
-				} else if kind == "portal" && idx < len(s.Portals) {
-					script = s.Portals[idx].Script
-				}
-				if script != "" {
-					out = append(out, flang.RefVal{Kind: flang.RefEdge, A: ch.ID, B: s.ID, C: id})
-				}
+		for bi := range ch.Brushes {
+			b := &ch.Brushes[bi]
+			if b.Script != "" {
+				out = append(out, flang.RefVal{Kind: flang.RefBrush, A: b.ID})
 			}
 		}
 	}
@@ -358,40 +332,11 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 	scriptEvents.overlaps = now
 }
 
-// postSectorEvents fires the sector-scoped enter/exit pair.
-//
-// Free, near enough: EntityUpdate already refreshes Entity.CurrentSector every
-// frame, so this is one string comparison per entity rather than a containment
-// test.
-func postSectorEvents(rt *ScriptRuntime, lvl *world.Level) {
-	if lvl == nil {
-		return
-	}
-	check := func(id, sector string, mover flang.RefVal) {
-		prev := scriptEvents.sectorOf[id]
-		if prev == sector {
-			return
-		}
-		scriptEvents.sectorOf[id] = sector
-		if prev != "" {
-			if r, ok := rt.cache.refFor(prev); ok && r.Kind == flang.RefSector {
-				_ = rt.post(r, "exit", []flang.Value{mover}, flang.Pos{})
-			}
-		}
-		if sector != "" {
-			if r, ok := rt.cache.refFor(sector); ok && r.Kind == flang.RefSector {
-				_ = rt.post(r, "enter", []flang.Value{mover}, flang.Pos{})
-			}
-		}
-	}
-	for i := range lvl.Entities {
-		e := &lvl.Entities[i]
-		check(e.ID, e.CurrentSector, flang.RefVal{Kind: flang.RefEntity, A: e.ID})
-	}
-	if world.PlayerEntity != nil {
-		check("player", world.PlayerEntity.CurrentSector, flang.RefVal{Kind: flang.RefEntity, A: "player"})
-	}
-}
+// The sector-scoped `:enter:`/`:exit:` pair is gone with sectors themselves:
+// a brush is a solid, not a room, so "which one is this body in" is not a
+// question it can answer. A Volume already fires exactly that pair for a
+// region an author draws (postOverlapEvents), which is what a level wanting
+// room events uses now.
 
 // postCollideEvents fires `:collide:` for each pair the resolver pushed apart
 // this frame. Both sides hear it: which one a script cares about is its business.
