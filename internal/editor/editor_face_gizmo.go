@@ -61,9 +61,8 @@ func gizmoVertexSels() []vertexSel {
 }
 
 // selectedFaceVertices is every vertex handle the selected faces are built
-// from, in sector-ring order and without duplicates — two faces of one sector
-// share corners, and a handle written twice would move a shared chunk point
-// twice.
+// from, without duplicates — two faces of one brush share corners, and a
+// handle written twice would move the same vert twice.
 func selectedFaceVertices() []vertexSel {
 	var out []vertexSel
 	seen := map[vertexSel]bool{}
@@ -79,103 +78,27 @@ func selectedFaceVertices() []vertexSel {
 	return out
 }
 
-// faceVertexSels is one face's handles. Empty when the face no longer names
-// live geometry, which prunes a selection left behind by an edit rather than
-// dragging something that is not there.
+// faceVertexSels is one face's handles: its own corners, which for a brush
+// face is simply the verts its index loop names. Empty when the face no longer
+// names live geometry, which prunes a selection left behind by an edit rather
+// than dragging something that is not there.
+//
+// The sector version had to work out which corners a face touched from its
+// kind — every corner of the polygon for a floor or ceiling, two corners at
+// two heights for a wall, the surface's own for a slab — and map a wall index
+// back onto its ring position to do it. A brush face names its corners
+// outright.
 func faceVertexSels(f faceSel) []vertexSel {
-	ch, s := faceSelSector(f)
-	if ch == nil || s == nil {
+	face := faceSelFace(f)
+	if face == nil {
 		return nil
 	}
-	n := len(s.PointIndices)
-	if n == 0 {
-		return nil
-	}
-	at := func(vi int, isFloor bool) (vertexSel, bool) {
-		if vi < 0 || vi >= n {
-			return vertexSel{}, false
-		}
-		pIdx := s.PointIndices[vi]
-		if pIdx < 0 || pIdx >= len(ch.Points) {
-			return vertexSel{}, false
-		}
-		return vertexSel{
-			chunkIdx:  f.chunkIdx,
-			sectorIdx: f.sectorIdx,
-			vertIdx:   vi,
-			pointIdx:  pIdx,
-			isFloor:   isFloor,
-		}, true
-	}
-
-	var out []vertexSel
-	add := func(vi int, isFloor bool) {
-		if sel, ok := at(vi, isFloor); ok {
-			out = append(out, sel)
-		}
-	}
-
-	switch f.kind {
-	// A slab face resolves to the handles of the surface it hangs off, so
-	// dragging the underside of a floor moves the floor and takes the slab with
-	// it — which is what grabbing a slab and pulling should do. How thick it is
-	// is a number in the panel, not a corner in the viewport: a slab has no
-	// corners of its own, its far face being an offset copy of the surface's.
-	case "floor", "ceiling", "floor_slab", "ceiling_slab":
-		isFloor := f.kind == "floor" || f.kind == "floor_slab"
-		for vi := 0; vi < n; vi++ {
-			add(vi, isFloor)
-		}
-	case "wall", "portal":
-		ei := faceEdgeRingIndex(s, f.kind, f.idx)
-		if ei < 0 {
-			return nil
-		}
-		// Both ends, both heights: the quad the outline draws.
-		for _, vi := range [2]int{ei, (ei + 1) % n} {
-			add(vi, true)
-			add(vi, false)
-		}
+	out := make([]vertexSel, 0, len(face.Indices))
+	for _, vi := range face.Indices {
+		out = append(out, vertexSel{chunkIdx: f.chunkIdx, brushIdx: f.brushIdx, vertIdx: vi})
 	}
 	return out
 }
-
-// faceEdgeRingIndex maps a wall or portal index to its position on the
-// sector's polygon ring.
-//
-// Walls and Portals are two separately-compacted slices whose entries run in
-// ring order (rebuildSectorEdgePoints fills them by walking EdgeKinds), so the
-// n-th wall is the n-th "wall" entry in EdgeKinds. Counting them is the same
-// walk portalEdgePosition already does for portals; this is both kinds, and it
-// is used rather than matching an edge's stored StartPoint against the sector's
-// points because a drag moves those points between events and two corners that
-// pass through each other would match the wrong one.
-func faceEdgeRingIndex(s *world.Sector, kind string, idx int) int {
-	if idx < 0 {
-		return -1
-	}
-	count := 0
-	for ei := range s.PointIndices {
-		// A ring position past the end of EdgeKinds is a wall, which is the
-		// same reading rebuildSectorEdgePoints takes of a short slice.
-		ek := "wall"
-		if ei < len(s.EdgeKinds) && s.EdgeKinds[ei] == "portal" {
-			ek = "portal"
-		}
-		if ek != kind {
-			continue
-		}
-		if count == idx {
-			return ei
-		}
-		count++
-	}
-	return -1
-}
-
-// selectedFacesCenter is where a face gizmo sits: the average of the handles
-// the selection owns, which for a wall is the middle of its quad and for a
-// floor the middle of its polygon.
 func selectedFacesCenter() (mgl32.Vec3, bool) {
 	var sum mgl32.Vec3
 	n := 0

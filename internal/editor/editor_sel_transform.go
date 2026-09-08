@@ -19,7 +19,6 @@ package editor
 // result does not depend on which handle was clicked first.
 
 import (
-	"foundry/internal/biome"
 	"foundry/internal/world"
 	"math"
 
@@ -46,7 +45,6 @@ func selectedVerticesWorld() []mgl32.Vec3 {
 // reloading — and so a test can inspect the write without a GL context, which
 // rebuilding geometry needs and headless code has not got.
 type vertexWriteback struct {
-	moves          map[int][]biome.PointMove // per chunk: the points that moved, and from where
 	movedPoints    map[[2]int]struct{}       // chunk+point index of each moved point
 	touchedSectors map[[2]int]struct{}       // chunk+sector index of each height change
 }
@@ -74,7 +72,6 @@ func setSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl32.
 // context.
 func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl32.Vec3) vertexWriteback {
 	out := vertexWriteback{
-		moves:          map[int][]biome.PointMove{},
 		movedPoints:    map[[2]int]struct{}{},
 		touchedSectors: map[[2]int]struct{}{},
 	}
@@ -138,7 +135,6 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 			continue
 		}
 		ch.Points[key[1]] = want
-		out.moves[key[0]] = append(out.moves[key[0]], biome.PointMove{PointIdx: key[1], From: was})
 		out.movedPoints[key] = struct{}{}
 	}
 
@@ -181,7 +177,6 @@ func rebuildAfterVertexWrite(w vertexWriteback) {
 	moves, movedPoints, touchedSectors := w.moves, w.movedPoints, w.touchedSectors
 
 	for ci, ms := range moves {
-		biome.CarryBiomesWithPoints(&lvl.Chunks[ci], ms)
 	}
 	// Edge points are re-derived for every sector of a touched chunk, not only
 	// the selected ones: a moved chunk point may well be a corner of a sector

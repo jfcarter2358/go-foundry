@@ -147,42 +147,20 @@ func editorPointOccluded(eye, p mgl32.Vec3) bool {
 			continue
 		}
 
-		for seci := range ch.Sectors {
-			s := &ch.Sectors[seci]
-			smin, smax := editorSectorBounds(s)
-			smin, smax = render.TransformAABB(model, smin, smax)
-			if !segmentHitsAABB(eye, dir, limit, smin, smax) {
+		for bi := range ch.Brushes {
+			b := &ch.Brushes[bi]
+			bmin, bmax := b.LocalAABB()
+			bmin, bmax = render.TransformAABB(model, bmin, bmax)
+			if !segmentHitsAABB(eye, dir, limit, bmin, bmax) {
 				continue
 			}
-			if s.Floor.Enabled && !s.Floor.Hidden {
-				if modelGeometryBlocks(eye, dir, limit, s.Floor.Geometry.Vertices, model) ||
-					modelGeometriesBlock(eye, dir, limit, s.Floor.SubmeshGeometries, model) {
-					return true
+			for fi := range b.Faces {
+				f := &b.Faces[fi]
+				if f.NoDraw {
+					continue // draws nothing, so it occludes nothing
 				}
-			}
-			if s.Ceiling.Enabled {
-				if modelGeometryBlocks(eye, dir, limit, s.Ceiling.Geometry.Vertices, model) ||
-					modelGeometriesBlock(eye, dir, limit, s.Ceiling.SubmeshGeometries, model) {
-					return true
-				}
-			}
-			for _, sl := range [...]*world.Slab{&s.Floor.Slab, &s.Ceiling.Slab} {
-				if sl.Hidden {
-					continue
-				}
-				if modelGeometryBlocks(eye, dir, limit, sl.Geometry.Vertices, model) ||
-					modelGeometriesBlock(eye, dir, limit, sl.SubmeshGeometries, model) ||
-					modelGeometryBlocks(eye, dir, limit, sl.RimGeometry.Vertices, model) {
-					return true
-				}
-			}
-			for wi := range s.Walls {
-				w := &s.Walls[wi]
-				if !w.Visible {
-					continue
-				}
-				if modelGeometryBlocks(eye, dir, limit, w.Geometry.Vertices, model) ||
-					modelGeometriesBlock(eye, dir, limit, w.SubmeshGeometries, model) {
+				if modelGeometryBlocks(eye, dir, limit, f.Geometry.Vertices, model) ||
+					modelGeometriesBlock(eye, dir, limit, f.SubmeshGeometries, model) {
 					return true
 				}
 			}
@@ -192,24 +170,6 @@ func editorPointOccluded(eye, p mgl32.Vec3) bool {
 	return false
 }
 
-// editorSectorBounds is a sector's CHUNK-LOCAL AABB, grown vertically so a
-// displaced or extruded surface that pushes past the stored floor/ceiling
-// heights still gets its triangles tested. The caller carries it out through
-// the owning chunk's ModelMatrix before testing a world-space ray against it.
-func editorSectorBounds(s *world.Sector) (mgl32.Vec3, mgl32.Vec3) {
-	const margin = 2
-	lo, hi := s.Floor.Height, s.Ceiling.Height
-	if hi < lo {
-		lo, hi = hi, lo
-	}
-	return mgl32.Vec3{s.MinBound.X(), lo - margin, s.MinBound.Y()},
-		mgl32.Vec3{s.MaxBound.X(), hi + margin, s.MaxBound.Y()}
-}
-
-// segmentHitsAABB reports whether the segment from origin running limit units
-// along dir meets the box. Being inside the box counts: rayAABBIntersect
-// returns the *exit* distance there, which can sit past a short segment that is
-// nevertheless entirely enclosed.
 func segmentHitsAABB(origin, dir mgl32.Vec3, limit float32, bmin, bmax mgl32.Vec3) bool {
 	inside := true
 	for i := 0; i < 3; i++ {

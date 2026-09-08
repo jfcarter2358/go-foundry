@@ -7,7 +7,6 @@ package editor
 
 import (
 	"fmt"
-	"foundry/internal/biome"
 	"foundry/internal/detail"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
@@ -1152,7 +1151,6 @@ func editor2DVertexGroup(ch *world.Chunk, s *world.Sector) {
 				pIdx := s.PointIndices[vi]
 				was := ch.Points[pIdx]
 				ch.Points[pIdx] = mgl32.Vec2{x, z}
-				biome.CarryBiomesWithPoints(ch, []biome.PointMove{{PointIdx: pIdx, From: was}})
 			}
 			rebuildSectorEdgePoints(ch, s)
 			reloadSectorsUsingPoint(ch, s.PointIndices[vi])

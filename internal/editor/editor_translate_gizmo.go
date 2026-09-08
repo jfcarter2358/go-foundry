@@ -13,7 +13,6 @@ package editor
 // exact, and makes snap-to-grid land on absolute grid multiples.
 
 import (
-	"foundry/internal/biome"
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"foundry/internal/world"
@@ -574,7 +573,6 @@ func sectorOf(sel vertexSel) (*world.Chunk, *world.Sector) {
 // selected ones, which may not be the only users of a shared point.
 func setSelectedVertexPoints(fn func(i int, sel vertexSel, pt mgl32.Vec2) mgl32.Vec2) {
 	touched := map[[2]int]struct{}{}
-	moves := map[int][]biome.PointMove{}
 	for i, sel := range gizmoVertexSels() {
 		ch, _ := sectorOf(sel)
 		if ch == nil || sel.pointIdx < 0 || sel.pointIdx >= len(ch.Points) {
@@ -593,14 +591,12 @@ func setSelectedVertexPoints(fn func(i int, sel vertexSel, pt mgl32.Vec2) mgl32.
 		}
 		was := ch.Points[sel.pointIdx]
 		ch.Points[sel.pointIdx] = fn(i, sel, was)
-		moves[sel.chunkIdx] = append(moves[sel.chunkIdx], biome.PointMove{PointIdx: sel.pointIdx, From: was})
 		touched[key] = struct{}{}
 	}
 	lvl := Editor.level
 	// Every point of this drag at once, so an edge drag warps its sector in one
 	// step rather than once per endpoint.
 	for ci, ms := range moves {
-		biome.CarryBiomesWithPoints(&lvl.Chunks[ci], ms)
 	}
 	for key := range touched {
 		ch := &lvl.Chunks[key[0]]

@@ -22,90 +22,48 @@ import "foundry/internal/world"
 // edgeSel are, so a selection survives the geometry rebuild that follows almost
 // every edit made to it.
 
-// faceSel identifies one selectable face of one sector.
+// faceSel identifies one selectable face of one brush.
+//
+// It used to carry a kind — floor, ceiling, floor_slab, ceiling_slab, wall or
+// portal — because a sector's faces were six different things with six
+// different field paths behind them. A brush has one kind of face, so the
+// kind is gone and what is left is a plain three-index address.
 type faceSel struct {
-	chunkIdx  int
-	sectorIdx int
-	kind      string // "floor", "ceiling", "floor_slab", "ceiling_slab", "wall", "portal"
-	idx       int    // index into Sector.Walls or .Portals; -1 for the horizontal faces
+	chunkIdx int
+	brushIdx int
+	faceIdx  int
 }
 
-// faceSelSlab resolves a slab face — the underside of a floor, the top of a
-// ceiling — to the Slab it names, or nil for every other kind. One lookup
-// rather than a two-arm switch at each of the half-dozen places that needs it.
-func faceSelSlab(s *world.Sector, kind string) *world.Slab {
-	switch kind {
-	case "floor_slab":
-		return &s.Floor.Slab
-	case "ceiling_slab":
-		return &s.Ceiling.Slab
-	}
-	return nil
+// brushFaceSel names one face of one brush.
+func brushFaceSel(chunkIdx, brushIdx, faceIdx int) faceSel {
+	return faceSel{chunkIdx: chunkIdx, brushIdx: brushIdx, faceIdx: faceIdx}
 }
 
-// slabFaceKind is the slab face belonging to a surface kind, and "" for a kind
-// that has no slab. Its inverse, in effect: the panel and the menu both start
-// from the surface and want the face hanging off it.
-func slabFaceKind(surfaceKind string) string {
-	switch surfaceKind {
-	case "floor":
-		return "floor_slab"
-	case "ceiling":
-		return "ceiling_slab"
-	}
-	return ""
-}
-
-// surfaceFaceSel names a floor or ceiling, which a sector has at most one of.
-func surfaceFaceSel(chunkIdx, sectorIdx int, kind string) faceSel {
-	return faceSel{chunkIdx: chunkIdx, sectorIdx: sectorIdx, kind: kind, idx: -1}
-}
-
-// edgeFaceSel names one wall or portal of a sector.
-func edgeFaceSel(chunkIdx, sectorIdx int, kind string, idx int) faceSel {
-	return faceSel{chunkIdx: chunkIdx, sectorIdx: sectorIdx, kind: kind, idx: idx}
-}
-
-// isEdgeFace reports whether this face is a wall or a portal — the two that
-// carry an index and can be converted into each other.
-func (f faceSel) isEdgeFace() bool { return f.kind == "wall" || f.kind == "portal" }
-
-// faceSelSector resolves the chunk and sector a face belongs to, or nil when
-// the indices no longer point at live geometry.
-func faceSelSector(f faceSel) (*world.Chunk, *world.Sector) {
+// faceSelBrush resolves the chunk and brush a face belongs to, or nil when the
+// indices no longer point at live geometry.
+func faceSelBrush(f faceSel) (*world.Chunk, *world.Brush) {
 	lvl := Editor.level
 	if lvl == nil || f.chunkIdx < 0 || f.chunkIdx >= len(lvl.Chunks) {
 		return nil, nil
 	}
 	ch := &lvl.Chunks[f.chunkIdx]
-	if f.sectorIdx < 0 || f.sectorIdx >= len(ch.Sectors) {
+	if f.brushIdx < 0 || f.brushIdx >= len(ch.Brushes) {
 		return ch, nil
 	}
-	return ch, &ch.Sectors[f.sectorIdx]
+	return ch, &ch.Brushes[f.brushIdx]
+}
+
+// faceSelFace resolves a selection all the way to the face it names, or nil.
+func faceSelFace(f faceSel) *world.BrushFace {
+	_, b := faceSelBrush(f)
+	if b == nil || f.faceIdx < 0 || f.faceIdx >= len(b.Faces) {
+		return nil
+	}
+	return &b.Faces[f.faceIdx]
 }
 
 // faceSelValid reports whether a face still names something that exists.
-func faceSelValid(f faceSel) bool {
-	_, s := faceSelSector(f)
-	if s == nil {
-		return false
-	}
-	switch f.kind {
-	case "floor", "ceiling":
-		return true
-	case "floor_slab", "ceiling_slab":
-		// A slab that has been thinned back to nothing is not a face any more:
-		// there is no geometry to outline and nothing in the viewport that
-		// could have been clicked to reach it.
-		sl := faceSelSlab(s, f.kind)
-		return sl != nil && sl.HasThickness()
-	case "wall":
-		return f.idx >= 0 && f.idx < len(s.Walls)
-	case "portal":
-		return f.idx >= 0 && f.idx < len(s.Portals)
-	}
-	return false
-}
+func faceSelValid(f faceSel) bool { return faceSelFace(f) != nil }
 
 // isFaceSelected reports whether f is part of the current selection.
 func isFaceSelected(f faceSel) bool {
@@ -196,9 +154,8 @@ func pruneFaceSelection() {
 // of the several places a face can be picked from.
 func syncActiveFace() {
 	if len(Editor.SelectedFaces) == 0 {
-		Editor.ActiveSurface = ""
-		Editor.ActiveEdgeKind = ""
-		Editor.ActiveEdgeIdx = -1
+		Editor.ActiveBrushIdx = -1
+		Editor.ActiveFaceIdx = -1
 		// Only our own kind is cleared: this runs from
 		// editorClearObjectSelections, which every other selection calls on its
 		// way to setting a kind of its own, and from editorClearObjectSelection,
@@ -211,66 +168,21 @@ func syncActiveFace() {
 	Editor.GizmoKind = gizmoKindFace
 	primary := Editor.SelectedFaces[0]
 	Editor.ActiveChunkIdx = primary.chunkIdx
-	Editor.ActiveSectorIdx = primary.sectorIdx
-	Editor.ActiveSurface = primary.kind
-	if primary.isEdgeFace() {
-		Editor.ActiveEdgeKind = primary.kind
-		Editor.ActiveEdgeIdx = primary.idx
-	} else {
-		Editor.ActiveEdgeKind = ""
-		Editor.ActiveEdgeIdx = -1
-	}
+	Editor.ActiveBrushIdx = primary.brushIdx
+	Editor.ActiveFaceIdx = primary.faceIdx
 }
 
-// faceSelPanelFocus is the properties section a face belongs to. Portals live
-// inside the wall section, which is where their fields are drawn.
-func faceSelPanelFocus(f faceSel) string {
-	switch f.kind {
-	case "floor":
-		return panelFocusFloor
-	case "ceiling":
-		return panelFocusCeiling
-	case "floor_slab":
-		return panelFocusFloorSlab
-	case "ceiling_slab":
-		return panelFocusCeilingSlab
-	default:
-		return panelFocusWall
-	}
-}
-
-// slabPanelFocus is the panel section a surface's slab group answers to, and ""
-// for a surface that has no slab.
-func slabPanelFocus(surfaceKind string) string {
-	switch surfaceKind {
-	case "floor":
-		return panelFocusFloorSlab
-	case "ceiling":
-		return panelFocusCeilingSlab
-	}
-	return ""
-}
+// faceSelPanelFocus is the properties section a face belongs to. One kind of
+// face, one section — the floor/ceiling/wall/slab split the sector model
+// needed is gone with it.
+func faceSelPanelFocus(faceSel) string { return panelFocusFace }
 
 // faceSelFromHit turns a 3D pick into the face it named. False for everything
-// that is not a sector face — the spawn marker, an entity, a water plane, or a
-// miss — none of which a face selection can hold.
-//
-// A portal arrives here only when the click landed on its gap fill; pick3D
-// lets a click through an opening that is actually open.
+// that is not brush geometry — the spawn marker, an entity, or a miss — none
+// of which a face selection can hold.
 func faceSelFromHit(hit pickHit) (faceSel, bool) {
-	switch hit.kind {
-	case pickWall:
-		return edgeFaceSel(hit.chunkIdx, hit.sectorIdx, "wall", hit.idx), true
-	case pickPortal:
-		return edgeFaceSel(hit.chunkIdx, hit.sectorIdx, "portal", hit.idx), true
-	case pickFloor:
-		return surfaceFaceSel(hit.chunkIdx, hit.sectorIdx, "floor"), true
-	case pickCeiling:
-		return surfaceFaceSel(hit.chunkIdx, hit.sectorIdx, "ceiling"), true
-	case pickFloorSlab:
-		return surfaceFaceSel(hit.chunkIdx, hit.sectorIdx, "floor_slab"), true
-	case pickCeilingSlab:
-		return surfaceFaceSel(hit.chunkIdx, hit.sectorIdx, "ceiling_slab"), true
+	if hit.kind == pickBrushFace {
+		return brushFaceSel(hit.chunkIdx, hit.brushIdx, hit.faceIdx), true
 	}
 	return faceSel{}, false
 }

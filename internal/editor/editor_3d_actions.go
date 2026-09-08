@@ -170,43 +170,47 @@ func editor3DActiveSpawn() *world.SpawnPoint {
 	return lvl.Spawn
 }
 
-func editor3DActiveSector() (*world.Chunk, *world.Sector) {
+func editor3DActiveBrush() (*world.Chunk, *world.Brush) {
 	lvl := Editor.level
 	if lvl == nil || Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
 		return nil, nil
 	}
 	ch := &lvl.Chunks[Editor.ActiveChunkIdx]
-	if Editor.ActiveSectorIdx < 0 || Editor.ActiveSectorIdx >= len(ch.Sectors) {
+	if Editor.ActiveBrushIdx < 0 || Editor.ActiveBrushIdx >= len(ch.Brushes) {
 		return ch, nil
 	}
-	return ch, &ch.Sectors[Editor.ActiveSectorIdx]
+	return ch, &ch.Brushes[Editor.ActiveBrushIdx]
 }
 
 // ---------- the selected surface ----------
 
-// surface3DRefs points at the fields of the selected surface that the menu can
-// toggle. A nil pointer means this surface has no such field — a portal has no
-// texture of its own, a floor has no collision flag — and the menu greys the
-// row out rather than special-casing every kind.
+// surface3DRefs points at the fields of the selected face that the menu can
+// toggle.
+//
+// A sector's six kinds of face each had a different set of these — a portal
+// had no texture of its own, a floor no collision flag — so the struct carried
+// nil pointers and the menu greyed rows out per kind. Every brush face has
+// every field, so they are all non-nil and the menu has no kinds to special-
+// case.
 //
 // The pointers are into the level's slices and are only good for the frame they
 // were taken in, which is all they need to be: the menu rebuilds its rows every
 // frame it is open, and a row's action runs during that same frame.
 type surface3DRefs struct {
-	ch   *world.Chunk
-	s    *world.Sector
-	kind string // "floor", "ceiling", "wall", "portal"
+	ch *world.Chunk
+	b  *world.Brush
+	f  *world.BrushFace
 
 	Texture     *string
 	Smooth      *bool
-	On          *bool // Enabled on a floor/ceiling, Visible on a wall/portal
+	On          *bool // drawn: the inverse of the face's own NoDraw
 	DoubleSided *bool
-	Collision   *bool
+	Collision   *bool // the inverse of NoCollide
 }
 
-// editor3DSurfaceRefs resolves the primary selected surface — the one the side
-// panel shows and the one a toggle reads its "before" value from. False when the
-// selection is not a surface, or when its indices no longer point at live
+// editor3DSurfaceRefs resolves the primary selected face — the one the side
+// panel shows and the one a toggle reads its "before" value from. False when
+// the selection is empty, or when its indices no longer point at live
 // geometry.
 func editor3DSurfaceRefs() (surface3DRefs, bool) {
 	if len(Editor.SelectedFaces) == 0 {
@@ -217,49 +221,31 @@ func editor3DSurfaceRefs() (surface3DRefs, bool) {
 
 // editor3DSurfaceRefsFor resolves one named face's editable fields.
 func editor3DSurfaceRefsFor(sel faceSel) (surface3DRefs, bool) {
-	ch, s := faceSelSector(sel)
-	if ch == nil || s == nil || sel.kind == "" {
+	ch, b := faceSelBrush(sel)
+	f := faceSelFace(sel)
+	if ch == nil || b == nil || f == nil {
 		return surface3DRefs{}, false
 	}
-	r := surface3DRefs{ch: ch, s: s, kind: sel.kind}
-
-	switch sel.kind {
-	case "floor":
-		r.Texture, r.Smooth = &s.Floor.Texture, &s.Floor.Smooth
-		r.On, r.DoubleSided = &s.Floor.Enabled, &s.Floor.DoubleSided
-	case "ceiling":
-		r.Texture, r.Smooth = &s.Ceiling.Texture, &s.Ceiling.Smooth
-		r.On, r.DoubleSided = &s.Ceiling.Enabled, &s.Ceiling.DoubleSided
-	case "floor_slab", "ceiling_slab":
-		sl := faceSelSlab(s, sel.kind)
-		if sl == nil {
-			return surface3DRefs{}, false
-		}
-		// No On: a slab is switched on by having a thickness, and there is no
-		// flag to toggle. Smooth is nil for the same reason it is inherited
-		// rather than stored — see world.Slab. Hidden is the closest thing to a
-		// visibility toggle a slab has, and it is in the panel.
-		r.Texture, r.DoubleSided = &sl.Texture, &sl.DoubleSided
-	case "wall":
-		if sel.idx < 0 || sel.idx >= len(s.Walls) {
-			return surface3DRefs{}, false
-		}
-		w := &s.Walls[sel.idx]
-		r.Texture, r.Smooth = &w.Texture, &w.Smooth
-		r.On, r.DoubleSided, r.Collision = &w.Visible, &w.DoubleSided, &w.Collision
-	case "portal":
-		if sel.idx < 0 || sel.idx >= len(s.Portals) {
-			return surface3DRefs{}, false
-		}
-		p := &s.Portals[sel.idx]
-		// A portal is a hole: its only surface is the optional gap quad, so
-		// that is what "texture" means here, and there is nothing to smooth.
-		r.Texture, r.On, r.DoubleSided = &p.GapTexture, &p.Visible, &p.DoubleSided
-	default:
-		return surface3DRefs{}, false
-	}
-	return r, true
+	return surface3DRefs{
+		ch: ch, b: b, f: f,
+		Texture:     &f.Texture,
+		Smooth:      &f.Smooth,
+		DoubleSided: &f.DoubleSided,
+		// NoDraw/NoCollide are stored the way round that makes the zero value
+		// the common case (drawn, solid); the menu asks the other way round,
+		// so these two are handled by name rather than by pointer — see
+		// faceDrawn/faceSolid below.
+	}, true
 }
+
+// faceDrawn and faceSolid read the two inverted flags the way the menu asks
+// about them, and their setters write them back inverted. Kept as functions
+// rather than pointers into the struct because the sense differs from what is
+// stored: a face's zero value is drawn and solid.
+func faceDrawn(f *world.BrushFace) bool  { return !f.NoDraw }
+func faceSolid(f *world.BrushFace) bool  { return !f.NoCollide }
+func setFaceDrawn(f *world.BrushFace, v bool) { f.NoDraw = !v }
+func setFaceSolid(f *world.BrushFace, v bool) { f.NoCollide = !v }
 
 // editor3DForEachSelectedFace applies fn to every selected face and then
 // rebuilds the geometry it invalidated.
@@ -271,7 +257,7 @@ func editor3DSurfaceRefsFor(sel faceSel) (surface3DRefs, bool) {
 // after every face on it has been written.
 func editor3DForEachSelectedFace(fn func(surface3DRefs)) int {
 	n := applySelectedFaceEdits(fn)
-	rebuildSelectedFaceSectors()
+	rebuildSelectedFaceBrushes()
 	return n
 }
 
@@ -294,46 +280,40 @@ func applySelectedFaceEdits(fn func(surface3DRefs)) int {
 	return touched
 }
 
-// rebuildSelectedFaceSectors reloads every sector the face selection touches,
-// once each, and regenerates a chunk's portal gap quads when a portal was among
-// them.
-func rebuildSelectedFaceSectors() {
+// rebuildSelectedFaceBrushes reloads every brush the face selection touches,
+// once each — eight selected faces of one brush cost one rebuild, not eight.
+func rebuildSelectedFaceBrushes() {
 	lvl := Editor.level
 	if lvl == nil {
 		return
 	}
 	done := map[[2]int]struct{}{}
-	gaps := map[int]struct{}{}
+	chunks := map[int]struct{}{}
 	for _, sel := range Editor.SelectedFaces {
-		ch, s := faceSelSector(sel)
-		if ch == nil || s == nil {
+		_, b := faceSelBrush(sel)
+		if b == nil {
 			continue
 		}
-		if sel.kind == "portal" {
-			gaps[sel.chunkIdx] = struct{}{}
-		}
-		key := [2]int{sel.chunkIdx, sel.sectorIdx}
+		key := [2]int{sel.chunkIdx, sel.brushIdx}
 		if _, seen := done[key]; seen {
 			continue
 		}
 		done[key] = struct{}{}
-		_ = world.ReloadSector(ch, s)
+		_ = b.Load()
+		chunks[sel.chunkIdx] = struct{}{}
 	}
-	for ci := range gaps {
+	for ci := range chunks {
 		if ci >= 0 && ci < len(lvl.Chunks) {
-			lvl.Chunks[ci].RebuildGaps()
+			lvl.Chunks[ci].RecomputeBounds()
 		}
 	}
 }
 
-// editor3DRebuildSurface is the bookkeeping every surface edit owes: rebuild
-// the sector, and the chunk's portal gap quads with it when the edit could have
-// changed one.
+// rebuild is the bookkeeping every face edit owes: rebuild the brush's
+// geometry, and roll its bounds up to the chunk in case the edit moved them.
 func (r surface3DRefs) rebuild() {
-	_ = world.ReloadSector(r.ch, r.s)
-	if r.kind == "portal" {
-		r.ch.RebuildGaps()
-	}
+	_ = r.b.Load()
+	r.ch.RecomputeBounds()
 }
 
 // editor3DSetSurfaceTexture repaints every selected surface — retexturing a

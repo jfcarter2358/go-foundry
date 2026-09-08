@@ -62,20 +62,13 @@ const (
 type pickKind string
 
 const (
-	pickNone    pickKind = ""
-	pickSpawn   pickKind = "spawn"
-	pickWall    pickKind = "wall"
-	pickPortal  pickKind = "portal"
-	pickFloor   pickKind = "floor"
-	pickCeiling pickKind = "ceiling"
-	// A slab's far face and rim: the underside of a floor, the top of a
-	// ceiling. Their own kinds rather than the surface's, because the whole
-	// point of giving a floor thickness is being able to texture what you see
-	// from underneath separately from what you walk on. See world/slab.go.
-	pickFloorSlab   pickKind = "floor_slab"
-	pickCeilingSlab pickKind = "ceiling_slab"
-	pickWater       pickKind = "water"
-	pickEntity      pickKind = "entity"
+	pickNone  pickKind = ""
+	pickSpawn pickKind = "spawn"
+	// pickBrushFace is any face of any brush — the level's geometry is one
+	// kind of thing now, where a sector's was six (wall, portal gap, floor,
+	// ceiling, and the two slab faces).
+	pickBrushFace pickKind = "brush_face"
+	pickEntity    pickKind = "entity"
 	pickVolume      pickKind = "volume"
 	pickSprite      pickKind = "sprite"
 	pickEmitter     pickKind = "emitter"
@@ -91,28 +84,41 @@ const (
 //	entity     → idx = index into level.Entities
 //	volume     → idx = index into level.Volumes
 //	light      → idx = index into level.Lights.Points
-//	wall       → chunkIdx + sectorIdx + idx = wall index within that sector
-//	portal     → chunkIdx + sectorIdx + idx = portal index within that sector
-//	floor/ceil → chunkIdx + sectorIdx
-//	water      → chunkIdx + idx = surface index within that chunk
+//	brush_face → chunkIdx + brushIdx + faceIdx
 type pickHit struct {
-	kind      pickKind
-	t         float32
-	chunkIdx  int
-	sectorIdx int
-	idx       int
+	kind     pickKind
+	t        float32
+	chunkIdx int
+	brushIdx int
+	faceIdx  int
+	idx      int
 }
 
 // consider replaces h with a hit at distance t when that hit is closer.
-func (h *pickHit) consider(t float32, kind pickKind, chunkIdx, sectorIdx, idx int) {
+func (h *pickHit) consider(t float32, kind pickKind, chunkIdx, idx int) {
 	if t >= h.t {
 		return
 	}
 	h.kind = kind
 	h.t = t
 	h.chunkIdx = chunkIdx
-	h.sectorIdx = sectorIdx
+	h.brushIdx = -1
+	h.faceIdx = -1
 	h.idx = idx
+}
+
+// considerFace is consider for brush geometry, which is addressed by brush and
+// face rather than by a single index.
+func (h *pickHit) considerFace(t float32, chunkIdx, brushIdx, faceIdx int) {
+	if t >= h.t {
+		return
+	}
+	h.kind = pickBrushFace
+	h.t = t
+	h.chunkIdx = chunkIdx
+	h.brushIdx = brushIdx
+	h.faceIdx = faceIdx
+	h.idx = -1
 }
 
 // ---------- geometry ray tests ----------
@@ -214,7 +220,7 @@ func pickEntityT(origin, dir mgl32.Vec3, e *world.Entity) float32 {
 // pick3D casts a ray through screen pixel (sx, sy) and returns the closest
 // clickable thing in the level.
 func pick3D(sx, sy int32) pickHit {
-	hit := pickHit{kind: pickNone, t: float32(math.MaxFloat32), chunkIdx: -1, sectorIdx: -1, idx: -1}
+	hit := pickHit{kind: pickNone, t: float32(math.MaxFloat32), chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: -1}
 	lvl := Editor.level
 	if lvl == nil {
 		return hit
@@ -227,12 +233,12 @@ func pick3D(sx, sy int32) pickHit {
 	if sp := lvl.Spawn; sp != nil {
 		if len(sp.Geometry.Vertices) > 0 {
 			if t := pickModelT(origin, dir, sp.Geometry.Vertices, sp.ModelMatrix()); t < float32(math.MaxFloat32) {
-				hit.consider(t, pickSpawn, -1, -1, -1)
+				hit.consider(t, pickSpawn, -1, -1)
 			}
 		} else {
 			bmin, bmax := sp.WorldAABB()
 			if boxHit, boxT := rayAABBIntersect(origin, dir, bmin, bmax); boxHit {
-				hit.consider(boxT, pickSpawn, -1, -1, -1)
+				hit.consider(boxT, pickSpawn, -1, -1)
 			}
 		}
 	}
@@ -247,7 +253,7 @@ func pick3D(sx, sy int32) pickHit {
 			continue
 		}
 		if t := pickEntityT(origin, dir, e); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickEntity, -1, -1, ei)
+			hit.consider(t, pickEntity, -1, ei)
 		}
 	}
 
@@ -259,93 +265,30 @@ func pick3D(sx, sy int32) pickHit {
 			// space. See world/chunk_enable.go.
 			continue
 		}
-		// Wall/floor/ceiling geometry is chunk-local, same as the production
-		// renderer's own vertex buffers (app.go) — carried into world space by
-		// this same matrix there, so picking has to go through it too.
+		// Brush verts are chunk-local, same as the production renderer's own
+		// vertex buffers (app.go) — carried into world space by this same
+		// matrix there, so picking has to go through it too.
 		model := ch.ModelMatrix()
 
-		// Sector faces.
-		for seci := range ch.Sectors {
-			s := &ch.Sectors[seci]
-
-			// Walls — the wall quad plus any extrusion side/cap geometry, so
-			// clicking a protruding trim still selects the wall it belongs to.
-			// Back faces are biased outward (see effectivePickT) so coincident
-			// walls at chunk boundaries resolve to the one the user can see.
-			for wi := range s.Walls {
-				w := &s.Walls[wi]
-				t := pickModelT(origin, dir, w.Geometry.Vertices, model)
-				if et := pickGeometriesModelT(origin, dir, w.SubmeshGeometries, model); et < t {
+		for bi := range ch.Brushes {
+			b := &ch.Brushes[bi]
+			for fi := range b.Faces {
+				f := &b.Faces[fi]
+				// A NoDraw face has no geometry to click, the same way it has
+				// none to draw or to cast a ray against (world/brush.go).
+				if f.NoDraw {
+					continue
+				}
+				// The face's own triangles plus any Detail texture-override
+				// submeshes, so clicking a detailed patch still selects the
+				// face it belongs to. Back faces are biased outward (see
+				// effectivePickT) so coincident faces at a brush boundary
+				// resolve to the one the user can see.
+				t := pickModelT(origin, dir, f.Geometry.Vertices, model)
+				if et := pickGeometriesModelT(origin, dir, f.SubmeshGeometries, model); et < t {
 					t = et
 				}
-				hit.consider(t, pickWall, ci, seci, wi)
-			}
-
-			// Portals — their gap fill only. The opening itself is still not
-			// hit-tested: a click passes through it to whatever is behind,
-			// which is the whole point of an opening. What is tested is the
-			// geometry that CLOSES one — the riser and the ceiling filler
-			// RebuildGaps draws where two sectors' floors or ceilings differ
-			// (world/chunk.go). That geometry is drawn, carries a texture and
-			// has a properties panel, so it has to be clickable.
-			//
-			// It was not, and the shape that made that hurt is the vertical
-			// door: a short sector with its floor raised and its ceiling
-			// lowered until they meet. Every visible face of it is gap fill,
-			// owned by the *neighbouring* sectors' portals rather than by the
-			// door's own, so there was nothing in the 3D view to click and no
-			// way to reach the gap texture except by finding the right edge on
-			// the 2D map.
-			//
-			// A gap present but not Visible is still picked, the same way a
-			// hidden wall and a hidden floor are: turning the flag back on is
-			// one of the things a click is for.
-			for pi := range s.Portals {
-				p := &s.Portals[pi]
-				if len(p.FloorGap.Vertices) == 0 && len(p.CeilGap.Vertices) == 0 {
-					continue // an open portal; clicks pass through
-				}
-				t := pickModelT(origin, dir, p.FloorGap.Vertices, model)
-				if ct := pickModelT(origin, dir, p.CeilGap.Vertices, model); ct < t {
-					t = ct
-				}
-				hit.consider(t, pickPortal, ci, seci, pi)
-			}
-
-			if s.Floor.Enabled {
-				t := pickSurfaceT(origin, dir, ch, s, &s.Floor.Geometry, s.Floor.SubmeshGeometries,
-					s.Floor.VertexHeight, false)
-				hit.consider(t, pickFloor, ci, seci, -1)
-			}
-			if s.Ceiling.Enabled {
-				t := pickSurfaceT(origin, dir, ch, s, &s.Ceiling.Geometry, s.Ceiling.SubmeshGeometries,
-					s.Ceiling.VertexHeight, true)
-				hit.consider(t, pickCeiling, ci, seci, -1)
-			}
-			// Slabs are tested against their real triangles only — there is no
-			// flat fallback of the kind pickSurfaceT keeps for a surface whose
-			// geometry has not been uploaded, because a slab with no geometry
-			// is a slab with no thickness, and there is nothing there to click.
-			if s.Floor.Enabled {
-				hit.consider(pickSlabT(origin, dir, &s.Floor.Slab, model), pickFloorSlab, ci, seci, -1)
-			}
-			if s.Ceiling.Enabled {
-				hit.consider(pickSlabT(origin, dir, &s.Ceiling.Slab, model), pickCeilingSlab, ci, seci, -1)
-			}
-		}
-
-		// Water planes. They are derived from a Water-kind biome sector rather
-		// than placed, but they are still a surface the user points at and
-		// wants the settings for, so a click resolves to the sector that owns
-		// one (see editorWaterSectorFor). Tested last only because the loop
-		// reads better that way — hit.consider sorts by distance, not order.
-		for wi := range ch.WaterSurfaces {
-			w := &ch.WaterSurfaces[wi]
-			if len(w.Geometry.Vertices) == 0 {
-				continue
-			}
-			if t := pickModelT(origin, dir, w.Geometry.Vertices, model.Mul4(w.ModelMatrix())); t < float32(math.MaxFloat32) {
-				hit.consider(t, pickWater, ci, -1, wi)
+				hit.considerFace(t, ci, bi, fi)
 			}
 		}
 	}
@@ -355,7 +298,7 @@ func pick3D(sx, sy int32) pickHit {
 	// should not win against a surface it happens to sit flush with.
 	for vi := range lvl.Volumes {
 		if t := pickVolumeRayT(origin, dir, &lvl.Volumes[vi]); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickVolume, -1, -1, vi)
+			hit.consider(t, pickVolume, -1, vi)
 		}
 	}
 
@@ -365,7 +308,7 @@ func pick3D(sx, sy int32) pickHit {
 	// should not steal the click meant for the wall.
 	for si := range lvl.Sprites {
 		if t := pickSpriteRayT(origin, dir, lvl, &lvl.Sprites[si], gfx.Cam.Position); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickSprite, -1, -1, si)
+			hit.consider(t, pickSprite, -1, si)
 		}
 	}
 
@@ -375,7 +318,7 @@ func pick3D(sx, sy int32) pickHit {
 	// Volumes and sprites are tested afterwards precisely because they are not.
 	for si := range lvl.Scenery {
 		if t := pickSceneryRayT(origin, dir, &lvl.Scenery[si]); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickScenery, -1, -1, si)
+			hit.consider(t, pickScenery, -1, si)
 		}
 	}
 
@@ -463,79 +406,6 @@ func pickPointLightT(origin, dir mgl32.Vec3, pl *world.PointLight) float32 {
 	return float32(math.MaxFloat32)
 }
 
-// pickSlabT ray-tests one surface's slab: its far face, that face's
-// per-texture submeshes, and the rim around the edge.
-//
-// The rim is included so that clicking the exposed edge of a thick floor —
-// often the only part of it in view from inside the room above — selects the
-// slab rather than falling through to whatever is behind it. A Hidden far face
-// is still picked, the same way a hidden wall and a hidden floor are: turning
-// the flag back on is one of the things a click is for.
-func pickSlabT(origin, dir mgl32.Vec3, sl *world.Slab, model mgl32.Mat4) float32 {
-	best := pickModelT(origin, dir, sl.Geometry.Vertices, model)
-	if t := pickGeometriesModelT(origin, dir, sl.SubmeshGeometries, model); t < best {
-		best = t
-	}
-	if t := pickModelT(origin, dir, sl.RimGeometry.Vertices, model); t < best {
-		best = t
-	}
-	return best
-}
-
-// pickSurfaceT ray-tests a floor or ceiling. The uploaded mesh is used when it
-// is available (it accounts for terrain displacement, extrusion holes, and the
-// real triangulation); a fan over the sector polygon is the fallback for a
-// surface whose geometry has not been built yet.
-func pickSurfaceT(origin, dir mgl32.Vec3, ch *world.Chunk, s *world.Sector, geo *gfx.Geometry,
-	extrusions []gfx.Geometry, heightAt func(int) float32, reversed bool) float32 {
-
-	model := ch.ModelMatrix()
-	best := pickModelT(origin, dir, geo.Vertices, model)
-	if et := pickGeometriesModelT(origin, dir, extrusions, model); et < best {
-		best = et
-	}
-	if len(geo.Vertices) > 0 {
-		return best
-	}
-
-	pts := world.SectorPoints(ch, s)
-	if len(pts) < 3 {
-		return best
-	}
-
-	// The fan triangles below are built straight from chunk-local points, so
-	// the ray is moved into that same space once — mirroring pickModelT — rather
-	// than transforming every triangle out to world space.
-	inv := model.Inv()
-	if inv == (mgl32.Mat4{}) {
-		return best
-	}
-	o4 := inv.Mul4x1(mgl32.Vec4{origin.X(), origin.Y(), origin.Z(), 1})
-	d4 := inv.Mul4x1(mgl32.Vec4{dir.X(), dir.Y(), dir.Z(), 0})
-	lOrigin := mgl32.Vec3{o4.X(), o4.Y(), o4.Z()}
-	lDir := mgl32.Vec3{d4.X(), d4.Y(), d4.Z()}
-
-	for i := 1; i < len(pts)-1; i++ {
-		a := mgl32.Vec3{pts[0].X(), heightAt(0), pts[0].Y()}
-		b := mgl32.Vec3{pts[i].X(), heightAt(i), pts[i].Y()}
-		c := mgl32.Vec3{pts[i+1].X(), heightAt(i + 1), pts[i+1].Y()}
-		if reversed {
-			b, c = c, b
-		}
-		if h, t, front := rayTriangleIntersect(lOrigin, lDir, a, b, c); h {
-			if eff := effectivePickT(t, front); eff < best {
-				best = eff
-			}
-		}
-	}
-	return best
-}
-
-// ---------- screen-space helpers ----------
-
-// projectToScreen projects a world point to window pixel coordinates through a
-// prebuilt projection×view matrix. ok is false when the point is behind the
-// camera. (worldToScreen is the 2D editor's top-down map transform — unrelated.)
 func projectToScreen(projView mgl32.Mat4, p mgl32.Vec3) (mgl32.Vec2, bool) {
 	return projectToScreenIn(projView, p, platform.WinWidth, platform.WinHeight)
 }
@@ -609,39 +479,17 @@ const (
 // viewport the moment a camera drag carried the pointer over the side panel.
 func handleShowsAll(showPx float32) bool { return showPx >= vertexHandleShowAllPx }
 
-// vertexSel identifies one selected point. Selections are stored as indices
-// rather than pointers so they survive geometry rebuilds.
-//
-// Almost always that is a sector vertex handle — one corner of one sector, at
-// its floor or its ceiling height. The exception is a *free* point: a chunk
-// point that belongs to no sector yet, which the 2D map can select so it can be
-// joined into one (editor_2d_join.go). A free point has no sector and so no
-// vertIdx and no height of its own; see freePointSel.
+// vertexSel identifies one selected brush vertex. Selections are stored as
+// indices rather than pointers so they survive geometry rebuilds.
 type vertexSel struct {
-	chunkIdx  int
-	sectorIdx int
-	vertIdx   int // index into Sector.PointIndices; -1 for a free point
-	pointIdx  int // index into Chunk.Points
-	isFloor   bool
+	chunkIdx int
+	brushIdx int
+	vertIdx  int // index into Brush.Verts
 }
 
-// freePointSel names a chunk point that is in no sector.
-//
-// isFloor is fixed rather than following the map's floor/ceiling switch: a free
-// point has one position and no heights, so letting the switch vary it would
-// make the same point two different selections depending on which way a toggle
-// happened to be set.
-func freePointSel(chunkIdx, pointIdx int) vertexSel {
-	return vertexSel{chunkIdx: chunkIdx, sectorIdx: -1, vertIdx: -1, pointIdx: pointIdx, isFloor: true}
-}
-
-// isFreePoint reports whether this selection is a chunk point with no sector
-// behind it, which is what every "…and a sector" step has to skip.
-func (s vertexSel) isFreePoint() bool { return s.sectorIdx < 0 }
-
-// vertexHandle is one clickable sector vertex, at either its floor or its
-// ceiling height. A point shared by several sectors yields one handle per
-// sector, which is what repeated clicks cycle through.
+// vertexHandle is one clickable brush vertex. A brush owns its verts outright,
+// so unlike a sector's shared point pool there is exactly one handle per
+// vertex.
 type vertexHandle struct {
 	vertexSel
 	pos     mgl32.Vec3
