@@ -85,6 +85,10 @@ type BSPLeaf struct {
 	// Solid is true for a cell inside brush material. Nothing is drawn there
 	// and nothing can see out of it; the PVS skips solid leaves entirely.
 	Solid bool
+	// Outside is true for a cell in the void around the level rather than
+	// inside it — see outside.go, which fills those in and is why visibility is
+	// a tractable question at all. Set after the build, by MarkOutside.
+	Outside bool
 	// Planes bound the cell: a point is inside when it is in FRONT of every one
 	// of them. This is the cell as a convex polytope, and it is what portal
 	// generation clips against.
