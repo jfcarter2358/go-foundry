@@ -81,12 +81,53 @@ func ScanPrefabNames() []string {
 	return names
 }
 
-// LoadPrefab reads a prefab file by name.
+// prefabCache holds the prefab files read this session, keyed by resolved
+// PATH rather than by name.
+//
+// Dragging an instance re-stamps it on every motion event (see
+// editor_prefab.go on why), and re-stamping re-reads the file — so without
+// this a drag is a YAML parse per frame. A prefab file does not change under
+// the editor except when the editor itself saves it, which invalidates, or
+// when someone edits it on disk, which is what the explicit "Re-stamp from
+// file" action is for.
+//
+// The path rather than the name because the install root moves: a test points
+// fileutil.ExecutablePath at a temp directory, and two tests each writing a
+// "street_lamp" would otherwise read each other's. Keying on the path makes
+// that impossible instead of making it something every caller has to remember
+// to clear.
+//
+// Not concurrency-guarded: every caller is the main thread, the same
+// assumption gfx.Textures and world.DetailPresets already make.
+var prefabCache = map[string]world.Prefab{}
+
+// InvalidatePrefabCache forgets one prefab file, so the next read comes from
+// disk. An empty name forgets all of them — what a level change wants, since
+// the cache outlives the level that filled it.
+func InvalidatePrefabCache(name string) {
+	if name == "" {
+		prefabCache = map[string]world.Prefab{}
+		return
+	}
+	delete(prefabCache, PrefabFilePath(name))
+}
+
+// LoadPrefab reads a prefab file by name, from the cache when it can.
+//
+// The returned Prefab's slices are the cached ones. Every consumer copies what
+// it needs before mutating (materializePrefabBrushes appends into a fresh
+// slice, and the entity/volume/light loops take their raw forms by value), so
+// nothing here hands out a shared slice that gets written through — but a new
+// consumer has to keep that up.
 func LoadPrefab(name string) (world.Prefab, error) {
 	if name == "" {
 		return world.Prefab{}, fmt.Errorf("prefab has no file")
 	}
-	data, err := os.ReadFile(PrefabFilePath(name))
+	path := PrefabFilePath(name)
+	if p, ok := prefabCache[path]; ok {
+		return p, nil
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return world.Prefab{}, fmt.Errorf("prefab %q: %w", name, err)
 	}
@@ -94,12 +135,14 @@ func LoadPrefab(name string) (world.Prefab, error) {
 	if err := yaml.Unmarshal(data, &rp); err != nil {
 		return world.Prefab{}, fmt.Errorf("prefab %q: %w", name, err)
 	}
-	return world.Prefab{
+	p := world.Prefab{
 		Brushes:  rp.Brushes,
 		Entities: rp.Entities,
 		Volumes:  rp.Volumes,
 		Lights:   rp.Lights,
-	}, nil
+	}
+	prefabCache[path] = p
+	return p, nil
 }
 
 // SavePrefab writes a prefab file by name, creating prefabs/ if it is not
@@ -121,7 +164,14 @@ func SavePrefab(name string, p *world.Prefab) error {
 	if err := os.MkdirAll(PrefabsDir(), 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", PrefabsDir(), err)
 	}
-	return os.WriteFile(PrefabFilePath(name), data, 0o644)
+	if err := os.WriteFile(PrefabFilePath(name), data, 0o644); err != nil {
+		return err
+	}
+	// The one write that has to reach the cache. RestampPrefabsOfFile runs
+	// straight after this in the editor, and a stale entry would re-stamp
+	// every placement from what the file said before the save.
+	InvalidatePrefabCache(name)
+	return nil
 }
 
 // ---------- materialising ----------

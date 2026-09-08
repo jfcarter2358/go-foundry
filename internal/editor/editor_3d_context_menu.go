@@ -21,6 +21,7 @@ package editor
 import (
 	"fmt"
 	"foundry/internal/gfx"
+	"foundry/internal/levelio"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -308,7 +309,10 @@ func editor3DPrefabMenuItems() []ctxMenuItem {
 			p.Position = editor3DMenuPoint
 			restampActivePrefab()
 		}, Tooltip: "Put it where the ray under the cursor met the world."},
-		{Label: "Re-stamp from file", Do: restampActivePrefab,
+		{Label: "Re-stamp from file", Do: func() {
+			levelio.InvalidatePrefabCache(p.File)
+			restampActivePrefab()
+		},
 			Tooltip: "Read the file again. The editor does this for you when YOU\nsave the prefab; this is for a file changed on disk."},
 		{Separator: true},
 		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid},

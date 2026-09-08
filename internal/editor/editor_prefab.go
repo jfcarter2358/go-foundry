@@ -172,24 +172,39 @@ func EditorSaveSelectionAsPrefab(name string) error {
 	if lvl == nil {
 		return nil
 	}
-	brushes := selectionBrushes()
-	if len(brushes) == 0 {
+	// Resolved once, chunk and all: the two halves below have to walk the same
+	// set, or a selection made by vertex rather than by face would measure an
+	// origin from brushes it then did not save.
+	type owned struct {
+		ch *world.Chunk
+		b  *world.Brush
+	}
+	var picked []owned
+	seen := map[*world.Brush]bool{}
+	add := func(ch *world.Chunk, b *world.Brush) {
+		if ch == nil || b == nil || seen[b] {
+			return
+		}
+		seen[b] = true
+		picked = append(picked, owned{ch, b})
+	}
+	for _, sel := range Editor.SelectedFaces {
+		add(faceSelBrush(sel))
+	}
+	for _, sel := range Editor.SelectedVertices {
+		add(vertexSelBrush(sel))
+	}
+	if len(picked) == 0 {
 		editorSetStatus("Select the brushes to save first")
 		return nil
 	}
 
-	// The centre of everything being saved, in world space — what the prefab's
-	// own origin becomes.
+	// The extent of everything being saved, in world space.
 	var lo, hi mgl32.Vec3
-	first := true
-	for _, sel := range Editor.SelectedFaces {
-		ch, b := faceSelBrush(sel)
-		if ch == nil || b == nil {
-			continue
-		}
-		bmin, bmax := b.WorldAABB(ch)
-		if first {
-			lo, hi, first = bmin, bmax, false
+	for i, o := range picked {
+		bmin, bmax := o.b.WorldAABB(o.ch)
+		if i == 0 {
+			lo, hi = bmin, bmax
 			continue
 		}
 		lo = mgl32.Vec3{min32(lo.X(), bmin.X()), min32(lo.Y(), bmin.Y()), min32(lo.Z(), bmin.Z())}
@@ -201,16 +216,10 @@ func EditorSaveSelectionAsPrefab(name string) error {
 	origin := mgl32.Vec3{(lo.X() + hi.X()) / 2, lo.Y(), (lo.Z() + hi.Z()) / 2}
 
 	var p world.Prefab
-	seen := map[*world.Brush]bool{}
-	for _, sel := range Editor.SelectedFaces {
-		ch, b := faceSelBrush(sel)
-		if ch == nil || b == nil || seen[b] {
-			continue
-		}
-		seen[b] = true
-		moved := world.CloneBrush(b, "")
+	for _, o := range picked {
+		moved := world.CloneBrush(o.b, "")
 		for i := range moved.Verts {
-			moved.Verts[i] = ch.LocalToWorld(moved.Verts[i]).Sub(origin)
+			moved.Verts[i] = o.ch.LocalToWorld(moved.Verts[i]).Sub(origin)
 		}
 		p.Brushes = append(p.Brushes, world.BrushToRaw(&moved))
 	}
@@ -327,6 +336,9 @@ func editorPrefabPropertiesSection() {
 
 	editorPropGroup("Actions##prefabactions", 0, func() {
 		if imgui.Button("Re-stamp##prefabrestamp") {
+			// The button exists for a file changed on disk, so it is the one
+			// path that has to re-read rather than trust the cache.
+			levelio.InvalidatePrefabCache(inst.File)
 			restampActivePrefab()
 			editorSetStatus("Re-stamped %q from %s", inst.ID, inst.File)
 		}
@@ -412,16 +424,4 @@ func prefabWorldBounds(lvl *world.Level, inst *world.PrefabInstance) (mgl32.Vec3
 		return mgl32.Vec3{}, mgl32.Vec3{}, false
 	}
 	return lo, hi, true
-}
-
-// prefabPlaceFileExists reports whether the armed file is still one of the ones
-// on disk — a placement mode left armed across a rescan must not stamp a name
-// that has since gone.
-func prefabPlaceFileExists() bool {
-	for _, n := range Editor.PrefabFileNames {
-		if n == Editor.PrefabPlaceFile {
-			return true
-		}
-	}
-	return false
 }

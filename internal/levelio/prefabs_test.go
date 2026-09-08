@@ -20,6 +20,7 @@ import (
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
+	"gopkg.in/yaml.v2"
 )
 
 // lampPrefab is one brush, one point light and one volume, authored around the
@@ -321,6 +322,59 @@ func TestASavedLevelStillWritesItsOwnContent(t *testing.T) {
 	}
 	if len(raw.Lights.Point) != 1 || raw.Lights.Point[0].ID != "level_own_light" {
 		t.Errorf("the level's own light was not written: %+v", raw.Lights.Point)
+	}
+}
+
+// The cache must never be what makes a save invisible. SavePrefab invalidates,
+// so the re-stamp that follows it in the editor reads what was just written.
+func TestTheCacheDoesNotDefeatTheLiveLink(t *testing.T) {
+	file := withPrefabFile(t, "street_lamp", lampPrefab())
+
+	// Warm the cache.
+	if _, err := LoadPrefab(file); err != nil {
+		t.Fatalf("LoadPrefab: %v", err)
+	}
+
+	edited := lampPrefab()
+	edited.Lights = nil
+	if err := SavePrefab(file, &edited); err != nil {
+		t.Fatalf("SavePrefab: %v", err)
+	}
+
+	got, err := LoadPrefab(file)
+	if err != nil {
+		t.Fatalf("LoadPrefab: %v", err)
+	}
+	if len(got.Lights) != 0 {
+		t.Errorf("the cache served the pre-save contents: %d lights", len(got.Lights))
+	}
+}
+
+// And an explicit invalidate picks up a file changed underneath us — which is
+// what the editor's "Re-stamp from file" action is for.
+func TestInvalidatingTheCacheRereadsFromDisk(t *testing.T) {
+	file := withPrefabFile(t, "street_lamp", lampPrefab())
+	if _, err := LoadPrefab(file); err != nil {
+		t.Fatalf("LoadPrefab: %v", err)
+	}
+
+	// Written behind SavePrefab's back, the way an external edit would be.
+	edited := lampPrefab()
+	edited.Lights = nil
+	data, err := yaml.Marshal(world.RawPrefab{Brushes: edited.Brushes, Volumes: edited.Volumes})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(PrefabFilePath(file), data, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if got, _ := LoadPrefab(file); len(got.Lights) != 1 {
+		t.Fatal("setup wrong: the cache should still be serving the old contents")
+	}
+	InvalidatePrefabCache(file)
+	if got, _ := LoadPrefab(file); len(got.Lights) != 0 {
+		t.Error("an invalidated cache did not re-read from disk")
 	}
 }
 
