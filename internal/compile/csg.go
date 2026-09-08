@@ -116,13 +116,19 @@ func (s *solid) containsPoint(p mgl32.Vec3) bool {
 // to carry it out. That is also why frame-owned chunks are SKIPPED — a
 // vehicle's interior moves, so its geometry cannot be baked into a static
 // world-space list. Those keep their brushes and are drawn the live way.
-func CSG(lvl *world.Level) []Face {
+// A concave brush is an error here rather than a warning, because "inside is
+// behind every plane" is not true of one and every stage below this depends on
+// it. See validate.go on why the editor takes the opposite line.
+func CSG(lvl *world.Level) ([]Face, error) {
+	if err := Validate(lvl); err != nil {
+		return nil, err
+	}
 	solids, faces := gatherSolids(lvl)
 	out := make([]Face, 0, len(faces))
 	for i := range faces {
 		out = append(out, clipFaceAgainstSolids(faces[i], solids)...)
 	}
-	return out
+	return out, nil
 }
 
 // gatherSolids walks the level once, producing the world-space solids CSG clips

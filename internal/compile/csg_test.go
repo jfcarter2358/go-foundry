@@ -20,6 +20,17 @@ func levelOf(brushes ...world.Brush) *world.Level {
 	return &world.Level{Chunks: []world.Chunk{{ID: "c0", Brushes: brushes}}}
 }
 
+// mustCSG compiles a level a test asserts about, failing the test rather than
+// returning an error the assertion would then have to thread through.
+func mustCSG(t *testing.T, lvl *world.Level) []Face {
+	t.Helper()
+	faces, err := CSG(lvl)
+	if err != nil {
+		t.Fatalf("CSG: %v", err)
+	}
+	return faces
+}
+
 // facesOn returns the compiled faces whose plane normal points roughly along n.
 func facesOn(faces []Face, n mgl32.Vec3) []Face {
 	var out []Face
@@ -42,7 +53,7 @@ func totalArea(faces []Face) float32 {
 
 func TestALoneBoxKeepsEverySide(t *testing.T) {
 	lvl := levelOf(world.NewBoxBrush("b", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, "concrete"))
-	faces := CSG(lvl)
+	faces := mustCSG(t, lvl)
 	if len(faces) != 6 {
 		t.Fatalf("got %d faces, want a box's 6", len(faces))
 	}
@@ -59,7 +70,7 @@ func TestTwoFlushBoxesKeepOneOfTheSharedPair(t *testing.T) {
 		world.NewBoxBrush("a", mgl32.Vec3{0, 0, 0}, mgl32.Vec3{1, 1, 1}, "concrete"),
 		world.NewBoxBrush("b", mgl32.Vec3{2, 0, 0}, mgl32.Vec3{1, 1, 1}, "concrete"),
 	)
-	faces := CSG(lvl)
+	faces := mustCSG(t, lvl)
 
 	// Two boxes have 12 faces; the shared surface at x=1 accounts for two of
 	// them, and one of those goes.
@@ -88,7 +99,7 @@ func TestABoxInsideAnotherDisappears(t *testing.T) {
 		world.NewBoxBrush("outer", mgl32.Vec3{}, mgl32.Vec3{4, 4, 4}, "concrete"),
 		world.NewBoxBrush("inner", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, "concrete"),
 	)
-	faces := CSG(lvl)
+	faces := mustCSG(t, lvl)
 	if len(faces) != 6 {
 		t.Fatalf("got %d faces, want the outer box's 6", len(faces))
 	}
@@ -114,7 +125,7 @@ func TestAPillarSunkIntoAFloorCutsIt(t *testing.T) {
 		world.NewBoxBrush("floor", mgl32.Vec3{0, -1, 0}, mgl32.Vec3{10, 1, 10}, "concrete"),
 		world.NewBoxBrush("pillar", mgl32.Vec3{0, 1.75, 0}, mgl32.Vec3{1, 2.25, 1}, "concrete"),
 	)
-	faces := CSG(lvl)
+	faces := mustCSG(t, lvl)
 
 	tops := facesOn(faces, mgl32.Vec3{0, 1, 0})
 	var floorTop []Face
@@ -151,7 +162,7 @@ func TestAPillarRestingOnAFloorKeepsItWhole(t *testing.T) {
 		world.NewBoxBrush("floor", mgl32.Vec3{0, -1, 0}, mgl32.Vec3{10, 1, 10}, "concrete"),
 		world.NewBoxBrush("pillar", mgl32.Vec3{0, 2, 0}, mgl32.Vec3{1, 2, 1}, "concrete"),
 	)
-	faces := CSG(lvl)
+	faces := mustCSG(t, lvl)
 
 	var floorTop []Face
 	for _, f := range facesOn(faces, mgl32.Vec3{0, 1, 0}) {
@@ -178,7 +189,7 @@ func TestAPillarRestingOnAFloorKeepsItWhole(t *testing.T) {
 func TestAHollowRoomKeepsItsInsideSurfaces(t *testing.T) {
 	lvl := levelOf(world.NewHollowRoom("room",
 		mgl32.Vec3{0, 0, 0}, mgl32.Vec3{8, 4, 8}, 0.5, "concrete")...)
-	faces := CSG(lvl)
+	faces := mustCSG(t, lvl)
 
 	// The floor's top at y=0 is what the player stands on.
 	found := false
@@ -211,7 +222,7 @@ func TestANonSolidBrushClipsNothing(t *testing.T) {
 		world.NewBoxBrush("a", mgl32.Vec3{0, 0, 0}, mgl32.Vec3{1, 1, 1}, "concrete"),
 		deco,
 	)
-	faces := CSG(lvl)
+	faces := mustCSG(t, lvl)
 
 	// The solid box keeps all six: nothing solid buries any of them.
 	solid := 0
@@ -231,7 +242,7 @@ func TestNoDrawFacesAreDroppedButStillClip(t *testing.T) {
 	b := world.NewBoxBrush("b", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, "concrete")
 	b.Faces[0].NoDraw = true
 	lvl := levelOf(b, world.NewBoxBrush("n", mgl32.Vec3{2, 0, 0}, mgl32.Vec3{1, 1, 1}, "concrete"))
-	faces := CSG(lvl)
+	faces := mustCSG(t, lvl)
 
 	for _, f := range faces {
 		if f.Brush == "b" && f.FaceIdx == 0 {
@@ -262,7 +273,7 @@ func TestFrameOwnedChunksAreLeftOut(t *testing.T) {
 			world.NewBoxBrush("hull", mgl32.Vec3{}, mgl32.Vec3{2, 2, 2}, "concrete"),
 		}},
 	}}
-	faces := CSG(lvl)
+	faces := mustCSG(t, lvl)
 
 	for _, f := range faces {
 		if f.Chunk == "ship" {
@@ -278,7 +289,7 @@ func TestFrameOwnedChunksAreLeftOut(t *testing.T) {
 func TestDisabledChunksAreLeftOut(t *testing.T) {
 	lvl := levelOf(world.NewBoxBrush("b", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, "concrete"))
 	lvl.Chunks[0].Disabled = true
-	if faces := CSG(lvl); len(faces) != 0 {
+	if faces := mustCSG(t, lvl); len(faces) != 0 {
 		t.Errorf("got %d faces from a disabled chunk", len(faces))
 	}
 }
@@ -290,7 +301,7 @@ func TestFacesComeOutInWorldSpace(t *testing.T) {
 	lvl.Chunks[0].Origin = mgl32.Vec3{100, 5, -30}
 	lvl.Chunks[0].Scale = 1
 
-	faces := CSG(lvl)
+	faces := mustCSG(t, lvl)
 	if len(faces) != 6 {
 		t.Fatalf("got %d faces", len(faces))
 	}
@@ -321,7 +332,7 @@ func TestCSGIsDeterministic(t *testing.T) {
 	build := func() []Face {
 		lvl := levelOf(world.NewHollowRoom("room",
 			mgl32.Vec3{0, 0, 0}, mgl32.Vec3{8, 4, 8}, 0.5, "concrete")...)
-		f := CSG(lvl)
+		f := mustCSG(t, lvl)
 		SortFaces(f)
 		return f
 	}
