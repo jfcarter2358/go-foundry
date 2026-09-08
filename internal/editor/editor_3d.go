@@ -347,7 +347,6 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	// exactly the case where the previous click's result has to survive.
 	if f, ok := faceSelFromHit(hit); ok && ctrlHeld {
 		editorSelectFace(f, true)
-		Editor.ActiveBiomeSectorIdx = -1
 		return
 	}
 	// A ctrl+click that reached no face keeps the set as it is rather than
@@ -357,9 +356,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
-	// Start from a clean slate so no stale selection survives the click. The
-	// biome sector goes with the rest: it is the same selection the 2D layer
-	// works in, and one sector is selected wherever it was clicked.
+	// Start from a clean slate so no stale selection survives the click.
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
@@ -368,7 +365,6 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	editorClearLightSelection()
 	clearVertexSelection()
 	clearFaceSelection()
-	Editor.ActiveBiomeSectorIdx = -1
 	Editor.GizmoKind = gizmoKindNone
 
 	if f, ok := faceSelFromHit(hit); ok {
@@ -378,59 +374,42 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 
 	switch hit.kind {
 	case pickSpawn:
-		Editor.ActiveSectorIdx = -1
 		editorSelectSpawn()
 
 	case pickEntity:
-		Editor.ActiveSectorIdx = -1
 		editorSelectEntity(hit.idx)
 
 	case pickVolume:
 		// The same gizmos an entity gets: a volume has a position, an
 		// orientation and a size, and the scale gizmo drags its half-extents
 		// (applyScaleToSelection) rather than a scale factor it does not have.
-		Editor.ActiveSectorIdx = -1
 		editorSelectVolume(hit.idx)
 
 	case pickSprite:
 		// The same gizmos a volume gets. Scale drags the quad's width and
 		// height (applyScaleToSelection), since a sprite's size is its extents
 		// and it has no scale factor of its own.
-		Editor.ActiveSectorIdx = -1
 		editorSelectSprite(hit.idx)
 
 	case pickScenery:
 		// Move, rotate and scale, all three meaning what they say: a prop's
 		// scale is a real per-axis factor on the model, unlike a volume's or a
 		// sprite's, so the scale gizmo needs no special case for it.
-		Editor.ActiveSectorIdx = -1
 		editorSelectScenery(hit.idx)
 
 	case pickEmitter:
-		Editor.ActiveSectorIdx = -1
 		editorSelectEmitter(hit.idx)
 
 	case pickSound:
-		Editor.ActiveSectorIdx = -1
 		editorSelectSound(hit.idx)
 
 	case pickLight:
 		// The Objects list is no longer the only way to reach a light: click
 		// its marker and the gizmo attaches to it, the same as an entity's.
-		Editor.ActiveSectorIdx = -1
 		editorSelectLight(lightKindPoint, hit.idx)
-
-	case pickWater:
-		// A water plane has no properties of its own — everything about it is
-		// derived from the Water-kind biome sector that produced it — so the
-		// click selects that sector and the panel shows its water settings.
-		// It does get one gizmo: the height the surface sits at is the single
-		// thing about it the polygon does not decide (editor_water.go).
-		editorSelectWater(hit.chunkIdx, hit.idx)
 
 	default:
 		// Click on empty space — deselect.
-		Editor.ActiveSectorIdx = -1
 		Editor.PanelFocus = panelFocusNone
 	}
 }
@@ -440,7 +419,6 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 // selected.
 func editor3DClearSelection() {
 	clearVertexSelection()
-	editorClearWaterSelection()
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
@@ -448,32 +426,8 @@ func editor3DClearSelection() {
 	editorClearChunkSelection()
 	editorClearLightSelection()
 	clearFaceSelection()
-	Editor.ActiveSectorIdx = -1
-	Editor.ActiveBiomeSectorIdx = -1
 	Editor.GizmoKind = gizmoKindNone
 	Editor.PanelFocus = panelFocusNone
-}
-
-// editorWaterSectorFor resolves a water surface back to the biome sector that
-// produced it. The two are matched by ID, which is what biome_water.go's sync
-// keys on as well; -1 when the sector has since been deleted and the surface
-// has not been swept up yet.
-func editorWaterSectorFor(chunkIdx, surfaceIdx int) int {
-	lvl := Editor.level
-	if lvl == nil || chunkIdx < 0 || chunkIdx >= len(lvl.Chunks) {
-		return -1
-	}
-	ch := &lvl.Chunks[chunkIdx]
-	if surfaceIdx < 0 || surfaceIdx >= len(ch.WaterSurfaces) {
-		return -1
-	}
-	id := ch.WaterSurfaces[surfaceIdx].ID
-	for i := range ch.BiomeSectors {
-		if ch.BiomeSectors[i].ID == id {
-			return i
-		}
-	}
-	return -1
 }
 
 // moveChunk places a chunk at newOrigin.
@@ -588,9 +542,6 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 		gizmo.GizmoOBB(center, axes, half, cyan)
 	}
 
-	// The surface being shaped, if any: its wireframe, handles and drag arms.
-	drawSurfaceEditOverlay()
-
 	// The selected face's outline, the handles the current selection mode can
 	// act on, and the translate gizmo — drawn last and without depth testing,
 	// so a mark is visible wherever it means something.
@@ -627,30 +578,27 @@ func editorFocusScroll(sections ...string) {
 	}
 }
 
-// editor3DVertexPanel draws the properties of the sector vertices selected by
+// editor3DVertexPanel draws the properties of the brush vertices selected by
 // clicking their handle boxes in 3D. With more than one selected, editing a
 // coordinate collapses every selected vertex onto that value — dragging an axis
 // arm is the way to move them as a group.
+//
+// The coordinates shown are chunk-local, which is what a brush stores and what
+// the fields write straight back. A sector vertex needed three fields for two
+// stores (a shared XZ point plus a per-surface height offset); a brush vertex
+// is one position, so it gets one X/Y/Z.
 func editor3DVertexPanel(lvl *world.Level) {
 	sels := Editor.SelectedVertices
 	if len(sels) == 0 {
 		return
 	}
 	primary := sels[0]
-	ch, s := sectorOf(primary)
-	if ch == nil || s == nil || primary.vertIdx >= len(s.PointIndices) {
-		return
-	}
-	pIdx := s.PointIndices[primary.vertIdx]
-	if pIdx < 0 || pIdx >= len(ch.Points) {
+	_, b := vertexSelBrush(primary)
+	if b == nil || primary.vertIdx < 0 || primary.vertIdx >= len(b.Verts) {
 		return
 	}
 
-	which := "Ceiling"
-	if primary.isFloor {
-		which = "Floor"
-	}
-	title := fmt.Sprintf("Vertex #%d (%s) — %s", primary.vertIdx, which, s.ID)
+	title := fmt.Sprintf("Vertex #%d — %s", primary.vertIdx, b.ID)
 	if len(sels) > 1 {
 		title = fmt.Sprintf("%d Vertices Selected", len(sels))
 	}
@@ -660,49 +608,32 @@ func editor3DVertexPanel(lvl *world.Level) {
 	if imgui.CollapsingHeaderV(title+"##vertexhdr", imgui.TreeNodeFlagsDefaultOpen) {
 		editorFocusScroll(panelFocusVertex)
 
-		pt := ch.Points[pIdx]
-		x := pt.X()
-		z := pt.Y()
+		v := b.Verts[primary.vertIdx]
+		x, y, z := v.X(), v.Y(), v.Z()
 		xChanged := editorDragFloat("X##v3dx", &x, -1e6, 1e6, "%.3f")
+		yChanged := editorDragFloat("Y##v3dy", &y, -1e6, 1e6, "%.3f")
 		zChanged := editorDragFloat("Z##v3dz", &z, -1e6, 1e6, "%.3f")
-		if xChanged || zChanged {
-			setSelectedVertexPoints(func(_ int, _ vertexSel, cur mgl32.Vec2) mgl32.Vec2 {
+		if xChanged || yChanged || zChanged {
+			EditorPushUndo()
+			setSelectedVertexLocals(func(_ int, _ vertexSel, cur mgl32.Vec3) mgl32.Vec3 {
 				out := cur
 				if xChanged {
 					out[0] = x
 				}
+				if yChanged {
+					out[1] = y
+				}
 				if zChanged {
-					out[1] = z
+					out[2] = z
 				}
 				return out
 			})
+			warnIfSelectionBrokeConvexity()
 		}
 
 		if len(sels) > 1 {
-			// One field for the whole selection: each vertex's own surface
-			// (floor or ceiling, per handle) gets the offset.
-			off := vertexOffset(s, primary)
-			if editorDragFloat("Height Offset##v3dmulti", &off, -100, 100, "%.3f") {
-				setSelectedVertexOffsets(func(_ int, _ vertexSel, _ float32) float32 {
-					return off
-				})
-			}
 			imgui.Text("Editing a field collapses all selected vertices to it")
 		} else {
-			if primary.vertIdx < len(s.Floor.VertexOffsets) {
-				fOff := s.Floor.VertexOffsets[primary.vertIdx]
-				if editorDragFloat("Floor Offset##v3dfo", &fOff, -100, 100, "%.3f") {
-					s.Floor.VertexOffsets[primary.vertIdx] = fOff
-					_ = world.ReloadSector(ch, s)
-				}
-			}
-			if primary.vertIdx < len(s.Ceiling.VertexOffsets) {
-				cOff := s.Ceiling.VertexOffsets[primary.vertIdx]
-				if editorDragFloat("Ceil Offset##v3dco", &cOff, -100, 100, "%.3f") {
-					s.Ceiling.VertexOffsets[primary.vertIdx] = cOff
-					_ = world.ReloadSector(ch, s)
-				}
-			}
 			imgui.Text("Click the handle again to cycle overlapping vertices")
 		}
 		imgui.Text("Ctrl+click adds every vertex under the cursor")
@@ -726,73 +657,43 @@ func Editor3DPanel() {
 	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: float32(platform.WinHeight) - 28})
 	imgui.BeginV("3D Editor", nil, imgui.WindowFlagsNoMove|imgui.WindowFlagsNoResize)
 
-	editorPanelBody(lvl, panelKind3D)
+	editorPanelBody(lvl)
 
 	imgui.End()
 	editorChunkPopups(lvl)
 }
 
-// createChunkAtCamera creates a minimal rectangular chunk at the camera's XZ position.
+// createChunkAtCamera creates a chunk holding one hollow room at the camera's
+// XZ position — somewhere to stand, rather than an empty container the author
+// then has to fill before anything is visible.
+//
+// world.NewHollowRoom is the same six-brush primitive the editor's Hollow
+// action stamps, so a fresh chunk is made of exactly what a hand-built one
+// would be. (A single NewBoxBrush would be a solid block with no interior.)
 func createChunkAtCamera(id string) {
 	lvl := Editor.level
-	// Centre the new chunk on whatever the active sub-mode is looking at: the
-	// fly camera in 3D, the map pan in 2D.
 	cx := gfx.Cam.Position.X()
 	cz := gfx.Cam.Position.Z()
-	if Editor.Mode == Mode2D {
-		// Pan2D is on the map's plane — the *currently active* chunk's local
-		// space (editor2DAnchor) — and Origin below is world. Using the pan
-		// raw would place the new chunk offset by the old chunk's placement.
-		cx, cz = editor2DFromPlane(Editor.Pan2D.X(), Editor.Pan2D.Y())
-	}
 	halfSize := float32(5.0)
+	floorH, ceilH := float32(0.0), float32(4.0)
 
-	// Points are built around the chunk's own local origin, like every other
-	// chunk's authored geometry — the camera/pan position is carried by Origin
-	// instead of baked into them.
-	pts := []mgl32.Vec2{
-		{-halfSize, -halfSize},
-		{halfSize, -halfSize},
-		{halfSize, halfSize},
-		{-halfSize, halfSize},
-	}
-	floorH := float32(0.0)
-	ceilH := float32(4.0)
-
-	// Wall/Floor/Ceiling.Alpha and DoubleSided have no zero-value-safe default
-	// like the YAML loader's float32Default/BoolDefault helpers apply — leaving
-	// them unset here means Alpha stays 0 (fully transparent) and DoubleSided
-	// stays false, so set them explicitly to match what a loaded level gets.
 	_ = gfx.EnsureTextureLoaded("concrete")
-	_ = gfx.EnsureTextureLoaded("stone_floor")
 
-	walls := []world.Wall{
-		{StartPoint: pts[0], EndPoint: pts[1], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
-		{StartPoint: pts[1], EndPoint: pts[2], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
-		{StartPoint: pts[2], EndPoint: pts[3], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
-		{StartPoint: pts[3], EndPoint: pts[0], Texture: "concrete", Collision: true, Visible: true, DoubleSided: true, Alpha: 1.0},
-	}
-
-	sector := world.Sector{
-		ID:           id + "_room",
-		PointIndices: []int{0, 1, 2, 3},
-		EdgeKinds:    []string{"wall", "wall", "wall", "wall"},
-		Floor:        world.Floor{Enabled: true, Height: floorH, Texture: "stone_floor", DoubleSided: true, Alpha: 1.0},
-		Ceiling:      world.Ceiling{Enabled: true, Height: ceilH, Texture: "concrete", DoubleSided: true, Alpha: 1.0},
-		Walls:        walls,
-	}
-
+	// Brush verts are built around the chunk's own local origin, like every
+	// other chunk's authored geometry — the camera position is carried by
+	// Origin instead of baked into them.
 	chunk := world.Chunk{
-		ID:         id,
-		Origin:     mgl32.Vec3{cx, 0, cz},
-		Points:     pts,
-		Sectors:    []world.Sector{sector},
-		MinBound:   mgl32.Vec3{-halfSize, floorH, -halfSize},
-		MaxBound:   mgl32.Vec3{halfSize, ceilH, halfSize},
-		PointNames: []string{"A", "B", "C", "D"},
+		ID:     id,
+		Origin: mgl32.Vec3{cx, 0, cz},
+		Brushes: world.NewHollowRoom(id+"_room",
+			mgl32.Vec3{-halfSize, floorH, -halfSize},
+			mgl32.Vec3{halfSize, ceilH, halfSize},
+			defaultBrushWallThickness, "concrete"),
 	}
-	_ = world.ReloadSector(&chunk, &sector)
-	chunk.Sectors[0] = sector
+	for bi := range chunk.Brushes {
+		_ = chunk.Brushes[bi].Load()
+	}
+	chunk.RecomputeBounds()
 
 	lvl.Chunks = append(lvl.Chunks, chunk)
 	Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
@@ -817,11 +718,10 @@ func duplicateActiveChunk() {
 	newID, suffix := uniqueChunkCopyID(lvl, src.ID)
 	clone := src.Clone(newID, suffix)
 
-	for si := range clone.Sectors {
-		s := &clone.Sectors[si]
-		_ = world.ReloadSector(&clone, s)
+	for bi := range clone.Brushes {
+		_ = clone.Brushes[bi].Load()
 	}
-	clone.RebuildGaps()
+	clone.RecomputeBounds()
 
 	// A duplicated vehicle interior keeps riding the same vehicle (Chunk.Clone
 	// copies FrameOwner), so the vehicle's own interior list has to name the
@@ -869,14 +769,15 @@ func deleteActiveChunk() {
 	} else if Editor.ActiveChunkIdx >= len(lvl.Chunks) {
 		Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
 	}
-	Editor.ActiveSectorIdx = -1
-	Editor.ActiveEdgeIdx = -1
+	clearFaceSelection()
+	clearVertexSelection()
 	editorClearSpawnSelection()
 }
 
 // uniqueChunkCopyID returns a chunk ID + suffix pair that does not collide
 // with any existing chunk in lvl. The suffix ("_copy", "_copy2", ...) is
-// reused for nested sector IDs so they stay consistent.
+// reused for the copy's brush IDs so they stay consistent — and, since brush
+// IDs are level-unique (world/identity.go), so they stay unique.
 func uniqueChunkCopyID(lvl *world.Level, srcID string) (string, string) {
 	existing := make(map[string]struct{}, len(lvl.Chunks))
 	for i := range lvl.Chunks {
@@ -907,12 +808,14 @@ func editorFaceSelectionNote() {
 		return
 	}
 	if n == 1 {
-		imgui.Text("Selected face: " + editor3DKindLabel(Editor.ActiveSurface))
+		if _, b := faceSelBrush(Editor.SelectedFaces[0]); b != nil {
+			imgui.Text(fmt.Sprintf("Selected face #%d of brush %s", Editor.ActiveFaceIdx, b.ID))
+		}
 		return
 	}
 	imgui.Text(fmt.Sprintf("%d faces selected — fields below are the first one's", n))
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Right-click the viewport for texture, visibility,\n" +
-			"collision and wall/portal actions that apply to all of them.")
+		imgui.SetTooltip("Right-click the viewport for texture, visibility and\n" +
+			"collision actions that apply to all of them.")
 	}
 }

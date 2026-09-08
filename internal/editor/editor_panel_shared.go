@@ -58,7 +58,6 @@ func editorChunkPropertiesSection(lvl *world.Level) {
 	editorPropGroup("Motion##chunkmotiongrp", 0, func() { editorChunkMotion(ch) })
 	editorPropGroup("Carried By##chunkframegrp", 0, func() { editorChunkFrameOwnerRow(lvl, ch) })
 	editorScriptDataUI(&ch.ScriptData, "chunk", "This chunk")
-	editorPropGroup("Actions##chunkactions", 0, func() { editorChunkActions(ch) })
 }
 
 // editorChunkIdentity draws the chunk's ID and what it holds.
@@ -89,36 +88,15 @@ func editorChunkIdentity(lvl *world.Level, ch *world.Chunk) {
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("A disabled chunk is not drawn, not solid, and its geometry\n" +
-			"is unloaded. It stays on the sector map, and a script switches\n" +
+			"is unloaded. It stays in the Explorer, and a script switches\n" +
 			"it back on with `@" + ch.ID + ".prop.enabled = true`.")
 	}
 
-	imgui.Text(fmt.Sprintf("Sectors: %d", len(ch.Sectors)))
-	imgui.Text(fmt.Sprintf("Points: %d", len(ch.Points)))
-	imgui.Text(fmt.Sprintf("Biome sectors: %d", len(ch.BiomeSectors)))
-}
-
-// editorChunkActions draws the jump to the other editor, centred on this chunk.
-//
-// From the sector map that means handing focus back to the main window's 3D
-// view (withEditor2DMode notices the mode change and raises it); from the 3D
-// view it means opening the map's window.
-func editorChunkActions(ch *world.Chunk) {
-	if Editor.Mode == Mode2D {
-		if imgui.Button("Switch to 3D Editor##chunkto3d") {
-			Editor.Mode = Mode3D
-		}
-		return
+	faces := 0
+	for bi := range ch.Brushes {
+		faces += len(ch.Brushes[bi].Faces)
 	}
-	if imgui.Button("Switch to Sector Editor##chunkto2d") {
-		OpenEditor2DWindow()
-		// Pan2D is a point on the map's plane, which IS this chunk's own local
-		// space (see editor2DAnchor) — so the chunk-local centre goes in as-is.
-		// Carrying it out to world first would pan the view off the chunk by
-		// exactly its Origin.
-		center := ch.MinBound.Add(ch.MaxBound).Mul(0.5)
-		Editor.Pan2D = mgl32.Vec2{center.X(), center.Z()}
-	}
+	imgui.Text(fmt.Sprintf("Brushes: %d (%d faces)", len(ch.Brushes), faces))
 }
 
 // editorChunkTransform draws the chunk's live Origin/Rotation/Scale — the
@@ -312,21 +290,18 @@ func editorChunkPopups(lvl *world.Level) {
 			if imgui.Button("Import") {
 				EditorPushUndo()
 				path := filepath.Join(fileutil.ExecutablePath, "chunks", Editor.ImportChunkFiles[Editor.ImportChunkIdx])
-				// Land the import wherever the active sub-mode is looking at —
-				// the same "here" createChunkAtCamera uses — rather than at
-				// whatever Origin the source file happened to carry, which was
-				// authored relative to a different level entirely.
+				// Land the import where the camera is looking — the same
+				// "here" createChunkAtCamera uses — rather than at whatever
+				// Origin the source file happened to carry, which was authored
+				// relative to a different level entirely.
 				target := mgl32.Vec3{gfx.Cam.Position.X(), 0, gfx.Cam.Position.Z()}
-				if Editor.Mode == Mode2D {
-					target = mgl32.Vec3{Editor.Pan2D.X(), 0, Editor.Pan2D.Y()}
-				}
 				chunkID, err := levelio.ImportChunkIntoLevel(lvl, path, target)
 				if err != nil {
 					Editor.StatusMsg = fmt.Sprintf("Import error: %v", err)
 				} else {
 					Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
-					Editor.ActiveSectorIdx = -1
-					Editor.ActiveEdgeIdx = -1
+					clearFaceSelection()
+					clearVertexSelection()
 					Editor.StatusMsg = fmt.Sprintf("Imported chunk %q", chunkID)
 				}
 				Editor.StatusTime = sdl.GetTicks()
@@ -338,27 +313,6 @@ func editorChunkPopups(lvl *world.Level) {
 			imgui.CloseCurrentPopup()
 		}
 	})
-}
-
-// editorEdgeKindCombo draws the wall↔portal converter for the selected edge.
-// idSuffix keeps the imgui IDs distinct between the 2D and 3D panels.
-// convertEdge rewrites the sector's edge arrays, so the change is snapshotted
-// for undo like every other structural edit.
-func editorEdgeKindCombo(ch *world.Chunk, s *world.Sector, idSuffix string) {
-	kind := Editor.ActiveEdgeKind
-	idx := Editor.ActiveEdgeIdx
-	if idx < 0 || (kind != "wall" && kind != "portal") {
-		return
-	}
-	if imgui.BeginCombo("Kind##ek"+idSuffix, kind) {
-		for _, target := range []string{"wall", "portal"} {
-			if imgui.SelectableV(target, kind == target, 0, imgui.Vec2{}) && target != kind {
-				EditorPushUndo()
-				convertEdge(ch, s, kind, idx, target)
-			}
-		}
-		imgui.EndCombo()
-	}
 }
 
 // editorSetStatus sets the editor's transient status line, the one-line

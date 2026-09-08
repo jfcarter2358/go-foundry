@@ -8,18 +8,22 @@ package editor
 // neighbours are — which is what makes a multi-selection turn as a rigid body
 // rather than each point spinning uselessly about itself.
 //
-// The awkward part is the write-back. A sector vertex is not stored as a
-// position: its XZ is a chunk point shared with every other sector (and every
-// other selected handle) that uses that corner, and its Y is a per-vertex
-// offset from the sector's floor or ceiling height. So a transform that hands
-// back world positions has to be folded into those two stores, and the shared
-// XZ has to be reconciled when several selected handles land on the same point
-// — the floor and ceiling handles of one corner are two selections of one
-// coordinate. They are averaged rather than written in selection order, so the
-// result does not depend on which handle was clicked first.
+// The write-back used to be the awkward part. A *sector* vertex was not stored
+// as a position: its XZ was a chunk point shared with every other sector that
+// used that corner, and its Y was a per-vertex offset from the sector's floor
+// or ceiling height — so a transform handing back world positions had to be
+// folded into two stores, and shared points had to be reconciled by averaging.
+//
+// A brush vertex is a position. It is owned outright by one brush and shared
+// with nothing, so the write is a write: carry the world target back into the
+// chunk's local space and store it. All of that machinery went with the sector.
+//
+// What remains is the chunk transform. Everything above this layer — the
+// gizmos, the selection centre — works in world space, and ch.LocalToWorld /
+// ch.WorldToLocal are the only two places that know a chunk can be moved,
+// rotated or scaled at all.
 
 import (
-	"foundry/internal/world"
 	"math"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -40,20 +44,17 @@ func selectedVerticesWorld() []mgl32.Vec3 {
 	return out
 }
 
-// vertexWriteback records what writeSelectedVertexWorld changed, so the rebuild
-// that follows knows exactly which chunk points moved and which sectors need
-// reloading — and so a test can inspect the write without a GL context, which
-// rebuilding geometry needs and headless code has not got.
+// vertexWriteback records which brushes a write actually changed, so the
+// rebuild that follows reloads exactly those — and so a test can inspect the
+// write without a GL context, which rebuilding geometry needs and headless code
+// has not got.
 type vertexWriteback struct {
-	movedPoints    map[[2]int]struct{}       // chunk+point index of each moved point
-	touchedSectors map[[2]int]struct{}       // chunk+sector index of each height change
+	touchedBrushes map[[2]int]struct{} // chunk+brush index of each moved brush
 }
 
 // empty reports whether nothing at all changed, in which case there is nothing
 // to rebuild.
-func (w vertexWriteback) empty() bool {
-	return len(w.moves) == 0 && len(w.touchedSectors) == 0
-}
+func (w vertexWriteback) empty() bool { return len(w.touchedBrushes) == 0 }
 
 // setSelectedVertexWorld rewrites every selected vertex's world position
 // through fn, then rebuilds whatever moved.
@@ -66,162 +67,86 @@ func setSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl32.
 	rebuildAfterVertexWrite(writeSelectedVertexWorld(fn))
 }
 
-// writeSelectedVertexWorld is setSelectedVertexWorld's write half: it folds the
-// positions fn returns into the two stores a sector vertex actually has, and
-// reports what it changed. It touches no geometry, so nothing here needs a GL
-// context.
+// writeSelectedVertexWorld is setSelectedVertexWorld's write half: it stores
+// the positions fn returns and reports which brushes it touched. It touches no
+// geometry, so nothing here needs a GL context.
 func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl32.Vec3) vertexWriteback {
-	out := vertexWriteback{
-		movedPoints:    map[[2]int]struct{}{},
-		touchedSectors: map[[2]int]struct{}{},
-	}
-	lvl := Editor.level
-	if lvl == nil {
+	out := vertexWriteback{touchedBrushes: map[[2]int]struct{}{}}
+	if Editor.level == nil {
 		return out
-	}
-
-	// Pass one: resolve the target position of every selection, and sum the XZ
-	// per shared chunk point so the reconciliation below can average it.
-	type xzAccum struct {
-		sum mgl32.Vec2
-		N   int
 	}
 	// Whatever the gizmo is dragging: the vertex selection, or the handles a
 	// face selection is built from (editor_face_gizmo.go). Both are the same
 	// list of handles by the time they get here.
-	sels := gizmoVertexSels()
-	targets := make([]mgl32.Vec3, len(sels))
-	resolved := make([]bool, len(sels))
-	accum := map[[2]int]*xzAccum{}
-	for i, sel := range sels {
+	for i, sel := range gizmoVertexSels() {
+		ch, b := vertexSelBrush(sel)
+		if b == nil || sel.vertIdx < 0 || sel.vertIdx >= len(b.Verts) {
+			continue
+		}
 		cur, ok := vertexSelPos(sel)
 		if !ok {
 			continue
 		}
-		p := fn(i, sel, cur)
-		targets[i] = p
-		resolved[i] = true
-		key := [2]int{sel.chunkIdx, sel.pointIdx}
-		a := accum[key]
-		if a == nil {
-			a = &xzAccum{}
-			accum[key] = a
-		}
-		a.sum = a.sum.Add(mgl32.Vec2{p.X(), p.Z()})
-		a.N++
-	}
-
-	// Pass two: the shared XZ. Only points that actually moved are recorded, so
-	// a pure height drag does not drag the biome layer along with it.
-	for key, a := range accum {
-		if key[0] < 0 || key[0] >= len(lvl.Chunks) {
-			continue
-		}
-		ch := &lvl.Chunks[key[0]]
-		if key[1] < 0 || key[1] >= len(ch.Points) {
-			continue
-		}
-		// fn (and the accumulation above) worked in world space, same as
-		// vertexSelPos read it; carry the averaged target back into this
-		// chunk's own local space before it touches ch.Points.
-		wantWorld := a.sum.Mul(1 / float32(a.N))
-		wantLocal3 := ch.WorldToLocal(mgl32.Vec3{wantWorld.X(), 0, wantWorld.Y()})
-		want := mgl32.Vec2{wantLocal3.X(), wantLocal3.Z()}
-		was := ch.Points[key[1]]
+		// fn works in world space, same as vertexSelPos read it; the store is
+		// chunk-local.
+		want := ch.WorldToLocal(fn(i, sel, cur))
 		// Exact, not approximate: every drag is applied absolutely from its
 		// mouse-down snapshot, so a still cursor recomputes the identical value
 		// and skips the rebuild, while a real move of any size gets through.
-		if was == want {
+		if b.Verts[sel.vertIdx] == want {
 			continue
 		}
-		ch.Points[key[1]] = want
-		out.movedPoints[key] = struct{}{}
-	}
-
-	// Pass three: the per-vertex height offset, which is the only per-vertex
-	// height control a sector has.
-	for i, sel := range sels {
-		if !resolved[i] {
-			continue
-		}
-		ch, s := sectorOf(sel)
-		if s == nil {
-			continue
-		}
-		base := s.Ceiling.Height
-		if sel.isFloor {
-			base = s.Floor.Height
-		}
-		// targets[i] is world space (fn works there, like vertexSelPos reads
-		// it); Height and the offset it anchors are chunk-local.
-		want := ch.WorldToLocal(targets[i]).Y() - base
-		if vertexOffset(s, sel) == want {
-			continue
-		}
-		setVertexOffset(s, sel, want)
-		out.touchedSectors[[2]int{sel.chunkIdx, sel.sectorIdx}] = struct{}{}
+		b.Verts[sel.vertIdx] = want
+		out.touchedBrushes[[2]int{sel.chunkIdx, sel.brushIdx}] = struct{}{}
 	}
 	return out
 }
 
-// rebuildAfterVertexWrite regenerates the geometry a write invalidated.
-//
-// Points first and all at once, so a rotation warps its sectors in one step
-// rather than once per corner; then the sectors whose heights changed but whose
-// outline did not, which the point pass never visited.
+// setSelectedVertexLocals is setSelectedVertexWorld in the chunk's own space,
+// for the edits that are defined there rather than in the world: grid snapping
+// wants to land on the chunk's grid, not on a world grid the chunk's own
+// rotation would have skewed it off.
+func setSelectedVertexLocals(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl32.Vec3) {
+	out := vertexWriteback{touchedBrushes: map[[2]int]struct{}{}}
+	if Editor.level != nil {
+		for i, sel := range gizmoVertexSels() {
+			_, b := vertexSelBrush(sel)
+			if b == nil || sel.vertIdx < 0 || sel.vertIdx >= len(b.Verts) {
+				continue
+			}
+			want := fn(i, sel, b.Verts[sel.vertIdx])
+			if b.Verts[sel.vertIdx] == want {
+				continue
+			}
+			b.Verts[sel.vertIdx] = want
+			out.touchedBrushes[[2]int{sel.chunkIdx, sel.brushIdx}] = struct{}{}
+		}
+	}
+	rebuildAfterVertexWrite(out)
+}
+
+// rebuildAfterVertexWrite regenerates the geometry a write invalidated: each
+// touched brush once, then its chunk's bounds, which a moved corner can have
+// grown or shrunk.
 func rebuildAfterVertexWrite(w vertexWriteback) {
 	lvl := Editor.level
 	if lvl == nil || w.empty() {
 		return
 	}
-	moves, movedPoints, touchedSectors := w.moves, w.movedPoints, w.touchedSectors
-
-	for ci, ms := range moves {
-	}
-	// Edge points are re-derived for every sector of a touched chunk, not only
-	// the selected ones: a moved chunk point may well be a corner of a sector
-	// nothing in the selection belongs to.
-	for ci := range moves {
-		ch := &lvl.Chunks[ci]
-		for si := range ch.Sectors {
-			rebuildSectorEdgePoints(ch, &ch.Sectors[si])
-		}
-	}
-	rebuilt := map[[2]int]struct{}{}
-	for key := range movedPoints {
-		ch := &lvl.Chunks[key[0]]
-		for si := range ch.Sectors {
-			if sectorVertexPos(&ch.Sectors[si], key[1]) < 0 {
-				continue
-			}
-			if _, done := rebuilt[[2]int{key[0], si}]; done {
-				continue
-			}
-			rebuilt[[2]int{key[0], si}] = struct{}{}
-			_ = world.ReloadSector(ch, &ch.Sectors[si])
-		}
-	}
-	for key := range touchedSectors {
-		if _, done := rebuilt[key]; done {
+	chunks := map[int]struct{}{}
+	for key := range w.touchedBrushes {
+		if key[0] < 0 || key[0] >= len(lvl.Chunks) {
 			continue
 		}
 		ch := &lvl.Chunks[key[0]]
-		if key[1] < 0 || key[1] >= len(ch.Sectors) {
+		if key[1] < 0 || key[1] >= len(ch.Brushes) {
 			continue
 		}
-		rebuilt[key] = struct{}{}
-		_ = world.ReloadSector(ch, &ch.Sectors[key[1]])
+		_ = ch.Brushes[key[1]].Load()
+		chunks[key[0]] = struct{}{}
 	}
-
-	touchedChunks := map[int]struct{}{}
-	for key := range rebuilt {
-		touchedChunks[key[0]] = struct{}{}
-	}
-	for ci := range moves {
-		touchedChunks[ci] = struct{}{}
-	}
-	for ci := range touchedChunks {
-		lvl.Chunks[ci].RebuildGaps()
+	for ci := range chunks {
+		lvl.Chunks[ci].RecomputeBounds()
 	}
 }
 
@@ -240,24 +165,24 @@ func rotatePointAbout(p, center, axis mgl32.Vec3, angle float32) mgl32.Vec3 {
 // scalePointAbout moves p toward or away from center by a per-axis factor.
 //
 // This is what the scale tool does to a selection, and it is deliberately *not*
-// a resize: sector vertices have no size to change, so spreading them about
+// a resize: a vertex has no size to change, so spreading a group of them about
 // their shared centre is the whole of what "scale the selection" can mean here.
+// Scaling a whole brush is exactly this applied to all of its corners, which is
+// why the tool needs no separate brush path.
 func scalePointAbout(p, center, factors mgl32.Vec3) mgl32.Vec3 {
 	d := p.Sub(center)
 	return center.Add(mgl32.Vec3{d.X() * factors.X(), d.Y() * factors.Y(), d.Z() * factors.Z()})
 }
 
-// rotateXZAbout turns the XZ of p about center's XZ, leaving Y alone — the
-// top-down map's only rotation, since a turn about any other axis would move
-// points out of the plane the map draws.
+// rotateXZAbout turns the XZ of p about center's XZ, leaving Y alone.
 func rotateXZAbout(p, center mgl32.Vec2, angle float32) mgl32.Vec2 {
 	sin, cos := float32(math.Sin(float64(angle))), float32(math.Cos(float64(angle)))
 	d := p.Sub(center)
 	return center.Add(mgl32.Vec2{d.X()*cos - d.Y()*sin, d.X()*sin + d.Y()*cos})
 }
 
-// selectionCenterXZ returns the XZ centre of whatever the 2D map's gizmo acts
-// on: the selected vertices, the selected entity, or the spawn marker.
+// selectionCenterXZ returns the XZ centre of whatever the gizmo acts on: the
+// selected vertices, the selected entity, or the spawn marker.
 func selectionCenterXZ() (mgl32.Vec2, bool) {
 	if len(Editor.SelectedVertices) > 0 {
 		if c, ok := selectedVerticesCenter(); ok {

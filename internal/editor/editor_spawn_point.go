@@ -145,14 +145,3 @@ func editorSpawnActions(lvl *world.Level, s *world.SpawnPoint) {
 		editorClearSpawnSelection()
 	}
 }
-
-// ---------- 2D map ----------
-
-// editor2DDrawSpawnHeading draws the marker's facing as an arrow on the top-down
-// map, scaled to the footprint it grows out of so it stays readable at any zoom.
-func editor2DDrawSpawnHeading(s *world.SpawnPoint, hx, hz float32, col mgl32.Vec3) {
-	d := world.SpawnDirection(s)
-	editor2DDrawHeading(
-		mgl32.Vec2{s.Position.X(), s.Position.Z()},
-		mgl32.Vec2{d.X(), d.Z()}, hx, hz, col)
-}

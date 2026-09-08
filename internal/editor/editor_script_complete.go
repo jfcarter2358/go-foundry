@@ -1173,26 +1173,19 @@ type scriptComplMember struct{ Name, Doc string }
 // levelHost.Member. A step added there and not here is offered by nothing,
 // which is why the two are worth reading side by side.
 var scriptComplStructuralTable = map[flang.Kind_][]scriptComplMember{
-	flang.RefSector: {
-		{"floor", "the sector's floor"},
-		{"ceil", "the sector's ceiling"},
-		{"edges", "list — every edge, in ring order"},
-		{"edge", "one edge by id: .edge.<edge id>"},
-		{"wall", "the same edge, as a wall"},
-		{"portal", "the same edge, as a portal"},
-		{"chunk", "the chunk this sector belongs to"},
+	// A brush has one structural step. Its faces have no IDs of their own, so
+	// there is nothing to address one by — see levelHost.Member, whose switch
+	// this table mirrors, and script_props_geom.go's brushProps.
+	flang.RefBrush: {
+		{"chunk", "the chunk this brush belongs to"},
 	},
 	flang.RefEntity: {
 		{"model", "one model attachment by name: .model.<name>"},
 		{"models", "list — every model attachment on the entity"},
 	},
-	flang.RefModel:   {{"entity", "the entity this attachment belongs to"}},
-	flang.RefEdge:    {{"sector", "the sector this edge belongs to"}},
-	flang.RefFloor:   {{"sector", "the sector this floor belongs to"}},
-	flang.RefCeiling: {{"sector", "the sector this ceiling belongs to"}},
+	flang.RefModel: {{"entity", "the entity this attachment belongs to"}},
 	flang.RefChunk: {
-		{"sector", "one sector by id: .sector.<sector id>"},
-		{"sectors", "list — every sector in the chunk"},
+		{"brushes", "list — every brush in the chunk"},
 	},
 	flang.RefLevel: {
 		{"entities", "list — every entity in the level"},
@@ -1213,7 +1206,7 @@ func scriptComplStructuralOf(kind flang.Kind_) []scriptComplMember {
 	}
 	seen := map[string]bool{}
 	var out []scriptComplMember
-	for _, k := range []flang.Kind_{flang.RefSector, flang.RefFloor, flang.RefChunk, flang.RefLevel, flang.RefEntity} {
+	for _, k := range []flang.Kind_{flang.RefBrush, flang.RefChunk, flang.RefLevel, flang.RefEntity} {
 		for _, m := range scriptComplStructuralTable[k] {
 			if !seen[m.Name] {
 				seen[m.Name] = true
@@ -1224,29 +1217,17 @@ func scriptComplStructuralOf(kind flang.Kind_) []scriptComplMember {
 	return out
 }
 
-// scriptComplStepKind walks one structural step, mirroring the linter's kindOf:
-// a sector's floor and ceiling are the steps that change what kind of thing is
-// in hand, and every other step either keeps it or is not a ref at all.
+// scriptComplStepKind walks one structural step, mirroring the linter's kindOf.
+//
+// It used to have a good deal more to say: a sector's floor and ceiling were
+// each a kind of their own, and an edge was a third, so walking `@room.floor.`
+// changed what was in hand twice over. A brush's only structural step is back
+// up to its chunk.
 func scriptComplStepKind(k flang.Kind_, seg string) (flang.Kind_, bool) {
 	switch k {
-	case flang.RefSector:
-		switch seg {
-		case "floor":
-			return flang.RefFloor, true
-		case "ceil", "ceiling":
-			return flang.RefCeiling, true
-		case "edge", "wall", "portal":
-			return flang.RefEdge, true
-		case "chunk":
+	case flang.RefBrush:
+		if seg == "chunk" {
 			return flang.RefChunk, true
-		}
-	case flang.RefChunk:
-		if seg == "sector" {
-			return flang.RefSector, true
-		}
-	case flang.RefEdge, flang.RefFloor, flang.RefCeiling:
-		if seg == "sector" {
-			return flang.RefSector, true
 		}
 	case flang.RefEntity:
 		if seg == "model" {

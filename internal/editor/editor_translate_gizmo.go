@@ -37,7 +37,6 @@ const (
 	gizmoKindSound    = "sound"
 	gizmoKindScenery  = "scenery"
 	gizmoKindLight    = "light"
-	gizmoKindWater    = "water"
 )
 
 const (
@@ -121,14 +120,6 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 			return pl.Position, true
 		}
 
-	case gizmoKindWater:
-		if ch, _, w := activeGizmoWater(); w != nil {
-			// The surface's own Position, which is chunk-local like the sector
-			// it was derived from — carried out to world space, the same way
-			// editorOutlineWaterSurface draws the polygon around it.
-			return ch.LocalToWorld(w.Position), true
-		}
-
 	case gizmoKindChunk:
 		if ch := activeGizmoChunk(); ch != nil {
 			// The chunk's Origin field can sit far from its geometry, so anchor
@@ -199,13 +190,9 @@ func pickTranslateAxis(mx, my int32) int {
 	armLen := gizmoArmLength(origin)
 	cursor := mgl32.Vec2{float32(mx), float32(my)}
 
-	yOnly := gizmoWaterMovesYOnly()
 	best := -1
 	bestD := gizmoPickPx
 	for i, axis := range gizmoAxes {
-		if yOnly && i != 1 {
-			continue
-		}
 		tipScreen, ok := projectToScreen(projView, origin.Add(axis.Mul(armLen)))
 		if !ok {
 			continue
@@ -225,7 +212,7 @@ func pickTranslateAxis(mx, my int32) int {
 // they must not be clickable either.
 func gizmoSuppressed() bool {
 	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode ||
-		Editor.VolumePlacementMode || Editor.SurfaceEditing ||
+		Editor.VolumePlacementMode ||
 		// The brush too: its arms would sit over the ghost and swallow the
 		// click that was meant to stamp one.
 		Editor.BrushActive
@@ -284,22 +271,12 @@ func captureGizmoDragStart() bool {
 		if lvl == nil || len(sels) == 0 {
 			return false
 		}
-		for _, sel := range sels {
-			pt := mgl32.Vec2{}
-			off := float32(0)
-			if sel.chunkIdx >= 0 && sel.chunkIdx < len(lvl.Chunks) {
-				ch := &lvl.Chunks[sel.chunkIdx]
-				if sel.pointIdx >= 0 && sel.pointIdx < len(ch.Points) {
-					pt = ch.Points[sel.pointIdx]
-				}
-				if sel.sectorIdx >= 0 && sel.sectorIdx < len(ch.Sectors) {
-					s := &ch.Sectors[sel.sectorIdx]
-					off = vertexOffset(s, sel)
-				}
-			}
-			Editor.GizmoDragPoints = append(Editor.GizmoDragPoints, pt)
-			Editor.GizmoDragOffsets = append(Editor.GizmoDragOffsets, off)
-		}
+		// The world snapshot is the whole of it. A sector vertex needed two
+		// more — its shared chunk point's XZ and its per-surface height offset
+		// — because those were the two stores a drag had to be folded back
+		// into. A brush vertex is a position, so the position at mouse-down is
+		// everything a drag has to remember.
+		_ = lvl
 		Editor.GizmoDragWorld = selectedVerticesWorld()
 		EditorPushUndo()
 		return true
@@ -412,20 +389,6 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
-	case gizmoKindWater:
-		ch, _, w := activeGizmoWater()
-		if w == nil {
-			return false
-		}
-		// Position only, and only its Y will move: a water plane's XZ is the
-		// centroid of the polygon that was painted, and its shape is that
-		// polygon — neither is something a gizmo could rewrite without editing
-		// the polygon itself, which is the map layer's job. Rotate and scale
-		// have no branch for this kind at all, so they simply show nothing.
-		Editor.GizmoDragStartPos = ch.LocalToWorld(w.Position)
-		EditorPushUndo()
-		return true
-
 	case gizmoKindChunk:
 		ch := activeGizmoChunk()
 		if ch == nil {
@@ -524,12 +487,6 @@ func translateGizmoMouseMove(mx, my int32) {
 			// move it.
 			world.UploadLights(Editor.level.Lights)
 		}
-	case gizmoKindWater:
-		// Only the Y arm is ever offered (gizmoWaterMovesYOnly), so a drag can
-		// only be a height change.
-		if axis == 1 {
-			dragWaterLevel(delta)
-		}
 	case gizmoKindChunk:
 		if ch := activeGizmoChunk(); ch != nil {
 			moveChunk(ch, axisMoved(Editor.GizmoDragStartPos, axis, delta))
@@ -553,190 +510,52 @@ func gizmoSnap(v float32) float32 {
 	return v
 }
 
-// sectorOf resolves the chunk and sector a selected vertex belongs to. Either
-// return value is nil when the indices no longer point at live geometry.
-func sectorOf(sel vertexSel) (*world.Chunk, *world.Sector) {
-	lvl := Editor.level
-	if lvl == nil || sel.chunkIdx < 0 || sel.chunkIdx >= len(lvl.Chunks) {
-		return nil, nil
-	}
-	ch := &lvl.Chunks[sel.chunkIdx]
-	if sel.sectorIdx < 0 || sel.sectorIdx >= len(ch.Sectors) {
-		return ch, nil
-	}
-	return ch, &ch.Sectors[sel.sectorIdx]
-}
-
-// setSelectedVertexPoints rewrites the XZ of every selected vertex's chunk point
-// through fn, then rebuilds the geometry that moved. Edge endpoints are cached
-// per sector, so every sector in a touched chunk is refreshed — not just the
-// selected ones, which may not be the only users of a shared point.
-func setSelectedVertexPoints(fn func(i int, sel vertexSel, pt mgl32.Vec2) mgl32.Vec2) {
-	touched := map[[2]int]struct{}{}
-	for i, sel := range gizmoVertexSels() {
-		ch, _ := sectorOf(sel)
-		if ch == nil || sel.pointIdx < 0 || sel.pointIdx >= len(ch.Points) {
-			continue
-		}
-		// A chunk point named twice — a corner whose floor and ceiling handles
-		// are both in the drag, or two faces meeting there — is written once.
-		// Every drag applies an absolute value from its own mouse-down
-		// snapshot, so the second write would land on the same coordinate
-		// anyway; what it would not do twice harmlessly is record a second
-		// PointMove, which carries the biome layer riding that point along at
-		// double the distance.
-		key := [2]int{sel.chunkIdx, sel.pointIdx}
-		if _, done := touched[key]; done {
-			continue
-		}
-		was := ch.Points[sel.pointIdx]
-		ch.Points[sel.pointIdx] = fn(i, sel, was)
-		touched[key] = struct{}{}
-	}
-	lvl := Editor.level
-	// Every point of this drag at once, so an edge drag warps its sector in one
-	// step rather than once per endpoint.
-	for ci, ms := range moves {
-	}
-	for key := range touched {
-		ch := &lvl.Chunks[key[0]]
-		for si := range ch.Sectors {
-			rebuildSectorEdgePoints(ch, &ch.Sectors[si])
-		}
-		reloadSectorsUsingPoint(ch, key[1])
-		ch.RebuildGaps()
-	}
-}
-
-// setSelectedVertexOffsets rewrites the floor/ceiling height offset of every
-// selected vertex through fn, then reloads the sectors that changed.
-func setSelectedVertexOffsets(fn func(i int, sel vertexSel, cur float32) float32) {
-	touched := map[[2]int]struct{}{}
-	for i, sel := range gizmoVertexSels() {
-		_, s := sectorOf(sel)
-		if s == nil {
-			continue
-		}
-		setVertexOffset(s, sel, fn(i, sel, vertexOffset(s, sel)))
-		touched[[2]int{sel.chunkIdx, sel.sectorIdx}] = struct{}{}
-	}
-	lvl := Editor.level
-	for key := range touched {
-		ch := &lvl.Chunks[key[0]]
-		s := &ch.Sectors[key[1]]
-		_ = world.ReloadSector(ch, s)
-		ch.RebuildGaps()
-	}
-}
-
-// dragVerticesAlongAxis moves every selected vertex by delta along one axis.
-// X and Z move the shared chunk point (so every sector using it follows); Y
-// adjusts the per-vertex floor or ceiling offset, which is the only per-vertex
-// height control a sector has.
+// dragVerticesAlongAxis moves every selected vertex by delta along one world
+// axis, from its own mouse-down position.
+//
+// This used to be two entirely different edits sharing a function. A sector
+// vertex's X and Z were a shared chunk point and its Y was a per-vertex offset
+// from the sector's floor or ceiling height, so the Y arm and the XZ arms wrote
+// different fields through different helpers, snapped against different bases,
+// and each had its own note about which space the delta was in. A brush vertex
+// is one position: all three arms do the same thing.
+//
+// The world→local conversion is still real, and still the only interesting
+// part. Snapping is done in the CHUNK's space, not the world's, because that is
+// the grid a brush's corners are authored on — and for a rotated, scaled or
+// frame-owned chunk the two are not the same grid.
 func dragVerticesAlongAxis(axis int, delta float32) {
-	if axis == 1 {
-		setSelectedVertexOffsets(func(i int, sel vertexSel, cur float32) float32 {
-			if i >= len(Editor.GizmoDragOffsets) {
-				return cur
-			}
-			// delta is a world Y distance; VertexOffsets are chunk-local, so a
-			// scaled chunk's vertices would otherwise rise at the wrong rate.
-			// Only the vertical component of the carried direction is taken:
-			// Chunk.Rotation is Y-only so it never tilts world up, and a
-			// frame that does tilt has no single local axis this drag maps to
-			// anyway (the same reasoning the XZ path below spells out).
-			d := delta
-			if ch, _ := sectorOf(sel); ch != nil {
-				d = ch.WorldToLocalDirection(mgl32.Vec3{0, delta, 0}).Y()
-			}
-			return gizmoSnapOffset(sel, Editor.GizmoDragOffsets[i]+d)
-		})
-		return
-	}
-	// Chunk.Points is XZ: component 0 is chunk-local X, component 1 chunk-local
-	// Z — the same thing as world X/Z only for a chunk with no rotation (the
-	// overwhelming common case, and the only one any shipped level uses), which
-	// is why that case keeps the exact old per-component behavior: the other
-	// axis is left completely untouched rather than passed through a snap it
-	// was never asked for. A rotated chunk has no single local axis a world
-	// drag corresponds to — world X moves it diagonally in its own local
-	// frame — so both components go through WorldToLocalDirection and get
-	// snapped together instead.
-	comp := 0
-	if axis == 2 {
-		comp = 1
-	}
 	worldDelta := gizmoAxes[axis].Mul(delta)
-	setSelectedVertexPoints(func(i int, sel vertexSel, pt mgl32.Vec2) mgl32.Vec2 {
-		if i >= len(Editor.GizmoDragPoints) {
-			return pt
+	setSelectedVertexLocals(func(i int, sel vertexSel, _ mgl32.Vec3) mgl32.Vec3 {
+		if i >= len(Editor.GizmoDragWorld) {
+			return mgl32.Vec3{}
 		}
-		out := Editor.GizmoDragPoints[i]
-		ch, _ := sectorOf(sel)
-		// The fast path leaves the untouched axis exactly alone, which is what
-		// keeps grid-snap honest for the ordinary case (see this function's
-		// own note). It is only legal when a world-space delta IS a local one
-		// — i.e. the whole ModelMatrix is the identity, not merely Rotation
-		// == 0. A scaled chunk moves at the wrong rate through it (one world
-		// unit is 1/Scale local units), and a frame-owned chunk can be rotated
-		// in the world by its vehicle while its own Rotation is still 0, which
-		// sends a world-X drag diagonally through its local space.
-		if ch == nil || ch.ModelMatrix() == mgl32.Ident4() {
-			out[comp] = gizmoSnap(out[comp] + delta)
+		ch, _ := vertexSelBrush(sel)
+		if ch == nil {
+			return mgl32.Vec3{}
+		}
+		start := ch.WorldToLocal(Editor.GizmoDragWorld[i])
+		// The fast path leaves the two untouched axes exactly alone, which is
+		// what keeps grid-snap honest for the ordinary case: a chunk sitting
+		// unrotated and unscaled at its origin. It is only legal when a
+		// world-space delta IS a local one — i.e. the whole ModelMatrix is the
+		// identity, not merely Rotation == 0. A scaled chunk moves at the
+		// wrong rate through it (one world unit is 1/Scale local units), and a
+		// frame-owned chunk can be rotated in the world by its vehicle while
+		// its own Rotation is still 0, which sends a world-X drag diagonally
+		// through its local space.
+		if ch.ModelMatrix() == mgl32.Ident4() {
+			out := start
+			out[axis] = gizmoSnap(out[axis] + delta)
 			return out
 		}
 		local := ch.WorldToLocalDirection(worldDelta)
-		return mgl32.Vec2{gizmoSnap(out.X() + local.X()), gizmoSnap(out.Y() + local.Z())}
+		return mgl32.Vec3{
+			gizmoSnap(start.X() + local.X()),
+			gizmoSnap(start.Y() + local.Y()),
+			gizmoSnap(start.Z() + local.Z()),
+		}
 	})
-}
-
-// gizmoSnapOffset snaps a vertex height offset so the resulting height — not
-// the offset itself — lands on the grid.
-//
-// The grid it lands on is the CHUNK'S, not the world's: base and offset are
-// both chunk-local, so `base+offset` is a local height. That is the right
-// grid to snap an authored vertex to (it is the one the 2D map draws and the
-// one every other authored height in the chunk shares), but it is not the
-// world grid unless the chunk is unmoved and unscaled — the previous comment
-// here claimed the world one.
-func gizmoSnapOffset(sel vertexSel, offset float32) float32 {
-	_, s := sectorOf(sel)
-	if s == nil {
-		return offset
-	}
-	base := s.Ceiling.Height
-	if sel.isFloor {
-		base = s.Floor.Height
-	}
-	return gizmoSnap(base+offset) - base
-}
-
-// vertexOffset reads the floor or ceiling height offset for a selected vertex.
-func vertexOffset(s *world.Sector, sel vertexSel) float32 {
-	offsets := s.Ceiling.VertexOffsets
-	if sel.isFloor {
-		offsets = s.Floor.VertexOffsets
-	}
-	if sel.vertIdx >= 0 && sel.vertIdx < len(offsets) {
-		return offsets[sel.vertIdx]
-	}
-	return 0
-}
-
-// setVertexOffset writes the floor or ceiling height offset for a selected
-// vertex, growing the offset slice if the sector has never been loaded.
-func setVertexOffset(s *world.Sector, sel vertexSel, value float32) {
-	if sel.vertIdx < 0 {
-		return
-	}
-	target := &s.Ceiling.VertexOffsets
-	if sel.isFloor {
-		target = &s.Floor.VertexOffsets
-	}
-	for len(*target) <= sel.vertIdx {
-		*target = append(*target, 0)
-	}
-	(*target)[sel.vertIdx] = value
 }
 
 // renderTranslateGizmo draws the three axis arms for the current selection.
@@ -755,11 +574,7 @@ func renderTranslateGizmo(mx, my int32) {
 
 	armLen := gizmoArmLength(origin)
 	yellow := mgl32.Vec3{1, 1, 0}
-	yOnly := gizmoWaterMovesYOnly()
 	for i, axis := range gizmoAxes {
-		if yOnly && i != 1 {
-			continue
-		}
 		col := gizmoAxisColors[i]
 		if i == hover {
 			col = yellow

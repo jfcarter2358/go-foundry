@@ -32,25 +32,17 @@ import (
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
 
-// editorPanelKind is which editor's panel is being drawn. Sections that differ
-// between the two switch on it rather than being written twice.
-type editorPanelKind int
-
-const (
-	panelKind3D editorPanelKind = iota
-	panelKind2D
-)
-
 // editorPanelBody draws the whole panel, in order. The caller owns the
 // imgui.Begin/End around it and the modal popups after it.
-func editorPanelBody(lvl *world.Level, kind editorPanelKind) {
-	editorContextSection(lvl, kind)
-	if kind == panelKind2D {
-		editor2DMapSection()
-	}
-	editorExplorerSection(lvl, kind)
-	editorPropertiesSection(lvl, kind)
-	editorViewSection(kind)
+//
+// It used to take a kind, because the sector map's panel and the 3D view's
+// shared this frame and differed in a handful of sections. There is one
+// viewport now, so the parameter and every branch on it are gone.
+func editorPanelBody(lvl *world.Level) {
+	editorContextSection(lvl)
+	editorExplorerSection(lvl)
+	editorPropertiesSection(lvl)
+	editorViewSection()
 	editorSettingsSection()
 
 	// Every section has had its chance to open and scroll itself.
@@ -65,15 +57,9 @@ func editorPanelBody(lvl *world.Level, kind editorPanelKind) {
 // Not collapsible, and first: it is the line you read before deciding whether
 // the panel below is showing you what you think it is. It is also where the
 // active chunk is reported now that the toolbar has no picker for it.
-func editorContextSection(lvl *world.Level, kind editorPanelKind) {
-	name := "3D"
-	if kind == panelKind2D {
-		name = "Sector Map"
-	}
-	editorTextMuted("Editor: " + name)
-
+func editorContextSection(lvl *world.Level) {
 	imgui.Text(fmt.Sprintf("Mode: %s select   Gizmo: %s", Editor.SelMode, Editor.GizmoTool))
-	imgui.Text("Selection: " + editorPanelSelectionSummary(kind))
+	imgui.Text("Selection: " + editorPanelSelectionSummary())
 
 	if activeChunkIndexValid() {
 		chunkLine := "Chunk: " + lvl.Chunks[Editor.ActiveChunkIdx].ID
@@ -85,19 +71,8 @@ func editorContextSection(lvl *world.Level, kind editorPanelKind) {
 		imgui.Text("Chunk: (none)")
 	}
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("The chunk being edited: the map draws it, a new sector\n" +
-			"joins it, the biome layer paints it.\nPick another in the Explorer's Chunks list.")
-	}
-
-	if kind == panelKind2D {
-		imgui.Text(fmt.Sprintf("Zoom: %.0f px/unit", Editor.Zoom2D))
-		which := "floor"
-		if !Editor.EditFloorVerts {
-			which = "ceiling"
-		}
-		imgui.Text("Editing: " + which + " corners")
-		editorTextMutedWrapped("Scroll zooms, MMB drags, shift+click adds a point, " +
-			"ctrl+click multi-selects, J joins, RMB opens the menu.")
+		imgui.SetTooltip("The chunk being edited: a stamped brush joins it.\n" +
+			"Pick another in the Explorer's Chunks list.")
 	}
 
 	if Editor.StatusMsg != "" {
@@ -108,7 +83,7 @@ func editorContextSection(lvl *world.Level, kind editorPanelKind) {
 // editorPanelSelectionSummary names the selection for the context line. The
 // context menus already name it for their headings, and the panel says the same
 // thing so the two cannot describe one selection differently.
-func editorPanelSelectionSummary(kind editorPanelKind) string {
+func editorPanelSelectionSummary() string {
 	if Editor.SelectedLightKind != lightKindNone && editorLightSelected() {
 		switch Editor.SelectedLightKind {
 		case lightKindGlobal:
@@ -124,9 +99,6 @@ func editorPanelSelectionSummary(kind editorPanelKind) string {
 	if ch := selectedChunk(); ch != nil {
 		return "Chunk " + ch.ID
 	}
-	if kind == panelKind2D {
-		return editor2DSelectionSummary()
-	}
 	return editor3DSelectionSummary()
 }
 
@@ -134,13 +106,9 @@ func editorPanelSelectionSummary(kind editorPanelKind) string {
 
 // editorViewSection draws the controls that change how the viewport looks
 // without changing the level.
-func editorViewSection(kind editorPanelKind) {
+func editorViewSection() {
 	imgui.Separator()
 	if !imgui.CollapsingHeader("View##view") {
-		return
-	}
-	if kind == panelKind2D {
-		editorView2DControls()
 		return
 	}
 	editorView3DControls()
@@ -179,21 +147,6 @@ func editorView3DControls() {
 		"zooms. WASD flies (orbit: slides the pivot), space and shift go up and down. " +
 		"1/2/3 pick points, edges or faces; ctrl+click adds to the selection; " +
 		"right-click without dragging opens the selection's actions.")
-}
-
-func editorView2DControls() {
-	imgui.Checkbox("Show All Point Boxes##view2dboxes", &Editor.ShowPointSelectRadius)
-	if editorDragFloatStep("Zoom (px/unit)##view2dzoom", &Editor.Zoom2D, 1, 400, "%.0f", 1) {
-		// Nothing derived to rebuild — the map reads Zoom2D straight.
-		_ = Editor.Zoom2D
-	}
-	if imgui.Button("Frame Chunk##view2dframe") {
-		editor2DFrameActiveChunk()
-	}
-	imgui.SameLine()
-	if imgui.Button("Switch to 3D Editor##view2dto3d") {
-		Editor.Mode = Mode3D
-	}
 }
 
 // ---------- Editor ----------

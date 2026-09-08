@@ -9,9 +9,9 @@ package editor
 // ("only ever shows what the current mode and the current selection can
 // actually act on") lives here more than anywhere else in the panel.
 //
-// Order follows SETTINGS_LAYOUT.md: Chunk, then whatever the current editor's
-// own selection unit is (a 3D face/vertex, or the 2D sector map's vertex/edge
-// blocks), then the painted biome sector, Entity, Volume, and Lights.
+// Order follows SETTINGS_LAYOUT.md: Chunk, then the geometry selection (the
+// selected brush and face, or the selected vertices), then Entity, Volume, and
+// Lights.
 
 import (
 	"foundry/internal/world"
@@ -22,11 +22,11 @@ import (
 // editorPropGroup draws one collapsible group of related fields inside a
 // properties block, and runs body when it is open.
 //
-// Groups are what make a properties block readable: a sector's floor carries a
-// height, a texture, a mesh to shape, UV, a skirt, smoothing, procedural detail
-// and its own tags/attributes/script, and drawn flat that is thirty controls in
-// one column with nothing saying which of them are about the floor. One group
-// per thing, and every group folds away as a unit.
+// Groups are what make a properties block readable: a brush face carries a
+// texture, a blend pair, UV, smoothing and procedural detail, and its brush
+// carries an ID, solidity and its own tags/attributes/script — drawn flat that
+// is thirty controls in one column with nothing saying which of them are about
+// which. One group per thing, and every group folds away as a unit.
 //
 // A tree node rather than a collapsing header, because these nest: the framed
 // bar is the properties block itself, and what sits inside it is indented under
@@ -51,23 +51,11 @@ func editorPropGroupOpen(label string, body func()) {
 }
 
 // editorPropertiesSection draws every properties block, in order.
-func editorPropertiesSection(lvl *world.Level, kind editorPanelKind) {
+func editorPropertiesSection(lvl *world.Level) {
 	editorChunkPropertiesSection(lvl)
 
-	if kind == panelKind2D {
-		if ch := activeChunk(); ch != nil {
-			editor2DSectorSections(lvl, ch)
-		}
-	} else {
-		editor3DSectorPropertiesSection(lvl)
-		editor3DVertexPanel(lvl)
-	}
-	// Both editors: a water plane clicked in the 3D view selects the biome
-	// sector that produced it, so the brush has to be reachable from there
-	// too — it used to be a water-only block of its own, which meant the same
-	// sector showed two different subsets of itself depending on which editor
-	// was asking.
-	biomePanelSection()
+	editorBrushPropertiesSection()
+	editor3DVertexPanel(lvl)
 
 	editorSpawnPointSection(lvl)
 	editorLevelUISection(lvl)
@@ -86,68 +74,8 @@ func editorPropertiesSection(lvl *world.Level, kind editorPanelKind) {
 	editorLightPropertiesSection(lvl)
 }
 
-// editor3DSectorPropertiesSection draws the selected sector — whatever a 3D
-// click landed on. The block itself is shared with the sector map's panel; see
-// editor_sector_panel.go.
-func editor3DSectorPropertiesSection(lvl *world.Level) {
-	if Editor.ActiveSectorIdx < 0 || !activeChunkIndexValid() {
-		return
-	}
-	sch := &lvl.Chunks[Editor.ActiveChunkIdx]
-	if Editor.ActiveSectorIdx >= len(sch.Sectors) {
-		return
-	}
-	s3d := &sch.Sectors[Editor.ActiveSectorIdx]
-
-	imgui.Separator()
-	editorFocusOpen(panelFocusSector, panelFocusFloor, panelFocusCeiling, panelFocusWall,
-		panelFocusFloorSlab, panelFocusCeilingSlab)
-	if !imgui.CollapsingHeaderV("Sector: "+s3d.ID+"##sechdr3d", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
-	editorFocusScroll(panelFocusSector)
-	editorSectorPropertiesBody(lvl, sch, s3d, "3d")
-}
-
-// editorPortalFrameCombo draws the target-frame picker for a portal: which
-// frame ToSector lives in when it is not this chunk's own — what makes the
-// portal a *frame portal* joining two spaces that move relative to each other.
-// Reports whether the value changed.
-func editorPortalFrameCombo(lvl *world.Level, ch *world.Chunk, p *world.Portal) bool {
-	label := p.ToFrame
-	if label == "" {
-		label = "(this chunk)"
-	}
-	changed := false
-	if !imgui.BeginCombo("To Frame##ptf3d", label) {
-		return false
-	}
-	if imgui.SelectableV("(this chunk)", p.ToFrame == "", 0, imgui.Vec2{}) && p.ToFrame != "" {
-		p.ToFrame = ""
-		changed = true
-	}
-	// "world" is always offered — a frame-owned chunk's own way to name the
-	// stationary world it is riding through, whether or not any frame is
-	// carrying anything right now.
-	if imgui.SelectableV("world", p.ToFrame == "world", 0, imgui.Vec2{}) && p.ToFrame != "world" {
-		p.ToFrame = "world"
-		changed = true
-	}
-	for i := range lvl.Entities {
-		e := &lvl.Entities[i]
-		if e.Vehicle == nil || !e.Vehicle.HasInterior() || e.ID == ch.FrameOwner {
-			continue
-		}
-		if imgui.SelectableV(e.ID, p.ToFrame == e.ID, 0, imgui.Vec2{}) && p.ToFrame != e.ID {
-			p.ToFrame = e.ID
-			changed = true
-		}
-	}
-	imgui.EndCombo()
-	return changed
-}
-
-// The sector block itself lives in editor_sector_panel.go, drawn by both
-// editors; the map's corner block (editor2DVertexGroup) stays in editor_ui.go
-// with the rest of the map's own drawing, and the biome brush in
-// editor_biome.go. This file wires them into the shared Properties order above.
+// The frame-portal target picker used to live here: which frame a portal's
+// destination sector was in, and so what made the portal a *frame* portal
+// joining two spaces that move relative to each other. Portals went with the
+// sector, and Phase 5's Volume.FrameDoorway replaces the mechanism — see the
+// migration handoff's regressions list.

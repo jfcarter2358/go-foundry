@@ -2,10 +2,10 @@ package editor
 
 // editor_3d_face_select.go — what a selected face looks like.
 //
-// Face mode's click used to leave no mark: the side panel opened on the wall or
-// floor it landed on and the viewport said nothing, so which of two coincident
-// surfaces you actually got — the floor of this sector or the ceiling of the
-// one below — was a guess until you dragged something.
+// Face mode's click used to leave no mark: the side panel opened on whatever it
+// landed on and the viewport said nothing, so which of two coincident faces you
+// actually got — this brush's top or the one stacked above it — was a guess
+// until you dragged something.
 //
 // This is the model editor's answer (drawModelSelection, editor_model_pick.go)
 // drawn against the level editor's geometry: the face's boundary outlined, plus
@@ -18,9 +18,7 @@ package editor
 // arm colours instead of defining its own.
 
 import (
-	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
-	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -59,148 +57,38 @@ func drawSelectedFaceOutline() {
 		}
 		editorOutlineFace(sel, col)
 	}
-
-	// A picked surface wins over a selected biome sector: clicking either one
-	// in the 3D view clears the other, but the 2D biome layer can select a
-	// sector on its own while a face is still up over here.
-	if len(Editor.SelectedFaces) > 0 {
-		return
-	}
-	if ch := activeChunk(); ch != nil {
-		editorOutlineWaterSurface(ch)
-	}
 }
 
-// editorOutlineFace outlines one selected face, whatever kind it is.
+// editorOutlineFace outlines one selected brush face: its corner loop, closed,
+// plus a stub along its outward normal.
+//
+// A sector needed six branches here, one per kind of face, because each was a
+// different shape derived a different way — a floor from the polygon at its
+// per-vertex heights, a wall from an upright quad between two of them, a slab
+// from a surface offset by its thickness. A brush face is a loop of corners, so
+// there is one path and it is the honest one: draw the corners.
 func editorOutlineFace(sel faceSel, col mgl32.Vec3) {
-	ch, s := faceSelSector(sel)
-	if ch == nil || s == nil {
+	ch, b := faceSelBrush(sel)
+	f := faceSelFace(sel)
+	if ch == nil || b == nil || f == nil {
 		return
 	}
-	pts := world.SectorPoints(ch, s)
-	switch sel.kind {
-	case "floor":
-		// Y-only chunk rotation never tips "up"/"down" over, so these two stay
-		// valid world directions regardless of ch's own orientation.
-		editorOutlineSurface(ch, pts, s.Floor.VertexHeight, gfx.WorldUp, col)
-	case "ceiling":
-		editorOutlineSurface(ch, pts, s.Ceiling.VertexHeight, gfx.WorldUp.Mul(-1), col)
-	case "floor_slab", "ceiling_slab":
-		// The far face, at the surface's own corner heights offset by the
-		// thickness — and its normal stub pointing the way the face looks,
-		// which is the opposite of the surface it hangs off. Outlining the
-		// surface itself would put the mark on the wrong side of the slab and
-		// make the two selections indistinguishable.
-		sl := faceSelSlab(s, sel.kind)
-		if sl == nil || !sl.HasThickness() {
-			return
-		}
-		if sel.kind == "floor_slab" {
-			editorOutlineSurface(ch, pts, slabHeightAt(s.Floor.VertexHeight, -sl.Thickness),
-				gfx.WorldUp.Mul(-1), col)
-		} else {
-			editorOutlineSurface(ch, pts, slabHeightAt(s.Ceiling.VertexHeight, sl.Thickness),
-				gfx.WorldUp, col)
-		}
-	case "wall":
-		if sel.idx >= 0 && sel.idx < len(s.Walls) {
-			w := &s.Walls[sel.idx]
-			editorOutlineUprightQuad(ch, pts, w.StartPoint, w.EndPoint,
-				s.Floor.VertexHeight, s.WallTopHeight, col)
-		}
-	case "portal":
-		// The whole opening, floor to wall top, not just the gap fill the
-		// click may have landed on: the selection is the portal, and its two
-		// gap quads are the top and bottom of that same span. Reached either
-		// by clicking gap fill in 3D or by picking the edge on the 2D map.
-		if sel.idx >= 0 && sel.idx < len(s.Portals) {
-			p := &s.Portals[sel.idx]
-			editorOutlineUprightQuad(ch, pts, p.StartPoint, p.EndPoint,
-				s.Floor.VertexHeight, s.WallTopHeight, col)
-		}
-	}
-}
-
-// slabHeightAt is a surface's per-vertex height function shifted by dy — the
-// heights of its slab's far face, in the shape editorOutlineSurface takes.
-func slabHeightAt(heightAt func(int) float32, dy float32) func(int) float32 {
-	return func(i int) float32 { return heightAt(i) + dy }
-}
-
-// editorOutlineSurface outlines a sector's floor or ceiling: its polygon at the
-// per-vertex heights of that surface, closed, with a stub along the way it
-// faces. pts/heightAt are chunk-local, like everywhere else; ch carries each
-// drawn point into world space.
-func editorOutlineSurface(ch *world.Chunk, pts []mgl32.Vec2, heightAt func(int) float32, normal, col mgl32.Vec3) {
+	pts := b.FacePoints(f)
 	n := len(pts)
 	if n < 2 {
 		return
 	}
-	at := func(i int) mgl32.Vec3 {
-		return ch.LocalToWorld(mgl32.Vec3{pts[i].X(), heightAt(i), pts[i].Y()})
-	}
 	var sum mgl32.Vec3
 	for i := 0; i < n; i++ {
-		a := at(i)
-		gizmo.GizmoLine(a, at((i+1)%n), col)
+		a := ch.LocalToWorld(pts[i])
+		gizmo.GizmoLine(a, ch.LocalToWorld(pts[(i+1)%n]), col)
 		sum = sum.Add(a)
 	}
+	// The normal is computed in the brush's own space, like the face's plane
+	// is, then carried out — LocalToWorldDirection is what makes a rotated or
+	// scaled chunk's faces point the right way.
+	normal := ch.LocalToWorldDirection(b.FaceNormal(f))
 	editorFaceNormalStub(sum.Mul(1/float32(n)), normal, col)
-}
-
-// editorOutlineUprightQuad outlines the vertical quad spanning p1 → p2 between
-// two height functions — the shape a wall occupies, and a portal's gap fill.
-// pts/p1/p2/bottom/top are chunk-local; ch carries the drawn quad and its
-// outward normal into world space.
-//
-// The endpoints are looked up in the sector's own points to find which vertex
-// heights apply, exactly as the wall mesh is built. FindVertexIdx returns -1
-// for a point that is not one of them, and VertexHeight reads that as "no
-// offset" — the same fallback the mesh itself lands on.
-func editorOutlineUprightQuad(ch *world.Chunk, pts []mgl32.Vec2, p1, p2 mgl32.Vec2, bottom, top func(int) float32, col mgl32.Vec3) {
-	i1, i2 := world.FindVertexIdx(pts, p1), world.FindVertexIdx(pts, p2)
-	a := ch.LocalToWorld(mgl32.Vec3{p1.X(), bottom(i1), p1.Y()})
-	b := ch.LocalToWorld(mgl32.Vec3{p2.X(), bottom(i2), p2.Y()})
-	c := ch.LocalToWorld(mgl32.Vec3{p2.X(), top(i2), p2.Y()})
-	d := ch.LocalToWorld(mgl32.Vec3{p1.X(), top(i1), p1.Y()})
-	for _, e := range [4][2]mgl32.Vec3{{a, b}, {b, c}, {c, d}, {d, a}} {
-		gizmo.GizmoLine(e[0], e[1], col)
-	}
-
-	// Outward normal: the left-hand normal of the run, which is the convention
-	// WallFacingCamera (culling.go) already reads walls with. Computed in local
-	// space from the local run, then carried out like everything else here.
-	dx, dz := p2.X()-p1.X(), p2.Y()-p1.Y()
-	center := a.Add(b).Add(c).Add(d).Mul(0.25)
-	editorFaceNormalStub(center, ch.LocalToWorldDirection(mgl32.Vec3{-dz, 0, dx}), col)
-}
-
-// editorOutlineWaterSurface outlines the water plane of the selected Water-kind
-// biome sector: the polygon that was painted, drawn at the height the plane
-// derived from it actually sits at.
-func editorOutlineWaterSurface(ch *world.Chunk) {
-	if Editor.ActiveBiomeSectorIdx < 0 || Editor.ActiveBiomeSectorIdx >= len(ch.BiomeSectors) {
-		return
-	}
-	bs := &ch.BiomeSectors[Editor.ActiveBiomeSectorIdx]
-	if bs.Brush.Kind != world.BiomeWater || len(bs.Points) < 2 {
-		return
-	}
-	y, ok := float32(0), false
-	for wi := range ch.WaterSurfaces {
-		if ch.WaterSurfaces[wi].ID == bs.ID {
-			y, ok = ch.WaterSurfaces[wi].Position.Y(), true
-			break
-		}
-	}
-	if !ok {
-		// Painted but not synced into a plane yet, so there is no surface to
-		// outline and no height to guess at.
-		return
-	}
-	// y is WaterSurface.Position.Y(), chunk-local like everything else
-	// editorOutlineSurface draws — ch.LocalToWorld carries it out correctly.
-	editorOutlineSurface(ch, bs.Points, func(int) float32 { return y }, gfx.WorldUp, modelFaceSelColor)
 }
 
 // editorFaceNormalStub draws the short line out of a face's middle that says

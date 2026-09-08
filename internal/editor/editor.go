@@ -5,14 +5,20 @@ package editor
 // Toggle with the tilde (~) key. The main window is always the 3D view:
 //   Mode3D        : fly-around chunk/light/spawn editing
 //
-// Shaping a surface is not a mode: it is a sub-state of the 3D view, in which
-// the selection modes retarget from the sector's topology to one face's mesh.
-// See editor_surface.go.
+// Shaping a brush is not a mode either. A brush *is* a mesh — a vertex list
+// and a face list, the same shape a model has — so the ordinary point, edge and
+// face selection modes already address exactly what an extrude or an inset acts
+// on. See editor_brush_mesh.go.
 //
-// Mode2D — the top-down sector map — is no longer one of the main window's
-// views. It lives in a window of its own (editor_2d_window.go), opened from
-// the toolbar's "2D Window" button, and is only ever the current mode inside
-// that window's withEditor2DMode brackets.
+// (A sector needed a sub-mode for this. Its faces were flat by construction, so
+// shaping one meant editing a parametric SurfaceMesh riding on top of it, in
+// (u, v, depth) coordinates relative to that face — a second geometry model
+// with its own selection unit. There is nothing for that to be a layer on top
+// of any more.)
+//
+// There is no 2D mode. Brushes are convex polyhedra with no floorplan to draw,
+// so they are placed and shaped in the 3D view and nowhere else — see the
+// migration handoff, decision 3.
 //
 // The editor owns all input while active; normal gameplay logic is bypassed.
 
@@ -36,13 +42,12 @@ import (
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-// EditorMode distinguishes the two editor sub-modes.
+// EditorMode distinguishes the editor's sub-modes.
 type EditorMode int
 
 const (
 	ModeGame EditorMode = iota // editor inactive — normal gameplay
 	Mode3D                     // 3D fly-around editor
-	Mode2D                     // 2D top-down sector editor (+ biome painting); pop-out window only
 )
 
 // GizmoState is the 3D viewport's gizmo interaction state — embedded
@@ -112,43 +117,27 @@ type Gizmo2DState struct {
 	Gizmo2DStartEntityScale mgl32.Vec3
 }
 
-// BiomeLayerState is the 2D biome-sector polygon layer's state
-// (editor_biome.go) — embedded in EditorState, see GizmoState's doc comment
-// above for why.
-type BiomeLayerState struct {
-	BiomeLayerActive     bool         // 2D view edits the biome-sector layer instead of structural geometry
-	BiomeDrawing         bool         // placing points for a new sector polygon
-	BiomeDrawPoints      []mgl32.Vec2 // points placed so far for the in-progress polygon
-	ActiveBiomeSectorIdx int          // index into the active chunk's BiomeSectors; -1 = none
-	BiomeDragVertexIdx   int          // vertex index being dragged on the selected sector; -1 = none
-}
-
 // EditorState holds all editor runtime state.
 type EditorState struct {
 	Active bool
 	Mode   EditorMode
 
 	// --- 3D mode ---
-	ActiveChunkIdx  int    // chunk being displayed/edited
-	ActiveSectorIdx int    // sector selected in 3D/2D mode
-	ActiveEdgeKind  string // "wall" or "portal"
-	ActiveEdgeIdx   int    // index within sector.Walls or sector.Portals; -1 = none
+	ActiveChunkIdx int // chunk being displayed/edited
+	// ActiveBrushIdx/ActiveFaceIdx address the primary selected face within
+	// the active chunk; -1 for none. Both are *derived*: they mirror
+	// SelectedFaces[0]. Write them through editor_face_sel.go, never directly.
+	ActiveBrushIdx int
+	ActiveFaceIdx  int
 
-	// Face of the selected sector picked by a 3D click: "floor", "ceiling",
-	// "wall", "portal", or "" for none. Walls/portals also set ActiveEdgeKind.
-	//
-	// Derived: this and ActiveEdgeKind/ActiveEdgeIdx mirror SelectedFaces[0].
-	// Write it through editor_face_sel.go, never directly.
-	ActiveSurface string
-
-	// Sector faces selected by clicking them in face mode. The first entry is
-	// the primary and mirrors ActiveSurface (and, for a wall or portal,
-	// ActiveEdgeKind/Idx); ctrl+click adds the rest. Empty = no face selection.
+	// Brush faces selected by clicking them in face mode. The first entry is
+	// the primary and mirrors ActiveBrushIdx/ActiveFaceIdx; ctrl+click adds
+	// the rest. Empty = no face selection.
 	SelectedFaces []faceSel
 
-	// Sector vertices selected by clicking their handle boxes in 3D. The first
-	// entry is the primary one and mirrors ActiveVertexSI/VI; ctrl+click adds
-	// the rest. Empty = no vertex selection.
+	// Brush vertices selected by clicking their handle boxes in 3D. The first
+	// entry is the primary one; ctrl+click adds the rest. Empty = no vertex
+	// selection.
 	SelectedVertices []vertexSel
 
 	// What a 3D click selects: points, edges, or faces and objects. See the
@@ -332,59 +321,11 @@ type EditorState struct {
 	ImportChunkFiles []string
 	ImportChunkIdx   int32
 
-	// --- 2D mode ---
-	Pan2D        mgl32.Vec2 // center of the 2D view in world XZ
-	Zoom2D       float32    // pixels per world unit
-	DragVertexSI int        // sector index of dragged vertex; -1 = none (set by EditorInit)
-	DragVertexVI int        // vertex index within that sector; -1 = none (set by EditorInit)
-	DragIsFloor  bool       // true = dragging floor-height dot; false = ceiling
-
-	// Persistent vertex selection (separate from drag — survives mouse release)
-	ActiveVertexSI int // sector index of selected vertex; -1 = none
-	ActiveVertexVI int // vertex index of selected vertex; -1 = none
-
-	// Last mouse position (2D mode panning)
-	LastMouse2D [2]int32
-
-	// In 2D mode, whether the floor vertices (true) or ceiling vertices (false) are being edited
-	EditFloorVerts bool
-
-	// ActiveLayer is which of the active chunk's authoring layers the 2D map is
-	// editing — the only one it hit-tests, and the one a newly drawn sector
-	// joins. LayerView is how much of the rest of the stack is drawn around it
-	// (the layerView* constants). Read the layer through activeLayer(), which
-	// clamps it to the chunk; see editor_2d_layers.go.
-	ActiveLayer int
-	LayerView   int
-
-	// OpeningDrawing is true while the floor/ceiling-opening tool is armed and
-	// collecting the hole's corners; OpeningDrawPoints are the ones placed so
-	// far, chunk-local. See editor_2d_opening.go.
-	OpeningDrawing    bool
-	OpeningDrawPoints []mgl32.Vec2
-
-	// An in-progress drag of an existing opening's corner. OpeningDragSector is
-	// -1 when nothing is being dragged; the other three are only meaningful
-	// while it is not. OpeningDragFloor latches which surface the grabbed hole
-	// belongs to, so flipping the Floor/Ceiling switch mid-drag cannot move the
-	// corner onto the other surface's hole.
-	OpeningDragSector int
-	OpeningDragIdx    int
-	OpeningDragVertex int
-	OpeningDragFloor  bool
-
-	// Draw a box around every selectable point instead of only the ones the
-	// cursor is near, so overlapping/hard-to-see points can be found. In 2D
-	// the box is each chunk point's click-proximity radius; in 3D it is every
-	// vertex handle within pick range of the camera, plus the edge prisms
-	// joining them.
+	// Draw a box around every selectable vertex handle instead of only the
+	// ones the cursor is near, so overlapping/hard-to-see corners can be
+	// found. The box is every vertex handle within pick range of the camera,
+	// plus the edge prisms joining them.
 	ShowPointSelectRadius bool
-
-	// Point connection state for ctrl+click workflow
-	PendingEdges [][2]int // edges not yet part of a sector (chunk point indices)
-
-	// --- Surface shaping (editor_surface.go) ---
-	SurfaceEditState
 
 	// Right-click drag rotation state (3D mode)
 	MouseDragging3D bool
@@ -436,9 +377,6 @@ type EditorState struct {
 	// Save As dialog
 	ShowSaveAs bool
 	SaveAsName string
-
-	// --- 2D biome sector layer ---
-	BiomeLayerState
 }
 
 // Editor is the global editor instance.
@@ -458,9 +396,8 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.Active = false
 	Editor.Mode = ModeGame
 	Editor.ActiveChunkIdx = 0
-	Editor.ActiveSectorIdx = -1
-	Editor.ActiveEdgeIdx = -1
-	Editor.ActiveSurface = ""
+	Editor.ActiveBrushIdx = -1
+	Editor.ActiveFaceIdx = -1
 	Editor.SelectedFaces = nil
 	Editor.PanelFocus = ""
 	Editor.SelectedLightKind = ""
@@ -485,10 +422,6 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.BrushScale = 1
 	Editor.BrushSolid = true
 	Editor.BrushRotation = mgl32.Vec3{}
-	Editor.DragVertexSI = -1
-	Editor.DragVertexVI = -1
-	Editor.ActiveVertexSI = -1
-	Editor.ActiveVertexVI = -1
 	Editor.SelectedVertices = nil
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoTool = editorToolMove
@@ -496,21 +429,10 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.GizmoDragging = false
 	Editor.Gizmo2DAxis = -1
 	Editor.Gizmo2DDragging = false
-	Editor.PendingEdges = nil
-	ExitSurfaceEdit()
-	Editor.Zoom2D = 20.0    // 20 px per world unit
 	Editor.PanelWidth = 360 // default side panel width
 	Editor.ExplorerHeight = 220
 	Editor.StepSize = 0.25
 	Editor.SnapToGrid = false
-	Editor.EditFloorVerts = true
-	Editor.ActiveLayer = 0
-	Editor.LayerView = layerViewStack
-	Editor.OpeningDrawing = false
-	Editor.OpeningDrawPoints = nil
-	Editor.OpeningDragSector = -1
-	Editor.OpeningDragIdx = -1
-	Editor.OpeningDragVertex = -1
 	Editor.LastTick = sdl.GetTicks()
 	Editor.SavePath = levelPath
 
@@ -524,11 +446,6 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	// this function.
 
 	// Biome sector layer defaults
-	Editor.BiomeLayerActive = false
-	Editor.BiomeDrawing = false
-	Editor.BiomeDrawPoints = nil
-	Editor.ActiveBiomeSectorIdx = -1
-	Editor.BiomeDragVertexIdx = -1
 
 }
 
@@ -682,21 +599,12 @@ func EditorToggle() {
 		if !editorCamRestore(Editor.PlayCam) {
 			editorCamEnter()
 		}
-		// World camera -> the map's plane, which is the active chunk's own
-		// local space (editor2DAnchor). Copying the world XZ straight in would
-		// open the map offset by that chunk's placement. Read after the camera
-		// is back, so the map re-centres on the restored view rather than on
-		// where the player stopped.
-		px, pz := editor2DToPlane(gfx.Cam.Position.X(), gfx.Cam.Position.Z())
-		Editor.Pan2D = mgl32.Vec2{px, pz}
 	}
 }
 
 // EditorHandleEvent processes one SDL event for the editor.
 // Returns true if the editor consumed the event (game should ignore it).
 func EditorHandleEvent(event sdl.Event) bool {
-	editorSyncMainWindowMode()
-
 	// Check panel resize before ImGui so the drag handle takes priority.
 	if panelHandleResize(event) {
 		return true
@@ -707,12 +615,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 
 	switch t := event.(type) {
 	case sdl.KeyboardEvent:
-		// Shaping a surface intercepts keys first, so the digits address the
-		// mesh's points, edges and faces rather than the sector's while one is
-		// being worked on.
-		if !imgui.CurrentIO().WantCaptureKeyboard() && surfaceEditHandleKey(t) {
-			return true
-		}
 		if t.Type != sdl.KEYDOWN {
 			break
 		}
@@ -736,12 +638,22 @@ func EditorHandleEvent(event sdl.Event) bool {
 			}
 		}
 
-		// The brush owns its keys while it is armed, ahead of everything below:
-		// [ and ] turn the ghost, - and = resize it, Escape puts it away. None
-		// of them is bound elsewhere in this editor, so nothing loses a
-		// shortcut to a tool that is only sometimes on.
+		// The scenery brush owns its keys while it is armed, ahead of everything
+		// below: [ and ] turn the ghost, - and = resize it, Escape puts it
+		// away. None of them is bound elsewhere in this editor, so nothing
+		// loses a shortcut to a tool that is only sometimes on.
 		if !imgui.CurrentIO().WantCaptureKeyboard() &&
 			editorBrushHandleKey(t.Keysym.Scancode, sdl.GetModState()&sdl.KMOD_SHIFT != 0) {
+			return true
+		}
+
+		// Then the brush mesh operations, which claim E/I/B only while faces
+		// are selected — see editor_brush_mesh.go. Ahead of the view switches
+		// below so a selected face's extrude wins over anything they might
+		// later want from those letters, and behind the scenery brush so an
+		// armed stamp is never interrupted by one.
+		if !imgui.CurrentIO().WantCaptureKeyboard() &&
+			brushMeshHandleKey(t.Keysym.Scancode, sdl.GetModState()&sdl.KMOD_SHIFT != 0) {
 			return true
 		}
 
@@ -757,25 +669,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 		// typing an id into a panel field must not also change the view
 		// underneath it.
 		//
-		// 1/2/3 and G/R/C answer in both viewports: the selection and the tool
-		// are shared between them (editor_3d_view.go, editor_sel_tool.go), so
-		// binding them to the 3D view alone would leave the 2D map able to show
-		// a mode it could not switch.
-		// PgUp/PgDn walk the active chunk's authoring layers — the 2D map's
-		// equivalent of picking a storey. Bound only in the map because that is
-		// the view layers exist to disambiguate; the 3D view draws the whole
-		// stack at once and has depth to tell it apart.
-		case sdl.SCANCODE_PAGEUP:
-			if Editor.Mode == Mode2D && editorSelKeysActive() {
-				editorStepLayer(1)
-				return true
-			}
-		case sdl.SCANCODE_PAGEDOWN:
-			if Editor.Mode == Mode2D && editorSelKeysActive() {
-				editorStepLayer(-1)
-				return true
-			}
-
 		case sdl.SCANCODE_1:
 			if editorSelKeysActive() {
 				editorSetSelMode(editorSelPoint)
@@ -872,8 +765,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 					Editor.PanDragging3D = sdl.GetModState()&sdl.KMOD_SHIFT != 0
 					Editor.LastDragX = t.X
 					Editor.LastDragY = t.Y
-				} else if SurfaceEditHandleClick(t, sdl.GetModState()&sdl.KMOD_CTRL != 0) {
-					// Shaping a surface owns every click in the viewport.
 				} else if editorGizmoMouseDown(t) {
 					// Grabbed an axis arm — the click must not re-select.
 				} else {
@@ -897,10 +788,6 @@ func EditorHandleEvent(event sdl.Event) bool {
 		// An axis drag owns the mouse until release.
 		if editorGizmoDragging() {
 			editorGizmoMouseMove(t.X, t.Y)
-			return true
-		}
-		// A surface drag owns the mouse until release, the same as an axis drag.
-		if SurfaceEditHandleMotion(t.X, t.Y) {
 			return true
 		}
 		if Editor.Mode == Mode3D && (Editor.MouseDragging3D || Editor.MiddleDragging3D) {
@@ -963,8 +850,6 @@ func EditorTick(keyStates []uint8) {
 
 // EditorRender draws all editor overlays, then the ImGui UI.
 func EditorRender() {
-	editorSyncMainWindowMode()
-
 	dt := platform.DeltaTime
 
 	// Which handles the camera can see is answered once per frame and cached
@@ -979,9 +864,6 @@ func EditorRender() {
 		gizmo.GizmoFlush(projView)
 	}
 
-	// The 2D sector map is not drawn here: it has its own window, which draws
-	// it into its own framebuffer (editor_2d_window.go).
-
 	// --- ImGui UI ---
 	imguibackend.ImGuiNewFrame(dt)
 	EditorDrawUI()
@@ -993,29 +875,19 @@ func EditorRender() {
 	imguibackend.ImGuiRender()
 }
 
-// EditorDeleteSelected removes the current selection: a biome sector, an edge,
-// or the level's spawn point.
+// EditorDeleteSelected removes the current selection: the selected brushes, or
+// the level's spawn point.
 func EditorDeleteSelected() {
 	if Editor.level == nil {
 		return
 	}
 
-	// 2D mode, biome layer active: delete the selected biome sector
-	if Editor.Mode == Mode2D && Editor.BiomeLayerActive {
-		if ch := activeChunk(); ch != nil && Editor.ActiveBiomeSectorIdx >= 0 &&
-			Editor.ActiveBiomeSectorIdx < len(ch.BiomeSectors) {
-			EditorPushUndo()
-			deleteBiomeSector(ch, Editor.ActiveBiomeSectorIdx)
-		}
-		return
-	}
-
-	// 2D mode: edge deletion (wall → delete sector, portal → merge sectors)
-	if Editor.Mode == Mode2D && Editor.ActiveEdgeIdx >= 0 &&
-		Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(Editor.level.Chunks) {
-		ch := &Editor.level.Chunks[Editor.ActiveChunkIdx]
+	// A face selection deletes the brushes those faces belong to: a brush is
+	// the unit the level is built from, and a face on its own is not something
+	// a convex solid can be missing.
+	if len(Editor.SelectedFaces) > 0 {
 		EditorPushUndo()
-		removeSelectedEdge(ch)
+		editorDeleteSelectedBrushes()
 		return
 	}
 
@@ -1099,9 +971,8 @@ func EditorLoadLevel(path string) error {
 
 	// Reset editor selection state
 	Editor.ActiveChunkIdx = 0
-	Editor.ActiveSectorIdx = -1
-	Editor.ActiveEdgeIdx = -1
-	Editor.ActiveSurface = ""
+	Editor.ActiveBrushIdx = -1
+	Editor.ActiveFaceIdx = -1
 	Editor.SelectedFaces = nil
 	Editor.PanelFocus = ""
 	Editor.SelectedLightKind = ""
@@ -1122,22 +993,12 @@ func EditorLoadLevel(path string) error {
 	Editor.ShowSoundRanges = true
 	Editor.ActiveSceneryIdx = -1
 	editorDisarmBrush()
-	Editor.DragVertexSI = -1
-	Editor.DragVertexVI = -1
-	Editor.ActiveVertexSI = -1
-	Editor.ActiveVertexVI = -1
 	Editor.SelectedVertices = nil
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
 	Editor.Gizmo2DAxis = -1
 	Editor.Gizmo2DDragging = false
-	Editor.PendingEdges = nil
-	ExitSurfaceEdit()
-	Editor.BiomeDrawing = false
-	Editor.BiomeDrawPoints = nil
-	Editor.ActiveBiomeSectorIdx = -1
-	Editor.BiomeDragVertexIdx = -1
 	Editor.SavePath = path
 
 	EditorClearUndoHistory()
@@ -1159,7 +1020,7 @@ func editorEndViewportDrag(button sdl.Button) bool {
 			editorGizmoMouseUp()
 			return true
 		}
-		return SurfaceEditHandleRelease()
+		return false
 	case sdl.ButtonRight:
 		// Cleared, but never reported as consumed: the caller has to go on to
 		// editor3DContextReleased, which is what turns a right-press that did

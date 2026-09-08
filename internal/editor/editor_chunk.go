@@ -5,9 +5,9 @@ package editor
 // A chunk is two things at once, and the difference is the whole reason this
 // file exists:
 //
-//   - the *active* chunk (Editor.ActiveChunkIdx) is the one being edited. The
-//     sector map draws it, a new sector joins its point pool, the biome layer
-//     paints it. There is always one, and every mode needs to know which.
+//   - the *active* chunk (Editor.ActiveChunkIdx) is the one being edited: a
+//     stamped brush joins it, and a chunk-scoped action addresses it. There is
+//     always one, and every mode needs to know which.
 //   - the *selected* chunk (Editor.ChunkSelected) is the one the panel is
 //     showing properties for and the gizmo is attached to. There may be none.
 //
@@ -15,6 +15,11 @@ package editor
 // second, which meant two controls for one piece of state that could disagree
 // about it. Now the list does both: clicking a row makes that chunk active and
 // selects it, and the panel's context line reports which one that is.
+
+// activeChunk returns the chunk currently being edited, or nil.
+//
+// It lived in editor_biome.go until the biome layer was removed — nothing to
+// do with painting, just the one place it happened to be written down.
 
 import "foundry/internal/world"
 
@@ -24,6 +29,13 @@ import "foundry/internal/world"
 func activeChunkIndexValid() bool {
 	lvl := Editor.level
 	return lvl != nil && Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks)
+}
+
+func activeChunk() *world.Chunk {
+	if !activeChunkIndexValid() {
+		return nil
+	}
+	return &Editor.level.Chunks[Editor.ActiveChunkIdx]
 }
 
 // selectedChunk returns the chunk the panel should show properties for, or nil

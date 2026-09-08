@@ -3,13 +3,13 @@ package editor
 // editor_3d_pick.go — 3D-mode click picking.
 //
 // One ray cast resolves every clickable thing in the world — the spawn point,
-// the entities, the volumes and the sector faces (walls, floors, ceilings) —
-// into a single closest hit, so a click always selects whatever is actually
-// nearest the camera along the ray. Sector faces and primitives are tested
-// against their real triangles rather than their bounding boxes so that curved
-// or thin geometry does not steal clicks from the surface behind it.
+// the entities, the volumes and every brush face — into a single closest hit,
+// so a click always selects whatever is actually nearest the camera along the
+// ray. Brush faces are tested against their real triangles rather than their
+// bounding boxes so that displaced or thin geometry does not steal clicks from
+// the surface behind it.
 //
-// On top of that, sector vertices get screen-space handle boxes that appear
+// On top of that, brush vertices get screen-space handle boxes that appear
 // when the cursor is near them; clicking inside a box selects that vertex,
 // repeated clicks cycle through every vertex whose box covers the cursor, and
 // ctrl+click selects all of them at once.
@@ -31,29 +31,23 @@ import (
 // panelFocus* are the values EditorState.PanelFocus takes: the properties
 // section a fresh selection wants the side panel to open and scroll to.
 const (
-	panelFocusNone    = ""
+	panelFocusNone = ""
+	// panelFocusFace is the one geometry section there is now. A sector's six
+	// kinds of face each had their own — floor, ceiling, the two slab sides,
+	// wall and portal — because each was a different set of fields; a brush
+	// face is one kind of thing with one set.
+	panelFocusFace    = "face"
+	panelFocusBrush   = "brush"
+	panelFocusVertex  = "vertex"
 	panelFocusSpawn   = "spawn"
-	panelFocusWall    = "wall"
-	panelFocusFloor   = "floor"
-	panelFocusCeiling = "ceiling"
-	// A slab face's own section, nested inside its surface's. Distinct from
-	// panelFocusFloor so that clicking the underside of a floor opens the
-	// Underside group rather than leaving it folded away inside an opened
-	// Floor group, which is exactly as useless as not opening anything.
-	panelFocusFloorSlab   = "floor_slab"
-	panelFocusCeilingSlab = "ceiling_slab"
-	panelFocusVertex      = "vertex"
-	panelFocusWater       = "water"
-	panelFocusEntity      = "entity"
-	panelFocusVolume      = "volume"
-	panelFocusSprite      = "sprite"
-	panelFocusEmitter     = "emitter"
-	panelFocusSound       = "sound"
-	panelFocusChunk       = "chunk"
-	panelFocusLight       = "light"
-	panelFocusSector      = "sector"
-	panelFocusBiome       = "biome"
-	panelFocusScenery     = "scenery"
+	panelFocusEntity  = "entity"
+	panelFocusVolume  = "volume"
+	panelFocusSprite  = "sprite"
+	panelFocusEmitter = "emitter"
+	panelFocusSound   = "sound"
+	panelFocusChunk   = "chunk"
+	panelFocusLight   = "light"
+	panelFocusScenery = "scenery"
 )
 
 // ---------- pick result ----------
@@ -69,12 +63,12 @@ const (
 	// ceiling, and the two slab faces).
 	pickBrushFace pickKind = "brush_face"
 	pickEntity    pickKind = "entity"
-	pickVolume      pickKind = "volume"
-	pickSprite      pickKind = "sprite"
-	pickEmitter     pickKind = "emitter"
-	pickSound       pickKind = "sound"
-	pickLight       pickKind = "light"
-	pickScenery     pickKind = "scenery"
+	pickVolume    pickKind = "volume"
+	pickSprite    pickKind = "sprite"
+	pickEmitter   pickKind = "emitter"
+	pickSound     pickKind = "sound"
+	pickLight     pickKind = "light"
+	pickScenery   pickKind = "scenery"
 )
 
 // pickHit is the closest thing found along a picking ray. Which index fields
@@ -327,7 +321,7 @@ func pick3D(sx, sy int32) pickHit {
 	// the marker is the only thing there is to click.
 	for ei := range lvl.Emitters {
 		if t := pickEmitterRayT(origin, dir, lvl, &lvl.Emitters[ei], gfx.Cam.Position); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickEmitter, -1, -1, ei)
+			hit.consider(t, pickEmitter, -1, ei)
 		}
 	}
 
@@ -335,7 +329,7 @@ func pick3D(sx, sy int32) pickHit {
 	// nothing to see except the marker drawn for it.
 	for si := range lvl.Sounds {
 		if t := pickSoundRayT(origin, dir, lvl, &lvl.Sounds[si], gfx.Cam.Position); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickSound, -1, -1, si)
+			hit.consider(t, pickSound, -1, si)
 		}
 	}
 
@@ -357,7 +351,7 @@ func pick3D(sx, sy int32) pickHit {
 		}
 	}
 	if bestLight >= 0 {
-		return pickHit{kind: pickLight, t: bestLightT, chunkIdx: -1, sectorIdx: -1, idx: bestLight}
+		return pickHit{kind: pickLight, t: bestLightT, chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: bestLight}
 	}
 
 	if hit.kind == pickNone {
@@ -498,7 +492,7 @@ type vertexHandle struct {
 	depth   float32 // distance from the camera
 }
 
-// collectVertexHandles returns every sector vertex handle within
+// collectVertexHandles returns every brush vertex handle within
 // vertexHandleMaxDist of the camera whose on-screen position is within maxPx of
 // (mx, my), nearest first. maxPx of vertexHandleShowAllPx drops that second
 // test altogether — see handleShowsAll.
@@ -516,55 +510,39 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 		if !ch.IsEnabled() {
 			continue // not drawn, so no handles; see world/chunk_enable.go
 		}
-		for seci := range ch.Sectors {
-			s := &ch.Sectors[seci]
-			for vi, pIdx := range s.PointIndices {
-				if pIdx < 0 || pIdx >= len(ch.Points) {
+		for bi := range ch.Brushes {
+			b := &ch.Brushes[bi]
+			for vi, v := range b.Verts {
+				// Brush verts are chunk-local; every consumer below (screen
+				// projection, camera distance, the eventual selection) wants
+				// world space.
+				pos := ch.LocalToWorld(v)
+				depth := pos.Sub(gfx.Cam.Position).Len()
+				if depth > vertexHandleMaxDist {
 					continue
 				}
-				pt := ch.Points[pIdx]
-				for _, isFloor := range [2]bool{true, false} {
-					y := s.Ceiling.VertexHeight(vi)
-					if isFloor {
-						y = s.Floor.VertexHeight(vi)
-					}
-					// pt/y are chunk-local; every consumer below (screen
-					// projection, camera distance, the eventual selection) wants
-					// world space.
-					pos := ch.LocalToWorld(mgl32.Vec3{pt.X(), y, pt.Y()})
-					depth := pos.Sub(gfx.Cam.Position).Len()
-					if depth > vertexHandleMaxDist {
-						continue
-					}
-					screen, ok := projectToScreen(projView, pos)
-					if !ok {
-						continue
-					}
-					d := screen.Sub(cursor).Len()
-					if d > maxPx && !handleShowsAll(maxPx) {
-						continue
-					}
-					sel := vertexSel{
-						chunkIdx:  ci,
-						sectorIdx: seci,
-						vertIdx:   vi,
-						pointIdx:  pIdx,
-						isFloor:   isFloor,
-					}
-					// Solid shading hides the far side of the world, so a
-					// handle behind a wall is neither drawn nor clickable;
-					// wireframe answers true for everything.
-					if !editorVertexVisible(sel, pos) {
-						continue
-					}
-					out = append(out, vertexHandle{
-						vertexSel: sel,
-						pos:       pos,
-						screen:    screen,
-						screenD:   d,
-						depth:     depth,
-					})
+				screen, ok := projectToScreen(projView, pos)
+				if !ok {
+					continue
 				}
+				d := screen.Sub(cursor).Len()
+				if d > maxPx && !handleShowsAll(maxPx) {
+					continue
+				}
+				sel := vertexSel{chunkIdx: ci, brushIdx: bi, vertIdx: vi}
+				// Solid shading hides the far side of the world, so a handle
+				// behind a wall is neither drawn nor clickable; wireframe
+				// answers true for everything.
+				if !editorVertexVisible(sel, pos) {
+					continue
+				}
+				out = append(out, vertexHandle{
+					vertexSel: sel,
+					pos:       pos,
+					screen:    screen,
+					screenD:   d,
+					depth:     depth,
+				})
 			}
 		}
 	}
@@ -580,13 +558,10 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 		if a.chunkIdx != b.chunkIdx {
 			return a.chunkIdx < b.chunkIdx
 		}
-		if a.sectorIdx != b.sectorIdx {
-			return a.sectorIdx < b.sectorIdx
+		if a.brushIdx != b.brushIdx {
+			return a.brushIdx < b.brushIdx
 		}
-		if a.vertIdx != b.vertIdx {
-			return a.vertIdx < b.vertIdx
-		}
-		return a.isFloor && !b.isFloor
+		return a.vertIdx < b.vertIdx
 	})
 	return out
 }
@@ -663,8 +638,7 @@ func addVertexHandlesToSelection(sels []vertexSel) {
 
 // setVertexSelection makes sels the selection, clears every other selection,
 // and points the panel at the vertex section. The first entry is the primary:
-// it drives ActiveVertexSI/VI (shared with the 2D editor) and the panel's
-// displayed values.
+// it names the chunk and brush the whole selection is read against.
 func setVertexSelection(sels []vertexSel) {
 	// Cleared first, then assigned: editorClearObjectSelections empties this
 	// very list on its way past. sels is always a fresh slice by here — the
@@ -673,22 +647,12 @@ func setVertexSelection(sels []vertexSel) {
 	Editor.SelectedVertices = sels
 
 	if len(sels) == 0 {
-		Editor.ActiveVertexSI = -1
-		Editor.ActiveVertexVI = -1
 		Editor.GizmoKind = gizmoKindNone
 		return
 	}
 	primary := sels[0]
 	Editor.ActiveChunkIdx = primary.chunkIdx
-	Editor.ActiveSectorIdx = primary.sectorIdx
-	Editor.ActiveVertexSI = primary.sectorIdx
-	Editor.ActiveVertexVI = primary.vertIdx
-	// A free point has no height of its own, so it must not drag the map's
-	// floor/ceiling switch with it — that switch decides which handles the next
-	// click reaches, and a point with neither should leave it alone.
-	if !primary.isFreePoint() {
-		Editor.EditFloorVerts = primary.isFloor
-	}
+	Editor.ActiveBrushIdx = primary.brushIdx
 	Editor.GizmoKind = gizmoKindVertices
 	Editor.PanelFocus = panelFocusVertex
 }
@@ -697,53 +661,39 @@ func setVertexSelection(sels []vertexSel) {
 // translate gizmo.
 func clearVertexSelection() {
 	Editor.SelectedVertices = nil
-	Editor.ActiveVertexSI = -1
-	Editor.ActiveVertexVI = -1
 	if Editor.GizmoKind == gizmoKindVertices {
 		Editor.GizmoKind = gizmoKindNone
 	}
 }
 
-// vertexSelPos returns the world position of a selected vertex handle. A free
-// point sits at local y=0, which is where the 2D map draws it — it has no
-// floor or ceiling to take a height from until it is part of a sector.
+// vertexSelPos returns the world position of a selected brush vertex.
 //
-// This is the one place that reads a chunk point as a position everything else
-// (the gizmos, the selection centre, the 2D map's own gizmo) treats as world —
-// see editor_sel_transform.go's own doc comment. ch.LocalToWorld is the whole
-// of what makes a chunk's own Origin/Rotation/Scale transparent to all of that
+// This is the one place that reads a brush vertex as a position everything else
+// (the gizmos, the selection centre) treats as world — see
+// editor_sel_transform.go's own doc comment. ch.LocalToWorld is the whole of
+// what makes a chunk's own Origin/Rotation/Scale transparent to all of that
 // code: fix the read (and writeSelectedVertexWorld's matching write) here, and
 // nothing downstream needs to know a chunk can move at all.
 func vertexSelPos(sel vertexSel) (mgl32.Vec3, bool) {
+	ch, b := vertexSelBrush(sel)
+	if b == nil || sel.vertIdx < 0 || sel.vertIdx >= len(b.Verts) {
+		return mgl32.Vec3{}, false
+	}
+	return ch.LocalToWorld(b.Verts[sel.vertIdx]), true
+}
+
+// vertexSelBrush resolves the chunk and brush a vertex selection names, or nil
+// when the indices no longer point at live geometry.
+func vertexSelBrush(sel vertexSel) (*world.Chunk, *world.Brush) {
 	lvl := Editor.level
 	if lvl == nil || sel.chunkIdx < 0 || sel.chunkIdx >= len(lvl.Chunks) {
-		return mgl32.Vec3{}, false
+		return nil, nil
 	}
 	ch := &lvl.Chunks[sel.chunkIdx]
-	if sel.isFreePoint() {
-		if sel.pointIdx < 0 || sel.pointIdx >= len(ch.Points) {
-			return mgl32.Vec3{}, false
-		}
-		pt := ch.Points[sel.pointIdx]
-		return ch.LocalToWorld(mgl32.Vec3{pt.X(), 0, pt.Y()}), true
+	if sel.brushIdx < 0 || sel.brushIdx >= len(ch.Brushes) {
+		return ch, nil
 	}
-	if sel.sectorIdx >= len(ch.Sectors) {
-		return mgl32.Vec3{}, false
-	}
-	s := &ch.Sectors[sel.sectorIdx]
-	if sel.vertIdx < 0 || sel.vertIdx >= len(s.PointIndices) {
-		return mgl32.Vec3{}, false
-	}
-	pIdx := s.PointIndices[sel.vertIdx]
-	if pIdx < 0 || pIdx >= len(ch.Points) {
-		return mgl32.Vec3{}, false
-	}
-	pt := ch.Points[pIdx]
-	y := s.Ceiling.VertexHeight(sel.vertIdx)
-	if sel.isFloor {
-		y = s.Floor.VertexHeight(sel.vertIdx)
-	}
-	return ch.LocalToWorld(mgl32.Vec3{pt.X(), y, pt.Y()}), true
+	return ch, &ch.Brushes[sel.brushIdx]
 }
 
 // selectedVerticesCenter returns the average position of the selected vertex
@@ -854,14 +804,12 @@ func drawVertexHandleBoxes(mx, my int32, showPx float32) {
 		}
 	}
 
-	// Floor handles are blue and ceiling handles red (matching the 2D
-	// editor's vertex-mode buttons); selected is yellow, and the handle
-	// under the cursor is white.
+	// A brush corner is one kind of thing, so there is one resting colour for
+	// it — the floor/ceiling blue-and-red split belonged to the sector model,
+	// where a handle was one of a stacked pair. Selected is yellow, and the
+	// handle under the cursor is white.
 	for _, h := range collectVertexHandles(mx, my, showPx) {
 		col := mgl32.Vec3{0.35, 0.55, 1}
-		if !h.isFloor {
-			col = mgl32.Vec3{1, 0.45, 0.35}
-		}
 		if handleBoxContains(h, mx, my) {
 			col = mgl32.Vec3{1, 1, 1}
 		}

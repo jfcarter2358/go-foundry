@@ -47,13 +47,13 @@ const explorerRowFlags = imgui.TreeNodeFlagsOpenOnArrow |
 // editorExplorerSection draws the Explorer: the Add menu, then the tree, in a
 // scroll box of its own so Properties below it stays on screen no matter how
 // much the level holds.
-func editorExplorerSection(lvl *world.Level, kind editorPanelKind) {
+func editorExplorerSection(lvl *world.Level) {
 	imgui.Separator()
 	if !imgui.CollapsingHeaderV("Explorer##explorer", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
 
-	editorExplorerAddMenu(lvl, kind)
+	editorExplorerAddMenu(lvl)
 	imgui.SameLine()
 	editorTextMuted("Right-click a row for its actions")
 	editorExplorerPlacementBanner()
@@ -103,13 +103,6 @@ func editorExplorerPlacementBanner() {
 		// the brush stays armed and every click places another copy.
 		label = "Brushing " + Editor.BrushModel + " — click to place, Escape to stop"
 		cancel = editorDisarmBrush
-	case Editor.BiomeDrawing:
-		label = fmt.Sprintf("Drawing a biome sector: %d corners (Enter to finish)",
-			len(Editor.BiomeDrawPoints))
-		cancel = func() {
-			Editor.BiomeDrawing = false
-			Editor.BiomeDrawPoints = nil
-		}
 	default:
 		return
 	}
@@ -117,14 +110,6 @@ func editorExplorerPlacementBanner() {
 	editorTextColored(imgui.Vec4{X: 1, Y: 0.75, Z: 0.2, W: 1}, label)
 	if imgui.Button("Cancel##explorerplacecancel") {
 		cancel()
-	}
-	if Editor.BiomeDrawing {
-		imgui.SameLine()
-		if imgui.Button("Finish##explorerplacefinish") {
-			if ch := activeChunk(); ch != nil {
-				finishBiomeSectorDraw(ch)
-			}
-		}
 	}
 }
 
@@ -213,26 +198,22 @@ func editorExplorerSpawnRow(lvl *world.Level) {
 }
 
 // editorExplorerPlacePoint is where a "put one here" action puts it: what the
-// active sub-mode is looking at. The 3D view has a camera and the map has a
-// pan centre, and neither knows about the other's.
+// camera is looking at, on the ground plane.
 func editorExplorerPlacePoint() mgl32.Vec3 {
-	if Editor.Mode == Mode2D {
-		return mgl32.Vec3{Editor.Pan2D.X(), 0, Editor.Pan2D.Y()}
-	}
 	return mgl32.Vec3{gfx.Cam.Position.X(), 0, gfx.Cam.Position.Z()}
 }
 
 // ---------- chunks, and what lives inside one ----------
 
 // editorExplorerChunkNodes draws the chunk list, each chunk expanding into its
-// sectors and its painted biome sectors.
+// brushes.
 //
 // Clicking a chunk makes it both active and selected — see editor_chunk.go on
 // why those are two things — so this list is still the only place either is
 // decided, and the Context line above reports which.
 func editorExplorerChunkNodes(lvl *world.Level) {
 	if !editorExplorerCategory(fmt.Sprintf("Chunks (%d)##chunks", len(lvl.Chunks)),
-		panelFocusChunk, panelFocusSector, panelFocusBiome, panelFocusWater) {
+		panelFocusChunk, panelFocusBrush, panelFocusFace) {
 		return
 	}
 	defer imgui.TreePop()
@@ -310,8 +291,7 @@ func editorExplorerChunkNodes(lvl *world.Level) {
 		})
 		if open {
 			imgui.Indent()
-			editorExplorerSectorNodes(ch, i)
-			editorExplorerBiomeNodes(ch, i)
+			editorExplorerBrushNodes(ch, i)
 			imgui.Unindent()
 		}
 		imgui.PopID()
@@ -339,92 +319,63 @@ func editorExplorerChunkNodes(lvl *world.Level) {
 	}
 }
 
-// editorExplorerSectorNodes draws a chunk's sectors.
+// editorExplorerBrushNodes draws a chunk's brushes.
 //
-// The sector list used to be the 2D panel's alone, which meant the 3D view had
-// no way to reach a sector except by finding a face of it to click — and a
-// sector whose surfaces are all switched off has none.
-func editorExplorerSectorNodes(ch *world.Chunk, chunkIdx int) {
-	if len(ch.Sectors) == 0 {
+// The list matters more than a sector list did. A brush is only reachable in
+// the viewport by finding a face of it to click, and a brush buried inside
+// another one — a clip volume, a nodraw filler — has no face anyone can see.
+// The tree is the only way to select those at all.
+//
+// Clicking a row selects the brush's first face, because a face is what the
+// selection unit actually is: the properties panel opens on the brush and the
+// gizmo attaches to the face's corners.
+func editorExplorerBrushNodes(ch *world.Chunk, chunkIdx int) {
+	if len(ch.Brushes) == 0 {
 		return
 	}
-	if !editorExplorerCategory(fmt.Sprintf("Sectors (%d)##sectors", len(ch.Sectors)), panelFocusSector) {
+	if !editorExplorerCategory(fmt.Sprintf("Brushes (%d)##brushes", len(ch.Brushes)),
+		panelFocusBrush, panelFocusFace) {
 		return
 	}
-	remove := -1
-	for i := range ch.Sectors {
-		selected := chunkIdx == Editor.ActiveChunkIdx && i == Editor.ActiveSectorIdx &&
-			!Editor.ChunkSelected
-		if editorExplorerLeaf(fmt.Sprintf("%s##sec%d", ch.Sectors[i].ID, i), selected, panelFocusSector) {
-			editorSelectSector(chunkIdx, i)
+	defer imgui.TreePop()
+
+	remove, duplicate := -1, -1
+	for i := range ch.Brushes {
+		b := &ch.Brushes[i]
+		selected := chunkIdx == Editor.ActiveChunkIdx && i == Editor.ActiveBrushIdx &&
+			len(Editor.SelectedFaces) > 0
+		label := b.ID
+		if !b.Solid {
+			// Worth saying on the row: a non-solid brush looks exactly like a
+			// solid one and behaves nothing like it.
+			label += "  (non-solid)"
 		}
-		editorExplorerMenu(fmt.Sprintf("secctx%d", i), func() {
+		imgui.PushID(fmt.Sprintf("brush%d", i))
+		if editorExplorerLeaf(fmt.Sprintf("%s##brush%d", label, i), selected, panelFocusBrush) {
+			editorSelectBrush(chunkIdx, i)
+		}
+		editorExplorerMenu(fmt.Sprintf("brushctx%d", i), func() {
+			if imgui.MenuItem("Duplicate") {
+				duplicate = i
+			}
+			imgui.Separator()
 			if imgui.MenuItem("Delete") {
 				remove = i
 			}
 		})
+		imgui.PopID()
 	}
-	// Acted on outside the loop: it rewrites the slice being walked.
-	if remove >= 0 {
-		EditorPushUndo()
-		deleteSector(ch, chunkIdx, remove)
-	}
-	imgui.TreePop()
-}
 
-// deleteSector removes one sector from a chunk, keeping its chunk points as
-// free vertices — the same bargain the map's Delete-on-a-wall-edge makes
-// (removeSectorKeepPoints), because the points are usually shared with the
-// neighbours that are staying.
-//
-// The selection goes with it: the indices above the removed sector all shift
-// down, so a stale ActiveSectorIdx would point at the wrong room rather than
-// at nothing.
-func deleteSector(ch *world.Chunk, chunkIdx, si int) {
-	if si < 0 || si >= len(ch.Sectors) {
-		return
-	}
-	removeSectorKeepPoints(ch, si)
-	if chunkIdx == Editor.ActiveChunkIdx {
-		Editor.ActiveSectorIdx = -1
-		Editor.ActiveEdgeIdx = -1
-		Editor.ActiveEdgeKind = ""
-		clearVertexSelection()
-	}
-}
-
-// editorExplorerBiomeNodes draws a chunk's painted biome sectors.
-//
-// Listed in both editors although only the map can reshape one: a water plane
-// clicked in the 3D view selects the biome sector behind it, and the row is
-// then what says which of them that was.
-func editorExplorerBiomeNodes(ch *world.Chunk, chunkIdx int) {
-	if len(ch.BiomeSectors) == 0 {
-		return
-	}
-	if !editorExplorerCategory(fmt.Sprintf("Biome (%d)##biomes", len(ch.BiomeSectors)),
-		panelFocusBiome, panelFocusWater) {
-		return
-	}
-	remove := -1
-	for i := range ch.BiomeSectors {
-		bs := &ch.BiomeSectors[i]
-		selected := chunkIdx == Editor.ActiveChunkIdx && i == Editor.ActiveBiomeSectorIdx
-		label := fmt.Sprintf("%s (%s)##bs%d", bs.ID, biomeKindName(bs.Brush.Kind), i)
-		if editorExplorerLeaf(label, selected, panelFocusBiome) {
-			editorSelectBiomeSector(chunkIdx, i)
-		}
-		editorExplorerMenu(fmt.Sprintf("bsctx%d", i), func() {
-			if imgui.MenuItem("Delete") {
-				remove = i
-			}
-		})
-	}
-	if remove >= 0 {
+	// Acted on outside the loop: each rewrites the slice being walked.
+	switch {
+	case duplicate >= 0:
+		editorSelectBrush(chunkIdx, duplicate)
+		editorDuplicateSelectedBrush()
+	case remove >= 0:
 		EditorPushUndo()
-		deleteBiomeSector(ch, remove)
+		editorSelectBrush(chunkIdx, remove)
+		editorDeleteSelectedBrushes()
 	}
-	imgui.TreePop()
 }
 
 // ---------- entities ----------
@@ -724,7 +675,7 @@ func editorLevelHasScript(lvl *world.Level, path string) bool {
 // next to selecting something, and the catalogs it needs — the entity type
 // list, the script folder — are three lines each that were on screen
 // permanently for the sake of a click that happens once a session.
-func editorExplorerAddMenu(lvl *world.Level, kind editorPanelKind) {
+func editorExplorerAddMenu(lvl *world.Level) {
 	if imgui.Button("Add...##exploreradd") {
 		imgui.OpenPopup("explorer_add")
 	}
@@ -776,16 +727,22 @@ func editorExplorerAddMenu(lvl *world.Level, kind editorPanelKind) {
 		editorAddPointLight(lvl)
 	}
 
-	if kind == panelKind2D && activeChunk() != nil {
+	// The brush stamps, when there is a chunk for one to join. First in the
+	// menu after chunks themselves, because a brush is what a level is made of
+	// and everything below is decoration on top of it.
+	if activeChunk() != nil {
 		imgui.Separator()
-		if imgui.MenuItem("Biome Sector") {
-			Editor.BiomeLayerActive = true
-			Editor.BiomeDrawing = true
-			Editor.BiomeDrawPoints = nil
-			Editor.ActiveBiomeSectorIdx = -1
+		if imgui.BeginMenu("Brush") {
+			for _, kind := range brushKinds {
+				if imgui.MenuItem(strings.ToUpper(kind[:1]) + kind[1:]) {
+					editorAddBrushAt(kind, editorExplorerPlacePoint())
+				}
+			}
+			imgui.EndMenu()
 		}
 		if imgui.IsItemHovered() {
-			imgui.SetTooltip("Paint a ground patch on the map: click its corners, then Enter.")
+			imgui.SetTooltip("A solid, placed where the camera is looking.\n" +
+				"Shape it with E (extrude), I (inset) and B (subdivide).")
 		}
 	}
 

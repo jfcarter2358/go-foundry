@@ -74,7 +74,6 @@ func editorSetGizmoTool(t editorGizmoTool) {
 		return
 	}
 	editorGizmoMouseUp()
-	editor2DGizmoMouseUp()
 	Editor.GizmoTool = t
 }
 
@@ -98,12 +97,9 @@ func editorToolActsOnSelection() bool {
 }
 
 // editorSelKeysActive reports whether the selection-unit and gizmo-tool
-// shortcuts should answer right now: only in the two viewports that have a
-// selection to act on, and never while a panel field has the keyboard — typing
-// a sector id must not also switch the tool underneath it.
+// shortcuts should answer right now: only in the viewport, and never while a
+// panel field has the keyboard — typing a brush id must not also switch the
+// tool underneath it.
 func editorSelKeysActive() bool {
-	if Editor.Mode != Mode3D && Editor.Mode != Mode2D {
-		return false
-	}
-	return !imgui.CurrentIO().WantCaptureKeyboard()
+	return Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureKeyboard()
 }

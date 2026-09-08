@@ -9,9 +9,9 @@ package editor
 // wrong. Every select* function goes through editorClearObjectSelections first
 // now, and the callers that used to clear by hand can stop.
 //
-// Sectors and biome sectors get their own entry points here for the same
-// reason: the Explorer can pick either, and both used to be set by assigning
-// the index straight and hoping nothing else was still selected.
+// Brushes get their own entry point here for the same reason: the Explorer can
+// pick one, and it used to be set by assigning the index straight and hoping
+// nothing else was still selected.
 
 // editorClearObjectSelections drops every selection there is: the spawn point,
 // an entity, a volume, a chunk, a light, and the faces and vertices picked
@@ -31,59 +31,32 @@ func editorClearObjectSelections() {
 	editorClearScenerySelection()
 	editorClearChunkSelection()
 	editorClearLightSelection()
-	editorClearWaterSelection()
 	clearVertexSelection()
 	clearFaceSelection()
-
-	// The in-chunk indices too. They are not cleared by clearFaceSelection —
-	// a face and its sector are separate selections, and a vertex sets the
-	// sector index itself — so without this a sector picked three clicks ago
-	// kept its properties block open under whatever was picked since.
-	Editor.ActiveSectorIdx = -1
-	Editor.ActiveEdgeIdx = -1
-	Editor.ActiveEdgeKind = ""
-	Editor.ActiveBiomeSectorIdx = -1
-	Editor.BiomeDragVertexIdx = -1
 }
 
-// editorSelectSector makes one sector the selection, from the Explorer's row.
+// editorSelectBrush makes one brush the selection, from the Explorer's row.
 //
-// The chunk it belongs to becomes active — a sector is only addressable
-// through one — but not *selected*: the panel is being asked for the sector's
+// The chunk it belongs to becomes active — a brush is only addressable through
+// one — but not *selected*: the panel is being asked for the brush's
 // properties, not the chunk's.
-func editorSelectSector(chunkIdx, sectorIdx int) {
-	lvl := Editor.level
-	if lvl == nil || chunkIdx < 0 || chunkIdx >= len(lvl.Chunks) {
-		return
-	}
-	if sectorIdx < 0 || sectorIdx >= len(lvl.Chunks[chunkIdx].Sectors) {
-		return
-	}
-	editorClearObjectSelections()
-
-	Editor.ActiveChunkIdx = chunkIdx
-	Editor.ActiveSectorIdx = sectorIdx
-	Editor.PanelFocus = panelFocusSector
-}
-
-// editorSelectBiomeSector makes one painted biome sector the selection.
 //
-// The biome layer is switched on with it: the sector cannot be reshaped on the
-// map while the layer is off, and picking one from the Explorer and then
-// finding it unclickable in the view is the kind of dead end the layer toggle
-// used to be.
-func editorSelectBiomeSector(chunkIdx, idx int) {
+// The selection is expressed as the brush's first face, because a face is what
+// the selection unit is: everything downstream (the properties panel, the
+// outline, the gizmo's corner handles) reads Editor.SelectedFaces, and a
+// separate "brush is selected" flag would be a second source of truth for the
+// same thing. A brush with no faces cannot be selected at all, which is
+// correct — there would be nothing to show or grab.
+func editorSelectBrush(chunkIdx, brushIdx int) {
 	lvl := Editor.level
 	if lvl == nil || chunkIdx < 0 || chunkIdx >= len(lvl.Chunks) {
 		return
 	}
-	if idx < 0 || idx >= len(lvl.Chunks[chunkIdx].BiomeSectors) {
+	ch := &lvl.Chunks[chunkIdx]
+	if brushIdx < 0 || brushIdx >= len(ch.Brushes) || len(ch.Brushes[brushIdx].Faces) == 0 {
 		return
 	}
-	editorClearObjectSelections()
-
 	Editor.ActiveChunkIdx = chunkIdx
-	Editor.ActiveBiomeSectorIdx = idx
-	Editor.BiomeLayerActive = true
-	Editor.PanelFocus = panelFocusBiome
+	setFaceSelection([]faceSel{brushFaceSel(chunkIdx, brushIdx, 0)})
+	Editor.PanelFocus = panelFocusBrush
 }

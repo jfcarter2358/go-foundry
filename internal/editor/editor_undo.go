@@ -173,10 +173,8 @@ func editorResetSelectionState() {
 	if Editor.ActiveChunkIdx < 0 && len(Editor.level.Chunks) > 0 {
 		Editor.ActiveChunkIdx = 0
 	}
-	Editor.ActiveSectorIdx = -1
-	Editor.ActiveEdgeIdx = -1
-	Editor.ActiveEdgeKind = ""
-	Editor.ActiveSurface = ""
+	Editor.ActiveBrushIdx = -1
+	Editor.ActiveFaceIdx = -1
 	Editor.SelectedFaces = nil
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
@@ -193,28 +191,10 @@ func editorResetSelectionState() {
 	Editor.SpritePlacementMode = false
 	Editor.EmitterPlacementMode = false
 	Editor.SoundPlacementMode = false
-	Editor.DragVertexSI = -1
-	Editor.DragVertexVI = -1
-	Editor.ActiveVertexSI = -1
-	Editor.ActiveVertexVI = -1
 	Editor.SelectedVertices = nil
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
-	Editor.PendingEdges = nil
-	Editor.BiomeDrawing = false
-	Editor.BiomeDrawPoints = nil
-	Editor.ActiveBiomeSectorIdx = -1
-	Editor.BiomeDragVertexIdx = -1
-
-	// Surface shaping holds point, edge and face indices into the shaped
-	// surface's mesh, and none of those are trustworthy after a snapshot swap —
-	// the restored mesh may have a different number of faces entirely. Only
-	// those go: which face is being shaped is a chunk/sector/face name, which
-	// the snapshot restores intact, so shaping continues over it. See
-	// surfaceEditResumeAfterSnapshot, which also drops the mode when the face
-	// really has gone.
-	surfaceEditResumeAfterSnapshot()
 }
 
 // restoreLevelSnapshot applies an undo/redo snapshot: rebuild the level, put the

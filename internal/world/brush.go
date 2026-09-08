@@ -261,6 +261,21 @@ func (b *Brush) Load() error {
 	return nil
 }
 
+// Release frees the GPU buffers every face owns. For a brush being removed
+// from the level: overwriting or dropping the slice entry would leak the
+// handles rather than free them, which is the same hazard ReleaseGeometry
+// exists for at chunk scale.
+func (b *Brush) Release() {
+	for fi := range b.Faces {
+		f := &b.Faces[fi]
+		f.Geometry.Delete()
+		for si := range f.SubmeshGeometries {
+			f.SubmeshGeometries[si].Delete()
+		}
+		f.SubmeshGeometries = nil
+	}
+}
+
 // NewHollowRoom returns the six brushes bounding an axis-aligned walkable
 // room: a floor, a ceiling, and four walls, each wallThickness deep,
 // enclosing the space between min and max. This is the editor's "hollow"

@@ -304,26 +304,14 @@ func editorSelectionBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 
 	if Editor.ActiveChunkIdx >= 0 && Editor.ActiveChunkIdx < len(lvl.Chunks) {
 		ch := &lvl.Chunks[Editor.ActiveChunkIdx]
-		// A water body is picked as its biome sector, and the thing to frame is
-		// the plane that sector produced — the polygon itself has no height.
-		if Editor.ActiveBiomeSectorIdx >= 0 && Editor.ActiveBiomeSectorIdx < len(ch.BiomeSectors) {
-			id := ch.BiomeSectors[Editor.ActiveBiomeSectorIdx].ID
-			for wi := range ch.WaterSurfaces {
-				if ch.WaterSurfaces[wi].ID == id {
-					wmin, wmax := ch.WaterSurfaces[wi].WorldAABB(ch)
-					return wmin, wmax, true
-				}
-			}
-		}
-		// Both of these are chunk-local (Sector.MinBound/MaxBound and
+		// Both of these are chunk-local (Brush.LocalAABB and
 		// Chunk.MinBound/MaxBound alike), and this function's whole contract is
 		// world-space bounds — so they go out through the chunk's own placement
 		// or "frame selection" flies the camera to where the chunk would be if
 		// it had never been moved.
-		if Editor.ActiveSectorIdx >= 0 && Editor.ActiveSectorIdx < len(ch.Sectors) {
-			s := &ch.Sectors[Editor.ActiveSectorIdx]
-			smin, smax := s.WorldAABB(ch)
-			return smin, smax, true
+		if _, b := editor3DActiveBrush(); b != nil {
+			bmin, bmax := b.WorldAABB(ch)
+			return bmin, bmax, true
 		}
 		lo, hi := ch.WorldBounds()
 		return lo, hi, true

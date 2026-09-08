@@ -17,7 +17,8 @@ import (
 	"fmt"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
-	"strings"
+	"math"
+	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -32,7 +33,7 @@ type editor3DSelKind int
 const (
 	sel3DNone editor3DSelKind = iota
 	sel3DVertices
-	sel3DSurface // a sector's floor, ceiling, wall or portal
+	sel3DSurface // one or more brush faces
 	sel3DSpawn
 	sel3DEntity
 	sel3DVolume
@@ -64,8 +65,8 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DSound
 	case len(Editor.SelectedVertices) > 0:
 		return sel3DVertices
-	case Editor.ActiveSurface != "":
-		if _, s := editor3DActiveSector(); s != nil {
+	case len(Editor.SelectedFaces) > 0:
+		if faceSelFace(Editor.SelectedFaces[0]) != nil {
 			return sel3DSurface
 		}
 	}
@@ -121,41 +122,24 @@ func editor3DSelectionSummary() string {
 			return fmt.Sprintf("%d vertices", n)
 		}
 		primary := Editor.SelectedVertices[0]
-		which := "ceiling"
-		if primary.isFloor {
-			which = "floor"
+		_, b := vertexSelBrush(primary)
+		if b == nil {
+			return fmt.Sprintf("Vertex #%d", primary.vertIdx)
 		}
-		return fmt.Sprintf("Vertex #%d (%s)", primary.vertIdx, which)
+		return fmt.Sprintf("Vertex #%d — brush %s", primary.vertIdx, b.ID)
 
 	case sel3DSurface:
 		if n := selectedFaceCount(); n > 1 {
 			return fmt.Sprintf("%d faces", n)
 		}
-		_, s := editor3DActiveSector()
-		if Editor.ActiveEdgeIdx >= 0 && Editor.ActiveEdgeKind != "" {
-			return fmt.Sprintf("%s #%d — sector %s",
-				editor3DKindLabel(Editor.ActiveEdgeKind), Editor.ActiveEdgeIdx, s.ID)
+		primary := Editor.SelectedFaces[0]
+		_, b := faceSelBrush(primary)
+		if b == nil {
+			return fmt.Sprintf("Face #%d", primary.faceIdx)
 		}
-		return fmt.Sprintf("%s — sector %s", editor3DKindLabel(Editor.ActiveSurface), s.ID)
+		return fmt.Sprintf("Face #%d — brush %s", primary.faceIdx, b.ID)
 	}
 	return "Nothing selected"
-}
-
-// editor3DKindLabel capitalises a one-word kind name ("wall" → "Wall") for
-// display in the menu's heading.
-func editor3DKindLabel(s string) string {
-	switch s {
-	case "":
-		return s
-	// A slab face is named for the side of the surface it is, not for the
-	// underscored kind string the selection carries — "Floor_slab" in a menu
-	// heading would be the schema leaking into the window.
-	case "floor_slab":
-		return "Floor underside"
-	case "ceiling_slab":
-		return "Ceiling top side"
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // ---------- selection accessors ----------
@@ -242,8 +226,8 @@ func editor3DSurfaceRefsFor(sel faceSel) (surface3DRefs, bool) {
 // about them, and their setters write them back inverted. Kept as functions
 // rather than pointers into the struct because the sense differs from what is
 // stored: a face's zero value is drawn and solid.
-func faceDrawn(f *world.BrushFace) bool  { return !f.NoDraw }
-func faceSolid(f *world.BrushFace) bool  { return !f.NoCollide }
+func faceDrawn(f *world.BrushFace) bool       { return !f.NoDraw }
+func faceSolid(f *world.BrushFace) bool       { return !f.NoCollide }
 func setFaceDrawn(f *world.BrushFace, v bool) { f.NoDraw = !v }
 func setFaceSolid(f *world.BrushFace, v bool) { f.NoCollide = !v }
 
@@ -360,116 +344,80 @@ func editor3DToggleSurfaceFlag(pick func(surface3DRefs) *bool) {
 	})
 }
 
-// editor3DConvertSelectedEdge turns every selected wall into a portal, or back.
+// editor3DToggleFaceDrawn and editor3DToggleFaceSolid flip the two inverted
+// flags across the selection. They are separate from editor3DToggleSurfaceFlag
+// because the sense differs from what is stored — NoDraw/NoCollide are the way
+// round that makes the zero value the common case (drawn, solid), while the
+// menu asks the other way round — so there is no *bool in the refs to hand it.
 //
-// Conversion renumbers a sector's Walls and Portals, so the faces are tracked
-// through it by *polygon* edge index instead — which the sector's outline fixes
-// and a conversion cannot move. Each edge is re-resolved from that index right
-// before it is converted, and the selection is rebuilt from the same indices
-// afterwards, so a run of walls can be opened up in one action.
-func editor3DConvertSelectedEdge(to string) {
-	type edgeRef struct {
-		chunkIdx, sectorIdx, polyIdx int
-	}
-	var refs []edgeRef
-	for _, sel := range Editor.SelectedFaces {
-		if !sel.isEdgeFace() || sel.kind == to {
-			continue
-		}
-		_, s := faceSelSector(sel)
-		if s == nil {
-			continue
-		}
-		if pi := polyEdgeIdx(s, sel.kind, sel.idx); pi >= 0 {
-			refs = append(refs, edgeRef{sel.chunkIdx, sel.sectorIdx, pi})
-		}
-	}
-	if len(refs) == 0 {
-		return
-	}
-
-	EditorPushUndo()
-	for _, ref := range refs {
-		ch, s := faceSelSector(faceSel{chunkIdx: ref.chunkIdx, sectorIdx: ref.sectorIdx})
-		if s == nil || ref.polyIdx >= len(s.EdgeKinds) {
-			continue
-		}
-		kind, idx := world.EdgeKindAndIndex(s, ref.polyIdx)
-		if kind == to {
-			continue
-		}
-		convertEdge(ch, s, kind, idx, to)
-		ch.RebuildGaps()
-	}
-
-	// Rebuild the selection from the polygon indices, which survived.
-	sels := make([]faceSel, 0, len(refs))
-	for _, ref := range refs {
-		_, s := faceSelSector(faceSel{chunkIdx: ref.chunkIdx, sectorIdx: ref.sectorIdx})
-		if s == nil || ref.polyIdx >= len(s.EdgeKinds) {
-			continue
-		}
-		kind, idx := world.EdgeKindAndIndex(s, ref.polyIdx)
-		sels = append(sels, edgeFaceSel(ref.chunkIdx, ref.sectorIdx, kind, idx))
-	}
-	if len(sels) > 0 {
-		setFaceSelection(sels)
-	} else {
-		clearFaceSelection()
-	}
-	editorSetStatus("Converted %d edge(s) to %s", len(refs), to)
-}
-
-// editor3DShapeSurface starts shaping the selected surface — the panel's
-// "Shape Surface" button, from the viewport.
-func editor3DShapeSurface() {
+// Like the flag toggle, every face is set to the same value: the opposite of
+// the primary's, rather than each flipped independently. "Turn collision off
+// for these twelve faces" is what the action is for.
+func editor3DToggleFaceDrawn() {
 	r, ok := editor3DSurfaceRefs()
-	if !ok || r.kind == "portal" {
+	if !ok {
 		return
 	}
-	idx := -1
-	if r.kind == "wall" {
-		idx = Editor.ActiveEdgeIdx
-	}
-	EnterSurfaceEdit(edgeFaceSel(Editor.ActiveChunkIdx, Editor.ActiveSectorIdx, r.kind, idx))
+	want := !faceDrawn(r.f)
+	EditorPushUndo()
+	editor3DForEachSelectedFace(func(r surface3DRefs) { setFaceDrawn(r.f, want) })
 }
+
+func editor3DToggleFaceSolid() {
+	r, ok := editor3DSurfaceRefs()
+	if !ok {
+		return
+	}
+	want := !faceSolid(r.f)
+	EditorPushUndo()
+	editor3DForEachSelectedFace(func(r surface3DRefs) { setFaceSolid(r.f, want) })
+}
+
+// A brush face is not convertible into anything: the wall/portal split it
+// replaced was a sector's way of saying "this edge is open", and open space is
+// now simply the absence of a brush. Cutting a doorway is a geometry edit —
+// carve the brush, or move one out of the way — not a flag on a face.
 
 // ---------- vertices ----------
 
-// editor3DSelectSectorRing selects every vertex handle of the active sector on
-// one side — the floor ring or the ceiling one, matching whichever the current
-// selection is on.
+// editor3DSelectBrushVertices selects every corner of the brush the current
+// selection belongs to — the whole solid, ready to be moved or scaled as one.
 //
-// One ring, not both: a floor handle and the ceiling handle above it share a
-// chunk point, so a selection holding both would move that point twice per drag
-// and the sector would warp at double speed.
-func editor3DSelectSectorRing() {
-	ch, s := editor3DActiveSector()
-	if ch == nil || s == nil || len(s.PointIndices) == 0 {
+// This is the brush counterpart of selecting a sector's floor ring. A sector
+// needed the ring restricted to one side, because a floor handle and the
+// ceiling handle above it shared a chunk point and moving both would warp the
+// room at double speed. A brush owns each corner outright, so there is nothing
+// to halve: taking all of them is exactly right.
+func editor3DSelectBrushVertices() {
+	ci, bi := activeBrushIndices()
+	if bi < 0 {
 		return
 	}
-	isFloor := Editor.EditFloorVerts
-	if len(Editor.SelectedVertices) > 0 {
-		isFloor = Editor.SelectedVertices[0].isFloor
-	}
-	sels := make([]vertexSel, 0, len(s.PointIndices))
-	for vi, pIdx := range s.PointIndices {
-		if pIdx < 0 || pIdx >= len(ch.Points) {
-			continue
-		}
-		sels = append(sels, vertexSel{
-			chunkIdx:  Editor.ActiveChunkIdx,
-			sectorIdx: Editor.ActiveSectorIdx,
-			vertIdx:   vi,
-			pointIdx:  pIdx,
-			isFloor:   isFloor,
-		})
-	}
-	if len(sels) == 0 {
+	ch, b := editor3DActiveBrush()
+	if ch == nil || b == nil || len(b.Verts) == 0 {
 		return
+	}
+	sels := make([]vertexSel, 0, len(b.Verts))
+	for vi := range b.Verts {
+		sels = append(sels, vertexSel{chunkIdx: ci, brushIdx: bi, vertIdx: vi})
 	}
 	setVertexSelection(sels)
-	editorSetStatus("Selected %d vertices of %s", len(sels), s.ID)
+	editorSetStatus("Selected %d vertices of %s", len(sels), b.ID)
+}
+
+// activeBrushIndices resolves which brush the selection is working on, from
+// whichever kind of selection is live: a face names its brush directly, and so
+// does a vertex. Returns a brush index of -1 when neither does.
+func activeBrushIndices() (chunkIdx, brushIdx int) {
+	if len(Editor.SelectedFaces) > 0 {
+		f := Editor.SelectedFaces[0]
+		return f.chunkIdx, f.brushIdx
+	}
+	if len(Editor.SelectedVertices) > 0 {
+		v := Editor.SelectedVertices[0]
+		return v.chunkIdx, v.brushIdx
+	}
+	return Editor.ActiveChunkIdx, Editor.ActiveBrushIdx
 }
 
 // ---------- snapping ----------
@@ -495,8 +443,8 @@ func editor3DSnapSelectionToGrid() {
 	switch editor3DSelection() {
 	case sel3DVertices:
 		EditorPushUndo()
-		setSelectedVertexPoints(func(_ int, _ vertexSel, cur mgl32.Vec2) mgl32.Vec2 {
-			return mgl32.Vec2{snapValue(cur.X(), step), snapValue(cur.Y(), step)}
+		setSelectedVertexLocals(func(_ int, _ vertexSel, cur mgl32.Vec3) mgl32.Vec3 {
+			return snapVec3(cur, step)
 		})
 		editorSetStatus("Snapped %d vertices to the grid", len(Editor.SelectedVertices))
 
@@ -598,43 +546,98 @@ func editor3DAddEntityAt(typeName string, pos mgl32.Vec3) {
 // own section — the menu's way of saying "and now show me the numbers".
 func editor3DFocusPanel(section string) { Editor.PanelFocus = section }
 
-// editor3DSelectSectorFaces replaces the selection with every face of the
-// sector the primary belongs to: its floor, its ceiling, and every wall and
-// portal around it.
+// editor3DSelectBrushFaces replaces the selection with every face of the brush
+// the primary belongs to.
 //
 // This is the shortcut behind the reason faces became multi-selectable —
-// retexturing a room, or turning its collision off, without ctrl+clicking each
-// wall in turn and missing one behind the camera.
-func editor3DSelectSectorFaces() {
-	ch, s := editor3DActiveSector()
-	if ch == nil || s == nil {
+// retexturing a whole solid, or turning its collision off, without ctrl+
+// clicking each side in turn and missing one behind the camera.
+func editor3DSelectBrushFaces() {
+	ci, bi := activeBrushIndices()
+	ch, b := editor3DActiveBrush()
+	if ch == nil || b == nil || len(b.Faces) == 0 {
 		return
 	}
-	ci, si := Editor.ActiveChunkIdx, Editor.ActiveSectorIdx
-	sels := []faceSel{surfaceFaceSel(ci, si, "floor"), surfaceFaceSel(ci, si, "ceiling")}
-	for i := range s.Walls {
-		sels = append(sels, edgeFaceSel(ci, si, "wall", i))
-	}
-	for i := range s.Portals {
-		sels = append(sels, edgeFaceSel(ci, si, "portal", i))
+	sels := make([]faceSel, 0, len(b.Faces))
+	for fi := range b.Faces {
+		sels = append(sels, brushFaceSel(ci, bi, fi))
 	}
 	setFaceSelection(sels)
-	editorSetStatus("Selected %d faces of %s", len(sels), s.ID)
+	editorSetStatus("Selected %d faces of %s", len(sels), b.ID)
 }
 
-// editor3DSelectSectorWalls is editor3DSelectSectorFaces narrowed to the
-// upright faces — the common case, since a room's walls usually want one
-// texture and its floor another.
-func editor3DSelectSectorWalls() {
-	ch, s := editor3DActiveSector()
-	if ch == nil || s == nil || len(s.Walls) == 0 {
+// editor3DSelectBrushSideFaces is editor3DSelectBrushFaces narrowed to the
+// upright faces — the common case, since a solid's sides usually want one
+// texture and its top and bottom another.
+//
+// "Upright" is a threshold on the face normal's Y component rather than an
+// authored kind, because a brush face has no kind: a wedge's slope is a side
+// or a roof depending only on how steep it is.
+func editor3DSelectBrushSideFaces() {
+	ci, bi := activeBrushIndices()
+	ch, b := editor3DActiveBrush()
+	if ch == nil || b == nil || len(b.Faces) == 0 {
 		return
 	}
-	ci, si := Editor.ActiveChunkIdx, Editor.ActiveSectorIdx
-	sels := make([]faceSel, 0, len(s.Walls))
-	for i := range s.Walls {
-		sels = append(sels, edgeFaceSel(ci, si, "wall", i))
+	sels := make([]faceSel, 0, len(b.Faces))
+	for fi := range b.Faces {
+		n := b.FaceNormal(&b.Faces[fi])
+		if math.Abs(float64(n.Y())) > uprightFaceMaxY {
+			continue
+		}
+		sels = append(sels, brushFaceSel(ci, bi, fi))
+	}
+	if len(sels) == 0 {
+		return
 	}
 	setFaceSelection(sels)
-	editorSetStatus("Selected %d walls of %s", len(sels), s.ID)
+	editorSetStatus("Selected %d side faces of %s", len(sels), b.ID)
+}
+
+// uprightFaceMaxY is how far a face normal may tilt off horizontal and still
+// count as a side: cos(60°), so anything steeper than a 30° slope from vertical
+// is a wall rather than a floor or a roof. The same threshold the collision
+// resolver uses to decide what can be walked up (internal/collision).
+const uprightFaceMaxY = 0.5
+
+// editorDeleteSelectedBrushes removes every brush the face selection names,
+// highest index first so the earlier removals do not renumber the later ones.
+// Caller brackets the undo.
+func editorDeleteSelectedBrushes() {
+	lvl := Editor.level
+	if lvl == nil {
+		return
+	}
+	// Deduplicated: eight selected faces of one brush delete one brush.
+	perChunk := map[int]map[int]struct{}{}
+	for _, sel := range Editor.SelectedFaces {
+		if _, b := faceSelBrush(sel); b == nil {
+			continue
+		}
+		if perChunk[sel.chunkIdx] == nil {
+			perChunk[sel.chunkIdx] = map[int]struct{}{}
+		}
+		perChunk[sel.chunkIdx][sel.brushIdx] = struct{}{}
+	}
+	n := 0
+	for ci, brushes := range perChunk {
+		ch := &lvl.Chunks[ci]
+		idxs := make([]int, 0, len(brushes))
+		for bi := range brushes {
+			idxs = append(idxs, bi)
+		}
+		sort.Sort(sort.Reverse(sort.IntSlice(idxs)))
+		for _, bi := range idxs {
+			if bi < 0 || bi >= len(ch.Brushes) {
+				continue
+			}
+			ch.Brushes[bi].Release()
+			ch.Brushes = append(ch.Brushes[:bi], ch.Brushes[bi+1:]...)
+			n++
+		}
+		ch.RecomputeBounds()
+	}
+	clearFaceSelection()
+	clearVertexSelection()
+	editorSetStatus("Deleted %d brush(es)", n)
 }

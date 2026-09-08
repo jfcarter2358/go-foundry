@@ -628,13 +628,13 @@ func Run() {
 		// counted it would be reporting the level file rather than what is
 		// actually resident. (The cached version was also left behind by
 		// load_level, which replaces the level wholesale.)
-		render.DebugStats.ChunksLoaded, render.DebugStats.SectorsLoaded = 0, 0
+		render.DebugStats.ChunksLoaded, render.DebugStats.BrushesLoaded = 0, 0
 		for i := range level.Chunks {
 			if !level.Chunks[i].IsEnabled() {
 				continue
 			}
 			render.DebugStats.ChunksLoaded++
-			render.DebugStats.SectorsLoaded += len(level.Chunks[i].Sectors)
+			render.DebugStats.BrushesLoaded += len(level.Chunks[i].Brushes)
 		}
 
 		// Animated textures (the texture editor's animation stack) advance on
@@ -744,8 +744,7 @@ func Run() {
 			// Draw world geometry: chunks → sectors → floor/ceiling/walls
 			// Two-pass rendering: opaque geometry first, then transparent geometry sorted back-to-front.
 			chunksDrawn := 0
-			sectorsDrawn := 0
-			sectorsPortalCulled := 0
+			brushesDrawn := 0
 			var transparentDraws []TransparentDraw
 
 			// Helper to queue or draw a geometry object based on its alpha.
@@ -822,121 +821,47 @@ func Run() {
 					chunkCam = mgl32.Vec3{r.X(), r.Y(), r.Z()}
 				}
 
-				// Portal visibility: only render sectors reachable through portals from the player's sector.
-				// Sectors disconnected from the portal graph (e.g. nested sectors with no shared
-				// edges) bypass portal culling and fall through to frustum-only culling.
-				//
-				// Off in the editor. The BFS starts at the PLAYER's sector but
-				// tests portal facing against the camera, and in the editor
-				// those are two unrelated places: the body stands wherever play
-				// last left it while the eye flies anywhere it likes. Sectors
-				// then dropped out of the set as the view moved — geometry
-				// simply stopping being drawn as the camera passed through it.
-				// A free camera has no room to be in, so there is nothing for
-				// this pass to cull from.
-				var visibleSectors map[string]bool
-				var connectedSectors map[string]bool
-				if !devActive() && world.PlayerEntity != nil && chunk.ID == world.PlayerEntity.CurrentChunk {
-					visibleSectors = render.PortalVisibleSectors(chunk, world.PlayerEntity.CurrentSector, chunkCam)
-					connectedSectors = render.PortalConnectedSectors(chunk, world.PlayerEntity.CurrentSector)
-				}
-
-				for j := range chunk.Sectors {
-					sector := &chunk.Sectors[j]
-					if visibleSectors != nil && connectedSectors[sector.ID] && !visibleSectors[sector.ID] {
-						sectorsPortalCulled++
+				// Brushes. There is no portal-visibility pass any more: a
+				// portal was a sector's declaration of which room it opened
+				// into, and open space is now simply the absence of a brush,
+				// so there is no graph to walk. Culling is the frustum and,
+				// for a release build, the compiled PVS (Phase 9); in the
+				// editor it is the frustum alone.
+				for j := range chunk.Brushes {
+					brush := &chunk.Brushes[j]
+					// LocalAABB carried out through the chunk's own matrix,
+					// matching what the shadow (shadow.go) and detail
+					// (detail_render.go) passes cull the same brush against.
+					// Culling against a tighter box here would drop a brush
+					// whose displaced face was on screen while its shadow was
+					// still being drawn.
+					bMin, bMax := brush.WorldAABB(chunk)
+					if !render.AABBInFrustum(frustum, bMin, bMax) {
 						continue
 					}
-					// WorldAABB, not a hand-built Floor.Height..Ceiling.Height
-					// box: LocalAABB widens that range by per-vertex offsets,
-					// terrain points, extrusions and wall tops, and this pass
-					// has to agree with the shadow (shadow.go) and detail
-					// (detail_render.go) passes, which both cull the same
-					// sector against exactly that. Culling against a tighter
-					// box here dropped sectors whose extrusion was on screen
-					// while their shadow was still being drawn.
-					sectorMin, sectorMax := sector.WorldAABB(chunk)
-					if !render.AABBInFrustum(frustum, sectorMin, sectorMax) {
-						continue
-					}
-					sectorsDrawn++
-					// The skirt closes the band under this sector's floor —
-					// a storey's slab edge, or the face under an overhang. It
-					// is drawn whatever the floor itself is doing: a Hidden
-					// floor still has a slab, and a displaced one still needs
-					// its edge. See world/skirt.go.
-					if world.SkirtDrawable(sector) {
-						drawOrQueue(&sector.Floor.SkirtGeometry, chunkModel, true)
-					}
-					if sector.Floor.Enabled && !sector.Floor.Hidden {
-						// Displaced faces are drawn by RenderDetailColor via the tess
-						// program instead of the flat mesh (avoids z-fighting).
-						if !sector.Floor.Detail.HasDisplace() {
-							drawOrQueue(&sector.Floor.Geometry, chunkModel, sector.Floor.DoubleSided)
-						}
-						for eg := range sector.Floor.SubmeshGeometries {
-							drawOrQueue(&sector.Floor.SubmeshGeometries[eg], chunkModel, sector.Floor.DoubleSided)
-						}
-					}
-					if sector.Ceiling.Enabled {
-						if !sector.Ceiling.Detail.HasDisplace() {
-							drawOrQueue(&sector.Ceiling.Geometry, chunkModel, sector.Ceiling.DoubleSided)
-						}
-						for eg := range sector.Ceiling.SubmeshGeometries {
-							drawOrQueue(&sector.Ceiling.SubmeshGeometries[eg], chunkModel, sector.Ceiling.DoubleSided)
-						}
-					}
-					// A slab is the far side of a surface it has already been
-					// decided to draw: the underside of the floor, the top of
-					// the ceiling, and the rim round either. Its rim is forced
-					// double-sided the same way a skirt's is — it is a band of
-					// solid geometry an author never picks a facing for. See
-					// world/slab.go.
-					for _, sl := range [...]*world.Slab{&sector.Floor.Slab, &sector.Ceiling.Slab} {
-						if !world.SlabDrawable(sl) {
+					brushesDrawn++
+					for k := range brush.Faces {
+						f := &brush.Faces[k]
+						if f.NoDraw {
 							continue
 						}
-						if !sl.Hidden {
-							drawOrQueue(&sl.Geometry, chunkModel, sl.DoubleSided)
-							for eg := range sl.SubmeshGeometries {
-								drawOrQueue(&sl.SubmeshGeometries[eg], chunkModel, sl.DoubleSided)
-							}
+						// Backface culling is the GPU's here, not ours. A
+						// sector wall was a two-sided quad whose facing had to
+						// be decided on the CPU (WallFacingCamera) because
+						// nothing said which side was outside; a brush face is
+						// wound CCW from outside by construction, so the
+						// rasteriser's own cull is both correct and free.
+						//
+						// Displaced faces are drawn by RenderDetailColor via
+						// the tess program instead of the flat mesh, which
+						// avoids z-fighting between the two.
+						if !f.Detail.HasDisplace() {
+							drawOrQueue(&f.Geometry, chunkModel, f.DoubleSided)
 						}
-						drawOrQueue(&sl.RimGeometry, chunkModel, true)
-					}
-					for k := range sector.Walls {
-						w := &sector.Walls[k]
-						if w.Visible && (w.DoubleSided || render.WallFacingCamera(*w, chunkCam)) {
-							if !w.Detail.HasDisplace() {
-								drawOrQueue(&w.Geometry, chunkModel, w.DoubleSided)
-							}
-							for eg := range w.SubmeshGeometries {
-								drawOrQueue(&w.SubmeshGeometries[eg], chunkModel, w.DoubleSided)
-							}
+						for eg := range f.SubmeshGeometries {
+							drawOrQueue(&f.SubmeshGeometries[eg], chunkModel, f.DoubleSided)
 						}
 					}
-					// Draw gap-fill geometry on portals connecting sectors at different heights.
-					for k := range sector.Portals {
-						p := &sector.Portals[k]
-						if p.Visible && p.DrawGap && (p.DoubleSided || render.PortalFacingCamera(p.StartPoint, p.EndPoint, chunkCam)) {
-							drawOrQueue(&p.FloorGap, chunkModel, p.DoubleSided)
-							drawOrQueue(&p.CeilGap, chunkModel, p.DoubleSided)
-						}
-					}
-				}
-
-				// Biome-painted water surfaces (see biome_water.go). They are
-				// culled against their own bounds rather than inside the sector
-				// loop above: a lake's extent is unrelated to the sector its
-				// centre lands in, so it would otherwise vanish as soon as that
-				// one small sector left the frustum.
-				for wi := range chunk.WaterSurfaces {
-					w := &chunk.WaterSurfaces[wi]
-					wmin, wmax := w.WorldAABB(chunk)
-					if !render.AABBInFrustum(frustum, wmin, wmax) {
-						continue
-					}
-					drawOrQueue(&w.Geometry, chunkModel.Mul4(w.ModelMatrix()), true)
 				}
 			}
 
@@ -979,11 +904,10 @@ func Run() {
 			}
 
 			if !editorWire {
-				// --- Procedural biome scatter (GPU grass / rocks) ---
-				// Drawn after opaque geometry but before the transparent pass: blades and
-				// rocks are solid (depth-written) so translucent water still sorts on top.
-				render.RenderBiomes(&level, projView, gfx.Cam.Position, shadowFrame)
-
+				// TODO(brush migration, Phase 5): biome scatter is being
+				// rebuilt as a Volume, mirroring Volume.Fog. Its render pass
+				// went with internal/biome.
+				//
 				// --- Procedural face detail (GPU rock displacement + scatter) ---
 				// Drawn after opaque geometry; reuses the main fragment shader so it
 				// receives shadows, and was rendered into the shadow maps above so it casts.
@@ -1072,8 +996,7 @@ func Run() {
 			}
 
 			render.DebugStats.ChunksDrawn = chunksDrawn
-			render.DebugStats.SectorsDrawn = sectorsDrawn
-			render.DebugStats.SectorsPortalCulled = sectorsPortalCulled
+			render.DebugStats.BrushesDrawn = brushesDrawn
 		}
 
 		// --- Runtime UI ---

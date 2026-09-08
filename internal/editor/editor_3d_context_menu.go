@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
-	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
@@ -177,29 +176,15 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 	if !ok {
 		return nil
 	}
-	isEdge := r.kind == "wall" || r.kind == "portal"
-
-	// "Enabled" on a floor or ceiling, "Visible" on a wall or portal: the
-	// fields mean the same thing to the user and are named differently in the
-	// schema, and the menu follows the schema so the panel and it agree.
-	onLabel := "Enabled"
-	if isEdge {
-		onLabel = "Visible"
-	}
-	on := r.On != nil && *r.On
 
 	texture := ""
 	if r.Texture != nil {
 		texture = *r.Texture
 	}
-	textureLabel := "Texture"
-	if r.kind == "portal" {
-		textureLabel = "Gap texture"
-	}
 
 	// Every row below acts on the whole face selection, not only the primary —
 	// which is what multi-select is for. The labels say so once it holds more
-	// than one, since "Texture" on its own would read as being about the wall
+	// than one, since "Texture" on its own would read as being about the face
 	// the panel happens to be showing.
 	multi := selectedFaceCount() > 1
 	all := func(label string) string {
@@ -210,26 +195,33 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 	}
 
 	items := []ctxMenuItem{
-		{Label: "Properties", Do: func() { editor3DFocusPanel(editor3DSurfaceFocus(r.kind)) },
+		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusFace) },
 			Tooltip: "Opens the side panel on the first selected face. The panel\nedits that one; these rows edit all of them."},
-		{Label: all(textureLabel), Disabled: r.Texture == nil,
-			Sub: ctxTextureMenuItems(texture, editor3DSetSurfaceTexture)},
-		{Label: fmt.Sprintf("Shape %s", strings.ToLower(editor3DKindLabel(r.kind))),
-			Disabled: r.kind == "portal" || multi,
-			Do:       editor3DShapeSurface,
-			Tooltip: "Edit this surface as a mesh, in place: place and connect points,\n" +
-				"extrude faces into bumps and recesses, open holes. One surface at a time.\n" +
-				"Shaping a slab's far face detaches it from the surface it was following."},
+		{Label: all("Texture"), Sub: ctxTextureMenuItems(texture, editor3DSetSurfaceTexture)},
 		{Separator: true},
-		{Label: all(onLabel), Checked: on, Disabled: r.On == nil,
-			Do: func() { editor3DToggleSurfaceFlag(func(r surface3DRefs) *bool { return r.On }) }},
-		{Label: all("Smooth"), Checked: r.Smooth != nil && *r.Smooth, Disabled: r.Smooth == nil,
+		// The three mesh operations, also on E, I and B — see
+		// editor_brush_mesh.go for why these three and not more.
+		{Label: all("Extrude [E]"), Do: func() { brushExtrudeSelectedFaces(brushExtrudeDefault()) },
+			Tooltip: "Slide the face along its own normal, growing the solid.\nShift+E pulls it back in."},
+		{Label: all("Inset [I]"), Do: func() { brushInsetSelectedFaces(brushInsetFraction) },
+			Tooltip: "Draw the face's corners toward its centre, in its own plane —\nturning the solid into a frustum of itself."},
+		{Label: all("Subdivide [B]"), Do: brushSubdivideSelectedFaces,
+			Tooltip: "Fan the face into one triangle per corner, meeting at its centre.\nAdds no volume; makes the face finer to shape."},
+		{Separator: true},
+		// Every brush face has every one of these fields — a sector's six kinds
+		// each had a different subset, which is why this block used to grey
+		// rows out per kind and name the same flag two different things.
+		{Label: all("Drawn"), Checked: faceDrawn(r.f),
+			Do:      func() { editor3DToggleFaceDrawn() },
+			Tooltip: "Off makes the face invisible while the brush still collides —\nfor a side buried against a neighbour."},
+		{Label: all("Smooth"), Checked: r.Smooth != nil && *r.Smooth,
 			Do:      func() { editor3DToggleSurfaceFlag(func(r surface3DRefs) *bool { return r.Smooth }) },
 			Tooltip: "Weld the normals along shared edges, so neighbouring\nfaces read as one curved surface."},
-		{Label: all("Double sided"), Checked: r.DoubleSided != nil && *r.DoubleSided, Disabled: r.DoubleSided == nil,
+		{Label: all("Double sided"), Checked: r.DoubleSided != nil && *r.DoubleSided,
 			Do: func() { editor3DToggleSurfaceFlag(func(r surface3DRefs) *bool { return r.DoubleSided }) }},
-		{Label: all("Collision"), Checked: r.Collision != nil && *r.Collision, Disabled: r.Collision == nil,
-			Do: func() { editor3DToggleSurfaceFlag(func(r surface3DRefs) *bool { return r.Collision }) }},
+		{Label: all("Collision"), Checked: faceSolid(r.f),
+			Do:      func() { editor3DToggleFaceSolid() },
+			Tooltip: "Off makes this one face walk-through while the rest of the\nbrush stays solid — a window opening in a wall."},
 	}
 	if multi {
 		// A mixed selection has no single "before" value, so the ticks above
@@ -239,46 +231,23 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 			Label: "(ticks show the first face; a row sets them all to match it)"})
 	}
 
-	if isEdge {
-		to, label := "portal", "Convert to portal"
-		if r.kind == "portal" {
-			to, label = "wall", "Convert to wall"
-		}
-		items = append(items,
-			ctxMenuItem{Separator: true},
-			ctxMenuItem{Label: all(label), Do: func() { editor3DConvertSelectedEdge(to) },
-				Tooltip: "A portal is an opening between sectors; a wall is solid.\n" +
-					"Only the selected edges of the other kind are converted."},
-		)
-	}
-
 	return append(items,
 		ctxMenuItem{Separator: true},
-		ctxMenuItem{Label: "Select this sector's walls", Do: editor3DSelectSectorWalls,
-			Tooltip: "Ctrl+click adds one face at a time; this takes the whole\nring at once, including the walls behind you."},
-		ctxMenuItem{Label: "Select this sector's faces", Do: editor3DSelectSectorFaces,
-			Tooltip: "The walls, the portals, the floor and the ceiling."},
-		ctxMenuItem{Label: "Select this sector's vertices", Do: editor3DSelectSectorRing,
-			Tooltip: "One ring — the floor's or the ceiling's — so a drag moves\neach chunk point once."},
+		ctxMenuItem{Label: "Hollow this brush", Disabled: multi, Do: editorHollowSelectedBrush,
+			Tooltip: "Replace the solid with the six brushes of a room filling it —\nfloor, ceiling and four walls."},
+		ctxMenuItem{Label: "Duplicate brush", Disabled: multi, Do: editorDuplicateSelectedBrush,
+			Tooltip: "A copy in place, selected and ready to drag off the original."},
+		ctxMenuItem{Separator: true},
+		ctxMenuItem{Label: "Select this brush's sides", Do: editor3DSelectBrushSideFaces,
+			Tooltip: "The upright faces only — the usual case, since a solid's sides\nwant one texture and its top and bottom another."},
+		ctxMenuItem{Label: "Select this brush's faces", Do: editor3DSelectBrushFaces,
+			Tooltip: "Ctrl+click adds one face at a time; this takes every side of\nthe solid at once, including the ones behind you."},
+		ctxMenuItem{Label: "Select this brush's vertices", Do: editor3DSelectBrushVertices,
+			Tooltip: "Every corner, so a drag moves the whole solid."},
 		ctxMenuItem{Label: "Deselect", Do: clearFaceSelection},
+		ctxMenuItem{Separator: true},
+		ctxMenuItem{Label: "Delete brush", Shortcut: "Del", Do: EditorDeleteSelected},
 	)
-}
-
-// editor3DSurfaceFocus is the panel section a surface kind belongs to. Portals
-// live inside the wall section, which is where their properties are drawn.
-func editor3DSurfaceFocus(kind string) string {
-	switch kind {
-	case "floor":
-		return panelFocusFloor
-	case "ceiling":
-		return panelFocusCeiling
-	case "floor_slab":
-		return panelFocusFloorSlab
-	case "ceiling_slab":
-		return panelFocusCeilingSlab
-	default:
-		return panelFocusWall
-	}
 }
 
 // ---------- vertices ----------
@@ -286,10 +255,10 @@ func editor3DSurfaceFocus(kind string) string {
 func editor3DVertexMenuItems() []ctxMenuItem {
 	return []ctxMenuItem{
 		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusVertex) },
-			Tooltip: "Open the vertex section: X, Z and the floor/ceiling offsets."},
+			Tooltip: "Open the vertex section: the corner's X, Y and Z."},
 		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid,
 			Tooltip: "Rounds onto the grid whatever the snap toggle is set to —\nthat one decides what dragging does."},
-		{Label: "Select this sector's vertices", Do: editor3DSelectSectorRing},
+		{Label: "Select this brush's vertices", Do: editor3DSelectBrushVertices},
 		{Label: "Deselect", Do: clearVertexSelection},
 	}
 }

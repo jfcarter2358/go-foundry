@@ -264,49 +264,13 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		},
 	},
 	{
-		Title: "Editor — 2D sector map (its own window)",
-		// The map only exists in its own window, and Editor.Mode says Mode2D
-		// only inside that window's draw brackets — never while the reference
-		// is being rendered — so the section keys off the window instead.
-		Active: func() bool { return editor.Editor.Active && editor.Editor2DPoppedOut() },
+		Title:  "Editor — shaping a brush",
+		Active: func() bool { return editor.Editor.Active && editor.Editor.Mode == editor.Mode3D },
 		Binds: []uiwin.Keybind{
-			{Keys: "W / A / S / D", Desc: "Pan the map"},
-			{Keys: "Middle-drag", Desc: "Pan the map"},
-			{Keys: "Mouse wheel", Desc: "Zoom"},
-			{Keys: "Left click / drag", Desc: "Select and move a vertex"},
-			{Keys: "Shift+Left click", Desc: "Split the nearest edge, else drop a free point"},
-			{Keys: "Ctrl+Left click", Desc: "Connect two points"},
-			{Keys: "Right click", Desc: "Remove the point under the cursor, else deselect"},
-		},
-	},
-	{
-		Title: "Editor — biome brush (2D)",
-		Active: func() bool {
-			return editor.Editor.Active && editor.Editor2DPoppedOut() && editor.Editor.BiomeLayerActive
-		},
-		Binds: []uiwin.Keybind{
-			{Keys: "Left click", Desc: "Add a polygon point; click the first point to close"},
-			{Keys: "Right click", Desc: "Undo the last point while drawing, else delete a sector"},
-			{Keys: "Enter", Desc: "Finish the polygon"},
-			{Keys: "Esc", Desc: "Cancel the polygon"},
-		},
-	},
-	{
-		Title:  "Editor — shaping a surface",
-		Active: func() bool { return editor.Editor.Active && editor.Editor.SurfaceEditing },
-		Binds: []uiwin.Keybind{
-			{Keys: "W A S D / Space / Shift", Desc: "Fly, exactly as outside surface mode"},
-			{Keys: "1 / 2 / 3", Desc: "Select the surface's points, edges or faces"},
-			{Keys: "Left click", Desc: "Pick; Ctrl+click adds to the selection"},
-			{Keys: "Drag an arm", Desc: "Move the selection — green is depth, red U, blue V"},
-			{Keys: "E", Desc: "Extrude the selected faces, then drag the depth arm"},
-			{Keys: "I", Desc: "Inset the selected faces"},
+			{Keys: "E", Desc: "Extrude the selected faces along their normals (Shift+E pulls in)"},
+			{Keys: "I", Desc: "Inset the selected faces (Shift+I widens them)"},
 			{Keys: "B", Desc: "Subdivide the selected faces"},
-			{Keys: "C", Desc: "Connect two selected points, splitting the face"},
-			{Keys: "H", Desc: "Open the selected faces as a hole, or close them"},
-			{Keys: "Ctrl+A", Desc: "Select all"},
-			{Keys: "Delete", Desc: "Delete the selected faces"},
-			{Keys: "Esc", Desc: "Done shaping"},
+			{Keys: "Delete", Desc: "Delete the selected faces' brushes"},
 		},
 	},
 }

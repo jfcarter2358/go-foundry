@@ -21,16 +21,15 @@ var DebugOverlayVisible = false
 
 // DebugStats holds the values displayed in the debug overlay.
 var DebugStats struct {
-	FPS                 float32
-	FrameTimeMs         float32
-	CPUPercent          float32
-	MemAllocMB          float32
-	MemSysMB            float32
-	SectorsLoaded       int
-	ChunksLoaded        int
-	SectorsDrawn        int
-	SectorsPortalCulled int
-	ChunksDrawn         int
+	FPS           float32
+	FrameTimeMs   float32
+	CPUPercent    float32
+	MemAllocMB    float32
+	MemSysMB      float32
+	BrushesLoaded int
+	ChunksLoaded  int
+	BrushesDrawn  int
+	ChunksDrawn   int
 	// The sprite pass. Particles is how many quads the emitters put up this
 	// frame and SpriteDraws how many draw calls that took — the two numbers an
 	// author needs together, because one large batch and a thousand tiny ones

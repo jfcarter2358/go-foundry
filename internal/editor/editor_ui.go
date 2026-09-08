@@ -755,31 +755,10 @@ func EditorDrawUI() {
 		imgui.WindowFlagsNoTitleBar|imgui.WindowFlagsNoResize|
 			imgui.WindowFlagsNoMove|imgui.WindowFlagsNoScrollbar)
 
-	// Snapshot mode before rendering so Push/Pop stay matched. The main window
-	// is always the 3D view now — the sector map has a window of its own — so
-	// there is no 2D/3D toggle here, and this button is the only way into it.
+	// Snapshot mode before rendering so Push/Pop stay matched.
 	currentMode := Editor.Mode
 
 	// ---- Group: sub-editor windows ----
-	// Snapshot before the button: clicking it opens the window, so re-testing
-	// Editor2DPoppedOut() afterwards would pop a color that was never pushed
-	// and unbalance imgui's global style stack (it asserts on the next
-	// push/pop anywhere). Same reason drawToolsPanel latches its selection.
-	editor2DOpen := Editor2DPoppedOut()
-	if editor2DOpen {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.6, Z: 0.2, W: 1})
-	}
-	if imgui.Button("2D Window") {
-		OpenEditor2DWindow()
-	}
-	if editor2DOpen {
-		imgui.PopStyleColor()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Open the top-down sector map in its own window.")
-	}
-
-	imgui.SameLine()
 	if imgui.Button("Textures") {
 		textureui.OpenTextureEditor()
 	}
@@ -1085,172 +1064,7 @@ func EditorDrawUI() {
 	}
 }
 
-// Editor2DPanel draws the 2D mode side panel: Context, the map's own actions,
-// Objects, Properties, View, Editor — see editor_panel.go for the shared frame
-// this and Editor3DPanel both draw through.
-func Editor2DPanel() {
-	lvl := Editor.level
-	if lvl == nil {
-		return
-	}
-
-	// Sized to whichever window is hosting the 2D view — the main one, or the
-	// pop-out (editor_2d_window.go).
-	viewW, viewH := editor2DViewportSize()
-	imgui.SetNextWindowPos(imgui.Vec2{X: viewW - Editor.PanelWidth, Y: 28})
-	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: viewH - 28})
-	imgui.BeginV("2D Sector Editor", nil, imgui.WindowFlagsNoMove|imgui.WindowFlagsNoResize)
-
-	editorPanelBody(lvl, panelKind2D)
-
-	imgui.End()
-	editorChunkPopups(lvl)
-}
-
-// editor2DSectorSections draws the selected sector's properties and, under
-// them, the selected corner.
-//
-// The sector block itself is the one the 3D panel draws — see
-// editor_sector_panel.go — so the two editors cannot disagree about what a
-// wall or a floor carries. What is left here is the corner, which only the map
-// can pick: a position in the plan, and the two per-corner height offsets that
-// tilt the floor and the ceiling above it.
-func editor2DSectorSections(lvl *world.Level, ch *world.Chunk) {
-	if Editor.ActiveSectorIdx < 0 || Editor.ActiveSectorIdx >= len(ch.Sectors) {
-		return
-	}
-	s := &ch.Sectors[Editor.ActiveSectorIdx]
-
-	imgui.Separator()
-	editorFocusOpen(panelFocusSector, panelFocusFloor, panelFocusCeiling, panelFocusWall)
-	if !imgui.CollapsingHeaderV("Sector: "+s.ID+"##sechdr2d", imgui.TreeNodeFlagsDefaultOpen) {
-		return
-	}
-	editorFocusScroll(panelFocusSector)
-	editorSectorPropertiesBody(lvl, ch, s, "2d")
-	editor2DVertexGroup(ch, s)
-}
-
-// editor2DVertexGroup draws the selected corner of the selected sector.
-func editor2DVertexGroup(ch *world.Chunk, s *world.Sector) {
-	si, vi := Editor.ActiveVertexSI, Editor.ActiveVertexVI
-	sectorPts := world.SectorPoints(ch, s)
-	if si != Editor.ActiveSectorIdx || si < 0 || vi < 0 || vi >= len(sectorPts) {
-		return
-	}
-
-	editorFocusOpen(panelFocusVertex)
-	editorPropGroup(fmt.Sprintf("Corner %d##grpvert2d", vi), imgui.TreeNodeFlagsDefaultOpen, func() {
-		editorFocusScroll(panelFocusVertex)
-		x := sectorPts[vi].X()
-		z := sectorPts[vi].Y()
-		xChanged := editorDragFloat(fmt.Sprintf("X##vx%d", vi), &x, -1e6, 1e6, "%.3f")
-		zChanged := editorDragFloat(fmt.Sprintf("Z##vz%d", vi), &z, -1e6, 1e6, "%.3f")
-		if xChanged || zChanged {
-			if vi < len(s.PointIndices) {
-				pIdx := s.PointIndices[vi]
-				was := ch.Points[pIdx]
-				ch.Points[pIdx] = mgl32.Vec2{x, z}
-			}
-			rebuildSectorEdgePoints(ch, s)
-			reloadSectorsUsingPoint(ch, s.PointIndices[vi])
-		}
-
-		// The two per-corner height deltas, which is what makes a ramp.
-		if vi < len(s.Floor.VertexOffsets) {
-			fOff := s.Floor.VertexOffsets[vi]
-			if editorDragFloat(fmt.Sprintf("Floor Offset##fo%d", vi), &fOff, -100, 100, "%.3f") {
-				s.Floor.VertexOffsets[vi] = fOff
-				_ = world.ReloadSector(ch, s)
-			}
-		}
-		if vi < len(s.Ceiling.VertexOffsets) {
-			cOff := s.Ceiling.VertexOffsets[vi]
-			if editorDragFloat(fmt.Sprintf("Ceil Offset##co%d", vi), &cOff, -100, 100, "%.3f") {
-				s.Ceiling.VertexOffsets[vi] = cOff
-				_ = world.ReloadSector(ch, s)
-			}
-		}
-	})
-}
-
-// convertEdge converts an edge between wall and portal types.
-func convertEdge(ch *world.Chunk, s *world.Sector, fromKind string, idx int, toKind string) {
-	if fromKind == toKind {
-		return
-	}
-
-	// Find the polygon edge index BEFORE modifying any arrays, so the
-	// wall/portal sub-array index still maps correctly to EdgeKinds.
-	polyIdx := polyEdgeIdx(s, fromKind, idx)
-	if polyIdx < 0 || polyIdx >= len(s.EdgeKinds) {
-		return
-	}
-
-	// Compute the correct insertion position in the target sub-array so
-	// that the ordering stays consistent with EdgeKinds.
-	insertIdx := 0
-	for ei := 0; ei < polyIdx; ei++ {
-		if s.EdgeKinds[ei] == toKind {
-			insertIdx++
-		}
-	}
-
-	// The edge keeps its ID across the conversion. This is the whole reason
-	// identity lives on the edge rather than on the wall or portal record: a
-	// script addressing @sector.edge.<id> must not lose its target because the
-	// author turned that edge into a doorway.
-	world.EnsureEdgeIDs(s)
-	edgeID := s.EdgeIDs[polyIdx]
-
-	if fromKind == "wall" && idx < len(s.Walls) {
-		w := s.Walls[idx]
-		p := world.Portal{ID: edgeID, StartPoint: w.StartPoint, EndPoint: w.EndPoint, Visible: true, DoubleSided: w.DoubleSided, Alpha: 1.0}
-		s.Walls = append(s.Walls[:idx], s.Walls[idx+1:]...)
-		// Insert portal at the correct position
-		s.Portals = append(s.Portals, world.Portal{})
-		copy(s.Portals[insertIdx+1:], s.Portals[insertIdx:])
-		s.Portals[insertIdx] = p
-		Editor.ActiveEdgeKind = "portal"
-		Editor.ActiveEdgeIdx = insertIdx
-	} else if fromKind == "portal" && idx < len(s.Portals) {
-		p := s.Portals[idx]
-		_ = gfx.EnsureTextureLoaded("concrete")
-		w := world.Wall{ID: edgeID, StartPoint: p.StartPoint, EndPoint: p.EndPoint, Texture: "concrete", Collision: true, Visible: true, Pinned: true, DoubleSided: p.DoubleSided, Alpha: 1.0}
-		s.Portals = append(s.Portals[:idx], s.Portals[idx+1:]...)
-		// Insert wall at the correct position
-		s.Walls = append(s.Walls, world.Wall{})
-		copy(s.Walls[insertIdx+1:], s.Walls[insertIdx:])
-		s.Walls[insertIdx] = w
-		Editor.ActiveEdgeKind = "wall"
-		Editor.ActiveEdgeIdx = insertIdx
-	}
-
-	s.EdgeKinds[polyIdx] = toKind
-	world.SyncEdgeRecordIDs(s)
-	_ = world.ReloadSector(ch, s)
-	// An edge that has just become a portal has no gap geometry yet, and one
-	// that has just become a wall still has the gap it had as a portal.
-	ch.RebuildGaps()
-}
-
-// polyEdgeIdx returns the polygon edge index for the wall/portal at kind+idx.
-func polyEdgeIdx(s *world.Sector, kind string, idx int) int {
-	count := 0
-	for ei, k := range s.EdgeKinds {
-		if k == kind {
-			if count == idx {
-				return ei
-			}
-			count++
-		}
-	}
-	return -1
-}
-
-// editorGizmoToolButtons draws the move/rotate/scale toggles. Shared by the
-// main window's toolbar and the 2D pop-out's, so the tool can be switched
-// wherever the view being edited happens to live.
+// editorGizmoToolButtons draws the move/rotate/scale toggles.
 func editorGizmoToolButtons() {
 	for _, tool := range editorGizmoTools {
 		tl := tool
@@ -1262,45 +1076,6 @@ func editorGizmoToolButtons() {
 		}
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip(editorGizmoToolTooltip(tl))
-		}
-	}
-}
-
-// editor2DJoinButtons draws the map's join actions. They are the panel half of
-// the pair of rows the right-click menu carries: picking points and then saying
-// what to do with them is the map's way of drawing a sector, and a workflow
-// that lives only in a context menu is a workflow nobody finds.
-func editor2DJoinButtons() {
-	can := editorCanJoinPoints()
-	imguibackend.EditorPushDisabled(!can)
-	if imgui.Button(editorJoinLabel(false) + "##join") {
-		EditorJoinSelectedPoints(false)
-	}
-	imguibackend.EditorPopDisabled()
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("J — Draw an edge between each picked point and the next,\n" +
-			"in the order you picked them. Ctrl+click points to pick them.")
-	}
-
-	imgui.SameLine()
-	imguibackend.EditorPushDisabled(!can)
-	if imgui.Button(editorJoinLabel(true) + "##joinclose") {
-		EditorJoinSelectedPoints(true)
-	}
-	imguibackend.EditorPopDisabled()
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Shift+J — The same, plus the edge back to the first point,\n" +
-			"which closes the outline and turns it into a sector.")
-	}
-
-	if len(Editor.PendingEdges) > 0 {
-		if imgui.Button(fmt.Sprintf("Discard %d Unjoined Edge(s)##discardpending",
-			len(Editor.PendingEdges))) {
-			EditorDiscardPendingEdges()
-		}
-		if imgui.IsItemHovered() {
-			imgui.SetTooltip("Edges drawn but not yet closed into a sector.\n" +
-				"The points themselves stay.")
 		}
 	}
 }

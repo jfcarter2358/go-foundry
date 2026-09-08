@@ -39,8 +39,6 @@ package editor
 // is carried along once per drag rather than once per handle that named it.
 
 import (
-	"foundry/internal/world"
-
 	"github.com/go-gl/mathgl/mgl32"
 )
 

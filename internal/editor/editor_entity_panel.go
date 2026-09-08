@@ -205,9 +205,8 @@ func editorEntityIdentity(lvl *world.Level, e *world.Entity) {
 		}
 	}
 	imgui.Checkbox("Visible##entvis", &e.Visible)
-	if e.CurrentChunk != "" || e.CurrentSector != "" {
-		imgui.Text(fmt.Sprintf("In: chunk %s / sector %s",
-			orDash(e.CurrentChunk), orDash(e.CurrentSector)))
+	if e.CurrentChunk != "" {
+		imgui.Text("In: chunk " + orDash(e.CurrentChunk))
 	}
 }
 

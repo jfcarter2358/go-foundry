@@ -28,7 +28,6 @@ package editor
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/render"
-	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
