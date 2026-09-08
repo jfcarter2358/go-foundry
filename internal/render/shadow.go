@@ -561,6 +561,11 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 			// the camera — a camera-facing quad rendered from here would be
 			// edge-on and cast nothing. Restores Shadows.Program.
 			RenderSpriteDirShadow(level, lsm, dl.Direction, gfx.Cam.Position, &cull)
+			// Cast the scatter volumes' foliage. The cascade index and its own
+			// split distance both go in: they are what stop a blade of grass
+			// from being re-instanced into a cascade whose shadow could never
+			// usefully reach it. Restores Shadows.Program.
+			RenderScatterDirShadow(level, lsm, c, frame.Splits[c], gfx.Cam.Position, BiomeWindTime, &cull)
 			layer++
 		}
 	}
@@ -629,6 +634,9 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 			// quads converge on it exactly as they converge on the eye in the
 			// colour pass. Restores Shadows.CubeProgram.
 			RenderSpriteCubeShadow(level, lsm, pl.Position, farPlane, &cull)
+			// Scatter into this cube face, with the light's own far plane as
+			// the cast cap. Restores Shadows.CubeProgram.
+			RenderScatterCubeShadow(level, lsm, pl.Position, farPlane, gfx.Cam.Position, BiomeWindTime, &cull)
 		}
 		mapIdx++
 	}

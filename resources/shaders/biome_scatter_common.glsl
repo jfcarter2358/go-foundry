@@ -9,7 +9,7 @@
 // vertex stages.
 //
 // It exists so a blade casts the shadow of the blade you can actually see: the
-// lattice, the hash jitter, the clump gathering, the polygon mask, the height
+// lattice, the hash jitter, the clump gathering, the shape mask, the height
 // drop, the wind sway and the bow are all evaluated ONCE here, and all three
 // stages call it. A second, hand-kept copy of this math in a shadow shader
 // would drift the instant either side was tuned, and the shadows would slide
@@ -17,9 +17,9 @@
 //
 // Every blade/rock is generated entirely on the GPU: gl_InstanceID indexes a
 // world-stable lattice around the camera; a hash scatters/jitters it; a
-// point-in-polygon test against the sector's own points (uploaded directly as
+// point-in-shape test against the volume's own extents (uploaded as
 // a uniform array — no coverage texture) decides whether it survives; a
-// per-sector height texture drops it onto the structural floor beneath it.
+// per-volume height texture drops it onto the geometry beneath it.
 // No per-instance CPU data is used — only a small template mesh drawn with
 // glDrawArraysInstanced. Grass can additionally gather neighbouring lattice
 // slots into plant-like tufts — see the `clump` uniform.
@@ -34,7 +34,8 @@
 
 // Camera-centered instancing ring. camXZ is the camera position carried into
 // the OWNING CHUNK's own local space (see uploadBiomeChunk in grass.go) —
-// every uniform the lattice is tested against below (polyPts, heightTex) is
+// every uniform the lattice is tested against below (the volume shape,
+// heightTex) is
 // chunk-local too, so the whole placement pipeline runs self-consistently in
 // that one frame; only the FINAL placed bWorldPos/bNormal get carried back
 // out to true world space, by the `model` uniform each vertex stage applies
@@ -48,7 +49,7 @@ uniform int   gridN;    // slots per side (instanceCount == gridN*gridN)
 uniform float range;    // max spawn radius from camera THIS draw call covers
 
 // Inner boundary of this draw call's own distance band (world units from the
-// camera), 0 for a kind's innermost/only LOD tier. Lets one sector be drawn
+// camera), 0 for a kind's innermost/only LOD tier. Lets one volume be drawn
 // as up to three concentric-ring passes — Near/Mid/Far, see grass.go's
 // three-tier scatter doc comment — each binding a different template mesh
 // and its own [lodMin, range] slice of the SAME camera-centered lattice
@@ -68,7 +69,7 @@ uniform float lodMin;
 // already makes lodGrowIn (biomePlace) a no-op regardless.
 uniform float lodFadeFraction;
 // Whether THIS tier's own outer edge (`range`) is an LOD split (Near->Mid,
-// Mid->Far — nonzero) or the sector's true, polygon-independent outer edge
+// Mid->Far — nonzero) or the volume's true, shape-independent outer edge
 // (zero, the last/only tier). Picks which kind of fade that edge gets: an LOD
 // split dithers (lodShrinkOut in biomePlace, folded into the alive test) so
 // it doesn't gap against the next tier's own dithered grow-in; the true edge
@@ -93,11 +94,11 @@ uniform float castRange;
 // the camera-ring boundary fades over; 0 reproduces the exact hard cutoff the
 // `dist <= range` alive test already gives on its own (no shrink at all).
 uniform float rangeFadeFraction;
-// edgeFadeDistance is how many world units in from the sector's OWN painted
-// polygon edge an instance takes to grow to full size; 0 disables it (an
+// edgeFadeDistance is how many world units in from the volume's OWN boundary
+// an instance takes to grow to full size; 0 disables it (an
 // instance right at the boundary is already full size, i.e. today's hard
 // edge). Off by default: unlike the range fade, it costs a real per-instance
-// distance-to-polygon query (see polyEdgeDist), so it's only paid for sectors
+// distance-to-boundary query (see volEdgeDist), so it's only paid for volumes
 // that actually opt in.
 uniform float edgeFadeDistance;
 
@@ -105,10 +106,10 @@ uniform float edgeFadeDistance;
 // EVERY circular boundary this instance's distance is compared against (the
 // alive test's range/lodStart/castRange cutoffs, and every fade/dither
 // envelope's smoothstep span) by a smooth, low-frequency world-space noise,
-// so a sector's rings read as an organic patch of thinning vegetation instead
+// so a volume's rings read as an organic patch of thinning vegetation instead
 // of a perfect circle centered on the camera. Applied once, to `dist` itself (see
 // distJ in biomePlace), rather than to each boundary separately — that's what
-// keeps a sector's Near/Mid/Far/outer rings bulging and receding TOGETHER at
+// keeps a volume's Near/Mid/Far/outer rings bulging and receding TOGETHER at
 // the same world positions instead of each wobbling on its own.
 uniform float boundaryJitter;
 
@@ -138,7 +139,7 @@ uniform int  hasLeaves; // wildflower basal leaves, gated the same degenerate-tr
 // the leaves are built in fractions of the stem's own height, so this scales
 // what is already proportional rather than replacing it.
 uniform float leafScale;
-uniform float density;    // 0..1 survival probability, uniform across the sector
+uniform float density;    // 0..1 survival probability, uniform across the volume
 
 // Grass clumping (BiomeBrush.GrassClump). 0 reproduces the original
 // one-blade-per-lattice-slot scatter EXACTLY — every expression below folds
@@ -172,15 +173,21 @@ const float CLUMP_SHORT = 0.55; // height multiplier at its rim
 const float BIOME_ROOT_AO = 0.55; // lighting multiplier at the very base of a stem
 const float BIOME_TUFT_AO = 0.78; // extra multiplier at the middle of a full clump
 
-// Per-sector polygon mask (the sector's own drawn points, chunk-local XZ —
+// The scatter volume's own shape (in the frame camXZ is in —
 // same frame as camXZ above). Tested directly instead of sampling a
 // rasterized coverage texture.
-const int MAX_POLY = 64;
-uniform vec2 polyPts[MAX_POLY];
-uniform int  numPolyPts;
-uniform vec2 polyMin, polyMax; // AABB, for a cheap reject before the ray-cast loop
+// The scatter volume's own shape, in the frame every other uniform here is in
+// (see camXZ). A candidate is carried INTO the volume's frame by volInvRot and
+// tested analytically, which replaces the ray-cast point-in-polygon the painted
+// version needed — cheaper, and four uniforms instead of a 64-entry array.
+//
+// volShape matches world.VolumeShape: 0 = box, 1 = sphere, 2 = cylinder.
+uniform vec3 volCenter;
+uniform vec3 volHalf;
+uniform mat4 volInvRot;
+uniform int  volShape;
 
-// Per-sector height/coverage texture: covers [heightOrigin,
+// Per-volume height/coverage texture: covers [heightOrigin,
 // heightOrigin+heightSize]. .r is the height to drop the instance onto
 // (structural floor, or a covering face's actual displaced surface — see
 // biome_displace.go); .g is a slope-coverage factor in [0,1] (1 = fully
@@ -191,9 +198,9 @@ uniform sampler2D heightTex;
 uniform vec2 heightOrigin;
 uniform vec2 heightSize;
 
-// Per-sector seed (derived from sector ID + brush settings) shifts the hash
-// inputs so different sectors don't scatter identically even when their
-// lattices overlap in world space — e.g. tall grass and short grass painted
+// Per-volume seed (derived from the volume's ID) shifts the hash inputs so
+// different volumes don't scatter identically even when their lattices overlap
+// in world space — e.g. tall grass and short grass placed
 // over the same area land on different spots instead of stacking.
 uniform vec2 seed;
 uniform vec3 tintColor; // paint color: multiplies the kind's base color(s)
@@ -245,57 +252,68 @@ float valueNoise2(vec2 p) {
 }
 
 // Bilinear (height, slope-coverage) at a chunk-local XZ, sampled from this
-// sector's cached height/coverage texture — see the heightTex uniform doc.
+// volume's cached height/coverage texture — see the heightTex uniform doc.
 vec2 sampleHeightCoverage(vec2 local) {
     vec2 uv = (local - heightOrigin) / heightSize;
     return textureLod(heightTex, uv, 0.0).rg;
 }
 
-// Ray-casting point-in-polygon test against the sector's own drawn points.
-bool pointInPoly(vec2 p) {
-    if (p.x < polyMin.x || p.x > polyMax.x || p.y < polyMin.y || p.y > polyMax.y) {
-        return false;
-    }
-    bool inside = false;
-    int j = numPolyPts - 1;
-    for (int i = 0; i < numPolyPts; i++) {
-        vec2 a = polyPts[i];
-        vec2 b = polyPts[j];
-        if (((a.y > p.y) != (b.y > p.y)) &&
-            (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)) {
-            inside = !inside;
-        }
-        j = i;
-    }
-    return inside;
+// volLocalXZ carries a candidate's XZ into the volume's own frame. The Y it
+// uses is the volume's own centre height, not the instance's: an instance is
+// placed on the ground under the lattice slot, and gating it on ITS height
+// would mean a volume had to be tall enough to enclose the terrain as well as
+// wide enough to cover it — which is not what "scatter grass in this region"
+// means. The vertical extent still matters for the sphere and cylinder tests
+// below, where the shape's footprint narrows away from its middle; taking the
+// centre plane is what makes those read as the footprint the author drew.
+vec2 volLocalXZ(vec2 p) {
+    vec3 rel = vec3(p.x, volCenter.y, p.y) - volCenter;
+    vec3 loc = (volInvRot * vec4(rel, 0.0)).xyz;
+    return loc.xz;
 }
 
-// Distance from p to the nearest point on the polygon's own boundary — the
-// same edge list pointInPoly ray-casts against, reused here for a magnitude
-// instead of a crossing count. Only called for instances that already passed
-// pointInPoly AND the density/coverage survival test (see edgeFade below), so
-// its cost lands on the instances actually being drawn, not the full lattice —
-// the same reasoning that keeps sampleHeightCoverage behind the cheap rejects.
-// Returns squared distance; the caller takes one sqrt over the minimum instead
-// of one per edge.
-float polyEdgeDistSq(vec2 p) {
-    float best = 1e30;
-    int j = numPolyPts - 1;
-    for (int i = 0; i < numPolyPts; i++) {
-        vec2 a = polyPts[j];
-        vec2 b = polyPts[i];
-        vec2 ab = b - a;
-        float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-8), 0.0, 1.0);
-        vec2 proj = a + ab * t;
-        vec2 d = p - proj;
-        best = min(best, dot(d, d));
-        j = i;
+// Is this lattice slot inside the volume? The three shapes match
+// world.ShapeContainsPoint's own conventions: half-extents are the box the
+// shape is inscribed in, so a sphere uses the largest of them as its radius and
+// a cylinder is a circle in XZ.
+bool pointInVolume(vec2 p) {
+    vec2 q = volLocalXZ(p);
+    if (volShape == 1) {              // sphere
+        float r = max(volHalf.x, max(volHalf.y, volHalf.z));
+        return dot(q, q) <= r * r;
     }
-    return best;
+    if (volShape == 2) {              // cylinder
+        float r = max(volHalf.x, volHalf.z);
+        return dot(q, q) <= r * r;
+    }
+    return abs(q.x) <= volHalf.x && abs(q.y) <= volHalf.z;
+}
+
+// Distance from p IN to the volume's own boundary — the same shape
+// pointInVolume tests, read as a magnitude instead of a yes/no. Only called for
+// instances that already passed pointInVolume AND the density/coverage survival
+// test (see edgeFade below), so its cost lands on the instances actually being
+// drawn rather than on the full lattice — the same reasoning that keeps
+// sampleHeightCoverage behind the cheap rejects.
+//
+// Analytic per shape rather than a loop over edges, which is the other thing
+// the volume buys: a box's inset distance is the smallest of its two axis
+// margins, and a round shape's is its radius less the point's own.
+float volEdgeDist(vec2 p) {
+    vec2 q = volLocalXZ(p);
+    if (volShape == 1) {
+        float r = max(volHalf.x, max(volHalf.y, volHalf.z));
+        return max(r - length(q), 0.0);
+    }
+    if (volShape == 2) {
+        float r = max(volHalf.x, volHalf.z);
+        return max(r - length(q), 0.0);
+    }
+    return max(min(volHalf.x - abs(q.x), volHalf.z - abs(q.y)), 0.0);
 }
 
 // A handful of fixed wildflower petal hues; tintColor (default neutral)
-// multiplies whichever gets picked so a sector reads as mixed flowers rather
+// multiplies whichever gets picked so a volume reads as mixed flowers rather
 // than one repeated color, while still staying user-tintable.
 vec3 flowerPalette(float h) {
     if (h < 0.2) return vec3(0.95, 0.55, 0.65); // pink
@@ -306,7 +324,7 @@ vec3 flowerPalette(float h) {
 }
 
 // Place and shape one template vertex of instance `instanceID`. Returns false
-// when the instance doesn't survive its polygon/range/density tests — the
+// when the instance doesn't survive its shape/range/density tests — the
 // caller then collapses the vertex off-screen. Fills the b* globals above.
 bool biomePlace(int instanceID, vec3 local, vec3 nrm, float param) {
     int id = instanceID;
@@ -330,7 +348,7 @@ bool biomePlace(int instanceID, vec3 local, vec3 nrm, float param) {
 
     // Clumping (see the `clump` uniform). Each CLUMP_SIDE^2 block of lattice
     // slots shares one jittered root point, and every blade in the block is
-    // pulled toward it. Done BEFORE the polygon/range/height tests below, so a
+    // pulled toward it. Done BEFORE the shape/range/height tests below, so a
     // blade is masked and dropped onto the floor by where it actually ends up
     // rather than by the slot it came from.
     //
@@ -374,8 +392,8 @@ bool biomePlace(int instanceID, vec3 local, vec3 nrm, float param) {
     // distJ instead of the true dist, so the population cutoff (the alive
     // test, LOD dither included) and the visual shrink (rangeFade/edgeFade)
     // always agree about where this instance's edge actually is. seed shifts
-    // the noise per sector, same as every other hash in this file, so two
-    // overlapping sectors don't bulge in lockstep.
+    // the noise per volume, same as every other hash in this file, so two
+    // overlapping volumes don't bulge in lockstep.
     float distJ = dist;
     if (boundaryJitter > 0.0) {
         float n = valueNoise2(cellPos * BOUNDARY_JITTER_FREQ + seed * 0.37) * 2.0 - 1.0;
@@ -405,11 +423,11 @@ bool biomePlace(int instanceID, vec3 local, vec3 nrm, float param) {
 
     // LOD crossfade envelopes (0 = fully faded, 1 = fully present) for this
     // tier's inner and outer edges, WHEN those edges are LOD splits rather
-    // than the sector's true polygon-independent outer edge. lodGrowIn is
+    // than the volume's true shape-independent outer edge. lodGrowIn is
     // this tier's own inner boundary (a no-op — always 1 — on a kind's
     // innermost/only tier, where lodMin is 0). lodShrinkOut is this tier's
     // OWN outer boundary, but only when outerIsLOD says that boundary is an
-    // LOD split (Near->Mid, Mid->Far) rather than the sector's true Range
+    // LOD split (Near->Mid, Mid->Far) rather than the volume's true Range
     // edge — the true edge uses rangeFade below instead, a DIFFERENT kind of
     // fade for a reason explained where it's applied.
     //
@@ -425,7 +443,7 @@ bool biomePlace(int instanceID, vec3 local, vec3 nrm, float param) {
     // instead keeps every surviving instance at FULL SIZE and only varies
     // which fraction of each tier's own already-full-density lattice is
     // present, which is what an LOD crossfade needs to look continuous. The
-    // sector's true outer edge has no second tier picking up past it, so
+    // volume's true outer edge has no second tier picking up past it, so
     // shrinking into nothing is the right look there and stays a shrink.
     float lodGrowIn = lodMin > 0.0
         ? clamp(smoothstep(lodStart, lodMin, distJ), 0.0, 1.0)
@@ -442,7 +460,7 @@ bool biomePlace(int instanceID, vec3 local, vec3 nrm, float param) {
     // INNER tier's own [0, lodMin] pass rather than picking up exactly where
     // it leaves off — lodMin is 0 on a kind's innermost/only tier, so
     // lodStart is 0 too and this is a no-op there.
-    bool alive = pointInPoly(cellPos) && (distJ >= lodStart) && (distJ <= range) && (distJ <= castRange);
+    bool alive = pointInVolume(cellPos) && (distJ >= lodStart) && (distJ <= range) && (distJ <= castRange);
     vec2 hc = vec2(0.0);
     if (alive) {
         hc = sampleHeightCoverage(cellPos);
@@ -460,13 +478,13 @@ bool biomePlace(int instanceID, vec3 local, vec3 nrm, float param) {
         return false;
     }
 
-    // Edge fade: how close this survivor sits to the sector's OWN painted
+    // Edge fade: how close this survivor sits to the volume's OWN
     // boundary, as a 0..1 grow-in factor. Computed only now, after both cheap
     // rejects and the density thinning above, so its cost lands on instances
-    // that are actually going to draw — see polyEdgeDistSq's doc comment.
+    // that are actually going to draw — see volEdgeDist's doc comment.
     float edgeFade = 1.0;
     if (edgeFadeDistance > 0.0) {
-        edgeFade = clamp(sqrt(polyEdgeDistSq(cellPos)) / edgeFadeDistance, 0.0, 1.0);
+        edgeFade = clamp(volEdgeDist(cellPos) / edgeFadeDistance, 0.0, 1.0);
     }
 
     float baseY = hc.x;
@@ -496,11 +514,11 @@ bool biomePlace(int instanceID, vec3 local, vec3 nrm, float param) {
     // reading as a hard circle — 0 disables it and falls back exactly to the
     // hard `dist <= range` cutoff the alive test already gives on its own
     // (fadeStart == range collapses smoothstep's rising edge to nothing).
-    // Composed with edgeFade (the sector's own painted-boundary fade, if
+    // Composed with edgeFade (the volume's own boundary fade, if
     // enabled) into the same shrink, so a corner near both the ring and the
     // polygon edge shrinks by whichever is stronger rather than double-fading.
     //
-    // ONLY applies when this tier's outer edge is the sector's actual Range
+    // ONLY applies when this tier's outer edge is the volume's actual Range
     // (outerIsLOD == 0) — an LOD split's own outer edge already dithered
     // itself out via lodShrinkOut above, in the alive test, so shrinking it
     // here too would fade a population that's already partly gone, on top of

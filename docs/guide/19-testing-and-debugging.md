@@ -72,7 +72,7 @@ The same three collision switches are checkboxes in the **Engine** group of the
 editor settings, which also says when one is off — the first thing to check when
 something that should be solid is not.
 
-Shadow cost switches (`F5`–`F9`) are covered in [Biomes](06-biomes.md) and
+Shadow cost switches (`F5`–`F9`) are covered in [Scatter](06-scatter.md) and
 [Lighting](07-lighting.md).
 
 ## When something does not appear
@@ -97,9 +97,9 @@ declining. Check the log for load errors.
 **A `?param` reads null.** Nobody bound it in the panel, or the ID it names is
 gone. Both read `null`, which is why `if ?target == null` is the check to write.
 
-**A biome polygon is bare.** The slope range excludes the ground under it, or the
-draw distance is shorter than where you are standing, or the chunk it belongs to
-is disabled.
+**A scatter volume is bare.** The slope range excludes the ground under it, the
+draw range is shorter than where you are standing, there is no solid brush face
+beneath it to plant on, or the chunk holding that face is disabled.
 
 **A texture is missing.** Its name has no matching `.png` in `textures/`. The log
 names the texture and the object keeps drawing what it had.

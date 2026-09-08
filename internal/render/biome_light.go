@@ -1,13 +1,13 @@
 package render
 
-// biome_light.go — lighting and shadow plumbing shared by the biome passes
-// (the scatter in grass.go and the ground patch in biome_ground.go).
+// biome_light.go — lighting and shadow plumbing shared by the scatter passes
+// (scatter.go's color and two depth programs).
 //
 // Both passes own their GL programs and never touch the main shader's state,
 // which used to mean they also had their own hand-rolled two-term lighting: a
 // global ambient plus directional light 0, no point lights, no shadows. That
 // read as a painted layer floating free of the scene — a building's shadow
-// swept across the terrain and stopped dead at the sector boundary, and a torch
+// swept across the terrain and stopped dead at the region boundary, and a torch
 // lit the floor but not the grass standing on it.
 //
 // The fix is deliberately not a second lighting model. resources/shaders/
@@ -50,7 +50,7 @@ type BiomeShadowSettings struct {
 
 	// CastFoliage: grass, wildflowers and cattails render into the shadow maps
 	// too. Off by default, and the reason the whole struct is runtime-toggleable:
-	// at maxGrassGridN this re-instances up to 102,400 blades per sector per
+	// at maxGrassGridN this re-instances up to 102,400 blades per volume per
 	// cascade, and a blade thinner than a shadow texel tends to alias into
 	// flickering speckle rather than a shadow. Worth trying at low density or
 	// with a short CastRange; worth measuring before shipping on.
@@ -59,8 +59,8 @@ type BiomeShadowSettings struct {
 	// CastCascades caps how many of ShadowCascades the scatter is drawn into,
 	// nearest first. Rock/moss silhouettes read as real shadow-casters well
 	// past the first cascade (unlike a single grass blade), so the default is
-	// 2 rather than 1 — see cascadeSplit in RenderBiomeScatterDirShadow for how
-	// this and CastRange combine to bound each cascade's own instance count.
+	// 2 rather than 1 — see cascadeSplit in RenderScatterDirShadow for how this
+	// and CastRange combine to bound each cascade's own instance count.
 	CastCascades int
 
 	// CastRange is an EXTRA user cap on the scatter ring's radius for the
@@ -76,8 +76,8 @@ type BiomeShadowSettings struct {
 	CastRange float32
 
 	// CastLODTiers caps how many of a scatter kind's LOD tiers (Near=1,
-	// Mid=2, Far=3 — see grass.go's three-tier scatter doc comment and
-	// BiomeLODTierCount) render into shadow maps at all, nearest first. This
+	// Mid=2, Far=3 — see scatter.go and world.ScatterLODTierCount) render into
+	// shadow maps at all, nearest first. This
 	// is a SEPARATE gate from CastRange/CastCascades above: a tier that
 	// doesn't make this cut is skipped structurally, not range-clipped, and
 	// when it DOES make the cut it casts using its own (cheaper, for Mid/Far)
@@ -101,7 +101,7 @@ var BiomeShadows = BiomeShadowSettings{
 	CastLODTiers: 1,
 }
 
-// BiomeWindTime is the wind clock, in seconds, that every biome pass animates
+// BiomeWindTime is the wind clock, in seconds, that every scatter pass animates
 // from. A single global rather than a per-call parameter because the shadow
 // passes run earlier in the frame than the color pass and MUST use the same
 // value: a blade that sways in the color pass and stands still in the depth
@@ -117,13 +117,24 @@ func (b *BiomeShadowSettings) AnyCast() bool {
 	return (b.CastRockMoss || b.CastFoliage) && b.CastCascades > 0
 }
 
-// TODO(brush migration, Phase 5): CastsKind gated shadow casting per scatter
-// kind (Rock/Moss vs foliage) off the world.Biome* constants, which went with
-// the biome package. It comes back with scatter volumes; the settings it read
-// (BiomeShadowSettings above) are kept because the shader plumbing in this
-// file is shared with sprite_render.go and the detail passes.
+// CastsKind reports whether a scatter kind is currently configured to cast.
+//
+// Rock and moss go together because they are the same silhouette question: both
+// are chunky, both are capped at a far lower instance count than foliage, and
+// both read as real casters. Grass, wildflowers and cattails go together for
+// the opposite reason — thin, numerous, and prone to aliasing into flickering
+// speckle rather than a shadow.
+func (b *BiomeShadowSettings) CastsKind(kind int32) bool {
+	switch kind {
+	case world.ScatterRock, world.ScatterMoss:
+		return b.CastRockMoss
+	case world.ScatterGrass, world.ScatterWildflower, world.ScatterCattail:
+		return b.CastFoliage
+	}
+	return false
+}
 
-// castRangeFor clamps a sector's own draw range for a shadow pass, in two
+// castRangeFor clamps a volume's own draw range for a shadow pass, in two
 // steps: first to mapReach — the shadow map actually being rendered into can't
 // usefully receive an instance beyond its own extent (a cascade's split
 // distance, a point light's far plane; 0 means no such limit, e.g. an unset

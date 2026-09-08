@@ -14,6 +14,7 @@ package editor
 import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/levelio"
+	"foundry/internal/render"
 	"foundry/internal/world"
 	"strconv"
 	"strings"
@@ -63,6 +64,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroupOpen("Transform##voltfgrp", func() { editorVolumeTransform(v) })
 	editorPropGroupOpen("Shape##volshapegrp", func() { editorVolumeShape(v) })
 	editorPropGroup("Fog##volfoggrp", 0, func() { editorVolumeFog(v) })
+	editorPropGroup("Scatter##volscattergrp", 0, func() { editorVolumeScatter(v) })
 	editorPropGroup("Frame Doorway##voldoorgrp", 0, func() { editorVolumeDoorway(v) })
 	editorPropGroupOpen("Level Exit##volexitgrp", func() { editorVolumeLevelExit(v) })
 	editorScriptDataUI(&v.ScriptData, "vol", strconv.Quote(v.ID))
@@ -147,6 +149,214 @@ func editorVolumeFrameRow(v *world.Volume) {
 		imgui.SetTooltip("The vehicle this region is bolted to. Its position and\n" +
 			"rotation below are then in that vehicle's coordinates,\n" +
 			"authored around the origin rather than where it sits.")
+	}
+}
+
+// editorVolumeScatter draws the scatter block: the checkbox that creates and
+// destroys it, then what grows and how.
+//
+// The checkbox is the gesture the fog group uses, deliberately — an author who
+// has filled a room with fog should recognise the control that fills one with
+// grass. Ticking it off DELETES the scatter; turning it off while keeping the
+// settings is the "Enabled" line below, the same distinction fog draws.
+//
+// The controls are grouped by what they answer: what grows, how much of it,
+// how far it is drawn, and where on the ground it will take. A kind that has
+// no opinion about a control does not show it — a rock has no bloom, and a
+// wildflower has no clumping — because a slider that does nothing is worse
+// than a missing one.
+func editorVolumeScatter(v *world.Volume) {
+	has := v.Scatter != nil
+	if imgui.Checkbox("This volume grows things##volscatteron", &has) {
+		EditorPushUndo()
+		if has {
+			sc := world.DefaultVolumeScatter()
+			v.Scatter = &sc
+			editorSetStatus("Volume %q now grows grass", v.ID)
+		} else {
+			v.Scatter = nil
+			editorSetStatus("Removed the scatter from volume %q", v.ID)
+		}
+		render.EvictScatterCache(v.ID)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Instanced foliage fills the region, planted on whatever\n" +
+			"geometry is underneath it. Cost is bounded by the draw\n" +
+			"range, not by how large the volume is.")
+	}
+	if v.Scatter == nil {
+		return
+	}
+	s := v.Scatter
+
+	on := s.Enabled
+	if imgui.Checkbox("Enabled##volscatteren", &on) {
+		EditorPushUndo()
+		s.Enabled = on
+	}
+
+	if imgui.BeginCombo("Kind##volscatterkind", world.ScatterKindName(s.Kind)) {
+		for i, name := range world.ScatterKindNames {
+			kind := int32(i)
+			if imgui.SelectableV(name, kind == s.Kind, 0, imgui.Vec2{}) && kind != s.Kind {
+				EditorPushUndo()
+				s.Kind = kind
+				// The slope gate's DEFAULT differs per kind — rock reads fine
+				// on a cliff and grass does not — so a kind change moves where
+				// the instances can land and the bake has to go.
+				render.EvictScatterCache(v.ID)
+			}
+		}
+		imgui.EndCombo()
+	}
+
+	editorDragFloat("Density##volscatterdens", &s.Density, 0, 1, "%.2f")
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How many of the lattice's slots survive. The lattice itself\n" +
+			"is fixed per kind, so this thins rather than spreads.")
+	}
+	rng := world.ScatterRange(s)
+	if editorDragFloatStep("Draw Range##volscatterrange", &rng, 1, 400, "%.0f", 1) {
+		s.Range = rng
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far from the CAMERA the foliage is drawn — a ring that\n" +
+			"follows you, not a property of the volume's own size.")
+	}
+
+	col := [3]float32{s.Color.X(), s.Color.Y(), s.Color.Z()}
+	if imgui.ColorEdit3("Tint##volscattercol", &col) {
+		s.Color = mgl32.Vec3{col[0], col[1], col[2]}
+	}
+
+	editorPropGroup("Size##volscattersize", 0, func() { editorScatterSize(s) })
+	editorPropGroup("Ground##volscatterground", 0, func() { editorScatterGround(v, s) })
+	editorPropGroup("Edges##volscatteredges", 0, func() { editorScatterEdges(s) })
+}
+
+// editorScatterSize draws the per-kind appearance controls.
+func editorScatterSize(s *world.VolumeScatter) {
+	switch s.Kind {
+	case world.ScatterRock, world.ScatterMoss:
+		editorDragFloat("Scale##volscatterrock", &s.RockScale, 0.01, 5, "%.3f")
+		if s.Kind == world.ScatterRock {
+			sides := s.RockSides
+			if imgui.DragIntV("Sides##volscattersides", &sides, 1, 3, 12, "%d", 0) {
+				s.RockSides = sides
+			}
+			if imgui.IsItemHovered() {
+				imgui.SetTooltip("Equatorial vertices of the rock blob — 2x this many faces.")
+			}
+		}
+		return
+	}
+
+	label := "Blade"
+	if s.Kind != world.ScatterGrass {
+		label = "Stem"
+	}
+	editorDragFloat(label+" Height##volscatterh", &s.GrassHeight, 0.01, world.MaxStemHeight, "%.3f")
+	editorDragFloat(label+" Width##volscatterw", &s.GrassWidth, 0.001, 0.5, "%.4f")
+
+	if s.Kind == world.ScatterGrass {
+		clump := s.GrassClump
+		if editorDragFloat("Clumping##volscatterclump", &clump, 0, 1, "%.2f") {
+			s.GrassClump = world.ClampGrassClump(clump)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Gathers the even scatter into tufts that read as individual\n" +
+				"plants: blades pull in toward a shared root and splay outward.\n" +
+				"0 is the plain one-blade-per-slot scatter.")
+		}
+		return
+	}
+
+	editorDragFloat("Head Size##volscatterhead", &s.HeadScale, 0.01, 1, "%.3f")
+	if s.Kind != world.ScatterWildflower {
+		return
+	}
+
+	imgui.Checkbox("Spike Bloom##volscatterspike", &s.BloomSpike)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("An elongated head instead of a squat petal disc.")
+	}
+	imgui.Checkbox("Bloom Centre##volscattercenter", &s.BloomCenter)
+	if s.BloomCenter {
+		cc := [3]float32{s.CenterColor.X(), s.CenterColor.Y(), s.CenterColor.Z()}
+		if imgui.ColorEdit3("Centre Colour##volscattercc", &cc) {
+			s.CenterColor = mgl32.Vec3{cc[0], cc[1], cc[2]}
+		}
+	}
+	imgui.Checkbox("One Colour##volscattersolid", &s.BloomSolidColor)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Use the tint directly rather than picking a random hue per\n" +
+			"flower — a deliberate colour instead of a mixed meadow.")
+	}
+	imgui.Checkbox("Basal Leaves##volscatterleaves", &s.StemLeaves)
+	if s.StemLeaves {
+		ls := world.ResolvedLeafScale(s.LeafScale)
+		if editorDragFloat("Leaf Size##volscatterleafsz", &ls, 0.1, world.MaxWildflowerLeafScale, "%.2f") {
+			s.LeafScale = ls
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("A multiplier on leaves already sized as a fraction of the\n" +
+				"stem, so 1 keeps them in proportion on any height of flower.")
+		}
+	}
+}
+
+// editorScatterGround draws the slope gate — which parts of the surface under
+// the volume will take anything.
+//
+// Both sliders re-bake the height texture, which is a few thousand ray casts,
+// so they are applied on release rather than per drag frame. That is what
+// editorDragFloat's own return already reports; what this adds is the eviction.
+func editorScatterGround(v *world.Volume, s *world.VolumeScatter) {
+	minA, maxA := world.ResolvedMinSlope(s), world.ResolvedMaxSlope(s)
+	changed := editorDragFloatStep("Min Slope##volscatterminslope", &minA, 0, 90, "%.0f deg", 1)
+	changed = editorDragFloatStep("Max Slope##volscattermaxslope", &maxA, 0, 90, "%.0f deg", 1) || changed
+	if changed {
+		s.MinSlopeAngle, s.MaxSlopeAngle = minA, maxA
+		render.EvictScatterCache(v.ID)
+	}
+	editorTextMutedWrapped("Degrees from level. Nothing grows outside the range, " +
+		"feathered over a few degrees at each end so the limit is not a line " +
+		"across the hillside.")
+
+	if imgui.Button("Rebuild Ground##volscatterrebake") {
+		render.EvictScatterCache(v.ID)
+		editorSetStatus("Rebuilt %q's ground sampling", v.ID)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Re-reads the geometry under the volume. The editor does this\n" +
+			"for you when the volume or the level's brushes change; this is\n" +
+			"for the cases it cannot see.")
+	}
+}
+
+// editorScatterEdges draws the three softening controls, all of which shrink
+// instances toward their root rather than fading alpha — the pass draws opaque,
+// so a fade would be a hard cut with extra steps.
+func editorScatterEdges(s *world.VolumeScatter) {
+	editorDragFloat("Range Fade##volscatterrangefade", &s.RangeFadeFraction, 0, 1, "%.2f")
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Fraction of the draw range the camera ring fades over.\n0 is a hard cut-off at the range.")
+	}
+	editorDragFloat("Edge Fade##volscatteredgefade", &s.EdgeFadeDistance, 0, 20, "%.2f")
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("World units in from the VOLUME's own boundary an instance\n" +
+			"takes to reach full size. 0 is off; it costs a per-instance\n" +
+			"distance query, so it is worth paying for where the edge\n" +
+			"will be seen up close.")
+	}
+	jitter := world.ResolvedBoundaryJitter(s)
+	if editorDragFloat("Boundary Jitter##volscatterjitter", &jitter, 0, 20, "%.2f") {
+		s.BoundaryJitter = jitter
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Bulges the circular camera-ring and LOD boundaries in and out,\n" +
+			"so the transition reads as an organic patch rather than a\n" +
+			"circle centred on the player.")
 	}
 }
 

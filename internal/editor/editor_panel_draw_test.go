@@ -98,6 +98,25 @@ func TestPanelDrawsForEverySelection(t *testing.T) {
 		}},
 		{"entity", panelFocusEntity, func() { editorSelectEntity(0) }},
 		{"volume", panelFocusVolume, func() { editorSelectVolume(0) }},
+		{"a volume with fog, scatter and a doorway", panelFocusVolume, func() {
+			v := &Editor.level.Volumes[0]
+			f := world.DefaultVolumeFog()
+			v.Fog = &f
+			sc := world.DefaultVolumeScatter()
+			v.Scatter = &sc
+			v.Frame = "ship"
+			v.Doorway = &world.FrameDoorway{}
+			editorSelectVolume(0)
+		}},
+		// One entry per scatter kind: the size group shows a different set of
+		// controls for each, and an imgui group left unbalanced in any one of
+		// them aborts inside End(). The wildflower case turns its optional
+		// sub-groups on, since those are the ones that nest.
+		{"grass scatter", panelFocusVolume, scatterOfKind(world.ScatterGrass)},
+		{"rock scatter", panelFocusVolume, scatterOfKind(world.ScatterRock)},
+		{"wildflower scatter", panelFocusVolume, scatterOfKind(world.ScatterWildflower)},
+		{"cattail scatter", panelFocusVolume, scatterOfKind(world.ScatterCattail)},
+		{"moss scatter", panelFocusVolume, scatterOfKind(world.ScatterMoss)},
 		{"global light", panelFocusLight, func() { editorSelectLight(lightKindGlobal, 0) }},
 		{"point light", panelFocusLight, func() { editorSelectLight(lightKindPoint, 0) }},
 	}
@@ -114,6 +133,19 @@ func TestPanelDrawsForEverySelection(t *testing.T) {
 				drawPanelOnce(lvl, sel.focus)
 			})
 		})
+	}
+}
+
+// scatterOfKind gives the fixture's volume a scatter of one kind and selects
+// it, with every optional sub-control switched on so the deepest nesting the
+// panel can produce is what gets drawn.
+func scatterOfKind(kind int32) func() {
+	return func() {
+		sc := world.DefaultVolumeScatter()
+		sc.Kind = kind
+		sc.BloomCenter, sc.StemLeaves, sc.BloomSpike = true, true, true
+		Editor.level.Volumes[0].Scatter = &sc
+		editorSelectVolume(0)
 	}
 }
 

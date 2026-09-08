@@ -904,10 +904,12 @@ func Run() {
 			}
 
 			if !editorWire {
-				// TODO(brush migration, Phase 5): biome scatter is being
-				// rebuilt as a Volume, mirroring Volume.Fog. Its render pass
-				// went with internal/biome.
-				//
+				// --- Scatter volumes (GPU grass / flowers / rock) ---
+				// After opaque geometry but before the transparent pass:
+				// blades and rocks are solid and depth-written, so anything
+				// translucent still sorts on top of them.
+				render.RenderScatterVolumes(&level, projView, gfx.Cam.Position, shadowFrame)
+
 				// --- Procedural face detail (GPU rock displacement + scatter) ---
 				// Drawn after opaque geometry; reuses the main fragment shader so it
 				// receives shadows, and was rendered into the shadow maps above so it casts.

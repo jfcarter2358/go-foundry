@@ -19,7 +19,6 @@ func init() {
 		flang.RefBrush:   brushProps(),
 		flang.RefChunk:   chunkProps(),
 		flang.RefLight:   lightProps(),
-		flang.RefBiome:   biomeProps(),
 		flang.RefSprite:  spriteProps(),
 		flang.RefLevel:   levelProps(),
 		flang.RefEmitter: emitterProps(),
@@ -353,15 +352,4 @@ func lightProps() map[string]propAccess {
 			Doc: "whether this light casts shadows",
 		},
 	}
-}
-
-// ---------- biome sectors ----------
-//
-// TODO(brush migration, Phase 5): biome scatter paint moves from a chunk-
-// owned BiomeSector polygon to a level-owned Volume (VolumeBiome, mirroring
-// Volume.Fog). Until that lands there is nothing for @biome to resolve to,
-// so the table is empty rather than gone — RefBiome stays a valid ref kind
-// script text can still parse and address, it just currently finds nothing.
-func biomeProps() map[string]propAccess {
-	return map[string]propAccess{}
 }

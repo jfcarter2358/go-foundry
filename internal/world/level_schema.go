@@ -124,6 +124,54 @@ type RawVolume struct {
 	Fog *RawVolumeFog `yaml:"fog,omitempty"`
 	// Doorway makes the volume a frame boundary. See Volume.Doorway.
 	Doorway *RawFrameDoorway `yaml:"doorway,omitempty"`
+	// Scatter fills the region with foliage. See Volume.Scatter.
+	Scatter *RawVolumeScatter `yaml:"scatter,omitempty"`
+}
+
+// RawVolumeScatter is the foliage filling a volume (volume_scatter.go).
+//
+// Disabled rather than Enabled, so the zero value is "on": the block only
+// exists because someone asked for scatter, and `scatter: {}` meaning no
+// scatter would be a trap. The same reasoning RawVolumeFog.Disabled follows,
+// which this deliberately mirrors.
+//
+// The fields that carry a meaningful zero — every distance and fraction whose
+// 0 means "use the kind's default", and the booleans — are plain values. The
+// ones where 0 is a legitimate authored setting distinct from "absent" are
+// pointers, on the rule the rest of this file uses.
+type RawVolumeScatter struct {
+	Disabled bool `yaml:"disabled,omitempty"`
+
+	Kind    string    `yaml:"kind,omitempty"` // grass (default) | rock | wildflower | cattail | moss
+	Density *float32  `yaml:"density,omitempty"`
+	Range   float32   `yaml:"range,omitempty"`
+	Color   *RawColor `yaml:"color,omitempty"`
+
+	LOD1Distance float32 `yaml:"lod1_distance,omitempty"`
+	LOD2Distance float32 `yaml:"lod2_distance,omitempty"`
+
+	GrassHeight *float32 `yaml:"grass_height,omitempty"`
+	GrassWidth  *float32 `yaml:"grass_width,omitempty"`
+	HeadScale   float32  `yaml:"head_scale,omitempty"`
+	GrassClump  float32  `yaml:"grass_clump,omitempty"`
+
+	BloomSpike      bool      `yaml:"bloom_spike,omitempty"`
+	BloomCenter     bool      `yaml:"bloom_center,omitempty"`
+	BloomSolidColor bool      `yaml:"bloom_solid_color,omitempty"`
+	CenterColor     *RawColor `yaml:"center_color,omitempty"`
+
+	StemLeaves bool    `yaml:"stem_leaves,omitempty"`
+	LeafScale  float32 `yaml:"leaf_scale,omitempty"`
+
+	RockSides int32    `yaml:"rock_sides,omitempty"`
+	RockScale *float32 `yaml:"rock_scale,omitempty"`
+
+	MinSlopeAngle float32 `yaml:"min_slope_angle,omitempty"`
+	MaxSlopeAngle float32 `yaml:"max_slope_angle,omitempty"`
+
+	RangeFadeFraction *float32 `yaml:"range_fade_fraction,omitempty"`
+	EdgeFadeDistance  float32  `yaml:"edge_fade_distance,omitempty"`
+	BoundaryJitter    float32  `yaml:"boundary_jitter,omitempty"`
 }
 
 // RawFrameDoorway is the boundary between two frames (volume_doorway.go).

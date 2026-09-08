@@ -671,6 +671,71 @@ func volumeProps() map[string]propAccess {
 			}),
 			Doc: "ceiling on how much the fog can hide, 0 to 1",
 		},
+		"scatter": {
+			Get: get(func(v *world.Volume) flang.Value {
+				return flang.BoolVal(v.Scatter != nil && v.Scatter.Enabled)
+			}),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("scatter", "bool", v)
+				}
+				return volumeScatterSet(vol, b, func(s *world.VolumeScatter) { s.Enabled = b })
+			}),
+			Doc: "whether the region grows instanced foliage",
+		},
+		"scatter_kind": {
+			Get: get(func(v *world.Volume) flang.Value {
+				return flang.StrVal(world.ScatterKindName(volumeScatterOf(v).Kind))
+			}),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				name, ok := toStr(v)
+				if !ok {
+					return propErr("scatter_kind", "str", v)
+				}
+				return volumeScatterSet(vol, true, func(s *world.VolumeScatter) {
+					s.Kind = world.ScatterKindFromName(name)
+				})
+			}),
+			Doc: "what grows: grass, rock, wildflower, cattail or moss",
+		},
+		"scatter_density": {
+			Get: get(func(v *world.Volume) flang.Value {
+				return flang.FloatVal(volumeScatterOf(v).Density)
+			}),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				f32, ok := toFloat32(v)
+				if !ok {
+					return propErr("scatter_density", "number", v)
+				}
+				return volumeScatterSet(vol, true, func(s *world.VolumeScatter) { s.Density = f32 })
+			}),
+			Doc: "how thickly it grows, 0 to 1",
+		},
+		"scatter_range": {
+			Get: get(func(v *world.Volume) flang.Value {
+				return flang.FloatVal(world.ScatterRange(volumeScatterRef(v)))
+			}),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				f32, ok := toFloat32(v)
+				if !ok {
+					return propErr("scatter_range", "number", v)
+				}
+				return volumeScatterSet(vol, true, func(s *world.VolumeScatter) { s.Range = f32 })
+			}),
+			Doc: "how far from the camera the foliage is drawn, in world units",
+		},
+		"scatter_color": {
+			Get: get(func(v *world.Volume) flang.Value { return vecValue(volumeScatterOf(v).Color) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("scatter_color", "vec", v)
+				}
+				return volumeScatterSet(vol, true, func(s *world.VolumeScatter) { s.Color = p })
+			}),
+			Doc: "the foliage's tint as a vec of r, g, b",
+		},
 	}
 }
 
@@ -710,6 +775,49 @@ func volumeFogSet(v *world.Volume, create bool, fn func(*world.VolumeFog)) error
 	}
 	fn(v.Fog)
 	v.Fog.Clamp()
+	return nil
+}
+
+// ---------- volume scatter property helpers ----------
+//
+// The same shape the fog helpers above have, and for the same reasons: a
+// volume's scatter is a pointer, a plain trigger has none, and reading one of
+// those is a fair question with a dull answer.
+
+// volumeScatterOf is the volume's scatter, or a default one to read fields off.
+// The returned value is a COPY when the volume has none, so nothing written
+// through it reaches the level by accident.
+func volumeScatterOf(v *world.Volume) world.VolumeScatter {
+	if v.Scatter == nil {
+		return world.DefaultVolumeScatter()
+	}
+	return *v.Scatter
+}
+
+// volumeScatterRef is volumeScatterOf for the resolvers that take a pointer
+// (world.ScatterRange and friends, which read Kind to pick a default). The
+// value it points at is a copy on the volume-has-none path, so this is still a
+// read-only view.
+func volumeScatterRef(v *world.Volume) *world.VolumeScatter {
+	s := volumeScatterOf(v)
+	return &s
+}
+
+// volumeScatterSet applies fn to the volume's scatter, creating one at the
+// defaults if there was none — see volumeFogSet on why a write should not have
+// to be preceded by switching the feature on. create is false only for the
+// write that turns scatter OFF, so switching off scatter that was never there
+// leaves the volume as it found it rather than giving it a switched-off block
+// the next save would write out.
+func volumeScatterSet(v *world.Volume, create bool, fn func(*world.VolumeScatter)) error {
+	if v.Scatter == nil {
+		if !create {
+			return nil
+		}
+		s := world.DefaultVolumeScatter()
+		v.Scatter = &s
+	}
+	fn(v.Scatter)
 	return nil
 }
 

@@ -329,15 +329,6 @@ func (c *refCache) brushOwnerFor(r flang.RefVal) (*world.Chunk, *world.Brush) {
 	return ch, &ch.Brushes[idx[1]]
 }
 
-// biomeFor returns the biome scatter object a ref names — currently never
-// anything.
-//
-// TODO(brush migration, Phase 5): biome paint moves from a chunk-owned
-// BiomeSector polygon to a level-owned Volume. RefBiome stays a parseable ref
-// kind meanwhile, resolving to nothing, rather than making every existing
-// `@biome` script a parse error before its replacement exists.
-func (c *refCache) biomeFor(r flang.RefVal) any { return nil }
-
 // lightFor returns the light a ref names. The two kinds are returned separately
 // because a directional light and a point light share only some properties.
 func (c *refCache) lightFor(r flang.RefVal) (*world.DirectionalLight, *world.PointLight) {
@@ -421,8 +412,6 @@ func (c *refCache) alive(r flang.RefVal) bool {
 		return c.chunkFor(r) != nil
 	case flang.RefBrush:
 		return c.brushFor(r) != nil
-	case flang.RefBiome:
-		return false // nothing to resolve to until Phase 5; see biomeFor
 	case flang.RefLight:
 		d, p := c.lightFor(r)
 		return d != nil || p != nil

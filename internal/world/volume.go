@@ -82,6 +82,10 @@ type Volume struct {
 	// includes them.
 	LoadLevel string
 
+	// Scatter fills the region with instanced foliage when set — see
+	// volume_scatter.go. nil is the ordinary case.
+	Scatter *VolumeScatter
+
 	// Doorway makes the volume a frame doorway: standing in it is being aboard
 	// the frame it belongs to. See volume_doorway.go. nil is the ordinary case.
 	Doorway *FrameDoorway
@@ -329,6 +333,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		LoadLevel:  r.LoadLevel,
 		Fog:        VolumeFogFromRaw(r.Fog),
 		Doorway:    FrameDoorwayFromRaw(r.Doorway),
+		Scatter:    VolumeScatterFromRaw(r.Scatter),
 	}, nil
 }
 
@@ -346,6 +351,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		LoadLevel:     v.LoadLevel,
 		Fog:           VolumeFogToRaw(v.Fog),
 		Doorway:       FrameDoorwayToRaw(v.Doorway),
+		Scatter:       VolumeScatterToRaw(v.Scatter),
 	}
 }
 

@@ -148,13 +148,17 @@ const (
 	RefEntity
 	RefVolume
 	RefLight
-	RefBiome
 	RefSprite
 	RefEmitter
 	RefSound
 	// A screen and one widget on it. Appended after the level kinds so that no
 	// existing constant shifts — a reordered enum would silently reinterpret a
 	// ref held anywhere it was written down.
+	//
+	// (RefBiome sat between RefLight and RefSprite and was removed rather than
+	// left as a hole: biome scatter became a property of a Volume rather than
+	// an object of its own, so nothing addresses one. Safe because a ref kind
+	// is never serialised — it lives only in a running script's values.)
 	RefScreen
 	RefWidget
 	// RefModel is one attachment of an entity — `@guard.model.body`. Appended
@@ -164,7 +168,7 @@ const (
 
 var refKindNames = [...]string{
 	RefNone: "none", RefLevel: "level", RefChunk: "chunk", RefBrush: "brush",
-	RefEntity: "entity", RefVolume: "volume", RefLight: "light", RefBiome: "biome",
+	RefEntity: "entity", RefVolume: "volume", RefLight: "light",
 	RefSprite: "sprite", RefEmitter: "emitter", RefSound: "sound",
 	RefScreen: "screen", RefWidget: "widget",
 	RefModel: "model",
@@ -188,8 +192,6 @@ func (v RefVal) String() string {
 		return "@?"
 	case RefLevel:
 		return "@level"
-	case RefBiome:
-		return "@" + v.B
 	case RefWidget:
 		// Screen and node, because a widget id is only unique within its
 		// screen and "@ok" would not say which "ok".
@@ -206,11 +208,11 @@ func (v RefVal) String() string {
 // ID returns the name a script would address this object by.
 func (v RefVal) ID() string {
 	switch v.Kind {
-	case RefBiome, RefWidget, RefModel:
-		// These are all scoped by something that comes first in the path: a
-		// widget by its screen, a model attachment by its entity. `ref.id` is
-		// the thing's own name, which is what a handler comparing `src.id`
-		// against a literal is asking for.
+	case RefWidget, RefModel:
+		// Both are scoped by something that comes first in the path: a widget
+		// by its screen, a model attachment by its entity. `ref.id` is the
+		// thing's own name, which is what a handler comparing `src.id` against
+		// a literal is asking for.
 		return v.B
 	default:
 		return v.A

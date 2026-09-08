@@ -201,11 +201,6 @@ var refKindOrder = []struct {
 	{"brush", flang.RefBrush},
 	{"chunk", flang.RefChunk},
 	{"light", flang.RefLight},
-	// TODO(brush migration, Phase 5): "biome" belongs here and is missing,
-	// because biome scatter is being rebuilt as a Volume and has no property
-	// table to point at yet. TestReferenceKindsAllHaveProperties fails on a
-	// label with nothing behind it, so the row goes back when the properties
-	// do.
 	{"screen", flang.RefScreen},
 	{"widget", flang.RefWidget},
 }

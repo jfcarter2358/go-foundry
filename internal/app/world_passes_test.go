@@ -28,12 +28,7 @@ import (
 
 // worldPassInits are the render entry points that stand up a pass drawing level
 // content. Anything added beside them in render/init.go belongs in this list.
-//
-// TODO(brush migration, Phase 5): GrassInit belongs here and is missing. The
-// biome scatter pass went with internal/biome and is being rebuilt as a Volume;
-// this list is what makes a build stand every pass up, so the name goes back
-// the moment the pass does.
-var worldPassInits = []string{"DetailInit", "SpriteInit", "SkyInit"}
+var worldPassInits = []string{"GrassInit", "DetailInit", "SpriteInit", "SkyInit"}
 
 func TestTheEngineStandsUpTheWorldPasses(t *testing.T) {
 	src := testenv.RepoFile(t, "internal", "app", "app.go")

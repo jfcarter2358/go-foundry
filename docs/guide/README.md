@@ -9,7 +9,7 @@ running engine: there is no export step and no separate viewer.
 > — 2D floorplan polygons with a floor and ceiling height, drawn on a top-down
 > map. That model, and the 2D editor that went with it, have been replaced. The
 > chapters below still describe the old one and are being rewritten; the ones
-> updated so far are [Prefabs](22-prefabs.md) and
+> updated so far are [Scatter](06-scatter.md), [Prefabs](22-prefabs.md) and
 > [Vehicles and frames](12-vehicles-and-frames.md).
 
 Start the editor:
@@ -33,7 +33,7 @@ and is always current.
 | [Shaping surfaces](03-shaping-surfaces.md) | Terrain, steps, recesses and holes on any face |
 | [Textures](04-textures.md) | The texture editor, palettes, layers, animation, bump maps |
 | [Detail and smoothing](05-detail-and-smoothing.md) | Per-face procedural displacement and scattered rock |
-| [Biomes](06-biomes.md) | Painting grass, rock, sand, moss and water over a floor |
+| [Scatter](06-scatter.md) | Volumes of grass, rock, wildflowers, cattails and moss |
 | [Lighting](07-lighting.md) | Global, directional and point lights; shadows and their cost |
 | [Sky and fog](08-sky-and-fog.md) | Skyboxes, gradients, distance fog, fog volumes |
 | [Models](09-models.md) | The model editor: primitives, shaping, UVs, OBJ import |
