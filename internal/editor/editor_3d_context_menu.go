@@ -134,6 +134,8 @@ func editor3DContextMenuItems() []ctxMenuItem {
 		items = append(items, editor3DEntityMenuItems()...)
 	case sel3DVolume:
 		items = append(items, editor3DVolumeMenuItems()...)
+	case sel3DPrefab:
+		items = append(items, editor3DPrefabMenuItems()...)
 	case sel3DSprite:
 		items = append(items, editor3DSpriteMenuItems()...)
 	case sel3DScenery:
@@ -237,6 +239,11 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 			Tooltip: "Replace the solid with the six brushes of a room filling it —\nfloor, ceiling and four walls."},
 		ctxMenuItem{Label: "Duplicate brush", Disabled: multi, Do: editorDuplicateSelectedBrush,
 			Tooltip: "A copy in place, selected and ready to drag off the original."},
+		ctxMenuItem{Label: "Save selection as prefab...", Do: func() { Editor.ShowSavePrefab = true },
+			Tooltip: "Write the selected brushes to a file, so the same thing can be\n" +
+				"placed twenty times and edited once. The prefab is authored around\n" +
+				"the bottom-centre of what is selected, so it sits on the ground\n" +
+				"wherever it is dropped."},
 		ctxMenuItem{Separator: true},
 		ctxMenuItem{Label: "Select this brush's sides", Do: editor3DSelectBrushSideFaces,
 			Tooltip: "The upright faces only — the usual case, since a solid's sides\nwant one texture and its top and bottom another."},
@@ -280,6 +287,32 @@ func editor3DEntityMenuItems() []ctxMenuItem {
 			Tooltip: "Re-stamp from its type, keeping only where it is.\nEvery override on this instance is discarded."},
 		{Separator: true},
 		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid},
+		{Label: "Delete", Shortcut: "Del", Do: EditorDeleteSelected},
+	}
+}
+
+// ---------- volume ----------
+
+// ---------- prefab ----------
+
+func editor3DPrefabMenuItems() []ctxMenuItem {
+	p := activePrefab()
+	if p == nil {
+		return nil
+	}
+	return []ctxMenuItem{
+		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusPrefab) },
+			Tooltip: "Open the instance's section: which file it places, and where."},
+		{Label: "Move here", Do: func() {
+			EditorPushUndo()
+			p.Position = editor3DMenuPoint
+			restampActivePrefab()
+		}, Tooltip: "Put it where the ray under the cursor met the world."},
+		{Label: "Re-stamp from file", Do: restampActivePrefab,
+			Tooltip: "Read the file again. The editor does this for you when YOU\nsave the prefab; this is for a file changed on disk."},
+		{Separator: true},
+		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid},
+		{Label: "Duplicate", Do: duplicateActivePrefab},
 		{Label: "Delete", Shortcut: "Del", Do: EditorDeleteSelected},
 	}
 }

@@ -44,6 +44,12 @@ type Entity struct {
 	// engine-owned player. Kept so saving can write the instance back as a
 	// reference rather than as an expansion of everything it inherited.
 	Type string
+	// FromPrefab is runtime-only, never serialized: the prefab instance whose
+	// file put this entity here (prefab.go). Empty for one the level file
+	// authored. It is what LevelToRaw checks before writing — a level that
+	// saved a copy of a prefab's content would freeze it and stop tracking the
+	// file.
+	FromPrefab string
 	// Tags are the entity's script-visible labels; scripts address every
 	// entity carrying one at once (`#tag`). Sorted and de-duplicated by
 	// setTags, so membership tests and saved files are both stable.

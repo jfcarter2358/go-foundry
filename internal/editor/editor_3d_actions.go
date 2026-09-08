@@ -37,6 +37,7 @@ const (
 	sel3DSpawn
 	sel3DEntity
 	sel3DVolume
+	sel3DPrefab
 	sel3DSprite
 	sel3DScenery
 	sel3DEmitter
@@ -55,6 +56,8 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DEntity
 	case activeVolume() != nil:
 		return sel3DVolume
+	case activePrefab() != nil:
+		return sel3DPrefab
 	case activeSprite() != nil:
 		return sel3DSprite
 	case activeScenery() != nil:
@@ -91,6 +94,13 @@ func editor3DSelectionSummary() string {
 	case sel3DVolume:
 		v := activeVolume()
 		return fmt.Sprintf("Volume %s (%s)", v.ID, world.VolumeShapeName(v.Shape))
+
+	case sel3DPrefab:
+		p := activePrefab()
+		if p.File == "" {
+			return fmt.Sprintf("Prefab %s (no file)", p.ID)
+		}
+		return fmt.Sprintf("Prefab %s (%s)", p.ID, p.File)
 
 	case sel3DSprite:
 		sp := activeSprite()
@@ -425,8 +435,8 @@ func activeBrushIndices() (chunkIdx, brushIdx int) {
 // editor3DCanSnap reports whether the selection is something snapping can move.
 func editor3DCanSnap() bool {
 	switch editor3DSelection() {
-	case sel3DVertices, sel3DSpawn, sel3DEntity, sel3DVolume, sel3DSprite,
-		sel3DScenery, sel3DEmitter, sel3DSound:
+	case sel3DVertices, sel3DSpawn, sel3DEntity, sel3DVolume, sel3DPrefab,
+		sel3DSprite, sel3DScenery, sel3DEmitter, sel3DSound:
 		return Editor.StepSize > 0
 	}
 	return false
@@ -468,6 +478,16 @@ func editor3DSnapSelectionToGrid() {
 		EditorPushUndo()
 		v.Position = snapVec3(v.Position, step)
 		editorSetStatus("Snapped volume %q to the grid", v.ID)
+
+	case sel3DPrefab:
+		// The position only. A prefab's scale is a factor on the whole group,
+		// and rounding it onto the world grid would resize something someone
+		// asked to have moved.
+		p := activePrefab()
+		EditorPushUndo()
+		p.Position = snapVec3(p.Position, step)
+		restampActivePrefab()
+		editorSetStatus("Snapped prefab %q to the grid", p.ID)
 
 	case sel3DSprite:
 		// The position only, for the reason a volume's size is left alone: a

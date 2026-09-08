@@ -236,6 +236,24 @@ func editorChunkPopups(lvl *world.Level) {
 		}
 	})
 
+	// Save selection as prefab. Opened from the viewport's face menu, and drawn
+	// here with the other modals for the reason this whole function exists:
+	// imgui refuses a modal opened inside a window that has already ended.
+	imguibackend.WithModalPopup("Save Selection as Prefab", &Editor.ShowSavePrefab, func() {
+		imgui.InputText("Name", &Editor.SavePrefabName)
+		editorTextMutedWrapped("Written to prefabs/. An existing name is overwritten, and " +
+			"every placement of it in this level updates.")
+		if imgui.Button("Save##saveprefab") && Editor.SavePrefabName != "" {
+			_ = EditorSaveSelectionAsPrefab(Editor.SavePrefabName)
+			Editor.SavePrefabName = ""
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##saveprefab") {
+			imgui.CloseCurrentPopup()
+		}
+	})
+
 	// Save chunk popup
 	imguibackend.WithModalPopup("Save Chunk", &Editor.ShowSaveChunk, func() {
 		imgui.InputText("Filename", &Editor.SaveChunkName)

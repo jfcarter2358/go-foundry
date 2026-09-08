@@ -191,6 +191,26 @@ type EditorState struct {
 	ScriptFileNames []string
 
 	// --- Volumes ---
+	// --- Prefabs ---
+	// ActivePrefabIdx indexes level.Prefabs; -1 = none selected. An index
+	// rather than a pointer for the reason ActiveEntityIdx is one: undo swaps
+	// the whole level out from under the editor.
+	ActivePrefabIdx int
+	// PrefabPlacementMode is true when the next left-click drops an instance
+	// of PrefabPlaceFile into the level.
+	PrefabPlacementMode bool
+	PrefabPlaceFile     string
+	// NewPrefabID is the ID field of the placement row, empty for "name it
+	// after the file".
+	NewPrefabID string
+	// PrefabFileNames caches the prefabs/ listing; nil forces a rescan, so a
+	// prefab saved while the editor is open shows up in the picker.
+	PrefabFileNames []string
+	// SavePrefabName and ShowSavePrefab are the "save selection as prefab"
+	// dialog.
+	SavePrefabName string
+	ShowSavePrefab bool
+
 	// ActiveVolumeIdx indexes level.Volumes; -1 = none selected. An index for
 	// the same reason ActiveEntityIdx is one: undo replaces the level wholesale.
 	ActiveVolumeIdx int
@@ -378,6 +398,9 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.EntityPlaceType = ""
 	Editor.ActiveVolumeIdx = -1
 	Editor.VolumePlacementMode = false
+	Editor.ActivePrefabIdx = -1
+	Editor.PrefabPlacementMode = false
+	Editor.PrefabFileNames = nil
 	Editor.ActiveSpriteIdx = -1
 	Editor.SpritePlacementMode = false
 	Editor.ActiveEmitterIdx = -1
@@ -878,6 +901,13 @@ func EditorDeleteSelected() {
 		return
 	}
 
+	// Prefab instance deletion — which takes everything it materialised with
+	// it, since none of that is level content in its own right.
+	if activePrefab() != nil {
+		deleteActivePrefab()
+		return
+	}
+
 	// Sprite deletion
 	if activeSprite() != nil {
 		deleteActiveSprite()
@@ -950,6 +980,9 @@ func EditorLoadLevel(path string) error {
 	Editor.EntityPlacementMode = false
 	Editor.ActiveVolumeIdx = -1
 	Editor.VolumePlacementMode = false
+	Editor.ActivePrefabIdx = -1
+	Editor.PrefabPlacementMode = false
+	Editor.PrefabFileNames = nil
 	Editor.ActiveSpriteIdx = -1
 	Editor.SpritePlacementMode = false
 	Editor.ActiveEmitterIdx = -1

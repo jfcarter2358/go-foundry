@@ -37,6 +37,7 @@ const (
 	gizmoKindSound    = "sound"
 	gizmoKindScenery  = "scenery"
 	gizmoKindLight    = "light"
+	gizmoKindPrefab   = "prefab"
 )
 
 const (
@@ -120,6 +121,11 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 			return pl.Position, true
 		}
 
+	case gizmoKindPrefab:
+		if p := activeGizmoPrefab(); p != nil {
+			return p.Position, true
+		}
+
 	case gizmoKindChunk:
 		if ch := activeGizmoChunk(); ch != nil {
 			// The chunk's Origin field can sit far from its geometry, so anchor
@@ -145,6 +151,17 @@ func activeGizmoSpawn() *world.SpawnPoint {
 // activeGizmoX functions apply, via selectedChunk (editor_chunk.go).
 func activeGizmoChunk() *world.Chunk {
 	return selectedChunk()
+}
+
+// activeGizmoPrefab is the selected prefab instance, when it is the gizmo's
+// target. Gated on the kind for the reason every other accessor here is: an
+// index left over from a selection that has since been replaced must not be
+// dragged by a gizmo attached to something else.
+func activeGizmoPrefab() *world.PrefabInstance {
+	if gizmoEffectiveKind() != gizmoKindPrefab {
+		return nil
+	}
+	return activePrefab()
 }
 
 // gizmoArmLength returns the world length of an arm at the gizmo's distance, so
@@ -389,6 +406,15 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindPrefab:
+		p := activeGizmoPrefab()
+		if p == nil {
+			return false
+		}
+		Editor.GizmoDragStartPos = p.Position
+		EditorPushUndo()
+		return true
+
 	case gizmoKindChunk:
 		ch := activeGizmoChunk()
 		if ch == nil {
@@ -486,6 +512,14 @@ func translateGizmoMouseMove(mx, my int32) {
 			// left behind, which is the one thing you are watching while you
 			// move it.
 			world.UploadLights(Editor.level.Lights)
+		}
+	case gizmoKindPrefab:
+		if p := activeGizmoPrefab(); p != nil {
+			p.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+			// Re-stamped per drag event, not on release: a prefab's entities,
+			// volumes and lights are world-positioned with no parent to
+			// inherit from, so nothing would appear to move until it ended.
+			restampActivePrefab()
 		}
 	case gizmoKindChunk:
 		if ch := activeGizmoChunk(); ch != nil {

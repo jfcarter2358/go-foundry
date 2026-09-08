@@ -127,6 +127,12 @@ type PointLight struct {
 	CastShadows    bool
 	ShadowStrength float32 // 0.0 = no shadow darkening, 1.0 = fully dark shadows
 	Disabled       bool    // switched off; see GlobalLight.EffectiveBrightness
+
+	// FromPrefab is runtime-only, never serialized: the prefab instance whose
+	// file put this here (prefab.go). Empty for one the level file authored.
+	// It is what LevelToRaw checks before writing — a level that saved a copy
+	// of a prefab's content would freeze it and stop tracking the file.
+	FromPrefab string
 }
 
 // EffectiveBrightness is zero while the light is switched off.

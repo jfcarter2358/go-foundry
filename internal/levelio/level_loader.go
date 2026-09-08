@@ -191,28 +191,40 @@ func rawToLightSet(rl world.RawLights) world.LightSet {
 		ls.Directional = append(ls.Directional, dl)
 	}
 	for _, rp := range rl.Point {
-		ss := rp.ShadowStrength
-		if ss == 0 && rp.CastShadows {
-			ss = 0.5
-		}
-		plScript, _ := world.ScriptDataFromRaw(rp.RawScriptData, "point light "+rp.ID)
-		ls.Points = append(ls.Points, world.PointLight{
-			ID:             rp.ID,
-			ScriptData:     plScript,
-			Position:       mgl32.Vec3{rp.Position.X, rp.Position.Y, rp.Position.Z},
-			Color:          mgl32.Vec3{rp.Color.R, rp.Color.G, rp.Color.B},
-			Brightness:     rp.Brightness,
-			Radius:         rp.Radius,
-			CastShadows:    rp.CastShadows,
-			ShadowStrength: ss,
-			Disabled:       rp.Disabled,
-		})
+		ls.Points = append(ls.Points, PointLightFromRaw(rp))
 	}
 	// Lights predate having identity, so most levels arrive with none. Mint them
 	// here rather than at every use site, so a light is addressable the moment it
 	// exists.
 	world.AssignLightIDs(&ls)
 	return ls
+}
+
+// PointLightFromRaw converts one point light's YAML form.
+//
+// Split out of the loop above because a prefab stamps lights too (prefabs.go),
+// and two conversions of the same eight fields would drift — the shadow-
+// strength default in particular is the kind of thing that gets fixed in one
+// copy.
+func PointLightFromRaw(rp world.RawPointLight) world.PointLight {
+	// A light that casts but says nothing about how dark gets a middling
+	// default rather than none, which would read as "cast_shadows did nothing".
+	ss := rp.ShadowStrength
+	if ss == 0 && rp.CastShadows {
+		ss = 0.5
+	}
+	data, _ := world.ScriptDataFromRaw(rp.RawScriptData, "point light "+rp.ID)
+	return world.PointLight{
+		ID:             rp.ID,
+		ScriptData:     data,
+		Position:       mgl32.Vec3{rp.Position.X, rp.Position.Y, rp.Position.Z},
+		Color:          mgl32.Vec3{rp.Color.R, rp.Color.G, rp.Color.B},
+		Brightness:     rp.Brightness,
+		Radius:         rp.Radius,
+		CastShadows:    rp.CastShadows,
+		ShadowStrength: ss,
+		Disabled:       rp.Disabled,
+	}
 }
 
 // rawToLevel converts a parsed RawLevel into runtime types and uploads all
@@ -329,6 +341,15 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 		for _, err := range MaterializeEntityChunks(level, &level.Entities[i], texNeeded) {
 			log.Printf("%v", err)
 		}
+	}
+
+	// The prefab PLACEMENTS. What they make is materialised at the very end of
+	// this function, once everything the level itself authored exists — see
+	// there for why the order matters.
+	for _, rp := range raw.Prefabs {
+		inst := world.PrefabInstanceFromRaw(rp)
+		inst.ID = world.UniquePrefabInstanceID(level, inst.ID)
+		level.Prefabs = append(level.Prefabs, inst)
 	}
 
 	// Volumes: scriptable regions, with the same ID guarantee entities get.
@@ -449,6 +470,23 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 
 	// Convert lights
 	level.Lights = rawToLightSet(raw.Lights)
+
+	// And last of all, what the prefab instances make (world/prefab.go).
+	//
+	// Last because every ID a prefab stamps is uniqued against the level, and
+	// the level's own names have to win: a level naming a volume `door` keeps
+	// it, and the prefab's own `door` becomes `lamp3_door` and then, if it must,
+	// `lamp3_door_2`. Materialising earlier would have renamed the level's own
+	// object out from under the script that addresses it.
+	//
+	// An instance that will not load is reported and skipped, on the chunk
+	// attachment's rule: a level that refuses to open over one missing prefab
+	// file is worse than one that opens with a hole in it and says so.
+	for i := range level.Prefabs {
+		if err := MaterializePrefab(level, &level.Prefabs[i], texNeeded); err != nil {
+			log.Printf("%v", err)
+		}
+	}
 	return nil
 }
 

@@ -92,6 +92,18 @@ type Chunk struct {
 	// chunk claiming to be the same attachment.
 	FromEntity string
 
+	// FromPrefab is runtime-only, on exactly the terms FromEntity is: the
+	// prefab instance whose file brought this chunk into the level
+	// (prefab.go). Empty for a chunk the level file authored.
+	//
+	// Two markers rather than one because the two answer different questions.
+	// FromEntity says "this geometry belongs to a *type*, and every level
+	// placing that type gets it"; FromPrefab says "this geometry belongs to a
+	// *file this level references*". Both mean "do not write me out", and a
+	// chunk can only be one or the other, but collapsing them would leave
+	// nothing to say which file a stale copy came from.
+	FromPrefab string
+
 	// Xform is runtime-only (never serialized, never cloned): where this
 	// chunk's frame currently is, refreshed every tick by RefreshFrames.
 	// Identity for a chunk with no FrameOwner. ModelMatrix composes this with

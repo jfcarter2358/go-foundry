@@ -62,6 +62,7 @@ func editorPropertiesSection(lvl *world.Level) {
 	editorEnvironmentSection(lvl)
 	editorPlayerSection(lvl)
 	editorEntityProperties(lvl)
+	editorPrefabPropertiesSection()
 	editorVolumePropertiesSection()
 	editorSpritePropertiesSection()
 	editorSceneryPropertiesSection()

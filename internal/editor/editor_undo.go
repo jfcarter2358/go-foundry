@@ -187,6 +187,8 @@ func editorResetSelectionState() {
 	// own annoyance. Only the *selection* is stale after a snapshot swap.
 	editorClearScenerySelection()
 	Editor.EntityPlacementMode = false
+	Editor.ActivePrefabIdx = -1
+	Editor.PrefabPlacementMode = false
 	Editor.VolumePlacementMode = false
 	Editor.SpritePlacementMode = false
 	Editor.EmitterPlacementMode = false

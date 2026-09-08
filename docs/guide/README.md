@@ -1,9 +1,16 @@
 # Foundry — designer's guide
 
-Foundry is a sector-based 3D engine with its editor built in. You lay out rooms
-as 2D polygons with a floor and ceiling height, stack them, texture them, then
-fill them with entities, props, effects and scripts. Everything here is authored
-in the running engine — there is no export step and no separate viewer.
+Foundry is a 3D engine with its editor built in. You block levels out of convex
+solids — **brushes** — shaped in the 3D view the way a model is, then fill them
+with entities, props, effects and scripts. Everything here is authored in the
+running engine: there is no export step and no separate viewer.
+
+> **TODO(brush migration, Phase 10):** levels used to be built out of *sectors*
+> — 2D floorplan polygons with a floor and ceiling height, drawn on a top-down
+> map. That model, and the 2D editor that went with it, have been replaced. The
+> chapters below still describe the old one and are being rewritten; the ones
+> updated so far are [Prefabs](22-prefabs.md) and
+> [Vehicles and frames](12-vehicles-and-frames.md).
 
 Start the editor:
 
@@ -22,6 +29,7 @@ and is always current.
 | --- | --- |
 | [Editor basics](01-editor-basics.md) | Windows, toolbar, selection, gizmos, cameras, undo, saving |
 | [Building levels](02-building-levels.md) | Chunks, sectors, walls, portals, floors, ceilings, the 2D map |
+| [Prefabs](22-prefabs.md) | Reusable groups, linked by file: build once, place twenty |
 | [Shaping surfaces](03-shaping-surfaces.md) | Terrain, steps, recesses and holes on any face |
 | [Textures](04-textures.md) | The texture editor, palettes, layers, animation, bump maps |
 | [Detail and smoothing](05-detail-and-smoothing.md) | Per-face procedural displacement and scattered rock |

@@ -48,6 +48,7 @@ const (
 	panelFocusChunk   = "chunk"
 	panelFocusLight   = "light"
 	panelFocusScenery = "scenery"
+	panelFocusPrefab  = "prefab"
 )
 
 // ---------- pick result ----------
@@ -753,6 +754,10 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	// Drawn whatever the cursor is doing: the selection does not stop existing
 	// because the pointer moved onto the panel.
 	drawSelectedFaceOutline()
+	// The prefab boxes are drawn whatever is selected: an instance is a unit
+	// that moves and deletes together, and without a box round it a lamp made
+	// of five brushes is indistinguishable from five loose brushes.
+	DrawPrefabOutlines()
 	drawSelectedVolumeOutline()
 	drawSelectedSpriteOutline(gfx.Cam.Position)
 	drawSelectedSceneryOutline()

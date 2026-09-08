@@ -18,6 +18,7 @@ import (
 
 	"foundry/internal/world"
 
+	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
 
@@ -85,6 +86,16 @@ func TestPanelDrawsForEverySelection(t *testing.T) {
 			})
 		}},
 		{"vertices", panelFocusVertex, func() { editor3DSelectBrushVertices() }},
+		{"prefab", panelFocusPrefab, func() {
+			Editor.level.Prefabs = []world.PrefabInstance{
+				{ID: "lamp1", File: "street_lamp", Position: mgl32.Vec3{1, 0, 2}, Scale: 1},
+			}
+			editorSelectPrefab(0)
+		}},
+		{"a prefab with no file yet", panelFocusPrefab, func() {
+			Editor.level.Prefabs = []world.PrefabInstance{{ID: "lamp1"}}
+			editorSelectPrefab(0)
+		}},
 		{"entity", panelFocusEntity, func() { editorSelectEntity(0) }},
 		{"volume", panelFocusVolume, func() { editorSelectVolume(0) }},
 		{"global light", panelFocusLight, func() { editorSelectLight(lightKindGlobal, 0) }},

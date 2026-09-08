@@ -92,6 +92,12 @@ type Volume struct {
 	// and does not acquire one by being re-saved.
 	Fog *VolumeFog
 
+	// FromPrefab is runtime-only, never serialized: the prefab instance whose
+	// file put this here (prefab.go). Empty for one the level file authored.
+	// It is what LevelToRaw checks before writing — a level that saved a copy
+	// of a prefab's content would freeze it and stop tracking the file.
+	FromPrefab string
+
 	// Geometry is the editor's wireframe cage. Runtime-only, never serialized —
 	// the cage is an authoring aid and is not drawn during play, whatever else
 	// the volume does.

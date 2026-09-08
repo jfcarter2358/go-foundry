@@ -150,6 +150,37 @@ type RawVolumeFog struct {
 	MaxOpacity *float32  `yaml:"max_opacity,omitempty"` // default 1
 }
 
+// RawPrefabInstance is one placement of a prefab file (prefab.go).
+//
+// Scale is a plain float rather than a pointer, because 0 has a defined reading
+// here — EffectiveScale treats it as 1, the same way Chunk.Scale and
+// EntityChunk.Scale do — so absent and "1" are the same value and there is
+// nothing for a pointer to distinguish.
+type RawPrefabInstance struct {
+	ID string `yaml:"id"`
+	// File is the prefab under prefabs/, without the extension.
+	File     string  `yaml:"file"`
+	Position RawVec3 `yaml:"position"`
+	Rotation float32 `yaml:"rotation,omitempty"` // radians about Y
+	Scale    float32 `yaml:"scale,omitempty"`    // 0 = 1
+	// Frame is the vehicle the instance rides, absent for the world.
+	Frame string `yaml:"frame,omitempty"`
+}
+
+// RawPrefab is a prefab file's own contents (prefab.go).
+//
+// The brushes are a flat list rather than a chunk, because a prefab has no
+// placement of its own — the instance supplies that. What a prefab holds is
+// content authored around its origin; where that content goes is the level's
+// business, and writing a `chunks:` block here would mean every prefab file
+// carrying an Origin nothing reads.
+type RawPrefab struct {
+	Brushes  []RawBrush      `yaml:"brushes,omitempty"`
+	Entities []RawEntity     `yaml:"entities,omitempty"`
+	Volumes  []RawVolume     `yaml:"volumes,omitempty"`
+	Lights   []RawPointLight `yaml:"lights,omitempty"`
+}
+
 // RawSprite is the YAML representation of a level sprite (sprite.go) — a
 // camera-facing textured quad.
 //
@@ -496,6 +527,10 @@ type RawLevel struct {
 	// two of them, and its authored position is world-space.
 	Volumes  []RawVolume `yaml:"volumes,omitempty"`
 	Entities []RawEntity `yaml:"entities,omitempty"`
+	// Prefabs are the level's placements of reusable content (prefab.go). Only
+	// the placements are stored: what each one MAKES is read from its file
+	// every load, which is the whole point of the link.
+	Prefabs []RawPrefabInstance `yaml:"prefabs,omitempty"`
 	// Sprites are the level's camera-facing quads (sprite.go). They sit beside
 	// volumes and entities rather than in a chunk because one attached to a
 	// moving entity crosses chunks, and its authored position is world-space

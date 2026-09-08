@@ -65,6 +65,7 @@ func editorExplorerSection(lvl *world.Level) {
 	imgui.BeginChildV("##explorertree", imgui.Vec2{X: 0, Y: h}, true, 0)
 	editorExplorerSpawnRow(lvl)
 	editorExplorerChunkNodes(lvl)
+	editorExplorerPrefabNodes(lvl)
 	editorExplorerEntityNodes(lvl)
 	editorExplorerVolumeNodes(lvl)
 	editorExplorerSpriteNodes(lvl)
@@ -92,6 +93,9 @@ func editorExplorerPlacementBanner() {
 		}
 		label = "Click in the view to place " + what
 		cancel = func() { Editor.EntityPlacementMode = false }
+	case Editor.PrefabPlacementMode:
+		label = "Click in the view to place " + Editor.PrefabPlaceFile
+		cancel = func() { Editor.PrefabPlacementMode = false }
 	case Editor.VolumePlacementMode:
 		label = "Click in the view to place a volume"
 		cancel = func() { Editor.VolumePlacementMode = false }
@@ -429,6 +433,62 @@ func editorExplorerEntityNodes(lvl *world.Level) {
 
 // ---------- volumes ----------
 
+// editorExplorerPrefabNodes draws the level's prefab placements.
+//
+// Above entities and volumes because an instance is what MADE some of them: a
+// level with twenty lamps has twenty rows here and two hundred below, and the
+// twenty are the ones anyone is looking for. The materialised content still
+// appears in its own categories — it is ordinary level content, and hiding it
+// would make "why can I not delete this light" a mystery — but its rows say
+// which instance owns them.
+func editorExplorerPrefabNodes(lvl *world.Level) {
+	if !editorExplorerCategory(fmt.Sprintf("Prefabs (%d)##prefabs", len(lvl.Prefabs)), panelFocusPrefab) {
+		return
+	}
+	defer imgui.TreePop()
+
+	if len(lvl.Prefabs) == 0 {
+		editorTextMuted("(none)")
+		return
+	}
+	del, dup, restamp := -1, -1, -1
+	for i := range lvl.Prefabs {
+		inst := &lvl.Prefabs[i]
+		label := inst.ID
+		if inst.File == "" {
+			label += "  (no file)"
+		}
+		if editorExplorerLeaf(fmt.Sprintf("%s##prefab%d", label, i), i == Editor.ActivePrefabIdx, panelFocusPrefab) {
+			editorSelectPrefab(i)
+		}
+		editorExplorerMenu(fmt.Sprintf("prefabctx%d", i), func() {
+			if imgui.MenuItem("Re-stamp from file") {
+				restamp = i
+			}
+			if imgui.MenuItem("Duplicate") {
+				dup = i
+			}
+			imgui.Separator()
+			if imgui.MenuItem("Delete") {
+				del = i
+			}
+		})
+	}
+
+	// Acted on outside the loop: each rewrites the slice being walked.
+	switch {
+	case restamp >= 0:
+		editorSelectPrefab(restamp)
+		restampActivePrefab()
+	case dup >= 0:
+		editorSelectPrefab(dup)
+		duplicateActivePrefab()
+	case del >= 0:
+		editorSelectPrefab(del)
+		deleteActivePrefab()
+	}
+}
+
 func editorExplorerVolumeNodes(lvl *world.Level) {
 	if !editorExplorerCategory(fmt.Sprintf("Volumes (%d)##volumes", len(lvl.Volumes)), panelFocusVolume) {
 		return
@@ -695,6 +755,14 @@ func editorExplorerAddMenu(lvl *world.Level) {
 	if imgui.BeginMenu("Entity") {
 		editorEntityAddMenu()
 		imgui.EndMenu()
+	}
+	if imgui.BeginMenu("Prefab") {
+		editorPrefabAddMenu()
+		imgui.EndMenu()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A reusable group, linked by file: editing the file\n" +
+			"updates every placement of it.")
 	}
 	if imgui.BeginMenu("Volume") {
 		editorVolumeAddMenu()

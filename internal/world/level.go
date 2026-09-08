@@ -26,6 +26,12 @@ type Level struct {
 	// Entities are the level's placed dynamic objects (entity.go). They live on
 	// the level rather than in a chunk because they move — see RawLevel's note.
 	Entities []Entity
+	// Prefabs are the level's placements of reusable content (prefab.go). What
+	// each one MAKES — a chunk, entities, volumes, lights — is materialised
+	// into the lists around this one and tagged with the instance it came
+	// from; this list is only the placements themselves, which is what the
+	// level file stores.
+	Prefabs []PrefabInstance
 	// Sprites are the level's camera-facing quads (sprite.go). Level-scoped for
 	// the same reason entities are — see RawLevel's note.
 	Sprites []Sprite

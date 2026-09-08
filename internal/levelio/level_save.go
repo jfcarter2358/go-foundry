@@ -70,10 +70,12 @@ func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
-		if ch.FromEntity != "" {
-			// An entity definition's own geometry, materialised into this level
-			// when the entity was placed. It belongs to the definition and is
-			// rebuilt from it on every load — see Chunk.FromEntity.
+		if ch.FromEntity != "" || ch.FromPrefab != "" {
+			// Content materialised into this level from somewhere else: an
+			// entity definition's own geometry (Chunk.FromEntity), or a prefab
+			// file's (Chunk.FromPrefab). It belongs to that file and is rebuilt
+			// from it on every load; writing it out would freeze a copy and
+			// stop the level tracking the original.
 			continue
 		}
 		rc, err := chunkToRaw(ch)
@@ -87,11 +89,23 @@ func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 		raw.Spawn = spawnToRaw(level.Spawn)
 	}
 
+	// The prefab placements themselves. What they MADE is skipped throughout
+	// this function, on FromPrefab — see the chunk loop above.
+	for i := range level.Prefabs {
+		raw.Prefabs = append(raw.Prefabs, world.PrefabInstanceToRaw(&level.Prefabs[i]))
+	}
+
 	for i := range level.Entities {
+		if level.Entities[i].FromPrefab != "" {
+			continue
+		}
 		raw.Entities = append(raw.Entities, world.EntityToRaw(&level.Entities[i], entityDefFor(&level.Entities[i])))
 	}
 
 	for i := range level.Volumes {
+		if level.Volumes[i].FromPrefab != "" {
+			continue
+		}
 		raw.Volumes = append(raw.Volumes, world.VolumeToRaw(&level.Volumes[i]))
 	}
 
@@ -239,6 +253,9 @@ func lightsToRaw(ls world.LightSet) world.RawLights {
 		})
 	}
 	for _, pl := range ls.Points {
+		if pl.FromPrefab != "" {
+			continue // a prefab file's light; see the chunk loop in LevelToRaw
+		}
 		rl.Point = append(rl.Point, world.RawPointLight{
 			ID:            pl.ID,
 			RawScriptData: world.ScriptDataToRaw(pl.ScriptData),

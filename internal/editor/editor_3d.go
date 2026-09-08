@@ -307,6 +307,15 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	if Editor.PrefabPlacementMode {
+		// On the ground where the click landed, not lifted like a volume: a
+		// prefab is authored with its origin at the bottom of its own bounds
+		// (EditorSaveSelectionAsPrefab), so it sits on the surface it is
+		// dropped onto.
+		placePrefabAt(editor3DPointAt(t.X, t.Y))
+		return
+	}
+
 	if Editor.VolumePlacementMode {
 		// A volume is a region rather than something that rests on a surface, so
 		// it is centred a little above where the click landed — a trigger flush
