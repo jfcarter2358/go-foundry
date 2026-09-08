@@ -54,8 +54,7 @@ func TestKeybindSplitSectionsCoversEverything(t *testing.T) {
 
 func TestKeybindActiveSectionsFollowMode(t *testing.T) {
 	saved := editor.Editor
-	savedWin := editor.Editor2DWindow
-	defer func() { editor.Editor, editor.Editor2DWindow = saved, savedWin }()
+	defer func() { editor.Editor = saved }()
 
 	activeTitles := func() map[string]bool {
 		out := map[string]bool{}
@@ -73,39 +72,25 @@ func TestKeybindActiveSectionsFollowMode(t *testing.T) {
 		t.Errorf("editor closed: expected gameplay only, got %v", got)
 	}
 
-	// The sector map lives in its own window, and Editor.Mode never says
-	// Mode2D outside that window's draw brackets — so the map's sections key
-	// off the window being open, not off the mode.
 	editor.Editor = editor.EditorState{}
 	editor.Editor.Active = true
-	editor.Editor2DWindow = &uiwin.UIWindow{}
+	editor.Editor.Mode = editor.Mode3D
 	got := activeTitles()
-	if !got["Editor — 2D sector map (its own window)"] || !got["Editor — any mode"] {
-		t.Errorf("2D window open: expected the 2D and shared editor sections, got %v", got)
+	for _, want := range []string{"Editor — 3D view", "Editor — any mode", "Editor — shaping a brush"} {
+		if !got[want] {
+			t.Errorf("3D view: expected the %q section, got %v", want, got)
+		}
 	}
-	if got["Gameplay"] || got["Editor — biome brush (2D)"] {
-		t.Errorf("2D window open: gameplay/biome sections should be inactive, got %v", got)
-	}
-
-	editor.Editor.BiomeLayerActive = true
-	if !activeTitles()["Editor — biome brush (2D)"] {
-		t.Error("biome layer active: expected the biome brush section to light up")
-	}
-
-	// Closing the window takes the map's sections with it.
-	editor.Editor2DWindow = nil
-	if activeTitles()["Editor — 2D sector map (its own window)"] {
-		t.Error("2D window closed: the sector map section should be inactive")
+	if got["Gameplay"] {
+		t.Errorf("3D view: the gameplay section should be inactive, got %v", got)
 	}
 
 	// Global sections have no predicate and apply everywhere.
-	for _, mode := range []editor.EditorMode{editor.Mode3D, editor.Mode2D} {
-		editor.Editor = editor.EditorState{}
-		editor.Editor.Active = true
-		editor.Editor.Mode = mode
-		if !activeTitles()["Global"] {
-			t.Errorf("mode %v: Global section should always be active", mode)
-		}
+	editor.Editor = editor.EditorState{}
+	editor.Editor.Active = true
+	editor.Editor.Mode = editor.Mode3D
+	if !activeTitles()["Global"] {
+		t.Error("the Global section should always be active")
 	}
 }
 

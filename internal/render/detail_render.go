@@ -658,7 +658,6 @@ func RenderDetailCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.V
 // aParam(1).
 const DetailVertexStride = 7
 
-
 // buildRockMesh returns a small faceted rock/blob as a triangle list with
 // per-face normals for flat shading. It's a two-ring "barrel" over an n-gon
 // cross-section (top apex → upper ring → lower ring → bottom apex); each

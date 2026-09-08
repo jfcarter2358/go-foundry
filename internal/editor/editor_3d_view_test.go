@@ -1,51 +1,57 @@
 package editor
 
 import (
-	"foundry/internal/gfx"
-	"foundry/internal/world"
 	"testing"
+
+	"foundry/internal/testenv"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
-// occluderLevel builds a level whose only geometry is one wall quad standing at
-// z = -5, spanning ±2 in X and Y. The camera set up by setupPickCamera looks
-// straight down -Z through the middle of it.
-func occluderLevel() *world.Level {
-	wall := world.Wall{Visible: true, Geometry: gfx.Geometry{Vertices: quadVerts(-5, 2)}}
-	return &world.Level{Chunks: []world.Chunk{{
-		ID:       "c0",
-		MinBound: mgl32.Vec3{-3, -5, -11},
-		MaxBound: mgl32.Vec3{3, 5, -1},
-		Sectors: []world.Sector{{
-			ID:       "s0",
-			Walls:    []world.Wall{wall},
-			MinBound: mgl32.Vec2{-3, -11},
-			MaxBound: mgl32.Vec2{3, -1},
-			Floor:    world.Floor{Height: -3},
-			Ceiling:  world.Ceiling{Height: 3},
-		}},
-	}}}
+// occluderLevel builds a level whose only geometry is one thin box brush
+// standing at z = -5, spanning ±2 in X and Y. The camera set up by
+// setupPickCamera looks straight down -Z through the middle of it.
+func occluderLevel(t *testing.T) *world.Level {
+	t.Helper()
+	testenv.WithoutGeometryUploads(t)
+	ch := world.Chunk{
+		ID: "c0",
+		Brushes: []world.Brush{
+			world.NewBoxBrush("wall", mgl32.Vec3{0, 0, -5}, mgl32.Vec3{2, 2, 0.1}, "concrete"),
+		},
+	}
+	for bi := range ch.Brushes {
+		if err := ch.Brushes[bi].Load(); err != nil {
+			t.Fatalf("loading: %v", err)
+		}
+	}
+	ch.RecomputeBounds()
+	return &world.Level{Chunks: []world.Chunk{ch}}
 }
 
-// Solid shading's whole contract: a point on the far side of a wall is not
+// aVertex names a corner of occluderLevel's brush. The occlusion cache is keyed
+// on the selection, so two tests asking about different world positions have to
+// ask about different corners or the second reads the first's answer.
+func aVertex(vertIdx int) vertexSel {
+	return vertexSel{chunkIdx: 0, brushIdx: 0, vertIdx: vertIdx}
+}
+
+// Solid shading's whole contract: a point on the far side of a brush is not
 // selectable, and one in front of it is.
 func TestSolidShadingHidesOccludedHandles(t *testing.T) {
 	defer saveEditorSelection()()
 	setupPickCamera()
-	Editor.level = occluderLevel()
+	Editor.level = occluderLevel(t)
 	Editor.Wireframe = false
 	editorVisReset()
 
-	behind := vertexSel{chunkIdx: 0, sectorIdx: 0, vertIdx: 0, pointIdx: 0, isFloor: true}
-	front := vertexSel{chunkIdx: 0, sectorIdx: 0, vertIdx: 1, pointIdx: 1, isFloor: true}
-
-	if editorVertexVisible(behind, mgl32.Vec3{0, 0, -10}) {
-		t.Error("a point behind the wall reported visible in solid shading")
+	if editorVertexVisible(aVertex(0), mgl32.Vec3{0, 0, -10}) {
+		t.Error("a point behind the brush reported visible in solid shading")
 	}
-	if !editorVertexVisible(front, mgl32.Vec3{0, 0, -3}) {
-		t.Error("a point in front of the wall reported hidden")
+	if !editorVertexVisible(aVertex(1), mgl32.Vec3{0, 0, -3}) {
+		t.Error("a point in front of the brush reported hidden")
 	}
 }
 
@@ -54,26 +60,24 @@ func TestSolidShadingHidesOccludedHandles(t *testing.T) {
 func TestWireframeMakesEveryHandleVisible(t *testing.T) {
 	defer saveEditorSelection()()
 	setupPickCamera()
-	Editor.level = occluderLevel()
-
-	behind := vertexSel{chunkIdx: 0, sectorIdx: 0, vertIdx: 0, pointIdx: 0, isFloor: true}
+	Editor.level = occluderLevel(t)
 
 	Editor.Wireframe = false
 	editorVisReset()
-	if editorVertexVisible(behind, mgl32.Vec3{0, 0, -10}) {
+	if editorVertexVisible(aVertex(0), mgl32.Vec3{0, 0, -10}) {
 		t.Fatal("setup wrong: the point should start out occluded")
 	}
 
 	editorSetWireframe(true)
-	if !editorVertexVisible(behind, mgl32.Vec3{0, 0, -10}) {
-		t.Error("wireframe still hid a point behind a wall")
+	if !editorVertexVisible(aVertex(0), mgl32.Vec3{0, 0, -10}) {
+		t.Error("wireframe still hid a point behind a brush")
 	}
 	if editorHandleShowPx() != vertexHandleShowAllPx {
 		t.Error("wireframe did not switch handles to show-all")
 	}
 
 	editorSetWireframe(false)
-	if editorVertexVisible(behind, mgl32.Vec3{0, 0, -10}) {
+	if editorVertexVisible(aVertex(0), mgl32.Vec3{0, 0, -10}) {
 		t.Error("going back to solid did not restore occlusion")
 	}
 }
@@ -83,13 +87,21 @@ func TestWireframeMakesEveryHandleVisible(t *testing.T) {
 func TestSurfaceDoesNotOccludeItsOwnVertex(t *testing.T) {
 	defer saveEditorSelection()()
 	setupPickCamera()
-	Editor.level = occluderLevel()
+	Editor.level = occluderLevel(t)
 	Editor.Wireframe = false
 	editorVisReset()
 
-	corner := vertexSel{chunkIdx: 0, sectorIdx: 0, vertIdx: 2, pointIdx: 2, isFloor: true}
-	if !editorVertexVisible(corner, mgl32.Vec3{0, 0, -5}) {
-		t.Error("a point lying on the wall was occluded by that wall")
+	// Corner 6 is (-x, +y, +z) — see world.CornerSign — so it is on the brush's
+	// NEAR face, lying exactly on the faces that meet there. That is the case
+	// the occlusion test's slack exists for. (A corner on the far side is
+	// genuinely behind the near face and correctly hidden, which is what the
+	// first test in this file checks.)
+	corner, ok := vertexSelPos(aVertex(6))
+	if !ok {
+		t.Fatal("the corner has no position")
+	}
+	if !editorVertexVisible(aVertex(6), corner) {
+		t.Error("a point lying on the brush was occluded by that brush")
 	}
 }
 
@@ -98,20 +110,16 @@ func TestSurfaceDoesNotOccludeItsOwnVertex(t *testing.T) {
 func TestEdgeVisibleWhenEitherEndIs(t *testing.T) {
 	defer saveEditorSelection()()
 	setupPickCamera()
-	Editor.level = occluderLevel()
+	Editor.level = occluderLevel(t)
 	Editor.Wireframe = false
 	editorVisReset()
 
-	a := vertexSel{chunkIdx: 0, sectorIdx: 0, vertIdx: 0, pointIdx: 0, isFloor: true}
-	b := vertexSel{chunkIdx: 0, sectorIdx: 0, vertIdx: 1, pointIdx: 1, isFloor: true}
 	hidden, shown := mgl32.Vec3{0, 0, -10}, mgl32.Vec3{0, 0, -3}
-
-	if !editorEdgeVisible(a, b, hidden, shown) {
+	if !editorEdgeVisible(aVertex(0), aVertex(1), hidden, shown) {
 		t.Error("an edge with one visible end was dropped")
 	}
-	c := vertexSel{chunkIdx: 0, sectorIdx: 0, vertIdx: 3, pointIdx: 3, isFloor: true}
-	if editorEdgeVisible(a, c, hidden, mgl32.Vec3{1, 1, -12}) {
-		t.Error("an edge with both ends behind the wall was offered")
+	if editorEdgeVisible(aVertex(0), aVertex(3), hidden, mgl32.Vec3{1, 1, -12}) {
+		t.Error("an edge with both ends behind the brush was offered")
 	}
 }
 
@@ -121,10 +129,9 @@ func TestEdgeVisibleWhenEitherEndIs(t *testing.T) {
 // keeps the selection; face works in another unit, so crossing to it clears.
 func TestSelModeSwitchCarriesPointsButNotFaces(t *testing.T) {
 	defer saveEditorSelection()()
-	Editor.level = occluderLevel()
+	Editor.level = occluderLevel(t)
 	Editor.SelMode = editorSelPoint
-	sel := []vertexSel{{chunkIdx: 0, sectorIdx: 0, vertIdx: 0, pointIdx: 0, isFloor: true}}
-	Editor.SelectedVertices = sel
+	Editor.SelectedVertices = []vertexSel{aVertex(0)}
 
 	editorSetSelMode(editorSelEdge)
 	if len(Editor.SelectedVertices) != 1 {
@@ -143,21 +150,18 @@ func TestSelModeSwitchCarriesPointsButNotFaces(t *testing.T) {
 }
 
 // Crossing back the other way has to drop what face mode selected, or the panel
-// would go on showing a wall the visible handles no longer explain.
+// would go on showing a face the visible handles no longer explain.
 func TestSelModeLeavingFaceClearsObjects(t *testing.T) {
 	defer saveEditorSelection()()
-	Editor.level = occluderLevel()
+	Editor.level = occluderLevel(t)
 	Editor.SelMode = editorSelFace
-	Editor.ActiveSectorIdx = 0
-	Editor.ActiveSurface = "wall"
-	Editor.ActiveEdgeKind = "wall"
-	Editor.ActiveEdgeIdx = 0
+	Editor.ActiveChunkIdx = 0
+	setFaceSelection([]faceSel{brushFaceSel(0, 0, boxFaceNegZ)})
 	Editor.SpawnSelected = true
 
 	editorSetSelMode(editorSelPoint)
-	if Editor.ActiveSurface != "" || Editor.ActiveEdgeIdx != -1 {
-		t.Errorf("face -> point left a surface selected: %q #%d",
-			Editor.ActiveSurface, Editor.ActiveEdgeIdx)
+	if len(Editor.SelectedFaces) != 0 {
+		t.Errorf("face -> point left %d faces selected", len(Editor.SelectedFaces))
 	}
 	if Editor.SpawnSelected {
 		t.Error("face -> point left the spawn point selected")
@@ -185,24 +189,27 @@ func centreClick() sdl.MouseButtonEvent {
 	return sdl.MouseButtonEvent{Button: sdl.ButtonLeft, X: mx, Y: my}
 }
 
-// Face mode is the only one that reaches through to the world, and it must go
-// on selecting sector faces exactly as the pre-mode viewport did.
-func TestFaceModeSelectsTheWall(t *testing.T) {
+// Face mode is the only one that reaches through to the world, and it selects
+// the brush face the ray meets.
+func TestFaceModeSelectsTheBrushFace(t *testing.T) {
 	defer saveEditorSelection()()
 	click := centreClick()
-	Editor.level = occluderLevel()
+	Editor.level = occluderLevel(t)
 	Editor.SpawnPlacementMode = false
 	Editor.SelMode = editorSelFace
 	editorVisReset()
 
 	Editor3DHandleClick(click)
 
-	if Editor.ActiveSurface != "wall" || Editor.ActiveEdgeIdx != 0 {
-		t.Fatalf("face mode selected %q #%d, want the wall",
-			Editor.ActiveSurface, Editor.ActiveEdgeIdx)
+	if len(Editor.SelectedFaces) != 1 {
+		t.Fatalf("face mode selected %d faces, want 1", len(Editor.SelectedFaces))
 	}
-	if Editor.PanelFocus != panelFocusWall {
-		t.Errorf("panel focus = %q, want %q", Editor.PanelFocus, panelFocusWall)
+	// Looking down -Z at a box centred at z=-5: the near side is +Z.
+	if got := Editor.SelectedFaces[0]; got.brushIdx != 0 || got.faceIdx != boxFacePosZ {
+		t.Fatalf("selected %+v, want brush 0's +Z face (%d)", got, boxFacePosZ)
+	}
+	if Editor.PanelFocus != panelFocusFace {
+		t.Errorf("panel focus = %q, want %q", Editor.PanelFocus, panelFocusFace)
 	}
 }
 
@@ -212,115 +219,23 @@ func TestFaceModeSelectsTheWall(t *testing.T) {
 func TestPointModeMissDoesNotFallThroughToTheFace(t *testing.T) {
 	defer saveEditorSelection()()
 	click := centreClick()
-	Editor.level = occluderLevel()
+	Editor.level = occluderLevel(t)
 	Editor.SpawnPlacementMode = false
+	Editor.ActiveChunkIdx = 0
 	editorVisReset()
 
 	for _, mode := range []editorSelMode{editorSelPoint, editorSelEdge} {
 		Editor.SelMode = mode
-		Editor.ActiveSurface = "wall"
-		Editor.ActiveEdgeIdx = 0
-		Editor.SelectedVertices = []vertexSel{{chunkIdx: 0}}
+		setFaceSelection([]faceSel{brushFaceSel(0, 0, boxFacePosZ)})
+		Editor.SelectedVertices = []vertexSel{aVertex(0)}
 
 		Editor3DHandleClick(click)
 
-		if Editor.ActiveSurface != "" {
-			t.Errorf("%v mode: a miss selected the face behind it (%q)", mode, Editor.ActiveSurface)
+		if len(Editor.SelectedFaces) != 0 {
+			t.Errorf("%v mode: a miss selected the face behind it (%+v)", mode, Editor.SelectedFaces)
 		}
 		if len(Editor.SelectedVertices) != 0 {
 			t.Errorf("%v mode: a miss left %d vertices selected", mode, len(Editor.SelectedVertices))
 		}
-	}
-}
-
-// ---------- water ----------
-
-// waterLevel puts a water plane at z = -4, in front of occluderLevel's wall,
-// with the Water-kind biome sector it was derived from.
-func waterLevel() *world.Level {
-	lvl := occluderLevel()
-	ch := &lvl.Chunks[0]
-	ch.BiomeSectors = []world.BiomeSector{
-		{ID: "other", Brush: world.BiomeBrush{Kind: world.BiomeGrass}},
-		{ID: "lake", Brush: world.BiomeBrush{Kind: world.BiomeWater}},
-	}
-	ch.WaterSurfaces = []world.WaterSurface{{
-		ID:       "lake",
-		ChunkID:  ch.ID,
-		Position: mgl32.Vec3{0, 0, -4},
-		Geometry: gfx.Geometry{Vertices: quadVerts(0, 2)},
-	}}
-	return lvl
-}
-
-// Water is still pickable now that it is derived from a biome sector rather
-// than placed as a primitive, and it wins over the wall behind it.
-func TestWaterPlaneIsPickable(t *testing.T) {
-	defer saveEditorSelection()()
-	mx, my := setupPickCamera()
-	Editor.level = waterLevel()
-
-	hit := pick3D(mx, my)
-	if hit.kind != pickWater {
-		t.Fatalf("pick3D found %q at t=%v, want the water plane", hit.kind, hit.t)
-	}
-	if hit.chunkIdx != 0 || hit.idx != 0 {
-		t.Fatalf("water hit = chunk %d surface %d, want 0/0", hit.chunkIdx, hit.idx)
-	}
-}
-
-// A water plane has nothing to edit of its own, so clicking one has to land on
-// the biome sector that produced it — matched by ID, not by index, since the
-// two slices are built independently.
-func TestClickingWaterSelectsItsBiomeSector(t *testing.T) {
-	defer saveEditorSelection()()
-	click := centreClick()
-	Editor.level = waterLevel()
-	Editor.SpawnPlacementMode = false
-	Editor.SelMode = editorSelFace
-	editorVisReset()
-
-	Editor3DHandleClick(click)
-
-	if Editor.ActiveBiomeSectorIdx != 1 {
-		t.Fatalf("selected biome sector %d, want 1 (\"lake\")", Editor.ActiveBiomeSectorIdx)
-	}
-	if Editor.PanelFocus != panelFocusWater {
-		t.Errorf("panel focus = %q, want %q", Editor.PanelFocus, panelFocusWater)
-	}
-	if Editor.ActiveSurface != "" {
-		t.Errorf("clicking water also selected a face: %q", Editor.ActiveSurface)
-	}
-}
-
-// A surface whose sector has been deleted must resolve to "no sector" rather
-// than to whatever happens to sit at that index.
-func TestWaterSectorForHandlesAMissingSector(t *testing.T) {
-	defer saveEditorSelection()()
-	Editor.level = waterLevel()
-	Editor.level.Chunks[0].BiomeSectors = nil
-
-	if got := editorWaterSectorFor(0, 0); got != -1 {
-		t.Errorf("orphaned water surface resolved to sector %d, want -1", got)
-	}
-	if got := editorWaterSectorFor(0, 9); got != -1 {
-		t.Errorf("out-of-range surface resolved to sector %d, want -1", got)
-	}
-}
-
-// Water is transparent, so it must never hide a handle underneath it — the
-// point of clicking through a lake is to reach the lakebed's corners.
-func TestWaterDoesNotOccludeHandles(t *testing.T) {
-	defer saveEditorSelection()()
-	setupPickCamera()
-	Editor.level = waterLevel()
-	// Drop the wall so the water plane is the only thing on the ray.
-	Editor.level.Chunks[0].Sectors[0].Walls = nil
-	Editor.Wireframe = false
-	editorVisReset()
-
-	under := vertexSel{chunkIdx: 0, sectorIdx: 0, vertIdx: 0, pointIdx: 0, isFloor: true}
-	if !editorVertexVisible(under, mgl32.Vec3{0, 0, -8}) {
-		t.Error("a point under the water plane was reported hidden")
 	}
 }

@@ -131,29 +131,22 @@ func TestPick3DPicksVolume(t *testing.T) {
 	prevLevel := Editor.level
 	defer func() { Editor.level = prevLevel }()
 
-	newLevel := func(wallZ float32) *world.Level {
-		wall := world.Wall{}
-		wall.Geometry.Vertices = quadVerts(wallZ, 4)
-		v := world.NewVolume("v0", mgl32.Vec3{0, 0, -8})
-		return &world.Level{
-			Chunks: []world.Chunk{{
-				ID:      "c0",
-				Sectors: []world.Sector{{ID: "s0", Walls: []world.Wall{wall}}},
-			}},
-			Volumes: []world.Volume{v},
-		}
+	setup := func(brushZ float32) {
+		brushGeomLevel(t, world.NewBoxBrush("wall",
+			mgl32.Vec3{0, 0, brushZ}, mgl32.Vec3{4, 4, 0.5}, "concrete"))
+		Editor.level.Volumes = []world.Volume{world.NewVolume("v0", mgl32.Vec3{0, 0, -8})}
 	}
 
-	// Volume at 7 (its near face), wall at 20 → the volume wins.
-	Editor.level = newLevel(-20)
+	// Volume at 7 (its near face), brush at 20 → the volume wins.
+	setup(-20)
 	if hit := pick3D(mx, my); hit.kind != pickVolume || hit.idx != 0 {
 		t.Fatalf("near volume: got kind=%q idx=%d, want the volume", hit.kind, hit.idx)
 	}
 
-	// Wall at 3, volume at 7 → the wall wins.
-	Editor.level = newLevel(-3)
-	if hit := pick3D(mx, my); hit.kind != pickWall {
-		t.Fatalf("near wall: got kind=%q, want the wall", hit.kind)
+	// Brush at 3, volume at 7 → the brush wins.
+	setup(-3)
+	if hit := pick3D(mx, my); hit.kind != pickBrushFace {
+		t.Fatalf("near brush: got kind=%q, want the brush face", hit.kind)
 	}
 }
 

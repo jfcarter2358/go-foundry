@@ -86,37 +86,6 @@ type GizmoState struct {
 	GizmoDragWorld []mgl32.Vec3
 }
 
-// Gizmo2DState is the top-down map's gizmo interaction state, embedded in
-// EditorState the way GizmoState is.
-//
-// It is deliberately separate from the 3D gizmo's rather than shared: the two
-// views can both be on screen at once (the 2D map pops out into a window of its
-// own), each resolves the cursor through its own projection, and a drag started
-// in one must not be continued by motion events arriving from the other.
-type Gizmo2DState struct {
-	Gizmo2DDragging bool            // a handle drag is in progress on the map
-	Gizmo2DTool     editorGizmoTool // the tool the in-progress drag belongs to
-	// Gizmo2DAxis is the handle being dragged: 0=X, 2=Z (world axes, matching
-	// gizmoAxes), gizmo2DPlaneAxis for the free-move square, and
-	// modelScaleUniformAxis for scale's centre handle. -1 = not dragging.
-	Gizmo2DAxis   int
-	Gizmo2DCenter mgl32.Vec2 // selection centre in world XZ at mouse-down
-	// Gizmo2DStartS is the measure the drag is an offset from, in its tool's
-	// unit: world units along the axis, radians, or a scale reference.
-	Gizmo2DStartS        float32
-	Gizmo2DStartWorld    mgl32.Vec2   // cursor position in world XZ at mouse-down
-	Gizmo2DStartPts      []mgl32.Vec3 // per selected vertex: world position at mouse-down
-	Gizmo2DStartSpawn    mgl32.Vec3   // spawn-point position at mouse-down
-	Gizmo2DStartSpawnRot mgl32.Vec3   // spawn-point rotation at mouse-down
-	// The selected entity's own transform at mouse-down. Kept apart from the
-	// 3D gizmo's snapshot of the same thing for the reason this whole struct
-	// is: the map can be a window of its own, so a drag can be in progress in
-	// each view at once.
-	Gizmo2DStartEntity      mgl32.Vec3
-	Gizmo2DStartEntityRot   mgl32.Vec3
-	Gizmo2DStartEntityScale mgl32.Vec3
-}
-
 // EditorState holds all editor runtime state.
 type EditorState struct {
 	Active bool
@@ -151,7 +120,6 @@ type EditorState struct {
 
 	// --- Move/rotate/scale gizmos ---
 	GizmoState
-	Gizmo2DState
 	// One-shot request from a selection change to open (and scroll to) a
 	// properties section in the side panel. See the panelFocus* constants;
 	// cleared by the panel once it has been applied.
@@ -427,8 +395,6 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.GizmoTool = editorToolMove
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
-	Editor.Gizmo2DAxis = -1
-	Editor.Gizmo2DDragging = false
 	Editor.PanelWidth = 360 // default side panel width
 	Editor.ExplorerHeight = 220
 	Editor.StepSize = 0.25
@@ -997,8 +963,6 @@ func EditorLoadLevel(path string) error {
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
-	Editor.Gizmo2DAxis = -1
-	Editor.Gizmo2DDragging = false
 	Editor.SavePath = path
 
 	EditorClearUndoHistory()

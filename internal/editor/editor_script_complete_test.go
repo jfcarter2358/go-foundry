@@ -366,16 +366,16 @@ func TestScriptComplIdentItemsAreOrderedByProximity(t *testing.T) {
 }
 
 func TestScriptComplStructuralNarrowsWithTheKind(t *testing.T) {
-	if len(scriptComplStructuralOf(flang.RefEdge)) != 1 {
-		t.Errorf("an edge should offer only its sector")
+	if len(scriptComplStructuralOf(flang.RefBrush)) != 1 {
+		t.Errorf("a brush should offer only its chunk")
 	}
 	var names []string
-	for _, m := range scriptComplStructuralOf(flang.RefSector) {
+	for _, m := range scriptComplStructuralOf(flang.RefChunk) {
 		names = append(names, m.Name)
 	}
-	for _, want := range []string{"floor", "ceil", "edges", "chunk"} {
+	for _, want := range []string{"brushes"} {
 		if !contains(names, want) {
-			t.Errorf("a sector should offer %q, got %v", want, names)
+			t.Errorf("a chunk should offer %q, got %v", want, names)
 		}
 	}
 	// An unknown kind is most refs a script holds, so it gets the union rather
@@ -385,12 +385,12 @@ func TestScriptComplStructuralNarrowsWithTheKind(t *testing.T) {
 	}
 }
 
-func TestScriptComplPathKindWalksToTheFloor(t *testing.T) {
-	if got := scriptComplPathKind(flang.RefSector, []string{"floor"}); got != flang.RefFloor {
-		t.Errorf("kind = %v, want floor", got)
+func TestScriptComplPathKindWalksToTheChunk(t *testing.T) {
+	if got := scriptComplPathKind(flang.RefBrush, []string{"chunk"}); got != flang.RefChunk {
+		t.Errorf("kind = %v, want chunk", got)
 	}
 	// A step that is not structural gives up rather than guessing.
-	if got := scriptComplPathKind(flang.RefSector, []string{"nonsense"}); got != flang.RefNone {
+	if got := scriptComplPathKind(flang.RefBrush, []string{"nonsense"}); got != flang.RefNone {
 		t.Errorf("kind = %v, want none", got)
 	}
 }

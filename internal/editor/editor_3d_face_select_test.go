@@ -25,32 +25,22 @@ func gizmoSegments() [][3]mgl32.Vec3 {
 	return out
 }
 
-// outlineLevel is a 4x4 square sector with a floor at y=0, a ceiling at y=3 and
-// one wall running along its first edge.
+// outlineLevel is one 4x4x3 box brush with its lower-left-near corner at the
+// origin, so a face's corners are round numbers.
 func outlineLevel() *world.Level {
 	return &world.Level{Chunks: []world.Chunk{{
-		ID:     "c0",
-		Points: []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}},
-		Sectors: []world.Sector{{
-			ID:           "s0",
-			PointIndices: []int{0, 1, 2, 3},
-			Floor:        world.Floor{Enabled: true, Height: 0},
-			Ceiling:      world.Ceiling{Enabled: true, Height: 3},
-			Walls: []world.Wall{{
-				Visible:    true,
-				StartPoint: mgl32.Vec2{0, 0},
-				EndPoint:   mgl32.Vec2{4, 0},
-			}},
-		}},
+		ID: "c0",
+		Brushes: []world.Brush{
+			world.NewBoxBrush("b0", mgl32.Vec3{2, 1.5, 2}, mgl32.Vec3{2, 1.5, 2}, "concrete"),
+		},
 	}}}
 }
 
 // outlineOf selects one face of outlineLevel and returns what the outline pass
 // queued for it.
-func outlineOf(surface string, edgeIdx int) [][3]mgl32.Vec3 {
+func outlineOf(faceIdx int) [][3]mgl32.Vec3 {
 	Editor.ActiveChunkIdx = 0
-	Editor.ActiveBiomeSectorIdx = -1
-	setFaceSelection([]faceSel{{chunkIdx: 0, sectorIdx: 0, kind: surface, idx: edgeIdx}})
+	setFaceSelection([]faceSel{brushFaceSel(0, 0, faceIdx)})
 	gizmo.Buf = gizmo.Buf[:0]
 	drawSelectedFaceOutline()
 	return gizmoSegments()
@@ -68,16 +58,29 @@ func segmentBetween(segs [][3]mgl32.Vec3, a, b mgl32.Vec3) bool {
 	return false
 }
 
-// A selected floor gets its polygon outlined at the floor's own heights, in the
-// model editor's face colour, with a stub pointing the way it faces.
-func TestSelectedFloorIsOutlined(t *testing.T) {
+// stubFrom finds the one segment starting at the face centre — the normal stub
+// — and returns its direction and length as a vector.
+func stubFrom(t *testing.T, segs [][3]mgl32.Vec3, center mgl32.Vec3) mgl32.Vec3 {
+	t.Helper()
+	for _, s := range segs {
+		if nearlyVec(s[0], center, 1e-4) {
+			return s[1].Sub(s[0])
+		}
+	}
+	t.Fatalf("no normal stub starting at the face centre %v", center)
+	return mgl32.Vec3{}
+}
+
+// A selected face gets its corner loop outlined in the model editor's face
+// colour, with a stub pointing the way it faces.
+func TestSelectedFaceIsOutlined(t *testing.T) {
 	defer saveEditorSelection()()
 	setupPickCamera()
 	Editor.level = outlineLevel()
 
-	segs := outlineOf("floor", -1)
+	segs := outlineOf(boxFaceBottom)
 	if len(segs) != 5 {
-		t.Fatalf("queued %d segments, want 4 polygon edges + 1 normal stub", len(segs))
+		t.Fatalf("queued %d segments, want 4 face edges + 1 normal stub", len(segs))
 	}
 	corners := []mgl32.Vec3{{0, 0, 0}, {4, 0, 0}, {4, 0, 4}, {0, 0, 4}}
 	for i, a := range corners {
@@ -92,64 +95,67 @@ func TestSelectedFloorIsOutlined(t *testing.T) {
 				s[0], s[2], modelFaceSelColor)
 		}
 	}
+}
 
-	stub := stubFrom(t, segs, mgl32.Vec3{2, 0, 2})
-	if stub.Normalize() != (mgl32.Vec3{0, 1, 0}) {
-		t.Errorf("floor stub points %v, want straight up", stub.Normalize())
+// Which way "out" is decides which way an extrude goes, so the stub has to
+// follow the face's own winding — and a box's top and bottom face opposite
+// ways.
+func TestFaceStubsFollowTheOutwardNormal(t *testing.T) {
+	defer saveEditorSelection()()
+	setupPickCamera()
+	Editor.level = outlineLevel()
+
+	for _, tc := range []struct {
+		name    string
+		faceIdx int
+		center  mgl32.Vec3
+		want    mgl32.Vec3
+	}{
+		{"bottom", boxFaceBottom, mgl32.Vec3{2, 0, 2}, mgl32.Vec3{0, -1, 0}},
+		{"top", boxFaceTop, mgl32.Vec3{2, 3, 2}, mgl32.Vec3{0, 1, 0}},
+		{"-Z side", boxFaceNegZ, mgl32.Vec3{2, 1.5, 0}, mgl32.Vec3{0, 0, -1}},
+		{"+X side", boxFacePosX, mgl32.Vec3{4, 1.5, 2}, mgl32.Vec3{1, 0, 0}},
+	} {
+		stub := stubFrom(t, outlineOf(tc.faceIdx), tc.center)
+		if !nearlyVec(stub.Normalize(), tc.want, 1e-5) {
+			t.Errorf("%s stub points %v, want %v", tc.name, stub.Normalize(), tc.want)
+		}
 	}
 }
 
-// stubFrom finds the one segment starting at the face centre — the normal stub
-// — and returns its direction and length as a vector.
-func stubFrom(t *testing.T, segs [][3]mgl32.Vec3, center mgl32.Vec3) mgl32.Vec3 {
-	t.Helper()
+// A secondary selection is dimmed. The primary is not merely first in a list —
+// it is the face the side panel edits — so a dozen identically lit faces would
+// say nothing about which one the panel is describing.
+func TestSecondarySelectionIsDimmed(t *testing.T) {
+	defer saveEditorSelection()()
+	setupPickCamera()
+	Editor.level = outlineLevel()
+	Editor.ActiveChunkIdx = 0
+
+	setFaceSelection([]faceSel{
+		brushFaceSel(0, 0, boxFaceBottom),
+		brushFaceSel(0, 0, boxFaceTop),
+	})
+	gizmo.Buf = gizmo.Buf[:0]
+	drawSelectedFaceOutline()
+	segs := gizmoSegments()
+
+	if len(segs) != 10 {
+		t.Fatalf("queued %d segments, want two faces' 5 each", len(segs))
+	}
+	primary, secondary := 0, 0
 	for _, s := range segs {
-		if nearlyVec(s[0], center, 1e-4) {
-			return s[1].Sub(s[0])
+		switch s[2] {
+		case modelFaceSelColor:
+			primary++
+		case editorFaceSelSecondaryColor:
+			secondary++
+		default:
+			t.Fatalf("segment drawn in an unexpected colour %v", s[2])
 		}
 	}
-	t.Fatalf("no normal stub starting at the face centre %v", center)
-	return mgl32.Vec3{}
-}
-
-// A ceiling faces the other way, and getting that backwards would point every
-// extrusion into the room above.
-func TestSelectedCeilingStubPointsDown(t *testing.T) {
-	defer saveEditorSelection()()
-	setupPickCamera()
-	Editor.level = outlineLevel()
-
-	segs := outlineOf("ceiling", -1)
-	if !segmentBetween(segs, mgl32.Vec3{0, 3, 0}, mgl32.Vec3{4, 3, 0}) {
-		t.Error("ceiling outlined at the wrong height")
-	}
-	stub := stubFrom(t, segs, mgl32.Vec3{2, 3, 2})
-	if stub.Normalize() != (mgl32.Vec3{0, -1, 0}) {
-		t.Errorf("ceiling stub points %v, want straight down", stub.Normalize())
-	}
-}
-
-// A wall is outlined as the upright quad it occupies, floor to wall top at each
-// end, with the outward normal WallFacingCamera reads it by.
-func TestSelectedWallIsOutlined(t *testing.T) {
-	defer saveEditorSelection()()
-	setupPickCamera()
-	Editor.level = outlineLevel()
-
-	segs := outlineOf("wall", 0)
-	if len(segs) != 5 {
-		t.Fatalf("queued %d segments, want 4 quad edges + 1 normal stub", len(segs))
-	}
-	corners := []mgl32.Vec3{{0, 0, 0}, {4, 0, 0}, {4, 3, 0}, {0, 3, 0}}
-	for i, a := range corners {
-		b := corners[(i+1)%len(corners)]
-		if !segmentBetween(segs, a, b) {
-			t.Errorf("no outline segment between %v and %v", a, b)
-		}
-	}
-	stub := stubFrom(t, segs, mgl32.Vec3{2, 1.5, 0})
-	if !nearlyVec(stub.Normalize(), mgl32.Vec3{0, 0, 1}, 1e-5) {
-		t.Errorf("wall stub points %v, want the left-hand normal {0 0 1}", stub.Normalize())
+	if primary != 5 || secondary != 5 {
+		t.Errorf("got %d primary and %d secondary segments, want 5 of each", primary, secondary)
 	}
 }
 
@@ -160,11 +166,11 @@ func TestFaceNormalStubIsPixelSized(t *testing.T) {
 	setupPickCamera()
 	Editor.level = outlineLevel()
 
-	near := stubFrom(t, outlineOf("floor", -1), mgl32.Vec3{2, 0, 2}).Len()
+	near := stubFrom(t, outlineOf(boxFaceBottom), mgl32.Vec3{2, 0, 2}).Len()
 
 	gfx.Cam.Position = mgl32.Vec3{2, 0, 60}
 	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{2, 0, 2}, mgl32.Vec3{0, 1, 0})
-	far := stubFrom(t, outlineOf("floor", -1), mgl32.Vec3{2, 0, 2}).Len()
+	far := stubFrom(t, outlineOf(boxFaceBottom), mgl32.Vec3{2, 0, 2}).Len()
 
 	if far <= near {
 		t.Errorf("stub is %v up close and %v far away; it should grow with distance "+
@@ -174,59 +180,27 @@ func TestFaceNormalStubIsPixelSized(t *testing.T) {
 
 // Nothing selected must queue nothing: an outline left over from a cleared
 // selection is worse than none, because it points at geometry an edit will not
-// touch.
+// touch. Nor must a stale index — undo can shorten a brush's face list.
 func TestNoSelectionOutlinesNothing(t *testing.T) {
 	defer saveEditorSelection()()
 	setupPickCamera()
 	Editor.level = outlineLevel()
-
-	if segs := outlineOf("", -1); len(segs) != 0 {
-		t.Errorf("no surface selected queued %d segments", len(segs))
-	}
-
-	Editor.ActiveSurface = "wall"
-	Editor.ActiveEdgeIdx = 7 // past the end of s0's walls
-	gizmo.Buf = gizmo.Buf[:0]
-	drawSelectedFaceOutline()
-	if segs := gizmoSegments(); len(segs) != 0 {
-		t.Errorf("an out-of-range wall index queued %d segments", len(segs))
-	}
-}
-
-// Water is picked in face mode too, so it gets the same outline — drawn at the
-// height its plane actually sits at rather than the flat polygon's.
-func TestSelectedWaterIsOutlinedAtThePlaneHeight(t *testing.T) {
-	defer saveEditorSelection()()
-	setupPickCamera()
-	Editor.level = outlineLevel()
-	ch := &Editor.level.Chunks[0]
-	ch.BiomeSectors = []world.BiomeSector{{
-		ID:     "lake",
-		Points: []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}},
-		Brush:  world.BiomeBrush{Kind: world.BiomeWater},
-	}}
-	ch.WaterSurfaces = []world.WaterSurface{{ID: "lake", Position: mgl32.Vec3{2, -0.6, 2}}}
-
 	Editor.ActiveChunkIdx = 0
-	Editor.ActiveSectorIdx = -1
-	Editor.ActiveSurface = ""
-	Editor.ActiveBiomeSectorIdx = 0
-	gizmo.Buf = gizmo.Buf[:0]
-	drawSelectedFaceOutline()
-	segs := gizmoSegments()
 
-	if len(segs) != 5 {
-		t.Fatalf("queued %d segments, want 4 polygon edges + 1 normal stub", len(segs))
-	}
-	if !segmentBetween(segs, mgl32.Vec3{0, -0.6, 0}, mgl32.Vec3{4, -0.6, 0}) {
-		t.Error("water outlined at the polygon's height rather than the plane's")
-	}
-
-	// A sector painted but not yet synced into a plane has no height to draw at.
-	ch.WaterSurfaces = nil
+	clearFaceSelection()
 	gizmo.Buf = gizmo.Buf[:0]
 	drawSelectedFaceOutline()
 	if segs := gizmoSegments(); len(segs) != 0 {
-		t.Errorf("a water sector with no plane yet queued %d segments", len(segs))
+		t.Errorf("no face selected queued %d segments", len(segs))
+	}
+
+	// Past the end of b0's faces. Assigned directly rather than through
+	// setFaceSelection, which prunes what does not resolve — the point here is
+	// what the draw pass does when a stale entry reaches it anyway.
+	Editor.SelectedFaces = []faceSel{brushFaceSel(0, 0, 99)}
+	gizmo.Buf = gizmo.Buf[:0]
+	drawSelectedFaceOutline()
+	if segs := gizmoSegments(); len(segs) != 0 {
+		t.Errorf("an out-of-range face index queued %d segments", len(segs))
 	}
 }

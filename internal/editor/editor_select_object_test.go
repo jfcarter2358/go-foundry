@@ -5,17 +5,16 @@ package editor
 // blocks up at once, neither of them wrong.
 
 import (
-	"foundry/internal/leveltest"
-	"foundry/internal/world"
 	"testing"
+
+	"foundry/internal/world"
 )
 
-// selectTestLevel is a level with one chunk, one painted biome sector, and one
-// of every level-scoped object, pointed at by the editor.
+// selectTestLevel is a level with one chunk of two brushes and one of every
+// level-scoped object, pointed at by the editor.
 func selectTestLevel(t *testing.T) *world.Level {
 	t.Helper()
-	ch := *leveltest.SplitChunk()
-	ch.BiomeSectors = []world.BiomeSector{{ID: "bs1"}}
+	ch := *brushTestLevel(t)
 	lvl := &world.Level{
 		Chunks:   []world.Chunk{ch},
 		Entities: []world.Entity{{ID: "crate"}},
@@ -26,10 +25,6 @@ func selectTestLevel(t *testing.T) *world.Level {
 
 	Editor.level = lvl
 	Editor.ActiveChunkIdx = 0
-	Editor.ActiveSectorIdx = -1
-	Editor.ActiveEdgeIdx = -1
-	Editor.ActiveEdgeKind = ""
-	Editor.ActiveBiomeSectorIdx = -1
 	Editor.ChunkSelected = false
 	Editor.SpawnSelected = false
 	Editor.ActiveEntityIdx = -1
@@ -49,8 +44,6 @@ func selectionCount() int {
 		Editor.ActiveEntityIdx >= 0,
 		Editor.ActiveVolumeIdx >= 0,
 		Editor.SelectedLightKind != lightKindNone,
-		Editor.ActiveSectorIdx >= 0,
-		Editor.ActiveBiomeSectorIdx >= 0,
 		len(Editor.SelectedVertices) > 0,
 		len(Editor.SelectedFaces) > 0,
 	} {
@@ -72,8 +65,7 @@ func TestSelectingAnObjectDropsEveryOther(t *testing.T) {
 	}{
 		{"spawn", editorSelectSpawn},
 		{"chunk", func() { editorSelectChunk(0) }},
-		{"sector", func() { editorSelectSector(0, 0) }},
-		{"biome sector", func() { editorSelectBiomeSector(0, 0) }},
+		{"brush", func() { editorSelectBrush(0, 0) }},
 		{"entity", func() { editorSelectEntity(0) }},
 		{"volume", func() { editorSelectVolume(0) }},
 		{"light", func() { editorSelectLight(lightKindPoint, 0) }},
@@ -95,57 +87,56 @@ func TestSelectingAnObjectDropsEveryOther(t *testing.T) {
 	}
 }
 
-// A sector is picked through the chunk that holds it, but the chunk is not the
-// selection — the panel was asked for the sector's fields.
-func TestSelectingASectorLeavesTheChunkActiveNotSelected(t *testing.T) {
+// A brush is picked through the chunk that holds it, but the chunk is not the
+// selection — the panel was asked for the brush's fields.
+func TestSelectingABrushLeavesTheChunkActiveNotSelected(t *testing.T) {
 	defer saveEditorSelection()()
 	selectTestLevel(t)
 
-	editorSelectSector(0, 1)
+	editorSelectBrush(0, 1)
 	if Editor.ActiveChunkIdx != 0 {
-		t.Errorf("ActiveChunkIdx = %d, want the sector's own chunk", Editor.ActiveChunkIdx)
+		t.Errorf("ActiveChunkIdx = %d, want the brush's own chunk", Editor.ActiveChunkIdx)
 	}
 	if Editor.ChunkSelected {
-		t.Error("the chunk is selected as well as the sector")
+		t.Error("the chunk is selected as well as the brush")
 	}
-	if Editor.ActiveSectorIdx != 1 {
-		t.Errorf("ActiveSectorIdx = %d, want 1", Editor.ActiveSectorIdx)
+	if Editor.ActiveBrushIdx != 1 {
+		t.Errorf("ActiveBrushIdx = %d, want 1", Editor.ActiveBrushIdx)
 	}
-	if Editor.PanelFocus != panelFocusSector {
-		t.Errorf("PanelFocus = %q, want %q", Editor.PanelFocus, panelFocusSector)
+	if Editor.PanelFocus != panelFocusBrush {
+		t.Errorf("PanelFocus = %q, want %q", Editor.PanelFocus, panelFocusBrush)
 	}
 }
 
-// Re-selecting the chunk a sector belongs to drops the sector. This is the case
-// that used to survive: editorSelectChunk only cleared what was picked inside a
-// chunk when the *chunk* changed.
-func TestSelectingTheActiveChunkDropsASectorInsideIt(t *testing.T) {
+// Selecting a brush is expressed as selecting its first face, because a face is
+// what the selection unit is — everything downstream reads SelectedFaces.
+func TestSelectingABrushSelectsItsFirstFace(t *testing.T) {
 	defer saveEditorSelection()()
 	selectTestLevel(t)
 
-	editorSelectSector(0, 0)
+	editorSelectBrush(0, 1)
+	if len(Editor.SelectedFaces) != 1 {
+		t.Fatalf("got %d selected faces, want 1", len(Editor.SelectedFaces))
+	}
+	if got := Editor.SelectedFaces[0]; got != brushFaceSel(0, 1, 0) {
+		t.Errorf("selected %+v, want brush 1's face 0", got)
+	}
+}
+
+// Re-selecting the chunk a brush belongs to drops the brush. This is the case
+// that used to survive: editorSelectChunk only cleared what was picked inside a
+// chunk when the *chunk* changed.
+func TestSelectingTheActiveChunkDropsABrushInsideIt(t *testing.T) {
+	defer saveEditorSelection()()
+	selectTestLevel(t)
+
+	editorSelectBrush(0, 0)
 	editorSelectChunk(0)
-	if Editor.ActiveSectorIdx >= 0 {
-		t.Errorf("sector %d is still selected under the selected chunk", Editor.ActiveSectorIdx)
+	if len(Editor.SelectedFaces) > 0 {
+		t.Errorf("a brush is still selected under the selected chunk")
 	}
 	if !Editor.ChunkSelected {
 		t.Error("the chunk did not end up selected")
-	}
-}
-
-// Picking paint from the Explorer arms the layer that can edit it, so the row
-// does not lead to a polygon nothing can touch.
-func TestSelectingABiomeSectorTurnsTheLayerOn(t *testing.T) {
-	defer saveEditorSelection()()
-	selectTestLevel(t)
-	Editor.BiomeLayerActive = false
-
-	editorSelectBiomeSector(0, 0)
-	if !Editor.BiomeLayerActive {
-		t.Error("the biome layer is still off")
-	}
-	if Editor.ActiveBiomeSectorIdx != 0 {
-		t.Errorf("ActiveBiomeSectorIdx = %d, want 0", Editor.ActiveBiomeSectorIdx)
 	}
 }
 
@@ -157,9 +148,9 @@ func TestSelectingAMissingObjectChangesNothing(t *testing.T) {
 	selectTestLevel(t)
 
 	editorSelectEntity(0)
-	editorSelectSector(0, 99)
-	editorSelectSector(99, 0)
-	editorSelectBiomeSector(0, 99)
+	editorSelectBrush(0, 99)
+	editorSelectBrush(99, 0)
+	editorSelectBrush(0, -1)
 	if Editor.ActiveEntityIdx != 0 {
 		t.Errorf("ActiveEntityIdx = %d, want the entity to have survived", Editor.ActiveEntityIdx)
 	}

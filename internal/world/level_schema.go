@@ -8,7 +8,6 @@ import "foundry/internal/geom"
 // level_loader.go, split out from what used to be one 1200+-line level.go —
 // see RESTRUCTURE_PROPOSAL.md §5 Phase A.
 
-
 // RawDetailWave is the YAML representation of one displacement wave layer.
 type RawDetailWave struct {
 	Enabled   bool    `yaml:"enabled"`
@@ -205,7 +204,6 @@ type RawEmitter struct {
 	Attach        *RawAttach `yaml:"attach,omitempty"`
 }
 
-
 // RawBrush is the YAML representation of one brush: the level's unit of solid
 // geometry (see brush.go).
 //
@@ -249,7 +247,6 @@ type RawBrushFace struct {
 	NoDraw    bool `yaml:"nodraw,omitempty"`
 	NoCollide bool `yaml:"nocollide,omitempty"`
 }
-
 
 // RawWater is the YAML representation of a water surface's wave and reflection
 // settings. Absent means the defaults from DefaultWaterParams.

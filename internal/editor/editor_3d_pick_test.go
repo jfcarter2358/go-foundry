@@ -1,11 +1,13 @@
 package editor
 
 import (
-	"foundry/internal/gfx"
-	"foundry/internal/platform"
-	"foundry/internal/world"
 	"math"
 	"testing"
+
+	"foundry/internal/gfx"
+	"foundry/internal/platform"
+	"foundry/internal/testenv"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -70,42 +72,51 @@ func TestPickModelTDegenerateMatrix(t *testing.T) {
 	}
 }
 
-// TestPick3DClosestWins covers the rule that a click selects whatever is
-// nearest along the ray, in both orders: a wall in front of the spawn marker
-// and the marker in front of a wall.
-func TestPick3DClosestWins(t *testing.T) {
-	mx, my := setupPickCamera()
-
-	newLevel := func(wallZ, spawnZ float32) *world.Level {
-		wall := world.Wall{Visible: true}
-		wall.Geometry.Vertices = quadVerts(wallZ, 4)
-		return &world.Level{
-			Chunks: []world.Chunk{{
-				ID: "c0",
-				Sectors: []world.Sector{{
-					ID:    "s0",
-					Walls: []world.Wall{wall},
-				}},
-			}},
-			// No uploaded mesh, so picking falls back to the marker's AABB —
-			// which is the case that matters here, since the arrow itself is
-			// only generated against a GL context.
-			Spawn: &world.SpawnPoint{Position: mgl32.Vec3{0, 0, spawnZ}},
+// brushGeomLevel installs a level of one chunk whose brush faces have real
+// CPU-side vertex buffers, which is what pick3D casts against.
+//
+// A picking test needs geometry, not just a brush: Brush.Load is where a face's
+// index loop becomes triangles, and testenv.WithoutGeometryUploads is what lets
+// that happen with no GL context.
+func brushGeomLevel(t *testing.T, brushes ...world.Brush) *world.Chunk {
+	t.Helper()
+	testenv.WithoutGeometryUploads(t)
+	ch := world.Chunk{ID: "c0", Brushes: brushes}
+	for bi := range ch.Brushes {
+		if err := ch.Brushes[bi].Load(); err != nil {
+			t.Fatalf("loading brush %q: %v", ch.Brushes[bi].ID, err)
 		}
 	}
+	ch.RecomputeBounds()
+	Editor.level = &world.Level{Chunks: []world.Chunk{ch}}
+	return &Editor.level.Chunks[0]
+}
 
-	prevLevel := Editor.level
-	defer func() { Editor.level = prevLevel }()
+// TestPick3DClosestWins covers the rule that a click selects whatever is
+// nearest along the ray, in both orders: a brush in front of the spawn marker
+// and the marker in front of a brush.
+func TestPick3DClosestWins(t *testing.T) {
+	defer saveEditorState()()
+	mx, my := setupPickCamera()
 
-	// Wall at 3, spawn marker at 10 → the wall wins.
-	Editor.level = newLevel(-3, -10)
-	if hit := pick3D(mx, my); hit.kind != pickWall || hit.idx != 0 || hit.sectorIdx != 0 {
-		t.Fatalf("near wall: got kind=%q chunk=%d sector=%d idx=%d, want the wall",
-			hit.kind, hit.chunkIdx, hit.sectorIdx, hit.idx)
+	setup := func(brushZ, spawnZ float32) {
+		brushGeomLevel(t, world.NewBoxBrush("wall",
+			mgl32.Vec3{0, 0, brushZ}, mgl32.Vec3{4, 4, 0.5}, "concrete"))
+		// No uploaded mesh, so picking falls back to the marker's AABB —
+		// which is the case that matters here, since the arrow itself is
+		// only generated against a GL context.
+		Editor.level.Spawn = &world.SpawnPoint{Position: mgl32.Vec3{0, 0, spawnZ}}
 	}
 
-	// Spawn marker at 3, wall at 10 → the marker wins.
-	Editor.level = newLevel(-10, -3)
+	// Brush at 3, spawn marker at 10 → the brush wins.
+	setup(-3, -10)
+	if hit := pick3D(mx, my); hit.kind != pickBrushFace || hit.brushIdx != 0 {
+		t.Fatalf("near brush: got kind=%q chunk=%d brush=%d face=%d, want a brush face",
+			hit.kind, hit.chunkIdx, hit.brushIdx, hit.faceIdx)
+	}
+
+	// Spawn marker at 3, brush at 10 → the marker wins.
+	setup(-10, -3)
 	if hit := pick3D(mx, my); hit.kind != pickSpawn {
 		t.Fatalf("near spawn: got kind=%q, want the spawn point", hit.kind)
 	}
@@ -117,214 +128,161 @@ func TestPick3DClosestWins(t *testing.T) {
 	}
 }
 
-// TestPick3DFloorAndCeiling checks that a floor and a ceiling are picked
-// separately, each resolving to its own sector face.
-func TestPick3DFloorAndCeiling(t *testing.T) {
+// TestPick3DResolvesTheNearFaceOfASolid checks that a click on a box lands on
+// the side facing the camera rather than on the far side behind it.
+//
+// This is the brush counterpart of the old floor-versus-ceiling test, and it is
+// a sharper question than that one was. A sector's floor and ceiling were two
+// separate objects; a box's top and bottom are two faces of one solid, both on
+// the ray, and only the winding tells them apart. effectivePickT's back-face
+// bias is what makes the near one win.
+func TestPick3DResolvesTheNearFaceOfASolid(t *testing.T) {
+	defer saveEditorState()()
 	platform.WinWidth, platform.WinHeight = 800, 600
-	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	gfx.Cam.Position = mgl32.Vec3{0, 2, 0}
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0),
+		float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Cam.Position = mgl32.Vec3{0, 6, 0}
 
-	sector := world.Sector{ID: "s0"}
-	sector.Floor.Enabled = true
-	sector.Ceiling.Enabled = true
-	// Horizontal quads: floor at y=0, ceiling at y=4, both spanning x,z ∈ [-4,4].
-	horizQuad := func(y float32) []float32 {
-		a := [3]float32{-4, y, -4}
-		b := [3]float32{4, y, -4}
-		c := [3]float32{4, y, 4}
-		d := [3]float32{-4, y, 4}
-		var out []float32
-		for _, tri := range [][3][3]float32{{a, b, c}, {a, c, d}} {
-			for _, v := range tri {
-				out = append(out, v[0], v[1], v[2], 0, 0)
-			}
-		}
-		return out
-	}
-	sector.Floor.Geometry.Vertices = horizQuad(0)
-	sector.Ceiling.Geometry.Vertices = horizQuad(4)
-
-	prevLevel := Editor.level
-	defer func() { Editor.level = prevLevel }()
-	Editor.level = &world.Level{Chunks: []world.Chunk{{ID: "c0", Sectors: []world.Sector{sector}}}}
+	brushGeomLevel(t, world.NewBoxBrush("block",
+		mgl32.Vec3{0, 0, 0}, mgl32.Vec3{4, 2, 4}, "concrete"))
 
 	mx, my := platform.WinWidth/2, platform.WinHeight/2
 
-	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(mgl32.Vec3{0, -1, 0}), mgl32.Vec3{0, 0, -1})
-	if hit := pick3D(mx, my); hit.kind != pickFloor {
-		t.Fatalf("looking down: got kind=%q, want floor", hit.kind)
+	// From above, looking down: the top face.
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position,
+		gfx.Cam.Position.Add(mgl32.Vec3{0, -1, 0}), mgl32.Vec3{0, 0, -1})
+	hit := pick3D(mx, my)
+	if hit.kind != pickBrushFace || hit.faceIdx != boxFaceTop {
+		t.Fatalf("looking down: got kind=%q face=%d, want the top face (%d)",
+			hit.kind, hit.faceIdx, boxFaceTop)
 	}
 
-	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, gfx.Cam.Position.Add(mgl32.Vec3{0, 1, 0}), mgl32.Vec3{0, 0, 1})
-	if hit := pick3D(mx, my); hit.kind != pickCeiling {
-		t.Fatalf("looking up: got kind=%q, want ceiling", hit.kind)
+	// From below, looking up: the bottom face.
+	gfx.Cam.Position = mgl32.Vec3{0, -6, 0}
+	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position,
+		gfx.Cam.Position.Add(mgl32.Vec3{0, 1, 0}), mgl32.Vec3{0, 0, 1})
+	hit = pick3D(mx, my)
+	if hit.kind != pickBrushFace || hit.faceIdx != boxFaceBottom {
+		t.Fatalf("looking up: got kind=%q face=%d, want the bottom face (%d)",
+			hit.kind, hit.faceIdx, boxFaceBottom)
 	}
 }
+
+// TestPick3DSkipsNoDrawFaces: a NoDraw face builds no geometry, so there is
+// nothing under the cursor to hit. Picking one would select an invisible
+// surface out of what looks like empty space.
+func TestPick3DSkipsNoDrawFaces(t *testing.T) {
+	defer saveEditorState()()
+	mx, my := setupPickCamera()
+
+	b := world.NewBoxBrush("block", mgl32.Vec3{0, 0, -5}, mgl32.Vec3{2, 2, 0.5}, "concrete")
+	brushGeomLevel(t, b)
+	if hit := pick3D(mx, my); hit.kind != pickBrushFace {
+		t.Fatalf("with the face drawn: got kind=%q, want a brush face", hit.kind)
+	}
+
+	// Every face off, so the whole solid is invisible.
+	ch := &Editor.level.Chunks[0]
+	for fi := range ch.Brushes[0].Faces {
+		ch.Brushes[0].Faces[fi].NoDraw = true
+	}
+	if err := ch.Brushes[0].Load(); err != nil {
+		t.Fatalf("reloading: %v", err)
+	}
+	if hit := pick3D(mx, my); hit.kind != pickNone {
+		t.Fatalf("with every face NoDraw: got kind=%q, want none", hit.kind)
+	}
+}
+
+// ---------- vertex handles ----------
 
 // TestVertexHandleCycling checks that clicking the same handle box repeatedly
-// walks through every vertex under the cursor and wraps around. Two sectors
-// share chunk point 0, so its floor handle is really two candidates.
+// walks through every vertex under the cursor and wraps around.
+//
+// Two boxes are placed so that a corner of each projects onto the same pixel,
+// which is the case the cycling exists for: a shared corner of two sectors used
+// to be the example, and a brush owns its corners outright, so overlapping
+// handles now come from two solids meeting rather than from one point named
+// twice.
 func TestVertexHandleCycling(t *testing.T) {
+	defer saveEditorState()()
 	platform.WinWidth, platform.WinHeight = 800, 600
-	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	gfx.Cam.Position = mgl32.Vec3{0, 1, 6}
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0),
+		float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Cam.Position = mgl32.Vec3{0, 0, 6}
 	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, 0}, mgl32.Vec3{0, 1, 0})
+	// Wireframe, so the occlusion test answers true without a rendered scene.
+	Editor.Wireframe = true
 
-	mkSector := func(id string) world.Sector {
-		s := world.Sector{ID: id, PointIndices: []int{0, 1, 2}}
-		s.Floor.Enabled = true
-		s.Ceiling.Enabled = true
-		s.Ceiling.Height = 4 // keeps ceiling handles off the clicked pixel
-		return s
-	}
-	chunk := world.Chunk{
-		ID:      "c0",
-		Points:  []mgl32.Vec2{{0, 0}, {2, 0}, {0, 2}},
-		Sectors: []world.Sector{mkSector("s0"), mkSector("s1")},
-	}
-
-	restore := saveEditorSelection()
-	defer restore()
-	Editor.level = &world.Level{Chunks: []world.Chunk{chunk}}
+	// Two boxes placed so that one corner of each lies on the same ray from the
+	// camera: the eye is at (0,0,6), the near corner is (1,1,1), and the ray
+	// through it reaches (1.6,1.6,-2) — which is the far box's own corner. The
+	// two therefore project onto a single pixel, which is what cycling is for.
+	brushGeomLevel(t,
+		world.NewBoxBrush("a", mgl32.Vec3{0, 0, 0}, mgl32.Vec3{1, 1, 1}, "concrete"),
+		world.NewBoxBrush("b", mgl32.Vec3{0.6, 0.6, -3}, mgl32.Vec3{1, 1, 1}, "concrete"))
 	Editor.ActiveChunkIdx = 0
-	clearVertexSelection()
+	setVertexSelection(nil)
 
-	// Click dead-centre on the shared point's floor handle.
+	// The pixel the front box's top-right-near corner lands on.
 	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
-	screen, ok := projectToScreen(projView, mgl32.Vec3{0, 0, 0})
+	corner, ok := projectToScreen(projView, mgl32.Vec3{1, 1, 1})
 	if !ok {
-		t.Fatal("shared point did not project to the screen")
+		t.Fatal("the corner did not project onto the screen")
 	}
-	mx, my := int32(screen.X()), int32(screen.Y())
+	mx, my := int32(corner.X()), int32(corner.Y())
 
-	var seen []int
-	for i := 0; i < 3; i++ {
+	inBox := vertexHandlesInBox(mx, my)
+	if len(inBox) < 2 {
+		t.Fatalf("got %d handles under the cursor, want at least 2 to cycle through", len(inBox))
+	}
+
+	// Each click advances to the next candidate, and the last wraps to the
+	// first — which is the whole point: a handle hidden behind another can be
+	// reached without moving the camera.
+	seen := map[vertexSel]bool{}
+	for i := 0; i < len(inBox); i++ {
 		h, ok := pickVertexHandle(mx, my)
 		if !ok {
-			t.Fatalf("click %d: no vertex handle picked", i)
+			t.Fatalf("click %d picked nothing", i)
 		}
-		if !h.isFloor || h.vertIdx != 0 {
-			t.Fatalf("click %d: picked vertIdx=%d isFloor=%v, want vertex 0's floor handle",
-				i, h.vertIdx, h.isFloor)
-		}
+		seen[h.vertexSel] = true
 		selectVertexHandle(h)
-		seen = append(seen, h.sectorIdx)
 	}
-
-	// Two candidates → sector A, sector B, then back to sector A.
-	if seen[0] == seen[1] {
-		t.Fatalf("clicking again did not advance to the other sector: %v", seen)
+	if len(seen) != len(inBox) {
+		t.Errorf("cycling reached %d of %d handles under the cursor", len(seen), len(inBox))
 	}
-	if seen[2] != seen[0] {
-		t.Fatalf("cycle did not wrap around: %v", seen)
-	}
-
-	// A click well away from any vertex must not pick a handle.
-	if _, ok := pickVertexHandle(mx+400, my); ok {
-		t.Fatal("picked a vertex handle far from any vertex")
-	}
-
-	// Ctrl+click grabs every vertex whose box covers the cursor — here the
-	// shared point's floor handle in both sectors.
-	clearVertexSelection()
-	if !handleVertexClick(mx, my, true) {
-		t.Fatal("ctrl+click picked nothing")
-	}
-	if len(Editor.SelectedVertices) != 2 {
-		t.Fatalf("ctrl+click selected %d vertices, want 2", len(Editor.SelectedVertices))
-	}
-	// A plain click after it collapses back to a single vertex.
-	if !handleVertexClick(mx, my, false) {
-		t.Fatal("plain click picked nothing")
-	}
-	if len(Editor.SelectedVertices) != 1 {
-		t.Fatalf("plain click selected %d vertices, want 1", len(Editor.SelectedVertices))
+	if h, ok := pickVertexHandle(mx, my); !ok || h.vertexSel != inBox[0].vertexSel {
+		t.Errorf("the cycle did not wrap back to the first handle")
 	}
 }
 
-// TestVertexHandleRangeLimit checks that vertices beyond vertexHandleMaxDist get
-// no handle, so distant geometry cannot hijack a click.
+// TestVertexHandleRangeLimit: a vertex further than vertexHandleMaxDist gets no
+// handle, so distant geometry that happens to project under the cursor cannot
+// hijack a click meant for what is in front of it.
 func TestVertexHandleRangeLimit(t *testing.T) {
+	defer saveEditorState()()
 	platform.WinWidth, platform.WinHeight = 800, 600
-	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0),
+		float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
+	Editor.Wireframe = true
 
-	sector := world.Sector{ID: "s0", PointIndices: []int{0}}
-	far := vertexHandleMaxDist * 3
-	chunk := world.Chunk{ID: "c0", Points: []mgl32.Vec2{{0, -far}}, Sectors: []world.Sector{sector}}
-
-	restore := saveEditorSelection()
-	defer restore()
-	Editor.level = &world.Level{Chunks: []world.Chunk{chunk}}
+	const far = vertexHandleMaxDist * 2
+	brushGeomLevel(t, world.NewBoxBrush("far",
+		mgl32.Vec3{0, 0, -far}, mgl32.Vec3{1, 1, 1}, "concrete"))
 	Editor.ActiveChunkIdx = 0
-	clearVertexSelection()
+	setVertexSelection(nil)
 
-	// In range: camera a few units away from the point.
-	gfx.Cam.Position = mgl32.Vec3{0, 0, -far + 5}
-	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, -far}, mgl32.Vec3{0, 1, 0})
-	mx, my := platform.WinWidth/2, platform.WinHeight/2
-	if _, ok := pickVertexHandle(mx, my); !ok {
-		t.Fatal("vertex within range was not pickable")
-	}
-
-	// Out of range: same screen position, camera far away.
 	gfx.Cam.Position = mgl32.Vec3{0, 0, 0}
 	gfx.Cam.Matrix = mgl32.LookAtV(gfx.Cam.Position, mgl32.Vec3{0, 0, -1}, mgl32.Vec3{0, 1, 0})
-	if _, ok := pickVertexHandle(mx, my); ok {
-		t.Fatalf("vertex %.0f units away was pickable (limit %.0f)", far, vertexHandleMaxDist)
-	}
-}
 
-// saveEditorSelection snapshots the editor selection state a test mutates and
-// returns a function that puts it back.
-func saveEditorSelection() func() {
-	lvl := Editor.level
-	mode := Editor.Mode
-	chunkIdx := Editor.ActiveChunkIdx
-	sectorIdx := Editor.ActiveSectorIdx
-	surface, edgeKind, edgeIdx := Editor.ActiveSurface, Editor.ActiveEdgeKind, Editor.ActiveEdgeIdx
-	spawn := Editor.SpawnSelected
-	si, vi := Editor.ActiveVertexSI, Editor.ActiveVertexVI
-	sels := Editor.SelectedVertices
-	faces := Editor.SelectedFaces
-	kind := Editor.GizmoKind
-	dragging, axis := Editor.GizmoDragging, Editor.GizmoDragAxis
-	snap, step := Editor.SnapToGrid, Editor.StepSize
-	selMode, wire := Editor.SelMode, Editor.Wireframe
-	biomeIdx := Editor.ActiveBiomeSectorIdx
-	tool := Editor.GizmoTool
-	gizmo2D := Editor.Gizmo2DState
-	editFloor := Editor.EditFloorVerts
-	dragSI, dragVI := Editor.DragVertexSI, Editor.DragVertexVI
-	chunkSel := Editor.ChunkSelected
-	entIdx, volIdx := Editor.ActiveEntityIdx, Editor.ActiveVolumeIdx
-	lightKind, lightIdx := Editor.SelectedLightKind, Editor.SelectedLightIdx
-	biomeLayer := Editor.BiomeLayerActive
-	focus := Editor.PanelFocus
-	return func() {
-		Editor.level = lvl
-		Editor.Mode = mode
-		Editor.ActiveChunkIdx = chunkIdx
-		Editor.ActiveSectorIdx = sectorIdx
-		Editor.ActiveSurface, Editor.ActiveEdgeKind, Editor.ActiveEdgeIdx = surface, edgeKind, edgeIdx
-		Editor.SpawnSelected = spawn
-		Editor.ActiveVertexSI, Editor.ActiveVertexVI = si, vi
-		Editor.SelectedVertices = sels
-		Editor.SelectedFaces = faces
-		Editor.GizmoKind = kind
-		Editor.GizmoDragging, Editor.GizmoDragAxis = dragging, axis
-		Editor.SnapToGrid, Editor.StepSize = snap, step
-		Editor.SelMode, Editor.Wireframe = selMode, wire
-		Editor.ActiveBiomeSectorIdx = biomeIdx
-		Editor.GizmoTool = tool
-		Editor.Gizmo2DState = gizmo2D
-		Editor.EditFloorVerts = editFloor
-		Editor.DragVertexSI, Editor.DragVertexVI = dragSI, dragVI
-		Editor.ChunkSelected = chunkSel
-		Editor.ActiveEntityIdx, Editor.ActiveVolumeIdx = entIdx, volIdx
-		Editor.SelectedLightKind, Editor.SelectedLightIdx = lightKind, lightIdx
-		Editor.BiomeLayerActive = biomeLayer
-		Editor.PanelFocus = focus
-		editorVisReset()
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
+	corner, ok := projectToScreen(projView, mgl32.Vec3{1, 1, -far + 1})
+	if !ok {
+		t.Fatal("the far corner did not project onto the screen")
+	}
+	if _, ok := pickVertexHandle(int32(corner.X()), int32(corner.Y())); ok {
+		t.Fatalf("a vertex %.0f units away was pickable (limit %.0f)", far, vertexHandleMaxDist)
 	}
 }
 
@@ -334,23 +292,15 @@ func saveEditorSelection() func() {
 // rejected all of them instead, which emptied the viewport whenever a camera
 // drag carried the pointer over the side panel — turning right, but not left.
 func TestCollectHandlesShowAllIgnoresCursor(t *testing.T) {
+	defer saveEditorState()()
 	setupPickCamera()
-
-	prevLevel, prevWire := Editor.level, Editor.Wireframe
-	defer func() { Editor.level = prevLevel; Editor.Wireframe = prevWire }()
-	// Wireframe so the occlusion test answers true without needing geometry.
+	// Wireframe so the occlusion test answers true without needing a rendered
+	// scene behind it.
 	Editor.Wireframe = true
 
-	// A unit square 5 units down -Z, well inside vertexHandleMaxDist.
-	sector := world.Sector{ID: "s0", PointIndices: []int{0, 1, 2, 3}}
-	sector.Floor.Height, sector.Ceiling.Height = 0, 2
-	Editor.level = &world.Level{Chunks: []world.Chunk{{
-		ID: "c0",
-		Points: []mgl32.Vec2{
-			{-1, -6}, {1, -6}, {1, -4}, {-1, -4},
-		},
-		Sectors: []world.Sector{sector},
-	}}}
+	// One box 5 units down -Z, well inside vertexHandleMaxDist.
+	brushGeomLevel(t, world.NewBoxBrush("b",
+		mgl32.Vec3{0, 0, -5}, mgl32.Vec3{1, 1, 1}, "concrete"))
 
 	const offWorld = math.MinInt32 / 2
 	for _, tc := range []struct {
@@ -361,10 +311,12 @@ func TestCollectHandlesShowAllIgnoresCursor(t *testing.T) {
 		{"cursor off the world", offWorld, offWorld},
 	} {
 		if got := len(collectVertexHandles(tc.mx, tc.my, vertexHandleShowAllPx)); got != 8 {
-			t.Errorf("%s: got %d vertex handles, want 8 (4 points × floor+ceiling)", tc.name, got)
+			t.Errorf("%s: got %d vertex handles, want 8 (a box's corners)", tc.name, got)
 		}
-		if got := len(collectEdgeHandles(tc.mx, tc.my, vertexHandleShowAllPx)); got == 0 {
-			t.Errorf("%s: got no edge handles", tc.name)
+		// A box has twelve edges: every face loop contributes four, and each
+		// is shared by exactly two faces, so the dedupe halves 24 down to 12.
+		if got := len(collectEdgeHandles(tc.mx, tc.my, vertexHandleShowAllPx)); got != 12 {
+			t.Errorf("%s: got %d edge handles, want 12 (a box's edges)", tc.name, got)
 		}
 	}
 
@@ -375,86 +327,22 @@ func TestCollectHandlesShowAllIgnoresCursor(t *testing.T) {
 	}
 }
 
-// TestPick3DPortalGapFill covers the rule that split portals in two: an open
-// portal is a hole and a click goes through it, but the gap fill that closes
-// one is drawn geometry and a click lands on it.
-//
-// The shape this exists for is the vertical door — a sector whose floor is
-// raised and ceiling lowered until they meet — whose every visible face is gap
-// fill owned by the neighbouring sector's portal. Without this the door could
-// be built but never clicked, and its gap texture was reachable only by
-// finding the right edge on the 2D map.
-func TestPick3DPortalGapFill(t *testing.T) {
-	mx, my := setupPickCamera()
-
-	prevLevel := Editor.level
-	defer func() { Editor.level = prevLevel }()
-
-	// A portal at z=-3 with a wall 7 units behind it. Whether the click stops
-	// at the portal or carries on to the wall is the whole question.
-	newLevel := func(withGap bool) *world.Level {
-		wall := world.Wall{Visible: true}
-		wall.Geometry.Vertices = quadVerts(-10, 4)
-		p := world.Portal{ID: "door", ToSector: "s0", DrawGap: true, Visible: true}
-		if withGap {
-			p.FloorGap.Vertices = quadVerts(-3, 4)
+// TestBrushEdgesDedupesSharedEdges: the two faces meeting along an edge report
+// the same undirected pair, and a doubled handle would mean every edge of every
+// brush was two coincident prisms fighting for the same click.
+func TestBrushEdgesDedupesSharedEdges(t *testing.T) {
+	b := world.NewBoxBrush("b", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, "concrete")
+	loops := make([][]int, len(b.Faces))
+	for fi := range b.Faces {
+		loops[fi] = b.Faces[fi].Indices
+	}
+	edges := brushEdges(0, 0, loops)
+	if len(edges) != 12 {
+		t.Fatalf("got %d edges for a box, want 12", len(edges))
+	}
+	for _, e := range edges {
+		if e.a >= e.b {
+			t.Errorf("edge %v is not in canonical (low, high) order", e)
 		}
-		return &world.Level{
-			Chunks: []world.Chunk{{
-				ID: "c0",
-				Sectors: []world.Sector{{
-					ID:      "s0",
-					Walls:   []world.Wall{wall},
-					Portals: []world.Portal{p},
-				}},
-			}},
-		}
-	}
-
-	Editor.level = newLevel(false)
-	if hit := pick3D(mx, my); hit.kind != pickWall {
-		t.Fatalf("open portal: got kind=%q, want the click to pass through to the wall", hit.kind)
-	}
-
-	Editor.level = newLevel(true)
-	hit := pick3D(mx, my)
-	if hit.kind != pickPortal || hit.sectorIdx != 0 || hit.idx != 0 {
-		t.Fatalf("gap fill: got kind=%q sector=%d idx=%d, want portal 0 of sector 0",
-			hit.kind, hit.sectorIdx, hit.idx)
-	}
-	if math.Abs(float64(hit.t-3)) > 1e-3 {
-		t.Fatalf("gap fill hit at t=%v, want ~3", hit.t)
-	}
-
-	// And it has to arrive as a face selection, or the properties panel never
-	// opens on the gap texture the click was aimed at.
-	f, ok := faceSelFromHit(hit)
-	if !ok || f.kind != "portal" || f.idx != 0 {
-		t.Fatalf("faceSelFromHit(%+v) = %+v, %v; want the portal face", hit, f, ok)
-	}
-	if !faceSelValid(f) {
-		t.Fatal("portal face selection does not name live geometry")
-	}
-}
-
-// TestPick3DPortalCeilingGap is the other half of a shut door: the filler
-// hanging from the ceiling, on a portal with no floor riser at all.
-func TestPick3DPortalCeilingGap(t *testing.T) {
-	mx, my := setupPickCamera()
-
-	prevLevel := Editor.level
-	defer func() { Editor.level = prevLevel }()
-
-	p := world.Portal{ID: "door", ToSector: "s0", DrawGap: true, Visible: true}
-	p.CeilGap.Vertices = quadVerts(-5, 4)
-	Editor.level = &world.Level{
-		Chunks: []world.Chunk{{
-			ID:      "c0",
-			Sectors: []world.Sector{{ID: "s0", Portals: []world.Portal{p}}},
-		}},
-	}
-
-	if hit := pick3D(mx, my); hit.kind != pickPortal || hit.idx != 0 {
-		t.Fatalf("ceiling filler: got kind=%q idx=%d, want portal 0", hit.kind, hit.idx)
 	}
 }

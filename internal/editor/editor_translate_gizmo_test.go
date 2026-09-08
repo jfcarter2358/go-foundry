@@ -158,28 +158,23 @@ func TestGizmoSnapAndAxisMoved(t *testing.T) {
 	}
 }
 
-// TestGizmoKindIsModeScoped checks that a 3D-mode selection cannot be dragged
-// from another sub-mode, so stale state from another workspace is inert.
-func TestGizmoKindIsModeScoped(t *testing.T) {
+// TestGizmoKindNeedsALiveSelection checks that a gizmo kind left behind by a
+// selection that has since gone is inert, rather than drawing arms attached to
+// nothing.
+func TestGizmoKindNeedsALiveSelection(t *testing.T) {
 	setupGizmoView()
 
 	restore := saveEditorSelection()
 	defer restore()
+	Editor.Mode = Mode3D
 	Editor.level = &world.Level{Spawn: &world.SpawnPoint{Position: mgl32.Vec3{0, 0, 0}}}
 	Editor.SpawnSelected = true
 	Editor.GizmoKind = gizmoKindSpawn
 
-	Editor.Mode = Mode3D
 	if _, ok := translateGizmoOrigin(); !ok {
-		t.Fatal("spawn gizmo missing in 3D mode")
+		t.Fatal("spawn gizmo missing with the marker selected")
 	}
 
-	Editor.Mode = Mode2D
-	if _, ok := translateGizmoOrigin(); ok {
-		t.Fatal("gizmo should not exist in 2D mode")
-	}
-
-	Editor.Mode = Mode3D
 	Editor.SpawnSelected = false
 	if _, ok := translateGizmoOrigin(); ok {
 		t.Fatal("deselecting the spawn point left its gizmo behind")
@@ -202,12 +197,15 @@ func TestGizmoArmClickAlwaysConsumes(t *testing.T) {
 	restore := saveEditorSelection()
 	defer restore()
 	Editor.Mode = Mode3D
+	// The box is placed so its first corner sits on the world origin, which is
+	// where the camera is aimed — the gizmo's Z arm then points straight at the
+	// eye, which is the edge-on case this test is about.
 	Editor.level = &world.Level{Chunks: []world.Chunk{{
 		ID:      "c0",
-		Points:  []mgl32.Vec2{{0, 0}, {2, 0}, {0, 2}},
-		Sectors: []world.Sector{{ID: "s0", PointIndices: []int{0, 1, 2}}},
+		Brushes: []world.Brush{world.NewBoxBrush("b0", mgl32.Vec3{1, 1, 1}, mgl32.Vec3{1, 1, 1}, "concrete")},
 	}}}
-	Editor.SelectedVertices = []vertexSel{{chunkIdx: 0, sectorIdx: 0, vertIdx: 0, pointIdx: 0, isFloor: true}}
+	Editor.ActiveChunkIdx = 0
+	Editor.SelectedVertices = []vertexSel{{chunkIdx: 0, brushIdx: 0, vertIdx: 0}}
 	Editor.GizmoKind = gizmoKindVertices
 	Editor.GizmoDragging = false
 	Editor.GizmoDragAxis = -1

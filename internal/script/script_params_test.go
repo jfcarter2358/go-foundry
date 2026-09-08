@@ -320,9 +320,9 @@ func TestScriptRefTargets(t *testing.T) {
 		t.Errorf("empty label = %q", got)
 	}
 }
+
 // TODO(brush migration): the shipped resources/scripts/button.flang example
 // raises and lowers a sector floor (`@target.floor.prop.height`), a property
 // brushes do not have — a brush's shape is its verts, not a height field. The
 // example and the test that ran it both need rewriting once brushes grow a
 // way to be moved from a script.
-

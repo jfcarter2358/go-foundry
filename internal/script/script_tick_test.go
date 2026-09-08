@@ -636,10 +636,10 @@ func TestPropertyCatalogueMatchesTheDocumentation(t *testing.T) {
 	// SCRIPTING.md lists a core surface per kind. If the table and the document
 	// drift, the document is what an author trusts and the table is what runs.
 	mustHave := map[flang.Kind_][]string{
-		flang.RefEntity:  {"position", "rotation", "velocity", "visible", "on_ground"},
-		flang.RefVolume:  {"position", "half", "shape", "enabled"},
-		flang.RefBrush:   {"solid"},
-		flang.RefLight:   {"color", "brightness", "cast_shadows"},
+		flang.RefEntity: {"position", "rotation", "velocity", "visible", "on_ground"},
+		flang.RefVolume: {"position", "half", "shape", "enabled"},
+		flang.RefBrush:  {"solid"},
+		flang.RefLight:  {"color", "brightness", "cast_shadows"},
 	}
 	for kind, names := range mustHave {
 		tbl := propTables[kind]

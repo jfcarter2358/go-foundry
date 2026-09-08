@@ -1,10 +1,10 @@
 package editor
 
-// editor_3d_worldbounds_test.go — Chunk.MinBound/MaxBound and
-// Sector.MinBound/MaxBound are chunk-LOCAL. Anything in the 3D view that draws
-// them, frames them, or tests a world-space ray against them has to carry them
-// out through the chunk's own placement first, or it describes where the chunk
-// would be if it had never been moved.
+// editor_3d_worldbounds_test.go — Chunk.MinBound/MaxBound and a brush's own
+// LocalAABB are chunk-LOCAL. Anything in the 3D view that draws them, frames
+// them, or tests a world-space ray against them has to carry them out through
+// the chunk's own placement first, or it describes where the chunk would be if
+// it had never been moved.
 
 import (
 	"math"
@@ -15,22 +15,17 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// boundsTestLevel is one square room chunk, placed by the caller.
+// boundsTestLevel is one chunk holding a single 10x8x10 box brush spanning
+// x,z ∈ [-5,5] and y ∈ [0,8], placed by the caller.
 func boundsTestLevel(origin mgl32.Vec3, rotation, scale float32) *world.Level {
 	return &world.Level{Chunks: []world.Chunk{{
 		ID:     "room",
 		Origin: origin, Rotation: rotation, Scale: scale,
-		Points:   []mgl32.Vec2{{-5, -5}, {5, -5}, {5, 5}, {-5, 5}},
+		Brushes: []world.Brush{
+			world.NewBoxBrush("b0", mgl32.Vec3{0, 4, 0}, mgl32.Vec3{5, 4, 5}, "concrete"),
+		},
 		MinBound: mgl32.Vec3{-5, 0, -5},
 		MaxBound: mgl32.Vec3{5, 8, 5},
-		Sectors: []world.Sector{{
-			ID:           "s0",
-			PointIndices: []int{0, 1, 2, 3},
-			MinBound:     mgl32.Vec2{-5, -5},
-			MaxBound:     mgl32.Vec2{5, 5},
-			Floor:        world.Floor{Enabled: true, Height: 0, VertexOffsets: []float32{0, 0, 0, 0}},
-			Ceiling:      world.Ceiling{Height: 8, VertexOffsets: []float32{0, 0, 0, 0}},
-		}},
 	}}}
 }
 
@@ -91,7 +86,7 @@ func TestChunkWorldOBBScalesWithTheChunk(t *testing.T) {
 }
 
 // "Frame selection" flies the camera to these bounds, so they have to be the
-// world ones for both the whole-chunk fallback and the selected-sector case.
+// world ones for both the whole-chunk fallback and the selected-brush case.
 func TestSelectionBoundsAreWorldSpace(t *testing.T) {
 	origin := mgl32.Vec3{300, 0, 40}
 	restore := saveEditorSelection()
@@ -102,10 +97,9 @@ func TestSelectionBoundsAreWorldSpace(t *testing.T) {
 	Editor.SelectedVertices = nil
 	Editor.ActiveEntityIdx = -1
 	Editor.ActiveVolumeIdx = -1
-	Editor.ActiveBiomeSectorIdx = -1
 
 	// Whole-chunk fallback.
-	Editor.ActiveSectorIdx = -1
+	clearFaceSelection()
 	min, max, ok := editorSelectionBounds()
 	if !ok {
 		t.Fatal("no selection bounds for an active chunk")
@@ -116,15 +110,15 @@ func TestSelectionBoundsAreWorldSpace(t *testing.T) {
 			centre, mgl32.Vec3{0, 4, 0}.Add(origin))
 	}
 
-	// Selected sector.
-	Editor.ActiveSectorIdx = 0
+	// Selected brush.
+	setFaceSelection([]faceSel{brushFaceSel(0, 0, 0)})
 	min, max, ok = editorSelectionBounds()
 	if !ok {
-		t.Fatal("no selection bounds for an active sector")
+		t.Fatal("no selection bounds for a selected brush")
 	}
 	centre = min.Add(max).Mul(0.5)
 	if !vecNear(centre, mgl32.Vec3{0, 4, 0}.Add(origin), 1e-3) {
-		t.Errorf("sector framing centre = %v, want the sector's placed centre %v",
+		t.Errorf("brush framing centre = %v, want the brush's placed centre %v",
 			centre, mgl32.Vec3{0, 4, 0}.Add(origin))
 	}
 }

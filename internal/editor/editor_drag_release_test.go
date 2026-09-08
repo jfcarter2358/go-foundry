@@ -59,28 +59,12 @@ func TestReleasingTheLeftButtonEndsAGizmoDrag(t *testing.T) {
 	}
 }
 
-func TestReleasingTheLeftButtonEndsASurfaceDrag(t *testing.T) {
-	defer saveEditorSelection()()
-	Editor.Mode = Mode3D
-	Editor.SurfaceDragDepth = true
-	Editor.SurfaceDragPts = []int{1, 2}
-	Editor.SurfaceDragStart = []float32{0, 0}
-
-	if !editorEndViewportDrag(sdl.ButtonLeft) {
-		t.Error("a left release over a running surface drag was not consumed")
-	}
-	if Editor.SurfaceDragDepth || Editor.SurfaceDragPts != nil {
-		t.Error("the surface drag is still running after the button came up")
-	}
-}
-
 // Nothing in progress: the release is left alone, so an ordinary click in the
 // panel is not swallowed on its way to ImGui.
 func TestAReleaseWithNoDragIsNotConsumed(t *testing.T) {
 	defer saveEditorSelection()()
 	Editor.Mode = Mode3D
 	Editor.GizmoDragging = false
-	Editor.SurfaceDragDepth = false
 
 	for _, b := range []sdl.Button{sdl.ButtonLeft, sdl.ButtonRight, sdl.ButtonMiddle} {
 		if editorEndViewportDrag(b) {

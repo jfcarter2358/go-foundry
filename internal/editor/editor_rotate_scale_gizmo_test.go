@@ -11,26 +11,26 @@ import (
 )
 
 // gizmo3DVertexSelection puts the camera on setupGizmoView's vantage and
-// selects two corners of a small sector, so the 3D gizmos have a selection with
+// selects two corners of a small brush, so the 3D gizmos have a selection with
 // a real extent to turn and spread.
+//
+// Corners 0 and 1 of a box are its two -Y-Z corners — see world.CornerSign —
+// so on a unit box at the origin they are (-1,-1,-1) and (1,-1,-1): a pair
+// straddling the origin along X, which is what the rotate and scale assertions
+// are written against.
 func gizmo3DVertexSelection(t *testing.T) mgl32.Mat4 {
 	t.Helper()
 	projView := setupGizmoView()
 	Editor.Mode = Mode3D
 	Editor.level = &world.Level{Chunks: []world.Chunk{{
-		ID:     "c0",
-		Points: []mgl32.Vec2{{-1, 0}, {1, 0}, {0, 2}},
-		Sectors: []world.Sector{{
-			ID:           "s0",
-			PointIndices: []int{0, 1, 2},
-			Floor:        world.Floor{Enabled: true, VertexOffsets: []float32{0, 0, 0}},
-			Ceiling:      world.Ceiling{Enabled: true, Height: 4, VertexOffsets: []float32{0, 0, 0}},
-		}},
+		ID:      "c0",
+		Brushes: []world.Brush{world.NewBoxBrush("b0", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, "concrete")},
 	}}}
 	Editor.ActiveChunkIdx = 0
+	Editor.SelectedFaces = nil
 	Editor.SelectedVertices = []vertexSel{
-		{chunkIdx: 0, sectorIdx: 0, vertIdx: 0, pointIdx: 0, isFloor: true},
-		{chunkIdx: 0, sectorIdx: 0, vertIdx: 1, pointIdx: 1, isFloor: true},
+		{chunkIdx: 0, brushIdx: 0, vertIdx: 0},
+		{chunkIdx: 0, brushIdx: 0, vertIdx: 1},
 	}
 	Editor.GizmoKind = gizmoKindVertices
 	Editor.GizmoTool = editorToolMove
@@ -38,7 +38,6 @@ func gizmo3DVertexSelection(t *testing.T) mgl32.Mat4 {
 	Editor.GizmoDragAxis = -1
 	Editor.SnapToGrid = false
 	Editor.SpawnPlacementMode = false
-	Editor.SurfaceEditing = false
 	return projView
 }
 
@@ -113,7 +112,6 @@ func gizmo3DSpawnSelection(t *testing.T) {
 	Editor.GizmoTool = editorToolMove
 	Editor.SnapToGrid = false
 	Editor.SpawnPlacementMode = false
-	Editor.SurfaceEditing = false
 }
 
 // Scale is defined against the selection's own size, which a single anchor does
@@ -221,15 +219,13 @@ func TestSetGizmoToolCancelsADragInProgress(t *testing.T) {
 	gizmo3DVertexSelection(t)
 	Editor.GizmoDragging = true
 	Editor.GizmoDragAxis = 1
-	Editor.Gizmo2DDragging = true
-	Editor.Gizmo2DAxis = 0
 
 	editorSetGizmoTool(editorToolScale)
 
 	if Editor.GizmoTool != editorToolScale {
 		t.Errorf("tool = %v, want Scale", Editor.GizmoTool)
 	}
-	if editorGizmoDragging() || editor2DGizmoDragging() {
+	if editorGizmoDragging() {
 		t.Error("a drag survived the tool switch")
 	}
 }

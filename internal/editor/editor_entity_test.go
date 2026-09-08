@@ -143,38 +143,6 @@ func TestEntityScaleClampKeepsSignAndAvoidsZero(t *testing.T) {
 	}
 }
 
-func TestGizmo2DRotateMatchesTheMapsAngleSense(t *testing.T) {
-	// The map measures angles from +X through +Z; a Y Euler rotation carries +X
-	// toward -Z. So a positive map delta is a negative yaw, and the arrow drawn
-	// on the map has to follow the cursor rather than run away from it.
-	lvl := entityEditorLevel(t)
-	e := &lvl.Entities[0]
-	Editor.Gizmo2DStartEntityRot = mgl32.Vec3{}
-
-	gizmo2DRotateEntity(e, math.Pi/2)
-
-	// Forward (+X local) should now point along +Z in world space, which is the
-	// direction the cursor was dragged toward.
-	d := world.EulerMatrixYXZ(e.Rotation).Mul4x1(mgl32.Vec4{1, 0, 0, 0})
-	if !vecNear(mgl32.Vec3{d.X(), d.Y(), d.Z()}, mgl32.Vec3{0, 0, 1}, 1e-5) {
-		t.Errorf("forward: got {%v %v %v}, want {0 0 1}", d.X(), d.Y(), d.Z())
-	}
-}
-
-func TestGizmo2DScaleLeavesHeightAlone(t *testing.T) {
-	// The map cannot express height, so a drag up here must not silently
-	// flatten what it is scaling.
-	lvl := entityEditorLevel(t)
-	e := &lvl.Entities[0]
-	Editor.Gizmo2DStartEntityScale = mgl32.Vec3{1, 3, 1}
-
-	gizmo2DScaleEntity(e, mgl32.Vec2{2, 4})
-
-	if !vecNear(e.Scale, mgl32.Vec3{2, 3, 4}, 1e-5) {
-		t.Errorf("got %v, want {2 3 4}", e.Scale)
-	}
-}
-
 func TestEditorToolActsOnEntitySelection(t *testing.T) {
 	// Rotate and scale need something with an orientation or a size. An entity
 	// has both; nothing selected has neither.
@@ -242,24 +210,4 @@ func levelEntityIDs(lvl *world.Level) []string {
 		out[i] = lvl.Entities[i].ID
 	}
 	return out
-}
-
-func TestEditor2DEntityPickTakesTheTopmost(t *testing.T) {
-	// Later entities win, so the one just dropped onto a pile is the one a
-	// click grabs.
-	lvl := &world.Level{Entities: []world.Entity{
-		{ID: "under", Position: mgl32.Vec3{0, 0, 0}, BoundHalfX: 1, BoundHalfY: 1, BoundHalfZ: 1},
-		{ID: "over", Position: mgl32.Vec3{0, 0, 0}, BoundHalfX: 1, BoundHalfY: 1, BoundHalfZ: 1},
-	}}
-	Editor.level = lvl
-	Editor.Zoom2D = 40
-	t.Cleanup(func() { Editor.level = nil })
-
-	idx, ok := editor2DEntityAt(lvl, 0, 0)
-	if !ok || lvl.Entities[idx].ID != "over" {
-		t.Errorf("got idx=%d ok=%v, want the topmost", idx, ok)
-	}
-	if _, ok := editor2DEntityAt(lvl, 50, 50); ok {
-		t.Error("a click far from every entity hit one")
-	}
 }

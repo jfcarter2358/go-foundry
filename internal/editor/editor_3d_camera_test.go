@@ -170,19 +170,15 @@ func TestEditorFrameSelectionOrbitsTheSelection(t *testing.T) {
 	setupEditorCam()
 
 	Editor.level = &world.Level{Chunks: []world.Chunk{{
-		ID:       "c0",
-		Points:   []mgl32.Vec2{{0, 0}, {4, 0}, {4, 4}, {0, 4}},
+		ID: "c0",
+		Brushes: []world.Brush{
+			world.NewBoxBrush("b", mgl32.Vec3{2, 1.5, 2}, mgl32.Vec3{2, 1.5, 2}, "concrete"),
+		},
 		MinBound: mgl32.Vec3{0, 0, 0},
 		MaxBound: mgl32.Vec3{4, 3, 4},
-		Sectors: []world.Sector{{
-			ID:           "s0",
-			PointIndices: []int{0, 1, 2, 3},
-			Floor:        world.Floor{Height: 0},
-			Ceiling:      world.Ceiling{Height: 3},
-		}},
 	}}}
 	Editor.ActiveChunkIdx = 0
-	Editor.ActiveSectorIdx = -1
+	Editor.SelectedFaces = nil
 	Editor.SelectedVertices = nil
 	editorClearSpawnSelection()
 
@@ -198,8 +194,10 @@ func TestEditorFrameSelectionOrbitsTheSelection(t *testing.T) {
 		t.Error("framing did not point the eye at the pivot")
 	}
 
-	// A vertex selection is finer-grained and wins over the chunk.
-	Editor.SelectedVertices = []vertexSel{{chunkIdx: 0, sectorIdx: 0, vertIdx: 1, pointIdx: 1, isFloor: true}}
+	// A vertex selection is finer-grained and wins over the chunk. Corner 1 of
+	// a box is (+x, -y, -z) — see world.CornerSign — so on this brush it is
+	// the {4, 0, 0} corner.
+	Editor.SelectedVertices = []vertexSel{{chunkIdx: 0, brushIdx: 0, vertIdx: 1}}
 	editorFrameSelection()
 	if !nearlyVec(editorCam3D.Target, mgl32.Vec3{4, 0, 0}, 1e-4) {
 		t.Errorf("pivot = %v, want the selected corner {4 0 0}", editorCam3D.Target)
@@ -210,26 +208,28 @@ func TestEditorFrameSelectionOrbitsTheSelection(t *testing.T) {
 	}
 }
 
-// Framing a water body has to reach the plane it produced, not the polygon that
-// describes it — a biome sector is flat on paper and the surface is where the
-// user is actually looking.
-func TestFrameSelectionReachesTheWaterPlane(t *testing.T) {
+// A brush selection is finer-grained than its chunk and coarser than a corner:
+// framing it has to reach that solid rather than the whole chunk around it.
+func TestFrameSelectionReachesTheSelectedBrush(t *testing.T) {
 	defer saveEditorCam()()
 	defer saveEditorSelection()()
 	setupEditorCam()
 
-	Editor.level = waterLevel()
-	Editor.level.Chunks[0].WaterSurfaces[0].BoundHalfX = 3
-	Editor.level.Chunks[0].WaterSurfaces[0].BoundHalfY = 0.1
-	Editor.level.Chunks[0].WaterSurfaces[0].BoundHalfZ = 3
+	Editor.level = &world.Level{Chunks: []world.Chunk{{
+		ID: "c0",
+		Brushes: []world.Brush{
+			world.NewBoxBrush("near", mgl32.Vec3{0, 0, 0}, mgl32.Vec3{1, 1, 1}, "concrete"),
+			world.NewBoxBrush("far", mgl32.Vec3{20, 0, 0}, mgl32.Vec3{1, 1, 1}, "concrete"),
+		},
+	}}}
+	Editor.level.Chunks[0].RecomputeBounds()
 	Editor.ActiveChunkIdx = 0
-	Editor.ActiveSectorIdx = -1
-	Editor.ActiveBiomeSectorIdx = 1 // "lake"
 	Editor.SelectedVertices = nil
 	editorClearSpawnSelection()
+	setFaceSelection([]faceSel{brushFaceSel(0, 1, 0)})
 
 	editorFrameSelection()
-	if !nearlyVec(editorCam3D.Target, mgl32.Vec3{0, 0, -4}, 1e-4) {
-		t.Errorf("pivot = %v, want the water plane's centre {0 0 -4}", editorCam3D.Target)
+	if !nearlyVec(editorCam3D.Target, mgl32.Vec3{20, 0, 0}, 1e-4) {
+		t.Errorf("pivot = %v, want the far brush's centre {20 0 0}", editorCam3D.Target)
 	}
 }

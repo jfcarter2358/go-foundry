@@ -11,11 +11,12 @@ package editor
 //
 // It runs the real editorPanelBody against a real level, so it also covers the
 // blocks reached only through a selection: with nothing selected the panel is a
-// fraction of itself, and the sector's block is the biggest part of it.
+// fraction of itself, and the brush's block is the biggest part of it.
 
 import (
-	"foundry/internal/world"
 	"testing"
+
+	"foundry/internal/world"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -25,7 +26,7 @@ import (
 // focus is the PanelFocus a fresh selection would have left behind, which is
 // what force-opens the groups belonging to it (editorFocusOpen) — so the bodies
 // inside them are drawn rather than skipped as a shut group.
-func drawPanelOnce(lvl *world.Level, kind editorPanelKind, focus string) {
+func drawPanelOnce(lvl *world.Level, focus string) {
 	io := imgui.CurrentIO()
 	io.SetDisplaySize(imgui.Vec2{X: 1280, Y: 800})
 	io.SetDeltaTime(1.0 / 60.0)
@@ -35,7 +36,7 @@ func drawPanelOnce(lvl *world.Level, kind editorPanelKind, focus string) {
 	imgui.SetNextWindowPos(imgui.Vec2{X: 0, Y: 0})
 	imgui.SetNextWindowSize(imgui.Vec2{X: 360, Y: 800})
 	imgui.Begin("panel")
-	editorPanelBody(lvl, kind)
+	editorPanelBody(lvl)
 	imgui.End()
 
 	imgui.Render()
@@ -57,9 +58,8 @@ func panelTestLevel(t *testing.T) *world.Level {
 	return selectTestLevel(t)
 }
 
-// Every selection, in both editors: the panel draws and imgui's stacks come out
-// even. A group left unclosed aborts inside End(); one closed twice aborts
-// inside TreePop.
+// Every selection: the panel draws and imgui's stacks come out even. A group
+// left unclosed aborts inside End(); one closed twice aborts inside TreePop.
 func TestPanelDrawsForEverySelection(t *testing.T) {
 	defer saveEditorSelection()()
 
@@ -71,44 +71,38 @@ func TestPanelDrawsForEverySelection(t *testing.T) {
 		{"nothing", panelFocusNone, editorClearObjectSelections},
 		{"spawn", panelFocusSpawn, editorSelectSpawn},
 		{"chunk", panelFocusChunk, func() { editorSelectChunk(0) }},
-		{"sector", panelFocusSector, func() { editorSelectSector(0, 0) }},
-		{"floor", panelFocusFloor, func() { editorSelectSector(0, 0) }},
-		{"ceiling", panelFocusCeiling, func() { editorSelectSector(0, 0) }},
-		{"wall", panelFocusWall, func() {
-			editorSelectSector(0, 0)
-			Editor.ActiveEdgeKind = "wall"
-			Editor.ActiveEdgeIdx = 0
+		{"brush", panelFocusBrush, func() { editorSelectBrush(0, 0) }},
+		{"face", panelFocusFace, func() { editorSelectBrush(0, 0) }},
+		{"a face of a non-solid brush", panelFocusFace, func() {
+			editorSelectBrush(0, 0)
+			Editor.level.Chunks[0].Brushes[0].Solid = false
 		}},
-		{"portal", panelFocusWall, func() {
-			editorSelectSector(0, 0)
-			Editor.ActiveEdgeKind = "portal"
-			Editor.ActiveEdgeIdx = 0
+		{"several faces", panelFocusFace, func() {
+			setFaceSelection([]faceSel{
+				brushFaceSel(0, 0, boxFaceTop),
+				brushFaceSel(0, 0, boxFaceNegX),
+				brushFaceSel(0, 1, boxFacePosZ),
+			})
 		}},
-		{"biome sector", panelFocusBiome, func() { editorSelectBiomeSector(0, 0) }},
+		{"vertices", panelFocusVertex, func() { editor3DSelectBrushVertices() }},
 		{"entity", panelFocusEntity, func() { editorSelectEntity(0) }},
 		{"volume", panelFocusVolume, func() { editorSelectVolume(0) }},
 		{"global light", panelFocusLight, func() { editorSelectLight(lightKindGlobal, 0) }},
 		{"point light", panelFocusLight, func() { editorSelectLight(lightKindPoint, 0) }},
 	}
 
-	for _, mode := range []struct {
-		name string
-		kind editorPanelKind
-	}{{"3D", panelKind3D}, {"2D", panelKind2D}} {
-		for _, sel := range selections {
-			t.Run(mode.name+"/"+sel.name, func(t *testing.T) {
-				lvl := panelTestLevel(t)
-				sel.do()
-				withImgui(func() {
-					// Twice: the first frame creates the window and every
-					// group's storage, the second draws with them already
-					// there, which is the path a real session spends its life
-					// on.
-					drawPanelOnce(lvl, mode.kind, sel.focus)
-					drawPanelOnce(lvl, mode.kind, sel.focus)
-				})
+	for _, sel := range selections {
+		t.Run(sel.name, func(t *testing.T) {
+			lvl := panelTestLevel(t)
+			sel.do()
+			withImgui(func() {
+				// Twice: the first frame creates the window and every group's
+				// storage, the second draws with them already there, which is
+				// the path a real session spends its life on.
+				drawPanelOnce(lvl, sel.focus)
+				drawPanelOnce(lvl, sel.focus)
 			})
-		}
+		})
 	}
 }
 
@@ -121,8 +115,8 @@ func TestPanelDrawsForADirectionalLight(t *testing.T) {
 	editorSelectLight(lightKindDir, 0)
 
 	withImgui(func() {
-		drawPanelOnce(lvl, panelKind3D, panelFocusLight)
-		drawPanelOnce(lvl, panelKind3D, panelFocusLight)
+		drawPanelOnce(lvl, panelFocusLight)
+		drawPanelOnce(lvl, panelFocusLight)
 	})
 }
 
@@ -137,7 +131,7 @@ func TestPanelDrawsForAnEmptyLevel(t *testing.T) {
 	editorClearObjectSelections()
 
 	withImgui(func() {
-		drawPanelOnce(lvl, panelKind3D, panelFocusNone)
-		drawPanelOnce(lvl, panelKind2D, panelFocusNone)
+		drawPanelOnce(lvl, panelFocusNone)
+		drawPanelOnce(lvl, panelFocusNone)
 	})
 }

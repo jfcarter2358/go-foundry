@@ -21,14 +21,14 @@ import (
 // line up, but a brush owns its verts outright and is never required to
 // share topology with whatever else is nearby.
 type Chunk struct {
-	ID          string
-	ScriptData  // tags, attributes and the attached script
-	Brushes     []Brush
-	MinBound    mgl32.Vec3 // chunk-local; see WorldBounds for the world-space AABB
-	MaxBound    mgl32.Vec3
-	Origin      mgl32.Vec3 // this chunk's live translation; see ModelMatrix
-	Rotation    float32    // this chunk's live Y-axis rotation, in radians; see ModelMatrix
-	Scale       float32    // this chunk's live uniform scale (0 = 1.0); see ModelMatrix
+	ID         string
+	ScriptData // tags, attributes and the attached script
+	Brushes    []Brush
+	MinBound   mgl32.Vec3 // chunk-local; see WorldBounds for the world-space AABB
+	MaxBound   mgl32.Vec3
+	Origin     mgl32.Vec3 // this chunk's live translation; see ModelMatrix
+	Rotation   float32    // this chunk's live Y-axis rotation, in radians; see ModelMatrix
+	Scale      float32    // this chunk's live uniform scale (0 = 1.0); see ModelMatrix
 
 	// Velocity is chunk units per second, added to Origin every tick of play
 	// (AdvanceChunks, chunk_motion.go) — a lift that rises, a barge that

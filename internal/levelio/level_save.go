@@ -141,6 +141,7 @@ func entityDefFor(e *world.Entity) *world.EntityDef {
 	}
 	return def
 }
+
 // chunkToRaw converts a runtime Chunk back into its YAML form.
 func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 	rc := world.RawChunk{
@@ -159,6 +160,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 	}
 	return rc, nil
 }
+
 // validateRawChunk checks a chunk's brushes are well-formed before it is
 // written: a face may only name verts the brush actually has, and a solid
 // needs at least four of them. The loader checks the same two things on the

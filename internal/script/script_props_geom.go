@@ -65,7 +65,6 @@ func brushProps() map[string]propAccess {
 	}
 }
 
-
 func chunkProps() map[string]propAccess {
 	get := func(fn func(*world.Chunk) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
 		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
@@ -366,4 +365,3 @@ func lightProps() map[string]propAccess {
 func biomeProps() map[string]propAccess {
 	return map[string]propAccess{}
 }
-
