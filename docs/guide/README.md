@@ -9,8 +9,9 @@ running engine: there is no export step and no separate viewer.
 > — 2D floorplan polygons with a floor and ceiling height, drawn on a top-down
 > map. That model, and the 2D editor that went with it, have been replaced. The
 > chapters below still describe the old one and are being rewritten; the ones
-> updated so far are [Scatter](06-scatter.md), [Prefabs](22-prefabs.md) and
-> [Vehicles and frames](12-vehicles-and-frames.md).
+> updated so far are [Scatter](06-scatter.md), [Prefabs](22-prefabs.md),
+> [Vehicles and frames](12-vehicles-and-frames.md) and
+> [Compiling levels](23-compiling-levels.md).
 
 Start the editor:
 
@@ -47,6 +48,7 @@ and is always current.
 | [UI screens](17-ui-screens.md) | The UI editor, anchors, bindings, themes, video |
 | [Scripting](18-scripting.md) | flang: events, messages, properties, parameters |
 | [Testing and debugging](19-testing-and-debugging.md) | Play mode, the log window, engine switches |
+| [Compiling levels](23-compiling-levels.md) | CSG, visibility, baked light — and why a level has to be sealed |
 | [Shipping a game](20-shipping.md) | Release builds, `game.yaml`, installers |
 | [Keybindings](21-keybindings.md) | The whole table, in one place |
 
