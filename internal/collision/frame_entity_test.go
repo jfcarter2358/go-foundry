@@ -63,8 +63,8 @@ func TestEntityInAFrameResolvesAgainstTheFrameNotTheWorld(t *testing.T) {
 	if !got.Collision.OnGround {
 		t.Error("crate is resting on the deck but does not report being grounded")
 	}
-	if got.CurrentSector == "" {
-		t.Error("crate is resting on the deck but is in no sector")
+	if got.CurrentChunk == "" {
+		t.Error("crate is resting on the deck but is in no chunk")
 	}
 	// And in world terms it is up where the ship is.
 	if w := lvl.Frames.WorldPosition(got); math.Abs(float64(w.Y()-40)) > 1e-2 {

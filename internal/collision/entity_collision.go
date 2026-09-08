@@ -41,25 +41,21 @@ import (
 // resolveEntityWorld pushes the entity out of level geometry and reports
 // whether it ended up resting on a floor.
 //
-// The resolvers work on a *proxy* entity placed at the volume's centre with the
-// volume's scaled extents, because that is the shape they are written against —
-// an entity's own Position is its base, and its bounds can be offset from it
-// besides. Whatever the resolvers do to the proxy is applied back as a delta,
-// so the offset and the scale never have to be un-done.
+// Worked out in terms of the entity's bound centre and half-extents rather
+// than its own Position, since the two can differ by an authored offset;
+// whatever the push does to the centre is applied back as a delta, so the
+// offset never has to be un-done.
 func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bool {
 	if lvl == nil || !e.HasBounds() {
 		return false
 	}
 	h := e.BoundHalfExtents()
 	center := e.BoundCenter()
-	proxy := world.Entity{
-		Position:   center,
-		BoundHalfX: h.X(),
-		BoundHalfY: h.Y(),
-		BoundHalfZ: h.Z(),
+	radius := h.X()
+	if h.Z() > radius {
+		radius = h.Z()
 	}
-	// Where that centre travelled from, which the slope resolver needs to tell
-	// uphill movement from downhill.
+	// Where that centre travelled from.
 	oldCenter := center.Sub(e.Position.Sub(oldPos))
 
 	// Everything below is in the entity's own frame. Its position, its bounds
@@ -69,10 +65,10 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 
 	// Walk the frame's travel rather than only resolving where it ended. An
 	// entity that moved farther than its own width in one frame would otherwise
-	// be looked up somewhere past everything it should have hit — and past every
-	// sector, where there is nothing to resolve against at all. Anything moving
-	// at ordinary speed takes exactly one step and this is the same single
-	// resolve it always was.
+	// be looked up somewhere past everything it should have hit — and past
+	// every chunk, where there is nothing to resolve against at all. Anything
+	// moving at ordinary speed takes exactly one step and this is the same
+	// single resolve it always was.
 	travel := center.Sub(oldCenter)
 	steps, travel := SweepPlan(h, travel)
 	stepTravel := travel.Mul(1 / float32(steps))
@@ -83,27 +79,25 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 		stepFrom := pos
 		pos = pos.Add(stepTravel)
 
-		chunk, sector := frame.ChunkAndSectorAt(lvl, pos)
-		if sector == nil {
-			// Outside every sector there is nothing to resolve against. The
+		// Falls back to where the body already stood if the raw target
+		// briefly lands outside even the destination chunk's own bounds —
+		// see player.go's MovePlayer, which does the same for the same
+		// reason.
+		chunk := frame.ChunkAt(lvl, pos)
+		if chunk == nil {
+			chunk = frame.ChunkAt(lvl, stepFrom)
+		}
+		if chunk == nil {
+			// Outside every chunk there is nothing to resolve against. The
 			// entity is left where it is rather than being pulled to the
 			// nearest floor: an entity over open space is a legitimate thing
 			// to be.
 			continue
 		}
 
-		// The resolvers below work in chunk's own local space (see chunkLocal);
-		// pos/stepFrom stay in the entity's frame everywhere else.
-		localPos := ResolveWallCollision(&proxy, chunk, sector, chunkLocal(chunk, pos))
-		localPos = ResolveSlopeCollision(&proxy, chunk, sector, chunkLocal(chunk, stepFrom), localPos)
-		pos = chunkWorld(chunk, localPos)
-		// Sliding along a slope can carry the entity into a different sector,
-		// so the floor it lands on has to be looked up again from where it
-		// ended.
-		chunk, sector = frame.ChunkAndSectorAt(lvl, pos)
-		localPos = chunkLocal(chunk, pos)
-		f, c := resolveEntityFloorCeiling(&proxy, chunk, sector, &localPos)
-		pos = chunkWorld(chunk, localPos)
+		localPos := chunkLocal(chunk, pos)
+		resolved, f, c := pushOutOfChunkBrushes(chunk, localPos, radius, h.Y())
+		pos = chunkWorld(chunk, resolved)
 		hitFloor = hitFloor || f
 		hitCeiling = hitCeiling || c
 	}
@@ -119,40 +113,6 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 		e.Velocity[1] = 0
 	}
 	return hitFloor
-}
-
-// resolveEntityFloorCeiling clamps the proxy's Y between the floor under it and
-// the ceiling over it, symmetrically about its centre.
-//
-// Unlike the player's ResolveFloorCollision, both halves agree on what the
-// position means — see that function's note on why its own two halves do not.
-func resolveEntityFloorCeiling(proxy *world.Entity, chunk *world.Chunk, sector *world.Sector, pos *mgl32.Vec3) (hitFloor, hitCeiling bool) {
-	if chunk == nil || sector == nil {
-		return false, false
-	}
-	xz := mgl32.Vec2{pos[0], pos[2]}
-
-	// No floor at all under the point means an opening (see opening.go): a
-	// placed entity over a hatch falls through it exactly as the player does.
-	if floorH, ok := sectorFloorHeightAt(chunk, sector, xz); ok {
-		minY := floorH + proxy.BoundHalfY
-		if pos[1] <= minY+world.EntityGroundEpsilon {
-			pos[1] = minY
-			hitFloor = true
-		}
-	}
-	// Applied after the floor, so in a gap thinner than the entity the ceiling
-	// wins. That is the recoverable way round: something pressed down into a
-	// floor is pushed back out next frame, whereas something pressed up through
-	// a ceiling is gone.
-	if ceilH, ok := sectorCeilingHeightAt(chunk, sector, xz); ok {
-		maxY := ceilH - proxy.BoundHalfY
-		if pos[1] >= maxY {
-			pos[1] = maxY
-			hitCeiling = true
-		}
-	}
-	return hitFloor, hitCeiling
 }
 
 // ---------- entity against entity ----------

@@ -15,10 +15,10 @@ package collision
 //     work in. A skinned model's CPU vertices are its bind pose — the GPU holds
 //     the posed mesh — so hitting triangles would put a walking guard's
 //     hitbox wherever it was standing when the artist exported it.
-//   - Geometry (walls, floors, ceilings) is tested against its real triangles,
-//     because a sloped floor, a shaped wall and an extrusion have no bounding
-//     volume worth the name, and the surface is static so its vertices are
-//     exactly what is drawn. Geometry.Load fills those in with no GL context
+//   - Geometry (brush faces) is tested against its real triangles, because a
+//     shaped or displaced face has no bounding volume worth the name, and the
+//     surface is static so its vertices are exactly what is drawn.
+//     Geometry.Load fills those in with no GL context
 //     (gfx.GeometryUploadsEnabled), which is what keeps this testable headless.
 //
 // One ray walks every triangle of every enabled chunk, which is what the
@@ -46,9 +46,8 @@ type RayHitKind int
 const (
 	RayHitEntity RayHitKind = iota
 	RayHitVolume
-	RayHitWall
-	RayHitFloor
-	RayHitCeiling
+	// RayHitBrush is a face of the level's solid geometry.
+	RayHitBrush
 	// RayHitScenery is a solid prop. It stops the ray like any other piece of
 	// the level's shape, but nothing addresses a scenery placement by name —
 	// see world/scenery.go — so a caller has nothing to report for it beyond
@@ -60,7 +59,7 @@ const (
 // does; the things standing in it do not.
 func (k RayHitKind) Blocks() bool {
 	switch k {
-	case RayHitWall, RayHitFloor, RayHitCeiling, RayHitScenery:
+	case RayHitBrush, RayHitScenery:
 		return true
 	}
 	return false
@@ -71,12 +70,11 @@ func (k RayHitKind) Blocks() bool {
 // survive the level being rebuilt.
 type RayHit struct {
 	Kind RayHitKind
-	// Chunk and Sector are set for geometry hits and empty otherwise.
-	Chunk  string
-	Sector string
-	// ID is the entity's, the volume's, the scenery placement's, or — for a
-	// wall — the polygon edge's, which is the name `@sector.edge.<id>` uses. A
-	// floor or ceiling has no ID of its own; Sector names it.
+	// Chunk is set for a brush hit and empty otherwise.
+	Chunk string
+	// ID is the entity's, the volume's, the scenery placement's, or the
+	// brush's. Brush IDs are level-unique (see world/identity.go), so this
+	// alone is enough to look one up.
 	ID string
 	// T is the distance along the ray, in world units, and Point is where it
 	// landed.
@@ -234,24 +232,15 @@ func reportable(lvl *world.Level, h RayHit, f RayFilter) bool {
 		return f.Tag == "" || v.HasTag(f.Tag)
 	}
 
-	_, s := sectorByID(lvl, h.Chunk, h.Sector)
-	if s == nil {
-		return false
-	}
-	switch h.Kind {
-	case RayHitWall:
-		w := wallByEdgeID(s, h.ID)
-		if w == nil {
+	if h.Kind == RayHitBrush {
+		b := brushByID(lvl, h.ID)
+		if b == nil {
 			return false
 		}
-		if f.VisibleOnly && !w.Visible {
-			return false
-		}
-		return f.Tag == "" || w.HasTag(f.Tag)
-	case RayHitFloor:
-		return f.Tag == "" || s.Floor.HasTag(f.Tag)
-	case RayHitCeiling:
-		return f.Tag == "" || s.Ceiling.HasTag(f.Tag)
+		// VisibleOnly has no extra meaning here: a hit only exists because a
+		// drawn (non-NoDraw) face was actually met, so every brush hit already
+		// qualifies.
+		return f.Tag == "" || b.HasTag(f.Tag)
 	}
 	return false
 }
@@ -342,10 +331,10 @@ func appendGeometryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, 
 			// vertex buffers are gone. See world/chunk_enable.go.
 			continue
 		}
-		// Wall, floor and ceiling vertices are chunk-local. Moving the ray into
-		// that space rather than the geometry into the world leaves t alone —
-		// origin and direction are transformed together — so distances stay
-		// comparable with the world-space hits above.
+		// Brush verts are chunk-local. Moving the ray into that space rather
+		// than the geometry into the world leaves t alone — origin and
+		// direction are transformed together — so distances stay comparable
+		// with the world-space hits above.
 		inv := ch.ModelMatrix().Inv()
 		if inv == (mgl32.Mat4{}) {
 			continue
@@ -355,66 +344,24 @@ func appendGeometryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, 
 		lOrigin := mgl32.Vec3{lo.X(), lo.Y(), lo.Z()}
 		lDir := mgl32.Vec3{ld.X(), ld.Y(), ld.Z()}
 
-		for si := range ch.Sectors {
-			s := &ch.Sectors[si]
-			for wi := range s.Walls {
-				w := &s.Walls[wi]
-				t, ok := nearestSurface(lOrigin, lDir, w.SubmeshGeometries, &w.Geometry)
-				if !ok || t > f.Range || f.Ignore[w.ID] {
+		for bi := range ch.Brushes {
+			b := &ch.Brushes[bi]
+			if f.Ignore[b.ID] {
+				continue
+			}
+			for fi := range b.Faces {
+				face := &b.Faces[fi]
+				// A NoDraw face has no uploaded geometry to test at all — see
+				// Brush.Load — so it is transparent to a ray the same way it
+				// is invisible to the eye.
+				t, ok := nearestSurface(lOrigin, lDir, face.SubmeshGeometries, &face.Geometry)
+				if !ok || t > f.Range {
 					continue
 				}
-				// w.ID is the polygon edge's, copied onto the record by
-				// InferPortals on the way in (world/chunk.go) — this stays a
-				// pure read rather than minting one, so a cast never mutates
-				// the level it is looking at.
 				out = append(out, RayHit{
-					Kind: RayHitWall, Chunk: ch.ID, Sector: s.ID, ID: w.ID,
+					Kind: RayHitBrush, Chunk: ch.ID, ID: b.ID,
 					T: t, Point: origin.Add(dir.Mul(t)),
 				})
-			}
-			// A portal is an opening, so the ray goes through it exactly as the
-			// editor's picking ray does.
-			if s.Floor.Enabled && !f.Ignore[s.ID] {
-				t, ok := nearestSurface(lOrigin, lDir, s.Floor.SubmeshGeometries, &s.Floor.Geometry, &s.Floor.SkirtGeometry)
-				if ok && t <= f.Range {
-					out = append(out, RayHit{
-						Kind: RayHitFloor, Chunk: ch.ID, Sector: s.ID,
-						T: t, Point: origin.Add(dir.Mul(t)),
-					})
-				}
-			}
-			// A slab is the far side of the surface it hangs off, so a shot
-			// that meets a thick floor's underside comes back as a hit on that
-			// floor: it is the same piece of geometry, and `hit.prop.texture`
-			// should answer about the floor either way.
-			if s.Floor.Enabled && !f.Ignore[s.ID] && world.SlabDrawable(&s.Floor.Slab) {
-				t, ok := nearestSurface(lOrigin, lDir, s.Floor.Slab.SubmeshGeometries,
-					&s.Floor.Slab.Geometry, &s.Floor.Slab.RimGeometry)
-				if ok && t <= f.Range {
-					out = append(out, RayHit{
-						Kind: RayHitFloor, Chunk: ch.ID, Sector: s.ID,
-						T: t, Point: origin.Add(dir.Mul(t)),
-					})
-				}
-			}
-			if s.Ceiling.Enabled && !f.Ignore[s.ID] && world.SlabDrawable(&s.Ceiling.Slab) {
-				t, ok := nearestSurface(lOrigin, lDir, s.Ceiling.Slab.SubmeshGeometries,
-					&s.Ceiling.Slab.Geometry, &s.Ceiling.Slab.RimGeometry)
-				if ok && t <= f.Range {
-					out = append(out, RayHit{
-						Kind: RayHitCeiling, Chunk: ch.ID, Sector: s.ID,
-						T: t, Point: origin.Add(dir.Mul(t)),
-					})
-				}
-			}
-			if s.Ceiling.Enabled && !f.Ignore[s.ID] {
-				t, ok := nearestSurface(lOrigin, lDir, s.Ceiling.SubmeshGeometries, &s.Ceiling.Geometry)
-				if ok && t <= f.Range {
-					out = append(out, RayHit{
-						Kind: RayHitCeiling, Chunk: ch.ID, Sector: s.ID,
-						T: t, Point: origin.Add(dir.Mul(t)),
-					})
-				}
 			}
 		}
 	}
@@ -422,8 +369,7 @@ func appendGeometryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, 
 }
 
 // nearestSurface returns the closest triangle hit across one face's geometry:
-// the extrusion group it carries plus however many single buffers it owns — a
-// wall has one, a floor has its surface and its skirt.
+// its Detail texture-override submeshes plus its own primary buffer.
 func nearestSurface(origin, dir mgl32.Vec3, group []gfx.Geometry, single ...*gfx.Geometry) (float32, bool) {
 	best, found := float32(math.MaxFloat32), false
 	consider := func(g *gfx.Geometry) {
@@ -667,25 +613,14 @@ func volumeByID(lvl *world.Level, id string) *world.Volume {
 	return nil
 }
 
-func sectorByID(lvl *world.Level, chunkID, sectorID string) (*world.Chunk, *world.Sector) {
+// brushByID finds a brush anywhere in the level by its (level-unique) ID.
+func brushByID(lvl *world.Level, id string) *world.Brush {
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
-		if ch.ID != chunkID {
-			continue
-		}
-		for si := range ch.Sectors {
-			if ch.Sectors[si].ID == sectorID {
-				return ch, &ch.Sectors[si]
+		for bi := range ch.Brushes {
+			if ch.Brushes[bi].ID == id {
+				return &ch.Brushes[bi]
 			}
-		}
-	}
-	return nil, nil
-}
-
-func wallByEdgeID(s *world.Sector, id string) *world.Wall {
-	for i := range s.Walls {
-		if s.Walls[i].ID == id {
-			return &s.Walls[i]
 		}
 	}
 	return nil

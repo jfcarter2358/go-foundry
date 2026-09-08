@@ -151,6 +151,47 @@ func (c Cylinder) Support(dir mgl32.Vec3) mgl32.Vec3 {
 	return c.C.Add(rotate(c.Rot, p))
 }
 
+// ---------- convex hull ----------
+
+// ConvexHull is an arbitrary convex solid described by its vertices directly —
+// a world.Brush's own Verts, which the brush format requires to all sit on the
+// hull (see brush.go's file comment), so no separate hull computation is
+// needed: every point IS a candidate support point.
+type ConvexHull struct {
+	Pts []mgl32.Vec3
+}
+
+// Center is the average of the hull's points. Not the exact centroid of the
+// solid (which would need to weight by volume), but GJK only uses Center to
+// seed its first search direction, where an approximation costs nothing.
+func (h ConvexHull) Center() mgl32.Vec3 {
+	if len(h.Pts) == 0 {
+		return mgl32.Vec3{}
+	}
+	var sum mgl32.Vec3
+	for _, p := range h.Pts {
+		sum = sum.Add(p)
+	}
+	return sum.Mul(1 / float32(len(h.Pts)))
+}
+
+// Support is the brute-force answer — the farthest point among Pts along dir
+// — which is all a convex hull's support function can be without a
+// half-edge structure to walk. Brushes are small (a handful to a few dozen
+// verts), so this is cheap; a level with many brushes bounds the cost with
+// the spatial hash before this is ever called, the same way a sector's wall
+// scan used to be bounded to its own polygon.
+func (h ConvexHull) Support(dir mgl32.Vec3) mgl32.Vec3 {
+	best := h.Pts[0]
+	bestDot := best.Dot(dir)
+	for _, p := range h.Pts[1:] {
+		if d := p.Dot(dir); d > bestDot {
+			best, bestDot = p, d
+		}
+	}
+	return best
+}
+
 // ---------- helpers ----------
 
 // rotate and rotateInv apply a rotation matrix and its inverse to a direction.
@@ -257,6 +298,12 @@ func Translate(s Shape, d mgl32.Vec3) Shape {
 	case Cylinder:
 		v.C = v.C.Add(d)
 		return v
+	case ConvexHull:
+		pts := make([]mgl32.Vec3, len(v.Pts))
+		for i, p := range v.Pts {
+			pts[i] = p.Add(d)
+		}
+		return ConvexHull{Pts: pts}
 	}
 	return s
 }

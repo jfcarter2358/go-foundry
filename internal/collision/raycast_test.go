@@ -21,8 +21,7 @@ import (
 // the far wall is at x=10.
 func rayRoom(t *testing.T) *world.Level {
 	t.Helper()
-	ch := leveltest.EdgeIDChunk(t)
-	ch.ID = "room_chunk"
+	ch := leveltest.RoomChunk(t)
 	leveltest.LoadGeometry(t, ch)
 	return &world.Level{Chunks: []world.Chunk{*ch}}
 }
@@ -47,11 +46,7 @@ var (
 func hitIDs(res RayResult) []string {
 	out := make([]string, 0, len(res.Hits))
 	for _, h := range res.Hits {
-		id := h.ID
-		if id == "" {
-			id = h.Sector
-		}
-		out = append(out, id)
+		out = append(out, h.ID)
 	}
 	return out
 }
@@ -96,7 +91,7 @@ func TestRaycastReportsEveryHitInTheLineOfFire(t *testing.T) {
 	if res.Hits[0].ID != "near" || res.Hits[1].ID != "far" {
 		t.Errorf("order = %v, want nearest first", hitIDs(res))
 	}
-	if res.Hits[2].Kind != RayHitWall {
+	if res.Hits[2].Kind != RayHitBrush {
 		t.Errorf("last hit = %v, want the wall the ray stopped on", res.Hits[2].Kind)
 	}
 }
@@ -217,8 +212,8 @@ func TestRaycastHitsFloorAndCeiling(t *testing.T) {
 
 	down := Raycast(lvl, mgl32.Vec3{5, 2, 5}, mgl32.Vec3{0, -1, 0}, DefaultRayFilter(100))
 	h, ok := down.First()
-	if !ok || h.Kind != RayHitFloor || h.Sector != "room" {
-		t.Fatalf("looking down hit %v, want the floor of room", hitIDs(down))
+	if !ok || h.Kind != RayHitBrush || h.ID != "room_floor" {
+		t.Fatalf("looking down hit %v, want the room's floor brush", hitIDs(down))
 	}
 	if h.Chunk != "room_chunk" {
 		t.Errorf("floor hit named chunk %q", h.Chunk)
@@ -228,21 +223,20 @@ func TestRaycastHitsFloorAndCeiling(t *testing.T) {
 	}
 
 	up := Raycast(lvl, mgl32.Vec3{5, 2, 5}, mgl32.Vec3{0, 1, 0}, DefaultRayFilter(100))
-	if h, ok := up.First(); !ok || h.Kind != RayHitCeiling {
-		t.Fatalf("looking up hit %v, want the ceiling", hitIDs(up))
+	if h, ok := up.First(); !ok || h.Kind != RayHitBrush || h.ID != "room_ceiling" {
+		t.Fatalf("looking up hit %v, want the room's ceiling brush", hitIDs(up))
 	}
 }
 
-func TestRaycastNamesTheWallEdgeAScriptAddresses(t *testing.T) {
+func TestRaycastNamesTheBrushAScriptAddresses(t *testing.T) {
 	lvl := rayRoom(t)
 	res := Raycast(lvl, eye, forward, DefaultRayFilter(100))
 	h, ok := res.First()
-	if !ok || h.Kind != RayHitWall {
-		t.Fatalf("hits = %v, want a wall", hitIDs(res))
+	if !ok || h.Kind != RayHitBrush {
+		t.Fatalf("hits = %v, want a brush", hitIDs(res))
 	}
-	s := &lvl.Chunks[0].Sectors[0]
-	if wallByEdgeID(s, h.ID) == nil {
-		t.Errorf("wall hit reported ID %q, which is no edge of the sector", h.ID)
+	if brushByID(lvl, h.ID) == nil {
+		t.Errorf("brush hit reported ID %q, which names no brush in the level", h.ID)
 	}
 }
 

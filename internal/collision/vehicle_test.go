@@ -20,7 +20,6 @@ func shuttle(t *testing.T, mode world.VehicleMode) *world.Level {
 	t.Helper()
 	lvl := collisionTestLevel()
 	lvl.Chunks[0].FrameOwner = "shuttle"
-	lvl.Chunks[0].InferPortals()
 
 	lvl.Entities = []world.Entity{{
 		ID: "shuttle", Position: mgl32.Vec3{0, 0, 0}, Scale: mgl32.Vec3{1, 1, 1},

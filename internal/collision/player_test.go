@@ -50,10 +50,12 @@ func TestMovePlayerFallsAndLandsOnTheFloor(t *testing.T) {
 	if !onGround {
 		t.Fatalf("never landed; ended at y=%v", p.Position.Y())
 	}
-	// ResolveFloorCollision's floor half treats the position as the body
-	// centre, so a resting player sits one half-height above the floor.
-	if got, want := p.Position.Y(), float32(0)+p.BoundHalfY; got != want {
-		t.Errorf("rested at y=%v, want %v", got, want)
+	// pushOutOfChunkBrushes treats the position as the body centre, so a
+	// resting player sits one half-height above the floor — plus the small
+	// separation margin the push-apart leaves beyond exact contact (see
+	// collision.go's separationEpsilon).
+	if got, want := p.Position.Y(), float32(0)+p.BoundHalfY; got < want || got > want+0.01 {
+		t.Errorf("rested at y=%v, want %v (+ up to 0.01 separation margin)", got, want)
 	}
 	if p.Velocity[1] != 0 {
 		t.Errorf("vertical velocity survived the landing: %v", p.Velocity[1])
@@ -115,14 +117,14 @@ func TestMovePlayerFreeFlyIgnoresGravityAndGround(t *testing.T) {
 
 // step is the shipped MovementSpeed. The tests below walk at it deliberately:
 // the resolvers are position-based rather than swept, so a step large enough to
-// clear a wall *and* leave the sector in one frame escapes the level entirely —
-// the lookup then finds no sector and nothing resolves. That is a real gap, and
+// clear a wall *and* leave the chunk in one frame escapes the level entirely —
+// the lookup then finds no chunk and nothing resolves. That is a real gap, and
 // it is what the swept-collision work exists to close; it is not something this
 // extraction changed, so it is not what these tests are guarding.
 const step = float32(0.1)
 
 func TestMovePlayerIsStoppedByAWall(t *testing.T) {
-	lvl := collisionTestLevel() // sectors span x in [0,20], walls on the outside
+	lvl := collisionTestLevel() // two rooms span x in [0,20], walls on the outside
 	p := newTestPlayer(mgl32.Vec3{1, 0.9, 5})
 	settle(p, lvl, 5)
 
@@ -137,22 +139,10 @@ func TestMovePlayerIsStoppedByAWall(t *testing.T) {
 
 func TestMovePlayerRecordsWhereItIs(t *testing.T) {
 	lvl := collisionTestLevel()
-	// The shared edge starts out a wall on both sides; InferPortals promotes it,
-	// which is what makes A and B one walkable space rather than two rooms.
-	lvl.Chunks[0].InferPortals()
-
-	p := newTestPlayer(mgl32.Vec3{5, 0.9, 5}) // inside sector A
+	p := newTestPlayer(mgl32.Vec3{5, 0.9, 5})
 	settle(p, lvl, 5)
-	if p.CurrentSector != "A" {
-		t.Errorf("CurrentSector = %q, want A", p.CurrentSector)
-	}
-
-	// Walk across the shared edge into B (x from 5 to 15).
-	for i := 0; i < 100; i++ {
-		MovePlayer(p, lvl, walkMove(mgl32.Vec3{step, 0, 0}))
-	}
-	if p.CurrentSector != "B" {
-		t.Errorf("after walking into B, CurrentSector = %q (x=%v)", p.CurrentSector, p.Position.X())
+	if p.CurrentChunk != lvl.Chunks[0].ID {
+		t.Errorf("CurrentChunk = %q, want %q", p.CurrentChunk, lvl.Chunks[0].ID)
 	}
 }
 
@@ -192,8 +182,8 @@ func TestMovePlayerIsIndependentOfWhereTheChunkSits(t *testing.T) {
 	if !vecNear(b.Position, want, 1e-3) {
 		t.Errorf("the same walk ended at %v in the shifted world, want %v", b.Position, want)
 	}
-	if a.CurrentSector != b.CurrentSector {
-		t.Errorf("ended in different sectors: %q vs %q", a.CurrentSector, b.CurrentSector)
+	if a.CurrentChunk == "" || b.CurrentChunk == "" {
+		t.Errorf("lost track of the chunk: %q vs %q", a.CurrentChunk, b.CurrentChunk)
 	}
 }
 
@@ -240,8 +230,8 @@ func TestMovePlayerTreatsChunkOriginTheSameAsShiftedPoints(t *testing.T) {
 	if !vecNear(a.Position, b.Position, 1e-3) {
 		t.Errorf("moving via shifted points ended at %v, moving via Origin ended at %v", a.Position, b.Position)
 	}
-	if a.CurrentSector != b.CurrentSector {
-		t.Errorf("ended in different sectors: %q (shifted) vs %q (Origin)", a.CurrentSector, b.CurrentSector)
+	if a.CurrentChunk == "" || b.CurrentChunk == "" {
+		t.Errorf("lost track of the chunk: %q (shifted) vs %q (Origin)", a.CurrentChunk, b.CurrentChunk)
 	}
 }
 
@@ -287,26 +277,19 @@ func TestMovePlayerTreatsChunkOriginAndRotationTheSameAsShiftedRotatedPoints(t *
 	if !vecNear(b.Position, want, 1e-3) {
 		t.Errorf("the rotated walk ended at %v, want %v (the plain walk carried through the rotation)", b.Position, want)
 	}
-	if a.CurrentSector != b.CurrentSector {
-		t.Errorf("ended in different sectors: %q (plain) vs %q (rotated)", a.CurrentSector, b.CurrentSector)
+	if a.CurrentChunk == "" || b.CurrentChunk == "" {
+		t.Errorf("lost track of the chunk: %q (plain) vs %q (rotated)", a.CurrentChunk, b.CurrentChunk)
 	}
 }
 
 // shiftChunkXZ translates a chunk's whole footprint, which for these GL-free
-// test chunks means the point pool, the cached wall endpoints and the per-sector
-// 2D bounds — everything MovePlayer reads.
+// test chunks means every brush's verts — everything MovePlayer reads.
 func shiftChunkXZ(ch *world.Chunk, dx, dz float32) {
-	d2 := mgl32.Vec2{dx, dz}
-	for i := range ch.Points {
-		ch.Points[i] = ch.Points[i].Add(d2)
-	}
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		s.MinBound = s.MinBound.Add(d2)
-		s.MaxBound = s.MaxBound.Add(d2)
-		for wi := range s.Walls {
-			s.Walls[wi].StartPoint = s.Walls[wi].StartPoint.Add(d2)
-			s.Walls[wi].EndPoint = s.Walls[wi].EndPoint.Add(d2)
+	d3 := mgl32.Vec3{dx, 0, dz}
+	for bi := range ch.Brushes {
+		verts := ch.Brushes[bi].Verts
+		for i := range verts {
+			verts[i] = verts[i].Add(d3)
 		}
 	}
 	ch.RecomputeBounds()

@@ -261,6 +261,39 @@ func (b *Brush) Load() error {
 	return nil
 }
 
+// NewHollowRoom returns the six brushes bounding an axis-aligned walkable
+// room: a floor, a ceiling, and four walls, each wallThickness deep,
+// enclosing the space between min and max. This is the editor's "hollow"
+// primitive — the fast way to block out a room, rather than hand-placing six
+// brushes — and is also what a test fixture wanting somewhere to walk around
+// reaches for, since a single NewBoxBrush is a solid block with no interior.
+func NewHollowRoom(idPrefix string, min, max mgl32.Vec3, wallThickness float32, texture string) []Brush {
+	if wallThickness <= 0 {
+		wallThickness = 0.5
+	}
+	cx, cz := (min.X()+max.X())/2, (min.Z()+max.Z())/2
+	hx, hz := (max.X()-min.X())/2, (max.Z()-min.Z())/2
+	floorY, ceilY := min.Y(), max.Y()
+	midY := (floorY + ceilY) / 2
+	halfWallY := (ceilY - floorY) / 2
+	ht := wallThickness / 2
+
+	return []Brush{
+		NewBoxBrush(idPrefix+"_floor",
+			mgl32.Vec3{cx, floorY - ht, cz}, mgl32.Vec3{hx + wallThickness, ht, hz + wallThickness}, texture),
+		NewBoxBrush(idPrefix+"_ceiling",
+			mgl32.Vec3{cx, ceilY + ht, cz}, mgl32.Vec3{hx + wallThickness, ht, hz + wallThickness}, texture),
+		NewBoxBrush(idPrefix+"_wall_negx",
+			mgl32.Vec3{min.X() - ht, midY, cz}, mgl32.Vec3{ht, halfWallY, hz}, texture),
+		NewBoxBrush(idPrefix+"_wall_posx",
+			mgl32.Vec3{max.X() + ht, midY, cz}, mgl32.Vec3{ht, halfWallY, hz}, texture),
+		NewBoxBrush(idPrefix+"_wall_negz",
+			mgl32.Vec3{cx, midY, min.Z() - ht}, mgl32.Vec3{hx, halfWallY, ht}, texture),
+		NewBoxBrush(idPrefix+"_wall_posz",
+			mgl32.Vec3{cx, midY, max.Z() + ht}, mgl32.Vec3{hx, halfWallY, ht}, texture),
+	}
+}
+
 // CloneBrush returns a deep, independent copy. GPU geometry handles are
 // zeroed — the caller must Load the clone before it can be rendered, exactly
 // as Chunk.Clone's sector counterpart used to require.

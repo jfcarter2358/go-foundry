@@ -4,7 +4,7 @@ package collision
 //
 // The wall case here is the one that used to fail. At the shipped walking speed
 // of 0.1 the positional resolvers hold fine; at 0.5 the player cleared the wall
-// *and* left the sector in a single step, the lookup then found nothing to
+// *and* left the chunk in a single step, the lookup then found nothing to
 // resolve against, and it kept going forever.
 
 import (
@@ -59,8 +59,8 @@ func TestFastPlayerDoesNotGoThroughAWall(t *testing.T) {
 		if p.Position.X() < p.BoundHalfX-1e-3 {
 			t.Errorf("speed %v: ended at x=%v, past the wall at x=0", speed, p.Position.X())
 		}
-		if p.CurrentSector == "" {
-			t.Errorf("speed %v: ended outside every sector at x=%v", speed, p.Position.X())
+		if p.CurrentChunk == "" {
+			t.Errorf("speed %v: ended outside every chunk at x=%v", speed, p.Position.X())
 		}
 	}
 }
@@ -72,14 +72,13 @@ func TestFastPlayerStaysInsideTheLevel(t *testing.T) {
 	for _, d := range dirs {
 		for _, speed := range []float32{1, 15, 150} {
 			lvl := collisionTestLevel()
-			lvl.Chunks[0].InferPortals()
 			p := newTestPlayer(mgl32.Vec3{5, 0.9, 5})
 			settle(p, lvl, 5)
 
 			for i := 0; i < 40; i++ {
 				MovePlayer(p, lvl, walkMove(d.Mul(speed)))
 			}
-			if p.CurrentSector == "" {
+			if p.CurrentChunk == "" {
 				t.Errorf("dir %v speed %v: escaped the level to %v", d, speed, p.Position)
 			}
 		}
@@ -88,7 +87,12 @@ func TestFastPlayerStaysInsideTheLevel(t *testing.T) {
 
 func TestFastFallLandsOnTheFloor(t *testing.T) {
 	lvl := collisionTestLevel()
-	p := newTestPlayer(mgl32.Vec3{5, 400, 5})
+	// Dropped from just under the room's (solid, sealed) ceiling rather than
+	// from outside and above it — a brush roof is real geometry, so falling
+	// onto it from outside lands ON the roof, same as any other floor. The
+	// room is only 8 units tall, so this is still a fall many times the
+	// player's own height at the speed below.
+	p := newTestPlayer(mgl32.Vec3{5, 7.5, 5})
 	// Already at terminal velocity, sixty units a frame — far more than the
 	// player is tall, and well past the point where a single positional clamp
 	// per frame would be sampling the world in the wrong places.
@@ -107,8 +111,8 @@ func TestFastFallLandsOnTheFloor(t *testing.T) {
 	if got := p.Position.Y(); math.Abs(float64(got-p.BoundHalfY)) > 1e-3 {
 		t.Errorf("came to rest at y=%v, want %v", got, p.BoundHalfY)
 	}
-	if p.CurrentSector == "" {
-		t.Error("landed outside every sector")
+	if p.CurrentChunk == "" {
+		t.Error("landed outside every chunk")
 	}
 }
 

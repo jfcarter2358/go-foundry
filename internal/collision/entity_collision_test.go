@@ -392,35 +392,16 @@ func TestResolveEntityCollisionsIsOrderIndependent(t *testing.T) {
 
 // ---------- world collision ----------
 
-// collisionTestLevel is leveltest.SplitChunk's two 10×10 sectors with their floors at
-// y=0 and their ceilings at y=8 — enough for the floor/ceiling clamp and the
-// wall push.
+// collisionTestLevel is leveltest.TwoRoomChunk's two 10×10 hollow rooms with
+// their floors at y=0 and their ceilings at y=8 — enough for the floor/
+// ceiling clamp and the wall push.
 //
-// The 2D sector bounds are computed here rather than through Sector.Load, which
-// also uploads geometry and so needs a GL context. Without them every sector
-// AABB is degenerate and the chunk lookup rejects the whole level.
+// Unlike the old sector fixture, a brush's bounds come straight off its own
+// verts (Brush.LocalAABB) with no geometry upload involved, so
+// Chunk.RecomputeBounds is all that's needed — no GL context, no manual
+// bounds walk.
 func collisionTestLevel() *world.Level {
-	ch := *leveltest.SplitChunk()
-	for si := range ch.Sectors {
-		s := &ch.Sectors[si]
-		s.Floor.Enabled = true
-		s.Floor.Height = 0
-		s.Ceiling.Enabled = true
-		s.Ceiling.Height = 8
-
-		pts := world.SectorPoints(&ch, s)
-		s.MinBound, s.MaxBound = pts[0], pts[0]
-		for _, p := range pts[1:] {
-			s.MinBound = mgl32.Vec2{
-				float32(math.Min(float64(s.MinBound.X()), float64(p.X()))),
-				float32(math.Min(float64(s.MinBound.Y()), float64(p.Y()))),
-			}
-			s.MaxBound = mgl32.Vec2{
-				float32(math.Max(float64(s.MaxBound.X()), float64(p.X()))),
-				float32(math.Max(float64(s.MaxBound.Y()), float64(p.Y()))),
-			}
-		}
-	}
+	ch := *leveltest.TwoRoomChunk()
 	ch.RecomputeBounds()
 	lvl := &world.Level{Chunks: []world.Chunk{ch}}
 	// Frames and the spatial hash are derived state every real level carries;
@@ -445,8 +426,10 @@ func TestResolveEntityWorldRestsOnTheFloor(t *testing.T) {
 	if !resolveEntityWorld(lvl, &e, mgl32.Vec3{5, 0.2, 5}) {
 		t.Fatal("expected to land on the floor")
 	}
-	if geom.Abs32(e.Position.Y()) > 1e-4 {
-		t.Errorf("base ended at y=%v, want 0", e.Position.Y())
+	// A small separation margin beyond exact contact (collision.go's
+	// separationEpsilon) means "resting" is not bit-exact zero.
+	if e.Position.Y() < 0 || e.Position.Y() > 0.01 {
+		t.Errorf("base ended at y=%v, want ~0", e.Position.Y())
 	}
 	if e.Velocity.Y() != 0 {
 		t.Errorf("landing did not stop the fall: %v", e.Velocity.Y())
@@ -481,8 +464,10 @@ func TestResolveEntityWorldClampsUnderTheCeiling(t *testing.T) {
 
 	// The volume's top ends at the ceiling, symmetrically about its centre —
 	// unlike the player's clamp, which is deliberately loose.
-	if geom.Abs32((e.Position.Y()+0.5)-8) > 1e-4 {
-		t.Errorf("top ended at y=%v, want the ceiling at 8", e.Position.Y()+0.5)
+	// A small separation margin beyond exact contact (collision.go's
+	// separationEpsilon) means the clamp does not land bit-exact on 8.
+	if top := e.Position.Y() + 0.5; top > 8 || top < 8-0.01 {
+		t.Errorf("top ended at y=%v, want the ceiling at ~8", top)
 	}
 	if e.Velocity.Y() != 0 {
 		t.Errorf("head-bonk did not stop the rise: %v", e.Velocity.Y())
@@ -593,9 +578,11 @@ func TestEntityUpdateStackSettlesWhateverTheListOrder(t *testing.T) {
 			got = append(got, lvl.Entities[i].Position.Y())
 		}
 		sortFloats(got)
+		// A small separation margin beyond exact contact (collision.go's
+		// separationEpsilon) applies to each of the three boxes in the stack.
 		want := []float32{0, 1, 2}
 		for i := range want {
-			if geom.Abs32(got[i]-want[i]) > 1e-4 {
+			if got[i] < want[i] || got[i] > want[i]+0.01 {
 				t.Errorf("topDown=%v: settled at %v, want %v", topDown, got, want)
 				break
 			}
