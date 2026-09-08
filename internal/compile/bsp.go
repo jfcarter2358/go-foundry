@@ -467,6 +467,41 @@ func (t *BSPTree) FindLeaf(p mgl32.Vec3) int {
 	return c.Leaf()
 }
 
+// LineOfSight reports whether the segment from a to b passes through nothing
+// solid.
+//
+// The test is against the TREE, not against the faces: a segment is blocked
+// exactly when it enters a solid cell, which is one plane comparison per level
+// of the tree and no polygon touched at all. Intersecting the faces themselves
+// would be the same answer computed the expensive way, and would have to
+// special-case a segment that grazes a shared edge — which the cell test cannot
+// get wrong, because a cell is either solid or it is not.
+func (t *BSPTree) LineOfSight(a, b mgl32.Vec3) bool {
+	return !t.blocked(t.Root, a, b)
+}
+
+func (t *BSPTree) blocked(c ChildRef, p1, p2 mgl32.Vec3) bool {
+	if c.IsLeaf() {
+		return t.Leaves[c.Leaf()].Solid
+	}
+	n := &t.Nodes[c.Node()]
+	d1, d2 := n.Plane.Distance(p1), n.Plane.Distance(p2)
+	switch {
+	case d1 >= 0 && d2 >= 0:
+		return t.blocked(n.Front, p1, p2)
+	case d1 < 0 && d2 < 0:
+		return t.blocked(n.Back, p1, p2)
+	}
+	// The segment crosses this plane: split it there and walk the near half
+	// first, so a blocked segment stops at the first thing it hits rather than
+	// descending the whole tree.
+	mid := p1.Add(p2.Sub(p1).Mul(d1 / (d1 - d2)))
+	if d1 >= 0 {
+		return t.blocked(n.Front, p1, mid) || t.blocked(n.Back, mid, p2)
+	}
+	return t.blocked(n.Back, p1, mid) || t.blocked(n.Front, mid, p2)
+}
+
 // EmptyLeafCount is how many cells are open space — the number of rows the PVS
 // will have anything to say about.
 func (t *BSPTree) EmptyLeafCount() int {

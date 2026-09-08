@@ -63,10 +63,10 @@ func corridorLevel() *world.Level {
 // wrong — the two ends come out visible to each other straight through the
 // block between them.
 //
-//	 |  centre block  |
-//	 |                |
-//	 +----------------+
-//	   the bottom arm
+//	|  centre block  |
+//	|                |
+//	+----------------+
+//	  the bottom arm
 func uLevel() *world.Level {
 	return levelOf(
 		boxFromTo("floor", mgl32.Vec3{-14, -1, -10}, mgl32.Vec3{14, 0, 10}),
