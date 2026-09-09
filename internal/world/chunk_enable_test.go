@@ -138,3 +138,34 @@ func TestReleaseLevelGeometryFreesEveryChunk(t *testing.T) {
 		t.Error("chunk geometry survived ReleaseLevelGeometry")
 	}
 }
+
+// A compiled chunk has no meshes of its own, and must not grow any when it
+// comes back: they would be a second copy of what the static list already
+// draws. And the static list has to be told, since releasing the chunk's
+// (empty) buffers reaches nothing that is on screen.
+func TestACompiledChunkStreamsThroughTheStaticList(t *testing.T) {
+	lvl := &Level{
+		Chunks: []Chunk{{
+			ID: "area", Compiled: true, Scale: 1,
+			Brushes: []Brush{NewBoxBrush("b", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, "concrete")},
+		}},
+		Static: &StaticGeometry{Surfaces: []StaticSurface{{Chunk: "area"}}},
+	}
+
+	SetChunkEnabled(&lvl.Chunks[0], false)
+	SyncChunkGeometry(lvl)
+	if !lvl.Static.Hidden(0) {
+		t.Error("switching a compiled chunk off left its surfaces drawable")
+	}
+
+	SetChunkEnabled(&lvl.Chunks[0], true)
+	SyncChunkGeometry(lvl)
+	if lvl.Static.Hidden(0) {
+		t.Error("switching it back on left its surfaces hidden")
+	}
+	for fi := range lvl.Chunks[0].Brushes[0].Faces {
+		if len(lvl.Chunks[0].Brushes[0].Faces[fi].Geometry.Vertices) > 0 {
+			t.Fatalf("face %d grew a mesh; it would be drawn on top of the compiled surface", fi)
+		}
+	}
+}

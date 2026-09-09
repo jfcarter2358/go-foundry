@@ -54,6 +54,9 @@ func DebugRenderOverlay() {
 		imgui.Separator()
 
 		imgui.Text(fmt.Sprintf("Brushes:      %d loaded / %d drawn", DebugStats.BrushesLoaded, DebugStats.BrushesDrawn))
+		if DebugStats.StaticSurfaces > 0 {
+			imgui.Text(fmt.Sprintf("Compiled:     %d surfaces / %d drawn", DebugStats.StaticSurfaces, DebugStats.StaticDrawn))
+		}
 		imgui.Text(fmt.Sprintf("Chunks:       %d loaded / %d drawn", DebugStats.ChunksLoaded, DebugStats.ChunksDrawn))
 		imgui.Text(fmt.Sprintf("Sprites:      %d quads / %d particles / %d draws",
 			DebugStats.Sprites, DebugStats.Particles, DebugStats.SpriteDraws))

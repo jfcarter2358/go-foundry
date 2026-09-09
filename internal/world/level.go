@@ -52,12 +52,12 @@ type Level struct {
 	// Player is the level's tuning for the engine-owned player it starts
 	// (player_settings.go). A value rather than a pointer, because there is
 	// always a player and its zero value is the engine's own defaults.
-	Player  PlayerSettings
-	Lights  LightSet
+	Player PlayerSettings
+	Lights LightSet
 	// Static is a compiled level's drawable geometry (static.go), or nil for an
 	// authored one. When it is set, every chunk marked Compiled is drawn from
 	// here instead of from its own brushes.
-	Static *StaticGeometry
+	Static  *StaticGeometry
 	Spatial *SpatialHash // accelerated chunk/sector lookup; rebuilt after level load
 	// Frames are the level's moving coordinate systems (frame.go). Built with
 	// Spatial, from the same structural information, and refreshed every tick.

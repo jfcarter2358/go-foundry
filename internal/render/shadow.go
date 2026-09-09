@@ -665,8 +665,37 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 	current := identity
 	gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
 
+	// A compiled level's static surfaces, which are already in world space —
+	// hence the identity that is still bound.
+	//
+	// Culled by the shadow frustum only, deliberately NOT by the camera's
+	// visibility set: a wall the player cannot see still casts the shadow that
+	// falls across the floor they can. The PVS answers "what can be seen from
+	// here", and a shadow caster is precisely the thing that matters while
+	// unseen.
+	if level.Static != nil {
+		for si := range level.Static.Surfaces {
+			surf := &level.Static.Surfaces[si]
+			if level.Static.Hidden(si) {
+				continue // its chunk is switched off — see world/static.go
+			}
+			if cull != nil && !AABBInFrustum(*cull, surf.Lo, surf.Hi) {
+				continue
+			}
+			if !surf.Detail.HasDisplace() {
+				drawGeometryShadow(&surf.Geometry, prog, skin)
+			}
+			for eg := range surf.SubmeshGeometries {
+				drawGeometryShadow(&surf.SubmeshGeometries[eg], prog, skin)
+			}
+		}
+	}
+
 	for ci := range level.Chunks {
 		chunk := &level.Chunks[ci]
+		if chunk.Compiled {
+			continue // cast above, out of the compiled list
+		}
 		if !chunk.IsEnabled() {
 			continue // switched off; see world/chunk_enable.go
 		}

@@ -73,8 +73,18 @@ func SyncChunkGeometry(lvl *Level) bool {
 	}
 	changed := false
 	for ci := range lvl.Chunks {
-		if SyncChunkGeometryFor(&lvl.Chunks[ci]) {
+		ch := &lvl.Chunks[ci]
+		if SyncChunkGeometryFor(ch) {
 			changed = true
+		}
+		// A compiled chunk's surfaces are not its own any more, so releasing
+		// its buffers reaches nothing — the static list has to be told
+		// separately, or a switched-off area would leave collision and the
+		// spatial hash and stay on screen. Written every frame rather than on
+		// the transition, because the flag can be set from anywhere (a script
+		// tick, an undo) and this is the reconcile that owns the consequence.
+		if lvl.Static != nil && ch.Compiled {
+			lvl.Static.SetChunkHidden(ch.ID, ch.Disabled)
 		}
 	}
 	return changed
@@ -124,8 +134,13 @@ func (ch *Chunk) ReleaseGeometry() {
 // chunk that has been off and on again is the chunk the loader would have
 // produced.
 func (ch *Chunk) ReloadGeometry() {
-	for bi := range ch.Brushes {
-		_ = ch.Brushes[bi].Load()
+	// Except for a compiled chunk, which never had meshes of its own: building
+	// them here would draw its surfaces twice, once from the static list and
+	// once from the brushes. See static.go.
+	if !ch.Compiled {
+		for bi := range ch.Brushes {
+			_ = ch.Brushes[bi].Load()
+		}
 	}
 	ch.RecomputeBounds()
 	ch.Unloaded = false

@@ -324,7 +324,36 @@ func appendSceneryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f
 // ---------- geometry ----------
 
 func appendGeometryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter) []RayHit {
+	// A compiled level's static surfaces. They are what the eye sees, so they
+	// are what a ray should hit — and the chunks they came from carry no meshes
+	// to test, which is deliberate: keeping a second copy of every mesh purely
+	// so rays could hit it would also have rays hitting surfaces CSG had
+	// already established were invisible.
+	//
+	// Already in world space, so no transform, and the hit reports the chunk
+	// and brush the surface was authored in — the same answer a script would
+	// have got from the level before it was compiled.
+	if lvl.Static != nil {
+		for si := range lvl.Static.Surfaces {
+			surf := &lvl.Static.Surfaces[si]
+			if f.Ignore[surf.Brush] || lvl.Static.Hidden(si) {
+				continue
+			}
+			t, ok := nearestSurface(origin, dir, surf.SubmeshGeometries, &surf.Geometry)
+			if !ok || t > f.Range {
+				continue
+			}
+			out = append(out, RayHit{
+				Kind: RayHitBrush, Chunk: surf.Chunk, ID: surf.Brush,
+				T: t, Point: origin.Add(dir.Mul(t)),
+			})
+		}
+	}
+
 	for ci := range lvl.Chunks {
+		if lvl.Chunks[ci].Compiled {
+			continue // tested above, from the compiled list
+		}
 		ch := &lvl.Chunks[ci]
 		if !ch.IsEnabled() {
 			// Released for streaming: not drawn, not collided against, and its

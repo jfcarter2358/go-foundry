@@ -167,6 +167,16 @@ func reachable(src string, idx assetIndex, roots []string) map[string]bool {
 		path := frontier[len(frontier)-1]
 		frontier = frontier[:len(frontier)-1]
 
+		// A level's compiled form is what a release build actually loads, and
+		// nothing NAMES it: the manifest and every load_level say a level's
+		// name, and the extension is chosen by the build. So it is pulled in
+		// beside the source rather than found by the scan below.
+		if compiled, ok := compiledSibling(path); ok {
+			if _, err := os.Stat(filepath.Join(src, filepath.FromSlash(compiled))); err == nil {
+				keep[compiled] = true
+			}
+		}
+
 		if !textExts[strings.ToLower(filepath.Ext(path))] {
 			continue
 		}
@@ -207,4 +217,42 @@ var tokenRe = regexp.MustCompile(`[A-Za-z0-9_./-]+`)
 // per-directory prune counts this tool logs are how anyone would notice.
 func scanTokens(s string) []string {
 	return tokenRe.FindAllString(s, -1)
+}
+
+// LevelSourceExt and CompiledLevelExt are what an authored level and its
+// compiled form are called. Spelled out here rather than imported from
+// internal/levelio, which this tool deliberately does not depend on — it packs
+// a tree of files and should not need the engine to do it.
+const (
+	LevelSourceExt   = ".yaml"
+	CompiledLevelExt = ".fbsp"
+	levelsDir        = "levels/"
+)
+
+// compiledSibling is the compiled form of an authored level path, and whether
+// the path was one at all. Entity definitions and the manifest are .yaml too,
+// so the directory is part of the test.
+func compiledSibling(path string) (string, bool) {
+	if !strings.HasPrefix(path, levelsDir) || !strings.HasSuffix(path, LevelSourceExt) {
+		return "", false
+	}
+	return strings.TrimSuffix(path, LevelSourceExt) + CompiledLevelExt, true
+}
+
+// IsSupersededLevelSource reports whether a path is an authored level that has
+// been compiled, and so should not be staged.
+//
+// A release build cannot read one — it loads .fbsp and only .fbsp
+// (app/levelsource_release.go) — so shipping it is dead weight and, less
+// happily, ships the level's source to whoever installs the game. A level with
+// no compiled form beside it is still staged: the failure then belongs to the
+// engine's own "recompile the level" message rather than to a packer that
+// silently dropped the only copy.
+func IsSupersededLevelSource(src, path string) bool {
+	compiled, ok := compiledSibling(path)
+	if !ok {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(src, filepath.FromSlash(compiled)))
+	return err == nil
 }

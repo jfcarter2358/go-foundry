@@ -34,6 +34,9 @@ import (
 const (
 	chunksPerStep   = 1
 	texturesPerStep = 4
+	// A compiled surface is a handful of triangles rather than a whole chunk's
+	// worth, so a step gets many of them.
+	staticSurfacesPerStep = 64
 )
 
 type loadStage int
@@ -42,6 +45,7 @@ const (
 	loadStageChunks loadStage = iota
 	loadStageObjects
 	loadStageTextures
+	loadStageStatic
 	loadStageIndexes
 	loadStageDone
 )
@@ -51,22 +55,31 @@ var loadStageNames = [...]string{
 	loadStageChunks:   "Building geometry",
 	loadStageObjects:  "Placing objects",
 	loadStageTextures: "Loading textures",
+	loadStageStatic:   "Building compiled geometry",
 	loadStageIndexes:  "Indexing",
 	loadStageDone:     "Ready",
 }
 
-// LoadJob is a level load in progress.
+// LoadJob is a level load in progress, of either kind.
+//
+// A compiled load sets compiled and leaves raw zero; an authored load does the
+// reverse. One job rather than two because everything after the geometry is
+// identical, and because the loading screen, the progress hook and
+// installLevel should not have to know which kind they are pumping.
 type LoadJob struct {
 	path  string
 	raw   world.RawLevel
 	level world.Level
+	// compiled is the artefact for a compiled load, nil for an authored one.
+	compiled *CompiledLevel
 
 	texNeeded map[string]bool
 	texNames  []string
 
-	stage   loadStage
-	chunkAt int
-	texAt   int
+	stage    loadStage
+	chunkAt  int
+	texAt    int
+	staticAt int
 
 	err error
 }
@@ -86,6 +99,27 @@ func BeginLoad(levelPath string) (*LoadJob, error) {
 	return j, nil
 }
 
+// BeginLoadCompiled reads a compiled level and returns a job that will build
+// it.
+//
+// The read is synchronous for the same reason BeginLoad's parse is: a file that
+// will not decode is a failure the caller should see now, rather than one frame
+// into a loading screen it has already put up.
+func BeginLoadCompiled(levelPath string) (*LoadJob, error) {
+	c, err := ReadCompiledLevel(levelPath)
+	if err != nil {
+		return nil, err
+	}
+	j := &LoadJob{path: levelPath, compiled: c, raw: c.Raw, texNeeded: map[string]bool{}}
+	// The compiled surfaces' textures are known from the file alone, so they
+	// join the list up front rather than being discovered a stage later.
+	for i := range c.Faces {
+		noteCompiledFaceTextures(j.texNeeded, &c.Faces[i])
+	}
+	j.publish()
+	return j, nil
+}
+
 // Step does a bounded slice of work and reports whether the load has finished.
 //
 // A failed step ends the job: Err says what went wrong, and Level is not usable.
@@ -98,12 +132,12 @@ func (j *LoadJob) Step() bool {
 
 	switch j.stage {
 	case loadStageChunks:
-		next, err := loadChunkRange(j.raw, &j.level, j.texNeeded, j.chunkAt, chunksPerStep)
+		next, total, err := j.stepChunks()
 		if err != nil {
 			return j.fail(err)
 		}
 		j.chunkAt = next
-		if j.chunkAt >= len(j.raw.Chunks) {
+		if j.chunkAt >= total {
 			j.stage = loadStageObjects
 		}
 
@@ -123,6 +157,20 @@ func (j *LoadJob) Step() bool {
 		}
 		j.texAt = next
 		if j.texAt >= len(j.texNames) {
+			j.stage = loadStageStatic
+		}
+
+	case loadStageStatic:
+		if j.compiled == nil {
+			j.stage = loadStageIndexes
+			break
+		}
+		next, err := buildStaticRange(j.compiled, &j.level, j.staticAt, staticSurfacesPerStep)
+		if err != nil {
+			return j.fail(err)
+		}
+		j.staticAt = next
+		if j.staticAt >= len(j.compiled.Faces) {
 			j.stage = loadStageIndexes
 		}
 
@@ -135,6 +183,17 @@ func (j *LoadJob) Step() bool {
 
 	j.publish()
 	return j.stage == loadStageDone
+}
+
+// stepChunks builds one slice of chunks, from whichever source this job has,
+// and reports where it got to and how many there are in all.
+func (j *LoadJob) stepChunks() (next, total int, err error) {
+	if j.compiled != nil {
+		next, err = loadCompiledChunkRange(j.compiled, &j.level, j.texNeeded, j.chunkAt, chunksPerStep)
+		return next, len(j.compiled.Chunks), err
+	}
+	next, err = loadChunkRange(j.raw, &j.level, j.texNeeded, j.chunkAt, chunksPerStep)
+	return next, len(j.raw.Chunks), err
 }
 
 func (j *LoadJob) fail(err error) bool {
@@ -154,15 +213,28 @@ func (j *LoadJob) Progress() (float32, string) {
 	label := loadStageNames[j.stage]
 	switch j.stage {
 	case loadStageChunks:
-		return 0.60 * fraction(j.chunkAt, len(j.raw.Chunks)), label
+		return 0.50 * fraction(j.chunkAt, j.chunkTotal()), label
 	case loadStageObjects:
-		return 0.65, label
+		return 0.55, label
 	case loadStageTextures:
-		return 0.65 + 0.30*fraction(j.texAt, len(j.texNames)), label
+		return 0.55 + 0.25*fraction(j.texAt, len(j.texNames)), label
+	case loadStageStatic:
+		if j.compiled == nil {
+			return 0.90, label
+		}
+		return 0.80 + 0.17*fraction(j.staticAt, len(j.compiled.Faces)), label
 	case loadStageIndexes:
 		return 0.97, label
 	}
 	return 1, label
+}
+
+// chunkTotal is how many chunks this job has to build, from whichever source.
+func (j *LoadJob) chunkTotal() int {
+	if j.compiled != nil {
+		return len(j.compiled.Chunks)
+	}
+	return len(j.raw.Chunks)
 }
 
 // Done reports whether there is no more work.

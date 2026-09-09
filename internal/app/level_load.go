@@ -46,7 +46,9 @@ func beginRequestedLevelLoad() {
 		return
 	}
 
-	job, err := levelio.BeginLoad(levelio.LevelPath(name))
+	// Which file that is depends on the build: authored in a development one,
+	// compiled in a release one. See levelsource_dev.go.
+	job, err := beginLevelLoad(levelSourcePath(name))
 	if err != nil {
 		log.Printf("load_level %q: %v", name, err)
 		return

@@ -747,6 +747,7 @@ func Run() {
 			// Two-pass rendering: opaque geometry first, then transparent geometry sorted back-to-front.
 			chunksDrawn := 0
 			brushesDrawn := 0
+			staticDrawn := 0
 			var transparentDraws []TransparentDraw
 
 			// Helper to queue or draw a geometry object based on its alpha.
@@ -784,8 +785,42 @@ func Run() {
 				}
 			}
 
+			// A compiled level's static surfaces. Culled by the compiled
+			// visibility set first — every cell the camera's own cannot see is
+			// gone before a single bounding box is tested — and then by the
+			// frustum, which is what removes the rest of the cell the camera
+			// IS in. The chunks those surfaces came from are still walked
+			// below, for the frame-owned and switched-off ones; the compiled
+			// ones carry Chunk.Compiled and are skipped.
+			if level.Static != nil {
+				staticDrawScratch = level.Static.VisibleSurfaces(gfx.Cam.Position, staticDrawScratch)
+				for _, si := range staticDrawScratch {
+					surf := &level.Static.Surfaces[si]
+					if !render.AABBInFrustum(frustum, surf.Lo, surf.Hi) {
+						continue
+					}
+					staticDrawn++
+					// Displaced surfaces are drawn by RenderDetailColor through
+					// the tessellation program instead of the flat mesh, which
+					// is what keeps the two from z-fighting — the same rule the
+					// brush loop below follows.
+					if !surf.Detail.HasDisplace() {
+						drawOrQueue(&surf.Geometry, identity, surf.DoubleSided)
+					}
+					for eg := range surf.SubmeshGeometries {
+						drawOrQueue(&surf.SubmeshGeometries[eg], identity, surf.DoubleSided)
+					}
+				}
+			}
+
 			for i := range level.Chunks {
 				chunk := &level.Chunks[i]
+				if chunk.Compiled {
+					// Its surfaces were drawn above, out of the compiled list.
+					// The chunk itself is still here for collision, raycasts
+					// and scripting — see world/static.go.
+					continue
+				}
 				if !chunk.IsEnabled() {
 					// Switched off, and its buffers are gone with it — see
 					// world/chunk_enable.go. The 2D map still draws it from its
@@ -1001,6 +1036,8 @@ func Run() {
 
 			render.DebugStats.ChunksDrawn = chunksDrawn
 			render.DebugStats.BrushesDrawn = brushesDrawn
+			render.DebugStats.StaticSurfaces = staticSurfaceCount(&level)
+			render.DebugStats.StaticDrawn = staticDrawn
 		}
 
 		// --- Runtime UI ---
@@ -1036,4 +1073,19 @@ func Run() {
 		// iteration touches world GL state again.
 		devRenderSecondaryWindows(platform.DeltaTime)
 	}
+}
+
+// staticDrawScratch is the list of compiled surfaces to draw this frame, reused
+// across frames so the world pass allocates nothing for it. Package-level
+// rather than a local because Run's frame loop is the only writer and a fresh
+// slice every frame is a few thousand ints of garbage per second.
+var staticDrawScratch []int
+
+// staticSurfaceCount is how many compiled surfaces the level has at all, for
+// the debug overlay to show the drawn count against.
+func staticSurfaceCount(level *world.Level) int {
+	if level.Static == nil {
+		return 0
+	}
+	return len(level.Static.Surfaces)
 }

@@ -49,6 +49,11 @@ type StaticSurface struct {
 	SubmeshGeometries []gfx.Geometry
 	Detail            DetailSpec
 	DoubleSided       bool
+	// Chunk and Brush name where this surface came from. Not needed to draw
+	// it — but a raycast reports what it hit by those names, and a script that
+	// asks what is under the crosshair has to get the same answer from a
+	// compiled level as from the authored one it was written against.
+	Chunk, Brush string
 	// Normal is the face's own plane normal, for the detail pass, which needs
 	// it to build a displacement basis without re-deriving it per frame.
 	Normal mgl32.Vec3
@@ -64,6 +69,10 @@ type StaticGeometry struct {
 	Tree *bsp.Tree
 	Vis  *bsp.PVS
 
+	// HiddenChunks names the compiled chunks currently switched off. See
+	// Hidden, which is why this exists at all.
+	HiddenChunks map[string]bool
+
 	// seen is the dedup scratch VisibleSurfaces fills, kept here so the frame
 	// loop allocates nothing. A surface bounds more than one cell whenever a
 	// splitting plane cut through the space in front of it, so the same index
@@ -71,6 +80,39 @@ type StaticGeometry struct {
 	seen []bool
 	// all is the everything-visible answer, built once.
 	all []int
+}
+
+// Hidden reports whether a compiled surface should be skipped because the chunk
+// it came from has been switched off.
+//
+// A compiled chunk's surfaces are not its own any more, so releasing its vertex
+// buffers — which is what disabling a chunk does — reaches nothing. Without
+// this, `@chunk.prop.enabled = false` would take a compiled area out of
+// collision and out of the spatial hash and leave it on screen, which is a
+// worse state than either being on or off.
+//
+// The map is empty in every level that never streams, and the guard is checked
+// before the lookup, so the ordinary case pays nothing.
+func (s *StaticGeometry) Hidden(i int) bool {
+	if s == nil || len(s.HiddenChunks) == 0 || i < 0 || i >= len(s.Surfaces) {
+		return false
+	}
+	return s.HiddenChunks[s.Surfaces[i].Chunk]
+}
+
+// SetChunkHidden records that a compiled chunk has been switched off, or on.
+func (s *StaticGeometry) SetChunkHidden(chunkID string, hidden bool) {
+	if s == nil {
+		return
+	}
+	if !hidden {
+		delete(s.HiddenChunks, chunkID)
+		return
+	}
+	if s.HiddenChunks == nil {
+		s.HiddenChunks = map[string]bool{}
+	}
+	s.HiddenChunks[chunkID] = true
 }
 
 // VisibleSurfaces returns the surface indices to draw from a point, appending
@@ -102,7 +144,7 @@ func (s *StaticGeometry) VisibleSurfaces(eye mgl32.Vec3, out []int) []int {
 			continue
 		}
 		for _, fi := range s.Tree.Leaves[other].Faces {
-			if fi >= 0 && fi < len(s.seen) && !s.seen[fi] {
+			if fi >= 0 && fi < len(s.seen) && !s.seen[fi] && !s.Hidden(fi) {
 				s.seen[fi] = true
 				out = append(out, fi)
 			}
@@ -111,8 +153,21 @@ func (s *StaticGeometry) VisibleSurfaces(eye mgl32.Vec3, out []int) []int {
 	return out
 }
 
-// everything is every surface index, for the fallbacks above.
+// everything is every surface index that is not hidden, for the fallbacks
+// above.
+//
+// Cached while nothing is hidden, which is every level that does not stream;
+// rebuilt each call otherwise, since the fallback is already the slow path.
 func (s *StaticGeometry) everything() []int {
+	if len(s.HiddenChunks) > 0 {
+		out := make([]int, 0, len(s.Surfaces))
+		for i := range s.Surfaces {
+			if !s.Hidden(i) {
+				out = append(out, i)
+			}
+		}
+		return out
+	}
 	if len(s.all) != len(s.Surfaces) {
 		s.all = make([]int, len(s.Surfaces))
 		for i := range s.all {

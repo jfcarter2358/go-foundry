@@ -288,3 +288,51 @@ chunks:
 		t.Error("an unreferenced chunk was kept")
 	}
 }
+
+// A level's compiled form is what a release build loads, and nothing names it:
+// the manifest and every load_level say a level's NAME, and which extension
+// that means is chosen by the build. So it has to be pulled in beside the
+// source rather than found by the token scan.
+func TestACompiledLevelIsPackedBesideItsSource(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"ui/theme.fth":         "font: title\n",
+		"ui/loading.fui":       "id: loading\n",
+		"ui/pause.fui":         "id: pause\n",
+		"textures/default.png": "x",
+		"levels/start.yaml":    "chunks: []\n",
+		"levels/start.fbsp":    "compiled bytes",
+		"levels/stale.fbsp":    "a compiled level nothing reaches",
+	})
+	keep := keepSet(t, root, game.Manifest{StartLevel: "start"})
+
+	if !keep["levels/start.fbsp"] {
+		t.Error("the start level's compiled form was not packed; a release build would find no level at all")
+	}
+	if keep["levels/stale.fbsp"] {
+		t.Error("a compiled level nothing reaches was packed")
+	}
+}
+
+// And the source it was compiled from is dropped: a release build cannot read
+// one, so shipping it is dead weight and ships the level's source to whoever
+// installs the game.
+func TestAnAuthoredLevelIsDroppedOnceItHasBeenCompiled(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"levels/start.yaml": "chunks: []\n",
+		"levels/start.fbsp": "compiled bytes",
+		"levels/draft.yaml": "chunks: []\n",
+	})
+	if !IsSupersededLevelSource(root, "levels/start.yaml") {
+		t.Error("a level with a compiled form beside it was kept")
+	}
+	// One that was never compiled still ships: the failure then belongs to the
+	// engine's own "recompile the level" message rather than to a packer that
+	// dropped the only copy.
+	if IsSupersededLevelSource(root, "levels/draft.yaml") {
+		t.Error("a level with no compiled form was dropped")
+	}
+	// An entity definition is .yaml too, and is not a level.
+	if IsSupersededLevelSource(root, "entities/crate.yaml") {
+		t.Error("an entity definition was treated as a level source")
+	}
+}

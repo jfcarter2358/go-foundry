@@ -344,6 +344,13 @@ func (p *packer) copyDir(dir string, keep map[string]bool) error {
 			dropped = append(dropped, slash)
 			return nil
 		}
+		// An authored level whose compiled form is beside it, which is what the
+		// game loads. Dropped whether or not this is a pruning pack: it is not
+		// "unreachable", it is unreadable by the binary being shipped.
+		if IsSupersededLevelSource(p.src, slash) {
+			dropped = append(dropped, slash)
+			return nil
+		}
 		return p.copy(rel)
 	})
 	if err != nil {

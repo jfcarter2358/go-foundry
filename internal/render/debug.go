@@ -30,6 +30,13 @@ var DebugStats struct {
 	ChunksLoaded  int
 	BrushesDrawn  int
 	ChunksDrawn   int
+	// A compiled level's static surfaces: how many it has, and how many
+	// survived the visibility set and the frustum this frame. The ratio is the
+	// number to watch — the whole point of compiling is for it to be small in a
+	// level built out of rooms, and a ratio near 1 means the level is one open
+	// space or is not sealed.
+	StaticSurfaces int
+	StaticDrawn    int
 	// The sprite pass. Particles is how many quads the emitters put up this
 	// frame and SpriteDraws how many draw calls that took — the two numbers an
 	// author needs together, because one large batch and a thousand tiny ones

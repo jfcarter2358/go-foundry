@@ -48,6 +48,7 @@ models:
 #   make release-windows      cross-build + stage
 #   make installer-linux      the above, plus a .deb
 #   make installer-windows    the above, plus a Setup.exe (needs makensis)
+#   make compile-levels       build every level's .fbsp (part of the release targets)
 #   make release-check        prove the editor is not in the binary
 #
 # PRUNE=0 stages the whole content tree instead of only what the game reaches
@@ -76,10 +77,16 @@ LINUX_STAGE   := $(BUILD_DIR)/install-linux
 WINDOWS_STAGE := $(BUILD_DIR)/install-windows
 
 .PHONY: release-linux release-windows installer-linux installer-windows \
-        release-check test-release clean-release
+        release-check test-release clean-release compile-levels
+
+## Compile every level to the form a release build loads. See
+## docs/guide/23-compiling-levels.md, and internal/app/levelsource_release.go
+## for why a shipped game reads nothing else.
+compile-levels:
+	go run ./cmd/foundrycompile -root resources -strict
 
 ## Build the release binary and stage a Linux install tree, then tar it.
-release-linux:
+release-linux: compile-levels
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
 	  go build -tags $(RELEASE_TAGS) -ldflags "$(RELEASE_LDFLAGS)" -o $(BUILD_DIR)/foundry-release ./cmd/foundry
@@ -92,7 +99,7 @@ release-linux:
 	  echo "release-linux: $(BUILD_DIR)/$$name-$$VERSION-linux-amd64.tar.gz"
 
 ## Cross-build the release binary for Windows and stage an install tree.
-release-windows:
+release-windows: compile-levels
 	@mkdir -p $(BUILD_DIR)
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
 	  CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc \

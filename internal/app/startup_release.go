@@ -103,20 +103,23 @@ func startupApplyWindow() {
 	}
 }
 
-// startupLevel loads the game's start level.
+// startupLevel loads the game's start level — the COMPILED one, which is the
+// only kind this build reads (levelsource_release.go).
 //
 // Synchronously, unlike a level change during play: there is no frame on screen
 // yet to cover with a loading screen, so there is nothing for the stepped
 // LoadJob to buy. The path and directory returned are what an editor would save
 // to, and are unused here.
 func startupLevel() (world.Level, string, string, error) {
-	path := levelio.LevelPath(manifest.StartLevel)
-	level, err := levelio.LoadLevel(path)
+	path := levelSourcePath(manifest.StartLevel)
+	level, err := levelio.LoadCompiledLevel(path)
 	return level, path, levelio.LevelsDir(), err
 }
 
 // startupDescribeLevel is what the boot log says it just loaded.
-func startupDescribeLevel() string { return "start level: " + manifest.StartLevel }
+func startupDescribeLevel() string {
+	return "start level: " + manifest.StartLevel + " (" + levelSourceExt + ")"
+}
 
 // startupEnterGame puts the engine into gameplay, doing for a shipped game what
 // pressing tilde does for a development one.

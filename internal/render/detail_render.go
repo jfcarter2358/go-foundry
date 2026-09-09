@@ -257,8 +257,26 @@ func forEachDetailFace(level *world.Level, cull *Frustum, fn func(f detailFace))
 		return AABBInFrustum(*cull, secMin.Sub(p), secMax.Add(p))
 	}
 
+	// A compiled level's static surfaces. Already in world space, so the
+	// identity is their model matrix; otherwise they are detail faces like any
+	// other, and every pass below this one — displacement, scatter, both
+	// shadow variants — gets them for free by going through here.
+	if level.Static != nil {
+		identity := mgl32.Ident4()
+		for si := range level.Static.Surfaces {
+			surf := &level.Static.Surfaces[si]
+			if level.Static.Hidden(si) || !surf.Detail.Enabled || !visible(surf.Lo, surf.Hi, &surf.Detail) {
+				continue
+			}
+			fn(detailFace{identity, &surf.Detail, &surf.Geometry, surf.Geometry.Texture})
+		}
+	}
+
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
+		if ch.Compiled {
+			continue // its faces were offered above, from the compiled list
+		}
 		if !ch.IsEnabled() {
 			continue // switched off; see world/chunk_enable.go
 		}
