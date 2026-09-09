@@ -6,11 +6,10 @@ Approved plan: `/home/jfcarter2358/.claude/plans/wild-churning-lollipop.md`
 document stands on its own).
 
 **State: `go build ./...`, `go vet ./...`, `go test ./...`,
-`go build -tags release ./...` and `make release-check` all pass.**
-Phases 1–8 are done. Phase 9's COMPILER is finished — every stage, the file
-format, and both ways of running it. What is not started is the RUNTIME that
-consumes the output, which turns out to be bigger than the original plan implied;
-see "Phase 9b" below. Phase 10 (cleanup and docs) is partial.
+`go build -tags release ./...`, `go vet -tags release ./...`, `make test-release`
+and `make release-check` all pass.**
+Phases 1–9 are done, compiler and runtime both. Phase 10 (cleanup and docs) is
+partial — see the end.
 
 ---
 
@@ -66,7 +65,7 @@ This is a hard cutover. There is no dual-format support and no converter.
 | 7 | Rendering traversal | **done** |
 | 8 | Scripting | **done** (scaled down — see regressions) |
 | 9a | Compile pipeline (CSG + BSP + PVS + baked lighting), the format, and running it | **done** |
-| 9b | The runtime that loads and draws a compiled level | **not started — read below before planning it** |
+| 9b | The runtime that loads, draws, culls and collides against a compiled level | **done** |
 | 10 | Cleanup / docs | partial — see below |
 
 ### Commits on this branch, migration only (oldest first)
@@ -96,6 +95,11 @@ f738f18  Phase 9 — baked per-vertex lighting
 15ab724  Phase 9 — the pipeline, and the compiled format
 e003ba3  Phase 9 — running the compiler
 eee146a  docs: compiling levels
+5417f32  handoff update
+31e6d3c  Phase 9b — the shape a compiled level loads into (internal/bsp, StaticGeometry)
+067ffbc  Phase 9b — a release build runs the compiled level
+64b934c  Phase 9b — the texture across a cut, and what sorts where
+8ea0329  Phase 9 — Preview, so an author can see the compile
 ```
 
 ---
@@ -258,7 +262,9 @@ ref kind is never serialised.
 
 ---
 
-## Phase 9a — the compiler. DONE.
+## Phase 9 — the compiler and the runtime. DONE.
+
+### Phase 9a — the compiler
 
 `internal/compile` is pure Go, GL-free and fully tested, and the rest of the
 pipeline kept that shape — the compiler is the one part of this engine that can
@@ -338,42 +344,77 @@ time to rediscover:
   not a grid of them, so "room A cannot see room B" is usually FALSE and
   correctly so. Assert on the pairs you have actually reasoned about.
 
-### Phase 9b — the runtime. NOT STARTED. Read this first.
+### Phase 9b — the runtime. DONE.
 
-The original plan said "a release build should load only the compiled format and
-never link the raw brush loader". That understates it considerably, and the
-sequencing question is real:
+A compiled level loads, draws, culls, collides, casts shadows, takes rays and
+streams, and a release build reads nothing else.
 
-- **Rendering.** `internal/app/app.go`'s world loop walks
-  `Chunk -> Brush -> BrushFace.Geometry`. A compiled level has no brushes. The
-  bridge is not hard — `world.BuildBrushFaceMesh(pts, doubleSided)` takes a
-  polygon and is exactly what a compiled `Face` needs — but it wants a new
-  runtime type (compiled faces + the tree + the PVS) and a draw path that walks
-  the camera's PVS row instead of the chunk list.
-- **Baked light needs a shader path.** `gfx.Geometry` vertices are `[X,Y,Z,U,V]`;
-  the baked value is a third attribute plus a `fragment.glsl` branch that uses it
-  instead of the light loop. Until that exists, a compiled level can still be
-  drawn — it just re-lights per fragment, so CSG and PVS pay off and the bake
-  does not.
-- **The shadow and detail passes** (`render/shadow.go`, `render/detail_render.go`)
-  walk chunks and brushes too.
-- **Collision is the real problem.** `internal/collision` runs GJK/EPA against
-  brush geometry, and a compiled level has none. Either the brushes are kept
-  (which defeats the point) or collision gets a BSP path — `BSPTree.LineOfSight`
-  and `FindLeaf` are already there and are the start of one, but a swept body
-  against a solid BSP is its own piece of work. **This is the thing to design
-  first**, because it decides whether the compiled format needs to carry the
-  brushes after all.
+**`internal/bsp`** holds the tree, the planes and the visibility bits;
+`internal/compile` holds the code that BUILDS them. The split was forced rather
+than chosen — `world.Level` has to hold a compiled level's tree and the compiler
+imports `world` — but it is also the honest description of the seam.
+`compile.BSPTree` is `*bsp.Tree` embedded plus the face list its cells index
+into, so every builder reads `t.Leaves` the way it always did.
 
-A reasonable first cut, if the whole of that is too much at once: load the
-compiled level for RENDERING and keep the raw chunks for collision, in a
-development build, to prove the geometry and the culling. Then decide about
-collision with something on screen.
+**`world.StaticGeometry`** is the drawable side: surfaces shaped exactly like a
+BrushFace's drawable half, so the renderer's inner loop cannot tell which it
+has. `VisibleSurfaces` finds the camera's cell and walks its PVS row.
 
-`internal/app/devtools_dev.go` / `devtools_release.go` are the existing seam and
-are deliberately thin wrappers — read them first.
-`TestTheEditorDoesNotStandUpTheWorldPasses` in `internal/app` is the shape of the
-assertion that would guard the split, and `make release-check` is the other half.
+**A compiled level keeps its brushes** and loses only its meshes. Collision
+resolves against `ConvexHull{Pts: b.Verts}`, a particle against `FacePoints`, a
+script against an ID — none has a compiled equivalent worth inventing, and all
+three would be worse against clipped fragments than against authored solids.
+`Chunk.Compiled` is the draw loop's signal that a chunk's surfaces are in the
+static list. Raycasts moved the other way, onto the compiled surfaces: cheaper
+than a second copy of every mesh, and rays no longer hit surfaces CSG had
+established were invisible.
+
+**`internal/app/levelsource_{dev,release}.go`** is decision 4's seam, and is
+deliberately tiny. Both halves have a test, since nothing in the type system
+makes the pair agree, and `make release-linux` runs `foundrycompile -strict`
+before packing.
+
+### Four things in 9b that were not obvious
+
+1. **A fragment must keep its SOURCE face's UV origin.** `BuildBrushFaceMesh`
+   measured a face's texture from its own first corner, so every fragment CSG,
+   the BSP or the light grid produced restarted the texture at its own edge —
+   a seam along every cut in the level, which is to say everywhere.
+   `Face.UVOrigin` carries it and `BuildBrushFaceMeshFrom` takes it stated.
+   `TestTheTextureRunsUnbrokenAcrossACut` fails loudly on the old code.
+2. **A compiled surface needs its own transparent sort key.** The queue takes
+   the distance from the model matrix's translation, which for a brush is its
+   chunk's origin — coarse but fine. A compiled surface's matrix is the
+   identity, so every transparent surface in the level shared one key.
+3. **Streaming had to be told separately.** A compiled chunk's surfaces are not
+   its own, so `@chunk.prop.enabled = false` released empty buffers and left the
+   area on screen while removing it from collision and the spatial hash.
+   `StaticGeometry.HiddenChunks`, written from the once-a-frame reconcile, and
+   `ReloadGeometry` no longer rebuilding meshes for a compiled chunk.
+4. **The shadow pass must NOT use the PVS.** A wall the player cannot see still
+   casts the shadow across the floor they can.
+
+### What is deliberately not compiled
+
+Frame-owned chunks (they move), disabled chunks (a script switches them on
+later) and an entity definition's own decks (stamped from that file at load, the
+way a model is). Prefabs are the opposite and are RESOLVED at compile time —
+the link is an authoring convenience, and a build output that still read prefab
+files could come out different from what was compiled.
+
+`compile.Bakes` is the single place that rule is written; the compiler and the
+writer of the compiled file read it from opposite ends, and geometry is dropped
+or doubled if they ever disagree.
+
+### Known limits of the compiled runtime
+
+- **A disabled chunk takes no part in sealing.** If one is a wall, the level
+  leaks through the hole it leaves. Documented in the guide.
+- **Smoothing is per-fragment**, as it was per-face before. A flat face split
+  into fragments has identical normals throughout, so there is no regression;
+  a genuinely curved surface was already many faces.
+- **The editor never loads a `.fbsp`.** Preview compiles into memory instead,
+  which is the same state by construction.
 
 ## Known regressions — all marked `TODO(brush migration` in the source
 
@@ -436,17 +477,21 @@ Grep for `TODO(brush migration` to find them. Summary:
     Cut each on its own extent and the shared edge gets vertices on one side
     with no counterpart on the other, and every one of those is a visible seam
     once the two sides interpolate different baked light.
-11. **`_ "image/png"` belongs in `internal/gfx`, not in a main.** It was in
+11. **A fragment must keep its SOURCE face's UV origin and plane.** Derive
+    either from the fragment's own corners and every cut in the level becomes a
+    texture seam. See Phase 9b above; `world.BuildBrushFaceMeshFrom` is where it
+    is taken rather than derived.
+12. **`_ "image/png"` belongs in `internal/gfx`, not in a main.** It was in
     `internal/app`, so the first binary that read a texture without going
     through app — the level compiler — got "image: unknown format" from a
     perfectly good PNG. Moved.
 
 ### Editor
 
-12. **`editorVisReset()` before an occlusion assertion.** The visibility cache is
+13. **`editorVisReset()` before an occlusion assertion.** The visibility cache is
     keyed on the selection, so two tests asking about different world positions
     must ask about different corners or the second reads the first's answer.
-13. **A vertex on the NEAR face is the self-occlusion case.** A corner on the
+14. **A vertex on the NEAR face is the self-occlusion case.** A corner on the
     far side of a brush is genuinely behind its near face and correctly hidden.
 
 ---
@@ -471,7 +516,13 @@ Grep for `TODO(brush migration` to find them. Summary:
   crossing-hysteresis rule, the floor/ceiling ring halving, the shared-point
   averaging in the vertex write-back. Each was correct, and each had nothing left
   to be correct *about*.
-- **Stage explicit paths, never `git add -A`.** See below.
+- **Stage explicit paths, never `git add -A`, and not even `git add <dir>`.**
+  This was violated twice in the Phase 9b work and both times swept another
+  session's in-flight changes into a commit — a vsync feature whose own file was
+  still untracked, so the commit did not build in isolation. Recovered by
+  amending with `git hash-object -w` + `git update-index --cacheinfo`, which
+  rewrites one file's blob in a commit without touching the working tree.
+  `git status` before every commit, and read the list.
 
 ---
 
@@ -494,8 +545,9 @@ reason.
 plainly that the sector-era chapters are stale and which have been rewritten.
 Rewritten so far: **06-scatter** (was 06-biomes), **12-vehicles-and-frames**,
 **22-prefabs** (new), **23-compiling-levels** (new — the sealing rule lives
-nowhere else, so read it before touching the compiler), and the two
-troubleshooting entries in **19-testing-and-debugging**.
+nowhere else, so read it before touching the compiler), **20-shipping** (levels
+are compiled, not copied), and the two troubleshooting entries in
+**19-testing-and-debugging**.
 
 Still describing sectors, walls, portals, the 2D map and the surface-shaping
 sub-mode: **01-editor-basics**, **02-building-levels** (the big one — it is the
