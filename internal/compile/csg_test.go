@@ -352,3 +352,35 @@ func TestCSGIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// Every fragment of a face keeps the SOURCE face's texture origin.
+//
+// A compiled level is nothing but cuts — CSG's, the BSP's splitting planes, the
+// light grid's — and a fragment that measured its texture from its own first
+// corner would restart the texture at every one of them. The seam that produces
+// runs the length of every cut in the level and is invisible in any test that
+// only counts faces.
+func TestEveryFragmentKeepsTheSourceFacesTextureOrigin(t *testing.T) {
+	// A pillar sunk into a floor, which cuts the floor's top face into pieces.
+	lvl := levelOf(
+		world.NewBoxBrush("floor", mgl32.Vec3{0, -1, 0}, mgl32.Vec3{10, 1, 10}, "concrete"),
+		world.NewBoxBrush("pillar", mgl32.Vec3{0, 1.75, 0}, mgl32.Vec3{1, 2.25, 1}, "concrete"),
+	)
+	faces := mustCSG(t, lvl)
+
+	var tops []Face
+	for _, f := range facesOn(faces, mgl32.Vec3{0, 1, 0}) {
+		if f.Brush == "floor" {
+			tops = append(tops, f)
+		}
+	}
+	if len(tops) < 2 {
+		t.Fatalf("the floor's top came back in %d piece(s); the test needs it cut", len(tops))
+	}
+	for i, f := range tops[1:] {
+		if f.UVOrigin != tops[0].UVOrigin {
+			t.Errorf("fragment %d measures its texture from %v, the first from %v",
+				i+1, f.UVOrigin, tops[0].UVOrigin)
+		}
+	}
+}

@@ -73,6 +73,13 @@ type Face struct {
 	DoubleSided  bool
 	Detail       world.DetailSpec
 
+	// UVOrigin is the corner the SOURCE face's texture coordinates are measured
+	// from, in world space, and it is inherited by every fragment that face is
+	// cut into. Without it each fragment would restart the texture at its own
+	// first corner, which is a visible seam along every cut in the level — and
+	// a compiled level is nothing but cuts. See world.BuildBrushFaceMeshFrom.
+	UVOrigin mgl32.Vec3
+
 	// Light is the baked per-vertex lighting, parallel to Points. Filled by the
 	// light stage; nil until then.
 	Light []mgl32.Vec3
@@ -198,7 +205,7 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 					continue
 				}
 				faces = append(faces, Face{
-					Points: pts, Plane: pl,
+					Points: pts, Plane: pl, UVOrigin: pts[0],
 					Chunk: ch.ID, Brush: b.ID, FaceIdx: fi,
 					Texture: f.Texture, BlendTexture: f.BlendTexture, BlendMask: f.BlendMask,
 					UVOffset: f.UVOffset, UVScale: f.UVScale, UVRotation: f.UVRotation,

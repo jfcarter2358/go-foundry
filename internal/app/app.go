@@ -785,6 +785,30 @@ func Run() {
 				}
 			}
 
+			// queueStatic is drawOrQueue for a compiled surface, which needs
+			// its own sort key.
+			//
+			// drawOrQueue takes the distance from the model matrix's
+			// translation, which for an authored brush is its chunk's origin —
+			// coarse, but a chunk is a room. A compiled surface's vertices are
+			// already in world space, so its matrix is the identity and every
+			// transparent surface in the level would sort at the world origin,
+			// which is not a coarse answer but a wrong one. Its own centre is
+			// the right key and is free: the bounds were computed at load.
+			queueStatic := func(g *gfx.Geometry, surf *world.StaticSurface) {
+				if !g.IsTransparent() {
+					g.Draw()
+					return
+				}
+				c := surf.Lo.Add(surf.Hi).Mul(0.5).Sub(gfx.Cam.Position)
+				transparentDraws = append(transparentDraws, TransparentDraw{
+					Geom:        g,
+					Model:       identity,
+					Distance:    c.Dot(c),
+					DoubleSided: surf.DoubleSided,
+				})
+			}
+
 			// A compiled level's static surfaces. Culled by the compiled
 			// visibility set first — every cell the camera's own cannot see is
 			// gone before a single bounding box is tested — and then by the
@@ -805,10 +829,10 @@ func Run() {
 					// is what keeps the two from z-fighting — the same rule the
 					// brush loop below follows.
 					if !surf.Detail.HasDisplace() {
-						drawOrQueue(&surf.Geometry, identity, surf.DoubleSided)
+						queueStatic(&surf.Geometry, surf)
 					}
 					for eg := range surf.SubmeshGeometries {
-						drawOrQueue(&surf.SubmeshGeometries[eg], identity, surf.DoubleSided)
+						queueStatic(&surf.SubmeshGeometries[eg], surf)
 					}
 				}
 			}

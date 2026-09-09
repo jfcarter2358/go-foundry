@@ -163,3 +163,32 @@ func TestAnEmptyLevelStillBuilds(t *testing.T) {
 		t.Error("the origin of an empty level came back solid")
 	}
 }
+
+// And a fragment the BSP itself produced, which is a different code path from
+// CSG's: the split happens inside the tree build rather than at clip time.
+func TestABSPFragmentKeepsTheSourceFacesTextureOrigin(t *testing.T) {
+	lvl := levelOf(
+		world.NewBoxBrush("floor", mgl32.Vec3{0, -1, 0}, mgl32.Vec3{10, 1, 10}, "concrete"),
+		world.NewBoxBrush("pillar", mgl32.Vec3{3, 1.75, 3}, mgl32.Vec3{1, 2.25, 1}, "concrete"),
+	)
+	tr := BuildBSP(mustCSG(t, lvl))
+	// The light grid cuts everything further, which is the finest source of
+	// fragments and the one most likely to lose the origin.
+	tr.SubdivideFaces(4)
+
+	origins := map[string]mgl32.Vec3{}
+	for fi := range tr.Faces {
+		f := &tr.Faces[fi]
+		key := f.Brush + ":" + string(rune('0'+f.FaceIdx))
+		if seen, ok := origins[key]; ok {
+			if seen != f.UVOrigin {
+				t.Fatalf("two fragments of %s measure their texture from %v and %v", key, seen, f.UVOrigin)
+			}
+			continue
+		}
+		origins[key] = f.UVOrigin
+	}
+	if len(origins) == 0 {
+		t.Fatal("no faces survived; the test proves nothing")
+	}
+}

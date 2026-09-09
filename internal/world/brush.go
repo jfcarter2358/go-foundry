@@ -203,13 +203,30 @@ func planarBasis(n mgl32.Vec3) (u, v mgl32.Vec3) {
 // (adding real geometry), not from a parametric layer riding on top of a
 // flat base the way a sector surface's SurfaceMesh did.
 func BuildBrushFaceMesh(pts []mgl32.Vec3, doubleSided bool) (verts [][]float32, indices []int) {
+	if len(pts) < 3 {
+		return nil, nil
+	}
+	return BuildBrushFaceMeshFrom(pts, doubleSided, geom.TriangleNormal(pts[0], pts[1], pts[2]), pts[0])
+}
+
+// BuildBrushFaceMeshFrom is BuildBrushFaceMesh with the projection stated
+// rather than derived, for a polygon that is a FRAGMENT of a face rather than
+// the whole of one.
+//
+// Both arguments matter and for the same reason. A compiled level's surfaces
+// have been cut — by CSG, by the BSP's splitting planes, by the light grid —
+// and every piece has to land on the same texture as its neighbours. Derive the
+// origin from the piece's own first corner and each piece restarts the texture
+// at its own edge, which is a visible seam along every cut in the level; derive
+// the normal from the piece's own first three corners and a sliver can flip it.
+// Passing the SOURCE face's corner and plane makes every fragment of one face
+// agree, because they are all given the same two.
+func BuildBrushFaceMeshFrom(pts []mgl32.Vec3, doubleSided bool, normal, origin mgl32.Vec3) (verts [][]float32, indices []int) {
 	n := len(pts)
 	if n < 3 {
 		return nil, nil
 	}
-	normal := geom.TriangleNormal(pts[0], pts[1], pts[2])
 	u, v := planarBasis(normal)
-	origin := pts[0]
 
 	verts = make([][]float32, n)
 	for i, p := range pts {

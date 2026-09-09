@@ -121,7 +121,10 @@ func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (in
 		surf.Normal = f.Plane.N
 		surf.Lo, surf.Hi = bsp.Bounds(f.Points)
 
-		verts, indices := world.BuildBrushFaceMesh(f.Points, f.DoubleSided)
+		// From the SOURCE face's corner and plane, not this fragment's: every
+		// piece of one authored face has to land on the same texture, or every
+		// cut in the level is a seam.
+		verts, indices := world.BuildBrushFaceMeshFrom(f.Points, f.DoubleSided, f.Plane.N, f.UVOrigin)
 		if len(verts) == 0 {
 			continue
 		}

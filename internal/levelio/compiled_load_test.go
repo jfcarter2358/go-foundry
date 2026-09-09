@@ -160,3 +160,53 @@ func TestTheLoadedLevelCullsWithItsVisibilitySet(t *testing.T) {
 		t.Errorf("standing in the room, all %d surfaces are visible; the set is culling nothing", len(inside))
 	}
 }
+
+// The seam test, at the level it actually matters: two fragments of ONE
+// authored face that meet share a corner, and that corner must have the same
+// texture coordinate in both. Anything else is a visible break in the texture
+// along every cut the compiler made — and it makes them everywhere.
+//
+// Keyed by the source face as well as the position, because two surfaces on
+// different planes meeting at an edge legitimately disagree: they have
+// different projections, and a room corner is exactly that.
+func TestTheTextureRunsUnbrokenAcrossACut(t *testing.T) {
+	lvl := loadedRoom(t)
+
+	type key struct {
+		chunk, brush string
+		normal       [3]int
+		pos          [3]float32
+	}
+	type uv struct{ u, v float32 }
+	at := map[key]uv{}
+	checked := 0
+	for si := range lvl.Static.Surfaces {
+		surf := &lvl.Static.Surfaces[si]
+		n := [3]int{
+			int(surf.Normal.X() * 100), int(surf.Normal.Y() * 100), int(surf.Normal.Z() * 100),
+		}
+		verts := surf.Geometry.Vertices
+		for i := 0; i+5 <= len(verts); i += 5 {
+			k := key{surf.Chunk, surf.Brush, n, [3]float32{verts[i], verts[i+1], verts[i+2]}}
+			got := uv{verts[i+3], verts[i+4]}
+			was, seen := at[k]
+			if !seen {
+				at[k] = got
+				continue
+			}
+			checked++
+			if !geomNear(was.u, got.u) || !geomNear(was.v, got.v) {
+				t.Fatalf("the corner %v of %s/%s has texture coordinates (%v,%v) on one fragment and (%v,%v) on another",
+					k.pos, k.chunk, k.brush, was.u, was.v, got.u, got.v)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no corner was shared by two fragments of one face; the test proves nothing")
+	}
+}
+
+func geomNear(a, b float32) bool {
+	d := a - b
+	return d < 0.001 && d > -0.001
+}
