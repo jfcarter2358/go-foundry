@@ -146,6 +146,33 @@ func TestMovePlayerRecordsWhereItIs(t *testing.T) {
 	}
 }
 
+// TestMovePlayerForgetsAChunkItHasLeft: CurrentChunk is where the body IS, and
+// a body that has walked off the end of every chunk is in none of them.
+//
+// It is not a cosmetic field. "Aboard a frame and inside none of its chunks" is
+// the whole of how collision knows a body has walked off a ship
+// (steppedOffFrame), so a CurrentChunk that could be set but never cleared left
+// a passenger aboard a hold they had walked out of — carried around by a ship
+// they were no longer standing in, with the level's own geometry no longer
+// solid to them.
+func TestMovePlayerForgetsAChunkItHasLeft(t *testing.T) {
+	lvl := collisionTestLevel() // two rooms span x in [0,20]
+	p := newTestPlayer(mgl32.Vec3{5, 0.9, 5})
+	settle(p, lvl, 5)
+	if p.CurrentChunk == "" {
+		t.Fatalf("did not start in a chunk at all")
+	}
+
+	// Put it well outside every chunk and let one frame of walking derive
+	// where that is. Teleported rather than walked, because the walls are
+	// there precisely to stop a body doing this on foot.
+	p.Position = mgl32.Vec3{500, 0.9, 500}
+	MovePlayer(p, lvl, walkMove(mgl32.Vec3{}))
+	if p.CurrentChunk != "" {
+		t.Errorf("CurrentChunk = %q for a body standing nowhere near it", p.CurrentChunk)
+	}
+}
+
 // TestMovePlayerIsIndependentOfWhereTheChunkSits is the invariant a moving
 // vehicle interior rests on: MovePlayer resolves against the chunks it is
 // handed, in whatever space those chunks are expressed in. Translate the whole

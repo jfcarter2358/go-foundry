@@ -119,7 +119,6 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 	stepDisp := disp.Mul(1 / float32(steps))
 
 	newPos := p.Position
-	var chunk *world.Chunk
 	for i := 0; i < steps; i++ {
 		intended := newPos.Add(stepDisp)
 
@@ -133,7 +132,7 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 		// push through its outer wall, say — and a body that stops resolving
 		// the instant it does that would sail straight through. The chunk it
 		// was already standing in still has the brushes to push back with.
-		chunk = frame.ChunkAt(lvl, intended)
+		chunk := frame.ChunkAt(lvl, intended)
 		if chunk == nil {
 			chunk = frame.ChunkAt(lvl, newPos)
 		}
@@ -176,8 +175,19 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 	p.Position = ResolveSealedPortals(lvl, p, p.Position)
 	newPos = p.Position
 
-	if chunk != nil {
-		p.CurrentChunk = chunk.ID
-	}
+	// Where the body ENDED, asked fresh, rather than whichever chunk the last
+	// substep happened to resolve against.
+	//
+	// Those are not the same question. The loop above falls back to the chunk
+	// the body was already standing in when its target lands outside every one
+	// of them, because that chunk still has the brushes to push back with — so
+	// the resolve's answer is never nil once a body has stood anywhere, and
+	// taking it here meant CurrentChunk could never become empty again.
+	// "Aboard, and inside none of the frame's chunks" is exactly what tells
+	// collision a body has walked off a ship (steppedOffFrame), so a body that
+	// walked out of a hold stayed aboard it for good, carried around by a ship
+	// it was no longer standing in and with the world's own geometry no longer
+	// solid to it.
+	p.UpdateLocation(lvl)
 	return onGround
 }

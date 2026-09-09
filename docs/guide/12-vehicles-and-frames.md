@@ -93,11 +93,23 @@ An entity's `frame` property is a ref to the vehicle it is riding, or `null`, an
 
 ## The way in
 
-Most of the time there is nothing to author. A body that gets inside an entity's
-own brushes is handed into that entity's frame by **containment in the geometry's
-own bounds** — so a hold with an opening in it is a hold you can walk into, and
-from outside the hull is solid, which makes the opening the only way through.
-Build the room; the way in is the way in.
+Most of the time there is nothing to author. A body that gets onto an entity's
+own brushes is handed into that entity's frame by **standing on them** — so a
+hold with an opening in it is a hold you can walk into, and from outside the hull
+is solid, which makes the opening the only way through. Build the room; the way
+in is the way in.
+
+Aboard means *carried*: the entity's own floor is what is under your feet — its
+deck, its ramp, its hold. That is what makes a ship with wings work. Its
+geometry's bounding box spans the wingspan, and almost all of that is the open
+air you walk through to reach the ramp; walking under a wing leaves you standing
+on the level's ground, in the level's coordinates, exactly as you were. Only
+stepping onto the ship puts you in the ship's.
+
+The corollary is that an entity with no floor under you does not take you
+aboard — a fence, an archway, a canopy on legs. Nothing about those is carrying
+anybody, and a body inside one that had stopped colliding with the world's ground
+would be a body falling through the level.
 
 What is below is for the case that rule does not cover: a doorway that has to
 lead somewhere other than the world (a ship parked inside a carrier), or one
@@ -140,11 +152,12 @@ between the two interiors. Inside a volume and outside it cannot both be true,
 so that failure has no way to happen here.
 
 Both rules apply to the implicit doorway too, with one difference: its region is
-the geometry's own bounds rather than a volume you sized, so rule 2 is a
+the entity's own solid underfoot rather than a volume you sized, so rule 2 is a
 statement about how fast a body can be moving rather than something to author
-around. The bounds are not padded, deliberately — a pad would be ground that both
+around. That region is not padded, deliberately — a pad would be ground that both
 "walked in" and "walked out" claimed, and a body standing in it would be traded
-back and forth every tick.
+back and forth every tick. Walking off the ship's floors hands you straight back
+to the world, wherever in its bounds you happen to be.
 
 ## What does not go in a frame
 

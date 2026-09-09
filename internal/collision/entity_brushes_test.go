@@ -9,9 +9,9 @@ package collision
 //     spatial hash, so without entity_brushes.go the player walks through a
 //     ship as if it were not there.
 //  2. Through the doorway, the body is handed into the entity's frame — with no
-//     authored doorway volume anywhere. The admitting region is the geometry's
-//     own bounds, which is what keeps it exactly antisymmetric with stepping
-//     off.
+//     authored doorway volume anywhere. The admitting region is the entity's
+//     solid underfoot, inside its bounds, which is what keeps it exactly
+//     antisymmetric with stepping off.
 //  3. Aboard, it is carried: the entity moves and the occupant's LOCAL position
 //     does not change, because nothing moved it — the coordinates did.
 //  4. Walking back out puts it back in the world, in the world's coordinates.
@@ -90,12 +90,15 @@ func walker(x, z float32) world.Entity {
 	return p
 }
 
+// walkStep is one tick of the real game loop and nothing else: MovePlayer, then
+// the portal check. Deliberately not followed by UpdateLocation — app.go does
+// not call it either, and a helper that tidied up the derived location behind
+// MovePlayer would be testing a loop nobody runs.
 func walkStep(lvl *world.Level, p *world.Entity, step mgl32.Vec3) {
 	MovePlayer(p, lvl, PlayerMove{Intent: step, DTScale: 1})
 	if c := FindFramePortalCrossing(lvl, p); c != nil {
 		CrossFramePortal(lvl, p, c, 0)
 	}
-	p.UpdateLocation(lvl)
 }
 
 // TestAnEntitysHullIsSolidFromOutside is claim 1. Its brushes live in the
@@ -118,7 +121,7 @@ func TestAnEntitysHullIsSolidFromOutside(t *testing.T) {
 }
 
 // TestWalkingInHandsTheBodyToTheEntitysFrame is claim 2: no doorway volume is
-// authored anywhere, and the containment test is the geometry's own bounds.
+// authored anywhere, and the test is the geometry underfoot.
 func TestWalkingInHandsTheBodyToTheEntitysFrame(t *testing.T) {
 	lvl := hutLevel(t, mgl32.Vec3{0, 0, 0})
 	// Outside the doorway (the +X wall is missing), walking west into the hut.
@@ -166,8 +169,8 @@ func TestABodyAboardIsCarried(t *testing.T) {
 }
 
 // TestWalkingBackOutReturnsToTheWorld is claim 4, and the half that would be a
-// trap if it were missing: containment lets a body in, and leaving the bounds
-// is the only thing that has to let it out.
+// trap if it were missing: standing on the geometry lets a body in, and
+// stepping off it is the only thing that has to let it out.
 func TestWalkingBackOutReturnsToTheWorld(t *testing.T) {
 	lvl := hutLevel(t, mgl32.Vec3{0, 0, 0})
 	p := walker(9, 3)
@@ -222,5 +225,152 @@ func TestAnEntityWithBrushesIsNotAlsoABoundingBox(t *testing.T) {
 	ResolveEntityCollisions(lvl, nil)
 	if got := world.FindEntity(lvl, "crate").Position; got != before {
 		t.Errorf("the hut's bounding cage shoved a crate standing inside it: %v -> %v", before, got)
+	}
+}
+
+// ---------- an entity whose solid does not fill its own box ----------
+//
+// The hut above is a box, so its brushes and their bounding box are very nearly
+// the same region and "inside the bounds" is a fair reading of "inside the
+// hut". A ship with wings is the case where they part company: its chunk's AABB
+// spans the wingspan, and most of that is the open air a body walks through on
+// its way to the ramp. Handing that body aboard means the world's chunks stop
+// being consulted at all, so the ground it is standing on stops existing — the
+// player walking up to a parked ship fell through the level.
+//
+// What settles it is being carried: aboard is standing ON the entity's solid,
+// which its deck, its ramp and its hold's floor all are, and the air under a
+// wing is not.
+
+// wingedShipEntity is a hut with two wings bolted on well clear of the hull,
+// two metres up — high enough to walk under, wide enough that the bounds of the
+// whole thing are mostly open air.
+func wingedShipEntity(id string, pos mgl32.Vec3) world.Entity {
+	e := hutEntity(id, pos)
+	e.Brushes = append(e.Brushes,
+		world.NewBoxBrush("wing_negx", mgl32.Vec3{-8, 2.2, 3}, mgl32.Vec3{8, 0.2, 2}, "hull"),
+		world.NewBoxBrush("wing_posx", mgl32.Vec3{14, 2.2, 3}, mgl32.Vec3{8, 0.2, 2}, "hull"),
+	)
+	return e
+}
+
+// wingedShipLevel parks one on a world floor, so that "walked through the
+// ground" is a thing a test can actually observe.
+func wingedShipLevel(t *testing.T) *world.Level {
+	t.Helper()
+	e := wingedShipEntity("ship", mgl32.Vec3{0, 0, 0})
+	lvl := &world.Level{Entities: []world.Entity{e}}
+
+	// The world is one big room rather than a bare slab: a chunk's bounds are
+	// what MovePlayer looks a body up in, and a body standing on top of a slab
+	// is above that slab's bounds and so in no chunk at all.
+	ground := world.Chunk{ID: "ground", Scale: 1}
+	ground.Brushes = world.NewHollowRoom("ground",
+		mgl32.Vec3{-60, 0, -60}, mgl32.Vec3{60, 20, 60}, 1, "grass")
+	ground.RecomputeBounds()
+	lvl.Chunks = append(lvl.Chunks, ground)
+
+	ch := world.Chunk{ID: world.EntityGeometryChunkID(e.ID), Scale: 1, FrameOwner: e.ID}
+	ch.FromEntity = e.ID
+	ch.Brushes = world.CloneEntityBrushes(e.Brushes)
+	ch.RecomputeBounds()
+	lvl.Chunks = append(lvl.Chunks, ch)
+
+	if err := world.RebuildIndexes(lvl); err != nil {
+		t.Fatalf("RebuildIndexes: %v", err)
+	}
+	return lvl
+}
+
+// gravityWalk is walkStep with gravity on, which is what makes falling through
+// the world visible at all.
+func gravityWalk(lvl *world.Level, p *world.Entity, step mgl32.Vec3) {
+	MovePlayer(p, lvl, PlayerMove{
+		Intent: step, DTScale: 1, Gravity: true,
+		GravityAccel: 0.02, MaxFallSpeed: 1, JumpVelocity: 0.3,
+	})
+	if c := FindFramePortalCrossing(lvl, p); c != nil {
+		CrossFramePortal(lvl, p, c, 0)
+	}
+}
+
+// TestWalkingUnderAWingStaysInTheWorld is the bug: the whole wingspan is inside
+// the geometry chunk's bounds, and a body admitted out there is a body for whom
+// the world's ground no longer exists.
+func TestWalkingUnderAWingStaysInTheWorld(t *testing.T) {
+	lvl := wingedShipLevel(t)
+	p := walker(-20, 3)
+	for i := 0; i < 200; i++ {
+		gravityWalk(lvl, &p, mgl32.Vec3{0.1, 0, 0})
+		if p.Frame != "" {
+			t.Fatalf("step %d at %v: walking under the wing put the body aboard %q",
+				i, p.Position, p.Frame)
+		}
+		if p.Position.Y() < walkerY-0.2 {
+			t.Fatalf("step %d: the body sank to y=%v — the world stopped being solid",
+				i, p.Position.Y())
+		}
+	}
+	// And the hull still stopped it: the -X wall's outer face is at x=-0.5.
+	if p.Position.X() > -0.7 {
+		t.Errorf("walked to x=%v — straight through the ship's wall", p.Position.X())
+	}
+}
+
+// TestWalkingIntoAWingedShipStillBoardsIt: the stricter rule must not have shut
+// the door. The way in is the aft opening, exactly as for the hut.
+func TestWalkingIntoAWingedShipStillBoardsIt(t *testing.T) {
+	lvl := wingedShipLevel(t)
+	p := walker(9, 3)
+	for i := 0; i < 120 && p.Frame == ""; i++ {
+		gravityWalk(lvl, &p, mgl32.Vec3{-0.1, 0, 0})
+	}
+	if p.Frame != "ship" {
+		t.Fatalf("after walking into the hold the body is in frame %q, want ship", p.Frame)
+	}
+}
+
+// TestWalkingOutOfAWingedShipReturnsToTheWorld is the same boundary run
+// backwards, and the half that would strand a passenger: outside the hold but
+// still inside the wingspan is inside the geometry chunk's bounds, so the
+// bounds alone would keep the body aboard with nothing under its feet.
+func TestWalkingOutOfAWingedShipReturnsToTheWorld(t *testing.T) {
+	lvl := wingedShipLevel(t)
+	p := walker(9, 3)
+	for i := 0; i < 120 && p.Frame == ""; i++ {
+		gravityWalk(lvl, &p, mgl32.Vec3{-0.1, 0, 0})
+	}
+	if p.Frame != "ship" {
+		t.Fatalf("never got aboard; frame is %q", p.Frame)
+	}
+	for i := 0; i < 60 && p.Frame != ""; i++ {
+		gravityWalk(lvl, &p, mgl32.Vec3{0.1, 0, 0})
+	}
+	if p.Frame != "" {
+		t.Fatalf("walking out under the wing left the body aboard %q at %v",
+			p.Frame, p.Position)
+	}
+	// Still well inside the geometry chunk's bounds, which reach x=22 — the
+	// bounds are not what let it out.
+	if p.Position.X() > 22 {
+		t.Fatalf("only left the ship past its bounds, at x=%v", p.Position.X())
+	}
+	if p.Position.Y() < walkerY-0.2 {
+		t.Errorf("landed at y=%v — the world was not solid on the way out", p.Position.Y())
+	}
+}
+
+// TestStandingOnAWingIsAboard: underfoot is the rule, and a wing is as much a
+// floor as a deck is. A body on top of one is carried by the ship, which is the
+// whole point of being handed into its frame.
+func TestStandingOnAWingIsAboard(t *testing.T) {
+	lvl := wingedShipLevel(t)
+	// The -X wing's top face is at y=2.4; a walker's centre stands 0.9 above it.
+	p := walker(-8, 3)
+	p.Position = mgl32.Vec3{-8, 3.3, 3}
+
+	c := FindFramePortalCrossing(lvl, &p)
+	if c == nil || c.ToID != "ship" {
+		t.Fatalf("standing on the ship's wing did not hand the body aboard: %+v", c)
 	}
 }

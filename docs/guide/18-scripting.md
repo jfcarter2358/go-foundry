@@ -119,7 +119,7 @@ The engine posts these without being asked.
 | `:spawn:` | anything | — | the level loaded, or the object was created |
 | `:destroy:` | anything | — | it is about to be removed |
 | `:tick:` | anything | `dt float` | once per frame during play |
-| `:enter:` | entity, volume, sector | `other ref` | something's origin entered its bounds |
+| `:enter:` | entity, volume | `other ref` | something's origin entered its bounds |
 | `:exit:` | " | `other ref` | and left |
 | `:collide:` | entity | `other ref` | two entities overlapped and were pushed apart |
 | `:interact:` | entity, volume | `src ref` | the interact key was pressed inside its bounds |

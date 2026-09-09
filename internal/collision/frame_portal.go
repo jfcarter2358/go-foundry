@@ -110,7 +110,7 @@ func FindFramePortalCrossing(lvl *world.Level, e *world.Entity) *FramePortalCros
 	if c := steppedIntoFrame(lvl, e); c != nil {
 		return c
 	}
-	// An entity built out of brushes admits by containment in its own solid,
+	// An entity built out of brushes admits a body standing on its own solid,
 	// with no doorway authored anywhere — see
 	// collision/entity_brushes.go. Tried after the authored doorways so that a
 	// ship which HAS a ramp keeps its ramp's rules (which frame it opens onto,
@@ -191,7 +191,16 @@ func steppedIntoFrame(lvl *world.Level, e *world.Entity) *FramePortalCrossing {
 // chunks entirely. A frame with no doorway at all is sealed, and its contents
 // stay in it however far they wander off its floors.
 func steppedOffFrame(lvl *world.Level, e *world.Entity) *FramePortalCrossing {
-	if e.Frame == "" || e.CurrentChunk != "" {
+	if e.Frame == "" {
+		return nil
+	}
+	// Inside one of the frame's chunks is still aboard — except on the solid an
+	// entity carries in its own right, which admits by standing on it rather
+	// than by being within its bounds, and so is left the same way. See
+	// steppedOffEntityGeometry: the way out has to be the way in run backwards,
+	// or a ship whose brushes do not fill their own box is a trap on one side
+	// of the boundary.
+	if e.CurrentChunk != "" && !steppedOffEntityGeometry(lvl, e) {
 		return nil
 	}
 	from := lvl.Frames.FrameFor(e)
@@ -215,10 +224,10 @@ func steppedOffFrame(lvl *world.Level, e *world.Entity) *FramePortalCrossing {
 			break
 		}
 	}
-	// An entity that carries its own brushes has an implicit doorway — the
-	// bounds of that solid — and being outside them is the whole of what it
-	// means to have left. Without this, walking into a hut would be a trap: the
-	// containment test would let you in and nothing would let you out.
+	// An entity that carries its own brushes has an implicit doorway — its own
+	// solid — and being off it is the whole of what it means to have left.
+	// Without this, walking into a hut would be a trap: standing on its floor
+	// would let you in and nothing would let you out.
 	if door == nil && !entityHasImplicitDoorway(lvl, e.Frame) {
 		return nil
 	}

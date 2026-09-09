@@ -25,9 +25,10 @@
 # a box could not have the doorway in it.
 #
 # PLACING ONE. Park it on the ground and walk in through the aft opening. There
-# is no portal to line up any more: a body that walks inside an entity's own
-# solid is handed into that entity's frame by containment, which is how it comes
-# to be carried when the ship drops.
+# is no portal to line up any more: a body standing on an entity's own solid —
+# this hold's floor — is handed into that entity's frame, which is how it comes
+# to be carried when the ship drops. Standing NEXT to the ship is not standing on
+# it, however far the hull overhangs.
 #
 # RENAMING AN INSTANCE. The param below names a brush of the materialised hold,
 # whose ID is built from the instance's own ID — `<id>.hatch`. An instance called
