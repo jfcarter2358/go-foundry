@@ -542,9 +542,11 @@ Writing one of them on a brush that is not dynamic is an error naming the brush
 and the toggle, rather than a move that works in the editor and silently does
 nothing in a shipped build.
 
-`position` is the brush's centre in **world** space, so it compares directly
-against a player's or an entity's. Collision, culling, the spatial hash and
-raycasts all follow the brush — what a body hits is where the brush is drawn.
+`position` is the brush's centre in the space **its chunk sits in**. For a
+level's own geometry that is world space, so it compares directly against a
+player's or an entity's; for a brush an *entity* carries it is that entity's own
+coordinates — see below. Collision, culling, the spatial hash and raycasts all
+follow the brush either way — what a body hits is where the brush is drawn.
 `velocity` is a rate the engine integrates each tick, so a lift that runs on its
 own needs no per-frame handler.
 
@@ -567,6 +569,32 @@ slow a door down is a rule the game has.
 Two limits worth knowing: nothing rides a moving brush (a player on a lift is not
 carried up by it — attach them to a moving *chunk* instead), and a dynamic brush
 cannot be part of the shell that seals a level for compiling.
+
+### A brush an entity carries
+
+An entity is built out of brushes as well as models, and those brushes
+materialise as `<entity id>.<brush id>` — so `@shuttle_2.door` names exactly one
+solid however many shuttles the level placed.
+
+`position`, `rotation` and `velocity` on one of them are in the **entity's own
+coordinates**, not the world's. A door closing on a ship means "two metres to
+port", and that stays true while the ship turns; a world-space write would stop
+meaning what it said the moment it did. The entity's own motion carries the
+brush on top of whatever the script wrote, which is what makes a lift inside a
+moving hull expressible at all:
+
+```flang
+-- The hold's blast door, on a ship that is two hundred metres into a fall.
+-- Nothing here mentions where the ship is, because nothing has to.
+def shut() -> null
+    p = @dropship.hatch.prop.position
+    @dropship.hatch.prop.position = <0.0, p.y, p.z>
+end
+```
+
+For a level's own brushes nothing changed: a chunk that no frame owns is placed
+by the same matrix either way, so its brushes still read and write in world
+space.
 
 A surface's `height` is **chunk-local**: the authored number, and the one the
 level file stores, so `height = height + 1` on a placed chunk round-trips.

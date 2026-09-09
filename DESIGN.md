@@ -154,11 +154,76 @@ An entity carries:
 - **model attachments**, any number of them, each with its own offset, rotation,
   scale and texture *relative to the entity*, and each with its own set of named
   animations
+- **brushes** — its own solid geometry, in its own coordinates: the same convex
+  polyhedra a level is built from, carried wherever it goes. See below.
 - **attributes**: arbitrary named values of type `int`, `float`, `bool` or `str`
   that the engine only stores, and the scripting engine reads
 
 Every part beyond the transform is optional. An entity with no models is a
 perfectly good trigger volume or script anchor; one with no attributes is a prop.
+
+### An entity's own solid
+
+A model gives an entity a *mesh*: something to look at, with no inside and
+nothing to stand on. Brushes give it *solid* — a hold to walk into, a wall to
+bump into, a door a script slides open.
+
+This used to be a **chunk attachment**: a file name under `chunks/` that the
+level materialised. That indirection was right while the only way to author
+world geometry was the level editor — a type could not hold geometry, so it
+borrowed a level's — and it cost a round trip through the other window and an
+export for every hull. A type holds its own now, written into
+`entities/<name>.yaml` in the level's own brush format, and shaped in the entity
+editor with the level editor's own tools. What is given up is sharing one hull
+between several types; what is gained is that a type is one file, and that its
+brushes are *its*.
+
+An instance materialises them into **one chunk whose frame owner is that
+entity** — the machinery vehicle interiors already used, so drawing, shadows,
+streaming and the spatial hash needed no change. Three things fall out of that
+and none of them had to be built:
+
+- **A brush is addressed per placement.** The materialised IDs are
+  `<entity id>.<brush id>`, so `@shuttle_2.door` names exactly one solid however
+  many shuttles a level places.
+- **A script writes it in the entity's own space.** `position`, `rotation` and
+  `velocity` on a brush an entity carries are that entity's coordinates, not the
+  world's. A door closing means "two metres to port", which stays true while the
+  ship turns, and the ship's own motion carries the door on top of it.
+- **A body standing inside is carried.** It is in the frame; it never moved, the
+  coordinates did.
+
+Two things did have to be built, and both are in `internal/collision`.
+
+**Solid from outside.** A frame-owned chunk is deliberately absent from the
+world spatial hash (see [Frames](#frames)), which is right for a body that is
+aboard and exactly wrong for one that is not — it would walk through the hull on
+its way in. So every entity's brushes are also resolved against in world space,
+by carrying the *body* into the entity's coordinates, pushing it out there, and
+carrying it back. The body rather than the brushes because a hull is eight-odd
+vertices and a body is one point, and because the push then runs against the
+same hull with the same epsilon as the aboard case — the wall a body is stopped
+by from outside and the one it walks on from inside cannot disagree about where
+it is. The same alignment rule frame portals use gates it: a rolled entity's
+brushes are skipped, because the body's cylinder carried into that space would
+be lying on its side.
+
+An entity that carries brushes also stops presenting its **bounding cage** to
+the entity-vs-entity pass. The cage would push a body out of the very volume it
+is trying to walk into. The cage is still what picking, hitscan, `:enter:` and
+the camera's framing use.
+
+**Walking in, with no doorway authored.** A ship names where its ramp is; a hut
+built out of brushes should not have to. An entity carrying geometry admits by
+**containment in that geometry's own bounds**, which is the one region that
+keeps the crossing antisymmetric: "inside the geometry chunk" is exactly what
+sets an entity's current chunk, and "aboard, and inside no chunk of the frame"
+is what already sends a body back out. Padding that region — admitting a little
+early, the way a proximity test would — is what must *not* be done: the pad is
+ground both tests claim, and a body standing in it is traded back and forth
+every tick. What makes the unpadded version safe is the paragraph above: an
+outside body is kept clear of the hull, so it only ever reaches the bounds
+through an opening someone built.
 
 ### Blank entities and definitions
 

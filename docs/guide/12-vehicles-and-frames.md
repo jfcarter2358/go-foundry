@@ -17,14 +17,11 @@ In the entity editor, with a type open, press **Make this a vehicle**.
 | Field | |
 | --- | --- |
 | **Mode** | `ground`, `air`, `water`, `space` |
-| **Interior** | the chunk(s) that are this vehicle's decks. A floor and a roof can both bind here |
 
-Setting an interior binds both sides: the chunk names the entity as its frame,
-and the vehicle lists the chunk. You can also do it from the chunk's **Carried
-By** dropdown in the level editor.
-
-Omit interiors entirely for a seat-only vehicle — a car you sit in rather than
-walk around.
+There is no interior to bind: a vehicle's deck is **the type's own brushes**
+(see [Entities](11-entities.md)), so anything you can walk around in is
+something you built in the entity editor. Give the type no brushes at all for a
+seat-only vehicle — a car you sit in rather than walk around.
 
 ### Seats
 
@@ -94,7 +91,19 @@ entity that is not a vehicle, and anything that would put a frame inside itself.
 An entity's `frame` property is a ref to the vehicle it is riding, or `null`, and
 `seat` is which seat it occupies — empty while standing on the deck.
 
-## Frame doorways — the way in
+## The way in
+
+Most of the time there is nothing to author. A body that gets inside an entity's
+own brushes is handed into that entity's frame by **containment in the geometry's
+own bounds** — so a hold with an opening in it is a hold you can walk into, and
+from outside the hull is solid, which makes the opening the only way through.
+Build the room; the way in is the way in.
+
+What is below is for the case that rule does not cover: a doorway that has to
+lead somewhere other than the world (a ship parked inside a carrier), or one
+whose threshold is not where the geometry ends.
+
+### Frame doorways, authored
 
 A doorway between a moving thing and the world is a **volume with a doorway**.
 Place a volume, set **Rides** to the vehicle under Transform, tick **This volume
@@ -130,9 +139,12 @@ in the overlap got traded back and forth once a tick with the screen strobing
 between the two interiors. Inside a volume and outside it cannot both be true,
 so that failure has no way to happen here.
 
-The rest of the level authoring is unchanged: build the interior as brushes in a
-chunk, bind the chunk to the vehicle under **Carried By**, and put the doorway
-volume across the threshold.
+Both rules apply to the implicit doorway too, with one difference: its region is
+the geometry's own bounds rather than a volume you sized, so rule 2 is a
+statement about how fast a body can be moving rather than something to author
+around. The bounds are not padded, deliberately — a pad would be ground that both
+"walked in" and "walked out" claimed, and a body standing in it would be traded
+back and forth every tick.
 
 ## What does not go in a frame
 

@@ -2,6 +2,66 @@
 
 ## Done
 
+- [x] Entities are built from brushes, and edited the way the 3D view edits a
+      level. A type was models plus a list of chunk *attachments* — file names
+      under `chunks/` that the level materialised — which was the right shape
+      while the only way to author world geometry was the level editor, and
+      which meant "give this ship a hold" was a round trip through the other
+      window, an export and a picker. A type holds its own brushes now
+      (`world/entity_brush.go`), written into `entities/<name>.yaml` in the
+      level's OWN brush format so a new face field can never be forgotten in a
+      second schema, and shaped in the entity editor with the level editor's own
+      tools — the same functions, not a second implementation.
+      The seam is `editor_workspace.go`. Everything about editing brushes lived
+      on the one global `Editor`: which level, which chunk, what is selected,
+      which unit a click addresses, the stamp, the snap, the gizmo's drag. That
+      is a `brushWorkspace` now; `EditorState` embeds one so `Editor.level` and
+      `Editor.SelectedFaces` still read the way they always have, and the entity
+      editor holds a second over a scratch level of one chunk. The shared files
+      say `ws()`, and the entity editor makes its own current for the length of
+      its draw and its event handling — two `defer entityUseWorkspace()()` call
+      sites, deliberately not a "current window" both windows write, since a
+      workspace left installed would point the level editor's tools at a type's
+      geometry and read as the main window being haunted. What that buys with no
+      new code: the stamps and their ghost, extrude/inset/subdivide on E/I/B,
+      object and edit mode on Tab, point/edge/face on 1/2/3, picking, the
+      convexity warning, the brush and face panels, and move/rotate/scale —
+      which needed no transform maths here either, because a brush's shape IS
+      its corner list and the gizmo resolves a selection down to the same
+      `[]vertexSel` a face already resolved to.
+      **The scratch chunk's brushes are the live ones** and `entityDef.Brushes`
+      is the document's copy, committed at the END of a frame. A tool pushes
+      undo BEFORE it edits, so the document has to still hold the pre-edit state
+      at that moment; committing eagerly would snapshot the edit as its own undo
+      point and make Ctrl+Z a no-op.
+      **A type's brushes materialise into one frame-owned chunk**, which is the
+      machinery vehicle interiors already used — so drawing, shadows, streaming
+      and the spatial hash needed no change, a script writing a brush's
+      `velocity` moves it in the ENTITY's coordinates, and a body standing
+      inside is carried because it never moved, the coordinates did. Two things
+      did have to be built. A frame-owned chunk is absent from the world spatial
+      hash, so **every entity's brushes are also solid in world space** — the
+      body is carried into the entity's coordinates, pushed out there and
+      carried back, which keeps the hull that stops you from outside and the one
+      you walk on from inside from disagreeing about where it is. And **walking
+      in needs no doorway authored**: an entity admits by containment in its
+      geometry's own bounds, which is the one region that stays antisymmetric
+      with stepping off. Padding it is exactly what must not be done — the pad
+      is ground both tests claim, and a body in it is traded back and forth
+      every tick; what makes the unpadded version safe is that an outside body
+      is kept clear of the hull and so only reaches the bounds through an
+      opening someone built. An entity that carries brushes also stops
+      presenting its bounding cage to the entity-vs-entity pass, which would
+      have pushed a body out of the very volume it was walking into.
+      Importing is what is left of the file link, and it copies: a chunk under
+      `chunks/`, or a chunk of the open level, read once into the type. Sharing
+      one hull between several types is what that gives up.
+      `entities/dropship.yaml` is the worked example, rebuilt: five static
+      brushes and a dynamic blast door, authored shut because authored geometry
+      is always a brush's rest state, slid to port by `scripts/dropship.flang`
+      in the ship's own coordinates so it stays put through a two-hundred-metre
+      fall. It needs no frame-portal volume lined up against it any more — park
+      it and walk in
 - [x] Detail mode: shaping a brush's surface without moving its collision.
       A brush is a convex solid, and convexity is not a preference — collision
       reads its corners as a hull and the compiler clips its faces as
@@ -459,3 +519,4 @@
 - [ ] Restitution/friction, and more than one solver iteration per frame
 - [ ] Potentially change the max number of frames for animated textures as well as frame spacing/interpolation
 - [ ] Volumes are brushes instead of boxes only
+- [ ] Game saves

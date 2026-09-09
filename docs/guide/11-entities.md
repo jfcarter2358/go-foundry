@@ -51,10 +51,14 @@ windows at once.
 | `V` | orbit / fly |
 | `WASD` `Q` `E` | fly (`Shift` faster) |
 | `F` | frame the whole type |
-| `G` / `B` | grid / bounds cage |
+| `Shift+G` / `B` | grid / bounds cage |
 | `Space` | play / pause the attachment animations |
-| `Delete` or `X` | remove the selected model, chunk or seat |
+| `Delete` or `X` | remove the selected model, brush or seat |
 | `Ctrl+N` / `O` / `S`, `Ctrl+Shift+S` | new / open / save / save as |
+
+The brush half of the window is the 3D view's, key for key — `Tab`, `1`/`2`/`3`,
+`G`/`R`/`C`, `E`/`I`/`B`, `Z`. See [Keybindings](21-keybindings.md); `B` is
+subdivide when a face is selected and the bounds cage when one is not.
 
 ## Bounds
 
@@ -136,18 +140,42 @@ Attribute writes made during play are discarded when play ends. See
 
 ## Entities that carry geometry
 
-A definition may name a **chunk** — a file under `chunks/`, placed in the
-entity's own space. Every instance materialises it as a chunk bound to that
-entity's frame, so the geometry is carried around by it: drawn, solid, and
-walkable while it moves.
+A type is built out of **brushes** as well as models — its own solid, in its own
+coordinates, carried around by it: drawn, solid, and walkable while it moves.
 
-In the entity editor: **Add Chunk** picks a file already under `chunks/`, or
-**Import** exports a chunk of the level open in the main window and attaches it
-in one click.
+Build them in the entity editor with the level editor's own tools. The stamp
+buttons under the outline's **Brushes** list arm a box, wedge or cylinder: a
+ghost follows the cursor and every click places another, until `Escape`. From
+there it is the 3D view — `Tab` for edit mode, `1`/`2`/`3` for points, edges and
+faces, `E`/`I`/`B` to extrude, inset and subdivide, `G`/`R`/`C` to move, turn and
+resize, and the same brush and face property blocks down the right.
 
-The level stores the placement and never the geometry, so a fix to the hull
-reaches every ship in the game. See
-[Vehicles and frames](12-vehicles-and-frames.md) for what to do with it.
+**Import** copies brushes in from a chunk under `chunks/`, or from the level open
+in the main window. A copy, not a link: the type owns its geometry from then on,
+and editing it here does not reach back into the level it came from.
+
+The level file stores the placement and never the geometry, so a fix to the hull
+reaches every ship in the game.
+
+### What you get for free
+
+**You can walk in.** A body that gets inside an entity's brushes is handed into
+that entity's frame, with no doorway to author — so build a room with a way in
+and the way in works. From outside the hull is solid, which is what makes the
+opening you built the only way through it.
+
+**A passenger is carried.** Once inside, a body is in the entity's coordinates:
+the entity moves and the body does not, because nothing had to move it.
+
+**A brush can be driven from a script.** Tick **Dynamic** on one and a script may
+write its `position`, `rotation` and `velocity` — a door, a lift, a crusher —
+in the *entity's* own coordinates, so "two metres to port" stays two metres to
+port while the ship turns, and the ship's motion carries the door on top of it.
+The materialised brush is addressed as `<entity id>.<brush id>`. See
+[Scripting](18-scripting.md).
+
+`resources/entities/dropship.yaml` is the worked example: a hold of five static
+brushes and one dynamic blast door, with `scripts/dropship.flang` driving it.
 
 ## The player
 

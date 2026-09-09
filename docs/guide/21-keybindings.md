@@ -208,12 +208,29 @@ Armed from `Add... > Brush` or the view's right-click menu.
 | `V` | orbit / fly camera |
 | `WASD` `Q` `E` | fly (`Shift` faster) |
 | `F` | frame the whole type |
-| `G` / `B` | grid / bounds cage |
+| `Shift+G` / `B` | grid / bounds cage |
 | `Space` | play / pause the attachment animations |
-| `Delete` / `X` | remove the selected model, chunk or seat |
+| `Delete` / `X` | remove the selected model, brush or seat |
 | `Ctrl+N` / `O` / `S` | new / open / save the type |
 | `Ctrl+Shift+S` | save as |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo |
+
+The type's **brushes** take the 3D view's keys, unchanged — an author who has
+blocked out a room already knows how to block out a hold:
+
+| | |
+| --- | --- |
+| `Tab` | object / edit mode |
+| `1` / `2` / `3` | points / edges / faces (edit mode) |
+| `G` / `R` / `C` | move / rotate / scale |
+| `E` / `I` / `B` | extrude / inset / subdivide the selected face(s) |
+| `Shift+E` / `Shift+I` | extrude inward / inset outward |
+| `Z` | wireframe |
+| `Escape` | put an armed brush stamp away |
+
+`B` is subdivide while a face is selected and the bounds cage when none is, and
+`G` is the move tool rather than the grid — which is why the grid is on
+`Shift+G` here, as it is in the 3D view.
 
 ## Texture editor
 

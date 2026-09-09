@@ -431,8 +431,9 @@ Grep for `TODO(brush migration` to find them. Summary:
 - **All shipped levels deleted** (`resources/levels/`, `resources/chunks/`) per
   decision 1. There is nothing to load — the "New Level" path writes a chunk
   holding one hollow room and that is the only content that exists. This is also
-  why nothing places the shipped dropship entity, which is otherwise intact and
-  whose boarding works again.
+  why nothing places the shipped dropship entity, which is current again as of
+  change 5 below (geometry and script both) but has no level putting it
+  anywhere.
 
 ---
 
@@ -561,7 +562,7 @@ at the deleted dropship level.
 
 ---
 
-## After Phase 10 — four changes to the brush model
+## After Phase 10 — five changes to the brush model
 
 Landed on this branch after the migration proper, so the phase table above does
 not mention them.
@@ -631,3 +632,77 @@ Four things worth knowing before touching it:
   the two disagreeing, and the panel's "Re-seed from solid" is the fix. Doing it
   on the author's behalf would silently discard their work every time they nudged
   a corner.
+
+**5. Entities are built from brushes, and edited like the 3D view.** An entity
+type was models plus a list of chunk *attachments* — file names under `chunks/`
+that the level materialised. A type holds its own brushes now
+(`internal/world/entity_brush.go`), written into `entities/<name>.yaml` in the
+level's own `RawBrush` format, and `internal/levelio/entity_geometry.go`
+materialises them into **one chunk whose FrameOwner is the entity**. That is the
+vehicle-interior machinery, so drawing, shadows, streaming and the spatial hash
+needed nothing. `world.EntityChunk`, `RawEntityChunk` and
+`levelio/entity_chunks.go` are gone; `Vehicle.Interiors` survives but means
+nothing (the panel says so) — a vehicle's deck is its type's brushes.
+
+Read `internal/editor/editor_workspace.go` first. Six things worth knowing:
+
+- **`ws()`, not `Editor`.** The geometry-editing state moved off the global
+  `EditorState` into a `brushWorkspace`, which `EditorState` embeds — so
+  `Editor.level` and `Editor.SelectedFaces` still compile and still mean the
+  level editor — and the *shared* files (`editor_brush_*`, `editor_3d_pick`,
+  `editor_face_*`, `editor_sel_transform`, `editor_detail*`, `editor_3d_view`)
+  say `ws()` instead. The entity editor installs its own for the length of its
+  draw and its event handler: `defer entityUseWorkspace()()`, two call sites.
+  **If you add a third entry point into that window, it needs one too.** A
+  workspace left installed after the window returned points the level editor's
+  own tools at a type's geometry, and the failure reads as the main window
+  losing brushes at random. `editor_workspace_test.go` pins it.
+- **A workspace supplies four things**: a pick ray, a projection (plus viewport
+  size and the projection's [1][1] term for handle sizing), an undo stack and a
+  status line — as function fields, nil meaning "the level editor's". Plus
+  `editingFn`, `placementArmedFn`, `disarmOthersFn`, `panelEdgeFn` and
+  `changedFn`, which are the places the two windows genuinely differ.
+- **The scratch chunk is authoritative during editing.** `entityGeomLevel` is a
+  one-chunk `world.Level` whose brushes are the live, uploaded ones the viewport
+  draws and the tools edit; `entityDef.Brushes` is the document's copy, taken by
+  `entityCommitBrushes` at the END of every frame. Not sooner: a tool pushes
+  undo BEFORE it edits, so the document has to still hold the pre-edit state at
+  that moment. `entityGeomDirty` is the other direction — set wherever
+  `entityDef` is *assigned* (new, open, undo) so the live chunk is re-seeded.
+  Comparing the two lists per frame instead would re-seed mid-drag, because they
+  differ for the whole of any frame that edits geometry.
+- **Solid from outside is a second resolve.** A frame-owned chunk is absent from
+  the world spatial hash, so `internal/collision/entity_brushes.go` carries the
+  *body* into each entity's coordinates, pushes it out there against the same
+  `ConvexHull` with the same epsilon the aboard case uses, and carries it back.
+  Gated on `FramesAligned` — a rolled entity is skipped, because the body's
+  cylinder carried into that space would be lying on its side. Folded into
+  `MovePlayer`'s and `resolveEntityWorld`'s substep loops rather than run as a
+  post-pass, so a fast approach meets the hull on the step it reaches it and the
+  ground flags are that step's.
+- **The implicit doorway's region is the geometry's own bounds, unpadded, and
+  that is load-bearing.** `world.ChunkContains` is exported precisely so the
+  entry test and the `CurrentChunk` test are the same predicate: "inside the
+  geometry chunk" and "aboard and inside no chunk of the frame" cannot both be
+  true. Pad it and the pad is ground both claim, and a body standing there is
+  traded back and forth every tick — the failure the whole doorway design exists
+  to avoid. What makes unpadded safe is the bullet above. `steppedOffFrame`
+  accepts the implicit doorway too, or walking into a hut would be a trap.
+- **An entity with brushes is excluded from the entity-vs-entity pass.** Its
+  cage would push a body out of the volume it is walking into. The cage still
+  does picking, hitscan, `:enter:` and camera framing.
+
+Scripting: `Chunk.LocalToPlacement` and its three companions stop one step short
+of the world, at the space the chunk is *placed* in, and `brushProps` uses them.
+A level's own brush still reads and writes `position`/`rotation`/`velocity` in
+world space (the two matrices are the same thing for a chunk no frame owns); a
+brush an entity carries reads and writes in the entity's own, which is what lets
+a door on a falling ship stay shut. Materialised brush IDs are
+`<entity id>.<brush id>`.
+
+Content: `resources/entities/dropship.yaml` is six brushes now, its `hatch`
+dynamic and authored SHUT (authored geometry is always a brush's rest state);
+`resources/scripts/dropship.flang` slides it to port in the ship's own
+coordinates. Its `aboard()` lost a test rather than gaining one — being in the
+ship's frame IS being inside its solid now. The frame-portal volume a level used
+to have to line up against the hold's aft edge is gone.
