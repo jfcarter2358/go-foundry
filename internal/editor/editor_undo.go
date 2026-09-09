@@ -102,6 +102,10 @@ func EditorPushUndo() {
 	if Editor.level == nil {
 		return
 	}
+	// The compiled preview is a picture of the level as it was when it was
+	// built, and this is the moment the level stops being that. Leaving it up
+	// would show the author their last compile while they edited past it.
+	dropCompiledPreview()
 	raw, err := levelio.LevelToRaw(Editor.level)
 	if err != nil {
 		return

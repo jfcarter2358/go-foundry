@@ -60,6 +60,24 @@ func LoadCompiledLevel(path string) (world.Level, error) {
 	return *job.Level(), nil
 }
 
+// StaticGeometryFrom uploads all of a compiled level's surfaces at once.
+//
+// For a caller with the artefact already in hand and no loading screen to
+// animate — the editor's compiled preview. A level change during play goes
+// through the stepped job instead.
+func StaticGeometryFrom(c *CompiledLevel) (*world.StaticGeometry, error) {
+	var lvl world.Level
+	if _, err := buildStaticRange(c, &lvl, 0, len(c.Faces)); err != nil {
+		return nil, err
+	}
+	if lvl.Static == nil {
+		// No faces at all: still a valid, empty static world rather than nil,
+		// so a caller can install it without a special case.
+		lvl.Static = &world.StaticGeometry{Tree: c.Tree, Vis: c.PVS}
+	}
+	return lvl.Static, nil
+}
+
 // loadCompiledChunkRange builds chunks [from, from+count) of a compiled level.
 //
 // The counterpart of loadChunkRange, and the one place the two loaders really

@@ -26,6 +26,58 @@ Either way the result is written beside the level: `canyon.yaml` gets a
 `canyon.fbsp`. Recompile whenever the geometry changes; nothing rebuilds it for
 you.
 
+## Looking at what it made
+
+The numbers say whether your level is sealed. They say nothing about whether it
+*looks* right, and a compiled level can be wrong in ways only the eye catches: a
+seam where a texture restarts, a surface CSG took that it should not have, a
+shadow baked into the wrong place.
+
+The toolbar's **Preview** button next to Compile is for that. It compiles into
+memory and draws the result the way a release build would — compiled surfaces,
+culled by the compiled visibility set — so what you are looking at is the
+shipped thing rather than an impression of it. `F3`'s overlay grows a
+`Compiled: N surfaces / M drawn` line while it is up, which is the culling in
+one number.
+
+**Any edit turns it off.** A preview is a picture of the level as it was when it
+was built, and an edit is the moment it stops being one.
+
+## What actually uses it
+
+Nothing, while you are editing. Play in the editor evaluates the brushes live,
+every frame, so what you see is the level and not the last compile of it — an
+editor whose view lagged a compile behind your edits would be worse than a slow
+one. (Preview, above, is the deliberate exception, and it is the reason it turns
+itself off.)
+
+A **release build** is the other way round: it loads a `.fbsp` and nothing else.
+That is where the four passes above are spent —
+
+- CSG's removed surfaces are never submitted, in any pass.
+- The visibility set skips whole rooms before a single bounding box is tested.
+  `F3`'s overlay shows it as `Compiled: N surfaces / M drawn`; in a level built
+  out of rooms M should be a fraction of N.
+- Baked lighting replaces the per-fragment light loop, its cascade selection and
+  its shadow-map samples, for every pixel of static geometry.
+
+— which means the shipped game is the *faster* of the two, and that the editor
+is the pessimistic case rather than the optimistic one.
+
+`make release-linux` compiles every level first, with `-strict`, so a leaking
+level fails the build. See [Shipping a game](20-shipping.md).
+
+## What stays a brush
+
+A compiled level keeps its brushes; they are just no longer what gets drawn.
+Collision resolves a body against a brush's own shape, a script addresses one by
+name, and a ray reports the brush it hit — none of which changes, and none of
+which would be better against a soup of clipped fragments than against the
+solids you placed.
+
+So a compiled level behaves exactly like the level it came from. If it does
+not, that is a bug rather than a trade-off.
+
 ## Your level has to be sealed
 
 This is the one rule the compiler imposes, and it is worth understanding rather
@@ -70,7 +122,7 @@ player never reaches them, and they are what keeps the void out.
 - **Frame-owned chunks** — a vehicle's interior. It moves, so it cannot be part
   of a static shell, and it is not compiled at all (see below).
 
-## What does not get compiled
+## What does not get compiled, and what does not get linked
 
 Two kinds of chunk stay as authored brushes and are built the ordinary way at
 load:
@@ -81,8 +133,18 @@ load:
   quietly make it permanent.
 
 Everything else about a level — entities, volumes, lights, the spawn, scripts,
-UI screens, prefab placements — is carried through unchanged. Only the static
-geometry is transformed.
+UI screens — is carried through unchanged. Only the static geometry is
+transformed.
+
+**Prefabs are the exception: they are resolved.** A prefab's link exists so that
+editing one file updates twenty placements, which is an authoring convenience;
+by the time you compile, it has done its job. A compiled level holds what the
+placements made, not the placements, so that a build cannot come out different
+from what you compiled because someone edited a prefab in between.
+
+An **entity definition's own geometry** — a ship's hold — is the opposite case
+and stays linked. It is frame-owned, so it was never baked, and it is what makes
+an entity type one thing rather than twenty frozen copies.
 
 ## Reading the report
 

@@ -48,7 +48,7 @@ and is always current.
 | [UI screens](17-ui-screens.md) | The UI editor, anchors, bindings, themes, video |
 | [Scripting](18-scripting.md) | flang: events, messages, properties, parameters |
 | [Testing and debugging](19-testing-and-debugging.md) | Play mode, the log window, engine switches |
-| [Compiling levels](23-compiling-levels.md) | CSG, visibility, baked light — and why a level has to be sealed |
+| [Compiling levels](23-compiling-levels.md) | CSG, visibility, baked light, Preview — and why a level has to be sealed |
 | [Shipping a game](20-shipping.md) | Release builds, `game.yaml`, installers |
 | [Keybindings](21-keybindings.md) | The whole table, in one place |
 

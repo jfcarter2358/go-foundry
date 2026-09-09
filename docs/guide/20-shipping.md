@@ -66,6 +66,38 @@ cannot write there.
 You can *ship* an `audio.yaml` to launch at a chosen mix; the player's own copy
 takes over the first time they move a slider.
 
+## Levels are compiled, not copied
+
+A shipped game reads **only compiled levels** (`.fbsp`). It has no CSG, no BSP
+builder, no visibility flood and no light baker in it, so it could not make one
+if it wanted to — and reading the authored `.yaml` would mean shipping a level
+that had never been compiled and quietly performing like it.
+
+`make release-*` therefore runs the compiler first:
+
+```
+make compile-levels        # or it happens as part of make release-linux
+```
+
+Compiling is `-strict` there: a **leaking** level fails the build rather than
+shipping with its culling switched off. See
+[Compiling levels](23-compiling-levels.md), which is also where to look when it
+does fail.
+
+Two consequences worth knowing:
+
+- **A level you edited and did not recompile ships as it was.** The `.fbsp` is
+  what gets packed; the editor's Compile button and `make compile-levels` are
+  the two ways to bring it up to date.
+- **The authored `.yaml` is not shipped** once a `.fbsp` exists beside it. The
+  binary cannot read it, and it is a level's authoring data.
+
+Play in the editor is still uncompiled — it evaluates the brushes live, every
+frame, so what you see is the level rather than the last compile of it. That
+means the shipped build is the *faster* of the two, and that a leak is
+something to check for with the Compile button rather than to discover at
+package time.
+
 ## Packing and the prune
 
 `make release-*` copies only the content the game can reach from its manifest.
@@ -104,10 +136,11 @@ renamed between releases cannot linger and keep being found.
 ## Checklist
 
 1. `game.yaml` names the real `start_level` and `start_screen`.
-2. `make release-check` — the editor is out of the binary.
-3. `make test-release` — the suite passes in the release configuration.
-4. `make release-linux` / `make release-windows`; read the prune counts.
-5. Run the staged tree from a directory that is **not** the repository. Confirm
+2. `make compile-levels` — every level compiles, and none of them leaks.
+3. `make release-check` — the editor is out of the binary.
+4. `make test-release` — the suite passes in the release configuration.
+5. `make release-linux` / `make release-windows`; read the prune counts.
+6. Run the staged tree from a directory that is **not** the repository. Confirm
    the log lands in the user data directory and nothing is written into the
    install.
-6. `make installer-linux` / `make installer-windows`.
+7. `make installer-linux` / `make installer-windows`.

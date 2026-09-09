@@ -58,7 +58,12 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 	if len(paths) == 0 {
-		log.Fatalf("no levels found under %s", levelio.LevelsDir())
+		// Not an error, because this runs as part of every release build and a
+		// project with no levels yet is a project, not a broken one. A game
+		// whose manifest names a level that does not exist still fails, loudly,
+		// at boot — which is where that belongs.
+		log.Printf("no levels under %s; nothing to compile", levelio.LevelsDir())
+		return
 	}
 
 	opt := compile.Options{SkipLight: *noLight}

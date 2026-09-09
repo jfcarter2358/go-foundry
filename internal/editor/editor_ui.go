@@ -987,6 +987,28 @@ func EditorDrawUI() {
 	}
 	imgui.SameLine()
 
+	// And looking at it. The numbers Compile prints say whether the level is
+	// sealed; only the eye catches a seam or a surface CSG should not have
+	// taken, and without this the first sight of a compiled level is the
+	// shipped build.
+	previewing := EditorPreviewingCompiled()
+	if editorActiveToggleButtonColor("Preview", previewing,
+		imgui.Vec4{X: 0.2, Y: 0.45, Z: 0.6, W: 1}) {
+		msg, err := EditorSetCompiledPreview(!previewing)
+		if err != nil {
+			Editor.StatusMsg = fmt.Sprintf("Preview failed: %v", err)
+		} else {
+			Editor.StatusMsg = msg
+		}
+		Editor.StatusTime = sdl.GetTicks()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Draw the level the way a release build would:\n" +
+			"compiled surfaces, culled by the compiled visibility set.\n" +
+			"Any edit turns it off.")
+	}
+	imgui.SameLine()
+
 	// Status message (shown for 3 seconds after save/load)
 	if Editor.StatusMsg != "" {
 		if sdl.GetTicks()-Editor.StatusTime < 3000 {
