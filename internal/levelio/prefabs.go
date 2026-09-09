@@ -275,10 +275,10 @@ func materializePrefabEntities(lvl *world.Level, inst *world.PrefabInstance, p *
 		}
 		lvl.Entities = append(lvl.Entities, e)
 
-		// The decks that entity carries, on the same terms every other
-		// materialised entity's are. They are tagged with the prefab too, so
-		// dropping the instance takes them with it.
-		for _, err := range MaterializeEntityChunks(lvl, &lvl.Entities[len(lvl.Entities)-1], texNeeded) {
+		// The solid that entity carries, on the same terms every other
+		// materialised entity's is. It is tagged with the prefab too, so
+		// dropping the instance takes it with it.
+		if err := MaterializeEntityGeometry(lvl, &lvl.Entities[len(lvl.Entities)-1], texNeeded); err != nil {
 			prefabWarn("%v", err)
 		}
 		for i := range lvl.Chunks {

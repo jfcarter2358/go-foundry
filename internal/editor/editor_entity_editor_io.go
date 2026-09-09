@@ -22,7 +22,6 @@ import (
 	"foundry/internal/levelio"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -55,6 +54,9 @@ func entityNewDoc() {
 	entitySel = entityEditorSelection{}
 	EntityDefClearUndoHistory()
 	entityPreviewInvalidate()
+	// The brushes came with it, so the live ones have to be rebuilt from the
+	// new document. See entityGeomDirty.
+	entityInvalidateGeometry()
 	entityStatus = "New entity type"
 }
 
@@ -96,6 +98,9 @@ func entityLoadDef(name string) error {
 	entitySel = entityEditorSelection{}
 	EntityDefClearUndoHistory()
 	entityPreviewInvalidate()
+	// The brushes came with it, so the live ones have to be rebuilt from the
+	// new document. See entityGeomDirty.
+	entityInvalidateGeometry()
 	entityStatus = "Opened " + name
 	return nil
 }
@@ -196,12 +201,12 @@ func ReloadEntitiesOfType(typeName string) int {
 		if err := e.Load(); err != nil {
 			editorSetStatus("Entity %s: %v", e.ID, err)
 		}
-		editorSyncEntityChunks(lvl, e)
+		editorSyncEntityGeometry(lvl, e)
 		n++
 	}
 	if n > 0 {
 		// Chunks came and went, so the spatial hash and the frame set are both
-		// stale — RebuildIndexes is what puts a materialised deck into the
+		// stale — RebuildIndexes is what puts a materialised solid into the
 		// world the player can walk on.
 		if err := world.RebuildIndexes(lvl); err != nil {
 			editorSetStatus("Entity type %s: %v", typeName, err)
@@ -210,20 +215,20 @@ func ReloadEntitiesOfType(typeName string) int {
 	return n
 }
 
-// editorSyncEntityChunks rebuilds the level chunks materialised from one
-// entity's chunk attachments: the old ones released, the current ones built.
+// editorSyncEntityGeometry rebuilds the level chunk materialised from one
+// entity's brushes: the old one released, the current one built.
 //
-// Called wherever an entity's identity or its attachment list changes — placed,
-// duplicated, renamed, deleted, re-stamped. Doing it in one place is what keeps
-// "the level's chunk list agrees with its entities" from being six separate
-// things to remember.
-func editorSyncEntityChunks(lvl *world.Level, e *world.Entity) {
+// Called wherever an entity's identity or its geometry changes — placed,
+// duplicated, renamed, deleted, re-stamped, or edited in the entity editor.
+// Doing it in one place is what keeps "the level's chunk list agrees with its
+// entities" from being six separate things to remember.
+func editorSyncEntityGeometry(lvl *world.Level, e *world.Entity) {
 	if lvl == nil || e == nil {
 		return
 	}
-	levelio.DropEntityChunks(lvl, e.ID)
+	levelio.DropEntityGeometry(lvl, e.ID)
 	tex := map[string]bool{}
-	for _, err := range levelio.MaterializeEntityChunks(lvl, e, tex) {
+	if err := levelio.MaterializeEntityGeometry(lvl, e, tex); err != nil {
 		editorSetStatus("%v", err)
 	}
 	if err := levelio.EnsureChunkTextures(tex); err != nil {
@@ -272,99 +277,6 @@ func entityRemoveModel(idx int) {
 	entityPreviewInvalidate()
 }
 
-// entityAddChunk attaches a piece of world geometry, with no file yet.
-func entityAddChunk() {
-	if entityDef == nil {
-		return
-	}
-	EntityDefPushUndo()
-	entityDef.Chunks = append(entityDef.Chunks, world.EntityChunk{
-		Name:  world.UniqueDefChunkName(entityDef.Chunks, defaultChunkAttachName),
-		Scale: 1,
-	})
-	entitySel = entityEditorSelection{Kind: entitySelChunk, Idx: len(entityDef.Chunks) - 1}
-	entityMarkDirty()
-	entityPreviewInvalidate()
-}
-
-// defaultChunkAttachName is what a new chunk attachment is called before it has
-// a file to take a name from — see entitySetChunkFile.
-const defaultChunkAttachName = "chunk"
-
-// entityRemoveChunk drops one chunk attachment, and unbinds it from the vehicle
-// block if it was one of the decks.
-func entityRemoveChunk(idx int) {
-	if entityDef == nil || idx < 0 || idx >= len(entityDef.Chunks) {
-		return
-	}
-	EntityDefPushUndo()
-	name := entityDef.Chunks[idx].Name
-	entityDef.Chunks = append(entityDef.Chunks[:idx:idx], entityDef.Chunks[idx+1:]...)
-	if entityDef.Vehicle != nil {
-		entityDef.Vehicle.RemoveInterior(name)
-	}
-	entitySel = entityEditorSelection{}
-	entityMarkDirty()
-	entityPreviewInvalidate()
-}
-
-// entitySetChunkFile points an attachment at a chunk file.
-//
-// An attachment still carrying the placeholder name it was created with is
-// renamed after its file, so the common case — add one, pick a chunk — ends up
-// with "hull" rather than "chunk" without anyone typing it. A name that has
-// been chosen is left alone: a script addresses a deck by it, and a vehicle's
-// interior list names it, so renaming one quietly would break both.
-func entitySetChunkFile(a *world.EntityChunk, file string) {
-	if entityDef == nil || a == nil {
-		return
-	}
-	EntityDefPushUndo()
-	prevName := a.Name
-	a.File = file
-	if file != "" && isPlaceholderChunkName(a.Name) {
-		a.Name = world.UniqueDefChunkName(entityChunksExcept(a), chunkAttachNameFor(file))
-		if entityDef.Vehicle != nil && entityDef.Vehicle.CarriesChunk(prevName) {
-			entityDef.Vehicle.RemoveInterior(prevName)
-			entityDef.Vehicle.AddInterior(a.Name)
-		}
-	}
-	entityMarkDirty()
-	entityPreviewInvalidate()
-}
-
-// entityChunksExcept is the attachment list minus one, so a rename can test
-// uniqueness without colliding with the very attachment being renamed.
-func entityChunksExcept(skip *world.EntityChunk) []world.EntityChunk {
-	var out []world.EntityChunk
-	for i := range entityDef.Chunks {
-		if &entityDef.Chunks[i] == skip {
-			continue
-		}
-		out = append(out, entityDef.Chunks[i])
-	}
-	return out
-}
-
-// chunkAttachNameFor is the attachment name a chosen file suggests: the file's
-// own name, so an entity carrying chunks/shuttle_hull.yaml has an attachment
-// called "shuttle_hull".
-func chunkAttachNameFor(file string) string {
-	base := filepath.Base(filepath.ToSlash(file))
-	base = strings.TrimSuffix(base, filepath.Ext(base))
-	if base == "" || base == "." {
-		return defaultChunkAttachName
-	}
-	return base
-}
-
-// isPlaceholderChunkName reports whether a name is one entityAddChunk made up
-// rather than one an author chose.
-func isPlaceholderChunkName(name string) bool {
-	return name == "" || name == defaultChunkAttachName ||
-		strings.HasPrefix(name, defaultChunkAttachName+"_")
-}
-
 // entityAddSeat adds a seat to the vehicle block, or nothing when the type is
 // not a vehicle.
 func entityAddSeat() {
@@ -405,8 +317,8 @@ func entityDeleteSelection() {
 	switch entitySel.Kind {
 	case entitySelModel:
 		entityRemoveModel(entitySel.Idx)
-	case entitySelChunk:
-		entityRemoveChunk(entitySel.Idx)
+	case entitySelBrush:
+		entityRemoveBrush(entitySel.Idx)
 	case entitySelSeat:
 		entityRemoveSeat(entitySel.Idx)
 	}
@@ -418,7 +330,7 @@ func entityDeleteSelection() {
 // This is the promotion the entities README describes and the editor could not
 // previously do: a blank entity is the quick path, and a definition is what it
 // becomes once a second level wants the same thing. What carries over is
-// everything about *what it is* — models, chunks, bounds, collision, tags,
+// everything about *what it is* — models, brushes, bounds, collision, tags,
 // attributes, script and vehicle. What does not is where it is: a definition
 // has no position, because a definition is not anywhere.
 //
@@ -442,7 +354,7 @@ func OpenEntityEditorFrom(e *world.Entity) {
 		Collision:    e.Collision,
 		Attributes:   e.Attributes.Clone(),
 		Params:       e.ScriptParams.Clone(),
-		Chunks:       append([]world.EntityChunk(nil), e.Chunks...),
+		Brushes:      world.CloneEntityBrushes(e.Brushes),
 		Vehicle:      world.CloneVehicleSpec(e.Vehicle),
 	}
 	for i := range e.Models {
@@ -459,6 +371,9 @@ func OpenEntityEditorFrom(e *world.Entity) {
 		entitySel = entityEditorSelection{}
 		EntityDefClearUndoHistory()
 		entityPreviewInvalidate()
+		// The brushes came with it, so the live ones have to be rebuilt from the
+		// new document. See entityGeomDirty.
+		entityInvalidateGeometry()
 		entityStatus = "New type from " + e.ID + " — Save to commit it"
 		OpenEntityEditorWindow()
 	})

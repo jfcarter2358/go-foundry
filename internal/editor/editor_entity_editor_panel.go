@@ -148,13 +148,45 @@ func entityEditorToolbar() {
 	imgui.SameLine()
 	imgui.Checkbox("Models##entshowm", &entityShowModels)
 	imgui.SameLine()
-	imgui.Checkbox("Chunks##entshowc", &entityShowChunks)
+	imgui.Checkbox("Brushes##entshowc", &entityShowChunks)
 	imgui.SameLine()
 	imgui.Checkbox("Seats##entshows", &entityShowSeats)
 	imgui.SameLine()
 	imgui.Checkbox("Wire##entwire", &entityWireOverlay)
 	imgui.SameLine()
 	imgui.Checkbox("Play [Space]##entplay", &entityPlayAnims)
+	// ---- Group: edit context and selection unit ----
+	//
+	// The 3D view's own controls, on the 3D view's own keys, because the tools
+	// under them are the 3D view's — see editor_workspace.go. Object mode moves
+	// whole brushes about; edit mode reaches the points, edges and faces one is
+	// made of.
+	imgui.SameLine()
+	editorToolbarGroupSep()
+	imgui.SameLine()
+	if editorActiveToggleButton("Object [Tab]##entctxobj", !editorInEditMode()) {
+		editorSetEditContext(editorObjectMode)
+		entityBrushSelectionSync()
+	}
+	imgui.SameLine()
+	if editorActiveToggleButton("Edit [Tab]##entctxedit", editorInEditMode()) {
+		editorSetEditContext(editorEditMode)
+		entityBrushSelectionSync()
+	}
+	if editorInEditMode() {
+		for _, m := range editorSelModes {
+			imgui.SameLine()
+			if editorActiveToggleButton(
+				fmt.Sprintf("%s [%s]##entsel%d", m, editorSelModeKey(m), int(m)),
+				entityWS.SelMode == m) {
+				editorSetSelMode(m)
+			}
+			if imgui.IsItemHovered() {
+				imgui.SetTooltip(editorSelModeTooltip(m))
+			}
+		}
+	}
+
 	// ---- Group: gizmo tool ----
 	imgui.SameLine()
 	editorToolbarGroupSep()
@@ -225,7 +257,7 @@ func entityEditorOutline() {
 	withUndoRedirect(entityPushUndoDirty, func() {
 		entityOutlineModels()
 		imgui.Separator()
-		entityOutlineChunks()
+		entityOutlineBrushes()
 		imgui.Separator()
 		entityOutlineSeats()
 	})
@@ -255,37 +287,66 @@ func entityOutlineModels() {
 	}
 }
 
-func entityOutlineChunks() {
-	imgui.Text("Chunks")
-	for i := range entityDef.Chunks {
-		c := &entityDef.Chunks[i]
-		imgui.PushID(fmt.Sprintf("outc%d", i))
-		label := c.Name
-		switch {
-		case c.File == "":
-			label += "  (no file)"
-		case c.Disabled:
-			label += "  (off)"
+// entityOutlineBrushes lists the type's own solid.
+//
+// The row and the viewport are one selection, not two that happen to agree:
+// entitySelectBrush sets both this list's cursor and the shared object-mode
+// brush selection, so clicking a name here puts the gizmo on that solid and
+// clicking that solid highlights the name.
+func entityOutlineBrushes() {
+	imgui.Text("Brushes")
+	n := entityBrushCount()
+	for i := 0; i < n; i++ {
+		b := entityBrushAt(i)
+		if b == nil {
+			continue
 		}
-		if imgui.SelectableV(label, entitySel.Kind == entitySelChunk && entitySel.Idx == i, 0, imgui.Vec2{}) {
-			entitySel = entityEditorSelection{Kind: entitySelChunk, Idx: i}
+		imgui.PushID(fmt.Sprintf("outb%d", i))
+		label := b.ID
+		switch {
+		case b.Dynamic:
+			label += "  (dynamic)"
+		case !b.Solid:
+			label += "  (not solid)"
+		}
+		if imgui.SelectableV(label, entitySel.Kind == entitySelBrush && entitySel.Idx == i, 0, imgui.Vec2{}) {
+			entitySelectBrush(i)
 		}
 		imgui.PopID()
 	}
-	if len(entityDef.Chunks) == 0 {
-		editorTextMutedWrapped("None. A chunk gives the type floors to stand on and walls to bump into, carried wherever it goes.")
+	if n == 0 {
+		editorTextMutedWrapped("None. Brushes give the type floors to stand on and walls to bump into, carried wherever it goes — and a body that walks inside them is carried with it.")
 	}
-	if imgui.Button("Add Chunk##entaddc") {
-		entityAddChunk()
+
+	for i, kind := range brushKinds {
+		k := kind
+		if i > 0 {
+			imgui.SameLine()
+		}
+		label := brushKindLabel(k)
+		if entityWS.BrushPlaceActive && entityWS.BrushPlaceKind == k {
+			// An armed stamp says so on its own button: the ghost is in the
+			// viewport, but the button is where the author armed it.
+			label = "* " + label
+		}
+		if imgui.Button(label + "##entstamp" + k) {
+			entityArmBrushStamp(k)
+		}
 	}
-	imgui.SameLine()
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Arms the stamp: a ghost follows the cursor and every click\n" +
+			"places another solid, until Escape. Shape one with the tools\n" +
+			"the 3D view uses — Tab for edit mode, E extrude, I inset,\n" +
+			"B subdivide, G/R/C to move, turn and resize.")
+	}
 	if imgui.Button("Import##entimpc") {
 		entityShowImportChunk = true
 		entityChunkFileList = nil
 	}
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Attach a chunk from " + levelio.ChunksDirName + "/, or lift one\n" +
-			"out of the level open in the main window.")
+		imgui.SetTooltip("Copies the brushes out of a chunk under " + levelio.ChunksDirName + "/,\n" +
+			"or out of the level open in the main window. A copy, not a\n" +
+			"link: the type owns its geometry from then on.")
 	}
 }
 
@@ -464,11 +525,13 @@ func entityPanelSelection() {
 			editorPropGroupOpen("Model: "+entityDef.Models[entitySel.Idx].Name+"##entselm",
 				func() { entityPanelModel(entitySel.Idx) })
 		}
-	case entitySelChunk:
-		if entitySel.Idx < len(entityDef.Chunks) {
-			editorPropGroupOpen("Chunk: "+entityDef.Chunks[entitySel.Idx].Name+"##entselc",
-				func() { entityPanelChunk(entitySel.Idx) })
-		}
+	case entitySelBrush:
+		// Not a panel of its own: editorBrushPropertiesSection is the level
+		// editor's brush and face block, and it reads the workspace this window
+		// has made current — so the ID, the solid and dynamic flags, the
+		// tags/attributes/script, the convexity warning and every face field
+		// are the same widgets writing to the same places.
+		editorBrushPropertiesSection()
 	case entitySelSeat:
 		if entityDef.Vehicle != nil && entitySel.Idx < len(entityDef.Vehicle.Seats) {
 			editorPropGroupOpen("Seat: "+entityDef.Vehicle.Seats[entitySel.Idx].Name+"##entsels",
@@ -693,112 +756,23 @@ func entityAnimationRow(m *world.EntityModel, idx int, clips []string, live *wor
 	return false
 }
 
-func entityPanelChunk(idx int) {
-	c := &entityDef.Chunks[idx]
-	name := c.Name
-	imgui.SetNextItemWidth(-90)
-	if imgui.InputTextV("##entcname", &name, imgui.InputTextFlagsEnterReturnsTrue, nil) {
-		entityRenameChunkAttachment(c, name)
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Part of the chunk's ID in a level (`<entity>.<name>`),\n" +
-			"so a script addresses this deck by it.")
-	}
-	imgui.SameLine()
-	if imgui.Button("Delete##entcdel") {
-		entityRemoveChunk(idx)
-		return
-	}
-
-	file := c.File
-	if entityChunkFileCombo("File##entcfile", &file) {
-		entitySetChunkFile(c, file)
-	}
-	if c.File == "" {
-		editorTextMutedWrapped("No file: this attachment carries no geometry. Import one, or export a chunk from the level editor first.")
-	}
-
-	off := [3]float32{c.Offset.X(), c.Offset.Y(), c.Offset.Z()}
-	if editorDragFloat3Step("Offset##entcoff", &off, -10000, 10000, "%.3f", 0.05) {
-		entityBeginEdit("coff")
-		c.Offset = mgl32.Vec3{off[0], off[1], off[2]}
-		entityPreviewInvalidate()
-	}
-	rot := mgl32.RadToDeg(c.Rotation)
-	if editorDragFloatStep("Rotation (deg)##entcrot", &rot, -360, 360, "%.1f", 1) {
-		entityBeginEdit("crot")
-		c.Rotation = mgl32.DegToRad(rot)
-		entityPreviewInvalidate()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("About Y only — a chunk's own placement has never had\nmore, and the entity's rotation carries the rest.")
-	}
-	scale := c.EffectiveScale()
-	if editorDragFloatStep("Scale##entcscale", &scale, 0.01, 100, "%.3f", 0.01) {
-		entityBeginEdit("cscale")
-		c.Scale = scale
-		entityPreviewInvalidate()
-	}
-	if imgui.Checkbox("Starts disabled##entcdis", &c.Disabled) {
-		entityBeginEdit("cdis")
-		entityPreviewInvalidate()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Not drawn, not collided with, never uploaded until a\nscript sets `@<entity>." + c.Name + ".prop.enabled = true`.")
-	}
-
-	if entityDef.Vehicle != nil {
-		aboard := entityDef.Vehicle.CarriesChunk(c.Name)
-		if imgui.Checkbox("Walkable interior##entcint", &aboard) {
-			EntityDefPushUndo()
-			if aboard {
-				entityDef.Vehicle.AddInterior(c.Name)
-			} else {
-				entityDef.Vehicle.RemoveInterior(c.Name)
-			}
-			entityMarkDirty()
-		}
-		if imgui.IsItemHovered() {
-			imgui.SetTooltip("An occupant can stand up and walk around on this deck\nwhile the vehicle moves.")
-		}
-	}
-
-	if c.File != "" {
-		editorTextMutedWrapped("Placing an instance of this type materialises " +
-			world.EntityChunkID("<entity>", c.Name) + " into the level, bound to its frame. " +
-			"The level file does not store the geometry — this attachment does.")
-	}
-}
-
-// entityRenameChunkAttachment renames an attachment, carrying the vehicle's
-// interior binding across with it.
+// entityBrushSelectionSync keeps the outline's cursor and the viewport's
+// object-mode selection agreeing when the click came from the viewport.
 //
-// The binding names the attachment, so a rename that did not update it would
-// silently turn a walkable deck into one you fall through — the kind of thing
-// that is noticed a level later.
-func entityRenameChunkAttachment(c *world.EntityChunk, name string) {
-	name = strings.TrimSpace(name)
-	switch {
-	case name == "":
-		entityStatus = "A chunk attachment needs a name"
-		return
-	case name == c.Name:
-		return
-	}
-	for i := range entityDef.Chunks {
-		if &entityDef.Chunks[i] != c && entityDef.Chunks[i].Name == name {
-			entityStatus = fmt.Sprintf("This type already has a chunk called %q", name)
-			return
+// entitySelectBrush does it in the other direction. Both exist because the two
+// selections are genuinely different things — an outline row and a picked
+// solid — and an author who clicks one expects the other to follow.
+func entityBrushSelectionSync() {
+	if len(entityWS.SelectedBrushes) == 0 {
+		if entitySel.Kind == entitySelBrush {
+			entitySel = entityEditorSelection{}
 		}
+		return
 	}
-	EntityDefPushUndo()
-	if entityDef.Vehicle != nil && entityDef.Vehicle.CarriesChunk(c.Name) {
-		entityDef.Vehicle.RemoveInterior(c.Name)
-		entityDef.Vehicle.AddInterior(name)
+	idx := entityWS.SelectedBrushes[0].brushIdx
+	if entitySel.Kind != entitySelBrush || entitySel.Idx != idx {
+		entitySel = entityEditorSelection{Kind: entitySelBrush, Idx: idx}
 	}
-	c.Name = name
-	entityMarkDirty()
-	entityPreviewInvalidate()
 }
 
 // entityChunkFileCombo lists what is under chunks/. Rescanned only while the
@@ -937,14 +911,14 @@ func entityEditorDialogs() {
 	imguibackend.WithModalPopup("Import Chunk##entimportdlg", &entityShowImportChunk, entityImportChunkDialog)
 }
 
-// entityImportChunkDialog offers the two ways geometry gets into a type: a file
-// already under chunks/, or a chunk in the level open in the main window.
+// entityImportChunkDialog offers the two ways existing geometry gets into a
+// type: a chunk file under chunks/, or a chunk of the level open in the main
+// window.
 //
-// The second is the one that matters in practice. A hull is built where hulls
-// are easy to build — in the 2D map, with sectors and portals — and the step
-// that used to be missing was carrying it over. Lifting one exports it to
-// chunks/ and attaches it in the same click, so the file it leaves behind is a
-// real chunk file that any other type can use too.
+// Both COPY. The type owns its brushes from then on, so editing them here does
+// not reach back into the level or the file they came from, and editing the
+// level does not reach forward into the type. That is the whole difference from
+// the chunk attachment this replaces, and it is what makes a type one file.
 func entityImportChunkDialog() {
 	if entityDef == nil {
 		return
@@ -960,7 +934,9 @@ func entityImportChunkDialog() {
 		if !imgui.Selectable(name) {
 			continue
 		}
-		entityAttachChunkFile(name)
+		if err := entityImportChunkFile(name); err != nil {
+			entityStatus = err.Error()
+		}
 		imgui.CloseCurrentPopup()
 	}
 
@@ -992,25 +968,15 @@ func entityImportChunkDialog() {
 	}
 }
 
-// entityAttachChunkFile adds an attachment pointing at an existing chunk file.
-func entityAttachChunkFile(file string) {
-	EntityDefPushUndo()
-	entityDef.Chunks = append(entityDef.Chunks, world.EntityChunk{
-		Name:  world.UniqueDefChunkName(entityDef.Chunks, chunkAttachNameFor(file)),
-		File:  file,
-		Scale: 1,
-	})
-	entitySel = entityEditorSelection{Kind: entitySelChunk, Idx: len(entityDef.Chunks) - 1}
-	entityMarkDirty()
-	entityPreviewInvalidate()
-	entityStatus = "Attached " + file
-}
-
-// entityImportLevelChunk exports a chunk out of the open level and attaches it.
+// entityImportLevelChunk copies a chunk out of the open level into the type.
 //
-// The chunk's own origin is dropped: it was where the thing sat in that level,
-// and what an attachment wants is where it sits within the *entity*. Starting
-// at the entity's origin is the only answer that is not arbitrary.
+// It goes through chunks/ rather than straight across, which looks like a
+// detour and is not: the export is the thing that makes the geometry available
+// to a second type and to a second level, and it costs one file write on a path
+// an author takes once. The chunk's own origin is dropped on the way — it was
+// where the thing sat in that level, and what the type wants is where it sits
+// within itself. Its authored coordinates are the only answer that is not
+// arbitrary.
 func entityImportLevelChunk(ch *world.Chunk) {
 	name := entityUniqueChunkFileName(ch.ID)
 	if err := levelio.SaveChunk(ch, levelio.ChunkFilePath(name)); err != nil {
@@ -1018,8 +984,11 @@ func entityImportLevelChunk(ch *world.Chunk) {
 		return
 	}
 	entityChunkFileList = nil
-	entityAttachChunkFile(name)
-	entityStatus = fmt.Sprintf("Lifted %s into %s/%s%s",
+	if err := entityImportChunkFile(name); err != nil {
+		entityStatus = err.Error()
+		return
+	}
+	entityStatus = fmt.Sprintf("Lifted %s into %s/%s%s and copied it in",
 		ch.ID, levelio.ChunksDirName, name, entityDefFileSuffix)
 }
 
@@ -1088,22 +1057,22 @@ func entityPanelVehicle() {
 			"water: like ground, floating.\nspace: full 6DOF, no gravity or drag.")
 	}
 
-	// The decks, read-only here: a chunk attachment is bound as an interior
-	// from its own section, where the chunk it names is in front of you. Listing
-	// them here is so "which of these can be walked on" is answerable without
-	// clicking through every attachment.
-	if len(v.Interiors) == 0 {
-		editorTextMutedWrapped("Seats only — no walkable deck. Tick \"Walkable interior\" on a chunk attachment to add one.")
+	// Whether there is anywhere to stand, which is now simply whether the type
+	// has brushes. It used to be a per-attachment tick box, because a type
+	// could carry several chunks and only some of them were decks; a type has
+	// one solid now, and a solid you can stand inside is one you can stand
+	// inside. See world/entity_brush.go.
+	if entityBrushCount() == 0 {
+		editorTextMutedWrapped("Seats only — no walkable deck. Give the type brushes and an occupant can stand up and walk around inside them while it moves.")
 	} else {
-		imgui.Text("Walkable decks: " + strings.Join(v.Interiors, ", "))
+		imgui.Text(fmt.Sprintf("Walkable: this type's %d brush(es).", entityBrushCount()))
 	}
-	for _, name := range v.Interiors {
-		if entityChunkAttachment(name) == nil {
-			// A deck naming an attachment that has been deleted or renamed
-			// would be a hole in the floor at runtime, and nothing else would
-			// report it.
-			editorTextWrapped("Deck \"" + name + "\" names no chunk attachment on this type.")
-		}
+	if len(v.Interiors) > 0 {
+		// Left over from the chunk-attachment era, when a deck was named. The
+		// list means nothing now and saying so is better than silently
+		// dropping something an author put there.
+		editorTextWrapped("This type still names decks (" + strings.Join(v.Interiors, ", ") +
+			") from before its geometry moved onto the type itself. They are ignored; its brushes are its interior.")
 	}
 
 	if imgui.Button("Not a vehicle##entdefvehdel") {
@@ -1117,19 +1086,6 @@ func entityPanelVehicle() {
 	}
 
 	editorVehicleDriveTuning(v)
-}
-
-// entityChunkAttachment finds an attachment by name on the document.
-func entityChunkAttachment(name string) *world.EntityChunk {
-	if entityDef == nil {
-		return nil
-	}
-	for i := range entityDef.Chunks {
-		if entityDef.Chunks[i].Name == name {
-			return &entityDef.Chunks[i]
-		}
-	}
-	return nil
 }
 
 // animSettings is the two overridable fields flattened to comparable values.

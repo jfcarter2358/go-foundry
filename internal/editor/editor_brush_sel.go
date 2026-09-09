@@ -39,7 +39,7 @@ type brushSel struct {
 
 // brushSelValid reports whether a selection still names live geometry.
 func brushSelValid(s brushSel) bool {
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil || s.chunkIdx < 0 || s.chunkIdx >= len(lvl.Chunks) {
 		return false
 	}
@@ -49,7 +49,7 @@ func brushSelValid(s brushSel) bool {
 
 // isBrushSelected reports whether s is part of the current selection.
 func isBrushSelected(s brushSel) bool {
-	for _, sel := range Editor.SelectedBrushes {
+	for _, sel := range ws().SelectedBrushes {
 		if sel == s {
 			return true
 		}
@@ -60,10 +60,10 @@ func isBrushSelected(s brushSel) bool {
 // primaryBrushSel is the brush the panel edits: the first of the selection, or
 // an unresolvable one when nothing is selected.
 func primaryBrushSel() brushSel {
-	if len(Editor.SelectedBrushes) == 0 {
+	if len(ws().SelectedBrushes) == 0 {
 		return brushSel{chunkIdx: -1, brushIdx: -1}
 	}
-	return Editor.SelectedBrushes[0]
+	return ws().SelectedBrushes[0]
 }
 
 // ---------- changing the selection ----------
@@ -73,7 +73,7 @@ func setBrushSelection(sels []brushSel) {
 	// Cleared first, then assigned: editorClearObjectSelections empties this
 	// very list on its way past, and every caller has already copied.
 	editorClearObjectSelections()
-	Editor.SelectedBrushes = sels
+	ws().SelectedBrushes = sels
 	syncActiveBrush()
 }
 
@@ -84,44 +84,44 @@ func addBrushToSelection(s brushSel) {
 	if !brushSelValid(s) {
 		return
 	}
-	for i, sel := range Editor.SelectedBrushes {
+	for i, sel := range ws().SelectedBrushes {
 		if sel != s {
 			continue
 		}
-		Editor.SelectedBrushes = append(
-			append([]brushSel{}, Editor.SelectedBrushes[:i]...),
-			Editor.SelectedBrushes[i+1:]...)
+		ws().SelectedBrushes = append(
+			append([]brushSel{}, ws().SelectedBrushes[:i]...),
+			ws().SelectedBrushes[i+1:]...)
 		syncActiveBrush()
 		return
 	}
-	setBrushSelection(append(append([]brushSel{}, Editor.SelectedBrushes...), s))
+	setBrushSelection(append(append([]brushSel{}, ws().SelectedBrushes...), s))
 }
 
 // clearBrushSelection drops every selected brush.
 func clearBrushSelection() {
-	Editor.SelectedBrushes = nil
+	ws().SelectedBrushes = nil
 	syncActiveBrush()
 }
 
 // syncActiveBrush republishes the primary brush into the fields the panels read
 // and hands the gizmo its kind — the brush counterpart of syncActiveFace, and
-// the one place Editor.GizmoKind becomes gizmoKindBrush.
+// the one place ws().GizmoKind becomes gizmoKindBrush.
 func syncActiveBrush() {
-	if len(Editor.SelectedBrushes) == 0 {
-		if Editor.GizmoKind == gizmoKindBrush {
-			Editor.GizmoKind = gizmoKindNone
+	if len(ws().SelectedBrushes) == 0 {
+		if ws().GizmoKind == gizmoKindBrush {
+			ws().GizmoKind = gizmoKindNone
 		}
 		return
 	}
-	Editor.GizmoKind = gizmoKindBrush
-	primary := Editor.SelectedBrushes[0]
-	Editor.ActiveChunkIdx = primary.chunkIdx
+	ws().GizmoKind = gizmoKindBrush
+	primary := ws().SelectedBrushes[0]
+	ws().ActiveChunkIdx = primary.chunkIdx
 	// ActiveBrushIdx is the "which brush is being worked on" field every tool
 	// that acts on one brush reads (editor3DActiveBrush), so an object-mode
 	// selection publishes it too — otherwise Duplicate would copy whichever
 	// brush a face was last picked on rather than the one that is selected.
-	Editor.ActiveBrushIdx = primary.brushIdx
-	Editor.ActiveFaceIdx = -1
+	ws().ActiveBrushIdx = primary.brushIdx
+	ws().ActiveFaceIdx = -1
 }
 
 // editorSelectBrushObject takes a brush, either replacing the selection or
@@ -133,7 +133,7 @@ func editorSelectBrushObject(s brushSel, addToSelection bool) {
 	} else {
 		setBrushSelection([]brushSel{s})
 	}
-	Editor.PanelFocus = panelFocusBrush
+	ws().PanelFocus = panelFocusBrush
 }
 
 // ---------- what the gizmo drags ----------
@@ -154,7 +154,7 @@ func brushVertexSels() []vertexSel {
 		seen[sel] = true
 		out = append(out, sel)
 	}
-	for _, s := range Editor.SelectedBrushes {
+	for _, s := range ws().SelectedBrushes {
 		_, b := vertexSelBrush(vertexSel{chunkIdx: s.chunkIdx, brushIdx: s.brushIdx})
 		if b == nil {
 			continue

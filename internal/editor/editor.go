@@ -98,71 +98,18 @@ type EditorState struct {
 	Active bool
 	Mode   EditorMode
 
-	// --- 3D mode ---
-	ActiveChunkIdx int // chunk being displayed/edited
-	// ActiveBrushIdx/ActiveFaceIdx address the primary selected face within
-	// the active chunk; -1 for none. Both are *derived*: they mirror
-	// SelectedFaces[0]. Write them through editor_face_sel.go, never directly.
-	ActiveBrushIdx int
-	ActiveFaceIdx  int
-
-	// Brush faces selected by clicking them in face mode. The first entry is
-	// the primary and mirrors ActiveBrushIdx/ActiveFaceIdx; ctrl+click adds
-	// the rest. Empty = no face selection.
-	SelectedFaces []faceSel
-
-	// Brush vertices selected by clicking their handle boxes in 3D. The first
-	// entry is the primary one; ctrl+click adds the rest. Empty = no vertex
-	// selection.
-	SelectedVertices []vertexSel
-
-	// Whole brushes selected by clicking them in object mode. The first entry
-	// is the primary; ctrl+click adds the rest. Empty = no brush selection.
-	// See editor_brush_sel.go.
-	SelectedBrushes []brushSel
-
-	// EditContext is whether a click and a gizmo address whole objects, the
-	// points, edges and faces one brush is made of, or the same three units of
-	// its detail mesh. Object mode is the zero value and Tab switches; see
-	// editor_3d_view.go.
-	EditContext editorEditContext
-
-	// DetailBrush is the brush detail mode is shaping — meaningless in any
-	// other context. Detail mode is scoped to ONE brush, the way the model
-	// editor is scoped to one document: the surface being carved is the thing
-	// being worked on, and being able to reach past it into a neighbour's hull
-	// by mis-aiming a click is exactly what the mode exists to prevent.
-	// See editor_detail.go.
-	DetailBrush brushSel
-
-	// What a 3D click selects: points, edges, or faces and objects. See the
-	// editorSel* constants (editor_3d_view.go).
-	SelMode editorSelMode
-
-	// Draw the world as lines rather than solid, which also makes every point
-	// and edge in range selectable instead of only the ones the camera can
-	// actually see. See editor_3d_visibility.go.
-	Wireframe bool
+	// brushWorkspace is the level editor's geometry-editing state: which level,
+	// which chunk, what is selected, what the gizmo has hold of, the stamp, the
+	// snap. Embedded rather than a named field so that Editor.level,
+	// Editor.SelectedFaces and the rest still read the way they always have —
+	// what changed is that the *shared* brush tools reach it through ws()
+	// instead, because the entity editor holds a second one.
+	// See editor_workspace.go.
+	brushWorkspace
 
 	// Draw the world bounding box of every object that has one, over whatever
 	// shading is on. See editor_3d_bounds.go.
 	ShowBounds bool
-
-	// BrushPlaceActive is true while the brush stamp is armed, and it survives
-	// the click that uses it: blocking out a room is a dozen boxes in a row,
-	// and a trip back through the Add menu for each of them is not a workflow.
-	// The scenery brush is armed on the same terms, and for the same reason —
-	// see editor_scenery.go. BrushPlaceKind is which primitive it stamps, one
-	// of the brushKind* constants.
-	BrushPlaceActive bool
-	BrushPlaceKind   string
-
-	// --- Move/rotate/scale gizmos ---
-	GizmoState
-	// One-shot request from a selection change to open (and scroll to) a
-	// properties section in the side panel. See the panelFocus* constants;
-	// cleared by the panel once it has been applied.
-	PanelFocus string
 
 	// SelectedLightKind is which light the panel's Lights properties block is
 	// showing: "" for none, or one of the lightKind* constants. Selecting a
@@ -363,10 +310,6 @@ type EditorState struct {
 	PanDragging3D        bool
 	LastDragX, LastDragY int32
 
-	// Drag step / snap-to-grid
-	StepSize   float32 // drag speed; also snap quantum
-	SnapToGrid bool    // round values to nearest StepSize multiple
-
 	// Side panel width (resizable by dragging the left edge)
 	PanelWidth    float32
 	PanelDragging bool
@@ -380,9 +323,6 @@ type EditorState struct {
 
 	// Frame timing
 	LastTick uint32
-
-	// Level reference (set by EditorInit)
-	level *world.Level
 
 	// Pending save path
 	SavePath string

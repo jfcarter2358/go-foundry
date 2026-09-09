@@ -141,7 +141,7 @@ func editorEntityProperties(lvl *world.Level) {
 	editorPropGroup("Collision##entcol", 0, func() { editorEntityCollisionSection(e) })
 	editorPropGroup("Vehicle##entveh", 0, func() { editorEntityVehicleSection(lvl, e) })
 	editorPropGroup("Models##entmodels", 0, func() { editorEntityModels(e) })
-	editorPropGroup("Chunks##entchunks", 0, func() { editorEntityChunks(lvl, e) })
+	editorPropGroup("Chunks##entchunks", 0, func() { editorEntityGeometry(lvl, e) })
 	// An entity's tags and attributes are merged from its definition rather
 	// than held in a ScriptData, so the three rows are assembled here instead
 	// of through editorScriptDataUI — under the same "Scripting" group name
@@ -776,93 +776,45 @@ func editorDragFloat3Step(label string, values *[3]float32, min, max float32, fo
 	return changed
 }
 
-// ---------- carried chunks ----------
+// ---------- carried geometry ----------
 
-// editorEntityChunks draws the entity's chunk attachments: the world geometry
-// it carries with it (world/entity_chunk.go).
+// editorEntityGeometry says what solid the entity carries, and points at where
+// it is edited.
 //
-// Deliberately thinner than the entity editor's version of the same list. This
-// panel edits one placement, and the reason to touch an attachment from here is
-// to move a deck a few centimetres or to switch one off — laying out a ship's
-// interior is what the other window is for, and the note at the bottom says so.
-func editorEntityChunks(lvl *world.Level, e *world.Entity) {
-	if len(e.Chunks) == 0 {
-		editorTextWrapped("None. A chunk attachment gives the entity floors to stand on " +
-			"and walls to bump into, carried wherever it goes — a ship's hold, a lift car.")
-	}
-	for i := range e.Chunks {
-		if editorEntityChunkRow(lvl, e, i) {
-			return // the list was rewritten; resume next frame
+// Read-only, deliberately. Geometry used to be a list of chunk-file attachments
+// with an offset each, which was worth editing per placement because the file
+// was shared; a type's brushes are the type's, and shaping them on one barrel
+// means every level that places that barrel diverges from it. The entity editor
+// is one click away and edits the thing an author actually means.
+func editorEntityGeometry(lvl *world.Level, e *world.Entity) {
+	if !e.HasBrushes() {
+		editorTextWrapped("None. Brushes give the entity floors to stand on and walls to " +
+			"bump into, carried wherever it goes — a ship's hold, a lift car — and a " +
+			"body that walks inside them is carried with it.")
+	} else {
+		imgui.Text(fmt.Sprintf("%d brush(es), as chunk %s",
+			len(e.Brushes), world.EntityGeometryChunkID(e.ID)))
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("The chunk this entity's solid becomes in the level, bound to\n" +
+				"its frame. The level file does not store the geometry — the\n" +
+				"type does, and a blank entity stores its own.")
 		}
-	}
-
-	if imgui.Button("Add Chunk##entchunkadd") {
-		EditorPushUndo()
-		e.Chunks = append(e.Chunks, world.EntityChunk{
-			Name:  world.UniqueEntityChunkName(e, "chunk"),
-			Scale: 1,
-		})
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("A new attachment with no chunk file yet.\nPick one for it below.")
+		for i := range e.Brushes {
+			imgui.Text("  \u2022 " + world.EntityBrushID(e.ID, e.Brushes[i].ID))
+		}
 	}
 
 	if e.Type != "" {
-		editorTextWrapped("This entity has a type, so a change here is stored in the level " +
-			"as an override on " + e.Type + " — and chunk attachments override as a whole " +
-			"list, not field by field. Edit the type instead unless this one placement " +
-			"really is different.")
+		if imgui.Button("Edit Type##entgeomedit") {
+			OpenEntityEditorOn(e.Type)
+		}
+		editorTextWrapped("Shaped in the entity editor, on the type — so the change reaches " +
+			"every " + e.Type + " in the game rather than this one.")
+		return
 	}
-}
-
-// editorEntityChunkRow draws one attachment. Reports whether the list was
-// structurally changed, which ends the caller's iteration for this frame.
-func editorEntityChunkRow(lvl *world.Level, e *world.Entity, idx int) bool {
-	c := &e.Chunks[idx]
-	imgui.PushID(fmt.Sprintf("entchunk%d", idx))
-	defer imgui.PopID()
-
-	changed := false
-	editorPropGroupOpen(c.Name+"##hdr", func() {
-		imgui.Text("Chunk: " + world.EntityChunkID(e.ID, c.Name))
-		if imgui.IsItemHovered() {
-			imgui.SetTooltip("The ID this deck has in the level, and what a script\naddresses it by.")
-		}
-		imgui.SameLine()
-		if imgui.Button("x##cdel") {
-			EditorPushUndo()
-			e.Chunks = append(e.Chunks[:idx:idx], e.Chunks[idx+1:]...)
-			editorMaterializeEntityChunks(lvl, e)
-			changed = true
-			return
-		}
-
-		file := c.File
-		if entityChunkFileCombo("File##cfile", &file) {
-			EditorPushUndo()
-			c.File = file
-			editorMaterializeEntityChunks(lvl, e)
-		}
-
-		off := [3]float32{c.Offset.X(), c.Offset.Y(), c.Offset.Z()}
-		if editorDragFloat3Step("Offset##coff", &off, -10000, 10000, "%.3f", 0.05) {
-			c.Offset = mgl32.Vec3{off[0], off[1], off[2]}
-			editorMaterializeEntityChunks(lvl, e)
-		}
-		rot := mgl32.RadToDeg(c.Rotation)
-		if editorDragFloatStep("Rotation (deg)##crot", &rot, -360, 360, "%.1f", 1) {
-			c.Rotation = mgl32.DegToRad(rot)
-			editorMaterializeEntityChunks(lvl, e)
-		}
-		scale := c.EffectiveScale()
-		if editorDragFloatStep("Scale##cscale", &scale, 0.01, 100, "%.3f", 0.01) {
-			c.Scale = scale
-			editorMaterializeEntityChunks(lvl, e)
-		}
-		if imgui.Checkbox("Starts disabled##cdis", &c.Disabled) {
-			EditorPushUndo()
-			editorMaterializeEntityChunks(lvl, e)
-		}
-	})
-	return changed
+	if imgui.Button("Make Type##entgeommake") {
+		OpenEntityEditorFrom(e)
+	}
+	editorTextWrapped("This entity has no type, so its brushes are its own. Promote it to a " +
+		"type to shape them with the 3D view's tools.")
 }

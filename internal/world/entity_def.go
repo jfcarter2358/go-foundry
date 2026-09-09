@@ -24,6 +24,8 @@ package world
 //	            attachment's mesh, texture, transform and visibility. An
 //	            attachment the definition does not have is one the instance
 //	            added, and is written out in full
+//	brushes     replaced wholesale, or inherited untouched — see
+//	            RawEntity.Brushes
 //
 // A level may also place an entity with no type at all. That is what the
 // editor's "blank entity" is: a thing authored where it stands, carrying its
@@ -169,7 +171,7 @@ type RawEntityDef struct {
 	Visible     *bool                   `yaml:"visible,omitempty"` // default true when absent
 	Collision   *RawEntityCollision     `yaml:"collision,omitempty"`
 	Models      []RawEntityModel        `yaml:"models,omitempty"`
-	Chunks      []RawEntityChunk        `yaml:"chunks,omitempty"` // see entity_chunk.go
+	Brushes     []RawBrush              `yaml:"brushes,omitempty"` // see entity_brush.go
 	Attributes  map[string]RawAttribute `yaml:"attributes,omitempty"`
 	Script      string                  `yaml:"script,omitempty"`      // .flang file driving this type's behaviour
 	Params      map[string]RawAttribute `yaml:"params,omitempty"`      // defaults for that script's `param` declarations
@@ -201,12 +203,12 @@ type RawEntity struct {
 	Params        map[string]RawAttribute `yaml:"params,omitempty"`    // script params, overlaid on the definition's
 	Collision     *RawEntityCollision     `yaml:"collision,omitempty"` // per-flag overrides
 	Models        []RawEntityModel        `yaml:"models,omitempty"`    // per-attachment overrides, matched by name
-	// Chunks is this instance's world-geometry attachments. Written whole or
-	// not at all, the way the vehicle block is and for the same reason: a
-	// per-field diff would have to invent a way to say "this deck was removed",
-	// and the list is short enough that restating it costs less than that
-	// machinery would.
-	Chunks []RawEntityChunk `yaml:"chunks,omitempty"`
+	// Brushes is this instance's own geometry. Written whole or not at all, the
+	// way the vehicle block is and for the same reason: a per-field diff would
+	// have to invent a way to say "this brush was removed", and an instance
+	// that has diverged from its type's shape at all has usually diverged
+	// wholesale.
+	Brushes []RawBrush `yaml:"brushes,omitempty"`
 	// Script overrides the definition's. A pointer so the three cases stay
 	// distinct: absent follows the type, "" detaches the script this instance
 	// would otherwise have inherited, and a name replaces it.
@@ -252,11 +254,11 @@ type EntityDef struct {
 	// copies them and the copy is what gets loaded — so one definition can back
 	// any number of placed entities.
 	Models []EntityModel
-	// Chunks are the type's world-geometry attachments. Like Models they hold
-	// no GPU state — the level materialises a chunk per attachment per instance
-	// (levelio/entity_chunks.go) — so one definition can back any number of
-	// placed ships.
-	Chunks     []EntityChunk
+	// Brushes are the type's own solid geometry, in its local space. Like
+	// Models they hold no GPU state — the level materialises one frame-owned
+	// chunk per instance from them (levelio/entity_geometry.go) — so one
+	// definition can back any number of placed ships.
+	Brushes    []Brush
 	Attributes AttrSet
 	// Params are the type's defaults for its script's `param` declarations. An
 	// instance overrides them one name at a time.
@@ -416,11 +418,11 @@ func entityDefFromRaw(raw RawEntityDef, name string) (*EntityDef, error) {
 		def.Models = append(def.Models, m)
 	}
 
-	chunks, err := entityChunksFromRaw(raw.Chunks)
+	brushes, err := entityBrushesFromRaw(raw.Brushes, fmt.Sprintf("entity definition %q", id))
 	if err != nil {
-		return nil, fmt.Errorf("entity definition %q: %w", id, err)
+		return nil, err
 	}
-	def.Chunks = chunks
+	def.Brushes = brushes
 	return def, nil
 }
 
@@ -446,7 +448,7 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 	for i := range def.Models {
 		raw.Models = append(raw.Models, entityModelToRaw(&def.Models[i]))
 	}
-	raw.Chunks = entityChunksToRaw(def.Chunks)
+	raw.Brushes = entityBrushesToRaw(def.Brushes)
 	return raw
 }
 
@@ -475,7 +477,7 @@ func (d *EntityDef) Instantiate(id string) Entity {
 		Attributes:   d.Attributes.Clone(),
 		ScriptParams: d.Params.Clone(),
 		Vehicle:      d.Vehicle,
-		Chunks:       cloneEntityChunks(d.Chunks),
+		Brushes:      CloneEntityBrushes(d.Brushes),
 	}
 	for i := range d.Models {
 		e.Models = append(e.Models, d.Models[i].TemplateCopy())
@@ -647,16 +649,16 @@ func EntityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 		e.Models = append(e.Models, m)
 	}
 
-	// Chunk attachments replace the definition's wholesale rather than merging
-	// per name — see RawEntity.Chunks. An instance that mentions none keeps the
-	// type's, which is the case that matters: a level places a shuttle and gets
-	// the shuttle's decks without restating them.
-	if len(r.Chunks) > 0 {
-		chunks, err := entityChunksFromRaw(r.Chunks)
+	// Brushes replace the definition's wholesale rather than merging per ID —
+	// see RawEntity.Brushes. An instance that mentions none keeps the type's,
+	// which is the case that matters: a level places a shuttle and gets the
+	// shuttle's hull without restating it.
+	if len(r.Brushes) > 0 {
+		brushes, err := entityBrushesFromRaw(r.Brushes, fmt.Sprintf("entity %q", id))
 		if err != nil {
-			return Entity{}, fmt.Errorf("entity %q: %w", id, err)
+			return Entity{}, err
 		}
-		e.Chunks = chunks
+		e.Brushes = brushes
 	}
 	return e, nil
 }
@@ -702,7 +704,7 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 		for i := range e.Models {
 			r.Models = append(r.Models, entityModelToRaw(&e.Models[i]))
 		}
-		r.Chunks = entityChunksToRaw(e.Chunks)
+		r.Brushes = entityBrushesToRaw(e.Brushes)
 		return r
 	}
 
@@ -734,8 +736,8 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 		}
 	}
 	// Whole list or nothing, exactly as the vehicle block above.
-	if !entityChunksEqual(def.Chunks, e.Chunks) {
-		r.Chunks = entityChunksToRaw(e.Chunks)
+	if !EntityBrushesEqual(def.Brushes, e.Brushes) {
+		r.Brushes = entityBrushesToRaw(e.Brushes)
 	}
 	return r
 }

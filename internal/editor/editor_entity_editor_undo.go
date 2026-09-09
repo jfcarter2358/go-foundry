@@ -86,6 +86,10 @@ func entityApplySnapshot(snap entityDefSnapshot) {
 	entityClampSelection()
 	entityMarkDirty()
 	entityPreviewInvalidate()
+	// The document's brushes have been replaced, so the live ones the viewport
+	// is drawing and the tools are editing are now the wrong ones. See
+	// entityGeomDirty.
+	entityInvalidateGeometry()
 }
 
 // entityClampSelection drops a selection that no longer points at anything.
@@ -98,8 +102,8 @@ func entityClampSelection() {
 	switch entitySel.Kind {
 	case entitySelModel:
 		n = len(entityDef.Models)
-	case entitySelChunk:
-		n = len(entityDef.Chunks)
+	case entitySelBrush:
+		n = entityBrushCount()
 	case entitySelSeat:
 		if entityDef.Vehicle != nil {
 			n = len(entityDef.Vehicle.Seats)

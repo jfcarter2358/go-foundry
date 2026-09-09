@@ -27,7 +27,6 @@ package editor
 // edges exist.
 
 import (
-	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"math"
 	"sort"
@@ -166,7 +165,7 @@ func edgePrism(p0, p1 mgl32.Vec3) (center mgl32.Vec3, axes [3]mgl32.Vec3, half m
 // and there is nothing left to click.
 func edgeTrim(p, u mgl32.Vec3) float32 {
 	half := worldSizeForPixels(p, vertexHandleHalfPx)
-	view := p.Sub(gfx.Cam.Position)
+	view := p.Sub(ws().camPos())
 	if view.Len() < 1e-5 {
 		return half
 	}
@@ -196,12 +195,12 @@ func rayOBBIntersect(origin, dir, center mgl32.Vec3, axes [3]mgl32.Vec3, half mg
 // vertexHandleMaxDist of the camera and whose projected segment passes within
 // maxPx of (mx, my), nearest first.
 func collectEdgeHandles(mx, my int32, maxPx float32) []edgeHandle {
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil {
 		return nil
 	}
 	cursor := mgl32.Vec2{float32(mx), float32(my)}
-	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
+	projView := ws().projView()
 
 	var out []edgeHandle
 	for ci := range lvl.Chunks {
@@ -263,7 +262,7 @@ func buildEdgeHandle(sel edgeSel, projView mgl32.Mat4, cursor mgl32.Vec2, maxPx 
 	}
 	// An edge is only reachable where both of its points are, so distant
 	// geometry cannot hijack a click here either.
-	if p0.Sub(gfx.Cam.Position).Len() > vertexHandleMaxDist || p1.Sub(gfx.Cam.Position).Len() > vertexHandleMaxDist {
+	if p0.Sub(ws().camPos()).Len() > vertexHandleMaxDist || p1.Sub(ws().camPos()).Len() > vertexHandleMaxDist {
 		return edgeHandle{}, false
 	}
 
@@ -297,14 +296,14 @@ func buildEdgeHandle(sel edgeSel, projView mgl32.Mat4, cursor mgl32.Vec2, maxPx 
 		axes:    axes,
 		half:    half,
 		screenD: d,
-		depth:   center.Sub(gfx.Cam.Position).Len(),
+		depth:   center.Sub(ws().camPos()).Len(),
 	}, true
 }
 
 // edgePrismContains reports whether the cursor's view ray passes through a
 // handle's prism — the edge equivalent of handleBoxContains.
 func edgePrismContains(h edgeHandle, mx, my int32) bool {
-	origin, dir := screenRay(mx, my)
+	origin, dir := ws().ray(mx, my)
 	hit, _ := rayOBBIntersect(origin, dir, h.center, h.axes, h.half)
 	return hit
 }

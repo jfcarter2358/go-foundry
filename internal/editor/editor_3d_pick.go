@@ -15,9 +15,7 @@ package editor
 // ctrl+click selects all of them at once.
 
 import (
-	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
-	"foundry/internal/platform"
 	"foundry/internal/world"
 	"math"
 	"sort"
@@ -198,11 +196,11 @@ func pickEntityT(origin, dir mgl32.Vec3, e *world.Entity) float32 {
 // clickable thing in the level.
 func pick3D(sx, sy int32) pickHit {
 	hit := pickHit{kind: pickNone, t: float32(math.MaxFloat32), chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: -1}
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil {
 		return hit
 	}
-	origin, dir := screenRay(sx, sy)
+	origin, dir := ws().ray(sx, sy)
 
 	// The spawn marker — exact mesh when it has been uploaded, its AABB
 	// otherwise. It is the only non-geometry thing in the level a click can
@@ -282,7 +280,7 @@ func pick3D(sx, sy int32) pickHit {
 	// the reason volumes are: a cutout sprite standing flush against a wall
 	// should not steal the click meant for the wall.
 	for si := range lvl.Sprites {
-		if t := pickSpriteRayT(origin, dir, lvl, &lvl.Sprites[si], gfx.Cam.Position); t < float32(math.MaxFloat32) {
+		if t := pickSpriteRayT(origin, dir, lvl, &lvl.Sprites[si], ws().camPos()); t < float32(math.MaxFloat32) {
 			hit.consider(t, pickSprite, -1, si)
 		}
 	}
@@ -301,7 +299,7 @@ func pick3D(sx, sy int32) pickHit {
 	// geometry of its own — what it produces is the whole of what you see — so
 	// the marker is the only thing there is to click.
 	for ei := range lvl.Emitters {
-		if t := pickEmitterRayT(origin, dir, lvl, &lvl.Emitters[ei], gfx.Cam.Position); t < float32(math.MaxFloat32) {
+		if t := pickEmitterRayT(origin, dir, lvl, &lvl.Emitters[ei], ws().camPos()); t < float32(math.MaxFloat32) {
 			hit.consider(t, pickEmitter, -1, ei)
 		}
 	}
@@ -309,7 +307,7 @@ func pick3D(sx, sy int32) pickHit {
 	// Sounds, against their marker disc, for the same reason: a sound has
 	// nothing to see except the marker drawn for it.
 	for si := range lvl.Sounds {
-		if t := pickSoundRayT(origin, dir, lvl, &lvl.Sounds[si], gfx.Cam.Position); t < float32(math.MaxFloat32) {
+		if t := pickSoundRayT(origin, dir, lvl, &lvl.Sounds[si], ws().camPos()); t < float32(math.MaxFloat32) {
 			hit.consider(t, pickSound, -1, si)
 		}
 	}
@@ -382,7 +380,8 @@ func pickPointLightT(origin, dir mgl32.Vec3, pl *world.PointLight) float32 {
 }
 
 func projectToScreen(projView mgl32.Mat4, p mgl32.Vec3) (mgl32.Vec2, bool) {
-	return projectToScreenIn(projView, p, platform.WinWidth, platform.WinHeight)
+	w, h := ws().viewSize()
+	return projectToScreenIn(projView, p, w, h)
 }
 
 // projectToScreenIn is projectToScreen against an explicit viewport size, for
@@ -405,7 +404,8 @@ func projectToScreenIn(projView mgl32.Mat4, p mgl32.Vec3, viewW, viewH int32) (m
 // pixels vertically at point p, so a gizmo drawn with it keeps a constant
 // on-screen size regardless of distance.
 func worldSizeForPixels(p mgl32.Vec3, halfPx float32) float32 {
-	return worldSizeForPixelsIn(p, gfx.Cam.Position, halfPx, gfx.Projection.At(1, 1), platform.WinHeight)
+	_, h := ws().viewSize()
+	return worldSizeForPixelsIn(p, ws().camPos(), halfPx, ws().projYY(), h)
 }
 
 // worldSizeForPixelsIn is worldSizeForPixels against an explicit camera,
@@ -487,12 +487,12 @@ type vertexHandle struct {
 // (mx, my), nearest first. maxPx of vertexHandleShowAllPx drops that second
 // test altogether — see handleShowsAll.
 func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil {
 		return nil
 	}
 	cursor := mgl32.Vec2{float32(mx), float32(my)}
-	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
+	projView := ws().projView()
 
 	var out []vertexHandle
 	for ci := range lvl.Chunks {
@@ -510,7 +510,7 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 				// projection, camera distance, the eventual selection) wants
 				// world space.
 				pos := ch.LocalToWorld(v)
-				depth := pos.Sub(gfx.Cam.Position).Len()
+				depth := pos.Sub(ws().camPos()).Len()
 				if depth > vertexHandleMaxDist {
 					continue
 				}
@@ -579,7 +579,7 @@ func vertexHandlesInBox(mx, my int32) []vertexHandle {
 
 // isVertexSelected reports whether sel is part of the current selection.
 func isVertexSelected(sel vertexSel) bool {
-	for _, s := range Editor.SelectedVertices {
+	for _, s := range ws().SelectedVertices {
 		if s == sel {
 			return true
 		}
@@ -613,7 +613,7 @@ func selectVertexHandle(h vertexHandle) {
 // ctrl+click path, which grabs every vertex whose box covers the cursor so
 // they can be dragged or collapsed onto one coordinate together.
 func addVertexHandlesToSelection(sels []vertexSel) {
-	merged := append([]vertexSel{}, Editor.SelectedVertices...)
+	merged := append([]vertexSel{}, ws().SelectedVertices...)
 	for _, sel := range sels {
 		dup := false
 		for _, existing := range merged {
@@ -637,25 +637,25 @@ func setVertexSelection(sels []vertexSel) {
 	// very list on its way past. sels is always a fresh slice by here — the
 	// ctrl+click path copies before calling — so nothing is lost to it.
 	editorClearObjectSelections()
-	Editor.SelectedVertices = sels
+	ws().SelectedVertices = sels
 
 	if len(sels) == 0 {
-		Editor.GizmoKind = gizmoKindNone
+		ws().GizmoKind = gizmoKindNone
 		return
 	}
 	primary := sels[0]
-	Editor.ActiveChunkIdx = primary.chunkIdx
-	Editor.ActiveBrushIdx = primary.brushIdx
-	Editor.GizmoKind = gizmoKindVertices
-	Editor.PanelFocus = panelFocusVertex
+	ws().ActiveChunkIdx = primary.chunkIdx
+	ws().ActiveBrushIdx = primary.brushIdx
+	ws().GizmoKind = gizmoKindVertices
+	ws().PanelFocus = panelFocusVertex
 }
 
 // clearVertexSelection drops every selected vertex, and with it the vertex
 // translate gizmo.
 func clearVertexSelection() {
-	Editor.SelectedVertices = nil
-	if Editor.GizmoKind == gizmoKindVertices {
-		Editor.GizmoKind = gizmoKindNone
+	ws().SelectedVertices = nil
+	if ws().GizmoKind == gizmoKindVertices {
+		ws().GizmoKind = gizmoKindNone
 	}
 }
 
@@ -679,7 +679,7 @@ func vertexSelPos(sel vertexSel) (mgl32.Vec3, bool) {
 // vertexSelBrush resolves the chunk and brush a vertex selection names, or nil
 // when the indices no longer point at live geometry.
 func vertexSelBrush(sel vertexSel) (*world.Chunk, *world.Brush) {
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil || sel.chunkIdx < 0 || sel.chunkIdx >= len(lvl.Chunks) {
 		return nil, nil
 	}
@@ -695,7 +695,7 @@ func vertexSelBrush(sel vertexSel) (*world.Chunk, *world.Brush) {
 func selectedVerticesCenter() (mgl32.Vec3, bool) {
 	var sum mgl32.Vec3
 	n := 0
-	for _, sel := range Editor.SelectedVertices {
+	for _, sel := range ws().SelectedVertices {
 		if pos, ok := vertexSelPos(sel); ok {
 			sum = sum.Add(pos)
 			n++
@@ -760,15 +760,15 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	// of five brushes is indistinguishable from five loose brushes.
 	DrawPrefabOutlines()
 	drawSelectedVolumeOutline()
-	drawSelectedSpriteOutline(gfx.Cam.Position)
+	drawSelectedSpriteOutline(ws().camPos())
 	drawSelectedSceneryOutline()
 	// The brush's footprint ring, on the same terms: it says where the next
 	// stamp lands, which is exactly the thing the panel cannot show. The brush
 	// stamp's box says the same thing about the next solid.
 	DrawBrushGhostOutline()
 	DrawBrushPlaceGhost()
-	RenderEmitterMarkers(Editor.level, gfx.Cam.Position)
-	RenderSoundMarkers(Editor.level, gfx.Cam.Position)
+	RenderEmitterMarkers(ws().level, ws().camPos())
+	RenderSoundMarkers(ws().level, ws().camPos())
 
 	if offWorld {
 		// Nothing is under the cursor, so no handle reads as hovered and the
@@ -799,7 +799,7 @@ func drawSelModeHandles(mx, my int32, showPx float32) {
 		// is exactly the confusion the modes exist to remove.
 		return
 	}
-	switch Editor.SelMode {
+	switch ws().SelMode {
 	case editorSelPoint:
 		drawVertexHandleBoxes(mx, my, showPx)
 	case editorSelEdge:
@@ -812,7 +812,7 @@ func drawSelModeHandles(mx, my int32, showPx float32) {
 func drawVertexHandleBoxes(mx, my int32, showPx float32) {
 	// Selected vertices stay marked wherever they are, so a multi-selection
 	// is visible while the cursor is over the gizmo instead of the vertices.
-	for _, sel := range Editor.SelectedVertices {
+	for _, sel := range ws().SelectedVertices {
 		if pos, ok := vertexSelPos(sel); ok {
 			gizmoBox(pos, vertexHandleHalfPx, mgl32.Vec3{1, 1, 0})
 		}

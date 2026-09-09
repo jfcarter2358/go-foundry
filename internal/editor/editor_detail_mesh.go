@@ -292,8 +292,8 @@ func detailMeshHandleKey(sc sdl.Scancode, shift bool) bool {
 // snapping is on, so detail lands on the same grid the level is built to, and a
 // small fixed step otherwise.
 func detailExtrudeDefault() float32 {
-	if Editor.SnapToGrid && Editor.StepSize > 0 {
-		return Editor.StepSize
+	if ws().SnapToGrid && ws().StepSize > 0 {
+		return ws().StepSize
 	}
 	return detailExtrudeStep
 }
@@ -305,16 +305,16 @@ func detailExtrudeSelection(dist float32) {
 	if !ok {
 		return
 	}
-	EditorPushUndo()
+	ws().pushUndo()
 	caps := detailExtrudeMesh(m, faces, dist)
 	if len(caps) == 0 {
 		EditorPopUndo()
-		editorSetStatus("Nothing to extrude: the selected faces have no common direction")
+		ws().setStatus("Nothing to extrude: the selected faces have no common direction")
 		return
 	}
 	detailGeometryChanged()
 	detailSelectFaces(caps)
-	editorSetStatus("Extruded %d detail face(s) by %.3f", len(caps), dist)
+	ws().setStatus("Extruded %d detail face(s) by %.3f", len(caps), dist)
 }
 
 func detailSubdivideSelection() {
@@ -322,7 +322,7 @@ func detailSubdivideSelection() {
 	if !ok {
 		return
 	}
-	EditorPushUndo()
+	ws().pushUndo()
 	children := detailSubdivideMesh(m, faces)
 	if len(children) == 0 {
 		EditorPopUndo()
@@ -330,7 +330,7 @@ func detailSubdivideSelection() {
 	}
 	detailGeometryChanged()
 	detailSelectFaces(children)
-	editorSetStatus("Subdivided %d detail face(s) into %d", len(faces), len(children))
+	ws().setStatus("Subdivided %d detail face(s) into %d", len(faces), len(children))
 }
 
 func detailSmoothSelection() {
@@ -338,17 +338,17 @@ func detailSmoothSelection() {
 	if ch == nil || b == nil || b.Detail == nil {
 		return
 	}
-	EditorPushUndo()
+	ws().pushUndo()
 	if !detailSmoothMesh(b.Detail) {
 		EditorPopUndo()
-		editorSetStatus("Nothing to smooth")
+		ws().setStatus("Nothing to smooth")
 		return
 	}
 	detailGeometryChanged()
 	// Every face is new, so there is no selection to carry: smoothing acts on
 	// the whole mesh rather than on what was picked.
 	clearFaceSelection()
-	editorSetStatus("Smoothed %s's detail mesh into %d faces", b.ID, len(b.Detail.Faces))
+	ws().setStatus("Smoothed %s's detail mesh into %d faces", b.ID, len(b.Detail.Faces))
 }
 
 func detailDeleteSelection() {
@@ -356,7 +356,7 @@ func detailDeleteSelection() {
 	if !ok {
 		return
 	}
-	EditorPushUndo()
+	ws().pushUndo()
 	if !detailDeleteMesh(m, faces) {
 		EditorPopUndo()
 		return
@@ -366,7 +366,7 @@ func detailDeleteSelection() {
 	// the mesh no longer uses, so nothing the selection named survives.
 	clearFaceSelection()
 	clearVertexSelection()
-	editorSetStatus("Deleted %d detail face(s)", len(faces))
+	ws().setStatus("Deleted %d detail face(s)", len(faces))
 }
 
 // detailOpTarget is the precondition every tool above shares: detail mode is
@@ -379,7 +379,7 @@ func detailOpTarget(what string) (*world.BrushMesh, []int, bool) {
 	}
 	faces := detailFaceIndices()
 	if len(faces) == 0 {
-		editorSetStatus("Select a detail face to %s", what)
+		ws().setStatus("Select a detail face to %s", what)
 		return nil, nil, false
 	}
 	return b.Detail, faces, true

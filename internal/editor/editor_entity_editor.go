@@ -14,9 +14,10 @@ package editor
 //
 //	models   .fmdl/.obj attachments, each with its own transform and its own
 //	         named animations — what the thing looks like
-//	chunks   world geometry carried by the entity (world/entity_chunk.go) —
-//	         floors to stand on, walls to bump into. This is what makes a
-//	         drivable ship a type rather than a level's hand-wiring
+//	brushes  the type's own solid (world/entity_brush.go) — floors to stand on,
+//	         walls to bump into, a door a script slides open. Shaped here with
+//	         the level editor's own tools, and what makes a ship with a
+//	         walkable hold a type rather than a level's hand-wiring
 //	script    the .flang file driving it, with its parameters bound here as
 //	         the type's defaults
 //	data      tags, attributes, bounds, collision flags, and a vehicle block
@@ -102,7 +103,11 @@ type entitySelKind int
 const (
 	entitySelNone entitySelKind = iota
 	entitySelModel
-	entitySelChunk
+	// entitySelBrush is one of the type's own solids. Idx indexes the scratch
+	// chunk's brush list, which is the same index the shared object-mode
+	// selection uses — see editor_entity_editor_brushes.go, and entitySelectBrush
+	// for why the two are always set together.
+	entitySelBrush
 	entitySelSeat
 )
 
@@ -412,6 +417,10 @@ func (c *entityCamera) frame() {
 // ---------- input ----------
 
 func entityEditorHandleEvent(event sdl.Event) {
+	// Every path below can reach the shared brush tools, and they resolve
+	// geometry through ws(). See editor_entity_editor_input.go.
+	defer entityUseWorkspace()()
+
 	io := imgui.CurrentIO()
 	switch t := event.(type) {
 	case sdl.MouseButtonEvent:
@@ -421,11 +430,14 @@ func entityEditorHandleEvent(event sdl.Event) {
 		down := t.Type == sdl.MOUSEBUTTONDOWN
 		switch t.Button {
 		case sdl.ButtonLeft:
-			// The gizmo owns the left button in the viewport. A click that
-			// misses every handle falls through to nothing, which is what a
-			// left click here has always done — selection is the outline's job.
+			// The gizmo owns the left button first — a click that lands on a
+			// handle is a drag, not a selection. A click that misses every
+			// handle falls through to the geometry, so picking a brush, a face,
+			// an edge or a corner works here the way it works in the 3D view.
 			if down {
-				entityGizmoMouseDown(t.X, t.Y)
+				if !entityGizmoMouseDown(t.X, t.Y) {
+					entityGeometryClick(t.X, t.Y, sdl.GetModState()&sdl.KMOD_CTRL != 0)
+				}
 			} else {
 				entityGizmoMouseUp()
 			}
@@ -466,6 +478,15 @@ func entityEditorHandleEvent(event sdl.Event) {
 
 	case sdl.KeyboardEvent:
 		if t.Type != sdl.KEYDOWN || io.WantCaptureKeyboard() {
+			return
+		}
+		mod := sdl.GetModState()
+		// The geometry shortcuts go first, so E, I, B, Tab and 1/2/3 mean here
+		// what they mean in the 3D view. Each reports whether it acted, and an
+		// unconsumed press falls through to this window's own bindings — which
+		// is what leaves B as the bounds toggle when no face is selected.
+		if entityGeometryHandleKey(t.Keysym.Scancode,
+			mod&sdl.KMOD_CTRL != 0, mod&sdl.KMOD_SHIFT != 0) {
 			return
 		}
 		entityEditorHandleKey(t)
@@ -630,6 +651,10 @@ func drawEntityEditorWindow() {
 	if w == nil {
 		return
 	}
+	// Installed for the whole frame: the panels, the overlays and the gizmo all
+	// reach the shared brush tools, and every one of them resolves geometry
+	// through ws(). See editor_workspace.go.
+	defer entityUseWorkspace()()
 	entityEnsureDoc()
 	entityEditorFlyKeys(platform.DeltaTime)
 
@@ -657,9 +682,12 @@ func drawEntityEditorWindow() {
 	if entityShowSeats {
 		drawEntitySeatMarkers()
 	}
-	drawEntityChunkOutlines()
+	drawEntityGeometryOutline()
 	gizmo.GizmoFlush(projView)
 	gl.Disable(gl.DEPTH_TEST)
+
+	// What is selected, and the handles it can be grabbed by.
+	drawEntityGeometryOverlays(projView)
 
 	// The gizmo after that flush, with depth testing off: a handle inside the
 	// hull is still a handle you need to be able to see and grab, and picking
@@ -673,4 +701,10 @@ func drawEntityEditorWindow() {
 	entityEditorPanel()
 	entityEditorDialogs()
 	entityEndEdits()
+
+	// The document's copy of the brushes, taken once at the end of the frame.
+	// Not sooner: a tool pushes its undo entry before it edits, and the
+	// document has to still be holding the pre-edit state at that moment. See
+	// editor_entity_editor_brushes.go.
+	entityCommitBrushes()
 }

@@ -80,12 +80,13 @@ type Entity struct {
 	// legitimate: an invisible entity is still a position with attributes on it.
 	Models []EntityModel
 
-	// Chunks are the entity's world-geometry attachments — sectors carried
-	// around by it rather than fixed in the level (see entity_chunk.go). Each
-	// one is materialised into the level as a frame-owned chunk when the entity
-	// is placed or the level is loaded, which is what makes a ship with a
-	// walkable hold a *type* rather than a level's hand-wiring.
-	Chunks []EntityChunk
+	// Brushes are the solid the entity is built out of: convex polyhedra in the
+	// entity's own local space, the same ones a level is built from (see
+	// entity_brush.go). They are materialised into the level as one frame-owned
+	// chunk when the entity is placed or the level is loaded, which is what
+	// makes a ship with a walkable hold a *type* rather than a level's
+	// hand-wiring — and what lets a body stand inside one and be carried.
+	Brushes []Brush
 
 	// Script is the .flang file driving this entity's behaviour, resolved from
 	// the definition and optionally overridden per instance. Empty means the

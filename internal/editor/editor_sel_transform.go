@@ -74,7 +74,7 @@ func setSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl32.
 // geometry, so nothing here needs a GL context.
 func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl32.Vec3) vertexWriteback {
 	out := vertexWriteback{touchedBrushes: map[[2]int]struct{}{}}
-	if Editor.level == nil {
+	if ws().level == nil {
 		return out
 	}
 	// Whatever the gizmo is dragging: the vertex selection, or the handles a
@@ -114,7 +114,7 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 // rotation would have skewed it off.
 func setSelectedVertexLocals(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl32.Vec3) {
 	out := vertexWriteback{touchedBrushes: map[[2]int]struct{}{}}
-	if Editor.level != nil {
+	if ws().level != nil {
 		for i, sel := range gizmoVertexSels() {
 			_, b := vertexSelBrush(sel)
 			m := selMesh(b, sel.detail)
@@ -136,7 +136,7 @@ func setSelectedVertexLocals(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl32
 // touched brush once, then its chunk's bounds, which a moved corner can have
 // grown or shrunk.
 func rebuildAfterVertexWrite(w vertexWriteback) {
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil || w.empty() {
 		return
 	}
@@ -195,7 +195,7 @@ func rotateXZAbout(p, center mgl32.Vec2, angle float32) mgl32.Vec2 {
 // selectionCenterXZ returns the XZ centre of whatever the gizmo acts on: the
 // selected vertices, the selected entity, or the spawn marker.
 func selectionCenterXZ() (mgl32.Vec2, bool) {
-	if len(Editor.SelectedVertices) > 0 {
+	if len(ws().SelectedVertices) > 0 {
 		if c, ok := selectedVerticesCenter(); ok {
 			return mgl32.Vec2{c.X(), c.Z()}, true
 		}

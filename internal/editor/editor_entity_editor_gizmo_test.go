@@ -10,6 +10,7 @@ package editor
 // documents.
 
 import (
+	"foundry/internal/testenv"
 	"foundry/internal/world"
 	"math"
 	"testing"
@@ -23,18 +24,23 @@ func entityGizmoTestDrag(t *testing.T) *world.EntityDef {
 	t.Helper()
 	def := entityTestDoc(t)
 
-	prevGizmo, prevTool, prevSnap := entityGizmo, entityGizmoTool, Editor.SnapToGrid
+	// The gizmo reads ws() for snapping and for what geometry is selected, so
+	// the tests have to install this window's workspace exactly as the window
+	// does — otherwise they would be asking the level editor's questions.
+	t.Cleanup(entityUseWorkspace())
+
+	prevGizmo, prevTool, prevSnap := entityGizmo, entityGizmoTool, entityWS.SnapToGrid
 	t.Cleanup(func() {
-		entityGizmo, entityGizmoTool, Editor.SnapToGrid = prevGizmo, prevTool, prevSnap
+		entityGizmo, entityGizmoTool, entityWS.SnapToGrid = prevGizmo, prevTool, prevSnap
 	})
 	entityGizmo = entityGizmoDrag{}
-	// Off by default: snapping is the level editor's global, and a drag of a
-	// third of a unit landing on a grid line would hide every arithmetic
-	// mistake these tests are here to catch.
-	Editor.SnapToGrid = false
+	// Off by default: a drag of a third of a unit landing on a grid line would
+	// hide every arithmetic mistake these tests are here to catch.
+	entityWS.SnapToGrid = false
+	entityClearGeometrySelection()
+	t.Cleanup(entityClearGeometrySelection)
 
 	def.Models = []world.EntityModel{{Name: "hull", Visible: true}}
-	def.Chunks = []world.EntityChunk{{Name: "hold"}}
 	def.Vehicle = &world.VehicleSpec{Seats: []world.VehicleSeat{{Name: "pilot"}}}
 	return def
 }
@@ -48,7 +54,6 @@ func TestEntityGizmoTargetPerKind(t *testing.T) {
 		wantAxisScale, wantU bool
 	}{
 		{entitySelModel, true, false, true, false},
-		{entitySelChunk, false, true, false, true},
 		// A seat is a point and a facing. There is nothing to scale: its extent
 		// is the occupant's, not its own.
 		{entitySelSeat, false, true, false, false},
@@ -92,14 +97,6 @@ func TestEntityGizmoOffersOnlyRealChannels(t *testing.T) {
 		t.Errorf("a seat's rotation should be Y-only: rotates=%v yOnly=%v", rotates, yOnly)
 	}
 
-	entitySel = entityEditorSelection{Kind: entitySelChunk}
-	if _, yOnly := entityGizmoRotates(); !yOnly {
-		t.Error("a chunk rotates about Y only — its placement has no other angle")
-	}
-	if scales, uniform := entityGizmoScales(); !scales || !uniform {
-		t.Errorf("a chunk scales uniformly only: scales=%v uniform=%v", scales, uniform)
-	}
-
 	entitySel = entityEditorSelection{Kind: entitySelModel}
 	if _, yOnly := entityGizmoRotates(); yOnly {
 		t.Error("a model attachment has a full Euler rotation")
@@ -130,7 +127,7 @@ func TestEntityGizmoMoveWritesTheOffset(t *testing.T) {
 
 	// Snapping rounds the resulting coordinate, not the delta, so a drag lands
 	// on absolute grid multiples.
-	Editor.SnapToGrid, Editor.StepSize = true, 0.5
+	entityWS.SnapToGrid, entityWS.StepSize = true, 0.5
 	entityGizmoApplyMove(2, 0.4)
 	if got, want := def.Models[0].Offset.Z(), float32(3.5); got != want {
 		t.Errorf("snapped drag landed on %v, want %v", got, want)
@@ -151,19 +148,8 @@ func TestEntityGizmoRotateWritesEachKind(t *testing.T) {
 		t.Errorf("X ring wrote %v, want only X changed from {0 0.25 0}", got)
 	}
 
-	// A chunk and a seat carry a single angle, and only the Y ring is offered
-	// for them — an X drag is a stale axis and writes nothing.
-	entitySel = entityEditorSelection{Kind: entitySelChunk}
-	entityGizmo.StartRot = mgl32.Vec3{0, 0.25, 0}
-	entityGizmoApplyRotate(0, quarter)
-	if def.Chunks[0].Rotation != 0 {
-		t.Errorf("an X drag turned a chunk to %v; only Y is offered", def.Chunks[0].Rotation)
-	}
-	entityGizmoApplyRotate(1, quarter)
-	if got := def.Chunks[0].Rotation; !nearly(got, 0.25+quarter) {
-		t.Errorf("Y ring turned the chunk to %v, want %v", got, 0.25+quarter)
-	}
-
+	// A seat carries a single angle, and only the Y ring is offered for it — an
+	// X drag is a stale axis and writes nothing.
 	entitySel = entityEditorSelection{Kind: entitySelSeat}
 	entityGizmo.StartRot = mgl32.Vec3{}
 	entityGizmoApplyRotate(1, quarter)
@@ -186,14 +172,6 @@ func TestEntityGizmoScaleWritesEachKind(t *testing.T) {
 	entityGizmoApplyScale(modelScaleUniformAxis, 3)
 	if got, want := def.Models[0].Scale, (mgl32.Vec3{3, 3, 3}); got != want {
 		t.Errorf("uniform handle wrote %v, want %v", got, want)
-	}
-
-	// A chunk has one factor, and only the centre handle is offered.
-	entitySel = entityEditorSelection{Kind: entitySelChunk}
-	entityGizmo.StartScale = mgl32.Vec3{2, 2, 2}
-	entityGizmoApplyScale(modelScaleUniformAxis, 1.5)
-	if got := def.Chunks[0].Scale; !nearly(got, 3) {
-		t.Errorf("uniform handle scaled the chunk to %v, want 3", got)
 	}
 
 	// A seat has no size at all, and a drag on one writes nothing.
@@ -264,3 +242,99 @@ func TestEntitySetGizmoToolEndsTheDrag(t *testing.T) {
 }
 
 func nearly(a, b float32) bool { return math.Abs(float64(a-b)) < 1e-4 }
+
+// ---------- geometry ----------
+//
+// A brush selection has no transform to write: the shape IS the corner list, so
+// the gizmo resolves the selection down to the handles underneath it and moves
+// those. These pin that the geometry branch is taken at all, and that it uses
+// the same absolute-from-snapshot rule the transform branch does.
+
+// entityGizmoTestGeometry installs a document with one box brush in it and
+// selects that brush in object mode.
+func entityGizmoTestGeometry(t *testing.T) *world.Brush {
+	t.Helper()
+	// The write-back reloads whatever it touched, and a reload is an upload.
+	testenv.WithoutGeometryUploads(t)
+	entityGizmoTestDrag(t)
+
+	ch := world.Chunk{ID: entityGeomChunkID, Scale: 1}
+	ch.Brushes = []world.Brush{
+		world.NewBoxBrush("box", mgl32.Vec3{0, 0, 0}, mgl32.Vec3{1, 1, 1}, "concrete"),
+	}
+	ch.RecomputeBounds()
+	prev := entityGeomLevel
+	entityGeomLevel = &world.Level{Chunks: []world.Chunk{ch}}
+	_ = world.RebuildIndexes(entityGeomLevel)
+	entityWS.level = entityGeomLevel
+	entityWS.ActiveChunkIdx = 0
+	t.Cleanup(func() { entityGeomLevel = prev; entityWS.level = prev })
+
+	setBrushSelection([]brushSel{{chunkIdx: 0, brushIdx: 0}})
+	return &entityGeomLevel.Chunks[0].Brushes[0]
+}
+
+func TestEntityGizmoMovesABrushByItsCorners(t *testing.T) {
+	b := entityGizmoTestGeometry(t)
+	if !entityGeometrySelected() {
+		t.Fatal("a selected brush offered the gizmo nothing to drag")
+	}
+	before := append([]mgl32.Vec3(nil), b.Verts...)
+
+	entityGizmoBeginDrag(editorToolMove, 0, 0, mgl32.Vec3{})
+	if entityGizmo.StartWorld == nil {
+		t.Fatal("the drag did not snapshot the corners; it is writing a transform instead")
+	}
+	entityGizmoApplyMove(0, 2)
+	for i := range b.Verts {
+		if got, want := b.Verts[i].X(), before[i].X()+2; !nearly(got, want) {
+			t.Fatalf("corner %d moved to x=%v, want %v", i, got, want)
+		}
+		if b.Verts[i].Y() != before[i].Y() || b.Verts[i].Z() != before[i].Z() {
+			t.Fatalf("an X drag moved corner %d off its own Y/Z", i)
+		}
+	}
+	// Absolute from the snapshot: the same event twice lands in the same place.
+	entityGizmoApplyMove(0, 2)
+	if got, want := b.Verts[0].X(), before[0].X()+2; !nearly(got, want) {
+		t.Errorf("the drag accumulated: x=%v, want %v", got, want)
+	}
+}
+
+func TestEntityGizmoScalesABrushAboutTheDragOrigin(t *testing.T) {
+	b := entityGizmoTestGeometry(t)
+	center, ok := entityGizmoOrigin()
+	if !ok {
+		t.Fatal("a brush selection has no gizmo origin")
+	}
+	before := append([]mgl32.Vec3(nil), b.Verts...)
+
+	entityGizmoBeginDrag(editorToolScale, modelScaleUniformAxis, 10, center)
+	entityGizmoApplyScale(modelScaleUniformAxis, 2)
+	for i := range b.Verts {
+		want := before[i].Sub(center).Mul(2).Add(center)
+		if !nearly(b.Verts[i].X(), want.X()) || !nearly(b.Verts[i].Y(), want.Y()) ||
+			!nearly(b.Verts[i].Z(), want.Z()) {
+			t.Fatalf("corner %d scaled to %v, want %v", i, b.Verts[i], want)
+		}
+	}
+}
+
+// TestEntityGizmoGeometryBeatsTheOutlineSelection pins the precedence: with a
+// brush picked in the viewport the gizmo drags geometry, whatever row the
+// outline happens to have highlighted. Otherwise clicking a brush and then
+// dragging would silently move the last-selected model attachment.
+func TestEntityGizmoGeometryBeatsTheOutlineSelection(t *testing.T) {
+	b := entityGizmoTestGeometry(t)
+	entitySel = entityEditorSelection{Kind: entitySelModel}
+	before := b.Verts[0].Y()
+
+	entityGizmoBeginDrag(editorToolMove, 1, 0, mgl32.Vec3{})
+	entityGizmoApplyMove(1, 1)
+	if entityDef.Models[0].Offset != (mgl32.Vec3{}) {
+		t.Errorf("the drag wrote the model attachment's offset: %v", entityDef.Models[0].Offset)
+	}
+	if got, want := b.Verts[0].Y(), before+1; !nearly(got, want) {
+		t.Errorf("the drag moved the brush's corner to y=%v, want %v", got, want)
+	}
+}

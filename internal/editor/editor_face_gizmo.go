@@ -24,7 +24,7 @@ package editor
 //     ceiling at each end — because a wall spans the two, and moving only one
 //     pair would tilt it rather than move it.
 //
-// The handles are not a selection: Editor.SelectedVertices stays empty, so the
+// The handles are not a selection: ws().SelectedVertices stays empty, so the
 // right-click menu still offers the face's actions rather than a vertex's, and
 // the vertex panel stays shut. They are derived on demand, which also means a
 // rebuild between two motion events cannot leave them stale.
@@ -46,7 +46,7 @@ import (
 //
 // Every write path below the gizmos (the two setSelectedVertex* functions and
 // writeSelectedVertexWorld) goes through here rather than reading
-// Editor.SelectedVertices directly, which is the whole of what makes a face
+// ws().SelectedVertices directly, which is the whole of what makes a face
 // draggable: with anything but a face selected it is that list, unchanged.
 //
 // The 2D map is deliberately not included — gizmoEffectiveKind is 3D-only, so
@@ -60,7 +60,7 @@ func gizmoVertexSels() []vertexSel {
 		// the solid as one body. See editor_brush_sel.go.
 		return brushVertexSels()
 	}
-	return Editor.SelectedVertices
+	return ws().SelectedVertices
 }
 
 // selectedFaceVertices is every vertex handle the selected faces are built
@@ -69,7 +69,7 @@ func gizmoVertexSels() []vertexSel {
 func selectedFaceVertices() []vertexSel {
 	var out []vertexSel
 	seen := map[vertexSel]bool{}
-	for _, f := range Editor.SelectedFaces {
+	for _, f := range ws().SelectedFaces {
 		for _, sel := range faceVertexSels(f) {
 			if seen[sel] {
 				continue

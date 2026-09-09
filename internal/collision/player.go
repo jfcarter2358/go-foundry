@@ -142,6 +142,19 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 		localPos = StepUp(chunk, mgl32.Vec2{localIntended.X(), localIntended.Z()}, localPos, radius, p.BoundHalfY, stepHeight)
 		newPos = chunkWorld(chunk, localPos)
 
+		// And out of every entity's own solid that the player is not standing
+		// inside. Those brushes are in that entity's coordinates and so are
+		// absent from this frame's chunks entirely — without this the player
+		// would walk through a ship's hull on the way to its hold. Inside the
+		// substep loop rather than after the whole move, so a fast approach
+		// meets the hull on the step it reaches it, and so the ground flags
+		// below are the ones that step actually produced.
+		var eFloor, eCeiling bool
+		newPos, eFloor, eCeiling = resolveAgainstEntityBrushes(
+			lvl, p, frame, newPos, radius, p.BoundHalfY)
+		hitFloor = hitFloor || eFloor
+		hitCeiling = hitCeiling || eCeiling
+
 		// Landing and bonking: kill vertical velocity on contact either way.
 		// Checked per step so a fast fall stops on the frame it arrives rather
 		// than carrying its speed through the rest of the frame's steps.

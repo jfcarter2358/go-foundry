@@ -68,7 +68,7 @@ const (
 // available to whatever else wants them when no face is selected. Caller has
 // already checked that ImGui does not want the keyboard.
 func brushMeshHandleKey(sc sdl.Scancode, shift bool) bool {
-	if Editor.Mode != Mode3D || len(Editor.SelectedFaces) == 0 {
+	if !ws().editing() || len(ws().SelectedFaces) == 0 {
 		return false
 	}
 	switch sc {
@@ -100,8 +100,8 @@ func brushMeshHandleKey(sc sdl.Scancode, shift bool) bool {
 // when snapping is on, so a shaped brush stays on the grid the rest of the
 // level is built to, and a fixed step otherwise.
 func brushExtrudeDefault() float32 {
-	if Editor.SnapToGrid && Editor.StepSize > 0 {
-		return Editor.StepSize
+	if ws().SnapToGrid && ws().StepSize > 0 {
+		return ws().StepSize
 	}
 	return brushExtrudeStep
 }
@@ -121,12 +121,12 @@ func brushExtrudeDefault() float32 {
 // side both move the two verts they have in common, and the second operation
 // has to see what the first did.
 func brushExtrudeSelectedFaces(dist float32) {
-	if len(Editor.SelectedFaces) == 0 || dist == 0 {
+	if len(ws().SelectedFaces) == 0 || dist == 0 {
 		return
 	}
-	EditorPushUndo()
+	ws().pushUndo()
 	n := 0
-	for _, sel := range Editor.SelectedFaces {
+	for _, sel := range ws().SelectedFaces {
 		if sel.detail {
 			// Edit mode's tools are the convexity-preserving ones and they act
 			// on the SOLID. A detail face has its own, in detail mode; running
@@ -151,7 +151,7 @@ func brushExtrudeSelectedFaces(dist float32) {
 	}
 	rebuildSelectedFaceBrushes()
 	warnIfSelectionBrokeConvexity()
-	editorSetStatus("Extruded %d face(s) by %.3f", n, dist)
+	ws().setStatus("Extruded %d face(s) by %.3f", n, dist)
 }
 
 // ---------- inset ----------
@@ -169,12 +169,12 @@ func brushExtrudeSelectedFaces(dist float32) {
 // left alone rather than collapsed: a degenerate loop has no normal, so the
 // next operation on it would have nothing to work from.
 func brushInsetSelectedFaces(fraction float32) {
-	if len(Editor.SelectedFaces) == 0 || fraction == 0 {
+	if len(ws().SelectedFaces) == 0 || fraction == 0 {
 		return
 	}
-	EditorPushUndo()
+	ws().pushUndo()
 	n, skipped := 0, 0
-	for _, sel := range Editor.SelectedFaces {
+	for _, sel := range ws().SelectedFaces {
 		if sel.detail {
 			continue // the solid's tools, on the solid's faces only
 		}
@@ -203,10 +203,10 @@ func brushInsetSelectedFaces(fraction float32) {
 	rebuildSelectedFaceBrushes()
 	warnIfSelectionBrokeConvexity()
 	if skipped > 0 {
-		editorSetStatus("Inset %d face(s); %d too small to inset further", n, skipped)
+		ws().setStatus("Inset %d face(s); %d too small to inset further", n, skipped)
 		return
 	}
-	editorSetStatus("Inset %d face(s)", n)
+	ws().setStatus("Inset %d face(s)", n)
 }
 
 // faceCenter is the average of a face's corners — its centroid for a regular
@@ -259,17 +259,17 @@ func faceMaxRadius(b *world.Brush, f *world.BrushFace, center mgl32.Vec3) float3
 // the other side of that edge with a T-junction to repair. The centre fan adds
 // only interior geometry.
 func brushSubdivideSelectedFaces() {
-	if len(Editor.SelectedFaces) == 0 {
+	if len(ws().SelectedFaces) == 0 {
 		return
 	}
-	EditorPushUndo()
+	ws().pushUndo()
 
 	// Faces are addressed by index and subdividing renumbers them, so the work
 	// is grouped per brush and each brush's faces are rewritten in one pass —
 	// highest index first, so the earlier splits do not move the later ones.
 	perBrush := map[[2]int][]int{}
 	order := [][2]int{}
-	for _, sel := range Editor.SelectedFaces {
+	for _, sel := range ws().SelectedFaces {
 		if sel.detail || faceSelFace(sel) == nil {
 			continue // the solid's tools, on the solid's faces only
 		}
@@ -303,7 +303,7 @@ func brushSubdivideSelectedFaces() {
 	if len(newSels) > 0 {
 		setFaceSelection(newSels)
 	}
-	editorSetStatus("Subdivided %d face(s)", n)
+	ws().setStatus("Subdivided %d face(s)", n)
 }
 
 // subdivideBrushFace replaces face fi with a fan of quads meeting at a new

@@ -28,7 +28,10 @@ package collision
 // # The boundary itself
 //
 // A doorway is an author-placed volume carrying a FrameDoorway (see
-// world/volume_doorway.go), riding the moving side. Which side of it an
+// world/volume_doorway.go), riding the moving side. An entity built out of
+// brushes gets one for free, implied by its own solid — see
+// entity_brushes.go, which is where that rule and the reason its region is
+// exactly the geometry's bounds are written down. Which side of a doorway an
 // occupant is on is settled by CONTAINMENT:
 //
 //   - Standing inside a ship's doorway volume, whatever frame you are in, is
@@ -104,7 +107,15 @@ func FindFramePortalCrossing(lvl *world.Level, e *world.Entity) *FramePortalCros
 	if c := steppedOffFrame(lvl, e); c != nil {
 		return c
 	}
-	return steppedIntoFrame(lvl, e)
+	if c := steppedIntoFrame(lvl, e); c != nil {
+		return c
+	}
+	// An entity built out of brushes admits by containment in its own solid,
+	// with no doorway authored anywhere — see
+	// collision/entity_brushes.go. Tried after the authored doorways so that a
+	// ship which HAS a ramp keeps its ramp's rules (which frame it opens onto,
+	// whether it is enabled) rather than being entered through its hull.
+	return steppedIntoEntityGeometry(lvl, e)
 }
 
 // steppedIntoFrame hands an occupant standing inside another frame's doorway
@@ -204,7 +215,11 @@ func steppedOffFrame(lvl *world.Level, e *world.Entity) *FramePortalCrossing {
 			break
 		}
 	}
-	if door == nil {
+	// An entity that carries its own brushes has an implicit doorway — the
+	// bounds of that solid — and being outside them is the whole of what it
+	// means to have left. Without this, walking into a hut would be a trap: the
+	// containment test would let you in and nothing would let you out.
+	if door == nil && !entityHasImplicitDoorway(lvl, e.Frame) {
 		return nil
 	}
 	return &FramePortalCrossing{

@@ -47,10 +47,10 @@ var editorFaceSelSecondaryColor = modelFaceSelColor.Mul(0.55)
 // drawn on, and for the same reason: it is feedback about what an edit will
 // touch, not something that has to be clickable where it appears.
 func drawSelectedFaceOutline() {
-	if Editor.level == nil {
+	if ws().level == nil {
 		return
 	}
-	for i, sel := range Editor.SelectedFaces {
+	for i, sel := range ws().SelectedFaces {
 		col := modelFaceSelColor
 		if i > 0 {
 			col = editorFaceSelSecondaryColor
@@ -117,10 +117,10 @@ var editorBrushSelSecondaryColor = editorBrushSelColor.Mul(0.55)
 // something it is not. No normal stubs — nothing here is about to be extruded
 // along one.
 func drawSelectedBrushOutline() {
-	if Editor.level == nil {
+	if ws().level == nil {
 		return
 	}
-	for i, sel := range Editor.SelectedBrushes {
+	for i, sel := range ws().SelectedBrushes {
 		col := editorBrushSelColor
 		if i > 0 {
 			col = editorBrushSelSecondaryColor

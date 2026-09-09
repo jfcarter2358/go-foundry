@@ -43,7 +43,7 @@ func (c editorEditContext) String() string {
 // editorInEditMode is the predicate everything downstream asks, rather than
 // comparing the enum: the negative reads badly at call sites and there are a
 // lot of them.
-func editorInEditMode() bool { return Editor.EditContext == editorEditMode }
+func editorInEditMode() bool { return ws().EditContext == editorEditMode }
 
 // EditorInEditMode is editorInEditMode for outside the package — the keybinding
 // reference (internal/app) shows a different block of shortcuts per context.
@@ -62,7 +62,7 @@ func EditorInEditMode() bool { return editorInEditMode() }
 //     the brush that owns it and that brush becomes the object selection. Tab,
 //     tab is therefore a round trip rather than a way to lose your place.
 func editorSetEditContext(c editorEditContext) {
-	if Editor.EditContext == c {
+	if ws().EditContext == c {
 		return
 	}
 	// Detail mode is entered on a NAMED brush, so there is nothing sensible
@@ -83,11 +83,11 @@ func editorSetEditContext(c editorEditContext) {
 		// Remember which brush to come back to before the selection that names
 		// it is cleared.
 		if s := primaryBrushSel(); brushSelValid(s) {
-			Editor.ActiveChunkIdx, Editor.ActiveBrushIdx = s.chunkIdx, s.brushIdx
+			ws().ActiveChunkIdx, ws().ActiveBrushIdx = s.chunkIdx, s.brushIdx
 		}
 		clearBrushSelection()
-		Editor.EditContext = c
-		Editor.PanelFocus = panelFocusNone
+		ws().EditContext = c
+		ws().PanelFocus = panelFocusNone
 		return
 	}
 
@@ -96,21 +96,21 @@ func editorSetEditContext(c editorEditContext) {
 	var back []brushSel
 	if f := primaryFaceSel(); faceSelValid(f) {
 		back = []brushSel{{chunkIdx: f.chunkIdx, brushIdx: f.brushIdx}}
-	} else if len(Editor.SelectedVertices) > 0 {
-		v := Editor.SelectedVertices[0]
+	} else if len(ws().SelectedVertices) > 0 {
+		v := ws().SelectedVertices[0]
 		if s := (brushSel{chunkIdx: v.chunkIdx, brushIdx: v.brushIdx}); brushSelValid(s) {
 			back = []brushSel{s}
 		}
 	}
 	clearVertexSelection()
 	clearFaceSelection()
-	Editor.EditContext = c
+	ws().EditContext = c
 	if back != nil {
 		setBrushSelection(back)
-		Editor.PanelFocus = panelFocusBrush
+		ws().PanelFocus = panelFocusBrush
 		return
 	}
-	Editor.PanelFocus = panelFocusNone
+	ws().PanelFocus = panelFocusNone
 }
 
 // editorEnterEditUnit is what 1, 2 and 3 are bound to: pick a unit a brush is
@@ -216,14 +216,14 @@ var editorSelModes = []editorSelMode{editorSelPoint, editorSelEdge, editorSelFac
 // a different unit entirely, so the crossing clears in both directions rather
 // than leaving a selection the visible handles no longer explain.
 func editorSetSelMode(m editorSelMode) {
-	if Editor.SelMode == m {
+	if ws().SelMode == m {
 		return
 	}
-	prev := Editor.SelMode
-	Editor.SelMode = m
+	prev := ws().SelMode
+	ws().SelMode = m
 	if m == editorSelFace {
 		clearVertexSelection()
-		Editor.PanelFocus = panelFocusNone
+		ws().PanelFocus = panelFocusNone
 		return
 	}
 	if prev == editorSelFace {
@@ -243,9 +243,9 @@ func editorClearObjectSelection() {
 	editorClearSpawnSelection()
 	clearFaceSelection()
 	clearBrushSelection()
-	Editor.PanelFocus = panelFocusNone
-	if Editor.GizmoKind != gizmoKindVertices {
-		Editor.GizmoKind = gizmoKindNone
+	ws().PanelFocus = panelFocusNone
+	if ws().GizmoKind != gizmoKindVertices {
+		ws().GizmoKind = gizmoKindNone
 	}
 }
 
@@ -254,16 +254,16 @@ func editorClearObjectSelection() {
 // editorSetWireframe switches shading. The visibility cache goes with it: which
 // handles can be seen changes without the camera or the world having moved.
 func editorSetWireframe(on bool) {
-	if Editor.Wireframe == on {
+	if ws().Wireframe == on {
 		return
 	}
-	Editor.Wireframe = on
+	ws().Wireframe = on
 	editorVisReset()
 }
 
 // editorShadingLabel names the shading button by the mode it is in.
 func editorShadingLabel() string {
-	if Editor.Wireframe {
+	if ws().Wireframe {
 		return "Wireframe [Z]"
 	}
 	return "Solid [Z]"
@@ -274,7 +274,7 @@ func editorShadingLabel() string {
 // cage is what the mode is for — and the show-all toggle asks for it directly
 // while still shading solid.
 func editorShowsAllHandles() bool {
-	return Editor.Wireframe || Editor.ShowPointSelectRadius
+	return ws().Wireframe || Editor.ShowPointSelectRadius
 }
 
 // editorHandleShowPx is how close the cursor has to be to a point or edge

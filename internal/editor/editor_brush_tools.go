@@ -68,8 +68,8 @@ const (
 // armed tool suppresses the gizmo — see gizmoSuppressed — so the selection's
 // arms cannot swallow the click that places the next brush.
 func editorAddBrushAt(kind string, pos mgl32.Vec3) {
-	lvl := Editor.level
-	ch := activeChunk()
+	lvl := ws().level
+	ch := ws().activeChunk()
 	if lvl == nil || ch == nil {
 		return
 	}
@@ -81,7 +81,7 @@ func editorAddBrushAt(kind string, pos mgl32.Vec3) {
 	half := mgl32.Vec3{defaultBrushHalf, defaultBrushHalf, defaultBrushHalf}
 
 	_ = gfx.EnsureTextureLoaded(defaultBrushTexture)
-	EditorPushUndo()
+	ws().pushUndo()
 
 	id := world.UniqueBrushID(ch, kind)
 	var b world.Brush
@@ -95,7 +95,7 @@ func editorAddBrushAt(kind string, pos mgl32.Vec3) {
 	}
 	appendBrush(ch, b)
 	selectNewestBrush(ch)
-	editorSetStatus("Added %s brush %s", kind, id)
+	ws().setStatus("Added %s brush %s", kind, id)
 }
 
 // brushStampAnchor is where a click puts a brush: the point itself, snapped to
@@ -103,8 +103,8 @@ func editorAddBrushAt(kind string, pos mgl32.Vec3) {
 // with the stamp exactly — a preview drawn at the unsnapped point and geometry
 // that lands half a unit away is worse than no preview at all.
 func brushStampAnchor(pos mgl32.Vec3) mgl32.Vec3 {
-	if Editor.SnapToGrid && Editor.StepSize > 0 {
-		return snapVec3(pos, Editor.StepSize)
+	if ws().SnapToGrid && ws().StepSize > 0 {
+		return snapVec3(pos, ws().StepSize)
 	}
 	return pos
 }
@@ -155,30 +155,23 @@ var brushPlaceGhostColor = mgl32.Vec3{0.2, 0.9, 1}
 
 // editorArmBrushPlacement points the stamp at a primitive and switches it on.
 func editorArmBrushPlacement(kind string) {
-	if activeChunk() == nil {
-		editorSetStatus("No chunk to place a brush in")
+	if ws().activeChunk() == nil {
+		ws().setStatus("No chunk to place a brush in")
 		return
 	}
-	Editor.BrushPlaceKind = kind
-	Editor.BrushPlaceActive = true
+	ws().BrushPlaceKind = kind
+	ws().BrushPlaceActive = true
 	// The one-shot modes, the scenery brush and this one are mutually
 	// exclusive: they all answer the next left-click, and two armed at once
 	// would make which one wins a question about the order of the checks in
 	// Editor3DHandleClick.
-	editorDisarmBrush()
-	Editor.EntityPlacementMode = false
-	Editor.PrefabPlacementMode = false
-	Editor.VolumePlacementMode = false
-	Editor.SpritePlacementMode = false
-	Editor.EmitterPlacementMode = false
-	Editor.SoundPlacementMode = false
-	Editor.SpawnPlacementMode = false
-	editorSetStatus("%s brush — click to place, Escape to stop", brushKindLabel(kind))
+	ws().disarmOtherPlacements()
+	ws().setStatus("%s brush — click to place, Escape to stop", brushKindLabel(kind))
 }
 
 // editorDisarmBrushPlacement puts the stamp away.
 func editorDisarmBrushPlacement() {
-	Editor.BrushPlaceActive = false
+	ws().BrushPlaceActive = false
 	brushPlaceValid = false
 }
 
@@ -191,11 +184,11 @@ func editorDisarmBrushPlacement() {
 // guessing, but still consumes the click: a click while stamping is never a
 // selection.
 func editorBrushPlaceHandleClick() bool {
-	if !Editor.BrushPlaceActive {
+	if !ws().BrushPlaceActive {
 		return false
 	}
 	if brushPlaceValid {
-		editorAddBrushAt(Editor.BrushPlaceKind, brushPlacePos)
+		editorAddBrushAt(ws().BrushPlaceKind, brushPlacePos)
 	}
 	return true
 }
@@ -203,11 +196,11 @@ func editorBrushPlaceHandleClick() bool {
 // editorBrushPlaceHandleKey owns Escape while the stamp is armed, and reports
 // whether it consumed the key.
 func editorBrushPlaceHandleKey(scancode sdl.Scancode) bool {
-	if !Editor.BrushPlaceActive || scancode != sdl.SCANCODE_ESCAPE {
+	if !ws().BrushPlaceActive || scancode != sdl.SCANCODE_ESCAPE {
 		return false
 	}
 	editorDisarmBrushPlacement()
-	editorSetStatus("Brush stamp off")
+	ws().setStatus("Brush stamp off")
 	return true
 }
 
@@ -219,14 +212,14 @@ func editorBrushPlaceHandleKey(scancode sdl.Scancode) bool {
 // the next box goes, and a trip to the side panel is the round trip the stamp
 // exists to remove.
 func editorBrushStampMenuItem() ctxMenuItem {
-	if Editor.BrushPlaceActive {
+	if ws().BrushPlaceActive {
 		return ctxMenuItem{
-			Label:   "Stop stamping " + brushKindLabel(Editor.BrushPlaceKind) + " brushes",
+			Label:   "Stop stamping " + brushKindLabel(ws().BrushPlaceKind) + " brushes",
 			Do:      editorDisarmBrushPlacement,
 			Tooltip: "Put the brush stamp away. Escape does the same.",
 		}
 	}
-	if activeChunk() == nil {
+	if ws().activeChunk() == nil {
 		return ctxMenuItem{
 			Label:    "Stamp brushes",
 			Disabled: true,
@@ -258,10 +251,10 @@ func editorBrushStampMenuItem() ctxMenuItem {
 // resting on instead of z-fighting with it.
 func DrawBrushPlaceGhost() {
 	brushPlaceValid = false
-	if !Editor.Active || Editor.Mode != Mode3D || !Editor.BrushPlaceActive || Editor.level == nil {
+	if !ws().editing() || !ws().BrushPlaceActive || ws().level == nil {
 		return
 	}
-	ch := activeChunk()
+	ch := ws().activeChunk()
 	if ch == nil {
 		return
 	}
@@ -270,14 +263,14 @@ func DrawBrushPlaceGhost() {
 	// would be cast through a pixel the viewport does not own, so nothing is
 	// drawn, which is also the signal the click reads.
 	mx, my, _ := sdl.GetMouseState()
-	if imgui.CurrentIO().WantCaptureMouse() || mx >= panelLeftEdgeX() {
+	if imgui.CurrentIO().WantCaptureMouse() || ws().cursorOverPanel(mx) {
 		return
 	}
 
-	brushPlacePos = brushStampAnchor(editor3DPointAt(mx, my))
+	brushPlacePos = brushStampAnchor(workspacePointAt(mx, my))
 	brushPlaceValid = true
 
-	c := brushStampLocalCenter(ch, Editor.BrushPlaceKind, brushPlacePos)
+	c := brushStampLocalCenter(ch, ws().BrushPlaceKind, brushPlacePos)
 	h := defaultBrushHalf
 	corner := func(sx, sy, sz float32) mgl32.Vec3 {
 		return ch.LocalToWorld(mgl32.Vec3{c.X() + sx*h, c.Y() + sy*h, c.Z() + sz*h})
@@ -330,7 +323,7 @@ func editorHollowSelectedBrush() {
 	if hi.X()-lo.X() <= 2*defaultBrushWallThickness ||
 		hi.Y()-lo.Y() <= 2*defaultBrushWallThickness ||
 		hi.Z()-lo.Z() <= 2*defaultBrushWallThickness {
-		editorSetStatus("%s is too small to hollow", b.ID)
+		ws().setStatus("%s is too small to hollow", b.ID)
 		return
 	}
 	// The shell goes *inside* the original bounds, so hollowing does not grow
@@ -346,7 +339,7 @@ func editorHollowSelectedBrush() {
 	}
 	id := b.ID
 
-	EditorPushUndo()
+	ws().pushUndo()
 	room := world.NewHollowRoom(id, inner[0], inner[1], t, texture)
 	b.Release()
 	ch.Brushes = append(ch.Brushes[:bi], ch.Brushes[bi+1:]...)
@@ -359,8 +352,8 @@ func editorHollowSelectedBrush() {
 	clearBrushSelection()
 	clearFaceSelection()
 	clearVertexSelection()
-	Editor.ActiveChunkIdx = ci
-	editorSetStatus("Hollowed %s into %d brushes", id, len(room))
+	ws().ActiveChunkIdx = ci
+	ws().setStatus("Hollowed %s into %d brushes", id, len(room))
 }
 
 // editorDuplicateSelectedBrush copies the selected brush in place. The copy
@@ -371,12 +364,12 @@ func editorDuplicateSelectedBrush() {
 	if ch == nil || b == nil {
 		return
 	}
-	EditorPushUndo()
+	ws().pushUndo()
 	clone := world.CloneBrush(b, "_copy")
 	clone.ID = world.UniqueBrushID(ch, clone.ID)
 	appendBrush(ch, clone)
 	selectNewestBrush(ch)
-	editorSetStatus("Duplicated %s as %s", b.ID, clone.ID)
+	ws().setStatus("Duplicated %s as %s", b.ID, clone.ID)
 }
 
 // appendBrush adds b to ch, uploads its geometry and rolls the chunk's bounds
@@ -402,11 +395,11 @@ func selectNewestBrush(ch *world.Chunk) {
 		return
 	}
 	if !editorInEditMode() {
-		editorSelectBrushObject(brushSel{chunkIdx: Editor.ActiveChunkIdx, brushIdx: bi}, false)
+		editorSelectBrushObject(brushSel{chunkIdx: ws().ActiveChunkIdx, brushIdx: bi}, false)
 		return
 	}
-	setFaceSelection([]faceSel{brushFaceSel(Editor.ActiveChunkIdx, bi, 0)})
-	Editor.PanelFocus = panelFocusFace
+	setFaceSelection([]faceSel{brushFaceSel(ws().ActiveChunkIdx, bi, 0)})
+	ws().PanelFocus = panelFocusFace
 }
 
 // ---------- the primitives ----------
@@ -509,9 +502,9 @@ func warnIfSelectionBrokeConvexity() {
 	}
 	switch {
 	case n == 1:
-		editorSetStatus("Warning: %s is no longer convex", bad)
+		ws().setStatus("Warning: %s is no longer convex", bad)
 	case n > 1:
-		editorSetStatus("Warning: %s and %d other brush(es) are no longer convex", bad, n-1)
+		ws().setStatus("Warning: %s and %d other brush(es) are no longer convex", bad, n-1)
 	}
 }
 
@@ -533,14 +526,14 @@ func selectionBrushes() []*world.Brush {
 	// Detail selections are skipped outright: a detail mesh has no convexity
 	// rule to break — it is not the solid — so checking one would either warn
 	// about nothing or, worse, warn about the hull the author has not touched.
-	for _, sel := range Editor.SelectedFaces {
+	for _, sel := range ws().SelectedFaces {
 		if sel.detail {
 			continue
 		}
 		_, b := faceSelBrush(sel)
 		add([2]int{sel.chunkIdx, sel.brushIdx}, b)
 	}
-	for _, sel := range Editor.SelectedVertices {
+	for _, sel := range ws().SelectedVertices {
 		if sel.detail {
 			continue
 		}

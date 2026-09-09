@@ -8,7 +8,7 @@ package editor
 // world, so offering a handle on every vertex in range is a lie: half of them
 // are behind a wall, and clicking one grabs geometry the user cannot see.
 // Wireframe is the opposite contract — nothing occludes anything, so every
-// point and edge is fair game, and Editor.Wireframe switches between the two.
+// point and edge is fair game, and ws().Wireframe switches between the two.
 //
 // The test is a real occlusion test — a ray from the eye to the vertex, blocked
 // or not — rather than the cheaper "is a face it belongs to turned towards me",
@@ -26,7 +26,6 @@ package editor
 //     just ask without coordinating.
 
 import (
-	"foundry/internal/gfx"
 	"foundry/internal/render"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -69,8 +68,8 @@ func editorVisReset() {
 	} else {
 		clear(editorVis.cache)
 	}
-	editorVis.eye = gfx.Cam.Position
-	editorVis.wire = Editor.Wireframe
+	editorVis.eye = ws().camPos()
+	editorVis.wire = ws().Wireframe
 	editorVis.ready = true
 	editorVis.budget = editorVisRayBudget
 }
@@ -78,10 +77,10 @@ func editorVisReset() {
 // editorVertexVisible reports whether the camera can see the handle at pos.
 // Always true in wireframe, where there is nothing to hide behind.
 func editorVertexVisible(sel vertexSel, pos mgl32.Vec3) bool {
-	if Editor.Wireframe {
+	if ws().Wireframe {
 		return true
 	}
-	if !editorVis.ready || editorVis.eye != gfx.Cam.Position || editorVis.wire != Editor.Wireframe {
+	if !editorVis.ready || editorVis.eye != ws().camPos() || editorVis.wire != ws().Wireframe {
 		editorVisReset()
 	}
 	if v, ok := editorVis.cache[sel]; ok {
@@ -91,7 +90,7 @@ func editorVertexVisible(sel vertexSel, pos mgl32.Vec3) bool {
 		return true
 	}
 	editorVis.budget--
-	v := !editorPointOccluded(gfx.Cam.Position, pos)
+	v := !editorPointOccluded(ws().camPos(), pos)
 	editorVis.cache[sel] = v
 	return v
 }
@@ -114,7 +113,7 @@ func editorEdgeVisible(a, b vertexSel, pa, pb mgl32.Vec3) bool {
 // is exactly what the user can see and means to grab, and the spawn marker is
 // an editor-only arrow drawn over the world rather than part of it.
 func editorPointOccluded(eye, p mgl32.Vec3) bool {
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil {
 		return false
 	}

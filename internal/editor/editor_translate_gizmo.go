@@ -60,10 +60,10 @@ var gizmoAxisColors = [3]mgl32.Vec3{{1, 0.25, 0.25}, {0.3, 1, 0.3}, {0.35, 0.5, 
 // gizmoEffectiveKind returns what the gizmo drags right now. The 2D modes have
 // no 3D gizmo at all.
 func gizmoEffectiveKind() string {
-	if Editor.Mode == Mode3D {
-		return Editor.GizmoKind
+	if !ws().editing() {
+		return gizmoKindNone
 	}
-	return gizmoKindNone
+	return ws().GizmoKind
 }
 
 // translateGizmoOrigin returns where the gizmo sits for the current selection.
@@ -543,8 +543,8 @@ func axisMoved(start mgl32.Vec3, axis int, delta float32) mgl32.Vec3 {
 
 // gizmoSnap rounds v to the editor's step size when snap-to-grid is enabled.
 func gizmoSnap(v float32) float32 {
-	if Editor.SnapToGrid && Editor.StepSize > 0 {
-		return snapValue(v, Editor.StepSize)
+	if ws().SnapToGrid && ws().StepSize > 0 {
+		return snapValue(v, ws().StepSize)
 	}
 	return v
 }

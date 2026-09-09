@@ -4,7 +4,7 @@ import "foundry/internal/world"
 
 // editor_face_sel.go — the selected faces.
 //
-// Points and edges have been multi-selectable for a while (Editor.SelectedVertices);
+// Points and edges have been multi-selectable for a while (ws().SelectedVertices);
 // faces were the odd one out, kept as a single ActiveSurface + sector + edge
 // index. That was fine while a face selection only ever opened a panel, and
 // stopped being fine the moment the menu grew actions worth doing to a dozen
@@ -50,7 +50,7 @@ func brushDetailFaceSel(chunkIdx, brushIdx, faceIdx int) faceSel {
 // faceSelBrush resolves the chunk and brush a face belongs to, or nil when the
 // indices no longer point at live geometry.
 func faceSelBrush(f faceSel) (*world.Chunk, *world.Brush) {
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil || f.chunkIdx < 0 || f.chunkIdx >= len(lvl.Chunks) {
 		return nil, nil
 	}
@@ -76,7 +76,7 @@ func faceSelValid(f faceSel) bool { return faceSelFace(f) != nil }
 
 // isFaceSelected reports whether f is part of the current selection.
 func isFaceSelected(f faceSel) bool {
-	for _, sel := range Editor.SelectedFaces {
+	for _, sel := range ws().SelectedFaces {
 		if sel == f {
 			return true
 		}
@@ -86,7 +86,7 @@ func isFaceSelected(f faceSel) bool {
 
 // selectedFaceCount is how many faces are selected — what the menu heading
 // counts and what decides whether an action is about one face or many.
-func selectedFaceCount() int { return len(Editor.SelectedFaces) }
+func selectedFaceCount() int { return len(ws().SelectedFaces) }
 
 // ---------- changing the selection ----------
 
@@ -102,7 +102,7 @@ func setFaceSelection(sels []faceSel) {
 	// very list on its way past. sels is always a fresh slice by here — the
 	// ctrl+click paths copy before calling — so nothing is lost to it.
 	editorClearObjectSelections()
-	Editor.SelectedFaces = sels
+	ws().SelectedFaces = sels
 	syncActiveFace()
 }
 
@@ -116,45 +116,45 @@ func addFaceToSelection(f faceSel) {
 	if !faceSelValid(f) {
 		return
 	}
-	for i, sel := range Editor.SelectedFaces {
+	for i, sel := range ws().SelectedFaces {
 		if sel != f {
 			continue
 		}
-		Editor.SelectedFaces = append(
-			append([]faceSel{}, Editor.SelectedFaces[:i]...),
-			Editor.SelectedFaces[i+1:]...)
+		ws().SelectedFaces = append(
+			append([]faceSel{}, ws().SelectedFaces[:i]...),
+			ws().SelectedFaces[i+1:]...)
 		syncActiveFace()
 		return
 	}
-	setFaceSelection(append(append([]faceSel{}, Editor.SelectedFaces...), f))
+	setFaceSelection(append(append([]faceSel{}, ws().SelectedFaces...), f))
 }
 
 // clearFaceSelection drops every selected face, and the mirrored fields with
 // them.
 func clearFaceSelection() {
-	Editor.SelectedFaces = nil
+	ws().SelectedFaces = nil
 	syncActiveFace()
 }
 
 // pruneFaceSelection drops entries that no longer name live geometry, which an
 // edit that deletes a sector or converts an edge can leave behind.
 func pruneFaceSelection() {
-	if len(Editor.SelectedFaces) == 0 {
+	if len(ws().SelectedFaces) == 0 {
 		return
 	}
-	kept := Editor.SelectedFaces[:0]
-	for _, sel := range Editor.SelectedFaces {
+	kept := ws().SelectedFaces[:0]
+	for _, sel := range ws().SelectedFaces {
 		if faceSelValid(sel) {
 			kept = append(kept, sel)
 		}
 	}
-	Editor.SelectedFaces = kept
+	ws().SelectedFaces = kept
 	syncActiveFace()
 }
 
 // syncActiveFace republishes the primary face into the four fields the panels,
 // the outline and the surface actions were all written against. Everything that
-// touches Editor.SelectedFaces ends here, which is what keeps the mirror from
+// touches ws().SelectedFaces ends here, which is what keeps the mirror from
 // drifting out of step with the list.
 //
 // The gizmo is part of that mirror. A selected face is something the move,
@@ -162,23 +162,23 @@ func pruneFaceSelection() {
 // from, see editor_face_gizmo.go — so the kind is set here rather than at each
 // of the several places a face can be picked from.
 func syncActiveFace() {
-	if len(Editor.SelectedFaces) == 0 {
-		Editor.ActiveBrushIdx = -1
-		Editor.ActiveFaceIdx = -1
+	if len(ws().SelectedFaces) == 0 {
+		ws().ActiveBrushIdx = -1
+		ws().ActiveFaceIdx = -1
 		// Only our own kind is cleared: this runs from
 		// editorClearObjectSelections, which every other selection calls on its
 		// way to setting a kind of its own, and from editorClearObjectSelection,
 		// which deliberately leaves a live vertex selection alone.
-		if Editor.GizmoKind == gizmoKindFace {
-			Editor.GizmoKind = gizmoKindNone
+		if ws().GizmoKind == gizmoKindFace {
+			ws().GizmoKind = gizmoKindNone
 		}
 		return
 	}
-	Editor.GizmoKind = gizmoKindFace
-	primary := Editor.SelectedFaces[0]
-	Editor.ActiveChunkIdx = primary.chunkIdx
-	Editor.ActiveBrushIdx = primary.brushIdx
-	Editor.ActiveFaceIdx = primary.faceIdx
+	ws().GizmoKind = gizmoKindFace
+	primary := ws().SelectedFaces[0]
+	ws().ActiveChunkIdx = primary.chunkIdx
+	ws().ActiveBrushIdx = primary.brushIdx
+	ws().ActiveFaceIdx = primary.faceIdx
 }
 
 // faceSelPanelFocus is the properties section a face belongs to. One kind of
@@ -207,5 +207,5 @@ func editorSelectFace(f faceSel, addToSelection bool) {
 	} else {
 		setFaceSelection([]faceSel{f})
 	}
-	Editor.PanelFocus = faceSelPanelFocus(f)
+	ws().PanelFocus = faceSelPanelFocus(f)
 }

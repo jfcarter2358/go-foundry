@@ -153,9 +153,9 @@ func placeEntityAt(pos mgl32.Vec3) bool {
 		editorSetStatus("Entity %s: %v", id, err)
 	}
 	lvl.Entities = append(lvl.Entities, e)
-	// The geometry the type carries, if any (world/entity_chunk.go). Placed
-	// after the append so the entity is in the level the chunks are bound to.
-	editorMaterializeEntityChunks(lvl, &lvl.Entities[len(lvl.Entities)-1])
+	// The solid the type carries, if any (world/entity_brush.go). Placed after
+	// the append so the entity is in the level its chunk is bound to.
+	editorMaterializeEntityGeometry(lvl, &lvl.Entities[len(lvl.Entities)-1])
 	editorSelectEntity(len(lvl.Entities) - 1)
 	if def == nil {
 		editorSetStatus("Placed entity %q — pick a model for it in the panel", id)
@@ -203,16 +203,17 @@ func duplicateActiveEntity() {
 	for i := range src.Models {
 		e.Models = append(e.Models, src.Models[i].TemplateCopy())
 	}
-	// Chunk attachments are plain data, but the copy needs its own slice: the
-	// two entities' attachment lists are edited independently from here on.
-	e.Chunks = append([]world.EntityChunk(nil), src.Chunks...)
+	// The brushes are plain data, but the copy needs its own deep copy: a Brush
+	// holds slices, and two entities sharing one backing array would mean
+	// dragging a corner of the copy reshaped the original.
+	e.Brushes = world.CloneEntityBrushes(src.Brushes)
 	e.Position = src.Position.Add(mgl32.Vec3{entityDuplicateOffset, 0, entityDuplicateOffset})
 	if err := e.Load(); err != nil {
 		editorSetStatus("Entity %s: %v", e.ID, err)
 	}
 
 	lvl.Entities = append(lvl.Entities, e)
-	editorMaterializeEntityChunks(lvl, &lvl.Entities[len(lvl.Entities)-1])
+	editorMaterializeEntityGeometry(lvl, &lvl.Entities[len(lvl.Entities)-1])
 	editorSelectEntity(len(lvl.Entities) - 1)
 	editorSetStatus("Duplicated entity %q", e.ID)
 }
@@ -231,10 +232,10 @@ func deleteActiveEntity() {
 	EditorPushUndo()
 	id := lvl.Entities[idx].ID
 	lvl.Entities[idx].Delete()
-	// The chunks this entity brought with it go with it. Without this they
-	// would stay in the level with a FrameOwner naming an entity that is gone,
-	// which BuildFrames reports as an error and refuses the whole level over.
-	editorReleaseEntityChunks(lvl, id)
+	// The chunk this entity's brushes made goes with it. Without this it would
+	// stay in the level with a FrameOwner naming an entity that is gone, which
+	// BuildFrames reports as an error and refuses the whole level over.
+	editorReleaseEntityGeometry(lvl, id)
 	lvl.Entities = append(lvl.Entities[:idx:idx], lvl.Entities[idx+1:]...)
 	editorClearEntitySelection()
 	editorSetStatus("Deleted entity %q", id)
@@ -356,7 +357,7 @@ func reapplyEntityDefinition() {
 		editorSetStatus("Entity %s: %v", e.ID, err)
 		return
 	}
-	editorSyncEntityChunks(lvl, e)
+	editorSyncEntityGeometry(lvl, e)
 	if err := world.RebuildIndexes(lvl); err != nil {
 		editorSetStatus("Entity %s: %v", e.ID, err)
 	}
@@ -404,17 +405,17 @@ func editorAddEntityMenuItem(pos mgl32.Vec3) ctxMenuItem {
 
 // ---------- carried geometry ----------
 
-// editorMaterializeEntityChunks builds the level chunks an entity's chunk
-// attachments describe, and refreshes the indexes those chunks belong to.
+// editorMaterializeEntityGeometry builds the level chunk an entity's brushes
+// describe, and refreshes the indexes that chunk belongs to.
 //
-// Split from editorSyncEntityChunks (editor_entity_editor_io.go) so the common
-// case — an entity that has just been placed and has nothing to drop first —
-// does not walk the chunk list twice.
-func editorMaterializeEntityChunks(lvl *world.Level, e *world.Entity) {
-	if lvl == nil || e == nil || len(e.Chunks) == 0 {
+// Split from editorSyncEntityGeometry (editor_entity_editor_io.go) so the
+// common case — an entity that has just been placed and has nothing to drop
+// first — does not walk the chunk list twice.
+func editorMaterializeEntityGeometry(lvl *world.Level, e *world.Entity) {
+	if lvl == nil || e == nil || !e.HasBrushes() {
 		return
 	}
-	editorSyncEntityChunks(lvl, e)
+	editorSyncEntityGeometry(lvl, e)
 	// A materialised chunk is geometry the player can stand on and a frame the
 	// entity carries, and neither exists until the indexes are rebuilt.
 	if err := world.RebuildIndexes(lvl); err != nil {
@@ -422,10 +423,10 @@ func editorMaterializeEntityChunks(lvl *world.Level, e *world.Entity) {
 	}
 }
 
-// editorReleaseEntityChunks drops every chunk materialised from the named
+// editorReleaseEntityGeometry drops every chunk materialised from the named
 // entity, and rebuilds the indexes without them.
-func editorReleaseEntityChunks(lvl *world.Level, id string) {
-	if lvl == nil || levelio.DropEntityChunks(lvl, id) == 0 {
+func editorReleaseEntityGeometry(lvl *world.Level, id string) {
+	if lvl == nil || levelio.DropEntityGeometry(lvl, id) == 0 {
 		return
 	}
 	if err := world.RebuildIndexes(lvl); err != nil {
@@ -433,19 +434,20 @@ func editorReleaseEntityChunks(lvl *world.Level, id string) {
 	}
 }
 
-// editorRenameEntity changes an entity's ID, taking its carried chunks with it.
+// editorRenameEntity changes an entity's ID, taking its carried solid with it.
 //
-// A materialised chunk's ID and its FrameOwner are both built from the entity's
-// ID, so a rename that touched only the entity would leave chunks bound to a
-// frame owner that no longer exists — which BuildFrames refuses the level over.
-// Rebuilding them is cheaper than trying to rewrite the two fields in place,
-// and it is the same path every other change to the attachment list takes.
+// The materialised chunk's ID, its FrameOwner and every brush ID inside it are
+// all built from the entity's ID, so a rename that touched only the entity
+// would leave a chunk bound to a frame owner that no longer exists — which
+// BuildFrames refuses the level over. Rebuilding is cheaper than rewriting
+// those fields in place, and it is the same path every other change to the
+// geometry takes.
 func editorRenameEntity(lvl *world.Level, e *world.Entity, id string) {
 	if lvl == nil || e == nil || id == e.ID {
 		return
 	}
 	EditorPushUndo()
-	editorReleaseEntityChunks(lvl, e.ID)
+	editorReleaseEntityGeometry(lvl, e.ID)
 	e.ID = id
-	editorMaterializeEntityChunks(lvl, e)
+	editorMaterializeEntityGeometry(lvl, e)
 }

@@ -87,19 +87,24 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 		if chunk == nil {
 			chunk = frame.ChunkAt(lvl, stepFrom)
 		}
-		if chunk == nil {
-			// Outside every chunk there is nothing to resolve against. The
-			// entity is left where it is rather than being pulled to the
-			// nearest floor: an entity over open space is a legitimate thing
-			// to be.
-			continue
+		if chunk != nil {
+			// Outside every chunk there is nothing here to resolve against — an
+			// entity over open space is a legitimate thing to be — but another
+			// entity's solid may still be in the way, so the pass below runs
+			// either way.
+			localPos := chunkLocal(chunk, pos)
+			resolved, f, c := pushOutOfChunkBrushes(chunk, localPos, radius, h.Y())
+			pos = chunkWorld(chunk, resolved)
+			hitFloor = hitFloor || f
+			hitCeiling = hitCeiling || c
 		}
 
-		localPos := chunkLocal(chunk, pos)
-		resolved, f, c := pushOutOfChunkBrushes(chunk, localPos, radius, h.Y())
-		pos = chunkWorld(chunk, resolved)
-		hitFloor = hitFloor || f
-		hitCeiling = hitCeiling || c
+		// Every other entity's own brushes, which are in their own frames and
+		// so are in none of this one's chunks. See entity_brushes.go.
+		ef, ec := false, false
+		pos, ef, ec = resolveAgainstEntityBrushes(lvl, e, frame, pos, radius, h.Y())
+		hitFloor = hitFloor || ef
+		hitCeiling = hitCeiling || ec
 	}
 
 	e.Position = e.Position.Add(pos.Sub(center))
@@ -143,7 +148,13 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 	}
 	idx := make([]int, 0, len(lvl.Entities))
 	for i := range lvl.Entities {
-		if lvl.Entities[i].CollidesWithEntities() {
+		// An entity that carries brushes presents THOSE as its solid, not its
+		// bounding cage — see entity_brushes.go. Resolving its box here as well
+		// would push a body out of the very volume it is trying to walk into,
+		// so a hut you could see the inside of would be one you bounced off.
+		// The cage stays what it always was for everything else it is for:
+		// picking, hitscan, :enter: overlap, and framing the camera.
+		if lvl.Entities[i].CollidesWithEntities() && !lvl.Entities[i].HasBrushes() {
 			idx = append(idx, i)
 		}
 	}

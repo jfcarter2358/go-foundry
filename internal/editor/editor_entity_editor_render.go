@@ -18,10 +18,13 @@ package editor
 // it. An attachment that will not load looks here exactly as wrong as it will
 // look in the level.
 //
-// Chunk attachments go through levelio.LoadChunkForEntity with an empty entity
-// ID, which builds them at their own offsets with no frame. That is right for
-// a preview: this window *is* the entity's local space, so the frame transform
-// a level would apply is the identity here.
+// The type's BRUSHES are not previewed at all in that sense: they are the live,
+// editable geometry of the scratch level this window edits
+// (editor_entity_editor_brushes.go), uploaded once and reloaded per edit by the
+// same tools that reload a level's. Drawing a second copy of them would be
+// drawing something an author could not click on. This window *is* the entity's
+// local space, so the frame transform a level would apply is the identity here
+// and the brushes are drawn where they are authored.
 //
 // Both halves are drawn through modelProgram, the model editor's headlight
 // shader, which carries the shared skinning path so a rigged attachment
@@ -30,19 +33,12 @@ package editor
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
-	"foundry/internal/levelio"
 	"foundry/internal/world"
-	"log"
 	"math"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
-
-// entityPreviewChunks is the chunk attachments, built and uploaded. A slice of
-// values rather than of pointers because Chunk carries no identity of its own
-// here — it is rebuilt wholesale whenever the document changes shape.
-var entityPreviewChunks []world.Chunk
 
 // entityPreviewDirty says the document has changed shape since the preview was
 // built. Set by every structural edit, acted on once a frame in
@@ -78,23 +74,12 @@ func entityPreviewSync() {
 		entityPreviewErr = err.Error()
 	}
 
-	for i := range entityDef.Chunks {
-		a := &entityDef.Chunks[i]
-		if a.File == "" {
-			continue // an attachment with nothing in it yet
-		}
-		// No entity ID: the preview is the entity's own space, so the chunk is
-		// built at its authored offset with no frame to carry it.
-		ch, tex, err := levelio.LoadChunkForEntity("", a)
-		if err != nil {
-			entityPreviewErr = err.Error()
-			continue
-		}
-		if err := levelio.EnsureChunkTextures(tex); err != nil {
-			// A missing texture costs the chunk its skin, not its shape.
-			log.Printf("entity editor: chunk %q: %v", a.Name, err)
-		}
-		entityPreviewChunks = append(entityPreviewChunks, ch)
+	// The brushes are seeded here too, but only when there is no live chunk yet
+	// or the document has been replaced under it — an ordinary edit mutates the
+	// live brushes in place, and re-seeding would throw away the selection and
+	// re-upload every buffer mid-drag. See entityGeomDirty.
+	if entityGeomDirty || entityGeomChunk() == nil {
+		entitySeedGeometry()
 	}
 }
 
@@ -124,17 +109,6 @@ func entityPreviewApplyTransforms() {
 			dst.Offset, dst.Rotation, dst.Scale = src.Offset, src.Rotation, src.Scale
 		}
 	}
-	for i := range entityPreviewChunks {
-		ch := &entityPreviewChunks[i]
-		ai := entityChunkIndexFor(ch)
-		if ai < 0 || ai >= len(entityDef.Chunks) {
-			continue
-		}
-		a := &entityDef.Chunks[ai]
-		ch.Origin = a.Offset
-		ch.Rotation = a.Rotation
-		ch.Scale = a.EffectiveScale()
-	}
 }
 
 // entityPreviewID is what the preview entity calls itself. It is never in a
@@ -149,10 +123,7 @@ func entityPreviewRelease() {
 		entityPreview.Delete()
 		entityPreview = nil
 	}
-	for i := range entityPreviewChunks {
-		entityPreviewChunks[i].ReleaseGeometry()
-	}
-	entityPreviewChunks = nil
+	entityReleaseGeometry()
 }
 
 // entityPreviewAnimate advances every attachment's animation clock.
@@ -205,12 +176,11 @@ func entityPreviewBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 			}
 		}
 	}
-	for i := range entityPreviewChunks {
-		ch := &entityPreviewChunks[i]
+	if ch := entityGeomChunk(); ch != nil {
 		m := ch.ModelMatrix()
 		lo, hi, ok := entityChunkBox(ch)
 		if !ok {
-			continue
+			goto boundsDone
 		}
 		// Every corner, not just the two: the chunk's placement may rotate it,
 		// and transforming the min and max alone would give a box that is not
@@ -225,6 +195,7 @@ func entityPreviewBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 			grow(mgl32.Vec3{w.X(), w.Y(), w.Z()})
 		}
 	}
+boundsDone:
 	if entityDef != nil && entityDef.BoundHalfX > 0 && entityDef.BoundHalfY > 0 && entityDef.BoundHalfZ > 0 {
 		half := mgl32.Vec3{entityDef.BoundHalfX, entityDef.BoundHalfY, entityDef.BoundHalfZ}
 		grow(entityDef.BoundOffset.Sub(half))
@@ -266,13 +237,7 @@ func entityDrawPreview(view, proj mgl32.Mat4, camPos mgl32.Vec3) {
 	}
 
 	if entityShowChunks {
-		for i := range entityPreviewChunks {
-			ch := &entityPreviewChunks[i]
-			if ch.Disabled {
-				// Authored switched off. Its outline is still drawn (see
-				// drawEntityChunkOutlines) so the author can see it is there.
-				continue
-			}
+		if ch := entityGeomChunk(); ch != nil {
 			m := ch.ModelMatrix()
 			for _, g := range world.ChunkDrawGeometries(ch) {
 				entityDrawGeometry(g, m, entityChunkTint)
@@ -382,41 +347,31 @@ func drawEntityBoundsCage() {
 	}
 }
 
-// drawEntityChunkOutlines boxes each chunk attachment where it sits.
+// drawEntityGeometryOutline boxes the extent of the type's brushes.
 //
-// Drawn even for a chunk switched off, and even when chunk drawing is off
-// altogether: the outline is how an author sees that an attachment is there at
-// all, and an attachment whose file is missing has nothing else to show.
-func drawEntityChunkOutlines() {
-	if entityDef == nil {
+// That box is not decoration: it is the region a body walking into the placed
+// entity is handed into the entity's frame at, so what it outlines is exactly
+// where "inside this thing" begins. See collision/entity_brushes.go.
+func drawEntityGeometryOutline() {
+	ch := entityGeomChunk()
+	if entityDef == nil || ch == nil {
 		return
 	}
-	for i := range entityPreviewChunks {
-		ch := &entityPreviewChunks[i]
-		col := entityChunkBoxColor
-		if ch.Disabled {
-			col = entityChunkOffColor
-		}
-		if entitySel.Kind == entitySelChunk && entitySel.Idx == entityChunkIndexFor(ch) {
-			col = entitySelectionColor
-		}
-		lo, hi, ok := entityChunkBox(ch)
-		if !ok {
-			continue
-		}
-		drawTransformedBox(ch.ModelMatrix(), lo, hi, col)
+	lo, hi, ok := entityChunkBox(ch)
+	if !ok {
+		return
 	}
+	drawTransformedBox(ch.ModelMatrix(), lo, hi, entityChunkBoxColor)
 }
 
 // entityChunkBox is a chunk's local bounds, or false when it has none worth
 // drawing.
 //
-// A chunk's vertical extent comes from its sectors' floor and ceiling heights;
-// one with points but no sectors never gets any, and is left holding the
-// sentinels the load started with — a box from +MaxFloat32 down to -MaxFloat32,
-// which as an outline is twelve lines to the horizon. Rejecting an inverted
-// range is cheaper than teaching the loader to care about a chunk that has
-// nothing in it.
+// A chunk with no brushes in it never gets any extent, and is left holding the
+// sentinels RecomputeBounds starts with — a box from +MaxFloat32 down to
+// -MaxFloat32, which as an outline is twelve lines to the horizon. Rejecting an
+// inverted range is cheaper than teaching every caller to care about a chunk
+// that has nothing in it.
 func entityChunkBox(ch *world.Chunk) (mgl32.Vec3, mgl32.Vec3, bool) {
 	lo, hi := ch.MinBound, ch.MaxBound
 	for i := 0; i < 3; i++ {
@@ -428,21 +383,6 @@ func entityChunkBox(ch *world.Chunk) (mgl32.Vec3, mgl32.Vec3, bool) {
 		return mgl32.Vec3{}, mgl32.Vec3{}, false
 	}
 	return lo, hi, true
-}
-
-// entityChunkIndexFor maps a built chunk back to the attachment that produced
-// it. The preview skips attachments with no file, so the two lists are not
-// index-aligned and the name is the only handle.
-func entityChunkIndexFor(ch *world.Chunk) int {
-	if entityDef == nil {
-		return -1
-	}
-	for i := range entityDef.Chunks {
-		if world.EntityChunkID("", entityDef.Chunks[i].Name) == ch.ID {
-			return i
-		}
-	}
-	return -1
 }
 
 // drawTransformedBox outlines a local-space AABB carried through a matrix, so a

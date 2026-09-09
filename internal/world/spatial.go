@@ -187,20 +187,37 @@ func FindChunkAmong(chunks []Chunk, idx []int, pos mgl32.Vec3) *Chunk {
 		if !c.IsEnabled() {
 			continue // switched off; see chunk_enable.go
 		}
-		local := pos
-		lm := c.LocalPlacementMatrix()
-		if lm != mgl32.Ident4() {
-			r := lm.Inv().Mul4x1(pos.Vec4(1))
-			local = mgl32.Vec3{r.X(), r.Y(), r.Z()}
+		if ChunkContains(c, pos) {
+			return c
 		}
-		if local.X() < c.MinBound.X() || local.X() > c.MaxBound.X() ||
-			!chunkContainsY(c, local.Y()) ||
-			local.Z() < c.MinBound.Z() || local.Z() > c.MaxBound.Z() {
-			continue
-		}
-		return c
 	}
 	return nil
+}
+
+// ChunkContains reports whether pos — expressed in the space the chunk is
+// PLACED in, which is its frame's for a frame-owned chunk and the world's
+// otherwise — falls inside the chunk's bounds.
+//
+// Exported because it is the predicate that decides Entity.CurrentChunk, and
+// the frame-entry rule for an entity's own geometry has to be exactly the same
+// question asked the other way round: a body is aboard an entity when it is
+// inside that entity's geometry chunk, and steps off when it is inside none of
+// its frame's chunks. Two nearly-identical containment tests would give the two
+// halves of that a sliver of ground they both claimed, which is the ping-pong
+// the whole doorway design exists to avoid. See collision/entity_brushes.go.
+func ChunkContains(c *Chunk, pos mgl32.Vec3) bool {
+	if c == nil {
+		return false
+	}
+	local := pos
+	lm := c.LocalPlacementMatrix()
+	if lm != mgl32.Ident4() {
+		r := lm.Inv().Mul4x1(pos.Vec4(1))
+		local = mgl32.Vec3{r.X(), r.Y(), r.Z()}
+	}
+	return local.X() >= c.MinBound.X() && local.X() <= c.MaxBound.X() &&
+		chunkContainsY(c, local.Y()) &&
+		local.Z() >= c.MinBound.Z() && local.Z() <= c.MaxBound.Z()
 }
 
 // ---------- vertical containment ----------

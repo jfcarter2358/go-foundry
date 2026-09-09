@@ -64,7 +64,7 @@ func selMesh(b *world.Brush, detail bool) *world.BrushMesh {
 
 // editorInDetailMode reports whether the viewport is shaping a brush's detail
 // mesh.
-func editorInDetailMode() bool { return Editor.EditContext == editorDetailMode }
+func editorInDetailMode() bool { return ws().EditContext == editorDetailMode }
 
 // EditorInDetailMode is editorInDetailMode for outside the package — the
 // keybinding reference (internal/app) shows a different block per context.
@@ -76,7 +76,7 @@ func detailBrush() (*world.Chunk, *world.Brush) {
 		return nil, nil
 	}
 	return vertexSelBrush(vertexSel{
-		chunkIdx: Editor.DetailBrush.chunkIdx, brushIdx: Editor.DetailBrush.brushIdx})
+		chunkIdx: ws().DetailBrush.chunkIdx, brushIdx: ws().DetailBrush.brushIdx})
 }
 
 // isDetailBrush reports whether the given chunk/brush pair is the one detail
@@ -84,7 +84,7 @@ func detailBrush() (*world.Chunk, *world.Brush) {
 // level is clickable while a brush is being detailed.
 func isDetailBrush(ci, bi int) bool {
 	return editorInDetailMode() &&
-		Editor.DetailBrush.chunkIdx == ci && Editor.DetailBrush.brushIdx == bi
+		ws().DetailBrush.chunkIdx == ci && ws().DetailBrush.brushIdx == bi
 }
 
 // ---------- entering and leaving ----------
@@ -106,10 +106,10 @@ func editorEnterDetailMode(s brushSel) {
 	if b.Detail == nil {
 		// The seed is a real edit to the level — it is what a save would write
 		// out — so it is undoable like any other.
-		EditorPushUndo()
+		ws().pushUndo()
 		b.SeedDetail()
 		if err := b.Load(); err != nil {
-			editorSetStatus("Detail: %v", err)
+			ws().setStatus("Detail: %v", err)
 		}
 		editorChunkGeometryChanged(ch)
 	}
@@ -117,12 +117,12 @@ func editorEnterDetailMode(s brushSel) {
 	editorClearObjectSelections()
 	clearVertexSelection()
 	clearFaceSelection()
-	Editor.EditContext = editorDetailMode
-	Editor.DetailBrush = s
-	Editor.ActiveChunkIdx, Editor.ActiveBrushIdx = s.chunkIdx, s.brushIdx
-	Editor.PanelFocus = panelFocusBrush
+	ws().EditContext = editorDetailMode
+	ws().DetailBrush = s
+	ws().ActiveChunkIdx, ws().ActiveBrushIdx = s.chunkIdx, s.brushIdx
+	ws().PanelFocus = panelFocusBrush
 	editorVisReset()
-	editorSetStatus("Detail mode: %s — %d faces. Collision is unchanged. Tab or Escape to leave",
+	ws().setStatus("Detail mode: %s — %d faces. Collision is unchanged. Tab or Escape to leave",
 		b.ID, len(b.Detail.Faces))
 }
 
@@ -131,7 +131,7 @@ func editorEnterDetailMode(s brushSel) {
 func editorEnterDetailModeOnSelection() {
 	s, ok := detailModeTarget()
 	if !ok {
-		editorSetStatus("Select a brush to detail")
+		ws().setStatus("Select a brush to detail")
 		return
 	}
 	editorEnterDetailMode(s)
@@ -148,14 +148,14 @@ func detailModeTarget() (brushSel, bool) {
 	if f := primaryFaceSel(); faceSelValid(f) {
 		return brushSel{chunkIdx: f.chunkIdx, brushIdx: f.brushIdx}, true
 	}
-	if len(Editor.SelectedVertices) > 0 {
-		v := Editor.SelectedVertices[0]
+	if len(ws().SelectedVertices) > 0 {
+		v := ws().SelectedVertices[0]
 		if s := (brushSel{chunkIdx: v.chunkIdx, brushIdx: v.brushIdx}); brushSelValid(s) {
 			return s, true
 		}
 	}
-	if editorInDetailMode() && brushSelValid(Editor.DetailBrush) {
-		return Editor.DetailBrush, true
+	if editorInDetailMode() && brushSelValid(ws().DetailBrush) {
+		return ws().DetailBrush, true
 	}
 	return brushSel{}, false
 }
@@ -167,18 +167,18 @@ func editorExitDetailMode() {
 	if !editorInDetailMode() {
 		return
 	}
-	back := Editor.DetailBrush
+	back := ws().DetailBrush
 	clearVertexSelection()
 	clearFaceSelection()
-	Editor.EditContext = editorObjectMode
-	Editor.DetailBrush = brushSel{chunkIdx: -1, brushIdx: -1}
+	ws().EditContext = editorObjectMode
+	ws().DetailBrush = brushSel{chunkIdx: -1, brushIdx: -1}
 	editorVisReset()
 	if brushSelValid(back) {
 		setBrushSelection([]brushSel{back})
-		Editor.PanelFocus = panelFocusBrush
+		ws().PanelFocus = panelFocusBrush
 		return
 	}
-	Editor.PanelFocus = panelFocusNone
+	ws().PanelFocus = panelFocusNone
 }
 
 // ---------- the tools' shared tail ----------
@@ -190,7 +190,7 @@ func editorExitDetailMode() {
 func detailFaceIndices() []int {
 	var out []int
 	seen := map[int]bool{}
-	for _, sel := range Editor.SelectedFaces {
+	for _, sel := range ws().SelectedFaces {
 		if !sel.detail || !isDetailBrush(sel.chunkIdx, sel.brushIdx) || seen[sel.faceIdx] {
 			continue
 		}
@@ -209,7 +209,7 @@ func detailFaceIndices() []int {
 func detailSelectFaces(faces []int) {
 	sels := make([]faceSel, 0, len(faces))
 	for _, fi := range faces {
-		sel := brushDetailFaceSel(Editor.DetailBrush.chunkIdx, Editor.DetailBrush.brushIdx, fi)
+		sel := brushDetailFaceSel(ws().DetailBrush.chunkIdx, ws().DetailBrush.brushIdx, fi)
 		if faceSelValid(sel) {
 			sels = append(sels, sel)
 		}
@@ -219,7 +219,7 @@ func detailSelectFaces(faces []int) {
 		return
 	}
 	setFaceSelection(sels)
-	Editor.PanelFocus = panelFocusFace
+	ws().PanelFocus = panelFocusFace
 }
 
 // detailGeometryChanged reuploads the brush being detailed and rolls its
@@ -232,7 +232,7 @@ func detailGeometryChanged() {
 		return
 	}
 	if err := b.Load(); err != nil {
-		editorSetStatus("Detail: %v", err)
+		ws().setStatus("Detail: %v", err)
 	}
 	editorChunkGeometryChanged(ch)
 }
@@ -353,12 +353,12 @@ func mulPoint(m mgl32.Mat4, p mgl32.Vec3) mgl32.Vec3 {
 func editor3DDetailClick(mx, my int32) {
 	hit := pick3DDrawnBrush(mx, my)
 	if hit.kind != pickBrushFace {
-		editorSetStatus("Ctrl+Shift+click a brush to shape its detail")
+		ws().setStatus("Ctrl+Shift+click a brush to shape its detail")
 		return
 	}
 	if isDetailBrush(hit.chunkIdx, hit.brushIdx) {
 		editorExitDetailMode()
-		editorSetStatus("Left detail mode")
+		ws().setStatus("Left detail mode")
 		return
 	}
 	editorEnterDetailMode(brushSel{chunkIdx: hit.chunkIdx, brushIdx: hit.brushIdx})
@@ -373,8 +373,8 @@ func editor3DDetailClick(mx, my int32) {
 // otherwise make it impossible to Ctrl+Shift+click STRAIGHT FROM one detailed
 // brush to the next.
 func pick3DDrawnBrush(mx, my int32) pickHit {
-	ctx := Editor.EditContext
-	Editor.EditContext = editorObjectMode
-	defer func() { Editor.EditContext = ctx }()
+	ctx := ws().EditContext
+	ws().EditContext = editorObjectMode
+	defer func() { ws().EditContext = ctx }()
 	return pick3D(mx, my)
 }

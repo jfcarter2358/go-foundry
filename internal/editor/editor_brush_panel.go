@@ -56,14 +56,14 @@ func editorBrushPropertiesSection() {
 	editorPropGroupOpen("Brush##brushgrp", func() {
 		id := b.ID
 		if imgui.InputText("ID##brushid", &id) && id != "" && id != b.ID {
-			EditorPushUndo()
+			ws().pushUndo()
 			// Level-unique, not chunk-unique (world/identity.go), so a rename
 			// that collides with a brush in another chunk has to be caught too.
 			ci, bi := activeBrushIndices()
 			b.ID = uniqueBrushIDInLevelFor(id, ci, bi)
 		}
 		if imgui.Checkbox("Solid##brushsolid", &b.Solid) {
-			EditorPushUndo()
+			ws().pushUndo()
 		}
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("Off makes the whole brush decorative — a body walks\n" +
@@ -71,7 +71,7 @@ func editorBrushPropertiesSection() {
 				"Collision box below.")
 		}
 		if imgui.Checkbox("Dynamic##brushdyn", &b.Dynamic) {
-			EditorPushUndo()
+			ws().pushUndo()
 		}
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("A door, a lift, a crusher: a script can write this brush's\n" +
@@ -101,7 +101,7 @@ func editorBrushPropertiesSection() {
 		return
 	}
 
-	editorPropGroupOpen(fmt.Sprintf("Face %d##brushfacegrp", Editor.ActiveFaceIdx), func() {
+	editorPropGroupOpen(fmt.Sprintf("Face %d##brushfacegrp", ws().ActiveFaceIdx), func() {
 		changed := false
 		changed = textureCombo("Texture##bftex", &f.Texture, false) || changed
 		changed = textureCombo("Blend Texture##bfbtex", &f.BlendTexture, true) || changed
@@ -217,13 +217,13 @@ func brushDetailPanel(ch *world.Chunk, b *world.Brush) {
 			// afterwards and the two no longer describe the same wall. Nothing
 			// re-seeds automatically, because that would silently discard work
 			// every time an author nudged a corner.
-			EditorPushUndo()
+			ws().pushUndo()
 			b.ResetDetail()
 			_ = b.Load()
 			editorChunkGeometryChanged(ch)
 			clearFaceSelection()
 			clearVertexSelection()
-			editorSetStatus("Re-seeded %s's detail mesh from its solid", b.ID)
+			ws().setStatus("Re-seeded %s's detail mesh from its solid", b.ID)
 		}
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("Throw the detail away and copy the solid's faces again.\n" +
@@ -231,7 +231,7 @@ func brushDetailPanel(ch *world.Chunk, b *world.Brush) {
 		}
 
 		if imgui.Button("Remove detail##brushdetailclear") {
-			EditorPushUndo()
+			ws().pushUndo()
 			if editorInDetailMode() {
 				// Leave first: the selection about to be thrown away is in the
 				// detail mesh's index space, and the mode has nothing to point
@@ -243,7 +243,7 @@ func brushDetailPanel(ch *world.Chunk, b *world.Brush) {
 			editorChunkGeometryChanged(ch)
 			clearFaceSelection()
 			clearVertexSelection()
-			editorSetStatus("Removed %s's detail mesh", b.ID)
+			ws().setStatus("Removed %s's detail mesh", b.ID)
 		}
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("Back to being drawn as the solid it is.")
@@ -257,7 +257,7 @@ func brushDetailPanel(ch *world.Chunk, b *world.Brush) {
 func brushPanelSubject() (*world.Chunk, *world.Brush) {
 	// Detail mode first: it clears the brush selection on the way in — clicks
 	// in there address the detail mesh, not the solid — so the brush being
-	// worked on is named by Editor.DetailBrush and by nothing else.
+	// worked on is named by ws().DetailBrush and by nothing else.
 	if ch, b := detailBrush(); b != nil {
 		return ch, b
 	}
@@ -275,7 +275,7 @@ func brushPanelSubject() (*world.Chunk, *world.Brush) {
 // editorFaceSelectionNote: it says how many brushes a bulk action would reach,
 // since the fields below bind to the primary one only.
 func editorBrushSelectionNote() {
-	if n := len(Editor.SelectedBrushes); n > 1 {
+	if n := len(ws().SelectedBrushes); n > 1 {
 		editorTextMutedWrapped(fmt.Sprintf(
 			"%d brushes selected. The gizmo moves, turns and scales all of them; "+
 				"the fields below edit the first.", n))
@@ -285,10 +285,10 @@ func editorBrushSelectionNote() {
 // primaryFaceSel is the face the panel edits: the first of the selection, or an
 // unresolvable one when nothing is selected.
 func primaryFaceSel() faceSel {
-	if len(Editor.SelectedFaces) == 0 {
+	if len(ws().SelectedFaces) == 0 {
 		return faceSel{chunkIdx: -1, brushIdx: -1, faceIdx: -1}
 	}
-	return Editor.SelectedFaces[0]
+	return ws().SelectedFaces[0]
 }
 
 // uniqueBrushIDInLevelFor returns want, or want with a numeric suffix, such that
@@ -304,7 +304,7 @@ func primaryFaceSel() faceSel {
 // scripts, with no chunk qualifier (world/identity.go), so two brushes in
 // different chunks sharing an ID would make that name ambiguous.
 func uniqueBrushIDInLevelFor(want string, selChunk, selBrush int) string {
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil {
 		return want
 	}

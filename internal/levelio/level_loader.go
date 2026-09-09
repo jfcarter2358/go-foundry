@@ -333,12 +333,12 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// ID is uniqued against the level and an entity placed later could
 	// otherwise take a name one placed earlier had already been given.
 	//
-	// A deck that will not load is reported and skipped, unlike a bad entity:
-	// the entity is what a script addresses and what carries the attributes, so
-	// losing it silently would be invisible, while losing one of its floors is
-	// a hole you can see.
+	// Geometry that will not build is reported and skipped, unlike a bad
+	// entity: the entity is what a script addresses and what carries the
+	// attributes, so losing it silently would be invisible, while losing its
+	// solid is a hole you can see.
 	for i := range level.Entities {
-		for _, err := range MaterializeEntityChunks(level, &level.Entities[i], texNeeded) {
+		if err := MaterializeEntityGeometry(level, &level.Entities[i], texNeeded); err != nil {
 			log.Printf("%v", err)
 		}
 	}

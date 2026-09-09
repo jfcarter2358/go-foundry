@@ -198,52 +198,68 @@ func TestEntityClampSelectionDropsStaleIndices(t *testing.T) {
 	}
 }
 
-func TestChunkAttachNameFor(t *testing.T) {
-	cases := map[string]string{
-		"shuttle_hull":      "shuttle_hull",
-		"shuttle_hull.yaml": "shuttle_hull",
-		"":                  defaultChunkAttachName,
-	}
-	for in, want := range cases {
-		if got := chunkAttachNameFor(in); got != want {
-			t.Errorf("chunkAttachNameFor(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-// TestSetChunkFileNamesTheAttachment covers the "add one, pick a file" order the
-// outline is built around, and its exception: a name someone chose is left
-// alone, because a script and the vehicle's deck list both address it.
-func TestSetChunkFileNamesTheAttachment(t *testing.T) {
-	entityTestDoc(t)
-
-	entityAddChunk()
-	entitySetChunkFile(&entityDef.Chunks[0], "shuttle_hull")
-	if entityDef.Chunks[0].Name != "shuttle_hull" {
-		t.Errorf("placeholder name survived: %q", entityDef.Chunks[0].Name)
-	}
-
-	entityAddChunk()
-	entityDef.Chunks[1].Name = "hold"
-	entitySetChunkFile(&entityDef.Chunks[1], "shuttle_hull")
-	if entityDef.Chunks[1].Name != "hold" {
-		t.Errorf("a chosen name was overwritten with %q", entityDef.Chunks[1].Name)
-	}
-}
-
-// TestRemovingADeckUnbindsIt: a vehicle interior names an attachment, and one
-// naming a deck that is gone is a hole in the floor nothing else reports.
-func TestRemovingADeckUnbindsIt(t *testing.T) {
+// TestEntityBrushRoundTripsThroughTheDocument covers the rule the whole
+// geometry seam rests on: the scratch chunk holds the live brushes, and the
+// document's copy is taken from it at the end of a frame.
+//
+// Committing eagerly instead would make Ctrl+Z a no-op, because a tool pushes
+// its undo entry BEFORE it edits and the document has to still be holding the
+// pre-edit state at that moment.
+func TestEntityBrushRoundTripsThroughTheDocument(t *testing.T) {
 	def := entityTestDoc(t)
-	def.Vehicle = &world.VehicleSpec{Mode: world.VehicleGround}
+	t.Cleanup(entityUseWorkspace())
 
-	entityAddChunk()
-	entitySetChunkFile(&def.Chunks[0], "shuttle_hull")
-	def.Vehicle.AddInterior(def.Chunks[0].Name)
+	ch := world.Chunk{ID: entityGeomChunkID, Scale: 1}
+	ch.Brushes = []world.Brush{
+		world.NewBoxBrush("box", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, "concrete"),
+	}
+	ch.RecomputeBounds()
+	prev := entityGeomLevel
+	entityGeomLevel = &world.Level{Chunks: []world.Chunk{ch}}
+	entityWS.level = entityGeomLevel
+	entityWS.ActiveChunkIdx = 0
+	t.Cleanup(func() { entityGeomLevel = prev; entityWS.level = prev })
 
-	entityRemoveChunk(0)
-	if len(def.Vehicle.Interiors) != 0 {
-		t.Errorf("the vehicle still carries %v", def.Vehicle.Interiors)
+	if len(def.Brushes) != 0 {
+		t.Fatalf("the document started with %d brushes", len(def.Brushes))
+	}
+	entityCommitBrushes()
+	if len(def.Brushes) != 1 || def.Brushes[0].ID != "box" {
+		t.Fatalf("the commit did not reach the document: %+v", def.Brushes)
+	}
+
+	// A frame that changed nothing must not re-copy and must not dirty the
+	// document — otherwise moving the camera would mark a type unsaved.
+	entityDefDirty = false
+	entityCommitBrushes()
+	if entityDefDirty {
+		t.Error("a frame that changed no geometry marked the document dirty")
+	}
+
+	// And a real edit does get through.
+	entityGeomLevel.Chunks[0].Brushes[0].Verts[0] = mgl32.Vec3{9, 9, 9}
+	entityCommitBrushes()
+	if def.Brushes[0].Verts[0] != (mgl32.Vec3{9, 9, 9}) {
+		t.Errorf("a moved corner did not reach the document: %v", def.Brushes[0].Verts[0])
+	}
+	if !entityDefDirty {
+		t.Error("a moved corner left the document clean")
+	}
+}
+
+// TestEntityBrushesAreDeepCopied: the document and the live chunk must not
+// share a backing array, or undo would restore a snapshot that had already been
+// edited in place.
+func TestEntityBrushesAreDeepCopied(t *testing.T) {
+	src := []world.Brush{world.NewBoxBrush("box", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, "concrete")}
+	dst := world.CloneEntityBrushes(src)
+	dst[0].Verts[0] = mgl32.Vec3{5, 5, 5}
+	if src[0].Verts[0] == (mgl32.Vec3{5, 5, 5}) {
+		t.Error("the copy shares its vertex array with the original")
+	}
+	dst[0].Faces[0].Indices[0] = 7
+	if src[0].Faces[0].Indices[0] == 7 {
+		t.Error("the copy shares a face's index loop with the original")
 	}
 }
 

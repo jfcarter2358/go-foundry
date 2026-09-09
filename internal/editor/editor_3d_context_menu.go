@@ -95,8 +95,13 @@ func editor3DPlacementArmed() bool {
 // editor3DPointAt is where the cursor's ray meets the world — the surface it
 // hits, or a short way out in front when it hits nothing, so "here" still means
 // something over open space.
-func editor3DPointAt(mx, my int32) mgl32.Vec3 {
-	origin, dir := screenRay(mx, my)
+func editor3DPointAt(mx, my int32) mgl32.Vec3 { return workspacePointAt(mx, my) }
+
+// workspacePointAt is that, through whichever workspace is active — so the
+// brush stamp's ghost lands where the cursor meets the geometry in the entity
+// editor's viewport as readily as in the level editor's.
+func workspacePointAt(mx, my int32) mgl32.Vec3 {
+	origin, dir := ws().ray(mx, my)
 	if hit := pick3D(mx, my); hit.kind != pickNone {
 		return origin.Add(dir.Mul(hit.t))
 	}
