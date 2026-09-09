@@ -513,6 +513,7 @@ editor's reference panel. The core surface:
 | model | `texture` `visible` `alpha` `offset` `rotation` `scale` · read-only: `path` |
 | vehicle | `vehicle_throttle` `vehicle_steer` `vehicle_pitch` `vehicle_roll` · tuning: `vehicle_max_speed` `vehicle_accel` `vehicle_brake` `vehicle_turn_rate` `vehicle_pitch_rate` `vehicle_roll_rate` `vehicle_drag` · read-only: `vehicle_speed` `vehicle_driver` |
 | volume | `position` `rotation` `half` `shape` `enabled` `load_level` `fog` `fog_color` `fog_density` `fog_max_opacity` |
+| brush | `solid` · dynamic brushes only: `position` `rotation` `velocity` `angular_velocity` · read-only: `dynamic` |
 | edge | `kind` `texture` `collision` `visible` `pinned` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · portals also: `to_sector` `draw_gap` `gap_texture` |
 | floor | `enabled` `hidden` `height` `texture` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · slab: `thickness` `slab_texture` `slab_rim_texture` `slab_hidden` `slab_rim_across_portals` · read-only: `shaped` `world_height` `slab_shaped` |
 | ceiling | as floor, without `hidden` |
@@ -521,6 +522,51 @@ editor's reference panel. The core surface:
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` |
 | level | `step_height` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
+
+### Moving a brush
+
+A brush is static geometry: its corners are baked into the compiled level, so
+writing a placement on one would move a shape the compiled world no longer agrees
+exists. Tick **Dynamic** on the brush first and it is left out of that bake, and
+`position`, `rotation`, `velocity` and `angular_velocity` become writable:
+
+```flang
+def open() -> null
+    @blast_door.prop.velocity = <0.0, 2.0, 0.0>
+    wait 1.5
+    @blast_door.prop.velocity = <0.0, 0.0, 0.0>
+end
+```
+
+Writing one of them on a brush that is not dynamic is an error naming the brush
+and the toggle, rather than a move that works in the editor and silently does
+nothing in a shipped build.
+
+`position` is the brush's centre in **world** space, so it compares directly
+against a player's or an entity's. Collision, culling, the spatial hash and
+raycasts all follow the brush — what a body hits is where the brush is drawn.
+`velocity` is a rate the engine integrates each tick, so a lift that runs on its
+own needs no per-frame handler.
+
+`angular_velocity` is the same idea for turning: radians per second, added to
+`rotation` every frame of play, so a fan or a revolving door is one write rather
+than a `:tick:` clause.
+
+```flang
+@fan.prop.angular_velocity = <0.0, 3.14, 0.0>   -- half a turn a second, forever
+@fan.prop.angular_velocity = <0.0, 0.0, 0.0>    -- stop it wherever it got to
+```
+
+Unlike `velocity`, it is **not** in world space: it is the rate of change of
+`rotation`, which is the brush's own Euler angles about its own centre, so the
+two read and write in the same basis. A brush turns in place — the centre
+`position` reports does not move — and the angle wraps into ±π as it goes, so a
+brush left spinning keeps its precision. Nothing damps either rate: what should
+slow a door down is a rule the game has.
+
+Two limits worth knowing: nothing rides a moving brush (a player on a lift is not
+carried up by it — attach them to a moving *chunk* instead), and a dynamic brush
+cannot be part of the shell that seals a level for compiling.
 
 A surface's `height` is **chunk-local**: the authored number, and the one the
 level file stores, so `height = height + 1` on a placed chunk round-trips.

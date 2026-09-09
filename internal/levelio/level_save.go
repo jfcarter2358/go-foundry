@@ -214,12 +214,27 @@ func validateRawChunk(rc *world.RawChunk) error {
 			return fmt.Errorf("chunk %q brush %q: %d verts; a solid needs at least four",
 				rc.ID, b.ID, nVerts)
 		}
-		for fi := range b.Faces {
-			for _, vi := range b.Faces[fi].Indices {
-				if vi < 0 || vi >= nVerts {
-					return fmt.Errorf("chunk %q brush %q: face %d names vertex %d, which it does not have",
-						rc.ID, b.ID, fi, vi)
-				}
+		if err := checkRawFaces(rc.ID, b.ID, "", nVerts, b.Faces); err != nil {
+			return err
+		}
+		if b.Detail != nil {
+			// The detail mesh indexes its OWN vertex pool, so it is checked
+			// against its own count rather than the hull's.
+			if err := checkRawFaces(rc.ID, b.ID, "detail ",
+				len(b.Detail.Verts)/3, b.Detail.Faces); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func checkRawFaces(chunkID, brushID, what string, nVerts int, faces []world.RawBrushFace) error {
+	for fi := range faces {
+		for _, vi := range faces[fi].Indices {
+			if vi < 0 || vi >= nVerts {
+				return fmt.Errorf("chunk %q brush %q: %sface %d names vertex %d, which it does not have",
+					chunkID, brushID, what, fi, vi)
 			}
 		}
 	}

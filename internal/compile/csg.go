@@ -58,6 +58,22 @@ type Face struct {
 	Chunk, Brush string
 	FaceIdx      int
 
+	// Detail marks a face that came off a brush's DETAIL mesh rather than off
+	// its hull (world/brush_detail.go). It is drawn and lit like any other
+	// face and takes no part in the partition: see BuildBSP on why a detail
+	// face must not be allowed to choose a splitting plane or to decide what
+	// is solid.
+	Detail bool
+
+	// NoDraw marks the other half of that arrangement: a face that shapes the
+	// partition and is never rendered. A DETAILED brush emits one per hull
+	// face, because the tree's cells, its portals and above all its SEALING
+	// have to describe the solid — and the solid is the hull, whatever has
+	// since been carved into the surface drawn over it. Without these a
+	// detailed wall would be a hole in the shell and the void fill would pour
+	// through it.
+	NoDraw bool
+
 	// Everything that decides how it draws, copied off the source face. Copied
 	// rather than referenced because the source brush is not present at run
 	// time in a release build — that is the whole point of compiling.
@@ -71,7 +87,6 @@ type Face struct {
 	SmoothAngle  float32
 	Alpha        float32
 	DoubleSided  bool
-	Detail       world.DetailSpec
 
 	// UVOrigin is the corner the SOURCE face's texture coordinates are measured
 	// from, in world space, and it is inherited by every fragment that face is
@@ -154,6 +169,24 @@ func Bakes(ch *world.Chunk) bool {
 	return ch.IsEnabled() && ch.FrameOwner == ""
 }
 
+// BakesBrush is Bakes one level down: whether this particular brush of a baking
+// chunk becomes compiled geometry.
+//
+// A dynamic brush does not (world/brush_dynamic.go). It is a door, a lift or a
+// crusher that a script moves at run time, so baking it would freeze it at the
+// position it happened to be authored in — and, worse, it would take part in
+// the CSG and the BSP as a solid: the floor under a lift would be clipped away,
+// the space a door fills would be a solid leaf of the partition, and neither is
+// true a second after the level starts.
+//
+// So a dynamic brush is left out of the bake in every sense. It clips nothing,
+// nothing clips it, it seals nothing, and it survives into the compiled level
+// as a live brush the runtime draws and collides the ordinary way (see
+// levelio/compiled_load.go). The consequence an author has to know about: a
+// dynamic brush cannot be part of the shell that seals a level, because a hole
+// it happens to be plugging is a hole as far as the void fill is concerned.
+func BakesBrush(b *world.Brush) bool { return !b.Dynamic }
+
 // gatherSolids walks the level once, producing the world-space solids CSG clips
 // against and the world-space faces it clips.
 //
@@ -175,6 +208,13 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 		model := ch.ModelMatrix()
 		for bi := range ch.Brushes {
 			b := &ch.Brushes[bi]
+			if !BakesBrush(b) {
+				// Moves at run time, so it is neither a clipper nor something
+				// to clip. Its order is deliberately not consumed either: the
+				// coplanar tie-break compares orders, and a gap in them would
+				// still be stable but would mean nothing.
+				continue
+			}
 			ws := worldPoints(b, model)
 
 			if b.Solid {
@@ -194,23 +234,52 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 				}
 			}
 
-			for fi := range b.Faces {
-				f := &b.Faces[fi]
+			// The solid above is the HULL — its planes are where the level is
+			// sealed and where a body stops. What is DRAWN may be a detail
+			// mesh instead, indexing its own vertex pool, so the two walks
+			// resolve their points against different vertex lists.
+			drawn := b.DrawMesh()
+			dws := ws
+			if b.HasDetail() {
+				dws = meshWorldPoints(drawn, model)
+				// The hull goes in too, as structure nobody draws. Everything
+				// downstream then partitions this brush exactly as it would
+				// have without a detail mesh — same cells, same portals, same
+				// seal — and the detail is dropped into the cells afterwards.
+				for fi := range b.Faces {
+					f := &b.Faces[fi]
+					if f.NoDraw {
+						continue // buried by hand; it was never part of the shell
+					}
+					pts := facePoints(ws, f)
+					pl, ok := bsp.PlaneFromPoints(pts)
+					if !ok {
+						continue
+					}
+					faces = append(faces, Face{
+						Points: pts, Plane: pl, UVOrigin: pts[0], NoDraw: true,
+						Chunk: ch.ID, Brush: b.ID, FaceIdx: fi,
+						Alpha: 1, sourceOrder: order,
+					})
+				}
+			}
+			for fi := range drawn.Faces {
+				f := &drawn.Faces[fi]
 				if f.NoDraw {
 					continue // never drawn, so there is nothing to keep
 				}
-				pts := facePoints(ws, f)
+				pts := facePoints(dws, f)
 				pl, ok := bsp.PlaneFromPoints(pts)
 				if !ok {
 					continue
 				}
 				faces = append(faces, Face{
 					Points: pts, Plane: pl, UVOrigin: pts[0],
-					Chunk: ch.ID, Brush: b.ID, FaceIdx: fi,
+					Chunk: ch.ID, Brush: b.ID, FaceIdx: fi, Detail: b.HasDetail(),
 					Texture: f.Texture, BlendTexture: f.BlendTexture, BlendMask: f.BlendMask,
 					UVOffset: f.UVOffset, UVScale: f.UVScale, UVRotation: f.UVRotation,
 					Smooth: f.Smooth, SmoothAngle: f.SmoothAngle,
-					Alpha: f.Alpha, DoubleSided: f.DoubleSided, Detail: f.Detail,
+					Alpha: f.Alpha, DoubleSided: f.DoubleSided,
 					// order is stashed on the face so the coplanar tie-break
 					// below can compare it against a solid's without a second
 					// lookup; it is not part of the output.
@@ -223,8 +292,13 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 	return solids, faces
 }
 
-// worldPoints carries a brush's verts out through its chunk's placement.
+// worldPoints carries a brush's HULL verts out through its chunk's placement.
 func worldPoints(b *world.Brush, model mgl32.Mat4) []mgl32.Vec3 {
+	return meshWorldPoints(&b.BrushMesh, model)
+}
+
+// meshWorldPoints is worldPoints for either of a brush's two meshes.
+func meshWorldPoints(b *world.BrushMesh, model mgl32.Mat4) []mgl32.Vec3 {
 	out := make([]mgl32.Vec3, len(b.Verts))
 	for i, v := range b.Verts {
 		if model == mgl32.Ident4() {

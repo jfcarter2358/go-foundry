@@ -34,6 +34,7 @@ func editorClearObjectSelections() {
 	editorClearLightSelection()
 	clearVertexSelection()
 	clearFaceSelection()
+	clearBrushSelection()
 }
 
 // editorSelectBrush makes one brush the selection, from the Explorer's row.
@@ -42,22 +43,20 @@ func editorClearObjectSelections() {
 // one — but not *selected*: the panel is being asked for the brush's
 // properties, not the chunk's.
 //
-// The selection is expressed as the brush's first face, because a face is what
-// the selection unit is: everything downstream (the properties panel, the
-// outline, the gizmo's corner handles) reads Editor.SelectedFaces, and a
-// separate "brush is selected" flag would be a second source of truth for the
-// same thing. A brush with no faces cannot be selected at all, which is
-// correct — there would be nothing to show or grab.
+// Picking a row names the brush itself, which is an object-mode selection, so
+// this switches context as well. Landing an author in edit mode with one face
+// of the clicked brush highlighted would be a guess at which face they meant;
+// selecting the solid is not a guess.
 func editorSelectBrush(chunkIdx, brushIdx int) {
 	lvl := Editor.level
 	if lvl == nil || chunkIdx < 0 || chunkIdx >= len(lvl.Chunks) {
 		return
 	}
 	ch := &lvl.Chunks[chunkIdx]
-	if brushIdx < 0 || brushIdx >= len(ch.Brushes) || len(ch.Brushes[brushIdx].Faces) == 0 {
+	if brushIdx < 0 || brushIdx >= len(ch.Brushes) {
 		return
 	}
+	Editor.EditContext = editorObjectMode
 	Editor.ActiveChunkIdx = chunkIdx
-	setFaceSelection([]faceSel{brushFaceSel(chunkIdx, brushIdx, 0)})
-	Editor.PanelFocus = panelFocusBrush
+	editorSelectBrushObject(brushSel{chunkIdx: chunkIdx, brushIdx: brushIdx}, false)
 }

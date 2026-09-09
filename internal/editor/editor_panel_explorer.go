@@ -107,6 +107,11 @@ func editorExplorerPlacementBanner() {
 		// the brush stays armed and every click places another copy.
 		label = "Brushing " + Editor.BrushModel + " — click to place, Escape to stop"
 		cancel = editorDisarmBrush
+	case Editor.BrushPlaceActive:
+		// A mode too, and for the same reason — see editor_brush_tools.go.
+		label = "Stamping " + brushKindLabel(Editor.BrushPlaceKind) +
+			" brushes — click to place, Escape to stop"
+		cancel = editorDisarmBrushPlacement
 	default:
 		return
 	}
@@ -346,13 +351,21 @@ func editorExplorerBrushNodes(ch *world.Chunk, chunkIdx int) {
 	remove, duplicate := -1, -1
 	for i := range ch.Brushes {
 		b := &ch.Brushes[i]
-		selected := chunkIdx == Editor.ActiveChunkIdx && i == Editor.ActiveBrushIdx &&
-			len(Editor.SelectedFaces) > 0
+		// Selected either way round: as a whole brush in object mode, or by
+		// way of one of its faces in edit mode.
+		selected := isBrushSelected(brushSel{chunkIdx: chunkIdx, brushIdx: i}) ||
+			(chunkIdx == Editor.ActiveChunkIdx && i == Editor.ActiveBrushIdx &&
+				len(Editor.SelectedFaces) > 0)
 		label := b.ID
 		if !b.Solid {
 			// Worth saying on the row: a non-solid brush looks exactly like a
 			// solid one and behaves nothing like it.
 			label += "  (non-solid)"
+		}
+		if b.Dynamic {
+			// Likewise: it is left out of the compiled bake and moves at run
+			// time, neither of which the viewport shows while it is at rest.
+			label += "  (dynamic)"
 		}
 		imgui.PushID(fmt.Sprintf("brush%d", i))
 		if editorExplorerLeaf(fmt.Sprintf("%s##brush%d", label, i), selected, panelFocusBrush) {
@@ -802,15 +815,24 @@ func editorExplorerAddMenu(lvl *world.Level) {
 		imgui.Separator()
 		if imgui.BeginMenu("Brush") {
 			for _, kind := range brushKinds {
-				if imgui.MenuItem(strings.ToUpper(kind[:1]) + kind[1:]) {
-					editorAddBrushAt(kind, editorExplorerPlacePoint())
+				k := kind
+				armed := Editor.BrushPlaceActive && Editor.BrushPlaceKind == k
+				if imgui.MenuItemV(brushKindLabel(k), "", armed, true) {
+					// Picking the armed kind again puts the stamp away, so the
+					// menu that switched it on can switch it off.
+					if armed {
+						editorDisarmBrushPlacement()
+					} else {
+						editorArmBrushPlacement(k)
+					}
 				}
 			}
 			imgui.EndMenu()
 		}
 		if imgui.IsItemHovered() {
-			imgui.SetTooltip("A solid, placed where the camera is looking.\n" +
-				"Shape it with E (extrude), I (inset) and B (subdivide).")
+			imgui.SetTooltip("Arms the stamp: every click in the view places another\n" +
+				"solid, Escape puts it away.\n" +
+				"Shape one with E (extrude), I (inset) and B (subdivide).")
 		}
 	}
 

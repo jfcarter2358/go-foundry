@@ -18,8 +18,8 @@ package world
 
 import "foundry/internal/gfx"
 
-// ChunkDrawGeometries returns every uploaded piece of ch's geometry: every
-// visible brush face and its Detail texture-override submeshes.
+// ChunkDrawGeometries returns every uploaded piece of ch's geometry: the mesh
+// of every visible brush face.
 //
 // Pointers into the chunk, not copies — a Geometry carries live GL handles, and
 // a copy of one is a second struct pointing at buffers it does not own.
@@ -36,15 +36,13 @@ func ChunkDrawGeometries(ch *Chunk) []*gfx.Geometry {
 
 	for bi := range ch.Brushes {
 		b := &ch.Brushes[bi]
-		for fi := range b.Faces {
-			f := &b.Faces[fi]
+		faces := b.DrawFaces()
+		for fi := range faces {
+			f := &faces[fi]
 			if f.NoDraw {
 				continue
 			}
 			add(&f.Geometry)
-			for i := range f.SubmeshGeometries {
-				add(&f.SubmeshGeometries[i])
-			}
 		}
 	}
 	return out

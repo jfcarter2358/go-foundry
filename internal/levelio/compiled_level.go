@@ -77,7 +77,7 @@ const CompiledExt = ".fbsp"
 
 // CompiledVersion is bumped whenever old bytes would load into the current
 // structs without complaining and mean something different.
-const CompiledVersion = 1
+const CompiledVersion = 2
 
 // compiledMagic is the first thing in the file, so that a truncated or
 // unrelated file is rejected as such rather than as a gob decode failure

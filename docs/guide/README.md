@@ -7,9 +7,12 @@ running engine: there is no export step and no separate viewer.
 
 > **TODO(brush migration, Phase 10):** levels used to be built out of *sectors*
 > — 2D floorplan polygons with a floor and ceiling height, drawn on a top-down
-> map. That model, and the 2D editor that went with it, have been replaced. The
+> map. That model, and the 2D editor that went with it, have been replaced. Some
 > chapters below still describe the old one and are being rewritten; the ones
-> updated so far are [Scatter](06-scatter.md), [Prefabs](22-prefabs.md),
+> updated so far are [Editor basics](01-editor-basics.md),
+> [Building levels](02-building-levels.md),
+> [Shaping surfaces](03-shaping-surfaces.md), [Smooth shading](05-smoothing.md),
+> [Scatter](06-scatter.md), [Prefabs](22-prefabs.md),
 > [Vehicles and frames](12-vehicles-and-frames.md) and
 > [Compiling levels](23-compiling-levels.md).
 
@@ -29,11 +32,11 @@ and is always current.
 | | |
 | --- | --- |
 | [Editor basics](01-editor-basics.md) | Windows, toolbar, selection, gizmos, cameras, undo, saving |
-| [Building levels](02-building-levels.md) | Chunks, sectors, walls, portals, floors, ceilings, the 2D map |
+| [Building levels](02-building-levels.md) | Chunks, brushes, faces, convexity, dynamic brushes |
 | [Prefabs](22-prefabs.md) | Reusable groups, linked by file: build once, place twenty |
-| [Shaping surfaces](03-shaping-surfaces.md) | Terrain, steps, recesses and holes on any face |
+| [Shaping surfaces](03-shaping-surfaces.md) | Edit mode shapes the solid; detail mode shapes what you see |
 | [Textures](04-textures.md) | The texture editor, palettes, layers, animation, bump maps |
-| [Detail and smoothing](05-detail-and-smoothing.md) | Per-face procedural displacement and scattered rock |
+| [Smooth shading](05-smoothing.md) | Welding normals so a run of faces reads as one curved surface |
 | [Scatter](06-scatter.md) | Volumes of grass, rock, wildflowers, cattails and moss |
 | [Lighting](07-lighting.md) | Global, directional and point lights; shadows and their cost |
 | [Sky and fog](08-sky-and-fog.md) | Skyboxes, gradients, distance fog, fog volumes |

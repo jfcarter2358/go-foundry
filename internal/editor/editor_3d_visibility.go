@@ -153,13 +153,13 @@ func editorPointOccluded(eye, p mgl32.Vec3) bool {
 			if !segmentHitsAABB(eye, dir, limit, bmin, bmax) {
 				continue
 			}
-			for fi := range b.Faces {
-				f := &b.Faces[fi]
+			faces := b.DrawFaces()
+			for fi := range faces {
+				f := &faces[fi]
 				if f.NoDraw {
 					continue // draws nothing, so it occludes nothing
 				}
-				if modelGeometryBlocks(eye, dir, limit, f.Geometry.Vertices, model) ||
-					modelGeometriesBlock(eye, dir, limit, f.SubmeshGeometries, model) {
+				if modelGeometryBlocks(eye, dir, limit, f.Geometry.Vertices, model) {
 					return true
 				}
 			}
@@ -220,15 +220,4 @@ func modelGeometryBlocks(origin, dir mgl32.Vec3, limit float32, verts []float32,
 		mgl32.Vec3{d4.X(), d4.Y(), d4.Z()},
 		limit, verts,
 	)
-}
-
-// modelGeometriesBlock is modelGeometryBlocks across a slice, the model-space
-// counterpart of geometriesBlock.
-func modelGeometriesBlock(origin, dir mgl32.Vec3, limit float32, geoms []gfx.Geometry, model mgl32.Mat4) bool {
-	for i := range geoms {
-		if modelGeometryBlocks(origin, dir, limit, geoms[i].Vertices, model) {
-			return true
-		}
-	}
-	return false
 }

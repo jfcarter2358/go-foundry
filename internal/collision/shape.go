@@ -159,6 +159,23 @@ func (c Cylinder) Support(dir mgl32.Vec3) mgl32.Vec3 {
 // needed: every point IS a candidate support point.
 type ConvexHull struct {
 	Pts []mgl32.Vec3
+	// Xform places Pts, for a brush a script has moved (world.Brush.Placement).
+	// The ZERO matrix means "no transform" — not the zero transform, which
+	// would collapse the solid to a point — so that the overwhelmingly common
+	// ConvexHull{Pts: ...} keeps meaning what it always did.
+	//
+	// A transform rather than a translation because a dynamic brush can turn as
+	// well as slide, and because carrying one costs the same as carrying the
+	// other: the support function below transforms two vectors either way.
+	Xform mgl32.Mat4
+}
+
+// placed reports whether Xform is a transform at all, and returns it.
+func (h ConvexHull) placed() (mgl32.Mat4, bool) {
+	if h.Xform == (mgl32.Mat4{}) || h.Xform == mgl32.Ident4() {
+		return mgl32.Ident4(), false
+	}
+	return h.Xform, true
 }
 
 // Center is the average of the hull's points. Not the exact centroid of the
@@ -172,7 +189,12 @@ func (h ConvexHull) Center() mgl32.Vec3 {
 	for _, p := range h.Pts {
 		sum = sum.Add(p)
 	}
-	return sum.Mul(1 / float32(len(h.Pts)))
+	c := sum.Mul(1 / float32(len(h.Pts)))
+	if m, ok := h.placed(); ok {
+		r := m.Mul4x1(c.Vec4(1))
+		return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+	}
+	return c
 }
 
 // Support is the brute-force answer — the farthest point among Pts along dir
@@ -182,6 +204,14 @@ func (h ConvexHull) Center() mgl32.Vec3 {
 // the spatial hash before this is ever called, the same way a sector's wall
 // scan used to be bounded to its own polygon.
 func (h ConvexHull) Support(dir mgl32.Vec3) mgl32.Vec3 {
+	m, placed := h.placed()
+	if placed {
+		// support_{A·S}(d) = A · support_S(Aᵀ·d), for any invertible linear A.
+		// Searching in the brush's own space and carrying the winner out is
+		// what keeps a moved brush from needing a transformed copy of its
+		// vertex list per query.
+		dir = transposeMulDir(m, dir)
+	}
 	best := h.Pts[0]
 	bestDot := best.Dot(dir)
 	for _, p := range h.Pts[1:] {
@@ -189,10 +219,26 @@ func (h ConvexHull) Support(dir mgl32.Vec3) mgl32.Vec3 {
 			best, bestDot = p, d
 		}
 	}
+	if placed {
+		r := m.Mul4x1(best.Vec4(1))
+		return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+	}
 	return best
 }
 
 // ---------- helpers ----------
+
+// transposeMulDir applies the transpose of m's linear part to a direction. For
+// a rotation that is the inverse; for a general affine placement it is what the
+// support-function identity in ConvexHull.Support asks for, which is not the
+// same thing and is deliberately not spelled as an inverse.
+func transposeMulDir(m mgl32.Mat4, d mgl32.Vec3) mgl32.Vec3 {
+	return mgl32.Vec3{
+		m[0]*d[0] + m[1]*d[1] + m[2]*d[2],
+		m[4]*d[0] + m[5]*d[1] + m[6]*d[2],
+		m[8]*d[0] + m[9]*d[1] + m[10]*d[2],
+	}
+}
 
 // rotate and rotateInv apply a rotation matrix and its inverse to a direction.
 // A rotation is orthonormal, so the inverse is the transpose — no matrix
@@ -299,6 +345,14 @@ func Translate(s Shape, d mgl32.Vec3) Shape {
 		v.C = v.C.Add(d)
 		return v
 	case ConvexHull:
+		// Translating the placement rather than the points when there is one:
+		// the points are the caller's authored slice, shared with the brush
+		// itself, and rewriting a copy of it per step of a sweep is the cost
+		// the placement exists to avoid.
+		if m, ok := v.placed(); ok {
+			v.Xform = mgl32.Translate3D(d.X(), d.Y(), d.Z()).Mul4(m)
+			return v
+		}
 		pts := make([]mgl32.Vec3, len(v.Pts))
 		for i, p := range v.Pts {
 			pts[i] = p.Add(d)

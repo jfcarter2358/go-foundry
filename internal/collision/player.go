@@ -107,9 +107,9 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 	// How tall a riser this body walks up is the level's to say, not this
 	// package's — see world.PlayerSettings. Resolved once here rather than per
 	// substep because it cannot change inside a frame, and because it is the
-	// only thing in this loop that has to ask the level a question about the
-	// player rather than about the geometry under it.
-	stepHeight := lvl.Player.EffectiveStepHeight(p)
+	// only thing in this loop that asks the level a question rather than the
+	// geometry under the body.
+	stepHeight := lvl.Player.EffectiveStepHeight()
 	radius := p.BoundHalfX
 	if p.BoundHalfZ > radius {
 		radius = p.BoundHalfZ

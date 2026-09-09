@@ -22,10 +22,9 @@ package world
 //     That is this file, and it is the part a volume expresses well.
 //   - **Ground patches** — a conforming, displaced, textured mesh under the
 //     paint, so a grassy area read as terrain rather than as a flat cutout.
-//     A brush face already does that: BrushFace.Detail (world/detail.go) gives
-//     any face procedural displacement and its own scatter, evaluated by the
-//     same tessellation the rock outcrops use. The ground IS geometry now, so
-//     a second draped mesh over it would be a copy that z-fights.
+//     Nothing drapes one now. A brush IS the ground, and shape in it comes
+//     from subdividing the brush's own faces, so an author who wants rolling
+//     terrain builds it rather than switching it on.
 //   - **Water** — a companion plane auto-managed by a Water-kind polygon.
 //     Nothing replaces it yet; it needs a water *volume*, which is a separate
 //     piece of work from this one.

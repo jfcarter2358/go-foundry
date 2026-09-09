@@ -421,6 +421,14 @@ func RestampPrefab(lvl *world.Level, instanceID string) error {
 	if err := MaterializePrefab(lvl, inst, texNeeded); err != nil {
 		return err
 	}
+	// A stamp adds and removes chunks and entities, and both of the level's
+	// indexes address those by position — the spatial hash's buckets and each
+	// frame's ChunkIdx. Rebuilt here rather than in MaterializePrefab because
+	// the load path materialises every instance before finishLevel does this
+	// once for the whole level; this is the entry point that runs afterwards.
+	if err := world.RebuildIndexes(lvl); err != nil {
+		return err
+	}
 	return EnsureChunkTextures(texNeeded)
 }
 

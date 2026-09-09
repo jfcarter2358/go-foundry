@@ -129,6 +129,8 @@ func editor3DContextMenuItems() []ctxMenuItem {
 		items = append(items, editor3DSpawnMenuItems()...)
 	case sel3DSurface:
 		items = append(items, editor3DSurfaceMenuItems()...)
+	case sel3DBrush:
+		items = append(items, editor3DBrushMenuItems()...)
 	case sel3DVertices:
 		items = append(items, editor3DVertexMenuItems()...)
 	case sel3DEntity:
@@ -172,6 +174,48 @@ func editor3DSpawnMenuItems() []ctxMenuItem {
 	}
 }
 
+// ---------- brush (object mode) ----------
+
+// editor3DBrushMenuItems is the menu for a whole-brush selection.
+//
+// Short on purpose. Almost everything a brush can be asked is either a property
+// of one of its faces (a texture, a UV, smoothing) or an operation on one (an
+// extrude, an inset), and both belong to edit mode — so the useful thing to
+// offer here is the way in, plus the handful of actions that really are about
+// the solid: duplicate it, snap it, delete it.
+func editor3DBrushMenuItems() []ctxMenuItem {
+	n := len(Editor.SelectedBrushes)
+	all := func(label string) string {
+		if n > 1 {
+			return fmt.Sprintf("%s (%d brushes)", label, n)
+		}
+		return label
+	}
+	return []ctxMenuItem{
+		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusBrush) },
+			Tooltip: "Opens the side panel on the first selected brush."},
+		{Label: "Edit this brush", Shortcut: "Tab",
+			Do:      func() { editorSetEditContext(editorEditMode) },
+			Tooltip: "Go into edit mode, where a click picks a face, an edge or a\ncorner and E/I/B reshape it."},
+		{Label: "Detail this brush", Shortcut: "Ctrl+Shift+click", Disabled: n > 1,
+			Do: editorEnterDetailModeOnSelection,
+			Tooltip: "Shape the surface drawn over this brush with the model editor's\n" +
+				"own tools — extrude, subdivide, smooth, delete — without moving\n" +
+				"the solid the player collides with."},
+		{Separator: true},
+		{Label: "Duplicate", Disabled: n > 1, Do: editorDuplicateSelectedBrush,
+			Tooltip: "A copy in place, selected and ready to drag off the original."},
+		{Label: "Hollow this brush", Disabled: n > 1, Do: editorHollowSelectedBrush,
+			Tooltip: "Replace the solid with the six brushes of a room filling it —\nfloor, ceiling and four walls."},
+		{Label: "Save selection as prefab...", Do: func() { Editor.ShowSavePrefab = true },
+			Tooltip: "Write the selected brushes to a file, so the same thing can be\n" +
+				"placed twenty times and edited once."},
+		{Separator: true},
+		{Label: all("Snap to grid"), Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid},
+		{Label: all("Delete"), Shortcut: "Del", Do: EditorDeleteSelected},
+	}
+}
+
 // ---------- surface ----------
 
 func editor3DSurfaceMenuItems() []ctxMenuItem {
@@ -202,14 +246,9 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 			Tooltip: "Opens the side panel on the first selected face. The panel\nedits that one; these rows edit all of them."},
 		{Label: all("Texture"), Sub: ctxTextureMenuItems(texture, editor3DSetSurfaceTexture)},
 		{Separator: true},
-		// The three mesh operations, also on E, I and B — see
-		// editor_brush_mesh.go for why these three and not more.
-		{Label: all("Extrude [E]"), Do: func() { brushExtrudeSelectedFaces(brushExtrudeDefault()) },
-			Tooltip: "Slide the face along its own normal, growing the solid.\nShift+E pulls it back in."},
-		{Label: all("Inset [I]"), Do: func() { brushInsetSelectedFaces(brushInsetFraction) },
-			Tooltip: "Draw the face's corners toward its centre, in its own plane —\nturning the solid into a frustum of itself."},
-		{Label: all("Subdivide [B]"), Do: brushSubdivideSelectedFaces,
-			Tooltip: "Fan the face into one triangle per corner, meeting at its centre.\nAdds no volume; makes the face finer to shape."},
+	}
+	items = append(items, editor3DFaceOpMenuItems(all)...)
+	items = append(items, []ctxMenuItem{
 		{Separator: true},
 		// Every brush face has every one of these fields — a sector's six kinds
 		// each had a different subset, which is why this block used to grey
@@ -225,13 +264,26 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 		{Label: all("Collision"), Checked: faceSolid(r.f),
 			Do:      func() { editor3DToggleFaceSolid() },
 			Tooltip: "Off makes this one face walk-through while the rest of the\nbrush stays solid — a window opening in a wall."},
-	}
+	}...)
 	if multi {
 		// A mixed selection has no single "before" value, so the ticks above
 		// describe the first face only. Saying which way the row will go is
 		// more use than a tick that is right about one of twelve.
 		items = append(items, ctxMenuItem{
 			Label: "(ticks show the first face; a row sets them all to match it)"})
+	}
+
+	if editorInDetailMode() {
+		// The rows below are about the SOLID — hollowing it, duplicating it,
+		// saving it to a prefab — and none of them is a thing to do to one
+		// face of the surface drawn over it.
+		return append(items,
+			ctxMenuItem{Separator: true},
+			ctxMenuItem{Label: "Select this brush's detail faces", Do: editor3DSelectBrushFaces},
+			ctxMenuItem{Label: "Select this brush's detail points", Do: editor3DSelectBrushVertices},
+			ctxMenuItem{Label: "Deselect", Do: clearFaceSelection},
+			ctxMenuItem{Separator: true},
+			ctxMenuItem{Label: "Leave detail mode", Shortcut: "Tab", Do: editorExitDetailMode})
 	}
 
 	return append(items,
@@ -379,8 +431,27 @@ func editor3DToggleVolumeEnabled() {
 
 func editor3DEmptyMenuItems() []ctxMenuItem {
 	return []ctxMenuItem{
-		{Label: "Click a face, an entity, a volume, the spawn point, a vertex or an edge to select it"},
+		{Label: editor3DEmptyMenuHint()},
 	}
+}
+
+// editor3DEmptyMenuHint says what a click would select, which depends on the
+// context: whole objects, the parts of a brush, or the parts of the detail mesh
+// drawn over one.
+func editor3DEmptyMenuHint() string {
+	switch {
+	case editorInDetailMode():
+		_, b := detailBrush()
+		id := "a brush"
+		if b != nil {
+			id = b.ID
+		}
+		return "Detail mode on " + id +
+			" — click its surface; E extrudes, B subdivides, Del removes (Tab or Escape to leave)"
+	case editorInEditMode():
+		return "Edit mode — click a face, an edge or a corner to select it (Tab for object mode)"
+	}
+	return "Object mode — click a brush, an entity, a volume or the spawn point to select it (Tab to edit a brush)"
 }
 
 // ---------- shared ----------
@@ -390,15 +461,38 @@ func editor3DSharedMenuItems() []ctxMenuItem {
 	if Editor.level.Spawn != nil {
 		spawnLabel = "Move spawn point here"
 	}
-	modes := make([]ctxMenuItem, 0, len(editorSelModes))
+	// The context first, then the units within it — the units are edit mode's,
+	// and picking one from here goes there, exactly as pressing 1/2/3 does.
+	modes := make([]ctxMenuItem, 0, len(editorSelModes)+2)
+	modes = append(modes,
+		ctxMenuItem{
+			Label:    "Object",
+			Shortcut: "Tab",
+			Checked:  !editorInEditMode() && !editorInDetailMode(),
+			Do:       func() { editorSetEditContext(editorObjectMode) },
+			Tooltip:  "Click picks up a whole brush; the gizmo moves, turns and scales all of it.",
+		},
+		ctxMenuItem{
+			Label:    "Detail",
+			Shortcut: "Ctrl+Shift+click",
+			Checked:  editorInDetailMode(),
+			Do:       func() { editorSetEditContext(editorDetailMode) },
+			Tooltip: "Shape the mesh drawn over one brush's surface. Collision stays\n" +
+				"with the solid underneath, which is drawn as a wire cage.",
+		},
+		ctxMenuItem{Separator: true},
+	)
 	for _, mode := range editorSelModes {
 		m := mode
 		modes = append(modes, ctxMenuItem{
 			Label:    m.String(),
 			Shortcut: editorSelModeKey(m),
-			Checked:  Editor.SelMode == m,
-			Do:       func() { editorSetSelMode(m) },
-			Tooltip:  editorSelModeTooltip(m),
+			Checked:  editorInEditMode() && Editor.SelMode == m,
+			Do: func() {
+				editorSetEditContext(editorEditMode)
+				editorSetSelMode(m)
+			},
+			Tooltip: editorSelModeTooltip(m),
 		})
 	}
 
@@ -409,10 +503,14 @@ func editor3DSharedMenuItems() []ctxMenuItem {
 		{Label: "Add volume here", Do: func() { editor3DAddVolumeAt(editor3DMenuPoint) },
 			Tooltip: "A one-unit box trigger where the cursor met the world.\nGive it a script in the Volumes panel."},
 		editorSceneryBrushMenuItem(),
+		editorBrushStampMenuItem(),
 		{Label: "Select", Sub: modes},
 		{Label: "Wireframe", Shortcut: "Z", Checked: Editor.Wireframe,
 			Do:      func() { editorSetWireframe(!Editor.Wireframe) },
 			Tooltip: "Solid hides the world's far side, and hidden points and\nedges cannot be clicked. Wireframe shows all of it."},
+		{Label: "Bounding boxes", Shortcut: "B", Checked: Editor.ShowBounds,
+			Do:      func() { editorSetShowBounds(!Editor.ShowBounds) },
+			Tooltip: editorBoundsTooltip},
 		{Label: "Orbit camera", Shortcut: "V", Checked: !editorCam3D.Fly,
 			Do:      func() { editorSetFlyCam(editorCam3D.Fly) },
 			Tooltip: "Turn around the pivot instead of flying. F frames the\nselection and puts the pivot on it."},
@@ -548,5 +646,38 @@ func editor3DToggleSpriteVisible() {
 	if s := activeSprite(); s != nil {
 		EditorPushUndo()
 		s.Visible = !s.Visible
+	}
+}
+
+// editor3DFaceOpMenuItems are the shaping operations offered on a face
+// selection, which are not the same three in every context.
+//
+// Edit mode's act on the SOLID and each preserves convexity, which is what
+// limits them to three (editor_brush_mesh.go). Detail mode's act on a surface
+// with no such rule, so they are the model editor's own — the real extrude that
+// leaves side walls behind, and the smoothing that would turn a brush into a
+// shape collision could not read (editor_detail_mesh.go).
+func editor3DFaceOpMenuItems(all func(string) string) []ctxMenuItem {
+	if editorInDetailMode() {
+		return []ctxMenuItem{
+			{Label: all("Extrude [E]"), Do: func() { detailExtrudeSelection(detailExtrudeDefault()) },
+				Tooltip: "Duplicate the face and wall in the gap with sides — a bump\n" +
+					"standing off the surface. Shift+E presses it in instead."},
+			{Label: all("Subdivide [B]"), Do: detailSubdivideSelection,
+				Tooltip: "Split the face at its edge midpoints, sharing the new corners\nwith its neighbours."},
+			{Label: "Smooth the whole mesh [Shift+B]", Do: detailSmoothSelection,
+				Tooltip: "One round of Catmull-Clark over every detail face. Rounds the\n" +
+					"surface off; the solid underneath is untouched."},
+			{Label: all("Delete [Del]"), Do: detailDeleteSelection,
+				Tooltip: "Remove these faces from the detail mesh. The brush keeps its\nshape — this is only what is drawn."},
+		}
+	}
+	return []ctxMenuItem{
+		{Label: all("Extrude [E]"), Do: func() { brushExtrudeSelectedFaces(brushExtrudeDefault()) },
+			Tooltip: "Slide the face along its own normal, growing the solid.\nShift+E pulls it back in."},
+		{Label: all("Inset [I]"), Do: func() { brushInsetSelectedFaces(brushInsetFraction) },
+			Tooltip: "Draw the face's corners toward its centre, in its own plane —\nturning the solid into a frustum of itself."},
+		{Label: all("Subdivide [B]"), Do: brushSubdivideSelectedFaces,
+			Tooltip: "Fan the face into one triangle per corner, meeting at its centre.\nAdds no volume; makes the face finer to shape."},
 	}
 }

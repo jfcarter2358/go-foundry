@@ -268,6 +268,12 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	// The brush stamp is armed on the same terms — every click places another
+	// solid until Escape puts it away. See editor_brush_tools.go.
+	if editorBrushPlaceHandleClick() {
+		return
+	}
+
 	if Editor.SpawnPlacementMode {
 		// 4m in front of the camera, at the floor the camera is standing on.
 		pos := gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(4.0))
@@ -326,13 +332,40 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	mods := sdl.GetModState()
+	ctrlHeld := mods&sdl.KMOD_CTRL != 0
+
+	// Ctrl+Shift is "go into this one", ahead of every selection below: it
+	// names a brush and enters DETAIL mode on it, where clicks address the
+	// mesh drawn over its surface and nothing reaches the solid underneath
+	// (editor_detail.go). Aimed at whatever is under the cursor rather than at
+	// whatever is selected, so it works from any context and in one gesture.
+	//
+	// Ctrl alone is already multi-select and Shift alone is held to fly
+	// downward, so the pair is the first combination that was free — and it
+	// reads as what it is: the modifier that adds to a selection, plus the one
+	// that means "more".
+	if ctrlHeld && mods&sdl.KMOD_SHIFT != 0 {
+		editor3DDetailClick(t.X, t.Y)
+		return
+	}
+
+	// Object mode owns the click before any of the selection units below: it is
+	// a different context, not a fourth unit, so a click here picks up a whole
+	// brush and the point/edge/face modes are simply not consulted. Everything
+	// that is not brush geometry — an entity, a volume, the spawn marker — is
+	// an object in both contexts and falls through to the shared tail.
+	if !editorInEditMode() {
+		editor3DObjectClick(t.X, t.Y, ctrlHeld)
+		return
+	}
+
 	// What a click means is the selection mode's call. Point and edge mode each
 	// own the click outright: hitting nothing there clears the selection rather
 	// than falling through to the surface behind, which is what makes the modes
 	// predictable. Repeated clicks on the same cluster cycle through every
 	// handle under the cursor; ctrl+click takes them all. (Ctrl rather than
 	// shift — shift is held to fly downward.)
-	ctrlHeld := sdl.GetModState()&sdl.KMOD_CTRL != 0
 	switch Editor.SelMode {
 	case editorSelPoint:
 		if !handleVertexClick(t.X, t.Y, ctrlHeld) && !ctrlHeld {
@@ -347,7 +380,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	}
 
 	// Face mode. Selection: one ray, closest hit wins across the spawn marker,
-	// the placed entities and the sector faces.
+	// the placed entities and the brush faces.
 	hit := pick3D(t.X, t.Y)
 
 	// A face, and ctrl held: add it to (or take it back out of) the set being
@@ -381,6 +414,18 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	editor3DSelectNonBrushHit(hit)
+}
+
+// editor3DSelectNonBrushHit selects whatever a pick landed on that is NOT brush
+// geometry — the spawn marker, an entity, a volume, a sprite, a prop, an
+// emitter, a sound, a light — or clears the panel when it landed on nothing.
+//
+// Shared by both contexts on purpose. A brush is the one thing object and edit
+// mode disagree about (a whole solid there, one of its faces here); everything
+// else in a level is an object either way, and having two copies of this switch
+// is how the two would drift.
+func editor3DSelectNonBrushHit(hit pickHit) {
 	switch hit.kind {
 	case pickSpawn:
 		editorSelectSpawn()
@@ -423,11 +468,38 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	}
 }
 
+// editor3DObjectClick resolves a click in OBJECT mode: brush geometry selects
+// the whole brush it belongs to, and everything else is picked exactly as face
+// mode picks it.
+//
+// Ctrl builds a multi-selection of brushes, the same gesture and the same
+// toggle-rather-than-add rule face mode uses — and, as there, a ctrl+click that
+// reaches no brush leaves the set alone rather than throwing it away, so aiming
+// past the last wall of a dozen and missing does not undo the other eleven.
+func editor3DObjectClick(mx, my int32, ctrlHeld bool) {
+	hit := pick3D(mx, my)
+
+	if hit.kind == pickBrushFace {
+		s := brushSel{chunkIdx: hit.chunkIdx, brushIdx: hit.brushIdx}
+		if brushSelValid(s) {
+			editorSelectBrushObject(s, ctrlHeld)
+			return
+		}
+	}
+	if ctrlHeld {
+		return
+	}
+
+	editor3DClearSelection()
+	editor3DSelectNonBrushHit(hit)
+}
+
 // editor3DClearSelection drops every kind of 3D selection at once — the miss
 // case for point and edge mode, where nothing under the cursor means nothing
 // selected.
 func editor3DClearSelection() {
 	clearVertexSelection()
+	clearBrushSelection()
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
@@ -466,6 +538,30 @@ func moveChunk(ch *world.Chunk, newOrigin mgl32.Vec3) {
 // verbs) until some unrelated edit rebuilds it. See RebuildSpatialHash. Cheap
 // enough to run on every frame of a drag.
 func editorChunkTransformChanged() {
+	world.RebuildSpatialHash(Editor.level)
+}
+
+// editorChunkGeometryChanged is the rest of the bookkeeping a brush edit owes:
+// roll ch's own AABB up around its brushes, and then re-bucket the spatial
+// hash, which is keyed on that AABB carried into world space.
+//
+// Only the first half was being done, and the second is the one that is
+// visible. A brush added, deleted or dragged past the chunk's old extent
+// changes which world cells the chunk belongs in; left in the cells it used to
+// occupy, it is a chunk FindChunkSH cannot see, and everything world-space
+// resolves through that — collision, entity location, the script location
+// verbs. What the author sees is a level they can walk straight through the
+// moment they press Play, because the chunk holding the floor is not in the
+// cell the player is standing in.
+//
+// Same reasoning and the same cost as editorChunkTransformChanged above, which
+// covers the other way a chunk's world footprint moves. A multi-chunk edit
+// recomputes each chunk's bounds itself and calls world.RebuildSpatialHash
+// once at the end rather than once per chunk.
+func editorChunkGeometryChanged(ch *world.Chunk) {
+	if ch != nil {
+		ch.RecomputeBounds()
+	}
 	world.RebuildSpatialHash(Editor.level)
 }
 
@@ -551,6 +647,11 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 		gizmo.GizmoOBB(center, axes, half, cyan)
 	}
 
+	// The bounds view, when it is on: every object's world box, in the same
+	// depth-tested pass as the two boxes above, so a box behind a wall is
+	// hidden by it rather than floating over the whole level.
+	drawEditorBounds()
+
 	// The selected face's outline, the handles the current selection mode can
 	// act on, and the translate gizmo — drawn last and without depth testing,
 	// so a mark is visible wherever it means something.
@@ -603,11 +704,15 @@ func editor3DVertexPanel(lvl *world.Level) {
 	}
 	primary := sels[0]
 	_, b := vertexSelBrush(primary)
-	if b == nil || primary.vertIdx < 0 || primary.vertIdx >= len(b.Verts) {
+	m := selMesh(b, primary.detail)
+	if m == nil || primary.vertIdx < 0 || primary.vertIdx >= len(m.Verts) {
 		return
 	}
 
 	title := fmt.Sprintf("Vertex #%d — %s", primary.vertIdx, b.ID)
+	if primary.detail {
+		title = fmt.Sprintf("Detail vertex #%d — %s", primary.vertIdx, b.ID)
+	}
 	if len(sels) > 1 {
 		title = fmt.Sprintf("%d Vertices Selected", len(sels))
 	}
@@ -706,6 +811,14 @@ func createChunkAtCamera(id string) {
 
 	lvl.Chunks = append(lvl.Chunks, chunk)
 	Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
+	// The new chunk needs bucketing — without this it is drawn (the render
+	// pass walks lvl.Chunks directly) but invisible to every world-space
+	// lookup, which on a blank level means the only room in it is not solid.
+	// duplicateActiveChunk below has always done this; this path is the one
+	// that makes the level's first chunk, so it is the one that showed.
+	if err := world.RebuildIndexes(lvl); err != nil {
+		editorSetStatus("Created %s, but frames are unhappy: %v", id, err)
+	}
 }
 
 // duplicateActiveChunk deep-copies the currently active chunk, reuploads all
@@ -763,6 +876,8 @@ func deleteActiveChunk() {
 		return
 	}
 	ch := &lvl.Chunks[idx]
+	// Read out before the removal shifts the slice under the pointer.
+	id := ch.ID
 
 	// Release every GPU resource the chunk owns — the same pass that unloading
 	// a disabled chunk runs, so a delete and a disable free exactly the same
@@ -781,6 +896,13 @@ func deleteActiveChunk() {
 	clearFaceSelection()
 	clearVertexSelection()
 	editorClearSpawnSelection()
+	// Both indexes address chunks by position in lvl.Chunks — the spatial
+	// hash's buckets and every frame's ChunkIdx — so a removal shifts every
+	// index past it. Left alone they name the wrong chunk, or one past the
+	// end.
+	if err := world.RebuildIndexes(lvl); err != nil {
+		editorSetStatus("Deleted %s, but frames are unhappy: %v", id, err)
+	}
 }
 
 // uniqueChunkCopyID returns a chunk ID + suffix pair that does not collide

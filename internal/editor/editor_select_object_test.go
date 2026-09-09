@@ -46,6 +46,7 @@ func selectionCount() int {
 		Editor.SelectedLightKind != lightKindNone,
 		len(Editor.SelectedVertices) > 0,
 		len(Editor.SelectedFaces) > 0,
+		len(Editor.SelectedBrushes) > 0,
 	} {
 		if on {
 			n++
@@ -108,18 +109,25 @@ func TestSelectingABrushLeavesTheChunkActiveNotSelected(t *testing.T) {
 	}
 }
 
-// Selecting a brush is expressed as selecting its first face, because a face is
-// what the selection unit is — everything downstream reads SelectedFaces.
-func TestSelectingABrushSelectsItsFirstFace(t *testing.T) {
+// Selecting a brush from the Explorer selects the brush itself, in object mode
+// — not one of its faces, which would be a guess at which face was meant.
+func TestSelectingABrushSelectsTheWholeBrush(t *testing.T) {
 	defer saveEditorSelection()()
 	selectTestLevel(t)
+	Editor.EditContext = editorEditMode
 
 	editorSelectBrush(0, 1)
-	if len(Editor.SelectedFaces) != 1 {
-		t.Fatalf("got %d selected faces, want 1", len(Editor.SelectedFaces))
+	if editorInEditMode() {
+		t.Error("selecting a brush from the Explorer left the editor in edit mode")
 	}
-	if got := Editor.SelectedFaces[0]; got != brushFaceSel(0, 1, 0) {
-		t.Errorf("selected %+v, want brush 1's face 0", got)
+	if len(Editor.SelectedBrushes) != 1 {
+		t.Fatalf("got %d selected brushes, want 1", len(Editor.SelectedBrushes))
+	}
+	if got := (Editor.SelectedBrushes[0]); got != (brushSel{chunkIdx: 0, brushIdx: 1}) {
+		t.Errorf("selected %+v, want brush 1 of chunk 0", got)
+	}
+	if len(Editor.SelectedFaces) != 0 {
+		t.Errorf("it also selected %d faces", len(Editor.SelectedFaces))
 	}
 }
 

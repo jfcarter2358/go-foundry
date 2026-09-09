@@ -94,7 +94,7 @@ func editorChunkIdentity(lvl *world.Level, ch *world.Chunk) {
 
 	faces := 0
 	for bi := range ch.Brushes {
-		faces += len(ch.Brushes[bi].Faces)
+		faces += len(ch.Brushes[bi].DrawFaces())
 	}
 	imgui.Text(fmt.Sprintf("Brushes: %d (%d faces)", len(ch.Brushes), faces))
 }
@@ -185,7 +185,7 @@ func editorChunkFrameOwnerRow(lvl *world.Level, ch *world.Chunk) {
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("The vehicle whose deck this chunk's geometry is, authored\n" +
 			"around the origin and carried around the world by it.\n" +
-			"Biome paint and procedural detail do not work on one.")
+			"Scatter volumes do not follow one.")
 	}
 	if ch.FrameOwner != "" {
 		editorTextMutedWrapped("Authored around the origin in the 2D map, not where the vehicle sits. " +

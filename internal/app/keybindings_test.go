@@ -72,17 +72,28 @@ func TestKeybindActiveSectionsFollowMode(t *testing.T) {
 		t.Errorf("editor closed: expected gameplay only, got %v", got)
 	}
 
+	// Object mode is the zero value, so a bare 3D editor shows the object-mode
+	// block and not the edit-mode one.
 	editor.Editor = editor.EditorState{}
 	editor.Editor.Active = true
 	editor.Editor.Mode = editor.Mode3D
 	got := activeTitles()
-	for _, want := range []string{"Editor — 3D view", "Editor — any mode", "Editor — shaping a brush"} {
+	for _, want := range []string{
+		"Editor — 3D view", "Editor — any mode", "Editor — placing a brush (object mode)",
+	} {
 		if !got[want] {
 			t.Errorf("3D view: expected the %q section, got %v", want, got)
 		}
 	}
 	if got["Gameplay"] {
 		t.Errorf("3D view: the gameplay section should be inactive, got %v", got)
+	}
+
+	// The edit-mode block is the same predicate inverted, so asserting the two
+	// are never both up is what there is to check from here; which one Tab
+	// leaves showing is internal/editor's own test.
+	if got["Editor — shaping a brush (edit mode)"] == got["Editor — placing a brush (object mode)"] {
+		t.Errorf("the object- and edit-mode blocks agree; exactly one should be up, got %v", got)
 	}
 
 	// Global sections have no predicate and apply everywhere.

@@ -136,9 +136,9 @@ volume across the threshold.
 
 ## What does not go in a frame
 
-- **Biome paint and procedural detail.** They build in world coordinates, so a
-  framed chunk would leave its grass where the ship used to be. The editor
-  refuses to paint one. A vehicle interior is a built environment, not terrain.
+- **Scatter volumes.** They build in world coordinates, so a framed chunk would
+  leave its grass where the ship used to be. A vehicle interior is a built
+  environment, not terrain.
 - **Cross-frame entity collision.** Two entities in different frames do not
   collide. The one pair that is always cross-frame is a rider against the hull
   carrying it, which it is inside by definition.

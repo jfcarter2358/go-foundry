@@ -85,11 +85,10 @@ func main() {
 // alwaysDirs are copied whole, however the pack was invoked.
 //
 // Each is here because its contents are named from Go rather than from content:
-// shaders by the string constants in internal/render and internal/gfx, detail
-// presets by a directory scan at startup, fonts by a theme that may name any of
-// them and by a fallback that names none. There is nothing for a walk over the
-// content to find, so there is nothing to prune.
-var alwaysDirs = []string{"shaders", "fonts", "detail_presets"}
+// shaders by the string constants in internal/render and internal/gfx, fonts by
+// a theme that may name any of them and by a fallback that names none. There is
+// nothing for a walk over the content to find, so there is nothing to prune.
+var alwaysDirs = []string{"shaders", "fonts"}
 
 // contentDirs are the directories a prune walks. Order is display order.
 //

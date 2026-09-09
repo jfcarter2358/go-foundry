@@ -7,7 +7,6 @@ package editor
 
 import (
 	"fmt"
-	"foundry/internal/detail"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
@@ -450,232 +449,6 @@ func editorSmoothPanel(surfaceLabel string, smooth *bool, angle *float32) bool {
 	return changed
 }
 
-// detailPresetNameEdits holds the preset-name text buffer per surface panel, so
-// a half-typed name survives across frames. Keyed by surfaceLabel.
-var detailPresetNameEdits = map[string]string{}
-
-// detailPresetNameSeen is the preset tag each surface panel showed last frame.
-// When it changes the panel is looking at a different face (or a preset was
-// applied), so the typed buffer is dropped rather than following the user onto
-// unrelated geometry.
-var detailPresetNameSeen = map[string]string{}
-
-// detailPresetStatus is the last preset save/delete result, shown inline under
-// the row for a few seconds.
-var (
-	detailPresetStatus     string
-	detailPresetStatusTime uint32
-)
-
-func detailPresetSetStatus(format string, args ...interface{}) {
-	detailPresetStatus = fmt.Sprintf(format, args...)
-	detailPresetStatusTime = sdl.GetTicks()
-}
-
-// editorDetailPresetSaveRow draws the name field and Save/Update/Delete buttons
-// that persist the face's current wave, noise, taper and scatter settings as a
-// named preset under <exe>/detail_presets. Returns true if the face changed
-// (only its Preset label ever does here — the parameters are read, not written).
-func editorDetailPresetSaveRow(surfaceLabel string, d *world.DetailSpec) bool {
-	changed := false
-
-	if seen, ok := detailPresetNameSeen[surfaceLabel]; !ok || seen != d.Preset {
-		detailPresetNameSeen[surfaceLabel] = d.Preset
-		delete(detailPresetNameEdits, surfaceLabel)
-	}
-
-	// The buffer starts from whatever preset the face is tagged with, so the
-	// common case — tweak a preset, save it back — is one click.
-	name, editing := detailPresetNameEdits[surfaceLabel]
-	if !editing {
-		name = d.Preset
-	}
-	imgui.SetNextItemWidth(140)
-	if imgui.InputText(fmt.Sprintf("##%sdetPreName", surfaceLabel), &name) {
-		detailPresetNameEdits[surfaceLabel] = name
-	}
-	imgui.SameLine()
-
-	clean := detail.DetailPresetName(name)
-	label := "Save Preset"
-	if _, exists := world.DetailPresets[clean]; exists && clean != "" {
-		label = "Update Preset"
-	}
-	imguibackend.EditorPushDisabled(clean == "")
-	if imgui.Button(fmt.Sprintf("%s##%sdetPreSave", label, surfaceLabel)) && clean != "" {
-		if err := detail.SaveDetailPreset(clean, *d); err != nil {
-			detailPresetSetStatus("Preset save failed: %v", err)
-		} else {
-			d.Preset = clean
-			detailPresetSetStatus("Saved preset %q", clean)
-			changed = true
-		}
-	}
-	imguibackend.EditorPopDisabled()
-
-	// Only user presets are deletable; the built-ins are compiled in.
-	if detail.DetailUserPresets[clean] {
-		imgui.SameLine()
-		if imgui.Button(fmt.Sprintf("Delete##%sdetPreDel", surfaceLabel)) {
-			if err := detail.DeleteDetailPreset(clean); err != nil {
-				detailPresetSetStatus("Preset delete failed: %v", err)
-			} else {
-				detailPresetSetStatus("Deleted preset %q", clean)
-			}
-		}
-	}
-
-	if detailPresetStatus != "" {
-		if sdl.GetTicks()-detailPresetStatusTime < 4000 {
-			imgui.Text(detailPresetStatus)
-		} else {
-			detailPresetStatus = ""
-		}
-	}
-	return changed
-}
-
-// editorDetailPanel draws the per-face procedural-detail controls (wave/noise
-// displacement + scatter). surfaceLabel disambiguates ImGui IDs across the
-// Floor/Ceiling/Wall panels. Returns true if any value changed.
-func editorDetailPanel(surfaceLabel string, d *world.DetailSpec) bool {
-	changed := false
-	editorPropGroup(fmt.Sprintf("Detail##%sdet", surfaceLabel), 0, func() {
-		changed = editorDetailPanelBody(surfaceLabel, d)
-	})
-	return changed
-}
-
-func editorDetailPanelBody(surfaceLabel string, d *world.DetailSpec) bool {
-	changed := false
-	changed = imgui.Checkbox(fmt.Sprintf("Enabled##%sdetEn", surfaceLabel), &d.Enabled) || changed
-	if !d.Enabled {
-		return changed
-	}
-
-	// Preset picker — copies a ready-made parameter set in.
-	preset := d.Preset
-	if preset == "" {
-		preset = "(custom)"
-	}
-	if imgui.BeginCombo(fmt.Sprintf("Preset##%sdetPre", surfaceLabel), preset) {
-		for _, name := range world.DetailPresetNames {
-			if imgui.SelectableV(name, name == d.Preset, 0, imgui.Vec2{}) {
-				world.ApplyDetailPreset(d, name)
-				changed = true
-			}
-		}
-		// User presets from <exe>/detail_presets, below the built-ins. Names that
-		// shadow a built-in already appeared above.
-		first := true
-		for _, name := range detail.DetailUserPresetNames {
-			if _, builtin := detail.DetailBuiltinPresets[name]; builtin {
-				continue
-			}
-			if first {
-				imgui.Separator()
-				first = false
-			}
-			if imgui.SelectableV(name, name == d.Preset, 0, imgui.Vec2{}) {
-				world.ApplyDetailPreset(d, name)
-				changed = true
-			}
-		}
-		imgui.EndCombo()
-	}
-
-	changed = editorDetailPresetSaveRow(surfaceLabel, d) || changed
-
-	// Deterministic seed.
-	seed := int32(d.Seed)
-	if imgui.InputInt(fmt.Sprintf("Seed##%sdetSeed", surfaceLabel), &seed) {
-		d.Seed = int64(seed)
-		changed = true
-	}
-	imgui.SameLine()
-	if imgui.Button(fmt.Sprintf("Randomize##%sdetRnd", surfaceLabel)) {
-		d.Seed = int64(sdl.GetTicks())&0x7fffffff | 1
-		changed = true
-	}
-
-	// --- Displacement: up to DetailMaxWaves sine layers + optional noise ---
-	if imgui.Checkbox(fmt.Sprintf("Displace surface##%sdetDisp", surfaceLabel), &d.Displace) {
-		if d.Displace {
-			d.EnsureDisplaceDefaults()
-		}
-		changed = true
-	}
-	if d.Displace {
-		imgui.Indent()
-		for i := range d.Waves {
-			w := &d.Waves[i]
-			id := fmt.Sprintf("%sdetW%d", surfaceLabel, i)
-			if imgui.Checkbox(fmt.Sprintf("Wave %d##%sEn", i+1, id), &w.Enabled) {
-				if w.Enabled && w.Frequency == 0 {
-					*w = world.DetailDefaultWave(i)
-				}
-				changed = true
-			}
-			if w.Enabled {
-				imgui.Indent()
-				changed = editorDragFloat(fmt.Sprintf("Amplitude##%sAmp", id), &w.Amplitude, 0, 20, "%.3f") || changed
-				changed = editorDragFloat(fmt.Sprintf("Frequency##%sFreq", id), &w.Frequency, 0, 20, "%.3f") || changed
-				changed = editorDragFloat(fmt.Sprintf("Rotation (deg)##%sRot", id), &w.Rotation, -360, 360, "%.1f") || changed
-				changed = editorDragFloat(fmt.Sprintf("Tessellation##%sTess", id), &w.TessLevel, 1, 64, "%.0f") || changed
-				imgui.Unindent()
-			}
-		}
-
-		// Noise layer — added on top of the summed waves.
-		if imgui.Checkbox(fmt.Sprintf("Noise##%sdetNoise", surfaceLabel), &d.Noise) {
-			if d.Noise {
-				d.EnsureNoiseDefaults()
-			}
-			changed = true
-		}
-		if d.Noise {
-			imgui.Indent()
-			changed = editorDragFloat(fmt.Sprintf("Amplitude##%sdetNAmp", surfaceLabel), &d.NoiseAmplitude, 0, 20, "%.3f") || changed
-			changed = editorDragFloat(fmt.Sprintf("Frequency##%sdetNFreq", surfaceLabel), &d.NoiseFrequency, 0.01, 20, "%.3f") || changed
-			oct := int32(d.NoiseOctaves)
-			if imgui.SliderInt(fmt.Sprintf("Octaves##%sdetNOct", surfaceLabel), &oct, 1, 6) {
-				d.NoiseOctaves = int(oct)
-				changed = true
-			}
-			changed = editorDragFloat(fmt.Sprintf("Tessellation##%sdetNTess", surfaceLabel), &d.NoiseTessLevel, 1, 64, "%.0f") || changed
-			imgui.Unindent()
-		}
-
-		// Tessellation is per-patch, so the active layers share the highest level.
-		imgui.Text(fmt.Sprintf("Effective tessellation: %.0f", d.TessLevelFor()))
-		changed = editorDragFloat(fmt.Sprintf("Edge Taper##%sdetTaper", surfaceLabel), &d.EdgeTaper, 0, 10, "%.2f") || changed
-		imgui.Unindent()
-	}
-
-	// --- Scatter ---
-	changed = imgui.Checkbox(fmt.Sprintf("Scatter meshes##%sdetScat", surfaceLabel), &d.Scatter) || changed
-	if d.Scatter {
-		imgui.Indent()
-		if textureCombo(fmt.Sprintf("Rock Texture##%sdetScTex", surfaceLabel), &d.ScatterTex, false) {
-			changed = true
-		}
-		changed = editorDragFloat(fmt.Sprintf("Density##%sdetScDen", surfaceLabel), &d.ScatterDensity, 0, 1, "%.2f") || changed
-		changed = editorDragFloat(fmt.Sprintf("Spacing##%sdetScSp", surfaceLabel), &d.ScatterSpacing, 0.05, 10, "%.2f") || changed
-		changed = editorDragFloat(fmt.Sprintf("Scale##%sdetScScl", surfaceLabel), &d.ScatterScale, 0.02, 5, "%.2f") || changed
-		changed = editorDragFloat(fmt.Sprintf("Jitter##%sdetScJit", surfaceLabel), &d.ScatterJitter, 0, 1, "%.2f") || changed
-		changed = editorDragFloat(fmt.Sprintf("Draw Range##%sdetScRng", surfaceLabel), &d.ScatterRange, 4, 400, "%.0f") || changed
-		if d.ScatterMesh == "" {
-			d.ScatterMesh = "rock"
-		}
-		imgui.Unindent()
-	}
-
-	if changed {
-		d.Clamp()
-	}
-	return changed
-}
-
 // editorGridSettings draws the step-size and snap-to-grid controls.
 func editorGridSettings() {
 	imgui.Checkbox("Snap to Grid", &Editor.SnapToGrid)
@@ -864,17 +637,44 @@ func EditorDrawUI() {
 	// a click selects and which gizmo acts on it are shared editor-wide state,
 	// so both toolbars offer them wherever the mouse happens to be.
 	if currentMode == Mode3D {
-		// ---- Group: select mode ----
+		// ---- Group: edit context ----
+		//
+		// Ahead of the selection modes because it decides whether those mean
+		// anything at all: in object mode a click picks up a whole brush and
+		// the three unit buttons below are not consulted.
 		editorToolbarGroupSep()
-		for _, mode := range editorSelModes {
-			m := mode
-			imgui.SameLine()
-			if editorActiveToggleButton(
-				fmt.Sprintf("%s [%s]##selmode", m, editorSelModeKey(m)), Editor.SelMode == m) {
-				editorSetSelMode(m)
-			}
-			if imgui.IsItemHovered() {
-				imgui.SetTooltip(editorSelModeTooltip(m))
+		imgui.SameLine()
+		if editorActiveToggleButton(
+			fmt.Sprintf("%s [Tab]##editctx", Editor.EditContext),
+			editorInEditMode() || editorInDetailMode()) {
+			editorToggleEditContext()
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Tab — Object mode moves a whole brush; Edit mode reshapes one.\n" +
+				"Pressing 1, 2 or 3 goes straight into Edit mode.\n\n" +
+				"Detail mode shapes the surface drawn over one brush without\n" +
+				"moving the solid: Ctrl+Shift+click a brush to go in, Tab or\n" +
+				"Escape to come back.")
+		}
+
+		// ---- Group: select mode ----
+		//
+		// In edit mode and in detail mode: both are made of points, edges and
+		// faces, of the hull and of the detail mesh respectively. Not in object
+		// mode, where a row of buttons that select nothing is worse than no row
+		// at all.
+		if editorInEditMode() || editorInDetailMode() {
+			editorToolbarGroupSep()
+			for _, mode := range editorSelModes {
+				m := mode
+				imgui.SameLine()
+				if editorActiveToggleButton(
+					fmt.Sprintf("%s [%s]##selmode", m, editorSelModeKey(m)), Editor.SelMode == m) {
+					editorSetSelMode(m)
+				}
+				if imgui.IsItemHovered() {
+					imgui.SetTooltip(editorSelModeTooltip(m))
+				}
 			}
 		}
 
@@ -895,6 +695,9 @@ func EditorDrawUI() {
 				"points and edges you can see can be clicked.\n" +
 				"Wireframe draws it as lines and lets you click any of them.")
 		}
+
+		imgui.SameLine()
+		editorBoundsToggleButton()
 
 		imgui.SameLine()
 		flying := editorCam3D.Fly

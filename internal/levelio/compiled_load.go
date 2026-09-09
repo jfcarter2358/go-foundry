@@ -94,12 +94,21 @@ func loadCompiledChunkRange(c *CompiledLevel, level *world.Level, texNeeded map[
 		// loadRawChunk — it is what a streaming script switches on later.
 		ch.Unloaded = ch.Disabled
 		for bi := range ch.Brushes {
-			for fi := range ch.Brushes[bi].Faces {
-				noteFaceTextures(texNeeded, &ch.Brushes[bi].Faces[fi])
-			}
+			ch.Brushes[bi].EachFace(func(f *world.BrushFace) {
+				noteFaceTextures(texNeeded, f)
+			})
 		}
-		if !ch.Compiled && !ch.Disabled {
+		if !ch.Disabled {
 			for bi := range ch.Brushes {
+				// A compiled chunk's static brushes are drawn out of the
+				// compiled surface list and need no mesh of their own. Its
+				// DYNAMIC ones do: the compiler left them out of the bake
+				// because they move, so they are still live geometry and are
+				// drawn, shadowed and picked from their own buffers. See
+				// Chunk.DrawsBrushLive, which is where that rule is written.
+				if !ch.DrawsBrushLive(&ch.Brushes[bi]) {
+					continue
+				}
 				if err := ch.Brushes[bi].Load(); err != nil {
 					return i, fmt.Errorf("chunk %q brush %q: %w", ch.ID, ch.Brushes[bi].ID, err)
 				}
@@ -132,8 +141,15 @@ func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (in
 	}
 	for i := from; i < to; i++ {
 		f := &c.Faces[i]
+		if f.NoDraw {
+			// Structure, not surface: it shaped the tree and is in no cell's
+			// draw list (compile/csg.go, Face.NoDraw). The light stage drops
+			// these, so only a level compiled without one still carries them —
+			// the surface is left zeroed and the draw loop skips it for having
+			// no vertices.
+			continue
+		}
 		surf := &level.Static.Surfaces[i]
-		surf.Detail = f.Detail
 		surf.DoubleSided = f.DoubleSided
 		surf.Chunk, surf.Brush = f.Chunk, f.Brush
 		surf.Normal = f.Plane.N
@@ -167,9 +183,6 @@ func noteFaceTextures(texNeeded map[string]bool, f *world.BrushFace) {
 			texNeeded[tex] = true
 		}
 	}
-	if f.Detail.Enabled && f.Detail.ScatterTex != "" {
-		texNeeded[f.Detail.ScatterTex] = true
-	}
 }
 
 func noteCompiledFaceTextures(texNeeded map[string]bool, f *compile.Face) {
@@ -177,9 +190,6 @@ func noteCompiledFaceTextures(texNeeded map[string]bool, f *compile.Face) {
 		if tex != "" {
 			texNeeded[tex] = true
 		}
-	}
-	if f.Detail.Enabled && f.Detail.ScatterTex != "" {
-		texNeeded[f.Detail.ScatterTex] = true
 	}
 }
 

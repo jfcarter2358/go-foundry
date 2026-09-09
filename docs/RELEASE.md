@@ -155,7 +155,7 @@ make sure the names appear literally somewhere the walk reaches. The
 per-directory prune counts are printed on every pack, and `-v` names every file
 dropped.
 
-`shaders/`, `fonts/` and `detail_presets/` are always copied whole: their
+`shaders/` and `fonts/` are always copied whole: their
 contents are named from Go, or scanned from the directory at startup, so there
 is nothing for a content walk to find.
 

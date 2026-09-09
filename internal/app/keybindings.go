@@ -181,6 +181,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "F3", Desc: "Toggle debug overlay (FPS, memory, counts)"},
 			{Keys: "F10", Desc: "Toggle anti-aliasing"},
 			{Keys: "F11", Desc: "Toggle fullscreen"},
+			{Keys: "F12", Desc: "Toggle vsync"},
 			{Keys: "~ / `", Desc: "Toggle the level editor"},
 			{Keys: "Esc", Desc: "Close this reference"},
 		},
@@ -236,8 +237,10 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		Title:  "Editor — 3D view",
 		Active: func() bool { return editor.Editor.Active && editor.Editor.Mode == editor.Mode3D },
 		Binds: []uiwin.Keybind{
-			{Keys: "1 / 2 / 3", Desc: "Point / edge / face select"},
+			{Keys: "Tab", Desc: "Object mode / edit mode"},
+			{Keys: "1 / 2 / 3", Desc: "Point / edge / face select (enters edit mode)"},
 			{Keys: "Z", Desc: "Toggle wireframe"},
+			{Keys: "B", Desc: "Toggle the bounding-box view"},
 			{Keys: "V", Desc: "Toggle orbit and fly camera"},
 			{Keys: "F", Desc: "Frame the selection"},
 			{Keys: "W / A / S / D", Desc: "Fly the camera (orbit: slide the pivot)"},
@@ -245,9 +248,9 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "Right-drag / Middle-drag", Desc: "Look around, or orbit the pivot"},
 			{Keys: "Shift+Middle-drag", Desc: "Pan"},
 			{Keys: "Mouse wheel", Desc: "Dolly in fly, zoom the orbit radius"},
-			{Keys: "Left click", Desc: "Select whatever the current mode picks"},
+			{Keys: "Left click", Desc: "Object mode: pick up a brush. Edit mode: pick its point/edge/face"},
 			{Keys: "Left click (handle)", Desc: "Pick a point/edge; repeat clicks cycle overlaps"},
-			{Keys: "Ctrl+Left click", Desc: "Add every point/edge under the cursor"},
+			{Keys: "Ctrl+Left click", Desc: "Add to the selection (brushes, faces, points, edges)"},
 			{Keys: "Left click (armed)", Desc: "Place the spawn point ahead of the camera"},
 			{Keys: "Drag gizmo arm", Desc: "Translate the selection along that axis"},
 		},
@@ -264,13 +267,48 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		},
 	},
 	{
-		Title:  "Editor — shaping a brush",
-		Active: func() bool { return editor.Editor.Active && editor.Editor.Mode == editor.Mode3D },
+		Title: "Editor — shaping a brush (edit mode)",
+		Active: func() bool {
+			return editor.Editor.Active && editor.Editor.Mode == editor.Mode3D &&
+				editor.EditorInEditMode()
+		},
 		Binds: []uiwin.Keybind{
 			{Keys: "E", Desc: "Extrude the selected faces along their normals (Shift+E pulls in)"},
 			{Keys: "I", Desc: "Inset the selected faces (Shift+I widens them)"},
 			{Keys: "B", Desc: "Subdivide the selected faces"},
 			{Keys: "Delete", Desc: "Delete the selected faces' brushes"},
+			{Keys: "Tab", Desc: "Back to object mode, with this brush selected"},
+		},
+	},
+	{
+		Title: "Editor — placing a brush (object mode)",
+		Active: func() bool {
+			return editor.Editor.Active && editor.Editor.Mode == editor.Mode3D &&
+				!editor.EditorInEditMode() && !editor.EditorInDetailMode()
+		},
+		Binds: []uiwin.Keybind{
+			{Keys: "Left click", Desc: "Pick up a whole brush (Ctrl to add another)"},
+			{Keys: "Ctrl+Shift+click", Desc: "Shape that brush's detail, leaving its collision alone"},
+			{Keys: "G / R / C", Desc: "Move / turn / scale all of it"},
+			{Keys: "Delete", Desc: "Delete the selected brushes"},
+			{Keys: "Tab", Desc: "Into edit mode, to reshape the selected brush"},
+		},
+	},
+	{
+		Title: "Editor — shaping a surface (detail mode)",
+		Active: func() bool {
+			return editor.Editor.Active && editor.Editor.Mode == editor.Mode3D &&
+				editor.EditorInDetailMode()
+		},
+		Binds: []uiwin.Keybind{
+			{Keys: "E", Desc: "Extrude the selected faces, walling in the sides (Shift+E pushes in)"},
+			{Keys: "B", Desc: "Subdivide the selected faces"},
+			{Keys: "Shift+B", Desc: "Smooth the whole detail mesh (Catmull-Clark)"},
+			{Keys: "Delete / X", Desc: "Delete the selected detail faces"},
+			{Keys: "1 / 2 / 3", Desc: "Select points, edges or faces of the detail mesh"},
+			{Keys: "G / R / C", Desc: "Move / turn / scale the selection"},
+			{Keys: "Ctrl+Shift+click", Desc: "Detail another brush, or the same one again to leave"},
+			{Keys: "Tab / Esc", Desc: "Back to object mode, with this brush selected"},
 		},
 	},
 }

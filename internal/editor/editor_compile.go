@@ -101,11 +101,13 @@ func EditorSetCompiledPreview(on bool) (string, error) {
 		if !compile.Bakes(ch) {
 			continue
 		}
-		// Its surfaces are in the static list now, so its own meshes are a
-		// second copy of them — released, exactly as a compiled load never
-		// builds them in the first place.
+		// Its BAKED surfaces are in the static list now, so their own meshes
+		// are a second copy of them — released, exactly as a compiled load
+		// never builds them in the first place. Its dynamic brushes keep
+		// theirs: the compiler left them out of the static list on purpose,
+		// so they are still drawn from their own buffers.
 		ch.Compiled = true
-		ch.ReleaseGeometry()
+		ch.ReleaseBakedGeometry()
 		ch.Unloaded = false
 	}
 	lvl.Static = static

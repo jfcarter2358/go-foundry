@@ -12,6 +12,7 @@ it is never out of date.
 | `F3` | debug overlay (FPS, memory, counts) |
 | `F10` | anti-aliasing |
 | `F11` | fullscreen |
+| `F12` | vsync |
 | `~` / `` ` `` | toggle the level editor |
 | `Esc` | close the reference |
 
@@ -53,9 +54,12 @@ it is never out of date.
 
 | | |
 | --- | --- |
-| `1` / `2` / `3` | point / edge / face select |
+| `Tab` | object mode / edit mode |
+| `Ctrl+Shift`+left click | shape that brush's detail, leaving its collision alone |
+| `1` / `2` / `3` | point / edge / face select (enters edit mode) |
 | `G` / `R` / `C` | move / rotate / scale gizmo |
 | `Z` | wireframe |
+| `B` | bounding boxes |
 | `V` | orbit / fly camera |
 | `F` | frame the selection |
 | `W` `A` `S` `D` | fly the camera (orbit: slide the pivot) |
@@ -63,10 +67,48 @@ it is never out of date.
 | Right-drag / middle-drag | look around, or orbit the pivot |
 | `Shift`+middle-drag | pan |
 | Wheel | dolly in fly, zoom the orbit radius |
-| Left click | select whatever the current mode picks |
+| Left click | object mode: pick up a brush. Edit mode: pick its point/edge/face |
 | Left click on a handle | pick a point/edge; repeat clicks cycle overlaps |
-| `Ctrl`+left click | add every point/edge under the cursor |
+| `Ctrl`+left click | add to the selection (brushes, faces, points, edges) |
 | Drag a gizmo arm | translate the selection along that axis |
+
+## Editor — object mode (3D)
+
+| | |
+| --- | --- |
+| Left click | pick up a whole brush |
+| `Ctrl`+left click | add another brush to the selection |
+| `G` / `R` / `C` | move / turn / scale all of it |
+| `Delete` | delete the selected brushes |
+| `Tab` | into edit mode, to reshape the selected brush |
+| `Ctrl+Shift`+left click | into detail mode, to shape what it looks like |
+
+## Editor — edit mode (3D)
+
+| | |
+| --- | --- |
+| `1` / `2` / `3` | a brush's points, edges or faces |
+| `E` / `Shift+E` | extrude the selected faces along their normals / pull them in |
+| `I` / `Shift+I` | inset the selected faces / widen them |
+| `B` | subdivide the selected faces |
+| `Delete` | delete the selected faces' brushes |
+| `Tab` | back to object mode, with this brush selected |
+
+## Editor — detail mode (3D)
+
+Shaping the mesh drawn over one brush. Nothing here changes collision; see
+[Shaping surfaces](03-shaping-surfaces.md).
+
+| | |
+| --- | --- |
+| `Ctrl+Shift`+left click | go in on the brush under the cursor, or come back out of it |
+| `1` / `2` / `3` | the detail mesh's points, edges or faces |
+| `E` / `Shift+E` | extrude the selected faces, walling in the sides / press them in |
+| `B` | subdivide the selected faces |
+| `Shift+B` | smooth the whole detail mesh (Catmull-Clark) |
+| `Delete` / `X` | delete the selected detail faces |
+| `G` / `R` / `C` | move / turn / scale the selection |
+| `Tab` / `Esc` | back to object mode, with this brush selected |
 
 ## Editor — 2D sector map
 
@@ -107,6 +149,16 @@ it is never out of date.
 | `Delete` | delete the selected faces |
 | `Esc` | done shaping |
 | `W A S D` / `Space` / `Shift` | fly, exactly as outside surface mode |
+
+## Editor — brush stamp
+
+Armed from `Add... > Brush` or the view's right-click menu.
+
+| | |
+| --- | --- |
+| Left click | place a solid where the ghost box is; the stamp stays armed |
+| `Ctrl+Z` | take back the last brush placed |
+| `Esc` | put the stamp away |
 
 ## Editor — scenery brush
 

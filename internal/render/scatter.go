@@ -741,9 +741,9 @@ func beginScatterPass(p *progUniforms, camPos mgl32.Vec3, timeSec float32) {
 }
 
 // uploadScatterFrame uploads p's `model` and `camXZ` for the frame a volume
-// rides, but only when that frame differs from *current — mirroring
-// uploadDetailModel's change-tracking, so a level of world-space volumes pays
-// for one upload per program per frame rather than one per volume.
+// rides, but only when that frame differs from *current, so a level of
+// world-space volumes pays for one upload per program per frame rather than
+// one per volume.
 //
 // A volume riding a vehicle describes its region in that vehicle's coordinates
 // (Volume.Frame), and so does the height texture baked for it, so the shader's

@@ -163,6 +163,12 @@ func HandleEvent(event sdl.Event) {
 			case sdl.SCANCODE_F10:
 				// Window-level multisample anti-aliasing — see antialias.go.
 				render.ToggleAntiAlias()
+			case sdl.SCANCODE_F12:
+				// Wait for the display on swap, or don't — see vsync.go. Next
+				// to the other two presentation switches (F10, F11) because it
+				// is the same kind of thing: how the window is put on screen,
+				// not what is drawn into it.
+				platform.ToggleVSync()
 			case sdl.SCANCODE_0:
 				if !devActive() {
 					platform.GravityEnabled = !platform.GravityEnabled

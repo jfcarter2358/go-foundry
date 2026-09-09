@@ -96,14 +96,56 @@ func BuildBSP(faces []Face) *BSPTree {
 		t.Hi[i] += worldMargin
 	}
 
-	idx := make([]int, len(t.Faces))
-	for i := range idx {
-		idx[i] = i
+	// Only the STRUCTURAL faces are partitioned. A detail face is a bump, a
+	// ledge or a reveal carved into a wall's surface (world/brush_detail.go),
+	// and letting one into the build would be wrong twice over: its plane
+	// would be offered as a knife, cutting the level into cells that describe
+	// a moulding rather than a room, and — because solidity here is read off
+	// the face normals — the space behind it would be labelled material. The
+	// partition and the visibility that comes out of it have to describe the
+	// SOLID, which is exactly the hull.
+	//
+	// So they are inserted afterwards, into the cells the hull made. That is
+	// Quake's detail brush and it is the same bargain: detail costs draws, not
+	// tree.
+	structural := make([]int, 0, len(t.Faces))
+	var detail []int
+	for i := range t.Faces {
+		if t.Faces[i].Detail {
+			detail = append(detail, i)
+			continue
+		}
+		structural = append(structural, i)
 	}
-	t.Root = t.build(idx, boxPlanes(t.Lo, t.Hi), 0, false)
+	t.Root = t.build(structural, boxPlanes(t.Lo, t.Hi), 0, false)
 	t.attachFacesToLeaves()
+	t.attachDetailFaces(detail)
 	t.computeNodeBounds(t.Root)
 	return t
+}
+
+// attachDetailFaces drops each detail face into every empty cell its polygon
+// reaches, walking it down from the root the same way a node's coplanar faces
+// are pushed down to the leaves they bound.
+//
+// From the ROOT rather than from a node, because a detail face was never
+// assigned to one — it took no part in choosing the planes it is now being
+// sorted by. The walk splits it as it descends, so a bump spanning two cells is
+// drawn from both and a bump buried inside a solid cell is drawn from neither.
+func (t *BSPTree) attachDetailFaces(detail []int) {
+	if len(detail) == 0 {
+		return
+	}
+	for _, fi := range detail {
+		t.markFace(t.Root, fi, t.Faces[fi].Points)
+	}
+	// markFace appends, so the cells it touched need the same tidy-up
+	// attachFacesToLeaves gives the ones it filled.
+	for li := range t.Leaves {
+		l := &t.Leaves[li]
+		sort.Ints(l.Faces)
+		l.Faces = dedupInts(l.Faces)
+	}
 }
 
 // faceSetBounds is the box around every compiled face. An empty level still
@@ -329,6 +371,12 @@ func (t *BSPTree) attachFacesToLeaves() {
 	for ni := range t.Nodes {
 		n := &t.Nodes[ni]
 		for _, fi := range n.Faces {
+			if t.Faces[fi].NoDraw {
+				// Structure only: it chose planes and decided solidity on the
+				// way down, and a cell's face list is a DRAW list. See
+				// Face.NoDraw.
+				continue
+			}
 			child := n.Front
 			if t.Faces[fi].Plane.N.Dot(n.Plane.N) < 0 {
 				child = n.Back

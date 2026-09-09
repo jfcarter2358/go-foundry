@@ -543,18 +543,91 @@ reason.
 
 `docs/guide/README.md` carries a `TODO(brush migration, Phase 10)` note saying
 plainly that the sector-era chapters are stale and which have been rewritten.
-Rewritten so far: **06-scatter** (was 06-biomes), **12-vehicles-and-frames**,
-**22-prefabs** (new), **23-compiling-levels** (new — the sealing rule lives
-nowhere else, so read it before touching the compiler), **20-shipping** (levels
-are compiled, not copied), and the two troubleshooting entries in
-**19-testing-and-debugging**.
+Rewritten so far: **01-editor-basics**, **02-building-levels**,
+**03-shaping-surfaces** (now the two shaping contexts — the solid in edit mode,
+its surface in detail mode),
+**05-smoothing** (was 05-detail-and-smoothing), **06-scatter** (was 06-biomes),
+**12-vehicles-and-frames**, **21-keybindings**, **22-prefabs** (new),
+**23-compiling-levels** (new — the sealing rule lives nowhere else, so read it
+before touching the compiler), **20-shipping** (levels are compiled, not
+copied), and the two troubleshooting entries in **19-testing-and-debugging**.
 
-Still describing sectors, walls, portals, the 2D map and the surface-shaping
-sub-mode: **01-editor-basics**, **02-building-levels** (the big one — it is the
-chapter about the format that no longer exists), **03-shaping-surfaces** (should
-probably be folded into 02, since shaping is no longer a mode),
-**05-detail-and-smoothing**, **07-lighting**, **18-scripting** (the `@sec.edge`
-addressing is gone), **21-keybindings**.
+Still describing sectors, walls, portals and the 2D map: **07-lighting**,
+**18-scripting** (the `@sec.edge` addressing is gone; the brush section of
+SCRIPTING.md itself is current).
 
 `resources/entities/README.md` has a `TODO(brush migration, Phase 10)` pointing
 at the deleted dropship level.
+
+---
+
+## After Phase 10 — four changes to the brush model
+
+Landed on this branch after the migration proper, so the phase table above does
+not mention them.
+
+**1. Per-face procedural detail is gone.** `internal/detail`,
+`internal/render/detail_render.go`, `world.DetailSpec`, `BrushFace.Detail`,
+`StaticSurface.Detail`, the `SubmeshGeometries` slices that carried its scatter,
+the ten `detail_*` shaders and the user-preset store are all deleted, and
+`CompiledVersion` is bumped to 2. It was a parametric layer riding on a face,
+which made sense when a sector's faces were flat by construction; a brush is a
+solid you shape directly, so roughness is corners you moved and the collision,
+the compiled geometry and the silhouette all agree about them. `progUniforms`,
+`mustReadShader` and `linkStages` moved to `internal/render/shader_program.go`
+(every other pass borrowed them from the detail renderer), `buildRockMesh` moved
+to `scatter_mesh.go`, and `Smoothstep32` to `internal/geom`.
+
+**2. Dynamic brushes.** `Brush.Dynamic` is an authored flag; `Offset`,
+`Rotation` and `Velocity` beside it are run-time only. See
+`internal/world/brush_dynamic.go` and DESIGN.md's "A brush that moves" — the
+three things that matter are that the authored corners are never rewritten, that
+`compile.BakesBrush` leaves a dynamic brush out of the bake entirely (so it
+cannot seal a level), and that writing a placement on a brush without the flag
+is an error rather than a silent no-op in a shipped build. Scripts get
+`position`, `rotation`, `velocity` and a read-only `dynamic`.
+
+**3. Object mode and edit mode.** `Editor.EditContext`, Tab to switch, object
+mode the default. Object mode selects whole brushes (`Editor.SelectedBrushes`,
+`editor_brush_sel.go`) and edit mode is the point/edge/face selection that was
+already there. The gizmo needed no new transform code: a brush selection
+resolves to every one of its corners through `gizmoVertexSels`, exactly as a
+face selection resolves to its own — see `editor_face_gizmo.go`.
+
+**4. Detail meshes, and detail mode.** A brush is now two meshes: `Brush` embeds
+a `world.BrushMesh` (its hull — `b.Verts` and `b.Faces` still name it, so every
+collision and CSG call site was untouched) and carries an optional
+`Detail *BrushMesh` beside it. `b.DrawMesh()` / `b.DrawFaces()` is the detail one
+when there is one and the hull otherwise, and that one method is the whole seam:
+**DrawFaces is what you see, Faces is what you hit.** Every draw, shadow, upload,
+pick, occlusion and raycast path was moved onto it; nothing in `internal/collision`
+was, which is the feature.
+
+Read `internal/world/brush_detail.go` first, then `internal/editor/editor_detail.go`.
+Four things worth knowing before touching it:
+
+- **The compiler needs BOTH.** A detailed brush's drawable faces come off its
+  detail mesh, so its hull faces would otherwise vanish from the face list
+  entirely — and with them the planes that make its volume solid. `gatherSolids`
+  emits them as `Face.NoDraw`: structure that shapes the tree and is in no cell's
+  draw list. Without it a detailed wall is a hole in the shell and the void fill
+  pours through the room (`TestADetailedWallStillSeals`). Detail faces are then
+  excluded from `BuildBSP`'s splitter search and inserted into the finished cells
+  by `attachDetailFaces`, so the partition is bit-for-bit what it would have been
+  — and the light stage had to learn that a leaf, not a node, is a detail face's
+  authority for "did this survive the build".
+- **The selection carries which mesh it means.** `vertexSel`, `faceSel` and
+  `edgeSel` each grew a `detail bool`, and `selMesh(b, detail)` resolves it. That
+  is what lets the gizmos, panels, outlines and undo stay untouched — and it is a
+  property of the SELECTION rather than of the editor's mode because object mode
+  drags both meshes at once, which is how a wall carries its ledge.
+- **The tools are `model.ModelDoc`'s, called, not copied.**
+  `editor_detail_mesh.go` bridges a `BrushMesh` to a document plus a parallel
+  slice of `BrushFace` attributes, because a `ModelFace` has nowhere to put a
+  texture. Each op states where its output faces got their attributes; subdivide
+  runs one face at a time because `SubdivideFaces` rebuilds the whole list in
+  place and there is otherwise no way to tell whose children are whose.
+- **Nothing re-seeds automatically.** Reshaping a hull under a detail mesh leaves
+  the two disagreeing, and the panel's "Re-seed from solid" is the fix. Doing it
+  on the author's behalf would silently discard their work every time they nudged
+  a corner.

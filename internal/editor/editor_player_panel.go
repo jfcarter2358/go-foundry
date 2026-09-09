@@ -48,7 +48,7 @@ func editorPlayerStepHeight(lvl *world.Level) {
 	if imgui.Checkbox("This level sets a step height##stepon", &has) {
 		EditorPushUndo()
 		if has {
-			lvl.Player.StepHeight = world.SuggestedStepHeight
+			lvl.Player.StepHeight = def
 			editorSetStatus("Player step height set to %.2f", lvl.Player.StepHeight)
 		} else {
 			lvl.Player.StepHeight = 0
@@ -58,7 +58,7 @@ func editorPlayerStepHeight(lvl *world.Level) {
 
 	if lvl.Player.StepHeight <= 0 {
 		editorTextMutedWrapped(fmt.Sprintf(
-			"Following the default: the player's own height, %.2f units. Anything taller than that is a wall it is stopped by; anything shorter is a step it walks up.", def))
+			"Following the default: %.2f units, about a stair riser. Anything taller than that is a wall it is stopped by; anything shorter is a step it walks up.", def))
 		return
 	}
 
@@ -71,5 +71,5 @@ func editorPlayerStepHeight(lvl *world.Level) {
 			"floor being left.")
 	}
 	editorTextMutedWrapped(fmt.Sprintf(
-		"World units, measured from the floor the player is leaving. The engine's default without this block is %.2f, the player's own height.", def))
+		"World units, measured from the floor the player is leaving. The engine's default without this block is %.2f.", def))
 }

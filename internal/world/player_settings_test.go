@@ -6,19 +6,26 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// A level with no `player:` block behaves exactly as every level did before the
-// block existed: the allowance is the body's own height.
-func TestAbsentPlayerBlockFallsBackToTheBodysHeight(t *testing.T) {
+// A level with no `player:` block gets the engine's default.
+func TestAbsentPlayerBlockFallsBackToTheDefault(t *testing.T) {
 	p := PlayerSettingsFromRaw(nil)
 	if p != (PlayerSettings{}) {
 		t.Fatalf("absent block gave %+v, want the zero value", p)
 	}
-	body := NewPlayer(mgl32.Vec3{})
-	if got, want := p.EffectiveStepHeight(body), body.BoundHalfY*2; got != want {
-		t.Errorf("step height %v, want the body's height %v", got, want)
+	if got, want := p.EffectiveStepHeight(), DefaultStepHeight(); got != want {
+		t.Errorf("step height %v, want the default %v", got, want)
 	}
-	if got, want := DefaultStepHeight(), body.BoundHalfY*2; got != want {
-		t.Errorf("DefaultStepHeight() = %v, want %v — the two must agree", got, want)
+}
+
+// The default is a stair riser, not a body height. It was the latter, which on
+// solid brush geometry meant the player could walk up onto anything shorter
+// than themselves — and gave StepUp a lift tall enough to cross a ceiling with.
+func TestTheDefaultStepHeightIsACurb(t *testing.T) {
+	if got := DefaultStepHeight(); got != 0.5 {
+		t.Errorf("DefaultStepHeight() = %v, want 0.5", got)
+	}
+	if body := NewPlayer(mgl32.Vec3{}); DefaultStepHeight() >= body.BoundHalfY*2 {
+		t.Errorf("the default is still the body's own height (%v)", body.BoundHalfY*2)
 	}
 }
 
@@ -26,19 +33,18 @@ func TestAbsentPlayerBlockFallsBackToTheBodysHeight(t *testing.T) {
 // zero clearance would be refused by the seam between two floors that differ by
 // a rounding error, so it is never what an author meant.
 func TestNonPositiveStepHeightIsTheDefault(t *testing.T) {
-	body := NewPlayer(mgl32.Vec3{})
 	for _, v := range []float32{0, -1} {
 		p := PlayerSettings{StepHeight: v}
-		if got, want := p.EffectiveStepHeight(body), body.BoundHalfY*2; got != want {
+		if got, want := p.EffectiveStepHeight(), DefaultStepHeight(); got != want {
 			t.Errorf("step height %v gave %v, want the default %v", v, got, want)
 		}
 	}
 }
 
 func TestAuthoredStepHeightIsUsedAsGiven(t *testing.T) {
-	v := float32(0.5)
+	v := float32(0.75)
 	p := PlayerSettingsFromRaw(&RawPlayer{StepHeight: &v})
-	if got := p.EffectiveStepHeight(NewPlayer(mgl32.Vec3{})); got != v {
+	if got := p.EffectiveStepHeight(); got != v {
 		t.Errorf("step height %v, want %v", got, v)
 	}
 }

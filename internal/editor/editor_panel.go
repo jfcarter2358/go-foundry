@@ -128,6 +128,8 @@ func editorView3DControls() {
 			"Wireframe draws it as lines and lets you click any of them.")
 	}
 	imgui.SameLine()
+	editorBoundsToggleButton()
+	imgui.SameLine()
 	flying := editorCam3D.Fly
 	if editorActiveToggleButtonColor(editorCameraLabel(), flying,
 		imgui.Vec4{X: 0.2, Y: 0.55, Z: 0.35, W: 1}) {
@@ -138,6 +140,8 @@ func editorView3DControls() {
 		editorFrameSelection()
 	}
 
+	editorBoundsLegend()
+
 	imgui.Checkbox("Show All Point/Edge Boxes##viewboxes", &Editor.ShowPointSelectRadius)
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Wireframe already draws them all; this is the same\nfor a solid-shaded view.")
@@ -146,6 +150,7 @@ func editorView3DControls() {
 	editorTextMutedWrapped("Right- or middle-drag turns, shift+middle pans, the wheel " +
 		"zooms. WASD flies (orbit: slides the pivot), space and shift go up and down. " +
 		"1/2/3 pick points, edges or faces; ctrl+click adds to the selection; " +
+		"B shows every object's bounding box; " +
 		"right-click without dragging opens the selection's actions.")
 }
 
@@ -252,6 +257,24 @@ func editorRenderingSettings() {
 	}
 	if render.AntiAliasGrantedSamples <= 0 {
 		editorTextMutedWrapped("The window was not granted multisampling, so this has nothing to toggle.")
+	}
+	vsync := platform.VSyncEnabled
+	if imgui.Checkbox("VSync  [F12]##rndvsync", &vsync) {
+		// Through ToggleVSync so the swap interval is actually set, not just
+		// the flag — same reason as anti-aliasing above.
+		platform.ToggleVSync()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Wait for the display's refresh before showing a frame.\n" +
+			"Off removes the frame-rate ceiling, which is how you tell a scene\n" +
+			"that is expensive from one that is merely waiting for the monitor.")
+	}
+	// The request and what the driver did with it are separate facts, and the
+	// checkbox can only show one of them. Say so when they disagree.
+	if !platform.VSyncSettable {
+		editorTextMutedWrapped("The driver would not let the swap interval be set, so this has nothing to toggle.")
+	} else if platform.VSyncActive() != platform.VSyncEnabled {
+		editorTextMutedWrapped("The driver is ignoring this and pacing swaps its own way.")
 	}
 	imgui.Checkbox("Debug overlay  [F3]##rnddebug", &render.DebugOverlayVisible)
 	fullscreen := platform.IsFullscreen()

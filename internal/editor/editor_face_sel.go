@@ -32,11 +32,19 @@ type faceSel struct {
 	chunkIdx int
 	brushIdx int
 	faceIdx  int
+	// detail says which of the brush's two meshes faceIdx indexes — see
+	// vertexSel.detail, which carries the same flag for the same reason.
+	detail bool
 }
 
-// brushFaceSel names one face of one brush.
+// brushFaceSel names one face of one brush's HULL.
 func brushFaceSel(chunkIdx, brushIdx, faceIdx int) faceSel {
 	return faceSel{chunkIdx: chunkIdx, brushIdx: brushIdx, faceIdx: faceIdx}
+}
+
+// brushDetailFaceSel names one face of one brush's DETAIL mesh.
+func brushDetailFaceSel(chunkIdx, brushIdx, faceIdx int) faceSel {
+	return faceSel{chunkIdx: chunkIdx, brushIdx: brushIdx, faceIdx: faceIdx, detail: true}
 }
 
 // faceSelBrush resolves the chunk and brush a face belongs to, or nil when the
@@ -56,10 +64,11 @@ func faceSelBrush(f faceSel) (*world.Chunk, *world.Brush) {
 // faceSelFace resolves a selection all the way to the face it names, or nil.
 func faceSelFace(f faceSel) *world.BrushFace {
 	_, b := faceSelBrush(f)
-	if b == nil || f.faceIdx < 0 || f.faceIdx >= len(b.Faces) {
+	m := selMesh(b, f.detail)
+	if m == nil || f.faceIdx < 0 || f.faceIdx >= len(m.Faces) {
 		return nil
 	}
-	return &b.Faces[f.faceIdx]
+	return &m.Faces[f.faceIdx]
 }
 
 // faceSelValid reports whether a face still names something that exists.
@@ -182,7 +191,8 @@ func faceSelPanelFocus(faceSel) string { return panelFocusFace }
 // of which a face selection can hold.
 func faceSelFromHit(hit pickHit) (faceSel, bool) {
 	if hit.kind == pickBrushFace {
-		return brushFaceSel(hit.chunkIdx, hit.brushIdx, hit.faceIdx), true
+		return faceSel{chunkIdx: hit.chunkIdx, brushIdx: hit.brushIdx,
+			faceIdx: hit.faceIdx, detail: hit.detail}, true
 	}
 	return faceSel{}, false
 }

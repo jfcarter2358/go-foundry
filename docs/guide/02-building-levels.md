@@ -1,123 +1,162 @@
 # Building levels
 
-Level geometry is a stack of **chunks**. A chunk is one storey — a flat 2D map of
-convex polygons, each with a floor height and a ceiling height. Put a chunk on
-top of another and you have two floors of a house. You cannot have one sector
-over another inside a single chunk; that is what the stack is for.
+Level geometry is **brushes**: convex solids, each face individually textured,
+grouped into **chunks**. Empty walkable space is whatever is not inside a brush,
+so a room is not a shape you draw — it is a box you hollow out, or six slabs you
+place around a gap.
 
 ```
 level
-  chunk           a storey. Has an origin, a yaw, a scale, an on/off flag
-    sector        a convex polygon with a floor and a ceiling
-      edge        a side of the polygon: either a wall or a portal
-      floor       optional, has a height and a texture
-      ceiling     optional, same
-    biome sector  painted decoration over the floors (see the Biomes guide)
+  chunk           an origin, a yaw, a scale and an on/off flag
+    brush         a convex polyhedron: a vertex list and a face list
+      face        a planar loop of those vertices, with its own texture
 ```
+
+Everything is authored in the 3D view. There is no floorplan and no top-down map.
 
 ## Making the first room
 
-1. `Add... > Chunk...` in the Explorer. Name it and it is placed at the camera.
-2. Open the **2D Window** — this is where outlines are drawn.
-3. `Shift+click` on the map to drop points. Four of them, roughly square.
-4. `Ctrl+click` each point in order, then press `Shift+J` (**Join & Close Loop**).
-   That draws the edges and closes them into a sector.
-5. Back in the 3D view, click the floor and set its **Height** and **Texture**.
+1. `Add... > Chunk...` in the Explorer. It is placed at the camera and starts
+   with a hollow room already in it — six brushes around somewhere to stand.
+2. Fly inside. You are in **object mode**: click a wall and the whole slab it
+   belongs to lights up in cyan.
+3. Drag it with `G` to make the room bigger.
+4. Press `Tab` for **edit mode**, press `3`, and click one face of that slab. Now
+   `E` extrudes it, `I` insets it and `B` subdivides it.
 
-`J` joins the picked points into a chain without closing it — for a wall across a
-room, or an outline you mean to finish later. `Shift+J` closes the loop, which is
-what actually creates a sector.
+That is the whole loop: place solids in object mode, shape them in edit mode. See
+[Editor basics](01-editor-basics.md) for the two contexts and
+[Shaping surfaces](03-shaping-surfaces.md) for the shaping tools.
 
-`Shift+click` near an existing edge splits that edge instead of dropping a free
-point, which is how you add a corner to a room you have already made.
+## Placing brushes
 
-## The 2D map
+`Add... > Brush` offers three stamps, each two units across:
 
 | | |
 | --- | --- |
-| `W` `A` `S` `D`, middle-drag | pan |
-| Wheel | zoom |
-| Left click / drag | select and move a corner |
-| `Ctrl+click` | add to the selection |
-| `Shift+click` | split the nearest edge, or drop a free point |
-| Right click | remove the point under the cursor, else deselect |
-| `J` / `Shift+J` | join the picked points / join and close the loop |
+| **Box** | six faces. Sits *on* the surface you clicked rather than straddling it |
+| **Wedge** | a box with one edge collapsed — ramps, roof slopes, buttresses |
+| **Cylinder** | twelve sides and two caps. Pillars, tanks, towers |
 
-Two buttons at the top of the Map section decide which of a corner's two handles
-you are dragging: **Floor Verts** or **Ceiling Verts**. A corner carries a height
-offset for each surface, so tilting a floor and tilting the ceiling over it are
-separate edits. `Refresh Heights` re-samples biome paint after you have moved
-geometry under it.
+Picking one *arms* the stamp rather than placing a single brush. A cyan box then
+follows the cursor onto whatever surface it is over — snapped to the grid when
+snapping is on — and **every click places another solid**, so a room is blocked
+out in a dozen clicks instead of a dozen trips through the menu. `Esc` puts the
+stamp away, as does picking the same kind again or **Cancel** in the Explorer's
+banner. Right-clicking the view offers the same stamps under **Stamp brushes**.
 
-Sectors share their corners. Drag a corner that two rooms meet at and both
-follow — which is what keeps the seam closed. Sectors must stay convex; cut an
-L-shaped room into two sectors joined by a portal.
+Each brush lands selected, ready to be dragged into place once you are done
+stamping, and `Ctrl+Z` takes back one brush per press.
 
-## Walls and portals
+Right-click a selected brush for **Duplicate** (a copy on top of the original,
+ready to drag off), **Snap to grid** (every corner rounded onto the grid, whether
+or not snapping is on) and **Delete**.
 
-Every edge is one or the other, and converting between them keeps the edge's ID,
-so a script addressing it does not break.
+**Hollow** turns a solid into a room: it replaces the brush with the six brushes
+of a shell filling its bounds. Block a building out as plain boxes, then hollow
+the ones you need to walk inside. It works from the axis-aligned bounds, so
+hollowing a wedge gives a box-shaped room.
 
-**A wall** is drawn and solid. It has a texture, a visibility flag, a collision
-flag, alpha, its own UV transform, and can carry a surface mesh, detail and a
-script.
+## Brushes must stay convex
 
-**A portal** connects two sectors. It is not drawn and does not collide — you
-walk straight through. Select an edge and set **Kind** to `portal` to make one.
+Every brush is required to be convex — every corner on or behind every face's
+plane. Collision reads a brush's corners as a hull directly and the compiler
+clips faces as half-spaces; both are *wrong* on a concave brush rather than
+merely slow, so a dent in one is a dent nothing else in the engine knows about.
 
-A portal's useful extras:
+The stamps and the shaping tools preserve convexity by construction. Dragging a
+single corner is the one thing that can break it, and when it does the editor
+says so in the status line and in the brush's properties; compiling refuses
+outright and names the brush.
 
-| Field | |
-| --- | --- |
-| **To Sector** | which sector is on the far side. Usually inferred |
-| **Draw Gap** | fill the height difference between the two sectors with geometry |
-| **Gap Texture** | what that filler is textured with |
-| **To Frame** | join two spaces that move relative to each other — see [Vehicles and frames](12-vehicles-and-frames.md) |
+An L-shaped room is two brushes. That is not a limitation to work around — it is
+what keeps collision and the compiler cheap.
 
-`Draw Gap` is how a doorway with a header over it works, and how a step between
-two floors gets a riser. Lowering a sector's ceiling with `Draw Gap` on is also
-how the dropship's blast door is built: the gap *is* the door.
+## Faces
 
-**Pinned** on a wall stops the editor's portal inference from converting it.
-
-## Floors and ceilings
-
-Both are optional. A sector with no ceiling is open to the sky; one with no floor
-is a hole you fall through.
+Select a face in edit mode (`Tab`, `3`, click) and its properties sit below the
+brush's:
 
 | Field | |
 | --- | --- |
-| **Height** | chunk-local Y. Per-corner offsets on top of it make a slope |
-| **Texture** | resolved against `textures/` |
-| **Visible** (eye) | hides the structural texture without disabling the surface — for a floor completely covered by biome paint |
-| **Double Sided** | draw and collide from underneath too |
-| **Alpha** | translucency |
-| **Shape Surface** | shape it — see [Shaping surfaces](03-shaping-surfaces.md) |
+| **Texture** | plus an optional **Blend Texture** and a grayscale **Blend Mask** |
+| **Alpha** | 1 is opaque; anything less sorts into the transparent pass |
+| **Double Sided** | draw it from behind as well |
+| **Drawn** | off builds no geometry at all while the brush still collides — for a face buried against a neighbour |
+| **Collision** | off makes this one face walk-through while the rest of the brush stays solid — a window opening in a wall |
+| **UV** | offset, scale and rotation, in the face's own plane |
+| **Smooth** | weld normals with the neighbours; see [Smooth shading](05-smoothing.md) |
 
-**Skirt** (floors only) closes the band between this floor and whatever is
-underneath it — the slab edge of a storey, the rock face under an overhang.
-`ceiling` stops at the ceiling of the room below; `floor` carries all the way
-down to its floor. It takes its own texture, or the floor's if you leave it
-empty.
+The panel edits the primary selected face. To change a dozen at once, select them
+all with `Ctrl+click` and use the right-click menu, whose rows say how many faces
+they will reach.
 
-## Openings
+## Solid, and not
 
-An opening is a hole cut through a floor or ceiling that connects to the sector
-below or above — a stairwell, a hatch, a gap in a mezzanine. Bodies fall through
-it and the renderer sees through it.
+**Solid** on the brush is collision for the whole thing. Turn it off and the
+brush is decoration a body walks straight through — a light shaft, a bush, a
+detail you do not want the player catching on.
 
-Draw one on the 2D map: arm the tool, click the corners, `Enter` to close,
-`Escape` to abandon. Which surface it cuts follows the Floor Verts / Ceiling
-Verts switch. It attaches to whichever sector its centre lands in, and what lies
-under it is worked out fresh each time, so it cannot go stale.
+With the per-face **Drawn** and **Collision** flags that gives the four useful
+combinations: solid and drawn (a wall), solid and not drawn (a clip brush that
+blocks an area invisibly), drawn and not solid (decoration), and neither — which
+is a brush you should delete.
 
-Openings connect; **surface meshes** cut shapes. If you want a hole in a *wall*,
-that is a surface mesh hole, not an opening.
+## Dynamic brushes
+
+A brush is static by default. Its corners are baked into the compiled level's
+geometry, clipped against its neighbours and partitioned into the BSP — none of
+which survives it moving.
+
+Tick **Dynamic** on a brush and it is left out of all of that, and a script can
+move it during play:
+
+```flang
+@blast_door.prop.position = @blast_door.prop.position + <0.0, -3.0, 0.0>
+```
+
+| Property | |
+| --- | --- |
+| `position` | the brush's centre, in world space. Writing it moves the brush |
+| `rotation` | euler angles in radians, turning it about its own centre |
+| `velocity` | units per second; the engine keeps it moving with no script per frame |
+| `angular_velocity` | radians per second, added to `rotation`; the engine keeps it turning |
+| `dynamic` | read-only: whether this brush is one |
+
+`velocity` and `angular_velocity` are rates rather than moves: writing one does
+nothing at that instant, and every frame of play afterwards the engine slides or
+turns the brush by it. A fan is one line —
+`@fan.prop.angular_velocity = <0.0, 3.14, 0.0>` — and stops on a write of zero.
+Nothing damps either one. Note that `velocity` is world-space like `position`,
+while `angular_velocity` is in the brush's own basis like `rotation`, since it
+is that property's rate of change.
+
+**Its collision moves with it.** That is the point of the feature: what a body
+hits is where the brush is drawn, not where it was authored. Frustum culling, the
+spatial hash and raycasts all follow it too.
+
+The authored corners are never rewritten. The movement is a placement riding on
+top of them, so the level file always holds the brush at rest and leaving play
+puts it back there.
+
+Three things to know before relying on one:
+
+- **Writing a placement on a brush that is not marked Dynamic is an error**, and
+  the script log names the brush and the toggle. That is deliberate: without the
+  toggle the compiler has already baked the brush, so the move would work in the
+  editor and silently do nothing in a shipped build.
+- **A dynamic brush cannot seal a level.** [Compiling](23-compiling-levels.md)
+  needs the level's shell closed, and a brush that moves is not part of a shell.
+  A doorway a dynamic door fills is a hole as far as the compiler is concerned —
+  put a static frame around it, or accept the leak.
+- **Nothing rides it.** A player standing on a rising lift is not carried up; the
+  brush moves out from under them. Carrying riders is a chunk-scale feature —
+  bind them with `AttachedChunk` and move the whole chunk instead.
 
 ## Chunks
 
-Select a chunk in the Explorer to make it active — that is the one the 2D map is
-drawing and the one new geometry goes into.
+Select a chunk in the Explorer to make it active — that is the one new geometry
+goes into.
 
 | Field | |
 | --- | --- |
@@ -149,8 +188,8 @@ press both.
 
 Under **Player** in the properties panel. It is how tall a riser the player walks
 up rather than being stopped by. Leave the checkbox off and it follows the
-engine's default, which is the player's own height. Tick it to set a level that
-makes the player pick their feet up less.
+engine's default of 0.5 units — about a stair riser. Tick it to set a level that
+makes the player pick their feet up more, or less.
 
 ## Level environment
 

@@ -61,8 +61,8 @@ same triangles that were drawn, so a bump you can see is a bump you walk up. A
 **wall's collision plane stays flat** — the mesh moves what you see, and what
 stops you is still the wall's segment on the 2D map, with the mesh's `Hole`
 faces punched through it as pass-through windows. Bumps you walk into; holes you
-walk through. That is the same contract procedural detail already ships with,
-and it keeps wall collision a segment test rather than a swept mesh query.
+walk through. It keeps wall collision a segment test rather than a swept mesh
+query.
 
 `Opening` survives alongside this, because it is not a shape but a *connection*:
 it pairs two faces of one slab, is walked by the portal-culling BFS, and is what
@@ -324,11 +324,10 @@ changes shape:
   always resolved before children, a frame may not end up inside itself, and the
   chain is depth-limited.
 
-Three things are deliberately not in a frame. **Biome paint and procedural
-detail** build their meshes and instance transforms directly in world
-coordinates with no model matrix anywhere in the pipeline, so a framed chunk
-would leave its grass standing where the ship used to be; a vehicle interior is
-a built environment rather than terrain, and the editor refuses to paint one.
+Three things are deliberately not in a frame. **Scatter volumes** build their
+instance transforms directly in world coordinates with no model matrix anywhere
+in the pipeline, so a framed chunk would leave its grass standing where the ship
+used to be; a vehicle interior is a built environment rather than terrain.
 And **two entities in different frames do not collide**: comparing their volumes
 would be subtracting numbers that do not mean the same thing, and the one pair
 that is always cross-frame is a rider against the hull carrying it — which it is
@@ -555,8 +554,8 @@ a time, and a particle batch is thousands of quads under one draw.
 One static unit quad, one streamed per-instance buffer, one
 `glDrawArraysInstanced` per batch — where a batch is a (texture, blend,
 billboard, lit) tuple. **This is the engine's first use of per-instance vertex
-attributes.** Every other instanced draw here (biome scatter, detail scatter)
-derives placement procedurally from `gl_InstanceID`, which is a placement trick
+attributes.** Every other instanced draw here (the scatter volumes) derives
+placement procedurally from `gl_InstanceID`, which is a placement trick
 and cannot carry simulated state.
 
 `sprite_common.glsl` holds the billboard basis and is injected into all three
@@ -729,6 +728,101 @@ not move either: it is out of the world entirely, and a streaming level
 should not find its switched-off areas had wandered off before it switched
 them back on.
 
+### A brush that moves
+
+The same idea one level down, and for the cases a whole chunk is too coarse
+for: a door, a lift, a crusher. A brush marked `Dynamic` carries an `Offset` and
+a `Rotation` that a script writes, with a `Velocity` and an `AngularVelocity`
+that carry them; `world.AdvanceBrushes` integrates both rates on the same tick
+`AdvanceChunks` runs, and `Brush.Placement` composes the offset and the rotation
+into a matrix. `Velocity` slides the offset, `AngularVelocity` turns the
+rotation about the brush's own pivot — so a fan spins in place — and the angle
+wraps into ±π as it is integrated, for the reason `Entity.Integrate` wraps its
+own: a brush left spinning for an hour would otherwise reach an angle whose
+float32 resolution is coarser than a degree.
+
+Three decisions are what make it cheap and what an author has to know about.
+
+**The placement is run-time only and the corners are never rewritten.** A
+brush's `Verts` are its authored shape; moving it by rewriting them would
+rebuild the face meshes every frame it moved, would make the level file's
+contents depend on where the door happened to stop, and would leave nothing to
+restore to when play ends. So the transform rides on top: the face meshes are
+uploaded once in authored coordinates and the draw multiplies `Placement` into
+the chunk's model matrix, `LocalAABB` reports where the brush IS so the chunk's
+bounds and the spatial hash follow it, and `collision.ConvexHull` carries the
+same matrix so what a body hits is where the brush is drawn. Nothing is
+serialized, so the level on disk is always the brush at rest.
+
+**A dynamic brush is left out of the compiled bake entirely** —
+`compile.BakesBrush`. It is not clipped, it does not clip its neighbours, it is
+not a solid leaf of the BSP and it does not help seal the level. Any of those
+would freeze it at the position it happened to be authored at: the floor under a
+lift would have a hole cut in it, the space a door fills would be solid for the
+life of the level. It survives into the compiled level as a live brush that the
+runtime draws and collides the ordinary way, which is why a compiled chunk's
+draw loop still walks its brush list when `HasDynamicBrushes` says so. The
+consequence an author cannot be protected from: a doorway a dynamic door fills
+is a hole as far as the void fill is concerned, so a moving brush cannot be part
+of the shell that seals a level.
+
+**Writing a placement on a brush that is not dynamic is an error**, not a move
+that quietly happens. Without the flag the compiler has already baked the brush,
+so the write would work in the editor and do nothing in a shipped build — the
+worst possible failure, because it is invisible until the game ships. The flag
+is the author saying "leave this one out of the bake", and it is therefore also
+what makes the write meaningful.
+
+Nothing rides a moving brush. A body standing on a lift is not carried by it —
+the brush moves out from under the body and the next resolve pushes it. That is
+the same starting point `AdvanceChunks` had, and the answer is the same one:
+attach the rider to a moving *chunk* (`Entity.AttachedChunk`) if it has to be
+carried.
+
+### A brush's two meshes
+
+A brush is convex because collision reads its corners as a hull and the compiler
+clips its faces as half-spaces, and both are *wrong* rather than merely slow on a
+concave one. That rules out most of what makes a surface interesting: a window
+reveal, a ledge along a wall, a lip round a doorway, a panel pressed into a
+bulkhead are all concave, and none of them is something a player should ever
+catch on.
+
+So a brush is two meshes of the same type. `Brush` embeds a `BrushMesh` — its
+**hull**, which is what `b.Verts` and `b.Faces` still name — and carries an
+optional `Detail *BrushMesh` beside it, shaped in the editor's third context
+(`Ctrl+Shift+click`) with the model editor's own operations. The seam is one
+method: **`b.DrawFaces()` is what you see, `b.Faces` is what you hit.** Every
+draw, shadow, upload, pick, occlusion and raycast path goes through the first;
+every collision path reads the second, and that asymmetry is the entire feature.
+
+Three rules make it hold together.
+
+**The detail mesh is drawn INSTEAD of the hull, never as well.** `Brush.Load`
+uploads one and frees the other's buffers, so a detailed brush cannot z-fight
+with the solid it is carved into, and there is no state in which both are on
+screen. It is seeded as a copy of the hull, so entering the mode changes nothing
+until the first edit; it is not kept in step afterwards, because guessing which
+carved geometry was meant to follow a reshaped hull would silently move or
+discard an author's work. Re-seeding is a button.
+
+**The compiler treats it as a Quake detail brush, one level down.** Detail faces
+are drawn, clipped by other solids and lit like anything else, and they are
+excluded from the BSP's splitter search and inserted into the finished cells
+afterwards — so the partition, the portals and the PVS of a level are exactly
+what they would be with no detail in it at all. Letting one in would be wrong
+twice: its plane would cut the world into cells describing a moulding rather than
+a room, and since solidity is read off the face normals, the space behind it
+would be labelled material.
+
+**A detailed brush still emits its hull as structure nobody draws.** This is the
+part that is easy to miss. A brush's drawable faces come off whichever mesh draws
+it, so a detailed one would otherwise contribute no faces at all to the compile —
+and with them would go the planes that make its volume solid. `compile.Face`
+carries a `NoDraw` flag for exactly this: those faces shape the tree, decide what
+is material, and are in no cell's draw list. Without them a detailed wall is a
+hole in the shell and the void fill floods the room behind it.
+
 ### Switching a chunk off
 
 A chunk carries an `Enabled` flag (stored as `Disabled`, so the zero value is
@@ -765,8 +859,8 @@ Rendering should cull as many chunks/sectors/walls as possible _before_ renderin
 
 Relief belongs to the material, not to the surface wearing it. A texture
 document carries a second layer stack — the *bump channel* — beside its colour
-one, and a wall, floor, model or detail patch gets relief simply by using that
-texture. Nothing in a level file mentions normal maps, and there is no
+one, and a brush face, a model or a scenery prop gets relief simply by using
+that texture. Nothing in a level file mentions normal maps, and there is no
 per-surface toggle: painting a height field into `brick.ftex` lights every
 brick in the game, which is the whole reason to author it once.
 
@@ -793,8 +887,8 @@ clamping there would draw a ridge of false relief down every tile seam.
 
 Bump strength is baked into the derived map rather than sent to the shader as a
 uniform. The renderer then needs to know nothing about it, and every pass that
-samples a normal map — the world program, the detail tessellation and scatter
-programs, whatever comes next — gets the same relief without each one having to
+samples a normal map — the world program, the scatter programs, whatever comes
+next — gets the same relief without each one having to
 look a per-texture value up per draw.
 
 ### No tangent attributes
@@ -832,7 +926,7 @@ would otherwise prune every one of them as unreferenced.
 Three passes deliberately do not sample one. Water derives its normal from the
 wave field. Biome foliage already perturbs its normal from a procedural noise
 field of its own (`biome_frag.glsl`), and the ground patch is deliberately
-without any surface-detail term (`ground_frag.glsl`). Sprites and particles are
+without any surface term of its own (`ground_frag.glsl`). Sprites and particles are
 camera-facing billboards, where a tangent frame describes the screen rather
 than a surface.
 
@@ -876,9 +970,8 @@ a runtime-only `TransitionFrom` snapshot plus an elapsed/duration pair
 again before an earlier one finishes retargets it rather than queuing a second.
 
 **Fog** is declared exactly once, in `resources/shaders/fog.glsl`, and spliced
-into the `#version` line of every stage that shades: the world shader, the two
-detail programs that reuse its fragment stage, the biome scatter and ground
-patch, sprites, and the sky. This is the same trick `biome_light.glsl` plays with
+into the `#version` line of every stage that shades: the world shader, the
+scatter programs and the ground patch, sprites, and the sky. This is the same trick `biome_light.glsl` plays with
 the lighting uniforms, and for a sharper reason. Fog that disagreed between
 passes would not read as a fog bug — it would read as the *passes* disagreeing
 about where things are: a wall fading into the distance with the grass in front
@@ -1321,10 +1414,9 @@ internal/audio        clips, the voice pool and the software mixer; no level,
 internal/world        the level data model — chunks, sectors, walls, entities,
                       volumes, sprites, emitters, biomes, lights. One package
                       because the types are mutually recursive.
-internal/detail       the CPU port of the displacement shader, user presets
-internal/biome        how biome paint drapes over the floor beneath it
+internal/biome        finding the ground under a scatter volume
 internal/collision    the resolver: player, world, entity-against-entity
-internal/render       every GPU pass — shadows, scatter, detail, culling, AA
+internal/render       every GPU pass — shadows, scatter, culling, AA
 internal/script       the engine side of scripting: Host, refs, messages, verbs
 internal/levelio      the YAML boundary, and the play-session snapshot
 internal/uiwin        multi-window plumbing, the F1 keybinding overlay

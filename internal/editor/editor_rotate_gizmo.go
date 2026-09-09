@@ -119,6 +119,11 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 		// extent made of corners, and swinging them about its own middle is
 		// what turning a wall or a floor can mean.
 		return selectedFacesCenter()
+	case gizmoKindBrush:
+		// The vertex sense again, and for a brush it is the only one available:
+		// an authored brush has no orientation field to rewrite, so turning one
+		// turns its corners about the middle of the selection.
+		return selectedBrushesCenter()
 	case gizmoKindEntity:
 		if e := activeGizmoEntity(); e != nil {
 			return e.Position, true

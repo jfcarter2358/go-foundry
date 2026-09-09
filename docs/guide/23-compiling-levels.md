@@ -15,6 +15,14 @@ each of which throws away work the game would otherwise do every frame:
 | **Visibility** | Works out which cells can see which, through the openings between them. A room you are not in then costs nothing at all. |
 | **Lighting** | Bakes the light onto the vertices, once, instead of onto the pixels, every frame. |
 
+A brush's **detail mesh** ([Shaping surfaces](03-shaping-surfaces.md)) is drawn
+and lit like anything else and takes no part in the second and third passes: the
+tree is cut with the solids' own planes and the detail is dropped into the cells
+they made. So a level compiles to the same partition, the same portals and the
+same visibility whether or not you have carved its walls — detail costs draws,
+not tree — and a wall you have detailed still seals the level exactly as the flat
+one did.
+
 You compile from the toolbar's **Compile** button, or from the command line:
 
 ```

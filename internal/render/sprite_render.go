@@ -141,7 +141,7 @@ type spriteBatch struct {
 // ---------- init ----------
 
 // SpriteInit builds the quad, the instance buffer and the three programs.
-// Called from EditorInit alongside GrassInit and DetailInit.
+// Called from InitWorldPasses alongside GrassInit and SkyInit.
 func SpriteInit() {
 	if sprites.ready {
 		return

@@ -121,6 +121,17 @@ func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWind
 		return nil, fmt.Errorf("GetID for %q: %w", title, err)
 	}
 
+	// A swap interval belongs to a context, and RenderSecondaryWindows swaps
+	// every open window in the same frame the main one swapped in. If each of
+	// those waited for a vblank too, the frame rate would divide by the number
+	// of open windows: three sub-editors up and the 3D view runs at 15fps on a
+	// 60Hz display, for reasons nothing on screen would explain. So a
+	// secondary window never waits — the main window's swap already paces the
+	// frame, and these are tool windows.
+	if err := sdl.GLSetSwapInterval(0); err != nil {
+		log.Printf("WARNING: sdl.GLSetSwapInterval(0) for %q: %v (its swaps may pace the frame loop)", title, err)
+	}
+
 	// win.GLCreateContext leaves glCtx current; imgui/device-object setup
 	// below runs against it. Pass the main context's already-built font
 	// atlas explicitly — see SharedFontAtlas (editor_imgui.go) for why nil
@@ -150,6 +161,12 @@ func NewUIWindow(title string, w, h int32, draw func(), onClose func()) (*UIWind
 	// caller is typically mid-frame on the main loop.
 	platform.Window.GLMakeCurrent(platform.Context)
 	imguibackend.ImguiContext.SetCurrent()
+	// Re-assert the main window's swap interval. On the GLX_EXT_swap_control
+	// path the interval above was per-drawable and this changes nothing, but
+	// SDL falls back to glXSwapIntervalSGI/MESA on older drivers, where it is
+	// per-context and "no wait" could have followed the make-current back here
+	// and silently unsynced the main window for the rest of the session.
+	platform.ApplyVSync()
 
 	return uw, nil
 }

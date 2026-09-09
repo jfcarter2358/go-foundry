@@ -109,9 +109,8 @@ face has no floorplan to draw on.
 Two other things went with the polygon and have not come back as they were:
 
 - **Ground patches** — a conforming, displaced, textured mesh under the paint.
-  A brush face already does that: give the floor a **Detail** spec
-  ([Detail and smoothing](05-detail-and-smoothing.md)) and it displaces and
-  scatters on its own. The ground is geometry now, so a second draped mesh over
-  it would be a copy that z-fights.
+  Nothing drapes one now. A brush *is* the ground, and shape in it comes from
+  subdividing the brush's own faces, so an author who wants rolling terrain
+  builds it rather than switching it on.
 - **Water** — a plane the Water kind auto-managed inside its polygon. Nothing
   replaces it yet; it needs a water volume, which is its own piece of work.

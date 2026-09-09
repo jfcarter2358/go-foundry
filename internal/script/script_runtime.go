@@ -811,14 +811,13 @@ func DrainScriptWork(lvl *world.Level) {
 		for r := range rt.dirtyBrushes {
 			ch, b := cache.brushOwnerFor(r)
 			if ch != nil && b != nil {
-				for fi := range b.Faces {
-					f := &b.Faces[fi]
+				b.EachFace(func(f *world.BrushFace) {
 					for _, tex := range []string{f.Texture, f.BlendTexture, f.BlendMask} {
 						if tex != "" {
 							_ = gfx.EnsureTextureLoaded(tex)
 						}
 					}
-				}
+				})
 				_ = b.Load()
 				dirtyChunks[ch] = true
 			}

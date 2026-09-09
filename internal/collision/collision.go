@@ -134,7 +134,11 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 		if !b.Solid || len(b.Verts) < 4 {
 			continue
 		}
-		n, depth, ok := Penetration(body, ConvexHull{Pts: b.Verts})
+		// Pts are the brush's AUTHORED corners and Xform is where a script has
+		// moved it to (world/brush_dynamic.go) — the identity for the static
+		// brushes a level is mostly made of, so nothing here pays for the
+		// feature until a level uses it.
+		n, depth, ok := Penetration(body, ConvexHull{Pts: b.Verts, Xform: b.Placement()})
 		if !ok || depth <= 0 {
 			continue
 		}
@@ -171,13 +175,14 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 }
 
 // StepUp retries a horizontal move that pushOutOfChunkBrushes blocked, from
-// stepHeight higher — the classic step-offset technique for climbing a curb
-// or a stair riser without its vertical face reading as a wall.
+// higher up — the classic step-offset technique for climbing a curb or a stair
+// riser without its vertical face reading as a wall.
 //
 // from and to are chunk-local, pre- and post-resolve. If raising the probe
 // clears the block (the raised attempt lands materially closer to the
-// intended XZ than the flat one did) and does not itself hit a ceiling, the
-// raised, re-settled result replaces it; otherwise the flat result stands.
+// intended XZ than the flat one did) from a height the body could actually
+// have risen to, the raised, re-settled result replaces it; otherwise the flat
+// result stands.
 //
 // stepHeight <= 0 means no allowance at all — MovePlayer resolves the
 // level's configured step height (world.PlayerSettings) to a concrete number
@@ -192,30 +197,63 @@ func StepUp(chunk *world.Chunk, intendedXZ mgl32.Vec2, flatResult mgl32.Vec3, ra
 		return flatResult // not blocked; nothing to do
 	}
 
-	raised := mgl32.Vec3{intendedXZ.X(), flatResult.Y() + stepHeight, intendedXZ.Y()}
-	resolved, _, hitCeiling := pushOutOfChunkBrushes(chunk, raised, radius, halfHeight)
-	if hitCeiling {
-		return flatResult // no headroom to step up into
-	}
-	raisedXZ := mgl32.Vec2{resolved.X(), resolved.Z()}
-	if raisedXZ.Sub(intendedXZ).Len() >= flatXZ.Sub(intendedXZ).Len()-1e-4 {
-		return flatResult // stepping up did not actually clear the obstruction
-	}
-
-	// Settle back down onto whatever is actually under the stepped-up
-	// position, in a handful of substeps rather than the full stepHeight in
-	// one jump — a curb an inch tall should not leave the body hovering
-	// stepHeight above it for a frame.
-	const settleSubsteps = 8
-	settled := resolved
-	for i := 1; i <= settleSubsteps; i++ {
-		probe := settled
-		probe[1] = resolved.Y() - stepHeight*float32(i)/settleSubsteps
-		s, hitFloor, _ := pushOutOfChunkBrushes(chunk, probe, radius, halfHeight)
-		if hitFloor {
-			return s
+	// A step-up is a teleport, not a sweep: the body is lifted straight up and
+	// re-resolved there, with nothing checking what it passed through on the
+	// way. That is sound only while the raised probe lands in FREE SPACE, and
+	// a single raise of the full stepHeight often does not — so the lift is
+	// tried at descending heights and the first one that fits is the one taken.
+	//
+	// Two ways a raise fails to fit, and they used to be handled as one:
+	//
+	//   - Solid above it (hitCeiling). The old code refused the step outright,
+	//     which meant no stepping at all in any room shorter than stepHeight
+	//     plus the body — a 2.5-unit room with the default 1.8 allowance could
+	//     not be walked over a curb.
+	//
+	//   - Solid AROUND it, reported as a push UP. This is the dangerous one,
+	//     and it is what let a player walk out through a ceiling. Pressed
+	//     against a wall, the full raise lands the body straddling the ceiling
+	//     slab, more than half of the way through it; the push-out is a
+	//     minimum translation with no memory of which side the body came from,
+	//     so once it is more than half through, the shortest way out is the FAR
+	//     side. The body is ejected upward, settles on the roof, and has
+	//     crossed geometry it never touched.
+	//
+	// Either way the answer is the same — that lift does not fit, try a
+	// shorter one — and a lift that fits is one the body could have risen to
+	// without passing through anything.
+	const stepProbes = 4
+	for probeIdx := 0; probeIdx < stepProbes; probeIdx++ {
+		lift := stepHeight * float32(stepProbes-probeIdx) / float32(stepProbes)
+		raised := mgl32.Vec3{intendedXZ.X(), flatResult.Y() + lift, intendedXZ.Y()}
+		resolved, raisedIntoSolid, hitCeiling := pushOutOfChunkBrushes(chunk, raised, radius, halfHeight)
+		if hitCeiling || raisedIntoSolid {
+			continue // this lift does not fit; a shorter one might
 		}
-		settled = probe
+		raisedXZ := mgl32.Vec2{resolved.X(), resolved.Z()}
+		if raisedXZ.Sub(intendedXZ).Len() >= flatXZ.Sub(intendedXZ).Len()-1e-4 {
+			// Stepping up did not clear the obstruction, and a shorter lift
+			// cannot clear what a taller one could not: the riser is simply
+			// higher than the body may step. The flat result stands.
+			return flatResult
+		}
+
+		// Settle back down onto whatever is actually under the stepped-up
+		// position, in a handful of substeps rather than the whole lift in one
+		// jump — a curb an inch tall should not leave the body hovering the
+		// full step height above it for a frame.
+		const settleSubsteps = 8
+		settled := resolved
+		for i := 1; i <= settleSubsteps; i++ {
+			probe := settled
+			probe[1] = resolved.Y() - lift*float32(i)/settleSubsteps
+			s, hitFloor, _ := pushOutOfChunkBrushes(chunk, probe, radius, halfHeight)
+			if hitFloor {
+				return s
+			}
+			settled = probe
+		}
+		return resolved
 	}
-	return resolved
+	return flatResult
 }

@@ -54,6 +54,12 @@ It contains:
 
 `F3`. FPS, memory, and object counts.
 
+Read the FPS against the vsync line under it. With vsync on, a frame that costs
+4ms and a frame that costs 16ms both report 60 — the number is the monitor's,
+not the scene's. `F12` turns the wait off, and the frame rate that comes back is
+the one you can actually compare between two versions of a level. Nothing else
+caps the loop, so expect it to run hot while it is off.
+
 ## Engine switches
 
 These are engine-wide, not level data, and they do not save with the level. They
@@ -67,6 +73,7 @@ one keypress.
 | `0` | gravity |
 | `F10` | anti-aliasing |
 | `F11` | fullscreen |
+| `F12` | vsync |
 
 The same three collision switches are checkboxes in the **Engine** group of the
 editor settings, which also says when one is off — the first thing to check when

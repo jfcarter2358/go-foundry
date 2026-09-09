@@ -336,7 +336,7 @@ func TestBrushEdgesDedupesSharedEdges(t *testing.T) {
 	for fi := range b.Faces {
 		loops[fi] = b.Faces[fi].Indices
 	}
-	edges := brushEdges(0, 0, loops)
+	edges := brushEdges(0, 0, loops, false)
 	if len(edges) != 12 {
 		t.Fatalf("got %d edges for a box, want 12", len(edges))
 	}

@@ -61,7 +61,7 @@ func levelProps() map[string]propAccess {
 				// on a level that never set one wants the height it is actually
 				// walking with, and 0 would be an answer that is never true.
 				return flang.FloatVal(float64(
-					c.lvl.Player.EffectiveStepHeight(world.PlayerEntity))), true
+					c.lvl.Player.EffectiveStepHeight())), true
 			},
 			Set: func(c *refCache, _ flang.RefVal, v flang.Value) error {
 				f, ok := toFloat32(v)

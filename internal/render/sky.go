@@ -14,7 +14,7 @@ package render
 // translucent water and alpha sprites have to blend against the sky behind
 // them, and they cannot if the sky has not been drawn yet.
 //
-// Unlike GrassInit/DetailInit/SpriteInit, SkyInit is called from the engine's
+// Unlike GrassInit/SpriteInit, SkyInit is called from the engine's
 // own startup (app.go) rather than from EditorInit — the sky is level content,
 // not an authoring aid, and a release build has no EditorInit to be initialised
 // from.

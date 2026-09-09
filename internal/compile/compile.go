@@ -111,7 +111,10 @@ func sourceFaceCount(lvl *world.Level) int {
 			continue
 		}
 		for bi := range ch.Brushes {
-			n += len(ch.Brushes[bi].Faces)
+			if !BakesBrush(&ch.Brushes[bi]) {
+				continue // never reached CSG; see BakesBrush
+			}
+			n += len(ch.Brushes[bi].DrawFaces())
 		}
 	}
 	return n

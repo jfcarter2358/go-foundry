@@ -48,7 +48,7 @@ Up to 32. **Add Frame**, **Duplicate Frame**, **Delete Frame**, and `< Move` /
 
 An animated texture plays one full cycle per second, so the frame rate is however
 many frames you gave it. Anything that samples the texture animates — walls,
-floors, models, detail patches — and so does its normal map.
+floors, models — and so does its normal map.
 
 ## Bump maps
 
@@ -59,8 +59,8 @@ than a palette index: lighter is higher.
 
 The engine derives a tangent-space normal map from the height field at save time
 and writes it beside the albedo as `<name>_normal.png`. From then on, anything
-using that texture has relief — walls, floors, ceilings, surface meshes, models,
-detail patches. There is no per-surface toggle and nothing in a level file
+using that texture has relief — brush faces, models, scenery, scatter. There is
+no per-surface toggle and nothing in a level file
 mentions it. Paint height into `brick.ftex` once and every brick in the game
 lights.
 

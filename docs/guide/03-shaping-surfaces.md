@@ -1,81 +1,122 @@
 # Shaping surfaces
 
-Every wall, floor and ceiling is flat until you shape it. When you do, it grows a
-**surface mesh** — a web of points and faces you edit with the same gestures the
-model editor uses. This is how terrain, steps, pits, recesses, bevels and holes
-are all made.
+A brush is a mesh — a vertex list and a face list — so it is shaped with the same
+gestures a model is. There are two places to do that, and the difference between
+them is the whole chapter:
 
-Select a face in the 3D view and press **Shape Surface** in its properties, or
-pick it from the face's right-click menu. `Esc` leaves.
+| | | |
+| --- | --- | --- |
+| **Edit mode** | `Tab` | shapes the **solid**. Everything you do here moves where the player stops |
+| **Detail mode** | `Ctrl+Shift+click` | shapes the **surface drawn over** the solid. Nothing you do here touches collision |
 
-## The keys
+Use edit mode for the shape of the room. Use detail mode for the ledge running
+along the wall, the reveal around the window, the panelling, the moulding, the
+lip on the step — everything a player should see and nothing they should catch
+on.
 
-While shaping, the select modes retarget from the sector to the surface itself.
+## Edit mode: shaping the solid
+
+`Tab` goes in, `1` `2` `3` pick points, edges and faces, and `Tab` comes back out
+with the brush selected. Three tools act on the face selection:
 
 | Key | |
 | --- | --- |
-| `1` `2` `3` | the surface's points, edges, faces |
-| Left click | pick; `Ctrl+click` adds |
-| Drag an arm | move — **green is depth**, red is U, blue is V |
-| `E` | extrude the selected faces, then drag the depth arm |
-| `I` | inset |
-| `B` | subdivide |
-| `C` | connect two selected points, splitting the face |
-| `H` | open the selected faces as a hole, or close them again |
-| `Ctrl+A` | select all |
-| `Delete` | delete the selected faces |
-| `Esc` | done |
+| `E` | **extrude** — slide the face along its own normal (`Shift+E` pulls it back in) |
+| `I` | **inset** — draw the face's corners toward its centre, in its own plane (`Shift+I` widens) |
+| `B` | **subdivide** — fan the face into triangles meeting at a new centre corner |
+| `G` `R` `C` | move, turn, scale whatever is selected |
 
-Camera controls are unchanged — fly around while you shape.
+All three keep the brush **convex**, which it must be
+([Building levels](02-building-levels.md) says why). That is also why the list is
+short: extrude here slides the face's plane rather than growing a bump off it,
+because a bump is concave. In an id-lineage editor a bump on a wall is a second
+brush, and it still is here — or it is detail.
 
-## How to make things
+Dragging a single corner is the one edit that can break convexity. The editor
+warns rather than refuses, in the status line and in the brush's properties, so
+you can pass through an invalid shape on the way to a valid one; compiling
+refuses outright and names the brush.
 
-**A hill.** Select the floor, **Shape Surface**, `3` for faces, `B` a couple of times to
-subdivide, `1` for points, then drag points up the green arm. Turn on **Smooth
-Shading** afterwards so it reads as a curve rather than facets.
+## Detail mode: shaping what you see
 
-**A recess.** Pick a face, `I` to inset, then `E` and drag inward. Because
-extrude is a topological operation you can apply it to its own output — put a
-bump inside the recess by picking its floor and doing it again.
+**`Ctrl+Shift+click` a brush.** The first time, its detail mesh is seeded as a
+copy of the solid's own faces, so nothing changes on screen. From then on the
+brush is *drawn* from that mesh, and the solid underneath is drawn as a dim wire
+cage so you can always see where the player will actually stop.
 
-**A hole in a wall.** Pick the face where the window goes, `I` to inset a frame
-around it, then `H` on the inner face. That face stops drawing and the player can
-walk or shoot through it.
+Clicks in here reach that one brush and nothing else — you cannot move a solid by
+mis-aiming — and the tools are the **model editor's**, not edit mode's:
 
-**Steps.** Subdivide a floor into strips, then raise each strip with the depth
-arm.
+| Key | |
+| --- | --- |
+| `E` | **extrude** — the real one: the face is duplicated and the gap walled in with sides (`Shift+E` presses it in instead) |
+| `B` | **subdivide** the selected faces at their edge midpoints |
+| `Shift+B` | **smooth** the whole detail mesh — one round of Catmull-Clark |
+| `Delete` / `X` | delete the selected faces |
+| `1` `2` `3` | points, edges, faces of the detail mesh |
+| `G` `R` `C` | move, turn, scale the selection, anywhere, in any direction |
+| `Tab` / `Esc` | leave, with the brush selected |
 
-## What collides with what
+`Ctrl+Shift+click` another brush to go straight to it, or the same one again to
+come out.
 
-This is the one rule to remember, and it is the same one procedural detail
-follows:
+There is no convexity rule in here, no warning, and no limit on what the mesh can
+become: it may be open, concave, disconnected, or a single floating quad. It is a
+surface, not a solid.
 
-- **Floors and ceilings collide with the mesh.** The height query reads the same
-  triangles you can see, so a bump you can see is a bump you walk up.
-- **A wall's collision stays flat.** What stops you is still the wall's line on
-  the 2D map. The mesh moves what you *see*.
-- **Holes are real on walls.** A `Hole` face is punched through the wall's
-  collision as a pass-through window.
+### How to make things
 
-So: bumps you walk into, holes you walk through.
+**A ledge along a wall.** `Ctrl+Shift+click` the wall, `3`, click the inward
+face, `B` to subdivide it, click the strip you want, `E` to pull it out.
 
-## Points ride the sector
+**A window reveal.** Click the face, `B` twice, delete the middle faces, then
+extrude the ring inward — the walls of the reveal are the sides `E` leaves
+behind. The window itself is a hole in the *solid*, which is edit mode's job or a
+second brush's; detail cannot make a hole you can walk through, because it cannot
+make a hole in collision at all.
 
-A surface mesh point is stored as a position in the face's own space — along and
-down for a wall, chunk-local X/Z for a floor — plus a depth. It is not a free 3D
-position. That means the mesh rides the surface: raise the ceiling and a wall's
-mesh stretches with it, drag a corner on the 2D map and the shape follows.
+**Panelling.** Subdivide a wall into a grid, select alternating faces with
+`Ctrl+click`, `Shift+E` to press them in a few centimetres.
 
-Points on the face's outline belong to the *sector*, not to the mesh. You cannot
-drag them across the surface, and they are re-derived whenever the outline
-changes. When you split a wall or insert a corner, the interior of your mesh is
-carried across rather than thrown away.
+**A rounded pillar.** `Shift+B` on a cylinder brush's detail mesh, once or twice.
+The solid stays a twelve-sided prism — cheap to collide against — and what you
+see is round.
+
+### What it costs, and what it does not
+
+- **Collision, always the solid.** A body meets the hull. So does a particle, so
+  does the level's seal, and so do the cells the compiler cuts the world into.
+- **Drawing, always the detail.** Shadows, picking and raycasts follow what is
+  drawn, so a crosshair lands on the ledge it is pointing at even though a
+  shoulder would pass through it.
+- **The compiler treats it as detail proper.** Detail faces are drawn and lit
+  like any others, and take no part in choosing the BSP's splitting planes or in
+  computing visibility — the partition of a level is exactly the partition it
+  would have had with no detail in it at all. This is the same bargain Quake's
+  detail brushes make: detail costs draws, not tree.
+- **Nothing is free.** Every face you add is a face to draw. A wall subdivided
+  four times is 256 of them.
+
+### Keeping the two in step
+
+The detail mesh does not follow later edits to the solid. Move the brush as a
+whole — in object mode, with the gizmo — and the detail goes with it; reshape the
+*solid's* faces in edit mode and the detail stays where it was, because there is
+no way to guess which of your carved geometry was meant to follow.
+
+The brush's **Detail** properties group is where that is fixed:
+
+| | |
+| --- | --- |
+| **Shape detail...** | the same thing `Ctrl+Shift+click` does |
+| **Re-seed from solid** | throw the detail away and copy the solid's faces again |
+| **Remove detail** | back to being drawn as the solid it is |
+
+So the order of work is: get the solid right first, then carve it.
 
 ## Smooth shading
 
-In the same properties group. Ticking **Smooth Shading** welds normals along
-shared edges so neighbouring faces read as one curved surface. **Crease Angle**
-is the cutoff — edges sharper than it stay sharp.
-
-It works on displaced procedural detail too, which uses the analytic derivative
-of the displacement rather than welded normals.
+Both meshes take the per-face **Smooth** flag, which welds normals along shared
+edges so a run of faces reads as one curved surface. It is a shading trick and
+changes no geometry — where `Shift+B` in detail mode actually moves the corners.
+See [Smooth shading](05-smoothing.md).

@@ -31,22 +31,64 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+// BrushMesh is a vertex pool and the faces indexing into it — the shape a
+// brush's hull and its detail geometry both have.
+//
+// A brush is TWO of these, or one and nil: the hull is what the level is made
+// of, and the detail mesh is what an author has since carved into its surface.
+// Everything a face needs to be drawn is here and nothing a solid needs to be
+// solid is, which is exactly the split — see brush_detail.go.
+type BrushMesh struct {
+	Verts []mgl32.Vec3
+	Faces []BrushFace
+}
+
 // Brush is a solid, convex polyhedron: a level's fundamental piece of
 // geometry, replacing the Sector.
 type Brush struct {
 	ID         string
 	ScriptData // tags, attributes and the attached script
-	// Verts are the brush's corners, chunk-local. Every vertex is expected to
-	// sit on the convex hull — see the file comment — so nothing here holds a
-	// separate hull; ConvexHull collision (internal/collision) reads these
+	// BrushMesh is the brush's HULL: the convex corners and faces that decide
+	// where the solid is. Embedded, so b.Verts and b.Faces still name it —
+	// every collision, CSG and sealing path reads those and means the hull.
+	//
+	// Its Verts are the brush's corners, chunk-local. Every vertex is expected
+	// to sit on the convex hull — see the file comment — so nothing here holds
+	// a separate hull; ConvexHull collision (internal/collision) reads these
 	// directly.
-	Verts []mgl32.Vec3
-	Faces []BrushFace
+	BrushMesh
+
+	// Detail is the brush's optional free-form SURFACE geometry: the same mesh
+	// again, but shaped without the convexity rule, and drawn INSTEAD of the
+	// hull. Nil for the ordinary case, where a brush looks exactly like the
+	// solid it is. See brush_detail.go.
+	Detail *BrushMesh
 
 	// Solid is whether the player and entities collide with this brush. On by
 	// default; a false brush is decorative geometry a body passes through —
 	// the brush counterpart of a wall with Collision off.
 	Solid bool
+
+	// Dynamic marks a brush a script moves at run time — a door, a lift, a
+	// crusher. It is what the compiler reads to leave the brush out of the
+	// static bake, and what the script runtime reads to allow a write to
+	// Offset/Rotation at all. See brush_dynamic.go.
+	Dynamic bool
+
+	// Offset, Rotation, Velocity and AngularVelocity are the brush's RUN-TIME
+	// placement: where a script has moved it to, relative to the verts above,
+	// and the rates it is still moving at. Runtime-only — never authored,
+	// never saved, and zero again the moment a level is reloaded, so the
+	// authored geometry is always the brush's rest state. See
+	// brush_dynamic.go.
+	//
+	// Velocity is chunk units per second and integrates onto Offset;
+	// AngularVelocity is radians per second and integrates onto Rotation, in
+	// the same Euler basis Rotation itself is in.
+	Offset          mgl32.Vec3
+	Rotation        mgl32.Vec3
+	Velocity        mgl32.Vec3
+	AngularVelocity mgl32.Vec3
 }
 
 // BrushFace is one planar face of a brush: a convex n-gon (in practice
@@ -65,7 +107,6 @@ type BrushFace struct {
 	UVRotation   float32    // radians
 	Smooth       bool       // shade from interpolated vertex normals across the brush
 	SmoothAngle  float32    // crease threshold in degrees; 0 = DefaultSmoothAngle
-	Detail       DetailSpec // per-face procedural rock displacement; disabled by default
 	Alpha        float32    // 0 = fully transparent, 1 = fully opaque
 	DoubleSided  bool       // render from both sides
 
@@ -80,8 +121,7 @@ type BrushFace struct {
 	NoCollide bool
 
 	// ---------- runtime, never authored and never saved ----------
-	Geometry          gfx.Geometry
-	SubmeshGeometries []gfx.Geometry // Detail's texture-override regions, same as Wall/Floor/Ceiling
+	Geometry gfx.Geometry
 }
 
 // NewBrushFace returns a face with the defaults an authored one should have.
@@ -95,13 +135,38 @@ func NewBrushFace(indices []int, texture string) BrushFace {
 	}
 }
 
-// LocalAABB returns the brush's chunk-local bounds.
+// LocalAABB returns the brush's chunk-local bounds, where the brush currently
+// IS — its authored corners carried through Placement.
+//
+// Every consumer of a brush's extent goes through here: the chunk's own bounds
+// (RecomputeBounds), and so the spatial hash and every frustum cull. A dynamic
+// brush that had moved would otherwise be culled, collided and bucketed at the
+// position it was authored in rather than the one it is drawn at.
 func (b *Brush) LocalAABB() (min, max mgl32.Vec3) {
 	if len(b.Verts) == 0 {
 		return mgl32.Vec3{}, mgl32.Vec3{}
 	}
-	min, max = b.Verts[0], b.Verts[0]
-	for _, p := range b.Verts[1:] {
+	// The detail mesh counts. It is drawn and shadow-mapped like any other
+	// geometry and a bump on a wall sticks out PAST the hull, so a box drawn
+	// around the corners alone would cull the very thing detail exists to add
+	// the moment the hull left the frustum.
+	pts := b.Verts
+	if b.Detail != nil && len(b.Detail.Verts) > 0 {
+		pts = append(append(make([]mgl32.Vec3, 0, len(b.Verts)+len(b.Detail.Verts)),
+			b.Verts...), b.Detail.Verts...)
+	}
+	if b.AtRest() {
+		min, max = pts[0], pts[0]
+		for _, p := range pts[1:] {
+			min, max = geom.VecMin(min, p), geom.VecMax(max, p)
+		}
+		return min, max
+	}
+	m := b.Placement()
+	first := mulPoint(m, pts[0])
+	min, max = first, first
+	for _, v := range pts[1:] {
+		p := mulPoint(m, v)
 		min, max = geom.VecMin(min, p), geom.VecMax(max, p)
 	}
 	return min, max
@@ -114,7 +179,7 @@ func (b *Brush) WorldAABB(ch *Chunk) (min, max mgl32.Vec3) {
 }
 
 // FacePoints resolves a face's corners to their brush-local positions.
-func (b *Brush) FacePoints(f *BrushFace) []mgl32.Vec3 {
+func (b *BrushMesh) FacePoints(f *BrushFace) []mgl32.Vec3 {
 	pts := make([]mgl32.Vec3, len(f.Indices))
 	for i, vi := range f.Indices {
 		if vi >= 0 && vi < len(b.Verts) {
@@ -125,7 +190,7 @@ func (b *Brush) FacePoints(f *BrushFace) []mgl32.Vec3 {
 }
 
 // FaceNormal is a face's outward normal, from its first three corners.
-func (b *Brush) FaceNormal(f *BrushFace) mgl32.Vec3 {
+func (b *BrushMesh) FaceNormal(f *BrushFace) mgl32.Vec3 {
 	pts := b.FacePoints(f)
 	if len(pts) < 3 {
 		return mgl32.Vec3{0, 1, 0}
@@ -248,20 +313,16 @@ func BuildBrushFaceMeshFrom(pts []mgl32.Vec3, doubleSided bool, normal, origin m
 }
 
 // Load builds and uploads every visible face's render geometry. Call after
-// any edit to the brush's verts or faces.
-func (b *Brush) Load() error {
-	for fi := range b.Faces {
-		f := &b.Faces[fi]
+// any edit to the mesh's verts or faces.
+func (m *BrushMesh) Load() error {
+	for fi := range m.Faces {
+		f := &m.Faces[fi]
 		f.Geometry.Delete()
-		for i := range f.SubmeshGeometries {
-			f.SubmeshGeometries[i].Delete()
-		}
-		f.SubmeshGeometries = nil
 
 		if f.NoDraw {
 			continue
 		}
-		pts := b.FacePoints(f)
+		pts := m.FacePoints(f)
 		verts, indices := BuildBrushFaceMesh(pts, f.DoubleSided)
 		if len(verts) == 0 {
 			continue
@@ -278,18 +339,22 @@ func (b *Brush) Load() error {
 	return nil
 }
 
-// Release frees the GPU buffers every face owns. For a brush being removed
+// Release frees the GPU buffers every face owns. For geometry being removed
 // from the level: overwriting or dropping the slice entry would leak the
 // handles rather than free them, which is the same hazard ReleaseGeometry
 // exists for at chunk scale.
-func (b *Brush) Release() {
-	for fi := range b.Faces {
-		f := &b.Faces[fi]
-		f.Geometry.Delete()
-		for si := range f.SubmeshGeometries {
-			f.SubmeshGeometries[si].Delete()
-		}
-		f.SubmeshGeometries = nil
+func (m *BrushMesh) Release() {
+	for fi := range m.Faces {
+		m.Faces[fi].Geometry.Delete()
+	}
+}
+
+// Unload frees the GPU buffers and the CPU-side vertex copies with them, for a
+// mesh that is coming back later — a streamed-out chunk. Geometry.Unload is the
+// distinction; see chunk_enable.go.
+func (m *BrushMesh) Unload() {
+	for fi := range m.Faces {
+		m.Faces[fi].Geometry.Unload()
 	}
 }
 
@@ -334,14 +399,12 @@ func CloneBrush(b *Brush, idSuffix string) Brush {
 		ID:         b.ID + idSuffix,
 		ScriptData: CloneScriptData(b.ScriptData),
 		Solid:      b.Solid,
-		Verts:      append([]mgl32.Vec3(nil), b.Verts...),
+		Dynamic:    b.Dynamic,
+		BrushMesh:  b.BrushMesh.Clone(),
 	}
-	out.Faces = make([]BrushFace, len(b.Faces))
-	for i := range b.Faces {
-		out.Faces[i] = b.Faces[i]
-		out.Faces[i].Indices = append([]int(nil), b.Faces[i].Indices...)
-		out.Faces[i].Geometry = gfx.Geometry{}
-		out.Faces[i].SubmeshGeometries = nil
+	if b.Detail != nil {
+		d := b.Detail.Clone()
+		out.Detail = &d
 	}
 	return out
 }
@@ -371,7 +434,7 @@ func NewBoxBrush(id string, center mgl32.Vec3, half mgl32.Vec3, texture string) 
 		NewBrushFace([]int{1, 0, 2, 3}, texture), // -Z
 		NewBrushFace([]int{4, 5, 7, 6}, texture), // +Z
 	}
-	return Brush{ID: id, Verts: verts, Faces: faces, Solid: true}
+	return Brush{ID: id, BrushMesh: BrushMesh{Verts: verts, Faces: faces}, Solid: true}
 }
 
 // ---------- serialization ----------
@@ -388,31 +451,12 @@ func BrushFromRaw(r RawBrush) (Brush, error) {
 		ID:         r.ID,
 		ScriptData: data,
 		Solid:      BoolDefault(r.Solid, true),
+		Dynamic:    r.Dynamic,
 	}
-	// Verts arrive flattened, three floats per vertex; a trailing partial
-	// triple is a malformed file rather than a vertex, and is dropped.
-	b.Verts = make([]mgl32.Vec3, 0, len(r.Verts)/3)
-	for i := 0; i+2 < len(r.Verts); i += 3 {
-		b.Verts = append(b.Verts, mgl32.Vec3{r.Verts[i], r.Verts[i+1], r.Verts[i+2]})
-	}
-	b.Faces = make([]BrushFace, 0, len(r.Faces))
-	for _, rf := range r.Faces {
-		b.Faces = append(b.Faces, BrushFace{
-			Indices:      append([]int(nil), rf.Indices...),
-			Texture:      rf.Texture,
-			BlendTexture: rf.BlendTexture,
-			BlendMask:    rf.BlendMask,
-			UVOffset:     mgl32.Vec2{rf.UVOffset.X, rf.UVOffset.Y},
-			UVScale:      mgl32.Vec2{rf.UVScale.X, rf.UVScale.Y},
-			UVRotation:   rf.UVRotation,
-			Smooth:       rf.Smooth,
-			SmoothAngle:  rf.SmoothAngle,
-			Detail:       DetailFromRaw(rf.Detail),
-			Alpha:        float32Default(rf.Alpha, 1.0),
-			DoubleSided:  rf.DoubleSided,
-			NoDraw:       rf.NoDraw,
-			NoCollide:    rf.NoCollide,
-		})
+	b.BrushMesh = meshFromRaw(r.Verts, r.Faces)
+	if r.Detail != nil {
+		d := meshFromRaw(r.Detail.Verts, r.Detail.Faces)
+		b.Detail = &d
 	}
 	return b, nil
 }
@@ -423,14 +467,57 @@ func BrushToRaw(b *Brush) RawBrush {
 		ID:            b.ID,
 		RawScriptData: ScriptDataToRaw(b.ScriptData),
 		Solid:         BoolPtrIfFalse(b.Solid),
+		Dynamic:       b.Dynamic,
 	}
-	out.Verts = make([]float32, 0, len(b.Verts)*3)
-	for _, v := range b.Verts {
-		out.Verts = append(out.Verts, v.X(), v.Y(), v.Z())
+	out.Verts, out.Faces = meshToRaw(&b.BrushMesh)
+	if b.Detail != nil && len(b.Detail.Faces) > 0 {
+		v, f := meshToRaw(b.Detail)
+		out.Detail = &RawBrushMesh{Verts: v, Faces: f}
 	}
-	out.Faces = make([]RawBrushFace, 0, len(b.Faces))
-	for i := range b.Faces {
-		f := &b.Faces[i]
+	return out
+}
+
+// meshFromRaw reads the vertex/face pair a brush's hull and its detail mesh are
+// both written as. One function rather than two so the two can never drift into
+// disagreeing about what a defaulted field means.
+func meshFromRaw(rawVerts []float32, rawFaces []RawBrushFace) BrushMesh {
+	var m BrushMesh
+	// Verts arrive flattened, three floats per vertex; a trailing partial
+	// triple is a malformed file rather than a vertex, and is dropped.
+	m.Verts = make([]mgl32.Vec3, 0, len(rawVerts)/3)
+	for i := 0; i+2 < len(rawVerts); i += 3 {
+		m.Verts = append(m.Verts, mgl32.Vec3{rawVerts[i], rawVerts[i+1], rawVerts[i+2]})
+	}
+	m.Faces = make([]BrushFace, 0, len(rawFaces))
+	for _, rf := range rawFaces {
+		m.Faces = append(m.Faces, BrushFace{
+			Indices:      append([]int(nil), rf.Indices...),
+			Texture:      rf.Texture,
+			BlendTexture: rf.BlendTexture,
+			BlendMask:    rf.BlendMask,
+			UVOffset:     mgl32.Vec2{rf.UVOffset.X, rf.UVOffset.Y},
+			UVScale:      mgl32.Vec2{rf.UVScale.X, rf.UVScale.Y},
+			UVRotation:   rf.UVRotation,
+			Smooth:       rf.Smooth,
+			SmoothAngle:  rf.SmoothAngle,
+			Alpha:        float32Default(rf.Alpha, 1.0),
+			DoubleSided:  rf.DoubleSided,
+			NoDraw:       rf.NoDraw,
+			NoCollide:    rf.NoCollide,
+		})
+	}
+	return m
+}
+
+// meshToRaw is meshFromRaw's inverse.
+func meshToRaw(m *BrushMesh) ([]float32, []RawBrushFace) {
+	verts := make([]float32, 0, len(m.Verts)*3)
+	for _, v := range m.Verts {
+		verts = append(verts, v.X(), v.Y(), v.Z())
+	}
+	faces := make([]RawBrushFace, 0, len(m.Faces))
+	for i := range m.Faces {
+		f := &m.Faces[i]
 		alpha := f.Alpha
 		var alphaPtr *float32
 		// Opaque is the default, so an opaque face writes no key at all and a
@@ -438,7 +525,7 @@ func BrushToRaw(b *Brush) RawBrush {
 		if alpha != 1 {
 			alphaPtr = &alpha
 		}
-		out.Faces = append(out.Faces, RawBrushFace{
+		faces = append(faces, RawBrushFace{
 			Indices:      append([]int(nil), f.Indices...),
 			Texture:      f.Texture,
 			BlendTexture: f.BlendTexture,
@@ -448,12 +535,11 @@ func BrushToRaw(b *Brush) RawBrush {
 			UVRotation:   f.UVRotation,
 			Smooth:       f.Smooth,
 			SmoothAngle:  f.SmoothAngle,
-			Detail:       DetailToRaw(f.Detail),
 			Alpha:        alphaPtr,
 			DoubleSided:  f.DoubleSided,
 			NoDraw:       f.NoDraw,
 			NoCollide:    f.NoCollide,
 		})
 	}
-	return out
+	return verts, faces
 }

@@ -28,6 +28,7 @@ const (
 	gizmoKindNone     = ""
 	gizmoKindVertices = "vertices"
 	gizmoKindFace     = "face"
+	gizmoKindBrush    = "brush"
 	gizmoKindSpawn    = "spawn"
 	gizmoKindChunk    = "chunk"
 	gizmoKindEntity   = "entity"
@@ -73,6 +74,9 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 
 	case gizmoKindFace:
 		return selectedFacesCenter()
+
+	case gizmoKindBrush:
+		return selectedBrushesCenter()
 
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {
@@ -230,9 +234,9 @@ func pickTranslateAxis(mx, my int32) int {
 func gizmoSuppressed() bool {
 	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode ||
 		Editor.VolumePlacementMode ||
-		// The brush too: its arms would sit over the ghost and swallow the
-		// click that was meant to stamp one.
-		Editor.BrushActive
+		// The brush and the brush stamp too: their arms would sit over the
+		// ghost and swallow the click that was meant to stamp one.
+		Editor.BrushActive || Editor.BrushPlaceActive
 }
 
 // translateGizmoMouseDown starts an axis drag if the click grabbed an arm.
@@ -278,11 +282,12 @@ func captureGizmoDragStart() bool {
 	Editor.GizmoDragOffsets = nil
 
 	switch gizmoEffectiveKind() {
-	case gizmoKindVertices, gizmoKindFace:
-		// One case for both: a face drag is a drag of the handles the face is
-		// built from (editor_face_gizmo.go), and gizmoVertexSels is what says
-		// which those are. The snapshot below is parallel to that list, so
-		// every drag indexes into it the same way.
+	case gizmoKindVertices, gizmoKindFace, gizmoKindBrush:
+		// One case for all three: a face drag is a drag of the handles the face
+		// is built from (editor_face_gizmo.go) and a brush drag is a drag of
+		// every handle it owns (editor_brush_sel.go), and gizmoVertexSels is
+		// what says which those are. The snapshot below is parallel to that
+		// list, so every drag indexes into it the same way.
 		lvl := Editor.level
 		sels := gizmoVertexSels()
 		if lvl == nil || len(sels) == 0 {
@@ -468,7 +473,7 @@ func translateGizmoMouseMove(mx, my int32) {
 	}
 
 	switch gizmoEffectiveKind() {
-	case gizmoKindVertices, gizmoKindFace:
+	case gizmoKindVertices, gizmoKindFace, gizmoKindBrush:
 		dragVerticesAlongAxis(axis, delta)
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {

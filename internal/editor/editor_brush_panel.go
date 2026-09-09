@@ -20,18 +20,25 @@ package editor
 import (
 	"fmt"
 
+	"foundry/internal/world"
+
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
 
-// editorBrushPropertiesSection draws the selected brush, then the selected
-// face inside it. Nothing at all when no face is selected — the panel's one
-// rule, that it shows only what the selection can act on.
+// editorBrushPropertiesSection draws the selected brush, and — in edit mode —
+// the selected face inside it. Nothing at all when neither is selected: the
+// panel's one rule is that it shows only what the selection can act on.
+//
+// The two contexts reach it from opposite ends. Object mode selects the brush
+// outright, so the brush block is all there is; edit mode selects one of its
+// faces, and the brush the face belongs to is shown above it because the two
+// are genuinely different objects and a script addresses the brush.
 func editorBrushPropertiesSection() {
-	ch, b := faceSelBrush(primaryFaceSel())
-	f := faceSelFace(primaryFaceSel())
-	if ch == nil || b == nil || f == nil {
+	ch, b := brushPanelSubject()
+	if ch == nil || b == nil {
 		return
 	}
+	f := faceSelFace(primaryFaceSel())
 
 	imgui.Separator()
 	editorFocusOpen(panelFocusBrush, panelFocusFace)
@@ -40,7 +47,11 @@ func editorBrushPropertiesSection() {
 	}
 	editorFocusScroll(panelFocusBrush)
 
-	editorFaceSelectionNote()
+	if f != nil {
+		editorFaceSelectionNote()
+	} else {
+		editorBrushSelectionNote()
+	}
 
 	editorPropGroupOpen("Brush##brushgrp", func() {
 		id := b.ID
@@ -48,7 +59,8 @@ func editorBrushPropertiesSection() {
 			EditorPushUndo()
 			// Level-unique, not chunk-unique (world/identity.go), so a rename
 			// that collides with a brush in another chunk has to be caught too.
-			b.ID = uniqueBrushIDInLevelFor(id, primaryFaceSel())
+			ci, bi := activeBrushIndices()
+			b.ID = uniqueBrushIDInLevelFor(id, ci, bi)
 		}
 		if imgui.Checkbox("Solid##brushsolid", &b.Solid) {
 			EditorPushUndo()
@@ -57,6 +69,16 @@ func editorBrushPropertiesSection() {
 			imgui.SetTooltip("Off makes the whole brush decorative — a body walks\n" +
 				"straight through it. For one face only, use the face's\n" +
 				"Collision box below.")
+		}
+		if imgui.Checkbox("Dynamic##brushdyn", &b.Dynamic) {
+			EditorPushUndo()
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("A door, a lift, a crusher: a script can write this brush's\n" +
+				"position, rotation and velocity, and its collision moves with it.\n\n" +
+				"It is also left out of the compiled level's static geometry, so it\n" +
+				"clips nothing, nothing clips it, and it cannot be part of the shell\n" +
+				"that seals the level.")
 		}
 		convex := b.IsConvex()
 		if !convex {
@@ -68,6 +90,16 @@ func editorBrushPropertiesSection() {
 		imgui.Text(fmt.Sprintf("%d corners, %d faces", len(b.Verts), len(b.Faces)))
 		editorScriptDataUI(&b.ScriptData, "brush", "This brush")
 	})
+
+	brushDetailPanel(ch, b)
+
+	if f == nil {
+		// Object mode: there is no face selection to describe. Say where the
+		// other half of the panel lives rather than leaving a gap.
+		imgui.Separator()
+		imgui.Text("Tab to edit this brush — its faces, edges and corners.")
+		return
+	}
 
 	editorPropGroupOpen(fmt.Sprintf("Face %d##brushfacegrp", Editor.ActiveFaceIdx), func() {
 		changed := false
@@ -120,20 +152,134 @@ func editorBrushPropertiesSection() {
 			}
 		})
 
-		changed = editorDetailPanel(fmt.Sprintf("bf%d", Editor.ActiveFaceIdx), &f.Detail) || changed
-
 		if changed {
 			// One reload for the whole block: a face edit is a handful of
 			// fields and the panel redraws every frame, so rebuilding per
 			// field would re-upload the brush a dozen times a frame while a
 			// slider is held.
 			_ = b.Load()
-			ch.RecomputeBounds()
+			editorChunkGeometryChanged(ch)
 		}
 	})
 
 	imgui.Separator()
+	if editorInDetailMode() {
+		imgui.Text("E extrudes, Shift+B smooths, B subdivides, Del removes.")
+		return
+	}
 	imgui.Text("E extrudes, I insets, B subdivides — see the right-click menu.")
+}
+
+// brushDetailPanel is the brush's detail-mesh section: whether it has one, the
+// way into shaping it, and the two ways back out of one that has gone wrong.
+//
+// It lives on the BRUSH rather than on a face because a detail mesh belongs to
+// the whole solid — it replaces every face at once — and because the question
+// it answers is a question about the brush: is what I am looking at the shape
+// the player will collide with?
+func brushDetailPanel(ch *world.Chunk, b *world.Brush) {
+	title := "Detail##brushdetail"
+	if b.Detail != nil {
+		title = fmt.Sprintf("Detail (%d faces)##brushdetail", len(b.Detail.Faces))
+	}
+	editorPropGroup(title, 0, func() {
+		if b.Detail == nil {
+			editorTextMutedWrapped(
+				"This brush is drawn as the solid it is. Give it a detail mesh to " +
+					"shape its surface — a ledge, a reveal, a panel — with the model " +
+					"editor's tools, without changing where the player stops.")
+			if imgui.Button("Shape detail...##brushdetailenter") {
+				editorEnterDetailModeOnSelection()
+			}
+			if imgui.IsItemHovered() {
+				imgui.SetTooltip("Ctrl+Shift+click a brush in the viewport does the same thing.")
+			}
+			return
+		}
+
+		editorTextWrappedColored(imgui.Vec4{X: 0.85, Y: 0.7, Z: 0.35, W: 1},
+			"Drawn from its detail mesh. Collision, sealing and the compiled level's "+
+				"cells all still use the solid below, which is outlined while you shape it.")
+
+		if editorInDetailMode() {
+			if imgui.Button("Leave detail mode##brushdetailleave") {
+				editorExitDetailMode()
+			}
+			if imgui.IsItemHovered() {
+				imgui.SetTooltip("Tab or Escape does the same thing.")
+			}
+		} else if imgui.Button("Shape detail...##brushdetailenter2") {
+			editorEnterDetailModeOnSelection()
+		}
+
+		if imgui.Button("Re-seed from solid##brushdetailreset") {
+			// For the case the mode cannot prevent: the hull was reshaped
+			// afterwards and the two no longer describe the same wall. Nothing
+			// re-seeds automatically, because that would silently discard work
+			// every time an author nudged a corner.
+			EditorPushUndo()
+			b.ResetDetail()
+			_ = b.Load()
+			editorChunkGeometryChanged(ch)
+			clearFaceSelection()
+			clearVertexSelection()
+			editorSetStatus("Re-seeded %s's detail mesh from its solid", b.ID)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Throw the detail away and copy the solid's faces again.\n" +
+				"What to reach for after reshaping the brush underneath it.")
+		}
+
+		if imgui.Button("Remove detail##brushdetailclear") {
+			EditorPushUndo()
+			if editorInDetailMode() {
+				// Leave first: the selection about to be thrown away is in the
+				// detail mesh's index space, and the mode has nothing to point
+				// at once the mesh is gone.
+				editorExitDetailMode()
+			}
+			b.ClearDetail()
+			_ = b.Load()
+			editorChunkGeometryChanged(ch)
+			clearFaceSelection()
+			clearVertexSelection()
+			editorSetStatus("Removed %s's detail mesh", b.ID)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Back to being drawn as the solid it is.")
+		}
+	})
+}
+
+// brushPanelSubject is the brush the panel is describing: the primary of the
+// brush selection in object mode, or the brush the primary selected face
+// belongs to in edit mode. Nil when there is no selection of either kind.
+func brushPanelSubject() (*world.Chunk, *world.Brush) {
+	// Detail mode first: it clears the brush selection on the way in — clicks
+	// in there address the detail mesh, not the solid — so the brush being
+	// worked on is named by Editor.DetailBrush and by nothing else.
+	if ch, b := detailBrush(); b != nil {
+		return ch, b
+	}
+	if s := primaryBrushSel(); brushSelValid(s) {
+		return vertexSelBrush(vertexSel{chunkIdx: s.chunkIdx, brushIdx: s.brushIdx})
+	}
+	ch, b := faceSelBrush(primaryFaceSel())
+	if faceSelFace(primaryFaceSel()) == nil {
+		return nil, nil
+	}
+	return ch, b
+}
+
+// editorBrushSelectionNote is the object-mode counterpart of
+// editorFaceSelectionNote: it says how many brushes a bulk action would reach,
+// since the fields below bind to the primary one only.
+func editorBrushSelectionNote() {
+	if n := len(Editor.SelectedBrushes); n > 1 {
+		editorTextMutedWrapped(fmt.Sprintf(
+			"%d brushes selected. The gizmo moves, turns and scales all of them; "+
+				"the fields below edit the first.", n))
+	}
 }
 
 // primaryFaceSel is the face the panel edits: the first of the selection, or an
@@ -145,13 +291,19 @@ func primaryFaceSel() faceSel {
 	return Editor.SelectedFaces[0]
 }
 
-// uniqueBrushIDInLevelFor returns want, or want with a numeric suffix, such
-// that no brush anywhere in the level other than the one at sel is using it.
+// uniqueBrushIDInLevelFor returns want, or want with a numeric suffix, such that
+// no brush anywhere in the level other than the one at (selChunk, selBrush) is
+// using it.
+//
+// Indices rather than a selection, because both contexts call it: object mode
+// has a brush selected and edit mode has one of its faces, and the brush being
+// renamed has to be excluded either way or typing its own current name back
+// would read as a collision with itself.
 //
 // Chunk-scoped uniqueness is not enough: a brush is addressed by a bare name in
 // scripts, with no chunk qualifier (world/identity.go), so two brushes in
 // different chunks sharing an ID would make that name ambiguous.
-func uniqueBrushIDInLevelFor(want string, sel faceSel) string {
+func uniqueBrushIDInLevelFor(want string, selChunk, selBrush int) string {
 	lvl := Editor.level
 	if lvl == nil {
 		return want
@@ -159,7 +311,7 @@ func uniqueBrushIDInLevelFor(want string, sel faceSel) string {
 	taken := func(id string) bool {
 		for ci := range lvl.Chunks {
 			for bi := range lvl.Chunks[ci].Brushes {
-				if ci == sel.chunkIdx && bi == sel.brushIdx {
+				if ci == selChunk && bi == selBrush {
 					continue
 				}
 				if lvl.Chunks[ci].Brushes[bi].ID == id {

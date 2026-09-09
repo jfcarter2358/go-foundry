@@ -127,6 +127,12 @@ func brushExtrudeSelectedFaces(dist float32) {
 	EditorPushUndo()
 	n := 0
 	for _, sel := range Editor.SelectedFaces {
+		if sel.detail {
+			// Edit mode's tools are the convexity-preserving ones and they act
+			// on the SOLID. A detail face has its own, in detail mode; running
+			// these on one would slide a plane the hull does not have.
+			continue
+		}
 		_, b := faceSelBrush(sel)
 		f := faceSelFace(sel)
 		if b == nil || f == nil {
@@ -169,6 +175,9 @@ func brushInsetSelectedFaces(fraction float32) {
 	EditorPushUndo()
 	n, skipped := 0, 0
 	for _, sel := range Editor.SelectedFaces {
+		if sel.detail {
+			continue // the solid's tools, on the solid's faces only
+		}
 		_, b := faceSelBrush(sel)
 		f := faceSelFace(sel)
 		if b == nil || f == nil || len(f.Indices) < 3 {
@@ -261,8 +270,8 @@ func brushSubdivideSelectedFaces() {
 	perBrush := map[[2]int][]int{}
 	order := [][2]int{}
 	for _, sel := range Editor.SelectedFaces {
-		if faceSelFace(sel) == nil {
-			continue
+		if sel.detail || faceSelFace(sel) == nil {
+			continue // the solid's tools, on the solid's faces only
 		}
 		key := [2]int{sel.chunkIdx, sel.brushIdx}
 		if _, seen := perBrush[key]; !seen {
@@ -322,11 +331,10 @@ func subdivideBrushFace(b *world.Brush, fi int) int {
 	quad := func(i int) world.BrushFace {
 		f := src
 		f.Indices = []int{loop[i], loop[(i+1)%len(loop)], ci}
-		// The copy carries the source's GPU handles, which belong to the face
+		// The copy carries the source's GPU handle, which belongs to the face
 		// being replaced and must not be freed twice or drawn from two places.
-		// Zeroing them makes each piece a fresh face that Load will upload.
+		// Zeroing it makes each piece a fresh face that Load will upload.
 		f.Geometry = gfx.Geometry{}
-		f.SubmeshGeometries = nil
 		return f
 	}
 	b.Faces[fi] = quad(0)

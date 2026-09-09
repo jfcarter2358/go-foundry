@@ -5,13 +5,20 @@ package editor
 // Toggle with the tilde (~) key. The main window is always the 3D view:
 //   Mode3D        : fly-around chunk/light/spawn editing
 //
-// Shaping a brush is not a mode either. A brush *is* a mesh — a vertex list
-// and a face list, the same shape a model has — so the ordinary point, edge and
-// face selection modes already address exactly what an extrude or an inset acts
-// on. See editor_brush_mesh.go.
+// Within the 3D view there are two CONTEXTS, switched with Tab and modelled on
+// the model editor's object/edit split (see editor_3d_view.go):
 //
-// (A sector needed a sub-mode for this. Its faces were flat by construction, so
-// shaping one meant editing a parametric SurfaceMesh riding on top of it, in
+//   - Object mode, the default: a click picks up a whole brush (or an entity, a
+//     volume, a light, the spawn marker) and the gizmo moves, turns and scales
+//     all of it.
+//   - Edit mode: a click picks a point, an edge or a face of a brush, and E/I/B
+//     extrude, inset and subdivide what is selected. A brush *is* a mesh — a
+//     vertex list and a face list, the same shape a model has — so this is
+//     literally the model editor's mesh editing, pointed at level geometry.
+//     See editor_brush_mesh.go.
+//
+// (A sector needed a sub-mode for shaping. Its faces were flat by construction,
+// so shaping one meant editing a parametric SurfaceMesh riding on top of it, in
 // (u, v, depth) coordinates relative to that face — a second geometry model
 // with its own selection unit. There is nothing for that to be a layer on top
 // of any more.)
@@ -109,6 +116,25 @@ type EditorState struct {
 	// selection.
 	SelectedVertices []vertexSel
 
+	// Whole brushes selected by clicking them in object mode. The first entry
+	// is the primary; ctrl+click adds the rest. Empty = no brush selection.
+	// See editor_brush_sel.go.
+	SelectedBrushes []brushSel
+
+	// EditContext is whether a click and a gizmo address whole objects, the
+	// points, edges and faces one brush is made of, or the same three units of
+	// its detail mesh. Object mode is the zero value and Tab switches; see
+	// editor_3d_view.go.
+	EditContext editorEditContext
+
+	// DetailBrush is the brush detail mode is shaping — meaningless in any
+	// other context. Detail mode is scoped to ONE brush, the way the model
+	// editor is scoped to one document: the surface being carved is the thing
+	// being worked on, and being able to reach past it into a neighbour's hull
+	// by mis-aiming a click is exactly what the mode exists to prevent.
+	// See editor_detail.go.
+	DetailBrush brushSel
+
 	// What a 3D click selects: points, edges, or faces and objects. See the
 	// editorSel* constants (editor_3d_view.go).
 	SelMode editorSelMode
@@ -117,6 +143,19 @@ type EditorState struct {
 	// and edge in range selectable instead of only the ones the camera can
 	// actually see. See editor_3d_visibility.go.
 	Wireframe bool
+
+	// Draw the world bounding box of every object that has one, over whatever
+	// shading is on. See editor_3d_bounds.go.
+	ShowBounds bool
+
+	// BrushPlaceActive is true while the brush stamp is armed, and it survives
+	// the click that uses it: blocking out a room is a dozen boxes in a row,
+	// and a trip back through the Add menu for each of them is not a workflow.
+	// The scenery brush is armed on the same terms, and for the same reason —
+	// see editor_scenery.go. BrushPlaceKind is which primitive it stamps, one
+	// of the brushKind* constants.
+	BrushPlaceActive bool
+	BrushPlaceKind   string
 
 	// --- Move/rotate/scale gizmos ---
 	GizmoState
@@ -410,6 +449,7 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.ShowSoundRanges = true
 	Editor.ActiveSceneryIdx = -1
 	editorDisarmBrush()
+	editorDisarmBrushPlacement()
 	Editor.BrushScale = 1
 	Editor.BrushSolid = true
 	Editor.BrushRotation = mgl32.Vec3{}
@@ -630,17 +670,31 @@ func EditorHandleEvent(event sdl.Event) bool {
 		// The scenery brush owns its keys while it is armed, ahead of everything
 		// below: [ and ] turn the ghost, - and = resize it, Escape puts it
 		// away. None of them is bound elsewhere in this editor, so nothing
-		// loses a shortcut to a tool that is only sometimes on.
+		// loses a shortcut to a tool that is only sometimes on. The brush
+		// stamp is armed on the same terms and takes Escape the same way.
 		if !imgui.CurrentIO().WantCaptureKeyboard() &&
-			editorBrushHandleKey(t.Keysym.Scancode, sdl.GetModState()&sdl.KMOD_SHIFT != 0) {
+			(editorBrushHandleKey(t.Keysym.Scancode, sdl.GetModState()&sdl.KMOD_SHIFT != 0) ||
+				editorBrushPlaceHandleKey(t.Keysym.Scancode)) {
 			return true
 		}
 
-		// Then the brush mesh operations, which claim E/I/B only while faces
-		// are selected — see editor_brush_mesh.go. Ahead of the view switches
-		// below so a selected face's extrude wins over anything they might
-		// later want from those letters, and behind the scenery brush so an
-		// armed stamp is never interrupted by one.
+		// Then the mesh operations. Detail mode's come first and claim the
+		// same letters: while a brush's surface is being carved, E is the
+		// model editor's extrude — the one that leaves side walls behind —
+		// rather than the convexity-preserving slide edit mode has to use, and
+		// B subdivides the detail face rather than toggling the bounds
+		// overlay. Both claim a key only when they actually run, so nothing
+		// below loses a shortcut in the contexts they are not in.
+		if !imgui.CurrentIO().WantCaptureKeyboard() &&
+			detailMeshHandleKey(t.Keysym.Scancode, sdl.GetModState()&sdl.KMOD_SHIFT != 0) {
+			return true
+		}
+
+		// The hull's, which claim E/I/B only while faces are selected — see
+		// editor_brush_mesh.go. Ahead of the view switches below so a selected
+		// face's extrude wins over anything they might later want from those
+		// letters, and behind the scenery brush so an armed stamp is never
+		// interrupted by one.
 		if !imgui.CurrentIO().WantCaptureKeyboard() &&
 			brushMeshHandleKey(t.Keysym.Scancode, sdl.GetModState()&sdl.KMOD_SHIFT != 0) {
 			return true
@@ -651,26 +705,52 @@ func EditorHandleEvent(event sdl.Event) bool {
 			if !imgui.CurrentIO().WantCaptureKeyboard() {
 				EditorDeleteSelected()
 			}
+		case sdl.SCANCODE_ESCAPE:
+			// Escape leaves detail mode, matching every other thing in this
+			// editor you can be inside. It is checked here rather than with the
+			// armed tools above because those consume Escape first, which is
+			// right: putting the stamp away is more urgent than leaving the
+			// mode you are stamping in.
+			if editorInDetailMode() && !imgui.CurrentIO().WantCaptureKeyboard() {
+				editorExitDetailMode()
+				editorSetStatus("Left detail mode")
+				return true
+			}
 
-		// View switches, again on the model editor's shortcuts: 1/2/3 pick the
-		// selection unit, G/R/C pick the gizmo, Z swaps shading, V swaps
-		// camera, F frames what is selected. Same guard as the tool keys —
-		// typing an id into a panel field must not also change the view
-		// underneath it.
+		// Tab swaps object and edit mode, the one binding that changes what
+		// every other one below means. Free in this window: the model editor
+		// uses it to hand focus back to this one, and the script editor's text
+		// area takes it, but neither is the 3D viewport.
+		case sdl.SCANCODE_TAB:
+			if editorSelKeysActive() {
+				editorToggleEditContext()
+				return true
+			}
+
+		// View switches, again on the model editor's shortcuts: 1/2/3 pick
+		// the selection unit, G/R/C pick the gizmo, Z swaps shading, B shows
+		// the bounding boxes, V swaps camera, F frames what is selected. Same
+		// guard as the tool keys — typing an id into a panel field must not
+		// also change the view underneath it.
 		//
+		// 1/2/3 name a unit a brush is made of, so they belong to edit mode.
+		// Pressed in object mode they take the author there rather than doing
+		// nothing: reaching for a corner is exactly the intent, and making it
+		// silently fail because Tab was not pressed first is the kind of dead
+		// key that teaches an author the editor is broken.
 		case sdl.SCANCODE_1:
 			if editorSelKeysActive() {
-				editorSetSelMode(editorSelPoint)
+				editorEnterEditUnit(editorSelPoint)
 				return true
 			}
 		case sdl.SCANCODE_2:
 			if editorSelKeysActive() {
-				editorSetSelMode(editorSelEdge)
+				editorEnterEditUnit(editorSelEdge)
 				return true
 			}
 		case sdl.SCANCODE_3:
 			if editorSelKeysActive() {
-				editorSetSelMode(editorSelFace)
+				editorEnterEditUnit(editorSelFace)
 				return true
 			}
 		case sdl.SCANCODE_G:
@@ -692,6 +772,11 @@ func EditorHandleEvent(event sdl.Event) bool {
 			// Bare Z only: Ctrl+Z is undo, and that is handled above.
 			if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureKeyboard() {
 				editorSetWireframe(!Editor.Wireframe)
+				return true
+			}
+		case sdl.SCANCODE_B:
+			if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureKeyboard() {
+				editorSetShowBounds(!Editor.ShowBounds)
 				return true
 			}
 		case sdl.SCANCODE_V:
@@ -871,10 +956,19 @@ func EditorDeleteSelected() {
 		return
 	}
 
-	// A face selection deletes the brushes those faces belong to: a brush is
-	// the unit the level is built from, and a face on its own is not something
-	// a convex solid can be missing.
-	if len(Editor.SelectedFaces) > 0 {
+	// In detail mode, delete removes the selected DETAIL faces. A detail mesh
+	// is a surface rather than a solid, so a face missing from one is an
+	// ordinary thing for it to be; and deleting the whole brush from inside the
+	// mode that exists to shape it is never what was meant.
+	if editorInDetailMode() {
+		detailDeleteSelection()
+		return
+	}
+
+	// A brush selection (object mode) or a face selection (edit mode) both
+	// delete brushes: a brush is the unit the level is built from, and a face
+	// on its own is not something a convex solid can be missing.
+	if len(Editor.SelectedBrushes) > 0 || len(Editor.SelectedFaces) > 0 {
 		EditorPushUndo()
 		editorDeleteSelectedBrushes()
 		return
@@ -992,6 +1086,7 @@ func EditorLoadLevel(path string) error {
 	Editor.ShowSoundRanges = true
 	Editor.ActiveSceneryIdx = -1
 	editorDisarmBrush()
+	editorDisarmBrushPlacement()
 	Editor.SelectedVertices = nil
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoDragAxis = -1

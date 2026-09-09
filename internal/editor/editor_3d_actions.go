@@ -33,7 +33,8 @@ type editor3DSelKind int
 const (
 	sel3DNone editor3DSelKind = iota
 	sel3DVertices
-	sel3DSurface // one or more brush faces
+	sel3DSurface // one or more brush faces (edit mode)
+	sel3DBrush   // one or more whole brushes (object mode)
 	sel3DSpawn
 	sel3DEntity
 	sel3DVolume
@@ -68,6 +69,10 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DSound
 	case len(Editor.SelectedVertices) > 0:
 		return sel3DVertices
+	case len(Editor.SelectedBrushes) > 0:
+		if brushSelValid(Editor.SelectedBrushes[0]) {
+			return sel3DBrush
+		}
 	case len(Editor.SelectedFaces) > 0:
 		if faceSelFace(Editor.SelectedFaces[0]) != nil {
 			return sel3DSurface
@@ -148,6 +153,17 @@ func editor3DSelectionSummary() string {
 			return fmt.Sprintf("Face #%d", primary.faceIdx)
 		}
 		return fmt.Sprintf("Face #%d — brush %s", primary.faceIdx, b.ID)
+
+	case sel3DBrush:
+		if n := len(Editor.SelectedBrushes); n > 1 {
+			return fmt.Sprintf("%d brushes", n)
+		}
+		primary := Editor.SelectedBrushes[0]
+		_, b := vertexSelBrush(vertexSel{chunkIdx: primary.chunkIdx, brushIdx: primary.brushIdx})
+		if b == nil {
+			return "Brush"
+		}
+		return fmt.Sprintf("Brush %s", b.ID)
 	}
 	return "Nothing selected"
 }
@@ -301,13 +317,19 @@ func rebuildSelectedFaceBrushes() {
 			lvl.Chunks[ci].RecomputeBounds()
 		}
 	}
+	// Once for the whole selection rather than once per chunk — see
+	// editorChunkGeometryChanged for what this is and why omitting it reads as
+	// collision being off.
+	world.RebuildSpatialHash(lvl)
 }
 
 // rebuild is the bookkeeping every face edit owes: rebuild the brush's
-// geometry, and roll its bounds up to the chunk in case the edit moved them.
+// geometry, and roll its bounds up to the chunk in case the edit moved them —
+// and re-bucket the chunk, since those bounds are what the spatial hash is
+// keyed on.
 func (r surface3DRefs) rebuild() {
 	_ = r.b.Load()
-	r.ch.RecomputeBounds()
+	editorChunkGeometryChanged(r.ch)
 }
 
 // editor3DSetSurfaceTexture repaints every selected surface — retexturing a
@@ -404,21 +426,33 @@ func editor3DSelectBrushVertices() {
 		return
 	}
 	ch, b := editor3DActiveBrush()
-	if ch == nil || b == nil || len(b.Verts) == 0 {
+	if ch == nil || b == nil {
 		return
 	}
-	sels := make([]vertexSel, 0, len(b.Verts))
-	for vi := range b.Verts {
-		sels = append(sels, vertexSel{chunkIdx: ci, brushIdx: bi, vertIdx: vi})
+	// Whichever mesh the current context addresses: the hull in edit mode, the
+	// detail one while its surface is being carved. Same resolution a click
+	// goes through, so "select all" selects what a click could have.
+	m, detail, ok := pickMeshFor(ci, bi, b)
+	if !ok || m == nil || len(m.Verts) == 0 {
+		return
+	}
+	sels := make([]vertexSel, 0, len(m.Verts))
+	for vi := range m.Verts {
+		sels = append(sels, vertexSel{chunkIdx: ci, brushIdx: bi, vertIdx: vi, detail: detail})
 	}
 	setVertexSelection(sels)
 	editorSetStatus("Selected %d vertices of %s", len(sels), b.ID)
 }
 
 // activeBrushIndices resolves which brush the selection is working on, from
-// whichever kind of selection is live: a face names its brush directly, and so
-// does a vertex. Returns a brush index of -1 when neither does.
+// whichever kind of selection is live: object mode names one outright, and in
+// edit mode a face and a vertex each name their own. Returns a brush index of
+// -1 when none does.
 func activeBrushIndices() (chunkIdx, brushIdx int) {
+	if len(Editor.SelectedBrushes) > 0 {
+		b := Editor.SelectedBrushes[0]
+		return b.chunkIdx, b.brushIdx
+	}
 	if len(Editor.SelectedFaces) > 0 {
 		f := Editor.SelectedFaces[0]
 		return f.chunkIdx, f.brushIdx
@@ -435,8 +469,8 @@ func activeBrushIndices() (chunkIdx, brushIdx int) {
 // editor3DCanSnap reports whether the selection is something snapping can move.
 func editor3DCanSnap() bool {
 	switch editor3DSelection() {
-	case sel3DVertices, sel3DSpawn, sel3DEntity, sel3DVolume, sel3DPrefab,
-		sel3DSprite, sel3DScenery, sel3DEmitter, sel3DSound:
+	case sel3DVertices, sel3DBrush, sel3DSpawn, sel3DEntity, sel3DVolume,
+		sel3DPrefab, sel3DSprite, sel3DScenery, sel3DEmitter, sel3DSound:
 		return Editor.StepSize > 0
 	}
 	return false
@@ -457,6 +491,18 @@ func editor3DSnapSelectionToGrid() {
 			return snapVec3(cur, step)
 		})
 		editorSetStatus("Snapped %d vertices to the grid", len(Editor.SelectedVertices))
+
+	case sel3DBrush:
+		// Every corner of every selected brush, through the same write path a
+		// vertex selection uses — gizmoVertexSels is already reporting them
+		// (editor_brush_sel.go), so this needs no loop of its own. Rounding
+		// each corner rather than the brush's centre is what makes a
+		// box-shaped brush land ON the grid rather than merely aligned to it.
+		EditorPushUndo()
+		setSelectedVertexLocals(func(_ int, _ vertexSel, cur mgl32.Vec3) mgl32.Vec3 {
+			return snapVec3(cur, step)
+		})
+		editorSetStatus("Snapped %d brush(es) to the grid", len(Editor.SelectedBrushes))
 
 	case sel3DSpawn:
 		sp := editor3DActiveSpawn()
@@ -575,12 +621,16 @@ func editor3DFocusPanel(section string) { Editor.PanelFocus = section }
 func editor3DSelectBrushFaces() {
 	ci, bi := activeBrushIndices()
 	ch, b := editor3DActiveBrush()
-	if ch == nil || b == nil || len(b.Faces) == 0 {
+	if ch == nil || b == nil {
 		return
 	}
-	sels := make([]faceSel, 0, len(b.Faces))
-	for fi := range b.Faces {
-		sels = append(sels, brushFaceSel(ci, bi, fi))
+	m, detail, ok := pickMeshFor(ci, bi, b)
+	if !ok || m == nil || len(m.Faces) == 0 {
+		return
+	}
+	sels := make([]faceSel, 0, len(m.Faces))
+	for fi := range m.Faces {
+		sels = append(sels, faceSel{chunkIdx: ci, brushIdx: bi, faceIdx: fi, detail: detail})
 	}
 	setFaceSelection(sels)
 	editorSetStatus("Selected %d faces of %s", len(sels), b.ID)
@@ -596,16 +646,20 @@ func editor3DSelectBrushFaces() {
 func editor3DSelectBrushSideFaces() {
 	ci, bi := activeBrushIndices()
 	ch, b := editor3DActiveBrush()
-	if ch == nil || b == nil || len(b.Faces) == 0 {
+	if ch == nil || b == nil {
 		return
 	}
-	sels := make([]faceSel, 0, len(b.Faces))
-	for fi := range b.Faces {
-		n := b.FaceNormal(&b.Faces[fi])
+	m, detail, ok := pickMeshFor(ci, bi, b)
+	if !ok || m == nil || len(m.Faces) == 0 {
+		return
+	}
+	sels := make([]faceSel, 0, len(m.Faces))
+	for fi := range m.Faces {
+		n := m.FaceNormal(&m.Faces[fi])
 		if math.Abs(float64(n.Y())) > uprightFaceMaxY {
 			continue
 		}
-		sels = append(sels, brushFaceSel(ci, bi, fi))
+		sels = append(sels, faceSel{chunkIdx: ci, brushIdx: bi, faceIdx: fi, detail: detail})
 	}
 	if len(sels) == 0 {
 		return
@@ -628,16 +682,26 @@ func editorDeleteSelectedBrushes() {
 	if lvl == nil {
 		return
 	}
-	// Deduplicated: eight selected faces of one brush delete one brush.
+	// Deduplicated: eight selected faces of one brush delete one brush. Both
+	// selections feed it, so the same call serves object mode (where the brush
+	// itself is selected) and edit mode (where one of its faces is).
 	perChunk := map[int]map[int]struct{}{}
+	mark := func(chunkIdx, brushIdx int) {
+		if perChunk[chunkIdx] == nil {
+			perChunk[chunkIdx] = map[int]struct{}{}
+		}
+		perChunk[chunkIdx][brushIdx] = struct{}{}
+	}
+	for _, sel := range Editor.SelectedBrushes {
+		if brushSelValid(sel) {
+			mark(sel.chunkIdx, sel.brushIdx)
+		}
+	}
 	for _, sel := range Editor.SelectedFaces {
 		if _, b := faceSelBrush(sel); b == nil {
 			continue
 		}
-		if perChunk[sel.chunkIdx] == nil {
-			perChunk[sel.chunkIdx] = map[int]struct{}{}
-		}
-		perChunk[sel.chunkIdx][sel.brushIdx] = struct{}{}
+		mark(sel.chunkIdx, sel.brushIdx)
 	}
 	n := 0
 	for ci, brushes := range perChunk {
@@ -655,8 +719,9 @@ func editorDeleteSelectedBrushes() {
 			ch.Brushes = append(ch.Brushes[:bi], ch.Brushes[bi+1:]...)
 			n++
 		}
-		ch.RecomputeBounds()
+		editorChunkGeometryChanged(ch)
 	}
+	clearBrushSelection()
 	clearFaceSelection()
 	clearVertexSelection()
 	editorSetStatus("Deleted %d brush(es)", n)

@@ -22,11 +22,15 @@ package editor
 
 import (
 	"math"
+	"strings"
 
 	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
+	imgui "github.com/inkyblackness/imgui-go/v4"
+	"github.com/veandco/go-sdl2/sdl"
 )
 
 const (
@@ -58,23 +62,22 @@ const (
 // editorAddBrushAt stamps a primitive into the active chunk, centred on pos
 // (world space) and snapped to the grid when snapping is on.
 //
-// The brush lands *selected*, unlike the scenery brush's stamps: a level brush
-// is placed one at a time and then shaped, so the next thing the author wants
-// is to work on what they just made. (Scenery is the opposite — see
-// editor_scenery.go's own note.)
+// The brush lands *selected*, unlike the scenery brush's stamps: a solid is
+// blocked out and then shaped, so the next thing the author wants is a handle
+// on what they just made. That costs the armed stamp below nothing, because an
+// armed tool suppresses the gizmo — see gizmoSuppressed — so the selection's
+// arms cannot swallow the click that places the next brush.
 func editorAddBrushAt(kind string, pos mgl32.Vec3) {
 	lvl := Editor.level
 	ch := activeChunk()
 	if lvl == nil || ch == nil {
 		return
 	}
-	if Editor.SnapToGrid && Editor.StepSize > 0 {
-		pos = snapVec3(pos, Editor.StepSize)
-	}
+	pos = brushStampAnchor(pos)
 	// pos is where the author clicked, in world space; a brush's verts are
 	// chunk-local, so the chunk's own placement is divided out here rather
 	// than being baked into the geometry.
-	local := ch.WorldToLocal(pos)
+	local := brushStampLocalCenter(ch, kind, pos)
 	half := mgl32.Vec3{defaultBrushHalf, defaultBrushHalf, defaultBrushHalf}
 
 	_ = gfx.EnsureTextureLoaded(defaultBrushTexture)
@@ -88,15 +91,204 @@ func editorAddBrushAt(kind string, pos mgl32.Vec3) {
 	case brushKindCylinder:
 		b = newCylinderBrush(id, local, half, brushCylinderSides, defaultBrushTexture)
 	default:
-		// A box sits on the click rather than straddling it: the click landed
-		// on a surface, and a block half-buried in the floor is never what was
-		// meant.
-		local[1] += half.Y()
 		b = world.NewBoxBrush(id, local, half, defaultBrushTexture)
 	}
 	appendBrush(ch, b)
 	selectNewestBrush(ch)
 	editorSetStatus("Added %s brush %s", kind, id)
+}
+
+// brushStampAnchor is where a click puts a brush: the point itself, snapped to
+// the grid when snapping is on. Its own function because the ghost has to agree
+// with the stamp exactly — a preview drawn at the unsnapped point and geometry
+// that lands half a unit away is worse than no preview at all.
+func brushStampAnchor(pos mgl32.Vec3) mgl32.Vec3 {
+	if Editor.SnapToGrid && Editor.StepSize > 0 {
+		return snapVec3(pos, Editor.StepSize)
+	}
+	return pos
+}
+
+// brushStampLocalCenter is where the stamped primitive's centre ends up in
+// chunk-local space, given the (already snapped) world point clicked.
+//
+// The box's lift lives here rather than beside the stamps themselves, so the
+// ghost and the geometry cannot disagree about whether a box sits on the click
+// or straddles it.
+func brushStampLocalCenter(ch *world.Chunk, kind string, pos mgl32.Vec3) mgl32.Vec3 {
+	local := ch.WorldToLocal(pos)
+	if kind != brushKindWedge && kind != brushKindCylinder {
+		// A box sits on the click rather than straddling it: the click landed
+		// on a surface, and a block half-buried in the floor is never what was
+		// meant.
+		local[1] += defaultBrushHalf
+	}
+	return local
+}
+
+// ---------- the stamp, armed ----------
+
+// The stamp is armed rather than one-shot, unlike every other Add menu entry
+// that drops something into the level. Blocking out a room is a dozen boxes in
+// a row, and a round trip through the menu for each of them is not a workflow —
+// the same argument the scenery brush makes at length in editor_scenery.go, and
+// this is the same arrangement: it stays armed until Escape puts it away, a
+// ghost of what will land follows the cursor, and every click places another.
+//
+// Undo is per stamp, matching the click: one Ctrl+Z takes back one brush.
+
+// brushPlacePos is where the ghost was last drawn — the point the next stamp
+// lands on. Recorded during the draw, which is the one place per frame the ray
+// is cast, and read by the click rather than cast again: a second ray is a
+// second answer to the same question.
+var brushPlacePos mgl32.Vec3
+
+// brushPlaceValid says whether brushPlacePos is from this frame. False means
+// the cursor was over the panel, or nothing is armed, and a click must not
+// stamp anything.
+var brushPlaceValid bool
+
+// brushPlaceGhostColor is the preview's outline — cyan, which nothing else in
+// the viewport uses for geometry, so the ghost is never mistaken for a
+// selection (yellow).
+var brushPlaceGhostColor = mgl32.Vec3{0.2, 0.9, 1}
+
+// editorArmBrushPlacement points the stamp at a primitive and switches it on.
+func editorArmBrushPlacement(kind string) {
+	if activeChunk() == nil {
+		editorSetStatus("No chunk to place a brush in")
+		return
+	}
+	Editor.BrushPlaceKind = kind
+	Editor.BrushPlaceActive = true
+	// The one-shot modes, the scenery brush and this one are mutually
+	// exclusive: they all answer the next left-click, and two armed at once
+	// would make which one wins a question about the order of the checks in
+	// Editor3DHandleClick.
+	editorDisarmBrush()
+	Editor.EntityPlacementMode = false
+	Editor.PrefabPlacementMode = false
+	Editor.VolumePlacementMode = false
+	Editor.SpritePlacementMode = false
+	Editor.EmitterPlacementMode = false
+	Editor.SoundPlacementMode = false
+	Editor.SpawnPlacementMode = false
+	editorSetStatus("%s brush — click to place, Escape to stop", brushKindLabel(kind))
+}
+
+// editorDisarmBrushPlacement puts the stamp away.
+func editorDisarmBrushPlacement() {
+	Editor.BrushPlaceActive = false
+	brushPlaceValid = false
+}
+
+// editorBrushPlaceHandleClick stamps at the cursor when the stamp is armed, and
+// reports whether it consumed the click.
+//
+// It uses the point the ghost was drawn at rather than casting a fresh ray, so
+// what lands is exactly what was being previewed. A frame where the ghost was
+// not drawn — the cursor over the side panel — places nothing rather than
+// guessing, but still consumes the click: a click while stamping is never a
+// selection.
+func editorBrushPlaceHandleClick() bool {
+	if !Editor.BrushPlaceActive {
+		return false
+	}
+	if brushPlaceValid {
+		editorAddBrushAt(Editor.BrushPlaceKind, brushPlacePos)
+	}
+	return true
+}
+
+// editorBrushPlaceHandleKey owns Escape while the stamp is armed, and reports
+// whether it consumed the key.
+func editorBrushPlaceHandleKey(scancode sdl.Scancode) bool {
+	if !Editor.BrushPlaceActive || scancode != sdl.SCANCODE_ESCAPE {
+		return false
+	}
+	editorDisarmBrushPlacement()
+	editorSetStatus("Brush stamp off")
+	return true
+}
+
+// editorBrushStampMenuItem is the 3D context menu's entry for the stamp: arm
+// one of the primitives, or put an armed one away.
+//
+// In the menu as well as the panel because arming from the viewport is the
+// point of the tool — an author blocking out a room is already looking at where
+// the next box goes, and a trip to the side panel is the round trip the stamp
+// exists to remove.
+func editorBrushStampMenuItem() ctxMenuItem {
+	if Editor.BrushPlaceActive {
+		return ctxMenuItem{
+			Label:   "Stop stamping " + brushKindLabel(Editor.BrushPlaceKind) + " brushes",
+			Do:      editorDisarmBrushPlacement,
+			Tooltip: "Put the brush stamp away. Escape does the same.",
+		}
+	}
+	if activeChunk() == nil {
+		return ctxMenuItem{
+			Label:    "Stamp brushes",
+			Disabled: true,
+			Tooltip:  "Make a chunk for them to live in first.",
+		}
+	}
+	kinds := make([]ctxMenuItem, 0, len(brushKinds))
+	for _, kind := range brushKinds {
+		k := kind
+		kinds = append(kinds, ctxMenuItem{
+			Label: brushKindLabel(k),
+			Do:    func() { editorArmBrushPlacement(k) },
+		})
+	}
+	return ctxMenuItem{
+		Label:   "Stamp brushes",
+		Sub:     kinds,
+		Tooltip: "A box follows the cursor and every click places another\nsolid. Stays on until Escape.",
+	}
+}
+
+// DrawBrushPlaceGhost outlines where the next stamp will land, and records that
+// point for the click to use.
+//
+// Drawn as the primitive's own bounding box carried out through the chunk's
+// placement, so a rotated or scaled chunk gets a box where its brush will
+// actually be rather than an axis-aligned guess. Called from the overlay pass
+// with depth testing off, so the outline is visible against the surface it is
+// resting on instead of z-fighting with it.
+func DrawBrushPlaceGhost() {
+	brushPlaceValid = false
+	if !Editor.Active || Editor.Mode != Mode3D || !Editor.BrushPlaceActive || Editor.level == nil {
+		return
+	}
+	ch := activeChunk()
+	if ch == nil {
+		return
+	}
+	// Where the cursor is, asked of SDL rather than remembered from an event —
+	// the same source the gizmo's hover test uses. Over the side panel the ray
+	// would be cast through a pixel the viewport does not own, so nothing is
+	// drawn, which is also the signal the click reads.
+	mx, my, _ := sdl.GetMouseState()
+	if imgui.CurrentIO().WantCaptureMouse() || mx >= panelLeftEdgeX() {
+		return
+	}
+
+	brushPlacePos = brushStampAnchor(editor3DPointAt(mx, my))
+	brushPlaceValid = true
+
+	c := brushStampLocalCenter(ch, Editor.BrushPlaceKind, brushPlacePos)
+	h := defaultBrushHalf
+	corner := func(sx, sy, sz float32) mgl32.Vec3 {
+		return ch.LocalToWorld(mgl32.Vec3{c.X() + sx*h, c.Y() + sy*h, c.Z() + sz*h})
+	}
+	lo := [4]mgl32.Vec3{corner(-1, -1, -1), corner(1, -1, -1), corner(1, -1, 1), corner(-1, -1, 1)}
+	hi := [4]mgl32.Vec3{corner(-1, 1, -1), corner(1, 1, -1), corner(1, 1, 1), corner(-1, 1, 1)}
+	for i := 0; i < 4; i++ {
+		gizmo.GizmoLine(lo[i], lo[(i+1)%4], brushPlaceGhostColor)
+		gizmo.GizmoLine(hi[i], hi[(i+1)%4], brushPlaceGhostColor)
+		gizmo.GizmoLine(lo[i], hi[i], brushPlaceGhostColor)
+	}
 }
 
 // brushKind* are the primitives the stamp offers.
@@ -109,6 +301,15 @@ const (
 // brushKinds is the stamp menu's order, which is also roughly how often each
 // is reached for.
 var brushKinds = []string{brushKindBox, brushKindWedge, brushKindCylinder}
+
+// brushKindLabel is a kind as it is shown to an author — the constant with its
+// first letter raised, so the menu and the status line say Box, not box.
+func brushKindLabel(kind string) string {
+	if kind == "" {
+		return ""
+	}
+	return strings.ToUpper(kind[:1]) + kind[1:]
+}
 
 // editorHollowSelectedBrush replaces the brush the selection names with the six
 // brushes of a hollow room filling its bounds — the fast way to turn a blocked-
@@ -153,6 +354,9 @@ func editorHollowSelectedBrush() {
 		room[i].ID = world.UniqueBrushID(ch, room[i].ID)
 		appendBrush(ch, room[i])
 	}
+	// Every selection, because all three could be naming the brush that has
+	// just been removed — and in object mode it certainly was.
+	clearBrushSelection()
 	clearFaceSelection()
 	clearVertexSelection()
 	Editor.ActiveChunkIdx = ci
@@ -182,14 +386,23 @@ func editorDuplicateSelectedBrush() {
 func appendBrush(ch *world.Chunk, b world.Brush) {
 	ch.Brushes = append(ch.Brushes, b)
 	_ = ch.Brushes[len(ch.Brushes)-1].Load()
-	ch.RecomputeBounds()
+	editorChunkGeometryChanged(ch)
 }
 
-// selectNewestBrush selects the last brush of ch, by way of its first face, so
-// the properties panel opens on something and the gizmo has a handle.
+// selectNewestBrush selects the last brush of ch so the properties panel opens
+// on something and the gizmo has a handle.
+//
+// In the unit of whichever context is current: the whole brush in object mode,
+// its first face in edit mode. Placing a brush is an object-mode act and a
+// freshly stamped box wants dragging into place, so the common path gets a
+// gizmo on the solid rather than on one arbitrary side of it.
 func selectNewestBrush(ch *world.Chunk) {
 	bi := len(ch.Brushes) - 1
 	if bi < 0 || len(ch.Brushes[bi].Faces) == 0 {
+		return
+	}
+	if !editorInEditMode() {
+		editorSelectBrushObject(brushSel{chunkIdx: Editor.ActiveChunkIdx, brushIdx: bi}, false)
 		return
 	}
 	setFaceSelection([]faceSel{brushFaceSel(Editor.ActiveChunkIdx, bi, 0)})
@@ -224,7 +437,7 @@ func newWedgeBrush(id string, center, half mgl32.Vec3, texture string) world.Bru
 		world.NewBrushFace([]int{0, 3, 4}, texture),    // -X end
 		world.NewBrushFace([]int{1, 5, 2}, texture),    // +X end
 	}
-	return world.Brush{ID: id, Verts: verts, Faces: faces, Solid: true}
+	return world.Brush{ID: id, BrushMesh: world.BrushMesh{Verts: verts, Faces: faces}, Solid: true}
 }
 
 // newCylinderBrush is a right prism on a regular n-gon in the XZ plane: a
@@ -268,7 +481,7 @@ func newCylinderBrush(id string, center, half mgl32.Vec3, sides int, texture str
 		j := (i + 1) % sides
 		faces = append(faces, world.NewBrushFace([]int{i, j, sides + j, sides + i}, texture))
 	}
-	return world.Brush{ID: id, Verts: verts, Faces: faces, Solid: true}
+	return world.Brush{ID: id, BrushMesh: world.BrushMesh{Verts: verts, Faces: faces}, Solid: true}
 }
 
 // ---------- convexity ----------
@@ -317,11 +530,20 @@ func selectionBrushes() []*world.Brush {
 		seen[key] = struct{}{}
 		out = append(out, b)
 	}
+	// Detail selections are skipped outright: a detail mesh has no convexity
+	// rule to break — it is not the solid — so checking one would either warn
+	// about nothing or, worse, warn about the hull the author has not touched.
 	for _, sel := range Editor.SelectedFaces {
+		if sel.detail {
+			continue
+		}
 		_, b := faceSelBrush(sel)
 		add([2]int{sel.chunkIdx, sel.brushIdx}, b)
 	}
 	for _, sel := range Editor.SelectedVertices {
+		if sel.detail {
+			continue
+		}
 		_, b := vertexSelBrush(sel)
 		add([2]int{sel.chunkIdx, sel.brushIdx}, b)
 	}

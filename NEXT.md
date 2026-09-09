@@ -2,6 +2,31 @@
 
 ## Done
 
+- [x] Detail mode: shaping a brush's surface without moving its collision.
+      A brush is a convex solid, and convexity is not a preference — collision
+      reads its corners as a hull and the compiler clips its faces as
+      half-spaces — so every interesting piece of surface relief (a ledge, a
+      window reveal, panelling, a lip on a step) was previously either a second
+      brush or nothing. A brush now carries an optional second mesh, its
+      `Detail`, which is DRAWN INSTEAD of its own faces and which nothing about
+      collision, sealing or the partition ever reads. `Ctrl+Shift+click` a brush
+      enters detail mode on it: the mesh is seeded as a copy of the hull so
+      nothing changes on screen, the hull is drawn as a wire cage so you can see
+      where the player will actually stop, clicks reach that one brush and
+      nothing else, and the tools are the *model editor's own* — extrude with
+      side walls, subdivide, Catmull-Clark, delete — called through
+      `model.ModelDoc` rather than reimplemented, with a parallel attribute
+      table carrying the texture, UV, blend and alpha a `ModelFace` has no room
+      for. Everything below the selection is shared with the hull's editing:
+      `vertexSel`, `faceSel` and `edgeSel` grew a `detail` flag saying which of
+      the two vertex pools their indices name, and the gizmos, panels, outlines
+      and undo work unchanged from there — which is also what lets an
+      object-mode drag carry both meshes, so moving a wall takes its ledge with
+      it. In the compiler a detail face is a Quake detail brush one level down:
+      it is drawn and lit but never chooses a splitting plane and never decides
+      what is solid, and a detailed brush emits its hull faces as structure
+      nobody draws so that the tree, the portals and above all the SEAL come out
+      exactly as they would have without it.
 - [x] The sky is scriptable, and a script can ease between two of them.
       `@level.prop.sky` (on/off, existence rather than a field), `sky_kind`,
       `sky_cubemap` (the editor's "fill from base name" button as a property),
@@ -406,6 +431,8 @@
 - [x] UI builder
 - [x] Entity editor
 - [x] Closing the main editor should close all other windows
+- [x] Conversion to brushes for geometry
+- [x] Bounding box view
 
 ## TODO
 
@@ -419,7 +446,6 @@
 - [ ] Debugger
 - [ ] Configurable editor keybindings
 - [ ] Audio mixer
-- [ ] Bounding box view
 - [ ] Gizmo in 3D editor to edit texture UVs
 
 

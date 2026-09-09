@@ -32,7 +32,7 @@ end`)
 	if got := lvl.Player.StepHeight; got != 0.2 {
 		t.Errorf("step height is %v, want 0.2 — the write did not reach the level", got)
 	}
-	if got, want := lvl.Player.EffectiveStepHeight(nil), float32(0.2); got != want {
+	if got, want := lvl.Player.EffectiveStepHeight(), float32(0.2); got != want {
 		t.Errorf("the height in force is %v, want %v", got, want)
 	}
 }
@@ -73,7 +73,7 @@ end`)
 	if got := lvl.Player.StepHeight; got != 0 {
 		t.Errorf("step height is %v, want 0", got)
 	}
-	if got, want := lvl.Player.EffectiveStepHeight(nil), world.DefaultStepHeight(); got != want {
+	if got, want := lvl.Player.EffectiveStepHeight(), world.DefaultStepHeight(); got != want {
 		t.Errorf("the height in force is %v, want the default %v", got, want)
 	}
 }

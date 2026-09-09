@@ -287,14 +287,16 @@ func TestEditor3DRightClickSelectsUnderTheCursorOnlyWhenNothingIsSelected(t *tes
 	lvl.Chunks[0].RecomputeBounds()
 	mx, my := setupPickCamera()
 
+	// Object mode, so what a right-click on empty selection picks up is the
+	// whole brush under the cursor.
 	editor3DContextPressed(mx, my)
 	editor3DContextReleased(mx, my)
-	if len(Editor.SelectedFaces) != 1 || Editor.SelectedFaces[0].brushIdx != 0 {
-		t.Fatalf("selection is %+v, want the brush face under the cursor", Editor.SelectedFaces)
+	if len(Editor.SelectedBrushes) != 1 || Editor.SelectedBrushes[0].brushIdx != 0 {
+		t.Fatalf("selection is %+v, want the brush under the cursor", Editor.SelectedBrushes)
 	}
 
 	// With something already selected the click is a menu and nothing else.
-	clearFaceSelection()
+	clearBrushSelection()
 	Editor.SpawnSelected = true
 	editor3DContextPressed(mx, my)
 	editor3DContextReleased(mx, my)

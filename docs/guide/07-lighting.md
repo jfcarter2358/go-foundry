@@ -56,7 +56,7 @@ Rotation and scale do nothing on a point light.
 ## What gets lit
 
 Everything in the world pass: walls, floors, ceilings, surface meshes, models,
-scenery props, procedural detail patches and scattered rock. Biome foliage is lit
+scenery props and scattered rock. Biome foliage is lit
 per-vertex.
 
 Sprites and particles take the lighting only if their **Lit** checkbox is on.

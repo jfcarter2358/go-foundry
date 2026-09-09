@@ -13,6 +13,7 @@ import (
 
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
+	"foundry/internal/platform"
 	"foundry/internal/world"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -88,6 +89,21 @@ func DebugRenderOverlay() {
 		}
 		imgui.Text(fmt.Sprintf("Rotation:     yaw=%.2f  pitch=%.2f", gfx.Cam.Yaw, gfx.Cam.Pitch))
 		imgui.Separator()
+
+		// Above anti-aliasing because it is the first thing the FPS number at
+		// the top has to be read against: 60.0 flat means nothing until you
+		// know whether the frame is waiting for the display.
+		switch {
+		case !platform.VSyncSettable:
+			imgui.Text("VSync:         driver-controlled (not settable, F12)")
+		case platform.VSyncInterval == -1:
+			imgui.Text(fmt.Sprintf("VSync:         %s  (adaptive, F12)", onOff(platform.VSyncEnabled)))
+		case platform.VSyncActive() != platform.VSyncEnabled:
+			imgui.Text(fmt.Sprintf("VSync:         %s requested, driver says %s  (F12)",
+				onOff(platform.VSyncEnabled), onOff(platform.VSyncActive())))
+		default:
+			imgui.Text(fmt.Sprintf("VSync:         %s  (F12)", onOff(platform.VSyncEnabled)))
+		}
 
 		if AntiAliasGrantedSamples > 0 {
 			imgui.Text(fmt.Sprintf("Anti-aliasing: %s  (MSAA %dx of %dx, F10)",

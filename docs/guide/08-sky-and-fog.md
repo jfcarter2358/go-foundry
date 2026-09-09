@@ -66,7 +66,7 @@ ease_sky(3)
 | **Sky Blend** | how much fog colour the sky takes at the horizon |
 | **Sky Falloff** | how tightly that is confined to the horizon |
 
-Fog reaches every pass that shades — walls, detail, biome scatter, ground
+Fog reaches every pass that shades — walls, scatter, ground
 patches, sprites and the sky — so nothing fades at a different rate from the
 thing beside it.
 

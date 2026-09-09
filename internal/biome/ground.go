@@ -21,20 +21,17 @@ package biome
 // blade of grass has no opinion about. What scatter needs is narrower and
 // cheaper: the highest brush surface below a point, and its normal.
 //
-// # Why the surface and not the plane
+// # The surface IS the plane
 //
-// A brush face carrying procedural displacement (BrushFace.Detail) is drawn by
-// the tessellator as a rolling surface, while its flat mesh — the triangles
-// this ray actually meets — is the average plane through it. Landing an
-// instance on the plane plants it inside the hills and floating over the
-// valleys. So the ray finds the face, and detail.DetailSurfaceAt then finds
-// where that face's *drawn* surface is at the same XZ. The two agree because
-// the CPU port and the GLSL are the same maths (detail_cpu.go).
+// A brush face is flat. It has no displacement layer riding on top of it — the
+// per-face procedural detail that used to put one there is gone, and organic
+// shape comes from subdividing the brush's own geometry instead — so the
+// triangles this ray meets are the drawn surface, and there is nothing to
+// correct the hit against afterwards.
 
 import (
 	"math"
 
-	"foundry/internal/detail"
 	"foundry/internal/geom"
 	"foundry/internal/world"
 
@@ -101,8 +98,14 @@ func SurfaceUnder(lvl *world.Level, wx, topY, wz, maxDrop float32) Surface {
 				// and grass growing on it would be growing on nothing.
 				continue
 			}
-			for fi := range b.Faces {
-				f := &b.Faces[fi]
+			// The DRAWN mesh: what grass grows on is the surface an author can
+			// see, and its faces index that mesh's own vertex pool — asking the
+			// brush for a detail face's corners would resolve them against the
+			// hull's.
+			drawn := b.DrawMesh()
+			faces := drawn.Faces
+			for fi := range faces {
+				f := &faces[fi]
 				if f.NoDraw || f.NoCollide {
 					continue
 				}
@@ -110,7 +113,7 @@ func SurfaceUnder(lvl *world.Level, wx, topY, wz, maxDrop float32) Surface {
 				// on the column too — every enclosed room has four of them
 				// around it — and landing an instance on one would grow grass
 				// sideways out of it.
-				n := ch.LocalToWorldDirection(b.FaceNormal(f))
+				n := ch.LocalToWorldDirection(drawn.FaceNormal(f))
 				if n.Y() <= 0 {
 					continue
 				}
@@ -120,13 +123,6 @@ func SurfaceUnder(lvl *world.Level, wx, topY, wz, maxDrop float32) Surface {
 				}
 				bestT = t
 				best = Surface{Height: topY - t, Normal: n.Normalize(), Found: true}
-				// The drawn surface, not the plane the triangles are in.
-				if f.Detail.HasDisplace() {
-					h, dn := detail.DetailSurfaceAt(f, wx, wz, best.Height)
-					best.Height = h
-					best.Normal = rotateNormalBetween(
-						detail.DispNormalFor(&f.Geometry), best.Normal, dn)
-				}
 			}
 		}
 	}
@@ -196,34 +192,6 @@ func rayTriangle(origin, dir, a, b, c mgl32.Vec3) (float32, bool) {
 	return e2.Dot(q) * inv, true
 }
 
-// rotateNormalBetween applies the minimal rotation taking unit vector `from`
-// onto unit vector `to` (Rodrigues) to n. Used to move a normal computed in one
-// face frame into another.
-//
-// The displacement normal is expressed about the face's AVERAGE plane — that is
-// the frame the derivative is taken in — so on a face that is itself tilted it
-// knows about the procedural bumps but not the slope underneath them. Rotating
-// it out of the average plane and onto the real face normal composes the two;
-// for a face whose plane is its average the two coincide and this is the
-// identity.
-func rotateNormalBetween(from, to, n mgl32.Vec3) mgl32.Vec3 {
-	axis := from.Cross(to)
-	s := axis.Len()
-	c := from.Dot(to)
-	if s < 1e-6 {
-		if c >= 0 {
-			return n
-		}
-		return n.Mul(-1) // antiparallel: a 180-degree flip about any perpendicular axis
-	}
-	k := axis.Mul(1 / s)
-	theta := math.Atan2(float64(s), float64(c))
-	cosT, sinT := float32(math.Cos(theta)), float32(math.Sin(theta))
-	return n.Mul(cosT).
-		Add(k.Cross(n).Mul(sinT)).
-		Add(k.Mul(k.Dot(n) * (1 - cosT)))
-}
-
 // SlopeCoverage is how much of an instance survives at a surface with this
 // normal, in [0,1]: 1 inside the authored slope range, 0 outside it, feathered
 // over SlopeFeatherDegrees at each end.
@@ -251,11 +219,11 @@ func SlopeCoverage(s *world.VolumeScatter, n mgl32.Vec3) float32 {
 
 	lo := float32(1)
 	if minA > 0 {
-		lo = detail.Smoothstep32(minA-SlopeFeatherDegrees, minA+SlopeFeatherDegrees, angle)
+		lo = geom.Smoothstep32(minA-SlopeFeatherDegrees, minA+SlopeFeatherDegrees, angle)
 	}
 	hi := float32(1)
 	if maxA < 90 {
-		hi = 1 - detail.Smoothstep32(maxA-SlopeFeatherDegrees, maxA+SlopeFeatherDegrees, angle)
+		hi = 1 - geom.Smoothstep32(maxA-SlopeFeatherDegrees, maxA+SlopeFeatherDegrees, angle)
 	}
 	return geom.Clamp01(lo * hi)
 }

@@ -166,11 +166,25 @@ func (t *BSPTree) SubdivideFaces(step float32) {
 			used[fi] = true
 		}
 	}
+	// A detail face never reaches a node: it is inserted straight into the
+	// cells the structural faces made (bsp.go), so for those the LEAVES are
+	// the authority. Reading the nodes alone would drop every one of them
+	// here, and a level would compile with its detail missing.
+	for li := range t.Leaves {
+		for _, fi := range t.Leaves[li].Faces {
+			if t.Faces[fi].Detail {
+				used[fi] = true
+			}
+		}
+	}
 
 	faces := make([]Face, 0, len(t.Faces))
 	remap := make([][]int, len(t.Faces))
 	for fi := range t.Faces {
-		if !used[fi] {
+		if !used[fi] || t.Faces[fi].NoDraw {
+			// A structural face is never seen, so there is nothing to light
+			// and no reason to carry it any further: the tree it shaped is
+			// built, and visibility has already been computed over it.
 			continue
 		}
 		for _, piece := range gridSubdivide(t.Faces[fi].Points, step) {

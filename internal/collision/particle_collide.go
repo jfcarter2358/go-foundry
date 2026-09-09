@@ -72,14 +72,14 @@ func ParticleCollide(lvl *world.Level, from, to mgl32.Vec3, r float32) (pos, nor
 		}
 		for fi := range b.Faces {
 			f := &b.Faces[fi]
-			pts := b.FacePoints(f)
+			pts := b.PlacedFacePoints(f)
 			for i := 1; i+1 < len(pts); i++ {
 				t, ok := rayTriangle(origin, dir, pts[0], pts[i], pts[i+1])
 				if !ok {
 					continue
 				}
 				if bestT < 0 || t < bestT {
-					bestT, bestNormal = t, b.FaceNormal(f)
+					bestT, bestNormal = t, b.PlacedFaceNormal(f)
 				}
 			}
 		}

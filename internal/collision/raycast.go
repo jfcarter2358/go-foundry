@@ -339,7 +339,7 @@ func appendGeometryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, 
 			if f.Ignore[surf.Brush] || lvl.Static.Hidden(si) {
 				continue
 			}
-			t, ok := nearestSurface(origin, dir, surf.SubmeshGeometries, &surf.Geometry)
+			t, ok := rayGeometry(origin, dir, &surf.Geometry)
 			if !ok || t > f.Range {
 				continue
 			}
@@ -351,10 +351,14 @@ func appendGeometryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, 
 	}
 
 	for ci := range lvl.Chunks {
-		if lvl.Chunks[ci].Compiled {
-			continue // tested above, from the compiled list
-		}
 		ch := &lvl.Chunks[ci]
+		// A compiled chunk's static brushes were tested above, out of the
+		// compiled list — but its dynamic ones were not, because the compiler
+		// left them out of that list on purpose. They keep their own meshes
+		// (Chunk.DrawsBrushLive) and are tested here.
+		if ch.Compiled && !ch.HasDynamicBrushes() {
+			continue
+		}
 		if !ch.IsEnabled() {
 			// Released for streaming: not drawn, not collided against, and its
 			// vertex buffers are gone. See world/chunk_enable.go.
@@ -375,15 +379,36 @@ func appendGeometryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, 
 
 		for bi := range ch.Brushes {
 			b := &ch.Brushes[bi]
-			if f.Ignore[b.ID] {
+			if f.Ignore[b.ID] || !ch.DrawsBrushLive(b) {
 				continue
 			}
-			for fi := range b.Faces {
-				face := &b.Faces[fi]
+			// The uploaded meshes are in the brush's AUTHORED coordinates, so
+			// a brush a script has moved needs the ray taken one space further
+			// in — its own placement — exactly as the chunk transform was
+			// divided out above, and for the same reason: t survives it.
+			bOrigin, bDir := lOrigin, lDir
+			if !b.AtRest() {
+				pinv := b.Placement().Inv()
+				if pinv == (mgl32.Mat4{}) {
+					continue
+				}
+				bo := pinv.Mul4x1(lOrigin.Vec4(1))
+				bd := pinv.Mul4x1(lDir.Vec4(0))
+				bOrigin = mgl32.Vec3{bo.X(), bo.Y(), bo.Z()}
+				bDir = mgl32.Vec3{bd.X(), bd.Y(), bd.Z()}
+			}
+			// A ray reports what it can SEE, so it is cast against the drawn
+			// mesh — the detail one for a detailed brush. That deliberately
+			// differs from where a BODY stops, which is always the hull: a
+			// crosshair lands on the ledge it is pointing at, while the player
+			// walks past the flat wall the ledge is carved into.
+			faces := b.DrawFaces()
+			for fi := range faces {
+				face := &faces[fi]
 				// A NoDraw face has no uploaded geometry to test at all — see
 				// Brush.Load — so it is transparent to a ray the same way it
 				// is invisible to the eye.
-				t, ok := nearestSurface(lOrigin, lDir, face.SubmeshGeometries, &face.Geometry)
+				t, ok := rayGeometry(bOrigin, bDir, &face.Geometry)
 				if !ok || t > f.Range {
 					continue
 				}
@@ -395,24 +420,6 @@ func appendGeometryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, 
 		}
 	}
 	return out
-}
-
-// nearestSurface returns the closest triangle hit across one face's geometry:
-// its Detail texture-override submeshes plus its own primary buffer.
-func nearestSurface(origin, dir mgl32.Vec3, group []gfx.Geometry, single ...*gfx.Geometry) (float32, bool) {
-	best, found := float32(math.MaxFloat32), false
-	consider := func(g *gfx.Geometry) {
-		if t, ok := rayGeometry(origin, dir, g); ok && t < best {
-			best, found = t, true
-		}
-	}
-	for i := range group {
-		consider(&group[i])
-	}
-	for _, g := range single {
-		consider(g)
-	}
-	return best, found
 }
 
 // rayGeometry returns the nearest hit among a de-indexed [X,Y,Z,U,V] triangle

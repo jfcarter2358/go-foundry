@@ -51,15 +51,18 @@ const (
 type edgeSel struct {
 	chunkIdx int
 	brushIdx int
-	a, b     int // indices into Brush.Verts
+	a, b     int // indices into the mesh selMesh resolves
+	// detail says which of the brush's two meshes the endpoints index — see
+	// vertexSel.detail.
+	detail bool
 }
 
 // newEdgeSel orders the endpoints so an edge has one canonical form.
-func newEdgeSel(chunkIdx, brushIdx, a, b int) edgeSel {
+func newEdgeSel(chunkIdx, brushIdx, a, b int, detail bool) edgeSel {
 	if b < a {
 		a, b = b, a
 	}
-	return edgeSel{chunkIdx: chunkIdx, brushIdx: brushIdx, a: a, b: b}
+	return edgeSel{chunkIdx: chunkIdx, brushIdx: brushIdx, a: a, b: b, detail: detail}
 }
 
 // edgeHandle is one clickable edge together with the prism that selects it.
@@ -82,8 +85,8 @@ func edgeSelVertices(sel edgeSel) (vertexSel, vertexSel, bool) {
 	if sel.a < 0 || sel.a >= n || sel.b < 0 || sel.b >= n || sel.a == sel.b {
 		return vertexSel{}, vertexSel{}, false
 	}
-	return vertexSel{chunkIdx: sel.chunkIdx, brushIdx: sel.brushIdx, vertIdx: sel.a},
-		vertexSel{chunkIdx: sel.chunkIdx, brushIdx: sel.brushIdx, vertIdx: sel.b},
+	return vertexSel{chunkIdx: sel.chunkIdx, brushIdx: sel.brushIdx, vertIdx: sel.a, detail: sel.detail},
+		vertexSel{chunkIdx: sel.chunkIdx, brushIdx: sel.brushIdx, vertIdx: sel.b, detail: sel.detail},
 		true
 }
 
@@ -91,13 +94,13 @@ func edgeSelVertices(sel edgeSel) (vertexSel, vertexSel, bool) {
 // vertexSelBrush's bounds checking. The vertex index is deliberately the first
 // endpoint's, but nothing here reads it.
 func (sel edgeSel) edgeBrush() vertexSel {
-	return vertexSel{chunkIdx: sel.chunkIdx, brushIdx: sel.brushIdx, vertIdx: sel.a}
+	return vertexSel{chunkIdx: sel.chunkIdx, brushIdx: sel.brushIdx, vertIdx: sel.a, detail: sel.detail}
 }
 
 // brushEdges lists a brush's distinct edges, walking every face's index loop
 // and keeping each undirected pair once. A convex solid's every edge is shared
 // by exactly two faces, so without the dedupe every handle would be doubled.
-func brushEdges(chunkIdx, brushIdx int, faces [][]int) []edgeSel {
+func brushEdges(chunkIdx, brushIdx int, faces [][]int, detail bool) []edgeSel {
 	seen := map[[2]int]struct{}{}
 	var out []edgeSel
 	for _, loop := range faces {
@@ -106,7 +109,7 @@ func brushEdges(chunkIdx, brushIdx int, faces [][]int) []edgeSel {
 			continue
 		}
 		for i := 0; i < n; i++ {
-			sel := newEdgeSel(chunkIdx, brushIdx, loop[i], loop[(i+1)%n])
+			sel := newEdgeSel(chunkIdx, brushIdx, loop[i], loop[(i+1)%n], detail)
 			if sel.a == sel.b {
 				continue
 			}
@@ -207,12 +210,15 @@ func collectEdgeHandles(mx, my int32, maxPx float32) []edgeHandle {
 			continue // not drawn, so no handles; see world/chunk_enable.go
 		}
 		for bi := range ch.Brushes {
-			b := &ch.Brushes[bi]
-			loops := make([][]int, len(b.Faces))
-			for fi := range b.Faces {
-				loops[fi] = b.Faces[fi].Indices
+			m, detail, ok := pickMeshFor(ci, bi, &ch.Brushes[bi])
+			if !ok {
+				continue
 			}
-			for _, sel := range brushEdges(ci, bi, loops) {
+			loops := make([][]int, len(m.Faces))
+			for fi := range m.Faces {
+				loops[fi] = m.Faces[fi].Indices
+			}
+			for _, sel := range brushEdges(ci, bi, loops, detail) {
 				if h, ok := buildEdgeHandle(sel, projView, cursor, maxPx); ok {
 					out = append(out, h)
 				}

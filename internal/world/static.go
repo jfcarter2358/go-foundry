@@ -43,19 +43,15 @@ import (
 // It is deliberately shaped like a BrushFace's drawable half and nothing else:
 // the renderer's inner loop should not be able to tell which of the two it has.
 type StaticSurface struct {
-	Geometry gfx.Geometry
-	// SubmeshGeometries is the scattered detail this surface carries, exactly
-	// as a BrushFace's does.
-	SubmeshGeometries []gfx.Geometry
-	Detail            DetailSpec
-	DoubleSided       bool
+	Geometry    gfx.Geometry
+	DoubleSided bool
 	// Chunk and Brush name where this surface came from. Not needed to draw
 	// it — but a raycast reports what it hit by those names, and a script that
 	// asks what is under the crosshair has to get the same answer from a
 	// compiled level as from the authored one it was written against.
 	Chunk, Brush string
-	// Normal is the face's own plane normal, for the detail pass, which needs
-	// it to build a displacement basis without re-deriving it per frame.
+	// Normal is the face's own plane normal, carried across from the compiler
+	// so nothing downstream has to re-derive it from the triangles.
 	Normal mgl32.Vec3
 	Lo, Hi mgl32.Vec3
 }
@@ -187,9 +183,5 @@ func (s *StaticGeometry) Release() {
 	}
 	for i := range s.Surfaces {
 		s.Surfaces[i].Geometry.Unload()
-		for j := range s.Surfaces[i].SubmeshGeometries {
-			s.Surfaces[i].SubmeshGeometries[j].Unload()
-		}
-		s.Surfaces[i].SubmeshGeometries = nil
 	}
 }

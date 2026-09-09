@@ -87,6 +87,10 @@ type pickHit struct {
 	brushIdx int
 	faceIdx  int
 	idx      int
+	// detail says which of the brush's two meshes faceIdx indexes. A click in
+	// detail mode lands on the detail mesh, one in edit mode on the hull, and
+	// the two are different vertex pools — see vertexSel.detail.
+	detail bool
 }
 
 // consider replaces h with a hit at distance t when that hit is closer.
@@ -104,7 +108,7 @@ func (h *pickHit) consider(t float32, kind pickKind, chunkIdx, idx int) {
 
 // considerFace is consider for brush geometry, which is addressed by brush and
 // face rather than by a single index.
-func (h *pickHit) considerFace(t float32, chunkIdx, brushIdx, faceIdx int) {
+func (h *pickHit) considerFace(t float32, chunkIdx, brushIdx, faceIdx int, detail bool) {
 	if t >= h.t {
 		return
 	}
@@ -113,6 +117,7 @@ func (h *pickHit) considerFace(t float32, chunkIdx, brushIdx, faceIdx int) {
 	h.chunkIdx = chunkIdx
 	h.brushIdx = brushIdx
 	h.faceIdx = faceIdx
+	h.detail = detail
 	h.idx = -1
 }
 
@@ -130,29 +135,6 @@ func pickGeometryT(origin, dir mgl32.Vec3, verts []float32) float32 {
 			if eff := effectivePickT(t, front); eff < best {
 				best = eff
 			}
-		}
-	}
-	return best
-}
-
-// pickGeometriesT is pickGeometryT across a slice of geometries (extrusions).
-func pickGeometriesT(origin, dir mgl32.Vec3, geoms []gfx.Geometry) float32 {
-	best := float32(math.MaxFloat32)
-	for i := range geoms {
-		if t := pickGeometryT(origin, dir, geoms[i].Vertices); t < best {
-			best = t
-		}
-	}
-	return best
-}
-
-// pickGeometriesModelT is pickGeometriesT with a model transform, for a slice
-// of extrusion geometries belonging to a chunk that may be moved/rotated/scaled.
-func pickGeometriesModelT(origin, dir mgl32.Vec3, geoms []gfx.Geometry, model mgl32.Mat4) float32 {
-	best := float32(math.MaxFloat32)
-	for i := range geoms {
-		if t := pickModelT(origin, dir, geoms[i].Vertices, model); t < best {
-			best = t
 		}
 	}
 	return best
@@ -266,24 +248,22 @@ func pick3D(sx, sy int32) pickHit {
 		model := ch.ModelMatrix()
 
 		for bi := range ch.Brushes {
-			b := &ch.Brushes[bi]
-			for fi := range b.Faces {
-				f := &b.Faces[fi]
+			m, detail, ok := pickMeshFor(ci, bi, &ch.Brushes[bi])
+			if !ok {
+				continue
+			}
+			for fi := range m.Faces {
+				f := &m.Faces[fi]
 				// A NoDraw face has no geometry to click, the same way it has
 				// none to draw or to cast a ray against (world/brush.go).
 				if f.NoDraw {
 					continue
 				}
-				// The face's own triangles plus any Detail texture-override
-				// submeshes, so clicking a detailed patch still selects the
-				// face it belongs to. Back faces are biased outward (see
-				// effectivePickT) so coincident faces at a brush boundary
-				// resolve to the one the user can see.
-				t := pickModelT(origin, dir, f.Geometry.Vertices, model)
-				if et := pickGeometriesModelT(origin, dir, f.SubmeshGeometries, model); et < t {
-					t = et
-				}
-				hit.considerFace(t, ci, bi, fi)
+				// Back faces are biased outward (see effectivePickT) so
+				// coincident faces at a brush boundary resolve to the one the
+				// user can see.
+				t := pickBrushFaceT(origin, dir, m, f, model)
+				hit.considerFace(t, ci, bi, fi, detail)
 			}
 		}
 	}
@@ -479,7 +459,16 @@ func handleShowsAll(showPx float32) bool { return showPx >= vertexHandleShowAllP
 type vertexSel struct {
 	chunkIdx int
 	brushIdx int
-	vertIdx  int // index into Brush.Verts
+	vertIdx  int // index into the mesh selMesh resolves
+	// detail says WHICH of the brush's two meshes vertIdx indexes: its hull,
+	// or the detail mesh drawn over it (world/brush_detail.go). The two are
+	// separate vertex pools, so an index means nothing without it.
+	//
+	// It is a property of the selection rather than of the editor's mode
+	// because object mode drags BOTH at once: moving a brush has to carry the
+	// detail carved into it, and that is one gizmo over one list of handles
+	// naming two meshes.
+	detail bool
 }
 
 // vertexHandle is one clickable brush vertex. A brush owns its verts outright,
@@ -512,8 +501,11 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 			continue // not drawn, so no handles; see world/chunk_enable.go
 		}
 		for bi := range ch.Brushes {
-			b := &ch.Brushes[bi]
-			for vi, v := range b.Verts {
+			m, detail, ok := pickMeshFor(ci, bi, &ch.Brushes[bi])
+			if !ok {
+				continue
+			}
+			for vi, v := range m.Verts {
 				// Brush verts are chunk-local; every consumer below (screen
 				// projection, camera distance, the eventual selection) wants
 				// world space.
@@ -530,7 +522,7 @@ func collectVertexHandles(mx, my int32, maxPx float32) []vertexHandle {
 				if d > maxPx && !handleShowsAll(maxPx) {
 					continue
 				}
-				sel := vertexSel{chunkIdx: ci, brushIdx: bi, vertIdx: vi}
+				sel := vertexSel{chunkIdx: ci, brushIdx: bi, vertIdx: vi, detail: detail}
 				// Solid shading hides the far side of the world, so a handle
 				// behind a wall is neither drawn nor clickable; wireframe
 				// answers true for everything.
@@ -677,10 +669,11 @@ func clearVertexSelection() {
 // nothing downstream needs to know a chunk can move at all.
 func vertexSelPos(sel vertexSel) (mgl32.Vec3, bool) {
 	ch, b := vertexSelBrush(sel)
-	if b == nil || sel.vertIdx < 0 || sel.vertIdx >= len(b.Verts) {
+	m := selMesh(b, sel.detail)
+	if m == nil || sel.vertIdx < 0 || sel.vertIdx >= len(m.Verts) {
 		return mgl32.Vec3{}, false
 	}
-	return ch.LocalToWorld(b.Verts[sel.vertIdx]), true
+	return ch.LocalToWorld(m.Verts[sel.vertIdx]), true
 }
 
 // vertexSelBrush resolves the chunk and brush a vertex selection names, or nil
@@ -752,8 +745,16 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	}()
 
 	// Drawn whatever the cursor is doing: the selection does not stop existing
-	// because the pointer moved onto the panel.
+	// because the pointer moved onto the panel. Only one of the two can be
+	// non-empty — they are the two contexts' selections — so this is not two
+	// cages fighting over the same brush.
 	drawSelectedFaceOutline()
+	drawSelectedBrushOutline()
+	// The hull of the brush being detailed, which is otherwise not on screen
+	// at all: its buffers are freed while its detail mesh is doing the drawing,
+	// and where the player will actually stop is the one thing an author
+	// carving a surface has to be able to see.
+	drawDetailHullCage()
 	// The prefab boxes are drawn whatever is selected: an instance is a unit
 	// that moves and deletes together, and without a box round it a lamp made
 	// of five brushes is indistinguishable from five loose brushes.
@@ -762,8 +763,10 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	drawSelectedSpriteOutline(gfx.Cam.Position)
 	drawSelectedSceneryOutline()
 	// The brush's footprint ring, on the same terms: it says where the next
-	// stamp lands, which is exactly the thing the panel cannot show.
+	// stamp lands, which is exactly the thing the panel cannot show. The brush
+	// stamp's box says the same thing about the next solid.
 	DrawBrushGhostOutline()
+	DrawBrushPlaceGhost()
 	RenderEmitterMarkers(Editor.level, gfx.Cam.Position)
 	RenderSoundMarkers(Editor.level, gfx.Cam.Position)
 
@@ -790,6 +793,12 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 // object behind them. Drawing a handle no click can reach was the confusing
 // part of the pre-mode viewport, where every box was always up.
 func drawSelModeHandles(mx, my int32, showPx float32) {
+	if !editorInEditMode() {
+		// Object mode has no sub-brush unit, so there is nothing here a click
+		// could reach — and a viewport full of corner boxes that do not respond
+		// is exactly the confusion the modes exist to remove.
+		return
+	}
 	switch Editor.SelMode {
 	case editorSelPoint:
 		drawVertexHandleBoxes(mx, my, showPx)

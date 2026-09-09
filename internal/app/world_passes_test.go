@@ -4,12 +4,12 @@ package app
 // stood up by the engine, not by the editor.
 //
 // This is a source-level check, which is unusual, and it is here because the
-// failure it guards has no runtime symptom to assert on. GrassInit, DetailInit
-// and SpriteInit were called from editor.EditorInit; `-tags release` compiles
+// failure it guards has no runtime symptom to assert on. GrassInit and
+// SpriteInit were called from editor.EditorInit; `-tags release` compiles
 // internal/editor out entirely, so a shipped game called none of them; and each
 // pass early-outs on its own `initialized` flag, so nothing logged, nothing
 // errored and nothing crashed. The game just quietly had no biome scatter, no
-// ground patches, no procedural detail, no sprites and no particles — a bug that
+// ground patches, no sprites and no particles — a bug that
 // survives every test that checks the engine starts, which is the same class of
 // failure `make release-check` exists to catch, and it is caught the same way:
 // by looking at what is wired to what rather than at what happens.
@@ -28,17 +28,17 @@ import (
 
 // worldPassInits are the render entry points that stand up a pass drawing level
 // content. Anything added beside them in render/init.go belongs in this list.
-var worldPassInits = []string{"GrassInit", "DetailInit", "SpriteInit", "SkyInit"}
+var worldPassInits = []string{"GrassInit", "SpriteInit", "SkyInit"}
 
 func TestTheEngineStandsUpTheWorldPasses(t *testing.T) {
 	src := testenv.RepoFile(t, "internal", "app", "app.go")
 	if !strings.Contains(src, "render.InitWorldPasses()") {
 		t.Error("internal/app/app.go does not call render.InitWorldPasses(); " +
-			"a release build would draw no scatter, detail, sprites or particles")
+			"a release build would draw no scatter, sprites or particles")
 	}
 
-	// And that function is the one place they are named, so adding a fifth pass
-	// to it is enough to have every build stand it up.
+	// And that function is the one place they are named, so adding a fourth
+	// pass to it is enough to have every build stand it up.
 	initSrc := testenv.RepoFile(t, "internal", "render", "init.go")
 	for _, name := range worldPassInits {
 		if !strings.Contains(initSrc, name+"()") {

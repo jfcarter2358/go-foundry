@@ -38,6 +38,11 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 		// wall gets wider and taller and a floor grows outward. Nothing is
 		// resized, because a corner has no size.
 		return selectedFacesCenter()
+	case gizmoKindBrush:
+		// The whole solid spreads about the middle of the selection, which is
+		// what "make this pillar taller" means when a brush has no scale field
+		// of its own.
+		return selectedBrushesCenter()
 	case gizmoKindEntity:
 		if e := activeGizmoEntity(); e != nil {
 			return e.Position, true

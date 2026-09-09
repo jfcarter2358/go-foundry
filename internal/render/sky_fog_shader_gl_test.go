@@ -99,7 +99,7 @@ func TestEveryShadingProgramGotTheFog(t *testing.T) {
 	withRepoResources(t)
 	t.Cleanup(DeleteSprites)
 
-	DetailInit()
+	GrassInit()
 	SpriteInit()
 	SkyInit()
 
@@ -107,8 +107,7 @@ func TestEveryShadingProgramGotTheFog(t *testing.T) {
 		name string
 		prog uint32
 	}{
-		{"detail displacement colour", detailRender.dispColor.prog},
-		{"detail scatter colour", detailRender.scatColor.prog},
+		{"scatter colour", scatters.color.prog},
 		{"sprite colour", sprites.color.prog},
 	} {
 		if p.prog == 0 {
@@ -144,19 +143,20 @@ func TestTheWorldShaderGotTheFog(t *testing.T) {
 // The depth-only programs are the ones that must NOT have picked fog up: they
 // write a depth and nothing else, and splicing a shading concern into them
 // would be a lie about what they do. This is the assertion that keeps the
-// `fogged` flag on mustTessProgram from quietly becoming decoration.
+// `fogged` flag on the program helpers from quietly becoming decoration.
 func TestDepthOnlyProgramsHaveNoFog(t *testing.T) {
 	gltest.Context(t)
 	withRepoResources(t)
 
-	DetailInit()
+	GrassInit()
+	SpriteInit()
 
 	for _, p := range []struct {
 		name string
 		prog uint32
 	}{
-		{"detail displacement shadow", detailRender.dispShadow.prog},
-		{"detail scatter shadow", detailRender.scatShadow.prog},
+		{"scatter cascade shadow", scatters.shadow.prog},
+		{"scatter cube shadow", scatters.cube.prog},
 	} {
 		if loc := world.ProgUniformLoc(p.prog, "fogColor\x00"); loc >= 0 {
 			t.Errorf("%s program exposes fogColor; a depth pass has no colour to fog", p.name)
@@ -182,7 +182,7 @@ func TestInitWorldPassesStandsUpEveryPass(t *testing.T) {
 		name  string
 		ready bool
 	}{
-		{"procedural face detail", detailRender.initialized},
+		{"scatter volumes", scatters.initialized},
 		{"sprites and particles", sprites.ready},
 		{"sky", skyRender.initialized},
 	} {
@@ -191,10 +191,6 @@ func TestInitWorldPassesStandsUpEveryPass(t *testing.T) {
 		}
 	}
 
-	// TODO(brush migration, Phase 5): GrassInit was also where
-	// world.EvictBiomeCaches got installed, so a chunk switched off released
-	// its biome GPU caches. Both the pass and the hook come back with scatter
-	// volumes.
 }
 
 // A cubemap the level names but that is not on disk must not take the sky down

@@ -554,9 +554,6 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 			// the box already extends toward the light to include it.
 			cull := ExtractFrustum(lsm)
 			renderSceneShadow(level, Shadows.Program, &gfx.ShadowSkinUniforms, Shadows.ModelUniform, &cull)
-			// Cast displaced/scattered detail (drawn via its own tess/instanced
-			// programs so bumps and rocks cast accurate shadows); restores Shadows.Program.
-			RenderDetailDirShadow(level, lsm, &cull)
 			// Cast shadow-casting sprites, turned to face the LIGHT rather than
 			// the camera — a camera-facing quad rendered from here would be
 			// edge-on and cast nothing. Restores Shadows.Program.
@@ -628,8 +625,6 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 
 			cull := ExtractFrustum(lsm)
 			renderSceneShadow(level, Shadows.CubeProgram, &gfx.ShadowCubeSkinUniforms, Shadows.CubeModelUniform, &cull)
-			// Cast displaced/scattered detail into this cube face; restores Shadows.CubeProgram.
-			RenderDetailCubeShadow(level, lsm, pl.Position, farPlane, &cull)
 			// Sprites into this cube face. A point light has a position, so the
 			// quads converge on it exactly as they converge on the eye in the
 			// colour pass. Restores Shadows.CubeProgram.
@@ -682,19 +677,18 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 			if cull != nil && !AABBInFrustum(*cull, surf.Lo, surf.Hi) {
 				continue
 			}
-			if !surf.Detail.HasDisplace() {
-				drawGeometryShadow(&surf.Geometry, prog, skin)
-			}
-			for eg := range surf.SubmeshGeometries {
-				drawGeometryShadow(&surf.SubmeshGeometries[eg], prog, skin)
-			}
+			drawGeometryShadow(&surf.Geometry, prog, skin)
 		}
 	}
 
 	for ci := range level.Chunks {
 		chunk := &level.Chunks[ci]
-		if chunk.Compiled {
-			continue // cast above, out of the compiled list
+		// A compiled chunk cast above, out of the compiled list — except for
+		// its dynamic brushes, which the compiler left out of the bake because
+		// they move and which are therefore still live geometry here. Same
+		// rule as the colour pass (internal/app).
+		if chunk.Compiled && !chunk.HasDynamicBrushes() {
+			continue
 		}
 		if !chunk.IsEnabled() {
 			continue // switched off; see world/chunk_enable.go
@@ -705,33 +699,42 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 				continue
 			}
 		}
-		if m := chunk.ModelMatrix(); m != current {
-			current = m
-			gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
-		}
+		chunkModel := chunk.ModelMatrix()
 		for bi := range chunk.Brushes {
 			brush := &chunk.Brushes[bi]
+			if !chunk.DrawsBrushLive(brush) {
+				continue // baked into the compiled surfaces above
+			}
+			// LocalAABB already reports where a moved brush IS
+			// (world/brush_dynamic.go), so this culls against the drawn
+			// position rather than the authored one.
 			if cull != nil {
 				bMin, bMax := brush.LocalAABB()
-				bMin, bMax = TransformAABB(current, bMin, bMax)
+				bMin, bMax = TransformAABB(chunkModel, bMin, bMax)
 				if !AABBInFrustum(*cull, bMin, bMax) {
 					continue
 				}
 			}
-			for fi := range brush.Faces {
-				f := &brush.Faces[fi]
+			// The face meshes are in authored coordinates whatever the brush
+			// has since done, so a moved one gets its placement folded into the
+			// matrix rather than its buffers rebuilt.
+			model := chunkModel
+			if !brush.AtRest() {
+				model = chunkModel.Mul4(brush.Placement())
+			}
+			if model != current {
+				current = model
+				gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
+			}
+			// The drawn mesh casts the shadow, so a wall's detail casts the
+			// shadow its bumps and reveals actually make.
+			faces := brush.DrawFaces()
+			for fi := range faces {
+				f := &faces[fi]
 				if f.NoDraw {
 					continue
 				}
-				// Displaced faces cast via the detail tess program instead (see
-				// RenderDetailDirShadow / RenderDetailCubeShadow), so skip the
-				// flat mesh.
-				if !f.Detail.HasDisplace() {
-					drawGeometryShadow(&f.Geometry, prog, skin)
-				}
-				for eg := range f.SubmeshGeometries {
-					drawGeometryShadow(&f.SubmeshGeometries[eg], prog, skin)
-				}
+				drawGeometryShadow(&f.Geometry, prog, skin)
 			}
 		}
 	}

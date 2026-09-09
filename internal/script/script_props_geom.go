@@ -8,6 +8,8 @@ package script
 // zero-Alpha default — so each is guarded at the point it applies.
 
 import (
+	"fmt"
+
 	"foundry/internal/flang"
 	"foundry/internal/world"
 )
@@ -31,12 +33,60 @@ func init() {
 
 // ---------- brushes ----------
 
-// brushProps is thin on purpose: a brush's textures, UVs and shading live on
-// its individual faces, and faces have no address of their own yet (see
-// SCRIPTING.md's brush section once Phase 8 gives them one — RefFace is not
-// here). All a script can currently ask a brush itself is whether it is
-// solid.
+// brushProps is what a script can ask a brush about itself. Its textures, UVs
+// and shading live on its individual faces, and faces have no address of their
+// own yet (RefFace is not here), so what is left is the brush as an object:
+// whether it is solid, and — for one marked dynamic — where it is.
+//
+// The placement properties are gated on Dynamic rather than allowed on any
+// brush. A static brush's corners are baked into the compiled level's BSP and
+// its faces have been clipped against their neighbours, so moving one at run
+// time would move a shape the compiled world no longer agrees exists. The
+// toggle is what tells the compiler to leave a brush out of that bake, so it is
+// also what makes writing a position meaningful; writing one without it is an
+// error the author can see rather than a move that silently works in the editor
+// and does nothing in the shipped game. See world/brush_dynamic.go.
 func brushProps() map[string]propAccess {
+	// A brush's verts are chunk-local, but a script thinks in world space —
+	// the space @player.prop.position and every volume's centre are in — so
+	// position reads and writes there and the chunk's own placement is
+	// divided out here. For the ordinary chunk sitting at the origin the two
+	// are the same numbers.
+	getOwner := func(fn func(*world.Chunk, *world.Brush) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+			ch, b := c.brushOwnerFor(r)
+			if b == nil {
+				return nil, false
+			}
+			return fn(ch, b), true
+		}
+	}
+	// setDynamic resolves the brush, refuses the write unless it is dynamic,
+	// and hands the setter a level it can re-bucket through — the same
+	// arrangement chunkProps makes for `origin`, and for the same reason: a
+	// brush that moved is in different spatial-hash cells than it was.
+	setDynamic := func(name string, fn func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+		return func(c *refCache, r flang.RefVal, v flang.Value) error {
+			ch, b := c.brushOwnerFor(r)
+			if b == nil {
+				return &scriptMissingError{r.String()}
+			}
+			if !b.Dynamic {
+				return fmt.Errorf("%s: cannot write %s on a brush that is not dynamic; "+
+					"tick Dynamic in its properties panel first", r.String(), name)
+			}
+			return fn(c, ch, b, v)
+		}
+	}
+	// rebucket is what every placement write ends with. A moved brush grows or
+	// shrinks its chunk's bounds, and the spatial hash keys off those, so a
+	// brush that slid out of its chunk's old footprint would stop being found
+	// by every world-space lookup — collision included, which would make a
+	// closing door pass straight through the player it was meant to crush.
+	rebucket := func(c *refCache, ch *world.Chunk) {
+		ch.RecomputeBounds()
+		world.RebuildSpatialHash(c.lvl)
+	}
 	return map[string]propAccess{
 		"solid": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
@@ -60,6 +110,100 @@ func brushProps() map[string]propAccess {
 			},
 			Dirty: true,
 			Doc:   "whether the brush blocks movement",
+		},
+		"dynamic": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				b := c.brushFor(r)
+				if b == nil {
+					return nil, false
+				}
+				return flang.BoolVal(b.Dynamic), true
+			},
+			Doc: "read-only: whether this brush can be moved by a script (authored, not switchable)",
+		},
+		"position": {
+			Get: getOwner(func(ch *world.Chunk, b *world.Brush) flang.Value {
+				return vecValue(ch.LocalToWorld(b.Position()))
+			}),
+			Set: setDynamic("position", func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error {
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("position", "vec", v)
+				}
+				want := ch.WorldToLocal(p)
+				if want == b.Position() {
+					// A script animating one door writes this every frame; one
+					// holding it still should not pay for a rehash.
+					return nil
+				}
+				b.MoveTo(want)
+				rebucket(c, ch)
+				return nil
+			}),
+			Dirty: true,
+			Doc:   "the brush's centre, in world space; writing it moves the brush and its collision together",
+		},
+		"rotation": {
+			Get: getOwner(func(_ *world.Chunk, b *world.Brush) flang.Value {
+				return vecValue(b.Rotation)
+			}),
+			Set: setDynamic("rotation", func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error {
+				rot, ok := toVec3(v)
+				if !ok {
+					return propErr("rotation", "vec", v)
+				}
+				if rot == b.Rotation {
+					return nil
+				}
+				b.Rotation = rot
+				rebucket(c, ch)
+				return nil
+			}),
+			Dirty: true,
+			Doc:   "euler angles in radians, turning the brush about its own centre",
+		},
+		"velocity": {
+			Get: getOwner(func(ch *world.Chunk, b *world.Brush) flang.Value {
+				return vecValue(ch.LocalToWorldDirection(b.Velocity))
+			}),
+			// No re-bucketing here, unlike `position`: writing a rate moves
+			// nothing this instant. The move it produces happens in
+			// world.AdvanceBrushes at the top of the next tick, which
+			// re-buckets the hash itself once every mover has been integrated.
+			Set: setDynamic("velocity", func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error {
+				vel, ok := toVec3(v)
+				if !ok {
+					return propErr("velocity", "vec", v)
+				}
+				b.Velocity = ch.WorldToLocalDirection(vel)
+				return nil
+			}),
+			Dirty: true,
+			Doc:   "units per second added to this brush's position during play; the engine keeps it moving",
+		},
+		"angular_velocity": {
+			// Read and written raw, with no chunk conversion — unlike
+			// `velocity`, which is world-space because a script aiming a move
+			// thinks in world directions. This is the rate of change of
+			// `rotation`, and `rotation` is the brush's own Euler angles about
+			// its own pivot, so the two have to be in the same basis or a
+			// script could not integrate one into the other by hand.
+			Get: getOwner(func(_ *world.Chunk, b *world.Brush) flang.Value {
+				return vecValue(b.AngularVelocity)
+			}),
+			// No re-bucketing, for the same reason `velocity` does none: a
+			// rate turns nothing this instant. world.AdvanceBrushes applies it
+			// at the top of the next tick and re-buckets the hash itself.
+			Set: setDynamic("angular_velocity", func(_ *refCache, _ *world.Chunk, b *world.Brush, v flang.Value) error {
+				av, ok := toVec3(v)
+				if !ok {
+					return propErr("angular_velocity", "vec", v)
+				}
+				b.AngularVelocity = av
+				return nil
+			}),
+			Dirty: true,
+			Doc:   "radians per second added to this brush's rotation during play; the engine keeps it turning",
 		},
 	}
 }

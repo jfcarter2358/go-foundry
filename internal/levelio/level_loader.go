@@ -62,23 +62,23 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 			return world.Chunk{}, nil, fmt.Errorf(
 				"brush %q: %d verts; a solid needs at least four", b.ID, len(b.Verts))
 		}
-		for fi := range b.Faces {
-			f := &b.Faces[fi]
-			for _, vi := range f.Indices {
-				if vi < 0 || vi >= len(b.Verts) {
-					return world.Chunk{}, nil, fmt.Errorf(
-						"brush %q: face names vertex %d, which it does not have", b.ID, vi)
-				}
+		if err := checkFaceIndices(b.ID, "", &b.BrushMesh); err != nil {
+			return world.Chunk{}, nil, err
+		}
+		if b.Detail != nil {
+			if err := checkFaceIndices(b.ID, "detail ", b.Detail); err != nil {
+				return world.Chunk{}, nil, err
 			}
+		}
+		// Both meshes' textures: the detail one is what is drawn, and the
+		// hull's are what comes back the moment the detail is cleared.
+		b.EachFace(func(f *world.BrushFace) {
 			for _, tex := range []string{f.Texture, f.BlendTexture, f.BlendMask} {
 				if tex != "" {
 					texNeeded[tex] = true
 				}
 			}
-			if f.Detail.Enabled && f.Detail.ScatterTex != "" {
-				texNeeded[f.Detail.ScatterTex] = true
-			}
-		}
+		})
 		chunk.Brushes = append(chunk.Brushes, b)
 	}
 
@@ -555,4 +555,20 @@ func blankRoomBrushes() []world.RawBrush {
 		out = append(out, world.BrushToRaw(&room[i]))
 	}
 	return out
+}
+
+// checkFaceIndices refuses a mesh whose faces name corners it has not got —
+// which would index out of range the first time anything triangulated it. Run
+// over a brush's hull and over its detail mesh separately, since each indexes
+// its own vertex pool.
+func checkFaceIndices(brushID, what string, m *world.BrushMesh) error {
+	for fi := range m.Faces {
+		for _, vi := range m.Faces[fi].Indices {
+			if vi < 0 || vi >= len(m.Verts) {
+				return fmt.Errorf("brush %q: %sface names vertex %d, which it does not have",
+					brushID, what, vi)
+			}
+		}
+	}
+	return nil
 }

@@ -8,101 +8,6 @@ import "foundry/internal/geom"
 // level_loader.go, split out from what used to be one 1200+-line level.go —
 // see RESTRUCTURE_PROPOSAL.md §5 Phase A.
 
-// RawDetailWave is the YAML representation of one displacement wave layer.
-type RawDetailWave struct {
-	Enabled   bool    `yaml:"enabled"`
-	Amplitude float32 `yaml:"amplitude,omitempty"`
-	Frequency float32 `yaml:"frequency,omitempty"`
-	Rotation  float32 `yaml:"rotation,omitempty"` // degrees within the face plane
-	TessLevel float32 `yaml:"tess_level,omitempty"`
-}
-
-// RawDetail is the YAML representation of a face's procedural detail.
-// Present only when a face has detail enabled (omitempty on the pointer).
-type RawDetail struct {
-	Preset string `yaml:"preset,omitempty"`
-	Seed   int64  `yaml:"seed"`
-
-	Displace bool            `yaml:"displace,omitempty"`
-	Waves    []RawDetailWave `yaml:"waves,omitempty"`
-
-	Noise          bool    `yaml:"noise,omitempty"`
-	NoiseAmplitude float32 `yaml:"noise_amplitude,omitempty"`
-	NoiseFrequency float32 `yaml:"noise_frequency,omitempty"`
-	NoiseOctaves   int     `yaml:"noise_octaves,omitempty"`
-	NoiseTessLevel float32 `yaml:"noise_tess_level,omitempty"`
-
-	EdgeTaper float32 `yaml:"edge_taper,omitempty"`
-
-	// Legacy single-layer displacement fields (pre-waves levels). Load-only:
-	// DetailFromRaw folds them into wave 0 + the noise layer, and they are never
-	// written back.
-	Amplitude float32 `yaml:"amplitude,omitempty"`
-	Frequency float32 `yaml:"frequency,omitempty"`
-	Octaves   int     `yaml:"octaves,omitempty"`
-	TessLevel float32 `yaml:"tess_level,omitempty"`
-
-	Scatter        bool    `yaml:"scatter,omitempty"`
-	ScatterMesh    string  `yaml:"scatter_mesh,omitempty"`
-	ScatterTex     string  `yaml:"scatter_tex,omitempty"`
-	ScatterDensity float32 `yaml:"scatter_density,omitempty"`
-	ScatterSpacing float32 `yaml:"scatter_spacing,omitempty"`
-	ScatterScale   float32 `yaml:"scatter_scale,omitempty"`
-	ScatterJitter  float32 `yaml:"scatter_jitter,omitempty"`
-	ScatterRange   float32 `yaml:"scatter_range,omitempty"`
-}
-
-// DetailFromRaw converts an optional RawDetail into a DetailSpec. A nil pointer
-// yields a disabled spec.
-func DetailFromRaw(r *RawDetail) DetailSpec {
-	if r == nil {
-		return DetailSpec{}
-	}
-	d := DetailSpec{
-		Enabled:        true,
-		Preset:         r.Preset,
-		Seed:           r.Seed,
-		Displace:       r.Displace,
-		Noise:          r.Noise,
-		NoiseAmplitude: r.NoiseAmplitude,
-		NoiseFrequency: r.NoiseFrequency,
-		NoiseOctaves:   r.NoiseOctaves,
-		NoiseTessLevel: r.NoiseTessLevel,
-		EdgeTaper:      r.EdgeTaper,
-		Scatter:        r.Scatter,
-		ScatterMesh:    r.ScatterMesh,
-		ScatterTex:     r.ScatterTex,
-		ScatterDensity: r.ScatterDensity,
-		ScatterSpacing: r.ScatterSpacing,
-		ScatterScale:   r.ScatterScale,
-		ScatterJitter:  r.ScatterJitter,
-		ScatterRange:   r.ScatterRange,
-	}
-	for i, w := range r.Waves {
-		if i >= DetailMaxWaves {
-			break
-		}
-		d.Waves[i] = DetailWave{
-			Enabled:   w.Enabled,
-			Amplitude: w.Amplitude,
-			Frequency: w.Frequency,
-			Rotation:  w.Rotation,
-			TessLevel: w.TessLevel,
-		}
-	}
-	// Legacy levels stored one noise layer as amplitude/frequency/octaves/tess.
-	// Fold it into the noise layer so old faces keep their look.
-	if len(r.Waves) == 0 && !r.Noise && r.Amplitude != 0 {
-		d.Noise = true
-		d.NoiseAmplitude = r.Amplitude
-		d.NoiseFrequency = r.Frequency
-		d.NoiseOctaves = r.Octaves
-		d.NoiseTessLevel = r.TessLevel
-	}
-	d.Clamp()
-	return d
-}
-
 // RawVolume is the YAML representation of a scriptable region (see volume.go).
 type RawVolume struct {
 	ID            string `yaml:"id"`
@@ -318,6 +223,24 @@ type RawBrush struct {
 	// non-solid one is distinguishable from a file written before the field
 	// existed.
 	Solid *bool `yaml:"solid,omitempty"`
+	// Dynamic marks a brush a script moves at run time. A plain bool rather
+	// than a pointer, unlike Solid: the default is false, so an absent key and
+	// an explicit `dynamic: false` mean the same thing.
+	Dynamic bool `yaml:"dynamic,omitempty"`
+	// Detail is the brush's free-form surface geometry, drawn instead of the
+	// faces above and ignored by collision entirely (brush_detail.go). Nested
+	// rather than a second pair of top-level keys so that the two meshes read
+	// as the two meshes they are, and absent for the ordinary brush that is
+	// drawn as the solid it is.
+	Detail *RawBrushMesh `yaml:"detail,omitempty"`
+}
+
+// RawBrushMesh is the YAML representation of a brush's detail mesh: the same
+// flattened vertex list and index-into-it face list a brush itself is written
+// as, since it is the same kind of mesh.
+type RawBrushMesh struct {
+	Verts []float32      `yaml:"verts"`
+	Faces []RawBrushFace `yaml:"faces"`
 }
 
 // RawBrushFace is the YAML representation of one face of a brush.
@@ -333,7 +256,6 @@ type RawBrushFace struct {
 	UVRotation   float32    `yaml:"uv_rotation,omitempty"`
 	Smooth       bool       `yaml:"smooth,omitempty"`
 	SmoothAngle  float32    `yaml:"smooth_angle,omitempty"`
-	Detail       *RawDetail `yaml:"detail,omitempty"`
 	Alpha        *float32   `yaml:"alpha,omitempty"` // nil = opaque (1.0)
 	DoubleSided  bool       `yaml:"double_sided,omitempty"`
 	// NoDraw is a face with no geometry built at all — a brush side buried

@@ -180,6 +180,7 @@ func editorResetSelectionState() {
 	Editor.ActiveBrushIdx = -1
 	Editor.ActiveFaceIdx = -1
 	Editor.SelectedFaces = nil
+	Editor.SelectedBrushes = nil
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
@@ -201,6 +202,15 @@ func editorResetSelectionState() {
 	Editor.GizmoKind = gizmoKindNone
 	Editor.GizmoDragAxis = -1
 	Editor.GizmoDragging = false
+	// Detail mode names a brush by index and shapes a mesh a snapshot may not
+	// have had at all — undoing past the seed leaves the mode pointed at a
+	// brush with nothing to carve. Staying in it would be a viewport where
+	// nothing is clickable, so the snapshot swap puts the author back in
+	// object mode along with everything else that was named by index.
+	if editorInDetailMode() {
+		Editor.EditContext = editorObjectMode
+	}
+	Editor.DetailBrush = brushSel{chunkIdx: -1, brushIdx: -1}
 }
 
 // restoreLevelSnapshot applies an undo/redo snapshot: rebuild the level, put the

@@ -112,15 +112,7 @@ func SyncChunkGeometryFor(ch *Chunk) bool {
 // Safe to call twice; the second call finds nothing to free.
 func (ch *Chunk) ReleaseGeometry() {
 	for bi := range ch.Brushes {
-		b := &ch.Brushes[bi]
-		for fi := range b.Faces {
-			f := &b.Faces[fi]
-			f.Geometry.Unload()
-			for si := range f.SubmeshGeometries {
-				f.SubmeshGeometries[si].Unload()
-			}
-			f.SubmeshGeometries = nil
-		}
+		ch.Brushes[bi].Unload()
 	}
 	ch.Unloaded = true
 }
@@ -134,16 +126,42 @@ func (ch *Chunk) ReleaseGeometry() {
 // chunk that has been off and on again is the chunk the loader would have
 // produced.
 func (ch *Chunk) ReloadGeometry() {
-	// Except for a compiled chunk, which never had meshes of its own: building
-	// them here would draw its surfaces twice, once from the static list and
-	// once from the brushes. See static.go.
-	if !ch.Compiled {
-		for bi := range ch.Brushes {
-			_ = ch.Brushes[bi].Load()
+	for bi := range ch.Brushes {
+		if !ch.DrawsBrushLive(&ch.Brushes[bi]) {
+			continue
 		}
+		_ = ch.Brushes[bi].Load()
 	}
 	ch.RecomputeBounds()
 	ch.Unloaded = false
+}
+
+// DrawsBrushLive reports whether b needs a mesh of its own in this chunk.
+//
+// It always does in an uncompiled chunk. In a compiled one the static brushes
+// do not — their surfaces are in the compiled list, and building meshes here
+// would draw them twice, once from each (see static.go) — but a DYNAMIC brush
+// still does, because the compiler deliberately left it out of that list. The
+// one place that rule is written; the loader, the reload above and the editor's
+// compiled preview all read it, and a disagreement between them is a brush
+// drawn twice or not at all.
+func (ch *Chunk) DrawsBrushLive(b *Brush) bool { return !ch.Compiled || b.Dynamic }
+
+// ReleaseBakedGeometry frees the meshes of the brushes a compile has taken
+// over, leaving the dynamic ones — which it has not — loaded.
+//
+// For the editor's compiled preview, which turns a live chunk into a compiled
+// one in place. ReleaseGeometry is the other case and deliberately releases
+// everything: a disabled chunk is out of the world entirely, dynamic brushes
+// included.
+func (ch *Chunk) ReleaseBakedGeometry() {
+	for bi := range ch.Brushes {
+		b := &ch.Brushes[bi]
+		if ch.DrawsBrushLive(b) {
+			continue
+		}
+		b.Unload()
+	}
 }
 
 // ReleaseLevelGeometry frees everything the level's chunks own on the GPU, plus

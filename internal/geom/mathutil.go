@@ -42,6 +42,21 @@ func Clamp01(v float32) float32 {
 	return v
 }
 
+// Smoothstep32 mirrors GLSL's smoothstep(edge0, edge1, x): 0 below edge0, 1
+// above edge1, and a Hermite ease between the two. Lives here rather than
+// beside its one caller because it is the CPU spelling of a shader builtin,
+// and the next thing that needs to feather a threshold will want it too.
+func Smoothstep32(edge0, edge1, x float32) float32 {
+	if edge0 == edge1 {
+		if x < edge0 {
+			return 0
+		}
+		return 1
+	}
+	t := Clamp01((x - edge0) / (edge1 - edge0))
+	return t * t * (3 - 2*t)
+}
+
 // Floor32 returns the floor of a float32 as a float32.
 func Floor32(x float32) float32 {
 	i := int(x)

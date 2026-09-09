@@ -117,8 +117,14 @@ func deleteActivePrefab() {
 	EditorPushUndo()
 	levelio.DropPrefabContent(lvl, id)
 	lvl.Prefabs = append(lvl.Prefabs[:idx], lvl.Prefabs[idx+1:]...)
-	editorClearPrefabSelection()
-	editorSetStatus("Deleted prefab instance %q", id)
+	// The only DropPrefabContent that is not followed by a re-stamp, so it is
+	// the only one that has to re-index by hand: dropping the instance's
+	// chunks shifts every index past them. See RestampPrefab.
+	if err := world.RebuildIndexes(lvl); err != nil {
+		editorSetStatus("Deleted %q, but frames are unhappy: %v", id, err)
+	} else {
+		editorSetStatus("Deleted prefab instance %q", id)
+	}
 }
 
 // duplicateActivePrefab copies the selected instance beside itself and selects
@@ -188,6 +194,13 @@ func EditorSaveSelectionAsPrefab(name string) error {
 		seen[b] = true
 		picked = append(picked, owned{ch, b})
 	}
+	// Every unit that names a brush, so the same command works from either
+	// context: a whole brush in object mode, one of its faces or corners in
+	// edit mode. Saving a group of brushes as a prefab is an object-mode act
+	// above all, and that selection is the one that says so directly.
+	for _, sel := range Editor.SelectedBrushes {
+		add(vertexSelBrush(vertexSel{chunkIdx: sel.chunkIdx, brushIdx: sel.brushIdx}))
+	}
 	for _, sel := range Editor.SelectedFaces {
 		add(faceSelBrush(sel))
 	}
@@ -218,8 +231,17 @@ func EditorSaveSelectionAsPrefab(name string) error {
 	var p world.Prefab
 	for _, o := range picked {
 		moved := world.CloneBrush(o.b, "")
+		// BOTH meshes. A detail mesh is authored in the same chunk-local space
+		// the hull is and is not derived from it, so a prefab that re-based
+		// only the corners would come back with its ledges and reveals still
+		// standing where the original chunk's origin used to be.
 		for i := range moved.Verts {
 			moved.Verts[i] = o.ch.LocalToWorld(moved.Verts[i]).Sub(origin)
+		}
+		if moved.Detail != nil {
+			for i := range moved.Detail.Verts {
+				moved.Detail.Verts[i] = o.ch.LocalToWorld(moved.Detail.Verts[i]).Sub(origin)
+			}
 		}
 		p.Brushes = append(p.Brushes, world.BrushToRaw(&moved))
 	}

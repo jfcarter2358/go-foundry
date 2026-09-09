@@ -117,7 +117,7 @@ appear literally somewhere the walk reaches.
 Per-directory prune counts print on every pack. Read them and confirm nothing
 live was dropped.
 
-`shaders/`, `fonts/` and `detail_presets/` are always copied whole.
+`shaders/` and `fonts/` are always copied whole.
 
 ## Installers
 

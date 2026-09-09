@@ -70,10 +70,14 @@ func drawSelectedFaceOutline() {
 func editorOutlineFace(sel faceSel, col mgl32.Vec3) {
 	ch, b := faceSelBrush(sel)
 	f := faceSelFace(sel)
-	if ch == nil || b == nil || f == nil {
+	// The mesh the selection names, not the brush: a detail face's corners are
+	// indices into the detail mesh's own vertex pool, and resolving them
+	// against the hull's would outline a shape that is not there.
+	m := selMesh(b, sel.detail)
+	if ch == nil || m == nil || f == nil {
 		return
 	}
-	pts := b.FacePoints(f)
+	pts := m.FacePoints(f)
 	n := len(pts)
 	if n < 2 {
 		return
@@ -87,8 +91,57 @@ func editorOutlineFace(sel faceSel, col mgl32.Vec3) {
 	// The normal is computed in the brush's own space, like the face's plane
 	// is, then carried out — LocalToWorldDirection is what makes a rotated or
 	// scaled chunk's faces point the right way.
-	normal := ch.LocalToWorldDirection(b.FaceNormal(f))
+	normal := ch.LocalToWorldDirection(m.FaceNormal(f))
 	editorFaceNormalStub(sum.Mul(1/float32(n)), normal, col)
+}
+
+// editorBrushSelColor is what a selected brush is outlined in in object mode.
+//
+// Deliberately not the face selection's orange. The two selections mean
+// different things — "this whole solid" against "this one face of it" — and
+// they can never be on screen together, so the colour is the quickest way for
+// an author to tell at a glance which context they are in without reading the
+// toolbar.
+var editorBrushSelColor = mgl32.Vec3{0.35, 0.9, 1}
+
+// editorBrushSelSecondaryColor is what a selected brush that is not the primary
+// is outlined in: the same hue, dimmed, for the same reason a face's is.
+var editorBrushSelSecondaryColor = editorBrushSelColor.Mul(0.55)
+
+// drawSelectedBrushOutline queues a wire cage around every selected brush —
+// object mode's counterpart of drawSelectedFaceOutline, on the same
+// depth-testing terms.
+//
+// Every face's corner loop rather than the brush's bounding box: a brush is
+// convex but rarely a box, and a box around a wedge would say the selection was
+// something it is not. No normal stubs — nothing here is about to be extruded
+// along one.
+func drawSelectedBrushOutline() {
+	if Editor.level == nil {
+		return
+	}
+	for i, sel := range Editor.SelectedBrushes {
+		col := editorBrushSelColor
+		if i > 0 {
+			col = editorBrushSelSecondaryColor
+		}
+		ch, b := vertexSelBrush(vertexSel{chunkIdx: sel.chunkIdx, brushIdx: sel.brushIdx})
+		if ch == nil || b == nil {
+			continue
+		}
+		for fi := range b.Faces {
+			pts := b.FacePoints(&b.Faces[fi])
+			n := len(pts)
+			if n < 2 {
+				continue
+			}
+			for j := 0; j < n; j++ {
+				gizmo.GizmoLine(
+					ch.LocalToWorld(pts[j]),
+					ch.LocalToWorld(pts[(j+1)%n]), col)
+			}
+		}
+	}
 }
 
 // editorFaceNormalStub draws the short line out of a face's middle that says

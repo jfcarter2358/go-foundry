@@ -236,10 +236,9 @@ func mustBiomeProgram(vertPath, fragPath, vertSnippet, fragSnippet string) uint3
 // program and leaves it bound. frame carries the directional cascade setup from
 // RenderShadowPass.
 //
-// The three Upload*To calls are the same ones RenderDetailColor makes for the
-// detail programs; nothing here is biome-specific except the view matrix (for
-// cascade selection, which fragment.glsl gets as a varying from vertex.glsl)
-// and the Receive toggle.
+// The three Upload*To calls are the same ones the world pass makes; nothing
+// here is biome-specific except the view matrix (for cascade selection, which
+// fragment.glsl gets as a varying from vertex.glsl) and the Receive toggle.
 func uploadBiomeLighting(prog uint32, level *world.Level, frame ShadowFrame) {
 	world.UploadLightsTo(prog, level.Lights, false)
 	world.UploadFogTo(prog, level.Fog, level.Volumes)

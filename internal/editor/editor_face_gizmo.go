@@ -52,8 +52,13 @@ import (
 // The 2D map is deliberately not included — gizmoEffectiveKind is 3D-only, so
 // the top-down view keeps working in the unit it has always worked in.
 func gizmoVertexSels() []vertexSel {
-	if gizmoEffectiveKind() == gizmoKindFace {
+	switch gizmoEffectiveKind() {
+	case gizmoKindFace:
 		return selectedFaceVertices()
+	case gizmoKindBrush:
+		// Object mode: every corner of every selected brush, so the tools move
+		// the solid as one body. See editor_brush_sel.go.
+		return brushVertexSels()
 	}
 	return Editor.SelectedVertices
 }
@@ -93,7 +98,8 @@ func faceVertexSels(f faceSel) []vertexSel {
 	}
 	out := make([]vertexSel, 0, len(face.Indices))
 	for _, vi := range face.Indices {
-		out = append(out, vertexSel{chunkIdx: f.chunkIdx, brushIdx: f.brushIdx, vertIdx: vi})
+		out = append(out, vertexSel{
+			chunkIdx: f.chunkIdx, brushIdx: f.brushIdx, vertIdx: vi, detail: f.detail})
 	}
 	return out
 }

@@ -3,7 +3,6 @@ package app
 import (
 	"foundry/internal/audio"
 	"foundry/internal/collision"
-	"foundry/internal/detail"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
@@ -93,9 +92,6 @@ func Run() {
 	gfx.TextureNames = gfx.ScanTextures(filepath.Join(fileutil.ExecutablePath, "textures"))
 	log.Printf("scanned %d textures", len(gfx.TextureNames))
 
-	// Merge the user's saved detail presets in over the compiled-in ones.
-	detail.LoadDetailPresets()
-
 	// Load (or, on a fresh checkout, create) the global 256-colour palette
 	// every texture in the texture editor composites against.
 	texture.LoadGlobalPalette()
@@ -182,6 +178,11 @@ func Run() {
 	// Reads back what CreateAntiAliasedWindow's request above actually got
 	// granted and applies AntiAliasEnabled's default (on) — see antialias.go.
 	render.ApplyAntiAliasGLState()
+
+	// Settle the swap interval rather than inheriting whatever the driver
+	// defaults to, so the frame rate below is the engine's decision and F12
+	// has something to flip. See platform/vsync.go.
+	platform.ApplyVSync()
 
 	// Resolves the anisotropic filtering level for world textures. Must come
 	// before the first texture upload — LoadTexture reads it at upload time.
@@ -453,6 +454,15 @@ func Run() {
 			// host, so leaving play would otherwise leave every platform
 			// wherever it had drifted to.
 			if world.AdvanceChunks(&level, platform.DeltaTime) {
+				script.PlaySessionMarkDirty()
+			}
+
+			// Then the brushes that carry one: a single door or lift inside an
+			// otherwise still chunk. Same tick, same ordering argument, same
+			// reason for marking the session dirty — and after the chunks, so
+			// that a brush moving inside a chunk that also moved is integrated
+			// against this frame's chunk placement rather than last frame's.
+			if world.AdvanceBrushes(&level, platform.DeltaTime) {
 				script.PlaySessionMarkDirty()
 			}
 
@@ -824,25 +834,19 @@ func Run() {
 						continue
 					}
 					staticDrawn++
-					// Displaced surfaces are drawn by RenderDetailColor through
-					// the tessellation program instead of the flat mesh, which
-					// is what keeps the two from z-fighting — the same rule the
-					// brush loop below follows.
-					if !surf.Detail.HasDisplace() {
-						queueStatic(&surf.Geometry, surf)
-					}
-					for eg := range surf.SubmeshGeometries {
-						queueStatic(&surf.SubmeshGeometries[eg], surf)
-					}
+					queueStatic(&surf.Geometry, surf)
 				}
 			}
 
 			for i := range level.Chunks {
 				chunk := &level.Chunks[i]
-				if chunk.Compiled {
-					// Its surfaces were drawn above, out of the compiled list.
-					// The chunk itself is still here for collision, raycasts
-					// and scripting — see world/static.go.
+				// A compiled chunk's static surfaces were drawn above, out of
+				// the compiled list; the chunk itself is still here for
+				// collision, raycasts and scripting (world/static.go). Its
+				// DYNAMIC brushes are the exception: the compiler leaves them
+				// out of the bake precisely because they move, so they are
+				// still live geometry and are drawn the ordinary way below.
+				if chunk.Compiled && !chunk.HasDynamicBrushes() {
 					continue
 				}
 				if !chunk.IsEnabled() {
@@ -890,19 +894,32 @@ func Run() {
 				// editor it is the frustum alone.
 				for j := range chunk.Brushes {
 					brush := &chunk.Brushes[j]
+					if !chunk.DrawsBrushLive(brush) {
+						continue // baked into the compiled surfaces above
+					}
 					// LocalAABB carried out through the chunk's own matrix,
-					// matching what the shadow (shadow.go) and detail
-					// (detail_render.go) passes cull the same brush against.
-					// Culling against a tighter box here would drop a brush
-					// whose displaced face was on screen while its shadow was
-					// still being drawn.
+					// matching what the shadow pass (shadow.go) culls the same
+					// brush against. Culling against a tighter box here would
+					// drop a brush whose shadow was still being drawn.
 					bMin, bMax := brush.WorldAABB(chunk)
 					if !render.AABBInFrustum(frustum, bMin, bMax) {
 						continue
 					}
 					brushesDrawn++
-					for k := range brush.Faces {
-						f := &brush.Faces[k]
+					// A brush a script has moved carries its own transform on
+					// top of the chunk's; the face meshes are still the ones
+					// uploaded at the authored position, which is what makes
+					// moving one free. Identity for every static brush.
+					brushModel := chunkModel
+					if !brush.AtRest() {
+						brushModel = chunkModel.Mul4(brush.Placement())
+					}
+					// DrawFaces, not Faces: a brush with a detail mesh is
+					// drawn from that instead of from its own sides, and the
+					// hull's buffers are not even uploaded (world/brush_detail.go).
+					faces := brush.DrawFaces()
+					for k := range faces {
+						f := &faces[k]
 						if f.NoDraw {
 							continue
 						}
@@ -912,16 +929,7 @@ func Run() {
 						// nothing said which side was outside; a brush face is
 						// wound CCW from outside by construction, so the
 						// rasteriser's own cull is both correct and free.
-						//
-						// Displaced faces are drawn by RenderDetailColor via
-						// the tess program instead of the flat mesh, which
-						// avoids z-fighting between the two.
-						if !f.Detail.HasDisplace() {
-							drawOrQueue(&f.Geometry, chunkModel, f.DoubleSided)
-						}
-						for eg := range f.SubmeshGeometries {
-							drawOrQueue(&f.SubmeshGeometries[eg], chunkModel, f.DoubleSided)
-						}
+						drawOrQueue(&f.Geometry, brushModel, f.DoubleSided)
 					}
 				}
 			}
@@ -970,11 +978,6 @@ func Run() {
 				// blades and rocks are solid and depth-written, so anything
 				// translucent still sorts on top of them.
 				render.RenderScatterVolumes(&level, projView, gfx.Cam.Position, shadowFrame)
-
-				// --- Procedural face detail (GPU rock displacement + scatter) ---
-				// Drawn after opaque geometry; reuses the main fragment shader so it
-				// receives shadows, and was rendered into the shadow maps above so it casts.
-				render.RenderDetailColor(&level, shadowFrame)
 
 				// --- Sprites, cutout only ---
 				// Inside the opaque block on purpose: a cutout sprite's alpha

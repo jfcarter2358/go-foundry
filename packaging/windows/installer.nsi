@@ -95,7 +95,6 @@ Section "Game" SecGame
   RMDir /r "$INSTDIR\fonts"
   RMDir /r "$INSTDIR\sounds"
   RMDir /r "$INSTDIR\particles"
-  RMDir /r "$INSTDIR\detail_presets"
 
   SetOutPath "$INSTDIR"
   File /r "${SRCDIR}\*.*"

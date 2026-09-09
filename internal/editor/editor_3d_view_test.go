@@ -189,13 +189,16 @@ func centreClick() sdl.MouseButtonEvent {
 	return sdl.MouseButtonEvent{Button: sdl.ButtonLeft, X: mx, Y: my}
 }
 
-// Face mode is the only one that reaches through to the world, and it selects
-// the brush face the ray meets.
+// Face mode is the only one of the three units that reaches through to the
+// world, and it selects the brush face the ray meets. Edit mode, because that
+// is where the units mean anything — in object mode the same click picks up the
+// whole brush instead (TestObjectModeSelectsTheWholeBrush).
 func TestFaceModeSelectsTheBrushFace(t *testing.T) {
 	defer saveEditorSelection()()
 	click := centreClick()
 	Editor.level = occluderLevel(t)
 	Editor.SpawnPlacementMode = false
+	Editor.EditContext = editorEditMode
 	Editor.SelMode = editorSelFace
 	editorVisReset()
 

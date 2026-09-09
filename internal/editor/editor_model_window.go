@@ -468,13 +468,17 @@ func modelEditorToolbar() {
 	// keyboard route to it (a second C) is invisible otherwise.
 	if modelGizmoTool == modelToolScale {
 		imgui.SameLine()
-		if modelScaleLocal {
+		// Latched before the button, for the same reason the mode buttons
+		// above are: clicking it flips the frame, and re-testing afterwards
+		// would pop a color that was never pushed.
+		local := modelScaleLocal
+		if local {
 			imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.55, Z: 0.55, W: 1})
 		}
 		if imgui.Button(fmt.Sprintf("%s axes [C]", modelScaleLocalLabel())) {
-			modelSetScaleLocal(!modelScaleLocal)
+			modelSetScaleLocal(!local)
 		}
-		if modelScaleLocal {
+		if local {
 			imgui.PopStyleColor()
 		}
 		if imgui.IsItemHovered() {
@@ -488,13 +492,17 @@ func modelEditorToolbar() {
 	// ---- Group: viewport display ----
 	editorToolbarGroupSep()
 	imgui.SameLine()
-	if modelWireframe {
+	// Latched before the button, for the same reason the mode buttons above
+	// are: clicking it flips the shading, and re-testing afterwards would pop
+	// a color that was never pushed.
+	wire := modelWireframe
+	if wire {
 		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.45, Z: 0.7, W: 1})
 	}
 	if imgui.Button(modelShadingLabel()) {
-		modelSetWireframe(!modelWireframe)
+		modelSetWireframe(!wire)
 	}
-	if modelWireframe {
+	if wire {
 		imgui.PopStyleColor()
 	}
 	if imgui.IsItemHovered() {

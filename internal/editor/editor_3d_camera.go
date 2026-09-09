@@ -272,6 +272,15 @@ func editorSelectionBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 		}
 	}
 
+	// Object mode's own selection, ahead of the active-brush fallback below:
+	// framing has to reach every brush in a multi-selection, not only the one
+	// the Active* fields happen to name.
+	if len(Editor.SelectedBrushes) > 0 {
+		if bmin, bmax, ok := selectedBrushesBounds(); ok {
+			return bmin, bmax, true
+		}
+	}
+
 	if Editor.SpawnSelected && lvl.Spawn != nil {
 		smin, smax := lvl.Spawn.WorldAABB()
 		return smin, smax, true

@@ -1,13 +1,11 @@
 package levelio
 
-// smooth_save_test.go — smoothing and detail settings as *authored* data.
+// smooth_save_test.go — smoothing as *authored* data.
 //
-// The smoothing maths itself is tested in internal/geom; these two are about
-// what a chunk saves and what a DetailSpec implies, so they stay with the
-// types they read.
+// The smoothing maths itself is tested in internal/geom; this is about what a
+// chunk saves, so it stays with the type it reads.
 
 import (
-	"foundry/internal/detail"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -49,37 +47,5 @@ func TestSmoothSavesPerSurface(t *testing.T) {
 	}
 	if rb.Faces[2].SmoothAngle != 80 {
 		t.Errorf("face 2 angle = %v, want 80", rb.Faces[2].SmoothAngle)
-	}
-}
-
-// The displacement-field difference step has to shrink as features get finer,
-// and stay bounded at both ends.
-func TestDispNormalEps(t *testing.T) {
-	flat := &world.DetailSpec{}
-	if got := detail.DispNormalEps(flat); got <= 0 || got > 0.25 {
-		t.Fatalf("flat spec eps = %v, want a bounded positive default", got)
-	}
-
-	coarse := &world.DetailSpec{Waves: [world.DetailMaxWaves]world.DetailWave{{Enabled: true, Frequency: 0.5}}}
-	fine := &world.DetailSpec{Waves: [world.DetailMaxWaves]world.DetailWave{{Enabled: true, Frequency: 5}}}
-	if detail.DispNormalEps(fine) >= detail.DispNormalEps(coarse) {
-		t.Fatalf("finer waves must use a smaller step: fine=%v coarse=%v",
-			detail.DispNormalEps(fine), detail.DispNormalEps(coarse))
-	}
-
-	// Disabled slots must not drive the step.
-	off := &world.DetailSpec{Waves: [world.DetailMaxWaves]world.DetailWave{{Enabled: false, Frequency: 20}}}
-	if detail.DispNormalEps(off) != detail.DispNormalEps(flat) {
-		t.Fatalf("disabled wave affected eps: %v vs %v", detail.DispNormalEps(off), detail.DispNormalEps(flat))
-	}
-
-	// Noise octaves double the frequency each step, so they can be the finest
-	// feature present.
-	noisy := &world.DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 5}
-	if detail.DispNormalEps(noisy) >= detail.DispNormalEps(&world.DetailSpec{Noise: true, NoiseFrequency: 2, NoiseOctaves: 1}) {
-		t.Fatal("more noise octaves must shrink the step")
-	}
-	if got := detail.DispNormalEps(&world.DetailSpec{Noise: true, NoiseFrequency: 500, NoiseOctaves: 6}); got < 0.001 {
-		t.Fatalf("eps = %v, want it clamped at 0.001", got)
 	}
 }

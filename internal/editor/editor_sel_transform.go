@@ -26,6 +26,8 @@ package editor
 import (
 	"math"
 
+	"foundry/internal/world"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -80,7 +82,11 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 	// list of handles by the time they get here.
 	for i, sel := range gizmoVertexSels() {
 		ch, b := vertexSelBrush(sel)
-		if b == nil || sel.vertIdx < 0 || sel.vertIdx >= len(b.Verts) {
+		// Which of the brush's two meshes the index belongs to. A gizmo drag
+		// in object mode carries handles from BOTH, so this is decided per
+		// handle rather than once for the drag — see vertexSel.detail.
+		m := selMesh(b, sel.detail)
+		if m == nil || sel.vertIdx < 0 || sel.vertIdx >= len(m.Verts) {
 			continue
 		}
 		cur, ok := vertexSelPos(sel)
@@ -93,10 +99,10 @@ func writeSelectedVertexWorld(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl3
 		// Exact, not approximate: every drag is applied absolutely from its
 		// mouse-down snapshot, so a still cursor recomputes the identical value
 		// and skips the rebuild, while a real move of any size gets through.
-		if b.Verts[sel.vertIdx] == want {
+		if m.Verts[sel.vertIdx] == want {
 			continue
 		}
-		b.Verts[sel.vertIdx] = want
+		m.Verts[sel.vertIdx] = want
 		out.touchedBrushes[[2]int{sel.chunkIdx, sel.brushIdx}] = struct{}{}
 	}
 	return out
@@ -111,14 +117,15 @@ func setSelectedVertexLocals(fn func(i int, sel vertexSel, cur mgl32.Vec3) mgl32
 	if Editor.level != nil {
 		for i, sel := range gizmoVertexSels() {
 			_, b := vertexSelBrush(sel)
-			if b == nil || sel.vertIdx < 0 || sel.vertIdx >= len(b.Verts) {
+			m := selMesh(b, sel.detail)
+			if m == nil || sel.vertIdx < 0 || sel.vertIdx >= len(m.Verts) {
 				continue
 			}
-			want := fn(i, sel, b.Verts[sel.vertIdx])
-			if b.Verts[sel.vertIdx] == want {
+			want := fn(i, sel, m.Verts[sel.vertIdx])
+			if m.Verts[sel.vertIdx] == want {
 				continue
 			}
-			b.Verts[sel.vertIdx] = want
+			m.Verts[sel.vertIdx] = want
 			out.touchedBrushes[[2]int{sel.chunkIdx, sel.brushIdx}] = struct{}{}
 		}
 	}
@@ -148,6 +155,10 @@ func rebuildAfterVertexWrite(w vertexWriteback) {
 	for ci := range chunks {
 		lvl.Chunks[ci].RecomputeBounds()
 	}
+	// Once for the whole write rather than once per chunk — see
+	// editorChunkGeometryChanged. A vertex dragged past the chunk's old extent
+	// is exactly the case that re-buckets it.
+	world.RebuildSpatialHash(lvl)
 }
 
 // ---------- the transforms themselves ----------
