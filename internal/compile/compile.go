@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-gl/mathgl/mgl32"
 
+	"foundry/internal/bsp"
 	"foundry/internal/world"
 )
 
@@ -52,7 +53,7 @@ type Stats struct {
 	OutsideLeaves  int
 	InteriorLeaves int
 	Portals        int
-	// AvgVisibleLeaves is the mean row weight of the PVS over interior cells.
+	// AvgVisibleLeaves is the mean row weight of the bsp.PVS over interior cells.
 	// The number to watch: close to the interior cell count means the level is
 	// one big open space and visibility is buying nothing.
 	AvgVisibleLeaves float64
@@ -72,7 +73,7 @@ type Leak struct {
 type Result struct {
 	Tree    *BSPTree
 	Portals []Portal
-	Vis     *PVS
+	Vis     *bsp.PVS
 	Stats   Stats
 }
 
@@ -106,7 +107,7 @@ func sourceFaceCount(lvl *world.Level) int {
 	n := 0
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
-		if !ch.IsEnabled() || ch.FrameOwner != "" {
+		if !Bakes(ch) {
 			continue
 		}
 		for bi := range ch.Brushes {

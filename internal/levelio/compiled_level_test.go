@@ -67,17 +67,21 @@ func TestACompiledLevelSurvivesTheRoundTrip(t *testing.T) {
 	if err := SaveCompiledLevel(c, path); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	back, err := LoadCompiledLevel(path)
+	back, err := ReadCompiledLevel(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
-	if len(back.Faces) != len(c.Faces) || len(back.Leaves) != len(c.Leaves) {
-		t.Fatalf("%d/%d faces and %d/%d cells came back", len(back.Faces), len(c.Faces), len(back.Leaves), len(c.Leaves))
+	if len(back.Faces) != len(c.Faces) || len(back.Tree.Leaves) != len(c.Tree.Leaves) {
+		t.Fatalf("%d/%d faces and %d/%d cells came back",
+			len(back.Faces), len(c.Faces), len(back.Tree.Leaves), len(c.Tree.Leaves))
+	}
+	if len(back.Chunks) != len(c.Chunks) {
+		t.Fatalf("%d of %d chunks came back", len(back.Chunks), len(c.Chunks))
 	}
 	// The tree still answers: the middle of the room is open, and the far side
 	// of a wall is not.
-	tr := back.Tree()
+	tr := back.Tree
 	if tr.Leaves[tr.FindLeaf(mgl32.Vec3{0, 2, 0})].Solid {
 		t.Error("the middle of the room came back solid after a round trip")
 	}
@@ -101,18 +105,28 @@ func TestACompiledLevelSurvivesTheRoundTrip(t *testing.T) {
 // a chunk it could not bake is still there.
 func TestOnlyTheChunksTheCompileCouldNotBakeStayAuthored(t *testing.T) {
 	c := compileFixture(t)
+	if len(c.Raw.Chunks) != 0 {
+		t.Errorf("%d chunks came through in the authored half; a compiled level stores them as runtime values",
+			len(c.Raw.Chunks))
+	}
 	got := map[string]bool{}
-	for _, rc := range c.Raw.Chunks {
-		got[rc.ID] = true
+	for i := range c.Chunks {
+		got[c.Chunks[i].ID] = c.Chunks[i].Compiled
 	}
-	if got["static"] {
-		t.Error("a chunk that was compiled is still in the authored half; it would be drawn twice")
+	if _, ok := got["static"]; !ok {
+		t.Error("the compiled chunk was dropped; collision would have nothing to resolve against")
+	} else if !got["static"] {
+		t.Error("the compiled chunk is not marked Compiled; it would be drawn twice")
 	}
-	if !got["ship"] {
+	if _, ok := got["ship"]; !ok {
 		t.Error("a frame-owned chunk was dropped; a vehicle's interior cannot be baked into world space")
+	} else if got["ship"] {
+		t.Error("a frame-owned chunk is marked as compiled; its geometry moves and was never baked")
 	}
-	if !got["later"] {
+	if _, ok := got["later"]; !ok {
 		t.Error("a disabled chunk was dropped; nothing would be left for a script to switch on")
+	} else if got["later"] {
+		t.Error("a disabled chunk is marked as compiled; it was not in the world to bake")
 	}
 	// Everything else the level is made of comes through untouched.
 	if c.Raw.Spawn == nil {
@@ -133,7 +147,7 @@ func TestAStaleCompiledLevelIsRejected(t *testing.T) {
 	if err := SaveCompiledLevel(c, path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadCompiledLevel(path); err == nil {
+	if _, err := ReadCompiledLevel(path); err == nil {
 		t.Error("a compiled level from another version loaded without complaint")
 	}
 }
@@ -143,7 +157,7 @@ func TestSomethingElseEntirelyIsNotACompiledLevel(t *testing.T) {
 	if err := os.WriteFile(path, []byte("chunks:\n  - id: main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadCompiledLevel(path); err == nil {
+	if _, err := ReadCompiledLevel(path); err == nil {
 		t.Error("a YAML level loaded as a compiled one")
 	}
 }

@@ -64,13 +64,36 @@ func SaveLevel(level *world.Level, path string) error {
 	return fileutil.WriteFileAtomic(path, data)
 }
 
-// levelToRaw converts the runtime Level into its serialisable form.
+// LevelToRaw converts the runtime Level into its serialisable form, as a level
+// file stores it: a prefab is a placement, and what it made is left out.
 func LevelToRaw(level *world.Level) (world.RawLevel, error) {
+	return levelToRaw(level, false)
+}
+
+// LevelToRawExpanded is the same, with every prefab RESOLVED: the content a
+// placement made is written out as ordinary level content and the placement
+// itself is dropped.
+//
+// For the level compiler, and only for it. A prefab's link exists so that
+// editing one file updates twenty placements, which is an authoring concern —
+// by the time a level is compiled the link has done its job, and a build output
+// that still had to go and read prefab files would be one that could compile
+// differently from what was compiled.
+func LevelToRawExpanded(level *world.Level) (world.RawLevel, error) {
+	return levelToRaw(level, true)
+}
+
+// levelToRaw converts the runtime Level into its serialisable form.
+//
+// keepPrefabContent inverts how prefabs are written: false stores the
+// placements and skips what they made (a level file), true stores what they
+// made and skips the placements (a compiled level).
+func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, error) {
 	var raw world.RawLevel
 
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
-		if ch.FromEntity != "" || ch.FromPrefab != "" {
+		if ch.FromEntity != "" || (ch.FromPrefab != "" && !keepPrefabContent) {
 			// Content materialised into this level from somewhere else: an
 			// entity definition's own geometry (Chunk.FromEntity), or a prefab
 			// file's (Chunk.FromPrefab). It belongs to that file and is rebuilt
@@ -90,20 +113,23 @@ func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 	}
 
 	// The prefab placements themselves. What they MADE is skipped throughout
-	// this function, on FromPrefab — see the chunk loop above.
-	for i := range level.Prefabs {
-		raw.Prefabs = append(raw.Prefabs, world.PrefabInstanceToRaw(&level.Prefabs[i]))
+	// this function, on FromPrefab — see the chunk loop above. Both halves
+	// swap over under keepPrefabContent.
+	if !keepPrefabContent {
+		for i := range level.Prefabs {
+			raw.Prefabs = append(raw.Prefabs, world.PrefabInstanceToRaw(&level.Prefabs[i]))
+		}
 	}
 
 	for i := range level.Entities {
-		if level.Entities[i].FromPrefab != "" {
+		if level.Entities[i].FromPrefab != "" && !keepPrefabContent {
 			continue
 		}
 		raw.Entities = append(raw.Entities, world.EntityToRaw(&level.Entities[i], entityDefFor(&level.Entities[i])))
 	}
 
 	for i := range level.Volumes {
-		if level.Volumes[i].FromPrefab != "" {
+		if level.Volumes[i].FromPrefab != "" && !keepPrefabContent {
 			continue
 		}
 		raw.Volumes = append(raw.Volumes, world.VolumeToRaw(&level.Volumes[i]))
@@ -137,7 +163,7 @@ func LevelToRaw(level *world.Level) (world.RawLevel, error) {
 
 	raw.Scripts = append([]string(nil), level.Scripts...)
 	raw.UI = append([]string(nil), level.UI...)
-	raw.Lights = lightsToRaw(level.Lights)
+	raw.Lights = lightsToRaw(level.Lights, keepPrefabContent)
 	return raw, nil
 }
 
@@ -222,7 +248,7 @@ func spawnToRaw(s *world.SpawnPoint) *world.RawSpawn {
 }
 
 // lightsToRaw converts the LightSet to its raw YAML form.
-func lightsToRaw(ls world.LightSet) world.RawLights {
+func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
 	rl := world.RawLights{
 		Global: world.RawGlobalLight{
 			Color:      world.RawColor{R: ls.Global.Color.X(), G: ls.Global.Color.Y(), B: ls.Global.Color.Z()},
@@ -253,8 +279,8 @@ func lightsToRaw(ls world.LightSet) world.RawLights {
 		})
 	}
 	for _, pl := range ls.Points {
-		if pl.FromPrefab != "" {
-			continue // a prefab file's light; see the chunk loop in LevelToRaw
+		if pl.FromPrefab != "" && !keepPrefabContent {
+			continue // a prefab file's light; see the chunk loop in levelToRaw
 		}
 		rl.Point = append(rl.Point, world.RawPointLight{
 			ID:            pl.ID,

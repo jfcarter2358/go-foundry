@@ -49,6 +49,12 @@ var AlphaUniform int32
 var SmoothUniform int32
 var AlphaSharpenUniform int32
 
+// BakedLightUniform gates the compiled-level lighting path: when set, the
+// fragment stage uses the light already on the vertices instead of summing the
+// scene's lights and sampling their shadow maps. Set per draw, like
+// SmoothUniform, so a baked surface never leaks its setting onto the next one.
+var BakedLightUniform int32
+
 // Water shader uniform locations. TimeUniform and CamPosUniform are set once
 // per frame; the rest are set per-draw from Geometry.Water.
 var (

@@ -48,7 +48,7 @@ func Validate(lvl *world.Level) error {
 	var problems []string
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
-		if !ch.IsEnabled() || ch.FrameOwner != "" {
+		if !Bakes(ch) {
 			// Neither takes part in the compile — a disabled chunk is not in
 			// the world and a frame-owned one is drawn live — so neither has to
 			// satisfy the compiler's rules.

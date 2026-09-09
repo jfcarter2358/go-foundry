@@ -37,6 +37,7 @@ package compile
 import (
 	"github.com/go-gl/mathgl/mgl32"
 
+	"foundry/internal/bsp"
 	"foundry/internal/world"
 )
 
@@ -111,7 +112,7 @@ func (b *baker) sample(p, n mgl32.Vec3) mgl32.Vec3 {
 			continue
 		}
 		toLight := d.Normalize().Mul(-1)
-		contrib := dl.Color.Mul(bright * geomAbs(n.Dot(toLight)))
+		contrib := dl.Color.Mul(bright * bsp.Abs(n.Dot(toLight)))
 		if dl.CastsShadows() && !b.tree.LineOfSight(origin, origin.Add(toLight.Mul(b.reach))) {
 			contrib = contrib.Mul(1 - dl.ShadowStrength)
 		}
@@ -137,7 +138,7 @@ func (b *baker) sample(p, n mgl32.Vec3) mgl32.Vec3 {
 			out = out.Add(pl.Color.Mul(bright))
 			continue
 		}
-		contrib := pl.Color.Mul(bright * geomAbs(n.Dot(toLight.Mul(1/dist))) * t * t)
+		contrib := pl.Color.Mul(bright * bsp.Abs(n.Dot(toLight.Mul(1/dist))) * t * t)
 		if pl.CastsShadows() && !b.tree.LineOfSight(origin, pl.Position) {
 			contrib = contrib.Mul(1 - pl.ShadowStrength)
 		}
@@ -218,29 +219,29 @@ func gridSubdivide(pts []mgl32.Vec3, step float32) [][]mgl32.Vec3 {
 }
 
 func splitOnAxis(pts []mgl32.Vec3, axis int, step float32) [][]mgl32.Vec3 {
-	lo, hi := boundsOf(pts)
-	if hi[axis]-lo[axis] <= step+onPlaneEps {
+	lo, hi := bsp.Bounds(pts)
+	if hi[axis]-lo[axis] <= step+bsp.OnPlaneEps {
 		return [][]mgl32.Vec3{pts}
 	}
 	// The first grid line strictly inside the polygon's span. It is less than
 	// one step above lo, so the piece below it never needs cutting again and
 	// only the piece above recurses.
 	k := float32(int(lo[axis]/step)) * step
-	for k <= lo[axis]+onPlaneEps {
+	for k <= lo[axis]+bsp.OnPlaneEps {
 		k += step
 	}
-	if k >= hi[axis]-onPlaneEps {
+	if k >= hi[axis]-bsp.OnPlaneEps {
 		return [][]mgl32.Vec3{pts}
 	}
 	var n mgl32.Vec3
 	n[axis] = 1
-	front, back := SplitPolygon(pts, Plane{N: n, D: k})
+	front, back := bsp.SplitPolygon(pts, bsp.Plane{N: n, D: k})
 
 	var out [][]mgl32.Vec3
-	if len(back) >= 3 && PolygonArea(back) >= minFragmentArea {
+	if len(back) >= 3 && bsp.PolygonArea(back) >= bsp.MinFragmentArea {
 		out = append(out, back)
 	}
-	if len(front) >= 3 && PolygonArea(front) >= minFragmentArea {
+	if len(front) >= 3 && bsp.PolygonArea(front) >= bsp.MinFragmentArea {
 		out = append(out, splitOnAxis(front, axis, step)...)
 	}
 	if len(out) == 0 {

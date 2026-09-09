@@ -36,6 +36,8 @@ package compile
 // and every frame of the shipped game spends the result.
 
 import (
+	"foundry/internal/bsp"
+
 	"math/bits"
 	"sort"
 
@@ -50,9 +52,9 @@ import (
 // single undirected record would have to be re-oriented at every step.
 type Portal struct {
 	Points []mgl32.Vec3
-	// Plane faces from A into B, so "in front of this plane" is the direction
+	// bsp.Plane faces from A into B, so "in front of this plane" is the direction
 	// the flow is travelling.
-	Plane Plane
+	Plane bsp.Plane
 	A, B  int
 }
 
@@ -70,7 +72,7 @@ func BuildPortals(t *BSPTree) []Portal {
 		if t.Leaves[i].Solid {
 			continue
 		}
-		polys[i] = regionPolygons(t.Leaves[i].Planes, t.Lo, t.Hi)
+		polys[i] = bsp.RegionPolygons(t.Leaves[i].Planes, t.Lo, t.Hi)
 	}
 
 	var out []Portal
@@ -82,7 +84,7 @@ func BuildPortals(t *BSPTree) []Portal {
 			if t.Leaves[b].Solid {
 				continue
 			}
-			if !boxesOverlap(t.Leaves[a].Lo, t.Leaves[a].Hi, t.Leaves[b].Lo, t.Leaves[b].Hi) {
+			if !bsp.BoxesOverlap(t.Leaves[a].Lo, t.Leaves[a].Hi, t.Leaves[b].Lo, t.Leaves[b].Hi) {
 				continue
 			}
 			for i, pa := range polys[a] {
@@ -95,7 +97,7 @@ func BuildPortals(t *BSPTree) []Portal {
 						continue
 					}
 					shared := intersectCoplanar(pa, pl.N, pb, pl.N.Mul(-1))
-					if len(shared) < 3 || PolygonArea(shared) < minPortalArea {
+					if len(shared) < 3 || bsp.PolygonArea(shared) < minPortalArea {
 						continue
 					}
 					out = append(out,
@@ -136,65 +138,9 @@ func intersectCoplanar(a []mgl32.Vec3, aN mgl32.Vec3, b []mgl32.Vec3, bN mgl32.V
 			continue
 		}
 		n = n.Normalize()
-		out = ClipPolygon(out, Plane{N: n, D: n.Dot(p)})
+		out = bsp.ClipPolygon(out, bsp.Plane{N: n, D: n.Dot(p)})
 	}
 	return out
-}
-
-// PVS is the visibility bit array: one row per leaf, one bit per leaf.
-//
-// Rows are addressed by LEAF index, including solid leaves, whose rows are
-// simply empty. Compacting to empty leaves only would save a little space and
-// cost every lookup a translation table, and the runtime lookup is the thing
-// that has to be cheap.
-type PVS struct {
-	Leaves   int
-	RowBytes int
-	Bits     []byte
-}
-
-// NewPVS is an all-invisible set.
-func NewPVS(leaves int) *PVS {
-	rb := (leaves + 7) / 8
-	return &PVS{Leaves: leaves, RowBytes: rb, Bits: make([]byte, leaves*rb)}
-}
-
-// Set marks to as visible from.
-func (v *PVS) Set(from, to int) {
-	if from < 0 || to < 0 || from >= v.Leaves || to >= v.Leaves {
-		return
-	}
-	v.Bits[from*v.RowBytes+to/8] |= 1 << uint(to%8)
-}
-
-// Visible reports whether anything in leaf to could be seen from leaf from.
-func (v *PVS) Visible(from, to int) bool {
-	if from < 0 || to < 0 || from >= v.Leaves || to >= v.Leaves {
-		return false
-	}
-	return v.Bits[from*v.RowBytes+to/8]&(1<<uint(to%8)) != 0
-}
-
-// Row is the raw bits for one leaf, for a runtime that wants to walk them
-// directly rather than call Visible once per leaf.
-func (v *PVS) Row(leaf int) []byte {
-	if leaf < 0 || leaf >= v.Leaves {
-		return nil
-	}
-	return v.Bits[leaf*v.RowBytes : (leaf+1)*v.RowBytes]
-}
-
-// VisibleCount is how many leaves are visible from one, which is the number
-// worth watching when tuning a level: a PVS where every row is nearly the whole
-// level means the level is not sealed.
-func (v *PVS) VisibleCount(leaf int) int {
-	n := 0
-	for i := 0; i < v.Leaves; i++ {
-		if v.Visible(leaf, i) {
-			n++
-		}
-	}
-	return n
 }
 
 // maxFlowDepth bounds the portal chain the flood will follow, and maxFlowSteps
@@ -222,7 +168,7 @@ const (
 type visState struct {
 	portals []Portal
 	byLeaf  [][]int
-	vis     *PVS
+	vis     *bsp.PVS
 
 	portalBytes int
 	// mightSee is the coarse answer: for each portal, which portals could
@@ -260,8 +206,8 @@ func bitSet(b []byte, i int)      { b[i>>3] |= 1 << uint(i&7) }
 func bitGet(b []byte, i int) bool { return b[i>>3]&(1<<uint(i&7)) != 0 }
 
 // BuildPVS floods visibility through the portals.
-func BuildPVS(t *BSPTree, portals []Portal) *PVS {
-	v := NewPVS(len(t.Leaves))
+func BuildPVS(t *BSPTree, portals []Portal) *bsp.PVS {
+	v := bsp.NewPVS(len(t.Leaves))
 	for i := range t.Leaves {
 		// Every cell can see itself; the flood below only ever adds to that.
 		// A filled-in exterior cell is not one of them: nothing is ever there,
@@ -345,10 +291,10 @@ func (s *visState) buildMightSee() {
 			if i == j {
 				continue
 			}
-			if s.portals[i].Plane.ClassifyPolygon(s.portals[j].Points) == SideBack {
+			if s.portals[i].Plane.ClassifyPolygon(s.portals[j].Points) == bsp.SideBack {
 				continue
 			}
-			if s.portals[j].Plane.ClassifyPolygon(s.portals[i].Points) == SideFront {
+			if s.portals[j].Plane.ClassifyPolygon(s.portals[i].Points) == bsp.SideFront {
 				continue
 			}
 			bitSet(row, j)
@@ -442,17 +388,17 @@ func (s *visState) flow(base, leaf int, might []byte, source, pass []mgl32.Vec3,
 		// not at all. That case is not exotic — a U-bend has both its corners
 		// on one plane, and admitting it makes the two ends of the U visible
 		// to each other through a wall.
-		if side := s.portals[base].Plane.ClassifyPolygon(s.portals[qi].Points); side == SideBack || side == SideOn {
+		if side := s.portals[base].Plane.ClassifyPolygon(s.portals[qi].Points); side == bsp.SideBack || side == bsp.SideOn {
 			continue
 		}
-		target := ClipPolygon(s.portals[qi].Points, s.portals[base].Plane)
+		target := bsp.ClipPolygon(s.portals[qi].Points, s.portals[base].Plane)
 		if len(target) < 3 {
 			continue
 		}
-		if side := s.portals[qi].Plane.ClassifyPolygon(source); side == SideFront || side == SideOn {
+		if side := s.portals[qi].Plane.ClassifyPolygon(source); side == bsp.SideFront || side == bsp.SideOn {
 			continue
 		}
-		narrowed := ClipPolygon(source, s.portals[qi].Plane.Flip())
+		narrowed := bsp.ClipPolygon(source, s.portals[qi].Plane.Flip())
 		if len(narrowed) < 3 {
 			continue
 		}
@@ -537,7 +483,7 @@ func clipToSeparators(source, pass, target []mgl32.Vec3) []mgl32.Vec3 {
 			if !ok {
 				continue
 			}
-			out = ClipPolygon(out, pl)
+			out = bsp.ClipPolygon(out, pl)
 		}
 	}
 	if len(out) < 3 {
@@ -548,14 +494,14 @@ func clipToSeparators(source, pass, target []mgl32.Vec3) []mgl32.Vec3 {
 
 // separatorPlane builds the plane through edge a->b and point p, oriented so
 // that pass is in FRONT of it, and reports whether it separates at all.
-func separatorPlane(a, b, p mgl32.Vec3, source, pass []mgl32.Vec3) (Plane, bool) {
+func separatorPlane(a, b, p mgl32.Vec3, source, pass []mgl32.Vec3) (bsp.Plane, bool) {
 	n := b.Sub(a).Cross(p.Sub(a))
 	l := n.Len()
 	if l < 1e-6 {
-		return Plane{}, false // the edge and the point are collinear
+		return bsp.Plane{}, false // the edge and the point are collinear
 	}
 	n = n.Mul(1 / l)
-	pl := Plane{N: n, D: n.Dot(a)}
+	pl := bsp.Plane{N: n, D: n.Dot(a)}
 
 	// Orient so source is behind. Source cannot straddle — the plane contains
 	// one of its edges and it is convex and planar — but it can lie in the
@@ -563,29 +509,29 @@ func separatorPlane(a, b, p mgl32.Vec3, source, pass []mgl32.Vec3) (Plane, bool)
 	sf, sb := sidesOf(pl, source)
 	switch {
 	case sf > 0 && sb > 0:
-		return Plane{}, false
+		return bsp.Plane{}, false
 	case sf > 0:
 		pl = pl.Flip()
 	case sb == 0:
-		return Plane{}, false
+		return bsp.Plane{}, false
 	}
 
 	// A separator has all of pass strictly on the other side from source.
 	pf, pb := sidesOf(pl, pass)
 	if pb > 0 || pf == 0 {
-		return Plane{}, false
+		return bsp.Plane{}, false
 	}
 	return pl, true
 }
 
 // sidesOf counts how many of pts are in front of and behind a plane; points ON
 // it count for neither.
-func sidesOf(pl Plane, pts []mgl32.Vec3) (front, back int) {
+func sidesOf(pl bsp.Plane, pts []mgl32.Vec3) (front, back int) {
 	for _, p := range pts {
 		switch pl.ClassifyPoint(p) {
-		case SideFront:
+		case bsp.SideFront:
 			front++
-		case SideBack:
+		case bsp.SideBack:
 			back++
 		}
 	}
@@ -597,7 +543,7 @@ func sidesOf(pl Plane, pts []mgl32.Vec3) (front, back int) {
 //
 // The tree is modified — MarkOutside labels its leaves — which is why this
 // takes a pointer and why the returned portals are the interior ones only.
-func ComputeVisibility(t *BSPTree) ([]Portal, *PVS) {
+func ComputeVisibility(t *BSPTree) ([]Portal, *bsp.PVS) {
 	portals := BuildPortals(t)
 	MarkOutside(t, portals)
 	portals = InteriorPortals(t, portals)

@@ -43,6 +43,14 @@ uniform vec3  reflectColor;
 uniform vec3  camPos;
 
 // Global ambient light
+// bakedLight selects a compiled level's static-geometry path: the lighting for
+// this fragment was computed once, offline, and arrives interpolated on
+// fragBakedLight instead of being summed here. Uniform rather than inferred
+// from the attribute, for the reason skin_common.glsl gives about `skinned`: a
+// disabled vertex attribute reads a driver default, not zero, so an unlit
+// surface would read as "baked to black" rather than as "not baked".
+uniform int   bakedLight;
+
 uniform vec3  globalLightColor;
 uniform float globalLightBrightness;
 
@@ -103,6 +111,9 @@ in vec3 fragNormal;
 // varyings — a vec4 per light per cascade would be 48 float varyings against a
 // guaranteed budget of 60.
 in float fragViewDepth;
+// The compiled level's baked lighting, interpolated across the triangle. Junk
+// unless bakedLight is set — see the uniform.
+in vec3 fragBakedLight;
 
 out vec4 outputColor;
 
@@ -357,8 +368,17 @@ void main() {
         }
     }
 
+    vec3 lighting;
+
+    // A compiled level's static geometry had all of this done once, offline,
+    // and interpolates the answer instead. Everything below — the light loops,
+    // the cascade selection, the shadow-map samples — is what that buys.
+    if (bakedLight != 0) {
+        lighting = fragBakedLight;
+    } else {
+
     // Start with global ambient contribution
-    vec3 lighting = globalLightColor * globalLightBrightness;
+    lighting = globalLightColor * globalLightBrightness;
 
     // Directional lights with soft shadows
     for (int i = 0; i < numDirLights; i++) {
@@ -393,6 +413,8 @@ void main() {
             lighting += contrib;
         }
     }
+
+    } // end of the non-baked path
 
     float finalAlpha = texColor.a * alpha;
 

@@ -243,6 +243,9 @@ func Run() {
 	gfx.SmoothUniform = gl.GetUniformLocation(gfx.Program, gl.Str("smoothShading\x00"))
 	gl.Uniform1i(gfx.SmoothUniform, 0) // default: flat facet normals
 
+	gfx.BakedLightUniform = gl.GetUniformLocation(gfx.Program, gl.Str("bakedLight\x00"))
+	gl.Uniform1i(gfx.BakedLightUniform, 0) // default: light the fragment the ordinary way
+
 	gfx.AlphaSharpenUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alphaSharpen\x00"))
 	gl.Uniform1i(gfx.AlphaSharpenUniform, 0) // default: off; the opaque pass turns it on
 

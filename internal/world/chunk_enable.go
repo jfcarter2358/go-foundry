@@ -159,4 +159,7 @@ func ReleaseLevelGeometry(lvl *Level) {
 	// be released explicitly — overwriting the level struct would drop the
 	// handles rather than free them.
 	DeleteScenery(lvl)
+	// A compiled level's surfaces belong to no chunk, so nothing above reaches
+	// them; they are the largest single thing a level owns on the GPU.
+	lvl.Static.Release()
 }

@@ -21,12 +21,20 @@ layout(location = 1) in vec2 vertTexCoord;
 // Per-vertex normal, present only on surfaces built with smoothing on. The
 // attribute array is disabled otherwise, so this reads (0,0,0) and is ignored.
 layout(location = 2) in vec3 vertNormal;
+// Baked lighting, present only on a compiled level's static surfaces.
+// Locations 3 and 4 belong to skinning (skin_common.glsl), so this takes 5.
+// The attribute array is disabled otherwise; bakedLight is what gates reading
+// it, for the same reason `skinned` gates the bone attributes — an unenabled
+// attribute reads a driver default, not zero.
+layout(location = 5) in vec3 vertLight;
 
 out vec2 fragTexCoord;
 out vec3 fragWorldPos;
 out vec3 fragNormal;
 // View-axis distance; the fragment stage uses it to select a shadow cascade.
 out float fragViewDepth;
+// The baked value, passed through and interpolated across the triangle.
+out vec3 fragBakedLight;
 
 // Sum of three travelling sine waves at different headings, so the surface
 // never reads as a single repeating ripple. Driven by world XZ, which keeps
@@ -48,6 +56,7 @@ float waterHeight(vec2 p) {
 
 void main() {
     fragTexCoord = vertTexCoord;
+    fragBakedLight = vertLight;
     // skinPosition is the identity unless this draw call set `skinned`
     // (skin_common.glsl), so every static surface takes the same path it always
     // did.

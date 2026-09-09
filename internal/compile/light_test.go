@@ -11,6 +11,7 @@ import (
 	"math"
 	"testing"
 
+	"foundry/internal/bsp"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -33,10 +34,10 @@ func faceAt(t *testing.T, tr *BSPTree, p mgl32.Vec3, normal mgl32.Vec3) *Face {
 	bestD := float32(1e9)
 	for fi := range tr.Faces {
 		f := &tr.Faces[fi]
-		if f.Plane.N.Dot(normal) < 0.99 || geomAbs(f.Plane.Distance(p)) > 0.01 {
+		if f.Plane.N.Dot(normal) < 0.99 || bsp.Abs(f.Plane.Distance(p)) > 0.01 {
 			continue
 		}
-		c := centroid(f.Points)
+		c := bsp.Centroid(f.Points)
 		if d := c.Sub(p).Len(); d < bestD {
 			best, bestD = f, d
 		}
@@ -55,7 +56,7 @@ func TestEveryVertexGetsALightValue(t *testing.T) {
 			t.Fatalf("face %d has %d points and %d light values", fi, len(f.Points), len(f.Light))
 		}
 		for _, l := range f.Light {
-			if geomAbs(l.X()-0.25) > 1e-5 {
+			if bsp.Abs(l.X()-0.25) > 1e-5 {
 				t.Fatalf("face %d baked %v, want the ambient 0.25 everywhere", fi, l)
 			}
 		}
@@ -176,7 +177,7 @@ func TestFacesAreCutOnTheWorldGrid(t *testing.T) {
 	tr.SubdivideFaces(4)
 
 	for fi := range tr.Faces {
-		lo, hi := boundsOf(tr.Faces[fi].Points)
+		lo, hi := bsp.Bounds(tr.Faces[fi].Points)
 		for a := 0; a < 3; a++ {
 			if hi[a]-lo[a] > 4+0.01 {
 				t.Fatalf("face %d spans %v on axis %d, want no more than the grid step",
@@ -185,8 +186,8 @@ func TestFacesAreCutOnTheWorldGrid(t *testing.T) {
 			// Every cut is on a multiple of the step, so a coordinate that is
 			// not one of the slab's own edges is one.
 			for _, v := range []float32{lo[a], hi[a]} {
-				onGrid := geomAbs(v-float32(math.Round(float64(v)/4))*4) < 0.01
-				own := geomAbs(geomAbs(v)-10) < 0.01 || geomAbs(geomAbs(v)-1) < 0.01
+				onGrid := bsp.Abs(v-float32(math.Round(float64(v)/4))*4) < 0.01
+				own := bsp.Abs(bsp.Abs(v)-10) < 0.01 || bsp.Abs(bsp.Abs(v)-1) < 0.01
 				if !onGrid && !own {
 					t.Fatalf("face %d has an edge at %v on axis %d, which is neither a grid line nor the slab's own", fi, v, a)
 				}
@@ -196,7 +197,7 @@ func TestFacesAreCutOnTheWorldGrid(t *testing.T) {
 	// The cutting is lossless: the pieces still cover the slab.
 	var area float32
 	for fi := range tr.Faces {
-		area += PolygonArea(tr.Faces[fi].Points)
+		area += bsp.PolygonArea(tr.Faces[fi].Points)
 	}
 	if want := totalArea(faces); area < want-0.05 || area > want+0.05 {
 		t.Errorf("the cut pieces cover %v, want the slab's %v", area, want)

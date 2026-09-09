@@ -1,6 +1,6 @@
 package levelio
 
-// compiled_level.go — the artefact a release build loads instead of a level.
+// compiled_level.go — the artefact a shipped game loads instead of a level.
 //
 // An authored level is a list of brushes, and turning it into something
 // drawable means running CSG, a BSP build, a visibility flood and a light bake,
@@ -10,22 +10,42 @@ package levelio
 // camera among them, and the bit array that says what to draw once it has been
 // located.
 //
-// # What stays authored
+// # What is compiled and what is not
 //
-// Not everything is compiled, and the parts that are not are carried through in
-// exactly the form the ordinary loader already understands (Raw). Two kinds of
-// chunk are kept whole rather than baked:
+// SURFACES are compiled. Brushes are not — they are still here, and they are
+// the same brushes; they are just no longer what gets drawn. Collision resolves
+// a body against a brush's own convex hull, a raycast wants its triangles, a
+// script addresses it by name, and none of those has a compiled equivalent
+// worth inventing (world/static.go argues this at length). Every chunk the
+// compiler consumed is stored with Chunk.Compiled set, which is the draw loop's
+// signal to leave it alone.
+//
+// Two kinds of chunk are deliberately NOT consumed, and are built the ordinary
+// way at load — see compile.Bakes, which is the one place that rule is written:
 //
 //   - FRAME-OWNED chunks, whose geometry moves with a vehicle and so cannot be
 //     a static world-space list.
-//   - DISABLED chunks, which are not in the world at compile time but which a
-//     script can switch on later (@chunk.prop.enabled). Baking them in would
-//     make the switch do nothing; leaving them authored means they appear when
-//     asked, drawn the live way.
+//   - DISABLED chunks, which a script can switch on later
+//     (@chunk.prop.enabled). Baking one would make the switch do nothing.
 //
 // The corollary is worth knowing before it surprises someone: a disabled chunk
 // takes no part in sealing the level. If one of them is a wall, the level leaks
 // through the hole it leaves, and the compile says so.
+//
+// # What is stored as what
+//
+// Chunks are stored as RUNTIME values, not as the authored RawChunk form, so
+// that loading a compiled level never goes near the authored brush format. An
+// entity definition's own decks are the exception and are left out: they are
+// stamped from that file at load exactly as a model or a texture is, which is
+// what makes an entity type one thing rather than twenty frozen copies. (They
+// are frame-owned, so the compiler never baked them either.)
+//
+// Prefabs, by contrast, are RESOLVED at compile time. A prefab's link exists so
+// that editing one file updates twenty placements, which is an authoring
+// concern; by the time a level is compiled it has done its job, and a build
+// output that still had to go and read prefab files could compile differently
+// from what was compiled.
 //
 // # Why gob, and why a version stamp
 //
@@ -45,6 +65,7 @@ import (
 
 	"github.com/go-gl/mathgl/mgl32"
 
+	"foundry/internal/bsp"
 	"foundry/internal/compile"
 	"foundry/internal/fileutil"
 	"foundry/internal/world"
@@ -67,79 +88,49 @@ const compiledMagic = "FOUNDRYBSP"
 type CompiledLevel struct {
 	Version int
 
-	// Faces are world-space, with baked per-vertex light. Indices into this
-	// list are what the cells and nodes hold.
-	Faces  []compile.Face
-	Nodes  []compile.BSPNode
-	Leaves []compile.BSPLeaf
-	Root   compile.ChildRef
-	Lo, Hi mgl32.Vec3
+	// Faces are world-space, with baked per-vertex light. The cells of Tree
+	// index into this list.
+	Faces []compile.Face
+	Tree  *bsp.Tree
+	PVS   *bsp.PVS
 
-	PVS CompiledPVS
+	// Chunks are the level's chunks as runtime values. See the file comment on
+	// which are here and why they are here at all.
+	Chunks []world.Chunk
 
-	// Raw is everything the compile did not consume: the level's entities,
-	// volumes, lights, spawn, scripts and UI, plus the chunks that are still
-	// built live. See the file comment on which those are.
+	// Raw is everything else the level is made of: entities, volumes, lights,
+	// the spawn, scripts, UI, sprites, emitters, scenery, sounds, sky and fog.
+	// Its own Chunks and Prefabs are empty — both have been resolved into the
+	// fields around it.
 	Raw world.RawLevel
 
-	// Stats is what the compile reported, kept so that a level can be asked
-	// what it cost without recompiling it.
+	// Stats is what the compile reported, kept so a level can be asked what it
+	// cost without recompiling it.
 	Stats compile.Stats
 }
 
-// CompiledPVS is the visibility bit array, flattened.
-type CompiledPVS struct {
-	Leaves   int
-	RowBytes int
-	Bits     []byte
-}
-
-// Visible reports whether anything in cell to could be seen from cell from.
-func (p *CompiledPVS) Visible(from, to int) bool {
-	if from < 0 || to < 0 || from >= p.Leaves || to >= p.Leaves || p.RowBytes == 0 {
-		return false
-	}
-	return p.Bits[from*p.RowBytes+to/8]&(1<<uint(to%8)) != 0
-}
-
-// Tree rebuilds the BSP the compile produced, for the runtime queries that live
-// on it — locating a camera, tracing a line.
-//
-// A view of the stored slices rather than a copy: the compiled level is loaded
-// once and read from thereafter.
-func (c *CompiledLevel) Tree() *compile.BSPTree {
-	return &compile.BSPTree{
-		Nodes: c.Nodes, Leaves: c.Leaves, Faces: c.Faces,
-		Root: c.Root, Lo: c.Lo, Hi: c.Hi,
-	}
-}
-
 // CompileLevel runs the compiler over a loaded level and returns the artefact.
-//
-// The level is not modified. Its chunks are partitioned here rather than in the
-// compiler: the compiler's rule for what it bakes (enabled, not frame-owned) and
-// this function's rule for what it carries through raw are the same rule read
-// from opposite ends, and they have to agree exactly or geometry is either
-// dropped or drawn twice.
+// The level is not modified.
 func CompileLevel(lvl *world.Level, opt compile.Options) (*CompiledLevel, error) {
 	res, err := compile.Compile(lvl, opt)
 	if err != nil {
 		return nil, err
 	}
-	raw, err := LevelToRaw(lvl)
+	raw, err := LevelToRawExpanded(lvl)
 	if err != nil {
 		return nil, err
 	}
-	raw.Chunks = uncompiledChunks(lvl, raw.Chunks)
+	raw.Chunks = nil
+	raw.Prefabs = nil
 
-	t := res.Tree
 	return &CompiledLevel{
 		Version: CompiledVersion,
-		Faces:   t.Faces, Nodes: t.Nodes, Leaves: t.Leaves,
-		Root: t.Root, Lo: t.Lo, Hi: t.Hi,
-		PVS:   CompiledPVS{Leaves: res.Vis.Leaves, RowBytes: res.Vis.RowBytes, Bits: res.Vis.Bits},
-		Raw:   raw,
-		Stats: res.Stats,
+		Faces:   res.Tree.Faces,
+		Tree:    res.Tree.Tree,
+		PVS:     res.Vis,
+		Chunks:  storableChunks(lvl),
+		Raw:     raw,
+		Stats:   res.Stats,
 	}, nil
 }
 
@@ -158,25 +149,26 @@ func CompileLevelFile(path string, opt compile.Options) (*CompiledLevel, error) 
 	return CompileLevel(&lvl, opt)
 }
 
-// uncompiledChunks keeps the raw chunks whose geometry the compile did not
-// take, matched back to the level by ID.
+// storableChunks is the level's chunks as the compiled file keeps them.
 //
-// By ID rather than by position, because LevelToRaw already drops the chunks a
-// level does not own — an entity's own decks, a prefab's contents — so the two
-// lists are not parallel.
-func uncompiledChunks(lvl *world.Level, raw []world.RawChunk) []world.RawChunk {
-	keep := map[string]bool{}
+// The runtime-only fields are cleared rather than carried: geometry handles
+// belong to the process that made them, and a frame transform is republished
+// every tick by RefreshFrames.
+func storableChunks(lvl *world.Level) []world.Chunk {
+	var out []world.Chunk
 	for ci := range lvl.Chunks {
-		ch := &lvl.Chunks[ci]
-		if !ch.IsEnabled() || ch.FrameOwner != "" {
-			keep[ch.ID] = true
+		src := &lvl.Chunks[ci]
+		if src.FromEntity != "" {
+			continue // stamped from the entity definition at load; see above
 		}
-	}
-	out := raw[:0:0]
-	for _, rc := range raw {
-		if keep[rc.ID] {
-			out = append(out, rc)
-		}
+		ch := *src
+		ch.Compiled = compile.Bakes(src)
+		ch.Unloaded = false
+		ch.Xform, ch.FrameScale = mgl32.Mat4{}, 0
+		// The prefab that put it here has been resolved away, so the marker
+		// would name a placement the compiled level no longer has.
+		ch.FromPrefab = ""
+		out = append(out, ch)
 	}
 	return out
 }
@@ -191,8 +183,8 @@ func SaveCompiledLevel(c *CompiledLevel, path string) error {
 	return fileutil.WriteFileAtomic(path, buf.Bytes())
 }
 
-// LoadCompiledLevel reads one back.
-func LoadCompiledLevel(path string) (*CompiledLevel, error) {
+// ReadCompiledLevel reads one back, without touching the GPU.
+func ReadCompiledLevel(path string) (*CompiledLevel, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

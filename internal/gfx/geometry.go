@@ -48,6 +48,13 @@ type Geometry struct {
 	SkinIdx, SkinWt [][]float32
 	skinIdx, skinWt []float32
 	Ibo, Wbo        uint32
+	// VertexLight is baked per-vertex lighting, set before Load and parallel to
+	// the *source* vertices, which Load de-indexes alongside Vertices. Only a
+	// compiled level's static surfaces have it; on everything else it is nil
+	// and the fragment stage lights the surface the ordinary way.
+	VertexLight [][]float32
+	vertexLight []float32
+	Lbo         uint32
 	// BonePalette is the per-frame pose, one delta per bone. The entity owns the
 	// backing array and updates it in place, so this slice header can be handed
 	// to every submesh once at load and never touched again — which is what lets
@@ -128,6 +135,25 @@ func (g *Geometry) applyNormalUniforms() {
 	BindNormalMap(g.Texture, HasNormalMapUniform, NormalMapUniform)
 }
 
+// GobEncode and GobDecode make a Geometry serialise as NOTHING.
+//
+// A compiled level is stored with gob, and the structures it stores — a chunk,
+// a brush — carry their render geometry as a field. None of it can be written:
+// Vao/Vbo/Nbo are handles that belong to one GL context and one run, the
+// uniform locations belong to one compiled program, and Vertices is a
+// de-indexed copy of a mesh that Load rebuilds from the source polygon in a
+// fraction of the space. Encoding them would produce a file several times
+// larger whose contents are, at best, ignored and, at worst, bound as if they
+// were live handles.
+//
+// Doing it here rather than by defining a parallel "storable" copy of every
+// type that contains one: a parallel type is a second thing to keep in step,
+// and the last engine that had one drifted.
+func (g Geometry) GobEncode() ([]byte, error) { return nil, nil }
+
+// GobDecode leaves the geometry zero — the caller reloads it from its source.
+func (g *Geometry) GobDecode([]byte) error { return nil }
+
 // GeometryUploadsEnabled gates the GPU half of Geometry.Load. It is true in the
 // running engine and always will be; tests turn it off so that editor operations
 // which rebuild geometry as a side effect can be exercised without a window.
@@ -147,6 +173,21 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 			return fmt.Errorf("Geometry.Load: index %d out of bounds (len=%d)", idx, len(vertices))
 		}
 		verts = append(verts, vertices[idx]...)
+	}
+
+	// The baked light is de-indexed the same way, for the same reason.
+	g.vertexLight = nil
+	if len(g.VertexLight) > 0 {
+		g.vertexLight = make([]float32, 0, len(indices)*3)
+		for _, idx := range indices {
+			if idx < len(g.VertexLight) && len(g.VertexLight[idx]) == 3 {
+				g.vertexLight = append(g.vertexLight, g.VertexLight[idx]...)
+			} else {
+				// A short or ragged input would tint the surface rather than
+				// fail; black is the one value that is obviously wrong.
+				g.vertexLight = append(g.vertexLight, 0, 0, 0)
+			}
+		}
 	}
 
 	// The skin attributes are de-indexed in the same order, so record k of the
@@ -254,7 +295,32 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 		g.loadSkinBuffer(&g.Wbo, "boneWt", g.skinWt)
 	}
 
+	// Baked light, likewise in its own buffer in the same VAO.
+	if len(g.vertexLight) > 0 {
+		if loc := gl.GetAttribLocation(Program, gl.Str("vertLight\x00")); loc >= 0 {
+			gl.GenBuffers(1, &g.Lbo)
+			gl.BindBuffer(gl.ARRAY_BUFFER, g.Lbo)
+			gl.BufferData(gl.ARRAY_BUFFER, len(g.vertexLight)*4, gl.Ptr(g.vertexLight), gl.STATIC_DRAW)
+			gl.EnableVertexAttribArray(uint32(loc))
+			gl.VertexAttribPointerWithOffset(uint32(loc), 3, gl.FLOAT, false, 3*4, 0)
+		}
+	}
+
 	return nil
+}
+
+// BakedLightFlag is the uniform value for this surface: 1 when its lighting is
+// already on its vertices, 0 when the fragment stage has to work it out.
+//
+// Read from the BUFFER rather than from VertexLight, because a surface built
+// with baked light in a headless process — a test, the compiler — has the data
+// and no buffer, and telling the shader to read an attribute that was never
+// enabled would light it black.
+func (g *Geometry) BakedLightFlag() int32 {
+	if g.Lbo != 0 {
+		return 1
+	}
+	return 0
 }
 
 // loadSkinBuffer uploads one vec4-per-vertex skinning attribute.
@@ -268,6 +334,13 @@ func (g *Geometry) loadSkinBuffer(buf *uint32, attr string, data []float32) {
 	gl.BufferData(gl.ARRAY_BUFFER, len(data)*4, gl.Ptr(data), gl.STATIC_DRAW)
 	gl.EnableVertexAttribArray(uint32(loc))
 	gl.VertexAttribPointerWithOffset(uint32(loc), 4, gl.FLOAT, false, 4*4, 0)
+}
+
+func (g *Geometry) deleteBakedLightBuffer() {
+	if g.Lbo != 0 {
+		gl.DeleteBuffers(1, &g.Lbo)
+		g.Lbo = 0
+	}
 }
 
 func (g *Geometry) deleteSkinBuffers() {
@@ -299,6 +372,7 @@ func (g *Geometry) Delete() {
 		g.Nbo = 0
 	}
 	g.deleteSkinBuffers()
+	g.deleteBakedLightBuffer()
 }
 
 // Unload releases the GPU handles AND drops the CPU-side vertex data, leaving
@@ -314,6 +388,7 @@ func (g *Geometry) Unload() {
 	g.Vertices = nil
 	g.Normals = nil
 	g.SkinIdx, g.SkinWt = nil, nil
+	g.VertexLight, g.vertexLight = nil, nil
 	g.BonePalette = nil
 }
 
@@ -336,6 +411,7 @@ func (g Geometry) Draw() {
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
+	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
 	g.applyWaterUniforms()
 	g.applyBlendUniforms()
 	g.applyNormalUniforms()
@@ -358,6 +434,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
+	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
 	g.applyWaterUniforms()
 	g.applyBlendUniforms()
 	g.applyNormalUniforms()
@@ -383,6 +460,7 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, 0)
+	gl.Uniform1i(BakedLightUniform, 0)
 	gl.Uniform1i(IsWaterUniform, 0)
 	gl.Uniform1i(HasNormalMapUniform, 0)
 	ApplySkinUniforms(&worldSkinUniforms, Program, nil)

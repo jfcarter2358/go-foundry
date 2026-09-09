@@ -11,6 +11,7 @@ package compile
 import (
 	"testing"
 
+	"foundry/internal/bsp"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -23,7 +24,7 @@ func boxFromTo(id string, lo, hi mgl32.Vec3) world.Brush {
 }
 
 // compiled runs the whole geometry pipeline on a level.
-func compiled(t *testing.T, lvl *world.Level) (*BSPTree, []Portal, *PVS) {
+func compiled(t *testing.T, lvl *world.Level) (*BSPTree, []Portal, *bsp.PVS) {
 	t.Helper()
 	faces, err := CSG(lvl)
 	if err != nil {
@@ -190,7 +191,7 @@ func TestABendBlocksSight(t *testing.T) {
 // assertSymmetric checks the whole matrix. Visibility is a property of a pair
 // of cells, so a row and a column that disagree is a bug in the flood, not a
 // conservative approximation.
-func assertSymmetric(t *testing.T, tr *BSPTree, vis *PVS) {
+func assertSymmetric(t *testing.T, tr *BSPTree, vis *bsp.PVS) {
 	t.Helper()
 	for a := range tr.Leaves {
 		for b := range tr.Leaves {
@@ -231,8 +232,8 @@ func TestTheSeparatorClipIsAProjectedWedge(t *testing.T) {
 	if len(got) < 3 {
 		t.Fatal("the whole target was clipped away")
 	}
-	lo, hi := boundsOf(got)
-	if geomAbs(lo.Z()-3) > 0.01 || geomAbs(hi.Z()-9) > 0.01 {
+	lo, hi := bsp.Bounds(got)
+	if bsp.Abs(lo.Z()-3) > 0.01 || bsp.Abs(hi.Z()-9) > 0.01 {
 		t.Errorf("the wedge covers z %v..%v, want 3..9", lo.Z(), hi.Z())
 	}
 }
@@ -248,7 +249,7 @@ func TestTheSeparatorClipCanRemoveTheTargetEntirely(t *testing.T) {
 	}
 }
 
-// A compile has to be reproducible — a PVS that came out differently twice
+// A compile has to be reproducible — a bsp.PVS that came out differently twice
 // would make every diff of a compiled level unreadable.
 func TestVisibilityIsDeterministic(t *testing.T) {
 	_, pa, va := compiled(t, corridorLevel())

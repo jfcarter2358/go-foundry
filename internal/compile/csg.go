@@ -40,6 +40,7 @@ import (
 
 	"github.com/go-gl/mathgl/mgl32"
 
+	"foundry/internal/bsp"
 	"foundry/internal/world"
 )
 
@@ -50,7 +51,7 @@ import (
 // brush's vertex list.
 type Face struct {
 	Points []mgl32.Vec3
-	Plane  Plane
+	Plane  bsp.Plane
 
 	// Source names where this came from, for diagnostics and for the editor's
 	// "why did my face vanish" question. Not used at runtime.
@@ -86,7 +87,7 @@ type Face struct {
 // solid is one brush as CSG sees it: its planes, its bounds, and the order it
 // appeared in, all in world space.
 type solid struct {
-	planes []Plane
+	planes []bsp.Plane
 	lo, hi mgl32.Vec3
 	// order is the brush's position in the level's own walk. It is what breaks
 	// the tie between two coplanar faces facing each other, so that the choice
@@ -101,7 +102,7 @@ type solid struct {
 // a neighbour's plane and would otherwise all read as buried.
 func (s *solid) containsPoint(p mgl32.Vec3) bool {
 	for _, pl := range s.planes {
-		if pl.Distance(p) > -onPlaneEps {
+		if pl.Distance(p) > -bsp.OnPlaneEps {
 			return false
 		}
 	}
@@ -131,6 +132,21 @@ func CSG(lvl *world.Level) ([]Face, error) {
 	return out, nil
 }
 
+// Bakes reports whether the compiler turns this chunk's surfaces into compiled
+// geometry.
+//
+// The one place the rule is written. Two callers read it from opposite ends —
+// the compiler, deciding what to consume, and the writer of the compiled file,
+// deciding what to mark as already drawn — and if they ever disagreed the
+// geometry would be either dropped or drawn twice.
+//
+// A disabled chunk is not in the world, and a frame-owned one moves with a
+// vehicle and so cannot be baked into a static world-space list. Both are kept
+// and built the ordinary way.
+func Bakes(ch *world.Chunk) bool {
+	return ch.IsEnabled() && ch.FrameOwner == ""
+}
+
 // gatherSolids walks the level once, producing the world-space solids CSG clips
 // against and the world-space faces it clips.
 //
@@ -146,9 +162,7 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 	order := 0
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
-		if !ch.IsEnabled() || ch.FrameOwner != "" {
-			// A disabled chunk is not in the world, and a frame-owned one moves
-			// — see CSG's own note on why the latter cannot be baked.
+		if !Bakes(ch) {
 			continue
 		}
 		model := ch.ModelMatrix()
@@ -160,7 +174,7 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 				s := solid{order: order}
 				for fi := range b.Faces {
 					pts := facePoints(ws, &b.Faces[fi])
-					if pl, ok := PlaneFromPoints(pts); ok {
+					if pl, ok := bsp.PlaneFromPoints(pts); ok {
 						s.planes = append(s.planes, pl)
 					}
 				}
@@ -168,7 +182,7 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 					// Fewer than four planes cannot bound a volume, so a brush
 					// with that many is malformed and clips nothing rather
 					// than clipping everything.
-					s.lo, s.hi = boundsOf(ws)
+					s.lo, s.hi = bsp.Bounds(ws)
 					solids = append(solids, s)
 				}
 			}
@@ -179,7 +193,7 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 					continue // never drawn, so there is nothing to keep
 				}
 				pts := facePoints(ws, f)
-				pl, ok := PlaneFromPoints(pts)
+				pl, ok := bsp.PlaneFromPoints(pts)
 				if !ok {
 					continue
 				}
@@ -236,14 +250,14 @@ func facePoints(ws []mgl32.Vec3, f *world.BrushFace) []mgl32.Vec3 {
 // and every later brush is skipped.
 func clipFaceAgainstSolids(f Face, solids []solid) []Face {
 	frags := [][]mgl32.Vec3{f.Points}
-	lo, hi := boundsOf(f.Points)
+	lo, hi := bsp.Bounds(f.Points)
 
 	for si := range solids {
 		s := &solids[si]
 		if len(frags) == 0 {
 			break
 		}
-		if !boxesOverlap(lo, hi, s.lo, s.hi) {
+		if !bsp.BoxesOverlap(lo, hi, s.lo, s.hi) {
 			continue
 		}
 		planes, clips := clipPlanesFor(&f, s)
@@ -259,7 +273,7 @@ func clipFaceAgainstSolids(f Face, solids []solid) []Face {
 
 	out := make([]Face, 0, len(frags))
 	for _, frag := range frags {
-		if PolygonArea(frag) < minFragmentArea {
+		if bsp.PolygonArea(frag) < bsp.MinFragmentArea {
 			continue
 		}
 		g := f
@@ -296,7 +310,7 @@ func clipFaceAgainstSolids(f Face, solids []solid) []Face {
 //     conflict where the solids actually overlap. Leaving the shared plane out
 //     turns the solid into the infinite prism through its other faces, and the
 //     part of the face inside THAT is exactly the region the winner covers.
-func clipPlanesFor(f *Face, s *solid) (planes []Plane, clips bool) {
+func clipPlanesFor(f *Face, s *solid) (planes []bsp.Plane, clips bool) {
 	if f.sourceOrder == s.order {
 		return nil, false
 	}
@@ -308,7 +322,7 @@ func clipPlanesFor(f *Face, s *solid) (planes []Plane, clips bool) {
 		if f.sourceOrder < s.order {
 			return nil, false // this face wins and is kept whole
 		}
-		out := make([]Plane, 0, len(s.planes)-1)
+		out := make([]bsp.Plane, 0, len(s.planes)-1)
 		out = append(out, s.planes[:i]...)
 		out = append(out, s.planes[i+1:]...)
 		return out, true
@@ -327,14 +341,14 @@ func clipPlanesFor(f *Face, s *solid) (planes []Plane, clips bool) {
 // That is the standard convex-subtraction fold, and it is exact: the union of
 // what it keeps plus what it drops is the original polygon, so nothing is
 // double-counted and nothing goes missing.
-func outsideOf(pts []mgl32.Vec3, planes []Plane) [][]mgl32.Vec3 {
+func outsideOf(pts []mgl32.Vec3, planes []bsp.Plane) [][]mgl32.Vec3 {
 	var kept [][]mgl32.Vec3
 	remaining := pts
 	for _, pl := range planes {
 		if remaining == nil {
 			break
 		}
-		front, back := SplitPolygon(remaining, pl)
+		front, back := bsp.SplitPolygon(remaining, pl)
 		if front != nil {
 			kept = append(kept, front)
 		}
@@ -348,7 +362,7 @@ func outsideOf(pts []mgl32.Vec3, planes []Plane) [][]mgl32.Vec3 {
 // SortFaces puts the output in a stable order: by chunk, then brush, then the
 // source face index, then by the fragment's own first point.
 //
-// Compilation has to be deterministic. The BSP's plane choice, the PVS's leaf
+// Compilation has to be deterministic. The BSP's plane choice, the bsp.PVS's leaf
 // numbering and the baked lighting all follow from the order faces arrive in,
 // so a level that compiled to one thing on Tuesday and another on Wednesday
 // would make every diff of a compiled level unreadable.

@@ -1,4 +1,4 @@
-package compile
+package bsp
 
 // region.go — a convex region as a set of half-spaces, and the polygons that
 // bound it.
@@ -19,7 +19,7 @@ package compile
 
 import "github.com/go-gl/mathgl/mgl32"
 
-// regionPolygons is the polygons bounding a convex region, one per plane that
+// RegionPolygons is the polygons bounding a convex region, one per plane that
 // actually contributes; nil in the slot of a plane that does not.
 //
 // The result is indexed BY PLANE rather than compacted, because the caller that
@@ -29,7 +29,7 @@ import "github.com/go-gl/mathgl/mgl32"
 // worldLo/worldHi size the starting quad. It has to be big enough that the
 // region's own planes, not the quad's edges, are what bound the result; the
 // diagonal of the world box is used, which is generous by construction.
-func regionPolygons(planes []Plane, worldLo, worldHi mgl32.Vec3) [][]mgl32.Vec3 {
+func RegionPolygons(planes []Plane, worldLo, worldHi mgl32.Vec3) [][]mgl32.Vec3 {
 	span := worldHi.Sub(worldLo).Len()
 	if span < 1 {
 		span = 1
@@ -43,14 +43,14 @@ func regionPolygons(planes []Plane, worldLo, worldHi mgl32.Vec3) [][]mgl32.Vec3 
 			}
 			poly = ClipPolygon(poly, other)
 		}
-		if len(poly) >= 3 && PolygonArea(poly) >= minFragmentArea {
+		if len(poly) >= 3 && PolygonArea(poly) >= MinFragmentArea {
 			out[i] = poly
 		}
 	}
 	return out
 }
 
-// regionBounds is the axis-aligned box around a convex region, clamped to the
+// RegionBounds is the axis-aligned box around a convex region, clamped to the
 // world box.
 //
 // Derived from the bounding polygons rather than from the planes directly:
@@ -60,14 +60,14 @@ func regionPolygons(planes []Plane, worldLo, worldHi mgl32.Vec3) [][]mgl32.Vec3 
 // a degenerate split can produce — comes back as the world box rather than as
 // an inverted one, so that nothing downstream reads it as covering everything
 // or as covering nothing at random.
-func regionBounds(planes []Plane, worldLo, worldHi mgl32.Vec3) (lo, hi mgl32.Vec3) {
-	polys := regionPolygons(planes, worldLo, worldHi)
+func RegionBounds(planes []Plane, worldLo, worldHi mgl32.Vec3) (lo, hi mgl32.Vec3) {
+	polys := RegionPolygons(planes, worldLo, worldHi)
 	first := true
 	for _, p := range polys {
 		if p == nil {
 			continue
 		}
-		l, h := boundsOf(p)
+		l, h := Bounds(p)
 		if first {
 			lo, hi, first = l, h, false
 			continue
@@ -116,9 +116,23 @@ func perpendicularTo(n mgl32.Vec3) mgl32.Vec3 {
 func axisOfSmallest(n mgl32.Vec3) int {
 	a := 0
 	for i := 1; i < 3; i++ {
-		if geomAbs(n[i]) < geomAbs(n[a]) {
+		if Abs(n[i]) < Abs(n[a]) {
 			a = i
 		}
 	}
 	return a
+}
+
+func minf(a, b float32) float32 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxf(a, b float32) float32 {
+	if a > b {
+		return a
+	}
+	return b
 }

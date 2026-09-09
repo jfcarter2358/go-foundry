@@ -41,78 +41,27 @@ package compile
 // surfaces to draw when the camera is in it.
 
 import (
+	"foundry/internal/bsp"
+
 	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// ChildRef points at either a node or a leaf. Non-negative values index
-// BSPTree.Nodes; negative values encode a leaf as ^i, so leaf 0 is -1 and there
-// is no ambiguous zero. One int rather than a pair of "index plus kind" fields
-// because the tree is walked in the innermost loop of every runtime query.
-type ChildRef int32
-
-// LeafRef encodes a leaf index as a child reference.
-func LeafRef(i int) ChildRef { return ChildRef(^i) }
-
-// NodeRef encodes a node index as a child reference.
-func NodeRef(i int) ChildRef { return ChildRef(i) }
-
-// IsLeaf reports whether this reference points at a leaf rather than a node.
-func (c ChildRef) IsLeaf() bool { return c < 0 }
-
-// Leaf is the leaf index. Only meaningful when IsLeaf.
-func (c ChildRef) Leaf() int { return int(^c) }
-
-// Node is the node index. Only meaningful when !IsLeaf.
-func (c ChildRef) Node() int { return int(c) }
-
-// BSPNode is one split of space.
-type BSPNode struct {
-	Plane       Plane
-	Front, Back ChildRef
-	// Faces are the compiled faces lying ON this node's plane, as indices into
-	// BSPTree.Faces. See the file comment on why they are here and not in a
-	// child.
-	Faces []int
-	// Lo, Hi bound everything below this node. Handy for a runtime frustum
-	// reject that skips a whole subtree.
-	Lo, Hi mgl32.Vec3
-}
-
-// BSPLeaf is a convex cell.
-type BSPLeaf struct {
-	// Solid is true for a cell inside brush material. Nothing is drawn there
-	// and nothing can see out of it; the PVS skips solid leaves entirely.
-	Solid bool
-	// Outside is true for a cell in the void around the level rather than
-	// inside it — see outside.go, which fills those in and is why visibility is
-	// a tractable question at all. Set after the build, by MarkOutside.
-	Outside bool
-	// Planes bound the cell: a point is inside when it is in FRONT of every one
-	// of them. This is the cell as a convex polytope, and it is what portal
-	// generation clips against.
-	Planes []Plane
-	// Faces are the compiled faces that bound this cell and face into it —
-	// what to draw when the camera is here. Indices into BSPTree.Faces, sorted.
-	Faces  []int
-	Lo, Hi mgl32.Vec3
-}
-
-// BSPTree is the built partition.
+// BSPTree is a built partition together with the faces it partitions.
+//
+// The tree proper lives in internal/bsp, which knows nothing about faces — a
+// shipped game reads it without linking the compiler that made it. This is the
+// compiler's own view: the same tree, plus the face list its cells index into.
+// Embedded rather than a field, so a builder reads t.Leaves and t.FindLeaf the
+// way it always did.
 type BSPTree struct {
-	Nodes  []BSPNode
-	Leaves []BSPLeaf
+	*bsp.Tree
 	// Faces are the compiled faces AFTER the build, which splits any face a
 	// chosen plane crosses. A fragment keeps every attribute of the face it
 	// came from, so this list is interchangeable with CSG's output as far as
 	// the renderer is concerned — there are just more of them.
 	Faces []Face
-	Root  ChildRef
-	// Lo, Hi are the world box the tree partitions, the level's own bounds
-	// grown by a margin so that the outermost cells are closed rather than
-	// running to infinity.
-	Lo, Hi mgl32.Vec3
 }
 
 // Build limits. Depth is a safety net rather than a tuning knob: the recursion
@@ -138,7 +87,7 @@ const (
 // splits faces and the caller's slice would otherwise stop describing what was
 // compiled.
 func BuildBSP(faces []Face) *BSPTree {
-	t := &BSPTree{Faces: append([]Face(nil), faces...)}
+	t := &BSPTree{Tree: &bsp.Tree{}, Faces: append([]Face(nil), faces...)}
 	SortFaces(t.Faces)
 
 	t.Lo, t.Hi = faceSetBounds(t.Faces)
@@ -164,9 +113,9 @@ func faceSetBounds(faces []Face) (lo, hi mgl32.Vec3) {
 	if len(faces) == 0 {
 		return mgl32.Vec3{-1, -1, -1}, mgl32.Vec3{1, 1, 1}
 	}
-	lo, hi = boundsOf(faces[0].Points)
+	lo, hi = bsp.Bounds(faces[0].Points)
 	for _, f := range faces[1:] {
-		l, h := boundsOf(f.Points)
+		l, h := bsp.Bounds(f.Points)
 		for i := 0; i < 3; i++ {
 			if l[i] < lo[i] {
 				lo[i] = l[i]
@@ -181,8 +130,8 @@ func faceSetBounds(faces []Face) (lo, hi mgl32.Vec3) {
 
 // boxPlanes is a box as six planes facing INWARD, matching the convention a
 // leaf's Planes use: inside is in front of all of them.
-func boxPlanes(lo, hi mgl32.Vec3) []Plane {
-	return []Plane{
+func boxPlanes(lo, hi mgl32.Vec3) []bsp.Plane {
+	return []bsp.Plane{
 		{N: mgl32.Vec3{1, 0, 0}, D: lo.X()},
 		{N: mgl32.Vec3{-1, 0, 0}, D: -hi.X()},
 		{N: mgl32.Vec3{0, 1, 0}, D: lo.Y()},
@@ -196,7 +145,7 @@ func boxPlanes(lo, hi mgl32.Vec3) []Plane {
 //
 // solid is what the region IS if it turns out to have no faces left: the side
 // of the last splitter we descended into. See the file comment.
-func (t *BSPTree) build(faceIdx []int, region []Plane, depth int, solid bool) ChildRef {
+func (t *BSPTree) build(faceIdx []int, region []bsp.Plane, depth int, solid bool) bsp.ChildRef {
 	if len(faceIdx) == 0 || depth >= maxBSPDepth {
 		return t.addLeaf(solid, region)
 	}
@@ -210,11 +159,11 @@ func (t *BSPTree) build(faceIdx []int, region []Plane, depth int, solid bool) Ch
 	var onNode, front, back []int
 	for _, fi := range faceIdx {
 		switch pl.ClassifyPolygon(t.Faces[fi].Points) {
-		case SideOn:
+		case bsp.SideOn:
 			onNode = append(onNode, fi)
-		case SideFront:
+		case bsp.SideFront:
 			front = append(front, fi)
-		case SideBack:
+		case bsp.SideBack:
 			back = append(back, fi)
 		default:
 			fIdx, bIdx := t.splitFace(fi, pl)
@@ -228,29 +177,29 @@ func (t *BSPTree) build(faceIdx []int, region []Plane, depth int, solid bool) Ch
 	}
 
 	ni := len(t.Nodes)
-	t.Nodes = append(t.Nodes, BSPNode{Plane: pl, Faces: onNode})
+	t.Nodes = append(t.Nodes, bsp.Node{Plane: pl, Faces: onNode})
 	// The children are built after the node is appended so that a subtree can
 	// grow t.Nodes underneath it; the index is stable, the pointer would not be.
 	f := t.build(front, appendPlane(region, pl), depth+1, false)
 	b := t.build(back, appendPlane(region, pl.Flip()), depth+1, true)
 	t.Nodes[ni].Front, t.Nodes[ni].Back = f, b
-	return NodeRef(ni)
+	return bsp.NodeRef(ni)
 }
 
 // appendPlane copies rather than appending in place. A region slice is handed
 // to two children, and an in-place append would let the front child's plane
 // overwrite the back child's in the shared backing array.
-func appendPlane(region []Plane, pl Plane) []Plane {
-	out := make([]Plane, len(region), len(region)+1)
+func appendPlane(region []bsp.Plane, pl bsp.Plane) []bsp.Plane {
+	out := make([]bsp.Plane, len(region), len(region)+1)
 	copy(out, region)
 	return append(out, pl)
 }
 
-func (t *BSPTree) addLeaf(solid bool, region []Plane) ChildRef {
-	l := BSPLeaf{Solid: solid, Planes: region}
-	l.Lo, l.Hi = regionBounds(region, t.Lo, t.Hi)
+func (t *BSPTree) addLeaf(solid bool, region []bsp.Plane) bsp.ChildRef {
+	l := bsp.Leaf{Solid: solid, Planes: region}
+	l.Lo, l.Hi = bsp.RegionBounds(region, t.Lo, t.Hi)
 	t.Leaves = append(t.Leaves, l)
-	return LeafRef(len(t.Leaves) - 1)
+	return bsp.LeafRef(len(t.Leaves) - 1)
 }
 
 // splitFace cuts face fi with a plane, appends the halves and returns their
@@ -259,17 +208,17 @@ func (t *BSPTree) addLeaf(solid bool, region []Plane) ChildRef {
 // The fragments inherit everything about the original but its points — the
 // texture, the UVs, the source names — so a fragment is still fully drawable
 // and still says which authored face it came from.
-func (t *BSPTree) splitFace(fi int, pl Plane) (front, back int) {
-	f, b := SplitPolygon(t.Faces[fi].Points, pl)
+func (t *BSPTree) splitFace(fi int, pl bsp.Plane) (front, back int) {
+	f, b := bsp.SplitPolygon(t.Faces[fi].Points, pl)
 	front, back = -1, -1
-	if len(f) >= 3 && PolygonArea(f) >= minFragmentArea {
+	if len(f) >= 3 && bsp.PolygonArea(f) >= bsp.MinFragmentArea {
 		g := t.Faces[fi]
 		g.Points = f
 		g.Light = nil // no longer parallel to Points; the bake refills it
 		t.Faces = append(t.Faces, g)
 		front = len(t.Faces) - 1
 	}
-	if len(b) >= 3 && PolygonArea(b) >= minFragmentArea {
+	if len(b) >= 3 && bsp.PolygonArea(b) >= bsp.MinFragmentArea {
 		g := t.Faces[fi]
 		g.Points = b
 		g.Light = nil
@@ -290,12 +239,12 @@ func (t *BSPTree) splitFace(fi int, pl Plane) (front, back int) {
 // Axial planes are given a small bonus. In a level blocked out of boxes almost
 // every plane is axial, and preferring them keeps the cells boxy, which makes
 // the portals between them rectangles rather than slivers.
-func (t *BSPTree) chooseSplitter(faceIdx []int) (Plane, bool) {
+func (t *BSPTree) chooseSplitter(faceIdx []int) (bsp.Plane, bool) {
 	var (
-		best      Plane
+		best      bsp.Plane
 		bestScore = int(^uint(0) >> 1)
 		found     bool
-		tried     []Plane
+		tried     []bsp.Plane
 	)
 	for _, fi := range faceIdx {
 		if len(tried) >= maxSplitterCandidates {
@@ -310,11 +259,11 @@ func (t *BSPTree) chooseSplitter(faceIdx []int) (Plane, bool) {
 		front, back, splits := 0, 0, 0
 		for _, oi := range faceIdx {
 			switch pl.ClassifyPolygon(t.Faces[oi].Points) {
-			case SideFront:
+			case bsp.SideFront:
 				front++
-			case SideBack:
+			case bsp.SideBack:
 				back++
-			case SideSpanning:
+			case bsp.SideSpanning:
 				splits++
 			}
 		}
@@ -353,14 +302,14 @@ const (
 
 func isAxial(n mgl32.Vec3) bool {
 	for i := 0; i < 3; i++ {
-		if geomAbs(geomAbs(n[i])-1) < 1e-4 {
+		if bsp.Abs(bsp.Abs(n[i])-1) < 1e-4 {
 			return true
 		}
 	}
 	return false
 }
 
-func planeSeen(seen []Plane, pl Plane) bool {
+func planeSeen(seen []bsp.Plane, pl bsp.Plane) bool {
 	for _, s := range seen {
 		if s.SameAs(pl) {
 			return true
@@ -396,7 +345,7 @@ func (t *BSPTree) attachFacesToLeaves() {
 
 // markFace walks a polygon down a subtree, recording the face in every empty
 // leaf it reaches.
-func (t *BSPTree) markFace(c ChildRef, fi int, pts []mgl32.Vec3) {
+func (t *BSPTree) markFace(c bsp.ChildRef, fi int, pts []mgl32.Vec3) {
 	if len(pts) < 3 {
 		return
 	}
@@ -409,18 +358,18 @@ func (t *BSPTree) markFace(c ChildRef, fi int, pts []mgl32.Vec3) {
 	}
 	n := &t.Nodes[c.Node()]
 	switch n.Plane.ClassifyPolygon(pts) {
-	case SideFront:
+	case bsp.SideFront:
 		t.markFace(n.Front, fi, pts)
-	case SideBack:
+	case bsp.SideBack:
 		t.markFace(n.Back, fi, pts)
-	case SideOn:
+	case bsp.SideOn:
 		// Coplanar with a node deeper in the tree. It bounds cells on both
 		// sides of it, and the empty-leaf filter above drops whichever of those
 		// turns out to be material.
 		t.markFace(n.Front, fi, pts)
 		t.markFace(n.Back, fi, pts)
 	default:
-		f, b := SplitPolygon(pts, n.Plane)
+		f, b := bsp.SplitPolygon(pts, n.Plane)
 		t.markFace(n.Front, fi, f)
 		t.markFace(n.Back, fi, b)
 	}
@@ -437,7 +386,7 @@ func dedupInts(s []int) []int {
 }
 
 // computeNodeBounds fills each node's box from its children's, bottom-up.
-func (t *BSPTree) computeNodeBounds(c ChildRef) (lo, hi mgl32.Vec3) {
+func (t *BSPTree) computeNodeBounds(c bsp.ChildRef) (lo, hi mgl32.Vec3) {
 	if c.IsLeaf() {
 		l := &t.Leaves[c.Leaf()]
 		return l.Lo, l.Hi
@@ -450,68 +399,6 @@ func (t *BSPTree) computeNodeBounds(c ChildRef) (lo, hi mgl32.Vec3) {
 		n.Hi[i] = maxf(fhi[i], bhi[i])
 	}
 	return n.Lo, n.Hi
-}
-
-// FindLeaf is which cell a point is in: one plane comparison per level of the
-// tree, and no geometry touched at all.
-func (t *BSPTree) FindLeaf(p mgl32.Vec3) int {
-	c := t.Root
-	for !c.IsLeaf() {
-		n := &t.Nodes[c.Node()]
-		if n.Plane.Distance(p) >= 0 {
-			c = n.Front
-		} else {
-			c = n.Back
-		}
-	}
-	return c.Leaf()
-}
-
-// LineOfSight reports whether the segment from a to b passes through nothing
-// solid.
-//
-// The test is against the TREE, not against the faces: a segment is blocked
-// exactly when it enters a solid cell, which is one plane comparison per level
-// of the tree and no polygon touched at all. Intersecting the faces themselves
-// would be the same answer computed the expensive way, and would have to
-// special-case a segment that grazes a shared edge — which the cell test cannot
-// get wrong, because a cell is either solid or it is not.
-func (t *BSPTree) LineOfSight(a, b mgl32.Vec3) bool {
-	return !t.blocked(t.Root, a, b)
-}
-
-func (t *BSPTree) blocked(c ChildRef, p1, p2 mgl32.Vec3) bool {
-	if c.IsLeaf() {
-		return t.Leaves[c.Leaf()].Solid
-	}
-	n := &t.Nodes[c.Node()]
-	d1, d2 := n.Plane.Distance(p1), n.Plane.Distance(p2)
-	switch {
-	case d1 >= 0 && d2 >= 0:
-		return t.blocked(n.Front, p1, p2)
-	case d1 < 0 && d2 < 0:
-		return t.blocked(n.Back, p1, p2)
-	}
-	// The segment crosses this plane: split it there and walk the near half
-	// first, so a blocked segment stops at the first thing it hits rather than
-	// descending the whole tree.
-	mid := p1.Add(p2.Sub(p1).Mul(d1 / (d1 - d2)))
-	if d1 >= 0 {
-		return t.blocked(n.Front, p1, mid) || t.blocked(n.Back, mid, p2)
-	}
-	return t.blocked(n.Back, p1, mid) || t.blocked(n.Front, mid, p2)
-}
-
-// EmptyLeafCount is how many cells are open space — the number of rows the PVS
-// will have anything to say about.
-func (t *BSPTree) EmptyLeafCount() int {
-	n := 0
-	for i := range t.Leaves {
-		if !t.Leaves[i].Solid {
-			n++
-		}
-	}
-	return n
 }
 
 func minf(a, b float32) float32 {

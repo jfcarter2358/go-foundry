@@ -11,6 +11,7 @@ package compile
 import (
 	"testing"
 
+	"foundry/internal/bsp"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -60,7 +61,7 @@ func TestTheRoomIsOneCell(t *testing.T) {
 
 	want := [2]mgl32.Vec3{{-4, 0, -4}, {4, 4, 4}}
 	for i := 0; i < 3; i++ {
-		if geomAbs(l.Lo[i]-want[0][i]) > 0.01 || geomAbs(l.Hi[i]-want[1][i]) > 0.01 {
+		if bsp.Abs(l.Lo[i]-want[0][i]) > 0.01 || bsp.Abs(l.Hi[i]-want[1][i]) > 0.01 {
 			t.Fatalf("cell bounds %v..%v, want the room's %v..%v", l.Lo, l.Hi, want[0], want[1])
 		}
 	}
@@ -72,7 +73,7 @@ func TestTheRoomIsOneCell(t *testing.T) {
 	// the tree walk FindLeaf did.
 	for _, p := range []mgl32.Vec3{{-3.9, 0.1, -3.9}, {3.9, 3.9, 3.9}, {0, 2, 0}} {
 		for _, pl := range l.Planes {
-			if pl.Distance(p) < -onPlaneEps {
+			if pl.Distance(p) < -bsp.OnPlaneEps {
 				t.Errorf("%v is outside the cell's half-spaces but FindLeaf put it in", p)
 				break
 			}
@@ -120,7 +121,7 @@ func TestSplittingAFaceKeepsAllOfIt(t *testing.T) {
 				continue
 			}
 			seen[fi] = true
-			after += PolygonArea(tr.Faces[fi].Points)
+			after += bsp.PolygonArea(tr.Faces[fi].Points)
 		}
 	}
 	if after < before-0.05 {
@@ -133,7 +134,7 @@ func TestSplittingAFaceKeepsAllOfIt(t *testing.T) {
 	}
 }
 
-// A compile has to be reproducible: the BSP's plane choice feeds the PVS's leaf
+// A compile has to be reproducible: the BSP's plane choice feeds the bsp.PVS's leaf
 // numbering, which feeds the baked light, so a tree that came out differently
 // twice would make every diff of a compiled level unreadable.
 func TestTheBuildIsDeterministic(t *testing.T) {

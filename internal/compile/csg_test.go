@@ -10,6 +10,7 @@ package compile
 import (
 	"testing"
 
+	"foundry/internal/bsp"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -46,7 +47,7 @@ func facesOn(faces []Face, n mgl32.Vec3) []Face {
 func totalArea(faces []Face) float32 {
 	var a float32
 	for _, f := range faces {
-		a += PolygonArea(f.Points)
+		a += bsp.PolygonArea(f.Points)
 	}
 	return a
 }
@@ -83,7 +84,7 @@ func TestTwoFlushBoxesKeepOneOfTheSharedPair(t *testing.T) {
 	// and a naive test counts it.
 	shared := 0
 	for _, f := range faces {
-		if geomAbs(geomAbs(f.Plane.N.X())-1) < 0.01 && geomAbs(f.Plane.D/f.Plane.N.X()-1) < 0.01 {
+		if bsp.Abs(bsp.Abs(f.Plane.N.X())-1) < 0.01 && bsp.Abs(f.Plane.D/f.Plane.N.X()-1) < 0.01 {
 			shared++
 		}
 	}
@@ -194,7 +195,7 @@ func TestAHollowRoomKeepsItsInsideSurfaces(t *testing.T) {
 	// The floor's top at y=0 is what the player stands on.
 	found := false
 	for _, f := range facesOn(faces, mgl32.Vec3{0, 1, 0}) {
-		if geomAbs(f.Plane.D) < 0.01 {
+		if bsp.Abs(f.Plane.D) < 0.01 {
 			found = true
 		}
 	}
@@ -204,7 +205,7 @@ func TestAHollowRoomKeepsItsInsideSurfaces(t *testing.T) {
 	// And the ceiling's underside at y=4.
 	found = false
 	for _, f := range facesOn(faces, mgl32.Vec3{0, -1, 0}) {
-		if geomAbs(f.Plane.D+4) < 0.01 {
+		if bsp.Abs(f.Plane.D+4) < 0.01 {
 			found = true
 		}
 	}
@@ -252,7 +253,7 @@ func TestNoDrawFacesAreDroppedButStillClip(t *testing.T) {
 	// The neighbour still lost its own face to b's surface, so b clipped.
 	shared := 0
 	for _, f := range faces {
-		if geomAbs(f.Plane.D-1) < 0.01 && geomAbs(geomAbs(f.Plane.N.X())-1) < 0.01 {
+		if bsp.Abs(f.Plane.D-1) < 0.01 && bsp.Abs(bsp.Abs(f.Plane.N.X())-1) < 0.01 {
 			shared++
 		}
 	}
@@ -305,10 +306,10 @@ func TestFacesComeOutInWorldSpace(t *testing.T) {
 	if len(faces) != 6 {
 		t.Fatalf("got %d faces", len(faces))
 	}
-	lo, hi := boundsOf(faces[0].Points)
+	lo, hi := bsp.Bounds(faces[0].Points)
 	all := [2]mgl32.Vec3{lo, hi}
 	for _, f := range faces[1:] {
-		a, b := boundsOf(f.Points)
+		a, b := bsp.Bounds(f.Points)
 		for i := 0; i < 3; i++ {
 			if a[i] < all[0][i] {
 				all[0][i] = a[i]
@@ -320,13 +321,13 @@ func TestFacesComeOutInWorldSpace(t *testing.T) {
 	}
 	wantLo := mgl32.Vec3{99, 4, -31}
 	for i := 0; i < 3; i++ {
-		if geomAbs(all[0][i]-wantLo[i]) > 0.01 {
+		if bsp.Abs(all[0][i]-wantLo[i]) > 0.01 {
 			t.Fatalf("compiled bounds %v, want the box carried to the chunk's origin (%v)", all[0], wantLo)
 		}
 	}
 }
 
-// Compilation has to be deterministic: the BSP's plane choice, the PVS's leaf
+// Compilation has to be deterministic: the BSP's plane choice, the bsp.PVS's leaf
 // numbering and the baked lighting all follow from the order faces arrive in.
 func TestCSGIsDeterministic(t *testing.T) {
 	build := func() []Face {

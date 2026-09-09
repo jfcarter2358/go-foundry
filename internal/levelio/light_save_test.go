@@ -20,7 +20,7 @@ func TestSaveLoadPreservesAnglesAtVerticalPitch(t *testing.T) {
 	src := world.DirectionalLight{Yaw: 123, Pitch: -90, Color: mgl32.Vec3{1, 1, 1}, Brightness: 1}
 	src.SyncDirection()
 
-	raw := world.RawLevel{Lights: lightsToRaw(world.LightSet{Directional: []world.DirectionalLight{src}})}
+	raw := world.RawLevel{Lights: lightsToRaw(world.LightSet{Directional: []world.DirectionalLight{src}}, false)}
 	lvl := buildLevelLights(t, raw)
 	dl := lvl.Lights.Directional[0]
 	if dl.Yaw != 123 || dl.Pitch != -90 {

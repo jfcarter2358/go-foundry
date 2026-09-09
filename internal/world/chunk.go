@@ -111,6 +111,16 @@ type Chunk struct {
 	// authored placement within the frame even as the frame itself moves.
 	Xform mgl32.Mat4
 
+	// Compiled is runtime-only (never serialized, never cloned): this chunk's
+	// surfaces are in the level's StaticGeometry, having been through CSG, and
+	// must not be drawn from here as well.
+	//
+	// The chunk is still fully present for everything else — collision resolves
+	// against its brushes, a raycast hits their triangles, a script addresses
+	// them by name. See static.go on why a compiled level keeps its brushes at
+	// all rather than inventing compiled equivalents of those three.
+	Compiled bool
+
 	// FrameScale is runtime-only alongside Xform (never serialized, never
 	// cloned): the scale of the entity whose frame this chunk rides in,
 	// republished every tick by RefreshFrames. 0 — what every unframed chunk

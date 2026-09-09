@@ -1,7 +1,7 @@
-package compile
+package bsp
 
-// plane.go — planes and polygon clipping, the primitives every stage of the
-// compiler is built from.
+// plane.go — planes and polygon clipping, the primitives everything here is
+// built from.
 //
 // CSG clips a face against a brush's planes. The BSP splits a set of faces by
 // one of their planes. Portal generation clips a leaf's boundary against its
@@ -11,7 +11,7 @@ package compile
 //
 // # On the epsilon
 //
-// Every classification here is against onPlaneEps rather than against zero.
+// Every classification here is against OnPlaneEps rather than against zero.
 // That is not defensive rounding; it is what makes the algorithms terminate.
 // A vertex that lies exactly on a splitting plane will, in exact arithmetic,
 // classify as neither in front nor behind, and both halves of a split get a
@@ -25,15 +25,11 @@ package compile
 // meant to be coplanar are coplanar to well within a thousandth; nothing an
 // author can express falls in the gap.
 
-import (
-	"math"
+import "github.com/go-gl/mathgl/mgl32"
 
-	"github.com/go-gl/mathgl/mgl32"
-)
-
-// onPlaneEps is how close to a plane a point counts as being ON it, in world
+// OnPlaneEps is how close to a plane a point counts as being ON it, in world
 // units. See the file comment on why this exists at all.
-const onPlaneEps = float32(0.001)
+const OnPlaneEps = float32(0.001)
 
 // Plane is an oriented plane: the set of points p where N·p = D. N is unit
 // length, and "in front" is the side N points toward.
@@ -69,13 +65,13 @@ func PlaneFromPoints(pts []mgl32.Vec3) (Plane, bool) {
 		return Plane{}, false
 	}
 	n = n.Mul(1 / l)
-	return Plane{N: n, D: n.Dot(centroid(pts))}, true
+	return Plane{N: n, D: n.Dot(Centroid(pts))}, true
 }
 
 // centroid is the average of a polygon's corners. Used as the plane's own
 // reference point rather than one corner, so a corner that is slightly off the
 // plane does not drag the whole plane with it.
-func centroid(pts []mgl32.Vec3) mgl32.Vec3 {
+func Centroid(pts []mgl32.Vec3) mgl32.Vec3 {
 	var sum mgl32.Vec3
 	for _, p := range pts {
 		sum = sum.Add(p)
@@ -92,14 +88,14 @@ func (pl Plane) Flip() Plane { return Plane{N: pl.N.Mul(-1), D: -pl.D} }
 // SameAs reports whether two planes are the same surface facing the same way,
 // within the tolerances a level is authored to.
 func (pl Plane) SameAs(o Plane) bool {
-	return pl.N.Dot(o.N) > 0.9999 && geomAbs(pl.D-o.D) < onPlaneEps
+	return pl.N.Dot(o.N) > 0.9999 && Abs(pl.D-o.D) < OnPlaneEps
 }
 
 // Side is where something sits relative to a plane.
 type Side int
 
 const (
-	// SideOn is within onPlaneEps of the plane — for a polygon, coplanar with
+	// SideOn is within OnPlaneEps of the plane — for a polygon, coplanar with
 	// it.
 	SideOn Side = iota
 	SideFront
@@ -113,9 +109,9 @@ const (
 func (pl Plane) ClassifyPoint(p mgl32.Vec3) Side {
 	d := pl.Distance(p)
 	switch {
-	case d > onPlaneEps:
+	case d > OnPlaneEps:
 		return SideFront
-	case d < -onPlaneEps:
+	case d < -OnPlaneEps:
 		return SideBack
 	default:
 		return SideOn
@@ -172,9 +168,9 @@ func SplitPolygon(pts []mgl32.Vec3, pl Plane) (front, back []mgl32.Vec3) {
 	for i, p := range pts {
 		dists[i] = pl.Distance(p)
 		switch {
-		case dists[i] > onPlaneEps:
+		case dists[i] > OnPlaneEps:
 			sides[i], hasFront = SideFront, true
-		case dists[i] < -onPlaneEps:
+		case dists[i] < -OnPlaneEps:
 			sides[i], hasBack = SideBack, true
 		default:
 			sides[i] = SideOn
@@ -241,7 +237,7 @@ func PolygonArea(pts []mgl32.Vec3) float32 {
 	if len(pts) < 3 {
 		return 0
 	}
-	c := centroid(pts)
+	c := Centroid(pts)
 	var sum mgl32.Vec3
 	for i := range pts {
 		a := pts[i].Sub(c)
@@ -251,21 +247,21 @@ func PolygonArea(pts []mgl32.Vec3) float32 {
 	return sum.Len() * 0.5
 }
 
-// minFragmentArea is the smallest area a clipped fragment is worth keeping, in
+// MinFragmentArea is the smallest area a clipped fragment is worth keeping, in
 // square world units. Below it the fragment is a sliver produced by two nearly
 // coincident planes, contributes nothing visible, and costs a draw call and a
 // BSP leaf like any other face.
-const minFragmentArea = float32(1e-5)
+const MinFragmentArea = float32(1e-5)
 
-func geomAbs(x float32) float32 {
+func Abs(x float32) float32 {
 	if x < 0 {
 		return -x
 	}
 	return x
 }
 
-// boundsOf is the axis-aligned box around a set of points.
-func boundsOf(pts []mgl32.Vec3) (lo, hi mgl32.Vec3) {
+// Bounds is the axis-aligned box around a set of points.
+func Bounds(pts []mgl32.Vec3) (lo, hi mgl32.Vec3) {
 	if len(pts) == 0 {
 		return mgl32.Vec3{}, mgl32.Vec3{}
 	}
@@ -283,12 +279,12 @@ func boundsOf(pts []mgl32.Vec3) (lo, hi mgl32.Vec3) {
 	return lo, hi
 }
 
-// boxesOverlap reports whether two AABBs share any volume, with a tolerance so
+// BoxesOverlap reports whether two AABBs share any volume, with a tolerance so
 // two brushes placed exactly flush against each other count as touching. CSG
 // needs that: the faces buried by a neighbour are precisely the ones on the
 // surface they share.
-func boxesOverlap(aLo, aHi, bLo, bHi mgl32.Vec3) bool {
-	const eps = onPlaneEps
+func BoxesOverlap(aLo, aHi, bLo, bHi mgl32.Vec3) bool {
+	const eps = OnPlaneEps
 	for i := 0; i < 3; i++ {
 		if aHi[i] < bLo[i]-eps || aLo[i] > bHi[i]+eps {
 			return false
@@ -296,7 +292,3 @@ func boxesOverlap(aLo, aHi, bLo, bHi mgl32.Vec3) bool {
 	}
 	return true
 }
-
-// float64Near is used by the tests and by the PVS builder's own progress
-// reporting; kept here beside the other numeric helpers.
-func float64Near(a, b, eps float64) bool { return math.Abs(a-b) <= eps }

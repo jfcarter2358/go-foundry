@@ -98,24 +98,3 @@ func InteriorPortals(t *BSPTree, portals []Portal) []Portal {
 	}
 	return out
 }
-
-// InteriorLeafCount is how many cells are open space the player can actually
-// occupy — the ones visibility has something to say about.
-func (t *BSPTree) InteriorLeafCount() int {
-	n := 0
-	for i := range t.Leaves {
-		if !t.Leaves[i].Solid && !t.Leaves[i].Outside {
-			n++
-		}
-	}
-	return n
-}
-
-// LeaksAt reports whether a point the level cares about — a spawn, an entity —
-// has ended up in the void, which is what a leak looks like from the inside: a
-// gap in the shell let the flood in, and everything it reached stopped being
-// part of the level.
-func (t *BSPTree) LeaksAt(p mgl32.Vec3) bool {
-	l := &t.Leaves[t.FindLeaf(p)]
-	return l.Outside && !l.Solid
-}
