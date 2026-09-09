@@ -18,52 +18,85 @@ picker, under the blank entry.
 ## What a definition holds
 
 Beyond the models, bounds, collision flags, tags, attributes and script, a type
-may carry **chunk attachments** — world geometry, named by a file under
-`chunks/`, placed in the entity's own space:
+may carry **brushes** — its own solid geometry, in its own coordinates, written
+in the same format a level's brushes are:
 
 ```yaml
 id: shuttle
-chunks:
-  - name: hull
-    file: shuttle_hull
-    offset: {x: 0, y: 0.5, z: 0}
+brushes:
+  - id: deck
+    verts: [...]
+    faces: [...]
+  - id: door
+    dynamic: true      # a script may move this one
+    verts: [...]
+    faces: [...]
 vehicle:
   mode: air
-  interiors: [hull]
   seats:
     - {name: pilot, driver: true, position: {x: 0, y: 0.2, z: 0}}
 ```
 
-Placing one of these materialises a chunk called `<entity id>.hull`, bound to
-that entity's frame, so the geometry is carried around by it — solid, drawn, and
-walkable while it moves. The level file stores the placement and never the
+Nobody types that by hand: the entity editor's brush tools write it, and they
+are the level editor's own tools — stamps, extrude, inset, subdivide, object and
+edit mode, the gizmos, the face panel. See `internal/world/entity_brush.go`.
+
+Placing one of these materialises a chunk called `<entity id>.geometry`, bound
+to that entity's frame, so the geometry is carried around by it — solid, drawn,
+and walkable while it moves. The level file stores the placement and never the
 geometry: the definition is authoritative, and a fix to the hull reaches every
-ship. See `internal/world/entity_chunk.go`.
+ship.
+
+Three things follow from the brushes being the *entity's* rather than a chunk
+file's:
+
+- **A brush is addressed per placement.** The materialised IDs are
+  `<entity id>.<brush id>`, so `@shuttle_2.door` names exactly one solid however
+  many shuttles a level has placed.
+- **A script writes it in the entity's own space.** `position`, `rotation` and
+  `velocity` on a brush an entity carries are that entity's coordinates, not the
+  world's — a door closing means "two metres to port", which stays true while
+  the ship turns, and the ship's own motion carries the door on top of it.
+- **Walking in is walking in.** A body that gets inside an entity's brushes is
+  handed into its frame by containment, with no doorway volume authored
+  anywhere, and is carried when the entity moves. From outside the hull is
+  solid, which is what makes the only way in the way you built.
 
 ## What ships
 
 `dropship.yaml` is an assault shuttle with a hold you walk into and a powered
-blast door across the hatch: two model attachments, a chunk attachment for the
-inside, a script, and params the level binds.
+blast door across the hatch: two model attachments, six brushes for the inside,
+a script, and params the level binds.
 
-The way *in* to a moving thing is the part with a rule that is not obvious. The
-doorway is a **volume** riding the ship, ticked as a frame doorway (see
-[Vehicles and frames](../../docs/guide/12-vehicles-and-frames.md)), and standing
-in it is being aboard. It has to be deeper than one step of whatever walks
-through it, because that is the whole of what decides which side you are on.
+It is worth reading as the worked example of all three rules above. The hold is
+five static brushes and one marked `dynamic` — the blast door — authored *shut*,
+because authored geometry is always a brush's rest state and nothing on disk
+records where a script left it. `scripts/dropship.flang` slides it clear on
+spawn and shuts it before the drop, writing `position` in the ship's own
+coordinates, which is what keeps the door where it was put while the ship is two
+hundred metres into a fall.
 
-> **TODO(brush migration, Phase 10):** every shipped level and chunk was deleted
-> in the sector→brush cutover, so the worked example this section used to point
-> at — `resources/levels/dropship_demo.yaml` and `chunks/dropship_hold.yaml` —
-> does not currently exist. The dropship *type* above is intact; what is missing
-> is a level placing it.
+There is no portal to line up and no doorway volume to place: park the ship and
+walk in through the aft opening.
+
+> **TODO(brush migration, Phase 10):** every shipped level was deleted in the
+> sector→brush cutover, so there is currently no level placing the dropship. The
+> type and its script are current.
 
 ## The editor
 
 The **Entity** button on the level editor's toolbar opens the entity editor: a
 window with a 3D view of the type being built, a list of what it is made of
-(models, chunks, seats) on the left, and the type's properties on the right.
+(models, brushes, seats) on the left, and the type's properties on the right.
 Saving there re-stamps every instance of that type in the level open beside it.
+
+The brush half of it is the 3D view's, not a second implementation: **Tab**
+swaps object and edit mode, **1/2/3** pick points, edges or faces, **G/R/C** are
+move, rotate and scale, **E/I/B** extrude, inset and subdivide, and the stamp
+buttons in the outline arm a ghost that follows the cursor until Escape.
+**Import** copies brushes in from a chunk under `chunks/` or from the level open
+in the main window — a copy, not a link: the type owns its geometry from then
+on.
 
 Two ways to get there from a level: **Edit Type** beside a placed entity's type,
 and **Make Type** beside a blank one — which seeds a new definition from
