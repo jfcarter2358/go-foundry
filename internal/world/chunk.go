@@ -372,6 +372,65 @@ func (ch *Chunk) WorldToLocal(p mgl32.Vec3) mgl32.Vec3 {
 	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
 }
 
+// ---------- the chunk's own placement, stopping at the frame ----------
+//
+// LocalToWorld and its three companions above go all the way out to the world,
+// through ModelMatrix. These four stop one step short, at the space the chunk
+// is PLACED in — the world for an ordinary chunk, and the owning entity's own
+// coordinates for one a frame carries.
+//
+// For every chunk that is not frame-owned the two matrices are the same thing,
+// so these are exactly LocalToWorld and friends there and nothing has to choose
+// between them. Where they diverge is where it matters: a brush that an entity
+// carries has a position and a velocity that mean something in that entity's
+// space and nothing much in the world's, since the entity is where they are
+// authored, drawn and collided relative to. See script/script_props_geom.go,
+// and collision.go's chunkLocal, which makes the same distinction for the same
+// reason.
+
+// LocalToPlacement carries a point out of this chunk's local space into the
+// space the chunk is placed in.
+func (ch *Chunk) LocalToPlacement(p mgl32.Vec3) mgl32.Vec3 {
+	m := ch.LocalPlacementMatrix()
+	if m == mgl32.Ident4() {
+		return p
+	}
+	r := m.Mul4x1(p.Vec4(1))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+}
+
+// PlacementToLocal is LocalToPlacement's inverse.
+func (ch *Chunk) PlacementToLocal(p mgl32.Vec3) mgl32.Vec3 {
+	m := ch.LocalPlacementMatrix()
+	if m == mgl32.Ident4() {
+		return p
+	}
+	r := m.Inv().Mul4x1(p.Vec4(1))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+}
+
+// LocalToPlacementDirection is LocalToPlacement for a direction rather than a
+// point — the W=0 multiply, which drops the translation a direction has no
+// business being offset by.
+func (ch *Chunk) LocalToPlacementDirection(d mgl32.Vec3) mgl32.Vec3 {
+	m := ch.LocalPlacementMatrix()
+	if m == mgl32.Ident4() {
+		return d
+	}
+	r := m.Mul4x1(d.Vec4(0))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+}
+
+// PlacementToLocalDirection is LocalToPlacementDirection's inverse.
+func (ch *Chunk) PlacementToLocalDirection(d mgl32.Vec3) mgl32.Vec3 {
+	m := ch.LocalPlacementMatrix()
+	if m == mgl32.Ident4() {
+		return d
+	}
+	r := m.Inv().Mul4x1(d.Vec4(0))
+	return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+}
+
 // LocalToWorldDirection carries a direction — not a point — out of this
 // chunk's local space. WorldToLocalDirection's inverse; see its own doc
 // comment for why a direction needs its own conversion rather than

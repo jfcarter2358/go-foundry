@@ -47,11 +47,24 @@ func init() {
 // error the author can see rather than a move that silently works in the editor
 // and does nothing in the shipped game. See world/brush_dynamic.go.
 func brushProps() map[string]propAccess {
-	// A brush's verts are chunk-local, but a script thinks in world space —
-	// the space @player.prop.position and every volume's centre are in — so
-	// position reads and writes there and the chunk's own placement is
-	// divided out here. For the ordinary chunk sitting at the origin the two
-	// are the same numbers.
+	// A brush's verts are chunk-local. What a script reads and writes is that
+	// carried out into the space the chunk is PLACED in — which for a level's
+	// own geometry is the world, the space @player.prop.position and every
+	// volume's centre are in, and for a brush an ENTITY carries is that
+	// entity's own.
+	//
+	// The entity case is the one that had to be chosen deliberately, and local
+	// is the only reading that works. A door on a ship is authored, drawn and
+	// collided relative to the ship; a script closing it means "slide two
+	// metres to port", not "slide two metres along world −X", and the two stop
+	// agreeing the moment the ship turns. Local also composes the way an author
+	// expects — the ship's own motion carries the door along, and the velocity
+	// written here is on top of it — which is exactly what makes it possible to
+	// write a lift inside a moving hull at all.
+	//
+	// For every chunk that is not frame-owned the two spaces are the same
+	// matrix, so nothing about a level's own brushes changed. See
+	// Chunk.LocalToPlacement.
 	getOwner := func(fn func(*world.Chunk, *world.Brush) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
 		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 			ch, b := c.brushOwnerFor(r)
@@ -123,14 +136,14 @@ func brushProps() map[string]propAccess {
 		},
 		"position": {
 			Get: getOwner(func(ch *world.Chunk, b *world.Brush) flang.Value {
-				return vecValue(ch.LocalToWorld(b.Position()))
+				return vecValue(ch.LocalToPlacement(b.Position()))
 			}),
 			Set: setDynamic("position", func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error {
 				p, ok := toVec3(v)
 				if !ok {
 					return propErr("position", "vec", v)
 				}
-				want := ch.WorldToLocal(p)
+				want := ch.PlacementToLocal(p)
 				if want == b.Position() {
 					// A script animating one door writes this every frame; one
 					// holding it still should not pay for a rehash.
@@ -141,7 +154,7 @@ func brushProps() map[string]propAccess {
 				return nil
 			}),
 			Dirty: true,
-			Doc:   "the brush's centre, in world space; writing it moves the brush and its collision together",
+			Doc:   "the brush's centre, in the space its chunk sits in — world space for a level's own geometry, the entity's own for a brush an entity carries; writing it moves the brush and its collision together",
 		},
 		"rotation": {
 			Get: getOwner(func(_ *world.Chunk, b *world.Brush) flang.Value {
@@ -164,7 +177,7 @@ func brushProps() map[string]propAccess {
 		},
 		"velocity": {
 			Get: getOwner(func(ch *world.Chunk, b *world.Brush) flang.Value {
-				return vecValue(ch.LocalToWorldDirection(b.Velocity))
+				return vecValue(ch.LocalToPlacementDirection(b.Velocity))
 			}),
 			// No re-bucketing here, unlike `position`: writing a rate moves
 			// nothing this instant. The move it produces happens in
@@ -175,11 +188,11 @@ func brushProps() map[string]propAccess {
 				if !ok {
 					return propErr("velocity", "vec", v)
 				}
-				b.Velocity = ch.WorldToLocalDirection(vel)
+				b.Velocity = ch.PlacementToLocalDirection(vel)
 				return nil
 			}),
 			Dirty: true,
-			Doc:   "units per second added to this brush's position during play; the engine keeps it moving",
+			Doc:   "units per second added to this brush's position during play, in the same space `position` is in; the engine keeps it moving",
 		},
 		"angular_velocity": {
 			// Read and written raw, with no chunk conversion — unlike

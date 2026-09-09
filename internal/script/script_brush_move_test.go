@@ -180,3 +180,96 @@ func vecNear(a, b mgl32.Vec3, tol float32) bool {
 	d := a.Sub(b)
 	return mgl32.Abs(d.X()) <= tol && mgl32.Abs(d.Y()) <= tol && mgl32.Abs(d.Z()) <= tol
 }
+
+// ---------- a brush an entity carries ----------
+//
+// The space question, which a level's own brushes never had to answer because
+// their chunk sits at the origin. A brush inside an entity is authored, drawn
+// and collided relative to that entity, so `position` and `velocity` are in the
+// entity's own coordinates — not the world's. A script closing a door on a ship
+// means "slide two metres to port", and the two readings stop agreeing the
+// moment the ship turns.
+
+// shipWithDoorLevel is a dynamic brush inside a chunk that a moving,
+// TURNED entity carries — so the entity's transform is not the identity and the
+// two candidate spaces give visibly different numbers.
+func shipWithDoorLevel(t *testing.T) *world.Level {
+	t.Helper()
+	lvl := dynamicBrushLevel(t)
+	ch := &lvl.Chunks[0]
+	ch.FrameOwner = "ship"
+	ch.FromEntity = "ship"
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID:       "ship",
+		Position: mgl32.Vec3{100, 0, -40},
+		// A quarter turn about Y: world +X is the ship's −Z, so a write in one
+		// space is unmistakably wrong if read in the other.
+		Rotation: mgl32.Vec3{0, math.Pi / 2, 0},
+		Scale:    mgl32.Vec3{1, 1, 1},
+	})
+	if err := world.RebuildIndexes(lvl); err != nil {
+		t.Fatalf("RebuildIndexes: %v", err)
+	}
+	return lvl
+}
+
+func TestABrushAnEntityCarriesIsAddressedInTheEntitysSpace(t *testing.T) {
+	lvl := shipWithDoorLevel(t)
+	b := &lvl.Chunks[0].Brushes[0]
+	rest := b.Position()
+
+	// Reading it back gives the LOCAL centre — the entity's hundred-metre
+	// offset and quarter turn are not in the number.
+	got := runScript(t, lvl, "", "def main() -> null\n    return @room.prop.position\nend")
+	if !flang.Equal(got, flang.VecVal{float64(rest.X()), float64(rest.Y()), float64(rest.Z())}) {
+		t.Errorf("a brush aboard a ship reads back %v, want its local centre %v", got, rest)
+	}
+
+	// And writing one lands where it was written, in the same space.
+	runScript(t, lvl, "", script("    @room.prop.position = <2.0, 1.0, 3.0>"))
+	if pos := b.Position(); !vecNear(pos, mgl32.Vec3{2, 1, 3}, 1e-4) {
+		t.Fatalf("wrote <2,1,3> and the brush went to %v — that is world space", pos)
+	}
+}
+
+// TestABrushVelocityIsLocalToTheEntityItRidesIn is the case the feature exists
+// for: the rate composes with the carrier's motion rather than fighting it.
+func TestABrushVelocityIsLocalToTheEntityItRidesIn(t *testing.T) {
+	lvl := shipWithDoorLevel(t)
+	b := &lvl.Chunks[0].Brushes[0]
+	start := b.Position()
+
+	runScript(t, lvl, "", script("    @room.prop.velocity = <0.0, -1.0, 0.0>"))
+	if !vecNear(b.Velocity, mgl32.Vec3{0, -1, 0}, 1e-4) {
+		t.Fatalf("the stored velocity is %v, want the written vec unrotated", b.Velocity)
+	}
+
+	// One second of it slides the brush a metre down the ship's OWN −Y.
+	world.AdvanceBrushes(lvl, 1)
+	if pos := b.Position(); !vecNear(pos, start.Sub(mgl32.Vec3{0, 1, 0}), 1e-3) {
+		t.Errorf("after a second the brush is at %v, want %v", pos, start.Sub(mgl32.Vec3{0, 1, 0}))
+	}
+
+	// And it reads back as it was written, rather than as whatever the ship's
+	// rotation would make of it in world terms.
+	got := runScript(t, lvl, "", "def main() -> null\n    return @room.prop.velocity\nend")
+	if !flang.Equal(got, flang.VecVal{0, -1, 0}) {
+		t.Errorf("velocity reads back %v, want <0,-1,0>", got)
+	}
+}
+
+// TestALevelsOwnBrushStillReadsInWorldSpace: the two spaces are one matrix for
+// a chunk that is not frame-owned, so nothing about existing content changed.
+func TestALevelsOwnBrushStillReadsInWorldSpace(t *testing.T) {
+	lvl := dynamicBrushLevel(t)
+	lvl.Chunks[0].Origin = mgl32.Vec3{10, 0, 0}
+	world.RebuildSpatialHash(lvl)
+	b := &lvl.Chunks[0].Brushes[0]
+
+	runScript(t, lvl, "", script("    @room.prop.position = <20.0, 3.0, -5.0>"))
+	// The chunk sits ten metres out, so the local centre is ten less than the
+	// world position that was written.
+	if pos := b.Position(); !vecNear(pos, mgl32.Vec3{10, 3, -5}, 1e-4) {
+		t.Errorf("local centre is %v, want <10,3,-5> — the chunk's origin was not divided out", pos)
+	}
+}
