@@ -148,7 +148,7 @@ func entityEditorToolbar() {
 	imgui.SameLine()
 	imgui.Checkbox("Models##entshowm", &entityShowModels)
 	imgui.SameLine()
-	imgui.Checkbox("Brushes##entshowc", &entityShowChunks)
+	imgui.Checkbox("Brushes##entshowb", &entityShowBrushes)
 	imgui.SameLine()
 	imgui.Checkbox("Seats##entshows", &entityShowSeats)
 	imgui.SameLine()

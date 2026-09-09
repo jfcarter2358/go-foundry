@@ -161,6 +161,12 @@ type brushWorkspace struct {
 	// the entity editor has only the brush stamp, which this already knows
 	// about.
 	placementArmedFn func() bool
+	// clearLevelObjectSelectionsFn drops the selections that belong to a LEVEL's
+	// objects — the spawn marker, entities, volumes, sprites, props, emitters,
+	// sounds, prefabs, chunks and lights. A workspace over a type has none of
+	// those, and calling the level editor's would deselect whatever the main
+	// window was showing.
+	clearLevelObjectSelectionsFn func()
 	// disarmOthersFn puts away every OTHER click-to-place tool in this window,
 	// so two are never armed at once and "which one answers the click" is never
 	// a question about the order of a chain of ifs.
@@ -272,6 +278,15 @@ func (w *brushWorkspace) placementArmed() bool {
 		Editor.VolumePlacementMode || Editor.SpritePlacementMode ||
 		Editor.EmitterPlacementMode || Editor.SoundPlacementMode ||
 		Editor.PrefabPlacementMode || Editor.BrushActive
+}
+
+// clearLevelObjectSelections drops this window's non-geometry selections.
+func (w *brushWorkspace) clearLevelObjectSelections() {
+	if w.clearLevelObjectSelectionsFn != nil {
+		w.clearLevelObjectSelectionsFn()
+		return
+	}
+	editorClearLevelObjectSelections()
 }
 
 // disarmOtherPlacements puts away every other click-to-place tool in this

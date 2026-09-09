@@ -124,6 +124,11 @@ var entityWS = brushWorkspace{
 	// is nothing else to report as armed and nothing else to put away.
 	placementArmedFn: func() bool { return false },
 	disarmOthersFn:   func() {},
+	// A type has no spawn marker, entities, volumes, sprites, props, emitters,
+	// sounds, prefabs or lights — so there is nothing to clear, and clearing
+	// the level editor's would deselect whatever the main window was showing
+	// every time a brush is picked here.
+	clearLevelObjectSelectionsFn: func() {},
 	panelEdgeFn: func() int32 {
 		w, _, ok := entityViewport()
 		if !ok {

@@ -22,6 +22,23 @@ package editor
 // second properties block nobody asked for, and a gizmo attached to something
 // that is no longer what is selected.
 func editorClearObjectSelections() {
+	// The level's own objects, which only the level editor has any of. Behind
+	// the workspace because these are Editor fields outright: called from the
+	// entity editor they would drop whatever the MAIN window had selected,
+	// which reads as the level editor deselecting itself every time a brush is
+	// picked in another window. See editor_workspace.go.
+	ws().clearLevelObjectSelections()
+
+	// The geometry selections belong to whichever workspace is asking, so these
+	// are unconditional.
+	clearVertexSelection()
+	clearFaceSelection()
+	clearBrushSelection()
+}
+
+// editorClearLevelObjectSelections is the level editor's half of the above, and
+// what a workspace with no level objects overrides away.
+func editorClearLevelObjectSelections() {
 	editorClearSpawnSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
@@ -32,9 +49,6 @@ func editorClearObjectSelections() {
 	editorClearPrefabSelection()
 	editorClearChunkSelection()
 	editorClearLightSelection()
-	clearVertexSelection()
-	clearFaceSelection()
-	clearBrushSelection()
 }
 
 // editorSelectBrush makes one brush the selection, from the Explorer's row.

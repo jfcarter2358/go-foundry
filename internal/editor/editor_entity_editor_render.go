@@ -83,17 +83,20 @@ func entityPreviewSync() {
 	}
 }
 
-// entityPreviewApplyTransforms moves the preview to match the document without
-// rebuilding it.
+// entityPreviewApplyTransforms moves the model attachments to match the
+// document without rebuilding them.
 //
-// Everything a gizmo drag writes — an attachment's offset, rotation and scale,
-// a chunk's placement — is a transform the draw reads per frame, not something
-// baked into a buffer. Copying the four fields across is all it takes, and it
-// is the difference between a live drag and one that re-reads every chunk file
-// off disk on every motion event.
+// What a gizmo drag writes to an attachment — its offset, rotation and scale —
+// is a transform the draw reads per frame, not something baked into a buffer,
+// so copying the three fields across is all it takes and it is the difference
+// between a live drag and one that re-uploads a mesh per motion event.
+//
+// Only the models: the type's BRUSHES are the live geometry this window edits
+// rather than a copy of it (editor_entity_editor_brushes.go), so a drag has
+// already moved the thing on screen by the time this runs.
 //
 // A structural change is still entityPreviewInvalidate's job: this cannot add
-// an attachment, swap a mesh or notice that a chunk file has changed.
+// an attachment or swap a mesh.
 func entityPreviewApplyTransforms() {
 	if entityDef == nil || entityPreviewDirty {
 		// Dirty already: the rebuild coming this frame supersedes anything
@@ -236,7 +239,7 @@ func entityDrawPreview(view, proj mgl32.Mat4, camPos mgl32.Vec3) {
 		defer gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
 	}
 
-	if entityShowChunks {
+	if entityShowBrushes {
 		if ch := entityGeomChunk(); ch != nil {
 			m := ch.ModelMatrix()
 			for _, g := range world.ChunkDrawGeometries(ch) {

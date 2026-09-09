@@ -119,7 +119,7 @@ var (
 	entityShowGrid    = true
 	entityShowBounds  = true
 	entityShowModels  = true
-	entityShowChunks  = true
+	entityShowBrushes = true
 	entityShowSeats   = true
 	entityPlayAnims   = true
 	entityBgColor     = [3]float32{0.13, 0.14, 0.16}

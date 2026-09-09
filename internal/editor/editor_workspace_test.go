@@ -149,3 +149,24 @@ func TestTheEntityEditorsWorkspaceIsItsOwn(t *testing.T) {
 		t.Errorf("the stamp did not reach the type: %d brushes", len(scratch.Chunks[0].Brushes))
 	}
 }
+
+// TestPickingInOneWindowDoesNotDeselectTheOther is the leak that made
+// clearLevelObjectSelectionsFn necessary. Selecting a brush clears every OTHER
+// kind of selection, and those live on Editor outright — so from the entity
+// editor it dropped whatever the main window was showing, once per click.
+func TestPickingInOneWindowDoesNotDeselectTheOther(t *testing.T) {
+	_, _, otherWS := twoWorkspaces(t)
+	otherWS.clearLevelObjectSelectionsFn = func() {}
+
+	prev := Editor.SpawnSelected
+	t.Cleanup(func() { Editor.SpawnSelected = prev })
+	Editor.SpawnSelected = true
+
+	restore := otherWS.use()
+	setBrushSelection([]brushSel{{chunkIdx: 0, brushIdx: 0}})
+	restore()
+
+	if !Editor.SpawnSelected {
+		t.Error("picking a brush in the second workspace deselected the level editor's spawn marker")
+	}
+}
