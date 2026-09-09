@@ -35,15 +35,23 @@ writes one out.
 | `Z` | wireframe |
 | `V` | orbit / fly camera |
 | `F` | frame the model |
+| `I` | inset — a border round the selected faces (outside pose mode) |
 | `Delete` | delete the selected faces or bones |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo |
 | `Tab` | hand focus back to the main window |
 
 Right-click for the same operations as a menu.
 
-In the **Face** section: **Extrude**, **Subdivide** (midpoint split — the surface
-does not move), **Delete**, and a per-face **Smooth** flag. With one face
-selected the panel reports its normal and side count.
+In the **Face** section: **Extrude**, **Inset**, **Subdivide** (midpoint split —
+the surface does not move), **Delete**, and a per-face **Smooth** flag. With one
+face selected the panel reports its normal and side count.
+
+**Inset** (`I`) puts a border round each selected face, in that face's own plane,
+mitred so it is the same width all the way round however long and thin the face
+is — and it leaves the *middle* selected, because what you almost always want
+next is to extrude it. Inset then extrude inward is a recess; inset then extrude
+the ring outward is a raised frame. The face's own outline does not move, so
+nothing sharing its corners is dragged along.
 
 In the **Mesh** section: **Smooth Subdivide** is Catmull-Clark over the whole
 mesh — the surface gets rounder each time, and it renumbers everything so your
@@ -51,6 +59,11 @@ selection is dropped. There is also a whole-mesh smooth toggle with a crease
 angle.
 
 ## UVs
+
+A model wears **one** texture, chosen in the **Texture** section — or `(none)`,
+which is what a new document starts as: an untextured mesh is painted with its
+own normals, in the editor and in the level alike. See
+[Textures](04-textures.md#no-texture).
 
 **Texture UV** section, with faces selected. The offset, scale and rotation
 controls are a transform re-applied to a captured base, not a compounding edit,

@@ -97,7 +97,7 @@ func modelSetTexture(tex string) {
 	_ = gfx.EnsureTextureLoaded(tex)
 	ModelPushUndo()
 	modelDoc.SetTexture(tex)
-	modelSetStatus("Model texture: %s", modelDoc.TextureName())
+	modelSetStatus("Model texture: %s", modelTextureLabel())
 }
 
 func modelSetSelectedFaceSmooth(smooth bool) {
@@ -130,7 +130,16 @@ func modelTexture() string {
 	if modelDoc == nil {
 		return ""
 	}
-	return modelDoc.TextureName()
+	return modelDoc.Texture
+}
+
+// modelTextureLabel is the same name for a status line, where the empty string
+// would read as the message having been cut off.
+func modelTextureLabel() string {
+	if modelDoc == nil || modelDoc.Texture == "" {
+		return "(none)"
+	}
+	return modelDoc.Texture
 }
 
 func modelSubdivideSelectedFaces() {
@@ -143,6 +152,36 @@ func modelSubdivideSelectedFaces() {
 	modelUVInvalidate() // the faces are renumbered and their UVs regenerated
 	modelSetStatus("Subdivided %d faces", len(faces))
 }
+
+// modelInsetSelectedFaces puts a border round each selected face and leaves
+// what is inside it selected, ready to be extruded into a recess.
+//
+// A fixed step rather than an interactive drag, unlike extrude. Extrude has to
+// be interactive because its depth has no natural size — a step could be a
+// centimetre or a metre depending on the model — whereas a border is read
+// against the face it is cut into, and a press that visibly does the right
+// thing is worth more than a gesture that has to be aimed.
+func modelInsetSelectedFaces() {
+	faces := modelSelectedFaces()
+	if len(faces) == 0 {
+		return
+	}
+	ModelPushUndo()
+	inner, _ := modelDoc.InsetFaces(faces, modelInsetStep)
+	if len(inner) == 0 {
+		modelUndoStack.pop()
+		modelSetStatus("Nothing to inset: %.3f is wider than the selected face(s)", modelInsetStep)
+		return
+	}
+	modelSelection.Faces = inner
+	modelUVInvalidate() // the ring is new geometry with UVs of its own
+	modelSetStatus("Inset %d face(s) by %.3f", len(inner), modelInsetStep)
+}
+
+// modelInsetStep is how wide a border one press of I leaves. Small: an inset is
+// a frame round something, and pressing the key twice for a wider one is easier
+// than undoing a border that swallowed the face.
+const modelInsetStep = 0.05
 
 func modelDeleteSelectedFaces() {
 	faces := modelSelectedFaces()

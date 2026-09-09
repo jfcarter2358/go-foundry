@@ -76,11 +76,11 @@ func TestModelUVLayoutOnlyForTheModelsOwnTexture(t *testing.T) {
 		t.Error("layout returned loops for an unbound document")
 	}
 
-	// An untextured model still answers to the default name, matching what the
-	// renderer binds.
+	// An untextured model wears nothing, so no texture in the editor gets its
+	// layout drawn over it.
 	modelDoc = model.NewCubeDoc()
-	if got := modelUVLayoutFor(model.DefaultModelTexture); len(got) != 6 {
-		t.Errorf("default-texture layout loops = %d, want 6", len(got))
+	if got := modelUVLayoutFor("crate_atlas"); got != nil {
+		t.Errorf("layout returned %d loops for a model wearing no texture", len(got))
 	}
 }
 
@@ -91,9 +91,10 @@ func TestModelUVLayoutReflectsLiveUVs(t *testing.T) {
 	defer func() { modelDoc = prev }()
 
 	modelDoc = model.NewCubeDoc()
+	modelDoc.SetTexture("crate_atlas")
 	modelDoc.Faces[0].UVs[0] = mgl32.Vec2{0.125, 0.875}
 
-	loops := modelUVLayoutFor(model.DefaultModelTexture)
+	loops := modelUVLayoutFor("crate_atlas")
 	if len(loops) == 0 {
 		t.Fatal("no loops")
 	}
@@ -108,13 +109,14 @@ func TestModelUVLayoutSkipsDegenerateFaces(t *testing.T) {
 	defer func() { modelDoc = prev }()
 
 	modelDoc = model.NewCubeDoc()
+	modelDoc.SetTexture("crate_atlas")
 	modelDoc.Faces = append(modelDoc.Faces, model.ModelFace{
 		Verts: []int{0, 1},
 		UVs:   make([]mgl32.Vec2, 2),
 	})
 	modelDoc.Invalidate()
 
-	if got := modelUVLayoutFor(model.DefaultModelTexture); len(got) != 6 {
+	if got := modelUVLayoutFor("crate_atlas"); len(got) != 6 {
 		t.Errorf("layout loops = %d, want 6 (the two-vertex face must be skipped)", len(got))
 	}
 }

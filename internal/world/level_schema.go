@@ -247,8 +247,10 @@ type RawBrushMesh struct {
 type RawBrushFace struct {
 	// Indices lists the face's corners as indices into the owning brush's
 	// Verts, in winding order (CCW seen from outside the solid).
-	Indices      []int      `yaml:"indices"`
-	Texture      string     `yaml:"texture"`
+	Indices []int `yaml:"indices"`
+	// Texture is omitted when the face wears none, which is how a face that has
+	// not been painted saves: the renderer draws it from its own normal.
+	Texture      string     `yaml:"texture,omitempty"`
 	BlendTexture string     `yaml:"blend_texture,omitempty"`
 	BlendMask    string     `yaml:"blend_mask,omitempty"`
 	UVOffset     geom.Point `yaml:"uv_offset,omitempty"`

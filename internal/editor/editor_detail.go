@@ -270,6 +270,73 @@ func drawDetailHullCage() {
 	}
 }
 
+// detailWireBiasPx is how far toward the camera an edge line is pulled before
+// it is drawn, in pixels.
+//
+// Without it the interior edges of a detail mesh are invisible, which is the
+// opposite of the point. They lie exactly ON the surface they bound — a
+// subdivided face's quarters are all in one plane — so line and triangle
+// rasterise to the same depth and GL_LESS throws the line away. A pixel of
+// bias is under the width of the line itself, so nothing visibly floats, and
+// it is measured in PIXELS rather than world units so it holds at any distance:
+// a fixed world offset that works across a room is a centimetre gap with your
+// nose against the wall.
+const detailWireBiasPx float32 = 1.0
+
+// drawDetailMeshWires outlines every face of the detail mesh being shaped.
+//
+// This is the model editor's own overlay (drawModelWireframe), and it is here
+// for the same reason it is there: a mesh's faces are not otherwise visible.
+// Four coplanar quarters of a subdivided wall are one flat surface to look at,
+// so without the seams an author cannot tell what a click is about to land on
+// — which is exactly the state subdividing a face puts them in.
+//
+// Drawn depth-tested, unlike the selection outlines below, so the far side of
+// the mesh does not show through the near side and turn the surface into a
+// hairball. Queued before editorRenderInteractiveOverlays' first flush; see
+// there.
+func drawDetailMeshWires() {
+	ch, b := detailBrush()
+	if ch == nil || b == nil || b.Detail == nil {
+		return
+	}
+	// The same colour pair the model editor uses, and the same reason for
+	// there being two: over a lit surface the line is a dark seam, and with
+	// the surface gone it is the only thing on screen and has to carry the
+	// shape against the background, which the dark one disappears into.
+	col := modelWireColor
+	if ws().Wireframe {
+		col = modelWireOnlyColor
+	}
+
+	// Each undirected edge once. Two faces share an edge, so walking the loops
+	// would draw every interior line twice — and on a mesh a few subdivides
+	// deep that is thousands of wasted lines a frame.
+	loops := make([][]int, len(b.Detail.Faces))
+	for fi := range b.Detail.Faces {
+		loops[fi] = b.Detail.Faces[fi].Indices
+	}
+	for _, e := range brushEdges(ws().DetailBrush.chunkIdx, ws().DetailBrush.brushIdx, loops, true) {
+		if e.a < 0 || e.a >= len(b.Detail.Verts) || e.b < 0 || e.b >= len(b.Detail.Verts) {
+			continue
+		}
+		a := ch.LocalToWorld(b.Detail.Verts[e.a])
+		bb := ch.LocalToWorld(b.Detail.Verts[e.b])
+		gizmo.GizmoLine(nudgeTowardCamera(a), nudgeTowardCamera(bb), col)
+	}
+}
+
+// nudgeTowardCamera moves a point a pixel's worth of world distance toward the
+// eye — the depth bias described on detailWireBiasPx.
+func nudgeTowardCamera(p mgl32.Vec3) mgl32.Vec3 {
+	d := ws().camPos().Sub(p)
+	l := d.Len()
+	if l < 1e-6 {
+		return p
+	}
+	return p.Add(d.Mul(worldSizeForPixels(p, detailWireBiasPx) / l))
+}
+
 // ---------- what a click can reach ----------
 
 // pickMeshFor decides which of a brush's two meshes a click addresses in the

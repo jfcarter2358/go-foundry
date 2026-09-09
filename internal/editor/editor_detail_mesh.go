@@ -55,9 +55,15 @@ const (
 
 // ---------- the bridge ----------
 
-// detailBridge is a brush mesh viewed as a model document, plus the per-face
+// meshBridge is a brush mesh viewed as a model document, plus the per-face
 // attributes a ModelFace has no room for.
-type detailBridge struct {
+//
+// The operations below take a *world.BrushMesh, not a brush: a hull and a
+// detail mesh are the same type and the same operations are correct on both.
+// Which of them an author may REACH is the editor's business, not theirs — edit
+// mode offers only the ones that keep a solid convex, detail mode offers the
+// lot. Subdivide is the one they share.
+type meshBridge struct {
 	doc *model.ModelDoc
 	// attrs is index-parallel to doc.Faces. Each entry is the source face with
 	// its Indices and Geometry meaningless — the topology lives in the
@@ -65,9 +71,9 @@ type detailBridge struct {
 	attrs []world.BrushFace
 }
 
-// bridgeDetailMesh builds the document an operation runs on.
-func bridgeDetailMesh(m *world.BrushMesh) *detailBridge {
-	br := &detailBridge{
+// bridgeMesh builds the document an operation runs on.
+func bridgeMesh(m *world.BrushMesh) *meshBridge {
+	br := &meshBridge{
 		doc:   &model.ModelDoc{Verts: append([]mgl32.Vec3(nil), m.Verts...)},
 		attrs: make([]world.BrushFace, len(m.Faces)),
 	}
@@ -89,7 +95,7 @@ func bridgeDetailMesh(m *world.BrushMesh) *detailBridge {
 // subdivided face's four children are all the same surface — and a Geometry
 // copied into two BrushFaces is one buffer two of them would free and draw. The
 // reload that follows uploads the lot again, which is cheap next to being wrong.
-func (br *detailBridge) writeBack(m *world.BrushMesh) bool {
+func (br *meshBridge) writeBack(m *world.BrushMesh) bool {
 	if len(br.attrs) != len(br.doc.Faces) {
 		// The operation and the mapping above it disagree about how many faces
 		// came out, which means the mapping is describing something the
@@ -112,17 +118,17 @@ func (br *detailBridge) writeBack(m *world.BrushMesh) bool {
 
 // ---------- the operations, as pure mesh edits ----------
 
-// detailExtrudeMesh pushes the given faces out along their shared normal,
+// meshExtrudeFaces pushes the given faces out along their shared normal,
 // walling in the gap with side quads, and returns the moved cap faces.
 //
 // The sides inherit the FIRST selected face's attributes. The document does not
 // report which cap each side grew from, and the answer that matters is the one
 // an author expects: the walls of a bump are painted like the bump.
-func detailExtrudeMesh(m *world.BrushMesh, faces []int, dist float32) []int {
+func meshExtrudeFaces(m *world.BrushMesh, faces []int, dist float32) []int {
 	if m == nil || len(faces) == 0 {
 		return nil
 	}
-	br := bridgeDetailMesh(m)
+	br := bridgeMesh(m)
 	caps, sides := br.doc.ExtrudeFaces(faces, dist)
 	if len(caps) == 0 {
 		return nil
@@ -140,7 +146,43 @@ func detailExtrudeMesh(m *world.BrushMesh, faces []int, dist float32) []int {
 	return caps
 }
 
-// detailSubdivideMesh splits each of the given faces at its edge midpoints,
+// meshInsetFaces shrinks each of the given faces within its own plane and
+// walls the gap with a ring of quads, returning the shrunken faces.
+//
+// One face at a time, so each ring can inherit the attributes of the face it
+// was cut from rather than of whichever face happened to be first. The ring is
+// appended at the END of the face list — InsetFaces does not renumber anything
+// — so unlike subdivide there is no shift to carry.
+func meshInsetFaces(m *world.BrushMesh, faces []int, dist float32) []int {
+	if m == nil || len(faces) == 0 {
+		return nil
+	}
+	br := bridgeMesh(m)
+	todo := append([]int(nil), faces...)
+	sortInts(todo)
+
+	var out []int
+	for _, fi := range todo {
+		if fi < 0 || fi >= len(br.doc.Faces) {
+			continue
+		}
+		src := br.attrs[fi]
+		inner, ring := br.doc.InsetFaces([]int{fi}, dist)
+		if len(inner) == 0 {
+			continue
+		}
+		for range ring {
+			br.attrs = append(br.attrs, src)
+		}
+		out = append(out, inner...)
+	}
+	if len(out) == 0 || !br.writeBack(m) {
+		return nil
+	}
+	return out
+}
+
+// meshSubdivideFaces splits each of the given faces at its edge midpoints,
 // and returns every face the split produced.
 //
 // One face at a time, deliberately. SubdivideFaces rebuilds the whole face list
@@ -150,11 +192,11 @@ func detailExtrudeMesh(m *world.BrushMesh, faces []int, dist float32) []int {
 // the children land where their parent was, and everything after it shifts.
 // The midpoints are still shared between neighbours, because each call sees the
 // vertices the last one inserted.
-func detailSubdivideMesh(m *world.BrushMesh, faces []int) []int {
+func meshSubdivideFaces(m *world.BrushMesh, faces []int) []int {
 	if m == nil || len(faces) == 0 {
 		return nil
 	}
-	br := bridgeDetailMesh(m)
+	br := bridgeMesh(m)
 
 	// Ascending, so the shift each split causes applies to the faces still to
 	// come and can simply be accumulated.
@@ -190,7 +232,7 @@ func detailSubdivideMesh(m *world.BrushMesh, faces []int) []int {
 	return out
 }
 
-// detailSmoothMesh runs one Catmull-Clark subdivision over the whole detail
+// meshSmoothFaces runs one Catmull-Clark subdivision over the whole detail
 // mesh — the model editor's smoothing, which is a shape change rather than a
 // shading one.
 //
@@ -198,11 +240,11 @@ func detailSubdivideMesh(m *world.BrushMesh, faces []int) []int {
 // child takes its parent's attributes. A face with fewer than three corners is
 // skipped by the document and so is skipped here, or the two would fall out of
 // step and the mesh would come back wearing the wrong textures.
-func detailSmoothMesh(m *world.BrushMesh) bool {
+func meshSmoothFaces(m *world.BrushMesh) bool {
 	if m == nil || len(m.Faces) == 0 {
 		return false
 	}
-	br := bridgeDetailMesh(m)
+	br := bridgeMesh(m)
 	grown := make([]world.BrushFace, 0, len(br.attrs)*4)
 	for i := range br.doc.Faces {
 		n := len(br.doc.Faces[i].Verts)
@@ -222,8 +264,8 @@ func detailSmoothMesh(m *world.BrushMesh) bool {
 	return br.writeBack(m)
 }
 
-// detailDeleteMesh removes the given faces, and any vertex nothing else uses.
-func detailDeleteMesh(m *world.BrushMesh, faces []int) bool {
+// meshDeleteFaces removes the given faces, and any vertex nothing else uses.
+func meshDeleteFaces(m *world.BrushMesh, faces []int) bool {
 	if m == nil || len(faces) == 0 {
 		return false
 	}
@@ -236,7 +278,7 @@ func detailDeleteMesh(m *world.BrushMesh, faces []int) bool {
 	if len(drop) == 0 {
 		return false
 	}
-	br := bridgeDetailMesh(m)
+	br := bridgeMesh(m)
 	br.doc.DeleteFaces(faces)
 	kept := make([]world.BrushFace, 0, len(br.attrs)-len(drop))
 	for i := range br.attrs {
@@ -274,6 +316,9 @@ func detailMeshHandleKey(sc sdl.Scancode, shift bool) bool {
 		}
 		detailExtrudeSelection(d)
 		return true
+	case sdl.SCANCODE_I:
+		detailInsetSelection(detailInsetDefault())
+		return true
 	case sdl.SCANCODE_B:
 		if shift {
 			detailSmoothSelection()
@@ -287,6 +332,13 @@ func detailMeshHandleKey(sc sdl.Scancode, shift bool) bool {
 	}
 	return false
 }
+
+// detailInsetDefault is how wide a border one press of I leaves: the grid
+// quantum when snapping is on, so a frame lands on the same grid the level is
+// built to, and the extrude step otherwise — a border and a bump are worked at
+// the same scale, and having one key move by a different amount from the other
+// makes a recess come out lopsided.
+func detailInsetDefault() float32 { return detailExtrudeDefault() }
 
 // detailExtrudeDefault is how far one press of E travels: the grid quantum when
 // snapping is on, so detail lands on the same grid the level is built to, and a
@@ -306,7 +358,7 @@ func detailExtrudeSelection(dist float32) {
 		return
 	}
 	ws().pushUndo()
-	caps := detailExtrudeMesh(m, faces, dist)
+	caps := meshExtrudeFaces(m, faces, dist)
 	if len(caps) == 0 {
 		EditorPopUndo()
 		ws().setStatus("Nothing to extrude: the selected faces have no common direction")
@@ -317,13 +369,32 @@ func detailExtrudeSelection(dist float32) {
 	ws().setStatus("Extruded %d detail face(s) by %.3f", len(caps), dist)
 }
 
+func detailInsetSelection(dist float32) {
+	m, faces, ok := detailOpTarget("inset")
+	if !ok {
+		return
+	}
+	ws().pushUndo()
+	inner := meshInsetFaces(m, faces, dist)
+	if len(inner) == 0 {
+		EditorPopUndo()
+		editorSetStatus("Nothing to inset: %.3f is wider than the selected face(s)", dist)
+		return
+	}
+	detailGeometryChanged()
+	// The inner faces stay selected, because the next thing after an inset is
+	// almost always an extrude of what it left in the middle.
+	detailSelectFaces(inner)
+	editorSetStatus("Inset %d detail face(s) by %.3f", len(inner), dist)
+}
+
 func detailSubdivideSelection() {
 	m, faces, ok := detailOpTarget("subdivide")
 	if !ok {
 		return
 	}
 	ws().pushUndo()
-	children := detailSubdivideMesh(m, faces)
+	children := meshSubdivideFaces(m, faces)
 	if len(children) == 0 {
 		EditorPopUndo()
 		return
@@ -339,7 +410,7 @@ func detailSmoothSelection() {
 		return
 	}
 	ws().pushUndo()
-	if !detailSmoothMesh(b.Detail) {
+	if !meshSmoothFaces(b.Detail) {
 		EditorPopUndo()
 		ws().setStatus("Nothing to smooth")
 		return
@@ -357,7 +428,7 @@ func detailDeleteSelection() {
 		return
 	}
 	ws().pushUndo()
-	if !detailDeleteMesh(m, faces) {
+	if !meshDeleteFaces(m, faces) {
 		EditorPopUndo()
 		return
 	}
@@ -379,6 +450,16 @@ func detailOpTarget(what string) (*world.BrushMesh, []int, bool) {
 	}
 	faces := detailFaceIndices()
 	if len(faces) == 0 {
+		// Say which of the two it is. "Select a detail face" in front of a
+		// viewport that is plainly showing a selection is the most confusing
+		// message this mode can print, and the selection being on the SOLID —
+		// a different mesh with a different set of indices — is exactly the
+		// state in which it used to appear.
+		if n := len(ws().SelectedFaces); n > 0 {
+			ws().setStatus(
+				"Cannot %s: the %d selected face(s) are on the solid, not the detail mesh — click the surface", what, n)
+			return nil, nil, false
+		}
 		ws().setStatus("Select a detail face to %s", what)
 		return nil, nil, false
 	}

@@ -57,7 +57,18 @@ func entityGeometryClick(mx, my int32, ctrlHeld bool) bool {
 		entityMarkDirty()
 		return true
 	}
-	if !editorInEditMode() {
+	// Ctrl+Shift enters DETAIL mode on the brush under the cursor, exactly as
+	// it does in the 3D view: a type's hold is blocked out of the same solids a
+	// room is, and its walls want the same ledges and reveals.
+	if ctrlHeld && sdl.GetModState()&sdl.KMOD_SHIFT != 0 {
+		editor3DDetailClick(mx, my)
+		entityBrushSelectionSync()
+		return true
+	}
+	// Edit mode and detail mode both address the parts of a brush; only object
+	// mode addresses whole ones. See editorInMeshContext on why asking
+	// editorInEditMode here is a bug rather than a shorthand.
+	if !editorInMeshContext() {
 		return entityObjectClick(mx, my, ctrlHeld)
 	}
 
@@ -142,9 +153,10 @@ func entityGeometryHandleKey(sc sdl.Scancode, ctrl, shift bool) bool {
 	if entityDef == nil || ctrl {
 		return false
 	}
-	// E, I and B, exactly as the level editor binds them — the same function,
-	// acting on this workspace's selection.
-	if brushMeshHandleKey(sc, shift) {
+	// Detail mode's tools first and the hull's after, in the same order the 3D
+	// view asks them (editor.go) — the same functions, acting on this
+	// workspace's selection.
+	if detailMeshHandleKey(sc, shift) || brushMeshHandleKey(sc, shift) {
 		entityGeometryEdited()
 		entityMarkDirty()
 		return true
@@ -169,6 +181,15 @@ func entityGeometryHandleKey(sc sdl.Scancode, ctrl, shift bool) bool {
 		entityWS.Wireframe = !entityWS.Wireframe
 		entityWireOverlay = entityWS.Wireframe
 		return true
+	case sdl.SCANCODE_ESCAPE:
+		// Behind the stamp below, which wants Escape more: putting an armed
+		// tool away is more urgent than leaving the mode you are stamping in.
+		if !entityWS.BrushPlaceActive && editorInDetailMode() {
+			editorExitDetailMode()
+			entityBrushSelectionSync()
+			entityStatus = "Left detail mode"
+			return true
+		}
 	}
 	// Escape puts an armed stamp away, and is otherwise the window's own.
 	if editorBrushPlaceHandleKey(sc) {
@@ -193,6 +214,14 @@ func drawEntityGeometryOverlays(projView mgl32.Mat4) {
 		return
 	}
 	gizmo.GizmoFlush(projView)
+
+	// The detail mesh's seams, and the one thing here drawn WITH depth testing:
+	// they are edges on a surface, not marks to be seen through it. Everything
+	// below is deliberately depth-free.
+	gl.Enable(gl.DEPTH_TEST)
+	drawDetailMeshWires()
+	gizmo.GizmoFlush(projView)
+
 	gl.Disable(gl.DEPTH_TEST)
 	defer gizmo.GizmoFlush(projView)
 

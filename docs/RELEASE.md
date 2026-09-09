@@ -182,6 +182,26 @@ player's saves and defaults to keeping them.
 
 Everything game-specific arrives as a `/D` define from the Makefile.
 
+**Upgrading is the normal path.** Running a newer `Setup.exe` over an existing
+install replaces it in place — no uninstall first, and the player's saves and
+settings in `%APPDATA%\<data dir>` are untouched. It finds the old install
+through `HKCU\Software\<AppName>\InstallDir`, confirms the folder is really
+ours by the `.foundrypack` stamp foundrypack left there, and then skips the
+Directory page entirely, so a player clicking Next cannot end up with a second
+copy in a second folder.
+
+The old tree is deleted whole rather than directory by directory. That is
+deliberate: a hand-kept list of directories to clear has to be kept in step with
+foundrypack's `contentDirs`, and it was already out of step. Deleting everything
+is safe precisely because a release build never writes under the install
+directory, and the `.foundrypack` stamp is the guard — without it nothing is
+deleted recursively.
+
+The one thing that will stop an upgrade is the game being open, because Windows
+locks the running `.exe`. That is checked before any file is touched and named
+plainly ("still running — close it, then click Retry") rather than surfacing as
+a stock abort/retry/ignore box half way through the copy.
+
 ### Linux — `packaging/linux/`
 
 - `make-deb.sh` builds a `.deb`: the tree under `/opt/<slug>`, a launcher on

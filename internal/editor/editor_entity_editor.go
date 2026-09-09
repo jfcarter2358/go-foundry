@@ -380,18 +380,27 @@ func (c *entityCamera) look(dx, dy int32) {
 	}
 }
 
-// move flies the eye, with forward flattened to the horizontal plane exactly as
-// MoveCamera does so looking down does not drive the camera into the floor.
+// move travels the camera, with forward flattened to the horizontal plane
+// exactly as MoveCamera does so looking down does not drive the camera into the
+// floor.
+//
+// Orbiting slides the *pivot* by the same vector rather than doing nothing,
+// which is what editorCamMove (editor_3d_camera.go) settled on and for the same
+// reason: a hold big enough to walk about inside is not a thing to be stuck
+// circling, and keys that die in half the modes read as broken rather than as
+// modal.
 func (c *entityCamera) move(f, u, r float32) {
-	if !c.Fly {
-		return
-	}
 	d := c.forward()
 	forward := mgl32.Vec3{d.X(), 0, d.Z()}
 	if forward.Len() > 1e-6 {
 		forward = forward.Normalize()
 	}
-	c.Pos = c.Pos.Add(forward.Mul(f)).Add(c.right().Mul(r)).Add(gfx.WorldUp.Mul(u))
+	delta := forward.Mul(f).Add(c.right().Mul(r)).Add(gfx.WorldUp.Mul(u))
+	if c.Fly {
+		c.Pos = c.Pos.Add(delta)
+		return
+	}
+	c.Target = c.Target.Add(delta)
 }
 
 // frame points the camera at everything the type contains, so an imported hull
@@ -453,11 +462,20 @@ func entityEditorHandleEvent(event sdl.Event) {
 				entityOrbiting, entityPanning = false, false
 			}
 		case sdl.ButtonRight:
+			// Right-drag looks or orbits, the gesture both other viewports
+			// use — and a right-click that does not travel opens the context
+			// menu instead, which is what the gesture below is watching for.
 			entityOrbiting = down
+			if down {
+				entityContextPressed(t.X, t.Y)
+			} else {
+				entityContextReleased(t.X, t.Y)
+			}
 		}
 
 	case sdl.MouseMotionEvent:
 		entityMouseX, entityMouseY = t.X, t.Y
+		entityContextMoved(t.X, t.Y)
 		switch {
 		case entityGizmoDragging():
 			// A drag owns the mouse until release, ahead of the camera: the
@@ -560,7 +578,11 @@ func entityShortcutFor(sc sdl.Scancode, ctrl, shift bool) entityShortcut {
 		return entityShortcutToolScale
 	case sdl.SCANCODE_B:
 		return entityShortcutToggleBounds
-	case sdl.SCANCODE_SPACE:
+	case sdl.SCANCODE_P:
+		// P rather than the Space the model and particle editors play on:
+		// Space rises here (entityEditorMoveKeys), and a key that flew the
+		// camera and started the animations with one press would be the worse
+		// half of both bindings.
 		return entityShortcutTogglePlay
 	case sdl.SCANCODE_DELETE, sdl.SCANCODE_X:
 		return entityShortcutDeleteSelection
@@ -606,16 +628,30 @@ func entityEditorHandleKey(t sdl.KeyboardEvent) {
 	}
 }
 
-// entityEditorFlyKeys drives the fly camera from held keys, once a frame.
+// entityEditorMoveKeys drives the camera from held keys, once a frame.
 // Read here rather than from an event because holding a key is a state, not an
 // event, and SDL's key repeat is far too coarse to fly with.
-func entityEditorFlyKeys(dt float32) {
-	if !entityCam.Fly || !entityEditorFocused() {
+//
+// The bindings are the ones every other camera in the program answers to:
+// WASD, Space up, Shift down, Ctrl to go faster. This window spelled up and
+// down Q and E, which was the one set nobody could guess from the other two
+// viewports — and E had since become extrude, so holding it to rise reshaped
+// the brush under the cursor instead. Ctrl is the speed modifier for the reason
+// the model editor gives: Shift is spoken for by the descent.
+func entityEditorMoveKeys(dt float32) {
+	if !entityEditorFocused() {
+		return
+	}
+	// A name being typed in the panel is not a camera command. Checked here
+	// rather than in the event path because these keys are read as held state,
+	// which no keyboard-capture gate has already filtered.
+	if imgui.CurrentIO().WantCaptureKeyboard() {
 		return
 	}
 	keys := sdl.GetKeyboardState()
+	mods := sdl.GetModState()
 	speed := float32(6) * dt
-	if sdl.GetModState()&sdl.KMOD_SHIFT != 0 {
+	if mods&sdl.KMOD_CTRL != 0 {
 		speed *= 3
 	}
 	var f, u, r float32
@@ -631,10 +667,12 @@ func entityEditorFlyKeys(dt float32) {
 	if keys[sdl.SCANCODE_A] != 0 {
 		r -= speed
 	}
-	if keys[sdl.SCANCODE_E] != 0 {
+	if keys[sdl.SCANCODE_SPACE] != 0 {
 		u += speed
 	}
-	if keys[sdl.SCANCODE_Q] != 0 {
+	// Not while panning: Shift+MMB is the pan gesture, and holding it to drag
+	// the view is not also a request to sink.
+	if !entityPanning && mods&sdl.KMOD_SHIFT != 0 {
 		u -= speed
 	}
 	if f != 0 || u != 0 || r != 0 {
@@ -656,7 +694,7 @@ func drawEntityEditorWindow() {
 	// through ws(). See editor_workspace.go.
 	defer entityUseWorkspace()()
 	entityEnsureDoc()
-	entityEditorFlyKeys(platform.DeltaTime)
+	entityEditorMoveKeys(platform.DeltaTime)
 
 	// Rebuilt here rather than at the moment of the edit: a panel widget runs
 	// many times during a drag, and uploading a mesh per frame of one is the
@@ -700,6 +738,9 @@ func drawEntityEditorWindow() {
 	entityEditorOutline()
 	entityEditorPanel()
 	entityEditorDialogs()
+	// After the panels, so the menu's rows are built from the state they are
+	// showing rather than from last frame's.
+	entityContextMenu()
 	entityEndEdits()
 
 	// The document's copy of the brushes, taken once at the end of the frame.

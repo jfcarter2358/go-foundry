@@ -2,6 +2,32 @@
 
 ## Done
 
+- [x] Nothing starts textured. A stamped brush's faces and a new model wore
+      "concrete" and "default" — placeholder materials nobody chose, which the
+      author has to notice before they can replace them, and which a blockout
+      ends up full of. Both are `(none)` now, and an untextured surface is
+      painted with **its own normal**: `n * 0.5 + 0.5` as the albedo, so every
+      plane of a solid is a different, predictable colour and a room reads as
+      shape while it is still being shaped. It is one uniform (`normalColor`)
+      and one branch in each of the two fragment shaders that draw geometry —
+      the world's and the model editor's — fed by one rule in Go,
+      `Geometry.NormalColorFlag`: a geometry that names no texture at all. A
+      name that fails to load is *not* it; a missing image stays the content
+      error it always was.
+      The colour is taken from the normal the polygon declares, **before** the
+      back-face flip, or the inside of a hollowed room would be the photographic
+      negative of its outside. Everything else about the surface is unchanged:
+      it lights, shadows, fogs, sorts and collides exactly as a textured one
+      does — only the albedo comes from somewhere else, which is what keeps the
+      change to the albedo line rather than to the pass.
+      `(none)` is a real choice and not a missing value, so it heads the texture
+      picker and the right-click Texture menu on the surfaces where wearing
+      nothing is a look — a brush face, a model — and is left out on a sprite,
+      where no texture is a black quad. `texture:` is now omitted from a face
+      that has none, and `ModelDoc.TextureName()`'s empty-means-"default" rule
+      is gone with it; a legacy `.fmdl` whose faces say "default" still loads
+      untextured, because that name was auto-filled rather than chosen.
+
 - [x] Entities are built from brushes, and edited the way the 3D view edits a
       level. A type was models plus a list of chunk *attachments* — file names
       under `chunks/` that the level materialised — which was the right shape
@@ -62,6 +88,25 @@
       in the ship's own coordinates so it stays put through a two-hundred-metre
       fall. It needs no frame-portal volume lined up against it any more — park
       it and walk in
+- [x] A real inset, shared by the model editor and detail mode.
+      `model.InsetFaces` builds a new, smaller loop INSIDE a face's outline and
+      walls the gap with a ring of quads, leaving the middle selected — so inset
+      then extrude is a recess and inset then extrude-the-ring is a raised
+      frame. Each corner is offset along its own angle bisector by
+      `dist / sin(theta/2)`, which is the mitre a picture frame has: the border
+      comes out the same width all the way round a 10x1 strip, where pulling the
+      corners toward the centre by a fraction leaves one ten times wider than
+      the other. The outline itself does not move, so no neighbouring face is
+      dragged along with it. `I` in the model editor and in detail mode; edit
+      mode keeps its own corner-pulling inset, which is the one that preserves
+      convexity.
+- [x] Subdivide splits a face into QUADRANTS, on the hull as well as on a detail
+      mesh. It was a fan of triangles to the face's centre, which cannot be
+      selected, dragged or textured as the quarters of a panel; it is now the
+      model editor's midpoint split, shared outright. The T-junction the fan was
+      dodging is repaired rather than avoided — a neighbour that shared a cut
+      edge takes the new midpoint into its own outline, so it keeps its shape
+      and gains a corner.
 - [x] Detail mode: shaping a brush's surface without moving its collision.
       A brush is a convex solid, and convexity is not a preference — collision
       reads its corners as a hull and the compiler clips its faces as
@@ -82,7 +127,14 @@
       the two vertex pools their indices name, and the gizmos, panels, outlines
       and undo work unchanged from there — which is also what lets an
       object-mode drag carry both meshes, so moving a wall takes its ledge with
-      it. In the compiler a detail face is a Quake detail brush one level down:
+      it. The mode draws two overlays of its own: every detail face outlined in
+      black, depth-tested, the way the model editor outlines a mesh — without
+      the seams a subdivided wall is one flat surface and there is no telling
+      what a click will hit — and the hull as a dim wire cage, since it is
+      otherwise not on screen at all. The seams are pulled a pixel toward the
+      camera before they are drawn, because an edge between two coplanar faces
+      lies exactly ON the surface and loses the depth test to the triangle it
+      bounds. In the compiler a detail face is a Quake detail brush one level down:
       it is drawn and lit but never chooses a splitting plane and never decides
       what is solid, and a detailed brush emits its hull faces as structure
       nobody draws so that the tree, the portals and above all the SEAL come out

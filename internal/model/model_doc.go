@@ -53,7 +53,9 @@ func (f ModelFace) Clone() ModelFace {
 type ModelDoc struct {
 	ID string
 	// Texture is the one image the whole model is painted with — the same
-	// logical name Wall.Texture holds. Empty means DefaultModelTexture.
+	// logical name a brush face's Texture holds. Empty means the model wears
+	// none, and is drawn from its surface normals instead (NormalColorFlag in
+	// gfx/geometry.go); it is the state a new document starts in.
 	//
 	// One texture per model, rather than one per face, because the two ways of
 	// texturing a mesh answer different questions and only one of them scales.
@@ -91,29 +93,10 @@ type ModelDoc struct {
 	rev uint64
 }
 
-// DefaultModelTexture is what an untextured document is drawn with. It is a
-// real entry in textures/, so a fresh cube looks like something rather than
-// binding texture 0 and rendering black.
-const DefaultModelTexture = "default"
-
-// TextureName is the document's texture, resolved through the empty-means-
-// default rule. Every consumer that is about to *use* the name — compiling
-// submeshes, exporting a material, seeding the picker — goes through this so
-// the fallback lives in one place; ModelDoc.Texture stays empty on disk.
-func (m *ModelDoc) TextureName() string {
-	if m.Texture == "" {
-		return DefaultModelTexture
-	}
-	return m.Texture
-}
-
-// SetTexture repoints the whole model at tex. Passing DefaultModelTexture
-// stores it as the empty string, so "never chosen" and "chosen the default"
-// serialise the same way and a round-trip cannot invent a change.
+// SetTexture repoints the whole model at tex. The empty string is a real
+// choice — "painted with nothing", which the renderer draws from the surface
+// normals — and not a missing value to be filled in.
 func (m *ModelDoc) SetTexture(tex string) {
-	if tex == DefaultModelTexture {
-		tex = ""
-	}
 	if m.Texture == tex {
 		return
 	}
@@ -402,7 +385,7 @@ func (m *ModelDoc) ModelSubmeshes() []modelSubmesh {
 // document goes on holding the rest mesh — so save, undo and every mesh op stay
 // untouched by posing — while what reaches the GPU is the deformed shape.
 func (m *ModelDoc) ModelSubmeshesFrom(verts []mgl32.Vec3) []modelSubmesh {
-	g := &modelSubmesh{Texture: m.TextureName()}
+	g := &modelSubmesh{Texture: m.Texture}
 	skinned := len(m.Bones) > 0 && m.HasSkin()
 
 	for fi := range m.Faces {

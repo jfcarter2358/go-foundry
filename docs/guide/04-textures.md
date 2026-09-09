@@ -88,6 +88,20 @@ With a model open in the model editor, the texture canvas can draw that model's
 UV layout over the art (`UV layout (n faces)` under the canvas). That is how you
 paint to a specific unwrap rather than guessing.
 
+## No texture
+
+A brush face and a model can wear **(none)**, and that is what a new one starts
+as. There is no placeholder material: a surface with no texture is painted with
+its own **normal** — the direction it faces, as a colour. Each plane of a solid
+comes out a different, predictable shade, so a blockout reads as shape while you
+are still shaping it, and nothing in the level claims to be concrete until
+somebody says it is.
+
+It is a real choice, not a missing value. `(none)` is the first row of the
+texture picker and of the right-click **Texture** menu, so you can take a
+texture back off a face. An untextured face lights, shadows and collides like
+any other; it just has no image.
+
 ## Naming
 
 Textures are referenced by name without an extension. `hull_plate.png` is

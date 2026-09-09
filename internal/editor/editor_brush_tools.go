@@ -24,7 +24,6 @@ import (
 	"math"
 	"strings"
 
-	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"foundry/internal/world"
 
@@ -52,9 +51,13 @@ const (
 	brushCylinderSides = 12
 
 	// defaultBrushTexture is what a freshly stamped brush's faces are painted
-	// with. Something visibly placeholder rather than nothing: an untextured
-	// face renders white and reads as a bug.
-	defaultBrushTexture = "concrete"
+	// with: nothing. A blocked-out solid has not been given a material yet, and
+	// naming one for it is a lie the author then has to notice and undo — the
+	// level ends up full of "concrete" that nobody chose. An untextured face is
+	// drawn from its own normal instead (NormalColorFlag in gfx/geometry.go),
+	// so a fresh brush reads as shape, with a different colour per plane,
+	// rather than as a placeholder material or a flat white slab.
+	defaultBrushTexture = ""
 )
 
 // ---------- placing a brush ----------
@@ -80,7 +83,6 @@ func editorAddBrushAt(kind string, pos mgl32.Vec3) {
 	local := brushStampLocalCenter(ch, kind, pos)
 	half := mgl32.Vec3{defaultBrushHalf, defaultBrushHalf, defaultBrushHalf}
 
-	_ = gfx.EnsureTextureLoaded(defaultBrushTexture)
 	ws().pushUndo()
 
 	id := world.UniqueBrushID(ch, kind)
@@ -158,6 +160,12 @@ func editorArmBrushPlacement(kind string) {
 	if ws().activeChunk() == nil {
 		ws().setStatus("No chunk to place a brush in")
 		return
+	}
+	if editorInDetailMode() {
+		// Detail mode shapes ONE brush's surface and nothing else is clickable
+		// in it, so an armed stamp would drop solids into a context that cannot
+		// select them. Arming it is the author saying they are placing again.
+		editorExitDetailMode()
 	}
 	ws().BrushPlaceKind = kind
 	ws().BrushPlaceActive = true
@@ -333,8 +341,9 @@ func editorHollowSelectedBrush() {
 		{lo.X() + t, lo.Y() + t, lo.Z() + t},
 		{hi.X() - t, hi.Y() - t, hi.Z() - t},
 	}
+	// The shell inherits whatever the solid wore, including nothing.
 	texture := defaultBrushTexture
-	if len(b.Faces) > 0 && b.Faces[0].Texture != "" {
+	if len(b.Faces) > 0 {
 		texture = b.Faces[0].Texture
 	}
 	id := b.ID

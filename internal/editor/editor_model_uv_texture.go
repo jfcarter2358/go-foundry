@@ -70,7 +70,7 @@ func modelOpenUnwrapDialog() {
 		return
 	}
 	name := modelDoc.Texture
-	if name == "" || name == model.DefaultModelTexture {
+	if name == "" {
 		name = modelUnwrapSuggestedName()
 	}
 	modelUnwrapDialog.Show = true
@@ -126,7 +126,7 @@ func modelTextureSection() {
 	}
 
 	tex := modelTexture()
-	if textureCombo("Texture##modeldoctex", &tex, false) {
+	if textureCombo("Texture##modeldoctex", &tex, true) {
 		modelSetTexture(tex)
 	}
 
@@ -158,7 +158,7 @@ func modelTextureSection() {
 func modelTextureIsBoundForPainting() bool {
 	return modelDoc != nil && textureui.ActiveTexEditor != nil &&
 		textureui.ActiveTexEditor.BoundTexture != "" &&
-		textureui.ActiveTexEditor.BoundTexture == modelDoc.TextureName()
+		textureui.ActiveTexEditor.BoundTexture == modelDoc.Texture
 }
 
 // ---------- the dialog ----------
@@ -408,7 +408,7 @@ func DrainModelTexEditorRequest() {
 // Returns nil when the open model does not wear tex, which is what makes the
 // overlay silently correct while editing an unrelated texture.
 func modelUVLayoutFor(tex string) [][]mgl32.Vec2 {
-	if modelDoc == nil || tex == "" || modelDoc.TextureName() != tex {
+	if modelDoc == nil || tex == "" || modelDoc.Texture != tex {
 		return nil
 	}
 	out := make([][]mgl32.Vec2, 0, len(modelDoc.Faces))

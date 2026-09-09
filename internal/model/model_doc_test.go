@@ -155,12 +155,13 @@ func TestModelSubmeshesAreOneGroup(t *testing.T) {
 	}
 }
 
-// An untextured document still names a texture, so the renderer never binds
-// texture 0 and draws the mesh black.
-func TestModelSubmeshFallsBackToDefaultTexture(t *testing.T) {
+// A document that names no texture compiles to a submesh that names none
+// either — the renderer's cue to shade it from its normals (NormalColorFlag)
+// rather than to bind a placeholder image nobody chose.
+func TestModelSubmeshOfUntexturedDocNamesNoTexture(t *testing.T) {
 	m := NewCubeDoc()
-	if got := m.ModelSubmeshes()[0].Texture; got != DefaultModelTexture {
-		t.Errorf("submesh texture = %q, want %q", got, DefaultModelTexture)
+	if got := m.ModelSubmeshes()[0].Texture; got != "" {
+		t.Errorf("submesh texture = %q, want empty", got)
 	}
 }
 

@@ -419,6 +419,15 @@ func modelFaceSection() {
 			"the world axes; Shift+E always stacks another extrude.")
 	}
 	imgui.SameLine()
+	if imgui.Button("Inset##modelinset") {
+		modelInsetSelectedFaces()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("I — a border round each face, in its own plane, mitred so it\n" +
+			"is the same width all the way round. What is left in the middle\n" +
+			"stays selected: inset then extrude is a recess.")
+	}
+	imgui.SameLine()
 	if imgui.Button("Subdivide##modelsub") {
 		modelSubdivideSelectedFaces()
 	}

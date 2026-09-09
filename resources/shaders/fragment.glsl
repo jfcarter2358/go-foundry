@@ -32,6 +32,14 @@ uniform int alphaSharpen;
 // silhouette is the halfway point, not "any alpha at all".
 const float alphaCutoff = 0.5;
 
+// Untextured surfaces. A face that names no texture takes its albedo from its
+// own normal, encoded as a colour (n * 0.5 + 0.5), instead of from tex — so a
+// brush blocked out and not yet painted reads as shape, with every plane a
+// different colour, rather than as the one flat slab that binding no texture
+// gives. Off (0) by default, so a program that links this shader without
+// knowing about it shades exactly as it did before.
+uniform int normalColor;
+
 // Water surface. isWater gates the whole path.
 uniform int   isWater;
 uniform float time;
@@ -321,6 +329,13 @@ void main() {
         normal = faceNormal;
     }
 
+    // The outward normal as the polygon itself declares it, kept before the
+    // back-face flip below: it is what normalColor paints an untextured face
+    // with, and a face has to keep one colour whichever side it is seen from —
+    // flipping it would make the inside of a hollowed room the photographic
+    // negative of its outside.
+    vec3 albedoNormal = normal;
+
     // Flip normal for back faces so double-sided surfaces are lit correctly.
     if (!gl_FrontFacing) {
         normal = -normal;
@@ -342,17 +357,25 @@ void main() {
         uv += vec2(t * 0.03, t * 0.02);
     }
 
-    vec4 texColor = texture(tex, uv);
-    if (isWater != 0) {
-        vec2 uv2 = fragTexCoord * 1.7 - vec2(time * waveSpeed * 0.021, time * waveSpeed * 0.034);
-        texColor = mix(texColor, texture(tex, uv2), 0.5);
-    }
+    vec4 texColor;
+    if (normalColor != 0) {
+        // No texture named, so there is nothing to sample and nothing to blend
+        // over: the normal is the albedo. Opaque, whatever texture object
+        // happens to be bound.
+        texColor = vec4(albedoNormal * 0.5 + 0.5, 1.0);
+    } else {
+        texColor = texture(tex, uv);
+        if (isWater != 0) {
+            vec2 uv2 = fragTexCoord * 1.7 - vec2(time * waveSpeed * 0.021, time * waveSpeed * 0.034);
+            texColor = mix(texColor, texture(tex, uv2), 0.5);
+        }
 
-    if (hasBlend != 0) {
-        vec4 blendColor = texture(blendTex, uv);
-        vec3 maskColor = texture(blendMask, uv).rgb;
-        float maskLum = dot(maskColor, vec3(0.299, 0.587, 0.114));
-        texColor = mix(texColor, blendColor, maskLum);
+        if (hasBlend != 0) {
+            vec4 blendColor = texture(blendTex, uv);
+            vec3 maskColor = texture(blendMask, uv).rgb;
+            float maskLum = dot(maskColor, vec3(0.299, 0.587, 0.114));
+            texColor = mix(texColor, blendColor, maskLum);
+        }
     }
 
     // Normal mapping, on everything but water — water derives its normal from

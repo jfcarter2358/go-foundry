@@ -181,15 +181,15 @@ func editor3DActiveSpawn() *world.SpawnPoint {
 }
 
 func editor3DActiveBrush() (*world.Chunk, *world.Brush) {
-	lvl := Editor.level
-	if lvl == nil || Editor.ActiveChunkIdx < 0 || Editor.ActiveChunkIdx >= len(lvl.Chunks) {
+	lvl := ws().level
+	if lvl == nil || ws().ActiveChunkIdx < 0 || ws().ActiveChunkIdx >= len(lvl.Chunks) {
 		return nil, nil
 	}
-	ch := &lvl.Chunks[Editor.ActiveChunkIdx]
-	if Editor.ActiveBrushIdx < 0 || Editor.ActiveBrushIdx >= len(ch.Brushes) {
+	ch := &lvl.Chunks[ws().ActiveChunkIdx]
+	if ws().ActiveBrushIdx < 0 || ws().ActiveBrushIdx >= len(ch.Brushes) {
 		return ch, nil
 	}
-	return ch, &ch.Brushes[Editor.ActiveBrushIdx]
+	return ch, &ch.Brushes[ws().ActiveBrushIdx]
 }
 
 // ---------- the selected surface ----------
@@ -223,10 +223,10 @@ type surface3DRefs struct {
 // the selection is empty, or when its indices no longer point at live
 // geometry.
 func editor3DSurfaceRefs() (surface3DRefs, bool) {
-	if len(Editor.SelectedFaces) == 0 {
+	if len(ws().SelectedFaces) == 0 {
 		return surface3DRefs{}, false
 	}
-	return editor3DSurfaceRefsFor(Editor.SelectedFaces[0])
+	return editor3DSurfaceRefsFor(ws().SelectedFaces[0])
 }
 
 // editor3DSurfaceRefsFor resolves one named face's editable fields.
@@ -279,7 +279,7 @@ func editor3DForEachSelectedFace(fn func(surface3DRefs)) int {
 // how long they stay good for.
 func applySelectedFaceEdits(fn func(surface3DRefs)) int {
 	touched := 0
-	for _, sel := range Editor.SelectedFaces {
+	for _, sel := range ws().SelectedFaces {
 		r, ok := editor3DSurfaceRefsFor(sel)
 		if !ok {
 			continue
@@ -293,13 +293,13 @@ func applySelectedFaceEdits(fn func(surface3DRefs)) int {
 // rebuildSelectedFaceBrushes reloads every brush the face selection touches,
 // once each — eight selected faces of one brush cost one rebuild, not eight.
 func rebuildSelectedFaceBrushes() {
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil {
 		return
 	}
 	done := map[[2]int]struct{}{}
 	chunks := map[int]struct{}{}
-	for _, sel := range Editor.SelectedFaces {
+	for _, sel := range ws().SelectedFaces {
 		_, b := faceSelBrush(sel)
 		if b == nil {
 			continue
@@ -341,13 +341,17 @@ func editor3DSetSurfaceTexture(name string) {
 		return
 	}
 	_ = gfx.EnsureTextureLoaded(name)
-	EditorPushUndo()
+	ws().pushUndo()
 	n := editor3DForEachSelectedFace(func(r surface3DRefs) {
 		if r.Texture != nil {
 			*r.Texture = name
 		}
 	})
-	editorSetStatus("Textured %d face(s) with %s", n, name)
+	if name == "" {
+		ws().setStatus("Cleared the texture on %d face(s)", n)
+	} else {
+		ws().setStatus("Textured %d face(s) with %s", n, name)
+	}
 }
 
 // editor3DToggleSurfaceFlag flips one of the selected surfaces' booleans. The
@@ -368,7 +372,7 @@ func editor3DToggleSurfaceFlag(pick func(surface3DRefs) *bool) {
 		return
 	}
 	want := !*field
-	EditorPushUndo()
+	ws().pushUndo()
 	editor3DForEachSelectedFace(func(r surface3DRefs) {
 		if f := pick(r); f != nil {
 			*f = want
@@ -391,7 +395,7 @@ func editor3DToggleFaceDrawn() {
 		return
 	}
 	want := !faceDrawn(r.f)
-	EditorPushUndo()
+	ws().pushUndo()
 	editor3DForEachSelectedFace(func(r surface3DRefs) { setFaceDrawn(r.f, want) })
 }
 
@@ -401,7 +405,7 @@ func editor3DToggleFaceSolid() {
 		return
 	}
 	want := !faceSolid(r.f)
-	EditorPushUndo()
+	ws().pushUndo()
 	editor3DForEachSelectedFace(func(r surface3DRefs) { setFaceSolid(r.f, want) })
 }
 
@@ -441,7 +445,7 @@ func editor3DSelectBrushVertices() {
 		sels = append(sels, vertexSel{chunkIdx: ci, brushIdx: bi, vertIdx: vi, detail: detail})
 	}
 	setVertexSelection(sels)
-	editorSetStatus("Selected %d vertices of %s", len(sels), b.ID)
+	ws().setStatus("Selected %d vertices of %s", len(sels), b.ID)
 }
 
 // activeBrushIndices resolves which brush the selection is working on, from
@@ -449,19 +453,19 @@ func editor3DSelectBrushVertices() {
 // edit mode a face and a vertex each name their own. Returns a brush index of
 // -1 when none does.
 func activeBrushIndices() (chunkIdx, brushIdx int) {
-	if len(Editor.SelectedBrushes) > 0 {
-		b := Editor.SelectedBrushes[0]
+	if len(ws().SelectedBrushes) > 0 {
+		b := ws().SelectedBrushes[0]
 		return b.chunkIdx, b.brushIdx
 	}
-	if len(Editor.SelectedFaces) > 0 {
-		f := Editor.SelectedFaces[0]
+	if len(ws().SelectedFaces) > 0 {
+		f := ws().SelectedFaces[0]
 		return f.chunkIdx, f.brushIdx
 	}
-	if len(Editor.SelectedVertices) > 0 {
-		v := Editor.SelectedVertices[0]
+	if len(ws().SelectedVertices) > 0 {
+		v := ws().SelectedVertices[0]
 		return v.chunkIdx, v.brushIdx
 	}
-	return Editor.ActiveChunkIdx, Editor.ActiveBrushIdx
+	return ws().ActiveChunkIdx, ws().ActiveBrushIdx
 }
 
 // ---------- snapping ----------
@@ -633,7 +637,7 @@ func editor3DSelectBrushFaces() {
 		sels = append(sels, faceSel{chunkIdx: ci, brushIdx: bi, faceIdx: fi, detail: detail})
 	}
 	setFaceSelection(sels)
-	editorSetStatus("Selected %d faces of %s", len(sels), b.ID)
+	ws().setStatus("Selected %d faces of %s", len(sels), b.ID)
 }
 
 // editor3DSelectBrushSideFaces is editor3DSelectBrushFaces narrowed to the
@@ -678,7 +682,7 @@ const uprightFaceMaxY = 0.5
 // highest index first so the earlier removals do not renumber the later ones.
 // Caller brackets the undo.
 func editorDeleteSelectedBrushes() {
-	lvl := Editor.level
+	lvl := ws().level
 	if lvl == nil {
 		return
 	}
@@ -692,12 +696,12 @@ func editorDeleteSelectedBrushes() {
 		}
 		perChunk[chunkIdx][brushIdx] = struct{}{}
 	}
-	for _, sel := range Editor.SelectedBrushes {
+	for _, sel := range ws().SelectedBrushes {
 		if brushSelValid(sel) {
 			mark(sel.chunkIdx, sel.brushIdx)
 		}
 	}
-	for _, sel := range Editor.SelectedFaces {
+	for _, sel := range ws().SelectedFaces {
 		if _, b := faceSelBrush(sel); b == nil {
 			continue
 		}
@@ -724,5 +728,5 @@ func editorDeleteSelectedBrushes() {
 	clearBrushSelection()
 	clearFaceSelection()
 	clearVertexSelection()
-	editorSetStatus("Deleted %d brush(es)", n)
+	ws().setStatus("Deleted %d brush(es)", n)
 }

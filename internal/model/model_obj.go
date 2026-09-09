@@ -230,12 +230,20 @@ func SaveOBJ(m *ModelDoc, path string) error {
 		fmt.Fprintf(&b, "v %s %s %s\n", objF(p.X()), objF(p.Y()), objF(p.Z()))
 	}
 
-	tex := m.TextureName()
+	// OBJ has no way to say "painted with its own normals", so a model wearing
+	// no texture exports as a material with a diffuse colour and no map — the
+	// closest thing the format has to untextured — named after the model
+	// rather than after a texture that does not exist.
+	tex := m.Texture
+	matName := tex
+	if matName == "" {
+		matName = objSafeName(m.ID)
+	}
 
 	// vt indices are assigned as they are written, so the face lines below have
 	// to be built in the same pass.
 	var faceLines strings.Builder
-	fmt.Fprintf(&faceLines, "usemtl %s\n", tex)
+	fmt.Fprintf(&faceLines, "usemtl %s\n", matName)
 	vtIdx := 1
 	for fi := range m.Faces {
 		f := &m.Faces[fi]
@@ -259,8 +267,11 @@ func SaveOBJ(m *ModelDoc, path string) error {
 
 	var mtl strings.Builder
 	mtl.WriteString("# exported by Foundry model editor\n")
-	fmt.Fprintf(&mtl, "newmtl %s\nKd 1.000 1.000 1.000\nmap_Kd %s/%s.png\n\n",
-		tex, fileutil.TexturesDirName, tex)
+	fmt.Fprintf(&mtl, "newmtl %s\nKd 1.000 1.000 1.000\n", matName)
+	if tex != "" {
+		fmt.Fprintf(&mtl, "map_Kd %s/%s.png\n", fileutil.TexturesDirName, tex)
+	}
+	mtl.WriteString("\n")
 	mtlPath := filepath.Join(filepath.Dir(path), mtlName)
 	if err := fileutil.WriteFileAtomic(mtlPath, []byte(mtl.String())); err != nil {
 		return fmt.Errorf("write %s: %w", mtlPath, err)

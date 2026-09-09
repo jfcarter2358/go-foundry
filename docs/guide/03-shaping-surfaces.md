@@ -23,14 +23,22 @@ with the brush selected. Three tools act on the face selection:
 | --- | --- |
 | `E` | **extrude** — slide the face along its own normal (`Shift+E` pulls it back in) |
 | `I` | **inset** — draw the face's corners toward its centre, in its own plane (`Shift+I` widens) |
-| `B` | **subdivide** — fan the face into triangles meeting at a new centre corner |
+| `B` | **subdivide** — split the face into quadrants at its edge midpoints |
 | `G` `R` `C` | move, turn, scale whatever is selected |
 
 All three keep the brush **convex**, which it must be
 ([Building levels](02-building-levels.md) says why). That is also why the list is
 short: extrude here slides the face's plane rather than growing a bump off it,
-because a bump is concave. In an id-lineage editor a bump on a wall is a second
-brush, and it still is here — or it is detail.
+because a bump is concave, and inset here draws the face's own corners in rather
+than building a border inside them, because a border is a face you would then
+push out of plane. In an id-lineage editor a bump on a wall is a second brush,
+and it still is here — or it is detail.
+
+Subdivide is the one tool that is the *same* in both modes, because splitting a
+face at its edge midpoints changes no shape at all: the quadrants are still in
+the face's own plane and still on the hull. A neighbour that shared a cut edge
+takes the new midpoint into its own outline as it goes, so a subdivided wall
+grows no cracks along its seams.
 
 Dragging a single corner is the one edit that can break convexity. The editor
 warns rather than refuses, in the status line and in the brush's properties, so
@@ -41,8 +49,15 @@ refuses outright and names the brush.
 
 **`Ctrl+Shift+click` a brush.** The first time, its detail mesh is seeded as a
 copy of the solid's own faces, so nothing changes on screen. From then on the
-brush is *drawn* from that mesh, and the solid underneath is drawn as a dim wire
-cage so you can always see where the player will actually stop.
+brush is *drawn* from that mesh, and two overlays come up with it:
+
+- **every face of the detail mesh is outlined in black**, the way the model
+  editor outlines a mesh's edges. Four coplanar quarters of a subdivided wall
+  are one flat surface to look at, so without the seams there is no telling what
+  a click is about to land on. They are depth-tested, so you see the near side
+  of the mesh and not through it;
+- **the solid underneath is drawn as a dim wire cage**, so you can always see
+  where the player will actually stop.
 
 Clicks in here reach that one brush and nothing else — you cannot move a solid by
 mis-aiming — and the tools are the **model editor's**, not edit mode's:
@@ -50,6 +65,7 @@ mis-aiming — and the tools are the **model editor's**, not edit mode's:
 | Key | |
 | --- | --- |
 | `E` | **extrude** — the real one: the face is duplicated and the gap walled in with sides (`Shift+E` presses it in instead) |
+| `I` | **inset** — a mitred border round the face, in its own plane, leaving the middle selected |
 | `B` | **subdivide** the selected faces at their edge midpoints |
 | `Shift+B` | **smooth** the whole detail mesh — one round of Catmull-Clark |
 | `Delete` / `X` | delete the selected faces |
@@ -58,7 +74,8 @@ mis-aiming — and the tools are the **model editor's**, not edit mode's:
 | `Tab` / `Esc` | leave, with the brush selected |
 
 `Ctrl+Shift+click` another brush to go straight to it, or the same one again to
-come out.
+come out. The entity editor's viewport works the same way, on a type's own
+brushes.
 
 There is no convexity rule in here, no warning, and no limit on what the mesh can
 become: it may be open, concave, disconnected, or a single floating quad. It is a
@@ -69,14 +86,18 @@ surface, not a solid.
 **A ledge along a wall.** `Ctrl+Shift+click` the wall, `3`, click the inward
 face, `B` to subdivide it, click the strip you want, `E` to pull it out.
 
-**A window reveal.** Click the face, `B` twice, delete the middle faces, then
-extrude the ring inward — the walls of the reveal are the sides `E` leaves
-behind. The window itself is a hole in the *solid*, which is edit mode's job or a
-second brush's; detail cannot make a hole you can walk through, because it cannot
-make a hole in collision at all.
+**A window reveal.** Click the face, `I` for a border, then `Shift+E` to press
+the middle in — the walls of the reveal are the sides the extrude leaves behind.
+The window *opening* is a hole in the solid, which is edit mode's job or a second
+brush's; detail cannot make a hole you can walk through, because it cannot make a
+hole in collision at all.
 
 **Panelling.** Subdivide a wall into a grid, select alternating faces with
-`Ctrl+click`, `Shift+E` to press them in a few centimetres.
+`Ctrl+click`, `I` then `Shift+E` to press each one in a few centimetres behind
+its own border.
+
+**A raised frame.** `I`, then `E` on the border rather than the middle: select
+the ring quads and push them out.
 
 **A rounded pillar.** `Shift+B` on a cylinder brush's detail mesh, once or twice.
 The solid stays a twelve-sided prism — cheap to collide against — and what you

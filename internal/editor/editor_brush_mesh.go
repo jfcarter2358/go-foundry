@@ -37,7 +37,6 @@ package editor
 // checked rather than refused — see warnIfSelectionBrokeConvexity.
 
 import (
-	"foundry/internal/gfx"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -245,7 +244,8 @@ func faceMaxRadius(b *world.Brush, f *world.BrushFace, center mgl32.Vec3) float3
 // ---------- subdivide ----------
 
 // brushSubdivideSelectedFaces splits every selected face into one quad per
-// corner, meeting at a new vertex at the face's centre.
+// corner: a new vertex at each edge's midpoint, one at the face's centre, and
+// four-sided pieces between them.
 //
 // No volume changes: every new vertex lies in the face's own plane, on the hull
 // it was already on, so the solid is exactly the solid it was. What changes is
@@ -253,20 +253,28 @@ func faceMaxRadius(b *world.Brush, f *world.BrushFace, center mgl32.Vec3) float3
 // can be dragged individually, and *that* is what breaks convexity, which is
 // why the warning belongs on the drag rather than here.
 //
-// A corner fan (quads to a centre point) rather than the model editor's
-// midpoint split, because it needs no cooperation from the neighbouring faces:
-// a midpoint split adds a vertex on a *shared* edge, which leaves the face on
-// the other side of that edge with a T-junction to repair. The centre fan adds
-// only interior geometry.
+// The pieces are QUADRANTS, not a fan of triangles to the centre. A fan is
+// cheaper to write — it needs no cooperation from the neighbouring faces — but
+// what it produces is a face crossed by diagonals, which is not what anyone
+// means by "subdivide this wall": you cannot select the top-left quarter of it
+// afterwards, and a dragged corner pulls a triangle rather than a panel. The
+// midpoint split is the model editor's, and it is the same code
+// (editor_detail_mesh.go), so a face splits the same way whichever mesh it
+// belongs to.
+//
+// The T-junction the fan was avoiding is handled rather than dodged: splitting
+// a face puts a vertex on an edge it SHARES with its neighbour, and
+// model.SubdivideFaces inserts that vertex into the neighbour's own loop as it
+// goes. The neighbour keeps its shape and gains a corner, which is what stops
+// the seam between them opening up under interpolated light.
 func brushSubdivideSelectedFaces() {
 	if len(ws().SelectedFaces) == 0 {
 		return
 	}
 	ws().pushUndo()
 
-	// Faces are addressed by index and subdividing renumbers them, so the work
-	// is grouped per brush and each brush's faces are rewritten in one pass —
-	// highest index first, so the earlier splits do not move the later ones.
+	// Grouped per brush: the split renumbers a brush's faces, so each brush is
+	// rewritten in one pass and the selection is rebuilt from what came back.
 	perBrush := map[[2]int][]int{}
 	order := [][2]int{}
 	for _, sel := range ws().SelectedFaces {
@@ -287,15 +295,18 @@ func brushSubdivideSelectedFaces() {
 		if b == nil {
 			continue
 		}
-		faces := dedupeDescending(perBrush[key])
-		for _, fi := range faces {
-			added := subdivideBrushFace(b, fi)
-			if added == 0 {
-				continue
-			}
-			n++
-			// The split face is replaced in place and its extra quads appended,
-			// so the original index still names one of the pieces.
+		// The brush's own mesh, through the shared operation. Every new vertex
+		// lands on an edge or in the plane of the face it came from, both of
+		// which are already on the hull, so the solid is exactly the solid it
+		// was and convexity cannot break here. What changes is how finely the
+		// face can be shaped afterwards — and dragging one of those new corners
+		// IS what breaks convexity, which is why the warning belongs there.
+		pieces := meshSubdivideFaces(&b.BrushMesh, perBrush[key])
+		if len(pieces) == 0 {
+			continue
+		}
+		n += len(perBrush[key])
+		for _, fi := range pieces {
 			newSels = append(newSels, brushFaceSel(key[0], key[1], fi))
 		}
 		_ = b.Load()
@@ -303,65 +314,5 @@ func brushSubdivideSelectedFaces() {
 	if len(newSels) > 0 {
 		setFaceSelection(newSels)
 	}
-	ws().setStatus("Subdivided %d face(s)", n)
-}
-
-// subdivideBrushFace replaces face fi with a fan of quads meeting at a new
-// centre vertex, and reports how many faces the brush gained. Zero means the
-// face was not something that could be split.
-func subdivideBrushFace(b *world.Brush, fi int) int {
-	if fi < 0 || fi >= len(b.Faces) {
-		return 0
-	}
-	src := b.Faces[fi]
-	loop := src.Indices
-	if len(loop) < 3 {
-		return 0
-	}
-	center, ok := faceCenter(b, &src)
-	if !ok {
-		return 0
-	}
-	ci := len(b.Verts)
-	b.Verts = append(b.Verts, center)
-
-	// Each new quad inherits the source face's texture and shading outright:
-	// the pieces of a split face are the same surface, and a subdivide that
-	// repainted them would be a surprise.
-	quad := func(i int) world.BrushFace {
-		f := src
-		f.Indices = []int{loop[i], loop[(i+1)%len(loop)], ci}
-		// The copy carries the source's GPU handle, which belongs to the face
-		// being replaced and must not be freed twice or drawn from two places.
-		// Zeroing it makes each piece a fresh face that Load will upload.
-		f.Geometry = gfx.Geometry{}
-		return f
-	}
-	b.Faces[fi] = quad(0)
-	for i := 1; i < len(loop); i++ {
-		b.Faces = append(b.Faces, quad(i))
-	}
-	return len(loop)
-}
-
-// dedupeDescending returns idxs without repeats, highest first — the order an
-// index-renumbering pass has to work in.
-func dedupeDescending(idxs []int) []int {
-	seen := map[int]struct{}{}
-	var out []int
-	for _, i := range idxs {
-		if _, dup := seen[i]; dup {
-			continue
-		}
-		seen[i] = struct{}{}
-		out = append(out, i)
-	}
-	for i := 0; i < len(out); i++ {
-		for j := i + 1; j < len(out); j++ {
-			if out[j] > out[i] {
-				out[i], out[j] = out[j], out[i]
-			}
-		}
-	}
-	return out
+	ws().setStatus("Subdivided %d face(s) into %d", n, len(newSels))
 }

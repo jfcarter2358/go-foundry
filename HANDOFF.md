@@ -632,6 +632,32 @@ Four things worth knowing before touching it:
   the two disagreeing, and the panel's "Re-seed from solid" is the fix. Doing it
   on the author's behalf would silently discard their work every time they nudged
   a corner.
+- **The mesh operations live on `world.BrushMesh`, not on a brush.** A hull and
+  a detail mesh are the same type and the same operations are correct on both;
+  which ones an author may REACH is the editor's business. `meshSubdivideFaces`
+  is shared outright — edit mode's B and detail mode's B are one call — and it
+  is what made the hull's subdivide produce quadrants instead of a triangle fan.
+  The fan existed to dodge the T-junction a midpoint split leaves on a shared
+  edge; `model.SubdivideFaces` repairs it instead, by inserting the midpoint
+  into the neighbour's own loop, so a square face beside a subdivided one comes
+  back a pentagon with its surface unmoved.
+- **`model.InsetFaces` is the real inset**, and lives in `model_ops.go` so the
+  model editor and detail mode share it. Corners are offset along their own
+  angle bisectors by `dist / sin(theta/2)` — the mitre — so the border is a
+  uniform width on a face of any shape, and the face's own outline never moves.
+  It refuses rather than clamps when the loop would invert, and the test for
+  that is on the loop's signed AREA: a 4x0.5 face inset by 1.0 comes back as a
+  perfectly respectable rectangle wound the other way round, which no
+  per-corner distance check notices.
+- **Ask `editorInMeshContext()`, never `editorInEditMode()`, at a dispatch.**
+  Detail mode is a THIRD context, and the first version of it shipped with every
+  click in the mode falling through to the object-mode path — so no detail face
+  could be selected and every tool reported that nothing was. The same mistake
+  was latent in the entity editor's mirror of that dispatch and in
+  `drawSelModeHandles`. `TestAClickInDetailModeSelectsADetailFace` and
+  `TestExtrudeAfterAClickInDetailMode` go through the real handler for that
+  reason: the `pickMeshFor` tests all passed while the feature was unusable,
+  because the click never got as far as asking it.
 
 **5. Entities are built from brushes, and edited like the 3D view.** An entity
 type was models plus a list of chunk *attachments* — file names under `chunks/`

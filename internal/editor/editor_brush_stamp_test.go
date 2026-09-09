@@ -34,6 +34,29 @@ func armTestStamp(t *testing.T, kind string, pos mgl32.Vec3) {
 	brushPlaceValid = true
 }
 
+// A stamped brush wears no texture. Naming one for it — "concrete", as this
+// used to — puts a material into the level that nobody chose, and which the
+// author has to notice before they can replace it; the renderer paints an
+// untextured face from its own normal instead, so a blockout still reads.
+func TestStampedBrushIsUntextured(t *testing.T) {
+	defer saveEditorState()()
+	ch := brushTestLevel(t)
+
+	armTestStamp(t, brushKindBox, mgl32.Vec3{8, 0, 0})
+	if !editorBrushPlaceHandleClick() {
+		t.Fatal("the click was not consumed by the stamp")
+	}
+	b := &ch.Brushes[len(ch.Brushes)-1]
+	if len(b.Faces) == 0 {
+		t.Fatalf("stamped brush %q has no faces", b.ID)
+	}
+	for i, f := range b.Faces {
+		if f.Texture != "" {
+			t.Errorf("face %d of a freshly stamped brush wears %q, want no texture", i, f.Texture)
+		}
+	}
+}
+
 func TestBrushStampStaysArmedAfterPlacing(t *testing.T) {
 	defer saveEditorState()()
 	ch := brushTestLevel(t)

@@ -154,7 +154,7 @@ func entityEditorToolbar() {
 	imgui.SameLine()
 	imgui.Checkbox("Wire##entwire", &entityWireOverlay)
 	imgui.SameLine()
-	imgui.Checkbox("Play [Space]##entplay", &entityPlayAnims)
+	imgui.Checkbox("Play [P]##entplay", &entityPlayAnims)
 	// ---- Group: edit context and selection unit ----
 	//
 	// The 3D view's own controls, on the 3D view's own keys, because the tools
@@ -209,7 +209,9 @@ func entityEditorToolbar() {
 		entityCam.setFly(!entityCam.Fly)
 	}
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("WASD/QE to move, right-drag to look — for getting\ninside a hull rather than orbiting it.")
+		imgui.SetTooltip("WASD to move, Space/Shift up and down, Ctrl to go faster,\n" +
+			"right-drag to look — for getting inside a hull rather than\n" +
+			"orbiting it. The keys move the pivot while orbiting.")
 	}
 	imgui.SameLine()
 	if imgui.Button("Frame [F]##entframe") {

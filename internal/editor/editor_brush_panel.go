@@ -103,7 +103,10 @@ func editorBrushPropertiesSection() {
 
 	editorPropGroupOpen(fmt.Sprintf("Face %d##brushfacegrp", ws().ActiveFaceIdx), func() {
 		changed := false
-		changed = textureCombo("Texture##bftex", &f.Texture, false) || changed
+		// "(none)" is a real choice here, not an absent one: a face with no
+		// texture is drawn from its own normal, which is what a brush looks
+		// like until someone paints it.
+		changed = textureCombo("Texture##bftex", &f.Texture, true) || changed
 		changed = textureCombo("Blend Texture##bfbtex", &f.BlendTexture, true) || changed
 		if f.BlendTexture != "" {
 			changed = textureCombo("Blend Mask##bfbmask", &f.BlendMask, true) || changed

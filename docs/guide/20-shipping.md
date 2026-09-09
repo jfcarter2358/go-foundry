@@ -126,6 +126,11 @@ live was dropped.
 optional desktop shortcut, Add/Remove Programs entry, uninstaller. Uninstalling
 offers to remove saves and defaults to keeping them.
 
+Shipping an update is just handing players the new `Setup.exe`: it finds the
+existing install, replaces it in place, and keeps their saves. They do not
+uninstall first. They do have to close the game first — Windows locks the
+running `.exe`, and the installer will say so.
+
 **Linux** is a `.deb` (tree under `/opt/<slug>`, a launcher on `PATH`, a desktop
 entry), plus an `install.sh` inside the tarball for everywhere `dpkg` is not
 (`PREFIX=~/.local` by default, no root; `--uninstall` reverses it).

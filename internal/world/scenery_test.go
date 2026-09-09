@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"foundry/internal/gfx"
-	"foundry/internal/model"
 	"foundry/internal/testenv"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -207,7 +206,6 @@ func TestSceneryLoadReadsBoundsFromTheModel(t *testing.T) {
 	if gfx.Textures == nil {
 		gfx.Textures = map[string]uint32{}
 	}
-	gfx.Textures[model.DefaultModelTexture] = 1
 
 	path := filepath.Join(t.TempDir(), "box.obj")
 	// A box from (-1, 0, -1) to (1, 2, 1): the base-origin convention again,

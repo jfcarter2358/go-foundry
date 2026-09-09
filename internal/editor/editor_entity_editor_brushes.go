@@ -309,6 +309,27 @@ func entityRemoveBrush(i int) {
 	entityStatus = fmt.Sprintf("Removed brush %s", id)
 }
 
+// entityDeleteSelectedBrushes removes every brush the viewport has selected,
+// falling back to the outline's cursor when the viewport has nothing.
+//
+// One function for the Delete key and the menu's Delete row, because a row
+// labelled "Delete (3 brushes)" and a key that took one would be two answers to
+// the same question. Selecting a FACE counts: the solid it belongs to is what
+// the 3D view deletes for the same key, and the two windows share the tools.
+func entityDeleteSelectedBrushes() {
+	if len(entityWS.SelectedBrushes) == 0 && len(entityWS.SelectedFaces) == 0 {
+		if entitySel.Kind == entitySelBrush {
+			entityRemoveBrush(entitySel.Idx)
+		}
+		return
+	}
+	EntityDefPushUndo()
+	editorDeleteSelectedBrushes()
+	entitySel = entityEditorSelection{}
+	entityGeometryEdited()
+	entityMarkDirty()
+}
+
 // ---------- importing geometry ----------
 
 // entityImportChunkFile copies the brushes out of a chunk file under chunks/

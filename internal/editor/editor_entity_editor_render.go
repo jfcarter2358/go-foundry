@@ -275,6 +275,7 @@ func entityDrawGeometry(g *gfx.Geometry, model mgl32.Mat4, tint mgl32.Vec3) {
 	gl.UniformMatrix4fv(modelUniforms.model, 1, false, &model[0])
 	gl.Uniform3f(modelUniforms.tint, tint.X(), tint.Y(), tint.Z())
 	gl.Uniform1i(modelUniforms.smoothShading, g.SmoothFlag())
+	gl.Uniform1i(modelUniforms.normalColor, g.NormalColorFlag())
 	// Not optional even for the unskinned chunk geometry: `skinned` is program
 	// state, so a wall drawn after an animated attachment would otherwise bend
 	// around that attachment's bones. See modelSkinUniforms.

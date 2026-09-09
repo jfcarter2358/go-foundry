@@ -1,21 +1,22 @@
 package editor
 
-// editor_context_menu.go — the machinery both viewport context menus are built
-// on: the model editor's (editor_model_context_menu.go) and the 3D level
-// editor's (editor_3d_context_menu.go).
+// editor_context_menu.go — the machinery every viewport context menu is built
+// on: the model editor's (editor_model_context_menu.go), the 3D level editor's
+// (editor_3d_context_menu.go) and the entity editor's
+// (editor_entity_context_menu.go).
 //
 // Two things are shared, and they are the two things that would otherwise drift:
 //
 //   - the item tree. A menu is built as data and rendered separately, which is
 //     what makes "what does this selection offer?" a question a test can ask
-//     without a GL context or an ImGui frame — and what keeps the two menus
+//     without a GL context or an ImGui frame — and what keeps the menus
 //     looking and behaving alike, since they render through the same code.
 //
-//   - the gesture. The right button was already spoken for in both viewports:
-//     it is mouse-look. So the two meanings are told apart the same way in
-//     both — a drag looks around, a press and release without travel opens the
-//     menu — because a gesture that meant different things in the two windows
-//     would be worse than no menu at all.
+//   - the gesture. The right button was already spoken for in every viewport:
+//     it is mouse-look. So the two meanings are told apart the same way
+//     everywhere — a drag looks around, a press and release without travel
+//     opens the menu — because a gesture that meant different things in
+//     different windows would be worse than no menu at all.
 //
 // What each editor supplies for itself is the interesting half: which rows
 // exist for which selection, and what they do.
@@ -152,10 +153,23 @@ func ctxDrawMenuItems(items []ctxMenuItem) {
 }
 
 // ctxTextureMenuItems is the texture list as menu rows, ticked at current.
-// Both menus assign textures, and both want the same list in the same order.
-func ctxTextureMenuItems(current string, set func(string)) []ctxMenuItem {
+// Every menu that assigns a texture wants the same list in the same order.
+//
+// allowNone heads the list with "(none)", for the surfaces where wearing no
+// texture is a look rather than a mistake: a brush face and a model are drawn
+// from their own normals without one, while a sprite with no texture is a
+// black quad, so its menu leaves the row out. Mirrors textureCombo's
+// allowEmpty.
+func ctxTextureMenuItems(current string, allowNone bool, set func(string)) []ctxMenuItem {
 	names := sortedTextureNames()
-	items := make([]ctxMenuItem, 0, len(names))
+	items := make([]ctxMenuItem, 0, len(names)+1)
+	if allowNone {
+		items = append(items, ctxMenuItem{
+			Label:   "(none)",
+			Checked: current == "",
+			Do:      func() { set("") },
+		})
+	}
 	for _, n := range names {
 		name := n
 		items = append(items, ctxMenuItem{

@@ -66,17 +66,50 @@ func TestEntityShortcutFor(t *testing.T) {
 	}
 }
 
-// TestBareSIsNotSave is the collision worth pinning on its own: S is a fly key
-// here, and mapping it to Save without the modifier would write a file every
-// time someone backed the camera up.
+// TestBareSIsNotSave is the collision worth pinning on its own: S is a movement
+// key here, and mapping it to Save without the modifier would write a file
+// every time someone backed the camera up. Space is on the list for the same
+// reason — it rises, and used to toggle animation playback.
 func TestBareSIsNotSave(t *testing.T) {
 	for _, sc := range []sdl.Scancode{
 		sdl.SCANCODE_W, sdl.SCANCODE_A, sdl.SCANCODE_S, sdl.SCANCODE_D,
-		sdl.SCANCODE_Q, sdl.SCANCODE_E,
+		sdl.SCANCODE_SPACE,
 	} {
 		if got := entityShortcutFor(sc, false, false); got != entityShortcutNone {
-			t.Errorf("fly key %v is bound to %v", sc, got)
+			t.Errorf("movement key %v is bound to %v", sc, got)
 		}
+	}
+}
+
+// TestEntityPlayIsOnP pins where the playback toggle went when Space became the
+// camera's "up".
+func TestEntityPlayIsOnP(t *testing.T) {
+	if got := entityShortcutFor(sdl.SCANCODE_P, false, false); got != entityShortcutTogglePlay {
+		t.Errorf("P is bound to %v, want the playback toggle", got)
+	}
+}
+
+// TestEntityCameraMoveInBothModes is the bug this pair of bindings was reported
+// as: up and down did nothing. Flying moves the eye; orbiting moves the pivot,
+// rather than nothing at all.
+func TestEntityCameraMoveInBothModes(t *testing.T) {
+	fly := entityCamera{Fly: true, Dist: 6}
+	fly.move(0, 2, 0)
+	if fly.Pos.Y() != 2 {
+		t.Errorf("flying up moved the eye to %v, want Y=2", fly.Pos)
+	}
+	fly.move(0, -3, 0)
+	if fly.Pos.Y() != -1 {
+		t.Errorf("flying down moved the eye to %v, want Y=-1", fly.Pos)
+	}
+
+	orbit := entityCamera{Dist: 6}
+	orbit.move(0, 2, 0)
+	if orbit.Target.Y() != 2 {
+		t.Errorf("orbiting up moved the pivot to %v, want Y=2", orbit.Target)
+	}
+	if orbit.Pos != (mgl32.Vec3{}) {
+		t.Errorf("orbiting moved the eye directly: %v", orbit.Pos)
 	}
 }
 

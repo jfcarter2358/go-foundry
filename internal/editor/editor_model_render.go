@@ -51,6 +51,7 @@ var modelUniforms struct {
 	projection, view, model int32
 	tex, camPos, tint       int32
 	smoothShading           int32
+	normalColor             int32
 }
 
 // modelGeoms is the mesh compiled for the GPU: one Geometry per texture, since
@@ -82,6 +83,7 @@ func modelEditorEnsureProgram() error {
 	modelUniforms.camPos = u("camPos")
 	modelUniforms.tint = u("tint")
 	modelUniforms.smoothShading = u("smoothShading")
+	modelUniforms.normalColor = u("normalColor")
 	return nil
 }
 
@@ -161,6 +163,7 @@ func drawModelMesh(view, proj mgl32.Mat4, camPos mgl32.Vec3) {
 		// the CPU. The call is not optional even so — see modelSkinUniforms.
 		gfx.ApplySkinUniforms(&modelSkinUniforms, modelProgram, nil)
 		gl.Uniform1i(modelUniforms.smoothShading, g.SmoothFlag())
+		gl.Uniform1i(modelUniforms.normalColor, g.NormalColorFlag())
 		gl.BindVertexArray(g.Vao)
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[g.Texture])

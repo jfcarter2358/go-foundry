@@ -265,6 +265,223 @@ func (m *ModelDoc) RefreshExtrudeSideUVs(faces []int) {
 	}
 }
 
+// ---------- inset ----------
+
+// InsetFaces shrinks each selected face within its own plane and walls the gap
+// with a ring of quads, returning the shrunken faces (the same indices that
+// went in, so a selection survives) and the ring faces it created.
+//
+// This is the operation that makes a frame: a window reveal, a recessed panel,
+// a border around a hatch. Inset first, then extrude the inner face, and the
+// ring becomes the sides of the recess.
+//
+// # Why it is not "pull the corners toward the centre"
+//
+// That is the cheap version, and it is what the level editor's convexity-safe
+// inset does (editor_brush_mesh.go). It has two problems this one does not: the
+// border comes out uneven on any face that is not roughly square — inset a 10x1
+// strip by a fifth and the border is 1.0 along one axis and 0.1 along the other
+// — and it moves the ORIGINAL corners, which drags every neighbouring face that
+// shares them. A real inset leaves the outline exactly where it was and builds
+// a new, smaller loop inside it.
+//
+// Each corner of the new loop is offset along its own angle bisector, by enough
+// that both of its edges move inward by exactly dist. That is the mitre a
+// picture frame has, and it is what makes the border uniform.
+//
+// dist is an absolute distance in model units rather than a fraction, for the
+// same reason: a 5cm frame is 5cm wide wherever it is used. A face too small to
+// take one is skipped rather than turned inside out — see insetCorners.
+func (m *ModelDoc) InsetFaces(faces []int, dist float32) (inner, ring []int) {
+	sel := m.faceSet(faces)
+	if len(sel) == 0 || dist <= 0 {
+		return nil, nil
+	}
+	m.EnsureWeights()
+
+	// Ascending, so the result is deterministic and a caller carrying its own
+	// per-face data across can walk the same order.
+	for _, fi := range sortedKeys(sel) {
+		n := len(m.Faces[fi].Verts)
+		if n < 3 {
+			continue
+		}
+		pts := make([]mgl32.Vec3, n)
+		for i, v := range m.Faces[fi].Verts {
+			pts[i] = m.Verts[v]
+		}
+		offsets, ok := insetCorners(pts, m.faceNormal(&m.Faces[fi]), dist)
+		if !ok {
+			continue // too small to take this border; left exactly as it was
+		}
+
+		// The new inner loop. Each vertex inherits the bone binding of the
+		// corner it was offset from, so an inset face keeps following whatever
+		// moved the surface it was cut into.
+		uvCentre := faceUVCentroid(&m.Faces[fi])
+		innerV := make([]int, n)
+		innerUV := make([]mgl32.Vec2, n)
+		for i := range pts {
+			f := &m.Faces[fi]
+			// UVs follow the positions by the same proportion, so what is on
+			// the inner face is the middle of what was on the whole one.
+			t := insetUVFraction(pts, offsets, i)
+			innerUV[i] = f.UvAt(i).Add(uvCentre.Sub(f.UvAt(i)).Mul(t))
+			innerV[i] = m.addVertex(pts[i].Add(offsets[i]), m.VertexWeights(f.Verts[i]))
+		}
+
+		// The ring, one quad per edge, wound the way its source face is so it
+		// faces the same way out: [outer i, outer next, inner next, inner i].
+		outerV := append([]int(nil), m.Faces[fi].Verts...)
+		outerUV := append([]mgl32.Vec2(nil), m.Faces[fi].UVs...)
+		smooth := m.Faces[fi].Smooth
+		for i := 0; i < n; i++ {
+			j := (i + 1) % n
+			ring = append(ring, len(m.Faces))
+			m.Faces = append(m.Faces, ModelFace{
+				Verts:  []int{outerV[i], outerV[j], innerV[j], innerV[i]},
+				UVs:    []mgl32.Vec2{uvAtOr(outerUV, i), uvAtOr(outerUV, j), innerUV[j], innerUV[i]},
+				Smooth: smooth,
+			})
+		}
+
+		// The source face becomes the inner one, keeping its index — so the
+		// selection survives and inset, inset, extrude is three keypresses
+		// rather than three keypresses and two clicks.
+		m.Faces[fi].Verts = innerV
+		m.Faces[fi].UVs = innerUV
+		inner = append(inner, fi)
+	}
+
+	if len(inner) == 0 {
+		return nil, nil
+	}
+	m.Invalidate()
+	return inner, ring
+}
+
+// insetMinScale is how much of its own size the loop must keep. An inset that
+// would leave less has nothing useful in the middle, and past the point where
+// opposite borders meet it turns the loop inside out — so it is refused rather
+// than clamped, which would silently do something other than what was asked.
+const insetMinScale = 0.05
+
+// insetCorners returns the offset to apply to each corner of a planar loop so
+// that every edge moves inward by dist, and whether the result is a loop worth
+// having.
+//
+// The offset at a corner runs along the bisector of its two edges, and its
+// length is dist / sin(theta/2), where theta is the interior angle — the mitre
+// that keeps the border a constant width right into the corner. A sharp corner
+// therefore travels a long way, which is why the check at the end is on the
+// resulting SIZE rather than on dist alone.
+func insetCorners(pts []mgl32.Vec3, normal mgl32.Vec3, dist float32) ([]mgl32.Vec3, bool) {
+	n := len(pts)
+	if n < 3 || normal.Len() < 1e-6 {
+		return nil, false
+	}
+	normal = normal.Normalize()
+
+	var centre mgl32.Vec3
+	for _, p := range pts {
+		centre = centre.Add(p)
+	}
+	centre = centre.Mul(1 / float32(n))
+
+	out := make([]mgl32.Vec3, n)
+	for i := range pts {
+		a := pts[(i-1+n)%n].Sub(pts[i])
+		b := pts[(i+1)%n].Sub(pts[i])
+		if a.Len() < 1e-9 || b.Len() < 1e-9 {
+			return nil, false
+		}
+		a, b = a.Normalize(), b.Normalize()
+
+		bis := a.Add(b)
+		if bis.Len() < 1e-6 {
+			// The two edges are opposite: a point on a straight run rather than
+			// a corner — which is what a subdivided face's midpoints are. Step
+			// straight inward, perpendicular to the run.
+			bis = normal.Cross(b)
+			if bis.Dot(centre.Sub(pts[i])) < 0 {
+				bis = bis.Mul(-1)
+			}
+			out[i] = bis.Normalize().Mul(dist)
+			continue
+		}
+		bis = bis.Normalize()
+		// Aim it at the inside of the face, whichever way the winding runs.
+		if bis.Dot(centre.Sub(pts[i])) < 0 {
+			bis = bis.Mul(-1)
+		}
+		// The sine of half the interior angle, read off the bisector against
+		// one of its edges.
+		sinHalf := bis.Cross(b).Len()
+		if sinHalf < 1e-4 {
+			return nil, false // a spike; the mitre would run away to infinity
+		}
+		out[i] = bis.Mul(dist / sinHalf)
+	}
+
+	// Refuse an inset that would collapse or invert the loop.
+	//
+	// The test is on the loop's own signed AREA rather than on how far each
+	// corner travelled, because the way this goes wrong is not that a corner
+	// moves too far — it is that opposite borders pass through each other and
+	// the loop comes out inside out. A 4x0.5 face inset by 1.0 does exactly
+	// that: every corner is still a respectable distance from the centre and
+	// still on the same side of it diagonally, and the rectangle it forms is
+	// wound the other way round. Area sees it; a per-corner test does not.
+	inner := make([]mgl32.Vec3, n)
+	for i := range pts {
+		inner[i] = pts[i].Add(out[i])
+	}
+	before := signedArea(pts, normal)
+	after := signedArea(inner, normal)
+	if before <= 0 || after <= before*insetMinScale {
+		return nil, false
+	}
+	return out, true
+}
+
+// signedArea is a planar loop's area measured against n, negative when the loop
+// is wound the other way round.
+func signedArea(pts []mgl32.Vec3, n mgl32.Vec3) float32 {
+	var acc mgl32.Vec3
+	for i := range pts {
+		acc = acc.Add(pts[i].Cross(pts[(i+1)%len(pts)]))
+	}
+	return acc.Mul(0.5).Dot(n)
+}
+
+// insetUVFraction is how far corner i travelled toward the centre as a fraction
+// of how far it could have — the number the UV interpolation needs so the
+// texture shrinks with the geometry.
+func insetUVFraction(pts []mgl32.Vec3, offsets []mgl32.Vec3, i int) float32 {
+	var centre mgl32.Vec3
+	for _, p := range pts {
+		centre = centre.Add(p)
+	}
+	centre = centre.Mul(1 / float32(len(pts)))
+	toCentre := centre.Sub(pts[i]).Len()
+	if toCentre < 1e-9 {
+		return 0
+	}
+	if f := offsets[i].Len() / toCentre; f < 1 {
+		return f
+	}
+	return 1
+}
+
+// uvAtOr reads a UV that may not be there, for a face whose UV list is short —
+// which a hand-written .fmdl or a UV-less OBJ import can produce.
+func uvAtOr(uvs []mgl32.Vec2, i int) mgl32.Vec2 {
+	if i < 0 || i >= len(uvs) {
+		return mgl32.Vec2{}
+	}
+	return uvs[i]
+}
+
 // ---------- midpoint subdivide ----------
 
 // SubdivideFaces splits each selected face at its edge midpoints: a triangle

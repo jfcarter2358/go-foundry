@@ -79,7 +79,7 @@ brush's:
 
 | Field | |
 | --- | --- |
-| **Texture** | plus an optional **Blend Texture** and a grayscale **Blend Mask** |
+| **Texture** | `(none)` on a fresh brush — an untextured face is painted with its own normal, see [Textures](04-textures.md#no-texture) — plus an optional **Blend Texture** and a grayscale **Blend Mask** |
 | **Alpha** | 1 is opaque; anything less sorts into the transparent pass |
 | **Double Sided** | draw it from behind as well |
 | **Drawn** | off builds no geometry at all while the brush still collides — for a face buried against a neighbour |

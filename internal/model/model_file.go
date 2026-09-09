@@ -37,11 +37,19 @@ func ModelsDir() string { return filepath.Join(fileutil.ExecutablePath, ModelsDi
 
 func ModelPath(name string) string { return filepath.Join(ModelsDir(), name+ModelExt) }
 
+// legacyDefaultTexture is the name older files carry on faces that were never
+// painted: back when a texture was a per-face field it was auto-filled with
+// "default" rather than left empty. Reading one back as a deliberate choice
+// would give every such model that placeholder image forever, so the import
+// below skips it and the model loads untextured — which is what it always was.
+const legacyDefaultTexture = "default"
+
 // RawModel is the on-disk form of a ModelDoc.
 type RawModel struct {
 	ID string `yaml:"id"`
 	// Texture is the one image the model is painted with. Omitted when the
-	// document never chose one, which loads back as DefaultModelTexture.
+	// model wears none, which is how a document that was never painted both
+	// saves and loads.
 	Texture     string           `yaml:"texture,omitempty"`
 	SmoothAngle float32          `yaml:"smooth_angle,omitempty"`
 	Vertices    [][]float32      `yaml:"vertices"`
@@ -268,7 +276,7 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 		// document's texture. A file that used several is flattened to the
 		// first, which is lossy — but the alternative is refusing to open it,
 		// and the UVs it carries are still the ones that were authored.
-		if raw.Texture == "" && m.Texture == "" && rf.Texture != "" && rf.Texture != DefaultModelTexture {
+		if raw.Texture == "" && m.Texture == "" && rf.Texture != "" && rf.Texture != legacyDefaultTexture {
 			m.Texture = rf.Texture
 		}
 		m.Faces[i] = f

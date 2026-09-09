@@ -90,6 +90,22 @@ func (g *Geometry) SmoothFlag() int32 {
 	return 0
 }
 
+// NormalColorFlag is the value of the shader's `normalColor` uniform for this
+// geometry: 1 when it names no texture at all.
+//
+// An unpainted surface is the ordinary state of a brush that has just been
+// blocked out, not an error, so it gets a look of its own rather than a
+// placeholder image: the fragment stage paints it with its own normal, which
+// makes every plane of a solid a different colour and reads as shape. The
+// alternative — binding whatever Textures[""] resolves to, which is texture
+// object 0 — samples black through the whole lighting model.
+func (g *Geometry) NormalColorFlag() int32 {
+	if g.Texture == "" {
+		return 1
+	}
+	return 0
+}
+
 // applyWaterUniforms pushes this geometry's water settings to the shader.
 // Every draw call sets them, including the disabled case, so a water plane
 // never leaks its wave/fresnel state onto the geometry drawn after it.
@@ -412,6 +428,7 @@ func (g Geometry) Draw() {
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
+	gl.Uniform1i(NormalColorUniform, g.NormalColorFlag())
 	g.applyWaterUniforms()
 	g.applyBlendUniforms()
 	g.applyNormalUniforms()
@@ -435,6 +452,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
+	gl.Uniform1i(NormalColorUniform, g.NormalColorFlag())
 	g.applyWaterUniforms()
 	g.applyBlendUniforms()
 	g.applyNormalUniforms()
@@ -461,6 +479,10 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, 0)
 	gl.Uniform1i(BakedLightUniform, 0)
+	// Never normal-coloured, whatever this geometry's texture is: a line has no
+	// facet for the fragment stage to take a normal from, so the derivative
+	// would be noise. A marker's colour comes from its texture and its alpha.
+	gl.Uniform1i(NormalColorUniform, 0)
 	gl.Uniform1i(IsWaterUniform, 0)
 	gl.Uniform1i(HasNormalMapUniform, 0)
 	ApplySkinUniforms(&worldSkinUniforms, Program, nil)

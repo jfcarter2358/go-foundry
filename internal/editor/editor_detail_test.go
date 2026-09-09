@@ -10,6 +10,8 @@ package editor
 import (
 	"testing"
 
+	"foundry/internal/gfx"
+	"foundry/internal/gizmo"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -302,5 +304,361 @@ func TestDetailSmoothRoundsTheSurfaceOnly(t *testing.T) {
 		if v.X() < -0.01 || v.Y() < -0.01 || v.Z() < -0.01 {
 			t.Fatalf("vertex %v is outside the original box; smoothing should shrink it", v)
 		}
+	}
+}
+
+// ---------- what a click in detail mode actually reaches ----------
+//
+// The tests above check pickMeshFor, which is the question "which mesh does
+// this brush offer". They passed while the feature was still broken, because
+// the click never got as far as asking: Editor3DHandleClick sent everything
+// that was not EDIT mode down the object-mode path, so detail mode picked up
+// whole brushes, no detail face could be selected, and every tool reported that
+// nothing was. These go through the dispatch instead.
+
+// clickAtCentre runs the 3D view's own left-click handler at the middle of the
+// viewport, which is where setupPickCamera aims.
+func clickAtCentre(mx, my int32) {
+	Editor3DHandleClick(sdl.MouseButtonEvent{Button: sdl.ButtonLeft, X: mx, Y: my})
+}
+
+// detailPickLevel puts a box in front of the camera with its detail mesh
+// seeded, and enters detail mode on it.
+func detailPickLevel(t *testing.T) (*world.Brush, int32, int32) {
+	t.Helper()
+	mx, my := setupPickCamera()
+	ch := brushGeomLevel(t, world.NewBoxBrush("wall",
+		mgl32.Vec3{0, 0, -6}, mgl32.Vec3{4, 4, 0.5}, "concrete"))
+	b := &ch.Brushes[0]
+	editorEnterDetailMode(brushSel{chunkIdx: 0, brushIdx: 0})
+	if err := b.Load(); err != nil {
+		t.Fatalf("loading the detailed brush: %v", err)
+	}
+	return b, mx, my
+}
+
+// TestAClickInDetailModeSelectsADetailFace is the regression: a plain click has
+// to land on the detail mesh, because that is what every tool in the mode acts
+// on.
+func TestAClickInDetailModeSelectsADetailFace(t *testing.T) {
+	defer saveEditorState()()
+	_, mx, my := detailPickLevel(t)
+
+	clickAtCentre(mx, my)
+
+	if len(ws().SelectedBrushes) > 0 {
+		t.Fatal("the click picked up a whole brush; detail mode took the object-mode path")
+	}
+	if len(ws().SelectedFaces) != 1 {
+		t.Fatalf("selected %d faces, want 1", len(ws().SelectedFaces))
+	}
+	if sel := ws().SelectedFaces[0]; !sel.detail {
+		t.Errorf("selected face %+v is on the hull, want the detail mesh", sel)
+	}
+	if !editorInDetailMode() {
+		t.Error("the click left detail mode")
+	}
+}
+
+// TestExtrudeAfterAClickInDetailMode is the user-visible loop end to end: click
+// a face, press E, and the surface moves while the solid does not.
+func TestExtrudeAfterAClickInDetailMode(t *testing.T) {
+	defer saveEditorState()()
+	b, mx, my := detailPickLevel(t)
+	hull := append([]mgl32.Vec3(nil), b.Verts...)
+	facesBefore := len(b.Detail.Faces)
+
+	clickAtCentre(mx, my)
+	if !detailMeshHandleKey(sdl.SCANCODE_E, false) {
+		t.Fatal("E was not consumed by detail mode")
+	}
+
+	if len(b.Detail.Faces) <= facesBefore {
+		t.Fatalf("E added no faces: %d, was %d — nothing was selected to extrude",
+			len(b.Detail.Faces), facesBefore)
+	}
+	for i := range hull {
+		if b.Verts[i] != hull[i] {
+			t.Fatalf("hull corner %d moved to %v, was %v", i, b.Verts[i], hull[i])
+		}
+	}
+
+	// And B subdivides what E left selected, which is the next thing a hand
+	// reaches for.
+	facesBefore = len(b.Detail.Faces)
+	if !detailMeshHandleKey(sdl.SCANCODE_B, false) {
+		t.Fatal("B was not consumed by detail mode")
+	}
+	if len(b.Detail.Faces) <= facesBefore {
+		t.Errorf("B added no faces: %d, was %d", len(b.Detail.Faces), facesBefore)
+	}
+}
+
+// TestDetailModeDrawsItsOwnHandles covers the same class of bug one layer over:
+// point and edge mode draw no handles in object mode, and detail mode is not
+// object mode.
+func TestDetailModeDrawsItsOwnHandles(t *testing.T) {
+	defer saveEditorState()()
+	detailPickLevel(t)
+	editorSetSelMode(editorSelPoint)
+
+	if !editorInMeshContext() {
+		t.Error("detail mode does not count as a mesh context, so its corner handles are never drawn")
+	}
+}
+
+// TestAPointClickInDetailModeSelectsADetailVertex covers the other two branches
+// of the same dispatch: point and edge mode each own the click outright, so
+// each had to stop being sent to object mode along with the rest of detail
+// mode.
+func TestAPointClickInDetailModeSelectsADetailVertex(t *testing.T) {
+	defer saveEditorState()()
+	b, _, _ := detailPickLevel(t)
+	// A corner of the box, projected to where the cursor has to be to grab it.
+	// The near face spans x,y in ±4 at z=-5.5, so its top-right corner is the
+	// one to aim at.
+	editorSetSelMode(editorSelPoint)
+	editorSetWireframe(true) // every handle in range is selectable, not only the visible ones
+
+	corner := mgl32.Vec3{4, 4, -5.5}
+	projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
+	screen, ok := projectToScreen(projView, corner)
+	if !ok {
+		t.Fatal("the corner does not project onto the viewport")
+	}
+
+	clickAtCentre(int32(screen.X()), int32(screen.Y()))
+
+	if len(ws().SelectedVertices) == 0 {
+		t.Fatal("no vertex was selected; the click went to the object-mode path")
+	}
+	sel := ws().SelectedVertices[0]
+	if !sel.detail {
+		t.Errorf("selected vertex %+v is on the hull, want the detail mesh", sel)
+	}
+	if pos, ok := vertexSelPos(sel); !ok || !vecNear(pos, corner, 0.001) {
+		t.Errorf("selected the vertex at %v, want the corner at %v", pos, corner)
+	}
+	_ = b
+}
+
+// ---------- inset ----------
+
+// TestDetailInsetLeavesABorder is the operation the detail mesh exists for as
+// much as extrude does: a frame, in the face's own plane, that the next extrude
+// turns into a recess.
+func TestDetailInsetLeavesABorder(t *testing.T) {
+	defer saveEditorState()()
+	b, hull := detailTestBrush(t)
+	selectDetailFace(boxFaceTop)
+	before := len(b.Detail.Faces)
+
+	detailInsetSelection(0.25)
+
+	// One ring quad per edge of the face that was inset.
+	if got := len(b.Detail.Faces) - before; got != 4 {
+		t.Errorf("inset added %d faces, want 4 ring quads", got)
+	}
+	// The inner face stays selected — inset then extrude is the workflow.
+	if len(ws().SelectedFaces) != 1 || ws().SelectedFaces[0].faceIdx != boxFaceTop {
+		t.Errorf("selection after inset is %+v, want the inner face", ws().SelectedFaces)
+	}
+	// The border is uniform: the box spans ±1, so a 0.25 border leaves ±0.75.
+	for _, vi := range b.Detail.Faces[boxFaceTop].Indices {
+		p := b.Detail.Verts[vi]
+		if !nearlyEqual(abs32(p.X()-1), 0.75, 0.001) && !nearlyEqual(abs32(p.X()), 0.75, 0.001) {
+			t.Errorf("inner corner %v is not 0.25 in from the face's edge", p)
+		}
+	}
+	// And the solid did not move.
+	for i := range hull {
+		if b.Verts[i] != hull[i] {
+			t.Errorf("hull corner %d moved to %v, was %v", i, b.Verts[i], hull[i])
+		}
+	}
+}
+
+// TestDetailInsetThenExtrudeIsARecess is the pair, end to end.
+func TestDetailInsetThenExtrudeIsARecess(t *testing.T) {
+	defer saveEditorState()()
+	b, _ := detailTestBrush(t)
+	selectDetailFace(boxFaceTop)
+
+	detailInsetSelection(0.25)
+	detailExtrudeSelection(-0.5)
+
+	// The box's top was y=2; the recess floor is half a unit below it.
+	floor := float32(1e9)
+	for _, v := range b.Detail.Verts {
+		if v.Y() < floor {
+			floor = v.Y()
+		}
+	}
+	if !nearlyEqual(floor, 0, 0.001) {
+		t.Errorf("the mesh's lowest point is y=%v; the box's own floor is y=0", floor)
+	}
+	sunk := 0
+	for _, v := range b.Detail.Verts {
+		if nearlyEqual(v.Y(), 1.5, 0.001) {
+			sunk++
+		}
+	}
+	if sunk != 4 {
+		t.Errorf("%d corners ended up at y=1.5, want the recess floor's 4", sunk)
+	}
+}
+
+func abs32(f float32) float32 {
+	if f < 0 {
+		return -f
+	}
+	return f
+}
+
+// ---------- subdivide shape ----------
+
+// TestSubdivideMakesQuadrantsNotTriangles covers both meshes at once. Two
+// assertions, and the second is the reason the first is safe:
+//
+//   - the pieces of a split quad are four QUADS, not a fan of triangles to the
+//     centre — a fan cannot be selected, dragged or textured as the quarters of
+//     a panel, which is what "subdivide this wall" means;
+//   - each neighbour that shared a cut edge gains the midpoint as a corner of
+//     its own. That is the T-junction the fan was invented to dodge, repaired
+//     instead: a square face beside a subdivided one comes back a pentagon, and
+//     its surface has not moved.
+func TestSubdivideMakesQuadrantsNotTriangles(t *testing.T) {
+	defer saveEditorState()()
+
+	// The detail mesh.
+	b, _ := detailTestBrush(t)
+	selectDetailFace(boxFaceTop)
+	detailSubdivideSelection()
+
+	pieces := ws().SelectedFaces
+	if len(pieces) != 4 {
+		t.Fatalf("splitting a quad gave %d pieces, want 4 quadrants", len(pieces))
+	}
+	for _, sel := range pieces {
+		f := faceSelFace(sel)
+		if f == nil {
+			t.Fatalf("piece %+v does not resolve", sel)
+		}
+		if n := len(f.Indices); n != 4 {
+			t.Errorf("piece %d has %d corners, want a quad", sel.faceIdx, n)
+		}
+	}
+	if len(b.Detail.Faces) != 9 {
+		t.Errorf("the detail mesh has %d faces, want 5 untouched sides plus 4 quarters",
+			len(b.Detail.Faces))
+	}
+	// The four sides that shared an edge with the top absorbed its midpoint.
+	pentagons := 0
+	for i := range b.Detail.Faces {
+		if len(b.Detail.Faces[i].Indices) == 5 {
+			pentagons++
+		}
+	}
+	if pentagons != 4 {
+		t.Errorf("%d neighbours took the new midpoints, want the 4 that share an edge "+
+			"with the face that was split — the rest are T-junctions", pentagons)
+	}
+
+	// And the solid, in edit mode, where the same split must also leave a brush
+	// something the compiler will still accept.
+	ch := brushTestLevel(t)
+	editorSetEditContext(editorEditMode)
+	setFaceSelection([]faceSel{brushFaceSel(0, 0, boxFaceTop)})
+	brushSubdivideSelectedFaces()
+
+	hull := &ch.Brushes[0]
+	if len(hull.Faces) != 9 {
+		t.Errorf("the brush has %d faces, want 5 untouched sides plus 4 quarters", len(hull.Faces))
+	}
+	for _, sel := range ws().SelectedFaces {
+		f := faceSelFace(sel)
+		if f == nil || len(f.Indices) != 4 {
+			t.Errorf("hull piece %+v is not a quad", sel)
+		}
+	}
+	if !hull.IsConvex() {
+		t.Error("subdividing a box's face made it non-convex")
+	}
+}
+
+// ---------- the seams ----------
+
+// queuedGizmoLines is how many line segments the overlays put in the shared
+// buffer, which is the only observable a headless test has for something that
+// is ultimately drawn. Each line is two endpoints of six floats.
+func queuedGizmoLines(draw func()) int {
+	gizmo.Buf = gizmo.Buf[:0]
+	draw()
+	return len(gizmo.Buf) / 12
+}
+
+// TestDetailWiresOutlineEveryFace is the overlay that makes the mode usable
+// after a subdivide: four coplanar quarters of a wall are one flat surface to
+// look at, and without the seams there is no telling what a click will hit.
+func TestDetailWiresOutlineEveryFace(t *testing.T) {
+	defer saveEditorState()()
+	b, _ := detailTestBrush(t)
+
+	// A box: twelve edges, each drawn once however many faces share it.
+	if n := queuedGizmoLines(drawDetailMeshWires); n != 12 {
+		t.Errorf("a box's detail mesh drew %d lines, want its 12 edges once each", n)
+	}
+
+	// Subdividing a face adds the seams that are the whole point: four
+	// quarters bring four midpoints and four spokes, and the four neighbours
+	// that absorbed a midpoint each gain a corner.
+	selectDetailFace(boxFaceTop)
+	detailSubdivideSelection()
+	after := queuedGizmoLines(drawDetailMeshWires)
+	if after <= 12 {
+		t.Errorf("after subdividing, %d lines — the new seams are not drawn", after)
+	}
+	if len(b.Detail.Faces) != 9 {
+		t.Fatalf("subdivide left %d faces", len(b.Detail.Faces))
+	}
+}
+
+// TestDetailWiresOnlyInDetailMode keeps the overlay out of the ordinary
+// viewport: every brush's edges at once is a hairball, and nothing outside
+// detail mode is clicking on a detail face.
+func TestDetailWiresOnlyInDetailMode(t *testing.T) {
+	defer saveEditorState()()
+	detailTestBrush(t)
+	editorExitDetailMode()
+
+	if n := queuedGizmoLines(drawDetailMeshWires); n != 0 {
+		t.Errorf("drew %d lines in object mode", n)
+	}
+	editorSetEditContext(editorEditMode)
+	if n := queuedGizmoLines(drawDetailMeshWires); n != 0 {
+		t.Errorf("drew %d lines in edit mode", n)
+	}
+}
+
+// TestDetailWiresAreBiasedTowardTheCamera is the difference between an overlay
+// that works and one that is invisible: an edge between two coplanar faces
+// lies exactly on the surface, so drawn at its own depth it loses to the
+// triangle it bounds.
+func TestDetailWiresAreBiasedTowardTheCamera(t *testing.T) {
+	defer saveEditorState()()
+	setupPickCamera() // eye at the origin, looking down -Z
+
+	p := mgl32.Vec3{0, 0, -10}
+	got := nudgeTowardCamera(p)
+	if got == p {
+		t.Fatal("the point was not moved at all")
+	}
+	if got.Z() <= p.Z() {
+		t.Errorf("moved to %v, which is further from the eye than %v", got, p)
+	}
+	// A pixel's worth, not a visible float: well under a hundredth of the ten
+	// units to the surface.
+	if d := got.Sub(p).Len(); d > 0.1 {
+		t.Errorf("moved %v units toward the eye; that would visibly float", d)
 	}
 }

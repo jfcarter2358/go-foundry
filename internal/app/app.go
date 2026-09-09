@@ -247,6 +247,9 @@ func Run() {
 	gfx.BakedLightUniform = gl.GetUniformLocation(gfx.Program, gl.Str("bakedLight\x00"))
 	gl.Uniform1i(gfx.BakedLightUniform, 0) // default: light the fragment the ordinary way
 
+	gfx.NormalColorUniform = gl.GetUniformLocation(gfx.Program, gl.Str("normalColor\x00"))
+	gl.Uniform1i(gfx.NormalColorUniform, 0) // default: sample tex, as a textured surface does
+
 	gfx.AlphaSharpenUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alphaSharpen\x00"))
 	gl.Uniform1i(gfx.AlphaSharpenUniform, 0) // default: off; the opaque pass turns it on
 

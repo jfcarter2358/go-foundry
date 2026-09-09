@@ -151,6 +151,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "1 / 2 / 3 / 4", Desc: "Vertex / edge / face / bone select"},
 			{Keys: "G / R / C", Desc: "Move / rotate / scale gizmo (C again: local axes)"},
 			{Keys: "E / Shift+E", Desc: "Extrude (again: re-aim along the normal) / always extrude"},
+			{Keys: "I", Desc: "Inset — a mitred border round the selected faces"},
 			{Keys: "V", Desc: "Toggle orbit and fly camera"},
 			{Keys: "Z", Desc: "Toggle wireframe"},
 			{Keys: "F", Desc: "Frame the model"},
@@ -275,7 +276,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		Binds: []uiwin.Keybind{
 			{Keys: "E", Desc: "Extrude the selected faces along their normals (Shift+E pulls in)"},
 			{Keys: "I", Desc: "Inset the selected faces (Shift+I widens them)"},
-			{Keys: "B", Desc: "Subdivide the selected faces"},
+			{Keys: "B", Desc: "Subdivide the selected faces into quadrants"},
 			{Keys: "Delete", Desc: "Delete the selected faces' brushes"},
 			{Keys: "Tab", Desc: "Back to object mode, with this brush selected"},
 		},
@@ -302,7 +303,8 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		},
 		Binds: []uiwin.Keybind{
 			{Keys: "E", Desc: "Extrude the selected faces, walling in the sides (Shift+E pushes in)"},
-			{Keys: "B", Desc: "Subdivide the selected faces"},
+			{Keys: "I", Desc: "Inset — a mitred border, leaving the middle selected"},
+			{Keys: "B", Desc: "Subdivide the selected faces into quadrants"},
 			{Keys: "Shift+B", Desc: "Smooth the whole detail mesh (Catmull-Clark)"},
 			{Keys: "Delete / X", Desc: "Delete the selected detail faces"},
 			{Keys: "1 / 2 / 3", Desc: "Select points, edges or faces of the detail mesh"},

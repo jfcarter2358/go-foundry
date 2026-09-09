@@ -47,12 +47,13 @@ windows at once.
 | Key | |
 | --- | --- |
 | Middle- or right-drag | orbit (mouse-look in fly mode) |
+| Right-click (no drag) | context menu for whatever is selected |
 | `Shift`+middle-drag | pan |
 | `V` | orbit / fly |
-| `WASD` `Q` `E` | fly (`Shift` faster) |
+| `WASD`, `Space` / `Shift` | move (`Ctrl` faster) — the eye in fly mode, the pivot while orbiting |
 | `F` | frame the whole type |
 | `Shift+G` / `B` | grid / bounds cage |
-| `Space` | play / pause the attachment animations |
+| `P` | play / pause the attachment animations |
 | `Delete` or `X` | remove the selected model, brush or seat |
 | `Ctrl+N` / `O` / `S`, `Ctrl+Shift+S` | new / open / save / save as |
 
@@ -149,6 +150,9 @@ ghost follows the cursor and every click places another, until `Escape`. From
 there it is the 3D view — `Tab` for edit mode, `1`/`2`/`3` for points, edges and
 faces, `E`/`I`/`B` to extrude, inset and subdivide, `G`/`R`/`C` to move, turn and
 resize, and the same brush and face property blocks down the right.
+`Ctrl+Shift+click` a brush for detail mode, which shapes what it looks like
+without moving what a body walks into — see
+[Shaping surfaces](03-shaping-surfaces.md).
 
 **Import** copies brushes in from a chunk under `chunks/`, or from the level open
 in the main window. A copy, not a link: the type owns its geometry from then on,

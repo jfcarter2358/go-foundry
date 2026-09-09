@@ -213,15 +213,19 @@ func editorResetSelectionState() {
 	Editor.DetailBrush = brushSel{chunkIdx: -1, brushIdx: -1}
 }
 
-// restoreLevelSnapshot applies an undo/redo snapshot: rebuild the level, put the
-// player on the restored spawn, and clear the editor's selection.
+// restoreLevelSnapshot applies an undo/redo snapshot: rebuild the level and
+// clear the editor's selection.
+//
+// It deliberately does not apply the spawn point. The editor's viewpoint *is*
+// the engine camera (editor_3d_camera.go moves gfx.Cam directly), so spawning
+// here would throw the author across the level on every Ctrl+Z — away from the
+// very thing they just undid. Nothing needs it either: the player is engine-
+// owned and not simulated while the editor is up, and EditorToggle puts it on
+// the spawn on the way into play.
 func restoreLevelSnapshot(raw world.RawLevel) {
 	if err := levelio.ApplyRawLevel(raw, Editor.level); err != nil {
 		return
 	}
-	// The player is engine-owned and survives the snapshot swap; only its
-	// position follows the restored spawn point.
-	world.ApplySpawnPoint(Editor.level)
 	editorResetSelectionState()
 
 	Editor.StatusMsg = "Undo/redo applied"

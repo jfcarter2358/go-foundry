@@ -145,6 +145,10 @@ func modelFaceMenuItems() []ctxMenuItem {
 			Tooltip: "Push the selected faces along their shared normal,\nthen drag the gizmo to set the depth.",
 			Do:      modelExtrudeAgain,
 		},
+		{Label: "Inset", Shortcut: "I", Disabled: none,
+			Tooltip: "A border round each face, in its own plane, leaving the\n" +
+				"middle selected — inset then extrude is a recess.",
+			Do: modelInsetSelectedFaces},
 		{Label: "Subdivide", Disabled: none,
 			Tooltip: "Midpoint split. The surface does not move.",
 			Do:      modelSubdivideSelectedFaces},
@@ -164,7 +168,7 @@ func modelFaceMenuItems() []ctxMenuItem {
 
 // modelTextureMenuItems is the texture list, ticked at the one the model wears.
 func modelTextureMenuItems() []ctxMenuItem {
-	return ctxTextureMenuItems(modelTexture(), modelSetTexture)
+	return ctxTextureMenuItems(modelTexture(), true, modelSetTexture)
 }
 
 // modelDocMenuItems are the whole-document rows. They sit above the

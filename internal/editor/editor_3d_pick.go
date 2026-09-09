@@ -736,6 +736,16 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 
 	gizmo.GizmoFlush(projView)
 	prevDepth := gl.IsEnabled(gl.DEPTH_TEST)
+
+	// The detail mesh's own edges, and the one overlay here drawn WITH depth
+	// testing: they are seams on a surface, so the far side of the mesh
+	// showing through the near side would turn it into a hairball. Enabled
+	// explicitly rather than relying on the state this was called in, since the
+	// two windows that call it arrive with different ones.
+	gl.Enable(gl.DEPTH_TEST)
+	drawDetailMeshWires()
+	gizmo.GizmoFlush(projView)
+
 	gl.Disable(gl.DEPTH_TEST)
 	defer func() {
 		gizmo.GizmoFlush(projView)
@@ -793,10 +803,11 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 // object behind them. Drawing a handle no click can reach was the confusing
 // part of the pre-mode viewport, where every box was always up.
 func drawSelModeHandles(mx, my int32, showPx float32) {
-	if !editorInEditMode() {
+	if !editorInMeshContext() {
 		// Object mode has no sub-brush unit, so there is nothing here a click
 		// could reach — and a viewport full of corner boxes that do not respond
-		// is exactly the confusion the modes exist to remove.
+		// is exactly the confusion the modes exist to remove. Detail mode does
+		// have one — the detail mesh's own corners and edges — so it draws them.
 		return
 	}
 	switch ws().SelMode {

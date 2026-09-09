@@ -49,6 +49,19 @@ func editorInEditMode() bool { return ws().EditContext == editorEditMode }
 // reference (internal/app) shows a different block of shortcuts per context.
 func EditorInEditMode() bool { return editorInEditMode() }
 
+// editorInMeshContext reports whether a click addresses the PARTS of a brush —
+// its points, edges and faces — rather than whole objects. True in edit mode,
+// where those parts are the solid's, and in detail mode, where they are the
+// detail mesh's.
+//
+// This is the question every dispatch actually wants to ask, and asking
+// editorInEditMode instead is a bug with a characteristic shape: detail mode
+// falls through to the object path, so a click in it picks up the whole brush,
+// no detail face can ever be selected, and every tool that acts on one reports
+// that nothing is selected. Detail mode is a third context, not a variant of
+// object mode.
+func editorInMeshContext() bool { return editorInEditMode() || editorInDetailMode() }
+
 // editorSetEditContext switches context, carrying the author's place across.
 //
 // The two selections are different units — a brush and one of its faces — so

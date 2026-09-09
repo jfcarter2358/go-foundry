@@ -354,8 +354,13 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	// a different context, not a fourth unit, so a click here picks up a whole
 	// brush and the point/edge/face modes are simply not consulted. Everything
 	// that is not brush geometry — an entity, a volume, the spawn marker — is
-	// an object in both contexts and falls through to the shared tail.
-	if !editorInEditMode() {
+	// an object in every context and falls through to the shared tail.
+	//
+	// Detail mode goes the OTHER way with edit mode, not with this: its unit is
+	// a point, an edge or a face of the detail mesh, picked by the same three
+	// branches below. Which mesh those branches reach is pickMeshFor's call, so
+	// nothing here has to know there are two.
+	if !editorInMeshContext() {
 		editor3DObjectClick(t.X, t.Y, ctrlHeld)
 		return
 	}
@@ -562,7 +567,7 @@ func editorChunkGeometryChanged(ch *world.Chunk) {
 	if ch != nil {
 		ch.RecomputeBounds()
 	}
-	world.RebuildSpatialHash(Editor.level)
+	world.RebuildSpatialHash(ws().level)
 }
 
 // chunkWorldOBB describes ch's bounding box where it actually sits in the
@@ -791,8 +796,6 @@ func createChunkAtCamera(id string) {
 	halfSize := float32(5.0)
 	floorH, ceilH := float32(0.0), float32(4.0)
 
-	_ = gfx.EnsureTextureLoaded("concrete")
-
 	// Brush verts are built around the chunk's own local origin, like every
 	// other chunk's authored geometry — the camera position is carried by
 	// Origin instead of baked into them.
@@ -802,7 +805,7 @@ func createChunkAtCamera(id string) {
 		Brushes: world.NewHollowRoom(id+"_room",
 			mgl32.Vec3{-halfSize, floorH, -halfSize},
 			mgl32.Vec3{halfSize, ceilH, halfSize},
-			defaultBrushWallThickness, "concrete"),
+			defaultBrushWallThickness, defaultBrushTexture),
 	}
 	for bi := range chunk.Brushes {
 		_ = chunk.Brushes[bi].Load()

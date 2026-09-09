@@ -104,7 +104,8 @@ Shaping the mesh drawn over one brush. Nothing here changes collision; see
 | `Ctrl+Shift`+left click | go in on the brush under the cursor, or come back out of it |
 | `1` / `2` / `3` | the detail mesh's points, edges or faces |
 | `E` / `Shift+E` | extrude the selected faces, walling in the sides / press them in |
-| `B` | subdivide the selected faces |
+| `I` | inset — a mitred border, leaving the middle selected |
+| `B` | subdivide the selected faces into quadrants |
 | `Shift+B` | smooth the whole detail mesh (Catmull-Clark) |
 | `Delete` / `X` | delete the selected detail faces |
 | `G` / `R` / `C` | move / turn / scale the selection |
@@ -177,6 +178,7 @@ Armed from `Add... > Brush` or the view's right-click menu.
 | `1` / `2` / `3` / `4` | vertex / edge / face / bone select |
 | `G` / `R` / `C` | move / rotate / scale (`C` again: local axes) |
 | `E` / `Shift+E` | extrude (again: re-aim along the normal) / always extrude |
+| `I` | inset — a mitred border round the selected faces (outside pose mode) |
 | `V` | orbit / fly camera |
 | `Z` | wireframe |
 | `F` | frame the model |
@@ -203,13 +205,14 @@ Armed from `Add... > Brush` or the view's right-click menu.
 | | |
 | --- | --- |
 | Middle- or right-drag | orbit (mouse-look in fly mode) |
+| Right-click (no drag) | context menu for whatever is selected |
 | `Shift`+middle-drag | pan |
 | Wheel | zoom |
 | `V` | orbit / fly camera |
-| `WASD` `Q` `E` | fly (`Shift` faster) |
+| `WASD`, `Space` / `Shift` | move (`Ctrl` faster) — the eye in fly mode, the pivot while orbiting |
 | `F` | frame the whole type |
 | `Shift+G` / `B` | grid / bounds cage |
-| `Space` | play / pause the attachment animations |
+| `P` | play / pause the attachment animations |
 | `Delete` / `X` | remove the selected model, brush or seat |
 | `Ctrl+N` / `O` / `S` | new / open / save the type |
 | `Ctrl+Shift+S` | save as |
@@ -221,12 +224,14 @@ blocked out a room already knows how to block out a hold:
 | | |
 | --- | --- |
 | `Tab` | object / edit mode |
-| `1` / `2` / `3` | points / edges / faces (edit mode) |
+| `Ctrl+Shift`+left click | detail mode on that brush — shape it without changing collision |
+| `1` / `2` / `3` | points / edges / faces (edit mode, and detail mode) |
 | `G` / `R` / `C` | move / rotate / scale |
 | `E` / `I` / `B` | extrude / inset / subdivide the selected face(s) |
 | `Shift+E` / `Shift+I` | extrude inward / inset outward |
+| `B` / `Shift+B` | in detail mode: subdivide / smooth the whole detail mesh |
 | `Z` | wireframe |
-| `Escape` | put an armed brush stamp away |
+| `Escape` | put an armed brush stamp away, or leave detail mode |
 
 `B` is subdivide while a face is selected and the bounds cage when none is, and
 `G` is the move tool rather than the grid — which is why the grid is on

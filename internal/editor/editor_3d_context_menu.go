@@ -249,7 +249,7 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 	items := []ctxMenuItem{
 		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusFace) },
 			Tooltip: "Opens the side panel on the first selected face. The panel\nedits that one; these rows edit all of them."},
-		{Label: all("Texture"), Sub: ctxTextureMenuItems(texture, editor3DSetSurfaceTexture)},
+		{Label: all("Texture"), Sub: ctxTextureMenuItems(texture, true, editor3DSetSurfaceTexture)},
 		{Separator: true},
 	}
 	items = append(items, editor3DFaceOpMenuItems(all)...)
@@ -492,11 +492,12 @@ func editor3DSharedMenuItems() []ctxMenuItem {
 		modes = append(modes, ctxMenuItem{
 			Label:    m.String(),
 			Shortcut: editorSelModeKey(m),
-			Checked:  editorInEditMode() && Editor.SelMode == m,
-			Do: func() {
-				editorSetEditContext(editorEditMode)
-				editorSetSelMode(m)
-			},
+			Checked:  editorInMeshContext() && ws().SelMode == m,
+			// The same call 1, 2 and 3 make, so the row and the key cannot
+			// disagree — which matters most in detail mode, where the units are
+			// the detail mesh's and picking one must not walk back out to the
+			// solid. See editorEnterEditUnit.
+			Do:      func() { editorEnterEditUnit(m) },
 			Tooltip: editorSelModeTooltip(m),
 		})
 	}
@@ -517,7 +518,7 @@ func editor3DSharedMenuItems() []ctxMenuItem {
 			Do:      func() { editorSetShowBounds(!Editor.ShowBounds) },
 			Tooltip: editorBoundsTooltip},
 		{Label: "Orbit camera", Shortcut: "V", Checked: !editorCam3D.Fly,
-			Do:      func() { editorSetFlyCam(editorCam3D.Fly) },
+			Do:      func() { editorSetFlyCam(!editorCam3D.Fly) },
 			Tooltip: "Turn around the pivot instead of flying. F frames the\nselection and puts the pivot on it."},
 		{Label: "Frame selection", Shortcut: "F", Do: editorFrameSelection,
 			Tooltip: "Orbit whatever is selected, falling back to the active chunk."},
@@ -592,7 +593,7 @@ func editor3DSpriteMenuItems() []ctxMenuItem {
 			Tooltip: "Open the sprite's section: transform, texture,\nbillboard and blend modes, and what it rides."},
 		{Label: "Move here", Do: func() { editor3DMoveSpriteTo(editor3DMenuPoint) },
 			Tooltip: "Put it where the ray under the cursor met the world."},
-		{Label: "Texture", Sub: ctxTextureMenuItems(s.Texture, editor3DSetSpriteTexture)},
+		{Label: "Texture", Sub: ctxTextureMenuItems(s.Texture, false, editor3DSetSpriteTexture)},
 		{Label: "Billboard", Sub: modes},
 		{Label: "Blend", Sub: blends},
 		{Label: "Lit", Checked: s.Lit, Do: editor3DToggleSpriteLit,
@@ -668,6 +669,10 @@ func editor3DFaceOpMenuItems(all func(string) string) []ctxMenuItem {
 			{Label: all("Extrude [E]"), Do: func() { detailExtrudeSelection(detailExtrudeDefault()) },
 				Tooltip: "Duplicate the face and wall in the gap with sides — a bump\n" +
 					"standing off the surface. Shift+E presses it in instead."},
+			{Label: all("Inset [I]"), Do: func() { detailInsetSelection(detailInsetDefault()) },
+				Tooltip: "A border round the face, in its own plane, mitred so it is the\n" +
+					"same width all the way round. What is left in the middle stays\n" +
+					"selected: inset then extrude is a recess."},
 			{Label: all("Subdivide [B]"), Do: detailSubdivideSelection,
 				Tooltip: "Split the face at its edge midpoints, sharing the new corners\nwith its neighbours."},
 			{Label: "Smooth the whole mesh [Shift+B]", Do: detailSmoothSelection,

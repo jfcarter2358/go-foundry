@@ -159,8 +159,9 @@ func TestLoadModelRejectsCorruptFile(t *testing.T) {
 }
 
 // A .fmdl written before the move to one texture per document named a texture
-// per face. Those files must still open wearing the material they were saved
-// with, rather than silently reverting to the default.
+// per face — and auto-filled "default" on any face that was never painted.
+// Those files must open wearing the material they were really given, and the
+// placeholder must not be mistaken for one.
 func TestLoadModelPromotesLegacyPerFaceTexture(t *testing.T) {
 	raw := RawModel{
 		ID:       "old",
@@ -192,18 +193,19 @@ func TestSaveModelOmitsPerFaceTexture(t *testing.T) {
 	}
 }
 
-// "Never chose a texture" and "chose the default" have to serialise the same
-// way, or a load/save round-trip would invent a change.
-func TestDefaultTextureRoundTripsAsEmpty(t *testing.T) {
+// A model that wears no texture writes no texture key, and comes back wearing
+// none — the state a new document starts in has to survive a round trip rather
+// than acquiring a material on the way through the file.
+func TestUntexturedModelRoundTripsAsEmpty(t *testing.T) {
 	m := NewCubeDoc()
-	m.SetTexture(DefaultModelTexture)
 	if m.Texture != "" {
-		t.Errorf("Texture = %q, want empty", m.Texture)
+		t.Errorf("new document Texture = %q, want empty", m.Texture)
 	}
-	if got := m.TextureName(); got != DefaultModelTexture {
-		t.Errorf("TextureName() = %q, want %q", got, DefaultModelTexture)
-	}
-	if raw := modelDocToRaw(m); raw.Texture != "" {
+	raw := modelDocToRaw(m)
+	if raw.Texture != "" {
 		t.Errorf("raw.Texture = %q, want empty", raw.Texture)
+	}
+	if got := rawToModelDoc(raw); got.Texture != "" {
+		t.Errorf("reloaded Texture = %q, want empty", got.Texture)
 	}
 }

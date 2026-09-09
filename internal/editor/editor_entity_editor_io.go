@@ -317,10 +317,14 @@ func entityDeleteSelection() {
 	switch entitySel.Kind {
 	case entitySelModel:
 		entityRemoveModel(entitySel.Idx)
-	case entitySelBrush:
-		entityRemoveBrush(entitySel.Idx)
 	case entitySelSeat:
 		entityRemoveSeat(entitySel.Idx)
+	default:
+		// A brush, or a face or corner of one. The geometry selection is what
+		// the viewport is showing, so it is what the key takes — and a face
+		// selection names the solid it belongs to, which is the 3D view's own
+		// answer to Delete.
+		entityDeleteSelectedBrushes()
 	}
 }
 

@@ -49,6 +49,13 @@ var AlphaUniform int32
 var SmoothUniform int32
 var AlphaSharpenUniform int32
 
+// NormalColorUniform gates the untextured path: when set, the fragment stage
+// takes the surface's albedo from its own normal instead of sampling tex. Set
+// per draw from the geometry's texture name — see NormalColorFlag — so an
+// untextured surface never leaves the setting on the next one, which would
+// paint a textured wall in normals.
+var NormalColorUniform int32
+
 // BakedLightUniform gates the compiled-level lighting path: when set, the
 // fragment stage uses the light already on the vertices instead of summing the
 // scene's lights and sampling their shadow maps. Set per draw, like

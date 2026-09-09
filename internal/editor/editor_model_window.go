@@ -695,6 +695,10 @@ func modelEditorHandleKey(t sdl.KeyboardEvent) {
 		} else {
 			modelStartExtrude()
 		}
+	case sdl.SCANCODE_I:
+		// Outside pose mode, where I inserts a keyframe — which is why the
+		// pose keys are asked first (see above).
+		modelInsetSelectedFaces()
 	case sdl.SCANCODE_DELETE:
 		switch {
 		case modelSelection.Mode == modelSelBone:
