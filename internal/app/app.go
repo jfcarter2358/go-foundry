@@ -569,6 +569,20 @@ func Run() {
 		// which is why that no longer needs a re-place of its own.
 		if !devActive() && !uiPaused {
 			PlacePlayerCamera(&level)
+
+			// The rest of what a waypoint animation can carry — sprites,
+			// emitters, sounds, lights and volumes. Brushes and entities went
+			// on their own kinds' ticks above. Here, after RefreshFrames, so
+			// one attached to something that moved this frame is divided
+			// through where its carrier now is; and before the emitters and
+			// the mixer below read where they are.
+			//
+			// Lights are uniforms rather than something drawn where it
+			// stands, so a light on a path is uploaded again. Quietly: the
+			// verbose upload logs a line, and this is every frame.
+			if world.AdvanceWaypointFollowers(&level, platform.DeltaTime) {
+				world.UploadLightsTo(gfx.Program, level.Lights, false)
+			}
 		}
 
 		// Particles, after the frames they may be riding have been republished and
@@ -675,10 +689,11 @@ func Run() {
 		// a hundred writes to one height cost one rebuild.
 		script.DrainScriptWork(&level)
 
-		// Likewise for a model editor asking to open the texture editor on a
-		// freshly unwrapped atlas: creating a window from inside another
+		// Likewise for an Unwrap & Paint — a model's or a level's brushes' —
+		// asking to open the texture editor on a freshly unwrapped atlas:
+		// creating a window from inside another
 		// window's draw would insert into the map being ranged over and leave
-		// the wrong GL context current. See modelPendingTexEditor.
+		// the wrong GL context current. See pendingTexEditor.
 		devDrainWork()
 
 		// Per-frame water shader inputs: animation clock and the view position

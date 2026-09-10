@@ -164,6 +164,9 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 		}
 		raw.Sounds = append(raw.Sounds, world.SoundToRaw(&level.Sounds[i]))
 	}
+	for i := range level.WaypointAnimations {
+		raw.WaypointAnimations = append(raw.WaypointAnimations, world.WaypointAnimationToRaw(&level.WaypointAnimations[i]))
+	}
 	raw.Music = world.MusicToRaw(level.Music)
 	raw.Sky = world.SkyToRaw(level.Sky)
 	raw.Fog = world.FogToRaw(level.Fog)
@@ -267,6 +270,9 @@ func spawnToRaw(s *world.SpawnPoint) *world.RawSpawn {
 		Rotation: world.RawVec3{X: s.Rotation.X(), Y: s.Rotation.Y(), Z: s.Rotation.Z()},
 		Frame:    s.Frame,
 		Seat:     s.Seat,
+
+		DisableControl: s.DisableControl,
+		DisableGravity: s.DisableGravity,
 	}
 }
 

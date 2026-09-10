@@ -72,6 +72,7 @@ func editorPropertiesSection(lvl *world.Level) {
 	editorSceneryBrushSection()
 	editorEmitterPropertiesSection()
 	editorSoundPropertiesSection()
+	editorWaypointPropertiesSection()
 	editorLightPropertiesSection(lvl)
 }
 

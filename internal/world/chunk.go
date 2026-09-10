@@ -51,6 +51,11 @@ type Chunk struct {
 	// below) and a vehicle, not this.
 	Velocity mgl32.Vec3
 
+	// OriginTween is a script easing Origin toward a target — `move_to` — or
+	// nil. While it runs Velocity waits. Runtime-only: not saved and not
+	// cloned. See tween.go.
+	OriginTween *Tween
+
 	// Disabled takes the chunk out of the world entirely: nothing draws it,
 	// nothing collides with it, and its vertex buffers are released. It is what
 	// a streaming script toggles as the player moves between areas — see

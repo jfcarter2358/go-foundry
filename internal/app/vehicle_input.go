@@ -11,6 +11,7 @@ import (
 	"foundry/internal/collision"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
+	"foundry/internal/platform"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -190,7 +191,18 @@ func clampFloat(v, lo, hi float32) float32 {
 // yaw is measured in the world. Riding in a frame, the yaw is measured in that
 // frame — so the vector is already frame-local and needs no rotation. What it
 // does need is to not exist at all while the controls are driving something.
+//
+// Nor while the player's control is switched off — and unlike driving, the look
+// keys go quiet with it, so gfx.MoveIntent is not called at all. A driven
+// vehicle gets its controls cleared rather than left alone, or it would keep
+// doing whatever the keys last asked of it.
 func PlayerMoveIntent(lvl *world.Level, keys []uint8) mgl32.Vec3 {
+	if !platform.PlayerControlEnabled {
+		if v := DrivenVehicle(lvl); v != nil {
+			v.EnsureVehicleState().Controls = world.VehicleControls{}
+		}
+		return mgl32.Vec3{}
+	}
 	if v := DrivenVehicle(lvl); v != nil {
 		ReadVehicleControls(v, keys)
 		// The look keys still have to run, or a driver cannot turn their head.

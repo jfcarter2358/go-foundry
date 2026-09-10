@@ -75,20 +75,33 @@ type Brush struct {
 	// Offset/Rotation at all. See brush_dynamic.go.
 	Dynamic bool
 
-	// Offset, Rotation, Velocity and AngularVelocity are the brush's RUN-TIME
-	// placement: where a script has moved it to, relative to the verts above,
-	// and the rates it is still moving at. Runtime-only — never authored,
-	// never saved, and zero again the moment a level is reloaded, so the
-	// authored geometry is always the brush's rest state. See
+	// Offset, Rotation, Scale, Velocity and AngularVelocity are the brush's
+	// RUN-TIME placement: where a script has moved it to, relative to the
+	// verts above, and the rates it is still moving at. Runtime-only — never
+	// authored, never saved, and zero again the moment a level is reloaded, so
+	// the authored geometry is always the brush's rest state. See
 	// brush_dynamic.go.
 	//
-	// Velocity is chunk units per second and integrates onto Offset;
-	// AngularVelocity is radians per second and integrates onto Rotation, in
-	// the same Euler basis Rotation itself is in.
+	// Scale is a per-axis multiplier on the authored size, about the brush's
+	// centre; its zero value means unscaled (EffectiveScale). Velocity is chunk
+	// units per second and integrates onto Offset; AngularVelocity is radians
+	// per second and integrates onto Rotation, in the same Euler basis
+	// Rotation itself is in.
 	Offset          mgl32.Vec3
 	Rotation        mgl32.Vec3
+	Scale           mgl32.Vec3
 	Velocity        mgl32.Vec3
 	AngularVelocity mgl32.Vec3
+
+	// Waypoints is the waypoint animation this brush is travelling, or nil.
+	// Runtime-only for the same reason as the placement it writes. See
+	// brush_waypoints.go.
+	Waypoints *WaypointPlayback
+
+	// Tweens are the channels of the placement a script is easing toward a
+	// target — `move_to`, `rotate_to`, `scale_to`. Runtime-only, like the
+	// placement they write. See tween.go.
+	Tweens Tweens
 }
 
 // BrushFace is one planar face of a brush: a convex n-gon (in practice
@@ -105,10 +118,17 @@ type BrushFace struct {
 	UVOffset     mgl32.Vec2
 	UVScale      mgl32.Vec2 // zero = {1,1}
 	UVRotation   float32    // radians
-	Smooth       bool       // shade from interpolated vertex normals across the brush
-	SmoothAngle  float32    // crease threshold in degrees; 0 = DefaultSmoothAngle
-	Alpha        float32    // 0 = fully transparent, 1 = fully opaque
-	DoubleSided  bool       // render from both sides
+	// UVs, when present, state the face's texture coordinates per corner —
+	// index-parallel to Indices — instead of deriving them by projecting the
+	// face onto its own plane. What an atlas unwrap writes, so that a face owns
+	// its own region of a painted texture; nil on every face that has not been
+	// through one. Honoured only while there is one per corner: see HasUVs and
+	// brush_uv.go.
+	UVs         []mgl32.Vec2
+	Smooth      bool    // shade from interpolated vertex normals across the brush
+	SmoothAngle float32 // crease threshold in degrees; 0 = DefaultSmoothAngle
+	Alpha       float32 // 0 = fully transparent, 1 = fully opaque
+	DoubleSided bool    // render from both sides
 
 	// NoDraw makes the face invisible — no geometry is built or uploaded —
 	// while it still collides if the brush is Solid. For a brush face buried
@@ -304,7 +324,14 @@ func BuildBrushFaceMeshFrom(pts []mgl32.Vec3, doubleSided bool, normal, origin m
 
 	if doubleSided {
 		base := len(verts)
-		verts = append(verts, append([][]float32(nil), verts[:n]...)...)
+		// Copies of the vertices, not of the slice headers. Copying only the
+		// headers leaves both sides pointing at one set of floats, and
+		// ApplyUVTransform — which walks every vertex — then moves each one
+		// twice, so a double-sided face drew at twice its offset, scale and
+		// rotation.
+		for i := 0; i < n; i++ {
+			verts = append(verts, append([]float32(nil), verts[i]...))
+		}
 		for i := 1; i < n-1; i++ {
 			indices = append(indices, base, base+i+1, base+i)
 		}
@@ -326,6 +353,9 @@ func (m *BrushMesh) Load() error {
 		verts, indices := BuildBrushFaceMesh(pts, f.DoubleSided)
 		if len(verts) == 0 {
 			continue
+		}
+		if f.HasUVs() {
+			applyCornerUVs(verts, f.UVs)
 		}
 		ApplyUVTransform(verts, f.UVOffset, f.UVScale, f.UVRotation)
 		f.Geometry.Smooth, f.Geometry.SmoothAngle = f.Smooth, f.SmoothAngle
@@ -498,6 +528,7 @@ func meshFromRaw(rawVerts []float32, rawFaces []RawBrushFace) BrushMesh {
 			UVOffset:     mgl32.Vec2{rf.UVOffset.X, rf.UVOffset.Y},
 			UVScale:      mgl32.Vec2{rf.UVScale.X, rf.UVScale.Y},
 			UVRotation:   rf.UVRotation,
+			UVs:          uvsFromRaw(rf.UVs),
 			Smooth:       rf.Smooth,
 			SmoothAngle:  rf.SmoothAngle,
 			Alpha:        float32Default(rf.Alpha, 1.0),
@@ -533,6 +564,7 @@ func meshToRaw(m *BrushMesh) ([]float32, []RawBrushFace) {
 			UVOffset:     geom.Point{X: f.UVOffset.X(), Y: f.UVOffset.Y()},
 			UVScale:      geom.Point{X: f.UVScale.X(), Y: f.UVScale.Y()},
 			UVRotation:   f.UVRotation,
+			UVs:          uvsToRaw(f),
 			Smooth:       f.Smooth,
 			SmoothAngle:  f.SmoothAngle,
 			Alpha:        alphaPtr,

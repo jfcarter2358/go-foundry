@@ -2,6 +2,77 @@
 
 ## Done
 
+- [x] Waypoint animations carry more than brushes. `play_waypoints` takes an
+      entity, a sprite, an emitter, a sound, a light or a volume as well as a
+      dynamic brush, and each reads the parts of a point it has: an entity all
+      three channels; a sprite all three as well, on a runtime `Sprite.Scale`
+      that multiplies its width and height (`DrawnSize`, which the renderer,
+      the culling bounds and editor picking read, and a `scale` property); an
+      emitter, sound or volume its position and rotation; a point light its
+      position; and a directional light the
+      arrow's aim — the turn that points +X along the light
+      (`world.DirLightEuler`), so a sweeping sun is a row of arrows.
+      The travelling was already one pose function, so what made the rest
+      possible is `world.WaypointFollower` (waypoint_follow.go): the three things
+      the step needed from a brush — a pose, a way to be put at one, a progress
+      slot — so the step, the seek and play/stop are written once. Position stays
+      world space for every kind, divided every tick through whatever the object
+      rides: a chunk, an entity's or a volume's frame, a sprite's Attach.
+      Entities step in EntityUpdate beside their tweens, without gravity; the
+      rest in `AdvanceWaypointFollowers` after RefreshFrames, which reports a
+      moved light so the frame loop uploads the uniforms again. Arrivals carry a
+      `hooks.WaypointObject` kind and are posted to the ref that arrived, every
+      kind reads `waypoints`, and the player and vehicles are refused as
+      `move_to` refuses them. In the editor the preview takes any of them from
+      an **Object** box, and each kind's panel has a **Waypoints** group. Every
+      kind but a brush is posed by writing fields the level file holds, so the
+      preview keeps a `world.WaypointRest` and lends it back to undo snapshots,
+      saves and compiles.
+
+- [x] Waypoint animations. A path for a dynamic brush, authored in the 3D view:
+      a row of arrows joined by a line, each point a position, a rotation, a
+      scale and a time, and `play_waypoints(@door, @door_open)` sends a brush
+      along it, arriving at each point at its time.
+      `world.WaypointAnimation` is level content under `waypoint_animations:`,
+      an ID in the level's one namespace, and drawn only by the editor. Every
+      channel eases by the same fraction of a leg, so a brush that turns on its
+      way to a point finishes the turn as it arrives, and the rotation is
+      blended as written, so 720° is two whole turns.
+      **A point's time is when the brush arrives at it**, so the first point's
+      time is the leg from wherever the brush was and needs no field of its
+      own, and the animation's length may run past the last point to hold the
+      brush there before it ends. Position is world space, divided through the chunk's
+      transform every tick; rotation and scale are the brush's own channels.
+      The travelling itself needed nothing downstream: the step writes the same
+      placement `position` does, so drawing, shadows, collision, culling and
+      raycasts follow. What did have to be built was **a scale channel on the
+      placement** — `Brush.Scale`, about the centre, applied before the turn,
+      normals carried by R·S⁻¹, and a `scale` property beside `rotation` —
+      since a brush had never been able to grow. It runs on AdvanceBrushes'
+      tick, holds the brush's rates while it follows, and posts `:waypoint:` at
+      every point and `:waypoints_end:` when the length runs out, through a hooks buffer gated
+      on play, so an editor preview announces nothing.
+      In the editor, **Add > Waypoint Animation** places a path's first point,
+      and **Ctrl+click** with a point selected lays the next one straight after
+      it, carrying on its turn and scale and timed at a walk. Ctrl+click is multi-select
+      everywhere else, but a waypoint selection excludes every brush and face
+      selection, so there is nothing for it to add to. Deleting a point joins
+      the one before to the one after and leaves the one before selected, so a
+      Ctrl+click fills the gap; an undo keeps the waypoint selected, by ID. Clicking an arrow selects its point for move, rotate and scale (the
+      rotation unwrapped, since the numbers are what is interpolated); the
+      animation's Explorer row carries the whole path on the move gizmo.
+      Selecting an animation docks a **timeline** under the view — the model
+      editor's strip with one lane — where each point is a key at its time,
+      dragged to retime it (held between its neighbours), beside a Length that
+      stretches every time with it, a scrubbable playhead with an orange ghost
+      arrow, and Key At Playhead. Each leg's distance is written above its line.
+      **Preview** poses any dynamic brush at the playhead through
+      `Brush.SeekWaypoints` — the same `PoseAt` the tick reads — from the
+      brush's authored position, loops if asked, and puts the brush back on
+      Stop, on entering play and on undo. A dynamic brush's own panel offers the
+      same Preview, and **New Animation From Here**, which drops the first point
+      on the brush's centre.
+
 - [x] An entity type carries particle effects, the way it already carried
       brushes. A ship's thruster plume, a torch's flame, smoke off a wrecked
       crate: each was a level's problem, placed beside the thing it belonged to
@@ -620,4 +691,6 @@
 - [ ] Decal support
 - [ ] move_to (move to a position in a given amount of time)
 - [ ] move_delta (move an offset in a given amount of time)
-- [ ] Unwrap brush texture
+- [x] Unwrap brush texture
+- [x] Waypoint animations
+- [ ] Cannot select sprites/waypoints/etc. as refs in script dropdown

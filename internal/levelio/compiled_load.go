@@ -162,6 +162,11 @@ func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (in
 		if len(verts) == 0 {
 			continue
 		}
+		if f.UVMapped {
+			// An unwrapped face: its UVs are a function of position, evaluated
+			// here at this fragment's own corners (compile.Face.UVMap).
+			world.ApplyUVMap(verts, f.UVMap)
+		}
 		world.ApplyUVTransform(verts, f.UVOffset, f.UVScale, f.UVRotation)
 
 		g := &surf.Geometry

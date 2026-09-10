@@ -151,7 +151,9 @@ func startupEnterGame(level *world.Level) {
 		}
 	}
 
-	platform.GravityEnabled = true
+	// Gravity and player control are not reset here: ApplySpawnPoint already set
+	// both from the spawn, and turning gravity back on would undo a spawn that
+	// asked for none.
 
 	// Mouse-look, unless a screen that came up above wants a pointer. Going
 	// through the same predicate the frame loop uses keeps a game that starts

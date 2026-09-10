@@ -128,6 +128,11 @@ type brushWorkspace struct {
 	// scroll to) a properties section. Cleared by the panel that applies it.
 	PanelFocus string
 
+	// UnwrapDialog is this window's Unwrap & Paint form
+	// (editor_brush_uv_texture.go). Per workspace because each window draws its
+	// own modals, and one shared form would open in both.
+	UnwrapDialog atlasUnwrapForm
+
 	// ---------- what the owning window supplies ----------
 	//
 	// nil in every one of these means "the level editor's", so the zero
@@ -277,7 +282,8 @@ func (w *brushWorkspace) placementArmed() bool {
 	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode ||
 		Editor.VolumePlacementMode || Editor.SpritePlacementMode ||
 		Editor.EmitterPlacementMode || Editor.SoundPlacementMode ||
-		Editor.PrefabPlacementMode || Editor.BrushActive
+		Editor.PrefabPlacementMode || Editor.BrushActive ||
+		Editor.WaypointPlacementMode
 }
 
 // clearLevelObjectSelections drops this window's non-geometry selections.
@@ -305,6 +311,7 @@ func (w *brushWorkspace) disarmOtherPlacements() {
 	Editor.EmitterPlacementMode = false
 	Editor.SoundPlacementMode = false
 	Editor.SpawnPlacementMode = false
+	Editor.WaypointPlacementMode = false
 }
 
 // cursorOverPanel reports whether a viewport x is actually over this window's

@@ -160,6 +160,12 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 	if _, ok := c.ptLight[id]; ok {
 		return flang.RefVal{Kind: flang.RefLight, A: id}, true
 	}
+	// A waypoint animation is found by walking the list rather than through an
+	// index: a level holds a handful, and they are named only when a script
+	// sends a brush along one.
+	if world.FindWaypointAnimation(c.lvl, id) != nil {
+		return flang.RefVal{Kind: flang.RefWaypoints, A: id}, true
+	}
 	// Biome scatter has no addressable object at the moment — see biomeFor.
 	// The UI last, so a level object always wins a name it shares with a
 	// widget: the level is the thing an author names deliberately, and a widget
@@ -294,6 +300,14 @@ func (c *refCache) soundFor(r flang.RefVal) *world.Sound {
 	return nil
 }
 
+// waypointAnimationFor resolves a waypoints ref to the animation itself.
+func (c *refCache) waypointAnimationFor(r flang.RefVal) *world.WaypointAnimation {
+	if c.lvl == nil || r.Kind != flang.RefWaypoints {
+		return nil
+	}
+	return world.FindWaypointAnimation(c.lvl, r.A)
+}
+
 func (c *refCache) chunkFor(r flang.RefVal) *world.Chunk {
 	if c.lvl == nil {
 		return nil
@@ -421,6 +435,8 @@ func (c *refCache) alive(r flang.RefVal) bool {
 		return c.widgetFor(r) != nil
 	case flang.RefModel:
 		return c.modelFor(r) != nil
+	case flang.RefWaypoints:
+		return c.waypointAnimationFor(r) != nil
 	}
 	return false
 }

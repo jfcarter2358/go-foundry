@@ -743,7 +743,7 @@ func EditorDrawUI() {
 	imgui.SameLine()
 
 	if imgui.Button("Save") {
-		if err := levelio.SaveLevel(lvl, Editor.SavePath); err != nil {
+		if err := editorSaveLevel(lvl, Editor.SavePath); err != nil {
 			Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
 		} else {
 			Editor.StatusMsg = fmt.Sprintf("Saved to %s", Editor.SavePath)
@@ -875,7 +875,7 @@ func EditorDrawUI() {
 				name += ".yaml"
 			}
 			path := filepath.Join(Editor.LevelsDir, name)
-			if err := levelio.SaveLevel(lvl, path); err != nil {
+			if err := editorSaveLevel(lvl, path); err != nil {
 				Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
 			} else {
 				Editor.SavePath = path
@@ -900,6 +900,11 @@ func EditorDrawUI() {
 	// ---- Mode-specific side panel ----
 	if Editor.Mode == Mode3D {
 		Editor3DPanel()
+		// Along the bottom of the viewport, beside the panel, while a waypoint
+		// animation is selected (editor_waypoint_timeline.go).
+		editorWaypointTimelineWindow()
+		// Behind every window, so the panel and the timeline cover a label.
+		editorWaypointDistanceLabels()
 		// After the panel — it sets the selection the indicator reads.
 		EditorDirLightIndicator()
 		// Last, so the popup opens over the panel as well as the viewport.

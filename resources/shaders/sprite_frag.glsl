@@ -14,6 +14,10 @@
 //   alpha     alpha is BLEND WEIGHT, sorted back to front by the caller.
 //   additive  alpha scales what is added; nothing is ever occluded.
 //
+// A fourth value is never authored: a cutout sprite whose own alpha is below 1
+// is drawn in the alpha pass as "cutout, fading" — cut against the texture,
+// blended by the sprite. See spriteBatch.FadingCutout in sprite_render.go.
+//
 // Lighting is opt-in and, when on, is the same biome_light.glsl block the
 // scatter and ground passes use — identical uniform names to fragment.glsl, so
 // UploadLightsTo and the two shadow uploads drive this program unchanged.
@@ -25,7 +29,8 @@ in vec4 fragColor;
 
 uniform sampler2D tex;
 
-// 0 = cutout, 1 = alpha, 2 = additive. Matches world.SpriteBlend.
+// 0 = cutout, 1 = alpha, 2 = additive — gfx.SpriteBlend — and 3 = cutout,
+// fading (spriteModeFadingCutout).
 uniform int blendMode;
 
 // alphaCutoff is where a cutout sprite stops being drawn at all. Matched to
@@ -69,6 +74,20 @@ void main() {
             discard;
         }
         a = clamp((a - alphaCutoff) / max(fwidth(a), 1e-5) + 0.5, 0.0, 1.0);
+    } else if (blendMode == 3) {
+        // Cutout mid-fade, drawn in the alpha pass. The cut is taken against
+        // the TEXTURE's alpha alone, so the silhouette stays where it is while
+        // the sprite's own alpha fades it; testing the product instead is what
+        // left a fading cutout invisible until the threshold and then whole.
+        // The same one-pixel ramp as above, blended rather than covered.
+        if (texel.a < alphaCutoff) {
+            discard;
+        }
+        a = clamp((texel.a - alphaCutoff) / max(fwidth(texel.a), 1e-5) + 0.5, 0.0, 1.0)
+          * fragColor.a;
+        if (a <= 0.0) {
+            discard;
+        }
     } else if (a <= 0.0) {
         // Nothing to add and nothing to blend; skipping keeps a fully
         // transparent particle from touching the framebuffer at all.

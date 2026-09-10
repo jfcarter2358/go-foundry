@@ -134,7 +134,7 @@ func OpenParticleEditorWindow() {
 //
 // Deferred through RequestWindowOpen because the caller is inside another
 // window's Draw: creating a window there inserts into the map being ranged over
-// and leaves the wrong GL context current. Same handoff modelRequestTexEditor
+// and leaves the wrong GL context current. Same handoff requestTexEditor
 // makes.
 func OpenParticleEditorOn(effect string) {
 	if effect == "" {

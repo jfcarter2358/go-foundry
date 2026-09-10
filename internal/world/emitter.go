@@ -78,6 +78,10 @@ type Emitter struct {
 	Doc *particle.Doc
 	// Systems is one simulation per layer, parallel to Doc.Layers.
 	Systems []*particle.System
+
+	// Waypoints is the waypoint animation this emitter is travelling, or nil.
+	// Runtime-only, never serialized; see waypoint_follow.go.
+	Waypoints *WaypointPlayback
 }
 
 // NewEmitter returns an emitter with the defaults a freshly placed one should

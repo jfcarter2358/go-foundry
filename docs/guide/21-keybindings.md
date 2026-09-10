@@ -151,6 +151,27 @@ Shaping the mesh drawn over one brush. Nothing here changes collision; see
 | `Esc` | done shaping |
 | `W A S D` / `Space` / `Shift` | fly, exactly as outside surface mode |
 
+## Editor — waypoint animations
+
+The first point is placed from `Add... > Waypoint Animation` or the view's
+right-click menu.
+
+| | |
+| --- | --- |
+| Left click an arrow | select that point |
+| `Ctrl+click` | with a point selected: add the next point there, straight after it |
+| `G` / `R` / `C` | move, turn or scale the selected point |
+| `Delete` | delete the selected point, joining the ones either side |
+
+With an animation selected, its timeline runs along the bottom of the view:
+
+| Timeline | |
+| --- | --- |
+| Click a diamond | select that point, and move the playhead to it |
+| Drag a diamond | retime the point, in 0.05 s steps |
+| `Shift` + drag a diamond | retime it freely |
+| Click or drag elsewhere | scrub the playhead |
+
 ## Editor — brush stamp
 
 Armed from `Add... > Brush` or the view's right-click menu.

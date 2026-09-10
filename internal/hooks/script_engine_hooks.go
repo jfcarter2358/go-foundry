@@ -118,3 +118,71 @@ func TakeVehicleEvents() []VehicleEvent {
 	vehicleEvents = nil
 	return out
 }
+
+// ---------- waypoint animations ----------
+
+// WaypointObject is the kind of object travelling a waypoint animation. The
+// engine only says which list its ID is in; the script package turns that into
+// the matching ref kind.
+type WaypointObject uint8
+
+const (
+	WaypointBrush WaypointObject = iota
+	WaypointEntity
+	WaypointSprite
+	WaypointEmitter
+	WaypointSound
+	WaypointLight
+	WaypointVolume
+)
+
+// WaypointObjectNames is each kind's name, indexed by the kind itself: the
+// word a script's ref kind uses for it, and what the editor labels it with.
+var WaypointObjectNames = [...]string{
+	WaypointBrush:   "brush",
+	WaypointEntity:  "entity",
+	WaypointSprite:  "sprite",
+	WaypointEmitter: "emitter",
+	WaypointSound:   "sound",
+	WaypointLight:   "light",
+	WaypointVolume:  "volume",
+}
+
+// WaypointEvent is one object reaching one point of the waypoint animation it
+// is travelling, or reaching the end of it.
+type WaypointEvent struct {
+	// Kind and Object name what arrived: which kind of object, and its ID.
+	Kind      WaypointObject
+	Object    string
+	Animation string
+	// Index is the point reached, counting from zero. For Ended it is the last
+	// point's index.
+	Index int
+	Ended bool
+	// Events are the custom atoms the point reached carries, to be posted to
+	// the brush after `:waypoint:`. Always empty for Ended: the last point's
+	// events went out with its own arrival.
+	Events []string
+}
+
+var waypointEvents []WaypointEvent
+
+// RecordWaypointEvent notes an arrival.
+//
+// Gated on play for RecordAnimEvent's reason: nothing a brush does on a path
+// while the editor is up may queue script events for the next play session to
+// deliver. The editor's preview seeks rather than steps, so it never gets here,
+// but the step it would be one call away from does.
+func RecordWaypointEvent(ev WaypointEvent) {
+	if EditorActive() {
+		return
+	}
+	waypointEvents = append(waypointEvents, ev)
+}
+
+// TakeWaypointEvents returns this frame's arrivals and clears the buffer.
+func TakeWaypointEvents() []WaypointEvent {
+	out := waypointEvents
+	waypointEvents = nil
+	return out
+}

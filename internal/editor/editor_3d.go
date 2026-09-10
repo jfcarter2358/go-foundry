@@ -277,7 +277,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	if Editor.SpawnPlacementMode {
 		// 4m in front of the camera, at the floor the camera is standing on.
 		pos := gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(4.0))
-		pos[1] -= world.EyeHeight
+		pos[1] -= world.SpawnEyeHeight
 		placeSpawnPointAt(pos)
 		return
 	}
@@ -332,6 +332,14 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	if Editor.WaypointPlacementMode {
+		// Where the click landed: a point is where the brush's centre goes,
+		// and the gizmo lifts it if the centre belongs off the floor. One
+		// point; the rest of the path is Ctrl+click, below.
+		placeWaypointAt(editor3DPointAt(t.X, t.Y))
+		return
+	}
+
 	mods := sdl.GetModState()
 	ctrlHeld := mods&sdl.KMOD_CTRL != 0
 
@@ -347,6 +355,15 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	// that means "more".
 	if ctrlHeld && mods&sdl.KMOD_SHIFT != 0 {
 		editor3DDetailClick(t.X, t.Y)
+		return
+	}
+
+	// Ctrl with a waypoint selected lays the next point of its path where the
+	// click lands, straight after the selected one. Ahead of both contexts'
+	// own Ctrl+click, which is multi-select — and free to be taken here: a
+	// waypoint selection excludes every brush and face selection, so there is
+	// nothing for Ctrl to add to.
+	if ctrlHeld && editorWaypointCtrlClick(t.X, t.Y) {
 		return
 	}
 
@@ -410,6 +427,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 	editorClearScenerySelection()
 	editorClearChunkSelection()
 	editorClearLightSelection()
+	editorClearWaypointSelection()
 	clearVertexSelection()
 	clearFaceSelection()
 	Editor.GizmoKind = gizmoKindNone
@@ -462,6 +480,11 @@ func editor3DSelectNonBrushHit(hit pickHit) {
 	case pickSound:
 		editorSelectSound(hit.idx)
 
+	case pickWaypoint:
+		// One point, not the whole path: it is the arrow that was clicked,
+		// and the point is what the move, rotate and scale gizmos can act on.
+		editorSelectWaypoint(hit.idx, hit.sub)
+
 	case pickLight:
 		// The Objects list is no longer the only way to reach a light: click
 		// its marker and the gizmo attaches to it, the same as an entity's.
@@ -511,6 +534,7 @@ func editor3DClearSelection() {
 	editorClearScenerySelection()
 	editorClearChunkSelection()
 	editorClearLightSelection()
+	editorClearWaypointSelection()
 	clearFaceSelection()
 	Editor.GizmoKind = gizmoKindNone
 	Editor.PanelFocus = panelFocusNone

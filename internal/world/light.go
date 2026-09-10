@@ -57,6 +57,10 @@ type DirectionalLight struct {
 	CastShadows    bool
 	ShadowStrength float32 // 0.0 = no shadow darkening, 1.0 = fully dark shadows
 	Disabled       bool    // switched off; see GlobalLight.EffectiveBrightness
+
+	// Waypoints is the waypoint animation turning this light, or nil: it
+	// shines the way each arrow points. Runtime-only; see waypoint_follow.go.
+	Waypoints *WaypointPlayback
 }
 
 // EffectiveBrightness is zero while the light is switched off.
@@ -133,6 +137,10 @@ type PointLight struct {
 	// It is what LevelToRaw checks before writing — a level that saved a copy
 	// of a prefab's content would freeze it and stop tracking the file.
 	FromPrefab string
+
+	// Waypoints is the waypoint animation carrying this light, or nil.
+	// Runtime-only; see waypoint_follow.go.
+	Waypoints *WaypointPlayback
 }
 
 // EffectiveBrightness is zero while the light is switched off.

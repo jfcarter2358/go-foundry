@@ -143,6 +143,7 @@ func editorEntityProperties(lvl *world.Level) {
 	editorPropGroup("Models##entmodels", 0, func() { editorEntityModels(e) })
 	editorPropGroup("Chunks##entchunks", 0, func() { editorEntityGeometry(lvl, e) })
 	editorPropGroup("Effects##enteffects", 0, func() { editorEntityEffects(lvl, e) })
+	editorObjectWaypointsUI(e)
 	// An entity's tags and attributes are merged from its definition rather
 	// than held in a ScriptData, so the three rows are assembled here instead
 	// of through editorScriptDataUI — under the same "Scripting" group name

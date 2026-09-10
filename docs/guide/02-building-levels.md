@@ -84,12 +84,56 @@ brush's:
 | **Double Sided** | draw it from behind as well |
 | **Drawn** | off builds no geometry at all while the brush still collides — for a face buried against a neighbour |
 | **Collision** | off makes this one face walk-through while the rest of the brush stays solid — a window opening in a wall |
-| **UV** | offset, scale and rotation, in the face's own plane |
+| **UV** | offset, scale and rotation, in the face's own plane — on top of the face's own layout once it has been unwrapped, when **Reset to projected** forgets the unwrap |
 | **Smooth** | weld normals with the neighbours; see [Smooth shading](05-smoothing.md) |
 
 The panel edits the primary selected face. To change a dozen at once, select them
 all with `Ctrl+click` and use the right-click menu, whose rows say how many faces
 they will reach.
+
+## Painting brushes
+
+A face's texture normally tiles: it is projected onto the face's own plane and
+repeats at the same size whatever shape the face is. That is what you want for
+brick, and no use at all for *painting* a wall — every face projected onto one
+texture shares every texel of it, so painting one wall paints the others too.
+
+**Unwrap & Paint...** gives each face a region of one texture to itself, the way
+a model's atlas does. It is in the brush's **Paint** section and on the
+right-click menu: in object mode it takes whole brushes, in edit and detail mode
+the faces you picked.
+
+| Field | |
+| --- | --- |
+| **Texture name** | the texture to make; it is saved straight away, over any texture of the same name |
+| **Size** | 64 to 1024, square |
+| **Seam angle** | how far two faces sharing an edge may turn before they get separate regions |
+| **Gutter** | empty texels kept around each region, so filtering and mipmaps do not bleed one into the next |
+
+It lays the faces out, points them at the new texture, and opens it in the
+[texture editor](04-textures.md) with a checker guide under an empty **Paint**
+layer. The level updates as you paint; turn on **UV layout** under the canvas to
+see which region is which face. A wall's region hangs the right way up — the top
+of the wall is the top of its region.
+
+Worth knowing:
+
+- **Every face already wearing that texture is laid out again too**, so no two
+  faces ever share texels. Unwrapping a new brush onto a room's atlas re-lays
+  the whole room. The dialog says how many extra faces that is before it runs;
+  if the number is large, the name probably belongs to a tiling material.
+- Unwrapping makes a **fresh** texture. Whatever was painted on the old one is
+  gone, so settle the geometry first.
+- The layout rides the corners. Moving, turning or scaling a brush keeps its
+  painting on it; dragging one corner stretches the painting with it.
+- Subdividing and insetting keep each face's region. A face the unwrap has never
+  seen — the side walls of an extrude in detail mode — goes back to tiling until
+  you unwrap again.
+- Texel density is the same across everything one texture covers, and the status
+  line reports it as *texels per unit*. A large room on a small texture comes out
+  blurry: use a bigger size, or paint it as several textures.
+- A compiled level keeps the painting exactly, however the compiler cuts the
+  faces up.
 
 ## Solid, and not
 
@@ -121,6 +165,8 @@ move it during play:
 | `rotation` | euler angles in radians, turning it about its own centre |
 | `velocity` | units per second; the engine keeps it moving with no script per frame |
 | `angular_velocity` | radians per second, added to `rotation`; the engine keeps it turning |
+| `scale` | a multiplier on its authored size, growing about its own centre |
+| `waypoints` | read-only: the [waypoint animation](#waypoint-animations) it is following, or null |
 | `dynamic` | read-only: whether this brush is one |
 
 `velocity` and `angular_velocity` are rates rather than moves: writing one does
@@ -153,6 +199,124 @@ Three things to know before relying on one:
   brush moves out from under them. Carrying riders is a chunk-scale feature —
   bind them with `AttachedChunk` and move the whole chunk instead.
 
+## Waypoint animations
+
+A waypoint animation is a path: a row of arrows placed in the 3D view, joined by
+a line, each saying where an object should be, how it should be turned and
+scaled there, and when to get there. A script sends a dynamic brush along one —
+or an entity, a sprite, an emitter, a sound, a light or a volume — and the
+engine does the rest.
+
+**Placing one.** `Add... > Waypoint Animation > Place By Clicking`, then click in
+the view: that places the animation's first point and selects it. **Ctrl+click**
+somewhere else and the next point goes there, straight after the selected one —
+keep Ctrl+clicking to lay the rest of the path. With an earlier point selected, a
+Ctrl+click inserts between it and the one after. The arrows are only ever drawn
+in the editor. Two other ways to place the first point:
+
+- Select anything a path can carry and use **New Animation From Here** in its
+  **Waypoints** group. The first point goes where the object is, turned as it
+  is — a brush's centre, or, for a directional light, a few units in front of the
+  camera aimed where the light shines — so the first Ctrl+click is where it goes
+  first.
+- Right-click in the view: **Add waypoint animation here**.
+
+**Shaping it.** Click an arrow to select its point. Move, rotate and scale (G, R,
+C) act on that point; select the animation's row in the Explorer instead and the
+move gizmo carries the whole path. A new point copies the rotation and scale of
+the one before it (for its time, see *Timing it*). The Properties panel lists the points in order, and
+has **Add Point**, **Insert After**, **Move Earlier/Later** and **Delete Point**.
+Del deletes the selected point and joins the point before it straight to the
+point after, leaving the point before selected so a Ctrl+click fills the gap;
+deleting an animation's only point deletes the animation.
+
+| Point field | |
+| --- | --- |
+| **Position** | world space: where the object goes — a brush's centre, anything else's position |
+| **Rotation** | the object's own turn there; a directional light shines the way the arrow points |
+| **Scale** | a multiplier on a brush's or an entity's authored size |
+| **Time** | when the object *arrives* at this point, in seconds from being sent — so the first point's time is how long the leg from wherever the object started takes, and 0 starts the path on it. Held between the times of the points either side |
+| **Events** | atoms posted to the object when it reaches this point, each as `(:atom:, animation ref)` — see *Playing it* |
+
+Each kind reads the parts of a point it has. A brush and an entity take all
+three; a sprite takes all three too, its scale's X growing its width and Y its
+height; an emitter, a sound and a volume ignore the scale; a point light only
+moves; and a directional light only turns, which is how a sun is swept across the
+sky.
+
+Position, rotation and scale all ease together across a leg, so an object that
+turns on the way to a point finishes turning as it arrives. The rotation eases between
+the numbers as written — 0° to 270° is three quarters of a turn, 0° to 720° two
+whole ones — so a spinning platform is one point, and 350° to 10° goes the long
+way round (write 370° for the short way). Two points at the same time make the
+leg between them instant.
+
+**Timing it.** Selecting an animation opens its **timeline** along the bottom of
+the 3D view. The ruler is in seconds, and each point is a diamond at the moment
+the brush arrives there. Drag a diamond to retime its point: it moves in 0.05 s
+steps (hold **Shift** to drag it freely), and it cannot pass the points either
+side of it, because the order of the list is the path. **Length** is how long
+the whole animation takes. Change it and every point's time stretches with it;
+drag the last point earlier than the end and the object waits on it for the rest,
+and only then hears `:waypoints_end:`. A point Ctrl+clicked onto the end of the
+path is timed as if the brush walked to it at two units a second, and the length
+grows to fit; one inserted between two points takes the moment halfway between
+them, so nothing else moves. Each leg's length is written above its line in the
+view, and hovering a diamond shows the leg's distance, time and speed.
+
+Click or drag anywhere else on the timeline to scrub the playhead. An orange arrow
+shows where the path is at that moment, and **Key At Playhead** adds a point
+exactly there, on the path, ready to be moved. `|<`, `<`, `>` and `>|` jump to the
+start, the previous point, the next point and the end.
+
+**Previewing it.** Pick an object in the timeline's **Object** box (or the
+animation's **Preview** group) — any dynamic brush, entity other than a vehicle,
+sprite, emitter, sound, light or volume — and it follows the playhead without
+entering play, setting off from where it was authored — the same place play
+starts it. **Play** runs the playhead, **Loop** replays it, and points can be
+dragged or retimed while it runs; **Stop** puts the object back. While the
+preview holds an object it cannot be moved by hand, and saving, compiling and
+undo all see it where it was authored. An orange line shows the first leg, from
+the object to the first point, which is the one nothing else draws. Each of those
+objects has a **Waypoints** group in its own panel with the same Preview button.
+
+**Playing it.**
+
+```flang
+def open(:interact:, who ref) -> null
+    play_waypoints(@blast_door, @door_open)
+end
+
+def arrived(:waypoints_end:, src ref, anim ref) -> null
+    log("the door is open")
+end
+```
+
+`play_waypoints` sets off from wherever the object is now, `stop_waypoints` leaves
+it where it has got to, and `@blast_door.prop.waypoints` says which animation it
+is following. The object hears `:waypoint:` at every point and `:waypoints_end:`
+when the animation's length runs out. While a brush or an entity follows a path
+its `velocity` waits — and an entity does not fall — picking up again from
+wherever the path left it. The player and vehicles cannot be sent along one:
+their motion belongs to the player's input and the drive model.
+
+**Events on a point.** To hear about one particular point by name, give it an
+event: select the point, type an atom into its **Events** group (`door_open`, or
+`:door_open:` — the colons are optional) and press **Add Event**. When the object
+reaches that point, it is posted `(:door_open:, animation ref)`, straight after
+the point's `:waypoint:`; a point with several events posts them in the order
+listed. The name must be lowercase letters and underscores, and cannot be one of
+the engine's own events. A point's events show after it in the point lists.
+
+```flang
+def at_top(:lift_top:, anim ref) -> null
+    @top_gate <- (:open:,)
+end
+```
+
+Unlike counting `:waypoint:` indices, an event stays on its point when points are
+inserted in front of it.
+
 ## Chunks
 
 Select a chunk in the Explorer to make it active — that is the one new geometry
@@ -183,6 +347,13 @@ object in the level, it is a property of the level.
 `Add... > Player Spawn`, or right-click the Spawn row in the Explorer for
 **Move To Camera** and **Face Camera** — fly to where you want to start, aim, and
 press both.
+
+The **Player** group decides what the player can do when they arrive. Untick
+**Player control** and they can neither move nor look around — the view stays
+where the spawn aims it; untick
+**Gravity** and they hang where they spawn. Both are for a start the level runs
+for them — a ride in, an intro — so a script hands them back with
+`@level.prop.player_control = true` and `@level.prop.player_gravity = true`.
 
 ## Player step height
 

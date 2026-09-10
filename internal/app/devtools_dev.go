@@ -101,11 +101,11 @@ func devRenderBrushGhost(draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSide
 }
 
 // devDrainWork applies the work the sub-editors deferred out of their own draw
-// calls — a model editor asking to open the texture editor on a fresh atlas,
+// calls — an Unwrap & Paint asking to open the texture editor on a fresh atlas,
 // and any window waiting to be created. Both have to happen here, between
 // frames, with the main GL context current.
 func devDrainWork() {
-	editor.DrainModelTexEditorRequest()
+	editor.DrainTexEditorRequest()
 	uiwin.DrainWindowOpens()
 }
 

@@ -509,19 +509,19 @@ editor's reference panel. The core surface:
 
 | Object | Properties |
 | --- | --- |
-| entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · read-only: `type` `current_sector` `current_chunk` `frame` `seat` |
+| entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · read-only: `type` `current_sector` `current_chunk` `frame` `seat` `waypoints` |
 | model | `texture` `visible` `alpha` `offset` `rotation` `scale` · read-only: `path` |
 | vehicle | `vehicle_throttle` `vehicle_steer` `vehicle_pitch` `vehicle_roll` · tuning: `vehicle_max_speed` `vehicle_accel` `vehicle_brake` `vehicle_turn_rate` `vehicle_pitch_rate` `vehicle_roll_rate` `vehicle_drag` · read-only: `vehicle_speed` `vehicle_driver` |
-| volume | `position` `rotation` `half` `shape` `enabled` `load_level` `fog` `fog_color` `fog_density` `fog_max_opacity` |
-| brush | `solid` · dynamic brushes only: `position` `rotation` `velocity` `angular_velocity` · read-only: `dynamic` |
+| volume | `position` `rotation` `half` `shape` `enabled` `load_level` `fog` `fog_color` `fog_density` `fog_max_opacity` · read-only: `waypoints` |
+| brush | `solid` · dynamic brushes only: `position` `rotation` `scale` `velocity` `angular_velocity` · read-only: `dynamic` `waypoints` |
 | edge | `kind` `texture` `collision` `visible` `pinned` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · portals also: `to_sector` `draw_gap` `gap_texture` |
 | floor | `enabled` `hidden` `height` `texture` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · slab: `thickness` `slab_texture` `slab_rim_texture` `slab_hidden` `slab_rim_across_portals` · read-only: `shaped` `world_height` `slab_shaped` |
 | ceiling | as floor, without `hidden` |
 | chunk | `enabled` `origin` `velocity` · read-only: `rotation` `scale` |
-| light | `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` |
+| light | `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
-| sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` |
-| level | `step_height` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
+| sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
+| level | `step_height` `player_control` `player_gravity` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
 
 ### Moving a brush
 
@@ -569,6 +569,147 @@ slow a door down is a rule the game has.
 Two limits worth knowing: nothing rides a moving brush (a player on a lift is not
 carried up by it — attach them to a moving *chunk* instead), and a dynamic brush
 cannot be part of the shell that seals a level for compiling.
+
+### Easing to a placement
+
+`velocity` keeps something going; `move_to`, `rotate_to` and `scale_to` get it
+*somewhere*, in a set time. Each blends one part of the placement in a straight
+line — from wherever the object is when the call runs, to the vec given, over
+that many seconds — and the engine carries it the rest of the way. There is no
+`:tick:` clause to write and nothing to stop when it arrives:
+
+```flang
+def open() -> null
+    p = @blast_door.prop.position
+    move_to(@blast_door, <p.x, p.y + 3.0, p.z>, 1.5)
+    wait 1.5                                   -- it is open now
+end
+```
+
+| Verb | Works on | The vec is in the terms of |
+| --- | --- | --- |
+| `move_to(obj, vec, seconds)` | a dynamic brush, a chunk, an entity | `position` — a chunk's `origin` |
+| `rotate_to(obj, vec, seconds)` | a dynamic brush, an entity | `rotation`, in radians |
+| `scale_to(obj, vec, seconds)` | a dynamic brush, an entity | `scale` — `<1.0, 1.0, 1.0>` is as authored |
+
+So the spaces are the properties' own: a brush an entity carries moves in that
+entity's coordinates, and an entity's `move_to` is world space.
+
+- **The three are independent.** A door can slide and turn at once, each on its
+  own clock. Calling one again replaces that blend, starting from wherever it had
+  got to.
+- **Zero seconds is immediate** — the same as writing the property.
+- **A rotation is blended as numbers**, not the short way round:
+  `rotate_to(@fan, <0.0, 2.0 * pi(), 0.0>, 4.0)` is one whole turn, and the angle
+  reads back as 2π afterwards rather than wrapping.
+- **Whatever else would move that part waits.** `velocity` pauses while the
+  position is eased, and `angular_velocity` while the rotation is; an entity
+  does not fall. Each takes over again from where the blend left off. A brush or
+  an entity following a waypoint animation stops following it, and
+  `play_waypoints` drops its blends.
+- **The blend wins over a property write.** Writing `position` mid-blend is
+  overwritten on the next tick; to snap somewhere instead, call the verb again
+  with 0 seconds.
+- **It is gameplay.** A pausing screen freezes a blend along with everything else
+  that moves, and an entity that collides with the world is still stopped by a
+  wall in its way.
+
+The object must be one a script may move: a static brush gets the same "not
+dynamic" error writing its `position` does, a chunk can only be moved (its
+`rotation` and `scale` are read-only), and the player and vehicles are refused —
+their motion belongs to the player's input and the drive model.
+
+### Waypoint animations
+
+A waypoint animation is a path authored in the level editor — a row of arrows,
+each a position, a rotation, a scale and a time — that an object can be sent
+along: a dynamic brush, an entity, a sprite, an emitter, a sound, a light or a
+volume. It is an object with an ID like any other, so `@door_open` names it;
+the verbs take the name as a string as well. Placing and previewing one is in the
+guide's *Building levels* chapter.
+
+```flang
+def open(:interact:, who ref) -> null
+    play_waypoints(@blast_door, @door_open)
+end
+
+def at_point(:waypoint:, src ref, anim ref, index int) -> null
+    log("reached point", index)
+end
+
+def arrived(:waypoints_end:, src ref, anim ref) -> null
+    log("the door is open")
+end
+```
+
+| | |
+| --- | --- |
+| `play_waypoints(obj, animation)` | send the object along it from wherever it is now; `false`, with a warning, for an animation with no points |
+| `stop_waypoints(obj)` | leave it where it has got to; `false` if it was following nothing |
+| `@obj.prop.waypoints` | read-only: the animation it is following, or `null` |
+
+How an object travels:
+
+- **Point by point, each at its time.** A point's time is when the object
+  *arrives* at it, in seconds from being sent — so the first point's time is how
+  long the leg from wherever the object was takes, and 0 starts the path on it.
+  Two points at the same time make the leg between them instant. The
+  animation's **length** may run past its last point, and the object holds that
+  point for the rest.
+- **Position, rotation and scale ease together**, linearly, so an object that
+  turns on its way to a point finishes the turn as it arrives. Rotation is
+  blended as numbers, as `rotate_to`'s is: 0 to 4π is two whole turns.
+- **Position is world space** — where the arrow is drawn — for every object, and
+  it is carried into whatever the object is placed in every tick: a brush's
+  chunk, the frame an entity or a volume rides, the thing a sprite, an emitter or
+  a sound is attached to. **Rotation and scale are the object's own** `rotation`
+  and `scale`.
+- **Each kind takes the parts of a point it has:**
+
+  | | position | rotation | scale |
+  | --- | --- | --- | --- |
+  | dynamic brush | its centre | ✓ | ✓ |
+  | entity | ✓ | ✓ | ✓ |
+  | sprite | ✓ | ✓ | x its width, y its height |
+  | emitter, sound, volume | ✓ | ✓ | |
+  | point light | ✓ | | |
+  | directional light | | shines the way the arrow points | |
+
+  A directional light's rotation is the turn that points the arrow's shaft along
+  the light, so a sun sweeping across the sky is a row of arrows aimed where it
+  should shine, and its `yaw` and `pitch` read back where it has got to.
+- **The path writes the whole placement.** `velocity` and `angular_velocity` wait
+  while a brush or an entity follows it and take over again from the last point,
+  and an entity does not fall. `move_to`, `rotate_to` or `scale_to` stops it
+  following, and `play_waypoints` drops its blends. A `position` write mid-path
+  is overwritten on the next tick.
+- **It is gameplay**: a pause freezes it, a disabled chunk's brushes wait, and an
+  animation deleted mid-journey leaves the object where it had got to. An entity
+  that collides with the world is still stopped by a wall in its way.
+- **The player and vehicles are refused**, as `move_to` refuses them: their
+  motion belongs to the player's input and the drive model.
+
+The object hears `:waypoint:` at every point, with the point's index counting
+from 0, and `:waypoints_end:` when the animation's length runs out — on reaching
+the last point, unless the length holds the brush there longer — after which
+`waypoints` reads `null`.
+
+A point can also carry **events** of its own, added in its **Events** group in
+the editor. Each is an atom posted to the object as `(:atom:, animation ref)`
+when it reaches that point, straight after the point's `:waypoint:` and in the
+order the point lists them:
+
+```flang
+def at_top(:lift_top:, anim ref) -> null
+    @top_gate <- (:open:,)
+end
+```
+
+An event stays with its point when other points are inserted before it, which an
+index does not. Event names are atoms (`[a-z_]+`), and the editor refuses the
+engine's own.
+
+Previewing an animation in the editor posts none of these.
 
 ### A brush an entity carries
 
@@ -793,6 +934,27 @@ could not step at all would be stopped by the seam between two floors that
 differ by a rounding error. Reading always reports the height actually in force,
 so a level that never set one reads its default rather than `0`.
 
+`@level.prop.player_control` and `@level.prop.player_gravity` are the spawn
+point's **Player control** and **Gravity** switches (`disable_control:` and
+`disable_gravity:` under `spawn:`), and the way a script gives them back. With
+control off the player's input does nothing — walking, jumping, driving, the
+interact key, and looking around with the mouse or the arrow keys, so the view
+stays wherever the spawn aimed it. With gravity off the player does
+not fall; turning it off mid-fall stops them where they are, and with control on
+they free-fly on Space and Shift.
+
+```
+-- a spawn with both off, aboard a dropship flying in
+def on_landed(:landed:) -> null
+    @level.prop.player_gravity = true
+    @level.prop.player_control = true
+end
+```
+
+Entering play sets both from the spawn again, and a level with no spawn starts
+with both on, so a script that switched them off cannot carry that into the next
+level or the next play session.
+
 A script's writes are not saved. They act on the level in memory, and the editor
 restores its snapshot when a play session ends, so `step_height` in the level
 file stays what the Player block set.
@@ -939,6 +1101,8 @@ The engine posts these without being asked.
 | `:anim_end:` | entity | `src ref, model str, anim str` | A clip finished, or a looping one wrapped |
 | `:mount:` | vehicle | `src ref, seat str` | Something came aboard; `seat` is empty if it is standing |
 | `:dismount:` | vehicle | `src ref, seat str` | …and left again; `seat` is the one it was in |
+| `:waypoint:` | the object on the path | `src ref, animation ref, index int` | A brush, entity, sprite, emitter, sound, light or volume on a waypoint animation reached one of its points; `index` counts from 0 |
+| `:waypoints_end:` | the object on the path | `src ref, animation ref` | …reached the end of the animation's length, and stopped following it |
 | `:click:` | widget, then its screen | `src ref` | A button, toggle or slider was activated, by pointer or navigation key |
 | `:hover:` | widget, then its screen | `src ref` | The pointer or the navigation highlight entered it |
 | `:unhover:` | widget, then its screen | `src ref` | …and left again |
@@ -1078,7 +1242,8 @@ Components are members rather than functions: `v.x`, `v.y`, `v.z`.
 `hitscan(atom)` `hitscan(atom, options)`
 `emit(emitter)` `stop_emit(emitter)`
 `burst(emitter, count)` `spawn_effect(name, vec)` `attach(obj, carrier)`
-`detach(obj)`
+`detach(obj)` `move_to(obj, vec, seconds)` `rotate_to(obj, vec, seconds)`
+`scale_to(obj, vec, seconds)`
 
 **UI** — `show_screen(name)` `hide_screen(screen)` `screen(name)`
 `widget(screen, id)` `focus(widget)` `load_level(name)` `quit_game()`
@@ -1283,9 +1448,11 @@ An **emitter**'s properties are the placement's, not the effect's: `position`,
 between every placement of it, so a script writing to it would change all of them
 — which is why there is no property that does.
 
-A **sprite**'s are `position`, `visible`, `texture`, `alpha`, `tint`, `size` and
-`frame`, plus the same read-only `attach` and `carrier`. `size` is a `vec` of
-width and height, whose `z` is unused.
+A **sprite**'s are `position`, `visible`, `texture`, `alpha`, `tint`, `size`,
+`scale` and `frame`, plus the same read-only `attach`, `carrier` and `waypoints`.
+`size` is a `vec` of width and height, whose `z` is unused. `scale` multiplies
+that size as drawn — `x` the width, `y` the height — without changing it; it is
+what a waypoint animation's scale writes, and `<1, 1, 1>` is the authored size.
 
 ### Audio
 

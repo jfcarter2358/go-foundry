@@ -39,6 +39,11 @@ const (
 	gizmoKindScenery  = "scenery"
 	gizmoKindLight    = "light"
 	gizmoKindPrefab   = "prefab"
+	// gizmoKindWaypoint is one point of a waypoint animation;
+	// gizmoKindWaypointAnim the whole animation, which only the move gizmo
+	// can carry.
+	gizmoKindWaypoint     = "waypoint"
+	gizmoKindWaypointAnim = "waypoint_anim"
 )
 
 const (
@@ -123,6 +128,18 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindLight:
 		if pl := activeGizmoPointLight(); pl != nil {
 			return pl.Position, true
+		}
+
+	case gizmoKindWaypoint:
+		if wp := activeGizmoWaypoint(); wp != nil {
+			return wp.Position, true
+		}
+
+	case gizmoKindWaypointAnim:
+		// The first point, since a path has no centre an author would aim
+		// for: it is where the brush sets off toward.
+		if wa := activeGizmoWaypointAnimation(); wa != nil && len(wa.Points) > 0 {
+			return wa.Points[0].Position, true
 		}
 
 	case gizmoKindPrefab:
@@ -233,7 +250,7 @@ func pickTranslateAxis(mx, my int32) int {
 // they must not be clickable either.
 func gizmoSuppressed() bool {
 	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode ||
-		Editor.VolumePlacementMode ||
+		Editor.VolumePlacementMode || Editor.WaypointPlacementMode ||
 		// The brush and the brush stamp too: their arms would sit over the
 		// ghost and swallow the click that was meant to stamp one.
 		Editor.BrushActive || Editor.BrushPlaceActive
@@ -371,6 +388,34 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindWaypoint:
+		wp := activeGizmoWaypoint()
+		if wp == nil {
+			return false
+		}
+		// All three, as for scenery: a point's position, turn and scale are
+		// each a real channel the brush arriving at it will take.
+		Editor.GizmoDragStartPos = wp.Position
+		Editor.GizmoDragStartRot = wp.Rotation
+		Editor.GizmoDragStartScale = wp.EffectiveScale()
+		EditorPushUndo()
+		return true
+
+	case gizmoKindWaypointAnim:
+		wa := activeGizmoWaypointAnimation()
+		if wa == nil || len(wa.Points) == 0 {
+			return false
+		}
+		// Every point's position, so the drag offsets each from where it
+		// started rather than accumulating per motion event.
+		Editor.GizmoDragWorld = make([]mgl32.Vec3, len(wa.Points))
+		for i := range wa.Points {
+			Editor.GizmoDragWorld[i] = wa.Points[i].Position
+		}
+		Editor.GizmoDragStartPos = wa.Points[0].Position
+		EditorPushUndo()
+		return true
+
 	case gizmoKindScenery:
 		sc := activeGizmoScenery()
 		if sc == nil {
@@ -502,6 +547,22 @@ func translateGizmoMouseMove(mx, my int32) {
 	case gizmoKindSound:
 		if sd := activeGizmoSound(); sd != nil {
 			sd.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		}
+	case gizmoKindWaypoint:
+		if wp := activeGizmoWaypoint(); wp != nil {
+			wp.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		}
+	case gizmoKindWaypointAnim:
+		if wa := activeGizmoWaypointAnimation(); wa != nil {
+			// The first point is snapped like any single object, and the rest
+			// keep their offsets from it, so a snapped path stays the shape it
+			// was drawn.
+			d := axisMoved(Editor.GizmoDragStartPos, axis, delta).Sub(Editor.GizmoDragStartPos)
+			for i := range wa.Points {
+				if i < len(Editor.GizmoDragWorld) {
+					wa.Points[i].Position = Editor.GizmoDragWorld[i].Add(d)
+				}
+			}
 		}
 	case gizmoKindSprite:
 		if sp := activeGizmoSprite(); sp != nil {

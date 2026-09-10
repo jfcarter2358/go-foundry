@@ -95,6 +95,15 @@ type Face struct {
 	// a compiled level is nothing but cuts. See world.BuildBrushFaceMeshFrom.
 	UVOrigin mgl32.Vec3
 
+	// UVMap, when UVMapped, replaces that projection altogether: the source face
+	// stated its UVs per corner (an atlas unwrap — world/brush_uv.go), and a
+	// fragment has none of those corners to carry them. So they are fitted once,
+	// on the whole source face, into a function of position, and every fragment
+	// evaluates it at its own points. A cut then lands on exactly the texels the
+	// uncut face had there, which is what keeps a painted wall painted.
+	UVMap    world.UVMap
+	UVMapped bool
+
 	// Light is the baked per-vertex lighting, parallel to Points. Filled by the
 	// light stage; nil until then.
 	Light []mgl32.Vec3
@@ -273,7 +282,7 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 				if !ok {
 					continue
 				}
-				faces = append(faces, Face{
+				cf := Face{
 					Points: pts, Plane: pl, UVOrigin: pts[0],
 					Chunk: ch.ID, Brush: b.ID, FaceIdx: fi, Detail: b.HasDetail(),
 					Texture: f.Texture, BlendTexture: f.BlendTexture, BlendMask: f.BlendMask,
@@ -284,7 +293,14 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 					// below can compare it against a solid's without a second
 					// lookup; it is not part of the output.
 					sourceOrder: order,
-				})
+				}
+				if f.HasUVs() {
+					// Fitted to the WORLD-space corners, so the map already
+					// includes the chunk's placement and a fragment — which is in
+					// world space too — can evaluate it as it stands.
+					cf.UVMap, cf.UVMapped = world.FitUVMap(pts, f.UVs)
+				}
+				faces = append(faces, cf)
 			}
 			order++
 		}

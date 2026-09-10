@@ -11,8 +11,8 @@ package world
 // the door happened to stop, and leaving play would have nothing to restore to.
 //
 // So a moving brush keeps its authored corners and carries a TRANSFORM on top:
-// Offset and Rotation, with Velocity and AngularVelocity the rates that carry
-// them, all runtime-only. Nothing here is serialized,
+// Offset, Rotation and Scale, with Velocity and AngularVelocity the rates that
+// carry the first two, all runtime-only. Nothing here is serialized,
 // nothing survives a reload, and the geometry on disk is always the brush at
 // rest. That is the same bargain Chunk.Origin strikes for a whole chunk, one
 // level down.
@@ -21,11 +21,14 @@ package world
 //
 //   - Drawing: the face meshes are uploaded once, in authored coordinates, and
 //     the draw multiplies Placement into the chunk's model matrix. Moving a
-//     brush uploads nothing (internal/app and render/shadow.go).
+//     brush uploads nothing (internal/app and render/shadow.go). The world
+//     shader carries normals through the inverse transpose, so a brush scaled
+//     unevenly still lights correctly.
 //   - Collision: the convex hull the resolver pushes bodies out of is the same
 //     vertex list with the same transform applied — collision.ConvexHull.Xform
 //     — so what a body hits is where the brush is drawn, which is the whole
-//     point of the feature.
+//     point of the feature. The hull's support function holds for any linear
+//     map, so a scaled brush is as solid as a turned one.
 //   - Extent: LocalAABB reports where the brush IS, so the chunk's bounds, the
 //     spatial hash and every frustum cull follow it. AdvanceBrushes re-buckets
 //     the hash after integrating, and so does the `position` property's setter.
@@ -47,14 +50,24 @@ import (
 )
 
 // AtRest reports whether the brush is where it was authored — no offset, no
-// rotation. The fast path every consumer of Placement takes first, since all
-// but a handful of brushes in a level are at rest for the whole of it.
+// rotation, no scale. The fast path every consumer of Placement takes first,
+// since all but a handful of brushes in a level are at rest for the whole of it.
 func (b *Brush) AtRest() bool {
-	return b.Offset == mgl32.Vec3{} && b.Rotation == mgl32.Vec3{}
+	return b.Offset == mgl32.Vec3{} && b.Rotation == mgl32.Vec3{} && b.unscaled()
 }
 
-// Pivot is the point Rotation turns about and the point `position` reports:
-// the average of the brush's authored corners, in chunk coordinates.
+// unscaled reports whether Scale leaves the brush its authored size. Both the
+// zero value and an explicit {1,1,1} do: the first is what every brush nobody
+// has scaled holds, the second what one scaled back to normal holds.
+func (b *Brush) unscaled() bool {
+	return b.Scale == (mgl32.Vec3{}) || b.Scale == (mgl32.Vec3{1, 1, 1})
+}
+
+// EffectiveScale is Scale with its zero value read as no scale at all.
+func (b *Brush) EffectiveScale() mgl32.Vec3 { return effectiveScale3(b.Scale) }
+
+// Pivot is the point Rotation turns about, Scale grows about, and `position`
+// reports: the average of the brush's authored corners, in chunk coordinates.
 //
 // The average rather than the centre of the bounding box, because it is the
 // same choice collision.ConvexHull.Center makes about the same vertex list, and
@@ -75,27 +88,36 @@ func (b *Brush) Pivot() mgl32.Vec3 {
 // currently is, in the chunk's own coordinates. The identity for a brush at
 // rest.
 //
-// Rotation is applied about Pivot rather than about the chunk origin, so a door
-// authored twenty metres out turns on its own centre rather than swinging round
-// the room.
+// Rotation and Scale are applied about Pivot rather than about the chunk
+// origin, so a door authored twenty metres out turns on its own centre rather
+// than swinging round the room, and a crate grown to twice its size grows in
+// place rather than away from the origin. Scale is applied first, in the
+// brush's own authored axes, so a slab stretched along X and then turned stays
+// a stretched slab rather than shearing.
 func (b *Brush) Placement() mgl32.Mat4 {
 	if b.AtRest() {
 		return mgl32.Ident4()
 	}
 	m := mgl32.Translate3D(b.Offset.X(), b.Offset.Y(), b.Offset.Z())
-	if b.Rotation != (mgl32.Vec3{}) {
+	scaled := !b.unscaled()
+	if b.Rotation != (mgl32.Vec3{}) || scaled {
 		p := b.Pivot()
-		m = m.Mul4(mgl32.Translate3D(p.X(), p.Y(), p.Z())).
-			Mul4(EulerMatrixYXZ(b.Rotation)).
-			Mul4(mgl32.Translate3D(-p.X(), -p.Y(), -p.Z()))
+		m = m.Mul4(mgl32.Translate3D(p.X(), p.Y(), p.Z()))
+		if b.Rotation != (mgl32.Vec3{}) {
+			m = m.Mul4(EulerMatrixYXZ(b.Rotation))
+		}
+		if scaled {
+			m = m.Mul4(mgl32.Scale3D(b.Scale.X(), b.Scale.Y(), b.Scale.Z()))
+		}
+		m = m.Mul4(mgl32.Translate3D(-p.X(), -p.Y(), -p.Z()))
 	}
 	return m
 }
 
 // Position is where the brush is now, in chunk coordinates: its pivot carried
-// through Placement. Rotation about the pivot leaves the pivot alone, so this
-// is Pivot plus Offset — written out the long way so that it stays true of
-// whatever Placement grows into.
+// through Placement. Rotation and scale about the pivot leave the pivot alone,
+// so this is Pivot plus Offset — written out the long way so that it stays true
+// of whatever Placement grows into.
 func (b *Brush) Position() mgl32.Vec3 {
 	if b.AtRest() {
 		return b.Pivot()
@@ -142,13 +164,22 @@ func (b *Brush) PlacedFacePoints(f *BrushFace) []mgl32.Vec3 {
 	return pts
 }
 
-// PlacedFaceNormal is FaceNormal turned by the brush's current rotation. A pure
-// translation leaves a normal alone, so this is the identity for the common
-// case of a brush that only slides.
+// PlacedFaceNormal is FaceNormal carried through the brush's current rotation
+// and scale. A pure translation leaves a normal alone, so this is the identity
+// for the common case of a brush that only slides.
+//
+// A normal is not carried the way a point is: the inverse transpose of R·S is
+// R·S⁻¹, so a face that slopes across an axis being stretched tilts TOWARD the
+// others rather than away. Dividing by the scale before turning is that.
 func (b *Brush) PlacedFaceNormal(f *BrushFace) mgl32.Vec3 {
 	n := b.FaceNormal(f)
-	if b.Rotation == (mgl32.Vec3{}) {
+	scaled := !b.unscaled()
+	if b.Rotation == (mgl32.Vec3{}) && !scaled {
 		return n
+	}
+	if scaled {
+		s := b.Scale
+		n = mgl32.Vec3{n.X() / s.X(), n.Y() / s.Y(), n.Z() / s.Z()}
 	}
 	r := EulerMatrixYXZ(b.Rotation).Mul4x1(n.Vec4(0))
 	return mgl32.Vec3{r.X(), r.Y(), r.Z()}.Normalize()
@@ -173,8 +204,9 @@ func (ch *Chunk) HasDynamicBrushes() bool {
 	return false
 }
 
-// AdvanceBrushes integrates every moving brush in the level by dt seconds and
-// reports whether any of them moved.
+// AdvanceBrushes moves every moving brush in the level on by dt seconds and
+// reports whether any of them moved: the ones following a waypoint animation
+// along it (brush_waypoints.go), and the rest by their rates.
 //
 // The brush counterpart of AdvanceChunks, and it runs on the same tick for the
 // same reason: a lift that slides on its own is authored state, not a script
@@ -182,6 +214,11 @@ func (ch *Chunk) HasDynamicBrushes() bool {
 // the space Offset is measured in, and AngularVelocity is in the same Euler
 // basis as Rotation — a turn about the brush's own pivot, not about anything
 // the chunk does.
+//
+// A brush following waypoints is driven by them alone, and its rates wait. Two
+// things writing one placement would have the door arrive somewhere no arrow
+// is, and the animation is the more specific instruction of the two; the rates
+// take over again from wherever the path left the brush.
 //
 // Rotation wraps into [-π, π] as it is integrated rather than growing without
 // bound, for the reason Entity.Integrate gives: a door left spinning for an
@@ -207,11 +244,25 @@ func AdvanceBrushes(lvl *Level, dt float32) bool {
 			if !b.Dynamic {
 				continue
 			}
-			if b.Velocity != (mgl32.Vec3{}) {
+			if b.Waypoints != nil {
+				if advanceBrushWaypoints(lvl, ch, b, dt) {
+					chunkMoved = true
+				}
+				continue
+			}
+			// A channel a script is easing is written by its tween alone, and
+			// the rate that would move it waits (tween.go). Read before the
+			// step, so a tween that arrives this tick does not also let its rate
+			// run on top of the exact value it landed on.
+			easingMove, easingTurn := b.Tweens.Easing(TweenMove), b.Tweens.Easing(TweenRotate)
+			if b.Tweens.Active() && advanceBrushTweens(ch, b, dt) {
+				chunkMoved = true
+			}
+			if b.Velocity != (mgl32.Vec3{}) && !easingMove {
 				b.Offset = b.Offset.Add(b.Velocity.Mul(dt))
 				chunkMoved = true
 			}
-			if b.AngularVelocity != (mgl32.Vec3{}) {
+			if b.AngularVelocity != (mgl32.Vec3{}) && !easingTurn {
 				r := b.Rotation.Add(b.AngularVelocity.Mul(dt))
 				b.Rotation = mgl32.Vec3{WrapAngle(r.X()), WrapAngle(r.Y()), WrapAngle(r.Z())}
 				chunkMoved = true

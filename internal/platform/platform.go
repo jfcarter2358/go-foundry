@@ -51,6 +51,12 @@ var GravityEnabled = true
 var IsOnGround = false
 var JumpRequested = false
 
+// PlayerControlEnabled is whether the player's input reaches the game. Off,
+// walking, jumping, driving, the interact key and looking around — mouse and
+// arrow keys both — all go quiet. Set from the spawn point on entering play,
+// and by a script handing control back.
+var PlayerControlEnabled = true
+
 const GravityAccel = float32(0.010) // downward acceleration per frame
 const MaxFallSpeed = float32(0.50)  // terminal fall speed per frame
 const JumpVelocity = float32(0.20)  // upward impulse on jump

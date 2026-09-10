@@ -271,6 +271,25 @@ type EditorState struct {
 	// forces a rescan, so a clip added while the editor is open shows up.
 	SoundFileNames []string
 
+	// --- Waypoint animations (editor_waypoint.go) ---
+	// ActiveWaypointAnimIdx indexes level.WaypointAnimations; -1 = none
+	// selected. ActiveWaypointIdx is the point inside it the gizmo drags, or
+	// -1 when the animation is selected as a whole.
+	ActiveWaypointAnimIdx int
+	ActiveWaypointIdx     int
+	// WaypointPlacementMode is true when the next left-click places a new
+	// waypoint animation's first point. The points after it are Ctrl+clicks
+	// with a waypoint selected, which need no mode.
+	WaypointPlacementMode bool
+	// NewWaypointAnimID is the ID field of the placement row, empty for
+	// "waypoints".
+	NewWaypointAnimID string
+	// NewWaypointEventText is the selected point's add-event field.
+	NewWaypointEventText string
+	// WaypointPreview is an animation being played on an object in the editor.
+	// Editor scratch: nothing about it is saved.
+	WaypointPreview waypointPreview
+
 	// VideoFileNames does the same for video/, on the same terms.
 	VideoFileNames []string
 	// ShowSoundRanges draws the selected sound's reference and maximum
@@ -358,7 +377,7 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	// it. See level_context.go and script_engine_hooks.go for why each exists.
 	world.CurrentLevel = func() *world.Level { return Editor.level }
 	hooks.EditorActive = func() bool { return Editor.Active }
-	textureui.UVGuideForTexture = modelUVLayoutFor
+	textureui.UVGuideForTexture = uvLayoutFor
 	Editor.LevelsDir = levelsDir
 	Editor.Active = false
 	Editor.Mode = ModeGame
@@ -387,6 +406,10 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.ActiveSoundIdx = -1
 	Editor.SoundPlacementMode = false
 	Editor.ShowSoundRanges = true
+	Editor.ActiveWaypointAnimIdx = -1
+	Editor.ActiveWaypointIdx = -1
+	Editor.WaypointPlacementMode = false
+	Editor.WaypointPreview = waypointPreview{}
 	Editor.ActiveSceneryIdx = -1
 	editorDisarmBrush()
 	editorDisarmBrushPlacement()
@@ -506,6 +529,11 @@ func EditorToggle() {
 		// straight back out of; the 2D map goes read-only for the duration
 		// instead (drawEditor2DWindow).
 
+		// A preview's brush goes back to rest first. Its placement is runtime
+		// state the snapshot below does not hold, so play would otherwise
+		// start with a door wherever the preview had left it.
+		editorWaypointPreviewStop()
+
 		// Snapshot before play so a script cannot permanently change the
 		// authored level — see script_play.go.
 		levelio.PlaySessionBegin(Editor.level)
@@ -525,7 +553,9 @@ func EditorToggle() {
 				editorSetStatus("UI screen %q: %v", name, err)
 			}
 		}
-		platform.GravityEnabled = true
+		// Gravity and player control were set by ApplySpawnPoint above, from
+		// the spawn's own switches — forcing gravity on here would undo one
+		// that asked for none.
 		Editor.Active = false
 		Editor.Mode = ModeGame
 	} else {
@@ -646,6 +676,12 @@ func EditorHandleEvent(event sdl.Event) bool {
 				EditorDeleteSelected()
 			}
 		case sdl.SCANCODE_ESCAPE:
+			// Laying a path is a mode like the brush, and put away the same way.
+			if Editor.WaypointPlacementMode && !imgui.CurrentIO().WantCaptureKeyboard() {
+				editorDisarmWaypointPlacement()
+				editorSetStatus("Stopped placing waypoints")
+				return true
+			}
 			// Escape leaves detail mode, matching every other thing in this
 			// editor you can be inside. It is checked here rather than with the
 			// armed tools above because those consume Escape first, which is
@@ -871,6 +907,10 @@ func EditorRender() {
 	// (editor_3d_visibility.go).
 	editorVisNewFrame()
 
+	// A waypoint preview moves its brush before anything draws it, so the
+	// frame shows where the brush is rather than where it was.
+	editorWaypointPreviewTick(dt)
+
 	// --- 3D gizmos (drawn on top of world, depth-tested) ---
 	if Editor.Mode == Mode3D {
 		projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
@@ -960,6 +1000,12 @@ func EditorDeleteSelected() {
 		return
 	}
 
+	// Waypoint deletion: the selected point, or the animation selected whole.
+	if activeWaypointAnimation() != nil {
+		deleteActiveWaypoint()
+		return
+	}
+
 	// Emitter deletion
 	if activeEmitter() != nil {
 		deleteActiveEmitter()
@@ -1024,6 +1070,12 @@ func EditorLoadLevel(path string) error {
 	Editor.ActiveSoundIdx = -1
 	Editor.SoundPlacementMode = false
 	Editor.ShowSoundRanges = true
+	Editor.ActiveWaypointAnimIdx = -1
+	Editor.ActiveWaypointIdx = -1
+	Editor.WaypointPlacementMode = false
+	// The previewed brush went with the old level, so there is nothing to put
+	// back — only the preview's own state to forget.
+	Editor.WaypointPreview.Playing, Editor.WaypointPreview.Posed = false, false
 	Editor.ActiveSceneryIdx = -1
 	editorDisarmBrush()
 	editorDisarmBrushPlacement()

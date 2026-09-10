@@ -84,9 +84,11 @@ quantised to the current palette.
 
 ## The UV layout overlay
 
-With a model open in the model editor, the texture canvas can draw that model's
-UV layout over the art (`UV layout (n faces)` under the canvas). That is how you
-paint to a specific unwrap rather than guessing.
+With a model open in the model editor, or with brushes laid out by
+[Unwrap & Paint](02-building-levels.md#painting-brushes), the texture canvas can
+draw the UV layout of everything wearing the open texture over the art
+(`UV layout (n faces)` under the canvas). That is how you paint to a specific
+unwrap rather than guessing.
 
 ## No texture
 

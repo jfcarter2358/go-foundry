@@ -30,6 +30,7 @@ import (
 
 	"foundry/internal/flang"
 	"foundry/internal/hooks"
+	"foundry/internal/platform"
 	"foundry/internal/world"
 )
 
@@ -82,6 +83,40 @@ func levelProps() map[string]propAccess {
 				return nil
 			},
 			Doc: "how tall a riser the player walks up rather than being stopped by, in world units; 0 restores the default (the player's own height)",
+		},
+
+		// The spawn point's two switches, for a script to hand back. They are
+		// engine state rather than fields on the level — there is one player —
+		// but they sit here beside step_height for the same reason it does.
+		// Entering play sets both from the spawn again, so a write is never
+		// carried out of the session.
+		"player_control": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(platform.PlayerControlEnabled), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("player_control", "bool", v)
+				}
+				world.SetPlayerControl(b)
+				return nil
+			},
+			Doc: "whether the player's input reaches the game: walking, jumping, driving, interact and looking around",
+		},
+		"player_gravity": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(platform.GravityEnabled), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("player_gravity", "bool", v)
+				}
+				world.SetPlayerGravity(b)
+				return nil
+			},
+			Doc: "whether the player falls. Turning it off stops a fall where it is; with control on, the player free-flies",
 		},
 
 		"sky": {

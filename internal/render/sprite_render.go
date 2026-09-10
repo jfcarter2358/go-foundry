@@ -52,6 +52,12 @@ const spriteInstanceFloats = 14
 // fragment.glsl's own so a sprite and a cutout wall dissolve at the same place.
 const spriteAlphaCutoff = 0.5
 
+// spriteModeFadingCutout is sprite_frag.glsl's blendMode for a cutout sprite
+// whose Alpha is below 1 — see spriteBatch.FadingCutout. It sits after the
+// three gfx.SpriteBlend values rather than among them, because it is how the
+// renderer draws a cutout sprite, not a mode anyone authors.
+const spriteModeFadingCutout = 3
+
 // spriteMaxInstances caps one draw call. Well above what a level of authored
 // sprites reaches; particles will batch against it rather than grow the buffer
 // without limit.
@@ -126,6 +132,12 @@ type spriteBatch struct {
 	Blend     gfx.SpriteBlend
 	Billboard gfx.BillboardMode
 	Lit       bool
+	// FadingCutout marks a cutout sprite whose Alpha is below 1. Cutout has no
+	// partial opacity — its alpha is a threshold, so a fade would show nothing
+	// until the threshold and then the whole sprite — so one mid-fade draws in
+	// the alpha pass instead: Blend reads SpriteBlendAlpha, and the shader still
+	// cuts against the texture's alpha before blending by the sprite's.
+	FadingCutout bool
 	// FixedRight/FixedUp are read only for BillboardFixed, which is why a fixed
 	// sprite batches alone — its basis is authored per sprite. Fixed sprites are
 	// signs and posters, so one draw each is a price worth paying to keep the
@@ -336,20 +348,25 @@ func SpriteBatches(lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersOn
 		u0, v0, du, dv := s.UVRect()
 		inst := SpriteInstance{
 			Pos:   pos,
-			Size:  mgl32.Vec2{s.Width, s.Height},
+			Size:  s.DrawnSize(),
 			Rot:   s.Rotation.Z(),
 			Color: mgl32.Vec4{s.Tint.X(), s.Tint.Y(), s.Tint.Z(), s.Alpha},
 			UV:    mgl32.Vec4{u0, v0, du, dv},
 		}
 		right, up := fixedBasis(s)
-		appendSpriteInstance(&sprites.batches, spriteBatch{
+		key := spriteBatch{
 			Texture:    s.Texture,
 			Blend:      s.Blend,
 			Billboard:  s.Billboard,
 			Lit:        s.Lit,
 			FixedRight: right,
 			FixedUp:    up,
-		}, inst, camPos)
+		}
+		if s.Blend == gfx.SpriteBlendCutout && s.Alpha < 1 {
+			key.Blend = gfx.SpriteBlendAlpha
+			key.FadingCutout = true
+		}
+		appendSpriteInstance(&sprites.batches, key, inst, camPos)
 	}
 
 	gatherEmitters(lvl, cull, camPos, castersOnly)
@@ -442,6 +459,7 @@ func findSpriteBatch(batches *[]spriteBatch, key spriteBatch) *spriteBatch {
 	for i := range *batches {
 		b := &(*batches)[i]
 		if b.Texture == key.Texture && b.Blend == key.Blend && b.Lit == key.Lit &&
+			b.FadingCutout == key.FadingCutout &&
 			b.Billboard == key.Billboard && key.Billboard != gfx.BillboardFixed {
 			return b
 		}
@@ -470,7 +488,7 @@ func appendSpriteInstance(batches *[]spriteBatch, key spriteBatch, inst SpriteIn
 	for i := range *batches {
 		b := &(*batches)[i]
 		if b.Texture != key.Texture || b.Blend != key.Blend || b.Lit != key.Lit ||
-			b.Billboard != key.Billboard {
+			b.FadingCutout != key.FadingCutout || b.Billboard != key.Billboard {
 			continue
 		}
 		// A fixed sprite's basis is a uniform, so two of them can only share a
@@ -545,7 +563,6 @@ func drawSpritePass(lvl *world.Level, batches []spriteBatch, projView mgl32.Mat4
 	gl.UniformMatrix4fv(p.projView, 1, false, &projView[0])
 	gl.Uniform3f(p.viewPos, camPos.X(), camPos.Y(), camPos.Z())
 	gl.Uniform1i(p.directional, 0)
-	gl.Uniform1i(p.blendMode, int32(mode))
 	gl.Uniform1f(p.alphaCutoff, spriteAlphaCutoff)
 	gl.Uniform1i(p.tex, 0)
 
@@ -601,6 +618,15 @@ func drawSpriteBatch(p *spriteProgram, b *spriteBatch) {
 
 	if p.lit >= 0 {
 		gl.Uniform1i(p.lit, boolToInt32(b.Lit))
+	}
+	if p.blendMode >= 0 {
+		// Per batch rather than per pass: a fading cutout shares the alpha
+		// pass with true alpha batches but not their shader path.
+		mode := int32(b.Blend)
+		if b.FadingCutout {
+			mode = spriteModeFadingCutout
+		}
+		gl.Uniform1i(p.blendMode, mode)
 	}
 	gl.Uniform1i(p.billboardMode, int32(b.Billboard))
 	gl.Uniform3f(p.fixedRight, b.FixedRight.X(), b.FixedRight.Y(), b.FixedRight.Z())
@@ -787,7 +813,6 @@ func DrawSpriteInstances(insts []particle.Instance, texture string, blend gfx.Sp
 	gl.UniformMatrix4fv(p.projView, 1, false, &projView[0])
 	gl.Uniform3f(p.viewPos, camPos.X(), camPos.Y(), camPos.Z())
 	gl.Uniform1i(p.directional, 0)
-	gl.Uniform1i(p.blendMode, int32(blend))
 	gl.Uniform1f(p.alphaCutoff, spriteAlphaCutoff)
 	gl.Uniform1i(p.tex, 0)
 	gl.Uniform1i(p.lit, 0)

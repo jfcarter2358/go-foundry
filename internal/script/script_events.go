@@ -81,11 +81,58 @@ func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	postOverlapEvents(rt, lvl)
 	postCollideEvents(rt)
 	postAnimEvents(rt)
+	postWaypointEvents(rt)
 	postVehicleEvents(rt)
 	postInteractEvent(rt, lvl)
 	postUIEvents(rt)
 	postTimerEvents(rt)
 	postTickEvents(rt, lvl, dt)
+}
+
+// postWaypointEvents fires `:waypoint:` as an object reaches each point of the
+// waypoint animation it is travelling, and `:waypoints_end:` once it reaches
+// the last and stops following it.
+//
+// Posted to the object, with the animation as an argument, on the shape
+// `:anim_end:` has: the thing that moved hears about its own motion, and one
+// handler can serve several paths by looking at which one arrived.
+//
+// A point's own events follow its `:waypoint:`, in the order the point lists
+// them, each as `(:atom:, animation ref)` — the atom is the author's, so the
+// only thing left to say is which path it came from.
+func postWaypointEvents(rt *ScriptRuntime) {
+	for _, ev := range hooks.TakeWaypointEvents() {
+		src := flang.RefVal{Kind: waypointRefKind(ev.Kind), A: ev.Object}
+		anim := flang.RefVal{Kind: flang.RefWaypoints, A: ev.Animation}
+		if ev.Ended {
+			_ = rt.post(src, "waypoints_end", []flang.Value{src, anim}, flang.Pos{})
+			continue
+		}
+		_ = rt.post(src, "waypoint", []flang.Value{src, anim, flang.IntVal(ev.Index)}, flang.Pos{})
+		for _, atom := range ev.Events {
+			_ = rt.post(src, atom, []flang.Value{anim}, flang.Pos{})
+		}
+	}
+}
+
+// waypointRefKind is the ref kind that names an object of a waypoint event's
+// kind.
+func waypointRefKind(k hooks.WaypointObject) flang.Kind_ {
+	switch k {
+	case hooks.WaypointEntity:
+		return flang.RefEntity
+	case hooks.WaypointSprite:
+		return flang.RefSprite
+	case hooks.WaypointEmitter:
+		return flang.RefEmitter
+	case hooks.WaypointSound:
+		return flang.RefSound
+	case hooks.WaypointLight:
+		return flang.RefLight
+	case hooks.WaypointVolume:
+		return flang.RefVolume
+	}
+	return flang.RefBrush
 }
 
 // scriptedRefs returns every object in the level that has a script, so the

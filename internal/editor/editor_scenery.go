@@ -129,6 +129,7 @@ func editorArmBrush(path string) {
 	Editor.EmitterPlacementMode = false
 	Editor.SoundPlacementMode = false
 	Editor.SpawnPlacementMode = false
+	Editor.WaypointPlacementMode = false
 	editorSetStatus("Brush: %s — click to place, Escape to stop", path)
 }
 

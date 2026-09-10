@@ -93,7 +93,34 @@ func editorSpawnPointSection(lvl *world.Level) {
 	editorFocusScroll(panelFocusSpawn)
 
 	editorPropGroupOpen("Transform##spawntfgrp", func() { editorSpawnTransform(s) })
+	editorPropGroupOpen("Player##spawnplayergrp", func() { editorSpawnPlayer(s) })
 	editorPropGroup("Actions##spawnactions", 0, func() { editorSpawnActions(lvl, s) })
+}
+
+// editorSpawnPlayer draws what the player starts able to do. The checkboxes
+// read as enabled switches; the spawn stores them as opt-outs so a spawn that
+// never touched them saves nothing.
+//
+// Each toggles a copy: imgui has already written the new value by the time
+// Checkbox reports a click, and the undo snapshot has to be of the old one.
+func editorSpawnPlayer(s *world.SpawnPoint) {
+	control := !s.DisableControl
+	if imgui.Checkbox("Player control##spawnctl", &control) {
+		EditorPushUndo()
+		s.DisableControl = !control
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Off: the player can neither move nor look around until a script\nsets @level.prop.player_control = true.")
+	}
+
+	gravity := !s.DisableGravity
+	if imgui.Checkbox("Gravity##spawngrav", &gravity) {
+		EditorPushUndo()
+		s.DisableGravity = !gravity
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Off: the player hangs where they spawn until a script sets\n@level.prop.player_gravity = true.")
+	}
 }
 
 // editorSpawnTransform draws where the marker is and which way it faces.
@@ -134,7 +161,9 @@ func editorSpawnActions(lvl *world.Level, s *world.SpawnPoint) {
 	if imgui.Button("Move To Camera##spawn") {
 		EditorPushUndo()
 		// The camera sits at eye height; the marker sits at the player's feet.
-		s.Position = gfx.Cam.Position.Sub(mgl32.Vec3{0, world.EyeHeight, 0})
+		// SpawnEyeHeight is the gap ApplySpawnPoint puts back, so playing from
+		// here starts in exactly this view.
+		s.Position = gfx.Cam.Position.Sub(mgl32.Vec3{0, world.SpawnEyeHeight, 0})
 		s.Rotation = spawnRotationFromCamera()
 	}
 

@@ -14,6 +14,8 @@ package script
 // touched.
 
 import (
+	"fmt"
+
 	"foundry/internal/flang"
 	"foundry/internal/world"
 )
@@ -52,6 +54,7 @@ func spriteProps() map[string]propAccess {
 			}),
 			Doc: "position, world-space unless the sprite is attached",
 		},
+		"waypoints": waypointsProp(),
 		"visible": {
 			Get: get(func(s *world.Sprite) flang.Value { return flang.BoolVal(s.Visible) }),
 			Set: set(func(sp *world.Sprite, v flang.Value) error {
@@ -115,6 +118,23 @@ func spriteProps() map[string]propAccess {
 				return nil
 			}),
 			Doc: "width and height as a vec; the z component is unused",
+		},
+		"scale": {
+			Get: get(func(s *world.Sprite) flang.Value { return vecValue(s.EffectiveScale()) }),
+			Set: set(func(sp *world.Sprite, v flang.Value) error {
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("scale", "vec", v)
+				}
+				// Refused rather than clamped, as a brush's scale is: a zero
+				// axis would hide the quad in a way that reads as a bug.
+				if p.X() <= 0 || p.Y() <= 0 {
+					return fmt.Errorf("scale: x and y must be greater than zero, got <%g, %g, %g>", p.X(), p.Y(), p.Z())
+				}
+				sp.Scale = world.ClampBrushScale(p)
+				return nil
+			}),
+			Doc: "multiplies size as drawn — x the width, y the height; <1, 1, 1> is the authored size",
 		},
 		"attach": {
 			Get: get(func(s *world.Sprite) flang.Value { return flang.StrVal(s.Attach.Describe()) }),
@@ -191,6 +211,7 @@ func emitterProps() map[string]propAccess {
 			}),
 			Doc: "Euler angles in radians; aims the emission shape",
 		},
+		"waypoints": waypointsProp(),
 		"enabled": {
 			Get: get(func(e *world.Emitter) flang.Value { return flang.BoolVal(e.Enabled) }),
 			Set: set(func(e *world.Emitter, v flang.Value) error {

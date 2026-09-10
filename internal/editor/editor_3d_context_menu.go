@@ -148,6 +148,8 @@ func editor3DContextMenuItems() []ctxMenuItem {
 		items = append(items, editor3DSpriteMenuItems()...)
 	case sel3DScenery:
 		items = append(items, editor3DSceneryMenuItems()...)
+	case sel3DWaypoint:
+		items = append(items, editor3DWaypointMenuItems()...)
 	default:
 		items = append(items, editor3DEmptyMenuItems()...)
 	}
@@ -207,6 +209,8 @@ func editor3DBrushMenuItems() []ctxMenuItem {
 			Tooltip: "Shape the surface drawn over this brush with the model editor's\n" +
 				"own tools — extrude, subdivide, smooth, delete — without moving\n" +
 				"the solid the player collides with."},
+		{Label: all("Unwrap && Paint..."), Do: brushOpenUnwrapDialog,
+			Tooltip: "Lay these brushes out on one texture of their own, and paint\nit in the texture editor."},
 		{Separator: true},
 		{Label: "Duplicate", Disabled: n > 1, Do: editorDuplicateSelectedBrush,
 			Tooltip: "A copy in place, selected and ready to drag off the original."},
@@ -250,6 +254,8 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusFace) },
 			Tooltip: "Opens the side panel on the first selected face. The panel\nedits that one; these rows edit all of them."},
 		{Label: all("Texture"), Sub: ctxTextureMenuItems(texture, true, editor3DSetSurfaceTexture)},
+		{Label: all("Unwrap && Paint..."), Do: brushOpenUnwrapDialog,
+			Tooltip: "Lay the selected faces out on one texture of their own, and\npaint it in the texture editor."},
 		{Separator: true},
 	}
 	items = append(items, editor3DFaceOpMenuItems(all)...)
@@ -508,6 +514,10 @@ func editor3DSharedMenuItems() []ctxMenuItem {
 		editorAddEntityMenuItem(editor3DMenuPoint),
 		{Label: "Add volume here", Do: func() { editor3DAddVolumeAt(editor3DMenuPoint) },
 			Tooltip: "A one-unit box trigger where the cursor met the world.\nGive it a script in the Volumes panel."},
+		{Label: "Add waypoint animation here", Do: func() {
+			addWaypointAnimationAt(editor3DMenuPoint, Editor.NewWaypointAnimID)
+		},
+			Tooltip: "A path's first point where the cursor met the world.\nCtrl+click afterwards adds the next point."},
 		editorSceneryBrushMenuItem(),
 		editorBrushStampMenuItem(),
 		{Label: "Select", Sub: modes},

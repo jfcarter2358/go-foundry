@@ -200,8 +200,9 @@ func spriteQuadCorners(lvl *world.Level, s *world.Sprite, camPos mgl32.Vec3) [4]
 		right = r
 	}
 
-	hx := right.Mul(s.Width * 0.5)
-	hy := up.Mul(s.Height * 0.5)
+	size := s.DrawnSize()
+	hx := right.Mul(size.X() * 0.5)
+	hy := up.Mul(size.Y() * 0.5)
 	return [4]mgl32.Vec3{
 		pos.Sub(hx).Sub(hy),
 		pos.Add(hx).Sub(hy),
@@ -304,9 +305,10 @@ func drawSelectedSpriteOutline(camPos mgl32.Vec3) {
 	centre := c[0].Add(c[2]).Mul(0.5)
 	n := c[1].Sub(c[0]).Cross(c[3].Sub(c[0]))
 	if n.LenSqr() > 1e-8 {
-		stub := s.Width
-		if s.Height < stub {
-			stub = s.Height
+		size := s.DrawnSize()
+		stub := size.X()
+		if size.Y() < stub {
+			stub = size.Y()
 		}
 		gizmo.GizmoLine(centre, centre.Add(n.Normalize().Mul(stub*0.5)), spriteSelColor)
 	}

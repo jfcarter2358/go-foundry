@@ -319,6 +319,11 @@ func LevelIDTaken(lvl *Level, id string) bool {
 			return true
 		}
 	}
+	for i := range lvl.WaypointAnimations {
+		if lvl.WaypointAnimations[i].ID == id {
+			return true
+		}
+	}
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
 		if ch.ID == id {

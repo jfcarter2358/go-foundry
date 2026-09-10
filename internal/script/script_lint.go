@@ -51,7 +51,7 @@ type ScriptIssue struct {
 var scriptEventAtoms = []string{
 	"spawn", "destroy", "tick", "enter", "exit",
 	"collide", "interact", "anim_start", "anim_end",
-	"mount", "dismount", "portal_seal",
+	"mount", "dismount", "portal_seal", "waypoint", "waypoints_end",
 	"click", "hover", "unhover", "change", "submit", "cancel", "shown", "hidden",
 }
 
@@ -144,9 +144,10 @@ func (l *linter) clause(c *flang.Clause) {
 //
 // Only a near miss, never an unrecognised name: custom atoms are ordinary and
 // need no declaration, so complaining about every one would make this useless.
-// `:intract:` is a typo; `:unlock:` is a design.
+// `:intract:` is a typo; `:unlock:` is a design. An atom one of the level's
+// waypoints posts is a design too, however close it is to `:waypoint:`.
 func (l *linter) handlerAtom(p flang.Param) {
-	if containsString(scriptEventAtoms, p.Atom) {
+	if containsString(scriptEventAtoms, p.Atom) || containsString(world.WaypointEventAtoms(l.lvl), p.Atom) {
 		return
 	}
 	if near := world.NearestName(p.Atom, scriptEventAtoms); near != "" {
@@ -363,8 +364,116 @@ func (l *linter) call(c *flang.CallExpr) {
 		l.afterCall(c)
 	case "hitscan":
 		l.hitscan(c)
+	case "play_waypoints", "stop_waypoints":
+		l.waypoints(c, name.Name)
+	case "move_to", "rotate_to", "scale_to":
+		l.tween(c, name.Name)
 	}
 	l.knownFunc(name)
+}
+
+// tween checks the object move_to, rotate_to and scale_to are handed, when it
+// is written as a literal: something of a kind the verb can ease, and — for a
+// brush — one a script is allowed to move. Each is a refusal that would
+// otherwise arrive only when the call runs.
+func (l *linter) tween(c *flang.CallExpr, verb string) {
+	if l.lvl == nil || len(c.Args) == 0 {
+		return
+	}
+	addr, ok := c.Args[0].(*flang.AddrExpr)
+	if !ok {
+		return
+	}
+	r, ok := l.cache.refFor(addr.Name)
+	if !ok {
+		return // addr() has already said there is no such object
+	}
+	switch r.Kind {
+	case flang.RefBrush:
+		if b := l.cache.brushFor(r); b != nil && !b.Dynamic {
+			l.add(addr.Pos_, "%s would fail: brush %q is not dynamic; tick Dynamic in its properties panel", verb, addr.Name)
+		}
+	case flang.RefChunk:
+		if verb != "move_to" {
+			l.add(addr.Pos_, "%s would fail: a chunk's rotation and scale are read-only, so only move_to works on @%s", verb, addr.Name)
+		}
+	case flang.RefEntity:
+		if e := l.cache.entityFor(r); e != nil && e.IsVehicle() {
+			l.add(addr.Pos_, "%s would fail: @%s is a vehicle, and its drive model owns its motion", verb, addr.Name)
+		}
+	default:
+		what := "a brush, a chunk or an entity"
+		if verb != "move_to" {
+			what = "a brush or an entity"
+		}
+		l.add(addr.Pos_, "%s eases %s, and @%s is a %s", verb, what, addr.Name, r.Kind)
+	}
+}
+
+// waypoints checks what play_waypoints and stop_waypoints need from the level,
+// for the arguments written as literals: a brush a script is allowed to move,
+// and — for play — an animation that exists and has somewhere to send it.
+//
+// The dynamic check is the one worth making early. Without it the refusal
+// arrives only when the call runs, which for a door is the moment somebody
+// walks up to it.
+func (l *linter) waypoints(c *flang.CallExpr, verb string) {
+	if l.lvl == nil || len(c.Args) == 0 {
+		return
+	}
+	if addr, ok := c.Args[0].(*flang.AddrExpr); ok {
+		if r, ok := l.cache.refFor(addr.Name); ok {
+			switch r.Kind {
+			case flang.RefBrush:
+				if b := l.cache.brushFor(r); b != nil && !b.Dynamic {
+					l.add(addr.Pos_, "%s would fail: brush %q is not dynamic; tick Dynamic in its properties panel", verb, addr.Name)
+				}
+			case flang.RefEntity:
+				if e := l.cache.entityFor(r); e == world.PlayerEntity && e != nil {
+					l.add(addr.Pos_, "%s would fail: it cannot move the player", verb)
+				} else if e.IsVehicle() {
+					l.add(addr.Pos_, "%s would fail: @%s is a vehicle, and its drive model owns its motion", verb, addr.Name)
+				}
+			case flang.RefSprite, flang.RefEmitter, flang.RefSound, flang.RefVolume, flang.RefLight:
+			default:
+				l.add(addr.Pos_, "%s moves %s, and @%s is a %s", verb, waypointFollowerKinds, addr.Name, r.Kind)
+			}
+		}
+	}
+	if verb != "play_waypoints" || len(c.Args) < 2 {
+		return
+	}
+
+	var anim *world.WaypointAnimation
+	switch a := c.Args[1].(type) {
+	case *flang.AddrExpr:
+		r, ok := l.cache.refFor(a.Name)
+		if !ok {
+			return // addr() has already said there is no such object
+		}
+		if r.Kind != flang.RefWaypoints {
+			l.add(a.Pos_, "play_waypoints needs a waypoint animation, and @%s is a %s", a.Name, r.Kind)
+			return
+		}
+		anim = l.cache.waypointAnimationFor(r)
+	case *flang.StringLit:
+		anim = world.FindWaypointAnimation(l.lvl, a.Value)
+		if anim == nil {
+			msg := fmt.Sprintf("play_waypoints would fail: this level has no waypoint animation called %q", a.Value)
+			names := make([]string, 0, len(l.lvl.WaypointAnimations))
+			for i := range l.lvl.WaypointAnimations {
+				names = append(names, l.lvl.WaypointAnimations[i].ID)
+			}
+			if near := world.NearestName(a.Value, names); near != "" {
+				msg += fmt.Sprintf("; did you mean %q?", near)
+			}
+			l.add(c.Pos_, "%s", msg)
+			return
+		}
+	}
+	if anim != nil && len(anim.Points) == 0 {
+		l.add(c.Pos_, "play_waypoints would do nothing: waypoint animation %q has no points", anim.ID)
+	}
 }
 
 // knownFunc flags a call to something neither defined nor built in.
@@ -762,6 +871,9 @@ func (l *linter) levelNames() []string {
 	}
 	for i := range l.lvl.Sounds {
 		out = append(out, l.lvl.Sounds[i].ID)
+	}
+	for i := range l.lvl.WaypointAnimations {
+		out = append(out, l.lvl.WaypointAnimations[i].ID)
 	}
 	for ci := range l.lvl.Chunks {
 		ch := &l.lvl.Chunks[ci]

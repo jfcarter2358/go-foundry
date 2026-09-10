@@ -36,6 +36,8 @@ var worldVerbs = []string{
 	"hitscan",
 	"play", "stop", "play_sound", "play_sound_at", "play_music", "stop_music",
 	"attach", "detach",
+	"play_waypoints", "stop_waypoints",
+	"move_to", "rotate_to", "scale_to",
 	"show_screen", "hide_screen", "screen", "widget", "focus", "load_level",
 	"quit_game",
 }

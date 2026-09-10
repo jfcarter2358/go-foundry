@@ -47,6 +47,7 @@ func (m *BrushMesh) Clone() BrushMesh {
 	for i := range m.Faces {
 		out.Faces[i] = m.Faces[i]
 		out.Faces[i].Indices = append([]int(nil), m.Faces[i].Indices...)
+		out.Faces[i].UVs = append([]mgl32.Vec2(nil), m.Faces[i].UVs...)
 		out.Faces[i].Geometry = gfx.Geometry{}
 	}
 	return out

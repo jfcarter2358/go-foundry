@@ -148,6 +148,10 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 		if sd := activeGizmoSound(); sd != nil {
 			return sd.Position, true
 		}
+	case gizmoKindWaypoint:
+		if wp := activeGizmoWaypoint(); wp != nil {
+			return wp.Position, true
+		}
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {
 			return s.Position, true
@@ -235,6 +239,12 @@ func rotateGizmoMouseMove(mx, my int32) {
 // reconciles that: a corner whose floor and ceiling handles are both selected
 // gets one averaged footprint rather than whichever handle was written last.
 func applyRotationToSelection(axis, origin mgl32.Vec3, delta float32) {
+	if wp := activeGizmoWaypoint(); wp != nil {
+		// Unwrapped — see eulerAddedAbout for why a waypoint alone keeps
+		// counting past 180°.
+		wp.Rotation = eulerAddedAbout(Editor.GizmoDragStartRot, axis, delta)
+		return
+	}
 	if e := activeGizmoEntity(); e != nil {
 		e.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
 		return

@@ -106,6 +106,10 @@ type Volume struct {
 	// the cage is an authoring aid and is not drawn during play, whatever else
 	// the volume does.
 	Geometry gfx.Geometry
+
+	// Waypoints is the waypoint animation this volume is travelling, or nil.
+	// Runtime-only, never serialized; see waypoint_follow.go.
+	Waypoints *WaypointPlayback
 }
 
 // VolumeShape is the region's shape. The values line up with BoundingType so the

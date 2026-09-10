@@ -63,6 +63,7 @@ func editorSpriteProperties(s *world.Sprite) {
 	editorPropGroupOpen("Appearance##sprappgrp", func() { editorSpriteAppearance(s) })
 	editorPropGroup("Sheet##sprsheetgrp", 0, func() { editorSpriteSheet(s) })
 	editorPropGroup("Attach##sprattachgrp", 0, func() { editorSpriteAttach(s) })
+	editorObjectWaypointsUI(s)
 	editorScriptDataUI(&s.ScriptData, "spr", strconv.Quote(s.ID))
 	editorPropGroup("Actions##spractions", 0, func() { editorSpriteActions(s) })
 }

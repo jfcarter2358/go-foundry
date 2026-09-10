@@ -299,6 +299,7 @@ func entityProps() map[string]propAccess {
 			})),
 			Doc: "per-axis scale; clamped away from zero",
 		},
+		"waypoints": waypointsProp(),
 		"velocity": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 				e := c.entityFor(r)
@@ -570,6 +571,7 @@ func volumeProps() map[string]propAccess {
 			}),
 			Doc: "Euler angles in radians",
 		},
+		"waypoints": waypointsProp(),
 		"half": {
 			Get: get(func(v *world.Volume) flang.Value {
 				return flang.VecVal{float64(v.HalfX), float64(v.HalfY), float64(v.HalfZ)}

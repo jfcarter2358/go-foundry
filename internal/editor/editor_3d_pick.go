@@ -34,19 +34,20 @@ const (
 	// kinds of face each had their own — floor, ceiling, the two slab sides,
 	// wall and portal — because each was a different set of fields; a brush
 	// face is one kind of thing with one set.
-	panelFocusFace    = "face"
-	panelFocusBrush   = "brush"
-	panelFocusVertex  = "vertex"
-	panelFocusSpawn   = "spawn"
-	panelFocusEntity  = "entity"
-	panelFocusVolume  = "volume"
-	panelFocusSprite  = "sprite"
-	panelFocusEmitter = "emitter"
-	panelFocusSound   = "sound"
-	panelFocusChunk   = "chunk"
-	panelFocusLight   = "light"
-	panelFocusScenery = "scenery"
-	panelFocusPrefab  = "prefab"
+	panelFocusFace     = "face"
+	panelFocusBrush    = "brush"
+	panelFocusVertex   = "vertex"
+	panelFocusSpawn    = "spawn"
+	panelFocusEntity   = "entity"
+	panelFocusVolume   = "volume"
+	panelFocusSprite   = "sprite"
+	panelFocusEmitter  = "emitter"
+	panelFocusSound    = "sound"
+	panelFocusChunk    = "chunk"
+	panelFocusLight    = "light"
+	panelFocusScenery  = "scenery"
+	panelFocusPrefab   = "prefab"
+	panelFocusWaypoint = "waypoint"
 )
 
 // ---------- pick result ----------
@@ -68,6 +69,7 @@ const (
 	pickSound     pickKind = "sound"
 	pickLight     pickKind = "light"
 	pickScenery   pickKind = "scenery"
+	pickWaypoint  pickKind = "waypoint"
 )
 
 // pickHit is the closest thing found along a picking ray. Which index fields
@@ -85,6 +87,8 @@ type pickHit struct {
 	brushIdx int
 	faceIdx  int
 	idx      int
+	// sub is the point inside the animation idx names, for a waypoint hit.
+	sub int
 	// detail says which of the brush's two meshes faceIdx indexes. A click in
 	// detail mode lands on the detail mesh, one in edit mode on the hull, and
 	// the two are different vertex pools — see vertexSel.detail.
@@ -329,8 +333,18 @@ func pick3D(sx, sy int32) pickHit {
 			bestLight, bestLightT = li, t
 		}
 	}
-	if bestLight >= 0 {
+	// Waypoint markers, on the point light's terms and for its reason: the
+	// arrows are drawn with the depth test off, and a path is routinely laid
+	// through the middle of the very brush it moves — the first point of a
+	// door's animation is usually the door's own centre. An arrow that could
+	// be seen but not clicked is the complaint the lights already answered.
+	// Between the two kinds of marker, the nearer wins.
+	wpAnim, wpPoint, wpT := pickWaypointMarker(origin, dir, ws().camPos(), lvl)
+	if bestLight >= 0 && bestLightT <= wpT {
 		return pickHit{kind: pickLight, t: bestLightT, chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: bestLight}
+	}
+	if wpAnim >= 0 {
+		return pickHit{kind: pickWaypoint, t: wpT, chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: wpAnim, sub: wpPoint}
 	}
 
 	if hit.kind == pickNone {
@@ -779,6 +793,11 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	DrawBrushPlaceGhost()
 	RenderEmitterMarkers(ws().level, ws().camPos())
 	RenderSoundMarkers(ws().level, ws().camPos())
+	// The level's own paths only: the entity editor's scratch level has none,
+	// and the waypoint selection indexes the main window's level.
+	if ws().level == Editor.level {
+		RenderWaypointMarkers(Editor.level)
+	}
 
 	if offWorld {
 		// Nothing is under the cursor, so no handle reads as hovered and the

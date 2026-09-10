@@ -72,6 +72,7 @@ func editorExplorerSection(lvl *world.Level) {
 	editorExplorerSceneryNodes(lvl)
 	editorExplorerEmitterNodes(lvl)
 	editorExplorerSoundNodes(lvl)
+	editorExplorerWaypointNodes(lvl)
 	editorExplorerLightNodes(lvl)
 	editorExplorerScriptNodes(lvl)
 	imgui.EndChild()
@@ -112,6 +113,9 @@ func editorExplorerPlacementBanner() {
 		label = "Stamping " + brushKindLabel(Editor.BrushPlaceKind) +
 			" brushes — click to place, Escape to stop"
 		cancel = editorDisarmBrushPlacement
+	case Editor.WaypointPlacementMode:
+		label = "Click in the view to place a waypoint — then Ctrl+click to add the next"
+		cancel = editorDisarmWaypointPlacement
 	default:
 		return
 	}
@@ -795,6 +799,10 @@ func editorExplorerAddMenu(lvl *world.Level) {
 	}
 	if imgui.BeginMenu("Sound") {
 		editorSoundAddMenu()
+		imgui.EndMenu()
+	}
+	if imgui.BeginMenu("Waypoint Animation") {
+		editorWaypointAddMenu()
 		imgui.EndMenu()
 	}
 

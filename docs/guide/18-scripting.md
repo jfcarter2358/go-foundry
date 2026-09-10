@@ -125,6 +125,9 @@ The engine posts these without being asked.
 | `:interact:` | entity, volume | `src ref` | the interact key was pressed inside its bounds |
 | `:anim_start:` / `:anim_end:` | entity | `src ref, model str, anim str` | a clip began / finished |
 | `:mount:` / `:dismount:` | vehicle | `src ref, seat str` | something came aboard / left |
+| `:waypoint:` | the object on the path | `src ref, animation ref, index int` | a brush, entity, sprite, emitter, sound, light or volume on a waypoint animation reached one of its points |
+| `:waypoints_end:` | the object on the path | `src ref, animation ref` | …and reached the end of its length |
+| any atom a point lists | the object on the path | `animation ref` | …reached a point with that atom in its **Events**, straight after that point's `:waypoint:` |
 | `:click:` `:hover:` `:unhover:` `:change:` `:submit:` | widget, then its screen | see [UI screens](17-ui-screens.md) | |
 | `:cancel:` `:shown:` `:hidden:` | screen | — | |
 

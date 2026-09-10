@@ -25,6 +25,10 @@ package editor
 //
 // All this file has to do is make sure the model's texture name and the
 // document's BoundTexture are the same string.
+//
+// The form, the texture it makes and the hand-off to the texture editor are
+// shared with a level's brushes, which have an Unwrap & Paint of their own
+// (editor_brush_uv_texture.go). The texture editor's layout overlay shows both.
 
 import (
 	"fmt"
@@ -43,24 +47,53 @@ import (
 	"foundry/internal/textureui"
 )
 
-// modelUnwrapDialogState is the Unwrap & Paint form. It lives across frames
-// because imgui is immediate-mode: the widgets are rebuilt every frame and the
-// values they edit cannot be.
-var modelUnwrapDialog struct {
+// atlasUnwrapForm is the Unwrap & Paint form. It lives across frames because
+// imgui is immediate-mode: the widgets are rebuilt every frame and the values
+// they edit cannot be.
+//
+// A type rather than one variable because three windows draw it — the model
+// editor, and the level and entity editors for their brushes — and each has to
+// own its copy, or a form opened in one would pop up in all of them.
+type atlasUnwrapForm struct {
 	Show      bool
 	Name      string
 	SizeIdx   int32   // index into texEditorSizeOptions
-	AngleDeg  float32 // AtlasUnwrapOptions.AngleLimit, in degrees
+	AngleDeg  float32 // geom.AtlasOptions.AngleLimit, in degrees
 	PadTexels float32 // gutter width, in texels of the chosen size
 	Err       string  // last failure, shown in the form until it succeeds
 }
 
-// modelUnwrapDefaults seeds the form. The angle matches
-// defaultAtlasAngleLimit; the padding matches defaultAtlasPaddingUV at 512².
+// modelUnwrapDialog is the model editor's copy of the form.
+var modelUnwrapDialog atlasUnwrapForm
+
+// The form's defaults. The angle matches geom's default angle limit; the
+// padding matches its default gutter at 512².
 const (
-	modelUnwrapDefaultAngleDeg  = float32(60)
-	modelUnwrapDefaultPadTexels = float32(4)
+	atlasUnwrapDefaultAngleDeg  = float32(60)
+	atlasUnwrapDefaultPadTexels = float32(4)
 )
+
+// open arms the form on a suggested texture name, with everything else back at
+// its defaults.
+func (d *atlasUnwrapForm) open(name string) {
+	d.Show = true
+	d.Name = name
+	d.SizeIdx = 3 // 512, same default as the texture editor's New
+	d.AngleDeg = atlasUnwrapDefaultAngleDeg
+	d.PadTexels = atlasUnwrapDefaultPadTexels
+	d.Err = ""
+}
+
+// atlasPadUV turns the form's gutter into the UV units an unwrap takes. It is
+// authored in texels because that is the unit the bleed happens in — a property
+// of the filter, not of the mesh. A deliberate zero comes back as -1, which the
+// options read as "no gutter" rather than as "unset".
+func atlasPadUV(padTexels float32, size int) float32 {
+	if padTexels <= 0 {
+		return -1
+	}
+	return padTexels / float32(size)
+}
 
 // modelOpenUnwrapDialog arms the form, seeding the texture name from whatever
 // the model already wears — re-unwrapping onto the same texture is the common
@@ -73,12 +106,7 @@ func modelOpenUnwrapDialog() {
 	if name == "" {
 		name = modelUnwrapSuggestedName()
 	}
-	modelUnwrapDialog.Show = true
-	modelUnwrapDialog.Name = name
-	modelUnwrapDialog.SizeIdx = 3 // 512, same default as the texture editor's New
-	modelUnwrapDialog.AngleDeg = modelUnwrapDefaultAngleDeg
-	modelUnwrapDialog.PadTexels = modelUnwrapDefaultPadTexels
-	modelUnwrapDialog.Err = ""
+	modelUnwrapDialog.open(name)
 }
 
 // modelUnwrapSuggestedName derives a texture name from the document's ID, so an
@@ -145,7 +173,7 @@ func modelTextureSection() {
 	if modelTextureIsBoundForPainting() {
 		imgui.SameLine()
 		if imgui.Button("Paint##modelpaintatlas") {
-			modelRequestTexEditor(nil)
+			requestTexEditor(nil)
 		}
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("Raise the texture editor on this model's texture.")
@@ -167,67 +195,79 @@ func modelTextureIsBoundForPainting() bool {
 // editor's panel, like the editor's other modals.
 func drawModelUnwrapDialog() {
 	imguibackend.WithModalPopup("Unwrap & Paint##modelunwrapdlg", &modelUnwrapDialog.Show, func() {
-		d := &modelUnwrapDialog
+		modelUnwrapDialog.body("model", "Flatten the mesh into one texture and paint it.",
+			nil, modelUnwrapToTexture)
+	})
+}
 
-		imgui.Text("Flatten the mesh into one texture and paint it.")
+// body draws the form's contents inside whichever modal the caller opened.
+//
+// id keeps this copy's widget IDs apart from another's. note, when non-nil, is
+// given the sanitised texture name to say what the unwrap is about to reach.
+// run is the action; its error stays on the form until a later run succeeds.
+func (d *atlasUnwrapForm) body(id, intro string, note func(name string),
+	run func(name string, size int, angleDeg, padTexels float32) error) {
+	imgui.Text(intro)
+	imgui.Separator()
+
+	imgui.Text("Texture name:")
+	imgui.SetNextItemWidth(200)
+	imgui.InputText("##"+id+"unwrapname", &d.Name)
+
+	imgui.Text("Size (square):")
+	sizeLabels := make([]string, len(textureui.TexEditorSizeOptions))
+	for i, s := range textureui.TexEditorSizeOptions {
+		sizeLabels[i] = fmt.Sprintf("%dx%d", s, s)
+	}
+	imgui.SetNextItemWidth(150)
+	imgui.Combo("##"+id+"unwrapsize", &d.SizeIdx, sizeLabels)
+
+	// Degrees and texels drag by whole units; Editor.StepSize is a world
+	// distance and would make both of these crawl.
+	editorDragFloatStep("Seam angle (deg)##"+id+"unwrapangle", &d.AngleDeg, 1, 179, "%.0f", 1)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far two neighbouring faces may differ before the\n" +
+			"unwrap cuts a seam between them. Lower makes more,\n" +
+			"flatter islands; higher makes fewer, more distorted ones.")
+	}
+
+	editorDragFloatStep("Gutter (texels)##"+id+"unwrappad", &d.PadTexels, 0, 32, "%.0f", 1)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Blank space kept around each island so filtering and\n" +
+			"mipmaps cannot bleed one island's colour into another.")
+	}
+
+	name := sanitizeTextureName(d.Name)
+	if note != nil && name != "" {
 		imgui.Separator()
-
-		imgui.Text("Texture name:")
-		imgui.SetNextItemWidth(200)
-		imgui.InputText("##modelunwrapname", &d.Name)
-
-		imgui.Text("Size (square):")
-		sizeLabels := make([]string, len(textureui.TexEditorSizeOptions))
-		for i, s := range textureui.TexEditorSizeOptions {
-			sizeLabels[i] = fmt.Sprintf("%dx%d", s, s)
-		}
-		imgui.SetNextItemWidth(150)
-		imgui.Combo("##modelunwrapsize", &d.SizeIdx, sizeLabels)
-
-		// Degrees and texels drag by whole units; Editor.StepSize is a world
-		// distance and would make both of these crawl.
-		editorDragFloatStep("Seam angle (deg)##modelunwrapangle", &d.AngleDeg, 1, 179, "%.0f", 1)
-		if imgui.IsItemHovered() {
-			imgui.SetTooltip("How far two neighbouring faces may differ before the\n" +
-				"unwrap cuts a seam between them. Lower makes more,\n" +
-				"flatter islands; higher makes fewer, more distorted ones.")
-		}
-
-		editorDragFloatStep("Gutter (texels)##modelunwrappad", &d.PadTexels, 0, 32, "%.0f", 1)
-		if imgui.IsItemHovered() {
-			imgui.SetTooltip("Blank space kept around each island so filtering and\n" +
-				"mipmaps cannot bleed one island's colour into another.")
-		}
-
-		name := sanitizeTextureName(d.Name)
-		if name != "" && texDocExistsOnDisk(name) {
-			imgui.Separator()
-			imgui.Text(fmt.Sprintf("Note: overwrites the existing texture %q.", name))
-		}
-		if d.Err != "" {
-			imgui.Separator()
-			imgui.Text("Failed: " + d.Err)
-		}
-
+		note(name)
+	}
+	if name != "" && texDocExistsOnDisk(name) {
 		imgui.Separator()
-		imguibackend.EditorPushDisabled(name == "")
-		if imgui.Button("Unwrap##modelunwrapok") {
-			size := int(textureui.TexEditorSizeOptions[d.SizeIdx])
-			err := modelUnwrapToTexture(name, size, d.AngleDeg, d.PadTexels)
-			if err != nil {
-				d.Err = err.Error()
-			} else {
-				d.Err = ""
-				imgui.CloseCurrentPopup()
-			}
-		}
-		imguibackend.EditorPopDisabled()
-		imgui.SameLine()
-		if imgui.Button("Cancel##modelunwrapcancel") {
+		imgui.Text(fmt.Sprintf("Note: overwrites the existing texture %q.", name))
+	}
+	if d.Err != "" {
+		imgui.Separator()
+		imgui.Text("Failed: " + d.Err)
+	}
+
+	imgui.Separator()
+	imguibackend.EditorPushDisabled(name == "")
+	if imgui.Button("Unwrap##" + id + "unwrapok") {
+		size := int(textureui.TexEditorSizeOptions[d.SizeIdx])
+		if err := run(name, size, d.AngleDeg, d.PadTexels); err != nil {
+			d.Err = err.Error()
+		} else {
 			d.Err = ""
 			imgui.CloseCurrentPopup()
 		}
-	})
+	}
+	imguibackend.EditorPopDisabled()
+	imgui.SameLine()
+	if imgui.Button("Cancel##" + id + "unwrapcancel") {
+		d.Err = ""
+		imgui.CloseCurrentPopup()
+	}
 }
 
 // texDocExistsOnDisk reports whether a texture of this name is already saved.
@@ -260,14 +300,6 @@ func modelUnwrapToTexture(name string, size int, angleDeg, padTexels float32) er
 		return err
 	}
 
-	// Padding is authored in texels because that is the unit the bleed happens
-	// in — it is a property of the filter, not of the model.
-	pad := padTexels / float32(size)
-	if padTexels <= 0 {
-		// A deliberate zero, which resolve() would otherwise read as "unset".
-		pad = -1
-	}
-
 	// One undo entry for the whole thing: the unwrap and the retexture are one
 	// action from the user's side, and undoing half of it would leave the model
 	// wearing an atlas it is no longer laid out for.
@@ -275,7 +307,7 @@ func modelUnwrapToTexture(name string, size int, angleDeg, padTexels float32) er
 
 	islands, err := modelDoc.AtlasUnwrap(modelAllFaceIndices(), model.AtlasUnwrapOptions{
 		AngleLimit: angleDeg * math.Pi / 180,
-		PaddingUV:  pad,
+		PaddingUV:  atlasPadUV(padTexels, size),
 		Aspect:     1, // the atlas is square; see the size options
 	})
 	if err != nil {
@@ -290,18 +322,18 @@ func modelUnwrapToTexture(name string, size int, angleDeg, padTexels float32) er
 	// one of those caches now describes UVs that no longer exist.
 	modelUVInvalidate()
 
-	ed, err := modelBuildAtlasTexture(name, size)
+	ed, err := buildAtlasTexture(name, size)
 	if err != nil {
 		return err
 	}
 
-	modelRequestTexEditor(ed)
+	requestTexEditor(ed)
 	modelSetStatus("Unwrapped %d faces into %d islands on %s (%d²)",
 		len(modelDoc.Faces), islands, name, size)
 	return nil
 }
 
-// modelBuildAtlasTexture creates the texture the unwrap was laid out for,
+// buildAtlasTexture creates the texture the unwrap was laid out for,
 // saves it, and returns it wrapped in editor state bound to the name.
 //
 // Two layers rather than one. The bottom is the checker guide
@@ -315,7 +347,7 @@ func modelUnwrapToTexture(name string, size int, angleDeg, padTexels float32) er
 // that can be hidden or thrown away without taking the guide with it — and,
 // just as importantly, so the guide itself can be hidden once the painting no
 // longer needs it, without disturbing the paint.
-func modelBuildAtlasTexture(name string, size int) (*texture.TexEditorState, error) {
+func buildAtlasTexture(name string, size int) (*texture.TexEditorState, error) {
 	doc, err := texdoc.NewTexDoc(name, size, size, texdoc.GlobalPalette)
 	if err != nil {
 		return nil, err
@@ -353,7 +385,7 @@ func modelBuildAtlasTexture(name string, size int) (*texture.TexEditorState, err
 
 // ---------- deferred hand-off to the texture editor ----------
 
-// modelPendingTexEditor is an open request waiting for the main loop.
+// pendingTexEditor is an open request waiting for the main loop.
 //
 // Opening the texture editor cannot happen where the request is made. The model
 // editor's panel runs inside RenderSecondaryWindows' range over the open
@@ -361,28 +393,28 @@ func modelBuildAtlasTexture(name string, size int) (*texture.TexEditorState, err
 // and — worse — leave the *new* window's GL context current for the rest of the
 // model editor's frame. So the request is parked here and drained from the main
 // loop, where neither is true.
-var modelPendingTexEditor struct {
+var pendingTexEditor struct {
 	Armed bool
 	Doc   *texture.TexEditorState // nil means "just raise it on what is already open"
 }
 
-// modelRequestTexEditor asks the main loop to open the texture editor, adopting
+// requestTexEditor asks the main loop to open the texture editor, adopting
 // ed if it is non-nil.
-func modelRequestTexEditor(ed *texture.TexEditorState) {
-	modelPendingTexEditor.Armed = true
-	modelPendingTexEditor.Doc = ed
+func requestTexEditor(ed *texture.TexEditorState) {
+	pendingTexEditor.Armed = true
+	pendingTexEditor.Doc = ed
 }
 
-// DrainModelTexEditorRequest opens the texture editor if one was requested.
+// DrainTexEditorRequest opens the texture editor if one was requested.
 // Called once per frame from the main loop with the main GL context current —
-// see modelPendingTexEditor for why it cannot happen at the call site.
-func DrainModelTexEditorRequest() {
-	if !modelPendingTexEditor.Armed {
+// see pendingTexEditor for why it cannot happen at the call site.
+func DrainTexEditorRequest() {
+	if !pendingTexEditor.Armed {
 		return
 	}
-	ed := modelPendingTexEditor.Doc
-	modelPendingTexEditor.Armed = false
-	modelPendingTexEditor.Doc = nil
+	ed := pendingTexEditor.Doc
+	pendingTexEditor.Armed = false
+	pendingTexEditor.Doc = nil
 
 	// Adopt before opening: OpenTextureEditor creates a blank starting document
 	// when nothing is open, and building one only to replace it would leave the

@@ -38,9 +38,17 @@ type Sprite struct {
 	// read, as a roll about the view axis; gfx.BillboardFixed reads all three.
 	Rotation mgl32.Vec3
 
-	// Width and Height are the quad's size in world units.
+	// Width and Height are the quad's authored size in world units.
 	Width  float32
 	Height float32
+
+	// Scale multiplies the authored size: X the width, Y the height, Z nothing
+	// (a quad has no depth). The zero value reads as {1,1,1} — see
+	// EffectiveScale. Runtime-only, like Brush.Scale: it is what a waypoint
+	// animation or a script grows the sprite by, never what a level file says
+	// its size is. DrawnSize is what everything that draws or bounds the quad
+	// reads.
+	Scale mgl32.Vec3
 
 	Texture   string
 	Billboard gfx.BillboardMode
@@ -48,7 +56,9 @@ type Sprite struct {
 
 	// Tint multiplies the texture. White is no tint.
 	Tint mgl32.Vec3
-	// Alpha scales the texture's own alpha. 1 is the texture unchanged.
+	// Alpha scales the texture's own alpha. 1 is the texture unchanged. A
+	// cutout sprite below 1 draws in the alpha pass until it is back at 1, so
+	// it fades rather than vanishing at the cutout threshold.
 	Alpha float32
 
 	// Lit takes the full scene lighting and shadows. Off by default, which is
@@ -71,6 +81,10 @@ type Sprite struct {
 	// Attach names the frame, entity or bone this sprite rides. Zero is the
 	// world.
 	Attach Attach
+
+	// Waypoints is the waypoint animation this sprite is travelling, or nil.
+	// Runtime-only, never serialized; see waypoint_follow.go.
+	Waypoints *WaypointPlayback
 }
 
 // DefaultSpriteTexture is what a freshly placed sprite gets, so it is visible
@@ -97,6 +111,16 @@ func NewSprite(id string, pos mgl32.Vec3) Sprite {
 // HasSize reports whether the sprite describes a drawable quad. A zero on
 // either axis is an unauthored sprite rather than a degenerate one.
 func (s *Sprite) HasSize() bool { return s.Width > 0 && s.Height > 0 }
+
+// EffectiveScale is Scale with its zero value read as no scale at all.
+func (s *Sprite) EffectiveScale() mgl32.Vec3 { return effectiveScale3(s.Scale) }
+
+// DrawnSize is the quad's size as drawn: the authored Width and Height, each
+// multiplied by its axis of Scale.
+func (s *Sprite) DrawnSize() mgl32.Vec2 {
+	sc := s.EffectiveScale()
+	return mgl32.Vec2{s.Width * sc.X(), s.Height * sc.Y()}
+}
 
 // Drawable reports whether the sprite should be submitted this frame at all.
 func (s *Sprite) Drawable() bool { return s.Visible && s.HasSize() && s.Texture != "" }
@@ -146,7 +170,7 @@ func (s *Sprite) WorldAABB(lvl *Level) (min, max mgl32.Vec3, ok bool) {
 	// Half the diagonal, on every axis: a quad spun about its centre sweeps a
 	// sphere of that radius, and a box around the sphere is what stays correct
 	// however the camera moves.
-	r := mgl32.Vec2{s.Width, s.Height}.Len() * 0.5
+	r := s.DrawnSize().Len() * 0.5
 	h := mgl32.Vec3{r, r, r}
 	p := s.WorldPosition(lvl)
 	return p.Sub(h), p.Add(h), true

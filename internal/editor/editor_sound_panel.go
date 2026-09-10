@@ -63,6 +63,7 @@ func editorSoundProperties(s *world.Sound) {
 	editorPropGroupOpen("Attenuation##sndattengrp", func() { editorSoundAttenuation(s) })
 	editorPropGroup("Cone##sndconegrp", 0, func() { editorSoundCone(s) })
 	editorPropGroup("Attach##sndattachgrp", 0, func() { editorSoundAttach(s) })
+	editorObjectWaypointsUI(s)
 	editorScriptDataUI(&s.ScriptData, "snd", strconv.Quote(s.ID))
 	editorPropGroup("Actions##sndactions", 0, func() { editorSoundActions(s) })
 }

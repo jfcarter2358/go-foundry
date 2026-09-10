@@ -77,6 +77,17 @@ type Entity struct {
 	Velocity        mgl32.Vec3
 	AngularVelocity mgl32.Vec3
 
+	// Tweens are the channels of Position, Rotation and Scale a script is
+	// easing toward a target — `move_to`, `rotate_to`, `scale_to`. A channel
+	// being eased is written by its tween, and the rate that would otherwise
+	// move it waits. Runtime-only; see tween.go.
+	Tweens Tweens
+
+	// Waypoints is the waypoint animation this entity is travelling, or nil.
+	// It writes Position, Rotation and Scale, and the rates wait while it
+	// does, as they do for a tween. Runtime-only; see waypoint_follow.go.
+	Waypoints *WaypointPlayback
+
 	// Bounds. BoundOffset moves the volume's centre off the entity's origin,
 	// which is what lets a model stand on its feet — Position at the floor —
 	// while its bounding box is centred at hip height.

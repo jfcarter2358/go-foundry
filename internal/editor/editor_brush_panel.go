@@ -92,6 +92,8 @@ func editorBrushPropertiesSection() {
 	})
 
 	brushDetailPanel(ch, b)
+	editorObjectWaypointsUI(world.BrushWaypointFollower(ch, b))
+	brushPaintPanel()
 
 	if f == nil {
 		// Object mode: there is no face selection to describe. Say where the
@@ -137,6 +139,19 @@ func editorBrushPropertiesSection() {
 		}
 
 		editorPropGroup("UV##bfuv", 0, func() {
+			if f.HasUVs() {
+				editorTextMutedWrapped("Laid out by an unwrap: each corner has its own place on " +
+					"the texture, and these move the whole face from there.")
+				if imgui.Button("Reset to projected##bfuvreset") {
+					ws().pushUndo()
+					f.UVs = nil
+					changed = true
+				}
+				if imgui.IsItemHovered() {
+					imgui.SetTooltip("Forget the unwrap and project this face onto its own\n" +
+						"plane again — what a face wearing a tiling material wants.")
+				}
+			}
 			changed = editorDragFloat("Offset U##bfuo", &f.UVOffset[0], -100, 100, "%.3f") || changed
 			changed = editorDragFloat("Offset V##bfvo", &f.UVOffset[1], -100, 100, "%.3f") || changed
 			changed = editorDragFloat("Scale U##bfus", &f.UVScale[0], -100, 100, "%.3f") || changed

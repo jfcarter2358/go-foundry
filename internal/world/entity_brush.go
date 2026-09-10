@@ -252,6 +252,14 @@ func rawBrushFacesEqual(a, b RawBrushFace) bool {
 	if (a.Alpha == nil) != (b.Alpha == nil) || (a.Alpha != nil && *a.Alpha != *b.Alpha) {
 		return false
 	}
+	if len(a.UVs) != len(b.UVs) {
+		return false
+	}
+	for i := range a.UVs {
+		if a.UVs[i] != b.UVs[i] {
+			return false
+		}
+	}
 	return a.Texture == b.Texture && a.BlendTexture == b.BlendTexture &&
 		a.BlendMask == b.BlendMask && a.UVOffset == b.UVOffset &&
 		a.UVScale == b.UVScale && a.UVRotation == b.UVRotation &&

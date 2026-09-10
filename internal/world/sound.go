@@ -87,6 +87,10 @@ type Sound struct {
 	// or zero when it is not sounding. Runtime-only, like Emitter.Doc — it
 	// must never reach a level file.
 	Voice audio.VoiceID
+
+	// Waypoints is the waypoint animation this sound is travelling, or nil.
+	// Runtime-only, never serialized; see waypoint_follow.go.
+	Waypoints *WaypointPlayback
 }
 
 // NewSound returns a sound with the defaults a freshly placed one should have:

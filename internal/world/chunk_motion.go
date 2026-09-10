@@ -40,13 +40,23 @@ func AdvanceChunks(lvl *Level, dt float32) bool {
 	moved, rehash := false, false
 	for i := range lvl.Chunks {
 		ch := &lvl.Chunks[i]
-		if ch.Velocity == (mgl32.Vec3{}) || !ch.IsEnabled() {
+		if (ch.Velocity == (mgl32.Vec3{}) && ch.OriginTween == nil) || !ch.IsEnabled() {
 			continue
 		}
-		delta := ch.Velocity.Mul(dt)
-		ch.Origin = ch.Origin.Add(delta)
+		// A script easing the origin (`move_to`) is the more specific
+		// instruction, and the velocity waits until it arrives — see tween.go.
+		target := ch.Origin.Add(ch.Velocity.Mul(dt))
+		if t := ch.OriginTween; t != nil {
+			p, done := t.Step(dt)
+			if done {
+				ch.OriginTween = nil
+			}
+			target = p
+		}
+		if !ch.moveOriginTo(lvl, target) {
+			continue
+		}
 		moved = true
-		CarryAttachedEntities(lvl, ch, delta)
 		// A frame-owned chunk is deliberately kept out of the spatial hash
 		// (chunk.go), so moving one within its carrier costs nothing to index.
 		// Only a world chunk's move invalidates a bucket.

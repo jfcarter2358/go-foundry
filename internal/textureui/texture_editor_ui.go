@@ -58,11 +58,11 @@ var (
 // you tell whether the strength is anywhere near right.
 var texEditorBumpShowNormal bool
 
-// texEditorShowUVLayout draws the open model's UV islands over the canvas, so a
-// texture unwrapped from a mesh can be painted region by region instead of
-// blind. On by default: the overlay only appears at all when the model editor
-// happens to be open on a model wearing *this* texture, which is precisely the
-// case where it is wanted.
+// texEditorShowUVLayout draws the UV islands of whatever wears this texture over
+// the canvas — an open model, or unwrapped brushes — so a texture unwrapped from
+// a mesh can be painted region by region instead of blind. On by default: the
+// overlay only appears at all when something open is laid out on *this*
+// texture, which is precisely the case where it is wanted.
 var texEditorShowUVLayout = true
 
 // Dialog state.
@@ -1218,8 +1218,8 @@ func drawCanvasPanel() {
 // never into the document, so nothing here can be painted over or saved.
 var texEditorUVLayoutColor = imgui.PackedColorFromVec4(imgui.Vec4{X: 0.2, Y: 0.9, Z: 1, W: 0.65})
 
-// drawTexEditorUVLayout outlines the UV island of every face the open model
-// maps onto this texture.
+// drawTexEditorUVLayout outlines the UV island of every open face — a model's
+// or a brush's — that maps onto this texture.
 //
 // UV (0,0) is drawn at the canvas's top-left corner and V grows downwards,
 // which is the same convention the sampler uses: the flattened image is

@@ -100,6 +100,8 @@ type scriptComplLevelCacheType struct {
 	Attrs []string
 	Props []script.PropertyDoc
 	Kind  flang.Kind_
+	// WaypointAtoms are world.WaypointEventAtoms, for an atom completion.
+	WaypointAtoms []string
 }
 
 // scriptComplLevelCache is the one gathered list, replaced wholesale rather
@@ -219,6 +221,7 @@ func scriptComplSourceFor(d *scriptDoc) scriptComplSource {
 		Attrs:          scriptComplLevelCache.Attrs,
 		Props:          scriptComplLevelCache.Props,
 		Kind:           scriptComplLevelCache.Kind,
+		WaypointAtoms:  scriptComplLevelCache.WaypointAtoms,
 	}
 }
 
@@ -237,6 +240,8 @@ func scriptComplLoadLevel(ctx scriptComplCtx) {
 	switch ctx.Kind {
 	case complAddr:
 		c.Refs = script.CompletionRefs(Editor.level)
+	case complAtom:
+		c.WaypointAtoms = world.WaypointEventAtoms(Editor.level)
 	case complTag:
 		c.Tags = script.CompletionTags(Editor.level)
 	case complAttr:

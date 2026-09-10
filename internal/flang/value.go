@@ -164,6 +164,9 @@ const (
 	// RefModel is one attachment of an entity — `@guard.model.body`. Appended
 	// for the same reason the screen kinds were.
 	RefModel
+	// RefWaypoints is a waypoint animation — a path an object can be sent
+	// along with play_waypoints. Appended for the same reason again.
+	RefWaypoints
 )
 
 var refKindNames = [...]string{
@@ -171,7 +174,8 @@ var refKindNames = [...]string{
 	RefEntity: "entity", RefVolume: "volume", RefLight: "light",
 	RefSprite: "sprite", RefEmitter: "emitter", RefSound: "sound",
 	RefScreen: "screen", RefWidget: "widget",
-	RefModel: "model",
+	RefModel:     "model",
+	RefWaypoints: "waypoints",
 }
 
 // String renders a ref kind as the atom `ref.kind` yields.

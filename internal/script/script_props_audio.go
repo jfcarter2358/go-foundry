@@ -90,6 +90,7 @@ func soundProps() map[string]propAccess {
 			}),
 			Doc: "position, world-space unless the sound is attached",
 		},
+		"waypoints": waypointsProp(),
 		"enabled": boolean("enabled",
 			func(s *world.Sound) bool { return s.Enabled },
 			func(s *world.Sound, b bool) { s.Enabled = b },

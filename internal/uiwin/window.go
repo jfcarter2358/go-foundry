@@ -376,7 +376,7 @@ func eventWindowID(event sdl.Event) (uint32, bool) {
 //
 // So the request is parked and drained from the main loop, where the main
 // context is genuinely current and nothing is iterating the registry. This
-// generalises what modelPendingTexEditor did for one case: the hazard applies to
+// generalises what pendingTexEditor did for one case: the hazard applies to
 // any window opening any other, and a shared door is one place to get it right
 // rather than several places to get it wrong.
 var PendingWindowOpens []func()

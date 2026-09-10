@@ -218,6 +218,35 @@ func brushProps() map[string]propAccess {
 			Dirty: true,
 			Doc:   "radians per second added to this brush's rotation during play; the engine keeps it turning",
 		},
+		"scale": {
+			// Raw, like `rotation`: a multiplier on the brush's own authored
+			// size about its own centre, so there is no space to convert into.
+			Get: getOwner(func(_ *world.Chunk, b *world.Brush) flang.Value {
+				return vecValue(b.EffectiveScale())
+			}),
+			Set: setDynamic("scale", func(c *refCache, ch *world.Chunk, b *world.Brush, v flang.Value) error {
+				s, ok := toVec3(v)
+				if !ok {
+					return propErr("scale", "vec", v)
+				}
+				// Refused rather than clamped: a zero axis collapses the solid
+				// and a negative one turns it inside out, and neither is a
+				// value an author means to get a slightly different version of.
+				if s.X() <= 0 || s.Y() <= 0 || s.Z() <= 0 {
+					return fmt.Errorf("scale: every axis must be greater than zero, got <%g, %g, %g>", s.X(), s.Y(), s.Z())
+				}
+				s = world.ClampBrushScale(s)
+				if s == b.EffectiveScale() {
+					return nil
+				}
+				b.Scale = s
+				rebucket(c, ch)
+				return nil
+			}),
+			Dirty: true,
+			Doc:   "per-axis size multiplier on the brush as authored, growing about its own centre; <1, 1, 1> is its authored size",
+		},
+		"waypoints": waypointsProp(),
 	}
 }
 
@@ -479,6 +508,7 @@ func lightProps() map[string]propAccess {
 			},
 			Doc: "directional lights only: degrees of elevation",
 		},
+		"waypoints": waypointsProp(),
 		"cast_shadows": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 				d, p := c.lightFor(r)

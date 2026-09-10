@@ -254,6 +254,9 @@ func editorChunkPopups(lvl *world.Level) {
 		}
 	})
 
+	// Unwrap & Paint, opened from the brush panel and the viewport's menus.
+	drawBrushUnwrapDialog()
+
 	// Save chunk popup
 	imguibackend.WithModalPopup("Save Chunk", &Editor.ShowSaveChunk, func() {
 		imgui.InputText("Filename", &Editor.SaveChunkName)

@@ -30,10 +30,14 @@ package editor
 // is the only thing here worth reading closely — get it wrong and a subdivided
 // wall comes back untextured.
 //
-// UVs are deliberately not bridged. A brush face's texture coordinates are
-// derived from its own plane when it is built (world.BuildBrushFaceMesh), not
-// stored per corner, so there is nothing for a ModelFace's UVs to carry and
-// nothing an operation could damage.
+// UVs cross the bridge when a face has them. Most brush faces derive their
+// texture coordinates from their own plane (world.BuildBrushFaceMesh) and there
+// is nothing to carry; but a face laid out by an unwrap states them per corner
+// (world/brush_uv.go), and the model's operations already keep per-corner UVs
+// right — a subdivided face's children interpolate their parent's, so they stay
+// inside the island the parent was painted on. What an operation INVENTS rather
+// than derives is dropped: an extrude's side walls are surface no unwrap has
+// seen, and coordinates made up for them would point at somebody else's texels.
 
 import (
 	"foundry/internal/gfx"
@@ -83,6 +87,9 @@ func bridgeMesh(m *world.BrushMesh) *meshBridge {
 			Verts:  append([]int(nil), m.Faces[i].Indices...),
 			Smooth: m.Faces[i].Smooth,
 		}
+		if m.Faces[i].HasUVs() {
+			br.doc.Faces[i].UVs = append([]mgl32.Vec2(nil), m.Faces[i].UVs...)
+		}
 		br.attrs[i] = m.Faces[i]
 	}
 	return br
@@ -110,6 +117,15 @@ func (br *meshBridge) writeBack(m *world.BrushMesh) bool {
 	for i := range br.doc.Faces {
 		f := br.attrs[i]
 		f.Indices = append([]int(nil), br.doc.Faces[i].Verts...)
+		// The document's UVs, but only for a face whose attributes came from one
+		// that had some. The operations fill in coordinates for every face they
+		// touch, and on a face that was projecting from its plane those are
+		// zeros and guesses that would replace a working projection.
+		out := br.doc.Faces[i]
+		f.UVs = nil
+		if len(br.attrs[i].UVs) > 0 && len(out.UVs) == len(out.Verts) {
+			f.UVs = append([]mgl32.Vec2(nil), out.UVs...)
+		}
 		f.Geometry = gfx.Geometry{}
 		m.Faces[i] = f
 	}
@@ -137,6 +153,9 @@ func meshExtrudeFaces(m *world.BrushMesh, faces []int, dist float32) []int {
 	// in the right places; the sides are appended, in the order the document
 	// created them.
 	src := br.attrs[caps[0]]
+	// New surface: nothing has laid it out, so it projects from its own plane
+	// until an unwrap does. See the note on the bridge.
+	src.UVs = nil
 	for range sides {
 		br.attrs = append(br.attrs, src)
 	}

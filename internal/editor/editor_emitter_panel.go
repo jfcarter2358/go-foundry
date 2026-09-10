@@ -60,6 +60,7 @@ func editorEmitterProperties(e *world.Emitter) {
 	editorPropGroupOpen("Effect##emfxgrp", func() { editorEmitterEffect(e) })
 	editorPropGroupOpen("Transform##emtfgrp", func() { editorEmitterTransform(e) })
 	editorPropGroup("Attach##emattachgrp", 0, func() { editorEmitterAttach(e) })
+	editorObjectWaypointsUI(e)
 	editorScriptDataUI(&e.ScriptData, "em", strconv.Quote(e.ID))
 	editorPropGroup("Actions##emactions", 0, func() { editorEmitterActions(e) })
 }

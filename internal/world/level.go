@@ -42,6 +42,9 @@ type Level struct {
 	Scenery []Scenery
 	// Sounds are the level's placed sound sources (sound.go).
 	Sounds []Sound
+	// WaypointAnimations are the level's paths an object can be sent along
+	// (waypoint.go, waypoint_follow.go). Drawn only in the editor.
+	WaypointAnimations []WaypointAnimation
 	// Music is the level's global track, or nil when it has none.
 	Music *Music
 	// Sky and Fog are the level's environment (sky.go, fog.go), or nil when it

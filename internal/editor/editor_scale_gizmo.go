@@ -72,6 +72,10 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 		if sd := activeGizmoSound(); sd != nil {
 			return sd.Position, true
 		}
+	case gizmoKindWaypoint:
+		if wp := activeGizmoWaypoint(); wp != nil {
+			return wp.Position, true
+		}
 	case gizmoKindChunk:
 		if ch := activeGizmoChunk(); ch != nil {
 			return ch.LocalToWorld(ch.MinBound.Add(ch.MaxBound).Mul(0.5)), true
@@ -217,6 +221,15 @@ func scaleGizmoMouseMove(mx, my int32) {
 // applyScaleToSelection moves every selected vertex toward or away from origin,
 // or resizes the selected entity in place.
 func applyScaleToSelection(origin, factors mgl32.Vec3) {
+	if wp := activeGizmoWaypoint(); wp != nil {
+		// A real per-axis factor, the scenery case: the brush arriving at the
+		// point takes exactly this scale.
+		s := Editor.GizmoDragStartScale
+		wp.Scale = world.ClampBrushScale(mgl32.Vec3{
+			s.X() * factors.X(), s.Y() * factors.Y(), s.Z() * factors.Z(),
+		})
+		return
+	}
 	if e := activeGizmoEntity(); e != nil {
 		s := Editor.GizmoDragStartScale
 		e.Scale = mgl32.Vec3{

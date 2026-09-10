@@ -58,6 +58,13 @@ func HandleEvent(event sdl.Event) {
 		if dx == 0 && dy == 0 {
 			break
 		}
+		// With the player's control off the view stays where it is. The cursor
+		// still goes back to centre, or the motion made meanwhile would all
+		// arrive as one lurch the moment control is handed back.
+		if !devActive() && !platform.PlayerControlEnabled {
+			platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
+			break
+		}
 		gfx.Cam.Yaw += platform.MouseRotationSpeed * float32(dx)
 		gfx.Cam.Pitch -= platform.MouseRotationSpeed * float32(dy)
 		if gfx.Cam.Pitch > gfx.MaxPitch {
@@ -118,7 +125,7 @@ func HandleEvent(event sdl.Event) {
 				// The interact key. Recorded as an edge rather than read as a
 				// level, so holding it fires once — SCRIPTING.md's `:interact:`
 				// is a press, not a state.
-				if !devActive() {
+				if !devActive() && platform.PlayerControlEnabled {
 					hooks.ScriptInteractRequest()
 				}
 
@@ -137,7 +144,7 @@ func HandleEvent(event sdl.Event) {
 				// there and the key does nothing.
 				devToggle()
 			case sdl.SCANCODE_SPACE:
-				if !devActive() && platform.GravityEnabled && platform.IsOnGround {
+				if !devActive() && platform.PlayerControlEnabled && platform.GravityEnabled && platform.IsOnGround {
 					platform.JumpRequested = true
 				}
 			case sdl.SCANCODE_F3:

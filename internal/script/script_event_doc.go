@@ -64,6 +64,10 @@ var eventDocs = []EventDoc{
 		"Something came aboard. seat is empty if it is standing on the deck rather than sitting."},
 	{":dismount:", "vehicle", "src ref, seat str",
 		"…and left again; seat is the one it was in."},
+	{":waypoint:", "the object on the path", "src ref, animation ref, index int",
+		"A brush, entity, sprite, emitter, sound, light or volume travelling a waypoint animation reached one of its points. index counts from 0."},
+	{":waypoints_end:", "the object on the path", "src ref, animation ref",
+		"…reached the end of the animation's length, and stopped following it."},
 
 	{":click:", "widget, then its screen", "src ref",
 		"A button, toggle or slider was activated, by pointer or by the navigation key."},

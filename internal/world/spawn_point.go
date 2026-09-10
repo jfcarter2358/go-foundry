@@ -29,6 +29,20 @@ import (
 // player's feet, so an unlifted marker would z-fight with the floor it sits on.
 const spawnArrowLift = float32(0.16)
 
+// spawnBodyLift is how far above Position the player's body is put. Position is
+// the feet, which is where the arrow sits, but collision places the body by its
+// centre (MovePlayer resolves a cylinder centred on PlayerEntity.Position). A
+// body put on the marker itself started half-buried in the floor, and the first
+// tick shoved it out, taking the camera with it — so the view the player got
+// was half a body higher than the one the spawn had set.
+const spawnBodyLift = playerHalfHeight
+
+// SpawnEyeHeight is how far above a spawn point's Position the camera starts:
+// the body's lift, plus the EyeHeight the frame loop places the camera above the
+// body at. Anything turning a camera into a spawn position uses it too, so a
+// spawn made from a view gives that same view back.
+const SpawnEyeHeight = spawnBodyLift + EyeHeight
+
 // spawnMarkerTexture is what the arrow is drawn with. It is an editor-only
 // marker, so this only ever needs to be a texture that exists.
 const spawnMarkerTexture = "default"
@@ -45,9 +59,16 @@ type SpawnPoint struct {
 	Rotation mgl32.Vec3 // Euler angles (X, Y, Z) in radians
 	// Frame is the vehicle to start aboard, and Seat which of its seats. With
 	// Frame set, Position and Rotation are in that vehicle's coordinates.
-	Frame    string
-	Seat     string
-	Geometry gfx.Geometry
+	Frame string
+	Seat  string
+	// DisableControl starts the player with their keys off, and DisableGravity
+	// starts them not falling. Both are how the level begins, not how it stays:
+	// a script gives either back with @level.prop.player_control and
+	// player_gravity. Named as opt-outs so a spawn that never set them is the
+	// ordinary walking start.
+	DisableControl bool
+	DisableGravity bool
+	Geometry       gfx.Geometry
 }
 
 // ModelMatrix builds the marker's model matrix, composed in the same Y*X*Z
@@ -131,16 +152,25 @@ func FindSpawnPoint(lvl *Level) *SpawnPoint {
 // ApplySpawnPoint teleports the player and camera to the level's spawn point and
 // reports whether one was found. Callers fall back to whatever camera they already
 // had when it returns false, so a level with no spawn point behaves as before.
+//
+// It also owns the player's control and gravity switches for the start of play.
+// They are reset before the nil check, so arriving in a level with no spawn
+// does not inherit a frozen player from the level that was just left.
 func ApplySpawnPoint(lvl *Level) bool {
+	SetPlayerControl(true)
+	SetPlayerGravity(true)
+
 	s := FindSpawnPoint(lvl)
 	if s == nil {
 		return false
 	}
+	SetPlayerControl(!s.DisableControl)
+	SetPlayerGravity(!s.DisableGravity)
 
 	gfx.Cam.Yaw, gfx.Cam.Pitch = SpawnYawPitch(s)
 
 	if PlayerEntity != nil {
-		PlayerEntity.Position = s.Position
+		PlayerEntity.Position = s.Position.Add(mgl32.Vec3{0, spawnBodyLift, 0})
 		PlayerEntity.Velocity = mgl32.Vec3{}
 		// Starting aboard is the same state mounting produces, so it is set the
 		// same way rather than through a second path: a frame, and optionally a
@@ -160,7 +190,7 @@ func ApplySpawnPoint(lvl *Level) bool {
 	// spawn aboard a ship looks out of the ship rather than from where the ship
 	// happens to sit in world coordinates.
 	f := lvl.Frames.Frame(s.Frame)
-	gfx.Cam.Position = f.ToWorld(s.Position.Add(mgl32.Vec3{0, EyeHeight, 0}))
+	gfx.Cam.Position = f.ToWorld(s.Position.Add(mgl32.Vec3{0, SpawnEyeHeight, 0}))
 	gfx.UpdateCamDirection()
 	gfx.Cam.Direction = f.DirToWorld(gfx.Cam.Direction)
 	gfx.Cam.Up = f.DirToWorld(gfx.WorldUp)
@@ -170,6 +200,30 @@ func ApplySpawnPoint(lvl *Level) bool {
 	platform.IsOnGround = false
 	platform.JumpRequested = false
 	return true
+}
+
+// SetPlayerControl turns the player's movement keys on or off. A jump already
+// queued is dropped with them, or it would fire on the frame control is lost.
+func SetPlayerControl(on bool) {
+	platform.PlayerControlEnabled = on
+	if !on {
+		platform.JumpRequested = false
+	}
+}
+
+// SetPlayerGravity turns gravity on or off for the player.
+//
+// Turning it off also stops any fall in progress. MovePlayer carries vertical
+// velocity forward whether gravity is on or not and only zeroes it on landing,
+// which it checks only with gravity on — so a player caught mid-fall would
+// otherwise keep sinking at that speed forever, straight through the floor.
+func SetPlayerGravity(on bool) {
+	platform.GravityEnabled = on
+	platform.IsOnGround = false
+	platform.JumpRequested = false
+	if !on && PlayerEntity != nil {
+		PlayerEntity.Velocity[1] = 0
+	}
 }
 
 // ---------- arrow mesh ----------

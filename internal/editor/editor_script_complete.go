@@ -775,6 +775,9 @@ type scriptComplSource struct {
 	Tags  []string
 	Attrs []string
 	Props []script.PropertyDoc
+	// WaypointAtoms are the events the level's waypoints post — custom atoms
+	// that are declared after all, in the level rather than in a script.
+	WaypointAtoms []string
 	// Kind is what the object before the `.` turned out to be, which is what
 	// makes a member and property list this kind's rather than every kind's.
 	// RefNone means it could not be worked out — a handler's `src ref`
@@ -939,6 +942,9 @@ func scriptComplAtomItems(src scriptComplSource) []scriptComplItem {
 		// EventDoc writes an atom as it is matched, colons and all; the name
 		// alone is what a completion inserts.
 		add(strings.Trim(e.Atom, ":"), e.PostedTo+" — "+e.When)
+	}
+	for _, a := range src.WaypointAtoms {
+		add(a, "brush — a waypoint in this level posts it, with the animation ref")
 	}
 	for _, a := range src.Scan.Atoms {
 		add(a, "used in this file")

@@ -785,7 +785,7 @@ func noHandlerReason(rt *ScriptRuntime, r flang.RefVal) string {
 // Called once per frame from the main loop, beside DrainTextureUploads, with the
 // main GL context current. It cannot happen inside the tick — ReloadSector ends
 // in gl.* calls, and the tick runs before the frame's GL work — which is the
-// same reason DrainModelTexEditorRequest exists.
+// same reason DrainTexEditorRequest exists.
 //
 // Coalescing by ref means a script writing a floor's height a hundred times in
 // one tick costs exactly one rebuild.

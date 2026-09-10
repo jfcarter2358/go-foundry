@@ -256,10 +256,15 @@ type RawBrushFace struct {
 	UVOffset     geom.Point `yaml:"uv_offset,omitempty"`
 	UVScale      geom.Point `yaml:"uv_scale,omitempty"`
 	UVRotation   float32    `yaml:"uv_rotation,omitempty"`
-	Smooth       bool       `yaml:"smooth,omitempty"`
-	SmoothAngle  float32    `yaml:"smooth_angle,omitempty"`
-	Alpha        *float32   `yaml:"alpha,omitempty"` // nil = opaque (1.0)
-	DoubleSided  bool       `yaml:"double_sided,omitempty"`
+	// UVs are the face's per-corner texture coordinates from an atlas unwrap,
+	// flattened two floats per corner in Indices' order — the same flattening
+	// Verts uses. Absent on every face whose coordinates are projected from its
+	// own plane, which is every face that has not been unwrapped.
+	UVs         []float32 `yaml:"uvs,omitempty"`
+	Smooth      bool      `yaml:"smooth,omitempty"`
+	SmoothAngle float32   `yaml:"smooth_angle,omitempty"`
+	Alpha       *float32  `yaml:"alpha,omitempty"` // nil = opaque (1.0)
+	DoubleSided bool      `yaml:"double_sided,omitempty"`
 	// NoDraw is a face with no geometry built at all — a brush side buried
 	// against a neighbour's. NoCollide is one that draws but does not stop
 	// anything, independent of the brush's own Solid flag.
@@ -349,6 +354,11 @@ type RawSpawn struct {
 	// Seat names which seat to start in. Only meaningful with Frame set; empty
 	// is standing on the deck.
 	Seat string `yaml:"seat,omitempty"`
+	// DisableControl and DisableGravity start the player without their keys or
+	// without falling. Opt-outs, so every spawn written before them loads as the
+	// ordinary walking start and saves without gaining either key.
+	DisableControl bool `yaml:"disable_control,omitempty"`
+	DisableGravity bool `yaml:"disable_gravity,omitempty"`
 }
 
 // RawColor is the YAML representation of an RGB color.
@@ -463,6 +473,29 @@ type RawSound struct {
 	Attach *RawAttach `yaml:"attach,omitempty"`
 }
 
+// RawWaypointAnimation is a path a dynamic brush can be sent along
+// (waypoint.go): an ID, how many seconds it takes, and its points in order.
+type RawWaypointAnimation struct {
+	ID     string        `yaml:"id"`
+	Length float32       `yaml:"length,omitempty"`
+	Points []RawWaypoint `yaml:"points"`
+}
+
+// RawWaypoint is one point of a waypoint animation.
+//
+// Rotation and Time are plain values because absent and zero mean the same: no
+// turn, and reached the moment the brush is sent. Scale is a pointer, on this
+// file's rule: an absent scale is {1,1,1} and not a brush collapsed to nothing.
+//
+// Events are atom names without their colons, posted to the brush on arrival.
+type RawWaypoint struct {
+	Position RawVec3  `yaml:"position"`
+	Rotation RawVec3  `yaml:"rotation,omitempty"`
+	Scale    *RawVec3 `yaml:"scale,omitempty"`
+	Time     float32  `yaml:"time,omitempty"`
+	Events   []string `yaml:"events,omitempty"`
+}
+
 // RawMusic is the level's global track.
 //
 // It follows RawSpawn's shape rather than the list shape the other placed
@@ -519,6 +552,10 @@ type RawLevel struct {
 	// Sounds are the level's placed sound sources (sound.go), beside emitters
 	// for the same reasons — one attached to a moving entity crosses chunks.
 	Sounds []RawSound `yaml:"sounds,omitempty"`
+	// WaypointAnimations are the level's paths a dynamic brush can be sent
+	// along (waypoint.go). Level-scoped and world-space for the volumes'
+	// reason: a path crosses whatever chunks it likes.
+	WaypointAnimations []RawWaypointAnimation `yaml:"waypoint_animations,omitempty"`
 	// Music is the level's global track, if it has one.
 	Music *RawMusic `yaml:"music,omitempty"`
 	// Sky and Fog are the level's environment (sky.go, fog.go). Pointers, and

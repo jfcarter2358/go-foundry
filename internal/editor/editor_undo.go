@@ -106,7 +106,7 @@ func EditorPushUndo() {
 	// built, and this is the moment the level stops being that. Leaving it up
 	// would show the author their last compile while they edited past it.
 	dropCompiledPreview()
-	raw, err := levelio.LevelToRaw(Editor.level)
+	raw, err := editorLevelToRaw()
 	if err != nil {
 		return
 	}
@@ -144,7 +144,7 @@ func EditorUndo() {
 	if Editor.level == nil || levelUndoStack.len() == 0 {
 		return
 	}
-	if cur, err := levelio.LevelToRaw(Editor.level); err == nil {
+	if cur, err := editorLevelToRaw(); err == nil {
 		levelRedoStack.push(cur)
 	}
 	prev, _ := levelUndoStack.pop()
@@ -159,7 +159,7 @@ func EditorRedo() {
 	if Editor.level == nil || levelRedoStack.len() == 0 {
 		return
 	}
-	if cur, err := levelio.LevelToRaw(Editor.level); err == nil {
+	if cur, err := editorLevelToRaw(); err == nil {
 		levelUndoStack.push(cur)
 	}
 	next, _ := levelRedoStack.pop()
@@ -187,6 +187,13 @@ func editorResetSelectionState() {
 	editorClearSpriteSelection()
 	editorClearEmitterSelection()
 	editorClearSoundSelection()
+	// An undo or redo puts it back by ID afterwards — see restoreLevelSnapshot.
+	editorClearWaypointSelection()
+	// The previewed object was rebuilt at rest by the snapshot — every one is
+	// taken with it at rest (withWaypointPreviewAtRest) — so the preview
+	// holds nothing any more. The playhead stays where it was: an undo of a
+	// retimed key should not also throw away the moment being looked at.
+	Editor.WaypointPreview.Playing, Editor.WaypointPreview.Posed = false, false
 	// The brush is deliberately not disarmed here: an undo of a stamp is part
 	// of scattering, and putting the tool away after every Ctrl+Z would be its
 	// own annoyance. Only the *selection* is stale after a snapshot swap.
@@ -223,10 +230,15 @@ func editorResetSelectionState() {
 // owned and not simulated while the editor is up, and EditorToggle puts it on
 // the spawn on the way into play.
 func restoreLevelSnapshot(raw world.RawLevel) {
+	wpID, wpPoint := "", Editor.ActiveWaypointIdx
+	if a := activeWaypointAnimation(); a != nil {
+		wpID = a.ID
+	}
 	if err := levelio.ApplyRawLevel(raw, Editor.level); err != nil {
 		return
 	}
 	editorResetSelectionState()
+	editorReselectWaypoint(wpID, wpPoint)
 
 	Editor.StatusMsg = "Undo/redo applied"
 	Editor.StatusTime = sdl.GetTicks()

@@ -300,6 +300,9 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 			Rotation: mgl32.Vec3{raw.Spawn.Rotation.X, raw.Spawn.Rotation.Y, raw.Spawn.Rotation.Z},
 			Frame:    raw.Spawn.Frame,
 			Seat:     raw.Spawn.Seat,
+
+			DisableControl: raw.Spawn.DisableControl,
+			DisableGravity: raw.Spawn.DisableGravity,
 		}
 		if err := spawn.Load(); err != nil {
 			return fmt.Errorf("spawn point load: %w", err)
@@ -456,6 +459,15 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 			}
 		}
 		level.Sounds = append(level.Sounds, sd)
+	}
+
+	// Waypoint animations: paths a dynamic brush can be sent along, with the
+	// same ID guarantee. Nothing to preload — they are points, drawn only by
+	// the editor.
+	for _, rw := range raw.WaypointAnimations {
+		wa := world.WaypointAnimationFromRaw(rw)
+		wa.ID = world.UniqueWaypointAnimationID(level, wa.ID)
+		level.WaypointAnimations = append(level.WaypointAnimations, wa)
 	}
 
 	level.Music = world.MusicFromRaw(raw.Music)

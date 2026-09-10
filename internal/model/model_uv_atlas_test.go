@@ -311,37 +311,5 @@ func TestAtlasUnwrapAspectCompensatesNonSquareTexture(t *testing.T) {
 	}
 }
 
-// The packer must refuse rather than silently dropping islands it cannot fit.
-func TestAtlasFitRefusesImpossiblePadding(t *testing.T) {
-	sizes := make([][2]float32, 10)
-	order := make([]int, len(sizes))
-	for i := range order {
-		order[i] = i
-	}
-	// A gutter of 0.3 makes each island 0.6 wide before any content, so three
-	// fill a row and four rows overflow — ten cannot fit at any scale.
-	if _, _, ok := atlasFit(sizes, order, 0.3); ok {
-		t.Error("atlasFit accepted a layout that cannot fit")
-	}
-}
-
-// atlasPack must place islands without overlap at whatever scale it is given.
-func TestAtlasPackPlacesWithoutOverlap(t *testing.T) {
-	sizes := [][2]float32{{0.4, 0.3}, {0.2, 0.3}, {0.3, 0.2}, {0.1, 0.1}}
-	order := []int{0, 1, 2, 3}
-	origins, _, ok := atlasPack(sizes, order, 1, 0.01)
-	if !ok {
-		t.Fatal("atlasPack refused a layout that fits")
-	}
-	for a := range sizes {
-		aMin := mgl32.Vec2{origins[a][0], origins[a][1]}
-		aMax := aMin.Add(mgl32.Vec2{sizes[a][0], sizes[a][1]})
-		for b := a + 1; b < len(sizes); b++ {
-			bMin := mgl32.Vec2{origins[b][0], origins[b][1]}
-			bMax := bMin.Add(mgl32.Vec2{sizes[b][0], sizes[b][1]})
-			if uvRectsOverlap(aMin, aMax, bMin, bMax) {
-				t.Errorf("packed rects %d and %d overlap", a, b)
-			}
-		}
-	}
-}
+// The packer's own cases (atlasFit, atlasPack) moved with it, to
+// geom/uv_atlas_test.go.

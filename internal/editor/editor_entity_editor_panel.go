@@ -1155,6 +1155,10 @@ func entityEditorDialogs() {
 	})
 
 	imguibackend.WithModalPopup("Import Chunk##entimportdlg", &entityShowImportChunk, entityImportChunkDialog)
+
+	// The type's brushes are painted the same way the level's are, through this
+	// window's own copy of the form.
+	drawBrushUnwrapDialog()
 }
 
 // entityImportChunkDialog offers the two ways existing geometry gets into a

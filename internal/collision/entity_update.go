@@ -62,8 +62,22 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 		e := &lvl.Entities[i]
 		if motion && !e.IsVehicle() {
 			old := e.Position
-			e.ApplyGravity(dt)
+			// An entity being eased somewhere (`move_to`) or sent along a
+			// waypoint animation does not fall on the way. Its position is the
+			// tween's or the path's, so gravity would only pile up a fall speed
+			// that nothing spends — and then release all of it the instant the
+			// tween or the path let go.
+			if !e.Tweens.Easing(world.TweenMove) && e.Waypoints == nil {
+				e.ApplyGravity(dt)
+			}
 			e.Integrate(dt)
+			// After Integrate, so an eased channel overwrites what its rate did
+			// this frame; before the resolve, so a colliding entity eased into a
+			// wall is stopped by it (world/tween.go). A path writes every
+			// channel on the same terms, and the two never both run: starting
+			// either drops the other.
+			e.AdvanceTweens(lvl.Frames, dt)
+			e.AdvanceWaypoints(lvl, dt)
 			if e.CollidesWithWorld() && resolveEntityWorld(lvl, e, old) {
 				e.Collision.GroundedNext = true
 			}

@@ -332,6 +332,8 @@ func editorDirLightProperties(lvl *world.Level) {
 		}
 	})
 
+	editorObjectWaypointsUI(dl)
+
 	editorScriptDataUI(&dl.ScriptData, fmt.Sprintf("dirlight%d", i), "This light")
 
 	if changed {
@@ -399,6 +401,8 @@ func editorPointLightProperties(lvl *world.Level) {
 			}
 		}
 	})
+
+	editorObjectWaypointsUI(pl)
 
 	editorScriptDataUI(&pl.ScriptData, fmt.Sprintf("ptlight%d", i), "This light")
 

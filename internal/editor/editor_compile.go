@@ -50,7 +50,7 @@ func EditorCompileLevel() (string, error) {
 	if lvl == nil {
 		return "", fmt.Errorf("no level open")
 	}
-	c, err := levelio.CompileLevel(lvl, compile.DefaultOptions())
+	c, err := editorCompile(lvl)
 	if err != nil {
 		return "", err
 	}
@@ -86,7 +86,7 @@ func EditorSetCompiledPreview(on bool) (string, error) {
 	// Compiled fresh every time rather than reusing the .fbsp on disk: the
 	// point is to look at what the level IS, and the file may be older than the
 	// edits.
-	c, err := levelio.CompileLevel(lvl, compile.DefaultOptions())
+	c, err := editorCompile(lvl)
 	if err != nil {
 		return "", err
 	}
