@@ -250,9 +250,14 @@ type VehicleState struct {
 	// Entity.Rotation is written back from it each frame, which keeps scripts,
 	// the editor panel and serialisation working on the field they already know.
 	Orient mgl32.Quat
-	// AngVel is in the vehicle's own axes: pitch about local X, yaw about local
-	// Y, roll about local Z.
-	AngVel mgl32.Vec3
+
+	// There is deliberately NO angular velocity here. It is Entity.AngularVelocity,
+	// the same field every other entity spins on, read in the vehicle's own axes:
+	// pitch about local X, yaw about local Y, roll about local Z. A second copy
+	// here is what used to make `@ship.prop.angular_velocity = <...>` a write
+	// nobody read — the drive model integrated its private one and overwrote
+	// Entity.Rotation from the result — while the linear half worked, because
+	// Entity.Velocity never had a duplicate to shadow it.
 
 	Controls  VehicleControls
 	Occupants []Occupant

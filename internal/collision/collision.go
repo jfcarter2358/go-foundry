@@ -174,11 +174,23 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 	return
 }
 
-// StepUp retries a horizontal move that pushOutOfChunkBrushes blocked, from
-// higher up — the classic step-offset technique for climbing a curb or a stair
-// riser without its vertical face reading as a wall.
+// SolidResolve is one pass of "push this body out of everything it is inside",
+// for a body of a size the function already knows about: a position in, the
+// position it may actually occupy out, and whether the correction that moved
+// it there was a floor rest or a ceiling bonk.
 //
-// from and to are chunk-local, pre- and post-resolve. If raising the probe
+// It exists so that a caller can bundle several kinds of solid — a chunk's
+// brushes and an entity's, resolved in different coordinate spaces — into the
+// single question everything walking asks of them. See MovePlayer, which builds
+// one per substep.
+type SolidResolve func(pos mgl32.Vec3) (out mgl32.Vec3, hitFloor, hitCeiling bool)
+
+// StepUp retries a horizontal move that a flat resolve blocked, from higher
+// up — the classic step-offset technique for climbing a curb or a stair riser
+// without its vertical face reading as a wall.
+//
+// intendedXZ and flatResult are where the substep was aiming and where the flat
+// resolve left it, both in the space resolve works in. If raising the probe
 // clears the block (the raised attempt lands materially closer to the
 // intended XZ than the flat one did) from a height the body could actually
 // have risen to, the raised, re-settled result replaces it; otherwise the flat
@@ -188,8 +200,18 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 // level's configured step height (world.PlayerSettings) to a concrete number
 // before calling here, so a non-positive value is a deliberate "no
 // stepping", not a sentinel to second-guess.
-func StepUp(chunk *world.Chunk, intendedXZ mgl32.Vec2, flatResult mgl32.Vec3, radius, halfHeight, stepHeight float32) mgl32.Vec3 {
-	if chunk == nil || stepHeight <= 0 {
+//
+// resolve is what the body is solid against, and it is a function rather than
+// a chunk because the answer is not one chunk's worth of brushes. A body
+// walking into a ship is stopped by the chunk it is standing in AND by that
+// ship's own solid, which is in the ship's coordinates and in none of this
+// frame's chunks (entity_brushes.go) — so a step-up that retried against only
+// the chunk would find the raised probe unobstructed, take the step, and be
+// pushed straight back out by geometry it never consulted. A threshold at a
+// ship's door is a riser like any other, and it has to be the same set of
+// solids on the retry as on the attempt that failed.
+func StepUp(resolve SolidResolve, intendedXZ mgl32.Vec2, flatResult mgl32.Vec3, stepHeight float32) mgl32.Vec3 {
+	if resolve == nil || stepHeight <= 0 {
 		return flatResult
 	}
 	flatXZ := mgl32.Vec2{flatResult.X(), flatResult.Z()}
@@ -226,16 +248,25 @@ func StepUp(chunk *world.Chunk, intendedXZ mgl32.Vec2, flatResult mgl32.Vec3, ra
 	for probeIdx := 0; probeIdx < stepProbes; probeIdx++ {
 		lift := stepHeight * float32(stepProbes-probeIdx) / float32(stepProbes)
 		raised := mgl32.Vec3{intendedXZ.X(), flatResult.Y() + lift, intendedXZ.Y()}
-		resolved, raisedIntoSolid, hitCeiling := pushOutOfChunkBrushes(chunk, raised, radius, halfHeight)
+		resolved, raisedIntoSolid, hitCeiling := resolve(raised)
 		if hitCeiling || raisedIntoSolid {
 			continue // this lift does not fit; a shorter one might
 		}
 		raisedXZ := mgl32.Vec2{resolved.X(), resolved.Z()}
 		if raisedXZ.Sub(intendedXZ).Len() >= flatXZ.Sub(intendedXZ).Len()-1e-4 {
-			// Stepping up did not clear the obstruction, and a shorter lift
-			// cannot clear what a taller one could not: the riser is simply
-			// higher than the body may step. The flat result stands.
-			return flatResult
+			// This lift did not clear the obstruction. Try a shorter one.
+			//
+			// It used to give up here, on the reasoning that a shorter lift
+			// cannot clear what a taller one could not — true of a plain riser,
+			// and false the moment anything overhangs it. What blocked the tall
+			// probe may not be the riser at all: a doorway's own lintel, a
+			// ship's roof over its threshold, the edge of a ceiling slab the
+			// raised body straddles. A push out of THAT says nothing about
+			// whether the body could have stepped over the sill underneath it,
+			// and giving up on it meant a doorway with a sill and a low header
+			// could not be walked through at all — which is most of the doorways
+			// there are, since a hull's roof is right above its deck.
+			continue
 		}
 
 		// Settle back down onto whatever is actually under the stepped-up
@@ -247,7 +278,7 @@ func StepUp(chunk *world.Chunk, intendedXZ mgl32.Vec2, flatResult mgl32.Vec3, ra
 		for i := 1; i <= settleSubsteps; i++ {
 			probe := settled
 			probe[1] = resolved.Y() - lift*float32(i)/settleSubsteps
-			s, hitFloor, _ := pushOutOfChunkBrushes(chunk, probe, radius, halfHeight)
+			s, hitFloor, _ := resolve(probe)
 			if hitFloor {
 				return s
 			}

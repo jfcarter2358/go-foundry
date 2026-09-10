@@ -157,6 +157,17 @@ func init() {
 				rt.logLine(fmt.Sprintf("spawn %s: %v", id, err))
 			}
 			rt.lvl.Entities = append(rt.lvl.Entities, e)
+			// The effects the type carries, materialised as level emitters
+			// riding the new entity (world/entity_emitter.go). Their textures
+			// are queued rather than loaded, because the tick must not touch
+			// GL — the rule spawn_effect follows.
+			tex := map[string]bool{}
+			if err := world.MaterializeEntityEmitters(rt.lvl, &rt.lvl.Entities[len(rt.lvl.Entities)-1], tex); err != nil {
+				rt.logLine(fmt.Sprintf("spawn %s: %v", id, err))
+			}
+			for t := range tex {
+				rt.markTextureDirty(t)
+			}
 			// The cache is indexed by name and the new entity is not in it yet.
 			rt.cache = buildRefCache(rt.lvl)
 			return flang.RefVal{Kind: flang.RefEntity, A: id}, nil
@@ -293,6 +304,11 @@ func (rt *ScriptRuntime) removeObject(r flang.RefVal) bool {
 	case flang.RefEntity:
 		for i := range rt.lvl.Entities {
 			if rt.lvl.Entities[i].ID == r.A {
+				// The effects its type hung on it go with it, or the level goes
+				// on emitting from where the thing used to be — the emitters
+				// ride the entity through Attach, and an Attach naming nothing
+				// resolves to the world origin rather than to nowhere.
+				world.DropEntityEmitters(rt.lvl, rt.lvl.Entities[i].ID)
 				rt.lvl.Entities[i].Delete()
 				rt.lvl.Entities = append(rt.lvl.Entities[:i], rt.lvl.Entities[i+1:]...)
 				return true

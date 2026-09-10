@@ -286,6 +286,14 @@ func materializePrefabEntities(lvl *world.Level, inst *world.PrefabInstance, p *
 				lvl.Chunks[i].FromPrefab = inst.ID
 			}
 		}
+
+		// The effects it carries, likewise. These are not tagged with the
+		// prefab: an emitter has no FromPrefab, and needs none, because
+		// DropPrefabContent finds them through the entity that owns them —
+		// which it is removing anyway.
+		if err := world.MaterializeEntityEmitters(lvl, &lvl.Entities[len(lvl.Entities)-1], texNeeded); err != nil {
+			prefabWarn("%v", err)
+		}
 	}
 }
 
@@ -372,6 +380,12 @@ func DropPrefabContent(lvl *world.Level, instanceID string) int {
 	keptEntities := lvl.Entities[:0]
 	for i := range lvl.Entities {
 		if lvl.Entities[i].FromPrefab == instanceID {
+			// The emitters this entity's type hung on it go with it. They are
+			// found through the entity rather than through the instance,
+			// because that is the relationship they actually have — and it has
+			// to happen before the entity leaves the list, since its ID is the
+			// only handle on them.
+			n += world.DropEntityEmitters(lvl, lvl.Entities[i].ID)
 			lvl.Entities[i].Delete()
 			n++
 			continue

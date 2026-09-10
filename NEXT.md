@@ -2,6 +2,51 @@
 
 ## Done
 
+- [x] An entity type carries particle effects, the way it already carried
+      brushes. A ship's thruster plume, a torch's flame, smoke off a wrecked
+      crate: each was a level's problem, placed beside the thing it belonged to
+      and re-placed by hand in every level that placed the thing — and lost the
+      moment the entity moved unless someone remembered to attach it.
+      A type holds its own now (`world/entity_emitter.go`), and the arrangement
+      is the third instance of one that was already there twice. A definition
+      holds templates with no runtime state; a level materialises one live
+      object per placement. Models make meshes, brushes make a frame-owned
+      chunk, and an emitter attachment makes a level `Emitter` whose `Attach`
+      names the entity — after which *nothing else needed writing*. It
+      simulates, because `EmitterUpdate` walks the level's list. It draws,
+      because `gatherEmitters` does. It culls, it shows up in the Explorer and
+      the bounds overlay, and a script says `@shuttle_2.thruster` and gets it,
+      because a materialised emitter is an ordinary one.
+      What is on the attachment is only what varies between two types sharing a
+      document: which `.fpar`, where it hangs, `enabled`/`emitting`, a rate
+      scale, a tint and its tags. Everything about how the effect *looks* is
+      still the `.fpar`'s, so retuning a plume is one file rather than every
+      ship that has one — the argument the type system makes, applied one level
+      down.
+      **Model and Bone are the reason this is not just an offset.** `Attach`
+      already resolved entity-plus-model-plus-bone for a level's emitters, so a
+      flame in a hand needs a definition to name the two and nothing more: it
+      rides the same skinning palette the mesh and both its shadows read, and
+      therefore swings with the hand rather than near it.
+      The entity editor grew an **Emitters** list beside Models and Brushes, and
+      the effects *run in it* — through `render.DrawSpriteInstances`, the
+      engine's own instanced pass, on this window's own VAO, exactly as the
+      particle editor previews. That is what makes a cone aimable: it is
+      pointed by eye against the hull it comes out of, at the same scale, rather
+      than by placing the type in a level and going to look. The move and rotate
+      gizmos took no new code — `entityGizmoTargetOf` resolves an emitter to its
+      offset and rotation, and deliberately offers no scale handle, since an
+      effect's size is its document's.
+      Saving skips them (`Emitter.FromEntity`, the twin of `Chunk.FromEntity`),
+      so a level stores the placement and never the plume. Selecting one in the
+      level editor says which entity owns it and offers the way through to the
+      type — the fields are left live, because turning a knob to see what it
+      does is how an author decides what to write, but nothing there is kept.
+      One thing was fixed on the way past: `Emitter.Tint` had never been applied
+      to anything. It is folded into each layer's own tint where the rate scale
+      already was, so the knob the level editor has always shown now does what
+      it says.
+
 - [x] Nothing starts textured. A stamped brush's faces and a new model wore
       "concrete" and "default" — placeholder materials nobody chose, which the
       author has to notice before they can replace them, and which a blockout
@@ -572,3 +617,7 @@
 - [ ] Potentially change the max number of frames for animated textures as well as frame spacing/interpolation
 - [ ] Volumes are brushes instead of boxes only
 - [ ] Game saves
+- [ ] Decal support
+- [ ] move_to (move to a position in a given amount of time)
+- [ ] move_delta (move an offset in a given amount of time)
+- [ ] Unwrap brush texture

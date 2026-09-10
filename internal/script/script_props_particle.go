@@ -237,6 +237,11 @@ func emitterProps() map[string]propAccess {
 					return propErr("tint", "vec", v)
 				}
 				e.Tint = p
+				// Pushed into the running systems, as rate_scale above is:
+				// the tint is folded into each layer on the way to it, so
+				// without this a write would only reach the particles emitted
+				// after the next reload.
+				e.SyncSystems()
 				return nil
 			}),
 			Doc: "colour multiplier over every layer's own tint",

@@ -90,6 +90,9 @@ func entityApplySnapshot(snap entityDefSnapshot) {
 	// is drawing and the tools are editing are now the wrong ones. See
 	// entityGeomDirty.
 	entityInvalidateGeometry()
+	// The effects have been replaced too, so the live simulations are running
+	// the wrong documents. Rebuilt from the restored list on the next frame.
+	entityEmitterPreviewRelease()
 }
 
 // entityClampSelection drops a selection that no longer points at anything.
@@ -104,6 +107,8 @@ func entityClampSelection() {
 		n = len(entityDef.Models)
 	case entitySelBrush:
 		n = entityBrushCount()
+	case entitySelEmitter:
+		n = len(entityDef.Emitters)
 	case entitySelSeat:
 		if entityDef.Vehicle != nil {
 			n = len(entityDef.Vehicle.Seats)

@@ -127,6 +127,7 @@ func entityPreviewRelease() {
 		entityPreview = nil
 	}
 	entityReleaseGeometry()
+	entityEmitterPreviewRelease()
 }
 
 // entityPreviewAnimate advances every attachment's animation clock.

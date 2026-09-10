@@ -201,7 +201,7 @@ func ReloadEntitiesOfType(typeName string) int {
 		if err := e.Load(); err != nil {
 			editorSetStatus("Entity %s: %v", e.ID, err)
 		}
-		editorSyncEntityGeometry(lvl, e)
+		editorSyncEntityContent(lvl, e)
 		n++
 	}
 	if n > 0 {
@@ -215,22 +215,30 @@ func ReloadEntitiesOfType(typeName string) int {
 	return n
 }
 
-// editorSyncEntityGeometry rebuilds the level chunk materialised from one
-// entity's brushes: the old one released, the current one built.
+// editorSyncEntityContent rebuilds everything a level materialises from one
+// entity: the chunk its brushes make and the emitters its effects make, the old
+// ones dropped and the current ones built.
 //
-// Called wherever an entity's identity or its geometry changes — placed,
+// Called wherever an entity's identity or its carried content changes — placed,
 // duplicated, renamed, deleted, re-stamped, or edited in the entity editor.
-// Doing it in one place is what keeps "the level's chunk list agrees with its
-// entities" from being six separate things to remember.
-func editorSyncEntityGeometry(lvl *world.Level, e *world.Entity) {
+// Doing it in one place is what keeps "the level agrees with its entities" from
+// being six separate things to remember, and it is why the two kinds are swept
+// together rather than each by its own caller.
+func editorSyncEntityContent(lvl *world.Level, e *world.Entity) {
 	if lvl == nil || e == nil {
 		return
 	}
 	levelio.DropEntityGeometry(lvl, e.ID)
+	world.DropEntityEmitters(lvl, e.ID)
 	tex := map[string]bool{}
 	if err := levelio.MaterializeEntityGeometry(lvl, e, tex); err != nil {
 		editorSetStatus("%v", err)
 	}
+	if err := world.MaterializeEntityEmitters(lvl, e, tex); err != nil {
+		editorSetStatus("%v", err)
+	}
+	// One table for both: a particle texture and a brush texture are the same
+	// kind of entry, so the same upload pass serves them.
 	if err := levelio.EnsureChunkTextures(tex); err != nil {
 		editorSetStatus("%v", err)
 	}
@@ -317,6 +325,8 @@ func entityDeleteSelection() {
 	switch entitySel.Kind {
 	case entitySelModel:
 		entityRemoveModel(entitySel.Idx)
+	case entitySelEmitter:
+		entityRemoveEmitter(entitySel.Idx)
 	case entitySelSeat:
 		entityRemoveSeat(entitySel.Idx)
 	default:
@@ -334,8 +344,8 @@ func entityDeleteSelection() {
 // This is the promotion the entities README describes and the editor could not
 // previously do: a blank entity is the quick path, and a definition is what it
 // becomes once a second level wants the same thing. What carries over is
-// everything about *what it is* — models, brushes, bounds, collision, tags,
-// attributes, script and vehicle. What does not is where it is: a definition
+// everything about *what it is* — models, brushes, emitters, bounds, collision,
+// tags, attributes, script and vehicle. What does not is where it is: a definition
 // has no position, because a definition is not anywhere.
 //
 // The placed entity is left exactly as it is. Turning it into an instance of
@@ -359,6 +369,7 @@ func OpenEntityEditorFrom(e *world.Entity) {
 		Attributes:   e.Attributes.Clone(),
 		Params:       e.ScriptParams.Clone(),
 		Brushes:      world.CloneEntityBrushes(e.Brushes),
+		Emitters:     world.CloneEntityEmitters(e.Emitters),
 		Vehicle:      world.CloneVehicleSpec(e.Vehicle),
 	}
 	for i := range e.Models {

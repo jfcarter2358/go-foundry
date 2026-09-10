@@ -96,18 +96,33 @@ func (a Attach) Matrix(lvl *Level) mgl32.Mat4 {
 
 // boneMatrix returns the posed placement of the named bone, relative to the
 // entity. ok is false when the attachment, the bone or the pose is missing.
+func (a Attach) boneMatrix(e *Entity) (mgl32.Mat4, bool) {
+	return EntityBoneMatrix(e, a.Model, a.Bone)
+}
+
+// EntityBoneMatrix is the posed placement of one bone inside one of an entity's
+// model attachments, in the ENTITY's local space rather than the world's. ok is
+// false when the attachment, the bone or the pose is missing.
 //
 // The palette holds skinning *deltas* — the transform taking a vertex from rest
 // to posed — so applying one to the bone's own rest placement is what gives the
 // socket. That is the same array the colour pass and both shadow passes read,
 // which is what keeps a flame, the hand holding it, and their shadows in
 // agreement.
-func (a Attach) boneMatrix(e *Entity) (mgl32.Mat4, bool) {
-	m := e.Model(a.Model)
+//
+// Exported and entity-local because two callers need it without a level to
+// resolve through: Attach.boneMatrix, which composes the entity's own transform
+// on the outside, and the entity editor's preview, whose window IS the entity's
+// local space and has no level at all.
+func EntityBoneMatrix(e *Entity, model, bone string) (mgl32.Mat4, bool) {
+	if e == nil || bone == "" {
+		return mgl32.Ident4(), false
+	}
+	m := e.Model(model)
 	if m == nil || m.Doc == nil || m.Anim == nil {
 		return mgl32.Ident4(), false
 	}
-	bi := m.Doc.BoneIndexByName(a.Bone)
+	bi := m.Doc.BoneIndexByName(bone)
 	if bi < 0 || bi >= len(m.Anim.Palette) {
 		return mgl32.Ident4(), false
 	}

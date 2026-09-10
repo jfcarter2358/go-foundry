@@ -142,3 +142,99 @@ func TestAPlayerIsStoppedByAWallTallerThanTheStep(t *testing.T) {
 		t.Errorf("walked into the block: x=%v, want stopped short of it", p.Position.X())
 	}
 }
+
+// ---------- a riser that belongs to an entity ----------
+
+// A body walking into a ship is stopped by two different sets of solids: the
+// chunk it is standing in, and the ship's own brushes, which are in the ship's
+// coordinates and in none of this frame's chunks at all
+// (collision/entity_brushes.go). The step-up used to retry against the chunk
+// alone — so a threshold at the door found the raised probe unobstructed, took
+// the step, and was pushed straight back out by the hull it had not consulted.
+//
+// The visible symptom is narrow and easy to mistake for a level-authoring
+// problem: an entity whose floor is flush with the ground outside can be
+// walked into, and one whose floor sits a hand's breadth above it cannot be
+// entered at all, however low the sill.
+
+// steppedHut is a hut whose deck is `lip` above the ground outside it, with the
+// +X wall left out for a doorway. The world is one big room around it, so a
+// body walking in is walking from one solid onto another.
+func steppedHut(t *testing.T, lip float32) *world.Level {
+	t.Helper()
+	e := world.NewBlankEntity("hut")
+	e.Position = mgl32.Vec3{0, 0, 0}
+	e.Scale = mgl32.Vec3{1, 1, 1}
+	room := world.NewHollowRoom("wall",
+		mgl32.Vec3{0, lip, 0}, mgl32.Vec3{6, lip + 3, 6}, 0.5, "concrete")
+	for i := range room {
+		if room[i].ID != "wall_wall_posx" {
+			e.Brushes = append(e.Brushes, room[i])
+		}
+	}
+
+	lvl := &world.Level{Entities: []world.Entity{e}}
+	ground := world.Chunk{ID: "ground", Brushes: world.NewHollowRoom("ground",
+		mgl32.Vec3{-60, 0, -60}, mgl32.Vec3{60, 20, 60}, 1, "grass")}
+	ground.RecomputeBounds()
+	lvl.Chunks = append(lvl.Chunks, ground)
+
+	ch := world.Chunk{ID: world.EntityGeometryChunkID(e.ID), Scale: 1, FrameOwner: e.ID}
+	ch.FromEntity = e.ID
+	ch.Brushes = world.CloneEntityBrushes(e.Brushes)
+	ch.RecomputeBounds()
+	lvl.Chunks = append(lvl.Chunks, ch)
+
+	lvl.Player.StepHeight = stepUpAllowance
+	if err := world.RebuildIndexes(lvl); err != nil {
+		t.Fatalf("RebuildIndexes: %v", err)
+	}
+	return lvl
+}
+
+// walkWest is the game loop's own tick — MovePlayer then the portal check —
+// walking toward the hut's doorway and settling on the spot at the end.
+func walkWest(lvl *world.Level, p *world.Entity, frames int) {
+	for i := 0; i < frames; i++ {
+		MovePlayer(p, lvl, stepMove(mgl32.Vec3{-0.08, 0, 0}, false))
+		if c := FindFramePortalCrossing(lvl, p); c != nil {
+			CrossFramePortal(lvl, p, c, 0)
+		}
+	}
+	for i := 0; i < 40; i++ {
+		MovePlayer(p, lvl, stepMove(mgl32.Vec3{}, false))
+		if c := FindFramePortalCrossing(lvl, p); c != nil {
+			CrossFramePortal(lvl, p, c, 0)
+		}
+	}
+}
+
+// TestAPlayerStepsUpIntoAnEntitysInterior: the deck is 0.35 up, well inside the
+// step allowance, and walking in has to climb it.
+func TestAPlayerStepsUpIntoAnEntitysInterior(t *testing.T) {
+	const lip = float32(0.35)
+	lvl := steppedHut(t, lip)
+
+	p := walker(9, 3)
+	walkWest(lvl, &p, 120)
+	if p.Frame != "hut" {
+		t.Fatalf("stopped outside the doorway at %v — never got over the sill", p.Position)
+	}
+	// Aboard, the position is in the hut's own coordinates, where the deck's
+	// top is exactly lip.
+	if got := feet(&p); got < lip-0.02 || got > lip+0.06 {
+		t.Errorf("feet rested at y=%v, want standing on the deck at %v", got, lip)
+	}
+}
+
+// And the allowance still means something: a deck the body could not climb is
+// a wall, exactly as a curb that tall would be.
+func TestAPlayerCannotStepIntoAnEntityDeckTallerThanTheStep(t *testing.T) {
+	lvl := steppedHut(t, stepUpAllowance+0.5)
+
+	p := walker(9, 3)
+	walkWest(lvl, &p, 120)
+	if p.Frame != "" {
+		t.Errorf("climbed a %v sill with a %v step allowance", stepUpAllowance+0.5, stepUpAllowance)
+	}
+}

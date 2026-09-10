@@ -54,7 +54,7 @@ windows at once.
 | `F` | frame the whole type |
 | `Shift+G` / `B` | grid / bounds cage |
 | `P` | play / pause the attachment animations |
-| `Delete` or `X` | remove the selected model, brush or seat |
+| `Delete` or `X` | remove the selected model, brush, emitter or seat |
 | `Ctrl+N` / `O` / `S`, `Ctrl+Shift+S` | new / open / save / save as |
 
 The brush half of the window is the 3D view's, key for key — `Tab`, `1`/`2`/`3`,
@@ -180,6 +180,41 @@ The materialised brush is addressed as `<entity id>.<brush id>`. See
 
 `resources/entities/dropship.yaml` is the worked example: a hold of five static
 brushes and one dynamic blast door, with `scripts/dropship.flang` driving it.
+
+## Entities that carry effects
+
+A type may also hang **emitters** on itself: particle effects in its own
+coordinates, carried around by it — a thruster plume, a torch flame, smoke off a
+wrecked crate. The **Emitters** list in the entity editor's outline is where they
+are added, and they run in that window while you aim them, so a cone is pointed
+by eye rather than by placing the type in a level and looking.
+
+| Field | |
+| --- | --- |
+| **Name** | what the level ID is built from, and what an instance override matches on |
+| **Effect** | a `.fpar` under `particles/`; **Edit...** opens it in the particle editor |
+| **Model** / **Bone** | a socket inside one of the type's model attachments — leave empty to hang it off the entity's origin |
+| **Offset / Rotation** | placement, in the entity's space or the bone's. `G` and `R` drag them |
+| **Enabled** | off stops the simulation dead |
+| **Emitting** | off stops new particles but lets the ones in flight finish — what a type whose effect only runs on cue ships with |
+| **Rate scale / Tint** | multiply every layer's own, for varying a shared document without a second one |
+| **Tags** | carried onto the placement, so `#engine` reaches every ship's plume at once |
+
+What an effect *is* still lives in its `.fpar` and is still edited in the
+particle editor — this is only where one hangs and the handful of knobs worth
+varying per type. Retuning a plume is one document, not every ship that has one.
+
+Placing the type puts a real emitter in the level, riding the entity, addressed
+as `<entity id>.<emitter name>` — so `@shuttle_2.thruster` names exactly one
+plume and every particle verb in [Scripting](18-scripting.md) works on it
+unchanged. **Bone-mounted effects follow the pose**: a flame on a hand bone
+swings with the hand, because it resolves through the same skinning palette the
+mesh and its shadow do.
+
+The level file stores the placement and never the emitters, the way it stores
+neither the models nor the brushes. Selecting one in the level editor shows it
+with a note saying which entity owns it: turn its knobs to see what they do, but
+the change that keeps is the one made on the type.
 
 ## The player
 

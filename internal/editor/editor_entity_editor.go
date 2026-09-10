@@ -8,12 +8,15 @@ package editor
 // override. This window edits resources/entities/<name>.yaml, so the change
 // reaches every barrel in the game and every level that has yet to place one.
 //
-// An entity type is assembled from four kinds of thing, and the point of a
-// window is that all four are visible at once, against the same origin, at the
-// same scale:
+// An entity type is assembled from five kinds of thing, and the point of a
+// window is that all of them are visible at once, against the same origin, at
+// the same scale:
 //
 //	models   .fmdl/.obj attachments, each with its own transform and its own
 //	         named animations — what the thing looks like
+//	emitters the effects it carries (world/entity_emitter.go) — a thruster
+//	         plume, a torch flame — running here, against the same origin, so
+//	         one is aimed by eye rather than by placing the type in a level
 //	brushes  the type's own solid (world/entity_brush.go) — floors to stand on,
 //	         walls to bump into, a door a script slides open. Shaped here with
 //	         the level editor's own tools, and what makes a ship with a
@@ -108,6 +111,10 @@ const (
 	// selection uses — see editor_entity_editor_brushes.go, and entitySelectBrush
 	// for why the two are always set together.
 	entitySelBrush
+	// entitySelEmitter is one of the type's particle effects. Idx indexes
+	// entityDef.Emitters, and the live preview simulation beside it — see
+	// editor_entity_editor_emitters.go.
+	entitySelEmitter
 	entitySelSeat
 )
 
@@ -121,6 +128,7 @@ var (
 	entityShowModels  = true
 	entityShowBrushes = true
 	entityShowSeats   = true
+	entityShowEffects = true
 	entityPlayAnims   = true
 	entityBgColor     = [3]float32{0.13, 0.14, 0.16}
 	entityWireOverlay bool
@@ -705,6 +713,14 @@ func drawEntityEditorWindow() {
 		entityPreviewAnimate(platform.DeltaTime)
 	}
 
+	// The effects, after the pose: a bone-mounted emitter reads this frame's
+	// palette, so stepping it before UpdateAnimations would hang a flame off
+	// last frame's hand.
+	entityEmitterPreviewSync()
+	if entityPlayAnims {
+		entityEmitterPreviewTick(platform.DeltaTime)
+	}
+
 	view := entityCam.view()
 	proj := entityCam.proj(w.W, w.H)
 	projView := proj.Mul4(view)
@@ -720,8 +736,19 @@ func drawEntityEditorWindow() {
 	if entityShowSeats {
 		drawEntitySeatMarkers()
 	}
+	if entityShowEffects {
+		drawEntityEmitterMarkers()
+	}
 	drawEntityGeometryOutline()
 	gizmo.GizmoFlush(projView)
+
+	// The particles after the gizmo flush and while depth testing is still on:
+	// they are transparent geometry and have to sort against the hull they come
+	// out of, and drawing them before the lines would have the lines punch
+	// holes in a plume.
+	if entityShowEffects {
+		entityDrawEmitterParticles(projView)
+	}
 	gl.Disable(gl.DEPTH_TEST)
 
 	// What is selected, and the handles it can be grabbed by.

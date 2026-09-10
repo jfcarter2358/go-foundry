@@ -257,6 +257,61 @@ func TestSpaceVehicleRotatesFreelyWithoutGimbalLock(t *testing.T) {
 	}
 }
 
+// A vehicle's spin is Entity.AngularVelocity, the same field every other entity
+// spins on — the drive model integrates it rather than a private copy. This is
+// the regression: the vehicle kept its rate in VehicleState.AngVel and
+// overwrote Entity.Rotation from the result, so `@ship.prop.angular_velocity`
+// was a write nobody read, while `velocity` worked because the linear half
+// never had a duplicate.
+func TestWritingAngularVelocitySpinsAVehicle(t *testing.T) {
+	lvl := shuttle(t, world.VehicleSpace)
+	v := world.FindEntity(lvl, "shuttle")
+	v.Collision.World = false
+	v.EnsureVehicleState()
+
+	// No controls at all: the only thing turning it is the written field.
+	v.AngularVelocity = mgl32.Vec3{0, 1, 0}
+	for i := 0; i < 60; i++ {
+		VehicleUpdate(lvl, 1.0/60.0, true)
+	}
+	if got := v.Rotation.Y(); math.Abs(float64(got)-1) > 0.02 {
+		t.Errorf("a second at 1 rad/s turned it %v radians, want ~1", got)
+	}
+	// Nothing damps a spin in space, so it reads back what was written.
+	if !vecNear(v.AngularVelocity, mgl32.Vec3{0, 1, 0}, 1e-3) {
+		t.Errorf("angular velocity reads back %v, want the written <0,1,0>", v.AngularVelocity)
+	}
+	// And the hold turns with the hull, which is the whole point for anyone
+	// standing in it rather than sitting in a seat.
+	f := lvl.Frames.Frame("shuttle")
+	if p := f.ToWorld(mgl32.Vec3{0, 0, -10}); math.Abs(float64(p.Z())) > 6 {
+		t.Errorf("a point 10 ahead in the hold is at %v; the frame did not turn with the hull", p)
+	}
+}
+
+// Writing one is subject to the same drive model that a stick is: a wheeled
+// vehicle keeps the yaw and drops the pitch and roll, and the field says so
+// rather than reporting a spin that is not happening.
+func TestAWrittenAngularVelocityIsFlattenedOnAGroundVehicle(t *testing.T) {
+	lvl := shuttle(t, world.VehicleGround)
+	v := world.FindEntity(lvl, "shuttle")
+	v.Collision.World = false
+	st := v.EnsureVehicleState()
+
+	v.AngularVelocity = mgl32.Vec3{2, 2, 2}
+	VehicleUpdate(lvl, 1.0/60.0, true)
+
+	if v.AngularVelocity.X() != 0 || v.AngularVelocity.Z() != 0 {
+		t.Errorf("a ground vehicle kept a pitch/roll rate: %v", v.AngularVelocity)
+	}
+	if up := st.Orient.Rotate(mgl32.Vec3{0, 1, 0}); up.Y() < 0.999 {
+		t.Errorf("a ground vehicle tilted: its up is %v", up)
+	}
+	if got := v.Rotation.Y(); math.Abs(float64(got)) < 0.01 {
+		t.Errorf("the yaw half was dropped too: turned %v radians", got)
+	}
+}
+
 func TestQuaternionDoesNotDriftOverManySteps(t *testing.T) {
 	lvl := shuttle(t, world.VehicleSpace)
 	v := world.FindEntity(lvl, "shuttle")

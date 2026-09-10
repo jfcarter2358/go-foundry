@@ -572,9 +572,22 @@ cannot be part of the shell that seals a level for compiling.
 
 ### A brush an entity carries
 
-An entity is built out of brushes as well as models, and those brushes
-materialise as `<entity id>.<brush id>` — so `@shuttle_2.door` names exactly one
-solid however many shuttles the level placed.
+An entity is built out of brushes as well as models. A script addresses one of
+them the same way it addresses a model attachment: the entity, then the name the
+brush has **in the definition** — `@shuttle_2.door` names exactly one solid
+however many shuttles the level placed, and every shuttle's own script says
+`door`. (The level-unique ID underneath is the two joined, `shuttle_2.door`,
+which is what `.id` reads back and what the Explorer shows; a script never has
+to spell it.)
+
+Two collections go with it, the counterparts of `.models`:
+
+```flang
+for b in @shuttle_2.brushes      -- every brush the entity carries
+    b.prop.solid = false
+end
+@shuttle_2.geometry.prop.enabled = false   -- the one chunk they materialise into
+```
 
 `position`, `rotation` and `velocity` on one of them are in the **entity's own
 coordinates**, not the world's. A door closing on a ship means "two metres to
@@ -595,6 +608,31 @@ end
 For a level's own brushes nothing changed: a chunk that no frame owns is placed
 by the same matrix either way, so its brushes still read and write in world
 space.
+
+### An emitter an entity carries
+
+An entity's type may hang particle effects on it as well as brushes, and a
+script reaches one by exactly the same step — the entity, then the name the
+emitter has **in the definition**:
+
+```flang
+stop_emit(@dropship.thruster)          -- one placement's plume, not every ship's
+burst(@dropship.thruster, 40)
+@dropship.thruster.prop.rate_scale = 3.0
+
+for e in @dropship.emitters            -- every effect the entity carries
+    stop_emit(e)
+end
+```
+
+The level-unique ID underneath is the two joined, `dropship.thruster`, which is
+what `.id` reads back and what the Explorer shows. Every particle verb and every
+emitter property works on one of these unchanged, because it *is* an ordinary
+emitter — it simply came from the type rather than from the level, and it rides
+the entity (or a bone of one of its models) rather than sitting still.
+
+`destroy` on the entity takes its emitters with it, so nothing is left emitting
+from where the thing used to be.
 
 A surface's `height` is **chunk-local**: the authored number, and the one the
 level file stores, so `height = height + 1` on a placed chunk round-trips.
@@ -966,6 +1004,26 @@ world space, and convert at the boundary. So
 `@crate.prop.velocity = <3.0, 0.0, 0.0>` sends the crate east whichever way the
 ship is pointing, and the conversion is the identity for anything that is not
 aboard something.
+
+### Moving a vehicle without driving it
+
+A vehicle's `velocity` and `angular_velocity` are the ordinary entity properties,
+and the drive model integrates those two fields rather than private copies of
+them. So a script can shove or spin a hull that nobody is sitting in:
+
+```flang
+@shuttle.prop.angular_velocity = <0.0, 1.0, 0.0>   -- a radian a second, and the
+                                                   -- hold turns with the hull
+```
+
+Two things are different from a plain entity. The rate is read in the vehicle's
+**own** axes — pitch about its local X, yaw about local Y, roll about local Z —
+because that is the only reading under which a roll rolls about the nose. And
+the drive model still runs on top: a spin is shed by `Angular Drag` the way a
+velocity is shed by `Drag`, a ground or water vehicle keeps only the yaw of one
+(it flattens to a heading every frame, and the property reads back what is
+actually happening rather than what was asked for), and only a space vehicle,
+which has nothing to push against, keeps whatever it is set spinning at forever.
 
 Reading a `vehicle_*` property of something that is not a vehicle gives zero
 rather than an error, since asking a crate how fast it is going is a fair

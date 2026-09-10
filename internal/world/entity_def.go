@@ -26,6 +26,8 @@ package world
 //	            added, and is written out in full
 //	brushes     replaced wholesale, or inherited untouched — see
 //	            RawEntity.Brushes
+//	emitters    matched by attachment name, exactly as models are; an override
+//	            adjusts that effect's document, socket, transform and knobs
 //
 // A level may also place an entity with no type at all. That is what the
 // editor's "blank entity" is: a thing authored where it stands, carrying its
@@ -171,7 +173,8 @@ type RawEntityDef struct {
 	Visible     *bool                   `yaml:"visible,omitempty"` // default true when absent
 	Collision   *RawEntityCollision     `yaml:"collision,omitempty"`
 	Models      []RawEntityModel        `yaml:"models,omitempty"`
-	Brushes     []RawBrush              `yaml:"brushes,omitempty"` // see entity_brush.go
+	Brushes     []RawBrush              `yaml:"brushes,omitempty"`  // see entity_brush.go
+	Emitters    []RawEntityEmitter      `yaml:"emitters,omitempty"` // see entity_emitter.go
 	Attributes  map[string]RawAttribute `yaml:"attributes,omitempty"`
 	Script      string                  `yaml:"script,omitempty"`      // .flang file driving this type's behaviour
 	Params      map[string]RawAttribute `yaml:"params,omitempty"`      // defaults for that script's `param` declarations
@@ -209,6 +212,12 @@ type RawEntity struct {
 	// that has diverged from its type's shape at all has usually diverged
 	// wholesale.
 	Brushes []RawBrush `yaml:"brushes,omitempty"`
+	// Emitters are per-attachment overrides, matched by name exactly as Models
+	// are. Per-name rather than wholesale like Brushes, because an effect IS a
+	// named attachment with a handful of knobs — "this one ship's plume is
+	// twice the rate" is the ordinary edit, and it should not drag the other
+	// five emitters into the level file with it.
+	Emitters []RawEntityEmitter `yaml:"emitters,omitempty"`
 	// Script overrides the definition's. A pointer so the three cases stay
 	// distinct: absent follows the type, "" detaches the script this instance
 	// would otherwise have inherited, and a name replaces it.
@@ -258,7 +267,11 @@ type EntityDef struct {
 	// Models they hold no GPU state — the level materialises one frame-owned
 	// chunk per instance from them (levelio/entity_geometry.go) — so one
 	// definition can back any number of placed ships.
-	Brushes    []Brush
+	Brushes []Brush
+	// Emitters are the particle effects the type carries, in its local space
+	// (entity_emitter.go). Templates like Models and Brushes: the level
+	// materialises one live Emitter per placement from each of them.
+	Emitters   []EntityEmitter
 	Attributes AttrSet
 	// Params are the type's defaults for its script's `param` declarations. An
 	// instance overrides them one name at a time.
@@ -423,6 +436,12 @@ func entityDefFromRaw(raw RawEntityDef, name string) (*EntityDef, error) {
 		return nil, err
 	}
 	def.Brushes = brushes
+
+	emitters, err := entityEmittersFromRaw(raw.Emitters, fmt.Sprintf("entity definition %q", id))
+	if err != nil {
+		return nil, err
+	}
+	def.Emitters = emitters
 	return def, nil
 }
 
@@ -449,6 +468,7 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 		raw.Models = append(raw.Models, entityModelToRaw(&def.Models[i]))
 	}
 	raw.Brushes = entityBrushesToRaw(def.Brushes)
+	raw.Emitters = entityEmittersToRaw(def.Emitters)
 	return raw
 }
 
@@ -478,6 +498,7 @@ func (d *EntityDef) Instantiate(id string) Entity {
 		ScriptParams: d.Params.Clone(),
 		Vehicle:      d.Vehicle,
 		Brushes:      CloneEntityBrushes(d.Brushes),
+		Emitters:     CloneEntityEmitters(d.Emitters),
 	}
 	for i := range d.Models {
 		e.Models = append(e.Models, d.Models[i].TemplateCopy())
@@ -660,6 +681,25 @@ func EntityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 		}
 		e.Brushes = brushes
 	}
+
+	// Emitters override by name, the way models do. An entry naming an effect
+	// the type does not have is one the instance added — every emitter on a
+	// typeless entity arrives this way — and an entry naming nothing at all is
+	// an override of something that is not there, which the level says.
+	for i, re := range r.Emitters {
+		if m := e.EntityEmitter(re.Name); m != nil && re.Name != "" {
+			applyEmitterOverride(m, re)
+			continue
+		}
+		m := entityEmitterFromRaw(re)
+		if m.Name == "" {
+			m.Name = fmt.Sprintf("emitter_%d", i+1)
+		}
+		if e.EntityEmitter(m.Name) != nil {
+			return Entity{}, fmt.Errorf("entity %q: duplicate emitter %q", id, m.Name)
+		}
+		e.Emitters = append(e.Emitters, m)
+	}
 	return e, nil
 }
 
@@ -705,6 +745,7 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 			r.Models = append(r.Models, entityModelToRaw(&e.Models[i]))
 		}
 		r.Brushes = entityBrushesToRaw(e.Brushes)
+		r.Emitters = entityEmittersToRaw(e.Emitters)
 		return r
 	}
 
@@ -738,6 +779,11 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 	// Whole list or nothing, exactly as the vehicle block above.
 	if !EntityBrushesEqual(def.Brushes, e.Brushes) {
 		r.Brushes = entityBrushesToRaw(e.Brushes)
+	}
+	for i := range e.Emitters {
+		if o, ok := emitterOverride(def, &e.Emitters[i]); ok {
+			r.Emitters = append(r.Emitters, o)
+		}
 	}
 	return r
 }

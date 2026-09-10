@@ -121,6 +121,15 @@ func entityGizmoTargetOf() (entityGizmoTarget, bool) {
 		m := &entityDef.Models[entitySel.Idx]
 		return entityGizmoTarget{Pos: &m.Offset, Rot: &m.Rotation, Scale: &m.Scale}, true
 
+	case entitySelEmitter:
+		if entitySel.Idx < 0 || entitySel.Idx >= len(entityDef.Emitters) {
+			return entityGizmoTarget{}, false
+		}
+		m := &entityDef.Emitters[entitySel.Idx]
+		// No scale: an effect's size is its document's, and a gizmo that
+		// offered a handle writing nothing would read as broken.
+		return entityGizmoTarget{Pos: &m.Offset, Rot: &m.Rotation}, true
+
 	case entitySelSeat:
 		if entityDef.Vehicle == nil ||
 			entitySel.Idx < 0 || entitySel.Idx >= len(entityDef.Vehicle.Seats) {

@@ -85,6 +85,7 @@ const (
 	entityCtxFaces
 	entityCtxBrush
 	entityCtxModel
+	entityCtxEmitter
 	entityCtxSeat
 )
 
@@ -109,6 +110,10 @@ func entityCtxSelection() entityCtxSelKind {
 	case entitySelModel:
 		if entitySel.Idx < len(entityDef.Models) {
 			return entityCtxModel
+		}
+	case entitySelEmitter:
+		if entitySel.Idx < len(entityDef.Emitters) {
+			return entityCtxEmitter
 		}
 	case entitySelSeat:
 		if entityDef.Vehicle != nil && entitySel.Idx < len(entityDef.Vehicle.Seats) {
@@ -151,6 +156,9 @@ func entityCtxSummary() string {
 	case entityCtxModel:
 		return "Model " + entityDef.Models[entitySel.Idx].Name
 
+	case entityCtxEmitter:
+		return "Emitter " + entityDef.Emitters[entitySel.Idx].Name
+
 	case entityCtxSeat:
 		return "Seat " + entityDef.Vehicle.Seats[entitySel.Idx].Name
 	}
@@ -178,6 +186,8 @@ func entityContextMenuItems() []ctxMenuItem {
 		items = append(items, entityCtxBrushItems()...)
 	case entityCtxModel:
 		items = append(items, entityCtxModelItems()...)
+	case entityCtxEmitter:
+		items = append(items, entityCtxEmitterItems()...)
 	case entityCtxSeat:
 		items = append(items, entityCtxSeatItems()...)
 	default:
@@ -328,6 +338,20 @@ func entityCtxModelItems() []ctxMenuItem {
 	}
 }
 
+func entityCtxEmitterItems() []ctxMenuItem {
+	idx := entitySel.Idx
+	m := &entityDef.Emitters[idx]
+	return []ctxMenuItem{
+		{Label: "Restart", Do: func() { entityEmitterRestart(idx) },
+			Tooltip: "Clear what is in flight and rewind, for judging a burst."},
+		{Label: "Edit effect...", Disabled: m.Effect == "", Do: func() { OpenParticleEditorOn(m.Effect) },
+			Tooltip: "Open this emitter's .fpar in the particle editor."},
+		{Separator: true},
+		{Label: "Remove emitter", Shortcut: "Del", Do: func() { entityRemoveEmitter(idx) },
+			Tooltip: "Takes the effect off the type. The .fpar on disk is untouched."},
+	}
+}
+
 func entityCtxSeatItems() []ctxMenuItem {
 	idx := entitySel.Idx
 	return []ctxMenuItem{
@@ -344,7 +368,7 @@ func entityCtxEmptyHint() string {
 	case editorInEditMode():
 		return "Edit mode — click a face, an edge or a corner to select it (Tab for object mode)"
 	}
-	return "Object mode — click a brush, or a model or seat in the outline (Tab to edit a brush)"
+	return "Object mode — click a brush, or a model, emitter or seat in the outline (Tab to edit a brush)"
 }
 
 // ---------- shared ----------
@@ -390,6 +414,9 @@ func entityCtxSharedItems() []ctxMenuItem {
 		entityCtxStampMenuItem(),
 		{Label: "Add model", Do: entityAddModel,
 			Tooltip: "Attach an .fmdl to the type. Pick which one in the panel."},
+		{Label: "Add emitter", Do: entityAddEmitter,
+			Tooltip: "Hang a particle effect on the type. Pick which .fpar, and\n" +
+				"where it hangs, in the panel."},
 		{Label: "Add seat", Disabled: entityDef.Vehicle == nil, Do: entityAddSeat,
 			Tooltip: "Somewhere for a rider to sit. Greyed out until the type is a\nvehicle, which the panel's Vehicle group makes it."},
 		{Label: "Select", Sub: modes},

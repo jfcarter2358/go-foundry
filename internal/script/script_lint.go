@@ -707,6 +707,25 @@ func (l *linter) kindOf(e flang.Expr) (flang.Kind_, bool) {
 				// next step, which lands in the RefModel case below.
 				return flang.RefModel, true
 			}
+			if t.Name == "geometry" {
+				return flang.RefChunk, true
+			}
+			// One of the entity's own brushes. Without this the property check
+			// would run `@ship.hatch.prop.dynamic` against the *entity* table
+			// and flag a write that is perfectly good.
+			if addr, ok := t.X.(*flang.AddrExpr); ok {
+				id := world.EntityBrushID(addr.Name, t.Name)
+				if r, ok := l.cache.refFor(id); ok && r.Kind == flang.RefBrush {
+					return flang.RefBrush, true
+				}
+				// Or one of its emitters, for the same reason: without this
+				// `@ship.thruster.prop.emitting` would be checked against the
+				// entity's table and flagged.
+				emID := world.EntityEmitterID(addr.Name, t.Name)
+				if r, ok := l.cache.refFor(emID); ok && r.Kind == flang.RefEmitter {
+					return flang.RefEmitter, true
+				}
+			}
 		case flang.RefModel:
 			// Either the attachment name completing that pending ref, or the
 			// step back out to the entity. Nothing else follows a model.

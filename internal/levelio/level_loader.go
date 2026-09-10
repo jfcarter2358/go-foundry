@@ -343,6 +343,17 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 		}
 	}
 
+	// The effects those entities carry (world/entity_emitter.go), materialised
+	// here for the same reason and under the same rule: after every entity
+	// exists, since a materialised emitter's ID is uniqued against the level,
+	// and reported rather than fatal, since a plume whose .fpar has been
+	// deleted is a marker to fix and not a level that will not open.
+	for i := range level.Entities {
+		if err := world.MaterializeEntityEmitters(level, &level.Entities[i], texNeeded); err != nil {
+			log.Printf("%v", err)
+		}
+	}
+
 	// The prefab PLACEMENTS. What they make is materialised at the very end of
 	// this function, once everything the level itself authored exists — see
 	// there for why the order matters.

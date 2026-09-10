@@ -142,6 +142,7 @@ func editorEntityProperties(lvl *world.Level) {
 	editorPropGroup("Vehicle##entveh", 0, func() { editorEntityVehicleSection(lvl, e) })
 	editorPropGroup("Models##entmodels", 0, func() { editorEntityModels(e) })
 	editorPropGroup("Chunks##entchunks", 0, func() { editorEntityGeometry(lvl, e) })
+	editorPropGroup("Effects##enteffects", 0, func() { editorEntityEffects(lvl, e) })
 	// An entity's tags and attributes are merged from its definition rather
 	// than held in a ScriptData, so the three rows are assembled here instead
 	// of through editorScriptDataUI — under the same "Scripting" group name
@@ -774,6 +775,57 @@ func editorDragFloat3Step(label string, values *[3]float32, min, max float32, fo
 	}
 	imgui.PopID()
 	return changed
+}
+
+// ---------- carried effects ----------
+
+// editorEntityEffects says what particle effects the entity carries, and points
+// at where they are edited.
+//
+// Read-only for the reason the geometry block above is: a type's effects are the
+// type's, and retuning one plume on one ship means every level that places that
+// ship diverges from it. What the list does give is the level ID each one
+// materialised under, which is the name a script in THIS level has to write.
+func editorEntityEffects(lvl *world.Level, e *world.Entity) {
+	if !e.HasEmitters() {
+		editorTextWrapped("None. An emitter hangs a particle effect off the entity — a " +
+			"thruster plume, a torch flame — carried wherever it goes, and riding a " +
+			"bone if the type names one.")
+	} else {
+		imgui.Text(fmt.Sprintf("%d emitter(s), placed in this level as:", len(e.Emitters)))
+		for i := range e.Emitters {
+			m := &e.Emitters[i]
+			label := "  • " + world.EntityEmitterID(e.ID, m.Name)
+			switch {
+			case m.Effect == "":
+				label += "  (no effect)"
+			case m.Bone != "":
+				label += "  → " + m.Effect + " on " + m.Model + "." + m.Bone
+			default:
+				label += "  → " + m.Effect
+			}
+			imgui.Text(label)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Real emitters in the level, riding this entity. The level\n" +
+				"file does not store them — the type does — so a script says\n" +
+				"@" + world.EntityEmitterID(e.ID, "<name>") + " and the placement stays the type's.")
+		}
+	}
+
+	if e.Type != "" {
+		if imgui.Button("Edit Type##entfxedit") {
+			OpenEntityEditorOn(e.Type)
+		}
+		editorTextWrapped("Aimed and tuned in the entity editor, on the type — so the change " +
+			"reaches every " + e.Type + " in the game rather than this one.")
+		return
+	}
+	if imgui.Button("Make Type##entfxmake") {
+		OpenEntityEditorFrom(e)
+	}
+	editorTextWrapped("This entity has no type, so its effects are its own. Promote it to a " +
+		"type to aim them against the thing they hang off.")
 }
 
 // ---------- carried geometry ----------

@@ -247,11 +247,17 @@ func TestEntityBrushRoundTripsThroughTheDocument(t *testing.T) {
 		world.NewBoxBrush("box", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, "concrete"),
 	}
 	ch.RecomputeBounds()
-	prev := entityGeomLevel
+	prev, prevDirty := entityGeomLevel, entityGeomDirty
 	entityGeomLevel = &world.Level{Chunks: []world.Chunk{ch}}
 	entityWS.level = entityGeomLevel
 	entityWS.ActiveChunkIdx = 0
-	t.Cleanup(func() { entityGeomLevel = prev; entityWS.level = prev })
+	// Hand-seeded, which is what entitySeedGeometry would have done — and it
+	// clears the flag, because the two copies are in step from that moment.
+	entityGeomDirty = false
+	t.Cleanup(func() {
+		entityGeomLevel, entityGeomDirty = prev, prevDirty
+		entityWS.level = prev
+	})
 
 	if len(def.Brushes) != 0 {
 		t.Fatalf("the document started with %d brushes", len(def.Brushes))
@@ -353,5 +359,126 @@ func TestAnimationSettingsSeesAValueChange(t *testing.T) {
 	explicit := animationSettings(&world.EntityAnimation{Loop: &off})
 	if unset == explicit {
 		t.Error("follow-the-clip and an explicit `once` compare equal")
+	}
+}
+
+// TestOpeningATypeSurvivesTheEndOfTheFrame is the bug that made an opened type
+// look blank: the Open dialog is drawn near the END of the frame, long after
+// entityPreviewSync has had its chance to re-seed, so the live chunk on that
+// frame is still the previous document's — an empty one, for the blank type the
+// window starts on. Committing it into the freshly loaded document threw away
+// every brush the file had, and marked the type dirty while doing it.
+//
+// The document is authoritative until the next frame re-seeds from it, which is
+// what entityGeomDirty says.
+func TestOpeningATypeSurvivesTheEndOfTheFrame(t *testing.T) {
+	entityTestDoc(t)
+	t.Cleanup(entityUseWorkspace())
+
+	// The live chunk of the document being replaced: the blank type the entity
+	// editor opens on has no brushes at all.
+	prev, prevDirty := entityGeomLevel, entityGeomDirty
+	entityGeomLevel = &world.Level{Chunks: []world.Chunk{{ID: entityGeomChunkID, Scale: 1}}}
+	entityWS.level = entityGeomLevel
+	entityWS.ActiveChunkIdx = 0
+	entityGeomDirty = false
+	t.Cleanup(func() {
+		entityGeomLevel, entityGeomDirty = prev, prevDirty
+		entityWS.level = prev
+	})
+
+	// What entityLoadDef does, minus the file: a new document, and the live
+	// brushes declared stale.
+	entityDef = entityNewDefaultDef("ship")
+	entityDef.Brushes = []world.Brush{
+		world.NewBoxBrush("hull", mgl32.Vec3{}, mgl32.Vec3{1, 1, 1}, ""),
+	}
+	entityDefDirty = false
+	entityInvalidateGeometry()
+
+	entityCommitBrushes()
+
+	if len(entityDef.Brushes) != 1 {
+		t.Fatalf("opening a type emptied it: %d brushes left", len(entityDef.Brushes))
+	}
+	if entityDefDirty {
+		t.Error("opening a type marked it unsaved before anyone had edited it")
+	}
+}
+
+func TestEntityAddAndRemoveEmitter(t *testing.T) {
+	def := entityTestDoc(t)
+
+	entityAddEmitter()
+	if len(def.Emitters) != 1 {
+		t.Fatalf("added %d emitters, want 1", len(def.Emitters))
+	}
+	if entitySel.Kind != entitySelEmitter || entitySel.Idx != 0 {
+		t.Errorf("adding an emitter did not select it: %+v", entitySel)
+	}
+	if !entityDefDirty {
+		t.Error("adding an emitter left the document clean")
+	}
+	// The defaults have to be the running ones, or an author who adds an
+	// effect and picks a document sees nothing and has no reason to look at
+	// three switches to find out why.
+	m := &def.Emitters[0]
+	if !m.Enabled || !m.Emitting || m.RateScale != 1 {
+		t.Errorf("a freshly added emitter is not running: %+v", m)
+	}
+
+	// A second one may not take the first's name: it is what an instance
+	// override matches on and what the level ID is built from.
+	entityAddEmitter()
+	if def.Emitters[0].Name == def.Emitters[1].Name {
+		t.Errorf("both attachments are called %q", def.Emitters[0].Name)
+	}
+
+	entityRemoveEmitter(0)
+	if len(def.Emitters) != 1 {
+		t.Fatalf("after removing one, %d remain", len(def.Emitters))
+	}
+	if entitySel.Kind != entitySelNone {
+		t.Error("the selection outlived the thing it pointed at")
+	}
+}
+
+// TestEmitterSelectionDrivesTheGizmo pins the one thing that makes an emitter
+// aimable by eye: the move and rotate handles have to resolve to its offset and
+// rotation, and there must be no scale handle, since an effect's size is its
+// document's and a handle writing nothing reads as broken.
+func TestEmitterSelectionDrivesTheGizmo(t *testing.T) {
+	def := entityTestDoc(t)
+	entityAddEmitter()
+
+	target, ok := entityGizmoTargetOf()
+	if !ok {
+		t.Fatal("a selected emitter exposes no gizmo target")
+	}
+	if target.Pos != &def.Emitters[0].Offset {
+		t.Error("the move gizmo does not write the emitter's offset")
+	}
+	if target.Rot != &def.Emitters[0].Rotation {
+		t.Error("the rotate gizmo does not write the emitter's rotation")
+	}
+	if target.Scale != nil || target.ScaleU != nil {
+		t.Error("an emitter offered a scale handle, which would write nothing")
+	}
+}
+
+func TestEntityClampDropsAStaleEmitterSelection(t *testing.T) {
+	def := entityTestDoc(t)
+	def.Emitters = []world.EntityEmitter{world.NewEntityEmitter("thruster")}
+
+	entitySel = entityEditorSelection{Kind: entitySelEmitter, Idx: 0}
+	entityClampSelection()
+	if entitySel.Kind != entitySelEmitter {
+		t.Error("a valid emitter selection was cleared")
+	}
+
+	entitySel = entityEditorSelection{Kind: entitySelEmitter, Idx: 4}
+	entityClampSelection()
+	if entitySel.Kind != entitySelNone {
+		t.Errorf("a selection past the end survived: %+v", entitySel)
 	}
 }

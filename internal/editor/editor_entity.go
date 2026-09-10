@@ -153,9 +153,10 @@ func placeEntityAt(pos mgl32.Vec3) bool {
 		editorSetStatus("Entity %s: %v", id, err)
 	}
 	lvl.Entities = append(lvl.Entities, e)
-	// The solid the type carries, if any (world/entity_brush.go). Placed after
-	// the append so the entity is in the level its chunk is bound to.
-	editorMaterializeEntityGeometry(lvl, &lvl.Entities[len(lvl.Entities)-1])
+	// The solid and the effects the type carries, if any (world/entity_brush.go
+	// and world/entity_emitter.go). Placed after the append so the entity is in
+	// the level its chunk is bound to and its emitters ride.
+	editorMaterializeEntityContent(lvl, &lvl.Entities[len(lvl.Entities)-1])
 	editorSelectEntity(len(lvl.Entities) - 1)
 	if def == nil {
 		editorSetStatus("Placed entity %q — pick a model for it in the panel", id)
@@ -207,13 +208,16 @@ func duplicateActiveEntity() {
 	// holds slices, and two entities sharing one backing array would mean
 	// dragging a corner of the copy reshaped the original.
 	e.Brushes = world.CloneEntityBrushes(src.Brushes)
+	// The effects likewise: only their tag lists are shared state, and a copy
+	// that aliased them would mean tagging one plume tagged the other's too.
+	e.Emitters = world.CloneEntityEmitters(src.Emitters)
 	e.Position = src.Position.Add(mgl32.Vec3{entityDuplicateOffset, 0, entityDuplicateOffset})
 	if err := e.Load(); err != nil {
 		editorSetStatus("Entity %s: %v", e.ID, err)
 	}
 
 	lvl.Entities = append(lvl.Entities, e)
-	editorMaterializeEntityGeometry(lvl, &lvl.Entities[len(lvl.Entities)-1])
+	editorMaterializeEntityContent(lvl, &lvl.Entities[len(lvl.Entities)-1])
 	editorSelectEntity(len(lvl.Entities) - 1)
 	editorSetStatus("Duplicated entity %q", e.ID)
 }
@@ -232,10 +236,13 @@ func deleteActiveEntity() {
 	EditorPushUndo()
 	id := lvl.Entities[idx].ID
 	lvl.Entities[idx].Delete()
-	// The chunk this entity's brushes made goes with it. Without this it would
-	// stay in the level with a FrameOwner naming an entity that is gone, which
-	// BuildFrames reports as an error and refuses the whole level over.
-	editorReleaseEntityGeometry(lvl, id)
+	// What this entity's type materialised into the level goes with it: the
+	// chunk its brushes made, and the emitters its effects made. Without the
+	// first the chunk would stay behind with a FrameOwner naming an entity that
+	// is gone, which BuildFrames reports as an error and refuses the whole
+	// level over; without the second the level would keep emitting from where
+	// the thing used to be.
+	editorReleaseEntityContent(lvl, id)
 	lvl.Entities = append(lvl.Entities[:idx:idx], lvl.Entities[idx+1:]...)
 	editorClearEntitySelection()
 	editorSetStatus("Deleted entity %q", id)
@@ -357,7 +364,7 @@ func reapplyEntityDefinition() {
 		editorSetStatus("Entity %s: %v", e.ID, err)
 		return
 	}
-	editorSyncEntityGeometry(lvl, e)
+	editorSyncEntityContent(lvl, e)
 	if err := world.RebuildIndexes(lvl); err != nil {
 		editorSetStatus("Entity %s: %v", e.ID, err)
 	}
@@ -403,19 +410,27 @@ func editorAddEntityMenuItem(pos mgl32.Vec3) ctxMenuItem {
 	}
 }
 
-// ---------- carried geometry ----------
+// ---------- carried content ----------
 
-// editorMaterializeEntityGeometry builds the level chunk an entity's brushes
-// describe, and refreshes the indexes that chunk belongs to.
+// editorMaterializeEntityContent builds what an entity carries into the level —
+// the chunk its brushes describe and the emitters its effects describe — and
+// refreshes the indexes that chunk belongs to.
 //
-// Split from editorSyncEntityGeometry (editor_entity_editor_io.go) so the
+// Split from editorSyncEntityContent (editor_entity_editor_io.go) so the
 // common case — an entity that has just been placed and has nothing to drop
 // first — does not walk the chunk list twice.
-func editorMaterializeEntityGeometry(lvl *world.Level, e *world.Entity) {
-	if lvl == nil || e == nil || !e.HasBrushes() {
+func editorMaterializeEntityContent(lvl *world.Level, e *world.Entity) {
+	if lvl == nil || e == nil || (!e.HasBrushes() && !e.HasEmitters()) {
 		return
 	}
-	editorSyncEntityGeometry(lvl, e)
+	editorSyncEntityContent(lvl, e)
+	if !e.HasBrushes() {
+		// Only effects came into the level. An emitter is in no index — it
+		// rides the entity through Attach rather than through the spatial hash
+		// — so there is nothing to rebuild, and rebuilding anyway would re-walk
+		// every chunk in the level for a plume.
+		return
+	}
 	// A materialised chunk is geometry the player can stand on and a frame the
 	// entity carries, and neither exists until the indexes are rebuilt.
 	if err := world.RebuildIndexes(lvl); err != nil {
@@ -423,10 +438,16 @@ func editorMaterializeEntityGeometry(lvl *world.Level, e *world.Entity) {
 	}
 }
 
-// editorReleaseEntityGeometry drops every chunk materialised from the named
-// entity, and rebuilds the indexes without them.
-func editorReleaseEntityGeometry(lvl *world.Level, id string) {
-	if lvl == nil || levelio.DropEntityGeometry(lvl, id) == 0 {
+// editorReleaseEntityContent drops everything materialised from the named
+// entity, and rebuilds the indexes without it.
+func editorReleaseEntityContent(lvl *world.Level, id string) {
+	if lvl == nil {
+		return
+	}
+	world.DropEntityEmitters(lvl, id)
+	if levelio.DropEntityGeometry(lvl, id) == 0 {
+		// Nothing left the chunk list, so no frame and no solid changed. The
+		// emitters above are not in any index.
 		return
 	}
 	if err := world.RebuildIndexes(lvl); err != nil {
@@ -447,7 +468,7 @@ func editorRenameEntity(lvl *world.Level, e *world.Entity, id string) {
 		return
 	}
 	EditorPushUndo()
-	editorReleaseEntityGeometry(lvl, e.ID)
+	editorReleaseEntityContent(lvl, e.ID)
 	e.ID = id
-	editorMaterializeEntityGeometry(lvl, e)
+	editorMaterializeEntityContent(lvl, e)
 }

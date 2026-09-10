@@ -68,6 +68,14 @@ Ground and water vehicles are flattened to a yaw every frame. Their body may til
 to the surface for looks, but the space an occupant stands in keeps its own up,
 or walking around a cabin would fight the terrain.
 
+A vehicle's speed and spin are the entity's own `velocity` and `angular_velocity`
+— the drive model integrates those two fields rather than keeping private copies,
+so a level file or a script can set either on a hull nobody is sitting in and it
+moves. The angular one is read in the vehicle's own axes (pitch about local X,
+yaw about local Y, roll about local Z), and the drive model still applies: drag
+sheds both, a ground or water vehicle keeps only the yaw, and a space vehicle
+keeps whatever it is set spinning at.
+
 ## Riding
 
 Being aboard is two things: a **frame**, and optionally a **seat**. Seated pins
@@ -105,6 +113,10 @@ geometry's bounding box spans the wingspan, and almost all of that is the open
 air you walk through to reach the ramp; walking under a wing leaves you standing
 on the level's ground, in the level's coordinates, exactly as you were. Only
 stepping onto the ship puts you in the ship's.
+
+A deck that sits above the ground outside it is a **step**, not a wall: a sill
+inside the level's step height is climbed walking into it, exactly as a curb is.
+Anything taller is a wall, and wants a ramp.
 
 The corollary is that an entity with no floor under you does not take you
 aboard — a fence, an archway, a canopy on legs. Nothing about those is carrying

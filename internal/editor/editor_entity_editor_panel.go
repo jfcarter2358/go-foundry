@@ -25,6 +25,7 @@ import (
 	"foundry/internal/imguibackend"
 	"foundry/internal/levelio"
 	"foundry/internal/world"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -152,6 +153,13 @@ func entityEditorToolbar() {
 	imgui.SameLine()
 	imgui.Checkbox("Seats##entshows", &entityShowSeats)
 	imgui.SameLine()
+	imgui.Checkbox("Effects##entshowe", &entityShowEffects)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Draw the type's emitters and the particles they are\n" +
+			"producing. Off leaves the simulation running — it is a\n" +
+			"view toggle, not the emitter's own switch.")
+	}
+	imgui.SameLine()
 	imgui.Checkbox("Wire##entwire", &entityWireOverlay)
 	imgui.SameLine()
 	imgui.Checkbox("Play [P]##entplay", &entityPlayAnims)
@@ -261,6 +269,8 @@ func entityEditorOutline() {
 		imgui.Separator()
 		entityOutlineBrushes()
 		imgui.Separator()
+		entityOutlineEmitters()
+		imgui.Separator()
 		entityOutlineSeats()
 	})
 
@@ -349,6 +359,45 @@ func entityOutlineBrushes() {
 		imgui.SetTooltip("Copies the brushes out of a chunk under " + levelio.ChunksDirName + "/,\n" +
 			"or out of the level open in the main window. A copy, not a\n" +
 			"link: the type owns its geometry from then on.")
+	}
+}
+
+// entityOutlineEmitters lists the effects the type carries.
+//
+// The label carries the state that decides whether an author is looking at a
+// bug or at what they asked for: no document chosen, a document that would not
+// load, and an attachment deliberately shipped switched off all look identical
+// in the viewport, because all three draw nothing.
+func entityOutlineEmitters() {
+	imgui.Text("Emitters")
+	for i := range entityDef.Emitters {
+		m := &entityDef.Emitters[i]
+		imgui.PushID(fmt.Sprintf("oute%d", i))
+		label := m.Name
+		switch {
+		case m.Effect == "":
+			label += "  (no effect)"
+		case !entityEmitterLoaded(i):
+			label += "  (missing)"
+		case !m.Enabled:
+			label += "  (off)"
+		case !m.Emitting:
+			label += "  (not emitting)"
+		}
+		if imgui.SelectableV(label, entitySel.Kind == entitySelEmitter && entitySel.Idx == i, 0, imgui.Vec2{}) {
+			entitySel = entityEditorSelection{Kind: entitySelEmitter, Idx: i}
+		}
+		imgui.PopID()
+	}
+	if len(entityDef.Emitters) == 0 {
+		editorTextMutedWrapped("None. An emitter hangs a particle effect off the type — off its origin, or off a bone of one of its models — and it is carried wherever the thing goes.")
+	}
+	if imgui.Button("Add Emitter##entadde") {
+		entityAddEmitter()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Adds an effect attachment. Pick its " + ParticleExtLabel + " on the\n" +
+			"right, and aim it with the move and rotate gizmos.")
 	}
 }
 
@@ -534,6 +583,11 @@ func entityPanelSelection() {
 		// tags/attributes/script, the convexity warning and every face field
 		// are the same widgets writing to the same places.
 		editorBrushPropertiesSection()
+	case entitySelEmitter:
+		if entitySel.Idx < len(entityDef.Emitters) {
+			editorPropGroupOpen("Emitter: "+entityDef.Emitters[entitySel.Idx].Name+"##entsele",
+				func() { entityPanelEmitter(entitySel.Idx) })
+		}
 	case entitySelSeat:
 		if entityDef.Vehicle != nil && entitySel.Idx < len(entityDef.Vehicle.Seats) {
 			editorPropGroupOpen("Seat: "+entityDef.Vehicle.Seats[entitySel.Idx].Name+"##entsels",
@@ -808,6 +862,196 @@ func entityChunkFileCombo(label string, file *string) bool {
 	}
 	if !known && *file != "" {
 		imgui.SelectableV(*file+" (missing)", true, 0, imgui.Vec2{})
+	}
+	return changed
+}
+
+// entityPanelEmitter draws one effect attachment: what it runs, where it hangs
+// and the four knobs worth varying per type.
+//
+// Deliberately short, exactly as the level editor's emitter panel is and for the
+// same reason: everything about how the effect *looks* lives in its .fpar and is
+// edited in the particle editor. Edit... is the seam between the two.
+func entityPanelEmitter(idx int) {
+	m := &entityDef.Emitters[idx]
+	name := m.Name
+	imgui.SetNextItemWidth(-90)
+	if imgui.InputTextV("##entename", &name, imgui.InputTextFlagsEnterReturnsTrue, nil) {
+		switch {
+		case name == "":
+			entityStatus = "An emitter needs a name"
+		case name != m.Name && entityDef.EmitterNamed(name) != nil:
+			entityStatus = fmt.Sprintf("This type already has an emitter called %q", name)
+		default:
+			EntityDefPushUndo()
+			m.Name = name
+			entityMarkDirty()
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Qualified by the placement in a level, so a script says\n" +
+			"@<entity>." + m.Name + " to reach this ship's and not every ship's.")
+	}
+	imgui.SameLine()
+	if imgui.Button("Delete##entedel") {
+		entityRemoveEmitter(idx)
+		return
+	}
+
+	entityPanelEmitterEffect(idx, m)
+	entityPanelEmitterSocket(m)
+
+	off := [3]float32{m.Offset.X(), m.Offset.Y(), m.Offset.Z()}
+	if editorDragFloat3Step("Offset##enteoff", &off, -1000, 1000, "%.3f", 0.05) {
+		entityBeginEdit("eoff")
+		m.Offset = mgl32.Vec3{off[0], off[1], off[2]}
+	}
+	if m.Bone != "" && imgui.IsItemHovered() {
+		imgui.SetTooltip("Local to the bone, not to the entity.")
+	}
+	rot := vec3ToDegrees(m.Rotation)
+	if editorDragFloat3Step("Rotation (deg)##enterot", &rot, -360, 360, "%.1f", 1) {
+		entityBeginEdit("erot")
+		m.Rotation = vec3FromDegrees(rot)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Turns the emission shape — a cone fires wherever it\n" +
+			"points. The stalk on the marker is that direction.")
+	}
+
+	editorTagsUI(&m.Tags, "ente", "Tags")
+}
+
+// entityPanelEmitterEffect draws the document picker, what it resolved to, and
+// the two switches.
+func entityPanelEmitterEffect(idx int, m *world.EntityEmitter) {
+	if particleFileCombo("Effect##entefx", &m.Effect) {
+		EntityDefPushUndo()
+		entityMarkDirty()
+	}
+	imgui.SameLine()
+	imguibackend.EditorPushDisabled(m.Effect == "")
+	if imgui.Button("Edit...##enteedit") {
+		OpenParticleEditorOn(m.Effect)
+	}
+	imguibackend.EditorPopDisabled()
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Open this effect in the particle editor, where its forty\nparameters actually are.")
+	}
+
+	switch {
+	case m.Effect == "":
+		editorTextMutedWrapped("No effect chosen: this emitter produces nothing.")
+	case !entityEmitterLoaded(idx):
+		editorTextWrappedColored(imgui.Vec4{X: 1, Y: 0.5, Z: 0.3, W: 1},
+			"Could not load "+m.Effect+ParticleExtLabel+" — the attachment is here but produces nothing.")
+	default:
+		editorTextMuted(fmt.Sprintf("live: %d", entityEmitterLiveCount(idx)))
+	}
+	if imgui.Button("Restart##enterestart") {
+		entityEmitterRestart(idx)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Clear what is in flight and rewind — for judging a burst\nrather than waiting for the next one.")
+	}
+
+	if imgui.Checkbox("Enabled##enteen", &m.Enabled) {
+		entityBeginEdit("een")
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Off stops the simulation dead — every live particle\nvanishes at once.")
+	}
+	if imgui.Checkbox("Emitting##enteem", &m.Emitting) {
+		entityBeginEdit("eem")
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Off stops new particles but lets the ones in flight finish.\n" +
+			"A type whose effect only runs when its script says so\nships with this off.")
+	}
+
+	if editorDragFloat("Rate scale##enterate", &m.RateScale, 0, 10, "%.2f") {
+		entityBeginEdit("erate")
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Multiplies every layer's emission rate. 1 is the\neffect's own.")
+	}
+	tint := m.EffectiveTint()
+	t := [3]float32{tint.X(), tint.Y(), tint.Z()}
+	if imgui.ColorEdit3("Tint##entetint", &t) {
+		entityBeginEdit("etint")
+		m.Tint = mgl32.Vec3{t[0], t[1], t[2]}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Multiplies every layer's own tint — one green torch\nwithout a second document.")
+	}
+}
+
+// entityPanelEmitterSocket draws the model-and-bone picker: which of the type's
+// meshes the effect rides, if any.
+//
+// The bone list comes from the preview, which is the only place the .fmdl has
+// actually been read — the same seam the animation clip list uses. A model with
+// no rig therefore offers nothing, which is the honest answer.
+func entityPanelEmitterSocket(m *world.EntityEmitter) {
+	models := entityEmitterModelNames()
+	if len(models) == 0 {
+		editorTextMutedWrapped("Hangs off the type's origin. Add a model with a rig to hang it off a bone instead.")
+		return
+	}
+	if entityNameCombo("Model##entemodel", &m.Model, models, "(the entity itself)") {
+		EntityDefPushUndo()
+		if m.Model == "" {
+			// A bone is meaningless without the attachment it belongs to, and
+			// one left behind would silently do nothing.
+			m.Bone = ""
+		}
+		entityMarkDirty()
+	}
+	if m.Model == "" {
+		return
+	}
+	bones := entityEmitterBoneNames(m.Model)
+	if len(bones) == 0 {
+		editorTextMutedWrapped("That attachment has no bones — either it is not rigged, or its mesh has not loaded.")
+		return
+	}
+	if entityNameCombo("Bone##entebone", &m.Bone, bones, "(the attachment's origin)") {
+		EntityDefPushUndo()
+		entityMarkDirty()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The effect rides this bone's posed placement, so a flame\n" +
+			"in a hand follows the hand. Its Offset is then local to\nthe bone.")
+	}
+}
+
+// entityNameCombo picks one name out of a list, with an explicit empty choice at
+// the top. Beside particleFileCombo in spirit: the empty entry is a real answer
+// — "off the entity itself" — rather than a missing one.
+func entityNameCombo(label string, value *string, names []string, emptyLabel string) bool {
+	preview := *value
+	if preview == "" {
+		preview = emptyLabel
+	}
+	changed := false
+	if imgui.BeginCombo(label, preview) {
+		if imgui.SelectableV(emptyLabel, *value == "", 0, imgui.Vec2{}) && *value != "" {
+			*value = ""
+			changed = true
+		}
+		for _, n := range names {
+			if imgui.SelectableV(n, n == *value, 0, imgui.Vec2{}) && n != *value {
+				*value = n
+				changed = true
+			}
+		}
+		imgui.EndCombo()
+	}
+	if *value != "" && !slices.Contains(names, *value) {
+		// A name the type no longer has: shown rather than silently reset, so
+		// the author can see what a renamed attachment left behind.
+		editorTextWrappedColored(imgui.Vec4{X: 1, Y: 0.5, Z: 0.3, W: 1},
+			*value+" is not one of this type's — the effect falls back to the entity's origin.")
 	}
 	return changed
 }

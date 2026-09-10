@@ -1182,6 +1182,9 @@ var scriptComplStructuralTable = map[flang.Kind_][]scriptComplMember{
 	flang.RefEntity: {
 		{"model", "one model attachment by name: .model.<name>"},
 		{"models", "list — every model attachment on the entity"},
+		{"geometry", "the one chunk the entity's brushes materialise into"},
+		{"brushes", "list — every brush the entity carries"},
+		{"emitters", "list — every particle effect the entity carries"},
 	},
 	flang.RefModel: {{"entity", "the entity this attachment belongs to"}},
 	flang.RefChunk: {

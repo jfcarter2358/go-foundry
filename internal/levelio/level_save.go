@@ -139,7 +139,15 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 		raw.Sprites = append(raw.Sprites, world.SpriteToRaw(&level.Sprites[i]))
 	}
 
+	// An emitter an entity's type hung on it is that type's content, not the
+	// level's — the rule a materialised chunk follows (Chunk.FromEntity), for
+	// the same reason: a level that wrote a copy would freeze the placement and
+	// stop tracking the definition. Prefab content is excluded through the same
+	// flag, since a prefab's entity carries its own.
 	for i := range level.Emitters {
+		if level.Emitters[i].FromEntity != "" {
+			continue
+		}
 		raw.Emitters = append(raw.Emitters, world.EmitterToRaw(&level.Emitters[i]))
 	}
 

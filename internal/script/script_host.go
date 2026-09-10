@@ -261,6 +261,60 @@ func (h *levelHost) Member(r flang.RefVal, name string) (flang.Value, bool) {
 				elems = append(elems, flang.RefVal{Kind: flang.RefModel, A: r.A, B: e.Models[i].Name})
 			}
 			return flang.NewList(elems...), true
+		case "geometry":
+			// The one chunk an entity's brushes materialise into
+			// (levelio/entity_geometry.go). Named rather than derived so
+			// `@ship.geometry.prop.enabled` switches a whole hull off.
+			id := world.EntityGeometryChunkID(r.A)
+			if c.chunkFor(flang.RefVal{Kind: flang.RefChunk, A: id}) == nil {
+				return nil, false
+			}
+			return flang.RefVal{Kind: flang.RefChunk, A: id}, true
+		case "brushes":
+			ch := c.chunkFor(flang.RefVal{Kind: flang.RefChunk, A: world.EntityGeometryChunkID(r.A)})
+			if ch == nil {
+				// An entity with no brushes has no chunk, and an empty list is
+				// what a loop over it wants — not an error.
+				return flang.NewList(), true
+			}
+			elems := make([]flang.Value, 0, len(ch.Brushes))
+			for bi := range ch.Brushes {
+				elems = append(elems, flang.RefVal{Kind: flang.RefBrush, A: ch.Brushes[bi].ID})
+			}
+			return flang.NewList(elems...), true
+		case "emitters":
+			// The effects the entity's type hung on it, materialised into the
+			// level (world/entity_emitter.go). Resolved through the cache
+			// rather than off e.Emitters, because those are the descriptions
+			// and a ref has to name the live emitter.
+			elems := make([]flang.Value, 0, len(e.Emitters))
+			for i := range e.Emitters {
+				id := world.EntityEmitterID(r.A, e.Emitters[i].Name)
+				if c.emitterFor(flang.RefVal{Kind: flang.RefEmitter, A: id}) != nil {
+					elems = append(elems, flang.RefVal{Kind: flang.RefEmitter, A: id})
+				}
+			}
+			return flang.NewList(elems...), true
+		default:
+			// One of the entity's own brushes, addressed by the name it has in
+			// the *definition* — `@ship.hatch`, not `@ship.hatch` spelled out
+			// as the level-unique "ship.hatch" the placement gave it. A script
+			// names the placement and the part; qualifying the two is the
+			// engine's business, and has to be, because the definition-local
+			// name is the only one an author of the type ever saw.
+			id := world.EntityBrushID(r.A, name)
+			if _, b := c.brushOwnerFor(flang.RefVal{Kind: flang.RefBrush, A: id}); b != nil {
+				return flang.RefVal{Kind: flang.RefBrush, A: id}, true
+			}
+			// Or one of its emitters, under exactly the same rule and for the
+			// same reason: `@ship.thruster` is the name the author of the type
+			// gave it, and the level-unique "ship.thruster" is the engine's
+			// business. Brushes are tried first only because they came first;
+			// a level cannot hold both under one ID.
+			emID := world.EntityEmitterID(r.A, name)
+			if c.emitterFor(flang.RefVal{Kind: flang.RefEmitter, A: emID}) != nil {
+				return flang.RefVal{Kind: flang.RefEmitter, A: emID}, true
+			}
 		}
 
 	case flang.RefModel:

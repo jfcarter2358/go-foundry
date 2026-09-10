@@ -26,6 +26,10 @@ package collision
 // resolve it against the world twice, fighting its own steering and setting
 // its interior frame transform to two different answers a tick. They do still
 // take part in entity-against-entity collision below, same as the player.
+//
+// Skipped here does NOT mean their Velocity and AngularVelocity are dead: the
+// drive model integrates both itself, in the vehicle's own axes for the
+// angular one. See vehicle_drive.go.
 
 import (
 	"foundry/internal/world"

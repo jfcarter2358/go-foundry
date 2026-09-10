@@ -62,6 +62,36 @@ file's:
   anywhere, and is carried when the entity moves. From outside the hull is
   solid, which is what makes the only way in the way you built.
 
+A type may also carry **emitters** — particle effects in its own coordinates,
+carried around by it the same way:
+
+```yaml
+emitters:
+  - name: thruster
+    effect: plume          # particles/plume.fpar
+    offset: {x: 0, y: 0.4, z: -6.2}
+    rotation: {x: 3.14159, y: 0, z: 0}   # aim the cone aft
+    tags: [engine]
+  - name: torch
+    effect: flame
+    model: hull            # ride a bone of one of the type's attachments
+    bone: brazier
+    emitting: false        # the script switches it on
+```
+
+What the effect *is* still lives in its `.fpar` and is still edited in the
+particle editor; this says where one hangs and carries only the knobs worth
+varying per type — `enabled`, `emitting`, `rate_scale`, `tint` and its tags.
+Retuning a plume is one document rather than every ship that has one.
+
+Placing one of these puts a real emitter in the level for each, already attached
+to the entity, addressed as `<entity id>.<emitter name>` — so
+`@shuttle_2.thruster` names exactly one plume and every particle verb works on
+it unchanged. With `model` and `bone` set it rides that bone's *posed*
+placement, so a flame in a hand swings with the hand. As with the brushes, the
+level file stores the placement and never the emitters. See
+`internal/world/entity_emitter.go`.
+
 ## What ships
 
 `dropship.yaml` is an assault shuttle with a hold you walk into and a powered
@@ -87,7 +117,7 @@ walk in through the aft opening.
 
 The **Entity** button on the level editor's toolbar opens the entity editor: a
 window with a 3D view of the type being built, a list of what it is made of
-(models, brushes, seats) on the left, and the type's properties on the right.
+(models, brushes, emitters, seats) on the left, and the type's properties on the right.
 Saving there re-stamps every instance of that type in the level open beside it.
 
 The brush half of it is the 3D view's, not a second implementation: **Tab**

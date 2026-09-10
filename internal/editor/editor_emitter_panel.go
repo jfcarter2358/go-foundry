@@ -55,12 +55,42 @@ func editorEmitterAddMenu() {
 
 // editorEmitterProperties draws the selected emitter's editable state.
 func editorEmitterProperties(e *world.Emitter) {
+	editorEmitterCarrierNote(e)
 	editorPropGroupOpen("Identity##emidgrp", func() { editorEmitterIdentity(e) })
 	editorPropGroupOpen("Effect##emfxgrp", func() { editorEmitterEffect(e) })
 	editorPropGroupOpen("Transform##emtfgrp", func() { editorEmitterTransform(e) })
 	editorPropGroup("Attach##emattachgrp", 0, func() { editorEmitterAttach(e) })
 	editorScriptDataUI(&e.ScriptData, "em", strconv.Quote(e.ID))
 	editorPropGroup("Actions##emactions", 0, func() { editorEmitterActions(e) })
+}
+
+// editorEmitterCarrierNote says so when this emitter is an entity's rather than
+// the level's, and offers the one button that leads anywhere.
+//
+// It has to be said, and said at the top. A materialised emitter is an ordinary
+// one in every way that matters — it simulates, it draws, a script addresses it
+// — so nothing else on screen distinguishes it from one the level placed, and
+// an author who retunes it here would watch the change vanish the next time the
+// level is opened. The fields below are left live rather than disabled: turning
+// a knob to see what it does is exactly how an author decides what to write on
+// the type, and the note is what stops them expecting it to keep.
+func editorEmitterCarrierNote(e *world.Emitter) {
+	if e.FromEntity == "" {
+		return
+	}
+	editorTextWrappedColored(imgui.Vec4{X: 1, Y: 0.8, Z: 0.35, W: 1},
+		"Carried by entity "+e.FromEntity+". This emitter belongs to that entity's "+
+			"type, not to the level, so nothing changed here is saved — it is put "+
+			"back from the type every time the level loads.")
+	if ent := world.FindEntity(Editor.level, e.FromEntity); ent != nil && ent.Type != "" {
+		if imgui.Button("Edit Type##emcarrier") {
+			OpenEntityEditorOn(ent.Type)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Open " + ent.Type + " in the entity editor, where this\neffect is aimed and tuned for good.")
+		}
+	}
+	imgui.Separator()
 }
 
 // editorEmitterIdentity draws the ID and the two switches.
@@ -138,13 +168,21 @@ func editorEmitterEffect(e *world.Emitter) {
 		e.Reset()
 	}
 
-	editorDragFloat("Rate scale##emrate", &e.RateScale, 0, 10, "%.2f")
+	// Both push into the running systems: the rate scale and the tint are
+	// folded into each layer on the way to it (Emitter.SetDoc), so without a
+	// sync a drag would do nothing until the effect was reloaded — which reads
+	// as a dead control rather than as a deferred one.
+	if editorDragFloat("Rate scale##emrate", &e.RateScale, 0, 10, "%.2f") {
+		e.SyncSystems()
+	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Multiplies every layer's emission rate.\n1 is the effect's own.")
 	}
-	tint := [3]float32{e.Tint.X(), e.Tint.Y(), e.Tint.Z()}
+	et := e.EffectiveTint()
+	tint := [3]float32{et.X(), et.Y(), et.Z()}
 	if imgui.ColorEdit3("Tint##emtint", &tint) {
 		e.Tint = mgl32.Vec3{tint[0], tint[1], tint[2]}
+		e.SyncSystems()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Multiplies every layer's own tint - one green torch\nwithout a second document.")
@@ -213,7 +251,12 @@ func editorEmitterAttach(e *world.Emitter) {
 }
 
 // editorEmitterActions draws the whole-object buttons.
+//
+// Both are shut off for an emitter an entity carries: a duplicate would be an
+// orphan the next re-materialisation drops, and a delete would come back on the
+// next load. The note at the top of the panel says where the real edit is.
 func editorEmitterActions(e *world.Emitter) {
+	imguibackend.EditorPushDisabled(e.FromEntity != "")
 	if imgui.Button("Duplicate##emdup") {
 		duplicateActiveEmitter()
 	}
@@ -221,7 +264,11 @@ func editorEmitterActions(e *world.Emitter) {
 	if imgui.Button("Delete##emdel") {
 		deleteActiveEmitter()
 	}
-	_ = e
+	imguibackend.EditorPopDisabled()
+	if e.FromEntity != "" && imgui.IsItemHovered() {
+		imgui.SetTooltip("Entity " + e.FromEntity + " owns this emitter. Remove it from\n" +
+			"that entity's type instead.")
+	}
 }
 
 // particleFileCombo picks a .fpar by name. Beside modelFileCombo in spirit and

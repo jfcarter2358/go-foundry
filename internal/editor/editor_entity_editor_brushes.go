@@ -239,6 +239,19 @@ func entityCommitBrushes() {
 	if entityDef == nil || ch == nil {
 		return
 	}
+	// Not while the document has been replaced under the live brushes. Every
+	// path that replaces one — the Open dialog, New, an undo — runs from a
+	// panel, a menu or a dialog, and all of those are drawn AFTER
+	// entityPreviewSync and BEFORE this. So on that one frame the live chunk
+	// still holds the OLD document's brushes, and copying them forward would
+	// overwrite the type that was just opened with the one that was just
+	// closed — emptying it, when what was closed was the blank new type. The
+	// re-seed at the top of the next frame is what puts the two back in step,
+	// and until it has run there is nothing here worth taking. See
+	// entityGeomDirty.
+	if entityGeomDirty {
+		return
+	}
 	if world.EntityBrushesEqual(entityDef.Brushes, ch.Brushes) {
 		return
 	}

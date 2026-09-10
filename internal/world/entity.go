@@ -63,6 +63,17 @@ type Entity struct {
 	// second about each Euler axis. Both are plain state that EntityUpdate
 	// integrates — nothing damps or clamps them, because what should slow a
 	// thrown crate down is the game's rules rather than the engine's.
+	//
+	// A VEHICLE is the one exception, and it is the same exception for both:
+	// its drive model owns these two fields rather than EntityUpdate, so a
+	// throttle adds to Velocity and drag sheds it, and the commanded turn rates
+	// add to AngularVelocity while AngularDrag sheds that. Writing either still
+	// works and still means what it says — it is state the drive model then
+	// acts on, not a suggestion it ignores. The one difference is the axes:
+	// a vehicle's AngularVelocity is read in its OWN frame (pitch about local
+	// X, yaw about local Y, roll about local Z), because that is the only
+	// reading under which a roll rolls about the nose. See
+	// collision/vehicle_drive.go.
 	Velocity        mgl32.Vec3
 	AngularVelocity mgl32.Vec3
 
@@ -87,6 +98,13 @@ type Entity struct {
 	// makes a ship with a walkable hold a *type* rather than a level's
 	// hand-wiring — and what lets a body stand inside one and be carried.
 	Brushes []Brush
+
+	// Emitters are the particle effects the entity carries, in its own local
+	// space (entity_emitter.go): a thruster plume, a torch flame, smoke off a
+	// wreck. Like the brushes they are a description rather than a simulation —
+	// the level materialises one live Emitter per attachment, attached to this
+	// entity, so an effect follows the thing it belongs to for free.
+	Emitters []EntityEmitter
 
 	// Script is the .flang file driving this entity's behaviour, resolved from
 	// the definition and optionally overridden per instance. Empty means the

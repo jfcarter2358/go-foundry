@@ -104,6 +104,20 @@ double-click opens a picker.
 | **Show emission shape** | outlines where particles are born |
 | **Reload / Restart** | |
 
+## Emitters an entity carries
+
+An emitter placed here belongs to the level. An entity *type* can also carry its
+own — a ship's thruster plume, a torch's flame — authored in the entity editor's
+**Emitters** list, aimed against the thing they hang off, and optionally mounted
+on a bone of one of its models so they follow the pose.
+
+Placing that type puts a real emitter in the level for each one, already
+attached, addressed as `<entity id>.<emitter name>`. Everything below works on it
+unchanged. What is different is where it is edited: those emitters are the
+type's, so the level file does not store them and nothing changed on the
+placement is saved — the panel says so, with a button through to the type. See
+[Entities](11-entities.md).
+
 ## Attaching
 
 The **Attach** group on a sprite, emitter or sound: pick a Frame, Entity, Model

@@ -55,6 +55,17 @@ type Emitter struct {
 	// Attach names the frame, entity or bone this emitter rides.
 	Attach Attach
 
+	// FromEntity is runtime-only and never serialized: the entity whose type
+	// hung this emitter on it (entity_emitter.go). Empty for one the level file
+	// placed.
+	//
+	// It plays the part Chunk.FromEntity plays for materialised geometry. Two
+	// things read it: LevelToRaw skips these when saving, because they are the
+	// entity's content and a level that wrote a copy would freeze it and stop
+	// tracking the type; and DropEntityEmitters finds them again when the
+	// entity is deleted, renamed or re-stamped.
+	FromEntity string
+
 	// OneShot marks an emitter that removes itself once its last particle has
 	// died. Set only by the `spawn_effect` verb and never serialized: a level
 	// file places lasting emitters, and a script firing one per impact would
@@ -89,6 +100,29 @@ func (e *Emitter) EffectiveRateScale() float32 {
 		return 0
 	}
 	return e.RateScale
+}
+
+// EffectiveTint is the tint, with the zero value read as white. An emitter
+// built field by field rather than through NewEmitter would otherwise multiply
+// every layer by black and emit invisible particles.
+func (e *Emitter) EffectiveTint() mgl32.Vec3 {
+	if e.Tint == (mgl32.Vec3{}) {
+		return mgl32.Vec3{1, 1, 1}
+	}
+	return e.Tint
+}
+
+// tintLayer folds the emitter's tint into a layer's own, which is how one
+// placement of a shared effect is recoloured without a second document.
+//
+// Applied where the rate scale is, on the copy of the layer handed to the
+// system, and for the same reason: the layer a system holds is its own, so
+// re-deriving it from the document each time is what keeps two syncs from
+// compounding.
+func (e *Emitter) tintLayer(l particle.Layer) particle.Layer {
+	t := e.EffectiveTint()
+	l.Tint = mgl32.Vec3{l.Tint.X() * t.X(), l.Tint.Y() * t.Y(), l.Tint.Z() * t.Z()}
+	return l
 }
 
 // Loaded reports whether the emitter has a document to simulate.
@@ -126,7 +160,7 @@ func (e *Emitter) SetDoc(doc *particle.Doc) {
 	}
 	e.Systems = make([]*particle.System, len(doc.Layers))
 	for i := range doc.Layers {
-		l := doc.Layers[i]
+		l := e.tintLayer(doc.Layers[i])
 		l.Rate *= e.EffectiveRateScale()
 		// Seeded per layer so two layers of one effect do not draw the same
 		// sequence, and per emitter ID so two torches in a room do not flicker
@@ -150,7 +184,7 @@ func (e *Emitter) SyncSystems() {
 	}
 	scale := e.EffectiveRateScale()
 	for i := range e.Doc.Layers {
-		l := e.Doc.Layers[i]
+		l := e.tintLayer(e.Doc.Layers[i])
 		l.Rate *= scale
 		e.Systems[i].SetLayer(l, e.Doc.Gravity)
 		e.Systems[i].Emitting = e.Emitting

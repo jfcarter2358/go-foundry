@@ -136,23 +136,37 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 		if chunk == nil {
 			chunk = frame.ChunkAt(lvl, newPos)
 		}
-		localIntended := chunkLocal(chunk, intended)
-		localPos, hitFloor, hitCeiling := pushOutOfChunkBrushes(chunk, localIntended, radius, p.BoundHalfY)
-		localPos = StepUp(chunk, mgl32.Vec2{localIntended.X(), localIntended.Z()}, localPos, radius, p.BoundHalfY, stepHeight)
-		newPos = chunkWorld(chunk, localPos)
 
-		// And out of every entity's own solid that the player is not standing
-		// inside. Those brushes are in that entity's coordinates and so are
-		// absent from this frame's chunks entirely — without this the player
-		// would walk through a ship's hull on the way to its hold. Inside the
-		// substep loop rather than after the whole move, so a fast approach
-		// meets the hull on the step it reaches it, and so the ground flags
-		// below are the ones that step actually produced.
-		var eFloor, eCeiling bool
-		newPos, eFloor, eCeiling = resolveAgainstEntityBrushes(
-			lvl, p, frame, newPos, radius, p.BoundHalfY)
-		hitFloor = hitFloor || eFloor
-		hitCeiling = hitCeiling || eCeiling
+		// Everything the body is solid against, as one pass, in the frame's own
+		// coordinates: the chunk's brushes — resolved in the chunk's local
+		// space, which is where its verts are — and then every entity's own
+		// solid, resolved in that entity's.
+		//
+		// The second half is not in this frame's chunks at all: those brushes
+		// are in the entity's coordinates and so are absent from the spatial
+		// hash (entity_brushes.go). Without it the player would walk through a
+		// ship's hull on the way to its hold.
+		//
+		// Bundled into one function because the step-up below has to retry
+		// against exactly the same set. A threshold at a ship's door is a riser
+		// like any other, and while the retry knew only about the chunk it
+		// found the raised probe unobstructed, took the step, and was shoved
+		// straight back out by the hull — so an entity's interior could be
+		// walked into only if its floor was flush with the ground outside.
+		resolve := func(pos mgl32.Vec3) (mgl32.Vec3, bool, bool) {
+			local, hitFloor, hitCeiling := pushOutOfChunkBrushes(
+				chunk, chunkLocal(chunk, pos), radius, p.BoundHalfY)
+			out, eFloor, eCeiling := resolveAgainstEntityBrushes(
+				lvl, p, frame, chunkWorld(chunk, local), radius, p.BoundHalfY)
+			return out, hitFloor || eFloor, hitCeiling || eCeiling
+		}
+
+		// Resolved once flat, then retried from a step's height up if that left
+		// the body short of where it was going. Both inside the substep loop,
+		// so a fast approach meets a wall on the step it reaches it and the
+		// ground flags below are the ones that step actually produced.
+		resolved, hitFloor, hitCeiling := resolve(intended)
+		newPos = StepUp(resolve, mgl32.Vec2{intended.X(), intended.Z()}, resolved, stepHeight)
 
 		// Landing and bonking: kill vertical velocity on contact either way.
 		// Checked per step so a fast fall stops on the frame it arrives rather

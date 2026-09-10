@@ -111,6 +111,9 @@ func duplicateActiveEmitter() {
 	if lvl == nil || src == nil {
 		return
 	}
+	if !editorEmitterIsTheLevels(src) {
+		return
+	}
 	EditorPushUndo()
 	cp := *src
 	cp.ScriptData = world.CloneScriptData(src.ScriptData)
@@ -135,11 +138,31 @@ func deleteActiveEmitter() {
 	if lvl == nil || idx < 0 || idx >= len(lvl.Emitters) {
 		return
 	}
+	if !editorEmitterIsTheLevels(&lvl.Emitters[idx]) {
+		return
+	}
 	EditorPushUndo()
 	id := lvl.Emitters[idx].ID
 	lvl.Emitters = append(lvl.Emitters[:idx], lvl.Emitters[idx+1:]...)
 	editorClearEmitterSelection()
 	editorSetStatus("Deleted emitter %q", id)
+}
+
+// editorEmitterIsTheLevels reports whether this emitter is the level's to add to
+// or take away, saying why when it is not.
+//
+// An emitter an entity's type hung on it is neither. A copy of one would be
+// dropped by the next re-materialisation and never written to the level file;
+// deleting one would put it straight back on the next load. Both are the kind of
+// no-op that reads as the editor being broken rather than as an answer, so they
+// are refused with the reason and the place the real edit lives.
+func editorEmitterIsTheLevels(e *world.Emitter) bool {
+	if e == nil || e.FromEntity == "" {
+		return true
+	}
+	editorSetStatus("Emitter %q belongs to entity %s — add or remove it on that entity's type",
+		e.ID, e.FromEntity)
+	return false
 }
 
 // reloadActiveEmitter re-reads the selected emitter's document from disk — what

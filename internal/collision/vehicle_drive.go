@@ -4,10 +4,12 @@ package collision
 // riders on the deck.
 //
 // One integrator per mode, all reading the same DriveSpec, all writing the same
-// two pieces of state: a world-space velocity and a quaternion orientation. The
-// quaternion is what makes 6DOF work — Euler angles cannot express a tumbling
-// body without gimbal lock, and integrating an angular velocity as Euler rates
-// is wrong even before it locks.
+// three pieces of state: the entity's own Velocity and AngularVelocity, and a
+// quaternion orientation. The quaternion is what makes 6DOF work — Euler angles
+// cannot express a tumbling body without gimbal lock, and integrating an
+// angular velocity as Euler rates is wrong even before it locks; but the RATE
+// is a plain vector and lives on the entity, so the two fields an author knows
+// how to write are the two fields the drive model actually uses.
 //
 // The ordering below is load-bearing rather than tidy. Vehicles are integrated
 // parents-first and their frames republished *before* anything inside them
@@ -71,6 +73,14 @@ func driveOne(lvl *world.Level, e *world.Entity, dt float32, motion bool) bool {
 
 	// --- orientation ---
 	//
+	// The spin lives in Entity.AngularVelocity, the same field every other
+	// entity spins on and the one a script, a level file and the editor panel
+	// all already write — read here in the vehicle's own axes (pitch about
+	// local X, yaw about local Y, roll about local Z), because that is the only
+	// reading under which a roll rolls about the nose. It is exactly the
+	// arrangement the linear half has always had, where Entity.Velocity IS the
+	// vehicle's velocity rather than a copy of it.
+	//
 	// Controls are rates, not torques. There is no inertia tensor here and no
 	// intention of adding one: a vehicle turns as fast as its tuning says, which
 	// is what makes an arcade drive model predictable to author against.
@@ -82,28 +92,33 @@ func driveOne(lvl *world.Level, e *world.Entity, dt float32, motion bool) bool {
 	switch spec.Mode {
 	case world.VehicleSpace:
 		// Nothing to push against: a rate command is an acceleration, and what
-		// you set spinning stays spinning.
-		st.AngVel = st.AngVel.Add(want.Mul(dt))
+		// you set spinning stays spinning — including a spin a script set
+		// rather than a stick.
+		e.AngularVelocity = e.AngularVelocity.Add(want.Mul(dt))
 	default:
 		// Everything else is in a medium, so the commanded rate is approached
-		// and released rather than accumulated.
-		st.AngVel = approachVec(st.AngVel, want, d.AngularDrag*dt+1e-6)
+		// and released rather than accumulated. A written spin is shed by
+		// AngularDrag the same way a written velocity is shed by Drag; a
+		// vehicle tuned with no angular drag keeps it.
+		e.AngularVelocity = approachVec(e.AngularVelocity, want, d.AngularDrag*dt+1e-6)
 	}
 
 	// Compose the frame's rotation in the vehicle's *own* axes, which is what
 	// makes a roll roll about the nose rather than about the world's Z.
-	if st.AngVel.Len() > 1e-8 {
+	if e.AngularVelocity.Len() > 1e-8 {
 		step := mgl32.AnglesToQuat(
-			st.AngVel.Y()*dt, st.AngVel.X()*dt, st.AngVel.Z()*dt, mgl32.YXZ)
+			e.AngularVelocity.Y()*dt, e.AngularVelocity.X()*dt, e.AngularVelocity.Z()*dt, mgl32.YXZ)
 		st.Orient = st.Orient.Mul(step).Normalize()
 	}
 
 	// Ground and water vehicles stay upright by construction: their body may be
 	// tilted to the surface for looks, but the frame an occupant stands in
 	// keeps its own up, or walking around a cabin would fight the terrain.
+	// The pitch and roll rates go with it, so the field reads back what the
+	// vehicle is actually doing rather than what it was asked for.
 	if spec.Mode == world.VehicleGround || spec.Mode == world.VehicleWater {
 		st.Orient = flattenToYaw(st.Orient)
-		st.AngVel[0], st.AngVel[2] = 0, 0
+		e.AngularVelocity[0], e.AngularVelocity[2] = 0, 0
 	}
 
 	// Keep the authored Euler triple in step, so scripts, the panel and the
