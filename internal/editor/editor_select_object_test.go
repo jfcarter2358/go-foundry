@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"foundry/internal/world"
+
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // selectTestLevel is a level with one chunk of two brushes and one of every
@@ -22,11 +24,13 @@ func selectTestLevel(t *testing.T) *world.Level {
 	}
 	lvl.Lights.Points = []world.PointLight{{}}
 	lvl.Spawn = &world.SpawnPoint{}
+	lvl.Seal = &world.Seal{Half: mgl32.Vec3{10, 10, 10}}
 
 	Editor.level = lvl
 	Editor.ActiveChunkIdx = 0
 	Editor.ChunkSelected = false
 	Editor.SpawnSelected = false
+	Editor.SealSelected = false
 	Editor.ActiveEntityIdx = -1
 	Editor.ActiveVolumeIdx = -1
 	Editor.SelectedLightKind = lightKindNone
@@ -40,6 +44,7 @@ func selectionCount() int {
 	n := 0
 	for _, on := range []bool{
 		Editor.SpawnSelected,
+		Editor.SealSelected,
 		Editor.ChunkSelected,
 		Editor.ActiveEntityIdx >= 0,
 		Editor.ActiveVolumeIdx >= 0,
@@ -65,6 +70,7 @@ func TestSelectingAnObjectDropsEveryOther(t *testing.T) {
 		do   func()
 	}{
 		{"spawn", editorSelectSpawn},
+		{"seal", editorSelectSeal},
 		{"chunk", func() { editorSelectChunk(0) }},
 		{"brush", func() { editorSelectBrush(0, 0) }},
 		{"entity", func() { editorSelectEntity(0) }},

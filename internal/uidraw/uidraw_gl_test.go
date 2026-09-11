@@ -148,9 +148,9 @@ func TestShippedHUDRendersThroughTheRealPass(t *testing.T) {
 		dir = parent
 	}
 
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(dir, "resources")
-	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(dir, "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
 
 	uifont.Reset()
 	t.Cleanup(uifont.Reset)

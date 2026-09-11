@@ -294,8 +294,9 @@ your place. `Ctrl+W` closes (asking if unsaved), `Ctrl+Tab` moves between them.
 
 **The sidebar** is the real folder tree under `scripts/` — a folder here is the
 folder an `import()` resolves through. Right-click for *Move or rename* (takes a
-whole path) and *Delete*, which asks first and tells you what will notice. Drag a
-script onto a folder to move it.
+whole path) and *Delete*, which asks first and tells you what will notice. A
+folder's right-click has *Delete folder*, which takes everything under it after
+the same kind of confirmation. Drag a script onto a folder to move it.
 
 **Completion** opens as you type, and what it offers depends on what you wrote:
 

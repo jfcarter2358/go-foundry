@@ -39,6 +39,14 @@ type refCache struct {
 	// handful of widgets each, and a map rebuilt every tick over that would
 	// cost more than the walk it saved.
 	ui *ui.Stack
+
+	// hidden are the screens that left the stack since the previous tick,
+	// kept so the :hidden: and :cancel: recorded as they left can still be
+	// delivered to them — see ScriptRuntime.hidden. Only a screen ref falls
+	// back to these: a widget on a screen that has gone resolves to nothing,
+	// as it always did, and nothing here is ticked, because scriptedUIRefs
+	// walks the stack rather than this cache.
+	hidden []*ui.Screen
 }
 
 // screenFor returns the screen a ref names, or nil.
@@ -46,7 +54,20 @@ func (c *refCache) screenFor(r flang.RefVal) *ui.Screen {
 	if c.ui == nil || (r.Kind != flang.RefScreen && r.Kind != flang.RefWidget) {
 		return nil
 	}
-	return c.ui.Find(r.A)
+	if s := c.ui.Find(r.A); s != nil {
+		return s
+	}
+	if r.Kind != flang.RefScreen {
+		return nil
+	}
+	// Newest first: a screen shown and hidden twice in one frame is the
+	// later of the two instances.
+	for i := len(c.hidden) - 1; i >= 0; i-- {
+		if c.hidden[i].ID == r.A {
+			return c.hidden[i]
+		}
+	}
+	return nil
 }
 
 // widgetFor returns the widget a ref names, or nil.
@@ -84,6 +105,10 @@ func buildRefCache(lvl *world.Level) *refCache {
 		dirLight: map[string]int{},
 		ptLight:  map[string]int{},
 		ui:       uiStack,
+		// From the runtime rather than handed in by ScriptTick: a verb that
+		// spawns or destroys something rebuilds the cache partway through a
+		// drain, and a departed screen must survive that rebuild.
+		hidden: Scripts.hidden,
 	}
 	if lvl == nil {
 		return c

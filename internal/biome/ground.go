@@ -66,10 +66,20 @@ type Surface struct {
 // Every brush in the level is a candidate, not only those in one chunk: a
 // volume is placed in world space and routinely spans a chunk boundary, which
 // is the whole reason it is level-scoped in the first place.
-func SurfaceUnder(lvl *world.Level, wx, topY, wz, maxDrop float32) Surface {
+//
+// Every brush in the level, that is, which is placed in `frame` — the frame the
+// point itself is in ("" for the world; see Volume.Frame). A chunk carried by
+// an entity is that entity's geometry, expressed in its coordinates: to a
+// world-space volume it is a ship hovering overhead, not ground, and taking it
+// as ground planted a field of grass on the floor of whatever flew over. It is
+// tested in placement space for the same reason — the point is in the frame,
+// so the geometry has to be carried only as far as the frame, not out to the
+// world.
+func SurfaceUnder(lvl *world.Level, frame string, wx, topY, wz, maxDrop float32) Surface {
 	if lvl == nil || maxDrop <= 0 {
 		return Surface{}
 	}
+	frame = world.FrameID(frame)
 	origin := mgl32.Vec3{wx, topY, wz}
 	best := Surface{}
 	bestT := maxDrop
@@ -79,17 +89,20 @@ func SurfaceUnder(lvl *world.Level, wx, topY, wz, maxDrop float32) Surface {
 		if !ch.IsEnabled() {
 			continue // not drawn and not solid, so nothing to stand on
 		}
+		if world.FrameID(ch.FrameOwner) != frame {
+			continue // another frame's geometry — see above
+		}
 		// A quick reject on the chunk's own bounds before any triangle work.
 		// The column is a vertical segment, so only the XZ overlap and the
 		// height range matter.
-		lo, hi := ch.WorldBounds()
+		lo, hi := ch.PlacementBounds()
 		if wx < lo.X() || wx > hi.X() || wz < lo.Z() || wz > hi.Z() {
 			continue
 		}
 		if hi.Y() < topY-maxDrop || lo.Y() > topY {
 			continue
 		}
-		model := ch.ModelMatrix()
+		model := ch.LocalPlacementMatrix()
 
 		for bi := range ch.Brushes {
 			b := &ch.Brushes[bi]
@@ -113,7 +126,7 @@ func SurfaceUnder(lvl *world.Level, wx, topY, wz, maxDrop float32) Surface {
 				// on the column too — every enclosed room has four of them
 				// around it — and landing an instance on one would grow grass
 				// sideways out of it.
-				n := ch.LocalToWorldDirection(drawn.FaceNormal(f))
+				n := ch.LocalToPlacementDirection(drawn.FaceNormal(f))
 				if n.Y() <= 0 {
 					continue
 				}

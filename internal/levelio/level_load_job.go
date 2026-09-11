@@ -281,7 +281,7 @@ const LevelsDirName = "levels"
 const LevelExt = ".yaml"
 
 // LevelsDir is the absolute levels folder.
-func LevelsDir() string { return filepath.Join(fileutil.ExecutablePath, LevelsDirName) }
+func LevelsDir() string { return filepath.Join(fileutil.ResourcesPath, LevelsDirName) }
 
 // LevelPath resolves a bare level name to a full path. A name that already
 // carries the extension is left alone, so both spellings work from a script.

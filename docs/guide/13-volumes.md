@@ -51,6 +51,41 @@ Disabling a volume disarms it. That is how a locked door works — the trigger i
 there, switched off, and unlocking it is
 `@cave_mouth.prop.enabled = true`.
 
+## Riding something
+
+A volume can ride a vehicle, an entity, or a bone of one of that entity's
+models: the same **Frame / Entity / Model / Bone** rows a sprite has, at the top
+of Transform. Attached, **Position** and **Rotation** are in the carrier's space,
+so a region authored at `0, 1, 3` on a guard sits three units in front of
+whichever way the guard faces, and goes wherever the guard goes.
+
+- A volume never reports **its own carrier**. A guard standing in the middle of
+  its own sight cone fires no `:enter:`.
+- `@cone.prop.carrier` is the entity it rides, or null. `attach(@cone, @guard)`
+  and `detach(@cone)` bind it from a script.
+- A **doorway** and **scatter** honour only the Frame row: both are about a
+  vehicle's decks, which a walking entity does not have.
+- The gizmos drag the authored offset, as they do for an attached sprite.
+
+In a level file the binding is an `attach:` block. A volume saved before volumes
+could ride entities says `frame: shuttle` instead, and still loads.
+
+```yaml
+volumes:
+  - id: cockpit
+    attach: {frame: shuttle}
+    position: {x: 0, y: 1, z: 2}
+    half: {x: 1, y: 1, z: 1}
+```
+
+### Carried by an entity type
+
+When every placement of a thing wants the same region, put the volume on the
+**type** instead — see [Entities](11-entities.md). Each placement then gets its
+own, named `<entity id>.<volume name>` and shown in the Explorer as
+`(from guard_1)`. It belongs to the type, so nothing changed on it in the level is
+saved, and its Duplicate and Delete are switched off.
+
 ## Level exits
 
 A volume carrying a **level exit** loads that level when the player walks in.

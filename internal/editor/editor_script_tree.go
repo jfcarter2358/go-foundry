@@ -297,7 +297,7 @@ func drawScriptTreeFolderMenu(n *scriptTreeNode) {
 	if !imgui.BeginPopupContextItemV("##dirmenu", imgui.PopupFlagsMouseButtonRight) {
 		return
 	}
-	ctxDrawMenuItems([]ctxMenuItem{
+	items := []ctxMenuItem{
 		{Label: fileutil.ScriptsDirName + "/" + scriptTreeDirPrefix(n.Path)},
 		{Separator: true},
 		{Label: "New script here…", Do: func() {
@@ -308,7 +308,22 @@ func drawScriptTreeFolderMenu(n *scriptTreeNode) {
 			scriptEditorNewFolderIn = n.Path
 			scriptEditorShowNewFolder = true
 		}},
-	})
+	}
+	// Not on the scripts folder itself: deleting every script at once is not a
+	// sidebar action, and the root row is there to be dropped on.
+	if n.Path != "" {
+		items = append(items,
+			ctxMenuItem{Separator: true},
+			ctxMenuItem{Label: "Delete folder…", Tooltip: "Remove the folder and everything in it from resources/scripts/.", Do: func() {
+				// Rescanned first, so the confirmation lists what is on disk now
+				// rather than what was there when the sidebar last looked.
+				scriptEditorRescan()
+				scriptEditorDeleteDirRel = n.Path
+				scriptEditorShowDeleteDir = true
+			}},
+		)
+	}
+	ctxDrawMenuItems(items)
 	imgui.EndPopup()
 }
 
@@ -414,6 +429,29 @@ func scriptTreeDirPrefix(dir string) string {
 		return ""
 	}
 	return dir + "/"
+}
+
+// scriptFilesUnder returns the scripts from a scan that sit inside dir, at any
+// depth. Both are slash-separated and relative to the scripts folder; a leading
+// scripts/ on either is ignored.
+//
+// It is what a folder delete is about, worked out from the scan rather than the
+// disk: the confirmation lists these, and after the folder has gone they are
+// the tabs to close and the parameter caches to drop — none of which can be
+// asked of a folder that no longer exists.
+func scriptFilesUnder(files []string, dir string) []string {
+	dir = strings.Trim(strings.TrimPrefix(dir, fileutil.ScriptsDirName+"/"), "/")
+	if dir == "" {
+		return nil
+	}
+	var out []string
+	for _, rel := range files {
+		rel = strings.TrimPrefix(strings.TrimPrefix(rel, "/"), fileutil.ScriptsDirName+"/")
+		if strings.HasPrefix(rel, dir+"/") {
+			out = append(out, rel)
+		}
+	}
+	return out
 }
 
 // scriptTreeHolds reports whether a folder contains that path, at any depth.

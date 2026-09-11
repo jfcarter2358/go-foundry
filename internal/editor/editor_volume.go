@@ -108,7 +108,7 @@ func placeVolumeAt(pos mgl32.Vec3) bool {
 func duplicateActiveVolume() {
 	lvl := Editor.level
 	src := activeVolume()
-	if lvl == nil || src == nil {
+	if lvl == nil || src == nil || !editorVolumeIsTheLevels(src) {
 		return
 	}
 	EditorPushUndo()
@@ -129,7 +129,7 @@ func duplicateActiveVolume() {
 func deleteActiveVolume() {
 	lvl := Editor.level
 	idx := Editor.ActiveVolumeIdx
-	if lvl == nil || idx < 0 || idx >= len(lvl.Volumes) {
+	if lvl == nil || idx < 0 || idx >= len(lvl.Volumes) || !editorVolumeIsTheLevels(&lvl.Volumes[idx]) {
 		return
 	}
 	EditorPushUndo()
@@ -138,6 +138,18 @@ func deleteActiveVolume() {
 	lvl.Volumes = append(lvl.Volumes[:idx], lvl.Volumes[idx+1:]...)
 	editorClearVolumeSelection()
 	editorSetStatus("Deleted volume %q", id)
+}
+
+// editorVolumeIsTheLevels reports whether this volume is the level's to copy or
+// take away, saying why when it is not — editorEmitterIsTheLevels' twin, since a
+// volume an entity's type hung on it comes back from the type on every load.
+func editorVolumeIsTheLevels(v *world.Volume) bool {
+	if v == nil || v.FromEntity == "" {
+		return true
+	}
+	editorSetStatus("Volume %q belongs to entity %s — add or remove it on that entity's type",
+		v.ID, v.FromEntity)
+	return false
 }
 
 // rebuildActiveVolumeCage re-uploads the selected volume's wireframe after a
@@ -163,9 +175,19 @@ func rebuildActiveVolumeCage() {
 //
 // Enabled is ignored for the same reason pickVolumeAt ignores it: a script that
 // disarmed a trigger must not thereby make it unselectable.
-func pickVolumeRayT(origin, dir mgl32.Vec3, v *world.Volume) float32 {
+//
+// An attached volume is tested in its carrier's space, the ray carried in
+// rather than the shape carried out. Origin and direction go through the same
+// affine inverse, so the parameter that comes back is still the world distance
+// along the unit ray even when the carrier is scaled.
+func pickVolumeRayT(lvl *world.Level, origin, dir mgl32.Vec3, v *world.Volume) float32 {
 	if !v.HasBounds() {
 		return float32(math.MaxFloat32)
+	}
+	if !v.Attach.IsZero() {
+		inv := v.Attach.Matrix(lvl).Inv()
+		origin = inv.Mul4x1(origin.Vec4(1)).Vec3()
+		dir = inv.Mul4x1(dir.Vec4(0)).Vec3()
 	}
 	t0, _, ok := rayShapeRange(origin, dir, v.Position, v.Rotation, v.HalfExtents(), v.BoundingKind())
 	if !ok || t0 <= 0 {
@@ -190,7 +212,7 @@ func pickVolumeAt(lvl *world.Level, p mgl32.Vec3) int {
 		if !v.HasBounds() {
 			continue
 		}
-		if !world.ShapeContainsPoint(p, v.Position, v.Rotation, v.HalfExtents(), v.BoundingKind()) {
+		if !world.ShapeContainsPoint(v.LocalPoint(lvl, p), v.Position, v.Rotation, v.HalfExtents(), v.BoundingKind()) {
 			continue
 		}
 		vol := v.HalfX * v.HalfY * v.HalfZ
@@ -212,7 +234,9 @@ func editor3DMoveVolumeTo(pos mgl32.Vec3) {
 		return
 	}
 	EditorPushUndo()
-	v.Position = pos
+	// pos is where the ray met the world; an attached volume stores it in its
+	// carrier's space.
+	v.SetWorldPosition(Editor.level, pos)
 }
 
 // editor3DAddVolumeAt drops a volume at pos, the same way the panel's placement
@@ -238,7 +262,7 @@ func drawSelectedVolumeOutline() {
 		return
 	}
 	verts, idx := v.CageMesh()
-	model := v.ModelMatrix()
+	model := v.WorldMatrix(Editor.level)
 	at := func(i int) mgl32.Vec3 {
 		p := model.Mul4x1(mgl32.Vec4{verts[i][0], verts[i][1], verts[i][2], 1})
 		return mgl32.Vec3{p.X(), p.Y(), p.Z()}

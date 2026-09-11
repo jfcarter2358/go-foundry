@@ -497,10 +497,15 @@ func newCylinderBrush(id string, center, half mgl32.Vec3, sides int, texture str
 // invalid intermediate state is an editor you cannot shape anything in. The
 // warning is there so the author knows before they save; the compile pipeline
 // is where it becomes an error.
-func warnIfSelectionBrokeConvexity() {
+func warnIfSelectionBrokeConvexity() { warnIfBrushesNotConvex(selectionBrushes()) }
+
+// warnIfBrushesNotConvex is the same warning for a stated list of brushes, for
+// an edit that has already changed the selection it would otherwise read — a
+// dissolve can leave nothing selected on the brush it reshaped.
+func warnIfBrushesNotConvex(brushes []*world.Brush) {
 	bad := ""
 	n := 0
-	for _, b := range selectionBrushes() {
+	for _, b := range brushes {
 		if b.IsConvex() {
 			continue
 		}

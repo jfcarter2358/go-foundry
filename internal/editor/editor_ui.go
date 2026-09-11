@@ -812,6 +812,29 @@ func EditorDrawUI() {
 	}
 	imgui.SameLine()
 
+	// Release, beside the two buttons it is the end of: Compile answers whether
+	// a level will ship, Preview shows what will ship, and this ships it. Lit
+	// while its window is open, and lit amber while a build is running whether or
+	// not it is: the build carries on with the window closed, and this is the
+	// only place left that says so.
+	releaseLit, releaseCol := ReleaseWindowOpen(), imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1}
+	if ReleaseBuildRunning() {
+		releaseLit, releaseCol = true, imgui.Vec4{X: 0.75, Y: 0.5, Z: 0.15, W: 1}
+	}
+	if releaseLit {
+		imgui.PushStyleColor(imgui.StyleColorButton, releaseCol)
+	}
+	if imgui.Button("Release") {
+		OpenReleaseWindow()
+	}
+	if releaseLit {
+		imgui.PopStyleColor()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Build a release of this project: compile every level, pack the\ncontent beside the game binary, and archive it for each platform.")
+	}
+	imgui.SameLine()
+
 	// Status message (shown for 3 seconds after save/load)
 	if Editor.StatusMsg != "" {
 		if sdl.GetTicks()-Editor.StatusTime < 3000 {

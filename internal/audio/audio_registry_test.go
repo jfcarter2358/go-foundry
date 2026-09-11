@@ -16,17 +16,17 @@ import (
 )
 
 // withSoundsDir points the asset path at a temporary directory and restores
-// the executable path afterwards. fileutil.ExecutablePath is a package global
+// the executable path afterwards. fileutil.ResourcesPath is a package global
 // the whole engine resolves assets against, so it gets the with-helper
 // treatment every other global in this repo's tests gets.
 func withSoundsDir(t *testing.T) string {
 	t.Helper()
-	prev := fileutil.ExecutablePath
+	prev := fileutil.ResourcesPath
 	dir := t.TempDir()
-	fileutil.ExecutablePath = dir
+	fileutil.ResourcesPath = dir
 	ReloadClips()
 	t.Cleanup(func() {
-		fileutil.ExecutablePath = prev
+		fileutil.ResourcesPath = prev
 		ReloadClips()
 	})
 	if err := os.MkdirAll(filepath.Join(dir, SoundsDirName), 0o755); err != nil {

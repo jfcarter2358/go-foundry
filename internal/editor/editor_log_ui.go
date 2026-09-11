@@ -291,12 +291,7 @@ func drawLogEntry(e script.LogEntry) {
 		col = levelColors[script.LogInfo]
 	}
 
-	height := rowLineHeight()
-	if e.HasPos() {
-		height = rowFrameHeight()
-	}
-
-	logRowSel.row(strconv.FormatUint(e.Seq, 10), logEntryCopyText(e), height, func() {
+	logRowSel.row(strconv.FormatUint(e.Seq, 10), logEntryCopyText(e), logEntryHeight(e), func() {
 		// Timestamp in seconds since start: an absolute clock is no use for
 		// reading what happened in the last two seconds, which is what this
 		// window is for.
@@ -327,6 +322,24 @@ func drawLogEntry(e script.LogEntry) {
 
 		editorTextColored(col, e.Text)
 	})
+}
+
+// logEntryHeight is how tall drawLogEntry's row has to be.
+//
+// Measured rather than assumed to be one line: an entry can carry newlines — a
+// shader's source dumped on a failed compile, a script logging a multi-line
+// value — and a row sized for its first line has the next row drawn over the
+// rest. The list does not wrap, so the newlines are the only thing that makes a
+// row taller.
+//
+// Beside a position button the message sits a frame's padding lower, to share
+// the button's baseline, so the text needs that much more than its own height.
+func logEntryHeight(e script.LogEntry) float32 {
+	text := imgui.CalcTextSize(e.Text, false, -1).Y
+	if e.HasPos() {
+		return max(rowFrameHeight(), imgui.CurrentStyle().FramePadding().Y+text)
+	}
+	return max(rowLineHeight(), text)
 }
 
 // logEntryCopyText renders one entry for the clipboard.

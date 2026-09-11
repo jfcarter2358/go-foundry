@@ -111,16 +111,25 @@ const (
 	scatterMaxTexDim       = 2048
 )
 
-// scatterDropMargin is how far above and below a volume the height bake looks
-// for ground, in world units.
+// scatterDropMargin is how far below a volume the height bake looks for ground,
+// in world units, because a volume floated a little clear of the ground it
+// means is the ordinary authoring mistake, and refusing to find a floor two
+// metres down would make the feature look broken rather than make the placement
+// look wrong.
 //
-// Above, because a volume is usually placed to ENCLOSE the vegetation rather
-// than to sit exactly on the floor, and a ray starting at its own top would
-// miss ground that pokes up inside it. Below, because a volume floated a little
-// clear of the ground it means is the ordinary authoring mistake, and refusing
-// to find a floor two metres down would make the feature look broken rather
-// than make the placement look wrong.
+// Below only. The column used to start this far ABOVE the volume too, which
+// meant any walkable surface up to 8 units over the region — the floor of an
+// entity parked or hovering above it — was the highest surface and won, so
+// grass grew outside the volume the author drew. See scatterColumn.
 const scatterDropMargin = float32(8)
+
+// scatterColumn is the downward ray the height bake casts for volume v: from
+// the volume's own top, reaching scatterDropMargin past its bottom. Both in the
+// volume's own frame, like the footprint.
+func scatterColumn(v *world.Volume) (topY, drop float32) {
+	half := v.HalfExtents()
+	return v.Position.Y() + half.Y(), 2*half.Y() + scatterDropMargin
+}
 
 // rockMesh is a cached rock template VAO for a given equatorial side count.
 type rockMesh struct {
@@ -147,8 +156,8 @@ type scatterHeightKey struct {
 	pos, half, rot   mgl32.Vec3
 	shape            world.VolumeShape
 	minSlope, maxSlp float32
-	// geom is a fingerprint of the level's own geometry, so that editing the
-	// floor under a volume re-bakes it. See scatterGeometryFingerprint.
+	// geom is a fingerprint of the geometry the bake can see, so that editing
+	// the floor under a volume re-bakes it. See scatterGeometryFingerprint.
 	geom uint64
 }
 
@@ -377,8 +386,8 @@ func scatterFootprint(v *world.Volume) (mgl32.Vec2, mgl32.Vec2) {
 		mgl32.Vec2{v.Position.X() + h.X(), v.Position.Z() + h.Z()}
 }
 
-// scatterGeometryFingerprint is a cheap summary of the level's brush geometry,
-// so that editing the floor under a scatter volume re-bakes its height texture.
+// scatterGeometryFingerprint is a cheap summary of the brush geometry volume v's
+// height bake can see, so that editing the floor under it re-bakes its texture.
 //
 // It is a count-and-bounds hash rather than a real content hash: walking every
 // vertex of every brush once a frame would cost more than the bake it is trying
@@ -387,16 +396,41 @@ func scatterFootprint(v *world.Volume) (mgl32.Vec2, mgl32.Vec2) {
 // not catch is an edit that leaves a chunk's bounds and brush count exactly as
 // they were; the editor calls EvictScatterCache on an explicit rebuild, which is
 // the backstop.
-func scatterGeometryFingerprint(lvl *world.Level) uint64 {
+//
+// Placement bounds, not world bounds: the bake tests a chunk in the space it is
+// placed in (biome.SurfaceUnder), so a ship flying about changes nothing any
+// volume's texture depends on — and hashing where it is in the world would
+// re-bake every scatter volume in the level on every frame it moved.
+//
+// Per volume, and only over the chunks the bake could hit — by the same two
+// rejects SurfaceUnder applies: placed in v's own frame, with bounds reaching
+// v's column. A key that moves for geometry the bake never reads re-bakes for
+// nothing, and a bake is thousands of ray casts (~60 ms for a 35x50 field). A
+// ship shrinking away over a grass field was exactly that: its scale reaches its
+// chunk's PlacementBounds through FrameScale, so a whole-level hash moved every
+// tick and the field re-baked every frame until the ship was gone. A chunk
+// crossing into or out of the column still changes the hash, on the frame it
+// crosses, because that is the edit that changes the ground.
+func scatterGeometryFingerprint(lvl *world.Level, v *world.Volume) uint64 {
 	h := uint64(14695981039346656037)
 	mix := func(x uint64) { h ^= x; h *= 1099511628211 }
+	frame := world.FrameID(v.Frame())
+	fpMin, fpMax := scatterFootprint(v)
+	_, _, size := scatterHeightTexDims(fpMin, fpMax) // the bake samples [min, min+size]
+	fpMax = fpMin.Add(size)
+	topY, drop := scatterColumn(v)
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
-		if !ch.IsEnabled() {
+		if !ch.IsEnabled() || world.FrameID(ch.FrameOwner) != frame {
 			continue
 		}
+		lo, hi := ch.PlacementBounds()
+		if hi.X() < fpMin.X() || lo.X() > fpMax.X() || hi.Z() < fpMin.Y() || lo.Z() > fpMax.Y() ||
+			hi.Y() < topY-drop || lo.Y() > topY {
+			continue
+		}
+		mix(uint64(ci))
 		mix(uint64(len(ch.Brushes)))
-		lo, hi := ch.WorldBounds()
 		for _, f := range []float32{lo.X(), lo.Y(), lo.Z(), hi.X(), hi.Y(), hi.Z()} {
 			mix(uint64(math.Float32bits(f)))
 		}
@@ -432,15 +466,11 @@ func (sr *scatterRenderer) ensureScatterHeight(lvl *world.Level, v *world.Volume
 	min, max := scatterFootprint(v)
 	w, h, size := scatterHeightTexDims(min, max)
 
-	// The column starts above the volume and reaches below it — see
-	// scatterDropMargin. Both in the volume's own frame, like the footprint.
-	half := v.HalfExtents()
-	topY := v.Position.Y() + half.Y() + scatterDropMargin
-	drop := 2*half.Y() + 2*scatterDropMargin
+	topY, drop := scatterColumn(v)
 
 	// The ray is cast in the volume's frame, so a volume riding a ship finds
-	// that ship's own decks. SurfaceUnder walks every chunk, and a frame-owned
-	// chunk's geometry is expressed in exactly this frame.
+	// that ship's own decks — and a world-space one never finds a ship's.
+	// SurfaceUnder only walks chunks placed in the frame it is given.
 	data := make([]float32, w*h*2)
 	for ty := 0; ty < h; ty++ {
 		tv := float32(ty) / float32(h-1)
@@ -448,7 +478,7 @@ func (sr *scatterRenderer) ensureScatterHeight(lvl *world.Level, v *world.Volume
 		for tx := 0; tx < w; tx++ {
 			tu := float32(tx) / float32(w-1)
 			wx := min.X() + tu*size.X()
-			s := biome.SurfaceUnder(lvl, wx, topY, wz, drop)
+			s := biome.SurfaceUnder(lvl, v.Frame(), wx, topY, wz, drop)
 			i := (ty*w + tx) * 2
 			if !s.Found {
 				data[i], data[i+1] = topY, 0
@@ -492,8 +522,8 @@ func scatterLattice(rng, baseSpacing float32, cap int32) (gridN int32, spacing f
 // its own bounds clipped to the camera ring, since the scatter exists only
 // within rng of the camera however large the volume is. Used to cull whole
 // volumes out of a shadow cascade.
-func scatterBounds(v *world.Volume, camPos mgl32.Vec3, rng float32) (mgl32.Vec3, mgl32.Vec3) {
-	lo, hi, ok := v.WorldAABB()
+func scatterBounds(lvl *world.Level, v *world.Volume, camPos mgl32.Vec3, rng float32) (mgl32.Vec3, mgl32.Vec3) {
+	lo, hi, ok := v.WorldAABB(lvl)
 	if !ok {
 		return mgl32.Vec3{1, 1, 1}, mgl32.Vec3{} // empty: min > max
 	}
@@ -562,6 +592,13 @@ func forEachScatterVolume(level *world.Level, camPos mgl32.Vec3, castOnly bool, 
 		if s == nil || !s.Enabled || !v.Enabled || !v.HasBounds() || s.Density <= 0 {
 			continue
 		}
+		// Scatter grows on the ground of the space its volume belongs to — the
+		// world's, or a frame's decks. A volume riding an entity belongs to
+		// neither, and baking it would plant grass on whatever world geometry
+		// sits under the entity's local coordinates.
+		if v.Attach.Entity != "" {
+			continue
+		}
 		if castOnly && !BiomeShadows.CastsKind(s.Kind) {
 			continue
 		}
@@ -579,7 +616,7 @@ func forEachScatterVolume(level *world.Level, camPos mgl32.Vec3, castOnly bool, 
 			// a jitter-extended instance near the true edge is culled out of a
 			// frustum that never expected it to reach that far.
 			rng += world.ResolvedBoundaryJitter(s)
-			bmin, bmax := scatterBounds(v, camPos, rng)
+			bmin, bmax := scatterBounds(level, v, camPos, rng)
 			if bmin.X() > bmax.X() || bmin.Z() > bmax.Z() {
 				continue // the volume lies entirely outside the camera ring
 			}
@@ -602,7 +639,6 @@ func RenderScatterVolumes(level *world.Level, projView mgl32.Mat4, camPos mgl32.
 		return
 	}
 	timeSec := BiomeWindTime
-	geomFP := scatterGeometryFingerprint(level)
 
 	p := &scatters.color
 	started := false
@@ -619,6 +655,7 @@ func RenderScatterVolumes(level *world.Level, projView mgl32.Mat4, camPos mgl32.
 			started = true
 		}
 		uploadScatterFrame(p, &frameM, level, v, camPos)
+		geomFP := scatterGeometryFingerprint(level, v)
 		for tier := 0; tier < world.ScatterLODTierCount(v.Scatter.Kind); tier++ {
 			renderScatterVolume(level, v, p, tier, false, 0, geomFP)
 		}
@@ -642,7 +679,6 @@ func RenderScatterDirShadow(level *world.Level, lsm mgl32.Mat4, cascade int, cas
 	if cascade >= BiomeShadows.CastCascades {
 		return
 	}
-	geomFP := scatterGeometryFingerprint(level)
 
 	p := &scatters.shadow
 	started := false
@@ -659,6 +695,7 @@ func RenderScatterDirShadow(level *world.Level, lsm mgl32.Mat4, cascade int, cas
 			started = true
 		}
 		uploadScatterFrame(p, &frameM, level, v, camPos)
+		geomFP := scatterGeometryFingerprint(level, v)
 		for tier := 0; tier < castTiersFor(v.Scatter); tier++ {
 			renderScatterVolume(level, v, p, tier, true, cascadeSplit, geomFP)
 		}
@@ -677,7 +714,6 @@ func RenderScatterCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.
 	if !scatters.initialized || level == nil || !BiomeShadows.AnyCast() {
 		return
 	}
-	geomFP := scatterGeometryFingerprint(level)
 
 	p := &scatters.cube
 	started := false
@@ -696,6 +732,7 @@ func RenderScatterCubeShadow(level *world.Level, lsm mgl32.Mat4, lightPos mgl32.
 			started = true
 		}
 		uploadScatterFrame(p, &frameM, level, v, camPos)
+		geomFP := scatterGeometryFingerprint(level, v)
 		for tier := 0; tier < castTiersFor(v.Scatter); tier++ {
 			renderScatterVolume(level, v, p, tier, true, farPlane, geomFP)
 		}
@@ -749,7 +786,7 @@ func beginScatterPass(p *progUniforms, camPos mgl32.Vec3, timeSec float32) {
 // (Volume.Frame), and so does the height texture baked for it, so the shader's
 // whole placement runs in that frame and `model` carries the result back out.
 func uploadScatterFrame(p *progUniforms, current *mgl32.Mat4, lvl *world.Level, v *world.Volume, camPos mgl32.Vec3) {
-	f := lvl.Frames.Frame(v.Frame)
+	f := lvl.Frames.Frame(v.Frame())
 	m := mgl32.Ident4()
 	local := camPos
 	if !f.IsWorld() {

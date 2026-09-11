@@ -99,26 +99,26 @@ func TestPickVolumeRayTSkipsVolumeAroundTheCamera(t *testing.T) {
 	dir := mgl32.Vec3{0, 0, -1}
 
 	ahead := world.NewVolume("ahead", mgl32.Vec3{0, 0, -5})
-	if got := pickVolumeRayT(origin, dir, &ahead); math.Abs(float64(got-4)) > nearMiss {
+	if got := pickVolumeRayT(nil, origin, dir, &ahead); math.Abs(float64(got-4)) > nearMiss {
 		t.Fatalf("volume ahead: got %v, want ~4", got)
 	}
 
 	around := world.NewVolume("around", mgl32.Vec3{0, 0, 0})
 	around.HalfX, around.HalfY, around.HalfZ = 50, 50, 50
-	if got := pickVolumeRayT(origin, dir, &around); got != float32(math.MaxFloat32) {
+	if got := pickVolumeRayT(nil, origin, dir, &around); got != float32(math.MaxFloat32) {
 		t.Fatalf("volume around the camera: got %v, want a miss", got)
 	}
 
 	// A disabled volume is still clickable — a script that disarmed a trigger
 	// must not make it unselectable.
 	ahead.Enabled = false
-	if got := pickVolumeRayT(origin, dir, &ahead); math.Abs(float64(got-4)) > nearMiss {
+	if got := pickVolumeRayT(nil, origin, dir, &ahead); math.Abs(float64(got-4)) > nearMiss {
 		t.Fatalf("disabled volume: got %v, want ~4", got)
 	}
 
 	// No extents authored: nothing to aim at.
 	ahead.HalfX = 0
-	if got := pickVolumeRayT(origin, dir, &ahead); got != float32(math.MaxFloat32) {
+	if got := pickVolumeRayT(nil, origin, dir, &ahead); got != float32(math.MaxFloat32) {
 		t.Fatalf("unbounded volume: got %v, want a miss", got)
 	}
 }

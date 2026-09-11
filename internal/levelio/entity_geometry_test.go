@@ -45,10 +45,10 @@ func withInstallRoot(t *testing.T) string {
 	t.Helper()
 	testenv.WithoutGeometryUploads(t)
 
-	prev := fileutil.ExecutablePath
+	prev := fileutil.ResourcesPath
 	root := t.TempDir()
-	fileutil.ExecutablePath = root
-	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+	fileutil.ResourcesPath = root
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
 
 	if err := os.MkdirAll(filepath.Join(root, ChunksDirName), 0o755); err != nil {
 		t.Fatalf("mkdir chunks: %v", err)

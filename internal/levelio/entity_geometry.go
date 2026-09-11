@@ -41,7 +41,7 @@ import (
 	"strings"
 )
 
-// ChunksDirName is the directory under the install root holding standalone
+// ChunksDirName is the directory under resources/ holding standalone
 // chunk files, and chunkFileExt the extension they carry.
 //
 // Chunk files are still a thing a level can import geometry from and export
@@ -53,7 +53,7 @@ const (
 )
 
 // ChunksDir is that directory's absolute path.
-func ChunksDir() string { return filepath.Join(fileutil.ExecutablePath, ChunksDirName) }
+func ChunksDir() string { return filepath.Join(fileutil.ResourcesPath, ChunksDirName) }
 
 // ChunkFilePath resolves a chunk name — with or without its extension — to a
 // path under chunks/.
@@ -170,7 +170,7 @@ func EnsureChunkTextures(texNeeded map[string]bool) error {
 		if !ok {
 			return fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 		}
-		if err := gfx.LoadTexture(name, filepath.Join(fileutil.ExecutablePath, path)); err != nil {
+		if err := gfx.LoadTexture(name, filepath.Join(fileutil.ResourcesPath, path)); err != nil {
 			return err
 		}
 	}

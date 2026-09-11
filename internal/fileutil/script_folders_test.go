@@ -10,13 +10,13 @@ import (
 // disk, so they are exercised against a scratch resources tree rather than the
 // real one.
 
-// withTempScripts points ExecutablePath at a scratch directory with an empty
+// withTempScripts points ResourcesPath at a scratch directory with an empty
 // scripts folder in it, and restores it afterwards.
 func withTempScripts(t *testing.T) string {
 	t.Helper()
-	prev := ExecutablePath
-	t.Cleanup(func() { ExecutablePath = prev })
-	ExecutablePath = t.TempDir()
+	prev := ResourcesPath
+	t.Cleanup(func() { ResourcesPath = prev })
+	ResourcesPath = t.TempDir()
 	root := ScriptsDir()
 	if err := os.MkdirAll(root, 0755); err != nil {
 		t.Fatalf("make scripts dir: %v", err)
@@ -87,7 +87,7 @@ func TestMakeScriptDirRefusesToEscape(t *testing.T) {
 			t.Errorf("MakeScriptDir(%q) was allowed", name)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(ExecutablePath, "outside")); err == nil {
+	if _, err := os.Stat(filepath.Join(ResourcesPath, "outside")); err == nil {
 		t.Error("a folder was created outside the scripts folder")
 	}
 }
@@ -193,7 +193,7 @@ func TestDeleteScriptFileAcceptsPrefixedNames(t *testing.T) {
 // folder with it.
 func TestDeleteScriptFileRefusesWhatIsNotAScript(t *testing.T) {
 	root := withTempScripts(t)
-	outside := filepath.Join(ExecutablePath, "keep.flang")
+	outside := filepath.Join(ResourcesPath, "keep.flang")
 	if err := os.WriteFile(outside, []byte("-- keep\n"), 0644); err != nil {
 		t.Fatalf("write the file outside: %v", err)
 	}
@@ -211,5 +211,55 @@ func TestDeleteScriptFileRefusesWhatIsNotAScript(t *testing.T) {
 	}
 	if info, err := os.Stat(filepath.Join(root, "doors")); err != nil || !info.IsDir() {
 		t.Errorf("the folder was deleted: %v", err)
+	}
+}
+
+// A folder goes with everything under it — scripts, sub-folders, and anything
+// else that happened to be in there — and leaves its neighbours alone.
+func TestDeleteScriptDir(t *testing.T) {
+	root := withTempScripts(t)
+	writeScriptFile(t, "doors/lift.flang", "-- lift\n")
+	writeScriptFile(t, "doors/inner/latch.flang", "-- latch\n")
+	writeScriptFile(t, "doorstop/keep.flang", "-- keep\n")
+	if err := MakeScriptDir("doors/empty"); err != nil {
+		t.Fatalf("MakeScriptDir: %v", err)
+	}
+
+	if err := DeleteScriptDir("scripts/doors"); err != nil {
+		t.Fatalf("DeleteScriptDir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "doors")); err == nil {
+		t.Error("the folder is still there")
+	}
+	// A folder whose name merely starts the same way is not inside it.
+	if _, err := os.Stat(ScriptPath("doorstop/keep.flang")); err != nil {
+		t.Errorf("the folder beside it went too: %v", err)
+	}
+}
+
+// Recursive is the dangerous half, so what it will not touch is checked as
+// carefully as what it will: nothing outside the scripts folder, never the
+// scripts folder itself, and never a script mistaken for a folder.
+func TestDeleteScriptDirRefusesWhatIsNotAFolder(t *testing.T) {
+	root := withTempScripts(t)
+	outside := filepath.Join(ResourcesPath, "keep")
+	if err := os.MkdirAll(outside, 0755); err != nil {
+		t.Fatalf("make the folder outside: %v", err)
+	}
+	writeScriptFile(t, "a.flang", "-- a\n")
+
+	for _, name := range []string{"../keep", "", "/", "scripts", "scripts/", "a.flang", "missing"} {
+		if err := DeleteScriptDir(name); err == nil {
+			t.Errorf("DeleteScriptDir(%q) was allowed", name)
+		}
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("a folder outside the scripts folder was deleted: %v", err)
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Errorf("the scripts folder itself was deleted: %v", err)
+	}
+	if _, err := os.Stat(ScriptPath("a.flang")); err != nil {
+		t.Errorf("a script was deleted as though it were a folder: %v", err)
 	}
 }

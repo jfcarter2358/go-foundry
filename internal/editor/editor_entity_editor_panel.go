@@ -160,6 +160,14 @@ func entityEditorToolbar() {
 			"view toggle, not the emitter's own switch.")
 	}
 	imgui.SameLine()
+	imgui.Checkbox("Volumes##entshowv", &entityShowVolumes)
+	imgui.SameLine()
+	imgui.Checkbox("Paths##entshowwp", &entityShowWaypoints)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Draw the type's waypoint animations, and let a click on\n" +
+			"one of their arrows select that point.")
+	}
+	imgui.SameLine()
 	imgui.Checkbox("Wire##entwire", &entityWireOverlay)
 	imgui.SameLine()
 	imgui.Checkbox("Play [P]##entplay", &entityPlayAnims)
@@ -270,6 +278,10 @@ func entityEditorOutline() {
 		entityOutlineBrushes()
 		imgui.Separator()
 		entityOutlineEmitters()
+		imgui.Separator()
+		entityOutlineVolumes()
+		imgui.Separator()
+		entityOutlineWaypoints()
 		imgui.Separator()
 		entityOutlineSeats()
 	})
@@ -587,6 +599,16 @@ func entityPanelSelection() {
 		if entitySel.Idx < len(entityDef.Emitters) {
 			editorPropGroupOpen("Emitter: "+entityDef.Emitters[entitySel.Idx].Name+"##entsele",
 				func() { entityPanelEmitter(entitySel.Idx) })
+		}
+	case entitySelVolume:
+		if entitySel.Idx < len(entityDef.Volumes) {
+			editorPropGroupOpen("Volume: "+entityDef.Volumes[entitySel.Idx].Name+"##entselv",
+				func() { entityPanelVolume(entitySel.Idx) })
+		}
+	case entitySelWaypoints:
+		if entitySel.Idx < len(entityDef.WaypointAnimations) {
+			editorPropGroupOpen("Path: "+entityDef.WaypointAnimations[entitySel.Idx].ID+"##entselwp",
+				func() { entityPanelWaypoints(entitySel.Idx) })
 		}
 	case entitySelSeat:
 		if entityDef.Vehicle != nil && entitySel.Idx < len(entityDef.Vehicle.Seats) {
@@ -987,42 +1009,10 @@ func entityPanelEmitterEffect(idx int, m *world.EntityEmitter) {
 }
 
 // entityPanelEmitterSocket draws the model-and-bone picker: which of the type's
-// meshes the effect rides, if any.
-//
-// The bone list comes from the preview, which is the only place the .fmdl has
-// actually been read — the same seam the animation clip list uses. A model with
-// no rig therefore offers nothing, which is the honest answer.
+// meshes the effect rides, if any. The picker itself is shared with carried
+// volumes — see entityPanelSocket.
 func entityPanelEmitterSocket(m *world.EntityEmitter) {
-	models := entityEmitterModelNames()
-	if len(models) == 0 {
-		editorTextMutedWrapped("Hangs off the type's origin. Add a model with a rig to hang it off a bone instead.")
-		return
-	}
-	if entityNameCombo("Model##entemodel", &m.Model, models, "(the entity itself)") {
-		EntityDefPushUndo()
-		if m.Model == "" {
-			// A bone is meaningless without the attachment it belongs to, and
-			// one left behind would silently do nothing.
-			m.Bone = ""
-		}
-		entityMarkDirty()
-	}
-	if m.Model == "" {
-		return
-	}
-	bones := entityEmitterBoneNames(m.Model)
-	if len(bones) == 0 {
-		editorTextMutedWrapped("That attachment has no bones — either it is not rigged, or its mesh has not loaded.")
-		return
-	}
-	if entityNameCombo("Bone##entebone", &m.Bone, bones, "(the attachment's origin)") {
-		EntityDefPushUndo()
-		entityMarkDirty()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("The effect rides this bone's posed placement, so a flame\n" +
-			"in a hand follows the hand. Its Offset is then local to\nthe bone.")
-	}
+	entityPanelSocket(&m.Model, &m.Bone, "e", "The effect")
 }
 
 // entityNameCombo picks one name out of a list, with an explicit empty choice at

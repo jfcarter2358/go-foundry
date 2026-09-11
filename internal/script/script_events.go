@@ -39,11 +39,21 @@ type scriptEventState struct {
 	spawned map[flang.RefVal]bool
 	// timers are pending `after(...)` messages.
 	timers []scriptTimer
-	// elapsed is play time in seconds, which is what `time()` returns.
+	// elapsed is play time in seconds, which is what `time()` returns. It
+	// stands still while a script has the game paused.
 	elapsed float64
+	// stackElapsed is the screen stack's clock, which a pause does not stop.
+	// A timer addressed to a screen or a widget counts against it: a menu's
+	// own `after` has to come due under the pause the menu is sitting over.
+	stackElapsed float64
 	// interactHeld tracks the interact key, so `:interact:` fires on the press
 	// rather than every frame the key is down.
 	interactHeld bool
+	// paused is `@level.prop.paused`. Kept here rather than on the runtime so
+	// that ScriptEventsReset lifts it — a level load, entering or leaving play
+	// — since a pause outliving the menu that set it would leave nothing on
+	// screen able to lift it. See script_pause.go.
+	paused bool
 }
 
 type scriptTimer struct {
@@ -52,6 +62,9 @@ type scriptTimer struct {
 	atom string
 	args []flang.Value
 	pos  flang.Pos
+	// onStack says the timer counts against stackElapsed rather than play
+	// time, because it is addressed to a screen or a widget.
+	onStack bool
 }
 
 // A timer is always a script send — `after` can only be called from a handler —
@@ -74,10 +87,21 @@ func ScriptEventsReset() {
 }
 
 // ScriptEventsTick derives and posts one frame's events.
+//
+// While a script has the game paused only the screen stack's half runs — see
+// script_pause.go. The stack's clock advances either way; play time does not.
 func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
+	scriptEvents.stackElapsed += float64(dt)
+	if scriptEvents.paused {
+		postPausedEvents(rt, dt)
+		return
+	}
 	scriptEvents.elapsed += float64(dt)
 
-	postSpawnEvents(rt, lvl)
+	// Walked once for both uses: nothing between the two is delivered, so the
+	// set of scripted objects cannot change in between.
+	refs := scriptedRefs(rt, lvl)
+	postSpawnEvents(rt, refs)
 	postOverlapEvents(rt, lvl)
 	postCollideEvents(rt)
 	postAnimEvents(rt)
@@ -86,7 +110,7 @@ func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	postInteractEvent(rt, lvl)
 	postUIEvents(rt)
 	postTimerEvents(rt)
-	postTickEvents(rt, lvl, dt)
+	postTickEvents(rt, refs, dt)
 }
 
 // postWaypointEvents fires `:waypoint:` as an object reaches each point of the
@@ -230,9 +254,11 @@ func scriptedUIRefs() []flang.RefVal {
 	return out
 }
 
-// postSpawnEvents fires `:spawn:` once per scripted object.
-func postSpawnEvents(rt *ScriptRuntime, lvl *world.Level) {
-	for _, r := range scriptedRefs(rt, lvl) {
+// postSpawnEvents fires `:spawn:` once per scripted object in refs. An object
+// left out — a level object while the game is paused — has not been spawned,
+// and hears it on the first tick it is included.
+func postSpawnEvents(rt *ScriptRuntime, refs []flang.RefVal) {
+	for _, r := range refs {
 		if scriptEvents.spawned[r] {
 			continue
 		}
@@ -241,9 +267,10 @@ func postSpawnEvents(rt *ScriptRuntime, lvl *world.Level) {
 	}
 }
 
-// postTickEvents fires `:tick:` on every scripted object, with the frame time.
-func postTickEvents(rt *ScriptRuntime, lvl *world.Level, dt float32) {
-	for _, r := range scriptedRefs(rt, lvl) {
+// postTickEvents fires `:tick:` on every scripted object in refs, with the
+// frame time.
+func postTickEvents(rt *ScriptRuntime, refs []flang.RefVal, dt float32) {
+	for _, r := range refs {
 		_ = rt.post(r, "tick", []flang.Value{flang.FloatVal(dt)}, flang.Pos{})
 	}
 }
@@ -304,6 +331,11 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 		// world.Volume.LoadLevel — it is why a container can be worth walking
 		// even when nothing is listening for its `:enter:`.
 		loadLevel string
+		// carrier is the entity a volume rides, which it does not report as
+		// entering it. A guard's sight cone is centred on the guard; telling its
+		// script "the guard came into view" the moment the level starts, and on
+		// every frame the guard walks, is noise nobody wants a handler for.
+		carrier string
 	}
 	var containers []container
 
@@ -314,15 +346,16 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 		}
 		vv := v
 		// A volume is level-scoped, but not necessarily world-space: one riding
-		// a vehicle (a doorway, a trigger in a hold) describes its region in
-		// that vehicle's coordinates, so the world-space point is carried in.
-		// ContainsWorldPoint is the no-op it always was for a volume with no
-		// frame, which is nearly all of them.
+		// a vehicle (a doorway, a trigger in a hold) or an entity (a sight cone)
+		// describes its region in the carrier's coordinates, so the world-space
+		// point is carried in. ContainsWorldPoint is the no-op it always was for
+		// a volume that rides nothing, which is nearly all of them.
 		containers = append(containers, container{
 			ref:       flang.RefVal{Kind: flang.RefVolume, A: v.ID},
 			test:      func(p mgl32.Vec3) bool { return vv.ContainsWorldPoint(lvl, p) },
 			scripted:  v.Script != "",
 			loadLevel: v.LoadLevel,
+			carrier:   v.Attach.Entity,
 		})
 	}
 	for i := range lvl.Entities {
@@ -345,7 +378,7 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 
 	for _, c := range containers {
 		for _, m := range moverList {
-			if m == c.ref {
+			if m == c.ref || (c.carrier != "" && m.Kind == flang.RefEntity && m.A == c.carrier) {
 				continue
 			}
 			p, ok := moverPosition(lvl, m)
@@ -501,7 +534,7 @@ func postInteractEvent(rt *ScriptRuntime, lvl *world.Level) {
 	}
 	for _, v := range world.VolumesContaining(lvl, p) {
 		if v.Script != "" {
-			consider(flang.RefVal{Kind: flang.RefVolume, A: v.ID}, v.Position)
+			consider(flang.RefVal{Kind: flang.RefVolume, A: v.ID}, v.WorldPosition(lvl))
 		}
 	}
 	for _, e := range world.EntitiesContaining(lvl, p) {
@@ -521,7 +554,7 @@ func postTimerEvents(rt *ScriptRuntime) {
 	}
 	kept := scriptEvents.timers[:0]
 	for _, t := range scriptEvents.timers {
-		if scriptEvents.elapsed >= t.due {
+		if timerClock(t.onStack) >= t.due {
 			_ = rt.postFrom(t.to, t.atom, t.args, t.pos, timerIsScriptSend)
 			continue
 		}
@@ -530,16 +563,32 @@ func postTimerEvents(rt *ScriptRuntime) {
 	scriptEvents.timers = kept
 }
 
-// scriptAddTimer queues a delayed message. Timers are play-time based, so
-// pausing the game pauses them, and they do not survive a level reload.
+// scriptAddTimer queues a delayed message. Timers are play-time based, so a
+// script's pause holds them, and they do not survive a level reload.
+//
+// The exception is a timer addressed to a screen or a widget, which counts on
+// the stack's clock instead: the pause does not stop the stack, and a menu's
+// own `after` has to come due under the pause the menu is sitting over. Chosen
+// by where the message is going rather than who set it, because the receiver's
+// clock is the one that is or is not running when it arrives.
 func scriptAddTimer(delayMS float64, to flang.RefVal, atom string, args []flang.Value, pos flang.Pos) {
+	onStack := to.Kind == flang.RefScreen || to.Kind == flang.RefWidget
 	scriptEvents.timers = append(scriptEvents.timers, scriptTimer{
-		due:  scriptEvents.elapsed + delayMS/1000.0,
-		to:   to,
-		atom: atom,
-		args: args,
-		pos:  pos,
+		due:     timerClock(onStack) + delayMS/1000.0,
+		to:      to,
+		atom:    atom,
+		args:    args,
+		pos:     pos,
+		onStack: onStack,
 	})
+}
+
+// timerClock is the clock a timer counts against.
+func timerClock(onStack bool) float64 {
+	if onStack {
+		return scriptEvents.stackElapsed
+	}
+	return scriptEvents.elapsed
 }
 
 // scriptElapsed is play time in seconds, which is what `time()` returns.

@@ -130,7 +130,7 @@ whose threshold is not where the geometry ends.
 ### Frame doorways, authored
 
 A doorway between a moving thing and the world is a **volume with a doorway**.
-Place a volume, set **Rides** to the vehicle under Transform, tick **This volume
+Place a volume, set **Frame** to the vehicle under Transform, tick **This volume
 is a way in and out** under Frame Doorway, and leave **Opens onto** at `world`
 for the ground.
 

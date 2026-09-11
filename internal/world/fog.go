@@ -243,7 +243,7 @@ func FogToRaw(f *Fog) *RawFog {
 // ---------- GPU ----------
 
 // UploadFog sends the fog uniforms to the main world shader.
-func UploadFog(f *Fog, vols []Volume) { UploadFogTo(gfx.Program, f, vols) }
+func UploadFog(f *Fog, vols []Volume, lvl *Level) { UploadFogTo(gfx.Program, f, vols, lvl) }
 
 // UploadFogTo sends them to prog, and leaves prog bound.
 //
@@ -259,7 +259,10 @@ func UploadFog(f *Fog, vols []Volume) { UploadFogTo(gfx.Program, f, vols) }
 // "unchanged" state to skip. A nil or switched-off fog is uploaded as mode 0
 // rather than skipped: the program may be holding last level's fog, and a
 // shader-side early-out is what makes that cost nothing.
-func UploadFogTo(prog uint32, f *Fog, vols []Volume) {
+//
+// lvl resolves what each volume rides (Volume.Attach), so a fog bank bolted to
+// a ship moves with it; nil reads them all as world-space.
+func UploadFogTo(prog uint32, f *Fog, vols []Volume, lvl *Level) {
 	if prog == 0 {
 		// No program, so nowhere to upload to — a headless test, where a GL
 		// call with no context current segfaults in the driver rather than
@@ -272,7 +275,7 @@ func UploadFogTo(prog uint32, f *Fog, vols []Volume) {
 	// distance-based, so a level whose distance fog is off or absent can still
 	// be full of fog banks. The early-out below is about the distance term
 	// alone.
-	UploadFogVolumesTo(prog, vols)
+	UploadFogVolumesTo(prog, vols, lvl)
 
 	mode := f.EffectiveMode()
 	gl.Uniform1i(ProgUniformLoc(prog, "fogMode\x00"), int32(mode))

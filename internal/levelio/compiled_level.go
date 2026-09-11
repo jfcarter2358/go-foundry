@@ -56,6 +56,18 @@ package levelio
 // already on disk. The version stamp is for the changes that do — a field
 // removed, or a meaning changed — where loading the old bytes into the new
 // structs would succeed and be wrong.
+//
+// # Why the authored half is YAML inside the gob
+//
+// gob does not send a field holding its zero value, and it flattens a pointer
+// into what it points at — so a pointer to 0 or false is not sent either, and
+// decodes as nil. The runtime values have no such fields. The authored form is
+// full of them, and on purpose: a RawSprite's Alpha is a *float32 exactly so
+// that `alpha: 0` and "no alpha, meaning 1" stay distinct, and gob collapses
+// the two. So Raw goes to disk as the YAML a level file is written as — the
+// encoding every one of those pointers was designed around — and comes back
+// through the same yaml.Unmarshal the level loader uses. compiledFile is the
+// shape that is actually encoded.
 
 import (
 	"bytes"
@@ -64,6 +76,7 @@ import (
 	"os"
 
 	"github.com/go-gl/mathgl/mgl32"
+	"gopkg.in/yaml.v2"
 
 	"foundry/internal/bsp"
 	"foundry/internal/compile"
@@ -77,7 +90,10 @@ const CompiledExt = ".fbsp"
 
 // CompiledVersion is bumped whenever old bytes would load into the current
 // structs without complaining and mean something different.
-const CompiledVersion = 2
+//
+// 3: the authored half is stored as YAML. A version-2 file decodes with that
+// half missing entirely, rather than failing.
+const CompiledVersion = 3
 
 // compiledMagic is the first thing in the file, so that a truncated or
 // unrelated file is rejected as such rather than as a gob decode failure
@@ -173,11 +189,36 @@ func storableChunks(lvl *world.Level) []world.Chunk {
 	return out
 }
 
+// compiledFile is a CompiledLevel as it is encoded: the same fields, with the
+// authored half as YAML. See the file comment on why.
+type compiledFile struct {
+	Version int
+	Faces   []compile.Face
+	Tree    *bsp.Tree
+	PVS     *bsp.PVS
+	Chunks  []world.Chunk
+	RawYAML []byte
+	Stats   compile.Stats
+}
+
 // SaveCompiledLevel writes a compiled level to path.
 func SaveCompiledLevel(c *CompiledLevel, path string) error {
+	rawYAML, err := yaml.Marshal(c.Raw)
+	if err != nil {
+		return fmt.Errorf("encoding compiled level's authored half: %w", err)
+	}
+	f := compiledFile{
+		Version: c.Version,
+		Faces:   c.Faces,
+		Tree:    c.Tree,
+		PVS:     c.PVS,
+		Chunks:  c.Chunks,
+		RawYAML: rawYAML,
+		Stats:   c.Stats,
+	}
 	var buf bytes.Buffer
 	buf.WriteString(compiledMagic)
-	if err := gob.NewEncoder(&buf).Encode(c); err != nil {
+	if err := gob.NewEncoder(&buf).Encode(&f); err != nil {
 		return fmt.Errorf("encoding compiled level: %w", err)
 	}
 	return fileutil.WriteFileAtomic(path, buf.Bytes())
@@ -192,13 +233,24 @@ func ReadCompiledLevel(path string) (*CompiledLevel, error) {
 	if len(data) < len(compiledMagic) || string(data[:len(compiledMagic)]) != compiledMagic {
 		return nil, fmt.Errorf("%s is not a compiled level", path)
 	}
-	var c CompiledLevel
-	if err := gob.NewDecoder(bytes.NewReader(data[len(compiledMagic):])).Decode(&c); err != nil {
+	var f compiledFile
+	if err := gob.NewDecoder(bytes.NewReader(data[len(compiledMagic):])).Decode(&f); err != nil {
 		return nil, fmt.Errorf("decoding compiled level: %w", err)
 	}
-	if c.Version != CompiledVersion {
+	if f.Version != CompiledVersion {
 		return nil, fmt.Errorf("%s was compiled by version %d of the compiler; this build wants %d — recompile the level",
-			path, c.Version, CompiledVersion)
+			path, f.Version, CompiledVersion)
+	}
+	c := CompiledLevel{
+		Version: f.Version,
+		Faces:   f.Faces,
+		Tree:    f.Tree,
+		PVS:     f.PVS,
+		Chunks:  f.Chunks,
+		Stats:   f.Stats,
+	}
+	if err := yaml.Unmarshal(f.RawYAML, &c.Raw); err != nil {
+		return nil, fmt.Errorf("decoding compiled level's authored half: %w", err)
 	}
 	return &c, nil
 }

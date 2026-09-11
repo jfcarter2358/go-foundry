@@ -42,9 +42,9 @@ func repoRoot(t *testing.T) string {
 // copied next to the executable at build time.
 func withShippedAssets(t *testing.T) {
 	t.Helper()
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(repoRoot(t), "resources")
-	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(repoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
 }
 
 func TestShippedScreensLoad(t *testing.T) {

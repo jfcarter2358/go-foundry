@@ -20,25 +20,35 @@ make test-release         # the test suite, in the release configuration
 
 ## 1. `game.yaml` — what makes it a game
 
-A release build reads one file, `game.yaml`, from beside its executable. It is
-the entire difference between "the engine" and "this particular game".
+A release build reads one file, `game.yaml`, from the `resources/` directory
+beside its executable. It is the entire difference between "the engine" and
+"this particular game".
 
 ```yaml
 title: My Game            # required — window caption, installer, data directory
 version: 1.0.0            # appended to the window caption
 data_dir: MyGame          # optional — overrides the data directory's name
 start_level: intro        # required — a level *name*, resolved under levels/
-start_screen: main_menu   # optional — a UI screen put up over it at boot
 window:
   width: 1280
   height: 720
   fullscreen: false
 ```
 
-A missing or malformed manifest is fatal in a release build, with the reason in
-the log: there is no editor to open a level from and no blank level worth
-showing, so a broken manifest means a broken install and the useful thing to do
-is say which file and why. A development build ignores the manifest entirely.
+On start, in either build (but not in `foundry build-release`), any of the
+content directories `entities`, `fonts`, `levels`, `models`, `particles`,
+`scripts`, `shaders`, `sounds`, `textures`, `ui` and `video` missing under
+`resources/` is created empty, and a missing `resources/game.yaml` is written
+with defaults: `title: Untitled Game`, `version: 0.1.0`, `start_level: untitled`
+— the name the editor saves a new, unnamed level under. Failing to create them,
+in a read-only install directory say, is a warning in the log rather than a
+failure.
+
+A manifest that still cannot be loaded — malformed, or missing because it could
+not be written — is fatal in a release build, with the reason in the log: there
+is no editor to open a level from and no blank level worth showing, so a broken
+manifest means a broken install and the useful thing to do is say which file
+and why. A development build ignores the manifest entirely.
 
 `data_dir` is worth setting when the title contains punctuation, or when it may
 change between releases — renaming the title should not silently orphan
@@ -49,10 +59,12 @@ Parsed by `internal/game`; the release boot that acts on it is
 
 ## 2. Where a shipped game writes
 
-Nowhere near itself. Every *asset* path resolves against the executable's
-directory (`fileutil.ExecutablePath`), which is why an install is just a binary
-with the content beside it. Every *write* goes through `fileutil.StatePath`,
-which in a release build points at:
+Nowhere near itself. Every *asset* path resolves against
+`fileutil.ResourcesPath` — the `resources/` directory beside the executable
+(`fileutil.ExecutablePath`) — which is why an install is just a binary with its
+content in a folder beside it. A stored install-relative path, such as an
+entity's `models/crate.fmdl`, is relative to `resources/`. Every *write* goes
+through `fileutil.StatePath`, which in a release build points at:
 
 | Platform | Directory |
 |---|---|
@@ -64,13 +76,15 @@ Today that is `foundry.log` and `audio.yaml`; saves belong there too when they
 exist. This is what lets the game be installed into `Program Files` or `/opt`
 and still be played by a user who cannot write there.
 
-Reads go through `fileutil.ReadState`, which falls back to a copy beside the
-executable — so a project can *ship* an `audio.yaml` to launch at a chosen mix,
-and the player's own copy takes over the first time they move a slider.
+Reads go through `fileutil.ReadState`, which falls back to a shipped copy in
+`resources/` — so a project can *ship* an `audio.yaml` to launch at a chosen mix
+by putting it at `resources/audio.yaml`, and the player's own copy takes over
+the first time they move a slider.
 
 In a development build `UserDataRoot` is empty and both of these resolve beside
-the executable, exactly as they always did. The editor's save-next-to-the-exe
-workflow is untouched.
+the executable, exactly as they always did: the editor's own state (`imgui.ini`,
+`foundry.log`, `release.yaml`, `audio.yaml`) sits next to the binary and next to
+`resources/`, not inside it.
 
 ## 3. The editor seam
 
@@ -112,13 +126,38 @@ Keep them in the same order so they can be read side by side.
 `internal/render/debug.go` — the counters behind that overlay — is *not*
 tagged. They cost almost nothing and a crash report is better with them in it.
 
-## 4. Packing — `cmd/foundrypack`
+## 4. Packing — `internal/pack`
 
 Stages a built binary and the content it can reach into an install tree.
+`cmd/foundrypack` is its command line; the editor's Release window runs it
+through `internal/release` (section 5).
 
 ```
 go run ./cmd/foundrypack -goos linux -exe build/foundry-release -out build/install-linux -prune
 ```
+
+`-src` is the content directory (default `resources`), and `-manifest` defaults
+to the `game.yaml` in it. The install tree it stages has the same shape as a
+project:
+
+```
+install-linux/
+  my-game                  the executable, named after title:
+  SDL2.dll                 (Windows) platform runtime libraries
+  .foundrypack             the stamp, below
+  install.sh
+  resources/
+    game.yaml
+    levels/  textures/  scripts/  ...
+```
+
+Everything from the content directory lands under `resources/`: the content
+directories, and any loose file at the top of it — `game.yaml`, a shipped
+`audio.yaml`, a LICENSE. Platform runtime libraries are the exception. They are
+taken from the top of the content directory and also from the directory holding
+it, which is where a project keeps `SDL2.dll` beside its Windows editor, and
+they always land beside the executable, because that is where the OS loader
+looks for them.
 
 Two modes:
 
@@ -142,8 +181,8 @@ loaders, wrong the first time a field is added.
 
 So it builds an index of every name any asset could be referred to by, scans
 each reachable file for tokens, and follows the ones that hit the index —
-transitively, to a fixpoint. Roots are the manifest's start level and start
-screen, plus four the engine names from Go and a walk would never see:
+transitively, to a fixpoint. Roots are the manifest's start level, plus four
+the engine names from Go and a walk would never see:
 `ui/theme.fth`, `ui/loading.fui`, `ui/pause.fui`, and `textures/default.png`.
 
 That is a conservative approximation in the safe direction. A level with the
@@ -166,7 +205,131 @@ executable name, data directory — in a form a shell script can source. The
 three installers downstream read it rather than each re-deriving those facts
 from the manifest with their own half-copy of the rules.
 
-## 5. Installers
+### What a pack refuses
+
+It empties its output directory first, so it refuses one that would take
+something with it: a filesystem root, the home directory, a repository (anything
+with a `.git`), the content directory being packed or any directory above it,
+and anything inside a directory that is itself packed. An existing directory is
+only emptied when it looks like an install tree: it has a `.foundrypack` stamp,
+a `resources/game.yaml`, or — for a tree packed before content moved under
+`resources/` — a top-level `game.yaml`. A project directory has a
+`resources/game.yaml` in it too, so without the rule about directories above
+the content, pointing the output at the project would have emptied it.
+
+It also leaves out what a development build writes beside itself, should any of
+it be in the content directory: `imgui.ini`, `foundry.log`, `release.yaml`,
+every `*.bak`, and any loose file that is a native program (ELF, PE or Mach-O by
+magic number) — the editor's own binary above all. In a project those sit beside
+the executable, outside `resources/`, so normally there is nothing there to
+leave out.
+
+## 5. From the editor — `internal/release`
+
+The toolbar's **Release** button builds a release of the project the editor is
+running from: `fileutil.ExecutablePath`, the directory holding the `resources/`
+(`fileutil.ResourcesPath`) it already reads and saves every asset in. So a game
+can live in a repository of its own, with the editor binary beside its
+`resources/`, and be built with no Foundry checkout in sight. The engine's own
+repository root is a project in the same sense: `go build ./cmd/foundry` there
+gives an editor that runs against the repository's `resources/`. The designer's
+view of it is in `docs/guide/20-shipping.md`.
+
+`release.Build` is the pipeline: compile every level (`release.CompileLevels`,
+shared with `cmd/foundrycompile`), get a game binary per platform, `pack.Pack`,
+then `pack.TarGz` (with `install.sh`, embedded from `packaging/`) or `pack.Zip`,
+and optionally `pack.Deb` / `pack.NSIS` using the embedded scripts. Everything
+checkable without compiling — the manifest, the output directory, whether a game
+binary exists — is checked before compiling.
+
+`foundry build-release -root` is the project directory, the one holding
+`resources/`, and `-out` is relative to it. An output directory over the project
+itself, or inside one of the content directories under its `resources/`, is
+refused.
+
+### It runs in a child process
+
+The dev binary doubles as the builder: `foundry build-release [flags]`, handled
+by `devRunCommand` at the very top of `app.Run`, before the log file is opened
+(which would truncate the running editor's log) and before any window. The
+Release window starts that as a child (`release.StartJob`) and draws its output.
+Not a goroutine, because compiling loads levels through the engine's loader,
+which fills the registries the editor is drawing from; because a crashing build
+should not take unsaved work with it; and because Cancel has to stop a `go build`
+two processes down (a process group on Unix, `taskkill /T` on Windows).
+
+Output lines starting `==> `, `WARNING: `, `artifact: ` and `FAILED: ` are the
+protocol between the two: the window colours by them and lists artifacts from
+them. `devRunCommand` is a stub in the release build, so a shipped game has no
+tool modes.
+
+### Where the game binary comes from
+
+- **`runtimes/` in the project**, named `foundry-release-<goos>-<goarch>[.exe]`,
+  beside `foundry-setup-windows-amd64.exe`, the Windows installer program
+  (section 6).
+  `make runtimes RUNTIMES_DIR=...` builds them; `make linux` and `make windows`
+  build their own platform's. The normal case: a Windows editor has no C
+  cross-compiler, and a game repository has no source.
+- **A Foundry checkout**, built with `go build -tags release` — when `source:`
+  names one, or when the project directory is one or is inside one (the
+  repository root itself, or `dist/`, which is what the Makefile does anyway).
+
+Either way `release.CheckPlayer` reads the binary's embedded build info and
+refuses anything not built with `-tags release` or built for the wrong GOOS or
+GOARCH: a development build would boot as the game and ship the editor. It
+warns when the binary's `vcs.revision` differs from the editor's — a warning
+rather than a refusal, because the game refuses a `.fbsp` whose
+`CompiledVersion` differs, and most commits do not change it.
+
+### `release.yaml`
+
+The window's settings, in the project directory beside the executable (not in
+`resources/` with `game.yaml`), written on every Build:
+
+```yaml
+platforms: [linux, windows]
+output: build          # relative to the project
+prune: true
+allow_leaks: false
+source: ../foundry     # optional
+```
+
+`foundry build-release` reads it for every flag not given, so a terminal build
+does what the window last did.
+
+## 6. Installers
+
+### Windows, from the editor — `cmd/foundrysetup`
+
+The Release window and `foundry build-release` do not use NSIS. makensis is
+almost never installed on the Windows machine an editor runs on, and a release
+with no installer in it is not one a player can install. Every Windows build
+makes `<game>-<version>-setup.exe` with Foundry's own installer instead:
+
+- `cmd/foundrysetup` is a small pure-Go Windows program: message boxes, the
+  registry and the known folders through the standard library's syscalls, and
+  shortcuts through the Windows Script Host by way of PowerShell. Pure Go, so it
+  cross-compiles with no mingw. `make runtime-windows` puts it in `runtimes/`,
+  or it is built from source like the game binary.
+- A Setup.exe is that program with a zip of the install tree and a 32-byte
+  trailer appended (`internal/setup`). Making one is concatenation, done in Go,
+  so any host builds it.
+- The same program with nothing appended is the uninstaller. Setup writes one
+  into the tree as `uninstall.exe`, which re-runs itself from `%TEMP%` so that it
+  can delete its own folder.
+
+It installs exactly as the NSIS script below does — the same folder, the same
+`HKCU\Software\<name>` and Uninstall keys, the same Start Menu folder and
+optional desktop shortcut, the same stamp-guarded whole-tree replacement on an
+upgrade, the same running-game check, and saves kept unless the player asks —
+so either installer upgrades and removes what the other put there.
+`Setup.exe -silent [-desktop]` and `uninstall.exe -silent [-delete-saves]` (or
+NSIS's `/S`) ask nothing, and exit 2 when the game is running.
+
+It is not code-signed, so SmartScreen warns the first time it is run. Signing is
+not a drop-in step yet: a signature is appended to the end of the file, which is
+where the installer looks for its payload.
 
 ### Windows — `packaging/windows/installer.nsi`
 
@@ -215,9 +378,9 @@ a stock abort/retry/ignore box half way through the copy.
 Both replace an existing install wholesale rather than merging, so an asset
 renamed between releases cannot linger and keep being found.
 
-## 6. Checklist for a real release
+## 7. Checklist for a real release
 
-1. `game.yaml` names the real `start_level` and `start_screen`.
+1. `resources/game.yaml` names the real `start_level`.
 2. `make release-check` — the editor is out.
 3. `make test-release` — the suite passes in the release configuration.
 4. `make release-linux` / `make release-windows`; read the prune counts and

@@ -63,6 +63,9 @@ func editorExplorerWaypointNodes(lvl *world.Level) {
 		imgui.PushID(fmt.Sprintf("wpa%d", ai))
 
 		label := fmt.Sprintf("%s  (%d points)", a.ID, len(a.Points))
+		if waypointCarried(a) {
+			label += "  (carried by " + a.FromEntity + ")"
+		}
 		if editorWaypointPreviewing(a.ID) {
 			label += "  (previewing)"
 		}
@@ -152,8 +155,18 @@ func editorWaypointPropertiesSection() {
 	}
 	editorFocusScroll(panelFocusWaypoint)
 
+	// A path an entity carries is shown and previewed here, but its fields are
+	// the type's and are written in the entity's space: greyed out, with the way
+	// to where they can be edited. The point list and the preview stay live.
+	carried := waypointCarried(a)
+	if carried {
+		editorWaypointCarriedNote(a)
+	}
+	imguibackend.EditorPushDisabled(carried)
 	editorPropGroupOpen("Animation##wpagrp", func() { editorWaypointAnimationIdentity(a) })
+	imguibackend.EditorPopDisabled()
 	editorPropGroupOpen("Points##wpptsgrp", func() { editorWaypointPointList(a) })
+	imguibackend.EditorPushDisabled(carried)
 	if p := activeWaypoint(); p != nil {
 		idx := Editor.ActiveWaypointIdx
 		// The label's number follows the selection; the ## id does not, so
@@ -161,10 +174,35 @@ func editorWaypointPropertiesSection() {
 		editorPropGroupOpen(fmt.Sprintf("Point %d##wpptgrp", idx+1), func() { editorWaypointPointFields(a, idx, p) })
 		editorPropGroupOpen(fmt.Sprintf("Point %d Events##wpevgrp", idx+1), func() { editorWaypointEventsUI(p) })
 	}
+	imguibackend.EditorPopDisabled()
 	editorPropGroupOpen("Preview##wpprevgrp", func() { editorWaypointPreviewUI(a) })
+	if carried {
+		return
+	}
 	// Last, because both of these change what `a` points at, and nothing
 	// after them in the frame reads it.
 	editorPropGroup("Actions##wpaactgrp", 0, func() { editorWaypointAnimationActions() })
+}
+
+// editorWaypointCarriedNote says whose a path is and opens that type in the
+// entity editor, which is where its points are edited.
+func editorWaypointCarriedNote(a *world.WaypointAnimation) {
+	typeName := ""
+	if e := world.FindEntity(Editor.level, a.FromEntity); e != nil {
+		typeName = e.Type
+	}
+	if typeName == "" {
+		editorTextMutedWrapped("Carried by entity " + a.FromEntity + ", in its own space. Its points move with it and are not edited here.")
+		return
+	}
+	editorTextMutedWrapped("Carried by entity " + a.FromEntity + ": part of type " + typeName +
+		", written in the entity's own space. It moves with the entity, and every placement of the type has its own copy.")
+	if imgui.Button("Edit Type##wpaedittype") {
+		OpenEntityEditorOn(typeName)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Open " + typeName + " in the entity editor, where its paths are edited.\nSaving it re-stamps every placement in this level.")
+	}
 }
 
 // editorWaypointAnimationIdentity draws the ID, what the animation adds up to,
@@ -374,13 +412,15 @@ func removeWaypointEvent(p *world.Waypoint, i int) {
 // measured for the object chosen to preview on — from where that object was
 // authored, which is where the preview (and play) start it.
 func waypointLegSummary(a *world.WaypointAnimation, idx int) string {
+	lvl := Editor.level
 	to := a.Points[idx]
+	to.Position = waypointWorldPosition(lvl, a, to.Position)
 	from, fromT := mgl32.Vec3{}, float32(0)
 	lead := "Leg"
 	if idx > 0 {
-		from, fromT = a.Points[idx-1].Position, a.Points[idx-1].Time
+		from, fromT = waypointWorldPosition(lvl, a, a.Points[idx-1].Position), a.Points[idx-1].Time
 	} else {
-		pose, f := waypointPreviewRestPose(Editor.level)
+		pose, f := waypointPreviewRestPose(lvl)
 		if f == nil || !world.WaypointTakesPosition(f) {
 			return fmt.Sprintf("Leg: %.2f s from wherever the object is when it is sent.", to.Time)
 		}
@@ -476,11 +516,15 @@ func editorWaypointPreviewTargetCombo(label string) {
 // preview one on it, or start a new one from where it is. Drawn in the panel of
 // every kind a path can carry; nothing for one a script could not send either.
 //
-// Only in the level editor. The entity editor shares the brush panel, and its
-// scratch level has no waypoint animations to offer.
+// The entity editor shares the brush panel, and there the paths on offer are the
+// type's own (entityObjectWaypointsUI).
 func editorObjectWaypointsUI(f world.WaypointFollower) {
 	lvl := Editor.level
 	t := waypointTargetOf(f)
+	if entityGeomLevel != nil && ws().level == entityGeomLevel {
+		entityObjectWaypointsUI(t)
+		return
+	}
 	if lvl == nil || ws().level != lvl || t.follower(lvl) == nil {
 		return
 	}

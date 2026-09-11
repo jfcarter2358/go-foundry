@@ -689,8 +689,8 @@
 - [ ] Volumes are brushes instead of boxes only
 - [ ] Game saves
 - [ ] Decal support
-- [ ] move_to (move to a position in a given amount of time)
-- [ ] move_delta (move an offset in a given amount of time)
+- [x] move_to (move to a position in a given amount of time)
 - [x] Unwrap brush texture
 - [x] Waypoint animations
-- [ ] Cannot select sprites/waypoints/etc. as refs in script dropdown
+- [x] Cannot select sprites/waypoints/etc. as refs in script dropdown
+- [ ] Popout help menu

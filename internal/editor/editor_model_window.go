@@ -699,6 +699,14 @@ func modelEditorHandleKey(t sdl.KeyboardEvent) {
 		// Outside pose mode, where I inserts a keyframe — which is why the
 		// pose keys are asked first (see above).
 		modelInsetSelectedFaces()
+	case sdl.SCANCODE_J:
+		modelJoinSelectedFaces()
+	case sdl.SCANCODE_M:
+		// Shift puts the point on the first one picked rather than halfway
+		// between them all — the one merge that keeps a corner where it is.
+		modelMergeSelectedPoints(mods&sdl.KMOD_SHIFT != 0)
+	case sdl.SCANCODE_X:
+		modelDissolveSelectedPoints()
 	case sdl.SCANCODE_DELETE:
 		switch {
 		case modelSelection.Mode == modelSelBone:

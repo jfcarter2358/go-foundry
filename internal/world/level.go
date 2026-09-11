@@ -16,6 +16,11 @@ package world
 type Level struct {
 	Chunks []Chunk
 	Spawn  *SpawnPoint
+	// Seal is the box the level compiler treats as the inside of the level
+	// (seal.go). Every loaded level has one; nil only for a level built in
+	// memory, which the compiler then seals the old way — with its own walls,
+	// or not at all.
+	Seal *Seal
 	// Scripts are the level's own .flang handlers — see RawLevel.Scripts.
 	Scripts []string
 	// UI are the .fui screens this level puts up when play starts — see

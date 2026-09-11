@@ -6,7 +6,7 @@ package game
 // A development build boots into the 3D editor on a blank level, because that
 // is what an engine with no project loaded should do. An installed build has
 // no editor to boot into and no author to pick a level, so something in the
-// install directory has to say which level starts, what the window is called
+// install's resources/ has to say which level starts, what the window is called
 // and where the player's settings go. That is this file.
 //
 // It is read by both builds and acted on by the release one (see
@@ -27,7 +27,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// FileName is the manifest's name in the install directory.
+// FileName is the manifest's name in the resources directory.
 const FileName = "game.yaml"
 
 // Window is the manifest's window block: what the game opens as.
@@ -56,10 +56,6 @@ type Manifest struct {
 	// there is nothing else for a release build to do.
 	StartLevel string `yaml:"start_level"`
 
-	// StartScreen is a UI screen put up over that level at boot: a main menu,
-	// typically. Optional; empty starts straight in gameplay.
-	StartScreen string `yaml:"start_screen,omitempty"`
-
 	Window Window `yaml:"window,omitempty"`
 }
 
@@ -73,8 +69,14 @@ func Default() Manifest {
 	return Manifest{Version: "0.0.0"}
 }
 
-// Path is the manifest's location in the install directory.
-func Path() string { return filepath.Join(fileutil.ExecutablePath, FileName) }
+// Path is the manifest's location in the running engine's resources directory.
+func Path() string { return filepath.Join(fileutil.ResourcesPath, FileName) }
+
+// ProjectPath is the manifest's location in the project at root: the directory
+// an editor runs from, which holds resources/ rather than being it.
+func ProjectPath(root string) string {
+	return filepath.Join(fileutil.ResourcesDir(root), FileName)
+}
 
 // Load reads and validates a manifest.
 func Load(path string) (Manifest, error) {
@@ -107,7 +109,6 @@ func (m *Manifest) normalize() {
 	m.Version = strings.TrimSpace(m.Version)
 	m.DataDir = strings.TrimSpace(m.DataDir)
 	m.StartLevel = strings.TrimSpace(m.StartLevel)
-	m.StartScreen = strings.TrimSpace(m.StartScreen)
 }
 
 // Validate reports what would make this manifest unusable at boot.

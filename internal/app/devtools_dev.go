@@ -18,8 +18,10 @@ package app
 
 import (
 	"foundry/internal/editor"
+	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
+	"foundry/internal/release"
 	"foundry/internal/render"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
@@ -45,6 +47,18 @@ func devWireframe() bool {
 	return editor.Editor.Active && editor.Editor.Mode == editor.Mode3D && editor.Editor.Wireframe
 }
 
+// devRunCommand runs one of the development binary's command-line tools in
+// place of the engine, and reports whether args named one. There is one:
+// `build-release`, which builds a release of the project this binary is running
+// from (internal/release) — headless, so the editor's Release window can run it
+// as a child process and a terminal can run it with no editor at all.
+func devRunCommand(args []string) (exitCode int, ran bool) {
+	if len(args) == 0 || args[0] != release.Command {
+		return 0, false
+	}
+	return release.Main(fileutil.ExecutablePath, args[1:]), true
+}
+
 // devInit stands the editor up on the level just loaded, and opens it: a
 // development build boots into the 3D view rather than into gameplay, because
 // a blank level has nothing to play.
@@ -63,12 +77,29 @@ func devInit(level *world.Level, levelPath, levelsDir string) {
 // the rest with it rather than leaving them on screen with no frame loop behind
 // them.
 func devShutdown() {
+	// A release build still running has nothing left to show its output to.
+	editor.CancelReleaseBuild()
 	uiwin.CloseAllUIWindows()
 	imguibackend.ImGuiShutdown()
 }
 
 // devToggle is the tilde key.
 func devToggle() { editor.EditorToggle() }
+
+// devInterceptQuit takes a script's quit_game away from the process and reports
+// that it did. In a development build gameplay is a play session over the
+// editor, so the game's Quit button ends the session — the same exit tilde
+// takes, snapshot restored — rather than closing the editor and every sub-editor
+// window with it. With the editor already open there is no session to end, and
+// the request is dropped rather than read as "quit the engine".
+//
+// The window's own close button is not a script's request and still quits.
+func devInterceptQuit() bool {
+	if !editor.Editor.Active {
+		editor.EditorToggle()
+	}
+	return true
+}
 
 // devTick runs the editor's camera and tools for this frame.
 func devTick(keyStates []uint8) { editor.EditorTick(keyStates) }

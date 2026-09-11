@@ -23,10 +23,10 @@ import (
 // it, restoring the real one afterwards.
 func withVideoDir(t *testing.T) string {
 	t.Helper()
-	old := fileutil.ExecutablePath
+	old := fileutil.ResourcesPath
 	root := t.TempDir()
-	fileutil.ExecutablePath = root
-	t.Cleanup(func() { fileutil.ExecutablePath = old })
+	fileutil.ResourcesPath = root
+	t.Cleanup(func() { fileutil.ResourcesPath = old })
 
 	dir := filepath.Join(root, VideoDirName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

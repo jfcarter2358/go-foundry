@@ -31,9 +31,9 @@ func TestSpriteShadersCompile(t *testing.T) {
 	// dropped inside internal/render (see HANDOFF.md's note). testenv.RepoRoot
 	// walks up to the go.mod instead, which is what it exists for and what lets
 	// this test pass from anywhere.
-	prevExe := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
-	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
+	prevExe := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prevExe })
 	t.Cleanup(DeleteSprites)
 
 	SpriteInit()

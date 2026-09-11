@@ -28,7 +28,7 @@ import (
 // first successful read.
 //
 // A failure is deliberately *not* cached. Caching one would mean a single early
-// call made before ExecutablePath is set — which is exactly what a test binary
+// call made before ResourcesPath is set — which is exactly what a test binary
 // does — permanently disables skinning for the rest of the process, and the
 // symptom would be three shaders failing to compile on a function they can no
 // longer see rather than the missing file that actually caused it.
@@ -43,7 +43,7 @@ func SkinCommonSource() (string, error) {
 	if skinShaderSrc != "" {
 		return skinShaderSrc, nil
 	}
-	path := filepath.Join(fileutil.ExecutablePath, "shaders", "skin_common.glsl")
+	path := filepath.Join(fileutil.ResourcesPath, "shaders", "skin_common.glsl")
 	src, err := ReadShaderFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read skinning shader: %w", err)

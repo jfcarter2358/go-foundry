@@ -91,7 +91,7 @@ type EntityModel struct {
 	// play an animation on this model rather than another, and what an instance
 	// names to override this attachment's transform. Unique per entity.
 	Name string
-	// Path is the model file, stored relative to the install root (see
+	// Path is the model file, stored relative to resources/ (see
 	// RelAssetPath). Both .fmdl and .obj are accepted.
 	Path string
 	// Texture overrides the model document's own texture. Empty keeps whatever

@@ -317,6 +317,12 @@ func (d *EntityDef) Clone() *EntityDef {
 	c.Attributes = d.Attributes.Clone()
 	c.Params = d.Params.Clone()
 	c.Brushes = CloneEntityBrushes(d.Brushes)
+	// The effect and volume lists too. A plain struct copy shares their backing
+	// arrays, so an undo snapshot of the effects would be the live list itself
+	// and dragging a plume would rewrite the state undo was meant to restore.
+	c.Emitters = CloneEntityEmitters(d.Emitters)
+	c.Volumes = CloneEntityVolumes(d.Volumes)
+	c.WaypointAnimations = CloneWaypointAnimations(d.WaypointAnimations)
 	c.Models = nil
 	for i := range d.Models {
 		c.Models = append(c.Models, d.Models[i].TemplateCopy())

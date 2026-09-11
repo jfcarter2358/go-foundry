@@ -207,9 +207,9 @@ var builtinDocs = []BuiltinDoc{
 	{GroupWorld, "stop_music", "stop_music()  ·  stop_music(fade)", "null",
 		"Fade the level's track out."},
 	{GroupWorld, "attach", "attach(obj, entity)  ·  attach(obj, entity, bone)  ·  attach(obj, entity, model, bone)  ·  attach(obj, frame)", "bool",
-		"Make a sprite or an emitter ride an entity, a bone of one of its models, or a named frame. Its `position` becomes an offset in that space; it is not moved to keep it where it was."},
+		"Make a sprite, an emitter or a volume ride an entity, a bone of one of its models, or a named frame. Its `position` becomes an offset in that space; it is not moved to keep it where it was."},
 	{GroupWorld, "detach", "detach(obj)", "bool",
-		"Put a sprite or an emitter back in world space, leaving it where it currently is. False if it was riding nothing."},
+		"Put a sprite, an emitter or a volume back in world space, leaving it where it currently is. False if it was riding nothing."},
 
 	{GroupWorld, "show_screen", "show_screen(name)", "ref",
 		"Put a .fui screen on the stack, or raise it if it is already up. Returns the screen."},
@@ -224,5 +224,5 @@ var builtinDocs = []BuiltinDoc{
 	{GroupWorld, "load_level", "load_level(name)", "bool",
 		"Ask for a level to be loaded, covered by the `loading` screen. It happens between frames, not at the call, because loading tears down the runtime running the script."},
 	{GroupWorld, "quit_game", "quit_game()", "bool",
-		"Ask for the game to end. Like load_level it happens between frames, not at the call: the window and the GL context belong to the main thread, and only the frame loop may end them."},
+		"Ask for the game to end. Like load_level it happens between frames, not at the call: the window and the GL context belong to the main thread, and only the frame loop may end them. In the editor's play mode it returns to the editor instead."},
 }

@@ -99,6 +99,9 @@ var entitySel entityEditorSelection
 type entityEditorSelection struct {
 	Kind entitySelKind
 	Idx  int
+	// Sub is the point inside a path (entitySelWaypoints), or -1 for the path
+	// selected whole. Unread by every other kind.
+	Sub int
 }
 
 type entitySelKind int
@@ -116,6 +119,13 @@ const (
 	// editor_entity_editor_emitters.go.
 	entitySelEmitter
 	entitySelSeat
+	// entitySelVolume is one of the type's carried regions. Idx indexes
+	// entityDef.Volumes — see editor_entity_editor_volumes.go.
+	entitySelVolume
+	// entitySelWaypoints is one of the type's paths, with Sub the point inside
+	// it. Idx indexes entityDef.WaypointAnimations — see
+	// editor_entity_editor_waypoints.go.
+	entitySelWaypoints
 )
 
 // entityStatus is the line under the toolbar.
@@ -129,6 +139,7 @@ var (
 	entityShowBrushes = true
 	entityShowSeats   = true
 	entityShowEffects = true
+	entityShowVolumes = true
 	entityPlayAnims   = true
 	entityBgColor     = [3]float32{0.13, 0.14, 0.16}
 	entityWireOverlay bool
@@ -452,8 +463,12 @@ func entityEditorHandleEvent(event sdl.Event) {
 			// handle falls through to the geometry, so picking a brush, a face,
 			// an edge or a corner works here the way it works in the 3D view.
 			if down {
-				if !entityGizmoMouseDown(t.X, t.Y) {
-					entityGeometryClick(t.X, t.Y, sdl.GetModState()&sdl.KMOD_CTRL != 0)
+				mod := sdl.GetModState()
+				ctrl, shift := mod&sdl.KMOD_CTRL != 0, mod&sdl.KMOD_SHIFT != 0
+				// A path's arrows before the geometry: they are drawn over the
+				// hull, and win a click the way they do in the 3D view.
+				if !entityGizmoMouseDown(t.X, t.Y) && !entityWaypointClick(t.X, t.Y, ctrl, shift) {
+					entityGeometryClick(t.X, t.Y, ctrl)
 				}
 			} else {
 				entityGizmoMouseUp()
@@ -720,6 +735,10 @@ func drawEntityEditorWindow() {
 	if entityPlayAnims {
 		entityEmitterPreviewTick(platform.DeltaTime)
 	}
+	// A path preview, after the re-seed above has brought the brushes back at
+	// rest if the document was replaced, and before anything draws them. Not
+	// under the Play toggle: a path preview has its own transport.
+	entityWaypointPreviewTick(platform.DeltaTime)
 
 	view := entityCam.view()
 	proj := entityCam.proj(w.W, w.H)
@@ -739,6 +758,9 @@ func drawEntityEditorWindow() {
 	if entityShowEffects {
 		drawEntityEmitterMarkers()
 	}
+	if entityShowVolumes {
+		drawEntityVolumeCages()
+	}
 	drawEntityGeometryOutline()
 	gizmo.GizmoFlush(projView)
 
@@ -753,6 +775,11 @@ func drawEntityEditorWindow() {
 
 	// What is selected, and the handles it can be grabbed by.
 	drawEntityGeometryOverlays(projView)
+	// The paths likewise: an arrow inside the hull it moves is still one to
+	// see and click, and its first point is usually inside the door.
+	if entityShowWaypoints {
+		drawEntityWaypointMarkers()
+	}
 
 	// The gizmo after that flush, with depth testing off: a handle inside the
 	// hull is still a handle you need to be able to see and grab, and picking
@@ -764,6 +791,7 @@ func drawEntityEditorWindow() {
 	entityEditorToolbar()
 	entityEditorOutline()
 	entityEditorPanel()
+	entityWaypointTimelineWindow()
 	entityEditorDialogs()
 	// After the panels, so the menu's rows are built from the state they are
 	// showing rather than from last frame's.

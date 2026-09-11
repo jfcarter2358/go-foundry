@@ -56,6 +56,21 @@ func Run() {
 		log.Fatalf("os.Executable: %v", err)
 	}
 	fileutil.ExecutablePath = filepath.Dir(executable)
+	// Every asset the engine reads — levels, textures, shaders, scripts,
+	// game.yaml — is under resources/, beside the executable.
+	fileutil.ResourcesPath = fileutil.ResourcesDir(fileutil.ExecutablePath)
+
+	// A development binary is also its project's release builder: `foundry
+	// build-release` builds and exits here, before anything opens a window or
+	// truncates the log of the editor that is probably the one running it (see
+	// internal/release/job.go).
+	if code, ran := devRunCommand(os.Args[1:]); ran {
+		os.Exit(code)
+	}
+
+	// Whatever resources/ is missing of its folders and its manifest. Ahead of
+	// startupConfigure, because a release build reads that manifest there.
+	scaffolded, scaffoldErr := scaffoldResources()
 
 	// What this binary is: the engine, or a particular game. A release build
 	// reads its manifest here — before the log is opened, because the manifest
@@ -81,7 +96,10 @@ func Run() {
 	log.SetFlags(log.Ltime | log.Lmsgprefix)
 	log.SetPrefix("[foundry] ")
 
-	// Anything startupConfigure could not report for want of a log.
+	// Anything scaffoldResources and startupConfigure could not report for want
+	// of a log — in that order, so a manifest that could not be written is
+	// explained before a release build gives up for want of it.
+	logScaffold(scaffolded, scaffoldErr)
 	startupVerify()
 
 	// Everything logged from here on is also readable in the log window, and a
@@ -89,7 +107,7 @@ func Run() {
 	// flags are set, because the tee has to strip exactly what they add.
 	script.InstallLogCapture(logSinks)
 
-	gfx.TextureNames = gfx.ScanTextures(filepath.Join(fileutil.ExecutablePath, "textures"))
+	gfx.TextureNames = gfx.ScanTextures(fileutil.TexturesDir())
 	log.Printf("scanned %d textures", len(gfx.TextureNames))
 
 	// Load (or, on a fresh checkout, create) the global 256-colour palette
@@ -110,6 +128,7 @@ func Run() {
 	}()
 
 	log.Printf("executable directory: %s", fileutil.ExecutablePath)
+	log.Printf("resources directory: %s", fileutil.ResourcesPath)
 
 	if err = sdl.Init(sdl.INIT_EVERYTHING); err != nil {
 		log.Fatalf("sdl.Init: %v", err)
@@ -198,8 +217,8 @@ func Run() {
 
 	// [SCENARIO 4] Check that shader files actually exist on disk before
 	// attempting to load them — catches stale/missing dist files immediately.
-	vShaderFull := filepath.Join(fileutil.ExecutablePath, gfx.VertexShaderPath)
-	fShaderFull := filepath.Join(fileutil.ExecutablePath, gfx.FragmentShaderPath)
+	vShaderFull := filepath.Join(fileutil.ResourcesPath, gfx.VertexShaderPath)
+	fShaderFull := filepath.Join(fileutil.ResourcesPath, gfx.FragmentShaderPath)
 	for _, p := range []string{vShaderFull, fShaderFull} {
 		if info, serr := os.Stat(p); serr != nil {
 			log.Printf("MISSING shader file: %s (%v)", p, serr)
@@ -218,10 +237,10 @@ func Run() {
 	gl.UseProgram(gfx.Program)
 
 	// Initialize shadow mapping pipeline (depth-only shaders + FBOs).
-	svShaderFull := filepath.Join(fileutil.ExecutablePath, shadowVertShaderPath)
-	sfShaderFull := filepath.Join(fileutil.ExecutablePath, shadowFragShaderPath)
-	scvShaderFull := filepath.Join(fileutil.ExecutablePath, shadowCubeVertPath)
-	scfShaderFull := filepath.Join(fileutil.ExecutablePath, shadowCubeFragPath)
+	svShaderFull := filepath.Join(fileutil.ResourcesPath, shadowVertShaderPath)
+	sfShaderFull := filepath.Join(fileutil.ResourcesPath, shadowFragShaderPath)
+	scvShaderFull := filepath.Join(fileutil.ResourcesPath, shadowCubeVertPath)
+	scfShaderFull := filepath.Join(fileutil.ResourcesPath, shadowCubeFragPath)
 	if err := render.InitShadows(svShaderFull, sfShaderFull, scvShaderFull, scfShaderFull); err != nil {
 		log.Fatalf("InitShadows: %v", err)
 	}
@@ -413,7 +432,10 @@ func Run() {
 		// load below is: quitting from inside a script would free the runtime
 		// executing the call. Ahead of everything else this frame, so a menu's
 		// Quit button does not also pay for a world tick and a draw.
-		if hooks.TakeQuitRequest() {
+		//
+		// A development build hands the request to the editor, which ends the
+		// play session instead of the process — see devInterceptQuit.
+		if hooks.TakeQuitRequest() && !devInterceptQuit() {
 			platform.Running = false
 			break
 		}
@@ -428,12 +450,18 @@ func Run() {
 		// A pausing screen freezes the player, the vehicles and the entities.
 		// It does not freeze scripts: the menu's own handlers have to run, and
 		// so does anything a script is animating behind it.
-		uiPaused := !devActive() && (ui.Game.Pauses() || levelLoadPending())
+		//
+		// A script writing `@level.prop.paused` freezes all of that, and the
+		// level's scripts and the entities' clips as well. The screen stack's
+		// scripts still run under it, since the menu that lifts the pause is
+		// made of them — see script_pause.go.
+		scriptPaused := !devActive() && script.GamePaused()
+		gamePaused := scriptPaused || !devActive() && (ui.Game.Pauses() || levelLoadPending())
 
 		if devActive() {
 			// Editor owns camera and input; gameplay logic is bypassed.
 			devTick(platform.KeyStates)
-		} else if !uiPaused {
+		} else if !gamePaused {
 			// --- Input -> player -> camera ---
 			// The keys say how far to move; the player is what moves, and the
 			// camera is placed on it afterwards. It used to run the other way
@@ -537,7 +565,15 @@ func Run() {
 		if world.PlayerEntity != nil {
 			world.PlayerEntity.Collision.OnGround = false
 		}
-		collision.EntityUpdate(&level, platform.DeltaTime, !devActive() && !uiPaused, world.PlayerEntity)
+		// A script's pause stops the clips as well. A pausing screen leaves them
+		// playing behind it, as it always has; under the hard pause a looping
+		// clip would otherwise bank an :anim_end: per cycle for the level's
+		// scripts to receive all at once when the pause lifts.
+		entityDT := platform.DeltaTime
+		if scriptPaused {
+			entityDT = 0
+		}
+		collision.EntityUpdate(&level, entityDT, !devActive() && !gamePaused, world.PlayerEntity)
 		if !devActive() && world.PlayerEntity != nil {
 			if world.PlayerEntity.Collision.OnGround {
 				platform.IsOnGround = true
@@ -567,7 +603,7 @@ func Run() {
 		//
 		// It also fixes up being shoved out of a solid entity by EntityUpdate,
 		// which is why that no longer needs a re-place of its own.
-		if !devActive() && !uiPaused {
+		if !devActive() && !gamePaused {
 			PlacePlayerCamera(&level)
 
 			// The rest of what a waypoint animation can carry — sprites,
@@ -593,7 +629,7 @@ func Run() {
 		// that froze the moment the editor opened could not be placed by eye. The
 		// gate is handed over anyway so the simulation can tell play from
 		// authoring if it ever needs to.
-		world.EmitterUpdate(&level, platform.DeltaTime, !devActive() && !uiPaused)
+		world.EmitterUpdate(&level, platform.DeltaTime, !devActive() && !gamePaused)
 
 		// The listener, published in the same slot and for the same reasons
 		// as the emitters above: after RefreshFrames, so anything riding a
@@ -615,13 +651,13 @@ func Run() {
 		// Advances a script's ease_sky the same way the lines above advance
 		// everything else time-based: RenderSky only ever reads lvl.Sky, so
 		// this is what makes the transition's blend actually move.
-		world.SkyUpdate(&level, platform.DeltaTime, !devActive() && !uiPaused)
+		world.SkyUpdate(&level, platform.DeltaTime, !devActive() && !gamePaused)
 
 		// The interact key's vehicle half, before the script tick so a mount
 		// made this frame is visible to it. It consumes the press only when it
 		// actually did something, so `E` still reaches a scripted door when
 		// there is no seat within reach.
-		if !devActive() {
+		if !devActive() && !gamePaused {
 			VehicleInteractRequest(&level)
 		}
 
@@ -707,7 +743,7 @@ func Run() {
 		// a ray from it, so there is no "unchanged" frame to skip either way.
 		// The other four programs that shade world geometry get theirs from
 		// their own per-frame lighting upload — see world.UploadFogTo.
-		world.UploadFog(level.Fog, level.Volumes)
+		world.UploadFog(level.Fog, level.Volumes, &level)
 
 		{
 			// Chunks a script switched on or off last tick get their geometry

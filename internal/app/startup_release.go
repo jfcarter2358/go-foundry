@@ -5,7 +5,7 @@ package app
 // startup_release.go — how a shipped game boots.
 //
 // The difference between the engine and a game is one file: game.yaml, in the
-// install directory, which names the level to open, what the window is called
+// install's resources/, which names the level to open, what the window is called
 // and where the player's settings belong. Everything here is reading it and
 // acting on it.
 //
@@ -85,8 +85,8 @@ func startupConfigure() {
 // which file and why.
 func startupVerify() {
 	if manifestErr != nil {
-		log.Fatalf("%v\n\nThis looks like a broken or incomplete installation: %s should sit beside the executable.",
-			manifestErr, game.FileName)
+		log.Fatalf("%v\n\nThis looks like a broken or incomplete installation: the game's manifest should be %s.",
+			manifestErr, game.Path())
 	}
 	log.Printf("game: %s (%s)", manifest.Title, manifest.Version)
 	log.Printf("user data directory: %s", fileutil.StateDir())
@@ -136,18 +136,12 @@ func startupEnterGame(level *world.Level) {
 	script.ScriptRuntimeLoad(level)
 	script.ScriptEventsReset()
 
-	// The level's own screens, then the manifest's start screen over them. The
-	// order is what makes a main menu sit on top of a HUD that is already up
-	// rather than behind it.
+	// The level's own screens. A main menu is one of them, listed on whichever
+	// level should open with it — not necessarily the first one.
 	ui.Game.Reset()
 	for _, name := range level.UI {
 		if _, err := ui.Game.Show(name); err != nil {
 			log.Printf("UI screen %q: %v", name, err)
-		}
-	}
-	if manifest.StartScreen != "" {
-		if _, err := ui.Game.Show(manifest.StartScreen); err != nil {
-			log.Printf("start screen %q: %v", manifest.StartScreen, err)
 		}
 	}
 

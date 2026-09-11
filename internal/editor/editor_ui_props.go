@@ -17,6 +17,7 @@ import (
 	"foundry/internal/ui"
 	"foundry/internal/uiwin"
 	"foundry/internal/video"
+	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -127,6 +128,26 @@ func uiScreenProperties() {
 
 		uiNodeIDCombo("Initial focus", &s.InitialFocus, true)
 	})
+
+	uiScriptingProperties(&s.ScriptData, "uiscreen", strconv.Quote(s.ID))
+}
+
+// ---------- scripting ----------
+
+// uiScriptingProperties is the tags / attributes / script group, for the screen
+// or a widget — the same keys a level object carries, so the same widgets.
+//
+// Those shared widgets push through EditorPushUndo, which here has to land on
+// this document's stack rather than the level's, and mark the document changed.
+// So the group draws inside withUndoRedirect, the way the entity editor's does.
+func uiScriptingProperties(d *world.ScriptData, idSuffix, owner string) {
+	withUndoRedirect(uiPushUndoEdited, func() { editorScriptDataUI(d, idSuffix, owner) })
+}
+
+// uiPushUndoEdited is that redirect: a snapshot, then the change mark.
+func uiPushUndoEdited() {
+	UIPushUndo()
+	uiEdited()
 }
 
 // ---------- a node ----------
@@ -190,6 +211,8 @@ func uiNodeProperties(n *ui.Node) {
 	if n.Kind == ui.KindInclude {
 		editorPropGroupOpen("Include", func() { uiIncludeProperties(n) })
 	}
+
+	uiScriptingProperties(&n.ScriptData, "uinode", strconv.Quote(n.ID))
 
 	editorPropGroupOpen("Actions", func() {
 		if imgui.Button("Duplicate##uidup") {

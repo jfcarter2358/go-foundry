@@ -25,7 +25,7 @@ import (
 // editorOpenImportChunk scans chunks/ and raises the import dialog. The Chunks
 // list's ↑ button calls it; the dialog itself is drawn by editorChunkPopups.
 func editorOpenImportChunk() {
-	files, _ := filepath.Glob(filepath.Join(fileutil.ExecutablePath, "chunks", "*.yaml"))
+	files, _ := filepath.Glob(filepath.Join(fileutil.ResourcesPath, "chunks", "*.yaml"))
 	Editor.ImportChunkFiles = nil
 	for _, f := range files {
 		Editor.ImportChunkFiles = append(Editor.ImportChunkFiles, filepath.Base(f))
@@ -262,7 +262,7 @@ func editorChunkPopups(lvl *world.Level) {
 		imgui.InputText("Filename", &Editor.SaveChunkName)
 		if imgui.Button("Save") && Editor.SaveChunkName != "" {
 			ch := &lvl.Chunks[Editor.ActiveChunkIdx]
-			path := filepath.Join(fileutil.ExecutablePath, "chunks", Editor.SaveChunkName+".yaml")
+			path := filepath.Join(fileutil.ResourcesPath, "chunks", Editor.SaveChunkName+".yaml")
 			if err := levelio.SaveChunk(ch, path); err != nil {
 				Editor.StatusMsg = fmt.Sprintf("Save chunk error: %v", err)
 			} else {
@@ -310,7 +310,7 @@ func editorChunkPopups(lvl *world.Level) {
 			}
 			if imgui.Button("Import") {
 				EditorPushUndo()
-				path := filepath.Join(fileutil.ExecutablePath, "chunks", Editor.ImportChunkFiles[Editor.ImportChunkIdx])
+				path := filepath.Join(fileutil.ResourcesPath, "chunks", Editor.ImportChunkFiles[Editor.ImportChunkIdx])
 				// Land the import where the camera is looking — the same
 				// "here" createChunkAtCamera uses — rather than at whatever
 				// Origin the source file happened to carry, which was authored

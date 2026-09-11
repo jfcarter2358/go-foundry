@@ -82,10 +82,10 @@ func TestGameplayKeepsItsInputWithNoMenuUp(t *testing.T) {
 // the shipped pause.fui, so a rename of the screen breaks it here rather than
 // in front of a player.
 func TestEscapeOpensAndClosesThePauseMenu(t *testing.T) {
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(repoRootDir(t), "resources")
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(repoRootDir(t), "resources")
 	t.Cleanup(func() {
-		fileutil.ExecutablePath = prev
+		fileutil.ResourcesPath = prev
 		ui.Game.Reset()
 		hooks.TakeUIEvents()
 	})

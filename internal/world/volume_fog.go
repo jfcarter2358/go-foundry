@@ -153,13 +153,31 @@ func (v *Volume) FogBasis() mgl32.Mat3 {
 	return m
 }
 
+// WorldFogBasis is FogBasis for a volume that may be riding something: the
+// carrier's own rotation and scale are undone first, so a fog bank bolted to a
+// ship turns and grows with it.
+//
+// A general inverse, unlike FogBasis's transpose, because a carrier may be
+// scaled. Its matrix is an entity's or a frame's, neither of which can reach a
+// zero scale (ClampBrushScale), so this is not the near-singular case the
+// comment above is wary of.
+func (v *Volume) WorldFogBasis(lvl *Level) mgl32.Mat3 {
+	if v.Attach.IsZero() {
+		return v.FogBasis()
+	}
+	return v.FogBasis().Mul3(v.Attach.Matrix(lvl).Mat3().Inv())
+}
+
 // UploadFogVolumesTo sends the fog volume uniforms to prog, which must already
 // be bound — it is called from UploadFogTo, immediately after that binds.
+//
+// lvl resolves what each volume rides. nil reads every volume as world-space,
+// which is what a probe handing in loose volumes wants.
 //
 // numFogVolumes is written even when there are none, for the reason UploadFogTo
 // writes mode 0: the program may still be holding the previous level's volumes,
 // and a zero count is what makes the shader's loop cost nothing.
-func UploadFogVolumesTo(prog uint32, vols []Volume) {
+func UploadFogVolumesTo(prog uint32, vols []Volume, lvl *Level) {
 	if prog == 0 {
 		return
 	}
@@ -171,13 +189,13 @@ func UploadFogVolumesTo(prog uint32, vols []Volume) {
 		// Each Sprintf result is kept in a named variable so the string's
 		// backing array stays alive for the duration of the gl call, the same
 		// way UploadLightsTo does it.
-		basis := v.FogBasis()
+		basis := v.WorldFogBasis(lvl)
 		basisName := fmt.Sprintf("fogVolBasis[%d]\x00", i)
 		gl.UniformMatrix3fv(ProgUniformLoc(prog, basisName), 1, false, &basis[0])
 
+		c := v.WorldPosition(lvl)
 		centerName := fmt.Sprintf("fogVolCenter[%d]\x00", i)
-		gl.Uniform3f(ProgUniformLoc(prog, centerName),
-			v.Position.X(), v.Position.Y(), v.Position.Z())
+		gl.Uniform3f(ProgUniformLoc(prog, centerName), c.X(), c.Y(), c.Z())
 
 		shapeName := fmt.Sprintf("fogVolShape[%d]\x00", i)
 		gl.Uniform1i(ProgUniformLoc(prog, shapeName), int32(v.Shape))

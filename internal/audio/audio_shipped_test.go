@@ -15,11 +15,11 @@ import (
 )
 
 func TestEveryShippedClipDecodes(t *testing.T) {
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join("..", "..", "resources")
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join("..", "..", "resources")
 	ReloadClips()
 	t.Cleanup(func() {
-		fileutil.ExecutablePath = prev
+		fileutil.ResourcesPath = prev
 		ReloadClips()
 	})
 

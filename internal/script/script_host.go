@@ -295,6 +295,17 @@ func (h *levelHost) Member(r flang.RefVal, name string) (flang.Value, bool) {
 				}
 			}
 			return flang.NewList(elems...), true
+		case "volumes":
+			// The regions the entity's type hung on it (world/entity_volume.go),
+			// resolved to the live level volumes for the reason emitters are.
+			elems := make([]flang.Value, 0, len(e.Volumes))
+			for i := range e.Volumes {
+				id := world.EntityVolumeID(r.A, e.Volumes[i].Name)
+				if c.volumeFor(flang.RefVal{Kind: flang.RefVolume, A: id}) != nil {
+					elems = append(elems, flang.RefVal{Kind: flang.RefVolume, A: id})
+				}
+			}
+			return flang.NewList(elems...), true
 		default:
 			// One of the entity's own brushes, addressed by the name it has in
 			// the *definition* — `@ship.hatch`, not `@ship.hatch` spelled out
@@ -314,6 +325,17 @@ func (h *levelHost) Member(r flang.RefVal, name string) (flang.Value, bool) {
 			emID := world.EntityEmitterID(r.A, name)
 			if c.emitterFor(flang.RefVal{Kind: flang.RefEmitter, A: emID}) != nil {
 				return flang.RefVal{Kind: flang.RefEmitter, A: emID}, true
+			}
+			// Or one of its volumes: `@guard.sight`.
+			volID := world.EntityVolumeID(r.A, name)
+			if c.volumeFor(flang.RefVal{Kind: flang.RefVolume, A: volID}) != nil {
+				return flang.RefVal{Kind: flang.RefVolume, A: volID}, true
+			}
+			// Or one of its paths: `@self.door_close`, the animation a type's
+			// script sends its own hatch along (world/entity_waypoints.go).
+			animID := world.EntityWaypointAnimationID(r.A, name)
+			if c.waypointAnimationFor(flang.RefVal{Kind: flang.RefWaypoints, A: animID}) != nil {
+				return flang.RefVal{Kind: flang.RefWaypoints, A: animID}, true
 			}
 		}
 
@@ -414,7 +436,8 @@ func (h *levelHost) refPosition(r flang.RefVal) (mgl32.Vec3, bool) {
 		}
 	case flang.RefVolume:
 		if v := c.volumeFor(r); v != nil {
-			return v.Position, true
+			// Through what it rides, on the sprites' rule below.
+			return v.WorldPosition(h.lvl()), true
 		}
 	case flang.RefLight:
 		if _, p := c.lightFor(r); p != nil {

@@ -1,4 +1,4 @@
--- pause.flang — what the pause menu's buttons do.
+-- pause.flang — what the pause menu's buttons do, and the pause itself.
 --
 -- On the screen rather than on each button, for the reason menu.flang gives:
 -- a click bubbles from the widget to its screen when the widget has no script
@@ -7,6 +7,21 @@
 -- Resume is spelled out here even though Escape already does it. Escape is the
 -- stack's own doing — it closes the topmost modal screen (Stack.Cancel) — and a
 -- menu that can only be dismissed by a key is not one a pointer can leave.
+--
+-- `pauses: true` in pause.fui freezes the world but leaves the level's scripts
+-- running, so a `:tick:` or an `after` would carry on behind the menu.
+-- `@level.prop.paused` stops those too. It is set on :shown: and lifted on
+-- :hidden: rather than beside each hide_screen, because :hidden: is the one
+-- thing every way off the stack has in common — Resume, Quit to Menu, and
+-- Escape, which never passes through this script's buttons at all.
+
+def on_shown(:shown:) -> null
+    @level.prop.paused = true
+end
+
+def on_hidden(:hidden:) -> null
+    @level.prop.paused = false
+end
 
 def on_click(:click:, src ref) when src.id == "resume" -> null
     hide_screen("pause")

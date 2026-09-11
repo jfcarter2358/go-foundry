@@ -153,10 +153,10 @@ func entityGeometryHandleKey(sc sdl.Scancode, ctrl, shift bool) bool {
 	if entityDef == nil || ctrl {
 		return false
 	}
-	// Detail mode's tools first and the hull's after, in the same order the 3D
-	// view asks them (editor.go) — the same functions, acting on this
-	// workspace's selection.
-	if detailMeshHandleKey(sc, shift) || brushMeshHandleKey(sc, shift) {
+	// Join, dissolve and merge, then detail mode's tools, then the hull's, in
+	// the same order the 3D view asks them (editor.go) — the same functions,
+	// acting on this workspace's selection.
+	if meshTopologyHandleKey(sc, shift) || detailMeshHandleKey(sc, shift) || brushMeshHandleKey(sc, shift) {
 		entityGeometryEdited()
 		entityMarkDirty()
 		return true

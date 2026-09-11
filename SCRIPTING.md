@@ -512,7 +512,7 @@ editor's reference panel. The core surface:
 | entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · read-only: `type` `current_sector` `current_chunk` `frame` `seat` `waypoints` |
 | model | `texture` `visible` `alpha` `offset` `rotation` `scale` · read-only: `path` |
 | vehicle | `vehicle_throttle` `vehicle_steer` `vehicle_pitch` `vehicle_roll` · tuning: `vehicle_max_speed` `vehicle_accel` `vehicle_brake` `vehicle_turn_rate` `vehicle_pitch_rate` `vehicle_roll_rate` `vehicle_drag` · read-only: `vehicle_speed` `vehicle_driver` |
-| volume | `position` `rotation` `half` `shape` `enabled` `load_level` `fog` `fog_color` `fog_density` `fog_max_opacity` · read-only: `waypoints` |
+| volume | `position` `rotation` `half` `shape` `enabled` `load_level` `fog` `fog_color` `fog_density` `fog_max_opacity` · read-only: `attach` `carrier` `waypoints` |
 | brush | `solid` · dynamic brushes only: `position` `rotation` `scale` `velocity` `angular_velocity` · read-only: `dynamic` `waypoints` |
 | edge | `kind` `texture` `collision` `visible` `pinned` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · portals also: `to_sector` `draw_gap` `gap_texture` |
 | floor | `enabled` `hidden` `height` `texture` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · slab: `thickness` `slab_texture` `slab_rim_texture` `slab_hidden` `slab_rim_across_portals` · read-only: `shaped` `world_height` `slab_shaped` |
@@ -521,7 +521,7 @@ editor's reference panel. The core surface:
 | light | `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
-| level | `step_height` `player_control` `player_gravity` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
+| level | `step_height` `player_control` `player_gravity` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
 
 ### Moving a brush
 
@@ -647,6 +647,14 @@ end
 | `play_waypoints(obj, animation)` | send the object along it from wherever it is now; `false`, with a warning, for an animation with no points |
 | `stop_waypoints(obj)` | leave it where it has got to; `false` if it was following nothing |
 | `@obj.prop.waypoints` | read-only: the animation it is following, or `null` |
+
+An entity's type can carry animations of its own. They are authored in the
+entity editor, in the entity's space, and every placement gets its own copy,
+`<entity id>.<name>`, whose points ride the entity. A type's script names one
+through the placement, as it names the placement's brushes:
+`play_waypoints(@self.hatch, @self.door_close)`. A string such as `"door_close"`
+works too. It is looked up as a level ID first, then on the entity the object
+belongs to, then on `@self`. An entity cannot follow a path it carries itself.
 
 How an object travels:
 
@@ -774,6 +782,12 @@ the entity (or a bone of one of its models) rather than sitting still.
 
 `destroy` on the entity takes its emitters with it, so nothing is left emitting
 from where the thing used to be.
+
+The **volumes** a type carries are reached the same way — `@guard.sight` for one,
+`@guard.volumes` for all of them — and `destroy` takes those too. Each is an
+ordinary volume riding the entity: its own script gets its `:enter:` and
+`:exit:`, `@self.prop.carrier` is the entity it rides, and that entity never
+counts as entering it.
 
 A surface's `height` is **chunk-local**: the authored number, and the one the
 level file stores, so `height = height + 1` on a placed chunk round-trips.
@@ -1139,8 +1153,10 @@ ignored — as is one whose clauses are all guarded and every guard declines. Se
 A timer is a send with a delay on it: everything about `<-` still holds — the
 target may be an object, a tag, a list or `null`, a tag is snapshotted when the
 timer is set rather than when it fires, and delivery is asynchronous — except
-that the message waits that many milliseconds of play time first. Pausing the
-game pauses the wait, and timers do not survive a level reload. A message whose
+that the message waits that many milliseconds of play time first.
+`@level.prop.paused` holds the wait — except for a timer addressed to a screen or
+a widget, which keeps counting so a menu's own `after` still comes due (see
+[Pausing](#pausing)) — and timers do not survive a level reload. A message whose
 target has been destroyed by the time it comes due is dropped.
 
 `after` exists only inside a send. Written on its own it has nobody to deliver
@@ -1525,8 +1541,9 @@ content and the author needs to see it in order to fix it.
 
 ### Attaching
 
-A sprite, an emitter or a sound can **ride** something, so that smoke follows a ship, a
-flame follows the hand holding the torch, and dust follows a wheel. It is the
+A sprite, an emitter, a sound or a volume can **ride** something, so that smoke follows a ship, a
+flame follows the hand holding the torch, dust follows a wheel, and a sight cone
+follows the guard. It is the
 same binding the editor's **Attach** panel authors, so an effect bound by a
 script and one bound by hand are the same effect.
 
@@ -1538,7 +1555,8 @@ attach(@wake, "ship")                    -- ride a frame: a vehicle's own space
 detach(@smoke)                           -- back to world space
 ```
 
-Only sprites and emitters. An **entity** boards a vehicle with `mount`, which has
+Sprites, emitters and volumes. A volume riding an entity never reports that entity
+entering it. An **entity** boards a vehicle with `mount`, which has
 answers for collision, seats and being thrown off that this does not.
 
 The three-argument form reads the entity's only model attachment, which is how
@@ -1621,6 +1639,54 @@ and `@level.prop.load_progress` is what that screen's bar binds to.
 context belong to the main thread, and the frame loop is the only place that may
 end them. It takes no arguments, and the call returns — the process leaves at the
 top of the next frame, not inside the handler.
+
+That is a shipped game. In the editor's play mode there is an editor to go back
+to, so `quit_game` ends the play session instead — the same as pressing tilde,
+with the level put back — and the engine stays open.
+
+### Pausing
+
+A screen with `pauses: true` freezes the world — the player, vehicles, entities,
+particles and the sky — but not scripts: a main menu's handlers have to run, and
+so does anything a script is animating behind it. For a pause menu that is only
+half a pause, because a `:tick:` counting down a fuse or an `after` spawning the
+next wave carries straight on underneath it.
+
+`@level.prop.paused` is the whole pause:
+
+```
+def on_shown(:shown:) -> null
+    @level.prop.paused = true
+end
+
+def on_hidden(:hidden:) -> null
+    @level.prop.paused = false
+end
+```
+
+While it is on, the world stands still as it does under a pausing screen, entity
+clips stop as well, and the player can neither move, look around, jump nor
+interact. The level's scripts hear nothing: no `:tick:`, no `:spawn:`, no
+`:enter:`, `:collide:` or any other engine event, and their timers do not come
+due. Play time stops with them, so `time()` stands still. An engine event
+recorded in the instant before the pause is held, not lost, and arrives on the
+first tick after it lifts. Sound, music and animated textures carry on.
+
+The screen stack is not paused, because the menu that lifts the pause is made of
+scripts. Screens and widgets keep receiving `:tick:` and every UI event, and a
+timer addressed to a screen or a widget keeps counting — a menu's own `after`
+comes due under the pause. A message a menu sends into the level is still
+delivered: pausing stops the clock, not the language, so a Restart button can
+still tell the level about it.
+
+A write takes effect from the next tick; the rest of the current tick's messages
+are delivered. It is one switch, not a count, so whichever script writes it last
+wins. Loading a level, and leaving play, both lift it.
+
+**Lift it on `:hidden:`, not beside each `hide_screen`.** `:hidden:` is the one
+thing every way off the stack has in common, Escape included — and Escape closes
+the topmost modal screen without going through any of its buttons. The shipped
+`scripts/pause.flang` does exactly this.
 
 ### Video
 
@@ -1880,6 +1946,14 @@ which other scripts import it, since an import is written in the importing
 script and nowhere the level could tell you about. An open tab on that file is
 closed with it, unsaved text and all, rather than left holding a buffer whose
 next save would quietly put the file back.
+
+Right-clicking a folder offers *Delete folder*, which removes it and everything
+under it — scripts, sub-folders and all — after the same kind of confirmation:
+it lists the scripts that go, which of them have unsaved edits in an open tab,
+which the level names, and which scripts *outside* the folder import them. An
+import between two scripts in the folder is not mentioned, since both ends go
+together. Every tab on a script in the folder is closed. The `scripts/` row at
+the top has no delete.
 
 **The buffer** is a normal text field with syntax colouring painted over it and
 numbered lines beside it. A line with a parse error is numbered in red and one

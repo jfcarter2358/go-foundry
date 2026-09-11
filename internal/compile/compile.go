@@ -19,6 +19,8 @@ package compile
 
 import (
 	"fmt"
+	"math"
+	"strings"
 
 	"github.com/go-gl/mathgl/mgl32"
 
@@ -61,12 +63,66 @@ type Stats struct {
 	// entity — that ended up in the void outside it. Each one means a hole in
 	// the shell. See outside.go.
 	Leaks []Leak
+	// BeyondSeal names the baked brushes reaching outside the level's seal box
+	// — see BrushesBeyondSeal and SealWarning.
+	BeyondSeal []string
+}
+
+// SealWarning is what to tell the author about brushes reaching outside the
+// seal box, or "" when there are none.
+func (s Stats) SealWarning() string {
+	n := len(s.BeyondSeal)
+	if n == 0 {
+		return ""
+	}
+	names, more := s.BeyondSeal, ""
+	if n > 5 {
+		names, more = names[:5], fmt.Sprintf(" and %d more", n-5)
+	}
+	return fmt.Sprintf("%d brush(es) reach outside the seal box, and what is outside it is never drawn from inside the level: %s%s",
+		n, strings.Join(names, ", "), more)
 }
 
 // Leak is one thing found outside the level.
 type Leak struct {
 	What     string
 	Position mgl32.Vec3
+	// Opening is roughly where the void gets in on its way to Position — see
+	// BSPTree.leakOpening. Meaningful only when HasOpening.
+	Opening    mgl32.Vec3
+	HasOpening bool
+	// OutsideSeal is a thing placed outside the level's seal box, which is a
+	// leak for a different reason and with a different fix.
+	OutsideSeal bool
+}
+
+// Describe is the leak as a sentence an author can act on.
+//
+// Not "X is outside the level". The author put X inside the level and can see
+// that it is, so a report saying otherwise reads as the compiler being wrong.
+// What is true is that the void outside reaches X — and where it gets in is
+// the thing to go and fix.
+func (l Leak) Describe() string {
+	switch {
+	case l.OutsideSeal:
+		return fmt.Sprintf("%s at %v is outside the level's seal box: move it inside, or make the box bigger",
+			l.What, roundVec(l.Position))
+	case l.HasOpening:
+		return fmt.Sprintf("%s at %v is not sealed in: the void outside the level reaches it through a gap near %v",
+			l.What, roundVec(l.Position), roundVec(l.Opening))
+	default:
+		return fmt.Sprintf("%s at %v is not sealed in: it is open to the void outside the level",
+			l.What, roundVec(l.Position))
+	}
+}
+
+// roundVec rounds to the hundredth, which is as precise as a place to go and
+// look needs to be, and keeps a portal's centroid from printing as 2.1600003.
+func roundVec(v mgl32.Vec3) mgl32.Vec3 {
+	for i := range v {
+		v[i] = float32(math.Round(float64(v[i])*100) / 100)
+	}
+	return v
 }
 
 // Result is a compiled level's geometry.
@@ -146,6 +202,7 @@ func gatherStats(lvl *world.Level, r *Result, source int) Stats {
 		s.AvgVisibleLeaves = float64(total) / float64(counted)
 	}
 	s.Leaks = findLeaks(lvl, r.Tree)
+	s.BeyondSeal = BrushesBeyondSeal(lvl)
 	return s
 }
 
@@ -159,14 +216,25 @@ func findLeaks(lvl *world.Level, t *BSPTree) []Leak {
 		return nil
 	}
 	var out []Leak
-	if lvl.Spawn != nil && t.LeaksAt(lvl.Spawn.Position) {
-		out = append(out, Leak{What: "the player spawn", Position: lvl.Spawn.Position})
+	check := func(what string, p mgl32.Vec3) {
+		// With a seal, nothing inside the box can leak, and the one way to be
+		// outside the level is to be outside the box.
+		if lvl.Seal.Active() && !lvl.Seal.Contains(p) {
+			out = append(out, Leak{What: what, Position: p, OutsideSeal: true})
+			return
+		}
+		if !t.LeaksAt(p) {
+			return
+		}
+		l := Leak{What: what, Position: p}
+		l.Opening, l.HasOpening = t.leakOpening(p)
+		out = append(out, l)
+	}
+	if lvl.Spawn != nil {
+		check("the player spawn", lvl.Spawn.Position)
 	}
 	for i := range lvl.Entities {
-		e := &lvl.Entities[i]
-		if t.LeaksAt(e.Position) {
-			out = append(out, Leak{What: "entity " + e.ID, Position: e.Position})
-		}
+		check("entity "+lvl.Entities[i].ID, lvl.Entities[i].Position)
 	}
 	return out
 }

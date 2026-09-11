@@ -139,7 +139,7 @@ func steppedIntoFrame(lvl *world.Level, e *world.Entity) *FramePortalCrossing {
 		// A doorway rides the frame it belongs to, and admits INTO it. One
 		// belonging to the frame the occupant is already in is the way out,
 		// not the way in — that is steppedOffFrame's business.
-		if v.Frame == e.Frame {
+		if v.Frame() == e.Frame {
 			continue
 		}
 		// And it only admits from the side it opens onto. A ship's ramp names
@@ -148,7 +148,7 @@ func steppedIntoFrame(lvl *world.Level, e *world.Entity) *FramePortalCrossing {
 		if v.Doorway.DoorwayLeadsTo() != e.Frame {
 			continue
 		}
-		to := lvl.Frames.Frame(v.Frame)
+		to := lvl.Frames.Frame(v.Frame())
 		if to == nil || to.OwnerID == e.ID {
 			continue // the frame is gone, or is the occupant's own
 		}

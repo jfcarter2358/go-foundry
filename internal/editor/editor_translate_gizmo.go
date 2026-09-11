@@ -30,6 +30,7 @@ const (
 	gizmoKindFace     = "face"
 	gizmoKindBrush    = "brush"
 	gizmoKindSpawn    = "spawn"
+	gizmoKindSeal     = "seal"
 	gizmoKindChunk    = "chunk"
 	gizmoKindEntity   = "entity"
 	gizmoKindVolume   = "volume"
@@ -85,6 +86,11 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {
+			return s.Position, true
+		}
+
+	case gizmoKindSeal:
+		if s := activeGizmoSeal(); s != nil {
 			return s.Position, true
 		}
 
@@ -332,6 +338,18 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindSeal:
+		s := activeGizmoSeal()
+		if s == nil {
+			return false
+		}
+		// Its size is its half-extents, as a volume's is, so the scale snapshot
+		// holds those and the scale gizmo resizes the box directly.
+		Editor.GizmoDragStartPos = s.Position
+		Editor.GizmoDragStartScale = s.Half
+		EditorPushUndo()
+		return true
+
 	case gizmoKindEntity:
 		e := activeGizmoEntity()
 		if e == nil {
@@ -522,6 +540,10 @@ func translateGizmoMouseMove(mx, my int32) {
 		dragVerticesAlongAxis(axis, delta)
 	case gizmoKindSpawn:
 		if s := activeGizmoSpawn(); s != nil {
+			s.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		}
+	case gizmoKindSeal:
+		if s := activeGizmoSeal(); s != nil {
 			s.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindEntity:

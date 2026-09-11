@@ -28,6 +28,13 @@ package world
 // drawn, and it is carried into whatever space the object is authored in on
 // every tick — so an emitter hung on a walking entity still meets each arrow.
 //
+// An animation an entity carries (entity_waypoints.go) is written in that
+// entity's space instead, and travelled there: the start and every pose along
+// the way are in the entity's terms, and only the pose handed to the object is
+// carried out to the world, through where the entity is this tick. So a door
+// sent shut while its ship climbs still closes against the hull, not against
+// the pad the ship left.
+//
 // A directional light has nowhere to be, so it takes the one thing an arrow
 // says that it can use: the way the arrow points is the way the light shines.
 // Its rotation channel is the Euler turn that points +X — the arrow's shaft —
@@ -115,7 +122,7 @@ func WaypointSource(f WaypointFollower) (hooks.WaypointObject, string) { return 
 // channel a tween could, so the two cannot share one (tween.go).
 func PlayWaypoints(lvl *Level, f WaypointFollower, anim *WaypointAnimation) {
 	f.dropTweens()
-	*f.waypoints() = &WaypointPlayback{Animation: anim.ID, Start: f.WaypointPose(lvl)}
+	*f.waypoints() = &WaypointPlayback{Animation: anim.ID, Start: anim.localPose(lvl, f.WaypointPose(lvl))}
 }
 
 // StopWaypoints leaves f wherever it has got to and reports whether it was
@@ -154,7 +161,7 @@ func SeekWaypoints(lvl *Level, f WaypointFollower, anim *WaypointAnimation, t fl
 	for pb.Next < len(anim.Points) && anim.Points[pb.Next].Time <= t {
 		pb.Next++
 	}
-	f.applyWaypointPose(lvl, anim.PoseAt(pb.Start, t))
+	f.applyWaypointPose(lvl, anim.worldPose(lvl, anim.PoseAt(pb.Start, t)))
 	return true
 }
 
@@ -189,14 +196,14 @@ func advanceWaypoints(lvl *Level, f WaypointFollower, dt float32) bool {
 		// The length has run out. Set down on the last point exactly, rather
 		// than wherever the final fraction of a float left the object.
 		if n > 0 {
-			f.applyWaypointPose(lvl, anim.Points[n-1].Pose())
+			f.applyWaypointPose(lvl, anim.worldPose(lvl, anim.Points[n-1].Pose()))
 		}
 		*slot = nil
 		hooks.RecordWaypointEvent(hooks.WaypointEvent{Kind: kind, Object: id, Animation: anim.ID, Index: n - 1, Ended: true})
 		return true
 	}
 
-	f.applyWaypointPose(lvl, anim.PoseAt(pb.Start, pb.Elapsed))
+	f.applyWaypointPose(lvl, anim.worldPose(lvl, anim.PoseAt(pb.Start, pb.Elapsed)))
 	return true
 }
 
@@ -424,15 +431,15 @@ func (s *Sound) waypointRest() WaypointRest {
 }
 func (s *Sound) setWaypointRest(r WaypointRest) { s.Position, s.Rotation = r.Position, r.Rotation }
 
-// Volume: a position in the frame it rides, and a rotation. Its cage is built
-// in its own space, so moving it needs no rebuild.
+// Volume: a position that rides whatever it is attached to, and a rotation. Its
+// cage is built in its own space, so moving it needs no rebuild.
 
 func (v *Volume) WaypointPose(lvl *Level) WaypointPose {
-	return WaypointPose{Position: framesOf(lvl).Frame(v.Frame).ToWorld(v.Position), Rotation: v.Rotation, Scale: unitScale}
+	return WaypointPose{Position: v.WorldPosition(lvl), Rotation: v.Rotation, Scale: unitScale}
 }
 func (v *Volume) waypoints() **WaypointPlayback { return &v.Waypoints }
 func (v *Volume) applyWaypointPose(lvl *Level, p WaypointPose) {
-	v.Position, v.Rotation = framesOf(lvl).Frame(v.Frame).FromWorld(p.Position), p.Rotation
+	v.Position, v.Rotation = fromAttached(lvl, v.Attach, p.Position), p.Rotation
 }
 func (v *Volume) waypointSource() (hooks.WaypointObject, string) { return hooks.WaypointVolume, v.ID }
 func (v *Volume) dropTweens()                                    {}

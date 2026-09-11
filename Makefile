@@ -1,13 +1,16 @@
 linux:
 	rm -rf dist || true
 	mkdir dist
-	cp -r resources/* dist
+	cp -r resources dist/resources
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -v -x -o dist/foundry ./cmd/foundry
+	$(MAKE) runtime-linux RUNTIMES_DIR=dist/runtimes
 
 windows:
-	cp -r resources/* /mnt/c/Users/jcart/OneDrive/Documents/Foundry
-	cp resources/SDL2.dll /mnt/c/Users/jcart/OneDrive/Documents/Foundry/SDL2.dll
+# 	cp -r resources/* /mnt/c/Users/jcart/OneDrive/Documents/Foundry
+# 	cp resources/SDL2.dll /mnt/c/Users/jcart/OneDrive/Documents/Foundry/SDL2.dll
+# 	cp foundrypack /mnt/c/Users/jcart/OneDrive/Documents/Foundry/foundrypack
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc go build -x -v -o /mnt/c/Users/jcart/OneDrive/Documents/Foundry/foundry.exe ./cmd/foundry
+	$(MAKE) runtime-windows RUNTIMES_DIR=/mnt/c/Users/jcart/OneDrive/Documents/Foundry/runtimes
 
 sdl:
 	rm -rf dist || true
@@ -50,11 +53,16 @@ models:
 #   make installer-windows    the above, plus a Setup.exe (needs makensis)
 #   make compile-levels       build every level's .fbsp (part of the release targets)
 #   make release-check        prove the editor is not in the binary
+#   make runtimes             the game binaries an editor's Release window packs
 #
 # PRUNE=0 stages the whole content tree instead of only what the game reaches
 # from its manifest. Worth reaching for when a script names a level or a texture
 # by a string it assembles at runtime, which is the one thing the reference walk
-# in cmd/foundrypack cannot see.
+# in internal/pack cannot see.
+#
+# These targets build the engine's own resources/. A game kept in a project
+# directory of its own is built from the editor running there — its Release
+# window, or `./foundry build-release` — see docs/guide/20-shipping.md.
 
 BUILD_DIR    ?= build
 PRUNE        ?= 1
@@ -77,13 +85,44 @@ LINUX_STAGE   := $(BUILD_DIR)/install-linux
 WINDOWS_STAGE := $(BUILD_DIR)/install-windows
 
 .PHONY: release-linux release-windows installer-linux installer-windows \
-        release-check test-release clean-release compile-levels
+        release-check test-release clean-release compile-levels \
+        runtimes runtime-linux runtime-windows
+
+## The release game binaries an editor packs a project's content around.
+##
+## An editor running from a game's own project directory has no Foundry source
+## beside it to build from, so its Release window looks for them in runtimes/
+## next to itself (internal/release/player.go). This is what puts them there:
+##
+##   make runtimes RUNTIMES_DIR=/path/to/my-game/runtimes
+##
+## Rebuild them with the editor beside them: a game binary refuses levels
+## compiled by a different version of the compiler, and the editor compiles
+## them. `make linux` and `make windows` each build their own platform's.
+RUNTIMES_DIR ?= dist/runtimes
+
+runtimes: runtime-linux runtime-windows
+
+runtime-linux:
+	@mkdir -p $(RUNTIMES_DIR)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 \
+	  go build -tags $(RELEASE_TAGS) -ldflags "$(RELEASE_LDFLAGS)" -o $(RUNTIMES_DIR)/foundry-release-linux-amd64 ./cmd/foundry
+
+runtime-windows:
+	@mkdir -p $(RUNTIMES_DIR)
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
+	  CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc \
+	  go build -tags $(RELEASE_TAGS) -ldflags "$(WINDOWS_LDFLAGS)" -o $(RUNTIMES_DIR)/foundry-release-windows-amd64.exe ./cmd/foundry
+	# The installer every Windows release is appended to (internal/setup). Pure
+	# Go, so no mingw.
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	  go build -ldflags "$(WINDOWS_LDFLAGS)" -o $(RUNTIMES_DIR)/foundry-setup-windows-amd64.exe ./cmd/foundrysetup
 
 ## Compile every level to the form a release build loads. See
 ## docs/guide/23-compiling-levels.md, and internal/app/levelsource_release.go
 ## for why a shipped game reads nothing else.
 compile-levels:
-	go run ./cmd/foundrycompile -root resources -strict
+	go run ./cmd/foundrycompile -strict
 
 ## Build the release binary and stage a Linux install tree, then tar it.
 release-linux: compile-levels
@@ -137,15 +176,15 @@ installer-windows: release-windows
 release-check:
 	@echo "release build's forbidden imports:"
 	@if go list -deps -tags $(RELEASE_TAGS) ./cmd/foundry \
-	     | grep -E 'internal/(editor|textureui|imguibackend|uiwin)$$|imgui-go'; then \
+	     | grep -E 'internal/(editor|textureui|imguibackend|uiwin|release|pack)$$|imgui-go'; then \
 	  echo "FAIL: a development-only package is linked into the release build"; exit 1; \
 	else \
-	  echo "  none — editor, textureui, imguibackend, uiwin and imgui are all absent"; \
+	  echo "  none — editor, textureui, imguibackend, uiwin, release, pack and imgui are all absent"; \
 	fi
 
 ## Run the tests over the release build's own configuration.
 test-release:
-	go test -tags $(RELEASE_TAGS) $$(go list -deps -tags $(RELEASE_TAGS) ./cmd/foundry | grep foundry/) ./cmd/foundrypack
+	go test -tags $(RELEASE_TAGS) $$(go list -deps -tags $(RELEASE_TAGS) ./cmd/foundry | grep foundry/) ./internal/pack
 
 clean-release:
 	rm -rf $(BUILD_DIR)

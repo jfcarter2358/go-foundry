@@ -430,7 +430,7 @@ func prefabWorldBounds(lvl *world.Level, inst *world.PrefabInstance) (mgl32.Vec3
 		if lvl.Volumes[i].FromPrefab != inst.ID {
 			continue
 		}
-		if a, b, ok := lvl.Volumes[i].WorldAABB(); ok {
+		if a, b, ok := lvl.Volumes[i].WorldAABB(lvl); ok {
 			grow(a, b)
 		}
 	}

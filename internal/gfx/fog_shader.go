@@ -28,7 +28,7 @@ func FogCommonSource() (string, error) {
 	if fogShaderSrc != "" {
 		return fogShaderSrc, nil
 	}
-	path := filepath.Join(fileutil.ExecutablePath, "shaders", "fog.glsl")
+	path := filepath.Join(fileutil.ResourcesPath, "shaders", "fog.glsl")
 	src, err := ReadShaderFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read fog shader: %w", err)

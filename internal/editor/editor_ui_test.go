@@ -452,6 +452,31 @@ func TestUndoClearsASelectionThatNoLongerExists(t *testing.T) {
 	}
 }
 
+// TestScriptingUndoLandsOnTheDocument: the shared tag/attribute/script widgets
+// push through EditorPushUndo, and inside this editor's panel that has to reach
+// the document's stack, not the level's — or picking a button's script could
+// only be undone from the 3D editor, where it would restore the wrong thing.
+func TestScriptingUndoLandsOnTheDocument(t *testing.T) {
+	uiTestDoc(t)
+	before := levelUndoStack.len()
+
+	withUndoRedirect(uiPushUndoEdited, func() {
+		EditorPushUndo() // what editorScriptUIBody does when a file is picked
+		uiDoc.Find("box").Script = "scripts/load_button.flang"
+	})
+
+	if levelUndoStack.len() != before {
+		t.Errorf("the level's undo stack grew from %d to %d", before, levelUndoStack.len())
+	}
+	if !UICanUndo() {
+		t.Fatal("the redirect did not reach the document's own stack")
+	}
+	UIUndo()
+	if got := uiDoc.Find("box").Script; got != "" {
+		t.Errorf("the script is %q after undo, want it gone", got)
+	}
+}
+
 func TestClearUndoHistoryDropsBothStacks(t *testing.T) {
 	uiTestDoc(t)
 	uiAddNode(ui.KindPanel)

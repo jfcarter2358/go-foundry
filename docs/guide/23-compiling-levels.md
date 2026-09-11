@@ -34,6 +34,10 @@ Either way the result is written beside the level: `canyon.yaml` gets a
 `canyon.fbsp`. Recompile whenever the geometry changes; nothing rebuilds it for
 you.
 
+The command works on a project: `-root` is the directory holding `resources/`,
+and defaults to the current one, so run it from the repository root or a game's
+project directory.
+
 ## Looking at what it made
 
 The numbers say whether your level is sealed. They say nothing about whether it
@@ -106,22 +110,55 @@ That is a **leak**, and the compiler tells you:
 
 ```
 canyon: faces 42 -> 345, 29 nodes, 30 cells (7 solid, 23 void, 0 interior), 0 portals
-canyon: LEAK — the player spawn is at [-15 1 0], which is outside the level.
+canyon: LEAK — the player spawn at [-15 1 0] is not sealed in: the void outside the level reaches it through a gap near [-12 4 0]
 ```
 
 The giveaway is `0 interior` cells. A sealed level has some.
+
+The spawn and the entities are only what gets *named*. Whatever they happen to
+be standing in, the point after "a gap near" is the thing to go and look at: it
+is where the void comes in on its way to them — the middle of an opening that
+stands onto nothing, like a hangar door open to the sky or a room with no
+ceiling. It is roughly placed rather than exact, so look around it.
+
+A dynamic brush does not seal (a door is a hole as far as this is concerned),
+and neither does a face marked no-draw on a detailed brush, so a gap one of
+those is covering in the editor is still a gap here.
 
 A leak does **not** fail the compile. The output is still correct — it is just
 that nothing is culled, so you have paid for the pass and got nothing. (For a
 release build that must not ship one, `foundrycompile -strict` makes it an
 error.)
 
-### Sealing an outdoor level
+### The seal box
 
-The same rule applies to a level with sky in it: the flood does not care that
-you meant it to be open. An outdoor level is sealed the way one always has been
-— with a shell of brushes around the whole thing, textured with your sky. The
-player never reaches them, and they are what keeps the void out.
+Every level has one, and it is what normally does the sealing. It is an
+invisible box around the level — **Seal Box** in the Explorer, a thin wireframe
+in the editor, and nothing at all in play: nothing collides with it and nothing
+draws it. The compiler wraps it in solid walls of its own, so the flood stops
+there, and everything inside it counts as inside the level — a hangar door open
+to space, a courtyard, a canyon.
+
+A level that has never had one gets one fitted when it opens: around every brush
+that compiles, the spawn and the entities, with 4 units to spare. After that it
+is yours. Select it from the Explorer (or click it from outside, where there is
+nothing else under the cursor), then move it with **G** and resize it with **C**
+— the scale gizmo drags its half-extents — or type the numbers into Properties.
+**Fit To Level** refits it after the level has grown.
+
+What follows from it:
+
+- **Something placed outside the box is a leak** — `entity ship at [...] is
+  outside the level's seal box` — because it is outside the level. Move it in,
+  or make the box bigger.
+- **The part of a brush outside the box is never drawn from inside the level.**
+  The compile names any brush that reaches past it, in a warning.
+- **Sunlight is not blocked by it.** Past the box is sky.
+
+Untick **Seals the level** in its Properties to switch it off. The level then
+has to seal itself with its own walls, the old way, and every gap in them is a
+leak — which is what you want for an indoor level that is meant to be closed and
+should tell you when it is not.
 
 ### Two things that do not count as sealing
 

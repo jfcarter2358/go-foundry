@@ -149,6 +149,45 @@ func TestScriptDropPath(t *testing.T) {
 	}
 }
 
+// A folder delete closes a tab and drops a cache for every script this returns,
+// after the folder is gone — so anything it misses is a tab left pointing at a
+// deleted file, and anything it wrongly includes is a tab closed for nothing.
+func TestScriptFilesUnder(t *testing.T) {
+	files := []string{
+		"doors/lift.flang",
+		"doors/inner/latch.flang",
+		"doorstop/stop.flang",
+		"loose.flang",
+	}
+	cases := []struct {
+		name, dir string
+		want      []string
+	}{
+		{"at any depth", "doors", []string{"doors/lift.flang", "doors/inner/latch.flang"}},
+		{"a nested folder", "doors/inner", []string{"doors/inner/latch.flang"}},
+		// The same trap scriptTreeHolds guards against: a name that only starts
+		// the same way is a different folder.
+		{"not a lookalike", "doorstop", []string{"doorstop/stop.flang"}},
+		{"prefixed and slashed", "scripts/doors/", []string{"doors/lift.flang", "doors/inner/latch.flang"}},
+		{"nothing in it", "empty", nil},
+		// The root is every script, and is never something to delete.
+		{"not the root", "", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := scriptFilesUnder(files, c.dir)
+			if strings.Join(got, ",") != strings.Join(c.want, ",") {
+				t.Errorf("scriptFilesUnder(%q) = %v, want %v", c.dir, got, c.want)
+			}
+		})
+	}
+	// Importers come back from the runtime prefixed, and the confirmation asks
+	// about them one at a time.
+	if got := scriptFilesUnder([]string{"scripts/doors/lift.flang"}, "doors"); len(got) != 1 {
+		t.Errorf("a prefixed path inside the folder was not recognised: %v", got)
+	}
+}
+
 // The root's menu and its "new script here" both build a path from the folder,
 // and at the root that path must not start with a slash — a name like
 // "/main.flang" reads as somewhere else entirely.

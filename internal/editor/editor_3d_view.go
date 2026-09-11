@@ -254,6 +254,7 @@ func editorSetSelMode(m editorSelMode) {
 // (editor3DClearSelection) — that is an explicit "the selection moved".
 func editorClearObjectSelection() {
 	editorClearSpawnSelection()
+	editorClearSealSelection()
 	clearFaceSelection()
 	clearBrushSelection()
 	ws().PanelFocus = panelFocusNone

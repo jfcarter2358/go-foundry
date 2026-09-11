@@ -91,6 +91,9 @@ it is never out of date.
 | `E` / `Shift+E` | extrude the selected faces along their normals / pull them in |
 | `I` / `Shift+I` | inset the selected faces / widen them |
 | `B` | subdivide the selected faces |
+| `J` | join the selected faces into one — they must lie flat together |
+| `M` / `Shift+M` | merge the selected points at their centre / on the first picked |
+| `X` | dissolve the selected points out of the lines they sit on |
 | `Delete` | delete the selected faces' brushes |
 | `Tab` | back to object mode, with this brush selected |
 
@@ -107,6 +110,9 @@ Shaping the mesh drawn over one brush. Nothing here changes collision; see
 | `I` | inset — a mitred border, leaving the middle selected |
 | `B` | subdivide the selected faces into quadrants |
 | `Shift+B` | smooth the whole detail mesh (Catmull-Clark) |
+| `J` | join the selected faces into one — they must lie flat together |
+| `M` / `Shift+M` | merge the selected points at their centre / on the first picked |
+| `X` | with points selected: dissolve them out of their lines |
 | `Delete` / `X` | delete the selected detail faces |
 | `G` / `R` / `C` | move / turn / scale the selection |
 | `Tab` / `Esc` | back to object mode, with this brush selected |
@@ -200,6 +206,9 @@ Armed from `Add... > Brush` or the view's right-click menu.
 | `G` / `R` / `C` | move / rotate / scale (`C` again: local axes) |
 | `E` / `Shift+E` | extrude (again: re-aim along the normal) / always extrude |
 | `I` | inset — a mitred border round the selected faces (outside pose mode) |
+| `J` | join the selected faces into one |
+| `M` / `Shift+M` | merge the selected points at their centre / on the first picked |
+| `X` | dissolve the selected points out of the lines they sit on (edge mode: a run of edges becomes one) |
 | `V` | orbit / fly camera |
 | `Z` | wireframe |
 | `F` | frame the model |
@@ -234,7 +243,9 @@ Armed from `Add... > Brush` or the view's right-click menu.
 | `F` | frame the whole type |
 | `Shift+G` / `B` | grid / bounds cage |
 | `P` | play / pause the attachment animations |
-| `Delete` / `X` | remove the selected model, brush or seat |
+| Left click on an arrow | select that point of one of the type's paths |
+| `Ctrl+click` | with a path selected: add its next point where the cursor meets the hull |
+| `Delete` / `X` | remove the selected model, brush, seat or path point |
 | `Ctrl+N` / `O` / `S` | new / open / save the type |
 | `Ctrl+Shift+S` | save as |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | undo / redo |
@@ -250,6 +261,8 @@ blocked out a room already knows how to block out a hold:
 | `G` / `R` / `C` | move / rotate / scale |
 | `E` / `I` / `B` | extrude / inset / subdivide the selected face(s) |
 | `Shift+E` / `Shift+I` | extrude inward / inset outward |
+| `J` | join the selected faces into one |
+| `M` / `Shift+M` / `X` | merge the selected points at their centre / on the first picked / dissolve them |
 | `B` / `Shift+B` | in detail mode: subdivide / smooth the whole detail mesh |
 | `Z` | wireframe |
 | `Escape` | put an armed brush stamp away, or leave detail mode |

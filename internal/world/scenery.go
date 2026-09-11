@@ -41,7 +41,7 @@ type Scenery struct {
 	// is unique within a level like every other object's, but nothing resolves
 	// a script reference through it — see the file comment.
 	ID string
-	// Model is the mesh file, stored relative to the install root (see
+	// Model is the mesh file, stored relative to resources/ (see
 	// fileutil.RelAssetPath). Both .fmdl and .obj are accepted, exactly as an
 	// entity attachment's path is.
 	Model string

@@ -125,21 +125,80 @@ func (w *Waypoint) Matrix() mgl32.Mat4 {
 // WaypointAnimation is a named sequence of points a dynamic brush can travel.
 type WaypointAnimation struct {
 	// ID is unique across the level, like every other addressable object's,
-	// and is what `play_waypoints(@door, @door_open)` names.
+	// and is what `play_waypoints(@door, @door_open)` names. On an entity
+	// definition it is the name within the type, qualified by the placement
+	// once materialised (EntityWaypointAnimationID).
 	ID string
 	// Length is how long the animation takes, in seconds. See EffectiveLength.
 	Length float32
 	Points []Waypoint
+	// FromEntity is the entity this animation was materialised from, or "" for
+	// one the level authored. Set, the points are written in that entity's
+	// local space rather than the world's (SpaceMatrix), and the animation is
+	// the type's content: saving skips it and DropEntityWaypointAnimations
+	// sweeps it (entity_waypoints.go). Runtime-only, like every FromEntity.
+	FromEntity string
 }
 
 // Clone returns an independent copy. The point list, and each point's event
 // list, are the only things a shallow copy would share.
 func (a *WaypointAnimation) Clone() WaypointAnimation {
-	cp := WaypointAnimation{ID: a.ID, Length: a.Length, Points: append([]Waypoint(nil), a.Points...)}
+	cp := *a
+	cp.Points = append([]Waypoint(nil), a.Points...)
 	for i := range cp.Points {
 		cp.Points[i].Events = cloneWaypointEvents(cp.Points[i].Events)
 	}
 	return cp
+}
+
+// SpaceMatrix carries a point written in the animation's space out to the
+// world: the identity for a level's own animation, and for one an entity
+// carries, wherever that entity is now.
+//
+// Through the entity's FRAME when it owns one, rather than through the entity
+// itself. A brush the entity carries is divided back out through its chunk's
+// transform, which is the frame as RefreshFrames last published it with the
+// owner's scale on top (Chunk.ModelMatrix) — and the entity's own position can
+// be a tick ahead of that, since AdvanceBrushes runs before EntityUpdate has
+// moved anything and before the frames are republished. A door carried out
+// through the one and back in through the other would slide along the hull by
+// however far the ship had moved. Through the same matrix both ways, the round
+// trip is exact whenever it is taken.
+//
+// An entity with no frame — one that carries no brushes — has no chunk to agree
+// with, and is read the way its emitters and volumes read it, through Attach.
+func (a *WaypointAnimation) SpaceMatrix(lvl *Level) mgl32.Mat4 {
+	if a == nil || a.FromEntity == "" || lvl == nil {
+		return mgl32.Ident4()
+	}
+	if f := lvl.Frames.Frame(a.FromEntity); f != nil && !f.IsWorld() {
+		k := f.OwnerScale
+		if k == 0 {
+			k = 1
+		}
+		return f.World.Mul4(mgl32.Scale3D(k, k, k))
+	}
+	return Attach{Entity: a.FromEntity}.Matrix(lvl)
+}
+
+// worldPose carries a pose written in the animation's space out to the world.
+// Only the position moves: rotation and scale are the follower's own channels,
+// which for anything the entity carries are already in the entity's terms.
+func (a *WaypointAnimation) worldPose(lvl *Level, p WaypointPose) WaypointPose {
+	if a.FromEntity == "" {
+		return p
+	}
+	p.Position = mulPoint(a.SpaceMatrix(lvl), p.Position)
+	return p
+}
+
+// localPose is worldPose's inverse: a world pose read in the animation's space.
+func (a *WaypointAnimation) localPose(lvl *Level, p WaypointPose) WaypointPose {
+	if a.FromEntity == "" {
+		return p
+	}
+	p.Position = mulPoint(a.SpaceMatrix(lvl).Inv(), p.Position)
+	return p
 }
 
 // cloneWaypointEvents copies an event list, keeping an empty one nil so a
@@ -169,7 +228,8 @@ func NormalizeWaypointEventAtom(s string) (atom string, ok bool) {
 	return atom, true
 }
 
-// WaypointEventAtoms lists every event atom any point in the level carries,
+// WaypointEventAtoms lists every event atom any point in the level carries —
+// the entities' materialised animations included —
 // sorted and without repeats — the custom atoms this level's waypoint
 // animations can post.
 func WaypointEventAtoms(lvl *Level) []string {

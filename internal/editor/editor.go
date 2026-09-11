@@ -146,6 +146,9 @@ type EditorState struct {
 	// SpawnSelected is whether the spawn marker is the current selection, which
 	// is what gives it the gizmo and its properties section.
 	SpawnSelected bool
+	// SealSelected is whether the level's seal box is the current selection
+	// (editor_seal.go).
+	SealSelected bool
 
 	// --- Entities ---
 	// ActiveEntityIdx indexes level.Entities; -1 = none selected. An index
@@ -391,6 +394,7 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.ChunkSelected = false
 	Editor.SpawnPlacementMode = false
 	Editor.SpawnSelected = false
+	Editor.SealSelected = false
 	Editor.ActiveEntityIdx = -1
 	Editor.EntityPlacementMode = false
 	Editor.EntityPlaceType = ""
@@ -648,7 +652,16 @@ func EditorHandleEvent(event sdl.Event) bool {
 			return true
 		}
 
-		// Then the mesh operations. Detail mode's come first and claim the
+		// Then the mesh operations. Join, dissolve and merge first: they are
+		// the same in edit and detail mode, and each claims its key only while
+		// there is a face (J) or a point (M, X) selected — so X with faces
+		// selected still reaches detail mode's delete below.
+		if !imgui.CurrentIO().WantCaptureKeyboard() &&
+			meshTopologyHandleKey(t.Keysym.Scancode, sdl.GetModState()&sdl.KMOD_SHIFT != 0) {
+			return true
+		}
+
+		// Detail mode's come next and claim the
 		// same letters: while a brush's surface is being carved, E is the
 		// model editor's extrude — the one that leaves side walls behind —
 		// rather than the convexity-preserving slide edit mode has to use, and
@@ -1056,6 +1069,7 @@ func EditorLoadLevel(path string) error {
 	Editor.ChunkSelected = false
 	Editor.SpawnPlacementMode = false
 	Editor.SpawnSelected = false
+	Editor.SealSelected = false
 	Editor.ActiveEntityIdx = -1
 	Editor.EntityPlacementMode = false
 	Editor.ActiveVolumeIdx = -1

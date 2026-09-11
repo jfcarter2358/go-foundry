@@ -324,14 +324,19 @@ func editor3DSurfaceMenuItems() []ctxMenuItem {
 // ---------- vertices ----------
 
 func editor3DVertexMenuItems() []ctxMenuItem {
-	return []ctxMenuItem{
+	items := []ctxMenuItem{
 		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusVertex) },
 			Tooltip: "Open the vertex section: the corner's X, Y and Z."},
-		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid,
-			Tooltip: "Rounds onto the grid whatever the snap toggle is set to —\nthat one decides what dragging does."},
-		{Label: "Select this brush's vertices", Do: editor3DSelectBrushVertices},
-		{Label: "Deselect", Do: clearVertexSelection},
+		{Separator: true},
 	}
+	items = append(items, editor3DPointOpMenuItems()...)
+	return append(items,
+		ctxMenuItem{Separator: true},
+		ctxMenuItem{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid,
+			Tooltip: "Rounds onto the grid whatever the snap toggle is set to —\nthat one decides what dragging does."},
+		ctxMenuItem{Label: "Select this brush's vertices", Do: editor3DSelectBrushVertices},
+		ctxMenuItem{Label: "Deselect", Do: clearVertexSelection},
+	)
 }
 
 // ---------- entity ----------
@@ -685,6 +690,8 @@ func editor3DFaceOpMenuItems(all func(string) string) []ctxMenuItem {
 					"selected: inset then extrude is a recess."},
 			{Label: all("Subdivide [B]"), Do: detailSubdivideSelection,
 				Tooltip: "Split the face at its edge midpoints, sharing the new corners\nwith its neighbours."},
+			{Label: all("Join [J]"), Disabled: selectedFaceCount() < 2, Do: meshJoinSelectedFaces,
+				Tooltip: meshJoinTooltip},
 			{Label: "Smooth the whole mesh [Shift+B]", Do: detailSmoothSelection,
 				Tooltip: "One round of Catmull-Clark over every detail face. Rounds the\n" +
 					"surface off; the solid underneath is untouched."},
@@ -699,5 +706,30 @@ func editor3DFaceOpMenuItems(all func(string) string) []ctxMenuItem {
 			Tooltip: "Draw the face's corners toward its centre, in its own plane —\nturning the solid into a frustum of itself."},
 		{Label: all("Subdivide [B]"), Do: brushSubdivideSelectedFaces,
 			Tooltip: "Fan the face into one triangle per corner, meeting at its centre.\nAdds no volume; makes the face finer to shape."},
+		{Label: all("Join [J]"), Disabled: selectedFaceCount() < 2, Do: meshJoinSelectedFaces,
+			Tooltip: meshJoinTooltip},
+	}
+}
+
+// meshJoinTooltip is the join row's tooltip, the same in both contexts.
+const meshJoinTooltip = "Make the selected faces one face, along the outline they share.\n" +
+	"They must meet along edges and lie flat as one convex shape.\n" +
+	"The points left along its edges can then be dissolved [X]."
+
+// editor3DPointOpMenuItems are the operations on a point or edge selection —
+// the topology edits of editor_mesh_topology.go, which act on the same meshes
+// whichever context the points were picked in.
+func editor3DPointOpMenuItems() []ctxMenuItem {
+	n := len(ws().SelectedVertices)
+	return []ctxMenuItem{
+		{Label: "Merge at centre [M]", Disabled: n < 2, Do: func() { meshMergeSelectedPoints(false) },
+			Tooltip: "Collapse the selected points into one, halfway between them all.\n" +
+				"Points on different brushes each stay their brush's own, but\nland in the same place."},
+		{Label: "Merge at first selected [Shift+M]", Disabled: n < 2, Do: func() { meshMergeSelectedPoints(true) },
+			Tooltip: "Collapse the selected points onto the first one picked."},
+		{Label: "Dissolve [X]", Disabled: n == 0, Do: meshDissolveSelectedPoints,
+			Tooltip: "Take each selected point out of the line it sits on, so the\n" +
+				"segments either side become one. Corners stay. In edge mode,\n" +
+				"a selected run of edges becomes one edge."},
 	}
 }

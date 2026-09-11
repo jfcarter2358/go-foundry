@@ -42,7 +42,9 @@ already placed.
 
 Saving writes the file, drops the definition cache, and re-stamps every instance
 of that type in the level open beside it, so the change is visible in both
-windows at once.
+windows at once. Each instance keeps what it overrides — the script parameters
+it bound, a tag it added, a bound it widened — and follows the type in
+everything else, exactly as it would after reopening the level.
 
 | Key | |
 | --- | --- |
@@ -148,8 +150,8 @@ Build them in the entity editor with the level editor's own tools. The stamp
 buttons under the outline's **Brushes** list arm a box, wedge or cylinder: a
 ghost follows the cursor and every click places another, until `Escape`. From
 there it is the 3D view — `Tab` for edit mode, `1`/`2`/`3` for points, edges and
-faces, `E`/`I`/`B` to extrude, inset and subdivide, `G`/`R`/`C` to move, turn and
-resize, and the same brush and face property blocks down the right.
+faces, `E`/`I`/`B` to extrude, inset and subdivide, `J` to join faces, `M` and `X`
+to merge and dissolve points, `G`/`R`/`C` to move, turn and resize, and the same brush and face property blocks down the right.
 `Ctrl+Shift+click` a brush for detail mode, which shapes what it looks like
 without moving what a body walks into — see
 [Shaping surfaces](03-shaping-surfaces.md).
@@ -215,6 +217,75 @@ The level file stores the placement and never the emitters, the way it stores
 neither the models nor the brushes. Selecting one in the level editor shows it
 with a note saying which entity owns it: turn its knobs to see what they do, but
 the change that keeps is the one made on the type.
+
+## Entities that carry volumes
+
+A type may carry **volumes** as well: regions in its own coordinates that go
+wherever it goes — a guard's sight cone, the pickup radius around a crate, the
+plate under a trap. Add them from the **Volumes** list in the entity editor's
+outline. Each is drawn as a cage in that window, and the move, rotate and scale
+gizmos place and size it.
+
+| Field | |
+| --- | --- |
+| **Name** | what the level ID is built from, and what an instance override matches on |
+| **Enabled** | a disabled volume contains nothing — what a region that arms on cue ships with |
+| **Model** / **Bone** | a socket inside one of the type's model attachments — leave empty to hang it off the entity's origin |
+| **Offset / Rotation** | placement, in the entity's space or the bone's |
+| **Shape / Half-extents** | as a level volume's. Scale drags the half-extents, and the entity's own scale reaches them once placed |
+| **Scripting** | the tags, attributes, script and parameters the placed volume carries |
+
+Placing the type puts a real volume in the level, riding the entity, addressed as
+`<entity id>.<volume name>` — so `@guard_2.sight` names exactly one, and
+`@guard_2.volumes` lists them all. Its script gets that volume's `:enter:` and
+`:exit:` with `@self` the volume, and `@self.prop.carrier` is the guard it
+belongs to. The guard itself never enters its own volume. `spawn` gives a new
+guard its own, and `destroy` takes them away with it.
+
+A carried volume is a trigger. A level exit, a doorway, fog and scatter are
+places rather than parts of a thing, so they stay on the level's own volumes —
+one of which can still ride an entity by hand (see [Volumes](13-volumes.md)).
+
+The level file stores the placement and never the volumes. Selecting one in the
+level editor shows a note naming the entity that owns it.
+
+## Entities that carry paths
+
+A type may carry **waypoint animations** too: paths in its own coordinates that
+go wherever it goes — a blast door sliding shut, a hatch swinging open, a lift
+car inside a moving platform. Add one from the **Paths** list in the entity
+editor's outline, or select a **Dynamic** brush and use **New Path From Here** in
+its **Paths** group, which starts the path on that brush.
+
+Shaping and timing one works as it does in the level editor (see
+[Waypoint animations](02-building-levels.md#waypoint-animations)), in the
+entity's space instead of the world's. **Ctrl+click** in the view adds the next
+point after the selected one, a click on an arrow selects its point, and `G`,
+`R` and `C` move, turn and scale it. The timeline along the bottom of the
+viewport retimes the points. Pick a dynamic brush in the timeline's **Brush** box
+and **Play** runs it along the path without leaving the window; **Stop** puts it
+back, and nothing the preview does is saved.
+
+Placing the type puts a real waypoint animation in the level, addressed as
+`<entity id>.<path name>`, whose points ride the entity: a door sent shut while
+its ship is climbing closes against the hull, not against the pad the ship left.
+From the type's own script, name both halves through `@self`:
+
+```flang
+def shut(:boarded:, who ref) -> null
+    play_waypoints(@self.hatch, @self.door_close)
+end
+```
+
+A string with the name the type gave the path works too:
+`play_waypoints(@self.hatch, "door_close")`. Either way each placement's hatch
+closes along its own copy. The entity itself cannot follow a path it carries;
+send one of its parts along it instead.
+
+The level file stores the placement and never the paths. The level editor draws
+each one where its entity is and can preview it on any object, but the points
+belong to the type: their fields are greyed out, and an **Edit Type** button
+opens the type in the entity editor. Saving the type re-stamps every placement.
 
 ## The player
 

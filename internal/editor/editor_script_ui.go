@@ -51,6 +51,8 @@ var (
 	scriptEditorMoveTo        string
 	scriptEditorShowDelete    bool
 	scriptEditorDeleteRel     string
+	scriptEditorShowDeleteDir bool
+	scriptEditorDeleteDirRel  string
 
 	// scriptEditorFiles and scriptEditorDirs are the last scan of
 	// resources/scripts/. Nil means "never scanned"; empty means "scanned, and
@@ -129,6 +131,7 @@ func drawScriptEditorWindow() {
 	drawScriptEditorNewFolderDialog()
 	drawScriptEditorMoveDialog()
 	drawScriptEditorDeleteConfirm()
+	drawScriptEditorDeleteDirConfirm()
 	drawScriptEditorCloseConfirm()
 
 	imgui.End()
@@ -1268,4 +1271,118 @@ func scriptEditorDeleteFile(rel string) {
 	script.ScriptReload()
 	scriptEditorRescan()
 	scriptEditorStatus("Deleted %s", path)
+}
+
+// scriptDeleteDirListMax is how many of a folder's scripts the confirmation
+// names before it summarises the rest. Enough to recognise the folder by; a
+// modal that grew past the window for a large one would hide its own buttons.
+const scriptDeleteDirListMax = 12
+
+// drawScriptEditorDeleteDirConfirm asks before removing a folder and everything
+// in it.
+//
+// The same warnings as a single script, gathered across every script in the
+// folder — with one difference: an import from one script in the folder to
+// another is not mentioned, because both ends go together and nothing is left
+// to break. What is left to break is what lives outside it.
+func drawScriptEditorDeleteDirConfirm() {
+	imguibackend.WithModalPopup("Delete folder?", &scriptEditorShowDeleteDir, func() {
+		dir := scriptEditorDeleteDirRel
+		if dir == "" {
+			imgui.CloseCurrentPopup()
+			return
+		}
+		imgui.Text("Delete " + fileutil.ScriptsDirName + "/" + dir + "/ and everything in it?")
+		editorTextMuted("It is removed from disk. This cannot be undone.")
+
+		files := scriptFilesUnder(scriptEditorFiles, dir)
+		imgui.Separator()
+		if len(files) == 0 {
+			editorTextMuted("It holds no scripts.")
+		} else {
+			verb := "go"
+			if len(files) == 1 {
+				verb = "goes"
+			}
+			imgui.Text(fmt.Sprintf("%s %s with it:", plural(len(files), "script"), verb))
+			for i, rel := range files {
+				if i == scriptDeleteDirListMax {
+					editorTextMuted(fmt.Sprintf("    …and %d more", len(files)-i))
+					break
+				}
+				editorTextMuted("    " + rel)
+			}
+		}
+
+		var unsaved, named []string
+		importers := map[string]bool{}
+		for _, rel := range files {
+			path := fileutil.ScriptsDirName + "/" + rel
+			if d := scriptDocForPath(path); d != nil && d.Dirty() {
+				unsaved = append(unsaved, rel)
+			}
+			isNamed, importedBy := script.ScriptUsage(path)
+			if isNamed {
+				named = append(named, rel)
+			}
+			for _, p := range importedBy {
+				if len(scriptFilesUnder([]string{p}, dir)) == 0 {
+					importers[p] = true
+				}
+			}
+		}
+		if len(unsaved) > 0 || len(named) > 0 || len(importers) > 0 {
+			imgui.Separator()
+		}
+		if len(unsaved) > 0 {
+			editorTextColored(scriptIssueColor,
+				"Open with unsaved changes, which go with it: "+strings.Join(unsaved, ", ")+".")
+		}
+		if len(named) > 0 {
+			editorTextColored(scriptIssueColor,
+				"This level names "+strings.Join(named, ", ")+".")
+		}
+		if len(importers) > 0 {
+			editorTextColored(scriptIssueColor,
+				"Imported from outside the folder by "+strings.Join(sortedKeys(importers), ", ")+".")
+		}
+
+		imgui.Separator()
+		if imgui.Button("Delete##deletescriptdir") {
+			scriptEditorDeleteDir(dir)
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##deletescriptdir") {
+			imgui.CloseCurrentPopup()
+		}
+	})
+}
+
+// scriptEditorDeleteDir removes a folder and forgets every script that was in
+// it, the way scriptEditorDeleteFile forgets one.
+//
+// Which scripts those were is read from the scan before the folder goes, since
+// afterwards there is nothing left to list. A tab is closed for each — see
+// scriptEditorDeleteFile for why a tab on a deleted file is not kept.
+func scriptEditorDeleteDir(dir string) {
+	files := scriptFilesUnder(scriptEditorFiles, dir)
+	if err := fileutil.DeleteScriptDir(dir); err != nil {
+		scriptEditorStatus("%v", err)
+		return
+	}
+	for _, rel := range files {
+		path := fileutil.ScriptsDirName + "/" + rel
+		if d := scriptDocForPath(path); d != nil {
+			scriptEditorDropDoc(d)
+		}
+		script.ScriptParamsInvalidate(path)
+	}
+	script.ScriptReload()
+	scriptEditorRescan()
+	if len(files) == 0 {
+		scriptEditorStatus("Deleted %s/%s/", fileutil.ScriptsDirName, dir)
+		return
+	}
+	scriptEditorStatus("Deleted %s/%s/ and %s", fileutil.ScriptsDirName, dir, plural(len(files), "script"))
 }

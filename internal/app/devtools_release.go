@@ -33,6 +33,10 @@ const devAvailable = false
 func devActive() bool    { return false }
 func devWireframe() bool { return false }
 
+// devRunCommand runs nothing: a shipped game has no command-line tools, and
+// `my-game build-release` is a player's typo rather than a request.
+func devRunCommand(args []string) (exitCode int, ran bool) { return 0, false }
+
 // devInit does nothing. The release build's startup loads the game's own start
 // level and goes straight into gameplay — see startup_release.go.
 func devInit(level *world.Level, levelPath, levelsDir string) {}
@@ -57,3 +61,7 @@ func devRenderBrushGhost(draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSide
 // devRouteEvent consumes nothing: with no F1 reference and no secondary
 // windows, every event belongs to the game.
 func devRouteEvent(event sdl.Event) bool { return false }
+
+// devInterceptQuit leaves quit_game alone: there is no editor to go back to, so
+// the game's Quit button ends the process.
+func devInterceptQuit() bool { return false }

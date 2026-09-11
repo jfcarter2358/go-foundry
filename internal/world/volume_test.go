@@ -75,7 +75,7 @@ func TestUnboundedVolumeContainsNothing(t *testing.T) {
 	if v.ContainsPoint(mgl32.Vec3{0, 0, 0}) {
 		t.Error("a volume with a zero extent reported a point inside it")
 	}
-	if _, _, ok := v.WorldAABB(); ok {
+	if _, _, ok := v.WorldAABB(nil); ok {
 		t.Error("WorldAABB reported bounds for an unauthored volume")
 	}
 }

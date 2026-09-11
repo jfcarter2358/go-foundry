@@ -31,6 +31,21 @@ func TestReleaseBuildHasNoEditor(t *testing.T) {
 	}
 }
 
+// With no editor to return to, a script's quit_game has to end the process.
+func TestReleaseBuildQuitEndsTheGame(t *testing.T) {
+	if devInterceptQuit() {
+		t.Error("devInterceptQuit took quit_game in a release build — the game's Quit button would do nothing")
+	}
+}
+
+// A shipped game has no command-line tools: `my-game build-release` is a
+// player's typo, and the game should start as if it had not been typed.
+func TestReleaseBuildRunsNoCommands(t *testing.T) {
+	if _, ran := devRunCommand([]string{"build-release"}); ran {
+		t.Error("devRunCommand ran a tool in a release build")
+	}
+}
+
 // Nothing routes to an editor window, so every event has to reach the game.
 func TestReleaseBuildConsumesNoEvents(t *testing.T) {
 	if devRouteEvent(nil) {

@@ -141,7 +141,12 @@ func (rt *ScriptRuntime) verbWaypointFollower(args []flang.Value, i int, name st
 // verbWaypointAnimation resolves argument i to a waypoint animation. Either
 // spelling is accepted — `@door_open` or "door_open" — since an animation's
 // name is as likely to arrive in a string attribute as to be written inline.
-func (rt *ScriptRuntime) verbWaypointAnimation(args []flang.Value, i int, name string) (*world.WaypointAnimation, error) {
+//
+// A name that is not a level ID is also tried as a path an entity carries,
+// qualified by the entity f belongs to and then by the entity whose script is
+// running: so `play_waypoints(@self.hatch, "door_close")` in a type's script
+// finds this placement's door_close, and every other ship's is left alone.
+func (rt *ScriptRuntime) verbWaypointAnimation(f world.WaypointFollower, args []flang.Value, i int, name string) (*world.WaypointAnimation, error) {
 	if i >= len(args) {
 		return nil, fmt.Errorf("%s needs a waypoint animation", name)
 	}
@@ -157,6 +162,18 @@ func (rt *ScriptRuntime) verbWaypointAnimation(args []flang.Value, i int, name s
 	case flang.StrVal:
 		if a := world.FindWaypointAnimation(rt.lvl, string(v)); a != nil {
 			return a, nil
+		}
+		carriers := []string{world.WaypointFollowerCarrier(f)}
+		if rt.self.Kind == flang.RefEntity {
+			carriers = append(carriers, rt.self.A)
+		}
+		for _, carrier := range carriers {
+			if carrier == "" {
+				continue
+			}
+			if a := world.FindWaypointAnimation(rt.lvl, world.EntityWaypointAnimationID(carrier, string(v))); a != nil {
+				return a, nil
+			}
 		}
 		return nil, fmt.Errorf("%s: this level has no waypoint animation called %q", name, string(v))
 	case flang.NullVal:
@@ -193,9 +210,12 @@ var waypointVerbs = map[string]scriptVerb{
 		if err != nil {
 			return nil, err
 		}
-		anim, err := rt.verbWaypointAnimation(args, 1, "play_waypoints")
+		anim, err := rt.verbWaypointAnimation(f, args, 1, "play_waypoints")
 		if err != nil {
 			return nil, err
+		}
+		if world.WaypointFollowerCarriesAnimation(f, anim) {
+			return nil, fmt.Errorf("play_waypoints: %s carries %q, and cannot follow a path that moves with it; send one of its parts along it instead", args[0], anim.ID)
 		}
 		if len(anim.Points) == 0 {
 			// A false rather than an error, on play_anim's rule: nothing is

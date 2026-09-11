@@ -111,8 +111,77 @@ func editorSelectWaypointAnimation(ai int) {
 	editorClearObjectSelections()
 	Editor.ActiveWaypointAnimIdx = ai
 	Editor.ActiveWaypointIdx = -1
-	Editor.GizmoKind = gizmoKindWaypointAnim
+	Editor.GizmoKind = waypointGizmoKind(&lvl.WaypointAnimations[ai], gizmoKindWaypointAnim)
 	Editor.PanelFocus = panelFocusWaypoint
+}
+
+// waypointGizmoKind is the gizmo a selection in a gives: kind, or none for a
+// path an entity carries, whose points are the type's and are written in the
+// entity's space — a drag here would move them in the wrong space, on a copy
+// the next re-stamp throws away.
+func waypointGizmoKind(a *world.WaypointAnimation, kind string) string {
+	if waypointCarried(a) {
+		return gizmoKindNone
+	}
+	return kind
+}
+
+// waypointCarried reports whether a is a path an entity's type carries
+// (world/entity_waypoints.go) rather than one the level authored.
+func waypointCarried(a *world.WaypointAnimation) bool { return a != nil && a.FromEntity != "" }
+
+// editorWaypointRefuseCarried reports whether a is carried, saying why it cannot
+// be edited here when it is. Every edit in this file and the panel's asks first;
+// selecting, previewing and scrubbing a carried path are all still allowed.
+func editorWaypointRefuseCarried(a *world.WaypointAnimation) bool {
+	if !waypointCarried(a) {
+		return false
+	}
+	editorSetStatus("%q is carried by entity %s: edit its type's paths in the entity editor", a.ID, a.FromEntity)
+	return true
+}
+
+// waypointSelKeep is the level editor's waypoint selection held by animation ID
+// across a change to the animation list that is not an undo: an entity's paths
+// dropped and materialised again, which shifts every index after them.
+type waypointSelKeep struct {
+	anim  string
+	point int
+}
+
+// editorDropEntityWaypointAnimations drops the paths materialised from the named
+// entity and puts the waypoint selection back on whatever it named, returning
+// what it named so a caller that materialises them again can restore it once
+// more.
+func editorDropEntityWaypointAnimations(lvl *world.Level, entityID string) waypointSelKeep {
+	keep := waypointSelKeep{point: Editor.ActiveWaypointIdx}
+	if a := activeWaypointAnimation(); a != nil && lvl == Editor.level {
+		keep.anim = a.ID
+	}
+	if world.DropEntityWaypointAnimations(lvl, entityID) > 0 {
+		keep.restore(lvl)
+	}
+	return keep
+}
+
+// restore re-points the selection at the animation k names, quietly — nothing
+// else the author had selected is touched — or drops it if that animation has
+// gone.
+func (k waypointSelKeep) restore(lvl *world.Level) {
+	if lvl == nil || lvl != Editor.level || k.anim == "" {
+		return
+	}
+	for ai := range lvl.WaypointAnimations {
+		if a := &lvl.WaypointAnimations[ai]; a.ID == k.anim {
+			Editor.ActiveWaypointAnimIdx = ai
+			Editor.ActiveWaypointIdx = k.point
+			if k.point >= len(a.Points) {
+				Editor.ActiveWaypointIdx = len(a.Points) - 1
+			}
+			return
+		}
+	}
+	editorClearWaypointSelection()
 }
 
 // editorSelectWaypoint selects one point of an animation, which gives it the
@@ -126,7 +195,7 @@ func editorSelectWaypoint(ai, pi int) {
 	editorClearObjectSelections()
 	Editor.ActiveWaypointAnimIdx = ai
 	Editor.ActiveWaypointIdx = pi
-	Editor.GizmoKind = gizmoKindWaypoint
+	Editor.GizmoKind = waypointGizmoKind(&lvl.WaypointAnimations[ai], gizmoKindWaypoint)
 	Editor.PanelFocus = panelFocusWaypoint
 }
 
@@ -268,6 +337,11 @@ func insertWaypointAt(pos mgl32.Vec3) bool {
 	if a == nil {
 		return false
 	}
+	if editorWaypointRefuseCarried(a) {
+		// Still taken: a Ctrl+click aimed at extending the path is not a
+		// request to multi-select either.
+		return true
+	}
 	EditorPushUndo()
 	at := len(a.Points)
 	if Editor.ActiveWaypointIdx >= 0 && Editor.ActiveWaypointIdx < len(a.Points) {
@@ -329,7 +403,7 @@ func insertWaypoint(a *world.WaypointAnimation, at int, w world.Waypoint) {
 // second one on it.
 func insertWaypointAtPlayhead(a *world.WaypointAnimation) {
 	lvl := Editor.level
-	if lvl == nil || a == nil || len(a.Points) == 0 {
+	if lvl == nil || a == nil || len(a.Points) == 0 || editorWaypointRefuseCarried(a) {
 		return
 	}
 	t := Editor.WaypointPreview.Time
@@ -392,7 +466,7 @@ func waypointAheadPosition(a *world.WaypointAnimation, after int) mgl32.Vec3 {
 // the Explorer that does nothing.
 func deleteActiveWaypoint() {
 	a := activeWaypointAnimation()
-	if a == nil {
+	if a == nil || editorWaypointRefuseCarried(a) {
 		return
 	}
 	ai, pi := Editor.ActiveWaypointAnimIdx, Editor.ActiveWaypointIdx
@@ -417,7 +491,7 @@ func deleteActiveWaypoint() {
 // deleteWaypointAnimation removes an animation outright.
 func deleteWaypointAnimation(ai int) {
 	lvl := Editor.level
-	if lvl == nil || ai < 0 || ai >= len(lvl.WaypointAnimations) {
+	if lvl == nil || ai < 0 || ai >= len(lvl.WaypointAnimations) || editorWaypointRefuseCarried(&lvl.WaypointAnimations[ai]) {
 		return
 	}
 	id := lvl.WaypointAnimations[ai].ID
@@ -437,7 +511,7 @@ func deleteWaypointAnimation(ai int) {
 // is visibly a second path rather than one drawn over the first.
 func duplicateWaypointAnimation(ai int) {
 	lvl := Editor.level
-	if lvl == nil || ai < 0 || ai >= len(lvl.WaypointAnimations) {
+	if lvl == nil || ai < 0 || ai >= len(lvl.WaypointAnimations) || editorWaypointRefuseCarried(&lvl.WaypointAnimations[ai]) {
 		return
 	}
 	EditorPushUndo()
@@ -457,7 +531,7 @@ func moveActiveWaypoint(by int) {
 	a := activeWaypointAnimation()
 	pi := Editor.ActiveWaypointIdx
 	to := pi + by
-	if a == nil || pi < 0 || pi >= len(a.Points) || to < 0 || to >= len(a.Points) {
+	if a == nil || pi < 0 || pi >= len(a.Points) || to < 0 || to >= len(a.Points) || editorWaypointRefuseCarried(a) {
 		return
 	}
 	EditorPushUndo()
@@ -475,7 +549,7 @@ func moveActiveWaypoint(by int) {
 func renameActiveWaypointAnimation(id string) {
 	lvl := Editor.level
 	a := activeWaypointAnimation()
-	if lvl == nil || a == nil || id == a.ID {
+	if lvl == nil || a == nil || id == a.ID || editorWaypointRefuseCarried(a) {
 		return
 	}
 	if id == "" {
@@ -500,7 +574,7 @@ func renameActiveWaypointAnimation(id string) {
 // which is the quick way to hang one in mid-air.
 func moveActiveWaypointToCamera() {
 	p := activeWaypoint()
-	if p == nil {
+	if p == nil || editorWaypointRefuseCarried(activeWaypointAnimation()) {
 		return
 	}
 	EditorPushUndo()
@@ -511,7 +585,7 @@ func moveActiveWaypointToCamera() {
 // selected whole, every point of it — onto the grid.
 func snapActiveWaypoints(step float32) {
 	a := activeWaypointAnimation()
-	if a == nil || step <= 0 {
+	if a == nil || step <= 0 || editorWaypointRefuseCarried(a) {
 		return
 	}
 	EditorPushUndo()
@@ -556,14 +630,26 @@ func pickWaypointMarker(origin, dir, camPos mgl32.Vec3, lvl *world.Level) (ai, p
 		return
 	}
 	for a := range lvl.WaypointAnimations {
-		pts := lvl.WaypointAnimations[a].Points
-		for p := range pts {
-			if tt := pickMarkerDiscRayT(origin, dir, pts[p].Position, camPos, waypointMarkerRadius); tt < t {
+		anim := &lvl.WaypointAnimations[a]
+		space := anim.SpaceMatrix(lvl)
+		for p := range anim.Points {
+			at := waypointXform(space, anim.Points[p].Position)
+			if tt := pickMarkerDiscRayT(origin, dir, at, camPos, waypointMarkerRadius); tt < t {
 				ai, pi, t = a, p, tt
 			}
 		}
 	}
 	return
+}
+
+// waypointWorldPosition is a point of a carried out of the space its points are
+// written in: itself for a level's path, and where the entity is for one an
+// entity carries.
+func waypointWorldPosition(lvl *world.Level, a *world.WaypointAnimation, p mgl32.Vec3) mgl32.Vec3 {
+	if !waypointCarried(a) {
+		return p
+	}
+	return waypointXform(a.SpaceMatrix(lvl), p)
 }
 
 // ---------- drawing ----------
@@ -586,6 +672,10 @@ var waypointArrowLines = [...][2]mgl32.Vec3{
 // point to the next with a chevron on it saying which way the path runs.
 //
 // Editor only, like every marker here. Nothing in play draws a waypoint.
+//
+// A path an entity carries is drawn where the entity is, through the same
+// matrix play carries it by (WaypointAnimation.SpaceMatrix), so its arrows sit
+// on the ship's hatch rather than at the level's origin.
 func RenderWaypointMarkers(lvl *world.Level) {
 	if lvl == nil {
 		return
@@ -596,32 +686,44 @@ func RenderWaypointMarkers(lvl *world.Level) {
 		if ai == Editor.ActiveWaypointAnimIdx {
 			col = waypointArrowColor
 		}
-		for pi := range a.Points {
-			p := &a.Points[pi]
-			if pi > 0 {
-				drawWaypointLeg(a.Points[pi-1].Position, p.Position, col)
-			}
-			arrow := col
-			if ai == Editor.ActiveWaypointAnimIdx && pi == Editor.ActiveWaypointIdx {
-				arrow = waypointSelColor
-			}
-			drawWaypointArrow(p, arrow)
+		sel := -1
+		if ai == Editor.ActiveWaypointAnimIdx {
+			sel = Editor.ActiveWaypointIdx
 		}
+		drawWaypointPath(a.SpaceMatrix(lvl), a, col, sel)
 	}
 	drawWaypointPreviewLeg(lvl)
 	drawWaypointPlayhead(lvl)
 }
 
-// drawWaypointArrow draws one point's arrow through its own transform.
-func drawWaypointArrow(p *world.Waypoint, col mgl32.Vec3) {
-	m := p.Matrix()
+// drawWaypointPath draws one animation's arrows and the legs between them,
+// through space — the identity for a path written in the space it is drawn in —
+// with point sel in the selection colour.
+func drawWaypointPath(space mgl32.Mat4, a *world.WaypointAnimation, col mgl32.Vec3, sel int) {
+	for pi := range a.Points {
+		p := &a.Points[pi]
+		if pi > 0 {
+			drawWaypointLeg(waypointXform(space, a.Points[pi-1].Position), waypointXform(space, p.Position), col)
+		}
+		arrow := col
+		if pi == sel {
+			arrow = waypointSelColor
+		}
+		drawWaypointArrow(space, p, arrow)
+	}
+}
+
+// drawWaypointArrow draws one point's arrow through its own transform, carried
+// through space.
+func drawWaypointArrow(space mgl32.Mat4, p *world.Waypoint, col mgl32.Vec3) {
+	m := space.Mul4(p.Matrix())
 	for _, l := range waypointArrowLines {
 		gizmo.GizmoLine(waypointXform(m, l[0]), waypointXform(m, l[1]), col)
 	}
 	// A small unscaled cross at the point itself, so a point scaled down to
 	// almost nothing is still there to find and click.
 	const c = float32(0.06)
-	at := p.Position
+	at := waypointXform(space, p.Position)
 	gizmo.GizmoLine(at.Sub(mgl32.Vec3{c, 0, 0}), at.Add(mgl32.Vec3{c, 0, 0}), col)
 	gizmo.GizmoLine(at.Sub(mgl32.Vec3{0, c, 0}), at.Add(mgl32.Vec3{0, c, 0}), col)
 	gizmo.GizmoLine(at.Sub(mgl32.Vec3{0, 0, c}), at.Add(mgl32.Vec3{0, 0, c}), col)
@@ -666,7 +768,7 @@ func drawWaypointPreviewLeg(lvl *world.Level) {
 	if f == nil || !world.WaypointTakesPosition(f) {
 		return
 	}
-	drawWaypointLeg(pose.Position, a.Points[0].Position, waypointPreviewLegColor)
+	drawWaypointLeg(pose.Position, waypointWorldPosition(lvl, a, a.Points[0].Position), waypointPreviewLegColor)
 }
 
 // drawWaypointPlayhead draws an arrow where the timeline's playhead has the
@@ -684,12 +786,13 @@ func drawWaypointPlayhead(lvl *world.Level) {
 	}
 	pose := a.PoseAt(waypointPreviewStartPose(lvl, a), p.Time)
 	ghost := world.Waypoint{Position: pose.Position, Rotation: pose.Rotation, Scale: pose.Scale}
-	drawWaypointArrow(&ghost, waypointPreviewLegColor)
+	drawWaypointArrow(a.SpaceMatrix(lvl), &ghost, waypointPreviewLegColor)
 }
 
-// waypointPreviewStartPose is where the preview's path sets off from: the
-// preview object as it was authored, as play would send it — or, with nothing
-// chosen, the first point, so the path is shown from where it begins.
+// waypointPreviewStartPose is where the preview's path sets off from, in the
+// space its points are written in: the preview object as it was authored, as
+// play would send it — or, with nothing chosen, the first point, so the path is
+// shown from where it begins.
 //
 // A directional light has no position to set off from, so its path is shown
 // starting on the first point, and its first leg only turns it.
@@ -697,6 +800,10 @@ func waypointPreviewStartPose(lvl *world.Level, a *world.WaypointAnimation) worl
 	if pose, f := waypointPreviewRestPose(lvl); f != nil {
 		if !world.WaypointTakesPosition(f) && len(a.Points) > 0 {
 			pose.Position = a.Points[0].Position
+		} else if waypointCarried(a) {
+			// The object stands in the world; a carried path is travelled in
+			// its entity's space, which is what PoseAt interpolates in.
+			pose.Position = waypointXform(a.SpaceMatrix(lvl).Inv(), pose.Position)
 		}
 		return pose
 	}

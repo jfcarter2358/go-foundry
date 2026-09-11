@@ -207,6 +207,11 @@ scaled there, and when to get there. A script sends a dynamic brush along one �
 or an entity, a sprite, an emitter, a sound, a light or a volume — and the
 engine does the rest.
 
+A path that belongs to a thing rather than to the level — a ship's door, which
+has to close wherever the ship has flown — is authored on the entity's type
+instead, and rides every placement: see
+[Entities that carry paths](11-entities.md#entities-that-carry-paths).
+
 **Placing one.** `Add... > Waypoint Animation > Place By Clicking`, then click in
 the view: that places the animation's first point and selects it. **Ctrl+click**
 somewhere else and the next point goes there, straight after the selected one —

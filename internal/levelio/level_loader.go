@@ -3,6 +3,7 @@ package levelio
 import (
 	"fmt"
 	"foundry/internal/audio"
+	"foundry/internal/compile"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
@@ -98,7 +99,7 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 
 // LoadLevel reads a YAML level file, converts it to runtime types, and uploads
 // all geometry to the GPU. Texture loading is driven from this function via the
-// global TextureNames map and ExecutablePath variable.
+// global TextureNames map and ResourcesPath variable.
 func LoadLevel(levelPath string) (world.Level, error) {
 	raw, err := readRawLevelFile(levelPath)
 	if err != nil {
@@ -381,6 +382,19 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 		level.Volumes = append(level.Volumes, v)
 	}
 
+	// The volumes the level's entities carry (world/entity_volume.go). After
+	// the level's own rather than beside the emitters above: IDs are uniqued
+	// against everything in the level, and it is the level-authored volume a
+	// script already names that should keep its ID when the two collide.
+	for i := range level.Entities {
+		if world.MaterializeEntityVolumes(level, &level.Entities[i]) == 0 {
+			continue
+		}
+		if err := world.LoadEntityVolumeCages(level, level.Entities[i].ID); err != nil {
+			log.Printf("%v", err)
+		}
+	}
+
 	// Sprites: camera-facing quads, with the same ID guarantee.
 	//
 	// A sprite whose texture is missing falls back to the marker rather than
@@ -470,6 +484,13 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 		level.WaypointAnimations = append(level.WaypointAnimations, wa)
 	}
 
+	// The paths the level's entities carry (world/entity_waypoints.go). After
+	// the level's own, on the carried volumes' rule: it is the level-authored
+	// animation a script already names that keeps its ID when the two collide.
+	for i := range level.Entities {
+		world.MaterializeEntityWaypointAnimations(level, &level.Entities[i])
+	}
+
 	level.Music = world.MusicFromRaw(raw.Music)
 	if level.Music != nil && level.Music.Track != "" {
 		if _, err := audio.ClipFor(level.Music.Track); err != nil {
@@ -510,6 +531,16 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 			log.Printf("%v", err)
 		}
 	}
+
+	// The sealing box (world/seal.go). A level that has never had one gets one
+	// fitted around what it holds — here, after every chunk, entity and prefab
+	// is in, so the fit sees all of it — and the next save writes it into the
+	// file, from when on it is the author's to size.
+	if raw.Seal != nil {
+		level.Seal = world.SealFromRaw(raw.Seal)
+	} else {
+		level.Seal = compile.FitSeal(level)
+	}
 	return nil
 }
 
@@ -543,7 +574,7 @@ func loadTextureRange(names []string, from, count int) (int, error) {
 		if !ok {
 			return i, fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 		}
-		if err := gfx.LoadTexture(name, filepath.Join(fileutil.ExecutablePath, path)); err != nil {
+		if err := gfx.LoadTexture(name, filepath.Join(fileutil.ResourcesPath, path)); err != nil {
 			return i, err
 		}
 	}

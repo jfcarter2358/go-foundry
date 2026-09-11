@@ -49,7 +49,7 @@ var skyRender skyRenderer
 // SkyInit compiles the sky program and builds its cube. Must be called once
 // with the GL context current.
 func SkyInit() {
-	shaderDir := filepath.Join(fileutil.ExecutablePath, "shaders")
+	shaderDir := filepath.Join(fileutil.ResourcesPath, "shaders")
 	sp := func(name string) string { return filepath.Join(shaderDir, name) }
 
 	vs, err := gfx.CompileShader(mustReadShader(sp("sky_vert.glsl")), gl.VERTEX_SHADER)
@@ -189,7 +189,7 @@ func RenderSky(lvl *world.Level) {
 	// The fog uniforms sky_frag.glsl reads for its horizon blend, uploaded
 	// through the same function every other program's fog goes through. It
 	// leaves the program bound.
-	world.UploadFogTo(p.prog, lvl.Fog, lvl.Volumes)
+	world.UploadFogTo(p.prog, lvl.Fog, lvl.Volumes, lvl)
 
 	// The camera with its translation dropped: the cube is centred on the eye,
 	// so the sky has no near side to walk toward.

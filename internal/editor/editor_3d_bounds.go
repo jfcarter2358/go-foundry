@@ -108,7 +108,7 @@ func editorBoundsWalk(lvl *world.Level, fn func(kind editorBoundsKind, lo, hi mg
 		emit(boundsKindScenery, lo, hi, ok)
 	}
 	for i := range lvl.Volumes {
-		lo, hi, ok := lvl.Volumes[i].WorldAABB()
+		lo, hi, ok := lvl.Volumes[i].WorldAABB(lvl)
 		emit(boundsKindVolume, lo, hi, ok)
 	}
 	for i := range lvl.Sprites {

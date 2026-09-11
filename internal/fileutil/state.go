@@ -2,21 +2,22 @@ package fileutil
 
 // state.go — where the game *writes*, as opposed to where it reads.
 //
-// Every asset path in the engine resolves against ExecutablePath, which is
-// exactly right for content: the install directory is read-only as far as the
-// game is concerned, and a level and its textures ship together. Mutable state
-// is the other half of that sentence and had been sharing the same answer —
-// foundry.log and audio.yaml were both written beside the executable, which
-// works in dist/ and fails the moment the game is installed under Program
-// Files or /opt, where the user running it cannot write.
+// Every asset path in the engine resolves against ResourcesPath, the install's
+// resources/ folder, which is exactly right for content: the install directory
+// is read-only as far as the game is concerned, and a level and its textures
+// ship together. Mutable state is the other half of that sentence and had been
+// sharing the same answer — foundry.log and audio.yaml were both written beside
+// the executable, which works in dist/ and fails the moment the game is
+// installed under Program Files or /opt, where the user running it cannot
+// write.
 //
 // So writes go through StatePath instead. UserDataRoot is empty in a
 // development build, which makes StatePath identical to what it replaced and
 // leaves the editor's save-beside-the-exe workflow untouched; a release build
 // points it at the per-user data directory during startup. Reads go through
-// ReadState, which falls back to the install directory so a shipped default
-// (an audio.yaml a project wants to ship at a particular mix, say) is still
-// picked up on a first run when nothing has been written yet.
+// ReadState, which falls back to resources/ so a shipped default (an
+// audio.yaml a project wants to ship at a particular mix, say) is still picked
+// up on a first run when nothing has been written yet.
 
 import (
 	"os"
@@ -45,19 +46,20 @@ func StatePath(name string) string {
 	return filepath.Join(StateDir(), filepath.FromSlash(name))
 }
 
-// ReadState reads a state file, falling back to a copy shipped beside the
-// executable when the user has none of their own yet.
+// ReadState reads a state file, falling back to a copy shipped in resources/
+// when the user has none of their own yet.
 //
 // The fallback is what makes a shipped default work: a project that wants to
 // launch at a particular volume, or with a particular set of detail presets,
-// puts the file in the install directory and the first write moves the user's
-// own copy to the data directory without ever touching the original.
+// puts the file in its resources/ — which is what a pack ships — and the first
+// write moves the user's own copy to the data directory without ever touching
+// the original.
 func ReadState(name string) ([]byte, error) {
 	data, err := os.ReadFile(StatePath(name))
 	if err == nil || UserDataRoot == "" {
 		return data, err
 	}
-	return os.ReadFile(filepath.Join(ExecutablePath, filepath.FromSlash(name)))
+	return os.ReadFile(filepath.Join(ResourcesPath, filepath.FromSlash(name)))
 }
 
 // UseUserDataDir points state writes at the per-user data directory for app,

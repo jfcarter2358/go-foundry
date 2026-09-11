@@ -282,8 +282,9 @@ func appendVolumeHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f 
 		if half.X() <= 0 || half.Y() <= 0 || half.Z() <= 0 {
 			continue
 		}
-		m := mgl32.Translate3D(v.Position.X(), v.Position.Y(), v.Position.Z()).
-			Mul4(world.EulerMatrixYXZ(v.Rotation))
+		// Through what it rides. rayBounds takes a general inverse, so a
+		// carrier's scale is honoured along with its placement.
+		m := v.WorldMatrix(lvl)
 		t, ok := rayBounds(origin, dir, m, half, world.BoundingType(v.Shape))
 		if !ok || t > f.Range {
 			continue

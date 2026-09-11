@@ -45,9 +45,9 @@ func writeTestPNG(t *testing.T, path string, c color.RGBA) {
 func TestNormalMapLoadsWithItsAlbedo(t *testing.T) {
 	gltest.Context(t)
 
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = t.TempDir()
-	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = t.TempDir()
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
 	dir := fileutil.TexturesDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)

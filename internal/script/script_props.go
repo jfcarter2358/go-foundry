@@ -557,7 +557,21 @@ func volumeProps() map[string]propAccess {
 				vol.Position = p
 				return nil
 			}),
-			Doc: "world-space position",
+			Doc: "position — world-space, or an offset in the carrier's space while attached",
+		},
+		"attach": {
+			Get: get(func(v *world.Volume) flang.Value { return flang.StrVal(v.Attach.Describe()) }),
+			Doc: "what the volume rides, as the editor names it; empty when it is in world space (read-only)",
+		},
+		"carrier": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				vol := c.volumeFor(r)
+				if vol == nil {
+					return nil, false
+				}
+				return carrierValue(c, vol.Attach), true
+			},
+			Doc: "a ref to the entity the volume rides, or null (read-only)",
 		},
 		"rotation": {
 			Get: get(func(v *world.Volume) flang.Value { return vecValue(v.Rotation) }),

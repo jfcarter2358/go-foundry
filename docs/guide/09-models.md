@@ -36,6 +36,9 @@ writes one out.
 | `V` | orbit / fly camera |
 | `F` | frame the model |
 | `I` | inset — a border round the selected faces (outside pose mode) |
+| `J` | join the selected faces into one |
+| `M` / `Shift+M` | merge the selected points at their centre / onto the first picked |
+| `X` | dissolve the selected points out of the lines they sit on |
 | `Delete` | delete the selected faces or bones |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo |
 | `Tab` | hand focus back to the main window |
@@ -43,8 +46,18 @@ writes one out.
 Right-click for the same operations as a menu.
 
 In the **Face** section: **Extrude**, **Inset**, **Subdivide** (midpoint split —
-the surface does not move), **Delete**, and a per-face **Smooth** flag. With one
-face selected the panel reports its normal and side count.
+the surface does not move), **Join**, **Delete**, and a per-face **Smooth** flag.
+With one face selected the panel reports its normal and side count.
+
+**Join** (`J`) makes the selected faces one face along the outline they share.
+They must meet along edges and leave no hole; a joined face may be any shape, and
+keeps the corners' UVs when every face in it had them. The points left along its
+edges can be cleared up in vertex mode with **Dissolve** (`X`), which takes out
+each selected point where only two edges meet, so the segments either side
+become one; corners stay. In edge mode, a selected run of edges becomes one edge.
+**Merge** (`M`) collapses the selected points into one at their centre, or onto
+the first one picked with `Shift+M`, blending their bone weights. Both are on the
+right-click menu in vertex and edge mode.
 
 **Inset** (`I`) puts a border round each selected face, in that face's own plane,
 mitred so it is the same width all the way round however long and thin the face

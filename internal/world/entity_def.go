@@ -53,14 +53,14 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// EntitiesDirName is the directory under the install root that holds definition
+// EntitiesDirName is the directory under resources/ that holds definition
 // files, and entityDefExt the extension they carry.
 const (
 	EntitiesDirName = "entities"
 	entityDefExt    = ".yaml"
 )
 
-func entityDefsDir() string { return filepath.Join(fileutil.ExecutablePath, EntitiesDirName) }
+func entityDefsDir() string { return filepath.Join(fileutil.ResourcesPath, EntitiesDirName) }
 
 func entityDefPath(name string) string {
 	return filepath.Join(entityDefsDir(), name+entityDefExt)
@@ -163,23 +163,25 @@ func entityCollisionToRaw(c, base EntityCollision) *RawEntityCollision {
 
 // RawEntityDef is a definition file: resources/entities/<name>.yaml.
 type RawEntityDef struct {
-	ID          string                  `yaml:"id,omitempty"` // defaults to the filename
-	Tags        []string                `yaml:"tags,omitempty"`
-	Bounding    string                  `yaml:"bounding,omitempty"` // aabb (default), sphere, cylinder
-	BoundHalfX  float32                 `yaml:"bound_half_x,omitempty"`
-	BoundHalfY  float32                 `yaml:"bound_half_y,omitempty"`
-	BoundHalfZ  float32                 `yaml:"bound_half_z,omitempty"`
-	BoundOffset *RawVec3                `yaml:"bound_offset,omitempty"`
-	Visible     *bool                   `yaml:"visible,omitempty"` // default true when absent
-	Collision   *RawEntityCollision     `yaml:"collision,omitempty"`
-	Models      []RawEntityModel        `yaml:"models,omitempty"`
-	Brushes     []RawBrush              `yaml:"brushes,omitempty"`  // see entity_brush.go
-	Emitters    []RawEntityEmitter      `yaml:"emitters,omitempty"` // see entity_emitter.go
-	Attributes  map[string]RawAttribute `yaml:"attributes,omitempty"`
-	Script      string                  `yaml:"script,omitempty"`      // .flang file driving this type's behaviour
-	Params      map[string]RawAttribute `yaml:"params,omitempty"`      // defaults for that script's `param` declarations
-	Description string                  `yaml:"description,omitempty"` // author's note; shown in the editor's picker
-	Vehicle     *RawVehicle             `yaml:"vehicle,omitempty"`     // see vehicle_def.go
+	ID                 string                  `yaml:"id,omitempty"` // defaults to the filename
+	Tags               []string                `yaml:"tags,omitempty"`
+	Bounding           string                  `yaml:"bounding,omitempty"` // aabb (default), sphere, cylinder
+	BoundHalfX         float32                 `yaml:"bound_half_x,omitempty"`
+	BoundHalfY         float32                 `yaml:"bound_half_y,omitempty"`
+	BoundHalfZ         float32                 `yaml:"bound_half_z,omitempty"`
+	BoundOffset        *RawVec3                `yaml:"bound_offset,omitempty"`
+	Visible            *bool                   `yaml:"visible,omitempty"` // default true when absent
+	Collision          *RawEntityCollision     `yaml:"collision,omitempty"`
+	Models             []RawEntityModel        `yaml:"models,omitempty"`
+	Brushes            []RawBrush              `yaml:"brushes,omitempty"`             // see entity_brush.go
+	Emitters           []RawEntityEmitter      `yaml:"emitters,omitempty"`            // see entity_emitter.go
+	Volumes            []RawEntityVolume       `yaml:"volumes,omitempty"`             // see entity_volume.go
+	WaypointAnimations []RawWaypointAnimation  `yaml:"waypoint_animations,omitempty"` // see entity_waypoints.go
+	Attributes         map[string]RawAttribute `yaml:"attributes,omitempty"`
+	Script             string                  `yaml:"script,omitempty"`      // .flang file driving this type's behaviour
+	Params             map[string]RawAttribute `yaml:"params,omitempty"`      // defaults for that script's `param` declarations
+	Description        string                  `yaml:"description,omitempty"` // author's note; shown in the editor's picker
+	Vehicle            *RawVehicle             `yaml:"vehicle,omitempty"`     // see vehicle_def.go
 }
 
 // RawEntity is the YAML form of one entity *instance* in a level file.
@@ -218,6 +220,12 @@ type RawEntity struct {
 	// twice the rate" is the ordinary edit, and it should not drag the other
 	// five emitters into the level file with it.
 	Emitters []RawEntityEmitter `yaml:"emitters,omitempty"`
+	// Volumes are per-volume overrides, matched by name, on the emitters' rule.
+	Volumes []RawEntityVolume `yaml:"volumes,omitempty"`
+	// WaypointAnimations are written whole or not at all, on the brushes' rule —
+	// and in practice only by a typeless instance, since a type's paths have no
+	// per-instance override (entity_waypoints.go).
+	WaypointAnimations []RawWaypointAnimation `yaml:"waypoint_animations,omitempty"`
 	// Script overrides the definition's. A pointer so the three cases stay
 	// distinct: absent follows the type, "" detaches the script this instance
 	// would otherwise have inherited, and a name replaces it.
@@ -271,8 +279,14 @@ type EntityDef struct {
 	// Emitters are the particle effects the type carries, in its local space
 	// (entity_emitter.go). Templates like Models and Brushes: the level
 	// materialises one live Emitter per placement from each of them.
-	Emitters   []EntityEmitter
-	Attributes AttrSet
+	Emitters []EntityEmitter
+	// Volumes are the regions the type carries, in its local space
+	// (entity_volume.go). Templates again: one live Volume per placement.
+	Volumes []EntityVolume
+	// WaypointAnimations are the paths the type carries, written in its local
+	// space (entity_waypoints.go): one live level animation per placement.
+	WaypointAnimations []WaypointAnimation
+	Attributes         AttrSet
 	// Params are the type's defaults for its script's `param` declarations. An
 	// instance overrides them one name at a time.
 	Params AttrSet
@@ -442,6 +456,18 @@ func entityDefFromRaw(raw RawEntityDef, name string) (*EntityDef, error) {
 		return nil, err
 	}
 	def.Emitters = emitters
+
+	volumes, err := entityVolumesFromRaw(raw.Volumes, fmt.Sprintf("entity definition %q", id))
+	if err != nil {
+		return nil, err
+	}
+	def.Volumes = volumes
+
+	anims, err := entityWaypointAnimationsFromRaw(raw.WaypointAnimations, fmt.Sprintf("entity definition %q", id))
+	if err != nil {
+		return nil, err
+	}
+	def.WaypointAnimations = anims
 	return def, nil
 }
 
@@ -469,6 +495,8 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 	}
 	raw.Brushes = entityBrushesToRaw(def.Brushes)
 	raw.Emitters = entityEmittersToRaw(def.Emitters)
+	raw.Volumes = entityVolumesToRaw(def.Volumes)
+	raw.WaypointAnimations = entityWaypointAnimationsToRaw(def.WaypointAnimations)
 	return raw
 }
 
@@ -499,6 +527,9 @@ func (d *EntityDef) Instantiate(id string) Entity {
 		Vehicle:      d.Vehicle,
 		Brushes:      CloneEntityBrushes(d.Brushes),
 		Emitters:     CloneEntityEmitters(d.Emitters),
+		Volumes:      CloneEntityVolumes(d.Volumes),
+
+		WaypointAnimations: CloneWaypointAnimations(d.WaypointAnimations),
 	}
 	for i := range d.Models {
 		e.Models = append(e.Models, d.Models[i].TemplateCopy())
@@ -700,7 +731,80 @@ func EntityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 		}
 		e.Emitters = append(e.Emitters, m)
 	}
+
+	// Volumes override by name as well, under the same two rules.
+	owner := fmt.Sprintf("entity %q", id)
+	for i, rv := range r.Volumes {
+		if m := e.EntityVolume(rv.Name); m != nil && rv.Name != "" {
+			if err := applyVolumeOverride(m, rv, owner); err != nil {
+				return Entity{}, err
+			}
+			continue
+		}
+		m, err := entityVolumeFromRaw(rv, owner)
+		if err != nil {
+			return Entity{}, err
+		}
+		if m.Name == "" {
+			m.Name = fmt.Sprintf("volume_%d", i+1)
+		}
+		if e.EntityVolume(m.Name) != nil {
+			return Entity{}, fmt.Errorf("entity %q: duplicate volume %q", id, m.Name)
+		}
+		e.Volumes = append(e.Volumes, m)
+	}
+
+	// Paths replace the type's wholesale — see RawEntity.WaypointAnimations.
+	if len(r.WaypointAnimations) > 0 {
+		anims, err := entityWaypointAnimationsFromRaw(r.WaypointAnimations, owner)
+		if err != nil {
+			return Entity{}, err
+		}
+		e.WaypointAnimations = anims
+	}
 	return e, nil
+}
+
+// RestampEntity rebuilds a placed entity from a changed definition, keeping what
+// the placement made its own.
+//
+// prev is the definition the entity was stamped from, next the one to stamp it
+// from now. The instance's difference from prev — its overrides, exactly what a
+// level file stores for it — is laid over next, so a field the instance left
+// alone follows the new definition and one it changed keeps its value: a type
+// that switches script takes every placement with it, and the parameters a
+// placement bound for that script stay bound. It is the level's save-and-reload
+// round trip done in memory, which is what makes an edited type land on an open
+// level the same way it would on one reopened from disk.
+//
+// The fields a level file does not store but a live placement has — the frame
+// and seat it occupies, the prefab that put it there — are carried across as
+// they were. A nil prev has no difference to take, so only the placement is
+// kept.
+//
+// An error means the overrides no longer fit next — one names a model the type
+// has since dropped, say — and the caller should leave the entity as it was
+// rather than discard what it carried.
+func RestampEntity(e *Entity, prev, next *EntityDef) (Entity, error) {
+	if e == nil || next == nil {
+		return Entity{}, fmt.Errorf("restamp: no entity or no definition")
+	}
+	var fresh Entity
+	if prev == nil {
+		fresh = next.Instantiate(e.ID)
+		fresh.Type = e.Type
+		fresh.Position, fresh.Rotation, fresh.Scale = e.Position, e.Rotation, e.Scale
+		fresh.Velocity, fresh.AngularVelocity = e.Velocity, e.AngularVelocity
+		fresh.AttachedChunk = e.AttachedChunk
+	} else {
+		var err error
+		fresh, err = EntityFromRaw(EntityToRaw(e, prev), func(string) (*EntityDef, error) { return next, nil })
+		if err != nil {
+			return Entity{}, err
+		}
+	}
+	fresh.Frame, fresh.Seat, fresh.FromPrefab = e.Frame, e.Seat, e.FromPrefab
+	return fresh, nil
 }
 
 // EntityToRaw is EntityFromRaw's inverse: the instance's own state, plus only
@@ -746,6 +850,8 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 		}
 		r.Brushes = entityBrushesToRaw(e.Brushes)
 		r.Emitters = entityEmittersToRaw(e.Emitters)
+		r.Volumes = entityVolumesToRaw(e.Volumes)
+		r.WaypointAnimations = entityWaypointAnimationsToRaw(e.WaypointAnimations)
 		return r
 	}
 
@@ -784,6 +890,15 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 		if o, ok := emitterOverride(def, &e.Emitters[i]); ok {
 			r.Emitters = append(r.Emitters, o)
 		}
+	}
+	for i := range e.Volumes {
+		if o, ok := volumeOverride(def, &e.Volumes[i]); ok {
+			r.Volumes = append(r.Volumes, o)
+		}
+	}
+	// Whole list or nothing, as the brushes above.
+	if !WaypointAnimationsEqual(def.WaypointAnimations, e.WaypointAnimations) {
+		r.WaypointAnimations = entityWaypointAnimationsToRaw(e.WaypointAnimations)
 	}
 	return r
 }

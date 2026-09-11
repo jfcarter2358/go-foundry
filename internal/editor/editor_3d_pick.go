@@ -38,6 +38,7 @@ const (
 	panelFocusBrush    = "brush"
 	panelFocusVertex   = "vertex"
 	panelFocusSpawn    = "spawn"
+	panelFocusSeal     = "seal"
 	panelFocusEntity   = "entity"
 	panelFocusVolume   = "volume"
 	panelFocusSprite   = "sprite"
@@ -58,6 +59,7 @@ type pickKind string
 const (
 	pickNone  pickKind = ""
 	pickSpawn pickKind = "spawn"
+	pickSeal  pickKind = "seal"
 	// pickBrushFace is any face of any brush — the level's geometry is one
 	// kind of thing now, where a sector's was six (wall, portal gap, floor,
 	// ceiling, and the two slab faces).
@@ -274,10 +276,15 @@ func pick3D(sx, sy int32) pickHit {
 	// the first hit at a given distance, and a region drawn as a wireframe cage
 	// should not win against a surface it happens to sit flush with.
 	for vi := range lvl.Volumes {
-		if t := pickVolumeRayT(origin, dir, &lvl.Volumes[vi]); t < float32(math.MaxFloat32) {
+		if t := pickVolumeRayT(lvl, origin, dir, &lvl.Volumes[vi]); t < float32(math.MaxFloat32) {
 			hit.consider(t, pickVolume, -1, vi)
 		}
 	}
+
+	// The seal box, which only gets a click that has hit nothing else by the
+	// end of this function: from outside, the box is in front of the whole
+	// level it holds. See pickSealRayT.
+	sealT := pickSealRayT(origin, dir, lvl.Seal)
 
 	// Sprites, against the quad as it is currently oriented — the only thing
 	// the author can see to aim at. Tested here rather than with the world for
@@ -347,6 +354,9 @@ func pick3D(sx, sy int32) pickHit {
 		return pickHit{kind: pickWaypoint, t: wpT, chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: wpAnim, sub: wpPoint}
 	}
 
+	if hit.kind == pickNone && sealT < float32(math.MaxFloat32) {
+		hit.consider(sealT, pickSeal, -1, -1)
+	}
 	if hit.kind == pickNone {
 		hit.t = 0
 	}

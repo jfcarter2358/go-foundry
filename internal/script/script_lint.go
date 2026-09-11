@@ -459,6 +459,11 @@ func (l *linter) waypoints(c *flang.CallExpr, verb string) {
 	case *flang.StringLit:
 		anim = world.FindWaypointAnimation(l.lvl, a.Value)
 		if anim == nil {
+			// A type's script names its own paths by the name the type gave
+			// them, which the verb qualifies by the placement at run time.
+			anim = world.FindCarriedWaypointAnimationNamed(l.lvl, a.Value)
+		}
+		if anim == nil {
 			msg := fmt.Sprintf("play_waypoints would fail: this level has no waypoint animation called %q", a.Value)
 			names := make([]string, 0, len(l.lvl.WaypointAnimations))
 			for i := range l.lvl.WaypointAnimations {
@@ -833,6 +838,16 @@ func (l *linter) kindOf(e flang.Expr) (flang.Kind_, bool) {
 				emID := world.EntityEmitterID(addr.Name, t.Name)
 				if r, ok := l.cache.refFor(emID); ok && r.Kind == flang.RefEmitter {
 					return flang.RefEmitter, true
+				}
+				// Or one of its volumes, likewise.
+				volID := world.EntityVolumeID(addr.Name, t.Name)
+				if r, ok := l.cache.refFor(volID); ok && r.Kind == flang.RefVolume {
+					return flang.RefVolume, true
+				}
+				// Or one of its paths.
+				animID := world.EntityWaypointAnimationID(addr.Name, t.Name)
+				if r, ok := l.cache.refFor(animID); ok && r.Kind == flang.RefWaypoints {
+					return flang.RefWaypoints, true
 				}
 			}
 		case flang.RefModel:

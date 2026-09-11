@@ -13,7 +13,7 @@ package script
 // bound by a script and one bound in the editor are the same emitter, and the
 // level format grew nothing to support this.
 //
-// Only sprites and emitters, because Attach is the binding those two have. An
+// Sprites, emitters and volumes, because Attach is the binding those have. An
 // entity rides a vehicle through `mount`, which is a different idea with a
 // different answer to collision, seats and dismounting, and conflating the two
 // would give an entity two ways to be somewhere else.
@@ -52,21 +52,21 @@ type attachTarget struct {
 	world func(lvl *world.Level) mgl32.Vec3
 }
 
-// verbAttachable resolves an argument to a sprite or an emitter.
+// verbAttachable resolves an argument to a sprite, an emitter or a volume.
 //
 // The pointers it hands back are into the level's slices, so they are good for
 // exactly as long as nothing appends to one. Every caller here writes
 // immediately, which is the same contract verbEntity works under.
 func (rt *ScriptRuntime) verbAttachable(args []flang.Value, i int, name string) (attachTarget, error) {
 	if i >= len(args) {
-		return attachTarget{}, fmt.Errorf("%s needs a sprite or an emitter", name)
+		return attachTarget{}, fmt.Errorf("%s needs a sprite, an emitter or a volume", name)
 	}
 	r, ok := args[i].(flang.RefVal)
 	if !ok {
 		if _, isNull := args[i].(flang.NullVal); isNull {
 			return attachTarget{}, fmt.Errorf("%s was given null — an `@name` that matches nothing in the level resolves to null, so check the object's ID", name)
 		}
-		return attachTarget{}, fmt.Errorf("%s takes a sprite or an emitter, not a %s", name, flang.TypeOf(args[i]))
+		return attachTarget{}, fmt.Errorf("%s takes a sprite, an emitter or a volume, not a %s", name, flang.TypeOf(args[i]))
 	}
 	switch r.Kind {
 	case flang.RefSprite:
@@ -81,9 +81,15 @@ func (rt *ScriptRuntime) verbAttachable(args []flang.Value, i int, name string) 
 			return attachTarget{}, &scriptMissingError{r.String()}
 		}
 		return attachTarget{id: e.ID, at: &e.Attach, pos: &e.Position, world: e.WorldPosition}, nil
+	case flang.RefVolume:
+		v := rt.cache.volumeFor(r)
+		if v == nil {
+			return attachTarget{}, &scriptMissingError{r.String()}
+		}
+		return attachTarget{id: v.ID, at: &v.Attach, pos: &v.Position, world: v.WorldPosition}, nil
 	}
 	return attachTarget{}, fmt.Errorf(
-		"%s takes a sprite or an emitter; %s is %s — an entity rides a vehicle with mount, not attach",
+		"%s takes a sprite, an emitter or a volume; %s is %s — an entity rides a vehicle with mount, not attach",
 		name, r.String(), aKind(r.Kind))
 }
 

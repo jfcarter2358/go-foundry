@@ -28,7 +28,6 @@ title: My Game
 version: 1.2.3
 data_dir: MyGame
 start_level: intro
-start_screen: main_menu
 window:
   width: 1280
   height: 720
@@ -37,8 +36,8 @@ window:
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if m.StartLevel != "intro" || m.StartScreen != "main_menu" {
-		t.Errorf("start = %q/%q", m.StartLevel, m.StartScreen)
+	if m.StartLevel != "intro" {
+		t.Errorf("start level = %q", m.StartLevel)
 	}
 	if m.Window.Width != 1280 || m.Window.Height != 720 || !m.Window.Fullscreen {
 		t.Errorf("window = %+v", m.Window)

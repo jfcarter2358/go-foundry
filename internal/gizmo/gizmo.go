@@ -53,8 +53,8 @@ var Buf []float32
 func GizmoInit() {
 	var err error
 	GizmoProgram, err = gfx.CompileProgramFromFiles(
-		filepath.Join(fileutil.ExecutablePath, "shaders/gizmo_vert.glsl"),
-		filepath.Join(fileutil.ExecutablePath, "shaders/gizmo_frag.glsl"),
+		filepath.Join(fileutil.ResourcesPath, "shaders/gizmo_vert.glsl"),
+		filepath.Join(fileutil.ResourcesPath, "shaders/gizmo_frag.glsl"),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("gizmo shader: %v", err))

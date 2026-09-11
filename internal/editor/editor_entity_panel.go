@@ -143,6 +143,7 @@ func editorEntityProperties(lvl *world.Level) {
 	editorPropGroup("Models##entmodels", 0, func() { editorEntityModels(e) })
 	editorPropGroup("Chunks##entchunks", 0, func() { editorEntityGeometry(lvl, e) })
 	editorPropGroup("Effects##enteffects", 0, func() { editorEntityEffects(lvl, e) })
+	editorPropGroup("Volumes##entvolumes", 0, func() { editorEntityVolumes(e) })
 	editorObjectWaypointsUI(e)
 	// An entity's tags and attributes are merged from its definition rather
 	// than held in a ScriptData, so the three rows are assembled here instead
@@ -827,6 +828,47 @@ func editorEntityEffects(lvl *world.Level, e *world.Entity) {
 	}
 	editorTextWrapped("This entity has no type, so its effects are its own. Promote it to a " +
 		"type to aim them against the thing they hang off.")
+}
+
+// ---------- carried volumes ----------
+
+// editorEntityVolumes says what regions the entity carries, and points at where
+// they are edited — editorEntityEffects' twin, read-only for the same reason.
+// What it gives is the level ID each one materialised under, which is what a
+// script in this level writes.
+func editorEntityVolumes(e *world.Entity) {
+	if !e.HasVolumes() {
+		editorTextWrapped("None. A carried volume is a region that goes wherever the entity " +
+			"goes — a sight cone, a pickup radius — with a script of its own for `enter` " +
+			"and `exit`. Add one to the type in the entity editor.")
+	} else {
+		imgui.Text(fmt.Sprintf("%d volume(s), placed in this level as:", len(e.Volumes)))
+		for i := range e.Volumes {
+			m := &e.Volumes[i]
+			label := "  • " + world.EntityVolumeID(e.ID, m.Name) + "  (" + world.VolumeShapeName(m.Shape) + ")"
+			if m.Bone != "" {
+				label += "  on " + m.Model + "." + m.Bone
+			}
+			if !m.Enabled {
+				label += "  (disabled)"
+			}
+			imgui.Text(label)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Real volumes in the level, riding this entity. The level\n" +
+				"file does not store them — the type does — so a script says\n" +
+				"@" + world.EntityVolumeID(e.ID, "<name>") + " and the placement stays the type's.")
+		}
+	}
+
+	if e.Type != "" {
+		if imgui.Button("Edit Type##entvoledit") {
+			OpenEntityEditorOn(e.Type)
+		}
+		return
+	}
+	editorTextWrapped("A volume placed by hand can ride this entity too: set its Entity under " +
+		"Transform in the volume's own panel.")
 }
 
 // ---------- carried geometry ----------

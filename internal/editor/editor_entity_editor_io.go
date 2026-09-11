@@ -129,6 +129,12 @@ func entitySaveDefAs(name string) {
 		entityStatus = "A type needs a name"
 		return
 	}
+	// What is on disk under this name before the write: the definition the
+	// level's placements were stamped from, which re-stamping measures their
+	// overrides against. Saving evicts the cache entry rather than rewriting it,
+	// so this pointer stays the old definition. nil when there was none.
+	stampedFrom, _ := world.LoadEntityDef(name)
+
 	prev := entityDef.Name
 	entityDef.Name = name
 	if err := world.SaveEntityDef(entityDef); err != nil {
@@ -146,7 +152,7 @@ func entitySaveDefAs(name string) {
 	// chunk geometry for entities the main window draws, and a VAO minted here
 	// is a name that window cannot bind — see withMainGLFrom.
 	var n int
-	withMainGLFrom(entityEditorWindow, func() { n = ReloadEntitiesOfType(name) })
+	withMainGLFrom(entityEditorWindow, func() { n = ReloadEntitiesOfType(name, stampedFrom) })
 	entityStatus = fmt.Sprintf("Saved %s%s", name+entityDefFileSuffix, reloadedSuffix(n))
 }
 
@@ -174,7 +180,13 @@ func reloadedSuffix(n int) string {
 // The counterpart of ReloadEmittersUsing for particle effects, and the reason
 // this window is worth having beside the level rather than instead of it: save
 // the type and the level in the other window is already showing it.
-func ReloadEntitiesOfType(typeName string) int {
+//
+// Each placement keeps what it made its own — its script parameters, an added
+// tag, a widened bound — and follows the type in everything else: see
+// world.RestampEntity. prev is the definition the placements were stamped from;
+// re-stamping from the new one alone would throw every override away, which is
+// how saving a type used to wipe the parameters each placement had bound.
+func ReloadEntitiesOfType(typeName string, prev *world.EntityDef) int {
 	lvl := Editor.level
 	if lvl == nil || typeName == "" {
 		return 0
@@ -190,11 +202,17 @@ func ReloadEntitiesOfType(typeName string) int {
 		if e.Type != typeName {
 			continue
 		}
-		fresh := def.Instantiate(e.ID)
-		fresh.Type = typeName
-		fresh.Position, fresh.Rotation, fresh.Scale = e.Position, e.Rotation, e.Scale
-		fresh.Velocity, fresh.AngularVelocity = e.Velocity, e.AngularVelocity
-		fresh.Frame, fresh.Seat = e.Frame, e.Seat
+		// The params bound on its carried volumes are on the level's copies,
+		// which the re-stamp is about to rebuild from the type.
+		e.Volumes = world.CarriedVolumeTemplates(lvl, e)
+		fresh, err := world.RestampEntity(e, prev, def)
+		if err != nil {
+			// Left as it was rather than re-stamped bare: an override that no
+			// longer fits is the author's to resolve, and discarding the rest
+			// of what the placement carried is not a resolution.
+			editorSetStatus("Entity %s kept its previous %s: %v", e.ID, typeName, err)
+			continue
+		}
 
 		e.Delete()
 		*e = fresh
@@ -230,12 +248,24 @@ func editorSyncEntityContent(lvl *world.Level, e *world.Entity) {
 	}
 	levelio.DropEntityGeometry(lvl, e.ID)
 	world.DropEntityEmitters(lvl, e.ID)
+	world.DropEntityVolumes(lvl, e.ID)
+	// The paths go out and come straight back under the same IDs, so a preview
+	// or a selection on one survives a re-stamp — see
+	// editorDropEntityWaypointAnimations for the part that has to be kept.
+	sel := editorDropEntityWaypointAnimations(lvl, e.ID)
+	world.MaterializeEntityWaypointAnimations(lvl, e)
+	sel.restore(lvl)
 	tex := map[string]bool{}
 	if err := levelio.MaterializeEntityGeometry(lvl, e, tex); err != nil {
 		editorSetStatus("%v", err)
 	}
 	if err := world.MaterializeEntityEmitters(lvl, e, tex); err != nil {
 		editorSetStatus("%v", err)
+	}
+	if world.MaterializeEntityVolumes(lvl, e) > 0 {
+		if err := world.LoadEntityVolumeCages(lvl, e.ID); err != nil {
+			editorSetStatus("%v", err)
+		}
 	}
 	// One table for both: a particle texture and a brush texture are the same
 	// kind of entry, so the same upload pass serves them.
@@ -327,6 +357,10 @@ func entityDeleteSelection() {
 		entityRemoveModel(entitySel.Idx)
 	case entitySelEmitter:
 		entityRemoveEmitter(entitySel.Idx)
+	case entitySelVolume:
+		entityRemoveVolume(entitySel.Idx)
+	case entitySelWaypoints:
+		entityDeleteActiveWaypoint()
 	case entitySelSeat:
 		entityRemoveSeat(entitySel.Idx)
 	default:
@@ -370,7 +404,10 @@ func OpenEntityEditorFrom(e *world.Entity) {
 		Params:       e.ScriptParams.Clone(),
 		Brushes:      world.CloneEntityBrushes(e.Brushes),
 		Emitters:     world.CloneEntityEmitters(e.Emitters),
-		Vehicle:      world.CloneVehicleSpec(e.Vehicle),
+		Volumes:      world.CloneEntityVolumes(e.Volumes),
+
+		WaypointAnimations: world.CloneWaypointAnimations(e.WaypointAnimations),
+		Vehicle:            world.CloneVehicleSpec(e.Vehicle),
 	}
 	for i := range e.Models {
 		def.Models = append(def.Models, e.Models[i].TemplateCopy())

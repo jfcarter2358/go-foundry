@@ -109,6 +109,12 @@ the bottom of the stack. A pause menu is a modal, pausing, cursor-releasing
 screen pushed on top of it. A loading screen is the same thing pushed by the load
 job. "Is the game paused" is a question about the stack.
 
+**Pauses the game** freezes the world but leaves scripts running, so a level's
+`:tick:` handlers and timers carry on behind the screen. To stop those too, the
+screen's script sets `@level.prop.paused` on `:shown:` and clears it on
+`:hidden:`, which is what the shipped pause menu does. Screens and widgets keep
+running under it. See *Pausing* in SCRIPTING.md.
+
 ## Bindings
 
 A widget says what it reads and the stack polls it once a tick:
@@ -157,7 +163,9 @@ as missing rather than as a rendering bug.
 ## Scripts on screens and widgets
 
 A screen and a widget carry the same tags, attributes, script and params any
-level object does.
+level object does. In the UI editor they are the **Scripting** group near the
+bottom of the properties panel: select a widget for its own, or the root for the
+screen's.
 
 | Event | Posted with | |
 | --- | --- | --- |
@@ -185,8 +193,9 @@ The **UI screens** block in the level properties panel lists the screens the
 level shows when play starts. A menu a script opens later is not listed there —
 `show_screen` names it directly.
 
-In a release build, `game.yaml`'s `start_screen` is where the main menu belongs.
-A menu is a property of the game, not of the beach it happens to be drawn over.
+A main menu is no different: list it on the level that should open with it, or
+show it from a script. Nothing puts a screen up game-wide, so a game can start on
+an intro level and bring the menu up in the one after it.
 
 ## Video
 

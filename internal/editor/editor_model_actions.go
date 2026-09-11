@@ -194,6 +194,165 @@ func modelDeleteSelectedFaces() {
 	modelSetStatus("Deleted %d faces", len(faces))
 }
 
+// ---------- topology ----------
+//
+// Join, dissolve and merge (model/model_topology.go). Each renumbers what it
+// touches, so each ends by carrying the selection across rather than leaving
+// indices that now name something else.
+
+// modelJoinSelectedFaces makes the selected faces as few faces as their
+// outlines allow, and leaves those selected.
+func modelJoinSelectedFaces() {
+	faces := modelSelectedFaces()
+	if len(faces) < 2 {
+		modelSetStatus("Select two or more neighbouring faces to join")
+		return
+	}
+	ModelPushUndo()
+	joined, refused, edit := modelDoc.JoinFaces(faces, nil)
+	if !edit.Changed() {
+		modelUndoStack.pop()
+		if refused > 0 {
+			modelSetStatus("Cannot join: the faces must share edges and make one outline with no hole in it")
+		} else {
+			modelSetStatus("Nothing to join: none of the selected faces shares an edge with another")
+		}
+		return
+	}
+	modelSelection.Faces = joined
+	modelUVInvalidate()
+	if refused > 0 {
+		modelSetStatus("Joined into %d face(s); %d group(s) could not be — not one outline", len(joined), refused)
+		return
+	}
+	modelSetStatus("Joined %d faces into %d", len(faces), len(joined))
+}
+
+// modelDissolveSelectedPoints takes the selected points out of the lines they
+// sit on. In edge mode it is the points a selected run of edges passes through,
+// so the run becomes one edge between its two ends.
+func modelDissolveSelectedPoints() {
+	if modelDoc == nil {
+		return
+	}
+	var verts []int
+	switch modelSelection.Mode {
+	case modelSelVertex:
+		verts = modelSelection.Verts
+	case modelSelEdge:
+		verts = modelEdgeRunInterior(modelSelection.Edges)
+	default:
+		return
+	}
+	ModelPushUndo()
+	dissolved, edit := modelDoc.DissolveVerts(verts)
+	if !edit.Changed() {
+		modelUndoStack.pop()
+		if modelSelection.Mode == modelSelEdge {
+			modelSetStatus("Nothing to dissolve: select a run of edges, and the points along it " +
+				"where only two edges meet are taken out")
+		} else {
+			modelSetStatus("Nothing to dissolve: a point can be dissolved only where two edges meet — " +
+				"a point along a line, not a corner")
+		}
+		return
+	}
+	modelCarryMeshSelection(edit)
+	modelUVInvalidate()
+	if skipped := len(verts) - len(dissolved); skipped > 0 {
+		modelSetStatus("Dissolved %d point(s); %d are corners and stay", len(dissolved), skipped)
+		return
+	}
+	modelSetStatus("Dissolved %d point(s)", len(dissolved))
+}
+
+// modelEdgeRunInterior is the points a selection of edges passes through: the
+// ones on a line both of whose edges are selected.
+func modelEdgeRunInterior(edges []model.EdgeKey) []int {
+	sel := make(map[model.EdgeKey]bool, len(edges))
+	for _, e := range edges {
+		sel[e] = true
+	}
+	var out []int
+	for _, v := range modelDoc.VertsOfEdges(edges) {
+		a, b, ok := modelDoc.LineNeighbours(v)
+		if ok && sel[model.MakeEdgeKey(v, a)] && sel[model.MakeEdgeKey(v, b)] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// modelMergeSelectedPoints collapses the selected points into one — at their
+// centre, or on the first one picked — and selects it, in vertex mode, since
+// whatever the selection was made of it is one point now.
+func modelMergeSelectedPoints(atFirst bool) {
+	if modelDoc == nil || (modelSelection.Mode != modelSelVertex && modelSelection.Mode != modelSelEdge) {
+		return
+	}
+	verts := modelSelectedVerts()
+	if len(verts) < 2 {
+		modelSetStatus("Select two or more points to merge")
+		return
+	}
+	n := len(verts)
+	at := modelDoc.VertsCentroid(verts)
+	if atFirst {
+		first := verts[0]
+		if modelSelection.Mode == modelSelEdge {
+			first = modelSelection.Edges[0].A
+		}
+		// MergeVerts keeps the first point it is given.
+		verts = append([]int{first}, verts...)
+		at = modelDoc.Verts[first]
+	}
+	ModelPushUndo()
+	kept, _ := modelDoc.MergeVerts(verts, at)
+	if kept < 0 {
+		modelUndoStack.pop()
+		return
+	}
+	modelSelection.Mode = modelSelVertex
+	modelSelection.Verts = []int{kept}
+	modelSelection.Edges = nil
+	modelSelection.Faces = nil
+	modelUVInvalidate()
+	modelSetStatus("Merged %d points into one", n)
+}
+
+// modelCarryMeshSelection keeps whatever part of the vertex or edge selection
+// an edit left standing, under its new numbering.
+func modelCarryMeshSelection(edit model.TopologyEdit) {
+	switch modelSelection.Mode {
+	case modelSelVertex:
+		keep := make([]int, 0, len(modelSelection.Verts))
+		for _, v := range modelSelection.Verts {
+			if nv := edit.Vert(v); nv >= 0 {
+				keep = append(keep, nv)
+			}
+		}
+		modelSelection.Verts = keep
+	case modelSelEdge:
+		// The edges between the points that survived — which is the run's one
+		// remaining edge where a dissolve took out the points along it.
+		alive := map[int]bool{}
+		for _, e := range modelSelection.Edges {
+			for _, v := range [2]int{e.A, e.B} {
+				if nv := edit.Vert(v); nv >= 0 {
+					alive[nv] = true
+				}
+			}
+		}
+		modelSelection.Edges = nil
+		for _, e := range modelDoc.Edges() {
+			if alive[e.A] && alive[e.B] {
+				modelSelection.Edges = append(modelSelection.Edges, e)
+			}
+		}
+	}
+	modelSelection.Faces = nil
+}
+
 func modelUnwrapSelectedFaces(fitUnit bool) {
 	faces := modelSelectedFaces()
 	if len(faces) == 0 {

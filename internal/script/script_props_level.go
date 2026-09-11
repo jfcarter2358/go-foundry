@@ -119,6 +119,25 @@ func levelProps() map[string]propAccess {
 			Doc: "whether the player falls. Turning it off stops a fall where it is; with control on, the player free-flies",
 		},
 
+		// The hard pause — see script_pause.go. Engine state rather than a
+		// level field, like the two switches above, and ScriptEventsReset
+		// lifts it, so neither a level load nor the end of a play session
+		// can carry a pause out with it.
+		"paused": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(GamePaused()), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("paused", "bool", v)
+				}
+				scriptEvents.paused = b
+				return nil
+			},
+			Doc: "whether the game is paused: the world stands still and the level's scripts get no :tick:, events or timers. Screens and widgets keep running, so a menu can lift it",
+		},
+
 		"sky": {
 			Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
 				if c == nil || c.lvl == nil {

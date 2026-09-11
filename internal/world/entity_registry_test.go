@@ -11,7 +11,7 @@ import (
 // withEntityDefsDir points the registry at a temporary install root holding the
 // given definition files, and restores the real one afterwards.
 //
-// The registry resolves paths against ExecutablePath and caches what it reads,
+// The registry resolves paths against ResourcesPath and caches what it reads,
 // so both have to be swapped or a test would either read the real
 // resources/entities/ or be served a definition an earlier test cached.
 func withEntityDefsDir(t *testing.T, files map[string]string) {
@@ -27,11 +27,11 @@ func withEntityDefsDir(t *testing.T, files map[string]string) {
 		}
 	}
 
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = root
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = root
 	ReloadEntityDefs()
 	t.Cleanup(func() {
-		fileutil.ExecutablePath = prev
+		fileutil.ResourcesPath = prev
 		ReloadEntityDefs()
 	})
 }
@@ -141,11 +141,11 @@ func TestSaveEntityDefRoundTrips(t *testing.T) {
 // The definitions shipped in resources/entities/ are content the editor's
 // catalog offers on a fresh checkout, so a typo in one is a broken catalog.
 func TestShippedEntityDefsLoad(t *testing.T) {
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
 	ReloadEntityDefs()
 	t.Cleanup(func() {
-		fileutil.ExecutablePath = prev
+		fileutil.ResourcesPath = prev
 		ReloadEntityDefs()
 	})
 

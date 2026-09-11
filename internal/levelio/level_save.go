@@ -111,6 +111,7 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 	if level.Spawn != nil {
 		raw.Spawn = spawnToRaw(level.Spawn)
 	}
+	raw.Seal = world.SealToRaw(level.Seal)
 
 	// The prefab placements themselves. What they MADE is skipped throughout
 	// this function, on FromPrefab — see the chunk loop above. Both halves
@@ -125,11 +126,19 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 		if level.Entities[i].FromPrefab != "" && !keepPrefabContent {
 			continue
 		}
-		raw.Entities = append(raw.Entities, world.EntityToRaw(&level.Entities[i], entityDefFor(&level.Entities[i])))
+		// A param bound on a carried volume lives on the level volume, which
+		// the loop below skips; read it back onto the entity so it is written
+		// as this placement's override (world.CarriedVolumeTemplates).
+		e := level.Entities[i]
+		e.Volumes = world.CarriedVolumeTemplates(level, &level.Entities[i])
+		raw.Entities = append(raw.Entities, world.EntityToRaw(&e, entityDefFor(&e)))
 	}
 
 	for i := range level.Volumes {
-		if level.Volumes[i].FromPrefab != "" && !keepPrefabContent {
+		// A volume an entity's type hung on it is the type's content, on the
+		// rule the emitters below follow — a level that wrote a copy would have
+		// two of it on the next load.
+		if level.Volumes[i].FromEntity != "" || (level.Volumes[i].FromPrefab != "" && !keepPrefabContent) {
 			continue
 		}
 		raw.Volumes = append(raw.Volumes, world.VolumeToRaw(&level.Volumes[i]))
@@ -165,6 +174,11 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 		raw.Sounds = append(raw.Sounds, world.SoundToRaw(&level.Sounds[i]))
 	}
 	for i := range level.WaypointAnimations {
+		// A path an entity's type carries is the type's, on the emitters' rule
+		// above — and its points are in the entity's space, not the world's.
+		if level.WaypointAnimations[i].FromEntity != "" {
+			continue
+		}
 		raw.WaypointAnimations = append(raw.WaypointAnimations, world.WaypointAnimationToRaw(&level.WaypointAnimations[i]))
 	}
 	raw.Music = world.MusicToRaw(level.Music)
@@ -450,7 +464,7 @@ func ImportChunkIntoLevel(lvl *world.Level, path string, target mgl32.Vec3) (str
 		if !ok {
 			return "", fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 		}
-		if err := gfx.LoadTexture(name, filepath.Join(fileutil.ExecutablePath, tpath)); err != nil {
+		if err := gfx.LoadTexture(name, filepath.Join(fileutil.ResourcesPath, tpath)); err != nil {
 			return "", err
 		}
 	}

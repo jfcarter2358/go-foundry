@@ -1,4 +1,4 @@
-package main
+package pack
 
 import (
 	"os"
@@ -116,24 +116,29 @@ func TestUnreachableAssetsArePruned(t *testing.T) {
 	}
 }
 
-// A start screen is a root like the start level is, and a menu is exactly the
-// screen most likely to be reachable from nothing else.
-func TestStartScreenIsARoot(t *testing.T) {
+// There is no start screen in the manifest: a main menu is listed on a level,
+// and not necessarily the first one. A game that opens on an intro reaches its
+// menu two hops out — start level, a script's load_level, that level's ui list
+// — and the menu is exactly the screen most likely to be reachable from nothing
+// else.
+func TestMenuOnALaterLevelIsKept(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"ui/theme.fth":         "\n",
 		"ui/loading.fui":       "\n",
 		"textures/default.png": "PNG",
-		"levels/start.yaml":    "chunks: []\n",
+		"levels/intro.yaml":    "scripts: [intro]\n",
+		"scripts/intro.flang":  "def main() -> null\n  load_level(\"town\")\nend\n",
+		"levels/town.yaml":     "ui: [menu]\n",
 		"ui/menu.fui":          "background: menu_bg\n",
 		"textures/menu_bg.png": "PNG",
 	})
 
-	keep := keepSet(t, root, game.Manifest{Title: "T", StartLevel: "start", StartScreen: "menu"})
+	keep := keepSet(t, root, game.Manifest{Title: "T", StartLevel: "intro"})
 	if !keep["ui/menu.fui"] {
-		t.Error("the manifest's start screen was pruned")
+		t.Error("a menu listed only on a level the intro loads was pruned")
 	}
 	if !keep["textures/menu_bg.png"] {
-		t.Error("a texture named only by the start screen was pruned")
+		t.Error("a texture named only by the menu was pruned")
 	}
 }
 
@@ -183,6 +188,12 @@ func TestDangerousOutputIsRefused(t *testing.T) {
 	}
 	if err := refuseDangerousOutput(installed); err != nil {
 		t.Errorf("an existing install tree was refused: %v", err)
+	}
+	// Including one whose pack was interrupted before its stamp, which has only
+	// the manifest it staged into resources/ to go by.
+	interrupted := writeTree(t, map[string]string{"game": "\x7fELF", "resources/game.yaml": "x"})
+	if err := refuseDangerousOutput(interrupted); err != nil {
+		t.Errorf("an unstamped install tree was refused: %v", err)
 	}
 
 	// And one that does not exist yet is the normal case.

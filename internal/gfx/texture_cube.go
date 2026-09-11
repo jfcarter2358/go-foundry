@@ -52,7 +52,7 @@ func EnsureCubemapLoaded(faces [6]string) (uint32, error) {
 		if !ok {
 			return 0, fmt.Errorf("cubemap face %d: unknown texture %q — ensure a matching .png exists in textures/", i, name)
 		}
-		paths[i] = filepath.Join(fileutil.ExecutablePath, rel)
+		paths[i] = filepath.Join(fileutil.ResourcesPath, rel)
 	}
 
 	tex, err := uploadCubemap(paths)

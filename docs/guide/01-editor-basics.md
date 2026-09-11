@@ -14,12 +14,13 @@ The toolbar runs across the top:
 | Point 1  Edge 2  Face 3          (edit mode only)
 | Move G  Rotate R  Scale C
 | Solid/Wireframe Z   Bounds B   Orbit/Fly V
-| Level: <name>  [Open] [Save] [Undo] [Redo] [Save As...]
+| Level: <name>  [Open] [Save] [Undo] [Redo] [Save As...] [Compile] [Preview] [Release]
 ```
 
 Each window button lights while its window is open. They are real windows — move
 them to a second monitor, leave them open while you play, close them from their
-own close button.
+own close button. **Release** also lights amber while a release build is running,
+window or no window — see [Shipping a game](20-shipping.md#from-the-editor).
 
 The panel down the right side is always in the same order, whatever you have
 selected:

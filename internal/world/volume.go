@@ -39,16 +39,20 @@ type Volume struct {
 	// three a sector or a wall has, so `#tag` reaches volumes on equal terms.
 	ScriptData
 
-	// Frame is the vehicle this volume rides, or "" for the world. With it set,
-	// Position and Rotation are in that vehicle's coordinates — the same
-	// convention SpawnPoint.Frame and Entity.Frame use.
+	// Attach names what this volume rides, or nothing for the world. With it
+	// set, Position and Rotation are in the carrier's coordinates — the binding
+	// sprites, emitters and sounds share (attach.go), resolved the same way.
 	//
 	// A world-space volume was enough while every volume was a trigger bolted
 	// to the level. A doorway (see FrameDoorway) is bolted to a *ship*, and a
 	// trigger in a ship's hold — "the cargo is aboard", "someone is in the
-	// cockpit" — wants the same thing, so this is a property of volumes rather
-	// than of doorways.
-	Frame string
+	// cockpit" — wants the same thing. So does a region around a thing that
+	// walks: a guard's field of view, the pickup radius on a crate. The frame
+	// half of the binding is the first; the entity and bone half is the second.
+	//
+	// Only the frame half means anything to a doorway or a scatter, which are
+	// questions about which space's chunks a region belongs to. See Frame.
+	Attach Attach
 
 	Position mgl32.Vec3
 	Rotation mgl32.Vec3 // Euler angles (X, Y, Z) in radians
@@ -101,6 +105,12 @@ type Volume struct {
 	// It is what LevelToRaw checks before writing — a level that saved a copy
 	// of a prefab's content would freeze it and stop tracking the file.
 	FromPrefab string
+
+	// FromEntity is runtime-only, never serialized: the entity whose type hung
+	// this volume on it (entity_volume.go). Empty for one the level authored.
+	// It plays the part Emitter.FromEntity plays: LevelToRaw skips these, and
+	// DropEntityVolumes sweeps them when the entity goes.
+	FromEntity string
 
 	// Geometry is the editor's wireframe cage. Runtime-only, never serialized —
 	// the cage is an authoring aid and is not drawn during play, whatever else
@@ -192,18 +202,97 @@ func (v *Volume) ContainsPoint(p mgl32.Vec3) bool {
 // wireframe and for broad-phase overlap tests. ok is false when no extents are
 // authored — an unbounded volume is not a zero-sized one.
 //
-// A rotated volume uses the extents' length as a uniform radius so the box stays
-// valid at any orientation, matching Entity.WorldAABB.
-func (v *Volume) WorldAABB() (min, max mgl32.Vec3, ok bool) {
+// A rotated or attached volume uses the extents' length as a uniform radius so
+// the box stays valid at any orientation, matching Entity.WorldAABB. An attached
+// one also takes its carrier's largest scale, since an entity scaled up carries
+// a region scaled with it.
+func (v *Volume) WorldAABB(lvl *Level) (min, max mgl32.Vec3, ok bool) {
 	if !v.HasBounds() {
 		return mgl32.Vec3{}, mgl32.Vec3{}, false
 	}
 	h := v.HalfExtents()
-	if v.Rotation != (mgl32.Vec3{}) {
-		r := h.Len()
-		h = mgl32.Vec3{r, r, r}
+	if v.Attach.IsZero() {
+		if v.Rotation != (mgl32.Vec3{}) {
+			r := h.Len()
+			h = mgl32.Vec3{r, r, r}
+		}
+		return v.Position.Sub(h), v.Position.Add(h), true
 	}
-	return v.Position.Sub(h), v.Position.Add(h), true
+	m := v.Attach.Matrix(lvl)
+	c := mulPoint(m, v.Position)
+	s := max3(m.Col(0).Vec3().Len(), m.Col(1).Vec3().Len(), m.Col(2).Vec3().Len())
+	r := h.Len() * s
+	h = mgl32.Vec3{r, r, r}
+	return c.Sub(h), c.Add(h), true
+}
+
+func max3(a, b, c float32) float32 {
+	if b > a {
+		a = b
+	}
+	if c > a {
+		a = c
+	}
+	return a
+}
+
+// ---------- what the volume rides ----------
+
+// Frame is the vehicle frame this volume's region belongs to, or "" for the
+// world. It is the frame half of Attach, and only while nothing more specific is
+// named: Attach.Matrix resolves an entity before a frame, so a volume that names
+// both rides the entity, and belongs to no frame's chunks.
+//
+// This is the question a doorway and a scatter ask — "whose decks is this
+// region part of" — which riding a walking entity has no answer to.
+func (v *Volume) Frame() string {
+	if v.Attach.Entity != "" {
+		return ""
+	}
+	return v.Attach.Frame
+}
+
+// WorldMatrix is the volume's full placement: its carrier's transform, then its
+// own. What the cage is drawn with and what a ray is tested against.
+func (v *Volume) WorldMatrix(lvl *Level) mgl32.Mat4 {
+	if v.Attach.IsZero() {
+		return v.ModelMatrix()
+	}
+	return v.Attach.Matrix(lvl).Mul4(v.ModelMatrix())
+}
+
+// WorldPosition resolves the volume's centre through its attachment.
+func (v *Volume) WorldPosition(lvl *Level) mgl32.Vec3 {
+	if v.Attach.IsZero() {
+		return v.Position
+	}
+	return mulPoint(v.Attach.Matrix(lvl), v.Position)
+}
+
+// LocalPoint carries a world-space point into the space Position is authored
+// in — the carrier's — which is the space ContainsPoint and the shape tests
+// expect. The identity for a world volume.
+func (v *Volume) LocalPoint(lvl *Level, p mgl32.Vec3) mgl32.Vec3 {
+	switch {
+	case v.Attach.IsZero() || lvl == nil:
+		// Nothing to resolve a carrier against reads as world space, the way
+		// Attach.Matrix reads it.
+		return p
+	case v.Attach.Entity == "":
+		// A frame keeps its inverse, so the common attached case — a trigger
+		// in a ship's hold — inverts nothing per test.
+		if f := lvl.Frames.Frame(v.Attach.Frame); f != nil {
+			return f.FromWorld(p)
+		}
+		return p
+	}
+	return mulPoint(v.Attach.Matrix(lvl).Inv(), p)
+}
+
+// SetWorldPosition places the volume's centre at a world-space point, written
+// back into its carrier's space.
+func (v *Volume) SetWorldPosition(lvl *Level, p mgl32.Vec3) {
+	v.Position = v.LocalPoint(lvl, p)
 }
 
 // ---------- level lookup ----------
@@ -223,10 +312,7 @@ func (v *Volume) IsLevelTrigger() bool {
 // the entity trigger test gives: a rotated region stays the shape it was
 // authored as, where transforming its extents would not.
 func (v *Volume) ContainsWorldPoint(lvl *Level, p mgl32.Vec3) bool {
-	if v.Frame == "" {
-		return v.ContainsPoint(p)
-	}
-	return v.ContainsPoint(lvl.Frames.Frame(v.Frame).FromWorld(p))
+	return v.ContainsPoint(v.LocalPoint(lvl, p))
 }
 
 // FindVolume returns the level volume with the given ID, or nil. This is what a
@@ -257,15 +343,15 @@ func FindVolumesByTag(lvl *Level, tag string) []*Volume {
 	return out
 }
 
-// VolumesContaining returns every enabled volume whose region holds p, in level
-// order. This is the query behind `enter`, `exit` and `interact`.
+// VolumesContaining returns every enabled volume whose region holds the
+// world-space point p, in level order. This is the query behind `interact`.
 func VolumesContaining(lvl *Level, p mgl32.Vec3) []*Volume {
 	if lvl == nil {
 		return nil
 	}
 	var out []*Volume
 	for i := range lvl.Volumes {
-		if lvl.Volumes[i].ContainsPoint(p) {
+		if lvl.Volumes[i].ContainsWorldPoint(lvl, p) {
 			out = append(out, &lvl.Volumes[i])
 		}
 	}
@@ -282,7 +368,7 @@ func FrameDoorways(lvl *Level, frameID string) []*Volume {
 	var out []*Volume
 	for i := range lvl.Volumes {
 		v := &lvl.Volumes[i]
-		if v.Doorway != nil && v.Enabled && v.HasBounds() && v.Frame == frameID {
+		if v.Doorway != nil && v.Enabled && v.HasBounds() && v.Frame() == frameID {
 			out = append(out, v)
 		}
 	}
@@ -323,10 +409,16 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 	if err != nil {
 		return Volume{}, err
 	}
+	// `frame:` is how a volume said what it rode before it took the whole
+	// Attach binding, and a level written then still says it that way.
+	at := AttachFromRaw(r.Attach)
+	if at.Frame == "" {
+		at.Frame = r.Frame
+	}
 	return Volume{
 		ID:         r.ID,
 		ScriptData: data,
-		Frame:      r.Frame,
+		Attach:     at,
 		Position:   mgl32.Vec3{r.Position.X, r.Position.Y, r.Position.Z},
 		Rotation:   mgl32.Vec3{r.Rotation.X, r.Rotation.Y, r.Rotation.Z},
 		Shape:      VolumeShapeFromName(r.Shape),
@@ -347,7 +439,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		ID:            v.ID,
 		RawScriptData: ScriptDataToRaw(v.ScriptData),
 		Shape:         VolumeShapeName(v.Shape),
-		Frame:         v.Frame,
+		Attach:        AttachToRaw(v.Attach),
 		Position:      RawVec3{X: v.Position.X(), Y: v.Position.Y(), Z: v.Position.Z()},
 		Rotation:      RawVec3{X: v.Rotation.X(), Y: v.Rotation.Y(), Z: v.Rotation.Z()},
 		Half:          RawVec3{X: v.HalfX, Y: v.HalfY, Z: v.HalfZ},

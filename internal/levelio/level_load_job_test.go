@@ -49,11 +49,11 @@ func withResidentTextures(t *testing.T) {
 // fails to load here and nowhere else.
 func withResourcesRoot(t *testing.T) {
 	t.Helper()
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
 	world.ReloadEntityDefs()
 	t.Cleanup(func() {
-		fileutil.ExecutablePath = prev
+		fileutil.ResourcesPath = prev
 		world.ReloadEntityDefs()
 	})
 }

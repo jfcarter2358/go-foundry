@@ -76,6 +76,9 @@ func (s *rowSelection) begin() {
 // row draws one row: a full-width Selectable of the given height, with draw
 // painted over the top of it.
 //
+// height has to cover everything draw paints: the next row starts where the
+// selectable ends, so anything draw puts below that is drawn over.
+//
 // copyText is what this row contributes to the clipboard, which is deliberately
 // not the same string as the one on screen — see the file comment.
 func (s *rowSelection) row(key, copyText string, height float32, draw func()) {

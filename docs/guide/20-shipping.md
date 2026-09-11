@@ -18,11 +18,99 @@ make release-check        # prove the editor is not in the binary
 make test-release         # the suite, in the release configuration
 ```
 
+Those targets build the engine's own `resources/`. A game kept in a project
+directory of its own is built from the editor running there — see
+[From the editor](#from-the-editor).
+
 `docs/RELEASE.md` is the full reference. This is what a designer needs from it.
+
+## From the editor
+
+The toolbar's **Release** button opens a window that builds a release of the
+project the editor is running from: the directory its binary is in, whose
+`resources/` is where it has been reading and saving everything all along.
+Nothing about it needs the Foundry source.
+
+For each platform ticked, it does what `make release-*` does:
+
+1. compiles every level — a leak fails the build unless **Allow leaking
+   levels** is on;
+2. stages an install tree in `build/install-<platform>`: the game binary, named
+   after `title:`, with the content the game reaches in `resources/` beside it;
+3. archives it — `<game>-<version>-linux-amd64.tar.gz`, with `install.sh`
+   inside, or `<game>-<version>-windows-amd64.zip`;
+4. builds the installer: a `<game>-<version>-setup.exe` for Windows, always, and
+   a `.deb` for Linux wherever `dpkg-deb` is installed (the tarball's
+   `install.sh` covers everywhere else).
+
+The files it made are listed above the output, each with a Copy button. The
+build runs as a separate process, so keep editing while it goes. Close the
+window if you like: the Release button stays amber until the build finishes.
+**Cancel** stops it outright.
+
+**It builds what is saved on disk.** Save the level first.
+
+### The game binary
+
+A release is the engine's *release* build — the one with no editor in it — with
+your content in `resources/` beside it. The window looks for one per platform in
+`runtimes/`, beside the editor:
+
+```
+my-game/
+  foundry                                     the editor
+  resources/
+    game.yaml
+    levels/  textures/  scripts/  ...
+  runtimes/foundry-release-linux-amd64
+  runtimes/foundry-release-windows-amd64.exe
+  runtimes/foundry-setup-windows-amd64.exe    the Windows installer
+```
+
+Content lives only under `resources/`; the editor's own files — `runtimes/`,
+`release.yaml`, `imgui.ini`, `foundry.log` — stay beside the binary. Start the
+editor in a directory with no `resources/` and it makes one: every missing
+content folder, empty, and a default `game.yaml`. The Foundry repository is laid
+out the same way, so `go build ./cmd/foundry` at its root gives an editor that
+works on the repository's own `resources/`.
+
+Build them from the Foundry checkout the editor came from:
+
+```
+make runtimes RUNTIMES_DIR=/path/to/my-game/runtimes
+```
+
+`make linux` and `make windows` build their own platform's alongside the editor.
+
+**Rebuild them whenever you rebuild the editor.** The editor compiles the levels
+and the game binary loads them, and a game refuses a level compiled by a
+different version of the compiler. The build warns when the two binaries come
+from different commits. A development build copied into `runtimes/` by mistake
+is refused outright, because it would ship the editor.
+
+Or put a Foundry checkout in **Source**, and the game binary is built from it on
+the spot with `go build -tags release`. That needs Go on the machine, and
+cross-building needs a C compiler for the other platform (mingw, for Windows
+from Linux).
+
+### Settings, and building from a terminal
+
+The window's settings are kept in `release.yaml` beside the editor (not in
+`resources/`), rewritten each time you press Build. It is never shipped. The
+same build runs with no editor open:
+
+```
+./foundry build-release                                  # what the window last did
+./foundry build-release -platforms linux,windows
+./foundry build-release -h                               # every flag
+```
+
+Nothing the editor writes beside itself ships: `imgui.ini`, `foundry.log`,
+`release.yaml`, any `*.bak`, and the editor binary itself are all left out.
 
 ## `game.yaml`
 
-One file beside the executable, and the entire difference between "the engine"
+One file, `resources/game.yaml`, and the entire difference between "the engine"
 and "this particular game". A release build reads it; a development build ignores
 it completely.
 
@@ -31,27 +119,28 @@ title: My Game            # required — window caption, installer, data directo
 version: 1.0.0            # appended to the window caption
 data_dir: MyGame          # optional — overrides the data directory's name
 start_level: intro        # required — a level name, resolved under levels/
-start_screen: main_menu   # optional — a UI screen put up over it at boot
 window:
   width: 1280
   height: 720
   fullscreen: false
 ```
 
-**The main menu belongs here, not in a level's own screen list.** A menu is a
-property of the game, not of the beach it happens to be drawn over, and a level
-reached later must not put it back up.
+Either build writes a default one on start if there is none: `title: Untitled
+Game`, `version: 0.1.0` and `start_level: untitled` — the name the editor saves a
+new, unnamed level under.
 
-The cost is that a development build — which never reads this file — enters play
-with no menu. `make release-linux` is how to see one.
+**There is no start screen.** A main menu is put up by the level that lists it
+in its UI screens, or by a script, so a game can open on an intro level and bring
+the menu up in the one after it — and a development build shows it the same way.
 
 Set `data_dir` when the title contains punctuation, or when it may change between
 releases: renaming the title should not silently orphan everyone's settings.
 
 ## Where a shipped game writes
 
-Nowhere near itself. Assets resolve against the executable's directory, so an
-install is a binary with the content beside it. Writes go to:
+Nowhere near itself. Assets resolve against the `resources/` directory beside
+the executable, so an install is a binary with its content in a folder next to
+it. Writes go to:
 
 | Platform | |
 | --- | --- |
@@ -63,8 +152,9 @@ Today that is `foundry.log` and `audio.yaml`. That is what lets the game be
 installed into `Program Files` or `/opt` and still be played by someone who
 cannot write there.
 
-You can *ship* an `audio.yaml` to launch at a chosen mix; the player's own copy
-takes over the first time they move a slider.
+You can *ship* an `audio.yaml` to launch at a chosen mix, by putting one at
+`resources/audio.yaml`; the player's own copy takes over the first time they
+move a slider.
 
 ## Levels are compiled, not copied
 
@@ -121,10 +211,17 @@ live was dropped.
 
 ## Installers
 
-**Windows** is an NSIS `Setup.exe` — a per-user install into
+**Windows** is a `Setup.exe` — a per-user install into
 `%LOCALAPPDATA%\Programs`, no administrator and no UAC prompt. Start Menu entry,
 optional desktop shortcut, Add/Remove Programs entry, uninstaller. Uninstalling
 offers to remove saves and defaults to keeping them.
+
+A release built from the editor makes it with Foundry's own installer, which
+needs nothing installed on the machine doing the building; `make
+installer-windows` makes the same install with NSIS. It is not code-signed, so
+the first time a player runs it Windows SmartScreen says "Windows protected your
+PC" — **More info → Run anyway**. `Setup.exe -silent` installs without asking
+anything.
 
 Shipping an update is just handing players the new `Setup.exe`: it finds the
 existing install, replaces it in place, and keeps their saves. They do not
@@ -140,11 +237,13 @@ renamed between releases cannot linger and keep being found.
 
 ## Checklist
 
-1. `game.yaml` names the real `start_level` and `start_screen`.
+1. `resources/game.yaml` names the real `start_level`, not the default
+   `untitled`.
 2. `make compile-levels` — every level compiles, and none of them leaks.
 3. `make release-check` — the editor is out of the binary.
 4. `make test-release` — the suite passes in the release configuration.
-5. `make release-linux` / `make release-windows`; read the prune counts.
+5. `make release-linux` / `make release-windows`, or the editor's **Release**
+   window; read the prune counts.
 6. Run the staged tree from a directory that is **not** the repository. Confirm
    the log lands in the user data directory and nothing is written into the
    install.

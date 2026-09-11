@@ -5,6 +5,7 @@ import (
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
 	"foundry/internal/render"
+	"foundry/internal/script"
 	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -58,10 +59,11 @@ func HandleEvent(event sdl.Event) {
 		if dx == 0 && dy == 0 {
 			break
 		}
-		// With the player's control off the view stays where it is. The cursor
-		// still goes back to centre, or the motion made meanwhile would all
-		// arrive as one lurch the moment control is handed back.
-		if !devActive() && !platform.PlayerControlEnabled {
+		// With the player's control off, or a script holding the game paused,
+		// the view stays where it is. The cursor still goes back to centre, or
+		// the motion made meanwhile would all arrive as one lurch the moment
+		// control is handed back.
+		if !devActive() && (!platform.PlayerControlEnabled || script.GamePaused()) {
 			platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
 			break
 		}
@@ -125,7 +127,7 @@ func HandleEvent(event sdl.Event) {
 				// The interact key. Recorded as an edge rather than read as a
 				// level, so holding it fires once — SCRIPTING.md's `:interact:`
 				// is a press, not a state.
-				if !devActive() && platform.PlayerControlEnabled {
+				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
 					hooks.ScriptInteractRequest()
 				}
 
@@ -144,7 +146,10 @@ func HandleEvent(event sdl.Event) {
 				// there and the key does nothing.
 				devToggle()
 			case sdl.SCANCODE_SPACE:
-				if !devActive() && platform.PlayerControlEnabled && platform.GravityEnabled && platform.IsOnGround {
+				// Not while a script holds the game paused: MovePlayer is not
+				// running to spend the request, so it would wait and fire on
+				// the first frame after the pause lifted.
+				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() && platform.GravityEnabled && platform.IsOnGround {
 					platform.JumpRequested = true
 				}
 			case sdl.SCANCODE_F3:

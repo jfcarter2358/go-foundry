@@ -16,7 +16,6 @@ package app
 import (
 	"path/filepath"
 
-	"foundry/internal/fileutil"
 	"foundry/internal/levelio"
 	"foundry/internal/world"
 )
@@ -37,7 +36,9 @@ func startupApplyWindow() {}
 // startupLevel is the level the engine boots with, and the path and directory
 // the editor will save it to.
 func startupLevel() (world.Level, string, string, error) {
-	levelsDir := filepath.Join(fileutil.ExecutablePath, levelio.LevelsDirName)
+	// "untitled" is also the start level of the game.yaml a new project is given
+	// (game.DefaultManifest), so keep the two in step.
+	levelsDir := levelio.LevelsDir()
 	level, err := levelio.NewBlankLevel()
 	return level, filepath.Join(levelsDir, "untitled"+levelio.LevelExt), levelsDir, err
 }

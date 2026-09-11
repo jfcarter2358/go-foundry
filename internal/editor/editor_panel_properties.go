@@ -58,6 +58,7 @@ func editorPropertiesSection(lvl *world.Level) {
 	editor3DVertexPanel(lvl)
 
 	editorSpawnPointSection(lvl)
+	editorSealSection(lvl)
 	editorLevelUISection(lvl)
 	editorEnvironmentSection(lvl)
 	editorPlayerSection(lvl)

@@ -19,9 +19,9 @@ import (
 func uiTempDir(t *testing.T) (dir string, logs *[]string) {
 	t.Helper()
 	root := t.TempDir()
-	prevExec := fileutil.ExecutablePath
-	fileutil.ExecutablePath = root
-	t.Cleanup(func() { fileutil.ExecutablePath = prevExec })
+	prevExec := fileutil.ResourcesPath
+	fileutil.ResourcesPath = root
+	t.Cleanup(func() { fileutil.ResourcesPath = prevExec })
 
 	if err := os.MkdirAll(UIDir(), 0o755); err != nil {
 		t.Fatalf("mkdir ui: %v", err)

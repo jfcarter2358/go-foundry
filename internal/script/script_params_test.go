@@ -296,19 +296,39 @@ func TestScriptParamsUnusedAndPrune(t *testing.T) {
 // it is — two objects that read alike still have to be tellable apart.
 func TestScriptRefTargets(t *testing.T) {
 	lvl := hostTestLevel(t)
+	lvl.Sprites = append(lvl.Sprites, world.Sprite{ID: "glow", Width: 1, Height: 1, Visible: true})
+	lvl.Emitters = append(lvl.Emitters, world.Emitter{ID: "sparks"})
+	lvl.Sounds = append(lvl.Sounds, world.Sound{ID: "hum"})
+	lvl.WaypointAnimations = append(lvl.WaypointAnimations, world.WaypointAnimation{ID: "rise"})
 	targets := ScriptRefTargets(lvl)
 
 	var ids []string
 	for _, tg := range targets {
 		ids = append(ids, tg.ID)
 	}
-	for _, want := range []string{"crate", "trigger", "chunk", "lamp", "sun"} {
+	for _, want := range []string{"crate", "trigger", "glow", "sparks", "hum", "rise", "chunk", "room", "lamp", "sun"} {
 		if !containsString(ids, want) {
 			t.Errorf("%q missing from %v", want, ids)
 		}
 	}
 	if ids[0] != "crate" {
 		t.Errorf("entities should come first, got %v", ids)
+	}
+	if got := ScriptRefLabel(targets, "rise"); !strings.Contains(got, "waypoints") {
+		t.Errorf("label %q should name the kind", got)
+	}
+
+	// The picker and `@name` completion both offer the set refFor resolves. The
+	// picker once walked a shorter list, and sprites, emitters, sounds and
+	// waypoints could be addressed in a script but never bound to a param.
+	// Screens and widgets are left out: a param names a level object.
+	for _, r := range CompletionRefs(lvl) {
+		if r.Kind == flang.RefScreen || r.Kind == flang.RefWidget {
+			continue
+		}
+		if !containsString(ids, r.ID) {
+			t.Errorf("%q (%v) completes as @name but is missing from the ref picker", r.ID, r.Kind)
+		}
 	}
 	if got := ScriptRefLabel(targets, "crate"); !strings.Contains(got, "entity") {
 		t.Errorf("label %q should name the kind", got)

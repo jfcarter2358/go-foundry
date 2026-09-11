@@ -38,7 +38,7 @@ const FontExt = ".ttf"
 
 // FontsDir is the absolute fonts folder, resolved against the executable rather
 // than the working directory for the reason fileutil.ResolveAssetPath gives.
-func FontsDir() string { return filepath.Join(fileutil.ExecutablePath, FontsDirName) }
+func FontsDir() string { return filepath.Join(fileutil.ResourcesPath, FontsDirName) }
 
 // FontPath is the absolute path of a font named without its extension.
 func FontPath(name string) string { return filepath.Join(FontsDir(), name+FontExt) }

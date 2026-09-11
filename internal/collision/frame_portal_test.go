@@ -49,7 +49,7 @@ func shipVehicleLevel(t *testing.T) *world.Level {
 func addRampDoorway(lvl *world.Level) *world.Volume {
 	lvl.Volumes = append(lvl.Volumes, world.Volume{
 		ID:       "ramp",
-		Frame:    "ship",
+		Attach:   world.Attach{Frame: "ship"},
 		Shape:    world.VolumeBox,
 		Position: mgl32.Vec3{0, 1, 4},
 		HalfX:    1.5,

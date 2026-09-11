@@ -472,6 +472,13 @@ func (ch *Chunk) WorldBounds() (min, max mgl32.Vec3) {
 	return transformAABB(ch.ModelMatrix(), ch.MinBound, ch.MaxBound)
 }
 
+// PlacementBounds is WorldBounds stopping at the frame: the chunk's AABB in the
+// space it is placed in, through LocalPlacementMatrix. The same box as
+// WorldBounds for a chunk no frame carries.
+func (ch *Chunk) PlacementBounds() (min, max mgl32.Vec3) {
+	return transformAABB(ch.LocalPlacementMatrix(), ch.MinBound, ch.MaxBound)
+}
+
 // transformAABB carries a local axis-aligned box through m and re-fits it.
 //
 // A rotated box does not stay a box, so the eight corners are transformed and

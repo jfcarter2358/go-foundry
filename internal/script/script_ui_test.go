@@ -34,7 +34,7 @@ func withUIStack(t *testing.T) *ui.Stack {
 // writeScreen puts a .fui in the temp ui/ directory.
 func writeScreen(t *testing.T, name, body string) {
 	t.Helper()
-	dir := filepath.Join(fileutil.ExecutablePath, ui.UIDirName)
+	dir := filepath.Join(fileutil.ResourcesPath, ui.UIDirName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

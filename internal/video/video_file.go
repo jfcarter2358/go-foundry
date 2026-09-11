@@ -29,7 +29,7 @@ const VideoDirName = "video"
 var VideoExts = []string{".avi", ".gif"}
 
 // VideoDir is where the editor's picker looks.
-func VideoDir() string { return filepath.Join(fileutil.ExecutablePath, VideoDirName) }
+func VideoDir() string { return filepath.Join(fileutil.ResourcesPath, VideoDirName) }
 
 // VideoPath resolves a bare name to a full path, trying each known extension.
 // It returns "" when nothing matches, which the caller reports as a missing

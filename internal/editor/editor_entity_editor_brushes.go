@@ -165,6 +165,9 @@ func entityGeomChunk() *world.Chunk {
 // editor_entity_editor_render.go for why that matters.
 func entitySeedGeometry() {
 	entityGeomDirty = false
+	// Every brush comes back from the document at rest, so a path preview that
+	// was holding one is holding nothing now; the next tick poses it afresh.
+	entityWaypointPreview.Posed = false
 	entityReleaseGeometry()
 	if entityDef == nil {
 		return

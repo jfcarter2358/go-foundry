@@ -70,7 +70,7 @@ func newNormalProbe(t *testing.T) *normalProbe {
 	ls.Global.Color = mgl32.Vec3{1, 1, 1}
 	ls.Global.Brightness = 1
 	world.UploadLightsTo(gfx.Program, ls, false)
-	world.UploadFogTo(gfx.Program, nil, nil)
+	world.UploadFogTo(gfx.Program, nil, nil, nil)
 
 	// Not optional even with no shadow-casting light in the scene: an
 	// unassigned sampler defaults to unit 0, where the albedo sampler2D lives,

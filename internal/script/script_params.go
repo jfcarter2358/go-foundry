@@ -229,8 +229,9 @@ type ScriptRefTarget struct {
 }
 
 // scriptRefTargets returns every object in the level a `ref` param could name,
-// in a stable order: entities, then volumes, then chunks with their sectors,
-// then lights.
+// in a stable order: entities, volumes, sprites, emitters, sounds, waypoint
+// animations, then chunks with their brushes, then lights — the kinds and order
+// CompletionRefs walks, since both are the set refFor resolves.
 //
 // Grouped by kind rather than sorted alphabetically, because "which one did I
 // mean" is a question an author answers by kind first — a level with forty
@@ -254,6 +255,18 @@ func ScriptRefTargets(lvl *world.Level) []ScriptRefTarget {
 	}
 	for i := range lvl.Volumes {
 		add(lvl.Volumes[i].ID, "volume")
+	}
+	for i := range lvl.Sprites {
+		add(lvl.Sprites[i].ID, "sprite")
+	}
+	for i := range lvl.Emitters {
+		add(lvl.Emitters[i].ID, "emitter")
+	}
+	for i := range lvl.Sounds {
+		add(lvl.Sounds[i].ID, "sound")
+	}
+	for i := range lvl.WaypointAnimations {
+		add(lvl.WaypointAnimations[i].ID, "waypoints")
 	}
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]

@@ -31,7 +31,11 @@ package compile
 // sealed the way an open-air Quake level is: with a shell of sky brushes around
 // it.
 
-import "github.com/go-gl/mathgl/mgl32"
+import (
+	"foundry/internal/bsp"
+
+	"github.com/go-gl/mathgl/mgl32"
+)
 
 // MarkOutside floods from the world box and marks every empty leaf it reaches.
 // It returns how many were marked.
@@ -44,6 +48,10 @@ func MarkOutside(t *BSPTree, portals []Portal) int {
 	byLeaf := make([][]int, len(t.Leaves))
 	for i := range portals {
 		byLeaf[portals[i].A] = append(byLeaf[portals[i].A], i)
+	}
+	t.reachedVia = make([]outsideStep, len(t.Leaves))
+	for i := range t.reachedVia {
+		t.reachedVia[i].from = -1
 	}
 
 	const inset = float32(0.01)
@@ -75,11 +83,125 @@ func MarkOutside(t *BSPTree, portals []Portal) int {
 		for _, pi := range byLeaf[li] {
 			if b := portals[pi].B; !seen[b] && !t.Leaves[b].Solid {
 				seen[b] = true
+				t.reachedVia[b] = outsideStep{from: li, at: bsp.Centroid(portals[pi].Points)}
 				queue = append(queue, b)
 			}
 		}
 	}
 	return n
+}
+
+// outsideStep is how the fill reached one cell: the cell it came from, and the
+// middle of the opening it came through. from is -1 for a cell the fill started
+// in, and for every cell it never reached.
+type outsideStep struct {
+	from int
+	at   mgl32.Vec3
+}
+
+// leakOpening is roughly where the void gets in on its way to p.
+//
+// "p is outside the level" is true and no use: the author put p inside the
+// level and can see that it is. What they need is the gap. The fill is
+// breadth-first, so walking its path back from p's cell retraces the shortest
+// way in from the world box, and the gap is where that path last passes from a
+// cell running out to the world box's edge — open space by construction, since
+// nothing is authored within worldMargin of it — into one that does not. The
+// middle of that opening is the answer: not the exact hole, but the doorway
+// that stands open onto nothing.
+//
+// A room with a wall simply missing is the other shape a leak takes: nothing in
+// the tree cuts the room's own cell off at the gap, so that cell runs straight
+// out to the world box and there is no opening between cells to name. The gap
+// is then inside the cell, where it crosses the edge of what the level
+// authored, and crossingOutOfLevel finds that instead.
+//
+// ok is false when p is not in a filled cell, or when p is itself beyond
+// everything authored: then it is simply out in the void, with no gap to point
+// at, and naming one would send the author looking for a hole that is not there.
+func (t *BSPTree) leakOpening(p mgl32.Vec3) (at mgl32.Vec3, ok bool) {
+	cur := t.FindLeaf(p)
+	if t.reachedVia == nil || !t.Leaves[cur].Outside || !t.withinAuthored(p) {
+		return mgl32.Vec3{}, false
+	}
+	if t.touchesWorldBox(cur) {
+		return t.crossingOutOfLevel(cur, p)
+	}
+	// A breadth-first path visits each cell once, so this bound is a backstop
+	// rather than a limit.
+	for range t.Leaves {
+		step := t.reachedVia[cur]
+		if step.from < 0 {
+			return mgl32.Vec3{}, false
+		}
+		if t.touchesWorldBox(step.from) {
+			return step.at, true
+		}
+		cur = step.from
+	}
+	return mgl32.Vec3{}, false
+}
+
+// authoredBounds is the box around everything the level authored: the tree's
+// box less the margin BuildBSP added to it.
+func (t *BSPTree) authoredBounds() (lo, hi mgl32.Vec3) {
+	lo, hi = t.Lo, t.Hi
+	for k := 0; k < 3; k++ {
+		lo[k] += worldMargin
+		hi[k] -= worldMargin
+	}
+	return lo, hi
+}
+
+// withinAuthored reports whether p is inside authoredBounds.
+func (t *BSPTree) withinAuthored(p mgl32.Vec3) bool {
+	lo, hi := t.authoredBounds()
+	for k := 0; k < 3; k++ {
+		if p[k] < lo[k] || p[k] > hi[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// crossingOutOfLevel is where a cell passes out of authoredBounds: the middle of
+// its cross-section with a side of that box, taking the side nearest p when the
+// cell leaves by more than one. See leakOpening.
+func (t *BSPTree) crossingOutOfLevel(leaf int, p mgl32.Vec3) (at mgl32.Vec3, ok bool) {
+	lo, hi := t.authoredBounds()
+	cell := t.Leaves[leaf].Planes
+	var bestDist float32
+	for k := 0; k < 3; k++ {
+		var axis mgl32.Vec3
+		axis[k] = 1
+		for _, side := range []bsp.Plane{{N: axis, D: hi[k]}, {N: axis.Mul(-1), D: -lo[k]}} {
+			// The polygon RegionPolygons makes for the side's own plane is that
+			// plane clipped by every one of the cell's: the cross-section.
+			planes := append(append(make([]bsp.Plane, 0, len(cell)+1), cell...), side)
+			polys := bsp.RegionPolygons(planes, t.Lo, t.Hi)
+			section := polys[len(polys)-1]
+			if section == nil {
+				continue
+			}
+			c := bsp.Centroid(section)
+			if d := c.Sub(p).Len(); !ok || d < bestDist {
+				at, bestDist, ok = c, d, true
+			}
+		}
+	}
+	return at, ok
+}
+
+// touchesWorldBox reports whether a cell runs out to an edge of the tree's box.
+func (t *BSPTree) touchesWorldBox(leaf int) bool {
+	const eps = float32(1e-3)
+	l := &t.Leaves[leaf]
+	for k := 0; k < 3; k++ {
+		if l.Lo[k] <= t.Lo[k]+eps || l.Hi[k] >= t.Hi[k]-eps {
+			return true
+		}
+	}
+	return false
 }
 
 // InteriorPortals drops every portal with an end in a filled-in cell.

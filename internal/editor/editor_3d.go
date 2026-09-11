@@ -422,6 +422,7 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 
 	// Start from a clean slate so no stale selection survives the click.
 	editorClearSpawnSelection()
+	editorClearSealSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
 	editorClearScenerySelection()
@@ -452,6 +453,11 @@ func editor3DSelectNonBrushHit(hit pickHit) {
 	switch hit.kind {
 	case pickSpawn:
 		editorSelectSpawn()
+
+	case pickSeal:
+		// Only ever a click from outside the box that hit nothing else — see
+		// pickSealRayT.
+		editorSelectSeal()
 
 	case pickEntity:
 		editorSelectEntity(hit.idx)
@@ -529,6 +535,7 @@ func editor3DClearSelection() {
 	clearVertexSelection()
 	clearBrushSelection()
 	editorClearSpawnSelection()
+	editorClearSealSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
 	editorClearScenerySelection()
@@ -646,6 +653,8 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 		smin, smax := lvl.Spawn.WorldAABB()
 		gizmo.GizmoAABB(smin, smax, col)
 	}
+
+	renderSealBox(lvl, yellow)
 
 	// Draw point light spheres. The selected one goes yellow, like every other
 	// selected object, so it is clear which light the translate gizmo's arms

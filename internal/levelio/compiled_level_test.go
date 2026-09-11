@@ -3,15 +3,18 @@ package levelio
 // compiled_level_test.go — the artefact survives the round trip, and carries
 // the right half of the level.
 //
-// The interesting assertions are not about gob, which either works or does not:
-// they are about the PARTITION of a level into what got baked and what stayed
-// authored. Get that wrong in one direction and a vehicle's interior vanishes;
-// get it wrong in the other and a chunk is drawn twice, once compiled and once
-// live.
+// Most of the assertions are about the PARTITION of a level into what got baked
+// and what stayed authored. Get that wrong in one direction and a vehicle's
+// interior vanishes; get it wrong in the other and a chunk is drawn twice, once
+// compiled and once live.
+//
+// The rest are about the encoding, which does not simply work or not: gob loses
+// a zero behind a pointer, and the authored half is made of those.
 
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"foundry/internal/compile"
@@ -19,6 +22,7 @@ import (
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
+	"gopkg.in/yaml.v2"
 )
 
 // sealedLevel is a shell with somewhere to stand in it, plus a chunk that is
@@ -152,6 +156,94 @@ func TestAStaleCompiledLevelIsRejected(t *testing.T) {
 	}
 }
 
+// Zero is a value, not an absence. The authored half keeps the two apart with
+// pointers — a sprite's `alpha: 0` against no alpha at all, which means 1 — and
+// gob, which sends neither a zero nor a pointer to one, handed every one of
+// them back as absent: an intro logo authored invisible, to fade in, started
+// the shipped game fully opaque.
+func TestZeroValuedAuthoredFieldsSurviveTheRoundTrip(t *testing.T) {
+	lvl := sealedLevel()
+	lvl.Sprites = []world.Sprite{{
+		ID: "logo", Position: mgl32.Vec3{0, 2, 0}, Width: 1, Height: 1,
+		Alpha: 0, Visible: false,
+	}}
+	c, err := CompileLevel(lvl, compile.DefaultOptions())
+	if err != nil {
+		t.Fatalf("CompileLevel: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "zeroes"+CompiledExt)
+	if err := SaveCompiledLevel(c, path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	back, err := ReadCompiledLevel(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if len(back.Raw.Sprites) != 1 {
+		t.Fatalf("%d sprites came back, want 1", len(back.Raw.Sprites))
+	}
+	s, err := world.SpriteFromRaw(back.Raw.Sprites[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Alpha != 0 {
+		t.Errorf("a sprite authored at alpha 0 came back at alpha %v", s.Alpha)
+	}
+	if s.Visible {
+		t.Error("a sprite authored hidden came back visible")
+	}
+
+	// And the authored half as a whole is what was written, not just the two
+	// fields checked above.
+	want, err := yaml.Marshal(c.Raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := yaml.Marshal(back.Raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("the authored half changed in the round trip:\nwrote:\n%s\nread:\n%s", want, got)
+	}
+}
+
+// What gob still encodes must hold none of the fields it cannot carry. A
+// struct field that points at anything but a struct loses its zero value and
+// decodes as nil; the authored half moved to YAML for exactly that, and this
+// keeps a runtime struct from growing one and bringing the bug back through
+// the other half.
+func TestTheGobEncodedHalfHoldsNoPointersToScalars(t *testing.T) {
+	seen := map[reflect.Type]bool{}
+	var walk func(tp reflect.Type, path string)
+	walk = func(tp reflect.Type, path string) {
+		switch tp.Kind() {
+		case reflect.Ptr, reflect.Slice, reflect.Array, reflect.Map:
+			walk(tp.Elem(), path)
+			return
+		case reflect.Struct:
+		default:
+			return
+		}
+		if seen[tp] {
+			return
+		}
+		seen[tp] = true
+		for i := 0; i < tp.NumField(); i++ {
+			f := tp.Field(i)
+			if !f.IsExported() {
+				continue // gob does not encode it
+			}
+			if f.Type.Kind() == reflect.Ptr && f.Type.Elem().Kind() != reflect.Struct {
+				t.Errorf("%s.%s is a %s; gob decodes a pointer to its zero value as nil", path, f.Name, f.Type)
+			}
+			walk(f.Type, tp.Name()+"."+f.Name)
+		}
+	}
+	walk(reflect.TypeOf(compiledFile{}), "compiledFile")
+}
+
 func TestSomethingElseEntirelyIsNotACompiledLevel(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notreally"+CompiledExt)
 	if err := os.WriteFile(path, []byte("chunks:\n  - id: main\n"), 0o644); err != nil {
@@ -214,6 +306,9 @@ func TestALeakingLevelStillCompilesAndReportsIt(t *testing.T) {
 	// Take the ceiling away, which is the whole roof of the only room.
 	ch := &lvl.Chunks[0]
 	ch.Brushes = append(ch.Brushes[:1], ch.Brushes[2:]...)
+	// With the seal box switched off, so the level has to seal itself — and
+	// with no roof, cannot.
+	lvl.Seal = &world.Seal{Half: mgl32.Vec3{10, 10, 10}, Disabled: true}
 
 	path := filepath.Join(t.TempDir(), "leaky"+LevelExt)
 	if err := SaveLevel(lvl, path); err != nil {

@@ -27,7 +27,7 @@ const SoundsDirName = "sounds"
 var SoundExts = []string{".wav", ".ogg", ".mp3"}
 
 // SoundsDir is where the editor's picker looks.
-func SoundsDir() string { return filepath.Join(fileutil.ExecutablePath, SoundsDirName) }
+func SoundsDir() string { return filepath.Join(fileutil.ResourcesPath, SoundsDirName) }
 
 // SoundPath resolves a bare name to a full path, trying each known extension.
 // It returns "" when nothing matches, which the caller reports as a missing

@@ -109,14 +109,24 @@ func entityClampSelection() {
 		n = entityBrushCount()
 	case entitySelEmitter:
 		n = len(entityDef.Emitters)
+	case entitySelVolume:
+		n = len(entityDef.Volumes)
 	case entitySelSeat:
 		if entityDef.Vehicle != nil {
 			n = len(entityDef.Vehicle.Seats)
 		}
+	case entitySelWaypoints:
+		n = len(entityDef.WaypointAnimations)
 	default:
 		return
 	}
 	if entitySel.Idx < 0 || entitySel.Idx >= n {
 		entitySel = entityEditorSelection{}
+		return
+	}
+	// A point past the end of a path the snapshot holds fewer of falls back to
+	// the path selected whole.
+	if entitySel.Kind == entitySelWaypoints && entitySel.Sub >= len(entityDef.WaypointAnimations[entitySel.Idx].Points) {
+		entitySel.Sub = -1
 	}
 }

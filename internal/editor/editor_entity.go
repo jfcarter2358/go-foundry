@@ -211,6 +211,8 @@ func duplicateActiveEntity() {
 	// The effects likewise: only their tag lists are shared state, and a copy
 	// that aliased them would mean tagging one plume tagged the other's too.
 	e.Emitters = world.CloneEntityEmitters(src.Emitters)
+	e.Volumes = world.CloneEntityVolumes(src.Volumes)
+	e.WaypointAnimations = world.CloneWaypointAnimations(src.WaypointAnimations)
 	e.Position = src.Position.Add(mgl32.Vec3{entityDuplicateOffset, 0, entityDuplicateOffset})
 	if err := e.Load(); err != nil {
 		editorSetStatus("Entity %s: %v", e.ID, err)
@@ -413,22 +415,22 @@ func editorAddEntityMenuItem(pos mgl32.Vec3) ctxMenuItem {
 // ---------- carried content ----------
 
 // editorMaterializeEntityContent builds what an entity carries into the level —
-// the chunk its brushes describe and the emitters its effects describe — and
-// refreshes the indexes that chunk belongs to.
+// the chunk its brushes describe, the emitters its effects describe and the
+// volumes it carries — and refreshes the indexes that chunk belongs to.
 //
 // Split from editorSyncEntityContent (editor_entity_editor_io.go) so the
 // common case — an entity that has just been placed and has nothing to drop
 // first — does not walk the chunk list twice.
 func editorMaterializeEntityContent(lvl *world.Level, e *world.Entity) {
-	if lvl == nil || e == nil || (!e.HasBrushes() && !e.HasEmitters()) {
+	if lvl == nil || e == nil || (!e.HasBrushes() && !e.HasEmitters() && !e.HasVolumes() && !e.HasWaypointAnimations()) {
 		return
 	}
 	editorSyncEntityContent(lvl, e)
 	if !e.HasBrushes() {
-		// Only effects came into the level. An emitter is in no index — it
-		// rides the entity through Attach rather than through the spatial hash
-		// — so there is nothing to rebuild, and rebuilding anyway would re-walk
-		// every chunk in the level for a plume.
+		// Only effects and volumes came into the level. Neither is in any
+		// index — both ride the entity through Attach rather than through the
+		// spatial hash — so there is nothing to rebuild, and rebuilding anyway
+		// would re-walk every chunk in the level for a plume.
 		return
 	}
 	// A materialised chunk is geometry the player can stand on and a frame the
@@ -445,9 +447,11 @@ func editorReleaseEntityContent(lvl *world.Level, id string) {
 		return
 	}
 	world.DropEntityEmitters(lvl, id)
+	world.DropEntityVolumes(lvl, id)
+	editorDropEntityWaypointAnimations(lvl, id)
 	if levelio.DropEntityGeometry(lvl, id) == 0 {
 		// Nothing left the chunk list, so no frame and no solid changed. The
-		// emitters above are not in any index.
+		// emitters and volumes above are not in any index.
 		return
 	}
 	if err := world.RebuildIndexes(lvl); err != nil {

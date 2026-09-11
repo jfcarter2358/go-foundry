@@ -24,7 +24,7 @@ import (
 // the name an emitter would use.
 func writeEffect(t *testing.T, name string) string {
 	t.Helper()
-	dir := filepath.Join(fileutil.ExecutablePath, particle.ParticlesDirName)
+	dir := filepath.Join(fileutil.ResourcesPath, particle.ParticlesDirName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ end`)
 func TestSpawnEffectPlacesAndReaps(t *testing.T) {
 	root := withTempScriptDir(t)
 	// A short, non-looping, burst-only effect, so it finishes on its own.
-	dir := filepath.Join(fileutil.ExecutablePath, particle.ParticlesDirName)
+	dir := filepath.Join(fileutil.ResourcesPath, particle.ParticlesDirName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

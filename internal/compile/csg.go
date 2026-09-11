@@ -113,6 +113,15 @@ type Face struct {
 	// unexported: it is an artefact of how CSG runs, not part of what a
 	// compiled face is.
 	sourceOrder int
+
+	// hull is the brush a detail face was carved into, as its hull's outward
+	// face planes; nil on every other face. The tree labels that whole hull
+	// solid — it cannot know what the detail mesh cut out of it — so a shadow
+	// ray from an INSET detail face starts inside material and is blocked by
+	// nothing but its own brush. The bake starts such a ray where it leaves the
+	// hull instead (clearOfHull). Unexported for the same reason as
+	// sourceOrder.
+	hull []bsp.Plane
 }
 
 // solid is one brush as CSG sees it: its planes, its bounds, and the order it
@@ -225,15 +234,15 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 				continue
 			}
 			ws := worldPoints(b, model)
+			var hull []bsp.Plane
+			for fi := range b.Faces {
+				if pl, ok := bsp.PlaneFromPoints(facePoints(ws, &b.Faces[fi])); ok {
+					hull = append(hull, pl)
+				}
+			}
 
 			if b.Solid {
-				s := solid{order: order}
-				for fi := range b.Faces {
-					pts := facePoints(ws, &b.Faces[fi])
-					if pl, ok := bsp.PlaneFromPoints(pts); ok {
-						s.planes = append(s.planes, pl)
-					}
-				}
+				s := solid{order: order, planes: hull}
 				if len(s.planes) >= 4 {
 					// Fewer than four planes cannot bound a volume, so a brush
 					// with that many is malformed and clips nothing rather
@@ -294,6 +303,9 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 					// lookup; it is not part of the output.
 					sourceOrder: order,
 				}
+				if b.HasDetail() {
+					cf.hull = hull
+				}
 				if f.HasUVs() {
 					// Fitted to the WORLD-space corners, so the map already
 					// includes the chunk's placement and a fragment — which is in
@@ -304,6 +316,13 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 			}
 			order++
 		}
+	}
+	// The level's seal last, so its slabs come after every brush in the order
+	// and a brush face flush against one keeps its whole surface. See seal.go.
+	if lvl.Seal.Active() {
+		ss, sf := sealSolids(lvl.Seal, order)
+		solids = append(solids, ss...)
+		faces = append(faces, sf...)
 	}
 	return solids, faces
 }

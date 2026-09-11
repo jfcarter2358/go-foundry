@@ -109,6 +109,8 @@ func modelContextMenuItems() []ctxMenuItem {
 		items = append(items, ctxMenuItem{Separator: true})
 		items = append(items, modelWeightMenuItems()...)
 	default:
+		items = append(items, modelPointMenuItems()...)
+		items = append(items, ctxMenuItem{Separator: true})
 		items = append(items, modelWeightMenuItems()...)
 	}
 
@@ -152,6 +154,11 @@ func modelFaceMenuItems() []ctxMenuItem {
 		{Label: "Subdivide", Disabled: none,
 			Tooltip: "Midpoint split. The surface does not move.",
 			Do:      modelSubdivideSelectedFaces},
+		{Label: "Join", Shortcut: "J", Disabled: len(faces) < 2,
+			Tooltip: "Make the selected faces one face, along the outline they share.\n" +
+				"They must meet along edges and leave no hole. The points left\n" +
+				"along its edges can then be dissolved [X] in vertex mode.",
+			Do: modelJoinSelectedFaces},
 		{Label: "Delete", Shortcut: "Del", Disabled: none, Do: modelDeleteSelectedFaces},
 		{Separator: true},
 		{Label: "Smooth", Checked: smooth, Disabled: none,
@@ -163,6 +170,25 @@ func modelFaceMenuItems() []ctxMenuItem {
 			{Label: "Flip U", Do: func() { modelFlipSelectedFaceUV(true, false) }},
 			{Label: "Flip V", Do: func() { modelFlipSelectedFaceUV(false, true) }},
 		}},
+	}
+}
+
+// modelPointMenuItems are vertex and edge mode's own rows: the edits that act
+// on points rather than faces.
+func modelPointMenuItems() []ctxMenuItem {
+	n := len(modelSelectedVerts())
+	return []ctxMenuItem{
+		{Label: "Merge at centre", Shortcut: "M", Disabled: n < 2,
+			Tooltip: "Collapse the selected points into one, halfway between them all.",
+			Do:      func() { modelMergeSelectedPoints(false) }},
+		{Label: "Merge at first selected", Shortcut: "Shift+M", Disabled: n < 2,
+			Tooltip: "Collapse the selected points onto the first one picked.",
+			Do:      func() { modelMergeSelectedPoints(true) }},
+		{Label: "Dissolve", Shortcut: "X", Disabled: n == 0,
+			Tooltip: "Take each selected point out of the line it sits on, so the\n" +
+				"segments either side become one. Corners stay. In edge mode,\n" +
+				"a selected run of edges becomes one edge.",
+			Do: modelDissolveSelectedPoints},
 	}
 }
 

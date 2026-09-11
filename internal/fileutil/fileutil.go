@@ -12,10 +12,29 @@ import (
 	"strings"
 )
 
-// ExecutablePath is the directory containing the game executable. Asset paths
-// are resolved against it rather than against the working directory, which is
-// whatever the launcher happened to set.
+// ExecutablePath is the directory containing the game executable. Only what
+// belongs to the binary rather than to the game is found here — runtimes/, and a
+// development build's log, window layout and release settings. Content is under
+// ResourcesPath.
 var ExecutablePath string
+
+// ResourcesDirName is the folder, beside the executable, that every asset the
+// engine reads lives under: levels/, textures/, scripts/, game.yaml and the rest.
+const ResourcesDirName = "resources"
+
+// ResourcesPath is the content root: the resources/ folder beside the
+// executable, set at startup. Asset paths are resolved against it rather than
+// against the working directory, which is whatever the launcher happened to set.
+//
+// A variable of its own rather than derived from ExecutablePath on every call,
+// so that a tool reading a project it is not running from — the level compiler,
+// the release builder — and a test reading the repository's resources/ can
+// point content somewhere without also moving where the binary's own files go.
+var ResourcesPath string
+
+// ResourcesDir is the content root of the project at root: the resources/
+// folder in the directory a project's executable runs from.
+func ResourcesDir(root string) string { return filepath.Join(root, ResourcesDirName) }
 
 // WriteFileAtomic writes data to path via a temporary file in the same
 // directory followed by a rename, so an interrupted or failing write can never
@@ -77,35 +96,34 @@ func ScanFilesByExt(dir, ext string) []string {
 	return files
 }
 
-// ResolveAssetPath makes a stored asset path absolute against the executable
+// ResolveAssetPath makes a stored asset path absolute against the resources
 // directory.
 //
-// Entity definitions store model paths relative to the install root so a
-// definition stays portable between machines and platforms (RelAssetPath strips
-// the prefix on save). Handing that relative path straight to os.Open would
-// instead resolve it against the working directory, which only happens to be
-// the install root when the game is launched from inside it — "make run-linux"
-// runs ./dist/foundry from the repo root, and every entity model would fail to
-// load.
+// Entity definitions store model paths relative to resources/ so a definition
+// stays portable between machines and platforms (RelAssetPath strips the prefix
+// on save). Handing that relative path straight to os.Open would instead
+// resolve it against the working directory, which is not resources/ however the
+// game is launched — "make run-linux" runs ./dist/foundry from the repo root,
+// and every entity model would fail to load.
 //
 // An absolute path is left alone: it is either already resolved or points
-// somewhere outside the install root on purpose.
+// somewhere outside resources/ on purpose.
 func ResolveAssetPath(p string) string {
 	if p == "" || filepath.IsAbs(p) {
 		return p
 	}
-	return filepath.Join(ExecutablePath, p)
+	return filepath.Join(ResourcesPath, p)
 }
 
 // RelAssetPath is ResolveAssetPath's inverse, used when writing a path back to
-// YAML. A path that does not live under the executable directory is written as
+// YAML. A path that does not live under the resources directory is written as
 // it is — there is nothing shorter that would still find it — and the result is
 // slash-separated so a definition saved on Windows still loads on Linux.
 func RelAssetPath(p string) string {
-	if p == "" || ExecutablePath == "" {
+	if p == "" || ResourcesPath == "" {
 		return p
 	}
-	rel, err := filepath.Rel(ExecutablePath, p)
+	rel, err := filepath.Rel(ResourcesPath, p)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return p
 	}
@@ -121,7 +139,7 @@ const ScriptExt = ".flang"
 
 // ScriptsDir returns the absolute path to the scripts folder.
 func ScriptsDir() string {
-	return filepath.Join(ExecutablePath, ScriptsDirName)
+	return filepath.Join(ResourcesPath, ScriptsDirName)
 }
 
 // ScriptPath resolves a script name — as written in a level or an entity
@@ -262,10 +280,34 @@ func DeleteScriptFile(rel string) error {
 	return os.Remove(full)
 }
 
+// DeleteScriptDir removes a folder under the scripts folder and everything in
+// it. rel is slash-separated and relative to it, with or without the scripts/
+// prefix.
+//
+// Kept apart from DeleteScriptFile rather than folded into it, so that a
+// recursive delete is only ever something a caller asked for by name. It
+// refuses the scripts folder itself — scriptSubPath has no name for it — and
+// anything that is not a folder: a rel that turned out to be a script is a
+// caller that meant DeleteScriptFile, and finding that out is worth an error.
+func DeleteScriptDir(rel string) error {
+	full, ok := scriptSubPath(rel)
+	if !ok {
+		return fmt.Errorf("%q is not a folder inside the scripts folder", rel)
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is a script, not a folder", rel)
+	}
+	return os.RemoveAll(full)
+}
+
 // scriptSubPath resolves a slash-separated name to an absolute path under the
 // scripts folder, reporting false for anything that would escape it. `..` in a
 // folder name is a typo rather than an attack here, but a typo that creates a
-// directory beside resources/ is still worth not doing.
+// directory beside scripts/ is still worth not doing.
 func scriptSubPath(rel string) (string, bool) {
 	rel = strings.TrimPrefix(filepath.ToSlash(rel), ScriptsDirName+"/")
 	rel = strings.Trim(rel, "/")
@@ -289,7 +331,7 @@ func scriptSubPath(rel string) (string, bool) {
 
 const TexturesDirName = "textures"
 
-func TexturesDir() string { return filepath.Join(ExecutablePath, TexturesDirName) }
+func TexturesDir() string { return filepath.Join(ResourcesPath, TexturesDirName) }
 
 // NormalMapSuffix is appended to a texture's logical name to get its normal
 // map's: brick -> brick_normal, sampled from textures/brick_normal.png.

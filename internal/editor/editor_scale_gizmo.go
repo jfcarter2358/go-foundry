@@ -51,6 +51,10 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 		if v := activeGizmoVolume(); v != nil {
 			return v.Position, true
 		}
+	case gizmoKindSeal:
+		if s := activeGizmoSeal(); s != nil {
+			return s.Position, true
+		}
 	case gizmoKindSprite:
 		if sp := activeGizmoSprite(); sp != nil {
 			return sp.Position, true
@@ -248,6 +252,12 @@ func applyScaleToSelection(origin, factors mgl32.Vec3) {
 			world.EntityScaleClamp(st.Y() * factors.Y()),
 			world.EntityScaleClamp(st.Z() * factors.Z()),
 		}
+		return
+	}
+	if s := activeGizmoSeal(); s != nil {
+		// Half-extents, as for a volume: the box grows about its centre.
+		h := Editor.GizmoDragStartScale
+		s.Half = world.ClampSealHalf(mgl32.Vec3{h.X() * factors.X(), h.Y() * factors.Y(), h.Z() * factors.Z()})
 		return
 	}
 	if v := activeGizmoVolume(); v != nil {

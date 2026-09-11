@@ -36,7 +36,7 @@ func groundLevel(t *testing.T) *world.Level {
 func TestSurfaceUnderFindsTheTopFace(t *testing.T) {
 	lvl := groundLevel(t)
 
-	s := SurfaceUnder(lvl, 0, 10, 0, 20)
+	s := SurfaceUnder(lvl, "",0, 10, 0, 20)
 	if !s.Found {
 		t.Fatal("no ground under the middle of the slab")
 	}
@@ -55,7 +55,7 @@ func TestSurfaceUnderFindsTheTopFace(t *testing.T) {
 func TestSurfaceUnderReportsNothingOffTheEdge(t *testing.T) {
 	lvl := groundLevel(t)
 
-	if s := SurfaceUnder(lvl, 50, 10, 0, 20); s.Found {
+	if s := SurfaceUnder(lvl, "",50, 10, 0, 20); s.Found {
 		t.Errorf("found ground at y=%v well outside the slab", s.Height)
 	}
 }
@@ -65,10 +65,10 @@ func TestSurfaceUnderReportsNothingOffTheEdge(t *testing.T) {
 func TestSurfaceUnderRespectsTheDrop(t *testing.T) {
 	lvl := groundLevel(t)
 
-	if s := SurfaceUnder(lvl, 0, 100, 0, 10); s.Found {
+	if s := SurfaceUnder(lvl, "",0, 100, 0, 10); s.Found {
 		t.Errorf("a 10-unit ray from y=100 reached the slab at y=2 (got %v)", s.Height)
 	}
-	if s := SurfaceUnder(lvl, 0, 100, 0, 99); !s.Found {
+	if s := SurfaceUnder(lvl, "",0, 100, 0, 99); !s.Found {
 		t.Error("a 99-unit ray from y=100 did not reach the slab at y=2")
 	}
 }
@@ -92,12 +92,12 @@ func TestSurfaceUnderIgnoresDownwardFaces(t *testing.T) {
 
 	// From below the ceiling: its underside is the only thing the ray could
 	// meet, and it must not count.
-	if s := SurfaceUnder(lvl, 0, 8, 0, 20); s.Found {
+	if s := SurfaceUnder(lvl, "",0, 8, 0, 20); s.Found {
 		t.Errorf("a downward-facing surface was taken as ground (y=%v)", s.Height)
 	}
 	// From above it, the top face is ground as usual — so the rejection is
 	// about the face's facing, not about the brush.
-	if s := SurfaceUnder(lvl, 0, 20, 0, 20); !s.Found || s.Height < 10.99 {
+	if s := SurfaceUnder(lvl, "",0, 20, 0, 20); !s.Found || s.Height < 10.99 {
 		t.Errorf("the ceiling's own top face was not ground: %+v", s)
 	}
 }
@@ -108,7 +108,7 @@ func TestSurfaceUnderSkipsNonSolidBrushes(t *testing.T) {
 	lvl := groundLevel(t)
 	lvl.Chunks[0].Brushes[0].Solid = false
 
-	if s := SurfaceUnder(lvl, 0, 10, 0, 20); s.Found {
+	if s := SurfaceUnder(lvl, "",0, 10, 0, 20); s.Found {
 		t.Errorf("found ground on a non-solid brush (y=%v)", s.Height)
 	}
 }
@@ -131,7 +131,7 @@ func TestSurfaceUnderSkipsHiddenAndWalkThroughFaces(t *testing.T) {
 					tc.set(&b.Faces[fi])
 				}
 			}
-			if s := SurfaceUnder(lvl, 0, 10, 0, 20); s.Found {
+			if s := SurfaceUnder(lvl, "",0, 10, 0, 20); s.Found {
 				t.Errorf("a %s face was taken as ground (y=%v)", tc.name, s.Height)
 			}
 		})
@@ -156,11 +156,11 @@ func TestSurfaceUnderTakesTheHighestSurface(t *testing.T) {
 	lvl := &world.Level{Chunks: []world.Chunk{ch}}
 
 	// Over the platform: its top, at y=6.
-	if s := SurfaceUnder(lvl, 0, 20, 0, 40); !s.Found || s.Height < 5.99 || s.Height > 6.01 {
+	if s := SurfaceUnder(lvl, "",0, 20, 0, 40); !s.Found || s.Height < 5.99 || s.Height > 6.01 {
 		t.Errorf("over the platform: got %+v, want the platform top at 6", s)
 	}
 	// Beside it: the floor's top, at y=1.
-	if s := SurfaceUnder(lvl, 4, 20, 4, 40); !s.Found || s.Height < 0.99 || s.Height > 1.01 {
+	if s := SurfaceUnder(lvl, "",4, 20, 4, 40); !s.Found || s.Height < 0.99 || s.Height > 1.01 {
 		t.Errorf("beside the platform: got %+v, want the floor top at 1", s)
 	}
 }
@@ -170,7 +170,7 @@ func TestSurfaceUnderSkipsDisabledChunks(t *testing.T) {
 	lvl := groundLevel(t)
 	lvl.Chunks[0].Disabled = true
 
-	if s := SurfaceUnder(lvl, 0, 10, 0, 20); s.Found {
+	if s := SurfaceUnder(lvl, "",0, 10, 0, 20); s.Found {
 		t.Errorf("found ground in a disabled chunk (y=%v)", s.Height)
 	}
 }
@@ -182,15 +182,49 @@ func TestSurfaceUnderFollowsThePlacement(t *testing.T) {
 	lvl.Chunks[0].Origin = mgl32.Vec3{100, 20, -50}
 	lvl.Chunks[0].Scale = 1
 
-	if s := SurfaceUnder(lvl, 0, 10, 0, 20); s.Found {
+	if s := SurfaceUnder(lvl, "",0, 10, 0, 20); s.Found {
 		t.Errorf("found the moved chunk at its authored position (y=%v)", s.Height)
 	}
-	s := SurfaceUnder(lvl, 100, 40, -50, 40)
+	s := SurfaceUnder(lvl, "",100, 40, -50, 40)
 	if !s.Found {
 		t.Fatal("did not find the moved chunk where it was placed")
 	}
 	if s.Height < 21.99 || s.Height > 22.01 {
 		t.Errorf("ground at y=%v, want the slab's top carried to 22", s.Height)
+	}
+}
+
+// An entity's geometry is in the entity's frame. To a world-space volume under
+// it, that is a ship hovering overhead rather than ground — taking its floor as
+// the highest surface planted grass up on it, well outside the volume. And to a
+// volume riding the ship, the ship's floor is found where it sits in the ship's
+// own coordinates, wherever the ship currently is in the world.
+func TestSurfaceUnderOnlySeesItsOwnFrame(t *testing.T) {
+	lvl := groundLevel(t) // world slab, top at y=2
+	ship := world.Chunk{ID: "ship.geometry", FrameOwner: "ship"}
+	ship.Brushes = []world.Brush{
+		world.NewBoxBrush("hold", mgl32.Vec3{0, 5, 0}, mgl32.Vec3{2, 1, 2}, "concrete"),
+	}
+	if err := ship.Brushes[0].Load(); err != nil {
+		t.Fatalf("loading: %v", err)
+	}
+	ship.RecomputeBounds()
+	// Wherever the ship is flying right now; the hold's floor is at y=6 in its
+	// own coordinates and y=10 in the world's.
+	ship.Xform = mgl32.Translate3D(0, 4, 0)
+	lvl.Chunks = append(lvl.Chunks, ship)
+
+	if s := SurfaceUnder(lvl, "", 0, 20, 0, 40); !s.Found || s.Height < 1.99 || s.Height > 2.01 {
+		t.Errorf("world volume under the ship: got %+v, want the world slab at 2", s)
+	}
+	if s := SurfaceUnder(lvl, "world", 0, 20, 0, 40); !s.Found || s.Height < 1.99 || s.Height > 2.01 {
+		t.Errorf(`the reserved "world" frame name: got %+v, want the world slab at 2`, s)
+	}
+	if s := SurfaceUnder(lvl, "ship", 0, 20, 0, 40); !s.Found || s.Height < 5.99 || s.Height > 6.01 {
+		t.Errorf("volume riding the ship: got %+v, want the hold floor at its own y=6", s)
+	}
+	if s := SurfaceUnder(lvl, "ship", 4, 20, 4, 40); s.Found {
+		t.Errorf("volume riding the ship found world ground beside the hold (y=%v)", s.Height)
 	}
 }
 

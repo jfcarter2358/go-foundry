@@ -81,9 +81,9 @@ func TestQuitGameRefusesArguments(t *testing.T) {
 // internal/app's event type switch. A test that mocked the click would have
 // passed then too, so this one presses the button.
 func TestShippedMenuPlayButtonHidesTheMenu(t *testing.T) {
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
-	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
 
 	st := withUIStack(t)
 	lvl := tickTestLevel(t)
@@ -124,9 +124,9 @@ func TestShippedMenuPlayButtonHidesTheMenu(t *testing.T) {
 // hide: Quit to Menu has to take the pause screen down AND bring the main menu
 // up, and getting only the first half is a game with no way back.
 func TestShippedPauseQuitToMenuReturnsToTheMainMenu(t *testing.T) {
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
-	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
 
 	st := withUIStack(t)
 	lvl := tickTestLevel(t)
@@ -157,5 +157,47 @@ func TestShippedPauseQuitToMenuReturnsToTheMainMenu(t *testing.T) {
 	}
 	if st.Find("menu") == nil {
 		t.Error("Quit to Menu did not bring the main menu up")
+	}
+}
+
+// The pause menu really pauses, and Escape really unpauses. Escape is the case
+// that matters: it closes the screen through Stack.Cancel without touching any
+// button, so the only thing the script ever hears is :hidden: — delivered to a
+// screen that is already off the stack.
+func TestShippedPauseMenuPausesAndEscapeLiftsIt(t *testing.T) {
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
+
+	st := withUIStack(t)
+	lvl := tickTestLevel(t)
+	prevRT := *Scripts
+	prevEv := scriptEvents
+	t.Cleanup(func() {
+		*Scripts = prevRT
+		scriptEvents = prevEv
+		ui.OnScreenShown, ui.OnScreenHidden = nil, nil
+	})
+
+	ScriptRuntimeLoad(lvl)
+	ScriptEventsReset()
+	if _, err := st.Show("pause"); err != nil {
+		t.Fatalf("show the shipped pause menu: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		ScriptTick(lvl, 1.0/60.0, true)
+	}
+	if !GamePaused() {
+		t.Fatal("putting the pause menu up did not pause the game")
+	}
+
+	if !st.Cancel() {
+		t.Fatal("Escape did not close the pause menu")
+	}
+	for i := 0; i < 2; i++ {
+		ScriptTick(lvl, 1.0/60.0, true)
+	}
+	if GamePaused() {
+		t.Error("Escape closed the pause menu and left the game paused")
 	}
 }

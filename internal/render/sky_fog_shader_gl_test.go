@@ -31,9 +31,9 @@ import (
 
 func withRepoResources(t *testing.T) {
 	t.Helper()
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
-	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
 }
 
 // fogUniformNames are the ones world.UploadFogTo writes. Every program that

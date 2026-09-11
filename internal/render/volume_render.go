@@ -32,11 +32,13 @@ func RenderVolumes(lvl *world.Level, cull *Frustum) {
 			continue
 		}
 		if cull != nil {
-			if lo, hi, ok := v.WorldAABB(); ok && !AABBInFrustum(*cull, lo, hi) {
+			if lo, hi, ok := v.WorldAABB(lvl); ok && !AABBInFrustum(*cull, lo, hi) {
 				continue
 			}
 		}
-		v.Geometry.DrawLinesWithTransform(v.ModelMatrix())
+		// Through whatever it rides, so a sight cone on a guard is drawn on
+		// the guard.
+		v.Geometry.DrawLinesWithTransform(v.WorldMatrix(lvl))
 	}
 }
 

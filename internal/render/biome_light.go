@@ -160,7 +160,7 @@ func (b *BiomeShadowSettings) castRangeFor(sectorRange, mapReach float32) float3
 // biomeShaderPath resolves a shader file inside the running executable's
 // shaders directory.
 func biomeShaderPath(name string) string {
-	return filepath.Join(fileutil.ExecutablePath, "shaders", name)
+	return filepath.Join(fileutil.ResourcesPath, "shaders", name)
 }
 
 // biomeLightSnippet returns biome_light.glsl prefixed with the defines that fix
@@ -241,7 +241,7 @@ func mustBiomeProgram(vertPath, fragPath, vertSnippet, fragSnippet string) uint3
 // fragment.glsl gets as a varying from vertex.glsl) and the Receive toggle.
 func uploadBiomeLighting(prog uint32, level *world.Level, frame ShadowFrame) {
 	world.UploadLightsTo(prog, level.Lights, false)
-	world.UploadFogTo(prog, level.Fog, level.Volumes)
+	world.UploadFogTo(prog, level.Fog, level.Volumes, level)
 	UploadShadowUniformsTo(prog, level.Lights, frame)
 	UploadPointShadowUniformsTo(prog, level.Lights)
 

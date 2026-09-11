@@ -48,9 +48,9 @@ func withPrefabFile(t *testing.T, name string, p world.Prefab) string {
 	t.Helper()
 	testenv.WithoutGeometryUploads(t)
 
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = t.TempDir()
-	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = t.TempDir()
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
 
 	if err := SavePrefab(name, &p); err != nil {
 		t.Fatalf("SavePrefab: %v", err)

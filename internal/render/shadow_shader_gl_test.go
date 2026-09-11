@@ -41,9 +41,9 @@ func compileBiomeStages(vertPath, fragPath, vertSnippet, fragSnippet string) err
 func TestShadowSamplingShadersCompile(t *testing.T) {
 	gltest.Context(t)
 
-	prevExe := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
-	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
+	prevExe := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prevExe })
 
 	// The scene shader: 5x5 PCF in a fragment stage.
 	if err := gfx.LoadProgram(repoShader(t, "vertex.glsl"), repoShader(t, "fragment.glsl")); err != nil {

@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	fileutil.ExecutablePath = os.Args[1]
+	fileutil.ResourcesPath = os.Args[1]
 	name := os.Args[2]
 
 	texture.LoadGlobalPalette()

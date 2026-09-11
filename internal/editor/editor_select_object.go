@@ -40,6 +40,7 @@ func editorClearObjectSelections() {
 // what a workspace with no level objects overrides away.
 func editorClearLevelObjectSelections() {
 	editorClearSpawnSelection()
+	editorClearSealSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
 	editorClearSpriteSelection()

@@ -30,7 +30,7 @@ func editorAttachUI(lvl *world.Level, a *world.Attach, idSuffix string) bool {
 	changed := false
 
 	if editorAttachCombo("Frame##attfr"+idSuffix, &a.Frame, editorFrameNames(lvl),
-		"A moving coordinate system - in practice a vehicle.\nThe sprite rides it, and Position becomes its local space.") {
+		"A moving coordinate system - in practice a vehicle.\nThis rides it, and Position becomes its local space.") {
 		changed = true
 	}
 
@@ -61,7 +61,7 @@ func editorAttachUI(lvl *world.Level, a *world.Attach, idSuffix string) bool {
 	}
 	imguibackend.EditorPushDisabled(m == nil)
 	if editorAttachCombo("Bone##attbn"+idSuffix, &a.Bone, editorModelBoneNames(m),
-		"A bone within that model. The sprite follows it through\nevery animation the entity plays.") {
+		"A bone within that model. This follows it through\nevery animation the entity plays.") {
 		changed = true
 	}
 	imguibackend.EditorPopDisabled()

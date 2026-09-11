@@ -72,7 +72,18 @@ var upward = map[string][]string{
 	"levelio":   {"editor", "app", "uiwin"},
 	"uiwin":     {"editor", "app"},
 	"textureui": {"editor", "app"},
-	"editor":    {"app"},
+	// pack stages an install tree and archives it: a tree of files and the
+	// manifest, and nothing about how the engine loads either. Below gfx and
+	// levelio, so cmd/foundrypack packs without linking OpenGL.
+	"pack": {"gfx", "world", "levelio", "compile", "render", "script", "editor", "app", "uiwin", "release", "setup"},
+	// setup is the Windows installer, which is shipped to players: it must
+	// stay the standard library and fileutil, and nothing of the engine.
+	"setup": {"gfx", "world", "levelio", "compile", "render", "script", "editor", "app", "uiwin", "release", "pack", "game", "ui", "audio"},
+	// release is the pipeline the editor's Release window runs in a child
+	// process. Above levelio, because it compiles levels; below the editor
+	// that starts it.
+	"release": {"editor", "app", "uiwin"},
+	"editor":  {"app"},
 }
 
 func TestPackagesDoNotDependUpward(t *testing.T) {

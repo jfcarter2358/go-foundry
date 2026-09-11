@@ -62,6 +62,11 @@ type BSPTree struct {
 	// came from, so this list is interchangeable with CSG's output as far as
 	// the renderer is concerned — there are just more of them.
 	Faces []Face
+
+	// reachedVia is how the void fill reached each cell, kept so that a leak
+	// can be traced back to the opening it came in through. Set by
+	// MarkOutside; nil until it has run.
+	reachedVia []outsideStep
 }
 
 // Build limits. Depth is a safety net rather than a tuning knob: the recursion
@@ -131,20 +136,123 @@ func BuildBSP(faces []Face) *BSPTree {
 // From the ROOT rather than from a node, because a detail face was never
 // assigned to one — it took no part in choosing the planes it is now being
 // sorted by. The walk splits it as it descends, so a bump spanning two cells is
-// drawn from both and a bump buried inside a solid cell is drawn from neither.
+// drawn from both.
+//
+// A detail face that comes to rest in a SOLID cell is the other case, and it is
+// most of what detail is for: a recess, a reveal, a panel pressed into a wall
+// all sit behind the hull's surface, inside the material the tree was built
+// from. Nothing is ever drawn from a solid cell, so those go through
+// attachInsetDetail instead.
 func (t *BSPTree) attachDetailFaces(detail []int) {
 	if len(detail) == 0 {
 		return
 	}
+	var inset []int
 	for _, fi := range detail {
-		t.markFace(t.Root, fi, t.Faces[fi].Points)
+		if t.insertDetail(t.Root, fi, t.Faces[fi].Points) {
+			inset = append(inset, fi)
+		}
 	}
+	t.attachInsetDetail(inset)
 	// markFace appends, so the cells it touched need the same tidy-up
 	// attachFacesToLeaves gives the ones it filled.
 	for li := range t.Leaves {
 		l := &t.Leaves[li]
 		sort.Ints(l.Faces)
 		l.Faces = dedupInts(l.Faces)
+	}
+}
+
+// insertDetail is markFace for a detail face: it records fi in every empty leaf
+// the polygon reaches, and reports whether any real part of it came to rest in
+// a solid one instead.
+func (t *BSPTree) insertDetail(c bsp.ChildRef, fi int, pts []mgl32.Vec3) (buried bool) {
+	if len(pts) < 3 {
+		return false
+	}
+	if c.IsLeaf() {
+		l := &t.Leaves[c.Leaf()]
+		if !l.Solid {
+			l.Faces = append(l.Faces, fi)
+			return false
+		}
+		return bsp.PolygonArea(pts) >= bsp.MinFragmentArea
+	}
+	n := &t.Nodes[c.Node()]
+	switch n.Plane.ClassifyPolygon(pts) {
+	case bsp.SideFront:
+		return t.insertDetail(n.Front, fi, pts)
+	case bsp.SideBack:
+		return t.insertDetail(n.Back, fi, pts)
+	case bsp.SideOn:
+		// Lying on a hull face's plane — which a detail mesh seeded from its
+		// hull does, face for face. It is seen from the side it faces. The
+		// other side is the hull's own material, and counting that as buried
+		// would send every untouched face of a detailed brush down the inset
+		// path. A double-sided face is still drawn from both, but only the
+		// side it faces decides whether it is buried.
+		f := &t.Faces[fi]
+		facing, behind := n.Front, n.Back
+		if f.Plane.N.Dot(n.Plane.N) < 0 {
+			facing, behind = n.Back, n.Front
+		}
+		if f.DoubleSided {
+			t.markFace(behind, fi, pts)
+		}
+		return t.insertDetail(facing, fi, pts)
+	default:
+		fr, bk := bsp.SplitPolygon(pts, n.Plane)
+		inFront := t.insertDetail(n.Front, fi, fr)
+		behind := t.insertDetail(n.Back, fi, bk)
+		return inFront || behind
+	}
+}
+
+// attachInsetDetail gives each detail face that came to rest inside solid
+// material to every empty cell its own brush's hull faces bound.
+//
+// Those are the cells an inset is seen FROM. A recess sunk into a floor is
+// looked at through the floor's top face, and the cells in front of that face
+// are exactly the ones attachFacesToLeaves would have drawn the undetailed
+// floor from. The hull faces are still in the tree for that purpose — a
+// detailed brush emits them as NoDraw structure (csg.go) — so they are walked
+// down their facing side the same way a drawn node face is, recording the
+// inset face rather than themselves.
+//
+// Every hull face of the brush rather than the one the inset happens to be
+// under, because which one that is is not a local question for a recess wall
+// or a reveal cut through a corner. The cost is draws, not correctness: a
+// cell beside a different face of the brush is handed a surface the depth
+// test then hides.
+func (t *BSPTree) attachInsetDetail(inset []int) {
+	if len(inset) == 0 {
+		return
+	}
+	type brushKey struct{ chunk, brush string }
+	byBrush := map[brushKey][]int{}
+	for _, fi := range inset {
+		k := brushKey{t.Faces[fi].Chunk, t.Faces[fi].Brush}
+		byBrush[k] = append(byBrush[k], fi)
+	}
+	for ni := range t.Nodes {
+		n := &t.Nodes[ni]
+		for _, hi := range n.Faces {
+			h := &t.Faces[hi]
+			if !h.NoDraw {
+				continue
+			}
+			faces := byBrush[brushKey{h.Chunk, h.Brush}]
+			if len(faces) == 0 {
+				continue
+			}
+			child := n.Front
+			if h.Plane.N.Dot(n.Plane.N) < 0 {
+				child = n.Back
+			}
+			for _, fi := range faces {
+				t.markFace(child, fi, h.Points)
+			}
+		}
 	}
 }
 
@@ -200,7 +308,7 @@ func (t *BSPTree) build(faceIdx []int, region []bsp.Plane, depth int, solid bool
 
 	var onNode, front, back []int
 	for _, fi := range faceIdx {
-		switch pl.ClassifyPolygon(t.Faces[fi].Points) {
+		switch t.sideOf(fi, pl) {
 		case bsp.SideOn:
 			onNode = append(onNode, fi)
 		case bsp.SideFront:
@@ -226,6 +334,28 @@ func (t *BSPTree) build(faceIdx []int, region []bsp.Plane, depth int, solid bool
 	b := t.build(back, appendPlane(region, pl.Flip()), depth+1, true)
 	t.Nodes[ni].Front, t.Nodes[ni].Back = f, b
 	return bsp.NodeRef(ni)
+}
+
+// sideOf is where face fi lies relative to a splitting plane.
+//
+// A face whose own plane IS the splitter goes on the node, whatever its corners
+// say. A face that is not quite flat — a brush whose corners have been dragged
+// out of line, so that a quad bends across its own plane — has corners on both
+// sides of that plane, and classifying them would split it. Both halves keep the
+// plane they came from, so the next level down offers the same plane again,
+// which splits them again: the same cut down one branch until maxBSPDepth, with
+// a copy of the plane in every cell beneath it. Portals are found pairwise over
+// cell boundaries, and a hundred copies of one plane on each side of a boundary
+// made millions of them — enough that the visibility stage asked for terabytes.
+//
+// Consumed at the node, the face stops recursing the first time its plane is
+// used, and the cells it bounds are the cells a flat face would have made.
+func (t *BSPTree) sideOf(fi int, pl bsp.Plane) bsp.Side {
+	own := t.Faces[fi].Plane
+	if own.SameAs(pl) || own.SameAs(pl.Flip()) {
+		return bsp.SideOn
+	}
+	return pl.ClassifyPolygon(t.Faces[fi].Points)
 }
 
 // appendPlane copies rather than appending in place. A region slice is handed
@@ -300,7 +430,7 @@ func (t *BSPTree) chooseSplitter(faceIdx []int) (bsp.Plane, bool) {
 
 		front, back, splits := 0, 0, 0
 		for _, oi := range faceIdx {
-			switch pl.ClassifyPolygon(t.Faces[oi].Points) {
+			switch t.sideOf(oi, pl) {
 			case bsp.SideFront:
 				front++
 			case bsp.SideBack:

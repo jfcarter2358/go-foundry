@@ -64,6 +64,7 @@ func editorExplorerSection(lvl *world.Level) {
 	}
 	imgui.BeginChildV("##explorertree", imgui.Vec2{X: 0, Y: h}, true, 0)
 	editorExplorerSpawnRow(lvl)
+	editorExplorerSealRow(lvl)
 	editorExplorerChunkNodes(lvl)
 	editorExplorerPrefabNodes(lvl)
 	editorExplorerEntityNodes(lvl)
@@ -527,6 +528,9 @@ func editorExplorerVolumeNodes(lvl *world.Level) {
 			// A disarmed volume is still there and still selectable; saying so
 			// on the row saves hunting for why a trigger stopped firing.
 			label += "  (disabled)"
+		}
+		if v.FromEntity != "" {
+			label += "  (from " + v.FromEntity + ")"
 		}
 		if editorExplorerLeaf(fmt.Sprintf("%s##vol%d", label, i), i == Editor.ActiveVolumeIdx, panelFocusVolume) {
 			editorSelectVolume(i)

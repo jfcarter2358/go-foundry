@@ -147,7 +147,7 @@ func TestASpriteOnAPathScalesItsQuad(t *testing.T) {
 func TestAVolumeInAFrameMeetsTheArrowInTheWorld(t *testing.T) {
 	lvl := attachLevel(t)
 	v := NewVolume("hold", mgl32.Vec3{5, 0, 0})
-	v.Frame = "ship"
+	v.Attach.Frame = "ship"
 	lvl.Volumes = []Volume{v}
 	lvl.WaypointAnimations = []WaypointAnimation{{ID: "path", Points: []Waypoint{wp(mgl32.Vec3{105, 0, 10}, 1)}}}
 	PlayWaypoints(lvl, &lvl.Volumes[0], &lvl.WaypointAnimations[0])

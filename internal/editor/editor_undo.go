@@ -182,6 +182,7 @@ func editorResetSelectionState() {
 	Editor.SelectedFaces = nil
 	Editor.SelectedBrushes = nil
 	editorClearSpawnSelection()
+	editorClearSealSelection()
 	editorClearEntitySelection()
 	editorClearVolumeSelection()
 	editorClearSpriteSelection()

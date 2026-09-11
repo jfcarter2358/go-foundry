@@ -99,7 +99,7 @@ func editorWaypointTimelineWindow() {
 	// The row can delete the animation along with its last point, so the
 	// canvas looks it up again rather than drawing what was there.
 	if a = activeWaypointAnimation(); a != nil {
-		waypointTimelineCanvas(a)
+		waypointTimelineCanvas(a, levelWaypointTimelineHost(a))
 	}
 	imgui.End()
 }
@@ -214,13 +214,49 @@ func waypointKeyTimeAfter(a *world.WaypointAnimation, t float32) float32 {
 
 // ---------- the lane ----------
 
+// waypointTimelineHost is what the lane needs from the window it is drawn in.
+// The level editor's strip and the entity editor's each supply one, so the
+// ruler, the keys and a key's drag are written once.
+type waypointTimelineHost struct {
+	// selected is the point whose key is drawn on top, or -1.
+	selected int
+	// playhead is where the playhead line is drawn, in seconds.
+	playhead float32
+	// selectPoint selects point i: the same selection clicking its arrow makes.
+	selectPoint func(i int)
+	// seek moves the playhead to t and poses the preview there.
+	seek func(t float32)
+	// pushUndo is called once, before a drag first retimes a key.
+	pushUndo func()
+	// tip is the tooltip over point i's key.
+	tip func(i int) string
+	// locked keeps the keys where they are — a path an entity carries, seen
+	// from the level editor. Clicking a key still selects it and parks on it.
+	locked bool
+}
+
+// levelWaypointTimelineHost is the level editor's host for a.
+func levelWaypointTimelineHost(a *world.WaypointAnimation) waypointTimelineHost {
+	return waypointTimelineHost{
+		selected:    Editor.ActiveWaypointIdx,
+		playhead:    Editor.WaypointPreview.Time,
+		selectPoint: func(i int) { editorSelectWaypoint(Editor.ActiveWaypointAnimIdx, i) },
+		seek:        editorWaypointPreviewSeek,
+		pushUndo:    EditorPushUndo,
+		tip: func(i int) string {
+			return fmt.Sprintf("Point %d at %.2f s\n%s", i+1, a.Points[i].Time, waypointLegSummary(a, i))
+		},
+		locked: waypointCarried(a),
+	}
+}
+
 // waypointTimelineCanvas draws the ruler, the keys and the playhead, and
 // resolves clicks and drags on them.
 //
 // The geometry is the model timeline's modelTimelineLayout, so the two strips
 // map time to pixels the same way; the lanes and frame rate it also carries go
 // unused here, since a waypoint animation has neither bones nor frames.
-func waypointTimelineCanvas(a *world.WaypointAnimation) {
+func waypointTimelineCanvas(a *world.WaypointAnimation, host waypointTimelineHost) {
 	origin := imgui.CursorScreenPos()
 	avail := imgui.ContentRegionAvail()
 	if avail.X < waypointTimelineGutterW+60 {
@@ -242,11 +278,11 @@ func waypointTimelineCanvas(a *world.WaypointAnimation) {
 	}
 	laneY := origin.Y + waypointTimelineRulerH + waypointTimelineLaneH/2
 
-	waypointTimelineDraw(l, a, origin, avail.X, height, laneY)
-	waypointTimelineInput(l, a, laneY, hovered, held)
+	waypointTimelineDraw(l, a, origin, avail.X, height, laneY, host)
+	waypointTimelineInput(l, a, laneY, hovered, held, host)
 }
 
-func waypointTimelineDraw(l modelTimelineLayout, a *world.WaypointAnimation, origin imgui.Vec2, width, height, laneY float32) {
+func waypointTimelineDraw(l modelTimelineLayout, a *world.WaypointAnimation, origin imgui.Vec2, width, height, laneY float32, host waypointTimelineHost) {
 	dl := imgui.WindowDrawList()
 	bg := imgui.PackedColorFromVec4(imgui.Vec4{X: 0.11, Y: 0.11, Z: 0.13, W: 1})
 	gutter := imgui.PackedColorFromVec4(imgui.Vec4{X: 0.15, Y: 0.15, Z: 0.18, W: 1})
@@ -275,7 +311,7 @@ func waypointTimelineDraw(l modelTimelineLayout, a *world.WaypointAnimation, ori
 
 	dl.AddText(imgui.Vec2{X: origin.X + 8, Y: laneY - 7}, textCol, "Points")
 	dl.AddLine(imgui.Vec2{X: l.x0, Y: laneY}, imgui.Vec2{X: l.x1, Y: laneY}, laneCol)
-	sel := Editor.ActiveWaypointIdx
+	sel := host.selected
 	for i := range a.Points {
 		if i != sel {
 			modelDrawKeyDiamond(dl, l.timeToX(a.Points[i].Time), laneY, modelTimelineKeyR+1, keyCol)
@@ -287,7 +323,7 @@ func waypointTimelineDraw(l modelTimelineLayout, a *world.WaypointAnimation, ori
 		modelDrawKeyDiamond(dl, l.timeToX(a.Points[sel].Time), laneY, modelTimelineKeyR+1, selCol)
 	}
 
-	px := l.timeToX(Editor.WaypointPreview.Time)
+	px := l.timeToX(host.playhead)
 	dl.AddLine(imgui.Vec2{X: px, Y: origin.Y}, imgui.Vec2{X: px, Y: origin.Y + height}, headCol)
 }
 
@@ -309,11 +345,11 @@ func waypointRulerStep(l modelTimelineLayout) float32 {
 //
 // Keys are tested before the scrub, as the model timeline tests its diamonds,
 // so a click aimed at a key is never read as "move the playhead near it".
-func waypointTimelineInput(l modelTimelineLayout, a *world.WaypointAnimation, laneY float32, hovered, held bool) {
+func waypointTimelineInput(l modelTimelineLayout, a *world.WaypointAnimation, laneY float32, hovered, held bool, host waypointTimelineHost) {
 	mouse := imgui.MousePos()
 	if hovered && !held {
-		if i, ok := waypointTimelinePickKey(l, a, laneY, mouse); ok {
-			imgui.SetTooltip(fmt.Sprintf("Point %d at %.2f s\n%s", i+1, a.Points[i].Time, waypointLegSummary(a, i)))
+		if i, ok := waypointTimelinePickKey(l, a, laneY, mouse, host.selected); ok && host.tip != nil {
+			imgui.SetTooltip(host.tip(i))
 		}
 	}
 	if !held {
@@ -323,21 +359,23 @@ func waypointTimelineInput(l modelTimelineLayout, a *world.WaypointAnimation, la
 
 	if imgui.IsMouseClicked(0) {
 		waypointTimelineDrag, waypointTimelineDragUndo = -1, false
-		if i, ok := waypointTimelinePickKey(l, a, laneY, mouse); ok {
-			editorSelectWaypoint(Editor.ActiveWaypointAnimIdx, i)
+		if i, ok := waypointTimelinePickKey(l, a, laneY, mouse, host.selected); ok {
+			host.selectPoint(i)
 			// Park on the key, so what the view shows is the point just picked.
-			editorWaypointPreviewSeek(a.Points[i].Time)
+			host.seek(a.Points[i].Time)
 			waypointTimelineDrag = i
 			return
 		}
 	}
 
 	if i := waypointTimelineDrag; i >= 0 {
-		if i >= len(a.Points) || !imgui.IsMouseDragging(0, 2) {
+		// A locked key is still held, so the press does not turn into a scrub
+		// the moment the mouse moves; it just goes nowhere.
+		if i >= len(a.Points) || !imgui.IsMouseDragging(0, 2) || host.locked {
 			return
 		}
 		if !waypointTimelineDragUndo {
-			EditorPushUndo()
+			host.pushUndo()
 			waypointTimelineDragUndo = true
 		}
 		t := l.xToTime(mouse.X)
@@ -349,11 +387,11 @@ func waypointTimelineInput(l modelTimelineLayout, a *world.WaypointAnimation, la
 				t = l.dur
 			}
 		}
-		editorWaypointPreviewSeek(a.SetPointTime(i, t))
+		host.seek(a.SetPointTime(i, t))
 		return
 	}
 
-	editorWaypointPreviewSeek(l.xToTime(mouse.X))
+	host.seek(l.xToTime(mouse.X))
 }
 
 // waypointTimelinePickKey returns the point whose key is under the cursor.
@@ -361,7 +399,7 @@ func waypointTimelineInput(l modelTimelineLayout, a *world.WaypointAnimation, la
 // Keys at the same moment stack. The selected one wins, since it is the one
 // drawn on top; otherwise the later one does, which is the one a drag to the
 // right can pull out of the stack.
-func waypointTimelinePickKey(l modelTimelineLayout, a *world.WaypointAnimation, laneY float32, mouse imgui.Vec2) (int, bool) {
+func waypointTimelinePickKey(l modelTimelineLayout, a *world.WaypointAnimation, laneY float32, mouse imgui.Vec2, selected int) (int, bool) {
 	if geom.Abs32(mouse.Y-laneY) > waypointTimelineLaneH/2 {
 		return -1, false
 	}
@@ -371,7 +409,7 @@ func waypointTimelinePickKey(l modelTimelineLayout, a *world.WaypointAnimation, 
 		d := geom.Abs32(l.timeToX(a.Points[i].Time) - mouse.X)
 		switch {
 		case d > reach:
-		case i == Editor.ActiveWaypointIdx:
+		case i == selected:
 			return i, true
 		case d <= bestD:
 			best, bestD = i, d
@@ -407,7 +445,8 @@ func editorWaypointDistanceLabels() {
 		col := imgui.PackedColorFromVec4(imgui.Vec4{X: c.X(), Y: c.Y(), Z: c.Z(), W: 1})
 
 		for pi := 1; pi < len(a.Points); pi++ {
-			from, to := a.Points[pi-1].Position, a.Points[pi].Position
+			from := waypointWorldPosition(lvl, a, a.Points[pi-1].Position)
+			to := waypointWorldPosition(lvl, a, a.Points[pi].Position)
 			s0, ok0 := projectToScreen(projView, from)
 			s1, ok1 := projectToScreen(projView, to)
 			if !ok0 || !ok1 {

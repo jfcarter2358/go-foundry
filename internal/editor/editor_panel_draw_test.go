@@ -71,6 +71,7 @@ func TestPanelDrawsForEverySelection(t *testing.T) {
 	}{
 		{"nothing", panelFocusNone, editorClearObjectSelections},
 		{"spawn", panelFocusSpawn, editorSelectSpawn},
+		{"seal", panelFocusSeal, editorSelectSeal},
 		{"chunk", panelFocusChunk, func() { editorSelectChunk(0) }},
 		{"brush", panelFocusBrush, func() { editorSelectBrush(0, 0) }},
 		{"face", panelFocusFace, func() { editorSelectBrush(0, 0) }},
@@ -104,7 +105,7 @@ func TestPanelDrawsForEverySelection(t *testing.T) {
 			v.Fog = &f
 			sc := world.DefaultVolumeScatter()
 			v.Scatter = &sc
-			v.Frame = "ship"
+			v.Attach.Frame = "ship"
 			v.Doorway = &world.FrameDoorway{}
 			editorSelectVolume(0)
 		}},

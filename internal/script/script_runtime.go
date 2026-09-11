@@ -148,6 +148,13 @@ type ScriptRuntime struct {
 	// tick, because it is only ever read during that tick's drain.
 	fanout map[string]int
 
+	// hidden collects the screens that leave the stack through
+	// ui.OnScreenHidden. Every refCache built reads it, so a screen ref still
+	// resolves to one for the tick after it left — the tick its :hidden: and
+	// :cancel: are delivered on — and ScriptTick lets go of each once that
+	// tick's drain is done.
+	hidden []*ui.Screen
+
 	stats ScriptStats
 }
 
@@ -197,6 +204,8 @@ func ScriptRuntimeReset(lvl *world.Level) {
 	// load a script for a screen shown after the runtime has gone.
 	ClearUIBindings(uiStack)
 	ui.OnScreenShown = nil
+	ui.OnScreenHidden = nil
+	rt.hidden = nil
 	InvalidateBindingCache()
 	rt.stats = ScriptStats{}
 }
@@ -228,6 +237,13 @@ func ScriptRuntimeLoad(lvl *world.Level) {
 			Scripts.loadUnit(n.Script)
 			return true
 		})
+	}
+	// A screen leaving the stack is kept for the next tick, so the :hidden:
+	// and :cancel: recorded as it left can still reach its script.
+	ui.OnScreenHidden = func(sc *ui.Screen) {
+		if sc != nil {
+			Scripts.hidden = append(Scripts.hidden, sc)
+		}
 	}
 }
 
@@ -759,6 +775,10 @@ func ScriptTick(lvl *world.Level, dt float32, play bool) {
 	rt.stats = ScriptStats{}
 	rt.fanout = map[string]int{}
 
+	// Screens that left the stack before this tick are the ones whose :hidden:
+	// and :cancel: it delivers — see ScriptRuntime.hidden.
+	departed := len(rt.hidden)
+
 	// Messages deferred last frame go first, so a spilled cascade continues in
 	// the order it was cut off.
 	rt.queue = append(rt.queue, rt.spill...)
@@ -767,6 +787,11 @@ func ScriptTick(lvl *world.Level, dt float32, play bool) {
 	rt.currentHops = -1
 	ScriptEventsTick(rt, lvl, dt)
 	rt.drain()
+
+	// Delivered now. A screen that left during this drain stays for the next
+	// tick, whose events it is; copied so the ones let go are not kept alive
+	// by the slice's backing array.
+	rt.hidden = append([]*ui.Screen(nil), rt.hidden[departed:]...)
 }
 
 // noHandlerReason says why a targeted send reached no script at all.

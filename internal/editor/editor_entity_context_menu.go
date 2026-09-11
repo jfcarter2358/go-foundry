@@ -87,6 +87,8 @@ const (
 	entityCtxModel
 	entityCtxEmitter
 	entityCtxSeat
+	entityCtxVolume
+	entityCtxWaypoints
 )
 
 // entityCtxSelection reports what the menu should be about.
@@ -114,6 +116,14 @@ func entityCtxSelection() entityCtxSelKind {
 	case entitySelEmitter:
 		if entitySel.Idx < len(entityDef.Emitters) {
 			return entityCtxEmitter
+		}
+	case entitySelVolume:
+		if entitySel.Idx < len(entityDef.Volumes) {
+			return entityCtxVolume
+		}
+	case entitySelWaypoints:
+		if entityActiveWaypointAnimation() != nil {
+			return entityCtxWaypoints
 		}
 	case entitySelSeat:
 		if entityDef.Vehicle != nil && entitySel.Idx < len(entityDef.Vehicle.Seats) {
@@ -159,6 +169,16 @@ func entityCtxSummary() string {
 	case entityCtxEmitter:
 		return "Emitter " + entityDef.Emitters[entitySel.Idx].Name
 
+	case entityCtxVolume:
+		return "Volume " + entityDef.Volumes[entitySel.Idx].Name
+
+	case entityCtxWaypoints:
+		a := entityActiveWaypointAnimation()
+		if entityActiveWaypoint() != nil {
+			return fmt.Sprintf("Point %d of path %s", entitySel.Sub+1, a.ID)
+		}
+		return "Path " + a.ID
+
 	case entityCtxSeat:
 		return "Seat " + entityDef.Vehicle.Seats[entitySel.Idx].Name
 	}
@@ -188,6 +208,10 @@ func entityContextMenuItems() []ctxMenuItem {
 		items = append(items, entityCtxModelItems()...)
 	case entityCtxEmitter:
 		items = append(items, entityCtxEmitterItems()...)
+	case entityCtxVolume:
+		items = append(items, entityCtxVolumeItems()...)
+	case entityCtxWaypoints:
+		items = append(items, entityCtxWaypointItems()...)
 	case entityCtxSeat:
 		items = append(items, entityCtxSeatItems()...)
 	default:
@@ -288,11 +312,12 @@ func entityCtxFaceItems() []ctxMenuItem {
 // ---------- corners ----------
 
 func entityCtxVertexItems() []ctxMenuItem {
-	return []ctxMenuItem{
-		{Label: "Select this brush's corners", Do: entityCtxSelectBrushVertices,
+	return append(entityCtxWrapFaceOps(editor3DPointOpMenuItems()),
+		ctxMenuItem{Separator: true},
+		ctxMenuItem{Label: "Select this brush's corners", Do: entityCtxSelectBrushVertices,
 			Tooltip: "Every corner, so a drag moves the whole solid."},
-		{Label: "Deselect", Do: entityClearGeometrySelection},
-	}
+		ctxMenuItem{Label: "Deselect", Do: entityClearGeometrySelection},
+	)
 }
 
 // ---------- a whole brush ----------
@@ -352,6 +377,14 @@ func entityCtxEmitterItems() []ctxMenuItem {
 	}
 }
 
+func entityCtxVolumeItems() []ctxMenuItem {
+	idx := entitySel.Idx
+	return []ctxMenuItem{
+		{Label: "Remove volume", Shortcut: "Del", Do: func() { entityRemoveVolume(idx) },
+			Tooltip: "Takes the region off the type, and off every placement of it."},
+	}
+}
+
 func entityCtxSeatItems() []ctxMenuItem {
 	idx := entitySel.Idx
 	return []ctxMenuItem{
@@ -368,7 +401,7 @@ func entityCtxEmptyHint() string {
 	case editorInEditMode():
 		return "Edit mode — click a face, an edge or a corner to select it (Tab for object mode)"
 	}
-	return "Object mode — click a brush, or a model, emitter or seat in the outline (Tab to edit a brush)"
+	return "Object mode — click a brush, or a model, emitter, volume or seat in the outline (Tab to edit a brush)"
 }
 
 // ---------- shared ----------
@@ -494,8 +527,8 @@ func entityCtxToggleFaceSolid() {
 	entityCtxGeometryEdited()
 }
 
-// entityCtxWrapFaceOps re-points the shared face operations' rows at this
-// window's bookkeeping. The rows themselves are the 3D view's — one list of
+// entityCtxWrapFaceOps re-points the shared face and point operations' rows at
+// this window's bookkeeping. The rows themselves are the 3D view's — one list of
 // what a face can be asked, not two that drift.
 func entityCtxWrapFaceOps(items []ctxMenuItem) []ctxMenuItem {
 	for i := range items {

@@ -142,6 +142,10 @@ func editorWaypointPreviewStart(animID string, t waypointTarget) bool {
 		}
 		return false
 	}
+	if anim := world.FindWaypointAnimation(lvl, animID); world.WaypointFollowerCarriesAnimation(t.follower(lvl), anim) {
+		editorSetStatus("Preview: %s carries %q, so it cannot follow it; preview it on one of its parts", t.label(), animID)
+		return false
+	}
 	editorWaypointPreviewStop()
 	Editor.WaypointPreview.Target = t
 	return editorWaypointPreviewPlay(animID)
@@ -215,6 +219,9 @@ func editorWaypointPreviewSeek(t float32) {
 // editorSetWaypointAnimationLength stretches an animation to a new length, and
 // the playhead with it, so the playhead stays on the same moment of the path.
 func editorSetWaypointAnimationLength(a *world.WaypointAnimation, l float32) {
+	if editorWaypointRefuseCarried(a) {
+		return
+	}
 	old := a.EffectiveLength()
 	a.SetLength(l)
 	if p := &Editor.WaypointPreview; p.Anim == a.ID && old > 0 {
@@ -234,7 +241,7 @@ func editorWaypointPreviewPose() {
 	p := &Editor.WaypointPreview
 	anim := world.FindWaypointAnimation(lvl, p.Anim)
 	f := p.Target.follower(lvl)
-	if anim == nil || f == nil {
+	if anim == nil || f == nil || world.WaypointFollowerCarriesAnimation(f, anim) {
 		return
 	}
 	before := world.CaptureWaypointRest(f)

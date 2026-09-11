@@ -286,6 +286,11 @@ func editorSelectionBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 		return smin, smax, true
 	}
 
+	if s := activeSeal(); s != nil {
+		lo, hi := s.Bounds()
+		return lo, hi, true
+	}
+
 	if e := activeEntity(); e != nil {
 		if emin, emax, ok := e.WorldAABB(); ok {
 			return emin, emax, true
@@ -296,10 +301,11 @@ func editorSelectionBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 	}
 
 	if v := activeVolume(); v != nil {
-		if vmin, vmax, ok := v.WorldAABB(); ok {
+		if vmin, vmax, ok := v.WorldAABB(lvl); ok {
 			return vmin, vmax, true
 		}
-		return v.Position, v.Position, true
+		p := v.WorldPosition(lvl)
+		return p, p, true
 	}
 
 	if sc := activeScenery(); sc != nil {

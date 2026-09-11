@@ -201,7 +201,7 @@ func CompileShader(source string, shaderType uint32) (uint32, error) {
 }
 
 // Where the world shader's two stages are read from, relative to
-// ExecutablePath. Named here rather than at the call site so a build that wants
+// ResourcesPath. Named here rather than at the call site so a build that wants
 // to swap them has one place to do it.
 var VertexShaderPath = "shaders/vertex.glsl"
 var FragmentShaderPath = "shaders/fragment.glsl"

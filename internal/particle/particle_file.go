@@ -34,7 +34,7 @@ const ParticlesDirName = "particles"
 const ParticleExt = ".fpar"
 
 // ParticlesDir is where the editor's open/save dialogs look.
-func ParticlesDir() string { return filepath.Join(fileutil.ExecutablePath, ParticlesDirName) }
+func ParticlesDir() string { return filepath.Join(fileutil.ResourcesPath, ParticlesDirName) }
 
 // ParticlePath resolves a bare effect name to a full path.
 func ParticlePath(name string) string { return filepath.Join(ParticlesDir(), name+ParticleExt) }

@@ -146,8 +146,10 @@ func dropCompiledPreview() {
 func reportCompile(what string, s *compile.Stats) {
 	log.Printf("compiled %s: %s", what, s.Summary())
 	for _, leak := range s.Leaks {
-		log.Printf("LEAK: %s is at %v, outside the level — something in the shell does not meet",
-			leak.What, leak.Position)
+		log.Printf("LEAK: %s", leak.Describe())
+	}
+	if w := s.SealWarning(); w != "" {
+		log.Printf("WARNING: %s", w)
 	}
 }
 

@@ -58,6 +58,7 @@ func editorVolumeAddMenu() {
 
 // editorVolumeProperties draws the selected volume's editable state.
 func editorVolumeProperties(v *world.Volume) {
+	editorVolumeCarrierNote(v)
 	// The same groups an entity gets, in the same order, so the two blocks read
 	// as one panel with different middles.
 	editorPropGroupOpen("Identity##volidgrp", func() { editorVolumeIdentity(v) })
@@ -70,6 +71,30 @@ func editorVolumeProperties(v *world.Volume) {
 	editorObjectWaypointsUI(v)
 	editorScriptDataUI(&v.ScriptData, "vol", strconv.Quote(v.ID))
 	editorPropGroup("Actions##volactions", 0, func() { editorVolumeActions(v) })
+}
+
+// editorVolumeCarrierNote says, first, that a volume an entity's type hung on it
+// belongs to that type — editorEmitterCarrierNote's twin, for its reason: the
+// volume is an ordinary one in every other respect, so nothing else on screen
+// would warn an author that what they change here is not kept.
+func editorVolumeCarrierNote(v *world.Volume) {
+	if v.FromEntity == "" {
+		return
+	}
+	editorTextWrappedColored(imgui.Vec4{X: 1, Y: 0.8, Z: 0.35, W: 1},
+		"Carried by entity "+v.FromEntity+". Its script, tags, attributes and "+
+			"params are saved as that placement's own; its shape and placement "+
+			"belong to the entity's type and are put back from it every time the "+
+			"level loads.")
+	if ent := world.FindEntity(Editor.level, v.FromEntity); ent != nil && ent.Type != "" {
+		if imgui.Button("Edit Type##volcarrier") {
+			OpenEntityEditorOn(ent.Type)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Open " + ent.Type + " in the entity editor, where this\nvolume is shaped and placed for good.")
+		}
+	}
+	imgui.Separator()
 }
 
 // editorVolumeIdentity draws the ID field and the enabled toggle.
@@ -102,11 +127,14 @@ func editorVolumeIdentity(v *world.Volume) {
 // editorVolumeTransform draws position and rotation. There is no scale — a
 // volume's size is its half-extents, edited under Shape.
 func editorVolumeTransform(v *world.Volume) {
-	editorVolumeFrameRow(v)
+	editorVolumeAttachRows(v)
 
 	pos := [3]float32{v.Position.X(), v.Position.Y(), v.Position.Z()}
 	if editorDragFloat3("Position##volpos", &pos, 0, 0, "%.3f") {
 		v.Position = mgl32.Vec3{pos[0], pos[1], pos[2]}
+	}
+	if !v.Attach.IsZero() && imgui.IsItemHovered() {
+		imgui.SetTooltip("Local to " + v.Attach.Describe() + ", not the world.")
 	}
 
 	rot := vec3ToDegrees(v.Rotation)
@@ -115,41 +143,35 @@ func editorVolumeTransform(v *world.Volume) {
 	}
 }
 
-// editorVolumeFrameRow draws which vehicle the volume rides, if any.
+// editorVolumeAttachRows draws what the volume rides, if anything: a vehicle's
+// frame, an entity, or a bone of one of that entity's models.
 //
-// It sits inside Transform rather than beside it because it is part of what the
-// position below it MEANS: with a frame set, Position and Rotation are that
-// vehicle's coordinates, and the same three numbers describe a different place.
-func editorVolumeFrameRow(v *world.Volume) {
+// They sit inside Transform rather than beside it because they are part of what
+// the position below them MEANS: attached, Position and Rotation are the
+// carrier's coordinates, and the same three numbers describe a different place.
+// The rows are the shared Attach widget, so a volume binds exactly the way a
+// sprite, an emitter or a sound does.
+//
+// Nothing is rebased when the binding changes, the rule `attach` follows: an
+// offset authored around the origin is what a region bolted to something wants.
+func editorVolumeAttachRows(v *world.Volume) {
 	lvl := Editor.level
 	if lvl == nil {
 		return
 	}
-	label := v.Frame
-	if label == "" {
-		label = "(nothing — world volume)"
+	before := v.Attach
+	if editorAttachUI(lvl, &v.Attach, "vol") {
+		// The widget writes as it goes, so the snapshot has to be taken of the
+		// binding being left, not the one arrived at.
+		after := v.Attach
+		v.Attach = before
+		EditorPushUndo()
+		v.Attach = after
 	}
-	if imgui.BeginCombo("Rides##volframe", label) {
-		if imgui.SelectableV("(nothing — world volume)", v.Frame == "", 0, imgui.Vec2{}) && v.Frame != "" {
-			EditorPushUndo()
-			v.Frame = ""
-		}
-		for i := range lvl.Entities {
-			e := &lvl.Entities[i]
-			if e.Vehicle == nil {
-				continue
-			}
-			if imgui.SelectableV(e.ID, v.Frame == e.ID, 0, imgui.Vec2{}) && v.Frame != e.ID {
-				EditorPushUndo()
-				v.Frame = e.ID
-			}
-		}
-		imgui.EndCombo()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("The vehicle this region is bolted to. Its position and\n" +
-			"rotation below are then in that vehicle's coordinates,\n" +
-			"authored around the origin rather than where it sits.")
+	if v.Attach.IsZero() {
+		editorTextMutedWrapped("Unattached: Position is world-space.")
+	} else {
+		editorTextMutedWrapped("Rides " + v.Attach.Describe() + "; Position is local to it.")
 	}
 }
 
@@ -187,6 +209,11 @@ func editorVolumeScatter(v *world.Volume) {
 	}
 	if v.Scatter == nil {
 		return
+	}
+	if v.Attach.Entity != "" {
+		editorTextWrappedColored(imgui.Vec4{X: 1, Y: 0.55, Z: 0.3, W: 1},
+			"This volume rides an entity, and scatter only grows on the world's ground "+
+				"or a vehicle's decks — nothing is drawn while it is attached this way.")
 	}
 	s := v.Scatter
 
@@ -374,7 +401,8 @@ func editorVolumeDoorway(v *world.Volume) {
 		return
 	}
 	has := v.Doorway != nil
-	imguibackend.EditorPushDisabled(v.Frame == "" && !has)
+	frame := v.Frame()
+	imguibackend.EditorPushDisabled(frame == "" && !has)
 	if imgui.Checkbox("This volume is a way in and out##voldooron", &has) {
 		EditorPushUndo()
 		if has {
@@ -391,9 +419,9 @@ func editorVolumeDoorway(v *world.Volume) {
 			"Walking out of the vehicle's chunks entirely is leaving.\n" +
 			"Make it deeper than one step, or a fast walk passes through it.")
 	}
-	if v.Frame == "" && !has {
-		editorTextMutedWrapped("A doorway rides the vehicle it lets you into, so give this " +
-			"volume a frame under Transform first.")
+	if frame == "" && !has {
+		editorTextMutedWrapped("A doorway rides the vehicle it lets you into, so set this " +
+			"volume's Frame under Transform first — and no entity, which would take precedence.")
 		return
 	}
 	if v.Doorway == nil {
@@ -413,7 +441,7 @@ func editorVolumeDoorway(v *world.Volume) {
 			e := &lvl.Entities[i]
 			// A doorway onto the vehicle it is bolted to would be a way from a
 			// ship into itself.
-			if e.Vehicle == nil || e.ID == v.Frame {
+			if e.Vehicle == nil || e.ID == frame {
 				continue
 			}
 			if imgui.SelectableV(e.ID, v.Doorway.To == e.ID, 0, imgui.Vec2{}) && v.Doorway.To != e.ID {
@@ -428,7 +456,7 @@ func editorVolumeDoorway(v *world.Volume) {
 			"what a ramp almost always opens onto; naming a vehicle makes\n" +
 			"this a dock that only that one can be entered from.")
 	}
-	if v.Frame != "" && v.Doorway.To == world.FrameID(v.Frame) {
+	if frame != "" && v.Doorway.To == world.FrameID(frame) {
 		editorTextWrappedColored(imgui.Vec4{X: 1, Y: 0.55, Z: 0.3, W: 1},
 			"This doorway opens onto the vehicle it rides, so it leads nowhere.")
 	}
@@ -583,12 +611,22 @@ func editorVolumeFog(v *world.Volume) {
 }
 
 // editorVolumeActions draws duplicate and delete.
+//
+// Both are shut off for a volume an entity carries, on the emitter panel's
+// reasoning: a duplicate would be an orphan the next re-materialisation drops,
+// and a delete would come back on the next load.
 func editorVolumeActions(v *world.Volume) {
+	imguibackend.EditorPushDisabled(v.FromEntity != "")
 	if imgui.Button("Duplicate##voldup") {
 		duplicateActiveVolume()
 	}
 	imgui.SameLine()
 	if imgui.Button("Delete##voldel") {
 		deleteActiveVolume()
+	}
+	imguibackend.EditorPopDisabled()
+	if v.FromEntity != "" && imgui.IsItemHovered() {
+		imgui.SetTooltip("Entity " + v.FromEntity + " owns this volume. Remove it from\n" +
+			"that entity's type instead.")
 	}
 }

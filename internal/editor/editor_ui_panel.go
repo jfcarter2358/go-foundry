@@ -223,7 +223,29 @@ func uiEditorHierarchy(w *uiwin.UIWindow) {
 	if uiDoc != nil {
 		uiHierarchyNode(&uiDoc.Root)
 	}
+	uiRunHierarchyPending()
 	imgui.End()
+}
+
+// uiHierarchyPending is a structural edit asked for by a row of the tree, held
+// until the walk that drew the row has finished.
+//
+// Running it on the spot was a crash: the walk ranges over each node's Children,
+// and a delete or reparent shrinks that slice under the loop, so the next
+// &n.Children[i] indexes past the end. Only one is held because a frame has
+// only one click in it.
+var uiHierarchyPending func()
+
+// uiHierarchyDefer queues an edit to run once the tree has been drawn.
+func uiHierarchyDefer(op func()) { uiHierarchyPending = op }
+
+// uiRunHierarchyPending applies the queued edit, if any.
+func uiRunHierarchyPending() {
+	op := uiHierarchyPending
+	uiHierarchyPending = nil
+	if op != nil {
+		op()
+	}
 }
 
 func uiHierarchyNode(n *ui.Node) {
@@ -298,43 +320,53 @@ var uiDragPayload string
 func uiHierarchyDropTarget(n *ui.Node) {
 	if imgui.BeginDragDropTarget() {
 		if imgui.AcceptDragDropPayload("uinode", 0) != nil && uiDragPayload != "" {
-			uiReparent(uiDragPayload, n.ID)
+			child, target := uiDragPayload, n.ID
+			uiHierarchyDefer(func() { uiReparent(child, target) })
 			uiDragPayload = ""
 		}
 		imgui.EndDragDropTarget()
 	}
 }
 
+// uiHierarchyContextMenu is a row's right-click menu. Every edit in it is
+// deferred through uiHierarchyDefer, with the row's ID captured, because it is
+// drawn from inside the tree walk — see uiHierarchyPending.
 func uiHierarchyContextMenu(n *ui.Node) {
 	if !imgui.BeginPopupContextItemV("##uictx"+n.ID, 1) {
 		return
 	}
 	uiSel = n.ID
+	id := n.ID
+	on := func(op func()) func() {
+		return func() {
+			uiSel = id
+			op()
+		}
+	}
 	root := uiDoc != nil && n.ID == uiDoc.Root.ID
 	if !root {
 		if imgui.MenuItem("Duplicate") {
-			uiDuplicateSelection()
+			uiHierarchyDefer(on(uiDuplicateSelection))
 		}
 		if imgui.MenuItem("Move up") {
-			uiMoveSelection(-1)
+			uiHierarchyDefer(on(func() { uiMoveSelection(-1) }))
 		}
 		if imgui.MenuItem("Move down") {
-			uiMoveSelection(1)
+			uiHierarchyDefer(on(func() { uiMoveSelection(1) }))
 		}
 		if imgui.MenuItem("Wrap in panel") {
-			uiWrapInPanel()
+			uiHierarchyDefer(on(uiWrapInPanel))
 		}
 		imgui.Separator()
 		if imgui.MenuItem("Delete") {
-			uiDeleteSelection()
+			uiHierarchyDefer(on(uiDeleteSelection))
 		}
 		imgui.Separator()
 	}
 	if imgui.BeginMenu("Add child") {
 		for k := ui.KindPanel; int(k) < len(ui.KindNames); k++ {
 			if imgui.MenuItem(ui.KindName(k)) {
-				uiSel = n.ID
-				uiAddNode(k)
+				uiHierarchyDefer(on(func() { uiAddNode(k) }))
 			}
 		}
 		imgui.EndMenu()

@@ -60,10 +60,16 @@ and is always current.
 Everything the game reads is under `resources/`. Names in a level file are names,
 not paths — the loader resolves them against the folder for that kind of asset.
 
+`resources/` sits beside the executable, in the engine's repository, in a game's
+project directory and in a shipped install alike. Start the engine with any of
+its folders missing and they are created empty, along with a default `game.yaml`
+if there is none.
+
 ```
 resources/
   levels/      .yaml    a level: chunks, lights, entities, volumes, sky, fog
   chunks/      .yaml    exported geometry, reusable across levels
+  prefabs/     .yaml    reusable groups a level places by file
   entities/    .yaml    entity type definitions
   models/      .fmdl    meshes, armatures and animation clips (.obj also loads)
   textures/    .png     world textures; <name>_normal.png beside one is its bump
@@ -74,7 +80,8 @@ resources/
   ui/          .fui     screens; theme.fth is the shared palette
   scripts/     .flang   scripts, in any folder structure you like
   fonts/       .ttf
-  game.yaml             read only by a release build: title, start level, menu
+  shaders/     .glsl    the engine's GLSL programs
+  game.yaml             read only by a release build: title, version, start level, window
 ```
 
 ## Units and conventions

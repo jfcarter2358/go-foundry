@@ -1,4 +1,4 @@
-package main
+package pack
 
 // refs.go — which assets a game can actually reach.
 //
@@ -122,15 +122,16 @@ func referenceNames(slash string) []string {
 
 // manifestRoots is what a game reaches before any content says anything.
 //
-// The start level and the start screen come from the manifest. The rest are
-// named from Go and would be invisible to a walk: internal/ui always reads the
+// The start level comes from the manifest; a main menu is found like any other
+// screen, through the level that lists it or the script that shows it. The rest
+// are named from Go and would be invisible to a walk: internal/ui always reads the
 // active theme, internal/app puts up a screen called "loading" over every level
 // change, and Escape puts up one called "pause". Dropping any of them produces
 // a game that boots and then breaks later — at the first level change, or the
 // first time the player reaches for the pause menu — which is the worst kind of
 // packing bug, since it survives every test that only checks the game starts.
 func manifestRoots(m game.Manifest) []string {
-	roots := []string{
+	return []string{
 		"levels/" + m.StartLevel + ".yaml",
 		"ui/theme.fth",
 		"ui/loading.fui",
@@ -139,10 +140,6 @@ func manifestRoots(m game.Manifest) []string {
 		// texture is missing (world.DefaultSpriteTexture and friends).
 		"textures/default.png",
 	}
-	if m.StartScreen != "" {
-		roots = append(roots, "ui/"+m.StartScreen+".fui")
-	}
-	return roots
 }
 
 // reachable walks out from roots and returns the set of asset paths the game

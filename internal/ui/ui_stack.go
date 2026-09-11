@@ -26,6 +26,13 @@ import (
 // scripts at all.
 var OnScreenShown func(*Screen)
 
+// OnScreenHidden is called as a screen leaves the stack, before its :hidden:
+// event is recorded. internal/script installs it to keep the departing screen
+// reachable for one tick: :hidden: and :cancel: are delivered on the tick
+// after the screen has gone, and a message to a ref that no longer resolves is
+// dropped — so without it neither event ever reached the screen it was about.
+var OnScreenHidden func(*Screen)
+
 // VideoDriver advances the clip behind one video node and reports where it got
 // to. internal/uidraw installs it: opening the file, decoding a frame and
 // getting that frame onto a texture are all things this package must not know
@@ -163,6 +170,9 @@ func (st *Stack) removeAt(i int) {
 	s := st.screens[i]
 	st.screens = append(st.screens[:i], st.screens[i+1:]...)
 	st.clearTargetsFor(s.ID)
+	if OnScreenHidden != nil {
+		OnScreenHidden(s)
+	}
 	hooks.RecordUIEvent(hooks.UIEvent{Atom: "hidden", Screen: s.ID})
 }
 

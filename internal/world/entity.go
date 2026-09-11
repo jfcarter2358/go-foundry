@@ -117,6 +117,18 @@ type Entity struct {
 	// entity, so an effect follows the thing it belongs to for free.
 	Emitters []EntityEmitter
 
+	// Volumes are the regions the entity carries, in its own local space
+	// (entity_volume.go): a sight cone, a pickup radius. Materialised the way
+	// the emitters are — one live level Volume per template, attached to this
+	// entity — so `enter` and `exit` on it follow the thing it belongs to.
+	Volumes []EntityVolume
+
+	// WaypointAnimations are the paths the entity carries, written in its own
+	// local space (entity_waypoints.go): a blast door's slide, a hatch's swing.
+	// Materialised like the volumes — one live level animation per template,
+	// riding this entity — so a path goes wherever the thing it moves goes.
+	WaypointAnimations []WaypointAnimation
+
 	// Script is the .flang file driving this entity's behaviour, resolved from
 	// the definition and optionally overridden per instance. Empty means the
 	// entity has no behaviour of its own.

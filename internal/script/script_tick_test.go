@@ -30,10 +30,10 @@ import (
 // of withTempTextureDir.
 func withTempScriptDir(t *testing.T) string {
 	t.Helper()
-	prev := fileutil.ExecutablePath
+	prev := fileutil.ResourcesPath
 	dir := t.TempDir()
-	fileutil.ExecutablePath = dir
-	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+	fileutil.ResourcesPath = dir
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
 
 	root := filepath.Join(dir, fileutil.ScriptsDirName)
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -208,6 +208,65 @@ end`)
 	ScriptTick(lvl, 1.0/60.0, true)
 	if a, _ := lvl.Volumes[0].Attr("exited"); a.I != 1 {
 		t.Errorf("exited fired %d times, want 1", a.I)
+	}
+}
+
+func TestAVolumeRidingAnEntityFollowsItAndIgnoresItsCarrier(t *testing.T) {
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "aura.flang", `def on_enter(:enter:, other ref) -> null
+    @self.attr.entered += 1
+end
+def on_exit(:exit:, other ref) -> null
+    @self.attr.exited += 1
+end`)
+
+	lvl := tickTestLevel(t)
+	v := world.NewVolume("aura", mgl32.Vec3{0, 0, 0})
+	v.HalfX, v.HalfY, v.HalfZ = 2, 2, 2
+	v.Attach = world.Attach{Entity: "guard"}
+	v.Script = path
+	v.SetAttr("entered", world.IntAttr(0))
+	v.SetAttr("exited", world.IntAttr(0))
+	lvl.Volumes = append(lvl.Volumes, v)
+
+	lvl.Entities = append(lvl.Entities,
+		world.Entity{ID: "guard", Visible: true, Scale: mgl32.Vec3{1, 1, 1},
+			Position: mgl32.Vec3{0, 0, 0}, Attributes: world.AttrSet{}},
+		world.Entity{ID: "walker", Visible: true, Scale: mgl32.Vec3{1, 1, 1},
+			Position: mgl32.Vec3{30, 0, 0}, Attributes: world.AttrSet{}},
+	)
+
+	prevRT := *Scripts
+	prevEv := scriptEvents
+	t.Cleanup(func() { *Scripts = prevRT; scriptEvents = prevEv })
+	ScriptEventsReset()
+	ScriptRuntimeLoad(lvl)
+
+	// The guard stands at the centre of its own volume, and that is not news.
+	ScriptTick(lvl, 1.0/60.0, true)
+	if a, _ := lvl.Volumes[0].Attr("entered"); a.I != 0 {
+		t.Fatalf("entered fired %d time(s) with only the carrier inside", a.I)
+	}
+
+	// Walk up to the guard.
+	lvl.Entities[1].Position = mgl32.Vec3{1, 0, 0}
+	ScriptTick(lvl, 1.0/60.0, true)
+	if a, _ := lvl.Volumes[0].Attr("entered"); a.I != 1 {
+		t.Fatalf("entered fired %d times when the walker reached the guard, want 1", a.I)
+	}
+
+	// The guard walks off, taking the volume with it.
+	lvl.Entities[0].Position = mgl32.Vec3{50, 0, 0}
+	ScriptTick(lvl, 1.0/60.0, true)
+	if a, _ := lvl.Volumes[0].Attr("exited"); a.I != 1 {
+		t.Fatalf("exited fired %d times when the carrier left the walker behind, want 1", a.I)
+	}
+
+	// And catches up with it where the guard now is.
+	lvl.Entities[1].Position = mgl32.Vec3{50, 0, 1}
+	ScriptTick(lvl, 1.0/60.0, true)
+	if a, _ := lvl.Volumes[0].Attr("entered"); a.I != 2 {
+		t.Errorf("entered fired %d times at the guard's new spot, want 2", a.I)
 	}
 }
 

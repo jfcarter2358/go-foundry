@@ -51,7 +51,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// PrefabsDirName is the directory under the install root holding prefab files,
+// PrefabsDirName is the directory under resources/ holding prefab files,
 // and prefabFileExt the extension they carry.
 const (
 	PrefabsDirName = "prefabs"
@@ -59,7 +59,7 @@ const (
 )
 
 // PrefabsDir is that directory's absolute path.
-func PrefabsDir() string { return filepath.Join(fileutil.ExecutablePath, PrefabsDirName) }
+func PrefabsDir() string { return filepath.Join(fileutil.ResourcesPath, PrefabsDirName) }
 
 // PrefabFilePath resolves a prefab name — with or without its extension — to a
 // path under prefabs/.
@@ -92,7 +92,7 @@ func ScanPrefabNames() []string {
 // file" action is for.
 //
 // The path rather than the name because the install root moves: a test points
-// fileutil.ExecutablePath at a temp directory, and two tests each writing a
+// fileutil.ResourcesPath at a temp directory, and two tests each writing a
 // "street_lamp" would otherwise read each other's. Keying on the path makes
 // that impossible instead of making it something every caller has to remember
 // to clear.
@@ -294,6 +294,16 @@ func materializePrefabEntities(lvl *world.Level, inst *world.PrefabInstance, p *
 		if err := world.MaterializeEntityEmitters(lvl, &lvl.Entities[len(lvl.Entities)-1], texNeeded); err != nil {
 			prefabWarn("%v", err)
 		}
+
+		// And the volumes it carries, found again the same way.
+		if world.MaterializeEntityVolumes(lvl, &lvl.Entities[len(lvl.Entities)-1]) > 0 {
+			if err := world.LoadEntityVolumeCages(lvl, e.ID); err != nil {
+				prefabWarn("%v", err)
+			}
+		}
+
+		// And its paths, the same way.
+		world.MaterializeEntityWaypointAnimations(lvl, &lvl.Entities[len(lvl.Entities)-1])
 	}
 }
 
@@ -305,15 +315,25 @@ func materializePrefabVolumes(lvl *world.Level, inst *world.PrefabInstance, p *w
 			prefabWarn("prefab instance %q: volume %q: %v", inst.ID, rv.ID, err)
 			continue
 		}
-		v.Position = prefabPoint(inst, v.Position)
-		v.Rotation[1] += inst.Rotation
-		// A volume's extents are half-sizes, so the instance's scale reaches
-		// them — unlike its position, which is a point. A prefab scaled to half
-		// size must not keep a full-size trigger.
-		s := inst.EffectiveScale()
-		v.HalfX, v.HalfY, v.HalfZ = v.HalfX*s, v.HalfY*s, v.HalfZ*s
-		if inst.Frame != "" {
-			v.Frame = inst.Frame
+		if v.Attach.Entity != "" {
+			// Riding an entity: its position is already an offset in that
+			// entity's space, and the instance's placement, turn and scale
+			// reach it through the entity. Only the name has to follow, since
+			// the prefab's own entities are renamed into the instance.
+			if id := world.PrefabMemberID(inst.ID, v.Attach.Entity); prefabOwnsEntity(lvl, inst.ID, id) {
+				v.Attach.Entity = id
+			}
+		} else {
+			v.Position = prefabPoint(inst, v.Position)
+			v.Rotation[1] += inst.Rotation
+			// A volume's extents are half-sizes, so the instance's scale reaches
+			// them — unlike its position, which is a point. A prefab scaled to
+			// half size must not keep a full-size trigger.
+			s := inst.EffectiveScale()
+			v.HalfX, v.HalfY, v.HalfZ = v.HalfX*s, v.HalfY*s, v.HalfZ*s
+			if inst.Frame != "" {
+				v.Attach.Frame = inst.Frame
+			}
 		}
 		v.ID = world.UniqueVolumeID(lvl, v.ID)
 		v.FromPrefab = inst.ID
@@ -336,6 +356,14 @@ func materializePrefabLights(lvl *world.Level, inst *world.PrefabInstance, p *wo
 		pl.FromPrefab = inst.ID
 		lvl.Lights.Points = append(lvl.Lights.Points, pl)
 	}
+}
+
+// prefabOwnsEntity reports whether the level holds an entity with that ID which
+// the named instance put there — what a prefab volume riding one of the
+// prefab's own entities is re-pointed at.
+func prefabOwnsEntity(lvl *world.Level, instanceID, id string) bool {
+	e := world.FindEntity(lvl, id)
+	return e != nil && e.FromPrefab == instanceID
 }
 
 // prefabWarn reports something a prefab could not stamp.
@@ -386,6 +414,8 @@ func DropPrefabContent(lvl *world.Level, instanceID string) int {
 			// to happen before the entity leaves the list, since its ID is the
 			// only handle on them.
 			n += world.DropEntityEmitters(lvl, lvl.Entities[i].ID)
+			n += world.DropEntityVolumes(lvl, lvl.Entities[i].ID)
+			n += world.DropEntityWaypointAnimations(lvl, lvl.Entities[i].ID)
 			lvl.Entities[i].Delete()
 			n++
 			continue

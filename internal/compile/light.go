@@ -73,6 +73,7 @@ func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) {
 	b := &baker{tree: t, opt: opt}
 	if lvl != nil {
 		b.lights = lvl.Lights
+		b.seal = lvl.Seal
 	}
 	// The segment a shadow ray covers for a directional light, which has no
 	// position to aim at: far enough to leave the world box from anywhere
@@ -83,9 +84,38 @@ func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) {
 		f := &t.Faces[fi]
 		f.Light = make([]mgl32.Vec3, len(f.Points))
 		for i, p := range f.Points {
-			f.Light[i] = b.sample(p, f.Plane.N)
+			f.Light[i] = b.sample(p, f.Plane.N, f.hull)
 		}
 	}
+}
+
+// clearOfHull is where a shadow ray from origin, heading along the unit
+// direction dir, leaves a convex hull given as outward planes — nudged past it
+// by bias, so the ray starts in the cell beyond the surface rather than on it.
+// A ray that does not start inside the hull starts where it is.
+//
+// For an inset detail face (see Face.hull). The hull is solid as far as the
+// tree knows, and the part of it the detail carved away is exactly the part
+// the ray is crossing. What that gives up is the detail shadowing itself — a
+// recess wall does not darken the recess floor in the bake — which is the price
+// of the tree describing the hull and not the detail.
+func clearOfHull(origin, dir mgl32.Vec3, hull []bsp.Plane, bias float32) mgl32.Vec3 {
+	exit := float32(-1)
+	for _, pl := range hull {
+		d := pl.Distance(origin)
+		if d >= 0 {
+			return origin // in front of one plane, so outside the whole hull
+		}
+		if s := pl.N.Dot(dir); s > 1e-6 {
+			if t := -d / s; exit < 0 || t < exit {
+				exit = t
+			}
+		}
+	}
+	if exit < 0 {
+		return origin
+	}
+	return origin.Add(dir.Mul(exit + bias))
 }
 
 type baker struct {
@@ -93,10 +123,14 @@ type baker struct {
 	lights world.LightSet
 	opt    LightOptions
 	reach  float32
+	// seal is the level's sealing box, where a sun's shadow ray stops (see
+	// sealExit). nil, or switched off, for a level that seals itself.
+	seal *world.Seal
 }
 
-// sample is fragment.glsl's lighting loop, for one point on a surface.
-func (b *baker) sample(p, n mgl32.Vec3) mgl32.Vec3 {
+// sample is fragment.glsl's lighting loop, for one point on a surface. hull is
+// the surface's Face.hull, nil unless it is detail.
+func (b *baker) sample(p, n mgl32.Vec3, hull []bsp.Plane) mgl32.Vec3 {
 	g := b.lights.Global
 	out := g.Color.Mul(g.EffectiveBrightness())
 	origin := p.Add(n.Mul(b.opt.ShadowBias))
@@ -113,7 +147,12 @@ func (b *baker) sample(p, n mgl32.Vec3) mgl32.Vec3 {
 		}
 		toLight := d.Normalize().Mul(-1)
 		contrib := dl.Color.Mul(bright * bsp.Abs(n.Dot(toLight)))
-		if dl.CastsShadows() && !b.tree.LineOfSight(origin, origin.Add(toLight.Mul(b.reach))) {
+		start := clearOfHull(origin, toLight, hull, b.opt.ShadowBias)
+		end := start.Add(toLight.Mul(b.reach))
+		if e, ok := sealExit(b.seal, start, toLight); ok {
+			end = e
+		}
+		if dl.CastsShadows() && !b.tree.LineOfSight(start, end) {
 			contrib = contrib.Mul(1 - dl.ShadowStrength)
 		}
 		out = out.Add(contrib)
@@ -139,7 +178,11 @@ func (b *baker) sample(p, n mgl32.Vec3) mgl32.Vec3 {
 			continue
 		}
 		contrib := pl.Color.Mul(bright * bsp.Abs(n.Dot(toLight.Mul(1/dist))) * t * t)
-		if pl.CastsShadows() && !b.tree.LineOfSight(origin, pl.Position) {
+		start := origin
+		if ray := pl.Position.Sub(origin); len(hull) > 0 && ray.Len() > 1e-6 {
+			start = clearOfHull(origin, ray.Normalize(), hull, b.opt.ShadowBias)
+		}
+		if pl.CastsShadows() && !b.tree.LineOfSight(start, pl.Position) {
 			contrib = contrib.Mul(1 - pl.ShadowStrength)
 		}
 		out = out.Add(contrib)

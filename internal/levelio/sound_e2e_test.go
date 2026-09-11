@@ -27,9 +27,9 @@ func TestALevelWithSoundsSurvivesSaveAndLoad(t *testing.T) {
 	// Point the asset root at the shipped resources so the clips resolve; the
 	// loader reports a missing one and keeps the placement, and asserting on
 	// that path separately is what the next test does.
-	prev := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
-	t.Cleanup(func() { fileutil.ExecutablePath = prev })
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
 
 	lvl, _ := NewBlankLevel()
 

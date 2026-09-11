@@ -518,7 +518,7 @@ func drawTexEditorImportDialog() {
 		imgui.Text("Import as a new single-layer document (quantised to the current palette):")
 		for _, n := range names {
 			if imgui.SelectableV(n, false, 0, imgui.Vec2{}) {
-				path := filepath.Join(fileutil.ExecutablePath, gfx.TextureNames[n])
+				path := filepath.Join(fileutil.ResourcesPath, gfx.TextureNames[n])
 				ed, err := texture.ImportTexEditorDoc(path)
 				if err != nil {
 					texEditorStatus(fmt.Sprintf("Import failed: %v", err))

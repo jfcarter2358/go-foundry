@@ -29,9 +29,9 @@ func TestModelShadersCompile(t *testing.T) {
 
 	// The splice below reads skin_common.glsl relative to the install root, so
 	// the root has to be the repo's resources/ for the duration.
-	prevExe := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
-	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
+	prevExe := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prevExe })
 
 	// With skinning spliced in, which is how both editors compile it: the
 	// vertex stage calls skinPosition/skinNormal, so the raw file does not
@@ -88,9 +88,9 @@ func TestModelShadersCompile(t *testing.T) {
 func TestSkinnedShadersCompileAndLink(t *testing.T) {
 	gltest.Context(t)
 
-	prevExe := fileutil.ExecutablePath
-	fileutil.ExecutablePath = filepath.Join(testenv.RepoRoot(t), "resources")
-	t.Cleanup(func() { fileutil.ExecutablePath = prevExe })
+	prevExe := fileutil.ResourcesPath
+	fileutil.ResourcesPath = filepath.Join(testenv.RepoRoot(t), "resources")
+	t.Cleanup(func() { fileutil.ResourcesPath = prevExe })
 
 	if _, err := gfx.SkinCommonSource(); err != nil {
 		t.Fatalf("skin_common.glsl did not load: %v", err)

@@ -33,7 +33,7 @@ const ModelsDirName = "models"
 // open/save dialogs look.
 const ModelExt = ".fmdl"
 
-func ModelsDir() string { return filepath.Join(fileutil.ExecutablePath, ModelsDirName) }
+func ModelsDir() string { return filepath.Join(fileutil.ResourcesPath, ModelsDirName) }
 
 func ModelPath(name string) string { return filepath.Join(ModelsDir(), name+ModelExt) }
 

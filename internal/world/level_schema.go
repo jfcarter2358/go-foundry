@@ -13,9 +13,12 @@ type RawVolume struct {
 	ID            string `yaml:"id"`
 	RawScriptData `yaml:",inline"`
 	Shape         string `yaml:"shape,omitempty"` // box (default) | sphere | cylinder
-	// Frame is the vehicle the volume rides, or absent for the world. With it
-	// set, Position and Rotation are in that vehicle's coordinates — the same
-	// key, and the same meaning, a spawn point's `frame:` has.
+	// Attach is what the volume rides — a frame, an entity, or a bone — or
+	// absent for the world. With it set, Position and Rotation are in the
+	// carrier's coordinates. The same block a sprite's `attach:` is.
+	Attach *RawAttach `yaml:"attach,omitempty"`
+	// Frame is the older spelling of `attach: {frame: ...}`, read so a level
+	// written before volumes took the whole binding still loads. Never written.
 	Frame    string  `yaml:"frame,omitempty"`
 	Position RawVec3 `yaml:"position"`
 	Rotation RawVec3 `yaml:"rotation,omitempty"`
@@ -514,6 +517,9 @@ type RawMusic struct {
 type RawLevel struct {
 	Chunks []RawChunk `yaml:"chunks"`
 	Spawn  *RawSpawn  `yaml:"spawn,omitempty"`
+	// Seal is the level's sealing box (seal.go). Absent from a level written
+	// before it existed, which gets one fitted when it loads.
+	Seal *RawSeal `yaml:"seal,omitempty"`
 	// Scripts are the level's own handlers, where `@self` is the level. Game
 	// rules that belong to no single object live here — a win condition, a
 	// spawn director — and it is a list because rules split by topic across

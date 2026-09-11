@@ -168,6 +168,12 @@ func init() {
 			for t := range tex {
 				rt.markTextureDirty(t)
 			}
+			// And the volumes it carries (world/entity_volume.go). No cage: that
+			// is GL work and an editor aid, and play draws no cages.
+			world.MaterializeEntityVolumes(rt.lvl, &rt.lvl.Entities[len(rt.lvl.Entities)-1])
+			// And its paths (world/entity_waypoints.go), so the new ship's door
+			// has somewhere to close to.
+			world.MaterializeEntityWaypointAnimations(rt.lvl, &rt.lvl.Entities[len(rt.lvl.Entities)-1])
 			// The cache is indexed by name and the new entity is not in it yet.
 			rt.cache = buildRefCache(rt.lvl)
 			return flang.RefVal{Kind: flang.RefEntity, A: id}, nil
@@ -309,6 +315,13 @@ func (rt *ScriptRuntime) removeObject(r flang.RefVal) bool {
 				// ride the entity through Attach, and an Attach naming nothing
 				// resolves to the world origin rather than to nowhere.
 				world.DropEntityEmitters(rt.lvl, rt.lvl.Entities[i].ID)
+				// Its volumes likewise, for the same reason and more urgently: a
+				// sight cone left behind would go on firing `enter` at the origin.
+				world.DropEntityVolumes(rt.lvl, rt.lvl.Entities[i].ID)
+				// And its paths: anything still on one stops where it has got to.
+				world.DropEntityWaypointAnimations(rt.lvl, rt.lvl.Entities[i].ID)
+				// Dropping volumes compacts that slice, not this one, so i still
+				// names the entity.
 				rt.lvl.Entities[i].Delete()
 				rt.lvl.Entities = append(rt.lvl.Entities[:i], rt.lvl.Entities[i+1:]...)
 				return true

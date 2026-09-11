@@ -93,7 +93,7 @@ func (p *fogProbe) shade(f *world.Fog, pos mgl32.Vec3, additive bool) float32 {
 // since applyFog is the one entry point both halves of the fog model come out
 // of. See fog_volume_gl_test.go.
 func (p *fogProbe) shadeThrough(f *world.Fog, vols []world.Volume, pos mgl32.Vec3, additive bool) float32 {
-	world.UploadFogTo(p.prog, f, vols) // binds the program and sets fogCamPos
+	world.UploadFogTo(p.prog, f, vols, nil) // binds the program and sets fogCamPos
 	gl.Uniform3f(world.ProgUniformLoc(p.prog, "probePos\x00"), pos.X(), pos.Y(), pos.Z())
 	a := int32(0)
 	if additive {

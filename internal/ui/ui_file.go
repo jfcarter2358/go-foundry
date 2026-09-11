@@ -59,7 +59,7 @@ func logf(format string, args ...any) {
 }
 
 // UIDir is where the editor's open and save dialogs look.
-func UIDir() string { return filepath.Join(fileutil.ExecutablePath, UIDirName) }
+func UIDir() string { return filepath.Join(fileutil.ResourcesPath, UIDirName) }
 
 // UIPath resolves a bare screen name to a full path.
 func UIPath(name string) string { return filepath.Join(UIDir(), name+UIExt) }

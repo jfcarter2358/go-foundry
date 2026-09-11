@@ -106,7 +106,7 @@ func EnsureTextureLoaded(name string) error {
 	if !ok {
 		return fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 	}
-	return LoadTexture(name, filepath.Join(fileutil.ExecutablePath, path))
+	return LoadTexture(name, filepath.Join(fileutil.ResourcesPath, path))
 }
 
 // ---------- texture editor GPU sync ----------
@@ -207,7 +207,7 @@ func RegisterTexture(name string) {
 	TextureNames[name] = fileutil.TexturesDirName + "/" + name + ".png"
 }
 
-// TextureNames maps logical texture names to paths relative to ExecutablePath.
+// TextureNames maps logical texture names to paths relative to ResourcesPath.
 // Populated at startup by ScanTextures.
 var TextureNames map[string]string
 

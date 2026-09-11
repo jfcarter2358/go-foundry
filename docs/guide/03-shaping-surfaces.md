@@ -24,6 +24,9 @@ with the brush selected. Three tools act on the face selection:
 | `E` | **extrude** — slide the face along its own normal (`Shift+E` pulls it back in) |
 | `I` | **inset** — draw the face's corners toward its centre, in its own plane (`Shift+I` widens) |
 | `B` | **subdivide** — split the face into quadrants at its edge midpoints |
+| `J` | **join** — make the selected faces one face, along the outline they share |
+| `X` | **dissolve** — take the selected points out of the lines they sit on |
+| `M` | **merge** the selected points into one at their centre (`Shift+M`: onto the first picked) |
 | `G` `R` `C` | move, turn, scale whatever is selected |
 
 All three keep the brush **convex**, which it must be
@@ -40,7 +43,19 @@ the face's own plane and still on the hull. A neighbour that shared a cut edge
 takes the new midpoint into its own outline as it goes, so a subdivided wall
 grows no cracks along its seams.
 
-Dragging a single corner is the one edit that can break convexity. The editor
+**Join, dissolve and merge** are the same in both modes too, and undo what
+subdivide does. `J` makes the selected faces one face: they must meet along
+edges, leave no hole, and — because a brush face is flat and convex — lie flat
+together as a convex shape. The points the join leaves along its edges are
+dissolved with `X`, which takes out any selected point where only two edges meet,
+so the two segments either side become one; corners stay. In edge mode, select a
+run of edges and `X` makes it one edge. Subdivide a wall, join the quarters, and
+dissolve the midpoints, and it is the box it started as. `M` merges the selected
+points into one, at their centre or (`Shift+M`) onto the first one picked. Points
+on two different brushes each stay their own brush's but land on the same spot,
+which is how two solids are made to meet exactly.
+
+Dragging a single corner, or merging two, is the edit that can break convexity. The editor
 warns rather than refuses, in the status line and in the brush's properties, so
 you can pass through an invalid shape on the way to a valid one; compiling
 refuses outright and names the brush.
@@ -68,6 +83,9 @@ mis-aiming — and the tools are the **model editor's**, not edit mode's:
 | `I` | **inset** — a mitred border round the face, in its own plane, leaving the middle selected |
 | `B` | **subdivide** the selected faces at their edge midpoints |
 | `Shift+B` | **smooth** the whole detail mesh — one round of Catmull-Clark |
+| `J` | **join** the selected faces into one, if they lie flat together |
+| `M` / `Shift+M` | **merge** the selected points at their centre / onto the first picked |
+| `X` | with points selected, **dissolve** them out of their lines |
 | `Delete` / `X` | delete the selected faces |
 | `1` `2` `3` | points, edges, faces of the detail mesh |
 | `G` `R` `C` | move, turn, scale the selection, anywhere, in any direction |

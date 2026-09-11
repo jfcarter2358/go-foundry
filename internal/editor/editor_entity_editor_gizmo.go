@@ -105,6 +105,9 @@ type entityGizmoTarget struct {
 	// with no size of its own.
 	Scale  *mgl32.Vec3
 	ScaleU *float32
+	// Waypoint marks a path's point: its rotation keeps counting past half a
+	// turn (eulerAddedAbout) and its scale is a brush's (ClampBrushScale).
+	Waypoint bool
 }
 
 // entityGizmoTargetOf resolves the outline's selection, or reports false when
@@ -130,6 +133,15 @@ func entityGizmoTargetOf() (entityGizmoTarget, bool) {
 		// offered a handle writing nothing would read as broken.
 		return entityGizmoTarget{Pos: &m.Offset, Rot: &m.Rotation}, true
 
+	case entitySelVolume:
+		if entitySel.Idx < 0 || entitySel.Idx >= len(entityDef.Volumes) {
+			return entityGizmoTarget{}, false
+		}
+		m := &entityDef.Volumes[entitySel.Idx]
+		// Scale drags the half-extents, the level editor's rule for a volume:
+		// a region's size IS its extents, and it has no factor of its own.
+		return entityGizmoTarget{Pos: &m.Offset, Rot: &m.Rotation, Scale: &m.Half}, true
+
 	case entitySelSeat:
 		if entityDef.Vehicle == nil ||
 			entitySel.Idx < 0 || entitySel.Idx >= len(entityDef.Vehicle.Seats) {
@@ -137,6 +149,15 @@ func entityGizmoTargetOf() (entityGizmoTarget, bool) {
 		}
 		s := &entityDef.Vehicle.Seats[entitySel.Idx]
 		return entityGizmoTarget{Pos: &s.Position, RotY: &s.Yaw}, true
+
+	case entitySelWaypoints:
+		// One point, all three channels — each is a real one the brush arriving
+		// there takes. A path selected whole has no single place to grab.
+		p := entityActiveWaypoint()
+		if p == nil {
+			return entityGizmoTarget{}, false
+		}
+		return entityGizmoTarget{Pos: &p.Position, Rot: &p.Rotation, Scale: &p.Scale, Waypoint: true}, true
 	}
 	return entityGizmoTarget{}, false
 }
@@ -729,6 +750,8 @@ func entityGizmoApplyRotate(axis int, delta float32) {
 		return
 	}
 	switch {
+	case t.Rot != nil && t.Waypoint:
+		*t.Rot = eulerAddedAbout(entityGizmo.StartRot, gizmoAxes[axis], delta)
 	case t.Rot != nil:
 		*t.Rot = eulerRotatedAbout(entityGizmo.StartRot, gizmoAxes[axis], delta)
 	case t.RotY != nil:
@@ -768,6 +791,8 @@ func entityGizmoApplyScale(handle int, f float32) {
 	factors := scaleVector(handle, f)
 	s := entityGizmo.StartScale
 	switch {
+	case t.Scale != nil && t.Waypoint:
+		*t.Scale = world.ClampBrushScale(mgl32.Vec3{s.X() * factors.X(), s.Y() * factors.Y(), s.Z() * factors.Z()})
 	case t.Scale != nil:
 		*t.Scale = mgl32.Vec3{
 			world.EntityScaleClamp(s.X() * factors.X()),

@@ -435,6 +435,14 @@ func modelFaceSection() {
 		imgui.SetTooltip("Midpoint split. The surface does not move —\nneighbouring faces absorb the new midpoints.")
 	}
 	imgui.SameLine()
+	if imgui.Button("Join##modeljoin") {
+		modelJoinSelectedFaces()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("J — make the selected faces one face, along the outline they share.\n" +
+			"They must meet along edges and leave no hole.")
+	}
+	imgui.SameLine()
 	if imgui.Button("Delete##modeldelface") {
 		modelDeleteSelectedFaces()
 	}

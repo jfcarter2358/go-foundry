@@ -17,10 +17,10 @@ import (
 )
 
 func TestVideoNodeRoundTrips(t *testing.T) {
-	old := fileutil.ExecutablePath
+	old := fileutil.ResourcesPath
 	root := t.TempDir()
-	fileutil.ExecutablePath = root
-	t.Cleanup(func() { fileutil.ExecutablePath = old })
+	fileutil.ResourcesPath = root
+	t.Cleanup(func() { fileutil.ResourcesPath = old })
 	if err := os.MkdirAll(filepath.Join(root, UIDirName), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
