@@ -397,7 +397,11 @@ void main() {
     // and interpolates the answer instead. Everything below — the light loops,
     // the cascade selection, the shadow-map samples — is what that buys.
     if (bakedLight != 0) {
-        lighting = fragBakedLight;
+        // Clouds still move over a baked level, so their shadow is taken off
+        // the baked answer here — see CLOUD_SHADOW_BAKED_SHARE in
+        // cloud_shadow.glsl for why a share rather than the whole of it.
+        lighting = fragBakedLight * mix(1.0,
+            cloudShadowFactor(cloudShadowLight, fragWorldPos), CLOUD_SHADOW_BAKED_SHARE);
     } else {
 
     // Start with global ambient contribution
@@ -414,6 +418,10 @@ void main() {
             // Shadow strength: 0 = no darkening, 1 = full shadow
             contrib *= (1.0 - shadow * dirLightShadowStrength[i]);
         }
+        // The clouds' shadow, on top of the geometry's. Its own map, not a
+        // cascade: a cloud is a volume and casts a soft, partial shadow no depth
+        // map can hold. See cloud_shadow.glsl.
+        contrib *= cloudShadowFactor(i, fragWorldPos);
 
         lighting += contrib;
     }

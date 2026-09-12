@@ -1,0 +1,152 @@
+id: explosion
+seed: 7
+layers:
+- name: fireball
+  duration: 3
+  loop: false
+  max: 12
+  bursts:
+  - t: 0
+    n: 9
+  shape: sphere
+  radius: 0.6
+  life_min: 1.6
+  life_max: 2.4
+  speed_min: 1.5
+  speed_max: 4
+  size_min: 2.2
+  size_max: 3.2
+  gravity: -0.25
+  drag: 2.5
+  render: volume
+  volume:
+    density: 5
+    noise_scale: 1.4
+    displacement: 0.45
+    billow: 0.8
+    erosion: 0.15
+    erosion_ramp:
+    - t: 0
+      v: 0
+    - t: 0.6
+      v: 0.6
+    - t: 1
+      v: 1
+    albedo:
+      r: 0.22
+      g: 0.2
+      b: 0.19
+    emission: 2.2
+    emission_ramp:
+    - t: 0
+      v: 1
+    - t: 0.25
+      v: 0.5
+    - t: 0.55
+      v: 0
+  size_ramp:
+  - t: 0
+    v: 0.35
+  - t: 0.2
+    v: 1
+  - t: 1
+    v: 1.6
+  alpha_ramp:
+  - t: 0
+    v: 1
+  - t: 0.7
+    v: 0.7
+  - t: 1
+    v: 0
+  color_ramp:
+  - t: 0
+    c:
+      r: 1
+      g: 0.95
+      b: 0.7
+  - t: 0.15
+    c:
+      r: 1
+      g: 0.55
+      b: 0.12
+  - t: 0.45
+    c:
+      r: 0.6
+      g: 0.12
+      b: 0.02
+  - t: 1
+    c:
+      r: 0
+      g: 0
+      b: 0
+- name: smoke
+  duration: 3
+  loop: false
+  max: 8
+  bursts:
+  - t: 0.35
+    n: 6
+  shape: sphere
+  radius: 1
+  life_min: 3
+  life_max: 4.5
+  speed_min: 0.5
+  speed_max: 1.5
+  size_min: 3
+  size_max: 4.5
+  gravity: -0.35
+  drag: 1.2
+  render: volume
+  volume:
+    density: 2.5
+    noise_scale: 1.1
+    billow: 0.4
+    erosion_ramp:
+    - t: 0
+      v: 0.6
+    - t: 1
+      v: 3
+    albedo:
+      r: 0.3
+      g: 0.29
+      b: 0.28
+  size_ramp:
+  - t: 0
+    v: 0.5
+  - t: 1
+    v: 1.8
+  alpha_ramp:
+  - t: 0
+    v: 0
+  - t: 0.15
+    v: 1
+  - t: 1
+    v: 0
+- name: sparks
+  duration: 3
+  loop: false
+  max: 120
+  bursts:
+  - t: 0
+    n: 90
+  shape: sphere
+  radius: 0.3
+  life_min: 0.5
+  life_max: 1.2
+  speed_min: 6
+  speed_max: 14
+  size_min: 0.05
+  size_max: 0.12
+  gravity: 1
+  drag: 0.8
+  texture: default
+  blend: additive
+  tint:
+    r: 1
+    g: 0.7
+    b: 0.3
+  alpha_ramp:
+  - t: 0
+    v: 1
+  - t: 1
+    v: 0

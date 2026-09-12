@@ -13,9 +13,11 @@ package editor
 // instead, tracked by particleDragActive.
 
 import (
+	"fmt"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
 	"foundry/internal/particle"
+	"foundry/internal/render"
 	"path/filepath"
 	"strconv"
 
@@ -517,6 +519,25 @@ func particleAppearanceSection(l *particle.Layer) {
 	if !imgui.CollapsingHeaderV("Appearance##papp", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
+	if imgui.BeginCombo("Render##prender", particle.RenderKindName(l.Render)) {
+		for i, n := range particle.RenderKindNames {
+			k := particle.RenderKind(i)
+			if imgui.SelectableV(n, k == l.Render, 0, imgui.Vec2{}) && k != l.Render {
+				ParticlePushUndo()
+				l.Render = k
+				particleTouch()
+			}
+			if imgui.IsItemHovered() {
+				imgui.SetTooltip(particleRenderHelp[i])
+			}
+		}
+		imgui.EndCombo()
+	}
+	if l.Render == particle.RenderVolume {
+		particleVolumeLookSection(l)
+		return
+	}
+
 	if textureCombo("Texture##ptex", &l.Texture, false) {
 		ParticlePushUndo()
 		particleTouch()
@@ -591,6 +612,52 @@ func particleAppearanceSection(l *particle.Layer) {
 		"Take the scene's lights and shadows. Off for anything\nemissive. The preview is always unlit - it has no scene.")
 	particleBool("Cast shadows##pcast", &l.CastShadows,
 		"Draw into the shadow maps, facing the light. Expensive\nfor a large pool; convincing only for solid particles.")
+}
+
+var particleRenderHelp = []string{
+	"Each particle is a textured quad, drawn by the sprite pass.",
+	"Each particle is a soft ball of volumetric smoke or fire, ray-marched\nand lit by the sun and sky. Size is its diameter, the Alpha ramp its\ndensity and the Color ramp the light it gives off. What a fireball is.",
+}
+
+// particleVolumeLookSection draws a volume layer's look in place of the quad
+// fields it has no use for.
+func particleVolumeLookSection(l *particle.Layer) {
+	v := &l.Volume
+	editorTextMutedWrapped("Size is each ball's diameter, the Alpha ramp its density, the Color ramp " +
+		"(times Tint) the light it gives off. The Emission and Erosion strips below shape both over life.")
+
+	particleFloat("Density##pvdens", &v.Density, 0, 50, "%.2f",
+		"Thickness per world unit at a ball's core, before the Alpha ramp.")
+	particleFloat("Noise scale##pvnoise", &v.NoiseScale, 0.05, 10, "%.2f",
+		"How many repeats of the noise span one ball's radius.\nLow is a few big lumps; high is a cauliflower.")
+	particleFloat("Displacement##pvdisp", &v.Displacement, 0, 1, "%.2f",
+		"How far the noise pushes the surface in and out, as a fraction\nof the radius. 0 is a smooth sphere.")
+	particleFloat("Billow##pvbillow", &v.Billow, -5, 5, "%.2f",
+		"How fast the noise rolls outward over the particle's life -\nthe churn of a fireball growing.")
+	particleFloat("Erosion##pverode", &v.Erosion, 0, 1, "%.2f",
+		"How hard fine noise eats the edges, times the Erosion ramp.\nRising erosion is fire breaking up into smoke.")
+
+	albedo := [3]float32{v.Albedo.X(), v.Albedo.Y(), v.Albedo.Z()}
+	if imgui.ColorEdit3("Smoke colour##pvalbedo", &albedo) {
+		particleBeginEdit("pvalbedo")
+		v.Albedo = mgl32.Vec3{albedo[0], albedo[1], albedo[2]}
+		particleTouch()
+	}
+	particleFloat("Absorption##pvabs", &v.Absorption, 0, 8, "%.2f",
+		"How much sunlight the smoke's own mass takes out. Higher\nshades a plume's underside darker.")
+	particleFloat("Emission##pvemit", &v.Emission, 0, 20, "%.2f",
+		"How brightly the Color ramp glows, times the Emission ramp.\n0 is plain smoke.")
+
+	tint := [3]float32{l.Tint.X(), l.Tint.Y(), l.Tint.Z()}
+	if imgui.ColorEdit3("Tint##pvtint", &tint) {
+		particleBeginEdit("pvtint")
+		l.Tint = mgl32.Vec3{tint[0], tint[1], tint[2]}
+		particleTouch()
+	}
+
+	if limit := render.MaxVolumeBlobs * render.MaxVolumeBlobDraws; l.EffectiveMax() > limit {
+		editorTextMutedWrapped(fmt.Sprintf("At most %d balls of one layer are drawn at once; past that the nearest are skipped.", limit))
+	}
 }
 
 var particleFrameHelp = []string{

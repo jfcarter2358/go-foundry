@@ -85,8 +85,8 @@ var (
 // in internal/render/shadow.go) — colliding with any of those binds a
 // differently-typed sampler to the same unit, which is invalid and silently
 // breaks every draw through this program. 10/11 sit safely past all of them
-// (and NormalMapUnit takes 12), still well inside GL 4.1's guaranteed minimum
-// of 16 texture image units.
+// (NormalMapUnit takes 12 and render.CloudShadowTexUnit 13), still well inside
+// GL 4.1's guaranteed minimum of 16 texture image units.
 const (
 	BlendTexUnit  = 10
 	BlendMaskUnit = 11
@@ -131,6 +131,11 @@ func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
 	// that shades world geometry compiles this same file, so there is one fog
 	// model in the engine rather than one per pass. See fog_shader.go.
 	fragmentSource, err := InjectFog(strings.ReplaceAll(strings.TrimRight(string(fragmentShaderBytes), "\n"), "\r\n", "\n"))
+	if err != nil {
+		return err
+	}
+	// The clouds' shadow, on the same terms again — cloud_shadow.glsl.
+	fragmentSource, err = InjectCloudShadow(fragmentSource)
 	if err != nil {
 		return err
 	}

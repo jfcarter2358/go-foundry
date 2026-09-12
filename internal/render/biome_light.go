@@ -199,7 +199,12 @@ func biomeLightSnippet(pcf int, pointShadows, cascadeBlend bool) string {
 	//
 	// The depth-only programs are the ones that do NOT ask for this snippet
 	// (see GrassInit), so they do not pick fog up either.
-	return src + mustReadShader(biomeShaderPath("biome_light.glsl")) +
+	//
+	// cloud_shadow.glsl goes AHEAD of the lighting block, which calls it, and
+	// for the same structural reason: a pass that lit its blades without it
+	// would leave the grass sunlit under a cloud whose shadow covers the floor.
+	return src + mustReadShader(biomeShaderPath("cloud_shadow.glsl")) +
+		"\n" + mustReadShader(biomeShaderPath("biome_light.glsl")) +
 		"\n" + mustReadShader(biomeShaderPath("fog.glsl"))
 }
 

@@ -183,6 +183,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		Binds: []uiwin.Keybind{
 			{Keys: "F1", Desc: "Toggle this reference: keybindings, events, the stdlib, properties"},
 			{Keys: "F3", Desc: "Toggle debug overlay (FPS, memory, counts)"},
+			{Keys: "F4", Desc: "Cycle volumetrics: half resolution, full resolution, off"},
 			{Keys: "F10", Desc: "Toggle anti-aliasing"},
 			{Keys: "F11", Desc: "Toggle fullscreen"},
 			{Keys: "F12", Desc: "Toggle vsync"},

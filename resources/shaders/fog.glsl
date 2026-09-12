@@ -94,28 +94,23 @@ uniform vec3  fogVolColor[MAX_FOG_VOLUMES];
 uniform float fogVolDensity[MAX_FOG_VOLUMES];    // per world unit travelled inside
 uniform float fogVolMaxOpacity[MAX_FOG_VOLUMES];
 
-// fogVolumeSpan is how far the segment from fogCamPos to worldPos travels inside
-// volume i, in world units. 0 when the segment misses it entirely.
+// fogShapeInterval narrows [t0, t1] to the part of the ray ro + t*dir that lies
+// inside a volume shape, and reports whether anything is left. dir must be a
+// unit vector for t to be in world units. The shape is given as its basis (see
+// the note above), centre and kind, so the volumetric passes
+// (volume_common.glsl) solve their cloud volumes with the SAME intersection a
+// fog bank uses — a cloud and a fog bank placed in one box cannot disagree
+// about where its walls are.
 //
-// The interval starts clamped to [0, segLen], which is what makes the two cases
-// that matter fall out with no special-casing: a camera INSIDE the volume keeps
-// t0 = 0 (the fog starts at the eye), and a volume behind the fragment is
-// clipped away by t1 rather than fogging things in front of it.
-float fogVolumeSpan(int i, vec3 worldPos) {
-    vec3 seg = worldPos - fogCamPos;
-    float segLen = length(seg);
-    if (segLen < 1e-5) {
-        return 0.0;
-    }
-    vec3 dir = seg / segLen;
-
-    mat3 basis = fogVolBasis[i];
-    vec3 o = basis * (fogCamPos - fogVolCenter[i]);
+// The interval arrives already clamped by the caller, which is what makes the
+// two cases that matter fall out with no special-casing: a ray starting INSIDE
+// the shape keeps t0 at the caller's 0 (the fog starts at the eye), and a shape
+// behind the fragment is clipped away by the caller's t1 rather than fogging
+// things in front of it.
+bool fogShapeInterval(int shape, mat3 basis, vec3 center, vec3 ro, vec3 dir,
+                      inout float t0, inout float t1) {
+    vec3 o = basis * (ro - center);
     vec3 d = basis * dir;
-
-    float t0 = 0.0;
-    float t1 = segLen;
-    int shape = fogVolShape[i];
 
     if (shape == FOG_VOL_SPHERE) {
         // Unit sphere. |o + t*d| = 1.
@@ -124,7 +119,7 @@ float fogVolumeSpan(int i, vec3 worldPos) {
         float c = dot(o, o) - 1.0;
         float disc = b * b - 4.0 * a * c;
         if (a < 1e-12 || disc <= 0.0) {
-            return 0.0;
+            return false;
         }
         float sq = sqrt(disc);
         t0 = max(t0, (-b - sq) / (2.0 * a));
@@ -137,9 +132,9 @@ float fogVolumeSpan(int i, vec3 worldPos) {
         for (int ax = lo; ax <= hi; ++ax) {
             if (abs(d[ax]) < 1e-6) {
                 // Parallel to this pair of planes: either always between them
-                // or never, and never means the whole segment misses.
+                // or never, and never means the whole ray misses.
                 if (abs(o[ax]) > 1.0) {
-                    return 0.0;
+                    return false;
                 }
             } else {
                 float inv = 1.0 / d[ax];
@@ -158,13 +153,13 @@ float fogVolumeSpan(int i, vec3 worldPos) {
                 // Straight up the axis: inside for its whole length, or outside
                 // for all of it.
                 if (c > 0.0) {
-                    return 0.0;
+                    return false;
                 }
             } else {
                 float b = 2.0 * dot(o2, d2);
                 float disc = b * b - 4.0 * a * c;
                 if (disc <= 0.0) {
-                    return 0.0;
+                    return false;
                 }
                 float sq = sqrt(disc);
                 t0 = max(t0, (-b - sq) / (2.0 * a));
@@ -172,7 +167,23 @@ float fogVolumeSpan(int i, vec3 worldPos) {
             }
         }
     }
+    return t1 > t0;
+}
 
+// fogVolumeSpan is how far the segment from fogCamPos to worldPos travels inside
+// volume i, in world units. 0 when the segment misses it entirely.
+float fogVolumeSpan(int i, vec3 worldPos) {
+    vec3 seg = worldPos - fogCamPos;
+    float segLen = length(seg);
+    if (segLen < 1e-5) {
+        return 0.0;
+    }
+    float t0 = 0.0;
+    float t1 = segLen;
+    if (!fogShapeInterval(fogVolShape[i], fogVolBasis[i], fogVolCenter[i],
+                          fogCamPos, seg / segLen, t0, t1)) {
+        return 0.0;
+    }
     return max(t1 - t0, 0.0);
 }
 

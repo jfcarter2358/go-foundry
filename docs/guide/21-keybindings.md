@@ -10,6 +10,7 @@ it is never out of date.
 | --- | --- |
 | `F1` | the reference: keybindings, events, the stdlib, properties |
 | `F3` | debug overlay (FPS, memory, counts) |
+| `F4` | volumetrics: half resolution, full resolution, off |
 | `F10` | anti-aliasing |
 | `F11` | fullscreen |
 | `F12` | vsync |

@@ -44,6 +44,10 @@ var DebugStats struct {
 	Particles   int
 	Sprites     int
 	SpriteDraws int
+	// The volumetric pass (volumetric.go): how many marches it ran this frame,
+	// and how many particle blobs they carried between them.
+	VolumeDraws int
+	VolumeBlobs int
 	// Scenery is how many placed props survived culling this frame — the one
 	// number that says whether a brush-scattered field is costing anything.
 	Scenery int

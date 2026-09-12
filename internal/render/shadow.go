@@ -831,6 +831,9 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 			gl.Uniform1f(uniformLoc(biasName), m.Bias)
 		}
 	}
+	// The clouds' shadow rides here because every program that can read it
+	// already makes this call — see cloud_shadow.go.
+	uploadCloudShadowTo(prog)
 	gl.ActiveTexture(gl.TEXTURE0)
 }
 

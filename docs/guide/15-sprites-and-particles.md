@@ -75,7 +75,7 @@ delete.
 | **Shape** | `point`, `sphere`, `hemisphere`, `box`, `cone`, `disc`, with whichever of Radius / Angle / Half extents / Thickness that kind reads. Direction is `shape`, `random` or `fixed`, with a Vector and a Spread |
 | **Initial** | Life, Speed, Size, Rotation, Rot speed — min/max pairs |
 | **Motion** | Gravity, Drag, Radial, Tangential, Turbulence, Turb freq, and **Local space** (carry live particles when the emitter moves) |
-| **Appearance** | Texture, sheet cols/rows, Frames (`over-life` / `random` / `static`), Blend, Billboard, Tint, Lit, Cast shadows |
+| **Appearance** | **Render** (`sprite` / `volume`); for a sprite layer Texture, sheet cols/rows, Frames (`over-life` / `random` / `static`), Blend, Billboard, Tint, Lit, Cast shadows; for a volume layer, see *Volume layers* below |
 | **Collision** | `none` / `stop` / `bounce` / `kill`, Radius, Bounce, Friction |
 
 Each layer's pool is preallocated and never grows. Emission stalls at **Max** —
@@ -88,6 +88,46 @@ particle's normalised life. One strip at a time.
 
 Click adds a stop, drag moves it, right-click deletes, and on the colour strip a
 double-click opens a picker.
+
+### Volume layers: fire and smoke
+
+Set a layer's **Render** to `volume` and each of its particles stops being a
+quad and becomes a soft ball of volumetric smoke or fire — ray-marched, lit by
+the sun and sky like a [cloud](08-sky-and-fog.md#cloud-volumes), with its surface
+pushed in and out by noise that rolls outward as it ages. A fireball is a burst
+of eight or so of these. The simulation is unchanged: they move, drag, rise and
+collide exactly as quads would.
+
+The ramps mean something different on a volume layer:
+
+| Ramp | on a volume layer |
+| --- | --- |
+| **Size** | the ball's diameter |
+| **Alpha** (shown as **Density**) | its density |
+| **Color** | the light it gives off, times Tint |
+| **Emission** | how brightly it glows over its life |
+| **Erosion** | how much its edges break up over its life |
+
+and the look has its own fields:
+
+| Field | |
+| --- | --- |
+| **Density** | thickness at a ball's core |
+| **Noise scale** | noise repeats across a ball's radius — low is big lumps |
+| **Displacement** | how far the noise pushes the surface |
+| **Billow** | how fast the noise rolls outward |
+| **Erosion** | fine-noise erosion, times the Erosion ramp |
+| **Smoke colour** | what the smoke looks like lit |
+| **Absorption** | how dark its underside gets |
+| **Emission** | glow strength, times the Emission ramp. 0 is plain smoke |
+
+The shape that reads as an explosion: a fireball layer with Emission starting
+high and ramping to 0 while Erosion ramps up, then a slower smoke layer released
+a moment later with no emission, negative gravity and a growing size ramp.
+`explosion.fpar` ships as exactly that, with a sparks layer on top.
+
+At most 64 balls of one layer are drawn at once, 16 per march. Volume layers
+cast no shadow-map shadows.
 
 ## Placing an emitter
 

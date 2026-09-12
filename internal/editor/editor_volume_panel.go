@@ -65,6 +65,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroupOpen("Transform##voltfgrp", func() { editorVolumeTransform(v) })
 	editorPropGroupOpen("Shape##volshapegrp", func() { editorVolumeShape(v) })
 	editorPropGroup("Fog##volfoggrp", 0, func() { editorVolumeFog(v) })
+	editorPropGroup("Cloud##volcloudgrp", 0, func() { editorVolumeCloud(v) })
 	editorPropGroup("Scatter##volscattergrp", 0, func() { editorVolumeScatter(v) })
 	editorPropGroup("Frame Doorway##voldoorgrp", 0, func() { editorVolumeDoorway(v) })
 	editorPropGroupOpen("Level Exit##volexitgrp", func() { editorVolumeLevelExit(v) })
@@ -607,6 +608,49 @@ func editorVolumeFog(v *world.Volume) {
 
 	if !v.Enabled {
 		imgui.Text("The volume is disabled, so the fog is not drawn.")
+	}
+}
+
+// editorVolumeCloud draws the region's volumetric cloud: the checkbox that
+// creates and destroys the block, then what the cloud looks like. The same
+// gesture the fog group above it makes, for the same reason.
+func editorVolumeCloud(v *world.Volume) {
+	has := v.Cloud != nil
+	if imgui.Checkbox("This volume is full of cloud##volcloudon", &has) {
+		EditorPushUndo()
+		if has {
+			c := world.DefaultVolumeCloud()
+			v.Cloud = &c
+			editorSetStatus("Volume %q now fills with cloud", v.ID)
+		} else {
+			v.Cloud = nil
+			editorSetStatus("Removed the cloud from volume %q", v.ID)
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The region fills with ray-marched cloud, lit by the level's sun and sky.\n" +
+			"A big flat box over the level is a cloud layer; a sphere is one cumulus.")
+	}
+	if v.Cloud == nil {
+		return
+	}
+
+	c := v.Cloud
+	on := c.Enabled
+	if imgui.Checkbox("Enabled##volcloud_en", &on) {
+		EditorPushUndo()
+		c.Enabled = on
+	}
+	editorCloudLook("vol", &c.CloudLook)
+	editorDragFloatStep("Softness##volcloudsoft", &c.Softness, 0.01, 1, "%.2f", 0.01)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far in from the region's walls the cloud fades up to full,\n" +
+			"as a fraction of the half-extent. Low shows the shape's flat faces.")
+	}
+	c.Clamp()
+
+	if !v.Enabled {
+		imgui.Text("The volume is disabled, so the cloud is not drawn.")
 	}
 }
 

@@ -190,6 +190,15 @@ func entityEmitterOrigin(i int) mgl32.Mat4 {
 
 // ---------- drawing ----------
 
+// entityPreviewVolumes are this window's volumetric render targets, released
+// with the window (onEntityEditorClose) in the context they were made in.
+// entityPreviewVolumeLayers is the per-frame list of volume layers handed to
+// them.
+var (
+	entityPreviewVolumes      render.VolumeTargets
+	entityPreviewVolumeLayers []*particle.System
+)
+
 // entityDrawEmitterParticles puts the live particles on screen through the
 // engine's own instanced pass.
 //
@@ -207,6 +216,11 @@ func entityDrawEmitterParticles(projView mgl32.Mat4) {
 	render.SpriteVAOOverride = entityEditorWindow.SpriteVAO
 	defer func() { render.SpriteVAOOverride = 0 }()
 
+	entityPreviewVolumeLayers = entityPreviewVolumeLayers[:0]
+	defer func() {
+		render.DrawVolumeParticlePreview(&entityPreviewVolumes, entityPreviewVolumeLayers, projView, camPos)
+	}()
+
 	for i := range entityPreviewEmitters {
 		e := &entityPreviewEmitters[i]
 		if !e.Enabled || !e.Loaded() {
@@ -215,6 +229,10 @@ func entityDrawEmitterParticles(projView mgl32.Mat4) {
 		for _, s := range e.Systems {
 			n := s.Count()
 			if n == 0 || s.Layer.Muted {
+				continue
+			}
+			if s.Layer.Render == particle.RenderVolume {
+				entityPreviewVolumeLayers = append(entityPreviewVolumeLayers, s)
 				continue
 			}
 			if cap(entityEmitterFill) < n {

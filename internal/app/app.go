@@ -765,9 +765,16 @@ func Run() {
 			// scatter sways identically in the depth maps and in the color pass and
 			// a blade's shadow stays under the blade.
 			render.BiomeWindTime = float32(now) / 1000.0
+			// The cloud wind clock, latched for the same reason: the shadow bake
+			// below and the volumetric pass after the transparent pass must see
+			// one cloud, or its shadow slides off it.
+			render.VolumeTime = float64(now) / 1000.0
 
 			// --- Shadow pass: render depth from each shadow-casting light ---
 			shadowFrame := render.RenderShadowPass(level.Lights, &level, gfx.Cam.Matrix, gfx.Projection)
+			// The clouds' shadow map, before any program's shadow uniforms go
+			// up — UploadShadowUniformsTo is what binds it. See cloud_shadow.go.
+			render.RenderCloudShadowMap(&level, gfx.Cam.Position)
 			render.UploadShadowUniforms(level.Lights, shadowFrame)
 			render.RenderPointShadowPass(level.Lights, &level)
 			render.UploadPointShadowUniforms(level.Lights)
@@ -1098,6 +1105,16 @@ func Run() {
 
 				gl.DepthMask(true)
 				gl.Disable(gl.BLEND)
+			}
+
+			// --- Volumetrics: cloud volumes, the sky's cloud deck, fireballs ---
+			// After the transparent pass, so a cloud behind glass is seen
+			// through it; before the sprites, so smoke puffs and sparks draw
+			// over a fireball rather than under it. Marched against a copy of
+			// the depth the opaque pass left, which nothing since has written.
+			// Skipped in wireframe for the reason the sky is. See volumetric.go.
+			if !editorWire {
+				render.RenderVolumetrics(&level, projView, gfx.Cam.Position, &frustum, render.MainVolumeTargets)
 			}
 
 			// --- Sprites, alpha and additive ---

@@ -252,6 +252,11 @@ vec3 biomeLighting(vec3 worldPos, vec3 normal, float viewDepth, bool receiveShad
             float shadow = biomeDirShadow(i, worldPos, viewDepth, normal, ldir);
             contrib *= (1.0 - shadow * dirLightShadowStrength[i]);
         }
+        // Clouds shade the grass under them as they shade the floor —
+        // cloud_shadow.glsl, spliced in ahead of this file by biomeLightSnippet.
+        if (receiveShadow) {
+            contrib *= cloudShadowFactor(i, worldPos);
+        }
         lighting += contrib;
     }
 

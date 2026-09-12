@@ -91,6 +91,12 @@ type Sky struct {
 	// level's own sun without repainting it.
 	Rotation float32
 
+	// Clouds is the volumetric cloud deck, or nil for a clear sky — see
+	// cloud.go. Drawn by the volumetric pass rather than by sky_frag.glsl,
+	// because a deck is at an altitude rather than at infinity: a mountain has
+	// to be able to push up through it.
+	Clouds *SkyClouds
+
 	// TransitionFrom, TransitionSeconds and TransitionElapsed are runtime-only
 	// — never touched by SkyFromRaw/SkyToRaw — so a level file never carries a
 	// transition mid-flight and a fresh load is always fully eased in.
@@ -138,6 +144,7 @@ func (s *Sky) Clamp() {
 		s.Ground[i] = clampF(s.Ground[i], 0, 16)
 		s.Tint[i] = clampF(s.Tint[i], 0, 16)
 	}
+	s.Clouds.Clamp()
 }
 
 // BeginTransition arms an ease: from this call until `seconds` have ticked
@@ -167,6 +174,13 @@ func (s *Sky) BeginTransition(seconds float32) {
 	}
 	from := *s
 	from.TransitionFrom = nil
+	// The deck is a pointer, and the writes that follow an ease_sky change it
+	// in place (skySet in script_props_level.go). A snapshot sharing it would
+	// ease from the destination to the destination.
+	if s.Clouds != nil {
+		c := *s.Clouds
+		from.Clouds = &c
+	}
 	s.TransitionFrom = &from
 	s.TransitionSeconds = seconds
 	s.TransitionElapsed = 0
@@ -285,6 +299,7 @@ func SkyFromRaw(r *RawSky) *Sky {
 		s.Intensity = *r.Intensity
 	}
 	s.Rotation = r.Rotation
+	s.Clouds = SkyCloudsFromRaw(r.Clouds)
 	s.Clamp()
 	return &s
 }
@@ -316,5 +331,6 @@ func SkyToRaw(s *Sky) *RawSky {
 		Tint:      &RawColor{R: c.Tint.X(), G: c.Tint.Y(), B: c.Tint.Z()},
 		Intensity: &intensity,
 		Rotation:  c.Rotation,
+		Clouds:    SkyCloudsToRaw(c.Clouds),
 	}
 }

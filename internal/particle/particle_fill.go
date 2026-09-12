@@ -67,6 +67,72 @@ func (s *System) Fill(dst []Instance, camPos mgl32.Vec3, sortBackToFront bool) i
 	return n
 }
 
+// Blob is one live particle of a RenderVolume layer, as the volumetric pass
+// reads it: a ball of smoke rather than a quad.
+type Blob struct {
+	Pos mgl32.Vec3
+	// Radius is half the particle's ramped size, so a volume layer and a
+	// sprite layer with the same numbers cover the same patch of screen.
+	Radius float32
+	// Density is the extinction at the ball's core: the look's Density times
+	// the alpha ramp.
+	Density float32
+	// Emission is the light the ball gives off: the colour ramp times Tint
+	// times Emission times the emission ramp.
+	Emission mgl32.Vec3
+	// Erosion is the look's Erosion times its ramp, clamped to 0..1.
+	Erosion float32
+	// LifeT is the particle's normalised age, which scrolls its noise outward.
+	LifeT float32
+	// Seed is the particle's own seed in 0..1, which offsets its noise so two
+	// balls released together do not wear the same lumps.
+	Seed float32
+}
+
+// FillBlobs writes one Blob per live particle into dst, farthest from camPos
+// first, and returns how many it wrote, capped by len(dst). Nothing is
+// allocated.
+//
+// Always sorted, unlike Fill: the volumetric pass draws blobs in groups that
+// composite over one another, and a near group drawn under a far one is a
+// fireball seen inside out.
+func (s *System) FillBlobs(dst []Blob, camPos mgl32.Vec3) int {
+	l := &s.Layer
+	v := &l.Volume
+	n := 0
+	for i := range s.Live {
+		if n >= len(dst) {
+			break
+		}
+		p := &s.Live[i]
+		t := p.LifeT()
+		r := p.Size * l.SizeRamp.At(t) * 0.5
+		density := v.Density * l.AlphaRamp.At(t)
+		if r <= 0 || density <= 0 {
+			continue
+		}
+		c := l.ColorRamp.At(t)
+		glow := v.Emission * v.EmissionRamp.At(t)
+		dst[n] = Blob{
+			Pos:      p.Pos,
+			Radius:   r,
+			Density:  density,
+			Emission: mgl32.Vec3{c.X() * l.Tint.X() * glow, c.Y() * l.Tint.Y() * glow, c.Z() * l.Tint.Z() * glow},
+			Erosion:  clamp01(v.Erosion * v.ErosionRamp.At(t)),
+			LifeT:    t,
+			Seed:     float32(p.Seed&0xFFFF) / 65535,
+		}
+		n++
+	}
+	if n > 1 {
+		out := dst[:n]
+		sort.Slice(out, func(a, b int) bool {
+			return out[a].Pos.Sub(camPos).LenSqr() > out[b].Pos.Sub(camPos).LenSqr()
+		})
+	}
+	return n
+}
+
 // cell picks the sheet rectangle for one particle. The whole texture when no
 // sheet is authored, which is the common case.
 func (s *System) cell(p *Particle, t float32) (u0, v0, du, dv float32) {

@@ -154,6 +154,11 @@ func HandleEvent(event sdl.Event) {
 				}
 			case sdl.SCANCODE_F3:
 				render.DebugToggle()
+			case sdl.SCANCODE_F4:
+				// Volumetric quality: half resolution, full, off. A cost
+				// switch like the F5-F9 ones, read against the F3 overlay's
+				// frame time — see render.VolumetricSettings.
+				render.CycleVolumetricQuality()
 			// Biome lighting cost switches — see BiomeShadowSettings. Bound to
 			// keys, not editor checkboxes, so they can be flipped while flying
 			// around with the mouse captured and the F3 overlay's frame time

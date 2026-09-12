@@ -100,6 +100,10 @@ type Volume struct {
 	// and does not acquire one by being re-saved.
 	Fog *VolumeFog
 
+	// Cloud fills the region with volumetric cloud when set — see cloud.go.
+	// nil is the ordinary case, and a pointer for the reason Fog is.
+	Cloud *VolumeCloud
+
 	// FromPrefab is runtime-only, never serialized: the prefab instance whose
 	// file put this here (prefab.go). Empty for one the level file authored.
 	// It is what LevelToRaw checks before writing — a level that saved a copy
@@ -428,6 +432,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		Enabled:    BoolDefault(r.Enabled, true),
 		LoadLevel:  r.LoadLevel,
 		Fog:        VolumeFogFromRaw(r.Fog),
+		Cloud:      VolumeCloudFromRaw(r.Cloud),
 		Doorway:    FrameDoorwayFromRaw(r.Doorway),
 		Scatter:    VolumeScatterFromRaw(r.Scatter),
 	}, nil
@@ -446,6 +451,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		Enabled:       BoolPtrIfFalse(v.Enabled),
 		LoadLevel:     v.LoadLevel,
 		Fog:           VolumeFogToRaw(v.Fog),
+		Cloud:         VolumeCloudToRaw(v.Cloud),
 		Doorway:       FrameDoorwayToRaw(v.Doorway),
 		Scatter:       VolumeScatterToRaw(v.Scatter),
 	}

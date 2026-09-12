@@ -93,7 +93,50 @@ func editorSkyBody(s *world.Sky) {
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Turns the sky about the vertical axis.\nHow a cubemap is lined up with the level's own sun\nwithout repainting it.")
 	}
+	editorSkyClouds(s)
 	s.Clamp()
+}
+
+// editorSkyClouds draws the sky's volumetric cloud deck. A block of its own
+// with its own checkbox, the same create-and-destroy gesture as the sky's.
+func editorSkyClouds(s *world.Sky) {
+	imgui.Separator()
+	has := s.Clouds != nil
+	if imgui.Checkbox("Volumetric cloud deck##skycloudson", &has) {
+		EditorPushUndo()
+		if has {
+			d := world.DefaultSkyClouds()
+			s.Clouds = &d
+			editorSetStatus("Added a cloud deck to the sky")
+		} else {
+			s.Clouds = nil
+			editorSetStatus("Removed the sky's cloud deck")
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A layer of ray-marched cloud between two heights, running out to the horizon.\n" +
+			"Unlike the dome it has an altitude, so terrain can rise into it.")
+	}
+	if s.Clouds == nil {
+		return
+	}
+	d := s.Clouds
+	on := d.Enabled
+	if imgui.Checkbox("Enabled##skycloud_en", &on) {
+		EditorPushUndo()
+		d.Enabled = on
+	}
+	editorDragFloatStep("Altitude##skycloudalt", &d.Altitude, -world.SkyCloudMaxAltitude, world.SkyCloudMaxAltitude, "%.0f", 1)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The height of the deck's base, in world units.")
+	}
+	editorDragFloatStep("Thickness##skycloudthick", &d.Thickness, world.SkyCloudMinThickness, 5000, "%.0f", 1)
+	editorDragFloatStep("Range##skycloudrange", &d.Range, world.SkyCloudMinRange, 50000, "%.0f", 10)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far from the eye the deck is drawn before it fades into the horizon.\nIt bounds the cost of looking along the deck, not only its look.")
+	}
+	editorCloudLook("sky", &d.CloudLook)
+	editorTextMutedWrapped("ease_sky blends the deck too: a script can clear or thicken the clouds along with the dome.")
 }
 
 // editorSkyFaces draws the six texture pickers and the shortcut that fills them.

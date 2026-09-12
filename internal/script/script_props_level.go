@@ -266,6 +266,158 @@ func levelProps() map[string]propAccess {
 			},
 			Doc: "degrees about +Y; lines a cubemap's art up with the level's own sun without repainting it",
 		},
+		"sky_clouds": {
+			Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+				if c == nil {
+					return nil, false
+				}
+				on := c.lvl != nil && c.lvl.Sky != nil && c.lvl.Sky.Clouds != nil && c.lvl.Sky.Clouds.Enabled
+				return flang.BoolVal(on), true
+			},
+			Set: func(c *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("sky_clouds", "bool", v)
+				}
+				if c == nil {
+					return nil
+				}
+				skyCloudsSet(c.lvl, b, func(d *world.SkyClouds) { d.Enabled = b })
+				return nil
+			},
+			Doc: "whether the sky has its volumetric cloud deck; off keeps the numbers, as fog's switch does",
+		},
+		"sky_cloud_coverage": skyCloudNumberProp("sky_cloud_coverage",
+			func(d *world.SkyClouds) *float32 { return &d.Coverage },
+			"how much of the deck is cloud, 0 (clear) to 1 (overcast)"),
+		"sky_cloud_density": skyCloudNumberProp("sky_cloud_density",
+			func(d *world.SkyClouds) *float32 { return &d.Density },
+			"the deck's thickness per world unit at its densest"),
+		"sky_cloud_altitude": skyCloudNumberProp("sky_cloud_altitude",
+			func(d *world.SkyClouds) *float32 { return &d.Altitude },
+			"the height of the deck's base, in world units"),
+		"sky_cloud_thickness": skyCloudNumberProp("sky_cloud_thickness",
+			func(d *world.SkyClouds) *float32 { return &d.Thickness },
+			"how deep the deck is, in world units"),
+		"sky_cloud_range": skyCloudNumberProp("sky_cloud_range",
+			func(d *world.SkyClouds) *float32 { return &d.Range },
+			"how far from the eye the deck is drawn before it fades into the horizon"),
+		"sky_cloud_scale": skyCloudNumberProp("sky_cloud_scale",
+			func(d *world.SkyClouds) *float32 { return &d.Scale },
+			"world units across the deck's largest clouds"),
+		"sky_cloud_erosion": skyCloudNumberProp("sky_cloud_erosion",
+			func(d *world.SkyClouds) *float32 { return &d.Erosion },
+			"how ragged the clouds' edges are, 0 to 1"),
+		"sky_cloud_color": skyCloudVecProp("sky_cloud_color",
+			func(d *world.SkyClouds) *mgl32.Vec3 { return &d.Color },
+			"the clouds' colour as a vec of r, g, b"),
+		"sky_cloud_wind": skyCloudVecProp("sky_cloud_wind",
+			func(d *world.SkyClouds) *mgl32.Vec3 { return &d.Wind },
+			"how fast the clouds drift, in world units per second"),
+		"sky_cloud_shadows": {
+			Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+				if c == nil {
+					return nil, false
+				}
+				return flang.BoolVal(skyCloudsOf(c.lvl).CastShadows), true
+			},
+			Set: func(c *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("sky_cloud_shadows", "bool", v)
+				}
+				if c == nil {
+					return nil
+				}
+				skyCloudsSet(c.lvl, true, func(d *world.SkyClouds) { d.CastShadows = b })
+				return nil
+			},
+			Doc: "whether the deck casts its shadow on the level",
+		},
+	}
+}
+
+// ---------- the sky's cloud deck ----------
+//
+// The sky helpers' shape one level down: reading a deck that is not there
+// returns the defaults, writing any sky_cloud_* property gives the level a sky
+// and the sky a deck, and switching the deck off where there was none leaves
+// the level as it found it. Every write goes through skySet, so it clamps, and
+// so an ease_sky armed before it blends it.
+
+// skyCloudsOf is the level's deck, or a default one to read — a COPY.
+func skyCloudsOf(lvl *world.Level) world.SkyClouds {
+	if lvl == nil || lvl.Sky == nil || lvl.Sky.Clouds == nil {
+		return world.DefaultSkyClouds()
+	}
+	return *lvl.Sky.Clouds
+}
+
+// skyCloudsSet applies fn to the level's deck, creating the sky and the deck at
+// their defaults first unless create is false.
+func skyCloudsSet(lvl *world.Level, create bool, fn func(*world.SkyClouds)) {
+	if lvl == nil {
+		return
+	}
+	if !create && (lvl.Sky == nil || lvl.Sky.Clouds == nil) {
+		return
+	}
+	skySet(lvl, func(sk *world.Sky) {
+		if sk.Clouds == nil {
+			d := world.DefaultSkyClouds()
+			sk.Clouds = &d
+		}
+		fn(sk.Clouds)
+	})
+}
+
+// skyCloudNumberProp builds one number-valued sky_cloud_* property.
+func skyCloudNumberProp(name string, field func(*world.SkyClouds) *float32, doc string) propAccess {
+	return propAccess{
+		Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+			if c == nil {
+				return nil, false
+			}
+			d := skyCloudsOf(c.lvl)
+			return flang.FloatVal(float64(*field(&d))), true
+		},
+		Set: func(c *refCache, _ flang.RefVal, v flang.Value) error {
+			f, ok := toFloat32(v)
+			if !ok {
+				return propErr(name, "number", v)
+			}
+			if c == nil {
+				return nil
+			}
+			skyCloudsSet(c.lvl, true, func(d *world.SkyClouds) { *field(d) = f })
+			return nil
+		},
+		Doc: doc,
+	}
+}
+
+// skyCloudVecProp builds one vec-valued sky_cloud_* property.
+func skyCloudVecProp(name string, field func(*world.SkyClouds) *mgl32.Vec3, doc string) propAccess {
+	return propAccess{
+		Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+			if c == nil {
+				return nil, false
+			}
+			d := skyCloudsOf(c.lvl)
+			return vecValue(*field(&d)), true
+		},
+		Set: func(c *refCache, _ flang.RefVal, v flang.Value) error {
+			p, ok := toVec3(v)
+			if !ok {
+				return propErr(name, "vec", v)
+			}
+			if c == nil {
+				return nil
+			}
+			skyCloudsSet(c.lvl, true, func(d *world.SkyClouds) { *field(d) = p })
+			return nil
+		},
+		Doc: doc,
 	}
 }
 

@@ -51,6 +51,40 @@ func InjectFog(src string) (string, error) {
 	return InjectAfterVersion(src, shared), nil
 }
 
+var (
+	cloudShadowShaderMu  sync.Mutex
+	cloudShadowShaderSrc string
+)
+
+// CloudShadowSource returns cloud_shadow.glsl, reading it once.
+func CloudShadowSource() (string, error) {
+	cloudShadowShaderMu.Lock()
+	defer cloudShadowShaderMu.Unlock()
+	if cloudShadowShaderSrc != "" {
+		return cloudShadowShaderSrc, nil
+	}
+	path := filepath.Join(fileutil.ResourcesPath, "shaders", "cloud_shadow.glsl")
+	src, err := ReadShaderFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read cloud shadow shader: %w", err)
+	}
+	cloudShadowShaderSrc = src
+	return src, nil
+}
+
+// InjectCloudShadow splices the shared cloud-shadow lookup into a fragment
+// shader, on InjectFog's terms: the world shader calls cloudShadowFactor, so a
+// missing file is an error naming the file rather than a compile failure naming
+// the function. The biome_light.glsl consumers get the same file through
+// render's biomeLightSnippet instead.
+func InjectCloudShadow(src string) (string, error) {
+	shared, err := CloudShadowSource()
+	if err != nil {
+		return "", err
+	}
+	return InjectAfterVersion(src, shared), nil
+}
+
 // MustInjectFog is InjectFog for the callers that already panic on a shader
 // they cannot compile (the detail and biome programs). A missing fog.glsl is a
 // broken install, not a runtime condition worth limping through.

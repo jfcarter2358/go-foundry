@@ -118,15 +118,17 @@ type RawLayer struct {
 	LocalSpace     bool    `yaml:"local_space,omitempty"`
 
 	// Appearance.
-	Texture     string    `yaml:"texture,omitempty"`
-	SheetCols   int       `yaml:"sheet_cols,omitempty"`
-	SheetRows   int       `yaml:"sheet_rows,omitempty"`
-	FrameMode   string    `yaml:"frames,omitempty"`    // over-life (default) | random | static
-	Blend       string    `yaml:"blend,omitempty"`     // cutout (default) | alpha | additive
-	Billboard   string    `yaml:"billboard,omitempty"` // full (default) | y-axis | fixed
-	Lit         bool      `yaml:"lit,omitempty"`
-	CastShadows bool      `yaml:"cast_shadows,omitempty"`
-	Tint        *RawColor `yaml:"tint,omitempty"` // default white
+	Render      string         `yaml:"render,omitempty"` // sprite (default) | volume
+	Volume      *RawVolumeLook `yaml:"volume,omitempty"` // absent = DefaultVolumeLook
+	Texture     string         `yaml:"texture,omitempty"`
+	SheetCols   int            `yaml:"sheet_cols,omitempty"`
+	SheetRows   int            `yaml:"sheet_rows,omitempty"`
+	FrameMode   string         `yaml:"frames,omitempty"`    // over-life (default) | random | static
+	Blend       string         `yaml:"blend,omitempty"`     // cutout (default) | alpha | additive
+	Billboard   string         `yaml:"billboard,omitempty"` // full (default) | y-axis | fixed
+	Lit         bool           `yaml:"lit,omitempty"`
+	CastShadows bool           `yaml:"cast_shadows,omitempty"`
+	Tint        *RawColor      `yaml:"tint,omitempty"` // default white
 
 	// Collision.
 	Collision     string  `yaml:"collision,omitempty"` // none (default) | stop | bounce | kill
@@ -138,6 +140,23 @@ type RawLayer struct {
 	SizeRamp  []RawStop      `yaml:"size_ramp,omitempty"`
 	AlphaRamp []RawStop      `yaml:"alpha_ramp,omitempty"`
 	ColorRamp []RawColorStop `yaml:"color_ramp,omitempty"`
+}
+
+// RawVolumeLook is a volume layer's look (VolumeLook). The whole block is
+// omitted while the look is the default, which is every sprite layer; inside
+// it, a key is written only when it differs from the default, and every number
+// with a meaningful zero that is not its default is a pointer.
+type RawVolumeLook struct {
+	Density      *float32  `yaml:"density,omitempty"`
+	NoiseScale   *float32  `yaml:"noise_scale,omitempty"`
+	Displacement *float32  `yaml:"displacement,omitempty"`
+	Billow       *float32  `yaml:"billow,omitempty"`
+	Erosion      *float32  `yaml:"erosion,omitempty"`
+	ErosionRamp  []RawStop `yaml:"erosion_ramp,omitempty"`
+	Albedo       *RawColor `yaml:"albedo,omitempty"`
+	Absorption   *float32  `yaml:"absorption,omitempty"`
+	Emission     float32   `yaml:"emission,omitempty"` // default 0
+	EmissionRamp []RawStop `yaml:"emission_ramp,omitempty"`
 }
 
 // RawParticle is the top-level document.
@@ -196,6 +215,8 @@ func rawToLayer(r RawLayer) Layer {
 		TurbulenceAmp:  r.TurbulenceAmp,
 		TurbulenceFreq: r.TurbulenceFreq,
 		LocalSpace:     r.LocalSpace,
+		Render:         RenderKindFromName(r.Render),
+		Volume:         volumeLookFromRaw(r.Volume),
 		Texture:        r.Texture,
 		SheetCols:      r.SheetCols,
 		SheetRows:      r.SheetRows,
@@ -274,6 +295,8 @@ func layerToRaw(l *Layer) RawLayer {
 		TurbulenceAmp:  l.TurbulenceAmp,
 		TurbulenceFreq: l.TurbulenceFreq,
 		LocalSpace:     l.LocalSpace,
+		Render:         nameIfNot(RenderKindName(l.Render), RenderKindNames[RenderSprite]),
+		Volume:         volumeLookToRaw(l.Volume),
 		Texture:        l.Texture,
 		SheetCols:      l.SheetCols,
 		SheetRows:      l.SheetRows,
@@ -299,6 +322,56 @@ func layerToRaw(l *Layer) RawLayer {
 	}
 	for _, s := range l.ColorRamp {
 		r.ColorRamp = append(r.ColorRamp, RawColorStop{T: s.T, C: RawColor{R: s.C.X(), G: s.C.Y(), B: s.C.Z()}})
+	}
+	return r
+}
+
+func volumeLookFromRaw(r *RawVolumeLook) VolumeLook {
+	v := DefaultVolumeLook()
+	if r == nil {
+		return v
+	}
+	v.Density = f32Default(r.Density, v.Density)
+	v.NoiseScale = f32Default(r.NoiseScale, v.NoiseScale)
+	v.Displacement = f32Default(r.Displacement, v.Displacement)
+	v.Billow = f32Default(r.Billow, v.Billow)
+	v.Erosion = f32Default(r.Erosion, v.Erosion)
+	if r.Albedo != nil {
+		v.Albedo = mgl32.Vec3{r.Albedo.R, r.Albedo.G, r.Albedo.B}
+	}
+	v.Absorption = f32Default(r.Absorption, v.Absorption)
+	v.Emission = r.Emission
+	for _, s := range r.ErosionRamp {
+		v.ErosionRamp = append(v.ErosionRamp, Stop{T: s.T, V: s.V})
+	}
+	for _, s := range r.EmissionRamp {
+		v.EmissionRamp = append(v.EmissionRamp, Stop{T: s.T, V: s.V})
+	}
+	return v
+}
+
+func volumeLookToRaw(v VolumeLook) *RawVolumeLook {
+	if v.IsDefault() {
+		return nil
+	}
+	d := DefaultVolumeLook()
+	r := &RawVolumeLook{
+		Density:      f32PtrIfNot(v.Density, d.Density),
+		NoiseScale:   f32PtrIfNot(v.NoiseScale, d.NoiseScale),
+		Displacement: f32PtrIfNot(v.Displacement, d.Displacement),
+		Billow:       f32PtrIfNot(v.Billow, d.Billow),
+		Erosion:      f32PtrIfNot(v.Erosion, d.Erosion),
+		Absorption:   f32PtrIfNot(v.Absorption, d.Absorption),
+		Emission:     v.Emission,
+	}
+	if v.Albedo != d.Albedo {
+		r.Albedo = &RawColor{R: v.Albedo.X(), G: v.Albedo.Y(), B: v.Albedo.Z()}
+	}
+	for _, s := range v.ErosionRamp {
+		r.ErosionRamp = append(r.ErosionRamp, RawStop{T: s.T, V: s.V})
+	}
+	for _, s := range v.EmissionRamp {
+		r.EmissionRamp = append(r.EmissionRamp, RawStop{T: s.T, V: s.V})
 	}
 	return r
 }

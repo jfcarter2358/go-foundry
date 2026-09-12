@@ -30,6 +30,8 @@ type RawVolume struct {
 	// Fog fills the region with fog. Absent is the ordinary case — a volume
 	// that is only a trigger. See Volume.Fog.
 	Fog *RawVolumeFog `yaml:"fog,omitempty"`
+	// Cloud fills the region with volumetric cloud. See Volume.Cloud.
+	Cloud *RawVolumeCloud `yaml:"cloud,omitempty"`
 	// Doorway makes the volume a frame boundary. See Volume.Doorway.
 	Doorway *RawFrameDoorway `yaml:"doorway,omitempty"`
 	// Scatter fills the region with foliage. See Volume.Scatter.
@@ -104,6 +106,44 @@ type RawVolumeFog struct {
 	Color      *RawColor `yaml:"color,omitempty"`
 	Density    *float32  `yaml:"density,omitempty"`     // per world unit inside
 	MaxOpacity *float32  `yaml:"max_opacity,omitempty"` // default 1
+}
+
+// RawCloudLook is what a cloud looks like (cloud.go), shared by a volume's
+// `cloud:` block and the sky's `clouds:` block, which inline it.
+//
+// Every number is a pointer, because every one of them has a meaningful zero
+// that is not its default — a zero erosion is soft cotton, a zero wind is a
+// still day. NoShadows is inverted for the reason RawVolumeFog.Disabled is: the
+// ordinary cloud casts, and the key only needs writing for the one that does
+// not.
+type RawCloudLook struct {
+	Color      *RawColor `yaml:"color,omitempty"`
+	Coverage   *float32  `yaml:"coverage,omitempty"`
+	Density    *float32  `yaml:"density,omitempty"`
+	Scale      *float32  `yaml:"scale,omitempty"`
+	Detail     *float32  `yaml:"detail,omitempty"`
+	Erosion    *float32  `yaml:"erosion,omitempty"`
+	Wind       *RawVec3  `yaml:"wind,omitempty"`
+	Absorption *float32  `yaml:"absorption,omitempty"`
+	Ambient    *float32  `yaml:"ambient,omitempty"`
+	NoShadows  bool      `yaml:"no_shadows,omitempty"`
+}
+
+// RawVolumeCloud is the cloud filling a volume (cloud.go). Disabled rather than
+// Enabled, on RawVolumeFog's reasoning.
+type RawVolumeCloud struct {
+	Disabled     bool `yaml:"disabled,omitempty"`
+	RawCloudLook `yaml:",inline"`
+	Softness     *float32 `yaml:"softness,omitempty"`
+}
+
+// RawSkyClouds is the sky's cloud deck (cloud.go).
+type RawSkyClouds struct {
+	Disabled     bool `yaml:"disabled,omitempty"`
+	RawCloudLook `yaml:",inline"`
+	Altitude     *float32 `yaml:"altitude,omitempty"`
+	Thickness    *float32 `yaml:"thickness,omitempty"`
+	Range        *float32 `yaml:"range,omitempty"`
 }
 
 // RawPrefabInstance is one placement of a prefab file (prefab.go).
@@ -611,6 +651,9 @@ type RawSky struct {
 	Tint      *RawColor `yaml:"tint,omitempty"`
 	Intensity *float32  `yaml:"intensity,omitempty"` // default 1
 	Rotation  float32   `yaml:"rotation,omitempty"`  // degrees about +Y
+
+	// Clouds is the volumetric cloud deck. Absent is a clear sky.
+	Clouds *RawSkyClouds `yaml:"clouds,omitempty"`
 }
 
 // RawFog is the level's distance fog (fog.go).

@@ -115,6 +115,16 @@ func duplicateActiveVolume() {
 	cp := *src
 	cp.ScriptData = world.CloneScriptData(src.ScriptData)
 	cp.Geometry = gfx.Geometry{}
+	// Fog and cloud are pointers, and a copy sharing them would be one bank of
+	// fog or cloud with two cages: tuning either volume would tune both.
+	if src.Fog != nil {
+		f := *src.Fog
+		cp.Fog = &f
+	}
+	if src.Cloud != nil {
+		c := *src.Cloud
+		cp.Cloud = &c
+	}
 	cp.ID = world.UniqueVolumeID(lvl, src.ID)
 	cp.Position = src.Position.Add(mgl32.Vec3{src.HalfX * 2, 0, 0})
 	if err := cp.Load(); err != nil {

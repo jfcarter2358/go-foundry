@@ -171,6 +171,100 @@ func CollideModeFromName(name string) CollideMode {
 	return CollideNone
 }
 
+// RenderKind is what a layer's particles are drawn AS.
+type RenderKind int
+
+const (
+	// RenderSprite draws every particle as a textured quad — the sprite pass,
+	// and everything its blend and billboard modes say.
+	RenderSprite RenderKind = iota
+	// RenderVolume draws every particle as a soft, noise-displaced ball of
+	// volumetric smoke or fire, marched by the volumetric pass rather than
+	// rasterised as a quad. A fireball is a handful of these: the simulation
+	// moves them exactly as it moves quads, and the size, alpha and colour ramps
+	// become radius, density and emitted light.
+	RenderVolume
+)
+
+// RenderKindNames is the YAML/UI name of each kind.
+var RenderKindNames = []string{"sprite", "volume"}
+
+// RenderKindName returns a kind's name, falling back to sprite.
+func RenderKindName(k RenderKind) string {
+	if int(k) < 0 || int(k) >= len(RenderKindNames) {
+		return RenderKindNames[RenderSprite]
+	}
+	return RenderKindNames[k]
+}
+
+// RenderKindFromName is the inverse; an unknown name loads as a sprite.
+func RenderKindFromName(name string) RenderKind {
+	for i, n := range RenderKindNames {
+		if n == name {
+			return RenderKind(i)
+		}
+	}
+	return RenderSprite
+}
+
+// VolumeLook is how a RenderVolume layer's particles look. Unread by a sprite
+// layer, and kept across a switch between the two so comparing them costs
+// nothing.
+type VolumeLook struct {
+	// Density is the extinction per world unit at a ball's core, before the
+	// alpha ramp scales it over the particle's life.
+	Density float32
+	// NoiseScale is how many repeats of the noise span one ball's radius. Low
+	// is a few big lumps; high is a cauliflower.
+	NoiseScale float32
+	// Displacement is how far the noise pushes the ball's surface in and out,
+	// as a fraction of its radius. 0 is a smooth sphere of smoke.
+	Displacement float32
+	// Billow is how fast the noise rolls outward from the ball's centre, in
+	// noise repeats per unit of life — what makes a fireball churn as it grows
+	// rather than inflate like a balloon.
+	Billow float32
+	// Erosion is how hard the detail noise eats the ball's edges, 0 to 1,
+	// multiplied by ErosionRamp over life: rising erosion is how dense fire
+	// breaks up into wisps of smoke as it dies.
+	Erosion     float32
+	ErosionRamp Ramp
+	// Albedo is the colour of the smoke — the light it scatters back, lit by
+	// the sun and the sky exactly as a cloud is.
+	Albedo mgl32.Vec3
+	// Absorption multiplies how much light the ball's own mass takes out on
+	// its way from the sun, which is what shades a plume's underside.
+	Absorption float32
+	// Emission is how brightly the colour ramp (times Tint) glows as light of
+	// its own, multiplied by EmissionRamp over life. 0 is plain smoke; a
+	// fireball starts high and ramps to 0 as it cools.
+	Emission     float32
+	EmissionRamp Ramp
+}
+
+// DefaultVolumeLook is a grey ball of smoke.
+func DefaultVolumeLook() VolumeLook {
+	return VolumeLook{
+		Density:      4,
+		NoiseScale:   1.2,
+		Displacement: 0.35,
+		Billow:       0.6,
+		Erosion:      0.3,
+		Albedo:       mgl32.Vec3{0.45, 0.43, 0.4},
+		Absorption:   1,
+	}
+}
+
+// IsDefault reports whether the look is DefaultVolumeLook, ramps included —
+// what decides whether a document writes a `volume:` block at all.
+func (v VolumeLook) IsDefault() bool {
+	d := DefaultVolumeLook()
+	return v.Density == d.Density && v.NoiseScale == d.NoiseScale &&
+		v.Displacement == d.Displacement && v.Billow == d.Billow &&
+		v.Erosion == d.Erosion && v.Albedo == d.Albedo && v.Absorption == d.Absorption &&
+		v.Emission == d.Emission && len(v.ErosionRamp) == 0 && len(v.EmissionRamp) == 0
+}
+
 // Burst is a one-off release of count particles at time t into the layer's
 // cycle. A layer can carry any number, which is how an effect gets a bang
 // followed by a trail.
@@ -324,6 +418,12 @@ type Layer struct {
 
 	// ---- appearance ----
 
+	// Render picks the pass: quads, or volumetric balls. Every field below it
+	// but Tint and the ramps is read by one or the other, not both.
+	Render RenderKind
+	// Volume is how a RenderVolume layer looks.
+	Volume VolumeLook
+
 	Texture              string
 	SheetCols, SheetRows int
 	FrameMode            FrameMode
@@ -408,6 +508,7 @@ func NewLayer(name string) Layer {
 		RotMax:        0,
 		Gravity:       0,
 		Drag:          0.4,
+		Volume:        DefaultVolumeLook(),
 		Texture:       "default",
 		FrameMode:     FrameOverLife,
 		Blend:         gfx.SpriteBlendAdditive,
@@ -483,6 +584,8 @@ func (l Layer) Clone() Layer {
 	cp.SizeRamp = append(Ramp(nil), l.SizeRamp...)
 	cp.AlphaRamp = append(Ramp(nil), l.AlphaRamp...)
 	cp.ColorRamp = append(Gradient(nil), l.ColorRamp...)
+	cp.Volume.ErosionRamp = append(Ramp(nil), l.Volume.ErosionRamp...)
+	cp.Volume.EmissionRamp = append(Ramp(nil), l.Volume.EmissionRamp...)
 	return cp
 }
 

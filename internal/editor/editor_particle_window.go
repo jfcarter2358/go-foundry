@@ -161,6 +161,7 @@ func CloseParticleEditorWindow() {
 // onParticleEditorClose runs with this window's GL context current. The
 // document stays in memory: closing the window is not discarding the work.
 func onParticleEditorClose() {
+	particlePreviewVolumes.Delete()
 	particleEditorWindow = nil
 }
 

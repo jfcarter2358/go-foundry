@@ -124,3 +124,75 @@ silhouette against slate.
 
 Additive sprites are attenuated by fog rather than tinted by it, so a distant
 spark gets dimmer instead of brighter.
+
+## Cloud volumes
+
+Fog is a colour laid over what is behind it. A **cloud** is a body you can see
+the shape of: lumpy, lit by the sun on one side and shaded on the other, and
+drifting. Clouds are ray-marched through 3D noise, and like fog they come in two
+kinds.
+
+A **cloud volume** is a [volume](13-volumes.md) full of cloud. Place one, select
+it, and tick **This volume is full of cloud** in its **Cloud** group. A big, flat
+box over the level is a cloud layer; a sphere is one cumulus.
+
+| Field | |
+| --- | --- |
+| **Colour** | the cloud's albedo — white for fair weather, grey for a storm |
+| **Coverage** | how much of the region is cloud, 0 to 1. The one you will change most |
+| **Density** | thickness per world unit at the cloud's densest |
+| **Scale** | world units across the largest lumps |
+| **Detail** | world units across the fine noise that breaks the edges up |
+| **Erosion** | how hard that detail eats the edges. 0 is cotton, 1 is ragged |
+| **Wind** | world units per second the pattern drifts. Moves the shape, not the region |
+| **Absorption** | how dark the underside gets |
+| **Ambient** | how much sky light fills the shadowed side |
+| **Casts shadows** | see *Cloud shadows* below |
+| **Softness** | how far in from the region's walls the cloud fades up |
+
+The cloud is lit by the level's first directional light, filled by its global
+light and tinted by its sky, so a cloud under a dusk sky is shaded dusk-coloured.
+Point lights light it too — a torch lights the smoke rising past it.
+
+A cloud volume is still a volume: it fires `:enter:` and `:exit:`, and disabling
+the volume clears the cloud.
+
+## The cloud deck
+
+The sky's **Volumetric cloud deck** is cloud with no edge: a layer between two
+heights running out to the horizon. Tick it in the sky group.
+
+| Field | |
+| --- | --- |
+| **Altitude** | the deck's base, in world units |
+| **Thickness** | how deep it is |
+| **Range** | how far out it is drawn before fading into the horizon. Also bounds its cost |
+
+and every field a cloud volume has, above.
+
+The deck has an altitude rather than living at infinity like the dome, so a
+mountain can rise through it and the camera can fly above it. `ease_sky` blends
+the deck with the rest of the sky: a script can clear the weather over a few
+seconds.
+
+## Cloud shadows
+
+A cloud with **Casts shadows** on darkens everything under it — floors, walls,
+scatter and sprites — from the level's first directional light, and the shadow
+drifts with the wind. It is a soft, partial shadow, not a hard one, and it lands
+only *below* the cloud: a peak standing above a cloud layer stays sunlit.
+
+The shadow covers a square around the camera (600 units either side by default).
+On a compiled level, whose lighting is baked, it takes part of the baked light
+away rather than all of it.
+
+## Cost
+
+Clouds cost fill rate: a cloud covering the screen marches every pixel. `F4`
+cycles **half resolution** (the default), **full resolution** and **off**, and
+the editor's render settings expose the march and light step counts and the
+cloud shadow switch. The `F3` overlay reports the current setting and how many
+marches the frame ran.
+
+Half resolution keeps edges against geometry sharp: the upsample matches each
+screen pixel to the cloud samples taken at its own depth.

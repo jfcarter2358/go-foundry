@@ -1096,6 +1096,91 @@ volume: it fires `enter` and `exit`, a script can thicken it or put it out, and
 disabling the volume does both — a region that kept fogging after being switched
 off would be half there.
 
+## Volumetrics
+
+Clouds and explosions are one feature: light scattered by a density field,
+ray-marched per pixel. Three things feed the one pass in
+`internal/render/volumetric.go` — **cloud volumes** (a volume's `cloud:` block),
+the **sky's cloud deck** (`sky.clouds`, a slab between two altitudes), and
+**volume particle layers** (`render: volume` in a `.fpar` layer, each live
+particle a soft noise-displaced ball). They differ only in where the density
+comes from, so one shader marches all three: `volume_frag.glsl` over
+`volume_common.glsl`, which holds both density models and the lighting.
+
+**Why a fragment-shader march.** GL 4.1 core has no compute, so the options were
+a fragment pass or faking volumes with stacks of sprites. A march is what
+gives a cloud a lit side and a shaded side that stay consistent as the camera
+walks around it, which is the whole difference between a cloud and a picture of
+one. The noise is the part that cannot be generated per sample, so it is baked:
+`internal/noise3d` builds a tileable Perlin-Worley shape volume and a Worley
+detail volume at startup, uploaded as the engine's first `GL_TEXTURE_3D`s.
+Generated rather than shipped because a file the engine reads rather than one a
+level names is a file the packer's content scan cannot see.
+
+**Depth without a scene framebuffer.** Everything draws straight into the
+window's multisampled back buffer (see anti-aliasing), so there is no depth
+texture to clip a march against. The pass makes one: it blits the frame's depth
+into a single-sample texture of the same format — a multisample resolve, which
+`glBlitFramebuffer` allows for depth — having read the source's format back,
+because a blit between mismatched depth formats is refused outright. A driver
+that refuses anyway is logged once and the copy is cleared to the far plane:
+volumes then draw unclipped, which is wrong at the edges but still draws them.
+
+**The four steps.** Depth copy; a downsample to eye distances at the march's
+resolution (nearest of each block, so a volume is cut back behind a thin pole
+rather than drawn over it); the march, every draw into an RGBA16F target at half
+or full resolution, premultiplied and back to front; and a depth-aware upsample
+over the frame that weights each low-res sample by how closely its depth
+matches the screen pixel's, which is what keeps a tree's silhouette sharp
+against a half-resolution cloud. A volume's draw is its proxy box,
+front-face-culled with depth clamping so exactly one fragment runs per covered
+pixel from inside the box or out; the fragment stage builds its own ray from
+`gl_FragCoord` and intersects the volume with `fogShapeInterval` — the same
+routine a fog bank is solved with, so the two cannot disagree about where a
+volume's walls are.
+
+It sits after the world's transparent pass and before the alpha sprites: a
+cloud behind glass is seen through it, and sparks draw over a fireball. The
+trade is the one the sprite pass makes — a cloud in front of water has the
+water drawn over it.
+
+**Integration.** Single scattering with the analytic per-step integral from
+Hillaire's Frostbite paper, a two-lobe Henyey-Greenstein phase, a short light
+march toward the sun, a cheap multiple-scattering term so thick cloud stays
+grey rather than black underneath, ambient graded from the sky's own colours,
+and the scene's point lights. Emission — a fireball's glow — is a source term
+integrated exactly as scattered light is, which is why the output is
+premultiplied: one blend state lets a fireball add light while its smoke hides
+what is behind it. Fog is applied at the depth of the visible mass, not the
+region's surface.
+
+**Per context.** Framebuffers and vertex arrays are never shared between GL
+contexts, so the render targets live in a `VolumeTargets` the caller owns: one
+for the main window, one each for the particle and entity editors' previews,
+made and released in that caller's context. The programs and noise textures
+are shared. The proxy is generated from `gl_VertexID`, so a draw needs a bound
+VAO with nothing in it, which any context can make.
+
+**Volume particles are particles.** A `render: volume` layer is simulated by
+the same `particle.System` — bursts, drag, gravity, collision, local space,
+one-shot reaping — and only drawn differently: `System.FillBlobs` turns the
+size ramp into a radius, the alpha ramp into density and the colour ramp into
+emitted light. Blobs are marched in groups of `MaxVolumeBlobs` (a uniform array;
+each sample loops over the group), at most four groups a layer. That is the
+same "fixed array, drop the rest" budget fog volumes and point lights have.
+
+**Cloud shadows.** A cloud cannot go in the cascades: those hold one depth per
+texel, and a cloud is a partial, soft dimming. So a separate map is baked each
+frame by marching every shadow-casting cloud along the sun
+(`cloud_shadow_bake_frag.glsl`, the same density file the pass draws). Each
+texel keeps two numbers: how much light survives, and how far along the sun's
+path the mass sits. The second is what puts the shadow under a cloud and not on
+a peak standing above it. The lookup (`cloud_shadow.glsl`) is spliced wherever
+lighting is — the world shader, and every `biome_light.glsl` consumer — and its
+uniforms ride on `UploadShadowUniformsTo`, which every one of those programs
+already calls. That also guarantees the sampler is always bound, to a white dummy
+when there are no clouds, on a unit of its own (13).
+
 ## Collision Checking
 
 The player carries an axis-aligned bounding box, and everything it is resolved against is level geometry. First it works out which world chunk it is in; once it knows that, the chunk's spatial index gives it the sector. If the floor carries a surface mesh, a 'top-down' check figures out which of its triangles the player is over and the collision is resolved against that triangle and any applicable edges. Walls, floors, ceilings, slopes and the openings cut through walls are each resolved in turn.

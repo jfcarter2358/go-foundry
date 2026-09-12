@@ -120,6 +120,15 @@ func DebugRenderOverlay() {
 		} else {
 			imgui.Text("Texture filter: mipmaps (anisotropic unavailable)")
 		}
+		// The volumetric pass's cost is almost entirely its resolution and step
+		// count, so both are reported next to the frame time they drive.
+		if VolumetricsReady() {
+			imgui.Text(fmt.Sprintf("Volumetrics:   %s  (F4)", Volumetrics))
+			imgui.Text(fmt.Sprintf("               %d marches, %d blobs, cloud shadow map %s",
+				DebugStats.VolumeDraws, DebugStats.VolumeBlobs, onOff(CloudShadowActive())))
+		} else {
+			imgui.Text("Volumetrics:   unavailable (see the log)")
+		}
 		imgui.Separator()
 
 		// TODO(brush migration, Phase 5): the biome lighting cost switches

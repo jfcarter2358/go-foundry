@@ -59,22 +59,37 @@ func TestDocRoundTripsEveryField(t *testing.T) {
 			TurbulenceAmp:  0.6,
 			TurbulenceFreq: 1.5,
 			LocalSpace:     true,
-			Texture:        "flame_sheet",
-			SheetCols:      4,
-			SheetRows:      4,
-			FrameMode:      FrameRandom,
-			Blend:          gfx.SpriteBlendAdditive,
-			Billboard:      gfx.BillboardYAxis,
-			Lit:            true,
-			CastShadows:    true,
-			Tint:           mgl32.Vec3{1, 0.5, 0.25},
-			Collision:      CollideBounce,
-			CollideRadius:  0.05,
-			Bounce:         0.4,
-			Friction:       0.2,
-			SizeRamp:       Ramp{{T: 0, V: 1}, {T: 1, V: 0.2}},
-			AlphaRamp:      Ramp{{T: 0, V: 0}, {T: 0.2, V: 1}, {T: 1, V: 0}},
-			ColorRamp:      Gradient{{T: 0, C: mgl32.Vec3{1, 1, 0.8}}, {T: 1, C: mgl32.Vec3{0.6, 0, 0}}},
+			Render:         RenderVolume,
+			// Density 0 and Displacement 0 are the authored zeros that are not
+			// defaults, which is the pointer half of the contract.
+			Volume: VolumeLook{
+				Density:      0,
+				NoiseScale:   2,
+				Displacement: 0,
+				Billow:       1.5,
+				Erosion:      0.8,
+				ErosionRamp:  Ramp{{T: 0, V: 0}, {T: 1, V: 1}},
+				Albedo:       mgl32.Vec3{0.2, 0.2, 0.2},
+				Absorption:   3,
+				Emission:     6,
+				EmissionRamp: Ramp{{T: 0, V: 1}, {T: 0.4, V: 0}},
+			},
+			Texture:       "flame_sheet",
+			SheetCols:     4,
+			SheetRows:     4,
+			FrameMode:     FrameRandom,
+			Blend:         gfx.SpriteBlendAdditive,
+			Billboard:     gfx.BillboardYAxis,
+			Lit:           true,
+			CastShadows:   true,
+			Tint:          mgl32.Vec3{1, 0.5, 0.25},
+			Collision:     CollideBounce,
+			CollideRadius: 0.05,
+			Bounce:        0.4,
+			Friction:      0.2,
+			SizeRamp:      Ramp{{T: 0, V: 1}, {T: 1, V: 0.2}},
+			AlphaRamp:     Ramp{{T: 0, V: 0}, {T: 0.2, V: 1}, {T: 1, V: 0}},
+			ColorRamp:     Gradient{{T: 0, C: mgl32.Vec3{1, 1, 0.8}}, {T: 1, C: mgl32.Vec3{0.6, 0, 0}}},
 		}},
 	}
 
@@ -93,7 +108,7 @@ func TestDefaultLayerWritesNoRedundantKeys(t *testing.T) {
 	d := &Doc{
 		ID:      "e",
 		Gravity: DefaultGravity,
-		Layers:  []Layer{{Name: "l", Duration: 1, Loop: true, MaxParticles: 500, BoxHalf: mgl32.Vec3{0.5, 0.5, 0.5}, Direction: mgl32.Vec3{0, 1, 0}, Tint: mgl32.Vec3{1, 1, 1}}},
+		Layers:  []Layer{{Name: "l", Duration: 1, Loop: true, MaxParticles: 500, BoxHalf: mgl32.Vec3{0.5, 0.5, 0.5}, Direction: mgl32.Vec3{0, 1, 0}, Tint: mgl32.Vec3{1, 1, 1}, Volume: DefaultVolumeLook()}},
 	}
 	out, err := yaml.Marshal(docToRaw(d))
 	if err != nil {
@@ -105,6 +120,7 @@ func TestDefaultLayerWritesNoRedundantKeys(t *testing.T) {
 		"box_half:", "direction:", "frames:", "blend:", "billboard:", "tint:",
 		"collision:", "bursts:", "size_ramp:", "alpha_ramp:", "color_ramp:",
 		"muted:", "prewarm:", "lit:", "cast_shadows:", "local_space:",
+		"render:", "volume:",
 	} {
 		if strings.Contains(text, key) {
 			t.Errorf("a default layer wrote %q; it should be omitted:\n%s", key, text)

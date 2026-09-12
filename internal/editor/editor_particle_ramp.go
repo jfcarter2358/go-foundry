@@ -42,9 +42,21 @@ const (
 	rampSize particleRampKind = iota
 	rampAlpha
 	rampColor
+	// The two a volume layer adds (particle.VolumeLook). Offered only while
+	// the active layer renders as a volume — a sprite layer has no use for them.
+	rampEmission
+	rampErosion
 )
 
-var particleRampNames = []string{"Size", "Alpha", "Color"}
+var particleRampNames = []string{"Size", "Alpha", "Color", "Emission", "Erosion"}
+
+// particleRampOffered reports whether a strip applies to the layer.
+func particleRampOffered(k particleRampKind, lay *particle.Layer) bool {
+	if k == rampEmission || k == rampErosion {
+		return lay != nil && lay.Render == particle.RenderVolume
+	}
+	return true
+}
 
 // particleActiveRamp is which strip is showing. One at a time rather than three
 // stacked: three would leave the preview a letterbox at this window's height.
@@ -154,11 +166,23 @@ func modFloat(t, d float32) float32 {
 
 // particleRampTabs picks which strip is showing.
 func particleRampTabs() {
+	lay := particleActive()
+	if !particleRampOffered(particleActiveRamp, lay) {
+		particleActiveRamp = rampAlpha
+	}
 	for i, n := range particleRampNames {
+		if !particleRampOffered(particleRampKind(i), lay) {
+			continue
+		}
+		label := n
+		if particleRampKind(i) == rampAlpha && lay != nil && lay.Render == particle.RenderVolume {
+			// The same ramp, read as what it means on a volume layer.
+			label = "Density"
+		}
 		if i > 0 {
 			imgui.SameLine()
 		}
-		if editorActiveToggleButton(n+"##pramptab"+n, particleActiveRamp == particleRampKind(i)) {
+		if editorActiveToggleButton(label+"##pramptab"+n, particleActiveRamp == particleRampKind(i)) {
 			particleActiveRamp = particleRampKind(i)
 			particleColorPick = -1
 		}
@@ -290,8 +314,13 @@ func particleDrawGradient(dl imgui.DrawList, l particleRampLayout, lay *particle
 
 // particleRampFor returns the scalar ramp the active strip edits.
 func particleRampFor(lay *particle.Layer) *particle.Ramp {
-	if particleActiveRamp == rampSize {
+	switch particleActiveRamp {
+	case rampSize:
 		return &lay.SizeRamp
+	case rampEmission:
+		return &lay.Volume.EmissionRamp
+	case rampErosion:
+		return &lay.Volume.ErosionRamp
 	}
 	return &lay.AlphaRamp
 }

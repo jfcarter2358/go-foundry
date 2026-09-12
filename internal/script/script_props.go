@@ -524,8 +524,16 @@ func entityTextureName(e *world.Entity) string {
 
 // ---------- volume ----------
 
-func volumeProps() map[string]propAccess {
-	get := func(fn func(v *world.Volume) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
+// volumeAccessors returns the pair of adapters every volume property is built
+// from: a getter or setter written against a *world.Volume, lifted to one that
+// resolves the ref first. A function rather than two closures inside
+// volumeProps so the property builders further down (volumeCloudNumberProp)
+// can build on the same pair.
+func volumeAccessors() (
+	get func(fn func(v *world.Volume) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool),
+	set func(fn func(vol *world.Volume, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error,
+) {
+	get = func(fn func(v *world.Volume) flang.Value) func(*refCache, flang.RefVal) (flang.Value, bool) {
 		return func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 			vol := c.volumeFor(r)
 			if vol == nil {
@@ -534,7 +542,7 @@ func volumeProps() map[string]propAccess {
 			return fn(vol), true
 		}
 	}
-	set := func(fn func(vol *world.Volume, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+	set = func(fn func(vol *world.Volume, v flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
 		return func(c *refCache, r flang.RefVal, v flang.Value) error {
 			vol := c.volumeFor(r)
 			if vol == nil {
@@ -543,6 +551,11 @@ func volumeProps() map[string]propAccess {
 			return fn(vol, v)
 		}
 	}
+	return get, set
+}
+
+func volumeProps() map[string]propAccess {
+	get, set := volumeAccessors()
 
 	return map[string]propAccess{
 		"position": {
@@ -752,6 +765,118 @@ func volumeProps() map[string]propAccess {
 			}),
 			Doc: "the foliage's tint as a vec of r, g, b",
 		},
+		"cloud": {
+			Get: get(func(v *world.Volume) flang.Value { return flang.BoolVal(v.Cloud != nil && v.Cloud.Enabled) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("cloud", "bool", v)
+				}
+				return volumeCloudSet(vol, b, func(c *world.VolumeCloud) { c.Enabled = b })
+			}),
+			Doc: "whether the region is filled with volumetric cloud",
+		},
+		"cloud_coverage": volumeCloudNumberProp("cloud_coverage",
+			func(c *world.VolumeCloud) *float32 { return &c.Coverage },
+			"how much of the region the cloud fills, 0 to 1"),
+		"cloud_density": volumeCloudNumberProp("cloud_density",
+			func(c *world.VolumeCloud) *float32 { return &c.Density },
+			"the cloud's thickness per world unit at its densest"),
+		"cloud_scale": volumeCloudNumberProp("cloud_scale",
+			func(c *world.VolumeCloud) *float32 { return &c.Scale },
+			"world units across the cloud's largest lumps"),
+		"cloud_erosion": volumeCloudNumberProp("cloud_erosion",
+			func(c *world.VolumeCloud) *float32 { return &c.Erosion },
+			"how ragged the cloud's edges are, 0 to 1"),
+		"cloud_softness": volumeCloudNumberProp("cloud_softness",
+			func(c *world.VolumeCloud) *float32 { return &c.Softness },
+			"how far in from the region's walls the cloud fades up, 0 to 1"),
+		"cloud_color": volumeCloudVecProp("cloud_color",
+			func(c *world.VolumeCloud) *mgl32.Vec3 { return &c.Color },
+			"the cloud's colour as a vec of r, g, b"),
+		"cloud_wind": volumeCloudVecProp("cloud_wind",
+			func(c *world.VolumeCloud) *mgl32.Vec3 { return &c.Wind },
+			"how fast the cloud's pattern drifts, in world units per second"),
+		"cloud_shadows": {
+			Get: get(func(v *world.Volume) flang.Value { return flang.BoolVal(volumeCloudOf(v).CastShadows) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("cloud_shadows", "bool", v)
+				}
+				return volumeCloudSet(vol, true, func(c *world.VolumeCloud) { c.CastShadows = b })
+			}),
+			Doc: "whether the cloud casts its shadow on what is under it",
+		},
+	}
+}
+
+// ---------- volume cloud property helpers ----------
+//
+// The fog helpers' shape, for the fog helpers' reasons: a volume's cloud is a
+// pointer, a plain trigger has none, reading one returns the defaults, and
+// writing any cloud_* property gives it one.
+
+// volumeCloudOf is the volume's cloud, or a default one to read fields off —
+// a COPY when the volume has none.
+func volumeCloudOf(v *world.Volume) world.VolumeCloud {
+	if v.Cloud == nil {
+		return world.DefaultVolumeCloud()
+	}
+	return *v.Cloud
+}
+
+// volumeCloudSet applies fn to the volume's cloud, creating one at the defaults
+// first unless create is false — the write that switches cloud OFF, which
+// leaves a volume with none as it found it.
+func volumeCloudSet(v *world.Volume, create bool, fn func(*world.VolumeCloud)) error {
+	if v.Cloud == nil {
+		if !create {
+			return nil
+		}
+		c := world.DefaultVolumeCloud()
+		v.Cloud = &c
+	}
+	fn(v.Cloud)
+	v.Cloud.Clamp()
+	return nil
+}
+
+// volumeCloudNumberProp builds one number-valued cloud_* property.
+func volumeCloudNumberProp(name string, field func(*world.VolumeCloud) *float32, doc string) propAccess {
+	get, set := volumeAccessors()
+	return propAccess{
+		Get: get(func(v *world.Volume) flang.Value {
+			c := volumeCloudOf(v)
+			return flang.FloatVal(float64(*field(&c)))
+		}),
+		Set: set(func(vol *world.Volume, v flang.Value) error {
+			f, ok := toFloat32(v)
+			if !ok {
+				return propErr(name, "number", v)
+			}
+			return volumeCloudSet(vol, true, func(c *world.VolumeCloud) { *field(c) = f })
+		}),
+		Doc: doc,
+	}
+}
+
+// volumeCloudVecProp builds one vec-valued cloud_* property.
+func volumeCloudVecProp(name string, field func(*world.VolumeCloud) *mgl32.Vec3, doc string) propAccess {
+	get, set := volumeAccessors()
+	return propAccess{
+		Get: get(func(v *world.Volume) flang.Value {
+			c := volumeCloudOf(v)
+			return vecValue(*field(&c))
+		}),
+		Set: set(func(vol *world.Volume, v flang.Value) error {
+			p, ok := toVec3(v)
+			if !ok {
+				return propErr(name, "vec", v)
+			}
+			return volumeCloudSet(vol, true, func(c *world.VolumeCloud) { *field(c) = p })
+		}),
+		Doc: doc,
 	}
 }
 

@@ -48,6 +48,9 @@ var upward = map[string][]string{
 	// simulation, with no idea what a level or a GPU is. internal/world
 	// imports it, which is what forbids the reverse.
 	"particle": {"world", "render", "collision", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
+	// noise3d builds the volumetric passes' noise volumes. Pure arithmetic, and
+	// held below gfx so the tiling it promises is testable with no GL context.
+	"noise3d": {"gfx", "world", "particle", "render", "collision", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
 	// audio sits at particle's level: clips, a voice pool and a software
 	// mixer, with no idea what a level is. Its entry is stricter than
 	// particle's by one name — it must not reach gfx either. The listener is

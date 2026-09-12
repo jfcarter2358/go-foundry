@@ -689,6 +689,11 @@
 - [ ] Volumes are brushes instead of boxes only
 - [ ] Game saves
 - [ ] Decal support
+- [x] Volumetric clouds and explosions: cloud volumes (`cloud:` on a volume), a
+      volumetric cloud deck on the sky that `ease_sky` blends, cloud shadows on
+      the world, and `render: volume` particle layers for fireballs and smoke —
+      one ray-marched pass at half or full resolution (F4), with
+      `explosion.fpar` as the worked example
 - [x] move_to (move to a position in a given amount of time)
 - [x] Unwrap brush texture
 - [x] Waypoint animations

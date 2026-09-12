@@ -249,6 +249,27 @@ func editorRenderingSettings() {
 		imgui.SetTooltip("An extra cap on the scatter ring for the shadow passes.\n0 = whatever the shadow map itself already reaches.")
 	}
 
+	// The volumetric pass — clouds, the sky's deck, volume particle layers.
+	// Its cost is its resolution and its step counts, so those are the knobs.
+	imgui.Separator()
+	imgui.Checkbox("Volumetrics  [F4]##rndvol", &render.Volumetrics.Enabled)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Cloud volumes, the sky's cloud deck and volume particle layers.\nF4 cycles half resolution, full resolution and off.")
+	}
+	if !render.VolumetricsReady() {
+		editorTextMutedWrapped("The volumetric programs did not build on this driver; see the log.")
+	}
+	imgui.Checkbox("Half resolution##rndvolhalf", &render.Volumetrics.HalfRes)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("March at half the resolution on each axis and upsample.\nA quarter of the cost; edges against geometry are kept sharp.")
+	}
+	imgui.SliderInt("March steps##rndvolsteps", &render.Volumetrics.Steps, 8, 128)
+	imgui.SliderInt("Light steps##rndvollight", &render.Volumetrics.LightSteps, 1, 8)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Samples each march step takes toward the sun. What shades a cloud's underside.")
+	}
+	imgui.Checkbox("Cloud shadows##rndvolshadow", &render.Volumetrics.CloudShadows)
+
 	imgui.Separator()
 	aa := render.AntiAliasEnabled
 	if imgui.Checkbox("Anti-aliasing  [F10]##rndaa", &aa) {

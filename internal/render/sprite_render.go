@@ -396,6 +396,12 @@ func gatherEmitters(lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersO
 			if sys.Count() == 0 || sys.Layer.Muted {
 				continue
 			}
+			// A volume layer's particles are marched, not quads — see
+			// volumetric.go. They cast no shadow map shadow either: a ball of
+			// smoke is not a depth.
+			if sys.Layer.Render == particle.RenderVolume {
+				continue
+			}
 			if castersOnly && !sys.Layer.CastShadows {
 				continue
 			}

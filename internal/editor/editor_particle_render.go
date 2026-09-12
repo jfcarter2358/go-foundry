@@ -94,6 +94,15 @@ func drawParticleShapeOutline() {
 // frame of preview allocates nothing.
 var particlePreviewFill []particle.Instance
 
+// particlePreviewVolumes are this window's volumetric render targets — made in
+// its context on first use and released in onParticleEditorClose, because a
+// framebuffer is no more shared between contexts than a VAO is.
+// particlePreviewVolumeLayers is the per-frame list handed to it.
+var (
+	particlePreviewVolumes      render.VolumeTargets
+	particlePreviewVolumeLayers []*particle.System
+)
+
 // previewDraw draws every visible layer through the engine's own sprite pass.
 //
 // Layers are drawn in document order rather than sorted against each other:
@@ -112,8 +121,18 @@ func previewDraw(projView mgl32.Mat4) {
 	render.SpriteVAOOverride = particleEditorWindow.SpriteVAO
 	defer func() { render.SpriteVAOOverride = 0 }()
 
+	particlePreviewVolumeLayers = particlePreviewVolumeLayers[:0]
+	defer func() {
+		// Volume layers after the quads, through the same pass the level uses.
+		render.DrawVolumeParticlePreview(&particlePreviewVolumes, particlePreviewVolumeLayers, projView, camPos)
+	}()
+
 	for i, s := range particleSystems {
 		if !particleLayerVisible(i) || s.Count() == 0 {
+			continue
+		}
+		if particleDoc.Layers[i].Render == particle.RenderVolume {
+			particlePreviewVolumeLayers = append(particlePreviewVolumeLayers, s)
 			continue
 		}
 		n := s.Count()

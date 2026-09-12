@@ -1031,6 +1031,33 @@ costs one visible snap if a level eases the sky faster than its own transition
 finishes. Nothing calls `ease_sky` on every tick, so this is not a case worth
 budgeting for.
 
+**The cloud deck.** The sky's volumetric cloud deck (see "Volumetrics" in
+DESIGN.md) is reached the same way, through `sky_cloud_*` properties, and a
+write gives a level with no sky a sky and a deck at their defaults:
+
+```
+@level.prop.sky_cloud_coverage = 0.9       -- clouding over
+@level.prop.sky_cloud_altitude = 250
+@level.prop.sky_cloud_color = <0.55, 0.55, 0.6>
+@level.prop.sky_cloud_wind = <12, 0, 3>
+@level.prop.sky_clouds = false             -- off, keeping the numbers
+```
+
+The full set is `sky_clouds`, `sky_cloud_coverage`, `sky_cloud_density`,
+`sky_cloud_altitude`, `sky_cloud_thickness`, `sky_cloud_range`,
+`sky_cloud_scale`, `sky_cloud_erosion`, `sky_cloud_color`, `sky_cloud_wind` and
+`sky_cloud_shadows`. Unlike `sky`, `sky_clouds = false` switches the deck off
+rather than deleting it — it has an on/off of its own, the way fog does.
+
+`ease_sky` blends the deck along with the rest: its numbers are eased rather
+than two decks cross-faded, so clouds thin out and clear instead of one set
+ghosting through another. Easing to a sky with no deck clears the one there is.
+
+```
+ease_sky(8)
+@level.prop.sky_cloud_coverage = 0.1       -- the storm passes
+```
+
 Writing an unknown property is an error naming the closest valid one. Some writes
 (heights, textures) rebuild geometry; the engine defers that to the end of the
 frame and coalesces repeats, so writing a height in a loop costs one rebuild.
@@ -1811,6 +1838,37 @@ and leaves it alone — there was nothing to switch.
 A fog volume is still a volume, so it still fires `enter` and `exit`. "The player
 is in the fog" is usually exactly the event a level wants when there is fog to be
 in.
+
+### Cloud volumes
+
+A volume may be **full of cloud** too — ray-marched, lumpy, lit by the sun and
+drifting — with a `cloud:` block:
+
+```yaml
+volumes:
+  - id: thunderhead
+    shape: sphere
+    position: {x: 0, y: 120, z: 40}
+    half: {x: 60, y: 30, z: 60}
+    cloud:
+      color: {r: 0.6, g: 0.6, b: 0.65}
+      coverage: 0.8     # how much of the region is cloud, 0 to 1
+      density: 0.4      # per world unit at its densest
+      scale: 50         # world units across the largest lumps
+      wind: {x: 3, y: 0, z: 1}
+```
+
+Its properties follow the fog ones: `cloud`, `cloud_coverage`, `cloud_density`,
+`cloud_scale`, `cloud_erosion`, `cloud_softness`, `cloud_color`, `cloud_wind`
+and `cloud_shadows`. Writing any of them on a volume with no cloud block gives it
+one at the defaults; switching `cloud` off on one that never had any leaves it
+alone; disabling the volume clears the cloud with the trigger.
+
+```
+@thunderhead.prop.cloud_coverage = 1       -- build the storm
+@thunderhead.prop.cloud_color = <0.35, 0.35, 0.4>
+@thunderhead.prop.cloud = false            -- clear it, keep the numbers
+```
 
 ### Where output goes
 

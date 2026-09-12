@@ -237,6 +237,7 @@ func CloseEntityEditorWindow() {
 func onEntityEditorClose() {
 	entityGizmoMouseUp()
 	entityPreviewRelease()
+	entityPreviewVolumes.Delete()
 	entityEditorWindow = nil
 }
 
