@@ -49,11 +49,13 @@ func hostTestLevel(t *testing.T) *world.Level {
 	trigger.SetAttr("armed", world.BoolAttr(true))
 	lvl.Volumes = append(lvl.Volumes, trigger)
 
+	// Dynamic, both: they are here for scripts to change, and a static light
+	// refuses that (TestAStaticLightRefusesScriptWrites).
 	lvl.Lights.Points = append(lvl.Lights.Points, world.PointLight{
-		ID: "lamp", Brightness: 1, Radius: 10, Color: mgl32.Vec3{1, 1, 1},
+		ID: "lamp", Brightness: 1, Radius: 10, Color: mgl32.Vec3{1, 1, 1}, Dynamic: true,
 	})
 	lvl.Lights.Directional = append(lvl.Lights.Directional, world.DirectionalLight{
-		ID: "sun", Yaw: 0, Pitch: -45, Brightness: 1,
+		ID: "sun", Yaw: 0, Pitch: -45, Brightness: 1, Dynamic: true,
 	})
 	lvl.Lights.Directional[0].SyncDirection()
 	return lvl

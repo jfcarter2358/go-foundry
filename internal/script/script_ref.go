@@ -29,6 +29,7 @@ type refCache struct {
 	sprite   map[string]int    // sprite ID -> index into lvl.Sprites
 	emitter  map[string]int    // emitter ID -> index into lvl.Emitters
 	sound    map[string]int    // sound ID -> index into lvl.Sounds
+	effect   map[string]int    // effect ID -> index into lvl.Effects
 	chunk    map[string]int    // chunk ID -> index into lvl.Chunks
 	brush    map[string][2]int // brush ID -> {chunk, brush}
 	dirLight map[string]int
@@ -100,6 +101,7 @@ func buildRefCache(lvl *world.Level) *refCache {
 		sprite:   map[string]int{},
 		emitter:  map[string]int{},
 		sound:    map[string]int{},
+		effect:   map[string]int{},
 		chunk:    map[string]int{},
 		brush:    map[string][2]int{},
 		dirLight: map[string]int{},
@@ -127,6 +129,9 @@ func buildRefCache(lvl *world.Level) *refCache {
 	}
 	for i := range lvl.Sounds {
 		c.sound[lvl.Sounds[i].ID] = i
+	}
+	for i := range lvl.Effects {
+		c.effect[lvl.Effects[i].ID] = i
 	}
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
@@ -169,6 +174,9 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 	}
 	if _, ok := c.sound[id]; ok {
 		return flang.RefVal{Kind: flang.RefSound, A: id}, true
+	}
+	if _, ok := c.effect[id]; ok {
+		return flang.RefVal{Kind: flang.RefEffect, A: id}, true
 	}
 	if _, ok := c.brush[id]; ok {
 		// Brush IDs are level-unique (world/identity.go), so a brush ref is a
@@ -325,6 +333,17 @@ func (c *refCache) soundFor(r flang.RefVal) *world.Sound {
 	return nil
 }
 
+// effectFor resolves an effect ref to the effect itself.
+func (c *refCache) effectFor(r flang.RefVal) *world.Effect {
+	if c.lvl == nil || r.Kind != flang.RefEffect {
+		return nil
+	}
+	if i, ok := c.effect[r.A]; ok && i < len(c.lvl.Effects) {
+		return &c.lvl.Effects[i]
+	}
+	return nil
+}
+
 // waypointAnimationFor resolves a waypoints ref to the animation itself.
 func (c *refCache) waypointAnimationFor(r flang.RefVal) *world.WaypointAnimation {
 	if c.lvl == nil || r.Kind != flang.RefWaypoints {
@@ -406,6 +425,10 @@ func (c *refCache) scriptDataFor(r flang.RefVal) *world.ScriptData {
 		if sd := c.soundFor(r); sd != nil {
 			return &sd.ScriptData
 		}
+	case flang.RefEffect:
+		if fx := c.effectFor(r); fx != nil {
+			return &fx.ScriptData
+		}
 	case flang.RefBrush:
 		if b := c.brushFor(r); b != nil {
 			return &b.ScriptData
@@ -447,6 +470,8 @@ func (c *refCache) alive(r flang.RefVal) bool {
 		return c.emitterFor(r) != nil
 	case flang.RefSound:
 		return c.soundFor(r) != nil
+	case flang.RefEffect:
+		return c.effectFor(r) != nil
 	case flang.RefChunk:
 		return c.chunkFor(r) != nil
 	case flang.RefBrush:
@@ -500,6 +525,11 @@ func (c *refCache) refsWithTag(tag string) []flang.RefVal {
 	for i := range c.lvl.Sounds {
 		if c.lvl.Sounds[i].HasTag(tag) {
 			out = append(out, flang.RefVal{Kind: flang.RefSound, A: c.lvl.Sounds[i].ID})
+		}
+	}
+	for i := range c.lvl.Effects {
+		if c.lvl.Effects[i].HasTag(tag) {
+			out = append(out, flang.RefVal{Kind: flang.RefEffect, A: c.lvl.Effects[i].ID})
 		}
 	}
 	for ci := range c.lvl.Chunks {
@@ -577,6 +607,9 @@ func (c *refCache) allTags() []string {
 	}
 	for i := range c.lvl.Sounds {
 		add(c.lvl.Sounds[i].Tags)
+	}
+	for i := range c.lvl.Effects {
+		add(c.lvl.Effects[i].Tags)
 	}
 	for ci := range c.lvl.Chunks {
 		ch := &c.lvl.Chunks[ci]

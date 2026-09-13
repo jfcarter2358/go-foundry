@@ -274,6 +274,15 @@ type EditorState struct {
 	// forces a rescan, so a clip added while the editor is open shows up.
 	SoundFileNames []string
 
+	// ActiveEffectIdx indexes level.Effects; -1 = none selected.
+	ActiveEffectIdx int
+	// EffectPlacementMode is true when the next left-click drops an effect.
+	EffectPlacementMode bool
+	// NewEffectID is the ID field of the placement row, empty to name it after
+	// its kind. NewEffectKind is the kind the armed placement drops.
+	NewEffectID   string
+	NewEffectKind string
+
 	// --- Waypoint animations (editor_waypoint.go) ---
 	// ActiveWaypointAnimIdx indexes level.WaypointAnimations; -1 = none
 	// selected. ActiveWaypointIdx is the point inside it the gizmo drags, or
@@ -410,6 +419,8 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.ActiveSoundIdx = -1
 	Editor.SoundPlacementMode = false
 	Editor.ShowSoundRanges = true
+	Editor.ActiveEffectIdx = -1
+	Editor.EffectPlacementMode = false
 	Editor.ActiveWaypointAnimIdx = -1
 	Editor.ActiveWaypointIdx = -1
 	Editor.WaypointPlacementMode = false
@@ -1007,6 +1018,12 @@ func EditorDeleteSelected() {
 		return
 	}
 
+	// Effect deletion
+	if activeEffect() != nil {
+		deleteActiveEffect()
+		return
+	}
+
 	// Scenery deletion
 	if activeScenery() != nil {
 		deleteActiveScenery()
@@ -1084,6 +1101,8 @@ func EditorLoadLevel(path string) error {
 	Editor.ActiveSoundIdx = -1
 	Editor.SoundPlacementMode = false
 	Editor.ShowSoundRanges = true
+	Editor.ActiveEffectIdx = -1
+	Editor.EffectPlacementMode = false
 	Editor.ActiveWaypointAnimIdx = -1
 	Editor.ActiveWaypointIdx = -1
 	Editor.WaypointPlacementMode = false

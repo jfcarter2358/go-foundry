@@ -173,6 +173,13 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 		}
 		raw.Sounds = append(raw.Sounds, world.SoundToRaw(&level.Sounds[i]))
 	}
+	// One-shot explosions a script set off are skipped on the sounds' rule.
+	for i := range level.Effects {
+		if level.Effects[i].OneShot {
+			continue
+		}
+		raw.Effects = append(raw.Effects, world.EffectToRaw(&level.Effects[i]))
+	}
 	for i := range level.WaypointAnimations {
 		// A path an entity's type carries is the type's, on the emitters' rule
 		// above — and its points are in the entity's space, not the world's.
@@ -319,6 +326,7 @@ func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
 			CastShadows:    dl.CastShadows,
 			ShadowStrength: dl.ShadowStrength,
 			Disabled:       dl.Disabled,
+			Dynamic:        dl.Dynamic,
 		})
 	}
 	for _, pl := range ls.Points {
@@ -339,6 +347,7 @@ func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
 			CastShadows:    pl.CastShadows,
 			ShadowStrength: pl.ShadowStrength,
 			Disabled:       pl.Disabled,
+			Dynamic:        pl.Dynamic,
 		})
 	}
 	return rl

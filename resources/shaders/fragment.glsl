@@ -50,14 +50,16 @@ uniform float reflectivity;
 uniform vec3  reflectColor;
 uniform vec3  camPos;
 
-// Global ambient light
-// bakedLight selects a compiled level's static-geometry path: the lighting for
-// this fragment was computed once, offline, and arrives interpolated on
-// fragBakedLight instead of being summed here. Uniform rather than inferred
-// from the attribute, for the reason skin_common.glsl gives about `skinned`: a
+// bakedLight selects a compiled level's static-geometry path: the static
+// lights for this fragment were summed once, offline, and arrive interpolated
+// on fragBakedLight; only the dynamic lights (dirLightDynamic,
+// pointLightDynamic) are still summed here. Uniform rather than inferred from
+// the attribute, for the reason skin_common.glsl gives about `skinned`: a
 // disabled vertex attribute reads a driver default, not zero, so an unlit
 // surface would read as "baked to black" rather than as "not baked".
 uniform int   bakedLight;
+
+// Global ambient light
 
 uniform vec3  globalLightColor;
 uniform float globalLightBrightness;
@@ -68,6 +70,8 @@ uniform int   numDirLights;
 uniform vec3  dirLightDir[MAX_DIR_LIGHTS];
 uniform vec3  dirLightColor[MAX_DIR_LIGHTS];
 uniform float dirLightBrightness[MAX_DIR_LIGHTS];
+// 1 for a light left out of the bake — see PointLight.Dynamic in light.go.
+uniform int   dirLightDynamic[MAX_DIR_LIGHTS];
 
 // Directional cascaded shadow maps.
 //
@@ -99,6 +103,7 @@ uniform vec3  pointLightPos[MAX_POINT_LIGHTS];
 uniform vec3  pointLightColor[MAX_POINT_LIGHTS];
 uniform float pointLightBrightness[MAX_POINT_LIGHTS];
 uniform float pointLightRadius[MAX_POINT_LIGHTS];
+uniform int   pointLightDynamic[MAX_POINT_LIGHTS];
 
 // Point light cubemap shadow maps
 uniform samplerCube pointShadowMap[MAX_POINT_LIGHTS];
@@ -303,6 +308,46 @@ float calcPointShadow(int lightIdx, vec3 fragPos) {
     return shadow;
 }
 
+// dirLightContrib is directional light i's share of this fragment: abs(N.L),
+// both sides of a surface lit alike, then its cascade shadow and the clouds'.
+// geoNormal is the unbumped normal the shadow bias wants — see main.
+vec3 dirLightContrib(int i, vec3 normal, vec3 geoNormal) {
+    vec3 ldir = -normalize(dirLightDir[i]);
+    float diff = abs(dot(normal, ldir));
+    vec3 contrib = dirLightColor[i] * dirLightBrightness[i] * diff;
+
+    if (dirLightCastShadows[i]) {
+        float shadow = calcDirShadow(i, geoNormal, ldir);
+        // Shadow strength: 0 = no darkening, 1 = full shadow
+        contrib *= (1.0 - shadow * dirLightShadowStrength[i]);
+    }
+    // The clouds' shadow, on top of the geometry's. Its own map, not a
+    // cascade: a cloud is a volume and casts a soft, partial shadow no depth
+    // map can hold. See cloud_shadow.glsl.
+    contrib *= cloudShadowFactor(i, fragWorldPos);
+    return contrib;
+}
+
+// pointLightContrib is point light i's share: quadratic falloff to nothing at
+// its radius, then its cubemap shadow.
+vec3 pointLightContrib(int i, vec3 normal) {
+    vec3  toLight = pointLightPos[i] - fragWorldPos;
+    float dist    = length(toLight);
+    if (dist >= pointLightRadius[i]) {
+        return vec3(0.0);
+    }
+    float t           = 1.0 - (dist / pointLightRadius[i]);
+    float attenuation = t * t;
+    float diff        = abs(dot(normal, normalize(toLight)));
+    vec3 contrib = pointLightColor[i] * pointLightBrightness[i] * diff * attenuation;
+
+    if (pointLightCastShadows[i]) {
+        float shadow = calcPointShadow(i, fragWorldPos);
+        contrib *= (1.0 - shadow * pointLightShadowStrength[i]);
+    }
+    return contrib;
+}
+
 void main() {
     // Screen-space derivatives, taken once at the top of main and outside every
     // branch: derivatives are only defined under uniform control flow, and
@@ -393,59 +438,42 @@ void main() {
 
     vec3 lighting;
 
-    // A compiled level's static geometry had all of this done once, offline,
-    // and interpolates the answer instead. Everything below — the light loops,
-    // the cascade selection, the shadow-map samples — is what that buys.
+    // A compiled level's static geometry had the static lights summed once,
+    // offline, and interpolates that answer instead — the light loops, the
+    // cascade selection and the shadow-map samples for every one of them are
+    // what that buys. The dynamic lights were left out of the bake, so they
+    // are the only ones still summed for it.
     if (bakedLight != 0) {
         // Clouds still move over a baked level, so their shadow is taken off
         // the baked answer here — see CLOUD_SHADOW_BAKED_SHARE in
-        // cloud_shadow.glsl for why a share rather than the whole of it.
-        lighting = fragBakedLight * mix(1.0,
-            cloudShadowFactor(cloudShadowLight, fragWorldPos), CLOUD_SHADOW_BAKED_SHARE);
-    } else {
-
-    // Start with global ambient contribution
-    lighting = globalLightColor * globalLightBrightness;
-
-    // Directional lights with soft shadows
-    for (int i = 0; i < numDirLights; i++) {
-        vec3 ldir = -normalize(dirLightDir[i]);
-        float diff = abs(dot(normal, ldir));
-        vec3 contrib = dirLightColor[i] * dirLightBrightness[i] * diff;
-
-        if (dirLightCastShadows[i]) {
-            float shadow = calcDirShadow(i, geoNormal, ldir);
-            // Shadow strength: 0 = no darkening, 1 = full shadow
-            contrib *= (1.0 - shadow * dirLightShadowStrength[i]);
+        // cloud_shadow.glsl for why a share rather than the whole of it. Unless
+        // the sun the map follows is dynamic: then none of the baked answer is
+        // its light, and its own term below takes the shadow in full.
+        lighting = fragBakedLight;
+        if (dirLightDynamic[clamp(cloudShadowLight, 0, MAX_DIR_LIGHTS - 1)] == 0) {
+            lighting *= mix(1.0,
+                cloudShadowFactor(cloudShadowLight, fragWorldPos), CLOUD_SHADOW_BAKED_SHARE);
         }
-        // The clouds' shadow, on top of the geometry's. Its own map, not a
-        // cascade: a cloud is a volume and casts a soft, partial shadow no depth
-        // map can hold. See cloud_shadow.glsl.
-        contrib *= cloudShadowFactor(i, fragWorldPos);
-
-        lighting += contrib;
-    }
-
-    // Point lights with quadratic falloff and cubemap shadows
-    for (int i = 0; i < numPointLights; i++) {
-        vec3  toLight = pointLightPos[i] - fragWorldPos;
-        float dist    = length(toLight);
-        if (dist < pointLightRadius[i]) {
-            float t           = 1.0 - (dist / pointLightRadius[i]);
-            float attenuation = t * t;
-            float diff        = abs(dot(normal, normalize(toLight)));
-            vec3 contrib = pointLightColor[i] * pointLightBrightness[i] * diff * attenuation;
-
-            if (pointLightCastShadows[i]) {
-                float shadow = calcPointShadow(i, fragWorldPos);
-                contrib *= (1.0 - shadow * pointLightShadowStrength[i]);
+        for (int i = 0; i < numDirLights; i++) {
+            if (dirLightDynamic[i] != 0) {
+                lighting += dirLightContrib(i, normal, geoNormal);
             }
-
-            lighting += contrib;
+        }
+        for (int i = 0; i < numPointLights; i++) {
+            if (pointLightDynamic[i] != 0) {
+                lighting += pointLightContrib(i, normal);
+            }
+        }
+    } else {
+        // Every light, static or dynamic, on anything that was not baked.
+        lighting = globalLightColor * globalLightBrightness;
+        for (int i = 0; i < numDirLights; i++) {
+            lighting += dirLightContrib(i, normal, geoNormal);
+        }
+        for (int i = 0; i < numPointLights; i++) {
+            lighting += pointLightContrib(i, normal);
         }
     }
-
-    } // end of the non-baked path
 
     float finalAlpha = texColor.a * alpha;
 

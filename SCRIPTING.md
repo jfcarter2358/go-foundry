@@ -518,7 +518,7 @@ editor's reference panel. The core surface:
 | floor | `enabled` `hidden` `height` `texture` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · slab: `thickness` `slab_texture` `slab_rim_texture` `slab_hidden` `slab_rim_across_portals` · read-only: `shaped` `world_height` `slab_shaped` |
 | ceiling | as floor, without `hidden` |
 | chunk | `enabled` `origin` `velocity` · read-only: `rotation` `scale` |
-| light | `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `waypoints` |
+| light | dynamic lights only: `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `dynamic` `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
 | level | `step_height` `player_control` `player_gravity` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
@@ -619,12 +619,22 @@ dynamic" error writing its `position` does, a chunk can only be moved (its
 `rotation` and `scale` are read-only), and the player and vehicles are refused —
 their motion belongs to the player's input and the drive model.
 
+### Changing a light
+
+A light is static unless it is marked **Dynamic**, and a static light is baked
+into the compiled level's walls and floors. Writing any of its properties, or
+sending it along a waypoint animation, is refused with an error naming the
+light and the checkbox. Otherwise the change would reach the props and entities,
+which are lit live, and not the walls, which were lit at compile time. The
+refusal is made in every build, so what works in the editor works shipped.
+`dynamic` itself is read-only.
+
 ### Waypoint animations
 
 A waypoint animation is a path authored in the level editor — a row of arrows,
 each a position, a rotation, a scale and a time — that an object can be sent
-along: a dynamic brush, an entity, a sprite, an emitter, a sound, a light or a
-volume. It is an object with an ID like any other, so `@door_open` names it;
+along: a dynamic brush, an entity, a sprite, an emitter, a sound, a dynamic light
+or a volume. It is an object with an ID like any other, so `@door_open` names it;
 the verbs take the name as a string as well. Placing and previewing one is in the
 guide's *Building levels* chapter.
 
@@ -2164,6 +2174,10 @@ volumes:
       locked: {type: bool, value: false}
       uses:   {type: int,  value: 0}
 ```
+
+The lights tagged `door_lights` are marked **Dynamic**, since the script
+recolours them. A static light would refuse the write. See
+[Changing a light](#changing-a-light).
 
 ---
 

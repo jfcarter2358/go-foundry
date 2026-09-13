@@ -1,7 +1,7 @@
 #version 410
 
 // volume_frag.glsl — one volumetric draw: a cloud volume, the sky's cloud
-// deck, or a group of particle blobs.
+// deck, a group of particle blobs, or an explosion effect.
 //
 // fog.glsl and volume_common.glsl are spliced in above this (VolumetricInit).
 //
@@ -29,6 +29,7 @@
 #define VOL_KIND_CLOUD 0
 #define VOL_KIND_BLOBS 1
 #define VOL_KIND_DECK  2
+#define VOL_KIND_EXPLOSION 3
 
 #define VOL_MAX_STEPS       128
 #define VOL_MAX_LIGHT_STEPS 8
@@ -65,6 +66,9 @@ float volDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
     if (volKind == VOL_KIND_BLOBS) {
         return blobDensity(p, footprint, detail, glow);
     }
+    if (volKind == VOL_KIND_EXPLOSION) {
+        return explosionDensity(p, footprint, detail, glow);
+    }
     return cloudDensity(volCloud, p, footprint, detail);
 }
 
@@ -72,12 +76,19 @@ bool volInterval(vec3 ro, vec3 rd, inout float t0, inout float t1) {
     if (volKind == VOL_KIND_BLOBS) {
         return fogShapeInterval(VOL_SHAPE_BOX, volProxyBasis, volProxyCenter, ro, rd, t0, t1);
     }
+    if (volKind == VOL_KIND_EXPLOSION) {
+        return fogShapeInterval(VOL_SHAPE_SPHERE, mat3(1.0 / max(volExpReach, 1e-3)),
+                                volExpCenter, ro, rd, t0, t1);
+    }
     return cloudInterval(volCloud, ro, rd, t0, t1);
 }
 
 float volHeight(vec3 p) {
     if (volKind == VOL_KIND_BLOBS) {
         return clamp((volProxyBasis * (p - volProxyCenter)).y * 0.5 + 0.5, 0.0, 1.0);
+    }
+    if (volKind == VOL_KIND_EXPLOSION) {
+        return clamp((p.y - volExpCenter.y) / max(volExpReach, 1e-3) * 0.5 + 0.5, 0.0, 1.0);
     }
     return clamp(cloudHeight(volCloud, p), 0.0, 1.0);
 }
@@ -127,6 +138,11 @@ void main() {
     vec3 albedo = (volKind == VOL_KIND_BLOBS) ? volBlobAlbedo : volCloud.albedo;
     float absorption = (volKind == VOL_KIND_BLOBS) ? volBlobAbsorption : volCloud.absorption;
     float ambientK = (volKind == VOL_KIND_BLOBS) ? 1.0 : volCloud.ambient;
+    if (volKind == VOL_KIND_EXPLOSION) {
+        albedo = volExpSmoke;
+        absorption = 1.0;
+        ambientK = 1.0;
+    }
 
     float T = 1.0;
     vec3 L = vec3(0.0);

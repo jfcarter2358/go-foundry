@@ -29,6 +29,7 @@ corner of the viewport shows where the selected one points.
 | --- | --- |
 | Yaw / Pitch | which way it shines |
 | Color, Brightness | |
+| Dynamic | whether it may change in game — see [Static and dynamic lights](#static-and-dynamic-lights) |
 | Cast shadows | |
 | Shadow strength | how dark the shadow is, when casting |
 
@@ -48,10 +49,40 @@ in the 3D view, by clicking it in the viewport, or by typing coordinates.
 | Position | from the Transform block |
 | Radius | how far it reaches |
 | Color, Brightness | |
+| Dynamic | whether it may change in game — see below |
 | Cast shadows | a cubemap shadow, so it casts in every direction |
 | Shadow strength | |
 
 Rotation and scale do nothing on a point light.
+
+## Static and dynamic lights
+
+Every directional and point light is one or the other, set by its **Dynamic**
+checkbox. Lights start static, and so does every light in a level saved before
+the switch existed.
+
+| | Static (the default) | Dynamic |
+| --- | --- | --- |
+| Walls, floors, brushes in a compiled level | baked in at compile time | lit live, every frame, with shadow maps |
+| Models, entities, dynamic brushes, sprites, scatter | lit live | lit live |
+| A script may change it, or `play_waypoints` move it | no — refused | yes |
+| Cost in a release build | nothing on static geometry | the full per-pixel light loop and its shadow samples |
+
+Use static for the lighting a level is *built* with: the sun that never moves,
+the ceiling lamps, the glow from a window. Use dynamic for anything that moves,
+flickers, switches or sweeps: a searchlight on a waypoint path, a lamp a trigger
+turns off, a sun that sets.
+
+The global ambient light has no switch. It is always baked.
+
+Nothing is baked until a level is compiled, so in the editor and in a dev build
+both kinds light live and look identical. What differs is only what a script
+may do to them, and that is refused in every build, not just a compiled one. A
+script that changed a static lamp in the editor would otherwise change it on the
+props and not on the walls once shipped. The refusal names the light and the
+checkbox, and the script editor flags it as you type.
+
+The Explorer marks dynamic lights `(dynamic)`.
 
 ## What gets lit
 
@@ -80,7 +111,8 @@ These are engine switches, not level data. They do not save with the level.
 ## Scripting lights
 
 A light is addressable like anything else — give it an ID and it takes tags,
-attributes and a script.
+attributes and a script. Writing its properties needs it to be **Dynamic** (see
+above). `@lamp.prop.dynamic` reads which it is, on either kind.
 
 ```
 @lamp.prop.brightness = 0.0

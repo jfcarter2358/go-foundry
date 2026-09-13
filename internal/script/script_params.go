@@ -265,6 +265,9 @@ func ScriptRefTargets(lvl *world.Level) []ScriptRefTarget {
 	for i := range lvl.Sounds {
 		add(lvl.Sounds[i].ID, "sound")
 	}
+	for i := range lvl.Effects {
+		add(lvl.Effects[i].ID, "effect")
+	}
 	for i := range lvl.WaypointAnimations {
 		add(lvl.WaypointAnimations[i].ID, "waypoints")
 	}

@@ -73,6 +73,7 @@ func editorExplorerSection(lvl *world.Level) {
 	editorExplorerSceneryNodes(lvl)
 	editorExplorerEmitterNodes(lvl)
 	editorExplorerSoundNodes(lvl)
+	editorExplorerEffectNodes(lvl)
 	editorExplorerWaypointNodes(lvl)
 	editorExplorerLightNodes(lvl)
 	editorExplorerScriptNodes(lvl)
@@ -605,6 +606,9 @@ func editorExplorerDirLightRows(lvl *world.Level) {
 		if dl.Disabled {
 			label += "  (off)"
 		}
+		if dl.Dynamic {
+			label += "  (dynamic)"
+		}
 		selected := Editor.SelectedLightKind == lightKindDir && Editor.SelectedLightIdx == i
 		if editorExplorerLeaf(label+"##dirlightrow", selected, panelFocusLight) {
 			editorSelectLight(lightKindDir, i)
@@ -654,6 +658,9 @@ func editorExplorerPointLightRows(lvl *world.Level) {
 		label := editorPointLightLabel(pl, i) + "  (point)"
 		if pl.Disabled {
 			label += "  (off)"
+		}
+		if pl.Dynamic {
+			label += "  (dynamic)"
 		}
 		selected := Editor.SelectedLightKind == lightKindPoint && Editor.SelectedLightIdx == i
 		if editorExplorerLeaf(label+"##ptlightrow", selected, panelFocusLight) {
@@ -803,6 +810,10 @@ func editorExplorerAddMenu(lvl *world.Level) {
 	}
 	if imgui.BeginMenu("Sound") {
 		editorSoundAddMenu()
+		imgui.EndMenu()
+	}
+	if imgui.BeginMenu("Effect") {
+		editorEffectAddMenu()
 		imgui.EndMenu()
 	}
 	if imgui.BeginMenu("Waypoint Animation") {
@@ -1195,6 +1206,70 @@ func editorExplorerSoundNodes(lvl *world.Level) {
 	if del >= 0 {
 		editorSelectSound(del)
 		deleteActiveSound()
+	}
+}
+
+// editorExplorerEffectNodes draws the level's placed effects.
+func editorExplorerEffectNodes(lvl *world.Level) {
+	if !editorExplorerCategory(fmt.Sprintf("Effects (%d)##effects", len(lvl.Effects)), panelFocusEffect) {
+		return
+	}
+	defer imgui.TreePop()
+
+	if len(lvl.Effects) == 0 {
+		editorTextMuted("(none)")
+		return
+	}
+	del, dup := -1, -1
+	for i := range lvl.Effects {
+		fx := &lvl.Effects[i]
+		label := fx.ID
+		if label == "" {
+			label = "(unnamed)"
+		}
+		label += "  [" + effectKindLabel(fx.Kind) + "]"
+		if !fx.Enabled {
+			label += "  (off)"
+		} else if !fx.Playing {
+			label += "  (stopped)"
+		}
+		if !fx.Attach.IsZero() {
+			label += "  <" + fx.Attach.Describe() + ">"
+		}
+		if editorExplorerLeaf(fmt.Sprintf("%s##fx%d", label, i), i == Editor.ActiveEffectIdx, panelFocusEffect) {
+			editorSelectEffect(i)
+		}
+		editorExplorerMenu(fmt.Sprintf("fxctx%d", i), func() {
+			if imgui.MenuItem("Detonate") {
+				editorSelectEffect(i)
+				detonateActiveEffect()
+			}
+			enabled := fx.Enabled
+			if imgui.MenuItemV("Enabled", "", enabled, true) {
+				EditorPushUndo()
+				fx.Enabled = !enabled
+			}
+			looping := fx.Loop
+			if imgui.MenuItemV("Loop", "", looping, true) {
+				EditorPushUndo()
+				fx.Loop = !looping
+			}
+			if imgui.MenuItem("Duplicate") {
+				dup = i
+			}
+			imgui.Separator()
+			if imgui.MenuItem("Delete") {
+				del = i
+			}
+		})
+	}
+	if dup >= 0 {
+		editorSelectEffect(dup)
+		duplicateActiveEffect()
+	}
+	if del >= 0 {
+		editorSelectEffect(del)
+		deleteActiveEffect()
 	}
 }
 

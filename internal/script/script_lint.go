@@ -434,7 +434,11 @@ func (l *linter) waypoints(c *flang.CallExpr, verb string) {
 				} else if e.IsVehicle() {
 					l.add(addr.Pos_, "%s would fail: @%s is a vehicle, and its drive model owns its motion", verb, addr.Name)
 				}
-			case flang.RefSprite, flang.RefEmitter, flang.RefSound, flang.RefVolume, flang.RefLight:
+			case flang.RefLight:
+				if d, p := l.cache.lightFor(r); (d != nil && !d.Dynamic) || (p != nil && !p.Dynamic) {
+					l.add(addr.Pos_, "%s would fail: light %q is static; tick Dynamic in its properties panel", verb, addr.Name)
+				}
+			case flang.RefSprite, flang.RefEmitter, flang.RefSound, flang.RefVolume:
 			default:
 				l.add(addr.Pos_, "%s moves %s, and @%s is a %s", verb, waypointFollowerKinds, addr.Name, r.Kind)
 			}
@@ -534,7 +538,11 @@ func (l *linter) assign(a *flang.AssignStmt) {
 		return
 	}
 	inner, ok := target.X.(*flang.MemberExpr)
-	if !ok || inner.Name != "prop" || target.Name != "texture" {
+	if !ok || inner.Name != "prop" {
+		return
+	}
+	l.staticLightWrite(inner.X, target.Name, a.Pos_)
+	if target.Name != "texture" {
 		return
 	}
 	if name, ok := litString(a.Value); ok {
@@ -562,6 +570,26 @@ func (l *linter) assign(a *flang.AssignStmt) {
 	}
 	if why := e.TextureProblem(model); why != "" {
 		l.add(a.Pos_, "writing texture would do nothing: %s", why)
+	}
+}
+
+// staticLightWrite flags a property write on a light, written as a literal,
+// that is not dynamic — a refusal that would otherwise arrive only when the
+// write runs, which for a flickering lamp is whenever its trigger fires.
+func (l *linter) staticLightWrite(base flang.Expr, prop string, pos flang.Pos) {
+	addr, ok := base.(*flang.AddrExpr)
+	if !ok || l.lvl == nil {
+		return
+	}
+	r, ok := l.cache.refFor(addr.Name)
+	if !ok || r.Kind != flang.RefLight {
+		return
+	}
+	if acc, ok := propTables[flang.RefLight][prop]; !ok || acc.Set == nil {
+		return // an unknown or read-only property is someone else's complaint
+	}
+	if d, p := l.cache.lightFor(r); (d != nil && !d.Dynamic) || (p != nil && !p.Dynamic) {
+		l.add(pos, "writing %s would fail: light %q is static; tick Dynamic in its properties panel", prop, addr.Name)
 	}
 }
 
@@ -886,6 +914,9 @@ func (l *linter) levelNames() []string {
 	}
 	for i := range l.lvl.Sounds {
 		out = append(out, l.lvl.Sounds[i].ID)
+	}
+	for i := range l.lvl.Effects {
+		out = append(out, l.lvl.Effects[i].ID)
 	}
 	for i := range l.lvl.WaypointAnimations {
 		out = append(out, l.lvl.WaypointAnimations[i].ID)

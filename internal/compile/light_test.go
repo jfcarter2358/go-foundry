@@ -162,6 +162,43 @@ func TestASwitchedOffLightBakesToNothing(t *testing.T) {
 	}
 }
 
+// A dynamic light is left out of the bake entirely — the shader sums it live on
+// top of the baked value, so baking it in as well would light the walls twice.
+// Checked beside an identical static light, which has to bake, so the test
+// cannot pass by baking nothing at all.
+func TestADynamicLightIsNotBaked(t *testing.T) {
+	light := world.PointLight{
+		Position: mgl32.Vec3{-15, 2, 0}, Color: mgl32.Vec3{1, 1, 1}, Brightness: 1, Radius: 20,
+	}
+	static := litRoom(t, world.LightSet{Points: []world.PointLight{light}})
+	light.Dynamic = true
+	sun := world.DirectionalLight{Yaw: 0, Pitch: -60, Color: mgl32.Vec3{1, 1, 1}, Brightness: 1, Dynamic: true}
+	sun.SyncDirection()
+	dynamic := litRoom(t, world.LightSet{
+		Global:      world.GlobalLight{Color: mgl32.Vec3{1, 1, 1}, Brightness: 0.1},
+		Points:      []world.PointLight{light},
+		Directional: []world.DirectionalLight{sun},
+	})
+
+	lit := false
+	for fi := range static.Faces {
+		for _, l := range static.Faces[fi].Light {
+			lit = lit || l != (mgl32.Vec3{})
+		}
+	}
+	if !lit {
+		t.Fatal("the static light baked to nothing; the test proves nothing")
+	}
+	for fi := range dynamic.Faces {
+		for _, l := range dynamic.Faces[fi].Light {
+			// The ambient, which is always baked, and nothing else.
+			if bsp.Abs(l.X()-0.1) > 1e-5 {
+				t.Fatalf("face %d baked %v with only dynamic lights beside the 0.1 ambient", fi, l)
+			}
+		}
+	}
+}
+
 // Cutting on the world grid rather than on each face's own bounds is what makes
 // two faces meeting at an edge agree about where their vertices are. Cut
 // per-face and the shared edge gets vertices on one side with no counterpart on

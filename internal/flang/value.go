@@ -167,6 +167,9 @@ const (
 	// RefWaypoints is a waypoint animation — a path an object can be sent
 	// along with play_waypoints. Appended for the same reason again.
 	RefWaypoints
+	// RefEffect is a placed procedural effect — an explosion. Appended for the
+	// same reason again.
+	RefEffect
 )
 
 var refKindNames = [...]string{
@@ -176,6 +179,7 @@ var refKindNames = [...]string{
 	RefScreen: "screen", RefWidget: "widget",
 	RefModel:     "model",
 	RefWaypoints: "waypoints",
+	RefEffect:    "effect",
 }
 
 // String renders a ref kind as the atom `ref.kind` yields.

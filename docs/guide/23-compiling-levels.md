@@ -71,7 +71,9 @@ That is where the four passes above are spent —
   `F3`'s overlay shows it as `Compiled: N surfaces / M drawn`; in a level built
   out of rooms M should be a fraction of N.
 - Baked lighting replaces the per-fragment light loop, its cascade selection and
-  its shadow-map samples, for every pixel of static geometry.
+  its shadow-map samples, for every pixel of static geometry — for every
+  *static* light. A light marked **Dynamic** is left out of the bake and still
+  summed per pixel, on top of the baked value (see *Lighting*).
 
 — which means the shipped game is the *faster* of the two, and that the editor
 is the pessimistic case rather than the optimistic one.
@@ -179,7 +181,8 @@ load:
 
 Everything else about a level — entities, volumes, lights, the spawn, scripts,
 UI screens — is carried through unchanged. Only the static geometry is
-transformed.
+transformed. The lights are carried through, but the static ones are also baked
+into it, so moving one means recompiling.
 
 **Prefabs are the exception: they are resolved.** A prefab's link exists so that
 editing one file updates twenty placements, which is an authoring convenience;

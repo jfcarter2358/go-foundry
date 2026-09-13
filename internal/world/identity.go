@@ -314,6 +314,11 @@ func LevelIDTaken(lvl *Level, id string) bool {
 			return true
 		}
 	}
+	for i := range lvl.Effects {
+		if lvl.Effects[i].ID == id {
+			return true
+		}
+	}
 	for i := range lvl.Scenery {
 		if lvl.Scenery[i].ID == id {
 			return true

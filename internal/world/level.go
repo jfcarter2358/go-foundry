@@ -47,6 +47,8 @@ type Level struct {
 	Scenery []Scenery
 	// Sounds are the level's placed sound sources (sound.go).
 	Sounds []Sound
+	// Effects are the level's placed procedural effects (effect.go).
+	Effects []Effect
 	// WaypointAnimations are the level's paths an object can be sent along
 	// (waypoint.go, waypoint_follow.go). Drawn only in the editor.
 	WaypointAnimations []WaypointAnimation

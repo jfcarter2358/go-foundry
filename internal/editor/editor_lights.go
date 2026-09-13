@@ -297,6 +297,9 @@ func editorDirLightProperties(lvl *world.Level) {
 		if editorDragFloat(fmt.Sprintf("Brightness##dir%d", i), &dl.Brightness, 0, 10, "%.2f") {
 			changed = true
 		}
+		if editorLightDynamicCheckbox(fmt.Sprintf("dir%d", i), &dl.Dynamic) {
+			changed = true
+		}
 	})
 
 	editorPropGroupOpen("Aim##dirlightaim", func() {
@@ -332,6 +335,7 @@ func editorDirLightProperties(lvl *world.Level) {
 		}
 	})
 
+	editorStaticLightWaypointsNote(dl.Dynamic)
 	editorObjectWaypointsUI(dl)
 
 	editorScriptDataUI(&dl.ScriptData, fmt.Sprintf("dirlight%d", i), "This light")
@@ -369,6 +373,9 @@ func editorPointLightProperties(lvl *world.Level) {
 		if editorDragFloat(fmt.Sprintf("Radius##pt%d", i), &pl.Radius, 0.1, 200, "%.1f") {
 			changed = true
 		}
+		if editorLightDynamicCheckbox(fmt.Sprintf("pt%d", i), &pl.Dynamic) {
+			changed = true
+		}
 	})
 
 	editorPropGroupOpen("Transform##ptlighttf", func() {
@@ -402,6 +409,7 @@ func editorPointLightProperties(lvl *world.Level) {
 		}
 	})
 
+	editorStaticLightWaypointsNote(pl.Dynamic)
 	editorObjectWaypointsUI(pl)
 
 	editorScriptDataUI(&pl.ScriptData, fmt.Sprintf("ptlight%d", i), "This light")
@@ -409,6 +417,39 @@ func editorPointLightProperties(lvl *world.Level) {
 	if changed {
 		world.UploadLights(lvl.Lights)
 	}
+}
+
+// editorLightDynamicCheckbox draws a light's Dynamic switch, reporting a change.
+// Undo is pushed before the flip, like Enabled, because the checkbox is the
+// whole edit.
+func editorLightDynamicCheckbox(id string, dynamic *bool) bool {
+	on := *dynamic
+	changed := false
+	if imgui.Checkbox("Dynamic##lightdyn"+id, &on) {
+		EditorPushUndo()
+		*dynamic = on
+		changed = true
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A torch carried past, a flickering lamp, a sweeping searchlight:\n" +
+			"a script can change this light, and waypoint animations can move it.\n\n" +
+			"Off (static), the light is baked into the compiled level's walls and\n" +
+			"floors, which is free to draw but frozen as authored. On, it is left\n" +
+			"out of the bake and lit live on everything, every frame, with its\n" +
+			"shadow maps. Uncompiled levels light both kinds live.")
+	}
+	return changed
+}
+
+// editorStaticLightWaypointsNote explains, above the Waypoints group, why a
+// static light's path can be previewed here and never played in game.
+// Only once the level has an animation to pick, which is when the group shows.
+func editorStaticLightWaypointsNote(dynamic bool) {
+	if dynamic || Editor.level == nil || len(Editor.level.WaypointAnimations) == 0 {
+		return
+	}
+	editorTextMutedWrapped("Static: baked into the level, so play_waypoints and script " +
+		"writes refuse this light. Tick Dynamic to change it in game.")
 }
 
 // ---------- selected directional light indicator ----------

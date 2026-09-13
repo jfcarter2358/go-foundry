@@ -46,7 +46,7 @@ and is always current.
 | [Vehicles and frames](12-vehicles-and-frames.md) | Drivable things and walkable interiors |
 | [Volumes](13-volumes.md) | Trigger regions, level exits, fog volumes |
 | [Scenery and the brush](14-scenery-brush.md) | Stamping hundreds of static props |
-| [Sprites and particles](15-sprites-and-particles.md) | Billboards and the particle editor |
+| [Sprites and particles](15-sprites-and-particles.md) | Billboards, the particle editor, and explosion effects |
 | [Audio](16-audio.md) | Placed sounds, music, attenuation, the mixer settings |
 | [UI screens](17-ui-screens.md) | The UI editor, anchors, bindings, themes, video |
 | [Scripting](18-scripting.md) | flang: events, messages, properties, parameters |

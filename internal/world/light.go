@@ -57,6 +57,7 @@ type DirectionalLight struct {
 	CastShadows    bool
 	ShadowStrength float32 // 0.0 = no shadow darkening, 1.0 = fully dark shadows
 	Disabled       bool    // switched off; see GlobalLight.EffectiveBrightness
+	Dynamic        bool    // lit live rather than baked; see the note on PointLight.Dynamic
 
 	// Waypoints is the waypoint animation turning this light, or nil: it
 	// shines the way each arrow points. Runtime-only; see waypoint_follow.go.
@@ -131,6 +132,21 @@ type PointLight struct {
 	CastShadows    bool
 	ShadowStrength float32 // 0.0 = no shadow darkening, 1.0 = fully dark shadows
 	Disabled       bool    // switched off; see GlobalLight.EffectiveBrightness
+
+	// Dynamic marks a light that may change in game — moved, re-aimed, dimmed,
+	// sent along a path. A static light (the zero value, and so every light
+	// authored before the flag existed) is baked into a compiled level's static
+	// geometry by the light bake and never summed per fragment on it again; a
+	// dynamic one is left out of the bake and lit live on everything, the baked
+	// surfaces included, with its shadow maps.
+	//
+	// It is also why a script may only change a dynamic light: a static light's
+	// contribution to the world is frozen into the vertices at compile time, so
+	// changing it would move the light on the props and not on the walls. The
+	// refusal is made in every build, not only a compiled one, so a level that
+	// runs in the editor runs the same once shipped. Same contract as
+	// Brush.Dynamic.
+	Dynamic bool
 
 	// FromPrefab is runtime-only, never serialized: the prefab instance whose
 	// file put this here (prefab.go). Empty for one the level file authored.
@@ -217,6 +233,8 @@ func UploadLightsTo(prog uint32, ls LightSet, verbose bool) {
 		gl.Uniform3f(UniformLoc(colorName), d.Color[0], d.Color[1], d.Color[2])
 		brightnessName := fmt.Sprintf("dirLightBrightness[%d]\x00", i)
 		gl.Uniform1f(UniformLoc(brightnessName), d.EffectiveBrightness())
+		dynName := fmt.Sprintf("dirLightDynamic[%d]\x00", i)
+		gl.Uniform1i(UniformLoc(dynName), boolInt(d.Dynamic))
 	}
 
 	numPoint := len(ls.Points)
@@ -234,9 +252,19 @@ func UploadLightsTo(prog uint32, ls LightSet, verbose bool) {
 		gl.Uniform1f(UniformLoc(brightnessName), p.EffectiveBrightness())
 		radiusName := fmt.Sprintf("pointLightRadius[%d]\x00", i)
 		gl.Uniform1f(UniformLoc(radiusName), p.Radius)
+		dynName := fmt.Sprintf("pointLightDynamic[%d]\x00", i)
+		gl.Uniform1i(UniformLoc(dynName), boolInt(p.Dynamic))
 	}
 
 	if verbose {
 		log.Printf("light uniforms uploaded")
 	}
+}
+
+// boolInt is a bool as the 0/1 a GLSL int uniform takes.
+func boolInt(b bool) int32 {
+	if b {
+		return 1
+	}
+	return 0
 }

@@ -66,6 +66,26 @@ func TestLoadNaNDirLightFallsBackToDefaults(t *testing.T) {
 
 // buildLevelLights converts raw lights through the normal load path (the GPU-free
 // half of rawToLevel).
+// Dynamic survives a save and a load on both kinds, and a light that says
+// nothing about it — every level authored before the flag — loads static.
+func TestSaveLoadPreservesDynamic(t *testing.T) {
+	dl := world.DirectionalLight{Yaw: 10, Pitch: -45, Brightness: 1, Dynamic: true}
+	dl.SyncDirection()
+	ls := world.LightSet{
+		Directional: []world.DirectionalLight{dl, {Yaw: 20, Pitch: -45, Brightness: 1}},
+		Points:      []world.PointLight{{Radius: 5, Dynamic: true}, {Radius: 6}},
+	}
+	lvl := buildLevelLights(t, world.RawLevel{Lights: lightsToRaw(ls, false)})
+	if !lvl.Lights.Directional[0].Dynamic || lvl.Lights.Directional[1].Dynamic {
+		t.Errorf("directional Dynamic round-tripped as %v/%v, want true/false",
+			lvl.Lights.Directional[0].Dynamic, lvl.Lights.Directional[1].Dynamic)
+	}
+	if !lvl.Lights.Points[0].Dynamic || lvl.Lights.Points[1].Dynamic {
+		t.Errorf("point Dynamic round-tripped as %v/%v, want true/false",
+			lvl.Lights.Points[0].Dynamic, lvl.Lights.Points[1].Dynamic)
+	}
+}
+
 func buildLevelLights(t *testing.T, raw world.RawLevel) *world.Level {
 	t.Helper()
 	lvl := &world.Level{Lights: rawToLightSet(raw.Lights)}

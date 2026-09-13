@@ -27,6 +27,7 @@ func init() {
 		flang.RefScreen:  screenProps(),
 		flang.RefWidget:  widgetProps(),
 		flang.RefSound:   soundProps(),
+		flang.RefEffect:  effectProps(),
 		flang.RefModel:   modelProps(),
 	}
 }
@@ -355,8 +356,27 @@ func chunkProps() map[string]propAccess {
 
 // ---------- lights ----------
 
+// lightProps is what a script can ask a light about itself. Every write is
+// gated on the light being dynamic (see staticLightGate), so a property added
+// here is refused on a static light without having to remember to be.
 func lightProps() map[string]propAccess {
-	return map[string]propAccess{
+	props := map[string]propAccess{
+		"dynamic": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					return flang.BoolVal(d.Dynamic), true
+				case p != nil:
+					return flang.BoolVal(p.Dynamic), true
+				}
+				return nil, false
+			},
+			// Read-only: a static light's contribution is already in the
+			// compiled level's vertices, and nothing at run time can take it
+			// back out again.
+			Doc: "read-only: whether this light is lit live and may be changed by a script; a static light is baked into the level",
+		},
 		"color": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 				d, p := c.lightFor(r)
@@ -539,4 +559,35 @@ func lightProps() map[string]propAccess {
 			Doc: "whether this light casts shadows",
 		},
 	}
+	for name, acc := range props {
+		if acc.Set != nil {
+			acc.Set = staticLightGate(name, acc.Set)
+			props[name] = acc
+		}
+	}
+	return props
+}
+
+// staticLightGate refuses set on a light that is not dynamic, and otherwise
+// hands the write on.
+//
+// A static light is baked into a compiled level's static geometry, so a write
+// would change it on the props and entities, which are lit live, and not on
+// the walls and floors, which were lit at compile time. It is refused in every
+// build rather than only a compiled one, so a script that works in the editor
+// cannot stop working in the release. The same refusal a static brush gets.
+func staticLightGate(name string, set func(*refCache, flang.RefVal, flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
+	return func(c *refCache, r flang.RefVal, v flang.Value) error {
+		if d, p := c.lightFor(r); (d != nil && !d.Dynamic) || (p != nil && !p.Dynamic) {
+			return staticLightError(r.String(), "cannot write "+name+" on")
+		}
+		return set(c, r, v)
+	}
+}
+
+// staticLightError is the one wording of the refusal, shared by the property
+// gate, play_waypoints and the linter: what cannot be done to the static light
+// named, and what to do about it.
+func staticLightError(light, what string) error {
+	return fmt.Errorf("%s: %s a static light, whose light is baked into the level; tick Dynamic in its properties panel first", light, what)
 }

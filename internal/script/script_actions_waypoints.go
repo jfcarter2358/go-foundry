@@ -22,7 +22,7 @@ import (
 
 // waypointFollowerKinds is what the waypoint verbs take, in the words their
 // errors use.
-const waypointFollowerKinds = "a dynamic brush, an entity, a sprite, an emitter, a sound, a light or a volume"
+const waypointFollowerKinds = "a dynamic brush, an entity, a sprite, an emitter, a sound, a dynamic light or a volume"
 
 // verbDynamicBrush resolves argument i to a brush a script may move, with the
 // error an author can act on — the same refusal, in the same words, that
@@ -131,6 +131,11 @@ func (rt *ScriptRuntime) verbWaypointFollower(args []flang.Value, i int, name st
 		return e, nil
 	case flang.RefSprite, flang.RefEmitter, flang.RefSound, flang.RefVolume, flang.RefLight:
 		if f := rt.cache.waypointFollowerFor(r); f != nil {
+			// A light must be dynamic, for the reason writing its position
+			// must be: a static one's light is baked where it was authored.
+			if d, p := rt.cache.lightFor(r); (d != nil && !d.Dynamic) || (p != nil && !p.Dynamic) {
+				return nil, staticLightError(r.String(), name+" cannot move")
+			}
 			return f, nil
 		}
 		return nil, &scriptMissingError{r.String()}

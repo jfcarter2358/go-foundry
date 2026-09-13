@@ -1,8 +1,8 @@
 package render
 
 // volumetric.go — the volumetric pass: cloud volumes, the sky's cloud deck,
-// and volume particle layers (fireballs and smoke), ray-marched rather than
-// rasterised.
+// volume particle layers (fireballs and smoke) and explosion effects,
+// ray-marched rather than rasterised.
 //
 // One pass for all three because they are one idea — light scattered by a
 // density field — and one shader marches them (volume_frag.glsl over
@@ -451,6 +451,8 @@ const (
 	volKindCloud int32 = 0
 	volKindBlobs int32 = 1
 	volKindDeck  int32 = 2
+	// volKindExplosion is an explosion effect (world/effect.go).
+	volKindExplosion int32 = 3
 )
 
 // cloudParams is one CloudParams struct, as volume_common.glsl declares it.
@@ -532,6 +534,75 @@ type volumeDraw struct {
 	proxyBasis  mgl32.Mat3
 	proxyCenter mgl32.Vec3
 	look        particle.VolumeLook
+
+	explosion explosionParams
+}
+
+// explosionParams is one explosion draw, as volume_common.glsl's explosion
+// uniforms read it.
+type explosionParams struct {
+	center     mgl32.Vec3
+	radius     float32
+	reach      float32
+	age        float32
+	heat       float32
+	density    float32
+	fade       float32
+	turbulence float32
+	brightness float32
+	seed       float32
+	rotation   mgl32.Mat3 // world -> the explosion's own axes, for its noise
+	fireTint   mgl32.Vec3
+	smoke      mgl32.Vec3
+}
+
+// explosionDraw builds the march for one live explosion effect.
+func explosionDraw(e *world.Effect, lvl *world.Level, camPos mgl32.Vec3) (volumeDraw, bool) {
+	st, ok := e.ExplosionState(lvl)
+	if !ok {
+		return volumeDraw{}, false
+	}
+	x := &e.Explosion
+	reach := x.Reach(st)
+	if reach < 1e-3 {
+		return volumeDraw{}, false
+	}
+	c := st.Center
+	return volumeDraw{
+		kind:       volKindExplosion,
+		depth:      c.Sub(camPos).Len(),
+		proxy:      mgl32.Translate3D(c.X(), c.Y(), c.Z()).Mul4(mgl32.Scale3D(reach, reach, reach)),
+		lightReach: reach * 2,
+		explosion: explosionParams{
+			center: c,
+			radius: st.Radius,
+			reach:  reach,
+			age:    st.Age,
+			heat:   st.Heat,
+			// Thinned partly by density and partly by eating the surface away
+			// (volExpFadeK), so the last smoke breaks up rather than dimming
+			// as a ball.
+			density:    x.Density * (0.35 + 0.65*st.Fade),
+			fade:       st.Fade,
+			turbulence: x.Turbulence,
+			brightness: x.Brightness,
+			// Seeded by ID, so two explosions side by side do not billow alike.
+			seed:     float32(effectSeed(e.ID)%1024) / 1024,
+			rotation: e.WorldRotation(lvl).Transpose(),
+			fireTint: x.FireTint,
+			smoke:    x.SmokeColor,
+		},
+	}, true
+}
+
+// effectSeed is an FNV-1a of an effect's ID.
+func effectSeed(id string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(id); i++ {
+		h ^= uint32(id[i])
+		h *= 16777619
+	}
+	return h
 }
 
 // gatherLevelVolumes collects the frame's draws from a level: the deck, every
@@ -578,6 +649,21 @@ func gatherLevelVolumes(lvl *world.Level, camPos mgl32.Vec3, cull *Frustum) []vo
 		for _, s := range e.Systems {
 			draws = appendBlobDraws(draws, s, camPos)
 		}
+	}
+
+	for i := range lvl.Effects {
+		dr, ok := explosionDraw(&lvl.Effects[i], lvl, camPos)
+		if !ok {
+			continue
+		}
+		if cull != nil {
+			r := dr.explosion.reach
+			ext := mgl32.Vec3{r, r, r}
+			if !AABBInFrustum(*cull, dr.explosion.center.Sub(ext), dr.explosion.center.Add(ext)) {
+				continue
+			}
+		}
+		draws = append(draws, dr)
 	}
 
 	volumes.draws = draws
@@ -717,7 +803,9 @@ func RenderVolumetrics(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3,
 		return
 	}
 	renderVolumeDraws(t, draws, projView, camPos, levelVolumeLighting(lvl), func(prog uint32) {
-		world.UploadLightsTo(prog, lvl.Lights, false)
+		// With the effects' flashes, so an explosion's smoke is lit by its own
+		// fire and by the one that went off beside it.
+		world.UploadLightsTo(prog, world.SceneLights(lvl), false)
 		world.UploadFogTo(prog, lvl.Fog, lvl.Volumes, lvl)
 	})
 }
@@ -833,6 +921,8 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 		if dr.kind == volKindBlobs {
 			uploadBlobs(m, dr)
 			DebugStats.VolumeBlobs += len(dr.blobs)
+		} else if dr.kind == volKindExplosion {
+			uploadExplosion(m, &dr.explosion)
 		} else {
 			uploadCloudParams(m, "volCloud", &dr.cloud)
 		}
@@ -913,6 +1003,22 @@ func uploadBlobs(m *progUniforms, dr *volumeDraw) {
 	gl.Uniform1f(m.U("volBlobAbsorption"), dr.look.Absorption)
 	gl.UniformMatrix3fv(m.U("volProxyBasis"), 1, false, &dr.proxyBasis[0])
 	uniformVec3(m.U("volProxyCenter"), dr.proxyCenter)
+}
+
+func uploadExplosion(m *progUniforms, x *explosionParams) {
+	uniformVec3(m.U("volExpCenter"), x.center)
+	gl.Uniform1f(m.U("volExpRadius"), x.radius)
+	gl.Uniform1f(m.U("volExpReach"), x.reach)
+	gl.Uniform1f(m.U("volExpAge"), x.age)
+	gl.Uniform1f(m.U("volExpHeat"), x.heat)
+	gl.Uniform1f(m.U("volExpDensity"), x.density)
+	gl.Uniform1f(m.U("volExpFadeK"), x.fade)
+	gl.Uniform1f(m.U("volExpTurbulence"), x.turbulence)
+	gl.Uniform1f(m.U("volExpBrightness"), x.brightness)
+	gl.Uniform1f(m.U("volExpSeed"), x.seed)
+	gl.UniformMatrix3fv(m.U("volExpRotation"), 1, false, &x.rotation[0])
+	uniformVec3(m.U("volExpFireTint"), x.fireTint)
+	uniformVec3(m.U("volExpSmoke"), x.smoke)
 }
 
 // uploadCloudParams writes one CloudParams struct, under prefix ("volCloud",

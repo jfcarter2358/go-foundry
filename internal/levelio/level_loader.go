@@ -180,6 +180,7 @@ func rawToLightSet(rl world.RawLights) world.LightSet {
 			CastShadows:    rd.CastShadows,
 			ShadowStrength: ss,
 			Disabled:       rd.Disabled,
+			Dynamic:        rd.Dynamic,
 		}
 		// Angles are authoritative when present; otherwise derive them from the
 		// direction vector, which is all pre-rotation levels stored.
@@ -225,6 +226,7 @@ func PointLightFromRaw(rp world.RawPointLight) world.PointLight {
 		CastShadows:    rp.CastShadows,
 		ShadowStrength: ss,
 		Disabled:       rp.Disabled,
+		Dynamic:        rp.Dynamic,
 	}
 }
 
@@ -473,6 +475,18 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 			}
 		}
 		level.Sounds = append(level.Sounds, sd)
+	}
+
+	// Effects: placed procedural effects, with the same ID guarantee. Nothing
+	// to preload — an explosion is drawn from its parameters and the noise
+	// volumes the volumetric pass already owns.
+	for _, re := range raw.Effects {
+		fx, err := world.EffectFromRaw(re)
+		if err != nil {
+			return err
+		}
+		fx.ID = world.UniqueEffectID(level, fx.ID)
+		level.Effects = append(level.Effects, fx)
 	}
 
 	// Waypoint animations: paths a dynamic brush can be sent along, with the

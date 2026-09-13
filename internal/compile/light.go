@@ -33,6 +33,14 @@ package compile
 // differently is the shadow, which is a ray through the BSP rather than a
 // sampled shadow map, and is therefore sharper than the live version rather
 // than softer.
+//
+// # Only the static lights
+//
+// A light marked Dynamic is skipped here entirely. It is the one a script
+// moves, dims or sends along a path, and a value frozen into the vertices
+// cannot follow it — so fragment.glsl sums it live on top of the baked answer
+// instead, shadow maps and all. The global ambient has no such switch and is
+// always baked.
 
 import (
 	"github.com/go-gl/mathgl/mgl32"
@@ -128,8 +136,9 @@ type baker struct {
 	seal *world.Seal
 }
 
-// sample is fragment.glsl's lighting loop, for one point on a surface. hull is
-// the surface's Face.hull, nil unless it is detail.
+// sample is fragment.glsl's lighting loop, for one point on a surface, over the
+// static lights only (see the file comment). hull is the surface's Face.hull,
+// nil unless it is detail.
 func (b *baker) sample(p, n mgl32.Vec3, hull []bsp.Plane) mgl32.Vec3 {
 	g := b.lights.Global
 	out := g.Color.Mul(g.EffectiveBrightness())
@@ -138,7 +147,7 @@ func (b *baker) sample(p, n mgl32.Vec3, hull []bsp.Plane) mgl32.Vec3 {
 	for i := range b.lights.Directional {
 		dl := &b.lights.Directional[i]
 		bright := dl.EffectiveBrightness()
-		if bright <= 0 {
+		if bright <= 0 || dl.Dynamic {
 			continue
 		}
 		d := dl.Direction
@@ -161,7 +170,7 @@ func (b *baker) sample(p, n mgl32.Vec3, hull []bsp.Plane) mgl32.Vec3 {
 	for i := range b.lights.Points {
 		pl := &b.lights.Points[i]
 		bright := pl.EffectiveBrightness()
-		if bright <= 0 || pl.Radius <= 0 {
+		if bright <= 0 || pl.Radius <= 0 || pl.Dynamic {
 			continue
 		}
 		toLight := pl.Position.Sub(p)

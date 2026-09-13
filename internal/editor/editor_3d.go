@@ -313,6 +313,13 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	if Editor.EffectPlacementMode {
+		// Lifted by placeEffectAt, so an explosion clicked onto the floor goes
+		// off on it rather than half inside it.
+		placeEffectAt(editor3DPointAt(t.X, t.Y))
+		return
+	}
+
 	if Editor.PrefabPlacementMode {
 		// On the ground where the click landed, not lifted like a volume: a
 		// prefab is authored with its origin at the bottom of its own bounds
@@ -485,6 +492,9 @@ func editor3DSelectNonBrushHit(hit pickHit) {
 
 	case pickSound:
 		editorSelectSound(hit.idx)
+
+	case pickEffect:
+		editorSelectEffect(hit.idx)
 
 	case pickWaypoint:
 		// One point, not the whole path: it is the arrow that was clicked,

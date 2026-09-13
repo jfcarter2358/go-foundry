@@ -44,6 +44,7 @@ const (
 	panelFocusSprite   = "sprite"
 	panelFocusEmitter  = "emitter"
 	panelFocusSound    = "sound"
+	panelFocusEffect   = "effect"
 	panelFocusChunk    = "chunk"
 	panelFocusLight    = "light"
 	panelFocusScenery  = "scenery"
@@ -69,6 +70,7 @@ const (
 	pickSprite    pickKind = "sprite"
 	pickEmitter   pickKind = "emitter"
 	pickSound     pickKind = "sound"
+	pickEffect    pickKind = "effect"
 	pickLight     pickKind = "light"
 	pickScenery   pickKind = "scenery"
 	pickWaypoint  pickKind = "waypoint"
@@ -320,6 +322,14 @@ func pick3D(sx, sy int32) pickHit {
 	for si := range lvl.Sounds {
 		if t := pickSoundRayT(origin, dir, lvl, &lvl.Sounds[si], ws().camPos()); t < float32(math.MaxFloat32) {
 			hit.consider(t, pickSound, -1, si)
+		}
+	}
+
+	// Effects, against their marker disc: the fireball is there for a second
+	// at a time, and is not what an author means to grab anyway.
+	for fi := range lvl.Effects {
+		if t := pickEffectRayT(origin, dir, lvl, &lvl.Effects[fi], ws().camPos()); t < float32(math.MaxFloat32) {
+			hit.consider(t, pickEffect, -1, fi)
 		}
 	}
 
@@ -803,6 +813,7 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	DrawBrushPlaceGhost()
 	RenderEmitterMarkers(ws().level, ws().camPos())
 	RenderSoundMarkers(ws().level, ws().camPos())
+	RenderEffectMarkers(ws().level, ws().camPos())
 	// The level's own paths only: the entity editor's scratch level has none,
 	// and the waypoint selection indexes the main window's level.
 	if ws().level == Editor.level {

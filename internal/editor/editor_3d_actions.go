@@ -43,6 +43,7 @@ const (
 	sel3DScenery
 	sel3DEmitter
 	sel3DSound
+	sel3DEffect
 	sel3DWaypoint // one point of a waypoint animation, or the animation whole
 )
 
@@ -68,6 +69,8 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DEmitter
 	case activeSound() != nil:
 		return sel3DSound
+	case activeEffect() != nil:
+		return sel3DEffect
 	case activeWaypointAnimation() != nil:
 		return sel3DWaypoint
 	case len(Editor.SelectedVertices) > 0:
@@ -134,6 +137,10 @@ func editor3DSelectionSummary() string {
 			return fmt.Sprintf("Sound %s (no clip)", sd.ID)
 		}
 		return fmt.Sprintf("Sound %s (%s)", sd.ID, sd.Clip)
+
+	case sel3DEffect:
+		fx := activeEffect()
+		return fmt.Sprintf("Effect %s (%s)", fx.ID, fx.Kind)
 
 	case sel3DWaypoint:
 		a := activeWaypointAnimation()
@@ -484,7 +491,7 @@ func activeBrushIndices() (chunkIdx, brushIdx int) {
 func editor3DCanSnap() bool {
 	switch editor3DSelection() {
 	case sel3DVertices, sel3DBrush, sel3DSpawn, sel3DEntity, sel3DVolume,
-		sel3DPrefab, sel3DSprite, sel3DScenery, sel3DEmitter, sel3DSound, sel3DWaypoint:
+		sel3DPrefab, sel3DSprite, sel3DScenery, sel3DEmitter, sel3DSound, sel3DEffect, sel3DWaypoint:
 		return Editor.StepSize > 0
 	}
 	return false
@@ -578,6 +585,12 @@ func editor3DSnapSelectionToGrid() {
 		EditorPushUndo()
 		sd.Position = snapVec3(sd.Position, step)
 		editorSetStatus("Snapped sound %q to the grid", sd.ID)
+
+	case sel3DEffect:
+		fx := activeEffect()
+		EditorPushUndo()
+		fx.Position = snapVec3(fx.Position, step)
+		editorSetStatus("Snapped effect %q to the grid", fx.ID)
 
 	case sel3DWaypoint:
 		// The position only, on the scenery rule: rounding a point's scale

@@ -70,6 +70,11 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 		if em := activeGizmoEmitter(); em != nil {
 			return em.Position, true
 		}
+	case gizmoKindEffect:
+		// Scaling an explosion resizes its fireball (applyScaleToSelection).
+		if fx := activeGizmoEffect(); fx != nil {
+			return fx.Position, true
+		}
 	case gizmoKindSound:
 		// Offered on the same terms and for the same reason: a sound's reach
 		// is its two distances, which are numbers in the panel.
@@ -278,6 +283,19 @@ func applyScaleToSelection(origin, factors mgl32.Vec3) {
 		h := Editor.GizmoDragStartScale
 		sp.Width = world.EntityScaleClamp(h.X() * factors.X())
 		sp.Height = world.EntityScaleClamp(h.Y() * factors.Y())
+		return
+	}
+	if fx := activeGizmoEffect(); fx != nil {
+		// One radius, so whichever handle is dragged drives it: the factor
+		// that moved furthest from 1, which on an axis handle is that axis and
+		// on the uniform one is all three alike.
+		f := factors.X()
+		for _, c := range []float32{factors.Y(), factors.Z()} {
+			if absF32(c-1) > absF32(f-1) {
+				f = c
+			}
+		}
+		fx.Explosion.Radius = world.EntityScaleClamp(Editor.GizmoDragStartScale.X() * f)
 		return
 	}
 	if ch := activeGizmoChunk(); ch != nil {

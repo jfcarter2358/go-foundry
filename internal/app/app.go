@@ -617,7 +617,7 @@ func Run() {
 			// stands, so a light on a path is uploaded again. Quietly: the
 			// verbose upload logs a line, and this is every frame.
 			if world.AdvanceWaypointFollowers(&level, platform.DeltaTime) {
-				world.UploadLightsTo(gfx.Program, level.Lights, false)
+				world.UploadLightsTo(gfx.Program, world.SceneLights(&level), false)
 			}
 		}
 
@@ -630,6 +630,16 @@ func Run() {
 		// gate is handed over anyway so the simulation can tell play from
 		// authoring if it ever needs to.
 		world.EmitterUpdate(&level, platform.DeltaTime, !devActive() && !gamePaused)
+
+		// Effects, in the emitters' slot and ungated by the editor for their
+		// reason, but stopped by a pause: an explosion is a moment, and one
+		// that carried on behind a pause menu would be over by the time play
+		// resumed. Its flash is a light, and lights are uniforms, so while one
+		// is lit — and once more when the last goes out — the scene's lights
+		// go up again with the flashes in them.
+		if world.EffectUpdate(&level, platform.DeltaTime, !gamePaused) {
+			world.UploadLightsTo(gfx.Program, world.SceneLights(&level), false)
+		}
 
 		// The listener, published in the same slot and for the same reasons
 		// as the emitters above: after RefreshFrames, so anything riding a
@@ -777,7 +787,10 @@ func Run() {
 			render.RenderCloudShadowMap(&level, gfx.Cam.Position)
 			render.UploadShadowUniforms(level.Lights, shadowFrame)
 			render.RenderPointShadowPass(level.Lights, &level)
-			render.UploadPointShadowUniforms(level.Lights)
+			// The scene's lights rather than the level's, so the shadow flags
+			// at an effect flash's index are written (off) rather than left at
+			// whatever a light that once had that slot set them to.
+			render.UploadPointShadowUniforms(world.SceneLights(&level))
 
 			// --- Render ---
 			// What is behind everything: the sky's own horizon, the fog colour

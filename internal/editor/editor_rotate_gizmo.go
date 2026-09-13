@@ -144,6 +144,10 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 		if em := activeGizmoEmitter(); em != nil {
 			return em.Position, true
 		}
+	case gizmoKindEffect:
+		if fx := activeGizmoEffect(); fx != nil {
+			return fx.Position, true
+		}
 	case gizmoKindSound:
 		if sd := activeGizmoSound(); sd != nil {
 			return sd.Position, true
@@ -261,6 +265,12 @@ func applyRotationToSelection(axis, origin mgl32.Vec3, delta float32) {
 		// An emitter's rotation aims its emission shape, which is the whole
 		// reason the rotate gizmo is offered on something with no visible body.
 		em.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
+		return
+	}
+	if fx := activeGizmoEffect(); fx != nil {
+		// Turns the fireball's noise, which is what tells two placements of
+		// the same explosion apart.
+		fx.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
 		return
 	}
 	if sd := activeGizmoSound(); sd != nil {

@@ -37,6 +37,7 @@ const (
 	gizmoKindSprite   = "sprite"
 	gizmoKindEmitter  = "emitter"
 	gizmoKindSound    = "sound"
+	gizmoKindEffect   = "effect"
 	gizmoKindScenery  = "scenery"
 	gizmoKindLight    = "light"
 	gizmoKindPrefab   = "prefab"
@@ -120,6 +121,11 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 			// the panel shows and the level file stores, so an attached sound
 			// is dragged in its carrier's space.
 			return sd.Position, true
+		}
+
+	case gizmoKindEffect:
+		if fx := activeGizmoEffect(); fx != nil {
+			return fx.Position, true
 		}
 
 	case gizmoKindSprite:
@@ -406,6 +412,20 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindEffect:
+		fx := activeGizmoEffect()
+		if fx == nil {
+			return false
+		}
+		// The snapshot holds the radius rather than a scale, the sprite's
+		// arrangement: scaling an explosion resizes the fireball itself.
+		r := fx.Explosion.Radius
+		Editor.GizmoDragStartPos = fx.Position
+		Editor.GizmoDragStartRot = fx.Rotation
+		Editor.GizmoDragStartScale = mgl32.Vec3{r, r, r}
+		EditorPushUndo()
+		return true
+
 	case gizmoKindWaypoint:
 		wp := activeGizmoWaypoint()
 		if wp == nil {
@@ -569,6 +589,10 @@ func translateGizmoMouseMove(mx, my int32) {
 	case gizmoKindSound:
 		if sd := activeGizmoSound(); sd != nil {
 			sd.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
+		}
+	case gizmoKindEffect:
+		if fx := activeGizmoEffect(); fx != nil {
+			fx.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindWaypoint:
 		if wp := activeGizmoWaypoint(); wp != nil {

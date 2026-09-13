@@ -441,6 +441,7 @@ type RawDirLight struct {
 	CastShadows    bool     `yaml:"cast_shadows"`
 	ShadowStrength float32  `yaml:"shadow_strength"`
 	Disabled       bool     `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
+	Dynamic        bool     `yaml:"dynamic,omitempty"`  // lit live, not baked; see PointLight.Dynamic
 }
 
 // RawPointLight is the YAML representation of a point light.
@@ -458,6 +459,7 @@ type RawPointLight struct {
 	CastShadows    bool     `yaml:"cast_shadows"`
 	ShadowStrength float32  `yaml:"shadow_strength"`
 	Disabled       bool     `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
+	Dynamic        bool     `yaml:"dynamic,omitempty"`  // lit live, not baked; see PointLight.Dynamic
 }
 
 // RawLights holds all light definitions from YAML.
@@ -514,6 +516,45 @@ type RawSound struct {
 	ConeOuterGain float32 `yaml:"cone_outer_gain,omitempty"`
 
 	Attach *RawAttach `yaml:"attach,omitempty"`
+}
+
+// RawEffect is a placed procedural effect (effect.go).
+//
+// Kind is a name, on this file's rule. The kind's parameters sit in a block
+// named for it, so a second kind adds a sibling block rather than
+// reinterpreting the first's keys, and a level that never changed a parameter
+// writes no block at all.
+type RawEffect struct {
+	ID            string `yaml:"id"`
+	RawScriptData `yaml:",inline"`
+	Kind          string  `yaml:"kind"`
+	Position      RawVec3 `yaml:"position"`
+	Rotation      RawVec3 `yaml:"rotation,omitempty"`
+
+	Enabled   *bool    `yaml:"enabled,omitempty"`    // default true when absent
+	Playing   *bool    `yaml:"playing,omitempty"`    // default true when absent
+	Loop      *bool    `yaml:"loop,omitempty"`       // default true when absent
+	LoopDelay *float32 `yaml:"loop_delay,omitempty"` // default 1
+
+	Explosion *RawExplosion `yaml:"explosion,omitempty"`
+
+	Attach *RawAttach `yaml:"attach,omitempty"`
+}
+
+// RawExplosion is the explosion kind's parameters. Every key is a pointer, so
+// an absent one takes world.DefaultExplosion's value rather than zero.
+type RawExplosion struct {
+	Radius          *float32  `yaml:"radius,omitempty"`
+	Duration        *float32  `yaml:"duration,omitempty"`
+	Brightness      *float32  `yaml:"brightness,omitempty"`
+	FireTint        *RawColor `yaml:"fire_tint,omitempty"`
+	SmokeColor      *RawColor `yaml:"smoke_color,omitempty"`
+	Density         *float32  `yaml:"density,omitempty"`
+	Turbulence      *float32  `yaml:"turbulence,omitempty"`
+	Rise            *float32  `yaml:"rise,omitempty"`
+	LightColor      *RawColor `yaml:"light_color,omitempty"`
+	LightBrightness *float32  `yaml:"light_brightness,omitempty"`
+	LightRadius     *float32  `yaml:"light_radius,omitempty"`
 }
 
 // RawWaypointAnimation is a path a dynamic brush can be sent along
@@ -598,6 +639,9 @@ type RawLevel struct {
 	// Sounds are the level's placed sound sources (sound.go), beside emitters
 	// for the same reasons — one attached to a moving entity crosses chunks.
 	Sounds []RawSound `yaml:"sounds,omitempty"`
+	// Effects are the level's placed procedural effects (effect.go) —
+	// explosions — beside sounds and emitters for the same reasons.
+	Effects []RawEffect `yaml:"effects,omitempty"`
 	// WaypointAnimations are the level's paths a dynamic brush can be sent
 	// along (waypoint.go). Level-scoped and world-space for the volumes'
 	// reason: a path crosses whatever chunks it likes.

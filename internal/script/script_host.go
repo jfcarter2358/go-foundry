@@ -461,6 +461,10 @@ func (h *levelHost) refPosition(r flang.RefVal) (mgl32.Vec3, bool) {
 		if sd := c.soundFor(r); sd != nil {
 			return sd.WorldPosition(h.lvl()), true
 		}
+	case flang.RefEffect:
+		if fx := c.effectFor(r); fx != nil {
+			return fx.WorldPosition(h.lvl()), true
+		}
 	case flang.RefBrush:
 		if ch, b := c.brushOwnerFor(r); b != nil {
 			// A brush's verts are chunk-local; every other arm of this switch

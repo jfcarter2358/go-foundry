@@ -677,10 +677,10 @@ func uploadSpriteInstances(insts []SpriteInstance) {
 // biome_light.glsl declares fragment.glsl's own uniform names, so there is no
 // sprite-specific light path to keep in step with the main shader's.
 func uploadSpriteLighting(prog uint32, lvl *world.Level, frame ShadowFrame) {
-	world.UploadLightsTo(prog, lvl.Lights, false)
+	world.UploadLightsTo(prog, world.SceneLights(lvl), false)
 	world.UploadFogTo(prog, lvl.Fog, lvl.Volumes, lvl)
 	UploadShadowUniformsTo(prog, lvl.Lights, frame)
-	UploadPointShadowUniformsTo(prog, lvl.Lights)
+	UploadPointShadowUniformsTo(prog, world.SceneLights(lvl))
 
 	gl.UseProgram(prog)
 	cam := gfx.Cam.Matrix

@@ -69,6 +69,9 @@ func CompletionRefs(lvl *world.Level) []CompletionRef {
 		for i := range lvl.Sounds {
 			add(lvl.Sounds[i].ID, flang.RefSound)
 		}
+		for i := range lvl.Effects {
+			add(lvl.Effects[i].ID, flang.RefEffect)
+		}
 		for i := range lvl.WaypointAnimations {
 			add(lvl.WaypointAnimations[i].ID, flang.RefWaypoints)
 		}

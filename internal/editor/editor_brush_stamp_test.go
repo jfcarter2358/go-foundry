@@ -133,6 +133,7 @@ func TestArmingBrushStampDisarmsEverythingElse(t *testing.T) {
 	Editor.SpritePlacementMode = true
 	Editor.EmitterPlacementMode = true
 	Editor.SoundPlacementMode = true
+	Editor.EffectPlacementMode = true
 	Editor.SpawnPlacementMode = true
 	Editor.BrushActive = true
 
@@ -145,6 +146,7 @@ func TestArmingBrushStampDisarmsEverythingElse(t *testing.T) {
 		"sprite":  Editor.SpritePlacementMode,
 		"emitter": Editor.EmitterPlacementMode,
 		"sound":   Editor.SoundPlacementMode,
+		"effect":  Editor.EffectPlacementMode,
 		"spawn":   Editor.SpawnPlacementMode,
 		"scenery": Editor.BrushActive,
 	} {

@@ -46,6 +46,7 @@ func editorClearLevelObjectSelections() {
 	editorClearSpriteSelection()
 	editorClearEmitterSelection()
 	editorClearSoundSelection()
+	editorClearEffectSelection()
 	editorClearWaypointSelection()
 	editorClearScenerySelection()
 	editorClearPrefabSelection()

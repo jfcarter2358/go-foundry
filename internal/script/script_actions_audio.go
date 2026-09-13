@@ -22,7 +22,8 @@ import (
 )
 
 // verbSound resolves argument i to a placed sound, with the error a script
-// author can act on.
+// author can act on. play and stop take an effect too; they ask verbEffectArg
+// first.
 func (rt *ScriptRuntime) verbSound(args []flang.Value, i int, name string) (*world.Sound, error) {
 	if i >= len(args) {
 		return nil, fmt.Errorf("%s needs a sound", name)
@@ -74,6 +75,14 @@ func optionalGain(args []flang.Value, i int) float32 {
 // own map so the audio surface can be read in one place.
 var audioVerbs = map[string]scriptVerb{
 	"play": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if fx, ok, err := rt.verbEffectArg(args, 0, "play"); ok {
+			if err != nil {
+				return nil, err
+			}
+			rt.markDirty()
+			fx.Detonate()
+			return flang.NullVal{}, nil
+		}
 		s, err := rt.verbSound(args, 0, "play")
 		if err != nil {
 			return nil, err
@@ -87,6 +96,14 @@ var audioVerbs = map[string]scriptVerb{
 	},
 
 	"stop": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if fx, ok, err := rt.verbEffectArg(args, 0, "stop"); ok {
+			if err != nil {
+				return nil, err
+			}
+			rt.markDirty()
+			fx.Playing = false
+			return flang.NullVal{}, nil
+		}
 		s, err := rt.verbSound(args, 0, "stop")
 		if err != nil {
 			return nil, err

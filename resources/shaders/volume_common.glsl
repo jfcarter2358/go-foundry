@@ -231,6 +231,127 @@ float blobDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
     return sum;
 }
 
+// ---------- explosions ----------
+
+// One explosion effect (world/effect.go). Its timeline — how big, how hot, how
+// thinned out — is solved on the CPU by Explosion.StateAt, so the fireball and
+// the flash it lights the level with come from one answer.
+uniform vec3  volExpCenter;
+uniform float volExpRadius;      // the surface before noise displacement
+uniform float volExpReach;       // the furthest the noise can push it
+uniform float volExpAge;         // 0 at detonation, 1 at the last smoke
+uniform float volExpHeat;        // 1 white-hot, 0 cooled to smoke
+uniform float volExpDensity;     // extinction per world unit, already faded
+uniform float volExpFadeK;       // 1 while the smoke is full, 0 once it has gone
+uniform float volExpTurbulence;  // displacement, fraction of the radius
+uniform float volExpBrightness;  // multiplier on the fire's glow
+uniform float volExpSeed;
+uniform mat3  volExpRotation;    // world -> the explosion's own axes
+uniform vec3  volExpFireTint;
+uniform vec3  volExpSmoke;       // the smoke's albedo
+
+// How many repeats of the shape noise fit across one radius. Sized to the
+// ball, not to the world, so the billows grow as it does.
+#define VOL_EXP_NOISE 0.42
+
+float volExpFade() { return clamp(volExpFadeK, 0.0, 1.0); }
+
+// explosionFireRamp is a blackbody-ish colour for a temperature in 0..1:
+// nothing, a sullen red, orange, yellow, and white at the heart of the flash.
+// Stops chosen for a display with no tone mapping, where a colour pushed past
+// 1 clips toward yellow rather than toward white.
+vec3 explosionFireRamp(float x) {
+    vec3 c = mix(vec3(0.0), vec3(0.42, 0.035, 0.01), smoothstep(0.0, 0.2, x));
+    c = mix(c, vec3(1.0, 0.26, 0.03), smoothstep(0.15, 0.45, x));
+    c = mix(c, vec3(1.0, 0.66, 0.16), smoothstep(0.4, 0.75, x));
+    c = mix(c, vec3(1.0, 0.95, 0.82), smoothstep(0.72, 1.0, x));
+    return c;
+}
+
+// explosionDensity is the explosion's extinction at p, adding its emitted
+// light into glow the way blobDensity does.
+float explosionDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
+    vec3 off = p - volExpCenter;
+    float dd = dot(off, off);
+    if (dd >= volExpReach * volExpReach || volExpDensity <= 0.0) {
+        return 0.0;
+    }
+    float r = max(volExpRadius, 1e-3);
+    float dist = sqrt(dd);
+    float dn = dist / r;
+
+    // Noise in the ball's own normalised space: the billows scale with the
+    // fireball, which is what makes the whole thing read as radiating outward
+    // rather than as a sphere swelling behind a fixed pattern. On top of that
+    // the pattern's scale shrinks as it ages, so each billow drifts outward
+    // through the ball faster than the ball itself grows — the churn of a
+    // blast front turning over on itself — and the whole pattern sinks a
+    // little, so the lobes appear to boil upward.
+    //
+    // Deliberately a scale and not an offset along the radius: offsetting
+    // every point by the same distance outward makes every radial line pass
+    // through the same noise coordinate at one radius, which draws a crisp,
+    // perfectly uniform shell there.
+    vec3 q = volExpRotation * (off / r);
+    float k = VOL_EXP_NOISE / (1.0 + volExpAge * 0.9);
+    vec3 uvw = q * k
+             + vec3(volExpSeed * 37.1, volExpSeed * 11.3 + volExpAge * 0.35, volExpSeed * 23.7);
+    float freq = k / r;
+    vec2 n = textureLod(volNoiseShape, uvw, volNoiseLod(footprint, freq, VOL_SHAPE_TEXELS)).rg;
+    float n2 = textureLod(volNoiseShape, uvw * 2.1 + 0.37,
+                          volNoiseLod(footprint, freq * 2.1, VOL_SHAPE_TEXELS)).r;
+    // Two octaves — big cauliflower lobes with smaller ones riding on them —
+    // stretched over where their sum actually lies. It sits in a narrow band
+    // (5th to 95th percentile about 0.40 to 0.70, median 0.56, measured off
+    // noise3d.Shape), and a remap wider than that band leaves the ball a solid
+    // sphere with lumps stuck on rather than a surface carved in and out.
+    float billow = clamp(volRemap(n.r * 0.65 + n.g * 0.15 + n2 * 0.2, 0.42, 0.68), 0.0, 1.0);
+
+    // As the smoke thins it is eaten from the outside in rather than dimmed
+    // evenly, so the last of it breaks into lobes and wisps instead of fading
+    // as a ball.
+    float thin = 1.0 - volExpFade();
+    // Pushed out by the crests further than it is carved in by the troughs,
+    // so the lobes stand proud of a ball rather than holes being bored
+    // through one; and while the smoke is still full its heart stays filled,
+    // so a young fireball is never see-through.
+    float disp = (billow - 0.5) * 2.0 * volExpTurbulence;
+    disp *= (disp < 0.0) ? 0.5 : 1.0;
+    float surface = 1.0 - dn + disp - thin * (1.4 - billow * 1.2);
+    surface = max(surface, (0.65 - dn) * (1.0 - thin * 1.6));
+    float d = smoothstep(0.0, 0.2, surface);
+    if (d <= 0.0) {
+        return 0.0;
+    }
+    // Once the front has got away from it the heart thins out, so the late
+    // ball is a churning shell of smoke rather than a solid one.
+    float hollow = smoothstep(0.1, 0.55, volExpAge) * 0.6;
+    d *= 1.0 - hollow * (1.0 - smoothstep(0.15, 0.8, dn + (billow - 0.5) * 0.6));
+
+    float det = 0.5;
+    if (detail) {
+        det = textureLod(volNoiseDetail, uvw * 2.2,
+                         volNoiseLod(footprint, freq * 2.2, VOL_DETAIL_TEXELS)).r;
+        // Eroded at the thin edge, as a cloud's is: wisps off the rim, a solid
+        // core.
+        d = clamp(volRemap(d, det * 0.5 * (1.0 - d), 1.0), 0.0, 1.0);
+    }
+    float sigma = d * volExpDensity;
+    if (sigma <= 0.0) {
+        return 0.0;
+    }
+
+    // Hottest at the heart and in the billows' crests, cooler out at the rim
+    // where it meets the air, and broken up by soot: the fine noise carves
+    // dark streaks through the fire. As the heat falls the rim and the soot go
+    // dark first, and the fire is last seen glowing deep in the folds.
+    float soot = smoothstep(0.3, 0.7, det);
+    float temp = volExpHeat * (1.45 - 1.05 * dn) * mix(0.3, 1.3, billow) * mix(0.35, 1.2, soot);
+    temp = clamp(temp, 0.0, 1.0);
+    glow += explosionFireRamp(temp) * volExpFireTint * volExpBrightness * sigma;
+    return sigma;
+}
+
 // ---------- light ----------
 
 // The sun, and the sky light filling the shadowed side, resolved on the CPU

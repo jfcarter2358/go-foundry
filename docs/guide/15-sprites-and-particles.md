@@ -200,3 +200,55 @@ end
 
 Naming an effect with no matching `.fpar` is reported before the script runs,
 with a "did you mean".
+
+## Effects: explosions
+
+An **effect** is spectacle the engine draws by itself from a handful of
+numbers, rather than from a `.fpar` document. The first kind is an
+**explosion**: a ray-marched fireball that radiates outward, cools from a white
+flash through orange and red into sooty smoke, tears apart as the smoke thins,
+and lights the level with a flash while it burns.
+
+Place one from the Explorer's **Add → Effect → Explosion**, then click. Its centre
+lands half its radius above the surface you clicked, selected, going off on a
+loop so you can size it by eye. The selected explosion's full radius is outlined in the
+viewport; the move, rotate and scale gizmos all work on it, and scaling resizes
+the fireball.
+
+| Panel group | Fields |
+|---|---|
+| Identity | ID, Enabled, Playing (goes off when the level starts), Loop, Loop delay |
+| Explosion | Radius, Duration, Brightness, Fire tint, Smoke colour, Density, Turbulence, Rise |
+| Light | Colour, Brightness (the flash's peak; 0 lights nothing), Radius |
+| Actions | **Detonate** (set it off now), Duplicate, Delete |
+
+The flash is a dynamic point light that takes one of the level's eight point
+light slots while it is lit — only a slot the level's own point lights left free,
+so a level already holding eight gets fireballs that light nothing. It never
+casts shadows. Rotation turns the billows, so two explosions side by side don't
+look alike. Effects live under `effects:` in the level file.
+
+An explosion drawn by the volumetric pass follows its quality setting (F4): with
+volumetrics off, the flash still lights the level but the fireball is not drawn.
+
+### From a script
+
+For one a script sets off, untick **Playing** and **Loop**, then:
+
+```
+play(@boom)                   -- set it off from the start
+stop(@boom)                   -- stop it where it is; it vanishes
+@boom.prop.radius = 8.0       -- radius, duration, brightness, density,
+                              -- turbulence, rise, light_brightness, light_radius
+@boom.prop.live               -- whether it is burning right now (read-only)
+```
+
+`explode` is `spawn_effect`'s twin for explosions no level placed: it sets one
+off at a point or at an object's position, optionally with its own radius, and
+the effect removes itself when the smoke has cleared.
+
+```
+def on_collide(:collide:, other ref, at vec) -> null
+    explode(at, 3.0)
+end
+```
