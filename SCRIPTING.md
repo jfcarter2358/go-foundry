@@ -509,7 +509,7 @@ editor's reference panel. The core surface:
 
 | Object | Properties |
 | --- | --- |
-| entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · read-only: `type` `current_sector` `current_chunk` `frame` `seat` `waypoints` |
+| entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · `sprinting` (player) · read-only: `eye_position` `look_direction` `crouching` `type` `current_sector` `current_chunk` `frame` `local_position` `seat` `waypoints` |
 | model | `texture` `visible` `alpha` `offset` `rotation` `scale` · read-only: `path` |
 | vehicle | `vehicle_throttle` `vehicle_steer` `vehicle_pitch` `vehicle_roll` · tuning: `vehicle_max_speed` `vehicle_accel` `vehicle_brake` `vehicle_turn_rate` `vehicle_pitch_rate` `vehicle_roll_rate` `vehicle_drag` · read-only: `vehicle_speed` `vehicle_driver` |
 | volume | `position` `rotation` `half` `shape` `enabled` `load_level` `fog` `fog_color` `fog_density` `fog_max_opacity` · read-only: `attach` `carrier` `waypoints` |
@@ -521,7 +521,7 @@ editor's reference panel. The core surface:
 | light | dynamic lights only: `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `dynamic` `attach` `carrier` `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
-| level | `step_height` `player_control` `player_gravity` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
+| level | `step_height` `player_control` `player_gravity` `camera_fov` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
 
 ### Moving a brush
 
@@ -1151,6 +1151,12 @@ The engine posts these without being asked.
 | `:exit:` | entity, volume, sector | `other ref` | …and left again |
 | `:collide:` | entity | `other ref` | Two entities overlapped and were pushed apart |
 | `:interact:` | entity, volume | `src ref` | The interact key was pressed while inside its bounds |
+| `:primary_fire:` / `:primary_fire_end:` | player | — | The primary fire button (left mouse) went down / came back up |
+| `:secondary_fire:` / `:secondary_fire_end:` | player | — | The secondary fire button (right mouse) went down / came back up |
+| `:throw:` | player | — | The throw key (G) was pressed |
+| `:weapon_slot:` | player | `slot int` | A weapon-slot key (1/2/3) was pressed |
+| `:weapon_cycle:` | player | `step int` | The mouse wheel or Q asked for the next (`1`) or previous (`-1`) weapon |
+| `:reload:` | player | — | The reload key (R) was pressed |
 | `:anim_start:` | entity | `src ref, model str, anim str` | A clip began, including each loop wrap |
 | `:anim_end:` | entity | `src ref, model str, anim str` | A clip finished, or a looping one wrapped |
 | `:mount:` | vehicle | `src ref, seat str` | Something came aboard; `seat` is empty if it is standing |
@@ -1438,6 +1444,17 @@ for m in @wreck.models          -- every attachment of the entity
 end
 ```
 
+`bone_position` reads where one of an attachment's bones is right now, in world
+space — posed by its animation and carried by its entity. A weapon's `muzzle`
+socket is the usual one, for a flash or a sound a shot makes at the barrel:
+
+```
+spawn_effect("muzzle_flash", bone_position(@self.model.weapon, "muzzle"))
+```
+
+For the player the attachments are the first-person viewmodel, so the point is
+where the gun is on screen, carried by the camera.
+
 `offset`, `rotation` and `scale` are the attachment's transform relative to its
 entity, so a script can nod a head or slide a hatch without touching the entity
 itself. Naming an attachment the entity does not have is an error, the way any
@@ -1466,12 +1483,14 @@ end
 It answers with a message rather than a return value for the reason every other
 engine answer is one: a shot is a thing that happened, and the handler for "I
 hit something" is the same shape whether the cause was a script or the world.
-The message carries two arguments whatever the options say:
+The message carries two arguments, and a third when `"points": true` asks for
+it:
 
 | Argument | What it is |
 | --- | --- |
 | `hit` | A `ref` to the nearest object hit, or `null` if the ray met nothing. With `"all": true` it is instead a `list` of refs, nearest first, which is empty rather than `null` when nothing was hit. |
 | `at` | A `vec`: where the ray *stopped* — the surface it ran into, or the far end of its range when nothing stopped it. Useful even when `hit` is `null`, which is what a shot into the sky is; `at.y` is how a handler tells a headshot from a hit in the leg. |
+| `points` | Only with `"points": true`. Where each hit *landed*: a `vec` beside the nearest hit (or `null` beside a `null`), or with `"all": true` a `list` of vecs, index for index beside the list of refs. This is what puts an impact on a body — `at` is the wall behind it, since bodies do not stop the ray. |
 
 The two shapes `hit` takes never stand in for one another, so a handler's clause
 head says which mode it was written for: `def on_shot(:shot:, hit, at vec)` for
@@ -1497,6 +1516,7 @@ before the script runs, when the dict is written out literally.
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `all` | `bool` | `false` | Report every object in the line of fire instead of the nearest one. Changes `hit` from a ref to a list. |
+| `points` | `bool` | `false` | Add the third argument, where each hit landed. Off by default because it changes how many arguments the handler takes. |
 | `range` | number | `1000.0` | How far the ray travels, in world units. |
 | `entities` | `bool` | `true` | Entities can be hit. |
 | `volumes` | `bool` | `false` | Trigger volumes can be hit. Off by default because a level's rooms are routinely wrapped in one, and including them would make nearly every shot report the room before what was standing in it. |
@@ -1510,6 +1530,21 @@ hitscan(:shot:, {"all": true, "range": 40.0})          -- everything within 40 u
 hitscan(:shot:, {"tag": "enemy", "visible_only": true}) -- tagged, and drawn
 hitscan(:shot:, {"geometry": false})                    -- straight through the walls
 hitscan(:shot:, {"ignore": @shield})                    -- as if the shield were not there
+```
+
+```
+def on_fire(:primary_fire:) -> null
+    hitscan(:shot:, {"points": true})
+end
+
+def on_shot(:shot:, hit, at vec, point) -> null
+    if hit != null
+        spawn_effect("blood_hit", point)       -- on the body, not the wall behind
+        hit <- (:damage:, @self, 10)
+    else
+        spawn_effect("bullet_impact", at)
+    end
+end
 ```
 
 The division between the two kinds of option is what makes them compose.
@@ -1528,6 +1563,18 @@ addresses a scenery placement by name; the `at` vec still says where it landed.
 
 There is no player in the editor or before a level has finished loading, so a
 cast then does nothing and says so in the log.
+
+A cast always runs down the camera. Anything else that needs the player's aim —
+a thrown grenade, a flashlight — reads it as `@player.prop.look_direction`, from
+`@player.prop.eye_position`: both are the camera's, in world space, since the
+player looks with the camera's yaw and pitch rather than with a `rotation`. On
+any other entity they are the eye an AI agent sees from and the entity's own
+facing, its local −Z.
+
+```
+g = spawn("grenade", @player.prop.eye_position + @player.prop.look_direction * 0.6)
+g.prop.velocity = @player.prop.look_direction * 14.0 + <0.0, 3.0, 0.0>
+```
 
 ### Particles
 
@@ -2199,6 +2246,18 @@ scripts:
 ```
 
 In a level script, `@self` is `@level`.
+
+The player, which no level file describes as an entity, takes its script from
+the level's `player:` block — with `attributes:` and `params:` beside it, as an
+entity type has. In that script `@self` is `@player`, and every play session
+starts it from those attributes again:
+
+```yaml
+player:
+  script: scripts/player_combat.flang
+  attributes:
+    health: {type: int, value: 100}
+```
 
 ---
 

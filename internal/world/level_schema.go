@@ -692,6 +692,13 @@ type RawPlayer struct {
 	// list, the same way an entity's own `models:` is never merged with
 	// whatever the previous level happened to leave behind.
 	Models []RawEntityModel `yaml:"models,omitempty"`
+	// Script is the .flang file driving the player: what the fire buttons do,
+	// what `:damage:` does to it, what dying means in this level. The same
+	// three keys an entity type uses, for the same reason Models is: the
+	// player is an entity, just not an authored one.
+	Script     string                  `yaml:"script,omitempty"`
+	Attributes map[string]RawAttribute `yaml:"attributes,omitempty"`
+	Params     map[string]RawAttribute `yaml:"params,omitempty"`
 }
 
 // RawSky is the level's sky (sky.go).

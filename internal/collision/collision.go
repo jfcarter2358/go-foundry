@@ -106,6 +106,33 @@ func closestPointOnSegment2DWithT(p, a, b mgl32.Vec2) (mgl32.Vec2, float32, floa
 	return closest, closest.Sub(p).Len(), t
 }
 
+// bodyBoxTouchesBrush reports whether the box around a body (centre c,
+// half-extents half) overlaps the box around brush b's hull as currently
+// placed. Padded by a millimetre so a body resting exactly on a face — the
+// usual case, a foot on the floor — still reaches GJK and is credited as
+// ground.
+func bodyBoxTouchesBrush(c, half mgl32.Vec3, b *world.Brush) bool {
+	const pad = float32(1e-3)
+	box := emptyBox()
+	if b.AtRest() {
+		for _, v := range b.Verts {
+			box.addPoint(v)
+		}
+	} else {
+		m := b.Placement()
+		for _, v := range b.Verts {
+			r := m.Mul4x1(v.Vec4(1))
+			box.addPoint(mgl32.Vec3{r.X(), r.Y(), r.Z()})
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if c[i]+half[i]+pad < box.lo[i] || c[i]-half[i]-pad > box.hi[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // pushOutOfChunkBrushes pushes a cylindrical body — centre pos, given
 // horizontal radius and vertical half-height, matching the footprint the
 // sector-era wall resolver used (a circular cross-section, so corners never
@@ -132,6 +159,17 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 	for bi := range chunk.Brushes {
 		b := &chunk.Brushes[bi]
 		if !b.Solid || len(b.Verts) < 4 {
+			continue
+		}
+		// Boxes first. GJK is by far the dearest thing in a physics tick and
+		// a chunk is routinely hundreds of brushes, nearly all nowhere near
+		// the body: without this a 700-brush canyon cost half a millisecond
+		// per call, and an AI agent's step-up probes make several calls a
+		// frame each. Exact, not a heuristic — two convex shapes whose boxes
+		// are apart cannot overlap. The box is re-read from the corners every
+		// call rather than cached, so nothing can go stale under an edit.
+		// body moves as pushes land, so it is re-boxed from body.C.
+		if !bodyBoxTouchesBrush(body.C, body.Half, b) {
 			continue
 		}
 		// Pts are the brush's AUTHORED corners and Xform is where a script has
@@ -275,6 +313,7 @@ func StepUp(resolve SolidResolve, intendedXZ mgl32.Vec2, flatResult mgl32.Vec3, 
 		// full step height above it for a frame.
 		const settleSubsteps = 8
 		settled := resolved
+		lowestFree := resolved
 		for i := 1; i <= settleSubsteps; i++ {
 			probe := settled
 			probe[1] = resolved.Y() - lift*float32(i)/settleSubsteps
@@ -282,9 +321,29 @@ func StepUp(resolve SolidResolve, intendedXZ mgl32.Vec2, flatResult mgl32.Vec3, 
 			if hitFloor {
 				return s
 			}
+			if s.Sub(probe).Len() > 1e-5 {
+				// Touching something that is not a floor — a curb's edge
+				// clipped by a probe that has come down past its top. Below
+				// here is no better.
+				break
+			}
+			lowestFree = probe
 			settled = probe
 		}
-		return resolved
+		// Nothing to land ON: go to the lowest probe that was still in free
+		// space, never simply the top of the lift.
+		//
+		// Returning the lifted position here made every slope bounce. On any
+		// sloped floor the flat resolve pushes the body out along the tilted
+		// normal, which leaves it a hair short of its target in XZ and so
+		// reads as "blocked"; the raised probe then clears that hair, and every
+		// settle probe is free down to the last one, which sits exactly where
+		// the body already rested — just clear of the floor, so no floor
+		// contact — and the body was left the full step height up, to fall back
+		// down over the next ten frames and do it again. On a curb the probes
+		// stop being free just below its top, so the body is left just over it
+		// and lands on it, as before.
+		return lowestFree
 	}
 	return flatResult
 }

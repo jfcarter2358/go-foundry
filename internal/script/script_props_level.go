@@ -29,6 +29,7 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
+	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
 	"foundry/internal/world"
@@ -117,6 +118,81 @@ func levelProps() map[string]propAccess {
 				return nil
 			},
 			Doc: "whether the player falls. Turning it off stops a fall where it is; with control on, the player free-flies",
+		},
+
+		// The camera's lens, for a scope or a sprint's widening. Engine state
+		// like the two switches above; ScriptRuntimeReset puts the default
+		// back, so a zoom held when play ends does not follow the author into
+		// the editor.
+		"camera_fov": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(gfx.FieldOfView), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("camera_fov", "float", v)
+				}
+				fov := float32(f)
+				if fov < gfx.MinFieldOfView {
+					fov = gfx.MinFieldOfView
+				} else if fov > gfx.MaxFieldOfView {
+					fov = gfx.MaxFieldOfView
+				}
+				gfx.FieldOfView = fov
+				return nil
+			},
+			Doc: "the camera's vertical field of view in degrees (45 by default, clamped to 5–120); lower zooms in",
+		},
+
+		// The player's mouse settings, for a settings screen. Unlike every other
+		// level property these are the player's, not the level's: they persist
+		// across levels and sessions (app/controls_settings.go saves them once
+		// a change has settled), and nothing resets them.
+		"mouse_sensitivity": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(platform.MouseSensitivity), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("mouse_sensitivity", "float", v)
+				}
+				platform.MouseSensitivity = clampFloat32(float32(f), MinMouseSensitivity, MaxMouseSensitivity)
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "the player's mouse look sensitivity, a multiplier (1 by default, 0.1–5); saved for every level and session",
+		},
+		"mouse_smoothing": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(platform.MouseSmoothing), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("mouse_smoothing", "float", v)
+				}
+				platform.MouseSmoothing = clampFloat32(float32(f), 0, 1)
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "how much mouse look is smoothed, 0 (raw) to 1 (heaviest); saved for every level and session",
+		},
+		"mouse_invert_y": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(platform.MouseInvertY), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("mouse_invert_y", "bool", v)
+				}
+				platform.MouseInvertY = b
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "whether moving the mouse up looks down; saved for every level and session",
 		},
 
 		// The hard pause — see script_pause.go. Engine state rather than a
@@ -500,4 +576,20 @@ func skyCubemapBase(faces [world.SkyFaces]string) string {
 		return base
 	}
 	return ""
+}
+
+// The range @level.prop.mouse_sensitivity accepts.
+const (
+	MinMouseSensitivity = float32(0.1)
+	MaxMouseSensitivity = float32(5)
+)
+
+func clampFloat32(v, lo, hi float32) float32 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }

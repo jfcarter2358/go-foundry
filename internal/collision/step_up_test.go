@@ -120,6 +120,37 @@ func TestAPlayerStepsOntoACurb(t *testing.T) {
 	}
 }
 
+// Walking a gentle slope must not bounce. On a tilted floor the flat resolve
+// pushes the body out along the slope's normal, which leaves it a hair short of
+// its target and reads as blocked; the step-up then lifted it, found no floor
+// contact on the way back down (the lowest probe sits exactly where the body
+// already rested, just clear of the floor), and left it the whole allowance in
+// the air — to fall for ten frames and be lifted again, the length of every
+// hillside in a terrain level.
+func TestWalkingASlopeDoesNotBounce(t *testing.T) {
+	ramp := world.NewBoxBrush("ramp", mgl32.Vec3{0, 0.1, 0}, mgl32.Vec3{4, 0.1, 2}, "concrete")
+	// Raise the +X top edge (corners 3 and 7): a planar top rising 1.2 over
+	// 8 units, about 8.5 degrees.
+	ramp.Verts[3][1] += 1.2
+	ramp.Verts[7][1] += 1.2
+	for _, dir := range []float32{1, -1} {
+		lvl := stepRoom(6, ramp)
+		p := world.NewPlayer(mgl32.Vec3{-3 * dir, 2, 0})
+		for i := 0; i < 60; i++ {
+			MovePlayer(p, lvl, stepMove(mgl32.Vec3{}, false))
+		}
+		prev := p.Position.Y()
+		for i := 0; i < 70; i++ {
+			MovePlayer(p, lvl, stepMove(mgl32.Vec3{0.08 * dir, 0, 0}, false))
+			if dy := p.Position.Y() - prev; dy > 0.1 || dy < -0.1 {
+				t.Fatalf("walking %+v: frame %d moved %v vertically (y %v -> %v) — a bounce, not a slope",
+					dir, i, dy, prev, p.Position.Y())
+			}
+			prev = p.Position.Y()
+		}
+	}
+}
+
 // And it has to work in a room with a low ceiling, which is the case a single
 // full-height probe cannot serve: raising the whole allowance at once buries
 // the body in the ceiling of any room shorter than that allowance plus the

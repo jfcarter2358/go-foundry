@@ -325,11 +325,12 @@ func isPlaceholderModelName(name string) bool {
 
 // ---------- reload ----------
 
-// reloadActiveEntityModels re-reads every attachment on the selected entity
-// from disk. What the panel's model controls call after changing a texture or a
-// path, and what picks up a .fmdl re-saved by the model editor.
-func reloadActiveEntityModels() {
-	e := activeEntity()
+// reloadEntityModels re-reads every attachment on e from disk. What
+// editorEntityModels' own "Reload Models" button calls, on the entity it was
+// given rather than on whatever is selected in the viewport — that panel is
+// also reused for the player and for an AI entity picked from a combo,
+// neither of which is necessarily the viewport's current selection.
+func reloadEntityModels(e *world.Entity) {
 	if e == nil {
 		return
 	}

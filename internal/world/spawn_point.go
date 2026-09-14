@@ -159,6 +159,8 @@ func FindSpawnPoint(lvl *Level) *SpawnPoint {
 func ApplySpawnPoint(lvl *Level) bool {
 	SetPlayerControl(true)
 	SetPlayerGravity(true)
+	// A crouch is not carried into a new level or a new session either.
+	ResetPlayerStance()
 
 	s := FindSpawnPoint(lvl)
 	if s == nil {

@@ -440,7 +440,7 @@ func editorEntityModels(e *world.Entity) {
 	}
 	imgui.SameLine()
 	if imgui.Button("Reload Models##entreload") {
-		reloadActiveEntityModels()
+		reloadEntityModels(e)
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Re-read every attachment from disk — after editing\nits .fmdl in the model editor, say.")

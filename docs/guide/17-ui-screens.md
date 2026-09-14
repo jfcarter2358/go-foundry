@@ -187,6 +187,15 @@ widget(screen("pause"), "ok")
 focus(widget(@pause, "resume"))
 ```
 
+### A settings screen
+
+A slider that declares a binding shows the level's number and cannot be
+dragged, so a settings slider is left unbound: its script copies the setting in
+on `:shown:` (`widget(@self, "sens").prop.value = @level.prop.mouse_sensitivity`)
+and writes it back on `:change:`. The engine persists the mouse settings itself
+— see [Entities](11-entities.md#mouse-look-and-the-players-settings) — so the
+screen needs no Save button, and leaving with Escape keeps what was set.
+
 ## Which screens a level puts up
 
 The **UI screens** block in the level properties panel lists the screens the

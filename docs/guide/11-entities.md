@@ -340,6 +340,61 @@ so a solid crate is solid to walk into and a movable one is solid to shove.
 
 `@player` addresses it from a script.
 
+### Crouching
+
+Holding `C` or left `Ctrl` crouches the player: the body shrinks from 1.8 tall
+to 1.0 with its feet kept where they were, the eye eases down, and walking
+drops to under half speed. Letting go stands back up only if the taller body
+fits, so a crouch under a low ceiling or a hatch stays crouched until the
+player is out from under it. A crouched player is a smaller target too — AI
+sight and hitscans test the same shorter bounds. Scripts read it as
+`@player.prop.crouching`.
+
+### Sprinting
+
+`Left Shift` toggles a sprint at 1.65× walking speed. It lasts while `W` is
+held and ends by itself when the player stops pushing forward, crouches, sits
+down, or loses control — so the toggle never outlives the run it was pressed
+for. Scripts read and clear it as `@player.prop.sprinting`; the shipped
+`player_combat.flang` clears it when the player fires or aims.
+
+### Mouse look and the player's settings
+
+Gameplay mouse look is smoothed and scaled by three player settings, which are
+the player's rather than any level's: `@level.prop.mouse_sensitivity` (a
+multiplier), `@level.prop.mouse_smoothing` (0 raw – 1 heaviest) and
+`@level.prop.mouse_invert_y`. A script writes them — the shipped
+`ui/settings.fui` does — and the engine saves them to `controls.yaml` in the
+same place as `audio.yaml` once a change has settled. Smoothing only spreads a
+movement over a few frames; it never changes how far it turns. Zoomed in
+(`@level.prop.camera_fov` below the default) the turn slows in proportion, so
+aiming down sights is not twitchier than the hip.
+
+### The player's script
+
+Nothing hears an event sent to `@player` until the level gives the player a
+script. The `player:` block takes the same three keys an entity type does:
+
+```yaml
+player:
+  script: scripts/player_combat.flang
+  attributes:
+    health: {type: int, value: 100}
+    health_max: {type: int, value: 100}
+  params:
+    restart_level: {type: str, value: level1}
+```
+
+That script receives everything addressed to the player — the fire, throw and
+weapon-slot input below, `:damage:` from an enemy or a grenade, `:tick:`,
+`:anim_end:` from its viewmodel clips — and runs under `@level.prop.paused` like
+any other level object. Every play session, and every level change, starts the
+player from these attributes again, so health written during one session is
+not what the next one begins with.
+
+The level editor's Player panel has **Script** and **Attributes** groups for
+this, the same ones a placed entity shows.
+
 ### First-person viewmodel
 
 A level's `player:` block (see [Player step height](02-building-levels.md#player-step-height)
@@ -350,8 +405,11 @@ player's own draws directly in front of the camera rather than at its
 physical position in the world, so it is never occluded by nearby geometry
 and casts no shadow.
 
-There is no properties-panel row for this yet — write `models:` into the
-level file's `player:` block by hand, the way the example below does.
+The level editor's Player panel has a Viewmodel section for this — the same
+attachment editor a placed entity's own properties panel shows (mesh, texture,
+socket, transform, animations), plus a combo to switch it to any AI entity's
+attachments instead of the player's own. Or write `models:` into the level
+file's `player:` block by hand, the way the example below does.
 
 ```yaml
 player:
@@ -390,3 +448,12 @@ play_anim(@player, "hands", "pistol_idle")
 A level that says nothing in `player: models:` gives the player no viewmodel
 at all — unlike `step_height`, this is not merged with whatever the previous
 level had; each level states its own.
+
+Pressing fire, switching weapons and throwing are input events posted
+straight to `@player` — `:primary_fire:`/`:primary_fire_end:` (left mouse),
+`:secondary_fire:`/`:secondary_fire_end:` (right mouse), `:throw:` (G) and
+`:weapon_slot:` (1/2/3, with the slot number as its argument). See the Events
+table in [Scripting](18-scripting.md#events) for the full shape, and
+`enemy_combat.flang` for the state-machine pattern (fire-on-a-timer while
+held, one-shot clips, a carried grenade) a player-side handler for these wants
+too.

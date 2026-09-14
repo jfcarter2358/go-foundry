@@ -47,6 +47,7 @@ type hitscanOption struct {
 // hitscanOpts is a parsed options dict.
 type hitscanOpts struct {
 	all    bool
+	points bool
 	filter collision.RayFilter
 }
 
@@ -56,6 +57,14 @@ var hitscanOptions = map[string]hitscanOption{
 		func(o *hitscanOpts, v flang.Value) error {
 			b, err := hitscanBool("all", v)
 			o.all = b
+			return err
+		},
+	},
+	"points": {
+		"add a third argument: where each hit landed — a vec (or null) for the nearest, a list of vecs beside the hits for all",
+		func(o *hitscanOpts, v flang.Value) error {
+			b, err := hitscanBool("points", v)
+			o.points = b
 			return err
 		},
 	},
@@ -160,10 +169,14 @@ var hitscanVerbs = map[string]scriptVerb{
 		}
 
 		res := collision.Raycast(rt.lvl, origin, dir, opts.filter)
-		_ = rt.post(rt.self, string(atom), []flang.Value{
+		payload := []flang.Value{
 			hitscanPayload(res, opts.all),
 			vecValue(res.Stop),
-		}, pos)
+		}
+		if opts.points {
+			payload = append(payload, hitscanPoints(res, opts.all))
+		}
+		_ = rt.post(rt.self, string(atom), payload, pos)
 		return flang.NullVal{}, nil
 	},
 }
@@ -184,6 +197,29 @@ func hitscanPayload(res collision.RayResult, all bool) flang.Value {
 	elems := make([]flang.Value, 0, len(res.Hits))
 	for _, h := range res.Hits {
 		elems = append(elems, hitscanRef(h))
+	}
+	return flang.NewList(elems...)
+}
+
+// hitscanPoints is the third argument `"points": true` adds: where each hit
+// in the payload landed, shaped the same way the payload is — a vec or null
+// beside a ref or null, a list of vecs index-for-index beside a list of refs.
+//
+// Opt-in rather than always sent because it changes the message's arity, and
+// every handler written before it takes exactly two arguments. `at` alone
+// cannot stand in for it: bodies do not stop the ray, so `at` is the wall
+// behind an enemy, not the place on the enemy a shot met.
+func hitscanPoints(res collision.RayResult, all bool) flang.Value {
+	if !all {
+		h, ok := res.First()
+		if !ok {
+			return flang.NullVal{}
+		}
+		return vecValue(h.Point)
+	}
+	elems := make([]flang.Value, 0, len(res.Hits))
+	for _, h := range res.Hits {
+		elems = append(elems, vecValue(h.Point))
 	}
 	return flang.NewList(elems...)
 }

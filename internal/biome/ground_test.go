@@ -165,6 +165,36 @@ func TestSurfaceUnderTakesTheHighestSurface(t *testing.T) {
 	}
 }
 
+// Brushes are skipped on their own boxes before any face is tested, and a
+// column exactly on the seam between two abutting brushes sits on the edge of
+// both boxes — the reject must keep both, or the higher step is lost there.
+// A bake query made once must answer the same as the per-column call.
+func TestSurfaceUnderOnASeamTestsBothBrushes(t *testing.T) {
+	testenv.WithoutGeometryUploads(t)
+	ch := world.Chunk{ID: "c0"}
+	ch.Brushes = []world.Brush{
+		world.NewBoxBrush("low", mgl32.Vec3{-2, 0, 0}, mgl32.Vec3{2, 1, 2}, "concrete"),
+		world.NewBoxBrush("high", mgl32.Vec3{2, 1, 0}, mgl32.Vec3{2, 2, 2}, "concrete"),
+	}
+	for bi := range ch.Brushes {
+		if err := ch.Brushes[bi].Load(); err != nil {
+			t.Fatalf("loading: %v", err)
+		}
+	}
+	ch.RecomputeBounds()
+	lvl := &world.Level{Chunks: []world.Chunk{ch}}
+
+	if s := SurfaceUnder(lvl, "", 0, 20, 0, 40); !s.Found || s.Height < 2.99 || s.Height > 3.01 {
+		t.Errorf("on the seam: got %+v, want the high brush's top at 3", s)
+	}
+	q := NewGroundQuery(lvl, "")
+	for _, x := range []float32{-3, -1, 0, 1, 3, 5} {
+		if a, b := SurfaceUnder(lvl, "", x, 20, 0, 40), q.SurfaceUnder(x, 20, 0, 40); a != b {
+			t.Errorf("x=%v: SurfaceUnder %+v, GroundQuery %+v", x, a, b)
+		}
+	}
+}
+
 // A chunk switched off is not drawn and not solid, so it is not ground either.
 func TestSurfaceUnderSkipsDisabledChunks(t *testing.T) {
 	lvl := groundLevel(t)

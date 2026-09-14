@@ -70,6 +70,11 @@ func ParticleCollide(lvl *world.Level, from, to mgl32.Vec3, r float32) (pos, nor
 		if !b.Solid {
 			continue
 		}
+		// The probe is a vertical line, so a brush whose box it misses in XZ
+		// has no face it can meet — and a big chunk is mostly such brushes.
+		if !bodyBoxTouchesBrush(mgl32.Vec3{lTo.X(), 0, lTo.Z()}, mgl32.Vec3{0, 1e9, 0}, b) {
+			continue
+		}
 		for fi := range b.Faces {
 			f := &b.Faces[fi]
 			pts := b.PlacedFacePoints(f)

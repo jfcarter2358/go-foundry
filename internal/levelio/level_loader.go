@@ -528,7 +528,11 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// that may be carrying the previous level's settings, and a level that says
 	// nothing must get the engine's defaults rather than whatever the level
 	// before it happened to ask for.
-	level.Player = world.PlayerSettingsFromRaw(raw.Player)
+	player, err := world.PlayerSettingsFromRaw(raw.Player)
+	if err != nil {
+		return err
+	}
+	level.Player = player
 
 	// The player's own first-person viewmodel, the same unconditional way:
 	// replaced wholesale from this level's Models, nil included. world.PlayerEntity

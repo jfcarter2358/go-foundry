@@ -15,6 +15,7 @@ package editor
 
 import (
 	"fmt"
+	"foundry/internal/render"
 	"foundry/internal/world"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -23,13 +24,145 @@ import (
 // editorPlayerSection draws the level's `player:` block.
 func editorPlayerSection(lvl *world.Level) {
 	if lvl == nil {
+		render.EditorPreviewActive = false
 		return
 	}
 	imgui.Separator()
 	if !imgui.CollapsingHeader("Player##player") {
+		render.EditorPreviewActive = false
 		return
 	}
 	editorPropGroup("Movement##playermovegrp", 0, func() { editorPlayerStepHeight(lvl) })
+
+	// The player's behaviour, drawn with the very widgets a placed entity's
+	// panel uses. They edit the level's authored copy; world.ApplyPlayerScript
+	// hands it to the player as each play session starts.
+	editorScriptUI(&lvl.Player.Script, &lvl.Player.ScriptParams, "player", "The player")
+	editorAttributesUI(&lvl.Player.Attributes, "player", "Attributes", "the player")
+
+	// render.EditorPreviewActive tracks whether this group is open on THIS
+	// frame, not whether it was ever opened: editorPropGroup's body only runs
+	// while its own tree node is expanded, so closing the group (or the
+	// Player header above it, or leaving this panel's frame out entirely)
+	// naturally lets the flag fall back to false again next frame.
+	viewmodelOpen := false
+	editorPropGroup("Viewmodel##playermodelsgrp", 0, func() {
+		viewmodelOpen = true
+		editorViewmodelSection(lvl)
+	})
+	render.EditorPreviewActive = viewmodelOpen
+}
+
+// ---------- viewmodel ----------
+
+// editorViewmodelSection is the Player panel's model-attachment editor: the
+// player's own `models:` list by default, or — via the combo — any AI
+// entity's, reusing editorEntityModels exactly as a placed entity's own
+// properties panel already does when it is clicked in the viewport. This is
+// the panel that lets it be reached without hunting for one in the viewport.
+func editorViewmodelSection(lvl *world.Level) {
+	agents := world.FindAIAgents(lvl)
+
+	if imgui.BeginCombo("Edit##viewmodeltarget", editorViewmodelTargetLabel(agents)) {
+		if imgui.SelectableV("Player", Editor.ViewmodelTarget == "", 0, imgui.Vec2{}) {
+			Editor.ViewmodelTarget = ""
+		}
+		for _, a := range agents {
+			if imgui.SelectableV(a.ID, Editor.ViewmodelTarget == a.ID, 0, imgui.Vec2{}) {
+				Editor.ViewmodelTarget = a.ID
+			}
+		}
+		imgui.EndCombo()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Every entity with an AI controller, plus the player.\n" +
+			"Picking one here is the same panel that entity's own\n" +
+			"properties show when it is clicked in the viewport.")
+	}
+
+	if Editor.ViewmodelTarget == "" {
+		editorPlayerViewmodel(lvl)
+		return
+	}
+	for _, a := range agents {
+		if a.ID == Editor.ViewmodelTarget {
+			editorEntityModels(a)
+			return
+		}
+	}
+	// The chosen entity is gone — deleted, or an undo/redo swapped the level
+	// out from under this selection, which names entities by ID rather than
+	// by index for exactly this reason. Fall back rather than draw nothing.
+	Editor.ViewmodelTarget = ""
+	editorTextMutedWrapped("That entity is no longer in the level; showing the player instead.")
+	editorPlayerViewmodel(lvl)
+}
+
+// editorViewmodelTargetLabel is the combo's own closed-state label.
+func editorViewmodelTargetLabel(agents []*world.Entity) string {
+	if Editor.ViewmodelTarget == "" {
+		return "Player"
+	}
+	for _, a := range agents {
+		if a.ID == Editor.ViewmodelTarget {
+			return a.ID
+		}
+	}
+	return "Player"
+}
+
+// editorPlayerViewmodel edits the player's own `models:` list.
+//
+// world.PlayerEntity.Models is the loaded, GPU-backed copy the level load
+// already built (level_loader.go); lvl.Player.Models is the plain-data copy
+// that gets saved and undone. tmp aliases the loaded copy rather than the
+// plain one, so editorEntityModels' mesh-status messages ("nothing uploaded")
+// read the real state and a Path/Texture edit's own .Load() call — already
+// part of that generic panel — lands on the very thing RenderViewmodel draws.
+// That would not be true the other way around: starting from lvl.Player.Models
+// would mean nothing is ever "uploaded" until something is edited, and the
+// live preview below would show nothing for a level that already works.
+//
+// lvl.Player.Models is brought into step afterward, through
+// playerAuthoredModels rather than a raw slice assignment, so it never ends up
+// holding the GPU state a level file has no way to save and an undo snapshot
+// has no business duplicating.
+func editorPlayerViewmodel(lvl *world.Level) {
+	if world.PlayerEntity == nil {
+		editorTextMutedWrapped("No player object yet — the engine has not finished starting up.")
+		return
+	}
+	tmp := &world.Entity{ID: "player", Models: world.PlayerEntity.Models}
+	editorEntityModels(tmp)
+	world.PlayerEntity.Models = tmp.Models
+	lvl.Player.Models = playerAuthoredModels(world.PlayerEntity.Models)
+}
+
+// playerAuthoredModels copies only the fields a level file can hold, dropping
+// the runtime ones (Submeshes, Anim, Doc, AnimBlocked) that a GPU-backed
+// world.EntityModel also carries — the same set entityModelToRaw picks out,
+// reimplemented here since that conversion is unexported to the world package.
+func playerAuthoredModels(models []world.EntityModel) []world.EntityModel {
+	if len(models) == 0 {
+		return nil
+	}
+	out := make([]world.EntityModel, len(models))
+	for i, m := range models {
+		out[i] = world.EntityModel{
+			Name:       m.Name,
+			Path:       m.Path,
+			Texture:    m.Texture,
+			Parent:     m.Parent,
+			Bone:       m.Bone,
+			Offset:     m.Offset,
+			Rotation:   m.Rotation,
+			Scale:      m.Scale,
+			Alpha:      m.Alpha,
+			Visible:    m.Visible,
+			Animations: m.Animations,
+		}
+	}
+	return out
 }
 
 // editorPlayerStepHeight draws the step-height field, and the checkbox that

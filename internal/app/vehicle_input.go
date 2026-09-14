@@ -100,7 +100,7 @@ func SeatedCamera(lvl *world.Level) bool {
 		return false
 	}
 
-	eye := world.EyeHeight
+	eye := world.PlayerEyeHeight()
 	if v := world.FindEntity(lvl, p.Frame); v != nil && v.IsVehicle() && p.Seat != "" {
 		if s := v.Vehicle.Seat(p.Seat); s != nil {
 			eye = s.Eye
@@ -140,7 +140,7 @@ func PlacePlayerCamera(lvl *world.Level) {
 	}
 	gfx.Cam.Up = gfx.WorldUp
 	gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
-	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
+	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.PlayerEyeHeight(), 0})
 	gfx.UpdateCamMatrix()
 }
 
@@ -240,4 +240,12 @@ func VehicleInteractRequest(lvl *world.Level) bool {
 	}
 	hooks.ScriptInteractRequest()
 	return false
+}
+
+// crouchable reports whether the player is on foot and in control: the state
+// crouching and sprinting both need. A driver's Ctrl and Shift are the
+// vehicle's, and a seat has its own eye.
+func crouchable(lvl *world.Level) bool {
+	return platform.PlayerControlEnabled && world.PlayerEntity != nil &&
+		world.PlayerEntity.Seat == "" && DrivenVehicle(lvl) == nil
 }

@@ -8,7 +8,7 @@ import (
 
 // A level with no `player:` block gets the engine's default, and no viewmodel.
 func TestAbsentPlayerBlockFallsBackToTheDefault(t *testing.T) {
-	p := PlayerSettingsFromRaw(nil)
+	p := mustPlayerSettings(t, nil)
 	if p.StepHeight != 0 || len(p.Models) != 0 {
 		t.Fatalf("absent block gave %+v, want the zero value", p)
 	}
@@ -43,7 +43,7 @@ func TestNonPositiveStepHeightIsTheDefault(t *testing.T) {
 
 func TestAuthoredStepHeightIsUsedAsGiven(t *testing.T) {
 	v := float32(0.75)
-	p := PlayerSettingsFromRaw(&RawPlayer{StepHeight: &v})
+	p := mustPlayerSettings(t, &RawPlayer{StepHeight: &v})
 	if got := p.EffectiveStepHeight(); got != v {
 		t.Errorf("step height %v, want %v", got, v)
 	}
@@ -63,7 +63,7 @@ func TestPlayerSettingsRoundTrip(t *testing.T) {
 	if raw == nil || raw.StepHeight == nil {
 		t.Fatalf("set settings wrote %+v, want a step height", raw)
 	}
-	out := PlayerSettingsFromRaw(raw)
+	out := mustPlayerSettings(t, raw)
 	if out.StepHeight != in.StepHeight || len(out.Models) != 0 {
 		t.Errorf("round trip gave %+v, want %+v", out, in)
 	}
@@ -81,7 +81,7 @@ func TestPlayerViewmodelRoundTrips(t *testing.T) {
 	if raw == nil || len(raw.Models) != 2 {
 		t.Fatalf("wrote %+v, want two models", raw)
 	}
-	out := PlayerSettingsFromRaw(raw)
+	out := mustPlayerSettings(t, raw)
 	if len(out.Models) != 2 {
 		t.Fatalf("round trip gave %d models, want 2", len(out.Models))
 	}
@@ -105,7 +105,72 @@ func TestPlayerViewmodelAloneLeavesStepHeightAtTheDefault(t *testing.T) {
 	if raw.StepHeight != nil {
 		t.Errorf("wrote step_height %v with none given", *raw.StepHeight)
 	}
-	if out := PlayerSettingsFromRaw(raw); out.EffectiveStepHeight() != DefaultStepHeight() {
+	if out := mustPlayerSettings(t, raw); out.EffectiveStepHeight() != DefaultStepHeight() {
 		t.Errorf("effective step height %v, want the default", out.EffectiveStepHeight())
+	}
+}
+
+// mustPlayerSettings is PlayerSettingsFromRaw for a block the test knows is
+// well-typed.
+func mustPlayerSettings(t *testing.T, r *RawPlayer) PlayerSettings {
+	t.Helper()
+	p, err := PlayerSettingsFromRaw(r)
+	if err != nil {
+		t.Fatalf("PlayerSettingsFromRaw: %v", err)
+	}
+	return p
+}
+
+// The player's script, attributes and params round-trip the way an entity
+// type's do, and a mistyped attribute is an error rather than a silent drop.
+func TestPlayerScriptRoundTrips(t *testing.T) {
+	in := PlayerSettings{
+		Script:       "scripts/player_combat.flang",
+		Attributes:   AttrSet{"health": {Type: AttrInt, I: 100}},
+		ScriptParams: AttrSet{"restart_level": {Type: AttrString, S: "level1"}},
+	}
+	raw := PlayerSettingsToRaw(in)
+	if raw == nil || raw.Script != in.Script || len(raw.Attributes) != 1 || len(raw.Params) != 1 {
+		t.Fatalf("wrote %+v, want the script, one attribute and one param", raw)
+	}
+	out := mustPlayerSettings(t, raw)
+	if out.Script != in.Script {
+		t.Errorf("script came back as %q", out.Script)
+	}
+	if a, ok := out.Attributes.Attr("health"); !ok || a.I != 100 {
+		t.Errorf("health came back as %+v (present %v)", a, ok)
+	}
+	if a, ok := out.ScriptParams.Attr("restart_level"); !ok || a.S != "level1" {
+		t.Errorf("restart_level came back as %+v (present %v)", a, ok)
+	}
+
+	bad := &RawPlayer{Attributes: map[string]RawAttribute{"health": {Type: "int", Value: "lots"}}}
+	if _, err := PlayerSettingsFromRaw(bad); err == nil {
+		t.Error("a mistyped attribute loaded without an error")
+	}
+}
+
+// Each play session starts the player from the authored attributes, not from
+// wherever the last session's script left them.
+func TestApplyPlayerScriptStartsFromTheAuthoredAttributes(t *testing.T) {
+	prev := PlayerEntity
+	defer func() { PlayerEntity = prev }()
+	PlayerEntity = NewPlayer(mgl32.Vec3{})
+
+	lvl := &Level{Player: PlayerSettings{
+		Script:     "scripts/player_combat.flang",
+		Attributes: AttrSet{"health": {Type: AttrInt, I: 100}},
+	}}
+	ApplyPlayerScript(lvl)
+	if PlayerEntity.Script != lvl.Player.Script {
+		t.Fatalf("player script %q, want %q", PlayerEntity.Script, lvl.Player.Script)
+	}
+	PlayerEntity.SetAttr("health", AttrValue{Type: AttrInt, I: 0})
+	if a, _ := lvl.Player.Attributes.Attr("health"); a.I != 100 {
+		t.Fatalf("a write to the player reached the level's authored copy (health %d)", a.I)
+	}
+	ApplyPlayerScript(lvl)
+	if a, _ := PlayerEntity.Attr("health"); a.I != 100 {
+		t.Errorf("second session started at health %d, want 100", a.I)
 	}
 }

@@ -115,6 +115,7 @@ func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	postAIEvents(rt)
 	postVehicleEvents(rt)
 	postInteractEvent(rt, lvl)
+	postWeaponInputEvents(rt)
 	postUIEvents(rt)
 	postTimerEvents(rt)
 	postTickEvents(rt, refs, dt)
@@ -173,6 +174,11 @@ func scriptedRefs(rt *ScriptRuntime, lvl *world.Level) []flang.RefVal {
 		return nil
 	}
 	var out []flang.RefVal
+	// The player is engine-owned and not in Entities, so it is asked for by
+	// name; its script comes from the level's player block.
+	if world.PlayerEntity != nil && world.PlayerEntity.Script != "" {
+		out = append(out, flang.RefVal{Kind: flang.RefEntity, A: "player"})
+	}
 	for i := range lvl.Entities {
 		if lvl.Entities[i].Script != "" {
 			out = append(out, flang.RefVal{Kind: flang.RefEntity, A: lvl.Entities[i].ID})
@@ -556,6 +562,53 @@ func postInteractEvent(rt *ScriptRuntime, lvl *world.Level) {
 	}
 	if best.Kind != flang.RefNone {
 		_ = rt.post(best, "interact", []flang.Value{player}, flang.Pos{})
+	}
+}
+
+// postWeaponInputEvents fires the viewmodel's fire/throw/switch atoms,
+// straight to `@player` rather than through a containment lookup —
+// `postInteractEvent`'s "nearest container" question does not apply here,
+// since these are about the player itself, not what the player is near.
+func postWeaponInputEvents(rt *ScriptRuntime) {
+	// Drained unconditionally, same as postInteractEvent's own pressed flag —
+	// a pending edge from a frame with no player would otherwise sit in the
+	// buffer and fire late the moment one appears, rather than being the
+	// no-op it should be.
+	primaryDown, primaryUp := hooks.TakeScriptPrimaryFireEdges()
+	secondaryDown, secondaryUp := hooks.TakeScriptSecondaryFireEdges()
+	threw := hooks.ScriptThrowPressed()
+	reloaded := hooks.ScriptReloadPressed()
+	slots := hooks.TakeScriptWeaponSlotRequests()
+	cycles := hooks.TakeScriptWeaponCycleRequests()
+
+	if world.PlayerEntity == nil {
+		return
+	}
+	player := flang.RefVal{Kind: flang.RefEntity, A: "player"}
+
+	if primaryDown {
+		_ = rt.post(player, "primary_fire", nil, flang.Pos{})
+	}
+	if primaryUp {
+		_ = rt.post(player, "primary_fire_end", nil, flang.Pos{})
+	}
+	if secondaryDown {
+		_ = rt.post(player, "secondary_fire", nil, flang.Pos{})
+	}
+	if secondaryUp {
+		_ = rt.post(player, "secondary_fire_end", nil, flang.Pos{})
+	}
+	if threw {
+		_ = rt.post(player, "throw", nil, flang.Pos{})
+	}
+	if reloaded {
+		_ = rt.post(player, "reload", nil, flang.Pos{})
+	}
+	for _, slot := range slots {
+		_ = rt.post(player, "weapon_slot", []flang.Value{flang.IntVal(slot)}, flang.Pos{})
+	}
+	for _, step := range cycles {
+		_ = rt.post(player, "weapon_cycle", []flang.Value{flang.IntVal(step)}, flang.Pos{})
 	}
 }
 

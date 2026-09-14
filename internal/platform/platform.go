@@ -46,6 +46,22 @@ var MovementSpeed = float32(0.1)
 var KeyRotationSpeed = float32(0.025)
 var MouseRotationSpeed = float32(0.003)
 
+// The player's own mouse settings, on top of MouseRotationSpeed, for gameplay
+// look only — the editor's cameras keep the raw speed. Written by the game's
+// settings screen (@level.prop.mouse_*), saved to controls.yaml by the app.
+//
+// MouseSensitivity multiplies the turn per pixel. MouseSmoothing is 0 for the
+// raw mouse and 1 for the heaviest smoothing offered: the time constant the
+// look eases out over (see app/mouse_look.go). MouseInvertY flips pitch.
+var (
+	MouseSensitivity = float32(1)
+	MouseSmoothing   = float32(0.35)
+	MouseInvertY     = false
+	// ControlSettingsChanged is set by anything that writes the three above,
+	// and cleared by the app once it has saved them.
+	ControlSettingsChanged = false
+)
+
 // Gravity system globals — read and written by input handling and the main loop.
 var GravityEnabled = true
 var IsOnGround = false

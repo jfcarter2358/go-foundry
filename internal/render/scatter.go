@@ -472,13 +472,14 @@ func (sr *scatterRenderer) ensureScatterHeight(lvl *world.Level, v *world.Volume
 	// that ship's own decks — and a world-space one never finds a ship's.
 	// SurfaceUnder only walks chunks placed in the frame it is given.
 	data := make([]float32, w*h*2)
+	ground := biome.NewGroundQuery(lvl, v.Frame())
 	for ty := 0; ty < h; ty++ {
 		tv := float32(ty) / float32(h-1)
 		wz := min.Y() + tv*size.Y()
 		for tx := 0; tx < w; tx++ {
 			tu := float32(tx) / float32(w-1)
 			wx := min.X() + tu*size.X()
-			s := biome.SurfaceUnder(lvl, v.Frame(), wx, topY, wz, drop)
+			s := ground.SurfaceUnder(wx, topY, wz, drop)
 			i := (ty*w + tx) * 2
 			if !s.Found {
 				data[i], data[i+1] = topY, 0

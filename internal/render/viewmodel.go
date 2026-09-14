@@ -28,6 +28,16 @@ import (
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
 
+// EditorPreviewActive is set by the editor's Player panel while its Viewmodel
+// section is open, and read by app.go's call to RenderViewmodel — the one
+// override to "the editor never draws this" (see the header above): with the
+// section closed a floating gun over the free-fly camera would be noise while
+// placing brushes, but with it open it is the only way to see what is being
+// edited at all, since the editor's own preview cameras belong to other
+// windows (the entity editor's own 3D view, say) and RenderViewmodel always
+// draws from gfx.Cam, not from one of those.
+var EditorPreviewActive = false
+
 // RenderViewmodel draws the player's viewmodel attachments, last of anything
 // in the 3D world — after the sky, the transparent pass, volumetrics and
 // sprites, and before the 2D UI. Nothing later in the frame touches the depth

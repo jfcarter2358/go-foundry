@@ -23,10 +23,16 @@ it is never out of date.
 | --- | --- |
 | `W` `A` `S` `D` | move |
 | `Space` | jump (gravity on) / fly up (gravity off) |
-| `Left Shift` | fly down (gravity off) |
+| `Left Shift` | sprint, toggled (gravity on; ends when you stop moving forward, crouch, aim or fire) / fly down, held (gravity off) |
 | Arrow keys | turn / look |
 | Mouse | look; the cursor is captured |
 | `E` | sit / stand / get out of a vehicle, else interact |
+| Left / right mouse | primary / secondary fire (viewmodel) |
+| `G` | throw (viewmodel) |
+| `1` / `2` / `3` | weapon slot (viewmodel) |
+| Mouse wheel / `Q` | previous / next weapon (viewmodel; not while seated) |
+| `R` | reload (viewmodel) |
+| `C` / `Left Ctrl` (hold) | crouch — a shorter body at under half speed; stays crouched under anything too low to stand up in |
 | `0` | gravity (fly mode) |
 | `8` | entity-vs-world collision, engine-wide |
 | `9` | entity-vs-entity collision, engine-wide |

@@ -199,6 +199,9 @@ func ScriptRuntimeReset(lvl *world.Level) {
 	rt.warnedAt = map[string]bool{}
 	rt.fanout = map[string]int{}
 	rt.self = flang.RefVal{}
+	// A zoom a script left on (@level.prop.camera_fov) belongs to the session
+	// that set it.
+	gfx.FieldOfView = gfx.DefaultFieldOfView
 
 	// Nothing may evaluate a binding against a level that is being replaced, or
 	// load a script for a screen shown after the runtime has gone.
@@ -217,6 +220,10 @@ func ScriptRuntimeLoad(lvl *world.Level) {
 	if lvl == nil {
 		return
 	}
+	// The player's behaviour comes from the level's player block, and its
+	// attributes start over with each session — see world.ApplyPlayerScript
+	// for why here and not at level load.
+	world.ApplyPlayerScript(lvl)
 	for _, path := range Scripts.scriptPaths() {
 		Scripts.loadUnit(path)
 	}
@@ -260,6 +267,7 @@ func (rt *ScriptRuntime) scriptPaths() []string {
 		for _, p := range rt.lvl.Scripts {
 			add(p)
 		}
+		add(rt.lvl.Player.Script)
 		for i := range rt.lvl.Entities {
 			add(rt.lvl.Entities[i].Script)
 		}

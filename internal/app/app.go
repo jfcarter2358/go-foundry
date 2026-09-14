@@ -154,6 +154,8 @@ func Run() {
 	// The saved gains, after the device is up so a slider that was left at
 	// zero silences the mixer rather than being overwritten by it.
 	audio.LoadSettings()
+	// And the player's mouse settings, which nothing about the device gates.
+	loadControlSettings()
 
 	// Creates the window and its GL context together, at the highest MSAA
 	// sample count the platform actually accepts — the multisample buffer is
@@ -254,9 +256,8 @@ func Run() {
 	// came to be missing from shipped games.
 	render.InitWorldPasses()
 
-	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
 	gfx.ProjectionUniform = gl.GetUniformLocation(gfx.Program, gl.Str("projection\x00"))
-	gl.UniformMatrix4fv(gfx.ProjectionUniform, 1, false, &gfx.Projection[0])
+	gfx.RebuildProjection()
 
 	gfx.AlphaUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alpha\x00"))
 	gl.Uniform1f(gfx.AlphaUniform, 1.0) // default: fully opaque
@@ -456,6 +457,8 @@ func Run() {
 		// level's scripts and the entities' clips as well. The screen stack's
 		// scripts still run under it, since the menu that lifts the pause is
 		// made of them — see script_pause.go.
+		saveControlSettingsWhenSettled(platform.DeltaTime)
+
 		scriptPaused := !devActive() && script.GamePaused()
 		gamePaused := scriptPaused || !devActive() && (ui.Game.Pauses() || levelLoadPending())
 
@@ -463,6 +466,13 @@ func Run() {
 			// Editor owns camera and input; gameplay logic is bypassed.
 			devTick(platform.KeyStates)
 		} else if !gamePaused {
+			// The mouse motion banked since last frame, turned into look first
+			// so the move below walks the way the player is now facing.
+			if platform.PlayerControlEnabled {
+				applyMouseLook(platform.DeltaTime)
+			} else {
+				dropMouseLook()
+			}
 			// --- Input -> player -> camera ---
 			// The keys say how far to move; the player is what moves, and the
 			// camera is placed on it afterwards. It used to run the other way
@@ -514,6 +524,27 @@ func Run() {
 			}
 
 			if world.PlayerEntity != nil {
+				// Crouch is held, not toggled: C or left Ctrl, on foot only —
+				// a driver's Ctrl is the vehicle's, and a seat has its own eye.
+				crouch := crouchable(&level) &&
+					(platform.KeyStates[sdl.SCANCODE_C] != 0 || platform.KeyStates[sdl.SCANCODE_LCTRL] != 0)
+				collision.UpdatePlayerCrouch(world.PlayerEntity, &level, crouch, platform.DeltaTime)
+				// A sprint lasts while the player keeps pushing forward on
+				// foot; stopping, crouching, sitting or losing control ends it,
+				// so the toggle never outlives the run it was pressed for.
+				if world.PlayerSprinting() && (world.PlayerCrouched() || !crouchable(&level) ||
+					platform.KeyStates[sdl.SCANCODE_W] == 0 || !platform.GravityEnabled) {
+					world.SetPlayerSprinting(false)
+				}
+				switch {
+				case world.PlayerCrouched():
+					intent[0] *= world.CrouchSpeedScale
+					intent[2] *= world.CrouchSpeedScale
+				case world.PlayerSprinting():
+					intent[0] *= world.SprintSpeedScale
+					intent[2] *= world.SprintSpeedScale
+				}
+
 				onGround := collision.MovePlayer(
 					world.PlayerEntity, &level,
 					collision.PlayerMove{
@@ -551,6 +582,11 @@ func Run() {
 				gfx.Cam.Position = gfx.Cam.Position.Add(intent)
 				gfx.UpdateCamMatrix()
 			}
+		}
+
+		// Motion banked while the view could not turn must not arrive later.
+		if devActive() || gamePaused {
+			dropMouseLook()
 		}
 
 		// --- Placed entities ---
@@ -862,6 +898,9 @@ func Run() {
 			render.SetAlphaToCoverage(true)
 			gl.UseProgram(gfx.Program)
 			gl.Uniform1i(gfx.AlphaSharpenUniform, 1)
+			// A script zooming the camera (@level.prop.camera_fov) lands here,
+			// before the frustum and every pass below read Projection.
+			gfx.SyncProjection()
 
 			// Build frustum from current projection × camera matrices
 			projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
@@ -1187,8 +1226,10 @@ func Run() {
 			// running any earlier would let whatever came after undo that.
 			// Skipped in the editor for the reason the runtime UI below is: the
 			// view here is the level being built, not a game being played from
-			// inside a body that has hands.
-			if !devActive() {
+			// inside a body that has hands — except while the Player panel's
+			// Viewmodel section is open, which is the one moment the editor
+			// itself needs to see this (render.EditorPreviewActive).
+			if !devActive() || render.EditorPreviewActive {
 				render.RenderViewmodel()
 			}
 

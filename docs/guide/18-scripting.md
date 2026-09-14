@@ -16,7 +16,9 @@ mistyped path is a script that silently never runs.
 
 An entity *definition* names the script for its type; an instance may override it
 or clear it. A level takes a list of its own, for rules that belong to no single
-object; in a level script `@self` is `@level`.
+object; in a level script `@self` is `@level`. The player takes one from the
+level's `player:` block, with its starting attributes beside it — see
+[The player's script](11-entities.md#the-players-script).
 
 ## The shape of a script
 
@@ -123,6 +125,12 @@ The engine posts these without being asked.
 | `:exit:` | " | `other ref` | and left |
 | `:collide:` | entity | `other ref` | two entities overlapped and were pushed apart |
 | `:interact:` | entity, volume | `src ref` | the interact key was pressed inside its bounds |
+| `:primary_fire:` / `:primary_fire_end:` | player | — | the primary fire button (left mouse) went down / came back up |
+| `:secondary_fire:` / `:secondary_fire_end:` | player | — | the secondary fire button (right mouse) went down / came back up |
+| `:throw:` | player | — | the throw key (G) was pressed |
+| `:weapon_slot:` | player | `slot int` | a weapon-slot key (1/2/3) was pressed |
+| `:weapon_cycle:` | player | `step int` | the mouse wheel or Q asked for the next (`1`) or previous (`-1`) weapon |
+| `:reload:` | player | — | the reload key (R) was pressed |
 | `:anim_start:` / `:anim_end:` | entity | `src ref, model str, anim str` | a clip began / finished |
 | `:mount:` / `:dismount:` | vehicle | `src ref, seat str` | something came aboard / left |
 | `:waypoint:` | the object on the path | `src ref, animation ref, index int` | a brush, entity, sprite, emitter, sound, light or volume on a waypoint animation reached one of its points |
@@ -238,7 +246,7 @@ not the one the body sees.
 `v.z` as members
 
 **World** — `log` `time` `player` `find(tag)` `distance(a, b)` `play_anim`
-`stop_anim` `spawn(type, vec)` `destroy(ref)` `after(ms, atom, ...)` `hitscan` `emit` `stop_emit` `burst`
+`stop_anim` `bone_position` `spawn(type, vec)` `destroy(ref)` `after(ms, atom, ...)` `hitscan` `emit` `stop_emit` `burst`
 `spawn_effect` `attach` `detach` `mount` `dismount` `ai_move_to` `ai_stop` `ai_target`
 `ai_objective` `ai_follow_waypoints` `ai_continue` `find_path` `can_see` `play` `stop` `play_sound`
 `play_sound_at` `play_music` `stop_music`
@@ -271,7 +279,7 @@ the leg.
 Bodies do not stop the ray; geometry does. That is what lets one cast answer both
 "what did I hit" and, with `{"all": true}`, "everything in the line of fire".
 
-Options, as a dict second argument: `all`, `range` (default 1000), `entities`
+Options, as a dict second argument: `all`, `points`, `range` (default 1000), `entities`
 (default on), `volumes` (default **off** — levels wrap rooms in them),
 `geometry` (default on; clear it to see through walls), `visible_only`, `tag`,
 `ignore`. An unknown key is reported as a typo with a suggestion before the
@@ -279,6 +287,15 @@ script runs.
 
 A wall comes back as its edge ref, so `hit.prop.texture = "scorched"` works on
 whatever the shot landed on.
+
+`"points": true` adds a third argument: where each hit landed — a `vec` beside
+the nearest hit, or a list of them beside `"all"`'s list. `at` is the wall
+behind a body, so this is how an effect goes on the body:
+`def on_shot(:shot:, hit, at vec, point)`.
+
+The player's aim, for anything that is not a cast — a grenade, say — is
+`@player.prop.look_direction` from `@player.prop.eye_position`, both the
+camera's and in world space.
 
 ## Importing
 

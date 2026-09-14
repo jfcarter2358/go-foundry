@@ -76,34 +76,57 @@ type Surface struct {
 // so the geometry has to be carried only as far as the frame, not out to the
 // world.
 func SurfaceUnder(lvl *world.Level, frame string, wx, topY, wz, maxDrop float32) Surface {
-	if lvl == nil || maxDrop <= 0 {
-		return Surface{}
+	return NewGroundQuery(lvl, frame).SurfaceUnder(wx, topY, wz, maxDrop)
+}
+
+// GroundQuery is SurfaceUnder with the per-chunk and per-brush work done once,
+// for a caller about to ask thousands of columns in a row — a scatter volume's
+// height bake. It captures the level as it is when made, so it is for one bake
+// and not to be kept across frames: an edit afterwards is not seen.
+type GroundQuery struct {
+	chunks []groundChunk
+}
+
+type groundChunk struct {
+	ch     *world.Chunk
+	lo, hi mgl32.Vec3 // placement bounds
+	model  mgl32.Mat4
+	inv    mgl32.Mat4
+	moved  bool // model is not the identity
+	// brushes are the solid brushes, each with the box around its drawn mesh
+	// in chunk space.
+	brushes []groundBrush
+}
+
+type groundBrush struct {
+	b      *world.Brush
+	lo, hi mgl32.Vec3
+}
+
+// NewGroundQuery gathers what SurfaceUnder needs from lvl for points in frame.
+func NewGroundQuery(lvl *world.Level, frame string) *GroundQuery {
+	q := &GroundQuery{}
+	if lvl == nil {
+		return q
 	}
 	frame = world.FrameID(frame)
-	origin := mgl32.Vec3{wx, topY, wz}
-	best := Surface{}
-	bestT := maxDrop
-
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
 		if !ch.IsEnabled() {
 			continue // not drawn and not solid, so nothing to stand on
 		}
 		if world.FrameID(ch.FrameOwner) != frame {
-			continue // another frame's geometry — see above
+			continue // another frame's geometry — see SurfaceUnder
 		}
-		// A quick reject on the chunk's own bounds before any triangle work.
-		// The column is a vertical segment, so only the XZ overlap and the
-		// height range matter.
-		lo, hi := ch.PlacementBounds()
-		if wx < lo.X() || wx > hi.X() || wz < lo.Z() || wz > hi.Z() {
-			continue
+		gc := groundChunk{ch: ch, model: ch.LocalPlacementMatrix()}
+		gc.lo, gc.hi = ch.PlacementBounds()
+		if gc.model != mgl32.Ident4() {
+			gc.inv = gc.model.Inv()
+			if gc.inv == (mgl32.Mat4{}) {
+				continue
+			}
+			gc.moved = true
 		}
-		if hi.Y() < topY-maxDrop || lo.Y() > topY {
-			continue
-		}
-		model := ch.LocalPlacementMatrix()
-
 		for bi := range ch.Brushes {
 			b := &ch.Brushes[bi]
 			if !b.Solid {
@@ -112,10 +135,72 @@ func SurfaceUnder(lvl *world.Level, frame string, wx, topY, wz, maxDrop float32)
 				continue
 			}
 			// The DRAWN mesh: what grass grows on is the surface an author can
-			// see, and its faces index that mesh's own vertex pool — asking the
-			// brush for a detail face's corners would resolve them against the
-			// hull's.
-			drawn := b.DrawMesh()
+			// see, and its faces index that mesh's own vertex pool.
+			verts := b.DrawMesh().Verts
+			if len(verts) == 0 {
+				continue
+			}
+			gb := groundBrush{b: b, lo: verts[0], hi: verts[0]}
+			for _, v := range verts[1:] {
+				gb.lo, gb.hi = geom.VecMin(gb.lo, v), geom.VecMax(gb.hi, v)
+			}
+			gc.brushes = append(gc.brushes, gb)
+		}
+		q.chunks = append(q.chunks, gc)
+	}
+	return q
+}
+
+// SurfaceUnder is the package-level SurfaceUnder against the gathered level.
+func (q *GroundQuery) SurfaceUnder(wx, topY, wz, maxDrop float32) Surface {
+	if q == nil || maxDrop <= 0 {
+		return Surface{}
+	}
+	origin := mgl32.Vec3{wx, topY, wz}
+	best := Surface{}
+	bestT := maxDrop
+
+	for ci := range q.chunks {
+		gc := &q.chunks[ci]
+		ch := gc.ch
+		// A quick reject on the chunk's own bounds before any triangle work.
+		// The column is a vertical segment, so only the XZ overlap and the
+		// height range matter.
+		if wx < gc.lo.X() || wx > gc.hi.X() || wz < gc.lo.Z() || wz > gc.hi.Z() {
+			continue
+		}
+		if gc.hi.Y() < topY-maxDrop || gc.lo.Y() > topY {
+			continue
+		}
+
+		// The column in the chunk's own space, once per chunk. A chunk's
+		// placement is a Y rotation and a uniform scale, so the column stays
+		// vertical in here; only its length changes with the scale.
+		localOrigin, localDir := origin, mgl32.Vec3{0, -1, 0}
+		if gc.moved {
+			o4 := gc.inv.Mul4x1(origin.Vec4(1))
+			d4 := gc.inv.Mul4x1(localDir.Vec4(0))
+			localOrigin = mgl32.Vec3{o4.X(), o4.Y(), o4.Z()}
+			localDir = mgl32.Vec3{d4.X(), d4.Y(), d4.Z()}
+		}
+		localBottom := localOrigin.Y() + localDir.Y()*maxDrop
+
+		for bi := range gc.brushes {
+			gb := &gc.brushes[bi]
+			// Reject the brush on its own box before touching a face. The
+			// chunk reject above is not enough on its own: a chunk is one box
+			// around everything in it, so a big terrain chunk passes it for
+			// every column, and every face of every brush got ray-tested — a
+			// grass field over a 700-brush canyon took 13 s to bake, on the
+			// main thread, on the frame the chunk was switched on. A point
+			// exactly on a box's edge counts as inside, so a column down the
+			// seam between two brushes still tests both.
+			if localOrigin.X() < gb.lo.X() || localOrigin.X() > gb.hi.X() ||
+				localOrigin.Z() < gb.lo.Z() || localOrigin.Z() > gb.hi.Z() ||
+				gb.hi.Y() < localBottom || gb.lo.Y() > localOrigin.Y() {
+				continue
+			}
+			drawn := gb.b.DrawMesh()
 			faces := drawn.Faces
 			for fi := range faces {
 				f := &faces[fi]
@@ -130,7 +215,7 @@ func SurfaceUnder(lvl *world.Level, frame string, wx, topY, wz, maxDrop float32)
 				if n.Y() <= 0 {
 					continue
 				}
-				t, ok := columnHitsFace(origin, maxDrop, f.Geometry.Vertices, model)
+				t, ok := columnHitsFace(localOrigin, localDir, maxDrop, f.Geometry.Vertices)
 				if !ok || t >= bestT {
 					continue
 				}
@@ -145,26 +230,15 @@ func SurfaceUnder(lvl *world.Level, frame string, wx, topY, wz, maxDrop float32)
 // columnHitsFace intersects a straight-down ray with one face's triangles and
 // returns the nearest distance along it.
 //
-// The ray is rewritten in the chunk's own space rather than the triangles being
+// origin and dir are the column already rewritten in the chunk's own space
+// (SurfaceUnder does that once per chunk) rather than the triangles being
 // carried into the world, exactly as the editor's picker does: the inverse
 // transform scales origin and direction together, so the returned distance is
 // still the world-space one and is directly comparable across chunks.
-func columnHitsFace(origin mgl32.Vec3, maxDrop float32, verts []float32, model mgl32.Mat4) (float32, bool) {
+func columnHitsFace(origin, dir mgl32.Vec3, maxDrop float32, verts []float32) (float32, bool) {
 	if len(verts) < 15 {
 		return 0, false
 	}
-	dir := mgl32.Vec3{0, -1, 0}
-	if model != mgl32.Ident4() {
-		inv := model.Inv()
-		if inv == (mgl32.Mat4{}) {
-			return 0, false
-		}
-		o4 := inv.Mul4x1(origin.Vec4(1))
-		d4 := inv.Mul4x1(dir.Vec4(0))
-		origin = mgl32.Vec3{o4.X(), o4.Y(), o4.Z()}
-		dir = mgl32.Vec3{d4.X(), d4.Y(), d4.Z()}
-	}
-
 	best := float32(math.MaxFloat32)
 	found := false
 	for i := 0; i+14 < len(verts); i += 15 {

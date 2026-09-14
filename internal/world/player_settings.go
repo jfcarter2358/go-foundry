@@ -1,5 +1,7 @@
 package world
 
+import "fmt"
+
 // player_settings.go — the level's tuning for the engine-owned player.
 //
 // The player is the one body in the level nothing authors: NewPlayer builds it,
@@ -63,6 +65,19 @@ type PlayerSettings struct {
 	// Level.Entities (see entity.go's header on why) and so is invisible to
 	// every walk that is.
 	Models []EntityModel
+
+	// Script, Attributes and ScriptParams are the player's behaviour, the
+	// same three things an entity type carries: which .flang file hears what
+	// happens to the player (`:primary_fire:`, `:damage:`, `:tick:`), the
+	// values it starts each play session with (health, most likely), and the
+	// level's answers to that script's `param`s.
+	//
+	// These are the authored copies. ApplyPlayerScript puts them onto
+	// PlayerEntity — attributes cloned, since a script writes those during
+	// play and the level must still hold what the author wrote when play ends.
+	Script       string
+	Attributes   AttrSet
+	ScriptParams AttrSet
 }
 
 // EffectiveStepHeight is the allowance actually in force: what the level says,
@@ -82,10 +97,14 @@ func (p PlayerSettings) EffectiveStepHeight() float32 {
 // PlayerSettingsFromRaw reads the optional `player:` block. A nil in is a level
 // that never mentioned the player, and gives the zero value rather than an
 // error — the same way an absent `fog:` is a level with no fog.
-func PlayerSettingsFromRaw(r *RawPlayer) PlayerSettings {
+//
+// The error is a mistyped attribute or param, which stops the load for the
+// reason it stops an entity type's: a script finding health missing later is
+// a worse place to learn about it.
+func PlayerSettingsFromRaw(r *RawPlayer) (PlayerSettings, error) {
 	var p PlayerSettings
 	if r == nil {
-		return p
+		return p, nil
 	}
 	if r.StepHeight != nil {
 		p.StepHeight = *r.StepHeight
@@ -93,7 +112,17 @@ func PlayerSettingsFromRaw(r *RawPlayer) PlayerSettings {
 	for _, rm := range r.Models {
 		p.Models = append(p.Models, entityModelFromRaw(rm))
 	}
-	return p
+	p.Script = r.Script
+	attrs, err := attrsFromRaw(r.Attributes)
+	if err != nil {
+		return PlayerSettings{}, fmt.Errorf("player attributes: %w", err)
+	}
+	params, err := attrsFromRaw(r.Params)
+	if err != nil {
+		return PlayerSettings{}, fmt.Errorf("player params: %w", err)
+	}
+	p.Attributes, p.ScriptParams = attrs, params
+	return p, nil
 }
 
 // PlayerSettingsToRaw writes the block back, returning nil for settings that
@@ -104,7 +133,8 @@ func PlayerSettingsFromRaw(r *RawPlayer) PlayerSettings {
 // slice cannot be compared with ==, and an empty-but-non-nil slice would have
 // to count as "unset" anyway, the same way StepHeight's own zero does.
 func PlayerSettingsToRaw(p PlayerSettings) *RawPlayer {
-	if p.StepHeight == 0 && len(p.Models) == 0 {
+	if p.StepHeight == 0 && len(p.Models) == 0 && p.Script == "" &&
+		len(p.Attributes) == 0 && len(p.ScriptParams) == 0 {
 		return nil
 	}
 	r := &RawPlayer{}
@@ -115,5 +145,29 @@ func PlayerSettingsToRaw(p PlayerSettings) *RawPlayer {
 	for i := range p.Models {
 		r.Models = append(r.Models, entityModelToRaw(&p.Models[i]))
 	}
+	r.Script = p.Script
+	r.Attributes = attrsToRaw(p.Attributes)
+	r.Params = attrsToRaw(p.ScriptParams)
 	return r
+}
+
+// ApplyPlayerScript puts a level's player behaviour onto the engine-owned
+// player: its script, its params, and a fresh copy of its starting attributes.
+//
+// Called as a play session's scripts load (script.ScriptRuntimeLoad), which is
+// every entry into play, every level change and every release boot — the
+// moments a player should come back to full health. Not at level load: the
+// editor loads a level long before anyone plays it, and a second play session
+// must not start with the health the first one ended on, which the level load
+// alone would leave in place.
+//
+// The player is a no-op when nil, which it is in tests and tools that never ran
+// the app's startup.
+func ApplyPlayerScript(lvl *Level) {
+	if PlayerEntity == nil || lvl == nil {
+		return
+	}
+	PlayerEntity.Script = lvl.Player.Script
+	PlayerEntity.Attributes = lvl.Player.Attributes.Clone()
+	PlayerEntity.ScriptParams = lvl.Player.ScriptParams.Clone()
 }

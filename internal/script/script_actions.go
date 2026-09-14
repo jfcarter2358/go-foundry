@@ -157,6 +157,13 @@ func init() {
 				rt.logLine(fmt.Sprintf("spawn %s: %v", id, err))
 			}
 			rt.lvl.Entities = append(rt.lvl.Entities, e)
+			// Its script, if nothing already in the level named it. The runtime
+			// loads what the level references when play starts, and a type that
+			// only ever arrives by spawn — a thrown grenade — is referenced by
+			// nothing placed, so without this its `:spawn:` and every message
+			// after went to a script that was never parsed. File I/O, which a
+			// tick may do; loadUnit is a no-op for a script already loaded.
+			rt.loadUnit(e.Script)
 			// The effects the type carries, materialised as level emitters
 			// riding the new entity (world/entity_emitter.go). Their textures
 			// are queued rather than loaded, because the tick must not touch
@@ -292,7 +299,7 @@ func init() {
 	// The particle, attach and audio verbs live in their own files and their
 	// own maps, so each surface can be read in one place; they are merged in
 	// here so there is still exactly one table the runtime looks in.
-	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs, audioVerbs, effectVerbs, uiVerbs, hitscanVerbs, waypointVerbs, tweenVerbs, aiVerbs} {
+	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs, audioVerbs, effectVerbs, uiVerbs, hitscanVerbs, waypointVerbs, tweenVerbs, aiVerbs, boneVerbs} {
 		for name, fn := range group {
 			if _, clash := scriptVerbs[name]; clash {
 				panic("script: two implementations of the verb " + name)

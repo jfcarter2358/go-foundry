@@ -763,3 +763,10 @@
 - [x] Waypoint animations
 - [x] Cannot select sprites/waypoints/etc. as refs in script dropdown
 - [ ] Popout help menu
+- [ ] No weapon state
+- [ ] Volumes where player has to hold their weapon down/firing is disabled
+- [ ] Enable AI to enter vehicles
+- [ ] Friendly units
+- [ ] RTS mode
+- [ ] 3rd person mode
+- [ ] Audio control

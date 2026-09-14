@@ -32,7 +32,9 @@ import (
 
 	"github.com/go-gl/mathgl/mgl32"
 
+	"foundry/internal/ai"
 	"foundry/internal/flang"
+	"foundry/internal/gfx"
 	"foundry/internal/world"
 )
 
@@ -414,6 +416,54 @@ func entityProps() map[string]propAccess {
 			Get: get(func(e *world.Entity) flang.Value { return flang.BoolVal(e.Collision.OnGround) }),
 			Doc: "read-only: whether the entity is resting on something",
 		},
+		// Where the entity looks from, and which way, in world space. For the
+		// player both are the camera — the reticle hitscan casts along — because
+		// its look is the camera's yaw and pitch, which Entity.Rotation never
+		// tracks. For anything else they are the eye an AI agent sees from and
+		// the entity's own facing, its local −Z.
+		"eye_position": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				e := c.entityFor(r)
+				if e == nil {
+					return nil, false
+				}
+				return vecValue(entityEye(c.lvl, e)), true
+			},
+			Doc: "read-only: where the entity looks from, in world space — the camera for the player",
+		},
+		"crouching": {
+			Get: get(func(e *world.Entity) flang.Value {
+				return flang.BoolVal(e == world.PlayerEntity && world.PlayerCrouched())
+			}),
+			Doc: "read-only: whether the player is crouched (C or left Ctrl); always false for any other entity",
+		},
+		"sprinting": {
+			Get: get(func(e *world.Entity) flang.Value {
+				return flang.BoolVal(e == world.PlayerEntity && world.PlayerSprinting())
+			}),
+			Set: set(func(e *world.Entity, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("sprinting", "bool", v)
+				}
+				if e != world.PlayerEntity {
+					return fmt.Errorf("only the player sprints; @%s has no sprint to set", e.ID)
+				}
+				world.SetPlayerSprinting(b)
+				return nil
+			}),
+			Doc: "whether the player is sprinting (Left Shift toggles it; stopping, crouching or sitting ends it). Writable on the player, so firing or aiming can end a sprint",
+		},
+		"look_direction": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				e := c.entityFor(r)
+				if e == nil {
+					return nil, false
+				}
+				return vecValue(entityLook(c.lvl, e)), true
+			},
+			Doc: "read-only: the unit direction the entity looks, in world space — the camera's aim for the player",
+		},
 		"type": {
 			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(e.Type) }),
 			Doc: "read-only: the definition this instance came from",
@@ -433,6 +483,14 @@ func entityProps() map[string]propAccess {
 				return flang.RefVal{Kind: flang.RefEntity, A: e.Frame}
 			}),
 			Doc: "read-only: the vehicle this entity is riding in, or null",
+		},
+		// The one position that does NOT convert to world space. A rider's own
+		// movement is its change here; `position` also carries the vehicle's
+		// motion, so a passenger standing still on a falling ship reads as
+		// walking. Same as `position` for an entity in no frame.
+		"local_position": {
+			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.Position) }),
+			Doc: "read-only: position in the frame the entity rides in (world-space when not riding)",
 		},
 		"seat": {
 			Get: get(func(e *world.Entity) flang.Value { return flang.StrVal(e.Seat) }),
@@ -1047,4 +1105,35 @@ func clamp11(f float32) float32 {
 		return 1
 	}
 	return f
+}
+
+// entityEye is eye_position: the camera for the player, an agent's eye for
+// anything else.
+func entityEye(lvl *world.Level, e *world.Entity) mgl32.Vec3 {
+	if e == world.PlayerEntity {
+		return gfx.Cam.Position
+	}
+	if lvl == nil {
+		return e.Position
+	}
+	return ai.EyeOf(lvl, e)
+}
+
+// entityLook is look_direction: the camera's aim for the player, the entity's
+// own −Z carried into world space for anything else.
+func entityLook(lvl *world.Level, e *world.Entity) mgl32.Vec3 {
+	if e == world.PlayerEntity {
+		if d := gfx.Cam.Direction; d.Len() > 1e-6 {
+			return d.Normalize()
+		}
+		return mgl32.Vec3{0, 0, -1}
+	}
+	d := e.RotationMatrix().Mul4x1(mgl32.Vec4{0, 0, -1, 0}).Vec3()
+	if lvl != nil {
+		d = lvl.Frames.FrameFor(e).DirToWorld(d)
+	}
+	if d.Len() < 1e-6 {
+		return mgl32.Vec3{0, 0, -1}
+	}
+	return d.Normalize()
 }

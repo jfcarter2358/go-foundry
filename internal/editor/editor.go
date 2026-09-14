@@ -174,6 +174,13 @@ type EditorState struct {
 	NewAttrName string
 	NewAttrType int32
 
+	// ViewmodelTarget is the Player panel's Viewmodel section's own selector:
+	// "" edits the player's own models, else the ID of an AI entity from
+	// world.FindAIAgents to edit instead. Lives here rather than as a local so
+	// it survives between frames the same way every other combo selection on
+	// this panel does.
+	ViewmodelTarget string
+
 	// ScriptFileNames is the .flang catalog, rescanned rather than watched —
 	// see editorRefreshScriptFiles. nil means "never scanned"; empty means
 	// "scanned, folder is empty".

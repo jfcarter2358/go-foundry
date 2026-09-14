@@ -428,6 +428,10 @@ func feetOf(lvl *world.Level, e *world.Entity) mgl32.Vec3 {
 }
 
 // eyeOf is where an entity looks from: most of the way up its bounds.
+// EyeOf is eyeOf for callers outside the controller — a script asking where an
+// entity looks from gets the same answer an agent's own sight uses.
+func EyeOf(lvl *world.Level, e *world.Entity) mgl32.Vec3 { return eyeOf(lvl, e) }
+
 func eyeOf(lvl *world.Level, e *world.Entity) mgl32.Vec3 {
 	c := lvl.Frames.WorldBoundCenter(e)
 	if e.HasBounds() {

@@ -117,6 +117,40 @@ func TestEntityPositionPropIsWorldSpace(t *testing.T) {
 	}
 }
 
+// local_position is the deliberate exception: a rider's own movement has to be
+// measurable without the ship's. Moving the ship must move `position` and leave
+// `local_position` exactly where it was — the player script's walk/idle choice
+// depends on it.
+func TestEntityLocalPositionIgnoresTheFrameMoving(t *testing.T) {
+	lvl := framedLevel(t, mgl32.Vec3{50, 0, 0})
+	lvl.Entities[0].Position = mgl32.Vec3{1, 2, 3}
+
+	read := func(prop string) mgl32.Vec3 {
+		got := runScript(t, lvl, "",
+			"def main() -> null\n    return @crate.prop."+prop+"\nend")
+		v, ok := got.(flang.VecVal)
+		if !ok {
+			t.Fatalf("%s prop returned %T, want a vec", prop, got)
+		}
+		return vec3Of(v)
+	}
+
+	if got := read("local_position"); !vecClose(got, mgl32.Vec3{1, 2, 3}, 1e-4) {
+		t.Errorf("local_position = %v, want the stored frame-local <1,2,3>", got)
+	}
+
+	// The ship moves; the crate does not move within it.
+	world.FindEntity(lvl, "ship").Position = mgl32.Vec3{80, -10, 5}
+	world.RefreshFrames(lvl, lvl.Frames)
+	if got := read("local_position"); !vecClose(got, mgl32.Vec3{1, 2, 3}, 1e-4) {
+		t.Errorf("local_position after the ship moved = %v, want <1,2,3> unchanged", got)
+	}
+	if got := read("position"); vecClose(got, mgl32.Vec3{51, 2, 3}, 1e-4) {
+		t.Errorf("position after the ship moved = %v, still the old world value — "+
+			"the test is not moving the frame", got)
+	}
+}
+
 // Writing the property back must land the entity where the script asked, in
 // world terms — and must round-trip with the getter.
 func TestEntityPositionPropRoundTripsThroughItsFrame(t *testing.T) {

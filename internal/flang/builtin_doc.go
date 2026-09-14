@@ -167,6 +167,8 @@ var builtinDocs = []BuiltinDoc{
 	{GroupWorld, "play_anim", "play_anim(ref, name)  ·  play_anim(ref, model, name)", "bool",
 		"Play the animation by the name the entity gives it — not the clip name inside the .fmdl."},
 	{GroupWorld, "stop_anim", "stop_anim(ref)", "bool", "Stop whatever is playing on the entity."},
+	{GroupWorld, "bone_position", "bone_position(@e.model.name, bone)  ·  bone_position(ref, model, bone)", "vec",
+		"Where one bone of an attachment is right now, in world space — a muzzle to put a flash at. The player's are the viewmodel's, carried by the camera."},
 	{GroupWorld, "after", "ref <- after(ms, atom, ...)", "null",
 		"Send the message to that object, that many milliseconds of play time from now. Only ever sent — `after(...)` on its own has nobody to deliver to."},
 	{GroupWorld, "mount", "mount(ref, vehicle, seat?)", "bool",

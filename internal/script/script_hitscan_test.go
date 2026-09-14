@@ -325,3 +325,85 @@ func TestHitscanOptionNamesAndSummariesAgree(t *testing.T) {
 		t.Error("the language does not know hitscan is a builtin")
 	}
 }
+
+// `"points": true` adds where each hit landed. Bodies do not stop the ray, so
+// `at` is the wall behind a target — the points are the only way to put an
+// effect on the target itself.
+func TestHitscanPointsSayWhereEachHitLanded(t *testing.T) {
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "gun.flang", `def on_spawn(:spawn:) -> null
+    hitscan(:near_shot:, {"points": true})
+    hitscan(:all_shot:, {"all": true, "points": true})
+end
+def on_near(:near_shot:, hit, at vec, point vec) -> null
+    @self.attr.x = point.x
+end
+def on_all(:all_shot:, hits list, at vec, points list) -> null
+    @self.attr.n = len(points)
+    @self.attr.hit = format("{}", points[1].x)
+end`)
+
+	lvl := aimingLevel(t)
+	lvl.Entities = []world.Entity{caster(path), target("far", 8), target("near", 4)}
+
+	runTicks(t, lvl, 2)
+
+	gun := &lvl.Entities[0]
+	// The near cube spans x 3.5..4.5; the ray enters it at 3.5.
+	if a, _ := gun.Attr("x"); a.F < 3.49 || a.F > 3.51 {
+		t.Errorf("nearest point x = %v, want the near cube's face at 3.5", a.F)
+	}
+	if n, _ := gun.Attr("n"); n.I != 3 {
+		t.Errorf("points = %d, want one per hit (two cubes and the wall)", n.I)
+	}
+	if got := attrStr(t, gun, "hit"); got != "7.5" {
+		t.Errorf("second point x = %q, want the far cube's face at 7.5", got)
+	}
+}
+
+// Without the option the message keeps its two arguments, so a handler
+// written before it still matches.
+func TestHitscanWithoutPointsKeepsTwoArguments(t *testing.T) {
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "gun.flang", `def on_spawn(:spawn:) -> null
+    hitscan(:shot:)
+end
+def on_shot(:shot:, hit, at vec) -> null
+    @self.attr.n = 2
+end`)
+
+	lvl := aimingLevel(t)
+	lvl.Entities = []world.Entity{caster(path), target("near", 4)}
+	runTicks(t, lvl, 2)
+
+	if n, _ := lvl.Entities[0].Attr("n"); n.I != 2 {
+		t.Error("a two-argument handler no longer matched")
+	}
+}
+
+// The player's aim is the camera's, which is what a thrown grenade needs and
+// what Entity.Rotation never tracks; anything else looks down its own −Z.
+func TestEyePositionAndLookDirection(t *testing.T) {
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "look.flang", `def on_spawn(:spawn:) -> null
+    d = @player.prop.look_direction
+    e = @player.prop.eye_position
+    @self.attr.x = d.x
+    @self.attr.hit = format("{} {}", e.y, @near.prop.look_direction.x)
+end`)
+
+	lvl := aimingLevel(t) // camera at (1,2,5) looking +X
+	gfx.Cam.Direction = mgl32.Vec3{2, 0, 0}
+	near := target("near", 4)
+	near.Rotation = mgl32.Vec3{0, 3.14159265 / 2, 0} // −Z turned a quarter left is −X
+	lvl.Entities = []world.Entity{caster(path), near}
+	runTicks(t, lvl, 2)
+
+	gun := &lvl.Entities[0]
+	if a, _ := gun.Attr("x"); a.F < 0.999 || a.F > 1.001 {
+		t.Errorf("player look_direction.x = %v, want the camera's aim normalised to 1", a.F)
+	}
+	if got := attrStr(t, gun, "hit"); !strings.HasPrefix(got, "2.0 -1.0") && !strings.HasPrefix(got, "2 -1") {
+		t.Errorf("eye y and entity look x = %q, want the camera's height 2 and −X", got)
+	}
+}

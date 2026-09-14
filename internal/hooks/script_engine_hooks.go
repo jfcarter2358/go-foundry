@@ -89,6 +89,115 @@ func ScriptInteractPressed() bool {
 	return out
 }
 
+// ---------- weapon input ----------
+//
+// The viewmodel's fire/throw/switch buttons, mirroring the interact key's
+// shape above with one difference: fire needs both edges, not just the press,
+// because a held trigger and a released one are different script events (an
+// automatic weapon fires on a timer while down, and has to know when to stop).
+// Throw and weapon-switch are plain presses, same as interact.
+
+// fireEdges is one held button's press/release edges since the last drain.
+type fireEdges struct {
+	down bool
+	up   bool
+}
+
+var primaryFireEdges, secondaryFireEdges fireEdges
+
+// ScriptPrimaryFireRequest records the primary fire button's edge: down=true
+// on press, down=false on release. Both can be pending at once (a press and a
+// release inside the same frame), which is why this is two flags rather than
+// one "currently down" bool — TakeScriptPrimaryFireEdges reports both.
+func ScriptPrimaryFireRequest(down bool) { setFireEdge(&primaryFireEdges, down) }
+
+// TakeScriptPrimaryFireEdges reports and clears the pending press/release.
+func TakeScriptPrimaryFireEdges() (down, up bool) { return takeFireEdge(&primaryFireEdges) }
+
+// ScriptSecondaryFireRequest is ScriptPrimaryFireRequest for the secondary
+// fire button.
+func ScriptSecondaryFireRequest(down bool) { setFireEdge(&secondaryFireEdges, down) }
+
+// TakeScriptSecondaryFireEdges is TakeScriptPrimaryFireEdges for the
+// secondary fire button.
+func TakeScriptSecondaryFireEdges() (down, up bool) { return takeFireEdge(&secondaryFireEdges) }
+
+func setFireEdge(e *fireEdges, down bool) {
+	if down {
+		e.down = true
+	} else {
+		e.up = true
+	}
+}
+
+func takeFireEdge(e *fireEdges) (down, up bool) {
+	down, up = e.down, e.up
+	*e = fireEdges{}
+	return
+}
+
+// scriptThrowPressed is the grenade-throw key, an edge for the same reason
+// scriptInteractPressed is.
+var scriptThrowPressed bool
+
+// ScriptThrowRequest records that the throw key went down.
+func ScriptThrowRequest() { scriptThrowPressed = true }
+
+// ScriptThrowPressed reports and clears the pending press.
+func ScriptThrowPressed() bool {
+	out := scriptThrowPressed
+	scriptThrowPressed = false
+	return out
+}
+
+// scriptWeaponSlotRequests are pending weapon-switch presses, queued rather
+// than a single pending slot so two slot keys hit in the same frame both
+// reach the script rather than the second silently overwriting the first.
+var scriptWeaponSlotRequests []int
+
+// ScriptWeaponSlotRequest records that the given slot's key went down.
+func ScriptWeaponSlotRequest(slot int) {
+	scriptWeaponSlotRequests = append(scriptWeaponSlotRequests, slot)
+}
+
+// TakeScriptWeaponSlotRequests returns and clears the pending slot presses.
+func TakeScriptWeaponSlotRequests() []int {
+	out := scriptWeaponSlotRequests
+	scriptWeaponSlotRequests = nil
+	return out
+}
+
+// scriptReloadPressed is the reload key, an edge like the throw key.
+var scriptReloadPressed bool
+
+// ScriptReloadRequest records that the reload key went down.
+func ScriptReloadRequest() { scriptReloadPressed = true }
+
+// ScriptReloadPressed reports and clears the pending press.
+func ScriptReloadPressed() bool {
+	out := scriptReloadPressed
+	scriptReloadPressed = false
+	return out
+}
+
+// scriptWeaponCycleRequests are pending next/previous-weapon steps (+1 or -1),
+// queued for the same reason slot presses are: a wheel flicked twice in one
+// frame is two steps, not one.
+var scriptWeaponCycleRequests []int
+
+// ScriptWeaponCycleRequest records one step through the weapons: +1 for the
+// next, -1 for the previous.
+func ScriptWeaponCycleRequest(step int) {
+	scriptWeaponCycleRequests = append(scriptWeaponCycleRequests, step)
+}
+
+// TakeScriptWeaponCycleRequests returns and clears the pending steps.
+func TakeScriptWeaponCycleRequests() []int {
+	out := scriptWeaponCycleRequests
+	scriptWeaponCycleRequests = nil
+	return out
+}
+
 // ---------- vehicle events ----------
 
 // VehicleEvent is one boarding or leaving, recorded by the engine so the script

@@ -9,7 +9,6 @@ import (
 	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
-	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -23,8 +22,7 @@ func RefreshWindowSize() {
 	if platform.WinHeight < 1 {
 		platform.WinHeight = 1
 	}
-	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45.0), float32(platform.WinWidth)/float32(platform.WinHeight), 0.1, 1000.0)
-	gl.UniformMatrix4fv(gfx.ProjectionUniform, 1, false, &gfx.Projection[0])
+	gfx.RebuildProjection()
 	if gfx.Cam.MouseLock {
 		platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
 	}
@@ -64,21 +62,28 @@ func HandleEvent(event sdl.Event) {
 		// the motion made meanwhile would all arrive as one lurch the moment
 		// control is handed back.
 		if !devActive() && (!platform.PlayerControlEnabled || script.GamePaused()) {
+			dropMouseLook()
 			platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
 			break
 		}
-		gfx.Cam.Yaw += platform.MouseRotationSpeed * float32(dx)
-		gfx.Cam.Pitch -= platform.MouseRotationSpeed * float32(dy)
-		if gfx.Cam.Pitch > gfx.MaxPitch {
-			gfx.Cam.Pitch = gfx.MaxPitch
+		if devActive() {
+			gfx.Cam.Yaw += platform.MouseRotationSpeed * float32(dx)
+			gfx.Cam.Pitch -= platform.MouseRotationSpeed * float32(dy)
+			if gfx.Cam.Pitch > gfx.MaxPitch {
+				gfx.Cam.Pitch = gfx.MaxPitch
+			}
+			if gfx.Cam.Pitch < -gfx.MaxPitch {
+				gfx.Cam.Pitch = -gfx.MaxPitch
+			}
+			// Recompute direction immediately so movement this frame uses the
+			// correct look direction (no one-frame rotation lag).
+			gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
+			gfx.UpdateCamMatrix()
+		} else {
+			// Gameplay look is banked and spent by the frame loop, with the
+			// player's sensitivity and smoothing — see mouse_look.go.
+			bankMouseLook(dx, dy)
 		}
-		if gfx.Cam.Pitch < -gfx.MaxPitch {
-			gfx.Cam.Pitch = -gfx.MaxPitch
-		}
-		// Recompute direction immediately so movement this frame uses the
-		// correct look direction (no one-frame rotation lag).
-		gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
-		gfx.UpdateCamMatrix()
 		// Return cursor to centre for next delta measurement.
 		platform.Window.WarpMouseInWindow(platform.WinHalfWidth, platform.WinHalfHeight)
 
@@ -206,6 +211,69 @@ func HandleEvent(event sdl.Event) {
 				if !devActive() {
 					world.EntityEntityCollisionEnabled = !world.EntityEntityCollisionEnabled
 				}
+			case sdl.SCANCODE_G:
+				// Grenade throw. Same gate as the interact key: not while the
+				// editor, a paused script or a disabled player owns input.
+				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
+					hooks.ScriptThrowRequest()
+				}
+			case sdl.SCANCODE_1:
+				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
+					hooks.ScriptWeaponSlotRequest(1)
+				}
+			case sdl.SCANCODE_2:
+				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
+					hooks.ScriptWeaponSlotRequest(2)
+				}
+			case sdl.SCANCODE_3:
+				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
+					hooks.ScriptWeaponSlotRequest(3)
+				}
+			case sdl.SCANCODE_LSHIFT:
+				// Sprint, as a toggle. Only with gravity on: in free-fly Left
+				// Shift is "down", held (gfx.MoveIntent).
+				if t.Repeat == 0 && !devActive() && platform.PlayerControlEnabled && !script.GamePaused() &&
+					platform.GravityEnabled && world.PlayerEntity != nil && world.PlayerEntity.Seat == "" {
+					world.SetPlayerSprinting(!world.PlayerSprinting())
+				}
+			case sdl.SCANCODE_R:
+				if t.Repeat == 0 && !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
+					hooks.ScriptReloadRequest()
+				}
+			case sdl.SCANCODE_Q:
+				// Next weapon. Not on key repeat, or holding Q spins through
+				// every weapon at the keyboard's repeat rate.
+				// Nor while seated: Q is a vehicle's control there.
+				if t.Repeat == 0 && !devActive() && platform.PlayerControlEnabled && !script.GamePaused() &&
+					(world.PlayerEntity == nil || world.PlayerEntity.Seat == "") {
+					hooks.ScriptWeaponCycleRequest(1)
+				}
+			}
+		}
+
+	case sdl.MouseWheelEvent:
+		// Weapon cycling. Wheel up is the previous weapon and down the next,
+		// the way a list scrolls. Only reached when the UI did not consume the
+		// wheel (uiHandleEvent), so a scrolling menu never switches guns.
+		if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
+			if t.Y > 0 {
+				hooks.ScriptWeaponCycleRequest(-1)
+			} else if t.Y < 0 {
+				hooks.ScriptWeaponCycleRequest(1)
+			}
+		}
+
+	case sdl.MouseButtonEvent:
+		// The viewmodel's fire buttons. Gameplay-only — editor picking uses
+		// mouse buttons too, but through devActive's own handlers, never this
+		// one, so the two never fight over a click.
+		if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
+			down := t.Type == sdl.MOUSEBUTTONDOWN
+			switch t.Button {
+			case sdl.ButtonLeft:
+				hooks.ScriptPrimaryFireRequest(down)
+			case sdl.ButtonRight:
+				hooks.ScriptSecondaryFireRequest(down)
 			}
 		}
 	}
