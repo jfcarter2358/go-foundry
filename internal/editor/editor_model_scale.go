@@ -268,7 +268,8 @@ func modelBoneScaleApply(origin mgl32.Vec3, s mgl32.Vec3, basis [3]mgl32.Vec3) {
 	if len(modelBoneDrag.Bones) == 0 {
 		return
 	}
-	for _, bi := range modelSelection.Bones {
+	leads := modelBoneLeads()
+	for _, bi := range leads {
 		if bi < 0 || bi >= len(modelBoneDrag.Bones) || bi >= len(modelDoc.Bones) {
 			continue
 		}
@@ -283,6 +284,7 @@ func modelBoneScaleApply(origin mgl32.Vec3, s mgl32.Vec3, basis [3]mgl32.Vec3) {
 		modelDoc.SetBoneHead(bi, head)
 		modelDoc.Bones[bi].Tail = tail
 	}
+	modelMirrorBoneLeads(leads, true, true, false)
 	modelDoc.SyncConnectedBones()
 	if modelBoneDeform {
 		modelDoc.SkinFrom(modelBoneDrag.Bones, modelBoneDrag.Verts)

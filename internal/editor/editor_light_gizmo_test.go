@@ -153,7 +153,7 @@ func TestClickingALightsMarkerPicksIt(t *testing.T) {
 func TestALightMarkerStaysClickablyLarge(t *testing.T) {
 	setupGizmoView()
 	tiny := world.PointLight{Position: mgl32.Vec3{0, 0, 0}, Radius: 0.001}
-	r := pointLightMarkerRadius(&tiny)
+	r := pointLightMarkerRadius(&tiny, tiny.Position)
 	if r <= 0 || math.IsNaN(float64(r)) {
 		t.Fatalf("marker radius is %v", r)
 	}

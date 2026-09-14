@@ -216,6 +216,7 @@ func PointLightFromRaw(rp world.RawPointLight) world.PointLight {
 		ss = 0.5
 	}
 	data, _ := world.ScriptDataFromRaw(rp.RawScriptData, "point light "+rp.ID)
+	attach := world.AttachFromRaw(rp.Attach)
 	return world.PointLight{
 		ID:             rp.ID,
 		ScriptData:     data,
@@ -226,7 +227,10 @@ func PointLightFromRaw(rp world.RawPointLight) world.PointLight {
 		CastShadows:    rp.CastShadows,
 		ShadowStrength: ss,
 		Disabled:       rp.Disabled,
-		Dynamic:        rp.Dynamic,
+		// An attached light moves with its carrier, and a light that moves
+		// cannot be baked — so attached is dynamic, whatever the file says.
+		Dynamic: rp.Dynamic || !attach.IsZero(),
+		Attach:  attach,
 	}
 }
 
@@ -525,6 +529,20 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// nothing must get the engine's defaults rather than whatever the level
 	// before it happened to ask for.
 	level.Player = world.PlayerSettingsFromRaw(raw.Player)
+
+	// The player's own first-person viewmodel, the same unconditional way:
+	// replaced wholesale from this level's Models, nil included. world.PlayerEntity
+	// is engine-owned rather than part of this Level (see entity.go's header), so
+	// this is the one place anything copies a level's player block onto it — and
+	// it is nil in tests and tools that build a Level without going through the
+	// app's normal startup, which is what the guard is for.
+	if world.PlayerEntity != nil {
+		world.PlayerEntity.Delete()
+		world.PlayerEntity.Models = append([]world.EntityModel(nil), level.Player.Models...)
+		if err := world.PlayerEntity.Load(); err != nil {
+			return fmt.Errorf("player viewmodel load: %w", err)
+		}
+	}
 
 	// Convert lights
 	level.Lights = rawToLightSet(raw.Lights)

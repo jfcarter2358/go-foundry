@@ -170,7 +170,7 @@ func entityPreviewBounds() (mgl32.Vec3, mgl32.Vec3, bool) {
 	if entityPreview != nil {
 		for i := range entityPreview.Models {
 			m := &entityPreview.Models[i]
-			mm := m.LocalMatrix()
+			mm := entityPreview.AttachmentMatrix(m)
 			for si := range m.Submeshes {
 				g := &m.Submeshes[si]
 				for v := 0; v+2 < len(g.Vertices); v += 5 {
@@ -259,7 +259,7 @@ func entityDrawPreview(view, proj mgl32.Mat4, camPos mgl32.Vec3) {
 			if entitySel.Kind == entitySelModel && entitySel.Idx == i {
 				tint = entitySelectedTint
 			}
-			m := mdl.LocalMatrix()
+			m := entityPreview.AttachmentMatrix(mdl)
 			for si := range mdl.Submeshes {
 				entityDrawGeometry(&mdl.Submeshes[si], m, tint)
 			}

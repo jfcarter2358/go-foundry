@@ -381,8 +381,9 @@ func EffectLights(lvl *Level, dst []PointLight) []PointLight {
 // on the render thread and uploads the answer before asking again.
 var sceneLightPoints []PointLight
 
-// SceneLights is the level's lights with its effects' flashes added — what
-// every lighting upload that runs per frame should hand the shader.
+// SceneLights is the level's lights with attached ones resolved to where they
+// now are and its effects' flashes added — what every lighting upload that runs
+// per frame should hand the shader.
 //
 // The level's own point lights stay first and in order: a shadow-casting
 // light's cubemap is found by its index (UploadPointShadowUniformsTo), so an
@@ -393,13 +394,24 @@ func SceneLights(lvl *Level) LightSet {
 		return LightSet{}
 	}
 	ls := lvl.Lights
-	if len(lvl.Effects) == 0 || len(ls.Points) >= MaxPointLights {
+	attached := HasAttachedLights(lvl)
+	flashes := len(lvl.Effects) > 0 && len(ls.Points) < MaxPointLights
+	if !attached && !flashes {
 		return ls
 	}
 	buf := append(sceneLightPoints[:0], ls.Points...)
-	buf = EffectLights(lvl, buf)
-	if len(buf) > MaxPointLights {
-		buf = buf[:MaxPointLights]
+	// Attached lights are carried out to where their carriers now are. A copy,
+	// so the level keeps the authored offset the editor and the file own.
+	for i := range buf {
+		if !buf[i].Attach.IsZero() {
+			buf[i].Position = buf[i].WorldPosition(lvl)
+		}
+	}
+	if flashes {
+		buf = EffectLights(lvl, buf)
+		if len(buf) > MaxPointLights {
+			buf = buf[:MaxPointLights]
+		}
 	}
 	sceneLightPoints = buf
 	ls.Points = buf

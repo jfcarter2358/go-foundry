@@ -11,12 +11,38 @@ Press `4` for bone select, then work in the **Bones** section.
 | | |
 | --- | --- |
 | **Add** | a new bone |
-| **Extrude** | a child bone from the selected one — the fast way to build a limb |
+| **Extrude** (`E`) | a connected child from the selected bone's tail — the fast way to build a limb |
+| **From head** (`Shift+E`) | a child that starts at the bone's head and points away from it — legs off a pelvis |
+| **Fork** (`Alt+E`) | a mirrored `.L`/`.R` pair from a joint on the mirror plane — arms off a spine |
 | **Delete** | |
 | **Parent** | a dropdown over the other bones |
 
+A bare `E` grows from the head instead when the head handle is the joint you
+last clicked. A child grown from the head is not connected (connected welds a
+head to the parent's *tail*), but it still follows its parent in a pose.
+
 Bones compose down the hierarchy, so rotating a shoulder carries the elbow with
 it.
+
+### Mirror
+
+Tick **Mirror** to build both sides of a skeleton at once. Every edit that
+places a bone — a move, rotate or scale drag, a nudge, a typed head, tail or
+roll — is copied, reflected, onto its opposite-side partner. **Across** picks
+the axis; the mirror plane passes through the model origin, and `.L` is the
+positive side.
+
+Partners are found by name: `Arm.L` and `Arm.R`, `leg_l` and `leg_r`, `L_Hand`
+and `R_Hand`, `LeftFoot` and `RightFoot`. The partner does not need to be
+selected, and is drawn in purple so you can see what will move. Rename one half
+and the pair is broken.
+
+While mirror is on, **Add** off the plane makes a `Bone.L`/`Bone.R` pair, and
+**Extrude** on either half of a pair extrudes both. Extruding a bone on the
+plane makes another centre bone, which is what a spine wants — use **Fork** to
+branch a pair off it. Forking turns mirror on.
+
+Pose mode is never mirrored.
 
 ### Weights
 

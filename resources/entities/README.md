@@ -93,6 +93,23 @@ placement, so a flame in a hand swings with the hand. As with the brushes, the
 level file stores the placement and never the emitters. See
 `internal/world/entity_emitter.go`.
 
+A **model** can ride another of the type's models the same way, through a bone
+of it — the sword in a hand, the turret on a hull's mount:
+
+```yaml
+models:
+  - name: body
+    path: models/knight.fmdl
+  - name: sword
+    path: models/sword.fmdl
+    parent: body           # the model it rides
+    bone: hand_r           # a bone inside it; omit to ride body's origin
+    offset: {x: 0, y: 0.1, z: 0}   # measured from the bone's head, +Y along it
+```
+
+A bone works as a socket whether or not its model animates. See
+`Entity.AttachmentMatrix` in `internal/world/entity_model.go`.
+
 ## What ships
 
 `dropship.yaml` is an assault shuttle with a hold you walk into and a powered

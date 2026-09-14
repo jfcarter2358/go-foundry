@@ -88,6 +88,8 @@ type RawEntityModel struct {
 	Name       string               `yaml:"name"`
 	Path       string               `yaml:"path,omitempty"`
 	Texture    string               `yaml:"texture,omitempty"`
+	Parent     string               `yaml:"parent,omitempty"` // model attachment this one rides
+	Bone       string               `yaml:"bone,omitempty"`   // bone within Parent
 	Offset     *RawVec3             `yaml:"offset,omitempty"`
 	Rotation   *RawVec3             `yaml:"rotation,omitempty"`
 	Scale      *RawVec3             `yaml:"scale,omitempty"`
@@ -331,6 +333,8 @@ func entityModelFromRaw(r RawEntityModel) EntityModel {
 		Name:       r.Name,
 		Path:       r.Path,
 		Texture:    r.Texture,
+		Parent:     r.Parent,
+		Bone:       r.Bone,
 		Offset:     vec3FromRawPtr(r.Offset, mgl32.Vec3{}),
 		Rotation:   vec3FromRawPtr(r.Rotation, mgl32.Vec3{}),
 		Scale:      vec3FromRawPtr(r.Scale, mgl32.Vec3{}),
@@ -375,6 +379,8 @@ func entityModelToRaw(m *EntityModel) RawEntityModel {
 		Name:       m.Name,
 		Path:       fileutil.RelAssetPath(m.Path),
 		Texture:    m.Texture,
+		Parent:     m.Parent,
+		Bone:       m.Bone,
 		Offset:     vec3ToRawPtr(m.Offset),
 		Rotation:   vec3ToRawPtr(m.Rotation),
 		Scale:      vec3ToRawPtr(m.Scale),
@@ -558,6 +564,8 @@ func (m *EntityModel) TemplateCopy() EntityModel {
 		Name:     m.Name,
 		Path:     m.Path,
 		Texture:  m.Texture,
+		Parent:   m.Parent,
+		Bone:     m.Bone,
 		Offset:   m.Offset,
 		Rotation: m.Rotation,
 		Scale:    m.Scale,
@@ -587,6 +595,14 @@ func applyModelOverride(m *EntityModel, r RawEntityModel) {
 	}
 	if r.Texture != "" {
 		m.Texture = r.Texture
+	}
+	// Parent and Bone follow Texture's rule: an instance can move a mount to
+	// another bone but not take it off one — see applyEmitterOverride.
+	if r.Parent != "" {
+		m.Parent = r.Parent
+	}
+	if r.Bone != "" {
+		m.Bone = r.Bone
 	}
 	if r.Offset != nil {
 		m.Offset = mgl32.Vec3{r.Offset.X, r.Offset.Y, r.Offset.Z}
@@ -1019,6 +1035,14 @@ func modelOverride(def *EntityDef, m *EntityModel) (RawEntityModel, bool) {
 	}
 	if m.Texture != base.Texture {
 		o.Texture = m.Texture
+		changed = true
+	}
+	if m.Parent != base.Parent {
+		o.Parent = m.Parent
+		changed = true
+	}
+	if m.Bone != base.Bone {
+		o.Bone = m.Bone
 		changed = true
 	}
 	if m.Offset != base.Offset {

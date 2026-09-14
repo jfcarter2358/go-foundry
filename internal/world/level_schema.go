@@ -456,13 +456,14 @@ type RawPointLight struct {
 		Y float32 `yaml:"y"`
 		Z float32 `yaml:"z"`
 	} `yaml:"position"`
-	Color          RawColor `yaml:"color"`
-	Brightness     float32  `yaml:"brightness"`
-	Radius         float32  `yaml:"radius"`
-	CastShadows    bool     `yaml:"cast_shadows"`
-	ShadowStrength float32  `yaml:"shadow_strength"`
-	Disabled       bool     `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
-	Dynamic        bool     `yaml:"dynamic,omitempty"`  // lit live, not baked; see PointLight.Dynamic
+	Color          RawColor   `yaml:"color"`
+	Brightness     float32    `yaml:"brightness"`
+	Radius         float32    `yaml:"radius"`
+	CastShadows    bool       `yaml:"cast_shadows"`
+	ShadowStrength float32    `yaml:"shadow_strength"`
+	Disabled       bool       `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
+	Dynamic        bool       `yaml:"dynamic,omitempty"`  // lit live, not baked; see PointLight.Dynamic
+	Attach         *RawAttach `yaml:"attach,omitempty"`   // what it rides; see PointLight.Attach
 }
 
 // RawLights holds all light definitions from YAML.
@@ -679,6 +680,18 @@ type RawPlayer struct {
 	// stopped by, in world units. Absent or non-positive means the body's own
 	// height.
 	StepHeight *float32 `yaml:"step_height,omitempty"`
+	// Models is the first-person viewmodel: hands and whatever they hold,
+	// drawn in front of the camera by render.RenderViewmodel rather than
+	// anywhere in the world (see player_settings.go's header). Same shape as
+	// an entity type's own `models:` — the same Parent/Bone socket mounting,
+	// the same Animations list — because it is the same EntityModel, just
+	// read back with the camera in place of the entity's own transform.
+	//
+	// Unlike StepHeight this is not merged key-by-key: a level that says
+	// nothing gets no viewmodel at all, and one that does replaces the whole
+	// list, the same way an entity's own `models:` is never merged with
+	// whatever the previous level happened to leave behind.
+	Models []RawEntityModel `yaml:"models,omitempty"`
 }
 
 // RawSky is the level's sky (sky.go).

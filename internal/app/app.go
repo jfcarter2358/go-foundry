@@ -591,6 +591,17 @@ func Run() {
 			}
 		}
 		collision.EntityUpdate(&level, entityDT, !devActive() && !gamePaused, world.PlayerEntity)
+		// The player's own viewmodel is not in level.Entities (see entity.go),
+		// so EntityUpdate's walk never reaches it. Ticked on the same entityDT
+		// — including the hard-pause zeroing — so a paused clip's clock stops
+		// the same way a placed entity's does, and animations advance either
+		// way exactly as EntityUpdate's own comment says entities' do: the
+		// editor never renders this (render.RenderViewmodel is gated on
+		// !devActive()), so there is nothing here for a running clock to leak
+		// into, only nothing to gain from stopping it either.
+		if world.PlayerEntity != nil {
+			world.PlayerEntity.UpdateAnimations(entityDT)
+		}
 		if !devActive() && world.PlayerEntity != nil {
 			if world.PlayerEntity.Collision.OnGround {
 				platform.IsOnGround = true
@@ -797,13 +808,25 @@ func Run() {
 			// one cloud, or its shadow slides off it.
 			render.VolumeTime = float64(now) / 1000.0
 
+			// A light riding an entity or a bone moves whenever its carrier
+			// does, which is not a change anything else announces — so while
+			// any light is attached, the main program's lights go up every
+			// frame. Here, after every tick that can move a carrier and
+			// before anything is drawn. The other programs already take
+			// SceneLights per frame.
+			if world.HasAttachedLights(&level) {
+				world.UploadLightsTo(gfx.Program, world.SceneLights(&level), false)
+			}
+
 			// --- Shadow pass: render depth from each shadow-casting light ---
 			shadowFrame := render.RenderShadowPass(level.Lights, &level, gfx.Cam.Matrix, gfx.Projection)
 			// The clouds' shadow map, before any program's shadow uniforms go
 			// up — UploadShadowUniformsTo is what binds it. See cloud_shadow.go.
 			render.RenderCloudShadowMap(&level, gfx.Cam.Position)
 			render.UploadShadowUniforms(level.Lights, shadowFrame)
-			render.RenderPointShadowPass(level.Lights, &level)
+			// Scene lights, so an attached light's cubemap is rendered from
+			// where its carrier has taken it rather than from its offset.
+			render.RenderPointShadowPass(world.SceneLights(&level), &level)
 			// The scene's lights rather than the level's, so the shadow flags
 			// at an effect flash's index are written (off) rather than left at
 			// whatever a light that once had that slot set them to.
@@ -861,7 +884,7 @@ func Run() {
 					// caller's model matrix already contains that same
 					// translation (water: chunkModel*Translate(w.Position) with
 					// g.Position == w.Position; an entity attachment:
-					// world*LocalMatrix() which opens with Translate(m.Offset)
+					// world*AttachmentMatrix(), whose innermost term is Translate(m.Offset)
 					// and g.Position == m.Offset; the spawn marker likewise).
 					// Multiplying it in again put the sort key at twice the
 					// offset, so translucent water and attachments sorted
@@ -1154,6 +1177,19 @@ func Run() {
 			// no sorting at all, which that queue has no way to express.
 			if !editorWire {
 				render.RenderSpritesTransparent(&level, projView, gfx.Cam.Position, &frustum, shadowFrame)
+			}
+
+			// --- First-person viewmodel ---
+			// Last thing drawn in the 3D world, on purpose: it clears the depth
+			// buffer so it can never be poked into by nearby geometry (see
+			// render.RenderViewmodel), and nothing after this point in the
+			// frame writes to depth again before the next frame's own clear —
+			// running any earlier would let whatever came after undo that.
+			// Skipped in the editor for the reason the runtime UI below is: the
+			// view here is the level being built, not a game being played from
+			// inside a body that has hands.
+			if !devActive() {
+				render.RenderViewmodel()
 			}
 
 			// Back to filled triangles before the editor overlays and ImGui,

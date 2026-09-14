@@ -52,8 +52,25 @@ in the 3D view, by clicking it in the viewport, or by typing coordinates.
 | Dynamic | whether it may change in game — see below |
 | Cast shadows | a cubemap shadow, so it casts in every direction |
 | Shadow strength | |
+| Attach | a frame, entity, model and bone to ride — see below |
 
 Rotation and scale do nothing on a point light.
+
+### Attaching a point light
+
+The **Attach** group rides a point light on a vehicle, an entity, or a bone in
+one of an entity's models: a lantern in a hand, headlights on a truck, a glow in
+a reactor that moves with the ship. Pick Frame, Entity, Model and Bone, each row
+unlocking once the one above is answered. Attached, **Position** is an offset in
+the carrier's space, so zero puts the light right on the bone's head.
+
+An attached light is always **dynamic**. It moves, and a static light is baked
+where it stands. Attaching one ticks Dynamic for you, and the box stays ticked
+until the light is detached. Its shadow cubemap is rendered from wherever the
+carrier has taken it.
+
+From a script, `attach(@lantern, @guard, "hand_r")` and `detach(@lantern)` work
+on a dynamic point light exactly as on a sprite. See [Scripting](18-scripting.md).
 
 ## Static and dynamic lights
 

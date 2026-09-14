@@ -148,6 +148,13 @@ type PointLight struct {
 	// Brush.Dynamic.
 	Dynamic bool
 
+	// Attach names what the light rides — a frame, an entity, or a bone inside
+	// one of its models: a lantern in a hand, a headlight on a truck. Set,
+	// Position is an offset in that carrier's space. An attached light always
+	// moves, so it is always Dynamic; the loader and the editor both keep the
+	// two in step, and the bake leaves an attached light out regardless.
+	Attach Attach
+
 	// FromPrefab is runtime-only, never serialized: the prefab instance whose
 	// file put this here (prefab.go). Empty for one the level file authored.
 	// It is what LevelToRaw checks before writing — a level that saved a copy
@@ -169,6 +176,36 @@ func (pl PointLight) EffectiveBrightness() float32 {
 
 // CastsShadows reports whether this light should be given a shadow cubemap.
 func (pl PointLight) CastsShadows() bool { return pl.CastShadows && !pl.Disabled }
+
+// WorldPosition resolves the light's position through its attachment. This is
+// what the shader and the shadow cubemaps are handed (SceneLights).
+func (pl *PointLight) WorldPosition(lvl *Level) mgl32.Vec3 {
+	if pl.Attach.IsZero() {
+		return pl.Position
+	}
+	return mulPoint(pl.Attach.Matrix(lvl), pl.Position)
+}
+
+// SetWorldPosition puts the light at world point p, storing it in its carrier's
+// space when it is attached.
+func (pl *PointLight) SetWorldPosition(lvl *Level, p mgl32.Vec3) {
+	pl.Position = fromAttached(lvl, pl.Attach, p)
+}
+
+// HasAttachedLights reports whether any point light rides something. Their
+// carriers can move every frame, so a level with one uploads its lights every
+// frame; a level without keeps uploading only on change.
+func HasAttachedLights(lvl *Level) bool {
+	if lvl == nil {
+		return false
+	}
+	for i := range lvl.Lights.Points {
+		if !lvl.Lights.Points[i].Attach.IsZero() {
+			return true
+		}
+	}
+	return false
+}
 
 // LightSet holds all lights in the scene.
 type LightSet struct {

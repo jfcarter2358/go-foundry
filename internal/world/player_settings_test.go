@@ -6,10 +6,10 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// A level with no `player:` block gets the engine's default.
+// A level with no `player:` block gets the engine's default, and no viewmodel.
 func TestAbsentPlayerBlockFallsBackToTheDefault(t *testing.T) {
 	p := PlayerSettingsFromRaw(nil)
-	if p != (PlayerSettings{}) {
+	if p.StepHeight != 0 || len(p.Models) != 0 {
 		t.Fatalf("absent block gave %+v, want the zero value", p)
 	}
 	if got, want := p.EffectiveStepHeight(), DefaultStepHeight(); got != want {
@@ -63,7 +63,49 @@ func TestPlayerSettingsRoundTrip(t *testing.T) {
 	if raw == nil || raw.StepHeight == nil {
 		t.Fatalf("set settings wrote %+v, want a step height", raw)
 	}
-	if out := PlayerSettingsFromRaw(raw); out != in {
+	out := PlayerSettingsFromRaw(raw)
+	if out.StepHeight != in.StepHeight || len(out.Models) != 0 {
 		t.Errorf("round trip gave %+v, want %+v", out, in)
+	}
+}
+
+// A level's player viewmodel round-trips like an entity's own models: the
+// same RawEntityModel conversion, just reached through PlayerSettings instead
+// of an EntityDef.
+func TestPlayerViewmodelRoundTrips(t *testing.T) {
+	in := PlayerSettings{Models: []EntityModel{
+		{Name: "hands", Path: "models/fp_arms.fmdl"},
+		{Name: "rifle", Path: "models/rifle.fmdl", Parent: "hands", Bone: "hand_socket.R"},
+	}}
+	raw := PlayerSettingsToRaw(in)
+	if raw == nil || len(raw.Models) != 2 {
+		t.Fatalf("wrote %+v, want two models", raw)
+	}
+	out := PlayerSettingsFromRaw(raw)
+	if len(out.Models) != 2 {
+		t.Fatalf("round trip gave %d models, want 2", len(out.Models))
+	}
+	if out.Models[1].Parent != "hands" || out.Models[1].Bone != "hand_socket.R" {
+		t.Errorf("rifle's mount came back as %q/%q", out.Models[1].Parent, out.Models[1].Bone)
+	}
+	if out.Models[0].Path != "models/fp_arms.fmdl" {
+		t.Errorf("hands' path came back as %q", out.Models[0].Path)
+	}
+}
+
+// An empty player: block with only a viewmodel, and no step_height, must not
+// silently default StepHeight to a real number written back out — it stays
+// nil (the engine's default) both ways.
+func TestPlayerViewmodelAloneLeavesStepHeightAtTheDefault(t *testing.T) {
+	in := PlayerSettings{Models: []EntityModel{{Name: "hands", Path: "models/fp_arms.fmdl"}}}
+	raw := PlayerSettingsToRaw(in)
+	if raw == nil {
+		t.Fatal("wrote no block at all, want one for the viewmodel")
+	}
+	if raw.StepHeight != nil {
+		t.Errorf("wrote step_height %v with none given", *raw.StepHeight)
+	}
+	if out := PlayerSettingsFromRaw(raw); out.EffectiveStepHeight() != DefaultStepHeight() {
+		t.Errorf("effective step height %v, want the default", out.EffectiveStepHeight())
 	}
 }

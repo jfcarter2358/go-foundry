@@ -518,7 +518,7 @@ editor's reference panel. The core surface:
 | floor | `enabled` `hidden` `height` `texture` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · slab: `thickness` `slab_texture` `slab_rim_texture` `slab_hidden` `slab_rim_across_portals` · read-only: `shaped` `world_height` `slab_shaped` |
 | ceiling | as floor, without `hidden` |
 | chunk | `enabled` `origin` `velocity` · read-only: `rotation` `scale` |
-| light | dynamic lights only: `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `dynamic` `waypoints` |
+| light | dynamic lights only: `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `dynamic` `attach` `carrier` `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
 | level | `step_height` `player_control` `player_gravity` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
@@ -1653,9 +1653,9 @@ content and the author needs to see it in order to fix it.
 
 ### Attaching
 
-A sprite, an emitter, a sound or a volume can **ride** something, so that smoke follows a ship, a
-flame follows the hand holding the torch, dust follows a wheel, and a sight cone
-follows the guard. It is the
+A sprite, an emitter, a sound, a volume or a point light can **ride** something, so that smoke follows a ship, a
+flame follows the hand holding the torch, dust follows a wheel, a sight cone
+follows the guard, and a lantern's light follows the lantern. It is the
 same binding the editor's **Attach** panel authors, so an effect bound by a
 script and one bound by hand are the same effect.
 
@@ -1667,8 +1667,9 @@ attach(@wake, "ship")                    -- ride a frame: a vehicle's own space
 detach(@smoke)                           -- back to world space
 ```
 
-Sprites, emitters and volumes. A volume riding an entity never reports that entity
-entering it. An **entity** boards a vehicle with `mount`, which has
+Sprites, emitters, volumes and point lights. A volume riding an entity never reports that entity
+entering it. A light has to be **dynamic** to be attached, the same rule a
+property write on one follows, and a directional light has no position to carry. An **entity** boards a vehicle with `mount`, which has
 answers for collision, seats and being thrown off that this does not.
 
 The three-argument form reads the entity's only model attachment, which is how

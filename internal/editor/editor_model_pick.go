@@ -656,9 +656,11 @@ func modelNudgeSelection(axis int, delta float32) {
 			return
 		}
 		modelBoneEdit(func() {
-			for _, bi := range modelSelection.Bones {
+			leads := modelBoneLeads()
+			for _, bi := range leads {
 				modelNudgeBone(bi, axis, delta)
 			}
+			modelMirrorBoneMove(leads)
 		})
 		return
 	}

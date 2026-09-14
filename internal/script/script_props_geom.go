@@ -455,7 +455,33 @@ func lightProps() map[string]propAccess {
 				p.Position = pos
 				return nil
 			},
-			Doc: "point lights only",
+			Doc: "point lights only — world-space, or an offset in the carrier's space while attached",
+		},
+		"attach": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case p != nil:
+					return flang.StrVal(p.Attach.Describe()), true
+				case d != nil:
+					return flang.StrVal(""), true
+				}
+				return nil, false
+			},
+			Doc: "what the light rides, as the editor names it; empty when it is in world space (read-only; see attach())",
+		},
+		"carrier": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case p != nil:
+					return carrierValue(c, p.Attach), true
+				case d != nil:
+					return flang.NullVal{}, true
+				}
+				return nil, false
+			},
+			Doc: "a ref to the entity the light rides, or null (read-only)",
 		},
 		"radius": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {

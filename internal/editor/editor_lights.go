@@ -374,6 +374,12 @@ func editorPointLightProperties(lvl *world.Level) {
 			changed = true
 		}
 		if editorLightDynamicCheckbox(fmt.Sprintf("pt%d", i), &pl.Dynamic) {
+			if !pl.Attach.IsZero() && !pl.Dynamic {
+				// A light riding something moves, and a static light is baked
+				// where it stands. Detach it first to make it static.
+				pl.Dynamic = true
+				editorSetStatus("An attached light has to be dynamic — detach it to bake it")
+			}
 			changed = true
 		}
 	})
@@ -390,7 +396,15 @@ func editorPointLightProperties(lvl *world.Level) {
 		}
 		if imgui.Button(fmt.Sprintf("Move To Camera##pt%d", i)) {
 			EditorPushUndo()
-			pl.Position = gfx.Cam.Position
+			// The camera is in the world; an attached light stores it in its
+			// carrier's space.
+			pl.SetWorldPosition(lvl, gfx.Cam.Position)
+			changed = true
+		}
+	})
+
+	editorPropGroup("Attach##ptlightattach", 0, func() {
+		if editorPointLightAttachUI(lvl, pl, fmt.Sprintf("pt%d", i)) {
 			changed = true
 		}
 	})
@@ -417,6 +431,40 @@ func editorPointLightProperties(lvl *world.Level) {
 	if changed {
 		world.UploadLights(lvl.Lights)
 	}
+}
+
+// editorPointLightAttachUI is the Attach group of a point light: the shared
+// frame/entity/model/bone rows, plus the one rule lights add — a light that
+// rides something moves, so it cannot be baked, so it is made Dynamic.
+func editorPointLightAttachUI(lvl *world.Level, pl *world.PointLight, id string) bool {
+	at := pl.Attach
+	changed := false
+	if editorAttachUI(lvl, &at, "ptl"+id) {
+		EditorPushUndo()
+		// Position is left as typed, as a sprite's is: attached, it is an
+		// offset from the carrier, and zero puts the light right on the bone.
+		pl.Attach = at
+		if !at.IsZero() && !pl.Dynamic {
+			pl.Dynamic = true
+			editorSetStatus("Attached lights move, so %s is now dynamic", editorPointLightName(pl))
+		}
+		changed = true
+	}
+	if pl.Attach.IsZero() {
+		editorTextMutedWrapped("Unattached: Position is world-space.")
+	} else {
+		editorTextMutedWrapped("Position is local to " + pl.Attach.Describe() +
+			". Attached, the light is dynamic: it moves with what it rides, and a baked light cannot.")
+	}
+	return changed
+}
+
+// editorPointLightName is how a status line names a point light.
+func editorPointLightName(pl *world.PointLight) string {
+	if pl.ID != "" {
+		return pl.ID
+	}
+	return "the light"
 }
 
 // editorLightDynamicCheckbox draws a light's Dynamic switch, reporting a change.

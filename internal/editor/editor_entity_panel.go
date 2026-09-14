@@ -481,6 +481,7 @@ func editorEntityModelBody(e *world.Entity, m *world.EntityModel, idx int) bool 
 			editorSetStatus("This entity already has an attachment called %q", name)
 		default:
 			EditorPushUndo()
+			world.RenameModelMounts(e.Models, m.Name, name)
 			m.Name = name
 		}
 	}
@@ -515,6 +516,12 @@ func editorEntityModelBody(e *world.Entity, m *world.EntityModel, idx int) bool 
 			editorSetStatus("Entity %s: %v", e.ID, err)
 		}
 	}
+
+	editorModelMountUI(modelMountHost{
+		Models:   e.Models,
+		Bones:    func(model string) []string { return editorModelBoneNamesIn(e.Models, model) },
+		PushUndo: EditorPushUndo,
+	}, m, "")
 
 	off := [3]float32{m.Offset.X(), m.Offset.Y(), m.Offset.Z()}
 	if editorDragFloat3Step("Offset##moff", &off, -1000, 1000, "%.3f", 0.05) {

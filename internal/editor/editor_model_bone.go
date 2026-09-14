@@ -75,6 +75,7 @@ var (
 	modelBoneDimColor    = mgl32.Vec3{0.30, 0.33, 0.42}
 	modelBoneActiveColor = mgl32.Vec3{1, 0.88, 0.35}
 	modelBoneParentColor = mgl32.Vec3{0.32, 0.34, 0.40}
+	modelBoneMirrorColor = mgl32.Vec3{0.62, 0.50, 0.82}
 )
 
 // ---------- selection ----------
@@ -276,12 +277,16 @@ func modelBoneGizmoApply(axis int, delta float32) {
 	if modelDoc == nil || len(modelBoneDrag.Bones) == 0 {
 		return
 	}
-	for _, bi := range modelSelection.Bones {
+	leads := modelBoneLeads()
+	for _, bi := range leads {
 		if bi < 0 || bi >= len(modelBoneDrag.Bones) || bi >= len(modelDoc.Bones) {
 			continue
 		}
 		modelPlaceBoneJoint(bi, modelBoneDrag.Bones[bi], axis, delta)
 	}
+	// The partners are placed from the leads as they now stand, not offset from
+	// the snapshot, so each motion event lands them afresh like the leads.
+	modelMirrorBoneMove(leads)
 	modelDoc.SyncConnectedBones()
 	if modelBoneDeform {
 		modelDoc.SkinFrom(modelBoneDrag.Bones, modelBoneDrag.Verts)
@@ -351,6 +356,10 @@ func drawModelBones() {
 	}
 	boneMode := modelSelection.Mode == modelSelBone
 	active := modelActiveBone()
+	var partners map[int]bool
+	if boneMode && !modelPoseActive() {
+		partners = modelBoneMirrorPartners()
+	}
 
 	bones := modelDisplayBones()
 	for bi := range bones {
@@ -364,6 +373,9 @@ func drawModelBones() {
 				col = modelBoneActiveColor
 			case modelBoneSelected(bi):
 				col = modelSelColor
+			case partners[bi]:
+				// Not selected, but the next edit will move it.
+				col = modelBoneMirrorColor
 			}
 		} else if modelBoneSelected(bi) {
 			// Still worth marking outside bone mode: this is the bone the
@@ -373,8 +385,11 @@ func drawModelBones() {
 		drawBoneOctahedron(b, col)
 
 		// A non-connected child is drawn back to its parent's tail, so a
-		// skeleton reads as a hierarchy rather than as loose sticks.
-		if !b.Connected && b.Parent >= 0 && b.Parent < len(bones) {
+		// skeleton reads as a hierarchy rather than as loose sticks — unless it
+		// grew from the parent's head, where the two already visibly meet and
+		// the line would only retrace the parent.
+		if !b.Connected && b.Parent >= 0 && b.Parent < len(bones) &&
+			b.Head.Sub(bones[b.Parent].Head).Len() > 1e-5 {
 			gizmo.GizmoLine(bones[b.Parent].Tail, b.Head, modelBoneParentColor)
 		}
 

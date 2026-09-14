@@ -180,7 +180,7 @@ func pickEntityT(origin, dir mgl32.Vec3, e *world.Entity) float32 {
 		if !m.Visible {
 			continue
 		}
-		model := world.Mul4(m.LocalMatrix())
+		model := world.Mul4(e.AttachmentMatrix(m))
 		for si := range m.Submeshes {
 			if t := pickModelT(origin, dir, m.Submeshes[si].Vertices, model); t < best {
 				best = t
@@ -346,7 +346,7 @@ func pick3D(sx, sy int32) pickHit {
 	// about what it meant.
 	bestLight, bestLightT := -1, float32(math.MaxFloat32)
 	for li := range lvl.Lights.Points {
-		if t := pickPointLightT(origin, dir, &lvl.Lights.Points[li]); t < bestLightT {
+		if t := pickPointLightT(origin, dir, lvl, &lvl.Lights.Points[li]); t < bestLightT {
 			bestLight, bestLightT = li, t
 		}
 	}
@@ -377,9 +377,9 @@ func pick3D(sx, sy int32) pickHit {
 // marker: the sphere the 3D view draws for it (Editor3DRenderGizmos), widened
 // to a minimum on-screen size so a light with a small radius, or one far across
 // the level, is still something a click can land on.
-func pointLightMarkerRadius(pl *world.PointLight) float32 {
+func pointLightMarkerRadius(pl *world.PointLight, at mgl32.Vec3) float32 {
 	r := pl.Radius * 0.1
-	if min := worldSizeForPixels(pl.Position, pointLightPickPx); r < min {
+	if min := worldSizeForPixels(at, pointLightPickPx); r < min {
 		r = min
 	}
 	return r
@@ -391,9 +391,12 @@ const pointLightPickPx float32 = 8
 
 // pickPointLightT returns the distance at which the ray meets a point light's
 // marker sphere, or +Inf when it misses.
-func pickPointLightT(origin, dir mgl32.Vec3, pl *world.PointLight) float32 {
-	oc := origin.Sub(pl.Position)
-	r := pointLightMarkerRadius(pl)
+func pickPointLightT(origin, dir mgl32.Vec3, lvl *world.Level, pl *world.PointLight) float32 {
+	// Where the light is drawn, which for an attached one is where its carrier
+	// has taken it.
+	at := pl.WorldPosition(lvl)
+	oc := origin.Sub(at)
+	r := pointLightMarkerRadius(pl, at)
 	// dir is unit length, so the quadratic's leading coefficient is 1.
 	b := oc.Dot(dir)
 	c := oc.Dot(oc) - r*r

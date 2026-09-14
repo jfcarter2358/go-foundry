@@ -84,7 +84,7 @@ func RenderEntities(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, 
 			if !entityDrawable(e, m) {
 				continue
 			}
-			model := world.Mul4(m.LocalMatrix())
+			model := world.Mul4(e.AttachmentMatrix(m))
 			for si := range m.Submeshes {
 				// Single-sided: a model is a closed solid, and drawing its back
 				// faces would double every draw call to show what the front
@@ -126,7 +126,7 @@ func RenderEntitiesShadow(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms,
 			if !entityDrawable(e, m) {
 				continue
 			}
-			model := world.Mul4(m.LocalMatrix())
+			model := world.Mul4(e.AttachmentMatrix(m))
 			gl.UniformMatrix4fv(modelUniform, 1, false, &model[0])
 			drewAny = true
 			for si := range m.Submeshes {

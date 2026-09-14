@@ -206,6 +206,7 @@ Armed from `Add... > Brush` or the view's right-click menu.
 | `1` / `2` / `3` / `4` | vertex / edge / face / bone select |
 | `G` / `R` / `C` | move / rotate / scale (`C` again: local axes) |
 | `E` / `Shift+E` | extrude (again: re-aim along the normal) / always extrude |
+| `E` / `Shift+E` / `Alt+E` (bone select) | extrude a bone from its tail (its head, when the head handle is grabbed) / from its head / fork a mirrored `.L`/`.R` pair |
 | `I` | inset — a mitred border round the selected faces (outside pose mode) |
 | `J` | join the selected faces into one |
 | `M` / `Shift+M` | merge the selected points at their centre / on the first picked |

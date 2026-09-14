@@ -108,20 +108,57 @@ Entities only move while the editor is closed.
 
 ## Model attachments
 
-Any number, each with its own transform relative to the entity.
+Any number, each with its own transform relative to the entity — or to another
+of its models.
 
 | Field | |
 | --- | --- |
 | **Name** | how a script asks for an animation on *this* model rather than another |
 | **Model** | `.fmdl` or `.obj` under `models/` |
 | **Texture** | `(none)` falls back to what the mesh was authored with |
-| **Offset / Rotation / Scale** | |
+| **Mount on** / **Bone** | another of this entity's models to ride, and a bone (socket) inside it — leave empty to ride the entity itself |
+| **Offset / Rotation / Scale** | relative to whatever it rides |
 | **Alpha** | |
 | **Visible** (eye) | hide without removing |
 | **Animations** | see [Animation](10-animation.md) |
 
 **Reload Models** re-reads every attachment from disk after you have edited its
 `.fmdl`.
+
+### Sockets
+
+A bone in a model is a socket: somewhere to hang another model, an effect, a
+volume, a sprite, a sound or a point light. The thing hung there sits at the
+bone's **head**, with its +Y running along the bone toward the tail, and follows
+the bone through every animation. The bone's roll does not turn it — use the
+attachment's own **Rotation** for that.
+
+To put a sword in a knight's hand:
+
+1. In the model editor, give the knight's model a bone where the grip goes, and
+   name it — say `hand_r`. It needs no weights, and the model needs no
+   animation for the bone to work as a socket.
+2. In the entity editor, add both models to the type, named `body` and `sword`.
+3. Select `sword` and set **Mount on** to `body` and **Bone** to `hand_r`.
+4. Nudge **Offset** and **Rotation** until the grip sits in the palm. They are
+   now measured from the bone, so zero is the bone's head.
+
+A weapon authored the usual way — grip at the origin, muzzle down its −Z, top
++Y — sits right in a socket bone pointing along the grip with a **Rotation** of
+`(90°, 180°, 0)`. `entities/enemy_rifle.yaml` mounts one that way, and mounts a
+grenade the same way on the other hand's socket — a prop needs no "forward" of
+its own to hang correctly, and the same rotation lines its body up too.
+`entities/grenade.yaml` is the thrown, live version of that model: a separate
+entity a script spawns and gives a velocity, not the one riding the hand (see
+that held attachment's comment for the two, and `scripts/grenade.flang` for
+the fuse and the explosion).
+
+A mounted model's own bones are sockets too, so a flash can hang off the tip of
+that sword. **Mount on** leaves out any model that would end up riding itself.
+Renaming a model keeps what rides it; deleting one puts what rode it back on the
+entity. The same rows are on a placed entity's model in the level editor, where a
+change is saved as an override on its type. An override can move a model to
+another mount but not take it off one; only the type can do that.
 
 ## Motion
 
@@ -297,8 +334,59 @@ or a type. See [AI agents](24-ai.md).
 ## The player
 
 The engine creates the player rather than reading it from a level. It has no
-type, no models and is never saved. Its world collision is its own path, but it
-takes part in entity-against-entity collision on the same terms as anything else
-— so a solid crate is solid to walk into and a movable one is solid to shove.
+type and is never saved. Its world collision is its own path, but it takes
+part in entity-against-entity collision on the same terms as anything else —
+so a solid crate is solid to walk into and a movable one is solid to shove.
 
 `@player` addresses it from a script.
+
+### First-person viewmodel
+
+A level's `player:` block (see [Player step height](02-building-levels.md#player-step-height)
+for the rest of it) may carry a `models:` list — the same shape, and the same
+socket rules, as any entity type's own. This is what puts hands and a held
+weapon on screen: unlike every other model attachment in the engine, the
+player's own draws directly in front of the camera rather than at its
+physical position in the world, so it is never occluded by nearby geometry
+and casts no shadow.
+
+There is no properties-panel row for this yet — write `models:` into the
+level file's `player:` block by hand, the way the example below does.
+
+```yaml
+player:
+  models:
+  - name: hands
+    path: models/fp_arms.fmdl
+    animations:
+    - {name: rifle_idle, autoplay: true}
+    - {name: rifle_fire, loop: false, blend: 0.03}
+  - name: rifle
+    path: models/rifle.fmdl
+    parent: hands
+    bone: hand_socket.R
+    rotation: {x: 3.14159265, "y": 1.57079633, z: 0}
+```
+
+A first-person rig is authored exactly like any other rigged model — bones,
+weights, clips, hand sockets — with one difference worth knowing before you
+build one: its own local **−Z is the direction the camera looks**, and **+Y is
+the camera's up**, with no additional rotation of the kind a third-person
+attachment needs (`docs/guide/11-entities.md`'s own weapon example turns the
+body about because that model faces +Z; a viewmodel built facing −Z from the
+start needs no such turn on its root attachment). A weapon mounts on its hand
+socket exactly the way it would on any other rig — the `(90°, 180°, 0°)`
+rotation from the Sockets section above still applies unchanged.
+
+Switching what the player holds is `visible` and `play_anim`, the same pattern
+a carried grenade uses on an NPC:
+
+```
+@player.model.rifle.prop.visible = false
+@player.model.pistol.prop.visible = true
+play_anim(@player, "hands", "pistol_idle")
+```
+
+A level that says nothing in `player: models:` gives the player no viewmodel
+at all — unlike `step_height`, this is not merged with whatever the previous
+level had; each level states its own.

@@ -94,3 +94,30 @@ func buildLevelLights(t *testing.T, raw world.RawLevel) *world.Level {
 	}
 	return lvl
 }
+
+// An attached light keeps its carrier across a save and a load, and loads
+// dynamic whatever the file says — a light that moves cannot be baked.
+func TestSaveLoadPreservesALightsAttachment(t *testing.T) {
+	at := world.Attach{Entity: "guard", Model: "body", Bone: "hand"}
+	ls := world.LightSet{Points: []world.PointLight{
+		{ID: "lantern", Radius: 5, Dynamic: true, Attach: at},
+		{ID: "lamp", Radius: 5},
+	}}
+	raw := world.RawLevel{Lights: lightsToRaw(ls, false)}
+	if raw.Lights.Point[1].Attach != nil {
+		t.Error("an unattached light wrote an attach block")
+	}
+	lvl := buildLevelLights(t, raw)
+	if got := lvl.Lights.Points[0].Attach; got != at {
+		t.Errorf("attachment round-tripped as %+v, want %+v", got, at)
+	}
+
+	raw.Lights.Point[0].Dynamic = false
+	lvl = buildLevelLights(t, raw)
+	if !lvl.Lights.Points[0].Dynamic {
+		t.Error("an attached light saved as static loaded static")
+	}
+	if lvl.Lights.Points[1].Dynamic {
+		t.Error("an unattached static light loaded dynamic")
+	}
+}

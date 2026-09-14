@@ -225,9 +225,9 @@ var builtinDocs = []BuiltinDoc{
 	{GroupWorld, "stop_music", "stop_music()  ·  stop_music(fade)", "null",
 		"Fade the level's track out."},
 	{GroupWorld, "attach", "attach(obj, entity)  ·  attach(obj, entity, bone)  ·  attach(obj, entity, model, bone)  ·  attach(obj, frame)", "bool",
-		"Make a sprite, an emitter or a volume ride an entity, a bone of one of its models, or a named frame. Its `position` becomes an offset in that space; it is not moved to keep it where it was."},
+		"Make a sprite, an emitter, a volume or a dynamic point light ride an entity, a bone of one of its models, or a named frame. Its `position` becomes an offset in that space; it is not moved to keep it where it was."},
 	{GroupWorld, "detach", "detach(obj)", "bool",
-		"Put a sprite, an emitter or a volume back in world space, leaving it where it currently is. False if it was riding nothing."},
+		"Put a sprite, an emitter, a volume or a point light back in world space, leaving it where it currently is. False if it was riding nothing."},
 
 	{GroupWorld, "show_screen", "show_screen(name)", "ref",
 		"Put a .fui screen on the stack, or raise it if it is already up. Returns the screen."},

@@ -633,8 +633,10 @@ func entityPanelModel(idx int) {
 			entityStatus = fmt.Sprintf("This type already has an attachment called %q", name)
 		default:
 			EntityDefPushUndo()
+			world.RenameModelMounts(entityDef.Models, m.Name, name)
 			m.Name = name
 			entityMarkDirty()
+			entityPreviewInvalidate()
 		}
 	}
 	imgui.SameLine()
@@ -664,6 +666,15 @@ func entityPanelModel(idx int) {
 	}
 	if imgui.Checkbox("Visible##entmvis", &m.Visible) {
 		entityBeginEdit("mvis")
+		entityPreviewInvalidate()
+	}
+
+	if editorModelMountUI(modelMountHost{
+		Models:   entityDef.Models,
+		Bones:    entityEmitterBoneNames,
+		PushUndo: EntityDefPushUndo,
+	}, m, "ent") {
+		entityMarkDirty()
 		entityPreviewInvalidate()
 	}
 

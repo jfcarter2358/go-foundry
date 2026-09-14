@@ -348,6 +348,7 @@ func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
 			ShadowStrength: pl.ShadowStrength,
 			Disabled:       pl.Disabled,
 			Dynamic:        pl.Dynamic,
+			Attach:         world.AttachToRaw(pl.Attach),
 		})
 	}
 	return rl

@@ -309,7 +309,9 @@ func entityRemoveModel(idx int) {
 		return
 	}
 	EntityDefPushUndo()
+	removed := entityDef.Models[idx].Name
 	entityDef.Models = append(entityDef.Models[:idx:idx], entityDef.Models[idx+1:]...)
+	world.DropModelMounts(entityDef.Models, removed)
 	entitySel = entityEditorSelection{}
 	entityMarkDirty()
 	entityPreviewInvalidate()

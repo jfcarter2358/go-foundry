@@ -450,12 +450,12 @@ func (v *Volume) setWaypointRest(r WaypointRest) { v.Position, v.Rotation = r.Po
 
 // PointLight: a position, which is all a point light has.
 
-func (pl *PointLight) WaypointPose(*Level) WaypointPose {
-	return WaypointPose{Position: pl.Position, Scale: unitScale}
+func (pl *PointLight) WaypointPose(lvl *Level) WaypointPose {
+	return WaypointPose{Position: pl.WorldPosition(lvl), Scale: unitScale}
 }
 func (pl *PointLight) waypoints() **WaypointPlayback { return &pl.Waypoints }
-func (pl *PointLight) applyWaypointPose(_ *Level, p WaypointPose) {
-	pl.Position = p.Position
+func (pl *PointLight) applyWaypointPose(lvl *Level, p WaypointPose) {
+	pl.Position = fromAttached(lvl, pl.Attach, p.Position)
 }
 func (pl *PointLight) waypointSource() (hooks.WaypointObject, string) {
 	return hooks.WaypointLight, pl.ID

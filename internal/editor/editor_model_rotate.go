@@ -232,7 +232,8 @@ func modelBoneRotateApply(axis mgl32.Vec3, delta float32, origin mgl32.Vec3, rot
 	if len(modelBoneDrag.Bones) == 0 {
 		return
 	}
-	for _, bi := range modelSelection.Bones {
+	leads := modelBoneLeads()
+	for _, bi := range leads {
 		if bi < 0 || bi >= len(modelBoneDrag.Bones) || bi >= len(modelDoc.Bones) {
 			continue
 		}
@@ -253,6 +254,7 @@ func modelBoneRotateApply(axis mgl32.Vec3, delta float32, origin mgl32.Vec3, rot
 			modelDoc.Bones[bi].Roll = rest.Roll + delta*axis.Dot(dir.Normalize())
 		}
 	}
+	modelMirrorBoneLeads(leads, true, true, true)
 	modelDoc.SyncConnectedBones()
 	if modelBoneDeform {
 		modelDoc.SkinFrom(modelBoneDrag.Bones, modelBoneDrag.Verts)

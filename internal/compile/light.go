@@ -170,7 +170,10 @@ func (b *baker) sample(p, n mgl32.Vec3, hull []bsp.Plane) mgl32.Vec3 {
 	for i := range b.lights.Points {
 		pl := &b.lights.Points[i]
 		bright := pl.EffectiveBrightness()
-		if bright <= 0 || pl.Radius <= 0 || pl.Dynamic {
+		// An attached light is dynamic by construction (PointLight.Attach); the
+		// check is repeated so a level built in code cannot bake one at its
+		// carrier-local offset.
+		if bright <= 0 || pl.Radius <= 0 || pl.Dynamic || !pl.Attach.IsZero() {
 			continue
 		}
 		toLight := pl.Position.Sub(p)

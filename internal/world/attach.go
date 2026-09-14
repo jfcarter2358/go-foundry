@@ -114,21 +114,37 @@ func (a Attach) boneMatrix(e *Entity) (mgl32.Mat4, bool) {
 // resolve through: Attach.boneMatrix, which composes the entity's own transform
 // on the outside, and the entity editor's preview, whose window IS the entity's
 // local space and has no level at all.
+//
+// A model with bones and no animation still has sockets: its bones sit at rest,
+// which is where they were authored.
 func EntityBoneMatrix(e *Entity, model, bone string) (mgl32.Mat4, bool) {
 	if e == nil || bone == "" {
 		return mgl32.Ident4(), false
 	}
-	m := e.Model(model)
-	if m == nil || m.Doc == nil || m.Anim == nil {
+	return entityBoneMatrix(e, e.Model(model), bone, 0)
+}
+
+// entityBoneMatrix is EntityBoneMatrix for an attachment already in hand, with
+// the mount depth entityAttachmentMatrix is counting.
+func entityBoneMatrix(e *Entity, m *EntityModel, bone string, depth int) (mgl32.Mat4, bool) {
+	if m == nil || m.Doc == nil {
 		return mgl32.Ident4(), false
 	}
 	bi := m.Doc.BoneIndexByName(bone)
-	if bi < 0 || bi >= len(m.Anim.Palette) {
+	if bi < 0 {
 		return mgl32.Ident4(), false
 	}
-	// The attachment's own offset/rotation/scale sits between the entity and
-	// the bone, since the bone is expressed in the model's space.
-	return m.LocalMatrix().Mul4(m.Anim.Palette[bi].Mul4(boneRestMatrix(m, bi))), true
+	delta := mgl32.Ident4()
+	if m.Anim != nil {
+		if bi >= len(m.Anim.Palette) {
+			return mgl32.Ident4(), false
+		}
+		delta = m.Anim.Palette[bi]
+	}
+	// The attachment's placement in the entity sits between the entity and the
+	// bone, since the bone is expressed in the model's space — and that
+	// placement may itself ride another attachment's bone.
+	return entityAttachmentMatrix(e, m, depth).Mul4(delta.Mul4(boneRestMatrix(m, bi))), true
 }
 
 // boneRestMatrix places a socket at the bone's head, oriented along it. A bone
@@ -150,7 +166,9 @@ func boneRestMatrix(m *EntityModel, bi int) mgl32.Mat4 {
 		ref = mgl32.Vec3{1, 0, 0}
 	}
 	x := ref.Cross(y).Normalize()
-	z := y.Cross(x)
+	// x × y, not y × x: the other order builds a reflection, which mirrors
+	// whatever hangs on the socket.
+	z := x.Cross(y)
 	R := mgl32.Mat4{
 		x.X(), x.Y(), x.Z(), 0,
 		y.X(), y.Y(), y.Z(), 0,

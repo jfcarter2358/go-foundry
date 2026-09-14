@@ -702,9 +702,23 @@ func (l *linter) attach(c *flang.CallExpr) {
 	}
 	if kind, known := l.kindOf(c.Args[0]); known {
 		switch kind {
-		case flang.RefSprite, flang.RefEmitter:
+		case flang.RefSprite, flang.RefEmitter, flang.RefVolume:
+		case flang.RefLight:
+			if addr, ok := c.Args[0].(*flang.AddrExpr); ok && l.lvl != nil {
+				if r, ok := l.cache.refFor(addr.Name); ok {
+					d, p := l.cache.lightFor(r)
+					switch {
+					case d != nil:
+						l.add(c.Pos_, "%s: light %q is directional, and only a point light has a position to carry", name, addr.Name)
+						return
+					case p != nil && !p.Dynamic:
+						l.add(c.Pos_, "%s would fail: light %q is static; tick Dynamic in its properties panel", name, addr.Name)
+						return
+					}
+				}
+			}
 		default:
-			l.add(c.Pos_, "%s: %s cannot be attached; only sprites and emitters ride things — an entity boards a vehicle with mount", name, aKind(kind))
+			l.add(c.Pos_, "%s: %s cannot be attached; only sprites, emitters, volumes and point lights ride things — an entity boards a vehicle with mount", name, aKind(kind))
 			return
 		}
 	}

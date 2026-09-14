@@ -282,8 +282,10 @@ func editorEntityRemoveModel(e *world.Entity, idx int) {
 		return
 	}
 	EditorPushUndo()
+	removed := e.Models[idx].Name
 	e.Models[idx].Delete()
 	e.Models = append(e.Models[:idx:idx], e.Models[idx+1:]...)
+	world.DropModelMounts(e.Models, removed)
 }
 
 // editorEntitySetModelPath points an attachment at a different mesh and uploads

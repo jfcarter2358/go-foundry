@@ -74,7 +74,7 @@ func modelAddBone() {
 		length = step * float32(math.Max(1, math.Round(float64(1/step))))
 	}
 	ModelPushUndo()
-	bi := modelDoc.AddBone(head, head.Add(mgl32.Vec3{0, length, 0}))
+	bi := modelAddBoneAt(head, head.Add(mgl32.Vec3{0, length, 0}))
 	if bi < 0 {
 		modelUndoStack.pop()
 		return
@@ -82,33 +82,11 @@ func modelAddBone() {
 	modelSelection.Mode = modelSelBone
 	modelSelection.BoneJoint = modelBoneTail
 	modelSelection.Bones = []int{bi}
+	if p := modelDoc.MirrorBone(bi); modelBoneMirror && p >= 0 {
+		modelSetStatus("Added %s and %s", modelDoc.Bones[bi].Name, modelDoc.Bones[p].Name)
+		return
+	}
 	modelSetStatus("Added %s", modelDoc.Bones[bi].Name)
-}
-
-// modelExtrudeSelectedBones grows a connected child from each selected bone and
-// leaves the new tails selected, so pressing E repeatedly walks a chain out and
-// the gizmo drag in between places each joint.
-func modelExtrudeSelectedBones() {
-	if modelDoc == nil || len(modelSelection.Bones) == 0 {
-		return
-	}
-	ModelPushUndo()
-	var added []int
-	for _, bi := range modelSelection.Bones {
-		if child := modelDoc.ExtrudeBone(bi); child >= 0 {
-			added = append(added, child)
-		}
-	}
-	if len(added) == 0 {
-		modelUndoStack.pop()
-		modelSetStatus("Nothing to extrude from")
-		return
-	}
-	modelSelection.Mode = modelSelBone
-	modelSelection.Bones = added
-	// The tail is the end you place next; the head is pinned to the parent.
-	modelSelection.BoneJoint = modelBoneTail
-	modelSetStatus("Extruded %d bone(s) — drag an axis to place the tail", len(added))
 }
 
 // modelDeleteSelectedBones removes the selected bones, keeping their children.
@@ -141,11 +119,32 @@ func modelBoneSection() {
 
 	imguibackend.EditorPushDisabled(active < 0)
 	if imgui.Button("Extrude##modelboneext") {
-		modelExtrudeSelectedBones()
+		modelExtrudeBones(false)
 	}
 	imguibackend.EditorPopDisabled()
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("E in Bone mode — a connected child from this bone's tail.\nDrag the gizmo afterwards to place it.")
+		imgui.SetTooltip("E in Bone mode — a connected child from this bone's tail\n(from the head when the head handle is the one grabbed).\nDrag the gizmo afterwards to place it.")
+	}
+	imgui.SameLine()
+
+	imguibackend.EditorPushDisabled(active < 0)
+	if imgui.Button("From head##modelboneexthead") {
+		modelExtrudeBones(true)
+	}
+	imguibackend.EditorPopDisabled()
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Shift+E in Bone mode — a child that starts at this bone's head\nand points away from it: legs off a pelvis. Not connected,\nbut it still follows this bone in a pose.")
+	}
+	imgui.SameLine()
+
+	imguibackend.EditorPushDisabled(active < 0 || !modelBoneForkable(active))
+	if imgui.Button("Fork##modelbonefork") {
+		modelForkSelectedBones()
+	}
+	imguibackend.EditorPopDisabled()
+	// Hoverable while disabled: the reason it is greyed out is in the tooltip.
+	if imgui.IsItemHoveredV(imgui.HoveredFlagsAllowWhenDisabled) {
+		imgui.SetTooltip("Alt+E in Bone mode — a mirrored .L/.R pair from a joint on the\nmirror plane: arms off a spine. Grows from the grabbed end.")
 	}
 	imgui.SameLine()
 
@@ -163,6 +162,7 @@ func modelBoneSection() {
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("On: dragging a bone drags the points weighted to it.\nOff: the bone moves alone — for fitting a skeleton\ninto a mesh that is already finished.")
 	}
+	modelBoneMirrorControls()
 
 	modelBoneList()
 
@@ -229,10 +229,17 @@ func modelBoneProperties(bi int) {
 		imgui.SetTooltip("The head is welded to the parent's tail, so the\njoint between them moves as one.")
 	}
 
+	// The typed edits below mirror onto a partner the same way a drag does; the
+	// active bone is the lead whatever else is selected.
+	lead := []int{bi}
+
 	rollDeg := b.Roll * 180 / math.Pi
 	if editorDragFloat("Roll (deg)##modelboneroll", &rollDeg, -360, 360, "%.1f") {
 		ModelPushUndo()
-		modelBoneEdit(func() { modelDoc.SetBoneRoll(bi, rollDeg*math.Pi/180) })
+		modelBoneEdit(func() {
+			modelDoc.SetBoneRoll(bi, rollDeg*math.Pi/180)
+			modelMirrorBoneLeads(lead, false, false, true)
+		})
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Twists the bone's deform basis about its own axis.\nDecides which way a rotation will bend it.")
@@ -241,12 +248,18 @@ func modelBoneProperties(bi int) {
 	head := [3]float32{b.Head.X(), b.Head.Y(), b.Head.Z()}
 	if editorDragFloat3("Head##modelbonehead", &head, 0, 0, "%.3f") {
 		ModelPushUndo()
-		modelBoneEdit(func() { modelDoc.SetBoneHead(bi, mgl32.Vec3{head[0], head[1], head[2]}) })
+		modelBoneEdit(func() {
+			modelDoc.SetBoneHead(bi, mgl32.Vec3{head[0], head[1], head[2]})
+			modelMirrorBoneLeads(lead, true, false, false)
+		})
 	}
 	tail := [3]float32{b.Tail.X(), b.Tail.Y(), b.Tail.Z()}
 	if editorDragFloat3("Tail##modelbonetail", &tail, 0, 0, "%.3f") {
 		ModelPushUndo()
-		modelBoneEdit(func() { modelDoc.SetBoneTail(bi, mgl32.Vec3{tail[0], tail[1], tail[2]}) })
+		modelBoneEdit(func() {
+			modelDoc.SetBoneTail(bi, mgl32.Vec3{tail[0], tail[1], tail[2]})
+			modelMirrorBoneLeads(lead, false, true, false)
+		})
 	}
 	imgui.Text(fmt.Sprintf("Length: %.3f", modelDoc.BoneLength(bi)))
 

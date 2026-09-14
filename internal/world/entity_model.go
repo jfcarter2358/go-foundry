@@ -99,9 +99,16 @@ type EntityModel struct {
 	// for reskinning one shared mesh per entity type.
 	Texture string
 
-	// The attachment's transform *relative to the entity*. Composed under the
-	// entity's own matrix, so the entity's rotation and scale carry these with
-	// them.
+	// Parent names another of the entity's model attachments for this one to
+	// ride, and Bone a bone inside it — a sword in a hand, a turret on a hull's
+	// mount point. Empty Parent rides the entity itself. A Parent with no Bone
+	// rides that attachment's own origin. See Entity.AttachmentMatrix.
+	Parent string
+	Bone   string
+
+	// The attachment's transform relative to what it rides: the entity, or
+	// the Parent attachment's Bone when one is set. Composed under that, so the
+	// carrier's rotation and scale carry these with them.
 	Offset   mgl32.Vec3
 	Rotation mgl32.Vec3 // Euler angles (X, Y, Z) in radians
 	Scale    mgl32.Vec3 // per-axis; zero value treated as {1,1,1}
@@ -123,9 +130,11 @@ type EntityModel struct {
 	Submeshes []gfx.Geometry
 	// Anim is live playback state, nil on a model with no motion to play.
 	Anim *EntityAnim
-	// Doc is kept past Load only when there is an armature to pose against;
-	// re-reading the file every frame is not an option. Nil for static models,
-	// which is what keeps a level of props from holding every mesh twice.
+	// Doc is kept past Load only when the model has an armature — to pose
+	// against, and for its bones to serve as sockets even when nothing animates
+	// them. Re-reading the file every frame is not an option. Nil for models with
+	// no bones, which is what keeps a level of props from holding every mesh
+	// twice.
 	Doc *model.ModelDoc
 	// AnimBlocked is why Anim is nil, in words, or "" when it is not nil.
 	// Recorded at Load because that is the only moment the document is in hand:
@@ -150,7 +159,9 @@ func (m *EntityModel) EffectiveAlpha() float32 {
 	return m.Alpha
 }
 
-// LocalMatrix is the attachment's transform relative to its entity.
+// LocalMatrix is the attachment's own offset, rotation and scale — relative to
+// whatever it rides. For where it is in the entity, which is what anything
+// drawing or picking it wants, use Entity.AttachmentMatrix.
 func (m *EntityModel) LocalMatrix() mgl32.Mat4 {
 	s := m.EffectiveScale()
 	T := mgl32.Translate3D(m.Offset.X(), m.Offset.Y(), m.Offset.Z())
@@ -159,12 +170,86 @@ func (m *EntityModel) LocalMatrix() mgl32.Mat4 {
 }
 
 // WorldMatrix is the attachment's full transform: the entity's matrix with the
-// attachment's own composed under it.
+// attachment's placement in the entity composed under it.
 func (m *EntityModel) WorldMatrix(e *Entity) mgl32.Mat4 {
 	if e == nil {
 		return m.LocalMatrix()
 	}
-	return e.ModelMatrix().Mul4(m.LocalMatrix())
+	return e.ModelMatrix().Mul4(e.AttachmentMatrix(m))
+}
+
+// AttachmentMatrix is where attachment m sits in the entity's own space: its
+// LocalMatrix, carried by the posed bone of the attachment it rides, and that
+// attachment by whatever it rides in turn.
+//
+// This is the one resolution every pass shares — colour, both shadow passes,
+// picking and the entity editor's preview — so a sword and the hand holding it
+// cannot disagree about where the hand is. An unresolvable mount (a parent that
+// has been renamed, a bone its model does not have, a model not yet loaded)
+// reads as riding the next thing out rather than as an error, the rule Attach
+// follows for the same reason.
+func (e *Entity) AttachmentMatrix(m *EntityModel) mgl32.Mat4 {
+	return entityAttachmentMatrix(e, m, 0)
+}
+
+// entityAttachmentMatrix is AttachmentMatrix with a depth count. The editor
+// refuses a cycle (ModelMountCycle), but a hand-edited file can still hold one,
+// and the cap turns that into a wrong placement rather than a hang.
+func entityAttachmentMatrix(e *Entity, m *EntityModel, depth int) mgl32.Mat4 {
+	local := m.LocalMatrix()
+	if e == nil || m.Parent == "" || depth >= len(e.Models) {
+		return local
+	}
+	p := e.Model(m.Parent)
+	if p == nil || p == m {
+		return local
+	}
+	if m.Bone != "" {
+		if bm, ok := entityBoneMatrix(e, p, m.Bone, depth+1); ok {
+			return bm.Mul4(local)
+		}
+	}
+	return entityAttachmentMatrix(e, p, depth+1).Mul4(local)
+}
+
+// RenameModelMounts points every attachment riding the one called from at its
+// new name, so renaming a hand's model does not drop the sword off it.
+func RenameModelMounts(models []EntityModel, from, to string) {
+	for i := range models {
+		if models[i].Parent == from {
+			models[i].Parent = to
+		}
+	}
+}
+
+// DropModelMounts takes every attachment riding the one called name off it,
+// for when that attachment is removed. They go back to riding the entity,
+// where the mount would have left them anyway, rather than naming nothing.
+func DropModelMounts(models []EntityModel, name string) {
+	for i := range models {
+		if models[i].Parent == name {
+			models[i].Parent, models[i].Bone = "", ""
+		}
+	}
+}
+
+// ModelMountCycle reports whether mounting the attachment named child on the
+// one named parent would make child ride itself, directly or through others.
+func (e *Entity) ModelMountCycle(child, parent string) bool {
+	if e == nil || parent == "" {
+		return false
+	}
+	for steps, p := 0, parent; p != "" && steps <= len(e.Models); steps++ {
+		if p == child {
+			return true
+		}
+		m := e.Model(p)
+		if m == nil {
+			return false
+		}
+		p = m.Parent
+	}
+	return false
 }
 
 // ---------- loading ----------
@@ -271,7 +356,9 @@ func (m *EntityModel) SetAlpha(a float32) {
 func (m *EntityModel) initAnimation(doc *model.ModelDoc) {
 	m.Anim = NewEntityAnim(doc)
 	m.AnimBlocked = AnimUnavailable(doc)
-	if m.Anim != nil {
+	// Bones without motion are still sockets: a turret's muzzle bone is a place
+	// to hang a flash and a model, whether or not the turret ever animates.
+	if m.Anim != nil || (doc != nil && len(doc.Bones) > 0) {
 		m.Doc = doc
 	}
 }

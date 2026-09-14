@@ -13,7 +13,8 @@ package script
 // bound by a script and one bound in the editor are the same emitter, and the
 // level format grew nothing to support this.
 //
-// Sprites, emitters and volumes, because Attach is the binding those have. An
+// Sprites, emitters, volumes and point lights, because Attach is the binding
+// those have. A light has to be dynamic to be attached — see verbAttachable. An
 // entity rides a vehicle through `mount`, which is a different idea with a
 // different answer to collision, seats and dismounting, and conflating the two
 // would give an entity two ways to be somewhere else.
@@ -52,21 +53,22 @@ type attachTarget struct {
 	world func(lvl *world.Level) mgl32.Vec3
 }
 
-// verbAttachable resolves an argument to a sprite, an emitter or a volume.
+// verbAttachable resolves an argument to a sprite, an emitter, a volume or a
+// point light.
 //
 // The pointers it hands back are into the level's slices, so they are good for
 // exactly as long as nothing appends to one. Every caller here writes
 // immediately, which is the same contract verbEntity works under.
 func (rt *ScriptRuntime) verbAttachable(args []flang.Value, i int, name string) (attachTarget, error) {
 	if i >= len(args) {
-		return attachTarget{}, fmt.Errorf("%s needs a sprite, an emitter or a volume", name)
+		return attachTarget{}, fmt.Errorf("%s needs a sprite, an emitter, a volume or a point light", name)
 	}
 	r, ok := args[i].(flang.RefVal)
 	if !ok {
 		if _, isNull := args[i].(flang.NullVal); isNull {
 			return attachTarget{}, fmt.Errorf("%s was given null — an `@name` that matches nothing in the level resolves to null, so check the object's ID", name)
 		}
-		return attachTarget{}, fmt.Errorf("%s takes a sprite, an emitter or a volume, not a %s", name, flang.TypeOf(args[i]))
+		return attachTarget{}, fmt.Errorf("%s takes a sprite, an emitter, a volume or a point light, not a %s", name, flang.TypeOf(args[i]))
 	}
 	switch r.Kind {
 	case flang.RefSprite:
@@ -87,9 +89,24 @@ func (rt *ScriptRuntime) verbAttachable(args []flang.Value, i int, name string) 
 			return attachTarget{}, &scriptMissingError{r.String()}
 		}
 		return attachTarget{id: v.ID, at: &v.Attach, pos: &v.Position, world: v.WorldPosition}, nil
+	case flang.RefLight:
+		d, p := rt.cache.lightFor(r)
+		switch {
+		case p != nil:
+			// A static light is baked where it stands; one that rides
+			// something moves, which the bake cannot follow. The same refusal
+			// a property write on a static light gets.
+			if !p.Dynamic {
+				return attachTarget{}, staticLightError(r.String(), "cannot "+name)
+			}
+			return attachTarget{id: p.ID, at: &p.Attach, pos: &p.Position, world: p.WorldPosition}, nil
+		case d != nil:
+			return attachTarget{}, fmt.Errorf("%s: %s is a directional light, which shines from everywhere at once and has no position to carry; attach a point light", name, r.String())
+		}
+		return attachTarget{}, &scriptMissingError{r.String()}
 	}
 	return attachTarget{}, fmt.Errorf(
-		"%s takes a sprite, an emitter or a volume; %s is %s — an entity rides a vehicle with mount, not attach",
+		"%s takes a sprite, an emitter, a volume or a point light; %s is %s — an entity rides a vehicle with mount, not attach",
 		name, r.String(), aKind(r.Kind))
 }
 
@@ -102,7 +119,7 @@ var attachVerbs = map[string]scriptVerb{
 		}
 		if len(args) < 2 || len(args) > 4 {
 			return nil, fmt.Errorf(
-				"attach takes (sprite or emitter, entity), (…, entity, bone), (…, entity, model, bone) or (…, frame name)")
+				"attach takes (object, entity), (…, entity, bone), (…, entity, model, bone) or (…, frame name)")
 		}
 
 		// A string in the carrier slot names a frame rather than an entity: the

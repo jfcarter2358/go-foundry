@@ -681,8 +681,9 @@ func Editor3DRenderGizmos(projView mgl32.Mat4) {
 		}
 		// The same radius picking aims at, so what a click can reach is what
 		// the view draws — see pointLightMarkerRadius.
-		gizmo.GizmoSphere(pl.Position, pointLightMarkerRadius(pl), col)
-		gizmo.GizmoLine(pl.Position, pl.Position.Add(mgl32.Vec3{0, 0.3, 0}), col)
+		at := pl.WorldPosition(lvl)
+		gizmo.GizmoSphere(at, pointLightMarkerRadius(pl, at), col)
+		gizmo.GizmoLine(at, at.Add(mgl32.Vec3{0, 0.3, 0}), col)
 	}
 
 	// Highlight the selected chunk's box, where the chunk actually is:

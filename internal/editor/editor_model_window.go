@@ -687,6 +687,19 @@ func modelEditorHandleKey(t sdl.KeyboardEvent) {
 	case sdl.SCANCODE_Z:
 		modelSetWireframe(!modelWireframe)
 	case sdl.SCANCODE_E:
+		if modelSelection.Mode == modelSelBone {
+			// Bones have no pending extrude to re-aim, so the modifiers are free
+			// to choose where the new bone grows from instead.
+			switch {
+			case mods&sdl.KMOD_ALT != 0:
+				modelForkSelectedBones()
+			case mods&sdl.KMOD_SHIFT != 0:
+				modelExtrudeSelectedBonesFromHead()
+			default:
+				modelExtrudeSelectedBones()
+			}
+			return
+		}
 		if mods&sdl.KMOD_SHIFT != 0 {
 			// Shift+E always extrudes, where a bare E on an extrude that is
 			// still selected re-aims it instead. This is how a run of segments

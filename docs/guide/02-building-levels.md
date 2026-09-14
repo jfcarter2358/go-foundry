@@ -374,6 +374,11 @@ up rather than being stopped by. Leave the checkbox off and it follows the
 engine's default of 0.5 units — about a stair riser. Tick it to set a level that
 makes the player pick their feet up more, or less.
 
+The same level-scoped `player:` block can also carry `models:` — the player's
+first-person viewmodel, hands and a held weapon drawn in front of the camera.
+There is no panel for it yet; see [Sockets](11-entities.md#first-person-viewmodel)
+for the shape of it.
+
 ## Level environment
 
 Two more level-scoped blocks live in the **Environment** group: **Sky** and

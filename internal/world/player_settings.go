@@ -54,6 +54,15 @@ type PlayerSettings struct {
 	// two sectors whose floors differ by a rounding error, so zero clearance is
 	// never the thing an author meant.
 	StepHeight float32
+	// Models is the first-person viewmodel this level starts the player with —
+	// hands and whatever they hold. Nil is no viewmodel at all, not "keep
+	// whatever the last level had": a level's player block is read the same
+	// unconditional way StepHeight is, so a level that wants the player armed
+	// says so itself rather than inheriting it. render.RenderViewmodel draws
+	// these; nothing else in the frame will, since PlayerEntity is not in
+	// Level.Entities (see entity.go's header on why) and so is invisible to
+	// every walk that is.
+	Models []EntityModel
 }
 
 // EffectiveStepHeight is the allowance actually in force: what the level says,
@@ -81,16 +90,30 @@ func PlayerSettingsFromRaw(r *RawPlayer) PlayerSettings {
 	if r.StepHeight != nil {
 		p.StepHeight = *r.StepHeight
 	}
+	for _, rm := range r.Models {
+		p.Models = append(p.Models, entityModelFromRaw(rm))
+	}
 	return p
 }
 
 // PlayerSettingsToRaw writes the block back, returning nil for settings that
 // are still the default. That nil is what keeps every level authored before
 // this block existed byte-identical when the editor saves it.
+//
+// Models can't join the plain equality Empty used to be: a struct holding a
+// slice cannot be compared with ==, and an empty-but-non-nil slice would have
+// to count as "unset" anyway, the same way StepHeight's own zero does.
 func PlayerSettingsToRaw(p PlayerSettings) *RawPlayer {
-	if p == (PlayerSettings{}) {
+	if p.StepHeight == 0 && len(p.Models) == 0 {
 		return nil
 	}
-	sh := p.StepHeight
-	return &RawPlayer{StepHeight: &sh}
+	r := &RawPlayer{}
+	if p.StepHeight != 0 {
+		sh := p.StepHeight
+		r.StepHeight = &sh
+	}
+	for i := range p.Models {
+		r.Models = append(r.Models, entityModelToRaw(&p.Models[i]))
+	}
+	return r
 }
