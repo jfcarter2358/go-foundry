@@ -16,8 +16,8 @@ import (
 
 func init() {
 	propTables = map[flang.Kind_]map[string]propAccess{
-		flang.RefEntity:  entityProps(),
-		flang.RefVolume:  volumeProps(),
+		flang.RefEntity:  mergeProps(entityProps(), aiEntityProps()),
+		flang.RefVolume:  mergeProps(volumeProps(), objectiveVolumeProps()),
 		flang.RefBrush:   brushProps(),
 		flang.RefChunk:   chunkProps(),
 		flang.RefLight:   lightProps(),

@@ -140,6 +140,7 @@ func editorEntityProperties(lvl *world.Level) {
 	editorPropGroup("Bounds##entbounds", 0, func() { editorEntityBounds(e) })
 	editorPropGroup("Collision##entcol", 0, func() { editorEntityCollisionSection(e) })
 	editorPropGroup("Vehicle##entveh", 0, func() { editorEntityVehicleSection(lvl, e) })
+	editorPropGroup("AI##entai", 0, func() { editorEntityAISection(e) })
 	editorPropGroup("Models##entmodels", 0, func() { editorEntityModels(e) })
 	editorPropGroup("Chunks##entchunks", 0, func() { editorEntityGeometry(lvl, e) })
 	editorPropGroup("Effects##enteffects", 0, func() { editorEntityEffects(lvl, e) })

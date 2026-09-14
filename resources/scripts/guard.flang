@@ -1,0 +1,42 @@
+-- guard.flang — what the sample guard does about what its controller reports.
+--
+-- Attached to the `guard` entity type (entities/guard.yaml), whose `ai:` block
+-- is the whole of its behaviour: it walks the volumes tagged #patrol in order,
+-- pausing at each, hunts the player on sight, and closes to arm's length. None
+-- of that is in this file. A controller runs itself; a script is where the
+-- guard REACTS — speeding up when it is alerted, hitting what it has caught,
+-- and slowing back to a patrol when it gives up.
+--
+-- Copy it for your own agents. The four handlers below are the four events most
+-- behaviours hang off; SCRIPTING.md lists the rest.
+
+param alert_speed float = 5.5     -- how fast it runs once it has seen someone
+param damage int = 10             -- what each swing sends as (:damage:, @self, n)
+
+def on_spawn(:spawn:) -> null
+    -- Remembered rather than hard-coded, so an instance tuned slower or faster
+    -- in its AI panel goes back to its own pace, not the type's.
+    @self.state["patrol_speed"] = @self.prop.ai_speed
+end
+
+def on_seen(:target_acquired:, src ref, target ref) -> null
+    log(format("{} has seen {}", @self.id, target.id))
+    @self.prop.ai_speed = ?alert_speed
+end
+
+def on_lost(:target_lost:, src ref, target ref) -> null
+    log(format("{} lost {}", @self.id, target.id))
+    if @self.state["patrol_speed"] != null
+        @self.prop.ai_speed = @self.state["patrol_speed"]
+    end
+end
+
+def on_swing(:target_in_range:, src ref, target ref) -> null
+    -- Repeated every attack interval for as long as the target stays close.
+    -- Whatever handles :damage: on the target decides what a hit means.
+    target <- (:damage:, @self, ?damage)
+end
+
+def on_post(:objective_complete:, src ref, post ref) -> null
+    log(format("{} checked {}", @self.id, post.id))
+end

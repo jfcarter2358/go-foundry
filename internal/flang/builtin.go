@@ -38,6 +38,8 @@ var worldVerbs = []string{
 	"attach", "detach",
 	"play_waypoints", "stop_waypoints",
 	"move_to", "rotate_to", "scale_to",
+	"ai_move_to", "ai_stop", "ai_target", "ai_objective", "find_path", "can_see",
+	"ai_follow_waypoints", "ai_continue",
 	"show_screen", "hide_screen", "screen", "widget", "focus", "load_level",
 	"quit_game",
 }

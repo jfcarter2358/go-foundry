@@ -125,6 +125,12 @@ func duplicateActiveVolume() {
 		c := *src.Cloud
 		cp.Cloud = &c
 	}
+	// So is an objective, on the same reasoning: a copied console must not
+	// share its capacity and duration with the one it was copied from.
+	if src.Objective != nil {
+		o := *src.Objective
+		cp.Objective = &o
+	}
 	cp.ID = world.UniqueVolumeID(lvl, src.ID)
 	cp.Position = src.Position.Add(mgl32.Vec3{src.HalfX * 2, 0, 0})
 	if err := cp.Load(); err != nil {

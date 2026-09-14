@@ -342,6 +342,7 @@ func BuildBrushFaceMeshFrom(pts []mgl32.Vec3, doubleSided bool, normal, origin m
 // Load builds and uploads every visible face's render geometry. Call after
 // any edit to the mesh's verts or faces.
 func (m *BrushMesh) Load() error {
+	MarkBrushMeshesChanged()
 	for fi := range m.Faces {
 		f := &m.Faces[fi]
 		f.Geometry.Delete()
@@ -374,6 +375,7 @@ func (m *BrushMesh) Load() error {
 // handles rather than free them, which is the same hazard ReleaseGeometry
 // exists for at chunk scale.
 func (m *BrushMesh) Release() {
+	MarkBrushMeshesChanged()
 	for fi := range m.Faces {
 		m.Faces[fi].Geometry.Delete()
 	}
@@ -383,6 +385,7 @@ func (m *BrushMesh) Release() {
 // mesh that is coming back later — a streamed-out chunk. Geometry.Unload is the
 // distinction; see chunk_enable.go.
 func (m *BrushMesh) Unload() {
+	MarkBrushMeshesChanged()
 	for fi := range m.Faces {
 		m.Faces[fi].Geometry.Unload()
 	}

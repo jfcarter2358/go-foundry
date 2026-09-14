@@ -309,6 +309,14 @@ type EditorState struct {
 	// positional sound is authored and they are invisible otherwise.
 	ShowSoundRanges bool
 
+	// ShowNavigation draws the navigation grid near the camera, sized for the
+	// selected AI agent (or the player), and that agent's route through its
+	// objectives. See editor_ai_panel.go.
+	ShowNavigation bool
+	// NewAINameText is the add row of an AI panel's target and objective
+	// lists.
+	NewAINameText string
+
 	// ShowEmitterShapes outlines the selected emitter's emission volume in the
 	// viewport. Off by default: it is the answer to "why is this cone firing
 	// sideways", not something to have on while placing.

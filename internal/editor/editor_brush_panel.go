@@ -72,6 +72,9 @@ func editorBrushPropertiesSection() {
 		}
 		if imgui.Checkbox("Dynamic##brushdyn", &b.Dynamic) {
 			ws().pushUndo()
+			// A dynamic brush may move, so the raycast keeps it out of the
+			// trees it culls with; see world/brush_generation.go.
+			world.MarkBrushMeshesChanged()
 		}
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("A door, a lift, a crusher: a script can write this brush's\n" +

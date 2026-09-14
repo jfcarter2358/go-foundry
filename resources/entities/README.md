@@ -5,7 +5,8 @@ collision flags, its default attributes and tags, and the script that drives it.
 A level then places instances of it, storing only where each one is and whatever
 it overrides — see `entity_def.go`.
 
-One type ships — `dropship.yaml`, described below — and nothing else has to.
+Two types ship — `dropship.yaml`, described below, and `guard.yaml`, the sample
+AI agent (see `docs/guide/24-ai.md`) — and nothing else has to.
 The editor's Entities panel places a **blank entity**: a box with an ID, no
 model, and defaults filled in on the spot, written out in full in the level
 file. That is the right shape for a thing one level needs once.

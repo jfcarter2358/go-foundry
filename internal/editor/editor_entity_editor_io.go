@@ -379,7 +379,7 @@ func entityDeleteSelection() {
 // previously do: a blank entity is the quick path, and a definition is what it
 // becomes once a second level wants the same thing. What carries over is
 // everything about *what it is* — models, brushes, emitters, bounds, collision,
-// tags, attributes, script and vehicle. What does not is where it is: a definition
+// tags, attributes, script, vehicle and AI. What does not is where it is: a definition
 // has no position, because a definition is not anywhere.
 //
 // The placed entity is left exactly as it is. Turning it into an instance of
@@ -408,6 +408,7 @@ func OpenEntityEditorFrom(e *world.Entity) {
 
 		WaypointAnimations: world.CloneWaypointAnimations(e.WaypointAnimations),
 		Vehicle:            world.CloneVehicleSpec(e.Vehicle),
+		AI:                 e.AI.Clone(),
 	}
 	for i := range e.Models {
 		def.Models = append(def.Models, e.Models[i].TemplateCopy())

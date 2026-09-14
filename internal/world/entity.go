@@ -160,6 +160,12 @@ type Entity struct {
 	Vehicle *VehicleSpec
 	VState  *VehicleState
 
+	// AI is the authored controller block, nil for everything that decides
+	// nothing for itself — see ai.go. AIState is its runtime half, created on
+	// the controller's first tick and never serialised.
+	AI      *AISpec
+	AIState *AIState
+
 	// Seat is which seat of Frame's vehicle this entity occupies. Empty while
 	// aboard means standing on the deck rather than strapped into anything, so
 	// the two fields together say aboard-and-seated, aboard-and-walking, or not

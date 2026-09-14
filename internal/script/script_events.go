@@ -14,6 +14,7 @@ package script
 // collision code carrying event-shaped state it has no use for.
 
 import (
+	"foundry/internal/ai"
 	"foundry/internal/flang"
 	"foundry/internal/hooks"
 	"foundry/internal/ui"
@@ -84,6 +85,11 @@ func ScriptEventsReset() {
 		overlaps: map[overlapPair]bool{},
 		spawned:  map[flang.RefVal]bool{},
 	}
+	// The AI controllers start their rounds again at the same moments: a guard
+	// resuming a patrol from a play session that has ended, or chasing a
+	// player from a level that has been replaced, would be chasing a ghost.
+	ai.ResetSession()
+	hooks.TakeAIEvents()
 }
 
 // ScriptEventsTick derives and posts one frame's events.
@@ -106,6 +112,7 @@ func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	postCollideEvents(rt)
 	postAnimEvents(rt)
 	postWaypointEvents(rt)
+	postAIEvents(rt)
 	postVehicleEvents(rt)
 	postInteractEvent(rt, lvl)
 	postUIEvents(rt)

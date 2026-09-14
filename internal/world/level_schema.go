@@ -36,6 +36,9 @@ type RawVolume struct {
 	Doorway *RawFrameDoorway `yaml:"doorway,omitempty"`
 	// Scatter fills the region with foliage. See Volume.Scatter.
 	Scatter *RawVolumeScatter `yaml:"scatter,omitempty"`
+	// Objective makes the region a place AI agents are sent to act. See
+	// Volume.Objective.
+	Objective *RawVolumeObjective `yaml:"objective,omitempty"`
 }
 
 // RawVolumeScatter is the foliage filling a volume (volume_scatter.go).
@@ -578,6 +581,8 @@ type RawWaypoint struct {
 	Scale    *RawVec3 `yaml:"scale,omitempty"`
 	Time     float32  `yaml:"time,omitempty"`
 	Events   []string `yaml:"events,omitempty"`
+	// AI is what an AI agent following the path does here. See WaypointAI.
+	AI *RawWaypointAI `yaml:"ai,omitempty"`
 }
 
 // RawMusic is the level's global track.

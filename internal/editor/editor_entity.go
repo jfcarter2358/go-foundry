@@ -213,6 +213,10 @@ func duplicateActiveEntity() {
 	e.Emitters = world.CloneEntityEmitters(src.Emitters)
 	e.Volumes = world.CloneEntityVolumes(src.Volumes)
 	e.WaypointAnimations = world.CloneWaypointAnimations(src.WaypointAnimations)
+	// The controller's lists too, and none of its runtime: a copy starts its
+	// own round rather than resuming the original's.
+	e.AI = src.AI.Clone()
+	e.AIState = nil
 	e.Position = src.Position.Add(mgl32.Vec3{entityDuplicateOffset, 0, entityDuplicateOffset})
 	if err := e.Load(); err != nil {
 		editorSetStatus("Entity %s: %v", e.ID, err)

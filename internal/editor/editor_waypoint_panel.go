@@ -173,6 +173,9 @@ func editorWaypointPropertiesSection() {
 		// the group stays open as the author clicks from point to point.
 		editorPropGroupOpen(fmt.Sprintf("Point %d##wpptgrp", idx+1), func() { editorWaypointPointFields(a, idx, p) })
 		editorPropGroupOpen(fmt.Sprintf("Point %d Events##wpevgrp", idx+1), func() { editorWaypointEventsUI(p) })
+		editorPropGroupOpen(fmt.Sprintf("Point %d AI##wpaigrp", idx+1), func() {
+			editorWaypointAIUI(Editor.level, a, idx, p, func(string) {})
+		})
 	}
 	imguibackend.EditorPopDisabled()
 	editorPropGroupOpen("Preview##wpprevgrp", func() { editorWaypointPreviewUI(a) })

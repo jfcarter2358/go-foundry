@@ -147,10 +147,13 @@ func (l *linter) clause(c *flang.Clause) {
 // `:intract:` is a typo; `:unlock:` is a design. An atom one of the level's
 // waypoints posts is a design too, however close it is to `:waypoint:`.
 func (l *linter) handlerAtom(p flang.Param) {
-	if containsString(scriptEventAtoms, p.Atom) || containsString(world.WaypointEventAtoms(l.lvl), p.Atom) {
+	if containsString(scriptEventAtoms, p.Atom) || containsString(aiEventAtoms, p.Atom) ||
+		containsString(world.WaypointEventAtoms(l.lvl), p.Atom) ||
+		containsString(world.ObjectiveActionAtoms(l.lvl), p.Atom) {
 		return
 	}
-	if near := world.NearestName(p.Atom, scriptEventAtoms); near != "" {
+	engine := append(append([]string(nil), scriptEventAtoms...), aiEventAtoms...)
+	if near := world.NearestName(p.Atom, engine); near != "" {
 		l.add(p.Pos_, "this handler is for :%s:, which the engine never posts — did you mean :%s:? "+
 			"(a custom atom needs no declaration, so ignore this if :%s: is your own message)",
 			p.Atom, near, p.Atom)
@@ -368,8 +371,40 @@ func (l *linter) call(c *flang.CallExpr) {
 		l.waypoints(c, name.Name)
 	case "move_to", "rotate_to", "scale_to":
 		l.tween(c, name.Name)
+	case "ai_move_to", "ai_stop", "ai_target", "ai_objective", "ai_follow_waypoints", "ai_continue":
+		l.aiVerb(c, name.Name)
 	}
 	l.knownFunc(name)
+}
+
+// aiVerb checks, for arguments written as literals, that an AI verb's agent has
+// a controller and that ai_objective's volume is an objective — each a refusal
+// that would otherwise arrive only when the call runs.
+func (l *linter) aiVerb(c *flang.CallExpr, verb string) {
+	if l.lvl == nil || len(c.Args) == 0 {
+		return
+	}
+	if addr, ok := c.Args[0].(*flang.AddrExpr); ok {
+		if r, ok := l.cache.refFor(addr.Name); ok {
+			if r.Kind != flang.RefEntity {
+				l.add(addr.Pos_, "%s takes an entity with an AI controller, and @%s is a %s", verb, addr.Name, r.Kind)
+			} else if e := l.cache.entityFor(r); e != nil && e.AI == nil {
+				l.add(addr.Pos_, "%s would fail: @%s has no AI controller", verb, addr.Name)
+			}
+		}
+	}
+	if verb != "ai_objective" || len(c.Args) < 2 {
+		return
+	}
+	if addr, ok := c.Args[1].(*flang.AddrExpr); ok {
+		if r, ok := l.cache.refFor(addr.Name); ok {
+			if r.Kind != flang.RefVolume {
+				l.add(addr.Pos_, "ai_objective needs an objective volume, and @%s is a %s", addr.Name, r.Kind)
+			} else if v := l.cache.volumeFor(r); v != nil && v.Objective == nil {
+				l.add(addr.Pos_, "ai_objective would fail: volume @%s is not an objective", addr.Name)
+			}
+		}
+	}
 }
 
 // tween checks the object move_to, rotate_to and scale_to are handed, when it

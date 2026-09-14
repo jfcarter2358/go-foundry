@@ -322,6 +322,13 @@ end
 Unlike counting `:waypoint:` indices, an event stays on its point when points are
 inserted in front of it.
 
+### Paths for AI agents
+
+An AI agent can walk a waypoint animation too. It finds its own way to each point
+and ignores the times. Each point can also carry an **AI** group: wait here, run
+here, take cover near here, hold fire on the way, or stop anywhere inside a volume.
+See [AI agents](24-ai.md#waypoint-paths).
+
 ## Chunks
 
 Select a chunk in the Explorer to make it active — that is the one new geometry

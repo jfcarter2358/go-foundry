@@ -70,6 +70,15 @@ var upward = map[string][]string{
 	"detail":    {"render", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
 	"biome":     {"render", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
 	"collision": {"render", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
+	// nav builds a level's navigation grid from its brushes and answers path
+	// queries over it. It reads a level and nothing that moves one, so it sits
+	// below the resolver and the controllers both — a path is a question about
+	// the level's shape, not about any body in it.
+	"nav": {"collision", "ai", "render", "script", "levelio", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
+	// ai runs the controllers: it steers entities through the fields collision
+	// already integrates, and posts its events through hooks, so it sits above
+	// collision and below the script layer that addresses it.
+	"ai":        {"render", "script", "levelio", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
 	"render":    {"editor", "app", "uiwin", "uidraw"},
 	"script":    {"editor", "app", "uiwin"},
 	"levelio":   {"editor", "app", "uiwin"},

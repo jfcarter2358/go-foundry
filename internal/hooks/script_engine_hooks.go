@@ -186,3 +186,42 @@ func TakeWaypointEvents() []WaypointEvent {
 	waypointEvents = nil
 	return out
 }
+
+// ---------- AI controllers ----------
+
+// AIEvent is one thing an AI controller did that its entity's script — and,
+// for an objective, the objective volume's — will want to hear about: a target
+// seen or lost, an arrival, an objective reached or finished.
+//
+// A drain-once buffer on the vehicle events' reasoning: the controller sits
+// below scripting and must not reach up into it.
+type AIEvent struct {
+	// Atom is the message, without its colons.
+	Atom string
+	// Agent is the entity whose controller it is.
+	Agent string
+	// Target is the entity the event is about, for the target events.
+	Target string
+	// Objective is the volume the event is about, for the objective events.
+	Objective string
+	// ToObjective posts the event to the objective volume as well as the agent.
+	ToObjective bool
+}
+
+var aiEvents []AIEvent
+
+// RecordAIEvent notes a controller event. Gated on play for RecordAnimEvent's
+// reason, although nothing runs a controller in the editor today.
+func RecordAIEvent(ev AIEvent) {
+	if EditorActive() {
+		return
+	}
+	aiEvents = append(aiEvents, ev)
+}
+
+// TakeAIEvents returns this frame's controller events and clears the buffer.
+func TakeAIEvents() []AIEvent {
+	out := aiEvents
+	aiEvents = nil
+	return out
+}

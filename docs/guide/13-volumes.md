@@ -119,6 +119,15 @@ def on_enter(:enter:, other ref) -> null
 end
 ```
 
+## AI objectives
+
+A volume can be somewhere AI agents are sent to act: a console to hack, a post
+to stand guard at, one stop on a patrol. Tick **Agents are sent here to act** in
+its **AI Objective** group. An agent that lists the volume walks to a spot inside
+it, stays for the objective's **Duration**, and then both the agent and the volume
+receive the objective's **Action** atom and `:objective_complete:`. See
+[AI agents](24-ai.md#objective-volumes).
+
 ## Fog volumes
 
 A volume may be full of fog or full of cloud — the things a volume can be that

@@ -778,6 +778,10 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	// two windows that call it arrive with different ones.
 	gl.Enable(gl.DEPTH_TEST)
 	drawDetailMeshWires()
+	// The navigation grid lies on the floor it describes, so it is
+	// depth-tested for the detail wires' reason: through a wall, the grid of
+	// the room behind would read as belonging to this one.
+	drawNavigationOverlay()
 	gizmo.GizmoFlush(projView)
 
 	gl.Disable(gl.DEPTH_TEST)

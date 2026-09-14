@@ -21,9 +21,14 @@ package collision
 //     Geometry.Load fills those in with no GL context
 //     (gfx.GeometryUploadsEnabled), which is what keeps this testable headless.
 //
-// One ray walks every triangle of every enabled chunk, which is what the
-// editor's own picker does on a click and is fine at the rate gameplay fires
-// shots. A script casting one per object per frame is not what this is for.
+// A ray does not walk every triangle. Each chunk keeps a bounding-volume tree
+// over its faces, a compiled level keeps one over its surfaces, and bodies are
+// tested against a bounding sphere before their exact shape — see
+// raycast_accel.go. Geometry is found first and its nearest hit then bounds how
+// far every body has to be looked for. On a level of ten thousand brushes a
+// short sight line costs microseconds, which is what lets every AI agent in a
+// level look for its targets several times a second; LineBlocked is the cheaper
+// still any-hit form of that question.
 //
 // Only geometry stops the ray. Bodies are reported and passed through, so a
 // caster that wants the nearest takes the first hit and one that wants a line
@@ -158,16 +163,29 @@ func Raycast(lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter) RayResult {
 	dir = dir.Normalize()
 	res.Stop = origin.Add(dir.Mul(f.Range))
 
+	// Geometry first, because it decides how far everything else has to be
+	// looked for: only the nearest piece of the level's shape survives the
+	// truncation below, and nothing beyond it is reported. So the nearest
+	// geometry hit becomes the range the scenery, the entities and the volumes
+	// are tested within — which for a shot fired at a wall a metre away is
+	// nearly nothing. A body exactly at that distance is still tested, since
+	// the sort puts it ahead of the wall it touches.
 	var hits []RayHit
+	limit := f.Range
+	if f.Geometry {
+		q := geometryQuery{lvl: lvl, origin: origin, dir: dir, ignore: f.Ignore, tMax: limit}
+		q.run()
+		hits = append(hits, q.nearest()...)
+		if q.hit {
+			limit = q.tMax
+		}
+		hits, limit = appendSceneryHits(hits, lvl, origin, dir, f, limit)
+	}
 	if f.Entities {
-		hits = appendEntityHits(hits, lvl, origin, dir, f)
+		hits = appendEntityHits(hits, lvl, origin, dir, f, limit)
 	}
 	if f.Volumes {
-		hits = appendVolumeHits(hits, lvl, origin, dir, f)
-	}
-	if f.Geometry {
-		hits = appendGeometryHits(hits, lvl, origin, dir, f)
-		hits = appendSceneryHits(hits, lvl, origin, dir, f)
+		hits = appendVolumeHits(hits, lvl, origin, dir, f, limit)
 	}
 
 	// Nearest first, with a deterministic tiebreak. Two coincident surfaces at
@@ -247,20 +265,32 @@ func reportable(lvl *world.Level, h RayHit, f RayFilter) bool {
 
 // ---------- bodies ----------
 
-func appendEntityHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter) []RayHit {
+func appendEntityHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter, limit float32) []RayHit {
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]
-		if f.Ignore[e.ID] || !e.HasBounds() {
+		if (len(f.Ignore) > 0 && f.Ignore[e.ID]) || !e.HasBounds() {
+			continue
+		}
+		// A sphere first, about the entity's origin and wide enough for its
+		// volume at any turn — most bodies are nowhere near the ray, and the
+		// exact test builds a rotation and inverts a matrix. A frame is rigid,
+		// so carrying the origin out of it keeps every distance.
+		frame := lvl.Frames.FrameFor(e)
+		half := e.BoundHalfExtents()
+		sc := e.EffectiveScale()
+		off := mgl32.Vec3{e.BoundOffset.X() * sc.X(), e.BoundOffset.Y() * sc.Y(), e.BoundOffset.Z() * sc.Z()}
+		if !sphereReaches(origin, dir, frame.ToWorld(e.Position), (off.Len()+half.Len())*1.001+1e-4, limit) {
 			continue
 		}
 		// An entity riding in a frame describes itself in that frame's
 		// coordinates, so the frame goes on the outside — the same composition
 		// RenderEntities uses to draw it.
-		m := lvl.Frames.FrameFor(e).WorldMatrix().
-			Mul4(mgl32.Translate3D(e.BoundCenter().X(), e.BoundCenter().Y(), e.BoundCenter().Z())).
+		c := e.BoundCenter()
+		m := frame.WorldMatrix().
+			Mul4(mgl32.Translate3D(c.X(), c.Y(), c.Z())).
 			Mul4(e.RotationMatrix())
-		t, ok := rayBounds(origin, dir, m, e.BoundHalfExtents(), e.BoundingKind)
-		if !ok || t > f.Range {
+		t, ok := rayBounds(origin, dir, m, half, e.BoundingKind)
+		if !ok || t > limit {
 			continue
 		}
 		out = append(out, RayHit{
@@ -270,23 +300,33 @@ func appendEntityHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f 
 	return out
 }
 
-func appendVolumeHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter) []RayHit {
+func appendVolumeHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter, limit float32) []RayHit {
 	for i := range lvl.Volumes {
 		v := &lvl.Volumes[i]
 		// A disabled volume contains nothing, which is the whole of what
 		// disabling one means — so it is not there to be hit either.
-		if f.Ignore[v.ID] || !v.Enabled {
+		if (len(f.Ignore) > 0 && f.Ignore[v.ID]) || !v.Enabled {
 			continue
 		}
 		half := mgl32.Vec3{v.HalfX, v.HalfY, v.HalfZ}
 		if half.X() <= 0 || half.Y() <= 0 || half.Z() <= 0 {
 			continue
 		}
+		// A world volume's centre is its position, so the sphere needs no
+		// matrix at all; an attached one's needs its carrier's.
+		if v.Attach.IsZero() {
+			if !sphereReaches(origin, dir, v.Position, half.Len()*1.001+1e-4, limit) {
+				continue
+			}
+		}
 		// Through what it rides. rayBounds takes a general inverse, so a
 		// carrier's scale is honoured along with its placement.
 		m := v.WorldMatrix(lvl)
+		if !v.Attach.IsZero() && !sphereReaches(origin, dir, m.Col(3).Vec3(), half.Len()*maxColumnScale(m)*1.001+1e-4, limit) {
+			continue
+		}
 		t, ok := rayBounds(origin, dir, m, half, world.BoundingType(v.Shape))
-		if !ok || t > f.Range {
+		if !ok || t > limit {
 			continue
 		}
 		out = append(out, RayHit{
@@ -298,130 +338,27 @@ func appendVolumeHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f 
 
 // appendSceneryHits tests the solid props. It goes through sceneryProxy so that
 // a prop stops a shot in exactly the box it stops a body in — the alternative
-// is a second reading of "solid" that drifts from the resolver's.
-func appendSceneryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter) []RayHit {
+// is a second reading of "solid" that drifts from the resolver's. A prop blocks,
+// so each hit lowers the limit the rest are tested within.
+func appendSceneryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter, limit float32) ([]RayHit, float32) {
 	for i := range lvl.Scenery {
 		s := &lvl.Scenery[i]
-		if f.Ignore[s.ID] {
+		t, hit := sceneryHit(s, origin, dir, limit, f.Ignore)
+		if !hit || t > limit {
 			continue
 		}
-		proxy, ok := sceneryProxy(s)
-		if !ok {
-			continue
-		}
-		m := mgl32.Translate3D(proxy.Position.X(), proxy.Position.Y(), proxy.Position.Z()).
-			Mul4(world.EulerMatrixYXZ(proxy.Rotation))
-		t, hit := rayBounds(origin, dir, m, proxy.BoundHalfExtents(), proxy.BoundingKind)
-		if !hit || t > f.Range {
-			continue
-		}
+		limit = t
 		out = append(out, RayHit{
 			Kind: RayHitScenery, ID: s.ID, T: t, Point: origin.Add(dir.Mul(t)),
 		})
 	}
-	return out
+	return out, limit
 }
 
 // ---------- geometry ----------
-
-func appendGeometryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter) []RayHit {
-	// A compiled level's static surfaces. They are what the eye sees, so they
-	// are what a ray should hit — and the chunks they came from carry no meshes
-	// to test, which is deliberate: keeping a second copy of every mesh purely
-	// so rays could hit it would also have rays hitting surfaces CSG had
-	// already established were invisible.
-	//
-	// Already in world space, so no transform, and the hit reports the chunk
-	// and brush the surface was authored in — the same answer a script would
-	// have got from the level before it was compiled.
-	if lvl.Static != nil {
-		for si := range lvl.Static.Surfaces {
-			surf := &lvl.Static.Surfaces[si]
-			if f.Ignore[surf.Brush] || lvl.Static.Hidden(si) {
-				continue
-			}
-			t, ok := rayGeometry(origin, dir, &surf.Geometry)
-			if !ok || t > f.Range {
-				continue
-			}
-			out = append(out, RayHit{
-				Kind: RayHitBrush, Chunk: surf.Chunk, ID: surf.Brush,
-				T: t, Point: origin.Add(dir.Mul(t)),
-			})
-		}
-	}
-
-	for ci := range lvl.Chunks {
-		ch := &lvl.Chunks[ci]
-		// A compiled chunk's static brushes were tested above, out of the
-		// compiled list — but its dynamic ones were not, because the compiler
-		// left them out of that list on purpose. They keep their own meshes
-		// (Chunk.DrawsBrushLive) and are tested here.
-		if ch.Compiled && !ch.HasDynamicBrushes() {
-			continue
-		}
-		if !ch.IsEnabled() {
-			// Released for streaming: not drawn, not collided against, and its
-			// vertex buffers are gone. See world/chunk_enable.go.
-			continue
-		}
-		// Brush verts are chunk-local. Moving the ray into that space rather
-		// than the geometry into the world leaves t alone — origin and
-		// direction are transformed together — so distances stay comparable
-		// with the world-space hits above.
-		inv := ch.ModelMatrix().Inv()
-		if inv == (mgl32.Mat4{}) {
-			continue
-		}
-		lo := inv.Mul4x1(origin.Vec4(1))
-		ld := inv.Mul4x1(dir.Vec4(0))
-		lOrigin := mgl32.Vec3{lo.X(), lo.Y(), lo.Z()}
-		lDir := mgl32.Vec3{ld.X(), ld.Y(), ld.Z()}
-
-		for bi := range ch.Brushes {
-			b := &ch.Brushes[bi]
-			if f.Ignore[b.ID] || !ch.DrawsBrushLive(b) {
-				continue
-			}
-			// The uploaded meshes are in the brush's AUTHORED coordinates, so
-			// a brush a script has moved needs the ray taken one space further
-			// in — its own placement — exactly as the chunk transform was
-			// divided out above, and for the same reason: t survives it.
-			bOrigin, bDir := lOrigin, lDir
-			if !b.AtRest() {
-				pinv := b.Placement().Inv()
-				if pinv == (mgl32.Mat4{}) {
-					continue
-				}
-				bo := pinv.Mul4x1(lOrigin.Vec4(1))
-				bd := pinv.Mul4x1(lDir.Vec4(0))
-				bOrigin = mgl32.Vec3{bo.X(), bo.Y(), bo.Z()}
-				bDir = mgl32.Vec3{bd.X(), bd.Y(), bd.Z()}
-			}
-			// A ray reports what it can SEE, so it is cast against the drawn
-			// mesh — the detail one for a detailed brush. That deliberately
-			// differs from where a BODY stops, which is always the hull: a
-			// crosshair lands on the ledge it is pointing at, while the player
-			// walks past the flat wall the ledge is carved into.
-			faces := b.DrawFaces()
-			for fi := range faces {
-				face := &faces[fi]
-				// A NoDraw face has no uploaded geometry to test at all — see
-				// Brush.Load — so it is transparent to a ray the same way it
-				// is invisible to the eye.
-				t, ok := rayGeometry(bOrigin, bDir, &face.Geometry)
-				if !ok || t > f.Range {
-					continue
-				}
-				out = append(out, RayHit{
-					Kind: RayHitBrush, Chunk: ch.ID, ID: b.ID,
-					T: t, Point: origin.Add(dir.Mul(t)),
-				})
-			}
-		}
-	}
-	return out
-}
+//
+// Traversal, culling and the trees it walks are raycast_accel.go's. What stays
+// here is the one test every piece of geometry comes down to.
 
 // rayGeometry returns the nearest hit among a de-indexed [X,Y,Z,U,V] triangle
 // list, which is the one shape every buffer in the engine has once it has been

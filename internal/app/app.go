@@ -1,6 +1,7 @@
 package app
 
 import (
+	"foundry/internal/ai"
 	"foundry/internal/audio"
 	"foundry/internal/collision"
 	"foundry/internal/fileutil"
@@ -572,6 +573,22 @@ func Run() {
 		entityDT := platform.DeltaTime
 		if scriptPaused {
 			entityDT = 0
+		}
+
+		// AI controllers, immediately before the pass that moves what they
+		// steer. A controller only writes an entity's velocity (and its
+		// facing); gravity, walls, pushes and stairs are EntityUpdate's, so an
+		// agent goes through exactly the resolve every other body does, this
+		// frame rather than next. Gameplay only, and stopped by any pause — a
+		// guard that kept deciding behind a menu would be somewhere else when
+		// it closed.
+		//
+		// It writes the level's own entities without going through the script
+		// host, so the play session is marked dirty by hand, as driving is.
+		if !devActive() && !gamePaused {
+			if ai.Update(&level, platform.DeltaTime, world.PlayerEntity) {
+				script.PlaySessionMarkDirty()
+			}
 		}
 		collision.EntityUpdate(&level, entityDT, !devActive() && !gamePaused, world.PlayerEntity)
 		if !devActive() && world.PlayerEntity != nil {

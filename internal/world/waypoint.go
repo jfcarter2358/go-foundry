@@ -96,6 +96,10 @@ type Waypoint struct {
 	// order, each without its colons and each already a name flang can match
 	// (NormalizeWaypointEventAtom).
 	Events []string
+	// AI is what an AI agent following the path does at this point — see
+	// waypoint_ai.go. Nil is a point an agent passes through, and one nothing
+	// but an agent ever reads.
+	AI *WaypointAI
 }
 
 // NewWaypoint returns a point at pos with the defaults a freshly placed one
@@ -147,6 +151,7 @@ func (a *WaypointAnimation) Clone() WaypointAnimation {
 	cp.Points = append([]Waypoint(nil), a.Points...)
 	for i := range cp.Points {
 		cp.Points[i].Events = cloneWaypointEvents(cp.Points[i].Events)
+		cp.Points[i].AI = cloneWaypointAI(cp.Points[i].AI)
 	}
 	return cp
 }
@@ -437,6 +442,7 @@ func WaypointAnimationFromRaw(r RawWaypointAnimation) WaypointAnimation {
 			Scale:    mgl32.Vec3{1, 1, 1},
 			Time:     rp.Time,
 			Events:   waypointEventsFromRaw(rp.Events),
+			AI:       WaypointAIFromRaw(rp.AI),
 		}
 		if rp.Scale != nil {
 			w.Scale = ClampBrushScale(mgl32.Vec3{rp.Scale.X, rp.Scale.Y, rp.Scale.Z})
@@ -485,6 +491,7 @@ func WaypointAnimationToRaw(a *WaypointAnimation) RawWaypointAnimation {
 			Rotation: RawVec3{X: w.Rotation.X(), Y: w.Rotation.Y(), Z: w.Rotation.Z()},
 			Time:     w.Time,
 			Events:   cloneWaypointEvents(w.Events),
+			AI:       WaypointAIToRaw(w.AI),
 		}
 		if s := w.EffectiveScale(); s != (mgl32.Vec3{1, 1, 1}) {
 			rp.Scale = &RawVec3{X: s.X(), Y: s.Y(), Z: s.Z()}

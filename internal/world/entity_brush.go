@@ -87,6 +87,23 @@ func EntityBrushID(entityID, brushID string) string {
 // entity would *draw*, and is about its models.
 func (e *Entity) HasBrushes() bool { return e != nil && len(e.Brushes) > 0 }
 
+// HasSolidBrushes reports whether any brush the entity carries is solid — which
+// is what makes those brushes, rather than its bounding cage, the thing other
+// bodies collide with. An entity dressed only in decorative brushes (a body
+// drawn without a model, say) has no solid of its own to present, so its cage
+// stays its solid.
+func (e *Entity) HasSolidBrushes() bool {
+	if e == nil {
+		return false
+	}
+	for i := range e.Brushes {
+		if e.Brushes[i].Solid {
+			return true
+		}
+	}
+	return false
+}
+
 // Brush looks up one of the entity's brushes by its *authored* ID — the name it
 // carries in the definition, not the qualified one the materialised chunk gets.
 func (e *Entity) Brush(id string) *Brush {
@@ -328,6 +345,7 @@ func (d *EntityDef) Clone() *EntityDef {
 		c.Models = append(c.Models, d.Models[i].TemplateCopy())
 	}
 	c.Vehicle = CloneVehicleSpec(d.Vehicle)
+	c.AI = d.AI.Clone()
 	return &c
 }
 

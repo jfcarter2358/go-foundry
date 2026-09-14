@@ -44,7 +44,8 @@ and is always current.
 | [Animation](10-animation.md) | Armatures, skin weights, pose mode, clips |
 | [Entities](11-entities.md) | Types and instances, bounds, collision, attachments |
 | [Vehicles and frames](12-vehicles-and-frames.md) | Drivable things and walkable interiors |
-| [Volumes](13-volumes.md) | Trigger regions, level exits, fog volumes |
+| [AI agents](24-ai.md) | Controllers that find their way, hunt targets and work objective volumes |
+| [Volumes](13-volumes.md) | Trigger regions, level exits, fog volumes, AI objectives |
 | [Scenery and the brush](14-scenery-brush.md) | Stamping hundreds of static props |
 | [Sprites and particles](15-sprites-and-particles.md) | Billboards, the particle editor, and explosion effects |
 | [Audio](16-audio.md) | Placed sounds, music, attenuation, the mixer settings |

@@ -287,6 +287,13 @@ each one where its entity is and can preview it on any object, but the points
 belong to the type: their fields are greyed out, and an **Edit Type** button
 opens the type in the entity editor. Saving the type re-stamps every placement.
 
+## Entities that think
+
+An entity with an **AI** controller walks the level by itself: to where a script
+sends it, after the player or anything else on its target list, and through the
+objective volumes it is given. Add one from the **AI** group of a placed entity
+or a type. See [AI agents](24-ai.md).
+
 ## The player
 
 The engine creates the player rather than reading it from a level. It has no

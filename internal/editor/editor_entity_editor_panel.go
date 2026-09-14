@@ -459,6 +459,7 @@ func entityEditorPanel() {
 		editorPropGroup("Collision##entdefcol", 0, entityPanelCollision)
 		editorPropGroup("Scripting##entdefscript", 0, entityPanelScripting)
 		editorPropGroup("Vehicle##entdefveh", 0, entityPanelVehicle)
+		editorPropGroup("AI##entdefai", 0, entityPanelAI)
 
 		imgui.Separator()
 		entityPanelSelection()

@@ -69,6 +69,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroup("Scatter##volscattergrp", 0, func() { editorVolumeScatter(v) })
 	editorPropGroup("Frame Doorway##voldoorgrp", 0, func() { editorVolumeDoorway(v) })
 	editorPropGroupOpen("Level Exit##volexitgrp", func() { editorVolumeLevelExit(v) })
+	editorPropGroup("AI Objective##volobjgrp", 0, func() { editorVolumeObjective(v) })
 	editorObjectWaypointsUI(v)
 	editorScriptDataUI(&v.ScriptData, "vol", strconv.Quote(v.ID))
 	editorPropGroup("Actions##volactions", 0, func() { editorVolumeActions(v) })

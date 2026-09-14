@@ -629,6 +629,9 @@ func entityPanelWaypoints(ai int) {
 		idx := entitySel.Sub
 		editorPropGroupOpen(fmt.Sprintf("Point %d##entwppt", idx+1), func() { entityPanelWaypoint(a, idx, p) })
 		editorPropGroupOpen(fmt.Sprintf("Point %d Events##entwpev", idx+1), func() { editorWaypointEventsUI(p) })
+		editorPropGroupOpen(fmt.Sprintf("Point %d AI##entwpai", idx+1), func() {
+			editorWaypointAIUI(nil, a, idx, p, entityBeginEdit)
+		})
 	}
 	editorPropGroupOpen("Preview##entwpprev", func() { entityPanelWaypointPreview(a) })
 	editorPropGroup("Script##entwpscript", 0, func() { entityWaypointScriptHint(entityWaypointPreview.Brush, a.ID) })
@@ -954,7 +957,7 @@ func drawEntityWaypointMarkers() {
 		if a == active {
 			col, sel = waypointArrowColor, entitySel.Sub
 		}
-		drawWaypointPath(mgl32.Ident4(), a, col, sel)
+		drawWaypointPath(nil, mgl32.Ident4(), a, col, sel)
 	}
 	if active == nil || len(active.Points) == 0 {
 		return

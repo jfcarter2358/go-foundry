@@ -73,38 +73,58 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 	steps, travel := SweepPlan(h, travel)
 	stepTravel := travel.Mul(1 / float32(steps))
 
+	// An entity an AI controller is walking climbs stairs the way the player
+	// does. Nothing else steps: a crate shoved at a kerb stops at it, as it
+	// always has, and a body with no gravity has nothing to step off.
+	stepHeight := float32(0)
+	if e.AIDriven() && e.HasGravity() {
+		stepHeight = e.AI.StepHeight
+		if stepHeight <= 0 {
+			stepHeight = lvl.Player.EffectiveStepHeight()
+		}
+	}
+
 	pos := oldCenter
 	var hitFloor, hitCeiling bool
 	for i := 0; i < steps; i++ {
 		stepFrom := pos
-		pos = pos.Add(stepTravel)
+		intended := pos.Add(stepTravel)
 
 		// Falls back to where the body already stood if the raw target
 		// briefly lands outside even the destination chunk's own bounds —
 		// see player.go's MovePlayer, which does the same for the same
 		// reason.
-		chunk := frame.ChunkAt(lvl, pos)
+		chunk := frame.ChunkAt(lvl, intended)
 		if chunk == nil {
 			chunk = frame.ChunkAt(lvl, stepFrom)
 		}
-		if chunk != nil {
-			// Outside every chunk there is nothing here to resolve against — an
-			// entity over open space is a legitimate thing to be — but another
-			// entity's solid may still be in the way, so the pass below runs
-			// either way.
-			localPos := chunkLocal(chunk, pos)
-			resolved, f, c := pushOutOfChunkBrushes(chunk, localPos, radius, h.Y())
-			pos = chunkWorld(chunk, resolved)
-			hitFloor = hitFloor || f
-			hitCeiling = hitCeiling || c
+
+		// Everything the body is solid against, as one function, so a step-up
+		// retries against exactly what stopped the flat move — MovePlayer's
+		// arrangement, for its reason.
+		resolve := func(p mgl32.Vec3) (mgl32.Vec3, bool, bool) {
+			var f, c bool
+			if chunk != nil {
+				// Outside every chunk there is nothing here to resolve against —
+				// an entity over open space is a legitimate thing to be — but
+				// another entity's solid may still be in the way, so the pass
+				// below runs either way.
+				local, lf, lc := pushOutOfChunkBrushes(chunk, chunkLocal(chunk, p), radius, h.Y())
+				p, f, c = chunkWorld(chunk, local), lf, lc
+			}
+			// Every other entity's own brushes, which are in their own frames
+			// and so are in none of this one's chunks. See entity_brushes.go.
+			out, ef, ec := resolveAgainstEntityBrushes(lvl, e, frame, p, radius, h.Y())
+			return out, f || ef, c || ec
 		}
 
-		// Every other entity's own brushes, which are in their own frames and
-		// so are in none of this one's chunks. See entity_brushes.go.
-		ef, ec := false, false
-		pos, ef, ec = resolveAgainstEntityBrushes(lvl, e, frame, pos, radius, h.Y())
-		hitFloor = hitFloor || ef
-		hitCeiling = hitCeiling || ec
+		resolved, f, c := resolve(intended)
+		if stepHeight > 0 {
+			resolved = StepUp(resolve, mgl32.Vec2{intended.X(), intended.Z()}, resolved, stepHeight)
+		}
+		pos = resolved
+		hitFloor = hitFloor || f
+		hitCeiling = hitCeiling || c
 	}
 
 	e.Position = e.Position.Add(pos.Sub(center))
@@ -154,7 +174,11 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 		// so a hut you could see the inside of would be one you bounced off.
 		// The cage stays what it always was for everything else it is for:
 		// picking, hitscan, :enter: overlap, and framing the camera.
-		if lvl.Entities[i].CollidesWithEntities() && !lvl.Entities[i].HasBrushes() {
+		//
+		// Only SOLID brushes count. Brushes a body passes through present no
+		// solid, and an entity dressed in nothing else would otherwise collide
+		// with nothing at all.
+		if lvl.Entities[i].CollidesWithEntities() && !lvl.Entities[i].HasSolidBrushes() {
 			idx = append(idx, i)
 		}
 	}

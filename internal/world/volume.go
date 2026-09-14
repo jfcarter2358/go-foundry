@@ -104,6 +104,10 @@ type Volume struct {
 	// nil is the ordinary case, and a pointer for the reason Fog is.
 	Cloud *VolumeCloud
 
+	// Objective makes the region somewhere AI agents are sent to act — see
+	// volume_objective.go. nil is the ordinary case.
+	Objective *VolumeObjective
+
 	// FromPrefab is runtime-only, never serialized: the prefab instance whose
 	// file put this here (prefab.go). Empty for one the level file authored.
 	// It is what LevelToRaw checks before writing — a level that saved a copy
@@ -435,6 +439,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		Cloud:      VolumeCloudFromRaw(r.Cloud),
 		Doorway:    FrameDoorwayFromRaw(r.Doorway),
 		Scatter:    VolumeScatterFromRaw(r.Scatter),
+		Objective:  VolumeObjectiveFromRaw(r.Objective),
 	}, nil
 }
 
@@ -454,6 +459,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		Cloud:         VolumeCloudToRaw(v.Cloud),
 		Doorway:       FrameDoorwayToRaw(v.Doorway),
 		Scatter:       VolumeScatterToRaw(v.Scatter),
+		Objective:     VolumeObjectiveToRaw(v.Objective),
 	}
 }
 

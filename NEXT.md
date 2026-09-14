@@ -2,6 +2,70 @@
 
 ## Done
 
+- [x] AI waypoint paths. An AI agent walks a waypoint animation stop by stop —
+      its `ai: waypoints:` (a level ID or its type's own path name, with
+      `waypoints_loop`) or `ai_follow_waypoints` — finding its own way to each
+      point and ignoring the times, and posting the same `:waypoint:`, point
+      events and `:waypoints_end:` a brush gets. Each point may carry an `ai:`
+      block (`world.WaypointAI`): a volume to stop anywhere inside instead of
+      the arrow, a wait, wait-for-script (`ai_continue`), a speed multiplier,
+      an engage mode for the leg and stop (inherit, chase, hold — keep to the
+      path while facing and engaging — or ignore), take cover with a radius,
+      face the arrow, and an animation. Taking cover samples reachable nav
+      points (`nav.Grid.SamplePoints`) and keeps those where `LineBlocked`
+      hides both chest and head from the threat's eye — the target, or with none
+      a point along the arrow — rechecking twice a second (`:cover_taken:`,
+      `:cover_lost:`); a cover stop holds while the agent still has a target.
+      Settings on a point govern the leg arriving at it and the stop. The editor
+      has a Point AI group in both the level and entity editors, Create Volume
+      Here, cover rings, wait marks and volume links on the arrows, a Waypoints
+      row in the agent's AI group, and the route preview follows the path.
+      Also fixed: an agent whose goal jumped by less than half a metre could
+      report arriving at its old path forever (`follow` now re-plans at once
+      when the goal moves more than half the arrive radius).
+
+- [x] Raycasts are spatially culled. Each chunk keeps a BVH over its static
+      faces in its own coordinates (the ray is carried in through the chunk's
+      live transform, so moving and frame chunks keep their trees); a compiled
+      level keeps one over its surfaces; dynamic brushes sit outside the trees
+      with boxes cached against their placement. Boxes come from each face's
+      drawn vertices. Traversal is nearest-first and shrinks its range as it
+      hits, and entities, volumes and scenery are tested only up to the
+      nearest geometry, behind a trig-free bounding sphere. `LineBlocked` is
+      the any-hit form, and AI line of sight uses it. Trees are invalidated by
+      `world.BrushMeshGeneration`, which BrushMesh.Load/Release/Unload and the
+      Dynamic checkbox bump. On a 10,000-brush level a 20-unit sight check went
+      from ~7.3 ms to ~7.5 µs and a 1000-unit hitscan to ~27 µs; the old
+      brute-force cast is kept as a test oracle and 9,000 randomised rays must
+      match it exactly.
+
+- [x] AI controllers. An `ai:` block on an entity or a type makes it walk the
+      level by itself, with three behaviours out of the box: going where a
+      script sends it (`ai_move_to`), hunting what is on its Targets list —
+      `player`, IDs, `#tags` — once it hears or sees it (range, field of view,
+      line of sight, a lose timer), and working **objective volumes**: a volume's
+      new `objective:` block (action atom, duration, animation, capacity, agent
+      tag, face, once) is somewhere an agent walks to, performs, and reports to
+      both itself and the volume. Sequence, nearest and random order, looping
+      for patrols, and wandering when idle.
+      Navigation is `internal/nav`: a Recast-style column heightfield
+      rasterised from every static solid brush — each face clipped to a
+      column's whole square, so thin walls are not missed — then per agent size
+      a graph of standable nodes linked by step and headroom, eroded by radius,
+      labelled into regions, and searched with A* and string-pulled over the
+      links. It is built on first use and rebuilt when a hash of the level's
+      static solids changes; dynamic brushes, frame chunks and disabled chunks
+      stay out of it. `internal/ai` runs the controllers before EntityUpdate
+      and only ever writes Velocity and yaw, so collision is unchanged — except
+      that AI-driven entities now step up stairs (`resolveEntityWorld` uses
+      `StepUp`), and an entity dressed only in non-solid brushes collides by
+      its bounds instead of by nothing. Events go through `hooks.AIEvent`.
+      The editor has an AI group (placed entities and types), an AI Objective
+      group on volumes, and **Show navigation**, which draws the walkable edges
+      near the camera and the selected agent's route through its objectives.
+      `resources/entities/guard.yaml` and `scripts/guard.flang` are the example.
+      See `docs/guide/24-ai.md`.
+
 - [x] Waypoint animations carry more than brushes. `play_waypoints` takes an
       entity, a sprite, an emitter, a sound, a light or a volume as well as a
       dynamic brush, and each reads the parts of a point it has: an entity all

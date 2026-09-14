@@ -691,7 +691,7 @@ func RenderWaypointMarkers(lvl *world.Level) {
 		if ai == Editor.ActiveWaypointAnimIdx {
 			sel = Editor.ActiveWaypointIdx
 		}
-		drawWaypointPath(a.SpaceMatrix(lvl), a, col, sel)
+		drawWaypointPath(lvl, a.SpaceMatrix(lvl), a, col, sel)
 	}
 	drawWaypointPreviewLeg(lvl)
 	drawWaypointPlayhead(lvl)
@@ -700,9 +700,10 @@ func RenderWaypointMarkers(lvl *world.Level) {
 // drawWaypointPath draws one animation's arrows and the legs between them,
 // through space — the identity for a path written in the space it is drawn in —
 // with point sel in the selection colour.
-func drawWaypointPath(space mgl32.Mat4, a *world.WaypointAnimation, col mgl32.Vec3, sel int) {
+func drawWaypointPath(lvl *world.Level, space mgl32.Mat4, a *world.WaypointAnimation, col mgl32.Vec3, sel int) {
 	for pi := range a.Points {
 		p := &a.Points[pi]
+		drawWaypointAIMarks(lvl, space, p)
 		if pi > 0 {
 			drawWaypointLeg(waypointXform(space, a.Points[pi-1].Position), waypointXform(space, p.Position), col)
 		}

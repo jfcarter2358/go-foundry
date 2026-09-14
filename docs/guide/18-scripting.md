@@ -127,6 +127,10 @@ The engine posts these without being asked.
 | `:mount:` / `:dismount:` | vehicle | `src ref, seat str` | something came aboard / left |
 | `:waypoint:` | the object on the path | `src ref, animation ref, index int` | a brush, entity, sprite, emitter, sound, light or volume on a waypoint animation reached one of its points |
 | `:waypoints_end:` | the object on the path | `src ref, animation ref` | …and reached the end of its length |
+| `:target_acquired:` `:target_lost:` `:target_in_range:` | AI agent | `src ref, target ref` | see [AI agents](24-ai.md) |
+| `:ai_arrived:` `:ai_path_failed:` `:objectives_done:` | AI agent | `src ref` | " |
+| `:objective_reached:` `:objective_complete:`, and an objective's Action atom | AI agent and objective volume | `src ref, objective ref` | " |
+| `:cover_taken:` `:cover_lost:` | AI agent | `src ref` | " |
 | any atom a point lists | the object on the path | `animation ref` | …reached a point with that atom in its **Events**, straight after that point's `:waypoint:` |
 | `:click:` `:hover:` `:unhover:` `:change:` `:submit:` | widget, then its screen | see [UI screens](17-ui-screens.md) | |
 | `:cancel:` `:shown:` `:hidden:` | screen | — | |
@@ -235,7 +239,8 @@ not the one the body sees.
 
 **World** — `log` `time` `player` `find(tag)` `distance(a, b)` `play_anim`
 `stop_anim` `spawn(type, vec)` `destroy(ref)` `after(ms, atom, ...)` `hitscan` `emit` `stop_emit` `burst`
-`spawn_effect` `attach` `detach` `mount` `dismount` `play` `stop` `play_sound`
+`spawn_effect` `attach` `detach` `mount` `dismount` `ai_move_to` `ai_stop` `ai_target`
+`ai_objective` `ai_follow_waypoints` `ai_continue` `find_path` `can_see` `play` `stop` `play_sound`
 `play_sound_at` `play_music` `stop_music`
 
 **UI** — `show_screen` `hide_screen` `screen(name)` `widget(screen, id)`

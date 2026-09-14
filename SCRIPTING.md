@@ -590,7 +590,10 @@ end
 | --- | --- | --- |
 | `move_to(obj, vec, seconds)` | a dynamic brush, a chunk, an entity | `position` — a chunk's `origin` |
 | `rotate_to(obj, vec, seconds)` | a dynamic brush, an entity | `rotation`, in radians |
-| `scale_to(obj, vec, seconds)` | a dynamic brush, an entity | `scale` — `<1.0, 1.0, 1.0>` is as authored |
+| `scale_to(obj, vec, seconds)` `ai_move_to(agent, place)` `ai_stop(agent)`
+`ai_target(agent, entity)` `ai_objective(agent, volume)` `ai_follow_waypoints(agent, path)`
+`ai_continue(agent)` `find_path(from, to)`
+`can_see(entity, target)` | a dynamic brush, an entity | `scale` — `<1.0, 1.0, 1.0>` is as authored |
 
 So the spaces are the properties' own: a brush an entity carries moves in that
 entity's coordinates, and an entity's `move_to` is world space.
@@ -1154,6 +1157,16 @@ The engine posts these without being asked.
 | `:dismount:` | vehicle | `src ref, seat str` | …and left again; `seat` is the one it was in |
 | `:waypoint:` | the object on the path | `src ref, animation ref, index int` | A brush, entity, sprite, emitter, sound, light or volume on a waypoint animation reached one of its points; `index` counts from 0 |
 | `:waypoints_end:` | the object on the path | `src ref, animation ref` | …reached the end of the animation's length, and stopped following it |
+| `:target_acquired:` | an AI agent | `src ref, target ref` | The agent noticed something on its Targets list and is now hunting it |
+| `:target_lost:` | an AI agent | `src ref, target ref` | …gave up on it after its Lose Time out of sight, or it was destroyed |
+| `:target_in_range:` | an AI agent | `src ref, target ref` | The target is in sight within Attack Range; repeated every Attack Interval while it stays there |
+| `:ai_arrived:` | an AI agent | `src ref` | The agent reached where `ai_move_to` sent it |
+| `:ai_path_failed:` | an AI agent | `src ref` | The agent could not find, or could not follow, a way to where it was going |
+| `:objective_reached:` | an AI agent, and the objective volume | `src ref, objective ref` | The agent arrived inside an objective and began performing it |
+| `:objective_complete:` | an AI agent, and the objective volume | `src ref, objective ref` | …finished it, straight after the objective's own Action atom, which carries the same arguments |
+| `:objectives_done:` | an AI agent | `src ref` | The agent finished every objective on a list that does not loop |
+| `:cover_taken:` | an AI agent | `src ref` | The agent reached a hiding spot at a point of its waypoint path that takes cover |
+| `:cover_lost:` | an AI agent | `src ref` | …and the spot stopped hiding it, so it is looking for more |
 | `:click:` | widget, then its screen | `src ref` | A button, toggle or slider was activated, by pointer or navigation key |
 | `:hover:` | widget, then its screen | `src ref` | The pointer or the navigation highlight entered it |
 | `:unhover:` | widget, then its screen | `src ref` | …and left again |
@@ -1198,6 +1211,68 @@ target has been destroyed by the time it comes due is dropped.
 
 `after` exists only inside a send. Written on its own it has nobody to deliver
 to, and the compiler says so rather than scheduling something that goes nowhere.
+
+### AI agents
+
+An entity with an AI controller (its `ai:` block; see `docs/guide/24-ai.md`)
+walks, hunts and works objectives with no script at all. A script reacts to the
+events above and overrules the controller with these verbs:
+
+```flang
+ai_move_to(@guard, <12.0, 0.0, 4.0>)   -- or an object: walks to its position
+ai_stop(@guard)                        -- cancels ai_move_to
+ai_target(@guard, @player)             -- hunt this, however long it is out of sight
+ai_target(@guard, null)                -- back to hunting what it can see
+ai_objective(@guard, @console)         -- perform this objective now
+ai_objective(@guard, null)             -- drop the one it is working
+ai_follow_waypoints(@guard, @beat)     -- walk a waypoint path; a third argument loops it
+ai_follow_waypoints(@guard, null)      -- stop walking one
+ai_continue(@guard)                    -- send it on from the point it is waiting at
+corners = find_path(@guard, @exit)     -- list of vecs, or null when unreachable
+seen = can_see(@guard, @player)        -- nothing in the level's geometry in between?
+```
+
+`ai_move_to` outranks the agent's target and objectives until it arrives, then
+posts `:ai_arrived:`. It returns `false` and warns when the place cannot be
+reached, and the agent still walks as near as it can. `find_path` plans for a
+player-sized body unless a third argument names the entity to plan for. It
+returns `null` rather than a partial route. `can_see` ignores range and field of
+view: that is the controller's business. It answers only whether the line
+between the two is clear.
+
+An agent walking a waypoint path finds its own way to each point and ignores
+the points' times. Each point's AI block (a wait, a speed, how to treat targets,
+taking cover, a volume to stop in) is described in `docs/guide/24-ai.md`. It
+posts the same `:waypoint:`, point events and `:waypoints_end:` that
+`play_waypoints` does. `ai_follow_waypoints` takes `@id` or a name, and a name
+also finds a path the agent's own type carries. `ai_continue` returns `false`
+when the agent is not waiting at a point.
+
+An entity with no controller refuses the four `ai_` verbs by name, and the linter
+says so before the script runs.
+
+| Property | | |
+| --- | --- | --- |
+| `ai_enabled` | bool | whether the controller runs; off stops the agent where it is |
+| `ai_state` | atom, read-only | `:idle:` `:moving:` `:wandering:` `:travelling:` `:performing:` `:chasing:` `:engaging:` `:watching:` `:following:` `:taking_cover:` `:in_cover:` `:waiting:` `:disabled:`, or `:none:` without a controller |
+| `ai_target` | ref or null | what it is hunting; writing is `ai_target` |
+| `ai_objective` | ref or null, read-only | the objective volume it is working |
+| `ai_destination` | vec or null, read-only | where it is walking to |
+| `ai_on_target` | atom | `:chase:`, `:watch:` or `:ignore:` |
+| `ai_targets` | list | `player`, entity IDs and `#tag`s; refs are written as their IDs |
+| `ai_objectives` | list | volume IDs and `#tag`s; writing it starts the list over |
+| `ai_waypoints` | ref or null, read-only | the waypoint animation it is walking |
+| `ai_waypoint_index` | int, read-only | the point it is walking to or waiting at; -1 when it walks none |
+| `ai_in_cover` | bool, read-only | hidden at a point that takes cover |
+| `ai_waiting` | bool, read-only | waiting at a point of its path |
+| `ai_speed` `ai_accel` `ai_turn_rate` `ai_sight_range` `ai_fov` `ai_hearing_range` `ai_lose_time` `ai_attack_range` `ai_attack_interval` `ai_wander_radius` | float | the tuning, writable during play |
+
+Reading any of these on an entity with no controller gives a dull answer rather
+than an error, as the vehicle properties do. Writing one is reported.
+
+An objective volume adds `objective_enabled` (bool), `objective_action` (the atom
+as a str), `objective_duration` (float) and `objective_agents` (int, read-only:
+the agents working it, counting those on their way).
 
 ### Vehicles
 

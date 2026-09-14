@@ -182,6 +182,7 @@ type RawEntityDef struct {
 	Params             map[string]RawAttribute `yaml:"params,omitempty"`      // defaults for that script's `param` declarations
 	Description        string                  `yaml:"description,omitempty"` // author's note; shown in the editor's picker
 	Vehicle            *RawVehicle             `yaml:"vehicle,omitempty"`     // see vehicle_def.go
+	AI                 *RawAI                  `yaml:"ai,omitempty"`          // see ai.go
 }
 
 // RawEntity is the YAML form of one entity *instance* in a level file.
@@ -234,6 +235,10 @@ type RawEntity struct {
 	// Vehicle overlays the definition's vehicle block — seats matched by name,
 	// drive tuning merged field by field. See MergeVehicle.
 	Vehicle *RawVehicle `yaml:"vehicle,omitempty"`
+
+	// AI overlays the definition's controller field by field, the way the drive
+	// tuning does. See AIFromRaw.
+	AI *RawAI `yaml:"ai,omitempty"`
 
 	// Bounds overrides. Pointers throughout, so an absent field means "follow
 	// the definition" rather than "zero" — an extent of zero is a *disabled*
@@ -295,6 +300,11 @@ type EntityDef struct {
 	// Shared with every instance rather than copied: it is authored data that
 	// nothing mutates, and an instance override replaces the pointer wholesale.
 	Vehicle *VehicleSpec
+
+	// AI is the type's controller, nil for a type that decides nothing. Cloned
+	// into every instance rather than shared, because its numbers are writable
+	// during play (ai.go).
+	AI *AISpec
 }
 
 // vec3FromRawPtr reads an optional vector, falling back to def when absent.
@@ -428,6 +438,7 @@ func entityDefFromRaw(raw RawEntityDef, name string) (*EntityDef, error) {
 		Attributes:   attrs,
 		Params:       params,
 		Vehicle:      VehicleFromRaw(raw.Vehicle),
+		AI:           AIFromRaw(nil, raw.AI),
 	}
 
 	seen := map[string]bool{}
@@ -489,6 +500,7 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 		Attributes:  attrsToRaw(def.Attributes),
 		Params:      attrsToRaw(def.Params),
 		Vehicle:     VehicleToRaw(def.Vehicle),
+		AI:          AIToRaw(def.AI, nil),
 	}
 	for i := range def.Models {
 		raw.Models = append(raw.Models, entityModelToRaw(&def.Models[i]))
@@ -525,6 +537,7 @@ func (d *EntityDef) Instantiate(id string) Entity {
 		Attributes:   d.Attributes.Clone(),
 		ScriptParams: d.Params.Clone(),
 		Vehicle:      d.Vehicle,
+		AI:           d.AI.Clone(),
 		Brushes:      CloneEntityBrushes(d.Brushes),
 		Emitters:     CloneEntityEmitters(d.Emitters),
 		Volumes:      CloneEntityVolumes(d.Volumes),
@@ -651,6 +664,7 @@ func EntityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 
 	e.Collision = entityCollisionFromRaw(e.Collision, r.Collision)
 	e.Vehicle = MergeVehicle(e.Vehicle, r.Vehicle)
+	e.AI = AIFromRaw(e.AI, r.AI)
 
 	if r.Bounding != "" {
 		e.BoundingKind = BoundingKindFromName(r.Bounding)
@@ -845,6 +859,7 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 			r.Script = &s
 		}
 		r.Vehicle = VehicleToRaw(e.Vehicle)
+		r.AI = AIToRaw(e.AI, nil)
 		for i := range e.Models {
 			r.Models = append(r.Models, entityModelToRaw(&e.Models[i]))
 		}
@@ -876,6 +891,16 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 	// small enough that restating it costs less than that machinery would.
 	if !sameVehicle(def.Vehicle, e.Vehicle) {
 		r.Vehicle = VehicleToRaw(e.Vehicle)
+	}
+	switch {
+	case e.AI != nil:
+		r.AI = AIToRaw(e.AI, def.AI)
+	case def.AI != nil:
+		// An instance cannot shed the controller its type gives it — loading
+		// would put it straight back — so the nearest thing it can say is that
+		// its copy is switched off.
+		off := false
+		r.AI = &RawAI{Enabled: &off}
 	}
 	for i := range e.Models {
 		if o, ok := modelOverride(def, &e.Models[i]); ok {

@@ -374,3 +374,25 @@ func TestStandingOnAWingIsAboard(t *testing.T) {
 		t.Fatalf("standing on the ship's wing did not hand the body aboard: %+v", c)
 	}
 }
+
+func TestAnEntityInOnlyDecorativeBrushesStillCollidesByItsBox(t *testing.T) {
+	withCollisionMasters(t, true, true)
+	a := solidEntity("a", mgl32.Vec3{0, 0, 0})
+	a.Collision.Gravity = false
+	a.Brushes = []world.Brush{world.NewBoxBrush("body", mgl32.Vec3{}, mgl32.Vec3{0.5, 0.5, 0.5}, "")}
+	a.Brushes[0].Solid = false
+	b := solidEntity("b", mgl32.Vec3{0.6, 0, 0})
+	b.Collision.Gravity = false
+	lvl := &world.Level{Entities: []world.Entity{a, b}}
+
+	if moved := ResolveEntityCollisions(lvl, nil); len(moved) == 0 {
+		t.Fatal("two overlapping boxes were left overlapping because one wears a non-solid brush")
+	}
+
+	lvl.Entities[0].Brushes[0].Solid = true
+	lvl.Entities[0].Position = mgl32.Vec3{}
+	lvl.Entities[1].Position = mgl32.Vec3{0.6, 0, 0}
+	if moved := ResolveEntityCollisions(lvl, nil); len(moved) != 0 {
+		t.Error("an entity with a solid brush was resolved by its box as well")
+	}
+}
