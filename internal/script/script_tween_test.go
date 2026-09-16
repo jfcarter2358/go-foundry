@@ -189,7 +189,7 @@ func TestTweenVerbsRefuseWhatTheyCannotEase(t *testing.T) {
 	}{
 		{"static brush", "    move_to(@room, <1.0, 0.0, 0.0>, 1.0)", "not dynamic", nil},
 		{"static brush scale", "    scale_to(@room, <2.0, 2.0, 2.0>, 1.0)", "not dynamic", nil},
-		{"chunk rotation", "    rotate_to(@chunk, <0.0, 1.0, 0.0>, 1.0)", "read-only", nil},
+		{"chunk scale", "    scale_to(@chunk, <2.0, 2.0, 2.0>, 1.0)", "read-only", nil},
 		{"not a placeable", "    move_to(@lamp, <0.0, 1.0, 0.0>, 1.0)", "a brush, a chunk or an entity", nil},
 		{"collapsed scale", "    scale_to(@room, <0.0, 1.0, 1.0>, 1.0)", "greater than zero",
 			func(l *world.Level) { l.Chunks[0].Brushes[0].Dynamic = true }},
@@ -217,11 +217,11 @@ func TestTweenVerbsRefuseWhatTheyCannotEase(t *testing.T) {
 func TestLintFlagsTweenCallsThatWouldBeRefused(t *testing.T) {
 	lvl := boundedTestLevel(t) // "room" is not dynamic
 	wantOneIssue(t, lintSource(t, lvl, script("    move_to(@room, <0.0, 1.0, 0.0>, 1.0)")), "not dynamic")
-	wantOneIssue(t, lintSource(t, lvl, script("    rotate_to(@chunk, <0.0, 1.0, 0.0>, 1.0)")), "read-only")
+	wantOneIssue(t, lintSource(t, lvl, script("    scale_to(@chunk, <2.0, 2.0, 2.0>, 1.0)")), "read-only")
 	wantOneIssue(t, lintSource(t, lvl, script("    scale_to(@lamp, <2.0, 2.0, 2.0>, 1.0)")), "a brush or an entity")
 
 	lvl.Chunks[0].Brushes[0].Dynamic = true
-	if got := lintSource(t, lvl, script("    move_to(@room, <0.0, 1.0, 0.0>, 1.0)\n    move_to(@chunk, <1.0, 0.0, 0.0>, 2)\n    scale_to(@crate, <2.0, 2.0, 2.0>, 0.5)")); len(got) != 0 {
+	if got := lintSource(t, lvl, script("    move_to(@room, <0.0, 1.0, 0.0>, 1.0)\n    move_to(@chunk, <1.0, 0.0, 0.0>, 2)\n    rotate_to(@chunk, <0.0, 1.0, 0.0>, 2)\n    scale_to(@crate, <2.0, 2.0, 2.0>, 0.5)")); len(got) != 0 {
 		t.Errorf("calls that would succeed were flagged: %v", got)
 	}
 }

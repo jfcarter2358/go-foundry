@@ -217,14 +217,15 @@ func entityDefFor(e *world.Entity) *world.EntityDef {
 // chunkToRaw converts a runtime Chunk back into its YAML form.
 func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 	rc := world.RawChunk{
-		ID:            ch.ID,
-		RawScriptData: world.ScriptDataToRaw(ch.ScriptData),
-		Origin:        world.RawChunkOrigin{X: ch.Origin.X(), Y: ch.Origin.Y(), Z: ch.Origin.Z()},
-		Rotation:      ch.Rotation,
-		Scale:         ch.Scale,
-		Velocity:      world.RawVec3{X: ch.Velocity.X(), Y: ch.Velocity.Y(), Z: ch.Velocity.Z()},
-		Frame:         ch.FrameOwner,
-		Disabled:      ch.Disabled,
+		ID:              ch.ID,
+		RawScriptData:   world.ScriptDataToRaw(ch.ScriptData),
+		Origin:          world.RawChunkOrigin{X: ch.Origin.X(), Y: ch.Origin.Y(), Z: ch.Origin.Z()},
+		Rotation:        ch.Rotation,
+		Scale:           ch.Scale,
+		Velocity:        world.RawVec3{X: ch.Velocity.X(), Y: ch.Velocity.Y(), Z: ch.Velocity.Z()},
+		AngularVelocity: ch.AngularVelocity,
+		Frame:           ch.FrameOwner,
+		Disabled:        ch.Disabled,
 
 		UnloadWhenDisabled: ch.UnloadWhenDisabled,
 		Streamed:           ch.Streamed,

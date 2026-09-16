@@ -494,31 +494,43 @@ func newCylinderBrush(id string, center, half mgl32.Vec3, sides int, texture str
 // It reports rather than refuses. Refusing would mean rejecting the *first*
 // step of a two-step edit that ends up convex — pulling one corner out and then
 // its neighbour after it — and an editor that will not let you pass through an
-// invalid intermediate state is an editor you cannot shape anything in. The
-// warning is there so the author knows before they save; the compile pipeline
-// is where it becomes an error.
+// invalid intermediate state is an editor you cannot shape anything in.
 func warnIfSelectionBrokeConvexity() { warnIfBrushesNotConvex(selectionBrushes()) }
 
 // warnIfBrushesNotConvex is the same warning for a stated list of brushes, for
 // an edit that has already changed the selection it would otherwise read — a
 // dissolve can leave nothing selected on the brush it reshaped.
+//
+// A concave STATIC brush is FYI only: the compiler splits it into convex
+// pieces automatically (compile/validate.go, world.DecomposeConvex), so this
+// no longer blocks a build — it just costs a few extra collision/CSG checks
+// against the generated pieces. A concave DYNAMIC brush is still a real
+// problem worth a harder warning: a script moves it as one rigid convex hull,
+// and there is nothing to split it INTO that a script could still address as
+// one thing (see brush_dynamic.go).
 func warnIfBrushesNotConvex(brushes []*world.Brush) {
-	bad := ""
-	n := 0
+	var badDynamic, badStatic []string
 	for _, b := range brushes {
 		if b.IsConvex() {
 			continue
 		}
-		n++
-		if bad == "" {
-			bad = b.ID
+		if b.Dynamic {
+			badDynamic = append(badDynamic, b.ID)
+		} else {
+			badStatic = append(badStatic, b.ID)
 		}
 	}
 	switch {
-	case n == 1:
-		ws().setStatus("Warning: %s is no longer convex", bad)
-	case n > 1:
-		ws().setStatus("Warning: %s and %d other brush(es) are no longer convex", bad, n-1)
+	case len(badDynamic) == 1:
+		ws().setStatus("Warning: dynamic brush %s is concave; a moving brush must stay convex to collide correctly", badDynamic[0])
+	case len(badDynamic) > 1:
+		ws().setStatus("Warning: dynamic brush %s and %d other(s) are concave; a moving brush must stay convex to collide correctly",
+			badDynamic[0], len(badDynamic)-1)
+	case len(badStatic) == 1:
+		ws().setStatus("%s is concave — it will still compile fine (split into convex pieces automatically)", badStatic[0])
+	case len(badStatic) > 1:
+		ws().setStatus("%s and %d other brush(es) are concave — they will still compile fine (split into convex pieces automatically)",
+			badStatic[0], len(badStatic)-1)
 	}
 }
 

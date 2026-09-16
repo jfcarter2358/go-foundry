@@ -248,15 +248,21 @@ canyon: faces 172 -> 891, 96 nodes, 121 cells (58 solid, 58 void, 5 interior),
   the interior count means visibility is buying you nothing — either the level
   is one big open room, or it leaks.
 
-## A concave brush is an error here
+## A concave brush is split automatically, unless it is Dynamic
 
 The editor lets you drag a vertex until a brush is no longer convex, and warns
 you rather than refusing — an editor you cannot pass through an invalid shape in
-is one you cannot shape anything in. The compiler is the other end of that
-bargain: convexity is what makes "inside this brush" a local test, and CSG,
-collision and the cell labelling all depend on it. Compiling reports every
-concave brush by name and stops.
+is one you cannot shape anything in. Convexity is what makes "inside this
+brush" a local test, and CSG, collision and the cell labelling all depend on
+it — but rather than stop the compile, a concave brush is split into convex
+pieces automatically before CSG runs, and collision resolves against the same
+pieces. The brush stays the one shape you authored; only what the compiler and
+collision read is different.
 
-Fix it by moving the vertex back, or by splitting the shape into two brushes —
-which is what an id-lineage editor would have made you do all along, and is why
-extrude only ever pushes a face along its own normal.
+The one brush this does not apply to is a **Dynamic** one: a script moves it as
+a single rigid convex hull, addressed by one ID, and there is nothing to split
+it *into* that a script could still move as one thing. Compiling still reports
+a concave Dynamic brush by name and stops. Fix it by moving the vertex back, or
+by splitting the shape into convex pieces placed in one `Moves` chunk instead —
+which can translate and rotate as a group — and letting the pieces move
+together rather than one Dynamic brush alone.

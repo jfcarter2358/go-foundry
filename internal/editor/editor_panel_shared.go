@@ -181,8 +181,16 @@ func editorChunkMotion(ch *world.Chunk) {
 		ch.Velocity = mgl32.Vec3{vel[0], vel[1], vel[2]}
 	}
 
+	// Angular velocity is Rotation's own rate, degrees rather than radians on
+	// the same terms Rotation itself is above — an author thinks in degrees.
+	angVelDeg := mgl32.RadToDeg(ch.AngularVelocity)
+	if editorDragFloat("Angular velocity (deg/s)##chunkangvel", &angVelDeg, -3600, 3600, "%.1f") {
+		ch.AngularVelocity = mgl32.DegToRad(angVelDeg)
+	}
+
 	if imgui.Button("Stop##chunkstopmotion") {
 		ch.Velocity = mgl32.Vec3{}
+		ch.AngularVelocity = 0
 	}
 }
 

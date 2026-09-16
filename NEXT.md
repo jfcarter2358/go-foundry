@@ -801,5 +801,5 @@
 - [ ] Enable AI to enter vehicles
 - [ ] RTS mode
 - [ ] 3rd person mode
-- [ ] Audio control
-i- [ ] Shader editor
+- [x] Audio control
+- [ ] Shader editor

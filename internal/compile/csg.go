@@ -304,13 +304,39 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 			}
 
 			if b.Solid {
-				s := solid{order: order, planes: hull, chunk: ch.ID, streamed: ch.Streamed}
-				if len(s.planes) >= 4 {
-					// Fewer than four planes cannot bound a volume, so a brush
-					// with that many is malformed and clips nothing rather
-					// than clipping everything.
-					s.lo, s.hi = bsp.Bounds(ws)
-					solids = append(solids, s)
+				// One solid per CONVEX PIECE, not one per brush: "inside" is
+				// "behind every plane", which only means the whole brush for
+				// an already-convex (or Dynamic — see ConvexBrushPieces) one,
+				// where this is exactly the single-element loop hull above
+				// already covers. A concave brush's pieces all share this
+				// brush's own `order`, so the self-skip below
+				// (clipPlanesFor's f.sourceOrder == s.order) exempts every
+				// sibling piece from clipping the brush's own faces, the same
+				// way it already exempts a single ordinary brush from itself.
+				alreadyConvex := b.Dynamic || b.IsConvex()
+				for _, piece := range ch.ConvexBrushPieces(bi) {
+					pws, pieceHull := ws, hull
+					if !alreadyConvex {
+						// ConvexBrushPieces' slow path: this piece is a
+						// DecomposeConvex fragment, not b itself, so its
+						// points and planes have to be rebuilt rather than
+						// reusing ws/hull above.
+						pws = meshWorldPoints(&piece, model)
+						pieceHull = nil
+						for fi := range piece.Faces {
+							if pl, ok := bsp.PlaneFromPoints(facePoints(pws, &piece.Faces[fi])); ok {
+								pieceHull = append(pieceHull, pl)
+							}
+						}
+					}
+					s := solid{order: order, planes: pieceHull, chunk: ch.ID, streamed: ch.Streamed}
+					if len(s.planes) >= 4 {
+						// Fewer than four planes cannot bound a volume, so a
+						// piece with that many is malformed and clips nothing
+						// rather than clipping everything.
+						s.lo, s.hi = bsp.Bounds(pws)
+						solids = append(solids, s)
+					}
 				}
 			}
 

@@ -431,8 +431,8 @@ func (l *linter) tween(c *flang.CallExpr, verb string) {
 			l.add(addr.Pos_, "%s would fail: brush %q is not dynamic; tick Dynamic in its properties panel", verb, addr.Name)
 		}
 	case flang.RefChunk:
-		if verb != "move_to" {
-			l.add(addr.Pos_, "%s would fail: a chunk's rotation and scale are read-only, so only move_to works on @%s", verb, addr.Name)
+		if verb == "scale_to" {
+			l.add(addr.Pos_, "%s would fail: a chunk's scale is read-only, so only move_to and rotate_to work on @%s", verb, addr.Name)
 		}
 	case flang.RefEntity:
 		if e := l.cache.entityFor(r); e != nil && e.IsVehicle() {
@@ -440,7 +440,7 @@ func (l *linter) tween(c *flang.CallExpr, verb string) {
 		}
 	default:
 		what := "a brush, a chunk or an entity"
-		if verb != "move_to" {
+		if verb == "scale_to" {
 			what = "a brush or an entity"
 		}
 		l.add(addr.Pos_, "%s eases %s, and @%s is a %s", verb, what, addr.Name, r.Kind)

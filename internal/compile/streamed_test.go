@@ -42,15 +42,21 @@ func TestAMovingChunkIsNotBaked(t *testing.T) {
 }
 
 func TestValidationFollowsTheMarkers(t *testing.T) {
-	lvl := levelOf(dentedBox())
+	// Dynamic: a plain concave brush no longer breaks validation on its own
+	// (it auto-decomposes), so this needs the one shape that still does —
+	// see TestADynamicConcaveBrushStopsTheCompile.
+	dentedDynamic := dentedBox()
+	dentedDynamic.Dynamic = true
+
+	lvl := levelOf(dentedDynamic)
 	lvl.Chunks[0].Moves = true
 	if err := Validate(lvl); err != nil {
 		t.Errorf("a moving chunk was validated: %v", err)
 	}
-	lvl = levelOf(dentedBox())
+	lvl = levelOf(dentedDynamic)
 	lvl.Chunks[0].Disabled, lvl.Chunks[0].Streamed = true, true
 	if err := Validate(lvl); err == nil {
-		t.Error("a streamed chunk with a concave brush passed validation; it is compiled")
+		t.Error("a streamed chunk with a concave dynamic brush passed validation; it is compiled")
 	}
 }
 

@@ -361,6 +361,10 @@ type RawChunk struct {
 	// for the still chunk every level is mostly made of, so a level written
 	// before it existed round-trips byte-identical. See Chunk.Velocity.
 	Velocity RawVec3 `yaml:"velocity,omitempty"`
+	// AngularVelocity is radians per second added to Rotation during play —
+	// Velocity's rotational counterpart, and omitted on the same terms. See
+	// Chunk.AngularVelocity.
+	AngularVelocity float32 `yaml:"angular_velocity,omitempty"`
 	// Frame names the entity whose local space this chunk's geometry is
 	// authored in — a vehicle interior, carried around the world by whatever
 	// owns it. Omitted is the ordinary case: a chunk placed directly in world

@@ -25,22 +25,50 @@ func dentedBox() world.Brush {
 	return b
 }
 
-func TestAConcaveBrushStopsTheCompile(t *testing.T) {
+// A concave STATIC brush no longer stops the compile: CSG and collision both
+// read world.Chunk.ConvexBrushPieces instead of assuming a brush is already
+// convex, so Validate's job here is done — it only still refuses a DYNAMIC
+// one, which is a single script-moved rigid hull and cannot be split (see
+// TestADynamicConcaveBrushStopsTheCompile below).
+func TestAConcaveStaticBrushCompiles(t *testing.T) {
 	dented := dentedBox()
 	if dented.IsConvex() {
 		t.Fatal("the fixture is still convex; the test proves nothing")
 	}
-	lvl := levelOf(dentedBox())
+	lvl := levelOf(dented)
+
+	if err := Validate(lvl); err != nil {
+		t.Fatalf("Validate refused a concave static brush: %v", err)
+	}
+
+	faces, err := CSG(lvl)
+	if err != nil {
+		t.Fatalf("CSG refused a concave static brush: %v", err)
+	}
+	if len(faces) == 0 {
+		t.Error("CSG produced no faces for a concave brush that should have compiled")
+	}
+}
+
+// A DYNAMIC concave brush is still refused: a script moves it as one rigid
+// convex hull and addresses it by a single ID, and decomposing it into
+// several brushes would break both — see brush_dynamic.go.
+func TestADynamicConcaveBrushStopsTheCompile(t *testing.T) {
+	dented := dentedBox()
+	dented.Dynamic = true
+	lvl := levelOf(dented)
 
 	if err := Validate(lvl); err == nil {
-		t.Fatal("Validate accepted a concave brush")
+		t.Fatal("Validate accepted a concave dynamic brush")
 	} else if !strings.Contains(err.Error(), "dented") {
 		t.Errorf("the error does not name the offending brush: %v", err)
+	} else if !strings.Contains(err.Error(), "dynamic") {
+		t.Errorf("the error does not explain that Dynamic is what makes this one a hard requirement: %v", err)
 	}
 
 	faces, err := CSG(lvl)
 	if err == nil {
-		t.Fatalf("CSG compiled a concave brush into %d faces", len(faces))
+		t.Fatalf("CSG compiled a concave dynamic brush into %d faces", len(faces))
 	}
 	if faces != nil {
 		t.Error("CSG returned faces alongside the error; a failed compile has no output")
@@ -69,6 +97,9 @@ func TestValidationSkipsChunksTheCompileSkips(t *testing.T) {
 func TestValidationReportsEveryProblem(t *testing.T) {
 	a, b := dentedBox(), dentedBox()
 	a.ID, b.ID = "alpha", "beta"
+	// Dynamic: a plain concave brush no longer breaks validation (it
+	// auto-decomposes), so this needs the one shape that still does.
+	a.Dynamic, b.Dynamic = true, true
 	err := Validate(levelOf(a, b))
 	if err == nil {
 		t.Fatal("no error for two broken brushes")

@@ -58,7 +58,9 @@ which is how two solids are made to meet exactly.
 Dragging a single corner, or merging two, is the edit that can break convexity. The editor
 warns rather than refuses, in the status line and in the brush's properties, so
 you can pass through an invalid shape on the way to a valid one; compiling
-refuses outright and names the brush.
+splits a concave brush into convex pieces automatically rather than refusing it
+(see [Building levels](02-building-levels.md)) — unless it is Dynamic, which
+still must stay convex by hand.
 
 ## Detail mode: shaping what you see
 

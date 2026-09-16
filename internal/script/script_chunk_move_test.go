@@ -191,3 +191,136 @@ func TestChunkVelocityRefusesANonVector(t *testing.T) {
 		t.Errorf("the refused write set a velocity anyway, to %v", lvl.Chunks[0].Velocity)
 	}
 }
+
+func TestChunkRotationPropertyReadsAndWrites(t *testing.T) {
+	lvl := boundedTestLevel(t)
+
+	got := runScript(t, lvl, "", "def main() -> null\n    return @chunk.prop.rotation\nend")
+	if !flang.Equal(got, flang.FloatVal(0)) {
+		t.Errorf("an unturned chunk reads back %v, want 0", got)
+	}
+
+	runScript(t, lvl, "", script("    @chunk.prop.rotation = 1.5"))
+	if lvl.Chunks[0].Rotation != 1.5 {
+		t.Fatalf("rotation is %v, want the written value", lvl.Chunks[0].Rotation)
+	}
+
+	got = runScript(t, lvl, "", "def main() -> null\n    return @chunk.prop.rotation\nend")
+	if !flang.Equal(got, flang.FloatVal(1.5)) {
+		t.Errorf("a turned chunk reads back %v, want 1.5", got)
+	}
+}
+
+// Turning a chunk moves what a world-space lookup finds there, the same way
+// moving one does — see TestMovingAChunkCarriesItThroughTheSpatialHash.
+func TestRotatingAChunkCarriesItThroughTheSpatialHash(t *testing.T) {
+	lvl := boundedTestLevel(t)
+
+	inside := mgl32.Vec3{5, 1, 5}
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, inside); ch == nil {
+		t.Fatal("fixture: the chunk is not findable at its own position to begin with")
+	}
+
+	// A quarter turn carries the 10x10 room's footprint from the +X+Z
+	// quadrant into the +X-Z one: mgl32.HomogRotate3DY's +90 degrees maps
+	// local (x,z) to world (z,-x), so (5,1,5) lands at (5,1,-5).
+	runScript(t, lvl, "", script("    @chunk.prop.rotation = 1.5707964"))
+
+	turned := mgl32.Vec3{5, 1, -5}
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, turned); ch == nil {
+		t.Error("the turned chunk is not findable at its new footprint; the hash was not re-bucketed")
+	}
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, inside); ch != nil {
+		t.Error("the chunk is still findable at the footprint it turned off")
+	}
+}
+
+func TestChunkRotationRefusesANonNumber(t *testing.T) {
+	lvl := boundedTestLevel(t)
+	err := runScriptErr(t, lvl, "", script("    @chunk.prop.rotation = <1.0, 0.0, 0.0>"))
+	if err == nil {
+		t.Fatal("writing a vec to rotation was accepted")
+	}
+	if lvl.Chunks[0].Rotation != 0 {
+		t.Errorf("the refused write turned the chunk anyway, to %v", lvl.Chunks[0].Rotation)
+	}
+}
+
+func TestRewritingTheSameRotationKeepsTheHashUsable(t *testing.T) {
+	// Same short-circuit as origin's own, and the same reason it matters: the
+	// skip must not be reachable in a state where the hash still needed
+	// rebuilding.
+	lvl := boundedTestLevel(t)
+	runScript(t, lvl, "", script("    @chunk.prop.rotation = 1.5707964"))
+	runScript(t, lvl, "", script("    @chunk.prop.rotation = 1.5707964"))
+
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{5, 1, -5}); ch == nil {
+		t.Error("the chunk is not findable after a second, identical write")
+	}
+}
+
+func TestChunkAngularVelocityPropertyReadsAndWrites(t *testing.T) {
+	lvl := boundedTestLevel(t)
+
+	got := runScript(t, lvl, "", "def main() -> null\n    return @chunk.prop.angular_velocity\nend")
+	if !flang.Equal(got, flang.FloatVal(0)) {
+		t.Errorf("a still chunk reads back %v, want 0", got)
+	}
+
+	runScript(t, lvl, "", script("    @chunk.prop.angular_velocity = 0.5"))
+	if lvl.Chunks[0].AngularVelocity != 0.5 {
+		t.Fatalf("angular_velocity is %v, want the written value", lvl.Chunks[0].AngularVelocity)
+	}
+
+	got = runScript(t, lvl, "", "def main() -> null\n    return @chunk.prop.angular_velocity\nend")
+	if !flang.Equal(got, flang.FloatVal(0.5)) {
+		t.Errorf("a turning chunk reads back %v, want 0.5", got)
+	}
+}
+
+func TestWritingChunkAngularVelocityTurnsNothingYet(t *testing.T) {
+	// Velocity's own contract, one level up: writing a rate is not a turn —
+	// the chunk stays exactly as it is oriented until the next tick
+	// integrates it (world.AdvanceChunks).
+	lvl := boundedTestLevel(t)
+	runScript(t, lvl, "", script("    @chunk.prop.angular_velocity = 1.5707964"))
+
+	if lvl.Chunks[0].Rotation != 0 {
+		t.Errorf("the chunk turned to %v on the write", lvl.Chunks[0].Rotation)
+	}
+
+	world.AdvanceChunks(lvl, 1)
+	if lvl.Chunks[0].Rotation == 0 {
+		t.Error("a second of play did not integrate the angular velocity")
+	}
+}
+
+func TestChunkAngularVelocityRefusesANonNumber(t *testing.T) {
+	lvl := boundedTestLevel(t)
+	err := runScriptErr(t, lvl, "", script("    @chunk.prop.angular_velocity = <1.0, 0.0, 0.0>"))
+	if err == nil {
+		t.Fatal("writing a vec to angular_velocity was accepted")
+	}
+	if lvl.Chunks[0].AngularVelocity != 0 {
+		t.Errorf("the refused write set an angular velocity anyway, to %v", lvl.Chunks[0].AngularVelocity)
+	}
+}
+
+func TestRotateToEasesAChunkAndRebucketsOnArrival(t *testing.T) {
+	lvl := boundedTestLevel(t)
+	runScript(t, lvl, "", script("    rotate_to(@chunk, <0.0, 1.5707964, 0.0>, 1.0)"))
+
+	if lvl.Chunks[0].RotationTween == nil {
+		t.Fatal("rotate_to did not start a tween")
+	}
+	world.AdvanceChunks(lvl, 1)
+	if got := lvl.Chunks[0].Rotation; got < 1.57 || got > 1.58 {
+		t.Errorf("rotation after the blend is %v, want ~1.5707964", got)
+	}
+	if lvl.Chunks[0].RotationTween != nil {
+		t.Error("the tween did not clear on arrival")
+	}
+	if ch := world.FindChunkSH(lvl.Spatial, lvl.Chunks, mgl32.Vec3{5, 1, -5}); ch == nil {
+		t.Error("the turned chunk is not findable at its new footprint once the tween lands")
+	}
+}

@@ -57,9 +57,29 @@ func Validate(lvl *world.Level) error {
 		for bi := range ch.Brushes {
 			b := &ch.Brushes[bi]
 			if !b.IsConvex() {
-				problems = append(problems, fmt.Sprintf(
-					"brush %q in chunk %q is concave; CSG, collision and the BSP all assume every brush is convex",
-					b.ID, ch.ID))
+				switch {
+				case b.Dynamic:
+					// A script moves this brush as one rigid convex hull
+					// (world/brush_dynamic.go) and addresses it by exactly
+					// one ID (internal/script's brushOwnerFor) — decomposing
+					// it into several brushes would break both, so unlike a
+					// static brush this one is still a hard requirement.
+					problems = append(problems, fmt.Sprintf(
+						"dynamic brush %q in chunk %q is concave; a moving brush must stay convex — "+
+							"split it by hand into convex pieces placed in one Moves chunk instead "+
+							"(which can translate and rotate as a group), or make it non-dynamic and it will split automatically",
+						b.ID, ch.ID))
+				case b.Solid:
+					if _, err := world.DecomposeConvex(b.BrushMesh); err != nil {
+						problems = append(problems, fmt.Sprintf(
+							"brush %q in chunk %q could not be split into convex pieces: %v",
+							b.ID, ch.ID, err))
+					}
+					// Otherwise fine: CSG and collision both read this
+					// brush's ConvexBrushPieces instead of assuming the
+					// brush itself is convex — see world.Chunk's own
+					// comment on that cache.
+				}
 			}
 			if len(b.Faces) < 4 && b.Solid {
 				problems = append(problems, fmt.Sprintf(

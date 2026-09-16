@@ -9,10 +9,18 @@ package world
 // of the world.
 
 import (
+	"math"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
+
+func approxFloat(t *testing.T, got, want, eps float32, msg string) {
+	t.Helper()
+	if math.Abs(float64(got-want)) > float64(eps) {
+		t.Errorf("%s: got %v, want %v", msg, got, want)
+	}
+}
 
 // movingChunkLevel is one 10x10 room at the origin with a velocity, bucketed
 // into the spatial hash the way a loaded level would be.
@@ -47,6 +55,60 @@ func TestAdvanceChunksIntegratesVelocityOntoOrigin(t *testing.T) {
 	if lvl.Chunks[0].Velocity != (mgl32.Vec3{2, 0, -4}) {
 		t.Errorf("velocity became %v; integration must not consume it", lvl.Chunks[0].Velocity)
 	}
+}
+
+func TestAdvanceChunksIntegratesAngularVelocityOntoRotation(t *testing.T) {
+	lvl := movingChunkLevel(t, mgl32.Vec3{})
+	lvl.Chunks[0].AngularVelocity = math.Pi / 2
+
+	if !AdvanceChunks(lvl, 0.5) {
+		t.Fatal("AdvanceChunks reported nothing moved; a chunk with an angular velocity did")
+	}
+	approxFloat(t, lvl.Chunks[0].Rotation, math.Pi/4, 1e-5, "rotation after half a second")
+
+	AdvanceChunks(lvl, 0.5)
+	approxFloat(t, lvl.Chunks[0].Rotation, math.Pi/2, 1e-5, "rotation after a full second")
+
+	if lvl.Chunks[0].AngularVelocity != math.Pi/2 {
+		t.Errorf("angular velocity became %v; integration must not consume it", lvl.Chunks[0].AngularVelocity)
+	}
+}
+
+// Left spinning long enough, an unwrapped angle would lose precision — the
+// same reason AdvanceBrushes wraps a brush's own Rotation.
+func TestAdvanceChunksWrapsRotation(t *testing.T) {
+	lvl := movingChunkLevel(t, mgl32.Vec3{})
+	lvl.Chunks[0].Rotation = 3
+	lvl.Chunks[0].AngularVelocity = 1
+
+	AdvanceChunks(lvl, 1)
+
+	got := lvl.Chunks[0].Rotation
+	if got < -math.Pi || got > math.Pi {
+		t.Fatalf("rotation %v was not wrapped into [-pi, pi]", got)
+	}
+	approxFloat(t, got, float32(WrapAngle(4)), 1e-5, "wrapped rotation")
+}
+
+// A `rotate_to` in progress is the more specific instruction, the same
+// precedence Origin's own tween takes over Velocity.
+func TestAdvanceChunksRotationTweenTakesPrecedenceOverAngularVelocity(t *testing.T) {
+	lvl := movingChunkLevel(t, mgl32.Vec3{})
+	lvl.Chunks[0].AngularVelocity = 10 // would badly overshoot the tween's target if it also ran
+	lvl.Chunks[0].EaseRotation(lvl, math.Pi/2, 1.0)
+
+	AdvanceChunks(lvl, 0.5)
+	approxFloat(t, lvl.Chunks[0].Rotation, math.Pi/4, 1e-4, "rotation mid-tween")
+
+	AdvanceChunks(lvl, 0.5)
+	approxFloat(t, lvl.Chunks[0].Rotation, math.Pi/2, 1e-4, "rotation once the tween lands")
+	if lvl.Chunks[0].RotationTween != nil {
+		t.Error("the tween did not clear on arrival")
+	}
+
+	// The tween is gone, so the rate resumes from here.
+	AdvanceChunks(lvl, 1)
+	approxFloat(t, lvl.Chunks[0].Rotation, float32(WrapAngle(math.Pi/2+10)), 1e-4, "rotation after the rate resumes")
 }
 
 func TestAdvanceChunksReportsAStillChunkUnmoved(t *testing.T) {

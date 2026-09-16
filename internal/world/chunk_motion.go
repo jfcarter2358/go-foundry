@@ -40,20 +40,49 @@ func AdvanceChunks(lvl *Level, dt float32) bool {
 	moved, rehash := false, false
 	for i := range lvl.Chunks {
 		ch := &lvl.Chunks[i]
-		if (ch.Velocity == (mgl32.Vec3{}) && ch.OriginTween == nil) || !ch.IsEnabled() {
+		movingOrigin := ch.Velocity != (mgl32.Vec3{}) || ch.OriginTween != nil
+		movingRotation := ch.AngularVelocity != 0 || ch.RotationTween != nil
+		if (!movingOrigin && !movingRotation) || !ch.IsEnabled() {
 			continue
 		}
-		// A script easing the origin (`move_to`) is the more specific
-		// instruction, and the velocity waits until it arrives — see tween.go.
-		target := ch.Origin.Add(ch.Velocity.Mul(dt))
-		if t := ch.OriginTween; t != nil {
-			p, done := t.Step(dt)
-			if done {
-				ch.OriginTween = nil
+
+		chunkMoved := false
+		if movingOrigin {
+			// A script easing the origin (`move_to`) is the more specific
+			// instruction, and the velocity waits until it arrives — see
+			// tween.go.
+			target := ch.Origin.Add(ch.Velocity.Mul(dt))
+			if t := ch.OriginTween; t != nil {
+				p, done := t.Step(dt)
+				if done {
+					ch.OriginTween = nil
+				}
+				target = p
 			}
-			target = p
+			if ch.moveOriginTo(lvl, target) {
+				chunkMoved = true
+			}
 		}
-		if !ch.moveOriginTo(lvl, target) {
+		if movingRotation {
+			// The same precedence as movingOrigin above: a `rotate_to` in
+			// progress is the more specific instruction, and AngularVelocity
+			// waits until it arrives. Wrapped the way AdvanceBrushes wraps a
+			// brush's own Rotation, and for the same reason: left spinning
+			// long enough, an unwrapped angle's float32 resolution goes
+			// coarser than a degree.
+			target := WrapAngle(ch.Rotation + ch.AngularVelocity*dt)
+			if t := ch.RotationTween; t != nil {
+				p, done := t.Step(dt)
+				if done {
+					ch.RotationTween = nil
+				}
+				target = p.X()
+			}
+			if ch.rotateTo(target) {
+				chunkMoved = true
+			}
+		}
+		if !chunkMoved {
 			continue
 		}
 		moved = true

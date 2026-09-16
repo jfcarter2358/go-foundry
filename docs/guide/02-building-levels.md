@@ -57,20 +57,29 @@ of a shell filling its bounds. Block a building out as plain boxes, then hollow
 the ones you need to walk inside. It works from the axis-aligned bounds, so
 hollowing a wedge gives a box-shaped room.
 
-## Brushes must stay convex
+## Concave brushes are split automatically
 
-Every brush is required to be convex — every corner on or behind every face's
-plane. Collision reads a brush's corners as a hull directly and the compiler
-clips faces as half-spaces; both are *wrong* on a concave brush rather than
-merely slow, so a dent in one is a dent nothing else in the engine knows about.
+Collision and the compiler both want a brush's hull to be convex — every corner
+on or behind every face's plane, which is what makes "inside this brush" a cheap
+local test. Rather than make you keep every brush convex by hand, a concave
+brush is split into convex pieces automatically wherever that matters:
+collision resolves against the pieces, and the compiler's CSG clips against
+them, while the brush you authored stays exactly the one shape you drew — still
+one editable object, still one entry in the level file.
 
 The stamps and the shaping tools preserve convexity by construction. Dragging a
 single corner is the one thing that can break it, and when it does the editor
-says so in the status line and in the brush's properties; compiling refuses
-outright and names the brush.
+still notes it in the status line — worth knowing, since a concave brush costs a
+little more to collide against and to compile, but it is no longer something you
+have to go back and fix.
 
-An L-shaped room is two brushes. That is not a limitation to work around — it is
-what keeps collision and the compiler cheap.
+There is one exception: a **Dynamic** brush (one a script moves) is still
+required to stay convex. It moves as a single rigid hull and a script addresses
+it by one ID, so there is nothing to automatically split it *into* that a script
+could still move as one thing. A concave brush you want to animate needs
+splitting by hand into convex pieces placed in one `Moves` chunk instead, which
+can translate and rotate the whole group together — see
+[18-scripting.md](18-scripting.md) on `@chunk.prop.origin`/`rotation`.
 
 ## Faces
 

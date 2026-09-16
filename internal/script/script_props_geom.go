@@ -367,7 +367,43 @@ func chunkProps() map[string]propAccess {
 		},
 		"rotation": {
 			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.Rotation) }),
-			Doc: "read-only: this chunk's Y rotation, in radians",
+			// Rebuckets on every actual change, same as `origin`'s own Set:
+			// a turn changes ModelMatrix exactly as a move does, so the
+			// chunk's world-space bucket goes stale the same way. Unlike
+			// `origin` this does NOT call CarryAttachedEntities — a rider
+			// pinned via AttachedChunk is nudged by the distance the chunk's
+			// Origin moves, and a turn alone moves no distance, so it is not
+			// repositioned around the chunk's new orientation. A known gap
+			// (see Chunk.rotateTo), not a regression.
+			Set: set(func(c *refCache, ch *world.Chunk, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("rotation", "number", v)
+				}
+				if f == ch.Rotation {
+					return nil
+				}
+				ch.Rotation = f
+				world.RebuildSpatialHash(c.lvl)
+				return nil
+			}),
+			Warn: compiledChunkMoveWarning,
+			Doc:  "this chunk's Y rotation, in radians — writing it turns the chunk and everything authored in it",
+		},
+		"angular_velocity": {
+			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.AngularVelocity) }),
+			// No re-bucketing here, unlike `rotation`, on `velocity`'s own
+			// reasoning: writing a rate turns nothing this instant.
+			Set: set(func(_ *refCache, ch *world.Chunk, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("angular_velocity", "number", v)
+				}
+				ch.AngularVelocity = f
+				return nil
+			}),
+			Warn: compiledChunkMoveWarning,
+			Doc:  "radians per second added to this chunk's rotation during play; the engine keeps it turning",
 		},
 		"scale": {
 			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.Scale) }),

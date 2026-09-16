@@ -188,9 +188,7 @@ func advanceBrushTweens(ch *Chunk, b *Brush, dt float32) bool {
 
 // ---------- chunks ----------
 
-// EaseOrigin starts the chunk's Origin toward `to` over `seconds`. Only the
-// translation can be eased, for the reason only `origin` is writable: a
-// chunk's rotation and scale are read-only to a script.
+// EaseOrigin starts the chunk's Origin toward `to` over `seconds`.
 //
 // Entities attached to the chunk ride along exactly as they do when anything
 // else moves its Origin. An instantaneous ease is applied here and now.
@@ -205,6 +203,21 @@ func (ch *Chunk) EaseOrigin(lvl *Level, to mgl32.Vec3, seconds float32) {
 	ch.OriginTween = NewTween(ch.Origin, to, seconds)
 }
 
+// EaseRotation starts the chunk's Rotation toward `to` radians over
+// `seconds`. Chunk scale stays read-only to a script — nothing needs it — so
+// origin and rotation are the two channels a chunk can be eased on, unlike a
+// brush's three.
+func (ch *Chunk) EaseRotation(lvl *Level, to float32, seconds float32) {
+	if !(seconds > 0) {
+		ch.RotationTween = nil
+		if ch.rotateTo(to) && ch.FrameOwner == "" {
+			RebuildSpatialHash(lvl)
+		}
+		return
+	}
+	ch.RotationTween = NewTween(mgl32.Vec3{ch.Rotation, 0, 0}, mgl32.Vec3{to, 0, 0}, seconds)
+}
+
 // moveOriginTo places the chunk's Origin at p, carrying its attached entities
 // the same distance, and reports whether it moved. The caller re-buckets.
 func (ch *Chunk) moveOriginTo(lvl *Level, p mgl32.Vec3) bool {
@@ -214,6 +227,22 @@ func (ch *Chunk) moveOriginTo(lvl *Level, p mgl32.Vec3) bool {
 	}
 	ch.Origin = p
 	CarryAttachedEntities(lvl, ch, delta)
+	return true
+}
+
+// rotateTo places the chunk's Rotation at p radians and reports whether it
+// changed. The caller re-buckets — same shape as moveOriginTo, minus
+// CarryAttachedEntities: an AttachedChunk rider is nudged by the distance the
+// chunk's Origin moves, and a turn alone moves no distance, so nothing here
+// repositions a rider around the chunk's new orientation. A known gap, not a
+// regression — matching the "nothing rides a moving brush" limitation
+// brush_dynamic.go already documents — rather than the larger rigid-body
+// carrying a rotating attachment would need.
+func (ch *Chunk) rotateTo(p float32) bool {
+	if p == ch.Rotation {
+		return false
+	}
+	ch.Rotation = p
 	return true
 }
 

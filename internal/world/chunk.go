@@ -56,6 +56,24 @@ type Chunk struct {
 	// cloned. See tween.go.
 	OriginTween *Tween
 
+	// AngularVelocity is radians per second added to Rotation every tick of
+	// play (AdvanceChunks, chunk_motion.go) — Velocity's rotational
+	// counterpart, and the same contract: authored/live state the engine
+	// carries forward, nothing damps it, and a body standing on the chunk is
+	// not carried by it. A turntable, a revolving door built from several
+	// brushes in one Moves chunk, or the rotating half of a lift that also
+	// rises.
+	AngularVelocity float32
+
+	// RotationTween is a script easing Rotation toward a target — `rotate_to`
+	// — or nil. While it runs AngularVelocity waits, the same bargain
+	// OriginTween strikes with Velocity. Runtime-only: not saved and not
+	// cloned. Stored as a Vec3 (see tween.go) with the target angle in X and
+	// the rest unused, the same Tween type OriginTween already uses — a
+	// chunk only ever turns about Y, so a second tween TYPE just for a
+	// scalar would be new machinery for one fewer float per value.
+	RotationTween *Tween
+
 	// Disabled takes the chunk out of the world: nothing draws it and nothing
 	// collides with it. It is what a streaming script toggles as the player
 	// moves between areas — see chunk_enable.go, which owns this flag,
@@ -183,6 +201,18 @@ type Chunk struct {
 	// boarding a ship scaled 2x keeps their own size and finds a hold twice as
 	// big. See FrameLocalMatrix.
 	FrameScale float32
+
+	// convexPiecesGen/convexPieces cache ConvexBrushPieces' decomposition of
+	// each concave solid brush, keyed by index into Brushes. Runtime-only
+	// (not serialized, not cloned — a clone's brush indices and geometry can
+	// both differ, so an inherited cache would either answer for the wrong
+	// brush or simply be stale) and invalidated by comparing
+	// convexPiecesGen against the global BrushMeshGeneration rather than
+	// tracked per edit, the same trade the raycast BVH cache
+	// (collision/raycast_accel.go) already makes: coarser than it needs to
+	// be, but nothing here has to remember to invalidate it.
+	convexPiecesGen uint64
+	convexPieces    map[int][]BrushMesh
 }
 
 // Clone returns a fully-independent deep copy of the chunk. All slices get
@@ -199,10 +229,14 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 		Origin:     ch.Origin,
 		Rotation:   ch.Rotation,
 		Scale:      ch.Scale,
-		// Velocity rides along with the placement it is a rate of change of: a
-		// copy of a moving platform is another moving platform, not one that
-		// has stopped dead where the original happened to be.
-		Velocity: ch.Velocity,
+		// Velocity and AngularVelocity ride along with the placement they are
+		// rates of change of: a copy of a moving platform is another moving
+		// platform, not one that has stopped dead where the original
+		// happened to be. OriginTween/RotationTween deliberately do NOT — a
+		// script easing the original chunk somewhere is not a reason the
+		// copy should arrive there too.
+		Velocity:        ch.Velocity,
+		AngularVelocity: ch.AngularVelocity,
 		// FrameOwner rides along with Origin/Rotation/Scale because it is part
 		// of the same answer to "where is this chunk". Dropping it turned a
 		// copy of a vehicle interior into a world chunk whose geometry — still

@@ -69,15 +69,27 @@ func tweenVerb(name string, channel world.TweenChannel) scriptVerb {
 			b.Ease(rt.lvl, ch, channel, to, float32(seconds))
 
 		case flang.RefChunk:
-			if channel != world.TweenMove {
-				return nil, fmt.Errorf("%s turns or scales a brush or an entity; a chunk's rotation and scale are read-only, so only move_to works on %s", name, r)
+			if channel == world.TweenScale {
+				return nil, fmt.Errorf("%s scales a brush or an entity; a chunk's scale is read-only, so only move_to and rotate_to work on %s", name, r)
 			}
 			ch := rt.cache.chunkFor(r)
 			if ch == nil {
 				return nil, &scriptMissingError{r.String()}
 			}
 			rt.markDirty()
-			ch.EaseOrigin(rt.lvl, to, float32(seconds))
+			if channel == world.TweenRotate {
+				// A chunk turns about Y only (Chunk.Rotation is a single
+				// angle, not a brush's full Euler triple), so rotate_to's
+				// vec argument only means something in Y — matching the
+				// convention a brush's own rotate_to already uses, where Y
+				// is yaw (EulerMatrixYXZ).
+				if to.X() != 0 || to.Z() != 0 {
+					return nil, fmt.Errorf("%s: %s only turns about Y; give a vec with X and Z zero", name, r)
+				}
+				ch.EaseRotation(rt.lvl, to.Y(), float32(seconds))
+			} else {
+				ch.EaseOrigin(rt.lvl, to, float32(seconds))
+			}
 
 		case flang.RefEntity:
 			e, err := rt.verbEntity(args, 0, name)

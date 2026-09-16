@@ -198,40 +198,52 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 		if !bodyBoxTouchesBrush(body.C, body.Half, b) {
 			continue
 		}
-		// Pts are the brush's AUTHORED corners and Xform is where a script has
-		// moved it to (world/brush_dynamic.go) — the identity for the static
-		// brushes a level is mostly made of, so nothing here pays for the
-		// feature until a level uses it.
-		n, depth, ok := Penetration(body, ConvexHull{Pts: b.Verts, Xform: b.Placement()})
-		if !ok || depth <= 0 {
-			continue
-		}
-		// Penetration's normal points from the first shape toward the second
-		// (body toward brush), so the body's correction is the other way. A
-		// small extra margin beyond the reported depth clears EPA's own
-		// convergence tolerance — pushing out by exactly depth can leave a
-		// sliver of residual penetration that reports as still touching next
-		// frame, the same reason the old wall resolver pushed to radius+epsilon
-		// rather than exactly radius.
-		const separationEpsilon = float32(0.001)
-		push := n.Mul(-(depth + separationEpsilon))
-		out = out.Add(push)
-		body = Translate(body, push).(Cylinder)
-
-		mag := push.Len()
-		if mag < 1e-9 {
-			continue
-		}
-		cos := push.Y() / mag
-		switch {
-		case cos > 0:
-			if cos >= MaxSlopeCos && cos > bestFloorCos {
-				bestFloorCos = cos
-				hitFloor = true
+		// Xform is where a script has moved it to (world/brush_dynamic.go) —
+		// the identity for the static brushes a level is mostly made of, so
+		// nothing here pays for the feature until a level uses it. Pts is
+		// PIECE's corners rather than the brush's own: ConvexBrushPieces is
+		// the brush itself, unchanged, for every already-convex or Dynamic
+		// brush — the common case, one iteration — and a cached
+		// DecomposeConvex split otherwise, so a concave brush resolves as
+		// the union of its convex pieces instead of assuming (wrongly) that
+		// its own vertex list is already a hull. The transform is the same
+		// for every piece: a piece's verts are expressed in the SAME
+		// authored, chunk-local space b.Verts is, so b's own Placement
+		// (about b's own pivot, not a piece's) carries all of them alike.
+		m := b.Placement()
+		for _, piece := range chunk.ConvexBrushPieces(bi) {
+			n, depth, ok := Penetration(body, ConvexHull{Pts: piece.Verts, Xform: m})
+			if !ok || depth <= 0 {
+				continue
 			}
-		case cos < 0:
-			if -cos >= MaxSlopeCos {
-				hitCeiling = true
+			// Penetration's normal points from the first shape toward the
+			// second (body toward brush), so the body's correction is the
+			// other way. A small extra margin beyond the reported depth
+			// clears EPA's own convergence tolerance — pushing out by
+			// exactly depth can leave a sliver of residual penetration that
+			// reports as still touching next frame, the same reason the old
+			// wall resolver pushed to radius+epsilon rather than exactly
+			// radius.
+			const separationEpsilon = float32(0.001)
+			push := n.Mul(-(depth + separationEpsilon))
+			out = out.Add(push)
+			body = Translate(body, push).(Cylinder)
+
+			mag := push.Len()
+			if mag < 1e-9 {
+				continue
+			}
+			cos := push.Y() / mag
+			switch {
+			case cos > 0:
+				if cos >= MaxSlopeCos && cos > bestFloorCos {
+					bestFloorCos = cos
+					hitFloor = true
+				}
+			case cos < 0:
+				if -cos >= MaxSlopeCos {
+					hitCeiling = true
+				}
 			}
 		}
 	}

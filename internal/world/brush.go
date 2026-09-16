@@ -218,28 +218,55 @@ func (b *BrushMesh) FaceNormal(f *BrushFace) mgl32.Vec3 {
 	return geom.TriangleNormal(pts[0], pts[1], pts[2])
 }
 
-// IsConvex reports whether every vertex of the brush lies on or behind every
-// face's plane (within a small tolerance) — the property collision and
-// compile-time CSG both depend on. The editor calls this after any edit that
-// could break it (a free vertex drag; extrude/inset on a box start already
-// preserve it).
-func (b *Brush) IsConvex() bool {
-	const eps = 1e-4
+// concaveEps is the tolerance firstConcavePlane and IsConvex allow a vertex to
+// sit in front of a face's plane before calling the brush concave. Meaningful
+// as a world-space distance only because the plane's normal is normalized
+// first — see firstConcavePlane.
+const concaveEps = 1e-4
+
+// firstConcavePlane returns the plane of the first face some vertex lies
+// strictly in front of, and false if the brush is already convex.
+//
+// The normal is NORMALIZED before the half-space test. It used to not be
+// (geom.TriangleNormal is a bare cross product), which made the tolerance
+// below scale with the face's own size: a large or slanted face amplified
+// float32 rounding past a fixed epsilon and could misjudge a legitimately
+// coplanar corner as a convexity violation (see HANDOFF-streaming.md on the
+// generator's own workaround for this). Normalizing first makes eps an actual
+// world-space distance, which is what a fixed tolerance has to be to mean the
+// same thing on a small brush and a large one.
+func (b *BrushMesh) firstConcavePlane() (n mgl32.Vec3, d float32, ok bool) {
 	for fi := range b.Faces {
 		f := &b.Faces[fi]
 		pts := b.FacePoints(f)
 		if len(pts) < 3 {
 			continue
 		}
-		n := geom.TriangleNormal(pts[0], pts[1], pts[2])
-		d := n.Dot(pts[0])
+		fn := geom.TriangleNormal(pts[0], pts[1], pts[2])
+		if fn.Len() < 1e-8 {
+			continue // degenerate (collinear) triangle: no plane to test against
+		}
+		fn = fn.Normalize()
+		fd := fn.Dot(pts[0])
 		for _, v := range b.Verts {
-			if n.Dot(v)-d > eps {
-				return false
+			if fn.Dot(v)-fd > concaveEps {
+				return fn, fd, true
 			}
 		}
 	}
-	return true
+	return mgl32.Vec3{}, 0, false
+}
+
+// IsConvex reports whether every vertex of the mesh lies on or behind every
+// face's plane (within a small tolerance) — the property collision and
+// compile-time CSG both depend on, for a brush's hull. The editor calls this
+// after any edit that could break it (a free vertex drag; extrude/inset on a
+// box start already preserve it). Defined on BrushMesh rather than Brush so
+// DecomposeConvex's recursion — which builds bare BrushMesh pieces, not full
+// Brush values — can call it directly; Brush.IsConvex is this, promoted.
+func (b *BrushMesh) IsConvex() bool {
+	_, _, concave := b.firstConcavePlane()
+	return !concave
 }
 
 // ApplyUVTransform transforms the UV coordinates of a vertex slice in-place.

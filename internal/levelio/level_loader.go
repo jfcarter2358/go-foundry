@@ -38,14 +38,15 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		return world.Chunk{}, nil, err
 	}
 	chunk := world.Chunk{
-		ID:         rc.ID,
-		ScriptData: chunkScript,
-		Origin:     origin,
-		Rotation:   rc.Rotation,
-		Scale:      sc,
-		Velocity:   mgl32.Vec3{rc.Velocity.X, rc.Velocity.Y, rc.Velocity.Z},
-		FrameOwner: rc.Frame,
-		Disabled:   rc.Disabled,
+		ID:              rc.ID,
+		ScriptData:      chunkScript,
+		Origin:          origin,
+		Rotation:        rc.Rotation,
+		Scale:           sc,
+		Velocity:        mgl32.Vec3{rc.Velocity.X, rc.Velocity.Y, rc.Velocity.Z},
+		AngularVelocity: rc.AngularVelocity,
+		FrameOwner:      rc.Frame,
+		Disabled:        rc.Disabled,
 
 		UnloadWhenDisabled: rc.UnloadWhenDisabled,
 		Streamed:           rc.Streamed,
