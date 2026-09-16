@@ -39,7 +39,10 @@ import (
 	"foundry/internal/bsp"
 
 	"math/bits"
+	"runtime"
 	"sort"
+	"sync"
+	"sync/atomic"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -151,10 +154,28 @@ func intersectCoplanar(a []mgl32.Vec3, aN mgl32.Vec3, b []mgl32.Vec3, bN mgl32.V
 // pathological about it — an enormous open region carved into hundreds of cells
 // that all see each other. They are backstops against a compile that never
 // finishes, and both fall back to plain reachability rather than to silence.
+//
+// The step budget is also shared out across the level: a portal gets
+// maxFlowSteps, or totalFlowSteps divided among all of them if that is less.
+// A level of rooms never gets near it. A streamed outdoor level does — a canyon
+// is the "enormous open region" above, carved into thousands of cells — and
+// without a level-wide bound its compile ran for hours. There the floods that
+// run out fall back to reachability, which in open ground is close to the right
+// answer anyway, since open ground sees most of itself.
 const (
-	maxFlowDepth = 64
-	maxFlowSteps = 2000000
+	maxFlowDepth   = 64
+	maxFlowSteps   = 2000000
+	minFlowSteps   = 2000
+	totalFlowSteps = 400000000
 )
+
+// flowBudget is one portal's share of the step budget.
+func flowBudget(portals int) int {
+	if portals <= 0 {
+		return maxFlowSteps
+	}
+	return max(minFlowSteps, min(maxFlowSteps, totalFlowSteps/portals))
+}
 
 // visState is the whole of the visibility computation.
 //
@@ -168,7 +189,13 @@ const (
 type visState struct {
 	portals []Portal
 	byLeaf  [][]int
-	vis     *bsp.PVS
+	// row is the visibility row being filled: the cells the current source
+	// portal's cell can see. A flood writes only here, so floods running side
+	// by side never touch the same memory; BuildPVS merges each row into the
+	// PVS when its wave is finished.
+	row []byte
+	// might is the source portal's working candidate set.
+	might []byte
 
 	portalBytes int
 	// mightSee is the coarse answer: for each portal, which portals could
@@ -197,7 +224,9 @@ type visState struct {
 	// fallen back to plain reachability. Without the latch the give-up path
 	// runs at every level on the way out, which costs more than the flood it
 	// was supposed to cut short.
-	aborted    bool
+	aborted bool
+	// flowSteps is the budget each source portal starts with; see flowBudget.
+	flowSteps  int
 	reachSeen  []bool
 	reachQueue []int
 }
@@ -227,29 +256,142 @@ func BuildPVS(t *BSPTree, portals []Portal) *bsp.PVS {
 	s := &visState{
 		portals:     portals,
 		byLeaf:      byLeaf,
-		vis:         v,
 		portalBytes: (len(portals) + 7) / 8,
 	}
-	s.reachSeen = make([]bool, len(t.Leaves))
-	s.scratch = make([][]byte, maxFlowDepth+1)
-	for i := range s.scratch {
-		s.scratch[i] = make([]byte, s.portalBytes)
-	}
 	s.buildMightSee()
+	if len(portals) >= coarseVisPortals {
+		s.coarseRows(v)
+		return v
+	}
 	s.portalVis = make([]byte, len(portals)*s.portalBytes)
 	s.done = make([]bool, len(portals))
+	order := s.floodOrder()
 
-	might := make([]byte, s.portalBytes)
-	for _, pi := range s.floodOrder() {
-		v.Set(portals[pi].A, portals[pi].B)
-		s.baseSeen = s.portalVis[pi*s.portalBytes : (pi+1)*s.portalBytes]
-		bitSet(s.baseSeen, pi)
-		s.budget, s.aborted = maxFlowSteps, false
-		copy(might, s.mightSee[pi*s.portalBytes:(pi+1)*s.portalBytes])
-		s.flow(pi, portals[pi].B, might, portals[pi].Points, portals[pi].Points, 1)
-		s.done[pi] = true
+	// Floods run in waves. Every flood in a wave sees the exact answers of
+	// every portal finished in an earlier wave, and none from its own, so the
+	// result depends on the wave size alone and not on how many threads ran
+	// it: the same level compiles the same way on any machine. Below
+	// parallelWavePortals a wave is one portal — exactly the sequential flood,
+	// each one tightened by all before it. Above it, an open level has tens of
+	// thousands of portals and the sequential flood alone took most of an hour.
+	wave := 1
+	if len(portals) >= parallelWavePortals {
+		wave = len(portals) / flowWaves
+	}
+	leafBytes := v.RowBytes
+	workers := 1
+	if wave > 1 {
+		workers = runtime.GOMAXPROCS(0)
+	}
+	states := make([]*visState, workers)
+	for w := range states {
+		ws := *s
+		ws.reachSeen = make([]bool, len(t.Leaves))
+		ws.scratch = make([][]byte, maxFlowDepth+1)
+		for i := range ws.scratch {
+			ws.scratch[i] = make([]byte, s.portalBytes)
+		}
+		ws.might = make([]byte, s.portalBytes)
+		ws.flowSteps = flowBudget(len(portals))
+		states[w] = &ws
+	}
+	rows := make([]byte, wave*leafBytes)
+	for start := 0; start < len(order); start += wave {
+		end := min(len(order), start+wave)
+		for i := range rows {
+			rows[i] = 0
+		}
+		if workers == 1 {
+			for k := start; k < end; k++ {
+				states[0].row = rows[(k-start)*leafBytes : (k-start+1)*leafBytes]
+				states[0].flood(order[k])
+			}
+		} else {
+			var next atomic.Int64
+			next.Store(int64(start))
+			var wg sync.WaitGroup
+			for _, ws := range states {
+				wg.Add(1)
+				go func(ws *visState) {
+					defer wg.Done()
+					for {
+						k := int(next.Add(1) - 1)
+						if k >= end {
+							return
+						}
+						ws.row = rows[(k-start)*leafBytes : (k-start+1)*leafBytes]
+						ws.flood(order[k])
+					}
+				}(ws)
+			}
+			wg.Wait()
+		}
+		for k := start; k < end; k++ {
+			pi := order[k]
+			dst := v.Bits[portals[pi].A*leafBytes : (portals[pi].A+1)*leafBytes]
+			for j, b := range rows[(k-start)*leafBytes : (k-start+1)*leafBytes] {
+				dst[j] |= b
+			}
+			s.done[pi] = true
+		}
 	}
 	return v
+}
+
+// coarseVisPortals is the portal count from which the exact flood is not run
+// at all. Its inner loop ANDs portal sets a portal-count of bits wide, so its
+// cost grows with the square of the portals before any flood has done anything
+// — and a level with this many is open ground, whose cells see most of each
+// other whatever the flood finds. Such a level takes the coarse answer.
+const coarseVisPortals = 16384
+
+// CoarseVisibility reports whether a level with this many portals is given
+// coarse visibility rather than the exact flood (coarseRows).
+func CoarseVisibility(portals int) bool { return portals >= coarseVisPortals }
+
+// coarseRows fills the PVS from the candidate sets alone: a cell sees the far
+// side of every portal that orientation and connectivity leave possible from a
+// portal out of it. Never a hole — every exact answer is a subset of this —
+// just more drawn.
+func (s *visState) coarseRows(v *bsp.PVS) {
+	for pi := range s.portals {
+		a := s.portals[pi].A
+		v.Set(a, s.portals[pi].B)
+		row := s.mightSee[pi*s.portalBytes : (pi+1)*s.portalBytes]
+		for j, b := range row {
+			for b != 0 {
+				k := bits.TrailingZeros8(b)
+				b &^= 1 << uint(k)
+				v.Set(a, s.portals[j*8+k].B)
+			}
+		}
+	}
+}
+
+// parallelWavePortals is the portal count from which floods run in parallel
+// waves, and flowWaves how many waves the floods are then split into. Both
+// are constants rather than anything machine-dependent, which is what keeps a
+// compile reproducible.
+const (
+	parallelWavePortals = 4096
+	flowWaves           = 512
+)
+
+// flood fills the visibility row for one source portal.
+func (s *visState) flood(pi int) {
+	s.see(s.portals[pi].B)
+	s.baseSeen = s.portalVis[pi*s.portalBytes : (pi+1)*s.portalBytes]
+	bitSet(s.baseSeen, pi)
+	s.budget, s.aborted = s.flowSteps, false
+	copy(s.might, s.mightSee[pi*s.portalBytes:(pi+1)*s.portalBytes])
+	s.flow(pi, s.portals[pi].B, s.might, s.portals[pi].Points, s.portals[pi].Points, 1)
+}
+
+// see marks a cell visible from the current source portal's cell.
+func (s *visState) see(leaf int) {
+	if leaf >= 0 && leaf>>3 < len(s.row) {
+		bitSet(s.row, leaf)
+	}
 }
 
 // floodOrder is the order to flood the portals in: fewest candidates first.
@@ -285,21 +427,72 @@ func (s *visState) floodOrder() []int {
 func (s *visState) buildMightSee() {
 	n := len(s.portals)
 	pairs := make([]byte, n*s.portalBytes)
+
+	// A bounding sphere per portal settles nearly every orientation test with
+	// one distance: a sphere clear of a plane puts the whole polygon on that
+	// side. Only a sphere the plane passes through needs the polygon walked,
+	// and the answer is the same as walking it every time. A streamed open
+	// level has tens of thousands of portals, and the walk was all of a
+	// compile that took the better part of an hour.
+	centre := make([]mgl32.Vec3, n)
+	radius := make([]float32, n)
 	for i := range s.portals {
-		row := pairs[i*s.portalBytes : (i+1)*s.portalBytes]
-		for j := range s.portals {
-			if i == j {
-				continue
-			}
-			if s.portals[i].Plane.ClassifyPolygon(s.portals[j].Points) == bsp.SideBack {
-				continue
-			}
-			if s.portals[j].Plane.ClassifyPolygon(s.portals[i].Points) == bsp.SideFront {
-				continue
-			}
-			bitSet(row, j)
+		pts := s.portals[i].Points
+		var c mgl32.Vec3
+		for _, p := range pts {
+			c = c.Add(p)
 		}
+		c = c.Mul(1 / float32(len(pts)))
+		r := float32(0)
+		for _, p := range pts {
+			r = max(r, p.Sub(c).Len())
+		}
+		centre[i], radius[i] = c, r
 	}
+	side := func(pl bsp.Plane, j int) bsp.Side {
+		d := pl.Distance(centre[j])
+		reach := radius[j] + bsp.OnPlaneEps + 1e-4
+		switch {
+		case d > reach:
+			return bsp.SideFront
+		case d < -reach:
+			return bsp.SideBack
+		}
+		return pl.ClassifyPolygon(s.portals[j].Points)
+	}
+
+	// Rows are independent, so they are filled in parallel; each worker writes
+	// only its own rows.
+	workers := runtime.GOMAXPROCS(0)
+	var wg sync.WaitGroup
+	var next atomic.Int64
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= n {
+					return
+				}
+				row := pairs[i*s.portalBytes : (i+1)*s.portalBytes]
+				pi := s.portals[i].Plane
+				for j := 0; j < n; j++ {
+					if i == j {
+						continue
+					}
+					if side(pi, j) == bsp.SideBack {
+						continue
+					}
+					if side(s.portals[j].Plane, i) == bsp.SideFront {
+						continue
+					}
+					bitSet(row, j)
+				}
+			}
+		}()
+	}
+	wg.Wait()
 
 	s.mightSee = make([]byte, n*s.portalBytes)
 	seen := make([]bool, len(s.byLeaf))
@@ -346,14 +539,14 @@ func (s *visState) flow(base, leaf int, might []byte, source, pass []mgl32.Vec3,
 	if s.aborted {
 		return
 	}
-	s.vis.Set(s.portals[base].A, leaf)
+	s.see(leaf)
 	if s.budget <= 0 {
 		s.aborted = true
-		s.markReachable(s.portals[base].A, s.portals[base].A)
+		s.markReachable(s.portals[base].A)
 		return
 	}
 	if depth >= maxFlowDepth {
-		s.markReachable(s.portals[base].A, leaf)
+		s.markReachable(leaf)
 		return
 	}
 	s.budget--
@@ -420,7 +613,7 @@ func (s *visState) flow(base, leaf int, might []byte, source, pass []mgl32.Vec3,
 		}
 
 		bitSet(s.baseSeen, qi)
-		s.vis.Set(s.portals[base].A, s.portals[qi].B)
+		s.see(s.portals[qi].B)
 		s.flow(base, s.portals[qi].B, next, narrowed, target, depth+1)
 		// next is scratch[depth] and the recursion used scratch[depth+1], so it
 		// still holds this candidate's set — but the next candidate overwrites
@@ -439,7 +632,7 @@ func (s *visState) flow(base, leaf int, might []byte, source, pass []mgl32.Vec3,
 // The reused scratch is not an optimisation for the common case — it is for the
 // pathological one, where this is called at every node of a flood that has run
 // out of budget and a freshly allocated map each time is most of the compile.
-func (s *visState) markReachable(from, leaf int) {
+func (s *visState) markReachable(leaf int) {
 	for i := range s.reachSeen {
 		s.reachSeen[i] = false
 	}
@@ -448,7 +641,7 @@ func (s *visState) markReachable(from, leaf int) {
 	for len(queue) > 0 {
 		l := queue[0]
 		queue = queue[1:]
-		s.vis.Set(from, l)
+		s.see(l)
 		for _, qi := range s.byLeaf[l] {
 			if n := s.portals[qi].B; !s.reachSeen[n] {
 				s.reachSeen[n] = true

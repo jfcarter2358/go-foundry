@@ -20,17 +20,19 @@ package levelio
 // compiler consumed is stored with Chunk.Compiled set, which is the draw loop's
 // signal to leave it alone.
 //
-// Two kinds of chunk are deliberately NOT consumed, and are built the ordinary
+// Three kinds of chunk are deliberately NOT consumed, and are built the ordinary
 // way at load — see compile.Bakes, which is the one place that rule is written:
 //
 //   - FRAME-OWNED chunks, whose geometry moves with a vehicle and so cannot be
 //     a static world-space list.
+//   - Chunks marked MOVES, which a script moves, for the same reason.
 //   - DISABLED chunks, which a script can switch on later
-//     (@chunk.prop.enabled). Baking one would make the switch do nothing.
+//     (@chunk.prop.enabled) — unless marked STREAMED, in which case they are
+//     baked, stored Compiled and disabled, and their surfaces start hidden.
 //
 // The corollary is worth knowing before it surprises someone: a disabled chunk
-// takes no part in sealing the level. If one of them is a wall, the level leaks
-// through the hole it leaves, and the compile says so.
+// that is not streamed takes no part in sealing the level. If one of them is a
+// wall, the level leaks through the hole it leaves, and the compile says so.
 //
 // # What is stored as what
 //
@@ -93,7 +95,11 @@ const CompiledExt = ".fbsp"
 //
 // 3: the authored half is stored as YAML. A version-2 file decodes with that
 // half missing entirely, rather than failing.
-const CompiledVersion = 3
+//
+// 4: Compiled can be set on a disabled chunk (a streamed one, baked hidden),
+// and a chunk marked moves is no longer baked. A version-3 file would load a
+// streamed area as a live disabled chunk and a moving one frozen in place.
+const CompiledVersion = 4
 
 // compiledMagic is the first thing in the file, so that a truncated or
 // unrelated file is rejected as such rather than as a gob decode failure

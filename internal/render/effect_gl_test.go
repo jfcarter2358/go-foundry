@@ -73,3 +73,23 @@ func TestVolumetricExplosionDrawsNothingOutsideItsRun(t *testing.T) {
 		t.Errorf("a stopped explosion read %v with %d draws; want nothing", px, DebugStats.VolumeDraws)
 	}
 }
+
+// Late in the run, the space around a thinning explosion — outside its radius
+// but inside the reach its noise could push it to — must stay clear. The term
+// that keeps a young fireball's heart filled went negative as the smoke thinned,
+// and multiplied by the (also negative) distance past the heart it filled the
+// entire reach solid: a grey ball that popped in for the run's last half second.
+func TestVolumetricExplosionDoesNotFillItsReachAsItThins(t *testing.T) {
+	targets := volTestSetup(t)
+	lvl := explosionLevel(0.9)
+	lvl.Lights.Global = world.GlobalLight{Color: mgl32.Vec3{1, 1, 1}, Brightness: 1}
+	fx := &lvl.Effects[0]
+	st, _ := fx.ExplosionState(lvl)
+	// A ray passing the centre between the radius and the reach.
+	miss := (st.Radius + fx.Explosion.Reach(st)) / 2
+	fx.Position = mgl32.Vec3{miss, 0, 10}
+	px := volDraw(t, targets, lvl, volLook(mgl32.Vec3{0, 0, 1}, mgl32.Vec3{0, 1, 0}), 1, volTestSize/2, volTestSize/2)
+	if px[0] > 40 || px[1] > 40 || px[2] > 40 {
+		t.Errorf("a ray %v from a thinning explosion's centre (radius %v) read %v; want clear air", miss, st.Radius, px)
+	}
+}

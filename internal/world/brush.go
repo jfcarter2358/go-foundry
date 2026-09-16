@@ -339,8 +339,9 @@ func BuildBrushFaceMeshFrom(pts []mgl32.Vec3, doubleSided bool, normal, origin m
 	return verts, indices
 }
 
-// Load builds and uploads every visible face's render geometry. Call after
-// any edit to the mesh's verts or faces.
+// Load builds every visible face's render geometry — on the CPU only; the
+// renderer batches it per chunk. Call after any edit to the mesh's verts or
+// faces: the generation it bumps is what tells the batch to rebuild.
 func (m *BrushMesh) Load() error {
 	MarkBrushMeshesChanged()
 	for fi := range m.Faces {
@@ -360,6 +361,10 @@ func (m *BrushMesh) Load() error {
 		}
 		ApplyUVTransform(verts, f.UVOffset, f.UVScale, f.UVRotation)
 		f.Geometry.Smooth, f.Geometry.SmoothAngle = f.Smooth, f.SmoothAngle
+		// A face has no buffers of its own: its chunk's batch uploads every
+		// face of a material together (render/chunk_batch.go), which is what
+		// keeps a big area a few dozen GL objects rather than one per face.
+		f.Geometry.CPUOnly = true
 		if err := f.Geometry.Load(verts, indices, f.Texture, mgl32.Vec3{}); err != nil {
 			return err
 		}

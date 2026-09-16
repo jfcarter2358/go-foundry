@@ -90,15 +90,15 @@ func loadCompiledChunkRange(c *CompiledLevel, level *world.Level, texNeeded map[
 	}
 	for i := from; i < to; i++ {
 		ch := c.Chunks[i]
-		// A chunk authored disabled is not built at all, exactly as in
-		// loadRawChunk — it is what a streaming script switches on later.
-		ch.Unloaded = ch.Disabled
+		// Built whether it starts enabled or not, exactly as in loadRawChunk,
+		// unless it opted into unloading while disabled.
+		ch.Unloaded = !ch.WantsGeometry()
 		for bi := range ch.Brushes {
 			ch.Brushes[bi].EachFace(func(f *world.BrushFace) {
 				noteFaceTextures(texNeeded, f)
 			})
 		}
-		if !ch.Disabled {
+		if !ch.Unloaded {
 			for bi := range ch.Brushes {
 				// A compiled chunk's static brushes are drawn out of the
 				// compiled surface list and need no mesh of their own. Its
@@ -171,6 +171,9 @@ func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (in
 
 		g := &surf.Geometry
 		g.Smooth, g.SmoothAngle = f.Smooth, f.SmoothAngle
+		// No buffers of its own: the renderer batches a compiled level's
+		// surfaces per source chunk and material (render/static_batch.go).
+		g.CPUOnly = true
 		g.VertexLight = bakedLightRows(f, len(verts))
 		if err := g.Load(verts, indices, f.Texture, mgl32.Vec3{}); err != nil {
 			return i, fmt.Errorf("compiled face %d: %w", i, err)
@@ -178,6 +181,18 @@ func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (in
 		g.Alpha = f.Alpha
 		g.BlendTexture = f.BlendTexture
 		g.BlendMask = f.BlendMask
+	}
+	if to == len(c.Faces) {
+		// A streamed chunk is baked but starts switched off, and its surfaces
+		// have to start hidden with it. SyncChunkGeometry would hide them on
+		// the first frame, which is one frame too late: the area would flash
+		// up as the level appeared. After the last range rather than the
+		// first, because hiding reads which chunk each surface came from.
+		for ci := range level.Chunks {
+			if ch := &level.Chunks[ci]; ch.Compiled && ch.Disabled {
+				level.Static.SetChunkHidden(ch.ID, true)
+			}
+		}
 	}
 	return to, nil
 }

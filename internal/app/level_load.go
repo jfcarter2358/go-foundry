@@ -99,6 +99,15 @@ func installLevel(level *world.Level, built *world.Level) {
 
 	*level = *built
 
+	// Every chunk's and compiled surface's vertex buffers, now, behind the
+	// loading screen that has only just gone, rather than on the first frame
+	// the level is seen — and for the chunks that start switched off as well,
+	// so switching one on later costs no upload. See render/chunk_batch.go.
+	render.SyncChunkBatches(level)
+	// The raycast trees likewise, which the first sight line cast in the level
+	// would otherwise build mid-play. See collision.WarmRaycasts.
+	collision.WarmRaycasts(level)
+
 	world.UploadLights(level.Lights)
 	world.ApplySpawnPoint(level)
 

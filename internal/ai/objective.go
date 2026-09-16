@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"foundry/internal/hooks"
-	"foundry/internal/nav"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -201,7 +200,7 @@ func assignObjective(lvl *world.Level, e *world.Entity, st *world.AIState, vol *
 // volume's centre when no node qualifies.
 func ObjectivePoint(lvl *world.Level, e *world.Entity, vol *world.Volume) mgl32.Vec3 {
 	centre := vol.WorldPosition(lvl)
-	grid := nav.For(lvl, ProfileFor(lvl, e))
+	grid := gridFor(lvl, e)
 	if grid == nil || len(grid.Nodes) == 0 {
 		return centre
 	}

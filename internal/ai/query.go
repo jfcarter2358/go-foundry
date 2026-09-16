@@ -41,7 +41,7 @@ func MoveTo(lvl *world.Level, e *world.Entity, goal mgl32.Vec3) bool {
 	st.FailTimer = 0
 	st.StuckCount = 0
 	clearPath(st)
-	grid := nav.For(lvl, ProfileFor(lvl, e))
+	grid := gridFor(lvl, e)
 	if grid == nil || len(grid.Nodes) == 0 {
 		return true
 	}

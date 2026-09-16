@@ -32,7 +32,7 @@ func TestAStaticLightRefusesScriptWrites(t *testing.T) {
 	values := map[string]string{
 		"color": "<1.0, 0.0, 0.0>", "position": "<1.0, 2.0, 3.0>",
 		"brightness": "5.0", "radius": "3.0", "yaw": "90.0", "pitch": "-10.0",
-		"cast_shadows": "true",
+		"cast_shadows": "true", "enabled": "false",
 	}
 	for prop, acc := range propTables[flang.RefLight] {
 		if acc.Set == nil {
@@ -69,9 +69,35 @@ func TestAStaticLightRefusesScriptWrites(t *testing.T) {
 // to leave alone. The structs themselves carry ScriptData and so do not compare.
 func sameLight(p, p0 world.PointLight, d, d0 world.DirectionalLight) bool {
 	return p.Position == p0.Position && p.Color == p0.Color && p.Brightness == p0.Brightness &&
-		p.Radius == p0.Radius && p.CastShadows == p0.CastShadows &&
-		d.Yaw == d0.Yaw && d.Pitch == d0.Pitch && d.Direction == d0.Direction &&
+		p.Radius == p0.Radius && p.CastShadows == p0.CastShadows && p.Disabled == p0.Disabled &&
+		d.Disabled == d0.Disabled && d.Yaw == d0.Yaw && d.Pitch == d0.Pitch && d.Direction == d0.Direction &&
 		d.Color == d0.Color && d.Brightness == d0.Brightness && d.CastShadows == d0.CastShadows
+}
+
+// A static light left out of the bake may be switched on and off — nothing of
+// it is in the vertices — and nothing else. The hangar lights that must go out
+// when the hangar leaves are what it is for.
+func TestANoBakeLightCanOnlyBeSwitched(t *testing.T) {
+	lvl := staticLightLevel(t)
+	lvl.Lights.Points[0].NoBake = true
+	lvl.Lights.Directional[0].NoBake = true
+
+	runScript(t, lvl, "", script("    @lamp.prop.enabled = false\n    @sun.prop.enabled = false"))
+	if !lvl.Lights.Points[0].Disabled || !lvl.Lights.Directional[0].Disabled {
+		t.Fatal("switching a no_bake light off was not applied")
+	}
+	got := runScript(t, lvl, "", "def main() -> null\n    return @lamp.prop.enabled\nend")
+	if !flang.Equal(got, flang.BoolVal(false)) {
+		t.Errorf("a switched-off light reads enabled = %v", got)
+	}
+
+	before := lvl.Lights.Points[0].Brightness
+	if err := runScriptErr(t, lvl, "", script("    @lamp.prop.brightness = 9.0")); err == nil {
+		t.Error("a no_bake light let a script change its brightness; only enabled is allowed")
+	}
+	if lvl.Lights.Points[0].Brightness != before {
+		t.Error("the refused brightness write changed the light anyway")
+	}
 }
 
 // `dynamic` reads on either kind and cannot be written: flipping it at run time

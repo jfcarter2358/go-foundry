@@ -269,3 +269,20 @@ func TestAPlayerCannotStepIntoAnEntityDeckTallerThanTheStep(t *testing.T) {
 		t.Errorf("climbed a %v sill with a %v step allowance", stepUpAllowance+0.5, stepUpAllowance)
 	}
 }
+
+// A wall that leans back — steeper than a walkable slope, but not vertical —
+// is still a wall. Every raised probe slid up the face and stopped against it
+// rather than on a floor, and the settle kept that height; next frame the same
+// lift ran again from there, so walking into a canyon cliff scaled it.
+func TestAPlayerCannotClimbALeaningWall(t *testing.T) {
+	for _, lean := range []float32{0.5, 2, 6} { // over 8 high: ~86°, ~76°, ~53°
+		wall := world.NewBoxBrush("wall", mgl32.Vec3{3, 4, 0}, mgl32.Vec3{2, 4, 3}, "rock")
+		// Lean the -X face back: move its top corners (2, 6) away from the player.
+		wall.Verts[2][0] += lean
+		wall.Verts[6][0] += lean
+		p := walkAt(stepRoom(12, wall), 300)
+		if got := feet(p); got > 0.25 {
+			t.Errorf("lean %v: feet at y=%v, climbed the wall", lean, got)
+		}
+	}
+}

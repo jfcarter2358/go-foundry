@@ -431,6 +431,31 @@ func (f *Frame) ChunkAt(lvl *Level, pos mgl32.Vec3) *Chunk {
 	return FindChunkAmong(lvl.Chunks, f.ChunkIdx, pos)
 }
 
+// SolidChunks appends to out the chunks a body is solid against, and returns
+// it. at is where the body is going and fallback where it stood; [lo, hi] is
+// the box it sweeps through, all in this frame's coordinates.
+//
+// In the world frame that is every enabled chunk the box overlaps
+// (ChunksOverlapping). A carried frame keeps its single chunk, found at at and
+// then at fallback, the way the resolvers always looked one up: its chunks are
+// a vehicle's handful of rooms, which do not tile.
+func (f *Frame) SolidChunks(lvl *Level, at, fallback, lo, hi mgl32.Vec3, out []*Chunk) []*Chunk {
+	if lvl == nil {
+		return out
+	}
+	if f.IsWorld() {
+		return ChunksOverlapping(lvl, lo, hi, out)
+	}
+	c := f.ChunkAt(lvl, at)
+	if c == nil {
+		c = f.ChunkAt(lvl, fallback)
+	}
+	if c != nil {
+		out = append(out, c)
+	}
+	return out
+}
+
 // RebuildIndexes rebuilds a level's derived lookup structures: the world
 // spatial hash and the frame set.
 //

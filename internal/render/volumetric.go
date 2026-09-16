@@ -160,9 +160,10 @@ type volumeRenderer struct {
 	detailTex uint32
 
 	// Scratch, reused every frame.
-	draws []volumeDraw
-	blobs []particle.Blob
-	flat  []float32
+	draws  []volumeDraw
+	blobs  []particle.Blob
+	flat   []float32
+	clears []cloudClear
 }
 
 var volumes volumeRenderer
@@ -519,6 +520,47 @@ func deckCloudParams(d world.SkyClouds, time float64) cloudParams {
 	return c
 }
 
+// cloudClear is one region cloud is kept out of (Volume.ClearsClouds), in the
+// normalised shape space a fog bank is solved in: basis takes a world offset
+// from center to the unit box, sphere or cylinder shape names.
+type cloudClear struct {
+	shape  int32
+	basis  mgl32.Mat3
+	center mgl32.Vec3
+}
+
+// gatherCloudClears collects the frame's cloud-clearing regions: every enabled
+// one in view, in level order, up to world.MaxCloudClearVolumes.
+//
+// Culled before the cap rather than after, so four ships parked across the map
+// do not use up the slots the one on screen needed. The cull is exact enough:
+// every sample the march takes is on a ray through the view, so a region wholly
+// outside the frustum can contain none of them.
+func gatherCloudClears(lvl *world.Level, cull *Frustum) []cloudClear {
+	out := volumes.clears[:0]
+	for i := range lvl.Volumes {
+		v := &lvl.Volumes[i]
+		if !v.ClearsCloudsNow() {
+			continue
+		}
+		if cull != nil {
+			if lo, hi, ok := v.WorldAABB(lvl); ok && !AABBInFrustum(*cull, lo, hi) {
+				continue
+			}
+		}
+		out = append(out, cloudClear{
+			shape:  int32(v.Shape),
+			basis:  v.WorldFogBasis(lvl), // the same space the cloud itself is solved in
+			center: v.WorldPosition(lvl),
+		})
+		if len(out) == world.MaxCloudClearVolumes {
+			break
+		}
+	}
+	volumes.clears = out
+	return out
+}
+
 // volumeDraw is one march.
 type volumeDraw struct {
 	kind       int32
@@ -802,6 +844,7 @@ func RenderVolumetrics(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3,
 	if len(draws) == 0 {
 		return
 	}
+	gatherCloudClears(lvl, cull)
 	renderVolumeDraws(t, draws, projView, camPos, levelVolumeLighting(lvl), func(prog uint32) {
 		// With the effects' flashes, so an explosion's smoke is lit by its own
 		// fire and by the one that went off beside it.
@@ -819,6 +862,9 @@ func DrawVolumeParticlePreview(t *VolumeTargets, systems []*particle.System, pro
 	}
 	draws := volumes.draws[:0]
 	volumes.blobs = volumes.blobs[:0]
+	// Nothing to clear, and the program is shared with the main window's pass,
+	// so a count left over from the level would otherwise carry into this one.
+	volumes.clears = volumes.clears[:0]
 	for _, s := range systems {
 		draws = appendBlobDraws(draws, s, camPos)
 	}
@@ -912,6 +958,7 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 	uniformVec3(m.U("volSunColor"), light.sun)
 	uniformVec3(m.U("volAmbientTop"), light.ambTop)
 	uniformVec3(m.U("volAmbientBottom"), light.ambBottom)
+	uploadCloudClears(m, volumes.clears)
 
 	for i := range draws {
 		dr := &draws[i]
@@ -1004,6 +1051,31 @@ func uploadBlobs(m *progUniforms, dr *volumeDraw) {
 	gl.UniformMatrix3fv(m.U("volProxyBasis"), 1, false, &dr.proxyBasis[0])
 	uniformVec3(m.U("volProxyCenter"), dr.proxyCenter)
 }
+
+// uploadCloudClears writes the regions cloud is kept out of. The count is
+// written even at zero, for the reason numFogVolumes is: the program holds
+// whatever the last frame left in it.
+func uploadCloudClears(m *progUniforms, clears []cloudClear) {
+	gl.Uniform1i(m.U("volClearCount"), int32(len(clears)))
+	for i := range clears {
+		c := &clears[i]
+		n := &cloudClearNames[i]
+		gl.Uniform1i(m.U(n.shape), c.shape)
+		gl.UniformMatrix3fv(m.U(n.basis), 1, false, &c.basis[0])
+		uniformVec3(m.U(n.center), c.center)
+	}
+}
+
+// cloudClearNames are the array elements' uniform names, built once rather
+// than formatted every frame.
+var cloudClearNames = func() (out [world.MaxCloudClearVolumes]struct{ shape, basis, center string }) {
+	for i := range out {
+		out[i].shape = fmt.Sprintf("volClearShape[%d]", i)
+		out[i].basis = fmt.Sprintf("volClearBasis[%d]", i)
+		out[i].center = fmt.Sprintf("volClearCenter[%d]", i)
+	}
+	return out
+}()
 
 func uploadExplosion(m *progUniforms, x *explosionParams) {
 	uniformVec3(m.U("volExpCenter"), x.center)

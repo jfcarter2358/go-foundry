@@ -21,12 +21,15 @@ package script
 
 import (
 	"fmt"
+	"math"
 	"sort"
 
 	"foundry/internal/collision"
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
+
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // hitscanDefaultRange is how far a cast reaches when the options say nothing,
@@ -48,6 +51,10 @@ type hitscanOption struct {
 type hitscanOpts struct {
 	all    bool
 	points bool
+	// spread is the full width, in degrees, of the cone the shot may land in.
+	// Zero is a ray straight down the reticle, which is what every cast was
+	// before this existed.
+	spread float32
 	filter collision.RayFilter
 }
 
@@ -76,6 +83,20 @@ var hitscanOptions = map[string]hitscanOption{
 				return fmt.Errorf("hitscan's \"range\" is a number, not a %s", flang.TypeOf(v))
 			}
 			o.filter.Range = float32(n)
+			return nil
+		},
+	},
+	"spread": {
+		"the full width, in degrees, of the cone the shot scatters inside (0 — dead centre — by default)",
+		func(o *hitscanOpts, v flang.Value) error {
+			n, ok := numericValue(v)
+			if !ok {
+				return fmt.Errorf("hitscan's \"spread\" is a number of degrees, not a %s", flang.TypeOf(v))
+			}
+			if n < 0 {
+				return fmt.Errorf("hitscan's \"spread\" is a cone width in degrees and cannot be negative")
+			}
+			o.spread = float32(n)
 			return nil
 		},
 	},
@@ -168,6 +189,7 @@ var hitscanVerbs = map[string]scriptVerb{
 			return flang.NullVal{}, nil
 		}
 
+		dir = scatter(dir, opts.spread, rt.randomUnit)
 		res := collision.Raycast(rt.lvl, origin, dir, opts.filter)
 		payload := []flang.Value{
 			hitscanPayload(res, opts.all),
@@ -179,6 +201,40 @@ var hitscanVerbs = map[string]scriptVerb{
 		_ = rt.post(rt.self, string(atom), payload, pos)
 		return flang.NullVal{}, nil
 	},
+}
+
+// scatter tilts a shot off the reticle by a random angle inside a cone of that
+// full width, in degrees. A spread of zero is returned untouched, so the cost
+// of this existing is one comparison for every cast that does not want it.
+//
+// The landing point is uniform over the cone's disc rather than over its
+// angle: drawing the angle straight would pile most shots into the middle few
+// degrees and leave the rim nearly empty, which reads as a gun that is far
+// more accurate than its number says. The square root is what spreads a
+// uniform draw over area instead of over radius.
+//
+// The cone is built on any two axes square to the aim — which of them is which
+// does not matter, since the second draw spins the offset all the way round.
+func scatter(dir mgl32.Vec3, spreadDeg float32, draw func() float64) mgl32.Vec3 {
+	if spreadDeg <= 0 {
+		return dir
+	}
+	dir = dir.Normalize()
+	half := float64(spreadDeg) * math.Pi / 360 // degrees of full width to radians of half-angle
+	theta := math.Atan(math.Tan(half) * math.Sqrt(draw()))
+	phi := 2 * math.Pi * draw()
+
+	// An axis the aim is not parallel to, so the cross product below is a real
+	// direction rather than a zero vector.
+	up := mgl32.Vec3{0, 1, 0}
+	if math.Abs(float64(dir.Y())) > 0.99 {
+		up = mgl32.Vec3{1, 0, 0}
+	}
+	right := dir.Cross(up).Normalize()
+	up = right.Cross(dir).Normalize()
+
+	off := right.Mul(float32(math.Cos(phi))).Add(up.Mul(float32(math.Sin(phi))))
+	return dir.Mul(float32(math.Cos(theta))).Add(off.Mul(float32(math.Sin(theta)))).Normalize()
 }
 
 // hitscanPayload is the first argument the answering message carries: the

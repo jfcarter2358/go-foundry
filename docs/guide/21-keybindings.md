@@ -19,6 +19,11 @@ it is never out of date.
 
 ## Gameplay
 
+Every key and mouse button in this section and the next, except `0`, `8` and
+`9`, is a default: a player can rebind them from the game's settings screen —
+see [UI screens](17-ui-screens.md#rebinding-keys). The editor's fly camera always
+keeps `W` `A` `S` `D`.
+
 | | |
 | --- | --- |
 | `W` `A` `S` `D` | move |
@@ -29,7 +34,7 @@ it is never out of date.
 | `E` | sit / stand / get out of a vehicle, else interact |
 | Left / right mouse | primary / secondary fire (viewmodel) |
 | `G` | throw (viewmodel) |
-| `1` / `2` / `3` | weapon slot (viewmodel) |
+| `1` – `5` | weapon slot (viewmodel) |
 | Mouse wheel / `Q` | previous / next weapon (viewmodel; not while seated) |
 | `R` | reload (viewmodel) |
 | `C` / `Left Ctrl` (hold) | crouch — a shorter body at under half speed; stays crouched under anything too low to stand up in |

@@ -67,6 +67,11 @@ func LoadSettings() {
 	}
 }
 
+// SettingsChanged is raised by a script writing a gain (@level.prop.*_volume),
+// which must not do file I/O mid-tick; the app saves once the value has
+// settled and clears it. The editor's sliders save on release instead.
+var SettingsChanged bool
+
 // SaveSettings writes the current gains. Called when a slider is released
 // rather than on every frame of a drag, so a drag is one write and not two
 // hundred.

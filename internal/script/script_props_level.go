@@ -28,6 +28,7 @@ import (
 
 	"github.com/go-gl/mathgl/mgl32"
 
+	"foundry/internal/audio"
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
@@ -145,6 +146,26 @@ func levelProps() map[string]propAccess {
 			Doc: "the camera's vertical field of view in degrees (45 by default, clamped to 5–120); lower zooms in",
 		},
 
+		// The viewmodel's lens, which is deliberately NOT the camera's: the
+		// hands are drawn through their own fixed field of view so that a scope
+		// zooming the world does not magnify the arms with it (gfx's
+		// projection.go). A script that wants the gun pushed further away, or
+		// pulled in, moves this rather than camera_fov.
+		"viewmodel_fov": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(gfx.ViewmodelFieldOfView), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("viewmodel_fov", "float", v)
+				}
+				gfx.ViewmodelFieldOfView = clampFloat32(float32(f), gfx.MinFieldOfView, gfx.MaxFieldOfView)
+				return nil
+			},
+			Doc: "the field of view the first-person viewmodel is drawn through in degrees (55 by default, clamped to 5–120); independent of camera_fov, so aiming does not swell the hands",
+		},
+
 		// The player's mouse settings, for a settings screen. Unlike every other
 		// level property these are the player's, not the level's: they persist
 		// across levels and sessions (app/controls_settings.go saves them once
@@ -193,6 +214,55 @@ func levelProps() map[string]propAccess {
 				return nil
 			},
 			Doc: "whether moving the mouse up looks down; saved for every level and session",
+		},
+
+		// The player's volume, the same three gains the editor's audio settings
+		// write. Player settings like the mouse ones above: saved to audio.yaml
+		// once a change has settled (app/controls_settings.go).
+		"master_volume": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(audio.MasterGain()), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("master_volume", "float", v)
+				}
+				audio.SetMasterGain(float32(f))
+				audio.SettingsChanged = true
+				return nil
+			},
+			Doc: "the player's overall volume, 0 (silent) to 1 (full), multiplying music and effects both; saved for every level and session",
+		},
+		"music_volume": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(audio.MusicGain()), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("music_volume", "float", v)
+				}
+				audio.SetMusicGain(float32(f))
+				audio.SettingsChanged = true
+				return nil
+			},
+			Doc: "the player's music volume, 0 to 1, under master_volume; saved for every level and session",
+		},
+		"effects_volume": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(audio.EffectsGain()), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("effects_volume", "float", v)
+				}
+				audio.SetEffectsGain(float32(f))
+				audio.SettingsChanged = true
+				return nil
+			},
+			Doc: "the player's sound-effects volume, 0 to 1, under master_volume; saved for every level and session",
 		},
 
 		// The hard pause — see script_pause.go. Engine state rather than a

@@ -318,7 +318,11 @@ float explosionDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
     float disp = (billow - 0.5) * 2.0 * volExpTurbulence;
     disp *= (disp < 0.0) ? 0.5 : 1.0;
     float surface = 1.0 - dn + disp - thin * (1.4 - billow * 1.2);
-    surface = max(surface, (0.65 - dn) * (1.0 - thin * 1.6));
+    // Clamped: once the smoke is more than ~60% thinned the factor would go
+    // negative, and a negative times the negative (0.65 - dn) outside the heart
+    // is positive — the whole reach filled solid, a grey ball that popped in
+    // for the last half second of every explosion.
+    surface = max(surface, (0.65 - dn) * max(1.0 - thin * 1.6, 0.0));
     float d = smoothstep(0.0, 0.2, surface);
     if (d <= 0.0) {
         return 0.0;

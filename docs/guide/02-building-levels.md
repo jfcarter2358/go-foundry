@@ -346,10 +346,16 @@ Right-click a chunk to **Export...** it to `resources/chunks/`, and
 building gets reused.
 
 A chunk can be **switched off** — right-click, `Enabled`. A disabled chunk is not
-drawn, not solid, and its buffers are released. This is how a level streams: a
-script writes `@east_wing.prop.enabled = true` as the player approaches and
-`false` behind them. Author one starting off with `disabled: true` in the level
-file and it is never built until something asks for it.
+drawn and not solid. This is how a level streams: a script writes
+`@east_wing.prop.enabled = true` as the player approaches and `false` behind
+them. Author one starting off with `disabled: true` in the level file.
+
+A disabled chunk's geometry is still built at load, behind the loading screen,
+so switching it on mid-play is instant. If a level needs the memory more than
+it needs that, tick **Unload when disabled** on the chunk
+(`unload_when_disabled: true`): its buffers are released while it is off, and
+never built at all if it starts off, at the cost of a stall the frame a script
+switches it back on.
 
 ## The spawn point
 

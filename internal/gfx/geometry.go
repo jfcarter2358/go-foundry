@@ -77,6 +77,13 @@ type Geometry struct {
 	Vao      uint32
 	Vbo      uint32
 	Nbo      uint32 // normal buffer; 0 when the surface is flat-shaded
+
+	// CPUOnly makes Load build the mesh and stop there: no buffers of its own.
+	// For geometry some other owner uploads in bulk — a brush face, whose
+	// vertices are drawn out of its chunk's batch (render/chunk_batch.go). The
+	// CPU half is untouched, so everything that reads Vertices — raycasts,
+	// picking, the scatter ground — sees no difference.
+	CPUOnly bool
 }
 
 // SmoothFlag returns the value of the shader's `smoothShading` uniform for this
@@ -110,17 +117,21 @@ func (g *Geometry) NormalColorFlag() int32 {
 // Every draw call sets them, including the disabled case, so a water plane
 // never leaks its wave/fresnel state onto the geometry drawn after it.
 func (g *Geometry) applyWaterUniforms() {
-	if !g.Water.Enabled {
+	applyWaterUniforms(&g.Water)
+}
+
+func applyWaterUniforms(w *WaterParams) {
+	if !w.Enabled {
 		gl.Uniform1i(IsWaterUniform, 0)
 		return
 	}
 	gl.Uniform1i(IsWaterUniform, 1)
-	gl.Uniform1f(WaveAmplitudeUniform, g.Water.WaveAmplitude)
-	gl.Uniform1f(WaveLengthUniform, g.Water.WaveLength)
-	gl.Uniform1f(WaveSpeedUniform, g.Water.WaveSpeed)
-	gl.Uniform1f(ReflectivityUniform, g.Water.Reflectivity)
+	gl.Uniform1f(WaveAmplitudeUniform, w.WaveAmplitude)
+	gl.Uniform1f(WaveLengthUniform, w.WaveLength)
+	gl.Uniform1f(WaveSpeedUniform, w.WaveSpeed)
+	gl.Uniform1f(ReflectivityUniform, w.Reflectivity)
 	gl.Uniform3f(ReflectColorUniform,
-		g.Water.ReflectColor.X(), g.Water.ReflectColor.Y(), g.Water.ReflectColor.Z())
+		w.ReflectColor.X(), w.ReflectColor.Y(), w.ReflectColor.Z())
 }
 
 // applyBlendUniforms pushes this geometry's second-texture blend state to the
@@ -128,16 +139,20 @@ func (g *Geometry) applyWaterUniforms() {
 // surface never leaks its blendTex/blendMask binding onto the geometry drawn
 // after it. Mirrors applyWaterUniforms.
 func (g *Geometry) applyBlendUniforms() {
-	if g.BlendTexture == "" || g.BlendMask == "" {
+	applyBlendUniforms(g.BlendTexture, g.BlendMask)
+}
+
+func applyBlendUniforms(blendTexture, blendMask string) {
+	if blendTexture == "" || blendMask == "" {
 		gl.Uniform1i(HasBlendUniform, 0)
 		return
 	}
 	gl.Uniform1i(HasBlendUniform, 1)
 	gl.ActiveTexture(gl.TEXTURE0 + BlendTexUnit)
-	gl.BindTexture(gl.TEXTURE_2D, Textures[g.BlendTexture])
+	gl.BindTexture(gl.TEXTURE_2D, Textures[blendTexture])
 	gl.Uniform1i(BlendTexUniform, BlendTexUnit)
 	gl.ActiveTexture(gl.TEXTURE0 + BlendMaskUnit)
-	gl.BindTexture(gl.TEXTURE_2D, Textures[g.BlendMask])
+	gl.BindTexture(gl.TEXTURE_2D, Textures[blendMask])
 	gl.Uniform1i(BlendMaskUniform, BlendMaskUnit)
 	gl.ActiveTexture(gl.TEXTURE0)
 }
@@ -263,15 +278,18 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	// the GPU. Only the second half needs a live GL context, which is what lets
 	// the editor's structural operations — splitting an edge, merging sectors —
 	// be exercised headlessly. See withoutGeometryUploads in the tests.
-	if !GeometryUploadsEnabled {
+	if !GeometryUploadsEnabled || g.CPUOnly {
 		return nil
 	}
 
-	g.ModelUniform = gl.GetUniformLocation(Program, gl.Str("model\x00"))
-	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &g.Model[0])
-
-	g.TextureUniform = gl.GetUniformLocation(Program, gl.Str("tex\x00"))
-	gl.Uniform1i(g.TextureUniform, 0)
+	// No uniform is written here and no location is looked up by name: a
+	// load is not a draw, no program need be bound, and on a translated driver
+	// the name lookups per face were most of the cost of building a big chunk.
+	// The model location is the program's, cached once (WorldModelUniform);
+	// the attribute locations are pinned by layout qualifiers (Attrib*).
+	g.ModelUniform = WorldModelUniform()
+	g.VertexAttribute = AttribVert
+	g.TextureCoordinateAttribute = AttribTexCoord
 
 	gl.GenVertexArrays(1, &g.Vao)
 	gl.BindVertexArray(g.Vao)
@@ -279,51 +297,83 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	gl.GenBuffers(1, &g.Vbo)
 	gl.BindBuffer(gl.ARRAY_BUFFER, g.Vbo)
 	gl.BufferData(gl.ARRAY_BUFFER, len(g.Vertices)*4, gl.Ptr(g.Vertices), gl.STATIC_DRAW)
-
-	g.VertexAttribute = uint32(gl.GetAttribLocation(Program, gl.Str("vert\x00")))
-	gl.EnableVertexAttribArray(g.VertexAttribute)
-	gl.VertexAttribPointerWithOffset(g.VertexAttribute, 3, gl.FLOAT, false, 5*4, 0)
-
-	g.TextureCoordinateAttribute = uint32(gl.GetAttribLocation(Program, gl.Str("vertTexCoord\x00")))
-	gl.EnableVertexAttribArray(g.TextureCoordinateAttribute)
-	gl.VertexAttribPointerWithOffset(g.TextureCoordinateAttribute, 2, gl.FLOAT, false, 5*4, 3*4)
+	BindVertexLayout()
 
 	// Smooth surfaces get a second buffer in the same VAO. The previous one was
 	// released above, with the rest of the old upload.
 	if len(g.Normals) > 0 {
-		if loc := gl.GetAttribLocation(Program, gl.Str("vertNormal\x00")); loc >= 0 {
-			g.NormalAttribute = uint32(loc)
-			gl.GenBuffers(1, &g.Nbo)
-			gl.BindBuffer(gl.ARRAY_BUFFER, g.Nbo)
-			gl.BufferData(gl.ARRAY_BUFFER, len(g.Normals)*4, gl.Ptr(g.Normals), gl.STATIC_DRAW)
-			gl.EnableVertexAttribArray(g.NormalAttribute)
-			gl.VertexAttribPointerWithOffset(g.NormalAttribute, 3, gl.FLOAT, false, 3*4, 0)
-		} else {
-			g.Normals = nil // shader has no normal input; stay flat-shaded
-		}
+		g.NormalAttribute = AttribNormal
+		gl.GenBuffers(1, &g.Nbo)
+		gl.BindBuffer(gl.ARRAY_BUFFER, g.Nbo)
+		gl.BufferData(gl.ARRAY_BUFFER, len(g.Normals)*4, gl.Ptr(g.Normals), gl.STATIC_DRAW)
+		gl.EnableVertexAttribArray(AttribNormal)
+		gl.VertexAttribPointerWithOffset(AttribNormal, 3, gl.FLOAT, false, 3*4, 0)
 	}
 
 	// Skinning attributes get their own buffers in the same VAO, for the same
 	// reason normals do: Vertices stays the 5-float record that picking, the
 	// shadow passes and the detail renderer all index directly.
 	if len(g.skinIdx) > 0 {
-		g.loadSkinBuffer(&g.Ibo, "boneIdx", g.skinIdx)
-		g.loadSkinBuffer(&g.Wbo, "boneWt", g.skinWt)
+		loadVec4Buffer(&g.Ibo, AttribBoneIdx, g.skinIdx)
+		loadVec4Buffer(&g.Wbo, AttribBoneWt, g.skinWt)
 	}
 
 	// Baked light, likewise in its own buffer in the same VAO.
 	if len(g.vertexLight) > 0 {
-		if loc := gl.GetAttribLocation(Program, gl.Str("vertLight\x00")); loc >= 0 {
-			gl.GenBuffers(1, &g.Lbo)
-			gl.BindBuffer(gl.ARRAY_BUFFER, g.Lbo)
-			gl.BufferData(gl.ARRAY_BUFFER, len(g.vertexLight)*4, gl.Ptr(g.vertexLight), gl.STATIC_DRAW)
-			gl.EnableVertexAttribArray(uint32(loc))
-			gl.VertexAttribPointerWithOffset(uint32(loc), 3, gl.FLOAT, false, 3*4, 0)
-		}
+		gl.GenBuffers(1, &g.Lbo)
+		gl.BindBuffer(gl.ARRAY_BUFFER, g.Lbo)
+		gl.BufferData(gl.ARRAY_BUFFER, len(g.vertexLight)*4, gl.Ptr(g.vertexLight), gl.STATIC_DRAW)
+		gl.EnableVertexAttribArray(AttribLight)
+		gl.VertexAttribPointerWithOffset(AttribLight, 3, gl.FLOAT, false, 3*4, 0)
 	}
 
 	return nil
 }
+
+// Vertex attribute locations of the world program, pinned by layout qualifiers
+// in vertex.glsl (and skin_common.glsl for the bones). Every program that draws
+// a Geometry's VAO — the world, shadow and cube-shadow programs — declares the
+// same ones, which is what lets one VAO feed all of them.
+const (
+	AttribVert     = 0
+	AttribTexCoord = 1
+	AttribNormal   = 2
+	AttribBoneIdx  = 3
+	AttribBoneWt   = 4
+	AttribLight    = 5
+)
+
+// BindVertexLayout points attributes 0 and 1 at the 5-float [X,Y,Z,U,V] record
+// in the ARRAY_BUFFER currently bound, in the VAO currently bound.
+func BindVertexLayout() {
+	gl.EnableVertexAttribArray(AttribVert)
+	gl.VertexAttribPointerWithOffset(AttribVert, 3, gl.FLOAT, false, 5*4, 0)
+	gl.EnableVertexAttribArray(AttribTexCoord)
+	gl.VertexAttribPointerWithOffset(AttribTexCoord, 2, gl.FLOAT, false, 5*4, 3*4)
+}
+
+// worldModel caches the world program's `model` location. Program is fixed
+// after startup; the cache still re-reads when it changes, which the GL tests
+// do between programs, and LoadProgram clears it for a relink that reuses an id.
+var worldModel struct {
+	prog  uint32
+	loc   int32
+	valid bool
+}
+
+// WorldModelUniform is the `model` uniform location in Program.
+func WorldModelUniform() int32 {
+	if !worldModel.valid || worldModel.prog != Program {
+		worldModel.prog, worldModel.valid = Program, true
+		worldModel.loc = gl.GetUniformLocation(Program, gl.Str("model\x00"))
+	}
+	return worldModel.loc
+}
+
+// BakedLightData is the de-indexed baked light Load built from VertexLight,
+// three floats per vertex of Vertices, or nil. For a batch uploading many
+// surfaces' light together.
+func (g *Geometry) BakedLightData() []float32 { return g.vertexLight }
 
 // BakedLightFlag is the uniform value for this surface: 1 when its lighting is
 // already on its vertices, 0 when the fragment stage has to work it out.
@@ -339,17 +389,13 @@ func (g *Geometry) BakedLightFlag() int32 {
 	return 0
 }
 
-// loadSkinBuffer uploads one vec4-per-vertex skinning attribute.
-func (g *Geometry) loadSkinBuffer(buf *uint32, attr string, data []float32) {
-	loc := gl.GetAttribLocation(Program, gl.Str(attr+"\x00"))
-	if loc < 0 {
-		return // shader was built without the skinning path
-	}
+// loadVec4Buffer uploads one vec4-per-vertex attribute — a skinning input.
+func loadVec4Buffer(buf *uint32, loc uint32, data []float32) {
 	gl.GenBuffers(1, buf)
 	gl.BindBuffer(gl.ARRAY_BUFFER, *buf)
 	gl.BufferData(gl.ARRAY_BUFFER, len(data)*4, gl.Ptr(data), gl.STATIC_DRAW)
-	gl.EnableVertexAttribArray(uint32(loc))
-	gl.VertexAttribPointerWithOffset(uint32(loc), 4, gl.FLOAT, false, 4*4, 0)
+	gl.EnableVertexAttribArray(loc)
+	gl.VertexAttribPointerWithOffset(loc, 4, gl.FLOAT, false, 4*4, 0)
 }
 
 func (g *Geometry) deleteBakedLightBuffer() {
@@ -424,7 +470,7 @@ func (g Geometry) Draw() {
 	model := mgl32.Ident4()
 
 	gl.UseProgram(Program)
-	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
+	gl.UniformMatrix4fv(WorldModelUniform(), 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
@@ -448,7 +494,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 		return
 	}
 	gl.UseProgram(Program)
-	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
+	gl.UniformMatrix4fv(WorldModelUniform(), 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
@@ -475,7 +521,7 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 		return
 	}
 	gl.UseProgram(Program)
-	gl.UniformMatrix4fv(g.ModelUniform, 1, false, &model[0])
+	gl.UniformMatrix4fv(WorldModelUniform(), 1, false, &model[0])
 	gl.Uniform1f(AlphaUniform, g.Alpha)
 	gl.Uniform1i(SmoothUniform, 0)
 	gl.Uniform1i(BakedLightUniform, 0)

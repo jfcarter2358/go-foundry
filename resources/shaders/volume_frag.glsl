@@ -52,6 +52,17 @@ uniform float     volPixelFootprint; // world size of a target pixel one unit fr
 uniform vec3  volBlobAlbedo;
 uniform float volBlobAbsorption;
 
+// Regions cloud is kept out of (Volume.ClearsClouds): a ship's hold parked in
+// a bank. Each is a shape in the normalised space fog.glsl solves a fog bank in
+// — basis takes a world offset from the centre to the unit box, sphere or
+// cylinder — so a clear region and a cloud placed in the same box agree about
+// where its walls are. MUST match world.MaxCloudClearVolumes.
+#define VOL_MAX_CLEARS 4
+uniform int  volClearCount;
+uniform int  volClearShape[VOL_MAX_CLEARS];
+uniform mat3 volClearBasis[VOL_MAX_CLEARS];
+uniform vec3 volClearCenter[VOL_MAX_CLEARS];
+
 out vec4 outColor;
 
 // Interleaved gradient noise (Jimenez): a per-pixel offset for where along its
@@ -70,6 +81,41 @@ float volDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
         return explosionDensity(p, footprint, detail, glow);
     }
     return cloudDensity(volCloud, p, footprint, detail);
+}
+
+// volCleared reports whether p is inside a region cloud is kept out of. Only
+// the cloud kinds are cleared: a fireball going off in the hold is still a
+// fireball.
+//
+// Sampled, not solved: the march simply finds nothing at the samples inside,
+// rather than having its interval split around the region. That costs a few
+// comparisons a sample and leaves the wall of the clear region exactly as
+// sharp as the step spacing, which the per-pixel jitter already dissolves —
+// and it is only the view march that asks. The light march and the shadow
+// bake still see the whole cloud, so a hold in a bank is shaded like one.
+bool volCleared(vec3 p) {
+    if (volClearCount <= 0 || (volKind != VOL_KIND_CLOUD && volKind != VOL_KIND_DECK)) {
+        return false;
+    }
+    for (int i = 0; i < VOL_MAX_CLEARS; ++i) {
+        if (i >= volClearCount) {
+            break;
+        }
+        vec3 q = volClearBasis[i] * (p - volClearCenter[i]);
+        if (volClearShape[i] == VOL_SHAPE_SPHERE) {
+            if (dot(q, q) <= 1.0) {
+                return true;
+            }
+        } else if (volClearShape[i] == VOL_SHAPE_CYLINDER) {
+            // Upright on the volume's own Y, fogShapeInterval's convention.
+            if (abs(q.y) <= 1.0 && dot(q.xz, q.xz) <= 1.0) {
+                return true;
+            }
+        } else if (all(lessThanEqual(abs(q), vec3(1.0)))) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool volInterval(vec3 ro, vec3 rd, inout float t0, inout float t1) {
@@ -155,6 +201,9 @@ void main() {
         float t = t0 + dt * (float(i) + jitter);
         vec3 p = volCamPos + rd * t;
         float footprint = t * volPixelFootprint;
+        if (volCleared(p)) {
+            continue;
+        }
 
         vec3 glow = vec3(0.0);
         float sigma = volDensity(p, footprint, true, glow);

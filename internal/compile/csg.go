@@ -133,6 +133,11 @@ type solid struct {
 	// the tie between two coplanar faces facing each other, so that the choice
 	// is stable rather than depending on map iteration.
 	order int
+	// chunk is the chunk the brush came from, and streamed whether that chunk
+	// is marked Streamed — what StreamedClips is reported from. Empty for the
+	// seal's slabs.
+	chunk    string
+	streamed bool
 }
 
 // containsPoint reports whether p is inside the solid — behind every plane.
@@ -161,15 +166,66 @@ func (s *solid) containsPoint(p mgl32.Vec3) bool {
 // behind every plane" is not true of one and every stage below this depends on
 // it. See validate.go on why the editor takes the opposite line.
 func CSG(lvl *world.Level) ([]Face, error) {
+	faces, _, err := csg(lvl)
+	return faces, err
+}
+
+// csg is CSG, also reporting the streamed-chunk clips Stats.StreamedClips
+// lists.
+func csg(lvl *world.Level) ([]Face, []StreamedClip, error) {
 	if err := Validate(lvl); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	solids, faces := gatherSolids(lvl)
+	streamed := map[string]bool{}
+	for ci := range lvl.Chunks {
+		if lvl.Chunks[ci].Streamed {
+			streamed[lvl.Chunks[ci].ID] = true
+		}
+	}
+	clips := map[[2]string]*StreamedClip{}
+	report := func(faceChunk, solidChunk string, area float32) {
+		k := [2]string{faceChunk, solidChunk}
+		c := clips[k]
+		if c == nil {
+			c = &StreamedClip{FaceChunk: faceChunk, SolidChunk: solidChunk}
+			clips[k] = c
+		}
+		c.Faces++
+		c.Area += area
+	}
 	out := make([]Face, 0, len(faces))
 	for i := range faces {
-		out = append(out, clipFaceAgainstSolids(faces[i], solids)...)
+		out = append(out, clipFaceAgainstSolidsReporting(faces[i], solids, streamed, report)...)
 	}
-	return out, nil
+	list := make([]StreamedClip, 0, len(clips))
+	for _, c := range clips {
+		list = append(list, *c)
+	}
+	sort.Slice(list, func(a, b int) bool {
+		if list[a].FaceChunk != list[b].FaceChunk {
+			return list[a].FaceChunk < list[b].FaceChunk
+		}
+		return list[a].SolidChunk < list[b].SolidChunk
+	})
+	return out, list, nil
+}
+
+// StreamedClip is surface of one chunk that CSG removed because it was inside a
+// solid of another, where at least one of the two is streamed.
+//
+// The compile treats every baked chunk as present at once, so that removal is
+// permanent — and if the two chunks are not in fact on together, the chunk left
+// on shows a hole where the other one's solid used to be. Between two
+// neighbouring streamed areas that are always switched on together it is
+// harmless, and expected along their seam; between two that are alternatives
+// (a hangar and the ground it hovers over) it is the level being compiled
+// wrongly. Reported, so an author can tell which.
+type StreamedClip struct {
+	FaceChunk  string  // the chunk whose surface was removed
+	SolidChunk string  // the chunk whose solid removed it
+	Faces      int     // how many of FaceChunk's faces lost area to it
+	Area       float32 // how much surface, in square units
 }
 
 // Bakes reports whether the compiler turns this chunk's surfaces into compiled
@@ -180,11 +236,17 @@ func CSG(lvl *world.Level) ([]Face, error) {
 // deciding what to mark as already drawn — and if they ever disagreed the
 // geometry would be either dropped or drawn twice.
 //
-// A disabled chunk is not in the world, and a frame-owned one moves with a
-// vehicle and so cannot be baked into a static world-space list. Both are kept
-// and built the ordinary way.
+// A disabled chunk is not in the world — unless it is marked Streamed, which
+// asks for it to be baked anyway and shown later by a script. A frame-owned one
+// moves with a vehicle, and one marked Moves is moved by a script, and neither
+// can be baked into a static world-space list. All three that are not baked are
+// kept and built the ordinary way.
+//
+// Everything baked is compiled as present at once, so streamed chunks must be
+// able to coexist — see Stats.StreamedClips, which reports the ones that look
+// as though they cannot.
 func Bakes(ch *world.Chunk) bool {
-	return ch.IsEnabled() && ch.FrameOwner == ""
+	return (ch.IsEnabled() || ch.Streamed) && ch.FrameOwner == "" && !ch.Moves
 }
 
 // BakesBrush is Bakes one level down: whether this particular brush of a baking
@@ -242,7 +304,7 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 			}
 
 			if b.Solid {
-				s := solid{order: order, planes: hull}
+				s := solid{order: order, planes: hull, chunk: ch.ID, streamed: ch.Streamed}
 				if len(s.planes) >= 4 {
 					// Fewer than four planes cannot bound a volume, so a brush
 					// with that many is malformed and clips nothing rather
@@ -365,6 +427,13 @@ func facePoints(ws []mgl32.Vec3, f *world.BrushFace) []mgl32.Vec3 {
 // it, so the work is a fold: a face buried by the first brush produces nothing
 // and every later brush is skipped.
 func clipFaceAgainstSolids(f Face, solids []solid) []Face {
+	return clipFaceAgainstSolidsReporting(f, solids, nil, nil)
+}
+
+// clipFaceAgainstSolidsReporting is clipFaceAgainstSolids, calling report with
+// the area a solid of another chunk removed whenever either chunk is streamed.
+func clipFaceAgainstSolidsReporting(f Face, solids []solid, streamed map[string]bool,
+	report func(faceChunk, solidChunk string, area float32)) []Face {
 	frags := [][]mgl32.Vec3{f.Points}
 	lo, hi := bsp.Bounds(f.Points)
 
@@ -384,6 +453,11 @@ func clipFaceAgainstSolids(f Face, solids []solid) []Face {
 		for _, frag := range frags {
 			next = append(next, outsideOf(frag, planes)...)
 		}
+		if report != nil && s.chunk != "" && s.chunk != f.Chunk && (s.streamed || streamed[f.Chunk]) {
+			if lost := fragmentsArea(frags) - fragmentsArea(next); lost > bsp.MinFragmentArea {
+				report(f.Chunk, s.chunk, lost)
+			}
+		}
 		frags = next
 	}
 
@@ -397,6 +471,14 @@ func clipFaceAgainstSolids(f Face, solids []solid) []Face {
 		out = append(out, g)
 	}
 	return out
+}
+
+func fragmentsArea(frags [][]mgl32.Vec3) float32 {
+	a := float32(0)
+	for _, f := range frags {
+		a += bsp.PolygonArea(f)
+	}
+	return a
 }
 
 // clipPlanesFor decides how a solid clips this face, and which of its planes do

@@ -94,6 +94,11 @@ There is no flexbox and no constraint solver.
 Nodes spliced in from an include are shown muted and cannot be selected — editing
 one would write the change into a file that is not the one being edited.
 
+A texture a screen names — a widget's own, a state's, a bar's fill — is loaded
+when the screen goes up, whether the level put it up or a script's
+`show_screen` did. It is ready by the frame after, so an image shown on the
+same tick it is loaded may draw as its plain colour for that one frame.
+
 ## The screen itself
 
 Select the root:
@@ -192,9 +197,44 @@ focus(widget(@pause, "resume"))
 A slider that declares a binding shows the level's number and cannot be
 dragged, so a settings slider is left unbound: its script copies the setting in
 on `:shown:` (`widget(@self, "sens").prop.value = @level.prop.mouse_sensitivity`)
-and writes it back on `:change:`. The engine persists the mouse settings itself
-— see [Entities](11-entities.md#mouse-look-and-the-players-settings) — so the
-screen needs no Save button, and leaving with Escape keeps what was set.
+and writes it back on `:change:`. The engine persists the mouse settings, the
+key bindings and the volume (`@level.prop.master_volume`) itself — see
+[Entities](11-entities.md#mouse-look-and-the-players-settings) — so the screen
+needs no Save button, and leaving with Escape keeps what was set.
+
+Sub-sections are panels. Put each tab's widgets inside a panel and show one at a
+time with `.prop.visible`; a hidden panel takes its buttons out of reach of the
+pointer and the arrow keys alike.
+
+### Rebinding keys
+
+Every gameplay action has two binding slots, 1 and 2. A button for one calls
+`bind_key`, and the player's next key or mouse button press becomes the binding:
+
+```
+on_click(:click:, src ref) when src.id == "jump_1"
+    if bind_key("jump", 1)
+        src.prop.text = "Press a key"
+    end
+
+def on_bound(:bound:, src ref, action str, slot int) -> null
+    widget(@self, "jump_1").prop.text = binding_name("jump", 1)
+end
+```
+
+The press is taken before the UI or the game sees it, so the key being bound
+does not also act. Escape cancels and Backspace clears the slot; `F1`–`F12`,
+`~`, `0`, `8` and `9` belong to the engine and are ignored. `:bound:` arrives
+however it ended, at the screen or widget that called `bind_key`. A key bound
+to one action comes off any other action live at the same moment, so redraw
+every label, not just the one clicked. A vehicle's keys and the on-foot ones
+never clash, so `Q` can be both next weapon and roll left. `reset_bindings()`
+puts everything back.
+
+The actions are `move_forward` `move_back` `move_left` `move_right` `jump`
+`look_up` `look_down` `look_left` `look_right` `sprint` `crouch` `interact`
+`primary_fire` `secondary_fire` `reload` `throw` `next_weapon` `prev_weapon`
+`weapon_1`–`weapon_5` `roll_left` `roll_right` `pitch_up` `pitch_down`.
 
 ## Which screens a level puts up
 

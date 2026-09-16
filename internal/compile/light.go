@@ -39,10 +39,21 @@ package compile
 // A light marked Dynamic is skipped here entirely. It is the one a script
 // moves, dims or sends along a path, and a value frozen into the vertices
 // cannot follow it — so fragment.glsl sums it live on top of the baked answer
-// instead, shadow maps and all. The global ambient has no such switch and is
-// always baked.
+// instead, shadow maps and all. A static light marked NoBake is skipped the same
+// way: it belongs to geometry the compile leaves out, and baked it would stay on
+// whatever it shone on after that geometry had gone. The global ambient has no
+// such switch and is always baked.
+//
+// BakeExclude is the same idea aimed at one chunk rather than the whole bake: a
+// light that should still be baked everywhere else, just not onto a chunk with
+// no lasting reason to carry it (a hangar the level disables for good once the
+// ship has left it, lit for the moment by the same sun the ground outside
+// bakes normally). sample is handed the sampled face's source chunk for
+// exactly this check.
 
 import (
+	"slices"
+
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/bsp"
@@ -92,7 +103,7 @@ func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) {
 		f := &t.Faces[fi]
 		f.Light = make([]mgl32.Vec3, len(f.Points))
 		for i, p := range f.Points {
-			f.Light[i] = b.sample(p, f.Plane.N, f.hull)
+			f.Light[i] = b.sample(p, f.Plane.N, f.hull, f.Chunk)
 		}
 	}
 }
@@ -138,8 +149,10 @@ type baker struct {
 
 // sample is fragment.glsl's lighting loop, for one point on a surface, over the
 // static lights only (see the file comment). hull is the surface's Face.hull,
-// nil unless it is detail.
-func (b *baker) sample(p, n mgl32.Vec3, hull []bsp.Plane) mgl32.Vec3 {
+// nil unless it is detail. chunk is the face's source chunk (Face.Chunk),
+// which is the one thing a light's BakeExclude is checked against — see
+// DirectionalLight.BakeExclude.
+func (b *baker) sample(p, n mgl32.Vec3, hull []bsp.Plane, chunk string) mgl32.Vec3 {
 	g := b.lights.Global
 	out := g.Color.Mul(g.EffectiveBrightness())
 	origin := p.Add(n.Mul(b.opt.ShadowBias))
@@ -147,7 +160,7 @@ func (b *baker) sample(p, n mgl32.Vec3, hull []bsp.Plane) mgl32.Vec3 {
 	for i := range b.lights.Directional {
 		dl := &b.lights.Directional[i]
 		bright := dl.EffectiveBrightness()
-		if bright <= 0 || dl.Dynamic {
+		if bright <= 0 || dl.LitLive() || slices.Contains(dl.BakeExclude, chunk) {
 			continue
 		}
 		d := dl.Direction
@@ -173,7 +186,7 @@ func (b *baker) sample(p, n mgl32.Vec3, hull []bsp.Plane) mgl32.Vec3 {
 		// An attached light is dynamic by construction (PointLight.Attach); the
 		// check is repeated so a level built in code cannot bake one at its
 		// carrier-local offset.
-		if bright <= 0 || pl.Radius <= 0 || pl.Dynamic || !pl.Attach.IsZero() {
+		if bright <= 0 || pl.Radius <= 0 || pl.LitLive() || slices.Contains(pl.BakeExclude, chunk) {
 			continue
 		}
 		toLight := pl.Position.Sub(p)

@@ -244,6 +244,68 @@ func TestVolumetricDeckCoversTheSkyAboveNotBelow(t *testing.T) {
 	}
 }
 
+// A clearing volume empties the cloud and the deck inside it and nothing
+// outside it: the ray through a cleared sphere of cloud reads black, and one
+// through a box cleared somewhere else is still lit white. The camera sits in
+// a clearing box of its own for the deck case — the ship's hold, looking up out
+// of it into a deck that is still there past its roof.
+func TestVolumetricClearsCloudsInsideTheRegionOnly(t *testing.T) {
+	targets := volTestSetup(t)
+	lvl := ambientLevel()
+	clear := func(id string, shape world.VolumeShape, at mgl32.Vec3, half float32) world.Volume {
+		v := world.NewVolume(id, at)
+		v.Shape = shape
+		v.HalfX, v.HalfY, v.HalfZ = half, half, half
+		v.ClearsClouds = true
+		return v
+	}
+	pv := volLook(mgl32.Vec3{0, 0, 1}, mgl32.Vec3{0, 1, 0})
+
+	for _, half := range []bool{true, false} {
+		Volumetrics.HalfRes = half
+
+		lvl.Volumes = []world.Volume{
+			denseCloud(mgl32.Vec3{0, 0, 30}, 10),
+			clear("elsewhere", world.VolumeBox, mgl32.Vec3{0, 0, -50}, 5),
+		}
+		if px := volDraw(t, targets, lvl, pv, 1, volTestSize/2, volTestSize/2); px[0] < 90 {
+			t.Errorf("half=%v: a clear region behind the camera emptied the cloud ahead: %v", half, px)
+		}
+
+		for _, shape := range []world.VolumeShape{world.VolumeSphere, world.VolumeBox, world.VolumeCylinder} {
+			lvl.Volumes = []world.Volume{
+				denseCloud(mgl32.Vec3{0, 0, 30}, 10),
+				clear("hold", shape, mgl32.Vec3{0, 0, 30}, 12),
+			}
+			if px := volDraw(t, targets, lvl, pv, 1, volTestSize/2, volTestSize/2); px[0] > 4 {
+				t.Errorf("half=%v %s: cloud drew inside the region clearing it: %v", half, world.VolumeShapeName(shape), px)
+			}
+			// Disabled, it contains nothing — including the absence of cloud.
+			lvl.Volumes[1].Enabled = false
+			if px := volDraw(t, targets, lvl, pv, 1, volTestSize/2, volTestSize/2); px[0] < 90 {
+				t.Errorf("half=%v %s: a disabled clear region still emptied the cloud: %v", half, world.VolumeShapeName(shape), px)
+			}
+		}
+	}
+
+	sky := world.DefaultSky()
+	deck := world.DefaultSkyClouds()
+	deck.Coverage, deck.Density, deck.Erosion = 1, 1, 0
+	deck.Altitude, deck.Thickness = 40, 30
+	deck.Wind = mgl32.Vec3{}
+	sky.Clouds = &deck
+	lvl.Sky = &sky
+	up := volLook(mgl32.Vec3{0, 1, 0}, mgl32.Vec3{0, 0, 1})
+	lvl.Volumes = []world.Volume{clear("hold", world.VolumeBox, mgl32.Vec3{}, 5)}
+	if px := volDraw(t, targets, lvl, up, 1, volTestSize/2, volTestSize/2); px[0] < 60 {
+		t.Errorf("a small clear region round the camera hid the deck far above it: %v", px)
+	}
+	lvl.Volumes = []world.Volume{clear("column", world.VolumeCylinder, mgl32.Vec3{0, 50, 0}, 60)}
+	if px := volDraw(t, targets, lvl, up, 1, volTestSize/2, volTestSize/2); px[0] > 4 {
+		t.Errorf("a clear region through the deck left cloud overhead: %v", px)
+	}
+}
+
 // The pass hands the frame back exactly as it found it. The frame loop and
 // ImGui both draw straight after it on the assumption that nothing moved.
 func TestVolumetricLeavesGLStateAlone(t *testing.T) {

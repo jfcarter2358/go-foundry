@@ -11,8 +11,8 @@ package collision
 // units vertically in one frame is moving fast enough that exactly which
 // surface it lands on does not matter.
 //
-// Horizontal motion is not tested. A particle that leaves the chunk it was in
-// simply stops being asked about, which is cheap and, for the effects
+// Horizontal motion is not tested. A particle over no chunk at all simply
+// stops being asked about, which is cheap and, for the effects
 // collision is for (sparks skipping off a floor, dust settling),
 // indistinguishable from the right answer. Doing it properly would mean a
 // swept test against every brush face the step crosses, per particle, per
@@ -42,17 +42,51 @@ func ParticleCollide(lvl *world.Level, from, to mgl32.Vec3, r float32) (pos, nor
 	if lvl == nil {
 		return to, mgl32.Vec3{}, false
 	}
-	// Which chunk the step is in is asked once, from where the particle
-	// started, not per sample — the same "close enough" the old height-field
-	// version made.
-	ch := lvl.Frames.World().ChunkAt(lvl, from)
-	if ch == nil {
+	descending := to.Y() <= from.Y()
+
+	// Every chunk the vertical probe passes through — a particle over the
+	// seam between two chunks lands on whichever floor is under it — asked
+	// once for the step, not per sample.
+	lo := mgl32.Vec3{to.X(), min(from.Y(), to.Y()) - particleProbeDepth, to.Z()}
+	hi := mgl32.Vec3{to.X(), max(from.Y(), to.Y()) + particleProbeDepth, to.Z()}
+	var buf [4]*world.Chunk
+	chunks := world.ChunksOverlapping(lvl, lo, hi, buf[:0])
+
+	found := false
+	var hitPoint, hitNormal mgl32.Vec3
+	for _, ch := range chunks {
+		p, n, ok := probeChunkSurface(ch, from, to, descending)
+		if !ok {
+			continue
+		}
+		// The first surface the probe meets, over all of them: the highest
+		// when it runs down, the lowest when it runs up.
+		if !found || (descending && p.Y() > hitPoint.Y()) || (!descending && p.Y() < hitPoint.Y()) {
+			found, hitPoint, hitNormal = true, p, n
+		}
+	}
+	if !found {
 		return to, mgl32.Vec3{}, false
 	}
+	if descending {
+		if to.Y()-r > hitPoint.Y() {
+			return to, mgl32.Vec3{}, false // hasn't reached the surface yet
+		}
+		return mgl32.Vec3{to.X(), hitPoint.Y() + r, to.Z()}, hitNormal, true
+	}
+	if to.Y()+r < hitPoint.Y() {
+		return to, mgl32.Vec3{}, false
+	}
+	return mgl32.Vec3{to.X(), hitPoint.Y() - r, to.Z()}, hitNormal, true
+}
 
+// probeChunkSurface runs the vertical probe through one chunk's brushes, in the
+// chunk's local space, and returns the world point and unit normal of the
+// first solid face it meets. A chunk only turns about Y and scales uniformly,
+// so a vertical probe stays vertical in its space.
+func probeChunkSurface(ch *world.Chunk, from, to mgl32.Vec3, descending bool) (point, normal mgl32.Vec3, ok bool) {
 	lFrom := chunkLocal(ch, from)
 	lTo := chunkLocal(ch, to)
-	descending := lTo.Y() <= lFrom.Y()
 
 	var origin, dir mgl32.Vec3
 	if descending {
@@ -79,8 +113,8 @@ func ParticleCollide(lvl *world.Level, from, to mgl32.Vec3, r float32) (pos, nor
 			f := &b.Faces[fi]
 			pts := b.PlacedFacePoints(f)
 			for i := 1; i+1 < len(pts); i++ {
-				t, ok := rayTriangle(origin, dir, pts[0], pts[i], pts[i+1])
-				if !ok {
+				t, hit := rayTriangle(origin, dir, pts[0], pts[i], pts[i+1])
+				if !hit {
 					continue
 				}
 				if bestT < 0 || t < bestT {
@@ -90,25 +124,12 @@ func ParticleCollide(lvl *world.Level, from, to mgl32.Vec3, r float32) (pos, nor
 		}
 	}
 	if bestT < 0 {
-		return to, mgl32.Vec3{}, false
+		return mgl32.Vec3{}, mgl32.Vec3{}, false
 	}
-
-	hitY := origin.Y() + dir.Y()*bestT
-	if descending {
-		if lTo.Y()-r > hitY {
-			return to, mgl32.Vec3{}, false // hasn't reached the surface yet
-		}
-		lTo = mgl32.Vec3{lTo.X(), hitY + r, lTo.Z()}
-	} else {
-		if lTo.Y()+r < hitY {
-			return to, mgl32.Vec3{}, false
-		}
-		lTo = mgl32.Vec3{lTo.X(), hitY - r, lTo.Z()}
+	point = chunkWorld(ch, origin.Add(dir.Mul(bestT)))
+	normal = ch.LocalToWorldDirection(bestNormal)
+	if n := normal.Len(); n > 1e-9 {
+		normal = normal.Mul(1 / n)
 	}
-
-	worldNormal := ch.LocalToWorldDirection(bestNormal)
-	if n := worldNormal.Len(); n > 1e-9 {
-		worldNormal = worldNormal.Mul(1 / n)
-	}
-	return chunkWorld(ch, lTo), worldNormal, true
+	return point, normal, true
 }

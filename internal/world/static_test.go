@@ -145,3 +145,41 @@ func TestSwitchingAChunkOffHidesItsCompiledSurfaces(t *testing.T) {
 		t.Errorf("after switching it back on: got %v, want everything", got)
 	}
 }
+
+// Hidden is answered from a per-surface table SetChunkHidden rebuilds, and
+// VisibleSurfaces from a per-cell cache — both have to follow every toggle, and
+// Hidden has to stay right for a map someone wrote directly.
+func TestHiddenAndVisibleSurfacesFollowEveryToggle(t *testing.T) {
+	s := twoCellTree()
+	s.Surfaces[0].Chunk = "north"
+	s.Surfaces[1].Chunk = "main"
+	s.Surfaces[2].Chunk = "main"
+	eye := mgl32.Vec3{1, 0, 0}
+
+	for round := 0; round < 3; round++ {
+		s.SetChunkHidden("north", true)
+		s.SetChunkHidden("north", true) // a repeat changes nothing
+		if !s.Hidden(0) || s.Hidden(1) {
+			t.Fatalf("round %d: hidden = %v %v, want north only", round, s.Hidden(0), s.Hidden(1))
+		}
+		if got := s.VisibleSurfaces(eye, nil); len(got) != 1 {
+			t.Fatalf("round %d with north off: %v", round, got)
+		}
+		s.SetChunkHidden("north", false)
+		if s.Hidden(0) {
+			t.Fatalf("round %d: north still hidden after switching it on", round)
+		}
+		if got := s.VisibleSurfaces(eye, nil); len(got) != 2 {
+			t.Fatalf("round %d with north on: %v", round, got)
+		}
+	}
+
+	// Written directly rather than through SetChunkHidden.
+	s.HiddenChunks = map[string]bool{"main": true}
+	if !s.Hidden(1) || s.Hidden(0) {
+		t.Error("a directly written HiddenChunks map was not honoured")
+	}
+	if got := s.VisibleSurfaces(eye, nil); len(got) != 1 || got[0] != 0 {
+		t.Errorf("with main hidden by a direct write: %v, want only north's surface 0", got)
+	}
+}

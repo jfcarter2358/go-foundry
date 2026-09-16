@@ -38,6 +38,40 @@ import (
 
 // ---------- world ----------
 
+// stepLiftSlack is how much taller than a slope could account for a StepUp lift
+// has to be before it is treated as a riser and eased in the drawing. Enough to
+// swallow the settle's own rounding, far short of any step worth seeing.
+const stepLiftSlack = float32(0.02)
+
+// stepAnimLiftThreshold is the smallest StepUp lift worth a whole step_up clip.
+// A kerb or a threshold strip clears this with room to spare; a floor seam or
+// the settle's own rounding does not, so walking down a plain corridor never
+// flickers the clip on every tick's fractional lift.
+const stepAnimLiftThreshold = float32(0.12)
+
+// triggerStepAnim plays anim on a walker's humanoid body attachment, once per
+// stride. Every walker type shipped so far names that attachment "body"
+// (entities/enemy_*.yaml, friendly_rifle.yaml) — the same name the combat
+// script already assumes for hand_socket lookups — so there is no per-type
+// name to plumb through here.
+//
+// Skipped outright while anim is already what the body is playing: NoteStepLift
+// can report a lift more than once for one physical step (a staircase taken
+// tread by tread lands a separate call per tread), and PlayAnimation restarts
+// its clip from the top every time it is asked — without this guard a
+// staircase would flicker the stride instead of playing it once.
+//
+// A model with no "body" attachment, or no step_up/step_down animation on it,
+// simply reports false here and nothing plays — see EntityModel.Play and
+// entity_model.go's Playing.
+func triggerStepAnim(e *world.Entity, anim string) {
+	m := e.Model("body")
+	if m == nil || m.Playing() == anim {
+		return
+	}
+	e.PlayAnimation("body", anim)
+}
+
 // resolveEntityWorld pushes the entity out of level geometry and reports
 // whether it ended up resting on a floor.
 //
@@ -86,32 +120,29 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 
 	pos := oldCenter
 	var hitFloor, hitCeiling bool
+	var chunks []*world.Chunk
+	// How far the step-ups below teleported the body, summed over the sweep,
+	// so the drawing can take it back out and ease over it (world/
+	// entity_step.go). Only lifts StepUp itself made count: the flat resolve
+	// pushing a body up a slope is already continuous.
+	var stepLift float32
 	for i := 0; i < steps; i++ {
 		stepFrom := pos
 		intended := pos.Add(stepTravel)
 
-		// Falls back to where the body already stood if the raw target
-		// briefly lands outside even the destination chunk's own bounds —
-		// see player.go's MovePlayer, which does the same for the same
-		// reason.
-		chunk := frame.ChunkAt(lvl, intended)
-		if chunk == nil {
-			chunk = frame.ChunkAt(lvl, stepFrom)
-		}
+		// Every chunk the step's box overlaps — see player.go's MovePlayer,
+		// which does the same for the same reasons.
+		chunks = solidChunksFor(lvl, frame, stepFrom, intended, mgl32.Vec3{radius, h.Y(), radius}, stepHeight, chunks[:0])
 
 		// Everything the body is solid against, as one function, so a step-up
 		// retries against exactly what stopped the flat move — MovePlayer's
 		// arrangement, for its reason.
 		resolve := func(p mgl32.Vec3) (mgl32.Vec3, bool, bool) {
-			var f, c bool
-			if chunk != nil {
-				// Outside every chunk there is nothing here to resolve against —
-				// an entity over open space is a legitimate thing to be — but
-				// another entity's solid may still be in the way, so the pass
-				// below runs either way.
-				local, lf, lc := pushOutOfChunkBrushes(chunk, chunkLocal(chunk, p), radius, h.Y())
-				p, f, c = chunkWorld(chunk, local), lf, lc
-			}
+			// Outside every chunk there is nothing here to resolve against —
+			// an entity over open space is a legitimate thing to be — but
+			// another entity's solid may still be in the way, so the pass
+			// below runs either way.
+			p, f, c := pushOutOfChunksBrushes(chunks, p, radius, h.Y())
 			// Every other entity's own brushes, which are in their own frames
 			// and so are in none of this one's chunks. See entity_brushes.go.
 			out, ef, ec := resolveAgainstEntityBrushes(lvl, e, frame, p, radius, h.Y())
@@ -120,7 +151,19 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 
 		resolved, f, c := resolve(intended)
 		if stepHeight > 0 {
+			flat := resolved
 			resolved = StepUp(resolve, mgl32.Vec2{intended.X(), intended.Z()}, resolved, stepHeight)
+			// A riser, not a ramp. StepUp also fires on a slope — the flat
+			// resolve leaves the body a hair short in XZ there, which reads as
+			// blocked — and comes back a sliver higher. Walkable ground is no
+			// steeper than 45 degrees, so a lift no taller than this step's own
+			// horizontal travel is a slope being walked, and easing that would
+			// leave a body climbing a ramp drawn sunk into it.
+			lift := resolved.Y() - flat.Y()
+			horiz := mgl32.Vec2{stepTravel.X(), stepTravel.Z()}.Len()
+			if lift > horiz+stepLiftSlack {
+				stepLift += lift
+			}
 		}
 		pos = resolved
 		hitFloor = hitFloor || f
@@ -128,6 +171,15 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 	}
 
 	e.Position = e.Position.Add(pos.Sub(center))
+	if stepLift > 0 && e.Seat == "" {
+		e.NoteStepLift(stepLift, stepHeight)
+		// stepLift > 0 only accumulates inside the stepHeight > 0 branch above,
+		// so this is already gated to an AI-driven, gravity-on walker — the same
+		// case NoteStepLift itself is for.
+		if stepLift >= stepAnimLiftThreshold {
+			triggerStepAnim(e, "step_up")
+		}
+	}
 
 	// Landing and head-bonk both kill vertical velocity, or the entity would go
 	// on accelerating into the surface and jitter against it every frame.

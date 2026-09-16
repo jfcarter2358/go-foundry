@@ -29,7 +29,10 @@ var DebugStats struct {
 	BrushesLoaded int
 	ChunksLoaded  int
 	BrushesDrawn  int
-	ChunksDrawn   int
+	// BrushDrawCalls is how many draw calls the main pass spent on those
+	// brushes — one per material per chunk, plus one per moved brush.
+	BrushDrawCalls int
+	ChunksDrawn    int
 	// A compiled level's static surfaces: how many it has, and how many
 	// survived the visibility set and the frustum this frame. The ratio is the
 	// number to watch — the whole point of compiling is for it to be small in a

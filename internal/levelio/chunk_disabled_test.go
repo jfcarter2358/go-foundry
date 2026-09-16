@@ -3,11 +3,10 @@ package levelio
 // chunk_disabled_test.go — `disabled: true` on a chunk, through the writer and
 // the loader.
 //
-// The load side is the interesting half. A disabled chunk is not merely hidden:
-// its geometry is never built at all, which is what makes writing the flag into
-// a level worth doing for one that streams its areas in. So the assertion is
-// not just that the flag survives, but that nothing was uploaded for it — and
-// that switching it on afterwards produces the chunk the loader would have.
+// The load side is the interesting half. A disabled chunk is built at load like
+// any other, so switching it on costs no stall — unless it sets
+// `unload_when_disabled`, in which case nothing is uploaded for it until a
+// script switches it on, and that produces the chunk the loader would have.
 
 import (
 	"os"
@@ -27,6 +26,7 @@ import (
 const disabledChunkLevelYAML = `chunks:
   - id: area
     disabled: %DISABLED%
+    unload_when_disabled: %UNLOAD%
     origin: {x: 0, y: 0, z: 0}
     rotation: 0
     scale: 1
@@ -60,7 +60,13 @@ func withStubTextures(t *testing.T) {
 
 func writeDisabledChunkLevel(t *testing.T, disabled string) string {
 	t.Helper()
+	return writeChunkLevel(t, disabled, "false")
+}
+
+func writeChunkLevel(t *testing.T, disabled, unload string) string {
+	t.Helper()
 	src := strings.ReplaceAll(disabledChunkLevelYAML, "%DISABLED%", disabled)
+	src = strings.ReplaceAll(src, "%UNLOAD%", unload)
 	path := filepath.Join(t.TempDir(), "areas.yaml")
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
@@ -77,17 +83,11 @@ func brushHasMesh(b *world.Brush) bool {
 	return false
 }
 
-func TestDisabledChunkIsNeverBuiltAtLoad(t *testing.T) {
+func TestDisabledChunkIsBuiltAtLoad(t *testing.T) {
+	// Built behind the loading screen, so a script switching it on mid-play
+	// costs no stall.
 	testenv.WithoutGeometryUploads(t)
 	withStubTextures(t)
-
-	on, err := LoadLevel(writeDisabledChunkLevel(t, "false"))
-	if err != nil {
-		t.Fatalf("enabled load: %v", err)
-	}
-	if !brushHasMesh(&on.Chunks[0].Brushes[0]) {
-		t.Fatal("the fixture builds no geometry even when enabled")
-	}
 
 	off, err := LoadLevel(writeDisabledChunkLevel(t, "true"))
 	if err != nil {
@@ -97,11 +97,46 @@ func TestDisabledChunkIsNeverBuiltAtLoad(t *testing.T) {
 	if ch.IsEnabled() {
 		t.Fatal("`disabled: true` loaded as an enabled chunk")
 	}
+	if ch.Unloaded || !brushHasMesh(&ch.Brushes[0]) {
+		t.Error("a chunk loaded disabled was not built")
+	}
+	if world.SyncChunkGeometry(&off) {
+		t.Error("the first frame's reconcile reported a change the load already indexed")
+	}
+	gen := world.BrushMeshGeneration()
+	if !world.SetChunkEnabled(ch, true) {
+		t.Fatal("switching the chunk on reported no change")
+	}
+	if world.BrushMeshGeneration() != gen {
+		t.Error("switching a built chunk on rebuilt its meshes")
+	}
+}
+
+func TestUnloadWhenDisabledChunkIsNeverBuiltAtLoad(t *testing.T) {
+	testenv.WithoutGeometryUploads(t)
+	withStubTextures(t)
+
+	on, err := LoadLevel(writeChunkLevel(t, "false", "true"))
+	if err != nil {
+		t.Fatalf("enabled load: %v", err)
+	}
+	if !brushHasMesh(&on.Chunks[0].Brushes[0]) {
+		t.Fatal("the fixture builds no geometry even when enabled")
+	}
+
+	off, err := LoadLevel(writeChunkLevel(t, "true", "true"))
+	if err != nil {
+		t.Fatalf("disabled load: %v", err)
+	}
+	ch := &off.Chunks[0]
+	if !ch.UnloadWhenDisabled {
+		t.Fatal("`unload_when_disabled: true` did not load")
+	}
 	if !ch.Unloaded {
-		t.Error("a chunk loaded disabled is not marked unloaded, so nothing would ever build it")
+		t.Error("a chunk loaded disabled with unload_when_disabled is not marked unloaded, so nothing would ever build it")
 	}
 	if brushHasMesh(&ch.Brushes[0]) {
-		t.Error("a chunk loaded disabled uploaded its geometry anyway")
+		t.Error("a chunk loaded disabled with unload_when_disabled uploaded its geometry anyway")
 	}
 
 	// The brushes themselves are still there to be switched on — the skipped
@@ -114,6 +149,14 @@ func TestDisabledChunkIsNeverBuiltAtLoad(t *testing.T) {
 	}
 	if !brushHasMesh(&ch.Brushes[0]) {
 		t.Error("switching the chunk on built no geometry")
+	}
+
+	raw, err := LevelToRaw(&off)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !raw.Chunks[0].UnloadWhenDisabled {
+		t.Error("unload_when_disabled was dropped on the way out")
 	}
 }
 

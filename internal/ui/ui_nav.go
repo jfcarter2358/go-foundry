@@ -43,7 +43,7 @@ func Neighbour(s *Screen, from *Node, d Dir) *Node {
 	}
 
 	if id := from.Nav.inDirection(d); id != "" {
-		if n := s.Find(id); n != nil && n.Focusable() {
+		if n := s.Find(id); n != nil && s.CanFocus(n) {
 			return n
 		}
 		// A wired link pointing at something hidden or deleted falls through to

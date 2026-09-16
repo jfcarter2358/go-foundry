@@ -33,6 +33,7 @@ package editor
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
+	"foundry/internal/render"
 	"foundry/internal/world"
 	"math"
 
@@ -243,9 +244,12 @@ func entityDrawPreview(view, proj mgl32.Mat4, camPos mgl32.Vec3) {
 	if entityShowBrushes {
 		if ch := entityGeomChunk(); ch != nil {
 			m := ch.ModelMatrix()
-			for _, g := range world.ChunkDrawGeometries(ch) {
-				entityDrawGeometry(g, m, entityChunkTint)
-			}
+			// Out of the chunk's batches, which this window's context owns:
+			// they are built here, on first draw, with it current, and
+			// released with the scratch level (entityReleaseGeometry).
+			render.EachChunkBatch(entityGeomLevel, ch, func(b *gfx.Batch) {
+				entityDrawBatch(b, m, entityChunkTint)
+			})
 		}
 	}
 
@@ -266,6 +270,22 @@ func entityDrawPreview(view, proj mgl32.Mat4, camPos mgl32.Vec3) {
 		}
 	}
 	gl.BindVertexArray(0)
+}
+
+// entityDrawBatch draws a whole brush batch under modelProgram — the chunk
+// counterpart of entityDrawGeometry.
+func entityDrawBatch(b *gfx.Batch, model mgl32.Mat4, tint mgl32.Vec3) {
+	if b == nil || b.Verts == 0 {
+		return
+	}
+	gl.UniformMatrix4fv(modelUniforms.model, 1, false, &model[0])
+	gl.Uniform3f(modelUniforms.tint, tint.X(), tint.Y(), tint.Z())
+	gl.Uniform1i(modelUniforms.smoothShading, b.SmoothFlag())
+	gl.Uniform1i(modelUniforms.normalColor, b.NormalColorFlag())
+	gfx.ApplySkinUniforms(&modelSkinUniforms, modelProgram, nil)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, gfx.Textures[b.Texture])
+	b.DrawRanges([]int32{0}, []int32{b.Verts})
 }
 
 // entityDrawGeometry issues one draw under modelProgram.

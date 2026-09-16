@@ -199,6 +199,29 @@ func TestADynamicLightIsNotBaked(t *testing.T) {
 	}
 }
 
+// A static light marked NoBake is left out the same way: it belongs to geometry
+// the compile leaves out, and baked it would stay on the level after that
+// geometry had gone.
+func TestANoBakeLightIsNotBaked(t *testing.T) {
+	light := world.PointLight{
+		Position: mgl32.Vec3{-15, 2, 0}, Color: mgl32.Vec3{1, 1, 1}, Brightness: 1, Radius: 20, NoBake: true,
+	}
+	sun := world.DirectionalLight{Yaw: 0, Pitch: -60, Color: mgl32.Vec3{1, 1, 1}, Brightness: 1, NoBake: true}
+	sun.SyncDirection()
+	tr := litRoom(t, world.LightSet{
+		Global:      world.GlobalLight{Color: mgl32.Vec3{1, 1, 1}, Brightness: 0.1},
+		Points:      []world.PointLight{light},
+		Directional: []world.DirectionalLight{sun},
+	})
+	for fi := range tr.Faces {
+		for _, l := range tr.Faces[fi].Light {
+			if bsp.Abs(l.X()-0.1) > 1e-5 {
+				t.Fatalf("face %d baked %v with only no_bake lights beside the 0.1 ambient", fi, l)
+			}
+		}
+	}
+}
+
 // Cutting on the world grid rather than on each face's own bounds is what makes
 // two faces meeting at an edge agree about where their vertices are. Cut
 // per-face and the shared edge gets vertices on one side with no counterpart on
@@ -238,5 +261,43 @@ func TestFacesAreCutOnTheWorldGrid(t *testing.T) {
 	}
 	if want := totalArea(faces); area < want-0.05 || area > want+0.05 {
 		t.Errorf("the cut pieces cover %v, want the slab's %v", area, want)
+	}
+}
+
+// A light's BakeExclude names chunks its bake skips, while it keeps baking
+// normally into everything else — the hangar-and-ground case this was added
+// for (see world.DirectionalLight.BakeExclude): the sun bakes into the ground
+// but not into a hangar chunk the level disables for good.
+func TestBakeExcludeSkipsOnlyTheNamedChunk(t *testing.T) {
+	lvl := &world.Level{Chunks: []world.Chunk{
+		{ID: "ground", Brushes: []world.Brush{boxFromTo("floor", mgl32.Vec3{-10, -1, -10}, mgl32.Vec3{10, 0, 10})}},
+		{ID: "hangar", Brushes: []world.Brush{boxFromTo("floor", mgl32.Vec3{-10, -1, 20}, mgl32.Vec3{10, 0, 40})}},
+	}}
+	sun := world.DirectionalLight{Yaw: 0, Pitch: -90, Color: mgl32.Vec3{1, 1, 1}, Brightness: 1,
+		BakeExclude: []string{"hangar"}}
+	sun.SyncDirection()
+	lvl.Lights = world.LightSet{
+		Global:      world.GlobalLight{Color: mgl32.Vec3{1, 1, 1}, Brightness: 0.1},
+		Directional: []world.DirectionalLight{sun},
+	}
+
+	faces, err := CSG(lvl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := BuildBSP(faces)
+	BakeLight(tr, lvl, DefaultLightOptions())
+
+	up := mgl32.Vec3{0, 1, 0}
+	ground := faceAt(t, tr, mgl32.Vec3{0, 0, 0}, up)
+	hangar := faceAt(t, tr, mgl32.Vec3{0, 0, 30}, up)
+
+	// Straight down from directly overhead, N·L = 1: ambient 0.1 plus the
+	// sun's full 1.0, exactly the sun's own colour.
+	if got := ground.Light[0].X(); bsp.Abs(got-1.1) > 1e-4 {
+		t.Fatalf("ground (not excluded) baked %v, want the sun included: 1.1", got)
+	}
+	if got := hangar.Light[0].X(); bsp.Abs(got-0.1) > 1e-4 {
+		t.Fatalf("hangar (excluded) baked %v, want only the 0.1 ambient", got)
 	}
 }

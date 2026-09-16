@@ -6,7 +6,7 @@ package script
 // off once the player has passed it and switches the next one on. What the
 // write must NOT do is touch the GPU — a script tick runs before the frame's GL
 // work — so these assert that the property moves the flag and leaves the
-// residency to world.SyncChunkGeometry.
+// reconcile to world.SyncChunkGeometry.
 
 import (
 	"testing"
@@ -39,12 +39,35 @@ func TestChunkEnabledPropertyReadsAndWrites(t *testing.T) {
 	}
 }
 
-func TestChunkEnabledWriteDefersTheGeometryWork(t *testing.T) {
-	// The write is a flag and nothing else: releasing buffers is gl.* work, and
-	// the tick is not a place it may happen. SyncChunkGeometry, which the frame
-	// loop runs between frames, is what closes the gap — so straight after the
-	// write the chunk is disabled but not yet unloaded.
+func TestChunkEnabledWriteDefersTheReconcile(t *testing.T) {
+	// The write is a flag and nothing else. SyncChunkGeometry, which the frame
+	// loop runs between frames, is what notices it — it has to report the
+	// toggle so the spatial hash is rebuilt, even though an ordinary chunk's
+	// geometry stays where it is.
 	lvl := hostTestLevel(t)
+	world.RebuildIndexes(lvl)
+	runScript(t, lvl, "", "def main() -> null\n    @chunk.prop.enabled = false\nend")
+
+	if lvl.Chunks[0].Unloaded {
+		t.Error("the script write unloaded the chunk")
+	}
+	if !world.SyncChunkGeometry(lvl) {
+		t.Fatal("SyncChunkGeometry saw nothing to do after the flag moved")
+	}
+	if lvl.Chunks[0].Unloaded {
+		t.Error("the reconcile unloaded a chunk that did not opt into unloading")
+	}
+	if world.SyncChunkGeometry(lvl) {
+		t.Error("a second reconcile reported more work; it is not idempotent")
+	}
+}
+
+func TestUnloadWhenDisabledDefersTheGeometryWork(t *testing.T) {
+	// With the opt-in, releasing buffers is gl.* work, and the tick is not a
+	// place it may happen: straight after the write the chunk is disabled but
+	// not yet unloaded.
+	lvl := hostTestLevel(t)
+	lvl.Chunks[0].UnloadWhenDisabled = true
 	runScript(t, lvl, "", "def main() -> null\n    @chunk.prop.enabled = false\nend")
 
 	if lvl.Chunks[0].Unloaded {
@@ -72,4 +95,27 @@ func TestDisabledChunkStaysAddressable(t *testing.T) {
 	if !lvl.Chunks[0].IsEnabled() {
 		t.Error("a disabled chunk could not be switched back on by name")
 	}
+}
+
+// Moving a chunk the compiler bakes works in the editor and leaves the surfaces
+// behind in a release build. The linter says so wherever the level would bake
+// it; the runtime says so where it has.
+func TestMovingABakedChunkIsFlagged(t *testing.T) {
+	lvl := hostTestLevel(t)
+	src := script("    @chunk.prop.velocity = <0.0, 1.0, 0.0>")
+	if !issuesMention(lintSource(t, lvl, src), "baked into the compiled level") {
+		t.Error("the linter let a baked chunk's velocity be written")
+	}
+	lvl.Chunks[0].Moves = true
+	if issuesMention(lintSource(t, lvl, src), "baked into the compiled level") {
+		t.Error("the linter flagged a chunk marked moves")
+	}
+
+	lvl = hostTestLevel(t)
+	if got := warningsFrom(t, lvl, "", "    @chunk.prop.origin = <0.0, 1.0, 0.0>"); len(got) != 0 {
+		t.Errorf("an uncompiled chunk's move warned: %q", got)
+	}
+	lvl.Chunks[0].Compiled = true
+	got := warningsFrom(t, lvl, "", "    @chunk.prop.velocity = <0.0, 1.0, 0.0>")
+	wantOneWarning(t, got, "baked into the compiled level", "moves: true")
 }

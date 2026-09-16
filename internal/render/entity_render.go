@@ -75,7 +75,9 @@ func RenderEntities(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, 
 		// An entity riding in a frame has its transform in that frame's
 		// coordinates, so the frame goes on the outside — the same composition
 		// the frame's own chunks get, one level further in.
-		world := e.ModelMatrix()
+		// DrawMatrix, not ModelMatrix: a walker being eased over a step is drawn
+		// on its way up, not where collision snapped it (world/entity_step.go).
+		world := e.DrawMatrix()
 		if !frame.IsWorld() {
 			world = frame.World.Mul4(world)
 		}
@@ -117,7 +119,9 @@ func RenderEntitiesShadow(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms,
 		// An entity riding in a frame has its transform in that frame's
 		// coordinates, so the frame goes on the outside — the same composition
 		// the frame's own chunks get, one level further in.
-		world := e.ModelMatrix()
+		// DrawMatrix, not ModelMatrix: a walker being eased over a step is drawn
+		// on its way up, not where collision snapped it (world/entity_step.go).
+		world := e.DrawMatrix()
 		if !frame.IsWorld() {
 			world = frame.World.Mul4(world)
 		}

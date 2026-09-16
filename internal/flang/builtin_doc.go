@@ -210,6 +210,8 @@ var builtinDocs = []BuiltinDoc{
 		"Send an AI agent along a waypoint animation from its first point, walking to each on the level's navigation and doing what each point's AI block says: waiting, taking cover, holding its fire. `animation` is `@id`, or a name — the agent's own type's path by that name included. Posts `:waypoint:` at each point and `:waypoints_end:` at the end. `null` stops it following."},
 	{GroupWorld, "ai_continue", "ai_continue(agent)", "bool",
 		"Send an agent on from the point of its path it is waiting at — cutting its wait short, or giving the signal a Wait for script point holds for. False if it was not waiting at one."},
+	{GroupWorld, "ai_follow", "ai_follow(agent, leader)  ·  ai_follow(agent, null)", "bool",
+		"Make an agent keep up with a leader — `@player` or an entity — as a squadmate: it keeps a place in a loose group behind it, walks or runs to stay there, fights from where it stands, and regroups once the leader is `ai_follow_leash` away. A waypoint path it is walking comes first. `null` follows nobody."},
 	{GroupWorld, "find_path", "find_path(from, to)  ·  find_path(from, to, entity)", "list|null",
 		"The corners of a walkable route between two vecs or objects, sized for a player or for the given entity, ending at `to`. Null when there is no complete route."},
 	{GroupWorld, "can_see", "can_see(entity, target)", "bool",
@@ -245,4 +247,11 @@ var builtinDocs = []BuiltinDoc{
 		"Ask for a level to be loaded, covered by the `loading` screen. It happens between frames, not at the call, because loading tears down the runtime running the script."},
 	{GroupWorld, "quit_game", "quit_game()", "bool",
 		"Ask for the game to end. Like load_level it happens between frames, not at the call: the window and the GL context belong to the main thread, and only the frame loop may end them. In the editor's play mode it returns to the editor instead."},
+
+	{GroupWorld, "bind_key", "bind_key(action, slot)", "bool",
+		"Listen for the player's next key or mouse button press and make it the binding for an action's slot (1 or 2). Escape cancels, Backspace clears the slot, and the engine's own keys (Escape, `~`, 0, 8, 9, F1–F12) cannot be bound. The key is taken off any other action live at the same time. Call it from a screen or widget script: that screen or widget gets `:bound:` when the press arrives, however it ended."},
+	{GroupWorld, "binding_name", "binding_name(action, slot)", "str",
+		"The name of the key or mouse button in an action's slot (1 or 2), such as \"W\", \"Left Shift\" or \"Mouse Left\"; \"\" when the slot is empty."},
+	{GroupWorld, "reset_bindings", "reset_bindings()", "null",
+		"Put every action back on its default keys. Saved like any rebind."},
 }

@@ -1,6 +1,8 @@
 package world
 
 import (
+	"unsafe"
+
 	"foundry/internal/geom"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -41,6 +43,11 @@ func RebuildSpatialHash(lvl *Level) {
 		return
 	}
 	lvl.Spatial = BuildSpatialHash(lvl.Chunks, SpatialCellSize)
+	// The hash now reflects every chunk's enabled flag, so none of them has a
+	// toggle left for SyncChunkGeometry to report. See Chunk.indexedDisabled.
+	for ci := range lvl.Chunks {
+		lvl.Chunks[ci].indexedDisabled = lvl.Chunks[ci].Disabled
+	}
 }
 
 // BuildSpatialHash creates a spatial hash from all chunks.
@@ -133,6 +140,79 @@ func FindChunkSH(sh *SpatialHash, chunks []Chunk, pos mgl32.Vec3) *Chunk {
 		}
 	}
 	return best
+}
+
+// ChunksOverlapping appends to out every enabled world-space chunk whose world
+// bounds overlap the box [lo, hi], in level order, and returns it.
+//
+// FindChunkSH answers "which one chunk is this point in", which is the right
+// question for where a body is and the wrong one for what it is solid against:
+// a body on the seam between two terrain chunks touches both, a canyon's chunk
+// boxes overlap each other, and a body standing on a chunk whose top is its
+// floor is not inside that chunk at all. Collision asks this instead and
+// resolves against all of them. Every hash cell the box covers is walked, so a
+// wide box finds a chunk whose footprint only reaches one of its corners.
+func ChunksOverlapping(lvl *Level, lo, hi mgl32.Vec3, out []*Chunk) []*Chunk {
+	if lvl == nil {
+		return out
+	}
+	overlaps := func(c *Chunk) bool {
+		if c.InFrame() || !c.IsEnabled() {
+			return false
+		}
+		wmin, wmax := c.WorldBounds()
+		return wmin.X() <= hi.X() && wmax.X() >= lo.X() &&
+			wmin.Y() <= hi.Y() && wmax.Y() >= lo.Y() &&
+			wmin.Z() <= hi.Z() && wmax.Z() >= lo.Z()
+	}
+	sh := lvl.Spatial
+	if sh == nil {
+		for ci := range lvl.Chunks {
+			if overlaps(&lvl.Chunks[ci]) {
+				out = append(out, &lvl.Chunks[ci])
+			}
+		}
+		return out
+	}
+	minX := int(geom.Floor32(lo.X() * sh.InvCell))
+	maxX := int(geom.Floor32(hi.X() * sh.InvCell))
+	minZ := int(geom.Floor32(lo.Z() * sh.InvCell))
+	maxZ := int(geom.Floor32(hi.Z() * sh.InvCell))
+	start := len(out)
+	for cx := minX; cx <= maxX; cx++ {
+		for cz := minZ; cz <= maxZ; cz++ {
+			for _, ci := range sh.Cells[[2]int{cx, cz}] {
+				if ci >= len(lvl.Chunks) {
+					continue // a hash older than the slice; the next rebuild fixes it
+				}
+				c := &lvl.Chunks[ci]
+				dup := false
+				for _, have := range out[start:] {
+					if have == c {
+						dup = true
+						break
+					}
+				}
+				if !dup && overlaps(c) {
+					out = append(out, c)
+				}
+			}
+		}
+	}
+	// Level order, whatever order the cells were walked in, so a body resolves
+	// against the same chunks in the same order wherever it stands.
+	found := out[start:]
+	for i := 1; i < len(found); i++ {
+		for j := i; j > 0 && chunkIndex(lvl, found[j]) < chunkIndex(lvl, found[j-1]); j-- {
+			found[j], found[j-1] = found[j-1], found[j]
+		}
+	}
+	return out
+}
+
+// chunkIndex is c's index in lvl.Chunks; c must point into that slice.
+func chunkIndex(lvl *Level, c *Chunk) int {
+	return int((uintptr(unsafe.Pointer(c)) - uintptr(unsafe.Pointer(&lvl.Chunks[0]))) / unsafe.Sizeof(lvl.Chunks[0]))
 }
 
 // ---------- linear lookups ----------

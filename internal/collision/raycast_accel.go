@@ -567,6 +567,27 @@ func accelFor(lvl *world.Level) *levelAccel {
 	return la
 }
 
+// WarmRaycasts builds every acceleration structure a raycast into lvl would
+// otherwise build on demand: the compiled surfaces' tree and every chunk's,
+// switched off or not.
+//
+// For a level install, behind the loading screen. Built lazily, the first
+// sight line an AI agent casts in a streamed level paid for the whole compiled
+// tree — 117 ms over level1's 67,000 baked surfaces, on the frame the ground's
+// enemies woke — and each chunk's on its first cast after being switched on.
+func WarmRaycasts(lvl *world.Level) {
+	if lvl == nil {
+		return
+	}
+	accelMu.Lock()
+	defer accelMu.Unlock()
+	la := accelFor(lvl)
+	gen := world.BrushMeshGeneration()
+	for ci := range lvl.Chunks {
+		la.perChunk[ci].sync(&lvl.Chunks[ci], gen)
+	}
+}
+
 // ---------- queries ----------
 
 // geometryQuery is one cast through the level's geometry.

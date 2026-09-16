@@ -69,12 +69,8 @@ func roomToStand(p *world.Entity, lvl *world.Level) bool {
 		radius = p.BoundHalfZ
 	}
 	frame := lvl.Frames.FrameFor(p)
-	chunk := frame.ChunkAt(lvl, probe)
-	if chunk == nil {
-		chunk = frame.ChunkAt(lvl, p.Position)
-	}
-	local, _, _ := pushOutOfChunkBrushes(chunk, chunkLocal(chunk, probe), radius, half)
-	if chunkWorld(chunk, local).Sub(probe).Len() > 1e-4 {
+	chunks := solidChunksFor(lvl, frame, p.Position, probe, mgl32.Vec3{radius, half, radius}, 0, nil)
+	if local, _, _ := pushOutOfChunksBrushes(chunks, probe, radius, half); local.Sub(probe).Len() > 1e-4 {
 		return false
 	}
 	out, _, _ := resolveAgainstEntityBrushes(lvl, p, frame, probe, radius, half)

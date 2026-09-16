@@ -66,8 +66,31 @@ type StaticGeometry struct {
 	Vis  *bsp.PVS
 
 	// HiddenChunks names the compiled chunks currently switched off. See
-	// Hidden, which is why this exists at all.
+	// Hidden, which is why this exists at all. Write it through SetChunkHidden,
+	// which keeps the per-surface answer below in step.
 	HiddenChunks map[string]bool
+
+	// hidden is Hidden's answer per surface, rebuilt when a chunk's state
+	// changes, and hiddenCount the size of HiddenChunks it was built from. A
+	// streamed level asks Hidden of tens of thousands of surfaces a frame —
+	// the visibility walk, the raycasts — and a map lookup by chunk name each
+	// time was most of a frame's CPU. A map changed behind SetChunkHidden's
+	// back shows up as a different size and falls back to the lookup.
+	hidden      []bool
+	hiddenCount int
+	// hiddenVersion counts changes to what is hidden, for the caches below.
+	hiddenVersion uint64
+
+	// visible caches VisibleSurfaces' last answer: the cell it was for, the
+	// hidden state it was built against, and the list. With coarse visibility
+	// a cell sees most of the level, and walking every visible cell's face
+	// list again on every frame the camera stays in the same cell bought
+	// nothing.
+	visibleLeaf    int
+	visibleVersion uint64
+	visibleCount   int
+	visibleValid   bool
+	visible        []int
 
 	// seen is the dedup scratch VisibleSurfaces fills, kept here so the frame
 	// loop allocates nothing. A surface bounds more than one cell whenever a
@@ -93,22 +116,36 @@ func (s *StaticGeometry) Hidden(i int) bool {
 	if s == nil || len(s.HiddenChunks) == 0 || i < 0 || i >= len(s.Surfaces) {
 		return false
 	}
+	if len(s.hidden) == len(s.Surfaces) && s.hiddenCount == len(s.HiddenChunks) {
+		return s.hidden[i]
+	}
 	return s.HiddenChunks[s.Surfaces[i].Chunk]
 }
 
 // SetChunkHidden records that a compiled chunk has been switched off, or on.
+//
+// Called for every compiled chunk every frame (SyncChunkGeometry), so a call
+// that changes nothing returns before touching anything.
 func (s *StaticGeometry) SetChunkHidden(chunkID string, hidden bool) {
-	if s == nil {
+	if s == nil || s.HiddenChunks[chunkID] == hidden {
 		return
 	}
 	if !hidden {
 		delete(s.HiddenChunks, chunkID)
-		return
+	} else {
+		if s.HiddenChunks == nil {
+			s.HiddenChunks = map[string]bool{}
+		}
+		s.HiddenChunks[chunkID] = true
 	}
-	if s.HiddenChunks == nil {
-		s.HiddenChunks = map[string]bool{}
+	if len(s.hidden) != len(s.Surfaces) {
+		s.hidden = make([]bool, len(s.Surfaces))
 	}
-	s.HiddenChunks[chunkID] = true
+	for i := range s.Surfaces {
+		s.hidden[i] = s.HiddenChunks[s.Surfaces[i].Chunk]
+	}
+	s.hiddenCount = len(s.HiddenChunks)
+	s.hiddenVersion++
 }
 
 // VisibleSurfaces returns the surface indices to draw from a point, appending
@@ -126,6 +163,10 @@ func (s *StaticGeometry) VisibleSurfaces(eye mgl32.Vec3, out []int) []int {
 		// The camera is in material or in the void. Nothing was computed for
 		// there, so draw the level rather than a hole in it.
 		return append(out, s.everything()...)
+	}
+	if s.visibleValid && s.visibleLeaf == leaf && s.visibleVersion == s.hiddenVersion &&
+		s.visibleCount == len(s.HiddenChunks) {
+		return append(out, s.visible...)
 	}
 
 	if len(s.seen) != len(s.Surfaces) {
@@ -146,6 +187,8 @@ func (s *StaticGeometry) VisibleSurfaces(eye mgl32.Vec3, out []int) []int {
 			}
 		}
 	}
+	s.visible = append(s.visible[:0], out...)
+	s.visibleLeaf, s.visibleVersion, s.visibleCount, s.visibleValid = leaf, s.hiddenVersion, len(s.HiddenChunks), true
 	return out
 }
 

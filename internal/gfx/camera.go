@@ -152,8 +152,11 @@ const MaxPitch = float32(math.Pi/2 - 0.01)
 // Gameplay uses MoveIntent instead and moves the player, because a body and the
 // eyes riding it stop agreeing the moment the body is standing on something
 // that can rotate.
+//
+// The editor flies on the default layout, not the player's: see
+// platform/bindings.go.
 func HandleInput(keyStates []uint8) {
-	Cam.Position = Cam.Position.Add(MoveIntent(keyStates))
+	Cam.Position = Cam.Position.Add(moveIntent(keyStates, &platform.DefaultBindings))
 	UpdateCamMatrix()
 }
 
@@ -167,7 +170,13 @@ func HandleInput(keyStates []uint8) {
 // The returned vector is in the camera's own yaw-relative basis with WorldUp as
 // its vertical, which is world space while the viewer is standing on the world.
 // A caller whose viewer is standing in a rotating frame rotates it first.
+//
+// The keys are the player's own layout (platform.Bindings).
 func MoveIntent(keyStates []uint8) mgl32.Vec3 {
+	return moveIntent(keyStates, &platform.Bindings)
+}
+
+func moveIntent(keyStates []uint8, b *platform.BindingTable) mgl32.Vec3 {
 	// Scale movement and rotation by DeltaTime*60 so behavior is frame-rate independent
 	// while preserving the same feel as the original 60 FPS-tuned constants.
 	dtScale := platform.DeltaTime * 60.0
@@ -178,39 +187,39 @@ func MoveIntent(keyStates []uint8) mgl32.Vec3 {
 	uMove := float32(0.0)
 	rMove := float32(0.0)
 
-	if keyStates[sdl.SCANCODE_W] != 0 {
+	if b.Held(platform.ActMoveForward, keyStates) {
 		fMove += moveSpeed
 	}
-	if keyStates[sdl.SCANCODE_A] != 0 {
+	if b.Held(platform.ActMoveLeft, keyStates) {
 		rMove += moveSpeed
 	}
-	if keyStates[sdl.SCANCODE_S] != 0 {
+	if b.Held(platform.ActMoveBack, keyStates) {
 		fMove -= moveSpeed
 	}
-	if keyStates[sdl.SCANCODE_D] != 0 {
+	if b.Held(platform.ActMoveRight, keyStates) {
 		rMove -= moveSpeed
 	}
-	if keyStates[sdl.SCANCODE_SPACE] != 0 {
+	if b.Held(platform.ActJump, keyStates) {
 		if !platform.GravityEnabled {
 			uMove += moveSpeed // free-fly up
 		}
 		// jump is handled via KEYDOWN event in HandleEvent
 	}
-	if keyStates[sdl.SCANCODE_LSHIFT] != 0 {
+	if b.Held(platform.ActSprint, keyStates) {
 		if !platform.GravityEnabled {
-			uMove -= moveSpeed // free-fly down
+			uMove -= moveSpeed // free-fly down, on the sprint key
 		}
 	}
-	if keyStates[sdl.SCANCODE_LEFT] != 0 {
+	if b.Held(platform.ActLookLeft, keyStates) {
 		Cam.Yaw -= rotSpeed
 	}
-	if keyStates[sdl.SCANCODE_RIGHT] != 0 {
+	if b.Held(platform.ActLookRight, keyStates) {
 		Cam.Yaw += rotSpeed
 	}
-	if keyStates[sdl.SCANCODE_UP] != 0 {
+	if b.Held(platform.ActLookUp, keyStates) {
 		Cam.Pitch += rotSpeed
 	}
-	if keyStates[sdl.SCANCODE_DOWN] != 0 {
+	if b.Held(platform.ActLookDown, keyStates) {
 		Cam.Pitch -= rotSpeed
 	}
 

@@ -19,7 +19,8 @@ package hooks
 // between the event being recorded and the event being delivered.
 type UIEvent struct {
 	// Atom is the event's name without its colons: "click", "hover",
-	// "unhover", "change", "submit", "finished", "cancel", "shown", "hidden".
+	// "unhover", "change", "submit", "finished", "cancel", "shown", "hidden",
+	// "bound".
 	Atom   string
 	Screen string
 	// Widget is empty for a screen-scoped event such as cancel or shown.

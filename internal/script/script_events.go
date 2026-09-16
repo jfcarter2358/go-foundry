@@ -78,6 +78,42 @@ var scriptEvents = scriptEventState{
 	spawned:  map[flang.RefVal]bool{},
 }
 
+// forgetNamesake drops everything this ref's last occupant left behind, so that
+// a new object handed its name starts the way any other new object does.
+//
+// A name is freed the moment the object holding it is destroyed, and `spawn`
+// hands out the first free name of a type — so the grenade thrown after one has
+// gone off is `grenade` again, and so is the one after that. Three pieces of
+// per-object bookkeeping are keyed by that name and would otherwise carry
+// across:
+//
+//   - `spawned`, which is what makes `:spawn:` fire once per object rather than
+//     every frame. Inherited, the new grenade never hears `:spawn:` at all —
+//     its fuse is never lit, and it lies on the floor forever.
+//   - `overlaps`, last frame's containment. Inherited, an object born inside
+//     the volume its namesake died in is never seen to enter it.
+//   - pending timers. Inherited, the dead one's `after(2500, :detonate:)`
+//     lands on the live one, which goes off early through no fault of its own.
+//
+// Called from `spawn` rather than from `destroy`, so that an object's own
+// `:destroy:` handler — which is delivered after the removal — still has all
+// of it.
+func forgetNamesake(r flang.RefVal) {
+	delete(scriptEvents.spawned, r)
+	for p := range scriptEvents.overlaps {
+		if p.container == r || p.other == r {
+			delete(scriptEvents.overlaps, p)
+		}
+	}
+	kept := scriptEvents.timers[:0]
+	for _, t := range scriptEvents.timers {
+		if t.to != r {
+			kept = append(kept, t)
+		}
+	}
+	scriptEvents.timers = kept
+}
+
 // ScriptEventsReset clears the derived-event state. Called whenever the level is
 // replaced: the previous frame's overlaps describe objects that no longer exist.
 func ScriptEventsReset() {
@@ -504,6 +540,8 @@ func uiEventArgs(ev hooks.UIEvent) []flang.Value {
 		return []flang.Value{src, uiChangeValue(ev)}
 	case "submit":
 		return []flang.Value{src, flang.StrVal(ev.Str)}
+	case "bound":
+		return []flang.Value{src, flang.StrVal(ev.Str), flang.IntVal(int64(ev.Num))}
 	}
 	return []flang.Value{src}
 }

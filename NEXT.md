@@ -2,6 +2,39 @@
 
 ## Done
 
+- [x] Friendly units and squads. An AI agent can follow a leader — `ai: follow:`
+      or `ai_follow(@agent, @player)` — keeping a place in a loose group
+      spread across an arc behind it (each member nudged by an amount fixed to
+      its ID), measured against the way the leader has been walking rather than
+      its facing. It
+      walks alongside a leader on the move, settles on its slot when the leader
+      stops, runs at `run_speed` (playing `run_anim`) once it has fallen well
+      behind, and tries a spot closer in when its own is off the grid or a long
+      walk from the leader. With a target it fights from where it stands until the
+      leader is `follow_leash` away, then regroups — back to its slot still
+      facing and engaging. A waypoint path outranks the leader, so a squadmate
+      can be sent somewhere and falls back in at the end. New modes
+      `:escorting:` and `:regrouping:`; props `ai_follow`,
+      `ai_follow_distance`, `ai_follow_leash`, `ai_run_speed`; a Leader group
+      in the AI panel.
+      Agents now ride ships: an AI walker that steps onto an entity's own
+      brushes boards its frame (and steps off again) as the player does, the
+      controller steers in world space and carries velocity and yaw into the
+      frame, and aboard something moving it holds where it stands until it
+      stops. Navigation bakes a frame's chunks while their frame is at rest and
+      upright (`world.FrameAtRest`), so a parked ship's hold is walkable; an
+      agent aboard gets no grid while a rebuild is pending. A target that is
+      hidden or has its controller switched off is no longer a target — how a
+      dead or sleeping agent drops off the other side's list.
+      Content (level1): `entities/friendly_rifle.yaml` (the enemy rifleman in
+      `friendly_uniform`, `enemy_combat.flang` told its side by `ally_tag`/
+      `foe_tag`/`fights_player`); enemies hunt `#friendly`; player rounds pass
+      through friendlies, grenades and rockets hurt them. `squad_1` waits in the
+      hold, `squad_2` walks in along `squad_2_board` once the player is aboard,
+      and the ship leaves when both are in; at the landing zone they jump down
+      along the ship type's `disembark_1/2` paths and fall in behind the
+      player (`scripts/level1/dropship_trigger.flang`).
+
 - [x] AI waypoint paths. An AI agent walks a waypoint animation stop by stop —
       its `ai: waypoints:` (a level ID or its type's own path name, with
       `waypoints_loop`) or `ai_follow_waypoints` — finding its own way to each
@@ -766,7 +799,7 @@
 - [ ] No weapon state
 - [ ] Volumes where player has to hold their weapon down/firing is disabled
 - [ ] Enable AI to enter vehicles
-- [ ] Friendly units
 - [ ] RTS mode
 - [ ] 3rd person mode
 - [ ] Audio control
+i- [ ] Shader editor

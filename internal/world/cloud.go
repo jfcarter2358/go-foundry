@@ -220,6 +220,27 @@ func CloudVolumes(vols []Volume) []*Volume {
 	return out
 }
 
+// MaxCloudClearVolumes is how many cloud-clearing regions the march carries.
+// MUST match VOL_MAX_CLEARS in volume_frag.glsl.
+//
+// Four, because each one is a test on every sample of every cloud march, and
+// the case that asked for them — a ship's hold, a cockpit, a hangar — wants
+// one or two in view. Past it the later ones in level order among those in view
+// are dropped, the truncation FogVolumes makes, and the cloud simply shows
+// inside them.
+const MaxCloudClearVolumes = 4
+
+// ClearsCloudsNow reports whether the volume is keeping cloud out this frame:
+// the flag, the volume's own Enabled, and a real region. A disabled volume
+// contains nothing — HasFog's rule — and that includes the absence of cloud.
+//
+// A carried one counts like any other: it is a level volume by the time
+// anything draws, and its basis and centre follow the carrier through
+// WorldFogBasis and WorldPosition, so the clear region flies with the ship.
+func (v *Volume) ClearsCloudsNow() bool {
+	return v != nil && v.ClearsClouds && v.Enabled && v.HasBounds()
+}
+
 // VolumeCloudFromRaw reads the optional per-volume cloud block; nil in, nil
 // out, so a plain trigger stays one across a save.
 func VolumeCloudFromRaw(r *RawVolumeCloud) *VolumeCloud {

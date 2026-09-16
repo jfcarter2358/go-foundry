@@ -53,6 +53,30 @@ var session uint64 = 1
 // which spot in a volume to stand on. Seeded, so a test is repeatable.
 var rng = rand.New(rand.NewSource(1))
 
+// AsyncNav makes the controllers build navigation off the frame loop's thread:
+// a level whose shape changes keeps its old grids until new ones are ready, and
+// an agent with no grid at all yet holds still. Set by the app for play; left
+// off, every request builds on the spot, which is what tests and tools expect.
+// See nav.SyncAsync.
+var AsyncNav bool
+
+// gridFor is the navigation an agent's controller plans on this tick — nil only
+// under AsyncNav, when none has been built for it yet.
+//
+// An agent aboard a frame gets nil, too, while the grid is stale: a ship that
+// has just set down is in the level's shape but not yet in any grid, and a path
+// planned on the old one would not know its hold is there.
+func gridFor(lvl *world.Level, e *world.Entity) *nav.Grid {
+	if AsyncNav {
+		g, fresh := nav.ForReady(lvl, ProfileFor(lvl, e))
+		if !fresh && e != nil && e.Frame != "" {
+			return nil
+		}
+		return g
+	}
+	return nav.For(lvl, ProfileFor(lvl, e))
+}
+
 // ResetSession forgets every agent's runtime state and every built grid. Called
 // wherever the script events are reset — a level load, entering and leaving
 // play — since those are exactly the moments a guard should start its round
@@ -82,7 +106,11 @@ func Update(lvl *world.Level, dt float32, player *world.Entity) bool {
 	if !any {
 		return false
 	}
-	nav.Sync(lvl)
+	if AsyncNav {
+		nav.SyncAsync(lvl)
+	} else {
+		nav.Sync(lvl)
+	}
 	wrote := false
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]
@@ -117,6 +145,9 @@ type intent struct {
 	// faceWhileMoving turns the agent to facePos as it walks, rather than the
 	// way it is walking — holding a target in its sights along a path.
 	faceWhileMoving bool
+	// moveAnim replaces the agent's MoveAnim while it is actually moving —
+	// running to catch up — and leaves its idle alone when it is not.
+	moveAnim string
 }
 
 // stateFor returns an agent's runtime state, starting a fresh one on its first
@@ -163,11 +194,21 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 	in := decide(lvl, e, st, dt, player)
 	st.Mode = in.mode
 
-	// Riding something, seated, or being moved by a script: the agent still
-	// notices and decides, so its events keep coming, but whatever is moving
-	// it owns the body.
+	// Seated, or being moved by a script: the agent still notices and decides,
+	// so its events keep coming, but whatever is moving it owns the body.
 	if !canSteer(e) {
 		return false
+	}
+	// Aboard something that is moving: it stays on its feet where it stands,
+	// still turning to what it faces, and walks on once the thing under it
+	// stops. Nothing it was doing is over — a path, a command, keeping up —
+	// only paused, since navigation has no floor under it to plan on until
+	// then (nav's navigable).
+	if in.move && !world.FrameAtRest(lvl, e.Frame) {
+		in.move = false
+		if in.faceWhileMoving {
+			in.face = true
+		}
 	}
 
 	moving := false
@@ -176,10 +217,13 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 		moving = res == followMoving
 		if in.faceWhileMoving {
 			if d := in.facePos.Sub(feetOf(lvl, e)); d.X()*d.X()+d.Z()*d.Z() > 1e-4 {
-				turnTo(e, yawToward(d), spec.TurnRate*dt)
+				turnTo(lvl, e, yawToward(d), spec.TurnRate*dt)
 			}
 		}
 		switch {
+		case res == followHolding:
+			// Navigation is still being built: nothing has ended, the walk
+			// has not started yet.
 		case in.mode == world.AIMoving && st.Command && res != followMoving:
 			// A command ends however the walk does. One that could not be
 			// carried out in full says so, rather than holding the agent at
@@ -195,17 +239,25 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 		case in.mode == world.AIWandering && res != followMoving:
 			st.Wandering = false
 			st.WanderTimer = spec.WanderPause * (0.5 + rng.Float32())
+		case (in.mode == world.AIEscorting || in.mode == world.AIRegrouping) && res != followMoving && res != followHolding:
+			// At the slot, or as near it as the level allows: stand until the
+			// leader's movement opens the gap again. Behind a leader still on
+			// the move it only brakes for the tick, and the slot's next re-pick
+			// sets it walking again without waiting for a gap.
+			if !leaderMoving(st) {
+				st.FollowMoving, st.FollowRunning = false, false
+			}
 		}
 	} else {
 		clearPath(st)
 		brake(e, spec, dt)
 		switch {
 		case in.faceYawOn:
-			turnTo(e, in.faceYaw, spec.TurnRate*dt)
+			turnTo(lvl, e, in.faceYaw, spec.TurnRate*dt)
 		case in.face:
 			d := in.facePos.Sub(feetOf(lvl, e))
 			if d.X()*d.X()+d.Z()*d.Z() > 1e-4 {
-				turnTo(e, yawToward(d), spec.TurnRate*dt)
+				turnTo(lvl, e, yawToward(d), spec.TurnRate*dt)
 			}
 		}
 	}
@@ -213,6 +265,9 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 	anim := spec.IdleAnim
 	if moving {
 		anim = spec.MoveAnim
+		if in.moveAnim != "" {
+			anim = in.moveAnim
+		}
 	}
 	if in.anim != "" {
 		anim = in.anim
@@ -222,8 +277,12 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 }
 
 // canSteer reports whether the controller may write the entity's motion.
+//
+// Standing aboard a frame is not in the way: the controller steers in world
+// space and carries what it writes into the frame (steer, turnTo). Sitting in
+// one of its seats is.
 func canSteer(e *world.Entity) bool {
-	return e.Frame == "" && e.Seat == "" && !e.IsVehicle() &&
+	return e.Seat == "" && !e.IsVehicle() &&
 		e.Waypoints == nil && !e.Tweens.Easing(world.TweenMove)
 }
 
@@ -233,6 +292,13 @@ func decide(lvl *world.Level, e *world.Entity, st *world.AIState, dt float32, pl
 	arrive := spec.ArriveRadius
 	if arrive <= 0 {
 		arrive = world.DefaultAISpec().ArriveRadius
+	}
+
+	leader := leaderOf(lvl, e, player)
+	if leader != nil {
+		trackLeader(lvl, e, st, leader, dt)
+	} else if st.FollowLeader != "" {
+		forgetLeader(st)
 	}
 
 	if st.Command {
@@ -283,14 +349,23 @@ func decide(lvl *world.Level, e *world.Entity, st *world.AIState, dt float32, pl
 		st.RouteArrived, st.RoutePicked = false, false
 		st.HasCover, st.InCover = false, false
 		engageEvents(lvl, e, st, tgt, dt)
+		if leader != nil && route.anim == nil {
+			if in, ok := regroupIntent(lvl, e, st, leader, tgt, dt, arrive); ok {
+				return in
+			}
+		}
 		return engage(lvl, e, st, tgt, mode, arrive)
 	}
 	if st.InRange {
 		st.InRange = false
 	}
+	st.FollowRegroup = false
 
 	if route.anim != nil {
 		return routeIntent(lvl, e, st, route, nil, dt, arrive)
+	}
+	if leader != nil {
+		return followIntent(lvl, e, st, leader, arrive)
 	}
 	if in, ok := objectiveIntent(lvl, e, st, dt, arrive); ok {
 		return in
@@ -375,7 +450,7 @@ func wanderIntent(lvl *world.Level, e *world.Entity, st *world.AIState, dt, arri
 		return intent{mode: world.AIIdle}
 	}
 	st.WanderTimer = spec.WanderPause * (0.5 + rng.Float32())
-	grid := nav.For(lvl, ProfileFor(lvl, e))
+	grid := gridFor(lvl, e)
 	if grid == nil || len(grid.Nodes) == 0 {
 		return intent{mode: world.AIIdle}
 	}
@@ -469,6 +544,21 @@ func ProfileFor(lvl *world.Level, e *world.Entity) nav.Params {
 		}
 	}
 	return p
+}
+
+// targetable reports whether an entity is still something to hunt: in the
+// level to be seen, and — when it runs a controller of its own — with that
+// controller switched on. The second is how a combat script says an agent is
+// dead, or asleep until its part of the level wakes (`ai_enabled = false`), so
+// an agent on the other side stops shooting at a corpse. The player always is.
+func targetable(e, player *world.Entity) bool {
+	if e == nil {
+		return false
+	}
+	if e == player || e == world.PlayerEntity {
+		return true
+	}
+	return e.Visible && (e.AI == nil || e.AI.Enabled)
 }
 
 // targetEntity resolves a target ID, "player" included.

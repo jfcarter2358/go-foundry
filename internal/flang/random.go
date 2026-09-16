@@ -96,3 +96,13 @@ func (in *Interp) randomIntBetween(lo, hi int64) int64 {
 	}
 	return lo + int64(in.nextRandom()%span)
 }
+
+// RandomUnit is randomUnit for a host verb: a draw in [0, 1) from the
+// interpreter whose script is running.
+//
+// Exported because some engine verbs are themselves random — a shot that
+// scatters inside a cone — and a draw made from a separate source would be
+// outside everything SeedRandom is for. A replay that pins the seed has to pin
+// the bullets too, so those verbs draw from here rather than from a generator
+// of their own.
+func (in *Interp) RandomUnit() float64 { return in.randomUnit() }

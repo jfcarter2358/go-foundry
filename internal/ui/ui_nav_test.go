@@ -110,3 +110,30 @@ func idOrEmpty(n *Node) string {
 	}
 	return n.ID
 }
+
+// A widget inside a hidden panel — a settings tab that is not showing — must
+// be out of reach of the arrow keys, focus() and an explicit nav link alike.
+func TestHiddenPanelHidesItsChildrenFromFocus(t *testing.T) {
+	tab := at("tab", KindPanel, 0, 200, 400, 200)
+	tab.Children = []Node{at("inner", KindButton, 0, 0, 100, 100)}
+	top := at("top", KindButton, 0, 0, 100, 100)
+	top.Nav.Down = "inner"
+	s := solved(top, tab)
+
+	inner := s.Find("inner")
+	if !s.CanFocus(inner) || Neighbour(s, s.Find("top"), DirDown) != inner {
+		t.Fatal("a visible panel's child should be reachable")
+	}
+	s.Find("tab").Visible = false
+	if s.CanFocus(inner) {
+		t.Error("CanFocus is true inside a hidden panel")
+	}
+	if got := Neighbour(s, s.Find("top"), DirDown); got != nil {
+		t.Errorf("down from top reached %q inside a hidden panel", got.ID)
+	}
+	for _, n := range s.Focusables() {
+		if n.ID == "inner" {
+			t.Error("Focusables lists a node inside a hidden panel")
+		}
+	}
+}

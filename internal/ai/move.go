@@ -9,8 +9,9 @@ package ai
 // headway for a while, which is what a door shut in its face or a crowd in a
 // corridor looks like from inside the controller.
 //
-// A level with no navigation at all — open space, nothing built — is steered
-// straight at the goal instead. An agent with no gravity follows the path's
+// A level with no navigation at all — open space, nothing to build on — is
+// steered straight at the goal instead. A level whose navigation is still being
+// built in the background (AsyncNav) is not that: its agents hold still. An agent with no gravity follows the path's
 // heights as well as its turns, which is what makes a hovering drone take the
 // stairs rather than the floor under them.
 
@@ -18,7 +19,6 @@ import (
 	"math"
 
 	"foundry/internal/hooks"
-	"foundry/internal/nav"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -33,6 +33,9 @@ const (
 	followBlocked
 	// followFailed is no path at all.
 	followFailed
+	// followHolding is waiting for navigation to be built (ai.AsyncNav): the
+	// agent stands still, and nothing about the walk is reported as over.
+	followHolding
 )
 
 // follow steers the agent one tick along a path to goal.
@@ -57,7 +60,11 @@ func follow(lvl *world.Level, e *world.Entity, st *world.AIState, goal mgl32.Vec
 	jumped := shift > arrive*0.5
 	drifted := shift > maxf(0.5, 0.2*goal.Sub(feet).Len())
 	if !st.HasPath || jumped || (drifted && st.RepathTimer <= 0) {
-		if !plan(lvl, e, st, feet, goal) {
+		switch plan(lvl, e, st, feet, goal) {
+		case planHold:
+			brake(e, spec, dt)
+			return followHolding
+		case planFailed:
 			st.FailTimer = failHold
 			hooks.RecordAIEvent(hooks.AIEvent{Atom: "ai_path_failed", Agent: e.ID})
 			brake(e, spec, dt)
@@ -102,35 +109,51 @@ func follow(lvl *world.Level, e *world.Entity, st *world.AIState, goal mgl32.Vec
 		}
 	}
 
-	steer(e, spec, feet, target, last, speedScale, faceMove, dt)
+	steer(lvl, e, spec, feet, target, last, speedScale, faceMove, dt)
 	return followMoving
 }
 
+type planResult int
+
+const (
+	planOK planResult = iota
+	planFailed
+	// planHold is no grid yet (ai.AsyncNav): not a failure, and above all not
+	// the straight line — an agent steered straight at its goal while the
+	// level's navigation builds walks into the walls.
+	planHold
+)
+
 // plan finds a path and installs it. A level with no navigation to speak of
 // gets a straight line.
-func plan(lvl *world.Level, e *world.Entity, st *world.AIState, feet, goal mgl32.Vec3) bool {
+func plan(lvl *world.Level, e *world.Entity, st *world.AIState, feet, goal mgl32.Vec3) planResult {
 	st.RepathTimer = repathInterval
 	st.PathGoal = goal
 	st.PathIndex = 0
 	st.StuckTimer = 0
 	st.BestDist = float32(math.MaxFloat32)
 
-	grid := nav.For(lvl, ProfileFor(lvl, e))
+	grid := gridFor(lvl, e)
+	if grid == nil && AsyncNav {
+		st.HasPath = false
+		st.Path = st.Path[:0]
+		return planHold
+	}
 	if grid == nil || len(grid.Nodes) == 0 {
 		st.Path = append(st.Path[:0], goal)
 		st.HasPath, st.PathPartial = true, false
-		return true
+		return planOK
 	}
 	p, ok := grid.FindPath(feet, goal)
 	if !ok {
 		st.HasPath = false
 		st.Path = st.Path[:0]
-		return false
+		return planFailed
 	}
 	st.Path = append(st.Path[:0], p.Points...)
 	st.HasPath = true
 	st.PathPartial = p.Partial
-	return true
+	return planOK
 }
 
 // clearPath forgets the current path, so the next move plans afresh.
@@ -145,7 +168,16 @@ func clearPath(st *world.AIState) {
 
 // steer accelerates the agent toward a corner, and turns it to face the way it
 // is going.
-func steer(e *world.Entity, spec *world.AISpec, feet, target mgl32.Vec3, last bool, speedScale float32, faceMove bool, dt float32) {
+//
+// The steering is worked in world space, where the path is. An agent aboard a
+// frame keeps its Velocity in that frame's coordinates, so the velocity is
+// carried out to be steered and back in to be stored.
+func steer(lvl *world.Level, e *world.Entity, spec *world.AISpec, feet, target mgl32.Vec3, last bool, speedScale float32, faceMove bool, dt float32) {
+	var frame *world.Frame
+	if e.Frame != "" {
+		frame = lvl.Frames.FrameFor(e)
+	}
+	vel := frame.DirToWorld(e.Velocity)
 	dir := mgl32.Vec3{target.X() - feet.X(), 0, target.Z() - feet.Z()}
 	dist := dir.Len()
 	if speedScale <= 0 {
@@ -164,15 +196,16 @@ func steer(e *world.Entity, spec *world.AISpec, feet, target mgl32.Vec3, last bo
 	if dist > 1e-4 {
 		desired = dir.Mul(speed / dist)
 	}
-	flat := approach(mgl32.Vec3{e.Velocity.X(), 0, e.Velocity.Z()}, desired, accelStep(spec, dt))
-	e.Velocity[0], e.Velocity[2] = flat.X(), flat.Z()
+	flat := approach(mgl32.Vec3{vel.X(), 0, vel.Z()}, desired, accelStep(spec, dt))
+	vel[0], vel[2] = flat.X(), flat.Z()
 	if !e.HasGravity() {
 		dy := target.Y() - feet.Y()
 		vy := clampf(dy*4, -speed, speed)
-		e.Velocity[1] = approach1(e.Velocity.Y(), vy, accelStep(spec, dt))
+		vel[1] = approach1(vel.Y(), vy, accelStep(spec, dt))
 	}
+	e.Velocity = frame.DirFromWorld(vel)
 	if faceMove && spec.FaceMovement && desired.Len() > 0.05 {
-		turnTo(e, yawToward(desired), spec.TurnRate*dt)
+		turnTo(lvl, e, yawToward(desired), spec.TurnRate*dt)
 	}
 }
 

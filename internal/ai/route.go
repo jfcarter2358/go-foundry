@@ -36,7 +36,6 @@ import (
 	"strings"
 
 	"foundry/internal/hooks"
-	"foundry/internal/nav"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -309,7 +308,7 @@ func HiddenFrom(lvl *world.Level, e *world.Entity, spot, threat mgl32.Vec3, thre
 // inside vol when one is given — that the agent can reach and that hides it
 // from threat. ok is false when there is none.
 func FindCover(lvl *world.Level, e *world.Entity, centre mgl32.Vec3, radius float32, vol *world.Volume, threat mgl32.Vec3, threatID string) (mgl32.Vec3, bool) {
-	grid := nav.For(lvl, ProfileFor(lvl, e))
+	grid := gridFor(lvl, e)
 	if grid == nil || len(grid.Nodes) == 0 {
 		return mgl32.Vec3{}, false
 	}

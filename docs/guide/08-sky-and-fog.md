@@ -157,6 +157,32 @@ Point lights light it too — a torch lights the smoke rising past it.
 A cloud volume is still a volume: it fires `:enter:` and `:exit:`, and disabling
 the volume clears the cloud.
 
+### Keeping cloud out
+
+The opposite job: a dropship parked in a cloud bank should not have the bank
+drifting through its hold. Tick **Clears clouds** in any volume's **Cloud** group
+and no volumetric cloud is drawn inside it — cloud volumes and the deck alike.
+It needs no cloud of its own, and is usually a plain box fitted to the room.
+
+```yaml
+volumes:
+  - id: hold
+    attach: {entity: dropship_1}
+    position: {x: 0, y: 1.5, z: -2}
+    half: {x: 2.5, y: 1.5, z: 4}
+    clears_clouds: true
+```
+
+Put it on the ship's **type** instead (the same checkbox on a volume in the entity
+editor, `clears_clouds: true` under the type's `volumes:`) and every placement
+carries a clear hold wherever it flies. It clears only while the volume is
+enabled, and scripts can switch it with `@hold.prop.clears_clouds`.
+
+Only what the player sees is cleared. The cloud's shading and its shadow are
+untouched, so a hold inside a bank is still in the bank's shade. At most four
+clearing volumes in view take effect at once; past that, the later ones in level
+order are ignored. Particle smoke and explosions are never cleared.
+
 ## The cloud deck
 
 The sky's **Volumetric cloud deck** is cloud with no edge: a layer between two

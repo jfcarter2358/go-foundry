@@ -45,6 +45,7 @@ import (
 	"fmt"
 
 	"foundry/internal/levelio"
+	"foundry/internal/render"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -212,6 +213,7 @@ func entityReleaseGeometry() {
 		for i := range entityGeomLevel.Chunks {
 			entityGeomLevel.Chunks[i].ReleaseGeometry()
 		}
+		render.ReleaseChunkBatches(entityGeomLevel)
 	}
 	entityGeomLevel = nil
 	entityWS.level = nil

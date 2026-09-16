@@ -33,6 +33,8 @@ import (
 	"sort"
 	"strings"
 
+	"foundry/internal/compile"
+	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
 	"foundry/internal/particle"
@@ -52,7 +54,7 @@ var scriptEventAtoms = []string{
 	"spawn", "destroy", "tick", "enter", "exit",
 	"collide", "interact", "anim_start", "anim_end",
 	"mount", "dismount", "portal_seal", "waypoint", "waypoints_end",
-	"click", "hover", "unhover", "change", "submit", "cancel", "shown", "hidden",
+	"click", "hover", "unhover", "change", "submit", "cancel", "shown", "hidden", "bound",
 }
 
 // linter carries what the checks share: the level, its index, and the lazily
@@ -371,7 +373,7 @@ func (l *linter) call(c *flang.CallExpr) {
 		l.waypoints(c, name.Name)
 	case "move_to", "rotate_to", "scale_to":
 		l.tween(c, name.Name)
-	case "ai_move_to", "ai_stop", "ai_target", "ai_objective", "ai_follow_waypoints", "ai_continue":
+	case "ai_move_to", "ai_stop", "ai_target", "ai_objective", "ai_follow_waypoints", "ai_continue", "ai_follow":
 		l.aiVerb(c, name.Name)
 	}
 	l.knownFunc(name)
@@ -577,6 +579,7 @@ func (l *linter) assign(a *flang.AssignStmt) {
 		return
 	}
 	l.staticLightWrite(inner.X, target.Name, a.Pos_)
+	l.bakedChunkMove(inner.X, target.Name, a.Pos_)
 	if target.Name != "texture" {
 		return
 	}
@@ -623,9 +626,57 @@ func (l *linter) staticLightWrite(base flang.Expr, prop string, pos flang.Pos) {
 	if acc, ok := propTables[flang.RefLight][prop]; !ok || acc.Set == nil {
 		return // an unknown or read-only property is someone else's complaint
 	}
-	if d, p := l.cache.lightFor(r); (d != nil && !d.Dynamic) || (p != nil && !p.Dynamic) {
+	if d, p := l.cache.lightFor(r); lightRefusesWrite(d, p, prop) {
 		l.add(pos, "writing %s would fail: light %q is static; tick Dynamic in its properties panel", prop, addr.Name)
 	}
+}
+
+// bakedChunkMove flags a write that moves a chunk, written as a literal, that
+// the compiler bakes — which works in the editor and leaves the surfaces behind
+// in a release build.
+func (l *linter) bakedChunkMove(base flang.Expr, prop string, pos flang.Pos) {
+	if prop != "origin" && prop != "velocity" {
+		return
+	}
+	addr, ok := base.(*flang.AddrExpr)
+	if !ok || l.lvl == nil {
+		return
+	}
+	r, ok := l.cache.refFor(addr.Name)
+	if !ok || r.Kind != flang.RefChunk {
+		return
+	}
+	if ch := l.cache.chunkFor(r); ch != nil && compile.Bakes(ch) {
+		l.add(pos, "writing %s moves only half of it once compiled: %s", prop, bakedChunkMoveReason(ch.ID))
+	}
+}
+
+// BakedChunkMoves lints every script the level names and returns the writes
+// that move a chunk the compiler bakes, as "script:line:col: message" — what
+// foundrycompile -strict refuses to build.
+func BakedChunkMoves(lvl *world.Level) []string {
+	if lvl == nil {
+		return nil
+	}
+	rt := &ScriptRuntime{lvl: lvl}
+	var out []string
+	for _, path := range rt.scriptPaths() {
+		full := fileutil.ScriptPath(path)
+		src, err := ReadScriptFile(full)
+		if err != nil {
+			continue
+		}
+		prog, errs := flang.Link(full, src, scriptLoader{})
+		if len(errs) > 0 {
+			continue // reported by the runtime; a broken parse lints nothing
+		}
+		for _, is := range LintScript(lvl, rootFileOf(prog, full), programNames(prog), programParamNames(prog)) {
+			if strings.Contains(is.Msg, "moves only half of it once compiled") {
+				out = append(out, fmt.Sprintf("%s:%d:%d: %s", path, is.Pos.Line, is.Pos.Col, is.Msg))
+			}
+		}
+	}
+	return out
 }
 
 // textureExists flags a texture name with no .png behind it. Skipped when the

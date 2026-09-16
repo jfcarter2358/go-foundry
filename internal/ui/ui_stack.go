@@ -296,7 +296,7 @@ func (st *Stack) dropStaleTargets() {
 			return
 		}
 		n := s.Find(tgt.Node)
-		if n == nil || (needFocusable && !n.Focusable()) {
+		if n == nil || (needFocusable && !s.CanFocus(n)) {
 			*tgt = Target{}
 		}
 	}
@@ -629,7 +629,7 @@ func (st *Stack) Focus(screen, node string) bool {
 		return false
 	}
 	n := s.Find(node)
-	if n == nil || !n.Focusable() {
+	if !s.CanFocus(n) {
 		return false
 	}
 	st.setFocus(s, n)

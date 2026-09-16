@@ -2,10 +2,9 @@ package world
 
 // chunk_enable_test.go — switching a chunk off and on again.
 //
-// Three things are asserted, and they are the three the flag promises: the
-// chunk stops being findable, its buffers are actually released, and switching
-// it back on rebuilds them from the same authored data the loader would have
-// read.
+// What is asserted is what the flag promises: the chunk stops being findable,
+// its buffers stay built (so switching an area on costs no stall) unless it
+// opted into unloading, and a toggle is always reported so the indexes follow.
 
 import (
 	"testing"
@@ -50,11 +49,33 @@ func TestChunkStartsEnabled(t *testing.T) {
 	}
 }
 
-func TestDisableReleasesGeometryAndEnableRebuildsIt(t *testing.T) {
+func TestDisableKeepsGeometryResident(t *testing.T) {
+	// Switching an area on mid-play must not stall the frame, so disabling is a
+	// flag and nothing more: the meshes stay built, and no mesh changed, so the
+	// raycast accel and anything else keyed on the mesh generation stays warm.
 	ch := enableTestChunk(t)
-	if !chunkHasMeshes(ch) {
-		t.Fatal("fixture has no geometry to release")
+	gen := BrushMeshGeneration()
+
+	if !SetChunkEnabled(ch, false) {
+		t.Fatal("disabling an enabled chunk reported no change")
 	}
+	if ch.Unloaded || !chunkHasMeshes(ch) {
+		t.Error("disabling released the geometry; only unload_when_disabled should")
+	}
+	if !SetChunkEnabled(ch, true) {
+		t.Fatal("enabling a disabled chunk reported no change")
+	}
+	if ch.Unloaded || !chunkHasMeshes(ch) {
+		t.Error("geometry missing after switching back on")
+	}
+	if g := BrushMeshGeneration(); g != gen {
+		t.Errorf("toggling a resident chunk bumped the brush mesh generation %d -> %d", gen, g)
+	}
+}
+
+func TestUnloadWhenDisabledReleasesAndRebuilds(t *testing.T) {
+	ch := enableTestChunk(t)
+	ch.UnloadWhenDisabled = true
 
 	if !SetChunkEnabled(ch, false) {
 		t.Fatal("disabling an enabled chunk reported no change")
@@ -74,6 +95,49 @@ func TestDisableReleasesGeometryAndEnableRebuildsIt(t *testing.T) {
 	}
 	if !chunkHasMeshes(ch) {
 		t.Error("geometry was not rebuilt on enable")
+	}
+}
+
+// The trap in decoupling residency from the flag: SyncChunkGeometry reporting
+// a change is the only thing that rebuilds the spatial hash after a script
+// toggle, and FindChunkSH trusts the hash. A toggle that changes no residency
+// still has to be reported, once.
+func TestAFlagOnlyToggleStillRebuildsTheIndexes(t *testing.T) {
+	ch := enableTestChunk(t)
+	lvl := &Level{Chunks: []Chunk{*ch}}
+	if err := RebuildIndexes(lvl); err != nil {
+		t.Fatal(err)
+	}
+	inside := mgl32.Vec3{5, 1, 5}
+	if FindChunkSH(lvl.Spatial, lvl.Chunks, inside) == nil {
+		t.Fatal("fixture is not findable through the hash while enabled")
+	}
+	if SyncChunkGeometry(lvl) {
+		t.Error("a freshly indexed level reported a change")
+	}
+
+	// What a script's `@room.prop.enabled = false` does: the flag alone.
+	lvl.Chunks[0].Disabled = true
+	if !SyncChunkGeometry(lvl) {
+		t.Fatal("the frame's reconcile did not report the toggle; the hash would stay stale")
+	}
+	if err := RebuildIndexes(lvl); err != nil {
+		t.Fatal(err)
+	}
+	if c := FindChunkSH(lvl.Spatial, lvl.Chunks, inside); c != nil {
+		t.Error("a chunk a script disabled is still found through the hash on the next frame")
+	}
+	if SyncChunkGeometry(lvl) {
+		t.Error("the toggle was reported twice")
+	}
+
+	lvl.Chunks[0].Disabled = false
+	if !SyncChunkGeometry(lvl) {
+		t.Fatal("switching back on was not reported")
+	}
+	RebuildIndexes(lvl)
+	if FindChunkSH(lvl.Spatial, lvl.Chunks, inside) == nil {
+		t.Error("a chunk switched back on is not found through the hash")
 	}
 }
 

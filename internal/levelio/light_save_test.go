@@ -121,3 +121,39 @@ func TestSaveLoadPreservesALightsAttachment(t *testing.T) {
 		t.Error("an unattached static light loaded dynamic")
 	}
 }
+
+// BakeExclude round-trips across a save and a load, on both light kinds, and a
+// light naming none writes no key (world.DirectionalLight.BakeExclude).
+func TestSaveLoadPreservesBakeExclude(t *testing.T) {
+	dl := world.DirectionalLight{Yaw: 35, Pitch: -52, Color: mgl32.Vec3{1, 1, 1}, Brightness: 1,
+		BakeExclude: []string{"hangar"}}
+	dl.SyncDirection()
+	ls := world.LightSet{
+		Directional: []world.DirectionalLight{dl, {Yaw: 0, Pitch: -60, Color: mgl32.Vec3{1, 1, 1}, Brightness: 1}},
+		Points: []world.PointLight{
+			{ID: "lamp", Radius: 5, BakeExclude: []string{"hangar", "ground_lz"}},
+			{ID: "plain", Radius: 5},
+		},
+	}
+	raw := world.RawLevel{Lights: lightsToRaw(ls, false)}
+	if raw.Lights.Directional[1].BakeExclude != nil {
+		t.Error("a light excluding nothing wrote a bake_exclude key")
+	}
+	if raw.Lights.Point[1].BakeExclude != nil {
+		t.Error("a light excluding nothing wrote a bake_exclude key")
+	}
+
+	lvl := buildLevelLights(t, raw)
+	if got := lvl.Lights.Directional[0].BakeExclude; len(got) != 1 || got[0] != "hangar" {
+		t.Errorf("directional BakeExclude round-tripped as %v, want [hangar]", got)
+	}
+	if len(lvl.Lights.Points) != 2 {
+		t.Fatalf("got %d point lights, want 2", len(lvl.Lights.Points))
+	}
+	if got := lvl.Lights.Points[0].BakeExclude; len(got) != 2 || got[0] != "hangar" || got[1] != "ground_lz" {
+		t.Errorf("point BakeExclude round-tripped as %v, want [hangar ground_lz]", got)
+	}
+	if got := lvl.Lights.Points[1].BakeExclude; got != nil {
+		t.Errorf("a point light excluding nothing loaded %v, want nil", got)
+	}
+}

@@ -135,6 +135,12 @@ func brushProps() map[string]propAccess {
 			},
 			Doc: "read-only: whether this brush can be moved by a script (authored, not switchable)",
 		},
+		// The placement properties below mark nothing for rebuild: a moved
+		// brush is drawn out of its chunk's batch under its placement matrix
+		// (render/chunk_batch.go), and collision and raycasts carry the same
+		// matrix, so no mesh is stale — exactly as when AdvanceBrushes moves
+		// one by its velocity. Rebuilding the mesh every frame a script
+		// animated a door would re-upload the door's whole material batch.
 		"position": {
 			Get: getOwner(func(ch *world.Chunk, b *world.Brush) flang.Value {
 				return vecValue(ch.LocalToPlacement(b.Position()))
@@ -154,8 +160,7 @@ func brushProps() map[string]propAccess {
 				rebucket(c, ch)
 				return nil
 			}),
-			Dirty: true,
-			Doc:   "the brush's centre, in the space its chunk sits in — world space for a level's own geometry, the entity's own for a brush an entity carries; writing it moves the brush and its collision together",
+			Doc: "the brush's centre, in the space its chunk sits in — world space for a level's own geometry, the entity's own for a brush an entity carries; writing it moves the brush and its collision together",
 		},
 		"rotation": {
 			Get: getOwner(func(_ *world.Chunk, b *world.Brush) flang.Value {
@@ -173,8 +178,7 @@ func brushProps() map[string]propAccess {
 				rebucket(c, ch)
 				return nil
 			}),
-			Dirty: true,
-			Doc:   "euler angles in radians, turning the brush about its own centre",
+			Doc: "euler angles in radians, turning the brush about its own centre",
 		},
 		"velocity": {
 			Get: getOwner(func(ch *world.Chunk, b *world.Brush) flang.Value {
@@ -192,8 +196,7 @@ func brushProps() map[string]propAccess {
 				b.Velocity = ch.PlacementToLocalDirection(vel)
 				return nil
 			}),
-			Dirty: true,
-			Doc:   "units per second added to this brush's position during play, in the same space `position` is in; the engine keeps it moving",
+			Doc: "units per second added to this brush's position during play, in the same space `position` is in; the engine keeps it moving",
 		},
 		"angular_velocity": {
 			// Read and written raw, with no chunk conversion — unlike
@@ -216,8 +219,7 @@ func brushProps() map[string]propAccess {
 				b.AngularVelocity = av
 				return nil
 			}),
-			Dirty: true,
-			Doc:   "radians per second added to this brush's rotation during play; the engine keeps it turning",
+			Doc: "radians per second added to this brush's rotation during play; the engine keeps it turning",
 		},
 		"scale": {
 			// Raw, like `rotation`: a multiplier on the brush's own authored
@@ -244,11 +246,28 @@ func brushProps() map[string]propAccess {
 				rebucket(c, ch)
 				return nil
 			}),
-			Dirty: true,
-			Doc:   "per-axis size multiplier on the brush as authored, growing about its own centre; <1, 1, 1> is its authored size",
+			Doc: "per-axis size multiplier on the brush as authored, growing about its own centre; <1, 1, 1> is its authored size",
 		},
 		"waypoints": waypointsProp(),
 	}
+}
+
+// compiledChunkMoveWarning explains a write that moves a chunk whose surfaces
+// were baked into the compiled level: its collision moves, and what is drawn
+// stays where the compiler put it. Only a compiled level has such a chunk; the
+// linter (bakedChunkMove) says the same thing at author time, in every build.
+func compiledChunkMoveWarning(c *refCache, r flang.RefVal) string {
+	if ch := c.chunkFor(r); ch != nil && ch.Compiled {
+		return bakedChunkMoveReason(ch.ID)
+	}
+	return ""
+}
+
+// bakedChunkMoveReason is the one wording of the problem, for the runtime
+// warning, the linter and foundrycompile -strict.
+func bakedChunkMoveReason(chunk string) string {
+	return fmt.Sprintf("chunk %q is baked into the compiled level, so its surfaces stay where they were compiled "+
+		"while its collision moves; mark it `moves: true` (Moves in its properties panel) to draw it live", chunk)
 }
 
 func chunkProps() map[string]propAccess {
@@ -276,10 +295,11 @@ func chunkProps() map[string]propAccess {
 	return map[string]propAccess{
 		"enabled": {
 			Get: get(func(ch *world.Chunk) flang.Value { return flang.BoolVal(ch.IsEnabled()) }),
-			// Only the flag is written here. Releasing or rebuilding the
-			// chunk's buffers is gl.* work, which a script tick is not allowed
-			// to do — the frame loop's SyncChunkGeometry picks the change up
-			// between frames and rebuilds the spatial hash with it. See
+			// Only the flag is written here. The frame loop's
+			// SyncChunkGeometry picks the change up between frames and
+			// rebuilds the spatial hash with it — and, for a chunk with
+			// unload_when_disabled, releases or rebuilds its buffers, which is
+			// gl.* work a script tick is not allowed to do. See
 			// world/chunk_enable.go.
 			Set: set(func(_ *refCache, ch *world.Chunk, v flang.Value) error {
 				b, ok := toBool(v)
@@ -289,7 +309,7 @@ func chunkProps() map[string]propAccess {
 				ch.Disabled = !b
 				return nil
 			}),
-			Doc: "a disabled chunk is not drawn, not collided with, and its geometry is unloaded",
+			Doc: "a disabled chunk is not drawn and not collided with; its geometry stays loaded unless the chunk sets unload_when_disabled",
 		},
 		"origin": {
 			Get: get(func(ch *world.Chunk) flang.Value { return vecValue(ch.Origin) }),
@@ -325,7 +345,8 @@ func chunkProps() map[string]propAccess {
 				world.RebuildSpatialHash(c.lvl)
 				return nil
 			}),
-			Doc: "this chunk's placement: writing it moves the chunk and everything authored in it",
+			Warn: compiledChunkMoveWarning,
+			Doc:  "this chunk's placement: writing it moves the chunk and everything authored in it",
 		},
 		"velocity": {
 			Get: get(func(ch *world.Chunk) flang.Value { return vecValue(ch.Velocity) }),
@@ -341,7 +362,8 @@ func chunkProps() map[string]propAccess {
 				ch.Velocity = p
 				return nil
 			}),
-			Doc: "units per second added to this chunk's origin during play; the engine keeps it moving",
+			Warn: compiledChunkMoveWarning,
+			Doc:  "units per second added to this chunk's origin during play; the engine keeps it moving",
 		},
 		"rotation": {
 			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.Rotation) }),
@@ -361,6 +383,35 @@ func chunkProps() map[string]propAccess {
 // here is refused on a static light without having to remember to be.
 func lightProps() map[string]propAccess {
 	props := map[string]propAccess{
+		"enabled": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					return flang.BoolVal(!d.Disabled), true
+				case p != nil:
+					return flang.BoolVal(!p.Disabled), true
+				}
+				return nil, false
+			},
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("enabled", "bool", v)
+				}
+				d, p := c.lightFor(r)
+				switch {
+				case d != nil:
+					d.Disabled = !b
+				case p != nil:
+					p.Disabled = !b
+				default:
+					return &scriptMissingError{r.String()}
+				}
+				return nil
+			},
+			Doc: "whether the light shines; a static light refuses the write unless it is left out of the bake (no_bake)",
+		},
 		"dynamic": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
 				d, p := c.lightFor(r)
@@ -604,11 +655,24 @@ func lightProps() map[string]propAccess {
 // cannot stop working in the release. The same refusal a static brush gets.
 func staticLightGate(name string, set func(*refCache, flang.RefVal, flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
 	return func(c *refCache, r flang.RefVal, v flang.Value) error {
-		if d, p := c.lightFor(r); (d != nil && !d.Dynamic) || (p != nil && !p.Dynamic) {
+		if d, p := c.lightFor(r); lightRefusesWrite(d, p, name) {
 			return staticLightError(r.String(), "cannot write "+name+" on")
 		}
 		return set(c, r, v)
 	}
+}
+
+// lightRefusesWrite is the gate's rule: a static light refuses every write,
+// except that one left out of the bake (NoBake) may still be switched on and
+// off — none of it is in the vertices, so off is off everywhere.
+func lightRefusesWrite(d *world.DirectionalLight, p *world.PointLight, prop string) bool {
+	switch {
+	case d != nil:
+		return !d.Dynamic && !(d.NoBake && prop == "enabled")
+	case p != nil:
+		return !p.Dynamic && !(p.NoBake && prop == "enabled")
+	}
+	return false
 }
 
 // staticLightError is the one wording of the refusal, shared by the property

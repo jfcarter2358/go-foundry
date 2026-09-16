@@ -175,6 +175,7 @@ func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
 
 	gl.DeleteShader(vertexShader)
 	gl.DeleteShader(fragmentShader)
+	worldModel.valid = false
 	return nil
 }
 

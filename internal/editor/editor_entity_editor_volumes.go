@@ -124,6 +124,13 @@ func entityPanelVolume(idx int) {
 		imgui.SetTooltip("A disabled volume contains nothing, so it fires no events.\n" +
 			"A type whose region arms on cue ships with this off.")
 	}
+	if imgui.Checkbox("Clears clouds##entvclear", &m.ClearsClouds) {
+		entityBeginEdit("vclear")
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("No volumetric cloud is drawn inside the region, wherever the entity goes —\n" +
+			"a dropship's hold stays clear while the ship sits in a cloud bank.")
+	}
 
 	entityPanelSocket(&m.Model, &m.Bone, "v", "The volume")
 

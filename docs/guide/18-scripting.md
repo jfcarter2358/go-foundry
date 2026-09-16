@@ -128,7 +128,7 @@ The engine posts these without being asked.
 | `:primary_fire:` / `:primary_fire_end:` | player | — | the primary fire button (left mouse) went down / came back up |
 | `:secondary_fire:` / `:secondary_fire_end:` | player | — | the secondary fire button (right mouse) went down / came back up |
 | `:throw:` | player | — | the throw key (G) was pressed |
-| `:weapon_slot:` | player | `slot int` | a weapon-slot key (1/2/3) was pressed |
+| `:weapon_slot:` | player | `slot int` | a weapon-slot key (1 to 5) was pressed |
 | `:weapon_cycle:` | player | `step int` | the mouse wheel or Q asked for the next (`1`) or previous (`-1`) weapon |
 | `:reload:` | player | — | the reload key (R) was pressed |
 | `:anim_start:` / `:anim_end:` | entity | `src ref, model str, anim str` | a clip began / finished |
@@ -248,7 +248,7 @@ not the one the body sees.
 **World** — `log` `time` `player` `find(tag)` `distance(a, b)` `play_anim`
 `stop_anim` `bone_position` `spawn(type, vec)` `destroy(ref)` `after(ms, atom, ...)` `hitscan` `emit` `stop_emit` `burst`
 `spawn_effect` `attach` `detach` `mount` `dismount` `ai_move_to` `ai_stop` `ai_target`
-`ai_objective` `ai_follow_waypoints` `ai_continue` `find_path` `can_see` `play` `stop` `play_sound`
+`ai_objective` `ai_follow_waypoints` `ai_continue` `ai_follow` `find_path` `can_see` `play` `stop` `play_sound`
 `play_sound_at` `play_music` `stop_music`
 
 **UI** — `show_screen` `hide_screen` `screen(name)` `widget(screen, id)`
@@ -279,11 +279,16 @@ the leg.
 Bodies do not stop the ray; geometry does. That is what lets one cast answer both
 "what did I hit" and, with `{"all": true}`, "everything in the line of fire".
 
-Options, as a dict second argument: `all`, `points`, `range` (default 1000), `entities`
+Options, as a dict second argument: `all`, `points`, `range` (default 1000),
+`spread` (default 0), `entities`
 (default on), `volumes` (default **off** — levels wrap rooms in them),
 `geometry` (default on; clear it to see through walls), `visible_only`, `tag`,
 `ignore`. An unknown key is reported as a typo with a suggestion before the
 script runs.
+
+`"spread": 3.0` scatters the shot inside a cone three degrees across, which is
+how a weapon gets an accuracy: wider from the hip than down the sights, wider
+still while moving. Eight casts with a wide spread are a shotgun.
 
 A wall comes back as its edge ref, so `hit.prop.texture = "scorched"` works on
 whatever the shot landed on.

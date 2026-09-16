@@ -20,6 +20,11 @@ func TestAIAndObjectivesSurviveALevelRoundTrip(t *testing.T) {
 	spec.Targets = []string{"player"}
 	spec.Objectives = []string{"console"}
 	spec.WanderRadius = 6
+	spec.Follow = "player"
+	spec.FollowDistance = 3
+	spec.FollowLeash = 20
+	spec.RunSpeed = 3.3
+	spec.RunAnim = "run"
 	drone.AI = &spec
 	// Runtime state a play session left behind.
 	drone.AIState = &world.AIState{Command: true, Target: "player"}
@@ -39,7 +44,7 @@ func TestAIAndObjectivesSurviveALevelRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"ai:", "wander_radius: 6", "objective:", "action: hack", "duration: 3"} {
+	for _, key := range []string{"ai:", "wander_radius: 6", "follow: player", "follow_distance: 3", "follow_leash: 20", "run_speed: 3.3", "run_anim: run", "objective:", "action: hack", "duration: 3"} {
 		if !strings.Contains(string(out), key) {
 			t.Errorf("saved level is missing %q:\n%s", key, out)
 		}

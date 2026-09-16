@@ -138,7 +138,9 @@ func dropCompiledPreview() {
 			continue
 		}
 		ch.Compiled = false
-		ch.ReloadGeometry()
+		if ch.WantsGeometry() {
+			ch.ReloadGeometry()
+		}
 	}
 }
 
@@ -149,6 +151,9 @@ func reportCompile(what string, s *compile.Stats) {
 		log.Printf("LEAK: %s", leak.Describe())
 	}
 	if w := s.SealWarning(); w != "" {
+		log.Printf("WARNING: %s", w)
+	}
+	if w := s.StreamedClipWarning(); w != "" {
 		log.Printf("WARNING: %s", w)
 	}
 }

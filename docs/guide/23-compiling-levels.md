@@ -164,20 +164,57 @@ should tell you when it is not.
 
 ### Two things that do not count as sealing
 
-- **Disabled chunks.** A chunk switched off is not in the world at compile time,
-  so if part of your shell is one, the level leaks through the hole it leaves.
+- **Disabled chunks** that are not marked **Streamed**. A chunk switched off is
+  not in the world at compile time, so if part of your shell is one, the level
+  leaks through the hole it leaves. A streamed chunk is compiled, so it seals.
+- **Chunks marked Moves**, for the reason a vehicle's interior does not.
 - **Frame-owned chunks** — a vehicle's interior. It moves, so it cannot be part
   of a static shell, and it is not compiled at all (see below).
 
 ## What does not get compiled, and what does not get linked
 
-Two kinds of chunk stay as authored brushes and are built the ordinary way at
+Three kinds of chunk stay as authored brushes and are built the ordinary way at
 load:
 
 - **Frame-owned chunks**, whose geometry rides a vehicle. A moving room cannot
   be baked into a fixed list of world-space polygons.
-- **Disabled chunks**, which a script can switch on later. Baking one in would
-  quietly make it permanent.
+- **Chunks marked Moves** (`moves: true`), which a script moves with
+  `@chunk.prop.origin` or `velocity` — a lift, a hangar that drops away.
+  Compiled, its collision would move and its surfaces would stay where they
+  were baked. Moving a chunk that is not marked is flagged by the script linter,
+  warned about when it happens in a release build, and fails
+  `foundrycompile -strict`.
+- **Disabled chunks**, which a script can switch on later — unless they are
+  marked **Streamed**.
+
+### Streamed chunks
+
+A level that streams its areas in — `@area.prop.enabled = true` as the player
+approaches — wants those areas compiled too, or a release build draws them the
+slow way. Tick **Streamed** on the chunk (`streamed: true`): it is baked with
+the rest of the level, loads with its surfaces hidden, and switching it on is a
+flag flip with nothing to build.
+
+The catch is that a compile treats everything it bakes as present at once: one
+set of solids clipping each other's hidden faces away, one visibility set, one
+light bake. Streamed chunks must be able to coexist — neighbouring areas of one
+level, not alternatives that occupy the same space at different times, like a
+wall and the rubble it becomes. Where a streamed chunk's solid removes surface
+from another chunk (or the reverse), the compile says so:
+
+```
+WARNING level1: surface was removed from one chunk by another's solid where one
+of them is streamed; ...: ground_basin by ground_compound (12 faces, 30.5 sq), ...
+```
+
+Between areas that are always switched on together, that is expected along
+their seam. Between two that are not, it is a hole that appears when one of them
+goes off — leave one of the pair unstreamed, drawn live.
+
+A light that belongs to a chunk that is not baked — a hangar marked Moves — can
+be marked **Leave out of bake** (`no_bake: true`). It stays static but is lit
+live, so it does not stay painted on the ground after the hangar has gone, and a
+script may switch it on and off with `@light.prop.enabled`.
 
 Everything else about a level — entities, volumes, lights, the spawn, scripts,
 UI screens — is carried through unchanged. Only the static geometry is

@@ -56,21 +56,60 @@ type Chunk struct {
 	// cloned. See tween.go.
 	OriginTween *Tween
 
-	// Disabled takes the chunk out of the world entirely: nothing draws it,
-	// nothing collides with it, and its vertex buffers are released. It is what
-	// a streaming script toggles as the player moves between areas — see
-	// chunk_enable.go, which owns both this flag and Unloaded.
+	// Disabled takes the chunk out of the world: nothing draws it and nothing
+	// collides with it. It is what a streaming script toggles as the player
+	// moves between areas — see chunk_enable.go, which owns this flag,
+	// UnloadWhenDisabled and Unloaded.
+	//
+	// It is only a flag. The chunk's geometry stays built while it is off, so
+	// switching an area on mid-play costs an index rebuild rather than a
+	// frame-stalling rebuild of every mesh; UnloadWhenDisabled is the opt-in
+	// for a level that needs the memory back instead.
 	//
 	// Disabled rather than Enabled so the zero value is "on": every chunk
 	// written before this existed, and every one a test or an import builds by
 	// hand, means to be part of the level.
 	Disabled bool
 
+	// UnloadWhenDisabled makes switching the chunk off release its geometry as
+	// well — vertex buffers and CPU vertices — and switching it back on rebuild
+	// it, which is the expensive half. Authored, default false: a level has to
+	// ask for the trade of memory against a stall. A chunk with it set that
+	// loads disabled is never built at load either.
+	UnloadWhenDisabled bool
+
+	// Streamed tells the compiler to bake this chunk even though it is
+	// disabled in the file: its surfaces go into the compiled level, start
+	// hidden, and appear when a script switches the chunk on — a flag flip,
+	// with no geometry to build. Without it a disabled chunk is not in the
+	// world at compile time and is drawn live instead. Authored; see
+	// compile.Bakes.
+	//
+	// Everything the compiler bakes is compiled as present at once — one CSG,
+	// one BSP, one visibility set, one light bake — so streamed chunks have to
+	// be able to coexist: neighbouring areas of one level, not alternatives
+	// that occupy the same space at different times.
+	Streamed bool
+
+	// Moves marks a chunk a script moves at run time — a lift, a hangar that
+	// drops away. The compiler never bakes it (compiled surfaces are drawn in
+	// world space and would stay behind while its collision moved), and it is
+	// drawn live like a vehicle's interior. Authored; see compile.Bakes.
+	Moves bool
+
 	// Unloaded is runtime-only (never serialized, never cloned): whether the
-	// chunk's geometry has actually been released yet. It trails Disabled by up
-	// to a frame, because writing the flag may happen anywhere while freeing
+	// chunk's geometry has actually been released. It trails the flags by up
+	// to a frame, because writing a flag may happen anywhere while freeing
 	// buffers is gl.* work — SyncChunkGeometry is what closes the gap.
 	Unloaded bool
+
+	// indexedDisabled is runtime-only: the Disabled value SyncChunkGeometry
+	// last reported to its caller, which is what the level indexes were
+	// rebuilt from. Toggling no longer changes residency, so without it a
+	// script switching a chunk off would leave nothing to say the spatial
+	// hash is stale — and FindChunkSH trusts the hash. Unexported, so gob
+	// leaves it out of a compiled level.
+	indexedDisabled bool
 
 	// FrameOwner names the entity whose local space this chunk's geometry is
 	// authored in — a vehicle's interior, carried around the world by whatever
@@ -177,7 +216,12 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 		// of the answer to "is this chunk in the world". Unloaded deliberately
 		// does NOT — the copy has no buffers of its own yet, and the caller is
 		// already required to re-upload its geometry (see this method's doc).
-		Disabled: ch.Disabled,
+		// indexedDisabled is left at its zero value too: the copy is in no
+		// index yet, so the next sync reporting it is correct.
+		Disabled:           ch.Disabled,
+		UnloadWhenDisabled: ch.UnloadWhenDisabled,
+		Streamed:           ch.Streamed,
+		Moves:              ch.Moves,
 	}
 
 	cp.Brushes = make([]Brush, len(ch.Brushes))

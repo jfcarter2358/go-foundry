@@ -7,6 +7,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
+	"foundry/internal/levelio"
 	"foundry/internal/particle"
 	"foundry/internal/platform"
 	"foundry/internal/render"
@@ -32,10 +33,25 @@ import (
 // TransparentDraw holds a deferred draw call for a transparent geometry object.
 // Collected during the opaque pass and drawn back-to-front afterward.
 type TransparentDraw struct {
-	Geom        *gfx.Geometry
+	Geom *gfx.Geometry
+	// Batch, when set, is drawn instead of Geom: a batched brush's ranges of
+	// one chunk batch (render/chunk_batch.go), which carries its own model.
+	Batch       *render.BatchDraw
 	Model       mgl32.Mat4
 	Distance    float32
 	DoubleSided bool
+}
+
+// draw issues the deferred draw.
+func (td *TransparentDraw) draw() {
+	switch {
+	case td.Batch != nil:
+		td.Batch.Draw()
+	case td.Model == mgl32.Ident4():
+		td.Geom.Draw()
+	default:
+		td.Geom.DrawWithTransform(td.Model)
+	}
 }
 
 var shadowVertShaderPath = "shaders/shadow_vert.glsl"
@@ -50,6 +66,9 @@ var shadowCubeFragPath = "shaders/shadow_cube_frag.glsl"
 // see the note on its init.
 func Run() {
 	gfx.Textures = make(map[string]uint32)
+	// The frame loop would rather an agent wait a moment for its navigation
+	// than every agent's level stall while it is built. See ai.AsyncNav.
+	ai.AsyncNav = true
 
 	executable, err := os.Executable()
 	if err != nil {
@@ -323,6 +342,17 @@ func Run() {
 	world.PlayerEntity = world.NewPlayer(gfx.Cam.Position.Sub(mgl32.Vec3{0, world.EyeHeight, 0}))
 	gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight, 0})
 	gfx.UpdateCamMatrix()
+	// The startup level was loaded above, before there was a player to give
+	// its player block's viewmodel to — so it is given now. A later level load
+	// does this itself.
+	if err := levelio.InstallPlayerModels(&level); err != nil {
+		log.Printf("%v", err)
+	}
+	// What installLevel prepares for a level loaded later, prepared for this
+	// one before its first frame: every chunk's and compiled surface's vertex
+	// buffers, and the raycast trees.
+	render.SyncChunkBatches(&level)
+	collision.WarmRaycasts(&level)
 
 	// A spawn point in the level overrides that starting position, so a level
 	// loaded straight into gameplay starts where the editor says it should.
@@ -410,6 +440,11 @@ func Run() {
 			// secondary editor window still owns its own input. Consuming the
 			// event is the whole of how gameplay input is gated — see
 			// ui_input.go.
+			// A rebind waiting for a press takes it before anything else can
+			// act on it — see captureBindingEvent.
+			if captureBindingEvent(event) {
+				continue
+			}
 			if uiHandleEvent(event) {
 				continue
 			}
@@ -420,6 +455,7 @@ func Run() {
 		}
 
 		platform.KeyStates = sdl.GetKeyboardState()
+		_, _, platform.MouseButtons = sdl.GetMouseState()
 
 		// Point the F1 reference at the focused window before anything draws.
 		devUpdateFocus()
@@ -457,7 +493,7 @@ func Run() {
 		// level's scripts and the entities' clips as well. The screen stack's
 		// scripts still run under it, since the menu that lifts the pause is
 		// made of them — see script_pause.go.
-		saveControlSettingsWhenSettled(platform.DeltaTime)
+		saveSettingsWhenSettled(platform.DeltaTime)
 
 		scriptPaused := !devActive() && script.GamePaused()
 		gamePaused := scriptPaused || !devActive() && (ui.Game.Pauses() || levelLoadPending())
@@ -524,16 +560,16 @@ func Run() {
 			}
 
 			if world.PlayerEntity != nil {
-				// Crouch is held, not toggled: C or left Ctrl, on foot only —
+				// Crouch is held, not toggled (C or left Ctrl by default), on foot only —
 				// a driver's Ctrl is the vehicle's, and a seat has its own eye.
 				crouch := crouchable(&level) &&
-					(platform.KeyStates[sdl.SCANCODE_C] != 0 || platform.KeyStates[sdl.SCANCODE_LCTRL] != 0)
+					platform.ActionHeld(platform.ActCrouch, platform.KeyStates)
 				collision.UpdatePlayerCrouch(world.PlayerEntity, &level, crouch, platform.DeltaTime)
 				// A sprint lasts while the player keeps pushing forward on
 				// foot; stopping, crouching, sitting or losing control ends it,
 				// so the toggle never outlives the run it was pressed for.
 				if world.PlayerSprinting() && (world.PlayerCrouched() || !crouchable(&level) ||
-					platform.KeyStates[sdl.SCANCODE_W] == 0 || !platform.GravityEnabled) {
+					!platform.ActionHeld(platform.ActMoveForward, platform.KeyStates) || !platform.GravityEnabled) {
 					world.SetPlayerSprinting(false)
 				}
 				switch {
@@ -820,16 +856,20 @@ func Run() {
 		world.UploadFog(level.Fog, level.Volumes, &level)
 
 		{
-			// Chunks a script switched on or off last tick get their geometry
-			// built or released here, where the GL context is current and no
-			// pass is mid-way through reading it. A change means the set of
-			// chunks that exist has moved, so the spatial hash and the frames
-			// built from it are rebuilt to match.
+			// Chunks a script switched on or off last tick are reconciled
+			// here, where the GL context is current and no pass is mid-way
+			// through reading them (only unload_when_disabled chunks have
+			// buffers to build or release). A change means the set of chunks
+			// that exist has moved, so the spatial hash and the frames built
+			// from it are rebuilt to match.
 			if world.SyncChunkGeometry(&level) {
 				if err := world.RebuildIndexes(&level); err != nil {
 					log.Printf("chunk enable: %v", err)
 				}
 			}
+			// And the brush batches with the meshes, before the first pass
+			// reads them. Does nothing unless some brush mesh changed.
+			render.SyncChunkBatches(&level)
 
 			// TODO(brush migration, Phase 5): the Water-kind biome sector's
 			// companion water surface was synced here before anything read it
@@ -910,6 +950,7 @@ func Run() {
 			// Two-pass rendering: opaque geometry first, then transparent geometry sorted back-to-front.
 			chunksDrawn := 0
 			brushesDrawn := 0
+			brushDrawCalls := 0
 			staticDrawn := 0
 			var transparentDraws []TransparentDraw
 
@@ -948,47 +989,30 @@ func Run() {
 				}
 			}
 
-			// queueStatic is drawOrQueue for a compiled surface, which needs
-			// its own sort key.
-			//
-			// drawOrQueue takes the distance from the model matrix's
-			// translation, which for an authored brush is its chunk's origin —
-			// coarse, but a chunk is a room. A compiled surface's vertices are
-			// already in world space, so its matrix is the identity and every
-			// transparent surface in the level would sort at the world origin,
-			// which is not a coarse answer but a wrong one. Its own centre is
-			// the right key and is free: the bounds were computed at load.
-			queueStatic := func(g *gfx.Geometry, surf *world.StaticSurface) {
-				if !g.IsTransparent() {
-					g.Draw()
-					return
-				}
-				c := surf.Lo.Add(surf.Hi).Mul(0.5).Sub(gfx.Cam.Position)
-				transparentDraws = append(transparentDraws, TransparentDraw{
-					Geom:        g,
-					Model:       identity,
-					Distance:    c.Dot(c),
-					DoubleSided: surf.DoubleSided,
-				})
-			}
-
 			// A compiled level's static surfaces. Culled by the compiled
 			// visibility set first — every cell the camera's own cannot see is
 			// gone before a single bounding box is tested — and then by the
 			// frustum, which is what removes the rest of the cell the camera
-			// IS in. The chunks those surfaces came from are still walked
-			// below, for the frame-owned and switched-off ones; the compiled
-			// ones carry Chunk.Compiled and are skipped.
+			// IS in; the survivors are drawn out of their batches, one call per
+			// source chunk and material. The chunks those surfaces came from
+			// are still walked below, for the frame-owned and switched-off
+			// ones; the compiled ones carry Chunk.Compiled and are skipped.
+			//
+			// A transparent one is queued with its own centre as the sort key,
+			// not a model matrix's translation: its vertices are already in
+			// world space, so every one of them would sort at the origin.
 			if level.Static != nil {
 				staticDrawScratch = level.Static.VisibleSurfaces(gfx.Cam.Position, staticDrawScratch)
-				for _, si := range staticDrawScratch {
-					surf := &level.Static.Surfaces[si]
-					if !render.AABBInFrustum(frustum, surf.Lo, surf.Hi) {
-						continue
-					}
-					staticDrawn++
-					queueStatic(&surf.Geometry, surf)
-				}
+				n, calls := render.DrawStaticSurfaces(&level, staticDrawScratch, frustum, gfx.Cam.Position,
+					func(d render.BatchDraw, distance float32) {
+						transparentDraws = append(transparentDraws, TransparentDraw{
+							Batch:       &d,
+							Distance:    distance,
+							DoubleSided: d.DoubleSided,
+						})
+					})
+				staticDrawn += n
+				brushDrawCalls += calls
 			}
 
 			for i := range level.Chunks {
@@ -1003,10 +1027,8 @@ func Run() {
 					continue
 				}
 				if !chunk.IsEnabled() {
-					// Switched off, and its buffers are gone with it — see
-					// world/chunk_enable.go. The 2D map still draws it from its
-					// points, which is how an author gets at a chunk a level
-					// starts with disabled.
+					// Switched off — see world/chunk_enable.go. Its buffers may
+					// well still be built; the flag is what decides.
 					continue
 				}
 				if devActive() {
@@ -1029,62 +1051,22 @@ func Run() {
 				// unscaled chunk is what keeps this one loop.
 				chunkModel := chunk.ModelMatrix()
 
-				// Everything below that asks "where is the camera" has to ask it
-				// in the chunk's own local coordinates, or a backface test
-				// compares a world-space eye against local geometry and culls
-				// the wrong side of a moved or rotated chunk.
-				chunkCam := gfx.Cam.Position
-				if chunkModel != identity {
-					r := chunkModel.Inv().Mul4x1(chunkCam.Vec4(1))
-					chunkCam = mgl32.Vec3{r.X(), r.Y(), r.Z()}
-				}
-
-				// Brushes. There is no portal-visibility pass any more: a
-				// portal was a sector's declaration of which room it opened
-				// into, and open space is now simply the absence of a brush,
-				// so there is no graph to walk. Culling is the frustum and,
-				// for a release build, the compiled PVS (Phase 9); in the
-				// editor it is the frustum alone.
-				for j := range chunk.Brushes {
-					brush := &chunk.Brushes[j]
-					if !chunk.DrawsBrushLive(brush) {
-						continue // baked into the compiled surfaces above
-					}
-					// LocalAABB carried out through the chunk's own matrix,
-					// matching what the shadow pass (shadow.go) culls the same
-					// brush against. Culling against a tighter box here would
-					// drop a brush whose shadow was still being drawn.
-					bMin, bMax := brush.WorldAABB(chunk)
-					if !render.AABBInFrustum(frustum, bMin, bMax) {
-						continue
-					}
-					brushesDrawn++
-					// A brush a script has moved carries its own transform on
-					// top of the chunk's; the face meshes are still the ones
-					// uploaded at the authored position, which is what makes
-					// moving one free. Identity for every static brush.
-					brushModel := chunkModel
-					if !brush.AtRest() {
-						brushModel = chunkModel.Mul4(brush.Placement())
-					}
-					// DrawFaces, not Faces: a brush with a detail mesh is
-					// drawn from that instead of from its own sides, and the
-					// hull's buffers are not even uploaded (world/brush_detail.go).
-					faces := brush.DrawFaces()
-					for k := range faces {
-						f := &faces[k]
-						if f.NoDraw {
-							continue
-						}
-						// Backface culling is the GPU's here, not ours. A
-						// sector wall was a two-sided quad whose facing had to
-						// be decided on the CPU (WallFacingCamera) because
-						// nothing said which side was outside; a brush face is
-						// wound CCW from outside by construction, so the
-						// rasteriser's own cull is both correct and free.
-						drawOrQueue(&f.Geometry, brushModel, f.DoubleSided)
-					}
-				}
+				// Brushes, out of the chunk's batches: culled brush by brush
+				// against the frustum by the same box the shadow pass culls
+				// them by, the survivors drawn with one call per material, and
+				// transparent materials queued per brush for the sorted pass.
+				// Culling is the frustum and, for a release build, the
+				// compiled PVS; in the editor it is the frustum alone.
+				st := render.DrawChunkBrushes(&level, chunk, frustum, chunkModel, gfx.Cam.Position,
+					func(d render.BatchDraw, distance float32) {
+						transparentDraws = append(transparentDraws, TransparentDraw{
+							Batch:       &d,
+							Distance:    distance,
+							DoubleSided: d.DoubleSided,
+						})
+					})
+				brushesDrawn += st.Brushes
+				brushDrawCalls += st.DrawCalls
 			}
 
 			// Placed entities. Unlike the spawn marker below, these are part
@@ -1169,29 +1151,18 @@ func Run() {
 				gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 				gl.DepthMask(false)
 
-				for _, td := range transparentDraws {
+				for i := range transparentDraws {
+					td := &transparentDraws[i]
 					if td.DoubleSided {
 						// Two-sub-pass for double-sided: back faces first, then front faces
 						gl.Enable(gl.CULL_FACE)
 						gl.CullFace(gl.FRONT) // draw back faces
-						if td.Model == identity {
-							td.Geom.Draw()
-						} else {
-							td.Geom.DrawWithTransform(td.Model)
-						}
+						td.draw()
 						gl.CullFace(gl.BACK) // draw front faces
-						if td.Model == identity {
-							td.Geom.Draw()
-						} else {
-							td.Geom.DrawWithTransform(td.Model)
-						}
+						td.draw()
 						gl.Disable(gl.CULL_FACE)
 					} else {
-						if td.Model == identity {
-							td.Geom.Draw()
-						} else {
-							td.Geom.DrawWithTransform(td.Model)
-						}
+						td.draw()
 					}
 				}
 
@@ -1241,6 +1212,7 @@ func Run() {
 
 			render.DebugStats.ChunksDrawn = chunksDrawn
 			render.DebugStats.BrushesDrawn = brushesDrawn
+			render.DebugStats.BrushDrawCalls = brushDrawCalls
 			render.DebugStats.StaticSurfaces = staticSurfaceCount(&level)
 			render.DebugStats.StaticDrawn = staticDrawn
 		}

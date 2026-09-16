@@ -23,6 +23,11 @@ package world
 // to an entity, and fog and scatter are scenery that nobody has asked a type to
 // carry. Each of those is still one checkbox away on a level's own volume.
 //
+// The one piece of scenery a type does carry is ClearsClouds, because the
+// thing that asked for it was a type: a dropship's hold has to stay clear of
+// the cloud bank it is parked in wherever the ship is placed and wherever it
+// flies, and that is a region riding the ship or it is nothing.
+//
 // # Scripts
 //
 // The volume's script receives the volume's events, with `@self` the volume —
@@ -67,6 +72,9 @@ type EntityVolume struct {
 	// Enabled is carried onto the placement. A type whose region only arms
 	// when its script says so ships with it off.
 	Enabled bool
+
+	// ClearsClouds is carried onto the placement: see Volume.ClearsClouds.
+	ClearsClouds bool
 }
 
 // NewEntityVolume returns a volume with the defaults a freshly added one should
@@ -185,6 +193,9 @@ type RawEntityVolume struct {
 	Rotation      *RawVec3 `yaml:"rotation,omitempty"`
 	Half          *RawVec3 `yaml:"half,omitempty"`    // default 1, 1, 1 when absent
 	Enabled       *bool    `yaml:"enabled,omitempty"` // default true when absent
+	// ClearsClouds is a pointer for Enabled's reason: an instance override has
+	// to be able to say "false" to a type that said true.
+	ClearsClouds *bool `yaml:"clears_clouds,omitempty"`
 }
 
 // entityVolumeFromRaw converts one volume, applying the defaults every absent key
@@ -195,15 +206,16 @@ func entityVolumeFromRaw(r RawEntityVolume, owner string) (EntityVolume, error) 
 		return EntityVolume{}, err
 	}
 	return EntityVolume{
-		Name:       r.Name,
-		ScriptData: data,
-		Model:      r.Model,
-		Bone:       r.Bone,
-		Offset:     vec3FromRawPtr(r.Offset, mgl32.Vec3{}),
-		Rotation:   vec3FromRawPtr(r.Rotation, mgl32.Vec3{}),
-		Shape:      VolumeShapeFromName(r.Shape),
-		Half:       vec3FromRawPtr(r.Half, mgl32.Vec3{1, 1, 1}),
-		Enabled:    BoolDefault(r.Enabled, true),
+		Name:         r.Name,
+		ScriptData:   data,
+		Model:        r.Model,
+		Bone:         r.Bone,
+		Offset:       vec3FromRawPtr(r.Offset, mgl32.Vec3{}),
+		Rotation:     vec3FromRawPtr(r.Rotation, mgl32.Vec3{}),
+		Shape:        VolumeShapeFromName(r.Shape),
+		Half:         vec3FromRawPtr(r.Half, mgl32.Vec3{1, 1, 1}),
+		Enabled:      BoolDefault(r.Enabled, true),
+		ClearsClouds: BoolDefault(r.ClearsClouds, false),
 	}, nil
 }
 
@@ -218,6 +230,10 @@ func entityVolumeToRaw(m *EntityVolume) RawEntityVolume {
 		Offset:        vec3ToRawPtr(m.Offset),
 		Rotation:      vec3ToRawPtr(m.Rotation),
 		Enabled:       BoolPtrIfFalse(m.Enabled),
+	}
+	if m.ClearsClouds {
+		on := true
+		r.ClearsClouds = &on
 	}
 	if m.Shape != VolumeBox {
 		r.Shape = VolumeShapeName(m.Shape)
@@ -304,6 +320,9 @@ func applyVolumeOverride(m *EntityVolume, r RawEntityVolume, owner string) error
 	if r.Enabled != nil {
 		m.Enabled = *r.Enabled
 	}
+	if r.ClearsClouds != nil {
+		m.ClearsClouds = *r.ClearsClouds
+	}
 	return nil
 }
 
@@ -365,6 +384,11 @@ func volumeOverride(def *EntityDef, m *EntityVolume) (RawEntityVolume, bool) {
 		o.Enabled = &v
 		changed = true
 	}
+	if m.ClearsClouds != base.ClearsClouds {
+		v := m.ClearsClouds
+		o.ClearsClouds = &v
+		changed = true
+	}
 	return o, changed
 }
 
@@ -381,16 +405,17 @@ func volumeOverride(def *EntityDef, m *EntityVolume) (RawEntityVolume, bool) {
 // volume is then unattached and unqualified.
 func EntityVolumeInstance(entityID string, m *EntityVolume) Volume {
 	v := Volume{
-		ID:         EntityVolumeID(entityID, m.Name),
-		ScriptData: CloneScriptData(m.ScriptData),
-		Position:   m.Offset,
-		Rotation:   m.Rotation,
-		Shape:      m.Shape,
-		HalfX:      m.Half.X(),
-		HalfY:      m.Half.Y(),
-		HalfZ:      m.Half.Z(),
-		Enabled:    m.Enabled,
-		FromEntity: entityID,
+		ID:           EntityVolumeID(entityID, m.Name),
+		ScriptData:   CloneScriptData(m.ScriptData),
+		Position:     m.Offset,
+		Rotation:     m.Rotation,
+		Shape:        m.Shape,
+		HalfX:        m.Half.X(),
+		HalfY:        m.Half.Y(),
+		HalfZ:        m.Half.Z(),
+		Enabled:      m.Enabled,
+		ClearsClouds: m.ClearsClouds,
+		FromEntity:   entityID,
 	}
 	if entityID != "" {
 		// Model and Bone travel with the entity or not at all, as an emitter's

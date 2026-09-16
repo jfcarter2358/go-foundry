@@ -119,26 +119,25 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 	stepDisp := disp.Mul(1 / float32(steps))
 
 	newPos := p.Position
+	var chunks []*world.Chunk
 	for i := 0; i < steps; i++ {
 		intended := newPos.Add(stepDisp)
 
-		// The resolvers below work in the found chunk's own local space (see
+		// The resolvers below work in each found chunk's own local space (see
 		// chunkLocal); newPos/intended stay in the player's frame everywhere
 		// else.
 		//
-		// Looked up from the intended position, falling back to where the body
-		// already stood: a substep's raw, pre-resolution target can briefly
-		// land outside even the destination chunk's own bounds — trying to
-		// push through its outer wall, say — and a body that stops resolving
-		// the instant it does that would sail straight through. The chunk it
-		// was already standing in still has the brushes to push back with.
-		chunk := frame.ChunkAt(lvl, intended)
-		if chunk == nil {
-			chunk = frame.ChunkAt(lvl, newPos)
-		}
+		// Every chunk the move's box overlaps, from where the body stood to
+		// where it is going and a step's height up: a body on the seam between
+		// two chunks is solid against the floor and walls of both, and one
+		// whose raw target lands outside the destination chunk's bounds —
+		// pushing through its outer wall, say — still meets the brushes of the
+		// chunk it was standing in. A carried frame keeps its one chunk.
+		chunks = solidChunksFor(lvl, frame, newPos, intended,
+			mgl32.Vec3{radius, p.BoundHalfY, radius}, stepHeight, chunks[:0])
 
 		// Everything the body is solid against, as one pass, in the frame's own
-		// coordinates: the chunk's brushes — resolved in the chunk's local
+		// coordinates: the chunks' brushes — each resolved in its chunk's local
 		// space, which is where its verts are — and then every entity's own
 		// solid, resolved in that entity's.
 		//
@@ -154,10 +153,9 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (onGround bool
 		// straight back out by the hull — so an entity's interior could be
 		// walked into only if its floor was flush with the ground outside.
 		resolve := func(pos mgl32.Vec3) (mgl32.Vec3, bool, bool) {
-			local, hitFloor, hitCeiling := pushOutOfChunkBrushes(
-				chunk, chunkLocal(chunk, pos), radius, p.BoundHalfY)
+			pos, hitFloor, hitCeiling := pushOutOfChunksBrushes(chunks, pos, radius, p.BoundHalfY)
 			out, eFloor, eCeiling := resolveAgainstEntityBrushes(
-				lvl, p, frame, chunkWorld(chunk, local), radius, p.BoundHalfY)
+				lvl, p, frame, pos, radius, p.BoundHalfY)
 			return out, hitFloor || eFloor, hitCeiling || eCeiling
 		}
 

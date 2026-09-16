@@ -148,6 +148,19 @@ func init() {
 			}
 			rt.markDirty()
 			id := world.UniqueEntityID(rt.lvl, typeName)
+			// Whatever an object of this name left behind is not this object's.
+			//
+			// Everything about an object is keyed by its ref, and a ref is a
+			// name: the ninth grenade a player throws is called `grenade`
+			// again, because the eighth blew itself up and gave the name back.
+			// Without this it comes into the world holding the eighth's
+			// scratch — its bounce count, its "I have already gone off" flag —
+			// and, worse, holding the eighth's place in the engine's own
+			// bookkeeping: see forgetNamesake, which is the rest of this and
+			// says what each piece of it costs.
+			ref := flang.RefVal{Kind: flang.RefEntity, A: id}
+			delete(rt.state, ref)
+			forgetNamesake(ref)
 			e := def.Instantiate(id)
 			e.Position = p
 			// A model that will not load costs the entity its mesh, not its
@@ -299,7 +312,7 @@ func init() {
 	// The particle, attach and audio verbs live in their own files and their
 	// own maps, so each surface can be read in one place; they are merged in
 	// here so there is still exactly one table the runtime looks in.
-	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs, audioVerbs, effectVerbs, uiVerbs, hitscanVerbs, waypointVerbs, tweenVerbs, aiVerbs, boneVerbs} {
+	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs, audioVerbs, effectVerbs, uiVerbs, bindingVerbs, hitscanVerbs, waypointVerbs, tweenVerbs, aiVerbs, boneVerbs} {
 		for name, fn := range group {
 			if _, clash := scriptVerbs[name]; clash {
 				panic("script: two implementations of the verb " + name)

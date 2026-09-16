@@ -7,6 +7,7 @@ package script
 // two mistakes that should be caught before anything runs.
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -405,5 +406,106 @@ end`)
 	}
 	if got := attrStr(t, gun, "hit"); !strings.HasPrefix(got, "2.0 -1.0") && !strings.HasPrefix(got, "2 -1") {
 		t.Errorf("eye y and entity look x = %q, want the camera's height 2 and −X", got)
+	}
+}
+
+// ---------- spread ----------
+
+// The cone's geometry, independent of any level: a scattered shot stays inside
+// the half-angle it was given, never leaves the forward hemisphere, and stays
+// a unit vector however the draws come out.
+func TestScatterStaysInsideItsCone(t *testing.T) {
+	dir := mgl32.Vec3{0, 0, -1}
+	if got := scatter(dir, 0, func() float64 { return 0.9 }); got != dir {
+		t.Errorf("a spread of zero moved the aim to %v", got)
+	}
+
+	const spread = 12.0
+	half := float64(spread) * math.Pi / 360
+	// A draw sequence that walks the whole square, so the corners — the widest
+	// angle and every spin around it — are all tried.
+	draws := []float64{0, 0.25, 0.5, 0.75, 0.999999}
+	for _, aim := range []mgl32.Vec3{{0, 0, -1}, {1, 0, 0}, {0, 1, 0}, {0.3, -0.9, 0.2}} {
+		for _, u1 := range draws {
+			for _, u2 := range draws {
+				next := []float64{u1, u2}
+				i := 0
+				got := scatter(aim, spread, func() float64 { v := next[i]; i++; return v })
+				if d := math.Abs(float64(got.Len()) - 1); d > 1e-5 {
+					t.Errorf("aim %v draws %v %v: length %v, want a unit vector", aim, u1, u2, got.Len())
+				}
+				cos := float64(got.Normalize().Dot(aim.Normalize()))
+				if cos < math.Cos(half)-1e-5 {
+					t.Errorf("aim %v draws %v %v: tilted %.3f degrees, outside the %g-degree cone",
+						aim, u1, u2, math.Acos(cos)*180/math.Pi, spread/2)
+				}
+			}
+		}
+	}
+}
+
+// Drawn over the cone's disc rather than over its angle: half the shots land
+// inside the middle half of the cone's radius, not inside the middle half of
+// its angle. Tested against the median because that is the one number the two
+// distributions disagree about by a wide enough margin to assert on.
+func TestScatterFillsTheConeEvenly(t *testing.T) {
+	const spread = 20.0
+	half := float64(spread) * math.Pi / 360
+	aim := mgl32.Vec3{0, 0, -1}
+
+	// A fixed sweep of the first draw, which is the one that sets the angle.
+	inner := 0
+	const n = 1000
+	for i := 0; i < n; i++ {
+		u1 := (float64(i) + 0.5) / n
+		next := []float64{u1, 0.3}
+		j := 0
+		got := scatter(aim, spread, func() float64 { v := next[j]; j++; return v })
+		if math.Acos(float64(got.Dot(aim))) <= half/2 {
+			inner++
+		}
+	}
+	// Uniform over the disc puts a quarter of the shots inside half the radius;
+	// uniform over the angle would put half of them there.
+	if inner < n/5 || inner > n*3/10 {
+		t.Errorf("%d of %d shots landed in the inner half of the cone, want about a quarter — "+
+			"the draw is not spread over the cone's area", inner, n)
+	}
+}
+
+// And the same through the language: a spread cast is aimed off the reticle, so
+// a run of them lands in different places, all of them inside the cone.
+func TestHitscanSpreadScattersWhereShotsLand(t *testing.T) {
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "gun.flang", `def on_spawn(:spawn:) -> null
+    @self.attr.x = 0.0
+    n = 0
+    while n < 64
+        hitscan(:shot:, {"spread": 10.0, "entities": false})
+        n += 1
+    end
+end
+def on_shot(:shot:, hit, at vec) -> null
+    @self.attr.n += 1
+    @self.attr.x = max(@self.attr.x, abs(at.z - 5.0))
+end`)
+
+	lvl := aimingLevel(t) // camera at (1,2,5) looking +X at a wall 9 units away
+	lvl.Entities = []world.Entity{caster(path)}
+	runTicks(t, lvl, 2)
+
+	gun := &lvl.Entities[0]
+	if n, _ := gun.Attr("n"); n.I != 64 {
+		t.Fatalf("%d shots answered, want all 64", n.I)
+	}
+	// Every shot is inside a 10-degree cone, so none of them lands further off
+	// the centre of the wall than the cone is wide there — and at least one of
+	// them lands well off it, or the spread did nothing.
+	off, _ := gun.Attr("x")
+	if limit := 9 * math.Tan(5*math.Pi/180); off.F > limit+0.05 {
+		t.Errorf("a shot landed %v off centre, outside the %v the cone allows", off.F, limit)
+	}
+	if off.F < 0.1 {
+		t.Errorf("the widest shot was %v off centre: the cast did not scatter at all", off.F)
 	}
 }

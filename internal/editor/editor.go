@@ -173,6 +173,10 @@ type EditorState struct {
 	NewTagText  string
 	NewAttrName string
 	NewAttrType int32
+	// NewBakeExcludeText is the light panel's "add a chunk to exclude from the
+	// bake" row, on the same footing as NewTagText above and for the same
+	// reason.
+	NewBakeExcludeText string
 
 	// ViewmodelTarget is the Player panel's Viewmodel section's own selector:
 	// "" edits the player's own models, else the ID of an AI entity from

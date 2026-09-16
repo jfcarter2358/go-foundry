@@ -124,18 +124,22 @@ func HandleEvent(event sdl.Event) {
 		}
 
 	case sdl.KeyboardEvent:
+		// A gameplay key is an action, looked up in the player's layout —
+		// see platform/bindings.go. The switch below is only the engine's own
+		// keys, which platform.ReservedKey keeps any binding off.
+		if t.Type == sdl.KEYUP {
+			for _, a := range platform.Bindings.ActionsFor(platform.KeyInput(t.Keysym.Scancode)) {
+				releaseAction(a)
+			}
+			break
+		}
 		if t.Type == sdl.KEYDOWN {
+			for _, a := range platform.Bindings.ActionsFor(platform.KeyInput(t.Keysym.Scancode)) {
+				pressAction(a, t.Repeat != 0)
+			}
 			switch t.Keysym.Scancode {
 			case sdl.SCANCODE_F11:
 				ToggleFullscreen()
-			case sdl.SCANCODE_E:
-				// The interact key. Recorded as an edge rather than read as a
-				// level, so holding it fires once — SCRIPTING.md's `:interact:`
-				// is a press, not a state.
-				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
-					hooks.ScriptInteractRequest()
-				}
-
 			case sdl.SCANCODE_ESCAPE:
 				// The pause menu. Escape reaches this handler only when the
 				// screen stack did not take it, which is precisely when there
@@ -150,13 +154,6 @@ func HandleEvent(event sdl.Event) {
 				// A release build has no editor to toggle; devToggle is a stub
 				// there and the key does nothing.
 				devToggle()
-			case sdl.SCANCODE_SPACE:
-				// Not while a script holds the game paused: MovePlayer is not
-				// running to spend the request, so it would wait and fire on
-				// the first frame after the pause lifted.
-				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() && platform.GravityEnabled && platform.IsOnGround {
-					platform.JumpRequested = true
-				}
 			case sdl.SCANCODE_F3:
 				render.DebugToggle()
 			case sdl.SCANCODE_F4:
@@ -211,43 +208,6 @@ func HandleEvent(event sdl.Event) {
 				if !devActive() {
 					world.EntityEntityCollisionEnabled = !world.EntityEntityCollisionEnabled
 				}
-			case sdl.SCANCODE_G:
-				// Grenade throw. Same gate as the interact key: not while the
-				// editor, a paused script or a disabled player owns input.
-				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
-					hooks.ScriptThrowRequest()
-				}
-			case sdl.SCANCODE_1:
-				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
-					hooks.ScriptWeaponSlotRequest(1)
-				}
-			case sdl.SCANCODE_2:
-				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
-					hooks.ScriptWeaponSlotRequest(2)
-				}
-			case sdl.SCANCODE_3:
-				if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
-					hooks.ScriptWeaponSlotRequest(3)
-				}
-			case sdl.SCANCODE_LSHIFT:
-				// Sprint, as a toggle. Only with gravity on: in free-fly Left
-				// Shift is "down", held (gfx.MoveIntent).
-				if t.Repeat == 0 && !devActive() && platform.PlayerControlEnabled && !script.GamePaused() &&
-					platform.GravityEnabled && world.PlayerEntity != nil && world.PlayerEntity.Seat == "" {
-					world.SetPlayerSprinting(!world.PlayerSprinting())
-				}
-			case sdl.SCANCODE_R:
-				if t.Repeat == 0 && !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
-					hooks.ScriptReloadRequest()
-				}
-			case sdl.SCANCODE_Q:
-				// Next weapon. Not on key repeat, or holding Q spins through
-				// every weapon at the keyboard's repeat rate.
-				// Nor while seated: Q is a vehicle's control there.
-				if t.Repeat == 0 && !devActive() && platform.PlayerControlEnabled && !script.GamePaused() &&
-					(world.PlayerEntity == nil || world.PlayerEntity.Seat == "") {
-					hooks.ScriptWeaponCycleRequest(1)
-				}
 			}
 		}
 
@@ -264,17 +224,133 @@ func HandleEvent(event sdl.Event) {
 		}
 
 	case sdl.MouseButtonEvent:
-		// The viewmodel's fire buttons. Gameplay-only — editor picking uses
-		// mouse buttons too, but through devActive's own handlers, never this
-		// one, so the two never fight over a click.
-		if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
-			down := t.Type == sdl.MOUSEBUTTONDOWN
-			switch t.Button {
-			case sdl.ButtonLeft:
-				hooks.ScriptPrimaryFireRequest(down)
-			case sdl.ButtonRight:
-				hooks.ScriptSecondaryFireRequest(down)
+		// Mouse buttons are actions like keys are — fire and aim by default.
+		// Gameplay-only — editor picking uses mouse buttons too, but through
+		// devActive's own handlers, never this one, so the two never fight
+		// over a click.
+		for _, a := range platform.Bindings.ActionsFor(platform.MouseInput(t.Button)) {
+			if t.Type == sdl.MOUSEBUTTONDOWN {
+				pressAction(a, false)
+			} else {
+				releaseAction(a)
 			}
 		}
 	}
+}
+
+// gameplayInput reports whether the player's presses reach the game: not in the
+// editor, not with control handed away, not under a script's pause.
+func gameplayInput() bool {
+	return !devActive() && platform.PlayerControlEnabled && !script.GamePaused()
+}
+
+// onFoot reports whether the player is out of any seat, which is when the keys
+// a vehicle borrows (Q rolls, Left Shift pitches) are the player's own again.
+func onFoot() bool {
+	return world.PlayerEntity == nil || world.PlayerEntity.Seat == ""
+}
+
+// pressAction is an action's key or button going down. repeat is the
+// keyboard's auto-repeat, which only the actions that make sense held accept.
+//
+// The held actions — moving, looking, crouching, rolling and pitching — are not
+// here: they are read as state each frame (platform.ActionHeld), not as edges.
+func pressAction(a platform.Action, repeat bool) {
+	if !gameplayInput() {
+		return
+	}
+	switch a {
+	case platform.ActInteract:
+		// Recorded as an edge rather than read as a level, so holding it fires
+		// once — SCRIPTING.md's `:interact:` is a press, not a state.
+		if !repeat {
+			hooks.ScriptInteractRequest()
+		}
+	case platform.ActJump:
+		// Not while a script holds the game paused (gameplayInput): MovePlayer
+		// is not running to spend the request, so it would wait and fire on
+		// the first frame after the pause lifted.
+		if platform.GravityEnabled && platform.IsOnGround {
+			platform.JumpRequested = true
+		}
+	case platform.ActThrow:
+		hooks.ScriptThrowRequest()
+	case platform.ActWeapon1, platform.ActWeapon2, platform.ActWeapon3, platform.ActWeapon4, platform.ActWeapon5:
+		hooks.ScriptWeaponSlotRequest(int(a-platform.ActWeapon1) + 1)
+	case platform.ActSprint:
+		// Sprint, as a toggle. Only with gravity on: in free-fly the sprint key
+		// is "down", held (gfx.MoveIntent).
+		if !repeat && platform.GravityEnabled && world.PlayerEntity != nil && onFoot() {
+			world.SetPlayerSprinting(!world.PlayerSprinting())
+		}
+	case platform.ActReload:
+		if !repeat {
+			hooks.ScriptReloadRequest()
+		}
+	case platform.ActNextWeapon, platform.ActPrevWeapon:
+		// Not on key repeat, or holding the key spins through every weapon at
+		// the keyboard's repeat rate. Nor while seated: Q is a vehicle's
+		// control there.
+		if !repeat && onFoot() {
+			dir := 1
+			if a == platform.ActPrevWeapon {
+				dir = -1
+			}
+			hooks.ScriptWeaponCycleRequest(dir)
+		}
+	case platform.ActPrimaryFire:
+		if !repeat {
+			hooks.ScriptPrimaryFireRequest(true)
+		}
+	case platform.ActSecondaryFire:
+		if !repeat {
+			hooks.ScriptSecondaryFireRequest(true)
+		}
+	}
+}
+
+// releaseAction is an action's key or button coming back up. Only the fire
+// buttons care, and they care whatever else is going on: a trigger let go of
+// while a menu opened must not stay held.
+func releaseAction(a platform.Action) {
+	if devActive() {
+		return
+	}
+	switch a {
+	case platform.ActPrimaryFire:
+		hooks.ScriptPrimaryFireRequest(false)
+	case platform.ActSecondaryFire:
+		hooks.ScriptSecondaryFireRequest(false)
+	}
+}
+
+// captureBindingEvent hands a press to a rebind in progress (bind_key), ahead
+// of the UI and gameplay both, and reports whether it took it. It has to come
+// first: the key being bound must not also act, Escape cancelling the rebind
+// must not also close the settings screen, and a mouse button must not also
+// click whatever is under the pointer.
+//
+// Only presses: the release of the click or Enter that started the capture
+// arrives afterwards and must not be what gets bound. Key repeat is ignored for
+// the same reason.
+func captureBindingEvent(event sdl.Event) bool {
+	if !platform.BindingCaptureActive() {
+		return false
+	}
+	switch t := event.(type) {
+	case sdl.KeyboardEvent:
+		if t.Type != sdl.KEYDOWN {
+			return false
+		}
+		if t.Repeat != 0 {
+			return true
+		}
+		return platform.CaptureBindingInput(platform.KeyInput(t.Keysym.Scancode))
+	case sdl.MouseButtonEvent:
+		if t.Type != sdl.MOUSEBUTTONDOWN {
+			return false
+		}
+		return platform.CaptureBindingInput(platform.MouseInput(t.Button))
+	}
+	return false
 }

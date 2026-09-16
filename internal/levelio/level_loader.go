@@ -46,13 +46,17 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		Velocity:   mgl32.Vec3{rc.Velocity.X, rc.Velocity.Y, rc.Velocity.Z},
 		FrameOwner: rc.Frame,
 		Disabled:   rc.Disabled,
-		// A chunk authored disabled is not built at all — the geometry pass
-		// below is skipped and it is marked unloaded, which is exactly the
-		// state ReleaseGeometry would have left it in. That is the point of
-		// writing `disabled: true` into a level: the area costs nothing until
-		// a script switches it on, and world.SetChunkEnabled builds it then.
-		Unloaded: rc.Disabled,
+
+		UnloadWhenDisabled: rc.UnloadWhenDisabled,
+		Streamed:           rc.Streamed,
+		Moves:              rc.Moves,
 	}
+	// Every chunk is built here, behind the loading screen, whether it starts
+	// switched on or not: a script switching an area on mid-play then costs an
+	// index rebuild rather than a stall. The exception is a chunk that opted
+	// into unloading while disabled — it is left in exactly the state
+	// ReleaseGeometry would have, and SyncChunkGeometry builds it on enable.
+	chunk.Unloaded = !chunk.WantsGeometry()
 
 	for _, rb := range rc.Brushes {
 		b, err := world.BrushFromRaw(rb)
@@ -83,9 +87,8 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		chunk.Brushes = append(chunk.Brushes, b)
 	}
 
-	// A disabled chunk is authored, indexed and addressable but never built —
-	// see Chunk.Unloaded above.
-	if !rc.Disabled {
+	// See Chunk.Unloaded above.
+	if !chunk.Unloaded {
 		for bi := range chunk.Brushes {
 			if err := chunk.Brushes[bi].Load(); err != nil {
 				return world.Chunk{}, nil, fmt.Errorf("brush %q: %w", chunk.Brushes[bi].ID, err)
@@ -95,6 +98,29 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 	chunk.RecomputeBounds()
 
 	return chunk, texNeeded, nil
+}
+
+// InstallPlayerModels puts a level's player block Models — the first-person
+// viewmodel — onto world.PlayerEntity, replacing whatever it carried, nil
+// included, and uploads them.
+//
+// world.PlayerEntity is engine-owned rather than part of a Level (see
+// entity.go's header), so this is the one place anything copies a level's
+// player block onto it. The loader calls it; so does the app's startup, which
+// loads its first level BEFORE the player exists — without that second call a
+// release build booting straight into a level had a player with no `hands`,
+// and every script addressing `@player.model.hands` failed. A nil PlayerEntity
+// (tests, tools) is left alone.
+func InstallPlayerModels(level *world.Level) error {
+	if world.PlayerEntity == nil || level == nil {
+		return nil
+	}
+	world.PlayerEntity.Delete()
+	world.PlayerEntity.Models = append([]world.EntityModel(nil), level.Player.Models...)
+	if err := world.PlayerEntity.Load(); err != nil {
+		return fmt.Errorf("player viewmodel load: %w", err)
+	}
+	return nil
 }
 
 // LoadLevel reads a YAML level file, converts it to runtime types, and uploads
@@ -181,6 +207,8 @@ func rawToLightSet(rl world.RawLights) world.LightSet {
 			ShadowStrength: ss,
 			Disabled:       rd.Disabled,
 			Dynamic:        rd.Dynamic,
+			NoBake:         rd.NoBake,
+			BakeExclude:    rd.BakeExclude,
 		}
 		// Angles are authoritative when present; otherwise derive them from the
 		// direction vector, which is all pre-rotation levels stored.
@@ -229,8 +257,10 @@ func PointLightFromRaw(rp world.RawPointLight) world.PointLight {
 		Disabled:       rp.Disabled,
 		// An attached light moves with its carrier, and a light that moves
 		// cannot be baked — so attached is dynamic, whatever the file says.
-		Dynamic: rp.Dynamic || !attach.IsZero(),
-		Attach:  attach,
+		Dynamic:     rp.Dynamic || !attach.IsZero(),
+		NoBake:      rp.NoBake,
+		BakeExclude: rp.BakeExclude,
+		Attach:      attach,
 	}
 }
 
@@ -534,18 +564,10 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	}
 	level.Player = player
 
-	// The player's own first-person viewmodel, the same unconditional way:
-	// replaced wholesale from this level's Models, nil included. world.PlayerEntity
-	// is engine-owned rather than part of this Level (see entity.go's header), so
-	// this is the one place anything copies a level's player block onto it — and
-	// it is nil in tests and tools that build a Level without going through the
-	// app's normal startup, which is what the guard is for.
-	if world.PlayerEntity != nil {
-		world.PlayerEntity.Delete()
-		world.PlayerEntity.Models = append([]world.EntityModel(nil), level.Player.Models...)
-		if err := world.PlayerEntity.Load(); err != nil {
-			return fmt.Errorf("player viewmodel load: %w", err)
-		}
+	// The player's own first-person viewmodel, the same unconditional way. See
+	// InstallPlayerModels.
+	if err := InstallPlayerModels(level); err != nil {
+		return err
 	}
 
 	// Convert lights

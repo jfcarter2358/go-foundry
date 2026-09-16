@@ -27,9 +27,11 @@ import (
 // perceive updates an agent's target.
 func perceive(lvl *world.Level, e *world.Entity, st *world.AIState, dt float32, player *world.Entity) {
 	cur := targetEntity(lvl, st.Target, player)
-	if st.Target != "" && cur == nil {
-		// Destroyed, or a level load took it: gone is lost.
+	if st.Target != "" && !targetable(cur, player) {
+		// Destroyed, a level load took it, or it is down: gone is lost, even
+		// for a target a script chose.
 		loseTarget(e, st)
+		cur = nil
 	}
 	// Between looks, a target in sight is tracked continuously: the look
 	// decides whether it is in sight, not where it is.
@@ -113,7 +115,8 @@ func nearestPerceived(lvl *world.Level, e *world.Entity, player, except *world.E
 }
 
 // Candidates lists every entity an agent's Targets name, once each, never the
-// agent itself.
+// agent itself, and never one that is no longer targetable — hidden, or with
+// its own controller switched off.
 func Candidates(lvl *world.Level, e *world.Entity, player *world.Entity) []*world.Entity {
 	if e == nil || e.AI == nil {
 		return nil
@@ -124,7 +127,7 @@ func Candidates(lvl *world.Level, e *world.Entity, player *world.Entity) []*worl
 	var out []*world.Entity
 	seen := map[*world.Entity]bool{}
 	add := func(c *world.Entity) {
-		if c != nil && c != e && !seen[c] {
+		if c != nil && c != e && !seen[c] && targetable(c, player) {
 			seen[c] = true
 			out = append(out, c)
 		}
@@ -167,7 +170,7 @@ func Perceives(lvl *world.Level, e, t *world.Entity) bool {
 	if spec.FOV < 360 {
 		flat := mgl32.Vec2{d.X(), d.Z()}
 		if flat.Len() > 1e-3 {
-			fwd := forwardXZ(e)
+			fwd := forwardXZ(lvl, e)
 			cos := fwd.Dot(flat.Normalize())
 			half := float64(spec.FOV) / 2 * math.Pi / 180
 			if float64(cos) < math.Cos(half) {
@@ -209,11 +212,25 @@ func LineOfSight(lvl *world.Level, from, to mgl32.Vec3, ignore ...string) bool {
 	return !collision.LineBlocked(lvl, from, to, skip)
 }
 
-// forwardXZ is the way an entity faces, flattened: its local -Z, the axis a
-// vehicle drives along, turned by its yaw.
-func forwardXZ(e *world.Entity) mgl32.Vec2 {
-	yaw := float64(e.Rotation.Y())
+// forwardXZ is the way an entity faces in the world, flattened: its local -Z,
+// the axis a vehicle drives along, turned by its yaw and by whatever frame it
+// stands in.
+func forwardXZ(lvl *world.Level, e *world.Entity) mgl32.Vec2 {
+	yaw := float64(e.Rotation.Y() + frameYaw(lvl, e))
 	return mgl32.Vec2{float32(-math.Sin(yaw)), float32(-math.Cos(yaw))}
+}
+
+// frameYaw is how far the frame an entity stands in is turned from the world,
+// about up: what its own yaw is measured from. Zero in the world.
+func frameYaw(lvl *world.Level, e *world.Entity) float32 {
+	if lvl == nil || e == nil || e.Frame == "" {
+		return 0
+	}
+	f := lvl.Frames.FrameFor(e)
+	if f.IsWorld() {
+		return 0
+	}
+	return yawToward(f.DirToWorld(mgl32.Vec3{0, 0, -1}))
 }
 
 // yawToward is the yaw that faces an entity's -Z along d.
@@ -221,9 +238,10 @@ func yawToward(d mgl32.Vec3) float32 {
 	return float32(math.Atan2(float64(-d.X()), float64(-d.Z())))
 }
 
-// turnTo turns an entity's yaw toward want by at most maxStep radians, the
-// short way round.
-func turnTo(e *world.Entity, want, maxStep float32) {
+// turnTo turns an entity toward a world-space heading want by at most maxStep
+// radians, the short way round. Its yaw is kept in whatever frame it stands in.
+func turnTo(lvl *world.Level, e *world.Entity, want, maxStep float32) {
+	want -= frameYaw(lvl, e)
 	cur := e.Rotation.Y()
 	diff := world.WrapAngle(want - cur)
 	if maxStep > 0 {

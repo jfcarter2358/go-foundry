@@ -205,6 +205,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		Title:  "Gameplay",
 		Active: func() bool { return !editor.Editor.Active },
 		Binds: []uiwin.Keybind{
+			{Keys: "Settings screen", Desc: "Every key here but 0 / 8 / 9, and in Driving, is a default a player can rebind (bind_key)"},
 			{Keys: "W / A / S / D", Desc: "Move"},
 			{Keys: "Space", Desc: "Jump (gravity on) / fly up (gravity off)"},
 			{Keys: "Left Shift", Desc: "Sprint toggle (gravity on) / fly down (gravity off)"},
@@ -213,7 +214,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "E", Desc: "Sit / stand / get out of a vehicle, else interact (fires :interact:)"},
 			{Keys: "Left / Right mouse", Desc: "Primary / secondary fire (fires :primary_fire:/:secondary_fire: and their _end pair)"},
 			{Keys: "G", Desc: "Throw (fires :throw:)"},
-			{Keys: "1 / 2 / 3", Desc: "Weapon slot (fires :weapon_slot:)"},
+			{Keys: "1 – 5", Desc: "Weapon slot (fires :weapon_slot: with the number pressed)"},
 			{Keys: "Mouse wheel / Q", Desc: "Previous / next weapon (fires :weapon_cycle:; not while seated)"},
 			{Keys: "R", Desc: "Reload (fires :reload:)"},
 			{Keys: "C / Left Ctrl (hold)", Desc: "Crouch"},

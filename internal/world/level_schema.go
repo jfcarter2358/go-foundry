@@ -32,6 +32,9 @@ type RawVolume struct {
 	Fog *RawVolumeFog `yaml:"fog,omitempty"`
 	// Cloud fills the region with volumetric cloud. See Volume.Cloud.
 	Cloud *RawVolumeCloud `yaml:"cloud,omitempty"`
+	// ClearsClouds keeps volumetric cloud out of the region. See
+	// Volume.ClearsClouds.
+	ClearsClouds bool `yaml:"clears_clouds,omitempty"`
 	// Doorway makes the volume a frame boundary. See Volume.Doorway.
 	Doorway *RawFrameDoorway `yaml:"doorway,omitempty"`
 	// Scatter fills the region with foliage. See Volume.Scatter.
@@ -363,12 +366,21 @@ type RawChunk struct {
 	// owns it. Omitted is the ordinary case: a chunk placed directly in world
 	// space by its own Origin/Rotation/Scale, with no carrier.
 	Frame string `yaml:"frame,omitempty"`
-	// Disabled starts the chunk switched off: not drawn, not collided with, and
-	// never uploaded in the first place — which is what makes it worth writing
-	// for a level that streams its areas in. A script turns it back on with
-	// `@id.prop.enabled = true`. See Chunk.Disabled for why it is spelled this
-	// way round.
+	// Disabled starts the chunk switched off: not drawn and not collided with,
+	// though still built at load, so a script turning it back on with
+	// `@id.prop.enabled = true` costs no stall. See Chunk.Disabled for why it
+	// is spelled this way round.
 	Disabled bool `yaml:"disabled,omitempty"`
+	// UnloadWhenDisabled frees the chunk's geometry while it is switched off —
+	// and never builds it at load if it starts off — trading a rebuild stall
+	// on enable for the memory. See Chunk.UnloadWhenDisabled.
+	UnloadWhenDisabled bool `yaml:"unload_when_disabled,omitempty"`
+	// Streamed bakes the chunk into a compiled level even though it starts
+	// disabled, hidden until a script switches it on. See Chunk.Streamed.
+	Streamed bool `yaml:"streamed,omitempty"`
+	// Moves keeps the chunk out of the compile, drawn live, because a script
+	// moves it. See Chunk.Moves.
+	Moves bool `yaml:"moves,omitempty"`
 }
 
 // TODO(brush migration, Phase 5): RawBiomeSector and RawBiomeBrush lived
@@ -445,6 +457,10 @@ type RawDirLight struct {
 	ShadowStrength float32  `yaml:"shadow_strength"`
 	Disabled       bool     `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
 	Dynamic        bool     `yaml:"dynamic,omitempty"`  // lit live, not baked; see PointLight.Dynamic
+	NoBake         bool     `yaml:"no_bake,omitempty"`  // static, not baked; see PointLight.NoBake
+	// BakeExclude is chunk IDs this light's bake skips, while it still lights
+	// them live. See DirectionalLight.BakeExclude.
+	BakeExclude []string `yaml:"bake_exclude,omitempty"`
 }
 
 // RawPointLight is the YAML representation of a point light.
@@ -456,14 +472,18 @@ type RawPointLight struct {
 		Y float32 `yaml:"y"`
 		Z float32 `yaml:"z"`
 	} `yaml:"position"`
-	Color          RawColor   `yaml:"color"`
-	Brightness     float32    `yaml:"brightness"`
-	Radius         float32    `yaml:"radius"`
-	CastShadows    bool       `yaml:"cast_shadows"`
-	ShadowStrength float32    `yaml:"shadow_strength"`
-	Disabled       bool       `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
-	Dynamic        bool       `yaml:"dynamic,omitempty"`  // lit live, not baked; see PointLight.Dynamic
-	Attach         *RawAttach `yaml:"attach,omitempty"`   // what it rides; see PointLight.Attach
+	Color          RawColor `yaml:"color"`
+	Brightness     float32  `yaml:"brightness"`
+	Radius         float32  `yaml:"radius"`
+	CastShadows    bool     `yaml:"cast_shadows"`
+	ShadowStrength float32  `yaml:"shadow_strength"`
+	Disabled       bool     `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
+	Dynamic        bool     `yaml:"dynamic,omitempty"`  // lit live, not baked; see PointLight.Dynamic
+	NoBake         bool     `yaml:"no_bake,omitempty"`  // static, not baked; see PointLight.NoBake
+	// BakeExclude is chunk IDs this light's bake skips, while it still lights
+	// them live. See DirectionalLight.BakeExclude.
+	BakeExclude []string   `yaml:"bake_exclude,omitempty"`
+	Attach      *RawAttach `yaml:"attach,omitempty"` // what it rides; see PointLight.Attach
 }
 
 // RawLights holds all light definitions from YAML.

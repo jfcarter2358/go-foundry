@@ -212,6 +212,30 @@ var aiVerbs = map[string]scriptVerb{
 		return flang.BoolVal(ai.ContinueWaypoints(rt.lvl, e)), nil
 	},
 
+	"ai_follow": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("ai_follow takes an agent and the entity to keep up with, or null to follow nobody")
+		}
+		e, err := rt.verbAgent(args, 0, "ai_follow")
+		if err != nil {
+			return nil, err
+		}
+		if rt.lvl == nil {
+			return flang.BoolVal(false), nil
+		}
+		var leader *world.Entity
+		if _, isNull := args[1].(flang.NullVal); !isNull {
+			if leader, err = rt.verbEntity(args, 1, "ai_follow"); err != nil {
+				return nil, err
+			}
+			if leader == e {
+				return nil, fmt.Errorf("ai_follow: @%s cannot follow itself", e.ID)
+			}
+		}
+		rt.markDirty()
+		return flang.BoolVal(ai.SetFollow(rt.lvl, e, leader)), nil
+	},
+
 	"find_path": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
 		if len(args) != 2 && len(args) != 3 {
 			return nil, fmt.Errorf("find_path takes two places — vecs or objects — and optionally the entity whose size to plan for")
@@ -447,7 +471,7 @@ func aiEntityProps() map[string]propAccess {
 				}
 				return flang.AtomVal(world.AIModeName(ai.Mode(e)))
 			}),
-			Doc: "read-only: :idle:, :moving:, :wandering:, :travelling:, :performing:, :chasing:, :engaging:, :watching:, :following:, :taking_cover:, :in_cover:, :waiting:, :disabled:, or :none: without a controller",
+			Doc: "read-only: :idle:, :moving:, :wandering:, :travelling:, :performing:, :chasing:, :engaging:, :watching:, :following:, :taking_cover:, :in_cover:, :waiting:, :escorting:, :regrouping:, :disabled:, or :none: without a controller",
 		},
 		"ai_target": {
 			Get: get(func(c *refCache, e *world.Entity) flang.Value {
@@ -515,6 +539,38 @@ func aiEntityProps() map[string]propAccess {
 			}),
 			Doc: "read-only: the point of its path the agent is walking to or waiting at, counting from 0; -1 when it walks none",
 		},
+		"ai_follow": {
+			Get: get(func(c *refCache, e *world.Entity) flang.Value {
+				if l := ai.Leader(c.lvl, e); l != nil {
+					return flang.RefVal{Kind: flang.RefEntity, A: l.ID}
+				}
+				return flang.NullVal{}
+			}),
+			Set: func(c *refCache, r flang.RefVal, v flang.Value) error {
+				e, err := withAI("ai_follow", c, r)
+				if err != nil {
+					return err
+				}
+				if _, isNull := v.(flang.NullVal); isNull {
+					ai.SetFollow(c.lvl, e, nil)
+					return nil
+				}
+				lr, ok := v.(flang.RefVal)
+				if !ok || lr.Kind != flang.RefEntity {
+					return propErr("ai_follow", "entity or null", v)
+				}
+				l := c.entityFor(lr)
+				if l == nil {
+					return &scriptMissingError{lr.String()}
+				}
+				if l == e {
+					return fmt.Errorf("ai_follow: %s cannot follow itself", r.String())
+				}
+				ai.SetFollow(c.lvl, e, l)
+				return nil
+			},
+			Doc: "the entity the agent keeps up with as a squadmate, or null; null too while that leader is gone or down",
+		},
 		"ai_in_cover": {
 			Get: get(func(_ *refCache, e *world.Entity) flang.Value { return flang.BoolVal(ai.InCover(e)) }),
 			Doc: "read-only: whether the agent is hidden at a point of its path that takes cover",
@@ -571,6 +627,9 @@ func aiEntityProps() map[string]propAccess {
 		"ai_lose_time":       number("ai_lose_time", "seconds a target may be out of sight before the agent gives up on it", func(s *world.AISpec) *float32 { return &s.LoseTime }, 0),
 		"ai_attack_range":    number("ai_attack_range", "how close the agent closes on a target before :target_in_range:", func(s *world.AISpec) *float32 { return &s.AttackRange }, 0),
 		"ai_attack_interval": number("ai_attack_interval", "seconds between repeats of :target_in_range: while the target stays close", func(s *world.AISpec) *float32 { return &s.AttackInterval }, 0),
+		"ai_follow_distance": number("ai_follow_distance", "how far behind their leader followers gather, and roughly how far apart", func(s *world.AISpec) *float32 { return &s.FollowDistance }, 0),
+		"ai_follow_leash":    number("ai_follow_leash", "how far from its leader a fight may take a follower before it regroups; 0 never breaks off", func(s *world.AISpec) *float32 { return &s.FollowLeash }, 0),
+		"ai_run_speed":       number("ai_run_speed", "how fast a follower runs to catch up once it has fallen well behind; no faster than ai_speed never runs", func(s *world.AISpec) *float32 { return &s.RunSpeed }, 0),
 		"ai_wander_radius":   number("ai_wander_radius", "how far from where it started an idle agent strolls; 0 stands still", func(s *world.AISpec) *float32 { return &s.WanderRadius }, 0),
 	}
 }

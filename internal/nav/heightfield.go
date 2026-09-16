@@ -50,8 +50,9 @@ const DefaultCellSize = float32(0.25)
 // maxColumns caps how many columns a heightfield may have. A level larger than
 // this at DefaultCellSize is built at a coarser cell instead: navigation that is
 // slightly less precise over a huge map is better than a load that allocates
-// gigabytes.
-const maxColumns = 1 << 20
+// gigabytes. 512 m square at DefaultCellSize; the cell doubles past that, so
+// the tile cache (tiles.go) keeps working as a level grows.
+const maxColumns = 1 << 22
 
 // edgeEps is how far, as a fraction of a cell, a column's square is shrunk
 // before faces are clipped to it. See buildHeightfield.
@@ -109,16 +110,23 @@ type solid struct {
 	normals []mgl32.Vec3
 	min     mgl32.Vec3
 	max     mgl32.Vec3
+	// hash identifies the solid's world-space shape, for the tile cache.
+	hash uint64
 }
 
 // Solids gathers the level geometry navigation is built against: every solid,
 // static brush of every enabled chunk that lives in world space.
 //
-// Three kinds are left out, each on purpose. A dynamic brush moves, and a door
+// Four kinds are left out, each on purpose (see navigable for the chunk half). A dynamic brush moves, and a door
 // baked shut would be a wall for the life of the level — collision still stops
 // an agent at one, and the controller re-paths when it does. A frame-owned
-// chunk is a vehicle's deck, whose coordinates are not the world's. And a
-// disabled chunk is not there, which is exactly what streaming one out means.
+// chunk whose frame is moving — a ship in flight — is somewhere else next
+// frame; parked, it is baked through its frame like any other chunk. A moving
+// chunk will not be where it was baked. And a disabled chunk is not there,
+// which is exactly what streaming one out means.
+//
+// The result is a set of fresh world-space copies sharing nothing with the
+// level, which is what lets SyncAsync hand it to a goroutine.
 func gatherSolids(lvl *world.Level) []solid {
 	var out []solid
 	if lvl == nil {
@@ -126,7 +134,7 @@ func gatherSolids(lvl *world.Level) []solid {
 	}
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
-		if !ch.IsEnabled() || ch.InFrame() {
+		if !navigable(lvl, ch) {
 			continue
 		}
 		m := ch.ModelMatrix()
@@ -165,6 +173,7 @@ func gatherSolids(lvl *world.Level) []solid {
 				s.normals = append(s.normals, newellNormal(pts))
 			}
 			if len(s.faces) > 0 {
+				s.hash = hashSolid(&s)
 				out = append(out, s)
 			}
 		}
@@ -189,27 +198,12 @@ func newellNormal(pts []mgl32.Vec3) mgl32.Vec3 {
 	return mgl32.Vec3{}
 }
 
-// buildHeightfield rasterises every solid into columns of cell (or coarser, see
-// maxColumns).
-func buildHeightfield(solids []solid, cell, maxSlopeCos float32) *Heightfield {
-	h := &Heightfield{Cell: cell, MaxSlopeCos: maxSlopeCos}
-	if len(solids) == 0 {
-		h.colStart = []int32{0}
-		return h
-	}
-	lo, hi := solids[0].min, solids[0].max
-	for _, s := range solids[1:] {
-		lo = mgl32.Vec3{min32(lo.X(), s.min.X()), min32(lo.Y(), s.min.Y()), min32(lo.Z(), s.min.Z())}
-		hi = mgl32.Vec3{max32(hi.X(), s.max.X()), max32(hi.Y(), s.max.Y()), max32(hi.Z(), s.max.Z())}
-	}
-	sizeX, sizeZ := hi.X()-lo.X(), hi.Z()-lo.Z()
-	if cols := float64(sizeX/cell+1) * float64(sizeZ/cell+1); cols > maxColumns {
-		h.Cell = float32(math.Sqrt(float64(sizeX)*float64(sizeZ)/maxColumns)) * 1.05
-		cell = h.Cell
-	}
-	h.Origin = mgl32.Vec2{lo.X() - cell, lo.Z() - cell}
-	h.W = int(sizeX/cell) + 3
-	h.D = int(sizeZ/cell) + 3
+// rasterise builds the heightfield of solids over the w × d columns of cell
+// whose (0, 0) corner is at origin. A solid reaching outside that area is
+// clipped to it: its footprints clamp to the edge columns, and faces clipped
+// against those columns' real squares leave nothing that is not inside them.
+func rasterise(solids []solid, origin mgl32.Vec2, cell float32, w, d int, maxSlopeCos float32) *Heightfield {
+	h := &Heightfield{Origin: origin, Cell: cell, W: w, D: d, MaxSlopeCos: maxSlopeCos}
 
 	// Spans are collected as a linked list per column while solids are
 	// rasterised, then packed once at the end. A dense slice-per-column would

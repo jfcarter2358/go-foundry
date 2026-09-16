@@ -13,6 +13,7 @@ import (
 
 	"foundry/internal/compile"
 	"foundry/internal/levelio"
+	"foundry/internal/script"
 )
 
 // CompileLevels compiles levels under fileutil.ResourcesPath — the named ones,
@@ -59,7 +60,14 @@ func levelPaths(names []string) []string {
 }
 
 func compileOne(path string, opt compile.Options, strict, quiet bool, logf func(format string, args ...any)) error {
-	c, err := levelio.CompileLevelFile(path, opt)
+	lvl, err := levelio.LoadLevelHeadless(path)
+	if err != nil {
+		return err
+	}
+	// Before compiling, which consumes the level: a script moving a chunk the
+	// compile bakes is only half-moved in the build this produces.
+	moves := script.BakedChunkMoves(&lvl)
+	c, err := levelio.CompileLevel(&lvl, opt)
 	if err != nil {
 		return err
 	}
@@ -78,8 +86,17 @@ func compileOne(path string, opt compile.Options, strict, quiet bool, logf func(
 	if w := c.Stats.SealWarning(); w != "" {
 		logf(WarningPrefix+"%s: %s", name, w)
 	}
+	if w := c.Stats.StreamedClipWarning(); w != "" {
+		logf(WarningPrefix+"%s: %s", name, w)
+	}
+	for _, m := range moves {
+		logf(WarningPrefix+"%s: %s", name, m)
+	}
 	if strict && len(c.Stats.Leaks) > 0 {
 		return fmt.Errorf("%d leaks", len(c.Stats.Leaks))
+	}
+	if strict && len(moves) > 0 {
+		return fmt.Errorf("%d script writes move a baked chunk", len(moves))
 	}
 	return nil
 }

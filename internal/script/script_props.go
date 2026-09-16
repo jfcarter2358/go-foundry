@@ -834,6 +834,20 @@ func volumeProps() map[string]propAccess {
 			}),
 			Doc: "whether the region is filled with volumetric cloud",
 		},
+		"clears_clouds": {
+			Get: get(func(v *world.Volume) flang.Value { return flang.BoolVal(v.ClearsClouds) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("clears_clouds", "bool", v)
+				}
+				vol.ClearsClouds = b
+				return nil
+			}),
+			// Writable so a hold can fill with the bank the moment its ramp
+			// drops, rather than needing a second volume to swap in.
+			Doc: "whether no volumetric cloud is drawn inside the region",
+		},
 		"cloud_coverage": volumeCloudNumberProp("cloud_coverage",
 			func(c *world.VolumeCloud) *float32 { return &c.Coverage },
 			"how much of the region the cloud fills, 0 to 1"),

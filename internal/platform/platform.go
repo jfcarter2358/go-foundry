@@ -55,7 +55,7 @@ var MouseRotationSpeed = float32(0.003)
 // look eases out over (see app/mouse_look.go). MouseInvertY flips pitch.
 var (
 	MouseSensitivity = float32(1)
-	MouseSmoothing   = float32(0.35)
+	MouseSmoothing   = float32(0.1)
 	MouseInvertY     = false
 	// ControlSettingsChanged is set by anything that writes the three above,
 	// and cleared by the app once it has saved them.

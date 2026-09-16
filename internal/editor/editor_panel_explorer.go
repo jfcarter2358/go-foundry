@@ -240,10 +240,10 @@ func editorExplorerChunkNodes(lvl *world.Level) {
 
 		label := ch.ID
 		if !ch.IsEnabled() {
-			// A disabled chunk draws nothing in the 3D view, so this row and
-			// the sector map are the only places it is visible at all — say so
-			// rather than leaving the author looking for geometry that will
-			// never appear. See world/chunk_enable.go.
+			// A disabled chunk draws nothing in the 3D view, so this row is the
+			// only place it is visible at all — say so rather than leaving the
+			// author looking for geometry that will never appear. See
+			// world/chunk_enable.go.
 			label += "  (disabled)"
 		}
 		if ch.FromEntity != "" {

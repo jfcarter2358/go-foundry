@@ -7,6 +7,7 @@ package script
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -136,6 +137,109 @@ end`)
 	if a, _ := charge.Attr("lit"); !a.B {
 		t.Error("the spawned entity's script never heard :spawn:")
 	}
+}
+
+// A spawned object comes into the world clean, even when it has been handed
+// the name of one that was destroyed.
+//
+// The two are the same case in practice rather than in theory: `spawn` gives a
+// new object the first free name of its type, so the grenade thrown after one
+// has gone off is called `grenade` again. Everything about an object is keyed
+// by that name — its scratch state, whether it has had its `:spawn:`, what it
+// was overlapping, its pending timers — and every one of those inherited is a
+// bug with its own symptom. The one this test measures is the worst: a second
+// grenade that never hears `:spawn:` never lights its fuse and never goes off.
+func TestASpawnedObjectDoesNotInheritADeadNamesakesState(t *testing.T) {
+	root := withTempScriptDir(t)
+	// Each charge counts its own spawn, marks its scratch, and destroys itself
+	// on a timer — freeing its name for the next, which it asks for on the way
+	// out. A charge that finds the mark already set, or a stray timer from the
+	// one before, says so on the thrower.
+	fuse := writeScript(t, root, "fuse.flang", `def on_spawn(:spawn:) -> null
+    @thrower.attr.spawns += 1
+    if @self.state["used"] == true
+        @thrower.attr.stale = true
+    end
+    @self.state["used"] = true
+    @self <- after(1, :go:)
+    @self <- after(100000, :ghost:)   -- never due; it must not outlive this charge
+end
+def on_ghost(:ghost:) -> null
+    @thrower.attr.haunted = true
+end
+def on_go(:go:) -> null
+    if @thrower.attr.rounds < 2
+        @thrower.attr.rounds += 1
+        @thrower <- (:throw:,)
+    end
+    destroy(@self)
+end`)
+	thrower := writeScript(t, root, "thrower.flang", `def on_spawn(:spawn:) -> null
+    throw()
+end
+def on_throw(:throw:) -> null
+    throw()
+end
+def throw() -> null
+    c = spawn("charge", <0.0, 1.0, 0.0>)
+    @self.attr.thrown = @self.attr.thrown + c.id + " "
+end`)
+	dir := filepath.Join(fileutil.ResourcesPath, world.EntitiesDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	def := "id: charge\nscript: " + fuse + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "charge.yaml"), []byte(def), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	world.ReloadEntityDefs()
+	t.Cleanup(world.ReloadEntityDefs)
+
+	lvl := tickTestLevel(t)
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "thrower", Script: thrower, Visible: true, Scale: mgl32.Vec3{1, 1, 1},
+		Attributes: world.AttrSet{
+			"thrown":  world.StringAttr(""),
+			"rounds":  world.IntAttr(0),
+			"spawns":  world.IntAttr(0),
+			"stale":   world.BoolAttr(false),
+			"haunted": world.BoolAttr(false),
+		},
+	})
+	runTicks(t, lvl, 24)
+
+	e := entityByID(lvl, "thrower")
+	if e == nil {
+		t.Fatal("the thrower went missing")
+	}
+	thrown, _ := e.Attr("thrown")
+	names := strings.Fields(thrown.S)
+	if len(names) < 2 {
+		t.Fatalf("only %d charges were thrown (%q); the chain did not run", len(names), thrown.S)
+	}
+	// It only means anything if the name really was reused.
+	if names[0] != names[1] {
+		t.Skipf("spawn no longer reuses a freed name (%v); this test has nothing to measure", names)
+	}
+	if n, _ := e.Attr("spawns"); int(n.I) != len(names) {
+		t.Errorf("%d charges were thrown but :spawn: reached %d of them: one born under a dead "+
+			"namesake's name never woke up", len(names), n.I)
+	}
+	if a, _ := e.Attr("stale"); a.B {
+		t.Error("a spawned charge woke up holding the scratch of the one destroyed before it")
+	}
+	if a, _ := e.Attr("haunted"); a.B {
+		t.Error("a timer left by a destroyed charge was delivered to the one that took its name")
+	}
+}
+
+func entityByID(lvl *world.Level, id string) *world.Entity {
+	for i := range lvl.Entities {
+		if lvl.Entities[i].ID == id {
+			return &lvl.Entities[i]
+		}
+	}
+	return nil
 }
 
 // bone_position finds a socket in the world: through the entity's own matrix

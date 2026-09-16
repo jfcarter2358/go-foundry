@@ -101,6 +101,27 @@ checkbox, and the script editor flags it as you type.
 
 The Explorer marks dynamic lights `(dynamic)`.
 
+### Bake excludes
+
+A static light bakes into every compiled chunk it reaches, by default. **Bake
+excludes**, in a static light's own group (only offered while **Leave out of
+bake** is off — a light already left out of the whole bake has no per-chunk
+list to offer), names chunks it skips: baked everywhere else, as if it were
+never there on those. Type a chunk's ID and click **Exclude Chunk**; the
+Explorer's chunk list has the spelling.
+
+For a light that lights a chunk correctly while that chunk exists but has no
+business staying baked into it — the level's sun, say, over a hangar a script
+disables for good partway through the level (the ground it flies away from
+still wants the sun baked in). Baking the sun into the hangar's own walls would
+light them for nobody once the chunk is gone, and costs bake time for nothing.
+
+This only trims the *bake*. The light still lights anything drawn live inside
+that chunk while it exists — an entity standing in it, in particular, since
+entities are always lit live (the table above) whatever a light's own Static or
+Dynamic setting is. Excluding a chunk answers "is this light frozen into these
+walls", not "does this light ever reach in here".
+
 ## What gets lit
 
 Everything in the world pass: walls, floors, ceilings, surface meshes, models,
@@ -130,6 +151,12 @@ These are engine switches, not level data. They do not save with the level.
 A light is addressable like anything else — give it an ID and it takes tags,
 attributes and a script. Writing its properties needs it to be **Dynamic** (see
 above). `@lamp.prop.dynamic` reads which it is, on either kind.
+
+The one exception is `@lamp.prop.enabled`, which a static light marked **Leave
+out of bake** (`no_bake: true`) also accepts. Such a light is lit live rather
+than baked, so switching it off switches it off everywhere — it is for a light
+belonging to geometry that is not compiled either, like a hangar that flies away
+(see [Compiling levels](23-compiling-levels.md#streamed-chunks)).
 
 ```
 @lamp.prop.brightness = 0.0

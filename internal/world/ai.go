@@ -24,6 +24,9 @@ package world
 //   - its objectives: volumes carrying an objective block (volume_objective.go),
 //     walked to and performed in turn
 //
+// (a waypoint path, and a leader to keep up with, sit between the target and
+// the objectives, in that order — see internal/ai's decide)
+//
 // and with none of those, it wanders about where it started, or stands still.
 //
 // The logic that runs all this is internal/ai. What is here is only the data:
@@ -175,6 +178,26 @@ type AISpec struct {
 	// WaypointsLoop walks the path again from its first point after its last.
 	WaypointsLoop bool
 
+	// ---------- a leader ----------
+
+	// Follow names who the agent keeps up with, as a squadmate does: `player`
+	// or an entity ID. Empty follows nobody. It ranks below a path — an agent
+	// sent somewhere goes there, then falls back in — and above objectives and
+	// wandering. A target is fought from wherever the agent is, until the
+	// leader is FollowLeash away, when it regroups and fights on the move.
+	Follow string
+	// FollowDistance is how far behind the leader its followers gather, and
+	// roughly how far apart, in units.
+	FollowDistance float32
+	// FollowLeash is how far from the leader a follower lets a fight take it
+	// before it breaks off to catch up. Zero never breaks off.
+	FollowLeash float32
+	// RunSpeed is how fast it runs to catch up once it has fallen well behind,
+	// and RunAnim what it plays while it does. A RunSpeed no faster than Speed
+	// never runs.
+	RunSpeed float32
+	RunAnim  string
+
 	// ---------- idle ----------
 
 	// WanderRadius is how far from where it started it strolls about when it
@@ -210,6 +233,8 @@ func DefaultAISpec() AISpec {
 		AttackInterval: 1,
 		Order:          AIOrderSequence,
 		WanderPause:    3,
+		FollowDistance: 2.5,
+		FollowLeash:    15,
 	}
 }
 
@@ -264,6 +289,10 @@ const (
 	AITakingCover
 	AIInCover
 	AIWaiting
+	// AIEscorting is keeping up with its leader (Follow), and AIRegrouping is
+	// breaking off a fight that has taken it past FollowLeash to catch up.
+	AIEscorting
+	AIRegrouping
 )
 
 // AIModeNames is each mode's name, indexed by the mode.
@@ -271,6 +300,7 @@ var AIModeNames = []string{
 	"idle", "moving", "wandering", "travelling", "performing",
 	"chasing", "engaging", "watching", "disabled",
 	"following", "taking_cover", "in_cover", "waiting",
+	"escorting", "regrouping",
 }
 
 // AIModeName returns a mode's name.
@@ -363,6 +393,29 @@ type AIState struct {
 	InCover    bool
 	CoverTimer float32
 
+	// ---------- a leader ----------
+
+	// FollowLeader is the leader the fields below were kept for, by ID; a
+	// different one starts them afresh. FollowLast is where its feet were last
+	// tick, and FollowHeading the way it has been heading (a yaw, world space)
+	// once FollowHeaded — which is what the group gathers behind.
+	FollowLeader  string
+	FollowLast    mgl32.Vec3
+	FollowHeading float32
+	FollowHeaded  bool
+	// FollowLeaderVel is the leader's smoothed ground velocity, world space.
+	FollowLeaderVel mgl32.Vec3
+	// FollowGoal is the place in the group being walked to, re-picked only once
+	// the leader's movement has shifted it far enough to be worth a new path.
+	FollowGoal    mgl32.Vec3
+	FollowStop    float32
+	FollowHasGoal bool
+	// FollowMoving is closing on the slot; FollowRunning is doing it at
+	// RunSpeed; FollowRegroup is breaking off a fight to do it.
+	FollowMoving  bool
+	FollowRunning bool
+	FollowRegroup bool
+
 	// ---------- wandering ----------
 
 	WanderTimer float32
@@ -440,6 +493,12 @@ type RawAI struct {
 	Waypoints     *string `yaml:"waypoints,omitempty"`
 	WaypointsLoop *bool   `yaml:"waypoints_loop,omitempty"`
 
+	Follow         *string  `yaml:"follow,omitempty"`
+	FollowDistance *float32 `yaml:"follow_distance,omitempty"`
+	FollowLeash    *float32 `yaml:"follow_leash,omitempty"`
+	RunSpeed       *float32 `yaml:"run_speed,omitempty"`
+	RunAnim        *string  `yaml:"run_anim,omitempty"`
+
 	WanderRadius *float32 `yaml:"wander_radius,omitempty"`
 	WanderPause  *float32 `yaml:"wander_pause,omitempty"`
 
@@ -502,6 +561,15 @@ func AIFromRaw(base *AISpec, r *RawAI) *AISpec {
 		s.Waypoints = *r.Waypoints
 	}
 	setB(&s.WaypointsLoop, r.WaypointsLoop)
+	if r.Follow != nil {
+		s.Follow = *r.Follow
+	}
+	setF(&s.FollowDistance, r.FollowDistance)
+	setF(&s.FollowLeash, r.FollowLeash)
+	setF(&s.RunSpeed, r.RunSpeed)
+	if r.RunAnim != nil {
+		s.RunAnim = *r.RunAnim
+	}
 	setF(&s.WanderRadius, r.WanderRadius)
 	setF(&s.WanderPause, r.WanderPause)
 	if r.IdleAnim != nil {
@@ -580,6 +648,19 @@ func AIToRaw(s, base *AISpec) *RawAI {
 		any = true
 	}
 	diffB(&r.WaypointsLoop, s.WaypointsLoop, b.WaypointsLoop)
+	if s.Follow != b.Follow {
+		v := s.Follow
+		r.Follow = &v
+		any = true
+	}
+	diffF(&r.FollowDistance, s.FollowDistance, b.FollowDistance)
+	diffF(&r.FollowLeash, s.FollowLeash, b.FollowLeash)
+	diffF(&r.RunSpeed, s.RunSpeed, b.RunSpeed)
+	if s.RunAnim != b.RunAnim {
+		v := s.RunAnim
+		r.RunAnim = &v
+		any = true
+	}
 	diffF(&r.WanderRadius, s.WanderRadius, b.WanderRadius)
 	diffF(&r.WanderPause, s.WanderPause, b.WanderPause)
 	if s.IdleAnim != b.IdleAnim {

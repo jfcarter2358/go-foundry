@@ -76,6 +76,12 @@ The volume everything else tests against — collision, `:enter:`, hitscan.
 The offset is what lets a model stand on its feet while its volume is centred at
 hip height. **Fit To Contents** sizes the bounds to the attached models.
 
+A type file may also give `scale: {x: 1.5, y: 1.5, z: 1.5}`: the size every
+placement and every `spawn` of the type starts at. The bounds, the models and
+what hangs off their sockets all grow with it. A placement's own scale replaces
+the type's rather than multiplying it, and a level only writes one down when it
+differs from the type's.
+
 ## Collision
 
 Four flags, all authored on the type. The first three default **off**.
@@ -165,6 +171,15 @@ another mount but not take it off one; only the type can do that.
 **Velocity** and **Angular Velocity** are plain state the game sets and the
 engine carries forward — no damping, no forces. Integrated during play only; in
 the editor entities stay where you put them while their animations keep running.
+
+An entity an AI controller walks climbs a riser (up to its **step height**) by
+being lifted onto it in a single tick, which is exact for collision but would
+read as a pop. So the *drawn* body — its models, the weapon in its hand, and its
+shadow — is eased up over the step instead, closing the gap in roughly a third
+of a second. Only a real step is eased: walking up a slope, falling off a ledge,
+boarding a ship and a script setting `position` are all drawn exactly where the
+entity is. Nothing a script reads changes: `position`, `bone_position`, bounds
+and hitscan all see the true, already-stepped-up body.
 
 ## Tags, attributes and scripts
 
@@ -267,6 +282,7 @@ gizmos place and size it.
 | --- | --- |
 | **Name** | what the level ID is built from, and what an instance override matches on |
 | **Enabled** | a disabled volume contains nothing — what a region that arms on cue ships with |
+| **Clears clouds** | no volumetric cloud is drawn inside it — a ship's hold that stays clear in a cloud bank. See [Keeping cloud out](08-sky-and-fog.md#keeping-cloud-out) |
 | **Model** / **Bone** | a socket inside one of the type's model attachments — leave empty to hang it off the entity's origin |
 | **Offset / Rotation** | placement, in the entity's space or the bone's |
 | **Shape / Half-extents** | as a level volume's. Scale drags the half-extents, and the entity's own scale reaches them once placed |
@@ -370,6 +386,13 @@ movement over a few frames; it never changes how far it turns. Zoomed in
 (`@level.prop.camera_fov` below the default) the turn slows in proportion, so
 aiming down sights is not twitchier than the hip.
 
+The player's keys are saved in the same `controls.yaml`: every gameplay action
+(moving, jumping, firing, the weapon keys, a vehicle's roll and pitch…) has two
+bindings a settings screen can change with `bind_key` — see
+[UI screens](17-ui-screens.md#rebinding-keys). The volume is
+`@level.prop.master_volume` (with `music_volume` and `effects_volume` under
+it), saved to `audio.yaml` the same settled way.
+
 ### The player's script
 
 Nothing hears an event sent to `@player` until the level gives the player a
@@ -445,6 +468,15 @@ a carried grenade uses on an NPC:
 play_anim(@player, "hands", "pistol_idle")
 ```
 
+The viewmodel is drawn through a **lens of its own** — 55° by default, with a
+near plane ten times closer than the world's — rather than through the camera's.
+That is what keeps aiming down a scope from magnifying the arms along with the
+target, and what stops a hand held close to the eye being sliced open by the
+near plane. A script narrows `@level.prop.camera_fov` to zoom the *world*; it
+moves `@level.prop.viewmodel_fov` only to push the gun itself nearer or further
+away. A gun's sight alignment is unaffected by either: a sight line through the
+eye projects to the middle of the screen at any field of view.
+
 A level that says nothing in `player: models:` gives the player no viewmodel
 at all — unlike `step_height`, this is not merged with whatever the previous
 level had; each level states its own.
@@ -452,7 +484,7 @@ level had; each level states its own.
 Pressing fire, switching weapons and throwing are input events posted
 straight to `@player` — `:primary_fire:`/`:primary_fire_end:` (left mouse),
 `:secondary_fire:`/`:secondary_fire_end:` (right mouse), `:throw:` (G) and
-`:weapon_slot:` (1/2/3, with the slot number as its argument). See the Events
+`:weapon_slot:` (1 to 5, with the slot number as its argument). See the Events
 table in [Scripting](18-scripting.md#events) for the full shape, and
 `enemy_combat.flang` for the state-machine pattern (fire-on-a-timer while
 held, one-shot clips, a carried grenade) a player-side handler for these wants

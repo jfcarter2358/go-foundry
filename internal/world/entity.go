@@ -212,6 +212,20 @@ type Entity struct {
 	// this" becomes a Volume question (see volume.go) once Volumes take over
 	// the trigger-region role sectors used to play.
 	CurrentChunk string
+
+	// StepOffset is how far the DRAWN body sits from Position, along the up
+	// axis of the entity's own frame, in metres — and StepAnchor is the
+	// Position it was last carried at. Both runtime-only: never authored,
+	// never saved, and plain values so the zero state is the only state a gob
+	// or a fresh Instantiate ever sees.
+	//
+	// A walker climbs a riser by being teleported up it (collision.StepUp), and
+	// a body that jumps half a metre in one tick is the thing a player's eye
+	// catches first. The collision has to stay exact, so the lift is taken
+	// back out of the drawing instead and eased away over a few frames. See
+	// entity_step.go.
+	StepOffset float32
+	StepAnchor mgl32.Vec3
 }
 
 // NewPlayer creates the engine-owned player at pos, which is the player's feet

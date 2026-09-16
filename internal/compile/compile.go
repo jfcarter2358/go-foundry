@@ -66,6 +66,27 @@ type Stats struct {
 	// BeyondSeal names the baked brushes reaching outside the level's seal box
 	// — see BrushesBeyondSeal and SealWarning.
 	BeyondSeal []string
+	// StreamedClips is surface CSG removed from one chunk with a solid of
+	// another, where one of them is streamed — see StreamedClip.
+	StreamedClips []StreamedClip
+}
+
+// StreamedClipWarning is what to tell the author about StreamedClips, or "".
+func (s Stats) StreamedClipWarning() string {
+	if len(s.StreamedClips) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(s.StreamedClips))
+	for i, c := range s.StreamedClips {
+		if i == 8 {
+			parts = append(parts, fmt.Sprintf("and %d more pairs", len(s.StreamedClips)-8))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s by %s (%d faces, %.1f sq)", c.FaceChunk, c.SolidChunk, c.Faces, c.Area))
+	}
+	return "surface was removed from one chunk by another's solid where one of them is streamed; " +
+		"fine for neighbouring areas that are always switched on together, a hole in the level for two " +
+		"that are not: " + strings.Join(parts, ", ")
 }
 
 // SealWarning is what to tell the author about brushes reaching outside the
@@ -141,7 +162,7 @@ type Result struct {
 // the author look is more use than refusing, and refusing would make the
 // editor's compile button useless on a level halfway through being built.
 func Compile(lvl *world.Level, opt Options) (*Result, error) {
-	faces, err := CSG(lvl)
+	faces, clips, err := csg(lvl)
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +174,7 @@ func Compile(lvl *world.Level, opt Options) (*Result, error) {
 
 	r := &Result{Tree: tree, Portals: portals, Vis: vis}
 	r.Stats = gatherStats(lvl, r, sourceFaceCount(lvl))
+	r.Stats.StreamedClips = clips
 	return r, nil
 }
 
@@ -241,8 +263,12 @@ func findLeaks(lvl *world.Level, t *BSPTree) []Leak {
 
 // Summary is the one-line-per-fact report a build step or the editor prints.
 func (s Stats) Summary() string {
-	return fmt.Sprintf(
+	out := fmt.Sprintf(
 		"faces %d -> %d, %d nodes, %d cells (%d solid, %d void, %d interior), %d portals, %.1f cells visible on average",
 		s.SourceFaces, s.Faces, s.Nodes, s.Leaves,
 		s.SolidLeaves, s.OutsideLeaves, s.InteriorLeaves, s.Portals, s.AvgVisibleLeaves)
+	if CoarseVisibility(s.Portals) {
+		out += " (coarse visibility: too many portals for the exact flood)"
+	}
+	return out
 }

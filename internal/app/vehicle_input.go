@@ -2,10 +2,11 @@ package app
 
 // vehicle_input.go — the keys, when the player is driving.
 //
-// The same WASD that walks a body steers a vehicle; which of the two it reaches
+// The same movement keys that walk a body steer a vehicle; which of the two it reaches
 // depends on whether the player is sitting in a seat that hands over the
 // controls. Routing rather than a second key set is deliberate: a player who has
-// just sat down should not have to learn different keys to move.
+// just sat down should not have to learn different keys to move. All of them go
+// through the player's layout, platform.Bindings.
 
 import (
 	"foundry/internal/collision"
@@ -15,7 +16,6 @@ import (
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
-	"github.com/veandco/go-sdl2/sdl"
 )
 
 // DrivenVehicle is the vehicle the player is currently driving, or nil.
@@ -46,35 +46,35 @@ func ReadVehicleControls(v *world.Entity, keys []uint8) {
 	st := v.EnsureVehicleState()
 	c := world.VehicleControls{}
 
-	if keys[sdl.SCANCODE_W] != 0 {
+	if platform.ActionHeld(platform.ActMoveForward, keys) {
 		c.Throttle += 1
 	}
-	if keys[sdl.SCANCODE_S] != 0 {
+	if platform.ActionHeld(platform.ActMoveBack, keys) {
 		c.Throttle -= 1
 	}
-	if keys[sdl.SCANCODE_A] != 0 {
+	if platform.ActionHeld(platform.ActMoveLeft, keys) {
 		c.Steer -= 1
 	}
-	if keys[sdl.SCANCODE_D] != 0 {
+	if platform.ActionHeld(platform.ActMoveRight, keys) {
 		c.Steer += 1
 	}
-	c.Brake = keys[sdl.SCANCODE_SPACE] != 0
+	c.Brake = platform.ActionHeld(platform.ActJump, keys)
 
 	switch v.Vehicle.Mode {
 	case world.VehicleAir, world.VehicleSpace:
-		// Q/E roll, and the mouse's own pitch drives the nose. Reading the
-		// camera's pitch rather than a key is what makes flying feel like
-		// aiming rather than like nudging.
-		if keys[sdl.SCANCODE_Q] != 0 {
+		// The roll keys (Q/E by default) roll, and the mouse's own pitch
+		// drives the nose. Reading the camera's pitch rather than a key is
+		// what makes flying feel like aiming rather than like nudging.
+		if platform.ActionHeld(platform.ActRollLeft, keys) {
 			c.Roll -= 1
 		}
-		if keys[sdl.SCANCODE_E] != 0 {
+		if platform.ActionHeld(platform.ActRollRight, keys) {
 			c.Roll += 1
 		}
-		if keys[sdl.SCANCODE_LSHIFT] != 0 {
+		if platform.ActionHeld(platform.ActPitchDown, keys) {
 			c.Pitch -= 1
 		}
-		if keys[sdl.SCANCODE_LCTRL] != 0 {
+		if platform.ActionHeld(platform.ActPitchUp, keys) {
 			c.Pitch += 1
 		}
 	}

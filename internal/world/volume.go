@@ -104,6 +104,18 @@ type Volume struct {
 	// nil is the ordinary case, and a pointer for the reason Fog is.
 	Cloud *VolumeCloud
 
+	// ClearsClouds keeps volumetric cloud out of the region: the march treats
+	// every sample inside it as empty air, whichever cloud volume or deck the
+	// sample belongs to. It is what lets a dropship sit in a cloud bank with its
+	// hold clear — without it the cloud goes wherever the noise says, and the
+	// noise has no idea there is a hull in the way. See CloudClearingVolumes.
+	//
+	// A flag rather than a block, because there is nothing to tune: the region's
+	// shape is the whole of the answer. It only reaches what the player SEES —
+	// the light a cloud lets through and the shadow it casts are left alone, so
+	// the hold is shaded by the bank around it exactly as before.
+	ClearsClouds bool
+
 	// Objective makes the region somewhere AI agents are sent to act — see
 	// volume_objective.go. nil is the ordinary case.
 	Objective *VolumeObjective
@@ -424,22 +436,23 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		at.Frame = r.Frame
 	}
 	return Volume{
-		ID:         r.ID,
-		ScriptData: data,
-		Attach:     at,
-		Position:   mgl32.Vec3{r.Position.X, r.Position.Y, r.Position.Z},
-		Rotation:   mgl32.Vec3{r.Rotation.X, r.Rotation.Y, r.Rotation.Z},
-		Shape:      VolumeShapeFromName(r.Shape),
-		HalfX:      r.Half.X,
-		HalfY:      r.Half.Y,
-		HalfZ:      r.Half.Z,
-		Enabled:    BoolDefault(r.Enabled, true),
-		LoadLevel:  r.LoadLevel,
-		Fog:        VolumeFogFromRaw(r.Fog),
-		Cloud:      VolumeCloudFromRaw(r.Cloud),
-		Doorway:    FrameDoorwayFromRaw(r.Doorway),
-		Scatter:    VolumeScatterFromRaw(r.Scatter),
-		Objective:  VolumeObjectiveFromRaw(r.Objective),
+		ID:           r.ID,
+		ScriptData:   data,
+		Attach:       at,
+		Position:     mgl32.Vec3{r.Position.X, r.Position.Y, r.Position.Z},
+		Rotation:     mgl32.Vec3{r.Rotation.X, r.Rotation.Y, r.Rotation.Z},
+		Shape:        VolumeShapeFromName(r.Shape),
+		HalfX:        r.Half.X,
+		HalfY:        r.Half.Y,
+		HalfZ:        r.Half.Z,
+		Enabled:      BoolDefault(r.Enabled, true),
+		LoadLevel:    r.LoadLevel,
+		Fog:          VolumeFogFromRaw(r.Fog),
+		Cloud:        VolumeCloudFromRaw(r.Cloud),
+		ClearsClouds: r.ClearsClouds,
+		Doorway:      FrameDoorwayFromRaw(r.Doorway),
+		Scatter:      VolumeScatterFromRaw(r.Scatter),
+		Objective:    VolumeObjectiveFromRaw(r.Objective),
 	}, nil
 }
 
@@ -457,6 +470,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		LoadLevel:     v.LoadLevel,
 		Fog:           VolumeFogToRaw(v.Fog),
 		Cloud:         VolumeCloudToRaw(v.Cloud),
+		ClearsClouds:  v.ClearsClouds,
 		Doorway:       FrameDoorwayToRaw(v.Doorway),
 		Scatter:       VolumeScatterToRaw(v.Scatter),
 		Objective:     VolumeObjectiveToRaw(v.Objective),

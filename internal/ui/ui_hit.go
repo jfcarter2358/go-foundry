@@ -62,7 +62,7 @@ func (n *Node) Focusable() bool {
 // reading order, because tree order is draw order.
 func (s *Screen) FirstFocus() *Node {
 	if s.InitialFocus != "" {
-		if n := s.Find(s.InitialFocus); n != nil && n.Focusable() {
+		if n := s.Find(s.InitialFocus); n != nil && s.CanFocus(n) {
 			return n
 		}
 	}
@@ -74,7 +74,7 @@ func (s *Screen) FirstFocus() *Node {
 		if n.Focusable() {
 			found = n
 		}
-		return true
+		return n.Visible
 	})
 	return found
 }
@@ -86,7 +86,29 @@ func (s *Screen) Focusables() []*Node {
 		if n.Focusable() {
 			out = append(out, n)
 		}
-		return true
+		// A hidden panel hides everything in it — a settings tab that is
+		// not showing must not be reachable by the arrow keys.
+		return n.Visible
 	})
 	return out
+}
+
+// CanFocus is Focusable for a node in its place in the screen: false inside a
+// hidden ancestor too, which Focusable alone cannot see.
+func (s *Screen) CanFocus(target *Node) bool {
+	if target == nil || !target.Focusable() {
+		return false
+	}
+	found := false
+	s.Root.Walk(func(_, n *Node) bool {
+		if found || !n.Visible {
+			return false
+		}
+		if n == target {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }

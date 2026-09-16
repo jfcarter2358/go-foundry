@@ -78,7 +78,7 @@ func editorChunkIdentity(lvl *world.Level, ch *world.Chunk) {
 	if imgui.Checkbox("Enabled##chunkenabled", &enabled) {
 		EditorPushUndo()
 		// Straight through SetChunkEnabled rather than by writing the flag: the
-		// panel runs on the main thread with the GL context current, so the
+		// panel runs on the main thread with the GL context current, so any
 		// buffers can be released or rebuilt now and the author sees the chunk
 		// vanish or come back on this frame rather than the next. The spatial
 		// hash is rebuilt because disabled chunks are left out of it.
@@ -87,9 +87,43 @@ func editorChunkIdentity(lvl *world.Level, ch *world.Chunk) {
 		}
 	}
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("A disabled chunk is not drawn, not solid, and its geometry\n" +
-			"is unloaded. It stays in the Explorer, and a script switches\n" +
-			"it back on with `@" + ch.ID + ".prop.enabled = true`.")
+		imgui.SetTooltip("A disabled chunk is not drawn and not solid. Its geometry\n" +
+			"stays loaded, so switching it on costs no stall. It stays in\n" +
+			"the Explorer, and a script switches it back on with\n" +
+			"`@" + ch.ID + ".prop.enabled = true`.")
+	}
+	streamed := ch.Streamed
+	if imgui.Checkbox("Streamed##chunkstreamed", &streamed) {
+		EditorPushUndo()
+		ch.Streamed = streamed
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Compile this chunk even though it starts disabled. Its surfaces\n" +
+			"are baked with the rest of the level and stay hidden until a\n" +
+			"script switches it on. Streamed chunks are compiled as present\n" +
+			"together, so they must not overlap one another.")
+	}
+	moves := ch.Moves
+	if imgui.Checkbox("Moves##chunkmoves", &moves) {
+		EditorPushUndo()
+		ch.Moves = moves
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A script moves this chunk (its origin or velocity), so the\n" +
+			"compiler leaves it out and it is drawn live. Compiled surfaces\n" +
+			"cannot move: without this its collision would move and its\n" +
+			"surfaces would stay behind in a release build.")
+	}
+	unload := ch.UnloadWhenDisabled
+	if imgui.Checkbox("Unload when disabled##chunkunload", &unload) {
+		EditorPushUndo()
+		ch.UnloadWhenDisabled = unload
+		world.SyncChunkGeometryFor(ch)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Free this chunk's geometry while it is disabled, and never\n" +
+			"build it at load if it starts disabled. Saves memory, but\n" +
+			"switching it on rebuilds every mesh, which stalls a frame.")
 	}
 
 	faces := 0

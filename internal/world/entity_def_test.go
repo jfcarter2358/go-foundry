@@ -696,3 +696,45 @@ func TestEntityCollisionOverrideRoundTrips(t *testing.T) {
 		t.Errorf("drifted: got %+v, want %+v", back.Collision, e.Collision)
 	}
 }
+
+// A definition's scale is where every placement starts: an instance that says
+// nothing takes it, one that gives its own replaces it, and saving writes the
+// scale only when it differs from the type's.
+func TestEntityDefScaleIsThePlacementDefault(t *testing.T) {
+	def := testDef(t)
+	def.Scale = mgl32.Vec3{1.5, 1.5, 1.5}
+	look := lookup(def)
+
+	e, err := EntityFromRaw(RawEntity{Type: "barrel", ID: "a"}, look)
+	if err != nil {
+		t.Fatalf("EntityFromRaw: %v", err)
+	}
+	if e.Scale != def.Scale {
+		t.Fatalf("instance scale = %v, want the type's %v", e.Scale, def.Scale)
+	}
+	if got := e.BoundHalfExtents(); got.Y() != 0.75 {
+		t.Fatalf("bound half y = %v, want 0.75", got.Y())
+	}
+	if r := EntityToRaw(&e, def); r.Scale != nil {
+		t.Fatalf("an instance at the type's scale wrote scale %+v", *r.Scale)
+	}
+
+	own, err := EntityFromRaw(RawEntity{Type: "barrel", ID: "b", Scale: &RawVec3{X: 1, Y: 1, Z: 1}}, look)
+	if err != nil {
+		t.Fatalf("EntityFromRaw: %v", err)
+	}
+	if own.Scale != (mgl32.Vec3{1, 1, 1}) {
+		t.Fatalf("instance's own scale = %v, want 1", own.Scale)
+	}
+	r := EntityToRaw(&own, def)
+	if r.Scale == nil || r.Scale.X != 1 {
+		t.Fatalf("an instance off the type's scale must write it, got %+v", r.Scale)
+	}
+
+	if spawned := def.Instantiate("c"); spawned.Scale != def.Scale {
+		t.Fatalf("Instantiate scale = %v, want %v", spawned.Scale, def.Scale)
+	}
+	if raw := entityDefToRaw(def); raw.Scale == nil || raw.Scale.Y != 1.5 {
+		t.Fatalf("definition writer dropped scale: %+v", raw.Scale)
+	}
+}

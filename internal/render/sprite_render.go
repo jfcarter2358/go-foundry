@@ -105,6 +105,9 @@ type spriteRenderer struct {
 	// batches and pass are reused for the same reason.
 	batches []spriteBatch
 	pass    []spriteBatch
+	// warmed records which blend modes have had their first draw; see
+	// warmSpriteMode.
+	warmed [3]bool
 	// fill is the staging buffer a particle layer is filled into before being
 	// appended to a batch. Grown once and reused.
 	fill []particle.Instance
@@ -523,8 +526,28 @@ func RenderSpritesOpaque(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec
 	if !spritePassLive(lvl) {
 		return
 	}
+	warmSpriteMode(lvl, projView, camPos, frame, gfx.SpriteBlendCutout)
 	batches := SpriteBatches(lvl, cull, camPos, false)
 	drawSpritePass(lvl, batches, projView, camPos, frame, gfx.SpriteBlendCutout)
+}
+
+// warmSpriteMode draws one invisible, zero-sized sprite in a blend mode the
+// first time the pass runs, so the driver builds that mode's pipeline then.
+//
+// A GL driver that translates to D3D12 or Vulkan compiles a pipeline for each
+// shader-and-blend-state pair at its first draw, not when the program links.
+// The first additive particle in a level — the dropship's re-entry fire —
+// cost a 400 ms frame mid-sequence. Drawn here it costs that on the level's
+// first frame, which is already paying for everything else it loads. Called
+// from the pass the mode really draws in, so the warm-up runs under that
+// pass's GL state (alpha-to-coverage for cutout, blending for the others).
+func warmSpriteMode(lvl *world.Level, projView mgl32.Mat4, camPos mgl32.Vec3, frame ShadowFrame, mode gfx.SpriteBlend) {
+	if int(mode) >= len(sprites.warmed) || sprites.warmed[mode] {
+		return
+	}
+	sprites.warmed[mode] = true
+	warm := []spriteBatch{{Blend: mode, Instances: []SpriteInstance{{Pos: camPos}}}}
+	drawSpritePass(lvl, warm, projView, camPos, frame, mode)
 }
 
 // RenderSpritesTransparent draws the alpha and additive batches, in that order.
@@ -537,6 +560,8 @@ func RenderSpritesTransparent(lvl *world.Level, projView mgl32.Mat4, camPos mgl3
 	if !spritePassLive(lvl) {
 		return
 	}
+	warmSpriteMode(lvl, projView, camPos, frame, gfx.SpriteBlendAlpha)
+	warmSpriteMode(lvl, projView, camPos, frame, gfx.SpriteBlendAdditive)
 	batches := SpriteBatches(lvl, cull, camPos, false)
 	drawSpritePass(lvl, batches, projView, camPos, frame, gfx.SpriteBlendAlpha)
 	drawSpritePass(lvl, batches, projView, camPos, frame, gfx.SpriteBlendAdditive)

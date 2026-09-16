@@ -58,6 +58,22 @@ type DirectionalLight struct {
 	ShadowStrength float32 // 0.0 = no shadow darkening, 1.0 = fully dark shadows
 	Disabled       bool    // switched off; see GlobalLight.EffectiveBrightness
 	Dynamic        bool    // lit live rather than baked; see the note on PointLight.Dynamic
+	NoBake         bool    // static, but left out of the bake; see the note on PointLight.NoBake
+
+	// BakeExclude is chunk IDs this light's bake skips: it still shines on
+	// them live (fragment.glsl reads every enabled light regardless of this
+	// list — it is compile.BakeLight, and only the bake, that consults it),
+	// but its contribution is never frozen into their compiled surfaces.
+	//
+	// For a light that belongs where it is switched on but has no lasting
+	// business being baked into somewhere else — the sun over an outdoor level
+	// whose hangar chunk gets disabled for good once the ship has left it, say.
+	// Baking the sun into the hangar's own walls would light it for nobody: the
+	// chunk is either drawn live (while the hangar exists, lit correctly by
+	// this same light's live contribution) or gone. Unlike NoBake, the light
+	// itself keeps baking normally everywhere else — this trims one chunk's
+	// share of it, not the whole bake.
+	BakeExclude []string
 
 	// Waypoints is the waypoint animation turning this light, or nil: it
 	// shines the way each arrow points. Runtime-only; see waypoint_follow.go.
@@ -148,12 +164,27 @@ type PointLight struct {
 	// Brush.Dynamic.
 	Dynamic bool
 
+	// NoBake leaves a static light out of the light bake without making it
+	// dynamic: it is lit live on everything, like a dynamic light, but a script
+	// may do no more to it than switch it on and off. For a light that belongs
+	// to geometry the compiler does not bake — a hangar that flies away, marked
+	// Chunk.Moves — whose light would otherwise be baked onto whatever it
+	// happens to shine on and stay there after the hangar has gone.
+	//
+	// Switching it is allowed where nothing else is because nothing of it is in
+	// the vertices: off is off on the walls as well as the props.
+	NoBake bool
+
 	// Attach names what the light rides — a frame, an entity, or a bone inside
 	// one of its models: a lantern in a hand, a headlight on a truck. Set,
 	// Position is an offset in that carrier's space. An attached light always
 	// moves, so it is always Dynamic; the loader and the editor both keep the
 	// two in step, and the bake leaves an attached light out regardless.
 	Attach Attach
+
+	// BakeExclude is chunk IDs this light's bake skips; see
+	// DirectionalLight.BakeExclude.
+	BakeExclude []string
 
 	// FromPrefab is runtime-only, never serialized: the prefab instance whose
 	// file put this here (prefab.go). Empty for one the level file authored.
@@ -165,6 +196,14 @@ type PointLight struct {
 	// Runtime-only; see waypoint_follow.go.
 	Waypoints *WaypointPlayback
 }
+
+// LitLive reports whether the light is summed per fragment on compiled geometry
+// rather than baked into it: a dynamic light, one left out of the bake, and an
+// attached one (which is always dynamic).
+func (pl PointLight) LitLive() bool { return pl.Dynamic || pl.NoBake || !pl.Attach.IsZero() }
+
+// LitLive is PointLight.LitLive for a directional light.
+func (dl DirectionalLight) LitLive() bool { return dl.Dynamic || dl.NoBake }
 
 // EffectiveBrightness is zero while the light is switched off.
 func (pl PointLight) EffectiveBrightness() float32 {
@@ -271,7 +310,7 @@ func UploadLightsTo(prog uint32, ls LightSet, verbose bool) {
 		brightnessName := fmt.Sprintf("dirLightBrightness[%d]\x00", i)
 		gl.Uniform1f(UniformLoc(brightnessName), d.EffectiveBrightness())
 		dynName := fmt.Sprintf("dirLightDynamic[%d]\x00", i)
-		gl.Uniform1i(UniformLoc(dynName), boolInt(d.Dynamic))
+		gl.Uniform1i(UniformLoc(dynName), boolInt(d.LitLive()))
 	}
 
 	numPoint := len(ls.Points)
@@ -290,7 +329,7 @@ func UploadLightsTo(prog uint32, ls LightSet, verbose bool) {
 		radiusName := fmt.Sprintf("pointLightRadius[%d]\x00", i)
 		gl.Uniform1f(UniformLoc(radiusName), p.Radius)
 		dynName := fmt.Sprintf("pointLightDynamic[%d]\x00", i)
-		gl.Uniform1i(UniformLoc(dynName), boolInt(p.Dynamic))
+		gl.Uniform1i(UniformLoc(dynName), boolInt(p.LitLive()))
 	}
 
 	if verbose {

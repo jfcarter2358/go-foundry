@@ -133,6 +133,32 @@ func bodyBoxTouchesBrush(c, half mgl32.Vec3, b *world.Brush) bool {
 	return true
 }
 
+// solidChunksFor is the set of chunks a body of the given half-extents is
+// resolved against on a move from `from` to `to`: the frame's SolidChunks over
+// the box both ends of the move occupy, padded vertically by the step a
+// step-up probe may raise the body through.
+func solidChunksFor(lvl *world.Level, frame *world.Frame, from, to, half mgl32.Vec3, step float32, out []*world.Chunk) []*world.Chunk {
+	const margin = float32(0.05)
+	pad := mgl32.Vec3{half.X() + margin, half.Y() + step + margin, half.Z() + margin}
+	lo := mgl32.Vec3{min(from.X(), to.X()), min(from.Y(), to.Y()), min(from.Z(), to.Z())}.Sub(pad)
+	hi := mgl32.Vec3{max(from.X(), to.X()), max(from.Y(), to.Y()), max(from.Z(), to.Z())}.Add(pad)
+	return frame.SolidChunks(lvl, to, from, lo, hi, out)
+}
+
+// pushOutOfChunksBrushes is pushOutOfChunkBrushes over several chunks, each in
+// its own local space, one after another — the same single pass a chunk's
+// own brushes get, with the chunks' brushes read as one list.
+func pushOutOfChunksBrushes(chunks []*world.Chunk, pos mgl32.Vec3, radius, halfHeight float32) (out mgl32.Vec3, hitFloor, hitCeiling bool) {
+	out = pos
+	for _, ch := range chunks {
+		local, f, c := pushOutOfChunkBrushes(ch, chunkLocal(ch, out), radius, halfHeight)
+		out = chunkWorld(ch, local)
+		hitFloor = hitFloor || f
+		hitCeiling = hitCeiling || c
+	}
+	return
+}
+
 // pushOutOfChunkBrushes pushes a cylindrical body — centre pos, given
 // horizontal radius and vertical half-height, matching the footprint the
 // sector-era wall resolver used (a circular cross-section, so corners never
@@ -314,6 +340,7 @@ func StepUp(resolve SolidResolve, intendedXZ mgl32.Vec2, flatResult mgl32.Vec3, 
 		const settleSubsteps = 8
 		settled := resolved
 		lowestFree := resolved
+		touchedNonFloor := false
 		for i := 1; i <= settleSubsteps; i++ {
 			probe := settled
 			probe[1] = resolved.Y() - lift*float32(i)/settleSubsteps
@@ -322,13 +349,21 @@ func StepUp(resolve SolidResolve, intendedXZ mgl32.Vec2, flatResult mgl32.Vec3, 
 				return s
 			}
 			if s.Sub(probe).Len() > 1e-5 {
-				// Touching something that is not a floor — a curb's edge
-				// clipped by a probe that has come down past its top. Below
-				// here is no better.
+				// Touching something that is not a floor on the way down.
+				touchedNonFloor = true
 				break
 			}
 			lowestFree = probe
 			settled = probe
+		}
+		if touchedNonFloor {
+			// The lift came down onto something too steep to stand on, not a
+			// floor. Keeping it would leave the body up there, and next frame
+			// the same lift is taken from the new height. That is how a player
+			// climbed a canyon wall that leans back: every raised probe slid off
+			// the steep face, stopped on it, and kept the height. A lift that
+			// lands on nothing walkable is not a step, so try a shorter one.
+			continue
 		}
 		// Nothing to land ON: go to the lowest probe that was still in free
 		// space, never simply the top of the lift.

@@ -492,6 +492,14 @@ end
 
 Only `@self.state` is reachable; one object cannot read another's state.
 
+An object made by `spawn` starts with none of it, **including when it has been
+handed the name of one that was destroyed**. `spawn` gives out the first free
+name of a type, so the grenade thrown after one has gone off is `grenade`
+again — and it begins with empty scratch, no memory of having been spawned
+before, nothing it was overlapping, and none of its namesake's pending
+`after(...)` timers. Everything about an object is keyed by its name, and none
+of it outlives the object.
+
 ## Properties
 
 Properties are the object's **intrinsic** engine fields — a wall's visibility, an
@@ -521,7 +529,7 @@ editor's reference panel. The core surface:
 | light | dynamic lights only: `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `dynamic` `attach` `carrier` `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
-| level | `step_height` `player_control` `player_gravity` `camera_fov` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
+| level | `step_height` `player_control` `player_gravity` `camera_fov` `viewmodel_fov` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `master_volume` `music_volume` `effects_volume` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
 
 ### Moving a brush
 
@@ -592,7 +600,7 @@ end
 | `rotate_to(obj, vec, seconds)` | a dynamic brush, an entity | `rotation`, in radians |
 | `scale_to(obj, vec, seconds)` `ai_move_to(agent, place)` `ai_stop(agent)`
 `ai_target(agent, entity)` `ai_objective(agent, volume)` `ai_follow_waypoints(agent, path)`
-`ai_continue(agent)` `find_path(from, to)`
+`ai_continue(agent)` `ai_follow(agent, leader)` `find_path(from, to)`
 `can_see(entity, target)` | a dynamic brush, an entity | `scale` — `<1.0, 1.0, 1.0>` is as authored |
 
 So the spaces are the properties' own: a brush an entity carries moves in that
@@ -1154,7 +1162,7 @@ The engine posts these without being asked.
 | `:primary_fire:` / `:primary_fire_end:` | player | — | The primary fire button (left mouse) went down / came back up |
 | `:secondary_fire:` / `:secondary_fire_end:` | player | — | The secondary fire button (right mouse) went down / came back up |
 | `:throw:` | player | — | The throw key (G) was pressed |
-| `:weapon_slot:` | player | `slot int` | A weapon-slot key (1/2/3) was pressed |
+| `:weapon_slot:` | player | `slot int` | A weapon-slot key (1 to 5) was pressed |
 | `:weapon_cycle:` | player | `step int` | The mouse wheel or Q asked for the next (`1`) or previous (`-1`) weapon |
 | `:reload:` | player | — | The reload key (R) was pressed |
 | `:anim_start:` | entity | `src ref, model str, anim str` | A clip began, including each loop wrap |
@@ -1178,6 +1186,7 @@ The engine posts these without being asked.
 | `:unhover:` | widget, then its screen | `src ref` | …and left again |
 | `:change:` | widget, then its screen | `src ref, value` | A slider, toggle or field's value changed; `value` follows the kind |
 | `:submit:` | widget, then its screen | `src ref, text str` | Enter was pressed in a text field |
+| `:bound:` | widget or screen that called `bind_key` | `src ref, action str, slot int` | The press `bind_key` was waiting for arrived: bound, cleared (Backspace) or cancelled (Escape) |
 | `:cancel:` | screen | — | Escape was pressed while this screen was the topmost modal one |
 | `:shown:` | screen | — | The screen was put on the stack |
 | `:hidden:` | screen | — | …and taken off it |
@@ -1234,6 +1243,8 @@ ai_objective(@guard, null)             -- drop the one it is working
 ai_follow_waypoints(@guard, @beat)     -- walk a waypoint path; a third argument loops it
 ai_follow_waypoints(@guard, null)      -- stop walking one
 ai_continue(@guard)                    -- send it on from the point it is waiting at
+ai_follow(@squaddie, @player)          -- keep up with the player as a squadmate
+ai_follow(@squaddie, null)             -- stop following
 corners = find_path(@guard, @exit)     -- list of vecs, or null when unreachable
 seen = can_see(@guard, @player)        -- nothing in the level's geometry in between?
 ```
@@ -1254,13 +1265,24 @@ posts the same `:waypoint:`, point events and `:waypoints_end:` that
 also finds a path the agent's own type carries. `ai_continue` returns `false`
 when the agent is not waiting at a point.
 
-An entity with no controller refuses the four `ai_` verbs by name, and the linter
+`ai_follow` makes the agent a squadmate: it keeps a place in a loose group
+behind the leader, walks (or runs, at `ai_run_speed`) to keep it, fights from where it
+stands, and regroups once the leader is `ai_follow_leash` away. A waypoint path
+it is walking comes first, so a script can send a squadmate on a path and it
+falls back in at the end. It returns `false` for an agent told to follow itself.
+
+A target that is hidden (`visible = false`), or whose own controller is switched
+off, stops being one — a combat script that sets `ai_enabled = false` on death
+is also taking the body off every other agent's list, even a target a script
+chose.
+
+An entity with no controller refuses the `ai_` verbs by name, and the linter
 says so before the script runs.
 
 | Property | | |
 | --- | --- | --- |
 | `ai_enabled` | bool | whether the controller runs; off stops the agent where it is |
-| `ai_state` | atom, read-only | `:idle:` `:moving:` `:wandering:` `:travelling:` `:performing:` `:chasing:` `:engaging:` `:watching:` `:following:` `:taking_cover:` `:in_cover:` `:waiting:` `:disabled:`, or `:none:` without a controller |
+| `ai_state` | atom, read-only | `:idle:` `:moving:` `:wandering:` `:travelling:` `:performing:` `:chasing:` `:engaging:` `:watching:` `:following:` `:taking_cover:` `:in_cover:` `:waiting:` `:escorting:` `:regrouping:` `:disabled:`, or `:none:` without a controller |
 | `ai_target` | ref or null | what it is hunting; writing is `ai_target` |
 | `ai_objective` | ref or null, read-only | the objective volume it is working |
 | `ai_destination` | vec or null, read-only | where it is walking to |
@@ -1271,7 +1293,8 @@ says so before the script runs.
 | `ai_waypoint_index` | int, read-only | the point it is walking to or waiting at; -1 when it walks none |
 | `ai_in_cover` | bool, read-only | hidden at a point that takes cover |
 | `ai_waiting` | bool, read-only | waiting at a point of its path |
-| `ai_speed` `ai_accel` `ai_turn_rate` `ai_sight_range` `ai_fov` `ai_hearing_range` `ai_lose_time` `ai_attack_range` `ai_attack_interval` `ai_wander_radius` | float | the tuning, writable during play |
+| `ai_follow` | ref or null | the leader it keeps up with; null too while that leader is gone or down. Writing is `ai_follow` |
+| `ai_speed` `ai_accel` `ai_turn_rate` `ai_sight_range` `ai_fov` `ai_hearing_range` `ai_lose_time` `ai_attack_range` `ai_attack_interval` `ai_wander_radius` `ai_follow_distance` `ai_follow_leash` `ai_run_speed` | float | the tuning, writable during play |
 
 Reading any of these on an entity with no controller gives a dull answer rather
 than an error, as the vehicle properties do. Writing one is reported.
@@ -1381,6 +1404,7 @@ Components are members rather than functions: `v.x`, `v.y`, `v.z`.
 
 **UI** — `show_screen(name)` `hide_screen(screen)` `screen(name)`
 `widget(screen, id)` `focus(widget)` `load_level(name)` `quit_game()`
+`bind_key(action, slot)` `binding_name(action, slot)` `reset_bindings()`
 
 `spawn` returns a `ref` to the new entity. Entities spawned during play exist only
 for that play session.
@@ -1518,6 +1542,7 @@ before the script runs, when the dict is written out literally.
 | `all` | `bool` | `false` | Report every object in the line of fire instead of the nearest one. Changes `hit` from a ref to a list. |
 | `points` | `bool` | `false` | Add the third argument, where each hit landed. Off by default because it changes how many arguments the handler takes. |
 | `range` | number | `1000.0` | How far the ray travels, in world units. |
+| `spread` | number | `0.0` | The full width, in degrees, of the cone the shot scatters inside. `0` is dead centre down the reticle. |
 | `entities` | `bool` | `true` | Entities can be hit. |
 | `volumes` | `bool` | `false` | Trigger volumes can be hit. Off by default because a level's rooms are routinely wrapped in one, and including them would make nearly every shot report the room before what was standing in it. |
 | `geometry` | `bool` | `true` | Walls, floors and ceilings stop the ray and can be hit. Clearing it is what makes a cast see through walls. |
@@ -1530,7 +1555,24 @@ hitscan(:shot:, {"all": true, "range": 40.0})          -- everything within 40 u
 hitscan(:shot:, {"tag": "enemy", "visible_only": true}) -- tagged, and drawn
 hitscan(:shot:, {"geometry": false})                    -- straight through the walls
 hitscan(:shot:, {"ignore": @shield})                    -- as if the shield were not there
+hitscan(:shot:, {"spread": 3.0})                        -- somewhere in a 3-degree cone
 ```
+
+`spread` is what stops a hip-fired rifle being a sniper rifle. The shot lands
+somewhere inside a cone of that full width, drawn evenly over the cone's *disc*
+rather than over its angle — drawing the angle straight would pile most shots
+into the middle and leave the rim empty, which reads as a far more accurate gun
+than the number says. A shotgun is several casts in a row, each with its own
+draw:
+
+```
+for i in [0, 1, 2, 3, 4, 5, 6, 7]
+    hitscan(:pellet:, {"spread": 9.0, "range": 20.0})
+end
+```
+
+The draw comes from the running script's own generator, the one `random()` and
+`seed_random()` use, so a seeded run scatters its shots the same way twice.
 
 ```
 def on_fire(:primary_fire:) -> null
@@ -1777,6 +1819,9 @@ widget(screen("pause"), "ok")      -- one widget on it
 focus(widget(@pause, "resume"))    -- move keyboard and gamepad focus
 load_level("canyon")               -- covered by the `loading` screen
 quit_game()                        -- end the game after this frame
+bind_key("jump", 1)                -- the next key pressed becomes jump's binding; :bound: follows
+binding_name("jump", 1)            -- "Space", "Mouse Left", or "" when empty
+reset_bindings()                   -- every action back on its default keys
 ```
 
 A screen and a widget carry the same tags, attributes, script and params any
@@ -2002,6 +2047,9 @@ alone; disabling the volume clears the cloud with the trigger.
 @thunderhead.prop.cloud_color = <0.35, 0.35, 0.4>
 @thunderhead.prop.cloud = false            -- clear it, keep the numbers
 ```
+
+`clears_clouds` is the opposite switch: true on any volume, cloud or not, and no
+volumetric cloud is drawn inside its region.
 
 ### Where output goes
 

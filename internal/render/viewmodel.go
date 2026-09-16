@@ -73,6 +73,18 @@ func RenderViewmodel() {
 	gl.Enable(gl.DEPTH_TEST)
 	gl.Clear(gl.DEPTH_BUFFER_BIT)
 
+	// The viewmodel's own lens, for the pass and no longer: a wider, fixed
+	// field of view so that aiming down the sights zooms the world without
+	// swelling the arms across the screen, and a near plane ten times closer so
+	// that hands held at arm's length are not sliced open by it. See
+	// gfx.ViewmodelProjection. The world program is bound explicitly rather
+	// than assumed, since the uniform is uploaded to whatever is in use — and
+	// gfx.Projection goes back at the end, because every pass after this one
+	// reads that uniform expecting the world's lens.
+	gl.UseProgram(gfx.Program)
+	gfx.UploadProjection(gfx.ViewmodelProjection())
+	defer gfx.UploadProjection(gfx.Projection)
+
 	for mi := range e.Models {
 		m := &e.Models[mi]
 		if !entityDrawable(e, m) {

@@ -659,6 +659,9 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 	// would otherwise pay for a uniform upload per chunk to say nothing changed.
 	current := identity
 	gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
+	// Brush batches carry no skin, and nothing between here and the entity walk
+	// sets it; drawGeometryShadow sets it per surface for everything else.
+	gfx.ApplySkinUniforms(skin, prog, nil)
 
 	// A compiled level's static surfaces, which are already in world space —
 	// hence the identity that is still bound.
@@ -668,18 +671,7 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 	// falls across the floor they can. The PVS answers "what can be seen from
 	// here", and a shadow caster is precisely the thing that matters while
 	// unseen.
-	if level.Static != nil {
-		for si := range level.Static.Surfaces {
-			surf := &level.Static.Surfaces[si]
-			if level.Static.Hidden(si) {
-				continue // its chunk is switched off — see world/static.go
-			}
-			if cull != nil && !AABBInFrustum(*cull, surf.Lo, surf.Hi) {
-				continue
-			}
-			drawGeometryShadow(&surf.Geometry, prog, skin)
-		}
-	}
+	shadowStaticSurfaces(level, cull)
 
 	for ci := range level.Chunks {
 		chunk := &level.Chunks[ci]
@@ -699,44 +691,10 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 				continue
 			}
 		}
-		chunkModel := chunk.ModelMatrix()
-		for bi := range chunk.Brushes {
-			brush := &chunk.Brushes[bi]
-			if !chunk.DrawsBrushLive(brush) {
-				continue // baked into the compiled surfaces above
-			}
-			// LocalAABB already reports where a moved brush IS
-			// (world/brush_dynamic.go), so this culls against the drawn
-			// position rather than the authored one.
-			if cull != nil {
-				bMin, bMax := brush.LocalAABB()
-				bMin, bMax = TransformAABB(chunkModel, bMin, bMax)
-				if !AABBInFrustum(*cull, bMin, bMax) {
-					continue
-				}
-			}
-			// The face meshes are in authored coordinates whatever the brush
-			// has since done, so a moved one gets its placement folded into the
-			// matrix rather than its buffers rebuilt.
-			model := chunkModel
-			if !brush.AtRest() {
-				model = chunkModel.Mul4(brush.Placement())
-			}
-			if model != current {
-				current = model
-				gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
-			}
-			// The drawn mesh casts the shadow, so a wall's detail casts the
-			// shadow its bumps and reveals actually make.
-			faces := brush.DrawFaces()
-			for fi := range faces {
-				f := &faces[fi]
-				if f.NoDraw {
-					continue
-				}
-				drawGeometryShadow(&f.Geometry, prog, skin)
-			}
-		}
+		// Out of the chunk's batches, one call per material for the unmoved
+		// brushes that survive the cull. The drawn mesh casts the shadow, so a
+		// wall's detail casts the shadow its bumps and reveals actually make.
+		shadowChunkBrushes(level, chunk, chunk.ModelMatrix(), cull, modelUniform, &current)
 	}
 
 	// Put the identity back before the entity walk, which sets its own matrices

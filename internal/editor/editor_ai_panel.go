@@ -190,6 +190,40 @@ func editorAISpecUI(spec **world.AISpec, h aiPanelHost) {
 		imgui.TreePop()
 	}
 
+	if imgui.TreeNodeV("Leader##aifollow"+h.id, 0) {
+		editorTextMutedWrapped("Someone to keep up with, as a squadmate: a place in a loose group behind them, fighting from there until they are the leash away.")
+		preview := s.Follow
+		if preview == "" {
+			preview = "(nobody)"
+		}
+		if imgui.BeginCombo("Follow##aifollowc"+h.id, preview) {
+			if imgui.Selectable("(nobody)") {
+				EditorPushUndo()
+				s.Follow = ""
+				h.edited("aifollowc")
+			}
+			for _, name := range aiLeaderSuggestions(Editor.level) {
+				if imgui.SelectableV(name, name == s.Follow, 0, imgui.Vec2{}) {
+					EditorPushUndo()
+					s.Follow = name
+					h.edited("aifollowc")
+				}
+			}
+			imgui.EndCombo()
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("A waypoint path comes first: the agent walks it, then falls in.\n" +
+				"A script sets this with ai_follow(@agent, @player).")
+		}
+		aiDrag("Spacing", "aifollowd", h, &s.FollowDistance, 0.5, 20, 0.1)
+		aiDrag("Leash (0 = never regroup)", "aifollowl", h, &s.FollowLeash, 0, 500, 0.5)
+		aiDrag("Run speed (catching up)", "airunspd", h, &s.RunSpeed, 0, 100, 0.1)
+		if s.RunSpeed > s.Speed {
+			aiAnimCombo("Run animation", "airuna", h, &s.RunAnim)
+		}
+		imgui.TreePop()
+	}
+
 	if imgui.TreeNodeV("Idle and animation##aiidle"+h.id, 0) {
 		aiDrag("Wander radius (0 = stand)", "aiwander", h, &s.WanderRadius, 0, 1000, 0.5)
 		if s.WanderRadius > 0 {
@@ -334,6 +368,19 @@ func aiTargetSuggestions(lvl *world.Level) []string {
 		}
 	}
 	return append(append(out, sortedKeys(tags)...), ids...)
+}
+
+// aiLeaderSuggestions is who an agent could follow in the open level: the
+// player, and each entity by ID.
+func aiLeaderSuggestions(lvl *world.Level) []string {
+	out := []string{"player"}
+	if lvl == nil {
+		return out
+	}
+	for i := range lvl.Entities {
+		out = append(out, lvl.Entities[i].ID)
+	}
+	return out
 }
 
 // aiObjectiveSuggestions is every objective volume in the open level, and every

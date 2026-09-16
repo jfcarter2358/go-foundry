@@ -23,6 +23,7 @@ import (
 	"foundry/internal/platform"
 	"foundry/internal/world"
 	"math"
+	"slices"
 
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -278,7 +279,9 @@ func editorDirLightProperties(lvl *world.Level) {
 
 	// Light, Aim, Shadows and Scripting: four subjects, four groups. Shadows
 	// especially — every light carries a pair of shadow fields, and unfolded
-	// they doubled the block for something most lights never change.
+	// they doubled the block for something most lights never change. Bake
+	// excludes is a fifth, shown only for a static light that still bakes at
+	// all (Leave out of bake off) — anything else has no chunk list to offer.
 	editorPropGroupOpen("Light##dirlightgrp", func() {
 		if dl.ID != "" {
 			editorTextMuted("A script reaches this light as @" + dl.ID)
@@ -300,7 +303,18 @@ func editorDirLightProperties(lvl *world.Level) {
 		if editorLightDynamicCheckbox(fmt.Sprintf("dir%d", i), &dl.Dynamic) {
 			changed = true
 		}
+		if !dl.Dynamic && editorLightNoBakeCheckbox(fmt.Sprintf("dir%d", i), &dl.NoBake) {
+			changed = true
+		}
 	})
+
+	if !dl.Dynamic && !dl.NoBake {
+		editorPropGroupOpen(fmt.Sprintf("Bake excludes##dirbakeexcl%d", i), func() {
+			if editorLightBakeExcludeUI(fmt.Sprintf("dir%d", i), &dl.BakeExclude) {
+				changed = true
+			}
+		})
+	}
 
 	editorPropGroupOpen("Aim##dirlightaim", func() {
 		// Yaw/pitch instead of raw vector components: a vector edited one
@@ -382,7 +396,18 @@ func editorPointLightProperties(lvl *world.Level) {
 			}
 			changed = true
 		}
+		if !pl.Dynamic && editorLightNoBakeCheckbox(fmt.Sprintf("pt%d", i), &pl.NoBake) {
+			changed = true
+		}
 	})
+
+	if !pl.Dynamic && !pl.NoBake {
+		editorPropGroupOpen(fmt.Sprintf("Bake excludes##ptbakeexcl%d", i), func() {
+			if editorLightBakeExcludeUI(fmt.Sprintf("pt%d", i), &pl.BakeExclude) {
+				changed = true
+			}
+		})
+	}
 
 	editorPropGroupOpen("Transform##ptlighttf", func() {
 		// Position, typed. The translate gizmo in the 3D view edits the same
@@ -485,6 +510,76 @@ func editorLightDynamicCheckbox(id string, dynamic *bool) bool {
 			"floors, which is free to draw but frozen as authored. On, it is left\n" +
 			"out of the bake and lit live on everything, every frame, with its\n" +
 			"shadow maps. Uncompiled levels light both kinds live.")
+	}
+	return changed
+}
+
+// editorLightNoBakeCheckbox is the no_bake toggle, offered only on a static
+// light (a dynamic one is never baked anyway).
+func editorLightNoBakeCheckbox(id string, noBake *bool) bool {
+	on := *noBake
+	changed := false
+	if imgui.Checkbox("Leave out of bake##lightnobake"+id, &on) {
+		EditorPushUndo()
+		*noBake = on
+		changed = true
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("For a light that belongs to geometry the compiler does not bake,\n" +
+			"such as a hangar marked Moves. The light stays static but is lit\n" +
+			"live instead of being baked onto whatever it shines on, so it does\n" +
+			"not stay behind after that geometry has gone. A script may switch\n" +
+			"it on and off, and change nothing else.")
+	}
+	return changed
+}
+
+// editorLightBakeExcludeUI draws a static light's list of chunks its bake
+// skips, and its add row. Offered only alongside editorLightNoBakeCheckbox,
+// where "Leave out of bake" is off — that flag already means the light bakes
+// nowhere, which makes naming individual chunks to leave out moot.
+//
+// A plain add/remove list rather than editorTagsUI: these are chunk IDs, not
+// `#tag`s, and NormalizeTags' sort-and-lowercase would silently mismatch a
+// chunk whose ID is not already lowercase.
+func editorLightBakeExcludeUI(id string, list *[]string) bool {
+	changed := false
+	for _, c := range *list {
+		imgui.Text(c)
+		imgui.SameLine()
+		if imgui.Button("x##bakeexcl" + id + c) {
+			EditorPushUndo()
+			for i, cur := range *list {
+				if cur == c {
+					*list = append((*list)[:i], (*list)[i+1:]...)
+					break
+				}
+			}
+			changed = true
+			// The list being iterated has just been rewritten; leave now and
+			// draw the rest of it next frame, as editorTagsUIBody does.
+			return changed
+		}
+	}
+	if len(*list) == 0 {
+		imgui.Text("(none)")
+	}
+	imgui.InputTextV("##newbakeexcl"+id, &Editor.NewBakeExcludeText, 0, nil)
+	imgui.SameLine()
+	if imgui.Button("Exclude Chunk##bakeexcladd"+id) && Editor.NewBakeExcludeText != "" {
+		if !slices.Contains(*list, Editor.NewBakeExcludeText) {
+			EditorPushUndo()
+			*list = append(*list, Editor.NewBakeExcludeText)
+			changed = true
+		}
+		Editor.NewBakeExcludeText = ""
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A chunk ID (the Explorer panel's chunk list) this light's bake\n" +
+			"skips, while it keeps lighting that chunk live and keeps baking\n" +
+			"normally everywhere else. For a chunk with no lasting reason to\n" +
+			"carry this light baked in — a hangar the level disables for good,\n" +
+			"say, lit for the moment by the sun the ground outside bakes.")
 	}
 	return changed
 }

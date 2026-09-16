@@ -132,7 +132,10 @@ receive the objective's **Action** atom and `:objective_complete:`. See
 
 A volume may be full of fog or full of cloud — the things a volume can be that
 the player sees. See [Sky and fog](08-sky-and-fog.md) and its
-[cloud volumes](08-sky-and-fog.md#cloud-volumes).
+[cloud volumes](08-sky-and-fog.md#cloud-volumes). It can also keep cloud *out*:
+**Clears clouds** (`clears_clouds: true`) draws no volumetric cloud inside the
+region, which is how a ship's hold stays clear in a cloud bank — see
+[Keeping cloud out](08-sky-and-fog.md#keeping-cloud-out).
 
 The short version: open the volume's **Fog** group, set a colour and a density.
 Density is per world unit travelled *inside* the region, so the same number means

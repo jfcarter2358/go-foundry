@@ -632,6 +632,18 @@ func editorVolumeCloud(v *world.Volume) {
 		imgui.SetTooltip("The region fills with ray-marched cloud, lit by the level's sun and sky.\n" +
 			"A big flat box over the level is a cloud layer; a sphere is one cumulus.")
 	}
+	// The opposite of the checkbox above, and independent of it: a region that
+	// keeps everyone else's cloud out rather than holding its own.
+	clears := v.ClearsClouds
+	if imgui.Checkbox("Clears clouds##volcloudclear", &clears) {
+		EditorPushUndo()
+		v.ClearsClouds = clears
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("No volumetric cloud is drawn inside this region — cloud volumes and the sky deck alike.\n" +
+			"Put one in a ship's hold so it stays clear while the ship sits in a cloud bank.\n" +
+			"Up to " + strconv.Itoa(world.MaxCloudClearVolumes) + " in view at once, and only while the volume is enabled.")
+	}
 	if v.Cloud == nil {
 		return
 	}

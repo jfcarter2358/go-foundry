@@ -24,6 +24,7 @@ package script
 
 import (
 	"fmt"
+	"math/rand"
 	"sort"
 
 	"foundry/internal/fileutil"
@@ -155,7 +156,29 @@ type ScriptRuntime struct {
 	// tick's drain is done.
 	hidden []*ui.Screen
 
+	// running is the unit whose handler is on the stack, set for exactly as
+	// long as one is. A verb that is itself random — hitscan's spread — draws
+	// from that interpreter's generator through randomUnit below, so a seeded
+	// run scatters its shots the same way twice. Nothing else needs it: a verb
+	// reaches everything else it touches through rt.self and the host.
+	running *scriptUnit
+
 	stats ScriptStats
+}
+
+// randomUnit is a draw in [0, 1) from the generator of whichever script is
+// running — flang's, so `seed_random` pins it along with everything the script
+// rolls for itself.
+//
+// Outside a handler there is no such generator (nothing calls a verb from
+// there today, but a future caller would find nil rather than a panic), so it
+// falls back to math/rand — unseeded and unrepeatable, which is the right
+// answer for a draw nobody could have seeded anyway.
+func (rt *ScriptRuntime) randomUnit() float64 {
+	if rt.running != nil && rt.running.interp != nil {
+		return rt.running.interp.RandomUnit()
+	}
+	return rand.Float64()
 }
 
 // Scripts is the engine-wide runtime. One per process, rebuilt when a level is
@@ -202,6 +225,7 @@ func ScriptRuntimeReset(lvl *world.Level) {
 	// A zoom a script left on (@level.prop.camera_fov) belongs to the session
 	// that set it.
 	gfx.FieldOfView = gfx.DefaultFieldOfView
+	gfx.ViewmodelFieldOfView = gfx.DefaultViewmodelFieldOfView
 
 	// Nothing may evaluate a binding against a level that is being replaced, or
 	// load a script for a screen shown after the runtime has gone.
@@ -244,6 +268,14 @@ func ScriptRuntimeLoad(lvl *world.Level) {
 			Scripts.loadUnit(n.Script)
 			return true
 		})
+		Scripts.queueScreenTextures(sc)
+	}
+	// Screens the level put up before any of this was installed never passed
+	// through OnScreenShown, so their images are asked for here instead.
+	if uiStack != nil {
+		for _, sc := range uiStack.Screens() {
+			Scripts.queueScreenTextures(sc)
+		}
 	}
 	// A screen leaving the stack is kept for the next tick, so the :hidden:
 	// and :cancel: recorded as it left can still reach its script.
@@ -562,6 +594,31 @@ func (rt *ScriptRuntime) markGeometryDirty(r flang.RefVal) {
 // Deferred for the same reason a geometry rebuild is: LoadTexture is GL work
 // and the tick runs before the frame's GL work. Coalesced by name, so a script
 // flicking one wall between two textures every frame loads each once.
+// queueScreenTextures asks for every image a screen paints with — a widget's
+// own texture, its hover, press and disabled looks, and a bar's fill.
+//
+// Nothing else loads them. The UI draw only ever looks a texture up
+// (uidraw's drawBackground), and one that was never uploaded draws as a flat
+// block of its tint colour: a scope overlay, say, becomes a black rectangle
+// over the whole view. Queued rather than loaded, because showing a screen
+// happens during a tick, where GL must not be touched — DrainScriptWork loads
+// them before the frame draws, the rule spawn_effect already follows.
+func (rt *ScriptRuntime) queueScreenTextures(sc *ui.Screen) {
+	if sc == nil {
+		return
+	}
+	sc.Root.Walk(func(_, n *ui.Node) bool {
+		rt.markTextureDirty(n.Style.Texture)
+		for _, st := range []*ui.StateStyle{n.Style.Hover, n.Style.Press, n.Style.Disabled} {
+			if st != nil {
+				rt.markTextureDirty(st.Texture)
+			}
+		}
+		rt.markTextureDirty(n.Value.FillTexture)
+		return true
+	})
+}
+
 func (rt *ScriptRuntime) markTextureDirty(name string) {
 	if name == "" {
 		return
@@ -658,7 +715,15 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 	if !rt.host.Alive(m.to) {
 		// The object was destroyed between the send and the delivery, which is
 		// ordinary. Warn once per target so a repeated send does not fill the log.
-		if !rt.warned[m.to] {
+		//
+		// Only for a message a SCRIPT sent, on the same reading as the "nothing
+		// handled this" warning below: an engine event is posted to everything
+		// in the level whether or not it will still be there when the queue
+		// drains, so a grenade that goes off during the drain of the very tick
+		// it was posted a `:tick:` for is not a mistake anyone made — and a
+		// game that throws grenades would otherwise file a line for every one
+		// of them.
+		if m.fromScript && !rt.warned[m.to] {
 			rt.warned[m.to] = true
 			ScriptLog.Warnf(rt.scriptFor(m.to),
 				"dropped :%s: for %s, which no longer exists", m.atom, m.to)
@@ -680,8 +745,12 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 	rt.self, rt.currentHops = m.to, m.hops
 	defer func() { rt.self, rt.currentHops = prevSelf, prevHops }()
 
+	prevRunning := rt.running
+	defer func() { rt.running = prevRunning }()
+
 	anyMatched := false
 	for _, u := range units {
+		rt.running = u
 		u.interp.ResetSteps()
 		_, matched, err := u.interp.CallAtom(m.atom, m.args, m.pos)
 		if err != nil {

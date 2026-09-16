@@ -225,6 +225,10 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 		Velocity:      world.RawVec3{X: ch.Velocity.X(), Y: ch.Velocity.Y(), Z: ch.Velocity.Z()},
 		Frame:         ch.FrameOwner,
 		Disabled:      ch.Disabled,
+
+		UnloadWhenDisabled: ch.UnloadWhenDisabled,
+		Streamed:           ch.Streamed,
+		Moves:              ch.Moves,
 	}
 	rc.Brushes = make([]world.RawBrush, 0, len(ch.Brushes))
 	for bi := range ch.Brushes {
@@ -327,6 +331,8 @@ func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
 			ShadowStrength: dl.ShadowStrength,
 			Disabled:       dl.Disabled,
 			Dynamic:        dl.Dynamic,
+			NoBake:         dl.NoBake,
+			BakeExclude:    dl.BakeExclude,
 		})
 	}
 	for _, pl := range ls.Points {
@@ -348,6 +354,8 @@ func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
 			ShadowStrength: pl.ShadowStrength,
 			Disabled:       pl.Disabled,
 			Dynamic:        pl.Dynamic,
+			NoBake:         pl.NoBake,
+			BakeExclude:    pl.BakeExclude,
 			Attach:         world.AttachToRaw(pl.Attach),
 		})
 	}

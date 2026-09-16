@@ -10,6 +10,11 @@ windows:
 # 	cp resources/SDL2.dll /mnt/c/Users/jcart/OneDrive/Documents/Foundry/SDL2.dll
 # 	cp foundrypack /mnt/c/Users/jcart/OneDrive/Documents/Foundry/foundrypack
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc go build -x -v -o /mnt/c/Users/jcart/OneDrive/Documents/Foundry/foundry.exe ./cmd/foundry
+	# The shaders go with the binary: the engine binds uniforms and attribute
+	# locations they declare, so an exe newer than its shaders renders wrong
+	# (dynamic lights, explosions). Only the shaders — the rest of resources/
+	# is the game project's own content, which the copy above would clobber.
+	cp resources/shaders/* /mnt/c/Users/jcart/OneDrive/Documents/Foundry/resources/shaders/
 	$(MAKE) runtime-windows RUNTIMES_DIR=/mnt/c/Users/jcart/OneDrive/Documents/Foundry/runtimes
 
 sdl:

@@ -35,9 +35,10 @@ package world
 // the quick path — place something, give it a mesh, move on — and a definition
 // is what it becomes once a second level wants the same thing.
 //
-// Everything else on an instance (position, rotation, scale, velocity, angular
+// Everything else on an instance (position, rotation, velocity, angular
 // velocity) is the instance's alone: a definition has no position, because a
-// definition is not anywhere.
+// definition is not anywhere. Scale is the one exception — a definition may give
+// the size its placements start at, and an instance's own scale replaces it.
 
 import (
 	"fmt"
@@ -172,6 +173,7 @@ type RawEntityDef struct {
 	BoundHalfY         float32                 `yaml:"bound_half_y,omitempty"`
 	BoundHalfZ         float32                 `yaml:"bound_half_z,omitempty"`
 	BoundOffset        *RawVec3                `yaml:"bound_offset,omitempty"`
+	Scale              *RawVec3                `yaml:"scale,omitempty"`   // every placement's starting scale; absent = 1
 	Visible            *bool                   `yaml:"visible,omitempty"` // default true when absent
 	Collision          *RawEntityCollision     `yaml:"collision,omitempty"`
 	Models             []RawEntityModel        `yaml:"models,omitempty"`
@@ -270,6 +272,12 @@ type EntityDef struct {
 	BoundHalfY   float32
 	BoundHalfZ   float32
 	BoundOffset  mgl32.Vec3
+
+	// Scale is the size every placement starts at — a type drawn and collided
+	// half as big again, without restating it on each instance or each spawn.
+	// An instance's own scale replaces it rather than multiplying it, the way
+	// an instance's rotation replaces nothing but its own. Zero means 1.
+	Scale mgl32.Vec3
 
 	Visible bool
 	// Collision is what instances of this type take part in physically.
@@ -439,6 +447,7 @@ func entityDefFromRaw(raw RawEntityDef, name string) (*EntityDef, error) {
 		BoundHalfY:   raw.BoundHalfY,
 		BoundHalfZ:   raw.BoundHalfZ,
 		BoundOffset:  vec3FromRawPtr(raw.BoundOffset, mgl32.Vec3{}),
+		Scale:        vec3FromRawPtr(raw.Scale, mgl32.Vec3{}),
 		Visible:      BoolDefault(raw.Visible, true),
 		Collision:    entityCollisionFromRaw(DefaultEntityCollision(), raw.Collision),
 		Attributes:   attrs,
@@ -501,6 +510,7 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 		BoundHalfY:  def.BoundHalfY,
 		BoundHalfZ:  def.BoundHalfZ,
 		BoundOffset: vec3ToRawPtr(def.BoundOffset),
+		Scale:       vec3ToRawPtr(def.Scale),
 		Visible:     BoolPtrIfFalse(def.Visible),
 		Collision:   entityCollisionToRaw(def.Collision, DefaultEntityCollision()),
 		Attributes:  attrsToRaw(def.Attributes),
@@ -520,6 +530,14 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 
 // ---------- instantiation ----------
 
+// EffectiveScale treats the zero value as identity, as Entity's does.
+func (d *EntityDef) EffectiveScale() mgl32.Vec3 {
+	if d.Scale == (mgl32.Vec3{}) {
+		return mgl32.Vec3{1, 1, 1}
+	}
+	return d.Scale
+}
+
 // Instantiate stamps out a runtime entity from the definition. The result
 // shares nothing with the definition, so an entity edited in the level editor
 // cannot rewrite the type every other level places.
@@ -531,7 +549,7 @@ func (d *EntityDef) Instantiate(id string) Entity {
 		ID:           id,
 		Type:         d.Name,
 		Tags:         append([]string(nil), d.Tags...),
-		Scale:        mgl32.Vec3{1, 1, 1},
+		Scale:        d.EffectiveScale(),
 		BoundingKind: d.BoundingKind,
 		BoundHalfX:   d.BoundHalfX,
 		BoundHalfY:   d.BoundHalfY,
@@ -664,7 +682,7 @@ func EntityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 
 	e.Position = mgl32.Vec3{r.Position.X, r.Position.Y, r.Position.Z}
 	e.Rotation = mgl32.Vec3{r.Rotation.X, r.Rotation.Y, r.Rotation.Z}
-	e.Scale = vec3FromRawPtr(r.Scale, mgl32.Vec3{1, 1, 1})
+	e.Scale = vec3FromRawPtr(r.Scale, e.Scale)
 	e.Velocity = mgl32.Vec3{r.Velocity.X, r.Velocity.Y, r.Velocity.Z}
 	e.AngularVelocity = mgl32.Vec3{r.AngularVelocity.X, r.AngularVelocity.Y, r.AngularVelocity.Z}
 	e.AttachedChunk = r.AttachedChunk
@@ -854,7 +872,11 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 		AngularVelocity: RawVec3{X: e.AngularVelocity.X(), Y: e.AngularVelocity.Y(), Z: e.AngularVelocity.Z()},
 		AttachedChunk:   e.AttachedChunk,
 	}
-	if s := e.Scale; s != (mgl32.Vec3{1, 1, 1}) && s != (mgl32.Vec3{}) {
+	base := mgl32.Vec3{1, 1, 1}
+	if def != nil {
+		base = def.EffectiveScale()
+	}
+	if s := e.EffectiveScale(); s != base {
 		r.Scale = &RawVec3{X: s.X(), Y: s.Y(), Z: s.Z()}
 	}
 

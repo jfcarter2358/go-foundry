@@ -448,3 +448,51 @@ func TestBindingDeclinesWhatItCannotRead(t *testing.T) {
 }
 
 func containsStr(s, sub string) bool { return strings.Contains(s, sub) }
+
+// A screen's images are asked for when it goes up. Nothing else loads a UI
+// texture, and one never uploaded draws as a flat block of its tint — a scope
+// overlay that is a black rectangle over the whole view. Both ways a screen can
+// be up are covered: shown by a script during play, and already on the stack
+// when play began.
+func TestShownScreensQueueTheirTextures(t *testing.T) {
+	root := withTempScriptDir(t)
+	st := withUIStack(t)
+	writeScreen(t, "scope", `id: scope
+root:
+  id: root
+  kind: panel
+  children:
+    - id: lens
+      kind: image
+      texture: scope_overlay
+    - id: knob
+      kind: button
+      texture: knob_up
+      hover: {texture: knob_hover}
+`)
+	writeScreen(t, "hud", `id: hud
+root:
+  id: root
+  kind: panel
+  children:
+    - id: badge
+      kind: image
+      texture: hud_badge
+`)
+	if _, err := st.Show("hud"); err != nil {
+		t.Fatal(err)
+	}
+
+	path := writeScript(t, root, "lvl.flang", `def on_spawn(:spawn:) -> null
+    show_screen("scope")
+end`)
+	lvl := tickTestLevel(t)
+	lvl.Scripts = []string{path}
+	runTicks(t, lvl, 2)
+
+	for _, name := range []string{"scope_overlay", "knob_up", "knob_hover", "hud_badge"} {
+		if !Scripts.dirtyTex[name] {
+			t.Errorf("texture %q was never queued to load, so it would draw as a flat block", name)
+		}
+	}
+}

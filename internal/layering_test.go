@@ -67,7 +67,6 @@ var upward = map[string][]string{
 	// would be a bug reported as "the settings do nothing".
 	"video":     {"gfx", "world", "render", "collision", "script", "levelio", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
 	"texture":   {"world", "render", "editor", "app", "uiwin", "textureui", "ui", "uidraw", "uifont"},
-	"detail":    {"render", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
 	"biome":     {"render", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
 	"collision": {"render", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
 	// nav builds a level's navigation grid from its brushes and answers path
@@ -102,7 +101,9 @@ func TestPackagesDoNotDependUpward(t *testing.T) {
 	for pkg, forbidden := range upward {
 		out, err := exec.Command("go", "list", "-deps", "foundry/internal/"+pkg).Output()
 		if err != nil {
-			t.Fatalf("go list -deps %s: %v", pkg, err)
+			// Most likely the package has been removed, and its entry here
+			// with it should be.
+			t.Fatalf("go list -deps %s: %v (if internal/%s is gone, delete its entry from upward)", pkg, err, pkg)
 		}
 		deps := map[string]bool{}
 		for _, line := range strings.Split(string(out), "\n") {
