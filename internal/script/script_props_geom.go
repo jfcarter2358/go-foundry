@@ -409,6 +409,7 @@ func chunkProps() map[string]propAccess {
 			Get: get(func(ch *world.Chunk) flang.Value { return flang.FloatVal(ch.Scale) }),
 			Doc: "read-only: this chunk's uniform scale",
 		},
+		"waypoints": waypointsProp(),
 	}
 }
 

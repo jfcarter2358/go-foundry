@@ -204,6 +204,8 @@ ghost follows the cursor and every click places another, until `Escape`. From
 there it is the 3D view — `Tab` for edit mode, `1`/`2`/`3` for points, edges and
 faces, `E`/`I`/`B` to extrude, inset and subdivide, `J` to join faces, `M` and `X`
 to merge and dissolve points, `G`/`R`/`C` to move, turn and resize, and the same brush and face property blocks down the right.
+Click a face in edit mode to texture it on its own; `Ctrl+click` more and a
+field changed in the face block is written to all of them.
 `Ctrl+Shift+click` a brush for detail mode, which shapes what it looks like
 without moving what a body walks into — see
 [Shaping surfaces](03-shaping-surfaces.md).
@@ -368,11 +370,14 @@ sight and hitscans test the same shorter bounds. Scripts read it as
 
 ### Sprinting
 
-`Left Shift` toggles a sprint at 1.65× walking speed. It lasts while `W` is
-held and ends by itself when the player stops pushing forward, crouches, sits
-down, or loses control — so the toggle never outlives the run it was pressed
-for. Scripts read and clear it as `@player.prop.sprinting`; the shipped
-`player_combat.flang` clears it when the player fires or aims.
+Holding `Left Shift` sprints at 1.65× walking speed. It lasts while both
+`Left Shift` and `W` are held, and ends when either comes up, or the player
+crouches, sits down, or loses control. Scripts read it as
+`@player.prop.sprinting`. Writing `false` ends a sprint and keeps it off while
+the key stays down, and writing `true` lets a key that is still held sprint
+again. Neither one starts a sprint the player is not holding the key for. The
+shipped `player_combat.flang` writes `false` when the player fires or aims, and
+`true` shortly after they stop.
 
 ### Mouse look and the player's settings
 

@@ -27,22 +27,41 @@ const (
 // SprintSpeedScale multiplies walking speed while sprinting.
 const SprintSpeedScale = float32(1.65)
 
-// playerSprinting is the sprint toggle. Left Shift turns it on; the frame loop
-// turns it off again when the player stops pushing forward, crouches, sits, or
-// loses control, and a script may turn it off (firing, aiming) through
-// @player.prop.sprinting.
+// playerSprinting is whether the player is sprinting right now. The sprint key
+// is held, not toggled: the frame loop hands UpdatePlayerSprint whether the
+// player is asking to sprint (the key down, pushing forward, on foot) every
+// frame, and the sprint lasts exactly as long as that ask does.
 var playerSprinting bool
+
+// sprintWanted is the ask as of the last UpdatePlayerSprint.
+var sprintWanted bool
+
+// sprintHeldOff is a script's "not now" (@player.prop.sprinting = false —
+// firing, aiming). It keeps the sprint off while the key stays down, and lifts
+// when the key comes up or the script writes true again.
+var sprintHeldOff bool
 
 // PlayerSprinting reports whether the player is sprinting.
 func PlayerSprinting() bool { return playerSprinting }
 
-// SetPlayerSprinting turns the sprint on or off. Turning it on is refused while
-// crouched: the two are different speeds for the same legs.
-func SetPlayerSprinting(on bool) {
-	if on && PlayerCrouched() {
-		return
+// UpdatePlayerSprint is the frame loop's once-a-frame say: want is whether the
+// player is holding the sprint key down while able to sprint.
+func UpdatePlayerSprint(want bool) {
+	sprintWanted = want
+	if !want {
+		sprintHeldOff = false
 	}
-	playerSprinting = on
+	playerSprinting = want && !sprintHeldOff && !PlayerCrouched()
+}
+
+// SetPlayerSprinting is a script's hand on the sprint. false ends it and holds
+// it off for as long as the key stays down; true lifts that hold, so a player
+// still holding the key is sprinting again at once. Neither can start a sprint
+// the player is not asking for, and a crouched player never sprints: the two
+// are different speeds for the same legs.
+func SetPlayerSprinting(on bool) {
+	sprintHeldOff = !on
+	playerSprinting = on && sprintWanted && !PlayerCrouched()
 }
 
 // StandHalfHeight is the standing body's half-height.
@@ -75,7 +94,7 @@ func SetPlayerEyeHeight(h float32) { playerEye = h }
 // change, the start of play. Keeps the feet where they are.
 func ResetPlayerStance() {
 	playerEye = 0
-	playerSprinting = false
+	playerSprinting, sprintWanted, sprintHeldOff = false, false, false
 	if PlayerEntity == nil {
 		return
 	}

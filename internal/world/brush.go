@@ -124,7 +124,19 @@ type BrushFace struct {
 	// its own region of a painted texture; nil on every face that has not been
 	// through one. Honoured only while there is one per corner: see HasUVs and
 	// brush_uv.go.
-	UVs         []mgl32.Vec2
+	UVs []mgl32.Vec2
+
+	// TextureOverride draws the face with OverrideTexture projected onto its
+	// own plane under the Override* transform, in place of Texture and UVs.
+	// Those stay authored underneath — the face keeps its atlas island and its
+	// place in a re-unwrap — so switching the override off restores the paint.
+	// See DrawTexture and brush_uv.go.
+	TextureOverride    bool
+	OverrideTexture    string
+	OverrideUVOffset   mgl32.Vec2
+	OverrideUVScale    mgl32.Vec2 // zero = {1,1}
+	OverrideUVRotation float32    // radians
+
 	Smooth      bool    // shade from interpolated vertex normals across the brush
 	SmoothAngle float32 // crease threshold in degrees; 0 = DefaultSmoothAngle
 	Alpha       float32 // 0 = fully transparent, 1 = fully opaque
@@ -383,16 +395,17 @@ func (m *BrushMesh) Load() error {
 		if len(verts) == 0 {
 			continue
 		}
-		if f.HasUVs() {
+		if f.DrawsCornerUVs() {
 			applyCornerUVs(verts, f.UVs)
 		}
-		ApplyUVTransform(verts, f.UVOffset, f.UVScale, f.UVRotation)
+		offset, scale, rotation := f.DrawUVTransform()
+		ApplyUVTransform(verts, offset, scale, rotation)
 		f.Geometry.Smooth, f.Geometry.SmoothAngle = f.Smooth, f.SmoothAngle
 		// A face has no buffers of its own: its chunk's batch uploads every
 		// face of a material together (render/chunk_batch.go), which is what
 		// keeps a big area a few dozen GL objects rather than one per face.
 		f.Geometry.CPUOnly = true
-		if err := f.Geometry.Load(verts, indices, f.Texture, mgl32.Vec3{}); err != nil {
+		if err := f.Geometry.Load(verts, indices, f.DrawTexture(), mgl32.Vec3{}); err != nil {
 			return err
 		}
 		f.Geometry.Alpha = f.Alpha
@@ -556,20 +569,25 @@ func meshFromRaw(rawVerts []float32, rawFaces []RawBrushFace) BrushMesh {
 	m.Faces = make([]BrushFace, 0, len(rawFaces))
 	for _, rf := range rawFaces {
 		m.Faces = append(m.Faces, BrushFace{
-			Indices:      append([]int(nil), rf.Indices...),
-			Texture:      rf.Texture,
-			BlendTexture: rf.BlendTexture,
-			BlendMask:    rf.BlendMask,
-			UVOffset:     mgl32.Vec2{rf.UVOffset.X, rf.UVOffset.Y},
-			UVScale:      mgl32.Vec2{rf.UVScale.X, rf.UVScale.Y},
-			UVRotation:   rf.UVRotation,
-			UVs:          uvsFromRaw(rf.UVs),
-			Smooth:       rf.Smooth,
-			SmoothAngle:  rf.SmoothAngle,
-			Alpha:        float32Default(rf.Alpha, 1.0),
-			DoubleSided:  rf.DoubleSided,
-			NoDraw:       rf.NoDraw,
-			NoCollide:    rf.NoCollide,
+			Indices:            append([]int(nil), rf.Indices...),
+			Texture:            rf.Texture,
+			BlendTexture:       rf.BlendTexture,
+			BlendMask:          rf.BlendMask,
+			UVOffset:           mgl32.Vec2{rf.UVOffset.X, rf.UVOffset.Y},
+			UVScale:            mgl32.Vec2{rf.UVScale.X, rf.UVScale.Y},
+			UVRotation:         rf.UVRotation,
+			UVs:                uvsFromRaw(rf.UVs),
+			TextureOverride:    rf.TextureOverride,
+			OverrideTexture:    rf.OverrideTexture,
+			OverrideUVOffset:   mgl32.Vec2{rf.OverrideUVOffset.X, rf.OverrideUVOffset.Y},
+			OverrideUVScale:    mgl32.Vec2{rf.OverrideUVScale.X, rf.OverrideUVScale.Y},
+			OverrideUVRotation: rf.OverrideUVRotation,
+			Smooth:             rf.Smooth,
+			SmoothAngle:        rf.SmoothAngle,
+			Alpha:              float32Default(rf.Alpha, 1.0),
+			DoubleSided:        rf.DoubleSided,
+			NoDraw:             rf.NoDraw,
+			NoCollide:          rf.NoCollide,
 		})
 	}
 	return m
@@ -592,20 +610,25 @@ func meshToRaw(m *BrushMesh) ([]float32, []RawBrushFace) {
 			alphaPtr = &alpha
 		}
 		faces = append(faces, RawBrushFace{
-			Indices:      append([]int(nil), f.Indices...),
-			Texture:      f.Texture,
-			BlendTexture: f.BlendTexture,
-			BlendMask:    f.BlendMask,
-			UVOffset:     geom.Point{X: f.UVOffset.X(), Y: f.UVOffset.Y()},
-			UVScale:      geom.Point{X: f.UVScale.X(), Y: f.UVScale.Y()},
-			UVRotation:   f.UVRotation,
-			UVs:          uvsToRaw(f),
-			Smooth:       f.Smooth,
-			SmoothAngle:  f.SmoothAngle,
-			Alpha:        alphaPtr,
-			DoubleSided:  f.DoubleSided,
-			NoDraw:       f.NoDraw,
-			NoCollide:    f.NoCollide,
+			Indices:            append([]int(nil), f.Indices...),
+			Texture:            f.Texture,
+			BlendTexture:       f.BlendTexture,
+			BlendMask:          f.BlendMask,
+			UVOffset:           geom.Point{X: f.UVOffset.X(), Y: f.UVOffset.Y()},
+			UVScale:            geom.Point{X: f.UVScale.X(), Y: f.UVScale.Y()},
+			UVRotation:         f.UVRotation,
+			UVs:                uvsToRaw(f),
+			TextureOverride:    f.TextureOverride,
+			OverrideTexture:    f.OverrideTexture,
+			OverrideUVOffset:   geom.Point{X: f.OverrideUVOffset.X(), Y: f.OverrideUVOffset.Y()},
+			OverrideUVScale:    geom.Point{X: f.OverrideUVScale.X(), Y: f.OverrideUVScale.Y()},
+			OverrideUVRotation: f.OverrideUVRotation,
+			Smooth:             f.Smooth,
+			SmoothAngle:        f.SmoothAngle,
+			Alpha:              alphaPtr,
+			DoubleSided:        f.DoubleSided,
+			NoDraw:             f.NoDraw,
+			NoCollide:          f.NoCollide,
 		})
 	}
 	return verts, faces

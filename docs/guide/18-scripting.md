@@ -246,7 +246,7 @@ not the one the body sees.
 `v.z` as members
 
 **World** — `log` `time` `player` `find(tag)` `distance(a, b)` `play_anim`
-`stop_anim` `bone_position` `spawn(type, vec)` `destroy(ref)` `after(ms, atom, ...)` `hitscan` `emit` `stop_emit` `burst`
+`stop_anim` `bone_position` `recoil` `spawn(type, vec)` `destroy(ref)` `after(ms, atom, ...)` `hitscan` `emit` `stop_emit` `burst`
 `spawn_effect` `attach` `detach` `mount` `dismount` `ai_move_to` `ai_stop` `ai_target`
 `ai_objective` `ai_follow_waypoints` `ai_continue` `ai_follow` `find_path` `can_see` `play` `stop` `play_sound`
 `play_sound_at` `play_music` `stop_music`

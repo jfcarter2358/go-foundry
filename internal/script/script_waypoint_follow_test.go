@@ -39,23 +39,25 @@ func followScriptLevel(t *testing.T) *world.Level {
 
 func TestPlayWaypointsSendsEveryKindAPathCanCarry(t *testing.T) {
 	lvl := followScriptLevel(t)
-	for _, id := range []string{"crate", "torch", "smoke", "hum", "lamp", "trigger"} {
+	for _, id := range []string{"crate", "chunk", "torch", "smoke", "hum", "lamp", "trigger"} {
 		got := runScript(t, lvl, "", "def main() -> null\n    return play_waypoints(@"+id+", @rise)\nend")
 		if !flang.Equal(got, flang.BoolVal(true)) {
 			t.Fatalf("play_waypoints(@%s, @rise) returned %v, want true", id, got)
 		}
 	}
 
-	// Each on its own kind's tick: the entity in EntityUpdate, the rest in
-	// AdvanceWaypointFollowers.
+	// Each on its own kind's tick: the entity in EntityUpdate, the chunk in
+	// AdvanceChunks, the rest in AdvanceWaypointFollowers.
 	if !world.AdvanceWaypointFollowers(lvl, 1) {
 		t.Error("the lamp moved and the step did not ask for the lights to be uploaded")
 	}
 	collision.EntityUpdate(lvl, 1, true, nil)
+	world.AdvanceChunks(lvl, 1)
 
 	want := mgl32.Vec3{0, 4, 0}
 	for id, got := range map[string]mgl32.Vec3{
 		"crate":   lvl.Entities[0].Position,
+		"chunk":   lvl.Chunks[0].Origin,
 		"torch":   lvl.Sprites[0].Position,
 		"smoke":   lvl.Emitters[0].Position,
 		"hum":     lvl.Sounds[0].Position,
@@ -126,7 +128,7 @@ func nearlyEqualF(a, b, tol float32) bool { return a-b <= tol && b-a <= tol }
 
 func TestEveryKindReadsWhatItIsFollowing(t *testing.T) {
 	lvl := followScriptLevel(t)
-	for _, id := range []string{"crate", "torch", "smoke", "hum", "lamp", "sun", "trigger"} {
+	for _, id := range []string{"crate", "chunk", "torch", "smoke", "hum", "lamp", "sun", "trigger"} {
 		read := "def main() -> null\n    return @" + id + ".prop.waypoints\nend"
 		if got := runScript(t, lvl, "", read); !flang.Equal(got, flang.NullVal{}) {
 			t.Errorf("@%s following nothing reads back %v, want null", id, got)
@@ -169,8 +171,7 @@ func TestAnArrivalIsPostedToTheObjectThatArrived(t *testing.T) {
 	}
 }
 
-// The player and vehicles have movers of their own, and a chunk is not
-// something a path carries; each refusal says which.
+// The player and vehicles have movers of their own; each refusal says which.
 func TestWaypointVerbsRefuseWhatAPathCannotCarry(t *testing.T) {
 	cases := []struct {
 		name, target, want string
@@ -179,7 +180,6 @@ func TestWaypointVerbsRefuseWhatAPathCannotCarry(t *testing.T) {
 		{"static brush", "room", "not dynamic", nil},
 		{"vehicle", "crate", "vehicle", func(l *world.Level) { l.Entities[0].Vehicle = &world.VehicleSpec{} }},
 		{"player", "player", "cannot move the player", nil},
-		{"chunk", "chunk", "a dynamic brush, an entity, a sprite", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -204,13 +204,10 @@ func TestWaypointVerbsRefuseWhatAPathCannotCarry(t *testing.T) {
 
 func TestLintKnowsEveryKindAPathCanCarry(t *testing.T) {
 	lvl := followScriptLevel(t)
-	for _, id := range []string{"crate", "torch", "smoke", "hum", "lamp", "sun", "trigger"} {
+	for _, id := range []string{"crate", "chunk", "torch", "smoke", "hum", "lamp", "sun", "trigger"} {
 		if issues := lintBody(t, lvl, "    play_waypoints(@"+id+", @rise)"); len(issues) != 0 {
 			t.Errorf("play_waypoints on @%s produced issues: %v", id, issues)
 		}
-	}
-	if issues := lintBody(t, lvl, "    play_waypoints(@chunk, @rise)"); !issuesMention(issues, "moves a dynamic brush, an entity") {
-		t.Errorf("a path on a chunk got no issue naming what a path moves: %v", issues)
 	}
 	lvl.Entities[0].Vehicle = &world.VehicleSpec{}
 	if issues := lintBody(t, lvl, "    stop_waypoints(@crate)"); !issuesMention(issues, "vehicle") {

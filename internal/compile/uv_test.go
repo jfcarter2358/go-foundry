@@ -75,3 +75,39 @@ func TestAnUnwrappedFaceKeepsItsTexelsWhereItIsCut(t *testing.T) {
 		t.Error("no piece kept one of the face's own corners to check the map against")
 	}
 }
+
+// A texture override replaces the painting in the compiled level too: every
+// piece wears the override's texture and transform, and none carries the
+// unwrap's map, which would sample the override's image in pieces.
+func TestAnOverriddenFaceCompilesWithItsOverride(t *testing.T) {
+	const top = 3
+	lvl := levelOf(
+		world.NewBoxBrush("slab", mgl32.Vec3{0, -0.5, 0}, mgl32.Vec3{4, 0.5, 4}, "floor_atlas"),
+	)
+	slab := &lvl.Chunks[0].Brushes[0]
+	af := []world.AtlasFace{{Mesh: &slab.BrushMesh, Face: top}}
+	lay, err := world.LayoutBrushAtlas(af, geom.AtlasOptions{})
+	if err != nil {
+		t.Fatalf("LayoutBrushAtlas: %v", err)
+	}
+	world.ApplyBrushAtlas(af, lay)
+	src := &slab.Faces[top]
+	src.TextureOverride = true
+	src.OverrideTexture = "tiles"
+	src.OverrideUVOffset = mgl32.Vec2{0.25, 0.5}
+
+	found := false
+	for _, f := range mustCSG(t, lvl) {
+		if f.FaceIdx != top {
+			continue
+		}
+		found = true
+		if f.Texture != "tiles" || f.UVOffset != src.OverrideUVOffset || f.UVMapped {
+			t.Errorf("piece compiled with texture %q, offset %v, mapped %v; want the override",
+				f.Texture, f.UVOffset, f.UVMapped)
+		}
+	}
+	if !found {
+		t.Fatal("the slab's top did not come through the compile")
+	}
+}

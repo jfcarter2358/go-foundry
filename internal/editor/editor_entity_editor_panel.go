@@ -217,6 +217,13 @@ func entityEditorToolbar() {
 			imgui.SetTooltip(entityGizmoToolTooltip(tool))
 		}
 	}
+	imgui.SameLine()
+	if editorActiveToggleButton("UV [U]##entuvmode", entityWS.UVMode) {
+		entityToggleUVMode()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip(uvModeTooltip)
+	}
 
 	imgui.SameLine()
 	editorToolbarGroupSep()
@@ -596,6 +603,12 @@ func entityPanelSelection() {
 		// tags/attributes/script, the convexity warning and every face field
 		// are the same widgets writing to the same places.
 		editorBrushPropertiesSection()
+	case entitySelNone:
+		// Faces picked by something other than a click — a box select, an
+		// extrude or inset handing its new faces on — never went past the
+		// sync that sets the cursor. The block draws nothing when there is no
+		// geometry selection, so asking it is safe.
+		editorBrushPropertiesSection()
 	case entitySelEmitter:
 		if entitySel.Idx < len(entityDef.Emitters) {
 			editorPropGroupOpen("Emitter: "+entityDef.Emitters[entitySel.Idx].Name+"##entsele",
@@ -852,14 +865,27 @@ func entityAnimationRow(m *world.EntityModel, idx int, clips []string, live *wor
 // entitySelectBrush does it in the other direction. Both exist because the two
 // selections are genuinely different things — an outline row and a picked
 // solid — and an author who clicks one expects the other to follow.
+//
+// A face counts as selecting its brush. Edit mode selects faces and never whole
+// brushes, and the face fields are drawn inside the brush block, so a face
+// selection that left the cursor empty would leave the panel with nothing to
+// show and no way to texture a type face by face.
 func entityBrushSelectionSync() {
-	if len(entityWS.SelectedBrushes) == 0 {
+	idx := -1
+	switch {
+	case len(entityWS.SelectedBrushes) > 0:
+		idx = entityWS.SelectedBrushes[0].brushIdx
+	case len(entityWS.SelectedFaces) > 0:
+		idx = entityWS.SelectedFaces[0].brushIdx
+	case entityWS.DetailBrush.brushIdx >= 0:
+		idx = entityWS.DetailBrush.brushIdx
+	}
+	if idx < 0 {
 		if entitySel.Kind == entitySelBrush {
 			entitySel = entityEditorSelection{}
 		}
 		return
 	}
-	idx := entityWS.SelectedBrushes[0].brushIdx
 	if entitySel.Kind != entitySelBrush || entitySel.Idx != idx {
 		entitySel = entityEditorSelection{Kind: entitySelBrush, Idx: idx}
 	}

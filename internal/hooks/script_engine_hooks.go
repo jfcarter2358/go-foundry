@@ -238,6 +238,7 @@ type WaypointObject uint8
 const (
 	WaypointBrush WaypointObject = iota
 	WaypointEntity
+	WaypointChunk
 	WaypointSprite
 	WaypointEmitter
 	WaypointSound
@@ -250,6 +251,7 @@ const (
 var WaypointObjectNames = [...]string{
 	WaypointBrush:   "brush",
 	WaypointEntity:  "entity",
+	WaypointChunk:   "chunk",
 	WaypointSprite:  "sprite",
 	WaypointEmitter: "emitter",
 	WaypointSound:   "sound",

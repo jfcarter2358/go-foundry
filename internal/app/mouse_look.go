@@ -86,6 +86,7 @@ func applyMouseLook(dt float32) {
 	}
 	gfx.Cam.Yaw += float32(x * speed)
 	gfx.Cam.Pitch -= float32(y * speed)
+	gfx.AbsorbRecoilPitch(-float32(y * speed))
 	if gfx.Cam.Pitch > gfx.MaxPitch {
 		gfx.Cam.Pitch = gfx.MaxPitch
 	}

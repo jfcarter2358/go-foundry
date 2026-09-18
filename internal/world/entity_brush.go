@@ -280,6 +280,9 @@ func rawBrushFacesEqual(a, b RawBrushFace) bool {
 	return a.Texture == b.Texture && a.BlendTexture == b.BlendTexture &&
 		a.BlendMask == b.BlendMask && a.UVOffset == b.UVOffset &&
 		a.UVScale == b.UVScale && a.UVRotation == b.UVRotation &&
+		a.TextureOverride == b.TextureOverride && a.OverrideTexture == b.OverrideTexture &&
+		a.OverrideUVOffset == b.OverrideUVOffset && a.OverrideUVScale == b.OverrideUVScale &&
+		a.OverrideUVRotation == b.OverrideUVRotation &&
 		a.Smooth == b.Smooth && a.SmoothAngle == b.SmoothAngle &&
 		a.DoubleSided == b.DoubleSided && a.NoDraw == b.NoDraw &&
 		a.NoCollide == b.NoCollide

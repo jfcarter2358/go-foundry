@@ -1,6 +1,8 @@
 package ai
 
 import (
+	"math"
+
 	"testing"
 
 	"foundry/internal/collision"
@@ -270,5 +272,29 @@ func TestATypesPathIsFoundByItsName(t *testing.T) {
 	g := agent("guard", mgl32.Vec3{10, 0, 10})
 	if a := ResolveWaypoints(lvl, &g, "beat"); a == nil || a.ID != "guard.beat" {
 		t.Fatalf("the name a type gives its path resolved to %+v", a)
+	}
+}
+
+func TestAnAgentFacesTheLastArrowWhenAPathEnds(t *testing.T) {
+	lvl := aiLevel(t)
+	hooks.TakeWaypointEvents()
+	a := path("route", mgl32.Vec3{14, 0, 10})
+	// The arrow's +X turned to point down -Z; the agent walks in along +X.
+	a.Points[0].Rotation = mgl32.Vec3{0, math.Pi / 2, 0}
+	lvl.WaypointAnimations = []world.WaypointAnimation{a}
+	g := agent("guard", mgl32.Vec3{6, 0, 10})
+	g.AI.Waypoints = "route"
+	g.AI.WanderRadius = 0
+	lvl.Entities = []world.Entity{g}
+
+	runCollect(lvl, nil, 8, nil)
+
+	e := &lvl.Entities[0]
+	if e.AIState == nil || !e.AIState.RouteDone {
+		t.Fatalf("the path never ended")
+	}
+	want := yawToward(a.Forward(lvl, 0))
+	if d := absf(world.WrapAngle(e.Rotation.Y() - want)); d > 0.05 {
+		t.Fatalf("agent ended facing yaw %.2f, want the arrow's %.2f", e.Rotation.Y(), want)
 	}
 }

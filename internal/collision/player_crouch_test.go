@@ -94,11 +94,11 @@ func TestCrouchCannotStandUpUnderALowCeiling(t *testing.T) {
 }
 
 // Sprinting and crouching are two speeds for the same legs: a crouched player
-// cannot start a sprint, and resetting the stance ends one.
+// cannot sprint, and resetting the stance ends one.
 func TestSprintIsRefusedWhileCrouched(t *testing.T) {
 	lvl := stepRoom(6)
 	p := settledPlayer(t, lvl, 0, 0)
-	world.SetPlayerSprinting(true)
+	world.UpdatePlayerSprint(true)
 	if !world.PlayerSprinting() {
 		t.Fatal("standing player could not sprint")
 	}
@@ -107,8 +107,47 @@ func TestSprintIsRefusedWhileCrouched(t *testing.T) {
 		t.Error("a stance reset kept the sprint")
 	}
 	UpdatePlayerCrouch(p, lvl, true, 1.0/60)
-	world.SetPlayerSprinting(true)
+	world.UpdatePlayerSprint(true)
 	if world.PlayerSprinting() {
 		t.Error("crouched player started a sprint")
+	}
+}
+
+// The sprint is held, not toggled, and a script's false (firing, aiming) holds
+// it off only while the key stays down.
+func TestSprintIsHeld(t *testing.T) {
+	lvl := stepRoom(6)
+	settledPlayer(t, lvl, 0, 0)
+	world.UpdatePlayerSprint(true)
+	if !world.PlayerSprinting() {
+		t.Fatal("holding the key did not sprint")
+	}
+	world.UpdatePlayerSprint(false)
+	if world.PlayerSprinting() {
+		t.Fatal("letting go of the key kept the sprint")
+	}
+
+	world.UpdatePlayerSprint(true)
+	world.SetPlayerSprinting(false)
+	world.UpdatePlayerSprint(true)
+	if world.PlayerSprinting() {
+		t.Error("a script's false lasted one frame against a held key")
+	}
+	world.SetPlayerSprinting(true)
+	if !world.PlayerSprinting() {
+		t.Error("a script's true did not resume the held sprint")
+	}
+
+	world.SetPlayerSprinting(false)
+	world.UpdatePlayerSprint(false)
+	world.UpdatePlayerSprint(true)
+	if !world.PlayerSprinting() {
+		t.Error("pressing the key again after a script's false did not sprint")
+	}
+
+	world.UpdatePlayerSprint(false)
+	world.SetPlayerSprinting(true)
+	if world.PlayerSprinting() {
+		t.Error("a script's true started a sprint nobody is holding the key for")
 	}
 }

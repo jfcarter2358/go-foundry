@@ -28,7 +28,7 @@ keeps `W` `A` `S` `D`.
 | --- | --- |
 | `W` `A` `S` `D` | move |
 | `Space` | jump (gravity on) / fly up (gravity off) |
-| `Left Shift` | sprint, toggled (gravity on; ends when you stop moving forward, crouch, aim or fire) / fly down, held (gravity off) |
+| `Left Shift` | sprint, held (gravity on, while moving forward; crouching, aiming or firing interrupts it) / fly down, held (gravity off) |
 | Arrow keys | turn / look |
 | Mouse | look; the cursor is captured |
 | `E` | sit / stand / get out of a vehicle, else interact |
@@ -70,6 +70,7 @@ keeps `W` `A` `S` `D`.
 | `Ctrl+Shift`+left click | shape that brush's detail, leaving its collision alone |
 | `1` / `2` / `3` | point / edge / face select (enters edit mode) |
 | `G` / `R` / `C` | move / rotate / scale gizmo |
+| `U` | UV mode — `G` / `R` / `C` move, turn and scale the selected face's texture |
 | `Z` | wireframe |
 | `B` | bounding boxes |
 | `V` | orbit / fly camera |
@@ -272,6 +273,7 @@ blocked out a room already knows how to block out a hold:
 | `Ctrl+Shift`+left click | detail mode on that brush — shape it without changing collision |
 | `1` / `2` / `3` | points / edges / faces (edit mode, and detail mode) |
 | `G` / `R` / `C` | move / rotate / scale |
+| `U` | UV mode — `G` / `R` / `C` move, turn and scale the selected face's texture |
 | `E` / `I` / `B` | extrude / inset / subdivide the selected face(s) |
 | `Shift+E` / `Shift+I` | extrude inward / inset outward |
 | `J` | join the selected faces into one |

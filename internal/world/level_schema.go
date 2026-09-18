@@ -309,11 +309,18 @@ type RawBrushFace struct {
 	// flattened two floats per corner in Indices' order — the same flattening
 	// Verts uses. Absent on every face whose coordinates are projected from its
 	// own plane, which is every face that has not been unwrapped.
-	UVs         []float32 `yaml:"uvs,omitempty"`
-	Smooth      bool      `yaml:"smooth,omitempty"`
-	SmoothAngle float32   `yaml:"smooth_angle,omitempty"`
-	Alpha       *float32  `yaml:"alpha,omitempty"` // nil = opaque (1.0)
-	DoubleSided bool      `yaml:"double_sided,omitempty"`
+	UVs []float32 `yaml:"uvs,omitempty"`
+	// The override's texture and transform are saved even while it is off, so
+	// toggling it back on returns the placement it had.
+	TextureOverride    bool       `yaml:"texture_override,omitempty"`
+	OverrideTexture    string     `yaml:"override_texture,omitempty"`
+	OverrideUVOffset   geom.Point `yaml:"override_uv_offset,omitempty"`
+	OverrideUVScale    geom.Point `yaml:"override_uv_scale,omitempty"`
+	OverrideUVRotation float32    `yaml:"override_uv_rotation,omitempty"`
+	Smooth             bool       `yaml:"smooth,omitempty"`
+	SmoothAngle        float32    `yaml:"smooth_angle,omitempty"`
+	Alpha              *float32   `yaml:"alpha,omitempty"` // nil = opaque (1.0)
+	DoubleSided        bool       `yaml:"double_sided,omitempty"`
 	// NoDraw is a face with no geometry built at all — a brush side buried
 	// against a neighbour's. NoCollide is one that draws but does not stop
 	// anything, independent of the brush's own Solid flag.

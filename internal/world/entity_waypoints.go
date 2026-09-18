@@ -231,6 +231,8 @@ func WaypointFollowerCarrier(f WaypointFollower) string {
 		if o.ch != nil {
 			return o.ch.FromEntity
 		}
+	case *Chunk:
+		return o.FromEntity
 	case *Emitter:
 		return o.FromEntity
 	case *Volume:

@@ -69,6 +69,13 @@ var editorGizmoTools = []editorGizmoTool{editorToolMove, editorToolRotate, edito
 
 // editorSetGizmoTool switches tools, ending any drag in progress first so a
 // half-finished translation cannot be completed as a rotation.
+// editorToggleUVMode switches the level editor's tools between a face's
+// corners and its texture, ending any drag in progress first.
+func editorToggleUVMode() {
+	editorGizmoMouseUp()
+	Editor.UVMode = !Editor.UVMode
+}
+
 func editorSetGizmoTool(t editorGizmoTool) {
 	if Editor.GizmoTool == t {
 		return

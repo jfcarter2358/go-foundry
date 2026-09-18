@@ -13,15 +13,16 @@ package editor
 // different objects — deleting a face is not a thing, and a script addresses
 // the brush.
 //
-// The fields bind to the *primary* selected face only. There is no honest way
-// for a slider to edit twelve floats at once, so bulk edits live in the
-// right-click menu instead and editorFaceSelectionNote points at them.
+// The fields bind to the *primary* selected face, and whatever an edit changes
+// on it is then written to every other selected face too — only the fields that
+// changed, so the others keep everything the author did not touch.
 
 import (
 	"fmt"
 
 	"foundry/internal/world"
 
+	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
 
@@ -108,6 +109,10 @@ func editorBrushPropertiesSection() {
 
 	editorPropGroupOpen(fmt.Sprintf("Face %d##brushfacegrp", ws().ActiveFaceIdx), func() {
 		changed := false
+		// The widgets bind to the primary face; what they changed on it is
+		// carried to the rest of the selection afterwards. See
+		// applyFaceEditToSelection.
+		before := *f
 		// "(none)" is a real choice here, not an absent one: a face with no
 		// texture is drawn from its own normal, which is what a brush looks
 		// like until someone paints it.
@@ -141,7 +146,32 @@ func editorBrushPropertiesSection() {
 				"of the brush stays solid — a window opening in a wall.")
 		}
 
+		editorPropGroup("Texture Override##bfover", 0, func() {
+			if imgui.Checkbox("Override##bfoveron", &f.TextureOverride) {
+				ws().pushUndo()
+				changed = true
+			}
+			if imgui.IsItemHovered() {
+				imgui.SetTooltip("Draw another texture on this face, projected onto its own\n" +
+					"plane, instead of its unwrapped or painted one. The unwrap is\n" +
+					"kept, so switching this off brings the painting back.")
+			}
+			if !f.TextureOverride {
+				return
+			}
+			changed = textureCombo("Override Texture##bfovtex", &f.OverrideTexture, true) || changed
+			changed = editorDragFloat("Offset U##bfovuo", &f.OverrideUVOffset[0], -100, 100, "%.3f") || changed
+			changed = editorDragFloat("Offset V##bfovvo", &f.OverrideUVOffset[1], -100, 100, "%.3f") || changed
+			changed = editorDragFloat("Scale U##bfovus", &f.OverrideUVScale[0], -100, 100, "%.3f") || changed
+			changed = editorDragFloat("Scale V##bfovvs", &f.OverrideUVScale[1], -100, 100, "%.3f") || changed
+			changed = editorDragFloat("Rotation##bfovur", &f.OverrideUVRotation, -6.2832, 6.2832, "%.3f") || changed
+			editorTextMutedWrapped("UV mode [U] points G, R and C at this texture in the viewport.")
+		})
+
 		editorPropGroup("UV##bfuv", 0, func() {
+			if f.TextureOverride {
+				editorTextMutedWrapped("Not drawn while the texture override is on.")
+			}
 			if f.HasUVs() {
 				editorTextMutedWrapped("Laid out by an unwrap: each corner has its own place on " +
 					"the texture, and these move the whole face from there.")
@@ -180,6 +210,7 @@ func editorBrushPropertiesSection() {
 			// slider is held.
 			_ = b.Load()
 			editorChunkGeometryChanged(ch)
+			applyFaceEditToSelection(&before, f)
 		}
 	})
 
@@ -189,6 +220,89 @@ func editorBrushPropertiesSection() {
 		return
 	}
 	imgui.Text("E extrudes, I insets, B subdivides — see the right-click menu.")
+}
+
+// applyFaceEditToSelection carries an edit made through the panel on the
+// primary face to every other selected face.
+//
+// Only the fields that actually changed travel, and a vector travels one
+// component at a time: dragging Offset U on the primary must not flatten the
+// Offset V each of the others had. A per-corner unwrap does not travel at all —
+// its corners are the primary's — except for being thrown away, which is what
+// "Reset to projected" does.
+func applyFaceEditToSelection(before, after *world.BrushFace) {
+	sels := ws().SelectedFaces
+	if len(sels) < 2 {
+		return
+	}
+	type brushKey struct{ chunkIdx, brushIdx int }
+	touched := map[brushKey]bool{}
+	for _, s := range sels[1:] {
+		f := faceSelFace(s)
+		if f == nil || f == after {
+			continue
+		}
+		copyChangedFaceFields(before, after, f)
+		touched[brushKey{s.chunkIdx, s.brushIdx}] = true
+	}
+	for k := range touched {
+		ch, b := faceSelBrush(faceSel{chunkIdx: k.chunkIdx, brushIdx: k.brushIdx})
+		if b == nil {
+			continue
+		}
+		_ = b.Load()
+		editorChunkGeometryChanged(ch)
+	}
+}
+
+// copyChangedFaceFields writes into dst every panel-editable field that differs
+// between before and after.
+func copyChangedFaceFields(before, after, dst *world.BrushFace) {
+	str := func(b, a string, d *string) {
+		if b != a {
+			*d = a
+		}
+	}
+	f32 := func(b, a float32, d *float32) {
+		if b != a {
+			*d = a
+		}
+	}
+	flag := func(b, a bool, d *bool) {
+		if b != a {
+			*d = a
+		}
+	}
+	vec2 := func(b, a mgl32.Vec2, d *mgl32.Vec2) {
+		for i := range a {
+			if b[i] != a[i] {
+				d[i] = a[i]
+			}
+		}
+	}
+	str(before.Texture, after.Texture, &dst.Texture)
+	str(before.BlendTexture, after.BlendTexture, &dst.BlendTexture)
+	str(before.BlendMask, after.BlendMask, &dst.BlendMask)
+	f32(before.Alpha, after.Alpha, &dst.Alpha)
+	flag(before.DoubleSided, after.DoubleSided, &dst.DoubleSided)
+	flag(before.NoDraw, after.NoDraw, &dst.NoDraw)
+	flag(before.NoCollide, after.NoCollide, &dst.NoCollide)
+
+	flag(before.TextureOverride, after.TextureOverride, &dst.TextureOverride)
+	str(before.OverrideTexture, after.OverrideTexture, &dst.OverrideTexture)
+	vec2(before.OverrideUVOffset, after.OverrideUVOffset, &dst.OverrideUVOffset)
+	vec2(before.OverrideUVScale, after.OverrideUVScale, &dst.OverrideUVScale)
+	f32(before.OverrideUVRotation, after.OverrideUVRotation, &dst.OverrideUVRotation)
+
+	if len(before.UVs) > 0 && after.UVs == nil {
+		dst.UVs = nil
+	}
+	vec2(before.UVOffset, after.UVOffset, &dst.UVOffset)
+	vec2(before.UVScale, after.UVScale, &dst.UVScale)
+	f32(before.UVRotation, after.UVRotation, &dst.UVRotation)
+
+	flag(before.Smooth, after.Smooth, &dst.Smooth)
+	f32(before.SmoothAngle, after.SmoothAngle, &dst.SmoothAngle)
 }
 
 // brushDetailPanel is the brush's detail-mesh section: whether it has one, the

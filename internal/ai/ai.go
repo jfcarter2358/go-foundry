@@ -193,6 +193,14 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 
 	in := decide(lvl, e, st, dt, player)
 	st.Mode = in.mode
+	if st.RestYawOn {
+		switch {
+		case in.mode != world.AIIdle || in.move || st.RestFrame != e.Frame:
+			st.RestYawOn = false
+		case !in.face && !in.faceYawOn:
+			in.faceYawOn, in.faceYaw = true, st.RestYaw+frameYaw(lvl, e)
+		}
+	}
 
 	// Seated, or being moved by a script: the agent still notices and decides,
 	// so its events keep coming, but whatever is moving it owns the body.

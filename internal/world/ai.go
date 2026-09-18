@@ -384,6 +384,13 @@ type AIState struct {
 	// path being walked starts again at its end.
 	RouteDone bool
 	RouteLoop bool
+	// RestYaw is the heading an agent turns to and keeps while it stands idle
+	// once a path has ended, on RestYawOn: the last arrow's, measured in the
+	// frame named by RestFrame (empty for the world), so it keeps facing into
+	// a hold however the ship under it turns. Anything but idling drops it.
+	RestYaw   float32
+	RestYawOn bool
+	RestFrame string
 
 	// CoverPoint is the spot the agent has chosen to hide at, once HasCover;
 	// InCover once it is standing there. CoverTimer counts to the next check

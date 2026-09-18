@@ -935,7 +935,7 @@ func EditorDrawUI() {
 	}
 }
 
-// editorGizmoToolButtons draws the move/rotate/scale toggles.
+// editorGizmoToolButtons draws the move/rotate/scale toggles and UV mode.
 func editorGizmoToolButtons() {
 	for _, tool := range editorGizmoTools {
 		tl := tool
@@ -948,5 +948,13 @@ func editorGizmoToolButtons() {
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip(editorGizmoToolTooltip(tl))
 		}
+	}
+	imgui.SameLine()
+	if editorActiveToggleButtonColor("UV [U]##gizmouvmode", Editor.UVMode,
+		imgui.Vec4{X: 0.45, Y: 0.25, Z: 0.55, W: 1}) {
+		editorToggleUVMode()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip(uvModeTooltip)
 	}
 }

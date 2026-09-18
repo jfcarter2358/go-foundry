@@ -235,6 +235,81 @@ func TestARestComesBackToTheNumber(t *testing.T) {
 	}
 }
 
+// A chunk on a path takes its origin and its Y rotation only — not a point's
+// X/Z rotation, which a chunk has nowhere to put, and not its scale, which
+// stays a script's read-only field. Its AttachedChunk rider is carried along
+// the same distance the chunk moves, the same as a chunk driven by Velocity.
+func TestAChunkTravelsAPathAndCarriesItsRider(t *testing.T) {
+	to := wp(mgl32.Vec3{4, 0, 0}, 2)
+	to.Rotation = mgl32.Vec3{0.3, math.Pi / 2, 0.7}
+	lvl := followLevel(to)
+	lvl.Chunks = []Chunk{{ID: "lift", Scale: 1}}
+	lvl.Entities = []Entity{{ID: "rider", AttachedChunk: "lift", Position: mgl32.Vec3{1, 0, 0}}}
+	ch := &lvl.Chunks[0]
+	PlayWaypoints(lvl, ch, &lvl.WaypointAnimations[0])
+
+	AdvanceChunks(lvl, 1)
+	if !vecNear(ch.Origin, mgl32.Vec3{2, 0, 0}, 1e-4) || !nearF(ch.Rotation, math.Pi/4, 1e-4) {
+		t.Errorf("halfway, the chunk is at %v turned %v, want {2 0 0} and pi/4", ch.Origin, ch.Rotation)
+	}
+	if ch.Scale != 1 {
+		t.Errorf("the path wrote the chunk's scale to %v; it should stay untouched", ch.Scale)
+	}
+	if got := lvl.Entities[0].Position; !vecNear(got, mgl32.Vec3{3, 0, 0}, 1e-4) {
+		t.Errorf("the rider is at %v, want {3 0 0} — carried the same distance the chunk moved", got)
+	}
+
+	AdvanceChunks(lvl, 1)
+	if ch.Waypoints != nil {
+		t.Error("the chunk is still following after the length ran out")
+	}
+	want := []hooks.WaypointEvent{
+		{Kind: hooks.WaypointChunk, Object: "lift", Animation: "path", Index: 0},
+		{Kind: hooks.WaypointChunk, Object: "lift", Animation: "path", Index: 0, Ended: true},
+	}
+	if got := hooks.TakeWaypointEvents(); !reflect.DeepEqual(got, want) {
+		t.Errorf("announced %+v, want %+v — the arrivals must say they came from a chunk", got, want)
+	}
+}
+
+// A path and a tween both write the whole placement, so each drops the
+// other, for a chunk as for an entity or a brush.
+func TestAChunksTweensAndWaypointsCancelEachOther(t *testing.T) {
+	lvl := followLevel(wp(mgl32.Vec3{4, 0, 0}, 2))
+	lvl.Chunks = []Chunk{{ID: "lift"}}
+	ch := &lvl.Chunks[0]
+
+	ch.EaseOrigin(lvl, mgl32.Vec3{0, 9, 0}, 1)
+	PlayWaypoints(lvl, ch, &lvl.WaypointAnimations[0])
+	if ch.OriginTween != nil {
+		t.Error("sending the chunk along a path left its tween running")
+	}
+	ch.EaseRotation(lvl, 1, 1)
+	if ch.Waypoints != nil {
+		t.Error("easing the chunk left it following the path")
+	}
+}
+
+// Position is world space for every kind. A frame-owned chunk's Origin is in
+// its carrier's coordinates, so the path has to be divided through the frame
+// to meet the arrow — the same property TestAnEntityAboardAFrameMeetsTheArrowInTheWorld
+// checks for an entity.
+func TestAFrameOwnedChunkMeetsTheArrowInTheWorld(t *testing.T) {
+	lvl := attachLevel(t) // the "hull" chunk rides the ship, parked at {100 0 0}
+	lvl.WaypointAnimations = []WaypointAnimation{{ID: "path", Points: []Waypoint{wp(mgl32.Vec3{120, 0, 0}, 2)}}}
+	hull := FindChunkByID(lvl, "hull")
+	PlayWaypoints(lvl, hull, &lvl.WaypointAnimations[0])
+
+	advanceWaypoints(lvl, hull, 1)
+	if got := hull.LocalToWorld(mgl32.Vec3{}); !vecNear(got, mgl32.Vec3{110, 0, 0}, 1e-4) {
+		t.Errorf("halfway, the hull is at %v in the world, want {110 0 0}", got)
+	}
+	if !vecNear(hull.Origin, mgl32.Vec3{10, 0, 0}, 1e-4) {
+		t.Errorf("the hull's own origin is %v, want {10 0 0} in the ship's coordinates", hull.Origin)
+	}
+	hooks.TakeWaypointEvents()
+}
+
 func TestFindWaypointFollowerFindsEachKindByID(t *testing.T) {
 	lvl := attachLevel(t)
 	lvl.Sprites = []Sprite{NewSprite("torch", mgl32.Vec3{})}
@@ -248,9 +323,9 @@ func TestFindWaypointFollowerFindsEachKindByID(t *testing.T) {
 		kind hooks.WaypointObject
 		id   string
 	}{
-		{hooks.WaypointEntity, "npc"}, {hooks.WaypointSprite, "torch"}, {hooks.WaypointEmitter, "smoke"},
-		{hooks.WaypointSound, "hum"}, {hooks.WaypointVolume, "hold"}, {hooks.WaypointLight, "lamp"},
-		{hooks.WaypointLight, "sun"},
+		{hooks.WaypointEntity, "npc"}, {hooks.WaypointChunk, "hull"}, {hooks.WaypointSprite, "torch"},
+		{hooks.WaypointEmitter, "smoke"}, {hooks.WaypointSound, "hum"}, {hooks.WaypointVolume, "hold"},
+		{hooks.WaypointLight, "lamp"}, {hooks.WaypointLight, "sun"},
 	} {
 		f := FindWaypointFollower(lvl, c.kind, c.id)
 		if f == nil {

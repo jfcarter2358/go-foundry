@@ -555,6 +555,7 @@ const (
 	entityShortcutToolMove
 	entityShortcutToolRotate
 	entityShortcutToolScale
+	entityShortcutToggleUVMode
 	entityShortcutTogglePlay
 	entityShortcutDeleteSelection
 )
@@ -600,6 +601,8 @@ func entityShortcutFor(sc sdl.Scancode, ctrl, shift bool) entityShortcut {
 		return entityShortcutToolRotate
 	case sdl.SCANCODE_C:
 		return entityShortcutToolScale
+	case sdl.SCANCODE_U:
+		return entityShortcutToggleUVMode
 	case sdl.SCANCODE_B:
 		return entityShortcutToggleBounds
 	case sdl.SCANCODE_P:
@@ -643,6 +646,8 @@ func entityEditorHandleKey(t sdl.KeyboardEvent) {
 		entitySetGizmoTool(editorToolRotate)
 	case entityShortcutToolScale:
 		entitySetGizmoTool(editorToolScale)
+	case entityShortcutToggleUVMode:
+		entityToggleUVMode()
 	case entityShortcutToggleBounds:
 		entityShowBounds = !entityShowBounds
 	case entityShortcutTogglePlay:

@@ -18,6 +18,7 @@ package world
 //	kind                    position                        rotation            scale
 //	brush                   its centre, chunk divided out   `rotation`          `scale`
 //	entity                  `position`, frame divided out   `rotation`          `scale`
+//	chunk                   its origin, frame divided out   `rotation`.Y() only —
 //	sprite                  `position`, Attach divided out  `rotation`          width × x, height × y
 //	emitter, sound          `position`, Attach divided out  `rotation`          —
 //	volume                  `position`, Frame divided out   `rotation`          —
@@ -41,12 +42,19 @@ package world
 // along the light (DirLightEuler), which is also what lets "sweep the sun
 // across the sky" be written as numbers that keep counting past half a turn.
 //
+// A chunk's own rotation is a single Y-axis angle (chunk.go), not a full
+// Euler triple, so it reads only the Y channel of a point's rotation the same
+// way a directional light reads only two of a point's channels — the rest of
+// what an author turns on an arrow simply does not apply. Its scale is
+// read-only to a script (tween.go), so a path leaves it alone too.
+//
 // # Where each kind is stepped
 //
-// Brushes on AdvanceBrushes' tick and entities in EntityUpdate, where the
-// rates, the re-bucketing and the collision the path has to agree with already
-// are. Everything else in AdvanceWaypointFollowers, which the frame loop runs
-// once the frames an attached object is divided through have been republished.
+// Brushes on AdvanceBrushes' tick, chunks on AdvanceChunks' and entities in
+// EntityUpdate, where the rates, the re-bucketing and the collision the path
+// has to agree with already are. Everything else in AdvanceWaypointFollowers,
+// which the frame loop runs once the frames an attached object is divided
+// through have been republished.
 
 import (
 	"foundry/internal/hooks"
@@ -279,6 +287,10 @@ func FindWaypointFollower(lvl *Level, kind hooks.WaypointObject, id string) Wayp
 		if e := FindEntity(lvl, id); e != nil {
 			return e
 		}
+	case hooks.WaypointChunk:
+		if ch := FindChunkByID(lvl, id); ch != nil {
+			return ch
+		}
 	case hooks.WaypointSprite:
 		if s := FindSprite(lvl, id); s != nil {
 			return s
@@ -378,6 +390,53 @@ func (e *Entity) waypointRest() WaypointRest {
 }
 func (e *Entity) setWaypointRest(r WaypointRest) {
 	e.Position, e.Rotation, e.Scale = r.Position, r.Rotation, r.Scale
+}
+
+// Chunk: its own Origin and Rotation, the two channels a script may move it
+// on either (tween.go, `move_to`/`rotate_to`) — scale stays read-only to a
+// script, so a path leaves it alone the way it leaves a point light's alone,
+// and Rotation is a single Y-axis angle, so only a point's Y channel is read,
+// the way a directional light reads only its own two.
+//
+// applyWaypointPose goes through moveOriginTo/rotateTo, the same two writers
+// `move_to`/`rotate_to` use, so a chunk on a path carries its AttachedChunk
+// riders exactly as one eased or driven by Velocity does.
+
+func (ch *Chunk) WaypointPose(*Level) WaypointPose {
+	return WaypointPose{
+		Position: ch.LocalToWorld(mgl32.Vec3{}),
+		Rotation: mgl32.Vec3{0, ch.Rotation, 0},
+		Scale:    unitScale,
+	}
+}
+func (ch *Chunk) waypoints() **WaypointPlayback { return &ch.Waypoints }
+func (ch *Chunk) applyWaypointPose(lvl *Level, p WaypointPose) {
+	ch.moveOriginTo(lvl, ch.worldToOrigin(p.Position))
+	ch.rotateTo(p.Rotation.Y())
+}
+func (ch *Chunk) waypointSource() (hooks.WaypointObject, string) { return hooks.WaypointChunk, ch.ID }
+func (ch *Chunk) dropTweens()                                    { ch.OriginTween, ch.RotationTween = nil, nil }
+func (ch *Chunk) waypointRest() WaypointRest {
+	return WaypointRest{Position: ch.Origin, Rotation: mgl32.Vec3{0, ch.Rotation, 0}}
+}
+func (ch *Chunk) setWaypointRest(r WaypointRest) {
+	ch.Origin, ch.Rotation = r.Position, r.Rotation.Y()
+}
+
+// worldToOrigin is WaypointPose's Position, inverted: the value to write to
+// Origin so that LocalToWorld(zero) comes back to p. Undoes the owning
+// frame's Xform and the scale it contributes (FrameScale) — the two things
+// outside the chunk's own placement — and nothing else, since a translation
+// alone does not read the chunk's own Rotation or Scale either.
+func (ch *Chunk) worldToOrigin(p mgl32.Vec3) mgl32.Vec3 {
+	if ch.InFrame() && ch.Xform != (mgl32.Mat4{}) {
+		r := ch.Xform.Inv().Mul4x1(p.Vec4(1))
+		p = mgl32.Vec3{r.X(), r.Y(), r.Z()}
+	}
+	if k := ch.EffectiveFrameScale(); k != 1 {
+		p = p.Mul(1 / k)
+	}
+	return p
 }
 
 // Sprite, emitter and sound: a position that rides whatever they are attached

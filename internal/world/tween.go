@@ -191,8 +191,11 @@ func advanceBrushTweens(ch *Chunk, b *Brush, dt float32) bool {
 // EaseOrigin starts the chunk's Origin toward `to` over `seconds`.
 //
 // Entities attached to the chunk ride along exactly as they do when anything
-// else moves its Origin. An instantaneous ease is applied here and now.
+// else moves its Origin. An instantaneous ease is applied here and now. A path
+// the chunk was following is dropped, on the same grounds PlayWaypoints drops
+// a tween: the two cannot share a channel.
 func (ch *Chunk) EaseOrigin(lvl *Level, to mgl32.Vec3, seconds float32) {
+	ch.Waypoints = nil
 	if !(seconds > 0) {
 		ch.OriginTween = nil
 		if ch.moveOriginTo(lvl, to) && ch.FrameOwner == "" {
@@ -206,8 +209,10 @@ func (ch *Chunk) EaseOrigin(lvl *Level, to mgl32.Vec3, seconds float32) {
 // EaseRotation starts the chunk's Rotation toward `to` radians over
 // `seconds`. Chunk scale stays read-only to a script — nothing needs it — so
 // origin and rotation are the two channels a chunk can be eased on, unlike a
-// brush's three.
+// brush's three. A path the chunk was following is dropped, the same as
+// EaseOrigin drops one.
 func (ch *Chunk) EaseRotation(lvl *Level, to float32, seconds float32) {
+	ch.Waypoints = nil
 	if !(seconds > 0) {
 		ch.RotationTween = nil
 		if ch.rotateTo(to) && ch.FrameOwner == "" {

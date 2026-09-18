@@ -7,11 +7,11 @@ package script
 // NOW, and a property the next tick re-reads has no such moment. What an object
 // is currently following is still readable, as `@door.prop.waypoints`.
 //
-// Anything a path can carry takes them — a dynamic brush, an entity, a sprite,
-// an emitter, a sound, a light or a volume — each reading the channels of a
-// point it has (world/waypoint_follow.go). The movement itself is the engine's,
-// on the same tick as the object's other movers, so a script sends it and never
-// has to write a position again.
+// Anything a path can carry takes them — a dynamic brush, a chunk, an entity, a
+// sprite, an emitter, a sound, a light or a volume — each reading the channels
+// of a point it has (world/waypoint_follow.go). The movement itself is the
+// engine's, on the same tick as the object's other movers, so a script sends
+// it and never has to write a position again.
 
 import (
 	"fmt"
@@ -22,7 +22,7 @@ import (
 
 // waypointFollowerKinds is what the waypoint verbs take, in the words their
 // errors use.
-const waypointFollowerKinds = "a dynamic brush, an entity, a sprite, an emitter, a sound, a dynamic light or a volume"
+const waypointFollowerKinds = "a dynamic brush, a chunk, an entity, a sprite, an emitter, a sound, a dynamic light or a volume"
 
 // verbDynamicBrush resolves argument i to a brush a script may move, with the
 // error an author can act on — the same refusal, in the same words, that
@@ -60,6 +60,10 @@ func (c *refCache) waypointFollowerFor(r flang.RefVal) world.WaypointFollower {
 	case flang.RefBrush:
 		if ch, b := c.brushOwnerFor(r); b != nil {
 			return world.BrushWaypointFollower(ch, b)
+		}
+	case flang.RefChunk:
+		if ch := c.chunkFor(r); ch != nil {
+			return ch
 		}
 	case flang.RefEntity:
 		if e := c.entityFor(r); e != nil {
@@ -117,6 +121,12 @@ func (rt *ScriptRuntime) verbWaypointFollower(args []flang.Value, i int, name st
 			return nil, err
 		}
 		return world.BrushWaypointFollower(ch, b), nil
+	case flang.RefChunk:
+		ch := rt.cache.chunkFor(r)
+		if ch == nil {
+			return nil, &scriptMissingError{r.String()}
+		}
+		return ch, nil
 	case flang.RefEntity:
 		e, err := rt.verbEntity(args, i, name)
 		if err != nil {

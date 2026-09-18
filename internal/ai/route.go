@@ -108,6 +108,7 @@ func currentRoute(lvl *world.Level, e *world.Entity, st *world.AIState) routeRef
 // startRoute begins walking an animation from its first point.
 func startRoute(st *world.AIState, a *world.WaypointAnimation, loop, forced bool) {
 	st.Route, st.RouteForced, st.RouteLoop, st.RouteDone = a.ID, forced, loop, false
+	st.RestYawOn = false
 	st.RouteStop = 0
 	resetStop(st)
 }
@@ -209,6 +210,16 @@ func routeIntent(lvl *world.Level, e *world.Entity, st *world.AIState, route rou
 	}
 
 	advanceRoute(e, st, a)
+	if st.RouteDone {
+		// Off the end of the path: stand facing the way the last arrow does,
+		// as an entity sent along it by play_waypoints would.
+		if fwd := a.Forward(lvl, idx); fwd.X()*fwd.X()+fwd.Z()*fwd.Z() > 1e-6 {
+			yaw := yawToward(fwd)
+			st.RestYawOn, st.RestYaw, st.RestFrame = true, yaw-frameYaw(lvl, e), e.Frame
+			return intent{mode: world.AIIdle, faceYawOn: true, faceYaw: yaw}
+		}
+		return intent{mode: world.AIIdle}
+	}
 	return intent{mode: world.AIFollowing}
 }
 

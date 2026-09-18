@@ -226,6 +226,7 @@ func ScriptRuntimeReset(lvl *world.Level) {
 	// that set it.
 	gfx.FieldOfView = gfx.DefaultFieldOfView
 	gfx.ViewmodelFieldOfView = gfx.DefaultViewmodelFieldOfView
+	gfx.ResetRecoil()
 
 	// Nothing may evaluate a binding against a level that is being replaced, or
 	// load a script for a screen shown after the runtime has gone.

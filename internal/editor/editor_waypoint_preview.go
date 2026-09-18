@@ -65,8 +65,8 @@ func (t waypointTarget) follower(lvl *world.Level) world.WaypointFollower {
 }
 
 // editorWaypointTargets lists every object an animation can be previewed on:
-// the dynamic brushes, then the entities that are not vehicles, the sprites,
-// emitters, sounds, lights and volumes, each in level order.
+// the dynamic brushes, then the chunks, the entities that are not vehicles,
+// the sprites, emitters, sounds, lights and volumes, each in level order.
 func editorWaypointTargets(lvl *world.Level) []waypointTarget {
 	if lvl == nil {
 		return nil
@@ -83,6 +83,9 @@ func editorWaypointTargets(lvl *world.Level) []waypointTarget {
 				add(hooks.WaypointBrush, b.ID)
 			}
 		}
+	}
+	for i := range lvl.Chunks {
+		add(hooks.WaypointChunk, lvl.Chunks[i].ID)
 	}
 	for i := range lvl.Entities {
 		if !lvl.Entities[i].IsVehicle() {
@@ -265,13 +268,17 @@ func editorWaypointPreviewPose() {
 
 // waypointPreviewMoved does what moving an object needs afterwards, for the
 // kinds that need anything: a brush's chunk bounds and the spatial hash, which
-// key off where the brush is, and the light uniforms, which are not re-read
-// every frame.
+// key off where the brush is, a moved chunk's own spot in the same hash, and
+// the light uniforms, which are not re-read every frame.
 func waypointPreviewMoved(lvl *world.Level, t waypointTarget) {
 	switch t.Kind {
 	case hooks.WaypointBrush:
 		if ch, _ := world.FindBrushByID(lvl, t.ID); ch != nil {
 			ch.RecomputeBounds()
+			world.RebuildSpatialHash(lvl)
+		}
+	case hooks.WaypointChunk:
+		if ch := world.FindChunkByID(lvl, t.ID); ch != nil && ch.FrameOwner == "" {
 			world.RebuildSpatialHash(lvl)
 		}
 	case hooks.WaypointLight:
@@ -380,12 +387,12 @@ func addWaypointAnimationFromObject(t waypointTarget) {
 
 // withWaypointPreviewAtRest runs fn with the preview's object back where it was
 // authored, then poses it again: for anything that writes the level down. A
-// brush needs no lending — its placement is never written — so only the other
-// kinds are.
+// brush or a chunk needs no lending — its placement is written straight into
+// its own authored fields, never borrowed — so only the other kinds are.
 func withWaypointPreviewAtRest(fn func()) {
 	p := &Editor.WaypointPreview
 	var f world.WaypointFollower
-	if p.Posed && p.Target.Kind != hooks.WaypointBrush {
+	if p.Posed && p.Target.Kind != hooks.WaypointBrush && p.Target.Kind != hooks.WaypointChunk {
 		f = world.FindWaypointFollower(Editor.level, p.Target.Kind, p.Target.ID)
 	}
 	if f == nil {

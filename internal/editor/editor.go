@@ -91,6 +91,13 @@ type GizmoState struct {
 	// Rotate and scale work from this rather than from the XZ/offset pair,
 	// since both are defined on positions relative to the selection's centre.
 	GizmoDragWorld []mgl32.Vec3
+	// UVMode points the move, rotate and scale tools at the selected faces'
+	// texture instead of their corners (editor_uv_gizmo.go).
+	UVMode bool
+	// GizmoDragUV marks the drag in progress as a UV one; GizmoDragUVStarts is
+	// each selected face's drawn UV transform at its mouse-down.
+	GizmoDragUV       bool
+	GizmoDragUVStarts []uvDragStart
 }
 
 // EditorState holds all editor runtime state.
@@ -785,6 +792,11 @@ func EditorHandleEvent(event sdl.Event) bool {
 		case sdl.SCANCODE_C:
 			if editorSelKeysActive() {
 				editorSetGizmoTool(editorToolScale)
+				return true
+			}
+		case sdl.SCANCODE_U:
+			if editorSelKeysActive() {
+				editorToggleUVMode()
 				return true
 			}
 		case sdl.SCANCODE_Z:

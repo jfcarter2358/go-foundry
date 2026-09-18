@@ -44,6 +44,30 @@ func (f *BrushFace) HasUVs() bool {
 	return len(f.Indices) >= 3 && len(f.UVs) == len(f.Indices)
 }
 
+// DrawTexture is the texture the face is drawn with: the override's while it is
+// on, Texture otherwise.
+func (f *BrushFace) DrawTexture() string {
+	if f.TextureOverride {
+		return f.OverrideTexture
+	}
+	return f.Texture
+}
+
+// DrawsCornerUVs reports whether the face is drawn with its stated UVs rather
+// than projected ones. An override always projects: an unwrap's coordinates
+// address the atlas, and would sample the override's image in pieces.
+func (f *BrushFace) DrawsCornerUVs() bool {
+	return !f.TextureOverride && f.HasUVs()
+}
+
+// DrawUVTransform is the offset, scale and rotation the face is drawn with.
+func (f *BrushFace) DrawUVTransform() (offset, scale mgl32.Vec2, rotation float32) {
+	if f.TextureOverride {
+		return f.OverrideUVOffset, f.OverrideUVScale, f.OverrideUVRotation
+	}
+	return f.UVOffset, f.UVScale, f.UVRotation
+}
+
 // applyCornerUVs writes a face's stated UVs over the projected ones
 // BuildBrushFaceMesh put in verts. The corners repeat past the first loop for a
 // double-sided face's reverse copy, which draws the same texels from behind.
@@ -58,10 +82,10 @@ func applyCornerUVs(verts [][]float32, uvs []mgl32.Vec2) {
 	}
 }
 
-// FaceUVs returns the texture coordinate each corner of f is drawn with —
-// stated or projected, with the offset, scale and rotation applied — built the
-// way Load builds the face, so what it reports is what the sampler sees. The
-// texture editor's layout overlay is drawn from it.
+// FaceUVs returns the coordinate each corner of f has on its Texture — stated
+// or projected, with the offset, scale and rotation applied — built the way
+// Load builds a face without an override. The texture editor's layout overlay
+// is drawn from it, and an overridden face still owns that island.
 func (m *BrushMesh) FaceUVs(f *BrushFace) []mgl32.Vec2 {
 	verts, _ := BuildBrushFaceMesh(m.FacePoints(f), false)
 	if len(verts) == 0 {
@@ -162,6 +186,87 @@ func FitUVMap(pts []mgl32.Vec3, uvs []mgl32.Vec2) (UVMap, bool) {
 		return mgl32.Vec4{float32(x), float32(y), float32(z), float32(mean - (x*cx + y*cy + z*cz))}
 	}
 	return UVMap{U: axis(ssu, stu, mu), V: axis(ssv, stv, mv)}, true
+}
+
+// DrawnUVMap is the texture coordinates f is drawn with — override, unwrap or
+// projection, transform applied — as a function of position in the mesh's own
+// space. The UV gizmo reads which way the texture runs on the face from it.
+func (m *BrushMesh) DrawnUVMap(f *BrushFace) (UVMap, bool) {
+	pts := m.FacePoints(f)
+	verts, _ := BuildBrushFaceMesh(pts, false)
+	if len(verts) != len(pts) {
+		return UVMap{}, false
+	}
+	if f.DrawsCornerUVs() {
+		applyCornerUVs(verts, f.UVs)
+	}
+	offset, scale, rotation := f.DrawUVTransform()
+	ApplyUVTransform(verts, offset, scale, rotation)
+	uvs := make([]mgl32.Vec2, len(verts))
+	for i, v := range verts {
+		uvs[i] = mgl32.Vec2{v[3], v[4]}
+	}
+	return FitUVMap(pts, uvs)
+}
+
+// SetDrawUVTransform writes the transform f is drawn with: the override's while
+// it is on, the face's own otherwise.
+func (f *BrushFace) SetDrawUVTransform(offset, scale mgl32.Vec2, rotation float32) {
+	if f.TextureOverride {
+		f.OverrideUVOffset, f.OverrideUVScale, f.OverrideUVRotation = offset, scale, rotation
+		return
+	}
+	f.UVOffset, f.UVScale, f.UVRotation = offset, scale, rotation
+}
+
+// PinDrawnUV moves f's drawn offset so the point pivot samples uv, leaving the
+// scale and rotation alone — what turns a scale or a turn about the UV origin
+// into one about a point on the face.
+func (m *BrushMesh) PinDrawnUV(f *BrushFace, pivot mgl32.Vec3, uv mgl32.Vec2) bool {
+	uvm, ok := m.DrawnUVMap(f)
+	if !ok {
+		return false
+	}
+	offset, scale, rotation := f.DrawUVTransform()
+	f.SetDrawUVTransform(offset.Add(uv.Sub(uvm.At(pivot))), scale, rotation)
+	return true
+}
+
+// BaseUVMap is DrawnUVMap before the offset, scale and rotation: the projection
+// or unwrap alone. Its Steps are the axes the scale stretches along.
+func (m *BrushMesh) BaseUVMap(f *BrushFace) (UVMap, bool) {
+	g := *f
+	g.SetDrawUVTransform(mgl32.Vec2{}, mgl32.Vec2{}, 0)
+	return m.DrawnUVMap(&g)
+}
+
+// Handedness is the determinant of the map across the plane with normal n:
+// positive when the texture reads the right way round seen from the side n
+// points to, negative when it is mirrored.
+func (m UVMap) Handedness(n mgl32.Vec3) float32 {
+	e1 := geom.PerpAxis(n).Normalize()
+	e2 := n.Normalize().Cross(e1)
+	gu, gv := m.U.Vec3(), m.V.Vec3()
+	return gu.Dot(e1)*gv.Dot(e2) - gu.Dot(e2)*gv.Dot(e1)
+}
+
+// Shift is the UV offset change that slides the texture along d, so the texel
+// at a point p lands at p+d.
+func (m UVMap) Shift(d mgl32.Vec3) mgl32.Vec2 {
+	return mgl32.Vec2{-m.U.Vec3().Dot(d), -m.V.Vec3().Dot(d)}
+}
+
+// Steps returns the displacements within the plane with normal n that advance
+// u by one with v held, and v by one with u held — the directions the texture's
+// own axes run across the face. ok is false for a map with no extent in u or v.
+func (m UVMap) Steps(n mgl32.Vec3) (du, dv mgl32.Vec3, ok bool) {
+	gu, gv := m.U.Vec3(), m.V.Vec3()
+	du, dv = gv.Cross(n), n.Cross(gu)
+	ku, kv := gu.Dot(du), gv.Dot(dv)
+	if math.Abs(float64(ku)) < 1e-9 || math.Abs(float64(kv)) < 1e-9 {
+		return mgl32.Vec3{}, mgl32.Vec3{}, false
+	}
+	return du.Mul(1 / ku), dv.Mul(1 / kv), true
 }
 
 // ApplyUVMap sets each vertex's UV from its own position. Vertices are

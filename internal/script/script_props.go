@@ -452,7 +452,7 @@ func entityProps() map[string]propAccess {
 				world.SetPlayerSprinting(b)
 				return nil
 			}),
-			Doc: "whether the player is sprinting (Left Shift toggles it; stopping, crouching or sitting ends it). Writable on the player, so firing or aiming can end a sprint",
+			Doc: "whether the player is sprinting (held on Left Shift while pushing forward; crouching or sitting ends it). Writable on the player: false ends it and keeps it off while the key stays down (firing, aiming), true lets a still-held key sprint again",
 		},
 		"look_direction": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {

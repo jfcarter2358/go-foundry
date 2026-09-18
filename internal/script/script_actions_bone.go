@@ -54,7 +54,28 @@ var boneVerbs = map[string]scriptVerb{
 		}
 		return vecValue(p), nil
 	},
+	// recoil kicks the player's view: a shot climbing. Degrees up and right,
+	// and the share of the kick that eases back by itself.
+	"recoil": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if len(args) < 1 || len(args) > 3 {
+			return nil, fmt.Errorf("recoil takes (pitch), (pitch, yaw) or (pitch, yaw, recover)")
+		}
+		vals := [3]float32{0, 0, defaultRecoilRecover}
+		for i, a := range args {
+			f, ok := toFloat32(a)
+			if !ok {
+				return nil, fmt.Errorf("recoil's arguments are numbers, not a %s", flang.TypeOf(a))
+			}
+			vals[i] = f
+		}
+		gfx.AddRecoil(vals[0], vals[1], vals[2])
+		return flang.NullVal{}, nil
+	},
 }
+
+// defaultRecoilRecover is how much of a kick eases back when recoil is not
+// told: most of it, leaving a held trigger a climb to fight.
+const defaultRecoilRecover = float32(0.7)
 
 // bonePosition is the world-space point one bone of one attachment is at.
 //

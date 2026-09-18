@@ -535,6 +535,8 @@ func translateGizmoMouseUp() {
 	Editor.GizmoDragPoints = nil
 	Editor.GizmoDragOffsets = nil
 	Editor.GizmoDragWorld = nil
+	Editor.GizmoDragUV = false
+	Editor.GizmoDragUVStarts = nil
 }
 
 // translateGizmoMouseMove applies the current cursor position to the drag.
@@ -751,6 +753,9 @@ func editorGizmoDragging() bool { return Editor.GizmoDragging }
 
 // editorGizmoMouseDown routes a click to whichever gizmo is on screen.
 func editorGizmoMouseDown(t sdl.MouseButtonEvent) bool {
+	if Editor.UVMode {
+		return t.Button == sdl.ButtonLeft && uvGizmoMouseDown(Editor.GizmoTool, t.X, t.Y)
+	}
 	switch Editor.GizmoTool {
 	case editorToolRotate:
 		return rotateGizmoMouseDown(t)
@@ -768,6 +773,10 @@ func editorGizmoMouseMove(mx, my int32) {
 	if !Editor.GizmoDragging {
 		return
 	}
+	if Editor.GizmoDragUV {
+		uvGizmoMouseMove(mx, my)
+		return
+	}
 	switch Editor.GizmoDragTool {
 	case editorToolRotate:
 		rotateGizmoMouseMove(mx, my)
@@ -782,7 +791,15 @@ func editorGizmoMouseMove(mx, my int32) {
 func editorGizmoMouseUp() { translateGizmoMouseUp() }
 
 // renderEditorGizmo draws the gizmo for the current selection.
+//
+// In UV mode only the UV gizmo is drawn, and only on a face: a geometry gizmo
+// showing up for any other selection would let a drag meant for a texture move
+// the brush.
 func renderEditorGizmo(mx, my int32) {
+	if Editor.UVMode {
+		renderUVGizmo(Editor.GizmoTool, mx, my)
+		return
+	}
 	switch Editor.GizmoTool {
 	case editorToolRotate:
 		renderRotateGizmo(mx, my)

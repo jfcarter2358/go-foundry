@@ -509,9 +509,10 @@ func editorWaypointPreviewTargetCombo(label string) {
 		imgui.EndCombo()
 	}
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("What to play the animation on: a dynamic brush, an entity, a sprite,\n" +
-			"an emitter, a sound, a light or a volume. Each takes the parts of a\n" +
-			"point it has — a point light only moves, a directional light only turns.")
+		imgui.SetTooltip("What to play the animation on: a dynamic brush, a chunk, an entity,\n" +
+			"a sprite, an emitter, a sound, a light or a volume. Each takes the parts\n" +
+			"of a point it has — a chunk only its position and Y rotation, a point\n" +
+			"light only moves, a directional light only turns.")
 	}
 }
 

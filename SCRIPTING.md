@@ -1479,6 +1479,20 @@ spawn_effect("muzzle_flash", bone_position(@self.model.weapon, "muzzle"))
 For the player the attachments are the first-person viewmodel, so the point is
 where the gun is on screen, carried by the camera.
 
+`recoil(pitch, yaw, recover)` kicks the player's view when a shot goes off.
+The view turns up by `pitch` degrees and right by `yaw` over a few hundredths
+of a second. `yaw` and `recover` are optional. `recover` (0–1, default 0.7) is
+the share of the kick that eases back by itself. The rest stays, so holding
+the trigger makes the aim climb, and the player has to pull it back down. A
+pull downward while the kick is easing back counts against it, so the two
+together never drop the aim below where it started. The kick moves the camera
+itself, so the next shot's `look_direction` and `hitscan` aim from the kicked
+view.
+
+```
+recoil(0.9, random_range(-0.25, 0.25))
+```
+
 `offset`, `rotation` and `scale` are the attachment's transform relative to its
 entity, so a script can nod a head or slide a hatch without touching the entity
 itself. Naming an attachment the entity does not have is an error, the way any

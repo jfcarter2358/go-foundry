@@ -57,6 +57,7 @@ func editorChunkPropertiesSection(lvl *world.Level) {
 	editorPropGroupOpen("Transform##chunktfgrp", func() { editorChunkTransform(ch) })
 	editorPropGroup("Motion##chunkmotiongrp", 0, func() { editorChunkMotion(ch) })
 	editorPropGroup("Carried By##chunkframegrp", 0, func() { editorChunkFrameOwnerRow(lvl, ch) })
+	editorObjectWaypointsUI(ch)
 	editorScriptDataUI(&ch.ScriptData, "chunk", "This chunk")
 }
 

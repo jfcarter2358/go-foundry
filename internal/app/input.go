@@ -253,7 +253,7 @@ func onFoot() bool {
 // pressAction is an action's key or button going down. repeat is the
 // keyboard's auto-repeat, which only the actions that make sense held accept.
 //
-// The held actions — moving, looking, crouching, rolling and pitching — are not
+// The held actions — moving, looking, crouching, sprinting, rolling and pitching — are not
 // here: they are read as state each frame (platform.ActionHeld), not as edges.
 func pressAction(a platform.Action, repeat bool) {
 	if !gameplayInput() {
@@ -277,12 +277,6 @@ func pressAction(a platform.Action, repeat bool) {
 		hooks.ScriptThrowRequest()
 	case platform.ActWeapon1, platform.ActWeapon2, platform.ActWeapon3, platform.ActWeapon4, platform.ActWeapon5:
 		hooks.ScriptWeaponSlotRequest(int(a-platform.ActWeapon1) + 1)
-	case platform.ActSprint:
-		// Sprint, as a toggle. Only with gravity on: in free-fly the sprint key
-		// is "down", held (gfx.MoveIntent).
-		if !repeat && platform.GravityEnabled && world.PlayerEntity != nil && onFoot() {
-			world.SetPlayerSprinting(!world.PlayerSprinting())
-		}
 	case platform.ActReload:
 		if !repeat {
 			hooks.ScriptReloadRequest()

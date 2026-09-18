@@ -96,9 +96,10 @@ brush's:
 | **UV** | offset, scale and rotation, in the face's own plane — on top of the face's own layout once it has been unwrapped, when **Reset to projected** forgets the unwrap |
 | **Smooth** | weld normals with the neighbours; see [Smooth shading](05-smoothing.md) |
 
-The panel edits the primary selected face. To change a dozen at once, select them
-all with `Ctrl+click` and use the right-click menu, whose rows say how many faces
-they will reach.
+The panel shows the first selected face. With several selected (`Ctrl+click`),
+a field you change is written to every one of them — just that field, so an
+Offset U drag leaves each face's own Offset V alone. An unwrap's per-corner
+layout is the one thing that doesn't copy across; **Reset to projected** does.
 
 ## Painting brushes
 

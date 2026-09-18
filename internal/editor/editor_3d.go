@@ -973,27 +973,22 @@ func uniqueChunkCopyID(lvl *world.Level, srcID string) (string, string) {
 }
 
 // editorFaceSelectionNote says what the face selection is, and — when it holds
-// more than one — that the fields below it describe only the first.
-//
-// The panel binds its widgets straight to the primary's fields, which is what
-// makes them live; there is no honest way for a slider to edit twelve floats at
-// once. So the note points at where the bulk actions actually are, rather than
-// letting the panel quietly imply that typing a texture name here repaints
-// everything outlined in the viewport.
+// more than one — that the fields below show the first face but an edit to
+// them reaches all of them (see applyFaceEditToSelection).
 func editorFaceSelectionNote() {
 	n := selectedFaceCount()
 	if n == 0 {
 		return
 	}
 	if n == 1 {
-		if _, b := faceSelBrush(Editor.SelectedFaces[0]); b != nil {
-			imgui.Text(fmt.Sprintf("Selected face #%d of brush %s", Editor.ActiveFaceIdx, b.ID))
+		if _, b := faceSelBrush(ws().SelectedFaces[0]); b != nil {
+			imgui.Text(fmt.Sprintf("Selected face #%d of brush %s", ws().ActiveFaceIdx, b.ID))
 		}
 		return
 	}
-	imgui.Text(fmt.Sprintf("%d faces selected — fields below are the first one's", n))
+	imgui.Text(fmt.Sprintf("%d faces selected — edits apply to all", n))
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Right-click the viewport for texture, visibility and\n" +
-			"collision actions that apply to all of them.")
+		imgui.SetTooltip("The fields show the first face. Changing one writes\n" +
+			"just that field to every selected face.")
 	}
 }

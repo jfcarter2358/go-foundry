@@ -254,6 +254,13 @@ func entityGizmoToolTooltip(t editorGizmoTool) string {
 
 // entitySetGizmoTool switches tools, ending any drag in progress first so a
 // half-finished translation cannot be completed as a rotation.
+// entityToggleUVMode switches this window's tools between a face's corners and
+// its texture, ending any drag in progress first.
+func entityToggleUVMode() {
+	entityGizmoMouseUp()
+	entityWS.UVMode = !entityWS.UVMode
+}
+
 func entitySetGizmoTool(t editorGizmoTool) {
 	if entityGizmoTool == t {
 		return
@@ -497,6 +504,17 @@ func entityGizmoDragging() bool { return entityGizmo.Dragging }
 // one must never fall through to whatever the viewport would otherwise do with
 // it.
 func entityGizmoMouseDown(mx, my int32) bool {
+	if entityWS.UVMode {
+		// The UV drag keeps its state on the workspace (editor_uv_gizmo.go);
+		// entityGizmo only has to say a drag owns the mouse.
+		if !uvGizmoMouseDown(entityGizmoTool, mx, my) {
+			return false
+		}
+		if entityWS.GizmoDragging {
+			entityGizmo = entityGizmoDrag{Dragging: true, Tool: entityGizmoTool, Axis: entityWS.GizmoDragAxis}
+		}
+		return true
+	}
 	switch entityGizmoTool {
 	case editorToolRotate:
 		return entityRotateMouseDown(mx, my)
@@ -631,6 +649,7 @@ func entityGizmoMouseUp() {
 	entityGizmo.Dragging = false
 	entityGizmo.Axis = -1
 	entityGizmo.StartWorld = nil
+	uvGizmoEndDrag(&entityWS)
 }
 
 // entityGizmoMouseMove applies the cursor position to the drag. It dispatches
@@ -639,6 +658,10 @@ func entityGizmoMouseUp() {
 // a stale drag be finished by the wrong maths.
 func entityGizmoMouseMove(mx, my int32) {
 	if !entityGizmo.Dragging {
+		return
+	}
+	if entityWS.GizmoDragUV {
+		uvGizmoMouseMove(mx, my)
 		return
 	}
 	switch entityGizmo.Tool {
@@ -837,6 +860,10 @@ func entityGeometryDragged() {
 // with depth testing off, so a handle behind the hull is still one you can see
 // and grab.
 func drawEntityGizmo(mx, my int32) {
+	if entityWS.UVMode {
+		renderUVGizmo(entityGizmoTool, mx, my)
+		return
+	}
 	switch entityGizmoTool {
 	case editorToolRotate:
 		drawEntityRotateGizmo(mx, my)

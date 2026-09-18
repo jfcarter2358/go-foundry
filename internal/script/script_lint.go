@@ -475,7 +475,7 @@ func (l *linter) waypoints(c *flang.CallExpr, verb string) {
 				if d, p := l.cache.lightFor(r); (d != nil && !d.Dynamic) || (p != nil && !p.Dynamic) {
 					l.add(addr.Pos_, "%s would fail: light %q is static; tick Dynamic in its properties panel", verb, addr.Name)
 				}
-			case flang.RefSprite, flang.RefEmitter, flang.RefSound, flang.RefVolume:
+			case flang.RefChunk, flang.RefSprite, flang.RefEmitter, flang.RefSound, flang.RefVolume:
 			default:
 				l.add(addr.Pos_, "%s moves %s, and @%s is a %s", verb, waypointFollowerKinds, addr.Name, r.Kind)
 			}

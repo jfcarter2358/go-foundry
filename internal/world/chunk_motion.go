@@ -13,6 +13,10 @@ package world
 // move rebuilds no geometry at all. What does not follow on its own is the
 // spatial hash, whose keys are world cells — so a chunk that moved is
 // re-bucketed here, before anything this tick resolves against it.
+//
+// A chunk sent along a waypoint animation (`play_waypoints`) is stepped here
+// too, ahead of Velocity/AngularVelocity and the two tweens, on the same
+// precedence a tween already has: see waypoint_follow.go's Chunk methods.
 
 import "github.com/go-gl/mathgl/mgl32"
 
@@ -40,9 +44,25 @@ func AdvanceChunks(lvl *Level, dt float32) bool {
 	moved, rehash := false, false
 	for i := range lvl.Chunks {
 		ch := &lvl.Chunks[i]
+		if !ch.IsEnabled() {
+			continue
+		}
+		if ch.Waypoints != nil {
+			// A path writes the whole placement, the same as a tween, and
+			// takes precedence over Velocity/AngularVelocity on the same
+			// grounds: advanceWaypoints calls moveOriginTo/rotateTo itself,
+			// so a rider is carried and a wrap the same as any other write.
+			if advanceWaypoints(lvl, ch, dt) {
+				moved = true
+				if ch.FrameOwner == "" {
+					rehash = true
+				}
+			}
+			continue
+		}
 		movingOrigin := ch.Velocity != (mgl32.Vec3{}) || ch.OriginTween != nil
 		movingRotation := ch.AngularVelocity != 0 || ch.RotationTween != nil
-		if (!movingOrigin && !movingRotation) || !ch.IsEnabled() {
+		if !movingOrigin && !movingRotation {
 			continue
 		}
 

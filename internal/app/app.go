@@ -506,8 +506,15 @@ func Run() {
 			// so the move below walks the way the player is now facing.
 			if platform.PlayerControlEnabled {
 				applyMouseLook(platform.DeltaTime)
+				// A shot's kick (the `recoil` verb) turns the view the same
+				// way, before the move reads where the player faces.
+				if gfx.ApplyRecoil(platform.DeltaTime) {
+					gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
+					gfx.UpdateCamMatrix()
+				}
 			} else {
 				dropMouseLook()
+				gfx.ResetRecoil()
 			}
 			// --- Input -> player -> camera ---
 			// The keys say how far to move; the player is what moves, and the
@@ -565,13 +572,13 @@ func Run() {
 				crouch := crouchable(&level) &&
 					platform.ActionHeld(platform.ActCrouch, platform.KeyStates)
 				collision.UpdatePlayerCrouch(world.PlayerEntity, &level, crouch, platform.DeltaTime)
-				// A sprint lasts while the player keeps pushing forward on
-				// foot; stopping, crouching, sitting or losing control ends it,
-				// so the toggle never outlives the run it was pressed for.
-				if world.PlayerSprinting() && (world.PlayerCrouched() || !crouchable(&level) ||
-					!platform.ActionHeld(platform.ActMoveForward, platform.KeyStates) || !platform.GravityEnabled) {
-					world.SetPlayerSprinting(false)
-				}
+				// Sprint is held too (left Shift by default), on foot with
+				// gravity on and while pushing forward — in free-fly the same
+				// key is "down" (gfx.MoveIntent). Letting go of any of them
+				// ends it.
+				world.UpdatePlayerSprint(crouchable(&level) && platform.GravityEnabled &&
+					platform.ActionHeld(platform.ActSprint, platform.KeyStates) &&
+					platform.ActionHeld(platform.ActMoveForward, platform.KeyStates))
 				switch {
 				case world.PlayerCrouched():
 					intent[0] *= world.CrouchSpeedScale
@@ -623,6 +630,7 @@ func Run() {
 		// Motion banked while the view could not turn must not arrive later.
 		if devActive() || gamePaused {
 			dropMouseLook()
+			gfx.ResetRecoil()
 		}
 
 		// --- Placed entities ---

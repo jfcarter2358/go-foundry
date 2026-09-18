@@ -33,7 +33,7 @@ var worldVerbs = []string{
 	"play_anim", "stop_anim", "spawn", "destroy", "time",
 	"mount", "dismount", "ease_sky",
 	"emit", "stop_emit", "burst", "spawn_effect", "explode",
-	"hitscan", "bone_position",
+	"hitscan", "bone_position", "recoil",
 	"play", "stop", "play_sound", "play_sound_at", "play_music", "stop_music",
 	"attach", "detach",
 	"play_waypoints", "stop_waypoints",

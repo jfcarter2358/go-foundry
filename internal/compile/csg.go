@@ -379,11 +379,12 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 				if !ok {
 					continue
 				}
+				uvOffset, uvScale, uvRotation := f.DrawUVTransform()
 				cf := Face{
 					Points: pts, Plane: pl, UVOrigin: pts[0],
 					Chunk: ch.ID, Brush: b.ID, FaceIdx: fi, Detail: b.HasDetail(),
-					Texture: f.Texture, BlendTexture: f.BlendTexture, BlendMask: f.BlendMask,
-					UVOffset: f.UVOffset, UVScale: f.UVScale, UVRotation: f.UVRotation,
+					Texture: f.DrawTexture(), BlendTexture: f.BlendTexture, BlendMask: f.BlendMask,
+					UVOffset: uvOffset, UVScale: uvScale, UVRotation: uvRotation,
 					Smooth: f.Smooth, SmoothAngle: f.SmoothAngle,
 					Alpha: f.Alpha, DoubleSided: f.DoubleSided,
 					// order is stashed on the face so the coplanar tie-break
@@ -394,7 +395,7 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 				if b.HasDetail() {
 					cf.hull = hull
 				}
-				if f.HasUVs() {
+				if f.DrawsCornerUVs() {
 					// Fitted to the WORLD-space corners, so the map already
 					// includes the chunk's placement and a fragment — which is in
 					// world space too — can evaluate it as it stands.

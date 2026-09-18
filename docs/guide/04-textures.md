@@ -90,6 +90,36 @@ draw the UV layout of everything wearing the open texture over the art
 (`UV layout (n faces)` under the canvas). That is how you paint to a specific
 unwrap rather than guessing.
 
+## Overriding a face's texture
+
+A face that has been through Unwrap & Paint can wear a different texture without
+losing its painting. Tick **Override** under **Texture Override** in the face's
+panel and pick the **Override Texture**: the face is drawn with that texture
+projected onto its own plane, under its own offset, scale and rotation, and the
+unwrap is ignored — in the editor and in a compiled level. The painted texture
+and the face's place in its atlas are kept, so unticking **Override** brings the
+painting back, and a re-unwrap still includes the face.
+
+To place the texture by eye, select the face and press `U` for **UV mode**
+(or the **UV** button next to the move/rotate/scale tools). While it is on, the
+same three tools act on the face's texture instead of its corners:
+
+- **Move** (`G`) — two arms lie on the face along the texture's own U and V
+  directions. Drag one to slide the texture along that axis, or drag the square
+  where they meet to slide it freely. The texel you grab stays under the cursor.
+- **Rotate** (`R`) — drag the ring round the face to turn the texture with the
+  cursor, about the gizmo's centre. Snapping turns it in 15° steps.
+- **Scale** (`C`) — pull an arm out to stretch the texture along that axis, or
+  the centre box to grow it both ways; pull in to shrink it. It grows about the
+  gizmo's centre, and snapping moves in tenths.
+
+The tools change the transform the face is drawn with — the override's offset,
+scale and rotation while it is on, the face's ordinary UV fields otherwise — and
+with several faces selected they change all of them. Press `U` again to go back
+to moving corners; in UV mode nothing but a face's texture can be dragged. The
+override and UV mode work the same way on an entity type's brushes in the
+entity editor.
+
 ## No texture
 
 A brush face and a model can wear **(none)**, and that is what a new one starts

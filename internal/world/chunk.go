@@ -74,6 +74,14 @@ type Chunk struct {
 	// scalar would be new machinery for one fewer float per value.
 	RotationTween *Tween
 
+	// Waypoints is the chunk's progress along a waypoint animation (`
+	// play_waypoints`), or nil. Runtime-only: not saved and not cloned, the
+	// same as every other kind's — see waypoint_follow.go. While it is set,
+	// AdvanceChunks writes Origin/Rotation from the path directly and
+	// Velocity/AngularVelocity and the two tweens above all wait, the same
+	// precedence a tween already has over a velocity.
+	Waypoints *WaypointPlayback
+
 	// Disabled takes the chunk out of the world: nothing draws it and nothing
 	// collides with it. It is what a streaming script toggles as the player
 	// moves between areas — see chunk_enable.go, which owns this flag,
@@ -264,6 +272,19 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 	}
 
 	return cp
+}
+
+// FindChunkByID returns the chunk with the given level-unique ID, or nil.
+func FindChunkByID(lvl *Level, id string) *Chunk {
+	if lvl == nil || id == "" {
+		return nil
+	}
+	for i := range lvl.Chunks {
+		if lvl.Chunks[i].ID == id {
+			return &lvl.Chunks[i]
+		}
+	}
+	return nil
 }
 
 // RecomputeBounds re-derives the chunk's local AABB (MinBound/MaxBound; see
