@@ -183,3 +183,46 @@ func TestHiddenAndVisibleSurfacesFollowEveryToggle(t *testing.T) {
 		t.Errorf("with main hidden by a direct write: %v, want only north's surface 0", got)
 	}
 }
+
+// A cover surface is a zone's own surface that a neighbouring streamed zone's
+// solid buries. It is in no cell, and it draws exactly while its own chunk is
+// on and the chunk burying it is off: the edge of a streaming window.
+func TestACoverSurfaceDrawsOnlyWhileItsCoverIsOff(t *testing.T) {
+	s := twoCellTree()
+	for i := range s.Surfaces {
+		s.Surfaces[i].Chunk = "a"
+	}
+	s.Surfaces = append(s.Surfaces, StaticSurface{Chunk: "a", CoveredBy: []string{"b"}})
+	const cover = 3
+	eye := mgl32.Vec3{1, 0, 0}
+	has := func(got []int) bool {
+		for _, i := range got {
+			if i == cover {
+				return true
+			}
+		}
+		return false
+	}
+
+	if has(s.VisibleSurfaces(eye, nil)) || s.Hidden(cover) == false {
+		t.Error("a cover surface drew with nothing switched off")
+	}
+	for _, i := range s.everything() {
+		if i == cover {
+			t.Error("the everything fallback drew a buried cover surface")
+		}
+	}
+	s.SetChunkHidden("b", true)
+	if !has(s.VisibleSurfaces(eye, nil)) || s.Hidden(cover) {
+		t.Error("a cover surface stayed hidden with the chunk burying it switched off")
+	}
+	s.SetChunkHidden("a", true)
+	if has(s.VisibleSurfaces(eye, nil)) || !s.Hidden(cover) {
+		t.Error("a cover surface drew with its own chunk switched off")
+	}
+	s.SetChunkHidden("a", false)
+	s.SetChunkHidden("b", false)
+	if has(s.VisibleSurfaces(eye, nil)) || !s.Hidden(cover) {
+		t.Error("a cover surface drew after the chunk burying it came back")
+	}
+}

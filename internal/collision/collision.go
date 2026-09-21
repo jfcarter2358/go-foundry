@@ -182,6 +182,7 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 	}
 	body := Cylinder{C: out, Half: mgl32.Vec3{radius, halfHeight, radius}, Rot: mgl32.Ident4()}
 	bestFloorCos := float32(0)
+	boxes := brushBoxesFor(chunk)
 	for bi := range chunk.Brushes {
 		b := &chunk.Brushes[bi]
 		if !b.Solid || len(b.Verts) < 4 {
@@ -192,10 +193,15 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 		// the body: without this a 700-brush canyon cost half a millisecond
 		// per call, and an AI agent's step-up probes make several calls a
 		// frame each. Exact, not a heuristic — two convex shapes whose boxes
-		// are apart cannot overlap. The box is re-read from the corners every
-		// call rather than cached, so nothing can go stale under an edit.
-		// body moves as pushes land, so it is re-boxed from body.C.
-		if !bodyBoxTouchesBrush(body.C, body.Half, b) {
+		// are apart cannot overlap. An unmoved brush's box comes from the
+		// chunk's cache (brush_boxes.go), which every mesh edit invalidates; a
+		// moved one is re-read from its corners where it is now. The body
+		// moves as pushes land, so it is re-boxed from body.C.
+		if box := boxes.boxes[bi]; box.valid() {
+			if !box.touches(body.C, body.Half) {
+				continue
+			}
+		} else if !bodyBoxTouchesBrush(body.C, body.Half, b) {
 			continue
 		}
 		// Xform is where a script has moved it to (world/brush_dynamic.go) —

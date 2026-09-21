@@ -25,6 +25,7 @@ import (
 	"foundry/internal/nav"
 	"foundry/internal/world"
 
+	"foundry/internal/imguibackend"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -104,7 +105,7 @@ func editorAISpecUI(spec **world.AISpec, h aiPanelHost) {
 		aiNameList(&s.Targets, "aitgtl", h, aiTargetSuggestions(Editor.level))
 		if len(s.Targets) > 0 {
 			mode := int32(s.OnTarget)
-			if imgui.Combo("On target##aionT"+h.id, &mode, world.AITargetModeNames) {
+			if imguibackend.Combo("On target##aionT"+h.id, &mode, world.AITargetModeNames) {
 				s.OnTarget = world.AITargetMode(mode)
 				h.edited("aiont")
 			}
@@ -133,7 +134,7 @@ func editorAISpecUI(spec **world.AISpec, h aiPanelHost) {
 		aiNameList(&s.Objectives, "aiobjl", h, aiObjectiveSuggestions(Editor.level))
 		if len(s.Objectives) > 0 {
 			order := int32(s.Order)
-			if imgui.Combo("Order##aiorder"+h.id, &order, world.AIObjectiveOrderNames) {
+			if imguibackend.Combo("Order##aiorder"+h.id, &order, world.AIObjectiveOrderNames) {
 				s.Order = world.AIObjectiveOrder(order)
 				h.edited("aiorder")
 			}
@@ -159,8 +160,8 @@ func editorAISpecUI(spec **world.AISpec, h aiPanelHost) {
 		if preview == "" {
 			preview = "(none)"
 		}
-		if imgui.BeginCombo("Waypoints##aiwp"+h.id, preview) {
-			if imgui.Selectable("(none)") {
+		if imguibackend.BeginCombo("Waypoints##aiwp"+h.id, preview) {
+			if imguibackend.Selectable("(none)") {
 				EditorPushUndo()
 				s.Waypoints = ""
 				h.edited("aiwp")
@@ -169,13 +170,13 @@ func editorAISpecUI(spec **world.AISpec, h aiPanelHost) {
 				editorTextMuted("(no waypoint animations)")
 			}
 			for _, name := range h.paths {
-				if imgui.SelectableV(name, name == s.Waypoints, 0, imgui.Vec2{}) {
+				if imguibackend.SelectableV(name, name == s.Waypoints, 0, imgui.Vec2{}) {
 					EditorPushUndo()
 					s.Waypoints = name
 					h.edited("aiwp")
 				}
 			}
-			imgui.EndCombo()
+			imguibackend.EndCombo()
 		}
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("Walked ahead of the objectives, which take over once a path\n" +
@@ -196,20 +197,20 @@ func editorAISpecUI(spec **world.AISpec, h aiPanelHost) {
 		if preview == "" {
 			preview = "(nobody)"
 		}
-		if imgui.BeginCombo("Follow##aifollowc"+h.id, preview) {
-			if imgui.Selectable("(nobody)") {
+		if imguibackend.BeginCombo("Follow##aifollowc"+h.id, preview) {
+			if imguibackend.Selectable("(nobody)") {
 				EditorPushUndo()
 				s.Follow = ""
 				h.edited("aifollowc")
 			}
 			for _, name := range aiLeaderSuggestions(Editor.level) {
-				if imgui.SelectableV(name, name == s.Follow, 0, imgui.Vec2{}) {
+				if imguibackend.SelectableV(name, name == s.Follow, 0, imgui.Vec2{}) {
 					EditorPushUndo()
 					s.Follow = name
 					h.edited("aifollowc")
 				}
 			}
-			imgui.EndCombo()
+			imguibackend.EndCombo()
 		}
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("A waypoint path comes first: the agent walks it, then falls in.\n" +
@@ -300,16 +301,16 @@ func aiNameList(list *[]string, id string, h aiPanelHost, suggestions []string) 
 		Editor.NewAINameText = ""
 	}
 	imgui.SameLine()
-	if imgui.BeginCombo("##"+id+"pick"+h.id, "Add...") {
+	if imguibackend.BeginCombo("##"+id+"pick"+h.id, "Add...") {
 		if len(suggestions) == 0 {
 			editorTextMuted("(nothing in the open level)")
 		}
 		for _, s := range suggestions {
-			if imgui.Selectable(s) {
+			if imguibackend.Selectable(s) {
 				add(s)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 }
 
@@ -318,18 +319,18 @@ func aiAnimCombo(label, id string, h aiPanelHost, v *string) {
 	if preview == "" {
 		preview = "(none)"
 	}
-	if imgui.BeginCombo(label+"##"+id+h.id, preview) {
-		if imgui.Selectable("(none)") {
+	if imguibackend.BeginCombo(label+"##"+id+h.id, preview) {
+		if imguibackend.Selectable("(none)") {
 			*v = ""
 			h.edited(id)
 		}
 		for _, a := range h.animations {
-			if imgui.SelectableV(a, a == *v, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(a, a == *v, 0, imgui.Vec2{}) {
 				*v = a
 				h.edited(id)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 }
 

@@ -118,6 +118,14 @@ type RayFilter struct {
 	// Ignore is a set of object IDs the ray passes through entirely, blocking
 	// included — how a caster excludes itself.
 	Ignore map[string]bool
+
+	// Player is a body to test beside the level's entities, reported as an
+	// entity hit with its own ID. The player is not in Level.Entities (see
+	// world/entity.go), so without it no ray could meet the player at all —
+	// which is right for a shot fired from the player's own eye, and wrong for
+	// one fired at them. Nil leaves the player out. Taking part needs
+	// Entities as well, and Ignore still applies.
+	Player *world.Entity
 }
 
 // DefaultRayFilter is what a cast with nothing said about it does: entities and
@@ -235,6 +243,9 @@ func reportable(lvl *world.Level, h RayHit, f RayFilter) bool {
 	switch h.Kind {
 	case RayHitEntity:
 		e := entityByID(lvl, h.ID)
+		if e == nil && f.Player != nil && h.ID == f.Player.ID {
+			e = f.Player
+		}
 		if e == nil {
 			return false
 		}
@@ -266,8 +277,17 @@ func reportable(lvl *world.Level, h RayHit, f RayFilter) bool {
 // ---------- bodies ----------
 
 func appendEntityHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter, limit float32) []RayHit {
-	for i := range lvl.Entities {
-		e := &lvl.Entities[i]
+	n := len(lvl.Entities)
+	if f.Player != nil {
+		n++
+	}
+	for i := 0; i < n; i++ {
+		var e *world.Entity
+		if i < len(lvl.Entities) {
+			e = &lvl.Entities[i]
+		} else {
+			e = f.Player
+		}
 		if (len(f.Ignore) > 0 && f.Ignore[e.ID]) || !e.HasBounds() {
 			continue
 		}

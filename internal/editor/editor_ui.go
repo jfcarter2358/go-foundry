@@ -13,9 +13,7 @@ import (
 	"foundry/internal/levelio"
 	"foundry/internal/model"
 	"foundry/internal/platform"
-	"foundry/internal/textureui"
 	"foundry/internal/video"
-	"foundry/internal/world"
 	"math"
 	"path/filepath"
 	"sort"
@@ -240,9 +238,9 @@ func textureCombo(label string, tex *string, allowEmpty bool) bool {
 	}
 
 	changed := false
-	if imgui.BeginCombo(label, preview) {
+	if imguibackend.BeginCombo(label, preview) {
 		if allowEmpty {
-			if imgui.SelectableV("(none)", *tex == "", 0, imgui.Vec2{}) && *tex != "" {
+			if imguibackend.SelectableV("(none)", *tex == "", 0, imgui.Vec2{}) && *tex != "" {
 				*tex = ""
 				changed = true
 			}
@@ -252,16 +250,16 @@ func textureCombo(label string, tex *string, allowEmpty bool) bool {
 			if n == *tex {
 				known = true
 			}
-			if imgui.SelectableV(n, n == *tex, 0, imgui.Vec2{}) && n != *tex {
+			if imguibackend.SelectableV(n, n == *tex, 0, imgui.Vec2{}) && n != *tex {
 				_ = gfx.EnsureTextureLoaded(n)
 				*tex = n
 				changed = true
 			}
 		}
 		if !known && *tex != "" {
-			imgui.SelectableV(*tex+" (missing)", true, 0, imgui.Vec2{})
+			imguibackend.SelectableV(*tex+" (missing)", true, 0, imgui.Vec2{})
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	return changed
 }
@@ -277,11 +275,11 @@ func videoFileCombo(label string, clip *string) bool {
 		preview = "(none)"
 	}
 	changed := false
-	if imgui.BeginCombo(label, preview) {
+	if imguibackend.BeginCombo(label, preview) {
 		if Editor.VideoFileNames == nil {
 			Editor.VideoFileNames = video.ScanVideoNames()
 		}
-		if imgui.SelectableV("(none)", *clip == "", 0, imgui.Vec2{}) && *clip != "" {
+		if imguibackend.SelectableV("(none)", *clip == "", 0, imgui.Vec2{}) && *clip != "" {
 			*clip = ""
 			changed = true
 		}
@@ -290,7 +288,7 @@ func videoFileCombo(label string, clip *string) bool {
 			if n == *clip {
 				known = true
 			}
-			if imgui.SelectableV(n, n == *clip, 0, imgui.Vec2{}) && n != *clip {
+			if imguibackend.SelectableV(n, n == *clip, 0, imgui.Vec2{}) && n != *clip {
 				*clip = n
 				changed = true
 			}
@@ -298,9 +296,9 @@ func videoFileCombo(label string, clip *string) bool {
 		if !known && *clip != "" {
 			// A screen authored against a clip since renamed says so, rather
 			// than silently reverting to whatever happens to be first.
-			imgui.SelectableV(*clip+" (missing)", true, 0, imgui.Vec2{})
+			imguibackend.SelectableV(*clip+" (missing)", true, 0, imgui.Vec2{})
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	} else {
 		Editor.VideoFileNames = nil
 	}
@@ -336,17 +334,17 @@ func modelFileNames() []string {
 // per frame for the few frames a menu is down, and it means the list is always
 // what is on disk rather than what was on disk when the panel first drew.
 func modelFileCombo(label string, path *string) bool {
-	preview := *path
+	preview := modelDisplayName(*path)
 	if preview == "" {
 		preview = "(none)"
 	}
-	if !imgui.BeginCombo(label, preview) {
+	if !imguibackend.BeginCombo(label, preview) {
 		return false
 	}
-	defer imgui.EndCombo()
+	defer imguibackend.EndCombo()
 
 	changed := false
-	if imgui.SelectableV("(none)", *path == "", 0, imgui.Vec2{}) && *path != "" {
+	if imguibackend.SelectableV("(none)", *path == "", 0, imgui.Vec2{}) && *path != "" {
 		*path = ""
 		changed = true
 	}
@@ -355,15 +353,22 @@ func modelFileCombo(label string, path *string) bool {
 		if n == *path {
 			known = true
 		}
-		if imgui.SelectableV(n, n == *path, 0, imgui.Vec2{}) && n != *path {
+		if imguibackend.SelectableV(modelDisplayName(n), n == *path, 0, imgui.Vec2{}) && n != *path {
 			*path = n
 			changed = true
 		}
 	}
 	if !known && *path != "" {
-		imgui.SelectableV(*path+" (missing)", true, 0, imgui.Vec2{})
+		imguibackend.SelectableV(modelDisplayName(*path)+" (missing)", true, 0, imgui.Vec2{})
 	}
 	return changed
+}
+
+// modelDisplayName is how a picker shows a stored model path: every model
+// lives under models/, so the prefix is noise to an author and is dropped.
+// The stored path keeps it — only the label changes.
+func modelDisplayName(path string) string {
+	return strings.TrimPrefix(path, model.ModelsDirName+"/")
 }
 
 // waterControls draws the wave and reflection settings for a water surface.
@@ -429,13 +434,20 @@ func editorUVControlsBody(label string, offset *mgl32.Vec2, scale *mgl32.Vec2, r
 
 // editorSmoothPanel draws the per-surface smooth-shading toggle and its crease
 // angle. surfaceLabel disambiguates ImGui IDs across the Floor/Ceiling/Wall and
-// primitive panels. Returns true when the surface must be rebuilt — the normals
-// are generated at upload time, so the caller has to reload the geometry.
-func editorSmoothPanel(surfaceLabel string, smooth *bool, angle *float32) bool {
-	changed := imgui.Checkbox(fmt.Sprintf("Smooth Shading##%ssm", surfaceLabel), smooth)
-	if !*smooth {
-		return changed
+// primitive panels. toggled is the checkbox changing; changed is either
+// control, and means the surface must be rebuilt — the normals are generated
+// at upload time, so the caller has to reload the geometry.
+func editorSmoothPanel(surfaceLabel string, smooth *bool, angle *float32) (toggled, changed bool) {
+	toggled = imgui.Checkbox(fmt.Sprintf("Always Smooth##%ssm", surfaceLabel), smooth)
+	changed = toggled
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Shade smooth even when the player turns Smooth Lighting off.\n" +
+			"With it on (the default) every surface already shades smooth\n" +
+			"up to the crease angle.")
 	}
+	// The angle is shown either way: the player's Smooth Lighting setting
+	// smooths by it whether or not the box is ticked.
+	//
 	// Materialize the default so the control shows the angle actually in use;
 	// 0 already means "default", so this changes nothing about the shading.
 	if *angle == 0 {
@@ -446,7 +458,7 @@ func editorSmoothPanel(surfaceLabel string, smooth *bool, angle *float32) bool {
 		changed = true
 	}
 	imgui.Unindent()
-	return changed
+	return toggled, changed
 }
 
 // editorGridSettings draws the step-size and snap-to-grid controls.
@@ -521,129 +533,39 @@ func EditorDrawUI() {
 		return
 	}
 
-	// ---- Top toolbar ----
-	imgui.SetNextWindowPos(imgui.Vec2{X: 0, Y: 0})
-	imgui.SetNextWindowSize(imgui.Vec2{X: float32(platform.WinWidth), Y: 28})
-	imgui.BeginV("##toolbar", nil,
-		imgui.WindowFlagsNoTitleBar|imgui.WindowFlagsNoResize|
-			imgui.WindowFlagsNoMove|imgui.WindowFlagsNoScrollbar)
+	// ---- Top bar ----
+	//
+	// Menus above (editor_menubar.go lays out the part every editor shares),
+	// the 3D view's tools below.
+	editorTopBarBegin("##toolbar", float32(platform.WinWidth))
 
 	// Snapshot mode before rendering so Push/Pop stay matched.
 	currentMode := Editor.Mode
 
-	// ---- Group: sub-editor windows ----
-	if imgui.Button("Textures") {
-		textureui.OpenTextureEditor()
+	if imgui.BeginMenuBar() {
+		editorLevelFileMenu(lvl)
+		editorLevelEditMenu()
+		if currentMode == Mode3D {
+			editorLevelViewMenu()
+		}
+		editorLevelBuildMenu()
+		editorMenuBarShared(editorKindLevel)
+		editorMenuBarDoc(filepath.Base(Editor.SavePath), editorLevelDirty())
+		imgui.EndMenuBar()
 	}
 
-	imgui.SameLine()
-	// Snapshot before the button, for the same reason "2D Window" above does:
-	// clicking it opens the window, so re-testing ModelEditorOpen() afterwards
-	// would pop a color that was never pushed.
-	modelOpen := ModelEditorOpen()
-	if modelOpen {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
-	}
-	if imgui.Button("Model") {
-		OpenModelEditorWindow()
-	}
-	if modelOpen {
-		imgui.PopStyleColor()
-	}
-
-	imgui.SameLine()
-	// Latched before the button, for the same reason "Model" above is.
-	entityOpen := EntityEditorOpen()
-	if entityOpen {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
-	}
-	if imgui.Button("Entity") {
-		OpenEntityEditorWindow()
-	}
-	if entityOpen {
-		imgui.PopStyleColor()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Author entity types (" + world.EntitiesDirName + "/*.yaml) — models,\n" +
-			"carried chunk geometry, a script and a vehicle block.\nPlace them from Explorer -> Add -> Entity.")
-	}
-
-	imgui.SameLine()
-	// Latched before the button, for the same reason "Model" above is.
-	scriptOpen := ScriptEditorOpen()
-	if scriptOpen {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
-	}
-	if imgui.Button("Script") {
-		OpenScriptEditorWindow()
-	}
-	if scriptOpen {
-		imgui.PopStyleColor()
-	}
-
-	imgui.SameLine()
-	// Latched before the button, for the same reason "Model" above is.
-	particleOpen := ParticleEditorOpen()
-	if particleOpen {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
-	}
-	if imgui.Button("Particles") {
-		OpenParticleEditorWindow()
-	}
-	if particleOpen {
-		imgui.PopStyleColor()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Author particle effects (.fpar). Place them in the\nlevel as emitters from Explorer -> Add -> Emitter.")
-	}
-
-	imgui.SameLine()
-	// Latched before the button, for the same reason "Particles" above is:
-	// re-testing after it unbalances imgui's global style stack, and the
-	// assertion then fires in a different window's context.
-	uiOpen := UIEditorOpen()
-	if uiOpen {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
-	}
-	if imgui.Button("UI") {
-		OpenUIEditorWindow()
-	}
-	if uiOpen {
-		imgui.PopStyleColor()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Author screens (.fui) — menus, HUDs and loading screens.\nAttach them to the level from Properties -> Level -> UI.")
-	}
-
-	imgui.SameLine()
-	logOpen := LogWindowOpen()
-	if logOpen {
-		imgui.PushStyleColor(imgui.StyleColorButton, imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1})
-	}
-	if imgui.Button("Log") {
-		OpenLogWindow()
-	}
-	if logOpen {
-		imgui.PopStyleColor()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Live script output, errors and engine messages.")
-	}
-
-	// The three groups below are what a click selects, which gizmo acts on it,
-	// and how the viewport itself looks — all 3D-only, since the 2D map has no
-	// shading or camera mode of its own and carries its own copy of the first
-	// two on its own toolbar (editor2DWindowToolbar), for the same reason: what
-	// a click selects and which gizmo acts on it are shared editor-wide state,
-	// so both toolbars offer them wherever the mouse happens to be.
+	// ---- Row two: the 3D view's tools ----
+	//
+	// What a click selects, which gizmo acts on it, and how the viewport itself
+	// looks — all 3D-only. The display toggles are in the View menu as well;
+	// they stay here too because they are flipped mid-task, and a menu is two
+	// clicks where a button is one.
 	if currentMode == Mode3D {
 		// ---- Group: edit context ----
 		//
 		// Ahead of the selection modes because it decides whether those mean
 		// anything at all: in object mode a click picks up a whole brush and
 		// the three unit buttons below are not consulted.
-		editorToolbarGroupSep()
-		imgui.SameLine()
 		if editorActiveToggleButton(
 			fmt.Sprintf("%s [Tab]##editctx", Editor.EditContext),
 			editorInEditMode() || editorInDetailMode()) {
@@ -691,9 +613,7 @@ func EditorDrawUI() {
 			editorSetWireframe(!wire)
 		}
 		if imgui.IsItemHovered() {
-			imgui.SetTooltip("Z — Solid hides the far side of the world, and only the\n" +
-				"points and edges you can see can be clicked.\n" +
-				"Wireframe draws it as lines and lets you click any of them.")
+			imgui.SetTooltip(editorShadingTooltip)
 		}
 
 		imgui.SameLine()
@@ -706,13 +626,21 @@ func EditorDrawUI() {
 			editorSetFlyCam(!flying)
 		}
 		if imgui.IsItemHovered() {
-			if flying {
-				imgui.SetTooltip("RMB/MMB drag to look, WASD fly, Space/Shift up and down,\n" +
-					"wheel dollies, F frames the selection.")
-			} else {
-				imgui.SetTooltip("RMB/MMB drag to orbit, Shift+MMB pan, wheel zoom,\n" +
-					"WASD slides the pivot, F frames the selection.")
-			}
+			imgui.SetTooltip(editorCameraTooltip(flying))
+		}
+	}
+
+	// While the compiled preview is up, say so where the eye already is and
+	// offer the way out: the Build menu's checkmark is not somewhere anyone
+	// looks while the view seems to have stopped taking edits.
+	if EditorPreviewingCompiled() {
+		if currentMode == Mode3D {
+			editorToolbarGroupSep()
+			imgui.SameLine()
+		}
+		if editorActiveToggleButtonColor("Previewing Compiled - Exit", true,
+			imgui.Vec4{X: 0.2, Y: 0.45, Z: 0.6, W: 1}) {
+			editorTogglePreviewCompiled()
 		}
 	}
 
@@ -729,134 +657,27 @@ func EditorDrawUI() {
 		Editor.ActiveChunkIdx = len(lvl.Chunks) - 1
 	}
 
-	// ---- Group: level ----
-	editorToolbarGroupSep()
-	imgui.SameLine()
-	imgui.Text(fmt.Sprintf("Level: %s", filepath.Base(Editor.SavePath)))
-	imgui.SameLine()
-
-	if imgui.Button("Open") {
-		Editor.LevelFiles = levelio.ScanLevelFiles(Editor.LevelsDir)
-		Editor.NewLevelName = ""
-		Editor.ShowLevelPicker = true
-	}
-	imgui.SameLine()
-
-	if imgui.Button("Save") {
-		if err := editorSaveLevel(lvl, Editor.SavePath); err != nil {
-			Editor.StatusMsg = fmt.Sprintf("Save failed: %v", err)
-		} else {
-			Editor.StatusMsg = fmt.Sprintf("Saved to %s", Editor.SavePath)
-		}
-		Editor.StatusTime = sdl.GetTicks()
-	}
-	imgui.SameLine()
-
-	imguibackend.EditorPushDisabled(!EditorCanUndo())
-	if imgui.Button("Undo##lvl") {
-		EditorUndo()
-	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
-
-	imguibackend.EditorPushDisabled(!EditorCanRedo())
-	if imgui.Button("Redo##lvl") {
-		EditorRedo()
-	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
-
-	if imgui.Button("Save As...") {
-		Editor.SaveAsName = filepath.Base(Editor.SavePath)
-		Editor.ShowSaveAs = true
-	}
-	imgui.SameLine()
-
-	// Compile. Beside Save rather than in a menu because the one thing it
-	// answers — is this level sealed — is a question an author wants answered
-	// while the walls are still fresh, not at package time.
-	if imgui.Button("Compile") {
-		msg, err := EditorCompileLevel()
-		if err != nil {
-			Editor.StatusMsg = fmt.Sprintf("Compile failed: %v", err)
-		} else {
-			Editor.StatusMsg = msg
-		}
-		Editor.StatusTime = sdl.GetTicks()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Build the level's BSP, visibility and baked lighting,\n" +
-			"and write it beside the level file. Reports leaks.")
-	}
-	imgui.SameLine()
-
-	// And looking at it. The numbers Compile prints say whether the level is
-	// sealed; only the eye catches a seam or a surface CSG should not have
-	// taken, and without this the first sight of a compiled level is the
-	// shipped build.
-	previewing := EditorPreviewingCompiled()
-	if editorActiveToggleButtonColor("Preview", previewing,
-		imgui.Vec4{X: 0.2, Y: 0.45, Z: 0.6, W: 1}) {
-		msg, err := EditorSetCompiledPreview(!previewing)
-		if err != nil {
-			Editor.StatusMsg = fmt.Sprintf("Preview failed: %v", err)
-		} else {
-			Editor.StatusMsg = msg
-		}
-		Editor.StatusTime = sdl.GetTicks()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Draw the level the way a release build would:\n" +
-			"compiled surfaces, culled by the compiled visibility set.\n" +
-			"Any edit turns it off.")
-	}
-	imgui.SameLine()
-
-	// Release, beside the two buttons it is the end of: Compile answers whether
-	// a level will ship, Preview shows what will ship, and this ships it. Lit
-	// while its window is open, and lit amber while a build is running whether or
-	// not it is: the build carries on with the window closed, and this is the
-	// only place left that says so.
-	releaseLit, releaseCol := ReleaseWindowOpen(), imgui.Vec4{X: 0.2, Y: 0.5, Z: 0.7, W: 1}
-	if ReleaseBuildRunning() {
-		releaseLit, releaseCol = true, imgui.Vec4{X: 0.75, Y: 0.5, Z: 0.15, W: 1}
-	}
-	if releaseLit {
-		imgui.PushStyleColor(imgui.StyleColorButton, releaseCol)
-	}
-	if imgui.Button("Release") {
-		OpenReleaseWindow()
-	}
-	if releaseLit {
-		imgui.PopStyleColor()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Build a release of this project: compile every level, pack the\ncontent beside the game binary, and archive it for each platform.")
-	}
-	imgui.SameLine()
-
 	// Status message (shown for 3 seconds after save/load)
 	if Editor.StatusMsg != "" {
 		if sdl.GetTicks()-Editor.StatusTime < 3000 {
+			if currentMode == Mode3D || EditorPreviewingCompiled() {
+				imgui.SameLine()
+				editorToolbarGroupSep()
+				imgui.SameLine()
+			}
 			imgui.Text(Editor.StatusMsg)
 		} else {
 			Editor.StatusMsg = ""
 		}
 	}
-
 	// --- Level Picker popup ---
 	imguibackend.WithModalPopup("Level Picker", &Editor.ShowLevelPicker, func() {
 		imgui.Text("Select a level to open:")
 		imgui.Separator()
 		for _, f := range Editor.LevelFiles {
-			if imgui.SelectableV(f, false, 0, imgui.Vec2{}) {
-				path := filepath.Join(Editor.LevelsDir, f)
-				if err := EditorLoadLevel(path); err != nil {
-					Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
-				} else {
-					Editor.StatusMsg = fmt.Sprintf("Loaded %s", f)
-				}
-				Editor.StatusTime = sdl.GetTicks()
+			if imguibackend.SelectableV(f, false, 0, imgui.Vec2{}) {
+				// Behind a progress bar; the status line reports the result.
+				EditorBeginLoadLevel(filepath.Join(Editor.LevelsDir, f))
 				imgui.CloseCurrentPopup()
 			}
 		}
@@ -873,10 +694,8 @@ func EditorDrawUI() {
 			path := filepath.Join(Editor.LevelsDir, name)
 			if err := levelio.WriteBlankLevel(path); err != nil {
 				Editor.StatusMsg = fmt.Sprintf("Create failed: %v", err)
-			} else if err := EditorLoadLevel(path); err != nil {
-				Editor.StatusMsg = fmt.Sprintf("Load failed: %v", err)
 			} else {
-				Editor.StatusMsg = fmt.Sprintf("Created %s", name)
+				EditorBeginLoadLevel(path)
 			}
 			Editor.StatusTime = sdl.GetTicks()
 			imgui.CloseCurrentPopup()
@@ -912,6 +731,8 @@ func EditorDrawUI() {
 			imgui.CloseCurrentPopup()
 		}
 	})
+
+	editorProjectDialog()
 
 	// The toolbar has no Exit button. Quitting is the window's own close
 	// button, the same as every other window the editor opens — a red button

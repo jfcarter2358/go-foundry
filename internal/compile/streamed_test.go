@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"foundry/internal/bsp"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -111,5 +112,56 @@ func TestStreamedChunksThatClipEachOtherAreReported(t *testing.T) {
 	}
 	if w := s.StreamedClipWarning(); !strings.Contains(w, "hangar") || !strings.Contains(w, "ground") {
 		t.Errorf("the warning does not name the chunks: %q", w)
+	}
+}
+
+// The surface a streamed neighbour's solid buries is kept as cover, not
+// dropped: with the neighbour switched off the zone at the edge of a streaming
+// window would otherwise show a hole. Between two always-present chunks it is
+// buried for good, as before.
+func TestSurfaceBuriedByAStreamedNeighbourIsKeptAsCover(t *testing.T) {
+	compileOverlap := func(streamed bool) *Result {
+		lvl := &world.Level{Chunks: []world.Chunk{
+			{ID: "near", Scale: 1, Disabled: streamed, Streamed: streamed, Brushes: []world.Brush{
+				boxFromTo("slab", mgl32.Vec3{0, 0, 0}, mgl32.Vec3{10, 1, 10}),
+			}},
+			{ID: "far", Scale: 1, Disabled: streamed, Streamed: streamed, Brushes: []world.Brush{
+				boxFromTo("rock", mgl32.Vec3{5, -2, 5}, mgl32.Vec3{15, 3, 15}),
+			}},
+		}}
+		r, err := Compile(lvl, Options{SkipLight: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	coverArea := func(r *Result, chunk, by string) float32 {
+		a := float32(0)
+		for i := range r.Tree.Faces {
+			f := &r.Tree.Faces[i]
+			if f.Chunk == chunk && len(f.CoveredBy) == 1 && f.CoveredBy[0] == by {
+				a += bsp.PolygonArea(f.Points)
+			}
+		}
+		return a
+	}
+
+	if r := compileOverlap(false); coverArea(r, "near", "far")+coverArea(r, "far", "near") != 0 {
+		t.Error("two always-present chunks produced cover surface")
+	}
+	r := compileOverlap(true)
+	// Inside the rock: the slab's top and bottom, 5x5 each, and two sides of 5x1.
+	if got := coverArea(r, "near", "far"); got < 60-1e-3 || got > 60+1e-3 {
+		t.Errorf("near's cover under far is %.3f sq, want 60", got)
+	}
+	if coverArea(r, "far", "near") == 0 {
+		t.Error("far's surface inside near's slab was dropped rather than kept as cover")
+	}
+	for li := range r.Tree.Leaves {
+		for _, fi := range r.Tree.Leaves[li].Faces {
+			if r.Tree.Faces[fi].CoveredBy != nil {
+				t.Fatal("a cover face was put in a cell; it is buried as far as the tree knows")
+			}
+		}
 	}
 }

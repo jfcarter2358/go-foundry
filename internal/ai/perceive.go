@@ -48,11 +48,16 @@ func perceive(lvl *world.Level, e *world.Entity, st *world.AIState, dt float32, 
 		st.PerceiveTimer = perceiveInterval
 	}
 
-	if cur != nil && Perceives(lvl, e, cur) {
-		st.TargetVisible = true
-		st.SinceSeen = 0
-		st.LastKnown = feetOf(lvl, cur)
-		return
+	// Heard is enough to keep a target and to know where it is, but only seen
+	// is "visible": that is what lets the agent open fire, and a target heard
+	// through a wall is not one it can shoot at.
+	if cur != nil {
+		if sees := Sees(lvl, e, cur); sees || Hears(lvl, e, cur) {
+			st.TargetVisible = sees
+			st.SinceSeen = 0
+			st.LastKnown = feetOf(lvl, cur)
+			return
+		}
 	}
 	if !st.TargetForced {
 		if best := nearestPerceived(lvl, e, player, cur); best != nil {
@@ -60,7 +65,7 @@ func perceive(lvl *world.Level, e *world.Entity, st *world.AIState, dt float32, 
 				loseTarget(e, st)
 			}
 			st.Target = best.ID
-			st.TargetVisible = true
+			st.TargetVisible = Sees(lvl, e, best)
 			st.SinceSeen = 0
 			st.LastKnown = feetOf(lvl, best)
 			hooks.RecordAIEvent(hooks.AIEvent{Atom: "target_acquired", Agent: e.ID, Target: best.ID})
@@ -153,6 +158,23 @@ func Candidates(lvl *world.Level, e *world.Entity, player *world.Entity) []*worl
 // or by seeing it inside its range and field of view with, when its spec asks,
 // nothing solid in between.
 func Perceives(lvl *world.Level, e, t *world.Entity) bool {
+	return Hears(lvl, e, t) || Sees(lvl, e, t)
+}
+
+// Hears reports whether t is close enough for agent e to hear: any direction,
+// through anything. Enough to notice a target and keep track of it, never
+// enough to shoot at it.
+func Hears(lvl *world.Level, e, t *world.Entity) bool {
+	if e == nil || t == nil || e.AI == nil {
+		return false
+	}
+	return chestOf(lvl, t).Sub(eyeOf(lvl, e)).Len() <= e.AI.HearingRange
+}
+
+// Sees reports whether agent e can see t now: inside its sight range and field
+// of view with, when its spec asks, nothing solid in between. This, not
+// Perceives, is what TargetVisible means.
+func Sees(lvl *world.Level, e, t *world.Entity) bool {
 	if e == nil || t == nil || e.AI == nil {
 		return false
 	}
@@ -161,9 +183,6 @@ func Perceives(lvl *world.Level, e, t *world.Entity) bool {
 	to := chestOf(lvl, t)
 	d := to.Sub(eye)
 	dist := d.Len()
-	if dist <= spec.HearingRange {
-		return true
-	}
 	if dist > spec.SightRange {
 		return false
 	}

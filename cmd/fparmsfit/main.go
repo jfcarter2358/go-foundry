@@ -96,6 +96,11 @@ type grip struct {
 	// camera's own space at the hip pose, axis-aligned with the view. See
 	// shoulderCarry.
 	shoulder *mgl32.Vec3
+	// mount is the weapon attachment's offset on hand_socket.R, in the
+	// socket's frame exactly as level1.yaml's `player: models:` writes it —
+	// the palm has to go where the gun is actually drawn, not where it would
+	// be with no offset.
+	mount mgl32.Vec3
 }
 
 // Measured off each model: the underside of the rifle's handguard, the
@@ -103,17 +108,37 @@ type grip struct {
 // grip; and for the pistol, the left face of the grip just below the right hand.
 var grips = []grip{
 	{weapon: "rifle", clips: "rifle", source: "rifle",
-		palm: mgl32.Vec3{-0.005, 0.03, -0.30}, along: mgl32.Vec3{0.35, 0.35, -0.85}},
+		palm: mgl32.Vec3{-0.005, 0.03, -0.30}, along: mgl32.Vec3{0.35, 0.35, -0.85},
+		mount: rifleMount},
 	{weapon: "shotgun", clips: "shotgun", source: "rifle",
-		palm: mgl32.Vec3{-0.005, -0.02, -0.28}, along: mgl32.Vec3{0.35, 0.35, -0.85}},
+		palm: mgl32.Vec3{-0.005, -0.02, -0.28}, along: mgl32.Vec3{0.35, 0.35, -0.85},
+		mount: shotgunMount},
 	{weapon: "sniper", clips: "sniper", source: "rifle",
-		palm: mgl32.Vec3{-0.005, -0.01, -0.24}, along: mgl32.Vec3{0.35, 0.35, -0.85}},
+		palm: mgl32.Vec3{-0.005, -0.01, -0.24}, along: mgl32.Vec3{0.35, 0.35, -0.85},
+		mount: sniperMount},
 	{weapon: "rocket_launcher", clips: "rocket", source: "rifle",
 		palm: mgl32.Vec3{-0.01, -0.05, -0.25}, along: mgl32.Vec3{0.45, 0.25, -0.75},
 		shoulder: &launcherOnShoulder},
 	{weapon: "pistol", clips: "pistol", source: "pistol",
-		palm: mgl32.Vec3{-0.03, -0.035, 0.01}, along: mgl32.Vec3{0.6, 0.45, -0.5}},
+		palm: mgl32.Vec3{-0.03, -0.035, 0.01}, along: mgl32.Vec3{0.6, 0.45, -0.5},
+		mount: pistolMount},
 }
+
+// The marine's gloves are a fist a good deal bigger than the box hands these
+// weapons were first mounted for, and closed round each gun's origin — the top
+// of its grip — they swallowed the receiver. All four ride higher in the
+// hand: the rifle 4.5 cm up its grip and 1.2 cm forward along its rake, the
+// pistol 6.5 cm up, the shotgun 7 cm up and 9 cm forward. The sniper's origin
+// is at its magazine, well ahead of its grip, so it goes 6 cm up and 15 cm
+// forward to bring the grip under the palm. In the socket's frame, the mount
+// rotation turns the gun's +Y into the socket's −Y and its −Z into the
+// socket's +X.
+var (
+	rifleMount   = mgl32.Vec3{0.012, -0.045, 0}
+	pistolMount  = mgl32.Vec3{0, -0.065, 0}
+	shotgunMount = mgl32.Vec3{0.09, -0.07, 0}
+	sniperMount  = mgl32.Vec3{0.15, -0.06, 0}
+)
 
 // launcherOnShoulder puts the launcher's grip low and to the right of the eye
 // and a quarter-metre ahead, so the tube — whose bore is 7.5cm above the grip —
@@ -262,7 +287,7 @@ func fitArms(doc *model.ModelDoc, clip *model.ModelClip, gun *model.ModelDoc, g 
 	hands.Anim = world.NewEntityAnim(doc)
 	held := world.EntityModel{
 		Name: "gun", Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Parent: "hands", Bone: "hand_socket.R", Rotation: mountRotation,
+		Parent: "hands", Bone: "hand_socket.R", Rotation: mountRotation, Offset: g.mount,
 	}
 	held.Doc = gun
 	e.Models = []world.EntityModel{hands, held}
@@ -347,7 +372,7 @@ func shoulderCarry(doc *model.ModelDoc, gun *model.ModelDoc, g grip) mgl32.Mat4 
 	hands.Anim = world.NewEntityAnim(doc)
 	held := world.EntityModel{
 		Name: "gun", Visible: true, Scale: mgl32.Vec3{1, 1, 1},
-		Parent: "hands", Bone: "hand_socket.R", Rotation: mountRotation,
+		Parent: "hands", Bone: "hand_socket.R", Rotation: mountRotation, Offset: g.mount,
 	}
 	held.Doc = gun
 	e.Models = []world.EntityModel{hands, held}

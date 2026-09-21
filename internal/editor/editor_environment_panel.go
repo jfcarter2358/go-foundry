@@ -20,6 +20,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 
+	"foundry/internal/imguibackend"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -67,14 +68,14 @@ func editorSkyBody(s *world.Sky) {
 	// gradient stops and the six faces are both kept across a switch so
 	// flipping between them to compare does not cost either one.
 	kind := world.SkyKindName(s.Kind)
-	if imgui.BeginCombo("Kind##skykind", kind) {
+	if imguibackend.BeginCombo("Kind##skykind", kind) {
 		for _, name := range world.SkyKindNames {
-			if imgui.SelectableV(name, name == kind, 0, imgui.Vec2{}) && name != kind {
+			if imguibackend.SelectableV(name, name == kind, 0, imgui.Vec2{}) && name != kind {
 				EditorPushUndo()
 				s.Kind = world.SkyKindFromName(name)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 
 	if s.Kind == world.SkyCubemap {
@@ -239,14 +240,14 @@ func editorFogBody(lvl *world.Level) {
 	}
 
 	mode := world.FogModeName(f.Mode)
-	if imgui.BeginCombo("Mode##fogmode", mode) {
+	if imguibackend.BeginCombo("Mode##fogmode", mode) {
 		for _, name := range world.FogModeNames {
-			if imgui.SelectableV(name, name == mode, 0, imgui.Vec2{}) && name != mode {
+			if imguibackend.SelectableV(name, name == mode, 0, imgui.Vec2{}) && name != mode {
 				EditorPushUndo()
 				f.Mode = world.FogModeFromName(name)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("linear: nothing until Start, full at End — the mode to hide a draw distance with.\n" +

@@ -44,7 +44,18 @@ var resourceDirs = []string{
 // log file exists — ahead of startupConfigure, which reads the manifest this
 // may write — so what it did is handed back for logScaffold to report.
 func scaffoldResources() ([]string, error) {
-	return game.Scaffold(fileutil.ResourcesPath, resourceDirs)
+	dirs := resourceDirs
+	if fileutil.EngineShadersDir != "" {
+		// The shaders come with the executable, so a project opened by it has
+		// no use for a folder of its own.
+		dirs = nil
+		for _, d := range resourceDirs {
+			if d != "shaders" {
+				dirs = append(dirs, d)
+			}
+		}
+	}
+	return game.Scaffold(fileutil.ResourcesPath, dirs)
 }
 
 // logScaffold reports what startup made under resources/, and what it could

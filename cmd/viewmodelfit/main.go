@@ -56,6 +56,9 @@ func main() {
 	mountX := flag.Float64("mount-x", math.Pi, "the weapon mount's X rotation, in radians")
 	mountY := flag.Float64("mount-y", math.Pi/2, "…Y")
 	mountZ := flag.Float64("mount-z", 0, "…Z")
+	offX := flag.Float64("offset-x", 0, "the weapon mount's offset, in the socket's frame as the level yaml writes it")
+	offY := flag.Float64("offset-y", 0, "…Y")
+	offZ := flag.Float64("offset-z", 0, "…Z")
 	fov := flag.Float64("fov", 55, "the viewmodel's field of view, for the screen measurements")
 	flag.Parse()
 
@@ -82,6 +85,7 @@ func main() {
 		Name: "gun", Visible: true, Scale: mgl32.Vec3{1, 1, 1},
 		Parent: "hands", Bone: "hand_socket.R",
 		Rotation: mgl32.Vec3{float32(*mountX), float32(*mountY), float32(*mountZ)},
+		Offset:   mgl32.Vec3{float32(*offX), float32(*offY), float32(*offZ)},
 	}
 	held.Doc = gun
 	e.Models = []world.EntityModel{hands, held}

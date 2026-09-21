@@ -54,6 +54,10 @@ var DebugStats struct {
 	// Scenery is how many placed props survived culling this frame — the one
 	// number that says whether a brush-scattered field is costing anything.
 	Scenery int
+	// Shadowed point lights, and how many of their cubemaps were actually
+	// re-rendered this frame rather than kept (point_shadow_cache.go).
+	PointShadows       int
+	PointShadowRenders int
 }
 
 // cpuTracker holds state for per-frame CPU usage estimation.

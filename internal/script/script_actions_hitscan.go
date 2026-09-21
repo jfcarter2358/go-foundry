@@ -1,9 +1,10 @@
 package script
 
-// script_actions_hitscan.go — the verb that asks what the player is looking at.
+// script_actions_hitscan.go — the verb that asks what a ray meets.
 //
 // `hitscan` casts one ray from the reticle — the centre of the screen, which is
-// the camera's own position and direction — and posts what it met back to the
+// the camera's own position and direction — or, given "from" and "direction",
+// from anywhere at all, which is how an enemy fires at the player. It posts what it met back to the
 // caller as a message it names. It answers with a message rather than a return
 // value for the reason every other engine answer is a message: a shot is a
 // thing that happened, and the handler for "I hit something" is the same shape
@@ -56,6 +57,10 @@ type hitscanOpts struct {
 	// before this existed.
 	spread float32
 	filter collision.RayFilter
+	// from and direction replace the reticle's origin and aim, each only
+	// when set.
+	from, direction       mgl32.Vec3
+	hasFrom, hasDirection bool
 }
 
 var hitscanOptions = map[string]hitscanOption{
@@ -97,6 +102,31 @@ var hitscanOptions = map[string]hitscanOption{
 				return fmt.Errorf("hitscan's \"spread\" is a cone width in degrees and cannot be negative")
 			}
 			o.spread = float32(n)
+			return nil
+		},
+	},
+	"from": {
+		"a vec to cast from instead of the reticle — a muzzle, an eye; the player's body can then be hit",
+		func(o *hitscanOpts, v flang.Value) error {
+			p, ok := toVec3(v)
+			if !ok {
+				return fmt.Errorf("hitscan's \"from\" is a vec, not a %s", flang.TypeOf(v))
+			}
+			o.from, o.hasFrom = p, true
+			return nil
+		},
+	},
+	"direction": {
+		"a vec to cast along instead of the view; any length but zero",
+		func(o *hitscanOpts, v flang.Value) error {
+			d, ok := toVec3(v)
+			if !ok {
+				return fmt.Errorf("hitscan's \"direction\" is a vec, not a %s", flang.TypeOf(v))
+			}
+			if d.Len() < 1e-6 {
+				return fmt.Errorf("hitscan's \"direction\" is a zero vec, which points nowhere")
+			}
+			o.direction, o.hasDirection = d, true
 			return nil
 		},
 	},
@@ -183,9 +213,24 @@ var hitscanVerbs = map[string]scriptVerb{
 		// the camera looks, so there is no unprojection to do. Both are already
 		// world-space, including for a player riding in a frame — the vehicle
 		// camera writes them that way (app/vehicle_input.go).
+		//
+		// A cast with its own "from" is someone else's shot — an enemy's, a
+		// turret's — and so the player's body is something it can hit. One
+		// from the reticle starts inside that body, and leaves it out.
 		origin, dir := gfx.Cam.Position, gfx.Cam.Direction
-		if world.PlayerEntity == nil || dir.Len() < 1e-6 {
-			rt.warnAt(pos, "hitscan did nothing: there is no player to cast from, which is the case in the editor and before the level finishes loading")
+		if opts.hasDirection {
+			dir = opts.direction
+		}
+		if opts.hasFrom {
+			origin = opts.from
+			if opts.filter.Entities {
+				opts.filter.Player = world.PlayerEntity
+			}
+		} else if world.PlayerEntity == nil {
+			rt.warnAt(pos, "hitscan did nothing: there is no player to cast from, which is the case in the editor and before the level finishes loading — give it a \"from\" to cast from somewhere else")
+			return flang.NullVal{}, nil
+		}
+		if dir.Len() < 1e-6 {
 			return flang.NullVal{}, nil
 		}
 

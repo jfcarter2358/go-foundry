@@ -481,6 +481,10 @@ func rawToState(raw *RawStateStyle) *StateStyle {
 
 // ---------- writing ----------
 
+// Fingerprint identifies the screen's content as SaveScreen would write it,
+// for comparing against what was last saved. See fileutil.Fingerprint.
+func Fingerprint(s *Screen) uint64 { return fileutil.Fingerprint(screenToRaw(s)) }
+
 // SaveScreen validates and writes a document.
 //
 // Spliced include children are not written: only the include node itself is,

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"foundry/internal/imguibackend"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 
 	"foundry/internal/fileutil"
@@ -86,13 +87,13 @@ func editorAttributesUIBody(attrs *world.AttrSet, idSuffix, owner string) {
 
 	imgui.Separator()
 	imgui.InputTextV("Name##newattr"+idSuffix, &Editor.NewAttrName, 0, nil)
-	if imgui.BeginCombo("Type##newattr"+idSuffix, string(world.AttrTypeNames[editorNewAttrTypeIdx()])) {
+	if imguibackend.BeginCombo("Type##newattr"+idSuffix, string(world.AttrTypeNames[editorNewAttrTypeIdx()])) {
 		for i, t := range world.AttrTypeNames {
-			if imgui.SelectableV(string(t), int32(i) == Editor.NewAttrType, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(string(t), int32(i) == Editor.NewAttrType, 0, imgui.Vec2{}) {
 				Editor.NewAttrType = int32(i)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.Button("Add Attribute##attradd"+idSuffix) && Editor.NewAttrName != "" {
 		if _, exists := (*attrs)[Editor.NewAttrName]; exists {
@@ -125,16 +126,16 @@ func editorAttributeRow(attrs *world.AttrSet, idSuffix, name string) bool {
 	}
 
 	imgui.SetNextItemWidth(90)
-	if imgui.BeginCombo("##type", string(v.Type)) {
+	if imguibackend.BeginCombo("##type", string(v.Type)) {
 		for _, t := range world.AttrTypeNames {
-			if imgui.SelectableV(string(t), t == v.Type, 0, imgui.Vec2{}) && t != v.Type {
+			if imguibackend.SelectableV(string(t), t == v.Type, 0, imgui.Vec2{}) && t != v.Type {
 				// Converted rather than reset: picking float after typing 25
 				// should not throw the 25 away. See ConvertAttr.
 				EditorPushUndo()
 				(*attrs)[name] = world.ConvertAttr(v, t)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	imgui.SameLine()
 	editorAttributeValue(attrs, name, v)
@@ -191,19 +192,19 @@ func editorScriptUIBody(scriptPath *string, params *world.AttrSet, idSuffix, own
 	if label == "" {
 		label = "(none)"
 	}
-	if imgui.BeginCombo("File##scriptfile"+idSuffix, label) {
-		if imgui.SelectableV("(none)", *scriptPath == "", 0, imgui.Vec2{}) && *scriptPath != "" {
+	if imguibackend.BeginCombo("File##scriptfile"+idSuffix, label) {
+		if imguibackend.SelectableV("(none)", *scriptPath == "", 0, imgui.Vec2{}) && *scriptPath != "" {
 			EditorPushUndo()
 			*scriptPath = ""
 		}
 		for _, name := range Editor.ScriptFileNames {
 			path := fileutil.ScriptsDirName + "/" + name
-			if imgui.SelectableV(name, *scriptPath == path, 0, imgui.Vec2{}) && *scriptPath != path {
+			if imguibackend.SelectableV(name, *scriptPath == path, 0, imgui.Vec2{}) && *scriptPath != path {
 				EditorPushUndo()
 				*scriptPath = path
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	imgui.SameLine()
 	if imgui.Button("Rescan##scriptrescan" + idSuffix) {
@@ -326,18 +327,18 @@ func editorScriptParamRow(d *flang.ParamDecl, params *world.AttrSet, refTargets 
 func editorScriptParamRefValue(cur world.AttrValue, targets []script.ScriptRefTarget) (world.AttrValue, bool) {
 	id := cur.S
 	imgui.SetNextItemWidth(-1)
-	if !imgui.BeginCombo("##paramref", script.ScriptRefLabel(targets, id)) {
+	if !imguibackend.BeginCombo("##paramref", script.ScriptRefLabel(targets, id)) {
 		return cur, false
 	}
-	defer imgui.EndCombo()
+	defer imguibackend.EndCombo()
 
 	changed := false
 	out := cur
-	if imgui.SelectableV("(none)", id == "", 0, imgui.Vec2{}) && id != "" {
+	if imguibackend.SelectableV("(none)", id == "", 0, imgui.Vec2{}) && id != "" {
 		out, changed = world.StringAttr(""), true
 	}
 	for _, t := range targets {
-		if imgui.SelectableV(t.Label, t.ID == id, 0, imgui.Vec2{}) && t.ID != id {
+		if imguibackend.SelectableV(t.Label, t.ID == id, 0, imgui.Vec2{}) && t.ID != id {
 			out, changed = world.StringAttr(t.ID), true
 		}
 	}

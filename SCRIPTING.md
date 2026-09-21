@@ -529,7 +529,7 @@ editor's reference panel. The core surface:
 | light | dynamic lights only: `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `dynamic` `attach` `carrier` `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
-| level | `step_height` `player_control` `player_gravity` `camera_fov` `viewmodel_fov` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `master_volume` `music_volume` `effects_volume` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
+| level | `step_height` `player_control` `player_gravity` `camera_fov` `viewmodel_fov` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `master_volume` `music_volume` `effects_volume` `smooth_lighting` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
 
 ### Moving a brush
 
@@ -1493,6 +1493,19 @@ view.
 recoil(0.9, random_range(-0.25, 0.25))
 ```
 
+`look_at(place, seconds)` turns the player's view toward a vec or an object
+over that many seconds (at once without them), easing in and out and going the
+short way round. It aims again every frame, so a view that moves while it turns
+still ends on the point. It is for a cutscene that has taken the controls away:
+while `@level.prop.player_control` is off the view stays on the point until
+`look_at(null)` lets go. With control on the turn still runs, and the player has
+the view back the moment it arrives.
+
+```
+@level.prop.player_control = false
+look_at(@flagpole_top, 2.5)
+```
+
 `offset`, `rotation` and `scale` are the attachment's transform relative to its
 entity, so a script can nod a head or slide a hatch without touching the entity
 itself. Naming an attachment the entity does not have is an error, the way any
@@ -1503,7 +1516,9 @@ the attachment it looked for.
 
 `hitscan` casts a ray from the **reticle** — the centre of the screen, which is
 exactly where the camera looks — out along the player's view, and posts what it
-met back to the caster as a message named by the atom you hand it.
+met back to the caster as a message named by the atom you hand it. Given `from`
+and `direction` it casts from anywhere instead, which is how an enemy fires from
+its muzzle (see below).
 
 ```
 def on_interact(:interact:, src ref) -> null
@@ -1563,6 +1578,8 @@ before the script runs, when the dict is written out literally.
 | `visible_only` | `bool` | `false` | Report only what is drawn: entities and walls whose `visible` property is set. |
 | `tag` | `str` | — | Report only objects carrying this tag. |
 | `ignore` | `ref` or `list` | — | Refs the ray passes straight through, blocking included. A `null` in the list is skipped, so `{"ignore": @maybe_gone}` needs no guard. |
+| `from` | `vec` | the camera | Where the ray starts. A cast with its own `from` can hit the **player's body**, which a cast from the reticle, starting inside it, never does. |
+| `direction` | `vec` | the view | Which way the ray goes. Any length but zero; `spread` scatters around it. |
 
 ```
 hitscan(:shot:, {"all": true, "range": 40.0})          -- everything within 40 units
@@ -1570,6 +1587,16 @@ hitscan(:shot:, {"tag": "enemy", "visible_only": true}) -- tagged, and drawn
 hitscan(:shot:, {"geometry": false})                    -- straight through the walls
 hitscan(:shot:, {"ignore": @shield})                    -- as if the shield were not there
 hitscan(:shot:, {"spread": 3.0})                        -- somewhere in a 3-degree cone
+```
+
+An enemy's shot is the same verb cast from its gun. Pass `"ignore": @self` so the
+round does not start inside the shooter's own bounds, and the hit is `@player`
+when it is the player the round met:
+
+```
+muzzle = bone_position(@self.model.weapon, "muzzle")
+hitscan(:round:, {"from": muzzle, "direction": @player.prop.position - muzzle,
+                  "spread": 3.0, "ignore": @self})
 ```
 
 `spread` is what stops a hip-fired rifle being a sniper rifle. The shot lands
@@ -1989,6 +2016,68 @@ def on_enter(:enter:, other ref) -> null
     end
 end
 ```
+
+### Saves and checkpoints
+
+A **checkpoint** is a volume with `checkpoint: true`, or a script calling
+`checkpoint(name)`. Reaching one does two things:
+
+- It saves the game to the `autosave` slot.
+- It makes that save the one `retry()` goes back to.
+
+Like an exit, only the player reaches a checkpoint volume, and only while the
+volume is `enabled`. Each checkpoint is reached once per play-through, and a
+volume's name is its ID. The set of checkpoints already reached is part of the
+save, so retrying does not reach the same one again.
+
+```
+retry()            -- back to the last checkpoint, or the start of the level
+restart_level()    -- the level again from scratch, forgetting its checkpoints
+save_game("slot1") -- the player's own save
+load_game("slot1") -- false when the slot is empty
+save_info("slot1") -- {slot, level, kind, checkpoint, time, date, play_time} or null
+latest_save()      -- the newest slot, autosave included: a Continue button
+```
+
+Every one of these that changes the game is a request, carried out between
+frames, for `load_level`'s reason. A load tears down the runtime that is making
+the call, and a save taken halfway through a tick would record a cascade of
+messages half delivered. `save_info` and `latest_save` read the file at the
+call, so a load screen can fill its buttons on `:shown:`.
+
+A save holds what play has changed, not the level itself. It records:
+
+- every object's fields
+- every `.state`
+- every pending `after`, with the play clock it is due against
+- which objects have already heard `:spawn:`
+- who is standing in what
+- the player
+- the screens that were up
+
+Loading one loads the level fresh and applies those changes on top.
+Afterwards:
+
+- `:spawn:` is **not** posted again to anything that already heard it.
+- `:enter:` is not posted for a volume the player was already standing in.
+- A timer fires when it would have.
+
+What is not kept: a menu's own state, the save screen the player saved from,
+and live particles.
+
+Once a checkpoint's save is on disk, `(:checkpoint:, name str)` is posted to the
+player and to every screen that is up.
+
+A level's `save_mode:` sets what `save_game` writes there:
+
+- `exact` (the default) saves the game as it stands.
+- `checkpoint` saves the last checkpoint reached, or the start of the level
+  before the first one.
+
+Read it as `@level.prop.save_mode`. `@level.prop.name` is the running level's
+name. `@level.prop.last_checkpoint` is the checkpoint `retry()` would return to,
+or `""` if none has been reached. A pause menu reads it to grey out its Load
+Last Checkpoint button.
 
 ### Fog volumes
 

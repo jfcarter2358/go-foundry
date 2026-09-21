@@ -16,7 +16,7 @@ import (
 const (
 	TexMaxLayers = 8
 	TexMaxFrames = 32
-	TexMaxDim    = 1024
+	TexMaxDim    = 2048
 	TexPaletteSz = 256
 )
 
@@ -481,6 +481,85 @@ func (d *TexDoc) MoveLayer(i int, up bool) error {
 	}
 	d.dirty = true
 	return nil
+}
+
+// MergeLayerDown folds layer i of the checked-out stack into the layer below
+// it and removes layer i, the way an image editor's "Merge Down" does.
+//
+// Layer i is composited onto the lower layer's own texels with its blend mode
+// and opacity, exactly as Flatten would apply it; the merged layer keeps the
+// lower layer's name, visibility, opacity and blend, so the stack looks the
+// same afterwards when the lower layer is Normal at full opacity (and as close
+// as one layer can get otherwise). Texels the upper layer leaves empty keep
+// their exact bytes, and an opaque Normal texel is copied as-is, so a merge
+// never re-quantises paint it doesn't have to.
+//
+// A hidden upper layer is refused rather than dropped: merging it would
+// either throw its paint away or bake in paint that isn't on screen.
+func (d *TexDoc) MergeLayerDown(i int) error {
+	if i < 0 || i >= len(d.Layers) {
+		return fmt.Errorf("layer index %d out of range", i)
+	}
+	if i == 0 {
+		return fmt.Errorf("the bottom layer has nothing below it to merge into")
+	}
+	upper, lower := &d.Layers[i], &d.Layers[i-1]
+	if !upper.Visible {
+		return fmt.Errorf("cannot merge %q down: it is hidden", upper.Name)
+	}
+	if len(upper.Idx) != len(lower.Idx) {
+		return fmt.Errorf("layer sizes differ")
+	}
+	op := min(max(upper.Opacity, 0), 1)
+	if op > 0 {
+		if d.channel == ChanBump {
+			mergeHeights(lower.Idx, upper.Idx, upper.Blend, op)
+		} else {
+			d.mergeColours(lower.Idx, upper.Idx, upper.Blend, op)
+		}
+	}
+	d.Layers = append(d.Layers[:i], d.Layers[i+1:]...)
+	if d.Active >= i {
+		d.Active--
+	}
+	d.dirty = true
+	return nil
+}
+
+// mergeColours composites palette-index layer src onto dst in place.
+func (d *TexDoc) mergeColours(dst, src []uint8, mode TexBlend, op float32) {
+	q := NewQuantCache(&d.Pal)
+	for p, si := range src {
+		sc := d.Pal[si]
+		if sc.A == 0 {
+			continue
+		}
+		if mode == BlendNormal && op >= 1 && sc.A == 255 {
+			dst[p] = si
+			continue
+		}
+		sc.A = uint8(float32(sc.A) * op)
+		if sc.A == 0 {
+			continue
+		}
+		dc := d.Pal[dst[p]]
+		dst[p] = q.Quantize(compositeOver(dc, blendRGBA(dc, sc, mode)))
+	}
+}
+
+// mergeHeights composites height layer src onto dst in place, with the same
+// arithmetic flattenHeights uses. 0 means "nothing here" in a height layer, so
+// a merged texel the upper layer touched is kept at 1 at least — otherwise it
+// would stop covering the layers underneath.
+func mergeHeights(dst, src []uint8, mode TexBlend, op float32) {
+	for p, sv := range src {
+		if sv == 0 {
+			continue
+		}
+		dv := float32(dst[p]) / 255
+		v := dv*(1-op) + heightBlend(dv, float32(sv)/255, mode)*op
+		dst[p] = max(uint8(clampUnit(v)*255+0.5), 1)
+	}
 }
 
 // blendRGBA combines src over dst using the given blend mode (before

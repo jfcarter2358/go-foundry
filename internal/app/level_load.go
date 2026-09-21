@@ -15,6 +15,7 @@ package app
 
 import (
 	"log"
+	"time"
 
 	"foundry/internal/collision"
 	"foundry/internal/hooks"
@@ -29,6 +30,11 @@ import (
 // simply gets no cover; the load still works.
 const loadingScreenName = "loading"
 
+// levelLoadFrameBudget is how much of each frame the load may spend. Enough to
+// leave the loading screen animating smoothly; the rest of the frame is the
+// screen itself.
+const levelLoadFrameBudget = 12 * time.Millisecond
+
 // pendingLoad is the level being built, or nil.
 var pendingLoad *levelio.LoadJob
 
@@ -42,38 +48,51 @@ func levelLoadPending() bool { return pendingLoad != nil }
 // rather than take the game down.
 func beginRequestedLevelLoad() {
 	name, ok := hooks.TakeLevelLoadRequest()
-	if !ok || pendingLoad != nil {
+	if !ok {
 		return
 	}
+	startLevelLoad(name, nil)
+}
 
+// startLevelLoad starts loading a level by name, with a save to lay over it
+// once it is in (savegame.go) or nil. It reports whether the load started: one
+// already in flight wins, and a level that will not open is logged and
+// dropped, leaving the player where they are.
+func startLevelLoad(name string, restore []byte) bool {
+	if pendingLoad != nil {
+		return false
+	}
 	// Which file that is depends on the build: authored in a development one,
 	// compiled in a release one. See levelsource_dev.go.
 	job, err := beginLevelLoad(levelSourcePath(name))
 	if err != nil {
 		log.Printf("load_level %q: %v", name, err)
-		return
+		return false
 	}
 	pendingLoad = job
+	pendingRestore = restore
 
 	// The screen goes up before the first step, so the first frame of the load
 	// is already covered.
 	if _, err := ui.Game.Show(loadingScreenName); err != nil {
 		log.Printf("loading screen: %v", err)
 	}
+	return true
 }
 
-// stepLevelLoad advances the load by one slice and installs the level when it
-// finishes.
+// stepLevelLoad advances the load by a frame's worth of slices and installs
+// the level when it finishes.
 func stepLevelLoad(level *world.Level) {
 	if pendingLoad == nil {
 		return
 	}
-	if !pendingLoad.Step() {
+	if !pendingLoad.StepFor(levelLoadFrameBudget) {
 		return
 	}
 
 	job := pendingLoad
-	pendingLoad = nil
+	restore := pendingRestore
+	pendingLoad, pendingRestore = nil, nil
 	hooks.ClearLoadProgress()
 	ui.Game.Hide(loadingScreenName)
 
@@ -85,6 +104,7 @@ func stepLevelLoad(level *world.Level) {
 	}
 
 	installLevel(level, job.Level())
+	applyPendingRestore(level, restore)
 }
 
 // installLevel replaces the running level with a freshly built one.
@@ -96,6 +116,11 @@ func installLevel(level *world.Level, built *world.Level) {
 	collision.DeleteEntities(level)
 	render.DeleteVolumes(level)
 	world.ReleaseLevelGeometry(level)
+	// And its voices, which name placements about to stop existing: without
+	// this a restart or a retry left the old level's ambience looping under the
+	// new one's. ApplyRawLevel does the same for an undo.
+	world.StopAllSounds(level)
+	world.StopMusic(level, 0)
 
 	*level = *built
 

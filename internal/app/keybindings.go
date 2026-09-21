@@ -87,6 +87,13 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "Click a swatch", Desc: "Set the primary colour"},
 			{Keys: "Right-click a swatch", Desc: "Set the secondary colour"},
 			{Keys: "Double-click a swatch", Desc: "Edit that palette slot's colour"},
+			{Keys: "Drag (Rect Select / Lasso)", Desc: "Select; Shift adds, Alt or Ctrl subtracts, a click clears"},
+			{Keys: "Drag inside the selection", Desc: "Move what it holds"},
+			{Keys: "Arrow keys", Desc: "Nudge the selection's contents (Shift: 8 texels)"},
+			{Keys: "Ctrl+C / Ctrl+X / Ctrl+V", Desc: "Copy / cut / paste the selection"},
+			{Keys: "Ctrl+A / Ctrl+D or Esc", Desc: "Select all / deselect"},
+			{Keys: "Ctrl+Shift+I", Desc: "Invert the selection"},
+			{Keys: "Delete", Desc: "Clear the selection's texels"},
 		},
 	},
 	{

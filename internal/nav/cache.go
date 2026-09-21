@@ -15,7 +15,6 @@ package nav
 // that has something asking for a path.
 
 import (
-	"hash/fnv"
 	"math"
 	"sync"
 
@@ -357,46 +356,50 @@ func navigable(lvl *world.Level, ch *world.Chunk) bool {
 // Signature hashes everything a heightfield is built from: which world chunks
 // are there, where they are placed, and the corners of every static solid in
 // them.
+//
+// It runs every frame, over every corner of every static solid, so it is
+// FNV-1a taken a 32-bit word at a time and written out inline. Fed through
+// hash.Hash four bytes per call it was most of what the AI cost on a
+// three-thousand-brush level with nothing moving; the answer is still a pure
+// function of the same data, so an edit anywhere still changes it.
 func Signature(lvl *world.Level) uint64 {
-	h := fnv.New64a()
-	var buf [8]byte
-	f32 := func(v float32) {
-		b := math.Float32bits(v)
-		buf[0], buf[1], buf[2], buf[3] = byte(b), byte(b>>8), byte(b>>16), byte(b>>24)
-		_, _ = h.Write(buf[:4])
-	}
-	u32 := func(v uint32) {
-		buf[0], buf[1], buf[2], buf[3] = byte(v), byte(v>>8), byte(v>>16), byte(v>>24)
-		_, _ = h.Write(buf[:4])
+	const prime = 1099511628211
+	h := uint64(14695981039346656037)
+	w := func(v uint32) {
+		h ^= uint64(v)
+		h *= prime
 	}
 	for ci := range lvl.Chunks {
 		ch := &lvl.Chunks[ci]
 		if !navigable(lvl, ch) {
 			continue
 		}
-		_, _ = h.Write([]byte(ch.ID))
+		for i := 0; i < len(ch.ID); i++ {
+			h ^= uint64(ch.ID[i])
+			h *= prime
+		}
 		m := ch.ModelMatrix()
 		for _, v := range m {
-			f32(v)
+			w(math.Float32bits(v))
 		}
-		u32(uint32(len(ch.Brushes)))
+		w(uint32(len(ch.Brushes)))
 		for bi := range ch.Brushes {
 			b := &ch.Brushes[bi]
 			if !b.Solid || b.Dynamic {
-				u32(0xffffffff)
+				w(0xffffffff)
 				continue
 			}
-			u32(uint32(len(b.Verts)))
+			w(uint32(len(b.Verts)))
 			for _, v := range b.Verts {
-				f32(v.X())
-				f32(v.Y())
-				f32(v.Z())
+				w(math.Float32bits(v.X()))
+				w(math.Float32bits(v.Y()))
+				w(math.Float32bits(v.Z()))
 			}
-			u32(uint32(len(b.Faces)))
+			w(uint32(len(b.Faces)))
 			for fi := range b.Faces {
-				u32(uint32(len(b.Faces[fi].Indices)))
+				w(uint32(len(b.Faces[fi].Indices)))
 			}
 		}
 	}
-	return h.Sum64()
+	return h
 }

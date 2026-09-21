@@ -41,7 +41,6 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/imguibackend"
 	"foundry/internal/texdoc"
-	"foundry/internal/textureui"
 	"foundry/internal/world"
 )
 
@@ -309,42 +308,59 @@ func brushPaintPanel() {
 	editorPropGroup("Paint##brushpaint", 0, func() {
 		editorTextMutedWrapped("Lay the selection out on a texture of its own and paint it. " +
 			"The level updates as you paint.")
+		// As the model editor's: a selection already laid out on a saved atlas
+		// carries on painting it, and laying it out again is its own button.
+		existing := brushExistingAtlas()
 		if imgui.Button("Unwrap && Paint...##brushunwrap") {
-			brushOpenUnwrapDialog()
+			if existing != "" {
+				if err := openTextureForPainting(existing); err != nil {
+					ws().setStatus("Open %s: %v", existing, err)
+				}
+			} else {
+				brushOpenUnwrapDialog()
+			}
 		}
 		if imgui.IsItemHovered() {
-			imgui.SetTooltip("Give every selected face its own region of one new texture,\n" +
-				"point them at it, and open it in the texture editor.\n" +
-				"Faces already wearing that texture are laid out too.")
+			if existing != "" {
+				imgui.SetTooltip(fmt.Sprintf("Open %s in the texture editor with the UV layout\n"+
+					"over it, and keep painting. The level updates as you paint.", existing))
+			} else {
+				imgui.SetTooltip("Give every selected face its own region of one new texture,\n" +
+					"point them at it, and open it in the texture editor.\n" +
+					"Faces already wearing that texture are laid out too.")
+			}
 		}
-		// Shown only once the two are linked, as the model editor's is: a
-		// disabled button with no explanation reads as broken.
-		if brushSelectionIsBoundForPainting() {
+		if existing != "" {
 			imgui.SameLine()
-			if imgui.Button("Paint##brushpaintgo") {
-				requestTexEditor(nil)
+			if imgui.Button("Re-unwrap...##brushreunwrap") {
+				brushOpenUnwrapDialog()
 			}
 			if imgui.IsItemHovered() {
-				imgui.SetTooltip("Raise the texture editor on this atlas.")
+				imgui.SetTooltip("Lay the selection out again from scratch. The texture is\n" +
+					"replaced with a fresh guide, since the old paint would\n" +
+					"no longer line up with the new layout.")
 			}
 		}
 	})
 }
 
-// brushSelectionIsBoundForPainting reports whether the texture editor has open
-// an atlas a selected face is laid out on — the state in which painting updates
-// the level live.
-func brushSelectionIsBoundForPainting() bool {
-	ed := textureui.ActiveTexEditor
-	if ed == nil || ed.BoundTexture == "" {
-		return false
-	}
+// brushExistingAtlas is the saved atlas every selected face is already laid out
+// on, or "" when the selection is empty, spans several textures, or includes a
+// face no unwrap has reached yet — a new face has to be packed in, which only
+// the unwrap can do.
+func brushExistingAtlas() string {
+	tex := ""
 	for _, a := range brushUnwrapSelection() {
-		if _, _, _, f := a.resolve(ws().level); f.HasUVs() && f.Texture == ed.BoundTexture {
-			return true
+		_, _, _, f := a.resolve(ws().level)
+		if !f.HasUVs() || f.Texture == "" || (tex != "" && f.Texture != tex) {
+			return ""
 		}
+		tex = f.Texture
 	}
-	return false
+	if tex == "" || !texDocExistsOnDisk(tex) {
+		return ""
+	}
+	return tex
 }
 
 // ---------- the UV layout overlay ----------
@@ -363,6 +379,35 @@ func brushUVLayoutFor(lvl *world.Level, tex string) [][]mgl32.Vec2 {
 		if _, _, m, f := a.resolve(lvl); f.HasUVs() {
 			out = append(out, m.FaceUVs(f))
 		}
+	}
+	return out
+}
+
+// brushUVSelectionFor returns the UV outline of every selected face in w that
+// wears tex and has been laid out by an unwrap — the part of the layout the
+// texture editor highlights. The selection is read the way an unwrap reads it
+// (brushUnwrapSelection), so a whole brush picked in object mode lights up all
+// of its islands.
+func brushUVSelectionFor(w *brushWorkspace, tex string) [][]mgl32.Vec2 {
+	if w.level == nil || tex == "" {
+		return nil
+	}
+	defer w.use()()
+	var out [][]mgl32.Vec2
+	for _, a := range brushUnwrapSelection() {
+		if _, _, m, f := a.resolve(w.level); f != nil && f.HasUVs() && f.Texture == tex {
+			out = append(out, m.FaceUVs(f))
+		}
+	}
+	return out
+}
+
+// uvSelectionFor is uvLayoutFor narrowed to what is selected in each document.
+func uvSelectionFor(tex string) [][]mgl32.Vec2 {
+	out := modelUVSelectionFor(tex)
+	out = append(out, brushUVSelectionFor(&Editor.brushWorkspace, tex)...)
+	if entityDef != nil {
+		out = append(out, brushUVSelectionFor(&entityWS, tex)...)
 	}
 	return out
 }

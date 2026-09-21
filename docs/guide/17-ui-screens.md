@@ -4,7 +4,7 @@ The runtime UI is native — a shipped game draws its own main menu, HUD, pause
 screen and loading screen. The same pass draws the UI editor's canvas, so what
 you see while authoring is what ships.
 
-A screen is a `.fui` in `resources/ui/`. Toolbar: **UI**.
+A screen is a `.fui` in `resources/ui/`. Editor strip: **UI**.
 
 ## The window
 
@@ -12,7 +12,7 @@ Three columns: the hierarchy on the left, the canvas in the middle, the
 properties on the right.
 
 ```
-[New] [Open] [Save] [Save As] | [Undo] [Redo] | <screen name> | [Pop In]
+File  Edit  View  Window | <editor strip>                                <screen name> [Saved]
 [ ] Grid  [ ] Outlines  [ ] Safe area | <resolution> | [Data: Sample|Literal|Live]
 ```
 
@@ -192,13 +192,35 @@ widget(screen("pause"), "ok")
 focus(widget(@pause, "resume"))
 ```
 
+### Pinning a widget to the world
+
+`world_anchor` takes a point in the world, and from then on the widget rides on
+it: every frame its pivot is put where that point is on screen, and while the
+point is behind the camera the widget and everything under it are hidden. Its
+size is still the one it was authored with; only where it is changes. Writing
+`null` puts it back where the layout has it. It is how a prompt floats over
+something the player can use, or a name over a squadmate:
+
+```
+p = widget("hud", "interact_prompt")
+p.prop.text = format("Press {} to interact", binding_name("interact", 1))
+p.prop.world_anchor = @crate.prop.position + <0.0, 0.6, 0.0>
+p.prop.visible = true
+```
+
+Author the widget with its pivot where it should touch the point — bottom
+centre (0.5, 1) for a label that sits above it. The anchor is runtime state, like
+a script's writes to `text` or `alpha`: it is never saved, and the UI editor
+shows the widget where it was authored.
+
 ### A settings screen
 
 A slider that declares a binding shows the level's number and cannot be
 dragged, so a settings slider is left unbound: its script copies the setting in
 on `:shown:` (`widget(@self, "sens").prop.value = @level.prop.mouse_sensitivity`)
 and writes it back on `:change:`. The engine persists the mouse settings, the
-key bindings and the volume (`@level.prop.master_volume`) itself — see
+key bindings, the volume (`@level.prop.master_volume`) and Smooth Lighting
+(`@level.prop.smooth_lighting`, a toggle, saved to `graphics.yaml`) itself — see
 [Entities](11-entities.md#mouse-look-and-the-players-settings) — so the screen
 needs no Save button, and leaving with Escape keeps what was set.
 
@@ -235,6 +257,25 @@ The actions are `move_forward` `move_back` `move_left` `move_right` `jump`
 `look_up` `look_down` `look_left` `look_right` `sprint` `crouch` `interact`
 `primary_fire` `secondary_fire` `reload` `throw` `next_weapon` `prev_weapon`
 `weapon_1`–`weapon_5` `roll_left` `roll_right` `pitch_up` `pitch_down`.
+
+### The game's own settings
+
+Anything a settings screen offers beyond the mouse, the keys and the volume is
+the game's to define, and `setting`/`set_setting` keep it for every level and
+session in `settings.yaml`, beside `controls.yaml`:
+
+```
+on_click(:click:, src ref) when src.id == "hud_left"
+    set_setting("hud_corner", "left")
+
+-- anywhere, any time — the HUD's own script, say:
+corner = setting("hud_corner", "right")
+```
+
+The default is returned when nothing has been saved, and is also the
+setting's type: a str, int, float or bool. A saved value of another kind is
+ignored with a warning. Like the mouse settings, the file is written once the
+change has settled, so a slider dragged end to end is one write.
 
 ## Which screens a level puts up
 

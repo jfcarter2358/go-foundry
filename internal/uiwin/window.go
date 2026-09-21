@@ -69,6 +69,11 @@ type UIWindow struct {
 	// different Escape is to take the key away first.
 	FilterEvent func(sdl.Event) bool
 	OnClose     func()
+	// ConfirmClose is optional, and asked when the window's own close button
+	// is pressed: returning false keeps the window open — typically because
+	// it has just put up an unsaved-changes prompt that closes it itself.
+	// Quitting (CloseAllUIWindows) does not ask.
+	ConfirmClose func() bool
 	// CloseRequested asks for this window to be destroyed after the current
 	// frame. Set it instead of calling CloseUIWindow from inside Draw — the
 	// frame's imgui.Render still needs the context that CloseUIWindow tears
@@ -320,7 +325,9 @@ func RouteWindowEvent(event sdl.Event, mainWindowID uint32) bool {
 	}
 
 	if we, ok := event.(sdl.WindowEvent); ok && we.Event == sdl.WINDOWEVENT_CLOSE {
-		CloseUIWindow(w)
+		if w.ConfirmClose == nil || w.ConfirmClose() {
+			CloseUIWindow(w)
+		}
 		return true
 	}
 

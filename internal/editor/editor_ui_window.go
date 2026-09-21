@@ -42,10 +42,9 @@ const (
 	uiWindowW = int32(1440)
 	uiWindowH = int32(900)
 
-	// Two rows: file actions above, view toggles and the design resolution
-	// below. The same height the model and particle editors use, so the three
-	// windows read as one tool with different middles.
-	uiToolbarH = float32(54)
+	// The shared two-row top bar (editor_menubar.go): menus above, the design
+	// resolution, sample data and status below.
+	uiToolbarH = editorTopBarH
 
 	// uiPanelWidth matches the other document editors'.
 	uiPanelWidth = float32(300)
@@ -196,6 +195,7 @@ func uiAdoptDocument(s *ui.Screen) {
 	uiPreview.Push(uiDoc)
 	uiEditorInstallResolver()
 	uiFrameCanvas()
+	uiMarkSaved()
 }
 
 // uiSelected is the node the panel is editing, or nil.
@@ -255,6 +255,7 @@ func uiSave(path string) error {
 		return err
 	}
 	ui.InvalidateScreen(ui.ScreenName(path))
+	uiMarkSaved()
 	uiFileList = nil
 	uiStatus = "Saved " + filepath.Base(path)
 	return nil

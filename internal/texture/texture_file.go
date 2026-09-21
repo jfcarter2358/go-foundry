@@ -7,8 +7,8 @@ package texture
 //   0    [4]byte  magic "FTEX"
 //   4    uint16   version = 3
 //   6    uint16   flags — bit 0 (ftexFlagBump) = the document has a bump channel
-//   8    uint32   width   (1..1024)
-//   12   uint32   height  (1..1024)
+//   8    uint32   width   (1..2048)
+//   12   uint32   height  (1..2048)
 //   16   uint16   frameCount (1..32) — the animation stack; 1 means "not animated"
 //   18   [2]byte  padding
 //   20   [1024]   palette: 256 x RGBA8, the table this document was authored against
@@ -365,13 +365,18 @@ func readFrame(data []byte, pos, want, frameIdx int, hasBump bool) (texdoc.TexFr
 	if err != nil {
 		return texdoc.TexFrame{}, 0, err
 	}
-	frame := texdoc.TexFrame{Layers: layers, Active: 0}
+	// The active layer is not saved, so reopen on the top one: where the tools
+	// paint over everything already visible. Layer 0 is under every other
+	// layer (an unwrapped texture's "UV Guide" sits under its "Paint"), and
+	// paint put there shows only where the layers above are transparent.
+	frame := texdoc.TexFrame{Layers: layers, Active: len(layers) - 1}
 	if hasBump {
 		bump, next, err := readLayerBlock(data, pos, want, frameIdx)
 		if err != nil {
 			return texdoc.TexFrame{}, 0, err
 		}
 		frame.Bump = bump
+		frame.BumpActive = len(bump) - 1
 		pos = next
 	}
 	return frame, pos, nil
@@ -428,7 +433,7 @@ func parseTexDoc(data []byte) (*texdoc.TexDoc, error) {
 			layers = append(layers, layer)
 			pos = next
 		}
-		frames = []texdoc.TexFrame{{Layers: layers, Active: 0}}
+		frames = []texdoc.TexFrame{{Layers: layers, Active: len(layers) - 1}}
 	} else {
 		frameCount := binary.LittleEndian.Uint16(data[16:18])
 		if frameCount == 0 || int(frameCount) > texdoc.TexMaxFrames {
@@ -525,12 +530,7 @@ func writeNormalMapPNG(d *texdoc.TexDoc, name string) error {
 // Images larger than texdoc.TexMaxDim in either dimension are rejected rather than
 // silently downscaled — a rescale changes the art and should be explicit.
 func ImportPNG(path string) (*texdoc.TexDoc, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	img, _, err := image.Decode(f)
+	img, err := LoadImageFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -561,6 +561,22 @@ func ImportPNG(path string) (*texdoc.TexDoc, error) {
 	}
 	d.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	return d, nil
+}
+
+// LoadImageFile decodes a PNG (or other image.Decode-able file) for import,
+// refusing anything larger than texdoc.TexMaxDim before it is resampled or
+// quantised.
+func LoadImageFile(path string) (image.Image, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", filepath.Base(path), err)
+	}
+	return img, nil
 }
 
 // ScanFtexFiles returns sorted logical names (without extension) of .ftex

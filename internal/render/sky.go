@@ -49,7 +49,7 @@ var skyRender skyRenderer
 // SkyInit compiles the sky program and builds its cube. Must be called once
 // with the GL context current.
 func SkyInit() {
-	shaderDir := filepath.Join(fileutil.ResourcesPath, "shaders")
+	shaderDir := fileutil.ShadersDir()
 	sp := func(name string) string { return filepath.Join(shaderDir, name) }
 
 	vs, err := gfx.CompileShader(mustReadShader(sp("sky_vert.glsl")), gl.VERTEX_SHADER)

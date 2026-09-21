@@ -59,6 +59,7 @@ models:
 #   make compile-levels       build every level's .fbsp (part of the release targets)
 #   make release-check        prove the editor is not in the binary
 #   make runtimes             the game binaries an editor's Release window packs
+#   make dist-editor          the editor itself, for a Foundry release on GitHub
 #
 # PRUNE=0 stages the whole content tree instead of only what the game reaches
 # from its manifest. Worth reaching for when a script names a level or a texture
@@ -91,7 +92,8 @@ WINDOWS_STAGE := $(BUILD_DIR)/install-windows
 
 .PHONY: release-linux release-windows installer-linux installer-windows \
         release-check test-release clean-release compile-levels \
-        runtimes runtime-linux runtime-windows
+        runtimes runtime-linux runtime-windows \
+        dist-editor dist-editor-windows dist-editor-linux editor-runtimes
 
 ## The release game binaries an editor packs a project's content around.
 ##
@@ -122,6 +124,57 @@ runtime-windows:
 	# Go, so no mingw.
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	  go build -ldflags "$(WINDOWS_LDFLAGS)" -o $(RUNTIMES_DIR)/foundry-setup-windows-amd64.exe ./cmd/foundrysetup
+
+# ============================================================================
+# The editor, for a Foundry release
+# ============================================================================
+#
+# What goes on a GitHub release: the editor itself, for everybody who works on
+# a game made with it. It holds no project — it opens a project folder from
+# wherever its author keeps one (File > Open Project, or `foundry -project
+# <dir>`; see internal/project) — so it installs once and upgrades whole:
+#
+#   foundry-editor-<version>-windows-amd64-setup.exe   Setup.exe, per user, no admin
+#   foundry-editor-<version>-windows-amd64.zip         the same tree, portable
+#   foundry-editor-<version>-linux-amd64.tar.gz        needs libsdl2 on the system
+#
+# Each carries the shaders it was built from (which it reads instead of any
+# project's) and runtimes/ — the release game binaries for both platforms and
+# the Windows installer program — so its Release window can ship a game with
+# nothing else installed. Then:
+#
+#   make dist-editor
+#   gh release create v$(EDITOR_VERSION) $(EDITOR_DIST)/*
+
+EDITOR_VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
+EDITOR_DIST     ?= $(BUILD_DIR)/editor-dist
+EDITOR_RUNTIMES := $(BUILD_DIR)/editor-runtimes
+EDITOR_PACK     := go run ./cmd/foundrypack editor -version $(EDITOR_VERSION) -out $(EDITOR_DIST) \
+                     -shaders resources/shaders \
+                     -runtime $(EDITOR_RUNTIMES)/foundry-release-windows-amd64.exe \
+                     -runtime $(EDITOR_RUNTIMES)/foundry-release-linux-amd64 \
+                     -runtime $(EDITOR_RUNTIMES)/foundry-setup-windows-amd64.exe
+
+dist-editor: dist-editor-windows dist-editor-linux
+	@echo "dist-editor: $(EDITOR_DIST)"; ls -1 $(EDITOR_DIST)
+
+editor-runtimes:
+	$(MAKE) runtimes RUNTIMES_DIR=$(EDITOR_RUNTIMES)
+
+## The Windows editor: a console program, as `make windows` builds it — the
+## console is where a crash says what happened, and the git and go processes
+## the editor starts would each flash one up under a windowsgui parent.
+dist-editor-windows: editor-runtimes
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
+	  CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc \
+	  go build -o $(BUILD_DIR)/foundry-editor-windows.exe ./cmd/foundry
+	$(EDITOR_PACK) -goos windows -exe $(BUILD_DIR)/foundry-editor-windows.exe \
+	  -lib resources/SDL2.dll -setup-stub $(EDITOR_RUNTIMES)/foundry-setup-windows-amd64.exe \
+	  -stage $(BUILD_DIR)/editor-windows
+
+dist-editor-linux: editor-runtimes
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -o $(BUILD_DIR)/foundry-editor-linux ./cmd/foundry
+	$(EDITOR_PACK) -goos linux -exe $(BUILD_DIR)/foundry-editor-linux -stage $(BUILD_DIR)/editor-linux
 
 ## Compile every level to the form a release build loads. See
 ## docs/guide/23-compiling-levels.md, and internal/app/levelsource_release.go

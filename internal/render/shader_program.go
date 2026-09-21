@@ -15,6 +15,8 @@ import (
 	"os"
 	"strings"
 
+	"foundry/internal/gfx"
+
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
 
@@ -54,6 +56,7 @@ func linkStages(shaders ...uint32) (uint32, error) {
 		gl.AttachShader(prog, s)
 	}
 	gl.LinkProgram(prog)
+	gfx.ForgetUniformLocations(prog)
 	for _, s := range shaders {
 		gl.DeleteShader(s)
 	}

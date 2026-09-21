@@ -6,21 +6,36 @@ it was when you come back out.
 
 ## The main window
 
-The toolbar runs across the top:
+The top bar is two rows: menus, then the tools the mouse uses.
 
 ```
-[Textures] [Model] [Entity] [Script] [Particles] [UI] [Log]
-| Object/Edit Tab
-| Point 1  Edge 2  Face 3          (edit mode only)
-| Move G  Rotate R  Scale C
-| Solid/Wireframe Z   Bounds B   Orbit/Fly V
-| Level: <name>  [Open] [Save] [Undo] [Redo] [Save As...] [Compile] [Preview] [Release]
+File  Edit  View  Build  Window | Level Texture Model Entity Script YAML Particles UI   <name> [Saved]
+Object/Edit Tab | Point 1  Edge 2  Face 3 | Move G  Rotate R  Scale C  UV U | Solid/Wireframe Z  Bounds B  Orbit/Fly V
 ```
 
-Each window button lights while its window is open. They are real windows — move
-them to a second monitor, leave them open while you play, close them from their
-own close button. **Release** also lights amber while a release build is running,
-window or no window — see [Shipping a game](20-shipping.md#from-the-editor).
+- **File** — Open Level... (which also creates one), Save, Save As..., Save All.
+- **Edit** — Undo, Redo.
+- **View** — Wireframe, Bounds, Fly Camera; the same toggles as the buttons on
+  the row below.
+- **Build** — Compile, Preview Compiled, Release...
+- **Window** — the tool windows: Log, Git, Release. **Git** and **Release** say
+  so in the menu while a push, pull or build is still running behind a closed
+  window — see [Shipping a game](20-shipping.md#from-the-editor).
+
+After the menus comes the **editor strip**: every editor, by name. Click one to
+open it, or to bring it forward if it is already open. The strip is the same in
+every editor window, with the one you are in lit and any that are not open yet
+dimmed, so switching between them never means going back to the main window
+first. They are real windows — move them to a second monitor, leave them open
+while you play, close them from their own close button or **File > Close
+Window**. Closing one keeps its document; opening it again resumes where you
+left off.
+
+At the right edge is the document's name and whether it is saved.
+
+Every other editor's top bar has the same shape: **File**, **Edit** and
+**View** menus for its own document, then **Window** and the strip, then its
+name and save chip; its tools on the row below.
 
 The panel down the right side is always in the same order, whatever you have
 selected:
@@ -68,7 +83,7 @@ a ledge, a reveal or panelling that a player will never catch on; see
 
 The selected brush is outlined in cyan in object mode and the selected face in
 orange in edit mode, so a glance at the viewport tells you which you are in
-without reading the toolbar. The toolbar's leftmost button names the context
+without reading the top bar. The tool row's leftmost button names the context
 outright.
 
 `Tab` does not lose your place in either direction: going in, the brush you had
@@ -145,11 +160,44 @@ particle, UI, entity) has its own undo stack for its own document.
 
 ## Saving
 
-`Save` writes the level back to the file named in the toolbar. `Save As...`
-names a new one. Levels go to `resources/levels/`.
+**File > Save** writes the level back to the file named at the right of the top
+bar. **Save As...** names a new one. Levels go to `resources/levels/`.
+**File > Save All**, in every editor, saves every open editor with unsaved
+changes at once.
 
 Nothing else auto-saves either: the model, texture, particle, UI and entity
 editors each have their own Save, and an unsaved document is marked with `*`.
+
+## Editing the level file
+
+**YAML** opens the level's file as text, for the edits the panels are slow at: a
+value changed on forty entities at once, a block pasted from another level, a
+key no panel shows yet. It has find and replace (`Ctrl+F`, `Ctrl+H`; case, whole
+word and regex), colouring, and completion that knows the level format:
+
+- A key offers the keys that mapping can hold and does not have yet, with each
+  one's documentation beside the list. Hovering a key shows the same, and says so
+  when a key is one the loader does not know and would ignore.
+- A value offers `true`/`false`, the options a key lists (`shape:` →
+  `box`, `sphere`, `cylinder`), the files it can name (scripts, textures, entity
+  types, prefabs, effects, sounds, screens), or else the values the same key has
+  elsewhere in the file.
+
+The file is checked as you type. An error — something the loader would refuse —
+marks its line red and stops `Save`; a warning (an unknown key, a key given
+twice) marks it amber and does not. The status line under the text shows where
+the caret is in the level, as in `chunks[3] hangar › brushes[12] › faces[0]`.
+
+`Save` (`Ctrl+S`) writes the file. When it is the level the editor has open,
+the level is rebuilt from it behind the loading bar, as one undo step: `Ctrl+Z`
+in the main window puts back what was there. A save made while playing reaches
+the editor when you stop.
+
+The window reads the file on disk, which may not hold edits you have made in the
+editor and not saved. **From Level Editor** replaces the text with the level as
+the editor holds it (written the way `Save` writes it, so comments are lost;
+`Ctrl+Z` takes it back). When the editor saves the file, a clean buffer follows it;
+one with edits of its own asks first.
 
 ## Play
 

@@ -132,7 +132,9 @@ func LoadLevel(levelPath string) (world.Level, error) {
 	if err != nil {
 		return world.Level{}, err
 	}
-	return rawToLevel(raw)
+	lvl, err := rawToLevel(raw)
+	lvl.Name = LevelNameFromPath(levelPath)
+	return lvl, err
 }
 
 // readRawLevelFile parses a level file into its Raw form without touching the
@@ -189,9 +191,27 @@ func NewBlankLevel() (world.Level, error) {
 func rawToLightSet(rl world.RawLights) world.LightSet {
 	var ls world.LightSet
 	ls.Global = world.GlobalLight{
-		Color:      mgl32.Vec3{rl.Global.Color.R, rl.Global.Color.G, rl.Global.Color.B},
-		Brightness: rl.Global.Brightness,
-		Disabled:   rl.Global.Disabled,
+		Color:       mgl32.Vec3{rl.Global.Color.R, rl.Global.Color.G, rl.Global.Color.B},
+		Brightness:  rl.Global.Brightness,
+		Disabled:    rl.Global.Disabled,
+		Wrap:        world.DefaultLightWrap,
+		Hemisphere:  world.DefaultAmbientHemisphere,
+		Bounces:     world.DefaultBounces,
+		BounceScale: world.DefaultBounceScale,
+	}
+	if rl.Global.Wrap != nil {
+		ls.Global.Wrap = *rl.Global.Wrap
+	}
+	if rl.Global.Hemisphere != nil {
+		ls.Global.Hemisphere = *rl.Global.Hemisphere
+	}
+	if b := rl.Global.Bounce; b != nil {
+		if b.Count != nil {
+			ls.Global.Bounces = min(max(*b.Count, 0), world.MaxBounces)
+		}
+		if b.Scale != nil {
+			ls.Global.BounceScale = max(*b.Scale, 0)
+		}
 	}
 	for _, rd := range rl.Directional {
 		ss := rd.ShadowStrength
@@ -328,6 +348,11 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	// should still open.
 	level.Scripts = append([]string(nil), raw.Scripts...)
 	level.UI = append([]string(nil), raw.UI...)
+	level.EscapeLevel = raw.EscapeLevel
+	level.SaveMode = world.SaveModeFromName(raw.SaveMode)
+	if raw.Compile != nil {
+		level.LightGrid, level.LightMinGrid = raw.Compile.LightGrid, raw.Compile.LightMinGrid
+	}
 
 	world.ResolveLevelIDCollisions(level.Chunks)
 

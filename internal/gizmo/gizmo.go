@@ -16,7 +16,6 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"math"
-	"path/filepath"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -53,8 +52,8 @@ var Buf []float32
 func GizmoInit() {
 	var err error
 	GizmoProgram, err = gfx.CompileProgramFromFiles(
-		filepath.Join(fileutil.ResourcesPath, "shaders/gizmo_vert.glsl"),
-		filepath.Join(fileutil.ResourcesPath, "shaders/gizmo_frag.glsl"),
+		fileutil.ShaderPath("gizmo_vert.glsl"),
+		fileutil.ShaderPath("gizmo_frag.glsl"),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("gizmo shader: %v", err))

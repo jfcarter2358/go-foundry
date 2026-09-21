@@ -66,7 +66,8 @@ import (
 // Sixteen because the cost of a sample is a loop over every blob, and a
 // fireball reads as one from about nine. A layer with more live particles is
 // split into groups of this many (MaxVolumeBlobDraws of them at most), each
-// its own draw, composited far to near.
+// its own draw, composited far to near — unless it overlaps others, which it is
+// then marched together with while the sixteen last (mergeLocalDraws).
 const MaxVolumeBlobs = 16
 
 // MaxVolumeBlobDraws caps how many groups one layer is split into. Past it the
@@ -450,10 +451,11 @@ func (t *VolumeTargets) copyDepth(vx, vy, w, h int32) {
 // Draw kinds. MUST match VOL_KIND_* in volume_frag.glsl.
 const (
 	volKindCloud int32 = 0
-	volKindBlobs int32 = 1
+	// volKindLocal is particle blobs and/or one explosion effect
+	// (world/effect.go) in a box: everything that goes off in one place,
+	// marched together.
+	volKindLocal int32 = 1
 	volKindDeck  int32 = 2
-	// volKindExplosion is an explosion effect (world/effect.go).
-	volKindExplosion int32 = 3
 )
 
 // cloudParams is one CloudParams struct, as volume_common.glsl declares it.
@@ -572,12 +574,24 @@ type volumeDraw struct {
 
 	cloud cloudParams
 
-	blobs       []particle.Blob
-	proxyBasis  mgl32.Mat3
-	proxyCenter mgl32.Vec3
-	look        particle.VolumeLook
+	// A local draw's box, in world space, and what is in it: up to
+	// MaxVolumeBlobs blobs in runs that share a layer's look, and at most one
+	// explosion.
+	lo, hi       mgl32.Vec3
+	proxyBasis   mgl32.Mat3
+	proxyCenter  mgl32.Vec3
+	parts        [MaxVolumeBlobs]blobPart
+	nParts       int
+	nBlobs       int
+	hasExplosion bool
 
 	explosion explosionParams
+}
+
+// blobPart is a run of one layer's blobs in a local draw.
+type blobPart struct {
+	blobs []particle.Blob
+	look  *particle.VolumeLook
 }
 
 // explosionParams is one explosion draw, as volume_common.glsl's explosion
@@ -590,6 +604,7 @@ type explosionParams struct {
 	heat       float32
 	density    float32
 	fade       float32
+	jets       float32
 	turbulence float32
 	brightness float32
 	seed       float32
@@ -610,11 +625,10 @@ func explosionDraw(e *world.Effect, lvl *world.Level, camPos mgl32.Vec3) (volume
 		return volumeDraw{}, false
 	}
 	c := st.Center
-	return volumeDraw{
-		kind:       volKindExplosion,
-		depth:      c.Sub(camPos).Len(),
-		proxy:      mgl32.Translate3D(c.X(), c.Y(), c.Z()).Mul4(mgl32.Scale3D(reach, reach, reach)),
-		lightReach: reach * 2,
+	ext := mgl32.Vec3{reach, reach, reach}
+	dr := volumeDraw{
+		kind:         volKindLocal,
+		hasExplosion: true,
 		explosion: explosionParams{
 			center: c,
 			radius: st.Radius,
@@ -626,6 +640,7 @@ func explosionDraw(e *world.Effect, lvl *world.Level, camPos mgl32.Vec3) (volume
 			// as a ball.
 			density:    x.Density * (0.35 + 0.65*st.Fade),
 			fade:       st.Fade,
+			jets:       st.Jets,
 			turbulence: x.Turbulence,
 			brightness: x.Brightness,
 			// Seeded by ID, so two explosions side by side do not billow alike.
@@ -634,7 +649,82 @@ func explosionDraw(e *world.Effect, lvl *world.Level, camPos mgl32.Vec3) (volume
 			fireTint: x.FireTint,
 			smoke:    x.SmokeColor,
 		},
-	}, true
+	}
+	dr.setBox(c.Sub(ext), c.Add(ext), camPos)
+	return dr, true
+}
+
+// setBox makes lo..hi a local draw's box: the proxy drawn, the space its march
+// is confined to, and the distance it is sorted by.
+func (dr *volumeDraw) setBox(lo, hi, camPos mgl32.Vec3) {
+	center := lo.Add(hi).Mul(0.5)
+	half := hi.Sub(lo).Mul(0.5)
+	for a := 0; a < 3; a++ {
+		if half[a] < 1e-3 {
+			half[a] = 1e-3
+		}
+	}
+	dr.lo, dr.hi = lo, hi
+	dr.depth = center.Sub(camPos).Len()
+	dr.proxy = mgl32.Translate3D(center.X(), center.Y(), center.Z()).Mul4(mgl32.Scale3D(half.X(), half.Y(), half.Z()))
+	dr.proxyBasis = mgl32.Mat3{1 / half.X(), 0, 0, 0, 1 / half.Y(), 0, 0, 0, 1 / half.Z()}
+	dr.proxyCenter = center
+	dr.lightReach = half.Len() * 2
+}
+
+// mergeLocalDraws marches local draws that overlap as one.
+//
+// Two volumes drawn separately are composited whole, in the order of their
+// centres: a smoke layer wrapped round a fireball — or an explosion effect
+// going off inside a particle effect's smoke — was drawn wholly over the fire
+// or wholly under it, and flipped as the eye moved. One march integrates both
+// in the order the ray meets them. Merging stops at what one draw holds:
+// MaxVolumeBlobs blobs and one explosion; past that the rest stay separate and
+// are stacked the old way.
+func mergeLocalDraws(draws []volumeDraw, camPos mgl32.Vec3) []volumeDraw {
+	for merged := true; merged; {
+		merged = false
+		for i := 0; i < len(draws); i++ {
+			for j := i + 1; j < len(draws); j++ {
+				a, b := &draws[i], &draws[j]
+				if !canMergeLocal(a, b) {
+					continue
+				}
+				copy(a.parts[a.nParts:], b.parts[:b.nParts])
+				a.nParts += b.nParts
+				a.nBlobs += b.nBlobs
+				if b.hasExplosion {
+					a.hasExplosion = true
+					a.explosion = b.explosion
+				}
+				lo, hi := a.lo, a.hi
+				for k := 0; k < 3; k++ {
+					lo[k] = float32(math.Min(float64(lo[k]), float64(b.lo[k])))
+					hi[k] = float32(math.Max(float64(hi[k]), float64(b.hi[k])))
+				}
+				a.setBox(lo, hi, camPos)
+				draws = append(draws[:j], draws[j+1:]...)
+				j--
+				merged = true
+			}
+		}
+	}
+	return draws
+}
+
+func canMergeLocal(a, b *volumeDraw) bool {
+	if a.kind != volKindLocal || b.kind != volKindLocal {
+		return false
+	}
+	if a.nBlobs+b.nBlobs > MaxVolumeBlobs || (a.hasExplosion && b.hasExplosion) {
+		return false
+	}
+	for k := 0; k < 3; k++ {
+		if a.lo[k] > b.hi[k] || b.lo[k] > a.hi[k] {
+			return false
+		}
+	}
+	return true
 }
 
 // effectSeed is an FNV-1a of an effect's ID.
@@ -708,6 +798,7 @@ func gatherLevelVolumes(lvl *world.Level, camPos mgl32.Vec3, cull *Frustum) []vo
 		draws = append(draws, dr)
 	}
 
+	draws = mergeLocalDraws(draws, camPos)
 	volumes.draws = draws
 	return draws
 }
@@ -731,7 +822,7 @@ func appendBlobDraws(draws []volumeDraw, s *particle.System, camPos mgl32.Vec3) 
 	buf := volumes.blobs[start : start+want]
 	n := s.FillBlobs(buf, camPos)
 	volumes.blobs = volumes.blobs[:start+n]
-	look := s.Layer.Volume
+	look := &s.Layer.Volume
 
 	for g := 0; g < n; g += MaxVolumeBlobs {
 		end := g + MaxVolumeBlobs
@@ -749,23 +840,10 @@ func appendBlobDraws(draws []volumeDraw, s *particle.System, camPos mgl32.Vec3) 
 				hi[a] = float32(math.Max(float64(hi[a]), float64(b.Pos[a]+r)))
 			}
 		}
-		center := lo.Add(hi).Mul(0.5)
-		half := hi.Sub(lo).Mul(0.5)
-		for a := 0; a < 3; a++ {
-			if half[a] < 1e-3 {
-				half[a] = 1e-3
-			}
-		}
-		draws = append(draws, volumeDraw{
-			kind:        volKindBlobs,
-			depth:       center.Sub(camPos).Len(),
-			proxy:       mgl32.Translate3D(center.X(), center.Y(), center.Z()).Mul4(mgl32.Scale3D(half.X(), half.Y(), half.Z())),
-			proxyBasis:  mgl32.Mat3{1 / half.X(), 0, 0, 0, 1 / half.Y(), 0, 0, 0, 1 / half.Z()},
-			proxyCenter: center,
-			blobs:       group,
-			look:        look,
-			lightReach:  half.Len() * 2,
-		})
+		dr := volumeDraw{kind: volKindLocal, nParts: 1, nBlobs: len(group)}
+		dr.parts[0] = blobPart{blobs: group, look: look}
+		dr.setBox(lo, hi, camPos)
+		draws = append(draws, dr)
 	}
 	return draws
 }
@@ -868,6 +946,7 @@ func DrawVolumeParticlePreview(t *VolumeTargets, systems []*particle.System, pro
 	for _, s := range systems {
 		draws = appendBlobDraws(draws, s, camPos)
 	}
+	draws = mergeLocalDraws(draws, camPos)
 	volumes.draws = draws
 	if len(draws) == 0 {
 		return
@@ -965,11 +1044,16 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 		gl.Uniform1i(m.U("volKind"), dr.kind)
 		gl.Uniform1f(m.U("volLightReach"), dr.lightReach)
 		gl.Uniform1f(m.U("volDeckRange"), dr.deckRange)
-		if dr.kind == volKindBlobs {
+		if dr.kind == volKindLocal {
 			uploadBlobs(m, dr)
-			DebugStats.VolumeBlobs += len(dr.blobs)
-		} else if dr.kind == volKindExplosion {
-			uploadExplosion(m, &dr.explosion)
+			DebugStats.VolumeBlobs += dr.nBlobs
+			// Written every draw, on or off: the program keeps the last one's.
+			if dr.hasExplosion {
+				gl.Uniform1i(m.U("volExpOn"), 1)
+				uploadExplosion(m, &dr.explosion)
+			} else {
+				gl.Uniform1i(m.U("volExpOn"), 0)
+			}
 		} else {
 			uploadCloudParams(m, "volCloud", &dr.cloud)
 		}
@@ -1025,16 +1109,33 @@ func pixelFootprint(invPV mgl32.Mat4, camPos mgl32.Vec3, targetH int32) float32 
 }
 
 func uploadBlobs(m *progUniforms, dr *volumeDraw) {
-	n := len(dr.blobs)
+	n := dr.nBlobs
+	parts := dr.parts[:dr.nParts]
 	flat := volumes.flat[:0]
-	for _, b := range dr.blobs {
-		flat = append(flat, b.Pos.X(), b.Pos.Y(), b.Pos.Z(), b.Radius)
+	for _, p := range parts {
+		for _, b := range p.blobs {
+			flat = append(flat, b.Pos.X(), b.Pos.Y(), b.Pos.Z(), b.Radius)
+		}
 	}
-	for _, b := range dr.blobs {
-		flat = append(flat, b.Emission.X(), b.Emission.Y(), b.Emission.Z(), b.Density)
+	for _, p := range parts {
+		for _, b := range p.blobs {
+			flat = append(flat, b.Emission.X(), b.Emission.Y(), b.Emission.Z(), b.Density)
+		}
 	}
-	for _, b := range dr.blobs {
-		flat = append(flat, b.LifeT, b.Erosion, b.Seed, 0)
+	for _, p := range parts {
+		for _, b := range p.blobs {
+			flat = append(flat, b.LifeT, b.Erosion, b.Seed, 0)
+		}
+	}
+	for _, p := range parts {
+		for range p.blobs {
+			flat = append(flat, p.look.NoiseScale, p.look.Displacement, p.look.Billow, p.look.Absorption)
+		}
+	}
+	for _, p := range parts {
+		for range p.blobs {
+			flat = append(flat, p.look.Albedo.X(), p.look.Albedo.Y(), p.look.Albedo.Z())
+		}
 	}
 	volumes.flat = flat
 	gl.Uniform1i(m.U("volBlobCount"), int32(n))
@@ -1042,12 +1143,9 @@ func uploadBlobs(m *progUniforms, dr *volumeDraw) {
 		gl.Uniform4fv(m.U("volBlobSphere[0]"), int32(n), &flat[0])
 		gl.Uniform4fv(m.U("volBlobGlow[0]"), int32(n), &flat[4*n])
 		gl.Uniform4fv(m.U("volBlobState[0]"), int32(n), &flat[8*n])
+		gl.Uniform4fv(m.U("volBlobLook[0]"), int32(n), &flat[12*n])
+		gl.Uniform3fv(m.U("volBlobAlbedo[0]"), int32(n), &flat[16*n])
 	}
-	gl.Uniform1f(m.U("volBlobNoiseScale"), dr.look.NoiseScale)
-	gl.Uniform1f(m.U("volBlobDisplacement"), dr.look.Displacement)
-	gl.Uniform1f(m.U("volBlobBillow"), dr.look.Billow)
-	uniformVec3(m.U("volBlobAlbedo"), dr.look.Albedo)
-	gl.Uniform1f(m.U("volBlobAbsorption"), dr.look.Absorption)
 	gl.UniformMatrix3fv(m.U("volProxyBasis"), 1, false, &dr.proxyBasis[0])
 	uniformVec3(m.U("volProxyCenter"), dr.proxyCenter)
 }
@@ -1085,6 +1183,7 @@ func uploadExplosion(m *progUniforms, x *explosionParams) {
 	gl.Uniform1f(m.U("volExpHeat"), x.heat)
 	gl.Uniform1f(m.U("volExpDensity"), x.density)
 	gl.Uniform1f(m.U("volExpFadeK"), x.fade)
+	gl.Uniform1f(m.U("volExpJets"), x.jets)
 	gl.Uniform1f(m.U("volExpTurbulence"), x.turbulence)
 	gl.Uniform1f(m.U("volExpBrightness"), x.brightness)
 	gl.Uniform1f(m.U("volExpSeed"), x.seed)

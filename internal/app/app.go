@@ -77,7 +77,10 @@ func Run() {
 	}
 	fileutil.ExecutablePath = filepath.Dir(executable)
 	// Every asset the engine reads — levels, textures, shaders, scripts,
-	// game.yaml — is under resources/, beside the executable.
+	// game.yaml — is under a project's resources/. A tool run below names its
+	// own project with -root; until the project is chosen, it is the one beside
+	// the executable.
+	fileutil.ProjectPath = fileutil.ExecutablePath
 	fileutil.ResourcesPath = fileutil.ResourcesDir(fileutil.ExecutablePath)
 
 	// A development binary is also its project's release builder: `foundry
@@ -88,6 +91,17 @@ func Run() {
 		os.Exit(code)
 	}
 
+	// Which project: a release build's install; for the editor, the one it was
+	// asked for or opened last (internal/project). Shaders stay the
+	// executable's own when it carries them — they belong to the binary.
+	projectDir, projectReason := chooseProject(fileutil.ExecutablePath, os.Args[1:])
+	fileutil.ProjectPath = projectDir
+	fileutil.ResourcesPath = fileutil.ResourcesDir(projectDir)
+	fileutil.EngineShadersDir = fileutil.EngineShadersFor(fileutil.ExecutablePath, projectDir)
+	// File > Open Project ends this process and starts another on the chosen
+	// folder. Deferred first so it runs last, after SDL has let the window go.
+	defer func() { relaunchInto(devPendingProject()) }()
+
 	// Whatever resources/ is missing of its folders and its manifest. Ahead of
 	// startupConfigure, because a release build reads that manifest there.
 	scaffolded, scaffoldErr := scaffoldResources()
@@ -97,6 +111,9 @@ func Run() {
 	// is what says where the log belongs — and holds any failure until
 	// startupVerify below has somewhere to report it. See startup_release.go.
 	startupConfigure()
+	// FOUNDRY_BENCH — after the manifest, whose window size it may override,
+	// and before the log, which a benchmark run keeps apart from the game's.
+	benchConfigure()
 
 	// [SCENARIO 1/4/5] Open a persistent log file in the writable state
 	// directory so startup crashes are visible on Windows (where the console
@@ -104,12 +121,17 @@ func Run() {
 	// and the per-user data directory in an installed one — an installed game
 	// cannot write into its own install directory. See fileutil.StatePath.
 	logPath := fileutil.StatePath("foundry.log")
+	if bench.on {
+		logPath = fileutil.StatePath("foundry-bench.log")
+	}
 	logFile, ferr := os.Create(logPath)
 	var logSinks io.Writer = os.Stderr
 	if ferr != nil {
 		log.Printf("WARNING: could not create log file %s: %v — logging to stderr only", logPath, ferr)
 	} else {
-		logSinks = io.MultiWriter(os.Stderr, logFile)
+		// Not io.MultiWriter: a windowsgui release has no console, and its
+		// failing stderr would keep every line out of the file. See logFanout.
+		logSinks = newLogFanout(os.Stderr, logFile)
 		log.SetOutput(logSinks)
 		// os.File writes are unbuffered; entries reach the file even after os.Exit.
 	}
@@ -148,7 +170,12 @@ func Run() {
 	}()
 
 	log.Printf("executable directory: %s", fileutil.ExecutablePath)
+	log.Printf("project: %s (%s)", fileutil.ProjectPath, projectReason)
 	log.Printf("resources directory: %s", fileutil.ResourcesPath)
+	if fileutil.EngineShadersDir != "" {
+		log.Printf("shaders: %s, the executable's own", fileutil.EngineShadersDir)
+	}
+	projectOpened(fileutil.ProjectPath)
 
 	if err = sdl.Init(sdl.INIT_EVERYTHING); err != nil {
 		log.Fatalf("sdl.Init: %v", err)
@@ -175,6 +202,7 @@ func Run() {
 	audio.LoadSettings()
 	// And the player's mouse settings, which nothing about the device gates.
 	loadControlSettings()
+	loadGraphicsSettings()
 
 	// Creates the window and its GL context together, at the highest MSAA
 	// sample count the platform actually accepts — the multisample buffer is
@@ -239,8 +267,8 @@ func Run() {
 
 	// [SCENARIO 4] Check that shader files actually exist on disk before
 	// attempting to load them — catches stale/missing dist files immediately.
-	vShaderFull := filepath.Join(fileutil.ResourcesPath, gfx.VertexShaderPath)
-	fShaderFull := filepath.Join(fileutil.ResourcesPath, gfx.FragmentShaderPath)
+	vShaderFull := fileutil.ShaderPath(gfx.VertexShaderPath)
+	fShaderFull := fileutil.ShaderPath(gfx.FragmentShaderPath)
 	for _, p := range []string{vShaderFull, fShaderFull} {
 		if info, serr := os.Stat(p); serr != nil {
 			log.Printf("MISSING shader file: %s (%v)", p, serr)
@@ -259,10 +287,10 @@ func Run() {
 	gl.UseProgram(gfx.Program)
 
 	// Initialize shadow mapping pipeline (depth-only shaders + FBOs).
-	svShaderFull := filepath.Join(fileutil.ResourcesPath, shadowVertShaderPath)
-	sfShaderFull := filepath.Join(fileutil.ResourcesPath, shadowFragShaderPath)
-	scvShaderFull := filepath.Join(fileutil.ResourcesPath, shadowCubeVertPath)
-	scfShaderFull := filepath.Join(fileutil.ResourcesPath, shadowCubeFragPath)
+	svShaderFull := fileutil.ShaderPath(shadowVertShaderPath)
+	sfShaderFull := fileutil.ShaderPath(shadowFragShaderPath)
+	scvShaderFull := fileutil.ShaderPath(shadowCubeVertPath)
+	scfShaderFull := fileutil.ShaderPath(shadowCubeFragPath)
 	if err := render.InitShadows(svShaderFull, sfShaderFull, scvShaderFull, scfShaderFull); err != nil {
 		log.Fatalf("InitShadows: %v", err)
 	}
@@ -289,6 +317,9 @@ func Run() {
 
 	gfx.NormalColorUniform = gl.GetUniformLocation(gfx.Program, gl.Str("normalColor\x00"))
 	gl.Uniform1i(gfx.NormalColorUniform, 0) // default: sample tex, as a textured surface does
+
+	gfx.UnlitUniform = gl.GetUniformLocation(gfx.Program, gl.Str("unlit\x00"))
+	gl.Uniform1i(gfx.UnlitUniform, 0) // default: lit
 
 	gfx.AlphaSharpenUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alphaSharpen\x00"))
 	gl.Uniform1i(gfx.AlphaSharpenUniform, 0) // default: off; the opaque pass turns it on
@@ -405,6 +436,10 @@ func Run() {
 
 	log.Printf("startup complete — entering game loop")
 
+	// A benchmark run swaps in its level and goes straight into play. See
+	// bench.go.
+	benchStart(&level)
+
 	// Drain any events that accumulated during startup (level load, window creation,
 	// etc.) so the first game-loop poll doesn't see a huge mouse-motion delta.
 	sdl.PumpEvents()
@@ -413,6 +448,13 @@ func Run() {
 	platform.LastFrameTick = sdl.GetTicks()
 
 	for platform.Running {
+		// The frame's profile sections (render/profile.go). Off unless the F3
+		// overlay or a benchmark is reading them.
+		render.ProfileEnabled = bench.on || render.DebugOverlayVisible
+		render.ProfileFrameBegin()
+		render.ProfileBegin("frame")
+		render.ProfileBegin("update")
+
 		// Compute delta time (seconds), clamped to avoid spiral-of-death
 		now := sdl.GetTicks()
 		platform.DeltaTime = float32(now-platform.LastFrameTick) / 1000.0
@@ -482,6 +524,11 @@ func Run() {
 		// load is in flight the world does not tick — half of it belongs to the
 		// outgoing level and half to the incoming one — but the UI does, which
 		// is what lets the loading screen over it animate.
+		// A save, a load, a checkpoint, a retry or a restart a script asked
+		// for, ahead of the level load below so a save is of the world the
+		// last tick left and a load joins the queue the same way. See
+		// savegame.go.
+		handleSaveRequests(&level)
 		beginRequestedLevelLoad()
 		stepLevelLoad(&level)
 
@@ -498,6 +545,7 @@ func Run() {
 		scriptPaused := !devActive() && script.GamePaused()
 		gamePaused := scriptPaused || !devActive() && (ui.Game.Pauses() || levelLoadPending())
 
+		render.ProfileBegin("player & vehicles")
 		if devActive() {
 			// Editor owns camera and input; gameplay logic is bypassed.
 			devTick(platform.KeyStates)
@@ -515,6 +563,13 @@ func Run() {
 			} else {
 				dropMouseLook()
 				gfx.ResetRecoil()
+			}
+			// A script turning the view (the `look_at` verb). It keeps the
+			// view once it has arrived only while the player has no control
+			// of it — see gfx/look_at.go.
+			if gfx.ApplyLookAt(platform.DeltaTime, !platform.PlayerControlEnabled) {
+				gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
+				gfx.UpdateCamMatrix()
 			}
 			// --- Input -> player -> camera ---
 			// The keys say how far to move; the player is what moves, and the
@@ -627,6 +682,7 @@ func Run() {
 			}
 		}
 
+		render.ProfileEnd() // player & vehicles
 		// Motion banked while the view could not turn must not arrive later.
 		if devActive() || gamePaused {
 			dropMouseLook()
@@ -666,11 +722,15 @@ func Run() {
 		// It writes the level's own entities without going through the script
 		// host, so the play session is marked dirty by hand, as driving is.
 		if !devActive() && !gamePaused {
+			render.ProfileBegin("ai")
 			if ai.Update(&level, platform.DeltaTime, world.PlayerEntity) {
 				script.PlaySessionMarkDirty()
 			}
+			render.ProfileEnd()
 		}
+		render.ProfileBegin("entity update")
 		collision.EntityUpdate(&level, entityDT, !devActive() && !gamePaused, world.PlayerEntity)
+		render.ProfileEnd()
 		// The player's own viewmodel is not in level.Entities (see entity.go),
 		// so EntityUpdate's walk never reaches it. Ticked on the same entityDT
 		// — including the hard-pause zeroing — so a paused clip's clock stops
@@ -698,6 +758,7 @@ func Run() {
 		//
 		// Walked parents-first inside RefreshFrames, so a nested frame composes
 		// against a parent that is already up to date.
+		render.ProfileBegin("frames & waypoints")
 		world.RefreshFrames(&level, level.Frames)
 
 		// The camera, now that the frames are current. This is the whole reason
@@ -737,7 +798,11 @@ func Run() {
 		// that froze the moment the editor opened could not be placed by eye. The
 		// gate is handed over anyway so the simulation can tell play from
 		// authoring if it ever needs to.
+		render.ProfileEnd() // frames & waypoints
+		render.ProfileBegin("emitters")
 		world.EmitterUpdate(&level, platform.DeltaTime, !devActive() && !gamePaused)
+		render.ProfileEnd()
+		render.ProfileBegin("effects")
 
 		// Effects, in the emitters' slot and ungated by the editor for their
 		// reason, but stopped by a pause: an explosion is a moment, and one
@@ -762,6 +827,8 @@ func Run() {
 		// gfx.CamUp() rather than gfx.Cam.Up: the zero value there means "no
 		// tilt", and only the accessor knows that. The editor's fly camera is
 		// this same camera, which is what makes auditioning work.
+		render.ProfileEnd()
+		render.ProfileBegin("sound")
 		world.SoundUpdate(&level, platform.DeltaTime, !devActive(),
 			gfx.Cam.Position, gfx.Cam.Direction, gfx.CamUp())
 		world.MusicUpdate(&level)
@@ -769,7 +836,10 @@ func Run() {
 		// Advances a script's ease_sky the same way the lines above advance
 		// everything else time-based: RenderSky only ever reads lvl.Sky, so
 		// this is what makes the transition's blend actually move.
+		render.ProfileEnd()
+		render.ProfileBegin("sky")
 		world.SkyUpdate(&level, platform.DeltaTime, !devActive() && !gamePaused)
+		render.ProfileEnd()
 
 		// The interact key's vehicle half, before the script tick so a mount
 		// made this frame is visible to it. It consumes the press only when it
@@ -793,15 +863,20 @@ func Run() {
 		// microsecond later.
 		uidraw.SweepVideos()
 
+		render.ProfileBegin("ui tick")
 		if !devActive() {
 			ui.Game.Tick(platform.DeltaTime, float32(platform.WinWidth), float32(platform.WinHeight))
 		}
 
+		render.ProfileEnd() // ui tick
 		if !levelLoadPending() {
+			render.ProfileBegin("scripts")
 			script.ScriptTick(&level, platform.DeltaTime, !devActive())
+			render.ProfileEnd()
 		}
 
 		// --- Debug stats: update CPU & memory ---
+		render.ProfileBegin("debug stats")
 		render.DebugUpdateCPU()
 		render.DebugUpdateMemory()
 		render.DebugStats.FPS = 1.0 / platform.DeltaTime
@@ -825,6 +900,8 @@ func Run() {
 		// queuing a re-upload whenever a texture's clock crosses into its next
 		// frame — drained into the GL texture object right after, alongside
 		// every other queued texture edit.
+		render.ProfileEnd() // debug stats
+		render.ProfileBegin("drains")
 		gfx.AdvanceAnimatedTextures(float64(now) / 1000.0)
 
 		// Texture editor uploads (painted texels, saves) are queued rather
@@ -849,6 +926,12 @@ func Run() {
 		// window's draw would insert into the map being ranged over and leave
 		// the wrong GL context current. See pendingTexEditor.
 		devDrainWork()
+		render.ProfileEnd() // drains
+
+		// A benchmark pins the camera here: after everything that places it,
+		// before the first thing that reads it to draw.
+		benchPlaceCamera()
+		render.ProfileEnd() // update
 
 		// Per-frame water shader inputs: animation clock and the view position
 		// the fresnel/specular terms are measured against.
@@ -903,14 +986,24 @@ func Run() {
 			}
 
 			// --- Shadow pass: render depth from each shadow-casting light ---
+			render.ProfileBegin("shadows: sun")
 			shadowFrame := render.RenderShadowPass(level.Lights, &level, gfx.Cam.Matrix, gfx.Projection)
+			render.ProfileEnd()
 			// The clouds' shadow map, before any program's shadow uniforms go
 			// up — UploadShadowUniformsTo is what binds it. See cloud_shadow.go.
-			render.RenderCloudShadowMap(&level, gfx.Cam.Position)
+			render.ProfileBegin("shadows: clouds")
+			if !benchSkips("shadows: clouds") {
+				render.RenderCloudShadowMap(&level, gfx.Cam.Position)
+			}
+			render.ProfileEnd()
 			render.UploadShadowUniforms(level.Lights, shadowFrame)
 			// Scene lights, so an attached light's cubemap is rendered from
 			// where its carrier has taken it rather than from its offset.
-			render.RenderPointShadowPass(world.SceneLights(&level), &level)
+			render.ProfileBegin("shadows: point")
+			if !benchSkips("shadows: point") {
+				render.RenderPointShadowPass(world.SceneLights(&level), &level)
+			}
+			render.ProfileEnd()
 			// The scene's lights rather than the level's, so the shadow flags
 			// at an effect flash's index are written (off) rather than left at
 			// whatever a light that once had that slot set them to.
@@ -922,8 +1015,10 @@ func Run() {
 			// there is neither. Set per frame rather than at startup because it
 			// is level content and the level changes under it. See
 			// render.WorldClearColor.
+			render.ProfileBegin("clear")
 			render.ApplyWorldClearColor(&level)
 			gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+			render.ProfileEnd()
 
 			// The 3D editor's wireframe shading (editor_3d_view.go). Drawing
 			// the world as lines is the whole of it: with no filled triangles
@@ -1009,6 +1104,7 @@ func Run() {
 			// A transparent one is queued with its own centre as the sort key,
 			// not a model matrix's translation: its vertices are already in
 			// world space, so every one of them would sort at the origin.
+			render.ProfileBegin("world: compiled")
 			if level.Static != nil {
 				staticDrawScratch = level.Static.VisibleSurfaces(gfx.Cam.Position, staticDrawScratch)
 				n, calls := render.DrawStaticSurfaces(&level, staticDrawScratch, frustum, gfx.Cam.Position,
@@ -1022,7 +1118,9 @@ func Run() {
 				staticDrawn += n
 				brushDrawCalls += calls
 			}
+			render.ProfileEnd()
 
+			render.ProfileBegin("world: chunks")
 			for i := range level.Chunks {
 				chunk := &level.Chunks[i]
 				// A compiled chunk's static surfaces were drawn above, out of
@@ -1076,13 +1174,20 @@ func Run() {
 				brushesDrawn += st.Brushes
 				brushDrawCalls += st.DrawCalls
 			}
+			render.ProfileEnd()
 
 			// Placed entities. Unlike the spawn marker below, these are part
 			// of the world and draw in gameplay as well as in the editor.
-			render.RenderEntities(&level, &frustum, drawOrQueue)
+			render.ProfileBegin("entities")
+			if !benchSkips("entities") {
+				render.RenderEntities(&level, &frustum, drawOrQueue)
+			}
+			render.ProfileEnd()
 
 			// Placed scenery — the same story, one matrix simpler.
+			render.ProfileBegin("scenery")
 			render.RenderScenery(&level, &frustum, drawOrQueue)
+			render.ProfileEnd()
 
 			// The spawn marker is an authoring aid, not level geometry: it
 			// exists to be seen and dragged in the editor and must never show
@@ -1120,14 +1225,20 @@ func Run() {
 				// After opaque geometry but before the transparent pass:
 				// blades and rocks are solid and depth-written, so anything
 				// translucent still sorts on top of them.
+				render.ProfileBegin("scatter")
 				render.RenderScatterVolumes(&level, projView, gfx.Cam.Position, shadowFrame)
+				render.ProfileEnd()
 
 				// --- Sprites, cutout only ---
 				// Inside the opaque block on purpose: a cutout sprite's alpha
 				// is coverage, so the alpha-to-coverage still switched on above
 				// antialiases its silhouette and it needs no sorting at all.
 				// The alpha and additive modes come after the transparent pass.
-				render.RenderSpritesOpaque(&level, projView, gfx.Cam.Position, &frustum, shadowFrame)
+				render.ProfileBegin("sprites: cutout")
+				if !benchSkips("sprites") {
+					render.RenderSpritesOpaque(&level, projView, gfx.Cam.Position, &frustum, shadowFrame)
+				}
+				render.ProfileEnd()
 			}
 
 			// End of the opaque pass — hand alpha back to blending. Done
@@ -1146,10 +1257,13 @@ func Run() {
 			// blend against it. Skipped in wireframe for the reason the scatter
 			// is — a filled sky drawn as lines is neither.
 			if !editorWire {
+				render.ProfileBegin("sky")
 				render.RenderSky(&level)
+				render.ProfileEnd()
 			}
 
 			// --- Transparent pass: draw collected transparent geometry back-to-front ---
+			render.ProfileBegin("transparent")
 			if len(transparentDraws) > 0 {
 				sort.Slice(transparentDraws, func(a, b int) bool {
 					return transparentDraws[a].Distance > transparentDraws[b].Distance
@@ -1177,6 +1291,7 @@ func Run() {
 				gl.DepthMask(true)
 				gl.Disable(gl.BLEND)
 			}
+			render.ProfileEnd()
 
 			// --- Volumetrics: cloud volumes, the sky's cloud deck, fireballs ---
 			// After the transparent pass, so a cloud behind glass is seen
@@ -1185,7 +1300,11 @@ func Run() {
 			// the depth the opaque pass left, which nothing since has written.
 			// Skipped in wireframe for the reason the sky is. See volumetric.go.
 			if !editorWire {
-				render.RenderVolumetrics(&level, projView, gfx.Cam.Position, &frustum, render.MainVolumeTargets)
+				render.ProfileBegin("volumetrics")
+				if !benchSkips("volumetrics") {
+					render.RenderVolumetrics(&level, projView, gfx.Cam.Position, &frustum, render.MainVolumeTargets)
+				}
+				render.ProfileEnd()
 			}
 
 			// --- Sprites, alpha and additive ---
@@ -1194,7 +1313,11 @@ func Run() {
 			// queue that sorts one Geometry at a time — and additive quads want
 			// no sorting at all, which that queue has no way to express.
 			if !editorWire {
-				render.RenderSpritesTransparent(&level, projView, gfx.Cam.Position, &frustum, shadowFrame)
+				render.ProfileBegin("sprites: blended")
+				if !benchSkips("sprites") {
+					render.RenderSpritesTransparent(&level, projView, gfx.Cam.Position, &frustum, shadowFrame)
+				}
+				render.ProfileEnd()
 			}
 
 			// --- First-person viewmodel ---
@@ -1209,7 +1332,9 @@ func Run() {
 			// Viewmodel section is open, which is the one moment the editor
 			// itself needs to see this (render.EditorPreviewActive).
 			if !devActive() || render.EditorPreviewActive {
+				render.ProfileBegin("viewmodel")
 				render.RenderViewmodel()
+				render.ProfileEnd()
 			}
 
 			// Back to filled triangles before the editor overlays and ImGui,
@@ -1230,6 +1355,7 @@ func Run() {
 		// Not drawn while the editor is active, for the same reason scripts do
 		// not run there: what is on screen in the editor is the level, not the
 		// game.
+		render.ProfileBegin("ui")
 		if !devActive() {
 			// One pass per screen, bottom to top. Each has its own canvas and
 			// therefore its own scale, so they cannot share a projection.
@@ -1250,13 +1376,22 @@ func Run() {
 		if !devActive() {
 			devRenderOverlays(platform.DeltaTime)
 		}
+		render.ProfileEnd() // ui
+		render.ProfileEnd() // frame
 
+		// Where a GPU-bound frame shows up on the CPU: the swap blocks until
+		// the GPU has caught up.
+		benchCaptureShot()
+		render.ProfileBegin("swap")
 		platform.Window.GLSwap()
+		render.ProfileEnd()
 
 		// Secondary windows (texture editor, etc.) render last, each in its
 		// own GL/imgui context, restoring the main ones before the next
 		// iteration touches world GL state again.
 		devRenderSecondaryWindows(platform.DeltaTime)
+
+		benchEndFrame()
 	}
 }
 

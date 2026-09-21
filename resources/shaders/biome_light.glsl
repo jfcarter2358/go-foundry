@@ -240,12 +240,20 @@ float biomePointShadow(int lightIdx, vec3 worldPos) {
 // so a blade, a pebble and the floor under them agree about how lit they are.
 // receiveShadow lets a caller take the lighting without the cascade lookup (the
 // BiomeShadows.Receive toggle, so the cost can be measured against zero).
-vec3 biomeLighting(vec3 worldPos, vec3 normal, float viewDepth, bool receiveShadow) {
-    vec3 lighting = globalLightColor * globalLightBrightness;
+// twoSided is for the paper-thin things — a grass blade, a sprite — whose
+// normal says little about which side the light is on: they take it from
+// either side, as light through a leaf. A solid surface (a ground patch, a
+// rock) takes light_model.glsl's one-sided model, as the floor does.
+float biomeDiffuse(float ndl, bool twoSided) {
+    return lightWrapTerm(twoSided ? abs(ndl) : ndl);
+}
+
+vec3 biomeLighting(vec3 worldPos, vec3 normal, float viewDepth, bool receiveShadow, bool twoSided) {
+    vec3 lighting = ambientAt(globalLightColor * globalLightBrightness, normal);
 
     for (int i = 0; i < numDirLights; i++) {
         vec3 ldir = -normalize(dirLightDir[i]);
-        float diff = abs(dot(normal, ldir));
+        float diff = biomeDiffuse(dot(normal, ldir), twoSided);
         vec3 contrib = dirLightColor[i] * dirLightBrightness[i] * diff;
 
         if (receiveShadow && dirLightCastShadows[i]) {
@@ -266,7 +274,7 @@ vec3 biomeLighting(vec3 worldPos, vec3 normal, float viewDepth, bool receiveShad
         if (dist < pointLightRadius[i]) {
             float t           = 1.0 - (dist / pointLightRadius[i]);
             float attenuation = t * t;
-            float diff        = abs(dot(normal, normalize(toLight)));
+            float diff        = biomeDiffuse(dot(normal, normalize(toLight)), twoSided);
             vec3 contrib = pointLightColor[i] * pointLightBrightness[i] * diff * attenuation;
 
 #ifdef BIOME_LIGHT_POINT_SHADOWS

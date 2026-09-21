@@ -42,6 +42,7 @@ package world
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -234,26 +235,73 @@ func EntityBrushesEqual(a, b []Brush) bool {
 	return true
 }
 
-// rawBrushesEqual compares two serialized brushes.
+// rawBrushesEqual compares two serialized brushes — every field RawBrush
+// writes. One this skips is one the entity editor never copies back into its
+// document: Shape Detail edits, which only move the detail mesh, used to be
+// exactly that, and a save wrote the type out without them.
 func rawBrushesEqual(a, b RawBrush) bool {
-	if a.ID != b.ID || a.Dynamic != b.Dynamic || len(a.Verts) != len(b.Verts) ||
-		len(a.Faces) != len(b.Faces) {
+	if a.ID != b.ID || a.Dynamic != b.Dynamic {
 		return false
 	}
 	if (a.Solid == nil) != (b.Solid == nil) || (a.Solid != nil && *a.Solid != *b.Solid) {
 		return false
 	}
-	for i := range a.Verts {
-		if a.Verts[i] != b.Verts[i] {
+	if !rawScriptDataEqual(a.RawScriptData, b.RawScriptData) {
+		return false
+	}
+	if !rawMeshesEqual(a.Verts, a.Faces, b.Verts, b.Faces) {
+		return false
+	}
+	if (a.Detail == nil) != (b.Detail == nil) {
+		return false
+	}
+	return a.Detail == nil || rawMeshesEqual(a.Detail.Verts, a.Detail.Faces, b.Detail.Verts, b.Detail.Faces)
+}
+
+// rawMeshesEqual compares one serialized vertex/face pair — a brush's hull or
+// its detail mesh, which are written the same way.
+func rawMeshesEqual(av []float32, af []RawBrushFace, bv []float32, bf []RawBrushFace) bool {
+	if len(av) != len(bv) || len(af) != len(bf) {
+		return false
+	}
+	for i := range av {
+		if av[i] != bv[i] {
 			return false
 		}
 	}
-	for i := range a.Faces {
-		if !rawBrushFacesEqual(a.Faces[i], b.Faces[i]) {
+	for i := range af {
+		if !rawBrushFacesEqual(af[i], bf[i]) {
 			return false
 		}
 	}
-	return (a.Detail == nil) == (b.Detail == nil)
+	return true
+}
+
+// rawScriptDataEqual compares a brush's serialized tags, attributes and
+// script. A nil and an empty map both write nothing, so they are equal.
+func rawScriptDataEqual(a, b RawScriptData) bool {
+	if a.Script != b.Script || len(a.Tags) != len(b.Tags) {
+		return false
+	}
+	for i := range a.Tags {
+		if a.Tags[i] != b.Tags[i] {
+			return false
+		}
+	}
+	return rawAttrMapsEqual(a.Attributes, b.Attributes) && rawAttrMapsEqual(a.ScriptParams, b.ScriptParams)
+}
+
+func rawAttrMapsEqual(a, b map[string]RawAttribute) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok || av.Type != bv.Type || !reflect.DeepEqual(av.Value, bv.Value) {
+			return false
+		}
+	}
+	return true
 }
 
 // rawBrushFacesEqual compares two serialized faces, index loop included.

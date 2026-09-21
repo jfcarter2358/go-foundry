@@ -69,6 +69,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroup("Scatter##volscattergrp", 0, func() { editorVolumeScatter(v) })
 	editorPropGroup("Frame Doorway##voldoorgrp", 0, func() { editorVolumeDoorway(v) })
 	editorPropGroupOpen("Level Exit##volexitgrp", func() { editorVolumeLevelExit(v) })
+	editorPropGroupOpen("Checkpoint##volckgrp", func() { editorVolumeCheckpoint(v) })
 	editorPropGroup("AI Objective##volobjgrp", 0, func() { editorVolumeObjective(v) })
 	editorObjectWaypointsUI(v)
 	editorScriptDataUI(&v.ScriptData, "vol", strconv.Quote(v.ID))
@@ -225,10 +226,10 @@ func editorVolumeScatter(v *world.Volume) {
 		s.Enabled = on
 	}
 
-	if imgui.BeginCombo("Kind##volscatterkind", world.ScatterKindName(s.Kind)) {
+	if imguibackend.BeginCombo("Kind##volscatterkind", world.ScatterKindName(s.Kind)) {
 		for i, name := range world.ScatterKindNames {
 			kind := int32(i)
-			if imgui.SelectableV(name, kind == s.Kind, 0, imgui.Vec2{}) && kind != s.Kind {
+			if imguibackend.SelectableV(name, kind == s.Kind, 0, imgui.Vec2{}) && kind != s.Kind {
 				EditorPushUndo()
 				s.Kind = kind
 				// The slope gate's DEFAULT differs per kind — rock reads fine
@@ -237,7 +238,7 @@ func editorVolumeScatter(v *world.Volume) {
 				render.EvictScatterCache(v.ID)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 
 	editorDragFloat("Density##volscatterdens", &s.Density, 0, 1, "%.2f")
@@ -434,8 +435,8 @@ func editorVolumeDoorway(v *world.Volume) {
 	if label == "" {
 		label = "world"
 	}
-	if imgui.BeginCombo("Opens onto##voldoorto", label) {
-		if imgui.SelectableV("world", v.Doorway.To == "", 0, imgui.Vec2{}) && v.Doorway.To != "" {
+	if imguibackend.BeginCombo("Opens onto##voldoorto", label) {
+		if imguibackend.SelectableV("world", v.Doorway.To == "", 0, imgui.Vec2{}) && v.Doorway.To != "" {
 			EditorPushUndo()
 			v.Doorway.To = ""
 		}
@@ -446,12 +447,12 @@ func editorVolumeDoorway(v *world.Volume) {
 			if e.Vehicle == nil || e.ID == frame {
 				continue
 			}
-			if imgui.SelectableV(e.ID, v.Doorway.To == e.ID, 0, imgui.Vec2{}) && v.Doorway.To != e.ID {
+			if imguibackend.SelectableV(e.ID, v.Doorway.To == e.ID, 0, imgui.Vec2{}) && v.Doorway.To != e.ID {
 				EditorPushUndo()
 				v.Doorway.To = e.ID
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("The space on the other side. \"world\" is the ground, and is\n" +
@@ -472,16 +473,16 @@ func editorVolumeDoorway(v *world.Volume) {
 // the cage is built in volume-local space, so moving or rotating a volume needs
 // no rebuild at all.
 func editorVolumeShape(v *world.Volume) {
-	if imgui.BeginCombo("Shape##volshape", world.VolumeShapeName(v.Shape)) {
+	if imguibackend.BeginCombo("Shape##volshape", world.VolumeShapeName(v.Shape)) {
 		for i, name := range world.VolumeShapeNames {
 			kind := world.VolumeShape(i)
-			if imgui.SelectableV(name, kind == v.Shape, 0, imgui.Vec2{}) && kind != v.Shape {
+			if imguibackend.SelectableV(name, kind == v.Shape, 0, imgui.Vec2{}) && kind != v.Shape {
 				EditorPushUndo()
 				v.Shape = kind
 				rebuildActiveVolumeCage()
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 
 	half := [3]float32{v.HalfX, v.HalfY, v.HalfZ}
@@ -505,7 +506,7 @@ func editorVolumeLevelExit(v *world.Volume) {
 	if current == "" {
 		current = "(none)"
 	}
-	open := imgui.BeginCombo("Load Level##volloadlevel", current)
+	open := imguibackend.BeginCombo("Load Level##volloadlevel", current)
 	// Re-read the folder as the list drops down rather than on every frame it
 	// is held open — it fills the same cache the Open dialog uses, refreshed at
 	// the one moment it could be stale.
@@ -514,18 +515,18 @@ func editorVolumeLevelExit(v *world.Volume) {
 	}
 	Editor.VolLevelComboOpen = open
 	if open {
-		if imgui.SelectableV("(none)", v.LoadLevel == "", 0, imgui.Vec2{}) && v.LoadLevel != "" {
+		if imguibackend.SelectableV("(none)", v.LoadLevel == "", 0, imgui.Vec2{}) && v.LoadLevel != "" {
 			EditorPushUndo()
 			v.LoadLevel = ""
 		}
 		for _, f := range Editor.LevelFiles {
 			name := strings.TrimSuffix(f, levelio.LevelExt)
-			if imgui.SelectableV(name, name == v.LoadLevel, 0, imgui.Vec2{}) && name != v.LoadLevel {
+			if imguibackend.SelectableV(name, name == v.LoadLevel, 0, imgui.Vec2{}) && name != v.LoadLevel {
 				EditorPushUndo()
 				v.LoadLevel = name
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Walking the player into this volume loads that level,\n" +
@@ -534,6 +535,24 @@ func editorVolumeLevelExit(v *world.Volume) {
 	}
 	if v.LoadLevel != "" && v.Script != "" {
 		imgui.Text("Its script still gets `enter`, before the load starts.")
+	}
+}
+
+// editorVolumeCheckpoint draws the one switch that makes a volume a
+// checkpoint. See world.Volume.Checkpoint.
+func editorVolumeCheckpoint(v *world.Volume) {
+	on := v.Checkpoint
+	if imgui.Checkbox("Checkpoint##volcheckpoint", &on) {
+		EditorPushUndo()
+		v.Checkpoint = on
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The first time the player walks in, the game autosaves,\n" +
+			"and dying offers Retry from here. Only the player triggers it,\n" +
+			"only while the volume is enabled, and once per play-through.")
+	}
+	if v.Checkpoint && v.Script != "" {
+		imgui.Text("Its script still gets `enter`; the save is taken after.")
 	}
 }
 

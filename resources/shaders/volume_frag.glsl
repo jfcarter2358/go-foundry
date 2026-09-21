@@ -1,7 +1,13 @@
 #version 410
 
 // volume_frag.glsl — one volumetric draw: a cloud volume, the sky's cloud
-// deck, a group of particle blobs, or an explosion effect.
+// deck, or a local draw — particle blobs and/or an explosion effect, marched
+// together when they overlap (render/volumetric.go's mergeLocalDraws).
+//
+// Together, because two volumes drawn one after the other can only be stacked,
+// not interleaved: a smoke plume wrapped round a fireball drew either wholly in
+// front of it or wholly behind, and flipped between the two as the eye moved.
+// One march through both integrates them in the order the ray meets them.
 //
 // fog.glsl and volume_common.glsl are spliced in above this (VolumetricInit).
 //
@@ -27,16 +33,15 @@
 // fireball half-buried in the floor is half-buried.
 
 #define VOL_KIND_CLOUD 0
-#define VOL_KIND_BLOBS 1
+#define VOL_KIND_LOCAL 1
 #define VOL_KIND_DECK  2
-#define VOL_KIND_EXPLOSION 3
 
 #define VOL_MAX_STEPS       128
 #define VOL_MAX_LIGHT_STEPS 8
 
 uniform int         volKind;
 uniform CloudParams volCloud;        // CLOUD and DECK
-uniform mat3        volProxyBasis;   // BLOBS: world offset -> the group's unit box
+uniform mat3        volProxyBasis;   // LOCAL: world offset -> the draw's unit box
 uniform vec3        volProxyCenter;
 
 uniform mat4      volInvProjView;
@@ -48,9 +53,6 @@ uniform int       volLightSteps;
 uniform float     volLightReach;     // how far toward the sun a sample looks
 uniform float     volDeckRange;
 uniform float     volPixelFootprint; // world size of a target pixel one unit from the eye
-
-uniform vec3  volBlobAlbedo;
-uniform float volBlobAbsorption;
 
 // Regions cloud is kept out of (Volume.ClearsClouds): a ship's hold parked in
 // a bank. Each is a shape in the normalised space fog.glsl solves a fog bank in
@@ -73,14 +75,17 @@ float volIGN(vec2 p) {
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
 
-float volDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
-    if (volKind == VOL_KIND_BLOBS) {
-        return blobDensity(p, footprint, detail, glow);
+// volDensity is the extinction at p. medium gains the albedo (rgb) and
+// absorption (a) of what is there, each weighted by its own extinction, so
+// medium / sigma is the mix a sample is made of.
+float volDensity(vec3 p, float footprint, bool detail, inout vec3 glow, inout vec4 medium) {
+    if (volKind == VOL_KIND_LOCAL) {
+        return blobDensity(p, footprint, detail, glow, medium)
+             + explosionDensity(p, footprint, detail, glow, medium);
     }
-    if (volKind == VOL_KIND_EXPLOSION) {
-        return explosionDensity(p, footprint, detail, glow);
-    }
-    return cloudDensity(volCloud, p, footprint, detail);
+    float s = cloudDensity(volCloud, p, footprint, detail);
+    medium += vec4(volCloud.albedo, volCloud.absorption) * s;
+    return s;
 }
 
 // volCleared reports whether p is inside a region cloud is kept out of. Only
@@ -119,29 +124,22 @@ bool volCleared(vec3 p) {
 }
 
 bool volInterval(vec3 ro, vec3 rd, inout float t0, inout float t1) {
-    if (volKind == VOL_KIND_BLOBS) {
+    if (volKind == VOL_KIND_LOCAL) {
         return fogShapeInterval(VOL_SHAPE_BOX, volProxyBasis, volProxyCenter, ro, rd, t0, t1);
-    }
-    if (volKind == VOL_KIND_EXPLOSION) {
-        return fogShapeInterval(VOL_SHAPE_SPHERE, mat3(1.0 / max(volExpReach, 1e-3)),
-                                volExpCenter, ro, rd, t0, t1);
     }
     return cloudInterval(volCloud, ro, rd, t0, t1);
 }
 
 float volHeight(vec3 p) {
-    if (volKind == VOL_KIND_BLOBS) {
+    if (volKind == VOL_KIND_LOCAL) {
         return clamp((volProxyBasis * (p - volProxyCenter)).y * 0.5 + 0.5, 0.0, 1.0);
-    }
-    if (volKind == VOL_KIND_EXPLOSION) {
-        return clamp((p.y - volExpCenter.y) / max(volExpReach, 1e-3) * 0.5 + 0.5, 0.0, 1.0);
     }
     return clamp(cloudHeight(volCloud, p), 0.0, 1.0);
 }
 
 // volLightDepth is the optical depth between p and the edge of the region
 // along the sun direction — how much of the cloud's own mass the sunlight
-// crossed to get here.
+// crossed to get here, each part of it weighted by its own absorption.
 float volLightDepth(vec3 p, float footprint) {
     float t0 = 0.0;
     float t1 = volLightReach;
@@ -157,7 +155,9 @@ float volLightDepth(vec3 p, float footprint) {
             break;
         }
         vec3 q = p + volSunDir * (t0 + stepL * (float(j) + 0.5));
-        od += volDensity(q, max(footprint, stepL), false, ignored) * stepL;
+        vec4 medium = vec4(0.0);
+        volDensity(q, max(footprint, stepL), false, ignored, medium);
+        od += medium.a * stepL;
     }
     return od;
 }
@@ -181,14 +181,7 @@ void main() {
 
     bool sun = dot(volSunColor, volSunColor) > 0.0;
     float phase = volPhase(dot(rd, volSunDir));
-    vec3 albedo = (volKind == VOL_KIND_BLOBS) ? volBlobAlbedo : volCloud.albedo;
-    float absorption = (volKind == VOL_KIND_BLOBS) ? volBlobAbsorption : volCloud.absorption;
-    float ambientK = (volKind == VOL_KIND_BLOBS) ? 1.0 : volCloud.ambient;
-    if (volKind == VOL_KIND_EXPLOSION) {
-        albedo = volExpSmoke;
-        absorption = 1.0;
-        ambientK = 1.0;
-    }
+    float ambientK = (volKind == VOL_KIND_LOCAL) ? 1.0 : volCloud.ambient;
 
     float T = 1.0;
     vec3 L = vec3(0.0);
@@ -206,14 +199,15 @@ void main() {
         }
 
         vec3 glow = vec3(0.0);
-        float sigma = volDensity(p, footprint, true, glow);
+        vec4 medium = vec4(0.0);
+        float sigma = volDensity(p, footprint, true, glow, medium);
         if (sigma <= 1e-6) {
             continue;
         }
 
         vec3 light = mix(volAmbientBottom, volAmbientTop, volHeight(p)) * ambientK;
         if (sun) {
-            float od = volLightDepth(p, footprint) * absorption;
+            float od = volLightDepth(p, footprint);
             // Direct sunlight through the cloud's own mass, plus a cheap stand-in
             // for light scattered more than once: a far weaker extinction with
             // no phase, which is what keeps the deep side of a thick cloud grey
@@ -222,7 +216,7 @@ void main() {
         }
         light += volPointLights(p);
 
-        vec3 S = sigma * albedo * light + glow;
+        vec3 S = medium.rgb * light + glow;
         float Ts = exp(-sigma * dt);
         L += T * (S - S * Ts) / sigma;
 

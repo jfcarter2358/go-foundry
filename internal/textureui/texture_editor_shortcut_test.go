@@ -25,7 +25,20 @@ func TestShortcutMapping(t *testing.T) {
 		{"ctrl+y redoes", sdl.SCANCODE_Y, true, false, false, texShortcutRedo},
 		{"bare z paints nothing", sdl.SCANCODE_Z, false, false, false, texShortcutNone},
 		{"ctrl+z in a text field is the field's", sdl.SCANCODE_Z, true, false, true, texShortcutNone},
-		{"unrelated chord", sdl.SCANCODE_A, true, false, false, texShortcutNone},
+		{"unrelated chord", sdl.SCANCODE_Q, true, false, false, texShortcutNone},
+		{"ctrl+c copies", sdl.SCANCODE_C, true, false, false, texShortcutCopy},
+		{"ctrl+x cuts", sdl.SCANCODE_X, true, false, false, texShortcutCut},
+		{"ctrl+v pastes", sdl.SCANCODE_V, true, false, false, texShortcutPaste},
+		{"ctrl+a selects all", sdl.SCANCODE_A, true, false, false, texShortcutSelectAll},
+		{"ctrl+d deselects", sdl.SCANCODE_D, true, false, false, texShortcutDeselect},
+		{"escape deselects", sdl.SCANCODE_ESCAPE, false, false, false, texShortcutDeselect},
+		{"ctrl+shift+i inverts", sdl.SCANCODE_I, true, true, false, texShortcutInvertSelection},
+		{"ctrl+i is nothing", sdl.SCANCODE_I, true, false, false, texShortcutNone},
+		{"delete erases", sdl.SCANCODE_DELETE, false, false, false, texShortcutEraseSelection},
+		{"arrow nudges", sdl.SCANCODE_LEFT, false, false, false, texShortcutNudgeLeft},
+		{"shift+arrow nudges too", sdl.SCANCODE_DOWN, false, true, false, texShortcutNudgeDown},
+		{"delete in a text field is the field's", sdl.SCANCODE_DELETE, false, false, true, texShortcutNone},
+		{"ctrl+v in a text field is the field's", sdl.SCANCODE_V, true, false, true, texShortcutNone},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

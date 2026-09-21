@@ -20,6 +20,7 @@ import (
 	"foundry/internal/audio"
 	"foundry/internal/fileutil"
 	"foundry/internal/platform"
+	"foundry/internal/prefs"
 
 	"gopkg.in/yaml.v2"
 )
@@ -41,14 +42,18 @@ type rawControls struct {
 	Bindings map[string][]string `yaml:"bindings,omitempty"`
 }
 
-// loadControlSettings reads the saved mouse settings over the defaults.
+// loadControlSettings reads the saved mouse settings over the defaults, and the
+// game's own settings (settings.yaml, internal/prefs) beside them.
 func loadControlSettings() {
-	data, err := fileutil.ReadState(controlsFileName)
-	if err != nil {
-		return
+	if data, err := fileutil.ReadState(controlsFileName); err == nil {
+		if err := applyControlSettings(data); err != nil {
+			log.Printf("controls: %s: %v (using defaults)", controlsFileName, err)
+		}
 	}
-	if err := applyControlSettings(data); err != nil {
-		log.Printf("controls: %s: %v (using defaults)", controlsFileName, err)
+	if data, err := fileutil.ReadState(prefs.FileName); err == nil {
+		if err := prefs.Load(data); err != nil {
+			log.Printf("settings: %s: %v", prefs.FileName, err)
+		}
 	}
 }
 
@@ -130,10 +135,11 @@ func (s *settledSave) step(changed *bool, dt float32) bool {
 	return true
 }
 
-var controlsSave, audioSave settledSave
+var controlsSave, audioSave, prefsSave settledSave
 
-// saveSettingsWhenSettled writes controls.yaml and audio.yaml once a script's
-// change to them has settled. Called once a frame from the frame loop.
+// saveSettingsWhenSettled writes controls.yaml, audio.yaml, graphics.yaml and
+// settings.yaml once a script's change to them has settled. Called once a frame from the
+// frame loop.
 func saveSettingsWhenSettled(dt float32) {
 	if controlsSave.step(&platform.ControlSettingsChanged, dt) {
 		data, err := marshalControlSettings()
@@ -144,6 +150,16 @@ func saveSettingsWhenSettled(dt float32) {
 			log.Printf("controls: saving %s: %v", controlsFileName, err)
 		}
 	}
+	if prefsSave.step(&prefs.Changed, dt) {
+		data, err := prefs.Marshal()
+		if err == nil {
+			err = fileutil.WriteFileAtomic(fileutil.StatePath(prefs.FileName), data)
+		}
+		if err != nil {
+			log.Printf("settings: saving %s: %v", prefs.FileName, err)
+		}
+	}
+	saveGraphicsWhenSettled(dt)
 	if audioSave.step(&audio.SettingsChanged, dt) {
 		if err := audio.SaveSettings(); err != nil {
 			log.Printf("audio: saving settings: %v", err)

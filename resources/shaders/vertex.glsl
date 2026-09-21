@@ -26,7 +26,8 @@ layout(location = 2) in vec3 vertNormal;
 // The attribute array is disabled otherwise; bakedLight is what gates reading
 // it, for the same reason `skinned` gates the bone attributes — an unenabled
 // attribute reads a driver default, not zero.
-layout(location = 5) in vec3 vertLight;
+// xyz is the baked colour; w the baked sun's share (see fragment.glsl).
+layout(location = 5) in vec4 vertLight;
 
 out vec2 fragTexCoord;
 out vec3 fragWorldPos;
@@ -34,7 +35,7 @@ out vec3 fragNormal;
 // View-axis distance; the fragment stage uses it to select a shadow cascade.
 out float fragViewDepth;
 // The baked value, passed through and interpolated across the triangle.
-out vec3 fragBakedLight;
+out vec4 fragBakedLight;
 
 // Sum of three travelling sine waves at different headings, so the surface
 // never reads as a single repeating ripple. Driven by world XZ, which keeps

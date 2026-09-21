@@ -31,11 +31,14 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+
+	"foundry/internal/fileutil"
+	"foundry/internal/pack"
 )
 
 // RuntimesDirName is the folder prebuilt game binaries live in, in the project
 // directory. Not a content directory, so nothing in it is ever packed.
-const RuntimesDirName = "runtimes"
+const RuntimesDirName = pack.RuntimesDirName
 
 // PlayerFileName is what a prebuilt game binary for a platform is called in
 // runtimes/, and what `make runtimes` names it.
@@ -45,7 +48,24 @@ func PlayerFileName(p Platform) string {
 
 // PrebuiltPlayer is where a platform's prebuilt game binary is expected.
 func PrebuiltPlayer(root string, p Platform) string {
-	return filepath.Join(root, RuntimesDirName, PlayerFileName(p))
+	return runtimeFile(root, PlayerFileName(p))
+}
+
+// runtimeFile finds a file in the project's runtimes/, or else in the one
+// beside the editor — where an editor installed from a Foundry release keeps
+// the binaries it was released with. The project's wins, so a project can pin
+// its own. When neither has it, it is the project's path, for the message
+// saying where it was expected.
+func runtimeFile(root, name string) string {
+	own := filepath.Join(root, RuntimesDirName, name)
+	if _, err := os.Stat(own); err == nil || fileutil.ExecutablePath == "" {
+		return own
+	}
+	editor := filepath.Join(fileutil.ExecutablePath, RuntimesDirName, name)
+	if _, err := os.Stat(editor); err == nil {
+		return editor
+	}
+	return own
 }
 
 // FindSource returns the Foundry checkout to build the game binary from, or ""
@@ -125,7 +145,14 @@ func BuildPlayer(ctx context.Context, src string, p Platform, out string, w io.W
 	if p.GOOS == "windows" {
 		ldflags += " -H windowsgui"
 	}
-	cmd := exec.CommandContext(ctx, goTool, "build", "-tags", "release", "-ldflags", ldflags, "-o", absOut, "./cmd/foundry")
+	return goBuildEngine(ctx, goTool, src, p, absOut, w, "-tags", "release", "-ldflags", ldflags)
+}
+
+// goBuildEngine builds cmd/foundry from a checkout for a platform, with cgo and
+// the flags given, into out.
+func goBuildEngine(ctx context.Context, goTool, src string, p Platform, absOut string, w io.Writer, flags ...string) error {
+	args := append(append([]string{"build"}, flags...), "-o", absOut, "./cmd/foundry")
+	cmd := exec.CommandContext(ctx, goTool, args...)
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "GOOS="+p.GOOS, "GOARCH="+p.GOARCH, "CGO_ENABLED=1")
 	if p.GOOS == "windows" && runtime.GOOS != "windows" {
@@ -157,7 +184,7 @@ const setupStubPackage = "foundry/cmd/foundrysetup"
 // PrebuiltSetupStub is where the prebuilt Windows installer program is
 // expected.
 func PrebuiltSetupStub(root string) string {
-	return filepath.Join(root, RuntimesDirName, SetupStubFileName)
+	return runtimeFile(root, SetupStubFileName)
 }
 
 // BuildSetupStub compiles the Windows installer program from a Foundry

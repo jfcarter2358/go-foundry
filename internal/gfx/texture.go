@@ -31,20 +31,15 @@ import (
 var TextureUploadsEnabled = true
 
 func LoadTexture(name, file string) error {
-	imgFile, err := os.Open(file)
-	if err != nil {
-		return fmt.Errorf("texture %q not found on disk: %v", file, err)
+	// A decode PrefetchTextures already started is waited for rather than
+	// repeated.
+	rgba, err, ok := takePrefetched(file)
+	if !ok {
+		rgba, err = decodeTextureFile(file)
 	}
-	img, _, err := image.Decode(imgFile)
 	if err != nil {
 		return err
 	}
-
-	rgba := image.NewRGBA(img.Bounds())
-	if rgba.Stride != rgba.Rect.Size().X*4 {
-		return fmt.Errorf("unsupported stride")
-	}
-	draw.Draw(rgba, rgba.Bounds(), img, image.Point{0, 0}, draw.Src)
 
 	// Everything above is the decode, which any tool that only wants to know a
 	// texture's size can do; everything below hands it to the GPU. The split
@@ -70,6 +65,7 @@ func LoadTexture(name, file string) error {
 
 	Textures[name] = texture
 	noteTextureSize(name, int32(rgba.Rect.Size().X), int32(rgba.Rect.Size().Y))
+	noteTextureMean(name, rgba)
 
 	if !TextureUploadsEnabled {
 		// The normal map's own load would upload too, and a headless caller has
@@ -85,6 +81,27 @@ func LoadTexture(name, file string) error {
 		log.Printf("WARNING: %v", err)
 	}
 	return nil
+}
+
+// decodeTextureFile reads a PNG into tightly packed RGBA. Pure CPU and touching
+// no package state, so PrefetchTextures can run it off the main thread.
+func decodeTextureFile(file string) (*image.RGBA, error) {
+	imgFile, err := os.Open(file)
+	if err != nil {
+		return nil, fmt.Errorf("texture %q not found on disk: %v", file, err)
+	}
+	defer imgFile.Close()
+	img, _, err := image.Decode(imgFile)
+	if err != nil {
+		return nil, err
+	}
+
+	rgba := image.NewRGBA(img.Bounds())
+	if rgba.Stride != rgba.Rect.Size().X*4 {
+		return nil, fmt.Errorf("unsupported stride")
+	}
+	draw.Draw(rgba, rgba.Bounds(), img, image.Point{0, 0}, draw.Src)
+	return rgba, nil
 }
 
 // EnsureTextureLoaded uploads the named texture to the GPU if it isn't
@@ -196,6 +213,7 @@ func UpdateTextureFromRGBA(name string, img *image.RGBA) error {
 	// place.
 	generateWorldMipmaps()
 	noteTextureSize(name, w, h)
+	noteTextureMean(name, img)
 	return nil
 }
 

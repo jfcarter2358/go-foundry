@@ -816,8 +816,8 @@ func Editor3DPanel() {
 		return
 	}
 
-	imgui.SetNextWindowPos(imgui.Vec2{X: float32(platform.WinWidth) - Editor.PanelWidth, Y: 28})
-	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: float32(platform.WinHeight) - 28})
+	imgui.SetNextWindowPos(imgui.Vec2{X: float32(platform.WinWidth) - Editor.PanelWidth, Y: editorTopBarH})
+	imgui.SetNextWindowSize(imgui.Vec2{X: Editor.PanelWidth, Y: float32(platform.WinHeight) - editorTopBarH})
 	imgui.BeginV("3D Editor", nil, imgui.WindowFlagsNoMove|imgui.WindowFlagsNoResize)
 
 	editorPanelBody(lvl)

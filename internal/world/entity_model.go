@@ -23,8 +23,11 @@ import (
 	"foundry/internal/hooks"
 	"foundry/internal/model"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -118,6 +121,11 @@ type EntityModel struct {
 	Alpha float32
 	// Visible hides this attachment without removing it.
 	Visible bool
+	// Unlit draws the attachment at its texture's own colour, with no light or
+	// shadow on it and none cast by it — for something that gives off light,
+	// like a beam. It draws in the sorted transparent pass, so a texture with
+	// an alpha channel fades off at its edges as a glow rather than a solid.
+	Unlit bool
 
 	// Animations are the named clips this attachment can play.
 	Animations []EntityAnimation
@@ -288,7 +296,7 @@ func (m *EntityModel) Load(ownerID string) error {
 		if err := gfx.EnsureTextureLoaded(sub.Texture); err != nil {
 			log.Printf("entity %s: model %s: texture %q: %v", ownerID, m.Name, sub.Texture, err)
 		}
-		g := gfx.Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle}
+		g := gfx.Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle, AutoSmooth: true}
 		if m.Anim != nil {
 			// Set before Load, which de-indexes these alongside the positions.
 			g.SkinIdx, g.SkinWt = sub.SkinIdx, sub.SkinWt
@@ -299,6 +307,7 @@ func (m *EntityModel) Load(ownerID string) error {
 			return fmt.Errorf("entity %q model %q: %w", ownerID, m.Name, err)
 		}
 		g.Alpha = m.EffectiveAlpha()
+		g.Unlit = m.Unlit
 		m.Submeshes = append(m.Submeshes, g)
 	}
 
@@ -491,11 +500,59 @@ func (m *EntityModel) Update(dt float32, entityID string) {
 
 // loadModelDocument reads a model file into the editable document form, picking
 // the reader by extension.
+//
+// Parsed documents are cached by path, and every caller gets its own Clone: a
+// level full of soldiers is dozens of entities wearing the same three models,
+// and each of those is most of a megabyte of YAML. Parsing marine.fmdl once per
+// marine was most of level1's load. The cache entry is checked against the
+// file's size and modification time, so a model saved from the editor is read
+// again rather than served stale.
 func loadModelDocument(path string) (*model.ModelDoc, error) {
-	if strings.EqualFold(filepath.Ext(path), model.ModelExt) {
-		return model.LoadModel(path)
+	info, statErr := os.Stat(path)
+	if statErr == nil {
+		if doc := cachedModelDocument(path, info); doc != nil {
+			return doc, nil
+		}
 	}
-	return model.LoadOBJMesh(path)
+	var doc *model.ModelDoc
+	var err error
+	if strings.EqualFold(filepath.Ext(path), model.ModelExt) {
+		doc, err = model.LoadModel(path)
+	} else {
+		doc, err = model.LoadOBJMesh(path)
+	}
+	if err != nil || statErr != nil {
+		return doc, err
+	}
+	modelDocCache.Lock()
+	modelDocCache.docs[path] = modelDocEntry{doc: doc.Clone(), size: info.Size(), mod: info.ModTime()}
+	modelDocCache.Unlock()
+	return doc, nil
+}
+
+// modelDocCache holds the pristine parsed documents loadModelDocument clones.
+// Locked because an entity can be spawned from a script as well as loaded.
+var modelDocCache = struct {
+	sync.Mutex
+	docs map[string]modelDocEntry
+}{docs: map[string]modelDocEntry{}}
+
+type modelDocEntry struct {
+	doc  *model.ModelDoc
+	size int64
+	mod  time.Time
+}
+
+// cachedModelDocument is a clone of path's cached document, or nil when there
+// is none or the file has changed since it was parsed.
+func cachedModelDocument(path string, info os.FileInfo) *model.ModelDoc {
+	modelDocCache.Lock()
+	defer modelDocCache.Unlock()
+	e, ok := modelDocCache.docs[path]
+	if !ok || e.size != info.Size() || !e.mod.Equal(info.ModTime()) {
+		return nil
+	}
+	return e.doc.Clone()
 }
 
 // UniqueModelName returns base, or base with a numeric suffix no attachment on

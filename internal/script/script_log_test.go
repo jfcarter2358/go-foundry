@@ -290,3 +290,29 @@ func TestBrokenScriptDiagnosticsReachTheLog(t *testing.T) {
 	}
 	t.Errorf("a broken script produced no log entry: %+v", r.Snapshot())
 }
+
+// A failed handler's entry says which handler stopped and that the rest of it
+// was skipped. The failing line is rarely what anyone notices going wrong:
+// level1's :skybox: handler failed on a light write, and what went missing was
+// the ground, switched on further down the same handler.
+func TestAHandlerErrorSaysTheRestOfTheHandlerDidNotRun(t *testing.T) {
+	r := withScriptLog(t, 32)
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "boom.flang", `def on_spawn(:spawn:) -> null
+    x = 1 / 0
+end`)
+
+	lvl := tickTestLevel(t)
+	lvl.Entities = append(lvl.Entities, world.Entity{
+		ID: "crate", Script: path, Visible: true, Attributes: world.AttrSet{},
+	})
+	runTicks(t, lvl, 1)
+
+	for _, e := range r.Snapshot() {
+		if e.Level == LogError && strings.Contains(e.Text, ":spawn: handler") &&
+			strings.Contains(e.Text, "crate") && strings.Contains(e.Text, "nothing after this line") {
+			return
+		}
+	}
+	t.Errorf("no error named the handler that stopped: %+v", r.Snapshot())
+}

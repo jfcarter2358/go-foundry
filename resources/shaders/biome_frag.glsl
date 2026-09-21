@@ -92,7 +92,7 @@ void main() {
     // is a lighting fiction with no matching geometry in the depth map, and
     // feeding it to the slope-scaled bias would ask for a bias that suits a
     // surface the shadow map never saw.
-    vec3 lighting = biomeLighting(vWorldPos, bumpN, vViewDepth, receiveShadows != 0);
+    vec3 lighting = biomeLighting(vWorldPos, bumpN, vViewDepth, receiveShadows != 0, false);
     vec3 color = albedo * ao * clamp(lighting, 0.0, 1.0);
 
     // Blinn-Phong glint per directional light, on top of the diffuse result —

@@ -714,6 +714,18 @@ func volumeProps() map[string]propAccess {
 			// destination stacked in the same doorway.
 			Doc: "the level the player walks into this volume to load; \"\" for an ordinary volume",
 		},
+		"checkpoint": {
+			Get: get(func(v *world.Volume) flang.Value { return flang.BoolVal(v.Checkpoint) }),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("checkpoint", "bool", v)
+				}
+				vol.Checkpoint = b
+				return nil
+			}),
+			Doc: "a checkpoint: the first time the player walks in, the game autosaves and retry() comes back here",
+		},
 		"fog": {
 			Get: get(func(v *world.Volume) flang.Value { return flang.BoolVal(v.Fog != nil && v.Fog.Enabled) }),
 			Set: set(func(vol *world.Volume, v flang.Value) error {

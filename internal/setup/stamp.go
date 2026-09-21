@@ -20,7 +20,19 @@ type Stamp struct {
 	Version string
 	Exe     string
 	DataDir string
+	// Kind is "" for a game and KindEditor for the editor itself, installed
+	// from a Foundry release (make installer-editor). Only the wording differs:
+	// the editor keeps nothing in its install folder either — a project lives
+	// wherever its author put it — so both are replaced whole on an upgrade.
+	Kind string
 }
+
+// KindEditor is an editor install's KIND — pack.KindEditor, which this package
+// does not import: the packer has no business in the installer program.
+const KindEditor = "editor"
+
+// IsEditor reports whether the stamp is an editor install's.
+func (s Stamp) IsEditor() bool { return s.Kind == KindEditor }
 
 // ParseStamp reads a .foundrypack.
 //
@@ -51,6 +63,8 @@ func ParseStamp(data []byte) (Stamp, error) {
 			s.Exe = val
 		case "DATA_DIR":
 			s.DataDir = val
+		case "KIND":
+			s.Kind = val
 		}
 	}
 	if s.Title == "" || s.Exe == "" {

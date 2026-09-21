@@ -1,6 +1,7 @@
 //go:build windows
 
-// Command foundrysetup is a game's Windows installer and uninstaller.
+// Command foundrysetup is a game's Windows installer and uninstaller — and the
+// editor's, for a Foundry release (make installer-editor).
 //
 // One program, two jobs. With an install tree appended to it (internal/setup)
 // it is the game's Setup.exe; with nothing appended it is the game's
@@ -95,7 +96,12 @@ func relaunchUninstaller(exe string, o setup.Options) error {
 	if o.DeleteSaves {
 		args = append(args, "-delete-saves")
 	}
-	return exec.Command(tmp.Name(), args...).Start()
+	cmd := exec.Command(tmp.Name(), args...)
+	// Not the install folder, which is where the Start Menu's Uninstall
+	// shortcut starts this: a process's working directory cannot be deleted,
+	// so the copy would empty the folder and then fail to remove it.
+	cmd.Dir = filepath.Dir(tmp.Name())
+	return cmd.Start()
 }
 
 // exitCode is the process's answer: 0 done, 1 cancelled, 2 the game is running,

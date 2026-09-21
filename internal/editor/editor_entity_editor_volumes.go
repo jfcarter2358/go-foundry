@@ -21,6 +21,7 @@ import (
 	"foundry/internal/gizmo"
 	"foundry/internal/world"
 
+	"foundry/internal/imguibackend"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -45,7 +46,7 @@ func entityOutlineVolumes() {
 		if !m.Enabled {
 			label += "  (off)"
 		}
-		if imgui.SelectableV(label, entitySel.Kind == entitySelVolume && entitySel.Idx == i, 0, imgui.Vec2{}) {
+		if imguibackend.SelectableV(label, entitySel.Kind == entitySelVolume && entitySel.Idx == i, 0, imgui.Vec2{}) {
 			entitySel = entityEditorSelection{Kind: entitySelVolume, Idx: i}
 		}
 		imgui.PopID()
@@ -148,16 +149,16 @@ func entityPanelVolume(idx int) {
 		m.Rotation = vec3FromDegrees(rot)
 	}
 
-	if imgui.BeginCombo("Shape##entvshape", world.VolumeShapeName(m.Shape)) {
+	if imguibackend.BeginCombo("Shape##entvshape", world.VolumeShapeName(m.Shape)) {
 		for i, n := range world.VolumeShapeNames {
 			kind := world.VolumeShape(i)
-			if imgui.SelectableV(n, kind == m.Shape, 0, imgui.Vec2{}) && kind != m.Shape {
+			if imguibackend.SelectableV(n, kind == m.Shape, 0, imgui.Vec2{}) && kind != m.Shape {
 				EntityDefPushUndo()
 				m.Shape = kind
 				entityMarkDirty()
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	half := [3]float32{m.Half.X(), m.Half.Y(), m.Half.Z()}
 	if editorDragFloat3Step("Half-extents##entvhalf", &half, 0.01, 1000, "%.3f", 0.05) {

@@ -72,51 +72,21 @@ func particleEditorToolbar() {
 	if w == nil {
 		return
 	}
-	imgui.SetNextWindowPos(imgui.Vec2{})
-	imgui.SetNextWindowSize(imgui.Vec2{X: float32(w.W), Y: particleToolbarH})
-	imgui.BeginV("##particletoolbar", nil,
-		imgui.WindowFlagsNoMove|imgui.WindowFlagsNoResize|imgui.WindowFlagsNoTitleBar|
-			imgui.WindowFlagsNoScrollbar)
+	editorTopBarBegin("##particletoolbar", float32(w.W))
 
-	if imgui.Button("New##pnew") {
-		particleNewDoc()
-	}
-	imgui.SameLine()
-	if imgui.Button("Open##popen") {
-		particleShowOpenDialog = true
-		particleFileList = nil
-	}
-	imgui.SameLine()
-	if imgui.Button("Save##psave") {
-		particleSaveCurrent()
-	}
-	imgui.SameLine()
-	if imgui.Button("Save As##psaveas") {
-		particleSaveAsName = particleEffectName()
-		particleShowSaveAsDialog = true
+	if imgui.BeginMenuBar() {
+		particleEditorMenus()
+		editorMenuBarShared(editorKindParticles)
+		name := particleEffectName()
+		if name == "" {
+			name = "(unsaved)"
+		}
+		editorMenuBarDoc(name, particleEditorDirty())
+		imgui.EndMenuBar()
 	}
 
-	imgui.SameLine()
-	editorToolbarGroupSep()
-	imgui.SameLine()
-	name := particleEffectName()
-	if name == "" {
-		name = "(unsaved)"
-	}
-	if particleDoc != nil && particleDoc.Dirty() {
-		name += " *"
-	}
-	imgui.Text(name)
-
-	// Pop In sits at the right edge, as the model editor's does.
-	imgui.SameLine()
-	imgui.SetCursorPos(imgui.Vec2{X: float32(w.W) - 90, Y: 6})
-	if imgui.Button("Pop In##ppopin") {
-		CloseParticleEditorWindow()
-	}
-
-	// Second row: view toggles and the status line.
-	imgui.SetCursorPos(imgui.Vec2{X: 8, Y: 30})
+	// Second row: view toggles and the status line. The toggles are in the
+	// View menu too; here they are one click.
 	imgui.Checkbox("Grid##pgrid", &particleShowGrid)
 	imgui.SameLine()
 	imgui.Checkbox("Ground##pground", &particleShowGround)
@@ -130,14 +100,45 @@ func particleEditorToolbar() {
 	if w != nil {
 		w.ClearColor = [4]float32{particleBgColor[0], particleBgColor[1], particleBgColor[2], 1}
 	}
-	if particleStatus != "" {
-		imgui.SameLine()
-		editorToolbarGroupSep()
-		imgui.SameLine()
-		editorTextMuted(particleStatus)
-	}
+	editorStatusText(particleStatus)
 
 	imgui.End()
+}
+
+// particleEditorMenus draws the particle editor's own menus.
+func particleEditorMenus() {
+	if imgui.BeginMenu("File") {
+		if imgui.MenuItemV("New", "Ctrl+N", false, true) {
+			particleNewDoc()
+		}
+		if imgui.MenuItemV("Open...", "Ctrl+O", false, true) {
+			particleShowOpenDialog = true
+			particleFileList = nil
+		}
+		imgui.Separator()
+		if imgui.MenuItemV("Save", "Ctrl+S", false, true) {
+			particleSaveCurrent()
+		}
+		if imgui.MenuItem("Save As...") {
+			particleSaveAsName = particleEffectName()
+			particleShowSaveAsDialog = true
+		}
+		editorSaveAllMenuItem()
+		editorCloseWindowItem(CloseParticleEditorWindow)
+		imgui.EndMenu()
+	}
+
+	if imgui.BeginMenu("Edit") {
+		editorUndoRedoItems(ParticleCanUndo(), ParticleCanRedo(), ParticleUndo, ParticleRedo)
+		imgui.EndMenu()
+	}
+
+	if imgui.BeginMenu("View") {
+		editorMenuToggle("Grid", "", &particleShowGrid)
+		editorMenuToggle("Ground", "", &particleShowGround)
+		editorMenuToggle("Emitter Shape", "B", &particleShowShape)
+		imgui.EndMenu()
+	}
 }
 
 // ---------- layer list ----------
@@ -183,7 +184,7 @@ func particleLayerListWindow() {
 		if label == "" {
 			label = "(unnamed)"
 		}
-		if imgui.SelectableV(label, i == particleActiveLayer, 0, imgui.Vec2{}) {
+		if imguibackend.SelectableV(label, i == particleActiveLayer, 0, imgui.Vec2{}) {
 			particleActiveLayer = i
 			particleRenameFor = -1
 		}
@@ -414,16 +415,16 @@ func particleShapeSection(l *particle.Layer) {
 	if !imgui.CollapsingHeaderV("Shape##pshapesec", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
-	if imgui.BeginCombo("Kind##pshapekind", particle.ShapeKindName(l.Shape)) {
+	if imguibackend.BeginCombo("Kind##pshapekind", particle.ShapeKindName(l.Shape)) {
 		for i, n := range particle.ShapeKindNames {
 			k := particle.ShapeKind(i)
-			if imgui.SelectableV(n, k == l.Shape, 0, imgui.Vec2{}) && k != l.Shape {
+			if imguibackend.SelectableV(n, k == l.Shape, 0, imgui.Vec2{}) && k != l.Shape {
 				ParticlePushUndo()
 				l.Shape = k
 				particleTouch()
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 
 	switch l.Shape {
@@ -448,10 +449,10 @@ func particleShapeSection(l *particle.Layer) {
 			"0 fills the volume evenly; 1 is a hollow shell.")
 	}
 
-	if imgui.BeginCombo("Direction##pdirmode", particle.DirModeName(l.Dir)) {
+	if imguibackend.BeginCombo("Direction##pdirmode", particle.DirModeName(l.Dir)) {
 		for i, n := range particle.DirModeNames {
 			d := particle.DirMode(i)
-			if imgui.SelectableV(n, d == l.Dir, 0, imgui.Vec2{}) && d != l.Dir {
+			if imguibackend.SelectableV(n, d == l.Dir, 0, imgui.Vec2{}) && d != l.Dir {
 				ParticlePushUndo()
 				l.Dir = d
 				particleTouch()
@@ -460,7 +461,7 @@ func particleShapeSection(l *particle.Layer) {
 				imgui.SetTooltip(particleDirHelp[i])
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if l.Dir == particle.DirFixed {
 		dir := [3]float32{l.Direction.X(), l.Direction.Y(), l.Direction.Z()}
@@ -519,10 +520,10 @@ func particleAppearanceSection(l *particle.Layer) {
 	if !imgui.CollapsingHeaderV("Appearance##papp", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
-	if imgui.BeginCombo("Render##prender", particle.RenderKindName(l.Render)) {
+	if imguibackend.BeginCombo("Render##prender", particle.RenderKindName(l.Render)) {
 		for i, n := range particle.RenderKindNames {
 			k := particle.RenderKind(i)
-			if imgui.SelectableV(n, k == l.Render, 0, imgui.Vec2{}) && k != l.Render {
+			if imguibackend.SelectableV(n, k == l.Render, 0, imgui.Vec2{}) && k != l.Render {
 				ParticlePushUndo()
 				l.Render = k
 				particleTouch()
@@ -531,7 +532,7 @@ func particleAppearanceSection(l *particle.Layer) {
 				imgui.SetTooltip(particleRenderHelp[i])
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if l.Render == particle.RenderVolume {
 		particleVolumeLookSection(l)
@@ -555,10 +556,10 @@ func particleAppearanceSection(l *particle.Layer) {
 		particleTouch()
 	}
 	if l.SheetCols > 0 && l.SheetRows > 0 {
-		if imgui.BeginCombo("Frames##pframes", particle.FrameModeName(l.FrameMode)) {
+		if imguibackend.BeginCombo("Frames##pframes", particle.FrameModeName(l.FrameMode)) {
 			for i, n := range particle.FrameModeNames {
 				f := particle.FrameMode(i)
-				if imgui.SelectableV(n, f == l.FrameMode, 0, imgui.Vec2{}) && f != l.FrameMode {
+				if imguibackend.SelectableV(n, f == l.FrameMode, 0, imgui.Vec2{}) && f != l.FrameMode {
 					ParticlePushUndo()
 					l.FrameMode = f
 					particleTouch()
@@ -567,16 +568,16 @@ func particleAppearanceSection(l *particle.Layer) {
 					imgui.SetTooltip(particleFrameHelp[i])
 				}
 			}
-			imgui.EndCombo()
+			imguibackend.EndCombo()
 		}
 	} else {
 		editorTextMutedWrapped("Zero on either axis uses the whole texture.")
 	}
 
-	if imgui.BeginCombo("Blend##pblend", gfx.SpriteBlendName(l.Blend)) {
+	if imguibackend.BeginCombo("Blend##pblend", gfx.SpriteBlendName(l.Blend)) {
 		for i, n := range gfx.SpriteBlendNames {
 			b := gfx.SpriteBlend(i)
-			if imgui.SelectableV(n, b == l.Blend, 0, imgui.Vec2{}) && b != l.Blend {
+			if imguibackend.SelectableV(n, b == l.Blend, 0, imgui.Vec2{}) && b != l.Blend {
 				ParticlePushUndo()
 				l.Blend = b
 				particleTouch()
@@ -585,12 +586,12 @@ func particleAppearanceSection(l *particle.Layer) {
 				imgui.SetTooltip(spriteBlendHelp[i])
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
-	if imgui.BeginCombo("Billboard##pbb", gfx.BillboardModeName(l.Billboard)) {
+	if imguibackend.BeginCombo("Billboard##pbb", gfx.BillboardModeName(l.Billboard)) {
 		for i, n := range gfx.BillboardModeNames {
 			m := gfx.BillboardMode(i)
-			if imgui.SelectableV(n, m == l.Billboard, 0, imgui.Vec2{}) && m != l.Billboard {
+			if imguibackend.SelectableV(n, m == l.Billboard, 0, imgui.Vec2{}) && m != l.Billboard {
 				ParticlePushUndo()
 				l.Billboard = m
 				particleTouch()
@@ -599,7 +600,7 @@ func particleAppearanceSection(l *particle.Layer) {
 				imgui.SetTooltip(spriteBillboardHelp[i])
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 
 	tint := [3]float32{l.Tint.X(), l.Tint.Y(), l.Tint.Z()}
@@ -670,10 +671,10 @@ func particleCollisionSection(l *particle.Layer) {
 	if !imgui.CollapsingHeaderV("Collision##pcoll", 0) {
 		return
 	}
-	if imgui.BeginCombo("Mode##pcollmode", particle.CollideModeName(l.Collision)) {
+	if imguibackend.BeginCombo("Mode##pcollmode", particle.CollideModeName(l.Collision)) {
 		for i, n := range particle.CollideModeNames {
 			c := particle.CollideMode(i)
-			if imgui.SelectableV(n, c == l.Collision, 0, imgui.Vec2{}) && c != l.Collision {
+			if imguibackend.SelectableV(n, c == l.Collision, 0, imgui.Vec2{}) && c != l.Collision {
 				ParticlePushUndo()
 				l.Collision = c
 				particleTouch()
@@ -682,7 +683,7 @@ func particleCollisionSection(l *particle.Layer) {
 				imgui.SetTooltip(particleCollideHelp[i])
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if l.Collision == particle.CollideNone {
 		editorTextMutedWrapped("Off costs nothing. Most effects are smoke and fire, which have no business bouncing.")
@@ -783,6 +784,7 @@ func particleNewDoc() {
 	particleSolo = -1
 	ParticleClearUndoHistory()
 	particleRebuildSystems()
+	particleMarkSaved()
 	particleStatus = "New effect"
 }
 
@@ -809,7 +811,7 @@ func particleDialogs() {
 			editorTextMutedWrapped("Nothing in particles/ yet. Save one first.")
 		}
 		for _, name := range particleFileList {
-			if !imgui.Selectable(name) {
+			if !imguibackend.Selectable(name) {
 				continue
 			}
 			if err := particleLoad(filepath.Join(particle.ParticlesDir(), name)); err != nil {

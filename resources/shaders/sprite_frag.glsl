@@ -51,7 +51,7 @@ void main() {
 
     if (lit != 0) {
         rgb *= biomeLighting(fragWorldPos, normalize(fragNormal),
-                             biomeViewDepth(fragWorldPos), receiveShadows != 0);
+                             biomeViewDepth(fragWorldPos), receiveShadows != 0, true);
     }
 
     // Fog, before the blend-mode branch so every mode is fogged, but by the

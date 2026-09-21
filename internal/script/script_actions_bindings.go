@@ -11,9 +11,12 @@ package script
 // Slots are 1 and 2, the way weapon slots count from 1.
 
 import (
+	"fmt"
+
 	"foundry/internal/flang"
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
+	"foundry/internal/prefs"
 )
 
 var bindingVerbs = map[string]scriptVerb{
@@ -48,6 +51,74 @@ var bindingVerbs = map[string]scriptVerb{
 			return flang.StrVal(""), err
 		}
 		return flang.StrVal(platform.Bindings[a][slot].Name()), nil
+	},
+
+	// The game's own settings (internal/prefs): whatever a settings screen
+	// offers that is not the mouse, a key or the volume. setting's default is
+	// also its type — a stored value of another kind (an old file, a renamed
+	// option) is ignored rather than handed to a script that cannot use it.
+	"setting": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if len(args) != 2 {
+			return nil, verbArgErr("setting", "a name and a default")
+		}
+		name, ok := verbStrAt(args, 0)
+		if !ok {
+			return nil, verbArgErr("setting", "a setting name as its first argument")
+		}
+		def := args[1]
+		v, ok := prefs.Get(name)
+		if !ok {
+			return def, nil
+		}
+		switch d := def.(type) {
+		case flang.StrVal:
+			if s, ok := v.(string); ok {
+				return flang.StrVal(s), nil
+			}
+		case flang.BoolVal:
+			if b, ok := v.(bool); ok {
+				return flang.BoolVal(b), nil
+			}
+		case flang.IntVal:
+			if f, ok := v.(float64); ok {
+				return flang.IntVal(int64(f)), nil
+			}
+		case flang.FloatVal:
+			if f, ok := v.(float64); ok {
+				return flang.FloatVal(f), nil
+			}
+		default:
+			return nil, fmt.Errorf("setting's default is a str, int, float or bool, not a %s", flang.TypeOf(d))
+		}
+		rt.warnAt(pos, "setting(%q) is saved as a %T, not the kind its default is; using the default", name, v)
+		return def, nil
+	},
+
+	"set_setting": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if len(args) != 2 {
+			return nil, verbArgErr("set_setting", "a name and a value")
+		}
+		name, ok := verbStrAt(args, 0)
+		if !ok {
+			return nil, verbArgErr("set_setting", "a setting name as its first argument")
+		}
+		var v any
+		switch x := args[1].(type) {
+		case flang.StrVal:
+			v = string(x)
+		case flang.BoolVal:
+			v = bool(x)
+		case flang.IntVal:
+			v = float64(x)
+		case flang.FloatVal:
+			v = float64(x)
+		default:
+			return nil, fmt.Errorf("set_setting takes a str, int, float or bool, not a %s", flang.TypeOf(args[1]))
+		}
+		if err := prefs.Set(name, v); err != nil {
+			return nil, err
+		}
+		return flang.NullVal{}, nil
 	},
 
 	"reset_bindings": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {

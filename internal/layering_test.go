@@ -77,10 +77,14 @@ var upward = map[string][]string{
 	// ai runs the controllers: it steers entities through the fields collision
 	// already integrates, and posts its events through hooks, so it sits above
 	// collision and below the script layer that addresses it.
-	"ai":        {"render", "script", "levelio", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
-	"render":    {"editor", "app", "uiwin", "uidraw"},
-	"script":    {"editor", "app", "uiwin"},
-	"levelio":   {"editor", "app", "uiwin"},
+	"ai":      {"render", "script", "levelio", "editor", "app", "uiwin", "ui", "uidraw", "uifont"},
+	"render":  {"editor", "app", "uiwin", "uidraw"},
+	"script":  {"editor", "app", "uiwin"},
+	"levelio": {"editor", "app", "uiwin"},
+	// savefile is a save on disk, read by the script runtime (save_info) and
+	// written by savegame, so it sits under both.
+	"savefile":  {"script", "savegame", "levelio", "editor", "app", "uiwin", "render", "collision"},
+	"savegame":  {"editor", "app", "uiwin"},
 	"uiwin":     {"editor", "app"},
 	"textureui": {"editor", "app"},
 	// pack stages an install tree and archives it: a tree of files and the

@@ -25,12 +25,12 @@ func withReleaseProject(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(fileutil.ResourcesDir(root), "game.yaml"), []byte("title: Test Game\nstart_level: intro\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	prevRoot, prevCfg, prevJob := fileutil.ExecutablePath, releaseCfg, releaseJob
+	prevRoot, prevCfg, prevJob := fileutil.ProjectPath, releaseCfg, releaseJob
 	t.Cleanup(func() {
-		fileutil.ExecutablePath, releaseCfg, releaseJob = prevRoot, prevCfg, prevJob
+		fileutil.ProjectPath, releaseCfg, releaseJob = prevRoot, prevCfg, prevJob
 		releaseProbeAt = time.Time{}
 	})
-	fileutil.ExecutablePath = root
+	fileutil.ProjectPath = root
 	releaseCfg = release.DefaultConfig()
 	releaseJob = nil
 	releaseProbeAt = time.Time{}
@@ -68,7 +68,7 @@ func TestReleaseWindowDraws(t *testing.T) {
 		}
 		withImgui(func() {
 			drawReleaseFrame(func() {
-				drawReleaseControls(fileutil.ExecutablePath, releaseProbe, snap, state == release.JobRunning)
+				drawReleaseControls(snap, state == release.JobRunning, "", func() {})
 				drawReleaseOutput(snap)
 			})
 		})

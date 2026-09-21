@@ -150,14 +150,14 @@ func editorSoundClip(s *world.Sound) {
 // editorSoundBusCombo picks which slider the sound answers to.
 func editorSoundBusCombo(s *world.Sound) {
 	cur := string(s.AudioBus())
-	if imgui.BeginCombo("Bus##sndbus", cur) {
+	if imguibackend.BeginCombo("Bus##sndbus", cur) {
 		for _, b := range []string{string(audio.BusEffects), string(audio.BusMusic)} {
-			if imgui.SelectableV(b, b == cur, 0, imgui.Vec2{}) && b != cur {
+			if imguibackend.SelectableV(b, b == cur, 0, imgui.Vec2{}) && b != cur {
 				EditorPushUndo()
 				s.Bus = b
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Which of the player's volume sliders this answers to.")
@@ -225,16 +225,16 @@ func editorSoundAttenCombo(s *world.Sound) {
 	if cur == "" {
 		cur = string(audio.AttenInverse)
 	}
-	if imgui.BeginCombo("Falloff##sndatten", cur) {
+	if imguibackend.BeginCombo("Falloff##sndatten", cur) {
 		for _, m := range []string{
 			string(audio.AttenInverse), string(audio.AttenLinear), string(audio.AttenExponential),
 		} {
-			if imgui.SelectableV(m, m == cur, 0, imgui.Vec2{}) && m != cur {
+			if imguibackend.SelectableV(m, m == cur, 0, imgui.Vec2{}) && m != cur {
 				EditorPushUndo()
 				s.Atten = m
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Inverse is how sound behaves in the world.\nLinear and exponential are for effect.")
@@ -315,21 +315,21 @@ func soundFileCombo(label string, clip *string) bool {
 		preview = "(none)"
 	}
 	changed := false
-	if imgui.BeginCombo(label, preview) {
+	if imguibackend.BeginCombo(label, preview) {
 		if Editor.SoundFileNames == nil {
 			Editor.SoundFileNames = audio.ScanSoundNames()
 		}
-		if imgui.SelectableV("(none)", *clip == "", 0, imgui.Vec2{}) && *clip != "" {
+		if imguibackend.SelectableV("(none)", *clip == "", 0, imgui.Vec2{}) && *clip != "" {
 			*clip = ""
 			changed = true
 		}
 		for _, n := range Editor.SoundFileNames {
-			if imgui.SelectableV(n, n == *clip, 0, imgui.Vec2{}) && n != *clip {
+			if imguibackend.SelectableV(n, n == *clip, 0, imgui.Vec2{}) && n != *clip {
 				*clip = n
 				changed = true
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	} else {
 		Editor.SoundFileNames = nil
 	}

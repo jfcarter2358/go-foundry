@@ -17,10 +17,14 @@ package app
 // side and checked for agreement at a glance.
 
 import (
+	"os"
+
 	"foundry/internal/editor"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
+	"foundry/internal/pack"
+	"foundry/internal/project"
 	"foundry/internal/release"
 	"foundry/internal/render"
 	"foundry/internal/uiwin"
@@ -48,16 +52,39 @@ func devWireframe() bool {
 }
 
 // devRunCommand runs one of the development binary's command-line tools in
-// place of the engine, and reports whether args named one. There is one:
+// place of the engine, and reports whether args named one. There are two:
 // `build-release`, which builds a release of the project this binary is running
 // from (internal/release) — headless, so the editor's Release window can run it
-// as a child process and a terminal can run it with no editor at all.
+// as a child process and a terminal can run it with no editor at all — and
+// `find-unused`, which lists the project's assets that nothing uses.
 func devRunCommand(args []string) (exitCode int, ran bool) {
-	if len(args) == 0 || args[0] != release.Command {
+	if len(args) == 0 {
 		return 0, false
 	}
-	return release.Main(fileutil.ExecutablePath, args[1:]), true
+	switch args[0] {
+	case release.Command:
+		return release.Main(commandProject(), args[1:]), true
+	case pack.UnusedCommand:
+		return pack.UnusedMain(commandProject(), args[1:], os.Stdout), true
+	}
+	return 0, false
 }
+
+// commandProject is the project a command works on unless told otherwise
+// (-root): the one beside the executable, as always, or — for an editor
+// installed apart from its projects — the one in the working directory.
+func commandProject() string {
+	if !project.IsProject(fileutil.ExecutablePath) {
+		if wd, err := os.Getwd(); err == nil && project.IsProject(wd) {
+			return wd
+		}
+	}
+	return fileutil.ExecutablePath
+}
+
+// devPendingProject is the project File > Open Project or New Project asked
+// to reopen on, once this process has shut down, or "".
+func devPendingProject() string { return editor.PendingProject }
 
 // devInit stands the editor up on the level just loaded, and opens it: a
 // development build boots into the 3D view rather than into gameplay, because
@@ -79,6 +106,8 @@ func devInit(level *world.Level, levelPath, levelsDir string) {
 func devShutdown() {
 	// A release build still running has nothing left to show its output to.
 	editor.CancelReleaseBuild()
+	// Nor a push or pull the Git window started.
+	editor.CancelGitOperation()
 	uiwin.CloseAllUIWindows()
 	imguibackend.ImGuiShutdown()
 }
@@ -133,10 +162,12 @@ func devRenderBrushGhost(draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSide
 
 // devDrainWork applies the work the sub-editors deferred out of their own draw
 // calls — an Unwrap & Paint asking to open the texture editor on a fresh atlas,
-// and any window waiting to be created. Both have to happen here, between
-// frames, with the main GL context current.
+// a model saved in the model editor that the level is wearing, and any window
+// waiting to be created. All have to happen here, between frames, with the main
+// GL context current.
 func devDrainWork() {
 	editor.DrainTexEditorRequest()
+	editor.DrainModelReloads()
 	uiwin.DrainWindowOpens()
 }
 
@@ -147,6 +178,7 @@ func devDrainWork() {
 // and every window and a sub-editor cannot eat it; it also swallows the Escape
 // that closes it, so that Escape is not also read as "cancel".
 func devRouteEvent(event sdl.Event) bool {
+	editor.NoteInputEvent(event)
 	if uiwin.KeybindHelpHandleEvent(event) {
 		return true
 	}

@@ -281,21 +281,21 @@ func particleFileCombo(label string, effect *string) bool {
 		preview = "(none)"
 	}
 	changed := false
-	if imgui.BeginCombo(label, preview) {
+	if imguibackend.BeginCombo(label, preview) {
 		if Editor.ParticleFileNames == nil {
 			Editor.ParticleFileNames = particleEffectNames()
 		}
-		if imgui.SelectableV("(none)", *effect == "", 0, imgui.Vec2{}) && *effect != "" {
+		if imguibackend.SelectableV("(none)", *effect == "", 0, imgui.Vec2{}) && *effect != "" {
 			*effect = ""
 			changed = true
 		}
 		for _, n := range Editor.ParticleFileNames {
-			if imgui.SelectableV(n, n == *effect, 0, imgui.Vec2{}) && n != *effect {
+			if imguibackend.SelectableV(n, n == *effect, 0, imgui.Vec2{}) && n != *effect {
 				*effect = n
 				changed = true
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	} else {
 		// Dropped so the next open rescans; a new effect saved from the
 		// particle editor has to appear without restarting the level editor.

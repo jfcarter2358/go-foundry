@@ -3,7 +3,7 @@
 A world texture is a `.png` in `resources/textures/`. Drop one in and it appears
 in every texture picker in the editor — nothing has to be registered.
 
-The **texture editor** (toolbar: `Textures`) edits `.ftex` documents: layered,
+The **texture editor** (editor strip: **Texture**) edits `.ftex` documents: layered,
 palette-indexed, optionally animated, with a height channel for relief. Saving
 one writes both the `.ftex` and the `.png` the engine actually samples.
 
@@ -24,7 +24,8 @@ in every document and in the running world, live, as you drag.
 
 ## Tools
 
-`Brush`, `Eraser`, `Fill`, `Line`, `Rect`, `Eyedropper`, `Spray`.
+`Brush`, `Eraser`, `Fill`, `Line`, `Rect`, `Eyedropper`, `Spray`, `Rect Select`,
+`Lasso`.
 
 Brush size is a pixel count with no hardness — a soft edge quantised into 256
 colours turns into speckle. Spray has a density (dabs per frame while held).
@@ -35,6 +36,46 @@ colours turns into speckle. Spray has a density (dabs per frame while held).
 | Middle-drag | pan |
 | Wheel | zoom |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo |
+
+## Selections
+
+`Rect Select` and `Lasso` draw a selection, shown as marching ants. While there is
+one, **every tool only reaches inside it** — brush, fill, line, rect, spray,
+eraser and Fill UV alike, on both the colour and bump channels. The selection
+stays put when you switch tools, layers, frames or channels, so you can select a
+region once and paint it everywhere. A click with a select tool (no drag) clears
+it.
+
+Drag with **Shift** to add to the selection, with **Alt** or **Ctrl** to subtract.
+
+Drag *inside* the selection to move what it holds on the active layer (arrow keys
+nudge by one texel, Shift+arrow by eight). The moved art floats: dragging it over
+other art doesn't erase what it passes, and dragging it off the canvas edge and
+back doesn't lose it. It settles the moment you do anything else to that layer.
+
+With a select tool out, the selection's bounding box has **scale handles**: drag
+a corner to resize both ways, an edge's middle handle to resize one way. Hold
+**Shift** on a corner to keep the proportions. Dragging a handle past the
+opposite edge mirrors the art. Scaling is nearest-neighbour, so every texel
+stays one of the palette's colours. While the art is floating, each resize
+starts again from the original texels, so shrinking it and growing it back
+loses nothing.
+
+**Copy** (`Ctrl+C`) takes the selected texels of the active layer — the whole layer
+if nothing is selected. **Cut** (`Ctrl+X`) copies then clears them. **Paste**
+(`Ctrl+V`) drops the copy back where it came from, selected and floating, ready to
+drag into place; the clipboard is shared across documents, so you can paste into
+another texture. Transparent texels in what you move or paste don't cover what's
+underneath.
+
+| | |
+| --- | --- |
+| `Ctrl+A` / `Ctrl+D` or `Esc` | select all / deselect |
+| `Ctrl+Shift+I` | invert the selection |
+| `Delete` | clear the selected texels |
+
+Moves, scales, cuts and pastes are undoable, and undoing one puts the selection back
+where it was too. Drawing a selection on its own is not an undo step.
 
 ## Layers
 
@@ -81,6 +122,14 @@ New documents are square: 64, 128, 256, 512 or 1024.
 
 **Import PNG...** brings an existing image in as a single-layer document,
 quantised to the current palette.
+
+To bring an image into the document you already have open, use **Import PNG...**
+in the layers panel. It goes into the channel on screen — quantised to the
+palette on the colour channel, or read as brightness (white = high) on the bump
+channel — either as a new layer above the selected one or over the selected
+layer. **Stretch to canvas** resamples it to the canvas size; **Actual size**
+keeps one pixel per texel, centred, cropping or leaving an empty border.
+Transparent pixels stay empty so lower layers show through. It is one undo step.
 
 ## The UV layout overlay
 

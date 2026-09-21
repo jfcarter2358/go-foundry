@@ -55,6 +55,10 @@ type scriptEventState struct {
 	// — since a pause outliving the menu that set it would leave nothing on
 	// screen able to lift it. See script_pause.go.
 	paused bool
+	// checkpoints are the checkpoints the player has reached this play-through,
+	// by name — a checkpoint volume's ID or `checkpoint`'s argument. Part of a
+	// save, so a restore does not reach them again. See reachCheckpoint.
+	checkpoints map[string]bool
 }
 
 type scriptTimer struct {
@@ -73,9 +77,14 @@ type scriptTimer struct {
 // rt.self, which is no longer set by the time the timer comes due.
 const timerIsScriptSend = true
 
-var scriptEvents = scriptEventState{
-	overlaps: map[overlapPair]bool{},
-	spawned:  map[flang.RefVal]bool{},
+var scriptEvents = newScriptEventState()
+
+func newScriptEventState() scriptEventState {
+	return scriptEventState{
+		overlaps:    map[overlapPair]bool{},
+		spawned:     map[flang.RefVal]bool{},
+		checkpoints: map[string]bool{},
+	}
 }
 
 // forgetNamesake drops everything this ref's last occupant left behind, so that
@@ -117,10 +126,7 @@ func forgetNamesake(r flang.RefVal) {
 // ScriptEventsReset clears the derived-event state. Called whenever the level is
 // replaced: the previous frame's overlaps describe objects that no longer exist.
 func ScriptEventsReset() {
-	scriptEvents = scriptEventState{
-		overlaps: map[overlapPair]bool{},
-		spawned:  map[flang.RefVal]bool{},
-	}
+	scriptEvents = newScriptEventState()
 	// The AI controllers start their rounds again at the same moments: a guard
 	// resuming a patrol from a play session that has ended, or chasing a
 	// player from a level that has been replaced, would be chasing a ghost.
@@ -385,6 +391,9 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 		// world.Volume.LoadLevel — it is why a container can be worth walking
 		// even when nothing is listening for its `:enter:`.
 		loadLevel string
+		// checkpoint says the container is a checkpoint volume — see
+		// world.Volume.Checkpoint — which likewise needs walking unscripted.
+		checkpoint bool
 		// carrier is the entity a volume rides, which it does not report as
 		// entering it. A guard's sight cone is centred on the guard; telling its
 		// script "the guard came into view" the moment the level starts, and on
@@ -395,7 +404,7 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 
 	for i := range lvl.Volumes {
 		v := &lvl.Volumes[i]
-		if v.Script == "" && !v.IsLevelTrigger() {
+		if v.Script == "" && !v.IsLevelTrigger() && !v.IsCheckpointTrigger() {
 			continue
 		}
 		vv := v
@@ -405,11 +414,12 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 		// point is carried in. ContainsWorldPoint is the no-op it always was for
 		// a volume that rides nothing, which is nearly all of them.
 		containers = append(containers, container{
-			ref:       flang.RefVal{Kind: flang.RefVolume, A: v.ID},
-			test:      func(p mgl32.Vec3) bool { return vv.ContainsWorldPoint(lvl, p) },
-			scripted:  v.Script != "",
-			loadLevel: v.LoadLevel,
-			carrier:   v.Attach.Entity,
+			ref:        flang.RefVal{Kind: flang.RefVolume, A: v.ID},
+			test:       func(p mgl32.Vec3) bool { return vv.ContainsWorldPoint(lvl, p) },
+			scripted:   v.Script != "",
+			loadLevel:  v.LoadLevel,
+			checkpoint: v.Checkpoint,
+			carrier:    v.Attach.Entity,
 		})
 	}
 	for i := range lvl.Entities {
@@ -423,20 +433,57 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 		// volume carried out — which keeps a rotated volume the shape it was
 		// authored as.
 		ef := lvl.Frames.FrameFor(e)
+		// A sphere round the bounds, worked out once per frame, turns away
+		// nearly every mover before the exact shape test: with a hundred
+		// scripted soldiers in a level that is a hundred containers asked
+		// about a hundred movers each, and the exact test rebuilds the
+		// entity's rotation every time it is asked.
+		centre := ee.BoundCenter()
+		reach := ee.BoundHalfExtents().Len()
+		reach2 := reach * reach
 		containers = append(containers, container{
-			ref:      flang.RefVal{Kind: flang.RefEntity, A: e.ID},
-			test:     func(p mgl32.Vec3) bool { return ee.ContainsPoint(ef.FromWorld(p)) },
+			ref: flang.RefVal{Kind: flang.RefEntity, A: e.ID},
+			test: func(p mgl32.Vec3) bool {
+				local := ef.FromWorld(p)
+				if local.Sub(centre).LenSqr() > reach2 {
+					return false
+				}
+				return ee.ContainsPoint(local)
+			},
 			scripted: true,
 		})
 	}
 
+	// Each mover's position once, not once per container: finding an entity
+	// by ID is a walk of the level's entities, and posting (below) only
+	// queues, so nothing moves while the containers are asked.
+	type placed struct {
+		ref flang.RefVal
+		pos mgl32.Vec3
+	}
+	// Walked in the level's own order rather than looked up one by one:
+	// FindEntity is a walk of the entities, so asking it for every mover was
+	// quadratic in the entity count.
+	placedMovers := make([]placed, 0, len(moverList))
+	for _, m := range moverList {
+		if m.A == "player" {
+			if p, ok := moverPosition(lvl, m); ok {
+				placedMovers = append(placedMovers, placed{m, p})
+			}
+		}
+	}
+	for i := range lvl.Entities {
+		e := &lvl.Entities[i]
+		placedMovers = append(placedMovers, placed{flang.RefVal{Kind: flang.RefEntity, A: e.ID}, lvl.Frames.WorldPosition(e)})
+	}
+
 	for _, c := range containers {
-		for _, m := range moverList {
+		for _, pm := range placedMovers {
+			m := pm.ref
 			if m == c.ref || (c.carrier != "" && m.Kind == flang.RefEntity && m.A == c.carrier) {
 				continue
 			}
-			p, ok := moverPosition(lvl, m)
-			if !ok || !c.test(p) {
+			if !c.test(pm.pos) {
 				continue
 			}
 			pair := overlapPair{container: c.ref, other: m}
@@ -454,6 +501,10 @@ func postOverlapEvents(rt *ScriptRuntime, lvl *world.Level) {
 			// first, in the level that is still standing.
 			if c.loadLevel != "" && m.Kind == flang.RefEntity && m.A == "player" {
 				hooks.RequestLevelLoad(c.loadLevel)
+			}
+			// A checkpoint, likewise the player's alone, and reached once.
+			if c.checkpoint && m.Kind == flang.RefEntity && m.A == "player" {
+				reachCheckpoint(rt, c.ref.A)
 			}
 		}
 	}
@@ -548,10 +599,10 @@ func uiEventArgs(ev hooks.UIEvent) []flang.Value {
 
 func uiChangeValue(ev hooks.UIEvent) flang.Value {
 	switch {
-	case ev.Str != "":
+	case ev.Text || ev.Str != "":
 		return flang.StrVal(ev.Str)
-	case ev.Bool:
-		return flang.BoolVal(true)
+	case ev.Toggle || ev.Bool:
+		return flang.BoolVal(ev.Bool)
 	}
 	return flang.FloatVal(ev.Num)
 }

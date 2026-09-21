@@ -77,7 +77,7 @@ var effectVerbs = map[string]scriptVerb{
 
 		rt.lvl.Effects = append(rt.lvl.Effects, fx)
 		// The cache is indexed by name and the new effect is not in it yet.
-		rt.cache = buildRefCache(rt.lvl)
+		rt.cacheAdded(func(c *refCache) { c.effect[fx.ID] = len(rt.lvl.Effects) - 1 })
 		return flang.RefVal{Kind: flang.RefEffect, A: fx.ID}, nil
 	},
 }

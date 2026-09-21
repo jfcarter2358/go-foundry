@@ -63,6 +63,65 @@ func AABBInFrustum(f Frustum, min, max mgl32.Vec3) bool {
 	return true
 }
 
+// InSpaceOf is the frustum carried into the space m maps into the world — a
+// chunk's, for its model matrix — so boxes in that space can be tested without
+// carrying each one out. A plane is a row vector acting on world points, so in
+// local space it is the plane times m. The identity comes back unchanged.
+func (f Frustum) InSpaceOf(m mgl32.Mat4) Frustum {
+	if m == mgl32.Ident4() {
+		return f
+	}
+	var out Frustum
+	for i, p := range f.Planes {
+		for j := 0; j < 4; j++ {
+			out.Planes[i][j] = p[0]*m.At(0, j) + p[1]*m.At(1, j) + p[2]*m.At(2, j) + p[3]*m.At(3, j)
+		}
+	}
+	return out
+}
+
+// FrustumClass is where a box lies against a frustum.
+type FrustumClass uint8
+
+const (
+	FrustumOutside FrustumClass = iota
+	FrustumIntersects
+	FrustumInside
+)
+
+// ClassifyAABB is AABBInFrustum that also tells a box wholly inside from one
+// straddling a plane, so a hierarchy can accept everything under a contained
+// node without testing it. Conservative the same way: a box it calls Outside
+// is outside, and one that is not Inside may be partly out.
+func ClassifyAABB(f Frustum, min, max mgl32.Vec3) FrustumClass {
+	inside := true
+	for _, plane := range f.Planes {
+		// The corner furthest along the plane normal (p) and the one furthest
+		// against it (n).
+		px, py, pz := max.X(), max.Y(), max.Z()
+		nx, ny, nz := min.X(), min.Y(), min.Z()
+		if plane[0] < 0 {
+			px, nx = nx, px
+		}
+		if plane[1] < 0 {
+			py, ny = ny, py
+		}
+		if plane[2] < 0 {
+			pz, nz = nz, pz
+		}
+		if plane[0]*px+plane[1]*py+plane[2]*pz+plane[3] < 0 {
+			return FrustumOutside
+		}
+		if plane[0]*nx+plane[1]*ny+plane[2]*nz+plane[3] < 0 {
+			inside = false
+		}
+	}
+	if inside {
+		return FrustumInside
+	}
+	return FrustumIntersects
+}
+
 // Portal-graph visibility — the BFS through camera-facing sector portals and
 // floor/ceiling openings that used to narrow a chunk to the rooms actually
 // reachable from the one the camera stood in — went with sectors. A brush is

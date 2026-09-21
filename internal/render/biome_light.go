@@ -24,7 +24,6 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
-	"path/filepath"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 )
@@ -160,7 +159,7 @@ func (b *BiomeShadowSettings) castRangeFor(sectorRange, mapReach float32) float3
 // biomeShaderPath resolves a shader file inside the running executable's
 // shaders directory.
 func biomeShaderPath(name string) string {
-	return filepath.Join(fileutil.ResourcesPath, "shaders", name)
+	return fileutil.ShaderPath(name)
 }
 
 // biomeLightSnippet returns biome_light.glsl prefixed with the defines that fix
@@ -203,7 +202,11 @@ func biomeLightSnippet(pcf int, pointShadows, cascadeBlend bool) string {
 	// cloud_shadow.glsl goes AHEAD of the lighting block, which calls it, and
 	// for the same structural reason: a pass that lit its blades without it
 	// would leave the grass sunlit under a cloud whose shadow covers the floor.
+	//
+	// light_model.glsl goes ahead of it too: the lighting block's terms are
+	// the world shader's, from the one file.
 	return src + mustReadShader(biomeShaderPath("cloud_shadow.glsl")) +
+		"\n" + mustReadShader(biomeShaderPath("light_model.glsl")) +
 		"\n" + mustReadShader(biomeShaderPath("biome_light.glsl")) +
 		"\n" + mustReadShader(biomeShaderPath("fog.glsl"))
 }

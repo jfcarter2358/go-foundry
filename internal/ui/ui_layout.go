@@ -50,19 +50,27 @@ func (c Canvas) RootRect(fbW, fbH float32) Rect {
 	return Rect{W: fbW / s, H: fbH / s}
 }
 
+// WorldProject is where a world-anchored node (Node.SetWorldAnchor) lands on
+// screen: the point's position as fractions of the view, 0,0 top-left to 1,1
+// bottom-right, and false when it is behind the camera. Installed by the host
+// that owns the camera — this package draws nothing in 3D and must not import
+// what does, the same reason VideoDriver is a hook. Nil leaves anchored nodes
+// where they were authored.
+var WorldProject func(p mgl32.Vec3) (u, v float32, ok bool)
+
 // Solve writes every node's rect and clip rect for a framebuffer of this size.
 func (s *Screen) Solve(fbW, fbH float32) {
 	root := s.Canvas.RootRect(fbW, fbH)
-	solveNode(&s.Root, root, root)
+	solveNode(&s.Root, root, root, root)
 }
 
 // SolveInto solves against an explicit design-space rect rather than a
 // framebuffer size. The UI editor uses it to lay a screen out at the design
 // resolution picked in its toolbar, so the numbers on the panel are the numbers
 // the game will use rather than whatever size the editor window happens to be.
-func (s *Screen) SolveInto(area Rect) { solveNode(&s.Root, area, area) }
+func (s *Screen) SolveInto(area Rect) { solveNode(&s.Root, area, area, area) }
 
-func solveNode(n *Node, parent, clip Rect) {
+func solveNode(n *Node, root, parent, clip Rect) {
 	x := parent.X
 	y := parent.Y
 	ax0 := x + n.Rect.AnchorMin[0]*parent.W
@@ -95,6 +103,19 @@ func solveNode(n *Node, parent, clip Rect) {
 		r.Y = py - n.Rect.Pivot[1]*r.H
 	}
 
+	// A world anchor moves the rect, never resizes it: the pivot goes to where
+	// the point is on screen. Measured against the root rather than the
+	// parent, because a point in the world is somewhere on the whole screen.
+	behind := false
+	if n.anchored && WorldProject != nil {
+		if u, v, ok := WorldProject(n.worldAnchor); ok {
+			r.X = root.X + u*root.W - n.Rect.Pivot[0]*r.W
+			r.Y = root.Y + v*root.H - n.Rect.Pivot[1]*r.H
+		} else {
+			behind = true
+		}
+	}
+
 	n.solved = r
 	// Clip rects intersect rather than replace, so a clipping panel inside a
 	// clipping panel cannot draw outside its grandparent.
@@ -102,14 +123,14 @@ func solveNode(n *Node, parent, clip Rect) {
 	if n.Clip {
 		n.solvedClip = clip.Intersect(r)
 	}
-	n.culled = n.solvedClip.Empty()
+	n.culled = n.solvedClip.Empty() || behind
 
 	// Children anchor to the parent's solved rect, not its clip rect. A list
 	// inside a clipping panel has to keep its positions when the panel is
 	// partly off-screen; anchoring to the clip would make the items shuffle as
 	// the panel slid.
 	for i := range n.Children {
-		solveNode(&n.Children[i], r, n.solvedClip)
+		solveNode(&n.Children[i], root, r, n.solvedClip)
 	}
 }
 

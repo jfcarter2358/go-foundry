@@ -4,7 +4,7 @@ Three kinds of light, all under **Lights** in the Explorer.
 
 | | Count | Has |
 | --- | --- | --- |
-| **Global** | exactly one, always | colour, brightness |
+| **Global** | exactly one, always | colour, brightness, light wrap, sky/ground ambient |
 | **Directional** | up to 4 | yaw, pitch, colour, brightness, shadows |
 | **Point** | up to 8 | position, radius, colour, brightness, shadows |
 
@@ -16,7 +16,58 @@ carrying more drops the extras in level order.
 Ambient fill. It always exists and can be switched off but not deleted. It is
 what stops the shadowed side of everything being pure black.
 
-Colour and brightness, and nothing else — it has no direction.
+Colour and brightness, plus the two settings that shape how *every* light in the
+level falls across a surface:
+
+| Field | |
+| --- | --- |
+| Light Wrap | how far a light reaches round a surface past side-on. At 0 the light stops dead where a surface turns away from it, a hard line down every curved surface. Higher values let it ease out instead. Default 0.5 |
+| Sky/Ground Ambient | how much brighter the ambient is on surfaces facing up than on those facing down. The average stays the colour you set, so this reshapes the ambient without brightening it. 0 is the same from every side. Default 0.5 |
+
+A light only reaches the side of a surface that faces it. A ceiling lit by a sun
+above the roof gets ambient only, and a double-sided panel is lit separately on
+each side. Levels saved before these settings existed load with the defaults. To
+get the old hard look back, set both to 0. The engine used to light both sides of
+every surface alike, so a level may look darker where walls face away from its
+sun.
+
+### Bounce light
+
+Light that lands on a surface is partly passed on, tinted by that surface's
+colour. A sunlit red floor lights the wall beside it red, and the doorway into a
+dark room lights the floor inside it. The compile's light bake works this out.
+Two more Global Light settings control it:
+
+| Field | |
+| --- | --- |
+| Bounces | how many times light is passed on from one surface to the next. 0 bakes direct light only; 1 lets the floor light the wall; 2 lets that wall light the ceiling. Up to 4. Default 1 |
+| Bounce Strength | multiplies the light each bounce carries. 1 is physical. Default 1 |
+
+In the level file these are `bounce: {count, scale}` under `lights: global:`.
+Levels saved before bounce existed get 1 bounce at strength 1.
+
+Things to know:
+
+- **It only exists in a compiled level.** You see it in Preview and in a
+  release build. It is not visible in the editor viewport or in a dev build,
+  because those light everything live. Use Preview to judge it.
+- **Only baked surfaces take part.** Walls, floors and brushes in a compiled
+  level both receive bounce light and pass it on. Entities, models, dynamic
+  brushes and anything else lit live do neither. Dynamic lights are not
+  bounced either.
+- **A surface's colour is its texture's average colour.** A face with no
+  texture counts as neutral grey. It does not use the normal colour the editor
+  paints it with. Nothing passes on more than 90% of what it receives, so an
+  all-white room cannot keep brightening itself. Translucent faces neither
+  pass light on nor block it.
+- **Bake excludes still apply.** A light excluded from a chunk does not reach
+  that chunk by bouncing either. The sun kept off the hangar does not bounce
+  in off the sunlit ground outside the door.
+- **The ambient is still added on top.** Bounce light comes on top of the
+  ambient, and the ambient already stands in for light from the sky. If a level
+  looks washed out once bounce is on, lower the Global Light's brightness.
+- **Each bounce costs about as much compile time as the first.** One bounce
+  added about 15% to level1's compile.
 
 ## Directional lights
 
@@ -91,6 +142,17 @@ flickers, switches or sweeps: a searchlight on a waypoint path, a lamp a trigger
 turns off, a sun that sets.
 
 The global ambient light has no switch. It is always baked.
+
+### Live shadows on baked geometry
+
+A baked wall or floor still takes shadows from things the bake never saw: an
+entity, a soldier, a dropship, or a chunk switched on after the level loads,
+such as a wall a script swaps in or out. This works for one light, the **baked
+sun**: the first directional light that is static, casts shadows and is on.
+Each baked vertex remembers how much of that sun it received, and the renderer
+removes that share where such an object's shadow falls. The world's own
+shadows come from the bake alone. Other static lights get no live shadows on
+baked geometry.
 
 Nothing is baked until a level is compiled, so in the editor and in a dev build
 both kinds light live and look identical. What differs is only what a script

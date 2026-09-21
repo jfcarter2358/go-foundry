@@ -193,13 +193,17 @@ func editorBrushPropertiesSection() {
 		})
 
 		editorPropGroup("Shading##bfshade", 0, func() {
-			changed = imgui.Checkbox("Smooth##bfsm", &f.Smooth) || changed
+			changed = imgui.Checkbox("Always Smooth##bfsm", &f.Smooth) || changed
 			if imgui.IsItemHovered() {
-				imgui.SetTooltip("Weld the normals along shared edges, so neighbouring\n" +
-					"faces read as one curved surface.")
+				imgui.SetTooltip("Shade smooth even when the player turns Smooth Lighting off.\n" +
+					"With it on (the default) every face already blends into its\n" +
+					"neighbours up to the crease angle below.")
 			}
-			if f.Smooth {
-				changed = editorDragFloat("Crease Angle##bfsa", &f.SmoothAngle, 0, 180, "%.1f") || changed
+			// Shown whether or not the box is ticked: the player's setting
+			// smooths every face by it.
+			changed = editorDragFloat("Crease Angle##bfsa", &f.SmoothAngle, 0, 180, "%.1f") || changed
+			if imgui.IsItemHovered() {
+				imgui.SetTooltip("Edges sharper than this stay a hard crease (0 = 60).")
 			}
 		})
 

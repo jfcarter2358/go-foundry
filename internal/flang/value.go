@@ -157,8 +157,10 @@ const (
 	//
 	// (RefBiome sat between RefLight and RefSprite and was removed rather than
 	// left as a hole: biome scatter became a property of a Volume rather than
-	// an object of its own, so nothing addresses one. Safe because a ref kind
-	// is never serialised — it lives only in a running script's values.)
+	// an object of its own, so nothing addresses one. Safe then because a ref
+	// kind was never serialised. It is now: a save game writes the refs in
+	// every `.state` dict and pending timer by number (savefile.Ref), so a
+	// kind removed or reordered from here on must bump savefile.Version.)
 	RefScreen
 	RefWidget
 	// RefModel is one attachment of an entity — `@guard.model.body`. Appended

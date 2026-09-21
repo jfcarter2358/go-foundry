@@ -147,3 +147,19 @@ func TestLintFlagsAWriteToAStaticLight(t *testing.T) {
 		t.Errorf("lint flagged a write to a dynamic light: %v", issues)
 	}
 }
+
+// Switching a static light names both ways out. "Leave out of bake" is the
+// lighter fix, and the one a light belonging to geometry that goes away needs;
+// naming only Dynamic sent the author to the heavier one.
+func TestSwitchingAStaticLightNamesLeaveOutOfBake(t *testing.T) {
+	lvl := staticLightLevel(t)
+	err := runScriptErr(t, lvl, "", script("    @lamp.prop.enabled = false"))
+	if err == nil {
+		t.Fatal("switching a static light was allowed")
+	}
+	for _, want := range []string{"Leave out of bake", "no_bake", "Dynamic"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}

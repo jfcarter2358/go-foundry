@@ -21,6 +21,7 @@ import (
 	"foundry/internal/world"
 	"strconv"
 
+	"foundry/internal/imguibackend"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -205,7 +206,8 @@ func editorEntityIdentity(lvl *world.Level, e *world.Entity) {
 		}
 		if imgui.IsItemHovered() {
 			imgui.SetTooltip("Open this entity in the entity editor as a new type,\n" +
-				"so a second level can place the same thing.")
+				"so a second level can place the same thing. Saving\n" +
+				"the type makes this entity an instance of it.")
 		}
 	}
 	imgui.Checkbox("Visible##entvis", &e.Visible)
@@ -257,17 +259,17 @@ func editorEntityAttachedChunkCombo(lvl *world.Level, e *world.Entity) {
 	if label == "" {
 		label = "(none)"
 	}
-	if imgui.BeginCombo("Attached Chunk##entattachchunk", label) {
-		if imgui.SelectableV("(none)", e.AttachedChunk == "", 0, imgui.Vec2{}) {
+	if imguibackend.BeginCombo("Attached Chunk##entattachchunk", label) {
+		if imguibackend.SelectableV("(none)", e.AttachedChunk == "", 0, imgui.Vec2{}) {
 			e.AttachedChunk = ""
 		}
 		for i := range lvl.Chunks {
 			id := lvl.Chunks[i].ID
-			if imgui.SelectableV(id, e.AttachedChunk == id, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(id, e.AttachedChunk == id, 0, imgui.Vec2{}) {
 				e.AttachedChunk = id
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Rides this chunk: moving it — by hand here, by\nVelocity in play — carries this entity the same distance.")
@@ -314,13 +316,13 @@ func editorEntityMotion(e *world.Entity) {
 // editorEntityBounds draws the bounding volume: its shape, its size and where
 // it sits relative to the entity's origin.
 func editorEntityBounds(e *world.Entity) {
-	if imgui.BeginCombo("Shape##entboundkind", world.BoundingTypeName(e.BoundingKind)) {
+	if imguibackend.BeginCombo("Shape##entboundkind", world.BoundingTypeName(e.BoundingKind)) {
 		for i, n := range world.BoundingTypeNames {
-			if imgui.SelectableV(n, world.BoundingType(i) == e.BoundingKind, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(n, world.BoundingType(i) == e.BoundingKind, 0, imgui.Vec2{}) {
 				e.BoundingKind = world.BoundingType(i)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 
 	half := [3]float32{e.BoundHalfX, e.BoundHalfY, e.BoundHalfZ}
@@ -625,20 +627,20 @@ func editorEntityAnimationRow(m *world.EntityModel, idx int, clips []string, pla
 	// The clip is the .fmdl's own name for the motion. Shown even when it is
 	// not among the model's clips, so a mapping that has gone stale is visible
 	// rather than silently reset to something that happens to exist.
-	if imgui.BeginCombo("Clip##clip", a.EffectiveClip()) {
+	if imguibackend.BeginCombo("Clip##clip", a.EffectiveClip()) {
 		known := false
 		for _, c := range clips {
 			if c == a.EffectiveClip() {
 				known = true
 			}
-			if imgui.SelectableV(c, c == a.EffectiveClip(), 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(c, c == a.EffectiveClip(), 0, imgui.Vec2{}) {
 				a.Clip = c
 			}
 		}
 		if !known {
-			imgui.SelectableV(a.EffectiveClip()+" (missing)", true, 0, imgui.Vec2{})
+			imguibackend.SelectableV(a.EffectiveClip()+" (missing)", true, 0, imgui.Vec2{})
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 
 	speed := a.EffectiveSpeed()
@@ -678,21 +680,21 @@ func editorEntityLoopCombo(a *world.EntityAnimation) {
 			cur = forceOff
 		}
 	}
-	if !imgui.BeginCombo("Loop##loop", cur) {
+	if !imguibackend.BeginCombo("Loop##loop", cur) {
 		return
 	}
-	if imgui.SelectableV(followClip, cur == followClip, 0, imgui.Vec2{}) {
+	if imguibackend.SelectableV(followClip, cur == followClip, 0, imgui.Vec2{}) {
 		a.Loop = nil
 	}
-	if imgui.SelectableV(forceOn, cur == forceOn, 0, imgui.Vec2{}) {
+	if imguibackend.SelectableV(forceOn, cur == forceOn, 0, imgui.Vec2{}) {
 		v := true
 		a.Loop = &v
 	}
-	if imgui.SelectableV(forceOff, cur == forceOff, 0, imgui.Vec2{}) {
+	if imguibackend.SelectableV(forceOff, cur == forceOff, 0, imgui.Vec2{}) {
 		v := false
 		a.Loop = &v
 	}
-	imgui.EndCombo()
+	imguibackend.EndCombo()
 }
 
 // editorEntityBlendField draws the crossfade override: a checkbox for whether

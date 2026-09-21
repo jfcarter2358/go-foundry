@@ -106,6 +106,7 @@ func Init() error {
 
 	createWhitePixel()
 	InstallVideoDriver()
+	InstallWorldProject()
 	initialised = true
 	return nil
 }

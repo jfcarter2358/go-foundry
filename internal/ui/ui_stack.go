@@ -554,7 +554,7 @@ func (st *Stack) activate(s *Screen, n *Node) {
 	case KindToggle:
 		n.Value.On = !n.Value.On
 		hooks.RecordUIEvent(hooks.UIEvent{Atom: "change",
-			Screen: s.ID, Widget: n.ID, Bool: n.Value.On, Num: boolNum(n.Value.On)})
+			Screen: s.ID, Widget: n.ID, Bool: n.Value.On, Num: boolNum(n.Value.On), Toggle: true})
 	case KindInput:
 		st.setFocus(s, n)
 		return
@@ -567,9 +567,11 @@ func (st *Stack) postChange(s *Screen, n *Node) {
 	switch n.Kind {
 	case KindInput:
 		ev.Str = n.Text.Shown()
+		ev.Text = true
 	case KindToggle:
 		ev.Bool = n.Value.On
 		ev.Num = boolNum(n.Value.On)
+		ev.Toggle = true
 	default:
 		ev.Num = float64(n.Value.Current())
 	}

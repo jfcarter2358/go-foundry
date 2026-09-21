@@ -158,35 +158,68 @@ func modelTextureSection() {
 		modelSetTexture(tex)
 	}
 
+	// A model already wearing a saved texture has been through this before, and
+	// the texture is very likely painted: the button carries on painting it
+	// rather than laying the mesh out again over a fresh checkerboard. Starting
+	// over is still there, one button along, where it cannot be hit by habit.
+	existing := modelExistingTexture()
 	if imgui.Button("Unwrap && Paint...##modelunwrapatlas") {
-		modelOpenUnwrapDialog()
+		if existing != "" {
+			if err := openTextureForPainting(existing); err != nil {
+				modelSetStatus("Open %s: %v", existing, err)
+			}
+		} else {
+			modelOpenUnwrapDialog()
+		}
 	}
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Flatten the whole mesh into one texture, point the model\n" +
-			"at it, and open it in the texture editor.\n" +
-			"The model updates as you paint.")
+		if existing != "" {
+			imgui.SetTooltip(fmt.Sprintf("Open %s in the texture editor with the UV layout\n"+
+				"over it, and keep painting. The model updates as you paint.", existing))
+		} else {
+			imgui.SetTooltip("Flatten the whole mesh into one texture, point the model\n" +
+				"at it, and open it in the texture editor.\n" +
+				"The model updates as you paint.")
+		}
 	}
-
-	// The button is only useful once the two are already linked, so it is shown
-	// rather than greyed when they are not — a disabled button with no
-	// explanation reads as broken.
-	if modelTextureIsBoundForPainting() {
+	if existing != "" {
 		imgui.SameLine()
-		if imgui.Button("Paint##modelpaintatlas") {
-			requestTexEditor(nil)
+		if imgui.Button("Re-unwrap...##modelreunwrapatlas") {
+			modelOpenUnwrapDialog()
 		}
 		if imgui.IsItemHovered() {
-			imgui.SetTooltip("Raise the texture editor on this model's texture.")
+			imgui.SetTooltip("Lay the mesh out again from scratch. The texture is\n" +
+				"replaced with a fresh guide, since the old paint would\n" +
+				"no longer line up with the new layout.")
 		}
 	}
 }
 
-// modelTextureIsBoundForPainting reports whether the open texture document is
-// the one this model wears — the state in which painting updates the mesh live.
-func modelTextureIsBoundForPainting() bool {
-	return modelDoc != nil && textureui.ActiveTexEditor != nil &&
-		textureui.ActiveTexEditor.BoundTexture != "" &&
-		textureui.ActiveTexEditor.BoundTexture == modelDoc.Texture
+// modelExistingTexture is the texture the model wears when it is one saved on
+// disk — the case in which Unwrap & Paint opens it rather than replacing it.
+func modelExistingTexture() string {
+	if modelDoc == nil || modelDoc.Texture == "" || !texDocExistsOnDisk(modelDoc.Texture) {
+		return ""
+	}
+	return modelDoc.Texture
+}
+
+// openTextureForPainting raises the texture editor on the saved texture name,
+// with the UV layout of whatever wears it drawn over the canvas.
+//
+// When the texture editor already has it open, it is raised as it is: reading
+// the file again would throw away strokes not yet saved.
+func openTextureForPainting(name string) error {
+	if ed := textureui.ActiveTexEditor; ed != nil && ed.BoundTexture == name {
+		requestTexEditor(nil)
+		return nil
+	}
+	ed, err := texture.OpenTexEditorDoc(name)
+	if err != nil {
+		return err
+	}
+	requestTexEditor(ed)
+	return nil
 }
 
 // ---------- the dialog ----------
@@ -220,7 +253,7 @@ func (d *atlasUnwrapForm) body(id, intro string, note func(name string),
 		sizeLabels[i] = fmt.Sprintf("%dx%d", s, s)
 	}
 	imgui.SetNextItemWidth(150)
-	imgui.Combo("##"+id+"unwrapsize", &d.SizeIdx, sizeLabels)
+	imguibackend.Combo("##"+id+"unwrapsize", &d.SizeIdx, sizeLabels)
 
 	// Degrees and texels drag by whole units; Editor.StepSize is a world
 	// distance and would make both of these crawl.
@@ -445,15 +478,44 @@ func modelUVLayoutFor(tex string) [][]mgl32.Vec2 {
 	}
 	out := make([][]mgl32.Vec2, 0, len(modelDoc.Faces))
 	for fi := range modelDoc.Faces {
-		f := &modelDoc.Faces[fi]
-		if len(f.Verts) < 3 {
-			continue
+		if loop := modelFaceUVLoop(fi); loop != nil {
+			out = append(out, loop)
 		}
-		loop := make([]mgl32.Vec2, len(f.Verts))
-		for i := range f.Verts {
-			loop[i] = f.UvAt(i)
-		}
-		out = append(out, loop)
 	}
 	return out
+}
+
+// modelUVSelectionFor is modelUVLayoutFor narrowed to the face selection: the
+// islands the texture editor highlights so the painter can see where a face
+// picked in the viewport lives on the canvas. Face mode only — a vertex or edge
+// selection names no region to paint.
+func modelUVSelectionFor(tex string) [][]mgl32.Vec2 {
+	if modelDoc == nil || tex == "" || modelDoc.Texture != tex {
+		return nil
+	}
+	faces := modelSelectedFaces()
+	out := make([][]mgl32.Vec2, 0, len(faces))
+	for _, fi := range faces {
+		if loop := modelFaceUVLoop(fi); loop != nil {
+			out = append(out, loop)
+		}
+	}
+	return out
+}
+
+// modelFaceUVLoop is face fi's corners in UV space, or nil when fi does not
+// name a face with an area.
+func modelFaceUVLoop(fi int) []mgl32.Vec2 {
+	if fi < 0 || fi >= len(modelDoc.Faces) {
+		return nil
+	}
+	f := &modelDoc.Faces[fi]
+	if len(f.Verts) < 3 {
+		return nil
+	}
+	loop := make([]mgl32.Vec2, len(f.Verts))
+	for i := range f.Verts {
+		loop[i] = f.UvAt(i)
+	}
+	return loop
 }

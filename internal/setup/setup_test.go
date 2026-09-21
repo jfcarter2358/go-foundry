@@ -83,6 +83,7 @@ func (f *fakeHost) InUse(path string) bool {
 
 func (f *fakeHost) Launch(exe, dir string) error { f.launch = exe; return nil }
 
+
 const stubBytes = "MZ this stands in for the installer program"
 
 // quote is pack's shellQuote, which the stamp is written with.

@@ -33,6 +33,7 @@ package render
 import (
 	"unsafe"
 
+	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 
@@ -74,6 +75,12 @@ type ChunkBatch struct {
 	groups []*batchGroup
 	// byBrush[bi] lists every range brush bi has, one per material it uses.
 	byBrush [][]rangeRef
+	// boxes is each brush's box in chunk space, around exactly the vertices
+	// the batches draw for it — authored, before any placement, which a moved
+	// brush's box is carried through at draw time. Rebuilt with byBrush, so it
+	// can only be as stale as the batches themselves. An empty box (lo > hi)
+	// for a brush with nothing drawn.
+	boxes [][2]mgl32.Vec3
 }
 
 // levelBatches is every chunk batch of one level.
@@ -206,7 +213,7 @@ func (lb *levelBatches) syncChunk(ch *world.Chunk) *ChunkBatch {
 			key := batchKey{
 				mat: gfx.Material{
 					Texture: g.Texture, BlendTexture: g.BlendTexture, BlendMask: g.BlendMask,
-					Alpha: g.Alpha, Smooth: len(g.Normals) > 0,
+					Alpha: g.Alpha, Normals: len(g.Normals) > 0, Smooth: g.Smooth,
 				},
 				doubleSided: f.DoubleSided,
 			}
@@ -256,7 +263,37 @@ func (lb *levelBatches) syncChunk(ch *world.Chunk) *ChunkBatch {
 			cb.byBrush[bi] = append(cb.byBrush[bi], rangeRef{group: int32(gi), index: int32(ri)})
 		}
 	}
+	cb.boxes = make([][2]mgl32.Vec3, len(ch.Brushes))
+	for bi := range cb.boxes {
+		cb.boxes[bi] = emptyBox3()
+	}
+	for _, pg := range order {
+		for _, fr := range pg.faces {
+			box := &cb.boxes[fr.brush]
+			v := fr.g.Vertices
+			for i := 0; i+2 < len(v); i += 5 {
+				p := mgl32.Vec3{v[i], v[i+1], v[i+2]}
+				box[0], box[1] = geom.VecMin(box[0], p), geom.VecMax(box[1], p)
+			}
+		}
+	}
 	return cb
+}
+
+// emptyBox3 is a box that any point grows to fit.
+func emptyBox3() [2]mgl32.Vec3 {
+	const inf = float32(3.4e38)
+	return [2]mgl32.Vec3{{inf, inf, inf}, {-inf, -inf, -inf}}
+}
+
+// brushBox is where brush bi of ch is drawn, in chunk space: its cached box,
+// carried through the brush's placement when a script has moved it.
+func (cb *ChunkBatch) brushBox(ch *world.Chunk, bi int) (mgl32.Vec3, mgl32.Vec3) {
+	box := cb.boxes[bi]
+	if b := &ch.Brushes[bi]; !b.AtRest() {
+		return TransformAABB(b.Placement(), box[0], box[1])
+	}
+	return box[0], box[1]
 }
 
 // rebuild concatenates the group's faces and uploads them.
@@ -270,7 +307,7 @@ func (g *batchGroup) rebuild(pg *pendingGroup) {
 	}
 	verts := make([]float32, 0, nv)
 	var normals []float32
-	if pg.key.mat.Smooth {
+	if pg.key.mat.Normals {
 		normals = make([]float32, 0, nn)
 	}
 	g.keep = g.keep[:0]
@@ -335,13 +372,16 @@ func DrawChunkBrushes(lvl *world.Level, ch *world.Chunk, frustum Frustum, chunkM
 	if cb == nil {
 		return st
 	}
+	// The frustum is carried into the chunk once, rather than every brush's
+	// box out of it.
+	local := frustum.InSpaceOf(chunkModel)
 	for bi := range ch.Brushes {
 		if bi >= len(cb.byBrush) || len(cb.byBrush[bi]) == 0 {
 			continue
 		}
 		brush := &ch.Brushes[bi]
-		bMin, bMax := brush.WorldAABB(ch)
-		if !AABBInFrustum(frustum, bMin, bMax) {
+		bMin, bMax := cb.brushBox(ch, bi)
+		if !AABBInFrustum(local, bMin, bMax) {
 			continue
 		}
 		st.Brushes++
@@ -350,7 +390,10 @@ func DrawChunkBrushes(lvl *world.Level, ch *world.Chunk, frustum Frustum, chunkM
 		if moved {
 			model = chunkModel.Mul4(brush.Placement())
 		}
-		c := bMin.Add(bMax).Mul(0.5).Sub(camPos)
+		// The sort key is the box's centre in the world: a box's centre is
+		// carried to the centre of the carried box.
+		mid := bMin.Add(bMax).Mul(0.5)
+		c := chunkModel.Mul4x1(mid.Vec4(1)).Vec3().Sub(camPos)
 		for _, ref := range cb.byBrush[bi] {
 			g := cb.groups[ref.group]
 			first, count := g.firsts[ref.index:ref.index+1], g.counts[ref.index:ref.index+1]
@@ -406,18 +449,20 @@ func shadowChunkBrushes(lvl *world.Level, ch *world.Chunk, chunkModel mgl32.Mat4
 			gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
 		}
 	}
+	var localCull Frustum
+	if cull != nil {
+		localCull = cull.InSpaceOf(chunkModel)
+	}
 	for bi := range ch.Brushes {
 		if bi >= len(cb.byBrush) || len(cb.byBrush[bi]) == 0 {
 			continue
 		}
 		brush := &ch.Brushes[bi]
-		// LocalAABB already reports where a moved brush IS
-		// (world/brush_dynamic.go), so this culls against the drawn position
-		// rather than the authored one.
+		// Culled in the chunk's own space, against where the brush is drawn
+		// (brushBox carries a moved one to where it IS).
 		if cull != nil {
-			bMin, bMax := brush.LocalAABB()
-			bMin, bMax = TransformAABB(chunkModel, bMin, bMax)
-			if !AABBInFrustum(*cull, bMin, bMax) {
+			bMin, bMax := cb.brushBox(ch, bi)
+			if !AABBInFrustum(localCull, bMin, bMax) {
 				continue
 			}
 		}

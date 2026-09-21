@@ -12,11 +12,70 @@ import (
 	"strings"
 )
 
-// ExecutablePath is the directory containing the game executable. Only what
-// belongs to the binary rather than to the game is found here — runtimes/, and a
-// development build's log, window layout and release settings. Content is under
-// ResourcesPath.
+// ExecutablePath is the directory containing the executable. Only what belongs
+// to the binary rather than to the game is found here: the runtimes/ an
+// installed editor brings with it, and the shaders it was built against
+// (EngineShadersDir). Content is under ResourcesPath.
 var ExecutablePath string
+
+// ProjectPath is the project being worked on: the directory holding
+// resources/, and where a development build writes its log, its settings and
+// release.yaml. A release build's is its install directory, which is also
+// ExecutablePath. A development build's is chosen at startup
+// (internal/project) and may be anywhere — the editor is installed once and
+// opens projects, the way any other editor does.
+var ProjectPath string
+
+// EngineShadersDir is where the engine's own shaders are read from, when that
+// is not the project's resources/shaders: the resources/shaders an installed
+// editor carries beside itself. Empty means the project's.
+//
+// Shaders are the one part of resources/ that belongs to the binary rather than
+// the game — the engine binds uniforms and attributes they declare, so a binary
+// newer than its shaders renders wrong — and a project opened by an editor
+// installed somewhere else must not pin the editor to whatever shaders the
+// project last had copied into it.
+var EngineShadersDir string
+
+// ShadersDir is the directory shaders are read from.
+func ShadersDir() string {
+	if EngineShadersDir != "" {
+		return EngineShadersDir
+	}
+	return filepath.Join(ResourcesPath, "shaders")
+}
+
+// ShaderPath resolves a shader by its file name, or by its "shaders/<file>"
+// resource path.
+func ShaderPath(name string) string {
+	name = strings.TrimPrefix(filepath.ToSlash(name), "shaders/")
+	return filepath.Join(ShadersDir(), filepath.FromSlash(name))
+}
+
+// EngineShadersFor is the shader directory an executable in exeDir brings
+// with it, for a project at project: its own resources/shaders, when it has
+// one and the project is somewhere else. "" when the project's are the ones
+// to use — the executable runs from the project, as a release build and a
+// development build in a checkout both do.
+func EngineShadersFor(exeDir, project string) string {
+	if exeDir == "" || samePath(exeDir, project) {
+		return ""
+	}
+	dir := filepath.Join(exeDir, ResourcesDirName, "shaders")
+	if _, err := os.Stat(filepath.Join(dir, "fragment.glsl")); err != nil {
+		return ""
+	}
+	return dir
+}
+
+func samePath(a, b string) bool {
+	aa, err1 := filepath.Abs(a)
+	bb, err2 := filepath.Abs(b)
+	if err1 != nil || err2 != nil {
+		return a == b
+	}
+	return strings.EqualFold(filepath.Clean(aa), filepath.Clean(bb))
+}
 
 // ResourcesDirName is the folder, beside the executable, that every asset the
 // engine reads lives under: levels/, textures/, scripts/, game.yaml and the rest.

@@ -26,7 +26,7 @@ directory of its own is built from the editor running there — see
 
 ## From the editor
 
-The toolbar's **Release** button opens a window that builds a release of the
+**Build > Release...** (or **Window > Release**) opens a window that builds a release of the
 project the editor is running from: the directory its binary is in, whose
 `resources/` is where it has been reading and saving everything all along.
 Nothing about it needs the Foundry source.
@@ -200,14 +200,41 @@ The prune scans each reachable file for tokens that name other assets, and
 follows them to a fixpoint. It errs on the safe side: a level with the word
 "grass" in a comment pulls in `grass.png`, and the pack is one texture larger.
 
-**The one thing it cannot see is a name a script assembles at runtime** —
-`load_level("level_" + n)`. Either pack with `PRUNE=0`, or make sure the names
-appear literally somewhere the walk reaches.
+A name a script assembles at runtime is followed when its fixed part is
+written down: `format("ammo_{}", n)` reaches every `ammo_*` asset,
+`"pickup_" + kind` every `pickup_*`, and `format("{}_{}_icon", w, c)` every
+`*_icon`. A pattern needs at least three fixed characters, so `format("{}_{}")`
+reaches nothing. **What it still cannot see is a name built some other way** —
+from a variable holding the whole prefix, say. Either pack with `PRUNE=0`, or
+make sure the names appear literally somewhere the walk reaches.
 
 Per-directory prune counts print on every pack. Read them and confirm nothing
 live was dropped.
 
 `shaders/` and `fonts/` are always copied whole.
+
+### Finding unused assets
+
+The same walk, turned round, lists what you could delete. **Window > Unused
+Assets** scans `resources/` and lists every file nothing refers to, grouped by
+directory with its size. For a file that something does mention, it names what
+mentions it: a texture "named only by unused models/old.fmdl" goes when that
+model goes.
+
+- **Count every level as used** (on by default) keeps levels the start level
+  never leads to, and everything they use, out of the list. Test maps stay put.
+  Turn it off to see exactly what a pruned release leaves out.
+- Tick files, or use **Select shown** (after typing a filter) or **Select
+  backups** (the `*.bak` copies the editor leaves beside what it saves). Then
+  **Delete**. You confirm the list first, and a deleted file cannot be got back
+  unless `resources/` is under git (**Window > Git**).
+- `textures/palette.pal` (the texture editor's palette) and directory READMEs
+  are never listed. Nor are `shaders/` and `fonts/`.
+
+From a terminal, `foundry find-unused` prints the same report and deletes
+nothing. Add `-from-start` to count only what the start level leads to, and
+`-root <project>` to scan a project other than the one beside the binary or in
+the working directory.
 
 ## Installers
 
@@ -235,6 +262,55 @@ entry), plus an `install.sh` inside the tarball for everywhere `dpkg` is not
 Both replace an existing install wholesale rather than merging, so an asset
 renamed between releases cannot linger and keep being found.
 
+## Giving the editor to your team
+
+The editor is distributed on its own, as a Foundry release, and opens projects
+from wherever people keep them — typically a clone of the game's repository.
+From a Foundry checkout (on Linux, with the mingw cross-compiler):
+
+```
+make dist-editor
+gh release create v1.4.0 build/editor-dist/*
+```
+
+`make dist-editor` builds three files into `build/editor-dist/`, versioned from
+`git describe`:
+
+| File | What |
+|---|---|
+| `foundry-editor-<v>-windows-amd64-setup.exe` | per-user install into `%LOCALAPPDATA%\Programs\Foundry Editor`, no admin; Start Menu, Add/Remove Programs |
+| `foundry-editor-<v>-windows-amd64.zip` | the same, portable |
+| `foundry-editor-<v>-linux-amd64.tar.gz` | needs `libsdl2` from the distribution |
+
+Each carries the shaders it was built from and a `runtimes/` folder (the release
+game binaries for both platforms and the Windows installer program), so the
+Release window can ship a game with nothing else installed. Installing a newer
+Setup.exe replaces the editor in place. Nothing of anybody's is in there to lose,
+because projects live elsewhere.
+
+**Which project it opens:**
+
+1. `foundry -project <folder>`, or a folder dropped onto the program;
+2. the editor's own folder, if it holds `resources/game.yaml` — a checkout, or
+   the old layout with `foundry.exe` copied into a game's folder, both still
+   work;
+3. the project opened last;
+4. otherwise a new one at `Documents/Foundry Projects/Untitled`.
+
+**File → Open Project...** (with a recent list) and **New Project...** restart
+the editor on the chosen folder, after warning about anything unsaved. A new
+project can be made in an empty folder, or a fresh clone holding only `.git`.
+The editor's log and settings (`foundry.log`, `release.yaml`, `graphics.yaml`
+and so on) are written in the project folder, as before; the recent list is kept
+in the per-user `Foundry Editor` data folder.
+
+**Shaders belong to the editor.** They have to match the binary, so an installed
+editor reads its own `resources/shaders` instead of the project's. A release
+built from it ships those shaders too. A project opened that way does not need
+a `shaders/` folder, and one is not created. **Runtimes** are looked for in the
+project's `runtimes/` first, so a project can pin its own, and then in the
+editor's.
+
 ## Checklist
 
 1. `resources/game.yaml` names the real `start_level`, not the default
@@ -243,7 +319,8 @@ renamed between releases cannot linger and keep being found.
 3. `make release-check` — the editor is out of the binary.
 4. `make test-release` — the suite passes in the release configuration.
 5. `make release-linux` / `make release-windows`, or the editor's **Release**
-   window; read the prune counts.
+   window; read the prune counts. **Window > Unused Assets** lists what the
+   prune left out, if you'd rather delete it than carry it.
 6. Run the staged tree from a directory that is **not** the repository. Confirm
    the log lands in the user data directory and nothing is written into the
    install.

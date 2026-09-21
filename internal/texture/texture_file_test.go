@@ -139,6 +139,25 @@ func TestFtexRoundTrip8Layers(t *testing.T) {
 	}
 }
 
+// TestFtexReopensOnTopLayer: the active layer isn't saved, and reopening on
+// layer 0 put new paint under every other layer — an unwrapped texture's
+// "Paint" layer then hid it, so painting over earlier paint did nothing.
+func TestFtexReopensOnTopLayer(t *testing.T) {
+	withTempTextureDir(t)
+	d := roundTripDoc()
+	path := filepath.Join(t.TempDir(), "top.ftex")
+	if err := WriteTexDoc(path, d); err != nil {
+		t.Fatalf("WriteTexDoc: %v", err)
+	}
+	got, err := ReadTexDoc(path)
+	if err != nil {
+		t.Fatalf("ReadTexDoc: %v", err)
+	}
+	if want := len(got.Layers) - 1; got.Active != want {
+		t.Errorf("Active = %d, want the top layer %d", got.Active, want)
+	}
+}
+
 // TestFtexRoundTripMultipleFrames covers the version-2 format's actual new
 // content: several frames, each with its own layer stack, surviving a
 // write/read round trip independently of one another.
@@ -659,5 +678,43 @@ func TestImportedPNGIsAWholeDocument(t *testing.T) {
 	}
 	if err := SaveTexDoc(d, "imported"); err != nil {
 		t.Fatalf("SaveTexDoc on an imported document: %v", err)
+	}
+}
+
+// Closing the texture editor without saving reverts: the document comes back
+// as last saved, not as last painted, and one never saved has nothing to
+// come back as.
+func TestRevertToSaved(t *testing.T) {
+	withTempTextureDir(t)
+	prevNames := gfx.TextureNames
+	gfx.TextureNames = map[string]string{}
+	t.Cleanup(func() { gfx.TextureNames = prevNames })
+	ed, err := NewTexEditorDoc("revert", 8, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := ed.RevertToSaved(); saved != nil || err != nil {
+		t.Fatalf("never saved: got %v, %v; want nil, nil", saved, err)
+	}
+
+	ed.Doc.Layers[0].Idx[0] = 3
+	if err := ed.Save("revert"); err != nil {
+		t.Fatal(err)
+	}
+	ed.Doc.Layers[0].Idx[0] = 7
+	ed.Doc.MarkDirty()
+
+	saved, err := ed.RevertToSaved()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := saved.Doc.Layers[0].Idx[0]; got != 3 {
+		t.Errorf("reverted texel = %d, want the saved 3", got)
+	}
+	if saved.Doc.Dirty() {
+		t.Error("reverted document is dirty")
+	}
+	if saved.BoundTexture != "revert" {
+		t.Errorf("reverted document bound to %q, want %q", saved.BoundTexture, "revert")
 	}
 }

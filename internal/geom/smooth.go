@@ -64,6 +64,16 @@ func smoothWeld(x, y, z float32) smoothWeldKey {
 // and indices the triangle list. angleDeg is the crease threshold in degrees;
 // 0 means "use the default".
 func ComputeSmoothNormals(vertices [][]float32, indices []int, angleDeg float32) []float32 {
+	return ComputeSmoothNormalsPerTriangle(vertices, indices, func(int) float32 { return angleDeg })
+}
+
+// ComputeSmoothNormalsPerTriangle is ComputeSmoothNormals with the crease
+// threshold stated per triangle: angleOf(t) is triangle t's, and decides which
+// neighbours t's own corners average with. For a mesh welded out of surfaces
+// that each carry their own threshold — every face of a brush smoothed as one
+// (world.BrushMesh.Load) — where one number for the whole mesh would override
+// what each face asked for.
+func ComputeSmoothNormalsPerTriangle(vertices [][]float32, indices []int, angleOf func(t int) float32) []float32 {
 	triCount := len(indices) / 3
 	if triCount == 0 {
 		return nil
@@ -74,39 +84,46 @@ func ComputeSmoothNormals(vertices [][]float32, indices []int, angleDeg float32)
 		return vec3{v[0], v[1], v[2]}
 	}
 
-	// Face normals are left unnormalized: their length is twice the triangle
-	// area, which is exactly the weight a shared vertex should give each
-	// neighbour — a sliver contributes proportionally less than a broad face.
+	// Each triangle's unit normal, and the angle at each of its corners. A
+	// neighbour's normal counts in proportion to the angle it makes at the
+	// shared point: that is the one weighting that does not care how a polygon
+	// was cut into triangles — a quad's corner split between two fan triangles
+	// sums to the same angle as the whole corner — so a symmetric solid shades
+	// symmetrically. Weighting by triangle area instead gave a fan's pivot
+	// corner twice the say of the others, and a faceted cylinder lopsided
+	// highlights.
 	faceN := make([]vec3, triCount)
+	cornerAngle := make([]float32, triCount*3)
 	for t := 0; t < triCount; t++ {
 		a, b, c := pos(t*3), pos(t*3+1), pos(t*3+2)
-		faceN[t] = cross3(sub3(b, a), sub3(c, a))
+		faceN[t] = normalize3(cross3(sub3(b, a), sub3(c, a)))
+		cornerAngle[t*3] = angleBetween(sub3(b, a), sub3(c, a))
+		cornerAngle[t*3+1] = angleBetween(sub3(c, b), sub3(a, b))
+		cornerAngle[t*3+2] = angleBetween(sub3(a, c), sub3(b, c))
 	}
 
-	// Which triangles touch each welded position.
+	// Which triangle corners sit at each welded position.
 	adj := make(map[smoothWeldKey][]int32, triCount*3)
-	for t := 0; t < triCount; t++ {
-		for c := 0; c < 3; c++ {
-			p := pos(t*3 + c)
-			k := smoothWeld(p[0], p[1], p[2])
-			adj[k] = append(adj[k], int32(t))
-		}
+	for k := range indices[:triCount*3] {
+		p := pos(k)
+		key := smoothWeld(p[0], p[1], p[2])
+		adj[key] = append(adj[key], int32(k))
 	}
-
-	cosLimit := float32(math.Cos(float64(smoothAngleOrDefault(angleDeg)) * math.Pi / 180))
 
 	out := make([]float32, 0, len(indices)*3)
 	for t := 0; t < triCount; t++ {
-		own := normalize3(faceN[t])
+		cosLimit := float32(math.Cos(float64(smoothAngleOrDefault(angleOf(t))) * math.Pi / 180))
+		own := faceN[t]
 		for c := 0; c < 3; c++ {
 			p := pos(t*3 + c)
 			var acc vec3
-			for _, o := range adj[smoothWeld(p[0], p[1], p[2])] {
+			for _, k := range adj[smoothWeld(p[0], p[1], p[2])] {
+				o := int(k) / 3
 				n := faceN[o]
-				if int(o) != t && dot3(normalize3(n), own) < cosLimit {
+				if o != t && dot3(n, own) < cosLimit {
 					continue // crease — this neighbour lights as its own facet
 				}
-				acc = add3(acc, n)
+				acc = add3(acc, scale3(n, cornerAngle[k]))
 			}
 			n := normalize3(acc)
 			if n == (vec3{}) {
@@ -136,6 +153,19 @@ func cross3(a, b vec3) vec3 {
 }
 
 func dot3(a, b vec3) float32 { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2] }
+
+func scale3(a vec3, s float32) vec3 { return vec3{a[0] * s, a[1] * s, a[2] * s} }
+
+// angleBetween is the angle between two vectors, in radians; 0 when either is
+// degenerate, so a sliver corner carries no weight.
+func angleBetween(a, b vec3) float32 {
+	la, lb := dot3(a, a), dot3(b, b)
+	if la < 1e-24 || lb < 1e-24 {
+		return 0
+	}
+	c := float64(dot3(a, b)) / math.Sqrt(float64(la)*float64(lb))
+	return float32(math.Acos(math.Max(-1, math.Min(1, c))))
+}
 
 func normalize3(v vec3) vec3 {
 	l := float32(math.Sqrt(float64(dot3(v, v))))

@@ -135,7 +135,7 @@ func (b *builder) run(root string) ([]string, error) {
 	if b.source != "" {
 		b.logf("game binary: built from %s", b.source)
 	} else {
-		b.logf("game binary: prebuilt, from %s", filepath.Join(b.root, RuntimesDirName))
+		b.logf("game binary: prebuilt, from %s", filepath.Dir(PrebuiltPlayer(b.root, targets[0])))
 	}
 
 	// Levels, from disk. What the editor has open and has not saved is not in
@@ -175,6 +175,7 @@ func (b *builder) platform(p Platform) error {
 	stage := filepath.Join(b.outDir, "install-"+p.GOOS)
 	res, err := pack.Pack(pack.Options{
 		Src:     b.resources,
+		Shaders: b.shaders(),
 		Out:     stage,
 		Exe:     exe,
 		GOOS:    p.GOOS,
@@ -231,6 +232,17 @@ func (b *builder) platform(p Platform) error {
 		return fmt.Errorf("no archive format for %s", p.GOOS)
 	}
 	return nil
+}
+
+// shaders is where the release's shaders come from, when not the project's:
+// the checkout the game binary is built from, or the editor install whose
+// runtimes/ it came out of. Either way, the shaders that binary was built
+// against.
+func (b *builder) shaders() string {
+	if b.source != "" {
+		return filepath.Join(fileutil.ResourcesDir(b.source), "shaders")
+	}
+	return fileutil.EngineShadersFor(fileutil.ExecutablePath, b.root)
 }
 
 // installer builds one installer that needs a tool, or says why it could not.

@@ -131,3 +131,33 @@ func TestModelUVLayoutHandlesNoDocument(t *testing.T) {
 		t.Error("layout returned loops with no document open")
 	}
 }
+
+// The texture editor highlights exactly the faces picked in face mode, with the
+// same loops the layout draws for them — and nothing for a vertex selection,
+// which names no region to paint.
+func TestModelUVSelectionIsTheSelectedFacesLoops(t *testing.T) {
+	prevDoc, prevSel := modelDoc, modelSelection
+	defer func() { modelDoc, modelSelection = prevDoc, prevSel }()
+
+	modelDoc = model.NewCubeDoc()
+	modelDoc.SetTexture("crate_atlas")
+	modelSelection = modelSelectionState{Mode: modelSelFace, Faces: []int{2, 99}}
+
+	layout := modelUVLayoutFor("crate_atlas")
+	got := modelUVSelectionFor("crate_atlas")
+	if len(got) != 1 {
+		t.Fatalf("selection loops = %d, want 1 (the out-of-range face skipped)", len(got))
+	}
+	for i := range got[0] {
+		if got[0][i] != layout[2][i] {
+			t.Errorf("corner %d = %v, want face 2's %v", i, got[0][i], layout[2][i])
+		}
+	}
+	if got := modelUVSelectionFor("something_else"); got != nil {
+		t.Error("selection highlighted on a texture the model does not wear")
+	}
+	modelSelection.Mode = modelSelVertex
+	if got := modelUVSelectionFor("crate_atlas"); len(got) != 0 {
+		t.Errorf("vertex mode highlighted %d faces", len(got))
+	}
+}

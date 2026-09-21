@@ -7,7 +7,7 @@ files also load, for meshes with no rig.
 Nothing is shared between models. One file is the whole thing, which costs some
 duplication and means a rig and a mesh can never drift apart.
 
-Open the **Model** window from the toolbar.
+Open the **Model** window from the editor strip.
 
 ## Getting geometry in
 
@@ -20,7 +20,7 @@ Open the **Model** window from the toolbar.
 - **Merge Model...** and **Merge OBJ...** append another file's geometry to what
   you already have.
 
-**Import OBJ...** on the toolbar replaces the document instead. **Export OBJ...**
+**File > Import OBJ...** replaces the document instead. **File > Export OBJ...**
 writes one out.
 
 ## Shaping

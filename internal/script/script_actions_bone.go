@@ -71,6 +71,32 @@ var boneVerbs = map[string]scriptVerb{
 		gfx.AddRecoil(vals[0], vals[1], vals[2])
 		return flang.NullVal{}, nil
 	},
+	// look_at turns the player's view toward a point or an object over a
+	// number of seconds — a cutscene pointing the camera at what it is about.
+	// `look_at(null)` lets go. See gfx/look_at.go for how long it holds.
+	"look_at": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if len(args) < 1 || len(args) > 2 {
+			return nil, fmt.Errorf("look_at takes (place) or (place, seconds): a vec or an object, or null to let go")
+		}
+		if _, isNull := args[0].(flang.NullVal); isNull {
+			gfx.StopLookAt()
+			return flang.BoolVal(true), nil
+		}
+		target, ok := rt.positionOf(args[0])
+		if !ok {
+			return nil, fmt.Errorf("look_at takes a vec or an object with a position, not a %s", flang.TypeOf(args[0]))
+		}
+		seconds := float32(0)
+		if len(args) == 2 {
+			s, ok := toFloat32(args[1])
+			if !ok {
+				return nil, fmt.Errorf("look_at's seconds is a number, not a %s", flang.TypeOf(args[1]))
+			}
+			seconds = s
+		}
+		gfx.StartLookAt(target, seconds)
+		return flang.BoolVal(true), nil
+	},
 }
 
 // defaultRecoilRecover is how much of a kick eases back when recoil is not

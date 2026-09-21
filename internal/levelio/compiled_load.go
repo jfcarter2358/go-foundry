@@ -152,6 +152,7 @@ func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (in
 		surf := &level.Static.Surfaces[i]
 		surf.DoubleSided = f.DoubleSided
 		surf.Chunk, surf.Brush = f.Chunk, f.Brush
+		surf.CoveredBy = f.CoveredBy
 		surf.Normal = f.Plane.N
 		surf.Lo, surf.Hi = bsp.Bounds(f.Points)
 
@@ -174,7 +175,12 @@ func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (in
 		// No buffers of its own: the renderer batches a compiled level's
 		// surfaces per source chunk and material (render/static_batch.go).
 		g.CPUOnly = true
-		g.VertexLight = bakedLightRows(f, len(verts))
+		g.VertexLight = bakedLightRows(f, f.Light, f.BackLight, len(verts))
+		g.VertexLightSmooth = bakedLightRows(f, f.SmoothLight, f.SmoothBackLight, len(verts))
+		// The face's own smoothed normals, interpolated from its source face
+		// (compile/smooth.go). A flat face has none, and shades from the facet
+		// the way a flat face would anyway.
+		g.VertexNormals = compiledNormalRows(f.VertexNormals(), len(f.Points), len(verts))
 		if err := g.Load(verts, indices, f.Texture, mgl32.Vec3{}); err != nil {
 			return i, fmt.Errorf("compiled face %d: %w", i, err)
 		}
@@ -216,21 +222,60 @@ func noteCompiledFaceTextures(texNeeded map[string]bool, f *compile.Face) {
 // bakedLightRows lines the baked values up with the mesh's vertices.
 //
 // BuildBrushFaceMesh emits one vertex per polygon corner, then — for a
-// double-sided face — a second copy of the whole ring. The modulo is what
-// covers that second copy: both sides of a surface were lit as one, so both
-// take the same values.
+// double-sided face — a second copy of the whole ring, facing the other way,
+// which takes back: that side was baked facing the other way too.
 //
 // A face with no light, or with a light list that does not match its points,
 // gets none rather than a guess: the shader's flag is set from whether the
 // buffer exists, so "no baked light" cleanly means "light it the ordinary way".
-func bakedLightRows(f *compile.Face, n int) [][]float32 {
-	if len(f.Light) == 0 || len(f.Light) != len(f.Points) {
+//
+// Each row is the colour and then the baked sun's share (Face.SunShare) — 0,
+// "take nothing back off", for a face without one or a file baked before
+// faces had it.
+func bakedLightRows(f *compile.Face, front, back []mgl32.Vec3, n int) [][]float32 {
+	if len(front) == 0 || len(front) != len(f.Points) {
+		return nil
+	}
+	if len(back) != len(front) {
+		back = front // a file baked before faces had a far side
+	}
+	shareFront, shareBack := f.SunShare, f.BackSunShare
+	if len(shareFront) != len(front) {
+		shareFront = nil
+	}
+	if len(shareBack) != len(front) {
+		shareBack = shareFront
+	}
+	out := make([][]float32, n)
+	for i := range out {
+		k := i % len(front)
+		l, share := front[k], shareFront
+		if i >= len(front) {
+			l, share = back[k], shareBack
+		}
+		var sun float32
+		if share != nil {
+			sun = share[k]
+		}
+		out[i] = []float32{l.X(), l.Y(), l.Z(), sun}
+	}
+	return out
+}
+
+// compiledNormalRows lays a face's per-point normals out per vertex of its mesh
+// — the far side of a double-sided face, whose vertices follow the near
+// side's, facing the other way. Nil for a flat face.
+func compiledNormalRows(ns []mgl32.Vec3, points, n int) [][]float32 {
+	if len(ns) == 0 || len(ns) != points {
 		return nil
 	}
 	out := make([][]float32, n)
 	for i := range out {
-		l := f.Light[i%len(f.Points)]
-		out[i] = []float32{l.X(), l.Y(), l.Z()}
+		v := ns[i%points]
+		if i >= points {
+			v = v.Mul(-1)
+		}
+		out[i] = []float32{v.X(), v.Y(), v.Z()}
 	}
 	return out
 }

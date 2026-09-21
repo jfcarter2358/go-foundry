@@ -41,7 +41,7 @@ when you look from above), `fixed` does not turn at all.
 
 ## The particle editor
 
-Toolbar: **Particles**. It edits `.fpar` effect documents in
+Editor strip: **Particles**. It edits `.fpar` effect documents in
 `resources/particles/`. Three columns: the layer list, a live preview, and the
 parameters for the selected layer. The preview drives the same simulation and the
 same draw path the game does.

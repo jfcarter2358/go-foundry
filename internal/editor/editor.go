@@ -416,6 +416,10 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	world.CurrentLevel = func() *world.Level { return Editor.level }
 	hooks.EditorActive = func() bool { return Editor.Active }
 	textureui.UVGuideForTexture = uvLayoutFor
+	textureui.UVSelectionForTexture = uvSelectionFor
+	textureui.SharedMenuBar = func() { editorMenuBarShared(editorKindTexture) }
+	textureui.SaveAllMenuItem = editorSaveAllMenuItem
+	textureui.MenuBarDoc = editorMenuBarDoc
 	Editor.LevelsDir = levelsDir
 	Editor.Active = false
 	Editor.Mode = ModeGame
@@ -510,7 +514,7 @@ func panelHandleResizeAt(event sdl.Event, viewW int32) bool {
 			return false
 		}
 		if t.Type == sdl.MOUSEBUTTONDOWN {
-			if t.X >= edge-panelGrabZone && t.X <= edge+panelGrabZone && t.Y > 28 {
+			if t.X >= edge-panelGrabZone && t.X <= edge+panelGrabZone && float32(t.Y) > editorTopBarH {
 				Editor.PanelDragging = true
 				return true
 			}
@@ -533,7 +537,7 @@ func panelHandleResizeAt(event sdl.Event, viewW int32) bool {
 			return true
 		}
 		// Show resize cursor when hovering near the edge, reset otherwise
-		if t.X >= edge-panelGrabZone && t.X <= edge+panelGrabZone && t.Y > 28 {
+		if t.X >= edge-panelGrabZone && t.X <= edge+panelGrabZone && float32(t.Y) > editorTopBarH {
 			sdl.SetCursor(sdl.CreateSystemCursor(sdl.SYSTEM_CURSOR_SIZEWE))
 		} else if !Editor.PanelDragging {
 			sdl.SetCursor(sdl.CreateSystemCursor(sdl.SYSTEM_CURSOR_ARROW))
@@ -973,9 +977,14 @@ func EditorRender() {
 		gizmo.GizmoFlush(projView)
 	}
 
+	// A level being opened advances before the UI, so the bar drawn this frame
+	// is where the work got to.
+	editorStepLevelLoad()
+
 	// --- ImGui UI ---
 	imguibackend.ImGuiNewFrame(dt)
 	EditorDrawUI()
+	editorDrawLevelLoad()
 	// The F3 overlay is drawn here rather than in main.go's non-editor branch
 	// so it is available in every editor mode too — frame time and draw counts
 	// matter most while you are building the thing that costs them.
@@ -1080,6 +1089,13 @@ func EditorLoadLevel(path string) error {
 	if err != nil {
 		return err
 	}
+	editorInstallLevel(newLevel, path)
+	return nil
+}
+
+// editorInstallLevel replaces the current level with one already built from
+// path, and resets everything the editor held that named the old one.
+func editorInstallLevel(newLevel world.Level, path string) {
 
 	// Entity meshes are the one thing in a level that is uploaded per *entity*
 	// rather than per surface, so the outgoing level's have to be released
@@ -1150,8 +1166,7 @@ func EditorLoadLevel(path string) error {
 	Editor.SavePath = path
 
 	EditorClearUndoHistory()
-
-	return nil
+	levelMarkSaved()
 }
 
 // editorEndViewportDrag ends whatever viewport drag the released button owns,

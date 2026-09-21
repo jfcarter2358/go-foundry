@@ -17,8 +17,10 @@ import (
 	"math"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
 
@@ -43,6 +45,12 @@ var (
 	texEditorZoom float32 = 8
 	texEditorPanX float32
 	texEditorPanY float32
+)
+
+// The canvas zoom range, shared by the wheel and "Frame selection".
+const (
+	texEditorMinZoom float32 = 0.25
+	texEditorMaxZoom float32 = 64
 )
 
 // Paint-input state, tracked across frames while a gesture is in progress.
@@ -72,9 +80,17 @@ var (
 	texEditorNewSizeIdx       int32 = 3 // index into texEditorSizeOptions; 512
 	texEditorShowOpenDialog   bool
 	texEditorShowImportDialog bool
+	texEditorShowLayerImport  bool
+	texEditorLayerImportPath  string
+	texEditorLayerImportFind  string
+	texEditorLayerImportFit   int // texdoc.ImportFit
+	texEditorLayerImportInto  int // 0 = new layer, 1 = replace the active layer
 	texEditorShowSaveAsDialog bool
 	texEditorSaveAsName       string
 	texEditorShowMismatch     bool
+	texEditorShowUnsaved      bool
+	texEditorUnsavedThen      func() // what the unsaved-changes prompt is holding back
+	texEditorSaveAsThen       func() // run once a Save As the prompt started succeeds
 	texEditorPendingOpen      *texture.TexEditorState
 	texEditorStatusMsg        string
 	texEditorStatusTime       uint32
@@ -92,7 +108,7 @@ var (
 	texEditorPaletteEditCol    [4]float32 // staging value the picker writes into
 )
 
-var TexEditorSizeOptions = []int32{64, 128, 256, 512, 1024}
+var TexEditorSizeOptions = []int32{64, 128, 256, 512, 1024, 2048}
 
 func texEditorStatus(msg string) {
 	texEditorStatusMsg = msg
@@ -120,6 +136,13 @@ func OpenTextureEditor() {
 		return
 	}
 	w.HandleEvent = texEditorHandleEvent
+	w.ConfirmClose = func() bool {
+		if !TextureEditorDirty() {
+			return true
+		}
+		CloseTextureEditor()
+		return false
+	}
 	texEditorWindow = w
 	if ActiveTexEditor == nil {
 		if ed, err := texture.NewTexEditorDoc("untitled", 512, 512); err == nil {
@@ -131,11 +154,18 @@ func OpenTextureEditor() {
 }
 
 // onTextureEditorClose runs with the texture editor window's GL context
-// current (see CloseUIWindow) so it can free its own preview textures. The
-// document itself is kept in memory — closing the window doesn't discard
-// unsaved work, matching "closing hides the window and keeps the document in
-// memory" from the plan.
+// current (see CloseUIWindow) so it can free its own preview textures. Closing
+// the window by hand asks about unsaved changes first (texEditorConfirmDiscard),
+// so anything still unsaved here was either discarded at that prompt or is
+// going with the app on quit: the texture goes back to its saved version on
+// everything wearing it, rather than leaving the model and 3D editors showing
+// paint that is on no disk. The saved document is kept, so reopening the window
+// carries on from it.
 func onTextureEditorClose() {
+	texEditorShowUnsaved = false
+	texEditorUnsavedThen = nil
+	texEditorSaveAsThen = nil
+	texEditorDiscardUnsaved()
 	if texEditorPreview != 0 {
 		gl.DeleteTextures(1, &texEditorPreview)
 		texEditorPreview = 0
@@ -147,7 +177,54 @@ func onTextureEditorClose() {
 	texEditorWindow = nil
 }
 
+// texEditorDiscardUnsaved reverts the open document to its saved version, live
+// texture included — see RevertToSaved. A document that cannot be read back is
+// kept as it is: better stale paint on screen than paint lost.
+func texEditorDiscardUnsaved() {
+	ed := ActiveTexEditor
+	if ed == nil || !ed.Doc.Dirty() {
+		return
+	}
+	saved, err := ed.RevertToSaved()
+	if err != nil {
+		log.Printf("texture editor: revert %s: %v", ed.BoundTexture, err)
+		return
+	}
+	ActiveTexEditor = saved
+}
+
+// texEditorConfirmDiscard runs then straight away when the open document has
+// nothing unsaved to lose, and otherwise holds it behind the Save / Discard /
+// Cancel prompt (drawTexEditorUnsavedDialog). A second request while the
+// prompt is up replaces the first: the prompt answers for the latest thing
+// asked.
+func texEditorConfirmDiscard(then func()) {
+	if !TextureEditorDirty() {
+		then()
+		return
+	}
+	texEditorUnsavedThen = then
+	texEditorShowUnsaved = true
+}
+
+// TexEditorAdoptDoc makes ed the open document. The one it replaces is closed,
+// so unsaved changes to it are asked about exactly as closing the window asks —
+// unless ed is the same texture, whose upload supersedes them anyway (and whose
+// file may just have been rewritten, as Re-unwrap does, which saving the old
+// document from the prompt would clobber).
 func TexEditorAdoptDoc(ed *texture.TexEditorState) {
+	if old := ActiveTexEditor; old != nil && old != ed &&
+		(old.BoundTexture == "" || old.BoundTexture != ed.BoundTexture) {
+		texEditorConfirmDiscard(func() {
+			texEditorDiscardUnsaved()
+			texEditorAdoptNow(ed)
+		})
+		return
+	}
+	texEditorAdoptNow(ed)
+}
+
+func texEditorAdoptNow(ed *texture.TexEditorState) {
 	ActiveTexEditor = ed
 	ed.PreviewDirty = true
 	texEditorZoom = 8
@@ -232,6 +309,17 @@ const (
 	texShortcutNone texEditorShortcut = iota
 	texShortcutUndo
 	texShortcutRedo
+	texShortcutCopy
+	texShortcutCut
+	texShortcutPaste
+	texShortcutSelectAll
+	texShortcutDeselect
+	texShortcutInvertSelection
+	texShortcutEraseSelection
+	texShortcutNudgeLeft
+	texShortcutNudgeRight
+	texShortcutNudgeUp
+	texShortcutNudgeDown
 )
 
 // texEditorShortcutFor resolves one key chord to an action. Split out from the
@@ -245,7 +333,26 @@ const (
 // WantCaptureKeyboard is true almost all the time and would swallow every
 // shortcut.
 func texEditorShortcutFor(sc sdl.Scancode, ctrl, shift, typing bool) texEditorShortcut {
-	if !ctrl || typing {
+	if typing {
+		return texShortcutNone
+	}
+	if !ctrl {
+		// The bare keys all act on the selection; the handler ignores them
+		// when there isn't one.
+		switch sc {
+		case sdl.SCANCODE_DELETE, sdl.SCANCODE_BACKSPACE:
+			return texShortcutEraseSelection
+		case sdl.SCANCODE_ESCAPE:
+			return texShortcutDeselect
+		case sdl.SCANCODE_LEFT:
+			return texShortcutNudgeLeft
+		case sdl.SCANCODE_RIGHT:
+			return texShortcutNudgeRight
+		case sdl.SCANCODE_UP:
+			return texShortcutNudgeUp
+		case sdl.SCANCODE_DOWN:
+			return texShortcutNudgeDown
+		}
 		return texShortcutNone
 	}
 	switch sc {
@@ -256,6 +363,20 @@ func texEditorShortcutFor(sc sdl.Scancode, ctrl, shift, typing bool) texEditorSh
 		return texShortcutUndo
 	case sdl.SCANCODE_Y:
 		return texShortcutRedo
+	case sdl.SCANCODE_C:
+		return texShortcutCopy
+	case sdl.SCANCODE_X:
+		return texShortcutCut
+	case sdl.SCANCODE_V:
+		return texShortcutPaste
+	case sdl.SCANCODE_A:
+		return texShortcutSelectAll
+	case sdl.SCANCODE_D:
+		return texShortcutDeselect
+	case sdl.SCANCODE_I:
+		if shift {
+			return texShortcutInvertSelection
+		}
 	}
 	return texShortcutNone
 }
@@ -280,16 +401,50 @@ func texEditorHandleEvent(event sdl.Event) {
 		return
 	}
 	mods := sdl.GetModState()
-	switch texEditorShortcutFor(t.Keysym.Scancode,
-		mods&sdl.KMOD_CTRL != 0, mods&sdl.KMOD_SHIFT != 0, imgui.CurrentIO().WantTextInput()) {
+	shift := mods&sdl.KMOD_SHIFT != 0
+	sc := texEditorShortcutFor(t.Keysym.Scancode,
+		mods&sdl.KMOD_CTRL != 0, shift, imgui.CurrentIO().WantTextInput())
+	if sc == texShortcutNone {
+		return
+	}
+	// Every shortcut edits the document or the selection, and one landing
+	// mid-drag would act on texels the still-open gesture is about to write
+	// over (an undo restoring what the stroke then commits on top of), so
+	// close the gesture first.
+	texEditorFinishStroke(ed)
+	nudge := 1
+	if shift {
+		nudge = 8
+	}
+	switch sc {
 	case texShortcutUndo:
-		// An undo mid-drag would restore texels the still-open stroke is about
-		// to snapshot over, so close the gesture first.
-		texEditorFinishStroke(ed)
 		ed.Undo()
 	case texShortcutRedo:
-		texEditorFinishStroke(ed)
 		ed.Redo()
+	case texShortcutCopy:
+		texEditorCopy(ed)
+	case texShortcutCut:
+		texEditorCut(ed)
+	case texShortcutPaste:
+		texEditorPaste(ed)
+	case texShortcutSelectAll:
+		ed.SelectAll()
+	case texShortcutDeselect:
+		ed.Deselect()
+	case texShortcutInvertSelection:
+		ed.InvertSelection()
+	case texShortcutEraseSelection:
+		if ed.HasSelection() {
+			ed.EraseSelection()
+		}
+	case texShortcutNudgeLeft:
+		ed.Nudge(-nudge, 0)
+	case texShortcutNudgeRight:
+		ed.Nudge(nudge, 0)
+	case texShortcutNudgeUp:
+		ed.Nudge(0, -nudge)
+	case texShortcutNudgeDown:
+		ed.Nudge(0, nudge)
 	}
 }
 
@@ -299,8 +454,13 @@ func texEditorFinishStroke(ed *texture.TexEditorState) {
 	if !texEditorPainting {
 		return
 	}
+	// A move or scale is a stroke too (EndMove/EndScale are EndStroke); a
+	// selection being drawn has nothing to commit and is simply abandoned.
 	ed.EndStroke()
 	texEditorPainting = false
+	texEditorMoving = false
+	texEditorScaling = -1
+	texEditorLasso = nil
 }
 
 // ---------- top-level layout ----------
@@ -315,13 +475,14 @@ func drawTextureEditorUI() {
 	imgui.SetNextWindowPos(imgui.Vec2{X: 0, Y: 0})
 	imgui.SetNextWindowSize(imgui.Vec2{X: float32(w.W), Y: float32(w.H)})
 	imgui.BeginV("##texeditor_root", nil,
-		imgui.WindowFlagsNoTitleBar|imgui.WindowFlagsNoResize|imgui.WindowFlagsNoMove|imgui.WindowFlagsNoCollapse)
+		imgui.WindowFlagsNoTitleBar|imgui.WindowFlagsNoResize|imgui.WindowFlagsNoMove|imgui.WindowFlagsNoCollapse|
+			imgui.WindowFlagsMenuBar)
 
 	drawTextureEditorMenuBar()
 	imgui.Separator()
 
 	if ActiveTexEditor == nil {
-		imgui.Text("No document open — use New, Open, or Import PNG above.")
+		imgui.Text("No document open - use File > New, Open, or Import PNG.")
 		imgui.End()
 		return
 	}
@@ -357,76 +518,150 @@ func drawTextureEditorUI() {
 
 // ---------- menu bar + file dialogs ----------
 
+// The parts of the menu bar every editor shares live in the editor package,
+// which imports this one — so they reach it the way UVGuideForTexture does,
+// installed by the editor at startup. Nil (a test, a tool) draws without them.
+var (
+	// SharedMenuBar draws the Window menu and the editor switcher strip.
+	SharedMenuBar func()
+	// SaveAllMenuItem draws File > Save All.
+	SaveAllMenuItem func()
+	// MenuBarDoc draws the document name and save chip at the bar's right edge.
+	MenuBarDoc func(name string, dirty bool)
+)
+
+// CloseTextureEditor asks for the window to go at the end of the frame, once
+// any unsaved changes have been saved or discarded at the prompt. The saved
+// document stays in memory.
+func CloseTextureEditor() {
+	if texEditorWindow == nil {
+		return
+	}
+	texEditorConfirmDiscard(func() {
+		if texEditorWindow != nil {
+			texEditorWindow.CloseRequested = true
+		}
+	})
+}
+
+// TextureEditorDirty reports whether the open document has unsaved changes.
+func TextureEditorDirty() bool {
+	return ActiveTexEditor != nil && ActiveTexEditor.Doc.Dirty()
+}
+
+// SaveTextureEditor saves the open document, as File > Save does: a texture
+// never saved under a name opens the Save As dialog instead.
+func SaveTextureEditor() { texEditorDoSave() }
+
 func drawTextureEditorMenuBar() {
 	ed := ActiveTexEditor
 
-	if imgui.Button("New") {
-		texEditorNewName = "untitled"
-		texEditorNewSizeIdx = 3
-		texEditorShowNewDialog = true
-	}
-	imgui.SameLine()
-	if imgui.Button("Open...") {
-		texEditorShowOpenDialog = true
-	}
-	imgui.SameLine()
-	if imgui.Button("Import PNG...") {
-		texEditorShowImportDialog = true
-	}
-	imgui.SameLine()
-
-	imguibackend.EditorPushDisabled(ed == nil)
-	if imgui.Button("Save") {
-		texEditorDoSave()
-	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
-
-	imguibackend.EditorPushDisabled(ed == nil)
-	if imgui.Button("Save As...") {
-		if ed != nil {
-			texEditorSaveAsName = ed.Doc.Name
+	if imgui.BeginMenuBar() {
+		texEditorMenus(ed)
+		if SharedMenuBar != nil {
+			SharedMenuBar()
 		}
-		texEditorShowSaveAsDialog = true
-	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
-
-	imguibackend.EditorPushDisabled(ed == nil || !ed.CanUndo())
-	if imgui.Button("Undo") {
-		ed.Undo()
-	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
-
-	imguibackend.EditorPushDisabled(ed == nil || !ed.CanRedo())
-	if imgui.Button("Redo") {
-		ed.Redo()
-	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
-
-	if ed != nil {
-		title := ed.Doc.Name
-		if ed.Doc.Dirty() {
-			title += " *"
+		if ed != nil && MenuBarDoc != nil {
+			MenuBarDoc(ed.Doc.Name, ed.Doc.Dirty())
 		}
-		imgui.Text(title)
-		imgui.SameLine()
+		imgui.EndMenuBar()
 	}
-	if texEditorStatusMsg != "" {
-		if sdl.GetTicks()-texEditorStatusTime < 3000 {
-			imgui.Text(texEditorStatusMsg)
-		} else {
-			texEditorStatusMsg = ""
-		}
+
+	// The status line always takes its row, empty or not, so the panels
+	// below do not jump each time a message comes and goes.
+	if texEditorStatusMsg != "" && sdl.GetTicks()-texEditorStatusTime >= 3000 {
+		texEditorStatusMsg = ""
 	}
+	imgui.Text(texEditorStatusMsg)
 
 	drawTexEditorNewDialog()
 	drawTexEditorOpenDialog()
 	drawTexEditorImportDialog()
 	drawTexEditorSaveAsDialog()
 	drawTexEditorMismatchDialog()
+	drawTexEditorUnsavedDialog()
+}
+
+// texEditorMenus draws the texture editor's own menus.
+func texEditorMenus(ed *texture.TexEditorState) {
+	if imgui.BeginMenu("File") {
+		if imgui.MenuItem("New...") {
+			texEditorNewName = "untitled"
+			texEditorNewSizeIdx = 3
+			texEditorShowNewDialog = true
+		}
+		if imgui.MenuItem("Open...") {
+			texEditorShowOpenDialog = true
+		}
+		if imgui.MenuItem("Import PNG...") {
+			texEditorShowImportDialog = true
+		}
+		imgui.Separator()
+		if imgui.MenuItemV("Save", "", false, ed != nil) {
+			texEditorDoSave()
+		}
+		if imgui.MenuItemV("Save As...", "", false, ed != nil) {
+			texEditorSaveAsName = ed.Doc.Name
+			texEditorShowSaveAsDialog = true
+		}
+		if SaveAllMenuItem != nil {
+			SaveAllMenuItem()
+		}
+		imgui.Separator()
+		if imgui.MenuItem("Close Window") {
+			CloseTextureEditor()
+		}
+		imgui.EndMenu()
+	}
+
+	if imgui.BeginMenu("Edit") {
+		// Each action closes an open stroke first, as its shortcut does.
+		act := func(f func()) {
+			texEditorFinishStroke(ed)
+			f()
+		}
+		on := ed != nil
+		if imgui.MenuItemV("Undo", "Ctrl+Z", false, on && ed.CanUndo()) {
+			act(ed.Undo)
+		}
+		if imgui.MenuItemV("Redo", "Ctrl+Y", false, on && ed.CanRedo()) {
+			act(ed.Redo)
+		}
+		imgui.Separator()
+		if imgui.MenuItemV("Cut", "Ctrl+X", false, on && ed.HasSelection()) {
+			act(func() { texEditorCut(ed) })
+		}
+		if imgui.MenuItemV("Copy", "Ctrl+C", false, on) {
+			act(func() { texEditorCopy(ed) })
+		}
+		if imgui.MenuItemV("Paste", "Ctrl+V", false, on) {
+			act(func() { texEditorPaste(ed) })
+		}
+		if imgui.MenuItemV("Erase Selection", "Del", false, on && ed.HasSelection()) {
+			act(ed.EraseSelection)
+		}
+		imgui.Separator()
+		if imgui.MenuItemV("Select All", "Ctrl+A", false, on) {
+			act(ed.SelectAll)
+		}
+		if imgui.MenuItemV("Deselect", "Ctrl+D", false, on && ed.HasSelection()) {
+			act(ed.Deselect)
+		}
+		if imgui.MenuItemV("Invert Selection", "Ctrl+Shift+I", false, on) {
+			act(ed.InvertSelection)
+		}
+		imgui.EndMenu()
+	}
+
+	if imgui.BeginMenu("View") {
+		if imgui.MenuItemV("UV Layout", "", texEditorShowUVLayout, true) {
+			texEditorShowUVLayout = !texEditorShowUVLayout
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Draw the UV islands of every face that wears this texture\nover the canvas.")
+		}
+		imgui.EndMenu()
+	}
 }
 
 func texEditorDoSave() {
@@ -471,7 +706,7 @@ func drawTexEditorNewDialog() {
 			sizeLabels[i] = fmt.Sprintf("%dx%d", s, s)
 		}
 		imgui.SetNextItemWidth(150)
-		imgui.Combo("##newtexsize", &texEditorNewSizeIdx, sizeLabels)
+		imguibackend.Combo("##newtexsize", &texEditorNewSizeIdx, sizeLabels)
 		if imgui.Button("Create") && texEditorNewName != "" {
 			sz := int(TexEditorSizeOptions[texEditorNewSizeIdx])
 			ed, err := texture.NewTexEditorDoc(texEditorNewName, sz, sz)
@@ -496,7 +731,7 @@ func drawTexEditorOpenDialog() {
 			imgui.Text("No .ftex files found in textures/.")
 		}
 		for _, n := range names {
-			if imgui.SelectableV(n, false, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(n, false, 0, imgui.Vec2{}) {
 				texEditorDoOpen(n)
 				imgui.CloseCurrentPopup()
 			}
@@ -517,7 +752,7 @@ func drawTexEditorImportDialog() {
 		sort.Strings(names)
 		imgui.Text("Import as a new single-layer document (quantised to the current palette):")
 		for _, n := range names {
-			if imgui.SelectableV(n, false, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(n, false, 0, imgui.Vec2{}) {
 				path := filepath.Join(fileutil.ResourcesPath, gfx.TextureNames[n])
 				ed, err := texture.ImportTexEditorDoc(path)
 				if err != nil {
@@ -535,6 +770,91 @@ func drawTexEditorImportDialog() {
 	})
 }
 
+// drawTexEditorLayerImportDialog imports an image into the open document's
+// checked-out channel: a new layer above the selected one, or over the
+// selected one. Colour is quantised to the palette; on the bump channel the
+// image's brightness becomes the height.
+func drawTexEditorLayerImportDialog() {
+	imguibackend.WithModalPopup("Import PNG into Layer", &texEditorShowLayerImport, func() {
+		ed := ActiveTexEditor
+		if ed == nil {
+			imgui.CloseCurrentPopup()
+			return
+		}
+		d := ed.Doc
+		if d.Channel() == texdoc.ChanBump {
+			imgui.Text("Bump channel: the image's brightness becomes the height.")
+		} else {
+			imgui.Text("Colour channel: the image is quantised to the current palette.")
+		}
+		imgui.Text(fmt.Sprintf("Canvas is %dx%d.", d.W, d.H))
+
+		imgui.Text("Into:")
+		imgui.SameLine()
+		imgui.RadioButtonInt("New layer", &texEditorLayerImportInto, 0)
+		imgui.SameLine()
+		imgui.RadioButtonInt(fmt.Sprintf("Replace \"%s\"", d.Layers[d.Active].Name), &texEditorLayerImportInto, 1)
+		imgui.Text("Size:")
+		imgui.SameLine()
+		imgui.RadioButtonInt("Stretch to canvas", &texEditorLayerImportFit, int(texdoc.FitStretch))
+		imgui.SameLine()
+		imgui.RadioButtonInt("Actual size (centred)", &texEditorLayerImportFit, int(texdoc.FitActualSize))
+
+		full := texEditorLayerImportInto == 0 && len(d.Layers) >= texdoc.TexMaxLayers
+		if full {
+			imgui.Text(fmt.Sprintf("The layer stack is full (%d) — pick Replace, or delete a layer.", texdoc.TexMaxLayers))
+		}
+		importPath := func(path string) {
+			if err := ed.ImportLayerImage(path, texdoc.ImportFit(texEditorLayerImportFit), texEditorLayerImportInto == 1); err != nil {
+				texEditorStatus(fmt.Sprintf("Import failed: %v", err))
+			} else {
+				texEditorStatus(fmt.Sprintf("Imported %s", filepath.Base(path)))
+			}
+			imgui.CloseCurrentPopup()
+		}
+
+		imgui.Separator()
+		imgui.Text("File path (absolute, or relative to the project):")
+		imgui.SetNextItemWidth(360)
+		imgui.InputText("##layerimportpath", &texEditorLayerImportPath)
+		imgui.SameLine()
+		imguibackend.EditorPushDisabled(full || texEditorLayerImportPath == "")
+		if imgui.Button("Import##layerimportpath") {
+			path := texEditorLayerImportPath
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(fileutil.ResourcesPath, path)
+			}
+			importPath(path)
+		}
+		imguibackend.EditorPopDisabled()
+
+		imgui.Text("Or a project texture:")
+		imgui.SetNextItemWidth(200)
+		imgui.InputTextWithHint("##layerimportfind", "filter", &texEditorLayerImportFind)
+		names := make([]string, 0, len(gfx.TextureNames))
+		find := strings.ToLower(texEditorLayerImportFind)
+		for n := range gfx.TextureNames {
+			if strings.Contains(strings.ToLower(n), find) {
+				names = append(names, n)
+			}
+		}
+		sort.Strings(names)
+		imgui.BeginChildV("##layerimportlist", imgui.Vec2{X: 420, Y: 240}, true, 0)
+		imguibackend.EditorPushDisabled(full)
+		for _, n := range names {
+			if imguibackend.SelectableV(n, false, 0, imgui.Vec2{}) {
+				importPath(filepath.Join(fileutil.ResourcesPath, gfx.TextureNames[n]))
+			}
+		}
+		imguibackend.EditorPopDisabled()
+		imgui.EndChild()
+
+		if imgui.Button("Cancel##layerimport") {
+			imgui.CloseCurrentPopup()
+		}
+	})
+}
+
 func drawTexEditorSaveAsDialog() {
 	imguibackend.WithModalPopup("Save Texture As", &texEditorShowSaveAsDialog, func() {
 		imgui.SetNextItemWidth(200)
@@ -545,12 +865,18 @@ func drawTexEditorSaveAsDialog() {
 					texEditorStatus(fmt.Sprintf("Save failed: %v", err))
 				} else {
 					texEditorStatus(fmt.Sprintf("Saved %s", texEditorSaveAsName))
+					if then := texEditorSaveAsThen; then != nil {
+						texEditorSaveAsThen = nil
+						then()
+					}
 				}
 			}
+			texEditorSaveAsThen = nil
 			imgui.CloseCurrentPopup()
 		}
 		imgui.SameLine()
 		if imgui.Button("Cancel##saveastex") {
+			texEditorSaveAsThen = nil
 			imgui.CloseCurrentPopup()
 		}
 	})
@@ -582,7 +908,8 @@ func drawTexEditorMismatchDialog() {
 
 // ---------- tools panel ----------
 
-var texEditorToolNames = []string{"Brush", "Eraser", "Fill", "Line", "Rect", "Eyedropper", "Spray"}
+// Indexed by texture.TexTool, so the order here is the enum's.
+var texEditorToolNames = []string{"Brush", "Eraser", "Fill", "Line", "Rect", "Eyedropper", "Spray", "Rect Select", "Lasso"}
 
 func drawToolsPanel() {
 	ed := ActiveTexEditor
@@ -627,6 +954,90 @@ func drawToolsPanel() {
 			ed.SprayDensity = int(density)
 		}
 	}
+
+	imgui.Separator()
+	drawSelectionPanel()
+}
+
+// drawSelectionPanel carries the selection's commands. Always shown, not just
+// with a select tool up: a selection keeps fencing the brush in after you
+// switch to it, and the way out of that has to be in reach.
+func drawSelectionPanel() {
+	ed := ActiveTexEditor
+	has := ed.HasSelection()
+	imgui.Text("Selection")
+	if ed.Tool.IsSelectTool() {
+		imgui.PushTextWrapPos()
+		imgui.Text("Drag to select (Shift adds, Alt/Ctrl subtracts). Drag inside the selection, or use the arrow keys, to move what it holds.")
+		imgui.PopTextWrapPos()
+	} else if has {
+		imgui.PushTextWrapPos()
+		imgui.Text("Painting only reaches inside the selection.")
+		imgui.PopTextWrapPos()
+	}
+
+	const bw = float32(88)
+	if imgui.ButtonV("All##selall", imgui.Vec2{X: bw}) {
+		ed.SelectAll()
+	}
+	imgui.SameLine()
+	imguibackend.EditorPushDisabled(!has)
+	if imgui.ButtonV("None##selnone", imgui.Vec2{X: bw}) {
+		ed.Deselect()
+	}
+	if imgui.ButtonV("Invert##selinv", imgui.Vec2{X: bw}) {
+		ed.InvertSelection()
+	}
+	imgui.SameLine()
+	if imgui.ButtonV("Delete##seldel", imgui.Vec2{X: bw}) {
+		ed.EraseSelection()
+	}
+	if imgui.ButtonV("Cut##selcut", imgui.Vec2{X: bw}) {
+		texEditorCut(ed)
+	}
+	imguibackend.EditorPopDisabled()
+	imgui.SameLine()
+	if imgui.ButtonV("Copy##selcopy", imgui.Vec2{X: bw}) {
+		texEditorCopy(ed)
+	}
+	imguibackend.EditorPushDisabled(!texture.ClipboardFull())
+	if imgui.ButtonV("Paste##selpaste", imgui.Vec2{X: bw}) {
+		texEditorPaste(ed)
+	}
+	imguibackend.EditorPopDisabled()
+}
+
+func texEditorCopy(ed *texture.TexEditorState) {
+	if !ed.Copy() {
+		return
+	}
+	if ed.HasSelection() {
+		texEditorStatus("Copied selection")
+	} else {
+		texEditorStatus("Copied the whole layer")
+	}
+}
+
+func texEditorCut(ed *texture.TexEditorState) {
+	if !ed.HasSelection() {
+		texEditorStatus("Cut needs a selection")
+		return
+	}
+	if ed.Cut() {
+		texEditorStatus("Cut selection")
+	}
+}
+
+func texEditorPaste(ed *texture.TexEditorState) {
+	if !ed.Paste() {
+		return
+	}
+	// Pasting is only half the job: the paste is selected and floating, and
+	// the select tools are what drag it into place.
+	if !ed.Tool.IsSelectTool() {
+		ed.Tool = texture.ToolSelectRect
+	}
+	texEditorStatus("Pasted — drag it or use the arrow keys to place it")
 }
 
 // ---------- channel panel ----------
@@ -1056,6 +1467,24 @@ func drawLayersPanel() {
 		}
 	}
 	imguibackend.EditorPopDisabled()
+	imguibackend.EditorPushDisabled(d.Active <= 0)
+	if imgui.Button("Merge down") {
+		if err := ed.MergeLayerDown(d.Active); err != nil {
+			texEditorStatus(err.Error())
+		}
+	}
+	imguibackend.EditorPopDisabled()
+	if imgui.IsItemHoveredV(imgui.HoveredFlagsAllowWhenDisabled) {
+		imgui.SetTooltip("Merge the selected layer into the one below it.")
+	}
+	imgui.SameLine()
+	if imgui.Button("Import PNG...##layer") {
+		texEditorShowLayerImport = true
+	}
+	if imgui.IsItemHoveredV(imgui.HoveredFlagsAllowWhenDisabled) {
+		imgui.SetTooltip("Bring an image into a new layer, or over the selected one.")
+	}
+	drawTexEditorLayerImportDialog()
 	imgui.Separator()
 
 	// Bottom-first, matching storage order (index 0 = bottom).
@@ -1071,7 +1500,7 @@ func drawLayersPanel() {
 		}
 		imgui.SameLine()
 		selected := i == d.Active
-		if imgui.SelectableV(l.Name, selected, 0, imgui.Vec2{X: 0, Y: 0}) {
+		if imguibackend.SelectableV(l.Name, selected, 0, imgui.Vec2{X: 0, Y: 0}) {
 			d.Active = i
 		}
 
@@ -1090,7 +1519,7 @@ func drawLayersPanel() {
 
 		blend := int32(l.Blend)
 		imgui.SetNextItemWidth(120)
-		if imgui.Combo("Blend##bl", &blend, texEditorBlendNames) {
+		if imguibackend.Combo("Blend##bl", &blend, texEditorBlendNames) {
 			l.Blend = texdoc.TexBlend(blend)
 			ed.PreviewDirty = true
 			ed.BumpDirty = true
@@ -1123,7 +1552,11 @@ func drawCanvasPanel() {
 	ed := ActiveTexEditor
 	ensureTexEditorGLObjects()
 
+	// Leave a row under the canvas for the size readout and the UV buttons
+	// (Frame selection, Fill UV); a canvas taking the whole height pushes
+	// them off the bottom of the panel.
 	avail := imgui.ContentRegionAvail()
+	avail.Y -= imgui.FrameHeightWithSpacing()
 	if avail.X < 50 {
 		avail.X = 50
 	}
@@ -1146,6 +1579,8 @@ func drawCanvasPanel() {
 	dl.AddImageV(imgui.TextureID(texEditorPreview), topLeft, botRight, imgui.Vec2{}, imgui.Vec2{X: 1, Y: 1}, white)
 
 	drawTexEditorUVLayout(dl, topLeft, canvasW, canvasH)
+	drawTexEditorUVSelection(dl, topLeft, canvasW, canvasH)
+	drawTexEditorSelection(dl, ed, topLeft, zoom)
 
 	// Live preview of an in-progress line/rect drag, in screen space only —
 	// the document itself isn't touched until mouse-up (StampLine/StampRect
@@ -1171,12 +1606,7 @@ func drawCanvasPanel() {
 		if wheelY != 0 {
 			old := zoom
 			zoom *= float32(math.Pow(1.15, float64(wheelY)))
-			if zoom < 0.25 {
-				zoom = 0.25
-			}
-			if zoom > 64 {
-				zoom = 64
-			}
+			zoom = min(max(zoom, texEditorMinZoom), texEditorMaxZoom)
 			mp := imgui.MousePos()
 			localX := mp.X - topLeft.X
 			localY := mp.Y - topLeft.Y
@@ -1191,7 +1621,15 @@ func drawCanvasPanel() {
 		}
 	}
 
-	if hovered || active {
+	if ed.Tool.IsSelectTool() {
+		// Unlike the paint tools, a selection gesture keeps its own last
+		// position, so a release off the canvas finishes where the drag was
+		// rather than snapping back to where it started.
+		if hovered || active || texEditorPainting {
+			mp := imgui.MousePos()
+			texEditorHandleSelectInput(ed, (mp.X-topLeft.X)/zoom, (mp.Y-topLeft.Y)/zoom, zoom, active)
+		}
+	} else if hovered || active {
 		mp := imgui.MousePos()
 		tx := int(math.Floor(float64((mp.X - topLeft.X) / zoom)))
 		ty := int(math.Floor(float64((mp.Y - topLeft.Y) / zoom)))
@@ -1210,6 +1648,127 @@ func drawCanvasPanel() {
 		imgui.SameLine()
 		imgui.Checkbox(fmt.Sprintf("UV layout (%d faces)##texuvlayout", n), &texEditorShowUVLayout)
 	}
+	if sel := UVSelectionForTexture(ed.BoundTexture); len(sel) > 0 {
+		imgui.SameLine()
+		if imgui.Button(fmt.Sprintf("Frame selection (%d)##texuvframe", len(sel))) {
+			texEditorFrameUVs(sel, avail)
+		}
+		imgui.SameLine()
+		if imgui.Button("Fill UV##texuvfill") {
+			texEditorFillUVSelection(ed, sel)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Fill the selected faces' regions of the active layer\n" +
+				"with the current colour.")
+		}
+	}
+}
+
+// texEditorFillUVSelection paints the islands of the faces selected in a
+// viewport with the colour the tools are loaded with, on the active layer.
+func texEditorFillUVSelection(ed *texture.TexEditorState, sel [][]mgl32.Vec2) {
+	if ed.FillUVIslands(sel, ed.PaintIndex()) {
+		texEditorStatus(fmt.Sprintf("Filled %d face(s)", len(sel)))
+	} else {
+		texEditorStatus("Fill UV: the selected faces already have that colour")
+	}
+}
+
+// texEditorUVSelectionFill and texEditorUVSelectionEdge mark the islands of the
+// faces selected in a viewport: the layout's cyan would not stand out from
+// itself, so the selection takes the viewports' own selection amber.
+var (
+	texEditorUVSelectionFill = imgui.PackedColorFromVec4(imgui.Vec4{X: 1, Y: 0.75, Z: 0.1, W: 0.3})
+	texEditorUVSelectionEdge = imgui.PackedColorFromVec4(imgui.Vec4{X: 1, Y: 0.75, Z: 0.1, W: 1})
+)
+
+// drawTexEditorUVSelection fills and outlines the UV island of every face
+// selected in an open document that wears this texture, so selecting a face on
+// the model shows at once which texels paint it.
+//
+// It ignores the "UV layout" checkbox on purpose: hiding the full layout to see
+// the paint clearly should not also hide the one region being asked about. It
+// is drawn in the layout's space (see drawTexEditorUVLayout) and, like it, never
+// touches the document.
+func drawTexEditorUVSelection(dl imgui.DrawList, topLeft imgui.Vec2, canvasW, canvasH float32) {
+	ed := ActiveTexEditor
+	if ed == nil {
+		return
+	}
+	toScreen := func(p mgl32.Vec2) imgui.Vec2 {
+		return imgui.Vec2{X: topLeft.X + p.X()*canvasW, Y: topLeft.Y + p.Y()*canvasH}
+	}
+	for _, loop := range UVSelectionForTexture(ed.BoundTexture) {
+		for _, t := range uvLoopTriangles(loop) {
+			dl.AddTriangleFilled(toScreen(loop[t[0]]), toScreen(loop[t[1]]), toScreen(loop[t[2]]), texEditorUVSelectionFill)
+		}
+		for i := range loop {
+			dl.AddLineV(toScreen(loop[i]), toScreen(loop[(i+1)%len(loop)]), texEditorUVSelectionEdge, 2)
+		}
+	}
+}
+
+// uvLoopTriangles triangulates one face's UV loop for filling. A face may be
+// concave, so a fan would spill outside it; EarClip wants counter-clockwise, and
+// a face's winding in UV space depends on how the unwrap laid it down, so the
+// loop is reversed when it arrives the other way round.
+func uvLoopTriangles(loop []mgl32.Vec2) [][3]int {
+	n := len(loop)
+	if n < 3 {
+		return nil
+	}
+	var area float32
+	for i := range loop {
+		a, b := loop[i], loop[(i+1)%n]
+		area += a.X()*b.Y() - b.X()*a.Y()
+	}
+	poly, index := loop, func(i int) int { return i }
+	if area < 0 {
+		poly = make([]mgl32.Vec2, n)
+		for i := range loop {
+			poly[i] = loop[n-1-i]
+		}
+		index = func(i int) int { return n - 1 - i }
+	}
+	idx := geom.EarClip(poly)
+	tris := make([][3]int, 0, len(idx)/3)
+	for i := 0; i+2 < len(idx); i += 3 {
+		tris = append(tris, [3]int{index(idx[i]), index(idx[i+1]), index(idx[i+2])})
+	}
+	return tris
+}
+
+// texEditorFrameUVs zooms and pans the canvas so the given UV islands fill the
+// view with a margin — "take me to the face I selected". Zoom stays within the
+// wheel's range so the next scroll does not jump.
+func texEditorFrameUVs(loops [][]mgl32.Vec2, view imgui.Vec2) {
+	ed := ActiveTexEditor
+	if ed == nil || ed.Doc.W == 0 || ed.Doc.H == 0 {
+		return
+	}
+	lo := mgl32.Vec2{float32(math.Inf(1)), float32(math.Inf(1))}
+	hi := mgl32.Vec2{float32(math.Inf(-1)), float32(math.Inf(-1))}
+	for _, loop := range loops {
+		for _, p := range loop {
+			lo = mgl32.Vec2{min(lo.X(), p.X()), min(lo.Y(), p.Y())}
+			hi = mgl32.Vec2{max(hi.X(), p.X()), max(hi.Y(), p.Y())}
+		}
+	}
+	if lo.X() > hi.X() {
+		return
+	}
+	// Texels, with a quarter of the island's size (at least 2 texels) around it.
+	w, h := float32(ed.Doc.W), float32(ed.Doc.H)
+	x0, x1, y0, y1 := lo.X()*w, hi.X()*w, lo.Y()*h, hi.Y()*h
+	padX := max((x1-x0)/4, 2)
+	padY := max((y1-y0)/4, 2)
+	x0, x1, y0, y1 = x0-padX, x1+padX, y0-padY, y1+padY
+
+	zoom := min(view.X/(x1-x0), view.Y/(y1-y0))
+	zoom = min(max(zoom, texEditorMinZoom), texEditorMaxZoom)
+	texEditorZoom = zoom
+	texEditorPanX = view.X/2 - (x0+x1)/2*zoom
+	texEditorPanY = view.Y/2 - (y0+y1)/2*zoom
 }
 
 // texEditorUVLayoutColor is a translucent cyan: bright enough to read over any
@@ -1309,4 +1868,54 @@ func texEditorHandlePaintInput(ed *texture.TexEditorState, tx, ty int, active bo
 			}
 		}
 	}
+}
+
+// drawTexEditorUnsavedDialog is the prompt texEditorConfirmDiscard puts up in
+// front of anything that would drop the open document's unsaved changes.
+//
+// Save carries on only if the save worked; a texture never saved under a name
+// goes through Save As first, and carries on from there. Discard reverts the
+// texture on everything wearing it to its saved version. Cancel leaves the
+// document, the window and the live texture exactly as they were.
+func drawTexEditorUnsavedDialog() {
+	imguibackend.WithModalPopup("Unsaved Changes##texunsaved", &texEditorShowUnsaved, func() {
+		ed := ActiveTexEditor
+		then := texEditorUnsavedThen
+		if ed == nil || then == nil {
+			texEditorUnsavedThen = nil
+			imgui.CloseCurrentPopup()
+			return
+		}
+		imgui.Text(fmt.Sprintf("Save changes to %s?", ed.Doc.Name))
+		if ed.BoundTexture != "" {
+			imgui.Text("Discarding puts the texture back as it was last saved\n" +
+				"on everything that wears it.")
+		}
+		imgui.Separator()
+		if imgui.Button("Save##texunsaved") {
+			texEditorUnsavedThen = nil
+			if ed.BoundTexture == "" {
+				texEditorSaveAsThen = then
+				texEditorDoSave() // opens Save As
+			} else {
+				texEditorDoSave()
+				if !ed.Doc.Dirty() {
+					then()
+				}
+			}
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Discard##texunsaved") {
+			texEditorUnsavedThen = nil
+			texEditorDiscardUnsaved()
+			then()
+			imgui.CloseCurrentPopup()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##texunsaved") {
+			texEditorUnsavedThen = nil
+			imgui.CloseCurrentPopup()
+		}
+	})
 }

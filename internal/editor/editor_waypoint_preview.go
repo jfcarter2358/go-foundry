@@ -417,6 +417,9 @@ func editorLevelToRaw() (world.RawLevel, error) {
 func editorSaveLevel(lvl *world.Level, path string) error {
 	var err error
 	withWaypointPreviewAtRest(func() { err = levelio.SaveLevel(lvl, path) })
+	if err == nil && lvl == Editor.level {
+		levelMarkSaved()
+	}
 	return err
 }
 

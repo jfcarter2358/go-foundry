@@ -99,7 +99,12 @@ const CompiledExt = ".fbsp"
 // 4: Compiled can be set on a disabled chunk (a streamed one, baked hidden),
 // and a chunk marked moves is no longer baked. A version-3 file would load a
 // streamed area as a live disabled chunk and a moving one frozen in place.
-const CompiledVersion = 4
+//
+// 5: the lighting model is one-sided, wrapped and hemispheric, and faces carry
+// their smoothed normals and a bake per side and per shading (compile.Face's
+// SmoothPoly/SmoothCorner, SmoothLight, BackLight). A version-4 file would
+// load lit by abs(N·L) and could not follow the Smooth Lighting setting.
+const CompiledVersion = 5
 
 // compiledMagic is the first thing in the file, so that a truncated or
 // unrelated file is rejected as such rather than as a gob decode failure

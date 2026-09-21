@@ -66,6 +66,10 @@ type Options struct {
 	Prune bool
 	// Manifest is game.yaml's path. Empty means the one in Src.
 	Manifest string
+	// Shaders is where the shaders come from, when not Src's shaders/: those
+	// of the engine the game binary was built from, which an installed editor
+	// carries beside itself (fileutil.EngineShadersDir).
+	Shaders string
 	// Verbose names every file copied and every asset pruned.
 	Verbose bool
 	// Logf receives progress. Nil means log.Printf.
@@ -79,7 +83,15 @@ type Stamp struct {
 	Version string
 	Exe     string
 	DataDir string
+	// Kind is empty for a game, and KindEditor for an editor install
+	// (StageEditor), which an installer upgrades and removes around the
+	// project content in it rather than wholesale.
+	Kind string
 }
+
+// KindEditor is the stamp's KIND in an editor install: the development build
+// with a project around it, for a team member to work in. See editor.go.
+const KindEditor = "editor"
 
 // Result is what a pack made.
 type Result struct {
@@ -113,7 +125,7 @@ func Pack(o Options) (Result, error) {
 		return Result{}, err
 	}
 
-	p := &packer{src: o.Src, out: o.Out, goos: o.GOOS, verbose: o.Verbose, manifest: m, logf: o.Logf}
+	p := &packer{src: o.Src, out: o.Out, goos: o.GOOS, verbose: o.Verbose, manifest: m, logf: o.Logf, shaders: o.Shaders}
 	return p.run(o.Exe, o.ExeName, o.Prune)
 }
 
@@ -141,6 +153,7 @@ type packer struct {
 	verbose  bool
 	manifest game.Manifest
 	logf     func(format string, args ...any)
+	shaders  string
 
 	copied int
 	bytes  int64
@@ -173,6 +186,12 @@ func (p *packer) run(exePath, exeName string, prune bool) (Result, error) {
 	}
 
 	for _, dir := range alwaysDirs {
+		if dir == "shaders" && p.shaders != "" {
+			if err := p.copyShaders(); err != nil {
+				return Result{}, err
+			}
+			continue
+		}
 		if err := p.copyDir(dir, nil); err != nil {
 			return Result{}, err
 		}
@@ -201,7 +220,7 @@ func (p *packer) run(exePath, exeName string, prune bool) (Result, error) {
 		Exe:     exeName,
 		DataDir: p.manifest.DataDirName(),
 	}
-	if err := p.writeStamp(stamp); err != nil {
+	if err := WriteStamp(p.out, stamp); err != nil {
 		return Result{}, err
 	}
 
@@ -213,7 +232,8 @@ func (p *packer) run(exePath, exeName string, prune bool) (Result, error) {
 // made, and tells the installer scripts what is in it.
 const StampName = ".foundrypack"
 
-// writeStamp records what was packed, in a form a shell script can source.
+// WriteStamp records what was packed into dir, in a form a shell script can
+// source.
 //
 // The installers downstream — the NSIS script on Windows, the .deb and the
 // shell installer on Linux — all need the same four facts, and all of them
@@ -221,14 +241,17 @@ const StampName = ".foundrypack"
 // half-copy of DataDirName and defaultExeName. Writing them once, from the code
 // that decided them, is what keeps a title with an apostrophe in it from
 // meaning one thing here and another in a shortcut.
-func (p *packer) writeStamp(s Stamp) error {
+func WriteStamp(dir string, s Stamp) error {
 	var b strings.Builder
 	b.WriteString("# Written by foundrypack. Sourced by the installer scripts.\n")
 	fmt.Fprintf(&b, "TITLE=%s\n", shellQuote(s.Title))
 	fmt.Fprintf(&b, "VERSION=%s\n", shellQuote(s.Version))
 	fmt.Fprintf(&b, "EXE=%s\n", shellQuote(s.Exe))
 	fmt.Fprintf(&b, "DATA_DIR=%s\n", shellQuote(s.DataDir))
-	return os.WriteFile(filepath.Join(p.out, StampName), []byte(b.String()), 0644)
+	if s.Kind != "" {
+		fmt.Fprintf(&b, "KIND=%s\n", shellQuote(s.Kind))
+	}
+	return os.WriteFile(filepath.Join(dir, StampName), []byte(b.String()), 0644)
 }
 
 // shellQuote wraps a value in single quotes so that a title containing spaces,
@@ -353,7 +376,17 @@ func refuseDangerousOutput(out string) error {
 // across from a Windows cross-build.
 func defaultExeName(m game.Manifest, exePath string) string {
 	ext := filepath.Ext(exePath)
-	name := strings.ToLower(m.Title)
+	name := Slug(m.Title)
+	if name == "" {
+		return filepath.Base(exePath)
+	}
+	return name + ext
+}
+
+// Slug is a title lowercased and hyphenated, with everything else dropped:
+// what a game's executable and every file a release makes are named after.
+func Slug(title string) string {
+	name := strings.ToLower(title)
 	name = strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
@@ -366,11 +399,7 @@ func defaultExeName(m game.Manifest, exePath string) string {
 	for strings.Contains(name, "--") {
 		name = strings.ReplaceAll(name, "--", "-")
 	}
-	name = strings.Trim(name, "-")
-	if name == "" {
-		return filepath.Base(exePath)
-	}
-	return name + ext
+	return strings.Trim(name, "-")
 }
 
 // developmentFiles are what a development build writes into the directory it
@@ -579,6 +608,25 @@ func (p *packer) copyDir(dir string, keep map[string]bool) error {
 	return nil
 }
 
+// copyShaders copies the engine's shaders from p.shaders, in place of any the
+// project has.
+func (p *packer) copyShaders() error {
+	entries, err := os.ReadDir(p.shaders)
+	if err != nil {
+		return fmt.Errorf("shaders: %w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || IsDevelopmentFile(e.Name()) || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if err := p.copyTo(filepath.Join(p.shaders, e.Name()), filepath.Join(fileutil.ResourcesDirName, "shaders", e.Name())); err != nil {
+			return err
+		}
+	}
+	p.logf("shaders: from %s", p.shaders)
+	return nil
+}
+
 // alwaysKeep is the handful of files a prune must never drop: documentation
 // that explains an otherwise-empty directory, and the READMEs that keep those
 // directories in version control at all.
@@ -599,7 +647,9 @@ func (p *packer) copyTo(from, to string) error {
 	if err != nil {
 		return err
 	}
-	if err := copyFile(from, filepath.Join(p.out, to), info.Mode().Perm()); err != nil {
+	// Owner-writable whatever the source was, so the next pack can empty the
+	// tree: git's object files are read-only, and Windows will not delete one.
+	if err := copyFile(from, filepath.Join(p.out, to), info.Mode().Perm()|0200); err != nil {
 		return err
 	}
 	p.copied++

@@ -81,7 +81,7 @@ func uiScreenProperties() {
 
 	editorPropGroupOpen("Canvas", func() {
 		mode := int32(s.Canvas.Mode)
-		if imgui.Combo("Scale##uicanvasmode", &mode, ui.ScaleModeNames) {
+		if imguibackend.Combo("Scale##uicanvasmode", &mode, ui.ScaleModeNames) {
 			uiBeginEdit("canvas.mode")
 			s.Canvas.Mode = ui.ScaleMode(mode)
 			uiEdited()
@@ -399,7 +399,7 @@ func uiStyleProperties(n *ui.Node) {
 	// left it unreachable on the one kind that most needs it.
 	if n.Style.Texture != "" || n.Kind == ui.KindVideo {
 		fill := int32(n.Style.Fill)
-		if imgui.Combo("Fit##uifill", &fill, ui.FillModeNames) {
+		if imguibackend.Combo("Fit##uifill", &fill, ui.FillModeNames) {
 			uiBeginEdit("style.fill")
 			n.Style.Fill = ui.FillMode(fill)
 			uiEdited()
@@ -481,13 +481,13 @@ func uiTextProperties(n *ui.Node) {
 	}
 
 	h := int32(n.Text.HAlign)
-	if imgui.Combo("Align##uihalign", &h, ui.HAlignNames) {
+	if imguibackend.Combo("Align##uihalign", &h, ui.HAlignNames) {
 		uiBeginEdit("text.halign")
 		n.Text.HAlign = ui.HAlign(h)
 		uiEdited()
 	}
 	vv := int32(n.Text.VAlign)
-	if imgui.Combo("Vertical##uivalign", &vv, ui.VAlignNames) {
+	if imguibackend.Combo("Vertical##uivalign", &vv, ui.VAlignNames) {
 		uiBeginEdit("text.valign")
 		n.Text.VAlign = ui.VAlign(vv)
 		uiEdited()
@@ -551,7 +551,7 @@ func uiValueProperties(n *ui.Node) {
 	}
 
 	dir := int32(n.Value.Dir)
-	if imgui.Combo("Fills##uidir", &dir, ui.FillDirNames) {
+	if imguibackend.Combo("Fills##uidir", &dir, ui.FillDirNames) {
 		uiBeginEdit("value.dir")
 		n.Value.Dir = ui.FillDir(dir)
 		uiEdited()
@@ -729,8 +729,8 @@ func uiNodeIDCombo(label string, target *string, allowEmpty bool) bool {
 		shown = "(auto)"
 	}
 	changed := false
-	if imgui.BeginCombo(label, shown) {
-		if allowEmpty && imgui.SelectableV("(auto)", *target == "", 0, imgui.Vec2{}) {
+	if imguibackend.BeginCombo(label, shown) {
+		if allowEmpty && imguibackend.SelectableV("(auto)", *target == "", 0, imgui.Vec2{}) {
 			*target, changed = "", true
 		}
 		if uiDoc != nil {
@@ -738,13 +738,13 @@ func uiNodeIDCombo(label string, target *string, allowEmpty bool) bool {
 				if parent == nil {
 					return true
 				}
-				if imgui.SelectableV(n.ID, *target == n.ID, 0, imgui.Vec2{}) {
+				if imguibackend.SelectableV(n.ID, *target == n.ID, 0, imgui.Vec2{}) {
 					*target, changed = n.ID, true
 				}
 				return true
 			})
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if changed {
 		uiBeginEdit("nodeid." + label)
@@ -760,7 +760,7 @@ func uiScreenCombo(label string, target *string) bool {
 		shown = "(none)"
 	}
 	changed := false
-	if imgui.BeginCombo(label, shown) {
+	if imguibackend.BeginCombo(label, shown) {
 		for _, f := range ui.ScanScreenFiles() {
 			n := f[:len(f)-len(ui.UIExt)]
 			if n == uiScreenName() {
@@ -768,11 +768,11 @@ func uiScreenCombo(label string, target *string) bool {
 				// produce a cycle for the loader to refuse.
 				continue
 			}
-			if imgui.SelectableV(n, *target == n, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(n, *target == n, 0, imgui.Vec2{}) {
 				*target, changed = n, true
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	return changed
 }

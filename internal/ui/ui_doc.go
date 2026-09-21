@@ -656,7 +656,30 @@ type Node struct {
 	solvedClip  Rect
 	culled      bool
 	fromInclude bool
+
+	// ---- runtime only, set by scripts, never serialised ----
+	worldAnchor mgl32.Vec3 // see SetWorldAnchor
+	anchored    bool
 }
+
+// SetWorldAnchor pins the node to a point in the 3D world: every solve moves
+// its rect, keeping its authored size, so that its pivot lands where that
+// point is on screen, and culls it while the point is behind the camera. It is
+// how a label rides above something in the world — an interaction prompt, a
+// name — without a script ever touching the layout the author wrote; the
+// anchors and offsets still decide the size, the pin decides only where.
+//
+// Runtime state, like a script's writes to alpha or text: the document on disk
+// never carries it. Nothing happens unless the host has installed
+// WorldProject, which the UI editor does not, so an anchored node there sits
+// where it was authored.
+func (n *Node) SetWorldAnchor(p mgl32.Vec3) { n.worldAnchor, n.anchored = p, true }
+
+// ClearWorldAnchor returns the node to its authored place.
+func (n *Node) ClearWorldAnchor() { n.anchored = false }
+
+// WorldAnchor is the point the node is pinned to, if it is pinned.
+func (n *Node) WorldAnchor() (mgl32.Vec3, bool) { return n.worldAnchor, n.anchored }
 
 // NewNode is a node of a kind with the defaults an author expects: visible,
 // enabled, opaque, filling its parent's top-left corner.

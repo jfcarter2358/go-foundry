@@ -147,7 +147,13 @@ func HandleEvent(event sdl.Event) {
 				// of the pair and internal/ui owns the "close" half. See
 				// uiOpenPauseMenu.
 				if !devActive() {
-					uiOpenPauseMenu()
+					// A level with an escape_level (an intro) has no pause
+					// menu: Escape skips straight on to that level.
+					if lvl := world.CurrentLevel(); lvl != nil && lvl.EscapeLevel != "" {
+						hooks.RequestLevelLoad(lvl.EscapeLevel)
+					} else {
+						uiOpenPauseMenu()
+					}
 				}
 
 			case sdl.SCANCODE_GRAVE: // tilde (~) key toggles level editor

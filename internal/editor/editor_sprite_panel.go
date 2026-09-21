@@ -171,10 +171,10 @@ func editorSpriteAppearance(s *world.Sprite) {
 // the most common way a sprite ends up looking broken.
 func editorSpriteBillboardCombo(s *world.Sprite) bool {
 	changed := false
-	if imgui.BeginCombo("Billboard##sprbb", gfx.BillboardModeName(s.Billboard)) {
+	if imguibackend.BeginCombo("Billboard##sprbb", gfx.BillboardModeName(s.Billboard)) {
 		for i, name := range gfx.BillboardModeNames {
 			m := gfx.BillboardMode(i)
-			if imgui.SelectableV(name, m == s.Billboard, 0, imgui.Vec2{}) && m != s.Billboard {
+			if imguibackend.SelectableV(name, m == s.Billboard, 0, imgui.Vec2{}) && m != s.Billboard {
 				s.Billboard = m
 				changed = true
 			}
@@ -182,7 +182,7 @@ func editorSpriteBillboardCombo(s *world.Sprite) bool {
 				imgui.SetTooltip(spriteBillboardHelp[i])
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	return changed
 }
@@ -199,10 +199,10 @@ var spriteBillboardHelp = []string{
 // gets a line about what that buys.
 func editorSpriteBlendCombo(s *world.Sprite) bool {
 	changed := false
-	if imgui.BeginCombo("Blend##sprblend", gfx.SpriteBlendName(s.Blend)) {
+	if imguibackend.BeginCombo("Blend##sprblend", gfx.SpriteBlendName(s.Blend)) {
 		for i, name := range gfx.SpriteBlendNames {
 			b := gfx.SpriteBlend(i)
-			if imgui.SelectableV(name, b == s.Blend, 0, imgui.Vec2{}) && b != s.Blend {
+			if imguibackend.SelectableV(name, b == s.Blend, 0, imgui.Vec2{}) && b != s.Blend {
 				s.Blend = b
 				changed = true
 			}
@@ -210,7 +210,7 @@ func editorSpriteBlendCombo(s *world.Sprite) bool {
 				imgui.SetTooltip(spriteBlendHelp[i])
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	return changed
 }

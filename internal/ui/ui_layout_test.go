@@ -353,3 +353,57 @@ func TestStretchedReportsTheAxis(t *testing.T) {
 		t.Error("y reported pinned with differing y anchors")
 	}
 }
+
+// A world-anchored node keeps its authored size and puts its pivot where the
+// host says the point is on screen; behind the camera it is culled along with
+// everything under it; with no host installed it stays where it was authored.
+func TestSolveWorldAnchor(t *testing.T) {
+	prev := WorldProject
+	t.Cleanup(func() { WorldProject = prev })
+
+	const w, h = 1000, 800
+	rect := RectXf{Offset: [4]float32{16, 16, -216, -66}, Pivot: mgl32.Vec2{0.5, 1}, Scale: mgl32.Vec2{1, 1}}
+	s, c := child(rect)
+	c.Children = []Node{NewNode("label", KindText)}
+	root := s.Canvas.RootRect(w, h)
+
+	var at mgl32.Vec3
+	WorldProject = func(p mgl32.Vec3) (float32, float32, bool) {
+		at = p
+		if p.Z() > 0 {
+			return 0, 0, false
+		}
+		return 0.25, 0.75, true
+	}
+	c.SetWorldAnchor(mgl32.Vec3{1, 2, -3})
+	s.Solve(w, h)
+	want := Rect{root.W*0.25 - 100, root.H*0.75 - 50, 200, 50}
+	if got := c.Solved(); !rectClose(got, want) {
+		t.Errorf("anchored rect = %+v, want %+v", got, want)
+	}
+	if at != (mgl32.Vec3{1, 2, -3}) {
+		t.Errorf("projected %v, want the anchor itself", at)
+	}
+	if c.Culled() {
+		t.Error("an anchor in front of the camera culled the node")
+	}
+
+	c.SetWorldAnchor(mgl32.Vec3{0, 0, 5})
+	s.Solve(w, h)
+	if !c.Culled() {
+		t.Error("an anchor behind the camera left the node drawn")
+	}
+
+	c.ClearWorldAnchor()
+	s.Solve(w, h)
+	if got := c.Solved(); !rectClose(got, Rect{16, 16, 200, 50}) || c.Culled() {
+		t.Errorf("cleared anchor: rect %+v culled %v, want the authored rect", got, c.Culled())
+	}
+
+	WorldProject = nil
+	c.SetWorldAnchor(mgl32.Vec3{1, 2, -3})
+	s.Solve(w, h)
+	if got := c.Solved(); !rectClose(got, Rect{16, 16, 200, 50}) {
+		t.Errorf("no host: rect %+v, want the authored rect", got)
+	}
+}

@@ -17,6 +17,14 @@ import (
 )
 
 func main() {
+	// `foundrypack editor ...` packs the editor itself for a Foundry release
+	// rather than a game; see editor.go.
+	if len(os.Args) > 1 && os.Args[1] == "editor" {
+		log.SetFlags(0)
+		log.SetPrefix("foundrypack editor: ")
+		editorMain(os.Args[2:])
+		return
+	}
 	var (
 		src      = flag.String("src", "resources", "content directory to pack from")
 		out      = flag.String("out", "", "install tree to write (required; created, and emptied if it exists)")

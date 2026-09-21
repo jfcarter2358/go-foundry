@@ -14,6 +14,7 @@ package editor
 import (
 	"foundry/internal/model"
 
+	"foundry/internal/imguibackend"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -114,7 +115,7 @@ func modelBoneMirrorControls() {
 	imgui.SameLine()
 	axis := int32(modelBoneMirrorAxis)
 	imgui.PushItemWidth(60)
-	if imgui.Combo("Across##modelbonemirroraxis", &axis, modelBoneMirrorAxisNames) {
+	if imguibackend.Combo("Across##modelbonemirroraxis", &axis, modelBoneMirrorAxisNames) {
 		modelBoneMirrorAxis = int(axis)
 	}
 	imgui.PopItemWidth()

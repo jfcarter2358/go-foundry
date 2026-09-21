@@ -27,7 +27,8 @@ import (
 )
 
 // UserDataRoot is the directory per-user mutable state is written to. Empty
-// means "write beside the executable", which is the development default.
+// means "write in the project" (beside the executable, in a checkout), which is
+// the development default.
 //
 // Set through UseUserDataDir rather than directly, so the directory is known to
 // exist by the time anything tries to write into it.
@@ -37,6 +38,9 @@ var UserDataRoot string
 func StateDir() string {
 	if UserDataRoot != "" {
 		return UserDataRoot
+	}
+	if ProjectPath != "" {
+		return ProjectPath
 	}
 	return ExecutablePath
 }

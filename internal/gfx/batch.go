@@ -25,8 +25,11 @@ type Material struct {
 	BlendTexture string
 	BlendMask    string
 	Alpha        float32
-	// Smooth is whether the batch carries per-vertex normals.
-	Smooth bool
+	// Normals is whether the batch carries per-vertex normals; Smooth is
+	// whether its surfaces' author asked for them to shade smooth regardless
+	// of the Smooth Lighting setting. Geometry.ShadesSmooth, split in two.
+	Normals bool
+	Smooth  bool
 	// Baked is whether it carries baked light — a compiled level's static
 	// surfaces, whose static lights are already on their vertices.
 	Baked bool
@@ -49,7 +52,7 @@ func (m *Material) NormalColorFlag() int32 {
 
 // SmoothFlag is Geometry.SmoothFlag for a material.
 func (m *Material) SmoothFlag() int32 {
-	if m.Smooth {
+	if m.Normals && (m.Smooth || SmoothLighting) {
 		return 1
 	}
 	return 0
@@ -64,8 +67,8 @@ type Batch struct {
 }
 
 // Upload replaces the batch's contents. verts is the 5-float record, normals
-// and light three floats per vertex (nil unless the material is smooth, or
-// baked). The buffers are kept and re-filled rather than re-created when the
+// three floats per vertex and light LightStride (each nil unless the material
+// is smooth, or baked). The buffers are kept and re-filled rather than re-created when the
 // batch already has them.
 func (b *Batch) Upload(verts, normals, light []float32) {
 	b.Verts = int32(len(verts) / 5)
@@ -107,7 +110,7 @@ func (b *Batch) Upload(verts, normals, light []float32) {
 		gl.BindBuffer(gl.ARRAY_BUFFER, b.Lbo)
 		gl.BufferData(gl.ARRAY_BUFFER, len(light)*4, gl.Ptr(light), gl.STATIC_DRAW)
 		gl.EnableVertexAttribArray(AttribLight)
-		gl.VertexAttribPointerWithOffset(AttribLight, 3, gl.FLOAT, false, 3*4, 0)
+		gl.VertexAttribPointerWithOffset(AttribLight, LightStride, gl.FLOAT, false, LightStride*4, 0)
 	} else if b.Lbo != 0 {
 		gl.DisableVertexAttribArray(AttribLight)
 		gl.DeleteBuffers(1, &b.Lbo)
@@ -154,6 +157,8 @@ func (b *Batch) Draw(model mgl32.Mat4, firsts, counts []int32) {
 	}
 	gl.Uniform1i(BakedLightUniform, baked)
 	gl.Uniform1i(NormalColorUniform, b.NormalColorFlag())
+	// A chunk or static batch is always lit; only a model attachment opts out.
+	gl.Uniform1i(UnlitUniform, 0)
 	gl.Uniform1i(IsWaterUniform, 0)
 	applyBlendUniforms(b.BlendTexture, b.BlendMask)
 	BindNormalMap(b.Texture, HasNormalMapUniform, NormalMapUniform)

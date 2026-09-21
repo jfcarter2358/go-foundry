@@ -9,6 +9,7 @@ package compile
 // build.
 
 import (
+	"slices"
 	"testing"
 
 	"foundry/internal/bsp"
@@ -190,5 +191,58 @@ func TestABSPFragmentKeepsTheSourceFacesTextureOrigin(t *testing.T) {
 	}
 	if len(origins) == 0 {
 		t.Fatal("no faces survived; the test proves nothing")
+	}
+}
+
+// A plane a hair off a face's own — two triangles of one nearly-flat top, far
+// enough from the origin that their planes are not SameAs — can put the
+// face's node on the far side of that plane from the open air the face looks
+// into, leaving only a zero-volume sliver in front of it on its own side. The
+// face has to reach the air, or it is drawn from a cell nothing can see:
+// level1's ground_cliff_040, missing from the landing zone.
+func TestAFaceReachesTheAirPastAPlaneAHairOffItsOwn(t *testing.T) {
+	quad := []mgl32.Vec3{{0, 0, 0}, {0, 0, 1}, {1, 0, 1}, {1, 0, 0}}
+	up := bsp.Plane{N: mgl32.Vec3{0, 1, 0}, D: 0}
+	const sliver, solid, air = 0, 1, 2
+	tree := &BSPTree{
+		Tree: &bsp.Tree{
+			Nodes: []bsp.Node{
+				// Q: y = 0.01, facing down. Everything above it is open air.
+				{Plane: bsp.Plane{N: mgl32.Vec3{0, -1, 0}, D: -0.01}, Front: bsp.NodeRef(1), Back: bsp.LeafRef(air)},
+				// The face's own node, below Q: air-side child is the sliver.
+				{Plane: up, Front: bsp.LeafRef(sliver), Back: bsp.LeafRef(solid), Faces: []int{0}},
+			},
+			Leaves: []bsp.Leaf{{}, {Solid: true}, {}},
+			Root:   bsp.NodeRef(0),
+		},
+		Faces: []Face{{Points: quad, Plane: up}},
+	}
+	tree.attachFacesToLeaves()
+	if !slices.Contains(tree.Leaves[air].Faces, 0) {
+		t.Errorf("the face is drawn from the sliver (%v) but not the open air above it (%v)",
+			tree.Leaves[sliver].Faces, tree.Leaves[air].Faces)
+	}
+	if len(tree.Leaves[solid].Faces) != 0 {
+		t.Error("a face was drawn from the solid behind it")
+	}
+}
+
+// A slightly bent face sits a few millimetres off the plane of the node that
+// holds it. Judged by distance alone it would be sent behind its own plane,
+// into its own material, and drawn from nowhere.
+func TestABentFaceIsDrawnFromTheSideItFaces(t *testing.T) {
+	up := bsp.Plane{N: mgl32.Vec3{0, 1, 0}, D: 0}
+	bent := []mgl32.Vec3{{0, -0.005, 0}, {0, 0, 1}, {1, -0.005, 1}, {1, 0, 0}}
+	tree := &BSPTree{
+		Tree: &bsp.Tree{
+			Nodes:  []bsp.Node{{Plane: up, Front: bsp.LeafRef(0), Back: bsp.LeafRef(1), Faces: []int{0}}},
+			Leaves: []bsp.Leaf{{}, {Solid: true}},
+			Root:   bsp.NodeRef(0),
+		},
+		Faces: []Face{{Points: bent, Plane: up}},
+	}
+	tree.attachFacesToLeaves()
+	if !slices.Contains(tree.Leaves[0].Faces, 0) {
+		t.Error("a slightly bent face was not drawn from the cell it faces")
 	}
 }

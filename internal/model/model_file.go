@@ -520,6 +520,10 @@ func validateRawArmature(raw RawModel) error {
 	return nil
 }
 
+// Fingerprint identifies the document's content as SaveModel would write it,
+// for comparing against what was last saved. See fileutil.Fingerprint.
+func Fingerprint(m *ModelDoc) uint64 { return fileutil.Fingerprint(modelDocToRaw(m)) }
+
 // SaveModel writes the document to path as YAML.
 func SaveModel(m *ModelDoc, path string) error {
 	raw := modelDocToRaw(m)

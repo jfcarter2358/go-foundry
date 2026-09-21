@@ -207,8 +207,8 @@ func editorChunkFrameOwnerRow(lvl *world.Level, ch *world.Chunk) {
 	if label == "" {
 		label = "(nothing — world chunk)"
 	}
-	if imgui.BeginCombo("Carried by##chunkframe", label) {
-		if imgui.SelectableV("(nothing — world chunk)", ch.FrameOwner == "", 0, imgui.Vec2{}) &&
+	if imguibackend.BeginCombo("Carried by##chunkframe", label) {
+		if imguibackend.SelectableV("(nothing — world chunk)", ch.FrameOwner == "", 0, imgui.Vec2{}) &&
 			ch.FrameOwner != "" {
 			EditorPushUndo()
 			editorSetChunkCarrier(lvl, ch, "")
@@ -218,12 +218,12 @@ func editorChunkFrameOwnerRow(lvl *world.Level, ch *world.Chunk) {
 			if e.Vehicle == nil {
 				continue
 			}
-			if imgui.SelectableV(e.ID, ch.FrameOwner == e.ID, 0, imgui.Vec2{}) && ch.FrameOwner != e.ID {
+			if imguibackend.SelectableV(e.ID, ch.FrameOwner == e.ID, 0, imgui.Vec2{}) && ch.FrameOwner != e.ID {
 				EditorPushUndo()
 				editorSetChunkCarrier(lvl, ch, e.ID)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("The vehicle whose deck this chunk's geometry is, authored\n" +
@@ -343,13 +343,13 @@ func editorChunkPopups(lvl *world.Level) {
 		if len(Editor.ImportChunkFiles) == 0 {
 			imgui.Text("No chunk files found in chunks/")
 		} else {
-			if imgui.BeginComboV("##chunkfile", Editor.ImportChunkFiles[Editor.ImportChunkIdx], 0) {
+			if imguibackend.BeginComboV("##chunkfile", Editor.ImportChunkFiles[Editor.ImportChunkIdx], 0) {
 				for i, name := range Editor.ImportChunkFiles {
-					if imgui.SelectableV(name, int32(i) == Editor.ImportChunkIdx, 0, imgui.Vec2{}) {
+					if imguibackend.SelectableV(name, int32(i) == Editor.ImportChunkIdx, 0, imgui.Vec2{}) {
 						Editor.ImportChunkIdx = int32(i)
 					}
 				}
-				imgui.EndCombo()
+				imguibackend.EndCombo()
 			}
 			if imgui.Button("Import") {
 				EditorPushUndo()

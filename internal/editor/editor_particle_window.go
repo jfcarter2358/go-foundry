@@ -38,10 +38,9 @@ const (
 	particleWindowW = int32(1280)
 	particleWindowH = int32(800)
 
-	// Two rows: file actions above, playback and view below. One row cannot
-	// hold both at this width — the same reason the model editor's toolbar is
-	// two rows.
-	particleToolbarH = float32(54)
+	// The shared two-row top bar (editor_menubar.go): menus above, the
+	// preview's backdrop and the status line below.
+	particleToolbarH = editorTopBarH
 
 	// particlePanelWidth matches the model editor's, so the two windows read as
 	// the same tool with different middles.
@@ -179,6 +178,7 @@ func particleEnsureDoc() {
 		particleDoc = particle.NewDoc("effect")
 		particleActiveLayer = 0
 		particleRebuildSystems()
+		particleMarkSaved()
 	}
 }
 
@@ -254,6 +254,7 @@ func particleLoad(path string) error {
 	particleSolo = -1
 	ParticleClearUndoHistory()
 	particleRebuildSystems()
+	particleMarkSaved()
 	particleStatus = "Opened " + filepath.Base(path)
 	return nil
 }
@@ -270,6 +271,7 @@ func particleSave(path string) error {
 	}
 	particleDoc.Path = path
 	particleDoc.Clean()
+	particleMarkSaved()
 	particleStatus = "Saved " + filepath.Base(path)
 	ReloadEmittersUsing(particleEffectName())
 	return nil

@@ -375,5 +375,16 @@ func InstallLogCapture(base io.Writer) {
 	logDecorPrefix = log.Prefix()
 
 	// The tee is added to the existing sinks, not substituted for them.
-	log.SetOutput(io.MultiWriter(base, logTee{}))
+	log.SetOutput(teeAfter{base})
+}
+
+// teeAfter writes a line to base and then to the log window, whatever base
+// said. io.MultiWriter stops at the first error, so a base that cannot write
+// (stderr in a windowsgui release with no log file) would have kept every
+// engine line out of the window too.
+type teeAfter struct{ base io.Writer }
+
+func (t teeAfter) Write(p []byte) (int, error) {
+	_, _ = t.base.Write(p)
+	return logTee{}.Write(p)
 }

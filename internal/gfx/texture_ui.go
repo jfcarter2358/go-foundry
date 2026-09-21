@@ -54,6 +54,7 @@ func ReleaseTexture(name string) {
 	gl.DeleteTextures(1, &tex)
 	delete(Textures, name)
 	delete(TextureSizes, name)
+	forgetTextureMean(name)
 	for i := range pendingUITextureUploads {
 		if pendingUITextureUploads[i].Name == name {
 			// A queued upload would otherwise recreate the texture on the next

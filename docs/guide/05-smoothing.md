@@ -1,25 +1,37 @@
 # Smooth shading
 
-By default every brush face is flat-shaded: it has one plane, one normal, and
-the faces around it meet it at visible creases. That is right for a wall and
-wrong for a barrel, a dome or a hillside built out of a dozen small faces, which
-should read as one curved surface.
+A flat-shaded face has one plane and one normal, and the faces around it meet
+it at visible creases. That is right for a wall and wrong for a barrel, a dome or
+a hillside built out of a dozen small faces, which should read as one curved
+surface.
 
-**Smooth shading** is the switch that makes them read that way.
+**Smooth shading** makes them read that way, and it is on by default. Every
+face of a brush, and every model, blends its lighting into its neighbours
+across edges shallower than its **Crease Angle**. Edges sharper than that stay
+sharp. The default of 60° leaves a box exactly as it was, because its edges are
+all 90°, but rounds an eight-sided cylinder (45°).
 
-## Turning it on
+## The player's setting
 
-Select a face (Tab into edit mode, press `3`, click it), open **Shading** in its
-properties, and tick **Smooth**.
+Smooth Lighting is a player setting: the game's settings screen can turn it off
+with `@level.prop.smooth_lighting` (see [UI screens](17-ui-screens.md#a-settings-screen)).
+The engine saves the choice to `graphics.yaml`. It applies to compiled
+levels in a release build too, because the compiler bakes both answers.
+
+## Per-face controls
+
+Select a face (Tab into edit mode, press `3`, click it) and open **Shading** in
+its properties.
 
 **Crease Angle** is the cutoff. Neighbouring faces meeting at a shallower angle
 than this have their normals welded together and shade as one surface; edges
-sharper than it stay sharp. The default is a sensible middle — raise it to smooth
-harder corners, lower it to keep more of them crisp.
+sharper than it stay sharp. Raise it to smooth harder corners, lower it to keep
+more of them crisp. The setting is per face, so a cylinder can have its curved
+sides smoothed and its flat caps left alone.
 
-The setting is per face, not per brush, so a cylinder can have its curved sides
-smoothed and its flat caps left alone. To do a run of faces at once, select them
-all and use **Smooth** from the right-click menu.
+**Always Smooth** keeps a face smooth even when the player turns Smooth Lighting
+off, for surfaces that should never look faceted. To do a run of faces at once,
+select them all and use **Smooth** from the right-click menu.
 
 ## What it does and does not change
 

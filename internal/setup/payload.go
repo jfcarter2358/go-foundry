@@ -185,8 +185,18 @@ func (in *Installer) Stamp() (Stamp, error) {
 // Extract writes every file in the payload under dir, and returns how many
 // bytes that came to.
 func (in *Installer) Extract(dir string) (int64, error) {
+	return in.ExtractMatching(dir, nil)
+}
+
+// ExtractMatching writes the files in the payload whose slash-separated names
+// keep accepts — all of them when keep is nil — under dir, and returns how many
+// bytes that came to.
+func (in *Installer) ExtractMatching(dir string, keep func(name string) bool) (int64, error) {
 	var total int64
 	for _, zf := range in.Files.File {
+		if keep != nil && !keep(zf.Name) {
+			continue
+		}
 		target, err := within(dir, zf.Name)
 		if err != nil {
 			return total, err
@@ -229,6 +239,15 @@ func within(dir, name string) (string, error) {
 		return "", fmt.Errorf("the installer is damaged: it holds a file named %q", name)
 	}
 	return filepath.Join(dir, filepath.FromSlash(name)), nil
+}
+
+// Size is how many bytes the payload's files come to, unpacked.
+func (in *Installer) Size() int64 {
+	var n int64
+	for _, zf := range in.Files.File {
+		n += int64(zf.UncompressedSize64)
+	}
+	return n
 }
 
 // WriteUninstaller copies the program, without its payload, to dest.

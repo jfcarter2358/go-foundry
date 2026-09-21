@@ -39,8 +39,19 @@ type Geometry struct {
 	VertexAttribute            uint32
 	Smooth                     bool    // shade from interpolated vertex normals instead of flat facets
 	SmoothAngle                float32 // crease threshold in degrees; 0 = DefaultSmoothAngle
-	Normals                    []float32
-	NormalAttribute            uint32
+	// AutoSmooth builds the normals even with Smooth off, so the player's
+	// Smooth Lighting setting (SmoothLighting) can smooth the surface. Set by
+	// the world's own surfaces — brush faces, compiled surfaces, models — and
+	// left off everything the setting has no business reshading.
+	AutoSmooth bool
+	// VertexNormals, when set before Load, are the normals — one per *source*
+	// vertex, three floats each — and Load de-indexes them instead of welding
+	// its own. For a surface that is one piece of a bigger smoothed whole: a
+	// brush face, whose corners average with the brush's other faces
+	// (world.BrushMesh.Load), which this mesh alone cannot see.
+	VertexNormals   [][]float32
+	Normals         []float32
+	NormalAttribute uint32
 	// Skinning inputs, set before Load on a submesh built from a rigged model:
 	// four bone indices and four weights per *source* vertex, which Load
 	// de-indexes alongside Vertices. Nil on everything else, which is what keeps
@@ -54,7 +65,13 @@ type Geometry struct {
 	// and the fragment stage lights the surface the ordinary way.
 	VertexLight [][]float32
 	vertexLight []float32
-	Lbo         uint32
+	// VertexLightSmooth is the same bake taken with the smoothed normals, for
+	// when the surface shades smooth (ShadesSmooth). Nil where the two would
+	// agree — a flat face nothing smooths into — and then VertexLight serves
+	// both.
+	VertexLightSmooth [][]float32
+	vertexLightSmooth []float32
+	Lbo               uint32
 	// BonePalette is the per-frame pose, one delta per bone. The entity owns the
 	// backing array and updates it in place, so this slice header can be handed
 	// to every submesh once at load and never touched again — which is what lets
@@ -73,10 +90,14 @@ type Geometry struct {
 	Position mgl32.Vec3
 	Yaw      float32
 	Alpha    float32 // 0.0 = fully transparent, 1.0 = fully opaque
-	Water    WaterParams
-	Vao      uint32
-	Vbo      uint32
-	Nbo      uint32 // normal buffer; 0 when the surface is flat-shaded
+	// Unlit draws the texture's own colour, ignoring every light and shadow —
+	// for things that give off light rather than reflect it, like a beam. It
+	// also sends the surface to the blended pass; see IsTransparent.
+	Unlit bool
+	Water WaterParams
+	Vao   uint32
+	Vbo   uint32
+	Nbo   uint32 // normal buffer; 0 when the surface is flat-shaded
 
 	// CPUOnly makes Load build the mesh and stop there: no buffers of its own.
 	// For geometry some other owner uploads in bulk — a brush face, whose
@@ -86,12 +107,41 @@ type Geometry struct {
 	CPUOnly bool
 }
 
+// SmoothLighting is the player's Smooth Lighting setting: while it is on,
+// every surface that carries normals (AutoSmooth) shades from them whether or
+// not its author ticked Smooth; while it is off only the ticked ones do. On by
+// default. Saved to graphics.yaml (app/graphics_settings.go); set through
+// SetSmoothLighting so the save and the renderer's batches hear about it.
+var SmoothLighting = true
+
+// GraphicsSettingsChanged is raised by SetSmoothLighting and cleared by the
+// frame loop once it has saved graphics.yaml.
+var GraphicsSettingsChanged bool
+
+// SetSmoothLighting changes the setting. The static batches pick their baked
+// light by it, and notice the change by comparing against what they were
+// built with, so nothing else has to be told.
+func SetSmoothLighting(on bool) {
+	if SmoothLighting == on {
+		return
+	}
+	SmoothLighting = on
+	GraphicsSettingsChanged = true
+}
+
+// ShadesSmooth is whether the surface shades from interpolated normals: it has
+// some, and either its author asked for it or the Smooth Lighting setting
+// does.
+func (g *Geometry) ShadesSmooth() bool {
+	return len(g.Normals) > 0 && (g.Smooth || SmoothLighting)
+}
+
 // SmoothFlag returns the value of the shader's `smoothShading` uniform for this
-// geometry: 1 only when smoothing is on *and* normals were actually generated,
+// geometry: 1 only when it shades smooth *and* normals were actually generated,
 // so a surface whose mesh produced none still falls back to the derivative
 // normal rather than shading off an empty attribute.
 func (g *Geometry) SmoothFlag() int32 {
-	if g.Smooth && len(g.Normals) > 0 {
+	if g.ShadesSmooth() {
 		return 1
 	}
 	return 0
@@ -207,19 +257,8 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	}
 
 	// The baked light is de-indexed the same way, for the same reason.
-	g.vertexLight = nil
-	if len(g.VertexLight) > 0 {
-		g.vertexLight = make([]float32, 0, len(indices)*3)
-		for _, idx := range indices {
-			if idx < len(g.VertexLight) && len(g.VertexLight[idx]) == 3 {
-				g.vertexLight = append(g.vertexLight, g.VertexLight[idx]...)
-			} else {
-				// A short or ragged input would tint the surface rather than
-				// fail; black is the one value that is obviously wrong.
-				g.vertexLight = append(g.vertexLight, 0, 0, 0)
-			}
-		}
-	}
+	g.vertexLight = deindexLight(g.VertexLight, indices)
+	g.vertexLightSmooth = deindexLight(g.VertexLightSmooth, indices)
 
 	// The skin attributes are de-indexed in the same order, so record k of the
 	// vertex buffer and record k of these describe the same corner.
@@ -252,7 +291,9 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	// triangles shared a vertex — smooth.go welds by position anyway, but the
 	// index list is what defines the triangles in the first place.
 	g.Normals = nil
-	if g.Smooth {
+	if len(g.VertexNormals) > 0 {
+		g.Normals = deindexVec3(g.VertexNormals, indices)
+	} else if g.Smooth || g.AutoSmooth {
 		g.Normals = geom.ComputeSmoothNormals(vertices, indices, g.SmoothAngle)
 	}
 
@@ -319,12 +360,12 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 	}
 
 	// Baked light, likewise in its own buffer in the same VAO.
-	if len(g.vertexLight) > 0 {
+	if light := g.BakedLightData(); len(light) > 0 {
 		gl.GenBuffers(1, &g.Lbo)
 		gl.BindBuffer(gl.ARRAY_BUFFER, g.Lbo)
-		gl.BufferData(gl.ARRAY_BUFFER, len(g.vertexLight)*4, gl.Ptr(g.vertexLight), gl.STATIC_DRAW)
+		gl.BufferData(gl.ARRAY_BUFFER, len(light)*4, gl.Ptr(light), gl.STATIC_DRAW)
 		gl.EnableVertexAttribArray(AttribLight)
-		gl.VertexAttribPointerWithOffset(AttribLight, 3, gl.FLOAT, false, 3*4, 0)
+		gl.VertexAttribPointerWithOffset(AttribLight, LightStride, gl.FLOAT, false, LightStride*4, 0)
 	}
 
 	return nil
@@ -370,10 +411,63 @@ func WorldModelUniform() int32 {
 	return worldModel.loc
 }
 
-// BakedLightData is the de-indexed baked light Load built from VertexLight,
-// three floats per vertex of Vertices, or nil. For a batch uploading many
-// surfaces' light together.
-func (g *Geometry) BakedLightData() []float32 { return g.vertexLight }
+// BakedLightData is the de-indexed baked light Load built from VertexLight —
+// or from VertexLightSmooth, while the surface shades smooth and has one —
+// LightStride floats per vertex of Vertices, or nil. For a batch uploading many
+// surfaces' light together; it follows ShadesSmooth, so a batch built before
+// the setting changed holds the other answer (render/static_batch.go rebuilds).
+func (g *Geometry) BakedLightData() []float32 {
+	if len(g.vertexLightSmooth) > 0 && g.ShadesSmooth() {
+		return g.vertexLightSmooth
+	}
+	return g.vertexLight
+}
+
+// LightStride is the floats per vertex of baked light: the colour, then the
+// baked sun's share (compile.Face.SunShare), which the fragment stage scales
+// the sun's light by to take back off what a live shadow covers.
+const LightStride = 4
+
+// deindexLight lays baked-light rows out per corner, as deindexVec3 does
+// normals, LightStride floats each. A row of three — a colour with no share,
+// as a test builds one — gets a share of 0: nothing to take back off.
+func deindexLight(rows [][]float32, indices []int) []float32 {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]float32, 0, len(indices)*LightStride)
+	for _, idx := range indices {
+		switch {
+		case idx < len(rows) && len(rows[idx]) == LightStride:
+			out = append(out, rows[idx]...)
+		case idx < len(rows) && len(rows[idx]) == 3:
+			out = append(out, rows[idx][0], rows[idx][1], rows[idx][2], 0)
+		default:
+			out = append(out, 0, 0, 0, 0) // see deindexVec3
+		}
+	}
+	return out
+}
+
+// deindexVec3 lays per-source-vertex triples out per corner, in the order Load
+// de-indexes Vertices. Nil in, nil out.
+func deindexVec3(rows [][]float32, indices []int) []float32 {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]float32, 0, len(indices)*3)
+	for _, idx := range indices {
+		if idx < len(rows) && len(rows[idx]) == 3 {
+			out = append(out, rows[idx]...)
+		} else {
+			// A short or ragged input would tint or bend the surface rather
+			// than fail; zero is the one value that is obviously wrong (and
+			// a zero normal falls back to the facet in the shader).
+			out = append(out, 0, 0, 0)
+		}
+	}
+	return out
+}
 
 // BakedLightFlag is the uniform value for this surface: 1 when its lighting is
 // already on its vertices, 0 when the fragment stage has to work it out.
@@ -451,6 +545,8 @@ func (g *Geometry) Unload() {
 	g.Normals = nil
 	g.SkinIdx, g.SkinWt = nil, nil
 	g.VertexLight, g.vertexLight = nil, nil
+	g.VertexLightSmooth, g.vertexLightSmooth = nil, nil
+	g.VertexNormals = nil
 	g.BonePalette = nil
 }
 
@@ -458,8 +554,21 @@ func (g *Geometry) Unload() {
 // or its texture has any semi-transparent texel (see texture_alpha.go). Both
 // route the surface into the sorted, back-to-front blended pass instead of
 // the opaque one.
+//
+// An unlit surface always is. It is a glow, and a glow's texture alpha is
+// how it fades off at its edges — which only the blended pass honours, and a
+// texture loaded from a PNG is never scanned for alpha (textureHasAlpha is the
+// texture editor's to record). An opaque texel blended is still opaque.
 func (g *Geometry) IsTransparent() bool {
-	return (g.Alpha > 0 && g.Alpha < 1.0) || textureHasAlpha[g.Texture]
+	return g.Unlit || (g.Alpha > 0 && g.Alpha < 1.0) || textureHasAlpha[g.Texture]
+}
+
+// UnlitFlag is the value of the shader's `unlit` uniform for this geometry.
+func (g *Geometry) UnlitFlag() int32 {
+	if g.Unlit {
+		return 1
+	}
+	return 0
 }
 
 // Draw renders the geometry using the current OpenGL state.
@@ -475,6 +584,7 @@ func (g Geometry) Draw() {
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
 	gl.Uniform1i(NormalColorUniform, g.NormalColorFlag())
+	gl.Uniform1i(UnlitUniform, g.UnlitFlag())
 	g.applyWaterUniforms()
 	g.applyBlendUniforms()
 	g.applyNormalUniforms()
@@ -499,6 +609,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
 	gl.Uniform1i(NormalColorUniform, g.NormalColorFlag())
+	gl.Uniform1i(UnlitUniform, g.UnlitFlag())
 	g.applyWaterUniforms()
 	g.applyBlendUniforms()
 	g.applyNormalUniforms()
@@ -529,6 +640,7 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 	// facet for the fragment stage to take a normal from, so the derivative
 	// would be noise. A marker's colour comes from its texture and its alpha.
 	gl.Uniform1i(NormalColorUniform, 0)
+	gl.Uniform1i(UnlitUniform, g.UnlitFlag())
 	gl.Uniform1i(IsWaterUniform, 0)
 	gl.Uniform1i(HasNormalMapUniform, 0)
 	ApplySkinUniforms(&worldSkinUniforms, Program, nil)

@@ -2,6 +2,60 @@
 
 ## Done
 
+- [x] Save games and checkpoints. A save names its level and records
+      everything play has changed in it. That covers:
+      - every entity's fields, AI, animation clip and model state, including
+        entities a script spawned (made again from their type under the same
+        ID) and ones it destroyed (taken out again)
+      - chunk switches and moves, dynamic brushes, volumes, lights, sprites,
+        emitters, sounds, effects, the sky and the music
+      - the player and their view
+      - every script's `.state` and pending `after` timers, the play clock,
+        which objects have heard `:spawn:`, who stands in what, and the
+        checkpoints reached
+      - the non-modal screens up, with what scripts wrote to their widgets
+
+      Loading a save loads the level fresh through the ordinary level-load
+      path and lays the save over it (`internal/savegame`), matching objects
+      by ID. So a compiled and an authored level save alike, and a save
+      survives the level being edited. The format is gob with a separate
+      header (`internal/savefile`), in `saves/` beside `settings.yaml`.
+      level1's save is about 110 KB, taken in about 3 ms and applied in about
+      13 ms.
+
+      **Checkpoints**:
+      - A volume's `checkpoint: true` (the volume panel's Checkpoint group), or
+        `checkpoint(name)` from a script.
+      - Player only and once per play-through. It autosaves between frames,
+        becomes what `retry()` returns to, and posts `(:checkpoint:, name)`
+        to the player and the screens.
+      - The death screen now has Retry (the last checkpoint, else a restart)
+        and Restart Level (`restart_level()`).
+      - The last checkpoint rides inside every save, so dying after a load
+        retries from the checkpoint, not from the load.
+
+      **Slots**:
+      - `save_game`/`load_game`/`save_info`/`latest_save`/`delete_save`.
+      - Per-level `save_mode: exact | checkpoint` (the level's Saving group):
+        a `checkpoint` level saves its last checkpoint rather than the exact
+        state.
+      - `@level.prop.name`/`save_mode`/`last_checkpoint`.
+
+      **Fixed on the way**: `installLevel` never stopped the outgoing level's
+      voices, so its looping ambience carried on under the next level.
+
+      **Content**:
+      - level1 has `checkpoint_lz` (the landing-zone floor, below the hovering
+        hold) and `checkpoint_basin` (the canyon mouth into the open basin
+        with the compound and AA emplacement).
+      - Pause menu Save/Load/Load Last Checkpoint, a main menu with Resume
+        (loads the newest save) and Load Game, and shared
+        `save_game`/`load_game` screens (`scripts/menus/saves.flang`).
+      - A HUD "Checkpoint reached" toast.
+
+      `levelsim -restore-at t` saves, reloads, restores and diffs the result,
+      and prints `CHECKPOINT` requests. See `docs/guide/26-saves-and-checkpoints.md`.
+
 - [x] Friendly units and squads. An AI agent can follow a leader — `ai: follow:`
       or `ai_follow(@agent, @player)` — keeping a place in a loose group
       spread across an arc behind it (each member nudged by an amount fixed to
@@ -778,13 +832,14 @@
 
 
 - [ ] Physics engine
-- [ ] Configurable keybindings, other user settings
+- [x] Configurable keybindings, other user settings
 - [ ] Water reflections
 - [ ] Volumetric displacement (e.g. sand, snow)
 - [ ] Restitution/friction, and more than one solver iteration per frame
 - [ ] Potentially change the max number of frames for animated textures as well as frame spacing/interpolation
 - [ ] Volumes are brushes instead of boxes only
-- [ ] Game saves
+- [x] Game saves
+- [x] Checkpoints
 - [ ] Decal support
 - [x] Volumetric clouds and explosions: cloud volumes (`cloud:` on a volume), a
       volumetric cloud deck on the sky that `ease_sky` blends, cloud shadows on
@@ -796,10 +851,15 @@
 - [x] Waypoint animations
 - [x] Cannot select sprites/waypoints/etc. as refs in script dropdown
 - [ ] Popout help menu
-- [ ] No weapon state
-- [ ] Volumes where player has to hold their weapon down/firing is disabled
+
 - [ ] Enable AI to enter vehicles
-- [ ] RTS mode
-- [ ] 3rd person mode
+- [ ] RTS mode?
+- [ ] 3rd person mode?
 - [x] Audio control
 - [ ] Shader editor
+- [ ] Break apart model and skeleton with animations on skeletons
+
+### Game
+
+- [ ] No weapon state
+- [ ] Holding weapons down

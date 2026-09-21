@@ -254,6 +254,10 @@ not the one the body sees.
 **UI** — `show_screen` `hide_screen` `screen(name)` `widget(screen, id)`
 `focus(widget)` `load_level(name)` `quit_game()`
 
+**Saves** — `save_game(slot)` `load_game(slot)` `save_info(slot)` `latest_save()`
+`delete_save(slot)` `checkpoint(name)` `retry()` `restart_level()` — see
+[Saves and checkpoints](26-saves-and-checkpoints.md)
+
 ## Hitscan
 
 `hitscan` casts a ray from the reticle — the centre of the screen — and posts
@@ -314,7 +318,7 @@ imported; cycles are a load error.
 
 ## The script editor
 
-Toolbar: **Script**, or the arrow beside a script name in any object panel.
+Editor strip: **Script**, or the arrow beside a script name in any object panel.
 
 **Tabs** stay open, so reading one file while writing another does not cost you
 your place. `Ctrl+W` closes (asking if unsaved), `Ctrl+Tab` moves between them.

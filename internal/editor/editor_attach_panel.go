@@ -80,18 +80,18 @@ func editorAttachCombo(label string, value *string, names []string, tooltip stri
 	}
 
 	changed := false
-	if imgui.BeginCombo(label, preview) {
-		if imgui.SelectableV(attachNone, *value == "", 0, imgui.Vec2{}) && *value != "" {
+	if imguibackend.BeginCombo(label, preview) {
+		if imguibackend.SelectableV(attachNone, *value == "", 0, imgui.Vec2{}) && *value != "" {
 			*value = ""
 			changed = true
 		}
 		for _, n := range names {
-			if imgui.SelectableV(n, n == *value, 0, imgui.Vec2{}) && n != *value {
+			if imguibackend.SelectableV(n, n == *value, 0, imgui.Vec2{}) && n != *value {
 				*value = n
 				changed = true
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if tooltip != "" && imgui.IsItemHovered() {
 		imgui.SetTooltip(tooltip)

@@ -38,10 +38,8 @@ const (
 	modelWindowW = int32(1280)
 	modelWindowH = int32(800)
 
-	// Two rows: file actions above, selection and camera below. One row cannot
-	// hold both at this window's default width — the right-hand "Pop In" is
-	// positioned absolutely and would sit on top of whatever overflowed.
-	modelToolbarH = float32(54)
+	// The shared two-row top bar: menus above, selection and camera below.
+	modelToolbarH = editorTopBarH
 )
 
 // modelEditorWindow is the pop-out; nil when the model editor is closed.
@@ -222,6 +220,7 @@ func OpenModelEditorWindow() {
 	if modelDoc == nil {
 		modelDoc = model.NewCubeDoc()
 		modelCam.frame(modelDoc)
+		modelMarkSaved()
 	}
 	w, err := uiwin.NewUIWindow("Model Editor", modelWindowW, modelWindowH,
 		drawModelEditorWindow, onModelEditorClose)
@@ -276,6 +275,7 @@ func drawModelEditorWindow() {
 	if modelDoc == nil {
 		modelDoc = model.NewCubeDoc()
 		modelCam.frame(modelDoc)
+		modelMarkSaved()
 	}
 	if err := modelEditorEnsureProgram(); err != nil {
 		log.Printf("model editor: %v", err)
@@ -393,44 +393,34 @@ func modelEditorFly() {
 	modelCam.move(f, u, r)
 }
 
-// modelEditorToolbar draws the two-row top bar. Level-wide actions stay with
-// the main window's toolbar; this one carries only what belongs to the model.
+// modelEditorToolbar draws the two-row top bar: the menus (editor_menubar.go
+// lays out the part every editor shares) and then what the mouse is doing.
 func modelEditorToolbar() {
 	w := modelEditorWindow
 	if w == nil {
 		return
 	}
-	imgui.SetNextWindowPos(imgui.Vec2{X: 0, Y: 0})
-	imgui.SetNextWindowSize(imgui.Vec2{X: float32(w.W), Y: modelToolbarH})
-	imgui.BeginV("##modeleditor_toolbar", nil,
-		imgui.WindowFlagsNoTitleBar|imgui.WindowFlagsNoResize|
-			imgui.WindowFlagsNoMove|imgui.WindowFlagsNoScrollbar)
+	editorTopBarBegin("##modeleditor_toolbar", float32(w.W))
 
-	firstRowY := imgui.CursorPosY()
-
-	// --- row 1: the file menu ---
-	modelEditorMenuBar()
-
-	const popInBtnWidth = 90
-	imgui.SetCursorPos(imgui.Vec2{X: float32(w.W) - popInBtnWidth - 8, Y: firstRowY})
-	if imgui.ButtonV("Pop In", imgui.Vec2{X: popInBtnWidth, Y: 0}) {
-		CloseModelEditorWindow()
+	if imgui.BeginMenuBar() {
+		modelEditorMenus()
+		editorMenuBarShared(editorKindModel)
+		id := "(untitled)"
+		if modelDoc != nil && modelDoc.ID != "" {
+			id = modelDoc.ID
+		}
+		editorMenuBarDoc(id, modelEditorDirty())
+		imgui.EndMenuBar()
 	}
 
 	// --- row 2: what the mouse is doing ---
 	// Grouped and divided the same way every other toolbar in the editor is
-	// (editorToolbarGroupSep) — the level editor's main window, the 2D map's
-	// own window — so this reads as the same kind of bar as those.
-	id := "(untitled)"
-	if modelDoc != nil && modelDoc.ID != "" {
-		id = modelDoc.ID
-	}
-	imgui.Text(id)
-
+	// (editorToolbarGroupSep), so this reads as the same kind of bar.
 	// ---- Group: select mode ----
-	editorToolbarGroupSep()
-	for _, mode := range []modelSelMode{modelSelVertex, modelSelEdge, modelSelFace, modelSelBone} {
-		imgui.SameLine()
+	for i, mode := range []modelSelMode{modelSelVertex, modelSelEdge, modelSelFace, modelSelBone} {
+		if i > 0 {
+			imgui.SameLine()
+		}
 		// Latch the comparison before the button: clicking it changes the mode,
 		// and re-testing afterwards would pop a style color that was never
 		// pushed. The ImGui style stack is global across contexts, so an

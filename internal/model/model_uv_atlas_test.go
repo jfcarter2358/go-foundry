@@ -1,8 +1,11 @@
 package model
 
 import (
+	"fmt"
 	"math"
 	"testing"
+
+	"foundry/internal/geom"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -232,8 +235,118 @@ func TestAtlasUnwrapAngleLimitControlsIslandCount(t *testing.T) {
 	if tight <= loose {
 		t.Errorf("tight limit gave %d islands, loose gave %d — want tight > loose", tight, loose)
 	}
-	if loose != 1 {
-		t.Errorf("a 175° limit gave %d islands, want 1 (everything joins)", loose)
+	// A closed sphere cannot flatten into one piece without its back landing on
+	// its front, so even a limit that lets every edge through must still cut it.
+	if loose < 2 {
+		t.Errorf("a 175° limit gave %d island(s) — a closed sphere cannot lie flat in one", loose)
+	}
+}
+
+// assertNoUVOverlap fails if any two faces' UV triangles share interior area.
+// Bounding boxes are not enough here: neighbouring faces inside one island have
+// overlapping boxes by design, and what must never happen is two faces claiming
+// the same texel.
+func assertNoUVOverlap(t *testing.T, m *ModelDoc) {
+	t.Helper()
+	type tri struct {
+		face    int
+		a, b, c mgl32.Vec2
+	}
+	var tris []tri
+	for fi, f := range m.Faces {
+		if len(f.UVs) != len(f.Verts) {
+			continue
+		}
+		pts := make([]mgl32.Vec3, len(f.Verts))
+		for i, vi := range f.Verts {
+			pts[i] = m.Verts[vi]
+		}
+		for _, tr := range geom.TriangulatePolygon3D(pts) {
+			tris = append(tris, tri{fi, f.UVs[tr[0]], f.UVs[tr[1]], f.UVs[tr[2]]})
+		}
+	}
+	area := func(a, b, c mgl32.Vec2) float32 {
+		return (b.X()-a.X())*(c.Y()-a.Y()) - (b.Y()-a.Y())*(c.X()-a.X())
+	}
+	// Separating axis with a small slack, so faces meeting along an edge or at
+	// a corner count as touching.
+	const slack = 1e-5
+	sep := func(p, q [3]mgl32.Vec2) bool {
+		for _, s := range [2][3]mgl32.Vec2{p, q} {
+			for i := 0; i < 3; i++ {
+				e := s[(i+1)%3].Sub(s[i])
+				if e.Len() < 1e-9 {
+					continue
+				}
+				ax := mgl32.Vec2{-e.Y(), e.X()}.Normalize()
+				pl, ph := float32(math.MaxFloat32), -float32(math.MaxFloat32)
+				ql, qh := pl, ph
+				for _, v := range p {
+					pl, ph = minF(pl, v.Dot(ax)), maxF(ph, v.Dot(ax))
+				}
+				for _, v := range q {
+					ql, qh = minF(ql, v.Dot(ax)), maxF(qh, v.Dot(ax))
+				}
+				if ph <= ql+slack || qh <= pl+slack {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for i := range tris {
+		if math.Abs(float64(area(tris[i].a, tris[i].b, tris[i].c))) < 1e-10 {
+			continue
+		}
+		for j := i + 1; j < len(tris); j++ {
+			if tris[i].face == tris[j].face ||
+				math.Abs(float64(area(tris[j].a, tris[j].b, tris[j].c))) < 1e-10 {
+				continue
+			}
+			p := [3]mgl32.Vec2{tris[i].a, tris[i].b, tris[i].c}
+			q := [3]mgl32.Vec2{tris[j].a, tris[j].b, tris[j].c}
+			if !sep(p, q) {
+				t.Fatalf("faces %d and %d overlap in UV space: %v vs %v", tris[i].face, tris[j].face, p, q)
+			}
+		}
+	}
+}
+
+// Curved, closed shapes are where a flat projection folds: a cylinder's barrel
+// or a sphere is one smooth sheet edge to edge, so an island grown only by
+// neighbour angles wraps all the way round and its back lands on its front.
+// Painting one side then paints the other. No face may share a texel with
+// another, at any angle limit.
+func TestAtlasUnwrapCurvedShapesNeverOverlap(t *testing.T) {
+	shapes := map[string]*ModelDoc{
+		"cylinder": NewPrimitiveDoc(ModelPrimCylinder, 16),
+		"cone":     NewPrimitiveDoc(ModelPrimCone, 16),
+		"sphere":   NewPrimitiveDoc(ModelPrimSphere, 16),
+	}
+	for name, base := range shapes {
+		for _, deg := range []float32{30, 60, 89, 120, 175} {
+			m := base.Clone()
+			if _, err := m.AtlasUnwrap(modelAllFaceIndicesOf(m),
+				AtlasUnwrapOptions{AngleLimit: deg * math.Pi / 180}); err != nil {
+				t.Fatalf("%s @%v°: %v", name, deg, err)
+			}
+			t.Run(fmt.Sprintf("%s@%v", name, deg), func(t *testing.T) { assertNoUVOverlap(t, m) })
+		}
+	}
+}
+
+// Faces that stay continuous must still stay continuous: a gentle curve is not
+// shattered into one island per face.
+func TestAtlasUnwrapKeepsCurvedStripsTogether(t *testing.T) {
+	m := NewPrimitiveDoc(ModelPrimCylinder, 16)
+	n, err := m.AtlasUnwrap(modelAllFaceIndicesOf(m), AtlasUnwrapOptions{})
+	if err != nil {
+		t.Fatalf("AtlasUnwrap: %v", err)
+	}
+	// 16 side quads 22.5° apart within a 60° cone of their seed come to a few
+	// strips, plus the two caps — nowhere near one island per face.
+	if n > 8 {
+		t.Errorf("a 16-sided cylinder cut into %d islands, want the barrel kept in a few strips", n)
 	}
 }
 

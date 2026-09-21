@@ -239,14 +239,41 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 	}
 	// Lowest volume centre first; ties broken by index so the walk is stable
 	// and two runs over the same level always agree.
+	centreY := make(map[int]float32, len(idx))
+	for _, i := range idx {
+		centreY[i] = lvl.Entities[i].BoundCenter().Y()
+	}
 	sort.SliceStable(idx, func(a, b int) bool {
-		return lvl.Entities[idx[a]].BoundCenter().Y() < lvl.Entities[idx[b]].BoundCenter().Y()
+		return centreY[idx[a]] < centreY[idx[b]]
 	})
+
+	// Every participant's box once, rather than both boxes once per PAIR: a
+	// rotated box is eight corners through a rotation built from scratch, and
+	// with a hundred soldiers on the field there are five thousand pairs. A box
+	// is refreshed when its entity is pushed, so each pair still sees exactly
+	// the boxes resolveEntityOverlap would have built for it.
+	type cachedBox struct {
+		min, max mgl32.Vec3
+		ok       bool
+	}
+	boxes := make([]cachedBox, len(idx))
+	for k, i := range idx {
+		boxes[k].min, boxes[k].max, boxes[k].ok = lvl.Entities[i].CollisionAABB()
+	}
 
 	moved := map[int]bool{}
 	for a := 0; a < len(idx); a++ {
 		for b := a + 1; b < len(idx); b++ {
 			ea, eb := &lvl.Entities[idx[a]], &lvl.Entities[idx[b]]
+			if !ea.Collision.Movable && !eb.Collision.Movable {
+				continue
+			}
+			if !boxes[a].ok || !boxes[b].ok {
+				continue
+			}
+			if _, touching := boxOverlaps(boxes[a].min, boxes[a].max, boxes[b].min, boxes[b].max); !touching {
+				continue
+			}
 			if ea.Frame != eb.Frame {
 				// Two entities in different frames describe their volumes in
 				// different coordinate systems, and comparing those boxes
@@ -263,6 +290,12 @@ func ResolveEntityCollisions(lvl *world.Level, player *world.Entity) []int {
 				continue
 			}
 			movedA, movedB := resolveEntityOverlap(ea, eb)
+			if movedA {
+				boxes[a].min, boxes[a].max, boxes[a].ok = ea.CollisionAABB()
+			}
+			if movedB {
+				boxes[b].min, boxes[b].max, boxes[b].ok = eb.CollisionAABB()
+			}
 			if movedA || movedB {
 				// The pair, not just the fact that something moved: the
 				// scripting engine's `collide` event needs to know *what* was

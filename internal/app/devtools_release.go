@@ -37,6 +37,9 @@ func devWireframe() bool { return false }
 // `my-game build-release` is a player's typo rather than a request.
 func devRunCommand(args []string) (exitCode int, ran bool) { return 0, false }
 
+// devPendingProject is always "": a release build opens no other project.
+func devPendingProject() string { return "" }
+
 // devInit does nothing. The release build's startup loads the game's own start
 // level and goes straight into gameplay — see startup_release.go.
 func devInit(level *world.Level, levelPath, levelsDir string) {}

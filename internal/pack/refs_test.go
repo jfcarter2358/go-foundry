@@ -267,6 +267,34 @@ func TestNormalMapsRideAlongWithTheirAlbedo(t *testing.T) {
 	}
 }
 
+// A script switches sky by base name — `sky_cubemap = "dusk"` — and the six
+// faces it expands to are named nowhere in the content.
+func TestCubemapFacesAreReachedByTheirBaseName(t *testing.T) {
+	faces := []string{"px", "nx", "py", "ny", "pz", "nz"}
+	files := map[string]string{
+		"ui/theme.fth":         "\n",
+		"ui/loading.fui":       "\n",
+		"ui/pause.fui":         "\n",
+		"textures/default.png": "PNG",
+		"levels/start.yaml":    "scripts: [sky]\n",
+		"scripts/sky.flang":    "@level.prop.sky_cubemap = \"dusk\"\n",
+	}
+	for _, f := range faces {
+		files["textures/dusk_"+f+".png"] = "PNG"
+		files["textures/unused_"+f+".png"] = "PNG"
+	}
+	keep := keepSet(t, writeTree(t, files), game.Manifest{Title: "T", StartLevel: "start"})
+
+	for _, f := range faces {
+		if !keep["textures/dusk_"+f+".png"] {
+			t.Errorf("cubemap face dusk_%s named by its base was pruned", f)
+		}
+		if keep["textures/unused_"+f+".png"] {
+			t.Errorf("unreachable cubemap face unused_%s was kept", f)
+		}
+	}
+}
+
 // A ship's hull is reached from the entity type that carries it, not from any
 // level — the one reference chain that runs through chunks/ (entity_chunk.go).
 func TestCarriedChunkGeometryIsFollowed(t *testing.T) {

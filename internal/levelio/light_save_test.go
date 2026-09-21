@@ -157,3 +157,40 @@ func TestSaveLoadPreservesBakeExclude(t *testing.T) {
 		t.Errorf("a point light excluding nothing loaded %v, want nil", got)
 	}
 }
+
+// A level from before the lighting model had knobs gets the soft defaults; one
+// that set them — including a deliberate 0, the old hard look — keeps them.
+func TestLightingModelKnobsDefaultAndRoundTrip(t *testing.T) {
+	old := buildLevelLights(t, world.RawLevel{})
+	if old.Lights.Global.Wrap != world.DefaultLightWrap || old.Lights.Global.Hemisphere != world.DefaultAmbientHemisphere {
+		t.Errorf("a level without the knobs loaded wrap %v hemisphere %v, want the defaults",
+			old.Lights.Global.Wrap, old.Lights.Global.Hemisphere)
+	}
+	src := world.LightSet{Global: world.GlobalLight{Color: mgl32.Vec3{1, 1, 1}, Brightness: 0.3, Wrap: 0, Hemisphere: 0.8}}
+	lvl := buildLevelLights(t, world.RawLevel{Lights: lightsToRaw(src, false)})
+	if lvl.Lights.Global.Wrap != 0 || lvl.Lights.Global.Hemisphere != 0.8 {
+		t.Errorf("round trip gave wrap %v hemisphere %v, want 0 and 0.8", lvl.Lights.Global.Wrap, lvl.Lights.Global.Hemisphere)
+	}
+}
+
+// Bounce survives a save and a load, a deliberate 0 included, and a level that
+// never said anything about it gets the defaults.
+func TestSaveLoadPreservesBounce(t *testing.T) {
+	ls := world.LightSet{Global: world.GlobalLight{Bounces: 0, BounceScale: 0.5}}
+	g := buildLevelLights(t, world.RawLevel{Lights: lightsToRaw(ls, false)}).Lights.Global
+	if g.Bounces != 0 || g.BounceScale != 0.5 {
+		t.Errorf("bounce round-tripped as %d × %v, want 0 × 0.5", g.Bounces, g.BounceScale)
+	}
+
+	g = buildLevelLights(t, world.RawLevel{}).Lights.Global
+	if g.Bounces != world.DefaultBounces || g.BounceScale != world.DefaultBounceScale {
+		t.Errorf("a level with no bounce: loaded %d × %v, want the defaults", g.Bounces, g.BounceScale)
+	}
+
+	many := 99
+	var raw world.RawLevel
+	raw.Lights.Global.Bounce = &world.RawBounce{Count: &many}
+	if g = buildLevelLights(t, raw).Lights.Global; g.Bounces != world.MaxBounces {
+		t.Errorf("bounce count 99 loaded as %d, want it capped at %d", g.Bounces, world.MaxBounces)
+	}
+}

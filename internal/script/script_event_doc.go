@@ -56,6 +56,8 @@ var eventDocs = []EventDoc{
 		"Two entities overlapped and were pushed apart."},
 	{":interact:", "entity, volume", "src ref",
 		"The interact key (E) was pressed while inside its bounds."},
+	{":checkpoint:", "player, every screen up", "name str",
+		"A checkpoint was reached and its autosave is on disk. name is the checkpoint volume's ID, or checkpoint()'s argument."},
 	{":primary_fire:", "player", "—",
 		"The primary fire button (left mouse) went down."},
 	{":primary_fire_end:", "player", "—",

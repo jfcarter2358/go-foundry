@@ -22,6 +22,72 @@ type GlobalLight struct {
 	// so the zero value is "on": every level authored before the flag existed
 	// has one, and none of them meant it to be dark.
 	Disabled bool
+
+	// Wrap and Hemisphere shape how every light in the level falls across a
+	// surface — see LightWrap and AmbientAt. Level-wide rather than per light
+	// because they are the lighting MODEL, and a bake and a live surface have
+	// to agree on it. A loaded level without them gets DefaultLightWrap and
+	// DefaultAmbientHemisphere; zero is the hard, flat look.
+	Wrap       float32
+	Hemisphere float32
+
+	// Bounces is how many times the light bake carries light on from one
+	// surface to the next (compile/bounce.go): 0 bakes direct light only, 1
+	// lets a sunlit floor light the wall beside it, 2 lets that wall light the
+	// ceiling in turn. BounceScale multiplies what each bounce carries. Both
+	// act on the bake alone — nothing lit live receives bounced light — so a
+	// dev build, which lights everything live, never shows them. A loaded
+	// level without them gets DefaultBounces and DefaultBounceScale; the zero
+	// value (a level built in code) bakes no bounce at all.
+	Bounces     int
+	BounceScale float32
+}
+
+// DefaultLightWrap and DefaultAmbientHemisphere are what a level that never set
+// Wrap or Hemisphere gets (levelio's loader).
+const (
+	DefaultLightWrap         = float32(0.5)
+	DefaultAmbientHemisphere = float32(0.5)
+)
+
+// DefaultBounces and DefaultBounceScale are what a loaded level that never set
+// `bounce:` gets; MaxBounces is the most the bake will do however many are
+// asked for, each one costing as much again as the first.
+const (
+	DefaultBounces     = 1
+	DefaultBounceScale = float32(1)
+	MaxBounces         = 4
+)
+
+// LightWrap is how much of a light a surface at cosine ndl to it takes:
+// Lambert, wrapped. At Wrap 0 it is plain max(N·L, 0), falling to nothing
+// exactly side-on — the hard terminator. Wrap w lets the light carry on round
+// the curve until N·L = -w, easing to zero instead of stopping, which is what
+// a real surface's bounce and roughness look like and what keeps a smoothed
+// cylinder from having a sharp dark line down it. MUST stay identical to
+// lightWrapTerm in light_model.glsl — a baked surface and a live one have to
+// agree.
+func (g GlobalLight) LightWrap(ndl float32) float32 {
+	w := g.Wrap
+	if w < 0 {
+		w = 0
+	}
+	d := (ndl + w) / (1 + w)
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// AmbientAt is the ambient light a surface facing n receives: the global
+// colour, brighter facing up at the sky and darker facing down at the ground,
+// by Hemisphere (0 = the same from every side, 1 = from half to one and a half
+// times). The average over every direction is the colour itself, so turning it
+// up reshapes a level's ambient rather than brightening it. MUST stay
+// identical to ambientAt in light_model.glsl.
+func (g GlobalLight) AmbientAt(n mgl32.Vec3) mgl32.Vec3 {
+	h := min(max(g.Hemisphere, 0), 1)
+	return g.Color.Mul(g.EffectiveBrightness() * (1 + 0.5*h*n.Y()))
 }
 
 // EffectiveBrightness is the brightness actually uploaded — zero while the
@@ -265,7 +331,7 @@ func UniformLoc(name string) int32 {
 // UniformLoc it does not log misses — secondary programs (e.g. the detail
 // tessellation program) legitimately omit some uniforms.
 func ProgUniformLoc(prog uint32, name string) int32 {
-	return gl.GetUniformLocation(prog, gl.Str(name))
+	return gfx.UniformLoc(prog, name)
 }
 
 // UploadLights sends all light uniforms to the main shader program.
@@ -293,6 +359,8 @@ func UploadLightsTo(prog uint32, ls LightSet, verbose bool) {
 	gl.Uniform3f(UniformLoc("globalLightColor\x00"),
 		ls.Global.Color[0], ls.Global.Color[1], ls.Global.Color[2])
 	gl.Uniform1f(UniformLoc("globalLightBrightness\x00"), ls.Global.EffectiveBrightness())
+	gl.Uniform1f(UniformLoc("lightWrap\x00"), max(ls.Global.Wrap, 0))
+	gl.Uniform1f(UniformLoc("ambientHemisphere\x00"), min(max(ls.Global.Hemisphere, 0), 1))
 
 	numDir := len(ls.Directional)
 	if numDir > MaxDirLights {
@@ -343,4 +411,24 @@ func boolInt(b bool) int32 {
 		return 1
 	}
 	return 0
+}
+
+// BakedSun is the directional light whose baked share a compiled surface
+// carries per vertex, so the renderer can take it back out where something
+// the bake never saw — an entity, a chunk switched on later — stands in its
+// way: the first shadow-casting directional light that is baked at all. -1
+// when there is none. The compiler (compile/light.go) and the renderer
+// (render.UploadShadowUniformsTo) both ask here, which is what keeps the
+// share they agree on the same light.
+func (ls LightSet) BakedSun() int {
+	for i := range ls.Directional {
+		if i >= MaxDirLights {
+			break
+		}
+		dl := &ls.Directional[i]
+		if dl.EffectiveBrightness() > 0 && dl.CastsShadows() && !dl.LitLive() && dl.Direction.Len() > 1e-6 {
+			return i
+		}
+	}
+	return -1
 }

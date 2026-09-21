@@ -84,9 +84,9 @@ func (s Stats) StreamedClipWarning() string {
 		}
 		parts = append(parts, fmt.Sprintf("%s by %s (%d faces, %.1f sq)", c.FaceChunk, c.SolidChunk, c.Faces, c.Area))
 	}
-	return "surface was removed from one chunk by another's solid where one of them is streamed; " +
-		"fine for neighbouring areas that are always switched on together, a hole in the level for two " +
-		"that are not: " + strings.Join(parts, ", ")
+	return "surface of one chunk lies inside another's solid where one of them is streamed; it is kept " +
+		"and drawn only while the covering chunk is off, but the light bake and visibility assume both are on: " +
+		strings.Join(parts, ", ")
 }
 
 // SealWarning is what to tell the author about brushes reaching outside the
@@ -162,6 +162,15 @@ type Result struct {
 // the author look is more use than refusing, and refusing would make the
 // editor's compile button useless on a level halfway through being built.
 func Compile(lvl *world.Level, opt Options) (*Result, error) {
+	// A level that asks for its own bake spacing gets it however it is
+	// compiled — the editor's button, the release build, foundrycompile —
+	// since the right spacing is a fact about the level, not about the build.
+	if lvl != nil && lvl.LightGrid > 0 {
+		opt.Light.GridStep = lvl.LightGrid
+	}
+	if lvl != nil && lvl.LightMinGrid > 0 {
+		opt.Light.MinGridStep = lvl.LightMinGrid
+	}
 	faces, clips, err := csg(lvl)
 	if err != nil {
 		return nil, err

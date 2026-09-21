@@ -204,6 +204,41 @@ func TestAWallAndTheFieldOfViewBothHideATarget(t *testing.T) {
 	}
 }
 
+// Hearing notices a target through a wall and keeps track of it, but a heard
+// target is not a visible one: nothing may open fire on it. Every enemy type
+// hears a few metres, and used to shoot a player on the far side of a thin wall.
+func TestATargetHeardThroughAWallIsNotEngaged(t *testing.T) {
+	wall := world.NewBoxBrush("wall", mgl32.Vec3{10, 2, 14}, mgl32.Vec3{6, 2, 0.1}, "concrete")
+	lvl := aiLevel(t, wall)
+	g := agent("guard", mgl32.Vec3{10, 0, 15})
+	g.AI.Targets = []string{"player"}
+	g.AI.OnTarget = world.AIWatch // stay put: this is about sight, not the chase
+	g.AI.HearingRange = 6
+	g.AI.FOV = 360
+	g.AI.AttackRange = 10
+	lvl.Entities = []world.Entity{g}
+	p := player(t, mgl32.Vec3{10, 0, 12.5})
+
+	var events []hooks.AIEvent
+	run(lvl, p, 3, &events)
+	if count(events, "target_acquired") != 1 {
+		t.Fatalf("a player heard through a wall was not noticed: %v", events)
+	}
+	if n := count(events, "target_in_range"); n != 0 {
+		t.Fatalf("the guard engaged a player it could only hear through a wall (%d target_in_range)", n)
+	}
+	if Target(lvl, &lvl.Entities[0]) != p {
+		t.Error("a heard target was not kept")
+	}
+
+	// Past the end of the wall, on the guard's side: now it is a line of fire.
+	p.Position = mgl32.Vec3{19, 0.9, 14.5}
+	run(lvl, p, 1, &events)
+	if count(events, "target_in_range") == 0 {
+		t.Fatalf("the guard did not engage a player in plain sight: %v", events)
+	}
+}
+
 func TestATargetOutOfSightIsLostAfterLoseTime(t *testing.T) {
 	wall := world.NewBoxBrush("wall", mgl32.Vec3{5, 2, 10}, mgl32.Vec3{5, 2, 0.25}, "concrete")
 	lvl := aiLevel(t, wall)

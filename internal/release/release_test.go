@@ -1,6 +1,8 @@
 package release
 
 import (
+	"foundry/internal/fileutil"
+
 	"context"
 	"fmt"
 	"os"
@@ -347,4 +349,27 @@ func TestJobCancels(t *testing.T) {
 		t.Errorf("state = %v, want cancelled", s.State)
 	}
 	j.Cancel() // and again, on a job that has finished
+}
+
+// The project's runtimes/ wins; an installed editor's own is the fallback.
+func TestRuntimesComeFromTheProjectThenTheEditor(t *testing.T) {
+	root := t.TempDir()
+	proj := filepath.Join(root, "proj")
+	editor := filepath.Join(root, "editor")
+	prev := fileutil.ExecutablePath
+	defer func() { fileutil.ExecutablePath = prev }()
+	fileutil.ExecutablePath = editor
+
+	p := Platforms[0]
+	if got := PrebuiltPlayer(proj, p); got != filepath.Join(proj, RuntimesDirName, PlayerFileName(p)) {
+		t.Errorf("with neither: %s, want the project's path", got)
+	}
+	writeFiles(t, editor, map[string]string{filepath.Join(RuntimesDirName, PlayerFileName(p)): "x"})
+	if got := PrebuiltPlayer(proj, p); got != filepath.Join(editor, RuntimesDirName, PlayerFileName(p)) {
+		t.Errorf("with the editor's: %s", got)
+	}
+	writeFiles(t, proj, map[string]string{filepath.Join(RuntimesDirName, PlayerFileName(p)): "x"})
+	if got := PrebuiltPlayer(proj, p); got != filepath.Join(proj, RuntimesDirName, PlayerFileName(p)) {
+		t.Errorf("with both: %s, want the project's", got)
+	}
 }

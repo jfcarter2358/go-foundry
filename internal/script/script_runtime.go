@@ -227,6 +227,7 @@ func ScriptRuntimeReset(lvl *world.Level) {
 	gfx.FieldOfView = gfx.DefaultFieldOfView
 	gfx.ViewmodelFieldOfView = gfx.DefaultViewmodelFieldOfView
 	gfx.ResetRecoil()
+	gfx.StopLookAt()
 
 	// Nothing may evaluate a binding against a level that is being replaced, or
 	// load a script for a screen shown after the runtime has gone.
@@ -760,7 +761,7 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 			// top of the real error, which contradicts it and sends the author
 			// looking for a clause that is sitting right there.
 			anyMatched = true
-			rt.recordFailure(u, err)
+			rt.recordFailure(u, err, m)
 			continue
 		}
 		if matched {
@@ -781,15 +782,21 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 // recordFailure logs a script error and disables the script if it keeps
 // happening. A handler erroring every frame fills the log and slows the game
 // without ever telling the author anything new.
-func (rt *ScriptRuntime) recordFailure(u *scriptUnit, err error) {
+//
+// The entry names the handler and says that the rest of it was skipped. The
+// failing line is rarely the problem anyone notices: level1's :skybox: handler
+// failed on a light write, and what went missing was the ground, which the
+// handler would have switched on fifteen lines further down.
+func (rt *ScriptRuntime) recordFailure(u *scriptUnit, err error, m queuedMsg) {
 	rt.stats.Errors++
 	u.failures++
+	stopped := fmt.Sprintf("the :%s: handler on %s stopped here, and nothing after this line in it ran", m.atom, m.to)
 	// A runtime error knows where it happened; carrying the position through is
 	// what lets the window open the script at the offending line.
 	if re, ok := err.(*flang.RuntimeError); ok {
-		ScriptLog.ErrorAt(u.path, re.Pos, "%s", re.Msg)
+		ScriptLog.ErrorAt(u.path, re.Pos, "%s; %s", re.Msg, stopped)
 	} else {
-		ScriptLog.Errorf(u.path, "%v", err)
+		ScriptLog.Errorf(u.path, "%v; %s", err, stopped)
 	}
 	if u.failures >= scriptMaxErrorsPerScript {
 		u.disabled = true

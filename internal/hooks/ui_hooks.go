@@ -31,6 +31,10 @@ type UIEvent struct {
 	Num  float64
 	Str  string
 	Bool bool
+	// Toggle and Text say which of those a change carries, because the value
+	// alone cannot: a toggle switched off is Bool false and Num 0, a text
+	// field emptied is Str "" — both indistinguishable from a slider at 0.
+	Toggle, Text bool
 }
 
 var uiEvents []UIEvent

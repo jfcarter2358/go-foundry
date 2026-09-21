@@ -80,7 +80,7 @@ func SetTarget(lvl *world.Level, e, t *world.Entity) bool {
 	}
 	st.Target = t.ID
 	st.TargetForced = true
-	st.TargetVisible = Perceives(lvl, e, t)
+	st.TargetVisible = Sees(lvl, e, t)
 	st.LastKnown = feetOf(lvl, t)
 	st.SinceSeen = 0
 	st.InRange = false

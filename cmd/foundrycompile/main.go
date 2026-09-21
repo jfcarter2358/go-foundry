@@ -40,6 +40,8 @@ func main() {
 	root := flag.String("root", ".", "project or install directory: the one holding resources/")
 	grid := flag.Float64("grid", float64(compile.DefaultLightOptions().GridStep),
 		"how far apart baked light samples are, in world units; faces are cut on a grid this size before lighting")
+	minGrid := flag.Float64("min-grid", float64(compile.DefaultLightOptions().MinGridStep),
+		"finest light-bake sample spacing, used only where a shadow edge crosses (0 = never refine)")
 	noLight := flag.Bool("no-light", false, "skip the light bake")
 	strict := flag.Bool("strict", false, "fail the build on a leaking level")
 	quiet := flag.Bool("quiet", false, "print only failures")
@@ -55,6 +57,7 @@ func main() {
 	opt := compile.Options{SkipLight: *noLight}
 	opt.Light = compile.DefaultLightOptions()
 	opt.Light.GridStep = float32(*grid)
+	opt.Light.MinGridStep = float32(*minGrid)
 
 	if failed := release.CompileLevels(flag.Args(), opt, *strict, *quiet, log.Printf); failed > 0 {
 		os.Exit(1)

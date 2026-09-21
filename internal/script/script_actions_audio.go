@@ -58,8 +58,10 @@ func (rt *ScriptRuntime) placeOneShot(name string, at mgl32.Vec3, gain float32, 
 	s.OneShot = true
 
 	rt.lvl.Sounds = append(rt.lvl.Sounds, s)
-	// The cache is indexed by name and the new sound is not in it yet.
-	rt.cache = buildRefCache(rt.lvl)
+	// The cache is indexed by name and the new sound is not in it yet. An
+	// append shifts nothing, so it is the one entry, not a rebuild: a battle
+	// places a one-shot for every shot fired.
+	rt.cacheAdded(func(c *refCache) { c.sound[s.ID] = len(rt.lvl.Sounds) - 1 })
 	return flang.RefVal{Kind: flang.RefSound, A: s.ID}, nil
 }
 

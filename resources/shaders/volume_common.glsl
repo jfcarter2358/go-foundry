@@ -176,14 +176,19 @@ uniform int   volBlobCount;
 uniform vec4  volBlobSphere[MAX_VOLUME_BLOBS]; // xyz centre, w radius
 uniform vec4  volBlobGlow[MAX_VOLUME_BLOBS];   // rgb emitted light, a core density
 uniform vec4  volBlobState[MAX_VOLUME_BLOBS];  // x life t, y erosion, z seed
-uniform float volBlobNoiseScale;               // noise repeats per radius
-uniform float volBlobDisplacement;             // fraction of radius
-uniform float volBlobBillow;                   // repeats rolled outward per life
+// Per blob, not per draw: one draw marches every source that overlaps — the
+// fireball and smoke layers of one effect, and an explosion effect going off
+// in them — so each blob carries its own layer's look.
+uniform vec4  volBlobLook[MAX_VOLUME_BLOBS];   // x noise repeats per radius, y displacement
+                                               // (fraction of radius), z billow, w absorption
+uniform vec3  volBlobAlbedo[MAX_VOLUME_BLOBS];
 
 // blobDensity is the summed extinction of every blob at p, and adds each one's
 // emitted light, weighted by its own density, into glow — which is a source
-// term per world unit, integrated exactly as scattered light is.
-float blobDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
+// term per world unit, integrated exactly as scattered light is. medium sums
+// each one's albedo (rgb) and absorption (a), weighted the same way, so a
+// march through several kinds of stuff at once shades each by its own.
+float blobDensity(vec3 p, float footprint, bool detail, inout vec3 glow, inout vec4 medium) {
     float sum = 0.0;
     for (int i = 0; i < MAX_VOLUME_BLOBS; ++i) {
         if (i >= volBlobCount) {
@@ -191,7 +196,8 @@ float blobDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
         }
         vec3 off = p - volBlobSphere[i].xyz;
         float r = volBlobSphere[i].w;
-        float reach = r * (1.0 + volBlobDisplacement);
+        vec4 look = volBlobLook[i];
+        float reach = r * (1.0 + look.y);
         float dd = dot(off, off);
         if (dd >= reach * reach) {
             continue;
@@ -204,14 +210,14 @@ float blobDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
         // Noise in the blob's own space, so it scales with the blob, offset by
         // its seed, and scrolled outward along the radius as it ages — the
         // churn of a fireball rolling over itself as it grows.
-        float freq = volBlobNoiseScale / r;
+        float freq = look.x / r;
         vec3 uvw = off * freq + vec3(st.z * 17.3, st.z * 31.7, st.z * 7.1)
-                   - outward * st.x * volBlobBillow;
+                   - outward * st.x * look.z;
         float n = textureLod(volNoiseShape, uvw, volNoiseLod(footprint, freq, VOL_SHAPE_TEXELS)).r;
 
         // The surface pushed in and out by the noise, then a soft shell inside
         // it rather than a hard edge.
-        float surface = 1.0 - dn + (n - 0.5) * 2.0 * volBlobDisplacement;
+        float surface = 1.0 - dn + (n - 0.5) * 2.0 * look.y;
         float d = smoothstep(0.0, 0.3, surface);
         if (d <= 0.0) {
             continue;
@@ -223,6 +229,7 @@ float blobDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
         }
         float core = d * volBlobGlow[i].a;
         sum += core;
+        medium += vec4(volBlobAlbedo[i], look.w) * core;
         // Hotter at the heart than the rim — but the rim still glows at half:
         // a dense ball is only ever SEEN at its rim, so a rim that went dark
         // would hide the colour the author gave the fire.
@@ -236,6 +243,7 @@ float blobDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
 // One explosion effect (world/effect.go). Its timeline — how big, how hot, how
 // thinned out — is solved on the CPU by Explosion.StateAt, so the fireball and
 // the flash it lights the level with come from one answer.
+uniform int   volExpOn;          // whether this draw has an explosion in it
 uniform vec3  volExpCenter;
 uniform float volExpRadius;      // the surface before noise displacement
 uniform float volExpReach;       // the furthest the noise can push it
@@ -244,6 +252,7 @@ uniform float volExpHeat;        // 1 white-hot, 0 cooled to smoke
 uniform float volExpDensity;     // extinction per world unit, already faded
 uniform float volExpFadeK;       // 1 while the smoke is full, 0 once it has gone
 uniform float volExpTurbulence;  // displacement, fraction of the radius
+uniform float volExpJets;        // 1 while the blast throws fire outward, 0 once it has
 uniform float volExpBrightness;  // multiplier on the fire's glow
 uniform float volExpSeed;
 uniform mat3  volExpRotation;    // world -> the explosion's own axes
@@ -270,10 +279,10 @@ vec3 explosionFireRamp(float x) {
 
 // explosionDensity is the explosion's extinction at p, adding its emitted
 // light into glow the way blobDensity does.
-float explosionDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
+float explosionDensity(vec3 p, float footprint, bool detail, inout vec3 glow, inout vec4 medium) {
     vec3 off = p - volExpCenter;
     float dd = dot(off, off);
-    if (dd >= volExpReach * volExpReach || volExpDensity <= 0.0) {
+    if (volExpOn == 0 || dd >= volExpReach * volExpReach || volExpDensity <= 0.0) {
         return 0.0;
     }
     float r = max(volExpRadius, 1e-3);
@@ -292,12 +301,27 @@ float explosionDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
     // every point by the same distance outward makes every radial line pass
     // through the same noise coordinate at one radius, which draws a crisp,
     // perfectly uniform shell there.
+    //
+    // The blast rolls the pattern outward hard in its first moments — the
+    // scale collapses quickly, then settles to the slow churn — so the lobes
+    // are seen to be thrown out rather than to swell.
     vec3 q = volExpRotation * (off / r);
-    float k = VOL_EXP_NOISE / (1.0 + volExpAge * 0.9);
+    float roll = 1.0 + volExpAge * 0.9 + 1.4 * (1.0 - exp(-14.0 * volExpAge));
+    float k = VOL_EXP_NOISE / roll;
     vec3 uvw = q * k
              + vec3(volExpSeed * 37.1, volExpSeed * 11.3 + volExpAge * 0.35, volExpSeed * 23.7);
     float freq = k / r;
-    vec2 n = textureLod(volNoiseShape, uvw, volNoiseLod(footprint, freq, VOL_SHAPE_TEXELS)).rg;
+    float lod = volNoiseLod(footprint, freq, VOL_SHAPE_TEXELS);
+
+    // Turbulence: the point is shoved sideways by a coarser noise before the
+    // billows are read, so the lobes curl into and fold over each other
+    // instead of sitting on the ball as bumps. Kept gentle: much past this
+    // the folds flatten into crumpled sheets rather than rounded billows.
+    vec2 wa = textureLod(volNoiseShape, uvw * 0.8 + vec3(0.61, 0.13, 0.29), lod).rg;
+    float wb = textureLod(volNoiseShape, uvw * 0.8 + vec3(0.17, 0.83, 0.47), lod).r;
+    uvw += (vec3(wa, wb) - 0.55) * 0.14;
+
+    vec2 n = textureLod(volNoiseShape, uvw, lod).rg;
     float n2 = textureLod(volNoiseShape, uvw * 2.1 + 0.37,
                           volNoiseLod(footprint, freq * 2.1, VOL_SHAPE_TEXELS)).r;
     // Two octaves — big cauliflower lobes with smaller ones riding on them —
@@ -317,6 +341,19 @@ float explosionDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
     // so a young fireball is never see-through.
     float disp = (billow - 0.5) * 2.0 * volExpTurbulence;
     disp *= (disp < 0.0) ? 0.5 : 1.0;
+
+    // Jets: while the blast lasts, fingers of fire thrown straight out. Noise
+    // read by DIRECTION from the centre (and only faintly by distance) is near
+    // constant along each radial line, so what it pushes out is a streak, not
+    // a lump. Up to explosionJetsReach (world/effect.go) of the turbulence
+    // further out than the billows — Reach makes the room.
+    if (volExpJets > 0.0) {
+        vec3 dir = q / max(length(q), 1e-4);
+        float jn = textureLod(volNoiseShape, dir * 0.8 + q * 0.06
+                                  + vec3(volExpSeed * 5.3, volExpSeed * 9.1, volExpSeed * 2.9), 0.0).r;
+        float jet = smoothstep(0.55, 0.75, jn);
+        disp += jet * 0.7 * volExpTurbulence * volExpJets;
+    }
     float surface = 1.0 - dn + disp - thin * (1.4 - billow * 1.2);
     // Clamped: once the smoke is more than ~60% thinned the factor would go
     // negative, and a negative times the negative (0.65 - dn) outside the heart
@@ -353,6 +390,7 @@ float explosionDensity(vec3 p, float footprint, bool detail, inout vec3 glow) {
     float temp = volExpHeat * (1.45 - 1.05 * dn) * mix(0.3, 1.3, billow) * mix(0.35, 1.2, soot);
     temp = clamp(temp, 0.0, 1.0);
     glow += explosionFireRamp(temp) * volExpFireTint * volExpBrightness * sigma;
+    medium += vec4(volExpSmoke, 1.0) * sigma;
     return sigma;
 }
 

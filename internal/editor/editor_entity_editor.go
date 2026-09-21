@@ -59,10 +59,9 @@ const (
 	entityWindowW = int32(1360)
 	entityWindowH = int32(840)
 
-	// Two rows: file actions above, view toggles and status below — the model
-	// and particle editors' toolbar, at the same height so the three windows
-	// read as one tool with different middles.
-	entityToolbarH = float32(54)
+	// The shared two-row top bar (editor_menubar.go): menus above, the 3D
+	// view's tools and the status line below.
+	entityToolbarH = editorTopBarH
 
 	// entityPanelWidth is the right-hand properties column, and
 	// entityOutlineWidth the left-hand list of what the type is made of. The
@@ -84,6 +83,16 @@ var entityDef *world.EntityDef
 // which is the *id* an author may retype at any moment: Save writes to the name
 // in the field, so renaming and saving is how a type is forked.
 var entityDefSaved string
+
+// entityDefSource is the placed entity a document was seeded from by Make Type
+// (OpenEntityEditorFrom), and the level it stands in — nil for a document that
+// was opened or started fresh. The first save turns that placement into an
+// instance of the type it just wrote, so the level is showing what was saved
+// rather than a typeless copy of it. See entityAdoptSource.
+var entityDefSource struct {
+	level *world.Level
+	id    string
+}
 
 // entityPreview is the definition stamped out as a live entity — uploaded
 // meshes, playing animations, materialised chunk geometry. It is what the

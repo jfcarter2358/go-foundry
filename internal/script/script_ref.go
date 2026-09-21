@@ -134,12 +134,11 @@ func buildRefCache(lvl *world.Level) *refCache {
 		c.effect[lvl.Effects[i].ID] = i
 	}
 	for ci := range lvl.Chunks {
-		ch := &lvl.Chunks[ci]
-		c.chunk[ch.ID] = ci
-		for bi := range ch.Brushes {
-			c.brush[ch.Brushes[bi].ID] = [2]int{ci, bi}
-		}
+		c.chunk[lvl.Chunks[ci].ID] = ci
 	}
+	// Brushes are indexed on first use (brushIndex): a level has thousands,
+	// the cache is rebuilt every tick, and most ticks never name one.
+	c.brush = nil
 	for i := range lvl.Lights.Directional {
 		c.dirLight[lvl.Lights.Directional[i].ID] = i
 	}
@@ -147,6 +146,22 @@ func buildRefCache(lvl *world.Level) *refCache {
 		c.ptLight[lvl.Lights.Points[i].ID] = i
 	}
 	return c
+}
+
+// brushIndex is the brush ID -> {chunk, brush} map, built the first time a
+// tick needs it.
+func (c *refCache) brushIndex() map[string][2]int {
+	if c.brush != nil || c.lvl == nil {
+		return c.brush
+	}
+	c.brush = map[string][2]int{}
+	for ci := range c.lvl.Chunks {
+		ch := &c.lvl.Chunks[ci]
+		for bi := range ch.Brushes {
+			c.brush[ch.Brushes[bi].ID] = [2]int{ci, bi}
+		}
+	}
+	return c.brush
 }
 
 // ---------- name to ref ----------
@@ -178,7 +193,7 @@ func (c *refCache) refFor(id string) (flang.RefVal, bool) {
 	if _, ok := c.effect[id]; ok {
 		return flang.RefVal{Kind: flang.RefEffect, A: id}, true
 	}
-	if _, ok := c.brush[id]; ok {
+	if _, ok := c.brushIndex()[id]; ok {
 		// Brush IDs are level-unique (world/identity.go), so a brush ref is a
 		// bare name like an entity's — not scoped by its chunk the way a
 		// sector's used to be.
@@ -376,7 +391,7 @@ func (c *refCache) brushOwnerFor(r flang.RefVal) (*world.Chunk, *world.Brush) {
 	if c.lvl == nil || r.Kind != flang.RefBrush {
 		return nil, nil
 	}
-	idx, ok := c.brush[r.A]
+	idx, ok := c.brushIndex()[r.A]
 	if !ok || idx[0] >= len(c.lvl.Chunks) {
 		return nil, nil
 	}
@@ -677,4 +692,14 @@ func valueToAttr(v flang.Value) (world.AttrValue, bool) {
 		return world.StringAttr(string(t)), true
 	}
 	return world.AttrValue{}, false
+}
+
+// cacheAdded records one object just appended to the level in the tick's cache
+// — or rebuilds it, when there is no cache for this level to add to.
+func (rt *ScriptRuntime) cacheAdded(add func(c *refCache)) {
+	if rt.cache == nil || rt.cache.lvl != rt.lvl {
+		rt.cache = buildRefCache(rt.lvl)
+		return
+	}
+	add(rt.cache)
 }

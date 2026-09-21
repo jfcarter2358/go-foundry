@@ -12,6 +12,7 @@ import (
 
 	"foundry/internal/world"
 
+	"foundry/internal/imguibackend"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -40,7 +41,7 @@ func editorEntityVehicleSection(lvl *world.Level, e *world.Entity) {
 
 	// --- mode ---
 	mode := int32(v.Mode)
-	if imgui.Combo("Mode##entvehmode", &mode, world.VehicleModeNames) {
+	if imguibackend.Combo("Mode##entvehmode", &mode, world.VehicleModeNames) {
 		EditorPushUndo()
 		newMode := world.VehicleMode(mode)
 		// Re-default the tuning when the mode changes, unless the author has
@@ -121,7 +122,7 @@ func editorVehicleInteriorPicker(lvl *world.Level, e *world.Entity, v *world.Veh
 	}
 
 	label := "(add interior chunk)"
-	if imgui.BeginCombo("##entvehintadd", label) {
+	if imguibackend.BeginCombo("##entvehintadd", label) {
 		any := false
 		for ci := range lvl.Chunks {
 			ch := &lvl.Chunks[ci]
@@ -134,7 +135,7 @@ func editorVehicleInteriorPicker(lvl *world.Level, e *world.Entity, v *world.Veh
 				continue
 			}
 			any = true
-			if imgui.Selectable(ch.ID) {
+			if imguibackend.Selectable(ch.ID) {
 				EditorPushUndo()
 				ch.FrameOwner = e.ID
 				v.AddInterior(ch.ID)
@@ -144,7 +145,7 @@ func editorVehicleInteriorPicker(lvl *world.Level, e *world.Entity, v *world.Veh
 		if !any {
 			editorTextMuted("(no unowned chunks)")
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	imgui.Unindent()
 	if v.HasInterior() {

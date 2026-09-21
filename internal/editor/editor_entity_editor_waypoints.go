@@ -113,7 +113,7 @@ func entityOutlineWaypoints() {
 		a := &entityDef.WaypointAnimations[i]
 		imgui.PushID(fmt.Sprintf("outwp%d", i))
 		label := fmt.Sprintf("%s  (%d points, %.2f s)", a.ID, len(a.Points), a.EffectiveLength())
-		if imgui.SelectableV(label, entitySel.Kind == entitySelWaypoints && entitySel.Idx == i, 0, imgui.Vec2{}) {
+		if imguibackend.SelectableV(label, entitySel.Kind == entitySelWaypoints && entitySel.Idx == i, 0, imgui.Vec2{}) {
 			entitySelectWaypoints(i, -1)
 		}
 		imgui.PopID()
@@ -555,16 +555,16 @@ func entityWaypointPreviewBrushCombo(label string) {
 	if shown == "" {
 		shown = "(nothing)"
 	}
-	if imgui.BeginCombo(label, shown) {
-		if imgui.SelectableV("(nothing)", p.Brush == "", 0, imgui.Vec2{}) && p.Brush != "" {
+	if imguibackend.BeginCombo(label, shown) {
+		if imguibackend.SelectableV("(nothing)", p.Brush == "", 0, imgui.Vec2{}) && p.Brush != "" {
 			choose("")
 		}
 		for _, id := range entityDynamicBrushIDs() {
-			if imgui.SelectableV(id, id == p.Brush, 0, imgui.Vec2{}) && id != p.Brush {
+			if imguibackend.SelectableV(id, id == p.Brush, 0, imgui.Vec2{}) && id != p.Brush {
 				choose(id)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("The brush to play the path on — the one a script will send\n" +
@@ -620,7 +620,7 @@ func entityPanelWaypoints(ai int) {
 	editorPropGroupOpen("Points##entwppts", func() {
 		for i := range a.Points {
 			row := waypointRowLabel(i, &a.Points[i]) + fmt.Sprintf("##entwprow%d", i)
-			if imgui.SelectableV(row, i == entitySel.Sub, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(row, i == entitySel.Sub, 0, imgui.Vec2{}) {
 				entitySelectWaypoints(ai, i)
 			}
 		}
@@ -765,16 +765,16 @@ func entityObjectWaypointsUI(t waypointTarget) {
 		if shown == "" {
 			shown = "(none)"
 		}
-		if imgui.BeginCombo("Path##entobjwpanim", shown) {
+		if imguibackend.BeginCombo("Path##entobjwpanim", shown) {
 			for i := range entityDef.WaypointAnimations {
 				id := entityDef.WaypointAnimations[i].ID
-				if imgui.SelectableV(id, id == cur, 0, imgui.Vec2{}) && id != cur {
+				if imguibackend.SelectableV(id, id == cur, 0, imgui.Vec2{}) && id != cur {
 					entityWaypointPreviewStop()
 					p.Anim = id
 					cur = id
 				}
 			}
-			imgui.EndCombo()
+			imguibackend.EndCombo()
 		}
 		playing := (p.Playing || p.Posed) && p.Brush == b.ID && p.Anim == cur
 		imguibackend.EditorPushDisabled(cur == "")

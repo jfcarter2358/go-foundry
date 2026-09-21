@@ -35,6 +35,15 @@ func perFaceGeometry(t *testing.T, f *world.BrushFace) *gfx.Geometry {
 		idx[i] = i
 	}
 	g := &gfx.Geometry{Smooth: src.Smooth, SmoothAngle: src.SmoothAngle}
+	// The face's own normals, welded across its whole brush when it loaded
+	// (world.BrushMesh.Load) — a face re-welded on its own would only see its
+	// own plane. Already de-indexed, so they line up with verts one for one.
+	if len(src.Normals) == n*3 {
+		g.VertexNormals = make([][]float32, n)
+		for i := range g.VertexNormals {
+			g.VertexNormals[i] = src.Normals[i*3 : i*3+3]
+		}
+	}
 	if err := g.Load(verts, idx, src.Texture, mgl32.Vec3{}); err != nil {
 		t.Fatal(err)
 	}
@@ -79,8 +88,8 @@ func TestABatchedChunkDrawsExactlyWhatPerFaceDrawingDid(t *testing.T) {
 	add(mgl32.Vec3{2.5, 0, 0}, mgl32.Vec3{1, 1, 1}, "stucco", func(f *world.BrushFace) {
 		f.Smooth, f.SmoothAngle = true, 180
 	})
-	// Smooth normals are welded within a face, so a planar face shades the
-	// same either way: lift one top corner, bending the faces that share it.
+	// Lift one top corner too, bending the faces that share it, so the box
+	// has non-planar faces as well as welded edges.
 	smooth := &ch.Brushes[len(ch.Brushes)-1]
 	for i, v := range smooth.Verts {
 		if v.X() > 3 && v.Y() > 0.5 && v.Z() > 0.5 {

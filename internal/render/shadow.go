@@ -68,6 +68,12 @@ const ShadowWorldBias = 0.075
 type PointShadowMap struct {
 	FBO     uint32
 	Cubemap uint32
+	// The static layer (point_shadow_cache.go): the depth of everything that
+	// does not move, kept apart so a frame whose only change is a character
+	// walking past can start from a copy of it rather than redraw the room.
+	// Made the first time the light has anything moving in reach; zero until.
+	StaticFBO     uint32
+	StaticCubemap uint32
 }
 
 // ShadowState holds the shadow mapping pipeline state.
@@ -88,6 +94,15 @@ type ShadowState struct {
 	CascadeArray  uint32
 	CascadeFBO    uint32
 	CascadeLayers int32
+
+	// LiveCascadeArray is the baked sun's cascades (world.LightSet.BakedSun)
+	// drawn again with everything but the compiled level's static surfaces —
+	// only what the bake never saw. A baked surface reads it to take the sun
+	// back off where an entity or a live chunk shadows it (fragment.glsl,
+	// shadowMapLive); reading the full array instead would lay the cascades'
+	// blockier copy of every baked shadow over the bake's own. Rendered into
+	// through CascadeFBO. Zero until a compiled level with a baked sun needs it.
+	LiveCascadeArray uint32
 
 	// Point light cubemap shadow program
 	CubeProgram      uint32
@@ -169,6 +184,7 @@ func LinkProgram(vertPath, fragPath string, out *uint32) error {
 	gl.AttachShader(*out, vs)
 	gl.AttachShader(*out, fs)
 	gl.LinkProgram(*out)
+	gfx.ForgetUniformLocations(*out)
 
 	var status int32
 	gl.GetProgramiv(*out, gl.LINK_STATUS, &status)
@@ -203,8 +219,41 @@ func EnsureCascadeArray(layers int32) {
 		return
 	}
 
-	gl.GenTextures(1, &Shadows.CascadeArray)
-	gl.BindTexture(gl.TEXTURE_2D_ARRAY, Shadows.CascadeArray)
+	Shadows.CascadeArray = newCascadeTexture(layers)
+
+	if Shadows.CascadeFBO == 0 {
+		gl.GenFramebuffers(1, &Shadows.CascadeFBO)
+	}
+	gl.BindFramebuffer(gl.FRAMEBUFFER, Shadows.CascadeFBO)
+	gl.FramebufferTextureLayer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, Shadows.CascadeArray, 0, 0)
+	gl.DrawBuffer(gl.NONE)
+	gl.ReadBuffer(gl.NONE)
+	if st := gl.CheckFramebufferStatus(gl.FRAMEBUFFER); st != gl.FRAMEBUFFER_COMPLETE {
+		log.Printf("WARNING: cascade shadow FBO incomplete (status=0x%X)", st)
+	}
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+
+	log.Printf("cascade shadow array allocated (tex=%d, fbo=%d, %dx%d x %d layers)",
+		Shadows.CascadeArray, Shadows.CascadeFBO, ShadowMapSize, ShadowMapSize, layers)
+}
+
+// ensureLiveCascadeArray allocates LiveCascadeArray (one light's cascades) the
+// first time it is wanted, and frees it when want goes false.
+func ensureLiveCascadeArray(want bool) {
+	switch {
+	case want && Shadows.LiveCascadeArray == 0:
+		Shadows.LiveCascadeArray = newCascadeTexture(ShadowCascades)
+	case !want && Shadows.LiveCascadeArray != 0:
+		gl.DeleteTextures(1, &Shadows.LiveCascadeArray)
+		Shadows.LiveCascadeArray = 0
+	}
+}
+
+// newCascadeTexture is a comparison-sampled depth array of layers layers.
+func newCascadeTexture(layers int32) uint32 {
+	var tex uint32
+	gl.GenTextures(1, &tex)
+	gl.BindTexture(gl.TEXTURE_2D_ARRAY, tex)
 	gl.TexImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.DEPTH_COMPONENT24,
 		ShadowMapSize, ShadowMapSize, layers, 0,
 		gl.DEPTH_COMPONENT, gl.FLOAT, nil)
@@ -231,21 +280,7 @@ func EnsureCascadeArray(layers int32) {
 	borderColor := [4]float32{1, 1, 1, 1}
 	gl.TexParameterfv(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_BORDER_COLOR, &borderColor[0])
 	gl.BindTexture(gl.TEXTURE_2D_ARRAY, 0)
-
-	if Shadows.CascadeFBO == 0 {
-		gl.GenFramebuffers(1, &Shadows.CascadeFBO)
-	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, Shadows.CascadeFBO)
-	gl.FramebufferTextureLayer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, Shadows.CascadeArray, 0, 0)
-	gl.DrawBuffer(gl.NONE)
-	gl.ReadBuffer(gl.NONE)
-	if st := gl.CheckFramebufferStatus(gl.FRAMEBUFFER); st != gl.FRAMEBUFFER_COMPLETE {
-		log.Printf("WARNING: cascade shadow FBO incomplete (status=0x%X)", st)
-	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-
-	log.Printf("cascade shadow array allocated (tex=%d, fbo=%d, %dx%d x %d layers)",
-		Shadows.CascadeArray, Shadows.CascadeFBO, ShadowMapSize, ShadowMapSize, layers)
+	return tex
 }
 
 // createDummyCubemap allocates a 1x1 cubemap with depth=1.0 on all faces.
@@ -279,11 +314,28 @@ func EnsurePointShadowMaps(count int) {
 		pm := Shadows.PointMaps[len(Shadows.PointMaps)-1]
 		gl.DeleteFramebuffers(1, &pm.FBO)
 		gl.DeleteTextures(1, &pm.Cubemap)
+		if pm.StaticFBO != 0 {
+			gl.DeleteFramebuffers(1, &pm.StaticFBO)
+			gl.DeleteTextures(1, &pm.StaticCubemap)
+		}
 		Shadows.PointMaps = Shadows.PointMaps[:len(Shadows.PointMaps)-1]
+	}
+	// A deleted map's name can be handed out again, so what the old one held
+	// must not be credited to the new one (point_shadow_cache.go).
+	if len(pointShadowStates) > count {
+		pointShadowStates = pointShadowStates[:count]
 	}
 }
 
 func createPointShadowMap() PointShadowMap {
+	var pm PointShadowMap
+	pm.Cubemap, pm.FBO = createDepthCube()
+	return pm
+}
+
+// createDepthCube makes one depth cubemap and a framebuffer to render its faces
+// through.
+func createDepthCube() (cube, fbo uint32) {
 	var pm PointShadowMap
 	gl.GenTextures(1, &pm.Cubemap)
 	gl.BindTexture(gl.TEXTURE_CUBE_MAP, pm.Cubemap)
@@ -309,7 +361,7 @@ func createPointShadowMap() PointShadowMap {
 		log.Printf("WARNING: point shadow FBO incomplete (status=0x%X)", st)
 	}
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
-	return pm
+	return pm.Cubemap, pm.FBO
 }
 
 // cubeFaceViews returns the 6 view matrices for a cubemap centered at pos.
@@ -346,6 +398,10 @@ type DirShadow struct {
 type ShadowFrame struct {
 	Splits [ShadowCascades]float32 // view-space distance where each cascade ends
 	Lights []DirShadow             // parallel to LightSet.Directional
+	// LiveDrawn says LiveCascadeArray was drawn this frame, for directional
+	// light LiveSun (the baked sun). A zero frame has neither.
+	LiveDrawn bool
+	LiveSun   int
 }
 
 // newShadowFrame returns a frame with every light marked as non-casting, so the
@@ -520,6 +576,13 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 	if shadowCount == 0 || Shadows.CascadeArray == 0 {
 		return frame
 	}
+	// A compiled level's baked surfaces carry the sun's share and need its
+	// live-only cascades to take it back off (see LiveCascadeArray).
+	liveSun := -1
+	if level != nil && level.Static != nil {
+		liveSun = lights.BakedSun()
+	}
+	ensureLiveCascadeArray(liveSun >= 0)
 
 	gl.UseProgram(Shadows.Program)
 	var prevViewport [4]int32
@@ -557,12 +620,29 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 			// Cast shadow-casting sprites, turned to face the LIGHT rather than
 			// the camera — a camera-facing quad rendered from here would be
 			// edge-on and cast nothing. Restores Shadows.Program.
+			ProfileBegin("sprites")
 			RenderSpriteDirShadow(level, lsm, dl.Direction, gfx.Cam.Position, &cull)
+			ProfileEnd()
 			// Cast the scatter volumes' foliage. The cascade index and its own
 			// split distance both go in: they are what stop a blade of grass
 			// from being re-instanced into a cascade whose shadow could never
 			// usefully reach it. Restores Shadows.Program.
+			ProfileBegin("scatter")
 			RenderScatterDirShadow(level, lsm, c, frame.Splits[c], gfx.Cam.Position, BiomeWindTime, &cull)
+			ProfileEnd()
+
+			// The same cascade again with only what the bake never saw.
+			if i == liveSun {
+				ProfileBegin("live")
+				gl.FramebufferTextureLayer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,
+					Shadows.LiveCascadeArray, 0, int32(c))
+				gl.Clear(gl.DEPTH_BUFFER_BIT)
+				renderSceneShadowLayers(level, Shadows.Program, &gfx.ShadowSkinUniforms, Shadows.ModelUniform, &cull, shadowLiveLayers)
+				RenderSpriteDirShadow(level, lsm, dl.Direction, gfx.Cam.Position, &cull)
+				RenderScatterDirShadow(level, lsm, c, frame.Splits[c], gfx.Cam.Position, BiomeWindTime, &cull)
+				ProfileEnd()
+				frame.LiveDrawn, frame.LiveSun = true, i
+			}
 			layer++
 		}
 	}
@@ -584,6 +664,7 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 		}
 	}
 	EnsurePointShadowMaps(shadowCount)
+	DebugStats.PointShadowRenders, DebugStats.PointShadows = 0, shadowCount
 
 	if shadowCount == 0 {
 		return
@@ -606,7 +687,17 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 			break
 		}
 
-		pm := Shadows.PointMaps[mapIdx]
+		pm := &Shadows.PointMaps[mapIdx]
+		// What to redraw, if anything: nothing when no caster in reach has
+		// changed, the moving casters over a copy of the static layer when
+		// only they have, everything when the static world has. See
+		// point_shadow_cache.go.
+		plan := planPointShadow(mapIdx, level, pl, pm)
+		if plan == pointShadowKeep {
+			mapIdx++
+			continue
+		}
+		DebugStats.PointShadowRenders++
 		farPlane := pl.Radius
 		proj := mgl32.Perspective(mgl32.DegToRad(90.0), 1.0, 0.1, farPlane)
 		views := cubeFaceViews(pl.Position)
@@ -614,24 +705,60 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 		gl.Uniform3f(Shadows.CubeLightPos, pl.Position[0], pl.Position[1], pl.Position[2])
 		gl.Uniform1f(Shadows.CubeFarPlane, farPlane)
 
+		if plan == pointShadowStaticAndMoving {
+			// The static layer into its own cube, to be copied from until
+			// the static world next changes.
+			gl.BindFramebuffer(gl.FRAMEBUFFER, pm.StaticFBO)
+			for face := 0; face < 6; face++ {
+				gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,
+					uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+face), pm.StaticCubemap, 0)
+				gl.Clear(gl.DEPTH_BUFFER_BIT)
+				lsm := proj.Mul4(views[face])
+				gl.UniformMatrix4fv(Shadows.CubeLSMUniform, 1, false, &lsm[0])
+				cull := ExtractFrustum(lsm)
+				renderSceneShadowLayers(level, Shadows.CubeProgram, &gfx.ShadowCubeSkinUniforms,
+					Shadows.CubeModelUniform, &cull, shadowStaticLayer)
+			}
+		}
+
+		layers := shadowAllLayers
+		if plan != pointShadowEverything {
+			layers = shadowMovingLayer
+		}
 		gl.BindFramebuffer(gl.FRAMEBUFFER, pm.FBO)
 		for face := 0; face < 6; face++ {
-			gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,
-				uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+face), pm.Cubemap, 0)
-			gl.Clear(gl.DEPTH_BUFFER_BIT)
+			target := uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X + face)
+			if layers == shadowAllLayers {
+				gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, target, pm.Cubemap, 0)
+				gl.Clear(gl.DEPTH_BUFFER_BIT)
+			} else {
+				// Start from the static layer's depth rather than a clear.
+				gl.BindFramebuffer(gl.READ_FRAMEBUFFER, pm.StaticFBO)
+				gl.FramebufferTexture2D(gl.READ_FRAMEBUFFER, gl.DEPTH_ATTACHMENT, target, pm.StaticCubemap, 0)
+				gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, pm.FBO)
+				gl.FramebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.DEPTH_ATTACHMENT, target, pm.Cubemap, 0)
+				gl.BlitFramebuffer(0, 0, PointShadowMapSize, PointShadowMapSize,
+					0, 0, PointShadowMapSize, PointShadowMapSize, gl.DEPTH_BUFFER_BIT, gl.NEAREST)
+				gl.BindFramebuffer(gl.FRAMEBUFFER, pm.FBO)
+			}
 
 			lsm := proj.Mul4(views[face])
 			gl.UniformMatrix4fv(Shadows.CubeLSMUniform, 1, false, &lsm[0])
 
 			cull := ExtractFrustum(lsm)
-			renderSceneShadow(level, Shadows.CubeProgram, &gfx.ShadowCubeSkinUniforms, Shadows.CubeModelUniform, &cull)
+			renderSceneShadowLayers(level, Shadows.CubeProgram, &gfx.ShadowCubeSkinUniforms,
+				Shadows.CubeModelUniform, &cull, layers)
 			// Sprites into this cube face. A point light has a position, so the
 			// quads converge on it exactly as they converge on the eye in the
 			// colour pass. Restores Shadows.CubeProgram.
+			ProfileBegin("sprites")
 			RenderSpriteCubeShadow(level, lsm, pl.Position, farPlane, &cull)
+			ProfileEnd()
 			// Scatter into this cube face, with the light's own far plane as
 			// the cast cap. Restores Shadows.CubeProgram.
+			ProfileBegin("scatter")
 			RenderScatterCubeShadow(level, lsm, pl.Position, farPlane, gfx.Cam.Position, BiomeWindTime, &cull)
+			ProfileEnd()
 		}
 		mapIdx++
 	}
@@ -651,6 +778,30 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 // which program is bound: both passes share this walker but resolve the skinning
 // uniforms to different locations, so the cache cannot be a single global.
 func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
+	renderSceneShadowLayers(level, prog, skin, modelUniform, cull, shadowAllLayers)
+}
+
+// shadowLayers picks which half of a scene walk to draw: the world's
+// geometry, which only an edit, a streamed chunk or a moving chunk changes, or
+// the things that move on their own — entities and scenery. A point light's
+// cubemap keeps the first and redraws the second (point_shadow_cache.go);
+// sprites and scatter are drawn by the passes themselves and count as moving.
+//
+// The world's half is itself two: a compiled level's baked static surfaces,
+// and the chunks still drawn live. shadowLiveLayers is everything but the
+// first — what the bake never saw (LiveCascadeArray).
+type shadowLayers uint8
+
+const (
+	shadowCompiledLayer shadowLayers = 1 << iota
+	shadowChunkLayer
+	shadowMovingLayer
+	shadowStaticLayer = shadowCompiledLayer | shadowChunkLayer
+	shadowAllLayers   = shadowStaticLayer | shadowMovingLayer
+	shadowLiveLayers  = shadowChunkLayer | shadowMovingLayer
+)
+
+func renderSceneShadowLayers(level *world.Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum, layers shadowLayers) {
 	identity := mgl32.Ident4()
 	// The model matrix used to be uploaded once, here, because every piece of
 	// geometry was pre-baked into world space. Chunk geometry is chunk-local
@@ -671,9 +822,17 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 	// falls across the floor they can. The PVS answers "what can be seen from
 	// here", and a shadow caster is precisely the thing that matters while
 	// unseen.
-	shadowStaticSurfaces(level, cull)
+	if layers&shadowCompiledLayer != 0 {
+		ProfileBegin("compiled")
+		shadowStaticSurfaces(level, cull)
+		ProfileEnd()
+	}
 
+	ProfileBegin("chunks")
 	for ci := range level.Chunks {
+		if layers&shadowChunkLayer == 0 {
+			break
+		}
 		chunk := &level.Chunks[ci]
 		// A compiled chunk cast above, out of the compiled list — except for
 		// its dynamic brushes, which the compiler left out of the bake because
@@ -696,6 +855,7 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 		// wall's detail casts the shadow its bumps and reveals actually make.
 		shadowChunkBrushes(level, chunk, chunk.ModelMatrix(), cull, modelUniform, &current)
 	}
+	ProfileEnd()
 
 	// Put the identity back before the entity walk, which sets its own matrices
 	// and restores the identity when it is done — leaving a frame's transform
@@ -707,10 +867,17 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 	// Placed entities, after the world walk: they are the only thing here that
 	// needs a model matrix of its own, and RenderEntitiesShadow puts the
 	// identity back when it is done.
+	if layers&shadowMovingLayer == 0 {
+		return
+	}
+	ProfileBegin("entities")
 	RenderEntitiesShadow(level, prog, skin, modelUniform, cull)
+	ProfileEnd()
 	// And the scenery, which needs a matrix of its own for the same reason and
 	// restores the identity for the same one.
+	ProfileBegin("scenery")
 	RenderSceneryShadow(level, prog, skin, modelUniform, cull)
+	ProfileEnd()
 }
 
 func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
@@ -729,6 +896,10 @@ func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
 // CascadeTexUnit is the texture unit the directional cascade array is bound to.
 // All directional shadows share it; point-light cubemaps start after it.
 const CascadeTexUnit = 1
+
+// LiveCascadeTexUnit holds LiveCascadeArray. Past the point cubemaps (2-9),
+// the blend textures (10, 11), the normal map (12) and the clouds (13).
+const LiveCascadeTexUnit = 14
 
 // UploadShadowUniforms sends directional shadow data to the main shader.
 func UploadShadowUniforms(lights world.LightSet, frame ShadowFrame) {
@@ -753,6 +924,20 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 	gl.ActiveTexture(gl.TEXTURE0 + CascadeTexUnit)
 	gl.BindTexture(gl.TEXTURE_2D_ARRAY, Shadows.CascadeArray)
 	gl.Uniform1i(uniformLoc("shadowMapArray\x00"), CascadeTexUnit)
+
+	// The baked sun's live-only cascades. Bound whether or not there are any,
+	// for the reason above — the full array stands in, never read, since
+	// bakedSunLight is -1 then.
+	live, sun := Shadows.LiveCascadeArray, int32(-1)
+	if live != 0 && frame.LiveDrawn {
+		sun = int32(frame.LiveSun)
+	} else {
+		live = Shadows.CascadeArray
+	}
+	gl.ActiveTexture(gl.TEXTURE0 + LiveCascadeTexUnit)
+	gl.BindTexture(gl.TEXTURE_2D_ARRAY, live)
+	gl.Uniform1i(uniformLoc("shadowMapLive\x00"), LiveCascadeTexUnit)
+	gl.Uniform1i(uniformLoc("bakedSunLight\x00"), sun)
 
 	for i := 0; i < world.MaxDirLights; i++ {
 		layer := int32(-1)

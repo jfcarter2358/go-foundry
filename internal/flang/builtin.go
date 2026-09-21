@@ -33,7 +33,7 @@ var worldVerbs = []string{
 	"play_anim", "stop_anim", "spawn", "destroy", "time",
 	"mount", "dismount", "ease_sky",
 	"emit", "stop_emit", "burst", "spawn_effect", "explode",
-	"hitscan", "bone_position", "recoil",
+	"hitscan", "bone_position", "recoil", "look_at",
 	"play", "stop", "play_sound", "play_sound_at", "play_music", "stop_music",
 	"attach", "detach",
 	"play_waypoints", "stop_waypoints",
@@ -43,6 +43,9 @@ var worldVerbs = []string{
 	"show_screen", "hide_screen", "screen", "widget", "focus", "load_level",
 	"quit_game",
 	"bind_key", "binding_name", "reset_bindings",
+	"setting", "set_setting",
+	"save_game", "load_game", "save_info", "latest_save", "delete_save",
+	"checkpoint", "retry", "restart_level",
 }
 
 var builtins map[string]builtinFn

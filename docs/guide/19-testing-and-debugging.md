@@ -14,7 +14,7 @@ anyway, so you can see a clip while placing the thing that plays it.
 
 ## The log window
 
-Toolbar: **Log**, or the button in the script editor.
+**Window > Log**, from any editor.
 
 It carries script output from `log(...)`, runtime errors with the file and line
 they happened at, and the engine's own log beside them.

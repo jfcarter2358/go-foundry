@@ -9,6 +9,7 @@ package editor
 // entry is the same deep link the emitter panel has beside a .fpar.
 
 import (
+	"foundry/internal/imguibackend"
 	"foundry/internal/ui"
 	"foundry/internal/world"
 
@@ -68,6 +69,31 @@ func editorLevelUISection(lvl *world.Level) {
 		imgui.SameLine()
 		if imgui.Button("New screen##uilevelnew") {
 			OpenUIEditorWindow()
+		}
+	})
+}
+
+// editorLevelSaveSection is the level's save mode — what save_game writes
+// here. Beside the screens for their reason: it belongs to no object.
+func editorLevelSaveSection(lvl *world.Level) {
+	if lvl == nil {
+		return
+	}
+	editorPropGroup("Saving", 0, func() {
+		current := world.SaveModeNames[lvl.SaveMode]
+		if imguibackend.BeginCombo("Save mode##levelsavemode", current) {
+			for i, name := range world.SaveModeNames {
+				if imguibackend.SelectableV(name, int(lvl.SaveMode) == i, 0, imgui.Vec2{}) && int(lvl.SaveMode) != i {
+					EditorPushUndo()
+					lvl.SaveMode = world.SaveMode(i)
+				}
+			}
+			imguibackend.EndCombo()
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("exact: a save is the game as it stands, down to where the player is.\n" +
+				"checkpoint: a save is the last checkpoint reached (or the start of the\n" +
+				"level before any), so saving cannot skip a stretch between checkpoints.")
 		}
 	})
 }

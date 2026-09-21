@@ -258,4 +258,5 @@ func restoreLevelSnapshot(raw world.RawLevel) {
 func EditorAdoptLoadedLevel() {
 	editorResetSelectionState()
 	EditorClearUndoHistory()
+	levelMarkSaved()
 }

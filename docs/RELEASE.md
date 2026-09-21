@@ -226,8 +226,8 @@ leave out.
 
 ## 5. From the editor — `internal/release`
 
-The toolbar's **Release** button builds a release of the project the editor is
-running from: `fileutil.ExecutablePath`, the directory holding the `resources/`
+The editor's **Build > Release...** menu item builds a release of the project the editor has
+open: `fileutil.ProjectPath`, the directory holding the `resources/`
 (`fileutil.ResourcesPath`) it already reads and saves every asset in. So a game
 can live in a repository of its own, with the editor binary beside its
 `resources/`, and be built with no Foundry checkout in sight. The engine's own
@@ -327,6 +327,10 @@ so either installer upgrades and removes what the other put there.
 `Setup.exe -silent [-desktop]` and `uninstall.exe -silent [-delete-saves]` (or
 NSIS's `/S`) ask nothing, and exit 2 when the game is running.
 
+The uninstaller's copy in `%TEMP%` runs with `%TEMP%` as its working directory:
+the Start Menu shortcut starts it in the install folder, and Windows will not
+delete a process's working directory.
+
 It is not code-signed, so SmartScreen warns the first time it is run. Signing is
 not a drop-in step yet: a signature is appended to the end of the file, which is
 where the installer looks for its payload.
@@ -377,6 +381,42 @@ a stock abort/retry/ignore box half way through the copy.
 
 Both replace an existing install wholesale rather than merging, so an asset
 renamed between releases cannot linger and keep being found.
+
+### The editor itself — `make dist-editor`
+
+The editor is shipped as a Foundry release of its own. `make dist-editor` builds
+the development binary for Windows (mingw, a console program as `make windows`
+builds it) and Linux, plus `make runtimes` into `build/editor-runtimes`. Then
+`foundrypack editor` (`cmd/foundrypack/editor.go` → `pack.StageEditor`) stages:
+
+```
+foundry[.exe]  SDL2.dll  .foundrypack (TITLE='Foundry Editor', KIND='editor')
+resources/shaders/      the shaders the binary was built from
+runtimes/               release binaries for both platforms + the installer program
+```
+
+It then writes a zip and a Setup.exe (Windows) or a tar.gz (Linux) into
+`build/editor-dist`. The install holds no project, so the ordinary game
+installer rules apply unchanged: a per-user install and a whole-tree upgrade.
+The only thing `KIND` changes is wording ("Open it now?").
+
+What makes this work is that the project is no longer the executable's folder:
+
+- `fileutil.ProjectPath` is the project (`resources/`, and where a development
+  build writes state: `fileutil.StateDir`). `internal/project` chooses it at
+  startup: `-project`, then the executable's folder if it holds
+  `resources/game.yaml`, then the recent list, then a new project in Documents.
+  A release build's is its install.
+- `fileutil.EngineShadersDir` is set when the executable carries
+  `resources/shaders` and runs apart from its project. Every shader load goes
+  through `fileutil.ShaderPath`/`ShadersDir`, and new ones must too. A release
+  pack takes its shaders from there, or from the source checkout it built from
+  (`pack.Options.Shaders`).
+- `release.PrebuiltPlayer`/`PrebuiltSetupStub` look in the project's `runtimes/`,
+  then in the executable's.
+- File → Open/New Project sets `editor.PendingProject` and ends the frame loop.
+  `app.Run`'s first defer starts the program again with `-project`, because
+  every registry was filled from one project at boot.
 
 ## 7. Checklist for a real release
 

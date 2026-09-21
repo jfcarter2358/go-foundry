@@ -71,6 +71,12 @@ func indexAssets(src string, dirs []string) (assetIndex, error) {
 			if rerr != nil {
 				return rerr
 			}
+			// A backup answers to its original's names — enemy.yaml.bak's stem
+			// is enemy.yaml — so indexing one would make every reference to
+			// the original reach the backup too. Nothing loads a backup.
+			if IsDevelopmentFile(d.Name()) {
+				return nil
+			}
 			for _, name := range referenceNames(filepath.ToSlash(rel)) {
 				if idx[name] == nil {
 					idx[name] = map[string]bool{}
@@ -117,8 +123,21 @@ func referenceNames(slash string) []string {
 	if base := strings.TrimSuffix(stem, fileutil.NormalMapSuffix); base != stem {
 		names = append(names, base, dir+"/"+base, base+filepath.Ext(base))
 	}
+	// A cubemap face is named by its set's base: `sky_cubemap = "dusk"` in a
+	// script, or the editor's base-name field, becomes dusk_px, dusk_nx, ...
+	// (world.Sky.SetFacesFromBase). Nothing spells the face names out, so a
+	// sky only a script switches to was pruned out of every release.
+	for _, suf := range cubemapFaceSuffixes {
+		if base := strings.TrimSuffix(stem, suf); base != stem && base != "" {
+			names = append(names, base, dir+"/"+base)
+		}
+	}
 	return names
 }
+
+// cubemapFaceSuffixes mirror world.SkyFaceSuffix, spelled out here for the
+// same reason as LevelSourceExt: this tool does not depend on the engine.
+var cubemapFaceSuffixes = []string{"_px", "_nx", "_py", "_ny", "_pz", "_nz"}
 
 // manifestRoots is what a game reaches before any content says anything.
 //
@@ -189,8 +208,93 @@ func reachable(src string, idx assetIndex, roots []string) map[string]bool {
 				}
 			}
 		}
+		for _, pat := range scanNamePatterns(string(data)) {
+			for name, paths := range idx {
+				if !pat.matches(name) {
+					continue
+				}
+				for hit := range paths {
+					if !keep[hit] {
+						keep[hit] = true
+						frontier = append(frontier, hit)
+					}
+				}
+			}
+		}
 	}
 	return keep
+}
+
+// namePattern is a name a script assembles at runtime, as the fixed pieces
+// around its holes: format("ammo_0{}", n) is ["ammo_0", ""], and
+// "pickup_" + kind is ["pickup_", ""].
+type namePattern []string
+
+// minPatternFixed is how many fixed characters a pattern needs before it is
+// believed. "{}_{}" or "_" + x would otherwise reach every asset with an
+// underscore in its name — generous, but no longer telling anyone anything.
+const minPatternFixed = 3
+
+// stringLitRe is a double-quoted flang string, escapes and all.
+var stringLitRe = regexp.MustCompile(`"((?:[^"\\\n]|\\.)*)"`)
+
+// nameCharsRe is a piece that could be part of an asset name.
+var nameCharsRe = regexp.MustCompile(`^[A-Za-z0-9_./-]*$`)
+
+// scanNamePatterns finds the names a file builds rather than spells out: the
+// string a format() fills in, and a string concatenated with something. This
+// is the hole scanTokens leaves — a counter swapping `format("ammo_{}", n)`
+// textures names none of them — and it is a pattern match on the source, not
+// an evaluation, so it only sees a name whose fixed part is written down.
+func scanNamePatterns(s string) []namePattern {
+	var out []namePattern
+	for _, loc := range stringLitRe.FindAllStringSubmatchIndex(s, -1) {
+		lit := s[loc[2]:loc[3]]
+		var pat namePattern
+		switch {
+		case strings.Contains(lit, "{}"):
+			pat = strings.Split(lit, "{}")
+		case strings.HasPrefix(strings.TrimLeft(s[loc[1]:], " \t"), "+"):
+			pat = namePattern{lit, ""}
+		case strings.HasSuffix(strings.TrimRight(s[:loc[0]], " \t"), "+"):
+			pat = namePattern{"", lit}
+		default:
+			continue
+		}
+		fixed := 0
+		ok := true
+		for _, piece := range pat {
+			fixed += len(piece)
+			ok = ok && nameCharsRe.MatchString(piece)
+		}
+		if ok && fixed >= minPatternFixed {
+			out = append(out, pat)
+		}
+	}
+	return out
+}
+
+// matches reports whether name could be what the pattern builds: its pieces
+// in order, the first at the start and the last at the end, with room for
+// something in every hole.
+func (p namePattern) matches(name string) bool {
+	if len(p) < 2 || !strings.HasPrefix(name, p[0]) {
+		return false
+	}
+	rest := name[len(p[0]):]
+	last := p[len(p)-1]
+	if !strings.HasSuffix(rest, last) || len(rest) <= len(last) {
+		return false
+	}
+	rest = rest[:len(rest)-len(last)]
+	for _, mid := range p[1 : len(p)-1] {
+		i := strings.Index(rest, mid)
+		if i <= 0 {
+			return false
+		}
+		rest = rest[i+len(mid):]
+	}
+	return len(rest) > 0
 }
 
 // tokenRe is what could be an asset name in a text file: a run of the

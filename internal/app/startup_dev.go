@@ -22,7 +22,7 @@ import (
 
 // startupConfigure runs before the log file is opened and before the window
 // exists. A development build has nothing to configure: fileutil.UserDataRoot
-// stays empty, which keeps every write beside the executable.
+// stays empty, which keeps every write in the project (fileutil.StateDir).
 func startupConfigure() {}
 
 // startupVerify reports anything startupConfigure could not, now that logging

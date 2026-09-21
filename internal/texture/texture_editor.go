@@ -10,9 +10,12 @@ package texture
 // creation and imgui drawing live in texture_editor_ui.go.
 
 import (
+	"fmt"
 	"image"
 	"image/draw"
 	"math/rand"
+	"path/filepath"
+	"strings"
 
 	"foundry/internal/gfx"
 	"foundry/internal/texdoc"
@@ -29,12 +32,18 @@ const (
 	ToolRect
 	ToolEyedropper
 	ToolSpray
+	ToolSelectRect
+	ToolSelectLasso
 )
 
-// texUndoByteBudget bounds undo history by bytes, not entry count — a 32MB
-// budget is roughly 32 single-layer paint steps at the 1024x1024 cap, or
-// hundreds at a typical 256x256.
-const texUndoByteBudget = 32 * 1024 * 1024
+// IsSelectTool reports whether t draws selections (and drags their contents)
+// rather than painting.
+func (t TexTool) IsSelectTool() bool { return t == ToolSelectRect || t == ToolSelectLasso }
+
+// texUndoByteBudget bounds undo history by bytes, not entry count — a 128MB
+// budget is roughly 32 single-layer paint steps at the 2048x2048 cap, or
+// thousands at a typical 256x256.
+const texUndoByteBudget = 128 * 1024 * 1024
 
 // texUndoEntry is one undo/redo step. Paint ops touch a single layer's
 // indices; structural ops (add/delete/reorder/palette-remap) snapshot the
@@ -55,13 +64,18 @@ type texUndoEntry struct {
 	LayerIdx   int               // paint ops only
 	Before     []uint8           // paint ops only: the indices to write when applied
 	Doc        *texdoc.TexDoc    // structural ops only: the doc to swap in when applied
+
+	// HasSel marks a paint op that moved the selection (a move or a paste):
+	// applying it puts Sel back as the selection too, nil meaning none.
+	HasSel bool
+	Sel    []bool
 }
 
 func entrySize(e texUndoEntry) int {
 	if e.Structural {
 		return docByteSize(e.Doc)
 	}
-	return len(e.Before)
+	return len(e.Before) + len(e.Sel)
 }
 
 func docByteSize(d *texdoc.TexDoc) int {
@@ -99,6 +113,21 @@ type TexEditorState struct {
 	strokeFrame   int
 	strokeChannel texdoc.TexChannel
 	strokeBefore  []uint8
+
+	// strokeSelRecorded marks a stroke opened by beginSelStroke, which also
+	// records the selection it started with — see texture_selection.go.
+	strokeSelRecorded bool
+	strokeSelBefore   []bool
+
+	// Selection state (texture_selection.go). sel is nil for no selection;
+	// selGen counts changes to it. float is content lifted by a move or
+	// paste; moveFromX/Y is where the current move found it, and scaleFrom
+	// the edges (left, top, right, bottom) the current scale found it with.
+	sel                  []bool
+	selGen               int
+	float                *texFloat
+	moveFromX, moveFromY int
+	scaleFrom            [4]int
 
 	// BumpDirty is PreviewDirty's counterpart for the height field: set by
 	// anything that could have changed it, cleared by the UI once it has
@@ -144,6 +173,8 @@ func (e *TexEditorState) BeginStroke() {
 	e.strokeFrame = e.Doc.ActiveFrameIndex()
 	e.strokeChannel = e.Doc.Channel()
 	e.strokeBefore = append([]uint8(nil), layer.Idx...)
+	e.strokeSelRecorded = false
+	e.strokeSelBefore = nil
 }
 
 // EndStroke commits the accumulated diff as one undo entry, if anything
@@ -163,15 +194,36 @@ func (e *TexEditorState) EndStroke() {
 	}
 	before := e.strokeBefore
 	e.strokeBefore = nil
-	if changed {
-		e.pushUndo(texUndoEntry{
+	selMoved := e.strokeSelRecorded && !boolsEqual(e.strokeSelBefore, e.SelectionMask())
+	if changed || selMoved {
+		entry := texUndoEntry{
 			Frame:    e.strokeFrame,
 			Channel:  e.strokeChannel,
 			LayerIdx: e.strokeLayer,
 			Before:   before,
-		})
+		}
+		if e.strokeSelRecorded {
+			entry.HasSel, entry.Sel = true, e.strokeSelBefore
+		}
+		e.pushUndo(entry)
+	}
+	if changed {
 		e.Doc.MarkDirty()
 	}
+	e.strokeSelRecorded = false
+	e.strokeSelBefore = nil
+}
+
+func boolsEqual(a, b []bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *TexEditorState) setTexel(x, y int, idx uint8) {
@@ -182,7 +234,11 @@ func (e *TexEditorState) setTexel(x, y int, idx uint8) {
 	if layer == nil {
 		return
 	}
-	layer.Idx[y*e.Doc.W+x] = idx
+	i := y*e.Doc.W + x
+	if e.HasSelection() && !e.sel[i] {
+		return
+	}
+	layer.Idx[i] = idx
 	e.PreviewDirty = true
 	if e.Doc.Channel() == texdoc.ChanBump {
 		e.BumpDirty = true
@@ -310,7 +366,9 @@ func (e *TexEditorState) Fill(x, y int, idx uint8) {
 			continue
 		}
 		i := py*w + px
-		if layer.Idx[i] != target {
+		// An unselected texel is a wall like a different colour is: setTexel
+		// would refuse it, leaving it matching target and re-pushed forever.
+		if layer.Idx[i] != target || !e.Selected(px, py) {
 			continue
 		}
 		e.setTexel(px, py, idx)
@@ -372,6 +430,18 @@ func (e *TexEditorState) checkoutFor(entry texUndoEntry) *texdoc.TexLayer {
 	return layer
 }
 
+// applyEntrySelection restores the selection a move/paste entry recorded,
+// recording the current one on its inverse so the step can be taken back.
+// The float is left alone: the layer no longer holds what it stamped (or, on
+// a redo, holds it again), which floatValid works out for itself.
+func (e *TexEditorState) applyEntrySelection(entry texUndoEntry, inverse *texUndoEntry) {
+	if !entry.HasSel {
+		return
+	}
+	inverse.HasSel, inverse.Sel = true, e.SelectionMask()
+	e.setSelection(entry.Sel)
+}
+
 // pushUndo records a completed action: clears redo history (a new action
 // invalidates it) and appends to the undo stack, evicting the oldest entries
 // while over the byte budget.
@@ -417,6 +487,7 @@ func (e *TexEditorState) Undo() {
 			Before: append([]uint8(nil), layer.Idx...),
 		}
 		copy(layer.Idx, entry.Before)
+		e.applyEntrySelection(entry, &redoEntry)
 	}
 	e.redoStack = append(e.redoStack, redoEntry)
 	e.Doc.MarkDirty()
@@ -448,6 +519,7 @@ func (e *TexEditorState) Redo() {
 			Before: append([]uint8(nil), layer.Idx...),
 		}
 		copy(layer.Idx, entry.Before)
+		e.applyEntrySelection(entry, &undoEntry)
 	}
 	e.undoStack = append(e.undoStack, undoEntry)
 	e.undoBytes += entrySize(undoEntry)
@@ -495,9 +567,44 @@ func (e *TexEditorState) DeleteLayer(i int) error {
 	return nil
 }
 
+func (e *TexEditorState) MergeLayerDown(i int) error {
+	before := texdoc.CloneTexDoc(e.Doc)
+	if err := e.Doc.MergeLayerDown(i); err != nil {
+		return err
+	}
+	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
+	e.PreviewDirty = true
+	e.BumpDirty = true
+	return nil
+}
+
 func (e *TexEditorState) MoveLayer(i int, up bool) error {
 	before := texdoc.CloneTexDoc(e.Doc)
 	if err := e.Doc.MoveLayer(i, up); err != nil {
+		return err
+	}
+	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
+	e.PreviewDirty = true
+	e.BumpDirty = true
+	return nil
+}
+
+// ImportLayerImage decodes the image at path and imports it into the
+// checked-out channel of the current frame — as a new layer above the active
+// one, or with replace over the active layer — as one undoable step. See
+// texdoc.ImportImageLayer.
+func (e *TexEditorState) ImportLayerImage(path string, fit texdoc.ImportFit, replace bool) error {
+	img, err := LoadImageFile(path)
+	if err != nil {
+		return err
+	}
+	b := img.Bounds()
+	if err := texdoc.ValidTexSize(b.Dx(), b.Dy()); err != nil {
+		return fmt.Errorf("import %s: %w", filepath.Base(path), err)
+	}
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	before := texdoc.CloneTexDoc(e.Doc)
+	if err := e.Doc.ImportImageLayer(img, name, fit, replace); err != nil {
 		return err
 	}
 	e.pushUndo(texUndoEntry{Structural: true, Doc: before})
@@ -715,6 +822,27 @@ func (e *TexEditorState) Save(name string) error {
 	// overwrite the flag this ORs across every frame in the stack.
 	SyncAnimatedFrames(e.Doc, name)
 	return nil
+}
+
+// RevertToSaved throws away the document's unsaved changes: it reads the
+// texture it is bound to back off disk and pushes that to the live texture, so
+// every model and brush wearing it goes back to what was last saved instead of
+// keeping strokes that were never written. Returns the saved document, to
+// carry on from, or nil for one never saved — nothing wears it, so there is
+// nothing to put back and nothing to keep.
+func (e *TexEditorState) RevertToSaved() (*TexEditorState, error) {
+	if e.BoundTexture == "" {
+		return nil, nil
+	}
+	saved, err := OpenTexEditorDoc(e.BoundTexture)
+	if err != nil {
+		return nil, err
+	}
+	saved.SyncLiveTexture()
+	// Last, as in Save: the frame count or the transparency may be exactly
+	// what the discarded edits changed.
+	SyncAnimatedFrames(saved.Doc, saved.BoundTexture)
+	return saved, nil
 }
 
 // ---------- new/open/import ----------

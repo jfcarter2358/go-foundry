@@ -21,6 +21,7 @@ import (
 	"foundry/internal/particle"
 	"sort"
 
+	"foundry/internal/imguibackend"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -130,13 +131,13 @@ func particleTransportRow() {
 
 	imgui.SameLine()
 	imgui.SetNextItemWidth(90)
-	if imgui.BeginCombo("##pspeedcombo", fmt.Sprintf("%.2gx", particleSpeed)) {
+	if imguibackend.BeginCombo("##pspeedcombo", fmt.Sprintf("%.2gx", particleSpeed)) {
 		for _, s := range []float32{0.1, 0.25, 0.5, 1, 2, 4} {
-			if imgui.SelectableV(fmt.Sprintf("%.2gx", s), s == particleSpeed, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(fmt.Sprintf("%.2gx", s), s == particleSpeed, 0, imgui.Vec2{}) {
 				particleSpeed = s
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Preview speed. Not saved with the effect.")

@@ -248,7 +248,7 @@ func editorWaypointPointList(a *world.WaypointAnimation) {
 	ai := Editor.ActiveWaypointAnimIdx
 	for i := range a.Points {
 		row := waypointRowLabel(i, &a.Points[i]) + fmt.Sprintf("##wplist%d", i)
-		if imgui.SelectableV(row, i == Editor.ActiveWaypointIdx, 0, imgui.Vec2{}) {
+		if imguibackend.SelectableV(row, i == Editor.ActiveWaypointIdx, 0, imgui.Vec2{}) {
 			editorSelectWaypoint(ai, i)
 		}
 	}
@@ -497,16 +497,16 @@ func editorWaypointPreviewTargetCombo(label string) {
 			editorWaypointPreviewPose()
 		}
 	}
-	if imgui.BeginCombo(label, p.Target.label()) {
-		if imgui.SelectableV("(nothing)", p.Target.ID == "", 0, imgui.Vec2{}) && p.Target.ID != "" {
+	if imguibackend.BeginCombo(label, p.Target.label()) {
+		if imguibackend.SelectableV("(nothing)", p.Target.ID == "", 0, imgui.Vec2{}) && p.Target.ID != "" {
 			choose(waypointTarget{})
 		}
 		for _, t := range editorWaypointTargets(Editor.level) {
-			if imgui.SelectableV(t.label(), t == p.Target, 0, imgui.Vec2{}) && t != p.Target {
+			if imguibackend.SelectableV(t.label(), t == p.Target, 0, imgui.Vec2{}) && t != p.Target {
 				choose(t)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("What to play the animation on: a dynamic brush, a chunk, an entity,\n" +
@@ -542,16 +542,16 @@ func editorObjectWaypointsUI(f world.WaypointFollower) {
 		if shown == "" {
 			shown = "(none)"
 		}
-		if imgui.BeginCombo("Animation##brushwpanim", shown) {
+		if imguibackend.BeginCombo("Animation##brushwpanim", shown) {
 			for i := range lvl.WaypointAnimations {
 				id := lvl.WaypointAnimations[i].ID
-				if imgui.SelectableV(id, id == cur, 0, imgui.Vec2{}) && id != cur {
+				if imguibackend.SelectableV(id, id == cur, 0, imgui.Vec2{}) && id != cur {
 					editorWaypointPreviewStop()
 					p.Anim = id
 					cur = id
 				}
 			}
-			imgui.EndCombo()
+			imguibackend.EndCombo()
 		}
 
 		playing := (p.Playing || p.Posed) && p.Target == t && p.Anim == cur

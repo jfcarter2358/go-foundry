@@ -86,6 +86,18 @@ type Volume struct {
 	// includes them.
 	LoadLevel string
 
+	// Checkpoint makes the volume a checkpoint. The first time the player walks
+	// in, the game is saved to the autosave slot and remembered as where
+	// `retry()` — the death screen's Retry — puts the player back. Only the
+	// player triggers it, only while the volume is enabled, and only once per
+	// play-through: which checkpoints have been reached is part of the save, so
+	// retrying from one does not immediately save it again.
+	//
+	// Like LoadLevel it may sit beside a script, whose `:enter:` still runs
+	// first — the save is taken between frames, after that handler has had its
+	// say.
+	Checkpoint bool
+
 	// Scatter fills the region with instanced foliage when set — see
 	// volume_scatter.go. nil is the ordinary case.
 	Scatter *VolumeScatter
@@ -325,6 +337,11 @@ func (v *Volume) IsLevelTrigger() bool {
 	return v.LoadLevel != "" && v.Enabled && v.HasBounds()
 }
 
+// IsCheckpointTrigger is IsLevelTrigger for a checkpoint.
+func (v *Volume) IsCheckpointTrigger() bool {
+	return v.Checkpoint && v.Enabled && v.HasBounds()
+}
+
 // ContainsWorldPoint is ContainsPoint for a caller holding a world-space point,
 // carrying it into the volume's own frame first.
 //
@@ -447,6 +464,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		HalfZ:        r.Half.Z,
 		Enabled:      BoolDefault(r.Enabled, true),
 		LoadLevel:    r.LoadLevel,
+		Checkpoint:   r.Checkpoint,
 		Fog:          VolumeFogFromRaw(r.Fog),
 		Cloud:        VolumeCloudFromRaw(r.Cloud),
 		ClearsClouds: r.ClearsClouds,
@@ -468,6 +486,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		Half:          RawVec3{X: v.HalfX, Y: v.HalfY, Z: v.HalfZ},
 		Enabled:       BoolPtrIfFalse(v.Enabled),
 		LoadLevel:     v.LoadLevel,
+		Checkpoint:    v.Checkpoint,
 		Fog:           VolumeFogToRaw(v.Fog),
 		Cloud:         VolumeCloudToRaw(v.Cloud),
 		ClearsClouds:  v.ClearsClouds,

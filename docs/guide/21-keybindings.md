@@ -297,6 +297,13 @@ blocked out a room already knows how to block out a hold:
 | Right-click a swatch | set the secondary colour |
 | Double-click a swatch | edit that palette slot's colour |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo (`Ctrl+Shift+Z` redoes too) |
+| Drag with `Rect Select` / `Lasso` | select (`Shift` adds, `Alt`/`Ctrl` subtracts; a click clears) |
+| Drag inside the selection | move what it holds |
+| Arrow keys | nudge the selection's contents (`Shift`: 8 texels) |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | copy / cut / paste |
+| `Ctrl+A` / `Ctrl+D` or `Esc` | select all / deselect |
+| `Ctrl+Shift+I` | invert the selection |
+| `Delete` | clear the selected texels |
 
 ## Particle editor
 
@@ -369,6 +376,36 @@ blocked out a room already knows how to block out a hold:
 | `Enter` | accept too, unless it is already exactly what is typed |
 | Click a row | accept that one |
 | `Esc` | dismiss for this word |
+
+## Level YAML editor
+
+The **Level** / **game.yaml** buttons on its toolbar switch between the level file and the project's `game.yaml`. Each keeps its own unsaved edits, undo history and caret while the other is shown. `game.yaml` is checked the way the game reads it, so a key it doesn't know is an error, not a warning.
+
+| | |
+| --- | --- |
+| `Ctrl+S` | check and save; rebuilds the level editor's level when it is the same file |
+| `Ctrl+O` | open another level file |
+| `Ctrl+F` / `Ctrl+H` | find / find and replace |
+| `Enter` / `Shift+Enter` in the find box, `F3` / `Shift+F3` | next / previous match |
+| `Esc` in the find box | close it, with the match selected in the buffer |
+| `Ctrl+G` | go to a line |
+
+### The buffer
+
+| | |
+| --- | --- |
+| `Ctrl+X` / `C` / `V` | cut / copy / paste, through the system clipboard |
+| `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` | undo / redo — the window's own history, so a replace, a completion or a revert undo too |
+| `Ctrl+A` | select all |
+| `Tab` / `Shift+Tab` | indent / outdent two spaces (the lines of a selection, or to the next stop) |
+| `Ctrl+/` | comment / uncomment the lines |
+| `Enter` | new line at the same indent, one deeper after `key:` |
+| Hover a key | its type and documentation |
+| Right click | all of the above |
+
+Completion works as in the script editor: typing opens the list, `Ctrl+Space`
+opens it without typing, `Tab` or `Enter` accepts, `Esc` dismisses. Typing
+`key: ` opens the options for the value on its own.
 
 ## Log window
 

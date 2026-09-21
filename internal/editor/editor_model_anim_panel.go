@@ -84,13 +84,13 @@ func modelAnimClipControls() {
 	if c := modelActiveClip(); c != nil {
 		name = c.Name
 	}
-	if imgui.BeginCombo("Clip##modelanimclip", name) {
+	if imguibackend.BeginCombo("Clip##modelanimclip", name) {
 		for i := range modelDoc.Animations {
-			if imgui.SelectableV(modelDoc.Animations[i].Name, i == modelPoseClip, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(modelDoc.Animations[i].Name, i == modelPoseClip, 0, imgui.Vec2{}) {
 				modelPoseSetClip(i)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 
 	if imgui.Button("New##modelanimnew") {

@@ -196,7 +196,7 @@ func modelBoneList() {
 			joiner = "- "
 		}
 		label := fmt.Sprintf("%s%s%s##modelbonerow%d", prefix, joiner, b.Name, bi)
-		if imgui.SelectableV(label, modelBoneSelected(bi), 0, imgui.Vec2{}) {
+		if imguibackend.SelectableV(label, modelBoneSelected(bi), 0, imgui.Vec2{}) {
 			modelSelectBone(bi, sdl.GetModState()&sdl.KMOD_CTRL != 0)
 		}
 	}
@@ -284,10 +284,10 @@ func modelBoneParentCombo(bi int) {
 	if p := modelDoc.Bones[bi].Parent; modelDoc.ValidBone(p) {
 		current = modelDoc.Bones[p].Name
 	}
-	if !imgui.BeginCombo("Parent##modelboneparent", current) {
+	if !imguibackend.BeginCombo("Parent##modelboneparent", current) {
 		return
 	}
-	if imgui.SelectableV("(root)", modelDoc.Bones[bi].Parent < 0, 0, imgui.Vec2{}) {
+	if imguibackend.SelectableV("(root)", modelDoc.Bones[bi].Parent < 0, 0, imgui.Vec2{}) {
 		modelReparentBone(bi, model.ModelBoneNoParent)
 	}
 	for other := range modelDoc.Bones {
@@ -295,12 +295,12 @@ func modelBoneParentCombo(bi int) {
 			continue
 		}
 		selected := modelDoc.Bones[bi].Parent == other
-		if !imgui.SelectableV(modelDoc.Bones[other].Name+"##modelboneparent", selected, 0, imgui.Vec2{}) {
+		if !imguibackend.SelectableV(modelDoc.Bones[other].Name+"##modelboneparent", selected, 0, imgui.Vec2{}) {
 			continue
 		}
 		modelReparentBone(bi, other)
 	}
-	imgui.EndCombo()
+	imguibackend.EndCombo()
 }
 
 // modelBoneAssignment binds mesh vertices to the active bone.

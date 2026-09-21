@@ -127,7 +127,8 @@ func RenderEntitiesShadow(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms,
 		}
 		for mi := range e.Models {
 			m := &e.Models[mi]
-			if !entityDrawable(e, m) {
+			// Something that gives off light does not block it.
+			if !entityDrawable(e, m) || m.Unlit {
 				continue
 			}
 			model := world.Mul4(e.AttachmentMatrix(m))

@@ -15,6 +15,7 @@ import (
 	"foundry/internal/gizmo"
 	"foundry/internal/world"
 
+	"foundry/internal/imguibackend"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -68,7 +69,7 @@ func editorWaypointAIUI(lvl *world.Level, a *world.WaypointAnimation, idx int, p
 	}
 
 	engage := int32(b.Engage)
-	if imgui.Combo("Targets##wpaieng", &engage, world.AIEngageModeNames) {
+	if imguibackend.Combo("Targets##wpaieng", &engage, world.AIEngageModeNames) {
 		b.Engage = world.AIEngageMode(engage)
 		edited("wpaieng")
 	}
@@ -124,21 +125,21 @@ func editorWaypointStopVolume(lvl *world.Level, a *world.WaypointAnimation, idx 
 	} else if world.FindVolume(lvl, b.Volume) == nil {
 		preview = b.Volume + " (missing)"
 	}
-	if imgui.BeginCombo("Stop##wpaivol", preview) {
-		if imgui.Selectable("(the point itself)") {
+	if imguibackend.BeginCombo("Stop##wpaivol", preview) {
+		if imguibackend.Selectable("(the point itself)") {
 			EditorPushUndo()
 			b.Volume = ""
 			edited("wpaivol")
 		}
 		for i := range lvl.Volumes {
 			v := &lvl.Volumes[i]
-			if imgui.SelectableV(v.ID, v.ID == b.Volume, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(v.ID, v.ID == b.Volume, 0, imgui.Vec2{}) {
 				EditorPushUndo()
 				b.Volume = v.ID
 				edited("wpaivol")
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Make the stop an area: the agent goes anywhere inside the volume\n" +

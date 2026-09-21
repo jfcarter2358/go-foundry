@@ -262,12 +262,26 @@ type ExplosionState struct {
 	Fade float32
 	// Flash is the light's envelope, 0 to 1.
 	Flash float32
+	// Jets is how hard the blast is still throwing fire outward in streaks,
+	// 1 at detonation, gone well before the fire cools. The shader pushes the
+	// surface out along the radius by it, and Reach makes room for them.
+	Jets float32
 }
 
-// explosionGrowth is how quickly the fireball reaches its size: fast, then
-// slowing, which is what a pressure front does and what makes it read as a
-// blast rather than a balloon.
-const explosionGrowth = 7
+// The fireball's growth is two fronts added together: the blast, which takes
+// it to most of its size in the first tenth of a second or so, and the slow
+// billowing spread of what is left burning after it. A single curve either
+// balloons (too slow at the start) or stops dead (too fast at the end).
+const (
+	explosionBlastGrowth = 30
+	explosionBlastShare  = 0.72
+	explosionDriftGrowth = 3
+)
+
+// explosionJetsReach is how much further than the billows the jets can push
+// the surface, as a share of Turbulence. MUST match the jets term in
+// volume_common.glsl's explosionDensity.
+const explosionJetsReach = 0.7
 
 // ExplosionStateAt solves the explosion kind at run progress age, for an
 // effect whose origin is at. ok is false outside the run.
@@ -276,8 +290,11 @@ func (x Explosion) StateAt(age float32, at mgl32.Vec3) (s ExplosionState, ok boo
 		return ExplosionState{}, false
 	}
 	a := float64(age)
-	grow := (1 - math.Exp(-explosionGrowth*a)) / (1 - math.Exp(-explosionGrowth))
-	radius := float64(x.Radius) * (0.12 + 0.88*grow)
+	blast := (1 - math.Exp(-explosionBlastGrowth*a)) / (1 - math.Exp(-explosionBlastGrowth))
+	drift := (1 - math.Exp(-explosionDriftGrowth*a)) / (1 - math.Exp(-explosionDriftGrowth))
+	grow := explosionBlastShare*blast + (1-explosionBlastShare)*drift
+	radius := float64(x.Radius) * (0.1 + 0.9*grow)
+	jets := smoothstep64(0, 0.01, a) * (1 - smoothstep64(0.04, 0.3, a))
 
 	heat := math.Exp(-3.2*a) * (1 - smoothstep64(0.45, 0.85, a))
 	fade := 1 - smoothstep64(0.5, 1, a)
@@ -294,17 +311,19 @@ func (x Explosion) StateAt(age float32, at mgl32.Vec3) (s ExplosionState, ok boo
 		Heat:   float32(heat),
 		Fade:   float32(fade),
 		Flash:  float32(flash),
+		Jets:   float32(jets),
 	}, true
 }
 
 // Reach is how far from the centre the fireball can have density at all: its
-// radius pushed out by the noise at its strongest.
+// radius pushed out by the noise at its strongest, and by the jets while they
+// last.
 func (x Explosion) Reach(s ExplosionState) float32 {
 	t := x.Turbulence
 	if t < 0 {
 		t = 0
 	}
-	return s.Radius * (1 + t)
+	return s.Radius * (1 + t*(1+explosionJetsReach*s.Jets))
 }
 
 // ExplosionState is the effect's explosion as it is this frame, if it is live.

@@ -172,15 +172,30 @@ func TestBuildDrawsNoFillAtZero(t *testing.T) {
 	}
 }
 
+// A toggle always shows its check box, so it reads as something to flip even
+// switched off; the mark inside it is what switches.
 func TestBuildDrawsAToggleMarkOnlyWhenOn(t *testing.T) {
 	off := pinned("t", ui.KindToggle, 0, 0, 30, 30)
-	if got := quads(built(t, screenWith(off), nil)); got != 1 {
-		t.Errorf("%d quads for an off toggle, want just the background", got)
+	offQuads := quads(built(t, screenWith(off), nil))
+	if offQuads < 2 {
+		t.Errorf("%d quads for an off toggle, want the background and an empty box", offQuads)
 	}
 	on := pinned("t", ui.KindToggle, 0, 0, 30, 30)
 	on.Value.On = true
-	if got := quads(built(t, screenWith(on), nil)); got != 2 {
-		t.Errorf("%d quads for an on toggle, want a background and a mark", got)
+	if got := quads(built(t, screenWith(on), nil)); got != offQuads+1 {
+		t.Errorf("%d quads for an on toggle, want the off toggle's %d and a mark", got, offQuads)
+	}
+}
+
+// A wide toggle keeps its box at the left and its label beside it.
+func TestAWideTogglesLabelClearsItsBox(t *testing.T) {
+	r := ui.Rect{X: 10, Y: 0, W: 400, H: 40}
+	box, label := toggleBoxRect(r), toggleLabelRect(r)
+	if box.X > r.X+r.H/2 {
+		t.Errorf("box at x %v, want it at the toggle's left edge (%v)", box.X, r.X)
+	}
+	if label.X < box.X+box.W || label.X+label.W != r.X+r.W {
+		t.Errorf("label %+v overlaps the box %+v or does not reach the toggle's right edge", label, box)
 	}
 }
 

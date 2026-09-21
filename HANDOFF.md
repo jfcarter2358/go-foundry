@@ -1,309 +1,421 @@
-# Handoff: first-person viewmodel — input wiring and an editor panel
+# Handoff: detail brushes, baked hangar lights, cheaper point shadows
 
-Same branch, an unrelated feature — nothing above this line is affected by
-anything below it, and nothing below depends on the brush migration except by
-sharing a codebase.
+Three pieces of work that came out of a performance pass on level1 (the
+dropship ran at 20 fps in the editor's compiled preview; it now runs at
+128–150 fps). They are independent — do them in any order, or hand them to
+different people — but read "Context" first, because all three are judged by
+the same measurement tool and share the same traps.
 
-## What already exists
-
-The engine now has a real first-person viewmodel system, built and verified
-this session. In brief (see `[[first-person-viewmodel]]` if you're the same
-Claude session reading this back, or just read the code — it's the accurate
-record either way):
-
-- `world.PlayerSettings.Models []EntityModel` and `RawPlayer.Models` — a
-  level's `player:` block can carry a `models:` list, identical in shape to an
-  entity type's own (`internal/world/player_settings.go`, `level_schema.go`).
-- `internal/levelio/level_loader.go` populates `world.PlayerEntity.Models`
-  from it on every level load (`Delete()` the old ones first, to not leak
-  their GPU buffers, then reassign and `Load()`).
-- `internal/app/app.go`'s main loop ticks `world.PlayerEntity.UpdateAnimations`
-  every frame (nothing else does — `collision.EntityUpdate` only walks
-  `lvl.Entities`, which the player still isn't in).
-- `internal/render/viewmodel.go`'s `RenderViewmodel()` draws them: it clears
-  the depth buffer first and uses `gfx.Cam.Matrix.Inv()` as the "entity"
-  matrix, so a `hands` root attachment sits relative to the CAMERA rather than
-  the player's physical body, and can never be poked into by nearby geometry.
-  Called from `app.go` between `RenderSpritesTransparent` and the runtime UI
-  loop, gated `!devActive()` — **it draws nothing in the editor today**, which
-  matters for the preview question below.
-- `models/fp_arms.fmdl` (in the OneDrive project, not this repo) — a
-  two-armed rig with `hand_socket.R`/`.L` bones, 8 clips
-  (`rifle_idle/walk/fire`, `pistol_idle/walk/fire`, `grenade_idle`,
-  `grenade_throw`). `level1.yaml`'s `player:` block equips it with the rifle
-  visible and the pistol/grenade attached-but-hidden, exactly the pattern
-  `enemy_combat.flang` uses for a carried grenade.
-- Docs: `docs/guide/11-entities.md`'s new "First-person viewmodel" subsection
-  under "The player", and a pointer from `02-building-levels.md`'s "Player
-  step height" section (the two live in the same `player:` block).
-
-## What does not exist yet — the two things this handoff is for
-
-**Nothing presses fire, switches weapons, or throws a grenade.** The clips and
-the sockets exist; nothing in the input layer or in a script calls
-`play_anim`, toggles `.model.<name>.prop.visible`, or spawns a live grenade
-for the player. `enemy_combat.flang` is the AI side of this same shape of
-problem and is the file to read before starting — the player side needs the
-same state machine, minus the AI decision-making, plus real input.
-
-**There is no way to author `player: models:` except by hand-editing the
-level's YAML.** No panel, no picker, no add/remove button. The step-height
-checkbox next to where this would live is `internal/editor/editor_player_panel.go`.
-
-Both are real, separable pieces of work. Read both sections below before
-starting either — the editor panel section explains why the model list can't
-just be handed the existing per-entity widgets unchanged.
+1. **Detail brushes** — a per-brush flag that keeps a brush out of the BSP
+   partition and visibility, the way Quake's detail brushes work.
+2. **Baked lights that keep moving shadows** ("option 2") — bake the hangar's
+   lights and still show characters' shadows on the baked floor.
+3. **Cheaper live point shadows** ("option 3") — hardware-filtered PCF instead
+   of 20 manual cubemap taps.
 
 ---
 
-## Part 1 — input wiring
+## Context
 
-### The one existing precedent, and why it's not quite the right shape
+### State of the tree
 
-`:interact:` (E key) is the only player-input event the scripting layer has
-today, and it does two things a fire button should not:
+Everything below refers to the working tree of `feature/jc/brush-editing`,
+which has a large amount of **uncommitted** work in it (this perf pass, plus a
+second session's lighting-model/compiler work). Nothing here is committed. Do
+not stash or reset — other in-progress work lives in the same files
+(`internal/render/static_batch.go`, `internal/gfx/graphics.go`,
+`internal/app/app.go`, `resources/shaders/fragment.glsl`). Make targeted edits.
 
-1. It's a plain edge (`hooks.ScriptInteractRequest()` sets a bool,
-   `hooks.ScriptInteractPressed()` reads-and-clears it — see
-   `internal/hooks/script_engine_hooks.go:83-90`), consumed once per frame by
-   `internal/script/script_events.go`'s `postInteractEvent`
-   (`internal/app/input.go:126-132` is where the key press sets the flag).
-2. `postInteractEvent` doesn't post to `@player` — it posts to *whatever
-   contains the player* (nearest of `EntitiesContaining`/`VolumesContaining`,
-   `script_events.go:529-558`), because interacting is about the world object
-   you're standing in front of.
+`TestABatchedChunkDrawsExactlyWhatPerFaceDrawingDid` (GL test) currently fails
+with ~320 differing pixels; this was verified to be the other session's
+in-progress batch/shader work, not the perf pass (it fails identically with
+the perf changes reverted). Don't chase it as part of this work.
 
-A fire/throw/switch event is the opposite shape: it's about the player, not
-about what the player is near, and at least primary fire needs to distinguish
-*held* from *pressed* (a rifle fires on a timer while the button is down; a
-grenade throw and a weapon switch are single presses).
+The compiler's format version moved 4 → 5 (other session). Every `.fbsp` in the
+game project (`/mnt/c/Users/jcart/OneDrive/Documents/Foundry/resources/levels/`)
+is version 4 and will not load in a release build until recompiled.
 
-### Recommended shape
+### What the perf pass added that you will build on
 
-Mirror the `:interact:` plumbing exactly, but post straight to `@player` and
-carry a press/release pair for anything that can be held:
+- **Per-pass profiler** — `internal/render/profile.go`. `render.ProfileBegin(name)`
+  / `ProfileEnd()`; CPU (QPC on Windows) and GPU (timestamp queries) per
+  section, shown in the F3 overlay.
+- **Benchmark mode** — `internal/app/bench.go`. `FOUNDRY_BENCH='level=level1;
+  compiled=1;frames=240;warm=90;at=x,y,z,yaw,pitch|spawn;out=bench.txt;
+  cpuprofile=cpu.prof;hide=volumetrics'` loads a level, pins the camera per
+  pose, writes a per-pass CPU/GPU table, exits.
+- **Point-shadow cache** — `internal/render/point_shadow_cache.go`. Each
+  shadowed point light has a signature of everything its six faces draw, split
+  into a STATIC half (compiled surfaces, chunk brushes) and a MOVING half
+  (entities, scenery, sprites, scatter). A light whose signature is unchanged
+  is not re-rendered; a light with moving casters in reach keeps a second
+  cubemap (`PointShadowMap.StaticCubemap`) holding only the static layer, and
+  each face is a depth blit of that plus the moving casters drawn on top.
+  **Rule: anything new a cube face draws must add its inputs to
+  `pointShadowSignatures`, or its shadow freezes.**
+- **Uniform-location memo** — `gfx.UniformLoc`. **Every `gl.LinkProgram` must
+  be followed by `gfx.ForgetUniformLocations(prog)`**; a source test
+  (`internal/gfx/uniform_cache_test.go`) enforces it.
 
-| SDL input | New hook (in `internal/hooks`, same pattern as `scriptInteractPressed`) | Posted event | Args |
-|---|---|---|---|
-| LMB down / up | `ScriptPrimaryFireRequest(down bool)` | `:primary_fire:` / `:primary_fire_end:` | — |
-| RMB down / up | `ScriptSecondaryFireRequest(down bool)` | `:secondary_fire:` / `:secondary_fire_end:` | — |
-| `G` down | `ScriptThrowRequest()` | `:throw:` | — |
-| `1`/`2`/`3` down | `ScriptWeaponSlotRequest(n int)` | `:weapon_slot:` | `slot int` |
+### How to measure
 
-Capture the keys in `internal/app/input.go`'s `sdl.KeyboardEvent`/new
-`sdl.MouseButtonEvent` cases, gated the same way `SCANCODE_E` already is
-(`!devActive() && platform.PlayerControlEnabled && !script.GamePaused()`,
-`input.go:126-132`) — there's no existing mouse-button case in gameplay input
-today (only editor picking uses mouse buttons elsewhere), so that whole
-`case sdl.MouseButtonEvent:` arm is new. Post the events from
-`internal/script/script_events.go`, next to `postInteractEvent`, straight to
-`flang.RefVal{Kind: flang.RefEntity, A: "player"}` — no containment lookup
-needed. Add each new atom to `docs/guide/18-scripting.md`'s event table and
-`internal/script/script_event_doc.go`'s `eventDocs` — `eventDocs`' own
-neighbouring entries are the format to match, and
-`TestEventDocsMatchPosts` (`script_event_doc_test.go`) will fail the build
-if a new atom is posted and not documented, or the reverse. It only AST-scans
-`eventPostSources` (`script_events.go`, `script_actions.go`
-today) for `rt.post`/`rt.postFrom` calls, so posting the new events from
-`script_events.go` — the recommendation above — keeps this test honest for
-free; a new file posting them would need adding to that list. Also add the
-new atoms to `keybindings.go`/`docs/guide/21-keybindings.md`.
+The user's machine is Windows + GTX 1070; this repo is built from WSL. Measure
+natively, not under WSLg:
 
-### Why held-vs-pressed, not a per-frame poll
-
-A per-tick `is_down(:primary_fire:)`-style query builtin was the other option
-and was rejected for this write-up: it would need a new value type
-(`flang` has no "input state" concept) and a script would still have to build
-its own held/not-held state machine on top of it. A press/release event pair
-gives the script `@self.state["firing"] = true` directly and is one line to
-turn into automatic fire, self-rescheduling exactly like
-`enemy_combat.flang`'s `on_grenade_check` already does:
-
-```
-def on_primary_fire(:primary_fire:) -> null
-    @self.state["firing"] = true
-    fire_once()
-end
-
-def fire_once() -> null
-    if not @self.state["firing"]
-        return
-    end
-    play_anim(@player, "hands", "rifle_fire")
-    hitscan(:hit:)
-    @player <- after(180, :fire_tick:)   -- rifle_fire's own duration/rate
-end
-
-def on_fire_tick(:fire_tick:) -> null
-    fire_once()
-end
-
-def on_primary_fire_end(:primary_fire_end:) -> null
-    @self.state["firing"] = false
-end
+```sh
+B=/mnt/c/Users/jcart/AppData/Local/Temp/foundry-bench   # scratch copy of the game project
+GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc \
+  go build -tags release -o $B/foundry-bench.exe ./cmd/foundry
+cp resources/shaders/* $B/resources/shaders/
+go run ./cmd/foundrycompile -root $B level1          # ~1.5 min; needed after compiler changes
+cd $B && FOUNDRY_BENCH='level=level1;at=1.5,102.7,-36.76,0.785,0|2,102.1,-1,1.711,0' \
+  WSLENV=FOUNDRY_BENCH ./foundry-bench.exe; cat bench.txt
 ```
 
-Semi-auto (pistol) just never reschedules `:fire_tick:`. This sketch is
-illustrative, not a spec — whoever builds this should decide the actual rate
-per weapon, how `hitscan`'s target resolves to damage, and how weapon-switch
-interacts with a mid-reload or mid-throw animation (probably: it doesn't,
-until the current one-shot clip's `:anim_end:` fires — see
-`enemy_combat.flang`'s own comment on why one-shot clips need that).
+The scratch copy at `$B` is disposable; never compile into or write to the
+real game project without the user asking. `-tags release` builds even when the
+editor package is mid-edit and doesn't compile.
 
-### Open questions for whoever picks this up
+**Check the GPU is idle first**: `/mnt/c/Windows/System32/nvidia-smi.exe
+--query-gpu=utilization.gpu --format=csv`. During the perf pass the user
+started StarCraft II and every GPU number tripled; that cost an hour of
+chasing a phantom regression. If the GPU is busy, only back-to-back A/B runs
+mean anything.
 
-- Does `:primary_fire:` fire once immediately on press (shown above) or only
-  on the first `:fire_tick:`? The sketch above double-fires on a very fast
-  press-release if not careful — worth a test once this exists.
-- Grenade throw needs the same "spawn the live entity at the clip's release
-  frame" pattern `enemy_combat.flang`'s `on_grenade_check`/`on_release` use,
-  aimed by camera direction instead of a known target position — `gfx.Cam`
-  isn't reachable from script; the aim direction needs to come in as
-  something script-visible (a new read-only `.prop` on `@player`, most likely
-  — camera direction isn't currently exposed to scripts at all, only
-  position and rotation are, per `script_props.go`, and rotation is not the
-  same thing for the player, whose look direction is `gfx.Cam.Yaw/Pitch`, not
-  an `Entity.Rotation` field it has never had a reason to keep in sync).
+Useful poses (eye position, yaw, pitch):
+
+| Pose | at= |
+|---|---|
+| In the ship, facing forward (the original 20 fps spot) | `1.5,102.7,-36.76,0.785,0` |
+| In the ship, facing aft | `1.5,102.7,-36.76,-2.356,0` |
+| Hangar floor looking at the ship | `2,102.1,-1,1.711,0` |
+| The game's own spawn camera | `spawn` |
+
+The ground poses (canyon, basin, compound) are where detail brushes would
+matter; pick some along the route in `tools/level1_ground_gen.py`. Ground
+chunks are streamed and disabled at level start, so a ground pose needs them
+switched on — see `cmd/levelsim`'s `-enable` for the mechanism.
+
+GL tests are opt-in: `FOUNDRY_GL_TEST=1 go test -run <Name> ./internal/render/`
+(WSLg provides the display).
 
 ---
 
-## Part 2 — the editor panel
+## 1. Detail brushes
 
-### What the user asked for
+### The problem
 
-A panel to edit `player: models:` visually instead of by hand, **and** —
-explicitly — one that isn't player-only: it should also edit any AI entity's
-model attachments. Read on before assuming that means duplicating work: most
-of the second half is already free.
+level1 compiles to **63,610 portals**. The exact visibility flood only runs
+below `coarseVisPortals = 16384` (`internal/compile/pvs.go`); above it the
+compiler writes the coarse answer (orientation + connectivity only), and the
+average cell sees **6,967 of 8,554** cells. Visibility culling is doing almost
+nothing. The portal count is high because every face of every brush — terrain
+cells, rocks, props — offers its plane to the BSP.
 
-### The reusable half already exists
+### What already exists
 
-`internal/editor/editor_entity_panel.go`'s `editorEntityModels(e
-*world.Entity)` (and its two helpers, `editorEntityModelSection`/
-`editorEntityModelBody`, `entity_panel.go:424-553`) is **already** a
-plain function of a `*world.Entity` — not of the entity-editor's globals the
-way `editor_entity_editor_panel.go`'s near-duplicate `entityPanelModel` is.
-It's what draws the Models section of a **placed entity's** properties panel
-today, which already covers every placed AI entity (`enemy_rifle`,
-`enemy_pistol`, a placed `guard`, anything) — click one in the viewport, its
-properties panel has this section already. Add/remove attachment, mesh
-picker, texture override, `editorModelMountUI` (Parent/Bone — the same shared
-widget the entity editor and this panel both already use,
-`editor_model_mount_panel.go`), Offset/Rotation/Scale/Alpha, and the
-animation list with in-editor playback — all of it, already generic, already
-working, already reachable for an AI entity **today** by selecting it in the
-viewport.
+The compiler already implements the Quake detail bargain, but only for a
+brush's **detail mesh** (`world.Brush.Detail *BrushMesh`, `HasDetail()`,
+`world/brush_detail.go`) — the free-form surface drawn instead of the hull:
 
-So "edit any AI entity" may already be satisfied depending on what the user
-actually wants: if it's "let me get to an AI entity's models without hunting
-for it in the viewport," the missing piece is a **selector**, not a new
-editor. If it's something richer (side-by-side player/enemy loadout
-comparison, or editing an entity *type's* models — which is a different
-screen, the entity editor — rather than one placed *instance*), that's worth
-confirming with the user before building. This write-up assumes the first
-reading; it's the smaller, more clearly-scoped one and the one the wording
-("edit any AI entity") most directly supports.
+- `compile/csg.go` `gatherSolids`: a detailed brush emits its hull faces as
+  `NoDraw` structure and its drawn faces with `Face.Detail = true`.
+- `compile/bsp.go`: `BuildBSP` partitions only non-detail faces, then
+  `attachDetailFaces` → `insertDetail` drops each detail face into every empty
+  cell it reaches (splitting as it descends), and `attachInsetDetail` handles
+  faces that land inside solid.
+- `compile/light.go`: detail faces are lit like any other.
+- Tests: `compile/detail_test.go` — read its header; it states the three
+  invariants (drawn / doesn't shape the tree / doesn't break sealing).
 
-### The one thing that is genuinely new: reaching the player at all
+A whole-brush flag reuses all of the insertion machinery. What is new is that
+a whole-detail brush has **no structural hull at all**.
 
-`world.PlayerEntity` is a real `*world.Entity` (`internal/world/entity.go`),
-so `editorEntityModels(world.PlayerEntity)` would, mechanically, draw the same
-UI for it. Two things stop that from being the whole job:
+### Measured payoff (experiment, not committed)
 
-1. **`world.PlayerEntity.Models` and `lvl.Player.Models` are separate
-   slices.** `level_loader.go` copies one into the other
-   (`append([]EntityModel(nil), level.Player.Models...)`) on load — a value
-   copy, not a shared backing array. Editing `PlayerEntity.Models[i].Offset`
-   in a panel would not touch `lvl.Player.Models[i].Offset`, and saving the
-   level (`PlayerSettingsToRaw(lvl.Player)`) would silently write back the
-   *old* values. This is the bug shape to design out from the start, not
-   discover after the panel looks like it works.
+A throwaway compiler that treated brushes as detail by ID prefix, on level1
+with the hangar still `moves: true`:
 
-   The fix that needs the least new code: build the temporary entity the
-   panel edits **from `lvl.Player.Models` directly**, and write the (possibly
-   restructured, if an attachment was added/removed) slice back after:
+| Detail | Portals | Cells | Surface fragments | Avg visible |
+|---|---|---|---|---|
+| none (today) | 63,610 | 15,157 | 71,377 | 81% |
+| `ground_terrain`, `ground_rock`, `ground_cover`, `ground_rubble`, `dress_*`, `aa_roller`, `aa_conduit` | 47,112 | 10,726 | 68,099 | 86% |
+| + `ground_cliff_corner`, `ground_cliff_upper`, `ground_cliff_fin` | 27,020 | 5,356 | 57,058 | 90% |
 
-   ```go
-   tmp := &world.Entity{ID: "player", Models: lvl.Player.Models}
-   editorEntityModels(tmp)      // may reassign tmp.Models — add/remove does
-   lvl.Player.Models = tmp.Models
-   ```
+Set expectations accordingly: **detail brushes alone do not get level1 under
+the exact-flood cutoff.** What they do buy is a third of the tree, faster
+compiles, and ~20% fewer drawn surface fragments (fewer BSP splits chopping
+the terrain). Getting exact visibility needs a follow-up — see "After this".
+Also note the ground already streams ±2 zones (the canyon is nearly straight;
+±1 leaked sightlines), so even exact PVS will cull modestly on the ground.
 
-   Field-level edits (`m.Offset = ...` etc.) write straight through the
-   shared backing array either way; only a structural change (add/remove)
-   needs the slice header copied back, which is what the last line is for.
-   `lvl.Player` is *the* source of truth here, the same way `lvl.Entities[i]`
-   already is for a normal placed entity — there is no separate "player
-   definition" file for it to disagree with.
+The experiment's first compile **leaked everywhere**: level1's terrain dips
+below the seal box's floor (seal bottom ≈ y −14.2, leak found near y −15.3),
+so with the terrain no longer structural the void poured in underneath.
+Growing the seal 10 m down (`seal.position.y` 51.1391 → 41.1391,
+`seal.half.y` 65.3609 → 75.3609) fixed it. A detail brush cannot seal
+anything; authors and generators must know that.
 
-2. **The live preview.** `world.PlayerEntity.Models` (a *different* set of
-   `EntityModel`s than `lvl.Player.Models` until something syncs them) is
-   what actually has GPU buffers and a bone palette — `editorEntityModels`
-   itself doesn't load or render anything, it only edits fields, so a change
-   made through the temporary entity above needs `.Load()` called again
-   before anything shows it, exactly like `reloadActiveEntityModels()` already
-   does for a placed entity (`editor_entity_panel.go:442-447`) and like
-   `entityMarkDirty()`/`entityPreviewInvalidate()` do for the entity editor's
-   own preview object. And `RenderViewmodel()` is gated `!devActive()` today
-   — with nothing calling it, there is **no 3D preview at all** while this
-   panel is open, however correct the data ends up being. Cheapest fix:
-   lift that gate specifically while the Player section of the panel is open
-   (a package-level `bool` `editor` sets, `render` reads — same shape as
-   `render.DebugToggle()`), not unconditionally, since a floating gun
-   overlaid on the free-fly camera at all other times would be noise while
-   placing brushes. Whether that reads as "the player, looking where the
-   free-fly camera happens to be pointed" is a good enough preview, or
-   whether it wants its own fixed preview camera the way the entity editor's
-   3D view is its own separate window, is a judgement call for whoever builds
-   this to make by trying the cheap version first.
+### Design
 
-### Where the panel itself goes
+**Name.** `Detail` is taken — `Brush.Detail` is the mesh, and the YAML key
+`detail:` on a brush is the mesh (`world/level_schema.go` `RawBrush.Detail
+*RawBrushMesh`; there is also an unrelated `Detail *float32` at line ~130).
+Use something unambiguous, e.g. `Brush.VisDetail bool`, YAML `vis_detail:
+true`, UI label "Detail (not structural)". Whatever you pick, grep for
+`Detail` before settling on it.
 
-`internal/editor/editor_player_panel.go`'s `editorPlayerSection` already
-exists as the level-scoped, selection-free home for exactly this kind of
-thing (`editorPropGroup("Movement##playermovegrp", ...)` is its only group
-today). Add a sibling:
+**Compiler** (`compile/csg.go` `gatherSolids` and `clipPlanesFor`):
 
-```go
-editorPropGroup("Viewmodel##playermodelsgrp", 0, func() {
-    tmp := &world.Entity{ID: "player", Models: lvl.Player.Models}
-    editorEntityModels(tmp)
-    lvl.Player.Models = tmp.Models
-})
+1. A `VisDetail` brush emits its drawn faces with `Face.Detail = true` and
+   emits **no** `NoDraw` hull faces (unlike a detail mesh — there is no
+   structure to keep).
+2. Its solid(s) still go in the CSG solid list, flagged detail, and the clip
+   rule becomes:
+   - structural solid clips structural and detail faces (as today);
+   - detail solid clips **detail faces only** — never a structural face.
+     Otherwise a rock half-buried in a cliff deletes the cliff face behind it,
+     and the structural shell (which the tree, the seal and the void fill are
+     built from) gets a hole. This is the rule Quake's qbsp uses.
+   - detail vs detail keeps the existing `sourceOrder` coplanar tie-break.
+   `clipPlanesFor(f *Face, s *solid)` is where the rule goes; `solid` needs a
+   `detail bool`.
+3. Light bake: **baked shadows come from `b.tree.LineOfSight`** (the BSP's
+   solidity), in `baker.sample` (`compile/light.go` ~line 180). A VisDetail
+   brush is not in the tree, so without further work it **casts no baked
+   shadow** — terrain would stop shadowing itself and props would float. Add a
+   second occluder: a triangle BVH over the VisDetail faces (world space,
+   built once per bake, before `SubdivideFaces`), and treat a shadow ray as
+   blocked if either the tree or the BVH blocks it. `internal/collision/
+   raycast_accel.go` has a BVH and slab-test code (`buildBVH`, `rayDir`) you
+   can copy or lift into a shared package (check the import graph — compile
+   must not pull in the runtime). Self-shadowing: set `cf.hull` on VisDetail
+   faces to the brush's own hull planes so `clearOfHull` starts the ray
+   outside its own solid, exactly as detail-mesh faces do.
+4. Leak diagnostics: a leak whose only blocker was a VisDetail brush should
+   say so ("…sealed only by detail brushes; detail does not seal"), or authors
+   will be baffled. `compile/compile.go` `findLeaks` / `Leak.Describe`, and
+   `compile/outside.go`.
+5. `compile.Stats` / `Summary()`: report how many faces were detail, so the
+   effect of flagging shows up in the compile line.
+
+**Runtime**: nothing should change. Collision reads brushes directly; raycasts
+use `StaticGeometry` surfaces; rendering draws leaf faces, and detail faces are
+in leaves. Verify rather than assume — a compiled level with VisDetail brushes
+must still collide with them (`collision` uses the chunk's brushes, which
+compiled chunks keep).
+
+**Data + editor**:
+- `world.Brush.VisDetail`, a `RawBrush` field, `BrushFromRaw` / `BrushToRaw`
+  and `CloneBrush` in `world/brush.go`.
+- Checkbox in `internal/editor/editor_brush_panel.go`; structural edits must
+  call `EditorPushUndo()` first (editor undo is RawLevel snapshots) and must
+  drop the compiled preview (`dropCompiledPreview`, `editor_compile.go`) like
+  every other structural edit does.
+- Consider a view toggle that tints detail brushes, the way Hammer/TrenchBroom
+  do; authors need to see what is structural.
+- Document it in `docs/guide/` next to the detail-mesh docs, including "detail
+  does not seal".
+
+**Content** (`/mnt/c/Users/jcart/OneDrive/Documents/Foundry/tools/level1_ground_gen.py`,
+OneDrive project, not this repo): mark `ground_terrain`, `ground_rock`,
+`ground_cover`, `ground_rubble` and the cliff trim (`ground_cliff_corner`,
+`ground_cliff_upper`, `ground_cliff_fin`) as `vis_detail`, keep the main
+`ground_cliff` slabs structural (they are the occluders), and grow the seal
+(the generator computes `grown_seal`) below the lowest terrain point with
+margin. Hangar dressing (`dress_*`) lives in the hangar chunk, which is
+hand-authored; flag those by hand or via `tools/level1_hangar_gen.py`.
+
+### Tests to write (follow `compile/detail_test.go`'s style)
+
+- A VisDetail brush adds no splitting plane (use a diagonal face, as the
+  existing test does, so an axis-aligned coincidence can't pass it).
+- A VisDetail brush does not clip a structural face it overlaps; a structural
+  brush does clip a VisDetail face buried in it.
+- A VisDetail brush casts a baked shadow (a light, a detail block, a floor —
+  the floor texel behind the block is darker than one beside it).
+- A level sealed only by a VisDetail brush reports a leak, and the message
+  says why.
+- Save/load round-trip of the flag; clone keeps it; editor toggle is undoable.
+- Mutation-check each test (break the code it guards and see it fail).
+
+### After this: getting exact visibility
+
+Detail brushes get level1 to ~27k portals; the exact flood needs < 16,384.
+Options, not decided:
+- **Areas / clusters**: flood between groups of cells (a room, a canyon
+  stretch) rather than individual cells — Quake 2/3's clusters. Biggest
+  change, best scaling.
+- **Raise `coarseVisPortals`**: `buildMightSee` is O(portals²) in bits
+  (27k² bits ≈ 91 MB) and the flood's time is unmeasured at that size. Try it
+  on the scratch copy with `-quiet` and time it before committing to it.
+- More structural simplification (merge cliff slabs) in the generator.
+
+---
+
+## 2. Baked hangar lights that keep moving shadows
+
+### Why the hangar costs what it does
+
+- The hangar chunk is `moves: true` in `level1.yaml` (line ~23778). `compile.Bakes`
+  (`compile/csg.go`) refuses any chunk that moves, so the hangar is never
+  compiled or baked — in the editor preview **or** the release build. The flag
+  is stale: it dates from when `ship.flang` flew the hangar upward (still
+  visible in `scripts/ship.flang.bak`); the current `scripts/level1/ship.flang`
+  only sets `@hangar.prop.enabled = false`, and a compiled chunk can be
+  switched off (it is hidden via `StaticGeometry.SetChunkHidden`).
+  `level1_ground_gen.py` text-splices the hangar through untouched, so a hand
+  edit to `moves:` survives regeneration.
+- Its six lights (`point_light_0..2`, shadowed; `hangar_work_light`,
+  `hangar_bench_light`, `hangar_cargo_light`) are `no_bake: true`.
+  `PointLight.LitLive()` is true for `no_bake`, and `fragment.glsl` sums every
+  `LitLive` light per fragment **even on baked surfaces** (`pointLightDynamic[i]`
+  in the `bakedLight != 0` branch). So flipping `moves` alone gains little:
+  measured ~0.7 ms GPU in the ship (5.6 → 4.9 ms for the world passes), because
+  the per-pixel lighting is the cost — three of those lights take 20 cubemap
+  taps each (`calcPointShadow`).
+- They are `no_bake` so a script can switch them off: `lightRefusesWrite`
+  (`internal/script/script_props_geom.go`) allows `enabled` writes on a static
+  light only if it is `no_bake`. `ship.flang`'s `:skybox:` handler switches
+  them off when the hangar goes.
+
+### Plain baking (content only) — and why it isn't enough
+
+Set `moves: false`, remove `no_bake` from the six lights, and delete the
+`@point_light_*.prop.enabled = false` / `@hangar_*_light.prop.enabled = false`
+lines in `ship.flang` (the linter, `cmd/levelcheck`, will refuse them
+otherwise). That is safe: the baked light lives only on hangar surfaces, which
+vanish when the hangar is disabled, and the lights' reach stops well above the
+ground (`point_light_2` at y 111.6, radius 25.6, reaches y ≈ 86; the ground is
+below y ≈ 12). Verify with a compile that no ground surface picks up hangar
+light.
+
+What it loses: **characters stop casting shadows on the hangar floor** from
+those lights. A baked surface only sums `LitLive` lights, and a baked light's
+cube shadow is only ever sampled for live-lit fragments. Entities themselves
+stay lit and self-shadowed (entities are always lit live from every light).
+The squad and the four mechanics stand under the red lights; losing their
+floor shadows is visible. Option 2 is how to bake and keep them.
+
+### Option 2 design: subtract moving-caster shadows from the bake
+
+For a **baked, shadow-casting** point light, on a **baked** fragment within its
+radius:
+
+```
+L          = the light's live contribution, unshadowed (what pointLightContrib
+             computes before its shadow term) — the bake already contains L
+             wherever the static world didn't block it
+combined   = shadow from the live cube (static + moving casters)   ∈ [0,1]
+staticOnly = shadow from the static-layer cube                      ∈ [0,1]
+moving     = max(combined - staticOnly, 0)    // shadowed ONLY because of a mover
+lighting  -= L * moving * shadowStrength
 ```
 
-For the "any AI entity" selector, the natural spot is either right above that
-(a combo: "Player" plus every `lvl.Entities[i]` with `.AI != nil`, switching
-which target `editorEntityModels` is called on) inside this same section, or
-as an entirely separate toolbar tool if the intent is closer to a dedicated
-loadout-comparison window. There's no existing helper enumerating a level's
-AI entities — `internal/ai/ai.go`'s own `Update` just inlines
-`for i := range lvl.Entities { if e.AI == nil { continue } ... }`
-(`ai.go:87-90`); worth promoting to an exported `world.AIEntities(lvl)
-[]*Entity` if this panel and anything else both end up wanting the list.
+The `combined − staticOnly` difference is the important part: subtracting
+`L × combined` would double-darken everything the bake already shadowed.
 
-### Verifying any of this without a GL context
+Both cubes already exist per light: `PointShadowMap.Cubemap` (static + moving)
+and `PointShadowMap.StaticCubemap` (static only), maintained by
+`planPointShadow` / `RenderPointShadowPass` in `internal/render/shadow.go`.
+Today the static cube is only created when a light has movers in reach;
+that is exactly when this term is non-zero, so the shader needs a per-light
+flag ("static cube valid") and can skip the term otherwise.
 
-Found the hard way this session: `levelio.LoadLevel` on a real level
-segfaults with no GL context (it uploads chunk/brush geometry
-unconditionally — `BrushMesh.Load` → `gl.GetUniformLocation` with
-`Program==0`, the same "a GL call with no context segfaults rather than
-errors" trap `gfx.UpdateCamMatrix`'s own comment already warns about). To
-check a `player:` block's *shape* headlessly — bones exist, clips resolve,
-sockets resolve — parse just the raw YAML and stop short of `.Load()`:
+**The hard constraint is texture units.** GL 4.1 guarantees 16 fragment units
+and the world shader uses 14: 0 albedo, 1 sun cascades (`CascadeTexUnit`),
+2–9 the eight `pointShadowMap[]` cubes, 10 `BlendTexUnit`, 11
+`BlendMaskUnit`, 12 `NormalMapUnit`, 13 `CloudShadowTexUnit`. Only 14 and 15
+are free, so "a second samplerCube per light" does not fit. Options:
+- **Cube map array** (`samplerCubeArray`, core since GL 4.0): allocate all
+  point shadows as layers of one `GL_TEXTURE_CUBE_MAP_ARRAY` — live cube for
+  light i at layer i, static cube at layer `MaxPointLights + i` — and render
+  faces with `glFramebufferTextureLayer(…, layer*6 + face)`. One unit for all
+  of them; frees seven units for everything else. The biggest change, and the
+  right one. Touches `createDepthCube`, `EnsurePointShadowMaps`, the blit
+  (`BlitFramebuffer` works per layer-face attachment), `UploadPointShadowUniformsTo`,
+  the dummy cubemap, `fragment.glsl` and `biome_light.glsl` (it samples the
+  same cubes — search for `pointShadowMap` in `resources/shaders/`).
+- **Budget it**: units 14–15 give static cubes to at most two baked lights at a
+  time (nearest the camera, say). Smaller change, a visible cap.
 
-```go
-data, _ := os.ReadFile(levelPath)
-var raw world.RawLevel
-yaml.Unmarshal(data, &raw)
-settings := world.PlayerSettingsFromRaw(raw.Player)
-// settings.Models[i].Path -> model.LoadModel(...) for CPU-only bone/clip checks;
-// never call EntityModel.Load()/Entity.Load() outside a real GL context.
-```
+Also:
+- `biome_light.glsl` duplicates the point-shadow sampling for scatter/ground
+  patches; whatever the world shader does, it must do (see its header).
+- The layered-shadow GL test (`internal/render/point_shadow_cache_gl_test.go`)
+  proves the two cubes are right; add one that draws a baked quad under a
+  baked shadowed light with an entity between them and reads back a darker
+  pixel behind the entity and an unchanged one beside it (see
+  `light_dynamic_gl_test.go` for the baked-quad probe).
+- Then do the content changes from "Plain baking" above.
 
-This is exactly `levelio.readRawLevelFile` (unexported, hence reimplemented
-above) plus the conversion `level_loader.go` already calls. Testing the
-*rendered* result (the depth-clear behaviour, the camera-relative placement)
-needs the real app running — there's no headless GL test harness for the
-render package today beyond the `FOUNDRY_GL_TEST=1` unit tests, and this
-pass isn't covered by any of them yet.
+---
+
+## 3. Cheaper live point shadows (hardware PCF)
+
+Independent of 1 and 2, and it helps every level with shadowed point lights.
+
+### Today
+
+`calcPointShadow` in `fragment.glsl` (and its twin in `biome_light.glsl`)
+takes **20** `texture(samplerCube)` taps in a disk (`sampleOffsets[20]`),
+compares each by hand, and averages. The cube faces store linear distance /
+far plane (written as `gl_FragDepth` by `shadow_cube_frag.glsl`), in
+`DEPTH_COMPONENT24` cubemaps with LINEAR filtering (`createDepthCube` in
+`internal/render/shadow.go`). Every lit fragment within a shadowed light's
+radius pays 20 fetches per light; the hangar has three such lights.
+
+### Change
+
+- Set `GL_TEXTURE_COMPARE_MODE = GL_COMPARE_REF_TO_TEXTURE` and
+  `GL_TEXTURE_COMPARE_FUNC = GL_LEQUAL` on every point-shadow cube (live,
+  static layer, and the dummy cubemap — a `samplerCubeShadow` bound to a
+  texture without compare mode is undefined).
+- Declare `samplerCubeShadow pointShadowMap[]` and sample with
+  `texture(pointShadowMap[i], vec4(dir, currentDist/farPlane - bias/farPlane))`.
+  With LINEAR filtering each tap returns a bilinear 2×2 comparison, so 4–8
+  taps give smoother edges than today's 20 point taps.
+- `GL_TEXTURE_CUBE_MAP_SEAMLESS` is already enabled (context state, set in
+  `internal/render/sky.go`'s init), so filtering across face edges is fine —
+  but it is only set once the sky pass initialises; if a test harness draws
+  point shadows without it, expect seams in the test, not the game.
+- Both `fragment.glsl` and `biome_light.glsl` must change together (same
+  textures).
+- Keep the stored value as it is (linear distance / far) so nothing else
+  changes; the reference just has to be in the same units.
+
+Optional, measure first: `shadow_cube_frag.glsl` writing `gl_FragDepth`
+disables early-z in the cube pass. With the point-shadow cache the cube pass
+only redraws moving casters most frames, so this matters less than it did.
+
+### Verify
+
+- It changes how soft shadow edges look: screenshot before/after at the bench
+  poses and show the user, don't just report timings.
+- GL test: a shadowed point light, an occluder, a lit quad; read back a pixel
+  well inside the shadow (dark), well outside (lit), and check the penumbra is
+  monotonic across the edge.
+- Bench the ship and hangar poses with the GPU idle.
+
+---
+
+## Where things are
+
+| Thing | Where |
+|---|---|
+| Compile entry, stats line | `internal/compile/compile.go` (`Compile`, `Stats.Summary`) |
+| CSG, face emission, clip rule | `internal/compile/csg.go` (`gatherSolids`, `clipPlanesFor`, `Bakes`, `BakesBrush`) |
+| BSP build, detail insertion | `internal/compile/bsp.go` (`BuildBSP`, `attachDetailFaces`, `insertDetail`, `attachInsetDetail`) |
+| Visibility | `internal/compile/pvs.go` (`BuildPVS`, `coarseVisPortals`) |
+| Leaks, void fill | `internal/compile/outside.go`, `findLeaks` in compile.go |
+| Seal box | `internal/compile/seal.go` (`FitSeal`, `sealSolids`) |
+| Light bake | `internal/compile/light.go` (`BakeLight`, `baker.sample`, `clearOfHull`) |
+| Detail mesh semantics | `internal/world/brush_detail.go` |
+| Brush data, clone, raw | `internal/world/brush.go`, `internal/world/level_schema.go` |
+| Brush panel | `internal/editor/editor_brush_panel.go` |
+| Point shadow render + cache | `internal/render/shadow.go`, `internal/render/point_shadow_cache.go` |
+| Shadow sampling | `resources/shaders/fragment.glsl` (`calcPointShadow`, `pointLightContrib`, `bakedLight` branch), `resources/shaders/biome_light.glsl` |
+| Static-light script rule | `internal/script/script_props_geom.go` (`lightRefusesWrite`) |
+| level1 hangar script | OneDrive `resources/scripts/level1/ship.flang` (`:skybox:` handler) |
+| level1 ground generator | OneDrive `tools/level1_ground_gen.py` |
+| Bench + profiler | `internal/app/bench.go`, `internal/render/profile.go` |

@@ -200,10 +200,37 @@ func Install(h Host, in *Installer, o Options) error {
 	}
 
 	exe := filepath.Join(dir, st.Exe)
+	if err := register(h, name, st, dir, uninstaller, size); err != nil {
+		return err
+	}
+	problems := makeShortcuts(h, name, exe, uninstaller, dir, wantDesktop, desktopLink)
+
+	if o.Silent {
+		return nil
+	}
+	msg := st.Title + " is installed."
+	if len(problems) > 0 {
+		msg += "\n\nSome shortcuts could not be made:\n" + strings.Join(problems, "\n")
+	}
+	launch := "\n\nPlay it now?"
+	if st.IsEditor() {
+		launch = "\n\nOpen it now?"
+	}
+	if h.Ask(msg+launch, false) {
+		if err := h.Launch(exe, dir); err != nil {
+			h.Tell("Could not start "+st.Title+": "+err.Error(), true)
+		}
+	}
+	return nil
+}
+
+// register writes the registry keys an install is found and removed by.
+func register(h Host, name string, st Stamp, dir, uninstaller string, size int64) error {
+	exe := filepath.Join(dir, st.Exe)
 	if err := h.SetRegistry(appKey(name), Str("InstallDir", dir), Str("Version", st.Version)); err != nil {
 		return err
 	}
-	if err := h.SetRegistry(uninstallKey(name),
+	return h.SetRegistry(uninstallKey(name),
 		Str("DisplayName", st.Title),
 		Str("DisplayVersion", st.Version),
 		Str("DisplayIcon", exe),
@@ -213,12 +240,14 @@ func Install(h Host, in *Installer, o Options) error {
 		DWORD("NoModify", 1),
 		DWORD("NoRepair", 1),
 		DWORD("EstimatedSize", uint32(size/1024)),
-	); err != nil {
-		return err
-	}
+	)
+}
 
-	// Shortcuts are the one part that can fail without the game failing to
-	// install, so a problem with one is reported rather than undoing the rest.
+// makeShortcuts makes the Start Menu entries, and the desktop shortcut when one
+// is wanted, and returns what went wrong. Shortcuts are the one part that can
+// fail without the install failing, so a problem with one is reported rather
+// than undoing the rest.
+func makeShortcuts(h Host, name, exe, uninstaller, dir string, wantDesktop bool, desktopLink string) []string {
 	var problems []string
 	if programs, err := h.Folder(FolderPrograms); err != nil {
 		problems = append(problems, err.Error())
@@ -240,20 +269,21 @@ func Install(h Host, in *Installer, o Options) error {
 			problems = append(problems, err.Error())
 		}
 	}
+	return problems
+}
 
-	if o.Silent {
-		return nil
+// removeShortcutsAndKeys undoes register and makeShortcuts.
+func removeShortcutsAndKeys(h Host, name string) error {
+	if programs, err := h.Folder(FolderPrograms); err == nil {
+		os.RemoveAll(filepath.Join(programs, name))
 	}
-	msg := st.Title + " is installed."
-	if len(problems) > 0 {
-		msg += "\n\nSome shortcuts could not be made:\n" + strings.Join(problems, "\n")
+	if desktop, err := h.Folder(FolderDesktop); err == nil {
+		os.Remove(filepath.Join(desktop, name+".lnk"))
 	}
-	if h.Ask(msg+"\n\nPlay it now?", false) {
-		if err := h.Launch(exe, dir); err != nil {
-			h.Tell("Could not start "+st.Title+": "+err.Error(), true)
-		}
+	if err := h.DeleteRegistryKey(uninstallKey(name)); err != nil {
+		return err
 	}
-	return nil
+	return h.DeleteRegistryKey(appKey(name))
 }
 
 func installQuestion(st Stamp, dir string, upgrading bool, prevVersion string) string {
@@ -294,16 +324,7 @@ func Uninstall(h Host, dir string, o Options) error {
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("removing %s: %w", dir, err)
 	}
-	if programs, err := h.Folder(FolderPrograms); err == nil {
-		os.RemoveAll(filepath.Join(programs, name))
-	}
-	if desktop, err := h.Folder(FolderDesktop); err == nil {
-		os.Remove(filepath.Join(desktop, name+".lnk"))
-	}
-	if err := h.DeleteRegistryKey(uninstallKey(name)); err != nil {
-		return err
-	}
-	if err := h.DeleteRegistryKey(appKey(name)); err != nil {
+	if err := removeShortcutsAndKeys(h, name); err != nil {
 		return err
 	}
 

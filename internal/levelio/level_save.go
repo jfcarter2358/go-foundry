@@ -195,6 +195,11 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 
 	raw.Scripts = append([]string(nil), level.Scripts...)
 	raw.UI = append([]string(nil), level.UI...)
+	raw.EscapeLevel = level.EscapeLevel
+	raw.SaveMode = world.SaveModeName(level.SaveMode)
+	if level.LightGrid > 0 || level.LightMinGrid > 0 {
+		raw.Compile = &world.RawCompile{LightGrid: level.LightGrid, LightMinGrid: level.LightMinGrid}
+	}
 	raw.Lights = lightsToRaw(level.Lights, keepPrefabContent)
 	return raw, nil
 }
@@ -278,6 +283,10 @@ func checkRawFaces(chunkID, brushID, what string, nVerts int, faces []world.RawB
 	return nil
 }
 
+// ValidateRawLevel is the check SaveLevel makes before it writes: the same
+// refusal, for a level that arrives as text rather than from the editor.
+func ValidateRawLevel(raw *world.RawLevel) error { return validateRawLevel(raw) }
+
 func validateRawLevel(raw *world.RawLevel) error {
 	for ci := range raw.Chunks {
 		if err := validateRawChunk(&raw.Chunks[ci]); err != nil {
@@ -304,11 +313,16 @@ func spawnToRaw(s *world.SpawnPoint) *world.RawSpawn {
 
 // lightsToRaw converts the LightSet to its raw YAML form.
 func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
+	wrap, hemi := ls.Global.Wrap, ls.Global.Hemisphere
+	bounces, bounceScale := ls.Global.Bounces, ls.Global.BounceScale
 	rl := world.RawLights{
 		Global: world.RawGlobalLight{
 			Color:      world.RawColor{R: ls.Global.Color.X(), G: ls.Global.Color.Y(), B: ls.Global.Color.Z()},
 			Brightness: ls.Global.Brightness,
 			Disabled:   ls.Global.Disabled,
+			Wrap:       &wrap,
+			Hemisphere: &hemi,
+			Bounce:     &world.RawBounce{Count: &bounces, Scale: &bounceScale},
 		},
 	}
 	for _, dl := range ls.Directional {
@@ -522,7 +536,10 @@ func ApplyRawLevel(raw world.RawLevel, lvl *world.Level) error {
 	// of the leaked GPU buffers the two calls above exist to prevent.
 	world.StopAllSounds(lvl)
 	world.StopMusic(lvl, 0)
+	// Which level this is has not changed, only its contents.
+	name := lvl.Name
 	*lvl = newLevel
+	lvl.Name = name
 
 	world.UploadLights(lvl.Lights)
 	render.LoadVolumes(lvl)

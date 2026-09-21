@@ -133,3 +133,32 @@ func TestClearAndResetDetail(t *testing.T) {
 		t.Error("clearing a brush that has no detail mesh reported a change")
 	}
 }
+
+// TestEntityBrushesEqualSeesDetailEdits: the entity editor copies its live
+// brushes into the document only when this says they differ, so a Shape Detail
+// edit it calls equal is one Save never writes — which is how widening a
+// ship's window in detail mode came back narrow on reopen.
+func TestEntityBrushesEqualSeesDetailEdits(t *testing.T) {
+	doc := []Brush{detailedBox()}
+	if !EntityBrushesEqual(doc, CloneEntityBrushes(doc)) {
+		t.Fatal("a clone of a detailed brush compares unequal")
+	}
+
+	moved := CloneEntityBrushes(doc)
+	moved[0].Detail.Verts[0] = mgl32.Vec3{9, 9, 9}
+	if EntityBrushesEqual(doc, moved) {
+		t.Error("a moved detail vertex compares equal")
+	}
+
+	retextured := CloneEntityBrushes(doc)
+	retextured[0].Detail.Faces[0].Texture = "glass"
+	if EntityBrushesEqual(doc, retextured) {
+		t.Error("a retextured detail face compares equal")
+	}
+
+	tagged := CloneEntityBrushes(doc)
+	tagged[0].Tags = []string{"window"}
+	if EntityBrushesEqual(doc, tagged) {
+		t.Error("a brush given a tag compares equal")
+	}
+}

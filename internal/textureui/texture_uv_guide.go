@@ -19,3 +19,9 @@ import "github.com/go-gl/mathgl/mgl32"
 // UVGuideForTexture returns the UV islands of every open face that wears tex,
 // in UV space, or nil when nothing open does.
 var UVGuideForTexture = func(tex string) [][]mgl32.Vec2 { return nil }
+
+// UVSelectionForTexture returns the UV islands of the faces selected in the
+// open documents that wear tex — the subset of UVGuideForTexture the canvas
+// highlights so a face picked in a viewport shows where to paint. Nil when
+// nothing selected wears it.
+var UVSelectionForTexture = func(tex string) [][]mgl32.Vec2 { return nil }

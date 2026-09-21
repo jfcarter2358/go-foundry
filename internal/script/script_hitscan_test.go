@@ -509,3 +509,49 @@ end`)
 		t.Errorf("the widest shot was %v off centre: the cast did not scatter at all", off.F)
 	}
 }
+
+// A cast with "from" and "direction" is someone else's shot — an enemy firing
+// from its muzzle — so it goes where it is told rather than down the reticle,
+// and the player's body, which is in no entity list, is something it can hit.
+func TestHitscanFromAMuzzleCanHitThePlayer(t *testing.T) {
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "gun.flang", `def on_spawn(:spawn:) -> null
+    hitscan(:shot:, {"from": <8.0, 0.5, 5.0>, "direction": <0.0 - 1.0, 0.0, 0.0>, "ignore": @self})
+end
+def on_shot(:shot:, hit, at vec) -> null
+    if hit == @player
+        @self.attr.hit = "player"
+    elif hit != null
+        @self.attr.hit = hit.id
+    end
+end`)
+
+	lvl := aimingLevel(t)
+	lvl.Entities = []world.Entity{caster(path)}
+	runTicks(t, lvl, 2)
+	if got := attrStr(t, &lvl.Entities[0], "hit"); got != "player" {
+		t.Errorf("hit = %q, want the player standing in the line of fire", got)
+	}
+}
+
+// The reticle's own cast starts inside the player, and must not report them.
+func TestHitscanFromTheReticleNeverHitsThePlayer(t *testing.T) {
+	root := withTempScriptDir(t)
+	path := writeScript(t, root, "gun.flang", `def on_spawn(:spawn:) -> null
+    hitscan(:shot:, {"direction": <0.0, -1.0, 0.0>})
+end
+def on_shot(:shot:, hit, at vec) -> null
+    if hit != null
+        @self.attr.hit = hit.kind
+    end
+end`)
+
+	lvl := aimingLevel(t)
+	world.PlayerEntity.Position = gfx.Cam.Position
+	lvl.Entities = []world.Entity{caster(path)}
+	lvl.Entities[0].Position = mgl32.Vec3{5, 2, 5}
+	runTicks(t, lvl, 2)
+	if got := attrStr(t, &lvl.Entities[0], "hit"); got != "brush" {
+		t.Errorf("hit = %q, want the floor under the player's feet, not the player", got)
+	}
+}

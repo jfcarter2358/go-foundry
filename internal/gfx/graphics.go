@@ -56,6 +56,11 @@ var AlphaSharpenUniform int32
 // paint a textured wall in normals.
 var NormalColorUniform int32
 
+// UnlitUniform gates the self-lit path: the texture's own colour, with no
+// light or shadow applied. Set per draw from Geometry.Unlit, for the same
+// reason NormalColorUniform is.
+var UnlitUniform int32
+
 // BakedLightUniform gates the compiled-level lighting path: when set, the
 // fragment stage uses the light already on the vertices instead of summing the
 // scene's lights and sampling their shadow maps. Set per draw, like
@@ -139,6 +144,11 @@ func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
 	if err != nil {
 		return err
 	}
+	// And the lighting model — light_model.glsl.
+	fragmentSource, err = InjectLightModel(fragmentSource)
+	if err != nil {
+		return err
+	}
 
 	// [SCENARIO 1] Log shader source so the exact text sent to the driver is
 	// visible in foundry.log when a compile failure occurs.
@@ -162,6 +172,7 @@ func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
 	gl.AttachShader(Program, vertexShader)
 	gl.AttachShader(Program, fragmentShader)
 	gl.LinkProgram(Program)
+	ForgetUniformLocations(Program)
 
 	var status int32
 	gl.GetProgramiv(Program, gl.LINK_STATUS, &status)
@@ -292,6 +303,7 @@ func CompileProgramFromSources(vertSrc, fragSrc string) (uint32, error) {
 	gl.AttachShader(prog, vert)
 	gl.AttachShader(prog, frag)
 	gl.LinkProgram(prog)
+	ForgetUniformLocations(prog)
 	gl.DeleteShader(vert)
 	gl.DeleteShader(frag)
 

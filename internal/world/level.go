@@ -14,6 +14,11 @@ package world
 // from one whose spawn happens to sit at the origin; nil means "start the
 // player wherever the caller already had them".
 type Level struct {
+	// Name is the level's name as load_level takes it — its path under
+	// levels/ without the extension — or "" for one built in memory. Set by
+	// the loaders, not authored: it is what a save game records to find the
+	// level again, and what restarting reloads.
+	Name   string
 	Chunks []Chunk
 	Spawn  *SpawnPoint
 	// Seal is the box the level compiler treats as the inside of the level
@@ -26,6 +31,16 @@ type Level struct {
 	// UI are the .fui screens this level puts up when play starts — see
 	// RawLevel.UI.
 	UI []string
+	// EscapeLevel replaces the pause menu with a level change — see
+	// RawLevel.EscapeLevel.
+	EscapeLevel string
+	// SaveMode is what saving the game in this level writes — see
+	// RawLevel.SaveMode and savefile.
+	SaveMode SaveMode
+	// LightGrid and LightMinGrid are this level's own light-bake spacing, in
+	// world units, where it asks for one; 0 leaves the compiler's default.
+	// See RawCompile and compile.Compile.
+	LightGrid, LightMinGrid float32
 	// Volumes are the level's scriptable regions (volume.go).
 	Volumes []Volume
 	// Entities are the level's placed dynamic objects (entity.go). They live on
@@ -73,4 +88,39 @@ type Level struct {
 	// Spatial, from the same structural information, and refreshed every tick.
 	// Nil is the world-only case and reads as "no frames", not as an error.
 	Frames *FrameSet
+}
+
+// SaveMode is what a save made in a level holds.
+type SaveMode uint8
+
+const (
+	// SaveExact saves the game as it stands, down to where the player is.
+	SaveExact SaveMode = iota
+	// SaveCheckpoint saves the last checkpoint the player reached instead — or
+	// the start of the level, before any — so a save can never be used to
+	// skip the stretch between two checkpoints a level's design rests on.
+	SaveCheckpoint
+)
+
+// SaveModeNames are the YAML spellings, indexed by SaveMode.
+var SaveModeNames = []string{"exact", "checkpoint"}
+
+// SaveModeFromName reads the YAML spelling; anything unrecognised, including
+// "", is SaveExact.
+func SaveModeFromName(s string) SaveMode {
+	for i, n := range SaveModeNames {
+		if n == s {
+			return SaveMode(i)
+		}
+	}
+	return SaveExact
+}
+
+// SaveModeName is the inverse, and "" for the default so a level that never
+// chose one writes nothing.
+func SaveModeName(m SaveMode) string {
+	if m == SaveExact || int(m) >= len(SaveModeNames) {
+		return ""
+	}
+	return SaveModeNames[m]
 }

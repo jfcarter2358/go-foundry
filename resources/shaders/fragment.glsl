@@ -40,6 +40,12 @@ const float alphaCutoff = 0.5;
 // knowing about it shades exactly as it did before.
 uniform int normalColor;
 
+// Self-lit surfaces — a laser, a glowing readout. When set, the texture's own
+// colour is the result: no light, no shadow, no clamp to what the scene's
+// lights allow. Fog still applies. Off (0) by default, so a program that links
+// this shader without knowing about it shades exactly as it did before.
+uniform int unlit;
+
 // Water surface. isWater gates the whole path.
 uniform int   isWater;
 uniform float time;
@@ -58,6 +64,15 @@ uniform vec3  camPos;
 // disabled vertex attribute reads a driver default, not zero, so an unlit
 // surface would read as "baked to black" rather than as "not baked".
 uniform int   bakedLight;
+// bakedSunLight is the directional light whose share of a baked surface's
+// light is carried per vertex (fragBakedLight.w; world.LightSet.BakedSun), or
+// -1. shadowMapLive holds that light's cascades drawn with only what the bake
+// never saw — entities, sprites, chunks drawn live — so a baked surface can
+// take the sun back off where one of those shadows it, without the world's
+// own geometry landing a second, blockier copy of the shadow the bake already
+// has.
+uniform int   bakedSunLight;
+uniform sampler2DArrayShadow shadowMapLive;
 
 // Global ambient light
 
@@ -124,9 +139,10 @@ in vec3 fragNormal;
 // varyings — a vec4 per light per cascade would be 48 float varyings against a
 // guaranteed budget of 60.
 in float fragViewDepth;
-// The compiled level's baked lighting, interpolated across the triangle. Junk
-// unless bakedLight is set — see the uniform.
-in vec3 fragBakedLight;
+// The compiled level's baked lighting, interpolated across the triangle: xyz
+// the colour, w the baked sun's share (bakedSunLight). Junk unless bakedLight
+// is set — see the uniform.
+in vec4 fragBakedLight;
 
 out vec4 outputColor;
 
@@ -183,7 +199,7 @@ mat3 cotangentFrame(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2) {
 // 5x5 PCF sample of a single cascade layer. Returns occlusion in 0..1, or -1.0
 // when the fragment falls outside this cascade's box — the caller then falls
 // through to a wider cascade rather than reporting the fragment as lit.
-float sampleCascade(int matIdx, int layer, vec3 normal, vec3 lightDir) {
+float sampleCascade(sampler2DArrayShadow map, int matIdx, int layer, vec3 normal, vec3 lightDir) {
     vec4 posLS = cascadeMatrix[matIdx] * vec4(fragWorldPos, 1.0);
     vec3 projCoords = posLS.xyz / posLS.w;
     projCoords = projCoords * 0.5 + 0.5;
@@ -210,21 +226,19 @@ float sampleCascade(int matIdx, int layer, vec3 normal, vec3 lightDir) {
     // wide on screen when the surface is a couple of metres from the camera.
     float ref = currentDepth - bias;
     float lit = 0.0;
-    vec2 texelSize = 1.0 / vec2(textureSize(shadowMapArray, 0).xy);
+    vec2 texelSize = 1.0 / vec2(textureSize(map, 0).xy);
     for (int x = -2; x <= 2; x++) {
         for (int y = -2; y <= 2; y++) {
-            lit += texture(shadowMapArray,
+            lit += texture(map,
                 vec4(projCoords.xy + vec2(x, y) * texelSize, float(layer), ref));
         }
     }
     return 1.0 - lit / 25.0;
 }
 
-// Cascaded directional shadow lookup: pick the tightest cascade covering this
-// fragment, cross-fade into the next at the split, and fade out entirely as the
-// shadow range runs out.
-float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
-    int layerBase = dirLightShadowLayer[lightIdx];
+// calcDirShadowIn is calcDirShadow against a given map, whose cascades for
+// this light start at layerBase (-1: none).
+float calcDirShadowIn(sampler2DArrayShadow map, int layerBase, int lightIdx, vec3 normal, vec3 lightDir) {
     if (layerBase < 0) {
         return 0.0;
     }
@@ -241,13 +255,13 @@ float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
     }
 
     int matBase = lightIdx * SHADOW_CASCADES;
-    float shadow = sampleCascade(matBase + c, layerBase + c, normal, lightDir);
+    float shadow = sampleCascade(map, matBase + c, layerBase + c, normal, lightDir);
     if (shadow < 0.0) {
         // A fragment at the corner of a slice can sit just outside its own
         // cascade's box; the next one out always contains it.
         if (c + 1 < SHADOW_CASCADES) {
             c += 1;
-            shadow = sampleCascade(matBase + c, layerBase + c, normal, lightDir);
+            shadow = sampleCascade(map, matBase + c, layerBase + c, normal, lightDir);
         }
         if (shadow < 0.0) {
             return 0.0;
@@ -260,7 +274,7 @@ float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
     float span = max(cascadeSplit[c] - prev, 1e-4);
     float t = (fragViewDepth - prev) / span;
     if (c + 1 < SHADOW_CASCADES && t > 1.0 - SHADOW_CASCADE_BLEND) {
-        float next = sampleCascade(matBase + c + 1, layerBase + c + 1, normal, lightDir);
+        float next = sampleCascade(map, matBase + c + 1, layerBase + c + 1, normal, lightDir);
         if (next >= 0.0) {
             shadow = mix(shadow, next, (t - (1.0 - SHADOW_CASCADE_BLEND)) / SHADOW_CASCADE_BLEND);
         }
@@ -273,6 +287,13 @@ float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
     shadow *= 1.0 - clamp((fragViewDepth - fadeBegin) / max(maxDist - fadeBegin, 1e-4), 0.0, 1.0);
 
     return shadow;
+}
+
+// Cascaded directional shadow lookup: pick the tightest cascade covering this
+// fragment, cross-fade into the next at the split, and fade out entirely as the
+// shadow range runs out.
+float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
+    return calcDirShadowIn(shadowMapArray, dirLightShadowLayer[lightIdx], lightIdx, normal, lightDir);
 }
 
 // Sample offsets for soft point light shadows (20 directions).
@@ -308,12 +329,16 @@ float calcPointShadow(int lightIdx, vec3 fragPos) {
     return shadow;
 }
 
-// dirLightContrib is directional light i's share of this fragment: abs(N.L),
-// both sides of a surface lit alike, then its cascade shadow and the clouds'.
-// geoNormal is the unbumped normal the shadow bias wants — see main.
+// dirLightContrib is directional light i's share of this fragment: wrapped
+// Lambert on the side facing the viewer (light_model.glsl), then its cascade
+// shadow and the clouds'. geoNormal is the unbumped normal the shadow bias
+// wants — see main.
 vec3 dirLightContrib(int i, vec3 normal, vec3 geoNormal) {
     vec3 ldir = -normalize(dirLightDir[i]);
-    float diff = abs(dot(normal, ldir));
+    float diff = lightWrapTerm(dot(normal, ldir));
+    if (diff <= 0.0) {
+        return vec3(0.0); // facing away: no shadow lookup to pay for
+    }
     vec3 contrib = dirLightColor[i] * dirLightBrightness[i] * diff;
 
     if (dirLightCastShadows[i]) {
@@ -328,8 +353,8 @@ vec3 dirLightContrib(int i, vec3 normal, vec3 geoNormal) {
     return contrib;
 }
 
-// pointLightContrib is point light i's share: quadratic falloff to nothing at
-// its radius, then its cubemap shadow.
+// pointLightContrib is point light i's share: wrapped Lambert, quadratic
+// falloff to nothing at its radius, then its cubemap shadow.
 vec3 pointLightContrib(int i, vec3 normal) {
     vec3  toLight = pointLightPos[i] - fragWorldPos;
     float dist    = length(toLight);
@@ -338,7 +363,10 @@ vec3 pointLightContrib(int i, vec3 normal) {
     }
     float t           = 1.0 - (dist / pointLightRadius[i]);
     float attenuation = t * t;
-    float diff        = abs(dot(normal, normalize(toLight)));
+    float diff        = lightWrapTerm(dot(normal, normalize(toLight)));
+    if (diff <= 0.0) {
+        return vec3(0.0);
+    }
     vec3 contrib = pointLightColor[i] * pointLightBrightness[i] * diff * attenuation;
 
     if (pointLightCastShadows[i]) {
@@ -359,7 +387,16 @@ void main() {
 
     // Flat facet normal from screen-space position derivatives. Correct for a
     // flat surface and the fallback whenever no better normal is available.
+    //
+    // The cross product of two screen-space derivatives says nothing about the
+    // triangle's winding: window x cross window y always comes out facing the
+    // eye. So it is turned OUTWARD by the winding (away from the eye on a back
+    // face), which is the orientation the interpolated normals below arrive
+    // in and the one everything after this reads. Lighting is one-sided
+    // (light_model.glsl), so a facet normal facing the wrong way would light a
+    // surface from behind — which abs(N.L) used to hide.
     vec3 faceNormal = normalize(cross(dPdx, dPdy));
+    faceNormal *= gl_FrontFacing ? 1.0 : -1.0;
 
     vec3 normal;
     if (isWater != 0) {
@@ -449,7 +486,20 @@ void main() {
         // cloud_shadow.glsl for why a share rather than the whole of it. Unless
         // the sun the map follows is dynamic: then none of the baked answer is
         // its light, and its own term below takes the shadow in full.
-        lighting = fragBakedLight;
+        lighting = fragBakedLight.rgb;
+        // The baked sun, taken back off where something the bake never saw
+        // shadows it live: its unshadowed light here, times the share of it
+        // the bake kept, times how much of that the live-only map covers.
+        if (bakedSunLight >= 0 && fragBakedLight.w > 0.0) {
+            int s = bakedSunLight;
+            vec3 ldir = -normalize(dirLightDir[s]);
+            float diff = lightWrapTerm(dot(normal, ldir));
+            if (diff > 0.0) {
+                float live = calcDirShadowIn(shadowMapLive, 0, s, geoNormal, ldir);
+                vec3 sun = dirLightColor[s] * dirLightBrightness[s] * diff;
+                lighting = max(lighting - sun * fragBakedLight.w * live * dirLightShadowStrength[s], vec3(0.0));
+            }
+        }
         if (dirLightDynamic[clamp(cloudShadowLight, 0, MAX_DIR_LIGHTS - 1)] == 0) {
             lighting *= mix(1.0,
                 cloudShadowFactor(cloudShadowLight, fragWorldPos), CLOUD_SHADOW_BAKED_SHARE);
@@ -466,7 +516,7 @@ void main() {
         }
     } else {
         // Every light, static or dynamic, on anything that was not baked.
-        lighting = globalLightColor * globalLightBrightness;
+        lighting = ambientAt(globalLightColor * globalLightBrightness, normal);
         for (int i = 0; i < numDirLights; i++) {
             lighting += dirLightContrib(i, normal, geoNormal);
         }
@@ -501,7 +551,7 @@ void main() {
 
     if (finalAlpha < 0.001) discard;
 
-    vec3 surface = texColor.rgb * clamp(lighting, 0.0, 1.0);
+    vec3 surface = unlit != 0 ? texColor.rgb : texColor.rgb * clamp(lighting, 0.0, 1.0);
 
     if (isWater != 0) {
         vec3 viewDir = normalize(camPos - fragWorldPos);

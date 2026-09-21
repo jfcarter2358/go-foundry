@@ -45,15 +45,17 @@ and is always current.
 | [Entities](11-entities.md) | Types and instances, bounds, collision, attachments |
 | [Vehicles and frames](12-vehicles-and-frames.md) | Drivable things and walkable interiors |
 | [AI agents](24-ai.md) | Controllers that find their way, hunt targets and work objective volumes |
-| [Volumes](13-volumes.md) | Trigger regions, level exits, fog volumes, AI objectives |
+| [Volumes](13-volumes.md) | Trigger regions, level exits, checkpoints, fog volumes, AI objectives |
 | [Scenery and the brush](14-scenery-brush.md) | Stamping hundreds of static props |
 | [Sprites and particles](15-sprites-and-particles.md) | Billboards, the particle editor, and explosion effects |
 | [Audio](16-audio.md) | Placed sounds, music, attenuation, the mixer settings |
 | [UI screens](17-ui-screens.md) | The UI editor, anchors, bindings, themes, video |
 | [Scripting](18-scripting.md) | flang: events, messages, properties, parameters |
+| [Saves and checkpoints](26-saves-and-checkpoints.md) | Checkpoint volumes, Retry, save slots, per-level save mode |
 | [Testing and debugging](19-testing-and-debugging.md) | Play mode, the log window, engine switches |
 | [Compiling levels](23-compiling-levels.md) | CSG, visibility, baked light, Preview — and why a level has to be sealed |
 | [Shipping a game](20-shipping.md) | Release builds, `game.yaml`, installers |
+| [Version control](25-version-control.md) | The Git window: commit, branch, push and pull `resources/` |
 | [Keybindings](21-keybindings.md) | The whole table, in one place |
 
 ## Where things live

@@ -22,7 +22,6 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/gizmo"
 	"log"
-	"path/filepath"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -66,8 +65,8 @@ func modelEditorEnsureProgram() error {
 		return nil
 	}
 	p, err := gfx.CompileProgramWithSkinning(
-		filepath.Join(fileutil.ResourcesPath, "shaders/model_vert.glsl"),
-		filepath.Join(fileutil.ResourcesPath, "shaders/model_frag.glsl"),
+		fileutil.ShaderPath("model_vert.glsl"),
+		fileutil.ShaderPath("model_frag.glsl"),
 	)
 	if err != nil {
 		return fmt.Errorf("model editor shader: %w", err)
@@ -110,6 +109,7 @@ func modelEditorRebuild() {
 		g := gfx.Geometry{
 			Smooth:      sub.Smooth,
 			SmoothAngle: modelDoc.SmoothAngle,
+			AutoSmooth:  true,
 			Alpha:       1,
 		}
 		if err := g.Load(sub.Vertices, sub.Indices, sub.Texture, mgl32.Vec3{}); err != nil {

@@ -119,6 +119,21 @@ def on_enter(:enter:, other ref) -> null
 end
 ```
 
+## Checkpoints
+
+Tick **Checkpoint** on a volume and it becomes a checkpoint. The first time the
+player walks in, the game autosaves, and the death screen's **Retry** comes back
+to that point.
+
+- Like an exit, only the **player** triggers it, and only while the volume is
+  **enabled**.
+- It fires once per play-through, not once per entry. The set of checkpoints
+  reached is saved, so a retry does not reach the same one again.
+- A script on the volume still gets `:enter:`. The save is taken after that
+  handler has run.
+
+See [Saves and checkpoints](26-saves-and-checkpoints.md).
+
 ## AI objectives
 
 A volume can be somewhere AI agents are sent to act: a console to hack, a post

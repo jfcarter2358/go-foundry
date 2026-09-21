@@ -18,6 +18,7 @@ import (
 	"foundry/internal/render"
 	"foundry/internal/world"
 
+	"foundry/internal/imguibackend"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
 
@@ -63,16 +64,16 @@ func editorPlayerSection(lvl *world.Level) {
 func editorViewmodelSection(lvl *world.Level) {
 	agents := world.FindAIAgents(lvl)
 
-	if imgui.BeginCombo("Edit##viewmodeltarget", editorViewmodelTargetLabel(agents)) {
-		if imgui.SelectableV("Player", Editor.ViewmodelTarget == "", 0, imgui.Vec2{}) {
+	if imguibackend.BeginCombo("Edit##viewmodeltarget", editorViewmodelTargetLabel(agents)) {
+		if imguibackend.SelectableV("Player", Editor.ViewmodelTarget == "", 0, imgui.Vec2{}) {
 			Editor.ViewmodelTarget = ""
 		}
 		for _, a := range agents {
-			if imgui.SelectableV(a.ID, Editor.ViewmodelTarget == a.ID, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(a.ID, Editor.ViewmodelTarget == a.ID, 0, imgui.Vec2{}) {
 				Editor.ViewmodelTarget = a.ID
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Every entity with an AI controller, plus the player.\n" +

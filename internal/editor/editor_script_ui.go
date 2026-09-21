@@ -29,7 +29,6 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/imguibackend"
 	"foundry/internal/script"
-	"foundry/internal/uiwin"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
@@ -102,7 +101,7 @@ func drawScriptEditorWindow() {
 	imgui.SetNextWindowSize(imgui.Vec2{X: float32(w.W), Y: float32(w.H)})
 	if !imgui.BeginV("##scripteditor_root", nil,
 		imgui.WindowFlagsNoTitleBar|imgui.WindowFlagsNoResize|
-			imgui.WindowFlagsNoMove|imgui.WindowFlagsNoCollapse) {
+			imgui.WindowFlagsNoMove|imgui.WindowFlagsNoCollapse|imgui.WindowFlagsMenuBar) {
 		imgui.End()
 		return
 	}
@@ -143,61 +142,64 @@ func drawScriptEditorWindow() {
 	drawScriptComplPopup()
 }
 
-// drawScriptEditorMenuBar draws the file actions and the run/reload buttons.
+// drawScriptEditorMenuBar draws the menus (editor_menubar.go lays out the part
+// every editor shares), then the run button and the status line under them.
 func drawScriptEditorMenuBar() {
-	if imgui.Button("New") {
-		scriptEditorNewName = ""
-		scriptEditorShowNew = true
-	}
-	imgui.SameLine()
-	if imgui.Button("Open") {
-		scriptEditorShowOpen = true
-	}
-	imgui.SameLine()
-
-	// The latched-bool pattern: the condition is read *before* the button, since
-	// clicking it changes the answer and re-testing afterwards would pop a style
-	// colour that was never pushed, unbalancing ImGui's global stack.
-	unsaved := activeScript != nil && activeScript.Dirty()
-	imguibackend.EditorPushDisabled(!unsaved)
-	if imgui.Button("Save") {
-		scriptEditorSave()
-	}
-	imguibackend.EditorPopDisabled()
-
-	imgui.SameLine()
-	if imgui.Button("Save As") {
-		scriptEditorShowSaveAs = true
-	}
-	imgui.SameLine()
-	if imgui.Button("Reload All") {
-		scriptEditorReloadAll()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Re-read every script the level uses, from disk.")
+	if imgui.BeginMenuBar() {
+		scriptEditorMenus()
+		editorMenuBarShared(editorKindScript)
+		name := "(no script)"
+		if activeScript != nil {
+			name = activeScript.Name()
+		}
+		editorMenuBarDoc(name, activeScript != nil && activeScript.Dirty())
+		imgui.EndMenuBar()
 	}
 
-	imgui.SameLine()
-	if imgui.Button("Log") {
-		// Deferred: this runs inside this window's own Draw, and opening a
-		// window there would hand our imgui context away mid-frame. See
-		// RequestWindowOpen.
-		uiwin.RequestWindowOpen(OpenLogWindow)
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Open the log window: script output, and where errors happened.")
-	}
-
-	imgui.SameLine()
 	drawScriptEditorRunButton()
 
 	if scriptEditorStatusMsg != "" {
 		if sdl.GetTicks()-scriptEditorStatusTime > 4000 {
 			scriptEditorStatusMsg = ""
 		} else {
-			imgui.SameLine()
-			editorTextMuted(scriptEditorStatusMsg)
+			editorStatusText(scriptEditorStatusMsg)
 		}
+	}
+}
+
+// scriptEditorMenus draws the script editor's own menus.
+func scriptEditorMenus() {
+	if imgui.BeginMenu("File") {
+		if imgui.MenuItemV("New...", "Ctrl+N", false, true) {
+			scriptEditorNewName = ""
+			scriptEditorShowNew = true
+		}
+		if imgui.MenuItemV("Open...", "Ctrl+O", false, true) {
+			scriptEditorShowOpen = true
+		}
+		imgui.Separator()
+		if imgui.MenuItemV("Save", "Ctrl+S", false, activeScript != nil && activeScript.Dirty()) {
+			scriptEditorSave()
+		}
+		if imgui.MenuItemV("Save As...", "Ctrl+Shift+S", false, activeScript != nil) {
+			scriptEditorShowSaveAs = true
+		}
+		editorSaveAllMenuItem()
+		imgui.Separator()
+		if imgui.MenuItemV("Reload All", "Ctrl+R", false, true) {
+			scriptEditorReloadAll()
+		}
+		editorMenuTooltip("Re-read every script the level uses, from disk.")
+		if imgui.MenuItemV("Close Tab", "Ctrl+W", false, activeScript != nil) {
+			scriptEditorCloseDoc(activeScript)
+		}
+		editorCloseWindowItem(CloseScriptEditorWindow)
+		imgui.EndMenu()
+	}
+
+	if imgui.BeginMenu("Edit") {
+		ctxDrawMenuItems(scriptEditorBufferMenuItems())
+		imgui.EndMenu()
 	}
 }
 

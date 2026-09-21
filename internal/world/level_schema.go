@@ -27,6 +27,10 @@ type RawVolume struct {
 	// LoadLevel makes the volume a level exit: the named level is loaded when
 	// the player walks in, with no script involved. See Volume.LoadLevel.
 	LoadLevel string `yaml:"load_level,omitempty"`
+	// Checkpoint makes the volume a checkpoint: the first time the player walks
+	// in, the game is autosaved, and dying offers a retry from there. See
+	// Volume.Checkpoint.
+	Checkpoint bool `yaml:"checkpoint,omitempty"`
 	// Fog fills the region with fog. Absent is the ordinary case — a volume
 	// that is only a trigger. See Volume.Fog.
 	Fog *RawVolumeFog `yaml:"fog,omitempty"`
@@ -445,6 +449,22 @@ type RawGlobalLight struct {
 	// authored before the editor grew a switch for this has one, and none of
 	// them meant it to be dark. Same reasoning as RawFloor.Hidden.
 	Disabled bool `yaml:"disabled,omitempty"`
+	// Wrap and Hemisphere are GlobalLight's lighting-model knobs. Pointers so
+	// a level written before they existed gets the defaults
+	// (DefaultLightWrap, DefaultAmbientHemisphere) and a deliberate 0 — the
+	// old hard look — survives a round trip.
+	Wrap       *float32 `yaml:"wrap,omitempty"`
+	Hemisphere *float32 `yaml:"hemisphere,omitempty"`
+	// Bounce is the light bake's inter-reflection — see GlobalLight.Bounces.
+	// Absent gets the defaults; `count: 0` switches it off.
+	Bounce *RawBounce `yaml:"bounce,omitempty"`
+}
+
+// RawBounce is GlobalLight.Bounces/BounceScale. Pointers for the same reason
+// as Wrap: a deliberate 0 has to survive a round trip.
+type RawBounce struct {
+	Count *int     `yaml:"count,omitempty"` // bounces baked, 0 to 4; default 1
+	Scale *float32 `yaml:"scale,omitempty"` // strength of each bounce; default 1
 }
 
 // RawDirLight is the YAML representation of a directional light.
@@ -632,6 +652,19 @@ type RawMusic struct {
 	Fade float32 `yaml:"fade,omitempty"`
 }
 
+// RawCompile is a level's own compile settings (Level.LightGrid). A zero
+// field is the compiler's default.
+type RawCompile struct {
+	// LightGrid is how far apart baked light samples are, in world units:
+	// faces are cut on a grid this size before lighting. A level of open
+	// ground a kilometre long wants a coarser grid than a courtyard does —
+	// the finer one costs every frame, in surfaces drawn and shadowed.
+	LightGrid float32 `yaml:"light_grid,omitempty"`
+	// LightMinGrid is the finest spacing the bake refines to where a shadow
+	// edge crosses a face.
+	LightMinGrid float32 `yaml:"light_min_grid,omitempty"`
+}
+
 type RawLevel struct {
 	Chunks []RawChunk `yaml:"chunks"`
 	Spawn  *RawSpawn  `yaml:"spawn,omitempty"`
@@ -651,6 +684,18 @@ type RawLevel struct {
 	// Menus a script opens later are not listed here — show_screen names them
 	// directly. This is only what comes up with the level.
 	UI []string `yaml:"ui,omitempty"`
+	// EscapeLevel, when set, is the level Escape loads during play instead of
+	// putting up the pause menu — an intro or cutscene the player can skip but
+	// has nothing to pause. Named without its extension, as load_level takes it.
+	EscapeLevel string `yaml:"escape_level,omitempty"`
+	// Compile is how this level asks to be compiled, when it wants something
+	// other than the defaults. Absent for every level that does not.
+	Compile *RawCompile `yaml:"compile,omitempty"`
+	// SaveMode is what saving the game in this level writes: `exact` (the
+	// default) saves the game as it stands, `checkpoint` saves the last
+	// checkpoint the player reached — or the start of the level before any —
+	// so a save cannot skip the stretch between two checkpoints.
+	SaveMode string `yaml:"save_mode,omitempty"`
 	// Volumes are the level's scriptable regions (volume.go). They sit at the
 	// level rather than in a chunk because a trigger can span a doorway between
 	// two of them, and its authored position is world-space.

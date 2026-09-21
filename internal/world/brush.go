@@ -383,6 +383,7 @@ func BuildBrushFaceMeshFrom(pts []mgl32.Vec3, doubleSided bool, normal, origin m
 // faces: the generation it bumps is what tells the batch to rebuild.
 func (m *BrushMesh) Load() error {
 	MarkBrushMeshesChanged()
+	meshes := make([]faceMesh, len(m.Faces))
 	for fi := range m.Faces {
 		f := &m.Faces[fi]
 		f.Geometry.Delete()
@@ -395,12 +396,23 @@ func (m *BrushMesh) Load() error {
 		if len(verts) == 0 {
 			continue
 		}
+		meshes[fi] = faceMesh{verts, indices}
+	}
+	normals := brushSmoothNormals(m.Faces, meshes)
+	for fi := range m.Faces {
+		f := &m.Faces[fi]
+		verts, indices := meshes[fi].verts, meshes[fi].indices
+		if len(verts) == 0 {
+			continue
+		}
 		if f.DrawsCornerUVs() {
 			applyCornerUVs(verts, f.UVs)
 		}
 		offset, scale, rotation := f.DrawUVTransform()
 		ApplyUVTransform(verts, offset, scale, rotation)
 		f.Geometry.Smooth, f.Geometry.SmoothAngle = f.Smooth, f.SmoothAngle
+		f.Geometry.AutoSmooth = true
+		f.Geometry.VertexNormals = normals[fi]
 		// A face has no buffers of its own: its chunk's batch uploads every
 		// face of a material together (render/chunk_batch.go), which is what
 		// keeps a big area a few dozen GL objects rather than one per face.
@@ -413,6 +425,95 @@ func (m *BrushMesh) Load() error {
 		f.Geometry.BlendMask = f.BlendMask
 	}
 	return nil
+}
+
+// faceMesh is one face's triangulation as BuildBrushFaceMesh returns it.
+type faceMesh struct {
+	verts   [][]float32
+	indices []int
+}
+
+// brushSmoothNormals welds the smoothed normals of a whole brush: every drawn
+// face's triangles go into one mesh, so a corner averages with the faces on
+// the OTHER side of its edges — which is what makes a faceted cylinder read
+// round. Welding each face on its own, as Geometry.Load would, only ever sees
+// one flat polygon and hands back its plane. Each face keeps its own crease
+// angle for its own corners (geom.ComputeSmoothNormalsPerTriangle).
+//
+// The result is per face, per source vertex of that face's mesh — what
+// Geometry.VertexNormals takes. A corner shared by several of the face's
+// triangles takes the first one's answer: on a planar face they are all the
+// same triangle plane, so they agree.
+func brushSmoothNormals(faces []BrushFace, meshes []faceMesh) [][][]float32 {
+	var pool [][]float32
+	var indices []int
+	var angles []float32
+	first := make([]int, len(meshes)) // per face: where its corners start in indices
+	for fi, fm := range meshes {
+		first[fi] = len(indices)
+		base := len(pool)
+		pool = append(pool, fm.verts...)
+		for _, i := range fm.indices {
+			indices = append(indices, base+i)
+		}
+		for range len(fm.indices) / 3 {
+			angles = append(angles, faces[fi].SmoothAngle)
+		}
+	}
+	flat := geom.ComputeSmoothNormalsPerTriangle(pool, indices, func(t int) float32 { return angles[t] })
+	out := make([][][]float32, len(meshes))
+	if len(flat) != len(indices)*3 {
+		return out
+	}
+	for fi, fm := range meshes {
+		if len(fm.verts) == 0 {
+			continue
+		}
+		rows := make([][]float32, len(fm.verts))
+		for k, src := range fm.indices {
+			if rows[src] == nil {
+				c := (first[fi] + k) * 3
+				rows[src] = flat[c : c+3 : c+3]
+			}
+		}
+		out[fi] = rows
+	}
+	return out
+}
+
+// CornerNormals is the smoothed normal at each corner of each face of the mesh,
+// in the mesh's own space and in the order FacePoints lists the corners — what
+// Load gives the faces to shade with, for a caller that has the corners but
+// none of Load's geometry: the level compiler, which cuts every face into
+// fragments and has to hand each one the shading its face would have had. Nil
+// for a face Load would not draw.
+func (m *BrushMesh) CornerNormals() [][]mgl32.Vec3 {
+	meshes := make([]faceMesh, len(m.Faces))
+	for fi := range m.Faces {
+		f := &m.Faces[fi]
+		if f.NoDraw {
+			continue
+		}
+		verts, indices := BuildBrushFaceMesh(m.FacePoints(f), f.DoubleSided)
+		meshes[fi] = faceMesh{verts, indices}
+	}
+	rows := brushSmoothNormals(m.Faces, meshes)
+	out := make([][]mgl32.Vec3, len(m.Faces))
+	for fi, fm := range meshes {
+		if len(fm.verts) == 0 || rows[fi] == nil {
+			continue
+		}
+		// The first len(points) source vertices are the front side's corners,
+		// in order; a double-sided face's back copies follow them.
+		n := len(m.FacePoints(&m.Faces[fi]))
+		out[fi] = make([]mgl32.Vec3, n)
+		for i := 0; i < n && i < len(rows[fi]); i++ {
+			if r := rows[fi][i]; len(r) == 3 {
+				out[fi][i] = mgl32.Vec3{r[0], r[1], r[2]}
+			}
+		}
+	}
+	return out
 }
 
 // Release frees the GPU buffers every face owns. For geometry being removed

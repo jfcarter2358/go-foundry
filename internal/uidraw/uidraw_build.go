@@ -80,8 +80,11 @@ func buildNode(l *List, s *ui.Screen, n *ui.Node, in *ui.Interaction, alpha, sca
 	}
 
 	switch n.Kind {
-	case ui.KindText, ui.KindButton, ui.KindInput, ui.KindToggle:
+	case ui.KindText, ui.KindButton, ui.KindInput:
 		drawText(l, s, n, in, r, a, state)
+	case ui.KindToggle:
+		// The label sits beside the check box rather than over it.
+		drawText(l, s, n, in, toggleLabelRect(r), a, state)
 	}
 
 	if in.NavDriven && in.Focus.Is(s.ID, n.ID) {
@@ -255,16 +258,56 @@ func drawSliderHandle(l *List, n *ui.Node, r ui.Rect, alpha float32) {
 	l.AddRect(h, White(), PackColor(col))
 }
 
-// drawToggleMark fills the inset of a switched-on toggle.
+// drawToggleMark draws a toggle's check box: an empty well when it is off, the
+// well with an accent square in it when it is on.
+//
+// The well is drawn either way. A toggle that only showed its state by
+// filling in looked, switched off, exactly like a button, and switched on like
+// a button that had changed colour — nothing said it could be flipped back.
 func drawToggleMark(l *List, n *ui.Node, r ui.Rect, alpha float32) {
+	box := toggleBoxRect(r)
+	well := ui.ActiveTheme.BarBack
+	well[3] *= alpha
+	l.AddRect(box, White(), PackColor(well))
+	// Outlined in the label's colour: the well alone is nearly the colour of
+	// the toggle behind it, and an empty box has to be seen to be clicked.
+	edge := n.Text.Color
+	edge[3] *= alpha * 0.8
+	l.AddRectOutline(box, toggleBoxEdge, White(), PackColor(edge))
 	if !n.Value.On {
 		return
 	}
 	col := ui.ActiveTheme.Accent
 	col[3] *= alpha
-	inset := minF(r.W, r.H) * 0.25
-	l.AddRect(ui.Rect{X: r.X + inset, Y: r.Y + inset, W: r.W - 2*inset, H: r.H - 2*inset},
+	inset := box.W * 0.25
+	l.AddRect(ui.Rect{X: box.X + inset, Y: box.Y + inset, W: box.W - 2*inset, H: box.H - 2*inset},
 		White(), PackColor(col))
+}
+
+// toggleBoxEdge is the width of a toggle box's outline, in canvas units.
+const toggleBoxEdge = 2
+
+// toggleBoxRect is where a toggle's check box goes: a square at the left of a
+// wide toggle, which leaves the rest of it for the label, or most of a square
+// one.
+func toggleBoxRect(r ui.Rect) ui.Rect {
+	side := minF(r.W, r.H) * 0.66
+	pad := (r.H - side) / 2
+	if r.W < r.H*1.5 {
+		return ui.Rect{X: r.X + (r.W-side)/2, Y: r.Y + pad, W: side, H: side}
+	}
+	return ui.Rect{X: r.X + pad, Y: r.Y + pad, W: side, H: side}
+}
+
+// toggleLabelRect is the part of a toggle its label is laid out in: all of it
+// right of the check box on a wide toggle.
+func toggleLabelRect(r ui.Rect) ui.Rect {
+	if r.W < r.H*1.5 {
+		return r
+	}
+	box := toggleBoxRect(r)
+	shift := box.X + box.W - r.X + box.W*0.5 // and a gap
+	return ui.Rect{X: r.X + shift, Y: r.Y, W: r.W - shift, H: r.H}
 }
 
 // drawText paints a node's string, plus the caret when it is a focused input.

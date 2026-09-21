@@ -116,6 +116,11 @@ func BuildBSP(faces []Face) *BSPTree {
 	structural := make([]int, 0, len(t.Faces))
 	var detail []int
 	for i := range t.Faces {
+		if t.Faces[i].CoveredBy != nil {
+			// Buried while its neighbour is on, drawn past the PVS while it is
+			// off: in no cell either way. See Face.CoveredBy.
+			continue
+		}
 		if t.Faces[i].Detail {
 			detail = append(detail, i)
 			continue
@@ -386,14 +391,14 @@ func (t *BSPTree) splitFace(fi int, pl bsp.Plane) (front, back int) {
 	if len(f) >= 3 && bsp.PolygonArea(f) >= bsp.MinFragmentArea {
 		g := t.Faces[fi]
 		g.Points = f
-		g.Light = nil // no longer parallel to Points; the bake refills it
+		g.dropLight() // no longer parallel to Points; the bake refills it
 		t.Faces = append(t.Faces, g)
 		front = len(t.Faces) - 1
 	}
 	if len(b) >= 3 && bsp.PolygonArea(b) >= bsp.MinFragmentArea {
 		g := t.Faces[fi]
 		g.Points = b
-		g.Light = nil
+		g.dropLight()
 		t.Faces = append(t.Faces, g)
 		back = len(t.Faces) - 1
 	}
@@ -492,11 +497,18 @@ func planeSeen(seen []bsp.Plane, pl bsp.Plane) bool {
 
 // attachFacesToLeaves gives every empty leaf the list of faces that bound it.
 //
-// A node's coplanar faces are pushed down the subtree on the side they FACE —
-// which is the empty side, since CSG leaves normals pointing out of solids —
-// and land in the leaves they actually touch. Pushing rather than testing every
-// leaf against every face is what keeps this linear-ish: a face visits only the
-// cells its own polygon reaches.
+// A node's coplanar faces are pushed down from the ROOT and land in the leaves
+// they actually touch. Pushing rather than testing every leaf against every
+// face is what keeps this linear-ish: a face visits only the cells its own
+// polygon reaches.
+//
+// From the root rather than from the face's own node. The build filed the face
+// by the exact side of every plane above it, and a plane a hair off the face's
+// own (see attachEps) can leave the face's node on the far side of it from the
+// open air the face looks into, with only a zero-volume sliver in front of the
+// face on its own side. From the root, markFace hands the face across such a
+// plane, and at its own node it goes to both sides, where the side behind is
+// its own material and the solid filter drops it.
 func (t *BSPTree) attachFacesToLeaves() {
 	for ni := range t.Nodes {
 		n := &t.Nodes[ni]
@@ -507,11 +519,7 @@ func (t *BSPTree) attachFacesToLeaves() {
 				// Face.NoDraw.
 				continue
 			}
-			child := n.Front
-			if t.Faces[fi].Plane.N.Dot(n.Plane.N) < 0 {
-				child = n.Back
-			}
-			t.markFace(child, fi, t.Faces[fi].Points)
+			t.markFace(t.Root, fi, t.Faces[fi].Points)
 		}
 	}
 	for li := range t.Leaves {
@@ -535,7 +543,7 @@ func (t *BSPTree) markFace(c bsp.ChildRef, fi int, pts []mgl32.Vec3) {
 		return
 	}
 	n := &t.Nodes[c.Node()]
-	switch n.Plane.ClassifyPolygon(pts) {
+	switch classifyForAttach(n.Plane, pts) {
 	case bsp.SideFront:
 		t.markFace(n.Front, fi, pts)
 	case bsp.SideBack:
@@ -551,6 +559,46 @@ func (t *BSPTree) markFace(c bsp.ChildRef, fi int, pts []mgl32.Vec3) {
 		t.markFace(n.Front, fi, f)
 		t.markFace(n.Back, fi, b)
 	}
+}
+
+// attachEps is how far off a splitting plane a face may lie and still be
+// handed to the cells on both sides of it (markFace).
+//
+// Two neighbouring faces that are flat to the eye can have planes that differ
+// by less than a centimetre across the face and still not be SameAs: a hair's
+// tilt, 90 m from the origin, moves D by far more than bsp.OnPlaneEps. The
+// build then cuts the space between them into a paper-thin cell with no
+// volume, and so no portals, and a face lying a hair behind the other plane
+// was filed only there. level1's ground_cliff_040 had its top split into two
+// such triangles; one of them was drawn from that dead cell and no other, so
+// it was missing from the landing zone. Handing a face that is within this of
+// a plane to both sides costs at most a draw from an extra cell.
+const attachEps = float32(0.05)
+
+// classifyForAttach is where markFace sends a polygon. One that reaches past
+// attachEps on both sides is split, as ClassifyPolygon would. One that reaches
+// past it on one side and does not stray behind the plane on the other goes to
+// that side. Anything else goes to both (SideOn): a face within attachEps of the
+// plane, or grazing it — including a slightly bent face at its own node, which
+// can sit a few millimetres behind its own plane.
+func classifyForAttach(pl bsp.Plane, pts []mgl32.Vec3) bsp.Side {
+	farFront, farBack, front, back := false, false, false, false
+	for _, p := range pts {
+		d := pl.Distance(p)
+		farFront = farFront || d > attachEps
+		farBack = farBack || d < -attachEps
+		front = front || d > bsp.OnPlaneEps
+		back = back || d < -bsp.OnPlaneEps
+	}
+	switch {
+	case farFront && farBack:
+		return bsp.SideSpanning
+	case farFront && !back:
+		return bsp.SideFront
+	case farBack && !front:
+		return bsp.SideBack
+	}
+	return bsp.SideOn
 }
 
 func dedupInts(s []int) []int {

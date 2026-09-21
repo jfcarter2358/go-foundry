@@ -44,6 +44,30 @@ func levelProps() map[string]propAccess {
 			},
 			Doc: "how far a level load has got, from 0 to 1. 1 when nothing is loading",
 		},
+		"name": {
+			Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+				if c == nil || c.lvl == nil {
+					return nil, false
+				}
+				return flang.StrVal(c.lvl.Name), true
+			},
+			Doc: "the running level's name, as load_level takes it; \"\" for a level that was never loaded from a file",
+		},
+		"save_mode": {
+			Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+				if c == nil || c.lvl == nil {
+					return nil, false
+				}
+				return flang.StrVal(world.SaveModeNames[c.lvl.SaveMode]), true
+			},
+			Doc: "what save_game writes in this level: \"exact\" (where the player stands) or \"checkpoint\" (the last checkpoint reached)",
+		},
+		"last_checkpoint": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.StrVal(hooks.LastCheckpoint()), true
+			},
+			Doc: "the checkpoint retry() goes back to, or \"\" when none has been reached since the level was loaded or restarted",
+		},
 		"load_stage": {
 			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
 				return flang.StrVal(hooks.LoadStage()), true
@@ -263,6 +287,24 @@ func levelProps() map[string]propAccess {
 				return nil
 			},
 			Doc: "the player's sound-effects volume, 0 to 1, under master_volume; saved for every level and session",
+		},
+
+		// The player's Smooth Lighting setting (gfx.SmoothLighting), a player
+		// setting like the volumes above: saved to graphics.yaml once a change
+		// has settled (app/graphics_settings.go).
+		"smooth_lighting": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(gfx.SmoothLighting), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("smooth_lighting", "bool", v)
+				}
+				gfx.SetSmoothLighting(b)
+				return nil
+			},
+			Doc: "whether every surface shades smooth — lighting blends across the edges between a surface's faces, up to each face's crease angle — rather than only the ones marked Smooth; on by default, saved for every level and session",
 		},
 
 		// The hard pause — see script_pause.go. Engine state rather than a

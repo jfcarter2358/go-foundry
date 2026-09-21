@@ -60,6 +60,7 @@ func editorPropertiesSection(lvl *world.Level) {
 	editorSpawnPointSection(lvl)
 	editorSealSection(lvl)
 	editorLevelUISection(lvl)
+	editorLevelSaveSection(lvl)
 	editorEnvironmentSection(lvl)
 	editorPlayerSection(lvl)
 	editorEntityProperties(lvl)

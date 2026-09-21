@@ -99,28 +99,39 @@ func probeChunkSurface(ch *world.Chunk, from, to mgl32.Vec3, descending bool) (p
 
 	bestT := float32(-1)
 	var bestNormal mgl32.Vec3
-	for bi := range ch.Brushes {
-		b := &ch.Brushes[bi]
-		if !b.Solid {
-			continue
+	pc := brushBoxesFor(ch)
+	if pc == nil {
+		return mgl32.Vec3{}, mgl32.Vec3{}, false
+	}
+	test := func(b *world.Brush, f *world.BrushFace) {
+		pts := b.PlacedFacePoints(f)
+		for i := 1; i+1 < len(pts); i++ {
+			t, hit := rayTriangle(origin, dir, pts[0], pts[i], pts[i+1])
+			if hit && (bestT < 0 || t < bestT) {
+				bestT, bestNormal = t, b.PlacedFaceNormal(f)
+			}
 		}
-		// The probe is a vertical line, so a brush whose box it misses in XZ
-		// has no face it can meet — and a big chunk is mostly such brushes.
-		if !bodyBoxTouchesBrush(mgl32.Vec3{lTo.X(), 0, lTo.Z()}, mgl32.Vec3{0, 1e9, 0}, b) {
+	}
+	// The fixed brushes under the column, face boxes first.
+	for _, bi := range pc.fixedUnder(lTo) {
+		b := &ch.Brushes[bi]
+		if !b.Solid || !pc.boxes[bi].inColumn(lTo) {
 			continue
 		}
 		for fi := range b.Faces {
-			f := &b.Faces[fi]
-			pts := b.PlacedFacePoints(f)
-			for i := 1; i+1 < len(pts); i++ {
-				t, hit := rayTriangle(origin, dir, pts[0], pts[i], pts[i+1])
-				if !hit {
-					continue
-				}
-				if bestT < 0 || t < bestT {
-					bestT, bestNormal = t, b.PlacedFaceNormal(f)
-				}
+			if pc.faceBoxes[bi][fi].inColumn(lTo) {
+				test(b, &b.Faces[fi])
 			}
+		}
+	}
+	// And the loose ones, boxed where they are now.
+	for _, bi := range pc.loose {
+		b := &ch.Brushes[bi]
+		if !b.Solid || !bodyBoxTouchesBrush(mgl32.Vec3{lTo.X(), 0, lTo.Z()}, mgl32.Vec3{0, 1e9, 0}, b) {
+			continue
+		}
+		for fi := range b.Faces {
+			test(b, &b.Faces[fi])
 		}
 	}
 	if bestT < 0 {

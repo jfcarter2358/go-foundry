@@ -693,6 +693,9 @@ func lightProps() map[string]propAccess {
 func staticLightGate(name string, set func(*refCache, flang.RefVal, flang.Value) error) func(*refCache, flang.RefVal, flang.Value) error {
 	return func(c *refCache, r flang.RefVal, v flang.Value) error {
 		if d, p := c.lightFor(r); lightRefusesWrite(d, p, name) {
+			if name == "enabled" {
+				return staticLightSwitchError(r.String())
+			}
 			return staticLightError(r.String(), "cannot write "+name+" on")
 		}
 		return set(c, r, v)
@@ -717,4 +720,12 @@ func lightRefusesWrite(d *world.DirectionalLight, p *world.PointLight, prop stri
 // named, and what to do about it.
 func staticLightError(light, what string) error {
 	return fmt.Errorf("%s: %s a static light, whose light is baked into the level; tick Dynamic in its properties panel first", light, what)
+}
+
+// staticLightSwitchError is the refusal for `enabled`, which has a second way
+// out: a light left out of the bake may be switched even though it is static.
+// That is the fix a light belonging to geometry that goes away wants, and
+// "tick Dynamic" alone sends the author to the heavier one.
+func staticLightSwitchError(light string) error {
+	return fmt.Errorf("%s: cannot switch a static light on or off, because its light is baked into the level; tick \"Leave out of bake\" (no_bake) in its properties panel to let a script switch it, or Dynamic to let a script change anything on it", light)
 }

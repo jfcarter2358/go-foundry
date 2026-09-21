@@ -3,8 +3,8 @@ package editor
 // editor_release.go — the Release window: a release of this project, built
 // from inside the editor.
 //
-// The project is the directory the editor is running from, because its
-// resources/ is where it already reads and saves every asset
+// The project is the one the editor has open (fileutil.ProjectPath), because
+// its resources/ is where it already reads and saves every asset
 // (fileutil.ResourcesPath). The
 // build itself is internal/release, run in a child process (release.StartJob);
 // what is here is the settings it runs with and the output it prints.
@@ -62,6 +62,7 @@ var (
 
 	releaseProbe   releaseProbeResult
 	releaseProbeAt time.Time
+
 )
 
 var (
@@ -87,7 +88,7 @@ func OpenReleaseWindow() {
 	// is what the window shows — unless a build is running, whose settings are
 	// the ones already on screen.
 	if !ReleaseBuildRunning() {
-		releaseCfg, releaseCfgErr = release.LoadConfig(fileutil.ExecutablePath)
+		releaseCfg, releaseCfgErr = release.LoadConfig(fileutil.ProjectPath)
 	}
 	releaseProbeAt = time.Time{}
 
@@ -195,7 +196,7 @@ func drawReleaseWindow() {
 // drawReleaseBody is everything inside the window, split out so a test can draw
 // it in a bare imgui frame.
 func drawReleaseBody() {
-	root := fileutil.ExecutablePath
+	root := fileutil.ProjectPath
 	if time.Since(releaseProbeAt) > time.Second {
 		releaseProbe = probeRelease(root, releaseCfg)
 		releaseProbeAt = time.Now()
@@ -215,7 +216,10 @@ func drawReleaseBody() {
 	drawReleaseSettings(releaseProbe)
 	imguibackend.EditorPopDisabled()
 	imgui.Separator()
-	drawReleaseControls(root, releaseProbe, snap, running)
+	drawReleaseControls(snap, running, releaseBlockedReason(releaseCfg, releaseProbe), func() { startReleaseBuild(root) })
+	// The one thing about a release build most likely to surprise: it is built
+	// from the files, and the level open in front of you may not match them.
+	editorTextMuted("Builds what is saved on disk. Save the level first.")
 	imgui.Separator()
 	drawReleaseOutput(snap)
 }
@@ -321,18 +325,18 @@ func drawReleaseDebNote(pr releaseProbeResult) {
 	}
 }
 
-// drawReleaseControls draws Build or Cancel and the state of the build.
-func drawReleaseControls(root string, pr releaseProbeResult, snap release.JobSnapshot, running bool) {
-	blocked := ""
+// drawReleaseControls draws Build, or Cancel, and the state of the build.
+// blocked is why Build is disabled, or "".
+func drawReleaseControls(snap release.JobSnapshot, running bool, blocked string, start func()) {
 	if running {
 		if imgui.Button("Cancel") {
 			releaseJob.Cancel()
 		}
+		blocked = ""
 	} else {
-		blocked = releaseBlockedReason(releaseCfg, pr)
 		imguibackend.EditorPushDisabled(blocked != "")
 		if imgui.Button("Build") && blocked == "" {
-			startReleaseBuild(root)
+			start()
 		}
 		imguibackend.EditorPopDisabled()
 	}
@@ -355,10 +359,6 @@ func drawReleaseControls(root string, pr releaseProbeResult, snap release.JobSna
 	default:
 		editorTextColored(releaseErrorColor, fmt.Sprintf("Failed after %s — see the output below", elapsed))
 	}
-
-	// The one thing about a release build most likely to surprise: it is built
-	// from the files, and the level open in front of you may not match them.
-	editorTextMuted("Builds what is saved on disk. Save the level first.")
 }
 
 // startReleaseBuild saves the settings and starts the build.

@@ -265,6 +265,40 @@ func editorGlobalLightBody(lvl *world.Level) {
 		editorTextMutedWrapped("Switched off — the colour and brightness above are kept.")
 	}
 
+	// The lighting model, level-wide: how every light falls across a surface,
+	// baked and live alike (world.GlobalLight.LightWrap/AmbientAt).
+	imgui.Separator()
+	if editorDragFloat("Light Wrap##global", &g.Wrap, 0, 1, "%.2f") {
+		changed = true
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How far light reaches round a surface past side-on. 0 is a hard\nedge where a surface turns away from a light; higher eases it out.")
+	}
+	if editorDragFloat("Sky/Ground Ambient##global", &g.Hemisphere, 0, 1, "%.2f") {
+		changed = true
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How much brighter the ambient light is on surfaces facing up\nthan facing down. 0 is the same from every side.")
+	}
+
+	// Bounce acts on the compile's light bake alone (compile/bounce.go), so it
+	// shows in Preview and a release build, never in the live-lit viewport.
+	imgui.Separator()
+	bounces := int32(g.Bounces)
+	if imgui.SliderInt("Bounces##global", &bounces, 0, world.MaxBounces) {
+		g.Bounces = int(bounces)
+		changed = true
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How many times the light bake carries light on from one surface\nto the next, coloured by it. 0 bakes direct light only. Each one\ncosts the compile as much again. Seen in Preview and release\nbuilds only; the editor lights everything live.")
+	}
+	if editorDragFloat("Bounce Strength##global", &g.BounceScale, 0, 2, "%.2f") {
+		changed = true
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Multiplies the light each bounce carries. 1 is physical.")
+	}
+
 	if changed {
 		world.UploadLights(lvl.Lights)
 	}
@@ -620,7 +654,7 @@ func EditorDirLightIndicator() {
 	sz := dirLightIndicatorSize
 	x1 := float32(platform.WinWidth) - Editor.PanelWidth - pad
 	x0 := x1 - sz
-	y0 := 28 + pad
+	y0 := editorTopBarH + pad
 	y1 := y0 + sz + 46 // extra room for the title, elevation view, and readout
 
 	bg := imgui.PackedColorFromVec4(imgui.Vec4{X: 0.05, Y: 0.05, Z: 0.07, W: 0.78})

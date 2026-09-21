@@ -54,6 +54,11 @@ type StaticSurface struct {
 	// so nothing downstream has to re-derive it from the triangles.
 	Normal mgl32.Vec3
 	Lo, Hi mgl32.Vec3
+	// CoveredBy names the chunks whose solids bury this surface while they are
+	// switched on (compile.Face.CoveredBy): it is drawn only while every one of
+	// them is off, and then whatever the PVS says, since it is in no cell.
+	// Empty for every ordinary surface.
+	CoveredBy []string
 }
 
 // StaticGeometry is the whole of a compiled level's rendering side.
@@ -99,6 +104,10 @@ type StaticGeometry struct {
 	seen []bool
 	// all is the everything-visible answer, built once.
 	all []int
+	// covers lists the surfaces with a CoveredBy, which VisibleSurfaces adds
+	// past the PVS; coversFor is the surface count it was built for.
+	covers    []int
+	coversFor int
 }
 
 // Hidden reports whether a compiled surface should be skipped because the chunk
@@ -113,13 +122,43 @@ type StaticGeometry struct {
 // The map is empty in every level that never streams, and the guard is checked
 // before the lookup, so the ordinary case pays nothing.
 func (s *StaticGeometry) Hidden(i int) bool {
-	if s == nil || len(s.HiddenChunks) == 0 || i < 0 || i >= len(s.Surfaces) {
+	if s == nil || i < 0 || i >= len(s.Surfaces) {
 		return false
+	}
+	if len(s.HiddenChunks) == 0 {
+		// Nothing is switched off, so every cover surface is still buried.
+		return len(s.Surfaces[i].CoveredBy) > 0
 	}
 	if len(s.hidden) == len(s.Surfaces) && s.hiddenCount == len(s.HiddenChunks) {
 		return s.hidden[i]
 	}
-	return s.HiddenChunks[s.Surfaces[i].Chunk]
+	return s.HiddenFor(s.Surfaces[i].Chunk, s.Surfaces[i].CoveredBy)
+}
+
+// HiddenFor is Hidden for a surface from chunk, covered by coveredBy: off when
+// its own chunk is off, and — for a cover surface — while any chunk burying it
+// is still on.
+func (s *StaticGeometry) HiddenFor(chunk string, coveredBy []string) bool {
+	if s.HiddenChunks[chunk] {
+		return true
+	}
+	for _, c := range coveredBy {
+		if !s.HiddenChunks[c] {
+			return true
+		}
+	}
+	return false
+}
+
+// HiddenVersion changes whenever SetChunkHidden changes what is hidden, for a
+// cache outside this package built from which surfaces draw (the renderer's
+// point-shadow cache). A map written behind SetChunkHidden's back does not move
+// it; read len(HiddenChunks) alongside, as Hidden itself does.
+func (s *StaticGeometry) HiddenVersion() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.hiddenVersion
 }
 
 // SetChunkHidden records that a compiled chunk has been switched off, or on.
@@ -142,7 +181,7 @@ func (s *StaticGeometry) SetChunkHidden(chunkID string, hidden bool) {
 		s.hidden = make([]bool, len(s.Surfaces))
 	}
 	for i := range s.Surfaces {
-		s.hidden[i] = s.HiddenChunks[s.Surfaces[i].Chunk]
+		s.hidden[i] = s.HiddenFor(s.Surfaces[i].Chunk, s.Surfaces[i].CoveredBy)
 	}
 	s.hiddenCount = len(s.HiddenChunks)
 	s.hiddenVersion++
@@ -187,6 +226,17 @@ func (s *StaticGeometry) VisibleSurfaces(eye mgl32.Vec3, out []int) []int {
 			}
 		}
 	}
+	// A cover surface is in no cell: the PVS was built with the chunk that
+	// buries it switched on. It shows only at the edge of a streamed window,
+	// and there it goes past the PVS to the frustum.
+	if len(s.HiddenChunks) > 0 {
+		for _, fi := range s.coverSurfaces() {
+			if !s.seen[fi] && !s.Hidden(fi) {
+				s.seen[fi] = true
+				out = append(out, fi)
+			}
+		}
+	}
 	s.visible = append(s.visible[:0], out...)
 	s.visibleLeaf, s.visibleVersion, s.visibleCount, s.visibleValid = leaf, s.hiddenVersion, len(s.HiddenChunks), true
 	return out
@@ -207,13 +257,30 @@ func (s *StaticGeometry) everything() []int {
 		}
 		return out
 	}
-	if len(s.all) != len(s.Surfaces) {
-		s.all = make([]int, len(s.Surfaces))
-		for i := range s.all {
-			s.all[i] = i
+	if len(s.all) != len(s.Surfaces)-len(s.coverSurfaces()) {
+		// Nothing hidden means every cover surface is buried.
+		s.all = s.all[:0]
+		for i := range s.Surfaces {
+			if len(s.Surfaces[i].CoveredBy) == 0 {
+				s.all = append(s.all, i)
+			}
 		}
 	}
 	return s.all
+}
+
+// coverSurfaces is the index of every surface with a CoveredBy.
+func (s *StaticGeometry) coverSurfaces() []int {
+	if s.coversFor != len(s.Surfaces) {
+		s.covers = s.covers[:0]
+		for i := range s.Surfaces {
+			if len(s.Surfaces[i].CoveredBy) > 0 {
+				s.covers = append(s.covers, i)
+			}
+		}
+		s.coversFor = len(s.Surfaces)
+	}
+	return s.covers
 }
 
 // Release frees every GPU buffer the static geometry owns.

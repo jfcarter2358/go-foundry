@@ -20,7 +20,7 @@ package geom
 // and the brushes a level is built from (world/brush_uv.go). Both had better lay
 // the same mesh out the same way, and one implementation is how.
 //
-// Three properties the packing keeps deliberately:
+// Four properties the layout keeps deliberately:
 //
 //   - Uniform texel density. Every island is scaled by the *same* factor, so a
 //     face twice the size of another gets twice the texture area. Normalising
@@ -35,10 +35,16 @@ package geom
 //     layout. Otherwise every re-unwrap would scramble the texture that had been
 //     painted against the previous one.
 //
+//   - No overlap, inside an island as well as between them. Every face is
+//     checked as it joins an island, flattened, against the faces already
+//     there; one that would fold over or land on another starts a new island
+//     instead. No texel belongs to two places on the surface, so every part
+//     can be painted on its own.
+//
 // What it is not: a conformal or angle-preserving unwrap. Each island is a flat
-// projection, so a strongly curved island stretches towards its edges, and one
-// that folds back on itself can overlap. AngleLimit is the control for both —
-// lower it and the mesh is cut into more, flatter islands.
+// projection, so a strongly curved island stretches towards its edges.
+// AngleLimit is the control for that — lower it and the mesh is cut into more,
+// flatter islands.
 
 import (
 	"fmt"
@@ -223,59 +229,64 @@ func loopPoints(verts []mgl32.Vec3, loop []int) []mgl32.Vec3 {
 	return pts
 }
 
-// buildUVIslands groups faces into islands: two faces join when they share an
-// edge — the same two vertex indices — and the angle between their normals is
-// within the limit.
+// atlasFace is one usable face, resolved once for the whole unwrap.
+type atlasFace struct {
+	fi     int        // index into the faces slice
+	normal mgl32.Vec3 // unit, or zero for a face with no plane
+	tris   [][3]int   // its triangulation, as indices into verts
+	nbrs   []int      // slots of the faces across its edges, ascending
+}
+
+// buildUVIslands cuts the faces into islands, each of which flattens onto one
+// plane without any two of its faces landing on each other.
 //
-// Sharing an edge means sharing INDICES, not positions. Two faces that merely
-// touch in space, each with its own copy of the corner, are separate islands;
-// that is what keeps two brushes that meet at a wall from being flattened into
-// one sheet.
+// An island grows outwards from a seed face across shared edges — the same two
+// vertex INDICES, not positions. Two faces that merely touch in space, each with
+// its own copy of the corner, are separate islands; that is what keeps two
+// brushes that meet at a wall from being flattened into one sheet. A neighbour
+// joins only if:
 //
-// The grouping is a union-find over the faces rather than a flood fill, because
-// an island is defined by an equivalence relation ("reachable through
-// shallow-enough edges") and union-find expresses that directly — a flood fill
-// would have to re-derive the same answer with a visited set and a queue.
+//   - its normal is within the angle limit of the face it is reached from, so a
+//     hard edge is a seam;
+//   - its normal is within the limit of the SEED's, so a gentle curve cannot
+//     creep all the way round. Checking neighbours alone is what used to let a
+//     cylinder's whole barrel, or a limb, or a sphere, join into one island —
+//     every step 20°, the sum 360° — whose back then flattened onto its front;
+//   - flattened onto the seed's plane it keeps its winding, so it has not
+//     folded over, and it covers none of the faces already placed.
+//
+// The last test is what makes the layout paintable: every texel inside an
+// island belongs to one face. It is checked directly rather than trusted to the
+// angle tests, because a large angle limit, a non-planar face or a mesh that
+// spirals (a ramp, a helix, an overhang) can overlap while every angle passes.
+// A face turned away is not lost: it seeds, or joins, a later island.
+//
+// Seeds are taken in face order and the growth is breadth-first over sorted
+// neighbour lists, so the same mesh always cuts the same way.
 func buildUVIslands(verts []mgl32.Vec3, faces [][]int, opts AtlasOptions) []uvIsland {
 	// Only faces that can actually be projected take part. Dropping the
 	// degenerates here rather than mid-projection means every later step can
 	// assume a usable loop.
-	var list []int
+	var list []atlasFace
 	for fi, loop := range faces {
-		if usableAtlasFace(verts, loop) {
-			list = append(list, fi)
+		if !usableAtlasFace(verts, loop) {
+			continue
 		}
+		pts := loopPoints(verts, loop)
+		af := atlasFace{fi: fi, normal: PolygonNormal3D(pts)}
+		for _, t := range TriangulatePolygon3D(pts) {
+			af.tris = append(af.tris, [3]int{loop[t[0]], loop[t[1]], loop[t[2]]})
+		}
+		list = append(list, af)
 	}
 	if len(list) == 0 {
 		return nil
 	}
 
-	normals := make([]mgl32.Vec3, len(list))
-	for i, fi := range list {
-		normals[i] = PolygonNormal3D(loopPoints(verts, faces[fi]))
-	}
-
-	parent := make([]int, len(list))
-	for i := range parent {
-		parent[i] = i
-	}
-	find := func(i int) int {
-		for parent[i] != i {
-			parent[i] = parent[parent[i]] // path halving
-			i = parent[i]
-		}
-		return i
-	}
-	union := func(a, b int) {
-		if ra, rb := find(a), find(b); ra != rb {
-			parent[rb] = ra
-		}
-	}
-
 	// Which faces (by slot in list) sit on each undirected edge.
 	edgeFaces := make(map[[2]int][]int)
-	for slot, fi := range list {
-		loop := faces[fi]
+	for slot, af := range list {
+		loop := faces[af.fi]
 		for c := range loop {
 			a, b := loop[c], loop[(c+1)%len(loop)]
 			if a == b {
@@ -291,55 +302,182 @@ func buildUVIslands(verts []mgl32.Vec3, faces [][]int, opts AtlasOptions) []uvIs
 			edgeFaces[k] = append(edgeFaces[k], slot)
 		}
 	}
-
-	// The map is walked in no particular order, which is fine: the partition
-	// union-find arrives at does not depend on the order the unions came in.
-	cosLimit := float32(math.Cos(float64(opts.AngleLimit)))
+	// The map is walked in no particular order; sorting each neighbour list
+	// afterwards is what takes that order back out of the result.
 	for _, touching := range edgeFaces {
-		for a := 0; a < len(touching); a++ {
-			for b := a + 1; b < len(touching); b++ {
-				// A degenerate face has a zero normal, so this dot is 0 and it
-				// joins nothing above a 90° limit — it becomes its own island,
-				// which is the honest answer for a face with no plane.
-				if normals[touching[a]].Dot(normals[touching[b]]) >= cosLimit {
-					union(touching[a], touching[b])
+		for _, a := range touching {
+			for _, b := range touching {
+				if a != b {
+					list[a].nbrs = append(list[a].nbrs, b)
 				}
 			}
 		}
 	}
-
-	// Collect in first-seen order over the face list, so islands come out
-	// ordered by their lowest face index — stable across runs, unlike a walk
-	// over the group map.
-	groups := make(map[int][]int, len(list))
-	var roots []int
-	for slot, fi := range list {
-		r := find(slot)
-		if _, seen := groups[r]; !seen {
-			roots = append(roots, r)
-		}
-		groups[r] = append(groups[r], fi)
+	for i := range list {
+		list[i].nbrs = sortedUnique(list[i].nbrs)
 	}
 
-	out := make([]uvIsland, 0, len(roots))
-	for _, r := range roots {
-		out = append(out, projectIsland(verts, faces, groups[r], opts.VDown))
+	scale := atlasLengthScale(verts, faces, list)
+	cosLimit := float32(math.Cos(float64(opts.AngleLimit)))
+	assigned := make([]bool, len(list))
+	var out []uvIsland
+	for seed := range list {
+		if assigned[seed] {
+			continue
+		}
+		group := growUVIsland(verts, list, seed, assigned, cosLimit, scale)
+
+		// The seed's plane is the one the growth proved flat, but the island's
+		// area-weighted plane stretches it less. Use that one when it is also
+		// flat — it usually is — and fall back to the seed's when it is not.
+		n := islandAreaNormal(verts, faces, list, group)
+		if !islandFlatOn(verts, list, group, n, scale) {
+			n = list[seed].normal
+		}
+		fis := make([]int, len(group))
+		for i, slot := range group {
+			fis[i] = list[slot].fi
+		}
+		sort.Ints(fis)
+		out = append(out, projectIsland(verts, faces, fis, n, opts.VDown))
 	}
 	return out
 }
 
-// projectIsland flattens one island onto its best-fit plane.
-//
-// The plane's normal is the sum of the faces' *area vectors*, not of their unit
-// normals: a chart is usually a few large faces plus a scattering of small
-// ones, and weighting a sliver the same as the slab it sits on would tilt the
-// projection towards the sliver and stretch everything else.
-func projectIsland(verts []mgl32.Vec3, faces [][]int, group []int, vDown bool) uvIsland {
+// growUVIsland grows one island breadth-first from seed, marks its faces
+// assigned, and returns their slots. See buildUVIslands for the rules.
+func growUVIsland(verts []mgl32.Vec3, list []atlasFace, seed int, assigned []bool,
+	cosLimit float32, scale atlasScale) []int {
+	assigned[seed] = true
+	group := []int{seed}
+	n := list[seed].normal
+	if n.Len() < 0.5 {
+		// No plane to flatten anything else onto: the face stands alone,
+		// which is the honest answer for a face with no area.
+		return group
+	}
+	u, v := islandBasis(n, false)
+	origin := verts[list[seed].tris[0][0]]
+	flat := func(vi int) mgl32.Vec2 { return planeCoord(verts[vi], origin, u, v) }
+
+	grid := newTriGrid(scale.cell)
+	for _, t := range list[seed].tris {
+		grid.add(seed, flat(t[0]), flat(t[1]), flat(t[2]), scale.tol)
+	}
+
+	// Faces already turned down for this island for a reason that cannot
+	// change as it grows: outside the cone, folded, or overlapping. (Being too
+	// sharp an edge away from ONE neighbour is not such a reason — another
+	// neighbour may reach it at a shallower angle.)
+	refused := make(map[int]bool)
+	for q := 0; q < len(group); q++ {
+		cur := group[q]
+		for _, nb := range list[cur].nbrs {
+			if assigned[nb] || refused[nb] {
+				continue
+			}
+			if list[nb].normal.Dot(list[cur].normal) < cosLimit {
+				continue
+			}
+			if list[nb].normal.Dot(n) < cosLimit || !fitsFlat(list[nb], nb, grid, flat, scale.tol) {
+				refused[nb] = true
+				continue
+			}
+			for _, t := range list[nb].tris {
+				grid.add(nb, flat(t[0]), flat(t[1]), flat(t[2]), scale.tol)
+			}
+			assigned[nb] = true
+			group = append(group, nb)
+		}
+	}
+	return group
+}
+
+// fitsFlat reports whether a face, flattened, keeps its winding and covers no
+// triangle already in the grid.
+func fitsFlat(af atlasFace, slot int, grid *triGrid, flat func(int) mgl32.Vec2, tol float32) bool {
+	for _, t := range af.tris {
+		a, b, c := flat(t[0]), flat(t[1]), flat(t[2])
+		if triCross(a, b, c) < -tol*tol {
+			return false // folded over: seen from the plane it faces away
+		}
+		if grid.overlaps(slot, a, b, c, tol) {
+			return false
+		}
+	}
+	return true
+}
+
+// islandFlatOn reports whether a group of faces flattens onto the plane with
+// normal n with none folded and none overlapping another.
+func islandFlatOn(verts []mgl32.Vec3, list []atlasFace, group []int, n mgl32.Vec3,
+	scale atlasScale) bool {
+	if n.Len() < 0.5 {
+		return false
+	}
+	u, v := islandBasis(n, false)
+	origin := verts[list[group[0]].tris[0][0]]
+	flat := func(vi int) mgl32.Vec2 { return planeCoord(verts[vi], origin, u, v) }
+	grid := newTriGrid(scale.cell)
+	for _, slot := range group {
+		if !fitsFlat(list[slot], slot, grid, flat, scale.tol) {
+			return false
+		}
+		for _, t := range list[slot].tris {
+			grid.add(slot, flat(t[0]), flat(t[1]), flat(t[2]), scale.tol)
+		}
+	}
+	return true
+}
+
+// islandAreaNormal is the island's best-fit plane normal: the sum of its faces'
+// *area vectors*, not of their unit normals. A chart is usually a few large
+// faces plus a scattering of small ones, and weighting a sliver the same as the
+// slab it sits on would tilt the projection towards the sliver and stretch
+// everything else. Zero if the area vectors cancel.
+func islandAreaNormal(verts []mgl32.Vec3, faces [][]int, list []atlasFace, group []int) mgl32.Vec3 {
 	var n mgl32.Vec3
-	for _, fi := range group {
-		n = n.Add(loopAreaVector(verts, faces[fi]))
+	for _, slot := range group {
+		n = n.Add(loopAreaVector(verts, faces[list[slot].fi]))
 	}
 	if n.Len() < 1e-9 {
+		return mgl32.Vec3{}
+	}
+	return n.Normalize()
+}
+
+// islandBasis is the (u, v) an island flattens onto for plane normal n.
+//
+// The same basis a model's per-face planar unwrap builds, so a face unwrapped
+// either way comes out with its texture the same way up rather than mirrored.
+// PerpAxis puts U along the horizontal and V up the slope, the right-and-up of
+// someone facing the surface. v = n × u keeps a face wound CCW about n CCW in
+// the plane, which is what fitsFlat's fold test relies on — so the growth and
+// the flatness check always work unflipped, and vDown is applied only to the
+// final projection. A mirror cannot make faces fold or overlap, so the answer
+// is the same either way.
+func islandBasis(n mgl32.Vec3, vDown bool) (u, v mgl32.Vec3) {
+	u = PerpAxis(n)
+	if u.Len() < 1e-6 {
+		u = mgl32.Vec3{1, 0, 0}
+	}
+	u = u.Normalize()
+	v = n.Cross(u).Normalize()
+	if vDown {
+		v = v.Mul(-1)
+	}
+	return u, v
+}
+
+func planeCoord(p, origin, u, v mgl32.Vec3) mgl32.Vec2 {
+	d := p.Sub(origin)
+	return mgl32.Vec2{d.Dot(u), d.Dot(v)}
+}
+
+// projectIsland flattens one island (face indices, ascending) onto the plane
+// with normal n.
+func projectIsland(verts []mgl32.Vec3, faces [][]int, group []int, n mgl32.Vec3, vDown bool) uvIsland {
+	if n.Len() < 0.5 {
 		// The area vectors cancelled — a zero-area island, or two coincident
 		// faces wound against each other. Fall back to any face that does have
 		// a normal, then to +Y, so the island still lands somewhere finite
@@ -351,24 +489,10 @@ func projectIsland(verts []mgl32.Vec3, faces [][]int, group []int, vDown bool) u
 			}
 		}
 	}
-	if n.Len() < 1e-9 {
+	if n.Len() < 0.5 {
 		n = mgl32.Vec3{0, 1, 0}
 	}
-	n = n.Normalize()
-
-	// The same basis a model's per-face planar unwrap builds, so a face
-	// unwrapped either way comes out with its texture the same way up rather
-	// than mirrored. PerpAxis puts U along the horizontal and V up the slope,
-	// the right-and-up of someone facing the surface.
-	u := PerpAxis(n)
-	if u.Len() < 1e-6 {
-		u = mgl32.Vec3{1, 0, 0}
-	}
-	u = u.Normalize()
-	v := n.Cross(u).Normalize()
-	if vDown {
-		v = v.Mul(-1)
-	}
+	u, v := islandBasis(n.Normalize(), vDown)
 
 	is := uvIsland{Faces: group, Coords: make(map[int]mgl32.Vec2)}
 	origin := verts[faces[group[0]][0]]
@@ -379,8 +503,7 @@ func projectIsland(verts []mgl32.Vec3, faces [][]int, group []int, vDown bool) u
 			if _, done := is.Coords[vi]; done {
 				continue
 			}
-			d := verts[vi].Sub(origin)
-			c := mgl32.Vec2{d.Dot(u), d.Dot(v)}
+			c := planeCoord(verts[vi], origin, u, v)
 			is.Coords[vi] = c
 			minU, maxU = min(minU, c.X()), max(maxU, c.X())
 			minV, maxV = min(minV, c.Y()), max(maxV, c.Y())
@@ -389,6 +512,186 @@ func projectIsland(verts []mgl32.Vec3, faces [][]int, group []int, vDown bool) u
 	is.Min = mgl32.Vec2{minU, minV}
 	is.Size = mgl32.Vec2{maxU - minU, maxV - minV}
 	return is
+}
+
+// ---------- overlap testing in the flattened plane ----------
+
+// atlasScale sizes the overlap tests to the mesh rather than to fixed units, so
+// a centimetre-scale prop and a hundred-metre cliff are judged alike.
+type atlasScale struct {
+	tol  float32 // how far two triangles may interpenetrate and still count as touching
+	cell float32 // triGrid cell size
+}
+
+// atlasLengthScale derives the tests' sizes from the mean edge length of the
+// faces taking part.
+func atlasLengthScale(verts []mgl32.Vec3, faces [][]int, list []atlasFace) atlasScale {
+	var sum float64
+	var n int
+	for _, af := range list {
+		loop := faces[af.fi]
+		for c := range loop {
+			sum += float64(verts[loop[c]].Sub(verts[loop[(c+1)%len(loop)]]).Len())
+			n++
+		}
+	}
+	mean := float32(sum / float64(max(n, 1)))
+	if mean <= 0 || math.IsNaN(float64(mean)) || math.IsInf(float64(mean), 0) {
+		mean = 1
+	}
+	return atlasScale{tol: mean * 1e-4, cell: mean * 2}
+}
+
+// triGrid buckets flattened triangles by the cells their bounding boxes cover,
+// so testing a face against an island costs its neighbourhood rather than the
+// whole island.
+type triGrid struct {
+	cell  float32
+	tris  []gridTri
+	cells map[[2]int32][]int
+	// big holds triangles covering too many cells to bucket — a ground plane
+	// among a thousand bolts — and is tested against everything.
+	big []int
+}
+
+type gridTri struct {
+	slot    int
+	a, b, c mgl32.Vec2
+}
+
+// maxGridCellsPerTri bounds how many buckets one triangle is filed under.
+const maxGridCellsPerTri = 256
+
+func newTriGrid(cell float32) *triGrid {
+	return &triGrid{cell: cell, cells: make(map[[2]int32][]int)}
+}
+
+// cellRange is the span of cells a triangle's bounding box covers, and whether
+// it is small enough to bucket at all.
+func (g *triGrid) cellRange(a, b, c mgl32.Vec2) (x0, y0, x1, y1 int32, ok bool) {
+	lo := mgl32.Vec2{min(a.X(), b.X(), c.X()), min(a.Y(), b.Y(), c.Y())}
+	hi := mgl32.Vec2{max(a.X(), b.X(), c.X()), max(a.Y(), b.Y(), c.Y())}
+	fx0, fy0 := math.Floor(float64(lo.X()/g.cell)), math.Floor(float64(lo.Y()/g.cell))
+	fx1, fy1 := math.Floor(float64(hi.X()/g.cell)), math.Floor(float64(hi.Y()/g.cell))
+	if (fx1-fx0+1)*(fy1-fy0+1) > maxGridCellsPerTri || math.Abs(fx0) > 1e9 || math.Abs(fx1) > 1e9 ||
+		math.Abs(fy0) > 1e9 || math.Abs(fy1) > 1e9 {
+		return 0, 0, 0, 0, false
+	}
+	return int32(fx0), int32(fy0), int32(fx1), int32(fy1), true
+}
+
+// add files a triangle. One with no area covers nothing and is not kept.
+func (g *triGrid) add(slot int, a, b, c mgl32.Vec2, tol float32) {
+	if abs32(triCross(a, b, c)) <= tol*tol {
+		return
+	}
+	idx := len(g.tris)
+	g.tris = append(g.tris, gridTri{slot, a, b, c})
+	x0, y0, x1, y1, ok := g.cellRange(a, b, c)
+	if !ok {
+		g.big = append(g.big, idx)
+		return
+	}
+	for x := x0; x <= x1; x++ {
+		for y := y0; y <= y1; y++ {
+			k := [2]int32{x, y}
+			g.cells[k] = append(g.cells[k], idx)
+		}
+	}
+}
+
+// overlaps reports whether a triangle's interior meets that of any filed
+// triangle from a different face. Triangles of the same face never count
+// against each other: they share edges by construction.
+func (g *triGrid) overlaps(slot int, a, b, c mgl32.Vec2, tol float32) bool {
+	if abs32(triCross(a, b, c)) <= tol*tol {
+		return false // no area, so no interior to overlap with
+	}
+	hit := func(idx int) bool {
+		t := g.tris[idx]
+		return t.slot != slot && trianglesOverlap2D(a, b, c, t.a, t.b, t.c, tol)
+	}
+	for _, idx := range g.big {
+		if hit(idx) {
+			return true
+		}
+	}
+	x0, y0, x1, y1, ok := g.cellRange(a, b, c)
+	if !ok {
+		// Too big to look up by cell: test everything.
+		for idx := range g.tris {
+			if hit(idx) {
+				return true
+			}
+		}
+		return false
+	}
+	for x := x0; x <= x1; x++ {
+		for y := y0; y <= y1; y++ {
+			for _, idx := range g.cells[[2]int32{x, y}] {
+				if hit(idx) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// trianglesOverlap2D reports whether two triangles' interiors intersect by more
+// than tol, by the separating axis theorem: two convex shapes are disjoint
+// exactly when some edge normal of one of them separates them.
+//
+// The tolerance is what lets faces that share an edge or a corner — which is
+// every pair of neighbours in an island — count as touching, not overlapping:
+// along the shared edge's normal their projections meet at a single value.
+func trianglesOverlap2D(a0, a1, a2, b0, b1, b2 mgl32.Vec2, tol float32) bool {
+	ta := [3]mgl32.Vec2{a0, a1, a2}
+	tb := [3]mgl32.Vec2{b0, b1, b2}
+	for _, tri := range [2]*[3]mgl32.Vec2{&ta, &tb} {
+		for i := 0; i < 3; i++ {
+			e := tri[(i+1)%3].Sub(tri[i])
+			l := e.Len()
+			if l < 1e-12 {
+				continue
+			}
+			axis := mgl32.Vec2{-e.Y() / l, e.X() / l}
+			aLo, aHi := projectTri(ta, axis)
+			bLo, bHi := projectTri(tb, axis)
+			if aHi <= bLo+tol || bHi <= aLo+tol {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func projectTri(t [3]mgl32.Vec2, axis mgl32.Vec2) (lo, hi float32) {
+	lo, hi = t[0].Dot(axis), t[0].Dot(axis)
+	for _, p := range t[1:] {
+		d := p.Dot(axis)
+		lo, hi = min(lo, d), max(hi, d)
+	}
+	return lo, hi
+}
+
+func abs32(x float32) float32 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+// sortedUnique sorts s and drops repeats, in place.
+func sortedUnique(s []int) []int {
+	sort.Ints(s)
+	out := s[:0]
+	for i, x := range s {
+		if i == 0 || x != s[i-1] {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 // loopAreaVector returns a usable loop's Newell vector: a normal whose length is

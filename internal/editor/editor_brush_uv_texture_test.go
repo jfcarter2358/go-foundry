@@ -222,3 +222,31 @@ func TestExtrudeSidesOfAnUnwrappedFaceProjectFromTheirPlane(t *testing.T) {
 		}
 	}
 }
+
+// The highlight is the selected faces that are laid out on the texture — a
+// selected brush's unwrapped islands, not a neighbour's, and none of them on a
+// texture they do not wear.
+func TestBrushUVSelectionHighlightsOnlySelectedUnwrappedFaces(t *testing.T) {
+	brushUnwrapFixture(t)
+	Editor.SelectedBrushes = []brushSel{{chunkIdx: 0, brushIdx: 0}, {chunkIdx: 0, brushIdx: 1}}
+	if _, _, err := brushUnwrapFaces("room", 512, 60, 4); err != nil {
+		t.Fatalf("brushUnwrapFaces: %v", err)
+	}
+
+	Editor.SelectedBrushes = nil
+	Editor.SelectedFaces = []faceSel{brushFaceSel(0, 1, boxFaceTop)}
+	got := brushUVSelectionFor(&Editor.brushWorkspace, "room")
+	if len(got) != 1 {
+		t.Fatalf("selection loops = %d, want the one picked face", len(got))
+	}
+	_, _, m, f := brushAtlasFace{chunkIdx: 0, brushIdx: 1, faceIdx: boxFaceTop}.resolve(Editor.level)
+	want := m.FaceUVs(f)
+	for i := range want {
+		if got[0][i] != want[i] {
+			t.Errorf("corner %d = %v, want %v", i, got[0][i], want[i])
+		}
+	}
+	if got := brushUVSelectionFor(&Editor.brushWorkspace, "concrete"); got != nil {
+		t.Errorf("selection highlighted %d loops on a texture the face does not wear", len(got))
+	}
+}

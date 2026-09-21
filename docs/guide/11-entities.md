@@ -32,11 +32,11 @@ only where it is.
 
 ## The entity editor
 
-Toolbar: **Entity**. It edits a *type*, not a placement — a 3D view of the thing
+Editor strip: **Entity**. It edits a *type*, not a placement — a 3D view of the thing
 being assembled, an outline of what it is made of down the left, the type's
 properties down the right.
 
-Reach it three ways: the toolbar button, **Edit Type** beside a placed entity, or
+Reach it three ways: the editor strip, **Edit Type** beside a placed entity, or
 **Make Type** beside a blank one — which seeds a new definition from something
 already placed.
 

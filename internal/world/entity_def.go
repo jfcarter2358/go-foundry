@@ -96,6 +96,7 @@ type RawEntityModel struct {
 	Scale      *RawVec3             `yaml:"scale,omitempty"`
 	Alpha      float32              `yaml:"alpha,omitempty"`   // 0 = opaque
 	Visible    *bool                `yaml:"visible,omitempty"` // default true when absent
+	Unlit      bool                 `yaml:"unlit,omitempty"`   // self-lit; see EntityModel.Unlit
 	Animations []RawEntityAnimation `yaml:"animations,omitempty"`
 }
 
@@ -348,6 +349,7 @@ func entityModelFromRaw(r RawEntityModel) EntityModel {
 		Scale:      vec3FromRawPtr(r.Scale, mgl32.Vec3{}),
 		Alpha:      r.Alpha,
 		Visible:    BoolDefault(r.Visible, true),
+		Unlit:      r.Unlit,
 		Animations: entityAnimationsFromRaw(r.Animations),
 	}
 }
@@ -394,6 +396,7 @@ func entityModelToRaw(m *EntityModel) RawEntityModel {
 		Scale:      vec3ToRawPtr(m.Scale),
 		Alpha:      m.Alpha,
 		Visible:    BoolPtrIfFalse(m.Visible),
+		Unlit:      m.Unlit,
 		Animations: entityAnimationsToRaw(m.Animations),
 	}
 }
@@ -589,6 +592,7 @@ func (m *EntityModel) TemplateCopy() EntityModel {
 		Scale:    m.Scale,
 		Alpha:    m.Alpha,
 		Visible:  m.Visible,
+		Unlit:    m.Unlit,
 	}
 	if len(m.Animations) > 0 {
 		c.Animations = make([]EntityAnimation, len(m.Animations))

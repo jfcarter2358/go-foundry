@@ -10,6 +10,7 @@ package render
 
 import (
 	"fmt"
+	"strings"
 
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
@@ -63,6 +64,7 @@ func DebugRenderOverlay() {
 		imgui.Text(fmt.Sprintf("Sprites:      %d quads / %d particles / %d draws",
 			DebugStats.Sprites, DebugStats.Particles, DebugStats.SpriteDraws))
 		imgui.Text(fmt.Sprintf("Scenery:      %d drawn", DebugStats.Scenery))
+		imgui.Text(fmt.Sprintf("Point shadows: %d re-rendered of %d", DebugStats.PointShadowRenders, DebugStats.PointShadows))
 		imgui.Separator()
 
 		// The editor flies a free camera and leaves PlayerEntity parked
@@ -129,6 +131,15 @@ func DebugRenderOverlay() {
 				DebugStats.VolumeDraws, DebugStats.VolumeBlobs, onOff(CloudShadowActive())))
 		} else {
 			imgui.Text("Volumetrics:   unavailable (see the log)")
+		}
+		imgui.Separator()
+
+		// Where the frame goes, pass by pass (profile.go). GPU is the column
+		// that says what the GPU spent; a pass whose CPU number is the larger
+		// is the engine or the driver, not the hardware.
+		imgui.Text(fmt.Sprintf("%-22s %7s %7s", "Pass", "CPU ms", "GPU ms"))
+		for _, s := range ProfileSamples() {
+			imgui.Text(fmt.Sprintf("%-22s %7.2f %7.2f", strings.Repeat(" ", 2*s.Depth)+s.Name, s.CPUMs, s.GPUMs))
 		}
 		imgui.Separator()
 

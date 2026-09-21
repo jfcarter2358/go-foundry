@@ -45,62 +45,56 @@ func modelSetStatus(format string, args ...any) {
 
 // ---------- menu bar ----------
 
-func modelEditorMenuBar() {
-	if imgui.Button("New") {
-		modelNewDocument()
-	}
-	imgui.SameLine()
-	if imgui.Button("Open...") {
-		modelFileList = nil
-		modelShowOpenDialog = true
-	}
-	imgui.SameLine()
-
-	imguibackend.EditorPushDisabled(modelDoc == nil)
-	if imgui.Button("Save") {
-		modelDoSave()
-	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
-
-	imguibackend.EditorPushDisabled(modelDoc == nil)
-	if imgui.Button("Save As...") {
-		if modelDoc != nil {
+// modelEditorMenus draws the model editor's own menus.
+func modelEditorMenus() {
+	if imgui.BeginMenu("File") {
+		if imgui.MenuItem("New") {
+			modelNewDocument()
+		}
+		if imgui.MenuItem("Open...") {
+			modelFileList = nil
+			modelShowOpenDialog = true
+		}
+		imgui.Separator()
+		if imgui.MenuItemV("Save", "", false, modelDoc != nil) {
+			modelDoSave()
+		}
+		if imgui.MenuItemV("Save As...", "", false, modelDoc != nil) {
 			modelSaveAsName = modelDoc.ID
+			modelShowSaveAsDialog = true
 		}
-		modelShowSaveAsDialog = true
-	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
-
-	if imgui.Button("Import OBJ...") {
-		modelOBJList = nil
-		modelShowImportDialog = true
-	}
-	imgui.SameLine()
-
-	imguibackend.EditorPushDisabled(modelDoc == nil)
-	if imgui.Button("Export OBJ...") {
-		if modelDoc != nil {
+		editorSaveAllMenuItem()
+		imgui.Separator()
+		if imgui.MenuItem("Import OBJ...") {
+			modelOBJList = nil
+			modelShowImportDialog = true
+		}
+		if imgui.MenuItemV("Export OBJ...", "", false, modelDoc != nil) {
 			modelExportName = modelDoc.ID
+			modelShowExportDialog = true
 		}
-		modelShowExportDialog = true
+		editorCloseWindowItem(CloseModelEditorWindow)
+		imgui.EndMenu()
 	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
 
-	imguibackend.EditorPushDisabled(!ModelCanUndo())
-	if imgui.Button("Undo") {
-		ModelUndo()
+	if imgui.BeginMenu("Edit") {
+		editorUndoRedoItems(ModelCanUndo(), ModelCanRedo(), ModelUndo, ModelRedo)
+		imgui.Separator()
+		if imgui.MenuItemV("Select All", "Ctrl+A", false, modelDoc != nil) {
+			modelSelectAll()
+		}
+		imgui.EndMenu()
 	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
 
-	imguibackend.EditorPushDisabled(!ModelCanRedo())
-	if imgui.Button("Redo") {
-		ModelRedo()
+	if imgui.BeginMenu("View") {
+		if imgui.MenuItemV("Wireframe", "Z", modelWireframe, true) {
+			modelSetWireframe(!modelWireframe)
+		}
+		if imgui.MenuItemV("Fly Camera", "V", modelCam.Fly, true) {
+			modelCam.setFly(!modelCam.Fly)
+		}
+		imgui.EndMenu()
 	}
-	imguibackend.EditorPopDisabled()
 }
 
 // ---------- file actions ----------
@@ -111,6 +105,7 @@ func modelNewDocument() {
 	modelClearSelection()
 	ModelClearUndoHistory()
 	modelUVInvalidate()
+	modelMarkSaved()
 	modelSetStatus("New model")
 }
 
@@ -128,6 +123,8 @@ func modelDoSave() {
 		modelSetStatus("Save failed: %v", err)
 		return
 	}
+	requestModelReload(modelDoc.Path)
+	modelMarkSaved()
 	modelSetStatus("Saved %s", filepath.Base(modelDoc.Path))
 }
 
@@ -170,6 +167,8 @@ func modelDialogs() {
 				modelDoc.ID = modelSaveAsName
 				modelDoc.Path = path
 				modelFileList = nil
+				requestModelReload(path)
+				modelMarkSaved()
 				modelSetStatus("Saved %s", filepath.Base(path))
 			}
 			imgui.CloseCurrentPopup()
@@ -286,6 +285,7 @@ func modelAdoptDocument(doc *model.ModelDoc) {
 	ModelClearUndoHistory()
 	modelUVInvalidate()
 	modelCam.frame(modelDoc)
+	modelMarkSaved()
 }
 
 // ---------- properties panel ----------
@@ -366,9 +366,13 @@ func modelMeshSection() {
 		imgui.SetTooltip("Catmull-Clark: one level over the whole mesh.\nThe surface moves — it gets rounder each time.")
 	}
 
-	changed := editorSmoothPanel("Model", &modelSmoothAll, &modelDoc.SmoothAngle)
-	if changed {
+	// Only the checkbox sets every face: the crease angle is shown with it
+	// unticked too now, and dragging it must not clear the faces' own flags.
+	toggled, changed := editorSmoothPanel("Model", &modelSmoothAll, &modelDoc.SmoothAngle)
+	if toggled {
 		modelDoc.SetFaceSmooth(modelAllFaceIndices(), modelSmoothAll)
+	} else if changed {
+		modelDoc.Touch()
 	}
 }
 

@@ -265,6 +265,28 @@ func widgetProps() map[string]propAccess {
 			},
 			Doc: "the screen this widget belongs to",
 		},
+		"world_anchor": {
+			Get: get(func(n *ui.Node) flang.Value {
+				if p, ok := n.WorldAnchor(); ok {
+					return vecValue(p)
+				}
+				return flang.NullVal{}
+			}),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				if _, isNull := v.(flang.NullVal); isNull {
+					n.ClearWorldAnchor()
+					return nil
+				}
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("world_anchor", "vec or null", v)
+				}
+				n.SetWorldAnchor(p)
+				return nil
+			}),
+			Doc: "a point in the world the widget rides on: its pivot is kept where that point is on screen, " +
+				"and it is hidden while the point is behind the camera. null puts it back where it was authored",
+		},
 		"pos": {
 			Get: get(func(n *ui.Node) flang.Value {
 				r := n.Solved()

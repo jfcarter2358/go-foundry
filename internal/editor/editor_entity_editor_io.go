@@ -50,6 +50,7 @@ func entityNewDoc() {
 	entityGizmoMouseUp() // a drag into a document that is about to be replaced
 	entityDef = entityNewDefaultDef(entityUniqueDefName("entity"))
 	entityDefSaved = ""
+	entityDefSource.level, entityDefSource.id = nil, ""
 	entityDefDirty = false
 	entitySel = entityEditorSelection{}
 	EntityDefClearUndoHistory()
@@ -94,6 +95,7 @@ func entityLoadDef(name string) error {
 	entityDef = def.Clone()
 	entityDef.Name = name
 	entityDefSaved = name
+	entityDefSource.level, entityDefSource.id = nil, ""
 	entityDefDirty = false
 	entitySel = entityEditorSelection{}
 	EntityDefClearUndoHistory()
@@ -106,7 +108,11 @@ func entityLoadDef(name string) error {
 }
 
 // entitySaveCurrent writes the document under the name in the id field.
-func entitySaveCurrent() {
+func entitySaveCurrent() { entitySaveCurrentFrom(entityEditorWindow) }
+
+// entitySaveCurrentFrom is entitySaveCurrent called with from's GL context
+// current — nil when that is already the main window's, as it is for Save All.
+func entitySaveCurrentFrom(from *uiwin.UIWindow) {
 	if entityDef == nil {
 		return
 	}
@@ -115,12 +121,16 @@ func entitySaveCurrent() {
 		entityShowSaveAsDialog = true
 		return
 	}
-	entitySaveDefAs(entityDef.Name)
+	entitySaveDefAsFrom(entityDef.Name, from)
 }
 
 // entitySaveDefAs writes the document as name, and pushes the change out to
 // everything already placed from it.
-func entitySaveDefAs(name string) {
+func entitySaveDefAs(name string) { entitySaveDefAsFrom(name, entityEditorWindow) }
+
+// entitySaveDefAsFrom is entitySaveDefAs from the given window's GL context;
+// see entitySaveCurrentFrom.
+func entitySaveDefAsFrom(name string, from *uiwin.UIWindow) {
 	if entityDef == nil {
 		return
 	}
@@ -152,7 +162,12 @@ func entitySaveDefAs(name string) {
 	// chunk geometry for entities the main window draws, and a VAO minted here
 	// is a name that window cannot bind — see withMainGLFrom.
 	var n int
-	withMainGLFrom(entityEditorWindow, func() { n = ReloadEntitiesOfType(name, stampedFrom) })
+	withMainGLFrom(from, func() {
+		n = ReloadEntitiesOfType(name, stampedFrom)
+		if entityAdoptSource(name) {
+			n++
+		}
+	})
 	entityStatus = fmt.Sprintf("Saved %s%s", name+entityDefFileSuffix, reloadedSuffix(n))
 }
 
@@ -231,6 +246,51 @@ func ReloadEntitiesOfType(typeName string, prev *world.EntityDef) int {
 		}
 	}
 	return n
+}
+
+// entityAdoptSource makes the placed entity Make Type seeded this document from
+// an instance of typeName, which has just been saved, and forgets it — once is
+// all it takes, since from then on it is re-stamped like any other instance.
+// Reports whether it did.
+//
+// Its placement is all it keeps. Everything else it had went into the type, so
+// stamping it from the type rebuilds the same entity, now tracking the file.
+// Skipped when the level has since been swapped out, or the entity renamed,
+// deleted, or given a type some other way.
+func entityAdoptSource(typeName string) bool {
+	src := entityDefSource
+	entityDefSource.level, entityDefSource.id = nil, ""
+	lvl := Editor.level
+	if src.level == nil || src.level != lvl || src.id == "" {
+		return false
+	}
+	e := world.FindEntity(lvl, src.id)
+	if e == nil || e.Type != "" {
+		return false
+	}
+	def, err := world.LoadEntityDef(typeName)
+	if err != nil {
+		editorSetStatus("Entity type %s: %v", typeName, err)
+		return false
+	}
+	fresh, err := world.RestampEntity(e, nil, def)
+	if err != nil {
+		editorSetStatus("Entity %s: %v", e.ID, err)
+		return false
+	}
+	fresh.Type = typeName
+	EditorPushUndo()
+
+	e.Delete()
+	*e = fresh
+	if err := e.Load(); err != nil {
+		editorSetStatus("Entity %s: %v", e.ID, err)
+	}
+	editorSyncEntityContent(lvl, e)
+	if err := world.RebuildIndexes(lvl); err != nil {
+		editorSetStatus("Entity %s: %v", e.ID, err)
+	}
+	return true
 }
 
 // editorSyncEntityContent rebuilds everything a level materialises from one
@@ -384,9 +444,9 @@ func entityDeleteSelection() {
 // tags, attributes, script, vehicle and AI. What does not is where it is: a definition
 // has no position, because a definition is not anywhere.
 //
-// The placed entity is left exactly as it is. Turning it into an instance of
-// the new type would be a second decision — it would discard whatever it
-// overrides — and it is one click away in the panel once the type is saved.
+// The placed entity is left as it is until the type is saved; that first save
+// makes it an instance of the type (entityAdoptSource), so the level shows the
+// type as it was saved and follows every later save of it.
 func OpenEntityEditorFrom(e *world.Entity) {
 	if e == nil {
 		return
@@ -422,6 +482,7 @@ func OpenEntityEditorFrom(e *world.Entity) {
 		// Marked dirty from the start for the same reason — there is nothing on
 		// disk that matches what is on screen.
 		entityDefSaved = ""
+		entityDefSource.level, entityDefSource.id = Editor.level, e.ID
 		entityDefDirty = true
 		entitySel = entityEditorSelection{}
 		EntityDefClearUndoHistory()

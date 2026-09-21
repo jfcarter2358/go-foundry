@@ -112,16 +112,17 @@ func TestAPointLightFallsOffTheWayTheShaderDoes(t *testing.T) {
 // shader working it out every frame.
 func TestGeometryBetweenASurfaceAndALightShadowsIt(t *testing.T) {
 	// A light in room B, and floor in room A on the far side of the wall. The
-	// corridor is on the centre line, so the floor at z = 8 is behind solid
-	// wall from the light's point of view.
+	// corridor is on the centre line, so the floor at x = -15, z = 8 is behind
+	// solid wall from the light's point of view. (Not x = -5: that is UNDER the
+	// wall, a flush face nobody sees, lit as if from outside the wall.)
 	lights := world.LightSet{Points: []world.PointLight{{
 		Position: mgl32.Vec3{2, 2, 0}, Color: mgl32.Vec3{1, 1, 1}, Brightness: 1, Radius: 40,
 		CastShadows: true, ShadowStrength: 1,
 	}}}
 	tr := litRoom(t, lights)
 
-	lit := faceAt(t, tr, mgl32.Vec3{-2, 0, 0}, mgl32.Vec3{0, 1, 0})      // down the corridor
-	shadowed := faceAt(t, tr, mgl32.Vec3{-5, 0, 8}, mgl32.Vec3{0, 1, 0}) // behind the wall
+	lit := faceAt(t, tr, mgl32.Vec3{-2, 0, 0}, mgl32.Vec3{0, 1, 0})       // down the corridor
+	shadowed := faceAt(t, tr, mgl32.Vec3{-15, 0, 8}, mgl32.Vec3{0, 1, 0}) // behind the wall
 
 	var litMax, shadowMax float32
 	for _, l := range lit.Light {
@@ -299,5 +300,32 @@ func TestBakeExcludeSkipsOnlyTheNamedChunk(t *testing.T) {
 	}
 	if got := hangar.Light[0].X(); bsp.Abs(got-0.1) > 1e-4 {
 		t.Fatalf("hangar (excluded) baked %v, want only the 0.1 ambient", got)
+	}
+}
+
+// Shadow rays are tested against the drawn faces (faceBVH.occluded), and only
+// the front of a face stops one. A ray leaving a solid it started inside — a
+// vertex a bias's width into the brush it abuts, which is where level1's cliff
+// feet were baked black — gets out; the same ray from outside does not get in.
+func TestAShadowRayLeavingASolidIsNotBlockedByIt(t *testing.T) {
+	tr, _, _ := compiled(t, levelOf(boxFromTo("block", mgl32.Vec3{0, 0, 0}, mgl32.Vec3{2, 2, 2})))
+	bv := buildFaceBVH(tr, false)
+	up := mgl32.Vec3{0, 1, 0}
+	if bv.occluded(mgl32.Vec3{1, 1, 1}, up, 100, -1, false) {
+		t.Error("a ray from inside the block was stopped by the block's own top")
+	}
+	if !bv.occluded(mgl32.Vec3{1, -3, 1}, up, 100, -1, false) {
+		t.Error("a ray from under the block went through it")
+	}
+}
+
+// A vertex where a floor meets a wall lies on the wall's plane, so its ray
+// toward a light beyond the wall meets the wall at t = 0. That has to count:
+// skipped, the ray is inside the wall, sees only backs, and comes out lit.
+func TestAShadowRayStartingOnAFaceItEntersIsBlocked(t *testing.T) {
+	tr, _, _ := compiled(t, levelOf(boxFromTo("wall", mgl32.Vec3{0, 0, 0}, mgl32.Vec3{2, 4, 4})))
+	bv := buildFaceBVH(tr, false)
+	if !bv.occluded(mgl32.Vec3{0, 1, 2}, mgl32.Vec3{1, 0, 0}, 100, -1, false) {
+		t.Error("a ray starting on the wall's face and heading into it was not blocked")
 	}
 }

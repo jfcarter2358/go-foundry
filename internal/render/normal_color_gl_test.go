@@ -50,6 +50,7 @@ func newNormalProbe(t *testing.T) *normalProbe {
 	gfx.SmoothUniform = u("smoothShading")
 	gfx.BakedLightUniform = u("bakedLight")
 	gfx.NormalColorUniform = u("normalColor")
+	gfx.UnlitUniform = u("unlit")
 	gfx.AlphaSharpenUniform = u("alphaSharpen")
 	gfx.IsWaterUniform = u("isWater")
 	gfx.WaveAmplitudeUniform = u("waveAmplitude")
@@ -99,6 +100,12 @@ func newNormalProbe(t *testing.T) *normalProbe {
 // before model is applied — and returns the centre pixel.
 func (p *normalProbe) shadeQuad(texture string, model mgl32.Mat4) [4]uint8 {
 	p.t.Helper()
+	return p.shadeQuadWith(gfx.Geometry{Alpha: 1}, texture, model)
+}
+
+// shadeQuadWith is shadeQuad starting from g, for the per-surface flags.
+func (p *normalProbe) shadeQuadWith(g gfx.Geometry, texture string, model mgl32.Mat4) [4]uint8 {
+	p.t.Helper()
 
 	const h = 1.5 // wide enough to cover the centre pixel even edge-on-ish
 	verts := [][]float32{
@@ -107,8 +114,6 @@ func (p *normalProbe) shadeQuad(texture string, model mgl32.Mat4) [4]uint8 {
 		{h, h, 0, 1, 1},
 		{-h, h, 0, 0, 1},
 	}
-	var g gfx.Geometry
-	g.Alpha = 1
 	if err := g.Load(verts, []int{0, 1, 2, 0, 2, 3}, texture, mgl32.Vec3{}); err != nil {
 		p.t.Fatalf("upload probe quad: %v", err)
 	}

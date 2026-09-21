@@ -23,7 +23,7 @@ same visibility whether or not you have carved its walls — detail costs draws,
 not tree — and a wall you have detailed still seals the level exactly as the flat
 one did.
 
-You compile from the toolbar's **Compile** button, or from the command line:
+You compile from **Build > Compile**, or from the command line:
 
 ```
 go run ./cmd/foundrycompile              # every level under resources/levels
@@ -45,7 +45,7 @@ The numbers say whether your level is sealed. They say nothing about whether it
 seam where a texture restarts, a surface CSG took that it should not have, a
 shadow baked into the wrong place.
 
-The toolbar's **Preview** button next to Compile is for that. It compiles into
+**Build > Preview Compiled** is for that. It compiles into
 memory and draws the result the way a release build would — compiled surfaces,
 culled by the compiled visibility set — so what you are looking at is the
 shipped thing rather than an impression of it. `F3`'s overlay grows a
@@ -74,6 +74,9 @@ That is where the four passes above are spent —
   its shadow-map samples, for every pixel of static geometry — for every
   *static* light. A light marked **Dynamic** is left out of the bake and still
   summed per pixel, on top of the baked value (see *Lighting*).
+- The bake includes **bounce light** from one surface onto the next, which the
+  live lighting cannot do. This is the one way a compiled level looks different
+  from the editor. Set it with the Global Light's Bounces (see *Lighting*).
 
 — which means the shipped game is the *faster* of the two, and that the editor
 is the pessimistic case rather than the optimistic one.
@@ -196,20 +199,22 @@ the rest of the level, loads with its surfaces hidden, and switching it on is a
 flag flip with nothing to build.
 
 The catch is that a compile treats everything it bakes as present at once: one
-set of solids clipping each other's hidden faces away, one visibility set, one
-light bake. Streamed chunks must be able to coexist — neighbouring areas of one
-level, not alternatives that occupy the same space at different times, like a
-wall and the rubble it becomes. Where a streamed chunk's solid removes surface
-from another chunk (or the reverse), the compile says so:
+visibility set, one light bake. Where a streamed chunk's solid buries surface of
+another chunk (or the reverse), that surface is not thrown away: it is kept as
+*cover* surface, drawn only while the chunk burying it is switched off. So the
+last area at the edge of a streaming window shows its full surface, not the hole
+its switched-off neighbour used to leave. The compile says where this happens:
 
 ```
-WARNING level1: surface was removed from one chunk by another's solid where one
-of them is streamed; ...: ground_basin by ground_compound (12 faces, 30.5 sq), ...
+WARNING level1: surface of one chunk lies inside another's solid where one of
+them is streamed; ...: ground_basin by ground_compound (12 faces, 30.5 sq), ...
 ```
 
-Between areas that are always switched on together, that is expected along
-their seam. Between two that are not, it is a hole that appears when one of them
-goes off — leave one of the pair unstreamed, drawn live.
+Between neighbouring areas that is expected along their seam. What still assumes
+both are present is the light bake and the visibility set: a switched-off
+chunk's shadow stays baked onto its neighbour, and what it hid can stay culled.
+For two chunks that are alternatives occupying the same space, like a wall and
+the rubble it becomes, leave one of the pair unstreamed, drawn live.
 
 A light that belongs to a chunk that is not baked — a hangar marked Moves — can
 be marked **Leave out of bake** (`no_bake: true`). It stays static but is lit
@@ -241,7 +246,22 @@ canyon: faces 172 -> 891, 96 nodes, 121 cells (58 solid, 58 void, 5 interior),
 - **faces N -> M.** N is what you authored; M is what came out. It usually goes
   *up*, because faces are cut on a grid before lighting so that baked shadows
   have somewhere to land — `-grid` controls how fine (default 4 units; smaller
-  means sharper shadows and more geometry).
+  means sharper shadows and more geometry). Where a shadow edge crosses a face,
+  the compiler cuts that face finer, down to `-min-grid` (default 1 unit; `0`
+  turns it off). Each vertex near an edge averages a small patch of rays, so a
+  diagonal edge comes out as a smooth line, not a staircase.
+
+  A level can choose its own spacing, and then gets it however it is compiled —
+  the editor's Compile button, the release build, or `foundrycompile` — because
+  the right answer is a fact about the level. A kilometre of open ground cut on a
+  4-unit grid is hundreds of thousands of surfaces for the renderer to gather
+  every frame, where 8 units looks nearly the same from head height:
+
+  ```yaml
+  compile:
+    light_grid: 8        # instead of -grid
+    light_min_grid: 2    # instead of -min-grid
+  ```
 - **cells.** *Solid* is inside brush material, *void* is outside the level,
   *interior* is space you can stand in. Interior is the number that matters.
 - **cells visible on average.** How many cells a typical one can see. Close to

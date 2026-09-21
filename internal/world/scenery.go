@@ -224,7 +224,7 @@ func (s *Scenery) Load() error {
 		if err := gfx.EnsureTextureLoaded(sub.Texture); err != nil {
 			log.Printf("scenery %s: texture %q: %v", s.ID, sub.Texture, err)
 		}
-		g := gfx.Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle}
+		g := gfx.Geometry{Smooth: sub.Smooth, SmoothAngle: doc.SmoothAngle, AutoSmooth: true}
 		// The mesh is model-space and the draw carries ModelMatrix, so the
 		// geometry's own origin — the transparent pass's sort key — is zero.
 		if err := g.Load(sub.Vertices, sub.Indices, sub.Texture, mgl32.Vec3{}); err != nil {

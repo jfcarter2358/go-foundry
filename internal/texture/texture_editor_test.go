@@ -1,6 +1,11 @@
 package texture
 
 import (
+	"bytes"
+	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"foundry/internal/texdoc"
@@ -489,5 +494,31 @@ func TestBumpDirtyGatesTheNormalMapDerivation(t *testing.T) {
 	ed.EndStroke()
 	if !ed.BumpDirty {
 		t.Error("a height stroke did not mark the height field dirty")
+	}
+}
+
+func TestImportLayerImageIsOneUndoStep(t *testing.T) {
+	ed := newTestEditor(t, 4, 4)
+	path := filepath.Join(t.TempDir(), "in.png")
+	img := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+	for i := range img.Pix {
+		img.Pix[i] = 255
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ed.ImportLayerImage(path, texdoc.FitStretch, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(ed.Doc.Layers) != 2 || ed.Doc.Layers[1].Name != "in" || ed.Doc.Layers[1].Idx[0] == 0 {
+		t.Fatalf("import did not add a painted layer named after the file")
+	}
+	ed.Undo()
+	if len(ed.Doc.Layers) != 1 {
+		t.Fatalf("undo left %d layers, want 1", len(ed.Doc.Layers))
 	}
 }

@@ -87,6 +87,11 @@ func ResetSession() {
 	nav.Invalidate()
 }
 
+// CurrentSession is the session a state must carry to be resumed rather than
+// started afresh. A save game restamps the agents' states it puts back with it,
+// since the load that preceded the restore began a new session.
+func CurrentSession() uint64 { return session }
+
 // Update runs every controller in the level for one tick, and reports whether
 // any of them wrote to its entity — which the caller needs, to mark a play
 // session dirty.
@@ -178,7 +183,15 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 		brake(e, spec, math.MaxFloat32)
 		clearPath(st)
 		st.Mode = world.AIDisabled
-		setAnim(e, st, spec.IdleAnim)
+		// Only a pose the controller put there goes back to idle. A script
+		// that switched the controller off to play something of its own — a
+		// death, above all — keeps it; before, a body killed mid-walk was
+		// stood back up in its idle the tick after it fell.
+		if st.Anim != "" && !animShowing(e, st.Anim) {
+			st.Anim = ""
+		} else {
+			setAnim(e, st, spec.IdleAnim)
+		}
 		return true
 	}
 	if st.Mode == world.AIDisabled {
@@ -281,6 +294,13 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 		anim = in.anim
 	}
 	setAnim(e, st, anim)
+	// A body that is walking has to look like it. A script that posed it —
+	// the combat script's aim, or its idle on losing a target — did so
+	// without the controller hearing of it, so st.Anim still names the walk
+	// and setAnim would leave the body sliding along in a standing pose.
+	if moving && anim != "" && animDisplaced(e, anim) {
+		e.PlayAnimation("", anim)
+	}
 	return true
 }
 
@@ -494,6 +514,51 @@ func setAnim(e *world.Entity, st *world.AIState, name string) {
 	}
 	e.PlayAnimation("", name)
 	st.Anim = name
+}
+
+// animDisplaced reports whether something other than the controller has
+// replaced the loop it chose — on the first attachment that has that
+// animation, which is the one the controller's choice drives.
+//
+// A one-shot still running is not displaced: a flinch, a shot or a step up
+// while walking plays out, and the walk comes back when it ends.
+func animDisplaced(e *world.Entity, name string) bool {
+	for i := range e.Models {
+		m := &e.Models[i]
+		want := m.Animation(name)
+		if m.Anim == nil || want == nil {
+			continue
+		}
+		if m.Anim.Playing && !m.Anim.Loop {
+			return false
+		}
+		playing := m.Playing()
+		if playing == "" {
+			return true
+		}
+		// Compared by clip, since two names may share one.
+		return m.Animation(playing).EffectiveClip() != want.EffectiveClip()
+	}
+	return false
+}
+
+// animShowing reports whether the named animation is the pose the first
+// attachment that has it is showing — still playing, or a one-shot held on its
+// last frame, which Playing no longer reports.
+func animShowing(e *world.Entity, name string) bool {
+	for i := range e.Models {
+		m := &e.Models[i]
+		want := m.Animation(name)
+		if m.Anim == nil || want == nil {
+			continue
+		}
+		a := m.Anim
+		if a.Doc == nil || a.Clip < 0 || a.Clip >= len(a.Doc.Animations) {
+			return false
+		}
+		return a.Doc.Animations[a.Clip].Name == want.EffectiveClip()
+	}
+	return false
 }
 
 // ---------- where a body is ----------

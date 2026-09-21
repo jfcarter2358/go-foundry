@@ -627,6 +627,10 @@ func (l *linter) staticLightWrite(base flang.Expr, prop string, pos flang.Pos) {
 		return // an unknown or read-only property is someone else's complaint
 	}
 	if d, p := l.cache.lightFor(r); lightRefusesWrite(d, p, prop) {
+		if prop == "enabled" {
+			l.add(pos, "writing enabled would fail: light %q is static; tick \"Leave out of bake\" (no_bake) or Dynamic in its properties panel", addr.Name)
+			return
+		}
 		l.add(pos, "writing %s would fail: light %q is static; tick Dynamic in its properties panel", prop, addr.Name)
 	}
 }

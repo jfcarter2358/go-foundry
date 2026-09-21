@@ -496,3 +496,23 @@ end`)
 		}
 	}
 }
+
+// A change carries its value typed by the widget that sent it, including the
+// values that look like nothing: a toggle switched off is false, not 0.0, and
+// an emptied text field is "", not 0.0.
+func TestUIChangeValueIsTypedByTheWidgetEvenWhenZero(t *testing.T) {
+	cases := []struct {
+		ev   hooks.UIEvent
+		want flang.Value
+	}{
+		{hooks.UIEvent{Atom: "change", Toggle: true, Bool: false}, flang.BoolVal(false)},
+		{hooks.UIEvent{Atom: "change", Toggle: true, Bool: true, Num: 1}, flang.BoolVal(true)},
+		{hooks.UIEvent{Atom: "change", Text: true}, flang.StrVal("")},
+		{hooks.UIEvent{Atom: "change", Num: 0}, flang.FloatVal(0)},
+	}
+	for _, c := range cases {
+		if got := uiChangeValue(c.ev); got != c.want {
+			t.Errorf("%+v gave %#v, want %#v", c.ev, got, c.want)
+		}
+	}
+}

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"foundry/internal/imguibackend"
 	"foundry/internal/levelio"
+	"foundry/internal/uiwin"
 	"foundry/internal/world"
 	"slices"
 	"strconv"
@@ -83,103 +84,25 @@ func entityEditorToolbar() {
 	if w == nil {
 		return
 	}
-	imgui.SetNextWindowPos(imgui.Vec2{})
-	imgui.SetNextWindowSize(imgui.Vec2{X: float32(w.W), Y: entityToolbarH})
-	imgui.BeginV("##enttoolbar", nil,
-		imgui.WindowFlagsNoMove|imgui.WindowFlagsNoResize|imgui.WindowFlagsNoTitleBar|
-			imgui.WindowFlagsNoScrollbar)
+	editorTopBarBegin("##enttoolbar", float32(w.W))
 
-	if imgui.Button("New##entnew") {
-		entityNewDoc()
-	}
-	imgui.SameLine()
-	if imgui.Button("Open##entopen") {
-		entityShowOpenDialog = true
-		entityDefFileList = nil
-	}
-	imgui.SameLine()
-	if imgui.Button("Save##entsave") {
-		entitySaveCurrent()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Write " + world.EntitiesDirName + "/<id>.yaml and re-stamp\n" +
-			"every instance of it in the open level.")
-	}
-	imgui.SameLine()
-	if imgui.Button("Save As##entsaveas") {
-		entitySaveAsName = entityDefName()
-		entityShowSaveAsDialog = true
+	if imgui.BeginMenuBar() {
+		entityEditorMenus(w)
+		editorMenuBarShared(editorKindEntity)
+		name := entityDefName()
+		if name == "" {
+			name = "(unnamed)"
+		}
+		editorMenuBarDoc(name, entityEditorDirty())
+		imgui.EndMenuBar()
 	}
 
-	imgui.SameLine()
-	editorToolbarGroupSep()
-	imgui.SameLine()
-	if imgui.Button("Undo##entundo") {
-		EntityDefUndo()
-	}
-	imgui.SameLine()
-	if imgui.Button("Redo##entredo") {
-		EntityDefRedo()
-	}
-
-	imgui.SameLine()
-	editorToolbarGroupSep()
-	imgui.SameLine()
-	name := entityDefName()
-	if name == "" {
-		name = "(unnamed)"
-	}
-	if entityDefDirty {
-		name += " *"
-	}
-	imgui.Text(name)
-
-	// Pop In sits at the right edge, as the model and particle editors' do.
-	imgui.SameLine()
-	imgui.SetCursorPos(imgui.Vec2{X: float32(w.W) - 90, Y: 6})
-	if imgui.Button("Pop In##entpopin") {
-		CloseEntityEditorWindow()
-	}
-
-	// Second row: view toggles and the status line.
-	imgui.SetCursorPos(imgui.Vec2{X: 8, Y: 30})
-	imgui.Checkbox("Grid [\u21e7G]##entgrid", &entityShowGrid)
-	imgui.SameLine()
-	imgui.Checkbox("Bounds [B]##entbnds", &entityShowBounds)
-	imgui.SameLine()
-	imgui.Checkbox("Models##entshowm", &entityShowModels)
-	imgui.SameLine()
-	imgui.Checkbox("Brushes##entshowb", &entityShowBrushes)
-	imgui.SameLine()
-	imgui.Checkbox("Seats##entshows", &entityShowSeats)
-	imgui.SameLine()
-	imgui.Checkbox("Effects##entshowe", &entityShowEffects)
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Draw the type's emitters and the particles they are\n" +
-			"producing. Off leaves the simulation running — it is a\n" +
-			"view toggle, not the emitter's own switch.")
-	}
-	imgui.SameLine()
-	imgui.Checkbox("Volumes##entshowv", &entityShowVolumes)
-	imgui.SameLine()
-	imgui.Checkbox("Paths##entshowwp", &entityShowWaypoints)
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Draw the type's waypoint animations, and let a click on\n" +
-			"one of their arrows select that point.")
-	}
-	imgui.SameLine()
-	imgui.Checkbox("Wire##entwire", &entityWireOverlay)
-	imgui.SameLine()
-	imgui.Checkbox("Play [P]##entplay", &entityPlayAnims)
 	// ---- Group: edit context and selection unit ----
 	//
 	// The 3D view's own controls, on the 3D view's own keys, because the tools
 	// under them are the 3D view's — see editor_workspace.go. Object mode moves
 	// whole brushes about; edit mode reaches the points, edges and faces one is
 	// made of.
-	imgui.SameLine()
-	editorToolbarGroupSep()
-	imgui.SameLine()
 	if editorActiveToggleButton("Object [Tab]##entctxobj", !editorInEditMode()) {
 		editorSetEditContext(editorObjectMode)
 		entityBrushSelectionSync()
@@ -240,21 +163,73 @@ func entityEditorToolbar() {
 	if imgui.Button("Frame [F]##entframe") {
 		entityCam.frame()
 	}
-	imgui.SameLine()
-	imgui.SetNextItemWidth(100)
-	imgui.ColorEdit3V("BG##entbg", &entityBgColor, imgui.ColorEditFlagsNoInputs)
-	if w != nil {
-		w.ClearColor = [4]float32{entityBgColor[0], entityBgColor[1], entityBgColor[2], 1}
-	}
 
-	if msg := entityToolbarStatus(); msg != "" {
-		imgui.SameLine()
-		editorToolbarGroupSep()
-		imgui.SameLine()
-		editorTextMuted(msg)
-	}
+	editorStatusText(entityToolbarStatus())
 
 	imgui.End()
+}
+
+// entityEditorMenus draws the entity editor's own menus.
+func entityEditorMenus(w *uiwin.UIWindow) {
+	if imgui.BeginMenu("File") {
+		if imgui.MenuItemV("New", "Ctrl+N", false, true) {
+			entityNewDoc()
+		}
+		if imgui.MenuItemV("Open...", "Ctrl+O", false, true) {
+			entityShowOpenDialog = true
+			entityDefFileList = nil
+		}
+		imgui.Separator()
+		if imgui.MenuItemV("Save", "Ctrl+S", false, true) {
+			entitySaveCurrent()
+		}
+		editorMenuTooltip("Write " + world.EntitiesDirName + "/<id>.yaml and re-stamp\n" +
+			"every instance of it in the open level.")
+		if imgui.MenuItemV("Save As...", "Ctrl+Shift+S", false, true) {
+			entitySaveAsName = entityDefName()
+			entityShowSaveAsDialog = true
+		}
+		editorSaveAllMenuItem()
+		editorCloseWindowItem(CloseEntityEditorWindow)
+		imgui.EndMenu()
+	}
+
+	if imgui.BeginMenu("Edit") {
+		editorUndoRedoItems(EntityDefCanUndo(), EntityDefCanRedo(), EntityDefUndo, EntityDefRedo)
+		imgui.EndMenu()
+	}
+
+	if imgui.BeginMenu("View") {
+		editorMenuToggle("Grid", "Shift+G", &entityShowGrid)
+		editorMenuToggle("Bounds", "B", &entityShowBounds)
+		imgui.Separator()
+		editorMenuToggle("Models", "", &entityShowModels)
+		editorMenuToggle("Brushes", "", &entityShowBrushes)
+		editorMenuToggle("Seats", "", &entityShowSeats)
+		editorMenuToggle("Effects", "", &entityShowEffects)
+		editorMenuTooltip("Draw the type's emitters and the particles they are\n" +
+			"producing. Off leaves the simulation running — it is a\n" +
+			"view toggle, not the emitter's own switch.")
+		editorMenuToggle("Volumes", "", &entityShowVolumes)
+		editorMenuToggle("Paths", "", &entityShowWaypoints)
+		editorMenuTooltip("Draw the type's waypoint animations, and let a click on\n" +
+			"one of their arrows select that point.")
+		editorMenuToggle("Wire Overlay", "", &entityWireOverlay)
+		imgui.Separator()
+		editorMenuToggle("Play Animations", "P", &entityPlayAnims)
+		if imgui.MenuItemV("Fly Camera", "V", entityCam.Fly, true) {
+			entityCam.setFly(!entityCam.Fly)
+		}
+		if imgui.MenuItemV("Frame", "F", false, true) {
+			entityCam.frame()
+		}
+		imgui.Separator()
+		imgui.ColorEdit3V("Background##entbg", &entityBgColor, imgui.ColorEditFlagsNoInputs)
+		imgui.EndMenu()
+	}
+	// Every frame, not only while the menu is open: the colour is the
+	// document-independent view state the window is cleared to.
+	w.ClearColor = [4]float32{entityBgColor[0], entityBgColor[1], entityBgColor[2], 1}
 }
 
 // entityToolbarStatus is the one line of feedback the toolbar has room for.
@@ -305,7 +280,7 @@ func entityOutlineModels() {
 		if m.Path == "" {
 			label += "  (no mesh)"
 		}
-		if imgui.SelectableV(label, entitySel.Kind == entitySelModel && entitySel.Idx == i, 0, imgui.Vec2{}) {
+		if imguibackend.SelectableV(label, entitySel.Kind == entitySelModel && entitySel.Idx == i, 0, imgui.Vec2{}) {
 			entitySel = entityEditorSelection{Kind: entitySelModel, Idx: i}
 		}
 		imgui.PopID()
@@ -340,7 +315,7 @@ func entityOutlineBrushes() {
 		case !b.Solid:
 			label += "  (not solid)"
 		}
-		if imgui.SelectableV(label, entitySel.Kind == entitySelBrush && entitySel.Idx == i, 0, imgui.Vec2{}) {
+		if imguibackend.SelectableV(label, entitySel.Kind == entitySelBrush && entitySel.Idx == i, 0, imgui.Vec2{}) {
 			entitySelectBrush(i)
 		}
 		imgui.PopID()
@@ -403,7 +378,7 @@ func entityOutlineEmitters() {
 		case !m.Emitting:
 			label += "  (not emitting)"
 		}
-		if imgui.SelectableV(label, entitySel.Kind == entitySelEmitter && entitySel.Idx == i, 0, imgui.Vec2{}) {
+		if imguibackend.SelectableV(label, entitySel.Kind == entitySelEmitter && entitySel.Idx == i, 0, imgui.Vec2{}) {
 			entitySel = entityEditorSelection{Kind: entitySelEmitter, Idx: i}
 		}
 		imgui.PopID()
@@ -434,7 +409,7 @@ func entityOutlineSeats() {
 		if s.Driver {
 			label += "  (driver)"
 		}
-		if imgui.SelectableV(label, entitySel.Kind == entitySelSeat && entitySel.Idx == i, 0, imgui.Vec2{}) {
+		if imguibackend.SelectableV(label, entitySel.Kind == entitySelSeat && entitySel.Idx == i, 0, imgui.Vec2{}) {
 			entitySel = entityEditorSelection{Kind: entitySelSeat, Idx: i}
 		}
 		imgui.PopID()
@@ -504,14 +479,14 @@ func entityPanelIdentity() {
 
 func entityPanelBounds() {
 	editorTextMutedWrapped("The volume the world and other entities collide with — routinely nothing like the shape of the mesh inside it.")
-	if imgui.BeginCombo("Shape##entdefbk", world.BoundingTypeName(entityDef.BoundingKind)) {
+	if imguibackend.BeginCombo("Shape##entdefbk", world.BoundingTypeName(entityDef.BoundingKind)) {
 		for i, n := range world.BoundingTypeNames {
-			if imgui.SelectableV(n, world.BoundingType(i) == entityDef.BoundingKind, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(n, world.BoundingType(i) == entityDef.BoundingKind, 0, imgui.Vec2{}) {
 				entityBeginEdit("defbk")
 				entityDef.BoundingKind = world.BoundingType(i)
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	half := [3]float32{entityDef.BoundHalfX, entityDef.BoundHalfY, entityDef.BoundHalfZ}
 	if editorDragFloat3Step("Half extents##entdefhalf", &half, 0, 1000, "%.3f", 0.05) {
@@ -796,13 +771,13 @@ func entityAnimationRow(m *world.EntityModel, idx int, clips []string, live *wor
 	// Shown even when it is not among the model's clips, so a mapping that has
 	// gone stale is visible rather than silently reset to something that
 	// happens to exist.
-	if imgui.BeginCombo("Clip##clip", a.EffectiveClip()) {
+	if imguibackend.BeginCombo("Clip##clip", a.EffectiveClip()) {
 		known := false
 		for _, c := range clips {
 			if c == a.EffectiveClip() {
 				known = true
 			}
-			if imgui.SelectableV(c, c == a.EffectiveClip(), 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(c, c == a.EffectiveClip(), 0, imgui.Vec2{}) {
 				EntityDefPushUndo()
 				a.Clip = c
 				entityMarkDirty()
@@ -810,9 +785,9 @@ func entityAnimationRow(m *world.EntityModel, idx int, clips []string, live *wor
 			}
 		}
 		if !known {
-			imgui.SelectableV(a.EffectiveClip()+" (missing)", true, 0, imgui.Vec2{})
+			imguibackend.SelectableV(a.EffectiveClip()+" (missing)", true, 0, imgui.Vec2{})
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	speed := a.EffectiveSpeed()
 	if editorDragFloatStep("Speed##speed", &speed, 0.01, 100, "%.2f", 0.05) {
@@ -900,13 +875,13 @@ func entityChunkFileCombo(label string, file *string) bool {
 	if preview == "" {
 		preview = "(none)"
 	}
-	if !imgui.BeginCombo(label, preview) {
+	if !imguibackend.BeginCombo(label, preview) {
 		return false
 	}
-	defer imgui.EndCombo()
+	defer imguibackend.EndCombo()
 
 	changed := false
-	if imgui.SelectableV("(none)", *file == "", 0, imgui.Vec2{}) && *file != "" {
+	if imguibackend.SelectableV("(none)", *file == "", 0, imgui.Vec2{}) && *file != "" {
 		*file = ""
 		changed = true
 	}
@@ -915,13 +890,13 @@ func entityChunkFileCombo(label string, file *string) bool {
 		if n == *file {
 			known = true
 		}
-		if imgui.SelectableV(n, n == *file, 0, imgui.Vec2{}) && n != *file {
+		if imguibackend.SelectableV(n, n == *file, 0, imgui.Vec2{}) && n != *file {
 			*file = n
 			changed = true
 		}
 	}
 	if !known && *file != "" {
-		imgui.SelectableV(*file+" (missing)", true, 0, imgui.Vec2{})
+		imguibackend.SelectableV(*file+" (missing)", true, 0, imgui.Vec2{})
 	}
 	return changed
 }
@@ -1062,18 +1037,18 @@ func entityNameCombo(label string, value *string, names []string, emptyLabel str
 		preview = emptyLabel
 	}
 	changed := false
-	if imgui.BeginCombo(label, preview) {
-		if imgui.SelectableV(emptyLabel, *value == "", 0, imgui.Vec2{}) && *value != "" {
+	if imguibackend.BeginCombo(label, preview) {
+		if imguibackend.SelectableV(emptyLabel, *value == "", 0, imgui.Vec2{}) && *value != "" {
 			*value = ""
 			changed = true
 		}
 		for _, n := range names {
-			if imgui.SelectableV(n, n == *value, 0, imgui.Vec2{}) && n != *value {
+			if imguibackend.SelectableV(n, n == *value, 0, imgui.Vec2{}) && n != *value {
 				*value = n
 				changed = true
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	if *value != "" && !slices.Contains(names, *value) {
 		// A name the type no longer has: shown rather than silently reset, so
@@ -1154,7 +1129,7 @@ func entityEditorDialogs() {
 			editorTextMutedWrapped("Nothing in " + world.EntitiesDirName + "/ yet. Save one first.")
 		}
 		for _, name := range entityDefFileList {
-			if !imgui.Selectable(name) {
+			if !imguibackend.Selectable(name) {
 				continue
 			}
 			if err := entityLoadDef(name); err != nil {
@@ -1209,7 +1184,7 @@ func entityImportChunkDialog() {
 		editorTextMutedWrapped("Nothing there yet.")
 	}
 	for _, name := range entityChunkFileList {
-		if !imgui.Selectable(name) {
+		if !imguibackend.Selectable(name) {
 			continue
 		}
 		if err := entityImportChunkFile(name); err != nil {
@@ -1232,7 +1207,7 @@ func entityImportChunkDialog() {
 				// second copy of a thing that already has an owner.
 				continue
 			}
-			if !imgui.Selectable(ch.ID + "##lvlchunk" + strconv.Itoa(i)) {
+			if !imguibackend.Selectable(ch.ID + "##lvlchunk" + strconv.Itoa(i)) {
 				continue
 			}
 			entityImportLevelChunk(ch)
@@ -1318,7 +1293,7 @@ func entityPanelVehicle() {
 	v := entityDef.Vehicle
 
 	mode := int32(v.Mode)
-	if imgui.Combo("Mode##entdefvehmode", &mode, world.VehicleModeNames) {
+	if imguibackend.Combo("Mode##entdefvehmode", &mode, world.VehicleModeNames) {
 		EntityDefPushUndo()
 		newMode := world.VehicleMode(mode)
 		// Re-default the tuning when the mode changes, unless the author has

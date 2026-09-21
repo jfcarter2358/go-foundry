@@ -12,7 +12,6 @@ package gfx
 import (
 	"fmt"
 	"foundry/internal/fileutil"
-	"path/filepath"
 	"sync"
 )
 
@@ -28,7 +27,7 @@ func FogCommonSource() (string, error) {
 	if fogShaderSrc != "" {
 		return fogShaderSrc, nil
 	}
-	path := filepath.Join(fileutil.ResourcesPath, "shaders", "fog.glsl")
+	path := fileutil.ShaderPath("fog.glsl")
 	src, err := ReadShaderFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read fog shader: %w", err)
@@ -63,7 +62,7 @@ func CloudShadowSource() (string, error) {
 	if cloudShadowShaderSrc != "" {
 		return cloudShadowShaderSrc, nil
 	}
-	path := filepath.Join(fileutil.ResourcesPath, "shaders", "cloud_shadow.glsl")
+	path := fileutil.ShaderPath("cloud_shadow.glsl")
 	src, err := ReadShaderFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read cloud shadow shader: %w", err)
@@ -79,6 +78,39 @@ func CloudShadowSource() (string, error) {
 // render's biomeLightSnippet instead.
 func InjectCloudShadow(src string) (string, error) {
 	shared, err := CloudShadowSource()
+	if err != nil {
+		return "", err
+	}
+	return InjectAfterVersion(src, shared), nil
+}
+
+var (
+	lightModelShaderMu  sync.Mutex
+	lightModelShaderSrc string
+)
+
+// LightModelSource returns light_model.glsl, reading it once.
+func LightModelSource() (string, error) {
+	lightModelShaderMu.Lock()
+	defer lightModelShaderMu.Unlock()
+	if lightModelShaderSrc != "" {
+		return lightModelShaderSrc, nil
+	}
+	path := fileutil.ShaderPath("light_model.glsl")
+	src, err := ReadShaderFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read light model shader: %w", err)
+	}
+	lightModelShaderSrc = src
+	return src, nil
+}
+
+// InjectLightModel splices the shared lighting model (wrapped Lambert,
+// hemispheric ambient) into a fragment shader, on
+// InjectFog's terms. The biome_light.glsl consumers get the same file through
+// render's biomeLightSnippet.
+func InjectLightModel(src string) (string, error) {
+	shared, err := LightModelSource()
 	if err != nil {
 		return "", err
 	}

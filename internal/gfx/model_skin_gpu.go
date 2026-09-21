@@ -17,7 +17,6 @@ package gfx
 import (
 	"fmt"
 	"foundry/internal/fileutil"
-	"path/filepath"
 	"sync"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -43,7 +42,7 @@ func SkinCommonSource() (string, error) {
 	if skinShaderSrc != "" {
 		return skinShaderSrc, nil
 	}
-	path := filepath.Join(fileutil.ResourcesPath, "shaders", "skin_common.glsl")
+	path := fileutil.ShaderPath("skin_common.glsl")
 	src, err := ReadShaderFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read skinning shader: %w", err)

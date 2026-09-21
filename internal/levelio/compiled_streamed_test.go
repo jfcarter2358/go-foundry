@@ -77,7 +77,9 @@ func TestAStreamedChunkIsBakedHiddenAndShownByItsFlag(t *testing.T) {
 	world.SetChunkEnabled(area, true)
 	world.SyncChunkGeometry(&lvl)
 	for i := range lvl.Static.Surfaces {
-		if lvl.Static.Surfaces[i].Chunk == "area" && lvl.Static.Hidden(i) {
+		// A cover surface is the exception: it stays hidden while the chunk
+		// burying it is on (compile.Face.CoveredBy).
+		if lvl.Static.Surfaces[i].Chunk == "area" && lvl.Static.Surfaces[i].CoveredBy == nil && lvl.Static.Hidden(i) {
 			t.Fatal("switching the streamed chunk on left its surfaces hidden")
 		}
 	}

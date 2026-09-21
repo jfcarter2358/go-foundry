@@ -36,6 +36,7 @@ package compile
 // which of the two survives so that neither z-fights nor leaves a hole.
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -74,6 +75,17 @@ type Face struct {
 	// through it.
 	NoDraw bool
 
+	// CoveredBy marks surface that CSG took out from under the solid of
+	// another chunk, where one of the two is streamed. Such a fragment is
+	// buried only while every chunk named here is switched on, so it is kept
+	// rather than dropped, and the runtime draws it only while all of them are
+	// off (world.StaticSurface.CoveredBy). Otherwise the zone at the edge of a
+	// streamed window shows a hole wherever its switched-off neighbour
+	// overlapped it. A cover face lies inside solid as far as the tree knows,
+	// so it takes no part in the partition, is in no cell and is drawn past
+	// the PVS.
+	CoveredBy []string
+
 	// Everything that decides how it draws, copied off the source face. Copied
 	// rather than referenced because the source brush is not present at run
 	// time in a release build — that is the whole point of compiling.
@@ -104,24 +116,42 @@ type Face struct {
 	UVMap    world.UVMap
 	UVMapped bool
 
-	// Light is the baked per-vertex lighting, parallel to Points. Filled by the
-	// light stage; nil until then.
-	Light []mgl32.Vec3
+	// SmoothPoly and SmoothCorner are the SOURCE face's corners and the
+	// smoothed normal at each, in world space — how the face shades once
+	// smoothing is on (world.BrushMesh.CornerNormals), inherited by every
+	// fragment the face is cut into, which interpolates them at its own points
+	// (VertexNormals). Nil when every corner's normal is the plane's: a flat
+	// face nothing smooths into, the common case, and then there is nothing to
+	// store and nothing to bake twice.
+	SmoothPoly   []mgl32.Vec3
+	SmoothCorner []mgl32.Vec3
+
+	// Light is the baked per-vertex lighting, parallel to Points, taken with
+	// the plane's normal. Filled by the light stage; nil until then.
+	// SmoothLight is the same with VertexNormals, set only on a face that has
+	// them — the release renderer picks between the two by whether the face
+	// shades smooth (gfx.Geometry.BakedLightData). BackLight and
+	// SmoothBackLight are both again for the far side of a double-sided face,
+	// which faces the other way and so is lit by other lights.
+	Light           []mgl32.Vec3
+	SmoothLight     []mgl32.Vec3
+	BackLight       []mgl32.Vec3
+	SmoothBackLight []mgl32.Vec3
+
+	// SunShare is how much of the baked sun (world.LightSet.BakedSun) each
+	// point kept after the bake's own shadow, 0 to 1, parallel to Points;
+	// BackSunShare the same for a double-sided face's far side. The renderer
+	// scales the sun's unshadowed light by it and takes that back off wherever
+	// something the bake never saw — an entity, a chunk switched on later —
+	// shadows the point live. Nil with no baked sun.
+	SunShare     []float32
+	BackSunShare []float32
 
 	// sourceOrder is which brush this came from, in the level's own walk. Used
 	// only by the coplanar tie-break in clipsAgainst, and deliberately
 	// unexported: it is an artefact of how CSG runs, not part of what a
 	// compiled face is.
 	sourceOrder int
-
-	// hull is the brush a detail face was carved into, as its hull's outward
-	// face planes; nil on every other face. The tree labels that whole hull
-	// solid — it cannot know what the detail mesh cut out of it — so a shadow
-	// ray from an INSET detail face starts inside material and is blocked by
-	// nothing but its own brush. The bake starts such a ray where it leaves the
-	// hull instead (clearOfHull). Unexported for the same reason as
-	// sourceOrder.
-	hull []bsp.Plane
 }
 
 // solid is one brush as CSG sees it: its planes, its bounds, and the order it
@@ -214,13 +244,14 @@ func csg(lvl *world.Level) ([]Face, []StreamedClip, error) {
 // StreamedClip is surface of one chunk that CSG removed because it was inside a
 // solid of another, where at least one of the two is streamed.
 //
-// The compile treats every baked chunk as present at once, so that removal is
-// permanent — and if the two chunks are not in fact on together, the chunk left
-// on shows a hole where the other one's solid used to be. Between two
-// neighbouring streamed areas that are always switched on together it is
-// harmless, and expected along their seam; between two that are alternatives
-// (a hangar and the ground it hovers over) it is the level being compiled
-// wrongly. Reported, so an author can tell which.
+// The compile treats every baked chunk as present at once. The surface is not
+// lost — it comes back as CoveredBy fragments, drawn while the solid's chunk is
+// off, so a streamed window's edge has no hole where its switched-off neighbour
+// overlapped it. What still assumes both are on is the light bake (the solid's
+// shadow stays painted) and the PVS (what it hid stays culled). Between
+// neighbouring areas that is nothing anyone sees; between two that are
+// alternatives (a hangar and the ground it hovers over) it may be. Reported,
+// so an author can tell which.
 type StreamedClip struct {
 	FaceChunk  string  // the chunk whose surface was removed
 	SolidChunk string  // the chunk whose solid removed it
@@ -369,6 +400,7 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 					})
 				}
 			}
+			corners := drawn.CornerNormals()
 			for fi := range drawn.Faces {
 				f := &drawn.Faces[fi]
 				if f.NoDraw {
@@ -392,8 +424,8 @@ func gatherSolids(lvl *world.Level) ([]solid, []Face) {
 					// lookup; it is not part of the output.
 					sourceOrder: order,
 				}
-				if b.HasDetail() {
-					cf.hull = hull
+				if fi < len(corners) {
+					cf.SmoothPoly, cf.SmoothCorner = worldCornerNormals(pts, corners[fi], pl.N, model)
 				}
 				if f.DrawsCornerUVs() {
 					// Fitted to the WORLD-space corners, so the map already
@@ -459,9 +491,21 @@ func clipFaceAgainstSolids(f Face, solids []solid) []Face {
 
 // clipFaceAgainstSolidsReporting is clipFaceAgainstSolids, calling report with
 // the area a solid of another chunk removed whenever either chunk is streamed.
+//
+// When streamed is non-nil, that area is not thrown away: it comes back as
+// CoveredBy fragments, drawn only while the chunk that buried them is off.
+// A nil streamed map is the plain clip every other caller wants.
 func clipFaceAgainstSolidsReporting(f Face, solids []solid, streamed map[string]bool,
 	report func(faceChunk, solidChunk string, area float32)) []Face {
-	frags := [][]mgl32.Vec3{f.Points}
+	// A fragment and what it is buried under. Every fragment starts visible;
+	// one a streamed neighbour's solid swallows becomes a cover fragment and
+	// carries on being clipped, since whatever else it is inside still buries
+	// it whatever that neighbour is doing.
+	type frag struct {
+		pts   []mgl32.Vec3
+		cover []string
+	}
+	frags := []frag{{pts: f.Points}}
 	lo, hi := bsp.Bounds(f.Points)
 
 	for si := range solids {
@@ -476,36 +520,51 @@ func clipFaceAgainstSolidsReporting(f Face, solids []solid, streamed map[string]
 		if !clips {
 			continue
 		}
-		var next [][]mgl32.Vec3
-		for _, frag := range frags {
-			next = append(next, outsideOf(frag, planes)...)
-		}
-		if report != nil && s.chunk != "" && s.chunk != f.Chunk && (s.streamed || streamed[f.Chunk]) {
-			if lost := fragmentsArea(frags) - fragmentsArea(next); lost > bsp.MinFragmentArea {
-				report(f.Chunk, s.chunk, lost)
+		crossStreamed := s.chunk != "" && s.chunk != f.Chunk && (s.streamed || streamed[f.Chunk])
+		var next []frag
+		lost := float32(0)
+		for _, fr := range frags {
+			if crossStreamed && slices.Contains(fr.cover, s.chunk) {
+				next = append(next, fr) // already under this chunk; another of its solids adds nothing
+				continue
 			}
+			kept, inside := outsideAndInside(fr.pts, planes)
+			for _, k := range kept {
+				next = append(next, frag{pts: k, cover: fr.cover})
+			}
+			if inside == nil {
+				continue
+			}
+			if !crossStreamed {
+				continue // buried for good
+			}
+			lost += bsp.PolygonArea(inside)
+			if streamed == nil {
+				continue
+			}
+			cover := append(slices.Clone(fr.cover), s.chunk)
+			slices.Sort(cover)
+			next = append(next, frag{pts: inside, cover: cover})
+		}
+		if report != nil && crossStreamed && lost > bsp.MinFragmentArea {
+			report(f.Chunk, s.chunk, lost)
 		}
 		frags = next
 	}
 
 	out := make([]Face, 0, len(frags))
-	for _, frag := range frags {
-		if bsp.PolygonArea(frag) < bsp.MinFragmentArea {
+	for _, fr := range frags {
+		if bsp.PolygonArea(fr.pts) < bsp.MinFragmentArea {
 			continue
 		}
 		g := f
-		g.Points = frag
+		g.Points = fr.pts
+		if fr.cover != nil {
+			g.CoveredBy = fr.cover
+		}
 		out = append(out, g)
 	}
 	return out
-}
-
-func fragmentsArea(frags [][]mgl32.Vec3) float32 {
-	a := float32(0)
-	for _, f := range frags {
-		a += bsp.PolygonArea(f)
-	}
-	return a
 }
 
 // clipPlanesFor decides how a solid clips this face, and which of its planes do
@@ -567,7 +626,13 @@ func clipPlanesFor(f *Face, s *solid) (planes []bsp.Plane, clips bool) {
 // what it keeps plus what it drops is the original polygon, so nothing is
 // double-counted and nothing goes missing.
 func outsideOf(pts []mgl32.Vec3, planes []bsp.Plane) [][]mgl32.Vec3 {
-	var kept [][]mgl32.Vec3
+	kept, _ := outsideAndInside(pts, planes)
+	return kept
+}
+
+// outsideAndInside is outsideOf, also returning the part behind every plane —
+// inside the region — or nil when nothing is.
+func outsideAndInside(pts []mgl32.Vec3, planes []bsp.Plane) (kept [][]mgl32.Vec3, inside []mgl32.Vec3) {
 	remaining := pts
 	for _, pl := range planes {
 		if remaining == nil {
@@ -579,9 +644,7 @@ func outsideOf(pts []mgl32.Vec3, planes []bsp.Plane) [][]mgl32.Vec3 {
 		}
 		remaining = back
 	}
-	// `remaining` is now the part behind every plane — inside the region — and
-	// is deliberately not returned.
-	return kept
+	return kept, remaining
 }
 
 // SortFaces puts the output in a stable order: by chunk, then brush, then the

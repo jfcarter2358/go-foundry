@@ -54,62 +54,17 @@ func uiRequestSave(forceDialog bool) {
 // ---------- toolbar ----------
 
 func uiEditorToolbar(w *uiwin.UIWindow) {
-	imgui.SetNextWindowPos(imgui.Vec2{X: 0, Y: 0})
-	imgui.SetNextWindowSize(imgui.Vec2{X: float32(w.W), Y: uiToolbarH})
-	imgui.BeginV("##uitoolbar", nil,
-		imgui.WindowFlagsNoTitleBar|imgui.WindowFlagsNoResize|imgui.WindowFlagsNoMove|
-			imgui.WindowFlagsNoScrollbar|imgui.WindowFlagsNoSavedSettings)
+	editorTopBarBegin("##uitoolbar", float32(w.W))
 
-	if imgui.Button("New") {
-		uiNewName = "untitled"
-		uiShowNewDialog = true
-	}
-	imgui.SameLine()
-	if imgui.Button("Open") {
-		uiShowOpenDialog = true
-		uiFileList = nil
-	}
-	imgui.SameLine()
-	if imgui.Button("Save") {
-		uiRequestSave(false)
-	}
-	imgui.SameLine()
-	if imgui.Button("Save As") {
-		uiRequestSave(true)
+	if imgui.BeginMenuBar() {
+		uiEditorMenus()
+		editorMenuBarShared(editorKindUI)
+		editorMenuBarDoc(uiScreenName(), uiEditorDirty())
+		imgui.EndMenuBar()
 	}
 
-	imgui.SameLine()
-	editorToolbarGroupSep()
-	imgui.SameLine()
-	imguibackend.EditorPushDisabled(!UICanUndo())
-	if imgui.Button("Undo") {
-		UIUndo()
-	}
-	imguibackend.EditorPopDisabled()
-	imgui.SameLine()
-	imguibackend.EditorPushDisabled(!UICanRedo())
-	if imgui.Button("Redo") {
-		UIRedo()
-	}
-	imguibackend.EditorPopDisabled()
-
-	imgui.SameLine()
-	editorToolbarGroupSep()
-	imgui.SameLine()
-	name := uiScreenName()
-	if uiDoc != nil && uiDoc.Dirty() {
-		name += " *"
-	}
-	imgui.Text(name)
-
-	// Pop In, right-aligned, matching the other document editors.
-	imgui.SetCursorPos(imgui.Vec2{X: float32(w.W) - 90, Y: 6})
-	if imgui.Button("Pop In") {
-		CloseUIEditorWindow()
-	}
-
-	// Row two: view toggles, design resolution, sample data, status.
-	imgui.SetCursorPos(imgui.Vec2{X: 8, Y: 30})
+	// Row two: view toggles, design resolution, sample data, status. The
+	// toggles are in the View menu too; here they are one click.
 	imgui.Checkbox("Grid##uigrid", &uiShowGrid)
 	imgui.SameLine()
 	imgui.Checkbox("Outlines##uioutlines", &uiShowOutlines)
@@ -135,14 +90,45 @@ func uiEditorToolbar(w *uiwin.UIWindow) {
 			"Live: the open play session, if there is one.")
 	}
 
-	if uiStatus != "" {
-		imgui.SameLine()
-		editorToolbarGroupSep()
-		imgui.SameLine()
-		editorTextMuted(uiStatus)
-	}
+	editorStatusText(uiStatus)
 
 	imgui.End()
+}
+
+// uiEditorMenus draws the UI editor's own menus.
+func uiEditorMenus() {
+	if imgui.BeginMenu("File") {
+		if imgui.MenuItemV("New...", "Ctrl+N", false, true) {
+			uiNewName = "untitled"
+			uiShowNewDialog = true
+		}
+		if imgui.MenuItemV("Open...", "Ctrl+O", false, true) {
+			uiShowOpenDialog = true
+			uiFileList = nil
+		}
+		imgui.Separator()
+		if imgui.MenuItemV("Save", "Ctrl+S", false, true) {
+			uiRequestSave(false)
+		}
+		if imgui.MenuItemV("Save As...", "Ctrl+Shift+S", false, true) {
+			uiRequestSave(true)
+		}
+		editorSaveAllMenuItem()
+		editorCloseWindowItem(CloseUIEditorWindow)
+		imgui.EndMenu()
+	}
+
+	if imgui.BeginMenu("Edit") {
+		editorUndoRedoItems(UICanUndo(), UICanRedo(), UIUndo, UIRedo)
+		imgui.EndMenu()
+	}
+
+	if imgui.BeginMenu("View") {
+		editorMenuToggle("Grid", "", &uiShowGrid)
+		editorMenuToggle("Outlines", "", &uiShowOutlines)
+		editorMenuToggle("Safe Area", "", &uiShowSafeArea)
+		imgui.EndMenu()
+	}
 }
 
 // uiResolutions are the design sizes the canvas offers, plus Free.
@@ -163,19 +149,19 @@ func uiResolutionCombo() {
 		label = fmt.Sprintf("%.0fx%.0f", uiDesignW, uiDesignH)
 	}
 	imgui.PushItemWidth(130)
-	if imgui.BeginCombo("##uires", label) {
+	if imguibackend.BeginCombo("##uires", label) {
 		for _, r := range uiResolutions {
-			if imgui.SelectableV(r.Name, !uiFreeSize && uiDesignW == r.W && uiDesignH == r.H,
+			if imguibackend.SelectableV(r.Name, !uiFreeSize && uiDesignW == r.W && uiDesignH == r.H,
 				0, imgui.Vec2{}) {
 				uiDesignW, uiDesignH, uiFreeSize = r.W, r.H, false
 				uiFrameCanvas()
 			}
 		}
-		if imgui.SelectableV("Free", uiFreeSize, 0, imgui.Vec2{}) {
+		if imguibackend.SelectableV("Free", uiFreeSize, 0, imgui.Vec2{}) {
 			uiFreeSize = true
 			uiFrameCanvas()
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	imgui.PopItemWidth()
 	if imgui.IsItemHovered() {
@@ -400,7 +386,7 @@ func uiEditorDialogs(w *uiwin.UIWindow) {
 			editorTextMutedWrapped("No .fui files in resources/ui yet.")
 		}
 		for _, f := range uiFileList {
-			if imgui.SelectableV(f, false, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(f, false, 0, imgui.Vec2{}) {
 				if err := uiLoad(ui.UIPath(strings.TrimSuffix(f, ui.UIExt))); err != nil {
 					uiStatus = "Open failed: " + err.Error()
 				}
@@ -444,17 +430,17 @@ func uiFontCombo(label string, name *string) bool {
 	if shown == "" {
 		shown = "(theme)"
 	}
-	if imgui.BeginCombo(label, shown) {
-		if imgui.SelectableV("(theme)", *name == "", 0, imgui.Vec2{}) {
+	if imguibackend.BeginCombo(label, shown) {
+		if imguibackend.SelectableV("(theme)", *name == "", 0, imgui.Vec2{}) {
 			*name, changed = "", true
 		}
 		for _, f := range uifont.ScanFontFiles() {
 			n := strings.TrimSuffix(f, uifont.FontExt)
-			if imgui.SelectableV(n, *name == n, 0, imgui.Vec2{}) {
+			if imguibackend.SelectableV(n, *name == n, 0, imgui.Vec2{}) {
 				*name, changed = n, true
 			}
 		}
-		imgui.EndCombo()
+		imguibackend.EndCombo()
 	}
 	return changed
 }

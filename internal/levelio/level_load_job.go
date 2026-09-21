@@ -23,14 +23,22 @@ package levelio
 import (
 	"path/filepath"
 	"strings"
+	"time"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"foundry/internal/world"
 )
 
 // Per-step budgets, tuned so a step lands near four milliseconds on the levels
 // that ship. Chunks are the expensive one; textures are a PNG decode each.
+//
+// A step is the unit of work, not the unit of a frame: StepFor runs as many as
+// fit in the frame's budget. One step per frame put a floor under the load
+// that had nothing to do with the work — level1's 71k compiled surfaces are
+// 1,100 steps of 64, which is nineteen seconds of loading screen at 60 fps for
+// about a tenth of a second of building.
 const (
 	chunksPerStep   = 1
 	texturesPerStep = 4
@@ -94,9 +102,17 @@ func BeginLoad(levelPath string) (*LoadJob, error) {
 	if err != nil {
 		return nil, err
 	}
+	return BeginLoadRaw(levelPath, raw), nil
+}
+
+// BeginLoadRaw returns a job that builds a level already parsed — the level
+// YAML editor's, which has the file's RawLevel in hand from checking it and
+// would otherwise have the job parse the same two megabytes a second time.
+// levelPath is only what the job reports as its path.
+func BeginLoadRaw(levelPath string, raw world.RawLevel) *LoadJob {
 	j := &LoadJob{path: levelPath, raw: raw, texNeeded: map[string]bool{}}
 	j.publish()
-	return j, nil
+	return j
 }
 
 // BeginLoadCompiled reads a compiled level and returns a job that will build
@@ -116,6 +132,8 @@ func BeginLoadCompiled(levelPath string) (*LoadJob, error) {
 	for i := range c.Faces {
 		noteCompiledFaceTextures(j.texNeeded, &c.Faces[i])
 	}
+	// So they decode on the other cores while this one places the objects.
+	gfx.PrefetchTextures(textureLoadOrder(j.texNeeded))
 	j.publish()
 	return j, nil
 }
@@ -139,6 +157,9 @@ func (j *LoadJob) Step() bool {
 		j.chunkAt = next
 		if j.chunkAt >= total {
 			j.stage = loadStageObjects
+			// An authored level's textures are known only once its chunks
+			// are built. Already-started ones are skipped.
+			gfx.PrefetchTextures(textureLoadOrder(j.texNeeded))
 		}
 
 	case loadStageObjects:
@@ -148,6 +169,7 @@ func (j *LoadJob) Step() bool {
 		// The object pass discovers textures of its own — a sprite's, an
 		// entity model's — so the list can only be taken once it has run.
 		j.texNames = textureLoadOrder(j.texNeeded)
+		gfx.PrefetchTextures(j.texNames)
 		j.stage = loadStageTextures
 
 	case loadStageTextures:
@@ -158,6 +180,7 @@ func (j *LoadJob) Step() bool {
 		j.texAt = next
 		if j.texAt >= len(j.texNames) {
 			j.stage = loadStageStatic
+			gfx.DropPrefetchedTextures()
 		}
 
 	case loadStageStatic:
@@ -185,6 +208,21 @@ func (j *LoadJob) Step() bool {
 	return j.stage == loadStageDone
 }
 
+// StepFor runs steps until the load finishes or budget has been spent, and
+// reports whether it has finished. The budget is checked between steps, so one
+// long step still overruns it — a frame late rather than a load slow.
+func (j *LoadJob) StepFor(budget time.Duration) bool {
+	start := time.Now()
+	for {
+		if j.Step() {
+			return true
+		}
+		if time.Since(start) >= budget {
+			return false
+		}
+	}
+}
+
 // stepChunks builds one slice of chunks, from whichever source this job has,
 // and reports where it got to and how many there are in all.
 func (j *LoadJob) stepChunks() (next, total int, err error) {
@@ -197,6 +235,7 @@ func (j *LoadJob) stepChunks() (next, total int, err error) {
 }
 
 func (j *LoadJob) fail(err error) bool {
+	gfx.DropPrefetchedTextures()
 	j.err = err
 	j.stage = loadStageDone
 	j.publish()
@@ -247,7 +286,10 @@ func (j *LoadJob) Err() error { return j.err }
 func (j *LoadJob) Path() string { return j.path }
 
 // Level is the built level. Only meaningful once Done and Err is nil.
-func (j *LoadJob) Level() *world.Level { return &j.level }
+func (j *LoadJob) Level() *world.Level {
+	j.level.Name = LevelNameFromPath(j.path)
+	return &j.level
+}
 
 // publish makes the progress readable from a script — and therefore from a
 // widget bound to `@level.prop.load_progress`.
@@ -282,6 +324,23 @@ const LevelExt = ".yaml"
 
 // LevelsDir is the absolute levels folder.
 func LevelsDir() string { return filepath.Join(fileutil.ResourcesPath, LevelsDirName) }
+
+// LevelNameFromPath is LevelPath (or CompiledPath) run backwards: the name
+// load_level would take for the file at path. A file outside the levels folder
+// is named by its base name.
+func LevelNameFromPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	name := filepath.Base(path)
+	if rel, err := filepath.Rel(LevelsDir(), path); err == nil && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel) {
+		name = filepath.ToSlash(rel)
+	}
+	for _, ext := range []string{LevelExt, CompiledExt} {
+		name = strings.TrimSuffix(name, ext)
+	}
+	return name
+}
 
 // LevelPath resolves a bare level name to a full path. A name that already
 // carries the extension is left alone, so both spellings work from a script.

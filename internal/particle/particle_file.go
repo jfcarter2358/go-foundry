@@ -407,6 +407,10 @@ func validateRawParticle(raw RawParticle) error {
 
 // ---------- I/O ----------
 
+// Fingerprint identifies the document's content as SaveParticle would write
+// it, for comparing against what was last saved. See fileutil.Fingerprint.
+func Fingerprint(d *Doc) uint64 { return fileutil.Fingerprint(docToRaw(d)) }
+
 // SaveParticle writes the document to path as YAML.
 func SaveParticle(d *Doc, path string) error {
 	raw := docToRaw(d)
