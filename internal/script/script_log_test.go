@@ -316,3 +316,71 @@ end`)
 	}
 	t.Errorf("no error named the handler that stopped: %+v", r.Snapshot())
 }
+
+// ---------- the tail the developer console follows ----------
+
+func TestSinceReturnsOnlyWhatIsNewer(t *testing.T) {
+	r := newTestRing(t, 8)
+
+	_, seq := r.Since(0)
+	if seq != 0 {
+		t.Fatalf("an empty ring reported sequence %d", seq)
+	}
+
+	r.Infof("a", "one")
+	r.Infof("a", "two")
+	got, seq := r.Since(0)
+	if len(got) != 2 || got[0].Text != "one" || got[1].Text != "two" {
+		t.Fatalf("Since(0) = %v", entryTexts(got))
+	}
+	if seq != 2 {
+		t.Fatalf("sequence = %d, want 2", seq)
+	}
+
+	// Nothing has happened since, so a tail that asks again gets nothing.
+	got, seq2 := r.Since(seq)
+	if len(got) != 0 {
+		t.Fatalf("Since(%d) = %v, want nothing", seq, entryTexts(got))
+	}
+	if seq2 != seq {
+		t.Fatalf("the sequence moved without an entry: %d -> %d", seq, seq2)
+	}
+
+	r.Infof("a", "three")
+	got, _ = r.Since(seq)
+	if len(got) != 1 || got[0].Text != "three" {
+		t.Fatalf("Since(%d) = %v, want just \"three\"", seq, entryTexts(got))
+	}
+}
+
+func TestSinceIsBoundedByWhatTheRingStillHolds(t *testing.T) {
+	r := newTestRing(t, 4)
+	for i := 0; i < 10; i++ {
+		r.Infof("a", "line %d", i)
+	}
+	// Asked for all ten, the ring can only give the four it kept — the newest
+	// four, in order.
+	got, seq := r.Since(0)
+	if len(got) != 4 {
+		t.Fatalf("Since(0) returned %d entries from a ring of 4: %v", len(got), entryTexts(got))
+	}
+	if got[0].Text != "line 6" || got[3].Text != "line 9" {
+		t.Fatalf("Since(0) = %v, want the newest four in order", entryTexts(got))
+	}
+	if seq != 10 {
+		t.Fatalf("sequence = %d, want 10", seq)
+	}
+	if r.Dropped() == 0 {
+		t.Error("the ring did not report that it had evicted anything")
+	}
+}
+
+// entryTexts is what a run of entries said, for an assertion that reads as a
+// list rather than as a loop.
+func entryTexts(entries []LogEntry) []string {
+	out := make([]string, len(entries))
+	for i, e := range entries {
+		out[i] = e.Text
+	}
+	return out
+}

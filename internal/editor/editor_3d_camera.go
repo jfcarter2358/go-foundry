@@ -228,6 +228,14 @@ func editorFrameSelection() {
 	if !ok {
 		return
 	}
+	editorFrameBounds(min, max)
+}
+
+// editorFrameBounds points the camera at a world-space box. Split out of
+// editorFrameSelection so that something with bounds but no selection — a region
+// Claude was asked to look at — can be framed without taking the selection away
+// from whoever is using the editor.
+func editorFrameBounds(min, max mgl32.Vec3) {
 	center := min.Add(max).Mul(0.5)
 	radius := max.Sub(min).Len() / 2
 	if radius < 0.25 {

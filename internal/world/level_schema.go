@@ -46,6 +46,16 @@ type RawVolume struct {
 	// Objective makes the region a place AI agents are sent to act. See
 	// Volume.Objective.
 	Objective *RawVolumeObjective `yaml:"objective,omitempty"`
+	// Context marks the region as a named place to describe to an assistant,
+	// and changes nothing about what the volume does. See Volume.Context.
+	Context *RawVolumeContext `yaml:"context,omitempty"`
+}
+
+// RawVolumeContext is the context block (volume_context.go).
+type RawVolumeContext struct {
+	// Note is what this place is, in the author's own words — what the geometry
+	// cannot say. Optional.
+	Note string `yaml:"note,omitempty"`
 }
 
 // RawVolumeScatter is the foliage filling a volume (volume_scatter.go).

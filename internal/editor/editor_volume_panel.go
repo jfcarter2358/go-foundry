@@ -71,6 +71,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroupOpen("Level Exit##volexitgrp", func() { editorVolumeLevelExit(v) })
 	editorPropGroupOpen("Checkpoint##volckgrp", func() { editorVolumeCheckpoint(v) })
 	editorPropGroup("AI Objective##volobjgrp", 0, func() { editorVolumeObjective(v) })
+	editorPropGroup("Assistant Context##volctxgrp", 0, func() { editorVolumeContext(v) })
 	editorObjectWaypointsUI(v)
 	editorScriptDataUI(&v.ScriptData, "vol", strconv.Quote(v.ID))
 	editorPropGroup("Actions##volactions", 0, func() { editorVolumeActions(v) })
@@ -554,6 +555,58 @@ func editorVolumeCheckpoint(v *world.Volume) {
 	if v.Checkpoint && v.Script != "" {
 		imgui.Text("Its script still gets `enter`; the save is taken after.")
 	}
+}
+
+// editorVolumeContext draws the block that makes a volume a named place the
+// Claude Code panel can be pointed at. See world.VolumeContext.
+//
+// It changes nothing about what the volume does in the game, which is the first
+// thing the panel says: a region placed purely to talk about is a new idea, and
+// an author dropping one around a room should not have to wonder whether they
+// have just added a trigger to their level.
+func editorVolumeContext(v *world.Volume) {
+	has := v.Context != nil
+	if imgui.Checkbox("Describe this region to Claude##volctxon", &has) {
+		EditorPushUndo()
+		if has {
+			v.Context = &world.VolumeContext{}
+		} else {
+			v.Context = nil
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Makes this region a place you can name in the Claude Code panel:\n" +
+			"\"restyle @" + volumeContextExampleID(v) + "\". It answers with everything inside\n" +
+			"and where it is. Nothing about the game changes.")
+	}
+	if v.Context == nil {
+		return
+	}
+	if v.ID == "" {
+		editorTextColored(scriptIssueColor, "Give the volume an ID — that is the name you will type.")
+	} else {
+		editorTextMuted("Refer to it as @" + v.ID)
+	}
+	note := v.Context.Note
+	imgui.SetNextItemWidth(-1)
+	if imgui.InputTextV("##volctxnote", &note, 0, nil) && note != v.Context.Note {
+		EditorPushUndo()
+		v.Context.Note = note
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Optional: what this place is, in your own words.\n" +
+			"\"the crew's mess — lived-in, warm light\". The geometry cannot say it.")
+	}
+	editorTextMuted("What this place is (optional)")
+}
+
+// volumeContextExampleID is the volume's own ID for the tooltip's example, or a
+// stand-in while it has none.
+func volumeContextExampleID(v *world.Volume) string {
+	if v.ID == "" {
+		return "mess_hall"
+	}
+	return v.ID
 }
 
 // editorVolumeFog draws the region's fog: the checkbox that creates and destroys

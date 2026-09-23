@@ -1,4 +1,4 @@
-package app
+package sim
 
 // player_camera_test.go — the camera is placed from CURRENT frame transforms.
 //
@@ -102,13 +102,13 @@ func TestOnFootTheCameraIsStillTheWorldPlacement(t *testing.T) {
 // is one long function that cannot be stepped — and the invariant is entirely
 // about which line comes first.
 func TestTheFrameLoopPlacesTheCameraAfterRefreshingFrames(t *testing.T) {
-	src := testenv.RepoFile(t, "internal", "app", "app.go")
+	src := testenv.RepoFile(t, "internal", "sim", "sim.go")
 
-	refresh := strings.Index(src, "world.RefreshFrames(&level, level.Frames)")
+	refresh := strings.Index(src, "world.RefreshFrames(lvl, lvl.Frames)")
 	if refresh < 0 {
 		t.Fatal("the frame loop no longer calls world.RefreshFrames; this test needs rewriting")
 	}
-	place := strings.Index(src, "PlacePlayerCamera(&level)")
+	place := strings.Index(src, "PlacePlayerCamera(lvl)")
 	if place < 0 {
 		t.Fatal("the frame loop no longer calls PlacePlayerCamera")
 	}
@@ -116,13 +116,13 @@ func TestTheFrameLoopPlacesTheCameraAfterRefreshingFrames(t *testing.T) {
 		t.Error("PlacePlayerCamera runs before RefreshFrames: a rider's camera would be " +
 			"computed from last tick's transform while the geometry around it draws from this tick's")
 	}
-	if n := strings.Count(src, "PlacePlayerCamera(&level)"); n != 1 {
+	if n := strings.Count(src, "PlacePlayerCamera(lvl)"); n != 1 {
 		t.Errorf("the loop places the player camera %d times; one, after RefreshFrames, is the point", n)
 	}
 	// And nothing else in the loop places it: SeatedCamera is PlacePlayerCamera's
 	// own business now, and a second caller would be a second ordering to keep.
 	if strings.Contains(src, "SeatedCamera(") {
-		t.Error("app.go calls SeatedCamera directly again; camera placement belongs in PlacePlayerCamera")
+		t.Error("sim.go calls SeatedCamera directly again; camera placement belongs in PlacePlayerCamera")
 	}
 }
 

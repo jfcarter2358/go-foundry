@@ -4,6 +4,7 @@ import (
 	"foundry/internal/ai"
 	"foundry/internal/audio"
 	"foundry/internal/collision"
+	"foundry/internal/devui"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
@@ -12,6 +13,7 @@ import (
 	"foundry/internal/platform"
 	"foundry/internal/render"
 	"foundry/internal/script"
+	"foundry/internal/sim"
 	"foundry/internal/texture"
 	"foundry/internal/ui"
 	"foundry/internal/uidraw"
@@ -257,94 +259,27 @@ func Run() {
 	// before the first texture upload — LoadTexture reads it at upload time.
 	// See texture_filter.go for why mipmapping is the half of anti-aliasing
 	// MSAA above can't do.
-	gfx.InitTextureFiltering()
-
-	gl.Enable(gl.DEPTH_TEST)
-	gl.ClearColor(0.2, 0.2, 0.3, 1.0)
-	gl.ClearDepth(1)
-	gl.DepthFunc(gl.LEQUAL)
-	gl.Viewport(0, 0, int32(platform.WinWidth), int32(platform.WinHeight))
-
-	// [SCENARIO 4] Check that shader files actually exist on disk before
-	// attempting to load them — catches stale/missing dist files immediately.
-	vShaderFull := fileutil.ShaderPath(gfx.VertexShaderPath)
-	fShaderFull := fileutil.ShaderPath(gfx.FragmentShaderPath)
-	for _, p := range []string{vShaderFull, fShaderFull} {
+	// The shaders, the shadow pipeline, the passes that draw level content and
+	// every uniform default — in internal/render, because the headless
+	// renderer and the GL tests that draw need exactly the same sequence, and
+	// each copy of it that existed was missing a different piece of it.
+	//
+	// The shader files are checked first so a stale or pruned install says so
+	// in the log rather than failing as a compile error.
+	for _, p := range []string{
+		fileutil.ShaderPath(gfx.VertexShaderPath),
+		fileutil.ShaderPath(gfx.FragmentShaderPath),
+	} {
 		if info, serr := os.Stat(p); serr != nil {
 			log.Printf("MISSING shader file: %s (%v)", p, serr)
 		} else {
 			log.Printf("shader file OK: %s (%d bytes)", p, info.Size())
 		}
 	}
-
-	// [SCENARIO 1] Shader compilation / linking errors are returned here; a
-	// failure causes an immediate fatal log so the reason is preserved in the
-	// log file before the process exits.
-	if err := gfx.LoadProgram(vShaderFull, fShaderFull); err != nil {
-		log.Fatalf("LoadProgram: %v", err)
+	if err := render.StandUpWorld(platform.WinWidth, platform.WinHeight); err != nil {
+		log.Fatalf("%v", err)
 	}
 	log.Printf("shader program linked OK (id=%d)", gfx.Program)
-	gl.UseProgram(gfx.Program)
-
-	// Initialize shadow mapping pipeline (depth-only shaders + FBOs).
-	svShaderFull := fileutil.ShaderPath(shadowVertShaderPath)
-	sfShaderFull := fileutil.ShaderPath(shadowFragShaderPath)
-	scvShaderFull := fileutil.ShaderPath(shadowCubeVertPath)
-	scfShaderFull := fileutil.ShaderPath(shadowCubeFragPath)
-	if err := render.InitShadows(svShaderFull, sfShaderFull, scvShaderFull, scfShaderFull); err != nil {
-		log.Fatalf("InitShadows: %v", err)
-	}
-
-	// Every pass that draws level content: biome scatter and ground patches,
-	// procedural face detail, sprites and particles, and the sky. Here rather
-	// than in EditorInit because none of them is an authoring aid, and a
-	// release build has no EditorInit to be stood up from — see
-	// render.InitWorldPasses, which exists because that is exactly how they
-	// came to be missing from shipped games.
-	render.InitWorldPasses()
-
-	gfx.ProjectionUniform = gl.GetUniformLocation(gfx.Program, gl.Str("projection\x00"))
-	gfx.RebuildProjection()
-
-	gfx.AlphaUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alpha\x00"))
-	gl.Uniform1f(gfx.AlphaUniform, 1.0) // default: fully opaque
-
-	gfx.SmoothUniform = gl.GetUniformLocation(gfx.Program, gl.Str("smoothShading\x00"))
-	gl.Uniform1i(gfx.SmoothUniform, 0) // default: flat facet normals
-
-	gfx.BakedLightUniform = gl.GetUniformLocation(gfx.Program, gl.Str("bakedLight\x00"))
-	gl.Uniform1i(gfx.BakedLightUniform, 0) // default: light the fragment the ordinary way
-
-	gfx.NormalColorUniform = gl.GetUniformLocation(gfx.Program, gl.Str("normalColor\x00"))
-	gl.Uniform1i(gfx.NormalColorUniform, 0) // default: sample tex, as a textured surface does
-
-	gfx.UnlitUniform = gl.GetUniformLocation(gfx.Program, gl.Str("unlit\x00"))
-	gl.Uniform1i(gfx.UnlitUniform, 0) // default: lit
-
-	gfx.UVOffsetUniform = gl.GetUniformLocation(gfx.Program, gl.Str("uvOffset\x00"))
-	gl.Uniform2f(gfx.UVOffsetUniform, 0, 0) // default: the texture where the UVs put it
-
-	gfx.AlphaSharpenUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alphaSharpen\x00"))
-	gl.Uniform1i(gfx.AlphaSharpenUniform, 0) // default: off; the opaque pass turns it on
-
-	gfx.TimeUniform = gl.GetUniformLocation(gfx.Program, gl.Str("time\x00"))
-	gfx.CamPosUniform = gl.GetUniformLocation(gfx.Program, gl.Str("camPos\x00"))
-	gfx.IsWaterUniform = gl.GetUniformLocation(gfx.Program, gl.Str("isWater\x00"))
-	gfx.WaveAmplitudeUniform = gl.GetUniformLocation(gfx.Program, gl.Str("waveAmplitude\x00"))
-	gfx.WaveLengthUniform = gl.GetUniformLocation(gfx.Program, gl.Str("waveLength\x00"))
-	gfx.WaveSpeedUniform = gl.GetUniformLocation(gfx.Program, gl.Str("waveSpeed\x00"))
-	gfx.ReflectivityUniform = gl.GetUniformLocation(gfx.Program, gl.Str("reflectivity\x00"))
-	gfx.ReflectColorUniform = gl.GetUniformLocation(gfx.Program, gl.Str("reflectColor\x00"))
-	gl.Uniform1i(gfx.IsWaterUniform, 0)
-
-	gfx.HasBlendUniform = gl.GetUniformLocation(gfx.Program, gl.Str("hasBlend\x00"))
-	gfx.BlendTexUniform = gl.GetUniformLocation(gfx.Program, gl.Str("blendTex\x00"))
-	gfx.BlendMaskUniform = gl.GetUniformLocation(gfx.Program, gl.Str("blendMask\x00"))
-	gl.Uniform1i(gfx.HasBlendUniform, 0) // default: no second texture
-
-	gfx.HasNormalMapUniform = gl.GetUniformLocation(gfx.Program, gl.Str("hasNormalMap\x00"))
-	gfx.NormalMapUniform = gl.GetUniformLocation(gfx.Program, gl.Str("normalMap\x00"))
-	gl.Uniform1i(gfx.HasNormalMapUniform, 0) // default: flat, no relief
 
 	// Default camera position; overridden by the level's spawn point when it
 	// has one.
@@ -422,6 +357,11 @@ func Run() {
 	}
 	defer uidraw.Delete()
 
+	// The developer tools — the F3 overlay a release build can draw for
+	// itself, and the tilde console — behind FOUNDRY_DEBUG_ENABLED. After the
+	// UI renderer, because they are drawn with it. See internal/devui.
+	devui.Init()
+
 	// Init level editor (must be after LoadLevel and OpenGL context ready).
 	// A release build has no editor: both of these are stubs there, and
 	// startupEnterGame below does the work EditorToggle's play half does here.
@@ -480,6 +420,12 @@ func Run() {
 			if devRouteEvent(event) {
 				continue
 			}
+			// The developer console, when it is up, owns the keyboard
+			// outright — ahead of the game's UI and of gameplay both, so that
+			// a command being typed is never also a menu keystroke or a shot.
+			if devui.HandleEvent(event) {
+				continue
+			}
 			// The running game's UI. Ahead of gameplay so a click on a menu
 			// button is not also a shot, and behind the window router so a
 			// secondary editor window still owns its own input. Consuming the
@@ -502,8 +448,24 @@ func Run() {
 		platform.KeyStates = sdl.GetKeyboardState()
 		_, _, platform.MouseButtons = sdl.GetMouseState()
 
+		// Consuming the events is not enough to keep a typed command out of
+		// the game: the held actions — walking, crouching, sprinting, a
+		// vehicle's throttle — are read from this snapshot rather than from
+		// edges, so typing `destroy` would walk the player forward on the D
+		// and the E. Blanking it here is one place rather than a predicate at
+		// every one of those reads.
+		if devui.Open() {
+			platform.KeyStates = noKeys(len(platform.KeyStates))
+			platform.MouseButtons = 0
+		}
+
 		// Point the F1 reference at the focused window before anything draws.
 		devUpdateFocus()
+
+		// Whatever was typed into the developer console last frame, run now:
+		// with the level in hand, between the events and the world's own tick,
+		// which is the only point where `spawn` and `level` mean what they say.
+		devui.Tick(&level)
 
 		// A screen that wants a pointer releases mouse-look, and closing it
 		// gives capture back. Edge-triggered, so this joins the editor toggle
@@ -548,7 +510,7 @@ func Run() {
 		scriptPaused := !devActive() && script.GamePaused()
 		gamePaused := scriptPaused || !devActive() && (ui.Game.Pauses() || levelLoadPending())
 
-		render.ProfileBegin("player & vehicles")
+		render.ProfileBegin("player input")
 		if devActive() {
 			// Editor owns camera and input; gameplay logic is bypassed.
 			devTick(platform.KeyStates)
@@ -574,303 +536,15 @@ func Run() {
 				gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
 				gfx.UpdateCamMatrix()
 			}
-			// --- Input -> player -> camera ---
-			// The keys say how far to move; the player is what moves, and the
-			// camera is placed on it afterwards. It used to run the other way
-			// round — move the camera, then difference it onto the player —
-			// which cannot survive the two living in different coordinate
-			// systems, and cost a re-sync every time anything else nudged the
-			// body.
-			// While the player is in a driver's seat these keys fill the
-			// vehicle's controls instead of the player's move intent.
-			intent := PlayerMoveIntent(&level, platform.KeyStates)
-
-			// Chunks that carry a velocity move first, before anything
-			// resolves against them: a lift, a barge, a closing wall. Doing it
-			// here means the vehicle pass, the player's own move and the
-			// entity pass below all see the geometry where it is this frame
-			// rather than where it was last frame, and the re-bucketing it
-			// does is already paid for by the time a location verb asks.
-			//
-			// Marked dirty for the same reason driving is: this writes the
-			// level's own authored state without going through the script
-			// host, so leaving play would otherwise leave every platform
-			// wherever it had drifted to.
-			if world.AdvanceChunks(&level, platform.DeltaTime) {
-				script.PlaySessionMarkDirty()
-			}
-
-			// Then the brushes that carry one: a single door or lift inside an
-			// otherwise still chunk. Same tick, same ordering argument, same
-			// reason for marking the session dirty — and after the chunks, so
-			// that a brush moving inside a chunk that also moved is integrated
-			// against this frame's chunk placement rather than last frame's.
-			if world.AdvanceBrushes(&level, platform.DeltaTime) {
-				script.PlaySessionMarkDirty()
-			}
-
-			// Vehicles integrate before anything inside them resolves, and
-			// republish their frames as they go. A rider that resolved against
-			// last frame's transform would be shoved through the deck every
-			// time the ship pitched — this ordering is the fix, and it is why
-			// VehicleUpdate is here rather than folded into EntityUpdate.
-			//
-			// Driving writes straight into the level's own entities rather than
-			// going through the script host, so it never trips the runtime's
-			// markDirty calls. Mark the play session dirty by hand whenever a
-			// vehicle actually moved, or leaving play would leave it wherever it
-			// was last driven instead of putting the level back.
-			if collision.VehicleUpdate(&level, platform.DeltaTime, true) {
-				script.PlaySessionMarkDirty()
-			}
-
-			if world.PlayerEntity != nil {
-				// Crouch is held, not toggled (C or left Ctrl by default), on foot only —
-				// a driver's Ctrl is the vehicle's, and a seat has its own eye.
-				crouch := crouchable(&level) &&
-					platform.ActionHeld(platform.ActCrouch, platform.KeyStates)
-				collision.UpdatePlayerCrouch(world.PlayerEntity, &level, crouch, platform.DeltaTime)
-				// Sprint is held too (left Shift by default), on foot with
-				// gravity on and while pushing forward — in free-fly the same
-				// key is "down" (gfx.MoveIntent). Letting go of any of them
-				// ends it.
-				world.UpdatePlayerSprint(crouchable(&level) && platform.GravityEnabled &&
-					platform.ActionHeld(platform.ActSprint, platform.KeyStates) &&
-					platform.ActionHeld(platform.ActMoveForward, platform.KeyStates))
-				switch {
-				case world.PlayerCrouched():
-					intent[0] *= world.CrouchSpeedScale
-					intent[2] *= world.CrouchSpeedScale
-				case world.PlayerSprinting():
-					intent[0] *= world.SprintSpeedScale
-					intent[2] *= world.SprintSpeedScale
-				}
-
-				onGround := collision.MovePlayer(
-					world.PlayerEntity, &level,
-					collision.PlayerMove{
-						Intent:       intent,
-						Jump:         platform.JumpRequested,
-						Gravity:      platform.GravityEnabled,
-						DTScale:      platform.DeltaTime * 60.0,
-						GravityAccel: platform.GravityAccel,
-						MaxFallSpeed: platform.MaxFallSpeed,
-						JumpVelocity: platform.JumpVelocity,
-					})
-				platform.JumpRequested = false
-
-				// Standing in a frame portal's doorway hands the player over to
-				// the other side — the ship's ramp onto the hangar deck, or back
-				// again. Position, velocity and facing all go through the same
-				// relative transform, so nothing pops and nobody arrives walking
-				// sideways.
-				if c := collision.FindFramePortalCrossing(&level, world.PlayerEntity); c != nil && !c.Sealed {
-					gfx.Cam.Yaw = collision.CrossFramePortal(&level, world.PlayerEntity, c, gfx.Cam.Yaw)
-				}
-				// Only meaningful with gravity on; free-fly leaves it alone
-				// rather than reporting a fall that is not happening.
-				if platform.GravityEnabled {
-					platform.IsOnGround = onGround
-				}
-
-				// The camera is NOT placed here. It goes on after
-				// RefreshFrames below, once every mover this tick has finished
-				// and the frames a rider's coordinates are expressed in are
-				// current — see PlacePlayerCamera.
-			} else {
-				// No player yet: the intent still has to go somewhere, or the
-				// camera freezes on the loading frame.
-				gfx.Cam.Position = gfx.Cam.Position.Add(intent)
-				gfx.UpdateCamMatrix()
-			}
 		}
 
-		render.ProfileEnd() // player & vehicles
+		render.ProfileEnd() // player input
 		// Motion banked while the view could not turn must not arrive later.
 		if devActive() || gamePaused {
 			dropMouseLook()
 			gfx.ResetRecoil()
 		}
 
-		// --- Placed entities ---
-		// Outside the editor/gameplay branch so clips keep playing while the
-		// editor is open; motion is gated on gameplay so an entity cannot
-		// drift away from where it was just placed.
-		//
-		// The player is handed in so it takes part in entity-against-entity
-		// collision — a solid crate should be solid to walk into. Its
-		// ground flag is cleared first and read back after, since being pushed
-		// up onto an entity is the same as landing on a floor as far as jumping
-		// is concerned.
-		if world.PlayerEntity != nil {
-			world.PlayerEntity.Collision.OnGround = false
-		}
-		// A script's pause stops the clips as well. A pausing screen leaves them
-		// playing behind it, as it always has; under the hard pause a looping
-		// clip would otherwise bank an :anim_end: per cycle for the level's
-		// scripts to receive all at once when the pause lifts.
-		entityDT := platform.DeltaTime
-		if scriptPaused {
-			entityDT = 0
-		}
-
-		// AI controllers, immediately before the pass that moves what they
-		// steer. A controller only writes an entity's velocity (and its
-		// facing); gravity, walls, pushes and stairs are EntityUpdate's, so an
-		// agent goes through exactly the resolve every other body does, this
-		// frame rather than next. Gameplay only, and stopped by any pause — a
-		// guard that kept deciding behind a menu would be somewhere else when
-		// it closed.
-		//
-		// It writes the level's own entities without going through the script
-		// host, so the play session is marked dirty by hand, as driving is.
-		if !devActive() && !gamePaused {
-			render.ProfileBegin("ai")
-			// Where the player aims, so a fighter being drawn a bead on can
-			// dive out of the way (internal/ai/fight.go).
-			if world.PlayerEntity != nil && platform.PlayerControlEnabled {
-				ai.SetPlayerAim(gfx.Cam.Position, gfx.Cam.Direction)
-			} else {
-				ai.ClearPlayerAim()
-			}
-			if ai.Update(&level, platform.DeltaTime, world.PlayerEntity) {
-				script.PlaySessionMarkDirty()
-			}
-			render.ProfileEnd()
-		}
-		render.ProfileBegin("entity update")
-		collision.EntityUpdate(&level, entityDT, !devActive() && !gamePaused, world.PlayerEntity)
-		render.ProfileEnd()
-		// The player's own viewmodel is not in level.Entities (see entity.go),
-		// so EntityUpdate's walk never reaches it. Ticked on the same entityDT
-		// — including the hard-pause zeroing — so a paused clip's clock stops
-		// the same way a placed entity's does, and animations advance either
-		// way exactly as EntityUpdate's own comment says entities' do: the
-		// editor never renders this (render.RenderViewmodel is gated on
-		// !devActive()), so there is nothing here for a running clock to leak
-		// into, only nothing to gain from stopping it either.
-		if world.PlayerEntity != nil {
-			world.PlayerEntity.UpdateAnimations(entityDT)
-		}
-		if !devActive() && world.PlayerEntity != nil {
-			if world.PlayerEntity.Collision.OnGround {
-				platform.IsOnGround = true
-			}
-		}
-
-		// The script event loop, immediately after the world has settled: this
-		// Frames follow whatever carries them, so their transforms are recomputed
-		// once the entities that own them have finished moving — and before
-		// anything reads them. Everything downstream this frame (the script
-		// tick's world-space overlap tests, and every draw of a chunk that lives
-		// in a frame) sees where things actually are rather than where they were
-		// last frame.
-		//
-		// Walked parents-first inside RefreshFrames, so a nested frame composes
-		// against a parent that is already up to date.
-		render.ProfileBegin("frames & waypoints")
-		world.RefreshFrames(&level, level.Frames)
-
-		// The camera, now that the frames are current. This is the whole reason
-		// it is not placed up beside the move: a rider stores its position in a
-		// frame's coordinates, and reading them against last tick's transform
-		// puts the eye wherever the ship was rather than where it is — while
-		// the hold around it draws from the transform just published here. Any
-		// motion the vehicle picked up after the move (its own world collision,
-		// an entity push) then shows up as the interior jumping by that much,
-		// every frame.
-		//
-		// It also fixes up being shoved out of a solid entity by EntityUpdate,
-		// which is why that no longer needs a re-place of its own.
-		if !devActive() && !gamePaused {
-			PlacePlayerCamera(&level)
-
-			// The rest of what a waypoint animation can carry — sprites,
-			// emitters, sounds, lights and volumes. Brushes and entities went
-			// on their own kinds' ticks above. Here, after RefreshFrames, so
-			// one attached to something that moved this frame is divided
-			// through where its carrier now is; and before the emitters and
-			// the mixer below read where they are.
-			//
-			// Lights are uniforms rather than something drawn where it
-			// stands, so a light on a path is uploaded again. Quietly: the
-			// verbose upload logs a line, and this is every frame.
-			if world.AdvanceWaypointFollowers(&level, platform.DeltaTime) {
-				world.UploadLightsTo(gfx.Program, world.SceneLights(&level), false)
-			}
-		}
-
-		// Particles, after the frames they may be riding have been republished and
-		// before the script tick, so a burst a script fires this frame lands at
-		// age 0 and draws this frame.
-		//
-		// Not gated on the editor being closed, unlike entity motion: an effect
-		// that froze the moment the editor opened could not be placed by eye. The
-		// gate is handed over anyway so the simulation can tell play from
-		// authoring if it ever needs to.
-		render.ProfileEnd() // frames & waypoints
-		render.ProfileBegin("emitters")
-		// An effect whose document carries a `light:` flashes light over the
-		// level while it goes off — a muzzle flash on the wall beside the gun.
-		// Uploaded on the effects' terms below: while one is lit, and once
-		// more when the last goes out.
-		if world.EmitterUpdate(&level, platform.DeltaTime, !devActive() && !gamePaused) {
-			world.UploadLightsTo(gfx.Program, world.SceneLights(&level), false)
-		}
-		render.ProfileEnd()
-		render.ProfileBegin("effects")
-
-		// Effects, in the emitters' slot and ungated by the editor for their
-		// reason, but stopped by a pause: an explosion is a moment, and one
-		// that carried on behind a pause menu would be over by the time play
-		// resumed. Its flash is a light, and lights are uniforms, so while one
-		// is lit — and once more when the last goes out — the scene's lights
-		// go up again with the flashes in them.
-		if world.EffectUpdate(&level, platform.DeltaTime, !gamePaused) {
-			world.UploadLightsTo(gfx.Program, world.SceneLights(&level), false)
-		}
-
-		// The listener, published in the same slot and for the same reasons
-		// as the emitters above: after RefreshFrames, so anything riding a
-		// moving frame is read where it now actually is, and before the
-		// script tick, so a sound a script starts this frame is already
-		// audible in the block the mixer builds next.
-		//
-		// Not gated on the editor being closed, again like the emitters: a
-		// sound that went silent the moment the editor opened could not be
-		// placed by ear, which is most of how a positional sound gets placed.
-		//
-		// gfx.CamUp() rather than gfx.Cam.Up: the zero value there means "no
-		// tilt", and only the accessor knows that. The editor's fly camera is
-		// this same camera, which is what makes auditioning work.
-		render.ProfileEnd()
-		render.ProfileBegin("sound")
-		world.SoundUpdate(&level, platform.DeltaTime, !devActive(),
-			gfx.Cam.Position, gfx.Cam.Direction, gfx.CamUp())
-		world.MusicUpdate(&level)
-
-		// Advances a script's ease_sky the same way the lines above advance
-		// everything else time-based: RenderSky only ever reads lvl.Sky, so
-		// this is what makes the transition's blend actually move.
-		render.ProfileEnd()
-		render.ProfileBegin("sky")
-		world.SkyUpdate(&level, platform.DeltaTime, !devActive() && !gamePaused)
-		render.ProfileEnd()
-
-		// The interact key's vehicle half, before the script tick so a mount
-		// made this frame is visible to it. It consumes the press only when it
-		// actually did something, so `E` still reaches a scripted door when
-		// there is no seat within reach.
-		if !devActive() && !gamePaused {
-			VehicleInteractRequest(&level)
-		}
-
-		// frame's overlaps produce this frame's `enter`, and whatever a handler
-		// writes lands before the frame draws. `!Editor.Active` is the same play
-		// gate EntityUpdate takes.
-		// The UI ticks after the world has settled, so a binding reads this
-		// frame's values, and before the script tick, so a click made this
-		// frame is already in the queue that tick drains to a fixpoint.
 		// Video players whose widget went away last frame are closed here, at
 		// the top of the frame rather than after the tick below. The UI editor
 		// previews its own document from a secondary window, which renders at
@@ -879,17 +553,22 @@ func Run() {
 		// microsecond later.
 		uidraw.SweepVideos()
 
-		render.ProfileBegin("ui tick")
-		if !devActive() {
-			ui.Game.Tick(platform.DeltaTime, float32(platform.WinWidth), float32(platform.WinHeight))
-		}
-
-		render.ProfileEnd() // ui tick
-		if !levelLoadPending() {
-			render.ProfileBegin("scripts")
-			script.ScriptTick(&level, platform.DeltaTime, !devActive())
-			render.ProfileEnd()
-		}
+		// One frame of the world, in internal/sim: the movers, the frames they
+		// are expressed in, the particles, the sound, the UI's own tick and the
+		// script tick, in an order whose every step says why it is where it is.
+		//
+		// It is a package rather than the two hundred lines that used to sit
+		// here because the app is not the only thing that runs a frame —
+		// cmd/foundry sim runs the same one headlessly, and while there were two
+		// copies of it the headless one drifted.
+		sim.Step(&level, platform.DeltaTime, sim.Gates{
+			Dev:          devActive(),
+			GamePaused:   gamePaused,
+			ScriptPaused: scriptPaused,
+			LoadPending:  levelLoadPending(),
+			ViewW:        float32(platform.WinWidth),
+			ViewH:        float32(platform.WinHeight),
+		}, sim.Input{Keys: platform.KeyStates})
 
 		// --- Debug stats: update CPU & memory ---
 		render.ProfileBegin("debug stats")
@@ -1392,12 +1071,21 @@ func Run() {
 		if !devActive() {
 			devRenderOverlays(platform.DeltaTime)
 		}
+
+		// The developer tools, drawn with the runtime's own screen-space pass
+		// rather than with imgui — which is what lets a release build have
+		// them at all. Last, and over everything: an overlay the game's HUD
+		// could cover would be no use on the frame that mattered.
+		devui.Render(&gameUIList, platform.WinWidth, platform.WinHeight)
 		render.ProfileEnd() // ui
 		render.ProfileEnd() // frame
 
 		// Where a GPU-bound frame shows up on the CPU: the swap blocks until
 		// the GPU has caught up.
 		benchCaptureShot()
+		// A screenshot Claude asked for, taken at the one moment the back
+		// buffer holds the finished frame.
+		devCaptureClaudeShot()
 		render.ProfileBegin("swap")
 		platform.Window.GLSwap()
 		render.ProfileEnd()

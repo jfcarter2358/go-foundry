@@ -1,4 +1,4 @@
-package app
+package sim
 
 // vehicle_input.go — the keys, when the player is driving.
 //

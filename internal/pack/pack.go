@@ -414,6 +414,7 @@ var developmentFiles = map[string]bool{
 	"imgui.ini":    true, // the editor's window layout
 	"foundry.log":  true, // the development build's log (fileutil.StatePath)
 	"release.yaml": true, // the Release window's settings (internal/release)
+	"claude.yaml":  true, // the Claude Code panel's settings (editor_claude_settings.go)
 }
 
 // IsDevelopmentFile reports whether a loose file at the top of a content tree

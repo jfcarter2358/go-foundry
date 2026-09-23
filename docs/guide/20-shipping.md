@@ -328,6 +328,16 @@ a `shaders/` folder, and one is not created. **Runtimes** are looked for in the
 project's `runtimes/` first, so a project can pin its own, and then in the
 editor's.
 
+## Debugging the built game
+
+A release build has no editor. Start it with `FOUNDRY_DEBUG_ENABLED=true` in the
+environment and it gains two keys: `F3` for the debug overlay, and `~` for a
+developer console — a live log, a command prompt (`tp`, `spawn`, `destroy`,
+`find`, `god`, `noclip`, `level`, …) and a flang prompt over the running level.
+Without the variable, neither key does anything, so a player never sees it.
+
+[Testing and debugging](19-testing-and-debugging.md) has the details.
+
 ## Checklist
 
 1. `resources/game.yaml` names the real `start_level`, not the default

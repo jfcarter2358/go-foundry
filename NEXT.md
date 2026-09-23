@@ -2,6 +2,50 @@
 
 ## Done
 
+- [x] **Claude Code in the editor.** **Window > Claude Code** opens a chat panel
+      that drives the real `claude` CLI as a child process, over its stream-json
+      protocol — so it works on the same files, the same login and the same
+      `CLAUDE.md` as a terminal, and a conversation started in either can be
+      resumed in the other. Permission prompts come back over stdio as control
+      requests and are answered from the panel (Allow / Allow all edits /
+      Decline, with a note); the model, mode and last conversation are kept in
+      `claude.yaml` beside the project.
+
+      **What it adds over a terminal** is that Claude can see the editor. The
+      editor hosts an MCP server of its own on loopback — hand-written JSON-RPC,
+      no new dependency, bearer token per run — offering `editor_state`,
+      `viewport` (a screenshot of the 3D view, taken between the last draw and
+      the swap), `lint_scripts` (the level-aware checks against the level
+      actually loaded), `reload` and `select_object`. Every one hands itself to
+      the main thread and waits, because the server answers on its own goroutine.
+
+      **The engine's own tables are tools too**: `script_api` (every flang verb's
+      signature and every object's properties, from `flang.BuiltinDocs()` and
+      `script.PropertyDocs()`), `level_schema` (every key, from the generated
+      `yamlFieldDocs`) and `list_assets`. These are what stop it writing files
+      that load and do nothing — a level names assets by name rather than path,
+      and a key the schema does not have is dropped in silence.
+
+      **Context volumes** are how a place in the world is handed over. A volume
+      with `context:` ticked ("Describe this region to Claude") names a room, and
+      `@mess_hall` in a message then means it: the panel resolves the mention and
+      the `context_volume` tool answers with the region's bounds and every brush,
+      entity, light and trigger inside, with positions and textures. Brushes are
+      gathered on overlap rather than containment, because a room's walls straddle
+      its edge; asking it to *look* also frames the editor camera there, leaving
+      the selection alone. It changes nothing about the game — the volume is not a
+      trigger and draws nothing.
+
+      **The two directions of the gap** are handled: what the editor holds
+      unsaved is named above the input box with Save All beside it, because
+      Claude reads disk; and what Claude writes is routed back into the editor's
+      own reloads — scripts (open tabs included), models, entity types and
+      effects silently, a file with unsaved edits never, the open level offered
+      rather than taken because reloading starts the undo history again.
+
+      Dev-only, like the rest of `internal/editor` — `make release-check` proves
+      it. See `docs/guide/27-claude-code.md`.
+
 - [x] Muzzle flashes that light, and difficulty levels. An effect document can
       now carry a light: a `light:` block on a `.fpar` (colour, brightness,
       reach, duration) makes every placement of that effect flash a real

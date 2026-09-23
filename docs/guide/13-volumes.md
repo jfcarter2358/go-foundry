@@ -143,6 +143,23 @@ it, stays for the objective's **Duration**, and then both the agent and the volu
 receive the objective's **Action** atom and `:objective_complete:`. See
 [AI agents](24-ai.md#objective-volumes).
 
+## Naming a place for Claude
+
+A volume can name a *place* — a room, a corridor, a courtyard — for the
+[Claude Code panel](27-claude-code.md). Tick **Describe this region to Claude**
+in its **Assistant Context** group (`context:` in the file), and the volume's ID
+becomes something you can say in the panel:
+
+> take a look at @mess_hall and change the style of the room
+
+Claude gets the region's bounds and everything inside it, with positions and
+textures. The optional note beside the tick is for what the geometry cannot say —
+"the crew's mess — lived-in, warm light".
+
+Unlike every other block on this page, this one does nothing in the game. It is
+authoring metadata: the volume is not a trigger, draws nothing, and the level
+behaves exactly as it would without it.
+
 ## Fog volumes
 
 A volume may be full of fog or full of cloud — the things a volume can be that

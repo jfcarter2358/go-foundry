@@ -56,6 +56,7 @@ and is always current.
 | [Compiling levels](23-compiling-levels.md) | CSG, visibility, baked light, Preview — and why a level has to be sealed |
 | [Shipping a game](20-shipping.md) | Release builds, `game.yaml`, installers |
 | [Version control](25-version-control.md) | The Git window: commit, branch, push and pull `resources/` |
+| [Claude Code](27-claude-code.md) | The chat panel: writing scripts and assets with Claude, inside the editor |
 | [Keybindings](21-keybindings.md) | The whole table, in one place |
 
 ## Where things live

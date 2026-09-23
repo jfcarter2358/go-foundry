@@ -132,6 +132,12 @@ type Volume struct {
 	// volume_objective.go. nil is the ordinary case.
 	Objective *VolumeObjective
 
+	// Context marks the region as a named place to describe to an assistant —
+	// see volume_context.go. nil is the ordinary case. It changes nothing about
+	// what the volume does in the game: it is authoring metadata, and a level
+	// that ships with one behaves exactly as it would without.
+	Context *VolumeContext
+
 	// FromPrefab is runtime-only, never serialized: the prefab instance whose
 	// file put this here (prefab.go). Empty for one the level file authored.
 	// It is what LevelToRaw checks before writing — a level that saved a copy
@@ -471,6 +477,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		Doorway:      FrameDoorwayFromRaw(r.Doorway),
 		Scatter:      VolumeScatterFromRaw(r.Scatter),
 		Objective:    VolumeObjectiveFromRaw(r.Objective),
+		Context:      VolumeContextFromRaw(r.Context),
 	}, nil
 }
 
@@ -493,6 +500,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		Doorway:       FrameDoorwayToRaw(v.Doorway),
 		Scatter:       VolumeScatterToRaw(v.Scatter),
 		Objective:     VolumeObjectiveToRaw(v.Objective),
+		Context:       VolumeContextToRaw(v.Context),
 	}
 }
 

@@ -68,3 +68,7 @@ func devRouteEvent(event sdl.Event) bool { return false }
 // devInterceptQuit leaves quit_game alone: there is no editor to go back to, so
 // the game's Quit button ends the process.
 func devInterceptQuit() bool { return false }
+
+// devCaptureClaudeShot does nothing: the Claude Code panel is part of the
+// editor, which a release build does not have.
+func devCaptureClaudeShot() {}

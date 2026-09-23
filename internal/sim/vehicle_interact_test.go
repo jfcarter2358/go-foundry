@@ -1,4 +1,4 @@
-package app
+package sim
 
 // vehicle_interact_test.go — the interact key is a press, not a state.
 //

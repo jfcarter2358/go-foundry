@@ -1,12 +1,12 @@
 package render
 
-// debug.go — the numbers behind the F3 overlay.
+// debug.go — the numbers behind the F3 overlay, and the rows it shows them in.
 //
 // The numbers and the drawing of them are in separate files because they have
 // different fates in a release build: the counters are cheap, harmless and
 // still worth having (a script can read them, and a crash log is better with
-// them in it), while the overlay itself is imgui and imgui is not in a release
-// binary at all. See debug_overlay.go and debug_overlay_release.go.
+// them in it), while imgui is not in a release binary at all. See
+// debug_overlay.go and debug_overlay_release.go.
 
 import (
 	"fmt"
@@ -14,6 +14,11 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"foundry/internal/gfx"
+	"foundry/internal/hooks"
+	"foundry/internal/platform"
+	"foundry/internal/world"
 )
 
 // DebugOverlayVisible controls whether the F3 debug overlay is drawn.
@@ -116,4 +121,169 @@ func processCPUSeconds() float64 {
 	fmt.Sscanf(fields[14], "%d", &stime)
 	clkTck := 100.0 // sysconf(_SC_CLK_TCK) is almost always 100 on Linux
 	return float64(utime+stime) / clkTck
+}
+
+// ---------- what the overlay says ----------
+//
+// The rows are built here, as text, rather than in the file that draws them.
+// There are two drawings of them and only one binary can hold both: a
+// development build paints them with imgui (debug_overlay.go), and a release
+// build paints them with the runtime's own screen-space pass, which is the only
+// text renderer it has (internal/devui). Neither is allowed to be the one that
+// knows what "Chunks" means.
+
+// DebugLine is one row of the overlay: a line of text, or a rule between
+// groups. The rule is a row rather than a blank string because imgui draws a
+// real separator for it and the release overlay draws a real line.
+type DebugLine struct {
+	Text string
+	Rule bool
+}
+
+// debugRule is the separator row, spelled once.
+var debugRule = DebugLine{Rule: true}
+
+// DebugOverlayLines is the F3 overlay's contents for this frame.
+//
+// Called once per frame while the overlay is up, and never otherwise: it
+// samples live engine state, so the slice it returns is this frame's answer and
+// must not be held across one.
+func DebugOverlayLines() []DebugLine {
+	out := make([]DebugLine, 0, 48)
+	line := func(format string, args ...any) {
+		out = append(out, DebugLine{Text: fmt.Sprintf(format, args...)})
+	}
+
+	line("--- Debug Overlay (F3) ---")
+	out = append(out, debugRule)
+
+	line("FPS:          %.1f", DebugStats.FPS)
+	line("Frame Time:   %.2f ms", DebugStats.FrameTimeMs)
+	line("CPU Usage:    %.1f%%", DebugStats.CPUPercent)
+	line("Mem Alloc:    %.1f MB", DebugStats.MemAllocMB)
+	line("Mem Sys:      %.1f MB", DebugStats.MemSysMB)
+	out = append(out, debugRule)
+
+	line("Brushes:      %d loaded / %d drawn", DebugStats.BrushesLoaded, DebugStats.BrushesDrawn)
+	line("Brush draws:  %d", DebugStats.BrushDrawCalls)
+	if DebugStats.StaticSurfaces > 0 {
+		line("Compiled:     %d surfaces / %d drawn", DebugStats.StaticSurfaces, DebugStats.StaticDrawn)
+	}
+	line("Chunks:       %d loaded / %d drawn", DebugStats.ChunksLoaded, DebugStats.ChunksDrawn)
+	line("Sprites:      %d quads / %d particles / %d draws",
+		DebugStats.Sprites, DebugStats.Particles, DebugStats.SpriteDraws)
+	line("Scenery:      %d drawn", DebugStats.Scenery)
+	line("Point shadows: %d re-rendered of %d", DebugStats.PointShadowRenders, DebugStats.PointShadows)
+	out = append(out, debugRule)
+
+	// The editor flies a free camera and leaves PlayerEntity parked wherever
+	// gameplay left it, so reporting that as "Position" there would be a stale
+	// number next to a live one.
+	switch {
+	case hooks.EditorActive():
+		c := gfx.Cam.Position
+		line("Camera:       %.2f, %.2f, %.2f", c.X(), c.Y(), c.Z())
+	case world.PlayerEntity != nil:
+		pe := world.PlayerEntity
+		p := pe.Position
+		line("Position:     %.2f, %.2f, %.2f", p.X(), p.Y(), p.Z())
+		// A rider stores its position in its frame's coordinates, so that
+		// number is not a place in the world at all — on a ship's deck it
+		// reads as a wild coordinate with no way to tell it is not one.
+		// The eye is the same point carried out, so report both.
+		if pe.Frame != "" {
+			c := gfx.Cam.Position
+			line("  world (eye):%.2f, %.2f, %.2f", c.X(), c.Y(), c.Z())
+		}
+		line("Frame:        %s%s", frameLabel(pe.Frame), seatLabel(pe.Seat))
+		line("Standing in:  %s", orNone(pe.CurrentChunk))
+	default:
+		line("Position:     N/A")
+	}
+	line("Rotation:     yaw=%.2f  pitch=%.2f", gfx.Cam.Yaw, gfx.Cam.Pitch)
+	out = append(out, debugRule)
+
+	// Above anti-aliasing because it is the first thing the FPS number at the
+	// top has to be read against: 60.0 flat means nothing until you know
+	// whether the frame is waiting for the display.
+	switch {
+	case !platform.VSyncSettable:
+		line("VSync:         driver-controlled (not settable, F12)")
+	case platform.VSyncInterval == -1:
+		line("VSync:         %s  (adaptive, F12)", onOff(platform.VSyncEnabled))
+	case platform.VSyncActive() != platform.VSyncEnabled:
+		line("VSync:         %s requested, driver says %s  (F12)",
+			onOff(platform.VSyncEnabled), onOff(platform.VSyncActive()))
+	default:
+		line("VSync:         %s  (F12)", onOff(platform.VSyncEnabled))
+	}
+
+	if AntiAliasGrantedSamples > 0 {
+		line("Anti-aliasing: %s  (MSAA %dx of %dx, F10)",
+			onOff(AntiAliasEnabled), AntiAliasGrantedSamples, AntiAliasSamples)
+	} else {
+		line("Anti-aliasing: unavailable (driver granted 0 samples)")
+	}
+	// Reported next to MSAA because it is the half of anti-aliasing MSAA can't
+	// do (see texture_filter.go), and because a driver silently refusing
+	// anisotropy looks exactly like distant ground being blurry for no reason.
+	if gfx.TextureAnisotropy > 1 {
+		line("Texture filter: mipmaps + %.0fx aniso", gfx.TextureAnisotropy)
+	} else {
+		line("Texture filter: mipmaps (anisotropic unavailable)")
+	}
+	// The volumetric pass's cost is almost entirely its resolution and step
+	// count, so both are reported next to the frame time they drive.
+	if VolumetricsReady() {
+		line("Volumetrics:   %s  (F4)", Volumetrics)
+		line("               %d marches, %d blobs, cloud shadow map %s",
+			DebugStats.VolumeDraws, DebugStats.VolumeBlobs, onOff(CloudShadowActive()))
+	} else {
+		line("Volumetrics:   unavailable (see the log)")
+	}
+	out = append(out, debugRule)
+
+	// Where the frame goes, pass by pass (profile.go). GPU is the column that
+	// says what the GPU spent; a pass whose CPU number is the larger is the
+	// engine or the driver, not the hardware.
+	line("%-22s %7s %7s", "Pass", "CPU ms", "GPU ms")
+	for _, s := range ProfileSamples() {
+		line("%-22s %7.2f %7.2f", strings.Repeat(" ", 2*s.Depth)+s.Name, s.CPUMs, s.GPUMs)
+	}
+
+	// TODO(brush migration, Phase 5): the biome lighting cost switches (F5-F9)
+	// reported here went with the biome renderer. They come back with scatter
+	// volumes.
+	return out
+}
+
+// onOff renders a bool as an overlay-friendly fixed-width label.
+func onOff(b bool) string {
+	if b {
+		return "ON "
+	}
+	return "OFF"
+}
+
+// frameLabel names the coordinate system the player's position is expressed in.
+// The world frame is stored as "", which is not a thing to show anyone.
+func frameLabel(id string) string {
+	if id == "" {
+		return "world"
+	}
+	return id
+}
+
+func seatLabel(seat string) string {
+	if seat == "" {
+		return ""
+	}
+	return "  seat=" + seat
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

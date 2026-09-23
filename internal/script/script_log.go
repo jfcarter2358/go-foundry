@@ -223,6 +223,42 @@ func (r *logRing) Snapshot() []LogEntry {
 	return out
 }
 
+// Since returns every entry written after seq, oldest first, and the sequence
+// number the caller should pass next time.
+//
+// This is what a tail follows. Snapshot copies the whole ring — four thousand
+// entries — which is the right shape for a window that redraws a filtered list
+// and the wrong one for a console asking "anything new?" sixty times a second.
+// A caller starting from 0 gets everything the ring still holds.
+func (r *logRing) Since(seq uint64) ([]LogEntry, uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	n := r.next
+	if r.filled {
+		n = len(r.entries)
+	}
+	if n == 0 || seq >= r.seq {
+		return nil, r.seq
+	}
+	// How many of the entries still in the ring are newer than seq. Entries
+	// evicted since are simply not there to return; the caller finds out by
+	// asking Dropped, the way the log window does.
+	want := int(r.seq - seq)
+	if want > n {
+		want = n
+	}
+	out := make([]LogEntry, 0, want)
+	for i := n - want; i < n; i++ {
+		idx := i
+		if r.filled {
+			idx = (r.next + i) % len(r.entries)
+		}
+		out = append(out, r.entries[idx])
+	}
+	return out, r.seq
+}
+
 // Len returns how many entries the ring is holding.
 func (r *logRing) Len() int {
 	r.mu.Lock()

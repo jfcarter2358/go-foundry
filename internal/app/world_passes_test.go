@@ -31,9 +31,19 @@ import (
 var worldPassInits = []string{"GrassInit", "SpriteInit", "SkyInit"}
 
 func TestTheEngineStandsUpTheWorldPasses(t *testing.T) {
+	// The engine's boot calls render.StandUpWorld, and that is what calls
+	// InitWorldPasses. The two-step is deliberate — the headless renderer and the
+	// GL tests that draw need the same sequence, so it lives in render rather
+	// than inline here — but it means the chain has to be checked in both links,
+	// or a shipped game is back to drawing no scatter, sprites or particles.
 	src := testenv.RepoFile(t, "internal", "app", "app.go")
-	if !strings.Contains(src, "render.InitWorldPasses()") {
-		t.Error("internal/app/app.go does not call render.InitWorldPasses(); " +
+	if !strings.Contains(src, "render.StandUpWorld(") {
+		t.Error("internal/app/app.go does not call render.StandUpWorld(); " +
+			"a release build would have no world shader and no world passes")
+	}
+	bootSrc := testenv.RepoFile(t, "internal", "render", "boot.go")
+	if !strings.Contains(bootSrc, "InitWorldPasses()") {
+		t.Error("render.StandUpWorld does not call InitWorldPasses(); " +
 			"a release build would draw no scatter, sprites or particles")
 	}
 

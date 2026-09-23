@@ -1,6 +1,7 @@
 package app
 
 import (
+	"foundry/internal/devui"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
@@ -158,10 +159,18 @@ func HandleEvent(event sdl.Event) {
 
 			case sdl.SCANCODE_GRAVE: // tilde (~) key toggles level editor
 				// A release build has no editor to toggle; devToggle is a stub
-				// there and the key does nothing.
+				// there and the key does nothing — unless the developer tools
+				// are on, in which case the same key opened the developer
+				// console and this switch never saw it. See devui.HandleEvent.
 				devToggle()
 			case sdl.SCANCODE_F3:
-				render.DebugToggle()
+				// A development build always has the overlay. A release build
+				// has it only with the developer tools turned on — a player
+				// who hits F3 by accident should not find the engine's
+				// instruments behind it.
+				if devAvailable || devui.Enabled() {
+					render.DebugToggle()
+				}
 			case sdl.SCANCODE_F4:
 				// Volumetric quality: half resolution, full, off. A cost
 				// switch like the F5-F9 ones, read against the F3 overlay's
@@ -245,9 +254,24 @@ func HandleEvent(event sdl.Event) {
 }
 
 // gameplayInput reports whether the player's presses reach the game: not in the
-// editor, not with control handed away, not under a script's pause.
+// editor, not with the developer console up, not with control handed away, not
+// under a script's pause.
 func gameplayInput() bool {
-	return !devActive() && platform.PlayerControlEnabled && !script.GamePaused()
+	return !devActive() && !devui.Open() && platform.PlayerControlEnabled && !script.GamePaused()
+}
+
+// noKeys is a keyboard snapshot with nothing held, handed to the frame in place
+// of SDL's while the developer console owns the keyboard.
+//
+// Reused rather than allocated per frame, and never written to by anything
+// else: every reader of platform.KeyStates only ever indexes it.
+var noKeysBuf []uint8
+
+func noKeys(n int) []uint8 {
+	if len(noKeysBuf) < n {
+		noKeysBuf = make([]uint8, n)
+	}
+	return noKeysBuf[:n]
 }
 
 // onFoot reports whether the player is out of any seat, which is when the keys

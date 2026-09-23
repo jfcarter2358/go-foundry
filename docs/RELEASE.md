@@ -123,8 +123,100 @@ Keep them in the same order so they can be read side by side.
 | `internal/app/script_reference.go` | Drawn with imgui into the F1 overlay |
 | `internal/render/debug_overlay.go` | The F3 overlay is imgui |
 
-`internal/render/debug.go` — the counters behind that overlay — is *not*
-tagged. They cost almost nothing and a crash report is better with them in it.
+`internal/render/debug.go` — the counters behind that overlay, and the rows it
+shows them in — is *not* tagged. They cost almost nothing, a crash report is
+better with them in it, and the release build draws the same rows for itself
+(below).
+
+## 3a. Developer tools in a shipped build — `FOUNDRY_DEBUG_ENABLED`
+
+A release build has no editor, and that is the point. But a level that only
+misbehaves in the compiled build, on someone else's machine, an hour into a
+playthrough, still has to be debugged — and "rebuild it as a development
+binary" is not an answer when the difference between the two builds is the
+thing you are chasing.
+
+So a release build carries a small, safe half, off unless an environment
+variable turns it on:
+
+```
+FOUNDRY_DEBUG_ENABLED=true ./my-game
+```
+
+With it set:
+
+- **`F3`** draws the debug overlay — the same rows the editor's F3 shows, drawn
+  with the runtime's own screen-space pass because there is no imgui here.
+- **`~`** opens a **developer console**: a log tail, a command prompt and a
+  flang read-eval-print loop over the running level.
+
+Without it, both keys do nothing at all.
+
+### What is in it, and what deliberately is not
+
+`internal/devui` can look at the world and drive the script runtime. It cannot
+author anything: there is no path from it that saves a level, writes a texture
+or edits a script. That is why it needs no seam and is simply compiled into
+every build — `make release-check` still passes, because it imports none of the
+editor packages.
+
+The console is not a second engine. Every command that changes the world does
+it by running flang: `tp` writes `@player.prop.position`, `spawn` calls the
+`spawn` verb, `pause` writes `@level.prop.paused`. Each of those already
+carries the detail that makes it correct — a rider's position is in its frame's
+coordinates, a spawned entity has to forget its namesake's state — and a
+console that reimplemented any of it would be wrong in ways only the author
+would ever hit.
+
+### The console
+
+`help` lists the commands; `help <name>` explains one. Tab completes, and what
+it offers depends on where the cursor is: a command in the first word, an
+entity type after `spawn`, anything in the level after `tp`, a level after
+`level`. A word starting with `@` or `#` completes to a name or a tag wherever
+it appears.
+
+| | |
+| --- | --- |
+| `tp <tag\|id\|x y z>` | teleport the player |
+| `spawn <type> [x y z]` | make an entity, where you are looking by default |
+| `destroy <id\|#tag>` | remove an entity or a volume |
+| `find <tag>` / `tags` | what carries a tag, and every tag in the level |
+| `entities [substring]` | the level's entities, nearest first |
+| `level [name]` / `levels` | which level is loaded, or load another |
+| `god` / `noclip` | the two switches worth having by name |
+| `pause` / `gravity` / `collision` / `overlay` | the engine switches, typed |
+| `save` / `load` / `checkpoint` / `retry` / `restart` | the save system |
+| `script <name> [entry]` / `reload` | run a .flang file, re-read them all |
+| `setting [name [value]]` | the game's own saved settings |
+
+While the console is up it owns the keyboard outright and the frame's held-key
+snapshot is blanked, so typing `destroy` does not also walk the player forward
+on the D and the E. The world keeps running behind it; `pause` is a command
+rather than something opening the console does, because watching live behaviour
+is half of what it is for.
+
+### The flang prompt
+
+`repl` switches every line to flang, and `exit` comes back. `> <line>` does one
+line without switching, and a line starting with `@` or `#` is flang whatever
+mode you are in.
+
+```
+] > @player.prop.position
+<12.0, 3.5, -4.0>
+] repl
+flang> for r in find("enemy") \
+...        r.attr.health = 1 \
+...    end
+```
+
+A line is compiled as a whole program and run once, the way the script editor's
+Run button compiles a file. An expression prints its value; a statement prints
+nothing. Nothing survives between lines except the world — a local dies with
+the call that made it, exactly as it does in a handler, and
+`@level.state["x"]` is the scratch that lasts. A trailing `\` continues onto
+the next line, which is what lets a loop be typed at all.
 
 ## 4. Packing — `internal/pack`
 

@@ -37,6 +37,7 @@ func TestTheEditorsOwnFilesAreNotPacked(t *testing.T) {
 		"imgui.ini":                       "[Window]\n",
 		"foundry.log":                     "[foundry] hello\n",
 		"release.yaml":                    "prune: true\n",
+		"claude.yaml":                     "model: opus\n",
 		"foundry":                         "\x7fELF\x02\x01\x01 the editor",
 		"foundry.exe":                     "MZ\x90\x00 the editor, for Windows",
 		"SDL2.dll":                        "MZ\x90\x00 the library the Windows editor loads",
@@ -61,7 +62,7 @@ func TestTheEditorsOwnFilesAreNotPacked(t *testing.T) {
 			t.Errorf("%s was not packed", want)
 		}
 	}
-	for _, unwanted := range []string{"imgui.ini", "foundry.log", "release.yaml", "foundry", "foundry.exe",
+	for _, unwanted := range []string{"imgui.ini", "foundry.log", "release.yaml", "claude.yaml", "foundry", "foundry.exe",
 		"resources/imgui.ini", "resources/foundry", "resources/game.yaml.bak", "resources/levels/intro.yaml.bak"} {
 		if exists(out, unwanted) {
 			t.Errorf("%s was packed — it belongs to the editor", unwanted)

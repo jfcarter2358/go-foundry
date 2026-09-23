@@ -153,10 +153,10 @@ autosave.
 
 ## Checking a level
 
-`cmd/levelsim` can save and restore a level mid-run:
+`foundry sim` can save and restore a level mid-run:
 
 ```sh
-levelsim -resources <install>/resources -level level1 -seconds 20 -restore-at 4,12
+foundry sim -level level1 -seconds 20 -restore-at 4,12
 ```
 
 At each `-restore-at` time it does three things:

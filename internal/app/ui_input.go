@@ -14,6 +14,7 @@ package app
 // also a shot.
 
 import (
+	"foundry/internal/devui"
 	"log"
 
 	"foundry/internal/gfx"
@@ -158,7 +159,13 @@ var uiCursorReleased bool
 // uiApplyCursor releases or re-takes mouse-look when what the stack wants
 // changes.
 func uiApplyCursor() {
-	want := !devActive() && ui.Game.WantsCursor()
+	// The developer console is a third claimant, alongside the screen stack
+	// and the editor: typing into it with the cursor captured means the view
+	// spins while you look at the keyboard. Joining them here rather than
+	// grabbing the mouse itself is what makes closing the console hand capture
+	// back to whatever the game wants *now*, which may be a menu that came up
+	// while it was open.
+	want := !devActive() && (ui.Game.WantsCursor() || devui.Open())
 	if want == uiCursorReleased {
 		return
 	}

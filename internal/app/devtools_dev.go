@@ -18,12 +18,15 @@ package app
 
 import (
 	"os"
+	"strings"
 
 	"foundry/internal/editor"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/harness"
 	"foundry/internal/imguibackend"
 	"foundry/internal/pack"
+	"foundry/internal/preview"
 	"foundry/internal/project"
 	"foundry/internal/release"
 	"foundry/internal/render"
@@ -52,11 +55,25 @@ func devWireframe() bool {
 }
 
 // devRunCommand runs one of the development binary's command-line tools in
-// place of the engine, and reports whether args named one. There are two:
-// `build-release`, which builds a release of the project this binary is running
-// from (internal/release) — headless, so the editor's Release window can run it
-// as a child process and a terminal can run it with no editor at all — and
-// `find-unused`, which lists the project's assets that nothing uses.
+// place of the engine, and reports whether args named one:
+//
+//   - `build-release` builds a release of the project this binary is running
+//     from (internal/release) — headless, so the editor's Release window can run
+//     it as a child process and a terminal can run it with no editor at all.
+//   - `find-unused` lists the project's assets that nothing uses.
+//   - `check` loads a level with no window and lints its scripts against it.
+//   - `sim` loads a level with no window and runs the frame on it, which is the
+//     same frame this binary runs (internal/sim) — see internal/harness.
+//   - `render` draws a model, a screen or the player's arms to a .png.
+//   - `model inspect` measures a .fmdl through the engine's own pose maths.
+//   - `profile-load` times a level load, stage by stage.
+//   - `bench` is not a command at all: it fills FOUNDRY_BENCH and lets the
+//     engine boot, because the benchmark measures the real frame in the real
+//     window and there is nothing headless about it.
+//
+// The last two were cmd/levelcheck and cmd/levelsim. They are verbs on the
+// editor binary now because every one of them needs the whole engine compiled
+// anyway, and a tool nobody can find is a tool that gets rewritten.
 func devRunCommand(args []string) (exitCode int, ran bool) {
 	if len(args) == 0 {
 		return 0, false
@@ -66,6 +83,24 @@ func devRunCommand(args []string) (exitCode int, ran bool) {
 		return release.Main(commandProject(), args[1:]), true
 	case pack.UnusedCommand:
 		return pack.UnusedMain(commandProject(), args[1:], os.Stdout), true
+	case harness.CheckCommand:
+		return harness.CheckMain(commandProject(), args[1:], os.Stdout), true
+	case harness.SimCommand:
+		return harness.SimMain(commandProject(), args[1:], os.Stdout), true
+	case harness.RenderCommand:
+		return harness.RenderMain(commandProject(), args[1:], os.Stdout), true
+	case harness.ProfileLoadCommand:
+		return harness.ProfileLoadMain(commandProject(), args[1:], os.Stdout), true
+	case preview.ModelCommand:
+		return preview.ModelMain(commandProject(), args[1:], os.Stdout), true
+	case "bench":
+		// Not handled here: FOUNDRY_BENCH is read during boot (bench.go), so
+		// this sets it and reports "no command ran", which lets the engine start
+		// as it normally would and the benchmark take over from inside the frame
+		// loop. `foundry bench level=level1 frames=240` beats spelling out an
+		// environment variable, and on Windows it beats spelling out two.
+		os.Setenv("FOUNDRY_BENCH", strings.Join(args[1:], ";"))
+		return 0, false
 	}
 	return 0, false
 }
@@ -108,6 +143,10 @@ func devShutdown() {
 	editor.CancelReleaseBuild()
 	// Nor a push or pull the Git window started.
 	editor.CancelGitOperation()
+	// The Claude Code session is a child process of its own, and its tool
+	// server is a socket: both outlive this process unless they are told.
+	editor.EndClaudeSession()
+	editor.ClaudeStopTools()
 	uiwin.CloseAllUIWindows()
 	imguibackend.ImGuiShutdown()
 }
@@ -168,6 +207,11 @@ func devRenderBrushGhost(draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSide
 func devDrainWork() {
 	editor.DrainTexEditorRequest()
 	editor.DrainModelReloads()
+	// What Claude asked of the editor, and what its tools changed on disk. Both
+	// belong here for the same reason the reloads above do: they touch level
+	// state and GL objects, with the main context current, between frames.
+	editor.ClaudeRunQueuedTools()
+	editor.ClaudeDrainFileChanges()
 	uiwin.DrainWindowOpens()
 }
 
@@ -211,3 +255,8 @@ func devRenderOverlays(dt float32) {
 // GL/imgui context. Last in the frame, after the main window's swap, because it
 // leaves the main contexts current again on the way out.
 func devRenderSecondaryWindows(dt float32) { uiwin.RenderSecondaryWindows(dt) }
+
+// devCaptureClaudeShot fills a screenshot the Claude Code panel's viewport tool
+// asked for. Called from the frame loop with the finished frame still in the
+// back buffer.
+func devCaptureClaudeShot() { editor.ClaudeCaptureIfRequested() }

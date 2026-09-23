@@ -12,60 +12,28 @@ package gltest
 
 import (
 	"os"
-	"runtime"
-	"sync"
 	"testing"
 
 	"foundry/internal/gfx"
-
-	"github.com/go-gl/gl/v4.1-core/gl"
-	"github.com/veandco/go-sdl2/sdl"
+	"foundry/internal/glctx"
 )
 
-// One window and one context for the whole test binary, made current on
-// whichever OS thread the calling test has locked itself to.
+// The window and the context themselves are internal/glctx's: one creator for
+// the whole engine, because the thread rules below are the same wherever a
+// headless context is wanted and each copy of them got a different part wrong.
 //
-// It used to be one of each PER TEST, which worked for as long as every GL test
-// in the engine was compile-only. The first test that actually drew and read a
-// pixel back found the two problems with that: contexts and windows accumulate
-// (nothing is ever destroyed — see the note on teardown below), and each new
-// one silently displaces the previous as current on the thread that made it,
-// so which context a later test was drawing into depended on how the runtime
-// happened to schedule goroutines onto threads. The symptom was an intermittent
-// segfault inside the driver at glReadPixels, on a test whose own logic was
-// fine.
+// It used to be one window and context PER TEST, which worked for as long as
+// every GL test in the engine was compile-only. The first test that actually
+// drew and read a pixel back found the two problems with that: contexts and
+// windows accumulate, and each new one silently displaces the previous as
+// current on the thread that made it, so which context a later test was drawing
+// into depended on how the runtime happened to schedule goroutines onto threads.
+// The symptom was an intermittent segfault inside the driver at glReadPixels, on
+// a test whose own logic was fine.
 //
 // Sequential tests are what makes one shared context correct: a GL context may
 // be current on only one thread at a time, so nothing here may call
 // t.Parallel().
-var (
-	glOnce sync.Once
-	glWin  *sdl.Window
-	glCtx  sdl.GLContext
-	glErr  error
-)
-
-func initGL() {
-	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
-		glErr = err
-		return
-	}
-	_ = sdl.GLSetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
-	_ = sdl.GLSetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 1)
-	_ = sdl.GLSetAttribute(sdl.GL_CONTEXT_PROFILE_MASK, sdl.GL_CONTEXT_PROFILE_CORE)
-
-	glWin, glErr = sdl.CreateWindow("gl test", sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED,
-		64, 64, sdl.WINDOW_OPENGL|sdl.WINDOW_HIDDEN)
-	if glErr != nil {
-		return
-	}
-	if glCtx, glErr = glWin.GLCreateContext(); glErr != nil {
-		return
-	}
-	// Loads the function pointers into package globals, so it is a
-	// once-per-process call rather than a once-per-context one.
-	glErr = gl.Init()
-}
 
 // Context makes the test binary's GL 4.1 context current on this test's thread,
 // creating it on first use — or skips the test when the opt-in env var is unset.
@@ -79,25 +47,16 @@ func Context(t *testing.T) {
 	if os.Getenv("FOUNDRY_GL_TEST") == "" {
 		t.Skip("set FOUNDRY_GL_TEST=1 to run (needs a display and a GL 4.1 driver)")
 	}
-	// Locked for the rest of the test, so nothing this test does afterwards can
-	// be rescheduled onto a thread the context is not current on.
-	runtime.LockOSThread()
-
-	glOnce.Do(initGL)
-	if glErr != nil {
-		t.Fatalf("GL context: %v", glErr)
-	}
-	if err := glWin.GLMakeCurrent(glCtx); err != nil {
-		t.Fatalf("GLMakeCurrent: %v", err)
-	}
-	// Released again at the end of the test, and this is not optional: GLX
+	// Acquire locks this goroutine's thread for the rest of the test, so nothing
+	// it does afterwards can be rescheduled onto a thread the context is not
+	// current on — and Release gives it up again, which is not optional: GLX
 	// refuses to make a context current on a second thread while it is still
 	// current on the first ("BadAccess: attempt to access private resource
 	// denied"), so a test that kept it would take every test after it down.
-	t.Cleanup(func() {
-		_ = glWin.GLMakeCurrent(nil)
-		runtime.UnlockOSThread()
-	})
+	if err := glctx.Acquire(64, 64); err != nil {
+		t.Fatalf("GL context: %v", err)
+	}
+	t.Cleanup(glctx.Release)
 
 	// The context is shared now, so the names in these registries are still
 	// valid — but a test that expects to upload a texture and get a fresh one

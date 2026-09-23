@@ -140,6 +140,15 @@ func editorWindowMenu() {
 	}
 	editorMenuTooltip("Live script output, errors and engine messages.")
 
+	claudeLabel := "Claude Code"
+	if line := claudeStatusLine(); line != "" {
+		claudeLabel = "Claude Code — " + line
+	}
+	if imgui.MenuItemV(claudeLabel+"##claudewin", "", ClaudeWindowOpen(), true) {
+		uiwin.RequestWindowOpen(OpenClaudeWindow)
+	}
+	editorMenuTooltip("Ask Claude to write scripts, build levels and generate assets in\nthis project. It sees the project's files and the editor's state.")
+
 	gitLabel := "Git"
 	if GitOperationRunning() {
 		gitLabel = "Git (running...)"

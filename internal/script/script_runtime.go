@@ -987,6 +987,20 @@ func vec3Value(v flang.Value) (mgl32.Vec3, bool) { return toVec3(v) }
 // the caller pushes an undo entry first, so a deliberate editor-time run is as
 // undoable as any other operation, and everything else stays gated on play.
 func RunScriptOnce(lvl *world.Level, name, src, entry string) error {
+	_, err := RunScriptValue(lvl, name, src, entry, nil)
+	return err
+}
+
+// RunScriptValue is RunScriptOnce with the two things a read-eval-print loop
+// needs that a fire-and-forget run does not: what the call evaluated to, and
+// somewhere of its own to put the script's `log()` output.
+//
+// out nil sends output to the engine log, which is where RunScriptOnce's
+// callers want it. The developer console (internal/devui) passes its own sink,
+// because a line typed into a console should answer in that console — and it
+// tails the engine log as well, so sending it there instead would print
+// everything twice.
+func RunScriptValue(lvl *world.Level, name, src, entry string, out func(string)) (flang.Value, error) {
 	rt := Scripts
 	prevLvl, prevSelf := rt.lvl, rt.self
 	rt.lvl = lvl
@@ -1002,22 +1016,27 @@ func RunScriptOnce(lvl *world.Level, name, src, entry string) error {
 
 	prog, errs := flang.Link(name, []byte(src), scriptLoader{})
 	if len(errs) > 0 {
-		return fmt.Errorf("%s", errs.Error())
+		return nil, fmt.Errorf("%s", errs.Error())
 	}
 	in, ierrs := flang.NewInterp(prog, rt.host, flang.Limits{})
 	if len(ierrs) > 0 {
-		return fmt.Errorf("%s", ierrs.Error())
+		return nil, fmt.Errorf("%s", ierrs.Error())
 	}
-	in.SetOutput(func(s string) { rt.logLine(s) })
+	if out != nil {
+		in.SetOutput(out)
+	} else {
+		in.SetOutput(func(s string) { rt.logLine(s) })
+	}
 
 	if !in.Has(entry) {
-		return fmt.Errorf("%s defines no %s()", name, entry)
+		return nil, fmt.Errorf("%s defines no %s()", name, entry)
 	}
-	if _, err := in.Call(entry, nil, flang.Pos{File: name}); err != nil {
-		return err
+	v, err := in.Call(entry, nil, flang.Pos{File: name})
+	if err != nil {
+		return nil, err
 	}
 	// Whatever the run dirtied still needs its geometry rebuilt, and there is no
 	// tick coming to do it.
 	DrainScriptWork(lvl)
-	return nil
+	return v, nil
 }
