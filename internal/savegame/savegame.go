@@ -162,6 +162,7 @@ func captureModels(ms []world.EntityModel) []savefile.ModelState {
 			Name: m.Name, Path: m.Path, Texture: m.Texture,
 			Offset: m.Offset, Rotation: m.Rotation, Scale: m.Scale,
 			Alpha: m.Alpha, Visible: m.Visible,
+			UVScroll: m.UVScroll, UVOffset: m.UVOffset,
 		}
 		if a := m.Anim; a != nil && a.Doc != nil && a.Clip >= 0 && a.Clip < len(a.Doc.Animations) {
 			st.Clip = a.Doc.Animations[a.Clip].Name
@@ -400,6 +401,9 @@ func applyEntity(e *world.Entity, st *savefile.EntityState) {
 	e.Visible = s.Visible
 	e.Seat, e.Frame, e.AttachedChunk = s.Seat, s.Frame, s.AttachedChunk
 	e.StepOffset = 0
+	// A crouch (hit_height) is play state like any other: without it a soldier
+	// saved ducked behind a sandbag comes back presenting its whole body.
+	e.HitHeight = s.HitHeight
 
 	// gob writes a pointer to a zero struct as nil, so presence is saved beside
 	// each of these and a present one comes back as at least a zero value.
@@ -439,8 +443,19 @@ func applyModels(ms []world.EntityModel, saved []savefile.ModelState) {
 			}
 			m.Offset, m.Rotation, m.Scale = st.Offset, st.Rotation, st.Scale
 			m.Alpha, m.Visible = st.Alpha, st.Visible
+			m.UVScroll, m.UVOffset = st.UVScroll, st.UVOffset
 			if st.Texture != m.Texture {
-				m.Texture = st.Texture
+				// SetTexture, not the field: an entity spawned for the restore
+				// is already uploaded wearing its type's texture, and the
+				// submeshes are what draw — a reskinned reinforcement came
+				// back from a checkpoint in the type's colours.
+				// An empty name means "the mesh's own", which only a reload
+				// can put back, so that one stays a field write.
+				if st.Texture != "" {
+					m.SetTexture(st.Texture)
+				} else {
+					m.Texture = ""
+				}
 				script.QueueTextureLoad(st.Texture)
 			}
 			if st.Path != m.Path {

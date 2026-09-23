@@ -171,7 +171,8 @@ func routeIntent(lvl *world.Level, e *world.Entity, st *world.AIState, route rou
 			arrived = true
 		}
 		if !arrived {
-			return intent{mode: world.AIFollowing, move: true, goal: st.RoutePoint, arrive: reach, speedScale: speed}
+			return intent{mode: world.AIFollowing, move: true, goal: st.RoutePoint, arrive: reach, speedScale: speed,
+				moveAnim: legAnim(e.AI, speed)}
 		}
 		st.RouteArrived = true
 		st.RouteSignal = false
@@ -267,7 +268,8 @@ func coverIntent(lvl *world.Level, e *world.Entity, st *world.AIState, route rou
 		return intent{}, false
 	}
 	if distXZ(feetOf(lvl, e), st.CoverPoint) > arrive {
-		return intent{mode: world.AITakingCover, move: true, goal: st.CoverPoint, arrive: arrive, speedScale: speed}, true
+		return intent{mode: world.AITakingCover, move: true, goal: st.CoverPoint, arrive: arrive, speedScale: speed,
+			moveAnim: legAnim(e.AI, speed)}, true
 	}
 	if !st.InCover {
 		st.InCover = true
@@ -302,23 +304,54 @@ func threatPoint(lvl *world.Level, st *world.AIState, route routeRef, vol *world
 // agent's chest and its head. threatID names the entity the eye belongs to, if
 // any, whose own brushes do not count.
 func HiddenFrom(lvl *world.Level, e *world.Entity, spot, threat mgl32.Vec3, threatID string) bool {
-	h := ProfileFor(lvl, e).Height
-	ids := []string{e.ID}
-	if threatID != "" {
-		ids = append(ids, threatID)
-	}
+	return hiddenAt(lvl, e, spot, threat, threatID, 1)
+}
+
+// hiddenAt is HiddenFrom for a body presenting only the bottom duck of its
+// height: 1 standing, about 0.6 crouched.
+func hiddenAt(lvl *world.Level, e *world.Entity, spot, threat mgl32.Vec3, threatID string, duck float32) bool {
+	h := ProfileFor(lvl, e).Height * duck
 	for _, up := range [2]float32{0.55, 0.9} {
-		if LineOfSight(lvl, threat, spot.Add(mgl32.Vec3{0, h * up, 0}), ids...) {
+		if LineOfSight(lvl, threat, spot.Add(mgl32.Vec3{0, h * up, 0}), coverIgnores(e, threatID)...) {
 			return false
 		}
 	}
 	return true
 }
 
+func coverIgnores(e *world.Entity, threatID string) []string {
+	ids := []string{e.ID}
+	if threatID != "" {
+		ids = append(ids, threatID)
+	}
+	return ids
+}
+
+// CoverOpts shapes a cover search beyond where to look.
+type CoverOpts struct {
+	// Duck is how much of its height the spot has to hide: 0 (or 1) the
+	// whole standing body, 0.6 a body crouched behind something waist high.
+	Duck float32
+	// Peek also asks that the threat be in sight from the agent's standing
+	// eye there: a firing position, where rising from the crouch is enough to
+	// shoot back, rather than a hole to hide in.
+	Peek bool
+}
+
 // FindCover looks for the best spot near centre — within radius of it, or
 // inside vol when one is given — that the agent can reach and that hides it
 // from threat. ok is false when there is none.
 func FindCover(lvl *world.Level, e *world.Entity, centre mgl32.Vec3, radius float32, vol *world.Volume, threat mgl32.Vec3, threatID string) (mgl32.Vec3, bool) {
+	return FindCoverWith(lvl, e, centre, radius, vol, threat, threatID, CoverOpts{})
+}
+
+// FindCoverWith is FindCover shaped by opts.
+func FindCoverWith(lvl *world.Level, e *world.Entity, centre mgl32.Vec3, radius float32, vol *world.Volume, threat mgl32.Vec3, threatID string, opts CoverOpts) (mgl32.Vec3, bool) {
+	duck := opts.Duck
+	if duck <= 0 || duck > 1 {
+		duck = 1
+	}
+	standEye := ProfileFor(lvl, e).Height * 0.9
 	grid := gridFor(lvl, e)
 	if grid == nil || len(grid.Nodes) == 0 {
 		return mgl32.Vec3{}, false
@@ -350,7 +383,10 @@ func FindCover(lvl *world.Level, e *world.Entity, centre mgl32.Vec3, radius floa
 		if found && score >= bestScore {
 			continue
 		}
-		if !HiddenFrom(lvl, e, p, threat, threatID) {
+		if !hiddenAt(lvl, e, p, threat, threatID, duck) {
+			continue
+		}
+		if opts.Peek && !LineOfSight(lvl, p.Add(mgl32.Vec3{0, standEye, 0}), threat, coverIgnores(e, threatID)...) {
 			continue
 		}
 		best, bestScore, found = p, score, true

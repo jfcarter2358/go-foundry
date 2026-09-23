@@ -226,6 +226,27 @@ type Entity struct {
 	// entity_step.go.
 	StepOffset float32
 	StepAnchor mgl32.Vec3
+
+	// HitHeight is how much of its bounds' height the body presents while it
+	// ducks, from its feet up: 0.6 is a crouch. Zero (and anything from 1 up)
+	// is the whole body. Runtime state a combat script sets as it crouches,
+	// read by what rounds and sight lines meet (collision's ray casts, the
+	// AI's eye and chest) and by nothing else. The bounds themselves stay as
+	// authored, because navigation plans on them and a body that changed size
+	// with every crouch would ask for a new grid each time. Saved with the
+	// rest of the entity.
+	HitHeight float32
+}
+
+// HitScale is HitHeight as a fraction in (0, 1]: 1 for a body standing.
+func (e *Entity) HitScale() float32 {
+	if e.HitHeight <= 0 || e.HitHeight >= 1 {
+		return 1
+	}
+	if e.HitHeight < 0.2 {
+		return 0.2
+	}
+	return e.HitHeight
 }
 
 // NewPlayer creates the engine-owned player at pos, which is the player's feet
@@ -756,9 +777,37 @@ func (e *Entity) UpdateLocation(lvl *Level) {
 
 // UpdateAnimations advances every attachment's clip.
 func (e *Entity) UpdateAnimations(dt float32) {
+	e.UpdateAnimationsPose(dt, true)
+}
+
+// UpdateAnimationsPose advances every attachment's clip, posing them only when
+// pose is set (AnimPoseDue decides, for the level's entities).
+func (e *Entity) UpdateAnimationsPose(dt float32, pose bool) {
 	for i := range e.Models {
-		e.Models[i].Update(dt, e.ID)
+		e.Models[i].UpdatePose(dt, e.ID, pose)
 	}
+}
+
+// AnimPoseDue reports whether an entity's skeletons should be posed this
+// frame: every frame near the viewer, and less often the further off it is —
+// every 2nd frame past 60 m, every 4th past 150, every 8th past 300 — spread
+// over the frames by index so the work does not all land on one of them. A
+// hidden entity is posed only as often as the farthest band, so its sockets
+// (a muzzle a script asks the position of) are never far behind. Posing a
+// skeleton is most of what an animated crowd costs, and a soldier across a
+// battlefield animating at 15 Hz is not something anyone can see.
+func AnimPoseDue(e *Entity, index int, frame uint64, viewer mgl32.Vec3) bool {
+	n := uint64(1)
+	d2 := e.Position.Sub(viewer).LenSqr()
+	switch {
+	case !e.Visible || d2 > 300*300:
+		n = 8
+	case d2 > 150*150:
+		n = 4
+	case d2 > 60*60:
+		n = 2
+	}
+	return (frame+uint64(index))%n == 0
 }
 
 // PlayAnimation starts a named animation on one attachment and reports whether

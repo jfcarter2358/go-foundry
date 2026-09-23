@@ -125,6 +125,7 @@ of its models.
 | **Mount on** / **Bone** | another of this entity's models to ride, and a bone (socket) inside it — leave empty to ride the entity itself |
 | **Offset / Rotation / Scale** | relative to whatever it rides |
 | **Alpha** | |
+| **UV scroll** | slides the texture across the attachment, in texture tiles a second along U and V — a tank's tracks running round, a conveyor. The mesh wants a texture that tiles in that direction. A script changes it as the thing moves (`uv_scroll`); YAML `uv_scroll: {x, y}` |
 | **Visible** (eye) | hide without removing |
 | **Animations** | see [Animation](10-animation.md) |
 

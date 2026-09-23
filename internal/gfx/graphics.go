@@ -61,6 +61,13 @@ var NormalColorUniform int32
 // reason NormalColorUniform is.
 var UnlitUniform int32
 
+// UVOffsetUniform slides a surface's texture coordinates: Geometry.UVOffset,
+// set on every draw so one attachment's scroll never carries to the next.
+// -1 until the program is linked, so a draw before then (a GL test that
+// looks up only the uniforms it needs) writes nothing rather than whatever
+// uniform happens to sit at location 0.
+var UVOffsetUniform int32 = -1
+
 // BakedLightUniform gates the compiled-level lighting path: when set, the
 // fragment stage uses the light already on the vertices instead of summing the
 // scene's lights and sampling their shadow maps. Set per draw, like

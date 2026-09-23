@@ -207,12 +207,13 @@ func editorExplosionLight(x *world.Explosion) {
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("How far the flash reaches once the fireball is grown.")
 	}
-	// The flash only takes a slot the level's own lights left free, and says
-	// so: an explosion in a room already holding the limit would otherwise
-	// light nothing with no hint why.
+	// A level already at the limit has the flash competing for a slot rather
+	// than taking a free one, and says so: an explosion that lit nothing in a
+	// room full of lamps would otherwise have no hint why.
 	if lvl := Editor.level; lvl != nil && len(lvl.Lights.Points) >= world.MaxPointLights {
 		editorTextMutedWrapped("This level already has " + strconv.Itoa(world.MaxPointLights) +
-			" point lights, the most there are slots for: the flash will not light anything.")
+			" point lights, the most there are slots for: the flash lights only when it is" +
+			" worth more to the camera than one of them that casts no shadow.")
 	}
 }
 

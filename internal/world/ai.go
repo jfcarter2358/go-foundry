@@ -45,10 +45,17 @@ const (
 	// AIIgnore notices it and tells the script, and nothing more: the
 	// behaviour is entirely the script's.
 	AIIgnore
+	// AIFight fights it as a soldier does: stands and shoots, then moves —
+	// strafes, advances, backs off, flanks, ducks into cover — every few
+	// seconds, dives out of the way when the player draws a bead on it, and
+	// goes looking for a target that has slipped out of sight. The moving is
+	// the controller's (internal/ai/fight.go); the shooting stays the
+	// script's, on :target_in_range: as ever.
+	AIFight
 )
 
 // AITargetModeNames is the YAML/UI name of each mode, indexed by the mode.
-var AITargetModeNames = []string{"chase", "watch", "ignore"}
+var AITargetModeNames = []string{"chase", "watch", "ignore", "fight"}
 
 // AITargetModeName returns a mode's name, defaulting out-of-range to chase.
 func AITargetModeName(m AITargetMode) string {
@@ -198,6 +205,43 @@ type AISpec struct {
 	RunSpeed float32
 	RunAnim  string
 
+	// ---------- fighting (on_target: fight) ----------
+
+	// FightRange is the distance it likes to fight a target from: it closes
+	// on one well beyond it and backs off one well inside it. Zero means half
+	// of AttackRange.
+	FightRange float32
+	// Aggression, 0 to 1, is how it chooses its moves: high advances and
+	// flanks, low holds back and takes cover.
+	Aggression float32
+	// Reposition is roughly how many seconds it holds a position, shooting,
+	// before it moves again.
+	Reposition float32
+	// DodgeChance is how likely it is to dive aside within a second of the
+	// player drawing a bead on it; DodgeCooldown the fewest seconds between
+	// two dives. Zero never dives by itself (a script's ai_dodge still does).
+	DodgeChance   float32
+	DodgeCooldown float32
+	// DodgeDistance is how far a dive carries it, DodgeWindup how long it
+	// gathers itself before it leaves the ground, and DodgeRecover how long it
+	// stays down once it lands — a sidestep's quarter second, or a full dive's
+	// hit-the-dirt-and-get-up. They time the dive clips, so they follow them.
+	// Zero is the engine's quick sideways dive (3 m, 0.12 s, 0.25 s).
+	DodgeDistance float32
+	DodgeWindup   float32
+	DodgeRecover  float32
+	// AimAnim is what it plays standing its ground with a target, in place
+	// of IdleAnim. StrafeLeftAnim, StrafeRightAnim and BackAnim are what it
+	// plays moving sideways and backwards while it keeps its gun on the
+	// target; without them it turns and walks the way it is going instead.
+	// DodgeLeftAnim and DodgeRightAnim are the dives.
+	AimAnim         string
+	StrafeLeftAnim  string
+	StrafeRightAnim string
+	BackAnim        string
+	DodgeLeftAnim   string
+	DodgeRightAnim  string
+
 	// ---------- idle ----------
 
 	// WanderRadius is how far from where it started it strolls about when it
@@ -235,6 +279,10 @@ func DefaultAISpec() AISpec {
 		WanderPause:    3,
 		FollowDistance: 2.5,
 		FollowLeash:    15,
+		Aggression:     0.5,
+		Reposition:     2.5,
+		DodgeChance:    0.2,
+		DodgeCooldown:  6,
 	}
 }
 
@@ -293,6 +341,14 @@ const (
 	// breaking off a fight that has taken it past FollowLeash to catch up.
 	AIEscorting
 	AIRegrouping
+	// The fight modes (on_target: fight): AIManeuvering is moving between
+	// firing positions, AIFlanking working round the side of its target,
+	// AIDodging diving aside, and AISearching going to where it can see a
+	// target that has slipped out of sight.
+	AIManeuvering
+	AIFlanking
+	AIDodging
+	AISearching
 )
 
 // AIModeNames is each mode's name, indexed by the mode.
@@ -301,6 +357,7 @@ var AIModeNames = []string{
 	"chasing", "engaging", "watching", "disabled",
 	"following", "taking_cover", "in_cover", "waiting",
 	"escorting", "regrouping",
+	"maneuvering", "flanking", "dodging", "searching",
 }
 
 // AIModeName returns a mode's name.
@@ -331,6 +388,9 @@ type AIState struct {
 
 	Command     bool
 	CommandGoal mgl32.Vec3
+	// CommandRun sends it there at its run speed, playing its run animation:
+	// a dash for cover rather than a stroll.
+	CommandRun bool
 
 	// ---------- the target ----------
 
@@ -423,6 +483,35 @@ type AIState struct {
 	FollowRunning bool
 	FollowRegroup bool
 
+	// ---------- fighting ----------
+
+	// FightMove is the tactical move under way (a FightMove* constant, zero
+	// for none — standing its ground), to FightGoal, at a run on FightRun.
+	// FightTimer counts down to the next move while it stands.
+	FightMove  int
+	FightGoal  mgl32.Vec3
+	FightRun   bool
+	FightTimer float32
+	// FightFor is the target the fight fields were kept for, by ID; a new
+	// one starts them afresh. FightFrom is where the move under way began.
+	FightFor  string
+	FightFrom mgl32.Vec3
+	// FightAge counts up while a move is under way: one that takes far longer
+	// than its length should is given up.
+	FightAge float32
+	// FightUnseen counts up while the target is out of sight — heard or not,
+	// which SinceSeen does not tell apart.
+	FightUnseen float32
+	// DodgeTime counts down a dive under way, toward DodgeGoal, off to its
+	// left on DodgeLeft; DodgeCool counts down to when it may dive again.
+	DodgeTime float32
+	// DodgeAge counts up from the start of the dive: the body only leaves the
+	// ground once the clip's crouch has loaded it.
+	DodgeAge  float32
+	DodgeGoal mgl32.Vec3
+	DodgeLeft bool
+	DodgeCool float32
+
 	// ---------- wandering ----------
 
 	WanderTimer float32
@@ -489,7 +578,7 @@ type RawAI struct {
 	RequireSight   *bool    `yaml:"require_sight,omitempty"`
 	HearingRange   *float32 `yaml:"hearing_range,omitempty"`
 	LoseTime       *float32 `yaml:"lose_time,omitempty"`
-	OnTarget       string   `yaml:"on_target,omitempty"` // chase (default) | watch | ignore
+	OnTarget       string   `yaml:"on_target,omitempty"` // chase (default) | watch | ignore | fight
 	AttackRange    *float32 `yaml:"attack_range,omitempty"`
 	AttackInterval *float32 `yaml:"attack_interval,omitempty"`
 
@@ -505,6 +594,21 @@ type RawAI struct {
 	FollowLeash    *float32 `yaml:"follow_leash,omitempty"`
 	RunSpeed       *float32 `yaml:"run_speed,omitempty"`
 	RunAnim        *string  `yaml:"run_anim,omitempty"`
+
+	FightRange      *float32 `yaml:"fight_range,omitempty"`
+	Aggression      *float32 `yaml:"aggression,omitempty"`
+	Reposition      *float32 `yaml:"reposition,omitempty"`
+	DodgeChance     *float32 `yaml:"dodge_chance,omitempty"`
+	DodgeCooldown   *float32 `yaml:"dodge_cooldown,omitempty"`
+	DodgeDistance   *float32 `yaml:"dodge_distance,omitempty"`
+	DodgeWindup     *float32 `yaml:"dodge_windup,omitempty"`
+	DodgeRecover    *float32 `yaml:"dodge_recover,omitempty"`
+	AimAnim         *string  `yaml:"aim_anim,omitempty"`
+	StrafeLeftAnim  *string  `yaml:"strafe_left_anim,omitempty"`
+	StrafeRightAnim *string  `yaml:"strafe_right_anim,omitempty"`
+	BackAnim        *string  `yaml:"back_anim,omitempty"`
+	DodgeLeftAnim   *string  `yaml:"dodge_left_anim,omitempty"`
+	DodgeRightAnim  *string  `yaml:"dodge_right_anim,omitempty"`
 
 	WanderRadius *float32 `yaml:"wander_radius,omitempty"`
 	WanderPause  *float32 `yaml:"wander_pause,omitempty"`
@@ -576,6 +680,25 @@ func AIFromRaw(base *AISpec, r *RawAI) *AISpec {
 	setF(&s.RunSpeed, r.RunSpeed)
 	if r.RunAnim != nil {
 		s.RunAnim = *r.RunAnim
+	}
+	setF(&s.FightRange, r.FightRange)
+	setF(&s.Aggression, r.Aggression)
+	setF(&s.Reposition, r.Reposition)
+	setF(&s.DodgeChance, r.DodgeChance)
+	setF(&s.DodgeCooldown, r.DodgeCooldown)
+	setF(&s.DodgeDistance, r.DodgeDistance)
+	setF(&s.DodgeWindup, r.DodgeWindup)
+	setF(&s.DodgeRecover, r.DodgeRecover)
+	for _, a := range []struct {
+		dst *string
+		src *string
+	}{
+		{&s.AimAnim, r.AimAnim}, {&s.StrafeLeftAnim, r.StrafeLeftAnim}, {&s.StrafeRightAnim, r.StrafeRightAnim},
+		{&s.BackAnim, r.BackAnim}, {&s.DodgeLeftAnim, r.DodgeLeftAnim}, {&s.DodgeRightAnim, r.DodgeRightAnim},
+	} {
+		if a.src != nil {
+			*a.dst = *a.src
+		}
 	}
 	setF(&s.WanderRadius, r.WanderRadius)
 	setF(&s.WanderPause, r.WanderPause)
@@ -668,6 +791,27 @@ func AIToRaw(s, base *AISpec) *RawAI {
 		r.RunAnim = &v
 		any = true
 	}
+	diffF(&r.FightRange, s.FightRange, b.FightRange)
+	diffF(&r.Aggression, s.Aggression, b.Aggression)
+	diffF(&r.Reposition, s.Reposition, b.Reposition)
+	diffF(&r.DodgeChance, s.DodgeChance, b.DodgeChance)
+	diffF(&r.DodgeCooldown, s.DodgeCooldown, b.DodgeCooldown)
+	diffF(&r.DodgeDistance, s.DodgeDistance, b.DodgeDistance)
+	diffF(&r.DodgeWindup, s.DodgeWindup, b.DodgeWindup)
+	diffF(&r.DodgeRecover, s.DodgeRecover, b.DodgeRecover)
+	diffS := func(dst **string, got, want string) {
+		if got != want {
+			v := got
+			*dst = &v
+			any = true
+		}
+	}
+	diffS(&r.AimAnim, s.AimAnim, b.AimAnim)
+	diffS(&r.StrafeLeftAnim, s.StrafeLeftAnim, b.StrafeLeftAnim)
+	diffS(&r.StrafeRightAnim, s.StrafeRightAnim, b.StrafeRightAnim)
+	diffS(&r.BackAnim, s.BackAnim, b.BackAnim)
+	diffS(&r.DodgeLeftAnim, s.DodgeLeftAnim, b.DodgeLeftAnim)
+	diffS(&r.DodgeRightAnim, s.DodgeRightAnim, b.DodgeRightAnim)
 	diffF(&r.WanderRadius, s.WanderRadius, b.WanderRadius)
 	diffF(&r.WanderPause, s.WanderPause, b.WanderPause)
 	if s.IdleAnim != b.IdleAnim {

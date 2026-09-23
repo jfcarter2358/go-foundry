@@ -88,6 +88,7 @@ func RenderEntities(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, 
 			}
 			model := world.Mul4(e.AttachmentMatrix(m))
 			for si := range m.Submeshes {
+				m.Submeshes[si].UVOffset = m.UVOffset
 				// Single-sided: a model is a closed solid, and drawing its back
 				// faces would double every draw call to show what the front
 				// faces already cover.

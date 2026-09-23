@@ -95,6 +95,9 @@ func loseTarget(e *world.Entity, st *world.AIState) {
 	st.TargetVisible = false
 	st.InRange = false
 	st.SinceSeen = 0
+	st.FightFor = ""
+	st.FightMove, st.FightRun = fightHold, false
+	st.DodgeTime = 0
 	clearPath(st)
 }
 

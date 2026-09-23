@@ -164,6 +164,19 @@ func (s *System) Reset() {
 // Count is how many particles are live.
 func (s *System) Count() int { return len(s.Live) }
 
+// Clock is how far into the current cycle the system is, in seconds. A looping
+// layer's wraps at its duration; a one-shot's parks there.
+//
+// Exported for the effect's light: the flash is timed off the cycle rather
+// than off a clock of its own, so one flash goes with one cycle wherever the
+// cycle starts — at a spawn_effect, at a restart, at each lap of a looping
+// effect — with nothing to keep in step and nothing to serialize.
+func (s *System) Clock() float32 { return s.clock }
+
+// Started reports whether the system has taken its first step. Until it has,
+// its clock is 0 because nothing has run, not because a cycle just began.
+func (s *System) Started() bool { return s.started }
+
 // Done reports whether this system has finished for good: it has actually run,
 // it is not going to emit again, and nothing is left alive.
 //

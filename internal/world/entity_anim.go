@@ -179,13 +179,27 @@ func (a *EntityAnim) currentPose() model.ModelPose {
 
 // Update advances the clock and rebuilds the palette.
 func (a *EntityAnim) Update(dt float32) {
+	a.UpdatePose(dt, true)
+}
+
+// UpdatePose advances the clock, and rebuilds the palette only when pose is
+// set. Everything that depends on time alone — a loop's wrap, a one-shot's end,
+// a blend's progress — moves either way, so events and timing are the same
+// whether or not this frame was posed; skipping the pose only leaves the
+// palette a frame or two behind, which is what a body a hundred metres off can
+// afford (see AnimPoseDue).
+func (a *EntityAnim) UpdatePose(dt float32, pose bool) {
 	if a == nil || !a.Playing {
 		return
 	}
-	a.update(dt * a.Speed)
+	a.advance(dt*a.Speed, pose)
 }
 
 func (a *EntityAnim) update(dt float32) {
+	a.advance(dt, true)
+}
+
+func (a *EntityAnim) advance(dt float32, pose bool) {
 	c := a.clip()
 	if c == nil {
 		a.blending = false
@@ -210,6 +224,15 @@ func (a *EntityAnim) update(dt float32) {
 		}
 		a.Time = d
 		a.Playing = false
+	}
+
+	if !pose {
+		if a.blending {
+			if a.blendElapsed += dt; a.blendElapsed >= a.blendDuration {
+				a.blending = false
+			}
+		}
+		return
 	}
 
 	c.SampleInto(&a.pose, len(a.Doc.Bones), a.Time)

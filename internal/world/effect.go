@@ -22,6 +22,9 @@ package world
 
 import (
 	"math"
+	"sort"
+
+	"foundry/internal/gfx"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -401,21 +404,21 @@ func EffectLights(lvl *Level, dst []PointLight) []PointLight {
 var sceneLightPoints []PointLight
 
 // SceneLights is the level's lights with attached ones resolved to where they
-// now are and its effects' flashes added — what every lighting upload that runs
-// per frame should hand the shader.
+// now are and its effects' and emitters' flashes added — what every lighting
+// upload that runs per frame should hand the shader.
 //
-// The level's own point lights stay first and in order: a shadow-casting
-// light's cubemap is found by its index (UploadPointShadowUniformsTo), so an
-// effect light slotted in ahead of one would hand it someone else's shadow.
-// Effect lights only fill slots the level left free.
+// The shader carries MaxPointLights of them. While the level and its flashes
+// together fit, everything is here, the level's own lights first and in the
+// order the file gave them. When they do not, fitPointLights below decides who
+// gets a slot.
 func SceneLights(lvl *Level) LightSet {
 	if lvl == nil {
 		return LightSet{}
 	}
 	ls := lvl.Lights
 	attached := HasAttachedLights(lvl)
-	flashes := len(lvl.Effects) > 0 && len(ls.Points) < MaxPointLights
-	if !attached && !flashes {
+	flashes := len(lvl.Effects) > 0 || len(lvl.Emitters) > 0
+	if !attached && !flashes && len(ls.Points) <= MaxPointLights {
 		return ls
 	}
 	buf := append(sceneLightPoints[:0], ls.Points...)
@@ -428,13 +431,82 @@ func SceneLights(lvl *Level) LightSet {
 	}
 	if flashes {
 		buf = EffectLights(lvl, buf)
-		if len(buf) > MaxPointLights {
-			buf = buf[:MaxPointLights]
-		}
+		buf = EmitterLights(lvl, buf)
 	}
 	sceneLightPoints = buf
-	ls.Points = buf
+	ls.Points = fitPointLights(buf)
 	return ls
+}
+
+// sceneLightFit is fitPointLights' reused answer, on sceneLightPoints' terms.
+// A second buffer rather than a cut of that one, because the fit reads the
+// whole list while it is building its answer.
+var sceneLightFit []PointLight
+
+// fitPointLights cuts a scene's point lights down to the MaxPointLights the
+// shader carries, keeping the ones the viewer is actually going to see.
+//
+// Under the limit it is the identity, which is every level the editor will let
+// you author: it refuses a ninth point light. Over it — a level a tool
+// generated, or an ordinary one in a firefight full of muzzle flashes — the
+// rule is:
+//
+//   - every SHADOW-CASTING light keeps its slot, in the order it came in. Its
+//     cubemap is found by its index (RenderPointShadowPass walks this same
+//     list), so shuffling one would hand it another light's shadow and throw
+//     away the point-shadow cache every time the camera moved.
+//   - the rest, flashes included, compete by what they contribute to what the
+//     camera can see: brightness and reach for them, distance against them.
+//     So the flash on the end of the player's own gun beats a lamp across the
+//     courtyard, and a rifle going off two hundred metres away beats nothing.
+//
+// Before this, the first eight in the file won and everything after them lit
+// nothing at all, wherever it stood and however bright it was.
+func fitPointLights(buf []PointLight) []PointLight {
+	if len(buf) <= MaxPointLights {
+		return buf
+	}
+	kept := sceneLightFit[:0]
+	for i := range buf {
+		if buf[i].CastsShadows() && len(kept) < MaxPointLights {
+			kept = append(kept, buf[i])
+		}
+	}
+	if len(kept) < MaxPointLights {
+		rest := sceneLightRest[:0]
+		for i := range buf {
+			if !buf[i].CastsShadows() {
+				rest = append(rest, buf[i])
+			}
+		}
+		// Stable, so two lights of equal worth keep level order and neither
+		// flickers in and out of the last slot from frame to frame.
+		sort.SliceStable(rest, func(a, b int) bool {
+			return pointLightWorth(&rest[a]) > pointLightWorth(&rest[b])
+		})
+		if n := MaxPointLights - len(kept); n < len(rest) {
+			rest = rest[:n]
+		}
+		kept = append(kept, rest...)
+		sceneLightRest = rest[:0]
+	}
+	sceneLightFit = kept
+	return kept
+}
+
+// sceneLightRest is fitPointLights' scratch list of the lights competing for
+// what the shadow casters left.
+var sceneLightRest []PointLight
+
+// pointLightWorth ranks one point light against another for a contested slot:
+// how much of it the viewer is going to see. A light that is off, or that
+// reaches nowhere, is worth nothing.
+func pointLightWorth(l *PointLight) float32 {
+	b := l.EffectiveBrightness()
+	if b <= 0 || l.Radius <= 0 {
+		return 0
+	}
+	return b * l.Radius / (1 + l.Position.Sub(gfx.Cam.Position).LenSqr())
 }
 
 // EffectLightCount is how many effect flashes are lighting the level now.

@@ -32,6 +32,7 @@ var aiEventAtoms = []string{
 	"ai_arrived", "ai_path_failed",
 	"objective_reached", "objective_complete", "objectives_done",
 	"cover_taken", "cover_lost",
+	"ai_maneuver", "ai_in_position", "ai_dodge",
 }
 
 // postAIEvents turns what the controllers did this frame into messages.
@@ -74,8 +75,16 @@ func (rt *ScriptRuntime) verbAgent(args []flang.Value, i int, name string) (*wor
 // aiVerbs is merged into scriptVerbs at init.
 var aiVerbs = map[string]scriptVerb{
 	"ai_move_to": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("ai_move_to takes an agent and a place: a vec or an object")
+		if len(args) != 2 && len(args) != 3 {
+			return nil, fmt.Errorf("ai_move_to takes an agent, a place (a vec or an object), and optionally whether to run")
+		}
+		run := false
+		if len(args) == 3 {
+			b, ok := args[2].(flang.BoolVal)
+			if !ok {
+				return nil, fmt.Errorf("ai_move_to takes a bool as its third argument (run there), not a %s", flang.TypeOf(args[2]))
+			}
+			run = bool(b)
 		}
 		e, err := rt.verbAgent(args, 0, "ai_move_to")
 		if err != nil {
@@ -89,11 +98,38 @@ var aiVerbs = map[string]scriptVerb{
 			return flang.BoolVal(false), nil
 		}
 		rt.markDirty()
-		reachable := ai.MoveTo(rt.lvl, e, goal)
+		reachable := ai.MoveTo(rt.lvl, e, goal, run)
 		if !reachable {
 			rt.warnAt(pos, "ai_move_to: @%s cannot reach <%g, %g, %g> and will walk as near as it can", e.ID, goal.X(), goal.Y(), goal.Z())
 		}
 		return flang.BoolVal(reachable), nil
+	},
+
+	"ai_dodge": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if len(args) != 2 && len(args) != 3 {
+			return nil, fmt.Errorf("ai_dodge takes an agent, what to dive from (an object or a vec), and optionally whether to dive straight away from it")
+		}
+		away := false
+		if len(args) == 3 {
+			b, ok := args[2].(flang.BoolVal)
+			if !ok {
+				return nil, fmt.Errorf("ai_dodge takes a bool as its third argument (straight away from it), not a %s", flang.TypeOf(args[2]))
+			}
+			away = bool(b)
+		}
+		e, err := rt.verbAgent(args, 0, "ai_dodge")
+		if err != nil {
+			return nil, err
+		}
+		from, ok := rt.positionOf(args[1])
+		if !ok {
+			return nil, fmt.Errorf("ai_dodge takes a vec or an object with a position as its second argument, not a %s", flang.TypeOf(args[1]))
+		}
+		if rt.lvl == nil {
+			return flang.BoolVal(false), nil
+		}
+		rt.markDirty()
+		return flang.BoolVal(ai.Dodge(rt.lvl, e, from, away)), nil
 	},
 
 	"ai_stop": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
@@ -297,6 +333,109 @@ var aiVerbs = map[string]scriptVerb{
 		}
 		return flang.BoolVal(ai.LineOfSight(rt.lvl, ai.Eye(rt.lvl, from), to, ignore...)), nil
 	},
+
+	"find_cover": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		if len(args) != 2 && len(args) != 3 {
+			return nil, fmt.Errorf("find_cover takes an agent, how far to look, and optionally a dict of options")
+		}
+		e, err := rt.verbAgent(args, 0, "find_cover")
+		if err != nil {
+			return nil, err
+		}
+		radius, ok := numericValue(args[1])
+		if !ok || radius <= 0 {
+			return nil, fmt.Errorf("find_cover's second argument is how far to look, a positive number, not a %s", flang.TypeOf(args[1]))
+		}
+		if rt.lvl == nil {
+			return flang.NullVal{}, nil
+		}
+		opts, near, threat, threatID, haveThreat, err := rt.coverOpts(e, args)
+		if err != nil {
+			return nil, err
+		}
+		if !haveThreat {
+			// Nothing to hide from yet: no target and no "from".
+			return flang.NullVal{}, nil
+		}
+		spot, found := ai.FindCoverWith(rt.lvl, e, near, float32(radius), nil, threat, threatID, opts)
+		if !found {
+			return flang.NullVal{}, nil
+		}
+		return vecValue(spot), nil
+	},
+}
+
+// coverOptionNames are find_cover's option keys.
+var coverOptionNames = []string{"duck", "from", "near", "peek"}
+
+// coverOpts reads find_cover's options: where to look round ("near", the
+// agent's feet by default), what to hide from ("from": an entity or a vec, the
+// agent's target by default), how low it will be ("duck") and whether it must
+// be able to shoot back from there ("peek").
+func (rt *ScriptRuntime) coverOpts(e *world.Entity, args []flang.Value) (opts ai.CoverOpts, near, threat mgl32.Vec3, threatID string, haveThreat bool, err error) {
+	near = ai.Feet(rt.lvl, e)
+	if t := ai.Target(rt.lvl, e); t != nil {
+		threat, threatID, haveThreat = ai.Eye(rt.lvl, t), t.ID, true
+	}
+	if len(args) < 3 {
+		return
+	}
+	if _, isNull := args[2].(flang.NullVal); isNull {
+		return
+	}
+	d, ok := args[2].(*flang.DictVal)
+	if !ok {
+		err = fmt.Errorf("find_cover's options are a dict, not a %s", flang.TypeOf(args[2]))
+		return
+	}
+	for k, v := range d.M {
+		switch k {
+		case "duck":
+			n, ok := numericValue(v)
+			if !ok || n <= 0 || n > 1 {
+				err = fmt.Errorf("find_cover's \"duck\" is the share of its height to hide, over 0 and up to 1, not %s", flang.TypeOf(v))
+				return
+			}
+			opts.Duck = float32(n)
+		case "peek":
+			b, ok := v.(flang.BoolVal)
+			if !ok {
+				err = fmt.Errorf("find_cover's \"peek\" is a bool, not a %s", flang.TypeOf(v))
+				return
+			}
+			opts.Peek = bool(b)
+		case "near":
+			p, ok := rt.aiPlace(v)
+			if !ok {
+				err = fmt.Errorf("find_cover's \"near\" is a vec or an object, not a %s", flang.TypeOf(v))
+				return
+			}
+			near = p
+		case "from":
+			if r, ok := v.(flang.RefVal); ok && r.Kind == flang.RefEntity {
+				t := rt.host.entityFor(r)
+				if t == nil {
+					// Gone since it was named: nothing to hide from.
+					haveThreat = false
+					continue
+				}
+				threat, threatID, haveThreat = ai.Eye(rt.lvl, t), t.ID, true
+			} else if p, ok := rt.positionOf(v); ok {
+				threat, threatID, haveThreat = p, "", true
+			} else {
+				err = fmt.Errorf("find_cover's \"from\" is an entity or a vec, not a %s", flang.TypeOf(v))
+				return
+			}
+		default:
+			hint := ""
+			if best := world.NearestName(k, coverOptionNames); best != "" {
+				hint = fmt.Sprintf("; did you mean %q?", best)
+			}
+			err = fmt.Errorf("find_cover has no option called %q%s", k, hint)
+			return
+		}
+	}
+	return
 }
 
 // aiPlace reads a place: a vec as it is, an entity at its feet, anything else
@@ -471,7 +610,7 @@ func aiEntityProps() map[string]propAccess {
 				}
 				return flang.AtomVal(world.AIModeName(ai.Mode(e)))
 			}),
-			Doc: "read-only: :idle:, :moving:, :wandering:, :travelling:, :performing:, :chasing:, :engaging:, :watching:, :following:, :taking_cover:, :in_cover:, :waiting:, :escorting:, :regrouping:, :disabled:, or :none: without a controller",
+			Doc: "read-only: :idle:, :moving:, :wandering:, :travelling:, :performing:, :chasing:, :engaging:, :watching:, :following:, :taking_cover:, :in_cover:, :waiting:, :escorting:, :regrouping:, :maneuvering:, :flanking:, :dodging:, :searching:, :disabled:, or :none: without a controller",
 		},
 		"ai_target": {
 			Get: get(func(c *refCache, e *world.Entity) flang.Value {
@@ -630,6 +769,10 @@ func aiEntityProps() map[string]propAccess {
 		"ai_follow_distance": number("ai_follow_distance", "how far behind their leader followers gather, and roughly how far apart", func(s *world.AISpec) *float32 { return &s.FollowDistance }, 0),
 		"ai_follow_leash":    number("ai_follow_leash", "how far from its leader a fight may take a follower before it regroups; 0 never breaks off", func(s *world.AISpec) *float32 { return &s.FollowLeash }, 0),
 		"ai_run_speed":       number("ai_run_speed", "how fast a follower runs to catch up once it has fallen well behind; no faster than ai_speed never runs", func(s *world.AISpec) *float32 { return &s.RunSpeed }, 0),
+		"ai_fight_range":     number("ai_fight_range", "on_target: fight — the distance the agent likes to fight from; 0 is half its attack range", func(s *world.AISpec) *float32 { return &s.FightRange }, 0),
+		"ai_aggression":      number("ai_aggression", "on_target: fight — 0 to 1: high advances and flanks, low holds back and takes cover", func(s *world.AISpec) *float32 { return &s.Aggression }, 0),
+		"ai_reposition":      number("ai_reposition", "on_target: fight — roughly how many seconds it holds a position before moving again", func(s *world.AISpec) *float32 { return &s.Reposition }, 0),
+		"ai_dodge_chance":    number("ai_dodge_chance", "on_target: fight — how likely it is to dive aside within a second of the player aiming at it; 0 never does", func(s *world.AISpec) *float32 { return &s.DodgeChance }, 0),
 		"ai_wander_radius":   number("ai_wander_radius", "how far from where it started an idle agent strolls; 0 stands still", func(s *world.AISpec) *float32 { return &s.WanderRadius }, 0),
 	}
 }

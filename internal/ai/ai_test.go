@@ -98,7 +98,7 @@ func TestAnAgentWalksAroundAPillarToWhereItIsSent(t *testing.T) {
 	lvl.Entities = []world.Entity{agent("guard", mgl32.Vec3{10, 0, 3})}
 	goal := mgl32.Vec3{10, 0, 17}
 
-	if !MoveTo(lvl, &lvl.Entities[0], goal) {
+	if !MoveTo(lvl, &lvl.Entities[0], goal, false) {
 		t.Fatal("MoveTo called the far side of a pillar unreachable")
 	}
 	var events []hooks.AIEvent
@@ -130,7 +130,7 @@ func TestAnAgentClimbsAStepOnItsWay(t *testing.T) {
 	platform := world.NewBoxBrush("platform", mgl32.Vec3{15, 0.2, 10}, mgl32.Vec3{5, 0.2, 10}, "concrete")
 	lvl := aiLevel(t, platform)
 	lvl.Entities = []world.Entity{agent("guard", mgl32.Vec3{3, 0, 10})}
-	MoveTo(lvl, &lvl.Entities[0], mgl32.Vec3{16, 0.4, 10})
+	MoveTo(lvl, &lvl.Entities[0], mgl32.Vec3{16, 0.4, 10}, false)
 
 	var events []hooks.AIEvent
 	run(lvl, nil, 8, &events)
@@ -401,7 +401,7 @@ func TestOnceSwitchesAnObjectiveOffAfterItIsDone(t *testing.T) {
 func TestADisabledControllerStopsTheAgent(t *testing.T) {
 	lvl := aiLevel(t)
 	lvl.Entities = []world.Entity{agent("guard", mgl32.Vec3{3, 0, 3})}
-	MoveTo(lvl, &lvl.Entities[0], mgl32.Vec3{17, 0, 17})
+	MoveTo(lvl, &lvl.Entities[0], mgl32.Vec3{17, 0, 17}, false)
 	var events []hooks.AIEvent
 	run(lvl, nil, 0.5, &events)
 	if v := lvl.Entities[0].Velocity; v.X()*v.X()+v.Z()*v.Z() < 0.1 {
@@ -421,7 +421,7 @@ func TestADisabledControllerStopsTheAgent(t *testing.T) {
 func TestANewSessionStartsEveryAgentAfresh(t *testing.T) {
 	lvl := aiLevel(t)
 	lvl.Entities = []world.Entity{agent("guard", mgl32.Vec3{3, 0, 3})}
-	MoveTo(lvl, &lvl.Entities[0], mgl32.Vec3{17, 0, 17})
+	MoveTo(lvl, &lvl.Entities[0], mgl32.Vec3{17, 0, 17}, false)
 	var events []hooks.AIEvent
 	run(lvl, nil, 0.2, &events)
 

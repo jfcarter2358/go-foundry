@@ -31,7 +31,7 @@ func TestAnAgentHoldsStillUntilItsNavigationIsBuilt(t *testing.T) {
 	start := Feet(lvl, &lvl.Entities[0])
 	goal := mgl32.Vec3{10, 0, 17}
 
-	MoveTo(lvl, &lvl.Entities[0], goal)
+	MoveTo(lvl, &lvl.Entities[0], goal, false)
 	const dt = float32(1.0 / 60.0)
 	var events []hooks.AIEvent
 	// Nothing has been built, and a finished build is only installed at the

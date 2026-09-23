@@ -412,6 +412,12 @@ type RawVec3 struct {
 	Z float32 `yaml:"z"`
 }
 
+// RawVec2 is a bare {x, y} pair in YAML.
+type RawVec2 struct {
+	X float32 `yaml:"x"`
+	Y float32 `yaml:"y"`
+}
+
 // RawSpawn is the YAML representation of the level's player spawn point
 // (spawn_point.go). Rotation is Euler XYZ in radians; the facing it produces is
 // derived from it rather than stored, so the arrow in the editor and the camera

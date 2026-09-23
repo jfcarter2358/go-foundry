@@ -11,7 +11,7 @@ var yamlFieldDocs = map[string]string{
 	"game.Manifest.data_dir":              "DataDir overrides the per-user data directory's name. Worth setting when the title contains punctuation, or when it may change between releases: renaming the title should not silently orphan everyone's settings.",
 	"game.Manifest.start_level":           "StartLevel is the level, by name, that the game boots into. Required — there is nothing else for a release build to do.",
 	"game.Manifest.title":                 "Title names the window, the installer, and — unless DataDir overrides it — the per-user directory settings and saves are written to.",
-	"world.RawAI.on_target":               "chase (default) | watch | ignore",
+	"world.RawAI.on_target":               "chase (default) | watch | ignore | fight",
 	"world.RawAI.order":                   "sequence (default) | nearest | random",
 	"world.RawBounce.count":               "bounces baked, 0 to 4; default 1",
 	"world.RawBounce.scale":               "strength of each bounce; default 1",
@@ -71,6 +71,7 @@ var yamlFieldDocs = map[string]string{
 	"world.RawEntityModel.bone":           "bone within Parent",
 	"world.RawEntityModel.parent":         "model attachment this one rides",
 	"world.RawEntityModel.unlit":          "self-lit; see EntityModel.Unlit",
+	"world.RawEntityModel.uv_scroll":      "texture scroll, UV units a second",
 	"world.RawEntityModel.visible":        "default true when absent",
 	"world.RawEntityVolume.clears_clouds": "ClearsClouds is a pointer for Enabled's reason: an instance override has to be able to say \"false\" to a type that said true.",
 	"world.RawEntityVolume.enabled":       "default true when absent",
@@ -170,7 +171,7 @@ var yamlFieldDocs = map[string]string{
 
 // yamlFieldEnums is the values a string key's comment lists, keyed as above.
 var yamlFieldEnums = map[string][]string{
-	"world.RawAI.on_target":       {"chase", "watch", "ignore"},
+	"world.RawAI.on_target":       {"chase", "watch", "ignore", "fight"},
 	"world.RawAI.order":           {"sequence", "nearest", "random"},
 	"world.RawEntityVolume.shape": {"box", "sphere", "cylinder"},
 	"world.RawFog.mode":           {"linear", "exp", "exp2"},

@@ -194,7 +194,7 @@ func steer(lvl *world.Level, e *world.Entity, spec *world.AISpec, feet, target m
 	}
 	var desired mgl32.Vec3
 	if dist > 1e-4 {
-		desired = dir.Mul(speed / dist)
+		desired = avoid(lvl, e, feet, dir.Mul(speed/dist))
 	}
 	flat := approach(mgl32.Vec3{vel.X(), 0, vel.Z()}, desired, accelStep(spec, dt))
 	vel[0], vel[2] = flat.X(), flat.Z()
@@ -250,4 +250,88 @@ func approach1(v, want, step float32) float32 {
 
 func clampf(v, lo, hi float32) float32 {
 	return maxf(lo, minf(hi, v))
+}
+
+// avoidRange is how far ahead, in seconds of walking, an agent looks for bodies
+// in its way, over and above a fixed arm's length.
+const (
+	avoidAhead   = float32(0.6)
+	avoidReach   = float32(1.2)
+	avoidSideGap = float32(0.3)
+)
+
+// avoid bends a walking velocity round the bodies in its way. A path is planned
+// on the level's shape alone, so two squadmates swapping sides, or a soldier
+// walking back through its own squad, would each walk straight into the other
+// and stand there pushing. Instead a body that is ahead and close to the line
+// is passed: on the side it is not on, or — dead ahead — on the right, which
+// both of two bodies meeting head-on do, so they part rather than mirror each
+// other. Bodies already overlapping are eased apart. The speed is kept; only
+// the heading bends, and the path takes over again once the way is clear.
+func avoid(lvl *world.Level, e *world.Entity, feet, desired mgl32.Vec3) mgl32.Vec3 {
+	speed := desired.Len()
+	if speed < 0.05 || !e.CollidesWithEntities() {
+		return desired
+	}
+	fwd := desired.Mul(1 / speed)
+	left := mgl32.Vec3{fwd.Z(), 0, -fwd.X()}
+	r := bodyRadius(e)
+	look := avoidReach + speed*avoidAhead
+	var lateral float32
+	var apart mgl32.Vec3
+	consider := func(o *world.Entity) {
+		if o == e || o == nil || !o.HasBounds() || !o.CollidesWithEntities() || o.HasSolidBrushes() || o.Frame != e.Frame {
+			return
+		}
+		of := feetOf(lvl, o)
+		d := mgl32.Vec3{of.X() - feet.X(), 0, of.Z() - feet.Z()}
+		if absf(of.Y()-feet.Y()) > 2 {
+			return
+		}
+		rs := r + bodyRadius(o)
+		dist := d.Len()
+		if dist > look+rs {
+			return
+		}
+		if dist < rs+0.1 && dist > 1e-3 {
+			apart = apart.Sub(d.Mul((rs + 0.1 - dist) / dist))
+		}
+		ahead := d.Dot(fwd)
+		side := d.Dot(left)
+		if ahead <= 0 || ahead > look+rs || absf(side) > rs+avoidSideGap {
+			return
+		}
+		// Something going our way at least as fast is not in the way.
+		if o.Velocity.Dot(fwd) > speed*0.8 {
+			return
+		}
+		w := 1 - ahead/(look+rs)
+		switch {
+		case side > 0.05:
+			lateral -= w // it is on the left: pass it on the right
+		case side < -0.05:
+			lateral += w
+		default:
+			lateral -= w // dead ahead: keep right
+		}
+	}
+	for i := range lvl.Entities {
+		consider(&lvl.Entities[i])
+	}
+	consider(world.PlayerEntity)
+	if lateral == 0 && apart == (mgl32.Vec3{}) {
+		return desired
+	}
+	lateral = clampf(lateral, -1.5, 1.5)
+	bent := fwd.Add(left.Mul(lateral)).Add(apart.Mul(2))
+	if l := bent.Len(); l > 1e-4 {
+		return bent.Mul(speed / l)
+	}
+	return desired
+}
+
+// bodyRadius is how wide a body is across the ground.
+func bodyRadius(e *world.Entity) float32 {
+	h := e.BoundHalfExtents()
+	return maxf(h.X(), h.Z())
 }

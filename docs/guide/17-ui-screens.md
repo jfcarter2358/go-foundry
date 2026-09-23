@@ -213,6 +213,40 @@ centre (0.5, 1) for a label that sits above it. The anchor is runtime state, lik
 a script's writes to `text` or `alpha`: it is never saved, and the UI editor
 shows the widget where it was authored.
 
+### A compass
+
+A compass is a tape across the top of the screen with marks that slide along
+it as the player turns. Author the tape as a panel with `clip` on, and each
+mark — a letter, a tick, an objective's diamond — as a child of it, pivot at
+its centre (0.5 on X). Then pin each mark to a bearing:
+
+- `compass_heading` — a fixed bearing, in radians, in an entity's yaw
+  convention: 0 is -Z ("north"), `pi/2` is -X, `pi` is +Z, `-pi/2` is +X.
+- `compass_target` — a point in the world; the bearing is the direction from
+  the viewer to it, so it swings as the player walks past.
+
+The tape's width stands for `compass_span` radians of heading (half a turn,
+`pi`, unless set), centred on where the camera looks. A mark whose bearing is
+off the tape's ends is hidden — or, with `compass_clamp` on, held at the nearer
+end, which is what an objective wants: the player can still see which way to
+turn. Only the horizontal position is the pin's; the mark's size and height on
+the tape are what was authored. Writing `null` to either bearing unpins it.
+
+```
+hud = screen("hud")
+n = widget(hud, "compass_n")
+n.prop.compass_heading = 0.0
+m = widget(hud, "compass_obj_1")
+m.prop.compass_clamp = true
+m.prop.compass_target = @command_point_a.prop.position
+m.prop.visible = true
+```
+
+Like `world_anchor`, a pin is runtime state: never saved, and the UI editor
+shows the marks where they were authored. A script that puts markers up keeps
+them up by writing them again — on `:spawn:` for the cardinal points, and every
+so often for anything whose target moves or whose label (a distance) changes.
+
 ### A settings screen
 
 A slider that declares a binding shows the level's number and cannot be

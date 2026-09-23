@@ -93,6 +93,23 @@ the spot with `go build -tags release`. That needs Go on the machine, and
 cross-building needs a C compiler for the other platform (mingw, for Windows
 from Linux).
 
+### Keeping something out of the release
+
+A script can ask which build it is in:
+
+```flang
+widget(@self, "tab_game").prop.visible = @level.prop.dev_build
+```
+
+`@level.prop.dev_build` is read-only, true in the editor's build — including
+its play mode — and false in a shipped game. It is for the settings and the
+screens that exist to make a level rather than to play it: a difficulty the
+tester can change in the middle of a mission, a debug view, a level-skip
+button. The player's build simply does not show them.
+
+It is not a security boundary. Content that must not ship at all belongs
+outside `resources/`, or behind the [prune](#packing-and-the-prune).
+
 ### Settings, and building from a terminal
 
 The window's settings are kept in `release.yaml` beside the editor (not in

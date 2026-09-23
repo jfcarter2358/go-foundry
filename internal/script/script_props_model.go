@@ -13,6 +13,8 @@ package script
 // writable at the same time, and none of it needed a verb of its own.
 
 import (
+	"math"
+
 	"github.com/go-gl/mathgl/mgl32"
 
 	"foundry/internal/flang"
@@ -129,6 +131,18 @@ func modelProps() map[string]propAccess {
 				}
 			})),
 			Doc: "per-axis scale relative to the entity; clamped away from zero",
+		},
+		"uv_scroll": {
+			Get: get(func(m *world.EntityModel) flang.Value { return vecValue(mgl32.Vec3{m.UVScroll.X(), m.UVScroll.Y(), 0}) }),
+			Set: set(vecSet("uv_scroll", func(m *world.EntityModel, p mgl32.Vec3) { m.UVScroll = mgl32.Vec2{p.X(), p.Y()} })),
+			Doc: "how fast the texture slides across the attachment, in UV units a second (x, y; z unused): a tank's tracks. <0, 0, 0> holds it still",
+		},
+		"uv_offset": {
+			Get: get(func(m *world.EntityModel) flang.Value { return vecValue(mgl32.Vec3{m.UVOffset.X(), m.UVOffset.Y(), 0}) }),
+			Set: set(vecSet("uv_offset", func(m *world.EntityModel, p mgl32.Vec3) {
+				m.UVOffset = mgl32.Vec2{p.X() - float32(math.Floor(float64(p.X()))), p.Y() - float32(math.Floor(float64(p.Y())))}
+			})),
+			Doc: "how far the texture has slid across the attachment (x, y; z unused), kept within one tile",
 		},
 		"path": {
 			Get: get(func(m *world.EntityModel) flang.Value { return flang.StrVal(m.Path) }),

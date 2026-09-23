@@ -159,6 +159,10 @@ type ModelState struct {
 	Scale    mgl32.Vec3
 	Alpha    float32
 	Visible  bool
+	// UVScroll and UVOffset are the texture's scroll rate and how far it has
+	// slid (world.EntityModel).
+	UVScroll mgl32.Vec2
+	UVOffset mgl32.Vec2
 	// Clip is the animation playing, by name, or "".
 	Clip    string
 	Time    float32

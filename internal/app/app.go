@@ -321,6 +321,9 @@ func Run() {
 	gfx.UnlitUniform = gl.GetUniformLocation(gfx.Program, gl.Str("unlit\x00"))
 	gl.Uniform1i(gfx.UnlitUniform, 0) // default: lit
 
+	gfx.UVOffsetUniform = gl.GetUniformLocation(gfx.Program, gl.Str("uvOffset\x00"))
+	gl.Uniform2f(gfx.UVOffsetUniform, 0, 0) // default: the texture where the UVs put it
+
 	gfx.AlphaSharpenUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alphaSharpen\x00"))
 	gl.Uniform1i(gfx.AlphaSharpenUniform, 0) // default: off; the opaque pass turns it on
 
@@ -723,6 +726,13 @@ func Run() {
 		// host, so the play session is marked dirty by hand, as driving is.
 		if !devActive() && !gamePaused {
 			render.ProfileBegin("ai")
+			// Where the player aims, so a fighter being drawn a bead on can
+			// dive out of the way (internal/ai/fight.go).
+			if world.PlayerEntity != nil && platform.PlayerControlEnabled {
+				ai.SetPlayerAim(gfx.Cam.Position, gfx.Cam.Direction)
+			} else {
+				ai.ClearPlayerAim()
+			}
 			if ai.Update(&level, platform.DeltaTime, world.PlayerEntity) {
 				script.PlaySessionMarkDirty()
 			}
@@ -800,7 +810,13 @@ func Run() {
 		// authoring if it ever needs to.
 		render.ProfileEnd() // frames & waypoints
 		render.ProfileBegin("emitters")
-		world.EmitterUpdate(&level, platform.DeltaTime, !devActive() && !gamePaused)
+		// An effect whose document carries a `light:` flashes light over the
+		// level while it goes off — a muzzle flash on the wall beside the gun.
+		// Uploaded on the effects' terms below: while one is lit, and once
+		// more when the last goes out.
+		if world.EmitterUpdate(&level, platform.DeltaTime, !devActive() && !gamePaused) {
+			world.UploadLightsTo(gfx.Program, world.SceneLights(&level), false)
+		}
 		render.ProfileEnd()
 		render.ProfileBegin("effects")
 

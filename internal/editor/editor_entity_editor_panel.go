@@ -695,6 +695,16 @@ func entityPanelModel(idx int) {
 		m.Alpha = alpha
 		entityPreviewInvalidate()
 	}
+	// A texture sliding across the attachment, UV tiles a second: a tank's
+	// tracks. A script sets it while the thing moves (`uv_scroll`).
+	for i, label := range [2]string{"UV scroll U##entmuvu", "UV scroll V##entmuvv"} {
+		v := m.UVScroll[i]
+		if editorDragFloatStep(label, &v, -20, 20, "%.3f", 0.01) {
+			entityBeginEdit("muvscroll")
+			m.UVScroll[i] = v
+			entityPreviewInvalidate()
+		}
+	}
 
 	entityPanelModelAnimations(idx)
 }

@@ -70,7 +70,7 @@ delete.
 
 | Group | |
 | --- | --- |
-| **Effect** | ID, Gravity, **Seed** — the seed fixes every random draw, so the preview is reproducible |
+| **Effect** | ID, Gravity, **Seed** — the seed fixes every random draw, so the preview is reproducible — and the effect's own **Light** (see *A light on the effect* below) |
 | **Emission** | Rate /s, Duration, Loop, Prewarm, Max, plus timed **Bursts** (t and n per burst) |
 | **Shape** | `point`, `sphere`, `hemisphere`, `box`, `cone`, `disc`, with whichever of Radius / Angle / Half extents / Thickness that kind reads. Direction is `shape`, `random` or `fixed`, with a Vector and a Spread |
 | **Initial** | Life, Speed, Size, Rotation, Rot speed — min/max pairs |
@@ -88,6 +88,40 @@ particle's normalised life. One strip at a time.
 
 Click adds a stop, drag moves it, right-click deletes, and on the colour strip a
 double-click opens a picker.
+
+### A light on the effect
+
+A muzzle flash is two things: the flare on the end of the barrel, and the wall
+beside the gun lighting up for a twentieth of a second. The layers are the
+first; **Light** in the Effect group is the second.
+
+Turn **Light** (its brightness) up and the effect casts a real point light
+while it goes off — dynamic, shadowless, and summed on baked surfaces like any
+other. **Light colour**, **Light reach** and **Light time** are the rest of it;
+`Light` at 0 is no light at all, which is what every effect has until you ask
+for one. In the file it is a `light:` block on the document:
+
+```yaml
+id: muzzle_flash
+light: {color: {r: 1, g: 0.86, b: 0.62}, brightness: 6, radius: 7, duration: 0.05}
+layers:
+  - name: flash
+    ...
+```
+
+It goes off **with the effect's cycle**: at the `spawn_effect`, at a `restart`,
+and once per lap of a looping effect. `stop_emit` puts it out with the
+particles and `emit` brings it back. The preview does not show it — there is no
+scene there to light.
+
+The shader has eight point-light slots, and a firefight can easily want more
+than a level has left. When more lights are lit than there are slots, every
+**shadow-casting** light keeps its own — its cubemap is found by its slot — and
+everything else, flashes included, competes on what the camera can actually
+see: brightness and reach count for a light, distance from the camera against
+it. So the flash beside the player's head is never the one dropped for a rifle
+across the valley, and a level with more lights than slots lights what is in
+front of you rather than whatever came first in the file.
 
 ### Volume layers: fire and smoke
 
@@ -223,9 +257,9 @@ the fireball.
 | Actions | **Detonate** (set it off now), Duplicate, Delete |
 
 The flash is a dynamic point light that takes one of the level's eight point
-light slots while it is lit — only a slot the level's own point lights left free,
-so a level already holding eight gets fireballs that light nothing. It never
-casts shadows. Rotation turns the billows, so two explosions side by side don't
+light slots while it is lit. It never casts shadows. When the level's own lights
+and its flashes want more slots than there are, they compete: see
+[A light on the effect](#a-light-on-the-effect) for the rule. Rotation turns the billows, so two explosions side by side don't
 look alike. Effects live under `effects:` in the level file.
 
 An explosion drawn by the volumetric pass follows its quality setting (F4): with

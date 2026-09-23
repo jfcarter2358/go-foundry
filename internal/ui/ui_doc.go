@@ -660,7 +660,54 @@ type Node struct {
 	// ---- runtime only, set by scripts, never serialised ----
 	worldAnchor mgl32.Vec3 // see SetWorldAnchor
 	anchored    bool
+	compass     CompassPin // see SetCompassPin
 }
+
+// CompassPin places a node along its parent by bearing, the way a compass tape
+// does: the parent's width stands for Span radians of heading centred on where
+// the camera looks, and the node's pivot goes wherever the bearing falls on it.
+// A bearing is either fixed (Heading — the letter N, a tick every 15°) or the
+// direction from the camera to a point in the world (Target — an objective).
+//
+// Bearings use an entity's yaw convention: 0 looks down -Z, and a positive
+// angle turns toward -X, so a heading and an entity's rotation.y agree.
+type CompassPin struct {
+	On bool
+	// Target is the world point the bearing is taken to, when UseTarget is
+	// set; otherwise Heading is the bearing itself, in radians.
+	Target    mgl32.Vec3
+	UseTarget bool
+	Heading   float32
+	// Span is how much heading the parent's width covers, in radians. Zero
+	// reads as DefaultCompassSpan.
+	Span float32
+	// Clamp keeps a bearing beyond the tape's ends at the nearer end rather
+	// than hiding it — an objective behind the player still says which way to
+	// turn.
+	Clamp bool
+}
+
+// SetCompassPin pins the node to a bearing (see CompassPin). Runtime state,
+// like SetWorldAnchor: never saved, and inert where the host has not installed
+// ViewHeading, so the UI editor shows the node where it was authored.
+func (n *Node) SetCompassPin(p CompassPin) {
+	p.On = true
+	n.compass = p
+}
+
+// ClearCompassPin returns the node to its authored place. Its span and clamp
+// are kept for the next pin, so a script may set them before or after.
+func (n *Node) ClearCompassPin() { n.compass.On = false }
+
+// SetCompassSpan and SetCompassClamp change how a pin reads without pinning
+// or unpinning the node.
+func (n *Node) SetCompassSpan(span float32) { n.compass.Span = span }
+
+// SetCompassClamp: see CompassPin.Clamp.
+func (n *Node) SetCompassClamp(clamp bool) { n.compass.Clamp = clamp }
+
+// CompassPin is the node's bearing pin; On is false when it has none.
+func (n *Node) CompassPin() CompassPin { return n.compass }
 
 // SetWorldAnchor pins the node to a point in the 3D world: every solve moves
 // its rect, keeping its authored size, so that its pivot lands where that

@@ -373,7 +373,7 @@ func (l *linter) call(c *flang.CallExpr) {
 		l.waypoints(c, name.Name)
 	case "move_to", "rotate_to", "scale_to":
 		l.tween(c, name.Name)
-	case "ai_move_to", "ai_stop", "ai_target", "ai_objective", "ai_follow_waypoints", "ai_continue", "ai_follow":
+	case "ai_move_to", "ai_stop", "ai_target", "ai_objective", "ai_follow_waypoints", "ai_continue", "ai_follow", "find_cover", "ai_dodge":
 		l.aiVerb(c, name.Name)
 	}
 	l.knownFunc(name)

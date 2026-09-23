@@ -309,6 +309,12 @@ func appendEntityHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f 
 		m := frame.WorldMatrix().
 			Mul4(mgl32.Translate3D(c.X(), c.Y(), c.Z())).
 			Mul4(e.RotationMatrix())
+		// A ducking body is the bottom HitScale of its bounds: the volume
+		// shrinks toward the feet, which stay where they were.
+		if s := e.HitScale(); s < 1 {
+			m = m.Mul4(mgl32.Translate3D(0, -half.Y()*(1-s), 0))
+			half[1] *= s
+		}
 		t, ok := rayBounds(origin, dir, m, half, e.BoundingKind)
 		if !ok || t > limit {
 			continue

@@ -111,7 +111,9 @@ func editorAISpecUI(spec **world.AISpec, h aiPanelHost) {
 			}
 			if imgui.IsItemHovered() {
 				imgui.SetTooltip("chase: close to attack range, then :target_in_range:.\n" +
-					"watch: stay put and turn to face it.\nignore: only tell the script.")
+					"watch: stay put and turn to face it.\nignore: only tell the script.\n" +
+					"fight: as a soldier — shoot, strafe, advance, flank, take cover,\n" +
+					"dive from the player's aim, hunt a target that hides.")
 			}
 			aiDrag("Sight range", "aisight", h, &s.SightRange, 0, 1000, 0.5)
 			aiDrag("Field of view (deg)", "aifov", h, &s.FOV, 0, 360, 5)
@@ -125,6 +127,9 @@ func editorAISpecUI(spec **world.AISpec, h aiPanelHost) {
 			aiDrag("Lose after (s)", "ailose", h, &s.LoseTime, 0, 600, 0.25)
 			aiDrag("Attack range", "airange", h, &s.AttackRange, 0, 1000, 0.1)
 			aiDrag("Attack interval (s)", "aiint", h, &s.AttackInterval, 0.05, 600, 0.05)
+			if s.OnTarget == world.AIFight {
+				aiFightFields(s, h)
+			}
 		}
 		imgui.TreePop()
 	}
@@ -744,4 +749,41 @@ func absf32(v float32) float32 {
 		return -v
 	}
 	return v
+}
+
+// aiFightFields is the tuning only on_target: fight reads.
+func aiFightFields(s *world.AISpec, h aiPanelHost) {
+	if !imgui.TreeNodeV("Fighting##aifight"+h.id, imgui.TreeNodeFlagsDefaultOpen) {
+		return
+	}
+	aiDrag("Fight range (0 = half attack)", "aifrange", h, &s.FightRange, 0, 1000, 0.25)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The distance it likes to fight from: it closes on a target\nwell beyond it and backs off one well inside it.")
+	}
+	aiDrag("Aggression (0-1)", "aiaggr", h, &s.Aggression, 0, 1, 0.01)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("High advances and flanks; low holds back and takes cover.")
+	}
+	aiDrag("Reposition every (s)", "airepos", h, &s.Reposition, 0.2, 60, 0.1)
+	aiDrag("Dodge chance (per s aimed at)", "aidodge", h, &s.DodgeChance, 0, 1, 0.01)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How likely it is to dive aside within a second of the\nplayer aiming at it. 0 never dives by itself.")
+	}
+	aiDrag("Dodge cooldown (s)", "aidodgecd", h, &s.DodgeCooldown, 0, 60, 0.1)
+	aiDrag("Dive distance", "aidodgedist", h, &s.DodgeDistance, 0, 10, 0.05)
+	aiDrag("Dive windup (s)", "aidodgewind", h, &s.DodgeWindup, 0, 2, 0.01)
+	aiDrag("Dive down time (s)", "aidodgerec", h, &s.DodgeRecover, 0, 5, 0.01)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How long it stays down after it lands. Time these three\nto the dive clips. 0 is the quick 3 m sidestep dive.")
+	}
+	aiAnimCombo("Aim animation", "aiaima", h, &s.AimAnim)
+	aiAnimCombo("Strafe left animation", "aistrla", h, &s.StrafeLeftAnim)
+	aiAnimCombo("Strafe right animation", "aistrra", h, &s.StrafeRightAnim)
+	aiAnimCombo("Walk back animation", "aibacka", h, &s.BackAnim)
+	aiAnimCombo("Dive left animation", "aidivla", h, &s.DodgeLeftAnim)
+	aiAnimCombo("Dive right animation", "aidivra", h, &s.DodgeRightAnim)
+	if s.StrafeLeftAnim == "" || s.StrafeRightAnim == "" || s.BackAnim == "" {
+		editorTextMutedWrapped("Without strafe and walk-back animations it turns and walks the way it moves instead of keeping its gun on the target.")
+	}
+	imgui.TreePop()
 }

@@ -23,6 +23,7 @@ import (
 	"foundry/internal/hooks"
 	"foundry/internal/model"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,6 +127,11 @@ type EntityModel struct {
 	// like a beam. It draws in the sorted transparent pass, so a texture with
 	// an alpha channel fades off at its edges as a glow rather than a solid.
 	Unlit bool
+	// UVScroll slides the attachment's texture across it, in UV units a
+	// second: a tank's track belt running round its wheels, a conveyor, a
+	// waterfall. The mesh wants a texture that tiles along the direction it
+	// scrolls. Zero holds it still.
+	UVScroll mgl32.Vec2
 
 	// Animations are the named clips this attachment can play.
 	Animations []EntityAnimation
@@ -149,6 +155,10 @@ type EntityModel struct {
 	// afterwards a static model has dropped it, and "no armature" and "no skin
 	// weights" are indistinguishable from an EntityModel alone.
 	AnimBlocked string
+	// UVOffset is how far UVScroll has slid the texture, kept inside [0, 1)
+	// so a track that runs all game never loses precision. Handed to every
+	// submesh as it draws. Saved, so a restored tank's tracks do not jump.
+	UVOffset mgl32.Vec2
 }
 
 // effectiveScale treats the zero value as identity.
@@ -477,11 +487,20 @@ func (m *EntityModel) Playing() string {
 // looked up because an attachment has no way back to its entity, and adding one
 // would be a cycle for the sake of one string.
 func (m *EntityModel) Update(dt float32, entityID string) {
+	m.UpdatePose(dt, entityID, true)
+}
+
+// UpdatePose is Update that rebuilds the pose only when pose is set; the
+// clock, and every event it posts, move either way. See AnimPoseDue.
+func (m *EntityModel) UpdatePose(dt float32, entityID string, pose bool) {
+	if m.UVScroll != (mgl32.Vec2{}) {
+		m.UVOffset = wrapUV(m.UVOffset.Add(m.UVScroll.Mul(dt)))
+	}
 	if m.Anim == nil {
 		return
 	}
 	name := m.Playing()
-	m.Anim.Update(dt)
+	m.Anim.UpdatePose(dt, pose)
 
 	if m.Anim.wrapped {
 		m.Anim.wrapped = false
@@ -497,6 +516,15 @@ func (m *EntityModel) Update(dt float32, entityID string) {
 }
 
 // ---------- helpers ----------
+
+// wrapUV keeps each component of an offset in [0, 1): a whole tile of scroll
+// is no scroll at all on a texture that repeats.
+func wrapUV(v mgl32.Vec2) mgl32.Vec2 {
+	for i := range v {
+		v[i] -= float32(math.Floor(float64(v[i])))
+	}
+	return v
+}
 
 // loadModelDocument reads a model file into the editable document form, picking
 // the reader by extension.

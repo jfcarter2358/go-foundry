@@ -514,15 +514,17 @@ func canDisplace(e *world.Entity, axis int, sign float32) bool {
 // forever.
 func entityPushOut(e *world.Entity, delta mgl32.Vec3) {
 	e.Position = e.Position.Add(delta)
-	for axis := 0; axis < 3; axis++ {
-		// Only the component moving *into* the other body is cancelled. Zeroing
-		// the whole axis would also stop something already separating, which is
-		// what makes a stack of boxes stick together instead of settling.
-		if delta[axis] > 0 && e.Velocity[axis] < 0 {
-			e.Velocity[axis] = 0
-		}
-		if delta[axis] < 0 && e.Velocity[axis] > 0 {
-			e.Velocity[axis] = 0
+	// Only the part of the velocity moving *into* the other body is cancelled,
+	// measured along the push. Zeroing whole axes would also stop something
+	// already separating, which is what makes a stack of boxes stick together
+	// instead of settling — and, for two round bodies meeting at an angle, it
+	// would kill the sideways slide as well, so two walkers brushing past each
+	// other wedged instead of sliding by. Along an axis-aligned push the two
+	// rules are the same.
+	if l := delta.Len(); l > 1e-6 {
+		n := delta.Mul(1 / l)
+		if into := e.Velocity.Dot(n); into < 0 {
+			e.Velocity = e.Velocity.Sub(n.Mul(into))
 		}
 	}
 	// Being pushed up off something counts as standing on it, which is what

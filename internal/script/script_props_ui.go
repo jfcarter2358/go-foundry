@@ -287,6 +287,86 @@ func widgetProps() map[string]propAccess {
 			Doc: "a point in the world the widget rides on: its pivot is kept where that point is on screen, " +
 				"and it is hidden while the point is behind the camera. null puts it back where it was authored",
 		},
+		"compass_target": {
+			Get: get(func(n *ui.Node) flang.Value {
+				if p := n.CompassPin(); p.On && p.UseTarget {
+					return vecValue(p.Target)
+				}
+				return flang.NullVal{}
+			}),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				if _, isNull := v.(flang.NullVal); isNull {
+					n.ClearCompassPin()
+					return nil
+				}
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("compass_target", "vec or null", v)
+				}
+				pin := n.CompassPin()
+				pin.Target, pin.UseTarget = p, true
+				n.SetCompassPin(pin)
+				return nil
+			}),
+			Doc: "a point in the world the widget marks on a compass tape: its pivot slides along its parent's " +
+				"width by the bearing from the viewer to the point, and it is hidden off the tape's ends " +
+				"(see compass_clamp). null puts it back where it was authored",
+		},
+		"compass_heading": {
+			Get: get(func(n *ui.Node) flang.Value {
+				if p := n.CompassPin(); p.On && !p.UseTarget {
+					return flang.FloatVal(float64(p.Heading))
+				}
+				return flang.NullVal{}
+			}),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				if _, isNull := v.(flang.NullVal); isNull {
+					n.ClearCompassPin()
+					return nil
+				}
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("compass_heading", "float or null", v)
+				}
+				pin := n.CompassPin()
+				pin.Heading, pin.UseTarget = f, false
+				n.SetCompassPin(pin)
+				return nil
+			}),
+			Doc: "a fixed bearing in radians the widget marks on a compass tape, in an entity's yaw convention " +
+				"(0 is -Z, pi/2 is -X): the letter N is 0.0. null puts it back where it was authored",
+		},
+		"compass_span": {
+			Get: get(func(n *ui.Node) flang.Value {
+				s := n.CompassPin().Span
+				if s <= 0 {
+					s = ui.DefaultCompassSpan
+				}
+				return flang.FloatVal(float64(s))
+			}),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok || f <= 0 {
+					return propErr("compass_span", "float above 0", v)
+				}
+				n.SetCompassSpan(f)
+				return nil
+			}),
+			Doc: "how much heading, in radians, a compass-pinned widget's parent is wide; pi (half a turn) by default",
+		},
+		"compass_clamp": {
+			Get: get(func(n *ui.Node) flang.Value { return flang.BoolVal(n.CompassPin().Clamp) }),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("compass_clamp", "bool", v)
+				}
+				n.SetCompassClamp(b)
+				return nil
+			}),
+			Doc: "keeps a compass-pinned widget at the tape's nearer end when its bearing is off it, rather than " +
+				"hiding it — an objective behind the player still says which way to turn",
+		},
 		"pos": {
 			Get: get(func(n *ui.Node) flang.Value {
 				r := n.Solved()

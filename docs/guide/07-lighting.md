@@ -123,6 +123,17 @@ carrier has taken it.
 From a script, `attach(@lantern, @guard, "hand_r")` and `detach(@lantern)` work
 on a dynamic point light exactly as on a sprite. See [Scripting](18-scripting.md).
 
+### Flashes
+
+Two things light the level without a light being placed at all: an
+[explosion's](15-sprites-and-particles.md#effects-explosions) flash, and a
+particle effect whose document carries a
+[`light:`](15-sprites-and-particles.md#a-light-on-the-effect) block — a muzzle
+flash lighting the wall beside the gun. Both are dynamic and shadowless, and both compete for the level's eight
+point-light slots with everything else that is lit: a shadow-casting light
+always keeps its slot, and the rest go to whatever the camera can see most of
+(brightness and reach for, distance against).
+
 ## Static and dynamic lights
 
 Every directional and point light is one or the other, set by its **Dynamic**

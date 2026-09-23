@@ -389,6 +389,18 @@ func entityProps() map[string]propAccess {
 			Set: set(vecSet("bound_offset", func(e *world.Entity, p mgl32.Vec3) { e.BoundOffset = p })),
 			Doc: "offset of the volume's centre from the entity's origin",
 		},
+		"hit_height": {
+			Get: get(func(e *world.Entity) flang.Value { return flang.FloatVal(e.HitScale()) }),
+			Set: set(func(e *world.Entity, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("hit_height", "float", v)
+				}
+				e.HitHeight = f
+				return nil
+			}),
+			Doc: "share of its bounds' height the body presents to rounds and sight lines, from the feet up: 1 standing, about 0.6 crouched. Navigation keeps the whole bounds",
+		},
 		"collision_world": {
 			Get: get(func(e *world.Entity) flang.Value { return flang.BoolVal(e.Collision.World) }),
 			Set: set(boolSet("collision_world", func(e *world.Entity, b bool) { e.Collision.World = b })),

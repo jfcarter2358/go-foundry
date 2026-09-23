@@ -75,6 +75,19 @@ func levelProps() map[string]propAccess {
 			Doc: "a one-line description of what the load is doing, or empty when nothing is",
 		},
 
+		// Which kind of binary is running this (hooks.DevBuild): the
+		// development build with the editor in it, or a shipped release. A
+		// settings screen reads it to offer what only makes sense while a
+		// level is being built and tested — a difficulty that can be changed
+		// mid-mission, a debug view — and to leave it out of the release the
+		// player gets. Read-only in both, for the obvious reason.
+		"dev_build": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(hooks.DevBuild), true
+			},
+			Doc: "true while the running binary is a development build (the one with the 3D editor), false in a release build",
+		},
+
 		// Writable, and it takes effect on the very next frame: MovePlayer asks
 		// the level for this once per frame rather than caching it, so a script
 		// lowering it for a crawlspace or raising it for a climb needs nothing

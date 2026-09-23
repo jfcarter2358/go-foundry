@@ -16,6 +16,10 @@ uniform float waveSpeed;
 // same VAO also feeds the detail tessellation program (see detail_vert.glsl).
 uniform int smoothShading;
 
+// Slides the texture across the surface (gfx.Geometry.UVOffset): a scrolling
+// attachment such as a tank's track belt. Zero for everything else.
+uniform vec2 uvOffset;
+
 layout(location = 0) in vec3 vert;
 layout(location = 1) in vec2 vertTexCoord;
 // Per-vertex normal, present only on surfaces built with smoothing on. The
@@ -56,7 +60,7 @@ float waterHeight(vec2 p) {
 }
 
 void main() {
-    fragTexCoord = vertTexCoord;
+    fragTexCoord = vertTexCoord + uvOffset;
     fragBakedLight = vertLight;
     // skinPosition is the identity unless this draw call set `skinned`
     // (skin_common.glsl), so every static surface takes the same path it always

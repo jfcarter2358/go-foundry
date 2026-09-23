@@ -324,6 +324,43 @@ func particleDocSection() {
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Fixes every random draw, so the preview is reproducible.\nChanging it restarts the effect.")
 	}
+	particleFlashRows()
+}
+
+// particleFlashRows draws the effect's own light (particle.Flash): the flash a
+// muzzle flash or a grenade throws across the level while it goes off, as
+// opposed to the particles, which are what it throws it FROM.
+//
+// Brightness is the switch — 0 is no light — so it comes first, and the rest
+// of the rows are greyed out while it is off. The preview does not show it:
+// there is no scene there to light.
+func particleFlashRows() {
+	f := &particleDoc.Light
+	if f.Radius == 0 && f.Duration == 0 && f.Color == (mgl32.Vec3{}) {
+		// An effect that has never had a light: give the numbers something
+		// usable to start from, so turning the brightness up lights rather
+		// than doing nothing at all.
+		def := particle.DefaultFlash()
+		f.Radius, f.Duration, f.Color = def.Radius, def.Duration, def.Color
+	}
+	particleFloat("Light##pdoclb", &f.Brightness, 0, 60, "%.2f",
+		"How hard the effect lights the level at the peak of its\nflash. 0 is no light at all, which is the default.\nThe preview does not show it: there is no scene to light.")
+	if !f.On() {
+		imguibackend.EditorPushDisabled(true)
+	}
+	col := [3]float32{f.Color.X(), f.Color.Y(), f.Color.Z()}
+	if imgui.ColorEdit3("Light colour##pdoclc", &col) {
+		particleBeginEdit("pdoclc")
+		f.Color = mgl32.Vec3{col[0], col[1], col[2]}
+		particleTouch()
+	}
+	particleFloat("Light reach##pdoclr", &f.Radius, 0, 200, "%.1f",
+		"How far the flash reaches, in world units.")
+	particleFloat("Light time##pdocld", &f.Duration, 0.01, 5, "%.3f",
+		"How long the flash lasts, in seconds - its own, not the\nlayers'. It goes off with the effect's cycle, so a\nlooping effect flashes once a lap.")
+	if !f.On() {
+		imguibackend.EditorPopDisabled()
+	}
 }
 
 // particleLayerNameRow draws the rename field, committed on Enter for the

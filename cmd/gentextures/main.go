@@ -427,6 +427,7 @@ func main() {
 	genSkyDay()
 	genSkySpace()
 	genSkyCanyon()
+	genSkyNight()
 	// The dropship's four, last for the reason genMoss is: they draw from the
 	// shared rng, and inserting them earlier would regenerate everything after.
 	genHullPlate(rng)

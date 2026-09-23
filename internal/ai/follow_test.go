@@ -251,7 +251,7 @@ func TestAnAgentWalksAboardAParkedHullRidesItAndWalksOff(t *testing.T) {
 
 	// In through the open side, to the back of the hold.
 	inside := mgl32.Vec3{5.5, 0, 7}
-	if !MoveTo(lvl, a(), inside) {
+	if !MoveTo(lvl, a(), inside, false) {
 		t.Fatal("the hold of a parked hull is not reachable")
 	}
 	var events []hooks.AIEvent
@@ -267,7 +267,7 @@ func TestAnAgentWalksAboardAParkedHullRidesItAndWalksOff(t *testing.T) {
 	// stands even with somewhere to go.
 	local := a().Position
 	ship().Velocity = mgl32.Vec3{0, 1, 3}
-	MoveTo(lvl, a(), mgl32.Vec3{16, 0, 16})
+	MoveTo(lvl, a(), mgl32.Vec3{16, 0, 16}, false)
 	runFramed(lvl, 1.5, &events, nil)
 	if a().Frame != "ship" {
 		t.Fatalf("fell out of a moving ship: frame %q", a().Frame)

@@ -2,6 +2,62 @@
 
 ## Done
 
+- [x] Muzzle flashes that light, and difficulty levels. An effect document can
+      now carry a light: a `light:` block on a `.fpar` (colour, brightness,
+      reach, duration) makes every placement of that effect flash a real
+      dynamic point light while it goes off, timed off the effect's own cycle —
+      so `spawn_effect("muzzle_flash", at)` lights the wall beside the gun
+      wherever a gun goes off, with nothing to place and nothing to clean up.
+      Authored in the particle editor's Effect group; off by default, so every
+      effect written before it is unchanged.
+
+      **The eight slots**, which this needed fixing first: the shader carries
+      eight point lights, and until now the first eight in the level file won
+      them — so a level with more (every generated one: level1 has 11, level3
+      118) lit whatever happened to come first, and an explosion's flash in
+      such a level lit nothing at all. `world.fitPointLights` now decides:
+      every shadow-casting light keeps its slot in file order (its cubemap is
+      found by that index), and the rest — flashes included — compete on what
+      the camera can see, brightness and reach for, distance against.
+
+      **`@level.prop.dev_build`** (read-only) tells a script whether it is in
+      the build with the 3D editor or in a shipped release, which is how a
+      settings screen offers something only while a game is being made.
+
+      **Game side**: `scripts/difficulty.flang` is one imported table —
+      Easy/Normal/Hard, asked ONCE A GAME. The main menu's New Game forgets the
+      last answer, so the first player to spawn without one puts
+      `ui/difficulty.fui` up with the level paused behind it, and every later
+      level inherits it. It is kept twice on purpose: in the player's settings,
+      which is the only thing that survives a level load and so carries it from
+      level 1 into level 2, and in `player_combat.flang`'s own state, which is
+      what puts it in a SAVE — a game saved on Hard loads on Hard whatever has
+      been played since, pushed back over the setting on the first tick after
+      the restore. It scales the damage the player takes — once, in the
+      player's own `:damage:`, so every source goes through it — the enemy's
+      accuracy and reaction against the player, and how soon health comes back.
+      Normal is already kinder than the raw numbers the levels are built from
+      and Easy is kinder again. The settings screen's new **Game** tab changes
+      it mid-mission and appears only while `dev_build`. `muzzle_flash_3p.fpar` is the flash
+      at the size it has to be on someone else's gun — enemies, squadmates, the
+      level2 defenders and the level3 APC use it, since the viewmodel-sized one
+      is two pixels at thirty metres — and it, `muzzle_flash.fpar` and
+      `cannon_flash.fpar` all light now.
+
+- [x] Soldiers that react, armour, scrolling textures (for level2's second
+      pass). `find_cover(agent, radius, {from, near, duck, peek})` — the Take
+      cover search on demand, including a crouched firing position behind low
+      cover; `ai_move_to(agent, place, true)` runs there; `hit_height` makes a
+      crouch a smaller body for rounds and sight lines without touching the
+      nav bounds; waypoint legs from 1.6x speed play the run animation, and a
+      running `hold` leg faces its way. enemy_combat.flang uses all of it:
+      soldiers dash for cover when hit, near-missed or when a comrade falls,
+      go after whoever did it, scatter from grenades. Model attachments
+      scroll their texture (`uv_scroll`/`uv_offset`, vertex.glsl `uvOffset`) —
+      tank tracks. Animation LOD poses distant skeletons less often (a third of
+      a crowded tick). `levelsim -play -god -cpuprofile` runs the AI and physics
+      too.
+
 - [x] Save games and checkpoints. A save names its level and records
       everything play has changed in it. That covers:
       - every entity's fields, AI, animation clip and model state, including

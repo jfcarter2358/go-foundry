@@ -159,6 +159,7 @@ func (b *Batch) Draw(model mgl32.Mat4, firsts, counts []int32) {
 	gl.Uniform1i(NormalColorUniform, b.NormalColorFlag())
 	// A chunk or static batch is always lit; only a model attachment opts out.
 	gl.Uniform1i(UnlitUniform, 0)
+	gl.Uniform2f(UVOffsetUniform, 0, 0)
 	gl.Uniform1i(IsWaterUniform, 0)
 	applyBlendUniforms(b.BlendTexture, b.BlendMask)
 	BindNormalMap(b.Texture, HasNormalMapUniform, NormalMapUniform)

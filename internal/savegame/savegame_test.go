@@ -86,6 +86,7 @@ func TestAPlayedLevelComesBackAsItWasPlayed(t *testing.T) {
 	g1.Position = mgl32.Vec3{3, 0, -4}
 	g1.SetAttr("health", world.IntAttr(40))
 	g1.AI.Enabled = true
+	g1.HitHeight = 0.55 // ducked behind cover (enemy_combat.flang's hit_height)
 	if !removeEntity(lvl, "crate") {
 		t.Fatal("could not destroy the crate")
 	}
@@ -128,6 +129,9 @@ func TestAPlayedLevelComesBackAsItWasPlayed(t *testing.T) {
 	}
 	if h, _ := g.Attr("health"); h.I != 40 {
 		t.Errorf("guard_1's health came back as %d, want 40", h.I)
+	}
+	if g.HitHeight != 0.55 {
+		t.Errorf("guard_1's crouch came back as hit_height %v, want 0.55", g.HitHeight)
 	}
 	if g.AI == nil || !g.AI.Enabled {
 		t.Errorf("guard_1's AI came back as %+v, want switched on", g.AI)

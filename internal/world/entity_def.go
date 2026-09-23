@@ -97,6 +97,7 @@ type RawEntityModel struct {
 	Alpha      float32              `yaml:"alpha,omitempty"`   // 0 = opaque
 	Visible    *bool                `yaml:"visible,omitempty"` // default true when absent
 	Unlit      bool                 `yaml:"unlit,omitempty"`   // self-lit; see EntityModel.Unlit
+	UVScroll   *RawVec2             `yaml:"uv_scroll,omitempty"` // texture scroll, UV units a second
 	Animations []RawEntityAnimation `yaml:"animations,omitempty"`
 }
 
@@ -350,8 +351,23 @@ func entityModelFromRaw(r RawEntityModel) EntityModel {
 		Alpha:      r.Alpha,
 		Visible:    BoolDefault(r.Visible, true),
 		Unlit:      r.Unlit,
+		UVScroll:   vec2FromRawPtr(r.UVScroll),
 		Animations: entityAnimationsFromRaw(r.Animations),
 	}
+}
+
+func vec2FromRawPtr(r *RawVec2) mgl32.Vec2 {
+	if r == nil {
+		return mgl32.Vec2{}
+	}
+	return mgl32.Vec2{r.X, r.Y}
+}
+
+func vec2ToRawPtr(v mgl32.Vec2) *RawVec2 {
+	if v == (mgl32.Vec2{}) {
+		return nil
+	}
+	return &RawVec2{X: v.X(), Y: v.Y()}
 }
 
 // entityAnimationsFromRaw converts an attachment's animation list, dropping
@@ -397,6 +413,7 @@ func entityModelToRaw(m *EntityModel) RawEntityModel {
 		Alpha:      m.Alpha,
 		Visible:    BoolPtrIfFalse(m.Visible),
 		Unlit:      m.Unlit,
+		UVScroll:   vec2ToRawPtr(m.UVScroll),
 		Animations: entityAnimationsToRaw(m.Animations),
 	}
 }
@@ -593,6 +610,7 @@ func (m *EntityModel) TemplateCopy() EntityModel {
 		Alpha:    m.Alpha,
 		Visible:  m.Visible,
 		Unlit:    m.Unlit,
+		UVScroll: m.UVScroll,
 	}
 	if len(m.Animations) > 0 {
 		c.Animations = make([]EntityAnimation, len(m.Animations))
@@ -640,6 +658,9 @@ func applyModelOverride(m *EntityModel, r RawEntityModel) {
 	}
 	if r.Visible != nil {
 		m.Visible = *r.Visible
+	}
+	if r.UVScroll != nil {
+		m.UVScroll = mgl32.Vec2{r.UVScroll.X, r.UVScroll.Y}
 	}
 	if len(r.Animations) > 0 {
 		// Animations are replaced wholesale rather than merged: the list is one
@@ -1073,6 +1094,10 @@ func modelOverride(def *EntityDef, m *EntityModel) (RawEntityModel, bool) {
 	}
 	if m.Offset != base.Offset {
 		o.Offset = &RawVec3{X: m.Offset.X(), Y: m.Offset.Y(), Z: m.Offset.Z()}
+		changed = true
+	}
+	if m.UVScroll != base.UVScroll {
+		o.UVScroll = &RawVec2{X: m.UVScroll.X(), Y: m.UVScroll.Y()}
 		changed = true
 	}
 	if m.Rotation != base.Rotation {

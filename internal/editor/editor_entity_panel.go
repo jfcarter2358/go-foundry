@@ -549,6 +549,12 @@ func editorEntityModelBody(e *world.Entity, m *world.EntityModel, idx int) bool 
 	if editorDragFloatStep("Alpha##malpha", &alpha, 0, 1, "%.2f", 0.02) {
 		m.SetAlpha(alpha)
 	}
+	for i, label := range [2]string{"UV scroll U##muvu", "UV scroll V##muvv"} {
+		v := m.UVScroll[i]
+		if editorDragFloatStep(label, &v, -20, 20, "%.3f", 0.01) {
+			m.UVScroll[i] = v
+		}
+	}
 
 	editorEntityAnimations(e, m)
 	return false

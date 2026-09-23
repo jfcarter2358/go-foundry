@@ -153,6 +153,9 @@ type intent struct {
 	// moveAnim replaces the agent's MoveAnim while it is actually moving —
 	// running to catch up — and leaves its idle alone when it is not.
 	moveAnim string
+	// dodge throws the body straight at goal at dive speed (fight.go's dash)
+	// instead of walking a path there.
+	dodge bool
 }
 
 // stateFor returns an agent's runtime state, starting a fresh one on its first
@@ -225,15 +228,23 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 	// stops. Nothing it was doing is over — a path, a command, keeping up —
 	// only paused, since navigation has no floor under it to plan on until
 	// then (nav's navigable).
-	if in.move && !world.FrameAtRest(lvl, e.Frame) {
-		in.move = false
+	if (in.move || in.dodge) && !world.FrameAtRest(lvl, e.Frame) {
+		in.move, in.dodge = false, false
 		if in.faceWhileMoving {
 			in.face = true
 		}
 	}
 
 	moving := false
-	if in.move {
+	if in.dodge {
+		clearPath(st)
+		dash(lvl, e, in.goal)
+		if in.face {
+			if d := in.facePos.Sub(feetOf(lvl, e)); d.X()*d.X()+d.Z()*d.Z() > 1e-4 {
+				turnTo(lvl, e, yawToward(d), spec.TurnRate*dt)
+			}
+		}
+	} else if in.move {
 		res := follow(lvl, e, st, in.goal, in.arrive, in.speedScale, !in.faceWhileMoving, dt)
 		moving = res == followMoving
 		if in.faceWhileMoving {
@@ -260,6 +271,9 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 		case in.mode == world.AIWandering && res != followMoving:
 			st.Wandering = false
 			st.WanderTimer = spec.WanderPause * (0.5 + rng.Float32())
+		case fightMoving(in.mode) && res != followMoving && res != followHolding:
+			// At the spot, or as near as it gets: stand and shoot from there.
+			endFightMove(e, st)
 		case (in.mode == world.AIEscorting || in.mode == world.AIRegrouping) && res != followMoving && res != followHolding:
 			// At the slot, or as near it as the level allows: stand until the
 			// leader's movement opens the gap again. Behind a leader still on
@@ -288,6 +302,10 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 		anim = spec.MoveAnim
 		if in.moveAnim != "" {
 			anim = in.moveAnim
+		} else if in.faceWhileMoving && fightMoving(in.mode) {
+			// Walking with its gun on the target: the clip for the way it
+			// is going relative to the way it faces.
+			anim = strafeAnim(lvl, e, anim, st.Anim)
 		}
 	}
 	if in.anim != "" {
@@ -302,6 +320,34 @@ func tick(lvl *world.Level, e *world.Entity, index int, dt float32, player *worl
 		e.PlayAnimation("", anim)
 	}
 	return true
+}
+
+// fightMoving reports whether a mode is one of a fighter's moves, walked to a
+// spot it will stand and shoot from.
+func fightMoving(m world.AIMode) bool {
+	return m == world.AIManeuvering || m == world.AIFlanking || m == world.AISearching
+}
+
+// runLegScale is how much faster than its walk a leg has to be for the agent
+// to play its run animation on it: at 1.6x a walk cycle already skates.
+const runLegScale = float32(1.6)
+
+// runLeg is the speed scale and move animation of an agent running: its run
+// speed when it has one faster than its walk, else its walk.
+func runLeg(spec *world.AISpec) (float32, string) {
+	if spec.RunSpeed > spec.Speed && spec.Speed > 0 {
+		return spec.RunSpeed / spec.Speed, spec.RunAnim
+	}
+	return 1, ""
+}
+
+// legAnim is the move animation for a leg walked at scale times the agent's
+// walking speed: its run animation once that is a run, else its own.
+func legAnim(spec *world.AISpec, scale float32) string {
+	if scale >= runLegScale {
+		return spec.RunAnim
+	}
+	return ""
 }
 
 // canSteer reports whether the controller may write the entity's motion.
@@ -329,12 +375,20 @@ func decide(lvl *world.Level, e *world.Entity, st *world.AIState, dt float32, pl
 		forgetLeader(st)
 	}
 
+	if in, ok := dodgeIntent(lvl, e, st, dt); ok {
+		return in
+	}
+
 	if st.Command {
 		if distXZ(feetOf(lvl, e), st.CommandGoal) <= arrive && absf(feetOf(lvl, e).Y()-st.CommandGoal.Y()) < 2 {
 			st.Command = false
 			hooks.RecordAIEvent(hooks.AIEvent{Atom: "ai_arrived", Agent: e.ID})
 		} else {
-			return intent{mode: world.AIMoving, move: true, goal: st.CommandGoal, arrive: arrive}
+			in := intent{mode: world.AIMoving, move: true, goal: st.CommandGoal, arrive: arrive}
+			if st.CommandRun {
+				in.speedScale, in.moveAnim = runLeg(spec)
+			}
+			return in
 		}
 	}
 
@@ -359,7 +413,11 @@ func decide(lvl *world.Level, e *world.Entity, st *world.AIState, dt float32, pl
 		// Keep to the path, and fight from it.
 		engageEvents(lvl, e, st, tgt, dt)
 		in := routeIntent(lvl, e, st, route, tgt, dt, arrive)
-		if st.TargetVisible && !st.InCover {
+		// A leg it runs, it runs facing where it is going: turned to the
+		// target, the run clip would carry it sideways. It squares up again at
+		// the stop.
+		running := in.move && in.moveAnim != ""
+		if st.TargetVisible && !st.InCover && !running {
 			in.face, in.facePos = true, st.LastKnown
 			in.faceYawOn = false
 			if in.move {
@@ -379,10 +437,11 @@ func decide(lvl *world.Level, e *world.Entity, st *world.AIState, dt float32, pl
 		engageEvents(lvl, e, st, tgt, dt)
 		if leader != nil && route.anim == nil {
 			if in, ok := regroupIntent(lvl, e, st, leader, tgt, dt, arrive); ok {
+				st.FightMove = fightHold
 				return in
 			}
 		}
-		return engage(lvl, e, st, tgt, mode, arrive)
+		return engage(lvl, e, st, tgt, leader, mode, dt, arrive)
 	}
 	if st.InRange {
 		st.InRange = false
@@ -430,8 +489,11 @@ func engageEvents(lvl *world.Level, e *world.Entity, st *world.AIState, tgt *wor
 }
 
 // engage is what an agent does about a target it has, chasing or watching it.
-func engage(lvl *world.Level, e *world.Entity, st *world.AIState, tgt *world.Entity, mode world.AITargetMode, arrive float32) intent {
+func engage(lvl *world.Level, e *world.Entity, st *world.AIState, tgt, leader *world.Entity, mode world.AITargetMode, dt, arrive float32) intent {
 	spec := e.AI
+	if mode == world.AIFight {
+		return fightIntent(lvl, e, st, tgt, leader, dt, arrive)
+	}
 	feet := feetOf(lvl, e)
 	tfeet := feetOf(lvl, tgt)
 
@@ -581,19 +643,23 @@ func feetOf(lvl *world.Level, e *world.Entity) mgl32.Vec3 {
 func EyeOf(lvl *world.Level, e *world.Entity) mgl32.Vec3 { return eyeOf(lvl, e) }
 
 func eyeOf(lvl *world.Level, e *world.Entity) mgl32.Vec3 {
-	c := lvl.Frames.WorldBoundCenter(e)
-	if e.HasBounds() {
-		c[1] += e.BoundHalfExtents().Y() * 0.8
-	}
-	return c
+	return bodyPoint(lvl, e, 0.9)
 }
 
 // chestOf is where an entity is looked at: above the middle of its bounds, so
 // a waist-high wall hides a body's legs but not the body.
 func chestOf(lvl *world.Level, e *world.Entity) mgl32.Vec3 {
+	return bodyPoint(lvl, e, 0.75)
+}
+
+// bodyPoint is the point frac of the way up the body an entity presents — its
+// bounds, or the bottom HitScale of them while it ducks, so a body crouched
+// behind a sandbag both sees over it and is seen over it only once it stands.
+func bodyPoint(lvl *world.Level, e *world.Entity, frac float32) mgl32.Vec3 {
 	c := lvl.Frames.WorldBoundCenter(e)
 	if e.HasBounds() {
-		c[1] += e.BoundHalfExtents().Y() * 0.5
+		h := e.BoundHalfExtents().Y()
+		c[1] += -h + 2*h*e.HitScale()*frac
 	}
 	return c
 }

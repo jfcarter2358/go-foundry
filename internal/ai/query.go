@@ -31,13 +31,16 @@ func state(lvl *world.Level, e *world.Entity) *world.AIState {
 // objectives until it arrives, and reports whether the point is somewhere it
 // can get to. Unreachable is still commanded: the agent walks as near as it
 // can, which is usually what a script meant.
-func MoveTo(lvl *world.Level, e *world.Entity, goal mgl32.Vec3) bool {
+//
+// run sends it at its run speed with its run animation, when it has one.
+func MoveTo(lvl *world.Level, e *world.Entity, goal mgl32.Vec3, run bool) bool {
 	if lvl == nil || e == nil || e.AI == nil {
 		return false
 	}
 	st := state(lvl, e)
 	st.Command = true
 	st.CommandGoal = goal
+	st.CommandRun = run
 	st.FailTimer = 0
 	st.StuckCount = 0
 	clearPath(st)

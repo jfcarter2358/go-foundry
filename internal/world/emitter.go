@@ -338,9 +338,14 @@ func UniqueEmitterID(lvl *Level, base string) string {
 // motion is the play gate, matching EntityUpdate's: in the editor an emitter
 // still simulates, because an effect that froze the moment you opened the
 // editor could not be placed by eye. What it does not do is move anything else.
-func EmitterUpdate(lvl *Level, dt float32, motion bool) {
+//
+// It reports whether the scene's lights need uploading again this frame, on
+// EffectUpdate's terms and for the same reason: an effect whose document sets
+// a `light:` block casts a flash while it goes off (emitter_light.go), and a
+// light is a uniform rather than something drawn where it stands.
+func EmitterUpdate(lvl *Level, dt float32, motion bool) (lightsChanged bool) {
 	if lvl == nil {
-		return
+		return false
 	}
 	_ = motion
 	reap := false
@@ -360,7 +365,17 @@ func EmitterUpdate(lvl *Level, dt float32, motion bool) {
 	if reap {
 		reapOneShots(lvl)
 	}
+	// Lit this frame, or lit last frame and not this one — the frame after the
+	// last flash dies has to upload once more to clear it.
+	lit := AnyEmitterFlash(lvl)
+	changed := lit || emitterFlashesWereLit
+	emitterFlashesWereLit = lit
+	return changed
 }
+
+// emitterFlashesWereLit remembers whether last frame's upload carried an
+// emitter flash. See effect.go's effectLightsWereLit, which it mirrors.
+var emitterFlashesWereLit bool
 
 // finished reports whether a one-shot has run its course: nothing alive, and
 // nothing still to come.

@@ -159,11 +159,22 @@ type RawVolumeLook struct {
 	EmissionRamp []RawStop `yaml:"emission_ramp,omitempty"`
 }
 
+// RawFlash is the effect's light (Flash). The whole block is omitted while the
+// flash is the default — which is off — and inside it a key is written only
+// when it differs from that default.
+type RawFlash struct {
+	Color      *RawColor `yaml:"color,omitempty"`
+	Brightness float32   `yaml:"brightness,omitempty"` // default 0: no light
+	Radius     *float32  `yaml:"radius,omitempty"`     // default 8
+	Duration   *float32  `yaml:"duration,omitempty"`   // default 0.08
+}
+
 // RawParticle is the top-level document.
 type RawParticle struct {
 	ID      string     `yaml:"id"`
 	Seed    uint32     `yaml:"seed,omitempty"`
 	Gravity *float32   `yaml:"gravity,omitempty"` // default DefaultGravity
+	Light   *RawFlash  `yaml:"light,omitempty"`   // absent = no flash
 	Layers  []RawLayer `yaml:"layers"`
 }
 
@@ -174,6 +185,7 @@ func rawToDoc(raw RawParticle) *Doc {
 		ID:      raw.ID,
 		Seed:    raw.Seed,
 		Gravity: f32Default(raw.Gravity, DefaultGravity),
+		Light:   flashFromRaw(raw.Light),
 	}
 	for _, rl := range raw.Layers {
 		d.Layers = append(d.Layers, rawToLayer(rl))
@@ -254,6 +266,7 @@ func docToRaw(d *Doc) RawParticle {
 		ID:      d.ID,
 		Seed:    d.Seed,
 		Gravity: f32PtrIfNot(d.Gravity, DefaultGravity),
+		Light:   flashToRaw(d.Light),
 	}
 	for i := range d.Layers {
 		raw.Layers = append(raw.Layers, layerToRaw(&d.Layers[i]))
@@ -324,6 +337,44 @@ func layerToRaw(l *Layer) RawLayer {
 		r.ColorRamp = append(r.ColorRamp, RawColorStop{T: s.T, C: RawColor{R: s.C.X(), G: s.C.Y(), B: s.C.Z()}})
 	}
 	return r
+}
+
+// flashFromRaw reads the `light:` block. No block at all is no flash — the
+// zero Flash, so that the absence round-trips — while a block that IS there
+// gets DefaultFlash's numbers for whatever it leaves out, so `light:
+// {brightness: 4}` is a working muzzle flash rather than a black light of no
+// radius.
+func flashFromRaw(r *RawFlash) Flash {
+	if r == nil {
+		return Flash{}
+	}
+	f := DefaultFlash()
+	if r.Color != nil {
+		f.Color = mgl32.Vec3{r.Color.R, r.Color.G, r.Color.B}
+	}
+	f.Brightness = r.Brightness
+	f.Radius = f32Default(r.Radius, f.Radius)
+	f.Duration = f32Default(r.Duration, f.Duration)
+	return f
+}
+
+// flashToRaw is the inverse. A flash that lights nothing writes no block at
+// all, which is what keeps the `light:` key out of every effect that never
+// asked for one — the zero Flash of a document built in code included.
+func flashToRaw(f Flash) *RawFlash {
+	if !f.On() {
+		return nil
+	}
+	def := DefaultFlash()
+	r := RawFlash{
+		Brightness: f.Brightness,
+		Radius:     f32PtrIfNot(f.Radius, def.Radius),
+		Duration:   f32PtrIfNot(f.Duration, def.Duration),
+	}
+	if f.Color != def.Color {
+		r.Color = &RawColor{R: f.Color.X(), G: f.Color.Y(), B: f.Color.Z()}
+	}
+	return &r
 }
 
 func volumeLookFromRaw(r *RawVolumeLook) VolumeLook {

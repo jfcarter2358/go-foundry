@@ -94,7 +94,11 @@ type Geometry struct {
 	// for things that give off light rather than reflect it, like a beam. It
 	// also sends the surface to the blended pass; see IsTransparent.
 	Unlit bool
-	Water WaterParams
+	// UVOffset slides the texture across the surface: added to every texture
+	// coordinate as it draws. An entity attachment's scroll hands it over
+	// (world.EntityModel.UVScroll); nothing else sets it.
+	UVOffset mgl32.Vec2
+	Water    WaterParams
 	Vao   uint32
 	Vbo   uint32
 	Nbo   uint32 // normal buffer; 0 when the surface is flat-shaded
@@ -585,6 +589,7 @@ func (g Geometry) Draw() {
 	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
 	gl.Uniform1i(NormalColorUniform, g.NormalColorFlag())
 	gl.Uniform1i(UnlitUniform, g.UnlitFlag())
+	gl.Uniform2f(UVOffsetUniform, g.UVOffset.X(), g.UVOffset.Y())
 	g.applyWaterUniforms()
 	g.applyBlendUniforms()
 	g.applyNormalUniforms()
@@ -610,6 +615,7 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
 	gl.Uniform1i(NormalColorUniform, g.NormalColorFlag())
 	gl.Uniform1i(UnlitUniform, g.UnlitFlag())
+	gl.Uniform2f(UVOffsetUniform, g.UVOffset.X(), g.UVOffset.Y())
 	g.applyWaterUniforms()
 	g.applyBlendUniforms()
 	g.applyNormalUniforms()
@@ -641,6 +647,7 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 	// would be noise. A marker's colour comes from its texture and its alpha.
 	gl.Uniform1i(NormalColorUniform, 0)
 	gl.Uniform1i(UnlitUniform, g.UnlitFlag())
+	gl.Uniform2f(UVOffsetUniform, 0, 0)
 	gl.Uniform1i(IsWaterUniform, 0)
 	gl.Uniform1i(HasNormalMapUniform, 0)
 	ApplySkinUniforms(&worldSkinUniforms, Program, nil)

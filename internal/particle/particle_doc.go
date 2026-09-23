@@ -265,6 +265,89 @@ func (v VolumeLook) IsDefault() bool {
 		v.Emission == d.Emission && len(v.ErosionRamp) == 0 && len(v.EmissionRamp) == 0
 }
 
+// Flash is the light an effect casts as it goes off: a muzzle flash lighting
+// the wall beside the gun, a grenade lighting a room for a tenth of a second.
+//
+// It belongs to the DOCUMENT and not to a layer, because it is the effect's
+// light and not one layer's — the flash and the glow of a muzzle flash are one
+// light between them — and because a point light is not something a layer can
+// have several of: the scene has eight slots (world.MaxPointLights), and an
+// effect that quietly took four of them would put the level's own lights out.
+//
+// Brightness 0 is no light at all, which is the default and therefore what
+// every effect authored before this existed still has. What it costs when it
+// IS set is one dynamic, non-shadow-casting point light for as long as the
+// flash lasts; see world.EmitterLights for when it is lit and which flashes
+// win a slot when more are lit than there are slots.
+type Flash struct {
+	// Color is the light's colour. Black reads as white, so an effect that
+	// sets a brightness and nothing else still lights.
+	Color mgl32.Vec3
+	// Brightness is how hard it lights at the peak of the flash. 0 is off.
+	Brightness float32
+	// Radius is how far the light reaches, in world units.
+	Radius float32
+	// Duration is how long the flash lasts, in seconds — its own, and not the
+	// layers'. A muzzle flash is about 0.05; a grenade nearer 0.3.
+	Duration float32
+}
+
+// flashAttack is the share of a flash's duration it takes to reach full
+// brightness. Small on purpose: a flash is an event, and one that faded up
+// would read as a lamp being switched on.
+const flashAttack = float32(0.08)
+
+// flashPeak is what the rise and the fall multiply out to at the instant they
+// cross, which is the envelope's highest point. Divided back out so that
+// Brightness is the brightness at the peak rather than a number the curve
+// never quite reaches.
+const flashPeak = (1 - flashAttack) * (1 - flashAttack)
+
+// DefaultFlash is no light — Brightness 0 — with the rest of the numbers set
+// to something sensible, so that an author turning one on has a muzzle flash
+// rather than a black light of no radius.
+func DefaultFlash() Flash {
+	return Flash{Color: mgl32.Vec3{1, 0.85, 0.6}, Radius: 8, Duration: 0.08}
+}
+
+// On reports whether the flash lights anything at all.
+func (f Flash) On() bool { return f.Brightness > 0 && f.Radius > 0 }
+
+// EffectiveDuration is the flash's length, never zero — a flash with none
+// authored would otherwise divide by it.
+func (f Flash) EffectiveDuration() float32 {
+	if f.Duration <= 0 {
+		return 0.08
+	}
+	return f.Duration
+}
+
+// EffectiveColor is the colour, with black read as white: an effect that sets
+// a brightness and forgets the colour should light, not go dark.
+func (f Flash) EffectiveColor() mgl32.Vec3 {
+	if f.Color == (mgl32.Vec3{}) {
+		return mgl32.Vec3{1, 1, 1}
+	}
+	return f.Color
+}
+
+// At is the flash's envelope t seconds into the effect's cycle: 0 before it
+// starts and once it is over, up to 1 almost at once, and falling away over
+// the rest of its duration.
+func (f Flash) At(t float32) float32 {
+	d := f.EffectiveDuration()
+	if !f.On() || t < 0 || t >= d {
+		return 0
+	}
+	a := t / d
+	attack := a / flashAttack
+	if attack > 1 {
+		attack = 1
+	}
+	fall := 1 - a
+	return attack * fall * fall / flashPeak
+}
+
 // Burst is a one-off release of count particles at time t into the layer's
 // cycle. A layer can carry any number, which is how an effect gets a bang
 // followed by a trail.
@@ -457,7 +540,10 @@ type Doc struct {
 	// second squared. Carried on the document so an effect authored against one
 	// gravity does not change meaning in a level with another.
 	Gravity float32
-	Layers  []Layer
+	// Light is the flash this effect lights the level with while it goes off.
+	// Off by default; see Flash.
+	Light  Flash
+	Layers []Layer
 
 	// Path is where this document was loaded from or last saved to. Not
 	// serialized.
@@ -479,6 +565,7 @@ func NewDoc(id string) *Doc {
 		ID:      id,
 		Seed:    1,
 		Gravity: DefaultGravity,
+		Light:   DefaultFlash(),
 		Layers:  []Layer{NewLayer("layer")},
 	}
 }

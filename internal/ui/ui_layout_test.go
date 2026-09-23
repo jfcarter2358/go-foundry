@@ -407,3 +407,87 @@ func TestSolveWorldAnchor(t *testing.T) {
 		t.Errorf("no host: rect %+v, want the authored rect", got)
 	}
 }
+
+// A compass-pinned node slides along its parent's width by bearing: straight
+// ahead is the middle, a bearing to the viewer's left is left of it, one off
+// the tape's ends is hidden unless the pin clamps it to the nearer end. A
+// target point's bearing is taken from the eye, and turning the view moves it.
+func TestSolveCompassPin(t *testing.T) {
+	prev := ViewHeading
+	t.Cleanup(func() { ViewHeading = prev })
+
+	s := NewScreen("t")
+	tape := NewNode("tape", KindPanel)
+	tape.Rect.AnchorMin, tape.Rect.AnchorMax = mgl32.Vec2{0, 0}, mgl32.Vec2{0, 0}
+	tape.Rect.Offset = [4]float32{100, 10, -500, -40} // 400 wide at x 100
+	mark := NewNode("mark", KindText)
+	mark.Rect = RectXf{Offset: [4]float32{0, 0, -20, -30}, Pivot: mgl32.Vec2{0.5, 0}, Scale: mgl32.Vec2{1, 1}}
+	tape.Children = []Node{mark}
+	s.Root.Children = []Node{tape}
+	c := &s.Root.Children[0].Children[0]
+
+	eye, yaw := mgl32.Vec3{0, 0, 0}, float32(0)
+	ViewHeading = func() (mgl32.Vec3, float32, bool) { return eye, yaw, true }
+	centreX := func() float32 { r := c.Solved(); return r.X + r.W/2 }
+	area := Rect{0, 0, 1000, 800}
+
+	c.SetCompassPin(CompassPin{Heading: 0})
+	s.SolveInto(area)
+	if got := centreX(); math.Abs(float64(got-300)) > 0.01 || c.Culled() {
+		t.Errorf("dead ahead: centre %v culled %v, want the tape's middle, 300", got, c.Culled())
+	}
+	if c.Solved().Y != 10 {
+		t.Errorf("a compass pin moved the node vertically: y %v, want 10", c.Solved().Y)
+	}
+
+	// West (+pi/2) is to the left of a viewer looking north, a quarter of the
+	// way along a half-turn tape.
+	c.SetCompassPin(CompassPin{Heading: math.Pi / 2})
+	s.SolveInto(area)
+	if got := centreX(); math.Abs(float64(got-100)) > 0.01 {
+		t.Errorf("west while facing north: centre %v, want the left end, 100", got)
+	}
+	yaw = math.Pi / 2 // now facing west
+	s.SolveInto(area)
+	if got := centreX(); math.Abs(float64(got-300)) > 0.01 {
+		t.Errorf("west while facing west: centre %v, want 300", got)
+	}
+
+	// Behind: hidden, or at the nearer end when clamped.
+	yaw = 0
+	c.SetCompassPin(CompassPin{Heading: math.Pi * 0.9})
+	s.SolveInto(area)
+	if !c.Culled() {
+		t.Error("a bearing behind the viewer left the node drawn")
+	}
+	c.SetCompassPin(CompassPin{Heading: math.Pi * 0.9, Clamp: true})
+	s.SolveInto(area)
+	if got := centreX(); c.Culled() || math.Abs(float64(got-100)) > 0.01 {
+		t.Errorf("clamped bearing behind-left: centre %v culled %v, want the left end", got, c.Culled())
+	}
+
+	// A target due east of the eye is on the right; the eye moving past it
+	// swings it round.
+	c.SetCompassPin(CompassPin{Target: mgl32.Vec3{50, 3, 0}, UseTarget: true, Span: math.Pi})
+	s.SolveInto(area)
+	if got := centreX(); math.Abs(float64(got-500)) > 0.01 {
+		t.Errorf("target due east: centre %v, want the right end, 500", got)
+	}
+	eye = mgl32.Vec3{50, 0, 40} // due south of it: it is dead ahead
+	s.SolveInto(area)
+	if got := centreX(); math.Abs(float64(got-300)) > 0.01 {
+		t.Errorf("target due north of the eye: centre %v, want 300", got)
+	}
+
+	c.ClearCompassPin()
+	s.SolveInto(area)
+	if got := c.Solved(); !rectClose(got, Rect{100, 10, 20, 30}) {
+		t.Errorf("cleared pin: rect %+v, want the authored rect", got)
+	}
+	ViewHeading = nil
+	c.SetCompassPin(CompassPin{Heading: 1})
+	s.SolveInto(area)
+	if got := c.Solved(); !rectClose(got, Rect{100, 10, 20, 30}) {
+		t.Errorf("no host: rect %+v, want the authored rect", got)
+	}
+}

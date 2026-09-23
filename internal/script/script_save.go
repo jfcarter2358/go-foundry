@@ -166,6 +166,17 @@ func PostCheckpointSaved(name string) {
 	}
 }
 
+// PostEntityEvent delivers `(:atom:, args...)` to an entity's script as an
+// engine event would. For headless tools (levelsim's -kill) that need to poke
+// a level's scripts the way play would.
+func PostEntityEvent(id, atom string, args ...flang.Value) error {
+	rt := Scripts
+	if rt.lvl == nil {
+		return nil
+	}
+	return rt.post(flang.RefVal{Kind: flang.RefEntity, A: id}, atom, args, flang.Pos{})
+}
+
 // ---------- objects a restore makes and unmakes ----------
 
 // SpawnForRestore makes an entity a script had spawned, under the ID it had —

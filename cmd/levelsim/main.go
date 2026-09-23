@@ -12,12 +12,30 @@
 //	    -seconds 30 -watch 'aa_turret.rotation.y,aa_turret/beam.scale.x'
 //
 // WHAT IS AND IS NOT SIMULATED. ScriptTick is the whole script half of a frame:
-// timers, message delivery, :tick:, and every verb. What is NOT here is the
-// rest of the frame — physics, collision, AI stepping, rendering — so an
+// timers, message delivery, :tick:, and every verb. What is NOT here by default
+// is the rest of the frame — physics, collision, AI stepping, rendering — so an
 // entity's velocity does not move it and an AI agent does not walk. The
 // property blends (`move_to`, `rotate_to`, `scale_to`) and brush integration
 // ARE stepped, because those belong to the world and not to the frame loop, and
 // they are what most script-driven machinery is made of.
+//
+// -play adds the gameplay half the app runs before the scripts: the AI
+// controllers (ai.Update, navigation built synchronously) and the bodies they
+// and gravity move (collision.EntityUpdate), in the app's order. Agents then
+// walk, see, fight and take cover, which is what a combat script's reactions
+// need to be seen at all. Everything is still headless. -god holds the
+// teleported player's health far over anything one tick can take, so a route
+// through a battle is not ended by the first rocket that finds a player
+// standing still in the open (a death puts up the game-over screen, which
+// pauses the level: every trigger after it would silently never fire).
+//
+// MENUS. A modal screen that comes up stops a run dead: the shipped game's
+// menus pause the level, and there is nobody here to click them. So by default
+// the harness answers one — it clicks the widget the screen's `initial_focus`
+// names, once per screen, and prints what it did. That is the player taking
+// the offered default: the difficulty screen every level opens on picks
+// Normal, and the run carries on. `-menus hold` leaves them up, for a run that
+// is about the menu.
 //
 // THE PLAYER IS REAL, which is what makes the triggers real. -at teleports
 // world.PlayerEntity along a route, and the runtime derives `:enter:` and
@@ -31,12 +49,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"foundry/internal/ai"
+	"foundry/internal/collision"
 	"foundry/internal/fileutil"
+	"foundry/internal/flang"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
 	"foundry/internal/levelio"
@@ -61,6 +83,12 @@ func main() {
 	every := flag.Float64("every", 0, "also print the whole watch list this often, in seconds")
 	compiled := flag.Bool("compiled", false, "load the level's .fbsp, as a release build does, instead of its .yaml")
 	restoreAt := flag.String("restore-at", "", "seconds at which to save the game, load the level again from its file and restore the save over it, comma separated")
+	play := flag.Bool("play", false, "also run the AI controllers and entity physics each tick, as a frame does")
+	god := flag.Bool("god", false, "keep the player alive: health held far over anything one tick can take")
+	kill := flag.String("kill", "", "send (:damage:, @player, 9999) to every entity with a tag: 'tag@seconds' separated by ';'")
+	wake := flag.String("wake", "", "switch on the AI controller of, and show, every entity with a tag: 'tag@seconds' separated by ';' — what a level's zone scripts do when the player comes near")
+	menus := flag.String("menus", "answer", "what to do about a modal screen that comes up: `answer` clicks the widget its initial_focus names, once per screen, so a run does not stop at a menu; `hold` leaves it up, as a player who has not touched it")
+	cpuProfile := flag.String("cpuprofile", "", "write a CPU profile of the run to this file (go tool pprof)")
 	flag.Parse()
 	if *res == "" || *name == "" {
 		fmt.Fprintln(os.Stderr, "usage: levelsim -resources <dir> -level <name> [-seconds n] [-watch ...] [-send ...]")
@@ -102,7 +130,12 @@ func main() {
 		// first `@player.model.hands` and is disabled twenty errors later —
 		// taking the rest of the run's realism with it.
 		world.PlayerEntity.Models = append([]world.EntityModel(nil), lvl.Player.Models...)
+		// Where the level starts the player, as app/level_load.go puts them —
+		// aboard a vehicle when the spawn names one. `-at` moves them on.
+		world.ApplySpawnPoint(&lvl)
 
+		// A fresh AI session per load, as a level load starts one.
+		ai.ResetSession()
 		// ScriptRuntimeLoad applies the level's player script as well.
 		script.ScriptRuntimeLoad(&lvl)
 		script.ScriptEventsReset()
@@ -118,6 +151,18 @@ func main() {
 	}
 	start()
 	restores := parseTimes(*restoreAt)
+	if *cpuProfile != "" {
+		f, err := os.Create(*cpuProfile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "cpuprofile:", err)
+			os.Exit(1)
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			fmt.Fprintln(os.Stderr, "cpuprofile:", err)
+			os.Exit(1)
+		}
+		defer pprof.StopCPUProfile()
+	}
 
 	// Stand in for the parts of the level this harness does not run. level1's
 	// streaming cores, for instance, are disabled until the dropship's descent
@@ -148,14 +193,22 @@ func main() {
 	watches := parseWatches(*watch)
 	moves := parseMoves(*at)
 	presses := parseTimes(*press)
+	kills := parseKills(*kill)
+	wakes := parseKills(*wake)
 	dt := 1.0 / *hz
 	last := map[string]string{}
 	nextDump := 0.0
+	// Which modal screens have already been answered, so one is clicked once
+	// rather than every tick it stays up.
+	answeredMenus := map[string]bool{}
 
 	for t := 0.0; t < *seconds; t += dt {
 		for _, m := range moves {
 			if !m.done && t >= m.at {
 				m.done = true
+				// A teleport is to a place in the world: off whatever the
+				// player was riding, or the point is read in its frame.
+				world.PlayerEntity.Frame, world.PlayerEntity.Seat = "", ""
 				world.PlayerEntity.Position = m.to
 				fmt.Printf("%7.2f  PLAYER -> %s\n", t, vec(m.to))
 			}
@@ -167,12 +220,91 @@ func main() {
 				fmt.Printf("%7.2f  INTERACT\n", t)
 			}
 		}
+		for _, k := range kills {
+			if !k.done && t >= k.at {
+				k.done = true
+				n := 0
+				for i := range lvl.Entities {
+					e := &lvl.Entities[i]
+					if e.HasTag(k.tag) && e.Script != "" {
+						player := flang.RefVal{Kind: flang.RefEntity, A: "player"}
+						if err := script.PostEntityEvent(e.ID, "damage", player, flang.IntVal(9999)); err != nil {
+							fmt.Printf("%7.2f  KILL %s: %v\n", t, e.ID, err)
+						}
+						n++
+					}
+				}
+				fmt.Printf("%7.2f  KILL #%s (%d)\n", t, k.tag, n)
+			}
+		}
+		for _, w := range wakes {
+			if !w.done && t >= w.at {
+				w.done = true
+				n := 0
+				for i := range lvl.Entities {
+					e := &lvl.Entities[i]
+					if e.HasTag(w.tag) && e.AI != nil {
+						e.AI.Enabled, e.Visible = true, true
+						n++
+					}
+				}
+				fmt.Printf("%7.2f  WAKE #%s (%d)\n", t, w.tag, n)
+			}
+		}
 		for _, r := range restores {
 			if !r.done && t >= r.at {
 				r.done = true
 				roundTrip(&lvl, start, t)
 			}
 		}
+		if *god {
+			// Far over anything one tick can take: a rocket does more than a
+			// full bar, and a player who dies between two top-ups puts the
+			// game-over screen up, which pauses the level and ends the run's
+			// realism as surely as a crash.
+			if hm, ok := world.PlayerEntity.Attributes["health_max"]; ok {
+				hm.I, hm.F = 100000, 100000
+				world.PlayerEntity.Attributes["health"] = hm
+			}
+		}
+		if *play {
+			// The camera is the player's eye, as it is in play: what is near
+			// and far (animation LOD, the scripts' reticle) is measured from it.
+			gfx.Cam.Position = world.PlayerEntity.Position.Add(mgl32.Vec3{0, world.EyeHeight - 0.9, 0})
+			ai.Update(&lvl, float32(dt), world.PlayerEntity)
+			collision.EntityUpdate(&lvl, float32(dt), true, world.PlayerEntity)
+		}
+		// Frames follow what carries them, published once the movers have
+		// moved and before the script tick reads them, as the frame loop does.
+		// Without it a frame stays where its owner was placed: a squadmate
+		// stepping off a moving APC would land back where the APC started.
+		// A modal screen that has come up since the last tick: take the
+		// default and move on, unless the run asked to hold. Before the tick,
+		// so the click is delivered with everything else this frame; after the
+		// screen's own :shown: has had a tick to run.
+		if *menus != "hold" {
+			for _, sc := range ui.Game.Screens() {
+				if !sc.Modal || answeredMenus[sc.ID] {
+					continue
+				}
+				w := sc.InitialFocus
+				if w == "" {
+					continue
+				}
+				answeredMenus[sc.ID] = true
+				hooks.RecordUIEvent(hooks.UIEvent{Atom: "click", Screen: sc.ID, Widget: w})
+				fmt.Printf("%7.2f  SCREEN %s -> %s\n", t, sc.ID, w)
+			}
+		}
+		world.RefreshFrames(&lvl, lvl.Frames)
+		// The particles and the procedural effects, in the frame loop's own
+		// slot: after the frames they ride, before the tick that fires them.
+		// Without these a run never simulates the effect a script spawns, so
+		// its one-shots are never reaped — and an effect that lights the level
+		// (a muzzle flash) never flashes, which is the sort of thing a run is
+		// here to show.
+		world.EmitterUpdate(&lvl, float32(dt), true)
+		world.EffectUpdate(&lvl, float32(dt), true)
 		script.ScriptTick(&lvl, float32(dt), true)
 		// What a save, a checkpoint, a retry or a restart would have done is
 		// the app's, which this harness is not; that one was asked for is
@@ -213,10 +345,13 @@ func main() {
 //
 // A watch is `<id>.<field>`, `<entity>/<brush>.<field>` for a brush an
 // entity carries, or `<screen>:<widget>.<field>` for a widget on a screen that
-// is up (visible, alpha, text, world_anchor). Fields are the ones that matter for machinery: position,
+// is up (visible, alpha, text, world_anchor, compass_target), or `player.position`
+// (in the world), `player.frame` and `player.attr.health`. Fields are the ones that matter for machinery: position,
 // rotation, scale, velocity, angular_velocity, brightness, enabled, visible —
 // and, on an entity or a volume, `attr.<name>` (the state a level's scripts
-// keep on their objects), plus an agent's `ai_enabled` and `ai_waypoints`.
+// keep on their objects), plus an agent's `ai_enabled`, `ai_waypoints`,
+// `ai_mode`, `ai_target` and `hit_height`. A model attachment
+// (`<entity>#<attachment>`) also answers `uv_offset` and `uv_scroll`.
 
 var saveRequestNames = map[hooks.SaveRequestKind]string{
 	hooks.SaveToSlot: "SAVE_GAME", hooks.LoadFromSlot: "LOAD_GAME", hooks.Checkpoint: "CHECKPOINT",
@@ -269,6 +404,20 @@ func read(lvl *world.Level, w string) string {
 	}
 	if screen, widget, isUI := strings.Cut(id, ":"); isUI {
 		return widgetField(screen, widget, field)
+	}
+	// The player is not one of the level's entities. Its position is read in
+	// the world, whatever it rides; `frame` says what that is.
+	if id == "player" && world.PlayerEntity != nil {
+		p := world.PlayerEntity
+		switch field {
+		case "position":
+			return vec(lvl.Frames.WorldPosition(p))
+		case "frame":
+			return p.Frame
+		case "attr.health":
+			return fmt.Sprint(p.Attributes["health"])
+		}
+		return "?"
 	}
 	if ent, brush, isBrush := strings.Cut(id, "/"); isBrush {
 		e := world.FindEntity(lvl, ent)
@@ -324,6 +473,10 @@ func read(lvl *world.Level, w string) string {
 			return num(m.Scale.X())
 		case "alpha":
 			return num(m.Alpha)
+		case "uv_offset":
+			return fmt.Sprintf("<%s, %s>", num(m.UVOffset.X()), num(m.UVOffset.Y()))
+		case "uv_scroll":
+			return fmt.Sprintf("<%s, %s>", num(m.UVScroll.X()), num(m.UVScroll.Y()))
 		}
 		return "?"
 	}
@@ -346,6 +499,15 @@ func read(lvl *world.Level, w string) string {
 				return "none"
 			}
 			return e.AIState.Route
+		case "ai_mode":
+			return world.AIModeName(ai.Mode(e))
+		case "ai_target":
+			if t := ai.Target(lvl, e); t != nil {
+				return t.ID
+			}
+			return "none"
+		case "hit_height":
+			return num(e.HitScale())
 		}
 		// `attr.<name>`: the state a level's scripts keep on their objects.
 		if name, isAttr := strings.CutPrefix(field, "attr."); isAttr {
@@ -399,6 +561,11 @@ func widgetField(screen, widget, field string) string {
 	case "world_anchor":
 		if p, ok := n.WorldAnchor(); ok {
 			return vec(p)
+		}
+		return "none"
+	case "compass_target":
+		if p := n.CompassPin(); p.On && p.UseTarget {
+			return vec(p.Target)
 		}
 		return "none"
 	}
@@ -500,6 +667,26 @@ func parseTimes(s string) []*timeSpec {
 		}
 		at, _ := strconv.ParseFloat(p, 64)
 		out = append(out, &timeSpec{at: at})
+	}
+	return out
+}
+
+type killSpec struct {
+	tag  string
+	at   float64
+	done bool
+}
+
+// parseKills reads -kill: 'tag@seconds;...'.
+func parseKills(s string) []*killSpec {
+	var out []*killSpec
+	for _, p := range strings.Split(s, ";") {
+		tag, at, ok := strings.Cut(strings.TrimSpace(p), "@")
+		if !ok || tag == "" {
+			continue
+		}
+		sec, _ := strconv.ParseFloat(at, 64)
+		out = append(out, &killSpec{tag: tag, at: sec})
 	}
 	return out
 }

@@ -25,6 +25,7 @@ func TestDocRoundTripsEveryField(t *testing.T) {
 		ID:      "torch",
 		Seed:    4242,
 		Gravity: 3.5,
+		Light:   Flash{Color: mgl32.Vec3{1, 0.4, 0.1}, Brightness: 4, Radius: 6, Duration: 0.12},
 		Layers: []Layer{{
 			Name:           "flame",
 			Muted:          true,
@@ -120,7 +121,7 @@ func TestDefaultLayerWritesNoRedundantKeys(t *testing.T) {
 		"box_half:", "direction:", "frames:", "blend:", "billboard:", "tint:",
 		"collision:", "bursts:", "size_ramp:", "alpha_ramp:", "color_ramp:",
 		"muted:", "prewarm:", "lit:", "cast_shadows:", "local_space:",
-		"render:", "volume:",
+		"render:", "volume:", "light:",
 	} {
 		if strings.Contains(text, key) {
 			t.Errorf("a default layer wrote %q; it should be omitted:\n%s", key, text)
@@ -228,5 +229,54 @@ func TestLayerNamesStayUnique(t *testing.T) {
 	}
 	if len(d.Layers) != 3 {
 		t.Errorf("got %d layers, want 3", len(d.Layers))
+	}
+}
+
+// The flash's envelope: nothing before it starts or once it is over, up to
+// full almost at once, and falling away after that. What a light on a muzzle
+// flash looks like, solved on the CPU so the renderer and a test agree.
+func TestFlashEnvelopeRisesAtOnceAndFallsAway(t *testing.T) {
+	f := Flash{Color: mgl32.Vec3{1, 1, 1}, Brightness: 4, Radius: 8, Duration: 0.1}
+	if f.At(-0.01) != 0 || f.At(0) != 0 || f.At(0.1) != 0 || f.At(1) != 0 {
+		t.Error("the flash lights outside its own duration")
+	}
+	if peak := f.At(0.008); peak < 0.9 {
+		t.Errorf("a tenth of the way in the flash is only at %v of full", peak)
+	}
+	prev := f.At(0.01)
+	for _, at := range []float32{0.03, 0.05, 0.07, 0.09} {
+		v := f.At(at)
+		if v >= prev {
+			t.Errorf("at %vs the flash is at %v, no dimmer than the %v before it", at, v, prev)
+		}
+		prev = v
+	}
+
+	// Off is off, however the rest of it is set.
+	if (Flash{Brightness: 0, Radius: 8, Duration: 0.1}).At(0.01) != 0 {
+		t.Error("a flash of no brightness lit something")
+	}
+	if (Flash{Brightness: 4, Radius: 0, Duration: 0.1}).At(0.01) != 0 {
+		t.Error("a flash of no radius lit something")
+	}
+	// A black colour reads as white rather than as a light that does nothing.
+	if got := (Flash{Brightness: 4}).EffectiveColor(); got != (mgl32.Vec3{1, 1, 1}) {
+		t.Errorf("an uncoloured flash is %v, want white", got)
+	}
+}
+
+// `light: {brightness: 4}` is a working flash: everything it leaves out comes
+// from DefaultFlash, and an effect with no block at all has no light.
+func TestLightBlockFillsInWhatItLeavesOut(t *testing.T) {
+	d := rawToDoc(RawParticle{ID: "e", Light: &RawFlash{Brightness: 4}})
+	if !d.Light.On() {
+		t.Fatal("light: {brightness: 4} loaded as an effect that lights nothing")
+	}
+	def := DefaultFlash()
+	if d.Light.Radius != def.Radius || d.Light.Duration != def.Duration || d.Light.Color != def.Color {
+		t.Errorf("the block's missing keys loaded as %+v, want the defaults %+v", d.Light, def)
+	}
+	if got := rawToDoc(RawParticle{ID: "e"}).Light; got != (Flash{}) {
+		t.Errorf("an effect with no light: block loaded %+v", got)
 	}
 }

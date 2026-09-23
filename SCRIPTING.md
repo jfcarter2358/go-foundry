@@ -517,8 +517,8 @@ editor's reference panel. The core surface:
 
 | Object | Properties |
 | --- | --- |
-| entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · `sprinting` (player) · read-only: `eye_position` `look_direction` `crouching` `type` `current_sector` `current_chunk` `frame` `local_position` `seat` `waypoints` |
-| model | `texture` `visible` `alpha` `offset` `rotation` `scale` · read-only: `path` |
+| entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `hit_height` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · `sprinting` (player) · read-only: `eye_position` `look_direction` `crouching` `type` `current_sector` `current_chunk` `frame` `local_position` `seat` `waypoints` |
+| model | `texture` `visible` `alpha` `offset` `rotation` `scale` `uv_scroll` `uv_offset` · read-only: `path` |
 | vehicle | `vehicle_throttle` `vehicle_steer` `vehicle_pitch` `vehicle_roll` · tuning: `vehicle_max_speed` `vehicle_accel` `vehicle_brake` `vehicle_turn_rate` `vehicle_pitch_rate` `vehicle_roll_rate` `vehicle_drag` · read-only: `vehicle_speed` `vehicle_driver` |
 | volume | `position` `rotation` `half` `shape` `enabled` `load_level` `fog` `fog_color` `fog_density` `fog_max_opacity` · read-only: `attach` `carrier` `waypoints` |
 | brush | `solid` · dynamic brushes only: `position` `rotation` `scale` `velocity` `angular_velocity` · read-only: `dynamic` `waypoints` |
@@ -529,7 +529,7 @@ editor's reference panel. The core surface:
 | light | dynamic lights only: `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `dynamic` `attach` `carrier` `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
-| level | `step_height` `player_control` `player_gravity` `camera_fov` `viewmodel_fov` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `master_volume` `music_volume` `effects_volume` `smooth_lighting` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` |
+| level | `step_height` `player_control` `player_gravity` `camera_fov` `viewmodel_fov` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `master_volume` `music_volume` `effects_volume` `smooth_lighting` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` `dev_build` |
 
 ### Moving a brush
 
@@ -1181,6 +1181,9 @@ The engine posts these without being asked.
 | `:objectives_done:` | an AI agent | `src ref` | The agent finished every objective on a list that does not loop |
 | `:cover_taken:` | an AI agent | `src ref` | The agent reached a hiding spot at a point of its waypoint path that takes cover |
 | `:cover_lost:` | an AI agent | `src ref` | …and the spot stopped hiding it, so it is looking for more |
+| `:ai_maneuver:` | an AI agent | `src ref` | `on_target: fight`: it is setting off for a new firing position (strafe, advance, back off, flank, cover, search) |
+| `:ai_in_position:` | an AI agent | `src ref` | …it reached it or gave up on it, or it is up from a dive |
+| `:ai_dodge:` | an AI agent | `src ref` | It is diving aside, from the player's aim or an `ai_dodge` call |
 | `:click:` | widget, then its screen | `src ref` | A button, toggle or slider was activated, by pointer or navigation key |
 | `:hover:` | widget, then its screen | `src ref` | The pointer or the navigation highlight entered it |
 | `:unhover:` | widget, then its screen | `src ref` | …and left again |
@@ -1235,6 +1238,7 @@ events above and overrules the controller with these verbs:
 
 ```flang
 ai_move_to(@guard, <12.0, 0.0, 4.0>)   -- or an object: walks to its position
+ai_move_to(@guard, spot, true)         -- runs there, at ai_run_speed with its run animation
 ai_stop(@guard)                        -- cancels ai_move_to
 ai_target(@guard, @player)             -- hunt this, however long it is out of sight
 ai_target(@guard, null)                -- back to hunting what it can see
@@ -1247,6 +1251,10 @@ ai_follow(@squaddie, @player)          -- keep up with the player as a squadmate
 ai_follow(@squaddie, null)             -- stop following
 corners = find_path(@guard, @exit)     -- list of vecs, or null when unreachable
 seen = can_see(@guard, @player)        -- nothing in the level's geometry in between?
+spot = find_cover(@guard, 12.0)        -- a reachable spot hidden from its target, or null
+spot = find_cover(@guard, 12.0, {"duck": 0.55, "peek": true})   -- a crouched firing position
+ai_dodge(@guard, @player)              -- dive aside across the line from the player
+ai_dodge(@guard, g.prop.position, true) -- dive straight away from a grenade
 ```
 
 `ai_move_to` outranks the agent's target and objectives until it arrives, then
@@ -1256,6 +1264,25 @@ player-sized body unless a third argument names the entity to plan for. It
 returns `null` rather than a partial route. `can_see` ignores range and field of
 view: that is the controller's business. It answers only whether the line
 between the two is clear.
+
+`find_cover` is the search a waypoint's Take cover point makes, on demand: the
+nearest spot within the radius the agent can reach where level geometry lies
+between the threat's eye and the agent's chest and head. The threat is the
+agent's target unless `"from"` names an entity or a vec; `"near"` looks round
+another place than its feet. `"duck"` asks only that the bottom share of its
+height be hidden — 0.55 is a crouch behind something waist high on it — and
+`"peek"` that its standing eye there still see the threat, so that rising from
+the crouch is enough to shoot back. It answers `null` when there is no such spot,
+or nothing to hide from. Send the agent with `ai_move_to(agent, spot, true)`;
+`scripts/enemy_combat.flang` is the worked example (a soldier that dashes for
+cover when it is shot at, gets down, and pops up to fire).
+
+`hit_height` is how much of its bounds a body presents while it ducks, from its
+feet up — `0.6` for a crouch, `1.0` standing. Rounds (`hitscan`, and so every
+gun) meet only that much of it, and an agent's sight lines are drawn from and
+to that much of it, so a crouch behind a sandbag hides a soldier and robs it of
+its view over the top. The bounds themselves are untouched: navigation plans on
+them, and a body that changed size with every crouch would ask for a new grid.
 
 An agent walking a waypoint path finds its own way to each point and ignores
 the points' times. Each point's AI block (a wait, a speed, how to treat targets,
@@ -1462,6 +1489,7 @@ entity carrying it.
 @tank.model.turret.prop.texture = "rusted"
 @guard.model.helmet.prop.visible = false
 @ghost.model.body.prop.alpha = 0.3
+@tank.model.tracks.prop.uv_scroll = <0.0, 0.8, 0.0>   -- slide its texture along V, 0.8 tiles a second
 
 for m in @wreck.models          -- every attachment of the entity
     m.prop.visible = false

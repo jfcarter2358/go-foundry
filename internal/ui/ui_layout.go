@@ -58,6 +58,52 @@ func (c Canvas) RootRect(fbW, fbH float32) Rect {
 // where they were authored.
 var WorldProject func(p mgl32.Vec3) (u, v float32, ok bool)
 
+// ViewHeading is where the viewer stands and which way they look, for nodes
+// pinned to a bearing (Node.SetCompassPin): the eye in world space and its yaw
+// in an entity's convention (0 down -Z, positive toward -X). Installed by the
+// host that owns the camera, like WorldProject; nil leaves pinned nodes where
+// they were authored.
+var ViewHeading func() (eye mgl32.Vec3, yaw float32, ok bool)
+
+// DefaultCompassSpan is half a turn: the tape shows what is in front of the
+// viewer from their left hand to their right.
+const DefaultCompassSpan = float32(math.Pi)
+
+// compassOffset is where a bearing falls across a compass tape, as a fraction
+// of its width from the centre (-0.5 the left end, +0.5 the right), and
+// whether it falls on the tape at all. A clamped pin always does, at the
+// nearer end when it is off it.
+func compassOffset(p CompassPin, eye mgl32.Vec3, yaw float32) (float32, bool) {
+	bearing := p.Heading
+	if p.UseTarget {
+		dx, dz := p.Target.X()-eye.X(), p.Target.Z()-eye.Z()
+		if dx*dx+dz*dz < 1e-8 {
+			// Standing on it: every way is the way. Centre it.
+			return 0, true
+		}
+		bearing = float32(math.Atan2(float64(-dx), float64(-dz)))
+	}
+	rel := math.Remainder(float64(bearing-yaw), 2*math.Pi)
+	span := p.Span
+	if span <= 0 {
+		span = DefaultCompassSpan
+	}
+	// A positive yaw turns left, so a bearing to the left of the view is a
+	// positive rel and belongs on the left of the tape.
+	f := float32(-rel) / span
+	if f < -0.5 || f > 0.5 {
+		if !p.Clamp {
+			return 0, false
+		}
+		if f < 0 {
+			f = -0.5
+		} else {
+			f = 0.5
+		}
+	}
+	return f, true
+}
+
 // Solve writes every node's rect and clip rect for a framebuffer of this size.
 func (s *Screen) Solve(fbW, fbH float32) {
 	root := s.Canvas.RootRect(fbW, fbH)
@@ -113,6 +159,17 @@ func solveNode(n *Node, root, parent, clip Rect) {
 			r.Y = root.Y + v*root.H - n.Rect.Pivot[1]*r.H
 		} else {
 			behind = true
+		}
+	}
+	// A compass pin moves the rect along the parent's width only — the tape
+	// is the parent — and hides it when the bearing is off the tape's ends.
+	if n.compass.On && ViewHeading != nil {
+		if eye, yaw, ok := ViewHeading(); ok {
+			if f, on := compassOffset(n.compass, eye, yaw); on {
+				r.X = parent.X + (0.5+f)*parent.W - n.Rect.Pivot[0]*r.W
+			} else {
+				behind = true
+			}
 		}
 	}
 

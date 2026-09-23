@@ -34,10 +34,15 @@ package collision
 import (
 	"math"
 
+	"foundry/internal/gfx"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
+
+// animFrame counts EntityUpdate calls, for spreading distant entities' posing
+// over the frames (world.AnimPoseDue).
+var animFrame uint64
 
 // EntityUpdate advances every entity in the level by dt seconds.
 //
@@ -62,6 +67,8 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 	if lvl == nil {
 		return
 	}
+	animFrame++
+	viewer := gfx.Cam.Position
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]
 		if motion && !e.IsVehicle() {
@@ -99,7 +106,7 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 			e.UpdateLocation(lvl)
 			crossEntityFrames(lvl, e)
 		}
-		e.UpdateAnimations(dt)
+		e.UpdateAnimationsPose(dt, world.AnimPoseDue(e, i, animFrame, viewer))
 	}
 	if !motion {
 		return
