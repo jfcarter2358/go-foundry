@@ -89,6 +89,7 @@ brush's:
 | Field | |
 | --- | --- |
 | **Texture** | `(none)` on a fresh brush — an untextured face is painted with its own normal, see [Textures](04-textures.md#no-texture) — plus an optional **Blend Texture** and a grayscale **Blend Mask** |
+| **Material** | A [`.fmat`](28-materials.md) the face wears: water, a scroll, a cutout threshold, a self-lit panel. It is overlaid on the rows here rather than replacing them |
 | **Alpha** | 1 is opaque; anything less sorts into the transparent pass |
 | **Double Sided** | draw it from behind as well |
 | **Drawn** | off builds no geometry at all while the brush still collides — for a face buried against a neighbour |
@@ -379,9 +380,28 @@ press both.
 The **Player** group decides what the player can do when they arrive. Untick
 **Player control** and they can neither move nor look around — the view stays
 where the spawn aims it; untick
-**Gravity** and they hang where they spawn. Both are for a start the level runs
-for them — a ride in, an intro — so a script hands them back with
-`@level.prop.player_control = true` and `@level.prop.player_gravity = true`.
+**Gravity** and they stop falling — weightless rather than frozen, so a shove
+still drifts them. Both are for a start the level runs for them — a ride in, an
+intro — so a script hands them back with `@level.prop.player_control = true` and
+`@level.prop.player_gravity = true`.
+
+Free-fly is a separate switch (`@level.prop.player_fly`, the `0` key in play,
+`fly` in the developer console): it puts up and down on the jump and sprint keys
+and stops anything pulling. Turning gravity off does *not* start it.
+
+## Gravity
+
+Under **Player > Movement** in the properties panel, above the step height.
+Leave the checkbox off and the level falls at the engine's 36 units a second
+squared — what every level built so far uses. Tick it to set your own: about 6
+reads as a moon, 0 as a station with the plating off, and a negative number
+falls upward.
+
+Two more fields under it are the player's own, and both mean "the engine's" when
+left at 0: **Gravity scale** multiplies whatever pull is in force where they are
+standing, and **Max fall speed** caps the fall. The same two exist per entity
+type (see [Entities](11-entities.md#collision)), and a volume can replace the
+level's pull inside one region (see [Volumes](13-volumes.md#gravity)).
 
 ## Player step height
 

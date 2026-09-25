@@ -26,10 +26,10 @@ func TestFmdlRoundTripPreservesEverything(t *testing.T) {
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if err := validateRawModel(raw); err != nil {
+	if err := validateRawModel(raw, nil); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	got := rawToModelDoc(raw)
+	got := rawToModelDoc(raw, nil)
 
 	if got.ID != "crate" || got.SmoothAngle != 45 {
 		t.Errorf("header lost: ID=%q SmoothAngle=%v", got.ID, got.SmoothAngle)
@@ -111,7 +111,7 @@ func TestValidateRawModelRejectsBadIndices(t *testing.T) {
 		}},
 	}
 	for _, c := range cases {
-		if err := validateRawModel(c.raw); err == nil {
+		if err := validateRawModel(c.raw, nil); err == nil {
 			t.Errorf("%s: validateRawModel accepted an invalid model", c.name)
 		}
 	}
@@ -171,7 +171,7 @@ func TestLoadModelPromotesLegacyPerFaceTexture(t *testing.T) {
 			{Verts: []int{0, 1, 2}, Texture: "brick"},
 		},
 	}
-	got := rawToModelDoc(raw)
+	got := rawToModelDoc(raw, nil)
 	if got.Texture != "brick" {
 		t.Errorf("legacy texture = %q, want brick", got.Texture)
 	}
@@ -205,7 +205,7 @@ func TestUntexturedModelRoundTripsAsEmpty(t *testing.T) {
 	if raw.Texture != "" {
 		t.Errorf("raw.Texture = %q, want empty", raw.Texture)
 	}
-	if got := rawToModelDoc(raw); got.Texture != "" {
+	if got := rawToModelDoc(raw, nil); got.Texture != "" {
 		t.Errorf("reloaded Texture = %q, want empty", got.Texture)
 	}
 }

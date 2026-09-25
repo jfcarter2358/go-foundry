@@ -17,8 +17,21 @@ uniform float waveSpeed;
 uniform int smoothShading;
 
 // Slides the texture across the surface (gfx.Geometry.UVOffset): a scrolling
-// attachment such as a tank's track belt. Zero for everything else.
+// attachment such as a tank's track belt, or a material's uv_scroll. Zero for
+// everything else.
 uniform vec2 uvOffset;
+
+// The rest of a material's UV transform (material.KindUVTransform): a tiling
+// and a turn, applied before the offset.
+//
+// The scale arrives as a BIAS from 1 rather than as the scale, so that the
+// value GL gives an uninitialised uniform — zero — is the identity. A program
+// that links this shader without knowing about either (the shadow passes, the
+// detail tessellation stage, a GL test that looks up only what it needs) tiles
+// the texture exactly as it did before materials existed. Same reasoning as
+// fragment.glsl's normalColor and unlit, and as alphaCutoffBias.
+uniform vec2  uvScaleBias;
+uniform float uvRotation; // radians, about the UV origin
 
 layout(location = 0) in vec3 vert;
 layout(location = 1) in vec2 vertTexCoord;
@@ -60,7 +73,13 @@ float waterHeight(vec2 p) {
 }
 
 void main() {
-    fragTexCoord = vertTexCoord + uvOffset;
+    vec2 uv = vertTexCoord * (vec2(1.0) + uvScaleBias);
+    if (uvRotation != 0.0) {
+        float cs = cos(uvRotation);
+        float sn = sin(uvRotation);
+        uv = vec2(uv.x * cs - uv.y * sn, uv.x * sn + uv.y * cs);
+    }
+    fragTexCoord = uv + uvOffset;
     fragBakedLight = vertLight;
     // skinPosition is the identity unless this draw call set `skinned`
     // (skin_common.glsl), so every static surface takes the same path it always

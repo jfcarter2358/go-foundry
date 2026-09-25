@@ -212,8 +212,9 @@ func editorSelModeTooltip(m editorSelMode) string {
 		return "2 — Click the prism around a sector edge.\n" +
 			"An edge selection is its two endpoints, so the gizmo moves it as one."
 	default:
-		return "3 — Click a wall, floor, ceiling, water plane or the spawn point.\n" +
-			"On the 2D map: a wall or portal line, the spawn marker, or a sector."
+		return "3 — Click a brush face, an object, or the spawn point.\n" +
+			"Repeat clicks cycle through everything under the cursor;\n" +
+			"Ctrl+click adds the nearest to the selection."
 	}
 }
 

@@ -35,6 +35,7 @@ const (
 	gizmoKindEntity   = "entity"
 	gizmoKindVolume   = "volume"
 	gizmoKindSprite   = "sprite"
+	gizmoKindDecal    = "decal"
 	gizmoKindEmitter  = "emitter"
 	gizmoKindSound    = "sound"
 	gizmoKindEffect   = "effect"
@@ -126,6 +127,11 @@ func translateGizmoOrigin() (mgl32.Vec3, bool) {
 	case gizmoKindEffect:
 		if fx := activeGizmoEffect(); fx != nil {
 			return fx.Position, true
+		}
+
+	case gizmoKindDecal:
+		if d := activeGizmoDecal(); d != nil {
+			return d.Position, true
 		}
 
 	case gizmoKindSprite:
@@ -384,6 +390,22 @@ func captureGizmoDragStart() bool {
 		EditorPushUndo()
 		return true
 
+	case gizmoKindDecal:
+		d := activeGizmoDecal()
+		if d == nil {
+			return false
+		}
+		// Like a volume and a sprite, a decal has no scale factor — its size is
+		// its width, height and projection depth — so the snapshot holds those
+		// three and the scale gizmo resizes the box directly. All three axes are
+		// real here, unlike a sprite's, because the depth is a size an author
+		// genuinely drags.
+		Editor.GizmoDragStartPos = d.Position
+		Editor.GizmoDragStartRot = d.Rotation
+		Editor.GizmoDragStartScale = mgl32.Vec3{d.Width, d.Height, d.Depth}
+		EditorPushUndo()
+		return true
+
 	case gizmoKindSprite:
 		sp := activeGizmoSprite()
 		if sp == nil {
@@ -611,6 +633,13 @@ func translateGizmoMouseMove(mx, my int32) {
 					wa.Points[i].Position = Editor.GizmoDragWorld[i].Add(d)
 				}
 			}
+		}
+	case gizmoKindDecal:
+		if d := activeGizmoDecal(); d != nil {
+			// The mesh IS rebuilt, but not from here: moving the box changes the
+			// decal's fingerprint, and the next SyncDecals re-clips it out of
+			// whatever the box now covers (world/decal_sync.go).
+			d.Position = axisMoved(Editor.GizmoDragStartPos, axis, delta)
 		}
 	case gizmoKindSprite:
 		if sp := activeGizmoSprite(); sp != nil {

@@ -81,6 +81,26 @@ func spriteProps() map[string]propAccess {
 			Tex: true,
 			Doc: "texture name",
 		},
+		"material": {
+			// The .fmat the sprite wears. Swapping one is how a script changes
+			// several things about a quad at once — its blend, its billboard,
+			// its tint — without setting each of them and having to remember
+			// what they were.
+			Get: get(func(s *world.Sprite) flang.Value { return flang.StrVal(s.Material) }),
+			Set: set(func(sp *world.Sprite, v flang.Value) error {
+				name, ok := toStr(v)
+				if !ok {
+					return propErr("material", "str", v)
+				}
+				sp.Material = name
+				return nil
+			}),
+			// A material may name textures nothing has loaded yet, and it is
+			// resolved on the next draw rather than here, so the same deferral
+			// the texture property needs applies.
+			Tex: true,
+			Doc: "sprite material (.fmat) name, or \"\" for none",
+		},
 		"alpha": {
 			Get: get(func(s *world.Sprite) flang.Value { return flang.FloatVal(float64(s.Alpha)) }),
 			Set: set(func(sp *world.Sprite, v flang.Value) error {

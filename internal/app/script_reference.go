@@ -199,6 +199,7 @@ var refKindOrder = []struct {
 	{"emitter", flang.RefEmitter},
 	{"sound", flang.RefSound},
 	{"effect", flang.RefEffect},
+	{"decal", flang.RefDecal},
 	{"brush", flang.RefBrush},
 	{"chunk", flang.RefChunk},
 	{"light", flang.RefLight},

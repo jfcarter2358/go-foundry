@@ -25,6 +25,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
+	"foundry/internal/glctx"
 	"foundry/internal/hooks"
 	"foundry/internal/levelio"
 	"foundry/internal/platform"
@@ -69,6 +70,21 @@ type Options struct {
 	// solved position depends on it, so a run that watches one should say what
 	// resolution it means; 1920x1080 by default.
 	ViewW, ViewH float32
+	// Draw turns the pictures on. A drawing session makes an offscreen GL
+	// context, loads the level with its meshes and textures on the GPU rather
+	// than headlessly, and answers Shot with a .png of what the player can
+	// see. It needs a display and a GL 4.1 driver; without Draw a session is
+	// blind and needs neither.
+	//
+	// It also pins the goroutine that opened it: see shot.go.
+	Draw bool
+	// ShotW and ShotH are the size of those pictures, 1280x720 by default.
+	// They are also the window the projection and the UI layout are measured
+	// against, so they override ViewW and ViewH.
+	ShotW, ShotH int
+	// ShotDir is where a picture named without a directory goes. The default
+	// is a foundry-play folder in the system's temporary directory.
+	ShotDir string
 	// OnEvent receives everything the run has to say. The CLI prints it; a test
 	// can assert on it. nil discards.
 	OnEvent func(Event)
@@ -105,6 +121,12 @@ type Session struct {
 	answered map[string]bool // modal screens already clicked
 	watches  []string
 	last     map[string]string
+
+	// The drawing half, nil unless Options.Draw: the offscreen target every
+	// Shot is drawn into, and how many have been taken (which is what numbers
+	// the unnamed ones).
+	target *glctx.Target
+	shots  int
 }
 
 // Open loads the level and starts play on it.
@@ -133,9 +155,16 @@ func Open(opts Options) (*Session, error) {
 	if opts.ViewW == 0 || opts.ViewH == 0 {
 		opts.ViewW, opts.ViewH = 1920, 1080
 	}
+	if opts.ShotW == 0 || opts.ShotH == 0 {
+		opts.ShotW, opts.ShotH = 1280, 720
+	}
 	fileutil.ResourcesPath = res
 
-	gfx.GeometryUploadsEnabled, gfx.TextureUploadsEnabled = false, false
+	// A drawing session wants the uploads ON — the whole point of it is that
+	// the meshes and the textures reach the GPU — so the two kinds of session
+	// set up the graphics in opposite ways. Everything else about them is the
+	// same.
+	gfx.GeometryUploadsEnabled, gfx.TextureUploadsEnabled = opts.Draw, opts.Draw
 	if gfx.Textures == nil {
 		gfx.Textures = map[string]uint32{}
 	}
@@ -147,11 +176,24 @@ func Open(opts Options) (*Session, error) {
 		answered: map[string]bool{},
 		last:     map[string]string{},
 	}
+	if opts.Draw {
+		// Before the load: the level's meshes and textures are uploaded as it
+		// is read, and they need somewhere to go.
+		if err := s.standUpDrawing(); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.load(); err != nil {
+		s.closeDrawing()
 		return nil, err
 	}
 	return s, nil
 }
+
+// Close releases what the session holds. A blind session holds nothing and
+// need not be closed; a drawing one owns a GL target and the thread its
+// context is current on.
+func (s *Session) Close() { s.closeDrawing() }
 
 // Dt is the length of one tick, in seconds.
 func (s *Session) Dt() float64 { return s.dt }
@@ -162,9 +204,15 @@ func (s *Session) load() error {
 	path := levelio.LevelPath(s.opts.Level)
 	var err error
 	var lvl world.Level
-	if s.opts.Compiled {
+	switch {
+	case s.opts.Compiled:
 		lvl, err = levelio.LoadCompiledLevel(strings.TrimSuffix(path, ".yaml") + ".fbsp")
-	} else {
+	case s.opts.Draw:
+		// The ordinary load, uploads and all: this session is going to draw
+		// what it reads. LoadLevelHeadless would turn them off for the load
+		// and leave every mesh on the CPU.
+		lvl, err = levelio.LoadLevel(path)
+	default:
 		lvl, err = levelio.LoadLevelHeadless(path)
 	}
 	if err != nil {
@@ -179,8 +227,14 @@ func (s *Session) load() error {
 	world.PlayerEntity = world.NewPlayer(mgl32.Vec3{0, 0, 0})
 	// The viewmodel too, or the level's own player script fails on its first
 	// `@player.model.hands` and is disabled twenty errors later — taking the
-	// rest of the run's realism with it.
+	// rest of the run's realism with it. A drawing session loads the models
+	// properly a few lines down, since it has to draw them.
 	world.PlayerEntity.Models = append([]world.EntityModel(nil), lvl.Player.Models...)
+	if s.opts.Draw {
+		if err := s.installDrawnLevel(); err != nil {
+			return err
+		}
+	}
 	// Where the level starts the player, as app/level_load.go puts them —
 	// aboard a vehicle when the spawn names one. Teleport moves them on.
 	world.ApplySpawnPoint(s.Level)
@@ -214,6 +268,20 @@ func (s *Session) load() error {
 // moves a body, so an entity's velocity does not carry it and an agent does not
 // walk. It is a cheaper answer to a narrower question, and it is not a frame.
 func (s *Session) Step() {
+	s.beforeTick()
+	s.tick(sim.Input{
+		Intent: s.intent,
+		Jump:   s.jump,
+		Crouch: s.crouch,
+		Sprint: s.sprint,
+	})
+	s.jump = false
+	s.afterTick()
+}
+
+// beforeTick is what every tick does whatever drives it: keep a god-mode
+// player alive, and answer a modal screen that has come up since the last one.
+func (s *Session) beforeTick() {
 	if s.opts.God {
 		// Far over anything one tick can take: a rocket does more than a full
 		// bar, and a player who dies between two top-ups puts the game-over
@@ -239,22 +307,11 @@ func (s *Session) Step() {
 		}
 	}
 
-	dt := float32(s.dt)
-	if s.opts.ScriptsOnly {
-		s.stepScriptsOnly(dt)
-	} else {
-		sim.Step(s.Level, dt, sim.Gates{
-			ViewW: s.opts.ViewW,
-			ViewH: s.opts.ViewH,
-		}, sim.Input{
-			Intent: s.intent,
-			Jump:   s.jump,
-			Crouch: s.crouch,
-			Sprint: s.sprint,
-		})
-		s.jump = false
-	}
+}
 
+// afterTick is the other half: the requests the tick raised, the clock, and
+// the watch list.
+func (s *Session) afterTick() {
 	// What a save, a checkpoint, a retry or a restart would have done is the
 	// app's, which this is not; that one was asked for is what a run can show.
 	for _, r := range hooks.TakeSaveRequests() {
@@ -262,6 +319,29 @@ func (s *Session) Step() {
 	}
 	s.T += s.dt
 	s.reportWatches(false)
+}
+
+// StepWith advances the run by one tick, driven by an input built elsewhere —
+// a play script's, whose movement is a vector and a duration rather than the
+// held keys Walk and Crouch stand for. Everything else about the tick is
+// Step's: the same god-mode top-up, the same menu answering, the same watches.
+func (s *Session) StepWith(in sim.Input) {
+	s.beforeTick()
+	s.tick(in)
+	s.afterTick()
+}
+
+// tick is the frame itself, with whatever input drove it.
+func (s *Session) tick(in sim.Input) {
+	dt := float32(s.dt)
+	if s.opts.ScriptsOnly {
+		s.stepScriptsOnly(dt)
+		return
+	}
+	sim.Step(s.Level, dt, sim.Gates{
+		ViewW: s.opts.ViewW,
+		ViewH: s.opts.ViewH,
+	}, in)
 }
 
 // stepScriptsOnly is ScriptsOnly's tick: the script half of a frame and the

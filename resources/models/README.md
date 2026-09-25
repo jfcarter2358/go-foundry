@@ -12,7 +12,7 @@ in `entities/dropship.yaml`. Two documents rather than one because a model wears
 a single texture, and glass is not plating; the entity draws the second at low
 alpha over the first.
 
-Both are **generated**: `go run ./cmd/genmodels`, or `make models`. Edit the
+Both are **generated**: `go run ./cmd/genmodels`, or `task models`. Edit the
 generator, not the YAML — a hull assembled out of thirty tapered boxes is a
 thing a program never gets wrong and a hand never gets right twice, and the
 generator's own test checks that every face still winds outwards. Opening one in

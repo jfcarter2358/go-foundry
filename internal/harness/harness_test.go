@@ -46,6 +46,10 @@ func scratchProject(t *testing.T, name string) string {
 
 	ch := leveltest.RoomChunk(t)
 	lvl := &world.Level{Chunks: []world.Chunk{*ch}}
+	// Something to see by. A room with no light in it is a black picture,
+	// which a test that looks at what was drawn cannot tell from a room that
+	// was never drawn at all.
+	lvl.Lights.Global = world.GlobalLight{Color: mgl32.Vec3{1, 1, 1}, Brightness: 1}
 	if err := world.RebuildIndexes(lvl); err != nil {
 		t.Fatalf("RebuildIndexes: %v", err)
 	}
@@ -55,12 +59,20 @@ func scratchProject(t *testing.T, name string) string {
 	return dir
 }
 
-// writeTexture writes the smallest real .png that will do.
+// writeTexture writes the smallest real .png that will do: a 2x2 checker.
+//
+// A checker rather than a flat square because a test that looks at what was
+// DRAWN (play_gl_test.go) has to be able to tell a wall from an empty picture,
+// and a flat texture under flat light comes out as one colour either way.
 func writeTexture(t *testing.T, path string) {
 	t.Helper()
 	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
-	for i := range img.Pix {
-		img.Pix[i] = 0xff
+	for i := 0; i < 4; i++ {
+		v := byte(0xff)
+		if i%3 == 0 {
+			v = 0x20
+		}
+		img.Pix[i*4], img.Pix[i*4+1], img.Pix[i*4+2], img.Pix[i*4+3] = v, v, v, 0xff
 	}
 	f, err := os.Create(path)
 	if err != nil {

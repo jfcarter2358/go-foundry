@@ -61,6 +61,11 @@ func relaunchInto(dir string) {
 	cmd := exec.Command(exe, "-"+project.Flag, dir)
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	// Logged either way: this is the last line this process writes, and the
+	// next one's own "project: ... (named on the command line)" is what says
+	// the hand-over worked. Without the pair, a relaunch that opened the wrong
+	// project looks exactly like a relaunch that never happened.
+	log.Printf("reopening on %s: %s -%s %s", dir, exe, project.Flag, dir)
 	if err := cmd.Start(); err != nil {
 		log.Printf("could not reopen on %s: %v", dir, err)
 	}

@@ -33,7 +33,11 @@ func TestACarriedPathIsPickedWhereItsEntityIsAndRefusesEdits(t *testing.T) {
 	lvl := carriedWaypointLevel(t)
 
 	origin := mgl32.Vec3{10, 1, 5}
-	ai, pi, _ := pickWaypointMarker(origin, mgl32.Vec3{0, 0, -1}, origin, lvl)
+	markers := pickWaypointMarkers(origin, mgl32.Vec3{0, 0, -1}, origin, lvl)
+	if len(markers) == 0 {
+		t.Fatal("a ray at the ship's first arrow hit no marker at all")
+	}
+	ai, pi := markers[0].anim, markers[0].point
 	if ai != 0 || pi != 0 {
 		t.Fatalf("a ray at the ship's first arrow picked animation %d point %d; want 0, 0", ai, pi)
 	}

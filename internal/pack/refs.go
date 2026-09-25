@@ -44,12 +44,16 @@ type assetIndex map[string]map[string]bool
 // textExts are the formats worth scanning for references. Everything else in a
 // content tree is a leaf: a PNG, a font, a sound, a packed texture.
 var textExts = map[string]bool{
-	".yaml":  true, // levels, entity definitions
-	".yml":   true,
-	".fui":   true, // UI screens
-	".fth":   true, // UI themes
-	".fpar":  true, // particle effects
-	".fmdl":  true, // models
+	".yaml": true, // levels, entity definitions
+	".yml":  true,
+	".fui":  true, // UI screens
+	".fth":  true, // UI themes
+	".fpar": true, // particle effects
+	".fai":  true, // AI decision trees, which name the animations and effects
+	//                their nodes play, and the tags they send to
+	".fmat":  true, // materials, which name the textures their effects use
+	".fmdl":  true, // models, which name the skeleton they are rigged to
+	".fskl":  true, // skeletons, whose clips name nothing but are scanned for consistency
 	".flang": true,
 	".obj":   true, // model source, names its .mtl
 	".mtl":   true, // and that names its textures

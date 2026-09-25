@@ -89,14 +89,15 @@ type RawEntityModel struct {
 	Name       string               `yaml:"name"`
 	Path       string               `yaml:"path,omitempty"`
 	Texture    string               `yaml:"texture,omitempty"`
-	Parent     string               `yaml:"parent,omitempty"` // model attachment this one rides
-	Bone       string               `yaml:"bone,omitempty"`   // bone within Parent
+	Material   string               `yaml:"material,omitempty"` // .fmat worn by every submesh
+	Parent     string               `yaml:"parent,omitempty"`   // model attachment this one rides
+	Bone       string               `yaml:"bone,omitempty"`     // bone within Parent
 	Offset     *RawVec3             `yaml:"offset,omitempty"`
 	Rotation   *RawVec3             `yaml:"rotation,omitempty"`
 	Scale      *RawVec3             `yaml:"scale,omitempty"`
-	Alpha      float32              `yaml:"alpha,omitempty"`   // 0 = opaque
-	Visible    *bool                `yaml:"visible,omitempty"` // default true when absent
-	Unlit      bool                 `yaml:"unlit,omitempty"`   // self-lit; see EntityModel.Unlit
+	Alpha      float32              `yaml:"alpha,omitempty"`     // 0 = opaque
+	Visible    *bool                `yaml:"visible,omitempty"`   // default true when absent
+	Unlit      bool                 `yaml:"unlit,omitempty"`     // self-lit; see EntityModel.Unlit
 	UVScroll   *RawVec2             `yaml:"uv_scroll,omitempty"` // texture scroll, UV units a second
 	Animations []RawEntityAnimation `yaml:"animations,omitempty"`
 }
@@ -111,6 +112,14 @@ type RawEntityCollision struct {
 	Entities *bool `yaml:"entities,omitempty"`
 	Gravity  *bool `yaml:"gravity,omitempty"`
 	Movable  *bool `yaml:"movable,omitempty"` // default true when absent
+	// GravityScale multiplies the pull in force where this body is — the
+	// level's `gravity:`, or a volume's where one overrides it. Absent (or 0)
+	// is 1; 0.2 is a drifting feather, -1 falls upward. Switching gravity off
+	// entirely is `gravity: false` above, not a scale of zero.
+	GravityScale *float32 `yaml:"gravity_scale,omitempty"`
+	// MaxFallSpeed is the terminal speed this body falls at, in units per
+	// second. Absent (or 0) is the engine's 30.
+	MaxFallSpeed *float32 `yaml:"max_fall_speed,omitempty"`
 }
 
 // entityCollisionFromRaw folds a YAML block onto a starting set, leaving any
@@ -131,6 +140,12 @@ func entityCollisionFromRaw(base EntityCollision, r *RawEntityCollision) EntityC
 	}
 	if r.Movable != nil {
 		base.Movable = *r.Movable
+	}
+	if r.GravityScale != nil {
+		base.GravityScale = *r.GravityScale
+	}
+	if r.MaxFallSpeed != nil {
+		base.MaxFallSpeed = *r.MaxFallSpeed
 	}
 	return base
 }
@@ -160,6 +175,16 @@ func entityCollisionToRaw(c, base EntityCollision) *RawEntityCollision {
 		out.Movable = &v
 		changed = true
 	}
+	if c.GravityScale != base.GravityScale {
+		v := c.GravityScale
+		out.GravityScale = &v
+		changed = true
+	}
+	if c.MaxFallSpeed != base.MaxFallSpeed {
+		v := c.MaxFallSpeed
+		out.MaxFallSpeed = &v
+		changed = true
+	}
 	if !changed {
 		return nil
 	}
@@ -185,7 +210,8 @@ type RawEntityDef struct {
 	WaypointAnimations []RawWaypointAnimation  `yaml:"waypoint_animations,omitempty"` // see entity_waypoints.go
 	Attributes         map[string]RawAttribute `yaml:"attributes,omitempty"`
 	Script             string                  `yaml:"script,omitempty"`      // .flang file driving this type's behaviour
-	Params             map[string]RawAttribute `yaml:"params,omitempty"`      // defaults for that script's `param` declarations
+	AITree             string                  `yaml:"ai_tree,omitempty"`     // .fai decision tree deciding it — see internal/aitree
+	Params             map[string]RawAttribute `yaml:"params,omitempty"`      // defaults for that script's and tree's `param` declarations
 	Description        string                  `yaml:"description,omitempty"` // author's note; shown in the editor's picker
 	Vehicle            *RawVehicle             `yaml:"vehicle,omitempty"`     // see vehicle_def.go
 	AI                 *RawAI                  `yaml:"ai,omitempty"`          // see ai.go
@@ -238,6 +264,10 @@ type RawEntity struct {
 	// would otherwise have inherited, and a name replaces it.
 	Script *string `yaml:"script,omitempty"`
 
+	// AITree overrides the definition's decision tree, on exactly the rule
+	// Script follows: absent inherits, "" detaches, a name replaces.
+	AITree *string `yaml:"ai_tree,omitempty"`
+
 	// Vehicle overlays the definition's vehicle block — seats matched by name,
 	// drive tuning merged field by field. See MergeVehicle.
 	Vehicle *RawVehicle `yaml:"vehicle,omitempty"`
@@ -268,6 +298,9 @@ type EntityDef struct {
 	// Script is the .flang file driving this type's behaviour, relative to the
 	// scripts root. An instance may override it — see RawEntity.Script.
 	Script string
+	// AITree is the .fai decision tree deciding it, as a bare name under
+	// resources/ai/. An instance may override it — see RawEntity.AITree.
+	AITree string
 
 	BoundingKind BoundingType
 	BoundHalfX   float32
@@ -350,6 +383,7 @@ func entityModelFromRaw(r RawEntityModel) EntityModel {
 		Scale:      vec3FromRawPtr(r.Scale, mgl32.Vec3{}),
 		Alpha:      r.Alpha,
 		Visible:    BoolDefault(r.Visible, true),
+		Material:   r.Material,
 		Unlit:      r.Unlit,
 		UVScroll:   vec2FromRawPtr(r.UVScroll),
 		Animations: entityAnimationsFromRaw(r.Animations),
@@ -412,6 +446,7 @@ func entityModelToRaw(m *EntityModel) RawEntityModel {
 		Scale:      vec3ToRawPtr(m.Scale),
 		Alpha:      m.Alpha,
 		Visible:    BoolPtrIfFalse(m.Visible),
+		Material:   m.Material,
 		Unlit:      m.Unlit,
 		UVScroll:   vec2ToRawPtr(m.UVScroll),
 		Animations: entityAnimationsToRaw(m.Animations),
@@ -461,6 +496,7 @@ func entityDefFromRaw(raw RawEntityDef, name string) (*EntityDef, error) {
 		Name:         id,
 		Description:  raw.Description,
 		Script:       raw.Script,
+		AITree:       raw.AITree,
 		Tags:         NormalizeTags(raw.Tags),
 		BoundingKind: BoundingKindFromName(raw.Bounding),
 		BoundHalfX:   raw.BoundHalfX,
@@ -524,6 +560,7 @@ func entityDefToRaw(def *EntityDef) RawEntityDef {
 		ID:          def.Name,
 		Description: def.Description,
 		Script:      def.Script,
+		AITree:      def.AITree,
 		Tags:        def.Tags,
 		Bounding:    BoundingTypeName(def.BoundingKind),
 		BoundHalfX:  def.BoundHalfX,
@@ -578,6 +615,7 @@ func (d *EntityDef) Instantiate(id string) Entity {
 		Visible:      d.Visible,
 		Collision:    d.Collision,
 		Script:       d.Script,
+		AITree:       d.AITree,
 		Attributes:   d.Attributes.Clone(),
 		ScriptParams: d.Params.Clone(),
 		Vehicle:      d.Vehicle,
@@ -609,6 +647,7 @@ func (m *EntityModel) TemplateCopy() EntityModel {
 		Scale:    m.Scale,
 		Alpha:    m.Alpha,
 		Visible:  m.Visible,
+		Material: m.Material,
 		Unlit:    m.Unlit,
 		UVScroll: m.UVScroll,
 	}
@@ -719,6 +758,9 @@ func EntityFromRaw(r RawEntity, lookup func(string) (*EntityDef, error)) (Entity
 	// it, including with "" to detach the type's script from this instance.
 	if r.Script != nil {
 		e.Script = *r.Script
+	}
+	if r.AITree != nil {
+		e.AITree = *r.AITree
 	}
 
 	e.Collision = entityCollisionFromRaw(e.Collision, r.Collision)
@@ -921,6 +963,10 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 			s := e.Script
 			r.Script = &s
 		}
+		if e.AITree != "" {
+			s := e.AITree
+			r.AITree = &s
+		}
 		r.Vehicle = VehicleToRaw(e.Vehicle)
 		r.AI = AIToRaw(e.AI, nil)
 		for i := range e.Models {
@@ -938,6 +984,10 @@ func EntityToRaw(e *Entity, def *EntityDef) RawEntity {
 	if e.Script != def.Script {
 		s := e.Script
 		r.Script = &s
+	}
+	if e.AITree != def.AITree {
+		s := e.AITree
+		r.AITree = &s
 	}
 
 	r.Tags = tagsBeyond(def.Tags, e.Tags)
@@ -1082,6 +1132,10 @@ func modelOverride(def *EntityDef, m *EntityModel) (RawEntityModel, bool) {
 	}
 	if m.Texture != base.Texture {
 		o.Texture = m.Texture
+		changed = true
+	}
+	if m.Material != base.Material {
+		o.Material = m.Material
 		changed = true
 	}
 	if m.Parent != base.Parent {

@@ -83,7 +83,7 @@ func TestCollisionMastersGateThePerEntityFlags(t *testing.T) {
 func TestApplyGravityAcceleratesAndCaps(t *testing.T) {
 	e := solidEntity("a", mgl32.Vec3{})
 
-	e.ApplyGravity(0.5)
+	e.ApplyGravity(0.5, world.DefaultGravity)
 	if want := -world.EntityGravityAccel * 0.5; geom.Abs32(e.Velocity.Y()-want) > 1e-4 {
 		t.Errorf("got %v, want %v", e.Velocity.Y(), want)
 	}
@@ -91,7 +91,7 @@ func TestApplyGravityAcceleratesAndCaps(t *testing.T) {
 	// Terminal velocity: a long fall must not build up enough speed to tunnel
 	// through a floor in one step.
 	for i := 0; i < 100; i++ {
-		e.ApplyGravity(0.1)
+		e.ApplyGravity(0.1, world.DefaultGravity)
 	}
 	if e.Velocity.Y() < -world.EntityMaxFallSpeed-1e-4 {
 		t.Errorf("fall speed %v exceeded the cap %v", e.Velocity.Y(), world.EntityMaxFallSpeed)
@@ -101,7 +101,7 @@ func TestApplyGravityAcceleratesAndCaps(t *testing.T) {
 func TestApplyGravityRespectsItsFlags(t *testing.T) {
 	e := solidEntity("a", mgl32.Vec3{})
 	e.Collision.Gravity = false
-	e.ApplyGravity(1)
+	e.ApplyGravity(1, world.DefaultGravity)
 	if e.Velocity.Y() != 0 {
 		t.Errorf("gravity off but velocity changed: %v", e.Velocity.Y())
 	}
@@ -109,7 +109,7 @@ func TestApplyGravityRespectsItsFlags(t *testing.T) {
 	// Nothing can displace an immovable entity, gravity included.
 	e.Collision.Gravity = true
 	e.Collision.Movable = false
-	e.ApplyGravity(1)
+	e.ApplyGravity(1, world.DefaultGravity)
 	if e.Velocity.Y() != 0 {
 		t.Errorf("immovable entity fell: %v", e.Velocity.Y())
 	}

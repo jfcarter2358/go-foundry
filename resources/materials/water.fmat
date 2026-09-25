@@ -1,0 +1,19 @@
+# water.fmat — the animated water surface, as a material.
+#
+# This was a sector's `water:` block: six numbers filled in per surface, and no
+# way to give two ponds the same swell without typing them twice. Put a brush
+# face on this instead and it is water.
+#
+# The numbers here are the engine's own defaults spelled out, so that the file
+# is a worked example rather than an empty one. Delete a line to take that
+# parameter back to the default it already equals.
+kind: surface
+texture: water
+doc: Still water — a pond, a flooded basin. Put it on a flat face.
+effects:
+  - effect: water
+    wave_amplitude: 0.06
+    wave_length: 3
+    wave_speed: 0.35
+    reflectivity: 0.45
+    reflect_color: {r: 0.55, g: 0.72, b: 0.92}

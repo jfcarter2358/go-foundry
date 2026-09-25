@@ -9,6 +9,8 @@ package sim
 // through the player's layout, platform.Bindings.
 
 import (
+	"math"
+
 	"foundry/internal/collision"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
@@ -208,7 +210,24 @@ func PlayerMoveIntent(lvl *world.Level, keys []uint8) mgl32.Vec3 {
 		// The look keys still have to run, or a driver cannot turn their head.
 		return gfx.MoveIntent(keys).Mul(0)
 	}
-	return gfx.MoveIntent(keys)
+	return cameraRelative(gfx.MoveIntent(keys))
+}
+
+// cameraRelative turns the move keys to the script camera's heading while one
+// is detached: forward is into the screen, the way every third-person and
+// fixed-angle game walks. gfx.MoveIntent built the vector on the player's own
+// yaw, which the rig leaves alone and nobody can see while it is detached.
+//
+// On foot on the world only. Riding in a frame the intent is in the frame's
+// coordinates, and the camera's heading is not.
+func cameraRelative(intent mgl32.Vec3) mgl32.Vec3 {
+	if !gfx.CameraDetached() || world.PlayerEntity == nil || world.PlayerEntity.Frame != "" {
+		return intent
+	}
+	d := float64(gfx.Rig.Yaw - gfx.Cam.Yaw)
+	s, c := float32(math.Sin(d)), float32(math.Cos(d))
+	x, z := intent.X(), intent.Z()
+	return mgl32.Vec3{x*c - z*s, intent.Y(), x*s + z*c}
 }
 
 // VehicleInteractRequest is the interact key's vehicle half, run before the

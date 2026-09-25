@@ -16,7 +16,7 @@ import (
 // site would reach for the real editor to make it work.
 //
 // There is no assertion available for "package X is not linked": `go list
-// -deps -tags release ./cmd/foundry` is that check, and `make release-check`
+// -deps -tags release ./cmd/foundry` is that check, and `task release-check`
 // runs it. What is checkable here is the contract the stubs promise.
 
 func TestReleaseBuildHasNoEditor(t *testing.T) {

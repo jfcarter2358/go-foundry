@@ -12,6 +12,9 @@ package editor
 // this prevents.
 
 import (
+	"bytes"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +23,7 @@ import (
 
 	"foundry/internal/claude"
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"foundry/internal/world"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -233,7 +237,7 @@ func withClaudeProject(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	res := fileutil.ResourcesDir(root)
-	for _, d := range []string{"scripts", "models", "entities", "levels"} {
+	for _, d := range []string{"scripts", "models", "entities", "levels", "textures"} {
 		if err := os.MkdirAll(filepath.Join(res, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -291,6 +295,47 @@ func TestClaudeKeepsUnsavedScriptEditsOverAReload(t *testing.T) {
 	claudeApplyFileChange(path)
 	if len(claudeReload.conflicts) != 0 {
 		t.Errorf("a clean buffer should reload silently, got %v", claudeReload.conflicts)
+	}
+}
+
+// A texture Claude writes has to become a name the editor knows, or it is
+// invisible in every picker until the editor is restarted — the gap this
+// routing was added to close.
+func TestClaudeRegistersATextureItWrote(t *testing.T) {
+	withClaudePanel(t)
+	withClaudeProject(t)
+	prevNames, prevUploads := gfx.TextureNames, gfx.TextureUploadsEnabled
+	gfx.TextureNames = map[string]string{}
+	gfx.TextureUploadsEnabled = false
+	t.Cleanup(func() { gfx.TextureNames, gfx.TextureUploadsEnabled = prevNames, prevUploads })
+
+	path := filepath.Join(fileutil.TexturesDir(), "rust.png")
+	writeClaudeTestPNG(t, path)
+
+	claudeApplyFileChange(path)
+	if _, ok := gfx.TextureNames["rust"]; !ok {
+		t.Error("the texture Claude wrote is still not a name any picker offers")
+	}
+
+	// A PNG anywhere else is a screenshot or a document's image, and is
+	// nothing to do with the texture pickers.
+	other := filepath.Join(fileutil.ResourcesPath, "levels", "shot.png")
+	writeClaudeTestPNG(t, other)
+	claudeApplyFileChange(other)
+	if _, ok := gfx.TextureNames["shot"]; ok {
+		t.Error("a PNG outside textures/ was registered as a texture")
+	}
+}
+
+func writeClaudeTestPNG(t *testing.T, path string) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -467,5 +512,55 @@ func TestClaudeComposeAttachesTheEditorsContext(t *testing.T) {
 	Editor.SavePath, Editor.level, Editor.SelectedBrushes = "", nil, nil
 	if got := claudeCompose("hello"); got != "hello" {
 		t.Errorf("with nothing open, composed = %q", got)
+	}
+}
+
+// A play session is a live thing the author is inside of. Claude finishing a
+// file must not restart the scripts under them — see claudeDeferredChanges.
+func TestClaudeHoldsChangesUntilPlayEnds(t *testing.T) {
+	withClaudePanel(t)
+	withClaudeProject(t)
+	prevDocs, prevActive, prevDeferred := scriptDocs, Editor.Active, claudePlayDeferred
+	t.Cleanup(func() {
+		scriptDocs, Editor.Active, claudePlayDeferred = prevDocs, prevActive, prevDeferred
+	})
+	claudePlayDeferred = claudeDeferredChanges{}
+
+	path := filepath.Join(fileutil.ResourcesPath, "scripts", "door.flang")
+	old := "on :start:\n  say \"old\"\n"
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scriptDocs = []*scriptDoc{{Path: "door.flang", Text: old, saved: old}}
+
+	// Play is running, and Claude rewrites the script the player is running.
+	Editor.Active = false
+	if err := os.WriteFile(path, []byte("on :start:\n  say \"new\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	answer := claudeReloadPath(path)
+	if strings.Contains(scriptDocs[0].Text, "new") {
+		t.Error("the change was applied mid-play — the script runtime has just been reset under the player")
+	}
+	if claudePlayDeferCount() != 1 {
+		t.Errorf("deferred count = %d, want the change parked", claudePlayDeferCount())
+	}
+	if !strings.Contains(answer, "play") {
+		t.Errorf("the tool answered %q — Claude has no way to know the reload is only waiting", answer)
+	}
+	// Asked twice for the same file, it is still one change to make.
+	claudeReloadPath(path)
+	if claudePlayDeferCount() != 1 {
+		t.Errorf("deferred count = %d after a repeat, want no duplicate", claudePlayDeferCount())
+	}
+
+	// Leaving play is what EditorToggle does, and then the change lands.
+	Editor.Active = true
+	ClaudeApplyDeferredFileChanges()
+	if !strings.Contains(scriptDocs[0].Text, "new") {
+		t.Errorf("the tab still shows %q — the held change was dropped rather than deferred", scriptDocs[0].Text)
+	}
+	if claudePlayDeferCount() != 0 {
+		t.Errorf("deferred count = %d after leaving play, want the queue emptied", claudePlayDeferCount())
 	}
 }

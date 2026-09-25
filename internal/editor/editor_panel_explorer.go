@@ -70,6 +70,7 @@ func editorExplorerSection(lvl *world.Level) {
 	editorExplorerEntityNodes(lvl)
 	editorExplorerVolumeNodes(lvl)
 	editorExplorerSpriteNodes(lvl)
+	editorExplorerDecalNodes(lvl)
 	editorExplorerSceneryNodes(lvl)
 	editorExplorerEmitterNodes(lvl)
 	editorExplorerSoundNodes(lvl)
@@ -800,6 +801,15 @@ func editorExplorerAddMenu(lvl *world.Level) {
 		editorSpriteAddMenu()
 		imgui.EndMenu()
 	}
+	if imgui.BeginMenu("Decal") {
+		editorDecalAddMenu()
+		imgui.EndMenu()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A texture projected onto the level's own surfaces:\n" +
+			"a poster, a stencil, a scorch mark. It follows the\n" +
+			"shape it lands on instead of hovering in front of it.")
+	}
 	if imgui.BeginMenu("Scenery") {
 		editorSceneryAddMenu()
 		imgui.EndMenu()
@@ -960,6 +970,67 @@ func editorExplorerSpriteNodes(lvl *world.Level) {
 	if del >= 0 {
 		editorSelectSprite(del)
 		deleteActiveSprite()
+	}
+}
+
+// ---------- decals ----------
+
+// editorExplorerDecalNodes draws the level's decals, one leaf each, with the
+// same per-row menu the sprite rows carry.
+//
+// The row says more than a sprite's does, because a decal has one failure mode
+// nothing else here has: it can be perfectly well authored and project onto
+// nothing at all, having been left in mid-air or aimed at the wrong side of a
+// wall. That is invisible in the viewport — there is simply no decal — so the
+// list is where it has to be said.
+func editorExplorerDecalNodes(lvl *world.Level) {
+	if !editorExplorerCategory(fmt.Sprintf("Decals (%d)##decals", len(lvl.Decals)), panelFocusDecal) {
+		return
+	}
+	defer imgui.TreePop()
+
+	if len(lvl.Decals) == 0 {
+		editorTextMuted("(none)")
+		return
+	}
+	del, dup := -1, -1
+	for i := range lvl.Decals {
+		d := &lvl.Decals[i]
+		label := d.ID
+		if label == "" {
+			label = "(unnamed)"
+		}
+		if !d.Visible {
+			label += "  (hidden)"
+		}
+		if len(d.Pieces) == 0 {
+			label += "  (projects onto nothing)"
+		}
+		if editorExplorerLeaf(fmt.Sprintf("%s##dec%d", label, i), i == Editor.ActiveDecalIdx, panelFocusDecal) {
+			editorSelectDecal(i)
+		}
+		editorExplorerMenu(fmt.Sprintf("decctx%d", i), func() {
+			visible := d.Visible
+			if imgui.MenuItemV("Visible", "", visible, true) {
+				EditorPushUndo()
+				d.Visible = !visible
+			}
+			if imgui.MenuItem("Duplicate") {
+				dup = i
+			}
+			imgui.Separator()
+			if imgui.MenuItem("Delete") {
+				del = i
+			}
+		})
+	}
+	if dup >= 0 {
+		editorSelectDecal(dup)
+		duplicateActiveDecal()
+	}
+	if del >= 0 {
+		editorSelectDecal(del)
+		deleteActiveDecal()
 	}
 }
 

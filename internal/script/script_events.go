@@ -59,6 +59,13 @@ type scriptEventState struct {
 	// by name — a checkpoint volume's ID or `checkpoint`'s argument. Part of a
 	// save, so a restore does not reach them again. See reachCheckpoint.
 	checkpoints map[string]bool
+	// grounded is the player's footing as the last tick left it, and
+	// groundedKnown says whether there has been a tick to leave one.
+	// `:landed:` and `:left_ground:` are the edges between this and what the
+	// engine reports now — derived rather than posted by whoever changed it,
+	// because walking off a ledge has nothing that could post it.
+	grounded      bool
+	groundedKnown bool
 }
 
 type scriptTimer struct {
@@ -127,11 +134,17 @@ func forgetNamesake(r flang.RefVal) {
 // replaced: the previous frame's overlaps describe objects that no longer exist.
 func ScriptEventsReset() {
 	scriptEvents = newScriptEventState()
+	// The engine's side of the footing too, or a player who was mid-jump when
+	// the level ended lands in the first frame of the next one.
+	hooks.ResetPlayerGround()
 	// The AI controllers start their rounds again at the same moments: a guard
 	// resuming a patrol from a play session that has ended, or chasing a
 	// player from a level that has been replaced, would be chasing a ghost.
 	ai.ResetSession()
 	hooks.TakeAIEvents()
+	// A press made on the last level, or a hover over something in it, must
+	// not arrive on this one.
+	resetPointerTrack()
 }
 
 // ScriptEventsTick derives and posts one frame's events.
@@ -158,7 +171,9 @@ func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	postVehicleEvents(rt)
 	postInteractEvent(rt, lvl)
 	postWeaponInputEvents(rt)
+	postPlayerGroundEvents(rt)
 	postUIEvents(rt)
+	postPointerEvents(rt, lvl)
 	postTimerEvents(rt)
 	postTickEvents(rt, refs, dt)
 }
@@ -218,11 +233,14 @@ func scriptedRefs(rt *ScriptRuntime, lvl *world.Level) []flang.RefVal {
 	var out []flang.RefVal
 	// The player is engine-owned and not in Entities, so it is asked for by
 	// name; its script comes from the level's player block.
-	if world.PlayerEntity != nil && world.PlayerEntity.Script != "" {
+	if world.PlayerEntity != nil && (world.PlayerEntity.Script != "" || world.PlayerEntity.AITree != "") {
 		out = append(out, flang.RefVal{Kind: flang.RefEntity, A: "player"})
 	}
+	// An entity with a decision tree and no script of its own is scripted as
+	// far as the runtime is concerned: :spawn: and :tick: have to reach it, or
+	// a tree whose only root is one of them would never run.
 	for i := range lvl.Entities {
-		if lvl.Entities[i].Script != "" {
+		if lvl.Entities[i].Script != "" || lvl.Entities[i].AITree != "" {
 			out = append(out, flang.RefVal{Kind: flang.RefEntity, A: lvl.Entities[i].ID})
 		}
 	}
@@ -249,6 +267,11 @@ func scriptedRefs(rt *ScriptRuntime, lvl *world.Level) []flang.RefVal {
 	for i := range lvl.Effects {
 		if lvl.Effects[i].Script != "" {
 			out = append(out, flang.RefVal{Kind: flang.RefEffect, A: lvl.Effects[i].ID})
+		}
+	}
+	for i := range lvl.Decals {
+		if lvl.Decals[i].Script != "" {
+			out = append(out, flang.RefVal{Kind: flang.RefDecal, A: lvl.Decals[i].ID})
 		}
 	}
 	for ci := range lvl.Chunks {
@@ -593,9 +616,24 @@ func uiEventArgs(ev hooks.UIEvent) []flang.Value {
 		return []flang.Value{src, flang.StrVal(ev.Str)}
 	case "bound":
 		return []flang.Value{src, flang.StrVal(ev.Str), flang.IntVal(int64(ev.Num))}
+	// A drag's positions are in the screen's canvas units — what `pos` and
+	// `translate` read and write — so a handler can move the widget by the
+	// delta it was handed without converting anything.
+	case "drag_start":
+		return []flang.Value{src, canvasVec(ev.X, ev.Y)}
+	case "drag":
+		return []flang.Value{src, canvasVec(ev.X, ev.Y), canvasVec(ev.DX, ev.DY)}
+	case "drop":
+		var onto flang.Value = flang.NullVal{}
+		if ev.Other != "" {
+			onto = uiWidgetRef(ev.OtherScreen, ev.Other)
+		}
+		return []flang.Value{src, onto, canvasVec(ev.X, ev.Y)}
 	}
 	return []flang.Value{src}
 }
+
+func canvasVec(x, y float64) flang.Value { return flang.VecVal{x, y, 0} }
 
 func uiChangeValue(ev hooks.UIEvent) flang.Value {
 	switch {
@@ -699,6 +737,41 @@ func postWeaponInputEvents(rt *ScriptRuntime) {
 	for _, step := range cycles {
 		_ = rt.post(player, "weapon_cycle", []flang.Value{flang.IntVal(step)}, flang.Pos{})
 	}
+}
+
+// postPlayerGroundEvents fires `:landed:` and `:left_ground:` on the player.
+//
+// Derived from the engine's own footing rather than posted by whatever changed
+// it, for the reason `:enter:` is derived from containment: most of the ways a
+// player leaves the ground are not events at all. Jumping is, but walking off a
+// ledge, being thrown by a blast, having the floor moved out from under them
+// and having gravity switched off are not — and a rule that fired for the jump
+// and stayed silent for the rest would be worse than no rule.
+//
+// `:landed:` carries the speed the body arrived at, in units a second, because
+// that is the number a fall-damage rule is written against and this is the only
+// moment it exists: the resolve zeroes the fall on the frame it stops it, so a
+// handler reading `@player.prop.velocity` always finds nothing.
+//
+// The first tick of a session posts nothing. There is no previous footing to
+// compare against, and taking the zero value as "was in the air" would fire a
+// `:landed:` at the feet of every player who ever spawned standing up.
+func postPlayerGroundEvents(rt *ScriptRuntime) {
+	g := hooks.CurrentPlayerGround()
+	if !g.Known || world.PlayerEntity == nil {
+		return
+	}
+	was, knew := scriptEvents.grounded, scriptEvents.groundedKnown
+	scriptEvents.grounded, scriptEvents.groundedKnown = g.OnGround, true
+	if !knew || was == g.OnGround {
+		return
+	}
+	player := flang.RefVal{Kind: flang.RefEntity, A: "player"}
+	if g.OnGround {
+		_ = rt.post(player, "landed", []flang.Value{flang.FloatVal(g.Impact)}, flang.Pos{})
+		return
+	}
+	_ = rt.post(player, "left_ground", nil, flang.Pos{})
 }
 
 // postTimerEvents delivers every `after(...)` whose time has come.

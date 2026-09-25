@@ -1,0 +1,13 @@
+# fog_bank.fmat — a volume's fog, as a material.
+#
+# This was world.VolumeFog, the `fog:` block on a volume. Density is extinction
+# per world unit travelled INSIDE the region, so it means the same thing
+# whatever size the volume is: the number does not have to be re-tuned when the
+# room is.
+kind: sky
+doc: A haze to fill a room or a doorway with. Max opacity keeps it from hiding what stands in it.
+effects:
+  - effect: fog
+    color: {r: 0.62, g: 0.68, b: 0.76}
+    density: 0.22
+    max_opacity: 0.85

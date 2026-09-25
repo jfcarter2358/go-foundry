@@ -145,6 +145,9 @@ func Stand(lvl *world.Level, e *world.Entity) bool {
 	}
 	e.Seat = ""
 	e.Velocity = mgl32.Vec3{}
+	// A body walked by keys carries a record of what they contributed, and
+	// standing up is not a frame anything walked — see Entity.WalkVelocity.
+	e.WalkVelocity = mgl32.Vec3{}
 	v.EnsureVehicleState().AddOccupant(e.ID, "")
 	if v.Driver() == "" {
 		v.VState.Controls = world.VehicleControls{}
@@ -158,6 +161,7 @@ func Stand(lvl *world.Level, e *world.Entity) bool {
 func PinToSeat(e *world.Entity, s *world.VehicleSeat) {
 	e.Position = s.Position
 	e.Velocity = mgl32.Vec3{}
+	e.WalkVelocity = mgl32.Vec3{}
 	e.Collision.OnGround = true
 	e.Collision.GroundedNext = true
 }

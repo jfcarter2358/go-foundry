@@ -65,6 +65,15 @@ func modelEditorMenus() {
 		}
 		editorSaveAllMenuItem()
 		imgui.Separator()
+		if imgui.MenuItemV("New Skeleton...", "", false, modelDoc != nil && len(modelDoc.Bones) > 0) {
+			modelNewSkeletonName = modelDoc.ID
+			modelShowNewSkeletonDialog = true
+		}
+		if imgui.MenuItemV("Link Skeleton...", "", false, modelDoc != nil) {
+			modelSkeletonList = nil
+			modelShowLinkSkeletonDialog = true
+		}
+		imgui.Separator()
 		if imgui.MenuItem("Import OBJ...") {
 			modelOBJList = nil
 			modelShowImportDialog = true
@@ -124,7 +133,15 @@ func modelDoSave() {
 		return
 	}
 	requestModelReload(modelDoc.Path)
+	// SaveModel rewrote the shared .fskl too, so every other model on that rig
+	// is now stale in the level as well — they are what the split exists for.
+	shared := requestSkeletonReload(modelDoc.Skeleton, modelDoc.Path)
 	modelMarkSaved()
+	if shared > 0 {
+		modelSetStatus("Saved %s and %s%s (%d other model(s) on this rig)",
+			filepath.Base(modelDoc.Path), modelDoc.Skeleton, model.SkeletonExt, shared)
+		return
+	}
 	modelSetStatus("Saved %s", filepath.Base(modelDoc.Path))
 }
 
@@ -168,6 +185,7 @@ func modelDialogs() {
 				modelDoc.Path = path
 				modelFileList = nil
 				requestModelReload(path)
+				requestSkeletonReload(modelDoc.Skeleton, path)
 				modelMarkSaved()
 				modelSetStatus("Saved %s", filepath.Base(path))
 			}
@@ -219,8 +237,16 @@ func modelDialogs() {
 				modelSetStatus("Merge failed: %v", err)
 			} else {
 				ModelPushUndo()
+				// Asked before the merge: afterwards the incoming bones are
+				// either in the document or gone, and the answer is lost.
+				droppedRig := modelDoc.MergeDropsRig(other)
 				modelAdoptAddition(modelDoc.Merge(other, modelAddPosition()))
-				modelSetStatus("Merged %s (%d faces)", name, len(other.Faces))
+				if droppedRig {
+					modelSetStatus("Merged %s (%d faces) — its bones stayed behind; "+
+						"this model is on shared skeleton %s", name, len(other.Faces), modelDoc.Skeleton)
+				} else {
+					modelSetStatus("Merged %s (%d faces)", name, len(other.Faces))
+				}
 			}
 			imgui.CloseCurrentPopup()
 		}
@@ -315,6 +341,10 @@ func modelEditorPanel() {
 	imgui.Separator()
 	modelFaceSection()
 	imgui.Separator()
+	// Where the bones and clips below are saved — the .fmdl, or a shared .fskl
+	// — so the answer is in view before they are edited rather than after.
+	modelSkeletonSection()
+	imgui.Separator()
 	modelBoneSection()
 	imgui.Separator()
 	// Animation follows the bones it drives — a clip is meaningless without an
@@ -330,6 +360,7 @@ func modelEditorPanel() {
 	// Modals are drawn inside the panel window, after its sections, so a popup
 	// opened by one of them is queued in the same frame it was asked for.
 	drawModelUnwrapDialog()
+	modelSkeletonDialogs()
 
 	imgui.End()
 }

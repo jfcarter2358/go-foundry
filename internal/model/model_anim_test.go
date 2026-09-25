@@ -285,7 +285,7 @@ func TestLoadRejectsATrackNamingAMissingBone(t *testing.T) {
 	m, _, _ := clipChain(t)
 	raw := modelDocToRaw(m)
 	raw.Animations[0].Tracks[0].Bone = "NoSuchBone"
-	if err := validateRawModel(raw); err == nil {
+	if err := validateRawModel(raw, nil); err == nil {
 		t.Error("validation accepted a track driving a bone the armature does not contain")
 	}
 }
@@ -294,7 +294,7 @@ func TestLoadRejectsDuplicateClipNames(t *testing.T) {
 	m, _, _ := clipChain(t)
 	raw := modelDocToRaw(m)
 	raw.Animations = append(raw.Animations, raw.Animations[0])
-	if err := validateRawModel(raw); err == nil {
+	if err := validateRawModel(raw, nil); err == nil {
 		t.Error("validation accepted two clips with the same name")
 	}
 }
@@ -310,7 +310,7 @@ func TestLoadRejectsAnArmatureTooBigForTheShader(t *testing.T) {
 	c := m.Clip(m.AddClip("walk"))
 	c.SetKey(0, 0, IdentBonePose())
 
-	if err := validateRawModel(modelDocToRaw(m)); err == nil {
+	if err := validateRawModel(modelDocToRaw(m), nil); err == nil {
 		t.Errorf("validation accepted %d bones; the shader palette holds %d", len(m.Bones), gfx.MaxSkinBones)
 	}
 }

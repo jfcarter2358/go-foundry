@@ -14,6 +14,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/game"
 	"foundry/internal/levelio"
+	"foundry/internal/material"
 	"foundry/internal/model"
 	"foundry/internal/particle"
 	"foundry/internal/ui"
@@ -30,7 +31,9 @@ var resourceDirs = []string{
 	world.EntitiesDirName,
 	uifont.FontsDirName,
 	levelio.LevelsDirName,
+	material.MaterialsDirName,
 	model.ModelsDirName,
+	model.SkeletonsDirName,
 	particle.ParticlesDirName,
 	fileutil.ScriptsDirName,
 	"shaders",

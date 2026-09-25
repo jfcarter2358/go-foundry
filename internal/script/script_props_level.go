@@ -37,7 +37,7 @@ import (
 )
 
 func levelProps() map[string]propAccess {
-	return map[string]propAccess{
+	m := map[string]propAccess{
 		"load_progress": {
 			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
 				return flang.FloatVal(float64(hooks.LoadProgress())), true
@@ -155,7 +155,47 @@ func levelProps() map[string]propAccess {
 				world.SetPlayerGravity(b)
 				return nil
 			},
-			Doc: "whether the player falls. Turning it off stops a fall where it is; with control on, the player free-flies",
+			Doc: "whether the player falls. Turning it off is weightlessness, not flight: the body keeps the momentum it has and drifts. To fly it, use player_fly",
+		},
+		"player_fly": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(platform.FlyMode), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("player_fly", "bool", v)
+				}
+				world.SetPlayerFly(b)
+				return nil
+			},
+			Doc: "free-fly: the jump and sprint keys move the player straight up and down, and nothing pulls on them. Separate from player_gravity, which only says whether they fall",
+		},
+
+		// The level's own gravity. A number rather than a switch, because the
+		// interesting cases are between on and off: a moon, a ship under
+		// thrust, a slow-motion descent. A volume may override it in one region
+		// and a body may scale it — see world/gravity.go.
+		"gravity": {
+			Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(world.LevelGravity(c.lvl)), true
+			},
+			Set: func(c *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("gravity", "number", v)
+				}
+				if c.lvl == nil {
+					return nil
+				}
+				// Written through a fresh pointer rather than into the one the
+				// level is holding: the loader and the saver share these
+				// pointers across a round trip, and writing through one would
+				// edit the authored value as well as the live one.
+				c.lvl.Gravity = &f
+				return nil
+			},
+			Doc: "the level's downward acceleration, in world units a second squared. 36 is the engine's default, about 6 a moon, 0 a station with the plating off; a negative number falls upward",
 		},
 
 		// The camera's lens, for a scope or a sprint's widening. Engine state
@@ -177,6 +217,9 @@ func levelProps() map[string]propAccess {
 				} else if fov > gfx.MaxFieldOfView {
 					fov = gfx.MaxFieldOfView
 				}
+				// The later instruction is the one that meant it: a zoom
+				// still easing would take the lens straight back.
+				gfx.StopCameraZoom()
 				gfx.FieldOfView = fov
 				return nil
 			},
@@ -536,6 +579,11 @@ func levelProps() map[string]propAccess {
 			Doc: "whether the deck casts its shadow on the level",
 		},
 	}
+	// The camera and the pointer: script_props_camera.go.
+	for k, v := range cameraLevelProps() {
+		m[k] = v
+	}
+	return m
 }
 
 // ---------- the sky's cloud deck ----------

@@ -1,7 +1,7 @@
 package main
 
 // editor.go — `foundrypack editor`: the editor itself, staged and archived for
-// a Foundry release (make dist-editor). See internal/pack/editor.go.
+// a Foundry release (task dist-editor). See internal/pack/editor.go.
 
 import (
 	"flag"
@@ -28,6 +28,7 @@ func editorMain(args []string) {
 		goos     = fs.String("goos", "windows", "the platform it is built for: windows or linux")
 		version  = fs.String("version", "0.0.0", "the Foundry version being packed")
 		shaders  = fs.String("shaders", "resources/shaders", "the shaders the build was made from")
+		guide    = fs.String("guide", filepath.Join("docs", "guide"), "the authoring guide to carry along; empty to leave it out")
 		stage    = fs.String("stage", "", "install tree to write (required; created, and emptied if it exists)")
 		outDir   = fs.String("out", "dist", "where the archive and installer go")
 		stub     = fs.String("setup-stub", "", "the Windows installer program (cmd/foundrysetup); required for windows")
@@ -48,7 +49,7 @@ func editorMain(args []string) {
 	}
 	res, err := pack.StageEditor(pack.EditorOptions{
 		Out: *stage, Exe: *exe, ExeName: exeName, GOOS: *goos, Version: *version,
-		Shaders: *shaders, Libs: libs, Runtimes: runtimes,
+		Shaders: *shaders, Guide: *guide, Libs: libs, Runtimes: runtimes,
 	})
 	if err != nil {
 		log.Fatalf("%v", err)

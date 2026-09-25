@@ -89,6 +89,7 @@ func editorArmSoundPlacement() {
 	Editor.SoundPlacementMode = true
 	Editor.EmitterPlacementMode = false
 	Editor.SpritePlacementMode = false
+	Editor.DecalPlacementMode = false
 	Editor.VolumePlacementMode = false
 	Editor.EntityPlacementMode = false
 	Editor.SpawnPlacementMode = false

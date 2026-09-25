@@ -313,7 +313,7 @@ func init() {
 		},
 		{
 			name: "noclip", usage: "[on|off]",
-			summary: "gravity and world collision off together",
+			summary: "free-fly and world collision off together",
 			run:     cmdNoclip,
 		},
 		{
@@ -321,7 +321,18 @@ func init() {
 			run: func(c *cmdCtx) {
 				setSwitch(c, "gravity", &platform.GravityEnabled)
 				if !platform.GravityEnabled {
-					platform.IsOnGround, platform.JumpRequested = false, false
+					platform.JumpRequested = false
+				}
+			},
+		},
+		{
+			name: "fly", usage: "[on|off]",
+			summary: "free-fly: the jump and sprint keys move the body up and down",
+			run: func(c *cmdCtx) {
+				on := platform.FlyMode
+				setSwitch(c, "fly", &platform.FlyMode)
+				if platform.FlyMode != on {
+					world.SetPlayerFly(platform.FlyMode)
 				}
 			},
 		},
@@ -763,19 +774,18 @@ func cmdGod(c *cmdCtx) {
 }
 
 func cmdNoclip(c *cmdCtx) {
-	// Read the current state as "both off", so that a bare `noclip` flips the
-	// pair together however they were left by the two commands underneath it.
-	on := !(platform.GravityEnabled || world.EntityWorldCollisionEnabled)
+	// Free-fly rather than "gravity off": walking through walls while still
+	// being pulled downward is falling through the floor, not noclip. Read as
+	// "already on" when flying AND world collision is off, so a bare `noclip`
+	// flips the pair together however the two commands underneath it left them.
+	on := platform.FlyMode && !world.EntityWorldCollisionEnabled
 	want, err := switchArg(c.args, on)
 	if err != nil {
 		printf(kindErr, "noclip: %v", err)
 		return
 	}
-	platform.GravityEnabled = !want
+	world.SetPlayerFly(want)
 	world.EntityWorldCollisionEnabled = !want
-	if want {
-		platform.IsOnGround, platform.JumpRequested = false, false
-	}
 	printf(kindOK, "noclip %s", onOffWord(want))
 }
 

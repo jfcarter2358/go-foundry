@@ -68,6 +68,43 @@ var UnlitUniform int32
 // uniform happens to sit at location 0.
 var UVOffsetUniform int32 = -1
 
+// UVScaleBiasUniform and UVRotationUniform are the rest of a material's UV
+// transform (material.KindUVTransform). The SCALE is carried as a bias from 1,
+// not as the scale itself, so that the value GL gives an unwritten uniform —
+// zero — is the identity: a program that links vertex.glsl without knowing
+// about either tiles the texture exactly as it always did. Set through
+// ApplyUVUniforms, never on their own; see the note there.
+//
+// -1 until the program is linked, for the reason UVOffsetUniform is.
+var (
+	UVScaleBiasUniform int32 = -1
+	UVRotationUniform  int32 = -1
+)
+
+// TintBiasUniform multiplies a surface's albedo by a colour: Geometry.Tint,
+// carried as a BIAS from white for the reason UVScaleBiasUniform is carried as
+// one from 1. Zero — the value GL gives an unwritten uniform, and the zero value
+// of the Vec3 that feeds it — is no tint at all, so every wall, model and
+// compiled surface in the engine is untouched by this path.
+//
+// Decals are what it exists for: one grey scorch texture tinted eight ways is
+// eight marks, where eight copies of the texture is eight textures. Set through
+// SurfaceState.Apply, like every other per-draw uniform, so no surface can leak
+// its tint onto the one drawn after it.
+var TintBiasUniform int32 = -1
+
+// SurfaceBlendUniform tells the fragment stage how the framebuffer blend will
+// combine what it produces — see SurfaceBlend and fragment.glsl. Zero, which is
+// what GL gives an unwritten uniform, is the ordinary case, so nothing that does
+// not set it changes.
+var SurfaceBlendUniform int32 = -1
+
+// AlphaCutoffBiasUniform moves fragment.glsl's alpha-cutout threshold away
+// from its own DefaultAlphaCutoff. A bias rather than the threshold itself for
+// the same reason UVScaleBiasUniform is a bias: zero is the engine's
+// long-standing 0.5, so nothing that does not set it changes.
+var AlphaCutoffBiasUniform int32 = -1
+
 // BakedLightUniform gates the compiled-level lighting path: when set, the
 // fragment stage uses the light already on the vertices instead of summing the
 // scene's lights and sampling their shadow maps. Set per draw, like
@@ -120,14 +157,24 @@ var (
 	NormalMapUniform    int32
 )
 
-func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
-	vertexShaderBytes, err := os.ReadFile(VertexShaderPath)
+// WorldProgramSources reads the world vertex/fragment pair and splices in
+// everything the engine shares between the passes that shade world geometry:
+// skinning into the vertex stage, and fog, cloud shadow and the lighting model
+// into the fragment stage.
+//
+// Split out of LoadProgram so that a SECOND copy of the world program can be
+// built from exactly the same text — the material editor's preview compiles
+// one in its own window (see CompileWorldProgram). Two copies of the injection
+// list would be two chances for the preview to stop showing what the game
+// shows.
+func WorldProgramSources(vertexShaderPath, fragmentShaderPath string) (string, string, error) {
+	vertexShaderBytes, err := os.ReadFile(vertexShaderPath)
 	if err != nil {
-		return fmt.Errorf("read vertex shader: %w", err)
+		return "", "", fmt.Errorf("read vertex shader: %w", err)
 	}
-	fragmentShaderBytes, err := os.ReadFile(FragmentShaderPath)
+	fragmentShaderBytes, err := os.ReadFile(fragmentShaderPath)
 	if err != nil {
-		return fmt.Errorf("read fragment shader: %w", err)
+		return "", "", fmt.Errorf("read fragment shader: %w", err)
 	}
 
 	// The vertex stage gets the shared skinning source spliced in after its
@@ -136,7 +183,7 @@ func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
 	// `skinned` uniform (skin_common.glsl).
 	vertexSource, err := InjectSkinning(strings.ReplaceAll(strings.TrimRight(string(vertexShaderBytes), "\n"), "\r\n", "\n"))
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	// And the fragment stage gets the shared fog source, for the same reason and
 	// on the same terms: fragment.glsl calls applyFog, and every other program
@@ -144,15 +191,38 @@ func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
 	// model in the engine rather than one per pass. See fog_shader.go.
 	fragmentSource, err := InjectFog(strings.ReplaceAll(strings.TrimRight(string(fragmentShaderBytes), "\n"), "\r\n", "\n"))
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	// The clouds' shadow, on the same terms again — cloud_shadow.glsl.
 	fragmentSource, err = InjectCloudShadow(fragmentSource)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	// And the lighting model — light_model.glsl.
 	fragmentSource, err = InjectLightModel(fragmentSource)
+	if err != nil {
+		return "", "", err
+	}
+	return vertexSource, fragmentSource, nil
+}
+
+// CompileWorldProgram links another copy of the world program, leaving the
+// global Program alone. For a secondary window that has to shade a surface
+// exactly as the game does — the material editor's preview — and which must
+// not write its uniforms into the program the level window is drawing with.
+//
+// Programs are shared between the editor's GL contexts (a VAO is not), so this
+// may be compiled in whichever window needs it.
+func CompileWorldProgram(vertexShaderPath, fragmentShaderPath string) (uint32, error) {
+	vertSrc, fragSrc, err := WorldProgramSources(vertexShaderPath, fragmentShaderPath)
+	if err != nil {
+		return 0, err
+	}
+	return CompileProgramFromSources(vertSrc, fragSrc)
+}
+
+func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
+	vertexSource, fragmentSource, err := WorldProgramSources(VertexShaderPath, FragmentShaderPath)
 	if err != nil {
 		return err
 	}

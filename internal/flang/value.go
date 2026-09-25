@@ -172,6 +172,10 @@ const (
 	// RefEffect is a placed procedural effect — an explosion. Appended for the
 	// same reason again.
 	RefEffect
+	// RefDecal is a texture projected onto the level's surfaces. Appended for
+	// the same reason again — and note the warning above: a ref kind IS
+	// serialised now, so this one may only ever be added at the end.
+	RefDecal
 )
 
 var refKindNames = [...]string{
@@ -182,6 +186,7 @@ var refKindNames = [...]string{
 	RefModel:     "model",
 	RefWaypoints: "waypoints",
 	RefEffect:    "effect",
+	RefDecal:     "decal",
 }
 
 // String renders a ref kind as the atom `ref.kind` yields.

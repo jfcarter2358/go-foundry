@@ -3,7 +3,7 @@ package main
 // foundrypack — stage a release build into an install tree.
 //
 // The packing is internal/pack, which the editor's Release window runs too;
-// this is its command line, for the Makefile. See internal/pack/pack.go for
+// this is its command line, for the Taskfile. See internal/pack/pack.go for
 // what a pack is and what the prune decides.
 
 import (

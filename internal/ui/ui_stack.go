@@ -221,6 +221,28 @@ func (st *Stack) Pauses() bool {
 	return false
 }
 
+// CapturesPointer reports whether a press that lands on no widget is kept from
+// the world. Under a modal screen it is — unless the topmost modal screen lets
+// clicks through (Screen.ClickThrough), in which case its empty space is a
+// window onto the level. Only the topmost one decides, because everything
+// below it is inert anyway.
+func (st *Stack) CapturesPointer() bool {
+	for i := len(st.screens) - 1; i >= 0; i-- {
+		if st.screens[i].Modal {
+			return !st.screens[i].ClickThrough
+		}
+	}
+	return false
+}
+
+// PointerOver reports whether a widget that takes the pointer is under a
+// device-pixel point: a click there is the UI's, and what is behind it in the
+// world is not what the player is pointing at.
+func (st *Stack) PointerOver(px, py float32) bool {
+	_, n := st.hitAt(px, py)
+	return n != nil
+}
+
 // WantsCursor reports whether mouse-look should be released.
 func (st *Stack) WantsCursor() bool {
 	for _, s := range st.screens {
@@ -252,6 +274,42 @@ func (st *Stack) Tick(dt, fbW, fbH float32) {
 		s.Solve(fbW, fbH)
 	}
 	st.dropStaleTargets()
+	st.stepDrag()
+}
+
+// dragThreshold is how far, in device pixels, a press on a draggable widget has
+// to travel before it is a drag rather than a click.
+const dragThreshold = 4
+
+// stepDrag turns the pointer's travel since the last frame into at most one
+// :drag: — PointerMove only records where the pointer is, so a mouse reporting
+// a thousand times a second is still one message a frame. Here, after the
+// solve, because the event carries canvas coordinates.
+func (st *Stack) stepDrag() {
+	d := &st.inter.Drag
+	s, n := st.pressed()
+	if n == nil || !n.Draggable {
+		*d = DragState{}
+		return
+	}
+	if !d.Active {
+		dx, dy := d.CurX-d.StartX, d.CurY-d.StartY
+		if dx*dx+dy*dy < dragThreshold*dragThreshold {
+			return
+		}
+		d.Active = true
+		x, y := st.canvasPoint(s, d.StartX, d.StartY)
+		hooks.RecordUIEvent(hooks.UIEvent{Atom: "drag_start", Screen: s.ID, Widget: n.ID,
+			X: float64(x), Y: float64(y)})
+	}
+	if d.CurX == d.LastX && d.CurY == d.LastY {
+		return
+	}
+	x, y := st.canvasPoint(s, d.CurX, d.CurY)
+	lx, ly := st.canvasPoint(s, d.LastX, d.LastY)
+	d.LastX, d.LastY = d.CurX, d.CurY
+	hooks.RecordUIEvent(hooks.UIEvent{Atom: "drag", Screen: s.ID, Widget: n.ID,
+		X: float64(x), Y: float64(y), DX: float64(x - lx), DY: float64(y - ly)})
 }
 
 // tickVideo drives one video node's player and posts `:finished:` when a
@@ -333,6 +391,12 @@ func (st *Stack) canvasPoint(s *Screen, px, py float32) (float32, float32) {
 	return px / scale, py / scale
 }
 
+// CanvasPoint is a device-pixel point in one screen's canvas units: where the
+// pointer is in the terms that screen's layout was solved in.
+func (st *Stack) CanvasPoint(s *Screen, px, py float32) (float32, float32) {
+	return st.canvasPoint(s, px, py)
+}
+
 // hitAt is the topmost interactive or blocking widget under a device-pixel
 // point, and the screen it belongs to.
 func (st *Stack) hitAt(px, py float32) (*Screen, *Node) {
@@ -353,6 +417,12 @@ func (st *Stack) PointerMove(px, py float32) bool {
 	if s, n := st.pressed(); n != nil && n.Kind == KindSlider {
 		x, y := st.canvasPoint(s, px, py)
 		st.dragSlider(s, n, x, y)
+		return true
+	}
+	// A draggable widget held down carries the pointer with it; stepDrag
+	// turns the travel into events once a frame.
+	if _, n := st.pressed(); n != nil && n.Draggable {
+		st.inter.Drag.CurX, st.inter.Drag.CurY = px, py
 		return true
 	}
 
@@ -379,10 +449,15 @@ func (st *Stack) PointerMove(px, py float32) bool {
 func (st *Stack) PointerDown(px, py float32) bool {
 	s, n := st.hitAt(px, py)
 	if n == nil {
-		return st.CapturesInput()
+		return st.CapturesPointer()
 	}
 
 	st.inter.NavDriven = false
+	if n.Enabled && n.Draggable {
+		// Pressed now; a drag only once it has travelled (stepDrag).
+		st.inter.Press = Target{Screen: s.ID, Node: n.ID}
+		st.inter.Drag = DragState{StartX: px, StartY: py, LastX: px, LastY: py, CurX: px, CurY: py}
+	}
 	if n.Enabled && n.Kind.Interactive() {
 		st.inter.Press = Target{Screen: s.ID, Node: n.ID}
 		st.setFocus(s, n)
@@ -404,9 +479,15 @@ func (st *Stack) PointerDown(px, py float32) bool {
 // pressed, and clears the press either way.
 func (st *Stack) PointerUp(px, py float32) bool {
 	press := st.inter.Press
+	drag := st.inter.Drag
 	st.inter.Press = Target{}
+	st.inter.Drag = DragState{}
 	if !press.Valid() {
-		return st.CapturesInput()
+		return st.CapturesPointer()
+	}
+	if drag.Active {
+		st.drop(press, px, py)
+		return true
 	}
 
 	s, n := st.hitAt(px, py)
@@ -416,10 +497,44 @@ func (st *Stack) PointerUp(px, py float32) bool {
 	return true
 }
 
+// drop ends a drag: :drop: to the widget that was carried, naming the widget
+// it was let go over. That one is found as though the carried widget were not
+// there — it is usually following the pointer, and would otherwise always be
+// what it was dropped on.
+func (st *Stack) drop(press Target, px, py float32) {
+	ps, pn := st.nodeAt(press)
+	if pn == nil {
+		return
+	}
+	ev := hooks.UIEvent{Atom: "drop", Screen: ps.ID, Widget: pn.ID}
+	eligible := st.inputScreens()
+	for i := len(eligible) - 1; i >= 0; i-- {
+		s := eligible[i]
+		x, y := st.canvasPoint(s, px, py)
+		if n := s.hitTestSkipping(x, y, pn); n != nil {
+			ev.OtherScreen, ev.Other = s.ID, n.ID
+			break
+		}
+	}
+	x, y := st.canvasPoint(ps, px, py)
+	ev.X, ev.Y = float64(x), float64(y)
+	hooks.RecordUIEvent(ev)
+}
+
+// Dragging reports whether a widget is being carried by the pointer, and
+// which.
+func (st *Stack) Dragging() (Target, bool) {
+	if !st.inter.Drag.Active {
+		return Target{}, false
+	}
+	return st.inter.Press, true
+}
+
 // Wheel is consumed only under a modal screen, so that the wheel does not zoom
-// or switch weapons behind an open menu. There is no scroll view in this
-// version for it to do anything else with.
-func (st *Stack) Wheel(dy float32) bool { return st.CapturesInput() }
+// or switch weapons behind an open menu — unless that screen lets the pointer
+// through, when the wheel over its empty space is the world's. There is no
+// scroll view in this version for it to do anything else with.
+func (st *Stack) Wheel(dy float32) bool { return st.CapturesPointer() }
 
 // Navigate moves focus in a direction.
 func (st *Stack) Navigate(d Dir) bool {

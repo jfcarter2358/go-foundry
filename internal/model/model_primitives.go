@@ -297,14 +297,26 @@ func (m *ModelDoc) Merge(other *ModelDoc, offset mgl32.Vec3) []int {
 	other.EnsureWeights()
 	base := len(m.Verts)
 	boneBase := len(m.Bones)
+	// A linked document's bones are not its own: appending the incoming
+	// model's would push them, and its clips, into every other model on that
+	// skeleton. Merging a crate into a marine must not give the mechanic a
+	// crate bone, so the mesh comes across unbound and the rig does not come at
+	// all. MergeDropsRig is what the caller says so with.
+	dropRig := m.Skeleton != ""
 	for i, p := range other.Verts {
-		ws := append([]ModelVertexWeight(nil), other.Weights[i]...)
-		for j := range ws {
-			ws[j].Bone += boneBase
+		var ws []ModelVertexWeight
+		if !dropRig {
+			ws = append([]ModelVertexWeight(nil), other.Weights[i]...)
+			for j := range ws {
+				ws[j].Bone += boneBase
+			}
 		}
 		m.addVertex(p.Add(offset), ws)
 	}
 	for _, b := range other.Bones {
+		if dropRig {
+			break
+		}
 		b.Name = m.uniqueBoneName(b.Name)
 		if b.Parent >= 0 {
 			b.Parent += boneBase
@@ -317,6 +329,9 @@ func (m *ModelDoc) Merge(other *ModelDoc, offset mgl32.Vec3) []int {
 	// bone array, so they need the same boneBase shift the weights and parents
 	// just got — see the invariants in model_anim.go's header.
 	for _, c := range other.Animations {
+		if dropRig {
+			break
+		}
 		c = c.Clone()
 		c.Name = m.uniqueClipName(c.Name)
 		for ti := range c.Tracks {
@@ -335,6 +350,14 @@ func (m *ModelDoc) Merge(other *ModelDoc, offset mgl32.Vec3) []int {
 	}
 	m.Invalidate()
 	return added
+}
+
+// MergeDropsRig reports whether merging other into m would leave the incoming
+// model's armature and clips behind — which it does whenever m is on a shared
+// skeleton. The mesh still arrives; it simply arrives unbound. The editor asks
+// so it can say so, rather than let a limb silently go missing.
+func (m *ModelDoc) MergeDropsRig(other *ModelDoc) bool {
+	return m != nil && other != nil && m.Skeleton != "" && len(other.Bones) > 0
 }
 
 // ModelPrimitiveSegments is the radial resolution the panel's primitive palette

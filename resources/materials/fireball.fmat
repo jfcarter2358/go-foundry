@@ -1,0 +1,19 @@
+# fireball.fmat — the same volumetric effect, turned all the way up.
+#
+# Dense, churning and emitting light of its own. Side by side with smoke.fmat it
+# is a demonstration of what the eight numbers do, which is easier to learn from
+# than a slider on its own.
+kind: particle
+doc: The hot core of an explosion. Ramp its emission down on the layer to cool it into smoke.
+effects:
+  - effect: blend_mode
+    mode: additive
+  - effect: volume
+    density: 5
+    noise_scale: 1.4
+    displacement: 0.45
+    billow: 0.8
+    erosion: 0.15
+    albedo: {r: 0.22, g: 0.2, b: 0.19}
+    absorption: 1
+    emission: 2.2

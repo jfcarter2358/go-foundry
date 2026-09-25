@@ -37,7 +37,22 @@ var editorCam3D = struct {
 const (
 	editorCamMinDist float32 = 0.2
 	editorCamMaxDist float32 = 500
+	// editorCamFastScale multiplies every camera move while Caps Lock is on.
+	// Caps Lock rather than a held modifier because crossing a level takes far
+	// longer than a finger wants to stay down, and because Shift and Ctrl are
+	// both already spoken for in this viewport (fly down, multi-select).
+	editorCamFastScale float32 = 4
 )
+
+// editorCamSpeedScale is the multiplier the travel keys and the wheel dolly
+// move at. Caps Lock is read as a latch (KMOD_CAPS is the light on the
+// keyboard, not the key being held), so it stays on until it is turned off.
+func editorCamSpeedScale() float32 {
+	if sdl.GetModState()&sdl.KMOD_CAPS != 0 {
+		return editorCamFastScale
+	}
+	return 1
+}
 
 // editorApplyCamAngles rebuilds Cam from Yaw/Pitch. Flying leaves the eye where
 // it is and only turns the look; orbiting swings the eye around the pivot,
@@ -134,6 +149,7 @@ func editorCamZoom(wheelY int32) {
 		if speed <= 0 {
 			speed = platform.MovementSpeed
 		}
+		speed *= editorCamSpeedScale()
 		gfx.Cam.Position = gfx.Cam.Position.Add(gfx.Cam.Direction.Mul(float32(wheelY) * speed * 4))
 		editorApplyCamAngles()
 		return
@@ -175,7 +191,7 @@ func editorCamMove(f, u, r float32) {
 // of the eye.
 func editorOrbitKeys(keyStates []uint8) {
 	dtScale := platform.DeltaTime * 60.0
-	moveSpeed := platform.MovementSpeed * dtScale
+	moveSpeed := platform.MovementSpeed * dtScale * editorCamSpeedScale()
 	rotSpeed := platform.KeyRotationSpeed * dtScale
 
 	var f, u, r float32

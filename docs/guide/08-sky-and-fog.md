@@ -9,6 +9,11 @@ numbers.
 
 ## Sky
 
+A whole sky — the mode, the art, the tint and the cloud deck — can be saved as a
+sky [material](28-materials.md) and named from the **Material** row at the top of
+this panel, which is how several levels share one sky without spelling out nine
+fields each. The rows below then show what the material set.
+
 Two modes behind one setting.
 
 **Gradient** needs no art: three colour stops up the dome — **Zenith**,

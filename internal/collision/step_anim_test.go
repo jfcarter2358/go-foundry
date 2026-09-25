@@ -181,14 +181,14 @@ func TestNoteLandingIgnoresSeatedAndNonWalkerEntities(t *testing.T) {
 
 	seated := stepAnimWalker("w", mgl32.Vec3{})
 	seated.Seat = "vehicle"
-	noteLanding(&seated, midBandSpeed)
+	noteLanding(&seated, midBandSpeed, world.DefaultGravity)
 	if seated.Model("body").Playing() == "step_down" {
 		t.Error("a seated entity played step_down on landing")
 	}
 
 	noAI := stepAnimWalker("w2", mgl32.Vec3{})
 	noAI.AI = nil
-	noteLanding(&noAI, midBandSpeed)
+	noteLanding(&noAI, midBandSpeed, world.DefaultGravity)
 	if noAI.Model("body").Playing() == "step_down" {
 		t.Error("a non-AI-driven entity played step_down on landing")
 	}

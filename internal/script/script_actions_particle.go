@@ -126,7 +126,7 @@ var particleVerbs = map[string]scriptVerb{
 		// Every texture the effect reaches for, queued rather than loaded: the
 		// tick must not touch GL.
 		for i := range e.Doc.Layers {
-			rt.markTextureDirty(e.Doc.Layers[i].Texture)
+			rt.markTextureDirty(e.Doc.Layers[i].DrawTexture())
 		}
 		rt.lvl.Emitters = append(rt.lvl.Emitters, e)
 		// The cache is indexed by name and the new emitter is not in it yet.

@@ -289,6 +289,14 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	if Editor.DecalPlacementMode {
+		// The screen point rather than a world one, unlike every other placement
+		// here: a decal is oriented by the SURFACE it was clicked on, and only
+		// the pick knows which face that was. See placeDecalAt.
+		placeDecalAt(t.X, t.Y)
+		return
+	}
+
 	if Editor.SpritePlacementMode {
 		// On the surface the click is aimed at, like an entity — a sprite is a
 		// thing standing somewhere rather than a region, and placeSpriteAt
@@ -408,9 +416,13 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
-	// Face mode. Selection: one ray, closest hit wins across the spawn marker,
-	// the placed entities and the brush faces.
-	hit := pick3D(t.X, t.Y)
+	// Face mode. Selection: one ray across the spawn marker, the placed
+	// entities and the brush faces. The nearest hit wins the FIRST click, and
+	// clicking again without selecting something else carries on to the next
+	// thing along the ray — see editor_3d_pick_cycle.go. Ctrl is building a
+	// multi-selection, which is a different gesture, so it takes the nearest
+	// hit outright rather than cycling.
+	hit := pickFaceClick(t.X, t.Y, ctrlHeld)
 
 	// A face, and ctrl held: add it to (or take it back out of) the set being
 	// built, leaving everything else alone. This is the only branch that does
@@ -481,6 +493,12 @@ func editor3DSelectNonBrushHit(hit pickHit) {
 		// and it has no scale factor of its own.
 		editorSelectSprite(hit.idx)
 
+	case pickDecal:
+		// The same gizmos a sprite gets, and rotate matters more here than
+		// anywhere else: a decal's rotation is the direction it projects, so
+		// turning one is how it is aimed at a different wall.
+		editorSelectDecal(hit.idx)
+
 	case pickScenery:
 		// Move, rotate and scale, all three meaning what they say: a prop's
 		// scale is a real per-axis factor on the model, unlike a volume's or a
@@ -521,7 +539,10 @@ func editor3DSelectNonBrushHit(hit pickHit) {
 // reaches no brush leaves the set alone rather than throwing it away, so aiming
 // past the last wall of a dozen and missing does not undo the other eleven.
 func editor3DObjectClick(mx, my int32, ctrlHeld bool) {
-	hit := pick3D(mx, my)
+	// A plain click cycles through everything under the cursor, one object per
+	// click; ctrl is building a set, so it takes the nearest outright. See
+	// editor_3d_pick_cycle.go.
+	hit := pickObjectClick(mx, my, ctrlHeld)
 
 	if hit.kind == pickBrushFace {
 		s := brushSel{chunkIdx: hit.chunkIdx, brushIdx: hit.brushIdx}

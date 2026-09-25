@@ -43,3 +43,13 @@ func ResolveScriptImport(fromFile, importPath string) (string, error) {
 	}
 	return resolved, nil
 }
+
+// ImportLoader resolves a script's `import(...)` the way the runtime does, for
+// a tool that links a script outside a play session — `foundry ai check
+// -script`, above all, which has to see the functions an import brings in.
+type ImportLoader struct{}
+
+// Load reads one imported file.
+func (ImportLoader) Load(fromFile, importPath string) ([]byte, string, error) {
+	return scriptLoader{}.Load(fromFile, importPath)
+}

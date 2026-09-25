@@ -49,8 +49,10 @@ func block(topY float32) world.Brush {
 
 func stepMove(intent mgl32.Vec3, jump bool) PlayerMove {
 	return PlayerMove{
-		Intent: intent, Jump: jump, Gravity: true, DTScale: 1.0,
-		GravityAccel: 0.010, MaxFallSpeed: 0.50, JumpVelocity: 0.20,
+		Intent: intent, Jump: jump, Gravity: true, DT: 1.0 / 60,
+		GravityAccel: world.DefaultGravity,
+		MaxFallSpeed: world.DefaultMaxFallSpeed,
+		JumpVelocity: world.PlayerJumpVelocity,
 	}
 }
 

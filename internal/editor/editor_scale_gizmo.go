@@ -59,6 +59,10 @@ func scaleGizmoOrigin() (mgl32.Vec3, bool) {
 		if sp := activeGizmoSprite(); sp != nil {
 			return sp.Position, true
 		}
+	case gizmoKindDecal:
+		if d := activeGizmoDecal(); d != nil {
+			return d.Position, true
+		}
 	case gizmoKindScenery:
 		if sc := activeGizmoScenery(); sc != nil {
 			return sc.Position, true
@@ -283,6 +287,16 @@ func applyScaleToSelection(origin, factors mgl32.Vec3) {
 		h := Editor.GizmoDragStartScale
 		sp.Width = world.EntityScaleClamp(h.X() * factors.X())
 		sp.Height = world.EntityScaleClamp(h.Y() * factors.Y())
+		return
+	}
+	if d := activeGizmoDecal(); d != nil {
+		// The sprite case with the Z handle live: a decal's third axis is the
+		// depth its projection reaches, which is a size an author really does
+		// drag — it is what decides whether a mark wraps around a corner.
+		h := Editor.GizmoDragStartScale
+		d.Width = world.EntityScaleClamp(h.X() * factors.X())
+		d.Height = world.EntityScaleClamp(h.Y() * factors.Y())
+		d.Depth = world.EntityScaleClamp(h.Z() * factors.Z())
 		return
 	}
 	if fx := activeGizmoEffect(); fx != nil {

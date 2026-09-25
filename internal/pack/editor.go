@@ -1,7 +1,7 @@
 package pack
 
 // editor.go — stage the editor itself for distribution: what a Foundry release
-// on GitHub carries, and what `make dist-editor` builds.
+// on GitHub carries, and what `task dist-editor` builds.
 //
 // An editor install holds no project. It is the development build, the engine
 // files that belong to it, and the release binaries its Release window wraps a
@@ -13,6 +13,9 @@ package pack
 //	.foundrypack          the stamp, KIND='editor'
 //	resources/shaders/    the shaders it was built against, which it reads in
 //	                      place of any project's (fileutil.EngineShadersDir)
+//	docs/guide/           the authoring guide, which the editor reads as well as
+//	                      the author: it is what the Claude Code panel's docs tool
+//	                      serves (editor_claude_docs.go)
 //	runtimes/             the release game binaries and the installer program
 
 import (
@@ -46,6 +49,10 @@ type EditorOptions struct {
 	Version string
 	// Shaders is the directory of shaders the build was made from.
 	Shaders string
+	// Guide is the docs/guide directory to carry along. Empty leaves it out, and
+	// the panel's docs tool then says the install has no guide rather than
+	// pretending the subject is undocumented.
+	Guide string
 	// Libs are runtime libraries to put beside the editor. Those not for GOOS
 	// are skipped.
 	Libs []string
@@ -100,6 +107,17 @@ func StageEditor(o EditorOptions) (Result, error) {
 		}
 		if err := p.copyTo(filepath.Join(o.Shaders, e.Name()), filepath.Join(fileutil.ResourcesDirName, "shaders", e.Name())); err != nil {
 			return Result{}, err
+		}
+	}
+	if o.Guide != "" {
+		chapters := fileutil.ScanFilesByExt(o.Guide, ".md")
+		if len(chapters) == 0 {
+			o.Logf("no guide found at %s — the install will have no docs/", o.Guide)
+		}
+		for _, name := range chapters {
+			if err := p.copyTo(filepath.Join(o.Guide, name), filepath.Join("docs", "guide", name)); err != nil {
+				return Result{}, fmt.Errorf("guide: %w", err)
+			}
 		}
 	}
 	for _, rt := range o.Runtimes {

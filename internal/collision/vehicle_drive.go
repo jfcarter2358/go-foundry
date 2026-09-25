@@ -129,6 +129,12 @@ func driveOne(lvl *world.Level, e *world.Entity, dt float32, motion bool) bool {
 	forward := st.Orient.Rotate(mgl32.Vec3{0, 0, -1})
 	up := st.Orient.Rotate(mgl32.Vec3{0, 1, 0})
 
+	// The pull where the hull is, scaled by whatever the hull itself says —
+	// the same answer every other body gets (world/gravity.go). A vehicle is
+	// not put through Entity.ApplyGravity because its terminal speed is the
+	// drive model's business below, not the faller's.
+	gravity := world.GravityFor(lvl, e)
+
 	thrust := st.Controls.Throttle
 	accel := d.Accel
 	if thrust < 0 {
@@ -148,14 +154,14 @@ func driveOne(lvl *world.Level, e *world.Entity, dt float32, motion bool) bool {
 		speed := e.Velocity.Len()
 		hold := speed * d.Lift
 		e.Velocity = e.Velocity.Add(up.Mul(hold * dt))
-		e.Velocity[1] -= world.EntityGravityAccel * dt
+		e.Velocity[1] -= gravity * dt
 		e.Velocity = applyDrag(e.Velocity, d.Drag, dt)
 	case world.VehicleWater:
 		e.Velocity = applyDrag(e.Velocity, d.Drag, dt)
-		e.Velocity[1] -= world.EntityGravityAccel * dt
+		e.Velocity[1] -= gravity * dt
 	default: // ground
 		e.Velocity = applyDrag(e.Velocity, d.Drag, dt)
-		e.Velocity[1] -= world.EntityGravityAccel * dt
+		e.Velocity[1] -= gravity * dt
 	}
 
 	// Clamp the driven speed rather than the fall: a vehicle dropped off a

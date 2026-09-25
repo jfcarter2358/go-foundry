@@ -28,3 +28,28 @@ func BoolPtrIfFalse(v bool) *bool {
 	}
 	return nil
 }
+
+// CopyFloatPtr duplicates an optional float, so a round trip through the Raw
+// form never leaves the runtime value and the file's value sharing one word.
+//
+// Aliasing them would be a quiet bug rather than a loud one: a level's
+// `gravity:` written back out as the same pointer the runtime is holding means
+// a script writing @level.prop.gravity edits the saved file's copy too, and
+// leaving play would put the level back with the value play had left behind.
+// nil stays nil, which is what keeps "said nothing" distinct from "said 0".
+func CopyFloatPtr(p *float32) *float32 {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+// FloatPtrIfSet returns a pointer to v, or nil when v is zero — the shape an
+// optional YAML key wants, for a field whose zero means "not set".
+func FloatPtrIfSet(v float32) *float32 {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}

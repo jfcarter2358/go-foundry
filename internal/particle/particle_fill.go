@@ -31,6 +31,10 @@ type Instance struct {
 // caller's decision because only it knows which pass this is for.
 func (s *System) Fill(dst []Instance, camPos mgl32.Vec3, sortBackToFront bool) int {
 	l := &s.Layer
+	// Resolved once for the whole fill rather than per particle: the material
+	// is the same for every particle in the layer, and a few thousand map
+	// lookups a frame would not be.
+	tint := l.DrawTint()
 	n := 0
 	for i := range s.Live {
 		if n >= len(dst) {
@@ -52,7 +56,7 @@ func (s *System) Fill(dst []Instance, camPos mgl32.Vec3, sortBackToFront bool) i
 			Pos:   p.Pos,
 			Size:  mgl32.Vec2{size, size},
 			Rot:   p.Rot,
-			Color: mgl32.Vec4{c.X() * l.Tint.X(), c.Y() * l.Tint.Y(), c.Z() * l.Tint.Z(), l.AlphaRamp.At(t)},
+			Color: mgl32.Vec4{c.X() * tint.X(), c.Y() * tint.Y(), c.Z() * tint.Z(), l.AlphaRamp.At(t)},
 			UV:    mgl32.Vec4{u0, v0, du, dv},
 		}
 		n++
@@ -98,7 +102,11 @@ type Blob struct {
 // fireball seen inside out.
 func (s *System) FillBlobs(dst []Blob, camPos mgl32.Vec3) int {
 	l := &s.Layer
-	v := &l.Volume
+	tint := l.DrawTint()
+	// Through DrawVolume, so a material's constants win over the layer's while
+	// its two ramps stay the layer's — see particle_material.go.
+	vl := l.DrawVolume()
+	v := &vl
 	n := 0
 	for i := range s.Live {
 		if n >= len(dst) {
@@ -117,7 +125,7 @@ func (s *System) FillBlobs(dst []Blob, camPos mgl32.Vec3) int {
 			Pos:      p.Pos,
 			Radius:   r,
 			Density:  density,
-			Emission: mgl32.Vec3{c.X() * l.Tint.X() * glow, c.Y() * l.Tint.Y() * glow, c.Z() * l.Tint.Z() * glow},
+			Emission: mgl32.Vec3{c.X() * tint.X() * glow, c.Y() * tint.Y() * glow, c.Z() * tint.Z() * glow},
 			Erosion:  clamp01(v.Erosion * v.ErosionRamp.At(t)),
 			LifeT:    t,
 			Seed:     float32(p.Seed&0xFFFF) / 65535,
@@ -137,10 +145,11 @@ func (s *System) FillBlobs(dst []Blob, camPos mgl32.Vec3) int {
 // sheet is authored, which is the common case.
 func (s *System) cell(p *Particle, t float32) (u0, v0, du, dv float32) {
 	l := &s.Layer
-	if l.SheetCols <= 0 || l.SheetRows <= 0 {
+	cols, rows := l.DrawSheet()
+	if cols <= 0 || rows <= 0 {
 		return 0, 0, 1, 1
 	}
-	total := l.SheetCols * l.SheetRows
+	total := cols * rows
 	var f int
 	switch l.FrameMode {
 	case FrameRandom:
@@ -155,9 +164,9 @@ func (s *System) cell(p *Particle, t float32) (u0, v0, du, dv float32) {
 			f = total - 1
 		}
 	}
-	du = 1 / float32(l.SheetCols)
-	dv = 1 / float32(l.SheetRows)
-	return float32(f%l.SheetCols) * du, float32(f/l.SheetCols) * dv, du, dv
+	du = 1 / float32(cols)
+	dv = 1 / float32(rows)
+	return float32(f%cols) * du, float32(f/cols) * dv, du, dv
 }
 
 // Bounds returns a world-space box holding every live particle, for culling.

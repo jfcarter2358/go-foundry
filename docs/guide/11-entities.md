@@ -93,6 +93,18 @@ Four flags, all authored on the type. The first three default **off**.
 | `gravity` | fall, and stop when something is underneath |
 | `movable` | whether a resolution may displace *this* entity (default **true**) |
 
+Two more numbers sit beside them, both `0` by default and both meaning "the
+engine's own":
+
+| | |
+| --- | --- |
+| `gravity_scale` | multiplies the gravity in force where the body is. `0.2` drifts like a feather, `-1` falls upward. To stop it falling at all, use `gravity: false` — a scale of `0` is spelled the same as saying nothing |
+| `max_fall_speed` | terminal speed of its fall, in units a second; `0` is the engine's 30 |
+
+The pull it scales is the *place's*, not its own: the level sets one
+(`gravity:` at the top of the level file), and a volume can override it in one
+region. See [Volumes](13-volumes.md#gravity).
+
 Two things to know:
 
 - **`entities` has to be set on both sides.** Solidity is mutual.

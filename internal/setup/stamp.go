@@ -21,7 +21,7 @@ type Stamp struct {
 	Exe     string
 	DataDir string
 	// Kind is "" for a game and KindEditor for the editor itself, installed
-	// from a Foundry release (make installer-editor). Only the wording differs:
+	// from a Foundry release (task dist-editor). Only the wording differs:
 	// the editor keeps nothing in its install folder either — a project lives
 	// wherever its author put it — so both are replaced whole on an upgrade.
 	Kind string

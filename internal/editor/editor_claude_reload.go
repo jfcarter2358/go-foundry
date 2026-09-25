@@ -25,13 +25,20 @@ package editor
 // window has its own context current.
 
 import (
+	"log"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
+	"foundry/internal/material"
 	"foundry/internal/model"
 	"foundry/internal/script"
+	"foundry/internal/texture"
+	"foundry/internal/textureui"
 	"foundry/internal/uiwin"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
@@ -57,14 +64,25 @@ func ClaudeDrainFileChanges() {
 		return
 	}
 	paths, ranCommand := claudeState.sess.DrainTouched()
+	if claudeDeferReloads() {
+		claudePlayDefer(paths, ranCommand)
+		return
+	}
+	claudeApplyFileChanges(paths, ranCommand)
+}
+
+// claudeApplyFileChanges is the drain proper: one batch of written files turned
+// into the reloads the editor has for them.
+func claudeApplyFileChanges(paths []string, ranCommand bool) {
 	if ranCommand {
 		// A command can write anything and names nothing. Rather than rescan the
 		// project on every command — a generator run rewrites hundreds of files
-		// and the scan would cost more than the reload — the scripts and the
-		// level are treated as suspect, which is what a generator actually
-		// touches in this project.
+		// and the scan would cost more than the reload — the scripts, the
+		// textures and the level are treated as suspect, which is what a
+		// generator actually touches in this project.
 		claudeReload.levelChanged = claudeReload.levelChanged || Editor.SavePath != ""
 		claudeReloadScripts()
+		claudeReloadTextures()
 	}
 	for _, p := range paths {
 		claudeApplyFileChange(p)
@@ -75,6 +93,91 @@ func ClaudeDrainFileChanges() {
 		claudeSetStatus("Reloaded %s changed by Claude.", plural(claudeReload.reloaded, "file"))
 		claudeReload.reloaded = 0
 	}
+}
+
+// claudeDeferredChanges is what Claude changed while a play session was up.
+//
+// Play is live state, and almost none of it is on disk. The script runtime
+// holds every object's scratch dict, its timers, its `:spawn:` marks and the
+// player's own attributes, and script.ScriptReload throws the lot away and
+// starts the level's scripts again from nothing — ScriptRuntimeLoad resets
+// first. Under a player halfway through a level that is not a hot reload, it is
+// a reset, and one nobody asked for: Claude finishing a file is not the author
+// pressing anything. Re-instantiating every entity of a type, or putting a
+// model's mesh back, lands the same way.
+//
+// So a play session gets the world as it was when Play was pressed, and what
+// Claude wrote is parked here until the session ends. Nothing is lost by
+// waiting: leaving play applies it, and entering play again loads every script
+// from disk regardless.
+//
+// The author's own hot reload is deliberately not covered by this. Saving in
+// the script editor while the game runs is most of the point of having the
+// script editor (scriptEditorAfterSave), and someone who presses Ctrl+S knows
+// what they just changed.
+type claudeDeferredChanges struct {
+	// paths are the written files, absolute and deduplicated — a generator left
+	// running across a long session would otherwise list the same file a
+	// hundred times.
+	paths []string
+	// command records that a command ran, which names nothing and may have
+	// changed anything.
+	command bool
+	// textures records an explicit ask for the whole textures directory.
+	textures bool
+}
+
+var claudePlayDeferred claudeDeferredChanges
+
+// claudeDeferReloads reports whether reloads have to wait. A development build
+// is in gameplay exactly when the editor is not active, and that is the session
+// whose state the reloads would throw away.
+func claudeDeferReloads() bool { return !Editor.Active }
+
+// claudePlayDefer parks one batch of changes until play ends.
+func claudePlayDefer(paths []string, ranCommand bool) {
+	claudePlayDeferred.command = claudePlayDeferred.command || ranCommand
+	for _, p := range paths {
+		abs := claudeAbs(p)
+		if slices.Contains(claudePlayDeferred.paths, abs) {
+			continue
+		}
+		claudePlayDeferred.paths = append(claudePlayDeferred.paths, abs)
+	}
+}
+
+// claudePlayDeferCount is how many changes are waiting on the end of play.
+func claudePlayDeferCount() int {
+	n := len(claudePlayDeferred.paths)
+	if claudePlayDeferred.command {
+		n++
+	}
+	if claudePlayDeferred.textures {
+		n++
+	}
+	return n
+}
+
+// claudePlayDeferNote is what a tool is told when its reload is held back, so
+// that Claude does not read the silence as a failure and write the file again.
+func claudePlayDeferNote(what string) string {
+	return "A play session is running, so the editor is holding the level as it was when Play was " +
+		"pressed — reloading now would restart every script under the player. It will re-read " +
+		what + " as soon as they leave play."
+}
+
+// ClaudeApplyDeferredFileChanges applies everything Claude changed during a play
+// session. EditorToggle calls it on the way out of play, after the level has
+// been put back and the script runtime reset, so the reloads land on the
+// authored level rather than on the session's copy of it.
+func ClaudeApplyDeferredFileChanges() {
+	d := claudePlayDeferred
+	claudePlayDeferred = claudeDeferredChanges{}
+	if d.textures && !d.command {
+		// The command case reloads textures anyway, so it is not done twice.
+		claudeReloadTextures()
+	}
+	claudeApplyFileChanges(d.paths, d.command)
 }
 
 // claudeApplyFileChange routes one written file to the right reload.
@@ -107,13 +210,72 @@ func claudeApplyFileChange(path string) {
 		requestModelReload(abs)
 		claudeReload.reloaded++
 
+	case ext == model.SkeletonExt:
+		// The models on the rig are what draws, so they are what reloads: the
+		// skeleton itself is never uploaded. modelEditorDirty covers the open
+		// document's bones and clips too, which is why it guards this as well.
+		if modelDoc != nil && modelDoc.Skeleton == claudeAssetName(abs) && modelEditorDirty() {
+			claudeNoteConflict(abs)
+			return
+		}
+		claudeReload.reloaded += requestSkeletonReload(claudeAssetName(abs), "")
+
 	case ext == ".fpar":
 		ReloadEmittersUsing(claudeAssetName(abs))
 		claudeReload.reloaded++
 
+	case ext == material.MaterialExt:
+		name := claudeAssetName(abs)
+		if MaterialEditorOpen() && materialName() == name && materialEditorDirty() {
+			claudeNoteConflict(abs)
+			return
+		}
+		// Re-reading the library is all a material needs: everything wearing
+		// one resolves it live and notices through the generation counter.
+		// The sky is the exception, and InvalidateSkyMaterial is what tells it.
+		if err := material.Reload(name); err != nil {
+			claudeNoteConflict(abs)
+			return
+		}
+		gfx.EnsureMaterialTextures()
+		invalidateSkyMaterialForEditor()
+		if MaterialEditorOpen() && materialName() == name {
+			// The editor is showing this material and has no edits of its own,
+			// so it should be showing what Claude wrote.
+			if err := materialLoad(abs); err != nil {
+				claudeNoteConflict(abs)
+				return
+			}
+		}
+		claudeReload.reloaded++
+
 	case ext == ".png", ext == ".ftex":
-		// Textures are re-read by the renderer's own cache when the file's
-		// timestamp moves; nothing to do here beyond noting it happened.
+		// A texture, if it is in textures/ — a PNG anywhere else is a
+		// screenshot or a document's own image and belongs to nothing here.
+		//
+		// Nothing picks these up on its own: the picker offers what the startup
+		// scan found, and a texture already resident on the GPU is never read
+		// twice, so without this a new texture is invisible and a rewritten one
+		// keeps drawing yesterday's image until the editor restarts. This is
+		// the case the texture reload was written for.
+		if filepath.Dir(abs) != filepath.Clean(fileutil.TexturesDir()) {
+			return
+		}
+		name := claudeAssetName(abs)
+		if gfx.IsNormalMapName(name) {
+			// A normal map is reached through the texture it belongs to, and
+			// is never a texture in its own right — see gfx.NormalMapSuffix.
+			name = strings.TrimSuffix(name, gfx.NormalMapSuffix)
+		}
+		if textureEditorHoldsUnsaved(name) {
+			claudeNoteConflict(abs)
+			return
+		}
+		if err := texture.ReloadTexture(name); err != nil {
+			log.Printf("WARNING: texture reload: %v", err)
+			claudeNoteConflict(abs)
+			return
+		}
 		claudeReload.reloaded++
 
 	case ext == ".yaml", ext == ".yml":
@@ -136,6 +298,52 @@ func claudeAssetName(abs string) string {
 		return rel[i+1:]
 	}
 	return rel
+}
+
+// claudeReloadPath is the reload tool's route in: one file, or a directory,
+// which is how Claude asks for every texture at once after a generator run has
+// written a batch of them.
+func claudeReloadPath(path string) string {
+	abs := claudeAbs(path)
+	if st, err := os.Stat(abs); err == nil && st.IsDir() {
+		if filepath.Clean(abs) != filepath.Clean(fileutil.TexturesDir()) {
+			return "Nothing in " + path + " is something the editor reloads by directory. " +
+				"Name a file, or textures/ for every texture."
+		}
+		if claudeDeferReloads() {
+			claudePlayDeferred.textures = true
+			return claudePlayDeferNote("every texture")
+		}
+		r := texture.ReloadTextures()
+		if !r.Changed() {
+			return "The editor's textures already match what is on disk."
+		}
+		return "Reloaded textures: " + r.Summary() + "."
+	}
+	if claudeDeferReloads() {
+		claudePlayDefer([]string{abs}, false)
+		return claudePlayDeferNote(path)
+	}
+	claudeApplyFileChange(abs)
+	return "The editor will re-read " + path + "."
+}
+
+// claudeReloadTextures re-reads textures/ in full. For when the file that
+// changed is not named: a generator run, or an explicit ask for the lot.
+func claudeReloadTextures() {
+	r := texture.ReloadTextures()
+	claudeReload.reloaded += len(r.Added) + len(r.Reloaded) + len(r.Removed)
+	for _, err := range r.Errs {
+		log.Printf("WARNING: texture reload: %v", err)
+	}
+	// A texture being painted right now is the one case a silent reload can
+	// lose work — the document keeps its edits, but the image on the walls
+	// has just gone back to what was last saved. Worth saying.
+	for _, name := range r.Reloaded {
+		if textureEditorHoldsUnsaved(name) {
+			claudeNoteConflict(filepath.Join(fileutil.TexturesDir(), name+".png"))
+		}
+	}
 }
 
 func claudeReloadScripts() {
@@ -196,6 +404,13 @@ func claudeNoteConflict(abs string) {
 // Both halves are about the same gap, from the two directions, and both belong
 // where a message is about to be sent — which is the moment either one matters.
 func claudeDrawUnsavedWarning() {
+	if n := claudePlayDeferCount(); n > 0 {
+		// Said here rather than silently held, because from Claude's side the
+		// file is written and from the author's side nothing has changed: the
+		// gap between the two is exactly what this band is for.
+		editorTextColored(claudeWarnColor,
+			"Play session running — "+plural(n, "change")+" from Claude will be re-read when you leave play.")
+	}
 	if names := unsavedEditorNames(); len(names) > 0 {
 		editorTextColored(claudeWarnColor,
 			"Unsaved: "+strings.Join(names, ", ")+" — Claude reads the files on disk.")
@@ -244,6 +459,15 @@ func scriptEditorHoldsUnsaved(abs string) bool {
 		}
 	}
 	return false
+}
+
+// textureEditorHoldsUnsaved reports whether the texture editor is painting the
+// named texture and has changes nobody has saved. Those changes are ahead of
+// what is on disk, so re-reading the file would replace what is on screen with
+// something older — the one direction a reload must never go.
+func textureEditorHoldsUnsaved(name string) bool {
+	ed := textureui.ActiveTexEditor
+	return ed != nil && ed.Doc != nil && ed.Doc.Name == name && textureui.TextureEditorDirty()
 }
 
 // modelEditorHolds reports whether the model editor has the model at abs open.

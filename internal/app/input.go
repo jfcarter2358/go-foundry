@@ -7,6 +7,7 @@ import (
 	"foundry/internal/platform"
 	"foundry/internal/render"
 	"foundry/internal/script"
+	"foundry/internal/ui"
 	"foundry/internal/world"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -204,12 +205,11 @@ func HandleEvent(event sdl.Event) {
 				// not what is drawn into it.
 				platform.ToggleVSync()
 			case sdl.SCANCODE_0:
+				// Free-fly, not "gravity off". The two used to be one switch;
+				// this key has always meant "let me fly around and look at the
+				// level", which is the fly half — see platform.FlyMode.
 				if !devActive() {
-					platform.GravityEnabled = !platform.GravityEnabled
-					if !platform.GravityEnabled {
-						platform.IsOnGround = false
-						platform.JumpRequested = false
-					}
+					world.SetPlayerFly(!platform.FlyMode)
 				}
 			case sdl.SCANCODE_8:
 				// Engine-wide entity collision switches. Debug switches, not
@@ -230,7 +230,9 @@ func HandleEvent(event sdl.Event) {
 		// Weapon cycling. Wheel up is the previous weapon and down the next,
 		// the way a list scrolls. Only reached when the UI did not consume the
 		// wheel (uiHandleEvent), so a scrolling menu never switches guns.
-		if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() {
+		// Nor behind a modal screen that lets the pointer through to the world
+		// (`click_through`): the wheel's travel over it is the pointer's.
+		if !devActive() && platform.PlayerControlEnabled && !script.GamePaused() && !ui.Game.CapturesInput() {
 			if t.Y > 0 {
 				hooks.ScriptWeaponCycleRequest(-1)
 			} else if t.Y < 0 {
@@ -243,8 +245,16 @@ func HandleEvent(event sdl.Event) {
 		// Gameplay-only — editor picking uses mouse buttons too, but through
 		// devActive's own handlers, never this one, so the two never fight
 		// over a click.
+		//
+		// A press reaches here past a modal screen only when that screen lets
+		// clicks through to the world (`click_through`) — and those are the
+		// pointer's, not the trigger's. Releases always go through, so a
+		// button held as the screen came up still lets go.
 		for _, a := range platform.Bindings.ActionsFor(platform.MouseInput(t.Button)) {
 			if t.Type == sdl.MOUSEBUTTONDOWN {
+				if ui.Game.CapturesInput() {
+					continue
+				}
 				pressAction(a, false)
 			} else {
 				releaseAction(a)
@@ -300,7 +310,7 @@ func pressAction(a platform.Action, repeat bool) {
 		// Not while a script holds the game paused (gameplayInput): MovePlayer
 		// is not running to spend the request, so it would wait and fire on
 		// the first frame after the pause lifted.
-		if platform.GravityEnabled && platform.IsOnGround {
+		if platform.PlayerFalls() && platform.IsOnGround {
 			platform.JumpRequested = true
 		}
 	case platform.ActThrow:

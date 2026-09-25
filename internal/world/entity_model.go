@@ -98,6 +98,11 @@ type EntityModel struct {
 	// Path is the model file, stored relative to resources/ (see
 	// RelAssetPath). Both .fmdl and .obj are accepted.
 	Path string
+	// Material is the .fmat every submesh of this attachment wears, or "" for
+	// none. Overlaid on the fields around it rather than replacing them; see
+	// gfx.SurfaceState.
+	Material string
+
 	// Texture overrides the model document's own texture. Empty keeps whatever
 	// the model was authored with, which is the usual case — the override is
 	// for reskinning one shared mesh per entity type.
@@ -318,6 +323,7 @@ func (m *EntityModel) Load(ownerID string) error {
 		}
 		g.Alpha = m.EffectiveAlpha()
 		g.Unlit = m.Unlit
+		g.MaterialName = m.Material
 		m.Submeshes = append(m.Submeshes, g)
 	}
 
@@ -535,6 +541,10 @@ func wrapUV(v mgl32.Vec2) mgl32.Vec2 {
 // marine was most of level1's load. The cache entry is checked against the
 // file's size and modification time, so a model saved from the editor is read
 // again rather than served stale.
+//
+// A rigged model is two files — the .fmdl and the .fskl it links — so the stamp
+// covers both. Without the skeleton's, re-saving a walk cycle would leave every
+// character playing the old one until something happened to touch their meshes.
 func loadModelDocument(path string) (*model.ModelDoc, error) {
 	info, statErr := os.Stat(path)
 	if statErr == nil {
@@ -553,9 +563,34 @@ func loadModelDocument(path string) (*model.ModelDoc, error) {
 		return doc, err
 	}
 	modelDocCache.Lock()
-	modelDocCache.docs[path] = modelDocEntry{doc: doc.Clone(), size: info.Size(), mod: info.ModTime()}
+	modelDocCache.docs[path] = modelDocEntry{
+		doc:      doc.Clone(),
+		size:     info.Size(),
+		mod:      info.ModTime(),
+		skeleton: skeletonStamp(path, doc.Skeleton),
+	}
 	modelDocCache.Unlock()
 	return doc, nil
+}
+
+// skeletonStamp is a linked skeleton file's size and modification time, folded
+// into one comparable value. Zero for an unlinked model, and for a skeleton
+// that cannot be stat'd — which is a file that will fail to load anyway, and
+// the load is where that gets reported.
+//
+// Resolved through the *model's* path, not the bare name, for the same reason
+// LoadModel does: a project's skeletons sit beside its models, and the
+// configured resources directory is only the fallback. Stamping the wrong file
+// would read as "unchanged" forever.
+func skeletonStamp(modelPath, name string) int64 {
+	if name == "" {
+		return 0
+	}
+	info, err := os.Stat(model.SkeletonPathFor(modelPath, name))
+	if err != nil {
+		return 0
+	}
+	return info.Size() ^ info.ModTime().UnixNano()
 }
 
 // modelDocCache holds the pristine parsed documents loadModelDocument clones.
@@ -569,6 +604,8 @@ type modelDocEntry struct {
 	doc  *model.ModelDoc
 	size int64
 	mod  time.Time
+	// skeleton stamps the .fskl this document links, or 0 when it links none.
+	skeleton int64
 }
 
 // cachedModelDocument is a clone of path's cached document, or nil when there
@@ -578,6 +615,9 @@ func cachedModelDocument(path string, info os.FileInfo) *model.ModelDoc {
 	defer modelDocCache.Unlock()
 	e, ok := modelDocCache.docs[path]
 	if !ok || e.size != info.Size() || !e.mod.Equal(info.ModTime()) {
+		return nil
+	}
+	if e.skeleton != skeletonStamp(path, e.doc.Skeleton) {
 		return nil
 	}
 	return e.doc.Clone()

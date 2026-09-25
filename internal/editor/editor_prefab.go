@@ -67,6 +67,7 @@ func editorClearPrefabSelection() {
 // editorArmPrefabPlacement makes the next left-click drop an instance.
 func editorArmPrefabPlacement() {
 	Editor.PrefabPlacementMode = true
+	Editor.DecalPlacementMode = false
 	Editor.VolumePlacementMode = false
 	Editor.EntityPlacementMode = false
 	Editor.SpawnPlacementMode = false

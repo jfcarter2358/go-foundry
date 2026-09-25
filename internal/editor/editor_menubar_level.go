@@ -23,10 +23,12 @@ const editorShadingTooltip = "Z — Solid hides the far side of the world, and o
 func editorCameraTooltip(flying bool) string {
 	if flying {
 		return "RMB/MMB drag to look, WASD fly, Space/Shift up and down,\n" +
-			"wheel dollies, F frames the selection."
+			"wheel dollies, Caps Lock flies 4x faster,\n" +
+			"F frames the selection."
 	}
 	return "RMB/MMB drag to orbit, Shift+MMB pan, wheel zoom,\n" +
-		"WASD slides the pivot, F frames the selection."
+		"WASD slides the pivot, Caps Lock 4x faster,\n" +
+		"F frames the selection."
 }
 
 func editorLevelFileMenu(lvl *world.Level) {
@@ -52,6 +54,8 @@ func editorLevelFileMenu(lvl *world.Level) {
 		Editor.ShowSaveAs = true
 	}
 	editorSaveAllMenuItem()
+	imgui.Separator()
+	editorReloadTexturesMenuItem()
 	imgui.Separator()
 	editorProjectMenuItems()
 	// No Exit. Quitting is the window's own close button, the same as every

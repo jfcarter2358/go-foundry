@@ -125,6 +125,11 @@ func uiScreenProperties() {
 			uiEdited()
 		}
 		editorTextMuted("Mouse-look is released while this screen is up.")
+		if imgui.Checkbox("Clicks reach the world##uiclickthrough", &s.ClickThrough) {
+			uiBeginEdit("screen.click_through")
+			uiEdited()
+		}
+		editorTextMuted("A click on none of this screen's widgets reaches the level behind it, even while modal.")
 
 		uiNodeIDCombo("Initial focus", &s.InitialFocus, true)
 	})
@@ -177,6 +182,11 @@ func uiNodeProperties(n *ui.Node) {
 			uiEdited()
 		}
 		editorTextMuted("Swallow a click landing here even if this kind is inert.")
+		if imgui.Checkbox("Draggable##uidraggable", &n.Draggable) {
+			uiBeginEdit("node.draggable")
+			uiEdited()
+		}
+		editorTextMuted("Pressing and moving it posts :drag_start:, :drag: and :drop:.")
 		if editorDragFloat("Alpha", &n.Alpha, 0, 1, "%.2f") {
 			uiBeginEdit("node.alpha")
 			uiEdited()

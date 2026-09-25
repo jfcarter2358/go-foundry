@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"foundry/internal/model"
+
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // The cache hands out clones, so one entity's edits cannot reach the next, and
@@ -49,4 +51,66 @@ func TestModelDocumentCacheClonesAndNoticesEdits(t *testing.T) {
 	if c.Texture != "second" {
 		t.Fatalf("texture after re-save = %q, want %q", c.Texture, "second")
 	}
+}
+
+// A skeleton edit changes no byte of the .fmdl that links it, so the cache's
+// size-and-mtime stamp on the model alone would serve the old clips forever —
+// re-saving a walk cycle would leave every character still walking the old way.
+func TestModelDocumentCacheNoticesASkeletonEdit(t *testing.T) {
+	root := t.TempDir()
+	models := filepath.Join(root, model.ModelsDirName)
+	if err := os.MkdirAll(models, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := model.NewCubeDoc()
+	bi := doc.AddBone(mgl32.Vec3{0, -0.5, 0}, mgl32.Vec3{0, 0.5, 0})
+	doc.RenameBone(bi, "root")
+	doc.AssignVertsToBone(allVertIndices(doc), bi, 1)
+	ci := doc.AddClip("walk")
+	doc.Clip(ci).Duration = 1
+	doc.Clip(ci).SetKey(bi, 0, model.IdentBonePose())
+
+	skel := model.ExtractSkeleton(doc, "rig")
+	// Written through SkeletonPathFor, so it lands beside the model rather than
+	// in whatever resources directory the test binary inherited.
+	skelPath := model.SkeletonPathFor(filepath.Join(models, "x"+model.ModelExt), "rig")
+	if err := model.SaveSkeleton(skel, skelPath); err != nil {
+		t.Fatal(err)
+	}
+	doc.LinkSkeleton(skel)
+
+	path := filepath.Join(models, "box"+model.ModelExt)
+	if err := model.SaveModel(doc, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadModelDocument(path); err != nil {
+		t.Fatal(err)
+	}
+
+	// A second clip on the shared rig; the model file is untouched.
+	skel.Animations = append(skel.Animations, model.ModelClip{Name: "run", Duration: 1})
+	if err := model.SaveSkeleton(skel, skelPath); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(skelPath, later, later); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := loadModelDocument(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Animations) != 2 {
+		t.Fatalf("after the skeleton was re-saved the cache served %d clips, want 2", len(got.Animations))
+	}
+}
+
+func allVertIndices(m *model.ModelDoc) []int {
+	out := make([]int, len(m.Verts))
+	for i := range out {
+		out[i] = i
+	}
+	return out
 }

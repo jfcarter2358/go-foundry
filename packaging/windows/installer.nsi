@@ -6,7 +6,7 @@
 ; installer and needs Wine to build from here; that trade is the whole reason
 ; this is NSIS.
 ;
-; Everything specific to a game arrives as a /D define from the Makefile, which
+; Everything specific to a game arrives as a /D define from the Taskfile, which
 ; reads them from the .foundrypack stamp foundrypack wrote. Nothing about a
 ; particular project is hard-coded in this file.
 ;

@@ -107,7 +107,7 @@ Select the root:
 | --- | --- |
 | **Screen** | ID |
 | **Canvas** | scale mode (`screen` / `pixel`), reference width and height, match, snap to pixels |
-| **Input** | **Modal**, **Pauses the game**, **Shows the cursor**, initial focus |
+| **Input** | **Modal**, **Pauses the game**, **Shows the cursor**, **Clicks reach the world**, initial focus |
 
 There is no application-state enum. A HUD is a non-modal, non-pausing screen at
 the bottom of the stack. A pause menu is a modal, pausing, cursor-releasing
@@ -119,6 +119,14 @@ job. "Is the game paused" is a question about the stack.
 screen's script sets `@level.prop.paused` on `:shown:` and clears it on
 `:hidden:`, which is what the shipped pause menu does. Screens and widgets keep
 running under it. See *Pausing* in SCRIPTING.md.
+
+**Clicks reach the world** (`click_through: true`) lets a click that lands on
+none of the screen's widgets through to the level behind it, even while the
+screen is modal — a build menu over a level the player is still placing things
+in. The keyboard stays with the screen. A screen that is not modal already lets
+clicks on its empty space through. Either way the click arrives in the level's
+scripts as `:pointer_down:` and the rest (see *Pointing at the world* in
+[Scripting](18-scripting.md)), and only while the cursor is showing.
 
 ## Bindings
 
@@ -178,6 +186,9 @@ screen's.
 | `:hover:` / `:unhover:` | `src ref` | the pointer or navigation highlight entered / left |
 | `:change:` | `src ref, value` | a slider, toggle or field's value changed |
 | `:submit:` | `src ref, text str` | Enter in a text field |
+| `:drag_start:` | `src ref, pos vec` | a **Draggable** widget was pressed and moved a few pixels |
+| `:drag:` | `src ref, pos vec, delta vec` | it moved on — at most once a frame |
+| `:drop:` | `src ref, onto, pos vec` | it was let go; `onto` is the widget under it, or `null` |
 | `:cancel:` | — | Escape, while this screen is the topmost modal one |
 | `:shown:` / `:hidden:` | — | on and off the stack |
 
@@ -191,6 +202,30 @@ hide_screen(@pause)
 widget(screen("pause"), "ok")
 focus(widget(@pause, "resume"))
 ```
+
+### Dragging a widget
+
+Tick **Draggable** on a widget (any kind — an inventory icon is an image) and
+the pointer can pick it up. It does not move by itself: `translate` is a runtime
+slide from where the layout puts it, in canvas units, so the handler that
+carries it is one line, and the drop decides where it ends up:
+
+```
+def on_drag(:drag:, src, pos vec, delta vec) -> null
+    @self.prop.translate = @self.prop.translate + delta
+end
+def on_drop(:drop:, src, onto, pos vec) -> null
+    if onto == null
+        @self.prop.translate = <0.0, 0.0, 0.0>      -- snap back
+    end
+end
+```
+
+`onto` is found as if the dragged widget were not there, so an icon following
+the pointer is dropped onto the slot beneath it rather than onto itself. A press
+and release that never moved is still a `:click:`. `hovered` and `dragging` read
+what the pointer is doing to a widget, and a screen's `pointer` is where the
+pointer is in its canvas units.
 
 ### Pinning a widget to the world
 

@@ -72,6 +72,9 @@ func CompletionRefs(lvl *world.Level) []CompletionRef {
 		for i := range lvl.Effects {
 			add(lvl.Effects[i].ID, flang.RefEffect)
 		}
+		for i := range lvl.Decals {
+			add(lvl.Decals[i].ID, flang.RefDecal)
+		}
 		for i := range lvl.WaypointAnimations {
 			add(lvl.WaypointAnimations[i].ID, flang.RefWaypoints)
 		}

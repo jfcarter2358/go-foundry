@@ -85,5 +85,13 @@ func claudeLoadSettings() {
 	}
 	if claudeState.mode == "" {
 		claudeState.mode = cfg.Mode
+		// A mode saved against a newer CLI than this machine has would sit in the
+		// picker as a label for something that cannot run. Asking is the mode to
+		// fall back to.
+		for _, m := range claudeModes {
+			if m.Mode == claudeState.mode && !claudeModeAvailable(m.Min) {
+				claudeState.mode = ""
+			}
+		}
 	}
 }

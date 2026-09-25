@@ -1,0 +1,19 @@
+# mossy_rock.fmat — the second-texture blend, as a material.
+#
+# This was `blend_texture:` and `blend_mask:` on a brush face: two texture names
+# to fill in per face, and a mask whose meaning had to be remembered. Naming the
+# pair once is the difference between a cliff of forty faces that agree and one
+# that nearly does.
+#
+# The mask is read for LUMINANCE only, so any texture serves: black is the base
+# texture, white is the blend one. `dirt` is standing in for a painted mask here
+# — swap it for one of your own.
+kind: surface
+texture: rock
+doc: Rock with moss in its hollows. Swap `mask` for a painted one.
+effects:
+  - effect: blend
+    texture: moss
+    mask: dirt
+  - effect: normal_map
+  - effect: smooth

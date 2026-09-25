@@ -335,7 +335,7 @@ func SpriteBatches(lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersOn
 		if !s.Drawable() {
 			continue
 		}
-		if castersOnly && !s.CastShadows {
+		if castersOnly && !s.DrawCastShadows() {
 			continue
 		}
 		pos := s.WorldPosition(lvl)
@@ -349,23 +349,28 @@ func SpriteBatches(lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersOn
 			DebugStats.Sprites++
 		}
 		u0, v0, du, dv := s.UVRect()
+		// Everything a material can have a say in is read through the Draw*
+		// accessors (world/sprite_material.go), never off the fields: a sprite
+		// with no material gets its own values back, and one with a material
+		// gets them overlaid.
+		tint, alpha, blend := s.DrawTint(), s.DrawAlpha(), s.DrawBlend()
 		inst := SpriteInstance{
 			Pos:   pos,
 			Size:  s.DrawnSize(),
 			Rot:   s.Rotation.Z(),
-			Color: mgl32.Vec4{s.Tint.X(), s.Tint.Y(), s.Tint.Z(), s.Alpha},
+			Color: mgl32.Vec4{tint.X(), tint.Y(), tint.Z(), alpha},
 			UV:    mgl32.Vec4{u0, v0, du, dv},
 		}
 		right, up := fixedBasis(s)
 		key := spriteBatch{
-			Texture:    s.Texture,
-			Blend:      s.Blend,
-			Billboard:  s.Billboard,
-			Lit:        s.Lit,
+			Texture:    s.DrawTexture(),
+			Blend:      blend,
+			Billboard:  s.DrawBillboard(),
+			Lit:        s.DrawLit(),
 			FixedRight: right,
 			FixedUp:    up,
 		}
-		if s.Blend == gfx.SpriteBlendCutout && s.Alpha < 1 {
+		if blend == gfx.SpriteBlendCutout && alpha < 1 {
 			key.Blend = gfx.SpriteBlendAlpha
 			key.FadingCutout = true
 		}
@@ -405,14 +410,14 @@ func gatherEmitters(lvl *world.Level, cull *Frustum, camPos mgl32.Vec3, castersO
 			if sys.Layer.Render == particle.RenderVolume {
 				continue
 			}
-			if castersOnly && !sys.Layer.CastShadows {
+			if castersOnly && !sys.Layer.DrawCastShadows() {
 				continue
 			}
 			// Sorted here, inside the layer, rather than by the pass: the pass
 			// orders whole batches, and a cloud of alpha particles has to be
 			// ordered particle by particle or it composites wrong against
 			// itself. Additive and cutout skip it — neither needs an order.
-			sortIt := sys.Layer.Blend == gfx.SpriteBlendAlpha
+			sortIt := sys.Layer.DrawBlend() == gfx.SpriteBlendAlpha
 			n := sys.Fill(spriteFillBuf(sys.Count()), camPos, sortIt)
 			if n == 0 {
 				continue
@@ -441,11 +446,16 @@ func spriteFillBuf(n int) []particle.Instance {
 // so the per-instance search appendSpriteInstance does would be the same answer
 // several thousand times.
 func appendEmitterBatch(l particle.Layer, insts []particle.Instance, camPos mgl32.Vec3) {
+	// Through the Draw* accessors, never the fields: a layer wearing a
+	// material takes its blend, billboard and texture from there, and the
+	// batch key has to be the thing actually drawn or two layers that look
+	// alike would land in different batches (or, worse, two that do not would
+	// share one).
 	key := spriteBatch{
-		Texture:   l.Texture,
-		Blend:     l.Blend,
-		Billboard: l.Billboard,
-		Lit:       l.Lit,
+		Texture:   l.DrawTexture(),
+		Blend:     l.DrawBlend(),
+		Billboard: l.DrawBillboard(),
+		Lit:       l.DrawLit(),
 	}
 	b := findSpriteBatch(&sprites.batches, key)
 	for i := range insts {

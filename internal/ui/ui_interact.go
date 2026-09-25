@@ -32,6 +32,23 @@ type Interaction struct {
 	// Caret and Sel are the text field's cursor and selection anchor, as byte
 	// offsets into the focused input's string.
 	Caret, Sel int
+
+	// Drag is a draggable widget being carried by the pointer.
+	Drag DragState
+}
+
+// DragState follows one press on a draggable widget from the press to the
+// drop. The press is Interaction.Press; this is what the drag adds to it.
+type DragState struct {
+	// Active says the pointer has moved far enough from the press to be a drag
+	// rather than a click.
+	Active bool
+	// StartX, StartY is the press, and LastX, LastY the last position a :drag:
+	// reported, both in device pixels.
+	StartX, StartY float32
+	LastX, LastY   float32
+	// CurX, CurY is where the pointer is now, recorded by PointerMove.
+	CurX, CurY float32
 }
 
 // VisualState is which of a widget's looks applies right now.

@@ -465,6 +465,13 @@ func (h *levelHost) refPosition(r flang.RefVal) (mgl32.Vec3, bool) {
 		if fx := c.effectFor(r); fx != nil {
 			return fx.WorldPosition(h.lvl()), true
 		}
+	case flang.RefDecal:
+		if d := c.decalFor(r); d != nil {
+			// Already world-space: a decal has no carrier to resolve through —
+			// what rides a moving surface is its MESH, piece by piece, and the
+			// box itself stays where it was projected. See world/decal.go.
+			return d.Position, true
+		}
 	case flang.RefBrush:
 		if ch, b := c.brushOwnerFor(r); b != nil {
 			// A brush's verts are chunk-local; every other arm of this switch

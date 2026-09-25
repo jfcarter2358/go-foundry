@@ -281,6 +281,7 @@ func (w *brushWorkspace) placementArmed() bool {
 	}
 	return Editor.SpawnPlacementMode || Editor.EntityPlacementMode ||
 		Editor.VolumePlacementMode || Editor.SpritePlacementMode ||
+		Editor.DecalPlacementMode ||
 		Editor.EmitterPlacementMode || Editor.SoundPlacementMode ||
 		Editor.EffectPlacementMode ||
 		Editor.PrefabPlacementMode || Editor.BrushActive ||
@@ -309,6 +310,7 @@ func (w *brushWorkspace) disarmOtherPlacements() {
 	Editor.PrefabPlacementMode = false
 	Editor.VolumePlacementMode = false
 	Editor.SpritePlacementMode = false
+	Editor.DecalPlacementMode = false
 	Editor.EmitterPlacementMode = false
 	Editor.SoundPlacementMode = false
 	Editor.EffectPlacementMode = false

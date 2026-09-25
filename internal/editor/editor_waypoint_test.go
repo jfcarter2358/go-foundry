@@ -258,14 +258,22 @@ func TestPickingFindsTheNearestWaypointMarker(t *testing.T) {
 	}}}}
 	cam := mgl32.Vec3{0, 0, -10}
 
-	ai, pi, dist := pickWaypointMarker(cam, mgl32.Vec3{0, 0, 1}, cam, lvl)
-	if ai != 0 || pi != 0 {
-		t.Fatalf("a ray through both markers picked animation %d point %d, want the nearer, 0/0", ai, pi)
+	// Both markers are on the ray, and both come back — the far one is what a
+	// second click cycles to. Nearest first.
+	hits := pickWaypointMarkers(cam, mgl32.Vec3{0, 0, 1}, cam, lvl)
+	if len(hits) != 2 {
+		t.Fatalf("a ray through both markers returned %d hits, want 2", len(hits))
 	}
-	if !nearlyEqual(dist, 10, 1e-4) {
-		t.Errorf("the hit is at %v, want 10", dist)
+	if hits[0].anim != 0 || hits[0].point != 0 {
+		t.Fatalf("the first hit is animation %d point %d, want the nearer, 0/0", hits[0].anim, hits[0].point)
 	}
-	if ai, _, _ := pickWaypointMarker(mgl32.Vec3{3, 0, -10}, mgl32.Vec3{0, 0, 1}, cam, lvl); ai != -1 {
+	if hits[1].point != 1 {
+		t.Fatalf("the second hit is point %d, want the far one, 1", hits[1].point)
+	}
+	if !nearlyEqual(hits[0].t, 10, 1e-4) {
+		t.Errorf("the near hit is at %v, want 10", hits[0].t)
+	}
+	if got := pickWaypointMarkers(mgl32.Vec3{3, 0, -10}, mgl32.Vec3{0, 0, 1}, cam, lvl); len(got) != 0 {
 		t.Error("a ray three units wide of every marker still picked one")
 	}
 }

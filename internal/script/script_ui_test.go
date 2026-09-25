@@ -516,3 +516,43 @@ func TestUIChangeValueIsTypedByTheWidgetEvenWhenZero(t *testing.T) {
 		}
 	}
 }
+
+// TestDraggingAWidgetFromItsScript is the inventory case end to end: the icon
+// carries itself by its drag's delta and hears what it was dropped on.
+func TestDraggingAWidgetFromItsScript(t *testing.T) {
+	root := withTempScriptDir(t)
+	st := withUIStack(t)
+	path := writeScript(t, root, "icon.flang", `def on_drag(:drag:, src, pos vec, delta vec) -> null
+    @self.prop.translate = @self.prop.translate + delta
+end
+def on_drop(:drop:, src, onto, pos vec) -> null
+    @self.attr.onto = onto.id
+end`)
+
+	s := ui.NewScreen("inv")
+	s.Canvas = ui.Canvas{Mode: ui.ScaleConstantPixel}
+	icon := pinnedWidget("icon", ui.KindImage, 0, 0, 40, 40)
+	icon.Draggable = true
+	icon.Script = path
+	s.Root.Children = []ui.Node{icon, pinnedWidget("slot", ui.KindButton, 200, 0, 40, 40)}
+	st.Push(s)
+	st.Tick(0, 800, 600)
+
+	lvl := tickTestLevel(t)
+	st.PointerDown(20, 20)
+	st.PointerMove(220, 20)
+	st.Tick(0, 800, 600)
+	runTicks(t, lvl, 2)
+
+	n := st.Find("inv").Find("icon")
+	if got := n.Translate(); got[0] != 200 || got[1] != 0 {
+		t.Fatalf("the icon slid to %v, want the pointer's 200 across", got)
+	}
+
+	st.Tick(0, 800, 600)
+	st.PointerUp(220, 20)
+	runTicks(t, lvl, 2)
+	if v, ok := n.Attr("onto"); !ok || v.S != "slot" {
+		t.Fatalf("the drop reported %v, want the slot it landed on", v)
+	}
+}

@@ -212,7 +212,8 @@ func (lb *levelBatches) syncChunk(ch *world.Chunk) *ChunkBatch {
 			}
 			key := batchKey{
 				mat: gfx.Material{
-					Texture: g.Texture, BlendTexture: g.BlendTexture, BlendMask: g.BlendMask,
+					Texture: g.Texture, MaterialName: g.MaterialName,
+					BlendTexture: g.BlendTexture, BlendMask: g.BlendMask,
 					Alpha: g.Alpha, Normals: len(g.Normals) > 0, Smooth: g.Smooth,
 				},
 				doubleSided: f.DoubleSided,

@@ -1,6 +1,6 @@
 # game.yaml — what this install is, when the engine is built as a game.
 #
-# Read only by a release build (`go build -tags release`, or `make release-linux`); a
+# Read only by a release build (`go build -tags release`, or `task release-linux`); a
 # development build ignores it and boots into the editor on a blank level. See
 # internal/game/manifest.go and internal/app/startup_release.go.
 #

@@ -10,7 +10,7 @@ import (
 )
 
 // eventPostSources are the files that actually post engine events.
-var eventPostSources = []string{"script_events.go", "script_actions.go"}
+var eventPostSources = []string{"script_events.go", "script_actions.go", "script_pointer.go"}
 
 // TestEventDocsMatchPosts checks the reference against the code that posts.
 //
@@ -45,11 +45,24 @@ func TestEventDocsMatchPosts(t *testing.T) {
 			if !ok || len(call.Args) < 2 {
 				return true
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || (sel.Sel.Name != "post" && sel.Sel.Name != "postFrom") {
+			// rt.post(ref, "atom", ...) and rt.postFrom — and the pointer
+			// events' postPointer(rt, lvl, "atom", ...), which fans one event
+			// out to several listeners.
+			atomArg := -1
+			switch fn := call.Fun.(type) {
+			case *ast.SelectorExpr:
+				if fn.Sel.Name == "post" || fn.Sel.Name == "postFrom" {
+					atomArg = 1
+				}
+			case *ast.Ident:
+				if fn.Name == "postPointer" && len(call.Args) > 2 {
+					atomArg = 2
+				}
+			}
+			if atomArg < 0 {
 				return true
 			}
-			lit, ok := call.Args[1].(*ast.BasicLit)
+			lit, ok := call.Args[atomArg].(*ast.BasicLit)
 			if !ok || lit.Kind != token.STRING {
 				return true
 			}

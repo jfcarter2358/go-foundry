@@ -43,6 +43,7 @@ const (
 	boundsKindVolume
 	boundsKindSprite
 	boundsKindEmitter
+	boundsKindDecal
 	boundsKindCount
 )
 
@@ -62,6 +63,7 @@ var editorBoundsStyles = [boundsKindCount]struct {
 	boundsKindVolume:  {"Volumes", mgl32.Vec3{0.75, 0.4, 1}},
 	boundsKindSprite:  {"Sprites", mgl32.Vec3{1, 0.45, 0.7}},
 	boundsKindEmitter: {"Emitters", mgl32.Vec3{0.4, 0.8, 1}},
+	boundsKindDecal:   {"Decals", mgl32.Vec3{0.2, 0.75, 0.7}},
 }
 
 // ---------- the walk ----------
@@ -118,6 +120,10 @@ func editorBoundsWalk(lvl *world.Level, fn func(kind editorBoundsKind, lo, hi mg
 	for i := range lvl.Emitters {
 		lo, hi, ok := lvl.Emitters[i].WorldAABB(lvl)
 		emit(boundsKindEmitter, lo, hi, ok)
+	}
+	for i := range lvl.Decals {
+		lo, hi, ok := lvl.Decals[i].WorldAABB()
+		emit(boundsKindDecal, lo, hi, ok)
 	}
 }
 
@@ -226,6 +232,7 @@ func editorBoundsCount(lvl *world.Level) editorBoundsTally {
 	t.Total[boundsKindVolume] = len(lvl.Volumes)
 	t.Total[boundsKindSprite] = len(lvl.Sprites)
 	t.Total[boundsKindEmitter] = len(lvl.Emitters)
+	t.Total[boundsKindDecal] = len(lvl.Decals)
 	editorBoundsWalk(lvl, func(kind editorBoundsKind, _, _ mgl32.Vec3) {
 		t.Drawn[kind]++
 	})

@@ -78,6 +78,18 @@ type PlayerSettings struct {
 	Script       string
 	Attributes   AttrSet
 	ScriptParams AttrSet
+
+	// GravityScale and MaxFallSpeed are the player's half of the gravity model
+	// (gravity.go): what multiplies the pull where the player is standing, and
+	// how fast the fall is allowed to get. Zero means the engine's default for
+	// both, on StepHeight's convention.
+	//
+	// They live here rather than on the player entity because the player has no
+	// entity file to carry a `collision:` block — this block IS the player's
+	// definition. ApplyPlayerScript copies them onto the body, so the script
+	// property and the placed entity's property are the same field underneath.
+	GravityScale float32
+	MaxFallSpeed float32
 }
 
 // EffectiveStepHeight is the allowance actually in force: what the level says,
@@ -109,6 +121,12 @@ func PlayerSettingsFromRaw(r *RawPlayer) (PlayerSettings, error) {
 	if r.StepHeight != nil {
 		p.StepHeight = *r.StepHeight
 	}
+	if r.GravityScale != nil {
+		p.GravityScale = *r.GravityScale
+	}
+	if r.MaxFallSpeed != nil {
+		p.MaxFallSpeed = *r.MaxFallSpeed
+	}
 	for _, rm := range r.Models {
 		p.Models = append(p.Models, entityModelFromRaw(rm))
 	}
@@ -134,6 +152,7 @@ func PlayerSettingsFromRaw(r *RawPlayer) (PlayerSettings, error) {
 // to count as "unset" anyway, the same way StepHeight's own zero does.
 func PlayerSettingsToRaw(p PlayerSettings) *RawPlayer {
 	if p.StepHeight == 0 && len(p.Models) == 0 && p.Script == "" &&
+		p.GravityScale == 0 && p.MaxFallSpeed == 0 &&
 		len(p.Attributes) == 0 && len(p.ScriptParams) == 0 {
 		return nil
 	}
@@ -142,6 +161,8 @@ func PlayerSettingsToRaw(p PlayerSettings) *RawPlayer {
 		sh := p.StepHeight
 		r.StepHeight = &sh
 	}
+	r.GravityScale = FloatPtrIfSet(p.GravityScale)
+	r.MaxFallSpeed = FloatPtrIfSet(p.MaxFallSpeed)
 	for i := range p.Models {
 		r.Models = append(r.Models, entityModelToRaw(&p.Models[i]))
 	}
@@ -170,4 +191,12 @@ func ApplyPlayerScript(lvl *Level) {
 	PlayerEntity.Script = lvl.Player.Script
 	PlayerEntity.Attributes = lvl.Player.Attributes.Clone()
 	PlayerEntity.ScriptParams = lvl.Player.ScriptParams.Clone()
+	// The gravity knobs go onto the body rather than being read off the level
+	// every tick, so that @player.prop.gravity_scale is the same property a
+	// placed entity has and a script writing it during play is not overwritten
+	// by the authored value on the next frame. Reset from the level here, which
+	// is every entry into play — so a scale a script changed does not survive
+	// into the next session, exactly as the player's health does not.
+	PlayerEntity.Collision.GravityScale = lvl.Player.GravityScale
+	PlayerEntity.Collision.MaxFallSpeed = lvl.Player.MaxFallSpeed
 }

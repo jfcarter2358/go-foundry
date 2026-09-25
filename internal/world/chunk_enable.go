@@ -189,7 +189,7 @@ func (ch *Chunk) ReleaseBakedGeometry() {
 }
 
 // ReleaseLevelGeometry frees everything the level's chunks own on the GPU, plus
-// the spawn marker and the placed scenery.
+// the spawn marker, the placed scenery and the projected decals.
 //
 // For replacing a running level with another — a level trigger firing, the
 // editor opening a file. Overwriting the Level struct drops the handles rather
@@ -216,6 +216,9 @@ func ReleaseLevelGeometry(lvl *Level) {
 	// be released explicitly — overwriting the level struct would drop the
 	// handles rather than free them.
 	DeleteScenery(lvl)
+	// Decals, for the same reason again: a decal's mesh is clipped out of the
+	// level's geometry and uploaded per decal, so it belongs to no chunk.
+	ReleaseDecals(lvl)
 	// A compiled level's surfaces belong to no chunk, so nothing above reaches
 	// them; they are the largest single thing a level owns on the GPU.
 	lvl.Static.Release()

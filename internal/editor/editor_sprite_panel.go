@@ -13,6 +13,7 @@ package editor
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
+	"foundry/internal/material"
 	"foundry/internal/world"
 	"strconv"
 
@@ -132,6 +133,9 @@ func editorSpriteTransform(s *world.Sprite) {
 // editorSpriteAppearance draws texture, billboard mode, blend mode and the
 // lighting toggles.
 func editorSpriteAppearance(s *world.Sprite) {
+	if materialCombo("Material##sprmat", &s.Material, material.DomainSprite) {
+		EditorPushUndo()
+	}
 	if textureCombo("Texture##sprtex", &s.Texture, false) {
 		EditorPushUndo()
 		if err := s.EnsureSpriteTexture(); err != nil {

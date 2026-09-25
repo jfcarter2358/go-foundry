@@ -7,13 +7,16 @@ game: no editor, no imgui, no secondary windows, boots into the level its
 manifest names, and writes the player's settings and saves to the per-user data
 directory.
 
+The build tasks run under [go-task](https://taskfile.dev), from `Taskfile.yml`
+in the repository root; `task` on its own lists them all.
+
 ```
-make release-linux        # build, stage, tar.gz
-make release-windows      # cross-build, stage
-make installer-linux      # the above, plus a .deb
-make installer-windows    # the above, plus a Setup.exe
-make release-check        # prove the editor is not in the binary
-make test-release         # the test suite, in the release configuration
+task release-linux        # build, stage, tar.gz
+task release-windows      # cross-build, stage
+task installer-linux      # the above, plus a .deb
+task installer-windows    # the above, plus a Setup.exe
+task release-check        # prove the editor is not in the binary
+task test-release         # the test suite, in the release configuration
 ```
 
 ---
@@ -98,10 +101,10 @@ goes through thin wrappers — `devActive()`, `devTick()`, `devRender()` — and
 devActive()` in the frame loop compiles away rather than becoming a branch.
 
 The two files are a pair that must agree, and nothing in the type system makes
-them. `make release-check` is that check:
+them. `task release-check` is that check:
 
 ```
-$ make release-check
+$ task release-check
 release build's forbidden imports:
   none — editor, textureui, imguibackend, uiwin and imgui are all absent
 ```
@@ -157,7 +160,7 @@ Without it, both keys do nothing at all.
 `internal/devui` can look at the world and drive the script runtime. It cannot
 author anything: there is no path from it that saves a level, writes a texture
 or edits a script. That is why it needs no seam and is simply compiled into
-every build — `make release-check` still passes, because it imports none of the
+every build — `task release-check` still passes, because it imports none of the
 editor packages.
 
 The console is not a second engine. Every command that changes the world does
@@ -253,14 +256,14 @@ looks for them.
 
 Two modes:
 
-- **without `-prune`** — copy the content tree wholesale. What `make linux` has
+- **without `-prune`** — copy the content tree wholesale. What `task linux` has
   always done, and the right answer while a project is being built.
 - **with `-prune`** — copy only what the game can reach from its manifest. A
   repository's `resources/` accumulates: half-finished levels, textures nothing
   samples any more. None of it should ship, and none of it should have to be
   deleted by hand to not ship.
 
-`make release-*` prunes by default. `PRUNE=0 make release-linux` does not.
+`make release-*` prunes by default. `PRUNE=0 task release-linux` does not.
 
 ### How the prune decides
 
@@ -360,12 +363,12 @@ tool modes.
 - **`runtimes/` in the project**, named `foundry-release-<goos>-<goarch>[.exe]`,
   beside `foundry-setup-windows-amd64.exe`, the Windows installer program
   (section 6).
-  `make runtimes RUNTIMES_DIR=...` builds them; `make linux` and `make windows`
+  `task runtimes RUNTIMES_DIR=...` builds them; `task linux` and `task windows`
   build their own platform's. The normal case: a Windows editor has no C
   cross-compiler, and a game repository has no source.
 - **A Foundry checkout**, built with `go build -tags release` — when `source:`
   names one, or when the project directory is one or is inside one (the
-  repository root itself, or `dist/`, which is what the Makefile does anyway).
+  repository root itself, or `dist/`, which is what the Taskfile does anyway).
 
 Either way `release.CheckPlayer` reads the binary's embedded build info and
 refuses anything not built with `-tags release` or built for the wrong GOOS or
@@ -402,7 +405,7 @@ makes `<game>-<version>-setup.exe` with Foundry's own installer instead:
 - `cmd/foundrysetup` is a small pure-Go Windows program: message boxes, the
   registry and the known folders through the standard library's syscalls, and
   shortcuts through the Windows Script Host by way of PowerShell. Pure Go, so it
-  cross-compiles with no mingw. `make runtime-windows` puts it in `runtimes/`,
+  cross-compiles with no mingw. `task runtime-windows` puts it in `runtimes/`,
   or it is built from source like the game binary.
 - A Setup.exe is that program with a zip of the install tree and a 32-byte
   trailer appended (`internal/setup`). Making one is concatenation, done in Go,
@@ -439,7 +442,7 @@ directory. Produces a Start Menu entry, an optional desktop shortcut, an
 Add/Remove Programs entry and an uninstaller. Uninstalling offers to remove the
 player's saves and defaults to keeping them.
 
-Everything game-specific arrives as a `/D` define from the Makefile.
+Everything game-specific arrives as a `/D` define from the Taskfile.
 
 **Upgrading is the normal path.** Running a newer `Setup.exe` over an existing
 install replaces it in place — no uninstall first, and the player's saves and
@@ -474,11 +477,11 @@ a stock abort/retry/ignore box half way through the copy.
 Both replace an existing install wholesale rather than merging, so an asset
 renamed between releases cannot linger and keep being found.
 
-### The editor itself — `make dist-editor`
+### The editor itself — `task dist-editor`
 
-The editor is shipped as a Foundry release of its own. `make dist-editor` builds
-the development binary for Windows (mingw, a console program as `make windows`
-builds it) and Linux, plus `make runtimes` into `build/editor-runtimes`. Then
+The editor is shipped as a Foundry release of its own. `task dist-editor` builds
+the development binary for Windows (mingw, a console program as `task windows`
+builds it) and Linux, plus `task runtimes` into `build/editor-runtimes`. Then
 `foundrypack editor` (`cmd/foundrypack/editor.go` → `pack.StageEditor`) stages:
 
 ```
@@ -513,11 +516,11 @@ What makes this work is that the project is no longer the executable's folder:
 ## 7. Checklist for a real release
 
 1. `resources/game.yaml` names the real `start_level`.
-2. `make release-check` — the editor is out.
-3. `make test-release` — the suite passes in the release configuration.
-4. `make release-linux` / `make release-windows`; read the prune counts and
+2. `task release-check` — the editor is out.
+3. `task test-release` — the suite passes in the release configuration.
+4. `task release-linux` / `task release-windows`; read the prune counts and
    confirm nothing live was dropped.
 5. Run the staged tree from a directory that is *not* the repository, and
    confirm the log lands in the user data directory and nothing is written into
    the install.
-6. `make installer-linux` / `make installer-windows`.
+6. `task installer-linux` / `task installer-windows`.

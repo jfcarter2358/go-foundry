@@ -83,8 +83,15 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 			// tween's or the path's, so gravity would only pile up a fall speed
 			// that nothing spends — and then release all of it the instant the
 			// tween or the path let go.
+			//
+			// The pull is asked for per body rather than taken from a
+			// constant: the level sets it, a volume may override it where this
+			// entity is standing, and the entity scales whatever comes back
+			// (world/gravity.go). noteLanding below needs the same number to
+			// turn a landing speed back into a drop, so it is resolved once.
+			g := world.GravityFor(lvl, e)
 			if !e.Tweens.Easing(world.TweenMove) && e.Waypoints == nil {
-				e.ApplyGravity(dt)
+				e.ApplyGravity(dt, g)
 			}
 			// The speed gravity had built up the instant before the resolve can
 			// touch the ground and zero it back out — see noteLanding.
@@ -101,7 +108,7 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 				e.Collision.GroundedNext = true
 			}
 			if !wasGrounded && e.Collision.GroundedNext {
-				noteLanding(e, fallSpeed)
+				noteLanding(e, fallSpeed, g)
 			}
 			e.UpdateLocation(lvl)
 			crossEntityFrames(lvl, e)
@@ -196,11 +203,19 @@ const (
 // every tick it rests on something, right up to the last one), so the fall
 // that followed was ordinary gravity from rest, and standard kinematics
 // (v² = 2gd) gives back the distance from the speed alone.
-func noteLanding(e *world.Entity, fallSpeed float32) {
+func noteLanding(e *world.Entity, fallSpeed, g float32) {
 	if fallSpeed <= 0 || !e.AIDriven() || !e.HasGravity() || e.Seat != "" {
 		return
 	}
-	drop := (fallSpeed * fallSpeed) / (2 * world.EntityGravityAccel)
+	// g is the pull the fall actually happened under, not the engine's default:
+	// on a low-gravity level the same landing speed means a much longer drop,
+	// and reading it off a constant would play the ledge-hop clip for a fall of
+	// several storeys. A non-positive pull cannot have caused a downward fall,
+	// so there is no drop to recover.
+	if g <= 0 {
+		return
+	}
+	drop := (fallSpeed * fallSpeed) / (2 * g)
 	if drop < stepDownMinDrop || drop > stepDownMaxDrop {
 		return
 	}

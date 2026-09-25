@@ -192,6 +192,8 @@ type RawNode struct {
 	Alpha   *float32 `yaml:"alpha,omitempty"`
 	Clip    bool     `yaml:"clip,omitempty"`
 	Blocks  bool     `yaml:"blocks,omitempty"`
+	// Draggable: see Node.Draggable.
+	Draggable bool `yaml:"draggable,omitempty"`
 
 	Color    *RawColor4     `yaml:"color,omitempty"`
 	Texture  string         `yaml:"texture,omitempty"`
@@ -222,6 +224,7 @@ type RawScreen struct {
 	Modal        bool       `yaml:"modal,omitempty"`
 	Pauses       bool       `yaml:"pauses,omitempty"`
 	ShowsCursor  bool       `yaml:"shows_cursor,omitempty"`
+	ClickThrough bool       `yaml:"click_through,omitempty"`
 	InitialFocus string     `yaml:"initial_focus,omitempty"`
 
 	RawScriptData `yaml:",inline"`
@@ -356,6 +359,7 @@ func rawToScreen(raw RawScreen) *Screen {
 		Modal:        raw.Modal,
 		Pauses:       raw.Pauses,
 		ShowsCursor:  raw.ShowsCursor,
+		ClickThrough: raw.ClickThrough,
 		InitialFocus: raw.InitialFocus,
 		Root:         rawToNode(raw.Root),
 	}
@@ -397,6 +401,7 @@ func rawToNode(raw RawNode) Node {
 	n.Alpha = f32Default(raw.Alpha, 1)
 	n.Clip = raw.Clip
 	n.Blocks = raw.Blocks
+	n.Draggable = raw.Draggable
 
 	n.Style.Color = color4Default(raw.Color, DefaultBackground(n.Kind))
 	n.Style.Texture = raw.Texture
@@ -514,6 +519,7 @@ func screenToRaw(s *Screen) RawScreen {
 		Modal:        s.Modal,
 		Pauses:       s.Pauses,
 		ShowsCursor:  s.ShowsCursor,
+		ClickThrough: s.ClickThrough,
 		InitialFocus: s.InitialFocus,
 
 		RawScriptData: scriptDataToRaw(s.ScriptData),
@@ -554,6 +560,8 @@ func nodeToRaw(n *Node) RawNode {
 		Alpha:   f32PtrIfNot(n.Alpha, 1),
 		Clip:    n.Clip,
 		Blocks:  n.Blocks,
+
+		Draggable: n.Draggable,
 
 		Color:    color4PtrIfNot(n.Style.Color, DefaultBackground(n.Kind)),
 		Texture:  n.Style.Texture,

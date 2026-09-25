@@ -1,0 +1,14 @@
+# foliage_sprite.fmat — the other end of the sprite settings.
+#
+# A bush is the case the billboard modes exist for: it stands on the ground, so
+# it yaws toward the viewer and keeps world up, and it is solid, so it cuts out
+# rather than blending and is worth a shadow.
+kind: sprite
+doc: A bush or a grass card — stands on the ground, cuts out, lit, casts a shadow.
+effects:
+  - effect: blend_mode
+    mode: cutout
+  - effect: billboard
+    mode: y-axis
+  - effect: lit
+  - effect: cast_shadows

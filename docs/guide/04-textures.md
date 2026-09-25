@@ -183,6 +183,38 @@ texture picker and of the right-click **Texture** menu, so you can take a
 texture back off a face. An untextured face lights, shadows and collides like
 any other; it just has no image.
 
+## Materials
+
+A texture is art. What a surface *does* with it — water, a scroll, a cutout
+threshold, a second texture blended over it, no lighting at all — is a
+[material](28-materials.md), saved separately as a `.fmat` and named from the
+**Material** row under any texture picker. A bump channel painted here is the
+one exception: relief belongs to the art, so it applies wherever the texture
+does, with no material needed.
+
+## Textures written from outside the editor
+
+The editor reads `textures/` once, when it starts. A texture that arrives after
+that — a generator script run from a terminal, a branch switched in the Git
+window, a file Claude wrote — is on disk but invisible: the pickers offer what
+the startup scan found, and a texture already on the GPU is never read a second
+time, so one that has been overwritten keeps drawing the image it had when the
+editor opened.
+
+**File > Reload Textures** goes and looks. New files join the pickers, changed
+files replace what is drawing in the level and the 3D view, deleted ones stop
+being offered, animated `.ftex` files re-register their frames, and a texture
+something asked for before it existed is loaded at last. It is in the texture
+editor's File menu too, and it is safe to press whenever: a file that has not
+changed is not re-read.
+
+A texture you are painting is never overwritten by a reload. The document keeps
+its edits; save it if you want them on disk.
+
+Claude does this for itself. A texture it writes is reloaded as it writes it,
+and a generator it runs is followed by a reload of the lot — see
+[Claude Code in the editor](27-claude-code.md).
+
 ## Naming
 
 Textures are referenced by name without an extension. `hull_plate.png` is

@@ -3,11 +3,12 @@ package editor
 // editor_3d_pick.go — 3D-mode click picking.
 //
 // One ray cast resolves every clickable thing in the world — the spawn point,
-// the entities, the volumes and every brush face — into a single closest hit,
-// so a click always selects whatever is actually nearest the camera along the
-// ray. Brush faces are tested against their real triangles rather than their
-// bounding boxes so that displaced or thin geometry does not steal clicks from
-// the surface behind it.
+// the entities, the volumes and every brush face — into a list ordered from the
+// camera outward, so a click selects whatever is actually nearest along the ray
+// and a second click on the same pixel can carry on to what is behind it (that
+// half is editor_3d_pick_cycle.go). Brush faces are tested against their real
+// triangles rather than their bounding boxes so that displaced or thin geometry
+// does not steal clicks from the surface behind it.
 //
 // On top of that, brush vertices get screen-space handle boxes that appear
 // when the cursor is near them; clicking inside a box selects that vertex,
@@ -42,6 +43,7 @@ const (
 	panelFocusEntity   = "entity"
 	panelFocusVolume   = "volume"
 	panelFocusSprite   = "sprite"
+	panelFocusDecal    = "decal"
 	panelFocusEmitter  = "emitter"
 	panelFocusSound    = "sound"
 	panelFocusEffect   = "effect"
@@ -68,6 +70,7 @@ const (
 	pickEntity    pickKind = "entity"
 	pickVolume    pickKind = "volume"
 	pickSprite    pickKind = "sprite"
+	pickDecal     pickKind = "decal"
 	pickEmitter   pickKind = "emitter"
 	pickSound     pickKind = "sound"
 	pickEffect    pickKind = "effect"
@@ -76,8 +79,8 @@ const (
 	pickWaypoint  pickKind = "waypoint"
 )
 
-// pickHit is the closest thing found along a picking ray. Which index fields
-// are meaningful depends on kind:
+// pickHit is one thing found along a picking ray. Which index fields are
+// meaningful depends on kind:
 //
 //	spawn      → none; the level has at most one spawn point
 //	entity     → idx = index into level.Entities
@@ -97,34 +100,6 @@ type pickHit struct {
 	// detail mode lands on the detail mesh, one in edit mode on the hull, and
 	// the two are different vertex pools — see vertexSel.detail.
 	detail bool
-}
-
-// consider replaces h with a hit at distance t when that hit is closer.
-func (h *pickHit) consider(t float32, kind pickKind, chunkIdx, idx int) {
-	if t >= h.t {
-		return
-	}
-	h.kind = kind
-	h.t = t
-	h.chunkIdx = chunkIdx
-	h.brushIdx = -1
-	h.faceIdx = -1
-	h.idx = idx
-}
-
-// considerFace is consider for brush geometry, which is addressed by brush and
-// face rather than by a single index.
-func (h *pickHit) considerFace(t float32, chunkIdx, brushIdx, faceIdx int, detail bool) {
-	if t >= h.t {
-		return
-	}
-	h.kind = pickBrushFace
-	h.t = t
-	h.chunkIdx = chunkIdx
-	h.brushIdx = brushIdx
-	h.faceIdx = faceIdx
-	h.detail = detail
-	h.idx = -1
 }
 
 // ---------- geometry ray tests ----------
@@ -200,28 +175,104 @@ func pickEntityT(origin, dir mgl32.Vec3, e *world.Entity) float32 {
 
 // ---------- the picker ----------
 
+// pickList collects the hits along a picking ray — every one of them, not just
+// the closest, because a click cycles: the second click on the same pixel takes
+// the thing behind the one the first click took (editor_3d_pick_cycle.go).
+//
+// Order is load-bearing. Hits are added in the order the picker tests them and
+// sorted with a STABLE sort, so two things at the same distance keep the
+// precedence the test order gave them — which is how a volume's wireframe cage
+// still loses to the surface it sits flush with.
+type pickList struct{ hits []pickHit }
+
+// add records a hit at distance t, ignoring the miss value.
+func (l *pickList) add(t float32, kind pickKind, chunkIdx, idx int) {
+	if t >= float32(math.MaxFloat32) {
+		return
+	}
+	l.hits = append(l.hits, pickHit{kind: kind, t: t, chunkIdx: chunkIdx, brushIdx: -1, faceIdx: -1, idx: idx})
+}
+
+// addFace is add for brush geometry, which is addressed by brush and face
+// rather than by a single index.
+func (l *pickList) addFace(t float32, chunkIdx, brushIdx, faceIdx int, detail bool) {
+	if t >= float32(math.MaxFloat32) {
+		return
+	}
+	l.hits = append(l.hits, pickHit{kind: pickBrushFace, t: t, chunkIdx: chunkIdx,
+		brushIdx: brushIdx, faceIdx: faceIdx, detail: detail, idx: -1})
+}
+
+// sortByDistance orders the hits near to far, keeping the insertion order of
+// anything tied.
+func (l *pickList) sortByDistance() {
+	sort.SliceStable(l.hits, func(i, j int) bool { return l.hits[i].t < l.hits[j].t })
+}
+
+// pickNoHit is what a ray that reached nothing resolves to.
+func pickNoHit() pickHit {
+	return pickHit{kind: pickNone, t: 0, chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: -1}
+}
+
 // pick3D casts a ray through screen pixel (sx, sy) and returns the closest
 // clickable thing in the level.
 func pick3D(sx, sy int32) pickHit {
-	hit := pickHit{kind: pickNone, t: float32(math.MaxFloat32), chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: -1}
+	cands := pick3DCandidates(sx, sy)
+	if len(cands) == 0 {
+		return pickNoHit()
+	}
+	return cands[0]
+}
+
+// pick3DCandidates casts a ray through screen pixel (sx, sy) and returns
+// EVERY clickable thing along it, nearest first — pick3D's answer is its first
+// entry, and the rest are what repeated clicks cycle into.
+//
+// Brush faces are tested against their real triangles rather than their
+// bounding boxes so that displaced or thin geometry does not steal clicks from
+// the surface behind it.
+func pick3DCandidates(sx, sy int32) []pickHit {
 	lvl := ws().level
 	if lvl == nil {
-		return hit
+		return nil
 	}
 	origin, dir := ws().ray(sx, sy)
+
+	// The markers drawn WITHOUT the depth test — point lights and waypoint
+	// arrows — come first, ahead of the world and regardless of distance,
+	// because that is how they are drawn: the gizmo buffer is flushed with the
+	// depth test off, so a light is visible through whatever it sits inside and
+	// an arrow through the very brush its path moves. Lights are hung under
+	// ceiling slabs as a matter of course and the first point of a door's
+	// animation is usually the door's own centre; a marker you can see but
+	// cannot click is the whole complaint. They are small — eight pixels at
+	// their smallest (pointLightMarkerRadius) — so a click that lands on one is
+	// not ambiguous about what it meant, and a second click now carries on into
+	// the world behind it.
+	var markers pickList
+	for li := range lvl.Lights.Points {
+		markers.add(pickPointLightT(origin, dir, lvl, &lvl.Lights.Points[li]), pickLight, -1, li)
+	}
+	for _, w := range pickWaypointMarkers(origin, dir, ws().camPos(), lvl) {
+		markers.hits = append(markers.hits, pickHit{kind: pickWaypoint, t: w.t,
+			chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: w.anim, sub: w.point})
+	}
+	// Lights added before waypoints, so a tie between the two kinds goes to the
+	// light — the order this has always resolved in.
+	markers.sortByDistance()
+
+	var scene pickList
 
 	// The spawn marker — exact mesh when it has been uploaded, its AABB
 	// otherwise. It is the only non-geometry thing in the level a click can
 	// land on.
 	if sp := lvl.Spawn; sp != nil {
 		if len(sp.Geometry.Vertices) > 0 {
-			if t := pickModelT(origin, dir, sp.Geometry.Vertices, sp.ModelMatrix()); t < float32(math.MaxFloat32) {
-				hit.consider(t, pickSpawn, -1, -1)
-			}
+			scene.add(pickModelT(origin, dir, sp.Geometry.Vertices, sp.ModelMatrix()), pickSpawn, -1, -1)
 		} else {
 			bmin, bmax := sp.WorldAABB()
 			if boxHit, boxT := rayAABBIntersect(origin, dir, bmin, bmax); boxHit {
-				hit.consider(boxT, pickSpawn, -1, -1)
+				scene.add(boxT, pickSpawn, -1, -1)
 			}
 		}
 	}
@@ -235,9 +286,7 @@ func pick3D(sx, sy int32) pickHit {
 		if !e.Visible {
 			continue
 		}
-		if t := pickEntityT(origin, dir, e); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickEntity, -1, ei)
-		}
+		scene.add(pickEntityT(origin, dir, e), pickEntity, -1, ei)
 	}
 
 	for ci := range lvl.Chunks {
@@ -267,35 +316,35 @@ func pick3D(sx, sy int32) pickHit {
 				}
 				// Back faces are biased outward (see effectivePickT) so
 				// coincident faces at a brush boundary resolve to the one the
-				// user can see.
-				t := pickBrushFaceT(origin, dir, m, f, model)
-				hit.considerFace(t, ci, bi, fi, detail)
+				// user can see — and so the far side of a solid sorts behind
+				// its near side rather than tying with it.
+				scene.addFace(pickBrushFaceT(origin, dir, m, f, model), ci, bi, fi, detail)
 			}
 		}
 	}
 
-	// Volumes, tested last so that a tie goes to the world: hit.consider keeps
-	// the first hit at a given distance, and a region drawn as a wireframe cage
-	// should not win against a surface it happens to sit flush with.
+	// Volumes, tested after the world so that a tie goes to the world: the
+	// stable sort keeps the earlier hit at a given distance, and a region drawn
+	// as a wireframe cage should not win against a surface it happens to sit
+	// flush with.
 	for vi := range lvl.Volumes {
-		if t := pickVolumeRayT(lvl, origin, dir, &lvl.Volumes[vi]); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickVolume, -1, vi)
-		}
+		scene.add(pickVolumeRayT(lvl, origin, dir, &lvl.Volumes[vi]), pickVolume, -1, vi)
 	}
-
-	// The seal box, which only gets a click that has hit nothing else by the
-	// end of this function: from outside, the box is in front of the whole
-	// level it holds. See pickSealRayT.
-	sealT := pickSealRayT(origin, dir, lvl.Seal)
 
 	// Sprites, against the quad as it is currently oriented — the only thing
 	// the author can see to aim at. Tested here rather than with the world for
 	// the reason volumes are: a cutout sprite standing flush against a wall
 	// should not steal the click meant for the wall.
 	for si := range lvl.Sprites {
-		if t := pickSpriteRayT(origin, dir, lvl, &lvl.Sprites[si], ws().camPos()); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickSprite, -1, si)
-		}
+		scene.add(pickSpriteRayT(origin, dir, lvl, &lvl.Sprites[si], ws().camPos()), pickSprite, -1, si)
+	}
+
+	// Decals, after the world for the volumes' and sprites' reason, and with one
+	// more of its own: a decal lies FLUSH with a surface by definition, so a tie
+	// at that distance must go to the surface — clicking a wall with a poster on
+	// it a metre away should select the wall.
+	for di := range lvl.Decals {
+		scene.add(pickDecalRayT(origin, dir, &lvl.Decals[di]), pickDecal, -1, di)
 	}
 
 	// Scenery, tested with the world rather than after it: a prop is a solid
@@ -303,74 +352,40 @@ func pick3D(sx, sy int32) pickHit {
 	// click on distance exactly as the wall in front of another wall does.
 	// Volumes and sprites are tested afterwards precisely because they are not.
 	for si := range lvl.Scenery {
-		if t := pickSceneryRayT(origin, dir, &lvl.Scenery[si]); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickScenery, -1, si)
-		}
+		scene.add(pickSceneryRayT(origin, dir, &lvl.Scenery[si]), pickScenery, -1, si)
 	}
 
 	// Emitters, against the marker disc drawn for them. An emitter has no
 	// geometry of its own — what it produces is the whole of what you see — so
 	// the marker is the only thing there is to click.
 	for ei := range lvl.Emitters {
-		if t := pickEmitterRayT(origin, dir, lvl, &lvl.Emitters[ei], ws().camPos()); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickEmitter, -1, ei)
-		}
+		scene.add(pickEmitterRayT(origin, dir, lvl, &lvl.Emitters[ei], ws().camPos()), pickEmitter, -1, ei)
 	}
 
 	// Sounds, against their marker disc, for the same reason: a sound has
 	// nothing to see except the marker drawn for it.
 	for si := range lvl.Sounds {
-		if t := pickSoundRayT(origin, dir, lvl, &lvl.Sounds[si], ws().camPos()); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickSound, -1, si)
-		}
+		scene.add(pickSoundRayT(origin, dir, lvl, &lvl.Sounds[si], ws().camPos()), pickSound, -1, si)
 	}
 
 	// Effects, against their marker disc: the fireball is there for a second
 	// at a time, and is not what an author means to grab anyway.
 	for fi := range lvl.Effects {
-		if t := pickEffectRayT(origin, dir, lvl, &lvl.Effects[fi], ws().camPos()); t < float32(math.MaxFloat32) {
-			hit.consider(t, pickEffect, -1, fi)
-		}
+		scene.add(pickEffectRayT(origin, dir, lvl, &lvl.Effects[fi], ws().camPos()), pickEffect, -1, fi)
 	}
 
-	// Point lights, against the marker sphere Editor3DRenderGizmos draws for
-	// them.
-	//
-	// A marker under the cursor wins outright rather than competing on distance
-	// with the world, because that is how it is drawn: the gizmo buffer is
-	// flushed with the depth test off, so a light is visible through whatever
-	// it sits inside. Lights are hung under ceiling slabs and inside lamp
-	// fittings as a matter of course, and one you can see but cannot click is
-	// the whole complaint. The marker is small — eight pixels at its smallest
-	// (pointLightMarkerRadius) — so a click that lands on one is not ambiguous
-	// about what it meant.
-	bestLight, bestLightT := -1, float32(math.MaxFloat32)
-	for li := range lvl.Lights.Points {
-		if t := pickPointLightT(origin, dir, lvl, &lvl.Lights.Points[li]); t < bestLightT {
-			bestLight, bestLightT = li, t
-		}
-	}
-	// Waypoint markers, on the point light's terms and for its reason: the
-	// arrows are drawn with the depth test off, and a path is routinely laid
-	// through the middle of the very brush it moves — the first point of a
-	// door's animation is usually the door's own centre. An arrow that could
-	// be seen but not clicked is the complaint the lights already answered.
-	// Between the two kinds of marker, the nearer wins.
-	wpAnim, wpPoint, wpT := pickWaypointMarker(origin, dir, ws().camPos(), lvl)
-	if bestLight >= 0 && bestLightT <= wpT {
-		return pickHit{kind: pickLight, t: bestLightT, chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: bestLight}
-	}
-	if wpAnim >= 0 {
-		return pickHit{kind: pickWaypoint, t: wpT, chunkIdx: -1, brushIdx: -1, faceIdx: -1, idx: wpAnim, sub: wpPoint}
-	}
+	scene.sortByDistance()
+	out := append(markers.hits, scene.hits...)
 
-	if hit.kind == pickNone && sealT < float32(math.MaxFloat32) {
-		hit.consider(sealT, pickSeal, -1, -1)
+	// The seal box, which only gets a click that has hit nothing else at all:
+	// from outside, the box is in front of the whole level it holds, so it is
+	// not a thing to cycle past on the way in. See pickSealRayT.
+	if len(out) == 0 {
+		var seal pickList
+		seal.add(pickSealRayT(origin, dir, lvl.Seal), pickSeal, -1, -1)
+		return seal.hits
 	}
-	if hit.kind == pickNone {
-		hit.t = 0
-	}
-	return hit
+	return out
 }
 
 // pointLightMarkerRadius is the world radius of a point light's clickable
@@ -812,6 +827,7 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	DrawPrefabOutlines()
 	drawSelectedVolumeOutline()
 	drawSelectedSpriteOutline(ws().camPos())
+	drawSelectedDecalOutline()
 	drawSelectedSceneryOutline()
 	// The brush's footprint ring, on the same terms: it says where the next
 	// stamp lands, which is exactly the thing the panel cannot show. The brush

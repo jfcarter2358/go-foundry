@@ -478,7 +478,9 @@ func EntityEmitterInstances(entityID string, e *Entity) ([]Emitter, map[string]b
 		}
 		if em.Doc != nil {
 			for li := range em.Doc.Layers {
-				tex[em.Doc.Layers[li].Texture] = true
+				// DrawTexture, so a layer whose MATERIAL supplies the texture
+				// still gets it loaded — an unloaded texture draws black.
+				tex[em.Doc.Layers[li].DrawTexture()] = true
 			}
 		}
 		out = append(out, em)

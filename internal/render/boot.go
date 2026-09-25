@@ -94,6 +94,22 @@ func StandUpWorldUniforms() {
 	gfx.ProjectionUniform = gl.GetUniformLocation(gfx.Program, gl.Str("projection\x00"))
 	gfx.RebuildProjection()
 
+	// The view matrix's location, and the matrix itself from wherever the
+	// camera currently is.
+	//
+	// Here rather than only in gfx.LoadCamera, which is where it used to live
+	// alone: that function belongs to a window — it grabs the mouse — so
+	// anything that stood the world up without one (a headless render, a play
+	// session's screenshot, a GL test) left this at 0. Zero is a perfectly
+	// valid location for a DIFFERENT uniform, so the symptom was not an error
+	// but a world drawn through a view matrix that was never uploaded: every
+	// brush collapsed, the sky and the models (which have their own program)
+	// came out fine, and the picture looked like a level with no geometry in
+	// it. Resolving it with the rest of the program's uniforms also means a
+	// re-link cannot leave it stale.
+	gfx.Cam.Uniform = gl.GetUniformLocation(gfx.Program, gl.Str("camera\x00"))
+	gfx.UpdateCamMatrix()
+
 	gfx.AlphaUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alpha\x00"))
 	gl.Uniform1f(gfx.AlphaUniform, 1.0) // default: fully opaque
 
@@ -111,6 +127,22 @@ func StandUpWorldUniforms() {
 
 	gfx.UVOffsetUniform = gl.GetUniformLocation(gfx.Program, gl.Str("uvOffset\x00"))
 	gl.Uniform2f(gfx.UVOffsetUniform, 0, 0) // default: the texture where the UVs put it
+	// The rest of a material's UV transform and the cutout threshold. All
+	// three are biases from the identity, so zero is what the engine did
+	// before materials existed — see gfx.ApplyUVUniforms.
+	gfx.UVScaleBiasUniform = gl.GetUniformLocation(gfx.Program, gl.Str("uvScaleBias\x00"))
+	gl.Uniform2f(gfx.UVScaleBiasUniform, 0, 0)
+	gfx.UVRotationUniform = gl.GetUniformLocation(gfx.Program, gl.Str("uvRotation\x00"))
+	gl.Uniform1f(gfx.UVRotationUniform, 0)
+	gfx.AlphaCutoffBiasUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alphaCutoffBias\x00"))
+	gl.Uniform1f(gfx.AlphaCutoffBiasUniform, 0)
+	// The albedo tint, a bias from white on the same terms — zero is no tint.
+	gfx.TintBiasUniform = gl.GetUniformLocation(gfx.Program, gl.Str("tintBias\x00"))
+	gl.Uniform3f(gfx.TintBiasUniform, 0, 0, 0)
+	// How the framebuffer blend will combine a fragment. Zero is the ordinary
+	// case, so nothing that does not set it changes.
+	gfx.SurfaceBlendUniform = gl.GetUniformLocation(gfx.Program, gl.Str("surfaceBlend\x00"))
+	gl.Uniform1i(gfx.SurfaceBlendUniform, 0)
 
 	gfx.AlphaSharpenUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alphaSharpen\x00"))
 	gl.Uniform1i(gfx.AlphaSharpenUniform, 0) // default: off; the opaque pass turns it on

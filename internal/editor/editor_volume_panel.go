@@ -12,6 +12,8 @@ package editor
 // everything else the level contains.
 
 import (
+	"fmt"
+
 	"foundry/internal/imguibackend"
 	"foundry/internal/levelio"
 	"foundry/internal/render"
@@ -66,6 +68,7 @@ func editorVolumeProperties(v *world.Volume) {
 	editorPropGroupOpen("Shape##volshapegrp", func() { editorVolumeShape(v) })
 	editorPropGroup("Fog##volfoggrp", 0, func() { editorVolumeFog(v) })
 	editorPropGroup("Cloud##volcloudgrp", 0, func() { editorVolumeCloud(v) })
+	editorPropGroup("Gravity##volgravgrp", 0, func() { editorVolumeGravity(v) })
 	editorPropGroup("Scatter##volscattergrp", 0, func() { editorVolumeScatter(v) })
 	editorPropGroup("Frame Doorway##voldoorgrp", 0, func() { editorVolumeDoorway(v) })
 	editorPropGroupOpen("Level Exit##volexitgrp", func() { editorVolumeLevelExit(v) })
@@ -687,6 +690,42 @@ func editorVolumeFog(v *world.Volume) {
 // editorVolumeCloud draws the region's volumetric cloud: the checkbox that
 // creates and destroys the block, then what the cloud looks like. The same
 // gesture the fog group above it makes, for the same reason.
+// editorVolumeGravity draws the region's gravity override.
+//
+// A checkbox first, for the reason the level's own gravity has one: 0 is the
+// most likely value anybody will ever ask this field for — the zero-g chamber —
+// so "no value" cannot be spelled the same way.
+func editorVolumeGravity(v *world.Volume) {
+	has := v.Gravity != nil
+	if imgui.Checkbox("This volume sets a gravity##volgravon", &has) {
+		EditorPushUndo()
+		if has {
+			g := float32(0)
+			v.Gravity = &g
+			editorSetStatus("Volume %q is now zero-g", v.ID)
+		} else {
+			v.Gravity = nil
+			editorSetStatus("Volume %q leaves gravity alone again", v.ID)
+		}
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Anything whose centre is inside the region falls at this rate\n" +
+			"instead of the level's — the player, entities and vehicles alike.\n" +
+			"Only while the volume is enabled, so a script can switch the room's\n" +
+			"gravity by arming it. Where two gravity volumes overlap, the smaller wins.")
+	}
+	if v.Gravity == nil {
+		editorTextMutedWrapped(fmt.Sprintf(
+			"Leaving gravity alone: bodies in here fall at whatever the level says (%.1f right now).",
+			world.LevelGravity(Editor.level)))
+		return
+	}
+	editorDragFloatStep("Gravity##volgravity", v.Gravity, -200, 200, "%.2f", 0.5)
+	editorTextMutedWrapped(fmt.Sprintf(
+		"Units a second squared, downward. The level's is %.1f; 0 is zero-g and a negative number falls upward.",
+		world.LevelGravity(Editor.level)))
+}
+
 func editorVolumeCloud(v *world.Volume) {
 	has := v.Cloud != nil
 	if imgui.Checkbox("This volume is full of cloud##volcloudon", &has) {

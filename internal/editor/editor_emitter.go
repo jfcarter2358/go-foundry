@@ -70,6 +70,7 @@ func activeGizmoEmitter() *world.Emitter {
 func editorArmEmitterPlacement() {
 	Editor.EmitterPlacementMode = true
 	Editor.SpritePlacementMode = false
+	Editor.DecalPlacementMode = false
 	Editor.VolumePlacementMode = false
 	Editor.EntityPlacementMode = false
 	Editor.SpawnPlacementMode = false

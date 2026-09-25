@@ -59,6 +59,10 @@ var DebugStats struct {
 	// Scenery is how many placed props survived culling this frame — the one
 	// number that says whether a brush-scattered field is costing anything.
 	Scenery int
+	// Decals is how many projected decals were drawn this frame. Worth its own
+	// number because a decal is one draw call per source space it touches, and a
+	// firefight adds them faster than an author adds anything.
+	Decals int
 	// Shadowed point lights, and how many of their cubemaps were actually
 	// re-rendered this frame rather than kept (point_shadow_cache.go).
 	PointShadows       int
@@ -173,6 +177,11 @@ func DebugOverlayLines() []DebugLine {
 	line("Sprites:      %d quads / %d particles / %d draws",
 		DebugStats.Sprites, DebugStats.Particles, DebugStats.SpriteDraws)
 	line("Scenery:      %d drawn", DebugStats.Scenery)
+	if DebugStats.Decals > 0 {
+		// Only when there are any: a level with no decals should not carry a
+		// permanently-zero line in an overlay that is already dense.
+		line("Decals:       %d drawn", DebugStats.Decals)
+	}
 	line("Point shadows: %d re-rendered of %d", DebugStats.PointShadowRenders, DebugStats.PointShadows)
 	out = append(out, debugRule)
 

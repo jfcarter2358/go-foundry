@@ -42,6 +42,7 @@ func modelAnimSection() {
 		imgui.Text("Add bones before animating.")
 		return
 	}
+	modelSharedRigNote()
 
 	modelPoseModeToggle()
 	imgui.Separator()

@@ -162,7 +162,7 @@ func ScanFilesByExt(dir, ext string) []string {
 // stays portable between machines and platforms (RelAssetPath strips the prefix
 // on save). Handing that relative path straight to os.Open would instead
 // resolve it against the working directory, which is not resources/ however the
-// game is launched — "make run-linux" runs ./dist/foundry from the repo root,
+// game is launched — "task run-linux" runs ./dist/foundry from the repo root,
 // and every entity model would fail to load.
 //
 // An absolute path is left alone: it is either already resolved or points

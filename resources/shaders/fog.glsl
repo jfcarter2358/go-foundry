@@ -251,3 +251,17 @@ vec3 applyFog(vec3 color, vec3 worldPos) {
 vec3 applyFogAdditive(vec3 color, vec3 worldPos) {
     return color * (1.0 - fogFactor(worldPos)) * fogVolumeTransmittance(worldPos);
 }
+
+// applyFogModulate is the same answer again for a surface drawn with a MULTIPLY
+// blend — a decal's scorch mask (gfx.SurfaceBlendModulate).
+//
+// Such a fragment is not a colour but a FACTOR on what is already in the
+// framebuffer, and what is already there is the wall, fogged. Mixing the factor
+// toward fogColor would darken a distant wall by a grey mask on top of the haze
+// that has already replaced it; what fog does to a mark on a surface is hide it,
+// so the factor is faded toward WHITE instead — white being the factor that
+// changes nothing.
+vec3 applyFogModulate(vec3 color, vec3 worldPos) {
+    return mix(vec3(1.0), color,
+               (1.0 - fogFactor(worldPos)) * fogVolumeTransmittance(worldPos));
+}

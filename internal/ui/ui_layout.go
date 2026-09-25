@@ -173,6 +173,11 @@ func solveNode(n *Node, root, parent, clip Rect) {
 		}
 	}
 
+	// A script's slide, last, so it moves the node from wherever the anchors,
+	// a world pin or a compass put it.
+	r.X += n.translate[0]
+	r.Y += n.translate[1]
+
 	n.solved = r
 	// Clip rects intersect rather than replace, so a clipping panel inside a
 	// clipping panel cannot draw outside its grandparent.

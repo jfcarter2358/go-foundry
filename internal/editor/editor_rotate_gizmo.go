@@ -136,6 +136,10 @@ func rotateGizmoOrigin() (mgl32.Vec3, bool) {
 		if sp := activeGizmoSprite(); sp != nil {
 			return sp.Position, true
 		}
+	case gizmoKindDecal:
+		if d := activeGizmoDecal(); d != nil {
+			return d.Position, true
+		}
 	case gizmoKindScenery:
 		if sc := activeGizmoScenery(); sc != nil {
 			return sc.Position, true
@@ -286,6 +290,13 @@ func applyRotationToSelection(axis, origin mgl32.Vec3, delta float32) {
 		// drag is allowed either way rather than being blocked, so switching a
 		// sprite to Fixed keeps whatever was already dialled in.
 		s.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
+		return
+	}
+	if d := activeGizmoDecal(); d != nil {
+		// Every axis is meaningful and this is the gizmo that matters most on a
+		// decal: turning it aims the projection, so a mark can be swung from one
+		// wall onto the next without touching a number.
+		d.Rotation = eulerRotatedAbout(Editor.GizmoDragStartRot, axis, delta)
 		return
 	}
 	if sp := activeGizmoSpawn(); sp != nil {

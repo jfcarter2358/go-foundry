@@ -40,6 +40,7 @@ const (
 	sel3DVolume
 	sel3DPrefab
 	sel3DSprite
+	sel3DDecal
 	sel3DScenery
 	sel3DEmitter
 	sel3DSound
@@ -63,6 +64,8 @@ func editor3DSelection() editor3DSelKind {
 		return sel3DPrefab
 	case activeSprite() != nil:
 		return sel3DSprite
+	case activeDecal() != nil:
+		return sel3DDecal
 	case activeScenery() != nil:
 		return sel3DScenery
 	case activeEmitter() != nil:
@@ -116,6 +119,16 @@ func editor3DSelectionSummary() string {
 	case sel3DSprite:
 		sp := activeSprite()
 		return fmt.Sprintf("Sprite %s (%s)", sp.ID, gfx.BillboardModeName(sp.Billboard))
+
+	case sel3DDecal:
+		d := activeDecal()
+		// The piece count rather than the texture, because "projects onto
+		// nothing" is the one thing about a selected decal worth saying in a
+		// heading: a decal is otherwise invisible when it is wrong.
+		if len(d.Pieces) == 0 {
+			return fmt.Sprintf("Decal %s (projects onto nothing)", d.ID)
+		}
+		return fmt.Sprintf("Decal %s (%s)", d.ID, gfx.DecalBlendName(d.Blend))
 
 	case sel3DScenery:
 		sc := activeScenery()
@@ -491,7 +504,8 @@ func activeBrushIndices() (chunkIdx, brushIdx int) {
 func editor3DCanSnap() bool {
 	switch editor3DSelection() {
 	case sel3DVertices, sel3DBrush, sel3DSpawn, sel3DEntity, sel3DVolume,
-		sel3DPrefab, sel3DSprite, sel3DScenery, sel3DEmitter, sel3DSound, sel3DEffect, sel3DWaypoint:
+		sel3DPrefab, sel3DSprite, sel3DDecal, sel3DScenery, sel3DEmitter, sel3DSound, sel3DEffect,
+		sel3DWaypoint:
 		return Editor.StepSize > 0
 	}
 	return false
@@ -564,6 +578,16 @@ func editor3DSnapSelectionToGrid() {
 		EditorPushUndo()
 		sp.Position = snapVec3(sp.Position, step)
 		editorSetStatus("Snapped sprite %q to the grid", sp.ID)
+
+	case sel3DDecal:
+		// The position only, on the sprite's rule — and note that snapping a
+		// decal MOVES it off the surface it was projected onto if that surface is
+		// not on the grid, which re-clips it. That is what "snap to grid" means,
+		// and the cage drawn round the selection is where an author sees it.
+		d := activeDecal()
+		EditorPushUndo()
+		d.Position = snapVec3(d.Position, step)
+		editorSetStatus("Snapped decal %q to the grid", d.ID)
 
 	case sel3DScenery:
 		// The position only, on the volume's rule: a prop's scale is a factor

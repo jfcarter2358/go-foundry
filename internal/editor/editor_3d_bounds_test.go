@@ -41,6 +41,9 @@ func boundsLevel() *world.Level {
 		Sprites: []world.Sprite{{
 			ID: "sp0", Position: mgl32.Vec3{40, 0, 0}, Width: 2, Height: 2,
 		}},
+		Decals: []world.Decal{{
+			ID: "d0", Position: mgl32.Vec3{50, 0, 0}, Width: 1, Height: 1, Depth: 1,
+		}},
 	}
 }
 
@@ -84,7 +87,7 @@ func TestBoundsViewDrawsNothingWhileOff(t *testing.T) {
 // ---------- what gets a box ----------
 
 // Every kind with authored bounds gets exactly one box, and a box is twelve
-// segments — so the level above is 6 boxes' worth of lines.
+// segments — so the level above is 7 boxes' worth of lines.
 func TestBoundsViewBoxesEveryKind(t *testing.T) {
 	defer saveEditorState()()
 	Editor.level = boundsLevel()
@@ -104,8 +107,8 @@ func TestBoundsViewBoxesEveryKind(t *testing.T) {
 	Editor.ShowBounds = true
 	gizmo.Buf = gizmo.Buf[:0]
 	drawEditorBounds()
-	if got, want := len(gizmoSegments()), 6*12; got != want {
-		t.Errorf("queued %d segments, want %d (6 boxes)", got, want)
+	if got, want := len(gizmoSegments()), 7*12; got != want {
+		t.Errorf("queued %d segments, want %d (7 boxes)", got, want)
 	}
 }
 

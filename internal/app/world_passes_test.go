@@ -11,7 +11,7 @@ package app
 // errored and nothing crashed. The game just quietly had no biome scatter, no
 // ground patches, no sprites and no particles — a bug that
 // survives every test that checks the engine starts, which is the same class of
-// failure `make release-check` exists to catch, and it is caught the same way:
+// failure `task release-check` exists to catch, and it is caught the same way:
 // by looking at what is wired to what rather than at what happens.
 //
 // It runs under both build tags, so the release build's own suite covers it too.

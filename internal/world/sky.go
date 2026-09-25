@@ -69,6 +69,11 @@ var SkyFaceSuffix = [SkyFaces]string{"px", "nx", "py", "ny", "pz", "nz"}
 // Sky is a level's sky.
 type Sky struct {
 	Kind SkyKind
+	// Material is the sky .fmat this sky wears, or "" for none. Unlike every
+	// other domain, it is APPLIED to the fields below rather than overlaid at
+	// draw time — see sky_material.go for why the transition makes that the
+	// right choice here.
+	Material string
 	// Faces are the cubemap's six texture names, in SkyFaceOrder. Kept when the
 	// kind is switched to gradient, so flipping between the two to compare them
 	// does not cost the art.
@@ -280,6 +285,7 @@ func SkyFromRaw(r *RawSky) *Sky {
 	}
 	s := DefaultSky()
 	s.Kind = SkyKindFromName(r.Kind)
+	s.Material = r.Material
 	for i := 0; i < SkyFaces && i < len(r.Faces); i++ {
 		s.Faces[i] = r.Faces[i]
 	}
@@ -300,6 +306,10 @@ func SkyFromRaw(r *RawSky) *Sky {
 	}
 	s.Rotation = r.Rotation
 	s.Clouds = SkyCloudsFromRaw(r.Clouds)
+	// The material last, over whatever the level file said: naming one is how
+	// an author says "this sky is that one", and the fields around it are the
+	// starting point it overrides.
+	s.ApplyMaterial()
 	s.Clamp()
 	return &s
 }
@@ -325,6 +335,7 @@ func SkyToRaw(s *Sky) *RawSky {
 	return &RawSky{
 		Kind:      SkyKindName(c.Kind),
 		Faces:     faces,
+		Material:  c.Material,
 		Zenith:    &RawColor{R: c.Zenith.X(), G: c.Zenith.Y(), B: c.Zenith.Z()},
 		Horizon:   &RawColor{R: c.Horizon.X(), G: c.Horizon.Y(), B: c.Horizon.Z()},
 		Ground:    &RawColor{R: c.Ground.X(), G: c.Ground.Y(), B: c.Ground.Z()},

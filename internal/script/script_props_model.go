@@ -86,6 +86,28 @@ func modelProps() map[string]propAccess {
 			Tex: true,
 			Doc: "this attachment's texture, resolved against textures/",
 		},
+		"material": {
+			// The .fmat this attachment wears, overlaid on its own settings —
+			// so a script can make one panel glow by naming a material rather
+			// than by setting unlit, alpha and a scroll rate one at a time.
+			Get: get(func(m *world.EntityModel) flang.Value { return flang.StrVal(m.Material) }),
+			Set: set(func(m *world.EntityModel, v flang.Value) error {
+				s, ok := toStr(v)
+				if !ok {
+					return propErr("material", "str", v)
+				}
+				m.Material = s
+				for i := range m.Submeshes {
+					m.Submeshes[i].MaterialName = s
+				}
+				return nil
+			}),
+			// No rebuild: the mesh is unchanged, and the material is resolved
+			// afresh on every draw. Tex, because it may name art nothing has
+			// loaded yet.
+			Tex: true,
+			Doc: "surface material (.fmat) name for this attachment, or \"\" for none",
+		},
 		"visible": {
 			Get: get(func(m *world.EntityModel) flang.Value { return flang.BoolVal(m.Visible) }),
 			Set: set(func(m *world.EntityModel, v flang.Value) error {

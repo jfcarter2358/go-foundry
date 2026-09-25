@@ -107,6 +107,7 @@ func modelBoneSection() {
 	if !imgui.CollapsingHeader("Bones##modelbones") {
 		return
 	}
+	modelSharedRigNote()
 	active := modelActiveBone()
 
 	if imgui.Button("Add##modelboneadd") {

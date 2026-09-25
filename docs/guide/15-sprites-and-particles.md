@@ -23,6 +23,7 @@ the surface you clicked.
 | **Lit** | takes the scene's lights and shadows; off for anything emissive |
 | **Casts shadow** | faces the light in the depth passes rather than the camera |
 | **Sheet** | columns, rows and cell, for a sprite sheet |
+| **Material** | a [`.fmat`](28-materials.md) the sprite wears, overlaid on the rows above |
 
 ### Blend mode picks the pass
 
@@ -38,6 +39,12 @@ broken.
 **Billboard** matters nearly as much: `full` always faces the camera, `y-axis`
 spins about vertical only (right for trees and grass — a `full` tree lies down
 when you look from above), `fixed` does not turn at all.
+
+Both, and the tint, the sheet and the lit/shadow pair, can come from a
+[material](28-materials.md) instead — which is how forty sparks in six different
+effects are made to agree about what a spark is. A particle **layer** takes one
+on the same terms, and a layer's volumetric look can come from one too; only its
+ramps stay on the layer.
 
 ## The particle editor
 

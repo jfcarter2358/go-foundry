@@ -38,11 +38,30 @@ const (
 // have to be maintained against model releases.
 var claudeModels = []string{"default", "opus", "sonnet", "haiku"}
 
-// claudeModes are the permission modes, with the label the panel shows.
-var claudeModes = []struct{ Mode, Label, Tip string }{
-	{"", "Ask", "Ask before every file change and command."},
-	{"acceptEdits", "Accept edits", "File edits go through; commands still ask."},
-	{"plan", "Plan", "Read and plan only — nothing is changed until you leave plan mode."},
+// claudeModes are the permission modes, with the label the panel shows. Min is
+// the oldest CLI that has the mode, where that is newer than claude.MinVersion.
+var claudeModes = []struct {
+	Mode, Label, Tip string
+	Min              [3]int
+}{
+	{Mode: "", Label: "Ask", Tip: "Ask before every file change and command."},
+	{Mode: "acceptEdits", Label: "Accept edits", Tip: "File edits go through; commands still ask."},
+	{Mode: "auto", Label: "Auto", Min: claudeAutoModeVersion,
+		Tip: "Claude works on its own and decides what needs asking about:\nroutine edits and commands go through, anything risky still stops."},
+	{Mode: "plan", Label: "Plan", Tip: "Read and plan only — nothing is changed until you leave plan mode."},
+}
+
+// claudeAutoModeVersion is where --permission-mode auto arrived. Offering it to
+// an older CLI would not degrade to asking — the process refuses the flag and the
+// conversation never starts.
+var claudeAutoModeVersion = [3]int{2, 1, 0}
+
+// claudeModeAvailable reports whether the CLI that was found has this mode.
+func claudeModeAvailable(min [3]int) bool {
+	if min == [3]int{} {
+		return true
+	}
+	return claude.AtLeast(claudeState.version, min)
 }
 
 // claudePanelState is everything the window keeps. One panel, one conversation:
@@ -58,6 +77,11 @@ type claudePanelState struct {
 	model    string
 	mode     string
 	denyNote string
+
+	// wrapped is the input box's text as claudeWrapInput last left it, and wrapPx
+	// the width it wrapped to. See editor_claude_input.go.
+	wrapped string
+	wrapPx  float32
 
 	// Where the CLI is, and what it said when asked.
 	binary  string
@@ -186,7 +210,7 @@ func claudeStart() bool {
 		Binary:         claudeState.binary,
 		Dir:            dir,
 		Model:          claudeModelArg(),
-		PermissionMode: claudeState.mode,
+		PermissionMode: claudeModeArg(),
 		Resume:         claudeState.resume,
 		AppendSystem:   claudePrimer(),
 		AutoAllow:      claudeAutoAllow,
@@ -215,9 +239,24 @@ func claudeModelArg() string {
 	return claudeState.model
 }
 
+// claudeModeArg is the --permission-mode value. A mode the CLI on this machine
+// is too old for is dropped rather than passed: asking about everything is the
+// safe way to be wrong.
+func claudeModeArg() string {
+	for _, m := range claudeModes {
+		if m.Mode == claudeState.mode && !claudeModeAvailable(m.Min) {
+			claudeSetStatus("This Claude Code is too old for %s mode — asking about everything instead.", m.Label)
+			return ""
+		}
+	}
+	return claudeState.mode
+}
+
 // claudeSend starts a turn, bringing a session up if this is the first one.
 func claudeSend() {
-	text := strings.TrimSpace(claudeState.input)
+	// The breaks the input box put in to wrap the text are not part of the
+	// message. claudeUnwrap takes them back out.
+	text := strings.TrimSpace(claudeUnwrap(claudeState.input))
 	if text == "" {
 		return
 	}

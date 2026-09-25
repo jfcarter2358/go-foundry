@@ -47,6 +47,11 @@ const legacyDefaultTexture = "default"
 // RawModel is the on-disk form of a ModelDoc.
 type RawModel struct {
 	ID string `yaml:"id"`
+	// Skeleton names the .fskl this model's armature belongs to
+	// (model_skeleton.go). When it is set, Bones and Animations are absent —
+	// they live in that file — and Weights key on bone name rather than index,
+	// so reordering the shared rig cannot repoint them at the wrong limb.
+	Skeleton string `yaml:"skeleton,omitempty"`
 	// Texture is the one image the model is painted with. Omitted when the
 	// model wears none, which is how a document that was never painted both
 	// saves and loads.
@@ -78,8 +83,12 @@ type RawModelBone struct {
 // Bones and Weights are index-parallel rather than a list of pairs so the YAML
 // stays one short line per vertex instead of a nested block per influence.
 type RawVertexBinds struct {
-	Vert    int       `yaml:"v"`
-	Bones   []int     `yaml:"b"`
+	Vert  int   `yaml:"v"`
+	Bones []int `yaml:"b,omitempty"`
+	// Names is Bones by name, written instead of it when the model links a
+	// shared skeleton. Index-parallel to Weights in exactly the same way; the
+	// two forms never both appear.
+	Names   []string  `yaml:"bn,omitempty"`
 	Weights []float32 `yaml:"w"`
 }
 
@@ -130,6 +139,7 @@ type RawModelFace struct {
 func modelDocToRaw(m *ModelDoc) RawModel {
 	raw := RawModel{
 		ID:          m.ID,
+		Skeleton:    m.Skeleton,
 		Texture:     m.Texture,
 		SmoothAngle: m.SmoothAngle,
 		Vertices:    make([][]float32, len(m.Verts)),
@@ -155,8 +165,48 @@ func modelDocToRaw(m *ModelDoc) RawModel {
 		raw.Faces[i] = rf
 	}
 
-	for i := range m.Bones {
-		b := &m.Bones[i]
+	// A linked model writes neither: the armature and its clips belong to the
+	// .fskl, and a copy here would be the stale second copy the split exists to
+	// get rid of.
+	if m.Skeleton == "" {
+		raw.Bones = rawBonesFrom(m.Bones)
+	}
+
+	byName := m.Skeleton != ""
+	for vi, ws := range m.Weights {
+		if len(ws) == 0 || vi >= len(m.Verts) {
+			continue
+		}
+		bind := RawVertexBinds{Vert: vi}
+		for _, w := range ws {
+			if byName {
+				if w.Bone < 0 || w.Bone >= len(m.Bones) {
+					continue
+				}
+				bind.Names = append(bind.Names, m.Bones[w.Bone].Name)
+			} else {
+				bind.Bones = append(bind.Bones, w.Bone)
+			}
+			bind.Weights = append(bind.Weights, w.Weight)
+		}
+		if len(bind.Weights) > 0 {
+			raw.Weights = append(raw.Weights, bind)
+		}
+	}
+
+	if m.Skeleton == "" {
+		raw.Animations = rawClipsFrom(m.Animations, m.Bones)
+	}
+	return raw
+}
+
+// rawBonesFrom serialises an armature. Shared with the .fskl writer, which is
+// the only reason it is not inlined above: a rig lifted out of a model has to
+// come back byte-for-byte identical.
+func rawBonesFrom(bones []ModelBone) []RawModelBone {
+	out := make([]RawModelBone, 0, len(bones))
+	for i := range bones {
+		b := &bones[i]
 		rb := RawModelBone{
 			Name:      b.Name,
 			Head:      []float32{b.Head.X(), b.Head.Y(), b.Head.Z()},
@@ -168,23 +218,18 @@ func modelDocToRaw(m *ModelDoc) RawModel {
 			parent := b.Parent
 			rb.Parent = &parent
 		}
-		raw.Bones = append(raw.Bones, rb)
+		out = append(out, rb)
 	}
+	return out
+}
 
-	for vi, ws := range m.Weights {
-		if len(ws) == 0 || vi >= len(m.Verts) {
-			continue
-		}
-		bind := RawVertexBinds{Vert: vi}
-		for _, w := range ws {
-			bind.Bones = append(bind.Bones, w.Bone)
-			bind.Weights = append(bind.Weights, w.Weight)
-		}
-		raw.Weights = append(raw.Weights, bind)
-	}
-
-	for ci := range m.Animations {
-		c := &m.Animations[ci]
+// rawClipsFrom serialises clips, naming each track's bone through bones. A
+// track pointing outside the armature is dropped rather than written with a
+// blank bone name, which would not load.
+func rawClipsFrom(clips []ModelClip, bones []ModelBone) []RawModelClip {
+	out := make([]RawModelClip, 0, len(clips))
+	for ci := range clips {
+		c := &clips[ci]
 		rc := RawModelClip{
 			Name:     c.Name,
 			Duration: c.EffectiveDuration(),
@@ -193,18 +238,18 @@ func modelDocToRaw(m *ModelDoc) RawModel {
 		}
 		for ti := range c.Tracks {
 			tr := &c.Tracks[ti]
-			if tr.Bone < 0 || tr.Bone >= len(m.Bones) || len(tr.Keys) == 0 {
+			if tr.Bone < 0 || tr.Bone >= len(bones) || len(tr.Keys) == 0 {
 				continue
 			}
-			rt := RawModelTrack{Bone: m.Bones[tr.Bone].Name}
+			rt := RawModelTrack{Bone: bones[tr.Bone].Name}
 			for _, k := range tr.Keys {
 				rt.Keys = append(rt.Keys, rawKeyFrom(k))
 			}
 			rc.Tracks = append(rc.Tracks, rt)
 		}
-		raw.Animations = append(raw.Animations, rc)
+		out = append(out, rc)
 	}
-	return raw
+	return out
 }
 
 // rawKeyFrom serialises one keyframe, omitting whichever channels are at rest.
@@ -244,9 +289,16 @@ func anyNonZeroUV(uvs []mgl32.Vec2) bool {
 
 // rawToModelDoc rebuilds a document from its on-disk form. It assumes the raw
 // data has already passed validateRawModel.
-func rawToModelDoc(raw RawModel) *ModelDoc {
+//
+// skel is the resolved .fskl when the file links one, and nil otherwise; the
+// caller loads it because only the caller knows where files come from (LoadModel
+// from disk, a test from a literal). A linked document ends up with the
+// skeleton's bones and clips in memory, exactly as an inline armature would —
+// see the note at the top of model_skeleton.go.
+func rawToModelDoc(raw RawModel, skel *SkeletonDoc) *ModelDoc {
 	m := &ModelDoc{
 		ID:          raw.ID,
+		Skeleton:    raw.Skeleton,
 		Texture:     raw.Texture,
 		SmoothAngle: raw.SmoothAngle,
 		Verts:       make([]mgl32.Vec3, len(raw.Vertices)),
@@ -282,8 +334,27 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 		m.Faces[i] = f
 	}
 
-	m.Bones = make([]ModelBone, len(raw.Bones))
-	for i, rb := range raw.Bones {
+	if raw.Skeleton != "" {
+		m.Bones = CloneBones(skel.Bones)
+		m.Animations = cloneClips(skel.Animations)
+	} else {
+		m.Bones = bonesFromRaw(raw.Bones)
+		m.Animations = clipsFromRaw(raw.Animations, m.Bones)
+	}
+
+	// Materialised at full length whatever the file held, so every caller can
+	// index Weights by vertex without a length check of its own.
+	m.EnsureWeights()
+	applyRawWeights(m, raw.Weights)
+
+	m.Invalidate()
+	return m
+}
+
+// bonesFromRaw rebuilds an armature. Shared with the .fskl reader.
+func bonesFromRaw(raw []RawModelBone) []ModelBone {
+	bones := make([]ModelBone, len(raw))
+	for i, rb := range raw {
 		b := ModelBone{
 			Name:      rb.Name,
 			Parent:    ModelBoneNoParent,
@@ -298,27 +369,16 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 		if b.Name == "" {
 			b.Name = fmt.Sprintf("%s.%03d", defaultBoneName, i)
 		}
-		m.Bones[i] = b
+		bones[i] = b
 	}
+	return bones
+}
 
-	// Materialised at full length whatever the file held, so every caller can
-	// index Weights by vertex without a length check of its own.
-	m.EnsureWeights()
-	for _, bind := range raw.Weights {
-		if bind.Vert < 0 || bind.Vert >= len(m.Weights) {
-			continue
-		}
-		ws := make([]ModelVertexWeight, 0, len(bind.Bones))
-		for j, bi := range bind.Bones {
-			if j >= len(bind.Weights) {
-				break
-			}
-			ws = append(ws, ModelVertexWeight{Bone: bi, Weight: bind.Weights[j]})
-		}
-		m.Weights[bind.Vert] = normalizeWeights(ws)
-	}
-
-	for _, rc := range raw.Animations {
+// clipsFromRaw rebuilds clips, resolving each track's bone name against bones.
+// Shared with the .fskl reader.
+func clipsFromRaw(raw []RawModelClip, bones []ModelBone) []ModelClip {
+	out := make([]ModelClip, 0, len(raw))
+	for _, rc := range raw {
 		c := ModelClip{
 			Name:     rc.Name,
 			Duration: rc.Duration,
@@ -326,11 +386,11 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 			Loop:     rc.Loop != nil && *rc.Loop,
 		}
 		for _, rt := range rc.Tracks {
-			bi := m.BoneIndexByName(rt.Bone)
+			bi := boneIndexIn(bones, rt.Bone)
 			if bi < 0 {
-				// validateRawModel has already refused this, so reaching here
-				// means a caller built the raw form by hand; drop the track
-				// rather than key a bone that does not exist.
+				// Validation has already refused this, so reaching here means a
+				// caller built the raw form by hand; drop the track rather than
+				// key a bone that does not exist.
 				continue
 			}
 			tr := ModelBoneTrack{Bone: bi}
@@ -341,11 +401,52 @@ func rawToModelDoc(raw RawModel) *ModelDoc {
 				c.Tracks = append(c.Tracks, tr)
 			}
 		}
-		m.Animations = append(m.Animations, c)
+		out = append(out, c)
 	}
+	return out
+}
 
-	m.Invalidate()
-	return m
+// boneIndexIn is BoneIndexByName over a bare bone slice, for the readers that
+// have the armature in hand before any document exists.
+func boneIndexIn(bones []ModelBone, name string) int {
+	for i := range bones {
+		if bones[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// applyRawWeights binds the file's influences to m's bones, in whichever of the
+// two forms the file used: indices for an inline armature, names for a linked
+// skeleton. An influence naming a bone the rig does not have is dropped and the
+// vertex renormalised over the rest — validation refuses such a file, so this
+// only catches a hand-built raw form.
+func applyRawWeights(m *ModelDoc, binds []RawVertexBinds) {
+	for _, bind := range binds {
+		if bind.Vert < 0 || bind.Vert >= len(m.Weights) {
+			continue
+		}
+		ws := make([]ModelVertexWeight, 0, len(bind.Weights))
+		if len(bind.Names) > 0 {
+			for j, name := range bind.Names {
+				if j >= len(bind.Weights) {
+					break
+				}
+				if bi := boneIndexIn(m.Bones, name); bi >= 0 {
+					ws = append(ws, ModelVertexWeight{Bone: bi, Weight: bind.Weights[j]})
+				}
+			}
+		} else {
+			for j, bi := range bind.Bones {
+				if j >= len(bind.Weights) {
+					break
+				}
+				ws = append(ws, ModelVertexWeight{Bone: bi, Weight: bind.Weights[j]})
+			}
+		}
+		m.Weights[bind.Vert] = normalizeWeights(ws)
+	}
 }
 
 // modelKeyFromRaw rebuilds one keyframe, reading an omitted channel as rest and
@@ -372,7 +473,8 @@ func modelKeyFromRaw(rk RawModelKey) ModelBoneKey {
 // a degenerate face. Loading is the one place a hand-edited or foreign file
 // reaches the mesh code, and every operation downstream indexes without
 // checking.
-func validateRawModel(raw RawModel) error {
+// skel is the resolved skeleton when raw links one, nil otherwise.
+func validateRawModel(raw RawModel, skel *SkeletonDoc) error {
 	nv := len(raw.Vertices)
 	if nv == 0 {
 		return fmt.Errorf("model %q has no vertices", raw.ID)
@@ -395,10 +497,7 @@ func validateRawModel(raw RawModel) error {
 			return fmt.Errorf("model %q face %d has %d UVs for %d vertices", raw.ID, i, len(f.UVs), len(f.Verts))
 		}
 	}
-	if err := validateRawArmature(raw); err != nil {
-		return err
-	}
-	return validateRawAnimations(raw)
+	return validateRawArmature(raw, skel)
 }
 
 // validateRawAnimations rejects a clip the player could not run: a nameless or
@@ -408,44 +507,44 @@ func validateRawModel(raw RawModel) error {
 // The bone-name check is the one that matters most. A track whose bone has been
 // renamed out from under it would otherwise load as silence — the limb simply
 // stops moving — which is far harder to diagnose than a refused file.
-func validateRawAnimations(raw RawModel) error {
-	if len(raw.Animations) == 0 {
+func validateRawClips(id string, rawBones []RawModelBone, clips []RawModelClip) error {
+	if len(clips) == 0 {
 		return nil
 	}
-	if len(raw.Bones) > gfx.MaxSkinBones {
-		return fmt.Errorf("model %q has %d bones; the skinning shader carries at most %d",
-			raw.ID, len(raw.Bones), gfx.MaxSkinBones)
+	if len(rawBones) > gfx.MaxSkinBones {
+		return fmt.Errorf("%q has %d bones; the skinning shader carries at most %d",
+			id, len(rawBones), gfx.MaxSkinBones)
 	}
-	bones := make(map[string]bool, len(raw.Bones))
-	for _, b := range raw.Bones {
+	bones := make(map[string]bool, len(rawBones))
+	for _, b := range rawBones {
 		bones[b.Name] = true
 	}
-	seen := make(map[string]int, len(raw.Animations))
-	for i, c := range raw.Animations {
+	seen := make(map[string]int, len(clips))
+	for i, c := range clips {
 		if strings.TrimSpace(c.Name) == "" {
-			return fmt.Errorf("model %q animation %d has no name", raw.ID, i)
+			return fmt.Errorf("%q animation %d has no name", id, i)
 		}
 		if prev, dup := seen[c.Name]; dup {
-			return fmt.Errorf("model %q animations %d and %d are both named %q", raw.ID, prev, i, c.Name)
+			return fmt.Errorf("%q animations %d and %d are both named %q", id, prev, i, c.Name)
 		}
 		seen[c.Name] = i
 		if c.Duration <= 0 {
-			return fmt.Errorf("model %q animation %q has duration %v, want a positive length", raw.ID, c.Name, c.Duration)
+			return fmt.Errorf("%q animation %q has duration %v, want a positive length", id, c.Name, c.Duration)
 		}
 		for _, tr := range c.Tracks {
 			if !bones[tr.Bone] {
-				return fmt.Errorf("model %q animation %q drives bone %q, which the armature does not contain",
-					raw.ID, c.Name, tr.Bone)
+				return fmt.Errorf("%q animation %q drives bone %q, which the armature does not contain",
+					id, c.Name, tr.Bone)
 			}
 			last := float32(-1)
 			for k, key := range tr.Keys {
 				if key.Time < 0 {
-					return fmt.Errorf("model %q animation %q bone %q key %d is at negative time %v",
-						raw.ID, c.Name, tr.Bone, k, key.Time)
+					return fmt.Errorf("%q animation %q bone %q key %d is at negative time %v",
+						id, c.Name, tr.Bone, k, key.Time)
 				}
 				if key.Time < last {
-					return fmt.Errorf("model %q animation %q bone %q keys are not in time order (%v after %v)",
-						raw.ID, c.Name, tr.Bone, key.Time, last)
+					return fmt.Errorf("%q animation %q bone %q keys are not in time order (%v after %v)",
+						id, c.Name, tr.Bone, key.Time, last)
 				}
 				last = key.Time
 			}
@@ -462,51 +561,35 @@ func validateRawAnimations(raw RawModel) error {
 // towards keys its channels on bone names, so two bones called "Arm" would make
 // a saved pose ambiguous — better to refuse the file than to load it and lose
 // half the animation later.
-func validateRawArmature(raw RawModel) error {
-	nb := len(raw.Bones)
-	seen := make(map[string]int, nb)
-	for i, b := range raw.Bones {
-		if len(b.Head) != 3 || len(b.Tail) != 3 {
-			return fmt.Errorf("model %q bone %d needs a 3-component head and tail", raw.ID, i)
+// validateRawArmature is validateRawBones plus the weight binds, which only a
+// model has. With a linked skeleton the bones come from skel and the binds name
+// them rather than index them.
+func validateRawArmature(raw RawModel, skel *SkeletonDoc) error {
+	if raw.Skeleton != "" {
+		if len(raw.Bones) > 0 || len(raw.Animations) > 0 {
+			return fmt.Errorf("model %q links skeleton %q and also carries its own bones or animations; "+
+				"one or the other", raw.ID, raw.Skeleton)
 		}
-		head := mgl32.Vec3{b.Head[0], b.Head[1], b.Head[2]}
-		tail := mgl32.Vec3{b.Tail[0], b.Tail[1], b.Tail[2]}
-		if tail.Sub(head).Len() < 1e-6 {
-			return fmt.Errorf("model %q bone %d (%q) has zero length", raw.ID, i, b.Name)
+		if skel == nil {
+			return fmt.Errorf("model %q links skeleton %q, which was not loaded", raw.ID, raw.Skeleton)
 		}
-		if b.Name != "" {
-			if prev, dup := seen[b.Name]; dup {
-				return fmt.Errorf("model %q bones %d and %d share the name %q", raw.ID, prev, i, b.Name)
-			}
-			seen[b.Name] = i
-		}
-		if b.Parent == nil {
-			continue
-		}
-		if *b.Parent < 0 || *b.Parent >= nb {
-			return fmt.Errorf("model %q bone %d has parent %d (only %d exist)", raw.ID, i, *b.Parent, nb)
-		}
-		if *b.Parent == i {
-			return fmt.Errorf("model %q bone %d is its own parent", raw.ID, i)
-		}
+		return validateLinkedWeights(raw, skel)
 	}
-	// Cycles, walked per bone with a step cap: a chain longer than the whole
-	// armature can only mean it loops.
-	for i := range raw.Bones {
-		p, steps := raw.Bones[i].Parent, 0
-		for p != nil {
-			if steps > nb {
-				return fmt.Errorf("model %q bone %d sits in a parent cycle", raw.ID, i)
-			}
-			p = raw.Bones[*p].Parent
-			steps++
-		}
+	if err := validateRawBones(raw.ID, raw.Bones); err != nil {
+		return err
+	}
+	if err := validateRawClips(raw.ID, raw.Bones, raw.Animations); err != nil {
+		return err
 	}
 
-	nv := len(raw.Vertices)
+	nb, nv := len(raw.Bones), len(raw.Vertices)
 	for i, bind := range raw.Weights {
 		if bind.Vert < 0 || bind.Vert >= nv {
 			return fmt.Errorf("model %q weight %d binds vertex %d (only %d exist)", raw.ID, i, bind.Vert, nv)
+		}
+		if len(bind.Names) > 0 {
+			return fmt.Errorf("model %q weight %d names its bones, but the model has no skeleton to name them in",
+				raw.ID, i)
 		}
 		if len(bind.Bones) != len(bind.Weights) {
 			return fmt.Errorf("model %q weight %d has %d bones for %d weights", raw.ID, i, len(bind.Bones), len(bind.Weights))
@@ -520,15 +603,120 @@ func validateRawArmature(raw RawModel) error {
 	return nil
 }
 
+// validateLinkedWeights checks a linked model's name-keyed binds against the
+// skeleton it links.
+//
+// A name the rig does not have is refused rather than dropped. Dropping it
+// would load the model with a limb that no longer follows anything — the same
+// silent failure a renamed animation track used to produce, and the reason
+// tracks are validated by name too.
+func validateLinkedWeights(raw RawModel, skel *SkeletonDoc) error {
+	nv := len(raw.Vertices)
+	for i, bind := range raw.Weights {
+		if bind.Vert < 0 || bind.Vert >= nv {
+			return fmt.Errorf("model %q weight %d binds vertex %d (only %d exist)", raw.ID, i, bind.Vert, nv)
+		}
+		if len(bind.Bones) > 0 {
+			return fmt.Errorf("model %q weight %d indexes its bones, but a model linking skeleton %q must name them",
+				raw.ID, i, raw.Skeleton)
+		}
+		if len(bind.Names) != len(bind.Weights) {
+			return fmt.Errorf("model %q weight %d has %d bone names for %d weights", raw.ID, i, len(bind.Names), len(bind.Weights))
+		}
+		for _, name := range bind.Names {
+			if skel.BoneIndexByName(name) < 0 {
+				return fmt.Errorf("model %q weight %d is bound to bone %q, which skeleton %q does not contain",
+					raw.ID, i, name, raw.Skeleton)
+			}
+		}
+	}
+	return nil
+}
+
+// validateRawBones rejects a rig the mesh code could not walk: an out-of-range
+// or self-referencing parent, a cycle, a zero-length bone with no direction to
+// build a deform basis from, or a duplicate name.
+//
+// Names matter as much as indices here. Animation tracks key their channels on
+// bone names, and so do a linked model's weights, so two bones called "Arm"
+// would make both ambiguous — better to refuse the file than to load it and
+// lose half the animation later.
+func validateRawBones(id string, bones []RawModelBone) error {
+	nb := len(bones)
+	seen := make(map[string]int, nb)
+	for i, b := range bones {
+		if len(b.Head) != 3 || len(b.Tail) != 3 {
+			return fmt.Errorf("%q bone %d needs a 3-component head and tail", id, i)
+		}
+		head := mgl32.Vec3{b.Head[0], b.Head[1], b.Head[2]}
+		tail := mgl32.Vec3{b.Tail[0], b.Tail[1], b.Tail[2]}
+		if tail.Sub(head).Len() < 1e-6 {
+			return fmt.Errorf("%q bone %d (%q) has zero length", id, i, b.Name)
+		}
+		if b.Name != "" {
+			if prev, dup := seen[b.Name]; dup {
+				return fmt.Errorf("%q bones %d and %d share the name %q", id, prev, i, b.Name)
+			}
+			seen[b.Name] = i
+		}
+		if b.Parent == nil {
+			continue
+		}
+		if *b.Parent < 0 || *b.Parent >= nb {
+			return fmt.Errorf("%q bone %d has parent %d (only %d exist)", id, i, *b.Parent, nb)
+		}
+		if *b.Parent == i {
+			return fmt.Errorf("%q bone %d is its own parent", id, i)
+		}
+	}
+	// Cycles, walked per bone with a step cap: a chain longer than the whole
+	// armature can only mean it loops.
+	for i := range bones {
+		p, steps := bones[i].Parent, 0
+		for p != nil {
+			if steps > nb {
+				return fmt.Errorf("%q bone %d sits in a parent cycle", id, i)
+			}
+			p = bones[*p].Parent
+			steps++
+		}
+	}
+	return nil
+}
+
 // Fingerprint identifies the document's content as SaveModel would write it,
 // for comparing against what was last saved. See fileutil.Fingerprint.
-func Fingerprint(m *ModelDoc) uint64 { return fileutil.Fingerprint(modelDocToRaw(m)) }
+//
+// SaveModel writes both files for a linked document, so this covers both: the
+// raw model alone would leave a bone drag or a new keyframe invisible to the
+// editor's dirty check, and the save chip would read "saved" over unsaved work.
+func Fingerprint(m *ModelDoc) uint64 {
+	h := fileutil.Fingerprint(modelDocToRaw(m))
+	if s := m.SkeletonSnapshot(); s != nil {
+		// Mixed rather than combined with xor: two documents that differ only
+		// by swapping mesh and rig content would otherwise hash alike.
+		h = h*1099511628211 ^ SkeletonFingerprint(s)
+	}
+	return h
+}
 
 // SaveModel writes the document to path as YAML.
+//
+// A document linked to a skeleton writes *two* files: the .fmdl here and the
+// .fskl its bones and clips belong to. Saving only the mesh would quietly throw
+// away every bone drag and keyframe of the session, which is not a thing a
+// caller should have to opt into — and what it writes back is what it read, so
+// a tool that never touched the rig rewrites it unchanged.
 func SaveModel(m *ModelDoc, path string) error {
 	raw := modelDocToRaw(m)
-	if err := validateRawModel(raw); err != nil {
+	skel := m.SkeletonSnapshot()
+	if err := validateRawModel(raw, skel); err != nil {
 		return err
+	}
+	if skel != nil {
+		if err := SaveSkeleton(skel, SkeletonPathFor(path, m.Skeleton)); err != nil {
+			return err
+		}
 	}
 	data, err := yaml.Marshal(&raw)
 	if err != nil {
@@ -553,10 +741,21 @@ func LoadModel(path string) (*ModelDoc, error) {
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if err := validateRawModel(raw); err != nil {
+	// Resolved before validation, because the weights are checked against it: a
+	// missing .fskl is a hard error rather than a model that loads with no
+	// armature, which would show up on screen as a character stuck in its rest
+	// pose with nothing in the log.
+	var skel *SkeletonDoc
+	if raw.Skeleton != "" {
+		var serr error
+		if skel, serr = LoadSkeletonNamed(path, raw.Skeleton); serr != nil {
+			return nil, fmt.Errorf("%s: %w", path, serr)
+		}
+	}
+	if err := validateRawModel(raw, skel); err != nil {
 		return nil, err
 	}
-	m := rawToModelDoc(raw)
+	m := rawToModelDoc(raw, skel)
 	m.Path = path
 	if m.ID == "" {
 		m.ID = trimModelExt(filepath.Base(path))

@@ -141,7 +141,8 @@ func buildStaticBatches(s *world.StaticGeometry) *staticBatches {
 		key := staticKey{
 			chunk: surf.Chunk,
 			cover: strings.Join(surf.CoveredBy, "\x00"),
-			mat: gfx.Material{Texture: g.Texture, BlendTexture: g.BlendTexture, BlendMask: g.BlendMask,
+			mat: gfx.Material{Texture: g.Texture, MaterialName: g.MaterialName,
+				BlendTexture: g.BlendTexture, BlendMask: g.BlendMask,
 				Alpha: g.Alpha, Normals: len(g.Normals) > 0, Smooth: g.Smooth, Baked: len(light) > 0},
 			doubleSided: surf.DoubleSided,
 		}

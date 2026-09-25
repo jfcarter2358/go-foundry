@@ -1,0 +1,19 @@
+# flipbook.fmat — the sprite-sheet grid, as a material.
+#
+# This was `sheet_cols:`/`sheet_rows:` on every sprite and every particle layer,
+# which is odd when you look at it: how a texture divides up is a property of
+# the ART, and the same four-by-four sheet had to be described again on every
+# sprite that wore it.
+#
+# What stays on the object is the FRAME. Which cell this particular sprite is
+# showing is not a property of the art, and a script animating one sprite has no
+# business moving every other sprite wearing the same material.
+kind: sprite
+texture: square
+doc: A 4x4 sheet. The object picks the cell with its own frame number.
+effects:
+  - effect: sprite_sheet
+    cols: 4
+    rows: 4
+  - effect: blend_mode
+    mode: alpha

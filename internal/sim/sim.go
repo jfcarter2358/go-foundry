@@ -26,6 +26,7 @@ import (
 	"foundry/internal/ai"
 	"foundry/internal/collision"
 	"foundry/internal/gfx"
+	"foundry/internal/hooks"
 	"foundry/internal/platform"
 	"foundry/internal/render"
 	"foundry/internal/script"
@@ -175,7 +176,7 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 			// Sprint is held too, on foot with gravity on and while pushing
 			// forward — in free-fly the same key is "down" (gfx.MoveIntent).
 			// Letting go of any of them ends it.
-			world.UpdatePlayerSprint(sprintHeld && crouchable(lvl) && platform.GravityEnabled)
+			world.UpdatePlayerSprint(sprintHeld && crouchable(lvl) && !platform.FlyMode)
 			switch {
 			case world.PlayerCrouched():
 				intent[0] *= world.CrouchSpeedScale
@@ -185,18 +186,31 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 				intent[2] *= world.SprintSpeedScale
 			}
 
-			onGround := collision.MovePlayer(
-				world.PlayerEntity, lvl,
-				collision.PlayerMove{
-					Intent:       intent,
-					Jump:         jump,
-					Gravity:      platform.GravityEnabled,
-					DTScale:      dt * 60.0,
-					GravityAccel: platform.GravityAccel,
-					MaxFallSpeed: platform.MaxFallSpeed,
-					JumpVelocity: platform.JumpVelocity,
-				})
+			// The pull where the player is standing: the level's `gravity:`,
+			// whatever volume overrides it there, and the player's own scale,
+			// all resolved by world.GravityFor. Asked every frame rather than
+			// cached, because every one of the three can change under the body
+			// — a script writing the level's, a low-gravity room walked into,
+			// or a script writing the player's own scale.
+			move := collision.PlayerMove{
+				Intent:       intent,
+				Jump:         jump,
+				Gravity:      platform.GravityEnabled,
+				Fly:          platform.FlyMode,
+				Grounded:     platform.IsOnGround,
+				DT:           dt,
+				GravityAccel: world.GravityFor(lvl, world.PlayerEntity),
+				MaxFallSpeed: world.PlayerEntity.Collision.EffectiveMaxFallSpeed(),
+				JumpVelocity: world.PlayerJumpVelocity,
+			}
+			moved := collision.MovePlayer(world.PlayerEntity, lvl, move)
 			platform.JumpRequested = false
+			// Leaving and touching the ground, for the player's script
+			// (`:landed:`, `:left_ground:`). Recorded here because this is the
+			// only place that knows both the transition and the speed it
+			// happened at — MovePlayer zeroes the fall the instant it reports
+			// it. The script tick drains it (script_events.go).
+			hooks.RecordPlayerGround(moved.OnGround, moved.Landed, moved.Impact)
 
 			// Standing in a frame portal's doorway hands the player over to the
 			// other side — the ship's ramp onto the hangar deck, or back again.
@@ -205,10 +219,12 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 			if c := collision.FindFramePortalCrossing(lvl, world.PlayerEntity); c != nil && !c.Sealed {
 				gfx.Cam.Yaw = collision.CrossFramePortal(lvl, world.PlayerEntity, c, gfx.Cam.Yaw)
 			}
-			// Only meaningful with gravity on; free-fly leaves it alone rather
-			// than reporting a fall that is not happening.
-			if platform.GravityEnabled {
-				platform.IsOnGround = onGround
+			// Free-fly leaves it alone rather than reporting a fall that is not
+			// happening. Gravity being off no longer does: a weightless body
+			// still stands on things, and `:landed:` and the jump key both
+			// depend on knowing that it does.
+			if !platform.FlyMode {
+				platform.IsOnGround = moved.OnGround
 			}
 
 			// The camera is NOT placed here. It goes on after RefreshFrames
@@ -302,6 +318,11 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 	// It also fixes up being shoved out of a solid entity by EntityUpdate.
 	if g.Play() {
 		PlacePlayerCamera(lvl)
+		// A script camera takes the view straight back, so that everything
+		// between here and the end of the frame — the AI reading the
+		// player's aim, the listener, the script tick's picks and casts —
+		// sees the camera the picture is taken from. See gfx.HoldCameraRig.
+		gfx.HoldCameraRig()
 
 		// The rest of what a waypoint animation can carry — sprites, emitters,
 		// sounds, lights and volumes. Brushes and entities went on their own
@@ -345,6 +366,20 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 	render.ProfileBegin("effects")
 	if world.EffectUpdate(lvl, dt, !g.GamePaused) {
 		world.UploadLightsTo(gfx.Program, world.SceneLights(lvl), false)
+	}
+	render.ProfileEnd()
+
+	// Decals, in the effects' slot and stopped by a pause for their reason: the
+	// marks a firefight leaves are given a lifetime and fade out, and one fading
+	// behind a pause menu would be gone by the time play resumed.
+	//
+	// An expired decal leaves the list. Nothing has to be told: the script
+	// runtime's index into the level is rebuilt at the top of every tick and
+	// never carried across frames, precisely so that a list changing between
+	// them cannot go stale (script_ref.go).
+	render.ProfileBegin("decals")
+	if !g.GamePaused {
+		world.StepDecals(lvl, dt)
 	}
 	render.ProfileEnd()
 
@@ -396,5 +431,25 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 		render.ProfileBegin("scripts")
 		script.ScriptTick(lvl, dt, !g.Dev)
 		render.ProfileEnd()
+	}
+
+	// The script camera (gfx/camera_rig.go), last of all. After the script
+	// tick, so a camera verb called this frame moves this frame's picture and
+	// an object the camera follows is followed to where it went this frame;
+	// after PlacePlayerCamera, so the player's eye is already in the camera
+	// for a blend back to it to aim at. Not while a load is building a level
+	// the rig has already been reset for, and not in the editor, whose camera
+	// is its own.
+	//
+	// A pause holds the blends (dt 0) but still lays the pose down, so a
+	// camera a pause menu's script puts somewhere goes there.
+	if !g.Dev && !g.LoadPending {
+		script.RefreshCameraTargets(lvl)
+		camDT := dt
+		if !g.Play() {
+			camDT = 0
+		}
+		hasPlayer := world.PlayerEntity != nil
+		gfx.StepCameraRig(camDT, g.Play() && hasPlayer, hasPlayer)
 	}
 }

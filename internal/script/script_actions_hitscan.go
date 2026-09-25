@@ -61,6 +61,10 @@ type hitscanOpts struct {
 	// when set.
 	from, direction       mgl32.Vec3
 	hasFrom, hasDirection bool
+	// screen casts from the camera through a point on the window instead of
+	// through its centre — the ray `pick` casts through the cursor.
+	screen    mgl32.Vec3
+	hasScreen bool
 }
 
 var hitscanOptions = map[string]hitscanOption{
@@ -127,6 +131,17 @@ var hitscanOptions = map[string]hitscanOption{
 				return fmt.Errorf("hitscan's \"direction\" is a zero vec, which points nowhere")
 			}
 			o.direction, o.hasDirection = d, true
+			return nil
+		},
+	},
+	"screen": {
+		"a point on the window, in pixels from the top-left, to cast through from the camera instead of the reticle — what `pick` casts through the cursor; not with \"from\" or \"direction\"",
+		func(o *hitscanOpts, v flang.Value) error {
+			p, ok := toVec3(v)
+			if !ok {
+				return fmt.Errorf("hitscan's \"screen\" is a vec of window pixels, not a %s", flang.TypeOf(v))
+			}
+			o.screen, o.hasScreen = p, true
 			return nil
 		},
 	},
@@ -197,16 +212,12 @@ func HitscanOptionSummary(name string) string { return hitscanOptions[name].summ
 
 var hitscanVerbs = map[string]scriptVerb{
 	"hitscan": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
-		if len(args) < 1 || len(args) > 2 {
-			return nil, fmt.Errorf("hitscan takes an atom to answer with, and optionally a dict of options")
-		}
-		atom, ok := args[0].(flang.AtomVal)
-		if !ok {
-			return nil, fmt.Errorf("hitscan's first argument is the atom it answers with, not a %s", flang.TypeOf(args[0]))
-		}
-		opts, err := parseHitscanOpts(rt, args, pos)
+		atom, opts, err := hitscanArgs(rt, "hitscan", args, pos)
 		if err != nil {
 			return nil, err
+		}
+		if opts.hasScreen {
+			return castThroughScreen(rt, "hitscan", atom, opts, pos)
 		}
 
 		// The reticle is the camera: the centre of the screen is exactly where
@@ -230,22 +241,74 @@ var hitscanVerbs = map[string]scriptVerb{
 			rt.warnAt(pos, "hitscan did nothing: there is no player to cast from, which is the case in the editor and before the level finishes loading — give it a \"from\" to cast from somewhere else")
 			return flang.NullVal{}, nil
 		}
-		if dir.Len() < 1e-6 {
-			return flang.NullVal{}, nil
-		}
-
-		dir = scatter(dir, opts.spread, rt.randomUnit)
-		res := collision.Raycast(rt.lvl, origin, dir, opts.filter)
-		payload := []flang.Value{
-			hitscanPayload(res, opts.all),
-			vecValue(res.Stop),
-		}
-		if opts.points {
-			payload = append(payload, hitscanPoints(res, opts.all))
-		}
-		_ = rt.post(rt.self, string(atom), payload, pos)
+		castAndPost(rt, atom, origin, dir, opts, pos)
 		return flang.NullVal{}, nil
 	},
+
+	// pick is hitscan through the cursor: what the player is pointing at with
+	// a free mouse, rather than what the middle of the view is on. With the
+	// cursor captured the cursor IS the middle of the view, so the two agree.
+	"pick": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		atom, opts, err := hitscanArgs(rt, "pick", args, pos)
+		if err != nil {
+			return nil, err
+		}
+		if !opts.hasScreen {
+			c := cursorPosition()
+			opts.screen, opts.hasScreen = c, true
+		}
+		return castThroughScreen(rt, "pick", atom, opts, pos)
+	},
+}
+
+// hitscanArgs reads the atom and the options every cast takes.
+func hitscanArgs(rt *ScriptRuntime, name string, args []flang.Value, pos flang.Pos) (flang.AtomVal, hitscanOpts, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return "", hitscanOpts{}, fmt.Errorf("%s takes an atom to answer with, and optionally a dict of options", name)
+	}
+	atom, ok := args[0].(flang.AtomVal)
+	if !ok {
+		return "", hitscanOpts{}, fmt.Errorf("%s's first argument is the atom it answers with, not a %s", name, flang.TypeOf(args[0]))
+	}
+	opts, err := parseHitscanOpts(rt, args, pos)
+	return atom, opts, err
+}
+
+// castThroughScreen casts from the camera through opts.screen. It needs no
+// player — a strategy view has a camera and nothing else — and a camera that
+// has been detached from the player is not inside the player's body, so the
+// body is something it can point at.
+func castThroughScreen(rt *ScriptRuntime, name string, atom flang.AtomVal, opts hitscanOpts, pos flang.Pos) (flang.Value, error) {
+	if opts.hasFrom || opts.hasDirection {
+		return nil, fmt.Errorf("%s: \"screen\" casts from the camera through a point on the window, so it cannot be given a \"from\" or a \"direction\" as well", name)
+	}
+	origin, dir, ok := gfx.ScreenRay(opts.screen.X(), opts.screen.Y())
+	if !ok {
+		rt.warnAt(pos, "%s did nothing: the camera has not been placed yet", name)
+		return flang.NullVal{}, nil
+	}
+	if gfx.CameraDetached() && opts.filter.Entities {
+		opts.filter.Player = world.PlayerEntity
+	}
+	castAndPost(rt, atom, origin, dir, opts, pos)
+	return flang.NullVal{}, nil
+}
+
+// castAndPost casts one ray and posts the answer back to the caster.
+func castAndPost(rt *ScriptRuntime, atom flang.AtomVal, origin, dir mgl32.Vec3, opts hitscanOpts, pos flang.Pos) {
+	if dir.Len() < 1e-6 {
+		return
+	}
+	dir = scatter(dir, opts.spread, rt.randomUnit)
+	res := collision.Raycast(rt.lvl, origin, dir, opts.filter)
+	payload := []flang.Value{
+		hitscanPayload(res, opts.all),
+		vecValue(res.Stop),
+	}
+	if opts.points {
+		payload = append(payload, hitscanPoints(res, opts.all))
+	}
+	_ = rt.post(rt.self, string(atom), payload, pos)
 }
 
 // scatter tilts a shot off the reticle by a random angle inside a cone of that

@@ -11,7 +11,7 @@ package app
 // shipping a level that had never been compiled and quietly performing like it.
 //
 // That makes compiling part of packaging rather than a thing an author may
-// forget. cmd/foundrycompile is the build step; `make release-linux` runs it.
+// forget. cmd/foundrycompile is the build step; `task release-linux` runs it.
 // A level with no .fbsp beside it fails to load with a message that says so,
 // which is the right failure — loud, at the boot that would otherwise have
 // shown an empty world.

@@ -60,6 +60,10 @@ type Level struct {
 	// Scenery are the level's placed static models (scenery.go) — one mesh, a
 	// transform and a collision flag, and nothing a script can address.
 	Scenery []Scenery
+	// Decals are the level's projected textures (decal.go). Level-scoped for the
+	// volumes' reason and one more of its own: a decal's mesh is clipped out of
+	// whatever chunks its box reaches, so it belongs to none of them.
+	Decals []Decal
 	// Sounds are the level's placed sound sources (sound.go).
 	Sounds []Sound
 	// Effects are the level's placed procedural effects (effect.go).
@@ -78,7 +82,16 @@ type Level struct {
 	// (player_settings.go). A value rather than a pointer, because there is
 	// always a player and its zero value is the engine's own defaults.
 	Player PlayerSettings
-	Lights LightSet
+	// Gravity is this level's ambient downward pull, in units per second
+	// squared, or nil for the engine's DefaultGravity — see gravity.go.
+	//
+	// A pointer rather than a 0-means-default float because zero gravity is a
+	// thing a level may legitimately want, and a Level is routinely built as a
+	// struct literal by tests and by the editor: those must keep falling at the
+	// engine's rate, and `gravity: 0` must not be the same value as saying
+	// nothing. Read through LevelGravity, never directly.
+	Gravity *float32
+	Lights  LightSet
 	// Static is a compiled level's drawable geometry (static.go), or nil for an
 	// authored one. When it is set, every chunk marked Compiled is drawn from
 	// here instead of from its own brushes.

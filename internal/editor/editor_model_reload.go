@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 
 	"foundry/internal/fileutil"
+	"foundry/internal/model"
 	"foundry/internal/world"
 )
 
@@ -46,6 +47,29 @@ func requestModelReload(path string) {
 			}
 		}
 	}
+}
+
+// requestSkeletonReload queues every *other* model on the skeleton called name,
+// for when its .fskl has just been rewritten. Reports how many, so the caller
+// can say whose rig it just changed.
+//
+// The models' own .fmdl files are untouched by a skeleton save, so nothing else
+// would notice: the reload works because the parsed-document cache stamps the
+// skeleton file alongside the model (world.skeletonStamp), and that stamp is
+// what has moved.
+func requestSkeletonReload(name, excludePath string) int {
+	if name == "" {
+		return 0
+	}
+	n := 0
+	for _, path := range model.ModelPathsUsingSkeleton(name) {
+		if modelReloadKey(path) == modelReloadKey(excludePath) {
+			continue
+		}
+		requestModelReload(path)
+		n++
+	}
+	return n
 }
 
 // modelReloadKey is the form paths are compared in: an attachment names its

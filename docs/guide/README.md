@@ -19,8 +19,11 @@ running engine: there is no export step and no separate viewer.
 Start the editor:
 
 ```
-make run-linux          # or: make run-windows
+task run-linux          # or: task run-windows
 ```
+
+The build tasks run under [go-task](https://taskfile.dev) — `Taskfile.yml` in
+the repository root. `task` on its own lists every task.
 
 It opens on a blank level with the editor active. Press `` ` `` (backtick) or
 `~` to drop into play, and again to come back. Press `F1` at any time for the
@@ -36,6 +39,7 @@ and is always current.
 | [Prefabs](22-prefabs.md) | Reusable groups, linked by file: build once, place twenty |
 | [Shaping surfaces](03-shaping-surfaces.md) | Edit mode shapes the solid; detail mode shapes what you see |
 | [Textures](04-textures.md) | The texture editor, palettes, layers, animation, bump maps |
+| [Materials](28-materials.md) | `.fmat`: the shader effects a surface, sprite, particle or sky wears |
 | [Smooth shading](05-smoothing.md) | Welding normals so a run of faces reads as one curved surface |
 | [Scatter](06-scatter.md) | Volumes of grass, rock, wildflowers, cattails and moss |
 | [Lighting](07-lighting.md) | Global, directional and point lights; shadows and their cost |
@@ -44,10 +48,11 @@ and is always current.
 | [Animation](10-animation.md) | Armatures, skin weights, pose mode, clips |
 | [Entities](11-entities.md) | Types and instances, bounds, collision, attachments |
 | [Vehicles and frames](12-vehicles-and-frames.md) | Drivable things and walkable interiors |
-| [AI agents](24-ai.md) | Controllers that find their way, hunt targets and work objective volumes |
+| [AI agents](24-ai.md) | Controllers that find their way, hunt targets and work objective volumes, and decision trees (.fai) for what an agent does about what it finds |
 | [Volumes](13-volumes.md) | Trigger regions, level exits, checkpoints, fog volumes, AI objectives |
 | [Scenery and the brush](14-scenery-brush.md) | Stamping hundreds of static props |
 | [Sprites and particles](15-sprites-and-particles.md) | Billboards, the particle editor, and explosion effects |
+| [Decals](29-decals.md) | Textures projected onto the level's surfaces: posters, stencils, scorch marks, bullet holes |
 | [Audio](16-audio.md) | Placed sounds, music, attenuation, the mixer settings |
 | [UI screens](17-ui-screens.md) | The UI editor, anchors, bindings, themes, video |
 | [Scripting](18-scripting.md) | flang: events, messages, properties, parameters |
@@ -75,7 +80,10 @@ resources/
   chunks/      .yaml    exported geometry, reusable across levels
   prefabs/     .yaml    reusable groups a level places by file
   entities/    .yaml    entity type definitions
-  models/      .fmdl    meshes, armatures and animation clips (.obj also loads)
+  models/      .fmdl    meshes, skin weights, and an armature of their own
+                       (.obj also loads)
+  skeletons/   .fskl    armatures and animation clips, shared by the models
+                       that link them
   textures/    .png     world textures; <name>_normal.png beside one is its bump
                .ftex    the layered document the texture editor edits
   particles/   .fpar    particle effects

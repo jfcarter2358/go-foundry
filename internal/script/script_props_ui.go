@@ -406,6 +406,53 @@ func widgetProps() map[string]propAccess {
 			},
 			Doc: "writing true moves keyboard and gamepad focus here",
 		},
+		"translate": {
+			Get: get(func(n *ui.Node) flang.Value {
+				t := n.Translate()
+				return vecValue(mgl32.Vec3{t[0], t[1], 0})
+			}),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				p, ok := toVec3(v)
+				if !ok {
+					return propErr("translate", "vec", v)
+				}
+				n.SetTranslate(mgl32.Vec2{p.X(), p.Y()})
+				return nil
+			}),
+			Doc: "a slide from where the layout puts the widget, in canvas units (z unused), taking its children with it — " +
+				"`@icon.prop.translate += delta` in a :drag: handler carries it under the pointer. Runtime only, never saved",
+		},
+		"draggable": {
+			Get: get(func(n *ui.Node) flang.Value { return flang.BoolVal(n.Draggable) }),
+			Set: set(func(n *ui.Node, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("draggable", "bool", v)
+				}
+				n.Draggable = b
+				return nil
+			}),
+			Doc: "on, pressing the widget and moving posts :drag_start:, :drag: and, when it is let go, :drop:",
+		},
+		"hovered": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				if c.widgetFor(r) == nil || c.ui == nil {
+					return nil, false
+				}
+				return flang.BoolVal(c.ui.Interaction().Hover.Is(r.A, r.B)), true
+			},
+			Doc: "whether the pointer is over the widget",
+		},
+		"dragging": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				if c.widgetFor(r) == nil || c.ui == nil {
+					return nil, false
+				}
+				t, on := c.ui.Dragging()
+				return flang.BoolVal(on && t.Is(r.A, r.B)), true
+			},
+			Doc: "whether the pointer is carrying the widget right now, between :drag_start: and :drop:",
+		},
 	}
 }
 
@@ -480,6 +527,30 @@ func screenProps() map[string]propAccess {
 				return nil
 			}),
 			Doc: "on, mouse-look is released while this screen is up",
+		},
+		"click_through": {
+			Get: get(func(s *ui.Screen) flang.Value { return flang.BoolVal(s.ClickThrough) }),
+			Set: set(func(s *ui.Screen, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("click_through", "bool", v)
+				}
+				s.ClickThrough = b
+				return nil
+			}),
+			Doc: "on, a click that lands on none of this screen's widgets reaches the world behind it, even while the screen is modal",
+		},
+		"pointer": {
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				s := c.screenFor(r)
+				if s == nil || c.ui == nil {
+					return nil, false
+				}
+				p := cursorPosition()
+				x, y := c.ui.CanvasPoint(s, p.X(), p.Y())
+				return vecValue(mgl32.Vec3{x, y, 0}), true
+			},
+			Doc: "where the pointer is, in this screen's canvas units — what a widget's `pos` is measured in (z unused)",
 		},
 		"focus": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {

@@ -135,7 +135,13 @@ func UpdateCamMatrix() {
 		// rather than returning an error, so the guard has to be on this side.
 		return
 	}
-	gl.UniformMatrix4fv(Cam.Uniform, 1, false, &Cam.Matrix[0])
+	// Written to the world program by name rather than to whatever program
+	// happens to be bound. The camera moves during the simulation half of the
+	// frame, where the bound program is whatever the last pass of the last
+	// frame left — so the old spelling was writing the view matrix into some
+	// other program's uniform slot whenever that order came out differently,
+	// which is exactly what a headless frame (no UI pass, no imgui) does.
+	gl.ProgramUniformMatrix4fv(Program, Cam.Uniform, 1, false, &Cam.Matrix[0])
 }
 
 // MaxPitch prevents the camera from crossing vertical (avoids gimbal flip).
@@ -156,7 +162,15 @@ const MaxPitch = float32(math.Pi/2 - 0.01)
 // The editor flies on the default layout, not the player's: see
 // platform/bindings.go.
 func HandleInput(keyStates []uint8) {
-	Cam.Position = Cam.Position.Add(moveIntent(keyStates, &platform.DefaultBindings))
+	HandleInputScaled(keyStates, 1)
+}
+
+// HandleInputScaled is HandleInput with the step multiplied by scale, for a
+// viewport that offers a "fly faster" latch. Only the displacement is scaled:
+// the look keys turn at their own rate either way, because going somewhere
+// quickly is not a reason to lose the ability to aim.
+func HandleInputScaled(keyStates []uint8, scale float32) {
+	Cam.Position = Cam.Position.Add(moveIntent(keyStates, &platform.DefaultBindings, true).Mul(scale))
 	UpdateCamMatrix()
 }
 
@@ -173,10 +187,17 @@ func HandleInput(keyStates []uint8) {
 //
 // The keys are the player's own layout (platform.Bindings).
 func MoveIntent(keyStates []uint8) mgl32.Vec3 {
-	return moveIntent(keyStates, &platform.Bindings)
+	// A body flies when it has been put in free-fly; the editor's camera always
+	// does. This used to read "gravity is off", which made weightlessness and
+	// noclip the same thing — see platform.FlyMode.
+	return moveIntent(keyStates, &platform.Bindings, platform.FlyMode)
 }
 
-func moveIntent(keyStates []uint8, b *platform.BindingTable) mgl32.Vec3 {
+// freeFly is whether the vertical keys move the viewer. A camera with nothing to
+// stand on is always flying, so the editor passes true rather than reading
+// FlyMode — that global says whether the *player* is being flown, and the
+// editor's own camera is not the player.
+func moveIntent(keyStates []uint8, b *platform.BindingTable, freeFly bool) mgl32.Vec3 {
 	// Scale movement and rotation by DeltaTime*60 so behavior is frame-rate independent
 	// while preserving the same feel as the original 60 FPS-tuned constants.
 	dtScale := platform.DeltaTime * 60.0
@@ -200,13 +221,13 @@ func moveIntent(keyStates []uint8, b *platform.BindingTable) mgl32.Vec3 {
 		rMove -= moveSpeed
 	}
 	if b.Held(platform.ActJump, keyStates) {
-		if !platform.GravityEnabled {
+		if freeFly {
 			uMove += moveSpeed // free-fly up
 		}
 		// jump is handled via KEYDOWN event in HandleEvent
 	}
 	if b.Held(platform.ActSprint, keyStates) {
-		if !platform.GravityEnabled {
+		if freeFly {
 			uMove -= moveSpeed // free-fly down, on the sprint key
 		}
 	}

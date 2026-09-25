@@ -34,10 +34,6 @@ var (
 	claudeCodeBGColor = imgui.Vec4{X: 0.13, Y: 0.13, Z: 0.16, W: 1}
 )
 
-// claudeInputH is the height of the input box. Three lines: enough to see a
-// paragraph-long instruction without it turning into a text editor.
-const claudeInputH = 72
-
 func drawClaudeWindow() {
 	w := claudeState.win
 	if w == nil {
@@ -118,6 +114,9 @@ func claudeDrawHeader(snap claude.Snapshot) {
 	imgui.SetNextItemWidth(140)
 	if imguibackend.BeginCombo("##claudemode", claudeModeLabel(claudeState.mode)) {
 		for _, m := range claudeModes {
+			if !claudeModeAvailable(m.Min) {
+				continue
+			}
 			if imguibackend.SelectableV(m.Label, m.Mode == claudeState.mode, 0, imgui.Vec2{}) {
 				claudeSetMode(m.Mode)
 				claudeSaveSettings()
@@ -178,7 +177,7 @@ func claudeTokens(n int) string {
 // claudeDrawTranscript is the scrolling conversation.
 func claudeDrawTranscript(snap claude.Snapshot) {
 	// Everything above the input box and the status line below it.
-	h := -float32(claudeInputH + 56)
+	h := -(claudeInputHeight() + 56)
 	if !imgui.BeginChildV("##claudescroll", imgui.Vec2{X: 0, Y: h}, false, 0) {
 		imgui.EndChild()
 		return
@@ -560,12 +559,7 @@ func claudeDrawFooter(snap claude.Snapshot) {
 	claudeDrawUnsavedWarning()
 	claudeDrawContextLine()
 
-	flags := imgui.InputTextFlagsEnterReturnsTrue | imgui.InputTextFlagsCtrlEnterForNewLine
-	imgui.PushItemWidth(-1)
-	send := imgui.InputTextMultilineV("##claudeinput", &claudeState.input,
-		imgui.Vec2{X: -1, Y: claudeInputH}, flags, nil)
-	imgui.PopItemWidth()
-	if send {
+	if claudeDrawInputBox() {
 		claudeSend()
 		// Put the caret back where it was: the next instruction usually follows
 		// straight on, and clicking back into the box every turn is a tax.

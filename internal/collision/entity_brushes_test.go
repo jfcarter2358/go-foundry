@@ -95,7 +95,7 @@ func walker(x, z float32) world.Entity {
 // not call it either, and a helper that tidied up the derived location behind
 // MovePlayer would be testing a loop nobody runs.
 func walkStep(lvl *world.Level, p *world.Entity, step mgl32.Vec3) {
-	MovePlayer(p, lvl, PlayerMove{Intent: step, DTScale: 1})
+	MovePlayer(p, lvl, PlayerMove{Intent: step, DT: 1.0 / 60})
 	if c := FindFramePortalCrossing(lvl, p); c != nil {
 		CrossFramePortal(lvl, p, c, 0)
 	}
@@ -286,8 +286,8 @@ func wingedShipLevel(t *testing.T) *world.Level {
 // the world visible at all.
 func gravityWalk(lvl *world.Level, p *world.Entity, step mgl32.Vec3) {
 	MovePlayer(p, lvl, PlayerMove{
-		Intent: step, DTScale: 1, Gravity: true,
-		GravityAccel: 0.02, MaxFallSpeed: 1, JumpVelocity: 0.3,
+		Intent: step, DT: 1.0 / 60, Gravity: true,
+		GravityAccel: 72, MaxFallSpeed: 60, JumpVelocity: 18,
 	})
 	if c := FindFramePortalCrossing(lvl, p); c != nil {
 		CrossFramePortal(lvl, p, c, 0)

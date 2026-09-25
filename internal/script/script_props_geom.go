@@ -28,6 +28,7 @@ func init() {
 		flang.RefWidget:  widgetProps(),
 		flang.RefSound:   soundProps(),
 		flang.RefEffect:  effectProps(),
+		flang.RefDecal:   decalProps(),
 		flang.RefModel:   modelProps(),
 	}
 }

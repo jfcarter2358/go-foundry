@@ -30,6 +30,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 	"foundry/internal/gfx"
+	"foundry/internal/hooks"
 	"foundry/internal/ui"
 	"foundry/internal/world"
 
@@ -104,6 +105,13 @@ type ScriptRuntime struct {
 	// units is one entry per distinct script path, shared by every object that
 	// names it — a hundred barrels of one type parse their script once.
 	units map[string]*scriptUnit
+
+	// trees is one entry per distinct decision tree (.fai), on the same rule —
+	// see script_aitree.go. treeParams is the parameter source each script has
+	// to be linked against, by script path, because a tree's `params:` are
+	// declared to the script it runs beside.
+	trees      map[string]*treeUnit
+	treeParams map[string][]string
 
 	// self is the object whose handler is currently running, and currentHops is
 	// that message's hop count. A message sent while handling one inherits
@@ -185,6 +193,8 @@ func (rt *ScriptRuntime) randomUnit() float64 {
 // loaded or replaced.
 var Scripts = &ScriptRuntime{
 	units:        map[string]*scriptUnit{},
+	trees:        map[string]*treeUnit{},
+	treeParams:   map[string][]string{},
 	state:        map[flang.RefVal]*flang.DictVal{},
 	dirtyBrushes: map[flang.RefVal]bool{},
 	dirtyVolumes: map[string]bool{},
@@ -212,6 +222,8 @@ func ScriptRuntimeReset(lvl *world.Level) {
 	rt.cache = buildRefCache(lvl)
 	rt.host = &levelHost{rt: rt}
 	rt.units = map[string]*scriptUnit{}
+	rt.trees = map[string]*treeUnit{}
+	rt.treeParams = map[string][]string{}
 	rt.queue = nil
 	rt.spill = nil
 	rt.state = map[flang.RefVal]*flang.DictVal{}
@@ -228,6 +240,11 @@ func ScriptRuntimeReset(lvl *world.Level) {
 	gfx.ViewmodelFieldOfView = gfx.DefaultViewmodelFieldOfView
 	gfx.ResetRecoil()
 	gfx.StopLookAt()
+	// A camera a script detached, and a cursor it freed, likewise: play
+	// ending with a cutscene camera up must not leave the editor looking
+	// through it, or the next level starting with the mouse let go.
+	gfx.ResetCameraRig()
+	hooks.ScriptWantsCursor = false
 
 	// Nothing may evaluate a binding against a level that is being replaced, or
 	// load a script for a screen shown after the runtime has gone.
@@ -250,6 +267,9 @@ func ScriptRuntimeLoad(lvl *world.Level) {
 	// attributes start over with each session — see world.ApplyPlayerScript
 	// for why here and not at level load.
 	world.ApplyPlayerScript(lvl)
+	// Trees first: a script has to be linked against the parameters the tree
+	// beside it declares, and that source has to exist before the link.
+	Scripts.loadTrees()
 	for _, path := range Scripts.scriptPaths() {
 		Scripts.loadUnit(path)
 	}
@@ -395,6 +415,17 @@ func (rt *ScriptRuntime) loadUnit(path string) *scriptUnit {
 	prog, errs := flang.Link(full, src, scriptLoader{})
 	u.prog = prog
 	u.errs = errs
+
+	// The parameters of every decision tree that runs beside this script,
+	// declared to it as though it had written them itself. See the header of
+	// script_aitree.go for why this is the merge rather than a second table.
+	for _, psrc := range rt.treeParams[path] {
+		f, perrs := flang.Parse(path+" (ai tree params)", []byte(psrc))
+		if len(perrs) == 0 {
+			perrs = prog.Add(f)
+		}
+		u.errs = append(u.errs, perrs...)
+	}
 
 	interp, ierrs := flang.NewInterp(prog, rt.host, flang.Limits{})
 	u.errs = append(u.errs, ierrs...)
@@ -734,7 +765,8 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 		return
 	}
 	units := rt.unitsFor(m.to)
-	if len(units) == 0 {
+	runner, tu := rt.runnerFor(m.to)
+	if len(units) == 0 && runner == nil {
 		if m.fromScript && !rt.wasBroadcast(m) {
 			rt.warnFor(rt.scriptFor(m.from), m.pos,
 				"%s received :%s: but %s", m.to, m.atom, noHandlerReason(rt, m.to))
@@ -751,6 +783,32 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 	defer func() { rt.running = prevRunning }()
 
 	anyMatched := false
+
+	// The decision tree first — see script_aitree.go. A tree that answers this
+	// event has decided before the script's own clause for it runs, which is
+	// what makes the script's handler a consequence of the decision rather
+	// than a race with it.
+	if runner != nil && runner.Answers(m.atom) {
+		// Whatever interpreter the tree is running on is the one a verb should
+		// draw at random from, so rt.running names the script backing it (nil
+		// for a tree with no script, which draws from its own).
+		rt.running = rt.backingUnit(m.to)
+		if runner.Interp != nil {
+			runner.Interp.ResetSteps()
+		}
+		handled, err := runner.Fire(m.atom, m.args)
+		switch {
+		case err != nil:
+			// A run that failed *was* the handler, on deliver's own rule: the
+			// author's mistake is the error, not a missing clause.
+			anyMatched = true
+			rt.recordTreeFailure(tu, err, m)
+		case handled:
+			anyMatched = true
+			rt.stats.Delivered++
+		}
+	}
+
 	for _, u := range units {
 		rt.running = u
 		u.interp.ResetSteps()
@@ -774,8 +832,8 @@ func (rt *ScriptRuntime) deliver(m queuedMsg) {
 		// fix is: the receiving script's problem is a clause that is not there
 		// to point at.
 		rt.warnFor(rt.scriptFor(m.from), m.pos,
-			"nothing handled :%s: sent to %s: its script (%s) defines no clause whose first parameter is :%s:",
-			m.atom, m.to, rt.scriptFor(m.to), m.atom)
+			"nothing handled :%s: sent to %s: %s no clause whose first parameter is :%s:%s",
+			m.atom, m.to, handlerSourceOf(rt, m.to), m.atom, treeRootHint(rt, m.to, m.atom))
 	}
 }
 
@@ -884,8 +942,12 @@ func ScriptTick(lvl *world.Level, dt float32, play bool) {
 
 // noHandlerReason says why a targeted send reached no script at all.
 func noHandlerReason(rt *ScriptRuntime, r flang.RefVal) string {
-	if rt.scriptFor(r) == "" {
-		return "it has no script attached"
+	script, tree := rt.scriptFor(r), rt.aiTreeFor(r)
+	if script == "" && tree == "" {
+		return "it has no script and no decision tree attached"
+	}
+	if script == "" {
+		return "its decision tree did not load, or has been disabled after repeated errors"
 	}
 	return "its script did not compile, or has been disabled after repeated errors"
 }

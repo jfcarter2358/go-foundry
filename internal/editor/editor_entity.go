@@ -108,6 +108,10 @@ func editorSelectedDefName() string {
 func editorArmEntityPlacement(typeName string) {
 	Editor.EntityPlaceType = typeName
 	Editor.EntityPlacementMode = true
+	// The decal mode is checked before this one in Editor3DHandleClick, so an
+	// armed decal left over from a previous tool would swallow the click meant
+	// for the entity.
+	Editor.DecalPlacementMode = false
 }
 
 // placeEntityAt drops the armed entity at pos, selects it, and leaves placement

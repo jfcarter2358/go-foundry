@@ -187,6 +187,10 @@ func (d *scriptDoc) reparseNow(lvl *world.Level) {
 	d.Issues = nil
 	d.issueLines = map[int][]script.ScriptIssue{}
 	scope, params := scriptScopeNames(f, name)
+	// The parameters a decision tree beside this script declares count as this
+	// script's — see internal/script/script_aitree.go. Without this, a script
+	// whose numbers live in a .fai is underlined from end to end.
+	params = script.AddAITreeParams(params, d.Path)
 	d.scopeFuncs, d.scopeParams = sortedKeys(scope), sortedKeys(params)
 	if len(errs) == 0 {
 		d.Issues = script.LintScript(lvl, f, scope, params)

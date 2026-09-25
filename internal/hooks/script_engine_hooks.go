@@ -336,3 +336,52 @@ func TakeAIEvents() []AIEvent {
 	aiEvents = nil
 	return out
 }
+
+// ---------- the player's footing ----------
+//
+// Leaving and touching the ground, for the player's `:landed:` and
+// `:left_ground:`. Recorded by the frame that moved the player because it is
+// the only place that knows the transition AND the speed it happened at: the
+// resolve zeroes the fall the instant it stops it, so a script reading the
+// velocity afterwards always finds zero.
+//
+// A level rather than an edge buffer, on purpose. There is one player and at
+// most one transition per frame, so a queue would only make it possible to
+// miss one; and holding the state here is what lets the runtime derive the
+// edge itself, which is the only way `:left_ground:` can fire for a player who
+// walked off a ledge rather than jumping — nothing presses a key for that.
+
+// PlayerGround is the player's footing as of the last move.
+type PlayerGround struct {
+	// OnGround is whether the body is standing on something.
+	OnGround bool
+	// Landed is whether that became true this frame, and Impact is how fast it
+	// was falling when it did, in world units per second — what a fall-damage
+	// rule is written against.
+	Landed bool
+	Impact float32
+	// Known is false before anything has moved the player, which is the editor
+	// and the frames before a level finishes loading. The runtime treats it as
+	// "no answer yet" and posts nothing, rather than reading the zero value as
+	// a player hanging in mid-air and firing a spurious `:left_ground:`.
+	Known bool
+}
+
+var playerGround PlayerGround
+
+// RecordPlayerGround notes what one frame of walking did to the player's
+// footing. Called from the sim's player step.
+func RecordPlayerGround(onGround, landed bool, impact float32) {
+	playerGround = PlayerGround{OnGround: onGround, Landed: landed, Impact: impact, Known: true}
+}
+
+// CurrentPlayerGround reports the last recorded footing. Read, not drained:
+// the runtime compares it against what it last saw, so a frame the script tick
+// does not run must not lose the state.
+func CurrentPlayerGround() PlayerGround { return playerGround }
+
+// ResetPlayerGround forgets the footing, so the next level — or the next entry
+// into play — starts with no answer rather than with the last one. Without it a
+// player who was airborne when the level ended posts a `:landed:` on the first
+// frame of the next one.
+func ResetPlayerGround() { playerGround = PlayerGround{} }

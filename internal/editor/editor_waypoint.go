@@ -16,6 +16,7 @@ package editor
 
 import (
 	"math"
+	"sort"
 
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
@@ -275,6 +276,7 @@ func editorArmWaypointPlacement() {
 	Editor.PrefabPlacementMode = false
 	Editor.VolumePlacementMode = false
 	Editor.SpritePlacementMode = false
+	Editor.DecalPlacementMode = false
 	Editor.EmitterPlacementMode = false
 	Editor.SoundPlacementMode = false
 	Editor.EffectPlacementMode = false
@@ -623,24 +625,38 @@ func eulerAddedAbout(start, axis mgl32.Vec3, delta float32) mgl32.Vec3 {
 
 // ---------- picking ----------
 
-// pickWaypointMarker returns the animation and point whose marker a picking ray
-// crosses nearest, and the distance, or -1s and +Inf.
-func pickWaypointMarker(origin, dir, camPos mgl32.Vec3, lvl *world.Level) (ai, pi int, t float32) {
-	ai, pi, t = -1, -1, float32(math.MaxFloat32)
+// waypointMarkerHit is one arrow a picking ray crossed: which animation, which
+// point of it, and how far along the ray.
+type waypointMarkerHit struct {
+	anim  int
+	point int
+	t     float32
+}
+
+// pickWaypointMarkers returns every waypoint marker a picking ray crosses,
+// nearest first.
+//
+// Every one of them rather than only the nearest, because a click cycles: two
+// points of a path seen end-on, or a path laid over another, are arrows stacked
+// under one pixel, and the second click is how the one behind is reached. See
+// editor_3d_pick_cycle.go.
+func pickWaypointMarkers(origin, dir, camPos mgl32.Vec3, lvl *world.Level) []waypointMarkerHit {
 	if lvl == nil {
-		return
+		return nil
 	}
+	var hits []waypointMarkerHit
 	for a := range lvl.WaypointAnimations {
 		anim := &lvl.WaypointAnimations[a]
 		space := anim.SpaceMatrix(lvl)
 		for p := range anim.Points {
 			at := waypointXform(space, anim.Points[p].Position)
-			if tt := pickMarkerDiscRayT(origin, dir, at, camPos, waypointMarkerRadius); tt < t {
-				ai, pi, t = a, p, tt
+			if tt := pickMarkerDiscRayT(origin, dir, at, camPos, waypointMarkerRadius); tt < float32(math.MaxFloat32) {
+				hits = append(hits, waypointMarkerHit{anim: a, point: p, t: tt})
 			}
 		}
 	}
-	return
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].t < hits[j].t })
+	return hits
 }
 
 // waypointWorldPosition is a point of a carried out of the space its points are

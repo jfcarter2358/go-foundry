@@ -19,8 +19,12 @@ import (
 	"sort"
 
 	"foundry/internal/flang"
+	"foundry/internal/gfx"
+	"foundry/internal/hooks"
 	"foundry/internal/savefile"
 	"foundry/internal/world"
+
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // isScreenRef reports whether r names a screen or a widget.
@@ -82,7 +86,69 @@ func CaptureScriptState(screens map[string]bool) savefile.ScriptState {
 		ss.Checkpoints = append(ss.Checkpoints, name)
 	}
 	sort.Strings(ss.Checkpoints)
+	ss.View = captureView()
 	return ss
+}
+
+// captureView records the script camera and the cursor. Nothing — nil — when
+// no script has touched either, so a game that never uses them writes the
+// same save it always did.
+func captureView() *savefile.ViewState {
+	rs := gfx.SnapshotRig()
+	if !rs.Detached && !hooks.ScriptWantsCursor {
+		return nil
+	}
+	v := &savefile.ViewState{
+		Cursor: hooks.ScriptWantsCursor, Detached: rs.Detached,
+		Position: [3]float32(rs.Pos), Yaw: rs.Yaw, Pitch: rs.Pitch, Roll: rs.Roll,
+	}
+	if rs.Orbit {
+		v.Orbit = &savefile.OrbitState{Target: encodeTarget(rs.OrbitTarget),
+			Distance: rs.OrbitDistance, Yaw: rs.OrbitYaw, Pitch: rs.OrbitPitch}
+	}
+	if rs.Look {
+		t := encodeTarget(rs.LookTarget)
+		v.Look = &t
+	}
+	return v
+}
+
+// restoreView puts them back — or, for a save with none, lets go of both.
+func restoreView(v *savefile.ViewState) {
+	if v == nil {
+		gfx.ResetCameraRig()
+		hooks.ScriptWantsCursor = false
+		return
+	}
+	hooks.ScriptWantsCursor = v.Cursor
+	rs := gfx.RigSnapshot{
+		Detached: v.Detached, Pos: mgl32.Vec3(v.Position), Yaw: v.Yaw, Pitch: v.Pitch, Roll: v.Roll,
+	}
+	if v.Orbit != nil {
+		rs.Orbit, rs.OrbitTarget = true, decodeTarget(v.Orbit.Target)
+		rs.OrbitDistance, rs.OrbitYaw, rs.OrbitPitch = v.Orbit.Distance, v.Orbit.Yaw, v.Orbit.Pitch
+	}
+	if v.Look != nil {
+		rs.Look, rs.LookTarget = true, decodeTarget(*v.Look)
+	}
+	gfx.RestoreRig(rs)
+}
+
+func encodeTarget(t gfx.RigTarget) savefile.ViewTarget {
+	out := savefile.ViewTarget{Point: [3]float32(t.Point)}
+	if r, ok := t.Ref.(flang.RefVal); ok {
+		e := encodeRef(r)
+		out.Ref = &e
+	}
+	return out
+}
+
+func decodeTarget(t savefile.ViewTarget) gfx.RigTarget {
+	out := gfx.RigTarget{Point: mgl32.Vec3(t.Point)}
+	if t.Ref != nil {
+		out.Ref = decodeRef(*t.Ref)
+	}
+	return out
 }
 
 // RestoreScriptState puts a saved memory back into a runtime that has just
@@ -127,6 +193,7 @@ func RestoreScriptState(ss savefile.ScriptState) {
 	for _, name := range ss.Checkpoints {
 		scriptEvents.checkpoints[name] = true
 	}
+	restoreView(ss.View)
 	rt.queue, rt.spill = nil, nil
 	if rt.lvl != nil {
 		rt.cache = buildRefCache(rt.lvl)

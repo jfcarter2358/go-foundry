@@ -822,7 +822,11 @@ func appendBlobDraws(draws []volumeDraw, s *particle.System, camPos mgl32.Vec3) 
 	buf := volumes.blobs[start : start+want]
 	n := s.FillBlobs(buf, camPos)
 	volumes.blobs = volumes.blobs[:start+n]
-	look := &s.Layer.Volume
+	// The layer's look with its material's constants folded in — the same
+	// answer FillBlobs used for the blobs themselves, so the box the group is
+	// marched in and the balls inside it agree about displacement.
+	resolved := s.Layer.DrawVolume()
+	look := &resolved
 
 	for g := 0; g < n; g += MaxVolumeBlobs {
 		end := g + MaxVolumeBlobs

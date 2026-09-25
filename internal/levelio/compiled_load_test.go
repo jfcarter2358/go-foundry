@@ -120,7 +120,7 @@ func TestAPlayerStillLandsOnACompiledFloor(t *testing.T) {
 	mv := PlayerFallStep()
 	var onGround bool
 	for i := 0; i < 300; i++ {
-		onGround = collision.MovePlayer(p, &lvl, mv)
+		onGround = collision.MovePlayer(p, &lvl, mv).OnGround
 	}
 	if !onGround {
 		t.Fatalf("the player never landed; it is at %v", p.Position)
@@ -140,10 +140,10 @@ func TestAPlayerStillLandsOnACompiledFloor(t *testing.T) {
 func PlayerFallStep() collision.PlayerMove {
 	return collision.PlayerMove{
 		Gravity:      true,
-		DTScale:      1.0,
-		GravityAccel: 0.010,
-		MaxFallSpeed: 0.50,
-		JumpVelocity: 0.20,
+		DT:           1.0 / 60,
+		GravityAccel: world.DefaultGravity,
+		MaxFallSpeed: world.DefaultMaxFallSpeed,
+		JumpVelocity: world.PlayerJumpVelocity,
 	}
 }
 

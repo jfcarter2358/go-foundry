@@ -206,6 +206,17 @@ func CheckVersion(bin string) (string, error) {
 	return line, nil
 }
 
+// AtLeast reports whether the version in a --version line is v or newer. A line
+// that does not parse counts as new enough, for the same reason CheckVersion
+// accepts one: an unrecognised banner is far more likely to be newer than older.
+func AtLeast(line string, v [3]int) bool {
+	got, ok := ParseVersion(line)
+	if !ok {
+		return true
+	}
+	return !less(got, v)
+}
+
 func less(a, b [3]int) bool {
 	for i := 0; i < 3; i++ {
 		if a[i] != b[i] {

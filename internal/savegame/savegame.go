@@ -82,6 +82,7 @@ func captureWorld(lvl *world.Level) savefile.WorldState {
 	ws := savefile.WorldState{
 		GlobalLight: lvl.Lights.Global,
 		StepHeight:  lvl.Player.StepHeight,
+		Gravity:     world.CopyFloatPtr(lvl.Gravity),
 	}
 	for i := range lvl.Entities {
 		ws.Entities = append(ws.Entities, captureEntity(&lvl.Entities[i]))
@@ -122,6 +123,14 @@ func captureWorld(lvl *world.Level) savefile.WorldState {
 			ws.Effects = append(ws.Effects, lvl.Effects[i])
 		}
 	}
+	// Decals, less the transient ones, on the one-shot effects' rule above: a
+	// mark a script left per impact is not state a save should carry, and there
+	// are hundreds of them.
+	for i := range lvl.Decals {
+		if !lvl.Decals[i].Transient {
+			ws.Decals = append(ws.Decals, bareDecal(&lvl.Decals[i]))
+		}
+	}
 	if lvl.Sky != nil {
 		sk := *lvl.Sky
 		ws.Sky = &sk
@@ -130,6 +139,15 @@ func captureWorld(lvl *world.Level) savefile.WorldState {
 		ws.Music = &savefile.MusicState{Track: m.Track, Gain: m.Gain, Loop: m.Loop, Fade: m.Fade}
 	}
 	return ws
+}
+
+// bareDecal is a decal less its built mesh, which holds GPU buffers and is
+// clipped out of the level's own geometry — so it is rebuilt on load (the first
+// SyncDecals sees an unbuilt decal) rather than written into the save.
+func bareDecal(d *world.Decal) world.Decal {
+	b := *d
+	b.Pieces = nil
+	return b
 }
 
 // bareEntity is an entity less everything that is its type's rather than its
@@ -198,7 +216,8 @@ func captureVolume(v *world.Volume) savefile.VolumeState {
 		Attach: v.Attach, Position: v.Position, Rotation: v.Rotation,
 		HalfX: v.HalfX, HalfY: v.HalfY, HalfZ: v.HalfZ,
 		Enabled: v.Enabled, LoadLevel: v.LoadLevel, Checkpoint: v.Checkpoint,
-		Fog: v.Fog, Cloud: v.Cloud, ClearsClouds: v.ClearsClouds, Waypoints: v.Waypoints,
+		Fog: v.Fog, Cloud: v.Cloud, ClearsClouds: v.ClearsClouds,
+		Gravity: world.CopyFloatPtr(v.Gravity), Waypoints: v.Waypoints,
 	}
 }
 
@@ -206,6 +225,7 @@ func capturePlayer() savefile.PlayerState {
 	ps := savefile.PlayerState{
 		Yaw: gfx.Cam.Yaw, Pitch: gfx.Cam.Pitch,
 		Control: platform.PlayerControlEnabled, Gravity: platform.GravityEnabled,
+		Fly: platform.FlyMode,
 	}
 	if p := world.PlayerEntity; p != nil {
 		ps.Entity = bareEntity(p)
@@ -329,6 +349,19 @@ func applyWorld(lvl *world.Level, ws *savefile.WorldState) {
 			}
 		}
 	}
+	// Decals are applied onto the fresh load OR appended, unlike everything
+	// above, which only overwrites what it finds. A `decal` with `permanent` is a
+	// mark a script put there deliberately — a stain that stays through the level
+	// — and it exists in no level file, so a save that only updated the authored
+	// ones would lose it. Its mesh is rebuilt on the next frame either way.
+	for _, saved := range ws.Decals {
+		if d := world.FindDecal(lvl, saved.ID); d != nil {
+			*d = saved
+		} else {
+			lvl.Decals = append(lvl.Decals, saved)
+		}
+		script.QueueTextureLoad(saved.Texture)
+	}
 
 	// The sky and the fog blocks are never deleted by a script, so a nil in the
 	// save is a block gob could not tell from an empty one, and the level's is
@@ -346,6 +379,7 @@ func applyWorld(lvl *world.Level, ws *savefile.WorldState) {
 		lvl.Music = &world.Music{Track: m.Track, Gain: m.Gain, Loop: m.Loop, Fade: m.Fade}
 	}
 	lvl.Player.StepHeight = ws.StepHeight
+	lvl.Gravity = world.CopyFloatPtr(ws.Gravity)
 }
 
 // applyEntities takes out what was destroyed, makes again what was spawned,
@@ -531,6 +565,10 @@ func applyVolumes(lvl *world.Level, saved []savefile.VolumeState) {
 				v.Cloud = st.Cloud
 			}
 			v.ClearsClouds, v.Waypoints = st.ClearsClouds, st.Waypoints
+			// Written unconditionally, unlike Fog and Cloud above: nil is a
+			// meaningful value here — "this region no longer overrides gravity"
+			// — where a nil fog block only ever means the save predates it.
+			v.Gravity = world.CopyFloatPtr(st.Gravity)
 		}
 	}
 }
@@ -582,8 +620,10 @@ func applyPlayer(lvl *world.Level, ps *savefile.PlayerState) {
 	applyModels(p.Models, ps.Models)
 
 	world.SetPlayerControl(ps.Control)
+	world.SetPlayerFly(ps.Fly)
 	world.SetPlayerGravity(ps.Gravity)
-	// SetPlayerGravity stops a fall, and the save may have been taken in one.
+	// Both switches clear the momentum — one stops a fall, the other drops
+	// everything — and the save may have been taken mid-flight.
 	p.Velocity = s.Velocity
 	gfx.Cam.Yaw, gfx.Cam.Pitch = ps.Yaw, ps.Pitch
 	gfx.Cam.Direction = gfx.DirectionFromAngles(gfx.Cam.Yaw, gfx.Cam.Pitch)
@@ -695,6 +735,7 @@ func Diff(a, b *savefile.Snapshot) []string {
 	note("emitters", a.World.Emitters, b.World.Emitters)
 	note("sounds", a.World.Sounds, b.World.Sounds)
 	note("effects", a.World.Effects, b.World.Effects)
+	note("decals", a.World.Decals, b.World.Decals)
 	note("sky", a.World.Sky, b.World.Sky)
 	note("music", a.World.Music, b.World.Music)
 	note("player", a.Player, b.Player)

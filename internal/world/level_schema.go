@@ -36,6 +36,11 @@ type RawVolume struct {
 	Fog *RawVolumeFog `yaml:"fog,omitempty"`
 	// Cloud fills the region with volumetric cloud. See Volume.Cloud.
 	Cloud *RawVolumeCloud `yaml:"cloud,omitempty"`
+	// Gravity replaces the level's ambient pull inside the region, in units per
+	// second squared: 0 for a zero-g chamber, a negative number to throw things
+	// at the ceiling. Absent leaves gravity alone, which is every volume
+	// authored before this existed. See Volume.Gravity.
+	Gravity *float32 `yaml:"gravity,omitempty"`
 	// ClearsClouds keeps volumetric cloud out of the region. See
 	// Volume.ClearsClouds.
 	ClearsClouds bool `yaml:"clears_clouds,omitempty"`
@@ -208,22 +213,25 @@ type RawPrefab struct {
 type RawSprite struct {
 	ID            string `yaml:"id"`
 	RawScriptData `yaml:",inline"`
-	Position      RawVec3    `yaml:"position"`
-	Rotation      RawVec3    `yaml:"rotation,omitempty"`
-	Width         *float32   `yaml:"width,omitempty"`  // default 1
-	Height        *float32   `yaml:"height,omitempty"` // default 1
-	Texture       string     `yaml:"texture,omitempty"`
-	Billboard     string     `yaml:"billboard,omitempty"` // full (default) | y-axis | fixed
-	Blend         string     `yaml:"blend,omitempty"`     // cutout (default) | alpha | additive
-	Tint          *RawColor  `yaml:"tint,omitempty"`      // default white
-	Alpha         *float32   `yaml:"alpha,omitempty"`     // default 1
-	Lit           bool       `yaml:"lit,omitempty"`
-	CastShadows   bool       `yaml:"cast_shadows,omitempty"`
-	Visible       *bool      `yaml:"visible,omitempty"` // default true when absent
-	SheetCols     int        `yaml:"sheet_cols,omitempty"`
-	SheetRows     int        `yaml:"sheet_rows,omitempty"`
-	Frame         int        `yaml:"frame,omitempty"`
-	Attach        *RawAttach `yaml:"attach,omitempty"`
+	Position      RawVec3  `yaml:"position"`
+	Rotation      RawVec3  `yaml:"rotation,omitempty"`
+	Width         *float32 `yaml:"width,omitempty"`  // default 1
+	Height        *float32 `yaml:"height,omitempty"` // default 1
+	Texture       string   `yaml:"texture,omitempty"`
+	// Material is the .fmat this sprite wears, by name. Overlaid on the fields
+	// around it rather than replacing them; see world/sprite_material.go.
+	Material    string     `yaml:"material,omitempty"`
+	Billboard   string     `yaml:"billboard,omitempty"` // full (default) | y-axis | fixed
+	Blend       string     `yaml:"blend,omitempty"`     // cutout (default) | alpha | additive
+	Tint        *RawColor  `yaml:"tint,omitempty"`      // default white
+	Alpha       *float32   `yaml:"alpha,omitempty"`     // default 1
+	Lit         bool       `yaml:"lit,omitempty"`
+	CastShadows bool       `yaml:"cast_shadows,omitempty"`
+	Visible     *bool      `yaml:"visible,omitempty"` // default true when absent
+	SheetCols   int        `yaml:"sheet_cols,omitempty"`
+	SheetRows   int        `yaml:"sheet_rows,omitempty"`
+	Frame       int        `yaml:"frame,omitempty"`
+	Attach      *RawAttach `yaml:"attach,omitempty"`
 }
 
 // RawScenery is the YAML representation of a placed static model
@@ -244,6 +252,63 @@ type RawScenery struct {
 	// Solid defaults to true when absent — scenery exists mostly to be walked
 	// around, so the flag is written only to switch collision off.
 	Solid *bool `yaml:"solid,omitempty"`
+}
+
+// RawDecal is the YAML representation of a projected decal (decal.go) — a
+// texture laid onto the level's own surfaces.
+//
+// Position and rotation are the two keys that always appear, because a decal is
+// an orientation as much as a place: its local +Z is the direction it faces out
+// of the surface it lies on. Everything else has a default chosen so that the
+// smallest useful entry is an id, a position, a rotation and a texture.
+//
+// Width/Height/Depth/Alpha/MaxAngle/Push are pointers because zero is never a
+// meaningful authored value for any of them and "absent" has to mean the default
+// rather than nothing; Visible is a pointer for the usual reason.
+type RawDecal struct {
+	ID            string `yaml:"id"`
+	RawScriptData `yaml:",inline"`
+	Position      RawVec3 `yaml:"position"`
+	// Rotation aims the projection: the decal's local +Z is the direction it
+	// faces OUT of the surface, so a decal on a floor is pitched to look up. The
+	// editor writes this from the face that was clicked, which is why an author
+	// rarely types one.
+	Rotation RawVec3 `yaml:"rotation,omitempty"`
+	// Width and Height are the size the texture is fitted to, across the surface.
+	Width  *float32 `yaml:"width,omitempty"`  // default 0.25
+	Height *float32 `yaml:"height,omitempty"` // default 0.25
+	// Depth is how far along the projection axis a surface may lie and still be
+	// painted, measured either side of Position. Small on purpose: a deep decal
+	// aimed at a wall also prints itself on whatever stands behind the wall.
+	Depth   *float32 `yaml:"depth,omitempty"` // default 0.25
+	Texture string   `yaml:"texture,omitempty"`
+	// Material is the .fmat this decal wears, by name. Overlaid on the fields
+	// here rather than replacing them; a decal's mesh is ordinary world geometry,
+	// so every surface effect applies to one.
+	Material string `yaml:"material,omitempty"`
+	// Blend is how the decal combines with the surface under it: alpha (the
+	// default) lays it over, multiply darkens by it — which is what scorch, dirt
+	// and soot want, since one such texture then reads correctly on every colour
+	// it lands on — and additive adds light.
+	Blend string    `yaml:"blend,omitempty"`
+	Tint  *RawColor `yaml:"tint,omitempty"` // default white
+	Alpha *float32  `yaml:"alpha,omitempty"`
+	// Unlit ignores the scene's lights. Off by default, which is the opposite of
+	// a sprite's default: a decal is part of the surface it lies on, and one that
+	// stayed bright in a dark room would read as a light source.
+	Unlit bool `yaml:"unlit,omitempty"`
+	// MaxAngle is how far, in degrees, a surface's normal may lean from the
+	// decal's facing and still be painted — what stops a decal sprayed at a wall
+	// from smearing onto the floor as well.
+	MaxAngle *float32 `yaml:"max_angle,omitempty"` // default 75
+	// Push lifts the built mesh off the surface along its normal, in world units,
+	// on top of the depth offset the renderer already applies. Worth raising only
+	// where a decal on a surface seen almost edge-on still shimmers.
+	Push *float32 `yaml:"push,omitempty"` // default 0.002
+	// Order breaks the tie between overlapping decals: higher draws later, so on
+	// top. Equal orders draw in the order they appear here.
+	Order   int   `yaml:"order,omitempty"`
+	Visible *bool `yaml:"visible,omitempty"` // default true when absent
 }
 
 // RawEmitter is the YAML representation of a placed particle effect
@@ -313,7 +378,12 @@ type RawBrushFace struct {
 	Indices []int `yaml:"indices"`
 	// Texture is omitted when the face wears none, which is how a face that has
 	// not been painted saves: the renderer draws it from its own normal.
-	Texture      string     `yaml:"texture,omitempty"`
+	Texture string `yaml:"texture,omitempty"`
+	// Material is the .fmat this face wears, by name, or empty for none. What
+	// the material says is overlaid on the fields here rather than replacing
+	// them, so a face can carry a material for its scroll and still name its
+	// own texture — see internal/material and gfx.SurfaceState.
+	Material     string     `yaml:"material,omitempty"`
 	BlendTexture string     `yaml:"blend_texture,omitempty"`
 	BlendMask    string     `yaml:"blend_mask,omitempty"`
 	UVOffset     geom.Point `yaml:"uv_offset,omitempty"`
@@ -734,6 +804,11 @@ type RawLevel struct {
 	// world space, and a chunk boundary is not something an author aims at
 	// while scattering rocks along a path.
 	Scenery []RawScenery `yaml:"scenery,omitempty"`
+	// Decals are the level's projected textures (decal.go) — posters, stencils,
+	// scorch marks. Level-scoped for one more reason than the rest: a decal's
+	// mesh is clipped out of whatever chunks its box reaches, so it belongs to
+	// none of them.
+	Decals []RawDecal `yaml:"decals,omitempty"`
 	// Sounds are the level's placed sound sources (sound.go), beside emitters
 	// for the same reasons — one attached to a moving entity crosses chunks.
 	Sounds []RawSound `yaml:"sounds,omitempty"`
@@ -758,7 +833,13 @@ type RawLevel struct {
 	// a level that never wanted to say anything about it writes no block at all
 	// and gets exactly the movement every level had before the block existed.
 	Player *RawPlayer `yaml:"player,omitempty"`
-	Lights RawLights  `yaml:"lights"`
+	// Gravity is the level's ambient downward pull, in world units per second
+	// squared. Absent is the engine's 36, which is what every level built so
+	// far falls at; 6 is roughly a moon, 0 is a station with the plating off.
+	// A volume may override it in one region and a body may scale it — see
+	// world/gravity.go.
+	Gravity *float32  `yaml:"gravity,omitempty"`
+	Lights  RawLights `yaml:"lights"`
 }
 
 // RawPlayer is the level's `player:` block — see PlayerSettings.
@@ -791,6 +872,14 @@ type RawPlayer struct {
 	Script     string                  `yaml:"script,omitempty"`
 	Attributes map[string]RawAttribute `yaml:"attributes,omitempty"`
 	Params     map[string]RawAttribute `yaml:"params,omitempty"`
+	// GravityScale multiplies whatever gravity is in force where the player is
+	// standing — the level's, or a volume's where one overrides it. Absent (or
+	// 0) is 1. This is the same knob an entity type's `collision:` block has,
+	// spelled here because the player has no entity file to put it in.
+	GravityScale *float32 `yaml:"gravity_scale,omitempty"`
+	// MaxFallSpeed is the terminal speed the player falls at, in units per
+	// second. Absent (or 0) is the engine's 30.
+	MaxFallSpeed *float32 `yaml:"max_fall_speed,omitempty"`
 }
 
 // RawSky is the level's sky (sky.go).
@@ -804,6 +893,10 @@ type RawPlayer struct {
 type RawSky struct {
 	Kind  string   `yaml:"kind,omitempty"`  // gradient (default) | cubemap
 	Faces []string `yaml:"faces,omitempty"` // +X, -X, +Y, -Y, +Z, -Z
+	// Material is a sky .fmat, by name. What it carries is folded into the
+	// fields here when the level loads and whenever the material changes; see
+	// world/sky_material.go.
+	Material string `yaml:"material,omitempty"`
 
 	Zenith  *RawColor `yaml:"zenith,omitempty"`
 	Horizon *RawColor `yaml:"horizon,omitempty"`

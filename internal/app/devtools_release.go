@@ -19,6 +19,7 @@ package app
 import (
 	"foundry/internal/gfx"
 	"foundry/internal/render"
+	"foundry/internal/sim"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -32,6 +33,9 @@ const devAvailable = false
 
 func devActive() bool    { return false }
 func devWireframe() bool { return false }
+
+// devPlayInput: a release build has no Claude panel to be driven from.
+func devPlayInput(float32) (sim.Input, bool) { return sim.Input{}, false }
 
 // devRunCommand runs nothing: a shipped game has no command-line tools, and
 // `my-game build-release` is a player's typo rather than a request.

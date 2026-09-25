@@ -112,7 +112,10 @@ type BrushFace struct {
 	// winding order. A planar loop of at least 3.
 	Indices []int
 
-	Texture      string
+	Texture string
+	// Material is the .fmat this face wears, or "" for none. Overlaid on the
+	// fields around it rather than replacing them; see gfx.SurfaceState.
+	Material     string
 	BlendTexture string // optional second texture, mixed in by BlendMask's luminance
 	BlendMask    string // grayscale mask texture; 0 = Texture, 1 = BlendTexture
 	UVOffset     mgl32.Vec2
@@ -421,6 +424,7 @@ func (m *BrushMesh) Load() error {
 			return err
 		}
 		f.Geometry.Alpha = f.Alpha
+		f.Geometry.MaterialName = f.Material
 		f.Geometry.BlendTexture = f.BlendTexture
 		f.Geometry.BlendMask = f.BlendMask
 	}
@@ -672,6 +676,7 @@ func meshFromRaw(rawVerts []float32, rawFaces []RawBrushFace) BrushMesh {
 		m.Faces = append(m.Faces, BrushFace{
 			Indices:            append([]int(nil), rf.Indices...),
 			Texture:            rf.Texture,
+			Material:           rf.Material,
 			BlendTexture:       rf.BlendTexture,
 			BlendMask:          rf.BlendMask,
 			UVOffset:           mgl32.Vec2{rf.UVOffset.X, rf.UVOffset.Y},
@@ -713,6 +718,7 @@ func meshToRaw(m *BrushMesh) ([]float32, []RawBrushFace) {
 		faces = append(faces, RawBrushFace{
 			Indices:            append([]int(nil), f.Indices...),
 			Texture:            f.Texture,
+			Material:           f.Material,
 			BlendTexture:       f.BlendTexture,
 			BlendMask:          f.BlendMask,
 			UVOffset:           geom.Point{X: f.UVOffset.X(), Y: f.UVOffset.Y()},

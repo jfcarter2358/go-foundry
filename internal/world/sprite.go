@@ -50,7 +50,12 @@ type Sprite struct {
 	// reads.
 	Scale mgl32.Vec3
 
-	Texture   string
+	Texture string
+	// Material is the .fmat this sprite wears, or "" for none. What it says is
+	// overlaid on the fields around it rather than replacing them — see
+	// sprite_material.go, and the Draw* accessors there, which are what the
+	// renderer reads.
+	Material  string
 	Billboard gfx.BillboardMode
 	Blend     gfx.SpriteBlend
 
@@ -123,22 +128,23 @@ func (s *Sprite) DrawnSize() mgl32.Vec2 {
 }
 
 // Drawable reports whether the sprite should be submitted this frame at all.
-func (s *Sprite) Drawable() bool { return s.Visible && s.HasSize() && s.Texture != "" }
+func (s *Sprite) Drawable() bool { return s.Visible && s.HasSize() && s.DrawTexture() != "" }
 
 // UVRect returns the sub-rectangle of the texture this sprite draws, as
 // (u0, v0, du, dv). The whole texture when no sheet is authored.
 func (s *Sprite) UVRect() (u0, v0, du, dv float32) {
-	if s.SheetCols <= 0 || s.SheetRows <= 0 {
+	cols, rows := s.DrawSheet()
+	if cols <= 0 || rows <= 0 {
 		return 0, 0, 1, 1
 	}
-	n := s.SheetCols * s.SheetRows
+	n := cols * rows
 	f := s.Frame % n
 	if f < 0 {
 		f += n
 	}
-	du = 1 / float32(s.SheetCols)
-	dv = 1 / float32(s.SheetRows)
-	return float32(f%s.SheetCols) * du, float32(f/s.SheetCols) * dv, du, dv
+	du = 1 / float32(cols)
+	dv = 1 / float32(rows)
+	return float32(f%cols) * du, float32(f/cols) * dv, du, dv
 }
 
 // ModelMatrix builds the sprite's authored transform, before billboarding. The
@@ -232,6 +238,7 @@ func SpriteFromRaw(r RawSprite) (Sprite, error) {
 		Width:       float32Default(r.Width, 1),
 		Height:      float32Default(r.Height, 1),
 		Texture:     r.Texture,
+		Material:    r.Material,
 		Billboard:   gfx.BillboardModeFromName(r.Billboard),
 		Blend:       gfx.SpriteBlendFromName(r.Blend),
 		Tint:        colorDefault(r.Tint),
@@ -261,6 +268,7 @@ func SpriteToRaw(s *Sprite) RawSprite {
 		Width:         float32PtrIfNot(s.Width, 1),
 		Height:        float32PtrIfNot(s.Height, 1),
 		Texture:       s.Texture,
+		Material:      s.Material,
 		Billboard:     billboardNameIfNot(s.Billboard, gfx.BillboardFull),
 		Blend:         blendNameIfNot(s.Blend, gfx.SpriteBlendCutout),
 		Tint:          colorPtrIfNotWhite(s.Tint),
@@ -338,11 +346,14 @@ const SpriteMarkerTexture = "default"
 // EnsureSpriteTexture loads the sprite's texture, falling back to the marker so
 // a level naming a texture that no longer exists still opens.
 func (s *Sprite) EnsureSpriteTexture() error {
-	if s.Texture == "" {
+	// A material may supply the texture, in which case the sprite's own is
+	// free to be empty — so the fallback is applied to what will actually be
+	// drawn, not to the field.
+	if s.DrawTexture() == "" {
 		s.Texture = SpriteMarkerTexture
 	}
-	if err := gfx.EnsureTextureLoaded(s.Texture); err != nil {
-		s.Texture = SpriteMarkerTexture
+	if err := gfx.EnsureTextureLoaded(s.DrawTexture()); err != nil {
+		s.Texture, s.Material = SpriteMarkerTexture, ""
 		return gfx.EnsureTextureLoaded(s.Texture)
 	}
 	return nil

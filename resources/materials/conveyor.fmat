@@ -1,0 +1,15 @@
+# conveyor.fmat — UV scroll, as a material.
+#
+# This was `uv_scroll:` on an entity model attachment — a tank's track belt —
+# and it was the only thing in the engine that had it. A wall could not scroll.
+#
+# A material's scroll is a pure function of the clock rather than a per-surface
+# counter, because the same document is worn by every belt in the level and one
+# of them cannot be allowed to advance a counter the others share. So every
+# surface wearing this scrolls in step, which is what a row of conveyors wants.
+# A surface with its OWN uv_scroll still drifts independently, and the two add.
+kind: surface
+doc: A belt running along +V. Put it on the top face of the run.
+effects:
+  - effect: uv_scroll
+    rate: [0, 0.6]

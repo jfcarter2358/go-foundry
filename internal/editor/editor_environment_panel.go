@@ -18,6 +18,7 @@ package editor
 import (
 	"fmt"
 	"foundry/internal/gfx"
+	"foundry/internal/material"
 	"foundry/internal/world"
 
 	"foundry/internal/imguibackend"
@@ -64,6 +65,21 @@ func editorSkyGroup(lvl *world.Level) {
 }
 
 func editorSkyBody(s *world.Sky) {
+	// A sky material, if any. Unlike every other domain it is FOLDED INTO the
+	// fields below when the level loads rather than overlaid at draw time (see
+	// world/sky_material.go), so what the rows underneath show once one is
+	// named is what the material set — editing them by hand works, and the
+	// next reload puts the material's values back.
+	if materialCombo("Material##skymat", &s.Material, material.DomainSky) {
+		EditorPushUndo()
+		s.ApplyMaterial()
+	}
+	if s.Material != "" {
+		editorTextMutedWrapped(
+			"The rows below show what the material set. Changing one here holds until the level is reloaded; " +
+				"to make it stick, change it in the material.")
+	}
+
 	// Kind first: it decides which half of this block is even relevant, and the
 	// gradient stops and the six faces are both kept across a switch so
 	// flipping between them to compare does not cost either one.

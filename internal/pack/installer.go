@@ -2,7 +2,7 @@ package pack
 
 // installer.go — the Linux installers, from the scripts in packaging/.
 //
-// A .deb is dpkg-deb's job, driven by the same script the Makefile runs; what
+// A .deb is dpkg-deb's job, driven by the same script the Taskfile runs; what
 // is here is running it without a repository to find it in (it is embedded,
 // see foundry/packaging) and saying plainly when the tool it needs is missing.
 // The Windows installer is not a script at all: see internal/setup.

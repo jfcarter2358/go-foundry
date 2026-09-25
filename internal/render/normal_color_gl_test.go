@@ -52,6 +52,8 @@ func newNormalProbe(t *testing.T) *normalProbe {
 	gfx.NormalColorUniform = u("normalColor")
 	gfx.UnlitUniform = u("unlit")
 	gfx.AlphaSharpenUniform = u("alphaSharpen")
+	gfx.TintBiasUniform = u("tintBias")
+	gfx.SurfaceBlendUniform = u("surfaceBlend")
 	gfx.IsWaterUniform = u("isWater")
 	gfx.WaveAmplitudeUniform = u("waveAmplitude")
 	gfx.WaveLengthUniform = u("waveLength")

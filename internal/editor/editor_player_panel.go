@@ -33,7 +33,11 @@ func editorPlayerSection(lvl *world.Level) {
 		render.EditorPreviewActive = false
 		return
 	}
-	editorPropGroup("Movement##playermovegrp", 0, func() { editorPlayerStepHeight(lvl) })
+	editorPropGroup("Movement##playermovegrp", 0, func() {
+		editorPlayerStepHeight(lvl)
+		imgui.Separator()
+		editorPlayerGravity(lvl)
+	})
 
 	// The player's behaviour, drawn with the very widgets a placed entity's
 	// panel uses. They edit the level's authored copy; world.ApplyPlayerScript
@@ -206,4 +210,67 @@ func editorPlayerStepHeight(lvl *world.Level) {
 	}
 	editorTextMutedWrapped(fmt.Sprintf(
 		"World units, measured from the floor the player is leaving. The engine's default without this block is %.2f.", def))
+}
+
+// editorPlayerGravity draws the level's own gravity and the player's two knobs
+// on top of it.
+//
+// The level's number is here rather than in the Environment panel because this
+// is where an author is already thinking about how the body moves, and because
+// the three fields only make sense read together: the level sets the pull, the
+// player scales it, and the terminal speed caps what the scale can build up to.
+// The volume panel carries the fourth (a region that overrides the level's).
+func editorPlayerGravity(lvl *world.Level) {
+	// The level's own, with the same "does this level say anything" checkbox
+	// the step height opens with — and for a sharper reason here: 0 is a
+	// perfectly good gravity (a station with the plating off), so an unticked
+	// box has to mean "no value written" rather than "zero".
+	has := lvl.Gravity != nil
+	if imgui.Checkbox("This level sets a gravity##gravon", &has) {
+		EditorPushUndo()
+		if has {
+			g := world.DefaultGravity
+			lvl.Gravity = &g
+			editorSetStatus("Level gravity set to %.2f", g)
+		} else {
+			lvl.Gravity = nil
+			editorSetStatus("Level gravity back to the default (%.2f)", world.DefaultGravity)
+		}
+	}
+	if lvl.Gravity == nil {
+		editorTextMutedWrapped(fmt.Sprintf(
+			"Following the default: %.1f units a second squared, downward. A volume can still override it in one region.", world.DefaultGravity))
+	} else {
+		editorDragFloatStep("Gravity##levelgravity", lvl.Gravity, -200, 200, "%.2f", 0.5)
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Downward acceleration everywhere in the level, in units\n" +
+				"a second squared. 36 is the engine's default and about\n" +
+				"Earth at this scale; 6 reads as a moon, 0 as no pull at\n" +
+				"all, and a negative number falls upward.")
+		}
+	}
+
+	imgui.Spacing()
+	// The player's own two. Zero means "the engine's", so these are plain
+	// fields with no checkbox: the value at rest already says "not set".
+	scale := lvl.Player.GravityScale
+	if editorDragFloatStep("Gravity scale##plgravscale", &scale, -10, 10, "%.2f", 0.05) {
+		EditorPushUndo()
+		lvl.Player.GravityScale = scale
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Multiplies whatever gravity is in force where the player\n" +
+			"is standing — the level's, or a volume's. 0 leaves it at 1.\n" +
+			"To stop the player falling at all, use the spawn point's\n" +
+			"gravity switch or @level.prop.player_gravity.")
+	}
+	fall := lvl.Player.MaxFallSpeed
+	if editorDragFloatStep("Max fall speed##plmaxfall", &fall, 0, 500, "%.1f", 1) {
+		EditorPushUndo()
+		lvl.Player.MaxFallSpeed = fall
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip(fmt.Sprintf("Terminal speed of the player's fall, in units a second.\n"+
+			"0 leaves it at the engine's %.0f.", world.DefaultMaxFallSpeed))
+	}
 }

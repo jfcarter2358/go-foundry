@@ -77,6 +77,26 @@ type Entity struct {
 	Velocity        mgl32.Vec3
 	AngularVelocity mgl32.Vec3
 
+	// WalkVelocity is the part of Velocity that this frame's movement keys put
+	// there, for a body being walked by an input rather than only by physics —
+	// which today is the player and nothing else. Runtime-only, derived, and
+	// never authored.
+	//
+	// It exists because the keys are NOT momentum: holding forward is a
+	// continuous request that ends the frame the key comes up, where an
+	// explosion's shove survives until something spends it. Integrating the
+	// keys as momentum would leave a player skating after every step; leaving
+	// them out of Velocity entirely — which is what the first cut of this did —
+	// makes `@player.prop.velocity` read zero for a body that is plainly
+	// moving, which is worse, because the property is then a lie.
+	//
+	// So Velocity carries the whole truth and this records how much of it the
+	// keys are responsible for. collision.MovePlayer subtracts it at the top of
+	// a frame, runs the physics on what is left, and adds this frame's back at
+	// the bottom. Anything that clears Velocity by hand must clear this too, or
+	// the next subtraction invents momentum pointing backwards.
+	WalkVelocity mgl32.Vec3
+
 	// Tweens are the channels of Position, Rotation and Scale a script is
 	// easing toward a target — `move_to`, `rotate_to`, `scale_to`. A channel
 	// being eased is written by its tween, and the rate that would otherwise
@@ -133,6 +153,16 @@ type Entity struct {
 	// the definition and optionally overridden per instance. Empty means the
 	// entity has no behaviour of its own.
 	Script string
+
+	// AITree is the .fai decision tree deciding this entity's behaviour, as a
+	// bare name under resources/ai/ — see internal/aitree. Empty is an entity
+	// that decides nothing that way.
+	//
+	// It sits beside Script rather than in place of it: the tree owns the
+	// branching and the script the arithmetic, they share this entity's
+	// scratch state and its parameters, and an event reaches both. An entity
+	// may carry either, both, or neither.
+	AITree string
 
 	// Attributes are user-defined values the engine only stores — see
 	// entity_attr.go.
@@ -718,6 +748,20 @@ type EntityCollision struct {
 	// it immovable scenery that pushes others and is never pushed itself —
 	// the boulder other things bounce off. Defaults to true.
 	Movable bool
+	// GravityScale multiplies the ambient gravity wherever this body happens to
+	// be — the level's, or a volume's where one overrides it (gravity.go). A
+	// scale rather than an acceleration so that it composes with those two
+	// instead of arguing with them: a feather is half as heavy as whatever is
+	// around it, and does not have to know what that is.
+	//
+	// 0 is the default, meaning 1. Switching gravity off is the Gravity flag
+	// above — see EffectiveGravityScale.
+	GravityScale float32
+	// MaxFallSpeed is the terminal speed this body falls at, in units per
+	// second. 0 is DefaultMaxFallSpeed. A per-body number because terminal
+	// velocity is the one part of falling that is genuinely about the object:
+	// a dropped crate and a parachute share a gravity and share nothing else.
+	MaxFallSpeed float32
 	// OnGround is whether the entity is standing on something — a floor, or
 	// another entity. Derived, never authored, never saved.
 	//
@@ -869,13 +913,29 @@ func (e *Entity) HasGravity() bool {
 
 // ApplyGravity accelerates the entity downward, capped at terminal velocity so
 // a long fall cannot tunnel through a floor in one step.
-func (e *Entity) ApplyGravity(dt float32) {
+//
+// g is the pull already resolved for this body — the level's, a volume's, and
+// the body's own scale, all folded together by GravityFor. Passed in rather
+// than looked up here because the caller is holding the level and this method
+// is not, and because a caller integrating several bodies against the same
+// point (a vehicle and its riders) should ask once.
+//
+// The cap is symmetric: under an upward gravity the same number limits the
+// climb, so a ceiling-walk level does not accelerate forever.
+func (e *Entity) ApplyGravity(dt, g float32) {
 	if !e.HasGravity() {
 		return
 	}
-	v := e.Velocity.Y() - EntityGravityAccel*dt
-	if v < -EntityMaxFallSpeed {
-		v = -EntityMaxFallSpeed
+	max := e.Collision.EffectiveMaxFallSpeed()
+	v := e.Velocity.Y() - g*dt
+	switch {
+	case v < -max:
+		v = -max
+	case v > max && g < 0:
+		// Only a body being pushed UP by gravity is clamped upward. Clamping
+		// unconditionally would eat the top of a jump and the launch off a
+		// pad, which are velocities gravity did not put there.
+		v = max
 	}
 	e.Velocity[1] = v
 }
@@ -922,15 +982,13 @@ var (
 
 // Entity gravity, in world units per second and per second squared.
 //
-// These are the player's own GravityAccel/MaxFallSpeed (input.go) converted out
-// of its per-frame-at-60fps units, so a dropped crate falls at the rate a
-// player does. The player's cannot simply be reused: its velocity is measured
-// per frame, an entity's per second.
-const (
-	EntityGravityAccel  = float32(36.0)
-	EntityMaxFallSpeed  = float32(30.0)
-	EntityGroundEpsilon = float32(0.0001)
-)
+// EntityGroundEpsilon is the slack a resting contact is allowed.
+//
+// The gravity and terminal-speed defaults that used to sit here moved to
+// gravity.go, where a level and a volume can now override them. The player and
+// an entity measure velocity in the same units — per second — so there is one
+// set of numbers rather than two.
+const EntityGroundEpsilon = float32(0.0001)
 
 // EntitiesContaining is a spatial query, not a physics step — it is what a
 // script means by "who is standing in this volume".

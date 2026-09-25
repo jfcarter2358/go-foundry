@@ -362,10 +362,10 @@ func TestFmdlRoundTripsTheArmature(t *testing.T) {
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if err := validateRawModel(raw); err != nil {
+	if err := validateRawModel(raw, nil); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	got := rawToModelDoc(raw)
+	got := rawToModelDoc(raw, nil)
 
 	if len(got.Bones) != len(m.Bones) {
 		t.Fatalf("bones = %d, want %d", len(got.Bones), len(m.Bones))
@@ -440,7 +440,7 @@ func TestValidateRejectsBrokenArmatures(t *testing.T) {
 			m, _ := boneChain(t)
 			raw := modelDocToRaw(m)
 			tc.mut(&raw)
-			if err := validateRawModel(raw); err == nil {
+			if err := validateRawModel(raw, nil); err == nil {
 				t.Error("accepted a model that should have been refused")
 			}
 		})

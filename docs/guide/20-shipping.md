@@ -10,15 +10,15 @@ its manifest names, and writes the player's settings to the per-user data
 directory.
 
 ```
-make release-linux        # build, stage, tar.gz
-make release-windows      # cross-build, stage
-make installer-linux      # the above, plus a .deb
-make installer-windows    # the above, plus a Setup.exe
-make release-check        # prove the editor is not in the binary
-make test-release         # the suite, in the release configuration
+task release-linux        # build, stage, tar.gz
+task release-windows      # cross-build, stage
+task installer-linux      # the above, plus a .deb
+task installer-windows    # the above, plus a Setup.exe
+task release-check        # prove the editor is not in the binary
+task test-release         # the suite, in the release configuration
 ```
 
-Those targets build the engine's own `resources/`. A game kept in a project
+Those tasks build the engine's own `resources/`. A game kept in a project
 directory of its own is built from the editor running there — see
 [From the editor](#from-the-editor).
 
@@ -77,10 +77,10 @@ works on the repository's own `resources/`.
 Build them from the Foundry checkout the editor came from:
 
 ```
-make runtimes RUNTIMES_DIR=/path/to/my-game/runtimes
+task runtimes RUNTIMES_DIR=/path/to/my-game/runtimes
 ```
 
-`make linux` and `make windows` build their own platform's alongside the editor.
+`task linux` and `task windows` build their own platform's alongside the editor.
 
 **Rebuild them whenever you rebuild the editor.** The editor compiles the levels
 and the game binary loads them, and a game refuses a level compiled by a
@@ -183,7 +183,7 @@ that had never been compiled and quietly performing like it.
 `make release-*` therefore runs the compiler first:
 
 ```
-make compile-levels        # or it happens as part of make release-linux
+task compile-levels        # or it happens as part of task release-linux
 ```
 
 Compiling is `-strict` there: a **leaking** level fails the build rather than
@@ -194,7 +194,7 @@ does fail.
 Two consequences worth knowing:
 
 - **A level you edited and did not recompile ships as it was.** The `.fbsp` is
-  what gets packed; the editor's Compile button and `make compile-levels` are
+  what gets packed; the editor's Compile button and `task compile-levels` are
   the two ways to bring it up to date.
 - **The authored `.yaml` is not shipped** once a `.fbsp` exists beside it. The
   binary cannot read it, and it is a level's authoring data.
@@ -211,7 +211,7 @@ package time.
 A project's `resources/` accumulates — half-finished levels, textures nothing
 samples any more — and none of it should have to be deleted by hand to not ship.
 
-`PRUNE=0 make release-linux` copies everything instead.
+`PRUNE=0 task release-linux` copies everything instead.
 
 The prune scans each reachable file for tokens that name other assets, and
 follows them to a fixpoint. It errs on the safe side: a level with the word
@@ -286,11 +286,11 @@ from wherever people keep them — typically a clone of the game's repository.
 From a Foundry checkout (on Linux, with the mingw cross-compiler):
 
 ```
-make dist-editor
+task dist-editor
 gh release create v1.4.0 build/editor-dist/*
 ```
 
-`make dist-editor` builds three files into `build/editor-dist/`, versioned from
+`task dist-editor` builds three files into `build/editor-dist/`, versioned from
 `git describe`:
 
 | File | What |
@@ -315,8 +315,11 @@ because projects live elsewhere.
 4. otherwise a new one at `Documents/Foundry Projects/Untitled`.
 
 **File → Open Project...** (with a recent list) and **New Project...** restart
-the editor on the chosen folder, after warning about anything unsaved. A new
-project can be made in an empty folder, or a fresh clone holding only `.git`.
+the editor on the chosen folder, after warning about anything unsaved. Pick one
+from Recent — a double-click opens it outright — or type the path, or hit
+**Browse...** for a folder browser that tags every folder already holding a
+project. A new project can be made in an empty folder, or a fresh clone holding
+only `.git`.
 The editor's log and settings (`foundry.log`, `release.yaml`, `graphics.yaml`
 and so on) are written in the project folder, as before; the recent list is kept
 in the per-user `Foundry Editor` data folder.
@@ -342,13 +345,13 @@ Without the variable, neither key does anything, so a player never sees it.
 
 1. `resources/game.yaml` names the real `start_level`, not the default
    `untitled`.
-2. `make compile-levels` — every level compiles, and none of them leaks.
-3. `make release-check` — the editor is out of the binary.
-4. `make test-release` — the suite passes in the release configuration.
-5. `make release-linux` / `make release-windows`, or the editor's **Release**
+2. `task compile-levels` — every level compiles, and none of them leaks.
+3. `task release-check` — the editor is out of the binary.
+4. `task test-release` — the suite passes in the release configuration.
+5. `task release-linux` / `task release-windows`, or the editor's **Release**
    window; read the prune counts. **Window > Unused Assets** lists what the
    prune left out, if you'd rather delete it than carry it.
 6. Run the staged tree from a directory that is **not** the repository. Confirm
    the log lands in the user data directory and nothing is written into the
    install.
-7. `make installer-linux` / `make installer-windows`.
+7. `task installer-linux` / `task installer-windows`.

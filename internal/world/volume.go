@@ -116,6 +116,21 @@ type Volume struct {
 	// nil is the ordinary case, and a pointer for the reason Fog is.
 	Cloud *VolumeCloud
 
+	// Gravity replaces the level's ambient pull inside the region, in units per
+	// second squared — a low-gravity chamber, a well that throws things up, a
+	// pocket of vacuum with nothing to fall toward. nil is the ordinary case: a
+	// volume that leaves gravity alone.
+	//
+	// A pointer for Fog's reason and one more of its own: `gravity: 0` is the
+	// zero-g room, which is the single most likely thing anyone will ask this
+	// field for, so it cannot also be the spelling of "no opinion".
+	//
+	// The volume does not have to be a trigger as well — it never has to carry
+	// a script — but it does have to be Enabled, so a script can switch the
+	// room's gravity off and on by arming the region. See GravityAt, which
+	// resolves overlapping regions smallest-first.
+	Gravity *float32
+
 	// ClearsClouds keeps volumetric cloud out of the region: the march treats
 	// every sample inside it as empty air, whichever cloud volume or deck the
 	// sample belongs to. It is what lets a dropship sit in a cloud bank with its
@@ -473,6 +488,7 @@ func VolumeFromRaw(r RawVolume) (Volume, error) {
 		Checkpoint:   r.Checkpoint,
 		Fog:          VolumeFogFromRaw(r.Fog),
 		Cloud:        VolumeCloudFromRaw(r.Cloud),
+		Gravity:      CopyFloatPtr(r.Gravity),
 		ClearsClouds: r.ClearsClouds,
 		Doorway:      FrameDoorwayFromRaw(r.Doorway),
 		Scatter:      VolumeScatterFromRaw(r.Scatter),
@@ -496,6 +512,7 @@ func VolumeToRaw(v *Volume) RawVolume {
 		Checkpoint:    v.Checkpoint,
 		Fog:           VolumeFogToRaw(v.Fog),
 		Cloud:         VolumeCloudToRaw(v.Cloud),
+		Gravity:       CopyFloatPtr(v.Gravity),
 		ClearsClouds:  v.ClearsClouds,
 		Doorway:       FrameDoorwayToRaw(v.Doorway),
 		Scatter:       VolumeScatterToRaw(v.Scatter),

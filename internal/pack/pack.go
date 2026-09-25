@@ -6,7 +6,7 @@ package pack
 // asset path in the engine resolves under resources/ (fileutil.ResourcesPath),
 // so "packaging" is mostly a matter of putting the right files in the right
 // folder next to the right binary. This is what decides which files those are.
-// cmd/foundrypack is its command line, for the Makefile; internal/release runs
+// cmd/foundrypack is its command line, for the Taskfile; internal/release runs
 // it for the editor's Release window.
 //
 // The tree a pack writes:
@@ -18,7 +18,7 @@ package pack
 //
 // Two modes, and the difference between them is the whole point:
 //
-//	Prune=false  copy the content tree wholesale. What `make linux` has always
+//	Prune=false  copy the content tree wholesale. What `task linux` has always
 //	             done, and the right answer while a project is being built.
 //	Prune=true   copy only what the game can actually reach from its manifest.
 //	             A repository's resources/ accumulates: half-finished levels,
@@ -144,7 +144,7 @@ var alwaysDirs = []string{"shaders", "fonts"}
 // entities/shuttle.yaml, not from any level. The token scan follows that name
 // like any other, and the chunk file is itself YAML, so the textures inside it
 // come along transitively.
-var contentDirs = []string{"levels", "chunks", "ui", "scripts", "entities", "models", "textures", "particles", "sounds", "video"}
+var contentDirs = []string{"levels", "chunks", "ui", "scripts", "entities", "ai", "models", "skeletons", "textures", "materials", "particles", "sounds", "video"}
 
 type packer struct {
 	src      string
@@ -318,7 +318,7 @@ func within(path, dir string) bool {
 // refuseDangerousOutput rejects an output directory this tool has no business
 // deleting.
 //
-// It deletes its output directory, and it is going to be run from Makefiles and
+// It deletes its output directory, and it is going to be run from build scripts and
 // CI with a path built by string concatenation, and from an editor with a path
 // somebody typed. An empty or short path, a root, a repository, or a directory
 // that does not look like something this tool made is worth refusing outright.

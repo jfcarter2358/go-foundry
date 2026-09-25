@@ -81,7 +81,7 @@ That is where the four passes above are spent —
 — which means the shipped game is the *faster* of the two, and that the editor
 is the pessimistic case rather than the optimistic one.
 
-`make release-linux` compiles every level first, with `-strict`, so a leaking
+`task release-linux` compiles every level first, with `-strict`, so a leaking
 level fails the build. See [Shipping a game](20-shipping.md).
 
 ## What stays a brush

@@ -85,8 +85,10 @@ func entityGeometryClick(mx, my int32, ctrlHeld bool) bool {
 		return true
 	}
 
-	// Face mode.
-	hit := pick3D(mx, my)
+	// Face mode. A plain click cycles through the faces under the cursor, the
+	// same as the level editor's (editor_3d_pick_cycle.go); ctrl is building a
+	// multi-selection and takes the nearest outright.
+	hit := pickFaceClick(mx, my, ctrlHeld)
 	if f, ok := faceSelFromHit(hit); ok {
 		editorSelectFace(f, ctrlHeld)
 		entityBrushSelectionSync()
@@ -102,7 +104,7 @@ func entityGeometryClick(mx, my int32, ctrlHeld bool) bool {
 
 // entityObjectClick picks up a whole brush, which is what object mode selects.
 func entityObjectClick(mx, my int32, ctrlHeld bool) bool {
-	hit := pick3D(mx, my)
+	hit := pickObjectClick(mx, my, ctrlHeld)
 	if hit.kind == pickBrushFace {
 		s := brushSel{chunkIdx: hit.chunkIdx, brushIdx: hit.brushIdx}
 		if brushSelValid(s) {

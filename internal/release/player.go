@@ -9,14 +9,14 @@ package release
 // binary to be compiled for this project, only for this engine and this
 // platform, which is what lets it come from either of two places:
 //
-//   - runtimes/, in the project directory beside the editor. `make runtimes`
+//   - runtimes/, in the project directory beside the editor. `task runtimes`
 //     builds one per platform from the same checkout the editor was built
 //     from. The normal case for an editor running from a game's own project,
 //     which has no Foundry source in it and may have no Go toolchain — and on
 //     Windows almost certainly has no C cross-compiler.
 //   - A Foundry checkout, built on the spot with `go build -tags release`. Used
 //     when one is configured, or when the project directory is inside one (the
-//     engine's own repository, or dist/), which is what the Makefile does too.
+//     engine's own repository, or dist/), which is what the Taskfile does too.
 
 import (
 	"bufio"
@@ -41,7 +41,7 @@ import (
 const RuntimesDirName = pack.RuntimesDirName
 
 // PlayerFileName is what a prebuilt game binary for a platform is called in
-// runtimes/, and what `make runtimes` names it.
+// runtimes/, and what `task runtimes` names it.
 func PlayerFileName(p Platform) string {
 	return "foundry-release-" + p.String() + p.ExeExt()
 }
@@ -125,7 +125,7 @@ func modulePath(gomod []byte) string {
 }
 
 // BuildPlayer compiles the release game binary for a platform from a Foundry
-// checkout, with the flags the Makefile's release targets use.
+// checkout, with the flags the Taskfile's release tasks use.
 func BuildPlayer(ctx context.Context, src string, p Platform, out string, w io.Writer) error {
 	goTool, err := exec.LookPath("go")
 	if err != nil {
@@ -156,7 +156,7 @@ func goBuildEngine(ctx context.Context, goTool, src string, p Platform, absOut s
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "GOOS="+p.GOOS, "GOARCH="+p.GOARCH, "CGO_ENABLED=1")
 	if p.GOOS == "windows" && runtime.GOOS != "windows" {
-		// The mingw cross-compiler the Makefile names, unless the environment
+		// The mingw cross-compiler the Taskfile names, unless the environment
 		// already says otherwise.
 		for _, kv := range [][2]string{{"CC", "x86_64-w64-mingw32-gcc"}, {"CXX", "x86_64-w64-mingw32-g++"}} {
 			if os.Getenv(kv[0]) == "" {
@@ -167,7 +167,7 @@ func goBuildEngine(ctx context.Context, goTool, src string, p Platform, absOut s
 	cmd.Stdout, cmd.Stderr = w, w
 	if err := cmd.Run(); err != nil {
 		if p.GOOS != runtime.GOOS {
-			return fmt.Errorf("go build for %s: %w — the engine uses cgo, so cross-building needs a C compiler for %s; build it where there is one (make runtimes) and put it in runtimes/", p, err, p.GOOS)
+			return fmt.Errorf("go build for %s: %w — the engine uses cgo, so cross-building needs a C compiler for %s; build it where there is one (task runtimes) and put it in runtimes/", p, err, p.GOOS)
 		}
 		return fmt.Errorf("go build for %s: %w", p, err)
 	}
@@ -222,7 +222,7 @@ func CheckSetupStub(path string) error {
 		return fmt.Errorf("%s is not a Go program: %w", path, err)
 	}
 	if info.Path != setupStubPackage {
-		return fmt.Errorf("%s is %s, not the Foundry installer — rebuild runtimes/ with make runtimes", path, info.Path)
+		return fmt.Errorf("%s is %s, not the Foundry installer — rebuild runtimes/ with task runtimes", path, info.Path)
 	}
 	for _, s := range info.Settings {
 		if s.Key == "GOOS" && s.Value != "windows" {
@@ -251,7 +251,7 @@ func CheckPlayer(path string, p Platform) (warning string, err error) {
 		settings[s.Key] = s.Value
 	}
 	if !hasBuildTag(settings["-tags"], "release") {
-		return "", fmt.Errorf("%s is a development build, with the editor in it — build it with -tags release (make runtimes)", path)
+		return "", fmt.Errorf("%s is a development build, with the editor in it — build it with -tags release (task runtimes)", path)
 	}
 	if goos := settings["GOOS"]; goos != "" && goos != p.GOOS {
 		return "", fmt.Errorf("%s is built for %s, not %s", path, goos, p.GOOS)
@@ -284,7 +284,7 @@ func revisionWarning(player string) string {
 	if mine == "" || mine == player {
 		return ""
 	}
-	return fmt.Sprintf("the game binary was built from Foundry %s and this editor from %s; if the level format changed in between, the game will refuse its levels — rebuild runtimes/ with make runtimes",
+	return fmt.Sprintf("the game binary was built from Foundry %s and this editor from %s; if the level format changed in between, the game will refuse its levels — rebuild runtimes/ with task runtimes",
 		shortRevision(player), shortRevision(mine))
 }
 

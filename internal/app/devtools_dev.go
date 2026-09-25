@@ -30,6 +30,7 @@ import (
 	"foundry/internal/project"
 	"foundry/internal/release"
 	"foundry/internal/render"
+	"foundry/internal/sim"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
 
@@ -47,6 +48,11 @@ const devAvailable = true
 // script tick and on drawing the authoring-only overlays.
 func devActive() bool { return editor.Editor.Active }
 
+// devPlayInput is a play script driving the player this frame instead of the
+// keyboard — the editor's Claude panel playing the level (editor/
+// editor_claude_play.go). false means nobody is driving and the keys are.
+func devPlayInput(dt float32) (sim.Input, bool) { return editor.ClaudePlayInput(dt) }
+
 // devWireframe reports the 3D editor's wireframe shading, which the frame loop
 // has to know about because it changes the polygon mode around the whole world
 // pass and skips the scatter and displacement passes.
@@ -62,8 +68,13 @@ func devWireframe() bool {
 //     it as a child process and a terminal can run it with no editor at all.
 //   - `find-unused` lists the project's assets that nothing uses.
 //   - `check` loads a level with no window and lints its scripts against it.
+//   - `ai check` compiles the project's decision trees (.fai) and says what is
+//     wrong with them; `ai list` says what each one answers.
 //   - `sim` loads a level with no window and runs the frame on it, which is the
 //     same frame this binary runs (internal/sim) — see internal/harness.
+//   - `play` plays a level from a script instead of a keyboard, and can draw
+//     what the player sees — one run, or a session that stays up and is driven
+//     a command at a time (internal/play).
 //   - `render` draws a model, a screen or the player's arms to a .png.
 //   - `model inspect` measures a .fmdl through the engine's own pose maths.
 //   - `profile-load` times a level load, stage by stage.
@@ -85,8 +96,12 @@ func devRunCommand(args []string) (exitCode int, ran bool) {
 		return pack.UnusedMain(commandProject(), args[1:], os.Stdout), true
 	case harness.CheckCommand:
 		return harness.CheckMain(commandProject(), args[1:], os.Stdout), true
+	case harness.AICommand:
+		return harness.AIMain(commandProject(), args[1:], os.Stdout), true
 	case harness.SimCommand:
 		return harness.SimMain(commandProject(), args[1:], os.Stdout), true
+	case harness.PlayCommand:
+		return harness.PlayMain(commandProject(), args[1:], os.Stdout), true
 	case harness.RenderCommand:
 		return harness.RenderMain(commandProject(), args[1:], os.Stdout), true
 	case harness.ProfileLoadCommand:
@@ -259,4 +274,8 @@ func devRenderSecondaryWindows(dt float32) { uiwin.RenderSecondaryWindows(dt) }
 // devCaptureClaudeShot fills a screenshot the Claude Code panel's viewport tool
 // asked for. Called from the frame loop with the finished frame still in the
 // back buffer.
-func devCaptureClaudeShot() { editor.ClaudeCaptureIfRequested() }
+func devCaptureClaudeShot() {
+	editor.ClaudeCaptureIfRequested()
+	// And a `shot` command inside a play script, which wants the same instant.
+	editor.ClaudePlayCaptureIfRequested()
+}

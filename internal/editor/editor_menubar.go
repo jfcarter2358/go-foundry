@@ -19,6 +19,7 @@ package editor
 // safe: one route is less to get wrong, and a frame's delay is invisible.
 
 import (
+	"foundry/internal/material"
 	"foundry/internal/platform"
 	"foundry/internal/textureui"
 	"foundry/internal/uiwin"
@@ -51,7 +52,9 @@ const (
 	editorKindScript
 	editorKindYAML
 	editorKindParticles
+	editorKindMaterial
 	editorKindUI
+	editorKindAI
 )
 
 // editorSwitchTarget is one entry of the switcher strip.
@@ -74,7 +77,8 @@ func editorSwitchTargets() []editorSwitchTarget {
 		{editorKindTexture, "Texture", textureui.TextureEditorOpen, textureui.OpenTextureEditor,
 			"Paint textures, their frames, layers and bump maps."},
 		{editorKindModel, "Model", ModelEditorOpen, OpenModelEditorWindow,
-			"Model meshes, bones, skin weights and animation clips (.fmdl)."},
+			"Model meshes, bones, skin weights and animation clips (.fmdl),\n" +
+				"and the shared skeletons (.fskl) several models can be rigged to."},
 		{editorKindEntity, "Entity", EntityEditorOpen, OpenEntityEditorWindow,
 			"Author entity types (" + world.EntitiesDirName + "/*.yaml) — models,\n" +
 				"carried chunk geometry, a script and a vehicle block.\nPlace them from Explorer -> Add -> Entity."},
@@ -86,8 +90,15 @@ func editorSwitchTargets() []editorSwitchTarget {
 				"from it, as one step Ctrl+Z takes back."},
 		{editorKindParticles, "Particles", ParticleEditorOpen, OpenParticleEditorWindow,
 			"Author particle effects (.fpar). Place them in the\nlevel as emitters from Explorer -> Add -> Emitter."},
+		{editorKindMaterial, "Material", MaterialEditorOpen, OpenMaterialEditorWindow,
+			"Author materials (" + material.MaterialsDirName + "/*" + material.MaterialExt + ") — the shader\n" +
+				"effects a surface, sprite, particle layer or sky wears.\nName one from any texture picker's Material row."},
 		{editorKindUI, "UI", UIEditorOpen, OpenUIEditorWindow,
 			"Author screens (.fui) — menus, HUDs and loading screens.\nAttach them to the level from Properties -> Level -> UI."},
+		{editorKindAI, "AI", AIEditorOpen, OpenAIEditorWindow,
+			"Draw behaviours as decision trees (.fai) — what an agent does about\n" +
+				"what happens to it. Give one to an entity type with `ai_tree:`;\n" +
+				"the `ai:` block beside it still says how it moves."},
 	}
 }
 

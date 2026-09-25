@@ -517,10 +517,10 @@ editor's reference panel. The core surface:
 
 | Object | Properties |
 | --- | --- |
-| entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `hit_height` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `on_ground` · `sprinting` (player) · read-only: `eye_position` `look_direction` `crouching` `type` `current_sector` `current_chunk` `frame` `local_position` `seat` `waypoints` |
+| entity | `position` `rotation` `scale` `velocity` `angular_velocity` `visible` `texture` `bounding` `bound_half` `bound_offset` `hit_height` `collision_world` `collision_entities` `collision_gravity` `collision_movable` `gravity_scale` `max_fall_speed` `on_ground` · `sprinting` (player) · read-only: `gravity` `eye_position` `look_direction` `crouching` `type` `current_sector` `current_chunk` `frame` `local_position` `seat` `waypoints` |
 | model | `texture` `visible` `alpha` `offset` `rotation` `scale` `uv_scroll` `uv_offset` · read-only: `path` |
 | vehicle | `vehicle_throttle` `vehicle_steer` `vehicle_pitch` `vehicle_roll` · tuning: `vehicle_max_speed` `vehicle_accel` `vehicle_brake` `vehicle_turn_rate` `vehicle_pitch_rate` `vehicle_roll_rate` `vehicle_drag` · read-only: `vehicle_speed` `vehicle_driver` |
-| volume | `position` `rotation` `half` `shape` `enabled` `load_level` `fog` `fog_color` `fog_density` `fog_max_opacity` · read-only: `attach` `carrier` `waypoints` |
+| volume | `position` `rotation` `half` `shape` `enabled` `load_level` `gravity` `fog` `fog_color` `fog_density` `fog_max_opacity` · read-only: `attach` `carrier` `waypoints` |
 | brush | `solid` · dynamic brushes only: `position` `rotation` `scale` `velocity` `angular_velocity` · read-only: `dynamic` `waypoints` |
 | edge | `kind` `texture` `collision` `visible` `pinned` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · portals also: `to_sector` `draw_gap` `gap_texture` |
 | floor | `enabled` `hidden` `height` `texture` `double_sided` `alpha` `uv_offset` `uv_scale` `uv_rotation` `smooth` `smooth_angle` · slab: `thickness` `slab_texture` `slab_rim_texture` `slab_hidden` `slab_rim_across_portals` · read-only: `shaped` `world_height` `slab_shaped` |
@@ -529,7 +529,7 @@ editor's reference panel. The core surface:
 | light | dynamic lights only: `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `dynamic` `attach` `carrier` `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
-| level | `step_height` `player_control` `player_gravity` `camera_fov` `viewmodel_fov` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `master_volume` `music_volume` `effects_volume` `smooth_lighting` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` · read-only: `load_progress` `load_stage` `dev_build` |
+| level | `step_height` `gravity` `player_control` `player_gravity` `player_fly` `camera_fov` `viewmodel_fov` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `master_volume` `music_volume` `effects_volume` `smooth_lighting` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` `camera_detached` `camera_position` `camera_yaw` `camera_pitch` `camera_roll` `cursor` · read-only: `load_progress` `load_stage` `dev_build` `camera_direction` `camera_orbit_distance` `look_delta` `cursor_position` `cursor_free` `cursor_over_ui` |
 
 ### Moving a brush
 
@@ -868,6 +868,60 @@ resolved, and an entity written into a wall is in the wall until something moves
 it out. That is what makes it the tool for a teleport or a respawn, and the wrong
 one for a step — give a `velocity` and let the collision pass do its work.
 
+### Momentum, impulses and gravity
+
+`velocity` is how fast something is going, in world units a second, and **the
+player has one like everything else**. It reads back everything the body is
+doing — a shove, a fall, and the player's own walking — so a script asking how
+fast the player is moving gets the answer. Writing it sets what the body is
+doing and the physics carries on from there: gravity still pulls, walls still
+stop it, and the ground still bleeds it off.
+
+The one thing that is not carried between frames is the part the movement keys
+are asking for. Holding forward is a continuous request that ends the frame the
+key comes up; a blast's shove survives until something spends it. So the two are
+added rather than mixed: a shove does not cancel the player's run, the run does
+not cancel the shove, and letting go of the walk key does not leave them
+skating.
+
+`impulse(ref, vec)` **adds** to a velocity instead of replacing it, and that is
+almost always what you want:
+
+```
+def on_blast(:explode:, at vec) -> null
+    away = @player.prop.position - at
+    impulse(player(), normalize(away) * 14.0)
+end
+```
+
+Writing `velocity` for that would throw away whatever the body was already
+doing, so a grenade going off under a running player would stop them dead and
+then throw them. `impulse` works on any entity and on `player()`, and the vector
+is world-space in both cases.
+
+Gravity itself is three things multiplied together, and each has its own knob:
+
+| where | how | what it means |
+|---|---|---|
+| the level | `gravity:` in the level file, `@level.prop.gravity` | the ambient pull everywhere, in units a second squared. The engine's default is `36`; about `6` reads as a moon and `0` as no pull at all |
+| a region | `gravity:` on a volume, `@vol.prop.gravity` | replaces the level's while a body's centre is inside the volume, and only while the volume is enabled. Where two overlap, the smaller wins |
+| a body | `gravity_scale:` in an entity type's `collision:` block or the level's `player:` block, `@e.prop.gravity_scale` | multiplies whichever of the two applies. `0.2` drifts like a feather, `-1` falls upward |
+
+A negative number falls upward, at every level. `@e.prop.gravity` reads back the
+answer — what this body is actually falling under, with all three applied — and
+is read-only, because there is no single field it corresponds to.
+
+`max_fall_speed` is the terminal speed, per body, in units a second; `0` is the
+engine's `30`. It is a cap on falling, not on being thrown: a jump, a launch pad
+and an `impulse` all reach whatever speed they were given.
+
+```
+-- a zero-g chamber whose gravity a switch restores
+def on_switch(:interact:, src ref) -> null
+    @vacuum_room.prop.gravity = null     -- null hands the region back to the level
+end
+```
+
 An entity's `texture` is its attachments' skin: reading it reports what the first
 attachment draws with, and writing it reskins them all. One attachment of several
 is addressed rather than passed: `@tank.model.turret.prop.texture = "rusted"`.
@@ -974,13 +1028,23 @@ point's **Player control** and **Gravity** switches (`disable_control:` and
 `disable_gravity:` under `spawn:`), and the way a script gives them back. With
 control off the player's input does nothing — walking, jumping, driving, the
 interact key, and looking around with the mouse or the arrow keys, so the view
-stays wherever the spawn aimed it. With gravity off the player does
-not fall; turning it off mid-fall stops them where they are, and with control on
-they free-fly on Space and Shift.
+stays wherever the spawn aimed it.
+
+With gravity off the player does not fall, but they are **weightless rather than
+frozen**: whatever momentum they have carries them on, so an `impulse` in a
+zero-g corridor drifts them down it. Turning it off mid-fall stops the fall
+where it is and leaves the rest of the momentum alone.
+
+`@level.prop.player_fly` is the separate switch for free-fly: the jump and
+sprint keys move the body straight up and down, nothing pulls on it, and its
+momentum is dropped. It is what the `0` key and the developer console's `fly`
+and `noclip` toggle. The two used to be one switch, which made "the player is
+weightless" and "the player is a noclip camera" impossible to ask for
+separately.
 
 ```
 -- a spawn with both off, aboard a dropship flying in
-def on_landed(:landed:) -> null
+def on_arrived(:arrived:) -> null
     @level.prop.player_gravity = true
     @level.prop.player_control = true
 end
@@ -1165,6 +1229,8 @@ The engine posts these without being asked.
 | `:weapon_slot:` | player | `slot int` | A weapon-slot key (1 to 5) was pressed |
 | `:weapon_cycle:` | player | `step int` | The mouse wheel or Q asked for the next (`1`) or previous (`-1`) weapon |
 | `:reload:` | player | — | The reload key (R) was pressed |
+| `:landed:` | player | `speed float` | The player touched the ground after being off it; `speed` is how fast they were falling, in units a second |
+| `:left_ground:` | player | — | …and left it again: jumped, walked off a ledge, was thrown, or had the floor taken away |
 | `:anim_start:` | entity | `src ref, model str, anim str` | A clip began, including each loop wrap |
 | `:anim_end:` | entity | `src ref, model str, anim str` | A clip finished, or a looping one wrapped |
 | `:mount:` | vehicle | `src ref, seat str` | Something came aboard; `seat` is empty if it is standing |
@@ -1189,6 +1255,17 @@ The engine posts these without being asked.
 | `:unhover:` | widget, then its screen | `src ref` | …and left again |
 | `:change:` | widget, then its screen | `src ref, value` | A slider, toggle or field's value changed; `value` follows the kind |
 | `:submit:` | widget, then its screen | `src ref, text str` | Enter was pressed in a text field |
+| `:drag_start:` | widget, then its screen | `src ref, pos vec` | A `draggable` widget was pressed and the pointer moved a few pixels with it; `pos` is where the press began, in canvas units |
+| `:drag:` | widget, then its screen | `src ref, pos vec, delta vec` | …and moved on, at most once a frame; `delta` is the travel since the last one |
+| `:drop:` | widget, then its screen | `src ref, onto, pos vec` | …and was let go; `onto` is the widget it landed on, or `null` |
+| `:pointer_down:` / `:pointer_up:` | level, player, and the object under the cursor | `button atom, hit, at` | A mouse button went down / up on the world with the cursor free. See [The pointer](#the-pointer) |
+| `:pointer_click:` | level, player, and the object under the cursor | `button atom, hit, at` | A press and a release on the same thing, with no drag between |
+| `:pointer_enter:` / `:pointer_exit:` | level, player, and the object | `hit ref` | The cursor moved onto / off an object in the world |
+| `:pointer_wheel:` | level, player, and the object under the cursor | `amount float, hit, at` | The wheel turned over the world with the cursor free |
+| `:pointer_drag_start:` | level, player, and the object pressed on | `button atom, hit, at` | A button held on the world moved a few pixels |
+| `:pointer_drag:` | level, player, and the object pressed on | `button atom, delta vec, at` | …moved on, at most once a frame; `delta` is in window pixels, `at` is under the cursor now |
+| `:pointer_drag_end:` | level, player, and the object pressed on | `button atom, hit, at` | …and was let go over `hit` |
+| `:pointer_drop:` | the object a drag ended on | `button atom, dragged, at` | Something was dragged onto it and let go |
 | `:bound:` | widget or screen that called `bind_key` | `src ref, action str, slot int` | The press `bind_key` was waiting for arrived: bound, cleared (Backspace) or cancelled (Escape) |
 | `:cancel:` | screen | — | Escape was pressed while this screen was the topmost modal one |
 | `:shown:` | screen | — | The screen was put on the stack |
@@ -1423,11 +1500,18 @@ Components are members rather than functions: `v.x`, `v.y`, `v.z`.
 
 **World** — `log(...)` `time()` `player()` `find(tag)` `distance(a, b)`
 `play_anim(ref, model, name)` `stop_anim(ref)` `spawn(type, vec)` `destroy(ref)`
-`hitscan(atom)` `hitscan(atom, options)`
+`hitscan(atom)` `hitscan(atom, options)` `pick(atom)` `pick(atom, options)`
+`screen_ray(point)` `world_to_screen(place)`
 `emit(emitter)` `stop_emit(emitter)`
 `burst(emitter, count)` `spawn_effect(name, vec)` `attach(obj, carrier)`
-`detach(obj)` `move_to(obj, vec, seconds)` `rotate_to(obj, vec, seconds)`
-`scale_to(obj, vec, seconds)`
+`detach(obj)` `impulse(ref, vec)` `move_to(obj, vec, seconds)`
+`rotate_to(obj, vec, seconds)` `scale_to(obj, vec, seconds)`
+
+**Camera** — `camera_detach()` `camera_attach(seconds, ease)`
+`camera_move_to(place, seconds, ease)` `camera_turn_to(yaw, pitch, seconds, ease)`
+`camera_roll_to(degrees, seconds, ease)` `camera_look_at(place, seconds, ease)`
+`camera_orbit(target, options)` `camera_zoom(fov, seconds, ease)` — see
+[The camera](#the-camera)
 
 **UI** — `show_screen(name)` `hide_screen(screen)` `screen(name)`
 `widget(screen, id)` `focus(widget)` `load_level(name)` `quit_game()`
@@ -1687,6 +1771,159 @@ g = spawn("grenade", @player.prop.eye_position + @player.prop.look_direction * 0
 g.prop.velocity = @player.prop.look_direction * 14.0 + <0.0, 3.0, 0.0>
 ```
 
+`hitscan` takes one more option, `"screen"`: a point on the window in pixels,
+`<x, y, 0.0>` from the top-left, to cast through from the camera instead of
+through the reticle. It cannot be combined with `from` or `direction`.
+
+### The camera
+
+The camera is the player's eye until a script takes it. Every verb below that
+places or turns it **detaches** it from the player first, so a cutscene's first
+line can be its first shot:
+
+```
+@level.prop.player_control = false
+camera_move_to(<12.0, 6.0, -4.0>, 2.0)          -- fly out over two seconds
+camera_look_at(@dropship, 1.5)                   -- and keep the ship in frame
+...
+camera_attach(1.0)                               -- blend back to the player's eye
+@level.prop.player_control = true
+```
+
+| Verb | |
+| --- | --- |
+| `camera_detach()` | take the camera off the player and hold it where it is — invisible on its own |
+| `camera_attach(seconds, ease)` | give it back, blending from where it is to the player's eye (at once without `seconds`). `false` if it was not detached |
+| `camera_move_to(place, seconds, ease)` | slide to a vec or an object's position. Ends an orbit; keeps a look, so a camera can dolly past something while staying on it |
+| `camera_turn_to(yaw, pitch, seconds, ease)` | pan and tilt to a facing, in degrees. While orbiting, swings round the target instead |
+| `camera_roll_to(degrees, seconds, ease)` | bank; positive leans the camera's top to the right |
+| `camera_look_at(place, seconds, ease)` | turn toward a vec or an object and stay on it — an object is followed as it moves. `camera_look_at(null)` lets go |
+| `camera_orbit(target, options)` | circle a vec or an object, looking at it. `null` stops; options alone adjust the orbit already running |
+| `camera_zoom(fov, seconds, ease)` | ease the field of view (5–120 degrees, lower is closer). Does **not** detach — a scope wants it too |
+
+Every `seconds` is optional and blends from wherever the camera is now; zero or
+none is at once. `ease` is one of `:ease_in_out:` (the default — a camera that
+starts and stops dead reads as a mistake), `:linear:`, `:ease_in:` and
+`:ease_out:`. A new call on a channel replaces the blend already running on it,
+from wherever that had got to, so a script can retarget a move halfway through.
+
+**Angles** are degrees in the camera's own convention: yaw `0` looks along +X
+and grows turning right (toward +Z), pitch is positive up and stops just short
+of ±90, and every turn goes the short way round. `@level.prop.camera_yaw` reads
+the same number for whichever camera is live, so reading it and writing it back
+is a no-op.
+
+`camera_orbit` starts from **where the camera is**: its distance and direction
+to the target become the orbit's first values, so nothing jumps. The options
+dict takes `distance`, `yaw`, `pitch` (degrees), `seconds` and `ease`, and each
+one given blends to its new value. A second `camera_orbit` with a new target
+slides the centre across over the same blend.
+
+```
+camera_orbit(@squad_leader, {"distance": 6.0, "pitch": -20.0, "seconds": 1.0})
+camera_orbit({"yaw": @level.prop.camera_yaw + 90.0, "seconds": 0.5})   -- a quarter turn round
+camera_orbit(null)                                                        -- hold it here
+```
+
+**The player's look is left alone.** While the camera is detached the player
+keeps their own yaw and pitch — what a save records, what the view goes back to
+on `camera_attach`, and where a `hitscan` without `screen` is not aimed any more:
+the reticle is the middle of the camera, wherever that is. The walk keys move
+the player relative to the **camera's** heading while it is detached, the way a
+third-person or fixed-angle game walks. Mouse look turns nothing; it is still
+read, as `@level.prop.look_delta` — this frame's turn in degrees, x right and y
+up, with the player's sensitivity, smoothing and invert-Y applied — which is how
+a script steers an orbit from the mouse:
+
+```
+def on_tick(:tick:, dt float) -> null
+    d = @level.prop.look_delta
+    if d.x != 0.0 or d.y != 0.0
+        camera_orbit({"yaw": @level.prop.camera_yaw + d.x,
+                      "pitch": @level.prop.camera_pitch + d.y})
+    end
+end
+```
+
+The properties are the same camera: `camera_position`, `camera_yaw`,
+`camera_pitch` and `camera_roll` read wherever it is and, written, put it there
+at once (detaching it); `camera_detached` is the switch, written `false` to snap
+back; `camera_direction` and `camera_orbit_distance` (`null` when not orbiting)
+are read-only. A detached camera, like a zoom, belongs to the play session:
+leaving play or loading a level gives the view back to the player.
+
+### The pointer
+
+With the cursor captured the mouse is the player's head, and its buttons are
+the fire actions. With the cursor **free** it is a pointer at the world: a screen
+with `cursor` on frees it, and so does `@level.prop.cursor = true` with no
+screen up at all — a strategy view, a build mode. While it is free, a press that
+no widget takes is a press on the world, and the mouse buttons and wheel are
+the pointer's rather than the fire and weapon-switch actions they are bound to.
+
+What is under the cursor is found the way `hitscan` finds things — from the
+camera, through the cursor — and every event carries it:
+
+```
+def on_click(:pointer_click:, :left:, hit, at) -> null     -- in the level's script
+    if hit != null and hit.kind == "entity"
+        @self.state.selected = hit
+    elif at != null and @self.state.selected != null
+        ai_move_to(@self.state.selected, at)
+    end
+end
+```
+
+| Event | Arguments | When |
+| --- | --- | --- |
+| `:pointer_down:` / `:pointer_up:` | `button atom, hit, at` | a button went down / came up |
+| `:pointer_click:` | `button atom, hit, at` | down and up on the same thing, with no drag between |
+| `:pointer_enter:` / `:pointer_exit:` | `hit ref` | the cursor moved onto / off an object |
+| `:pointer_wheel:` | `amount float, hit, at` | the wheel turned; positive is away from the user |
+| `:pointer_drag_start:` | `button atom, hit, at` | a held button moved a few pixels — where the press began |
+| `:pointer_drag:` | `button atom, delta vec, at` | the drag moved: `delta` in window pixels since the last one, `at` under the cursor now |
+| `:pointer_drag_end:` | `button atom, hit, at` | the button came up, over `hit` |
+| `:pointer_drop:` | `button atom, dragged, at` | to the object a drag ended on: what was dragged onto it |
+
+`button` is `:left:`, `:right:` or `:middle:`, so a clause head can pick one out.
+`hit` is the nearest object under the cursor or `null`; `at` is where the ray met
+it — or met the floor, for a click on open ground — and `null` only for the sky.
+Each event goes to **the level's scripts, the player's, and the object it is
+about** when that object has a script: a console handles its own
+`:pointer_click:`, and the level handles "the player clicked the ground here".
+Over a widget nothing in the world is under the cursor, so hover exits.
+
+A drag moves the camera as naturally as it moves a unit — a right-drag that
+orbits, a middle-drag that pans:
+
+```
+def on_drag(:pointer_drag:, :right:, delta vec, at) -> null
+    camera_orbit({"yaw": @level.prop.camera_yaw + delta.x * 0.3})
+end
+def on_wheel(:pointer_wheel:, amount float, hit, at) -> null
+    camera_orbit({"distance": @level.prop.camera_orbit_distance - amount, "seconds": 0.15})
+end
+```
+
+`pick(atom, options)` is `hitscan` through the cursor, answering `(atom, hit,
+at)` the same way and taking the same options; with the cursor captured the
+cursor is the middle of the view. `screen_ray(point)` is the ray through the
+cursor, or a window point in pixels, as `{"from": vec, "direction": vec}` — the
+dict `hitscan` takes, so `hitscan(:shot:, screen_ray(p))` is a pick through `p`.
+`world_to_screen(place)` goes the other way: a vec or an object's window pixel
+as `<x, y, depth>`, or `null` behind the camera. `@level.prop.cursor_position`
+is the pointer in window pixels (the middle of the window while captured),
+`cursor_free` whether it is free, and `cursor_over_ui` whether a widget is
+under it.
+
+**Under a screen.** A HUD that is not modal lets the pointer through wherever
+it has no widget. A modal screen keeps everything — unless it sets
+`click_through: true`, when a click on none of its widgets reaches the world
+while the keyboard stays with the screen: a build menu over a level the player
+is still placing things in, a tactical pause over one they are still giving
+orders in. The events arrive under a pausing screen too — only
+`@level.prop.paused` stops them.
+
 ### Particles
 
 Four verbs drive particle emitters. The first two look like a pair and are not
@@ -1739,6 +1976,74 @@ A **sprite**'s are `position`, `visible`, `texture`, `alpha`, `tint`, `size`,
 `size` is a `vec` of width and height, whose `z` is unused. `scale` multiplies
 that size as drawn — `x` the width, `y` the height — without changing it; it is
 what a waypoint animation's scale writes, and `<1, 1, 1>` is the authored size.
+
+### Decals
+
+A **decal** is a texture projected onto the level's own surfaces: a bullet hole,
+a scorch mark, a splatter, a stencil. It is not a quad standing in front of a
+wall — its mesh is the wall's own triangles, clipped to the decal's box and
+re-textured — so it follows the shape it lands on, bends round its corners, is
+occluded by whatever is in front of it, and rides the lift or the hull it was
+placed on. The designer's side of it is
+[docs/guide/29-decals.md](docs/guide/29-decals.md).
+
+`decal` is `spawn_effect`'s counterpart for the marks a fight leaves. It takes a
+texture name and a **point** — not an orientation — and finds the surface there
+itself:
+
+```
+decal("decal_bullet_hole", at)
+decal("decal_bullet_hole", at, {"size": 0.07, "life": 45})
+decal("decal_scorch", @crate, {"blend": "multiply", "size": 1.2})
+```
+
+A point is what a script has: `hitscan`'s `at` is where the round landed. Making
+every weapon script carry a surface normal around instead would be one more thing
+to thread through and one more place to get it wrong, so the engine asks the
+geometry. Pass `normal` yourself when you already have one and it skips the
+search.
+
+It returns a `ref` to the decal, or `null` when there was no surface at that
+point — so a script shooting at the sky simply leaves no hole, with nothing to
+check:
+
+```
+def on_shot(:shot:, hit, at vec) -> null
+    if hit != null
+        hit <- (:damage:, @self, 10)
+    else
+        spawn_effect("bullet_impact", at)
+        decal("decal_bullet_hole", at, {"size": 0.07, "life": 45})
+    end
+end
+```
+
+The options are `size` (a number for a square, or a `vec` for width and height),
+`depth`, `normal`, `roll`, `material`, `blend`, `tint`, `alpha`, `life`, `order`,
+`max_angle`, `unlit` and `permanent`.
+
+`blend` is the one worth choosing deliberately: `"alpha"` lays the texture over
+the surface, `"multiply"` darkens the surface by it, and `"additive"` adds light.
+Multiply is what soot, scorch, oil and dirt want, because one such texture then
+reads correctly on every colour it lands on.
+
+Two options govern how long a mark lives. `life` is seconds, and the mark fades
+out over the last of them rather than blinking off. Without one it stays until
+the cap recycles it: script-placed decals are capped at 192 with the oldest
+dropped, because a level that kept every bullet hole a long firefight produced
+would grow without bound. `permanent` opts a mark out of that cap and into the
+save game — for the few a script places deliberately, not for per-impact ones.
+Decals an author placed in the editor are never touched by the cap.
+
+A **decal**'s properties are `position`, `rotation`, `size`, `texture`,
+`material`, `tint`, `alpha`, `blend`, `order`, `lifetime`, `visible`, `unlit`,
+and the read-only `faces` — the unit `vec` it projects along. `size` is a `vec`
+of width, height and projection depth, and a zero `z` leaves the depth alone.
+
+One thing about cost, because it is invisible. Writing `position`, `rotation` or
+`size` **re-clips the mesh** out of the world on the next frame; writing `alpha`,
+`tint`, `texture`, `material` or `visible` does not, and is free. So fade a decal
+through `alpha`, and hide one through `visible` rather than by moving it away.
 
 ### Audio
 
@@ -1896,6 +2201,31 @@ reset_bindings()                   -- every action back on its default keys
 A screen and a widget carry the same tags, attributes, script and params any
 level object does, so `#dimmable.prop.alpha = 0.5` reaches widgets, and a button
 gets its behaviour the same way a door does.
+
+A widget authored `draggable: true` (any kind — an inventory icon is an image)
+can be picked up: pressing it and moving posts `:drag_start:`, a `:drag:` each
+frame it moves and `:drop:` when it is let go, naming the widget it landed on.
+Positions are in the screen's canvas units, the ones `pos` reads. The widget
+does not move by itself; `translate` is a runtime slide from where its layout
+puts it, so carrying it is one line:
+
+```
+def on_drag(:drag:, src, pos vec, delta vec) -> null
+    @self.prop.translate = @self.prop.translate + delta
+end
+def on_drop(:drop:, src, onto, pos vec) -> null
+    if onto == null
+        @self.prop.translate = <0.0, 0.0, 0.0>      -- back where it came from
+    else
+        @self.prop.translate = onto.prop.pos - @self.prop.pos + @self.prop.translate
+    end
+end
+```
+
+`hovered` and `dragging` read what the pointer is doing to a widget, and a
+screen's `pointer` is where the pointer is in that screen's canvas units. A
+screen's `click_through` lets clicks on its empty space reach the world — see
+[The pointer](#the-pointer).
 
 **A widget whose document declares a binding is read-only to scripts.** Writing
 `@hud.hp.prop.text` on a label bound to `@player.attr.health` is refused, and
@@ -2437,6 +2767,46 @@ player:
   attributes:
     health: {type: int, value: 100}
 ```
+
+### Beside a decision tree
+
+An entity may also carry a **decision tree** — a `.fai` document drawn in the AI
+editor rather than written — with `ai_tree:`, on exactly the rule `script:`
+follows:
+
+```yaml
+# resources/entities/enemy_rifle.yaml
+script: scripts/enemy_combat.flang
+ai_tree: soldier                      # resources/ai/soldier.fai
+```
+
+A tree holds the branching: which reaction wins, how likely it is, how long
+before it may happen again, what to remember. The script holds what is
+genuinely computational. They are two halves of one behaviour, not two
+behaviours, because they run on the same interpreter:
+
+- the tree's `call` verb enters this script's functions directly, and can put
+  what one returns on the blackboard
+- the tree's `set` verb writes the same dict this script reads as
+  `@self.state["..."]`
+- the tree's `send` posts into the same queue, delivered under the same rules,
+  so a tree and its script can send each other messages
+- a tree's `params:` are declared **to** this script: `?grenade_chance` means
+  the same number in both, and the entity's own `params:` block sets it for
+  both. Declaring one name in both places is reported as a conflict rather than
+  resolved one way.
+- `random()` draws from one generator, so `seed_random` pins both halves
+
+When a message arrives at an object carrying both, **the tree hears it first** —
+deciding comes before acting — and either half handling it counts as handled.
+
+A tree can be checked without launching anything:
+
+```
+foundry ai check soldier -script scripts/enemy_combat.flang
+```
+
+See `docs/guide/24-ai.md` for the editor and the node vocabulary.
 
 ---
 

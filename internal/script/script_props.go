@@ -322,7 +322,7 @@ func entityProps() map[string]propAccess {
 				e.Velocity = frameDirSet(c, e, d)
 				return nil
 			},
-			Doc: "world-space velocity, in units per second",
+			Doc: "world-space velocity, in units per second — everything the body is doing, the player's own walking included. Writing it replaces whatever the body was doing; impulse() adds to it instead",
 		},
 		"angular_velocity": {
 			Get: get(func(e *world.Entity) flang.Value { return vecValue(e.AngularVelocity) }),
@@ -420,6 +420,53 @@ func entityProps() map[string]propAccess {
 			Get: get(func(e *world.Entity) flang.Value { return flang.BoolVal(e.Collision.Movable) }),
 			Set: set(boolSet("collision_movable", func(e *world.Entity, b bool) { e.Collision.Movable = b })),
 			Doc: "whether a resolution may displace this entity",
+		},
+		// How hard gravity pulls on this one body, and how fast it is allowed
+		// to get. The pull itself belongs to the place — the level's `gravity:`
+		// and whatever volume overrides it here — so the body scales it rather
+		// than replacing it (world/gravity.go).
+		"gravity_scale": {
+			Get: get(func(e *world.Entity) flang.Value {
+				return flang.FloatVal(e.Collision.EffectiveGravityScale())
+			}),
+			Set: set(func(e *world.Entity, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("gravity_scale", "number", v)
+				}
+				e.Collision.GravityScale = f
+				return nil
+			}),
+			Doc: "multiplies the gravity in force where this body is: 1 normal, 0.2 a drifting feather, -1 falls upward. Reads back 1 when nothing set it; switch gravity off entirely with collision_gravity",
+		},
+		"max_fall_speed": {
+			Get: get(func(e *world.Entity) flang.Value {
+				return flang.FloatVal(e.Collision.EffectiveMaxFallSpeed())
+			}),
+			Set: set(func(e *world.Entity, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("max_fall_speed", "number", v)
+				}
+				e.Collision.MaxFallSpeed = f
+				return nil
+			}),
+			Doc: "terminal speed of this body's fall, in units a second; 0 restores the engine's 30",
+		},
+		"gravity": {
+			// The answer, not a setting: what this body is actually falling
+			// under once the level, the region it is standing in and its own
+			// scale have all had their say. Read-only because there is no one
+			// field it corresponds to — write gravity_scale, the level's
+			// gravity, or the volume's.
+			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {
+				e := c.entityFor(r)
+				if e == nil {
+					return nil, false
+				}
+				return flang.FloatVal(world.GravityFor(c.lvl, e)), true
+			},
+			Doc: "read-only: the downward acceleration actually acting on this body, in units a second squared — the level's or the region's, times its gravity_scale",
 		},
 
 		// Derived state. Read-only because writing it would be overwritten by
@@ -645,6 +692,31 @@ func volumeProps() map[string]propAccess {
 		"attach": {
 			Get: get(func(v *world.Volume) flang.Value { return flang.StrVal(v.Attach.Describe()) }),
 			Doc: "what the volume rides, as the editor names it; empty when it is in world space (read-only)",
+		},
+		// The region's gravity override. null is the ordinary case — a volume
+		// that leaves gravity alone — and it is both what the property reads
+		// back and what writing null restores, so a script can lift an override
+		// it put there without the level having to remember what was underneath.
+		"gravity": {
+			Get: get(func(v *world.Volume) flang.Value {
+				if v.Gravity == nil {
+					return flang.NullVal{}
+				}
+				return flang.FloatVal(*v.Gravity)
+			}),
+			Set: set(func(vol *world.Volume, v flang.Value) error {
+				if _, isNull := v.(flang.NullVal); isNull {
+					vol.Gravity = nil
+					return nil
+				}
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("gravity", "number or null", v)
+				}
+				vol.Gravity = &f
+				return nil
+			}),
+			Doc: "the downward acceleration inside this region, replacing the level's, in units a second squared; null for a volume that leaves gravity alone. Only while the volume is enabled",
 		},
 		"carrier": {
 			Get: func(c *refCache, r flang.RefVal) (flang.Value, bool) {

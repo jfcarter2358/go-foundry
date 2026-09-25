@@ -70,6 +70,7 @@ func activeGizmoVolume() *world.Volume {
 // volume.
 func editorArmVolumePlacement() {
 	Editor.VolumePlacementMode = true
+	Editor.DecalPlacementMode = false
 	Editor.EntityPlacementMode = false
 	Editor.SpawnPlacementMode = false
 }

@@ -1,7 +1,7 @@
 // Package packaging carries the Linux installer scripts into the programs that
 // run them.
 //
-// The Makefile reads packaging/linux straight off the disk, from the repository
+// The Taskfile reads packaging/linux straight off the disk, from the repository
 // it runs in. A release built from inside the editor has no repository to read
 // them from — the editor runs from a game's own project directory, which is
 // somewhere else entirely — so the same files are embedded here, and
@@ -10,7 +10,7 @@
 //
 // windows/installer.nsi is not embedded: the editor's release build makes its
 // Setup.exe with Foundry's own installer (internal/setup), and only the
-// Makefile's installer-windows target still runs NSIS.
+// Taskfile's installer-windows task still runs NSIS.
 package packaging
 
 import _ "embed"

@@ -65,6 +65,13 @@ func ModelMain(root string, args []string, out io.Writer) int {
 	if m.Texture != "" {
 		fmt.Fprintf(out, "texture: %s\n", m.Texture)
 	}
+	if m.Skeleton != "" {
+		// Named before the clips, because it is where they came from: a clip
+		// that looks wrong here is a clip to fix in the .fskl, and every other
+		// model on that rig will change with it.
+		fmt.Fprintf(out, "skeleton: %s (shared with: %s)\n", m.Skeleton,
+			describeSkeletonSharers(m.Skeleton, rest[0]))
+	}
 	if len(m.Animations) > 0 {
 		names := m.ClipNames()
 		sort.Strings(names)
@@ -144,4 +151,15 @@ func bounds(vs []mgl32.Vec3) (lo, hi mgl32.Vec3) {
 // measurements are argued at: a gait 7 cm too wide, a socket 2 cm off.
 func vecStr(v mgl32.Vec3) string {
 	return fmt.Sprintf("<%7.3f, %7.3f, %7.3f>", v.X(), v.Y(), v.Z())
+}
+
+// describeSkeletonSharers lists the other models on the rig, for the line
+// above. "nothing else" rather than an empty list: the question being answered
+// is "what else does editing this break", and silence would read as unknown.
+func describeSkeletonSharers(name, selfPath string) string {
+	others := model.ModelsUsingSkeleton(name, selfPath)
+	if len(others) == 0 {
+		return "nothing else"
+	}
+	return strings.Join(others, ", ")
 }

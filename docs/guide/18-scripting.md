@@ -140,7 +140,12 @@ The engine posts these without being asked.
 | `:objective_reached:` `:objective_complete:`, and an objective's Action atom | AI agent and objective volume | `src ref, objective ref` | " |
 | `:cover_taken:` `:cover_lost:` | AI agent | `src ref` | " |
 | any atom a point lists | the object on the path | `animation ref` | …reached a point with that atom in its **Events**, straight after that point's `:waypoint:` |
-| `:click:` `:hover:` `:unhover:` `:change:` `:submit:` | widget, then its screen | see [UI screens](17-ui-screens.md) | |
+| `:pointer_down:` `:pointer_up:` `:pointer_click:` | level, player, and the object under the cursor | `button atom, hit, at` | a mouse button on the world with the cursor free — see [Pointing at the world](#pointing-at-the-world) |
+| `:pointer_enter:` `:pointer_exit:` | level, player, and the object | `hit ref` | the cursor moved onto / off an object |
+| `:pointer_wheel:` | " | `amount float, hit, at` | the wheel turned over the world |
+| `:pointer_drag_start:` `:pointer_drag:` `:pointer_drag_end:` | level, player, and the object pressed on | `button atom, …` | a held button moved; see SCRIPTING.md for each one's arguments |
+| `:pointer_drop:` | the object a drag ended on | `button atom, dragged, at` | something was dragged onto it |
+| `:click:` `:hover:` `:unhover:` `:change:` `:submit:` `:drag_start:` `:drag:` `:drop:` | widget, then its screen | see [UI screens](17-ui-screens.md) | |
 | `:cancel:` `:shown:` `:hidden:` | screen | — | |
 
 ## Messages
@@ -251,6 +256,13 @@ not the one the body sees.
 `ai_objective` `ai_follow_waypoints` `ai_continue` `ai_follow` `find_path` `can_see` `play` `stop` `play_sound`
 `play_sound_at` `play_music` `stop_music`
 
+**Camera** — `camera_detach` `camera_attach` `camera_move_to` `camera_turn_to`
+`camera_roll_to` `camera_look_at` `camera_orbit` `camera_zoom` — see
+[The camera](#the-camera)
+
+**Pointer** — `pick(atom)` `screen_ray(point)` `world_to_screen(place)` — see
+[Pointing at the world](#pointing-at-the-world)
+
 **UI** — `show_screen` `hide_screen` `screen(name)` `widget(screen, id)`
 `focus(widget)` `load_level(name)` `quit_game()`
 
@@ -305,6 +317,61 @@ behind a body, so this is how an effect goes on the body:
 The player's aim, for anything that is not a cast — a grenade, say — is
 `@player.prop.look_direction` from `@player.prop.eye_position`, both the
 camera's and in world space.
+
+## The camera
+
+The camera is the player's eye until a script takes it. Every `camera_*` verb
+that places or turns it detaches it from the player first, blends over an
+optional number of seconds with an optional ease (`:ease_in_out:` by default,
+`:linear:`, `:ease_in:`, `:ease_out:`), and starts from wherever the camera is
+now — so nothing ever jumps:
+
+```
+@level.prop.player_control = false
+camera_move_to(@balcony, 2.0)                      -- fly there
+camera_look_at(@dropship, 1.5)                     -- and stay on the ship as it moves
+camera_orbit(@dropship, {"distance": 12.0, "yaw": 90.0, "seconds": 3.0})
+camera_zoom(30.0, 0.5)                             -- a lens, not a position: works attached too
+camera_attach(1.0)                                 -- blend back to the player's eye
+@level.prop.player_control = true
+```
+
+Angles are degrees: yaw `0` looks along +X and grows turning right, pitch is up.
+`camera_turn_to(yaw, pitch)` pans and tilts, `camera_roll_to` banks, and
+`@level.prop.camera_position`, `camera_yaw`, `camera_pitch` and `camera_roll`
+read the live camera and, written, put it there at once.
+
+While the camera is detached the player keeps their own look for when it comes
+back, walks relative to the camera's heading, and the mouse turns nothing —
+`@level.prop.look_delta` reports the turn it would have made, which is how a
+script steers an orbit camera with the mouse. Leaving play or loading a level
+gives the view back to the player. SCRIPTING.md has the full reference.
+
+## Pointing at the world
+
+Set `@level.prop.cursor = true` (or put up a screen with **Shows the cursor**)
+and the mouse is a pointer rather than the player's head. A click that lands on
+no widget is a click on the world: the level's scripts, the player's, and the
+object under the cursor (if it has a script) all hear it, with what the cursor
+is on and where the ray met it.
+
+```
+def on_click(:pointer_click:, :left:, hit, at) -> null     -- in the level's script
+    if hit != null and hit.kind == "entity"
+        @self.state.selected = hit
+    elif at != null and @self.state.selected != null
+        ai_move_to(@self.state.selected, at)
+    end
+end
+```
+
+While the cursor is free the mouse buttons and wheel belong to the pointer, not
+to fire and weapon-switch. `pick(:atom:)` is `hitscan` through the cursor;
+`screen_ray` and `world_to_screen` convert between window pixels and the world;
+`@level.prop.cursor_position` is where the pointer is. Dragging posts
+`:pointer_drag_start:`, `:pointer_drag:` each frame it moves, and
+`:pointer_drag_end:` — enough to box-select, drag a unit, or orbit the camera on
+a right-drag.
 
 ## Importing
 

@@ -63,9 +63,28 @@ var (
 )
 
 // Gravity system globals — read and written by input handling and the main loop.
+//
+// GravityEnabled and FlyMode are two questions, not one. They used to be the
+// same switch: turning gravity off was how you got the free-fly camera, which
+// meant a level that wanted the player weightless — a station with the plating
+// off, a swim, a grapple — also handed them a noclip flight stick, and a level
+// that wanted to fly the camera about could not leave gravity on underneath it.
+//
+//	GravityEnabled  whether anything pulls on the player. Off, the body keeps
+//	                whatever momentum it has and drifts: zero-g, not frozen.
+//	FlyMode         whether the vertical keys move the body directly. On, it
+//	                also suppresses the pull, because a camera being flown is
+//	                not falling — so fly is still "off with gravity" from the
+//	                outside, without the reverse being true.
 var GravityEnabled = true
+var FlyMode = false
 var IsOnGround = false
 var JumpRequested = false
+
+// PlayerFalls is the one question the movement code actually asks: is the
+// player subject to gravity this frame. Written as a function so the two flags
+// can never be combined the wrong way round at one of the call sites.
+func PlayerFalls() bool { return GravityEnabled && !FlyMode }
 
 // PlayerControlEnabled is whether the player's input reaches the game. Off,
 // walking, jumping, driving, the interact key and looking around — mouse and
@@ -73,9 +92,10 @@ var JumpRequested = false
 // and by a script handing control back.
 var PlayerControlEnabled = true
 
-const GravityAccel = float32(0.010) // downward acceleration per frame
-const MaxFallSpeed = float32(0.50)  // terminal fall speed per frame
-const JumpVelocity = float32(0.20)  // upward impulse on jump
+// The tuning that used to live here — GravityAccel, MaxFallSpeed and
+// JumpVelocity, all in per-frame-at-60fps units — moved to world/gravity.go and
+// is expressed per second there. It is not a constant any more: a level sets
+// its own gravity, a volume overrides it in one region, and a body scales it.
 
 // ---------- fullscreen ----------
 //

@@ -13,6 +13,21 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
+// boundFramebuffer is the framebuffer being drawn into right now.
+//
+// It exists because every pass here draws into a depth map of its own and then
+// has to put the frame's own target back — and "the frame's own target" is not
+// always the window. A headless renderer (`foundry render`, a play session's
+// screenshot, a GL test) draws into an FBO, and a pass that restored 0 instead
+// sent the entire world pass after it to the window nobody is looking at,
+// leaving the caller's target exactly as empty as it started. The volumetric
+// and cloud-shadow passes already asked rather than assumed; these did not.
+func boundFramebuffer() uint32 {
+	var fb int32
+	gl.GetIntegerv(gl.DRAW_FRAMEBUFFER_BINDING, &fb)
+	return uint32(fb)
+}
+
 // ShadowMapSize is the resolution of one directional cascade layer (square).
 const ShadowMapSize = 2048
 
@@ -224,6 +239,7 @@ func EnsureCascadeArray(layers int32) {
 	if Shadows.CascadeFBO == 0 {
 		gl.GenFramebuffers(1, &Shadows.CascadeFBO)
 	}
+	prevFBO := boundFramebuffer()
 	gl.BindFramebuffer(gl.FRAMEBUFFER, Shadows.CascadeFBO)
 	gl.FramebufferTextureLayer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, Shadows.CascadeArray, 0, 0)
 	gl.DrawBuffer(gl.NONE)
@@ -231,7 +247,7 @@ func EnsureCascadeArray(layers int32) {
 	if st := gl.CheckFramebufferStatus(gl.FRAMEBUFFER); st != gl.FRAMEBUFFER_COMPLETE {
 		log.Printf("WARNING: cascade shadow FBO incomplete (status=0x%X)", st)
 	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, prevFBO)
 
 	log.Printf("cascade shadow array allocated (tex=%d, fbo=%d, %dx%d x %d layers)",
 		Shadows.CascadeArray, Shadows.CascadeFBO, ShadowMapSize, ShadowMapSize, layers)
@@ -350,6 +366,7 @@ func createDepthCube() (cube, fbo uint32) {
 	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
 	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
 
+	prevFBO := boundFramebuffer()
 	gl.GenFramebuffers(1, &pm.FBO)
 	gl.BindFramebuffer(gl.FRAMEBUFFER, pm.FBO)
 	// Attach the first face initially; we'll switch per-face during rendering.
@@ -360,7 +377,7 @@ func createDepthCube() (cube, fbo uint32) {
 	if st := gl.CheckFramebufferStatus(gl.FRAMEBUFFER); st != gl.FRAMEBUFFER_COMPLETE {
 		log.Printf("WARNING: point shadow FBO incomplete (status=0x%X)", st)
 	}
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, prevFBO)
 	return pm.Cubemap, pm.FBO
 }
 
@@ -587,6 +604,7 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 	gl.UseProgram(Shadows.Program)
 	var prevViewport [4]int32
 	gl.GetIntegerv(gl.VIEWPORT, &prevViewport[0])
+	prevFBO := boundFramebuffer()
 	gl.Viewport(0, 0, ShadowMapSize, ShadowMapSize)
 	gl.Disable(gl.CULL_FACE)
 	gl.Enable(gl.POLYGON_OFFSET_FILL)
@@ -648,7 +666,7 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 	}
 
 	gl.Disable(gl.POLYGON_OFFSET_FILL)
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, prevFBO)
 	gl.Viewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3])
 	gl.UseProgram(gfx.Program)
 
@@ -673,6 +691,7 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 	gl.UseProgram(Shadows.CubeProgram)
 	var prevViewport [4]int32
 	gl.GetIntegerv(gl.VIEWPORT, &prevViewport[0])
+	prevFBO := boundFramebuffer()
 	gl.Viewport(0, 0, PointShadowMapSize, PointShadowMapSize)
 	gl.Disable(gl.CULL_FACE)
 	gl.Enable(gl.POLYGON_OFFSET_FILL)
@@ -764,7 +783,7 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 	}
 
 	gl.Disable(gl.POLYGON_OFFSET_FILL)
-	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, prevFBO)
 	gl.Viewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3])
 	gl.UseProgram(gfx.Program)
 }

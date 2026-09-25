@@ -27,16 +27,26 @@ const (
 // whatever is behind, and deciding what to do about Enabled is the caller's
 // business rather than a question of geometry.
 func (s *Screen) HitTest(x, y float32, mode HitMode) *Node {
-	return hitNode(&s.Root, x, y, mode)
+	return hitNode(&s.Root, x, y, mode, nil)
 }
 
-func hitNode(n *Node, x, y float32, mode HitMode) *Node {
+// hitTestSkipping is HitTest as though one node, and everything in it, were
+// not there: what a dragged icon is being dropped ON, when the icon itself is
+// following the pointer and would otherwise always be the answer.
+func (s *Screen) hitTestSkipping(x, y float32, skip *Node) *Node {
+	return hitNode(&s.Root, x, y, HitInput, skip)
+}
+
+func hitNode(n *Node, x, y float32, mode HitMode, skip *Node) *Node {
+	if n == skip && skip != nil {
+		return nil
+	}
 	if mode == HitInput && (!n.Visible || n.culled) {
 		return nil
 	}
 
 	for i := len(n.Children) - 1; i >= 0; i-- {
-		if got := hitNode(&n.Children[i], x, y, mode); got != nil {
+		if got := hitNode(&n.Children[i], x, y, mode, skip); got != nil {
 			return got
 		}
 	}
@@ -46,7 +56,7 @@ func hitNode(n *Node, x, y float32, mode HitMode) *Node {
 	if !n.solvedClip.Contains(x, y) || !n.solved.Contains(x, y) {
 		return nil
 	}
-	if mode == HitInput && !n.Kind.Interactive() && !n.Blocks {
+	if mode == HitInput && !n.Kind.Interactive() && !n.Blocks && !n.Draggable {
 		return nil
 	}
 	return n

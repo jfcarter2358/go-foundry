@@ -21,8 +21,10 @@ import (
 	"fmt"
 	"strings"
 
+	"foundry/internal/aitree"
 	"foundry/internal/fileutil"
 	"foundry/internal/imguibackend"
+	"foundry/internal/material"
 	"foundry/internal/model"
 	"foundry/internal/particle"
 	"foundry/internal/platform"
@@ -85,7 +87,9 @@ var (
 	levelSaved    savedState
 	modelSaved    savedState
 	particleSaved savedState
+	materialSaved savedState
 	uiSaved       savedState
+	aiSaved       savedState
 )
 
 // ---------- the level ----------
@@ -174,6 +178,40 @@ func particleEditorDirty() bool {
 	return particleSaved.dirty()
 }
 
+func aiKey() any { return docKey{aiDoc, aiDoc.Rev} }
+
+func aiMarkSaved() {
+	if aiDoc != nil {
+		aiSaved.baseline(aiKey(), aitree.Fingerprint(aiDoc))
+	}
+}
+
+func aiEditorDirty() bool {
+	if aiDoc == nil {
+		return false
+	}
+	aiSaved.refresh(aiKey(), 200, func() uint64 { return aitree.Fingerprint(aiDoc) })
+	return aiSaved.dirty()
+}
+
+// The material document has no edit counter of its own, so — like the level —
+// its change signal is input: an edit is always the consequence of a click or
+// a key in some window. A .fmat encodes to a few hundred bytes, so the
+// fingerprint is cheap enough to take on a short throttle.
+func materialMarkSaved() {
+	if materialDoc != nil {
+		materialSaved.baseline(editorInputGen, material.Fingerprint(materialDoc))
+	}
+}
+
+func materialEditorDirty() bool {
+	if materialDoc == nil {
+		return false
+	}
+	materialSaved.refresh(editorInputGen, 200, func() uint64 { return material.Fingerprint(materialDoc) })
+	return materialSaved.dirty()
+}
+
 func uiKey() any { return docKey{uiDoc, uiDoc.Rev()} }
 
 func uiMarkSaved() {
@@ -233,8 +271,14 @@ func openEditors() []openEditor {
 	if ParticleEditorOpen() {
 		out = append(out, openEditor{"Particle", particleEditorDirty, particleSaveCurrent})
 	}
+	if MaterialEditorOpen() {
+		out = append(out, openEditor{"Material", materialEditorDirty, materialSaveCurrent})
+	}
 	if UIEditorOpen() {
 		out = append(out, openEditor{"UI", uiEditorDirty, func() { uiRequestSave(false) }})
+	}
+	if AIEditorOpen() {
+		out = append(out, openEditor{"AI", aiEditorDirty, aiSaveCurrent})
 	}
 	if ScriptEditorOpen() {
 		out = append(out, openEditor{"Script", scriptEditorDirty, scriptSaveAllTabs})

@@ -21,7 +21,12 @@ import (
 // Material is the draw state a batch shares across all of its surfaces: what a
 // Geometry sets per draw, set once per batch.
 type Material struct {
-	Texture      string
+	Texture string
+	// MaterialName is the .fmat the batch's surfaces wear. Part of the material
+	// identity, so faces wearing different materials land in different
+	// batches — which they must, since the material sets uniforms the batch
+	// applies once for all of them.
+	MaterialName string
 	BlendTexture string
 	BlendMask    string
 	Alpha        float32
@@ -39,23 +44,20 @@ type Material struct {
 // rather than when the batch is built, because whether a texture has alpha can
 // change while the game runs — the texture editor repaints one.
 func (m *Material) IsTransparent() bool {
-	return (m.Alpha > 0 && m.Alpha < 1.0) || textureHasAlpha[m.Texture]
+	st := m.SurfaceState()
+	return st.IsTransparent()
 }
 
 // NormalColorFlag is Geometry.NormalColorFlag for a material.
 func (m *Material) NormalColorFlag() int32 {
-	if m.Texture == "" {
-		return 1
-	}
-	return 0
+	st := m.SurfaceState()
+	return st.NormalColorFlag()
 }
 
 // SmoothFlag is Geometry.SmoothFlag for a material.
 func (m *Material) SmoothFlag() int32 {
-	if m.Normals && (m.Smooth || SmoothLighting) {
-		return 1
-	}
-	return 0
+	st := m.SurfaceState()
+	return st.SmoothFlag()
 }
 
 // Batch is one material's vertices on the GPU.
@@ -147,26 +149,22 @@ func (b *Batch) Draw(model mgl32.Mat4, firsts, counts []int32) {
 	if len(firsts) == 0 || b.Vao == 0 {
 		return
 	}
+	// A chunk or static batch is lit and still unless its material says
+	// otherwise — unlit, water and scroll all used to be a model attachment's
+	// business alone, and a .fmat is how a wall gets at them.
+	st := b.SurfaceState()
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(WorldModelUniform(), 1, false, &model[0])
-	gl.Uniform1f(AlphaUniform, b.Alpha)
-	gl.Uniform1i(SmoothUniform, b.SmoothFlag())
 	baked := int32(0)
 	if b.Baked && b.Lbo != 0 {
 		baked = 1
 	}
 	gl.Uniform1i(BakedLightUniform, baked)
-	gl.Uniform1i(NormalColorUniform, b.NormalColorFlag())
-	// A chunk or static batch is always lit; only a model attachment opts out.
-	gl.Uniform1i(UnlitUniform, 0)
-	gl.Uniform2f(UVOffsetUniform, 0, 0)
-	gl.Uniform1i(IsWaterUniform, 0)
-	applyBlendUniforms(b.BlendTexture, b.BlendMask)
-	BindNormalMap(b.Texture, HasNormalMapUniform, NormalMapUniform)
+	st.Apply()
 	ApplySkinUniforms(&worldSkinUniforms, Program, nil)
 	gl.BindVertexArray(b.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, Textures[b.Texture])
+	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
 	b.DrawRanges(firsts, counts)
 }
 

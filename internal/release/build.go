@@ -2,7 +2,7 @@ package release
 
 // build.go — a release of a project directory, in one call.
 //
-// What `make release-linux` and `make release-windows` do, for any project
+// What `task release-linux` and `task release-windows` do, for any project
 // rather than only the engine's own resources/: compile every level, get a game
 // binary for each platform, stage the content around it, and archive the
 // result. Run by the editor's Release window, as a child process (job.go), and
@@ -187,7 +187,7 @@ func (b *builder) platform(p Platform) error {
 		return err
 	}
 
-	// Named as the Makefile names them, so a release is the same files
+	// Named as the Taskfile names them, so a release is the same files
 	// whichever way it was built.
 	slug := strings.TrimSuffix(res.Stamp.Exe, p.ExeExt())
 	version := res.Stamp.Version
@@ -308,7 +308,7 @@ func (b *builder) setupStub() (string, error) {
 }
 
 func missingSetupStub(root string) error {
-	return fmt.Errorf("no installer program for Windows: expected %s — build it from a Foundry checkout with `make runtime-windows RUNTIMES_DIR=%s`, or set a Foundry source directory to build it from",
+	return fmt.Errorf("no installer program for Windows: expected %s — build it from a Foundry checkout with `task runtime-windows RUNTIMES_DIR=%s`, or set a Foundry source directory to build it from",
 		PrebuiltSetupStub(root), filepath.Join(root, RuntimesDirName))
 }
 

@@ -250,6 +250,18 @@ func GatherContext(lvl *Level, v *Volume) ContextContents {
 		})
 	}
 
+	for i := range lvl.Decals {
+		d := &lvl.Decals[i]
+		// The transient ones are left out: a room whose context listed the two
+		// hundred bullet holes a fight put in it would say nothing about the room.
+		if d.Transient || !inside(d.Position) {
+			continue
+		}
+		out.Items = append(out.Items, ContextItem{
+			Kind: "decal", ID: d.ID, Detail: d.DrawTexture(), Position: d.Position,
+		})
+	}
+
 	// Other volumes in the region are worth knowing about — a trigger inside the
 	// room is part of what the room does — but the region itself is not.
 	for i := range lvl.Volumes {

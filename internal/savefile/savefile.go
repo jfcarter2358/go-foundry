@@ -130,9 +130,20 @@ type WorldState struct {
 	Emitters    []EmitterState
 	Sounds      []SoundState
 	Effects     []world.Effect
-	Sky         *world.Sky
-	Music       *MusicState
-	StepHeight  float32
+	// Decals are the level's projected marks, each with its built mesh cleared
+	// (savegame.bareDecal): the mesh is clipped out of the level's geometry and
+	// holds GPU buffers, so it is rebuilt on load rather than stored. Only the
+	// lasting ones are here — the bullet holes a firefight left are Transient and
+	// are no more level state than a spent one-shot sound is.
+	Decals     []world.Decal
+	Sky        *world.Sky
+	Music      *MusicState
+	StepHeight float32
+	// Gravity is the level's ambient pull, which a script may have changed
+	// during play (`@level.prop.gravity`). A pointer, as on the level itself:
+	// nil is a level that never set one, and gob writes it as absent rather
+	// than as a zero that would restore every level into free fall.
+	Gravity *float32
 }
 
 // EntityState is one entity. Entity is the entity itself with everything that
@@ -216,7 +227,9 @@ type VolumeState struct {
 	Fog          *world.VolumeFog
 	Cloud        *world.VolumeCloud
 	ClearsClouds bool
-	Waypoints    *world.WaypointPlayback
+	// Gravity is the region's pull override, nil when it has none.
+	Gravity   *float32
+	Waypoints *world.WaypointPlayback
 }
 
 // EmitterState is an emitter less its live particle systems, which are
@@ -271,9 +284,13 @@ type PlayerState struct {
 	Models []ModelState
 	// Yaw and Pitch are where the player is looking.
 	Yaw, Pitch float32
-	// Control and Gravity are `@level.prop.player_control` and
-	// `player_gravity`.
-	Control, Gravity bool
+	// Control, Gravity and Fly are `@level.prop.player_control`,
+	// `player_gravity` and `player_fly`.
+	//
+	// Fly is the newest of the three and is absent from every save written
+	// before it existed, where it reads back false — which is the right
+	// answer, since a save taken then was taken by a player on their feet.
+	Control, Gravity, Fly bool
 }
 
 // ---------- scripts ----------
@@ -294,6 +311,41 @@ type ScriptState struct {
 	Overlaps [][2]Ref
 	// Checkpoints are the checkpoint volumes the player has reached.
 	Checkpoints []string
+	// View is the camera and the pointer as scripts left them. Nil is a save
+	// from before there was one — and reads back as the player's own camera
+	// with the cursor captured, which is what every such save was taken with.
+	View *ViewState
+}
+
+// ViewState is the script camera (gfx/camera_rig.go) and `@level.prop.cursor`.
+// Kept because a level that detaches the camera or frees the cursor does it
+// once, in `:spawn:`, and `:spawn:` is not heard again after a restore.
+//
+// A blend in flight is not: the camera is saved where it is, and a move that
+// was halfway somewhere is simply there. Orbit and look are, with what they
+// follow, since a script adjusting an orbit every frame would otherwise find
+// none to adjust.
+type ViewState struct {
+	Cursor   bool
+	Detached bool
+	// Position, Yaw, Pitch and Roll are the camera's pose, angles in radians.
+	Position         [3]float32
+	Yaw, Pitch, Roll float32
+	Orbit            *OrbitState
+	Look             *ViewTarget
+}
+
+// OrbitState is an orbit the camera was holding, angles in radians.
+type OrbitState struct {
+	Target               ViewTarget
+	Distance, Yaw, Pitch float32
+}
+
+// ViewTarget is what the camera orbits or looks at: a fixed point, or an
+// object it follows (Ref set) that was last seen at Point.
+type ViewTarget struct {
+	Point [3]float32
+	Ref   *Ref
 }
 
 // RefState is one object's `@x.state` dict.

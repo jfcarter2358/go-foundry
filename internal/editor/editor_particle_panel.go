@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"foundry/internal/gfx"
 	"foundry/internal/imguibackend"
+	"foundry/internal/material"
 	"foundry/internal/particle"
 	"foundry/internal/render"
 	"path/filepath"
@@ -576,6 +577,9 @@ func particleAppearanceSection(l *particle.Layer) {
 		return
 	}
 
+	if materialCombo("Material##pmat", &l.Material, material.DomainParticle) {
+		ParticlePushUndo()
+	}
 	if textureCombo("Texture##ptex", &l.Texture, false) {
 		ParticlePushUndo()
 		particleTouch()

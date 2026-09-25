@@ -149,20 +149,47 @@ func TestASwitchCommandReportsWhatItDid(t *testing.T) {
 	}
 }
 
+// noclip is free-fly plus no world collision. It used to be "gravity off" plus
+// no world collision, which is not noclip at all: a body walking through walls
+// while still being pulled down is a body falling out of the level.
 func TestNoclipMovesBothSwitchesTogether(t *testing.T) {
 	reset(t)
-	gravity, collide := platform.GravityEnabled, world.EntityWorldCollisionEnabled
-	t.Cleanup(func() { platform.GravityEnabled = gravity; world.EntityWorldCollisionEnabled = collide })
+	fly, collide := platform.FlyMode, world.EntityWorldCollisionEnabled
+	t.Cleanup(func() { platform.FlyMode = fly; world.EntityWorldCollisionEnabled = collide })
 
-	platform.GravityEnabled = true
+	platform.FlyMode = false
 	world.EntityWorldCollisionEnabled = true
 	run(nil, "noclip on")
-	if platform.GravityEnabled || world.EntityWorldCollisionEnabled {
-		t.Fatal("noclip on left gravity or collision on")
+	if !platform.FlyMode || world.EntityWorldCollisionEnabled {
+		t.Fatal("noclip on left the player walking, or collision on")
 	}
 	run(nil, "noclip off")
-	if !platform.GravityEnabled || !world.EntityWorldCollisionEnabled {
+	if platform.FlyMode || !world.EntityWorldCollisionEnabled {
 		t.Fatal("noclip off did not put both back")
+	}
+}
+
+// The two halves are separately addressable, and `gravity off` must not fly the
+// player: weightless is not the same as noclip.
+func TestGravityAndFlyAreSeparateSwitches(t *testing.T) {
+	reset(t)
+	grav, fly := platform.GravityEnabled, platform.FlyMode
+	t.Cleanup(func() { platform.GravityEnabled, platform.FlyMode = grav, fly })
+
+	platform.GravityEnabled, platform.FlyMode = true, false
+	run(nil, "gravity off")
+	if platform.GravityEnabled {
+		t.Fatal("gravity off did not turn gravity off")
+	}
+	if platform.FlyMode {
+		t.Fatal("gravity off also put the player in free-fly")
+	}
+	run(nil, "fly on")
+	if !platform.FlyMode {
+		t.Fatal("fly on did not turn free-fly on")
+	}
+	if platform.GravityEnabled {
+		t.Fatal("fly on turned gravity back on")
 	}
 }
 

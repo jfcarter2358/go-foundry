@@ -81,6 +81,7 @@ keeps `W` `A` `S` `D`.
 | `Shift`+middle-drag | pan |
 | Wheel | dolly in fly, zoom the orbit radius |
 | Left click | object mode: pick up a brush. Edit mode: pick its point/edge/face |
+| Left click again, same place | the next thing along the ray — what is behind what you just took |
 | Left click on a handle | pick a point/edge; repeat clicks cycle overlaps |
 | `Ctrl`+left click | add to the selection (brushes, faces, points, edges) |
 | Drag a gizmo arm | translate the selection along that axis |
@@ -89,7 +90,7 @@ keeps `W` `A` `S` `D`.
 
 | | |
 | --- | --- |
-| Left click | pick up a whole brush |
+| Left click | pick up a whole brush; click again for the one behind it |
 | `Ctrl`+left click | add another brush to the selection |
 | `G` / `R` / `C` | move / turn / scale all of it |
 | `Delete` | delete the selected brushes |
@@ -158,7 +159,7 @@ Shaping the mesh drawn over one brush. Nothing here changes collision; see
 | | |
 | --- | --- |
 | `1` / `2` / `3` | the surface's points, edges or faces |
-| Left click | pick; `Ctrl+click` adds |
+| Left click | pick; click again in the same place for the next thing behind it; `Ctrl+click` adds |
 | Drag an arm | move — green is depth, red U, blue V |
 | `E` | extrude the selected faces, then drag the depth arm |
 | `I` | inset |

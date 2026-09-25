@@ -1,0 +1,15 @@
+# glow_sprite.fmat — a sprite's blend and billboard modes, as a material.
+#
+# These were `blend:` and `billboard:` enums on every sprite and on every
+# particle layer, spelled the same way in two formats and set one object at a
+# time. A material is where "what a glow is in this project" lives.
+kind: sprite
+doc: A light bloom or a spark — adds light, never occludes, needs no sorting.
+effects:
+  - effect: blend_mode
+    mode: additive
+  - effect: billboard
+    mode: full
+  - effect: tint
+    color: {r: 1, g: 0.86, b: 0.62}
+    intensity: 1.4

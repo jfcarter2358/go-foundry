@@ -66,6 +66,9 @@ func LoadTexture(name, file string) error {
 	Textures[name] = texture
 	noteTextureSize(name, int32(rgba.Rect.Size().X), int32(rgba.Rect.Size().Y))
 	noteTextureMean(name, rgba)
+	// What was on disk when this was read, so RescanTextures can tell later
+	// whether the file has moved on. See texture_rescan.go.
+	noteTextureStamp(name, file)
 
 	if !TextureUploadsEnabled {
 		// The normal map's own load would upload too, and a headless caller has
@@ -121,6 +124,9 @@ func EnsureTextureLoaded(name string) error {
 	}
 	path, ok := TextureNames[name]
 	if !ok {
+		// Remembered, so that a rescan can make good on it if the file turns
+		// up later — see NoteMissingTexture.
+		NoteMissingTexture(name)
 		return fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 	}
 	return LoadTexture(name, filepath.Join(fileutil.ResourcesPath, path))
@@ -226,7 +232,8 @@ func RegisterTexture(name string) {
 }
 
 // TextureNames maps logical texture names to paths relative to ResourcesPath.
-// Populated at startup by ScanTextures.
+// Populated at startup by ScanTextures, and kept up to date afterwards by
+// RescanTextures — see texture_rescan.go.
 var TextureNames map[string]string
 
 // ScanTextures walks dir and returns a map from logical name (filename without

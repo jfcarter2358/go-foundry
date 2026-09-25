@@ -10,6 +10,6 @@ import (
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "foundrysetup is the Windows installer: build it with GOOS=windows (make runtime-windows) and let the release build append a game to it")
+	fmt.Fprintln(os.Stderr, "foundrysetup is the Windows installer: build it with GOOS=windows (task runtime-windows) and let the release build append a game to it")
 	os.Exit(2)
 }

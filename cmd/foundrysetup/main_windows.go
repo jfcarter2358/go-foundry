@@ -1,7 +1,7 @@
 //go:build windows
 
 // Command foundrysetup is a game's Windows installer and uninstaller — and the
-// editor's, for a Foundry release (make installer-editor).
+// editor's, for a Foundry release (task dist-editor).
 //
 // One program, two jobs. With an install tree appended to it (internal/setup)
 // it is the game's Setup.exe; with nothing appended it is the game's

@@ -350,6 +350,7 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	level.UI = append([]string(nil), raw.UI...)
 	level.EscapeLevel = raw.EscapeLevel
 	level.SaveMode = world.SaveModeFromName(raw.SaveMode)
+	level.Gravity = world.CopyFloatPtr(raw.Gravity)
 	if raw.Compile != nil {
 		level.LightGrid, level.LightMinGrid = raw.Compile.LightGrid, raw.Compile.LightMinGrid
 	}
@@ -473,6 +474,26 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 			log.Printf("sprite %q: texture %q: %v", sp.ID, sp.Texture, err)
 		}
 		level.Sprites = append(level.Sprites, sp)
+	}
+
+	// Decals: projected textures, with the same ID guarantee and the sprites'
+	// missing-texture rule.
+	//
+	// The MESH is not built here. It is clipped out of the level's own geometry,
+	// which does not exist yet — the chunks above have their brushes but a
+	// compiled level's static surfaces are attached later — so the first
+	// SyncDecals of the first frame builds them all, spread over a few frames by
+	// its budget (world/decal_sync.go).
+	for _, rd := range raw.Decals {
+		d, err := world.DecalFromRaw(rd)
+		if err != nil {
+			return err
+		}
+		d.ID = world.UniqueDecalID(level, d.ID)
+		if err := d.EnsureDecalTexture(); err != nil {
+			log.Printf("decal %q: texture %q: %v", d.ID, d.Texture, err)
+		}
+		level.Decals = append(level.Decals, d)
 	}
 
 	// Emitters: placed particle effects, with the same ID guarantee.
@@ -656,6 +677,10 @@ func loadTextureRange(names []string, from, count int) (int, error) {
 		}
 		path, ok := gfx.TextureNames[name]
 		if !ok {
+			// Remembered, so that rescanning textures/ later can load it
+			// without the level having to be reopened — see
+			// gfx.NoteMissingTexture.
+			gfx.NoteMissingTexture(name)
 			return i, fmt.Errorf("unknown texture %q — ensure a matching .png exists in textures/", name)
 		}
 		if err := gfx.LoadTexture(name, filepath.Join(fileutil.ResourcesPath, path)); err != nil {

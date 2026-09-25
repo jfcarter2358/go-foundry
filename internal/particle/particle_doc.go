@@ -507,7 +507,11 @@ type Layer struct {
 	// Volume is how a RenderVolume layer looks.
 	Volume VolumeLook
 
-	Texture              string
+	Texture string
+	// Material is the .fmat this layer wears, or "" for none. Overlaid on the
+	// appearance fields around it rather than replacing them; the renderer
+	// reads the Draw* accessors in particle_material.go, never these.
+	Material             string
 	SheetCols, SheetRows int
 	FrameMode            FrameMode
 	Blend                gfx.SpriteBlend

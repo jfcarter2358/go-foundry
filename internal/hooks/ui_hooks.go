@@ -20,7 +20,7 @@ package hooks
 type UIEvent struct {
 	// Atom is the event's name without its colons: "click", "hover",
 	// "unhover", "change", "submit", "finished", "cancel", "shown", "hidden",
-	// "bound".
+	// "bound", "drag_start", "drag", "drop".
 	Atom   string
 	Screen string
 	// Widget is empty for a screen-scoped event such as cancel or shown.
@@ -35,6 +35,13 @@ type UIEvent struct {
 	// alone cannot: a toggle switched off is Bool false and Num 0, a text
 	// field emptied is Str "" — both indistinguishable from a slider at 0.
 	Toggle, Text bool
+
+	// X, Y are where the pointer is for a drag event, in the screen's canvas
+	// units, and DX, DY how far it has moved since the last :drag:.
+	X, Y, DX, DY float64
+	// OtherScreen and Other name the widget a :drop: landed on; both empty
+	// when it landed on nothing that takes the pointer.
+	OtherScreen, Other string
 }
 
 var uiEvents []UIEvent

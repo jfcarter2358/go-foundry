@@ -123,7 +123,8 @@ func onMainThread[T any](fn func() T) (T, error) {
 // claudeTools is the tool set handed to the server: the ones that look at the
 // running editor, and the reference lookups in editor_claude_reference.go.
 func claudeTools() []claude.Tool {
-	return append(claudeEditorTools(), claudeReferenceTools()...)
+	tools := append(claudeEditorTools(), claudePlayTools()...)
+	return append(tools, claudeReferenceTools()...)
 }
 
 // claudeEditorTools are the ones that read or change the editor itself, and so
@@ -181,15 +182,19 @@ func claudeEditorTools() []claude.Tool {
 		},
 		{
 			Name: "reload",
-			Description: "Make the editor re-read a file you changed: a script, a model, an " +
-				"entity type, or the open level. Only needed if the editor has not already picked " +
-				"the change up.",
+			Description: "Make the editor re-read something you changed on disk: a texture, a " +
+				"script, a model, a material, an entity type, or the open level. The editor scans " +
+				"textures/ only when it starts, so a texture you have just written is invisible in " +
+				"the pickers and in the level until this is called for it — name the file, or the " +
+				"textures directory to take the lot. Only needed if the editor has not already " +
+				"picked the change up.",
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"path": map[string]any{
-						"type":        "string",
-						"description": "The file to reload, relative to the project or absolute.",
+						"type": "string",
+						"description": "The file to reload, relative to the project or absolute. " +
+							"A directory reloads everything in it that the editor knows how to reload.",
 					},
 				},
 				"required": []any{"path"},
@@ -201,10 +206,7 @@ func claudeEditorTools() []claude.Tool {
 				if err := json.Unmarshal(args, &a); err != nil || a.Path == "" {
 					return claude.ToolResult{}, errors.New("a path is required")
 				}
-				text, err := onMainThread(func() string {
-					claudeApplyFileChange(claudeAbs(a.Path))
-					return "The editor will re-read " + a.Path + "."
-				})
+				text, err := onMainThread(func() string { return claudeReloadPath(a.Path) })
 				return claude.ToolResult{Text: text}, err
 			},
 		},
@@ -302,6 +304,12 @@ func claudeEditorStateText() string {
 			fmt.Fprintf(&b, " (editing %q)", lvl.Chunks[Editor.ActiveChunkIdx].ID)
 		}
 		fmt.Fprintf(&b, "; entities: %d, volumes: %d\n", len(lvl.Entities), len(lvl.Volumes))
+	}
+	if !Editor.Active {
+		b.WriteString("A play session is running. The editor is holding the level as it was when Play " +
+			"was pressed, so files you write now are NOT reloaded until the author leaves play — " +
+			"reloading mid-session would restart every script under them. Write the change anyway; " +
+			"it lands when they come back.\n")
 	}
 	if sel := claudeSelectionNote(); sel != "" {
 		b.WriteString(sel + "\n")

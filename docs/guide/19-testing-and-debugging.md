@@ -70,7 +70,7 @@ one keypress.
 | --- | --- |
 | `8` | entity-vs-world collision |
 | `9` | entity-vs-entity collision |
-| `0` | gravity |
+| `0` | free-fly (the jump and sprint keys move the body up and down) |
 | `F10` | anti-aliasing |
 | `F11` | fullscreen |
 | `F12` | vsync |
@@ -96,8 +96,10 @@ here — opens a **developer console** instead: the engine and script log,
 scrolling live, with a prompt under it.
 
 `help` lists the commands. The ones you will reach for are `tp` (to a tag, an
-ID or three numbers), `spawn`, `destroy`, `find`, `entities`, `god`, `noclip`
-and `level`. Tab completes against the level you are actually in, so `tp #` and
+ID or three numbers), `spawn`, `destroy`, `find`, `entities`, `god`, `fly`,
+`gravity`, `noclip` and `level`. `fly` and `gravity` are separate: `gravity off`
+is weightlessness, `fly on` is a camera you steer, and `noclip` is `fly` plus no
+world collision. Tab completes against the level you are actually in, so `tp #` and
 Tab lists the tags that exist.
 
 `repl` turns the prompt into flang, and `> <line>` runs one line without
@@ -152,7 +154,7 @@ is shallower than one step, or it is disabled, or it is not riding the vehicle.
 See [Vehicles and frames](12-vehicles-and-frames.md).
 
 **A shipped build draws no menu.** A development build never reads `game.yaml`.
-`make release-linux` is how to see one.
+`task release-linux` is how to see one.
 
 ## Headless: the engine without a window
 
@@ -162,8 +164,11 @@ frame, the same script runtime — with nothing drawn.
 
 ```
 foundry check level1                     # does it load, and do the scripts' ids exist?
+foundry ai check                         # do the decision trees compile?
 foundry sim -level level1 -seconds 30 \
     -watch 'aa_turret.rotation.y,player.position'
+foundry play run -level level1 -seconds 4 \
+    -script 'look 90 -10; forward 3; use; shot door.png'
 foundry render screen hud -o hud.png     # a .fui through the real UI renderer
 foundry render model models/marine.fmdl -pose walk:0.25 -o walk.png
 foundry model inspect models/marine.fmdl -pose walk:0.25 -bone foot.L,foot.R
@@ -177,6 +182,14 @@ Run them from the project directory, or point `-root` at it.
 is not there, and a script writing a property the engine will refuse. Every
 `.fui` is loaded too. It exits non-zero on any problem, which is what makes it
 usable from a generator's own build step.
+
+**`ai check`** is the same question asked of a decision tree (`.fai`): does it
+compile, does every link point at a node, does every field parse, is anything
+drawn that nothing reaches. Naming a script as well —
+`foundry ai check soldier -script scripts/enemy_combat.flang` — also checks that
+every `call` node names a function that script defines, which is the one mistake
+a document cannot see by itself. `-v` prints every tree and node; `foundry ai
+list` just says which messages each document answers.
 
 **`sim`** runs the frame. The whole frame: chunks and brushes that carry a
 velocity, vehicles, the player's own move, the AI controllers, the bodies they
@@ -205,6 +218,64 @@ A watch is `<id>.<field>`, `<entity>/<brush>.<field>`, `<entity>#<attachment>.<f
 `player.position`. Fields are the ones machinery is made of: position, rotation,
 scale, velocity, enabled, visible, `attr.<name>`, and an agent's `ai_mode`,
 `ai_target`, `ai_waypoints`.
+
+### Playing it
+
+`sim` runs the level; `play` *plays* it. The difference is a player: a script of
+moves — look here, walk forward three seconds, press use, take a picture — spent
+through the same frame, with a screenshot of what the player can see at the end
+of it. It is the answer to "does this actually work", which no watch list has
+ever quite been.
+
+```
+foundry play commands                    # the vocabulary
+foundry play run -level level1 -script 'look 180; forward 2; use'
+```
+
+The commands are one per line or separated by `;`, and a comment is `//` (not
+`#`, which is a tag):
+
+| | |
+| --- | --- |
+| `look <yaw> [pitch]`, `turn`, `look_at <x,y,z\|id\|#tag>` | where the view points, in degrees |
+| `forward [s]`, `back`, `left`, `right`, `stop` | walk, for so many seconds |
+| `to <x,y,z\|id\|#tag> [s]` | face a place and walk to it, giving up when blocked |
+| `crouch on\|off`, `sprint on\|off`, `jump` | the held actions |
+| `fire [s]`, `aim on\|off`, `reload`, `throw`, `weapon <n>` | the gun |
+| `use`, `click <widget>` | interact, and a button on a screen that is up |
+| `cursor <x,y>\|center\|off`, `tap [button]`, `drag <x,y> [s] [button]` | free the pointer at a window pixel, click the world there, drag it somewhere |
+| `wait <s>`, `say <text>`, `read <path>`, `shot [name.png]` | the run itself |
+| `teleport`, `enable`, `wake #tag`, `kill #tag` | skipping the parts a short run cannot reach |
+
+Every one of them goes through the engine's own front door — the same
+`hooks.Script*Request` a key raises, the same `sim.Input` a held key fills — so a
+scripted shot is fired by the code that fires a clicked one. `forward 2` is a
+real walk into whatever is in the way.
+
+A run ends with the player's situation in words: where they stand, what they are
+holding, what the crosshair is on, which screens are up and what they say, and
+what is near them with the distance, the bearing and whether it can actually be
+seen from here.
+
+**A session that stays.** A single run cannot decide what to do next from what
+it just saw. A session can:
+
+```
+foundry play serve -level level1 &            # keeps ticking, at wall-clock pace
+foundry play do 'to 12,2,-30; look_at #enemy; fire 0.5'
+foundry play state
+foundry play shot lit.png
+foundry play stop
+```
+
+`do` plays a script in the running session and answers with what happened, the
+state and a screenshot. Between commands the level keeps running, so a fight
+does not stand still while the next command is being decided.
+
+Both take `-draw=false` to play blind (no display, no GL), `-size WxH`,
+`-shots <dir>`, `-seconds n` to let a level's own opening play out before the
+script starts, and the `sim` flags for `-watch`, `-enable`, `-god`, `-compiled`
+and `-menus`.
 
 ### Scenarios
 
@@ -242,9 +313,9 @@ pose maths — `-pose clip:seconds`, `-view front|back|left|right|top|iso`,
 landed where the geometry is. `render screen` and `render viewmodel` draw through
 the real UI and viewmodel passes and so need a display and a GL 4.1 driver.
 
-There is no `render world` yet: the frame's *draw* half is still spelled out
-inline in `app.Run` the way its simulation half was before `internal/sim`, and a
-headless world view would be a second copy of it.
+The world itself is drawn by `foundry play` (`shot`), through `render.DrawWorld`
+— the same call `app.Run` makes, so a headless picture is the frame the game
+would have drawn, HUD and viewmodel included, minus the editor's own markers.
 
 ### From a test
 
@@ -256,12 +327,20 @@ s, err := harness.Open(harness.Options{Project: dir, Level: "level1"})
 s.Teleport(mgl32.Vec3{12, 2, -380})
 s.RunFor(5)
 if s.Read("ground_breach.enabled") != "false" { ... }
+
+// And the same script a terminal plays, with the same pictures:
+s, err := harness.Open(harness.Options{Project: dir, Level: "level1", Draw: true})
+defer s.Close()
+shots, err := s.Play("look 90; forward 3; use; shot door.png", 30)
 ```
+
+A drawing session pins the goroutine that opened it — a GL context is current on
+one thread — so everything it is asked to do has to happen on that goroutine.
 
 ## Tests
 
 ```
-make test          # everything
-make vet
-make release-check # proves the editor is compiled out of a release build
+task test          # everything
+task vet
+task release-check # proves the editor is compiled out of a release build
 ```

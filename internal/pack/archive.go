@@ -3,7 +3,7 @@ package pack
 // archive.go — the file a player downloads.
 //
 // A staged install tree is a directory; what gets handed to a player is one
-// file. The Makefile makes the Linux one with tar, which is not something an
+// file. The Taskfile makes the Linux one with tar, which is not something an
 // editor running on Windows can count on having, so both archives are written
 // here in Go instead.
 

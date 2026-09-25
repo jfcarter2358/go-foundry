@@ -2,8 +2,8 @@ package editor
 
 // editor_claude_reference.go — the engine's own reference tables, as tools.
 //
-// These are the three things Claude gets wrong when it has only the files to go
-// on, and all three are already answered inside this binary:
+// These are the things Claude gets wrong when it has only the files to go on,
+// and each of them is already answered inside this binary or beside it:
 //
 //   - **Which verbs exist.** `flang.BuiltinDocs()` is the table the F1 reference
 //     is drawn from, so it is exactly current. SCRIPTING.md is prose written
@@ -17,8 +17,11 @@ package editor
 //     A texture named `sf_panel` is `resources/textures/sf_panel.png`, and
 //     nothing in the level file says so; listing them is far cheaper and more
 //     reliable than having Claude glob the tree and infer the rule.
+//   - **How a subsystem is meant to be used.** The authoring guide answers that
+//     and was being left unread because finding it was a search of its own. See
+//     editor_claude_docs.go.
 //
-// All three are read-only and cheap, so unlike the tools in
+// All of them are read-only and cheap, so unlike the tools in
 // editor_claude_tools.go they do not need the main thread — none of them touches
 // the level, the selection or GL. They are separate for that reason as much as
 // for tidiness.
@@ -29,11 +32,13 @@ import (
 	"sort"
 	"strings"
 
+	"foundry/internal/aitree"
 	"foundry/internal/audio"
 	"foundry/internal/claude"
 	"foundry/internal/fileutil"
 	"foundry/internal/flang"
 	"foundry/internal/levelio"
+	"foundry/internal/material"
 	"foundry/internal/model"
 	"foundry/internal/particle"
 	"foundry/internal/script"
@@ -90,16 +95,17 @@ func claudeReferenceTools() []claude.Tool {
 		},
 		{
 			Name: "list_assets",
-			Description: "The names of the assets this project has: textures, models, scripts, " +
-				"entity types, particle effects, sounds and levels. A level file names assets by " +
-				"name, not by path, and these are those names.",
+			Description: "The names of the assets this project has: textures, materials, models, " +
+				"scripts, entity types, particle effects, AI decision trees, sounds and levels. " +
+				"A level file names " +
+				"assets by name, not by path, and these are those names.",
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"kind": map[string]any{
 						"type": "string",
-						"enum": []any{"textures", "models", "scripts", "entities",
-							"particles", "sounds", "levels", "all"},
+						"enum": []any{"textures", "materials", "models", "scripts", "entities",
+							"particles", "ai", "sounds", "levels", "all"},
 						"description": "Which kind to list. Defaults to all of them.",
 					},
 					"filter": map[string]any{
@@ -117,6 +123,7 @@ func claudeReferenceTools() []claude.Tool {
 				return claude.ToolResult{Text: claudeListAssetsText(a.Kind, a.Filter)}, nil
 			},
 		},
+		claudeDocsTool(),
 	}
 }
 
@@ -212,7 +219,7 @@ func claudeRefKinds() []flang.Kind_ {
 		flang.RefLevel, flang.RefChunk, flang.RefBrush, flang.RefEntity,
 		flang.RefVolume, flang.RefLight, flang.RefSprite, flang.RefEmitter,
 		flang.RefSound, flang.RefScreen, flang.RefWidget, flang.RefModel,
-		flang.RefWaypoints, flang.RefEffect,
+		flang.RefWaypoints, flang.RefEffect, flang.RefDecal,
 	}
 }
 
@@ -262,9 +269,12 @@ func claudeAssetKinds() []struct {
 		Ext  string
 	}{
 		{"textures", fileutil.TexturesDir, ".png"},
+		{"materials", material.MaterialsDir, material.MaterialExt},
 		{"models", func() string { return fileutil.ResolveAssetPath(model.ModelsDirName) }, ".fmdl"},
+		{"skeletons", model.SkeletonsDir, model.SkeletonExt},
 		{"entities", func() string { return fileutil.ResolveAssetPath(world.EntitiesDirName) }, ".yaml"},
 		{"particles", func() string { return fileutil.ResolveAssetPath(particle.ParticlesDirName) }, ".fpar"},
+		{"ai", aitree.AIDir, aitree.AIExt},
 		{"sounds", func() string { return fileutil.ResolveAssetPath(audio.SoundsDirName) }, ".wav"},
 		{"levels", levelio.LevelsDir, ".yaml"},
 	}

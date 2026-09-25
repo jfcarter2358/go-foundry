@@ -174,6 +174,7 @@ func ApplySpawnPoint(lvl *Level) bool {
 	if PlayerEntity != nil {
 		PlayerEntity.Position = s.Position.Add(mgl32.Vec3{0, spawnBodyLift, 0})
 		PlayerEntity.Velocity = mgl32.Vec3{}
+		PlayerEntity.WalkVelocity = mgl32.Vec3{}
 		// Starting aboard is the same state mounting produces, so it is set the
 		// same way rather than through a second path: a frame, and optionally a
 		// seat. Position is already in that frame's coordinates.
@@ -215,16 +216,42 @@ func SetPlayerControl(on bool) {
 
 // SetPlayerGravity turns gravity on or off for the player.
 //
-// Turning it off also stops any fall in progress. MovePlayer carries vertical
-// velocity forward whether gravity is on or not and only zeroes it on landing,
-// which it checks only with gravity on — so a player caught mid-fall would
-// otherwise keep sinking at that speed forever, straight through the floor.
+// Turning it off stops the fall in progress but leaves the rest of the
+// momentum alone: gravity off is weightlessness, not paralysis, and a body
+// thrown by an explosion into a zero-g room should keep going. The vertical
+// component goes because otherwise the body would still be travelling at
+// whatever speed the fall had reached when the switch was thrown, which reads
+// as sinking rather than floating.
+//
+// A jump already queued is dropped: the key is ignored off the ground and
+// nothing is going to bring this body back to it.
 func SetPlayerGravity(on bool) {
 	platform.GravityEnabled = on
-	platform.IsOnGround = false
 	platform.JumpRequested = false
 	if !on && PlayerEntity != nil {
 		PlayerEntity.Velocity[1] = 0
+		PlayerEntity.WalkVelocity[1] = 0
+	}
+}
+
+// SetPlayerFly turns free-fly on or off: the jump and sprint keys move the body
+// straight up and down, and nothing pulls on it while they do.
+//
+// It is a separate switch from gravity because the two are separate ideas —
+// see platform.FlyMode. Entering fly drops every trace of falling, since
+// nothing the body was doing under gravity means anything once the keys are
+// flying it; leaving it hands the body back to gravity from rest, standing
+// wherever it was flown to.
+func SetPlayerFly(on bool) {
+	platform.FlyMode = on
+	platform.IsOnGround = false
+	platform.JumpRequested = false
+	if PlayerEntity != nil {
+		PlayerEntity.Velocity = mgl32.Vec3{}
+		// Both halves, or the next frame subtracts a key contribution that is
+		// no longer in Velocity and invents momentum running backwards — see
+		// Entity.WalkVelocity.
+		PlayerEntity.WalkVelocity = mgl32.Vec3{}
 	}
 }
 

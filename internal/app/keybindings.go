@@ -264,6 +264,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "F", Desc: "Frame the selection"},
 			{Keys: "W / A / S / D", Desc: "Fly the camera (orbit: slide the pivot)"},
 			{Keys: "Space / Left Shift", Desc: "Up / down"},
+			{Keys: "Caps Lock", Desc: "Fly 4x faster while it is on"},
 			{Keys: "Right-drag / Middle-drag", Desc: "Look around, or orbit the pivot"},
 			{Keys: "Shift+Middle-drag", Desc: "Pan"},
 			{Keys: "Mouse wheel", Desc: "Dolly in fly, zoom the orbit radius"},

@@ -1,8 +1,11 @@
 # Animation
 
-Animation is skeletal, and it lives entirely inside a `.fmdl`: bone hierarchy,
-per-vertex skin weights, and any number of named clips. Author it in the model
-editor's **pose mode**.
+Animation is skeletal: a bone hierarchy, per-vertex skin weights, and any number
+of named clips. Author it in the model editor's **pose mode**.
+
+The bones and the clips can live in the `.fmdl` itself, or — when several models
+are built on the same rig — in a **skeleton** file they all share. See
+[Skeletons](#skeletons) below.
 
 ## Rigging
 
@@ -96,6 +99,53 @@ A clip only ever mentions the bones you actually moved. Keys store local
 translation, rotation and scale channels rather than posed placements, so
 rotations interpolate as rotations and a swinging limb does not shorten between
 keys.
+
+## Skeletons
+
+A skeleton is the armature and its clips saved as their own document,
+`skeletons/<name>.fskl`. Any number of models can link one, and they then share
+a single copy of the rig: fix a walk cycle once and every character on that
+skeleton walks the new way.
+
+Build it the same way you always did — the bones are still dragged in the model
+viewport and the clips still keyed in the timeline. The **Skeleton** section of
+the model panel only decides where the result is saved.
+
+| | |
+| --- | --- |
+| **New Skeleton...** | move this model's bones and clips into a new `.fskl`, and link this model to it |
+| **Link Skeleton...** | replace this model's armature with an existing one |
+| **Unlink** | keep the bones and clips exactly as they are, but save them inside this `.fmdl` again |
+
+Both are also on the model editor's **File** menu.
+
+Linking carries the skin weights across **by bone name**. A vertex bound to a
+bone the new skeleton does not have loses that influence, and the panel says how
+many did — so a rename mismatch shows up as a number rather than as a limb that
+quietly stops moving.
+
+Once a model is linked:
+
+- Its `.fmdl` holds the mesh, the UVs and the weights. The bones and clips are
+  not in it at all, and its weights name their bones instead of numbering them,
+  so reordering the shared rig cannot repoint them at the wrong limb.
+- **Save** writes both files. The Bones and Animation sections carry a line
+  naming the other models on the rig, because an edit reaches all of them.
+- Saving reloads every model on that skeleton in the level open beside you, not
+  just the one being edited.
+- `foundry model inspect` prints the skeleton and who else wears it.
+
+A skeleton needs at least one bone. Clips still key their tracks on bone names,
+and a `.fskl` that drives a bone it does not contain is refused on load rather
+than loaded with a silent limb.
+
+### When not to share
+
+Sharing a rig means sharing the **rest pose**, not just the bone names. A clip
+holds each bone's motion relative to where that bone rests, so two models whose
+arms rest in different places cannot play one clip and both look right. If two
+characters were rigged separately, retarget one onto the other's rest pose
+before linking them — or give them a skeleton each.
 
 ## Playing a clip in the game
 

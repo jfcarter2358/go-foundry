@@ -1,6 +1,6 @@
 // genmodels writes the .fmdl models that ship with the engine.
 //
-// Run from the repo root: go run ./cmd/genmodels  (or `make models`).
+// Run from the repo root: go run ./cmd/genmodels  (or `task models`).
 //
 // The same argument gentextures makes for textures, made for meshes: a hull
 // assembled out of thirty tapered boxes is a thing a program never gets wrong

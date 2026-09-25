@@ -201,9 +201,23 @@ func editorEngineSettings() {
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Engine-wide. Each entity still has to opt in;\nthis says whether the engine listens.")
 	}
-	imgui.Checkbox("Gravity  [0]##enggrav", &platform.GravityEnabled)
+	// Two switches rather than one. They used to be the same flag, which made
+	// "the player is weightless" and "the player is a noclip camera"
+	// impossible to ask for separately — see platform.FlyMode.
+	imgui.Checkbox("Player gravity##enggrav", &platform.GravityEnabled)
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Off is fly mode. Applies to the player during play.")
+		imgui.SetTooltip("Whether the player falls during play. Off is weightless,\n" +
+			"not frozen: whatever momentum they have carries them on.\n" +
+			"How HARD they fall is the level's own Gravity, under Player.")
+	}
+	fly := platform.FlyMode
+	if imgui.Checkbox("Free-fly  [0]##engfly", &fly) {
+		world.SetPlayerFly(fly)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The jump and sprint keys move the player straight up and\n" +
+			"down, and nothing pulls on them. The editor's own camera\n" +
+			"always flies; this is the player's.")
 	}
 	editorTextMutedWrapped("Entities only move while the editor is closed.")
 }

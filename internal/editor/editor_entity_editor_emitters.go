@@ -133,7 +133,7 @@ func entityEmitterPreviewLoad(i int) {
 		// VAO), so an upload here is one the main window can draw with too.
 		tex := map[string]bool{}
 		for li := range e.Doc.Layers {
-			tex[e.Doc.Layers[li].Texture] = true
+			tex[e.Doc.Layers[li].DrawTexture()] = true
 		}
 		if err := levelio.EnsureChunkTextures(tex); err != nil {
 			entityStatus = "Emitter " + m.Name + ": " + err.Error()

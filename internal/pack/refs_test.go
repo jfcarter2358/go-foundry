@@ -161,7 +161,7 @@ func TestCyclesTerminate(t *testing.T) {
 }
 
 // The output directory is deleted before it is written, and this tool runs from
-// Makefiles with paths built by concatenation.
+// build scripts with paths built by concatenation.
 func TestDangerousOutputIsRefused(t *testing.T) {
 	if err := refuseDangerousOutput("/"); err == nil {
 		t.Error("a filesystem root was accepted as -out")

@@ -101,11 +101,16 @@ each vertex carries up to four weights.
 A rig needs three things before it can animate: an armature, at least one vertex
 weighted to a bone, and at least one keyframe. Missing any one and nothing moves.
 
+The armature can belong to the model or to a **skeleton** shared with other
+models — see [Skeletons](10-animation.md#skeletons). The **Skeleton** section
+above the bone panel says which, and switches between them.
+
 See [Animation](10-animation.md) for pose mode and clips.
 
 ## Saving and using
 
-**Save** writes `models/<name>.fmdl`. `*` in the title means unsaved.
+**Save** writes `models/<name>.fmdl`, plus `skeletons/<name>.fskl` when the
+model links a skeleton. `*` in the title means unsaved.
 
 A model reaches the world as an **attachment** on an entity type, or as a
 [scenery](14-scenery-brush.md) prop. Neither reads the `.fmdl` again until asked:

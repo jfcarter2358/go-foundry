@@ -30,7 +30,37 @@ uniform int alphaSharpen;
 // Where a cutout's edge sits once mip filtering has turned its hard 0/255
 // alpha into a ramp: the level set that best reproduces the original
 // silhouette is the halfway point, not "any alpha at all".
-const float alphaCutoff = 0.5;
+//
+// alphaCutoffBias moves it, for a material carrying a `cutout` effect with a
+// threshold of its own (material_kinds.go). A BIAS rather than the threshold,
+// so that zero — what GL gives an uninitialised uniform, and what every
+// surface with no cutout effect sends — is the 0.5 this was a constant at.
+// Clamped away from both ends: a threshold of 0 discards nothing and one of 1
+// discards everything, and neither is a thing an author means.
+uniform float alphaCutoffBias;
+
+// tintBias multiplies the albedo, carried as a BIAS FROM WHITE so that the zero
+// an unwritten uniform holds is no tint at all — the trick uvScaleBias plays.
+// A projected decal is what sets it: one grey scorch texture tinted eight ways
+// is eight different marks (gfx.Geometry.Tint).
+uniform vec3 tintBias;
+
+// surfaceBlend says how the FRAMEBUFFER blend will combine this fragment, which
+// the shading stage has to know about because two of the three answers are not a
+// colour at all:
+//
+//   0  ordinary — the fragment replaces or alpha-blends over what is behind it
+//   1  additive — it only ever ADDS light, so fog swallows it rather than
+//      replacing it (applyFogAdditive)
+//   2  modulate — it is a FACTOR on what is already in the framebuffer: a decal's
+//      scorch mask, where white changes nothing and black blacks the wall out
+//
+// Only a projected decal sets it (gfx.Geometry.Blend); everything else in the
+// engine leaves it at the 0 an unwritten uniform holds.
+uniform int surfaceBlend;
+float alphaCutoffLevel() {
+    return clamp(0.5 + alphaCutoffBias, 0.01, 0.99);
+}
 
 // Untextured surfaces. A face that names no texture takes its albedo from its
 // own normal, encoded as a colour (n * 0.5 + 0.5), instead of from tex — so a
@@ -460,6 +490,13 @@ void main() {
         }
     }
 
+    // The albedo tint, on the sampled texture rather than on the shaded result:
+    // a tint says what colour the surface IS, so it has to be in place before
+    // the lighting multiplies it — tinting afterwards would scale the light as
+    // well and turn a dark red decal into an unlit patch. Applied to the
+    // normalColor path too, so an untextured surface can still be tinted.
+    texColor.rgb *= vec3(1.0) + tintBias;
+
     // Normal mapping, on everything but water — water derives its normal from
     // the wave field, which is the whole point of that path, and a tangent
     // frame built on a surface that is displacing under the fragment would not
@@ -546,7 +583,7 @@ void main() {
         // the clamp pins coverage at 1 — ordinary opaque geometry is
         // untouched by this path, which is why it can stay on for the whole
         // opaque pass rather than being switched per surface.
-        finalAlpha = clamp((finalAlpha - alphaCutoff) / max(fwidth(finalAlpha), 1e-5) + 0.5, 0.0, 1.0);
+        finalAlpha = clamp((finalAlpha - alphaCutoffLevel()) / max(fwidth(finalAlpha), 1e-5) + 0.5, 0.0, 1.0);
     }
 
     if (finalAlpha < 0.001) discard;
@@ -576,10 +613,39 @@ void main() {
         finalAlpha = clamp(finalAlpha + fresnel * (1.0 - finalAlpha) * 0.5, 0.0, 1.0);
     }
 
+    if (surfaceBlend == 2) {
+        // A modulate decal is a MASK, not a surface. Three things follow, and
+        // all three are wrong if it is shaded like anything else here.
+        //
+        // It is never lit: the wall under it has already been lit, and lighting
+        // the mask as well would apply the room's light to that wall twice.
+        //
+        // Its alpha cannot be left to the framebuffer blend. The GL multiply
+        // blend can express `src * dst` and not `dst * mix(1, src, a)`, so a
+        // half-transparent WHITE texel would come out brighter than the wall it
+        // is supposed to leave alone. Folding the alpha toward white here is what
+        // makes a partly-faded mask fade instead of glowing — which is also what
+        // lets a decal's lifetime fade one out at all.
+        //
+        // And its fog fades it toward white rather than toward the fog colour,
+        // for the reason applyFogModulate gives.
+        surface = mix(vec3(1.0), texColor.rgb, finalAlpha);
+        surface = applyFogModulate(surface, fragWorldPos);
+        outputColor = vec4(surface, 1.0);
+        return;
+    }
+
     // Distance fog, last: it acts on the shaded result, so a fogged surface
     // loses its own lighting along with its colour rather than glowing through
     // the fog. See fog.glsl, injected above this file's own #version line.
-    surface = applyFog(surface, fragWorldPos);
+    //
+    // An additive fragment takes the other form of the same answer: the
+    // framebuffer already holds the fog behind it, so mixing toward the fog
+    // colour would add the fog a second time and make a distant mark brighter
+    // than a near one.
+    surface = surfaceBlend == 1
+        ? applyFogAdditive(surface, fragWorldPos)
+        : applyFog(surface, fragWorldPos);
 
     outputColor = vec4(surface, finalAlpha);
 }

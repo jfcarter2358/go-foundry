@@ -62,7 +62,6 @@ var (
 
 	releaseProbe   releaseProbeResult
 	releaseProbeAt time.Time
-
 )
 
 var (
@@ -279,7 +278,7 @@ func drawReleaseSettings(pr releaseProbeResult) {
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Optional. A Foundry checkout to build the game binary from with\n" +
 			"go build -tags release. Left empty, the prebuilt binaries in\n" +
-			release.RuntimesDirName + "/ are used — make runtimes puts them there.")
+			release.RuntimesDirName + "/ are used — task runtimes puts them there.")
 	}
 }
 
@@ -310,7 +309,7 @@ func drawReleasePlayers(pr releaseProbeResult) {
 		}
 		stub := filepath.ToSlash(filepath.Join(release.RuntimesDirName, release.SetupStubFileName))
 		if pr.missingSetup {
-			editorTextColored(releaseErrorColor, fmt.Sprintf("%s installer: no %s — make runtime-windows RUNTIMES_DIR=%s",
+			editorTextColored(releaseErrorColor, fmt.Sprintf("%s installer: no %s — task runtime-windows RUNTIMES_DIR=%s",
 				p.Label, stub, runtimes))
 		} else {
 			editorTextMuted(fmt.Sprintf("%s installer: %s", p.Label, stub))

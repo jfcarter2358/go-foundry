@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"foundry/internal/imguibackend"
 	"foundry/internal/levelio"
+	"foundry/internal/material"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
 	"slices"
@@ -643,6 +644,12 @@ func entityPanelModel(idx int) {
 	}
 	if m.Path == "" {
 		editorTextMutedWrapped("No mesh: this attachment draws nothing.")
+	}
+	// The material an attachment wears, overlaid on the mesh's own settings.
+	if materialCombo("Material##entedmat", &m.Material, material.DomainSurface) {
+		EntityDefPushUndo()
+		entityMarkDirty()
+		entityPreviewInvalidate()
 	}
 	if textureCombo("Texture##entmtex", &m.Texture, true) {
 		EntityDefPushUndo()

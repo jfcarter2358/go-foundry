@@ -121,6 +121,7 @@ type RawLayer struct {
 	Render      string         `yaml:"render,omitempty"` // sprite (default) | volume
 	Volume      *RawVolumeLook `yaml:"volume,omitempty"` // absent = DefaultVolumeLook
 	Texture     string         `yaml:"texture,omitempty"`
+	Material    string         `yaml:"material,omitempty"` // .fmat worn by the layer
 	SheetCols   int            `yaml:"sheet_cols,omitempty"`
 	SheetRows   int            `yaml:"sheet_rows,omitempty"`
 	FrameMode   string         `yaml:"frames,omitempty"`    // over-life (default) | random | static
@@ -230,6 +231,7 @@ func rawToLayer(r RawLayer) Layer {
 		Render:         RenderKindFromName(r.Render),
 		Volume:         volumeLookFromRaw(r.Volume),
 		Texture:        r.Texture,
+		Material:       r.Material,
 		SheetCols:      r.SheetCols,
 		SheetRows:      r.SheetRows,
 		FrameMode:      FrameModeFromName(r.FrameMode),
@@ -255,7 +257,10 @@ func rawToLayer(r RawLayer) Layer {
 	for _, s := range r.ColorRamp {
 		l.ColorRamp = append(l.ColorRamp, ColorStop{T: s.T, C: mgl32.Vec3{s.C.R, s.C.G, s.C.B}})
 	}
-	if l.Texture == "" {
+	if l.Texture == "" && l.Material == "" {
+		// A layer with neither is drawn as the fallback texture rather than as
+		// nothing; a layer whose MATERIAL supplies the texture is left alone,
+		// or the fallback would win over what the material names.
 		l.Texture = "default"
 	}
 	return l
@@ -311,6 +316,7 @@ func layerToRaw(l *Layer) RawLayer {
 		Render:         nameIfNot(RenderKindName(l.Render), RenderKindNames[RenderSprite]),
 		Volume:         volumeLookToRaw(l.Volume),
 		Texture:        l.Texture,
+		Material:       l.Material,
 		SheetCols:      l.SheetCols,
 		SheetRows:      l.SheetRows,
 		FrameMode:      nameIfNot(FrameModeName(l.FrameMode), FrameModeNames[FrameOverLife]),

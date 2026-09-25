@@ -90,6 +90,49 @@ func init() {
 			return flang.FloatVal(float64(a.Sub(b).Len())), nil
 		},
 
+		// impulse is the one verb that speaks to the physics rather than around
+		// it. Everything else that moves something either places it outright
+		// (`position`), eases it (`move_to`) or drives it along a path — all of
+		// which take the body OUT of the simulation for as long as they run.
+		// An impulse hands it a change in momentum and lets the simulation
+		// carry on: gravity still pulls, walls still stop it, the ground still
+		// bleeds it off. That is what a blast, a launch pad, a recoil shove and
+		// a jump pad all are, and writing `velocity` for them is wrong in the
+		// one way that matters — it discards whatever the body was already
+		// doing, so a grenade going off under a running player stops them dead
+		// and then throws them.
+		"impulse": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("impulse takes (object, vec): the change in velocity, in units a second")
+			}
+			e, err := rt.verbEntity(args, 0, "impulse")
+			if err != nil {
+				return nil, err
+			}
+			d, ok := toVec3(args[1])
+			if !ok {
+				return nil, fmt.Errorf("impulse takes a vec, not a %s", flang.TypeOf(args[1]))
+			}
+			// World space in, the body's own frame stored — `velocity`'s own
+			// bargain, for its reason: an impulse is almost always aimed at
+			// something, and a rider's Y is not the ship's Y once the ship
+			// rolls. A rotation only, so the length is untouched.
+			if rt.lvl != nil {
+				d = rt.lvl.Frames.FrameFor(e).DirFromWorld(d)
+			}
+			e.Velocity = e.Velocity.Add(d)
+			rt.markDirty()
+			// A body being eased or walked along a path has its position
+			// written for it every frame, so the momentum sits there unspent
+			// until whatever is carrying it lets go — and then arrives all at
+			// once. Worth saying out loud: it is a real effect, and it never
+			// looks like the one that was wanted.
+			if e.Tweens.Easing(world.TweenMove) || e.Waypoints != nil {
+				rt.warnAt(pos, "impulse on @%s does nothing yet: a move_to or a waypoint animation is writing its position, and the momentum is only spent once that lets go", e.ID)
+			}
+			return flang.BoolVal(true), nil
+		},
+
 		"play_anim": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
 			e, err := rt.verbEntity(args, 0, "play_anim")
 			if err != nil {
@@ -312,7 +355,7 @@ func init() {
 	// The particle, attach and audio verbs live in their own files and their
 	// own maps, so each surface can be read in one place; they are merged in
 	// here so there is still exactly one table the runtime looks in.
-	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs, audioVerbs, effectVerbs, uiVerbs, bindingVerbs, saveVerbs, hitscanVerbs, waypointVerbs, tweenVerbs, aiVerbs, boneVerbs} {
+	for _, group := range []map[string]scriptVerb{particleVerbs, attachVerbs, audioVerbs, effectVerbs, decalVerbs, uiVerbs, bindingVerbs, saveVerbs, hitscanVerbs, waypointVerbs, tweenVerbs, aiVerbs, boneVerbs, cameraVerbs} {
 		for name, fn := range group {
 			if _, clash := scriptVerbs[name]; clash {
 				panic("script: two implementations of the verb " + name)

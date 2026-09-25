@@ -74,6 +74,7 @@ func activeGizmoSprite() *world.Sprite {
 // sprite.
 func editorArmSpritePlacement() {
 	Editor.SpritePlacementMode = true
+	Editor.DecalPlacementMode = false
 	Editor.VolumePlacementMode = false
 	Editor.EntityPlacementMode = false
 	Editor.SpawnPlacementMode = false

@@ -324,6 +324,11 @@ func LevelIDTaken(lvl *Level, id string) bool {
 			return true
 		}
 	}
+	for i := range lvl.Decals {
+		if lvl.Decals[i].ID == id {
+			return true
+		}
+	}
 	for i := range lvl.WaypointAnimations {
 		if lvl.WaypointAnimations[i].ID == id {
 			return true

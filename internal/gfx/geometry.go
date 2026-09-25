@@ -8,6 +8,7 @@ package gfx
 import (
 	"fmt"
 	"foundry/internal/geom"
+	"foundry/internal/material"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -28,6 +29,11 @@ import (
 // picking, the shadow passes and the detail renderer all index directly.
 type Geometry struct {
 	Texture string
+	// MaterialName is the .fmat this surface wears, or "" for none — which is
+	// what nearly every surface in a level carries. What the material says is
+	// overlaid on the fields below rather than replacing them; see
+	// material_surface.go.
+	MaterialName string
 	// BlendTexture/BlendMask, when both set, mix a second texture over
 	// Texture at draw time — see applyBlendUniforms. Empty (the default) means
 	// no blending, at no extra GPU cost.
@@ -98,7 +104,16 @@ type Geometry struct {
 	// coordinate as it draws. An entity attachment's scroll hands it over
 	// (world.EntityModel.UVScroll); nothing else sets it.
 	UVOffset mgl32.Vec2
-	Water    WaterParams
+	// Tint multiplies the albedo. The ZERO value is white, not black — see
+	// applyTintUniform, which is what makes "a field nobody sets" mean "no
+	// tint". A projected decal's pieces are what set it (world/decal.go); no
+	// other geometry in the engine does.
+	Tint mgl32.Vec3
+	// Blend is how the framebuffer blend will combine this mesh, which the
+	// shading stage has to know — see SurfaceBlend. Set by a decal's pieces
+	// alongside Tint; the zero value is the ordinary case.
+	Blend SurfaceBlend
+	Water WaterParams
 	Vao   uint32
 	Vbo   uint32
 	Nbo   uint32 // normal buffer; 0 when the surface is flat-shaded
@@ -134,10 +149,22 @@ func SetSmoothLighting(on bool) {
 }
 
 // ShadesSmooth is whether the surface shades from interpolated normals: it has
-// some, and either its author asked for it or the Smooth Lighting setting
-// does.
+// some, and its author asked for it, its material does, or the Smooth Lighting
+// setting does.
+//
+// The material is consulted HERE rather than only where the uniform is set,
+// because this answer picks more than the uniform: BakedLightData chooses
+// between a compiled surface's flat and smoothed bakes by it, and a surface
+// shading smooth off the flat bake is lit for a shape it no longer has.
 func (g *Geometry) ShadesSmooth() bool {
-	return len(g.Normals) > 0 && (g.Smooth || SmoothLighting)
+	if len(g.Normals) == 0 {
+		return false
+	}
+	if g.Smooth || SmoothLighting {
+		return true
+	}
+	m, ok := material.ResolveSurface(g.MaterialName)
+	return ok && m.HasSmooth
 }
 
 // SmoothFlag returns the value of the shader's `smoothShading` uniform for this
@@ -161,19 +188,15 @@ func (g *Geometry) SmoothFlag() int32 {
 // alternative — binding whatever Textures[""] resolves to, which is texture
 // object 0 — samples black through the whole lighting model.
 func (g *Geometry) NormalColorFlag() int32 {
-	if g.Texture == "" {
-		return 1
-	}
-	return 0
+	st := g.SurfaceState()
+	return st.NormalColorFlag()
 }
 
-// applyWaterUniforms pushes this geometry's water settings to the shader.
-// Every draw call sets them, including the disabled case, so a water plane
-// never leaks its wave/fresnel state onto the geometry drawn after it.
-func (g *Geometry) applyWaterUniforms() {
-	applyWaterUniforms(&g.Water)
-}
-
+// applyWaterUniforms pushes a surface's water settings to the shader. Every
+// draw call sets them, including the disabled case, so a water plane never
+// leaks its wave/fresnel state onto the geometry drawn after it. Called from
+// SurfaceState.Apply, which is the one place a world-program draw sets its
+// per-surface uniforms.
 func applyWaterUniforms(w *WaterParams) {
 	if !w.Enabled {
 		gl.Uniform1i(IsWaterUniform, 0)
@@ -188,14 +211,10 @@ func applyWaterUniforms(w *WaterParams) {
 		w.ReflectColor.X(), w.ReflectColor.Y(), w.ReflectColor.Z())
 }
 
-// applyBlendUniforms pushes this geometry's second-texture blend state to the
+// applyBlendUniforms pushes a surface's second-texture blend state to the
 // shader. Every draw call sets it, including the disabled case, so a blended
 // surface never leaks its blendTex/blendMask binding onto the geometry drawn
 // after it. Mirrors applyWaterUniforms.
-func (g *Geometry) applyBlendUniforms() {
-	applyBlendUniforms(g.BlendTexture, g.BlendMask)
-}
-
 func applyBlendUniforms(blendTexture, blendMask string) {
 	if blendTexture == "" || blendMask == "" {
 		gl.Uniform1i(HasBlendUniform, 0)
@@ -209,15 +228,6 @@ func applyBlendUniforms(blendTexture, blendMask string) {
 	gl.BindTexture(gl.TEXTURE_2D, Textures[blendMask])
 	gl.Uniform1i(BlendMaskUniform, BlendMaskUnit)
 	gl.ActiveTexture(gl.TEXTURE0)
-}
-
-// applyNormalUniforms binds this geometry's normal map, if its texture has
-// one. Which textures do is a property of the art, not of the surface (see
-// texture_normal.go), so unlike the blend pair there is nothing per-geometry
-// to configure: painting a bump channel into brick.ftex gives every brick
-// wall in the game relief at once.
-func (g *Geometry) applyNormalUniforms() {
-	BindNormalMap(g.Texture, HasNormalMapUniform, NormalMapUniform)
 }
 
 // GobEncode and GobDecode make a Geometry serialise as NOTHING.
@@ -564,7 +574,8 @@ func (g *Geometry) Unload() {
 // texture loaded from a PNG is never scanned for alpha (textureHasAlpha is the
 // texture editor's to record). An opaque texel blended is still opaque.
 func (g *Geometry) IsTransparent() bool {
-	return g.Unlit || (g.Alpha > 0 && g.Alpha < 1.0) || textureHasAlpha[g.Texture]
+	st := g.SurfaceState()
+	return st.IsTransparent()
 }
 
 // UnlitFlag is the value of the shader's `unlit` uniform for this geometry.
@@ -582,23 +593,17 @@ func (g Geometry) Draw() {
 	}
 	model := mgl32.Ident4()
 
+	st := g.SurfaceState()
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(WorldModelUniform(), 1, false, &model[0])
-	gl.Uniform1f(AlphaUniform, g.Alpha)
-	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
-	gl.Uniform1i(NormalColorUniform, g.NormalColorFlag())
-	gl.Uniform1i(UnlitUniform, g.UnlitFlag())
-	gl.Uniform2f(UVOffsetUniform, g.UVOffset.X(), g.UVOffset.Y())
-	g.applyWaterUniforms()
-	g.applyBlendUniforms()
-	g.applyNormalUniforms()
+	st.Apply()
 	ApplySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
 
 	gl.BindVertexArray(g.Vao)
 
 	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])
+	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
 
 	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
 }
@@ -608,21 +613,15 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	if len(g.Vertices) == 0 {
 		return
 	}
+	st := g.SurfaceState()
 	gl.UseProgram(Program)
 	gl.UniformMatrix4fv(WorldModelUniform(), 1, false, &model[0])
-	gl.Uniform1f(AlphaUniform, g.Alpha)
-	gl.Uniform1i(SmoothUniform, g.SmoothFlag())
 	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
-	gl.Uniform1i(NormalColorUniform, g.NormalColorFlag())
-	gl.Uniform1i(UnlitUniform, g.UnlitFlag())
-	gl.Uniform2f(UVOffsetUniform, g.UVOffset.X(), g.UVOffset.Y())
-	g.applyWaterUniforms()
-	g.applyBlendUniforms()
-	g.applyNormalUniforms()
+	st.Apply()
 	ApplySkinUniforms(&worldSkinUniforms, Program, g.BonePalette)
 	gl.BindVertexArray(g.Vao)
 	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, Textures[g.Texture])
+	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
 	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
 }
 
@@ -647,7 +646,13 @@ func (g Geometry) DrawLinesWithTransform(model mgl32.Mat4) {
 	// would be noise. A marker's colour comes from its texture and its alpha.
 	gl.Uniform1i(NormalColorUniform, 0)
 	gl.Uniform1i(UnlitUniform, g.UnlitFlag())
-	gl.Uniform2f(UVOffsetUniform, 0, 0)
+	// No material: a line list wears none, and these are reset rather than
+	// merely left alone so the previous draw's tiling and cutout cannot ride
+	// along. See ApplyUVUniforms.
+	ResetUVUniforms()
+	gl.Uniform1f(AlphaCutoffBiasUniform, 0)
+	applyTintUniform(TintBiasUniform, mgl32.Vec3{})
+	gl.Uniform1i(SurfaceBlendUniform, int32(SurfaceBlendNormal))
 	gl.Uniform1i(IsWaterUniform, 0)
 	gl.Uniform1i(HasNormalMapUniform, 0)
 	ApplySkinUniforms(&worldSkinUniforms, Program, nil)

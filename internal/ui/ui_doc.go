@@ -634,6 +634,10 @@ type Node struct {
 	Alpha   float32 // multiplies down the whole subtree
 	Clip    bool    // scissor children to this rect
 	Blocks  bool    // swallow a click landing here even if this kind is inert
+	// Draggable lets the pointer pick the node up: pressing it and moving
+	// posts :drag_start:, :drag: and, on release, :drop:. Any kind — an
+	// inventory icon is an image — and hit-testable for it even when inert.
+	Draggable bool
 
 	Style   Style
 	Text    TextSpec
@@ -661,7 +665,17 @@ type Node struct {
 	worldAnchor mgl32.Vec3 // see SetWorldAnchor
 	anchored    bool
 	compass     CompassPin // see SetCompassPin
+	translate   mgl32.Vec2 // see SetTranslate
 }
+
+// SetTranslate slides the node from where its layout puts it, in canvas units
+// — an icon following the pointer while it is dragged, a panel sliding in.
+// Runtime state, like SetWorldAnchor: never saved, and it moves the node's
+// children with it.
+func (n *Node) SetTranslate(v mgl32.Vec2) { n.translate = v }
+
+// Translate is the node's runtime slide (SetTranslate).
+func (n *Node) Translate() mgl32.Vec2 { return n.translate }
 
 // CompassPin places a node along its parent by bearing, the way a compass tape
 // does: the parent's width stands for Span radians of heading centred on where
@@ -850,6 +864,10 @@ type Screen struct {
 	Modal       bool // nothing below this screen sees input
 	Pauses      bool // gameplay does not tick while this screen is up
 	ShowsCursor bool // mouse-look is released while this screen is up
+	// ClickThrough lets a press that lands on none of this screen's widgets
+	// reach the world behind it, even when the screen is modal: a build menu
+	// over a level the player is still pointing at. Keys stay captured.
+	ClickThrough bool
 
 	// InitialFocus is the node keyboard focus starts on. Empty picks the first
 	// interactive node in tree order.

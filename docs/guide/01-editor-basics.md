@@ -9,7 +9,7 @@ it was when you come back out.
 The top bar is two rows: menus, then the tools the mouse uses.
 
 ```
-File  Edit  View  Build  Window | Level Texture Model Entity Script YAML Particles UI   <name> [Saved]
+File  Edit  View  Build  Window | Level Texture Model Entity Script YAML Particles UI AI   <name> [Saved]
 Object/Edit Tab | Point 1  Edge 2  Face 3 | Move G  Rotate R  Scale C  UV U | Solid/Wireframe Z  Bounds B  Orbit/Fly V
 ```
 
@@ -103,9 +103,17 @@ reaching for a corner is what you meant.
 | `3` | Face | one face of a brush |
 
 `Ctrl+click` adds to the selection — in object mode too, where it builds up a set
-of brushes to move together. Repeated clicks on stacked handles cycle through
-them. Switching between Point and Edge keeps what you had; crossing to or from
-Face clears it.
+of brushes to move together. Switching between Point and Edge keeps what you had;
+crossing to or from Face clears it.
+
+A click takes whatever is nearest the camera, and **clicking again in the same
+place takes the next thing along the ray**, wrapping back to the nearest at the
+end. That is how you reach a wall behind a pillar, the far side of a box you are
+looking into, or the brush under a light fitting bolted to it — without hiding
+anything or flying around to a clear angle. What a click cycles through is
+whatever the mode selects: stacked handles in Point and Edge mode, the faces on
+the ray in Face mode, and whole solids and objects in object mode. `Ctrl+click`
+does not cycle, since it is building a set out of what you are pointing at.
 
 Editing a property applies it to everything selected of that type, and relative
 positions, rotations and scales are preserved.

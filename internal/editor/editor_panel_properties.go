@@ -67,6 +67,7 @@ func editorPropertiesSection(lvl *world.Level) {
 	editorPrefabPropertiesSection()
 	editorVolumePropertiesSection()
 	editorSpritePropertiesSection()
+	editorDecalPropertiesSection()
 	editorSceneryPropertiesSection()
 	// Not selection-driven, unlike everything around it: the brush block is
 	// about the *next* click rather than about anything selected, which is why

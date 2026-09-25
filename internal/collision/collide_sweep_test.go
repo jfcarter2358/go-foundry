@@ -103,7 +103,7 @@ func TestFastFallLandsOnTheFloor(t *testing.T) {
 
 	landed := false
 	for i := 0; i < 40 && !landed; i++ {
-		landed = MovePlayer(p, lvl, mv)
+		landed = MovePlayer(p, lvl, mv).OnGround
 	}
 	if !landed {
 		t.Fatalf("never landed; ended at y=%v", p.Position.Y())

@@ -2,6 +2,140 @@
 
 ## Done
 
+- [x] **Skeletons.** A `.fskl` in `resources/skeletons/` is an armature and the
+      animation clips that drive it, saved on its own so several models can
+      share one. A `.fmdl` names it — `skeleton: human` — and then carries only
+      its mesh, its UVs and its skin weights. Fix a walk cycle once and every
+      character on that rig walks the new way; before this each model carried
+      its own copy, and the game's marine had picked up fourteen clips the
+      mechanic never got.
+
+      **Nothing downstream changed.** In memory a loaded `ModelDoc` still has
+      its `Bones` and `Animations` populated, so posing, GPU skinning, the
+      gizmos and the runtime player are untouched — the split is applied on load
+      and undone on save. A rig the renderer had to resolve through a second
+      object every frame would only be a second way for the two to disagree.
+
+      **Except the weights.** They index the bone array, and that array now
+      belongs to somebody else, so a linked model writes its weights by bone
+      *name* — the same reasoning that already made an animation track key on a
+      name. Reordering a shared skeleton cannot repoint another model's weights
+      at the wrong limb, and a weight naming a bone the rig does not have is
+      refused on load rather than dropped into a limb that silently stops
+      moving.
+
+      **Authored where it always was.** Bones are still dragged in the model
+      viewport and clips still keyed in its timeline; the new **Skeleton** panel
+      section only decides where the result goes. New Skeleton lifts the open
+      model's armature out into a `.fskl`, Link points a model at an existing
+      one (carrying its weights across by name and saying how many influences
+      found no bone), Unlink brings it back inline. The Bones and Animation
+      sections name the other models an edit reaches, **Save** writes both files
+      and reloads every model on the rig in the level open beside you, and a
+      merge into a linked model leaves the incoming armature behind rather than
+      pushing a crate's bone into every marine.
+
+      Sharing a rig means sharing the **rest pose**, not just the bone names: a
+      clip holds each bone's motion relative to where that bone rests. The
+      guide says so, and the game project's conversion tool refuses a model
+      whose bones rest anywhere else than the skeleton's.
+
+- [x] **Materials.** A `.fmat` in `resources/materials/` is a named bundle of
+      shader effects and their settings, and anything that can wear a texture
+      can wear one instead: a brush face, a compiled surface, a model or entity
+      attachment, a sprite, one layer of a particle effect, or the sky. The new
+      **Material** editor authors them, with a live preview drawn through the
+      engine's own world shader — a second copy of `vertex.glsl`+`fragment.glsl`
+      so the swatch cannot disagree with the wall, and so the preview's camera
+      and lights never land in the program the level window is drawing with.
+
+      **Every effect the engine had is ported onto it**, and none of them moved
+      house: a material RESOLVES into exactly the per-object fields the renderer
+      already read, so a level that names no material draws to the bit as it
+      did. Water was six numbers on a surface; `unlit` was a checkbox on an
+      entity attachment and nothing else could reach it; the second-texture
+      blend was two names per face; the UV scroll was one field only a tank's
+      tracks had; a sprite's blend mode and a particle layer's were the same
+      enum spelled out in two formats; a layer's volumetric look was eight
+      numbers repeated in every effect with smoke in it; the sky's gradient,
+      cubemap, tint and cloud deck were nine fields per level; and the cutout
+      threshold was a *constant in the shader* and was not authorable at all.
+
+      **It overlays rather than replaces**, which is the whole reason it is safe
+      to add to finished content. A material carrying nothing but a scroll rate
+      slides the texture of whatever wears it and leaves that surface's own
+      texture, alpha, tint and smoothing exactly as the level set them — which
+      is what lets one `conveyor.fmat` drive nine belts of five different art.
+      Tints and alphas multiply rather than overwrite, so a script fading a
+      sprite out still reaches zero. The `Has*` flags on the resolved structs
+      are that distinction: a scroll rate of zero and no scroll effect are
+      different answers.
+
+      **The editor is built from the schema.** A `material.Kind` declares its
+      parameters with their types, ranges, defaults and documentation, and the
+      reader, the writer, the parameter panel, the Add menu and `Validate` are
+      all driven off that one table — so a new parameter is a row in
+      `material_kinds.go` and no UI code, and a parameter still at its default
+      is marked in the panel and left out of the file. A key this build does not
+      know is kept and written back, so opening a newer build's material in an
+      older editor loses nothing.
+
+      Three new uniforms carry what had nowhere to go — the cutout threshold and
+      the UV tiling and turn — and all three are *biases from the identity*, so
+      the zero GL gives an unwritten uniform is exactly what the engine did
+      before. Twenty-one worked examples ship in `resources/materials/`, one per
+      effect. `material` is a script property on sprites and model attachments;
+      `.fmat` is packed, pruned and scanned for the textures it names; a
+      material written from outside is routed into the editor's reloads like any
+      other file. See `docs/guide/28-materials.md`.
+
+- [x] **AI decision trees.** What an agent *does about* what happens to it is a
+      `.fai` document drawn in the new **AI** editor, not a script: condition
+      nodes that branch and action nodes that chain, one tree per entry point —
+      an event root fired by a message (`:damage:`, `:target_in_range:`,
+      `:anim_end:`) or a named helper another tree runs or asks. An entity type
+      carries one with `ai_tree:`, beside `script:`.
+
+      **It is a second front end onto the runtime that was already there, not a
+      second runtime.** Every field of every node is one flang expression,
+      parsed by flang's own parser and evaluated by its own evaluator against
+      the same host (the new `flang/embed.go` exposes exactly those two halves),
+      and the tree runs on *the entity's own interpreter*. So `call` enters that
+      script's functions directly, `set` writes the dict the script reads as
+      `@self.state["..."]`, `send` posts into the same queue under the same
+      rules, `?name` means one number in both halves, and a seeded run rolls one
+      stream. A message reaches the tree first — deciding before acting — and
+      either half handling it counts as handled.
+
+      **The vocabulary is a table, and everything is generated from it.** Twelve
+      checks and nineteen actions in `aitree/vocab.go`, each declaring its
+      fields with their hints and defaults; the node's form, the verb menu, the
+      completion, the validation and the file's key order are all read off it,
+      and nearly every verb compiles to a *template* — `distance` is exactly
+      `distance((from), (to)) <= (value)` — so there is no second
+      implementation of anything the language already does. The editor's **As an
+      expression** panel prints that line. Native ops are only the ones a
+      template cannot express: the writes, the tag fan-out, and the calls.
+
+      A document is recompiled on every change, so a bad node is marked on the
+      canvas and listed under Problems as it is drawn, and at run time it ends
+      its own branch rather than being guessed at — half a behaviour works while
+      the other half is finished. Canvas: drag to wire, rubber band, middle-drag
+      pan, zoom about the pointer, **Tidy** (which can only move boxes), **F**
+      to frame. `foundry ai check <name> -script <path>` does the same compile
+      headlessly and also catches a `call` naming a function that is not there.
+
+      **level1/2/3's soldiers are ported to it.** `enemy_combat.flang` went from
+      878 lines to 270: `resources/ai/soldier.fai` is 23 event roots, 15 helpers
+      and 231 nodes carrying every `if` — opening fire, bursts, the grenade and
+      crouch timer chains, dashes for cover, alerts, avenging a comrade, death —
+      and the script keeps only what is a loop or trigonometry: casting a spread
+      of pellets, resolving what a ray hit, a grenade's arc. The 42 parameters
+      moved to the document, where the editor can show them, and every type's
+      own `params:` block still sets them. `foundry check` reports byte-identical
+      output on all three levels before and after, and 90 s of 21 soldiers
+      fighting in `foundry sim` logs no error. See `docs/guide/24-ai.md`.
+
 - [x] **Claude Code in the editor.** **Window > Claude Code** opens a chat panel
       that drives the real `claude` CLI as a child process, over its stream-json
       protocol — so it works on the same files, the same login and the same
@@ -43,7 +177,7 @@
       effects silently, a file with unsaved edits never, the open level offered
       rather than taken because reloading starts the undo history again.
 
-      Dev-only, like the rest of `internal/editor` — `make release-check` proves
+      Dev-only, like the rest of `internal/editor` — `task release-check` proves
       it. See `docs/guide/27-claude-code.md`.
 
 - [x] Muzzle flashes that light, and difficulty levels. An effect document can
@@ -765,7 +899,7 @@
       in place
 - [x] Release builds and installers. `-tags release` compiles the engine without
       the editor, the four sub-editors or imgui (`internal/app/devtools_*.go` is
-      the seam; `make release-check` proves they are gone); `game.yaml` names the
+      the seam; `task release-check` proves they are gone); `game.yaml` names the
       start level, the start screen and the window; settings and logs move to the
       per-user data directory so an installed game never writes into its own
       install; `cmd/foundrypack` stages a tree with only the assets the game can
@@ -925,7 +1059,7 @@
 - [ ] Debugger
 - [ ] Configurable editor keybindings
 - [ ] Audio mixer
-- [ ] Gizmo in 3D editor to edit texture UVs
+- [/] Gizmo in 3D editor to edit texture UVs
 
 
 ### Engine
@@ -940,7 +1074,13 @@
 - [ ] Volumes are brushes instead of boxes only
 - [x] Game saves
 - [x] Checkpoints
-- [ ] Decal support
+- [x] Decal support: a `Decal` is an oriented box, and what it draws is the
+      level's own geometry clipped to that box and re-projected — so a mark
+      follows the surface, bends round its corners, is occluded by what is in
+      front of it, and rides the lift or hull it was placed on. Three blend
+      modes (alpha/multiply/additive), the `decal` verb for bullet holes and
+      scorch marks with a cap and a lifetime, and baked-light pickup in a
+      compiled level. See docs/guide/29-decals.md
 - [x] Volumetric clouds and explosions: cloud volumes (`cloud:` on a volume), a
       volumetric cloud deck on the sky that `ease_sky` blends, cloud shadows on
       the world, and `render: volume` particle layers for fireballs and smoke —
@@ -951,13 +1091,11 @@
 - [x] Waypoint animations
 - [x] Cannot select sprites/waypoints/etc. as refs in script dropdown
 - [ ] Popout help menu
-
 - [ ] Enable AI to enter vehicles
-- [ ] RTS mode?
-- [ ] 3rd person mode?
+- [ ] 3rd person camera
 - [x] Audio control
-- [ ] Shader editor
-- [ ] Break apart model and skeleton with animations on skeletons
+- [x] Shader editor
+- [x] Break apart model and skeleton with animations on skeletons
 
 ### Game
 

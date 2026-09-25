@@ -1,0 +1,18 @@
+# ember.fmat — a particle layer's appearance, as a material.
+#
+# A .fpar layer carries its blend, its billboard, its sheet and its tint inside
+# the effect document, so two effects that want the same sparks describe them
+# twice. Pointing both layers at this instead is how they stop drifting apart.
+#
+# What stays on the layer: the ramps. A ramp is a curve over a particle's life
+# rather than a constant, and a material's parameters are constants.
+kind: particle
+doc: Warm sparks — additive, always facing, one bright tint.
+effects:
+  - effect: blend_mode
+    mode: additive
+  - effect: billboard
+    mode: full
+  - effect: tint
+    color: {r: 1, g: 0.72, b: 0.35}
+    intensity: 1.6

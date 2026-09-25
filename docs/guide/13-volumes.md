@@ -6,7 +6,8 @@ its own. All it does is answer "is this point inside".
 
 Use one for anything a model-less entity would have done — a trigger, a script
 anchor, a level exit, a region of fog. It is the smaller idea, so it is the
-smaller type: no velocity, no gravity, no collision flags, no models.
+smaller type: no velocity, no collision flags, no models. (It can *set* the
+gravity inside itself — see below — but it never has one of its own.)
 
 ## Placing one
 
@@ -27,6 +28,22 @@ Clicking tests against the real solid, so a sphere is picked where it looks
 picked. A volume the camera is standing inside is skipped by the picker on
 purpose, or a room-sized trigger would swallow every click in the room it wraps.
 Select it from the Explorer instead.
+
+## Gravity
+
+Tick **This volume sets a gravity** under the **Gravity** group and everything
+whose centre is inside the region — the player, entities and vehicles alike —
+falls at that rate instead of the level's. `0` is a zero-g chamber, a negative
+number throws things at the ceiling.
+
+It only applies while the volume is **enabled**, so a script arms and disarms a
+room's gravity by arming the volume. Where two gravity volumes overlap, the
+smaller one wins, so a low-gravity chamber authored inside the room volume that
+dims the lights behaves the way it reads. A script reaches it with
+`@vol.prop.gravity`; writing `null` hands the region back to the level.
+
+A body's own `gravity_scale` multiplies whatever it finds here — see
+[Entities](11-entities.md#collision).
 
 ## Events
 

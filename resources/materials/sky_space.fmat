@@ -1,0 +1,5 @@
+kind: sky
+doc: Orbit. No clouds, no tint — the art is the whole sky.
+effects:
+  - effect: sky_cubemap
+    px: sky_space_px

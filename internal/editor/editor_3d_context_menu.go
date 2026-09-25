@@ -41,6 +41,18 @@ var editor3DRightPress ctxGesture
 // frame later, by which time the ray is gone.
 var editor3DMenuPoint mgl32.Vec3
 
+// editor3DMenuNormal is which way the surface under that point faces, and
+// editor3DMenuOnSurface whether there was a surface there at all. Recorded
+// beside the point and for the same reason — and off the SAME cast, so the two
+// cannot disagree about what was clicked.
+//
+// Only the decal menu reads them, because a decal is the only thing here whose
+// placement is an orientation as well as a position. See workspaceSurfaceAt.
+var (
+	editor3DMenuNormal    mgl32.Vec3
+	editor3DMenuOnSurface bool
+)
+
 // ---------- input glue ----------
 
 func editor3DContextPressed(mx, my int32) { editor3DRightPress.press(mx, my) }
@@ -73,7 +85,7 @@ func editor3DOpenContextMenu(mx, my int32) {
 	if Editor.level == nil {
 		return
 	}
-	editor3DMenuPoint = editor3DPointAt(mx, my)
+	editor3DMenuPoint, editor3DMenuNormal, editor3DMenuOnSurface = workspaceSurfaceAt(mx, my)
 	if !editor3DHasSelection() && !editor3DPlacementArmed() {
 		Editor3DHandleClick(sdl.MouseButtonEvent{
 			Type:   sdl.MOUSEBUTTONDOWN,
@@ -146,6 +158,8 @@ func editor3DContextMenuItems() []ctxMenuItem {
 		items = append(items, editor3DPrefabMenuItems()...)
 	case sel3DSprite:
 		items = append(items, editor3DSpriteMenuItems()...)
+	case sel3DDecal:
+		items = append(items, editor3DDecalMenuItems()...)
 	case sel3DScenery:
 		items = append(items, editor3DSceneryMenuItems()...)
 	case sel3DWaypoint:
@@ -620,6 +634,100 @@ func editor3DSpriteMenuItems() []ctxMenuItem {
 		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid},
 		{Label: "Delete", Shortcut: "Del", Do: EditorDeleteSelected},
 	}
+}
+
+// editor3DDecalMenuItems is the selected decal's block.
+//
+// "Face here" is the row no other object has, and it is the recovery for the one
+// mistake only a decal can make: a decal facing the wrong way draws nothing at
+// all, which gives an author nothing to grab and no clue what is wrong. Aiming it
+// back along the ray the menu was opened on needs no numbers.
+func editor3DDecalMenuItems() []ctxMenuItem {
+	d := activeDecal()
+	if d == nil {
+		return nil
+	}
+	blends := make([]ctxMenuItem, 0, len(gfx.DecalBlendNames))
+	for i := range gfx.DecalBlendNames {
+		b := gfx.DecalBlend(i)
+		blends = append(blends, ctxMenuItem{
+			Label:   gfx.DecalBlendNames[i],
+			Checked: b == d.Blend,
+			Tooltip: decalBlendHelp[i],
+			Do:      func() { editor3DSetDecalBlend(b) },
+		})
+	}
+
+	return []ctxMenuItem{
+		{Label: "Properties", Do: func() { editor3DFocusPanel(panelFocusDecal) },
+			Tooltip: "Open the decal's section: transform, texture, blend\nmode, and the projection's depth and angle."},
+		{Label: "Move here", Do: func() { editor3DMoveDecalTo(editor3DMenuPoint) },
+			Tooltip: "Put it where the ray under the cursor met the world.\nIts facing is left alone."},
+		{Label: "Face here", Do: editor3DAimDecalAtMenuPoint,
+			Tooltip: "Aim the projection at the surface under the cursor, and\nput it there. For a decal that has ended up facing the\nwrong way and so draws nothing at all."},
+		{Label: "Texture", Sub: ctxTextureMenuItems(d.Texture, false, editor3DSetDecalTexture)},
+		{Label: "Blend", Sub: blends},
+		{Label: "Visible", Checked: d.Visible, Do: editor3DToggleDecalVisible,
+			Tooltip: "A hidden decal is not drawn, but keeps its mesh and\nstays selectable."},
+		{Label: "Duplicate", Do: duplicateActiveDecal},
+		{Separator: true},
+		{Label: "Snap to grid", Disabled: !editor3DCanSnap(), Do: editor3DSnapSelectionToGrid},
+		{Label: "Delete", Shortcut: "Del", Do: EditorDeleteSelected},
+	}
+}
+
+// editor3DAimDecalAtMenuPoint moves the decal to where the menu was opened and
+// points it back along the ray that got there, so it lies on the surface that
+// was right-clicked.
+func editor3DAimDecalAtMenuPoint() {
+	d := activeDecal()
+	if d == nil {
+		return
+	}
+	if !editor3DMenuOnSurface {
+		editorSetStatus("Nothing under the cursor to lay decal %q on", d.ID)
+		return
+	}
+	EditorPushUndo()
+	d.Position = editor3DMenuPoint
+	// The roll is kept: an author who has spun the image is not asking to lose
+	// that by re-aiming it.
+	d.Rotation = world.DecalRotationFor(editor3DMenuNormal, d.Rotation.Z())
+	editorSetStatus("Laid decal %q on the surface under the cursor", d.ID)
+}
+
+// editor3DSetDecalBlend switches how the selected decal combines with its
+// surface.
+func editor3DSetDecalBlend(b gfx.DecalBlend) {
+	d := activeDecal()
+	if d == nil || d.Blend == b {
+		return
+	}
+	EditorPushUndo()
+	d.Blend = b
+}
+
+// editor3DSetDecalTexture repaints the selected decal.
+func editor3DSetDecalTexture(name string) {
+	d := activeDecal()
+	if d == nil || d.Texture == name {
+		return
+	}
+	EditorPushUndo()
+	d.Texture = name
+	if err := d.EnsureDecalTexture(); err != nil {
+		editorSetStatus("Decal %s: %v", d.ID, err)
+	}
+}
+
+// editor3DToggleDecalVisible hides or shows the selected decal.
+func editor3DToggleDecalVisible() {
+	d := activeDecal()
+	if d == nil {
+		return
+	}
+	EditorPushUndo()
+	d.Visible = !d.Visible
 }
 
 // editor3DSetSpriteBillboard switches which way the selected sprite faces.

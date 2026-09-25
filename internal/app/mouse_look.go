@@ -19,6 +19,8 @@ import (
 
 	"foundry/internal/gfx"
 	"foundry/internal/platform"
+
+	"github.com/go-gl/mathgl/mgl32"
 )
 
 // maxLookSmoothingSeconds is the time constant MouseSmoothing = 1 means. At
@@ -83,6 +85,14 @@ func applyMouseLook(dt float32) {
 	speed := float64(platform.MouseRotationSpeed*platform.MouseSensitivity) * lookZoomScale()
 	if platform.MouseInvertY {
 		y = -y
+	}
+	// The same turn, in degrees, for a script (`@level.prop.look_delta`).
+	// With the camera detached this is ALL the motion does: the script camera
+	// is the script's to turn, and the player's own look stays where it was
+	// for when the view is handed back.
+	gfx.LookDelta = mgl32.Vec2{float32(x * speed * 180 / math.Pi), float32(-y * speed * 180 / math.Pi)}
+	if gfx.CameraDetached() {
+		return
 	}
 	gfx.Cam.Yaw += float32(x * speed)
 	gfx.Cam.Pitch -= float32(y * speed)

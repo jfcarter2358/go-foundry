@@ -164,6 +164,16 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 		raw.Scenery = append(raw.Scenery, world.SceneryToRaw(&level.Scenery[i]))
 	}
 
+	// A decal a script spawned is skipped on the one-shot sounds' rule below: a
+	// level file places the marks an author put there, and the bullet holes a
+	// firefight left are not level content. See world.Decal.Transient.
+	for i := range level.Decals {
+		if level.Decals[i].Transient {
+			continue
+		}
+		raw.Decals = append(raw.Decals, world.DecalToRaw(&level.Decals[i]))
+	}
+
 	// One-shot sounds are skipped for the reason Emitter.OneShot is never
 	// serialized: a level file places lasting sounds, and the ones a script
 	// fired per impact are not level content.
@@ -197,6 +207,7 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 	raw.UI = append([]string(nil), level.UI...)
 	raw.EscapeLevel = level.EscapeLevel
 	raw.SaveMode = world.SaveModeName(level.SaveMode)
+	raw.Gravity = world.CopyFloatPtr(level.Gravity)
 	if level.LightGrid > 0 || level.LightMinGrid > 0 {
 		raw.Compile = &world.RawCompile{LightGrid: level.LightGrid, LightMinGrid: level.LightMinGrid}
 	}

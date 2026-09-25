@@ -239,6 +239,19 @@ type EditorState struct {
 	// falls back to world.DefaultSpriteTexture.
 	NewSpriteTexture string
 
+	// --- Decals (editor_decal.go) ---
+	// ActiveDecalIdx indexes level.Decals; -1 = none selected. An index for the
+	// reason ActiveSpriteIdx is one: undo replaces the level wholesale.
+	ActiveDecalIdx int
+	// DecalPlacementMode is true when the next left-click projects a new decal
+	// onto the surface it lands on rather than selecting something.
+	DecalPlacementMode bool
+	// NewDecalID is the ID field of the placement row, empty for "decal".
+	NewDecalID string
+	// NewDecalTexture is the texture a freshly placed decal takes. Empty falls
+	// back to world.DefaultDecalTexture.
+	NewDecalTexture string
+
 	// --- Scenery and the brush (editor_scenery.go) ---
 	// ActiveSceneryIdx indexes level.Scenery; -1 = none selected. An index for
 	// the reason ActiveEntityIdx is one: undo replaces the level wholesale.
@@ -274,6 +287,10 @@ type EditorState struct {
 	// ParticleFileNames caches the .fpar list while a picker is open; nil
 	// forces a rescan, the same arrangement modelFileCombo uses.
 	ParticleFileNames []string
+
+	// AITreeNames caches the .fai list on the same rule, for the AI Tree field
+	// on an entity and the AI editor's own open dialog.
+	AITreeNames []string
 	// SkyBaseName is the text in the sky panel's "fill from base name" popup —
 	// editor scratch, not level content: what it produces is six texture names
 	// written into the level, and the base itself is never saved. See
@@ -419,6 +436,7 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	textureui.UVSelectionForTexture = uvSelectionFor
 	textureui.SharedMenuBar = func() { editorMenuBarShared(editorKindTexture) }
 	textureui.SaveAllMenuItem = editorSaveAllMenuItem
+	textureui.ReloadTexturesMenuItem = editorReloadTexturesMenuItem
 	textureui.MenuBarDoc = editorMenuBarDoc
 	Editor.LevelsDir = levelsDir
 	Editor.Active = false
@@ -444,6 +462,8 @@ func EditorInit(level *world.Level, levelPath string, levelsDir string) {
 	Editor.PrefabFileNames = nil
 	Editor.ActiveSpriteIdx = -1
 	Editor.SpritePlacementMode = false
+	Editor.ActiveDecalIdx = -1
+	Editor.DecalPlacementMode = false
 	Editor.ActiveEmitterIdx = -1
 	Editor.EmitterPlacementMode = false
 	Editor.ActiveSoundIdx = -1
@@ -629,7 +649,15 @@ func EditorToggle() {
 		// be reading a level that has just been put back.
 		ui.Game.Reset()
 
+		// Now the files Claude changed during the session, which were held back
+		// so that a script rewritten mid-play could not reset the runtime under
+		// the player — see claudeDeferredChanges. Here, and not earlier: the
+		// level is back to the authored one and the runtime is reset, which is
+		// the state an edit-mode reload has always run against.
+		ClaudeApplyDeferredFileChanges()
+
 		platform.GravityEnabled = false
+		platform.FlyMode = false
 		platform.IsOnGround = false
 		platform.JumpRequested = false
 
@@ -951,8 +979,9 @@ func EditorTick(keyStates []uint8) {
 			// the eye (editor_3d_camera.go).
 			editorOrbitKeys(keyStates)
 		} else {
-			// Free-fly using existing HandleInput (gravity is already off)
-			gfx.HandleInput(keyStates)
+			// Free-fly using existing HandleInput (gravity is already off),
+			// at the Caps Lock speed (editor_3d_camera.go).
+			gfx.HandleInputScaled(keyStates, editorCamSpeedScale())
 		}
 	}
 }
@@ -1052,6 +1081,12 @@ func EditorDeleteSelected() {
 		return
 	}
 
+	// Decal deletion
+	if activeDecal() != nil {
+		deleteActiveDecal()
+		return
+	}
+
 	// Sound deletion
 	if activeSound() != nil {
 		deleteActiveSound()
@@ -1143,6 +1178,8 @@ func editorInstallLevel(newLevel world.Level, path string) {
 	Editor.PrefabFileNames = nil
 	Editor.ActiveSpriteIdx = -1
 	Editor.SpritePlacementMode = false
+	Editor.ActiveDecalIdx = -1
+	Editor.DecalPlacementMode = false
 	Editor.ActiveEmitterIdx = -1
 	Editor.EmitterPlacementMode = false
 	Editor.ActiveSoundIdx = -1

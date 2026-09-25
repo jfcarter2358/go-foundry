@@ -21,6 +21,8 @@ package script
 // tick after it. The world stands still meanwhile — the frame loop stops the
 // entities' clips as well as their motion — so nothing piles up behind it.
 
+import "foundry/internal/hooks"
+
 // GamePaused reports whether a script has paused the game. The frame loop reads
 // it alongside the screen stack's own Pauses.
 func GamePaused() bool { return scriptEvents.paused }
@@ -31,6 +33,10 @@ func postPausedEvents(rt *ScriptRuntime, dt float32) {
 	refs := scriptedUIRefs()
 	postSpawnEvents(rt, refs)
 	postUIEvents(rt)
+	// The world's pointer events are the level's, and the level is stopped:
+	// dropped rather than kept, or every click made on the pause menu's
+	// backdrop would land on the world the moment it lifted.
+	hooks.TakePointerEvents()
 	postTimerEvents(rt)
 	postTickEvents(rt, refs, dt)
 }

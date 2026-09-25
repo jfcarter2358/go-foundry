@@ -115,6 +115,11 @@ func texEditorStatus(msg string) {
 	texEditorStatusTime = sdl.GetTicks()
 }
 
+// TextureEditorStatus puts a message on this window's status line from outside
+// the package — what File > Reload Textures answers with, since the work it
+// asks for is done by the editor package on the frame loop rather than here.
+func TextureEditorStatus(msg string) { texEditorStatus(msg) }
+
 // ---------- window lifecycle ----------
 
 // TextureEditorOpen reports whether the texture editor window is up. Used by
@@ -526,6 +531,9 @@ var (
 	SharedMenuBar func()
 	// SaveAllMenuItem draws File > Save All.
 	SaveAllMenuItem func()
+	// ReloadTexturesMenuItem draws File > Reload Textures, which re-reads
+	// textures/ for files written outside the editor.
+	ReloadTexturesMenuItem func()
 	// MenuBarDoc draws the document name and save chip at the bar's right edge.
 	MenuBarDoc func(name string, dirty bool)
 )
@@ -606,6 +614,10 @@ func texEditorMenus(ed *texture.TexEditorState) {
 		}
 		if SaveAllMenuItem != nil {
 			SaveAllMenuItem()
+		}
+		imgui.Separator()
+		if ReloadTexturesMenuItem != nil {
+			ReloadTexturesMenuItem()
 		}
 		imgui.Separator()
 		if imgui.MenuItem("Close Window") {

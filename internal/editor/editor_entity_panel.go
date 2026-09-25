@@ -18,6 +18,7 @@ package editor
 import (
 	"fmt"
 	"foundry/internal/gfx"
+	"foundry/internal/material"
 	"foundry/internal/world"
 	"strconv"
 
@@ -155,6 +156,7 @@ func editorEntityProperties(lvl *world.Level) {
 		editorEntityTags(e)
 		editorEntityAttributes(e)
 		editorEntityScript(e)
+		editorEntityAITree(e)
 	})
 	editorPropGroup("Actions##entactions", 0, func() { editorEntityActions(e) })
 }
@@ -367,6 +369,22 @@ func editorEntityCollisionSection(e *world.Entity) {
 		imgui.SetTooltip("Off makes it immovable scenery: it pushes other entities\nand is never pushed itself, and gravity does not touch it.")
 	}
 
+	// How hard gravity pulls on THIS body, on top of whatever the place says.
+	// Shown even with the flag off, because the order an author sets them in
+	// is not ours to choose and a field that vanishes is a field nobody finds.
+	editorDragFloatStep("Gravity scale##entgravscale", &e.Collision.GravityScale, -10, 10, "%.2f", 0.05)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Multiplies the gravity where this body is — the level's,\n" +
+			"or a volume's where one overrides it. 0 means 1; use the\n" +
+			"Gravity box above to stop it falling at all. 0.2 drifts\n" +
+			"like a feather, -1 falls upward.")
+	}
+	editorDragFloatStep("Max fall speed##entmaxfall", &e.Collision.MaxFallSpeed, 0, 500, "%.1f", 1)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Terminal speed of this body's fall, in units a second.\n" +
+			"0 leaves it at the engine's 30.")
+	}
+
 	if !e.HasBounds() && (e.Collision.World || e.Collision.Entities) {
 		editorTextWrapped("No bounding volume, so nothing to collide with. " +
 			"Give every half-extent above a value above zero.")
@@ -407,6 +425,18 @@ func editorEntityAttributes(e *world.Entity) {
 // writes only the difference.
 func editorEntityScript(e *world.Entity) {
 	editorScriptUI(&e.Script, &e.ScriptParams, "ent", strconv.Quote(e.ID))
+}
+
+// editorEntityAITree draws the decision tree picker, under the script and on
+// the same rule: an instance starts with its definition's and may override or
+// detach it here.
+//
+// It sits beside the script rather than in the AI group above because the two
+// are one behaviour — the tree decides and the script acts, and they share this
+// entity's parameters and state. The `ai:` block is how it *moves*, which is a
+// different question and already has its own panel.
+func editorEntityAITree(e *world.Entity) {
+	editorAITreeUI(&e.AITree, "ent")
 }
 
 // editorNewAttrTypeIdx keeps the add row's type index in range, so a value left
@@ -513,6 +543,11 @@ func editorEntityModelBody(e *world.Entity, m *world.EntityModel, idx int) bool 
 
 	// Texture: an override on the model document's own. "(none)" clears it back
 	// to whatever the mesh was authored with, which is why allowEmpty is set.
+	if materialCombo("Material##entmat", &m.Material, material.DomainSurface) {
+		if err := m.Load(e.ID); err != nil {
+			editorSetStatus("Entity %s: %v", e.ID, err)
+		}
+	}
 	if textureCombo("Texture##mtex", &m.Texture, true) {
 		if err := m.Load(e.ID); err != nil {
 			editorSetStatus("Entity %s: %v", e.ID, err)

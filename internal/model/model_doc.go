@@ -46,12 +46,19 @@ func (f ModelFace) Clone() ModelFace {
 }
 
 // ModelDoc is the mesh being edited, together with the armature that deforms
-// it. Bones and Weights are described in model_bone.go and model_skin.go; they
-// live on the document rather than in a file of their own because a .fmdl is
-// the one thing the level places, and a skeleton kept somewhere else would be a
-// second file the user has to remember to keep in step.
+// it. Bones and Weights are described in model_bone.go and model_skin.go.
+//
+// The armature is *always* here in memory, but it does not always live in the
+// .fmdl: a document with Skeleton set reads its bones and clips from a shared
+// .fskl and writes them back there (model_skeleton.go). Everything downstream —
+// posing, skinning, the runtime player — sees the same fields either way.
 type ModelDoc struct {
 	ID string
+	// Skeleton is the .fskl this model's armature and clips belong to, by bare
+	// name ("human"), or "" when the model owns them itself. Several models
+	// naming one skeleton share a rig: fixing a walk cycle fixes it on all of
+	// them, which is the whole point of the split.
+	Skeleton string
 	// Texture is the one image the whole model is painted with — the same
 	// logical name a brush face's Texture holds. Empty means the model wears
 	// none, and is drawn from its surface normals instead (NormalColorFlag in
@@ -112,6 +119,7 @@ func (m *ModelDoc) Rev() uint64 { return m.rev }
 func (m *ModelDoc) Clone() *ModelDoc {
 	c := &ModelDoc{
 		ID:          m.ID,
+		Skeleton:    m.Skeleton,
 		Texture:     m.Texture,
 		Verts:       append([]mgl32.Vec3(nil), m.Verts...),
 		Faces:       make([]ModelFace, len(m.Faces)),

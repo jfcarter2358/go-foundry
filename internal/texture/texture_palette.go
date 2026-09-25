@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"image/color"
 	"log"
+	"os"
+	"time"
 
 	"foundry/internal/gfx"
 	"foundry/internal/texdoc"
@@ -64,21 +66,69 @@ func SetPaletteColor(idx uint8, c color.RGBA) error {
 // in the game. A file that fails to parse is logged and skipped rather than
 // aborting startup over one bad asset — the same tolerance RebuildAllTextures
 // gives a batch of .ftex files below.
-func ScanAnimatedTextures() {
+func ScanAnimatedTextures() int { return scanAnimatedTextures(false) }
+
+// RescanAnimatedTextures is the same walk for a project that has been running
+// for a while: only the .ftex files that have actually changed since they were
+// last read are parsed, and one that has gone from disk takes its animation
+// with it. See texture_reload.go, which is what calls it.
+func RescanAnimatedTextures() int { return scanAnimatedTextures(true) }
+
+// ftexStamp is what was on disk the last time a .ftex was parsed.
+type ftexStamp struct {
+	mod  time.Time
+	size int64
+}
+
+var ftexStamps = map[string]ftexStamp{}
+
+// scanAnimatedTextures is the body of both walks. Returns how many animated
+// textures it (re-)registered.
+func scanAnimatedTextures(onlyChanged bool) int {
+	n := 0
+	seen := map[string]bool{}
 	for _, name := range ScanFtexFiles() {
-		d, err := ReadTexDoc(FtexPath(name))
+		seen[name] = true
+		path := FtexPath(name)
+		st, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		stamp := ftexStamp{mod: st.ModTime(), size: st.Size()}
+		if onlyChanged {
+			if prev, ok := ftexStamps[name]; ok && prev == stamp {
+				continue
+			}
+		}
+		d, err := ReadTexDoc(path)
 		if err != nil {
 			log.Printf("WARNING: could not read %s.ftex for animation scan: %v", name, err)
 			continue
 		}
+		ftexStamps[name] = stamp
 		if d.FrameCount() <= 1 {
+			// Not animated — and, on a rescan, possibly no longer animated:
+			// a document whose frames have been taken back down to one would
+			// otherwise keep cycling through the stack it was registered with.
+			gfx.UnregisterAnimatedTexture(name)
+			gfx.UnregisterAnimatedTexture(gfx.NormalMapName(name))
 			continue
 		}
 		// Registers the animated normal map alongside the animated albedo. A
 		// static texture needs nothing here either way: its <name>_normal.png
 		// is already on disk and gfx.LoadTexture picks it up with the albedo.
 		SyncAnimatedFrames(d, name)
+		n++
 	}
+	for name := range ftexStamps {
+		if seen[name] {
+			continue
+		}
+		delete(ftexStamps, name)
+		gfx.UnregisterAnimatedTexture(name)
+		gfx.UnregisterAnimatedTexture(gfx.NormalMapName(name))
+	}
+	return n
 }
 
 // RebuildAllTextures walks every .ftex on disk, re-flattens it against the

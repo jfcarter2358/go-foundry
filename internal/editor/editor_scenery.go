@@ -126,6 +126,7 @@ func editorArmBrush(path string) {
 	Editor.EntityPlacementMode = false
 	Editor.VolumePlacementMode = false
 	Editor.SpritePlacementMode = false
+	Editor.DecalPlacementMode = false
 	Editor.EmitterPlacementMode = false
 	Editor.SoundPlacementMode = false
 	Editor.EffectPlacementMode = false

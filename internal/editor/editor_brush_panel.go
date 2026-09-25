@@ -20,6 +20,7 @@ package editor
 import (
 	"fmt"
 
+	"foundry/internal/material"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -117,6 +118,7 @@ func editorBrushPropertiesSection() {
 		// texture is drawn from its own normal, which is what a brush looks
 		// like until someone paints it.
 		changed = textureCombo("Texture##bftex", &f.Texture, true) || changed
+		changed = materialCombo("Material##bfmat", &f.Material, material.DomainSurface) || changed
 		changed = textureCombo("Blend Texture##bfbtex", &f.BlendTexture, true) || changed
 		if f.BlendTexture != "" {
 			changed = textureCombo("Blend Mask##bfbmask", &f.BlendMask, true) || changed
