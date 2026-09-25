@@ -15,9 +15,13 @@ package setup
 // And the rules are NSIS's too. An install per user, needing no administrator.
 // An upgrade goes where the old install is and replaces it whole — the game
 // never writes into its install tree, so there is nothing there to keep — but
-// only a folder carrying the .foundrypack stamp is ever deleted. A running game
-// is waited for rather than half-overwritten. Saves, in %APPDATA%\<data dir>,
-// are only deleted when the player says so.
+// only a folder carrying the .foundrypack stamp is ever deleted whole, and the
+// stamp is always the last thing to go (removeInstall), so a removal that is
+// interrupted can be finished by running either program again. A folder that
+// lost its stamp to an interruption before that rule existed is recognised by
+// holding nothing but files this installer would write itself (leftover). A
+// running game is waited for rather than half-overwritten. Saves, in
+// %APPDATA%\<data dir>, are only deleted when the player says so.
 //
 // Everything here goes through Host, so the whole of it runs in a test on any
 // machine; cmd/foundrysetup is the Windows Host.
@@ -27,7 +31,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"foundry/internal/fileutil"
 )
@@ -98,6 +104,10 @@ type Options struct {
 	Dir string
 	// DeleteSaves is a silent uninstall's answer to "delete the saves?".
 	DeleteSaves bool
+	// Record is what the uninstaller carries about the installation it
+	// removes (ReadRecord): the stamp and the file list, for a folder whose
+	// own stamp has gone.
+	Record *Record
 }
 
 var (
@@ -142,9 +152,14 @@ func Install(h Host, in *Installer, o Options) error {
 	// that still carries the stamp — and otherwise the usual place. A registry
 	// entry whose folder has since been deleted is not an upgrade, just a fresh
 	// install that knows where the last one was.
+	//
+	// A folder whose stamp has gone but which holds nothing this installer
+	// would not write itself is the remains of an interrupted removal, and is
+	// ours too — see leftover.
+	ownFiles := installedNames(in.Names())
 	dir := filepath.Join(h.LocalAppData(), "Programs", name)
 	upgrading, prevVersion := false, ""
-	if prev, ok := h.RegistryString(appKey(name), "InstallDir"); ok && hasStamp(prev) {
+	if prev, ok := h.RegistryString(appKey(name), "InstallDir"); ok && (hasStamp(prev) || leftover(prev, ownFiles)) {
 		dir, upgrading = prev, true
 		prevVersion, _ = h.RegistryString(appKey(name), "Version")
 	} else if o.Dir != "" {
@@ -171,23 +186,28 @@ func Install(h Host, in *Installer, o Options) error {
 	}
 
 	// A folder that already holds something and is not an install of ours is
-	// left alone entirely. Nothing is ever deleted without the stamp, so the
-	// alternative would be installing over someone's files and merging with
-	// them.
-	if !upgrading && !hasStamp(dir) && hasEntries(dir) {
-		return fmt.Errorf("%s already has files in it that are not an installation of %s, so Setup will not install over them", dir, st.Title)
+	// left alone entirely: the alternative would be installing over someone's
+	// files and merging with them. When it looks like an old copy that is
+	// merely missing its stamp, the message says which files are in the way.
+	ours := hasStamp(dir) || leftover(dir, ownFiles)
+	if !ours && hasEntries(dir) {
+		msg := fmt.Sprintf("%s already has files in it that are not an installation of %s, so Setup will not install over them.", dir, st.Title)
+		if strange := strangers(dir, ownFiles); len(strange) > 0 {
+			msg += "\n\nIf this is an old copy of " + st.Title + ", delete these and run Setup again:\n" + listSome(strange)
+		}
+		return errors.New(msg)
 	}
 
-	if err := waitNotRunning(h, filepath.Join(dir, st.Exe), st.Title, o.Silent); err != nil {
+	if err := waitNotRunning(h, dir, st, o.Silent); err != nil {
 		return err
 	}
 
 	// Replaced whole rather than merged: a level or texture renamed between
 	// releases would otherwise stay behind for ever, and the game would keep
 	// finding it.
-	if hasStamp(dir) {
-		if err := os.RemoveAll(dir); err != nil {
-			return fmt.Errorf("removing the previous installation: %w", err)
+	if ours {
+		if err := removeInstall(dir, st.Title); err != nil {
+			return err
 		}
 	}
 	size, err := in.Extract(dir)
@@ -300,10 +320,19 @@ func installQuestion(st Stamp, dir string, upgrading bool, prevVersion string) s
 }
 
 // Uninstall removes the installation in dir.
+//
+// The folder's stamp says what it is. Without one, the uninstaller's own
+// record (Options.Record) does, and then only the files that record lists are
+// removed — the stamp is what makes deleting the whole folder safe, and a
+// folder without it may have gained something that is not ours.
 func Uninstall(h Host, dir string, o Options) error {
 	data, err := os.ReadFile(filepath.Join(dir, StampName))
-	if err != nil {
-		return fmt.Errorf("%s is not an installation Setup made, so nothing was removed", dir)
+	stamped := err == nil
+	if !stamped {
+		if o.Record == nil {
+			return fmt.Errorf("%s is not an installation Setup made, so nothing was removed", dir)
+		}
+		data = o.Record.Stamp
 	}
 	st, err := ParseStamp(data)
 	if err != nil {
@@ -317,13 +346,22 @@ func Uninstall(h Host, dir string, o Options) error {
 	if !o.Silent && !h.Ask(fmt.Sprintf("Remove %s from\n%s?", st.Title, dir), false) {
 		return ErrCancelled
 	}
-	if err := waitNotRunning(h, filepath.Join(dir, st.Exe), st.Title, o.Silent); err != nil {
+	if err := waitNotRunning(h, dir, st, o.Silent); err != nil {
 		return err
 	}
 
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("removing %s: %w", dir, err)
+	var left []string
+	if stamped {
+		if err := removeInstall(dir, st.Title); err != nil {
+			return err
+		}
+	} else {
+		if left, err = removeListed(dir, st.Title, o.Record.Files); err != nil {
+			return err
+		}
 	}
+	// The registry and the shortcuts go even when something was left behind:
+	// nothing of the program is there any more to run or to uninstall again.
 	if err := removeShortcutsAndKeys(h, name); err != nil {
 		return err
 	}
@@ -344,21 +382,197 @@ func Uninstall(h Host, dir string, o Options) error {
 	}
 
 	if !o.Silent {
-		h.Tell(st.Title+" has been removed.", false)
+		msg := st.Title + " has been removed."
+		if len(left) > 0 {
+			msg += "\n\nThese were not part of it and were left in\n" + dir + ":\n" + listSome(left)
+		}
+		h.Tell(msg, false)
 	}
 	return nil
 }
 
-func waitNotRunning(h Host, exe, title string, silent bool) error {
-	for h.InUse(exe) {
+// waitNotRunning waits for every program in the installation to be closed —
+// not only the main one. A program the editor started from its own folder (a
+// packed game being tried out, say) holds its .exe and its DLLs just as surely,
+// and a removal that met one part way used to leave a folder that was neither
+// installed nor removable. The uninstaller is left out: the copy of it that is
+// doing the removing started from it, and it is on its way out.
+func waitNotRunning(h Host, dir string, st Stamp, silent bool) error {
+	for {
+		busy := runningIn(h, dir, st)
+		if busy == "" {
+			return nil
+		}
 		if silent {
 			return ErrRunning
 		}
-		if !h.Retry(title + " is still running.\n\nClose it, then click Retry.") {
+		what := st.Title + " is still running."
+		if busy != st.Exe {
+			what = busy + ", from " + st.Title + "'s folder, is still in use."
+		}
+		if !h.Retry(what + "\n\nClose it, then click Retry.") {
 			return ErrCancelled
 		}
 	}
+}
+
+// runningIn is the first program or library in the installation that is in
+// use, by its path under dir, or "" when none is.
+func runningIn(h Host, dir string, st Stamp) string {
+	if h.InUse(filepath.Join(dir, st.Exe)) {
+		return st.Exe
+	}
+	found := ""
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || found != "" {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(p))
+		if ext != ".exe" && ext != ".dll" {
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, p)
+		if strings.EqualFold(rel, UninstallerName) || strings.EqualFold(rel, st.Exe) {
+			return nil
+		}
+		if h.InUse(p) {
+			found = filepath.ToSlash(rel)
+		}
+		return nil
+	})
+	return found
+}
+
+// ---------- removing ----------
+
+// removeAttempts and removeWait are how hard a removal tries against a file
+// something has open for a moment — Windows Defender scanning an .exe that was
+// only just written is the usual one, and it lets go in well under a second.
+var (
+	removeAttempts = 15
+	removeWait     = 200 * time.Millisecond
+)
+
+// removeInstall deletes an installation, its stamp LAST. Everything else goes
+// first, so a removal that fails part way — a file still open — leaves a folder
+// that still says what it is, and running Setup or the uninstaller again
+// finishes the job. The stamp used to go first (it sorts first), and a failure
+// after it left a folder that both refused as not theirs.
+func removeInstall(dir, title string) error {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Name() == StampName {
+			continue
+		}
+		if err := removeRetrying(filepath.Join(dir, e.Name())); err != nil {
+			return lockedError(title, err)
+		}
+	}
+	if err := removeRetrying(dir); err != nil {
+		return lockedError(title, err)
+	}
 	return nil
+}
+
+// removeListed removes the files an installation wrote and the uninstaller,
+// then every folder that leaves empty, and dir itself if nothing else is in
+// it. It returns what was left because it was not the installation's.
+func removeListed(dir, title string, files []string) ([]string, error) {
+	for _, name := range append(append([]string(nil), files...), UninstallerName) {
+		p, err := within(dir, name)
+		if err != nil {
+			continue
+		}
+		if err := removeRetrying(p); err != nil {
+			return nil, lockedError(title, err)
+		}
+	}
+	// Deepest first, so a folder is empty by the time it is reached.
+	var dirs []string
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			dirs = append(dirs, p)
+		}
+		return nil
+	})
+	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
+	for _, d := range dirs {
+		os.Remove(d) // fails, rightly, on a folder with something else in it
+	}
+	return strangers(dir, nil), nil
+}
+
+func removeRetrying(path string) error {
+	var err error
+	for i := 0; i < removeAttempts; i++ {
+		if err = os.RemoveAll(path); err == nil {
+			return nil
+		}
+		time.Sleep(removeWait)
+	}
+	return err
+}
+
+func lockedError(title string, err error) error {
+	return fmt.Errorf("%v\n\nSomething still has this open: %s itself, a program started from it, "+
+		"or a virus scanner still checking it. Close it and run this again — it will finish the job", err, title)
+}
+
+// installedNames is the set of paths an installation of this payload holds:
+// its files and its uninstaller.
+func installedNames(files []string) map[string]bool {
+	set := map[string]bool{strings.ToLower(UninstallerName): true}
+	for _, f := range files {
+		set[strings.ToLower(f)] = true
+	}
+	return set
+}
+
+// leftover reports whether dir is what an interrupted removal of an earlier
+// version left: no stamp, but nothing in it that this installer would not
+// write there itself. Replacing those is exactly what installing does anyway,
+// so treating the folder as ours can never delete anything that was not.
+func leftover(dir string, own map[string]bool) bool {
+	return !hasStamp(dir) && hasEntries(dir) && len(strangers(dir, own)) == 0
+}
+
+// strangers are the files under dir that are not in own (nil: every file), by
+// slash path. Windows paths are compared without case, as Windows does.
+func strangers(dir string, own map[string]bool) []string {
+	var out []string
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if !own[strings.ToLower(rel)] {
+			out = append(out, rel)
+		}
+		return nil
+	})
+	return out
+}
+
+// listSome is a list of paths for a message box, cut short when it is long.
+func listSome(paths []string) string {
+	const most = 12
+	if len(paths) <= most {
+		return strings.Join(paths, "\n")
+	}
+	return strings.Join(paths[:most], "\n") + fmt.Sprintf("\n…and %d more", len(paths)-most)
 }
 
 func hasStamp(dir string) bool {

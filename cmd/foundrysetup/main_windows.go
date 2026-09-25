@@ -48,6 +48,13 @@ func main() {
 
 func run(h host, o setup.Options, removeDir string) int {
 	if removeDir != "" {
+		// What this uninstaller was written to remove, carried in the program
+		// itself, for an installation whose own stamp has gone.
+		if exe, err := os.Executable(); err == nil {
+			if r, ok := setup.ReadRecord(exe); ok {
+				o.Record = &r
+			}
+		}
 		return exitCode(h, o, setup.Uninstall(h, removeDir, o))
 	}
 	exe, err := os.Executable()

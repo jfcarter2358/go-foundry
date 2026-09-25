@@ -26,6 +26,7 @@ type fakeHost struct {
 	reg     map[string]map[string]RegistryValue
 	links   map[string]string
 	launch  string
+	inUse   map[string]bool // base names that are always in use
 }
 
 func newHost(t *testing.T) *fakeHost {
@@ -74,6 +75,9 @@ func (f *fakeHost) CreateShortcut(link, target, workDir string) error {
 }
 
 func (f *fakeHost) InUse(path string) bool {
+	if f.inUse[filepath.Base(path)] {
+		return true
+	}
 	if f.busy > 0 {
 		f.busy--
 		return true
@@ -154,11 +158,27 @@ func TestAnInstallerCarriesItsTreeAndItsProgram(t *testing.T) {
 	if err := in.WriteUninstaller(uninstaller); err != nil {
 		t.Fatal(err)
 	}
-	if got := readFile(t, uninstaller); got != stubBytes {
-		t.Errorf("the uninstaller is %q, want the program alone", got)
+	if got := readFile(t, uninstaller); !strings.HasPrefix(got, stubBytes) {
+		t.Errorf("the uninstaller is %q, want the program first", got)
 	}
 	if _, err := Open(uninstaller); !errors.Is(err, ErrNoPayload) {
 		t.Errorf("opening the uninstaller: %v, want ErrNoPayload", err)
+	}
+	r, ok := ReadRecord(uninstaller)
+	if !ok {
+		t.Fatal("the uninstaller carries no record of what it removes")
+	}
+	if rst, err := ParseStamp(r.Stamp); err != nil || rst.Title != "Test Game" {
+		t.Errorf("the record's stamp = %+v, %v", rst, err)
+	}
+	if !contains(r.Files, "levels/intro.fbsp") || !contains(r.Files, "test-game.exe") {
+		t.Errorf("the record's files = %v", r.Files)
+	}
+	// An uninstaller from before records existed is the program alone.
+	old := filepath.Join(t.TempDir(), "old-uninstall.exe")
+	os.WriteFile(old, []byte(stubBytes), 0755)
+	if _, ok := ReadRecord(old); ok {
+		t.Error("read a record out of an uninstaller that has none")
 	}
 }
 
@@ -217,7 +237,7 @@ func TestAFreshInstall(t *testing.T) {
 	if got := readFile(t, filepath.Join(dir, "levels", "intro.fbsp")); got != "a level" {
 		t.Errorf("installed level = %q", got)
 	}
-	if got := readFile(t, filepath.Join(dir, UninstallerName)); got != stubBytes {
+	if got := readFile(t, filepath.Join(dir, UninstallerName)); !strings.HasPrefix(got, stubBytes) {
 		t.Error("the uninstaller is not the program")
 	}
 	app := h.reg[`Software\Test Game`]
@@ -420,5 +440,167 @@ func TestParseStamp(t *testing.T) {
 		if _, err := ParseStamp([]byte(bad)); err == nil {
 			t.Errorf("ParseStamp(%q) accepted it", bad)
 		}
+	}
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// quickRemovals makes a removal that is going to fail fail at once, rather
+// than after the retries a real locked file gets.
+func quickRemovals(t *testing.T) {
+	prevN, prevW := removeAttempts, removeWait
+	removeAttempts, removeWait = 1, 0
+	t.Cleanup(func() { removeAttempts, removeWait = prevN, prevW })
+}
+
+// lockDir makes a folder whose contents cannot be deleted — the nearest a test
+// on any machine gets to a file Windows has open.
+func lockDir(t *testing.T, dir string) {
+	t.Helper()
+	if os.Getuid() == 0 {
+		t.Skip("root can delete from a read-only folder")
+	}
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0755) })
+}
+
+// TestAnInterruptedUpgradeKeepsTheStamp is the bug this rule exists for: a
+// removal stopped part way by a file in use took the stamp first, and left a
+// folder that neither Setup nor the uninstaller would touch again.
+func TestAnInterruptedUpgradeKeepsTheStamp(t *testing.T) {
+	quickRemovals(t)
+	h := newHost(t)
+	first := openInstaller(t, makeInstaller(t, "Test Game", "1.0.0", gameFiles("intro.fbsp")))
+	if err := Install(h, first, Options{Silent: true}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(h.LocalAppData(), "Programs", "Test Game")
+
+	lockDir(t, filepath.Join(dir, "levels"))
+	second := openInstaller(t, makeInstaller(t, "Test Game", "2.0.0", gameFiles("intro.fbsp")))
+	err := Install(h, second, Options{Silent: true})
+	if err == nil {
+		t.Fatal("an upgrade over a file that could not be removed succeeded")
+	}
+	if !strings.Contains(err.Error(), "run this again") {
+		t.Errorf("the error does not say what to do: %v", err)
+	}
+	if !hasStamp(dir) {
+		t.Fatal("the interrupted removal took the stamp, so nothing will recognise the folder again")
+	}
+
+	os.Chmod(filepath.Join(dir, "levels"), 0755)
+	if err := Install(h, second, Options{Silent: true}); err != nil {
+		t.Fatalf("running Setup again did not finish the job: %v", err)
+	}
+	if v := h.reg[`Software\Test Game`]["Version"].Str; v != "2.0.0" {
+		t.Errorf("version after the retry = %q", v)
+	}
+}
+
+// TestSetupRepairsAnInstallThatLostItsStamp is the state such an interrupted
+// removal already left on someone's machine: the old files, no stamp.
+func TestSetupRepairsAnInstallThatLostItsStamp(t *testing.T) {
+	h := newHost(t)
+	first := openInstaller(t, makeInstaller(t, "Test Game", "1.0.0", gameFiles("intro.fbsp")))
+	if err := Install(h, first, Options{Silent: true}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(h.LocalAppData(), "Programs", "Test Game")
+	os.Remove(filepath.Join(dir, StampName))
+	os.Remove(filepath.Join(dir, "test-game.exe")) // part of the removal had happened
+
+	second := openInstaller(t, makeInstaller(t, "Test Game", "2.0.0", gameFiles("intro.fbsp")))
+	if err := Install(h, second, Options{Silent: true}); err != nil {
+		t.Fatalf("Setup refused the remains of its own installation: %v", err)
+	}
+	if !hasStamp(dir) || readFile(t, filepath.Join(dir, "test-game.exe")) != "the game" {
+		t.Error("the repaired installation is incomplete")
+	}
+}
+
+// ...but not a stampless folder with anything in it Setup would not have put
+// there: that may be someone's, and the message says what is in the way.
+func TestAStamplessFolderWithSomethingElseInItIsRefused(t *testing.T) {
+	h := newHost(t)
+	first := openInstaller(t, makeInstaller(t, "Test Game", "1.0.0", gameFiles("intro.fbsp")))
+	if err := Install(h, first, Options{Silent: true}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(h.LocalAppData(), "Programs", "Test Game")
+	os.Remove(filepath.Join(dir, StampName))
+	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("mine"), 0644)
+
+	second := openInstaller(t, makeInstaller(t, "Test Game", "2.0.0", gameFiles("intro.fbsp")))
+	err := Install(h, second, Options{Silent: true})
+	if err == nil {
+		t.Fatal("installed over a stampless folder holding a file that is not the game's")
+	}
+	if !strings.Contains(err.Error(), "notes.txt") {
+		t.Errorf("the refusal does not name what is in the way: %v", err)
+	}
+	if readFile(t, filepath.Join(dir, "notes.txt")) != "mine" {
+		t.Error("the stranger was touched")
+	}
+}
+
+// TestUninstallWithoutTheStampUsesItsRecord: the uninstaller knows what it
+// installed, and removes exactly that — leaving anything else where it is.
+func TestUninstallWithoutTheStampUsesItsRecord(t *testing.T) {
+	h := newHost(t)
+	in := openInstaller(t, makeInstaller(t, "Test Game", "1.0.0", gameFiles("intro.fbsp")))
+	if err := Install(h, in, Options{Silent: true}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(h.LocalAppData(), "Programs", "Test Game")
+	rec, ok := ReadRecord(filepath.Join(dir, UninstallerName))
+	if !ok {
+		t.Fatal("no record")
+	}
+	os.Remove(filepath.Join(dir, StampName))
+	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("mine"), 0644)
+
+	if err := Uninstall(h, dir, Options{Silent: true}); err == nil {
+		t.Error("an uninstaller with no record removed a stampless folder")
+	}
+	if err := Uninstall(h, dir, Options{Silent: true, Record: &rec}); err != nil {
+		t.Fatalf("Uninstall with the record: %v", err)
+	}
+	for _, gone := range []string{"test-game.exe", "levels/intro.fbsp", "levels", UninstallerName} {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(gone))); err == nil {
+			t.Errorf("%s survived the uninstall", gone)
+		}
+	}
+	if readFile(t, filepath.Join(dir, "notes.txt")) != "mine" {
+		t.Error("a file that was never installed was deleted")
+	}
+	if len(h.reg) != 0 {
+		t.Errorf("registry after uninstalling: %v", h.reg)
+	}
+}
+
+// TestAnythingRunningFromTheFolderIsWaitedFor: the main program is not the
+// only thing that can hold the installation open.
+func TestAnythingRunningFromTheFolderIsWaitedFor(t *testing.T) {
+	h := newHost(t)
+	files := gameFiles("intro.fbsp")
+	files["runtimes/player.exe"] = "a packed game"
+	in := openInstaller(t, makeInstaller(t, "Test Game", "1.0.0", files))
+	if err := Install(h, in, Options{Silent: true}); err != nil {
+		t.Fatal(err)
+	}
+	h.inUse = map[string]bool{"player.exe": true}
+	err := Install(h, in, Options{Silent: true})
+	if !errors.Is(err, ErrRunning) {
+		t.Errorf("an upgrade with runtimes/player.exe running: %v, want ErrRunning", err)
 	}
 }

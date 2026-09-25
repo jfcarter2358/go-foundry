@@ -250,12 +250,116 @@ func (in *Installer) Size() int64 {
 	return n
 }
 
-// WriteUninstaller copies the program, without its payload, to dest.
+// Names are the slash paths of every file the payload installs.
+func (in *Installer) Names() []string {
+	out := make([]string, 0, len(in.Files.File))
+	for _, zf := range in.Files.File {
+		out = append(out, zf.Name)
+	}
+	return out
+}
+
+// WriteUninstaller copies the program, without its payload, to dest — with a
+// record of what it uninstalls appended (see Record).
 func (in *Installer) WriteUninstaller(dest string) error {
-	return writeAtomically(dest, func(f *os.File) error {
-		_, err := io.Copy(f, io.NewSectionReader(in.f, 0, in.StubSize))
+	stamp, err := in.stampBytes()
+	if err != nil {
 		return err
+	}
+	return writeAtomically(dest, func(f *os.File) error {
+		if _, err := io.Copy(f, io.NewSectionReader(in.f, 0, in.StubSize)); err != nil {
+			return err
+		}
+		return writeRecord(f, Record{Stamp: stamp, Files: in.Names()})
 	})
+}
+
+func (in *Installer) stampBytes() ([]byte, error) {
+	for _, zf := range in.Files.File {
+		if zf.Name != StampName {
+			continue
+		}
+		rc, err := zf.Open()
+		if err != nil {
+			return nil, err
+		}
+		defer rc.Close()
+		return io.ReadAll(rc)
+	}
+	return nil, fmt.Errorf("the installer carries no %s, so it does not say what it installs", StampName)
+}
+
+// ---------- the uninstaller's record ----------
+//
+// The install tree's stamp is what says a folder is an installation, and an
+// uninstall that finds it gone — a removal interrupted part way by a file that
+// was locked, in the days when the stamp could go first — used to have no way
+// of knowing what it was looking at, and refused. So the uninstaller carries
+// its own copy of the stamp, and the list of files it put there, after the
+// program: removing exactly those is always safe, stamp or no stamp.
+
+// recordMagic ends an uninstaller that carries a Record.
+const recordMagic = "FOUNDRY-UNINST01"
+
+// Record is what an uninstaller knows about the installation it removes.
+type Record struct {
+	// Stamp is the installation's .foundrypack, byte for byte.
+	Stamp []byte
+	// Files are the slash paths the installer wrote, not counting the
+	// uninstaller itself.
+	Files []string
+}
+
+func writeRecord(w io.Writer, r Record) error {
+	body := string(r.Stamp) + "\x00" + strings.Join(r.Files, "\n")
+	if _, err := io.WriteString(w, body); err != nil {
+		return err
+	}
+	var t [8 + len(recordMagic)]byte
+	binary.LittleEndian.PutUint64(t[:8], uint64(len(body)))
+	copy(t[8:], recordMagic)
+	_, err := w.Write(t[:])
+	return err
+}
+
+// ReadRecord reads the record an uninstaller carries. An uninstaller written
+// before there was one carries none, and answers false.
+func ReadRecord(path string) (Record, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Record{}, false
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return Record{}, false
+	}
+	size := st.Size()
+	tail := int64(8 + len(recordMagic))
+	if size < tail {
+		return Record{}, false
+	}
+	t := make([]byte, tail)
+	if _, err := f.ReadAt(t, size-tail); err != nil || string(t[8:]) != recordMagic {
+		return Record{}, false
+	}
+	n := int64(binary.LittleEndian.Uint64(t[:8]))
+	if n < 0 || n > size-tail || n > 16<<20 {
+		return Record{}, false
+	}
+	body := make([]byte, n)
+	if _, err := f.ReadAt(body, size-tail-n); err != nil {
+		return Record{}, false
+	}
+	stamp, files, ok := strings.Cut(string(body), "\x00")
+	if !ok {
+		return Record{}, false
+	}
+	r := Record{Stamp: []byte(stamp)}
+	if files != "" {
+		r.Files = strings.Split(files, "\n")
+	}
+	return r, true
 }
 
 type countingWriter struct {
