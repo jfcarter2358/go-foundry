@@ -144,6 +144,9 @@ type WorldState struct {
 	// nil is a level that never set one, and gob writes it as absent rather
 	// than as a zero that would restore every level into free fall.
 	Gravity *float32
+	// ViewDistance is the level's far plane, which a script may have changed
+	// during play (`@level.prop.view_distance`); 0 is the engine default.
+	ViewDistance float32
 }
 
 // EntityState is one entity. Entity is the entity itself with everything that

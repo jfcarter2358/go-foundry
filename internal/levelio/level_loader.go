@@ -351,6 +351,7 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	level.EscapeLevel = raw.EscapeLevel
 	level.SaveMode = world.SaveModeFromName(raw.SaveMode)
 	level.Gravity = world.CopyFloatPtr(raw.Gravity)
+	level.ViewDistance = raw.ViewDistance
 	if raw.Compile != nil {
 		level.LightGrid, level.LightMinGrid = raw.Compile.LightGrid, raw.Compile.LightMinGrid
 	}

@@ -3,6 +3,8 @@ package collision
 // brush_boxes.go — per-chunk brush boxes, cached against the mesh generation.
 
 import (
+	"slices"
+
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -40,6 +42,12 @@ type brushBoxes struct {
 	cell   float32
 	nx, nz int
 	cells  [][]int32
+
+	// Scratch for near: the candidate list it returns, and a per-brush stamp
+	// so a brush listed in several of the cells a body covers comes back once.
+	cand  []int32
+	seen  []uint32
+	stamp uint32
 }
 
 // brushGridCells caps the grid's size a side: a chunk's footprint is cut into
@@ -176,4 +184,48 @@ func (pc *brushBoxes) fixedUnder(p mgl32.Vec3) []int32 {
 		return nil
 	}
 	return pc.cells[int(z)*pc.nx+int(x)]
+}
+
+// near is every brush a body box at c with half-extents half might touch, in
+// ascending brush order: the fixed brushes listed in the grid cells the box's
+// XZ footprint covers, those after brush index `after` only, plus every loose
+// brush after it (which have no cell, and are boxed live by the caller).
+//
+// Ascending order is what lets a caller walk these instead of the whole
+// brush list and get exactly the answer the whole walk gives: the skipped
+// brushes are ones whose box the body is nowhere near, which the whole walk
+// would have rejected on the box test anyway. The slice is scratch, valid until
+// the next call on this chunk.
+func (pc *brushBoxes) near(c, half mgl32.Vec3, after int) []int32 {
+	pc.cand = pc.cand[:0]
+	if len(pc.seen) != pc.count {
+		pc.seen = make([]uint32, pc.count)
+		pc.stamp = 0
+	}
+	pc.stamp++
+	if pc.stamp == 0 { // wrapped: every old stamp is now ambiguous
+		clear(pc.seen)
+		pc.stamp = 1
+	}
+	if pc.nx > 0 {
+		x0, z0 := pc.cellOf(c.Sub(half))
+		x1, z1 := pc.cellOf(c.Add(half))
+		for z := z0; z <= z1; z++ {
+			for x := x0; x <= x1; x++ {
+				for _, bi := range pc.cells[z*pc.nx+x] {
+					if int(bi) > after && pc.seen[bi] != pc.stamp {
+						pc.seen[bi] = pc.stamp
+						pc.cand = append(pc.cand, bi)
+					}
+				}
+			}
+		}
+	}
+	for _, bi := range pc.loose {
+		if int(bi) > after {
+			pc.cand = append(pc.cand, bi)
+		}
+	}
+	slices.Sort(pc.cand)
+	return pc.cand
 }

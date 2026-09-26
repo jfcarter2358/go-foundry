@@ -701,8 +701,8 @@ func postWeaponInputEvents(rt *ScriptRuntime) {
 	// a pending edge from a frame with no player would otherwise sit in the
 	// buffer and fire late the moment one appears, rather than being the
 	// no-op it should be.
-	primaryDown, primaryUp := hooks.TakeScriptPrimaryFireEdges()
-	secondaryDown, secondaryUp := hooks.TakeScriptSecondaryFireEdges()
+	primary := hooks.TakeScriptPrimaryFireEdges()
+	secondary := hooks.TakeScriptSecondaryFireEdges()
 	threw := hooks.ScriptThrowPressed()
 	reloaded := hooks.ScriptReloadPressed()
 	slots := hooks.TakeScriptWeaponSlotRequests()
@@ -713,18 +713,10 @@ func postWeaponInputEvents(rt *ScriptRuntime) {
 	}
 	player := flang.RefVal{Kind: flang.RefEntity, A: "player"}
 
-	if primaryDown {
-		_ = rt.post(player, "primary_fire", nil, flang.Pos{})
-	}
-	if primaryUp {
-		_ = rt.post(player, "primary_fire_end", nil, flang.Pos{})
-	}
-	if secondaryDown {
-		_ = rt.post(player, "secondary_fire", nil, flang.Pos{})
-	}
-	if secondaryUp {
-		_ = rt.post(player, "secondary_fire_end", nil, flang.Pos{})
-	}
+	// In the order they happened, so a release and the next press in one
+	// frame leave the script holding the trigger, not letting it go.
+	postFireEdges(rt, player, primary, "primary_fire")
+	postFireEdges(rt, player, secondary, "secondary_fire")
 	if threw {
 		_ = rt.post(player, "throw", nil, flang.Pos{})
 	}
@@ -736,6 +728,18 @@ func postWeaponInputEvents(rt *ScriptRuntime) {
 	}
 	for _, step := range cycles {
 		_ = rt.post(player, "weapon_cycle", []flang.Value{flang.IntVal(step)}, flang.Pos{})
+	}
+}
+
+// postFireEdges posts one button's edges: `:<atom>:` for a press and
+// `:<atom>_end:` for a release.
+func postFireEdges(rt *ScriptRuntime, player flang.RefVal, edges []bool, atom string) {
+	for _, down := range edges {
+		if down {
+			_ = rt.post(player, atom, nil, flang.Pos{})
+		} else {
+			_ = rt.post(player, atom+"_end", nil, flang.Pos{})
+		}
 	}
 }
 

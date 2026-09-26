@@ -166,6 +166,14 @@ func DebugOverlayLines() []DebugLine {
 	line("CPU Usage:    %.1f%%", DebugStats.CPUPercent)
 	line("Mem Alloc:    %.1f MB", DebugStats.MemAllocMB)
 	line("Mem Sys:      %.1f MB", DebugStats.MemSysMB)
+	switch rec, path, left := cpuProfileStatus(); {
+	case rec:
+		line("CPU profile:  RECORDING %.0fs left (F2 stops) -> %s", left.Seconds(), path)
+	case path != "":
+		line("CPU profile:  written to %s  (F2 records again)", path)
+	default:
+		line("CPU profile:  F2 records %.0fs", CPUProfileDefaultSeconds)
+	}
 	out = append(out, debugRule)
 
 	line("Brushes:      %d loaded / %d drawn", DebugStats.BrushesLoaded, DebugStats.BrushesDrawn)

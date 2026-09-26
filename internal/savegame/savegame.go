@@ -80,9 +80,10 @@ func Fresh(level string, kind savefile.Kind) *savefile.Snapshot {
 
 func captureWorld(lvl *world.Level) savefile.WorldState {
 	ws := savefile.WorldState{
-		GlobalLight: lvl.Lights.Global,
-		StepHeight:  lvl.Player.StepHeight,
-		Gravity:     world.CopyFloatPtr(lvl.Gravity),
+		GlobalLight:  lvl.Lights.Global,
+		StepHeight:   lvl.Player.StepHeight,
+		Gravity:      world.CopyFloatPtr(lvl.Gravity),
+		ViewDistance: lvl.ViewDistance,
 	}
 	for i := range lvl.Entities {
 		ws.Entities = append(ws.Entities, captureEntity(&lvl.Entities[i]))
@@ -380,6 +381,7 @@ func applyWorld(lvl *world.Level, ws *savefile.WorldState) {
 	}
 	lvl.Player.StepHeight = ws.StepHeight
 	lvl.Gravity = world.CopyFloatPtr(ws.Gravity)
+	lvl.ViewDistance = ws.ViewDistance
 }
 
 // applyEntities takes out what was destroyed, makes again what was spawned,

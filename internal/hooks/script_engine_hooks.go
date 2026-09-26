@@ -97,43 +97,38 @@ func ScriptInteractPressed() bool {
 // automatic weapon fires on a timer while down, and has to know when to stop).
 // Throw and weapon-switch are plain presses, same as interact.
 
-// fireEdges is one held button's press/release edges since the last drain.
-type fireEdges struct {
-	down bool
-	up   bool
-}
+// fireEdges is one held button's presses (true) and releases (false) since
+// the last drain, in the order they happened.
+//
+// A list rather than a "pressed" and a "released" flag. Two flags lose the
+// order: the release of one click and the press of the next landing in the
+// same frame read back as "pressed, then released", and the script is told the
+// trigger is up while the player is holding it — an automatic weapon stops, a
+// scope drops. They also fold two quick clicks inside one frame into one.
+type fireEdges []bool
 
 var primaryFireEdges, secondaryFireEdges fireEdges
 
 // ScriptPrimaryFireRequest records the primary fire button's edge: down=true
-// on press, down=false on release. Both can be pending at once (a press and a
-// release inside the same frame), which is why this is two flags rather than
-// one "currently down" bool — TakeScriptPrimaryFireEdges reports both.
-func ScriptPrimaryFireRequest(down bool) { setFireEdge(&primaryFireEdges, down) }
+// on press, down=false on release.
+func ScriptPrimaryFireRequest(down bool) { primaryFireEdges = append(primaryFireEdges, down) }
 
-// TakeScriptPrimaryFireEdges reports and clears the pending press/release.
-func TakeScriptPrimaryFireEdges() (down, up bool) { return takeFireEdge(&primaryFireEdges) }
+// TakeScriptPrimaryFireEdges returns and clears the pending edges, oldest
+// first: true for a press, false for a release.
+func TakeScriptPrimaryFireEdges() []bool { return takeFireEdges(&primaryFireEdges) }
 
 // ScriptSecondaryFireRequest is ScriptPrimaryFireRequest for the secondary
 // fire button.
-func ScriptSecondaryFireRequest(down bool) { setFireEdge(&secondaryFireEdges, down) }
+func ScriptSecondaryFireRequest(down bool) { secondaryFireEdges = append(secondaryFireEdges, down) }
 
 // TakeScriptSecondaryFireEdges is TakeScriptPrimaryFireEdges for the
 // secondary fire button.
-func TakeScriptSecondaryFireEdges() (down, up bool) { return takeFireEdge(&secondaryFireEdges) }
+func TakeScriptSecondaryFireEdges() []bool { return takeFireEdges(&secondaryFireEdges) }
 
-func setFireEdge(e *fireEdges, down bool) {
-	if down {
-		e.down = true
-	} else {
-		e.up = true
-	}
-}
-
-func takeFireEdge(e *fireEdges) (down, up bool) {
-	down, up = e.down, e.up
-	*e = fireEdges{}
-	return
+func takeFireEdges(e *fireEdges) []bool {
+	out := []bool(*e)
+	*e = nil
+	return out
 }
 
 // scriptThrowPressed is the grenade-throw key, an edge for the same reason

@@ -105,7 +105,7 @@ type Fog struct {
 }
 
 // Fog defaults, and the range each field is clamped to. FogDefaultEnd is well
-// inside the 1000-unit far plane the projection is built with (app.go), so the
+// inside the default 1000-unit far plane (world.DefaultViewDistance), so the
 // default fog finishes before the geometry does rather than after it.
 const (
 	FogDefaultStart      float32 = 40

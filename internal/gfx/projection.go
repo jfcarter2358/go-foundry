@@ -30,16 +30,26 @@ const (
 // is the script's handle on it.
 var FieldOfView = DefaultFieldOfView
 
-const (
-	projectionNear = float32(0.1)
-	projectionFar  = float32(1000)
-)
+const projectionNear = float32(0.1)
+
+// DefaultFarPlane is how far the camera sees, in world units, when the level
+// has not asked for another distance (world.LevelViewDistance).
+const DefaultFarPlane = float32(1000)
+
+// FarPlane is the far clip distance the next SyncProjection builds with. The
+// frame loop writes the current level's `view_distance:` here before syncing,
+// so a large outdoor level can see further than a corridor needs to.
+//
+// The near plane stays where it is: the player can stand against a wall, so
+// pushing it out would slice that wall open. The cost of a long view is depth
+// precision at range, which is why the default is not simply "very far".
+var FarPlane = DefaultFarPlane
 
 // What Projection was last built from, so SyncProjection only rebuilds when
 // one of them has moved.
-var builtFOV, builtAspect float32
+var builtFOV, builtAspect, builtFar float32
 
-// RebuildProjection builds Projection from FieldOfView and the window's size,
+// RebuildProjection builds Projection from FieldOfView, FarPlane and the window's size,
 // and uploads it to the world program — which must be the program in use.
 func RebuildProjection() {
 	h := platform.WinHeight
@@ -48,12 +58,13 @@ func RebuildProjection() {
 	}
 	aspect := float32(platform.WinWidth) / float32(h)
 	fov := clampFOV(FieldOfView)
-	Projection = mgl32.Perspective(mgl32.DegToRad(fov), aspect, projectionNear, projectionFar)
-	builtFOV, builtAspect = fov, aspect
+	far := farPlane()
+	Projection = mgl32.Perspective(mgl32.DegToRad(fov), aspect, projectionNear, far)
+	builtFOV, builtAspect, builtFar = fov, aspect, far
 	gl.UniformMatrix4fv(ProjectionUniform, 1, false, &Projection[0])
 }
 
-// SyncProjection rebuilds the projection when the field of view has changed
+// SyncProjection rebuilds the projection when the field of view or far plane has changed
 // since it was last built. Called once a frame with the world program bound,
 // before anything reads Projection; free when nothing changed.
 func SyncProjection() {
@@ -62,10 +73,19 @@ func SyncProjection() {
 		h = 1
 	}
 	aspect := float32(platform.WinWidth) / float32(h)
-	if clampFOV(FieldOfView) == builtFOV && aspect == builtAspect {
+	if clampFOV(FieldOfView) == builtFOV && aspect == builtAspect && farPlane() == builtFar {
 		return
 	}
 	RebuildProjection()
+}
+
+// farPlane is FarPlane kept strictly beyond the near plane, so a zero or
+// garbage value cannot build a degenerate matrix.
+func farPlane() float32 {
+	if FarPlane <= projectionNear*10 {
+		return DefaultFarPlane
+	}
+	return FarPlane
 }
 
 func clampFOV(f float32) float32 {
@@ -121,7 +141,7 @@ func ViewmodelProjection() mgl32.Mat4 {
 		h = 1
 	}
 	aspect := float32(platform.WinWidth) / float32(h)
-	return mgl32.Perspective(mgl32.DegToRad(clampFOV(ViewmodelFieldOfView)), aspect, viewmodelNear, projectionFar)
+	return mgl32.Perspective(mgl32.DegToRad(clampFOV(ViewmodelFieldOfView)), aspect, viewmodelNear, DefaultFarPlane)
 }
 
 // UploadProjection sends a projection matrix to the world program, which must

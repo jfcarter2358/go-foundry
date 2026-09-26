@@ -198,6 +198,30 @@ func levelProps() map[string]propAccess {
 			Doc: "the level's downward acceleration, in world units a second squared. 36 is the engine's default, about 6 a moon, 0 a station with the plating off; a negative number falls upward",
 		},
 
+		// The level's far plane. Written onto the level like gravity, so a
+		// reload puts the authored distance back and a save keeps a changed one.
+		"view_distance": {
+			Get: func(c *refCache, _ flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(world.LevelViewDistance(c.lvl)), true
+			},
+			Set: func(c *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := toFloat32(v)
+				if !ok {
+					return propErr("view_distance", "number", v)
+				}
+				if c.lvl == nil {
+					return nil
+				}
+				if f <= 0 {
+					c.lvl.ViewDistance = 0
+					return nil
+				}
+				c.lvl.ViewDistance = world.ClampViewDistance(f)
+				return nil
+			},
+			Doc: "how far the camera sees, in world units (the level's `view_distance:`, 1000 by default, clamped to 50–50000); 0 goes back to the default",
+		},
+
 		// The camera's lens, for a scope or a sprint's widening. Engine state
 		// like the two switches above; ScriptRuntimeReset puts the default
 		// back, so a zoom held when play ends does not follow the author into

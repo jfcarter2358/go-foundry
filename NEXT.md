@@ -1059,7 +1059,7 @@
 - [ ] Debugger
 - [ ] Configurable editor keybindings
 - [ ] Audio mixer
-- [/] Gizmo in 3D editor to edit texture UVs
+- [x] Gizmo in 3D editor to edit texture UVs
 
 
 ### Engine

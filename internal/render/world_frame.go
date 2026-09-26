@@ -224,7 +224,9 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		gl.UseProgram(gfx.Program)
 		gl.Uniform1i(gfx.AlphaSharpenUniform, 1)
 		// A script zooming the camera (@level.prop.camera_fov) lands here,
-		// before the frustum and every pass below read Projection.
+		// before the frustum and every pass below read Projection — and so
+		// does the level's own view distance, which is also the far plane.
+		gfx.FarPlane = world.LevelViewDistance(lvl)
 		gfx.SyncProjection()
 
 		// Build frustum from current projection × camera matrices

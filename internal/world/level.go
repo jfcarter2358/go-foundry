@@ -91,7 +91,11 @@ type Level struct {
 	// engine's rate, and `gravity: 0` must not be the same value as saying
 	// nothing. Read through LevelGravity, never directly.
 	Gravity *float32
-	Lights  LightSet
+	// ViewDistance is the camera's far plane in this level, or 0 for the
+	// engine's default — see RawLevel.ViewDistance. Read through
+	// LevelViewDistance.
+	ViewDistance float32
+	Lights       LightSet
 	// Static is a compiled level's drawable geometry (static.go), or nil for an
 	// authored one. When it is set, every chunk marked Compiled is drawn from
 	// here instead of from its own brushes.
@@ -136,4 +140,33 @@ func SaveModeName(m SaveMode) string {
 		return ""
 	}
 	return SaveModeNames[m]
+}
+
+// View distance bounds. Below MinViewDistance a level would clip its own rooms;
+// past MaxViewDistance a 24-bit depth buffer has too little precision left at
+// range to tell surfaces apart.
+const (
+	DefaultViewDistance float32 = 1000
+	MinViewDistance     float32 = 50
+	MaxViewDistance     float32 = 50000
+)
+
+// LevelViewDistance is how far the camera sees in lvl: its own
+// `view_distance:`, clamped, or DefaultViewDistance when it names none.
+func LevelViewDistance(lvl *Level) float32 {
+	if lvl == nil || lvl.ViewDistance <= 0 {
+		return DefaultViewDistance
+	}
+	return ClampViewDistance(lvl.ViewDistance)
+}
+
+// ClampViewDistance keeps a view distance inside [MinViewDistance, MaxViewDistance].
+func ClampViewDistance(d float32) float32 {
+	if d < MinViewDistance {
+		return MinViewDistance
+	}
+	if d > MaxViewDistance {
+		return MaxViewDistance
+	}
+	return d
 }

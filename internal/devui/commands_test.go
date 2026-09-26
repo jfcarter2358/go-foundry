@@ -1,10 +1,13 @@
 package devui
 
 import (
+	"os"
 	"strings"
 	"testing"
 
+	"foundry/internal/fileutil"
 	"foundry/internal/platform"
+	"foundry/internal/render"
 	"foundry/internal/world"
 )
 
@@ -221,5 +224,30 @@ func TestSettingValueTakesTheTypeItLooksLike(t *testing.T) {
 		if got := settingValue(tc.in); got != tc.want {
 			t.Errorf("settingValue(%q) = %#v, want %#v", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestCPUProfileRecordsAndStops(t *testing.T) {
+	reset(t)
+	was := fileutil.UserDataRoot
+	fileutil.UserDataRoot = t.TempDir()
+	t.Cleanup(func() { fileutil.UserDataRoot = was; render.StopCPUProfile() })
+
+	run(nil, "cpuprofile 60")
+	if lastKind() != kindOK {
+		t.Fatalf("cpuprofile did not start:\n%s", output())
+	}
+	run(nil, "cpuprofile 60")
+	if lastKind() != kindErr {
+		t.Fatalf("a second start should refuse while one is recording:\n%s", output())
+	}
+	run(nil, "cpuprofile stop")
+	path := strings.TrimPrefix(console.back[len(console.back)-1].text, "cpuprofile written to ")
+	if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+		t.Fatalf("no profile at %s (%v)", path, err)
+	}
+	run(nil, "cpuprofile stop")
+	if lastKind() != kindErr {
+		t.Fatalf("stopping with nothing recording should say so:\n%s", output())
 	}
 }

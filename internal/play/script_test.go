@@ -116,7 +116,7 @@ func TestFireHoldsTheTriggerAndLetsGo(t *testing.T) {
 
 	const dt = 1.0 / 60
 	r.Tick(dt)
-	if down, _ := hooks.TakeScriptPrimaryFireEdges(); !down {
+	if e := hooks.TakeScriptPrimaryFireEdges(); len(e) == 0 || !e[0] {
 		t.Error("fire did not press the trigger")
 	}
 	for i := 0; i < 60 && !r.Done(); i++ {
@@ -125,7 +125,7 @@ func TestFireHoldsTheTriggerAndLetsGo(t *testing.T) {
 	if !r.Done() {
 		t.Fatal("fire never finished")
 	}
-	if _, up := hooks.TakeScriptPrimaryFireEdges(); !up {
+	if e := hooks.TakeScriptPrimaryFireEdges(); len(e) == 0 || e[len(e)-1] {
 		t.Error("fire never let the trigger go — the next run would start shooting")
 	}
 }

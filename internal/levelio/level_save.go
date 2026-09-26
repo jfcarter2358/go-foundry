@@ -208,6 +208,7 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 	raw.EscapeLevel = level.EscapeLevel
 	raw.SaveMode = world.SaveModeName(level.SaveMode)
 	raw.Gravity = world.CopyFloatPtr(level.Gravity)
+	raw.ViewDistance = level.ViewDistance
 	if level.LightGrid > 0 || level.LightMinGrid > 0 {
 		raw.Compile = &world.RawCompile{LightGrid: level.LightGrid, LightMinGrid: level.LightMinGrid}
 	}

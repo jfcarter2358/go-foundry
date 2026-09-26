@@ -226,6 +226,18 @@ func init() {
 			},
 			run: cmdStats,
 		},
+		{
+			name: "cpuprofile", usage: "[seconds|stop]",
+			summary: "record a Go CPU profile of the running game",
+			detail: []string{
+				"Starts recording to cpu-<time>.prof in the state directory; stops after",
+				"the given seconds (default 10) or at `cpuprofile stop`. Read it with",
+				"`go tool pprof -top -cum <binary> <file>`. This is the frame as played,",
+				"which is what a headless `foundry sim -cpuprofile` cannot reproduce.",
+				"F2 does the same without the console (it works in editor play mode).",
+			},
+			run: cmdCPUProfile,
+		},
 
 		// -- doing --
 		{
@@ -559,6 +571,32 @@ func cmdStats(c *cmdCtx) {
 		}
 		printf(kindOut, "  %s", l.Text)
 	}
+}
+
+func cmdCPUProfile(c *cmdCtx) {
+	if c.arg(0) == "stop" {
+		if path := render.StopCPUProfile(); path != "" {
+			printf(kindOK, "cpuprofile written to %s", path)
+		} else {
+			printf(kindErr, "cpuprofile: nothing is recording")
+		}
+		return
+	}
+	secs := render.CPUProfileDefaultSeconds
+	if a := c.arg(0); a != "" {
+		v, err := strconv.ParseFloat(a, 64)
+		if err != nil || v <= 0 {
+			printf(kindErr, "cpuprofile: %q is not a number of seconds", a)
+			return
+		}
+		secs = v
+	}
+	path, err := render.StartCPUProfile(secs)
+	if err != nil {
+		printf(kindErr, "cpuprofile: %v (%s)", err, path)
+		return
+	}
+	printf(kindOK, "cpuprofile: recording %.0fs to %s", secs, path)
 }
 
 // ---------- doing ----------

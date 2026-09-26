@@ -838,8 +838,13 @@ type RawLevel struct {
 	// far falls at; 6 is roughly a moon, 0 is a station with the plating off.
 	// A volume may override it in one region and a body may scale it — see
 	// world/gravity.go.
-	Gravity *float32  `yaml:"gravity,omitempty"`
-	Lights  RawLights `yaml:"lights"`
+	Gravity *float32 `yaml:"gravity,omitempty"`
+	// ViewDistance is how far the camera sees in this level, in world units —
+	// the projection's far plane. Absent (or 0) is the engine's 1000; a large
+	// outdoor level raises it so distant terrain is not clipped away. Longer
+	// costs depth precision at range, so raise it only as far as needed.
+	ViewDistance float32   `yaml:"view_distance,omitempty"`
+	Lights       RawLights `yaml:"lights"`
 }
 
 // RawPlayer is the level's `player:` block — see PlayerSettings.

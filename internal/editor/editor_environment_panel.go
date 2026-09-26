@@ -37,6 +37,35 @@ func editorEnvironmentSection(lvl *world.Level) {
 	}
 	editorSkyGroup(lvl)
 	editorFogGroup(lvl)
+	editorViewDistanceGroup(lvl)
+}
+
+// ---------- View distance ----------
+
+// editorViewDistanceGroup is the level's far plane. Zero is "the engine's",
+// so the field needs no checkbox: at rest it already says "not set".
+func editorViewDistanceGroup(lvl *world.Level) {
+	editorPropGroup("View distance##viewdistgrp", 0, func() {
+		d := world.LevelViewDistance(lvl)
+		if editorDragFloatStep("View distance##viewdist", &d, world.MinViewDistance, world.MaxViewDistance, "%.0f", 50) {
+			EditorPushUndo()
+			lvl.ViewDistance = world.ClampViewDistance(d)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("How far the camera sees, in world units — the far clip\n" +
+				"plane. Raise it for a large outdoor level. Longer costs\n" +
+				"depth precision far away, so go only as far as needed.")
+		}
+		if lvl.ViewDistance > 0 {
+			if imgui.Button("Use default##viewdistdef") {
+				EditorPushUndo()
+				lvl.ViewDistance = 0
+				editorSetStatus("View distance back to the default (%.0f)", world.DefaultViewDistance)
+			}
+		} else {
+			editorTextMutedWrapped(fmt.Sprintf("Following the default: %.0f units.", world.DefaultViewDistance))
+		}
+	})
 }
 
 // ---------- Sky ----------

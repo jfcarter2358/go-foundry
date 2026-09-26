@@ -183,7 +183,19 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 	body := Cylinder{C: out, Half: mgl32.Vec3{radius, halfHeight, radius}, Rot: mgl32.Ident4()}
 	bestFloorCos := float32(0)
 	boxes := brushBoxesFor(chunk)
-	for bi := range chunk.Brushes {
+	if boxes == nil {
+		return
+	}
+	// Only the brushes near the body, from the chunk's grid — not every brush
+	// in it. The box test below rejected all the others anyway, but a canyon
+	// chunk is thousands of brushes and walking them all to reject them was
+	// half of a frame with a squad in it. After a push moves the body the
+	// list is asked for again from the next brush on, so the walk still
+	// visits exactly the brushes, in exactly the order, a whole-list walk
+	// would have found touching.
+	cand := boxes.near(body.C, body.Half, -1)
+	for ci := 0; ci < len(cand); ci++ {
+		bi := int(cand[ci])
 		b := &chunk.Brushes[bi]
 		if !b.Solid || len(b.Verts) < 4 {
 			continue
@@ -217,6 +229,7 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 		// authored, chunk-local space b.Verts is, so b's own Placement
 		// (about b's own pivot, not a piece's) carries all of them alike.
 		m := b.Placement()
+		moved := false
 		for _, piece := range chunk.ConvexBrushPieces(bi) {
 			n, depth, ok := Penetration(body, ConvexHull{Pts: piece.Verts, Xform: m})
 			if !ok || depth <= 0 {
@@ -234,6 +247,7 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 			push := n.Mul(-(depth + separationEpsilon))
 			out = out.Add(push)
 			body = Translate(body, push).(Cylinder)
+			moved = true
 
 			mag := push.Len()
 			if mag < 1e-9 {
@@ -251,6 +265,12 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 					hitCeiling = true
 				}
 			}
+		}
+		if moved {
+			// The body is somewhere else now; the brushes after this one are
+			// the ones near where it went.
+			cand = boxes.near(body.C, body.Half, bi)
+			ci = -1
 		}
 	}
 	return

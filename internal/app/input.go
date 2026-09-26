@@ -172,6 +172,13 @@ func HandleEvent(event sdl.Event) {
 				if devAvailable || devui.Enabled() {
 					render.DebugToggle()
 				}
+			case sdl.SCANCODE_F2:
+				// A CPU profile of the frame as it is being played — the one
+				// instrument that works in editor play mode, where `~` leaves
+				// play rather than opening the console. Gated like F3.
+				if devAvailable || devui.Enabled() {
+					render.ToggleCPUProfile()
+				}
 			case sdl.SCANCODE_F4:
 				// Volumetric quality: half resolution, full, off. A cost
 				// switch like the F5-F9 ones, read against the F3 overlay's
