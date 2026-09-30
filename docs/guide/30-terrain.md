@@ -172,6 +172,10 @@ grows in. Paint a whole hillside and every face grows what suits it:
 | **Badlands** | red boulders piled below every bank, red gravel, dead brush, dry grass in the gullies, the odd prickly pear | |
 | **Volcanic Plains** | a thick grey-green blanket of woolly moss over black lava rubble, lupines in purple drifts, thin grass | woolly moss |
 | **Savannah** | a sea of golden grass, acacias standing alone and far apart, shrubs in the gullies, dead thornbush, rocks | |
+| **Mesa** | red boulders fallen at the foot of the walls, gravel, juniper, dead brush, dry grass, the odd prickly pear | banded red and cream strata |
+| **Glacier** | leaning seracs and broken ice blocks, dark moraine gravel and boulders along its edges; nothing grows | blue ice |
+| **Ice Plains** | wind-rippled snow with patches of blue ice, frozen tufts, ice blocks, frosted stones | lichen |
+| **Rocky Cliff** | talus piled at the foot, gravel, lichen, a tuft of grass or a stunted pine where soil holds | bare weathered rock, lichen |
 
 What decides where each species takes, read from the blocks:
 
@@ -210,8 +214,12 @@ Each biome in the **Biomes** list has:
 | **Kind** | which biome it is |
 | **Density** | how thickly everything in it grows (1 is natural) |
 | **Tint** | multiplies every colour in it: an autumn forest, a sun-scorched meadow |
+| **Amounts** | one slider per kind of thing the biome grows (grass, flowers, rocks, trees...): 0 grows none, 1 as the biome has it, up to 4 times as many. It applies to this terrain only; the biome file is unchanged. Ctrl+click a slider to type a value; **Reset Amounts** puts them all back to 1 |
 | **Ground** | what the painted faces show: the biome's own ground texture by default, or one of the terrain's materials instead |
 | **Remove** | removes the biome and all its paint |
+
+In the level file the amounts are a map by shape:
+`biomes: [{preset: forest, amounts: {broadleaf: 0.3, fern: 2}}]`.
 
 **Foliage seed** reshuffles where every plant falls without changing where
 anything grows.
