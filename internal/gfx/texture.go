@@ -276,3 +276,37 @@ func errEmptyImage(name string) error {
 func errBadStride(name string) error {
 	return fmt.Errorf("texture upload %q: unsupported stride, want tightly packed RGBA", name)
 }
+
+// TextureFile is the file on disk the texture called name is read from, if
+// the project has one.
+func TextureFile(name string) (string, bool) {
+	path, ok := TextureNames[name]
+	if !ok {
+		return "", false
+	}
+	return filepath.Join(fileutil.ResourcesPath, path), true
+}
+
+// DecodeTexture reads the texture called name off disk into RGBA, without
+// touching the GPU — for a renderer that packs textures into an array of its
+// own rather than drawing them one by one.
+func DecodeTexture(name string) (*image.RGBA, error) {
+	path, ok := TextureFile(name)
+	if !ok {
+		return nil, fmt.Errorf("unknown texture %q", name)
+	}
+	return decodeTextureFile(path)
+}
+
+// ApplyWorldTextureFilterTo sets the world textures' filtering — trilinear,
+// repeating, anisotropic as far as the player's setting allows — on the
+// texture bound to target, for an array texture the world samples like one.
+func ApplyWorldTextureFilterTo(target uint32) {
+	gl.TexParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+	gl.TexParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	gl.TexParameteri(target, gl.TEXTURE_WRAP_S, gl.REPEAT)
+	gl.TexParameteri(target, gl.TEXTURE_WRAP_T, gl.REPEAT)
+	if anisotropySupported && TextureAnisotropy > 1 {
+		gl.TexParameterf(target, gl.TEXTURE_MAX_ANISOTROPY, TextureAnisotropy)
+	}
+}

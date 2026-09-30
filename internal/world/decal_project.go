@@ -259,13 +259,13 @@ func (bs *decalBuilders) gatherBrushes(lvl *Level, bx *decalBox, lo, hi mgl32.Ve
 }
 
 // gatherTerrain clips the chunk's ground under the box. The terrain has no
-// face meshes to hand over, so the cells under the box are written out as one
-// in the layout clipGeometry reads — corners [X,Y,Z,U,V] and smooth normals —
-// and clipped in the chunk's space, on the chunk's own piece: a decal on the
+// face meshes to hand over, so the faces under the box are written out as one
+// in the layout clipGeometry reads — corners [X,Y,Z,U,V] and shading normals
+// — and clipped in the chunk's space, on the chunk's own piece: a decal on the
 // ground rides with its chunk, and streams out with it, like one on a wall.
 func (bs *decalBuilders) gatherTerrain(ch *Chunk, model mgl32.Mat4, bx *decalBox, lo, hi mgl32.Vec3) {
 	t := ch.Terrain
-	// The box's corners carried into the chunk, for the cells to take.
+	// The box's corners carried into the chunk, for the faces to take.
 	inv := model.Inv()
 	llo := mgl32.Vec3{float32(math.Inf(1)), float32(math.Inf(1)), float32(math.Inf(1))}
 	lhi := llo.Mul(-1)
@@ -286,26 +286,16 @@ func (bs *decalBuilders) gatherTerrain(ch *Chunk, model mgl32.Mat4, bx *decalBox
 			lhi[k] = max(lhi[k], p[k])
 		}
 	}
-	x0, z0, x1, z1, ok := t.CellRange(llo, lhi)
-	if !ok {
-		return
-	}
 	var g gfx.Geometry
-	for z := z0; z <= z1; z++ {
-		for x := x0; x <= x1; x++ {
-			if t.IsHole(x, z) {
-				continue
-			}
-			for _, tri := range t.CellCorners(x, z) {
-				for _, c := range tri {
-					p := t.Vertex(c[0], c[1])
-					n := t.SmoothNormal(c[0], c[1])
-					g.Vertices = append(g.Vertices, p.X(), p.Y(), p.Z(), 0, 0)
-					g.Normals = append(g.Normals, n.X(), n.Y(), n.Z())
-				}
+	t.EachFaceIn(llo, lhi, func(f *TerrainFace) {
+		for k := 0; k < 2; k++ {
+			for _, c := range f.Tri(k) {
+				p, n := f.Corners[c], f.Normals[c]
+				g.Vertices = append(g.Vertices, p.X(), p.Y(), p.Z(), 0, 0)
+				g.Normals = append(g.Normals, n.X(), n.Y(), n.Z())
 			}
 		}
-	}
+	})
 	if len(g.Vertices) == 0 {
 		return
 	}

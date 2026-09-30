@@ -648,6 +648,11 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 			ProfileBegin("scatter")
 			RenderScatterDirShadow(level, lsm, c, frame.Splits[c], gfx.Cam.Position, BiomeWindTime, &cull)
 			ProfileEnd()
+			// Terrain foliage's trees, shrubs and rocks. Restores
+			// Shadows.Program.
+			ProfileBegin("foliage")
+			RenderFoliageDirShadow(level, lsm, c, &cull)
+			ProfileEnd()
 
 			// The same cascade again with only what the bake never saw.
 			if i == liveSun {
@@ -658,6 +663,7 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 				renderSceneShadowLayers(level, Shadows.Program, &gfx.ShadowSkinUniforms, Shadows.ModelUniform, &cull, shadowLiveLayers)
 				RenderSpriteDirShadow(level, lsm, dl.Direction, gfx.Cam.Position, &cull)
 				RenderScatterDirShadow(level, lsm, c, frame.Splits[c], gfx.Cam.Position, BiomeWindTime, &cull)
+				RenderFoliageDirShadow(level, lsm, c, &cull)
 				ProfileEnd()
 				frame.LiveDrawn, frame.LiveSun = true, i
 			}

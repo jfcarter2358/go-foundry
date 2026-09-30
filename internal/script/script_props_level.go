@@ -387,6 +387,37 @@ func levelProps() map[string]propAccess {
 			Doc: "whether every surface shades smooth — lighting blends across the edges between a surface's faces, up to each face's crease angle — rather than only the ones marked Smooth; on by default, saved for every level and session",
 		},
 
+		// The player's foliage settings (gfx.FoliageDistance,
+		// gfx.FoliageShadows), saved to graphics.yaml like smooth_lighting.
+		"foliage_distance": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(float64(gfx.FoliageDistance)), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("foliage_distance", "float", v)
+				}
+				gfx.SetFoliageDistance(float32(f))
+				return nil
+			},
+			Doc: "how far painted terrain foliage is drawn, as a multiple of its natural distances, 0.25 to 2 (1 by default); lower is faster; saved for every level and session",
+		},
+		"foliage_shadows": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(gfx.FoliageShadows), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("foliage_shadows", "bool", v)
+				}
+				gfx.SetFoliageShadows(b)
+				return nil
+			},
+			Doc: "whether terrain foliage's trees, shrubs, rocks and ferns cast shadows; on by default, saved for every level and session",
+		},
+
 		// The hard pause — see script_pause.go. Engine state rather than a
 		// level field, like the two switches above, and ScriptEventsReset
 		// lifts it, so neither a level load nor the end of a play session

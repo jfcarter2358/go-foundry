@@ -1,16 +1,14 @@
 package render
 
-// terrain.go — drawing chunks' heightfield ground (world/terrain.go).
+// terrain.go — drawing chunks' block terrain (world/terrain.go).
 //
-// # One grid, many patches
+// # One buffer per section
 //
-// A terrain uploads as one vertex buffer holding every grid vertex (position,
-// smooth normal, four layer weights) and one index buffer cut into fixed
-// slots, one per terrainPatchCells x terrainPatchCells patch of cells. Each
-// patch is frustum-culled on its own box and drawn with one DrawElements over
-// its slot, holes left out of the indices. Fixed slots are what make editing
-// cheap: a brush stroke re-uploads the vertex rows it touched and the index
-// slots of the patches around them (Terrain.TakeDirty), not the grid.
+// A terrain's surface is built in sections (world/terrain_mesh.go); each
+// uploads as its own vertex and index buffer, re-uploaded only when its
+// generation moves, so mining a block re-uploads the one to eight sections
+// around it rather than the ground. Each section is frustum-culled on its own
+// box and drawn with one DrawElements.
 //
 // # Shading
 //
@@ -18,9 +16,10 @@ package render
 // scatter and sprites use — uploadBiomeLighting feeds it every uniform the
 // world shader is fed — so the ground takes the level's lights, cascade and
 // cube shadows, cloud shadows and fog exactly as the brushes beside it do.
-// The ground is lit live, like everything that is not a brush face: a
-// compiled level's baked light (and its bounce) belongs to the faces the
-// compiler saw, and the compiler never sees a terrain.
+// Textures are projected three ways and blended by the normal (triplanar),
+// since a block has sides as well as a top, and the biome painted on a face
+// tints it toward the colour of what grows there — more with distance, so a
+// meadow still reads as a meadow past the range its grass is drawn to.
 //
 // # Shadows
 //
@@ -41,13 +40,10 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// terrainPatchCells is a patch's edge, in cells: the unit of culling and of
-// index re-upload.
-const terrainPatchCells = 32
-
-// terrainVertexFloats is one vertex's size in the vertex buffer, in 4-byte
-// words: position (3 floats), normal (3 floats), weights (4 bytes, one word).
-const terrainVertexFloats = 7
+// terrainVertexWords is one vertex's size in the vertex buffer, in 4-byte
+// words: position (3 floats), normal (3 floats), layer weights (4 bytes),
+// cover (4 bytes), ground channel weights (8 bytes).
+const terrainVertexWords = 10
 
 // Texture units for the four layers. Unit 0 is the albedo unit every program
 // uses; the other three are units biome-lit programs leave free (the world
@@ -64,22 +60,18 @@ var terrains terrainRenderer
 
 // terrainMesh is one terrain's GPU state.
 type terrainMesh struct {
-	vao, vbo, ebo  uint32
-	cellsX, cellsZ int
-	gen            uint64
-	patchesX       int
-	patches        []terrainPatch
+	sections []terrainSectionGPU
+	seen     bool
 	// scratch buffers, kept between re-uploads.
-	verts []float32
+	verts []uint32
 	idx   []uint32
-	seen  bool
 }
 
-type terrainPatch struct {
-	// count is how many indices of the patch's slot are live.
-	count int32
-	// lo, hi are the patch's chunk-local box.
-	lo, hi mgl32.Vec3
+type terrainSectionGPU struct {
+	vao, vbo, ebo uint32
+	gen           uint64
+	count         int32
+	lo, hi        mgl32.Vec3
 }
 
 // TerrainInit compiles the terrain program. Called once with the GL context
@@ -106,6 +98,7 @@ func TerrainInit() {
 		biomeLightSnippet(0, false, false), biomeLightSnippet(2, true, true))
 	terrains.prog = progUniforms{prog: p, loc: map[string]int32{}}
 	terrains.cache = map[*world.Terrain]*terrainMesh{}
+	groundArrayInit()
 	terrains.initialized = true
 }
 
@@ -119,10 +112,19 @@ func ReleaseTerrainMeshes() {
 }
 
 func (m *terrainMesh) release() {
-	gl.DeleteVertexArrays(1, &m.vao)
-	gl.DeleteBuffers(1, &m.vbo)
-	gl.DeleteBuffers(1, &m.ebo)
-	m.vao, m.vbo, m.ebo = 0, 0, 0
+	for i := range m.sections {
+		m.sections[i].release()
+	}
+	m.sections = nil
+}
+
+func (s *terrainSectionGPU) release() {
+	if s.vao != 0 {
+		gl.DeleteVertexArrays(1, &s.vao)
+		gl.DeleteBuffers(1, &s.vbo)
+		gl.DeleteBuffers(1, &s.ebo)
+	}
+	*s = terrainSectionGPU{}
 }
 
 // SyncTerrainMeshes brings every terrain's GPU mesh up to date and frees the
@@ -154,161 +156,114 @@ func SyncTerrainMeshes(lvl *world.Level) {
 			delete(terrains.cache, t)
 		}
 	}
+	syncGroundArray(lvl)
+	syncFoliage(lvl)
 }
 
-// sync re-uploads whatever the terrain's edits since the last sync touched.
+// sync re-uploads every section whose faces changed since the last sync.
 func (m *terrainMesh) sync(t *world.Terrain) {
-	if m.vao != 0 && m.gen == t.Generation {
-		return
+	secs := t.Sections()
+	if len(m.sections) != len(secs) {
+		m.release()
+		m.sections = make([]terrainSectionGPU, len(secs))
 	}
-	x0, z0, x1, z1, all := t.TakeDirty()
-	if m.vao == 0 || m.cellsX != t.CellsX || m.cellsZ != t.CellsZ {
-		all = true
-	}
-	m.gen = t.Generation
-	if all {
-		m.build(t)
-		return
-	}
-	// A vertex's normal reads its neighbours' heights, so the rows either side
-	// of an edit change too; and a cell's split reads all four corners.
-	x0, z0 = max(x0-1, 0), max(z0-1, 0)
-	x1, z1 = min(x1+1, t.CellsX), min(z1+1, t.CellsZ)
-	m.uploadVertexRows(t, z0, z1)
-	px0, pz0 := max(x0-1, 0)/terrainPatchCells, max(z0-1, 0)/terrainPatchCells
-	px1, pz1 := min(x1, t.CellsX-1)/terrainPatchCells, min(z1, t.CellsZ-1)/terrainPatchCells
-	gl.BindVertexArray(m.vao)
-	for pz := pz0; pz <= pz1; pz++ {
-		for px := px0; px <= px1; px++ {
-			m.uploadPatch(t, px, pz)
+	for i, s := range secs {
+		g := &m.sections[i]
+		if g.gen == s.Gen && (g.vao != 0 || s.Empty()) {
+			continue
 		}
+		g.gen = s.Gen
+		g.lo, g.hi = s.Lo, s.Hi
+		if s.Empty() {
+			g.count = 0
+			continue
+		}
+		m.upload(g, s)
 	}
-	gl.BindVertexArray(0)
 }
 
-// build (re)creates the buffers for the whole grid.
-func (m *terrainMesh) build(t *world.Terrain) {
-	if m.vao == 0 {
-		gl.GenVertexArrays(1, &m.vao)
-		gl.GenBuffers(1, &m.vbo)
-		gl.GenBuffers(1, &m.ebo)
+func (m *terrainMesh) upload(g *terrainSectionGPU, s *world.TerrainSection) {
+	nv := len(s.Faces) * 4
+	if cap(m.verts) < nv*terrainVertexWords {
+		m.verts = make([]uint32, nv*terrainVertexWords)
 	}
-	m.cellsX, m.cellsZ = t.CellsX, t.CellsZ
-	m.patchesX = (t.CellsX + terrainPatchCells - 1) / terrainPatchCells
-	patchesZ := (t.CellsZ + terrainPatchCells - 1) / terrainPatchCells
-	m.patches = make([]terrainPatch, m.patchesX*patchesZ)
-
-	gl.BindVertexArray(m.vao)
-	gl.BindBuffer(gl.ARRAY_BUFFER, m.vbo)
-	gl.BufferData(gl.ARRAY_BUFFER, t.VertexCount()*terrainVertexFloats*4, nil, gl.DYNAMIC_DRAW)
-	stride := int32(terrainVertexFloats * 4)
-	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointerWithOffset(0, 3, gl.FLOAT, false, stride, 0)
-	gl.EnableVertexAttribArray(1)
-	gl.VertexAttribPointerWithOffset(1, 3, gl.FLOAT, false, stride, 3*4)
-	gl.EnableVertexAttribArray(2)
-	gl.VertexAttribPointerWithOffset(2, 4, gl.UNSIGNED_BYTE, true, stride, 6*4)
-	// Anything else a shadow program might read stays off: the skin
-	// attributes are gated by the `skinned` uniform, which the shadow walk
-	// sets to 0 before the chunks.
-	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.ebo)
-	slot := terrainPatchCells * terrainPatchCells * 6
-	gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(m.patches)*slot*4, nil, gl.DYNAMIC_DRAW)
-	m.uploadVertexRows(t, 0, t.CellsZ)
-	for pz := 0; pz < patchesZ; pz++ {
-		for px := 0; px < m.patchesX; px++ {
-			m.uploadPatch(t, px, pz)
-		}
+	if cap(m.idx) < len(s.Faces)*6 {
+		m.idx = make([]uint32, len(s.Faces)*6)
 	}
-	gl.BindVertexArray(0)
-}
-
-// uploadVertexRows writes grid rows z0..z1 into the vertex buffer. Rows are
-// contiguous, so it is one BufferSubData.
-func (m *terrainMesh) uploadVertexRows(t *world.Terrain, z0, z1 int) {
-	vx := t.VertsX()
-	n := (z1 - z0 + 1) * vx * terrainVertexFloats
-	if cap(m.verts) < n {
-		m.verts = make([]float32, n)
-	}
-	v := m.verts[:n]
-	k := 0
-	for z := z0; z <= z1; z++ {
-		for x := 0; x < vx; x++ {
-			p := t.Vertex(x, z)
-			nm := t.SmoothNormal(x, z)
-			var w [4]uint8
-			for l := 0; l < world.TerrainLayerCount; l++ {
-				w[l] = t.Weight(x, z, l)
-			}
-			packed := uint32(w[0]) | uint32(w[1])<<8 | uint32(w[2])<<16 | uint32(w[3])<<24
-			v[k+0], v[k+1], v[k+2] = p.X(), p.Y(), p.Z()
-			v[k+3], v[k+4], v[k+5] = nm.X(), nm.Y(), nm.Z()
-			v[k+6] = math.Float32frombits(packed)
-			k += terrainVertexFloats
-		}
-	}
-	gl.BindBuffer(gl.ARRAY_BUFFER, m.vbo)
-	gl.BufferSubData(gl.ARRAY_BUFFER, z0*vx*terrainVertexFloats*4, n*4, gl.Ptr(v))
-}
-
-// uploadPatch rebuilds patch (px, pz)'s index slot and box. The VAO must be
-// bound (the element buffer binding is VAO state).
-func (m *terrainMesh) uploadPatch(t *world.Terrain, px, pz int) {
-	cx0, cz0 := px*terrainPatchCells, pz*terrainPatchCells
-	cx1, cz1 := min(cx0+terrainPatchCells, t.CellsX), min(cz0+terrainPatchCells, t.CellsZ)
-	slot := terrainPatchCells * terrainPatchCells * 6
-	if cap(m.idx) < slot {
-		m.idx = make([]uint32, slot)
-	}
+	v := m.verts[:nv*terrainVertexWords]
 	idx := m.idx[:0]
-	vx := t.VertsX()
-	lo := mgl32.Vec3{float32(math.Inf(1)), float32(math.Inf(1)), float32(math.Inf(1))}
-	hi := lo.Mul(-1)
-	for z := cz0; z < cz1; z++ {
-		for x := cx0; x < cx1; x++ {
-			if t.IsHole(x, z) {
-				continue
-			}
-			for _, tri := range t.CellCorners(x, z) {
-				for _, c := range tri {
-					idx = append(idx, uint32(c[1]*vx+c[0]))
-					p := t.Vertex(c[0], c[1])
-					for i := 0; i < 3; i++ {
-						lo[i] = min(lo[i], p[i])
-						hi[i] = max(hi[i], p[i])
-					}
-				}
+	k := 0
+	f32 := math.Float32bits
+	for fi := range s.Faces {
+		f := &s.Faces[fi]
+		base := uint32(fi * 4)
+		for c := 0; c < 4; c++ {
+			p, n := f.Corners[c], f.Normals[c]
+			v[k+0], v[k+1], v[k+2] = f32(p[0]), f32(p[1]), f32(p[2])
+			v[k+3], v[k+4], v[k+5] = f32(n[0]), f32(n[1]), f32(n[2])
+			v[k+6] = f.Weights[c]
+			v[k+7] = f.Cover[c]
+			v[k+8] = uint32(f.Ground[c])
+			v[k+9] = uint32(f.Ground[c] >> 32)
+			k += terrainVertexWords
+		}
+		for t := 0; t < 2; t++ {
+			for _, c := range f.Tri(t) {
+				idx = append(idx, base+uint32(c))
 			}
 		}
 	}
-	pi := pz*m.patchesX + px
-	m.patches[pi] = terrainPatch{count: int32(len(idx)), lo: lo, hi: hi}
-	if len(idx) > 0 {
-		gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.ebo)
-		gl.BufferSubData(gl.ELEMENT_ARRAY_BUFFER, pi*slot*4, len(idx)*4, gl.Ptr(idx))
+	if g.vao == 0 {
+		gl.GenVertexArrays(1, &g.vao)
+		gl.GenBuffers(1, &g.vbo)
+		gl.GenBuffers(1, &g.ebo)
+		gl.BindVertexArray(g.vao)
+		gl.BindBuffer(gl.ARRAY_BUFFER, g.vbo)
+		stride := int32(terrainVertexWords * 4)
+		gl.EnableVertexAttribArray(0)
+		gl.VertexAttribPointerWithOffset(0, 3, gl.FLOAT, false, stride, 0)
+		gl.EnableVertexAttribArray(1)
+		gl.VertexAttribPointerWithOffset(1, 3, gl.FLOAT, false, stride, 3*4)
+		gl.EnableVertexAttribArray(2)
+		gl.VertexAttribPointerWithOffset(2, 4, gl.UNSIGNED_BYTE, true, stride, 6*4)
+		gl.EnableVertexAttribArray(3)
+		gl.VertexAttribPointerWithOffset(3, 4, gl.UNSIGNED_BYTE, true, stride, 7*4)
+		gl.EnableVertexAttribArray(4)
+		gl.VertexAttribPointerWithOffset(4, 4, gl.UNSIGNED_BYTE, true, stride, 8*4)
+		gl.EnableVertexAttribArray(5)
+		gl.VertexAttribPointerWithOffset(5, 4, gl.UNSIGNED_BYTE, true, stride, 9*4)
+		// Anything else a shadow program might read stays off: the skin
+		// attributes are gated by the `skinned` uniform, which the shadow walk
+		// sets to 0 before the chunks.
+		gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, g.ebo)
+	} else {
+		gl.BindVertexArray(g.vao)
+		gl.BindBuffer(gl.ARRAY_BUFFER, g.vbo)
 	}
+	gl.BufferData(gl.ARRAY_BUFFER, len(v)*4, gl.Ptr(v), gl.STATIC_DRAW)
+	gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(idx)*4, gl.Ptr(idx), gl.STATIC_DRAW)
+	gl.BindVertexArray(0)
+	g.count = int32(len(idx))
 }
 
-// drawPatches issues one DrawElements per patch that survives the cull, cull
-// being in world space and model the chunk's placement. It returns how many
-// patches it drew.
-func (m *terrainMesh) drawPatches(model mgl32.Mat4, cull *Frustum) int {
-	slot := terrainPatchCells * terrainPatchCells * 6
+// drawSections issues one DrawElements per section that survives the cull,
+// cull being in world space and model the chunk's placement. It returns how
+// many sections it drew.
+func (m *terrainMesh) drawSections(model mgl32.Mat4, cull *Frustum) int {
 	drawn := 0
-	gl.BindVertexArray(m.vao)
-	for pi := range m.patches {
-		p := &m.patches[pi]
-		if p.count == 0 {
+	for i := range m.sections {
+		s := &m.sections[i]
+		if s.count == 0 || s.vao == 0 {
 			continue
 		}
 		if cull != nil {
-			wlo, whi := transformBox(model, p.lo, p.hi)
+			wlo, whi := transformBox(model, s.lo, s.hi)
 			if !AABBInFrustum(*cull, wlo, whi) {
 				continue
 			}
 		}
-		gl.DrawElementsWithOffset(gl.TRIANGLES, p.count, gl.UNSIGNED_INT, uintptr(pi*slot*4))
+		gl.BindVertexArray(s.vao)
+		gl.DrawElementsWithOffset(gl.TRIANGLES, s.count, gl.UNSIGNED_INT, 0)
 		drawn++
 	}
 	return drawn
@@ -343,9 +298,13 @@ func terrainDrawable(ch *world.Chunk) bool {
 	return ch.Terrain != nil && ch.IsEnabled()
 }
 
+// TerrainCoverFar is the distance at which a painted biome's ground tint
+// reaches its full strength — about where its grass has thinned out.
+const TerrainCoverFar = 55
+
 // RenderTerrain draws every enabled chunk's terrain in the opaque pass. It
 // uses its own program and puts the world program back when done. Returns the
-// number of patches drawn.
+// number of sections drawn.
 func RenderTerrain(lvl *world.Level, projView mgl32.Mat4, frustum *Frustum, frame ShadowFrame) int {
 	if !terrains.initialized || lvl == nil {
 		return 0
@@ -359,7 +318,7 @@ func RenderTerrain(lvl *world.Level, projView mgl32.Mat4, frustum *Frustum, fram
 			continue
 		}
 		m := terrains.cache[ch.Terrain]
-		if m == nil || m.vao == 0 {
+		if m == nil {
 			continue
 		}
 		if frustum != nil {
@@ -377,9 +336,14 @@ func RenderTerrain(lvl *world.Level, projView mgl32.Mat4, frustum *Frustum, fram
 			// with the grass would be a floor a brush does not match.
 			gl.Uniform1i(p.U("receiveShadows"), 1)
 			gl.Uniform1i(p.U("smoothShading"), boolToInt32(gfx.SmoothLighting))
+			gl.Uniform3f(p.U("camPos"), gfx.Cam.Position.X(), gfx.Cam.Position.Y(), gfx.Cam.Position.Z())
+			gl.Uniform1f(p.U("coverFar"), TerrainCoverFar*FoliageDistanceScale())
 			for l, unit := range terrainLayerUnits {
 				gl.Uniform1i(p.U("layer"+string(rune('0'+l))), unit)
 			}
+			gl.Uniform1i(p.U("groundTex"), GroundTexUnit)
+			gl.ActiveTexture(gl.TEXTURE0 + GroundTexUnit)
+			gl.BindTexture(gl.TEXTURE_2D_ARRAY, ground.tex)
 			started = true
 		}
 		t := ch.Terrain
@@ -398,10 +362,13 @@ func RenderTerrain(lvl *world.Level, projView mgl32.Mat4, frustum *Frustum, fram
 		}
 		gl.Uniform4f(p.U("layerOn"), on[0], on[1], on[2], on[3])
 		gl.Uniform1i(p.U("normalColor"), boolToInt32(!t.HasTexture()))
-		drawn += m.drawPatches(model, frustum)
+		bindGroundUniforms(p, t)
+		drawn += m.drawSections(model, frustum)
 	}
 	if started {
 		gl.BindVertexArray(0)
+		gl.ActiveTexture(gl.TEXTURE0 + GroundTexUnit)
+		gl.BindTexture(gl.TEXTURE_2D_ARRAY, 0)
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.UseProgram(gfx.Program)
 	}
@@ -417,7 +384,7 @@ func shadowChunkTerrain(ch *world.Chunk, cull *Frustum, modelUniform int32, curr
 		return
 	}
 	m := terrains.cache[ch.Terrain]
-	if m == nil || m.vao == 0 {
+	if m == nil {
 		return
 	}
 	model := ch.ModelMatrix()
@@ -425,6 +392,6 @@ func shadowChunkTerrain(ch *world.Chunk, cull *Frustum, modelUniform int32, curr
 		*current = model
 		gl.UniformMatrix4fv(modelUniform, 1, false, &current[0])
 	}
-	m.drawPatches(model, cull)
+	m.drawSections(model, cull)
 	gl.BindVertexArray(0)
 }

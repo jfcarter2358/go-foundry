@@ -1,0 +1,73 @@
+# ice_plains.fbio — a terrain biome: what grows where it is painted, and the ground under it.
+# The format is docs/guide/30-terrain.md's "Biome files"; the editor reloads this on save.
+label: Ice Plains
+doc: 'Flat, wind-scoured snowfields: frozen tufts, ice blocks, frosted stones, lichen
+  on the rock.'
+ground:
+  texture: ground_ice_plains
+  scale: 6
+  tint: [0.88, 0.91, 0.94]
+  cover: 0.35
+species:
+- shape: grass
+  spacing: 1.2
+  where: [ground]
+  slope: [0, 35]
+  scale: [0.4, 0.7]
+  colors: [[0.62, 0.6, 0.48], [0.76, 0.74, 0.62]]
+  upright: 0.6
+  light: [0.3, 1]
+  cluster: 0.8
+  cluster_size: 4
+  edge: 0.6
+  color_noise: 0.2
+- shape: ice
+  variants: [0, 2]
+  spacing: 9
+  where: [ground]
+  slope: [0, 30]
+  scale: [0.4, 1]
+  colors: [[0.7, 0.84, 0.92], [0.86, 0.94, 0.98]]
+  upright: 0.5
+  sink: 0.3
+  cluster: 0.55
+  cluster_size: 14
+  color_noise: 0.15
+- shape: rock
+  spacing: 7
+  where: [ground]
+  slope: [0, 80]
+  scale: [0.3, 1]
+  colors: [[0.56, 0.58, 0.6], [0.72, 0.74, 0.76]]
+  sink: 0.4
+  cluster: 0.5
+  cluster_size: 10
+  edge: 1.4
+- shape: pebbles
+  spacing: 3
+  where: [ground]
+  slope: [0, 50]
+  scale: [0.7, 1.2]
+  colors: [[0.56, 0.58, 0.6], [0.72, 0.74, 0.76]]
+  sink: 0.25
+  cluster: 0.6
+  cluster_size: 5
+  edge: 0.8
+- shape: dead_bush
+  variants: [0]
+  spacing: 14
+  where: [ground]
+  slope: [0, 30]
+  scale: [0.4, 0.7]
+  colors: [[0.4, 0.36, 0.32], [0.54, 0.5, 0.44]]
+  upright: 0.9
+  cluster: 0.6
+  cluster_size: 10
+  edge: 0.6
+- shape: moss
+  spacing: 1.1
+  where: [wall, ceiling]
+  scale: [0.5, 1]
+  colors: [[0.48, 0.5, 0.44], [0.62, 0.62, 0.54]]
+  cluster: 0.6
+  cluster_size: 3

@@ -2,62 +2,95 @@ package world
 
 // terrain_raw.go — a terrain's YAML form.
 //
-// The grid's arrays are written inline, packed: bytes (for heights, a
-// quantised delta coding — see encodeTerrainHeights), zlib, base64, one
-// scalar each. Inline rather than a sidecar file because every
-// path that carries a level around carries a RawLevel — undo snapshots, the
+// The grid's arrays are written inline, packed: bytes, zlib, base64, one
+// scalar each. Inline rather than a sidecar file because every path that
+// carries a level around carries a RawLevel — undo snapshots, the
 // play-session snapshot, the YAML text editor, prefab and chunk files, the
 // compiler, the release packer's reference walk — and none of them would know
 // to bring a second file along. Packed rather than a YAML list because a
-// 128x128 terrain is 16,641 heights: as a list that is a level file nobody
-// can scroll through, and a flat or gently sculpted grid zlibs to a sliver.
+// 128x32x128 terrain is half a million blocks; ground is long runs of the
+// same byte, which zlib turns into a sliver.
 
 import (
 	"bytes"
+	"maps"
 	"compress/zlib"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
-	"math"
+	"sort"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// RawTerrain is the YAML representation of a chunk's heightfield ground: a
-// regular grid of heights in the chunk's own space, with a per-cell hole
-// mask and up to four blended texture layers painted per vertex. See
+// RawTerrain is the YAML representation of a chunk's block terrain: a
+// regular grid of blocks in the chunk's own space, each air or made of one of
+// up to four texture layers, with biomes painted on their faces. See
 // world.Terrain.
 type RawTerrain struct {
 	// Origin is the chunk-local position of the grid's first corner (its
-	// minimum X and Z); heights are measured up from its Y.
+	// minimum X, Y and Z).
 	Origin RawVec3 `yaml:"origin"`
-	// CellSize is the edge of one square cell, in chunk units.
-	CellSize float32 `yaml:"cell_size"`
-	// CellsX is the grid's width in cells, along X.
-	CellsX int `yaml:"cells_x"`
-	// CellsZ is the grid's depth in cells, along Z.
-	CellsZ int `yaml:"cells_z"`
-	// Layers names up to four textures, blended by the painted weights. The
-	// first is what unpainted ground shows. Empty (or all names empty) draws
-	// the terrain in its normal colour, like an untextured face.
+	// BlockSize is the edge of one block, in chunk units.
+	BlockSize float32 `yaml:"block_size"`
+	// SizeX is the grid's width in blocks, along X.
+	SizeX int `yaml:"size_x"`
+	// SizeY is the grid's height in blocks, along Y.
+	SizeY int `yaml:"size_y"`
+	// SizeZ is the grid's depth in blocks, along Z.
+	SizeZ int `yaml:"size_z"`
+	// Smooth draws the terrain as a smooth surface (a dual-contoured surface
+	// net over the blocks) instead of as blocks. Collision, rays and
+	// navigation follow whichever is drawn.
+	Smooth bool `yaml:"smooth,omitempty"`
+	// Smoothing is how widely the smooth surface blends the blocks, in
+	// blocks, 0.5 to 8: the width a floor's height is averaged over. Higher
+	// rolls gentler hills into one slope; lower keeps more of the blocks'
+	// shape. Cliffs, tunnels and ledges survive either way. Omitted means 3.
+	Smoothing float32 `yaml:"smoothing,omitempty"`
+	// Layers names up to four textures; a block's material picks one.
+	// Empty (or all names empty) draws the terrain in its normal colour, like
+	// an untextured face.
 	Layers []string `yaml:"layers,omitempty"`
 	// TextureScale is how many units one repeat of a layer texture spans.
 	// Omitted means 2.
 	TextureScale float32 `yaml:"texture_scale,omitempty"`
-	// Heights packs one height per vertex, (cells_x+1)*(cells_z+1) of them row
-	// by row along X, in 1/1024ths of a unit: each the difference from the
-	// vertex before it in its row (the one above, at a row's start),
-	// zigzag-encoded, split into four byte planes, zlib-compressed and
-	// base64-encoded. Omitted means flat. Written by the editor; not meant to
-	// be typed.
-	Heights string `yaml:"heights,omitempty"`
-	// Holes packs one byte per cell (non-zero = hole), zlib-compressed and
-	// base64-encoded. Omitted means no holes.
-	Holes string `yaml:"holes,omitempty"`
-	// Weights packs four bytes per vertex — one weight per layer, summing to
-	// 255 — zlib-compressed and base64-encoded. Omitted means every vertex is
-	// entirely the first layer.
-	Weights string `yaml:"weights,omitempty"`
+	// Blocks packs one byte per block — 0 air, 1..4 the texture layer it is
+	// made of — row by row along X, then up Y, then along Z, zlib-compressed
+	// and base64-encoded. Omitted means all air. Written by the editor; not
+	// meant to be typed.
+	Blocks string `yaml:"blocks,omitempty"`
+	// Biomes is the palette painted onto faces; a face stores its entry's
+	// position in the list, counting from 1.
+	Biomes []RawTerrainBiome `yaml:"biomes,omitempty"`
+	// Paint packs which faces are painted with which biome: for each painted
+	// face in order, the gap from the previous face's number (block index * 6
+	// + direction) as a varint, then its biome's position; zlib-compressed and
+	// base64-encoded. Written by the editor; not meant to be typed.
+	Paint string `yaml:"paint,omitempty"`
+	// FoliageSeed varies where every plant grows. Omitted means 0.
+	FoliageSeed uint32 `yaml:"foliage_seed,omitempty"`
+}
+
+// RawTerrainBiome is one entry of a terrain's biome palette.
+type RawTerrainBiome struct {
+	// Preset names what grows there: a biome file in biomes/ or a built-in —
+	// meadow, forest, pine, wetland, scrub, cliff, scree, jungle, desert,
+	// beach, tundra, badlands, volcanic, savannah, mesa, glacier, ice_plains
+	// or rocky_cliff.
+	Preset string `yaml:"preset"`
+	// Density scales how thickly everything grows. Omitted means 1.
+	Density float32 `yaml:"density,omitempty"`
+	// Tint multiplies every colour in the biome. Omitted means none.
+	Tint *RawVec3 `yaml:"tint,omitempty"`
+	// GroundLayer, 1..4, draws painted faces with that texture layer instead
+	// of their block's. Omitted means the block's own.
+	GroundLayer int `yaml:"ground_layer,omitempty"`
+	// Amounts scales how much of each kind of thing grows here, by shape —
+	// {grass: 0.5, rock: 2, broadleaf: 0}: 0 none, 1 as the biome has it, up
+	// to 4. Shapes not listed grow as the biome has them.
+	Amounts map[string]float32 `yaml:"amounts,omitempty"`
 }
 
 // TerrainFromRaw decodes a RawTerrain. nil in, nil out.
@@ -65,62 +98,97 @@ func TerrainFromRaw(r *RawTerrain) (*Terrain, error) {
 	if r == nil {
 		return nil, nil
 	}
-	if r.CellsX < 1 || r.CellsZ < 1 || r.CellsX > TerrainMaxCells || r.CellsZ > TerrainMaxCells {
-		return nil, fmt.Errorf("terrain: %dx%d cells; each side must be 1..%d", r.CellsX, r.CellsZ, TerrainMaxCells)
+	for _, s := range [3]int{r.SizeX, r.SizeY, r.SizeZ} {
+		if s < 1 || s > TerrainMaxSize {
+			return nil, fmt.Errorf("terrain: %dx%dx%d blocks; each side must be 1..%d", r.SizeX, r.SizeY, r.SizeZ, TerrainMaxSize)
+		}
 	}
-	if !(r.CellSize > 0) {
-		return nil, fmt.Errorf("terrain: cell_size %v must be positive", r.CellSize)
+	if r.SizeX*r.SizeY*r.SizeZ > TerrainMaxBlocks {
+		return nil, fmt.Errorf("terrain: %dx%dx%d is more than %d blocks", r.SizeX, r.SizeY, r.SizeZ, TerrainMaxBlocks)
+	}
+	if !(r.BlockSize > 0) {
+		return nil, fmt.Errorf("terrain: block_size %v must be positive", r.BlockSize)
 	}
 	if len(r.Layers) > TerrainLayerCount {
 		return nil, fmt.Errorf("terrain: %d layers; at most %d", len(r.Layers), TerrainLayerCount)
 	}
+	if len(r.Biomes) > TerrainMaxBiomes {
+		return nil, fmt.Errorf("terrain: %d biomes; at most %d", len(r.Biomes), TerrainMaxBiomes)
+	}
 	t := &Terrain{
 		Origin:       mgl32.Vec3{r.Origin.X, r.Origin.Y, r.Origin.Z},
-		CellSize:     r.CellSize,
-		CellsX:       r.CellsX,
-		CellsZ:       r.CellsZ,
+		BlockSize:    r.BlockSize,
+		SizeX:        r.SizeX,
+		SizeY:        r.SizeY,
+		SizeZ:        r.SizeZ,
+		Smooth:       r.Smooth,
+		Smoothing:    r.Smoothing,
 		TextureScale: r.TextureScale,
+		FoliageSeed:  r.FoliageSeed,
 	}
 	copy(t.Layers[:], r.Layers)
-	nv := t.VertexCount()
-
-	if r.Heights != "" {
-		b, err := unpackTerrainBytes(r.Heights, nv*4)
-		if err != nil {
-			return nil, fmt.Errorf("terrain heights: %w", err)
+	for _, rb := range r.Biomes {
+		b := TerrainBiome{Preset: rb.Preset, Density: rb.Density, GroundLayer: rb.GroundLayer}
+		for k, v := range rb.Amounts {
+			if s, ok := FoliageShapeByKey(k); ok {
+				b.SetAmount(s, v)
+			}
 		}
-		t.Heights = decodeTerrainHeights(b, t.VertsX())
+		if rb.Tint != nil {
+			b.Tint = mgl32.Vec3{rb.Tint.X, rb.Tint.Y, rb.Tint.Z}
+		}
+		t.Biomes = append(t.Biomes, b)
 	}
-	if r.Holes != "" {
-		b, err := unpackTerrainBytes(r.Holes, t.CellCount())
+	if r.Blocks != "" {
+		b, err := unpackTerrainBytes(r.Blocks, t.BlockCount())
 		if err != nil {
-			return nil, fmt.Errorf("terrain holes: %w", err)
+			return nil, fmt.Errorf("terrain blocks: %w", err)
 		}
-		t.Holes = b
+		t.Blocks = b
 	}
-	if r.Weights != "" {
-		b, err := unpackTerrainBytes(r.Weights, nv*TerrainLayerCount)
+	if r.Paint != "" {
+		b, err := unpackTerrainBytes(r.Paint, -1)
 		if err != nil {
-			return nil, fmt.Errorf("terrain weights: %w", err)
+			return nil, fmt.Errorf("terrain paint: %w", err)
 		}
-		t.Weights = b
+		t.Paint = map[int32]uint8{}
+		rd := bytes.NewReader(b)
+		key := int64(-1)
+		for rd.Len() > 0 {
+			gap, err := binary.ReadUvarint(rd)
+			if err != nil {
+				return nil, fmt.Errorf("terrain paint: %w", err)
+			}
+			slot, err := rd.ReadByte()
+			if err != nil {
+				return nil, fmt.Errorf("terrain paint: %w", err)
+			}
+			key += int64(gap) + 1
+			if key > int64(t.BlockCount())*6 {
+				return nil, fmt.Errorf("terrain paint: face %d is past the grid", key)
+			}
+			t.Paint[int32(key)] = slot
+		}
 	}
 	t.Normalize()
 	return t, nil
 }
 
-// TerrainToRaw encodes a terrain. nil in, nil out. Arrays that say nothing —
-// all-flat heights, no holes, all layer 0 — are omitted.
+// TerrainToRaw encodes a terrain. nil in, nil out.
 func TerrainToRaw(t *Terrain) *RawTerrain {
 	if t == nil {
 		return nil
 	}
 	r := &RawTerrain{
 		Origin:       RawVec3{X: t.Origin.X(), Y: t.Origin.Y(), Z: t.Origin.Z()},
-		CellSize:     t.CellSize,
-		CellsX:       t.CellsX,
-		CellsZ:       t.CellsZ,
+		BlockSize:    t.BlockSize,
+		SizeX:        t.SizeX,
+		SizeY:        t.SizeY,
+		SizeZ:        t.SizeZ,
+		Smooth:       t.Smooth,
+		Smoothing:    t.Smoothing,
 		TextureScale: t.TextureScale,
+		FoliageSeed:  t.FoliageSeed,
 	}
 	last := -1
 	for i, l := range t.Layers {
@@ -131,89 +199,40 @@ func TerrainToRaw(t *Terrain) *RawTerrain {
 	if last >= 0 {
 		r.Layers = append([]string(nil), t.Layers[:last+1]...)
 	}
-	flat := true
-	for _, h := range t.Heights {
-		if h != 0 {
-			flat = false
+	for _, b := range t.Biomes {
+		rb := RawTerrainBiome{Preset: b.Preset, Density: b.Density, GroundLayer: b.GroundLayer, Amounts: maps.Clone(b.Amounts)}
+		if b.Tint != (mgl32.Vec3{}) {
+			rb.Tint = &RawVec3{X: b.Tint[0], Y: b.Tint[1], Z: b.Tint[2]}
+		}
+		r.Biomes = append(r.Biomes, rb)
+	}
+	for _, v := range t.Blocks {
+		if v != 0 {
+			r.Blocks = packTerrainBytes(t.Blocks)
 			break
 		}
 	}
-	if !flat {
-		r.Heights = packTerrainBytes(encodeTerrainHeights(t.Heights, t.VertsX()))
-	}
-	if t.HasHoles() {
-		r.Holes = packTerrainBytes(t.Holes)
-	}
-	if t.Weights != nil && !allLayerZero(t.Weights) {
-		r.Weights = packTerrainBytes(t.Weights)
+	if len(t.Paint) > 0 {
+		keys := make([]int32, 0, len(t.Paint))
+		for k := range t.Paint {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+		var buf []byte
+		prev := int64(-1)
+		for _, k := range keys {
+			buf = binary.AppendUvarint(buf, uint64(int64(k)-prev-1))
+			buf = append(buf, t.Paint[k])
+			prev = int64(k)
+		}
+		r.Paint = packTerrainBytes(buf)
 	}
 	return r
 }
 
-// terrainHeightStep is the resolution heights are saved at, in units: a
-// millimetre, a thousand times finer than anything a body or an eye can tell,
-// and what turns a sculpted grid's noisy float mantissas into small integers
-// that compress.
-const terrainHeightStep = 1.0 / 1024
-
-// encodeTerrainHeights is the Heights byte layout: quantised, delta-coded
-// along rows, zigzagged, split into byte planes. Neighbouring heights on
-// ground are close, so the deltas are small and the high planes nearly all
-// zero, which is what zlib is good at; raw floats compressed about a third
-// as well.
-func encodeTerrainHeights(h []float32, rowLen int) []byte {
-	n := len(h)
-	out := make([]byte, n*4)
-	q := func(i int) int64 { return int64(math.Round(float64(h[i]) / terrainHeightStep)) }
-	for i := 0; i < n; i++ {
-		var prev int64
-		if i%rowLen != 0 {
-			prev = q(i - 1)
-		} else if i >= rowLen {
-			prev = q(i - rowLen)
-		}
-		d := int32(q(i) - prev)
-		u := uint32(d<<1) ^ uint32(d>>31)
-		out[i] = byte(u)
-		out[n+i] = byte(u >> 8)
-		out[2*n+i] = byte(u >> 16)
-		out[3*n+i] = byte(u >> 24)
-	}
-	return out
-}
-
-func decodeTerrainHeights(b []byte, rowLen int) []float32 {
-	n := len(b) / 4
-	q := make([]int32, n)
-	h := make([]float32, n)
-	for i := 0; i < n; i++ {
-		u := uint32(b[i]) | uint32(b[n+i])<<8 | uint32(b[2*n+i])<<16 | uint32(b[3*n+i])<<24
-		d := int32(u>>1) ^ -int32(u&1)
-		var prev int32
-		if i%rowLen != 0 {
-			prev = q[i-1]
-		} else if i >= rowLen {
-			prev = q[i-rowLen]
-		}
-		q[i] = prev + d
-		h[i] = float32(q[i]) * terrainHeightStep
-	}
-	return h
-}
-
-func allLayerZero(w []uint8) bool {
-	for i := 0; i+3 < len(w); i += TerrainLayerCount {
-		if w[i] != 255 {
-			return false
-		}
-	}
-	return true
-}
-
-// packTerrainBytes is zlib at its default level, not its best: on a sculpted
-// 512x512 grid the best level saves under 1% for ten times the time, and this
-// runs for every undo snapshot and every dirty check of the level, not only
-// on save.
+// packTerrainBytes is zlib at its default level, not its best: this runs for
+// every undo snapshot and every dirty check of the level, not only on save,
+// and the best level buys almost nothing on runs of identical bytes.
 func packTerrainBytes(b []byte) string {
 	var buf bytes.Buffer
 	zw, _ := zlib.NewWriterLevel(&buf, zlib.DefaultCompression)
@@ -222,6 +241,7 @@ func packTerrainBytes(b []byte) string {
 	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
+// unpackTerrainBytes reverses packTerrainBytes. want < 0 accepts any length.
 func unpackTerrainBytes(s string, want int) ([]byte, error) {
 	z, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
@@ -232,13 +252,17 @@ func unpackTerrainBytes(s string, want int) ([]byte, error) {
 		return nil, err
 	}
 	defer zr.Close()
-	// Read one byte past what the grid needs, so a mis-sized array is an
-	// error rather than silently truncated.
-	b, err := io.ReadAll(io.LimitReader(zr, int64(want)+1))
+	limit := int64(TerrainMaxBlocks) * 8
+	if want >= 0 {
+		// One byte past what the grid needs, so a mis-sized array is an
+		// error rather than silently truncated.
+		limit = int64(want) + 1
+	}
+	b, err := io.ReadAll(io.LimitReader(zr, limit))
 	if err != nil {
 		return nil, err
 	}
-	if len(b) != want {
+	if want >= 0 && len(b) != want {
 		return nil, fmt.Errorf("%d bytes, the grid needs %d", len(b), want)
 	}
 	return b, nil

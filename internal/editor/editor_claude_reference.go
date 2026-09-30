@@ -105,7 +105,7 @@ func claudeReferenceTools() []claude.Tool {
 					"kind": map[string]any{
 						"type": "string",
 						"enum": []any{"textures", "materials", "models", "scripts", "entities",
-							"particles", "ai", "sounds", "levels", "all"},
+							"particles", "ai", "biomes", "sounds", "levels", "all"},
 						"description": "Which kind to list. Defaults to all of them.",
 					},
 					"filter": map[string]any{
@@ -275,6 +275,7 @@ func claudeAssetKinds() []struct {
 		{"entities", func() string { return fileutil.ResolveAssetPath(world.EntitiesDirName) }, ".yaml"},
 		{"particles", func() string { return fileutil.ResolveAssetPath(particle.ParticlesDirName) }, ".fpar"},
 		{"ai", aitree.AIDir, aitree.AIExt},
+		{"biomes", world.BiomesDir, world.BiomeExt},
 		{"sounds", func() string { return fileutil.ResolveAssetPath(audio.SoundsDirName) }, ".wav"},
 		{"levels", levelio.LevelsDir, ".yaml"},
 	}

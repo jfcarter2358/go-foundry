@@ -1242,6 +1242,10 @@ func editorEndViewportDrag(button sdl.Button) bool {
 			editorTerrainEndStroke()
 			return true
 		}
+		if editorTerrainVolumeDragging() {
+			editorTerrainVolumeEndDrag()
+			return true
+		}
 		return false
 	case sdl.ButtonRight:
 		// Cleared, but never reported as consumed: the caller has to go on to

@@ -14,9 +14,12 @@ package app
 // with no editor over it at all.
 
 import (
+	"log"
 	"path/filepath"
 
+	"foundry/internal/editoricon"
 	"foundry/internal/levelio"
+	"foundry/internal/platform"
 	"foundry/internal/world"
 )
 
@@ -30,8 +33,13 @@ func startupConfigure() {}
 func startupVerify() {}
 
 // startupApplyWindow runs immediately after the window is created and before
-// its real size is read back.
-func startupApplyWindow() {}
+// its real size is read back. It gives the window the editor's icon — here and
+// not in Run, so a release build never carries it (see internal/editoricon).
+func startupApplyWindow() {
+	if err := editoricon.Apply(platform.Window); err != nil {
+		log.Printf("WARNING: %v", err)
+	}
+}
 
 // startupLevel is the level the engine boots with, and the path and directory
 // the editor will save it to.

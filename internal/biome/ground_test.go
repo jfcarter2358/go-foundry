@@ -314,26 +314,36 @@ func vecNear(a, b mgl32.Vec3, eps float32) bool {
 }
 
 func TestTerrainIsGroundForScatter(t *testing.T) {
-	tr := world.NewTerrain(mgl32.Vec3{-5, 0, -5}, 1, 10, 10)
-	for i := range tr.Heights {
-		tr.Heights[i] = float32(i%11) * 0.1
-	}
-	tr.SetHole(7, 7, true)
-	ch := world.Chunk{ID: "g", Origin: mgl32.Vec3{0, 2, 0}, Rotation: 0.3, Scale: 2, Terrain: tr}
-	ch.RecomputeBounds()
-	lvl := &world.Level{Chunks: []world.Chunk{ch}}
-	c := &lvl.Chunks[0]
-	for _, p := range [][2]float32{{1, 1}, {-3, 4}, {5, -2}} {
-		s := SurfaceUnder(lvl, "", p[0], 50, p[1], 100)
-		inv := c.LocalPlacementMatrix().Inv()
-		l := inv.Mul4x1(mgl32.Vec4{p[0], 0, p[1], 1})
-		h, _, ok := tr.HeightAt(l.X(), l.Z())
-		if !ok {
-			t.Fatalf("test point %v is off the terrain", p)
+	for _, smooth := range []bool{false, true} {
+		tr := world.NewTerrain(mgl32.Vec3{-8, -4, -8}, 1, 16, 12, 16)
+		tr.Generate(world.TerrainFill{Height: 5, Hills: 2, HillSize: 6, Top: 1, Under: 1, Deep: 1})
+		// A cave under part of it: the column must find the ground on top,
+		// and where the roof is mined away, the cave floor.
+		for x := 2; x < 12; x++ {
+			for z := 2; z < 12; z++ {
+				for y := 1; y < 3; y++ {
+					tr.SetBlock(x, y, z, 0)
+				}
+			}
 		}
-		want := c.LocalPlacementMatrix().Mul4x1(mgl32.Vec4{l.X(), h, l.Z(), 1}).Y()
-		if !s.Found || s.Height < want-1e-3 || s.Height > want+1e-3 {
-			t.Fatalf("at %v: surface %+v, terrain at %v", p, s, want)
+		tr.Smooth = smooth
+		tr.Touch()
+		ch := world.Chunk{ID: "g", Origin: mgl32.Vec3{0, 2, 0}, Rotation: 0.3, Scale: 2, Terrain: tr}
+		ch.RecomputeBounds()
+		lvl := &world.Level{Chunks: []world.Chunk{ch}}
+		c := &lvl.Chunks[0]
+		for _, p := range [][2]float32{{1, 1}, {-3, 4}, {5, -2}} {
+			s := SurfaceUnder(lvl, "", p[0], 50, p[1], 100)
+			inv := c.LocalPlacementMatrix().Inv()
+			l := inv.Mul4x1(mgl32.Vec4{p[0], 50, p[1], 1}).Vec3()
+			h, _, ok := tr.GroundBelow(l, 1000)
+			if !ok {
+				t.Fatalf("test point %v is off the terrain", p)
+			}
+			want := c.LocalPlacementMatrix().Mul4x1(mgl32.Vec4{l.X(), h, l.Z(), 1}).Y()
+			if !s.Found || s.Height < want-1e-3 || s.Height > want+1e-3 {
+				t.Fatalf("smooth=%v at %v: surface %+v, terrain at %v", smooth, p, s, want)
+			}
 		}
 	}
 }

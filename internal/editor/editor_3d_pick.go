@@ -77,7 +77,7 @@ const (
 	pickLight     pickKind = "light"
 	pickScenery   pickKind = "scenery"
 	pickWaypoint  pickKind = "waypoint"
-	// pickTerrain is a chunk's heightfield ground: chunkIdx names the chunk.
+	// pickTerrain is a chunk's block terrain: chunkIdx names the chunk.
 	pickTerrain pickKind = "terrain"
 )
 
@@ -304,15 +304,14 @@ func pick3DCandidates(sx, sy int32) []pickHit {
 		// matrix there, so picking has to go through it too.
 		model := ch.ModelMatrix()
 
-		// The chunk's ground, through the same cell walk collision's rays
-		// take. Added as a plain hit, not a face: nothing that acts on a
+		// The chunk's ground, through the same walk collision's rays take. Added as a plain hit, not a face: nothing that acts on a
 		// brush face has a face to act on here.
 		if ch.Terrain != nil {
 			inv := model.Inv()
 			lo := inv.Mul4x1(origin.Vec4(1)).Vec3()
 			ld := inv.Mul4x1(dir.Vec4(0)).Vec3()
-			if t, _, hit := ch.Terrain.Raycast(lo, ld, math.MaxFloat32); hit {
-				scene.add(t, pickTerrain, ci, -1)
+			if h, hit := ch.Terrain.Raycast(lo, ld, math.MaxFloat32); hit {
+				scene.add(h.T, pickTerrain, ci, -1)
 			}
 		}
 

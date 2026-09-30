@@ -184,69 +184,67 @@ func gatherSolids(lvl *world.Level) []solid {
 	return out
 }
 
-// terrainPatch is how many terrain cells along each side go into one solid.
-const terrainPatch = 8
-
-// appendTerrainSolids adds a chunk's terrain as solids, one per patch of
-// terrainPatch x terrainPatch cells. rasterise reads a solid as the span from
-// the lowest to the highest point of its faces over each column, so a patch
-// needs no side walls to be solid: its surface triangles give each column's
-// top (and whether it is walkable, from their slope), and a copy of each
-// cell sunk below the patch gives it a bottom. A hole cell contributes
-// neither, and its columns stay open — which is the point of a hole.
-// Patches rather than whole terrains keep the tile cache granular: sculpting
-// one hill re-rasterises the tiles under it, not the whole map.
+// appendTerrainSolids adds a chunk's terrain as solids, one per vertical run
+// of solid blocks in a column. rasterise reads a solid as the span from the
+// lowest to the highest point of its faces over each nav column, so a run
+// needs nothing but its own faces: every run has a face on top (air above it)
+// and one underneath (air, or the grid's bottom, below it), and its sides.
+// One solid per run rather than per patch of ground is what keeps a cave
+// open: a patch holding a cave's floor and its roof would span both and fill
+// the cave in.
+//
+// A run's faces are whichever surface the terrain draws — the blocks, or the
+// smooth surface's quads that cross the same block faces — so agents walk the
+// ramps a player sees, not the steps under them.
 func appendTerrainSolids(out []solid, t *world.Terrain, m mgl32.Mat4) []solid {
 	toWorld := func(p mgl32.Vec3) mgl32.Vec3 {
 		r := m.Mul4x1(p.Vec4(1))
 		return mgl32.Vec3{r.X(), r.Y(), r.Z()}
 	}
-	for pz := 0; pz < t.CellsZ; pz += terrainPatch {
-		for px := 0; px < t.CellsX; px += terrainPatch {
-			x1, z1 := min(px+terrainPatch, t.CellsX), min(pz+terrainPatch, t.CellsZ)
-			// The patch's lowest vertex, less a margin, is its underside.
-			bottom := float32(math.Inf(1))
-			for z := pz; z <= z1; z++ {
-				for x := px; x <= x1; x++ {
-					bottom = min32(bottom, t.Height(x, z))
-				}
+	// runOf names the run a block belongs to by the block at its foot.
+	runOf := func(x, y, z int) int32 {
+		for y > 0 && t.Solid(x, y-1, z) {
+			y--
+		}
+		return int32(t.Index(x, y, z))
+	}
+	type runSolid struct {
+		s     solid
+		first bool
+	}
+	runs := map[int32]*runSolid{}
+	var order []int32
+	for _, sec := range t.Sections() {
+		for fi := range sec.Faces {
+			f := &sec.Faces[fi]
+			x, y, z, _ := t.FaceBlock(f.Key)
+			id := runOf(x, y, z)
+			r := runs[id]
+			if r == nil {
+				r = &runSolid{first: true}
+				runs[id] = r
+				order = append(order, id)
 			}
-			bottom += t.Origin.Y() - 1
-			s := solid{}
-			first := true
-			add := func(pts []mgl32.Vec3) {
+			for k := 0; k < 2; k++ {
+				tri := f.Triangle(k)
+				pts := []mgl32.Vec3{toWorld(tri[0]), toWorld(tri[1]), toWorld(tri[2])}
 				for _, p := range pts {
-					if first {
-						s.min, s.max, first = p, p, false
+					if r.first {
+						r.s.min, r.s.max, r.first = p, p, false
 					} else {
-						s.min = mgl32.Vec3{min32(s.min.X(), p.X()), min32(s.min.Y(), p.Y()), min32(s.min.Z(), p.Z())}
-						s.max = mgl32.Vec3{max32(s.max.X(), p.X()), max32(s.max.Y(), p.Y()), max32(s.max.Z(), p.Z())}
+						r.s.min = mgl32.Vec3{min32(r.s.min.X(), p.X()), min32(r.s.min.Y(), p.Y()), min32(r.s.min.Z(), p.Z())}
+						r.s.max = mgl32.Vec3{max32(r.s.max.X(), p.X()), max32(r.s.max.Y(), p.Y()), max32(r.s.max.Z(), p.Z())}
 					}
 				}
-				s.faces = append(s.faces, pts)
-				s.normals = append(s.normals, newellNormal(pts))
-			}
-			for z := pz; z < z1; z++ {
-				for x := px; x < x1; x++ {
-					if t.IsHole(x, z) {
-						continue
-					}
-					for _, tri := range t.CellTriangles(x, z) {
-						add([]mgl32.Vec3{toWorld(tri[0]), toWorld(tri[1]), toWorld(tri[2])})
-					}
-					// The underside, wound to face down.
-					c := func(ix, iz int) mgl32.Vec3 {
-						v := t.Vertex(ix, iz)
-						return toWorld(mgl32.Vec3{v.X(), bottom, v.Z()})
-					}
-					add([]mgl32.Vec3{c(x, z), c(x+1, z), c(x+1, z+1), c(x, z+1)})
-				}
-			}
-			if len(s.faces) > 0 {
-				s.hash = hashSolid(&s)
-				out = append(out, s)
+				r.s.faces = append(r.s.faces, pts)
+				r.s.normals = append(r.s.normals, newellNormal(pts))
 			}
 		}
+	}
+	for _, id := range order {
+		r := runs[id]
+		r.s.hash = hashSolid(&r.s)
+		out = append(out, r.s)
 	}
 	return out
 }

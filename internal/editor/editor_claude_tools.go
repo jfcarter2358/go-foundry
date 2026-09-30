@@ -124,6 +124,7 @@ func onMainThread[T any](fn func() T) (T, error) {
 // running editor, and the reference lookups in editor_claude_reference.go.
 func claudeTools() []claude.Tool {
 	tools := append(claudeEditorTools(), claudePlayTools()...)
+	tools = append(tools, claudeBiomeTools()...)
 	return append(tools, claudeReferenceTools()...)
 }
 

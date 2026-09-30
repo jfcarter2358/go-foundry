@@ -712,10 +712,10 @@ func (q *geometryQuery) run() {
 	}
 }
 
-// terrain casts the query against ch's heightfield and reports whether an
-// any-hit query can stop. The grid walks its own cells along the ray
+// terrain casts the query against ch's block terrain and reports whether an
+// any-hit query can stop. The terrain walks its own bins along the ray
 // (Terrain.Raycast), so it needs no tree: the chunk's box rejects it, and
-// past that a cast costs the cells it crosses. It is tested whether or not
+// past that a cast costs the bins it crosses. It is tested whether or not
 // the chunk was compiled — the compiler leaves terrain out of the bake.
 func (q *geometryQuery) terrain(ch *world.Chunk) bool {
 	if len(q.ignore) > 0 && q.ignore[ch.ID] {
@@ -729,8 +729,8 @@ func (q *geometryQuery) terrain(ch *world.Chunk) bool {
 	inv := ch.ModelMatrix().Inv()
 	lo4 := inv.Mul4x1(q.origin.Vec4(1))
 	ld4 := inv.Mul4x1(q.dir.Vec4(0))
-	t, _, ok := ch.Terrain.Raycast(mgl32.Vec3{lo4.X(), lo4.Y(), lo4.Z()}, mgl32.Vec3{ld4.X(), ld4.Y(), ld4.Z()}, q.tMax)
-	return ok && q.record(RayHitTerrain, ch.ID, ch.ID, t)
+	hit, ok := ch.Terrain.Raycast(mgl32.Vec3{lo4.X(), lo4.Y(), lo4.Z()}, mgl32.Vec3{ld4.X(), ld4.Y(), ld4.Z()}, q.tMax)
+	return ok && q.record(RayHitTerrain, ch.ID, ch.ID, hit.T)
 }
 
 // nearest returns the hits tied for nearest, the only geometry a cast keeps.

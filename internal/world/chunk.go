@@ -123,7 +123,7 @@ type Chunk struct {
 	// drawn live like a vehicle's interior. Authored; see compile.Bakes.
 	Moves bool
 
-	// Terrain is the chunk's heightfield ground, or nil. It is chunk-local
+	// Terrain is the chunk's block terrain, or nil. It is chunk-local
 	// like the brushes, drawn, collided with and baked into navigation beside
 	// them, and never goes through CSG: see terrain.go.
 	Terrain *Terrain

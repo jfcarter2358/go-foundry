@@ -70,6 +70,8 @@ func devWireframe() bool {
 //   - `check` loads a level with no window and lints its scripts against it.
 //   - `ai check` compiles the project's decision trees (.fai) and says what is
 //     wrong with them; `ai list` says what each one answers.
+//   - `biomes list/check/export/schema` works on the terrain biome files
+//     (resources/biomes/*.fbio).
 //   - `sim` loads a level with no window and runs the frame on it, which is the
 //     same frame this binary runs (internal/sim) — see internal/harness.
 //   - `play` plays a level from a script instead of a keyboard, and can draw
@@ -98,6 +100,8 @@ func devRunCommand(args []string) (exitCode int, ran bool) {
 		return harness.CheckMain(commandProject(), args[1:], os.Stdout), true
 	case harness.AICommand:
 		return harness.AIMain(commandProject(), args[1:], os.Stdout), true
+	case harness.BiomesCommand:
+		return harness.BiomesMain(commandProject(), args[1:], os.Stdout), true
 	case harness.SimCommand:
 		return harness.SimMain(commandProject(), args[1:], os.Stdout), true
 	case harness.PlayCommand:
@@ -227,6 +231,7 @@ func devDrainWork() {
 	// state and GL objects, with the main context current, between frames.
 	editor.ClaudeRunQueuedTools()
 	editor.ClaudeDrainFileChanges()
+	editor.PollBiomeFiles()
 	uiwin.DrainWindowOpens()
 }
 

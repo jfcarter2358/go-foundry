@@ -58,7 +58,7 @@ const (
 	// see world/scenery.go — so a caller has nothing to report for it beyond
 	// the fact that the ray ended there.
 	RayHitScenery
-	// RayHitTerrain is a chunk's heightfield ground. Chunk and ID both name
+	// RayHitTerrain is a chunk's block terrain. Chunk and ID both name
 	// the chunk, which is how a script addresses it.
 	RayHitTerrain
 )

@@ -327,13 +327,12 @@ func TestALeakingLevelStillCompilesAndReportsIt(t *testing.T) {
 // gob — and a release build draws, collides and navigates it from there.
 func TestTerrainSurvivesACompiledRoundTrip(t *testing.T) {
 	lvl := sealedLevel()
-	tr := world.NewTerrain(mgl32.Vec3{-3, 0.1, -3}, 0.5, 12, 12)
-	for i := range tr.Heights {
-		tr.Heights[i] = float32(i%7) * 0.05
-	}
-	tr.SetHole(3, 4, true)
+	tr := world.NewTerrain(mgl32.Vec3{-3, 0.1, -3}, 0.5, 12, 6, 12)
+	tr.Biomes = []world.TerrainBiome{{Preset: "forest"}}
+	tr.Generate(world.TerrainFill{Height: 3, Hills: 1, HillSize: 4, Top: 1, Under: 2, Deep: 2, Biome: 1})
+	tr.SetBlock(3, 1, 4, 0)
 	tr.Layers = [world.TerrainLayerCount]string{"grass", "dirt"}
-	tr.PaintWeight(5, 5, 1, 0.6)
+	tr.Smooth = true
 	lvl.Chunks[0].Terrain = tr
 	lvl.Chunks[0].RecomputeBounds()
 
@@ -358,8 +357,13 @@ func TestTerrainSurvivesACompiledRoundTrip(t *testing.T) {
 	if got == nil {
 		t.Fatal("the compiled chunk came back without its terrain")
 	}
-	if !reflect.DeepEqual(got.Heights, tr.Heights) || !got.IsHole(3, 4) || got.IsHole(4, 4) ||
-		got.Layers != tr.Layers || got.Weight(5, 5, 1) != tr.Weight(5, 5, 1) || got.Origin != tr.Origin {
+	if !reflect.DeepEqual(got.Blocks, tr.Blocks) || !reflect.DeepEqual(got.Paint, tr.Paint) ||
+		got.Layers != tr.Layers || !got.Smooth || got.Origin != tr.Origin || len(got.Biomes) != 1 {
 		t.Fatal("the terrain changed in the round trip")
+	}
+	// And it builds its surface from there: nothing it needed was left in
+	// the unexported cache gob skips.
+	if len(got.Sections()) == 0 || got.Sections()[0].Empty() {
+		t.Fatal("the compiled terrain builds no surface")
 	}
 }

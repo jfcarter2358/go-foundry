@@ -38,6 +38,7 @@ import (
 	"foundry/internal/model"
 	"foundry/internal/script"
 	"foundry/internal/texture"
+	"foundry/internal/world"
 	"foundry/internal/textureui"
 	"foundry/internal/uiwin"
 
@@ -246,6 +247,17 @@ func claudeApplyFileChange(path string) {
 				claudeNoteConflict(abs)
 				return
 			}
+		}
+		claudeReload.reloaded++
+
+	case ext == world.BiomeExt:
+		// A biome: re-read, and every terrain painted with it regrows. A file
+		// that does not parse keeps the biome as it was — biome_save is the
+		// tool that says why before anything is written.
+		if _, err := reloadBiome(claudeAssetName(abs)); err != nil {
+			log.Printf("WARNING: biome: %v", err)
+			claudeNoteConflict(abs)
+			return
 		}
 		claudeReload.reloaded++
 

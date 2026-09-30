@@ -155,6 +155,14 @@ func Run() {
 	// also loads the textures only they reach — see gfx.LoadMaterials.
 	log.Printf("loaded %d materials", gfx.LoadMaterials())
 
+	// Biomes, before any level opens: a terrain's palette names them, and
+	// its first mesh build reads their ground texture and tint.
+	nb, berrs := world.LoadBiomes(world.BiomesDir())
+	for _, err := range berrs {
+		log.Printf("WARNING: biome: %v", err)
+	}
+	log.Printf("loaded %d biome files", nb)
+
 	// Catch any unexpected panic and write it to the log before exiting.
 	defer func() {
 		if r := recover(); r != nil {

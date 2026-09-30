@@ -1,0 +1,67 @@
+# cliff.fbio — a terrain biome: what grows where it is painted, and the ground under it.
+# The format is docs/guide/30-terrain.md's "Biome files"; the editor reloads this on save.
+label: Mossy Cliff
+ground:
+  texture: ground_cliff
+  walls: true
+  tint: [0.3, 0.38, 0.17]
+  cover: 0.5
+species:
+- shape: moss
+  spacing: 0.5
+  where: [ground, wall, ceiling]
+  slope: [0, 90]
+  scale: [0.7, 1.4]
+  colors: [[0.22, 0.34, 0.1], [0.36, 0.46, 0.14]]
+  cluster: 0.5
+  cluster_size: 2.5
+  moisture: 0.3
+  color_noise: 0.25
+- shape: fern
+  spacing: 1.6
+  where: [ground, wall]
+  slope: [0, 90]
+  scale: [0.45, 0.85]
+  colors: [[0.2, 0.38, 0.1], [0.32, 0.46, 0.14]]
+  upright: 0.35
+  light: [0, 0.8]
+  cluster: 0.65
+  cluster_size: 3
+  edge: 0.5
+  moisture: 0.4
+- shape: vine
+  spacing: 0.9
+  where: [wall]
+  scale: [0.8, 1.8]
+  colors: [[0.16, 0.3, 0.1], [0.28, 0.42, 0.14]]
+  cluster: 0.35
+  cluster_size: 3
+  top_edge: true
+- shape: vine
+  spacing: 0.8
+  where: [ceiling]
+  scale: [0.6, 1.5]
+  colors: [[0.16, 0.3, 0.1], [0.28, 0.42, 0.14]]
+  cluster: 0.35
+  cluster_size: 3
+- shape: grass
+  spacing: 0.45
+  where: [ground]
+  slope: [0, 60]
+  scale: [0.6, 1]
+  colors: [[0.28, 0.44, 0.13], [0.4, 0.52, 0.17]]
+  upright: 0.5
+  light: [0.3, 1]
+  cluster: 0.5
+  cluster_size: 3
+  color_noise: 0.3
+- shape: rock
+  spacing: 4
+  where: [ground]
+  slope: [0, 80]
+  scale: [0.25, 0.8]
+  colors: [[0.38, 0.4, 0.33], [0.52, 0.53, 0.46]]
+  sink: 0.4
+  cluster: 0.5
+  cluster_size: 6
+  edge: 1.5

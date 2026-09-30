@@ -36,9 +36,15 @@ func newTerrainProbe(t *testing.T, tr *world.Terrain) *terrainProbe {
 		t.Fatalf("shadow programs: %v", err)
 	}
 	TerrainInit()
+	FoliageInit()
+	if !terrains.initialized || !foliage.initialized {
+		t.Fatal("the terrain or foliage pass did not come up")
+	}
 	t.Cleanup(func() {
 		ReleaseTerrainMeshes()
+		ReleaseFoliage()
 		terrains.initialized = false
+		foliage.initialized = false
 	})
 
 	var ls world.LightSet
@@ -68,6 +74,10 @@ func (p *terrainProbe) frame() []uint8 {
 	if e := gl.GetError(); e != gl.NO_ERROR {
 		p.t.Fatalf("GL error 0x%x drawing terrain", e)
 	}
+	RenderFoliage(p.lvl, pv, &f, ShadowFrame{})
+	if e := gl.GetError(); e != gl.NO_ERROR {
+		p.t.Fatalf("GL error 0x%x drawing foliage", e)
+	}
 	px := make([]uint8, skyTestSize*skyTestSize*4)
 	gl.ReadPixels(0, 0, skyTestSize, skyTestSize, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
 	return px
@@ -78,8 +88,11 @@ func centre(px []uint8) [4]uint8 {
 	return [4]uint8{px[i], px[i+1], px[i+2], px[i+3]}
 }
 
+// flatTerrain is 8x2x8 blocks whose top is at Y 0, one block deep.
 func flatTerrain() *world.Terrain {
-	return world.NewTerrain(mgl32.Vec3{-4, 0, -4}, 1, 8, 8)
+	t := world.NewTerrain(mgl32.Vec3{-4, -1, -4}, 1, 8, 2, 8)
+	t.Generate(world.TerrainFill{Height: 1, Top: 1, Under: 1, Deep: 1})
+	return t
 }
 
 func TestUntexturedTerrainIsPaintedWithItsNormal(t *testing.T) {
@@ -90,26 +103,26 @@ func TestUntexturedTerrainIsPaintedWithItsNormal(t *testing.T) {
 	nearlyByte(t, "blue", c[2], 0.5)
 }
 
-// A layer painted to full weight shows that layer's texture: the same pixel
-// a terrain made only of that texture shows, and not the base layer's.
-func TestAPaintedTerrainLayerShowsItsTexture(t *testing.T) {
+// A block made of a material shows that material's texture: the same pixel
+// a terrain made only of that texture shows, and not the first material's.
+func TestABlocksMaterialShowsItsTexture(t *testing.T) {
 	grassOnly := flatTerrain()
 	grassOnly.Layers[0] = "grass"
 	p := newTerrainProbe(t, grassOnly)
 	want := p.frame()
 
-	painted := flatTerrain()
-	painted.Layers = [world.TerrainLayerCount]string{"concrete", "", "grass"}
-	for z := 0; z <= painted.CellsZ; z++ {
-		for x := 0; x <= painted.CellsX; x++ {
-			painted.PaintWeight(x, z, 2, 1)
+	retextured := flatTerrain()
+	retextured.Layers = [world.TerrainLayerCount]string{"concrete", "", "grass"}
+	for i, b := range retextured.Blocks {
+		if b != 0 {
+			retextured.Blocks[i] = 3
 		}
 	}
-	painted.Touch()
-	p.lvl.Chunks[0].Terrain = painted
+	retextured.Touch()
+	p.lvl.Chunks[0].Terrain = retextured
 	got := p.frame()
 	if c, w := centre(got), centre(want); c != w {
-		t.Fatalf("layer 2 painted to full shows %v, the grass terrain shows %v", c, w)
+		t.Fatalf("blocks of material 3 show %v, the grass terrain shows %v", c, w)
 	}
 
 	concrete := flatTerrain()
@@ -120,42 +133,136 @@ func TestAPaintedTerrainLayerShowsItsTexture(t *testing.T) {
 	}
 }
 
-func TestATerrainHoleDrawsNothing(t *testing.T) {
+func TestAMinedShaftDrawsNothing(t *testing.T) {
 	tr := flatTerrain()
-	tr.SetHole(4, 3, true)
-	tr.SetHole(3, 3, true)
-	tr.SetHole(4, 4, true)
-	tr.SetHole(3, 4, true)
+	for _, xz := range [][2]int{{3, 3}, {4, 3}, {3, 4}, {4, 4}} {
+		tr.SetBlock(xz[0], 0, xz[1], 0)
+	}
 	p := newTerrainProbe(t, tr)
+	// Looking down at 45 degrees into a 2x2 shaft, the centre pixel sees its
+	// far wall rather than through it; look straight down instead.
+	gfx.Cam.Position = mgl32.Vec3{0, 3, 0.001}
+	gfx.Cam.Direction = mgl32.Vec3{0, -1, -0.0001}.Normalize()
+	gfx.UpdateCamMatrix()
 	if c := centre(p.frame()); c != [4]uint8{255, 0, 255, 255} {
-		t.Fatalf("the hole under the centre drew %v", c)
+		t.Fatalf("the shaft under the centre drew %v", c)
 	}
 }
 
-// A sculpt re-uploads only the rows and patches it touched. What that draws
-// has to be exactly what uploading the whole edited grid again draws.
-func TestASculptedTerrainRegionDrawsLikeAFullRebuild(t *testing.T) {
-	tr := world.NewTerrain(mgl32.Vec3{-40, 0, -40}, 1, 80, 80)
-	tr.Layers[0] = "grass"
-	p := newTerrainProbe(t, tr)
-	p.frame()
+// An edit re-uploads only the sections it touched. What that draws has to be
+// exactly what uploading the whole edited terrain again draws — in both views.
+func TestAnEditedTerrainDrawsLikeAFullRebuild(t *testing.T) {
+	for _, smooth := range []bool{false, true} {
+		tr := world.NewTerrain(mgl32.Vec3{-40, -4, -40}, 1, 80, 8, 80)
+		tr.Generate(world.TerrainFill{Height: 4, Hills: 2, HillSize: 10, Top: 1, Under: 2, Deep: 2})
+		tr.Layers = [world.TerrainLayerCount]string{"grass", "dirt"}
+		tr.Smooth = smooth
+		tr.Touch()
+		p := newTerrainProbe(t, tr)
+		p.frame()
 
-	for z := 38; z <= 42; z++ {
 		for x := 37; x <= 43; x++ {
-			tr.Heights[tr.Index(x, z)] = 0.6
+			tr.SetBlock(x, 3, 40, 0)
+			tr.SetBlock(x, 4, 38, 2)
 		}
-	}
-	tr.PaintWeight(40, 40, 1, 1)
-	tr.SetHole(34, 40, true)
-	tr.TouchRect(34, 38, 43, 42)
-	partial := p.frame()
+		tr.SetBlock(34, 2, 40, 0)
+		partial := p.frame()
 
-	ReleaseTerrainMeshes()
-	tr.Touch()
-	full := p.frame()
-	for i := range full {
-		if partial[i] != full[i] {
-			t.Fatalf("pixel %d differs: partial upload %d, full rebuild %d", i/4, partial[i], full[i])
+		ReleaseTerrainMeshes()
+		tr.Touch()
+		full := p.frame()
+		for i := range full {
+			if partial[i] != full[i] {
+				t.Fatalf("smooth=%v: pixel %d differs: partial upload %d, full rebuild %d", smooth, i/4, partial[i], full[i])
+			}
 		}
 	}
+}
+
+// Painting a biome grows something: the same view with the ground painted
+// draws different pixels, the shadow pass draws its casters without a GL
+// error, and the foliage goes when the paint does.
+func TestAPaintedBiomeGrowsFoliage(t *testing.T) {
+	tr := world.NewTerrain(mgl32.Vec3{-16, -2, -16}, 1, 32, 12, 32)
+	tr.Layers[0] = "dirt"
+	tr.Generate(world.TerrainFill{Height: 2, Top: 1, Under: 1, Deep: 1})
+	p := newTerrainProbe(t, tr)
+	bare := p.frame()
+
+	tr.Biomes = []world.TerrainBiome{{Preset: "forest"}, {Preset: "meadow"}}
+	for z := 0; z < 32; z++ {
+		for x := 0; x < 32; x++ {
+			slot := uint8(2)
+			if x < 16 {
+				slot = 1
+			}
+			tr.SetPaint(tr.FaceKey(x, 1, z, world.FaceYPos), slot)
+		}
+	}
+	grown := p.frame()
+	g := foliage.cache[tr]
+	if g == nil {
+		t.Fatal("the painted terrain has no foliage")
+	}
+	count := 0
+	for _, s := range g.sections {
+		count += s.count
+	}
+	if count < 1000 {
+		t.Fatalf("a 32x32 painted field grew only %d plants", count)
+	}
+	differ := 0
+	for i := range bare {
+		if bare[i] != grown[i] {
+			differ++
+		}
+	}
+	if differ < len(bare)/20 {
+		t.Fatalf("the painted field draws almost like the bare one (%d bytes differ)", differ)
+	}
+
+	RenderFoliageDirShadow(p.lvl, mgl32.Ortho(-20, 20, -20, 20, -50, 50).Mul4(mgl32.LookAtV(mgl32.Vec3{5, 10, 5}, mgl32.Vec3{}, mgl32.Vec3{0, 1, 0})), 0, nil)
+	if e := gl.GetError(); e != gl.NO_ERROR {
+		t.Fatalf("GL error 0x%x drawing foliage shadows", e)
+	}
+
+	tr.Paint = nil
+	tr.Touch()
+	p.frame()
+	for _, s := range foliage.cache[tr].sections {
+		if s.count != 0 {
+			t.Fatal("foliage stayed after the paint was cleared")
+		}
+	}
+}
+
+// A biome that names a ground texture lays it over the ground it is painted
+// on — even a terrain with no textures of its own, which is otherwise drawn
+// in its normal colour — and taking the paint away takes the texture with it.
+func TestAPaintedBiomeShowsItsGroundTexture(t *testing.T) {
+	world.PutFoliagePreset(world.FoliagePreset{Name: "test_sand", Label: "Sand", GroundTexture: "ground_desert",
+		GroundTint: mgl32.Vec3{0.8, 0.65, 0.45}})
+	t.Cleanup(func() { world.LoadBiomes(t.TempDir()) })
+	tr := flatTerrain()
+	tr.Biomes = []world.TerrainBiome{{Preset: "test_sand"}}
+	for z := 0; z < 8; z++ {
+		for x := 0; x < 8; x++ {
+			tr.SetPaint(tr.FaceKey(x, 0, z, world.FaceYPos), 1)
+		}
+	}
+	p := newTerrainProbe(t, tr)
+	c := centre(p.frame())
+	if len(ground.names) != 1 || ground.names[0] != "ground_desert" || ground.missing["ground_desert"] {
+		t.Fatalf("the ground array holds %v (missing %v)", ground.names, ground.missing)
+	}
+	// Sand is warm: red well over blue, and nothing like the normal colour's
+	// (0.5, 1, 0.5).
+	if !(int(c[0]) > int(c[2])+40 && c[1] < 230) {
+		t.Fatalf("the painted ground is %v, not sand", c)
+	}
+
+	tr.Paint = nil
+	tr.Touch()
+	c = centre(p.frame())
+	nearlyByte(t, "green", c[1], 1.0)
 }

@@ -224,16 +224,27 @@ func (q *GroundQuery) SurfaceUnder(wx, topY, wz, maxDrop float32) Surface {
 			}
 		}
 
-		// The chunk's terrain answers the column with one cell lookup. The
-		// column's parameter is carried through the placement's scale exactly
-		// as the faces' is: localDir is the world's down, in here.
-		if tr := ch.Terrain; tr != nil && localDir.Y() < 0 {
-			if h, n, ok := tr.HeightAt(localOrigin.X(), localOrigin.Z()); ok {
-				t := (h - localOrigin.Y()) / localDir.Y()
-				if t >= 0 && t <= maxDrop && t < bestT {
-					bestT = t
-					best = Surface{Height: topY - t, Normal: ch.LocalToPlacementDirection(n).Normalize(), Found: true}
+		// The chunk's terrain answers the column with one ray down its own
+		// surface. The column's parameter is carried through the placement's
+		// scale exactly as the faces' is: localDir is the world's down, in
+		// here. Only an upward-facing hit is ground, as for the faces above.
+		// A cave roof's underside is passed through to the floor below it.
+		if tr := ch.Terrain; tr != nil {
+			o, gone := localOrigin, float32(0)
+			for i := 0; i < 4; i++ {
+				h, ok := tr.Raycast(o, localDir, min(maxDrop, bestT)-gone)
+				if !ok {
+					break
 				}
+				n := ch.LocalToPlacementDirection(h.Normal)
+				if n.Y() > 0 {
+					bestT = gone + h.T
+					best = Surface{Height: topY - bestT, Normal: n.Normalize(), Found: true}
+					break
+				}
+				const past = 1e-3
+				gone += h.T + past
+				o = o.Add(localDir.Mul(h.T + past))
 			}
 		}
 	}

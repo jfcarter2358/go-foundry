@@ -458,22 +458,19 @@ func itoa(i int) string {
 }
 
 // A mark on the ground lands on terrain the way it lands on a floor brush: on
-// the chunk's own piece, clipped from the cells under it and none of the rest
-// — and a sculpt under it re-clips it.
+// the chunk's own piece, clipped from the faces under it and none of the rest
+// — and mining under it re-clips it.
 func TestBuildDecalLandsOnTerrain(t *testing.T) {
 	gfx.GeometryUploadsEnabled = false
 	t.Cleanup(func() { gfx.GeometryUploadsEnabled = true })
-	tr := NewTerrain(mgl32.Vec3{-20, 0, -20}, 1, 40, 40)
-	for i := range tr.Heights {
-		tr.Heights[i] = float32(i%41) * 0.05
-	}
+	tr := NewTerrain(mgl32.Vec3{-20, -4, -20}, 1, 40, 8, 40)
+	tr.Generate(TerrainFill{Height: 4, Top: 1, Under: 1, Deep: 1})
 	ch := Chunk{ID: "ground", Origin: mgl32.Vec3{5, 1, 0}, Rotation: 0.4, Scale: 1, Terrain: tr}
 	ch.RecomputeBounds()
 	lvl := &Level{Chunks: []Chunk{ch}}
 
 	c := &lvl.Chunks[0]
-	h, _, _ := tr.HeightAt(0, 0)
-	at := c.ModelMatrix().Mul4x1(mgl32.Vec4{0, h, 0, 1}).Vec3()
+	at := c.ModelMatrix().Mul4x1(mgl32.Vec4{0.5, 0, 0.5, 1}).Vec3()
 	d := NewDecal("scorch", at, mgl32.Vec3{0, 1, 0})
 	d.Width, d.Height, d.Depth = 2, 2, 1
 	BuildDecal(lvl, &d)
@@ -485,12 +482,11 @@ func TestBuildDecalLandsOnTerrain(t *testing.T) {
 		t.Fatal("a decal on the ground clipped nothing out of the terrain")
 	}
 	if n > 64 {
-		t.Fatalf("a 2x2 decal took %d triangles — more than the cells under it", n)
+		t.Fatalf("a 2x2 decal took %d triangles — more than the faces under it", n)
 	}
 	before := decalFingerprint(&d)
-	tr.Heights[tr.Index(20, 20)] += 1
-	tr.TouchRect(20, 20, 20, 20)
+	tr.SetBlock(20, 3, 20, 0)
 	if decalFingerprint(&d) == before {
-		t.Fatal("sculpting the ground under a decal did not mark it stale")
+		t.Fatal("mining the ground under a decal did not mark it stale")
 	}
 }

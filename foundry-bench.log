@@ -1,0 +1,1449 @@
+14:39:24 [foundry] scanned 38 textures
+14:39:24 [foundry] material conveyor.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/conveyor.fmat.fmat: no such file or directory
+14:39:24 [foundry] material deck_tiled.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/deck_tiled.fmat.fmat: no such file or directory
+14:39:24 [foundry] material ember.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/ember.fmat.fmat: no such file or directory
+14:39:24 [foundry] material fireball.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/fireball.fmat.fmat: no such file or directory
+14:39:24 [foundry] material flipbook.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/flipbook.fmat.fmat: no such file or directory
+14:39:24 [foundry] material fog_bank.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/fog_bank.fmat.fmat: no such file or directory
+14:39:24 [foundry] material foliage.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/foliage.fmat.fmat: no such file or directory
+14:39:24 [foundry] material foliage_sprite.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/foliage_sprite.fmat.fmat: no such file or directory
+14:39:24 [foundry] material glass.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/glass.fmat.fmat: no such file or directory
+14:39:24 [foundry] material glow_sprite.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/glow_sprite.fmat.fmat: no such file or directory
+14:39:24 [foundry] material hologram.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/hologram.fmat.fmat: no such file or directory
+14:39:24 [foundry] material mossy_rock.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/mossy_rock.fmat.fmat: no such file or directory
+14:39:24 [foundry] material poster.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/poster.fmat.fmat: no such file or directory
+14:39:24 [foundry] material sky_canyon.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_canyon.fmat.fmat: no such file or directory
+14:39:24 [foundry] material sky_day.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_day.fmat.fmat: no such file or directory
+14:39:24 [foundry] material sky_overcast.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_overcast.fmat.fmat: no such file or directory
+14:39:24 [foundry] material sky_space.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_space.fmat.fmat: no such file or directory
+14:39:24 [foundry] material smoke.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/smoke.fmat.fmat: no such file or directory
+14:39:24 [foundry] material unlit.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/unlit.fmat.fmat: no such file or directory
+14:39:24 [foundry] material water.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/water.fmat.fmat: no such file or directory
+14:39:24 [foundry] material water_rough.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/water_rough.fmat.fmat: no such file or directory
+14:39:24 [foundry] loaded 0 materials
+14:39:24 [foundry] executable directory: /home/jfcarter2358/personal/code/main/foundry
+14:39:24 [foundry] project: /home/jfcarter2358/personal/code/main/foundry (beside the executable)
+14:39:24 [foundry] resources directory: /home/jfcarter2358/personal/code/main/foundry/resources
+14:39:24 [foundry] audio: 48000 Hz stereo, 10 ms chunks, 60 ms target
+14:39:24 [foundry] OpenGL version : 4.2 (Compatibility Profile) Mesa 23.2.1-1ubuntu3.1~22.04.4
+14:39:24 [foundry] GLSL version   : 4.20
+14:39:24 [foundry] GPU renderer   : D3D12 (NVIDIA GeForce GTX 1070)
+14:39:24 [foundry] multisampling: 8 samples granted (of 8 requested)
+14:39:24 [foundry] WARNING: sdl.GLSetSwapInterval(1): That operation is not supported — vsync is not ours to set on this driver
+14:39:24 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/resources/shaders/vertex.glsl (4450 bytes)
+14:39:24 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/resources/shaders/fragment.glsl (30098 bytes)
+14:39:24 [foundry] texture filtering: mipmaps on, anisotropic 16x (driver max 16x)
+14:39:24 [foundry] --- vertex shader source ---
+#version 410
+
+// skin_common.glsl — GPU linear blend skinning, shared by every pass that draws
+// an animated entity.
+//
+// This is injected after the #version line (injectAfterVersion, detail_render.go)
+// into vertex.glsl, shadow_vert.glsl and shadow_cube_vert.glsl. All three, not
+// just the colour pass: an entity whose shadow were still drawn from its rest
+// pose would cast a stationary silhouette while the model moved.
+//
+// The editor's own model_vert.glsl deliberately does NOT include this. The model
+// editor skins on the CPU, into the vertex array its wireframe and picking
+// already read (editor_model_pose.go), so a second implementation there would be
+// a second thing to keep in step for no gain.
+//
+// ---------- why `skinned` is a uniform and not inferred ----------
+//
+// When a VAO does not enable a vertex attribute, GL supplies the *default*
+// generic value for its type — and for a vec4 that default is (0, 0, 0, 1), not
+// zero. Inferring "unskinned" from a zero weight sum would therefore read every
+// ordinary wall as fully bound to bone 0 with weight 1 and collapse the level
+// onto that bone's delta. The uniform is the only safe gate.
+
+#define MAX_BONES 48
+
+// Bone indices and weights, four each — the budget modelMaxInfluences was
+// chosen to fit. Enabled only on submeshes built from a skinned model.
+layout(location = 3) in vec4 boneIdx;
+layout(location = 4) in vec4 boneWt;
+
+// The palette: one delta per bone, taking that bone's rest space to where the
+// pose puts it. Matches PoseDeltas (model_pose.go).
+uniform mat4 bones[MAX_BONES];
+uniform int  skinned;
+
+// skinMatrix blends this vertex's influences into one transform.
+//
+// Blending the matrices and applying once — rather than transforming the
+// position by each and averaging the results — is the same arithmetic for
+// positions, and it is what lets the normal reuse the result instead of running
+// the whole loop a second time.
+mat4 skinMatrix() {
+    mat4 m = mat4(0.0);
+    float total = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        float w = boneWt[i];
+        if (w <= 0.0) {
+            continue;
+        }
+        int b = int(boneIdx[i]);
+        if (b < 0 || b >= MAX_BONES) {
+            continue;
+        }
+        m += bones[b] * w;
+        total += w;
+    }
+    if (total <= 0.0) {
+        return mat4(1.0);
+    }
+    // Rescaling by the total covers weights that do not sum to 1 instead of
+    // dragging the vertex toward the origin — the same guard skinVerts applies
+    // on the CPU side (model_skin.go).
+    return m * (1.0 / total);
+}
+
+vec4 skinPosition(vec3 p) {
+    if (skinned == 0) {
+        return vec4(p, 1.0);
+    }
+    return skinMatrix() * vec4(p, 1.0);
+}
+
+// skinNormal rotates a normal by the same blend. mat3 of the blend rather than
+// its inverse-transpose: a bone delta is a rigid motion plus whatever stretch
+// the pose asked for, and the caller already applies the model matrix's own
+// inverse-transpose afterwards.
+vec3 skinNormal(vec3 n) {
+    if (skinned == 0) {
+        return n;
+    }
+    return mat3(skinMatrix()) * n;
+}
+
+uniform mat4 projection;
+uniform mat4 camera;
+uniform mat4 model;
+
+// Water animation. isWater gates the whole path; time is seconds since start.
+uniform int   isWater;
+uniform float time;
+uniform float waveAmplitude;
+uniform float waveLength;
+uniform float waveSpeed;
+
+// Smooth shading: 1 = shade from vertNormal, 0 = let the fragment stage recover
+// a flat facet normal from screen-space derivatives. Locations are pinned so the
+// same VAO also feeds the detail tessellation program (see detail_vert.glsl).
+uniform int smoothShading;
+
+// Slides the texture across the surface (gfx.Geometry.UVOffset): a scrolling
+// attachment such as a tank's track belt, or a material's uv_scroll. Zero for
+// everything else.
+uniform vec2 uvOffset;
+
+// The rest of a material's UV transform (material.KindUVTransform): a tiling
+// and a turn, applied before the offset.
+//
+// The scale arrives as a BIAS from 1 rather than as the scale, so that the
+// value GL gives an uninitialised uniform — zero — is the identity. A program
+// that links this shader without knowing about either (the shadow passes, the
+// detail tessellation stage, a GL test that looks up only what it needs) tiles
+// the texture exactly as it did before materials existed. Same reasoning as
+// fragment.glsl's normalColor and unlit, and as alphaCutoffBias.
+uniform vec2  uvScaleBias;
+uniform float uvRotation; // radians, about the UV origin
+
+layout(location = 0) in vec3 vert;
+layout(location = 1) in vec2 vertTexCoord;
+// Per-vertex normal, present only on surfaces built with smoothing on. The
+// attribute array is disabled otherwise, so this reads (0,0,0) and is ignored.
+layout(location = 2) in vec3 vertNormal;
+// Baked lighting, present only on a compiled level's static surfaces.
+// Locations 3 and 4 belong to skinning (skin_common.glsl), so this takes 5.
+// The attribute array is disabled otherwise; bakedLight is what gates reading
+// it, for the same reason `skinned` gates the bone attributes — an unenabled
+// attribute reads a driver default, not zero.
+// xyz is the baked colour; w the baked sun's share (see fragment.glsl).
+layout(location = 5) in vec4 vertLight;
+
+out vec2 fragTexCoord;
+out vec3 fragWorldPos;
+out vec3 fragNormal;
+// View-axis distance; the fragment stage uses it to select a shadow cascade.
+out float fragViewDepth;
+// The baked value, passed through and interpolated across the triangle.
+out vec4 fragBakedLight;
+
+// Sum of three travelling sine waves at different headings, so the surface
+// never reads as a single repeating ripple. Driven by world XZ, which keeps
+// wave size independent of how far the plane is scaled up.
+//
+// MUST stay identical to waterHeight() in fragment.glsl — the vertex stage
+// displaces geometry with it and the fragment stage differentiates it for the
+// shading normal. If they drift, lit highlights slide off the actual crests.
+float waterHeight(vec2 p) {
+    float k = 6.2831853 / max(waveLength, 0.001);
+    float t = time * waveSpeed * 6.2831853;
+
+    float h = 0.0;
+    h += sin(p.x * k + t) * 0.50;
+    h += sin((p.x * 0.7 + p.y * 0.7) * k * 1.3 - t * 1.1) * 0.30;
+    h += sin(p.y * k * 0.8 + t * 0.8) * 0.20;
+    return h * waveAmplitude;
+}
+
+void main() {
+    vec2 uv = vertTexCoord * (vec2(1.0) + uvScaleBias);
+    if (uvRotation != 0.0) {
+        float cs = cos(uvRotation);
+        float sn = sin(uvRotation);
+        uv = vec2(uv.x * cs - uv.y * sn, uv.x * sn + uv.y * cs);
+    }
+    fragTexCoord = uv + uvOffset;
+    fragBakedLight = vertLight;
+    // skinPosition is the identity unless this draw call set `skinned`
+    // (skin_common.glsl), so every static surface takes the same path it always
+    // did.
+    vec4 worldPos = model * skinPosition(vert);
+
+    // Vertical displacement only, so worldPos.xz still carries the undisplaced
+    // surface coordinate the fragment stage needs to re-derive the normal.
+    if (isWater != 0) {
+        worldPos.y += waterHeight(worldPos.xz);
+    }
+
+    fragWorldPos = worldPos.xyz;
+
+    // Inverse-transpose rather than mat3(model): primitives carry per-axis
+    // scale, which skews a plain rotation of the normal off the surface. Only
+    // paid for on smoothed surfaces.
+    fragNormal = vec3(0.0);
+    if (smoothShading != 0) {
+        fragNormal = transpose(inverse(mat3(model))) * skinNormal(vertNormal);
+    }
+
+    vec4 viewPos = camera * worldPos;
+    fragViewDepth = -viewPos.z;
+
+    gl_Position = projection * viewPos;
+}
+---
+14:39:24 [foundry] vertex shader compiled OK
+14:39:24 [foundry] --- fragment shader source ---
+#version 410
+
+// light_model.glsl — how light falls across a surface, for every pass that
+// lights one.
+//
+// Spliced after the #version line of the world fragment stage (fragment.glsl,
+// via gfx.InjectLightModel) and ahead of biome_light.glsl (render's
+// biomeLightSnippet), so the walls, the ground patches, the scatter and lit
+// sprites are one lighting model rather than one per pass. The level compiler
+// bakes with the same one (world.GlobalLight.LightWrap/AmbientAt) — change a
+// term here and change it there, or a baked surface stops matching a live one.
+
+// The level's lighting-model knobs, world.GlobalLight's Wrap and Hemisphere,
+// uploaded with the rest of the lights (world.UploadLightsTo).
+uniform float lightWrap;
+uniform float ambientHemisphere;
+
+// Wrapped Lambert: how much of a light a surface at cosine ndl to it takes. At
+// lightWrap 0 it is max(N.L, 0), the hard terminator; above that the light
+// carries on round the curve and eases out instead of stopping at side-on.
+float lightWrapTerm(float ndl) {
+    return max((ndl + lightWrap) / (1.0 + lightWrap), 0.0);
+}
+
+// Hemispheric ambient: the ambient colour brighter facing the sky and darker
+// facing the ground, averaging to the colour itself.
+vec3 ambientAt(vec3 ambient, vec3 n) {
+    return ambient * (1.0 + 0.5 * clamp(ambientHemisphere, 0.0, 1.0) * n.y);
+}
+
+// cloud_shadow.glsl — the shadow clouds cast on everything under them.
+//
+// Spliced into every stage that lights world geometry, beside fog.glsl and for
+// the same reason fog is shared: fragment.glsl (see InjectCloudShadow in
+// gfx/fog_shader.go) and every consumer of biome_light.glsl (the scatter, the
+// ground patch and sprites — see biomeLightSnippet). A cloud's shadow that
+// darkened the floor but not the grass standing on it would read as the grass
+// floating.
+//
+// The map is baked once a frame by render/cloud_shadow.go: a top-down view
+// along the sun of every shadow-casting cloud volume and the sky's deck, each
+// texel holding two numbers about the line of sunlight through it —
+//
+//   R  how much light survives the whole line (transmittance), and
+//   G  how far along it the cloud mass sits, as a 0..1 light-space depth.
+//
+// G is what lets a cloud shadow only what is UNDER it. A single transmittance
+// would darken the top of a mountain standing in a cloud and the valley below
+// it alike; comparing the receiver's own light depth against where the mass is
+// puts the shadow below the cloud and nowhere above it.
+//
+// The uniforms are uploaded by UploadShadowUniformsTo, which every program
+// that includes this already calls, and cloudShadowMap is always bound to a
+// real texture (a white dummy when there are no clouds) on its own unit — see
+// CloudShadowTexUnit — so a program never samples an unbound unit.
+
+uniform int       cloudShadowOn;     // 0 = no map this frame
+uniform int       cloudShadowLight;  // the directional light the map was baked for
+uniform sampler2D cloudShadowMap;
+uniform mat4      cloudShadowMatrix; // world -> [0,1]^3 in the bake's light space
+
+// How much of a compiled level's BAKED light the cloud shadow takes away.
+// Baked light is the sun and everything else summed offline, and which share
+// of it the sun contributed is not kept, so a fixed share is removed instead:
+// enough for the shadow of a passing cloud to read, not so much that a surface
+// lit mostly by lamps goes dark under one.
+#define CLOUD_SHADOW_BAKED_SHARE 0.55
+
+// cloudShadowFactor is the fraction of directional light lightIdx that reaches
+// worldPos past the clouds: 1 in the open, lower under cloud.
+//
+// textureLod rather than texture, because biome_light.glsl compiles this into a
+// VERTEX stage too, where there are no derivatives to pick a mip from.
+float cloudShadowFactor(int lightIdx, vec3 worldPos) {
+    if (cloudShadowOn == 0 || lightIdx != cloudShadowLight) {
+        return 1.0;
+    }
+    vec3 p = (cloudShadowMatrix * vec4(worldPos, 1.0)).xyz;
+    // Faded out over the outer tenth of the map, so the edge of the baked area
+    // is a gradient rather than a line across the ground.
+    vec2 edge = min(p.xy, 1.0 - p.xy);
+    float inside = clamp(min(edge.x, edge.y) * 10.0, 0.0, 1.0);
+    if (inside <= 0.0) {
+        return 1.0;
+    }
+    vec2 s = textureLod(cloudShadowMap, p.xy, 0.0).rg;
+    float below = smoothstep(s.g - 0.01, s.g + 0.01, p.z);
+    return mix(1.0, s.r, below * inside);
+}
+
+// fog.glsl — fog, shared by every stage that shades world geometry.
+//
+// Two kinds, one file. DISTANCE fog is the air of the whole level: a
+// function of how far away a point is, with no position of its own. A FOG
+// VOLUME is a placed region that is full of fog, and its term is the length
+// of the view ray that was inside it. They compose — see applyFog at the
+// bottom, which is the one entry point every pass calls.
+//
+// Injected after the #version line of fragment.glsl (world geometry, water and
+// the detail tessellation/scatter programs that reuse it), of biome_light.glsl's
+// consumers (the scatter in biome_frag.glsl, the ground patch in
+// ground_frag.glsl and sprites in sprite_frag.glsl) and of sky_frag.glsl — see
+// InjectFog in gfx/graphics.go and biomeLightSnippet in render/biome_light.go.
+//
+// The same trick biome_light.glsl uses: ONE declaration of the uniform names,
+// compiled into every program that shades, so world.UploadFogTo drives all of
+// them and there is no per-pass fog model to keep in step with the others. A
+// wall, the grass in front of it, the rock scattered over that grass and the
+// sprite standing on it all fade at exactly the same rate, which is the whole
+// point — fog that disagreed between passes would read as the passes
+// disagreeing about where things are.
+//
+// Distance is RADIAL (from the eye), not the view-axis depth a fixed-function
+// fog would use. Planar depth makes the fog on a fixed object change as the
+// camera turns its head, which reads as the world breathing.
+
+// 0 = off, 1 = linear, 2 = exponential, 3 = exponential-squared. Must match
+// world.FogMode's values (fog.go).
+uniform int   fogMode;
+uniform vec3  fogColor;
+uniform float fogStart;      // where fog begins, in world units, for every mode
+uniform float fogEnd;        // linear only: where it reaches fogMaxOpacity
+uniform float fogDensity;    // exp/exp2 only
+uniform float fogMaxOpacity; // ceiling on the blend, so distant geometry can be
+                             // left legible rather than erased
+uniform vec3  fogCamPos;     // the eye the radial distance is measured from
+
+// fogFactor is how much of fogColor this point has turned into: 0 = untouched,
+// 1 = the fog and nothing else.
+float fogFactor(vec3 worldPos) {
+    if (fogMode == 0) {
+        return 0.0;
+    }
+    float d = distance(worldPos, fogCamPos);
+    float f;
+    if (fogMode == 1) {
+        f = (d - fogStart) / max(fogEnd - fogStart, 1e-4);
+    } else if (fogMode == 2) {
+        f = 1.0 - exp(-fogDensity * max(d - fogStart, 0.0));
+    } else {
+        float t = fogDensity * max(d - fogStart, 0.0);
+        f = 1.0 - exp(-t * t);
+    }
+    return clamp(f, 0.0, 1.0) * fogMaxOpacity;
+}
+
+// ---------- fog volumes ----------
+//
+// A fog volume is a placed region that is FULL of fog, as against the distance
+// fog above which is everywhere. The two are different questions: distance fog
+// asks "how far away is this", a volume asks "how much of the air between the
+// eye and this point was inside that box".
+//
+// So the term is not a function of distance at all — it is the LENGTH of the
+// eye-to-fragment segment that lies inside the volume, run through the same
+// exponential extinction. That is what makes a fog bank behave like a bank: it
+// thickens as you look along it and thins as you look across it, a wall seen
+// through a corner of it is only lightly touched, and walking in fills the
+// screen because the segment now starts inside. A "distance from the centre"
+// falloff gets all four of those wrong, and gets them wrong in a way that looks
+// fine standing still.
+//
+// Every shape is solved in NORMALIZED space, where the volume is the unit box,
+// unit sphere or unit cylinder: fogVolBasis maps a world-space offset from the
+// centre through the inverse rotation and then divides by the half-extents, so
+// one intersection routine per shape covers every size and orientation. The ray
+// direction is carried through that same matrix WITHOUT renormalizing, which is
+// what keeps the parameter t measured in world units — the span has to come out
+// in metres, not in half-extents, or a wide volume would fog less than a narrow
+// one at the same density.
+
+#define MAX_FOG_VOLUMES 8
+
+// Shape values match world.VolumeShape (volume.go): 0 box, 1 sphere, 2 cylinder.
+#define FOG_VOL_BOX      0
+#define FOG_VOL_SPHERE   1
+#define FOG_VOL_CYLINDER 2
+
+uniform int   numFogVolumes;
+uniform mat3  fogVolBasis[MAX_FOG_VOLUMES];  // world offset -> normalized shape space
+uniform vec3  fogVolCenter[MAX_FOG_VOLUMES];
+uniform int   fogVolShape[MAX_FOG_VOLUMES];
+uniform vec3  fogVolColor[MAX_FOG_VOLUMES];
+uniform float fogVolDensity[MAX_FOG_VOLUMES];    // per world unit travelled inside
+uniform float fogVolMaxOpacity[MAX_FOG_VOLUMES];
+
+// fogShapeInterval narrows [t0, t1] to the part of the ray ro + t*dir that lies
+// inside a volume shape, and reports whether anything is left. dir must be a
+// unit vector for t to be in world units. The shape is given as its basis (see
+// the note above), centre and kind, so the volumetric passes
+// (volume_common.glsl) solve their cloud volumes with the SAME intersection a
+// fog bank uses — a cloud and a fog bank placed in one box cannot disagree
+// about where its walls are.
+//
+// The interval arrives already clamped by the caller, which is what makes the
+// two cases that matter fall out with no special-casing: a ray starting INSIDE
+// the shape keeps t0 at the caller's 0 (the fog starts at the eye), and a shape
+// behind the fragment is clipped away by the caller's t1 rather than fogging
+// things in front of it.
+bool fogShapeInterval(int shape, mat3 basis, vec3 center, vec3 ro, vec3 dir,
+                      inout float t0, inout float t1) {
+    vec3 o = basis * (ro - center);
+    vec3 d = basis * dir;
+
+    if (shape == FOG_VOL_SPHERE) {
+        // Unit sphere. |o + t*d| = 1.
+        float a = dot(d, d);
+        float b = 2.0 * dot(o, d);
+        float c = dot(o, o) - 1.0;
+        float disc = b * b - 4.0 * a * c;
+        if (a < 1e-12 || disc <= 0.0) {
+            return false;
+        }
+        float sq = sqrt(disc);
+        t0 = max(t0, (-b - sq) / (2.0 * a));
+        t1 = min(t1, (-b + sq) / (2.0 * a));
+    } else {
+        // Box and cylinder share the |y| <= 1 slab; the box adds the other two
+        // slabs, the cylinder a unit disc in XZ.
+        int lo = (shape == FOG_VOL_CYLINDER) ? 1 : 0;
+        int hi = (shape == FOG_VOL_CYLINDER) ? 1 : 2;
+        for (int ax = lo; ax <= hi; ++ax) {
+            if (abs(d[ax]) < 1e-6) {
+                // Parallel to this pair of planes: either always between them
+                // or never, and never means the whole ray misses.
+                if (abs(o[ax]) > 1.0) {
+                    return false;
+                }
+            } else {
+                float inv = 1.0 / d[ax];
+                float ta = (-1.0 - o[ax]) * inv;
+                float tb = ( 1.0 - o[ax]) * inv;
+                t0 = max(t0, min(ta, tb));
+                t1 = min(t1, max(ta, tb));
+            }
+        }
+        if (shape == FOG_VOL_CYLINDER) {
+            vec2 o2 = o.xz;
+            vec2 d2 = d.xz;
+            float a = dot(d2, d2);
+            float c = dot(o2, o2) - 1.0;
+            if (a < 1e-12) {
+                // Straight up the axis: inside for its whole length, or outside
+                // for all of it.
+                if (c > 0.0) {
+                    return false;
+                }
+            } else {
+                float b = 2.0 * dot(o2, d2);
+                float disc = b * b - 4.0 * a * c;
+                if (disc <= 0.0) {
+                    return false;
+                }
+                float sq = sqrt(disc);
+                t0 = max(t0, (-b - sq) / (2.0 * a));
+                t1 = min(t1, (-b + sq) / (2.0 * a));
+            }
+        }
+    }
+    return t1 > t0;
+}
+
+// fogVolumeSpan is how far the segment from fogCamPos to worldPos travels inside
+// volume i, in world units. 0 when the segment misses it entirely.
+float fogVolumeSpan(int i, vec3 worldPos) {
+    vec3 seg = worldPos - fogCamPos;
+    float segLen = length(seg);
+    if (segLen < 1e-5) {
+        return 0.0;
+    }
+    float t0 = 0.0;
+    float t1 = segLen;
+    if (!fogShapeInterval(fogVolShape[i], fogVolBasis[i], fogVolCenter[i],
+                          fogCamPos, seg / segLen, t0, t1)) {
+        return 0.0;
+    }
+    return max(t1 - t0, 0.0);
+}
+
+// fogVolumeOpacity is volume i's share of this pixel: how much of its colour has
+// replaced what was behind it.
+float fogVolumeOpacity(int i, vec3 worldPos) {
+    float span = fogVolumeSpan(i, worldPos);
+    if (span <= 0.0) {
+        return 0.0;
+    }
+    return clamp(1.0 - exp(-fogVolDensity[i] * span), 0.0, 1.0) * fogVolMaxOpacity[i];
+}
+
+// applyFogVolumes blends every volume the segment crosses over the surface,
+// in level order.
+//
+// Level order, rather than sorted back-to-front: two overlapping volumes are the
+// one case the order is visible, sorting per-pixel is not something a fragment
+// shader can do to a uniform array, and volumes are authored to fill rooms
+// rather than to be stacked. Each one composites correctly against everything
+// already there, so a single volume — which is the case that exists — is exact.
+vec3 applyFogVolumes(vec3 color, vec3 worldPos) {
+    for (int i = 0; i < MAX_FOG_VOLUMES; ++i) {
+        if (i >= numFogVolumes) {
+            break;
+        }
+        color = mix(color, fogVolColor[i], fogVolumeOpacity(i, worldPos));
+    }
+    return color;
+}
+
+// fogVolumeTransmittance is how much of an ADDITIVE surface survives the
+// volumes in front of it — the same reasoning as applyFogAdditive: the
+// framebuffer already holds them, so a spark deep in a fog bank is swallowed
+// rather than tinted.
+float fogVolumeTransmittance(vec3 worldPos) {
+    float t = 1.0;
+    for (int i = 0; i < MAX_FOG_VOLUMES; ++i) {
+        if (i >= numFogVolumes) {
+            break;
+        }
+        t *= 1.0 - fogVolumeOpacity(i, worldPos);
+    }
+    return t;
+}
+
+// ---------- what a shading pass calls ----------
+
+// applyFog is the ordinary case: the surface is replaced by the fog in front of
+// it, in proportion.
+vec3 applyFog(vec3 color, vec3 worldPos) {
+    // Volumes first, then the distance fog over the top of them. The distance
+    // fog fills the WHOLE segment, including the part in front of the nearest
+    // volume, so it is the outermost layer; doing it the other way round would
+    // let a fog bank tint the haze that is actually between the viewer and it.
+    color = applyFogVolumes(color, worldPos);
+    return mix(color, fogColor, fogFactor(worldPos));
+}
+
+// applyFogAdditive is the same physical answer for a surface drawn with an
+// ADDITIVE blend, where the framebuffer already holds the fog behind it. Mixing
+// toward fogColor there would add the fog a second time and make a distant
+// spark BRIGHTER than a near one; what fog does to something that only ever
+// adds light is swallow it, so the contribution is attenuated instead.
+vec3 applyFogAdditive(vec3 color, vec3 worldPos) {
+    return color * (1.0 - fogFactor(worldPos)) * fogVolumeTransmittance(worldPos);
+}
+
+// applyFogModulate is the same answer again for a surface drawn with a MULTIPLY
+// blend — a decal's scorch mask (gfx.SurfaceBlendModulate).
+//
+// Such a fragment is not a colour but a FACTOR on what is already in the
+// framebuffer, and what is already there is the wall, fogged. Mixing the factor
+// toward fogColor would darken a distant wall by a grey mask on top of the haze
+// that has already replaced it; what fog does to a mark on a surface is hide it,
+// so the factor is faded toward WHITE instead — white being the factor that
+// changes nothing.
+vec3 applyFogModulate(vec3 color, vec3 worldPos) {
+    return mix(vec3(1.0), color,
+               (1.0 - fogFactor(worldPos)) * fogVolumeTransmittance(worldPos));
+}
+
+uniform sampler2D tex;
+uniform float alpha; // per-geometry alpha multiplier (default 1.0)
+
+// Second-texture blending (texture "splatting"). When hasBlend is set, tex is
+// mixed with blendTex using blendMask's per-pixel luminance as the mix
+// factor (0 = tex, 1 = blendTex) — see applyBlendUniforms in geometry.go. Any
+// existing texture can serve as blendMask; it need not be literally
+// grayscale, since only luminance is read.
+uniform int       hasBlend;
+uniform sampler2D blendTex;
+uniform sampler2D blendMask;
+
+// Normal (bump) mapping. When hasNormalMap is set, normalMap holds a
+// tangent-space normal, RGB-encoded as n * 0.5 + 0.5, derived from the height
+// field painted on the texture's bump channel in the texture editor (see
+// texdoc/bump.go). Off (0) by default, so a program that links this shader
+// without knowing about it — and every texture with no <name>_normal.png
+// beside it — shades exactly as it did before.
+uniform int       hasNormalMap;
+uniform sampler2D normalMap;
+
+// Alpha-cutout anti-aliasing, set for the opaque pass only (see
+// AlphaSharpenUniform in main.go). Off (0) by default so any program that
+// links this shader without knowing about it — and the sorted transparent
+// pass, where alpha means blending, not coverage — behaves exactly as before.
+uniform int alphaSharpen;
+
+// Where a cutout's edge sits once mip filtering has turned its hard 0/255
+// alpha into a ramp: the level set that best reproduces the original
+// silhouette is the halfway point, not "any alpha at all".
+//
+// alphaCutoffBias moves it, for a material carrying a `cutout` effect with a
+// threshold of its own (material_kinds.go). A BIAS rather than the threshold,
+// so that zero — what GL gives an uninitialised uniform, and what every
+// surface with no cutout effect sends — is the 0.5 this was a constant at.
+// Clamped away from both ends: a threshold of 0 discards nothing and one of 1
+// discards everything, and neither is a thing an author means.
+uniform float alphaCutoffBias;
+
+// tintBias multiplies the albedo, carried as a BIAS FROM WHITE so that the zero
+// an unwritten uniform holds is no tint at all — the trick uvScaleBias plays.
+// A projected decal is what sets it: one grey scorch texture tinted eight ways
+// is eight different marks (gfx.Geometry.Tint).
+uniform vec3 tintBias;
+
+// surfaceBlend says how the FRAMEBUFFER blend will combine this fragment, which
+// the shading stage has to know about because two of the three answers are not a
+// colour at all:
+//
+//   0  ordinary — the fragment replaces or alpha-blends over what is behind it
+//   1  additive — it only ever ADDS light, so fog swallows it rather than
+//      replacing it (applyFogAdditive)
+//   2  modulate — it is a FACTOR on what is already in the framebuffer: a decal's
+//      scorch mask, where white changes nothing and black blacks the wall out
+//
+// Only a projected decal sets it (gfx.Geometry.Blend); everything else in the
+// engine leaves it at the 0 an unwritten uniform holds.
+uniform int surfaceBlend;
+float alphaCutoffLevel() {
+    return clamp(0.5 + alphaCutoffBias, 0.01, 0.99);
+}
+
+// Untextured surfaces. A face that names no texture takes its albedo from its
+// own normal, encoded as a colour (n * 0.5 + 0.5), instead of from tex — so a
+// brush blocked out and not yet painted reads as shape, with every plane a
+// different colour, rather than as the one flat slab that binding no texture
+// gives. Off (0) by default, so a program that links this shader without
+// knowing about it shades exactly as it did before.
+uniform int normalColor;
+
+// Self-lit surfaces — a laser, a glowing readout. When set, the texture's own
+// colour is the result: no light, no shadow, no clamp to what the scene's
+// lights allow. Fog still applies. Off (0) by default, so a program that links
+// this shader without knowing about it shades exactly as it did before.
+uniform int unlit;
+
+// Water surface. isWater gates the whole path.
+uniform int   isWater;
+uniform float time;
+uniform float waveAmplitude;
+uniform float waveLength;
+uniform float waveSpeed;
+uniform float reflectivity;
+uniform vec3  reflectColor;
+uniform vec3  camPos;
+
+// bakedLight selects a compiled level's static-geometry path: the static
+// lights for this fragment were summed once, offline, and arrive interpolated
+// on fragBakedLight; only the dynamic lights (dirLightDynamic,
+// pointLightDynamic) are still summed here. Uniform rather than inferred from
+// the attribute, for the reason skin_common.glsl gives about `skinned`: a
+// disabled vertex attribute reads a driver default, not zero, so an unlit
+// surface would read as "baked to black" rather than as "not baked".
+uniform int   bakedLight;
+// bakedSunLight is the directional light whose share of a baked surface's
+// light is carried per vertex (fragBakedLight.w; world.LightSet.BakedSun), or
+// -1. shadowMapLive holds that light's cascades drawn with only what the bake
+// never saw — entities, sprites, chunks drawn live — so a baked surface can
+// take the sun back off where one of those shadows it, without the world's
+// own geometry landing a second, blockier copy of the shadow the bake already
+// has.
+uniform int   bakedSunLight;
+uniform sampler2DArrayShadow shadowMapLive;
+
+// Global ambient light
+
+uniform vec3  globalLightColor;
+uniform float globalLightBrightness;
+
+// Directional lights (e.g. sun)
+#define MAX_DIR_LIGHTS 4
+uniform int   numDirLights;
+uniform vec3  dirLightDir[MAX_DIR_LIGHTS];
+uniform vec3  dirLightColor[MAX_DIR_LIGHTS];
+uniform float dirLightBrightness[MAX_DIR_LIGHTS];
+// 1 for a light left out of the bake — see PointLight.Dynamic in light.go.
+uniform int   dirLightDynamic[MAX_DIR_LIGHTS];
+
+// Directional cascaded shadow maps.
+//
+// SHADOW_CASCADES, SHADOW_CASCADE_BLEND and SHADOW_FADE_FRACTION must match
+// ShadowCascades / ShadowCascadeBlend / shadowFadeFraction in shadow.go.
+#define SHADOW_CASCADES       3
+#define SHADOW_CASCADE_BLEND  0.12
+#define SHADOW_FADE_FRACTION  0.15
+
+// One array texture holds every cascade of every casting light — MAX_DIR_LIGHTS
+// * SHADOW_CASCADES separate sampler2Ds would blow the 16 fragment texture
+// units GL 4.1 guarantees.
+// A comparison sampler: each lookup passes the fragment's own depth as a
+// reference and gets back the fraction of the four filtered texels it is in
+// front of, so a tap is a smooth 0..1 rather than a per-texel yes/no. The
+// compare mode lives on the texture (EnsureCascadeArray in shadow.go).
+uniform sampler2DArrayShadow shadowMapArray;
+uniform mat4  cascadeMatrix[MAX_DIR_LIGHTS * SHADOW_CASCADES];
+uniform float cascadeBias[MAX_DIR_LIGHTS * SHADOW_CASCADES];
+uniform float cascadeSplit[SHADOW_CASCADES]; // view-space distance each cascade ends at
+uniform int   dirLightShadowLayer[MAX_DIR_LIGHTS]; // first array layer, -1 = light doesn't cast
+uniform bool  dirLightCastShadows[MAX_DIR_LIGHTS];
+uniform float dirLightShadowStrength[MAX_DIR_LIGHTS];
+
+// Point lights
+#define MAX_POINT_LIGHTS 8
+uniform int   numPointLights;
+uniform vec3  pointLightPos[MAX_POINT_LIGHTS];
+uniform vec3  pointLightColor[MAX_POINT_LIGHTS];
+uniform float pointLightBrightness[MAX_POINT_LIGHTS];
+uniform float pointLightRadius[MAX_POINT_LIGHTS];
+uniform int   pointLightDynamic[MAX_POINT_LIGHTS];
+
+// Point light cubemap shadow maps
+uniform samplerCube pointShadowMap[MAX_POINT_LIGHTS];
+uniform bool        pointLightCastShadows[MAX_POINT_LIGHTS];
+uniform float       pointLightShadowStrength[MAX_POINT_LIGHTS];
+uniform float       pointLightFarPlane[MAX_POINT_LIGHTS];
+
+// Smooth shading. When set, the surface normal is the interpolated per-vertex
+// normal supplied by the vertex/tessellation stage instead of the flat facet
+// the derivatives below recover — see smooth.go.
+uniform int smoothShading;
+
+in vec2 fragTexCoord;
+in vec3 fragWorldPos;
+in vec3 fragNormal;
+// Distance along the view axis, used to pick a cascade. The light-space
+// positions themselves are derived here from fragWorldPos rather than passed as
+// varyings — a vec4 per light per cascade would be 48 float varyings against a
+// guaranteed budget of 60.
+in float fragViewDepth;
+// The compiled level's baked lighting, interpolated across the triangle: xyz
+// the colour, w the baked sun's share (bakedSunLight). Junk unless bakedLight
+// is set — see the uniform.
+in vec4 fragBakedLight;
+
+out vec4 outputColor;
+
+// MUST stay identical to waterHeight() in vertex.glsl — see the note there.
+float waterHeight(vec2 p) {
+    float k = 6.2831853 / max(waveLength, 0.001);
+    float t = time * waveSpeed * 6.2831853;
+
+    float h = 0.0;
+    h += sin(p.x * k + t) * 0.50;
+    h += sin((p.x * 0.7 + p.y * 0.7) * k * 1.3 - t * 1.1) * 0.30;
+    h += sin(p.y * k * 0.8 + t * 0.8) * 0.20;
+    return h * waveAmplitude;
+}
+
+// Central-difference gradient of the wave field. Done per-pixel rather than
+// per-vertex so the swell stays smooth regardless of mesh density, and so no
+// extra varying is needed — this fragment shader is also linked against the
+// detail tessellation and scatter vertex stages, which know nothing of water.
+vec3 waterNormal(vec2 p) {
+    float e  = max(waveLength * 0.02, 0.01);
+    float hL = waterHeight(p - vec2(e, 0.0));
+    float hR = waterHeight(p + vec2(e, 0.0));
+    float hD = waterHeight(p - vec2(0.0, e));
+    float hU = waterHeight(p + vec2(0.0, e));
+    return normalize(vec3(hL - hR, 2.0 * e, hD - hU));
+}
+
+// Tangent frame reconstructed from screen-space derivatives, rather than from
+// per-vertex tangent attributes.
+//
+// Every mesh in the engine — walls, floors, surface meshes, skinned models,
+// tessellated detail patches, scattered rock instances — shares one 5-float
+// [X,Y,Z,U,V] vertex record (see Geometry in geometry.go). Adding a tangent to
+// it would mean touching every builder, every buffer and every shadow pass for
+// something the fragment stage can recover exactly here: dp/du and dp/dv are
+// what a tangent frame *is*, and dFdx/dFdy of position and UV give them.
+//
+// The cost is one frame per fragment instead of one per vertex; the gain is
+// that a normal map works on every surface in the engine the day it lands,
+// including the procedurally displaced ones that have no authored UVs to hang
+// a tangent off.
+mat3 cotangentFrame(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2) {
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    // Scale both axes by the same factor so the frame stays orthonormal-ish
+    // rather than stretching the normal along whichever axis is denser.
+    float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+    return mat3(T * invmax, B * invmax, N);
+}
+
+// 5x5 PCF sample of a single cascade layer. Returns occlusion in 0..1, or -1.0
+// when the fragment falls outside this cascade's box — the caller then falls
+// through to a wider cascade rather than reporting the fragment as lit.
+float sampleCascade(sampler2DArrayShadow map, int matIdx, int layer, vec3 normal, vec3 lightDir) {
+    vec4 posLS = cascadeMatrix[matIdx] * vec4(fragWorldPos, 1.0);
+    vec3 projCoords = posLS.xyz / posLS.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0 ||
+        projCoords.z > 1.0) {
+        return -1.0;
+    }
+
+    // Quadratic slope-scaled bias — tighter than linear at seams. The base bias
+    // is per-cascade because each cascade normalizes the same world-space bias
+    // over its own depth range.
+    float base = cascadeBias[matIdx];
+    float cosTheta = abs(dot(normal, lightDir));
+    float bias = base * (1.0 - cosTheta) * (1.0 - cosTheta) + base * 0.05;
+    float currentDepth = projCoords.z;
+
+    // 5x5 PCF for softer edges. Every tap is itself bilinearly filtered by the
+    // comparison sampler, so the result is continuous across a texel rather
+    // than stepping from one whole texel to the next — which is what kept
+    // shadow edges on nearby geometry looking like a staircase of blocks, a
+    // cascade-0 texel being centimetres wide in the world but tens of pixels
+    // wide on screen when the surface is a couple of metres from the camera.
+    float ref = currentDepth - bias;
+    float lit = 0.0;
+    vec2 texelSize = 1.0 / vec2(textureSize(map, 0).xy);
+    for (int x = -2; x <= 2; x++) {
+        for (int y = -2; y <= 2; y++) {
+            lit += texture(map,
+                vec4(projCoords.xy + vec2(x, y) * texelSize, float(layer), ref));
+        }
+    }
+    return 1.0 - lit / 25.0;
+}
+
+// calcDirShadowIn is calcDirShadow against a given map, whose cascades for
+// this light start at layerBase (-1: none).
+float calcDirShadowIn(sampler2DArrayShadow map, int layerBase, int lightIdx, vec3 normal, vec3 lightDir) {
+    if (layerBase < 0) {
+        return 0.0;
+    }
+
+    int c = SHADOW_CASCADES;
+    for (int i = 0; i < SHADOW_CASCADES; i++) {
+        if (fragViewDepth <= cascadeSplit[i]) {
+            c = i;
+            break;
+        }
+    }
+    if (c >= SHADOW_CASCADES) {
+        return 0.0; // beyond ShadowMaxDistance — unshadowed
+    }
+
+    int matBase = lightIdx * SHADOW_CASCADES;
+    float shadow = sampleCascade(map, matBase + c, layerBase + c, normal, lightDir);
+    if (shadow < 0.0) {
+        // A fragment at the corner of a slice can sit just outside its own
+        // cascade's box; the next one out always contains it.
+        if (c + 1 < SHADOW_CASCADES) {
+            c += 1;
+            shadow = sampleCascade(map, matBase + c, layerBase + c, normal, lightDir);
+        }
+        if (shadow < 0.0) {
+            return 0.0;
+        }
+    }
+
+    // Cross-fade over the tail of this cascade so the jump in texel density
+    // reads as a softening rather than a seam.
+    float prev = (c == 0) ? 0.0 : cascadeSplit[c - 1];
+    float span = max(cascadeSplit[c] - prev, 1e-4);
+    float t = (fragViewDepth - prev) / span;
+    if (c + 1 < SHADOW_CASCADES && t > 1.0 - SHADOW_CASCADE_BLEND) {
+        float next = sampleCascade(map, matBase + c + 1, layerBase + c + 1, normal, lightDir);
+        if (next >= 0.0) {
+            shadow = mix(shadow, next, (t - (1.0 - SHADOW_CASCADE_BLEND)) / SHADOW_CASCADE_BLEND);
+        }
+    }
+
+    // Fade the shadow term out approaching the range limit, so the boundary
+    // isn't a hard line across the ground.
+    float maxDist = cascadeSplit[SHADOW_CASCADES - 1];
+    float fadeBegin = maxDist * (1.0 - SHADOW_FADE_FRACTION);
+    shadow *= 1.0 - clamp((fragViewDepth - fadeBegin) / max(maxDist - fadeBegin, 1e-4), 0.0, 1.0);
+
+    return shadow;
+}
+
+// Cascaded directional shadow lookup: pick the tightest cascade covering this
+// fragment, cross-fade into the next at the split, and fade out entirely as the
+// shadow range runs out.
+float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
+    return calcDirShadowIn(shadowMapArray, dirLightShadowLayer[lightIdx], lightIdx, normal, lightDir);
+}
+
+// Sample offsets for soft point light shadows (20 directions).
+const int NUM_POINT_SAMPLES = 20;
+const vec3 sampleOffsets[20] = vec3[](
+    vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1),
+    vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
+    vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
+    vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
+    vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
+);
+
+// Point light cubemap shadow sampling with PCF-like disk.
+float calcPointShadow(int lightIdx, vec3 fragPos) {
+    vec3 fragToLight = fragPos - pointLightPos[lightIdx];
+    float currentDist = length(fragToLight);
+    float farPlane = pointLightFarPlane[lightIdx];
+
+    // Disk radius scales with distance for consistent softness
+    float diskRadius = (1.0 + currentDist / farPlane) * 0.02;
+    float bias = 0.05;
+
+    float shadow = 0.0;
+    for (int i = 0; i < NUM_POINT_SAMPLES; i++) {
+        float closestDist = texture(pointShadowMap[lightIdx], fragToLight + sampleOffsets[i] * diskRadius).r;
+        closestDist *= farPlane; // stored as dist/farPlane, convert back
+        if (currentDist - bias > closestDist) {
+            shadow += 1.0;
+        }
+    }
+    shadow /= float(NUM_POINT_SAMPLES);
+
+    return shadow;
+}
+
+// dirLightContrib is directional light i's share of this fragment: wrapped
+// Lambert on the side facing the viewer (light_model.glsl), then its cascade
+// shadow and the clouds'. geoNormal is the unbumped normal the shadow bias
+// wants — see main.
+vec3 dirLightContrib(int i, vec3 normal, vec3 geoNormal) {
+    vec3 ldir = -normalize(dirLightDir[i]);
+    float diff = lightWrapTerm(dot(normal, ldir));
+    if (diff <= 0.0) {
+        return vec3(0.0); // facing away: no shadow lookup to pay for
+    }
+    vec3 contrib = dirLightColor[i] * dirLightBrightness[i] * diff;
+
+    if (dirLightCastShadows[i]) {
+        float shadow = calcDirShadow(i, geoNormal, ldir);
+        // Shadow strength: 0 = no darkening, 1 = full shadow
+        contrib *= (1.0 - shadow * dirLightShadowStrength[i]);
+    }
+    // The clouds' shadow, on top of the geometry's. Its own map, not a
+    // cascade: a cloud is a volume and casts a soft, partial shadow no depth
+    // map can hold. See cloud_shadow.glsl.
+    contrib *= cloudShadowFactor(i, fragWorldPos);
+    return contrib;
+}
+
+// pointLightContrib is point light i's share: wrapped Lambert, quadratic
+// falloff to nothing at its radius, then its cubemap shadow.
+vec3 pointLightContrib(int i, vec3 normal) {
+    vec3  toLight = pointLightPos[i] - fragWorldPos;
+    float dist    = length(toLight);
+    if (dist >= pointLightRadius[i]) {
+        return vec3(0.0);
+    }
+    float t           = 1.0 - (dist / pointLightRadius[i]);
+    float attenuation = t * t;
+    float diff        = lightWrapTerm(dot(normal, normalize(toLight)));
+    if (diff <= 0.0) {
+        return vec3(0.0);
+    }
+    vec3 contrib = pointLightColor[i] * pointLightBrightness[i] * diff * attenuation;
+
+    if (pointLightCastShadows[i]) {
+        float shadow = calcPointShadow(i, fragWorldPos);
+        contrib *= (1.0 - shadow * pointLightShadowStrength[i]);
+    }
+    return contrib;
+}
+
+void main() {
+    // Screen-space derivatives, taken once at the top of main and outside every
+    // branch: derivatives are only defined under uniform control flow, and
+    // gl_FrontFacing below is anything but.
+    vec3 dPdx = dFdx(fragWorldPos);
+    vec3 dPdy = dFdy(fragWorldPos);
+    vec2 dUVdx = dFdx(fragTexCoord);
+    vec2 dUVdy = dFdy(fragTexCoord);
+
+    // Flat facet normal from screen-space position derivatives. Correct for a
+    // flat surface and the fallback whenever no better normal is available.
+    //
+    // The cross product of two screen-space derivatives says nothing about the
+    // triangle's winding: window x cross window y always comes out facing the
+    // eye. So it is turned OUTWARD by the winding (away from the eye on a back
+    // face), which is the orientation the interpolated normals below arrive
+    // in and the one everything after this reads. Lighting is one-sided
+    // (light_model.glsl), so a facet normal facing the wrong way would light a
+    // surface from behind — which abs(N.L) used to hide.
+    vec3 faceNormal = normalize(cross(dPdx, dPdy));
+    faceNormal *= gl_FrontFacing ? 1.0 : -1.0;
+
+    vec3 normal;
+    if (isWater != 0) {
+        // Re-derive from the wave field; the facet normal would only recover the
+        // flat triangle and lose the swell entirely.
+        normal = waterNormal(fragWorldPos.xz);
+    } else if (smoothShading != 0 && dot(fragNormal, fragNormal) > 1e-12) {
+        // Interpolated across the triangle, so lighting varies continuously
+        // instead of stepping at every shared edge.
+        normal = normalize(fragNormal);
+    } else {
+        normal = faceNormal;
+    }
+
+    // The outward normal as the polygon itself declares it, kept before the
+    // back-face flip below: it is what normalColor paints an untextured face
+    // with, and a face has to keep one colour whichever side it is seen from —
+    // flipping it would make the inside of a hollowed room the photographic
+    // negative of its outside.
+    vec3 albedoNormal = normal;
+
+    // Flip normal for back faces so double-sided surfaces are lit correctly.
+    if (!gl_FrontFacing) {
+        normal = -normal;
+    }
+
+    // The shape of the surface, before any normal map perturbs it. The shadow
+    // lookups keep shading off this one: their slope-scaled bias describes how
+    // far the *geometry* is tilted away from the light, and feeding it a
+    // per-texel bumped normal would make the bias flicker texel to texel and
+    // stipple acne across an otherwise clean surface. Same reasoning as the
+    // flat-normal shadow term in biome_frag.glsl.
+    vec3 geoNormal = normal;
+
+    vec2 uv = fragTexCoord;
+    if (isWater != 0) {
+        // Two layers scrolling at different speeds/headings so the texture
+        // never reads as a rigid sheet sliding across the surface.
+        float t = time * waveSpeed;
+        uv += vec2(t * 0.03, t * 0.02);
+    }
+
+    vec4 texColor;
+    if (normalColor != 0) {
+        // No texture named, so there is nothing to sample and nothing to blend
+        // over: the normal is the albedo. Opaque, whatever texture object
+        // happens to be bound.
+        texColor = vec4(albedoNormal * 0.5 + 0.5, 1.0);
+    } else {
+        texColor = texture(tex, uv);
+        if (isWater != 0) {
+            vec2 uv2 = fragTexCoord * 1.7 - vec2(time * waveSpeed * 0.021, time * waveSpeed * 0.034);
+            texColor = mix(texColor, texture(tex, uv2), 0.5);
+        }
+
+        if (hasBlend != 0) {
+            vec4 blendColor = texture(blendTex, uv);
+            vec3 maskColor = texture(blendMask, uv).rgb;
+            float maskLum = dot(maskColor, vec3(0.299, 0.587, 0.114));
+            texColor = mix(texColor, blendColor, maskLum);
+        }
+    }
+
+    // The albedo tint, on the sampled texture rather than on the shaded result:
+    // a tint says what colour the surface IS, so it has to be in place before
+    // the lighting multiplies it — tinting afterwards would scale the light as
+    // well and turn a dark red decal into an unlit patch. Applied to the
+    // normalColor path too, so an untextured surface can still be tinted.
+    texColor.rgb *= vec3(1.0) + tintBias;
+
+    // Normal mapping, on everything but water — water derives its normal from
+    // the wave field, which is the whole point of that path, and a tangent
+    // frame built on a surface that is displacing under the fragment would not
+    // describe it anyway. Both conditions are uniforms, so the texture() call
+    // inside stays under uniform control flow.
+    if (hasNormalMap != 0 && isWater == 0) {
+        mat3 tbn = cotangentFrame(normal, dPdx, dPdy, dUVdx, dUVdy);
+        vec3 tangentNormal = texture(normalMap, uv).xyz * 2.0 - 1.0;
+        if (dot(tangentNormal, tangentNormal) > 1e-6) {
+            normal = normalize(tbn * tangentNormal);
+        }
+    }
+
+    vec3 lighting;
+
+    // A compiled level's static geometry had the static lights summed once,
+    // offline, and interpolates that answer instead — the light loops, the
+    // cascade selection and the shadow-map samples for every one of them are
+    // what that buys. The dynamic lights were left out of the bake, so they
+    // are the only ones still summed for it.
+    if (bakedLight != 0) {
+        // Clouds still move over a baked level, so their shadow is taken off
+        // the baked answer here — see CLOUD_SHADOW_BAKED_SHARE in
+        // cloud_shadow.glsl for why a share rather than the whole of it. Unless
+        // the sun the map follows is dynamic: then none of the baked answer is
+        // its light, and its own term below takes the shadow in full.
+        lighting = fragBakedLight.rgb;
+        // The baked sun, taken back off where something the bake never saw
+        // shadows it live: its unshadowed light here, times the share of it
+        // the bake kept, times how much of that the live-only map covers.
+        if (bakedSunLight >= 0 && fragBakedLight.w > 0.0) {
+            int s = bakedSunLight;
+            vec3 ldir = -normalize(dirLightDir[s]);
+            float diff = lightWrapTerm(dot(normal, ldir));
+            if (diff > 0.0) {
+                float live = calcDirShadowIn(shadowMapLive, 0, s, geoNormal, ldir);
+                vec3 sun = dirLightColor[s] * dirLightBrightness[s] * diff;
+                lighting = max(lighting - sun * fragBakedLight.w * live * dirLightShadowStrength[s], vec3(0.0));
+            }
+        }
+        if (dirLightDynamic[clamp(cloudShadowLight, 0, MAX_DIR_LIGHTS - 1)] == 0) {
+            lighting *= mix(1.0,
+                cloudShadowFactor(cloudShadowLight, fragWorldPos), CLOUD_SHADOW_BAKED_SHARE);
+        }
+        for (int i = 0; i < numDirLights; i++) {
+            if (dirLightDynamic[i] != 0) {
+                lighting += dirLightContrib(i, normal, geoNormal);
+            }
+        }
+        for (int i = 0; i < numPointLights; i++) {
+            if (pointLightDynamic[i] != 0) {
+                lighting += pointLightContrib(i, normal);
+            }
+        }
+    } else {
+        // Every light, static or dynamic, on anything that was not baked.
+        lighting = ambientAt(globalLightColor * globalLightBrightness, normal);
+        for (int i = 0; i < numDirLights; i++) {
+            lighting += dirLightContrib(i, normal, geoNormal);
+        }
+        for (int i = 0; i < numPointLights; i++) {
+            lighting += pointLightContrib(i, normal);
+        }
+    }
+
+    float finalAlpha = texColor.a * alpha;
+
+    if (alphaSharpen != 0) {
+        // Re-derive a crisp, roughly one-pixel-wide edge from the soft alpha
+        // ramp mip filtering leaves behind, and hand that to
+        // alpha-to-coverage (SetAlphaToCoverage, antialias.go) as the
+        // fraction of the pixel the cutout actually covers.
+        //
+        // Without this, mipmapping and cutouts fight each other: distant mip
+        // levels average a foliage texture's alpha down below the cutoff over
+        // more and more of the shape, so it thins and eventually dissolves —
+        // the classic regression from turning mipmaps on over alpha-tested
+        // art. Rescaling by fwidth is what makes the edge's *screen-space*
+        // width constant instead of its texture-space width: distance is
+        // divided back out, so the silhouette stays put and only the last
+        // pixel of it is partially covered.
+        //
+        // On a fully opaque texel fwidth is 0, the division saturates, and
+        // the clamp pins coverage at 1 — ordinary opaque geometry is
+        // untouched by this path, which is why it can stay on for the whole
+        // opaque pass rather than being switched per surface.
+        finalAlpha = clamp((finalAlpha - alphaCutoffLevel()) / max(fwidth(finalAlpha), 1e-5) + 0.5, 0.0, 1.0);
+    }
+
+    if (finalAlpha < 0.001) discard;
+
+    vec3 surface = unlit != 0 ? texColor.rgb : texColor.rgb * clamp(lighting, 0.0, 1.0);
+
+    if (isWater != 0) {
+        vec3 viewDir = normalize(camPos - fragWorldPos);
+
+        // Schlick fresnel: water is barely reflective looking straight down and
+        // near-mirror at grazing angles, which is what sells it as a surface.
+        float cosTheta = clamp(dot(normal, viewDir), 0.0, 1.0);
+        float fresnel  = reflectivity + (1.0 - reflectivity) * pow(1.0 - cosTheta, 5.0);
+
+        surface = mix(surface, reflectColor * clamp(lighting, 0.0, 1.0), fresnel);
+
+        // Blinn-Phong glint from each directional light — the moving specular
+        // highlight that reads as sun on water.
+        for (int i = 0; i < numDirLights; i++) {
+            vec3  ldir = -normalize(dirLightDir[i]);
+            vec3  halfVec = normalize(ldir + viewDir);
+            float spec = pow(max(dot(normal, halfVec), 0.0), 128.0);
+            surface += dirLightColor[i] * dirLightBrightness[i] * spec * fresnel;
+        }
+
+        // Grazing angles also read as more opaque, matching the reflection.
+        finalAlpha = clamp(finalAlpha + fresnel * (1.0 - finalAlpha) * 0.5, 0.0, 1.0);
+    }
+
+    if (surfaceBlend == 2) {
+        // A modulate decal is a MASK, not a surface. Three things follow, and
+        // all three are wrong if it is shaded like anything else here.
+        //
+        // It is never lit: the wall under it has already been lit, and lighting
+        // the mask as well would apply the room's light to that wall twice.
+        //
+        // Its alpha cannot be left to the framebuffer blend. The GL multiply
+        // blend can express `src * dst` and not `dst * mix(1, src, a)`, so a
+        // half-transparent WHITE texel would come out brighter than the wall it
+        // is supposed to leave alone. Folding the alpha toward white here is what
+        // makes a partly-faded mask fade instead of glowing — which is also what
+        // lets a decal's lifetime fade one out at all.
+        //
+        // And its fog fades it toward white rather than toward the fog colour,
+        // for the reason applyFogModulate gives.
+        surface = mix(vec3(1.0), texColor.rgb, finalAlpha);
+        surface = applyFogModulate(surface, fragWorldPos);
+        outputColor = vec4(surface, 1.0);
+        return;
+    }
+
+    // Distance fog, last: it acts on the shaded result, so a fogged surface
+    // loses its own lighting along with its colour rather than glowing through
+    // the fog. See fog.glsl, injected above this file's own #version line.
+    //
+    // An additive fragment takes the other form of the same answer: the
+    // framebuffer already holds the fog behind it, so mixing toward the fog
+    // colour would add the fog a second time and make a distant mark brighter
+    // than a near one.
+    surface = surfaceBlend == 1
+        ? applyFogAdditive(surface, fragWorldPos)
+        : applyFog(surface, fragWorldPos);
+
+    outputColor = vec4(surface, finalAlpha);
+}
+---
+14:39:24 [foundry] fragment shader compiled OK
+14:39:24 [foundry] dir shadow program linked OK (id=6)
+14:39:24 [foundry] cube shadow program linked OK (id=9)
+14:39:24 [foundry] dummy cubemap created (id=1)
+14:39:25 [foundry] shader program linked OK (id=3)
+14:39:25 [foundry] starting with blank level
+14:39:25 [foundry] level loaded: 0 chunk(s), 0 dir light(s), 0 point light(s)
+14:39:25 [foundry] uploading lights: global=1, directional=0, point=0
+14:39:25 [foundry] light uniforms uploaded
+14:39:25 [foundry] startup complete — entering game loop
+14:39:25 [foundry] uploading lights: global=1, directional=1, point=0
+14:39:25 [foundry] light uniforms uploaded
+14:39:25 [foundry] WARNING: sdl.GLSetSwapInterval(0): That operation is not supported — vsync is not ours to set on this driver
+14:39:26 [foundry] cascade shadow array allocated (tex=12, fbo=1, 2048x2048 x 3 layers)
+14:39:48 [foundry] bench: report written to /tmp/claude-1000/-home-jfcarter2358-personal-code-main-foundry/1e28956e-d69a-4122-9161-0ebc6a87044f/scratchpad/bench_final_on.txt
+bench zz_terrain_preview_smooth (yaml) — load 0.0s, 1600x900, MSAA 8x
+
+=== pose -40,3.7,-38,0.82,-0.12
+frame  avg 20.85 ms (48.0 fps)  p50 20.72  p95 22.39  max 25.77
+scene  static 0  brushes 0 in 0 calls  chunks 1  scenery 0  sprites 0 (0 particles, 0 draws)  volume marches 0.0
+point shadows re-rendered 0.00 of 0 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   4.20      6.82      7.97      9.57
+  update                                0.35      0.63      0.18      0.19
+    player input                        0.00      0.00      0.01      0.02
+    player & vehicles                   0.12      0.28      0.01      0.02
+    ai                                  0.00      0.00      0.01      0.01
+    entity update                       0.00      0.00      0.01      0.01
+    frames & waypoints                  0.01      0.02      0.01      0.01
+    emitters                            0.00      0.00      0.01      0.01
+    effects                             0.00      0.00      0.01      0.01
+    decals                              0.00      0.00      0.01      0.02
+    sound                               0.00      0.03      0.01      0.01
+    sky                                 0.00      0.00      0.01      0.02
+    ui tick                             0.00      0.00      0.01      0.01
+    scripts                             0.04      0.14      0.01      0.01
+    debug stats                         0.13      0.23      0.01      0.02
+    drains                              0.00      0.02      0.01      0.01
+  shadows: sun                          1.37      2.36      0.88      1.88
+    compiled                            0.00      0.00      0.02      0.03
+    chunks                              0.23      0.43      0.24      0.97
+    entities                            0.00      0.00      0.02      0.05
+    scenery                             0.00      0.00      0.02      0.05
+    sprites                             0.00      0.00      0.02      0.39
+    scatter                             0.00      0.00      0.05      0.83
+    foliage                             1.04      1.76      0.24      0.68
+  shadows: clouds                       0.00      0.00      0.01      0.01
+  shadows: point                        0.00      0.00      0.01      0.02
+  clear                                 0.16      1.14      0.06      0.07
+  world: compiled                       0.00      0.00      0.01      0.02
+  world: chunks                         0.00      0.01      0.01      0.01
+  terrain                               0.10      0.25      1.66      3.18
+  entities                              0.00      0.00      0.01      0.02
+  scenery                               0.00      0.00      0.01      0.03
+  foliage                               2.10      2.98      4.81      6.32
+  scatter                               0.00      0.00      0.01      0.01
+  sprites: cutout                       0.00      0.00      0.01      0.01
+  decals                                0.00      0.00      0.01      0.01
+  sky                                   0.02      0.05      0.06      0.39
+  transparent                           0.00      0.00      0.01      0.92
+  volumetrics                           0.00      0.00      0.01      0.50
+  sprites: blended                      0.00      0.00      0.01      0.34
+  viewmodel                             0.00      0.00      0.01      0.03
+  ui                                    0.00      0.00      0.01      0.03
+swap                                   16.54     19.01     12.91     17.85
+
+=== pose -45,15.7,-45,0.78,-0.4
+frame  avg 18.02 ms (55.5 fps)  p50 17.96  p95 19.11  max 19.65
+scene  static 0  brushes 0 in 0 calls  chunks 1  scenery 0  sprites 0 (0 particles, 0 draws)  volume marches 0.0
+point shadows re-rendered 0.00 of 0 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   3.71      4.87      5.91      7.65
+  update                                0.35      0.62      0.18      0.19
+    player input                        0.00      0.00      0.01      0.02
+    player & vehicles                   0.12      0.36      0.01      0.01
+    ai                                  0.00      0.00      0.01      0.01
+    entity update                       0.00      0.00      0.01      0.01
+    frames & waypoints                  0.01      0.02      0.01      0.01
+    emitters                            0.00      0.00      0.01      0.01
+    effects                             0.00      0.00      0.01      0.01
+    decals                              0.00      0.00      0.01      0.01
+    sound                               0.00      0.01      0.01      0.02
+    sky                                 0.00      0.00      0.01      0.01
+    ui tick                             0.00      0.00      0.01      0.02
+    scripts                             0.03      0.11      0.01      0.02
+    debug stats                         0.12      0.24      0.01      0.01
+    drains                              0.00      0.01      0.01      0.01
+  shadows: sun                          1.17      1.89      0.87      2.00
+    compiled                            0.00      0.00      0.02      0.03
+    chunks                              0.22      0.47      0.24      0.93
+    entities                            0.00      0.00      0.02      0.93
+    scenery                             0.00      0.00      0.02      0.36
+    sprites                             0.00      0.02      0.02      0.37
+    scatter                             0.00      0.00      0.03      0.53
+    foliage                             0.86      1.42      0.28      1.27
+  shadows: clouds                       0.00      0.01      0.01      0.02
+  shadows: point                        0.00      0.00      0.01      0.02
+  clear                                 0.18      1.25      0.06      0.06
+  world: compiled                       0.00      0.00      0.01      0.01
+  world: chunks                         0.00      0.02      0.01      0.02
+  terrain                               0.10      0.24      2.62      3.97
+  entities                              0.00      0.00      0.01      0.03
+  scenery                               0.00      0.00      0.01      0.02
+  foliage                               1.79      2.67      1.89      3.00
+  scatter                               0.00      0.01      0.01      0.03
+  sprites: cutout                       0.00      0.00      0.01      0.01
+  decals                                0.00      0.00      0.01      0.01
+  sky                                   0.02      0.07      0.04      0.05
+  transparent                           0.00      0.00      0.01      0.03
+  volumetrics                           0.00      0.04      0.01      0.05
+  sprites: blended                      0.00      0.00      0.01      0.03
+  viewmodel                             0.00      0.00      0.01      0.03
+  ui                                    0.00      0.00      0.01      0.97
+swap                                   14.16     15.71     12.12     13.82
+
+=== pose 10,4.7,-40,1.1,-0.15
+frame  avg 19.94 ms (50.1 fps)  p50 19.86  p95 21.33  max 24.28
+scene  static 0  brushes 0 in 0 calls  chunks 1  scenery 0  sprites 0 (0 particles, 0 draws)  volume marches 0.0
+point shadows re-rendered 0.00 of 0 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   3.85      5.67      7.22      8.73
+  update                                0.37      0.86      0.18      0.19
+    player input                        0.00      0.05      0.01      0.01
+    player & vehicles                   0.12      0.24      0.01      0.02
+    ai                                  0.00      0.00      0.01      0.01
+    entity update                       0.00      0.00      0.01      0.02
+    frames & waypoints                  0.01      0.02      0.01      0.02
+    emitters                            0.00      0.00      0.01      0.02
+    effects                             0.00      0.00      0.01      0.02
+    decals                              0.00      0.00      0.01      0.02
+    sound                               0.00      0.01      0.01      0.01
+    sky                                 0.00      0.00      0.01      0.01
+    ui tick                             0.00      0.00      0.01      0.01
+    scripts                             0.05      0.14      0.01      0.02
+    debug stats                         0.13      0.60      0.01      0.01
+    drains                              0.00      0.01      0.01      0.01
+  shadows: sun                          1.79      3.12      1.07      1.95
+    compiled                            0.00      0.00      0.02      0.03
+    chunks                              0.23      0.37      0.25      0.27
+    entities                            0.00      0.00      0.02      0.03
+    scenery                             0.00      0.00      0.03      1.00
+    sprites                             0.00      0.03      0.07      1.05
+    scatter                             0.00      0.00      0.02      0.54
+    foliage                             1.45      2.64      0.41      1.31
+  shadows: clouds                       0.00      0.02      0.01      0.02
+  shadows: point                        0.00      0.00      0.01      0.01
+  clear                                 0.10      0.58      0.07      0.85
+  world: compiled                       0.00      0.00      0.01      0.54
+  world: chunks                         0.00      0.03      0.01      0.55
+  terrain                               0.09      0.19      1.64      2.85
+  entities                              0.00      0.00      0.01      0.02
+  scenery                               0.00      0.00      0.01      0.37
+  foliage                               1.37      2.13      3.88      5.45
+  scatter                               0.00      0.01      0.01      0.35
+  sprites: cutout                       0.00      0.00      0.01      0.36
+  decals                                0.00      0.00      0.01      0.03
+  sky                                   0.02      0.06      0.06      0.65
+  transparent                           0.00      0.00      0.01      0.02
+  volumetrics                           0.00      0.01      0.01      0.03
+  sprites: blended                      0.00      0.00      0.01      0.02
+  viewmodel                             0.00      0.00      0.01      0.02
+  ui                                    0.00      0.00      0.01      0.01
+swap                                   15.95     18.40     12.74     16.74
+
+=== pose -4,3,-6,0.9,0
+frame  avg 19.90 ms (50.2 fps)  p50 19.88  p95 21.22  max 21.76
+scene  static 0  brushes 0 in 0 calls  chunks 1  scenery 0  sprites 0 (0 particles, 0 draws)  volume marches 0.0
+point shadows re-rendered 0.00 of 0 a frame
+section                              cpu avg   cpu max   gpu avg   gpu max
+frame                                   3.69      4.67      7.35      8.78
+  update                                0.35      0.48      0.18      0.19
+    player input                        0.00      0.09      0.01      0.01
+    player & vehicles                   0.12      0.25      0.01      0.01
+    ai                                  0.00      0.00      0.01      0.02
+    entity update                       0.00      0.01      0.01      0.01
+    frames & waypoints                  0.01      0.05      0.01      0.01
+    emitters                            0.00      0.00      0.01      0.01
+    effects                             0.00      0.00      0.01      0.01
+    decals                              0.00      0.00      0.01      0.01
+    sound                               0.00      0.01      0.01      0.01
+    sky                                 0.00      0.00      0.01      0.02
+    ui tick                             0.00      0.00      0.01      0.02
+    scripts                             0.04      0.11      0.01      0.01
+    debug stats                         0.13      0.21      0.01      0.01
+    drains                              0.01      0.04      0.01      0.01
+  shadows: sun                          1.87      2.67      1.06      2.09
+    compiled                            0.00      0.00      0.02      0.03
+    chunks                              0.24      0.52      0.26      0.28
+    entities                            0.00      0.00      0.02      0.38
+    scenery                             0.00      0.00      0.07      0.97
+    sprites                             0.00      0.01      0.02      0.03
+    scatter                             0.00      0.00      0.02      0.03
+    foliage                             1.53      2.32      0.43      1.32
+  shadows: clouds                       0.00      0.00      0.01      0.02
+  shadows: point                        0.00      0.01      0.01      0.02
+  clear                                 0.10      0.15      0.06      0.39
+  world: compiled                       0.00      0.00      0.02      0.55
+  world: chunks                         0.00      0.02      0.03      0.37
+  terrain                               0.09      0.16      1.40      2.47
+  entities                              0.00      0.00      0.01      0.37
+  scenery                               0.00      0.07      0.01      0.03
+  foliage                               1.17      1.85      4.17      5.75
+  scatter                               0.00      0.01      0.01      0.02
+  sprites: cutout                       0.00      0.00      0.01      0.02
+  decals                                0.00      0.00      0.01      0.02
+  sky                                   0.02      0.04      0.06      0.07
+  transparent                           0.00      0.02      0.01      0.01
+  volumetrics                           0.00      0.00      0.01      0.03
+  sprites: blended                      0.00      0.00      0.01      0.03
+  viewmodel                             0.00      0.00      0.01      0.37
+  ui                                    0.00      0.00      0.01      0.79
+swap                                   16.09     17.80     12.48     14.49

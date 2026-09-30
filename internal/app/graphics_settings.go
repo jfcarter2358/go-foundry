@@ -2,8 +2,9 @@ package app
 
 // graphics_settings.go — the player's graphics settings, on disk.
 //
-// controls_settings.go's arrangement, for the one graphics choice a game's
-// settings screen offers so far: Smooth Lighting (gfx.SmoothLighting). The
+// controls_settings.go's arrangement, for the graphics choices a game's
+// settings screen can offer: Smooth Lighting (gfx.SmoothLighting) and the
+// foliage distance and shadows (gfx.FoliageDistance, gfx.FoliageShadows). The
 // file is graphics.yaml in the writable state directory, a missing file means
 // defaults, a malformed one is logged and ignored, and a script's change is
 // saved once it has settled (saveSettingsWhenSettled).
@@ -22,7 +23,9 @@ const graphicsFileName = "graphics.yaml"
 // rawGraphics is the on-disk shape; pointers so a field missing from an older
 // file keeps its default.
 type rawGraphics struct {
-	SmoothLighting *bool `yaml:"smooth_lighting,omitempty"`
+	SmoothLighting  *bool    `yaml:"smooth_lighting,omitempty"`
+	FoliageDistance *float32 `yaml:"foliage_distance,omitempty"`
+	FoliageShadows  *bool    `yaml:"foliage_shadows,omitempty"`
 }
 
 // loadGraphicsSettings reads the saved graphics settings over the defaults.
@@ -46,12 +49,20 @@ func applyGraphicsSettings(data []byte) error {
 	if raw.SmoothLighting != nil {
 		gfx.SmoothLighting = *raw.SmoothLighting
 	}
+	if raw.FoliageDistance != nil {
+		gfx.FoliageDistance = min(max(*raw.FoliageDistance, gfx.FoliageDistanceMin), gfx.FoliageDistanceMax)
+	}
+	if raw.FoliageShadows != nil {
+		gfx.FoliageShadows = *raw.FoliageShadows
+	}
 	return nil
 }
 
 func marshalGraphicsSettings() ([]byte, error) {
 	smooth := gfx.SmoothLighting
-	return yaml.Marshal(rawGraphics{SmoothLighting: &smooth})
+	dist := gfx.FoliageDistance
+	shadows := gfx.FoliageShadows
+	return yaml.Marshal(rawGraphics{SmoothLighting: &smooth, FoliageDistance: &dist, FoliageShadows: &shadows})
 }
 
 var graphicsSave settledSave

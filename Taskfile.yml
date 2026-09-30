@@ -126,6 +126,11 @@ tasks:
     cmds:
       - ./dist/foundry.exe
 
+  icon:
+    desc: Redraw the editor icon (packaging/icon, internal/editoricon; needs mingw windres).
+    cmds:
+      - go run ./cmd/genicon
+
   test:
     desc: Run the tests.
     cmds:

@@ -1,0 +1,103 @@
+# pine.fbio — a terrain biome: what grows where it is painted, and the ground under it.
+# The format is docs/guide/30-terrain.md's "Biome files"; the editor reloads this on save.
+label: Pine Forest
+ground:
+  texture: ground_pine
+  tint: [0.33, 0.26, 0.15]
+  cover: 0.9
+species:
+- shape: conifer
+  spacing: 5
+  where: [ground]
+  slope: [0, 45]
+  scale: [0.7, 1.35]
+  colors: [[0.12, 0.24, 0.12], [0.2, 0.32, 0.15]]
+  upright: 1
+  light: [0.4, 1]
+  cluster: 0.2
+  cluster_size: 18
+  edge: -0.4
+  clearance: 8
+  color_noise: 0.25
+- shape: leaf_litter
+  variants: [1]
+  spacing: 0.35
+  where: [ground]
+  slope: [0, 45]
+  scale: [0.8, 1.4]
+  colors: [[0.48, 0.32, 0.16], [0.62, 0.44, 0.22]]
+  light: [0, 0.85]
+  cluster: 0.2
+  cluster_size: 3
+- shape: fern
+  spacing: 1.8
+  where: [ground]
+  slope: [0, 50]
+  scale: [0.6, 1]
+  colors: [[0.22, 0.38, 0.12], [0.34, 0.46, 0.15]]
+  upright: 0.6
+  light: [0, 0.7]
+  cluster: 0.7
+  cluster_size: 5
+  edge: 0.8
+  moisture: 0.4
+- shape: grass
+  spacing: 0.6
+  where: [ground]
+  slope: [0, 45]
+  scale: [0.6, 0.95]
+  colors: [[0.4, 0.44, 0.2], [0.52, 0.5, 0.26]]
+  upright: 0.6
+  light: [0.6, 1]
+  cluster: 0.6
+  cluster_size: 4
+  color_noise: 0.3
+- shape: rock
+  spacing: 5
+  where: [ground]
+  slope: [0, 80]
+  scale: [0.3, 1]
+  colors: [[0.38, 0.4, 0.33], [0.52, 0.53, 0.46]]
+  sink: 0.4
+  cluster: 0.55
+  cluster_size: 9
+  edge: 1.5
+- shape: shrub
+  variants: [0, 1]
+  spacing: 6
+  where: [ground]
+  slope: [0, 40]
+  scale: [0.4, 0.75]
+  colors: [[0.18, 0.3, 0.12], [0.26, 0.36, 0.15]]
+  upright: 0.9
+  light: [0.3, 1]
+  cluster: 0.5
+  cluster_size: 6
+  edge: 0.6
+- shape: mushroom
+  spacing: 5
+  where: [ground]
+  slope: [0, 35]
+  scale: [0.6, 1.1]
+  colors: [[0.85, 0.82, 0.74], [0.92, 0.88, 0.8]]
+  accents: [[0.6, 0.4, 0.25], [0.85, 0.8, 0.7], [0.75, 0.2, 0.15]]
+  light: [0, 0.6]
+  cluster: 0.85
+  cluster_size: 3
+- shape: deadwood
+  spacing: 10
+  where: [ground]
+  slope: [0, 30]
+  scale: [0.8, 1.4]
+  colors: [[0.36, 0.28, 0.2], [0.48, 0.4, 0.3]]
+  sink: 0.1
+  cluster: 0.3
+  cluster_size: 10
+- shape: moss
+  spacing: 0.6
+  where: [wall, ceiling]
+  scale: [0.6, 1.2]
+  colors: [[0.22, 0.34, 0.1], [0.36, 0.46, 0.14]]
+  cluster: 0.5
+  cluster_size: 3
+  moisture: 0.3

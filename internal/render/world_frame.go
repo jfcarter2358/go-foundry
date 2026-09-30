@@ -143,8 +143,9 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// And the brush batches with the meshes, before the first pass
 		// reads them. Does nothing unless some brush mesh changed.
 		SyncChunkBatches(lvl)
-		// And the terrain meshes, for the same reason: a sculpt stroke's rows
-		// are uploaded before the shadow pass draws them.
+		// And the terrain meshes and their foliage, for the same reason: a
+		// mined block's sections are uploaded before the shadow pass draws
+		// them.
 		SyncTerrainMeshes(lvl)
 
 		// TODO(brush migration, Phase 5): the Water-kind biome sector's
@@ -363,8 +364,8 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		}
 		ProfileEnd()
 
-		// Chunks' heightfield ground (terrain.go), in the opaque pass and
-		// ahead of the scatter so grass lands on its depth.
+		// Chunks' block terrain (terrain.go), in the opaque pass and ahead
+		// of the foliage and scatter so what grows lands on its depth.
 		ProfileBegin("terrain")
 		if !o.skip("terrain") {
 			RenderTerrain(lvl, projView, &frustum, shadowFrame)
@@ -416,6 +417,15 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		}
 
 		if !editorWire {
+			// --- Terrain foliage (world/foliage.go) ---
+			// Solid and depth-written like the scatter, with cutout cards
+			// antialiased by the alpha-to-coverage switched on above.
+			ProfileBegin("foliage")
+			if !o.skip("foliage") {
+				RenderFoliage(lvl, projView, &frustum, shadowFrame)
+			}
+			ProfileEnd()
+
 			// --- Scatter volumes (GPU grass / flowers / rock) ---
 			// After opaque geometry but before the transparent pass:
 			// blades and rocks are solid and depth-written, so anything

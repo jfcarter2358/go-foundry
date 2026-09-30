@@ -52,6 +52,7 @@ var textExts = map[string]bool{
 	".fai":  true, // AI decision trees, which name the animations and effects
 	//                their nodes play, and the tags they send to
 	".fmat":  true, // materials, which name the textures their effects use
+	".fbio":  true, // terrain biomes, which name their ground textures
 	".fmdl":  true, // models, which name the skeleton they are rigged to
 	".fskl":  true, // skeletons, whose clips name nothing but are scanned for consistency
 	".flang": true,

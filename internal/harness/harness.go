@@ -18,6 +18,7 @@ package harness
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -169,6 +170,13 @@ func Open(opts Options) (*Session, error) {
 		gfx.Textures = map[string]uint32{}
 	}
 	gfx.TextureNames = gfx.ScanTextures(fileutil.TexturesDir())
+	// The project's biome files, as app.Run loads them: a terrain painted
+	// with one grows and looks as its file says, not as the built-in does.
+	if _, errs := world.LoadBiomes(world.BiomesDir()); len(errs) > 0 {
+		for _, err := range errs {
+			log.Printf("WARNING: biome: %v", err)
+		}
+	}
 
 	s := &Session{
 		opts:     opts,

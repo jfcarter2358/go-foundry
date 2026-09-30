@@ -144,7 +144,7 @@ var alwaysDirs = []string{"shaders", "fonts"}
 // entities/shuttle.yaml, not from any level. The token scan follows that name
 // like any other, and the chunk file is itself YAML, so the textures inside it
 // come along transitively.
-var contentDirs = []string{"levels", "chunks", "ui", "scripts", "entities", "ai", "models", "skeletons", "textures", "materials", "particles", "sounds", "video"}
+var contentDirs = []string{"levels", "chunks", "ui", "scripts", "entities", "ai", "models", "skeletons", "textures", "materials", "biomes", "particles", "sounds", "video"}
 
 type packer struct {
 	src      string

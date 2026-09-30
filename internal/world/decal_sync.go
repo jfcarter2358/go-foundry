@@ -128,7 +128,7 @@ func decalFingerprint(d *Decal) uint64 {
 }
 
 // decalWorldGeneration moves whenever anything a decal projects onto is
-// edited: a brush mesh, or a terrain (a sculpt reshapes the ground a bullet
+// edited: a brush mesh, or a terrain (a mined block reshapes the ground a bullet
 // hole lies on as surely as a vertex drag reshapes a wall).
 func decalWorldGeneration() uint64 {
 	return BrushMeshGeneration()*1099511628211 ^ TerrainGeneration()

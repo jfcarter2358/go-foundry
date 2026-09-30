@@ -288,8 +288,10 @@ A slider that declares a binding shows the level's number and cannot be
 dragged, so a settings slider is left unbound: its script copies the setting in
 on `:shown:` (`widget(@self, "sens").prop.value = @level.prop.mouse_sensitivity`)
 and writes it back on `:change:`. The engine persists the mouse settings, the
-key bindings, the volume (`@level.prop.master_volume`) and Smooth Lighting
-(`@level.prop.smooth_lighting`, a toggle, saved to `graphics.yaml`) itself — see
+key bindings, the volume (`@level.prop.master_volume`), Smooth Lighting
+(`@level.prop.smooth_lighting`, a toggle) and the foliage settings
+(`@level.prop.foliage_distance`, 0.25 to 2, and `@level.prop.foliage_shadows`,
+a toggle — both saved to `graphics.yaml`) itself — see
 [Entities](11-entities.md#mouse-look-and-the-players-settings) — so the screen
 needs no Save button, and leaving with Escape keeps what was set.
 

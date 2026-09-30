@@ -186,12 +186,13 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 	// the ground has left it: a rock brush sitting on a hillside pushes a
 	// body off itself, not back into the slope.
 	if chunk.Terrain != nil {
-		var f bool
-		out, f = pushOutOfTerrain(chunk.Terrain, out, radius, halfHeight)
+		var f, c bool
+		out, f, c = pushOutOfTerrain(chunk.Terrain, out, radius, halfHeight)
 		if f {
 			hitFloor = true
 			bestFloorCos = 1
 		}
+		hitCeiling = hitCeiling || c
 		body.C = out
 	}
 	boxes := brushBoxesFor(chunk)

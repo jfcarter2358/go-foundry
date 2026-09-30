@@ -159,7 +159,7 @@ func pointShadowSignatures(level *world.Level, pl world.PointLight, cubemap uint
 	for ci := range level.Chunks {
 		ch := &level.Chunks[ci]
 		// Terrain casts from compiled chunks too (see renderSceneShadowLayers),
-		// and a sculpt moves no brush mesh, so its generation is the edit.
+		// and mining moves no brush mesh, so its generation is the edit.
 		if ch.Terrain != nil && ch.IsEnabled() {
 			if cmin, cmax := ch.WorldBounds(); AABBInFrustum(box, cmin, cmax) {
 				h.u64(uint64(ci))

@@ -217,11 +217,16 @@ Armed from `Add... > Brush` or the view's right-click menu.
 
 | | |
 | --- | --- |
-| Hold left button | brush the ground under the cursor; one undo step per stroke |
-| `Shift`+hold | the opposite mode for this stroke: lower/raise, fill/hole |
-| `1` – `7` | Raise, Lower, Smooth, Flatten, Paint, Hole, Fill |
-| `[` / `]` | radius down / up |
-| `-` / `=` | strength down / up |
+| Left click | mine, place or re-texture a block, or paint a biome; one undo step per stroke |
+| Hold left button | keep going: a block at a time, or brushing biome paint |
+| `Shift`+click | the opposite mode for this stroke: place/mine, erase/paint |
+| `1` – `6` | Mine, Place, Material, Paint Biome, Erase Biome, Volume |
+| Volume: drag a face | size the box a block at a time |
+| Volume: `Enter` / `Shift`+`Enter` | fill the box with the material / carve it out (also `Backspace`, `Delete`) |
+| Volume: `Esc` | drop the box |
+| `[` / `]` | reach down / up (0 is one block or face) |
+| `,` / `.` | previous / next material (biome while painting) |
+| `N` | show the terrain as blocks or as a smooth surface |
 | `T` / `Esc` | put the tool away |
 
 ## Model editor

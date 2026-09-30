@@ -6,6 +6,10 @@ cattails or moss, planted on whatever geometry is underneath it.
 It is decoration. It never collides, and the player walks on the brush faces
 under it.
 
+On [terrain](30-terrain.md), paint biomes instead: they grow on walls and
+under overhangs as well as on open ground, and choose what grows where from
+the shape of the land.
+
 ## Making one
 
 1. `Add... > Volume > Place By Clicking`, and click where the vegetation goes.

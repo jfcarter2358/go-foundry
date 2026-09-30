@@ -36,4 +36,5 @@ func InitWorldPasses() {
 	SkyInit()
 	VolumetricInit()
 	TerrainInit()
+	FoliageInit()
 }

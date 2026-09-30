@@ -1,32 +1,34 @@
 package editor
 
-// editor_terrain.go — sculpting, hole-cutting and texture painting on a
-// chunk's heightfield ground (world/terrain.go).
+// editor_terrain.go — mining, building and painting a chunk's block terrain
+// (world/terrain.go).
 //
 // # The tool
 //
-// T (or the toolbar's Terrain button) arms it. While armed, the left button
-// paints with the brush wherever the cursor meets a terrain, every frame it is
-// held — so raising is a rate, and holding still over a spot keeps building
-// it — and the brush's reach is traced on the ground as a ring. Its keys only
-// mean something while it is armed, the scenery brush's terms:
+// T (or the toolbar's Terrain button) arms it. While armed, the cursor picks
+// the face of the terrain under it — in block view or smooth view alike, a
+// face names the block behind it — and the target is outlined: the block
+// that would be mined or re-textured, the empty cell that would be filled, or
+// the reach of the biome brush. Its keys only mean something while it is
+// armed, the scenery brush's terms:
 //
-//	1..7  Raise, Lower, Smooth, Flatten, Paint, Hole, Fill
-//	[ ]   radius down / up
-//	- =   strength down / up
-//	Shift inverts the mode for one stroke (raise<->lower, hole<->fill)
+//	1..6  Mine, Place, Material, Paint Biome, Erase Biome, Volume
+//	[ ]   reach down / up (0 is one block or face)
+//	, .   previous / next material (or biome, while painting)
+//	N     switch the terrain between blocks and the smooth surface
+//	Shift inverts the mode for one stroke (mine<->place, paint<->erase)
 //	Esc   put the tool away
+//
+// Mine, Place and Material act once on the click and then repeat on a timer
+// while the button is held, a block at a time, the way digging and building
+// feel in a block game; Paint and Erase brush every frame. Volume lays out a
+// box of blocks to fill or carve in one go (editor_terrain_volume.go).
 //
 // # One stroke, one undo step
 //
 // The level is snapshotted when the button goes down and the entry kept only
 // if the stroke changed something, the texture editor's rule. A stroke locks
-// to the terrain it started on: dragging off the edge of one ground onto a
-// neighbouring chunk's does not start painting that one halfway through.
-//
-// The grid is written in place and the renderer re-uploads the rows the stroke
-// touched (Terrain.TouchRect); collision, rays and the nav signature read the
-// same arrays, so walking the level mid-sculpt stands on what is drawn.
+// to the terrain it started on.
 
 import (
 	"fmt"
@@ -45,15 +47,15 @@ import (
 // terrainToolState is the tool's settings and what it is doing this frame.
 type terrainToolState struct {
 	Active   bool
-	Mode     terrainBrushMode
-	Radius   float32 // world units
-	Strength float32 // 0..1
-	Hardness float32 // 0..1
-	Layer    int     // Paint's layer
+	Mode     terrainEditMode
+	Radius   int
+	Material uint8 // 1..4
+	Biome    uint8 // palette slot, counting from 1
 
 	// hover is where the cursor meets a terrain this frame.
 	hoverValid bool
 	hoverChunk int
+	hoverFace  int32
 	hoverPoint mgl32.Vec3 // world
 	hoverLocal mgl32.Vec3 // in the hovered chunk's space
 
@@ -61,20 +63,22 @@ type terrainToolState struct {
 	stroking      bool
 	strokeChunk   int
 	strokeTerrain *world.Terrain
-	strokeMode    terrainBrushMode
+	strokeMode    terrainEditMode
 	strokeChanged bool
 	// strokePushed is whether the stroke's undo entry really went on the
 	// stack — EditorPushUndo declines during a play session, and popping
 	// then would throw away somebody else's entry.
-	strokePushed  bool
-	flattenTarget float32 // local height Flatten pulls toward
+	strokePushed bool
+	// repeatIn counts down to the next repeat of a block mode.
+	repeatIn float32
 }
 
-var terrainTool = terrainToolState{Mode: terrainRaise, Radius: 4, Strength: 0.5, Hardness: 0.3}
+var terrainTool = terrainToolState{Mode: terrainMine, Material: 1, Biome: 1}
 
 const (
-	terrainMinRadius = 0.25
-	terrainMaxRadius = 64
+	terrainMaxRadius   = 12
+	terrainRepeatDelay = 0.3  // before the first repeat, seconds
+	terrainRepeatEvery = 0.12 // between repeats after that
 )
 
 // editorArmTerrainTool switches the tool on, putting every other armed tool
@@ -90,12 +94,13 @@ func editorArmTerrainTool() {
 		editorSetStatus("Terrain tool — no chunk has terrain yet: select a chunk and use Terrain > Add Terrain")
 		return
 	}
-	editorSetStatus("Terrain: %s — hold the left button to paint, 1-7 change mode, Esc to stop", terrainTool.Mode)
+	editorSetStatus("Terrain: %s — click to use, 1-6 change mode, N blocks/smooth, Esc to stop", terrainTool.Mode)
 }
 
 // editorDisarmTerrainTool puts the tool away, finishing any stroke.
 func editorDisarmTerrainTool() {
 	editorTerrainEndStroke()
+	editorTerrainVolumeCancel()
 	terrainTool.Active = false
 	terrainTool.hoverValid = false
 }
@@ -130,22 +135,28 @@ func editorTerrainHandleKey(scancode sdl.Scancode) bool {
 	if !terrainTool.Active {
 		return false
 	}
+	if editorTerrainVolumeHandleKey(scancode) {
+		return true
+	}
 	switch scancode {
-	case sdl.SCANCODE_1, sdl.SCANCODE_2, sdl.SCANCODE_3, sdl.SCANCODE_4,
-		sdl.SCANCODE_5, sdl.SCANCODE_6, sdl.SCANCODE_7:
-		editorSetTerrainMode(terrainBrushModes[int(scancode-sdl.SCANCODE_1)])
+	case sdl.SCANCODE_1, sdl.SCANCODE_2, sdl.SCANCODE_3, sdl.SCANCODE_4, sdl.SCANCODE_5, sdl.SCANCODE_6:
+		editorSetTerrainMode(terrainEditModes[int(scancode-sdl.SCANCODE_1)])
 	case sdl.SCANCODE_LEFTBRACKET:
-		terrainTool.Radius = clampf(terrainTool.Radius/1.25, terrainMinRadius, terrainMaxRadius)
-		editorSetStatus("Terrain radius %.2f", terrainTool.Radius)
+		terrainTool.Radius = max(terrainTool.Radius-1, 0)
+		editorSetStatus("Terrain reach %d", terrainTool.Radius)
 	case sdl.SCANCODE_RIGHTBRACKET:
-		terrainTool.Radius = clampf(terrainTool.Radius*1.25, terrainMinRadius, terrainMaxRadius)
-		editorSetStatus("Terrain radius %.2f", terrainTool.Radius)
-	case sdl.SCANCODE_MINUS:
-		terrainTool.Strength = clampf(terrainTool.Strength-0.1, 0.05, 1)
-		editorSetStatus("Terrain strength %.2f", terrainTool.Strength)
-	case sdl.SCANCODE_EQUALS:
-		terrainTool.Strength = clampf(terrainTool.Strength+0.1, 0.05, 1)
-		editorSetStatus("Terrain strength %.2f", terrainTool.Strength)
+		terrainTool.Radius = min(terrainTool.Radius+1, terrainMaxRadius)
+		editorSetStatus("Terrain reach %d", terrainTool.Radius)
+	case sdl.SCANCODE_COMMA, sdl.SCANCODE_PERIOD:
+		step := 1
+		if scancode == sdl.SCANCODE_COMMA {
+			step = -1
+		}
+		editorTerrainCycle(step)
+	case sdl.SCANCODE_N:
+		if ch := editorTerrainPanelChunk(); ch != nil {
+			editorToggleTerrainSmooth(ch)
+		}
 	case sdl.SCANCODE_ESCAPE:
 		editorDisarmTerrainTool()
 		editorSetStatus("Terrain tool off")
@@ -155,19 +166,54 @@ func editorTerrainHandleKey(scancode sdl.Scancode) bool {
 	return true
 }
 
-func editorSetTerrainMode(m terrainBrushMode) {
+// editorTerrainCycle steps the material, or the biome while painting.
+func editorTerrainCycle(step int) {
+	ch := editorTerrainPanelChunk()
+	if terrainTool.Mode == terrainPaint || terrainTool.Mode == terrainErase {
+		n := 0
+		if ch != nil {
+			n = len(ch.Terrain.Biomes)
+		}
+		if n == 0 {
+			editorSetStatus("No biomes yet — add one in the chunk's Terrain group")
+			return
+		}
+		terrainTool.Biome = uint8((int(terrainTool.Biome)-1+step+n)%n + 1)
+		editorSetStatus("Biome %d: %s", terrainTool.Biome, ch.Terrain.Biomes[terrainTool.Biome-1].Def().Label)
+		return
+	}
+	terrainTool.Material = uint8((int(terrainTool.Material)-1+step+world.TerrainLayerCount)%world.TerrainLayerCount + 1)
+	name := ""
+	if ch != nil {
+		name = ch.Terrain.Layers[terrainTool.Material-1]
+	}
+	editorSetStatus("Material %d %s", terrainTool.Material, name)
+}
+
+func editorSetTerrainMode(m terrainEditMode) {
+	if m != terrainVolume {
+		editorTerrainVolumeCancel()
+	}
 	terrainTool.Mode = m
 	editorSetStatus("Terrain: %s", m)
 }
 
-func clampf(v, lo, hi float32) float32 {
-	if v < lo {
-		return lo
+// editorToggleTerrainSmooth switches ch's terrain between its blocks and its
+// smooth surface, as one undo step.
+func editorToggleTerrainSmooth(ch *world.Chunk) {
+	t := ch.Terrain
+	if t == nil {
+		return
 	}
-	if v > hi {
-		return hi
+	EditorPushUndo()
+	t.Smooth = !t.Smooth
+	t.Touch()
+	editorChunkGeometryChanged(ch)
+	if t.Smooth {
+		editorSetStatus("%s: smooth surface", ch.ID)
+	} else {
+		editorSetStatus("%s: blocks", ch.ID)
 	}
-	return v
 }
 
 // editorTerrainHandleMouseDown starts a stroke. It consumes every left click
@@ -176,6 +222,10 @@ func clampf(v, lo, hi float32) float32 {
 func editorTerrainHandleMouseDown() bool {
 	if !terrainTool.Active {
 		return false
+	}
+	if terrainTool.Mode == terrainVolume {
+		editorTerrainVolumeMouseDown()
+		return true
 	}
 	lvl := Editor.level
 	if lvl == nil || !terrainTool.hoverValid || terrainTool.hoverChunk >= len(lvl.Chunks) {
@@ -189,11 +239,9 @@ func editorTerrainHandleMouseDown() bool {
 	if sdl.GetModState()&sdl.KMOD_SHIFT != 0 {
 		mode = mode.inverse()
 	}
-	if mode == terrainPaint {
-		if l := terrainTool.Layer; l < 0 || l >= world.TerrainLayerCount || ch.Terrain.Layers[l] == "" {
-			editorSetStatus("Layer %d of %s has no texture — pick one in the Terrain Tool panel first", terrainTool.Layer+1, ch.ID)
-			return true
-		}
+	if mode == terrainPaint && (terrainTool.Biome == 0 || int(terrainTool.Biome) > len(ch.Terrain.Biomes)) {
+		editorSetStatus("%s has no biome %d — add one in its Terrain group first", ch.ID, terrainTool.Biome)
+		return true
 	}
 	// The conditions EditorPushUndo pushes under; the stack's length cannot
 	// say, since a full stack drops its oldest entry and stays the same size.
@@ -204,10 +252,8 @@ func editorTerrainHandleMouseDown() bool {
 	terrainTool.strokeTerrain = ch.Terrain
 	terrainTool.strokeMode = mode
 	terrainTool.strokeChanged = false
-	terrainTool.flattenTarget = terrainTool.hoverLocal.Y()
-	// A click with no drag still does something: one frame's worth, at least,
-	// and the whole of it for the modes that are not rates.
-	editorTerrainApply(1.0 / 30)
+	terrainTool.repeatIn = terrainRepeatDelay
+	editorTerrainApply()
 	return true
 }
 
@@ -260,26 +306,34 @@ func editorTerrainFrame(dt float32) {
 		if terrainTool.stroking {
 			only = terrainTool.strokeChunk
 		}
-		if ci, t, ok := terrainRayHit(Editor.level, origin, dir, only); ok {
+		if ci, hit, ok := terrainRayHit(Editor.level, origin, dir, only); ok {
 			ch := &Editor.level.Chunks[ci]
-			p := origin.Add(dir.Mul(t))
-			inv := ch.ModelMatrix().Inv()
+			p := origin.Add(dir.Mul(hit.T))
 			terrainTool.hoverValid = true
 			terrainTool.hoverChunk = ci
+			terrainTool.hoverFace = hit.Face
 			terrainTool.hoverPoint = p
-			terrainTool.hoverLocal = inv.Mul4x1(p.Vec4(1)).Vec3()
+			terrainTool.hoverLocal = ch.ModelMatrix().Inv().Mul4x1(p.Vec4(1)).Vec3()
 		}
 	}
-	if terrainTool.stroking {
-		if dt > 0.1 {
-			dt = 0.1 // a hitch must not dump a second of raising at once
-		}
-		editorTerrainApply(dt)
+	if terrainTool.Mode == terrainVolume {
+		editorTerrainVolumeFrame(mx, my, overPanel)
 	}
+	if !terrainTool.stroking {
+		return
+	}
+	if terrainTool.strokeMode.repeats() {
+		terrainTool.repeatIn -= min(dt, 0.1)
+		if terrainTool.repeatIn > 0 {
+			return
+		}
+		terrainTool.repeatIn = terrainRepeatEvery
+	}
+	editorTerrainApply()
 }
 
-// editorTerrainApply applies one frame of the stroke at the hover point.
-func editorTerrainApply(dt float32) {
+// editorTerrainApply applies the stroke once at the hover point.
+func editorTerrainApply() {
 	lvl := Editor.level
 	if !terrainTool.stroking || lvl == nil || terrainTool.strokeChunk >= len(lvl.Chunks) {
 		return
@@ -294,27 +348,22 @@ func editorTerrainApply(dt float32) {
 	if !terrainTool.hoverValid || terrainTool.hoverChunk != terrainTool.strokeChunk {
 		return
 	}
-	scale := ch.EffectiveScale() * ch.EffectiveFrameScale()
-	b := terrainBrush{
+	e := terrainEdit{
 		mode:     terrainTool.strokeMode,
-		cx:       terrainTool.hoverLocal.X(),
-		cz:       terrainTool.hoverLocal.Z(),
-		radius:   terrainTool.Radius / scale,
-		strength: terrainTool.Strength,
-		hardness: terrainTool.Hardness,
-		layer:    terrainTool.Layer,
-		target:   terrainTool.flattenTarget,
-		dt:       dt,
+		face:     terrainTool.hoverFace,
+		point:    terrainTool.hoverLocal,
+		radius:   terrainTool.Radius,
+		material: terrainTool.Material,
+		biome:    terrainTool.Biome,
 	}
-	if changed, x0, z0, x1, z1 := applyTerrainBrush(t, b); changed {
-		t.TouchRect(x0, z0, x1, z1)
+	if applyTerrainEdit(t, e) {
 		terrainTool.strokeChanged = true
 	}
 }
 
-// terrainRayHit is the nearest enabled terrain the world-space ray meets, and
-// the distance along it. only >= 0 restricts it to that chunk.
-func terrainRayHit(lvl *world.Level, origin, dir mgl32.Vec3, only int) (chunk int, t float32, ok bool) {
+// terrainRayHit is the nearest enabled terrain the world-space ray meets.
+// only >= 0 restricts it to that chunk.
+func terrainRayHit(lvl *world.Level, origin, dir mgl32.Vec3, only int) (chunk int, hit world.TerrainHit, ok bool) {
 	best := float32(math.MaxFloat32)
 	for ci := range lvl.Chunks {
 		if only >= 0 && ci != only {
@@ -327,37 +376,39 @@ func terrainRayHit(lvl *world.Level, origin, dir mgl32.Vec3, only int) (chunk in
 		inv := ch.ModelMatrix().Inv()
 		lo := inv.Mul4x1(origin.Vec4(1)).Vec3()
 		ld := inv.Mul4x1(dir.Vec4(0)).Vec3()
-		if d, _, hit := ch.Terrain.Raycast(lo, ld, best); hit && d < best {
-			best, chunk, ok = d, ci, true
+		if h, got := ch.Terrain.Raycast(lo, ld, best); got && h.T < best {
+			best, chunk, hit, ok = h.T, ci, h, true
 		}
 	}
-	return chunk, best, ok
+	return chunk, hit, ok
 }
 
-// terrainModeColor is the ring's colour for each mode, so what the next click
-// does is readable without looking at the panel.
-func terrainModeColor(m terrainBrushMode) mgl32.Vec3 {
+// terrainModeColor is the outline's colour for each mode, so what the next
+// click does is readable without looking at the panel.
+func terrainModeColor(m terrainEditMode) mgl32.Vec3 {
 	switch m {
-	case terrainRaise:
+	case terrainMine:
+		return mgl32.Vec3{1, 0.35, 0.25}
+	case terrainPlace:
 		return mgl32.Vec3{0.3, 1, 0.4}
-	case terrainLower:
-		return mgl32.Vec3{1, 0.5, 0.2}
-	case terrainSmooth:
+	case terrainRetexture:
 		return mgl32.Vec3{0.4, 0.8, 1}
-	case terrainFlatten:
-		return mgl32.Vec3{1, 1, 0.4}
 	case terrainPaint:
 		return mgl32.Vec3{1, 0.4, 1}
-	case terrainHole, terrainFill:
-		return mgl32.Vec3{1, 0.25, 0.25}
+	case terrainErase:
+		return mgl32.Vec3{1, 1, 0.4}
 	}
 	return mgl32.Vec3{1, 1, 1}
 }
 
-// drawTerrainBrushRing traces the brush's reach on the ground: an outer ring
-// at the radius and an inner one where the falloff starts, each point dropped
-// onto the terrain so the ring hugs the hills it is about to reshape.
+// drawTerrainBrushRing outlines what the next click acts on: the block (or
+// the sphere of them) for the block modes, the reach on the surface for the
+// biome modes.
 func drawTerrainBrushRing() {
+	if terrainTool.Active && Editor.level != nil && terrainTool.Mode == terrainVolume {
+		drawTerrainVolume()
+		return
+	}
 	if !terrainTool.Active || !terrainTool.hoverValid || Editor.level == nil ||
 		terrainTool.hoverChunk >= len(Editor.level.Chunks) {
 		return
@@ -375,36 +426,73 @@ func drawTerrainBrushRing() {
 	}
 	col := terrainModeColor(mode)
 	model := ch.ModelMatrix()
-	scale := ch.EffectiveScale() * ch.EffectiveFrameScale()
-	c := terrainTool.hoverLocal
-	lift := 0.05 / scale
-	ring := func(r float32, col mgl32.Vec3) {
-		const segs = 48
-		var prev mgl32.Vec3
-		for i := 0; i <= segs; i++ {
-			a := float64(i) * 2 * math.Pi / segs
-			x := c.X() + r*float32(math.Cos(a))
-			z := c.Z() + r*float32(math.Sin(a))
-			y := c.Y()
-			if h, _, ok := t.HeightAt(x, z); ok {
-				y = h
+	w := func(p mgl32.Vec3) mgl32.Vec3 { return model.Mul4x1(p.Vec4(1)).Vec3() }
+	bs := t.BlockSize
+	r := terrainTool.Radius
+
+	if mode.repeats() {
+		x, y, z := terrainEditTarget(t, terrainEdit{mode: mode, face: terrainTool.hoverFace})
+		lo := t.BlockMin(x, y, z)
+		pad := bs * 0.02
+		if r > 0 {
+			lo = lo.Sub(mgl32.Vec3{float32(r) * bs, float32(r) * bs, float32(r) * bs})
+		}
+		size := bs * float32(2*r+1)
+		drawWireBox(lo.Sub(mgl32.Vec3{pad, pad, pad}), lo.Add(mgl32.Vec3{size + pad, size + pad, size + pad}), w, col)
+		return
+	}
+	// The biome brush: the face under the cursor, and a ring of the reach
+	// lying on the face's plane.
+	if f, ok := t.Face(terrainTool.hoverFace); ok {
+		for i := 0; i < 4; i++ {
+			gizmo.GizmoLine(w(f.Corners[i]), w(f.Corners[(i+1)%4]), col)
+		}
+		if r > 0 {
+			_, n := f.PointAt(0.5, 0.5)
+			a := n.Cross(mgl32.Vec3{0, 1, 0})
+			if a.Len() < 0.1 {
+				a = n.Cross(mgl32.Vec3{1, 0, 0})
 			}
-			p := model.Mul4x1(mgl32.Vec4{x, y + lift, z, 1}).Vec3()
-			if i > 0 {
-				gizmo.GizmoLine(prev, p, col)
+			a = a.Normalize()
+			b := n.Cross(a)
+			rad := (float32(r) + 0.5) * bs
+			c := terrainTool.hoverLocal.Add(n.Mul(0.03 * bs))
+			const segs = 40
+			var prev mgl32.Vec3
+			for i := 0; i <= segs; i++ {
+				ang := float64(i) * 2 * math.Pi / segs
+				p := c.Add(a.Mul(rad * float32(math.Cos(ang)))).Add(b.Mul(rad * float32(math.Sin(ang))))
+				if i > 0 {
+					gizmo.GizmoLine(w(prev), w(p), col)
+				}
+				prev = p
 			}
-			prev = p
 		}
 	}
-	r := terrainTool.Radius / scale
-	ring(r, col)
-	if terrainTool.Hardness > 0.02 && terrainTool.Hardness < 0.98 {
-		ring(r*terrainTool.Hardness, col.Mul(0.6))
+}
+
+// drawWireBox outlines the chunk-space box [lo, hi], carried out by w.
+func drawWireBox(lo, hi mgl32.Vec3, w func(mgl32.Vec3) mgl32.Vec3, col mgl32.Vec3) {
+	c := func(i int) mgl32.Vec3 {
+		p := lo
+		if i&1 != 0 {
+			p[0] = hi[0]
+		}
+		if i&2 != 0 {
+			p[1] = hi[1]
+		}
+		if i&4 != 0 {
+			p[2] = hi[2]
+		}
+		return w(p)
 	}
-	// A short stalk at the centre, so the exact point is visible on flat
-	// ground where the ring alone floats.
-	up := model.Mul4x1(mgl32.Vec4{c.X(), c.Y() + 0.6/scale, c.Z(), 1}).Vec3()
-	gizmo.GizmoLine(terrainTool.hoverPoint, up, col)
+	for i := 0; i < 8; i++ {
+		for _, bit := range [3]int{1, 2, 4} {
+			if i&bit == 0 {
+				gizmo.GizmoLine(c(i), c(i|bit), col)
+			}
+		}
+	}
 }
 
 // ---------- panel ----------
@@ -419,55 +507,74 @@ func editorTerrainToolSection() {
 	if !imgui.CollapsingHeaderV("Terrain Tool##terraintoolhdr", imgui.TreeNodeFlagsDefaultOpen) {
 		return
 	}
-	for i, m := range terrainBrushModes {
-		if i%4 != 0 {
+	for i, m := range terrainEditModes {
+		if i%3 != 0 {
 			imgui.SameLine()
 		}
 		if editorActiveToggleButton(fmt.Sprintf("%s [%d]##terrainmode%d", m, i+1, i), terrainTool.Mode == m) {
 			editorSetTerrainMode(m)
 		}
 	}
-	editorDragFloatStep("Radius##terrainradius", &terrainTool.Radius, terrainMinRadius, terrainMaxRadius, "%.2f", 0.25)
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("[ and ] change it from the viewport.")
+	reach := int32(terrainTool.Radius)
+	if imgui.SliderInt("Reach##terrainreach", &reach, 0, terrainMaxRadius) {
+		terrainTool.Radius = int(reach)
 	}
-	editorDragFloatStep("Strength##terrainstrength", &terrainTool.Strength, 0.05, 1, "%.2f", 0.05)
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("- and = change it from the viewport.")
+		imgui.SetTooltip("How many blocks around the target the tool reaches; 0 is the one block or face.\n[ and ] change it from the viewport.")
 	}
-	editorDragFloatStep("Hardness##terrainhardness", &terrainTool.Hardness, 0, 1, "%.2f", 0.05)
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("How much of the radius works at full strength before it fades out.")
-	}
+	editorTerrainVolumeSection()
 
 	ch := editorTerrainPanelChunk()
 	if ch == nil {
 		editorTextMutedWrapped("No terrain under the cursor or selected. Select a chunk and use its Terrain group to add one.")
 		return
 	}
-	imgui.Text("Paint layer (" + ch.ID + ")")
+	t := ch.Terrain
+	if editorActiveToggleButton("Blocks##terrainviewblocks", !t.Smooth) && t.Smooth {
+		editorToggleTerrainSmooth(ch)
+	}
+	imgui.SameLine()
+	if editorActiveToggleButton("Smooth [N]##terrainviewsmooth", t.Smooth) && !t.Smooth {
+		editorToggleTerrainSmooth(ch)
+	}
+
+	imgui.Text("Material (" + ch.ID + ")  , .")
 	for l := 0; l < world.TerrainLayerCount; l++ {
-		name := ch.Terrain.Layers[l]
-		label := fmt.Sprintf("%d: %s##terrainlayer%d", l+1, name, l)
+		name := t.Layers[l]
 		if name == "" {
-			label = fmt.Sprintf("%d: (none)##terrainlayer%d", l+1, l)
+			name = "(none)"
 		}
-		if imgui.RadioButton(label, terrainTool.Layer == l) {
-			terrainTool.Layer = l
+		if imgui.RadioButton(fmt.Sprintf("%d: %s##terrainmat%d", l+1, name, l), int(terrainTool.Material) == l+1) {
+			terrainTool.Material = uint8(l + 1)
+			if terrainTool.Mode != terrainPlace && terrainTool.Mode != terrainRetexture && terrainTool.Mode != terrainVolume {
+				editorSetTerrainMode(terrainPlace)
+			}
+		}
+	}
+	imgui.Text("Biome")
+	if len(t.Biomes) == 0 {
+		editorTextMutedWrapped("No biomes yet — add one in the chunk's Terrain group.")
+	}
+	for i := range t.Biomes {
+		if imgui.RadioButton(fmt.Sprintf("%d: %s##terrainbiome%d", i+1, t.Biomes[i].Def().Label, i), int(terrainTool.Biome) == i+1) {
+			terrainTool.Biome = uint8(i + 1)
 			if terrainTool.Mode != terrainPaint {
 				editorSetTerrainMode(terrainPaint)
 			}
 		}
 	}
-	editorTerrainLayerCombos(ch)
 	if terrainTool.hoverValid {
-		editorTextMuted(fmt.Sprintf("Cursor: %.2f, %.2f, %.2f", terrainTool.hoverPoint.X(),
-			terrainTool.hoverPoint.Y(), terrainTool.hoverPoint.Z()))
+		x, y, z, d := t.FaceBlock(terrainTool.hoverFace)
+		editorTextMuted(fmt.Sprintf("Block %d,%d,%d  face %s", x, y, z, terrainFaceName(d)))
 	}
 }
 
+func terrainFaceName(d int) string {
+	return [...]string{"+X", "-X", "top", "bottom", "+Z", "-Z"}[d]
+}
+
 // editorTerrainPanelChunk is the terrain the tool panel describes: the one
-// under the cursor, or else the selected chunk's.
+// being stroked, else the selected chunk's, else the one under the cursor.
 func editorTerrainPanelChunk() *world.Chunk {
 	lvl := Editor.level
 	if lvl == nil {
@@ -489,63 +596,155 @@ func editorTerrainPanelChunk() *world.Chunk {
 	return nil
 }
 
-// editorTerrainLayerCombos is the four layer texture pickers.
+// editorTerrainLayerCombos is the four material texture pickers.
 func editorTerrainLayerCombos(ch *world.Chunk) {
 	t := ch.Terrain
 	for l := 0; l < world.TerrainLayerCount; l++ {
 		name := t.Layers[l]
-		if textureCombo(fmt.Sprintf("Layer %d##terraintex%d", l+1, l), &name, true) {
+		if textureCombo(fmt.Sprintf("Material %d##terraintex%d", l+1, l), &name, true) {
 			EditorPushUndo()
 			t.Layers[l] = name
 			t.Touch()
 		}
-		if l == 0 && imgui.IsItemHovered() {
-			imgui.SetTooltip("Layer 1 is what unpainted ground shows.")
-		}
 	}
 }
 
-// terrainNewCells, terrainNewCellSize are the Add Terrain form's values,
-// kept between frames.
+// terrainDefaultLayers are the textures a new terrain's materials start as,
+// where the project has them.
+var terrainDefaultLayers = [world.TerrainLayerCount]string{"grass", "dirt", "rock", "sand"}
+
+// The Add Terrain / Regenerate form's values, kept between frames.
 var (
-	terrainNewCellsX   int32   = 64
-	terrainNewCellsZ   int32   = 64
-	terrainNewCellSize float32 = 1
-	terrainResizeX     int32
-	terrainResizeZ     int32
-	terrainResizeFor   *world.Terrain
+	terrainNewSize      = [3]int32{64, 32, 64}
+	terrainNewBlockSize float32 = 1
+	terrainFill                 = world.TerrainFill{Height: 10, Hills: 5, HillSize: 22, Top: 1, Under: 2, Deep: 3, UnderDepth: 3}
+	terrainFillBiome            = "meadow"
+	terrainAddPreset            = "meadow"
+	terrainResize       [3]int32
+	terrainResizeFor    *world.Terrain
 )
 
+// editorTerrainFillForm is the ground-shape fields shared by Add Terrain and
+// Regenerate.
+func editorTerrainFillForm(maxHeight int) {
+	h := int32(terrainFill.Height)
+	if imgui.SliderInt("Ground height##terrainfillh", &h, 1, int32(maxHeight)) {
+		terrainFill.Height = int(h)
+	}
+	editorDragFloatStep("Hills##terrainfillhills", &terrainFill.Hills, 0, float32(maxHeight), "%.1f", 0.5)
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("How many blocks the ground rises and falls; 0 is flat.")
+	}
+	editorDragFloatStep("Hill size##terrainfillsize", &terrainFill.HillSize, 2, 256, "%.0f", 1)
+	seed := int32(terrainFill.Seed)
+	if imgui.DragInt("Seed##terrainfillseed", &seed) {
+		terrainFill.Seed = uint32(seed)
+	}
+	if imgui.BeginCombo("Grow##terrainfillbiome", terrainPresetLabel(terrainFillBiome)) {
+		if imgui.SelectableV("(bare ground)##terrainfillnone", terrainFillBiome == "", 0, imgui.Vec2{}) {
+			terrainFillBiome = ""
+		}
+		for _, name := range world.FoliagePresetNames() {
+			if imgui.SelectableV(terrainPresetLabel(name)+"##terrainfill"+name, terrainFillBiome == name, 0, imgui.Vec2{}) {
+				terrainFillBiome = name
+			}
+		}
+		imgui.EndCombo()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("A biome painted over the whole top of the ground as it is made.")
+	}
+}
+
+func terrainPresetLabel(name string) string {
+	if name == "" {
+		return "(bare ground)"
+	}
+	if p := world.FoliagePresetByName(name); p != nil {
+		return p.Label
+	}
+	return name
+}
+
+// editorGenerateTerrain fills t from the form, painting its biome over the
+// top if one is chosen (adding it to the palette if it is not there yet).
+func editorGenerateTerrain(t *world.Terrain) {
+	f := terrainFill
+	f.Height = min(f.Height, t.SizeY)
+	f.Biome = 0
+	if terrainFillBiome != "" {
+		for i := range t.Biomes {
+			if t.Biomes[i].Preset == terrainFillBiome {
+				f.Biome = uint8(i + 1)
+			}
+		}
+		if f.Biome == 0 && len(t.Biomes) < world.TerrainMaxBiomes {
+			t.Biomes = append(t.Biomes, world.TerrainBiome{Preset: terrainFillBiome})
+			f.Biome = uint8(len(t.Biomes))
+		}
+	}
+	t.Generate(f)
+}
+
 // editorChunkTerrain is the chunk properties' Terrain group: add a terrain,
-// or set up and resize the one the chunk has.
+// or set up the one the chunk has.
 func editorChunkTerrain(ch *world.Chunk) {
 	t := ch.Terrain
 	if t == nil {
-		editorTextMutedWrapped("Open ground, sculpted and painted with the Terrain tool [T] rather than built from brushes.")
-		imgui.DragIntV("Cells X##terrainnewx", &terrainNewCellsX, 1, 1, world.TerrainMaxCells, "%d", 0)
-		imgui.DragIntV("Cells Z##terrainnewz", &terrainNewCellsZ, 1, 1, world.TerrainMaxCells, "%d", 0)
-		editorDragFloatStep("Cell size##terrainnewsize", &terrainNewCellSize, 0.125, 16, "%.3f", 0.25)
-		w := float32(terrainNewCellsX) * terrainNewCellSize
-		d := float32(terrainNewCellsZ) * terrainNewCellSize
+		editorTextMutedWrapped("Ground built from blocks: mine it, build on it, show it as blocks or as a smooth surface, and paint biomes on it that grow their own plants. Worked with the Terrain tool [T].")
+		imgui.DragInt3V("Size (blocks)##terrainnewsize", &terrainNewSize, 1, 1, world.TerrainMaxSize, "%d", 0)
+		editorDragFloatStep("Block size##terrainnewbs", &terrainNewBlockSize, 0.125, 16, "%.3f", 0.25)
+		editorTerrainFillForm(int(terrainNewSize[1]))
+		w := float32(terrainNewSize[0]) * terrainNewBlockSize
+		d := float32(terrainNewSize[2]) * terrainNewBlockSize
 		editorTextMuted(fmt.Sprintf("%.1f x %.1f units, centred on the chunk's origin", w, d))
 		if imgui.Button("Add Terrain##terrainadd") {
 			EditorPushUndo()
-			ch.Terrain = world.NewTerrain(mgl32.Vec3{-w / 2, 0, -d / 2}, terrainNewCellSize,
-				int(terrainNewCellsX), int(terrainNewCellsZ))
-			if _, ok := gfx.TextureNames["grass"]; ok {
-				ch.Terrain.Layers[0] = "grass"
-				_ = gfx.EnsureTextureLoaded("grass")
+			sz := [3]int{int(terrainNewSize[0]), int(terrainNewSize[1]), int(terrainNewSize[2])}
+			top := float32(min(terrainFill.Height, sz[1])) * terrainNewBlockSize
+			t := world.NewTerrain(mgl32.Vec3{-w / 2, -top, -d / 2}, terrainNewBlockSize, sz[0], sz[1], sz[2])
+			for l, name := range terrainDefaultLayers {
+				if _, ok := gfx.TextureNames[name]; ok {
+					t.Layers[l] = name
+					_ = gfx.EnsureTextureLoaded(name)
+				}
 			}
+			editorGenerateTerrain(t)
+			ch.Terrain = t
 			editorChunkGeometryChanged(ch)
 			editorArmTerrainTool()
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("The ground's top lands level with the chunk's origin.")
 		}
 		return
 	}
 
-	editorTextMuted(fmt.Sprintf("%d x %d cells of %.3g (%.1f x %.1f units)", t.CellsX, t.CellsZ, t.CellSize,
-		float32(t.CellsX)*t.CellSize, float32(t.CellsZ)*t.CellSize))
-	if editorActiveToggleButton("Sculpt & Paint [T]##terrainarm", terrainTool.Active) {
+	editorTextMuted(fmt.Sprintf("%d x %d x %d blocks of %.3g", t.SizeX, t.SizeY, t.SizeZ, t.BlockSize))
+	if editorActiveToggleButton("Blocks##chunkterrainblocks", !t.Smooth) && t.Smooth {
+		editorToggleTerrainSmooth(ch)
+	}
+	imgui.SameLine()
+	if editorActiveToggleButton("Smooth##chunkterrainsmooth", t.Smooth) && !t.Smooth {
+		editorToggleTerrainSmooth(ch)
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Draw (and collide with) the blocks as a smooth surface: a dual-contoured\nsurface net over the same grid. Mining and building still work block by block.")
+	}
+	imgui.SameLine()
+	if editorActiveToggleButton("Edit [T]##terrainarm", terrainTool.Active) {
 		editorToggleTerrainTool()
+	}
+	if t.Smooth {
+		sm := t.EffectiveSmoothing()
+		if editorDragFloatStep("Smoothing##terrainsmoothing", &sm, world.TerrainSmoothingMin, world.TerrainSmoothingMax, "%.2f", 0.1) {
+			t.Smoothing = sm
+			t.Touch()
+			editorChunkGeometryChanged(ch)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("How widely the smooth surface blends the blocks, in blocks.\nHigher rolls gentler hills — steps further apart — into one slope;\nlower keeps more of the blocks' shape. Cliffs, tunnels and ledges survive either way.")
+		}
 	}
 
 	origin := [3]float32{t.Origin.X(), t.Origin.Y(), t.Origin.Z()}
@@ -555,11 +754,11 @@ func editorChunkTerrain(ch *world.Chunk) {
 		editorChunkGeometryChanged(ch)
 	}
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Where the grid's first corner sits in the chunk; heights are measured up from its Y.")
+		imgui.SetTooltip("Where the grid's first corner (its lowest X, Y and Z) sits in the chunk.")
 	}
-	size := t.CellSize
-	if editorDragFloatStep("Cell size##terraincellsize", &size, 0.125, 16, "%.3f", 0.125) && size > 0 {
-		t.CellSize = size
+	size := t.BlockSize
+	if editorDragFloatStep("Block size##terrainblocksize", &size, 0.125, 16, "%.3f", 0.125) && size > 0 {
+		t.BlockSize = size
 		t.Touch()
 		editorChunkGeometryChanged(ch)
 	}
@@ -569,24 +768,46 @@ func editorChunkTerrain(ch *world.Chunk) {
 		t.Touch()
 	}
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Units of ground one repeat of a layer's texture covers.")
+		imgui.SetTooltip("Units of ground one repeat of a material's texture covers.")
 	}
 	editorTerrainLayerCombos(ch)
 
-	if terrainResizeFor != t {
-		terrainResizeFor, terrainResizeX, terrainResizeZ = t, int32(t.CellsX), int32(t.CellsZ)
+	imgui.Separator()
+	editorTerrainBiomes(ch)
+
+	imgui.Separator()
+	if imgui.TreeNodeV("Regenerate##terrainregen", 0) {
+		editorTerrainFillForm(t.SizeY)
+		if imgui.Button("Regenerate Ground##terrainregenbtn") {
+			EditorPushUndo()
+			editorTerrainEndStroke()
+			editorGenerateTerrain(t)
+			editorChunkGeometryChanged(ch)
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Replaces every block and all the painting. Ctrl+Z brings them back.")
+		}
+		imgui.TreePop()
 	}
-	imgui.DragIntV("Resize X##terrainrx", &terrainResizeX, 1, 1, world.TerrainMaxCells, "%d", 0)
-	imgui.DragIntV("Resize Z##terrainrz", &terrainResizeZ, 1, 1, world.TerrainMaxCells, "%d", 0)
-	imguibackend.EditorPushDisabled(int(terrainResizeX) == t.CellsX && int(terrainResizeZ) == t.CellsZ)
-	if imgui.Button("Apply Resize##terrainresize") {
-		EditorPushUndo()
-		t.Resize(int(terrainResizeX), int(terrainResizeZ))
-		editorChunkGeometryChanged(ch)
-	}
-	imguibackend.EditorPopDisabled()
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Grows or crops the grid from its far edges; the first corner stays put.")
+	if imgui.TreeNodeV("Resize##terrainresizenode", 0) {
+		if terrainResizeFor != t {
+			terrainResizeFor = t
+			terrainResize = [3]int32{int32(t.SizeX), int32(t.SizeY), int32(t.SizeZ)}
+		}
+		imgui.DragInt3V("Size##terrainresize", &terrainResize, 1, 1, world.TerrainMaxSize, "%d", 0)
+		same := int(terrainResize[0]) == t.SizeX && int(terrainResize[1]) == t.SizeY && int(terrainResize[2]) == t.SizeZ
+		imguibackend.EditorPushDisabled(same)
+		if imgui.Button("Apply Resize##terrainresizebtn") {
+			EditorPushUndo()
+			editorTerrainEndStroke()
+			t.Resize(int(terrainResize[0]), int(terrainResize[1]), int(terrainResize[2]))
+			editorChunkGeometryChanged(ch)
+		}
+		imguibackend.EditorPopDisabled()
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Grows or crops the grid from its far sides; the first corner stays put.")
+		}
+		imgui.TreePop()
 	}
 
 	if imgui.Button("Remove Terrain##terrainremove") {
@@ -594,6 +815,118 @@ func editorChunkTerrain(ch *world.Chunk) {
 		editorTerrainEndStroke()
 		ch.Terrain = nil
 		editorChunkGeometryChanged(ch)
+	}
+}
+
+// editorTerrainBiomes is the Terrain group's biome palette: what can be
+// painted, and how thickly and in what colours each grows.
+func editorTerrainBiomes(ch *world.Chunk) {
+	t := ch.Terrain
+	imgui.Text("Biomes")
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Paint these onto the terrain's faces with the tool's Paint Biome mode [4].\nWhat grows where — grass on open slopes, ferns in the shade, moss and vines\non cliffs, stones at a cliff's foot — is worked out from the blocks.")
+	}
+	for _, name := range biomeFileErrors() {
+		imgui.PushStyleColor(imgui.StyleColorText, imgui.Vec4{X: 1, Y: 0.45, Z: 0.4, W: 1})
+		imgui.Text("biomes/" + name + world.BiomeExt + " does not parse")
+		imgui.PopStyleColor()
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip(biomePoll.errors[name])
+		}
+	}
+	remove := -1
+	for i := range t.Biomes {
+		b := &t.Biomes[i]
+		imgui.PushID(fmt.Sprintf("terrainbiome%d", i))
+		open := imgui.TreeNodeV(fmt.Sprintf("%d: %s###biome", i+1, b.Def().Label), 0)
+		if open {
+			if imgui.BeginCombo("Kind", b.Def().Label) {
+				for _, name := range world.FoliagePresetNames() {
+					if imgui.SelectableV(terrainPresetLabel(name), b.Preset == name, 0, imgui.Vec2{}) && b.Preset != name {
+						EditorPushUndo()
+						b.Preset = name
+						t.Touch()
+					}
+				}
+				imgui.EndCombo()
+			}
+			dens := b.EffectiveDensity()
+			if editorDragFloatStep("Density", &dens, 0.1, 4, "%.2f", 0.05) {
+				b.Density = dens
+				t.Touch()
+			}
+			tint := b.EffectiveTint()
+			col := [3]float32{tint[0], tint[1], tint[2]}
+			if imgui.ColorEdit3("Tint", &col) {
+				b.Tint = mgl32.Vec3{col[0], col[1], col[2]}
+				t.Touch()
+			}
+			editorTerrainBiomeAmounts(t, b)
+			own := "(the block's own)"
+			if tex := b.Def().GroundTexture; tex != "" {
+				own = "(the biome's: " + tex + ")"
+			}
+			layer := own
+			if b.GroundLayer > 0 && b.GroundLayer <= world.TerrainLayerCount {
+				layer = fmt.Sprintf("%d: %s", b.GroundLayer, t.Layers[b.GroundLayer-1])
+			}
+			if imgui.BeginCombo("Ground", layer) {
+				if imgui.SelectableV(own, b.GroundLayer == 0, 0, imgui.Vec2{}) {
+					EditorPushUndo()
+					b.GroundLayer = 0
+					t.Touch()
+				}
+				for l := 0; l < world.TerrainLayerCount; l++ {
+					if imgui.SelectableV(fmt.Sprintf("%d: %s", l+1, t.Layers[l]), b.GroundLayer == l+1, 0, imgui.Vec2{}) {
+						EditorPushUndo()
+						b.GroundLayer = l + 1
+						t.Touch()
+					}
+				}
+				imgui.EndCombo()
+			}
+			if imgui.IsItemHovered() {
+				imgui.SetTooltip("What painted faces show. By default the biome's own ground texture\n(its file's ground.texture), or the block's layer if it names none;\npick a layer to use that instead.")
+			}
+			if imgui.Button("Remove") {
+				remove = i
+			}
+			imgui.TreePop()
+		}
+		imgui.PopID()
+	}
+	if remove >= 0 {
+		EditorPushUndo()
+		editorTerrainEndStroke()
+		t.RemoveBiome(remove + 1)
+		if int(terrainTool.Biome) > len(t.Biomes) {
+			terrainTool.Biome = uint8(max(len(t.Biomes), 1))
+		}
+	}
+	if len(t.Biomes) < world.TerrainMaxBiomes {
+		if imgui.BeginCombo("##terrainaddpreset", terrainPresetLabel(terrainAddPreset)) {
+			for _, name := range world.FoliagePresetNames() {
+				if imgui.SelectableV(terrainPresetLabel(name), terrainAddPreset == name, 0, imgui.Vec2{}) {
+					terrainAddPreset = name
+				}
+			}
+			imgui.EndCombo()
+		}
+		imgui.SameLine()
+		if imgui.Button("Add Biome##terrainaddbiome") && terrainAddPreset != "" {
+			EditorPushUndo()
+			t.Biomes = append(t.Biomes, world.TerrainBiome{Preset: terrainAddPreset})
+			t.Touch()
+			terrainTool.Biome = uint8(len(t.Biomes))
+		}
+	}
+	seed := int32(t.FoliageSeed)
+	if imgui.DragInt("Foliage seed##terrainfseed", &seed) {
+		t.FoliageSeed = uint32(seed)
+		t.Touch()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Changes where every plant falls without changing where anything grows.")
 	}
 }
 
@@ -605,8 +938,56 @@ func editorTerrainToolbarButton() {
 		editorToggleTerrainTool()
 	}
 	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Sculpt, cut holes in and paint the ground of chunks that have terrain.\n" +
-			"Hold the left button to brush; Shift inverts; 1-7 pick the mode;\n" +
-			"[ ] radius, - = strength, Esc puts it away.")
+		imgui.SetTooltip("Mine, build and paint biomes on chunks' block terrain.\n" +
+			"Click to use; hold to keep going; Shift inverts; 1-5 pick the mode;\n" +
+			"[ ] reach, , . material or biome, N blocks/smooth, Esc puts it away.")
 	}
+}
+
+// editorTerrainBiomeAmounts is a biome slot's per-kind amounts: one slider
+// for each kind of thing its biome grows — grass, flowers, rocks, trees — so
+// a meadow can be made all flowers, or a forest thinned to a few trees over
+// the same undergrowth, on this terrain only. The biome file is untouched.
+func editorTerrainBiomeAmounts(t *world.Terrain, b *world.TerrainBiome) {
+	shapes := b.Def().Shapes()
+	if len(shapes) == 0 {
+		return
+	}
+	label := "Amounts"
+	if len(b.Amounts) > 0 {
+		label = fmt.Sprintf("Amounts (%d changed)", len(b.Amounts))
+	}
+	if !imgui.TreeNodeV(label+"###amounts", 0) {
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("How much of each kind of thing grows here, on this terrain.")
+		}
+		return
+	}
+	changed := false
+	for _, sh := range shapes {
+		v := b.Amount(sh)
+		if imgui.SliderFloatV(sh.String(), &v, 0, world.MaxFoliageAmount, "%.2fx", 0) {
+			b.SetAmount(sh, v)
+			changed = true
+		}
+		if imgui.IsItemActivated() {
+			// Once per drag, before the first change: the whole drag is one
+			// undo step.
+			EditorPushUndo()
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip(world.FoliageShapeDocs[sh] + "\n\n0 grows none, 1 as the biome has it, 4 four times as many.\nCtrl+click to type a value.")
+		}
+	}
+	if len(b.Amounts) > 0 && imgui.Button("Reset Amounts") {
+		EditorPushUndo()
+		b.Amounts = nil
+		changed = true
+	}
+	if changed {
+		// What grows changed, not the ground's shape: the foliage and face
+		// looks rebuild, the surface does not.
+		t.TouchPaint(0, 0, 0, t.SizeX-1, t.SizeY-1, t.SizeZ-1)
+	}
+	imgui.TreePop()
 }

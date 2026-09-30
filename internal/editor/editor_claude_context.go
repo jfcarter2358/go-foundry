@@ -84,6 +84,13 @@ itself and about the engine through the Foundry tools. Prefer them to inference:
                   texture at once.
   - docs          a chapter of the authoring guide, by number or by name, or a
                   search across all of them.
+  - biome_schema, biome_list, biome_get, biome_save
+                  terrain biomes (resources/biomes/<name>.fbio): what grows on
+                  painted terrain and the ground texture under it. Read the
+                  schema, start from biome_get, and write with biome_save — it
+                  validates before writing and regrows the terrain painted with
+                  it. Ground textures come from cmd/genbiomeground
+                  (go run ./cmd/genbiomeground <name>) or any tiling PNG.
 
 Rules that matter here:
   - Assets are named, not pathed. A level writes "texture: sf_panel", and the
