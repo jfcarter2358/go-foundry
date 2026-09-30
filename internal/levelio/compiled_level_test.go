@@ -322,3 +322,44 @@ func TestALeakingLevelStillCompilesAndReportsIt(t *testing.T) {
 		t.Error("a room with no roof reported no leaks")
 	}
 }
+
+// Terrain is never baked, so a compiled level keeps it on its chunk — through
+// gob — and a release build draws, collides and navigates it from there.
+func TestTerrainSurvivesACompiledRoundTrip(t *testing.T) {
+	lvl := sealedLevel()
+	tr := world.NewTerrain(mgl32.Vec3{-3, 0.1, -3}, 0.5, 12, 12)
+	for i := range tr.Heights {
+		tr.Heights[i] = float32(i%7) * 0.05
+	}
+	tr.SetHole(3, 4, true)
+	tr.Layers = [world.TerrainLayerCount]string{"grass", "dirt"}
+	tr.PaintWeight(5, 5, 1, 0.6)
+	lvl.Chunks[0].Terrain = tr
+	lvl.Chunks[0].RecomputeBounds()
+
+	c, err := CompileLevel(lvl, compile.DefaultOptions())
+	if err != nil {
+		t.Fatalf("CompileLevel: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "terrain"+CompiledExt)
+	if err := SaveCompiledLevel(c, path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	back, err := ReadCompiledLevel(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	var got *world.Terrain
+	for i := range back.Chunks {
+		if back.Chunks[i].ID == "static" {
+			got = back.Chunks[i].Terrain
+		}
+	}
+	if got == nil {
+		t.Fatal("the compiled chunk came back without its terrain")
+	}
+	if !reflect.DeepEqual(got.Heights, tr.Heights) || !got.IsHole(3, 4) || got.IsHole(4, 4) ||
+		got.Layers != tr.Layers || got.Weight(5, 5, 1) != tr.Weight(5, 5, 1) || got.Origin != tr.Origin {
+		t.Fatal("the terrain changed in the round trip")
+	}
+}

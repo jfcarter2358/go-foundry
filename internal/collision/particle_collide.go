@@ -99,9 +99,23 @@ func probeChunkSurface(ch *world.Chunk, from, to mgl32.Vec3, descending bool) (p
 
 	bestT := float32(-1)
 	var bestNormal mgl32.Vec3
+	if d, n, hit := terrainProbe(ch.Terrain, origin, descending); hit {
+		bestT, bestNormal = d, n
+	}
+	finish := func() (mgl32.Vec3, mgl32.Vec3, bool) {
+		if bestT < 0 {
+			return mgl32.Vec3{}, mgl32.Vec3{}, false
+		}
+		point := chunkWorld(ch, origin.Add(dir.Mul(bestT)))
+		normal := ch.LocalToWorldDirection(bestNormal)
+		if n := normal.Len(); n > 1e-9 {
+			normal = normal.Mul(1 / n)
+		}
+		return point, normal, true
+	}
 	pc := brushBoxesFor(ch)
 	if pc == nil {
-		return mgl32.Vec3{}, mgl32.Vec3{}, false
+		return finish()
 	}
 	test := func(b *world.Brush, f *world.BrushFace) {
 		pts := b.PlacedFacePoints(f)
@@ -134,13 +148,5 @@ func probeChunkSurface(ch *world.Chunk, from, to mgl32.Vec3, descending bool) (p
 			test(b, &b.Faces[fi])
 		}
 	}
-	if bestT < 0 {
-		return mgl32.Vec3{}, mgl32.Vec3{}, false
-	}
-	point = chunkWorld(ch, origin.Add(dir.Mul(bestT)))
-	normal = ch.LocalToWorldDirection(bestNormal)
-	if n := normal.Len(); n > 1e-9 {
-		normal = normal.Mul(1 / n)
-	}
-	return point, normal, true
+	return finish()
 }

@@ -1258,6 +1258,8 @@ The engine posts these without being asked.
 | `:drag_start:` | widget, then its screen | `src ref, pos vec` | A `draggable` widget was pressed and the pointer moved a few pixels with it; `pos` is where the press began, in canvas units |
 | `:drag:` | widget, then its screen | `src ref, pos vec, delta vec` | …and moved on, at most once a frame; `delta` is the travel since the last one |
 | `:drop:` | widget, then its screen | `src ref, onto, pos vec` | …and was let go; `onto` is the widget it landed on, or `null` |
+| `:key_down:` | level, player | `key str` | A key or mouse button went down; `key` is its name (`"Space"`, `"F"`, `"Mouse Left"`). See [Keys and buttons](#keys-and-buttons) |
+| `:key_up:` | level, player | `key str, held float` | …and came back up after `held` seconds |
 | `:pointer_down:` / `:pointer_up:` | level, player, and the object under the cursor | `button atom, hit, at` | A mouse button went down / up on the world with the cursor free. See [The pointer](#the-pointer) |
 | `:pointer_click:` | level, player, and the object under the cursor | `button atom, hit, at` | A press and a release on the same thing, with no drag between |
 | `:pointer_enter:` / `:pointer_exit:` | level, player, and the object | `hit ref` | The cursor moved onto / off an object in the world |
@@ -1516,6 +1518,11 @@ Components are members rather than functions: `v.x`, `v.y`, `v.z`.
 **UI** — `show_screen(name)` `hide_screen(screen)` `screen(name)`
 `widget(screen, id)` `focus(widget)` `load_level(name)` `quit_game()`
 `bind_key(action, slot)` `binding_name(action, slot)` `reset_bindings()`
+
+**Keys** — `key_down(key)` `key_pressed(key)` `key_released(key)`
+`key_held_time(key)` `keys_down()` `action_down(action)` `action_pressed(action)`
+`action_released(action)` `action_held_time(action)` — see
+[Keys and buttons](#keys-and-buttons)
 
 `spawn` returns a `ref` to the new entity. Entities spawned during play exist only
 for that play session.
@@ -1851,6 +1858,53 @@ at once (detaching it); `camera_detached` is the switch, written `false` to snap
 back; `camera_direction` and `camera_orbit_distance` (`null` when not orbiting)
 are read-only. A detached camera, like a zoom, belongs to the play session:
 leaving play or loading a level gives the view back to the player.
+
+### Keys and buttons
+
+The fixed input events — `:interact:`, `:primary_fire:`, `:reload:` and the rest —
+are the engine's own player. For anything else, a script can ask about any key
+or mouse button directly:
+
+```
+key_down("Space")            -- held right now
+key_pressed("F")             -- went down since the last tick: true once per press
+key_released("Mouse Right")  -- came up since the last tick
+key_held_time("E")           -- seconds held; 0 when up
+keys_down()                  -- ["Left Shift", "W"]: everything held, by name
+```
+
+A key is named the way `binding_name` spells it — `"W"`, `"Space"`, `"Left
+Shift"`, `"Return"`, `"F"`, `"Mouse Left"`, `"Mouse 4"` — in any case. That is the
+physical key, whatever the player has rebound. For anything a player might want
+on another key, ask about the **action** instead, which follows their layout:
+
+```
+action_down("jump")          -- any key bound to jump is held
+action_pressed("interact")
+action_released("crouch")    -- one came up and none is still held
+action_held_time("primary_fire")
+```
+
+Pressed and released are measured between ticks, so a `:tick:` handler sees each
+press exactly once, and a tap made and let go inside one frame is both pressed
+and released on the same tick. Key repeat is never a press. A press that a menu
+took — a key typed into a text field, a click on a button — never reaches the
+game, so it is not down here either; nor is a click on the world while the
+cursor is free, which is the pointer's (see below).
+
+The same presses arrive as events, at the level's scripts and the player's:
+
+```
+def on_key(:key_down:, "F") -> null
+    toggle_flashlight()
+
+def on_charge(:key_up:, "Mouse Left", held float) -> null
+    fire_bow(min(held, 2.0))       -- a longer draw is a stronger shot
+```
+
+`:key_down:` carries the key's name; `:key_up:` carries it and how long it was
+held. Under `@level.prop.paused` the events are dropped, like every other input
+to the level, but the verbs still answer, so a menu can ask.
 
 ### The pointer
 

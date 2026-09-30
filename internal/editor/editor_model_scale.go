@@ -221,7 +221,7 @@ func modelScaleMouseDown(mx, my int32) bool {
 		modelBoneGizmoCapture()
 		return true
 	}
-	for _, v := range modelSelectedVerts() {
+	for _, v := range modelTransformVerts() {
 		if v >= 0 && v < len(modelDoc.Verts) {
 			modelGizmo.StartVerts[v] = modelDoc.Verts[v]
 		}

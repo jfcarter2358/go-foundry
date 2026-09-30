@@ -262,6 +262,12 @@ func Editor3DHandleClick(t sdl.MouseButtonEvent) {
 		return
 	}
 
+	// The terrain tool, armed on the brush's terms: every press starts a
+	// stroke until Escape or T puts it away. See editor_terrain.go.
+	if editorTerrainHandleMouseDown() {
+		return
+	}
+
 	// The brush first, and it does not disarm: it is the one tool here meant to
 	// be used many clicks running. See editor_scenery.go.
 	if editorBrushHandleClick() {
@@ -523,6 +529,11 @@ func editor3DSelectNonBrushHit(hit pickHit) {
 		// The Objects list is no longer the only way to reach a light: click
 		// its marker and the gizmo attaches to it, the same as an entity's.
 		editorSelectLight(lightKindPoint, hit.idx)
+
+	case pickTerrain:
+		// The ground belongs to its chunk, and selecting the chunk is what
+		// brings up the Terrain group to set it up.
+		editorSelectChunk(hit.chunkIdx)
 
 	default:
 		// Click on empty space — deselect.

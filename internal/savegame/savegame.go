@@ -195,6 +195,9 @@ func captureModels(ms []world.EntityModel) []savefile.ModelState {
 func captureChunk(ch *world.Chunk) savefile.ChunkState {
 	c := *ch
 	c.Brushes = nil
+	// Authored ground nothing in play writes: the level it is laid over
+	// already has it, so a save need not carry every height again.
+	c.Terrain = nil
 	// Derived every tick from what rides it, and never read back.
 	c.Xform, c.FrameScale, c.Unloaded = mgl32.Mat4{}, 0, false
 	cs := savefile.ChunkState{Chunk: c}

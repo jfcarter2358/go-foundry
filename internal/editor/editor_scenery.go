@@ -132,6 +132,7 @@ func editorArmBrush(path string) {
 	Editor.EffectPlacementMode = false
 	Editor.SpawnPlacementMode = false
 	Editor.WaypointPlacementMode = false
+	editorDisarmTerrainTool()
 	editorSetStatus("Brush: %s — click to place, Escape to stop", path)
 }
 

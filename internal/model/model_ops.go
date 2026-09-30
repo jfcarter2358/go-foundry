@@ -66,6 +66,79 @@ func (m *ModelDoc) VertsOfEdges(edges []EdgeKey) []int {
 	return sortedKeys(seen)
 }
 
+// CoincidentTol is how close two vertices must sit to count as one point for
+// WithCoincident — a tenth of a millimetre, loose enough for an OBJ's printed
+// float rounding and far tighter than anything placed on purpose.
+const CoincidentTol = 1e-4
+
+// WithCoincident returns verts plus every other vertex sitting on the same spot
+// as one of them, ascending. It is the set a transform of the selection has to
+// move for the mesh to stay closed.
+//
+// A vertex pool can hold two entries at one position without either face
+// knowing about the other: separate parts laid edge to edge (the generated
+// dropship), an imported mesh split along its seams, a strip built one quad at
+// a time. The surface looks joined, but dragging the one index you picked pulls
+// its faces away and leaves the rest behind — a hole. Welding those files would
+// fix it once; following the twins here fixes it for every mesh, including the
+// ones that are separate on purpose and only happen to touch.
+//
+// A twin joined to the selected point by an edge is left out. That edge has
+// zero length, and it is exactly what a zero-depth extrude or inset makes: the
+// new cap sits on its base, and dragging the cap out is the whole point — the
+// base following it would undo the extrude.
+func (m *ModelDoc) WithCoincident(verts []int) []int {
+	type cell [3]int32
+	cellOf := func(p mgl32.Vec3) cell {
+		return cell{
+			int32(math.Floor(float64(p.X() / CoincidentTol))),
+			int32(math.Floor(float64(p.Y() / CoincidentTol))),
+			int32(math.Floor(float64(p.Z() / CoincidentTol))),
+		}
+	}
+	out := map[int]bool{}
+	grid := map[cell][]int{}
+	for _, v := range verts {
+		if v < 0 || v >= len(m.Verts) || out[v] {
+			continue
+		}
+		out[v] = true
+		c := cellOf(m.Verts[v])
+		grid[c] = append(grid[c], v)
+	}
+	if len(grid) == 0 {
+		return nil
+	}
+	tol2 := float32(CoincidentTol * CoincidentTol)
+	edges := m.adjacency().edgeFaces
+	for u, p := range m.Verts {
+		if out[u] {
+			continue
+		}
+		c := cellOf(p)
+	search:
+		// The point can straddle a cell boundary from its twin, so the
+		// neighbouring cells are searched too.
+		for dx := int32(-1); dx <= 1; dx++ {
+			for dy := int32(-1); dy <= 1; dy++ {
+				for dz := int32(-1); dz <= 1; dz++ {
+					for _, s := range grid[cell{c[0] + dx, c[1] + dy, c[2] + dz}] {
+						if p.Sub(m.Verts[s]).LenSqr() > tol2 {
+							continue
+						}
+						if _, joined := edges[MakeEdgeKey(u, s)]; joined {
+							continue
+						}
+						out[u] = true
+						break search
+					}
+				}
+			}
+		}
+	}
+	return sortedKeys(out)
+}
+
 func sortedKeys(set map[int]bool) []int {
 	out := make([]int, 0, len(set))
 	for k := range set {

@@ -36,6 +36,7 @@ and is always current.
 | --- | --- |
 | [Editor basics](01-editor-basics.md) | Windows, toolbar, selection, gizmos, cameras, undo, saving |
 | [Building levels](02-building-levels.md) | Chunks, brushes, faces, convexity, dynamic brushes, waypoint animations |
+| [Terrain](30-terrain.md) | Heightfield ground on a chunk: sculpt, cut holes, paint up to four textures |
 | [Prefabs](22-prefabs.md) | Reusable groups, linked by file: build once, place twenty |
 | [Shaping surfaces](03-shaping-surfaces.md) | Edit mode shapes the solid; detail mode shapes what you see |
 | [Textures](04-textures.md) | The texture editor, palettes, layers, animation, bump maps |

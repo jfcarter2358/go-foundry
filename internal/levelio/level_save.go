@@ -247,6 +247,7 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 		UnloadWhenDisabled: ch.UnloadWhenDisabled,
 		Streamed:           ch.Streamed,
 		Moves:              ch.Moves,
+		Terrain:            world.TerrainToRaw(ch.Terrain),
 	}
 	rc.Brushes = make([]world.RawBrush, 0, len(ch.Brushes))
 	for bi := range ch.Brushes {
@@ -261,6 +262,9 @@ func chunkToRaw(ch *world.Chunk) (world.RawChunk, error) {
 // way in — this is the writer's half, so a level is never saved in a shape it
 // could not load back.
 func validateRawChunk(rc *world.RawChunk) error {
+	if _, err := world.TerrainFromRaw(rc.Terrain); err != nil {
+		return fmt.Errorf("chunk %q: %w", rc.ID, err)
+	}
 	for bi := range rc.Brushes {
 		b := &rc.Brushes[bi]
 		nVerts := len(b.Verts) / 3

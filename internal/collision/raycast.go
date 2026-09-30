@@ -58,13 +58,16 @@ const (
 	// see world/scenery.go — so a caller has nothing to report for it beyond
 	// the fact that the ray ended there.
 	RayHitScenery
+	// RayHitTerrain is a chunk's heightfield ground. Chunk and ID both name
+	// the chunk, which is how a script addresses it.
+	RayHitTerrain
 )
 
 // Blocks reports whether a hit of this kind ends the ray. The level's own shape
 // does; the things standing in it do not.
 func (k RayHitKind) Blocks() bool {
 	switch k {
-	case RayHitBrush, RayHitScenery:
+	case RayHitBrush, RayHitScenery, RayHitTerrain:
 		return true
 	}
 	return false
@@ -261,6 +264,10 @@ func reportable(lvl *world.Level, h RayHit, f RayFilter) bool {
 		return f.Tag == "" || v.HasTag(f.Tag)
 	}
 
+	if h.Kind == RayHitTerrain {
+		ch := world.FindChunkByID(lvl, h.Chunk)
+		return ch != nil && (f.Tag == "" || ch.HasTag(f.Tag))
+	}
 	if h.Kind == RayHitBrush {
 		b := brushByID(lvl, h.ID)
 		if b == nil {

@@ -399,6 +399,9 @@ func hitscanRef(h collision.RayHit) flang.RefVal {
 		// A brush ID is level-unique, so the chunk it sits in is not part of
 		// the address the way a sector's chunk used to be.
 		return flang.RefVal{Kind: flang.RefBrush, A: h.ID}
+	case collision.RayHitTerrain:
+		// The ground is the chunk's, and addressed as the chunk.
+		return flang.RefVal{Kind: flang.RefChunk, A: h.Chunk}
 	}
 	return flang.RefVal{}
 }

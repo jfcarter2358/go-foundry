@@ -129,6 +129,15 @@ func HandleEvent(event sdl.Event) {
 		// A gameplay key is an action, looked up in the player's layout —
 		// see platform/bindings.go. The switch below is only the engine's own
 		// keys, which platform.ReservedKey keeps any binding off.
+		if !devActive() {
+			// Every key that reaches gameplay, for scripts — see
+			// platform/key_state.go. Repeats are not presses.
+			if t.Type == sdl.KEYUP {
+				platform.ReleaseKey(platform.KeyInput(t.Keysym.Scancode))
+			} else if t.Type == sdl.KEYDOWN && t.Repeat == 0 {
+				platform.PressKey(platform.KeyInput(t.Keysym.Scancode))
+			}
+		}
 		if t.Type == sdl.KEYUP {
 			for _, a := range platform.Bindings.ActionsFor(platform.KeyInput(t.Keysym.Scancode)) {
 				releaseAction(a)
@@ -257,6 +266,13 @@ func HandleEvent(event sdl.Event) {
 		// clicks through to the world (`click_through`) — and those are the
 		// pointer's, not the trigger's. Releases always go through, so a
 		// button held as the screen came up still lets go.
+		if !devActive() {
+			if t.Type == sdl.MOUSEBUTTONUP {
+				platform.ReleaseKey(platform.MouseInput(t.Button))
+			} else if !ui.Game.CapturesInput() {
+				platform.PressKey(platform.MouseInput(t.Button))
+			}
+		}
 		for _, a := range platform.Bindings.ActionsFor(platform.MouseInput(t.Button)) {
 			if t.Type == sdl.MOUSEBUTTONDOWN {
 				if ui.Game.CapturesInput() {

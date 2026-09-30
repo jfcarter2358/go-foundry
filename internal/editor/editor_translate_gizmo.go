@@ -271,7 +271,10 @@ func gizmoSuppressed() bool {
 		Editor.VolumePlacementMode || Editor.WaypointPlacementMode ||
 		// The brush and the brush stamp too: their arms would sit over the
 		// ghost and swallow the click that was meant to stamp one.
-		Editor.BrushActive || Editor.BrushPlaceActive
+		Editor.BrushActive || Editor.BrushPlaceActive ||
+		// And the terrain tool, whose strokes start on the ground under the
+		// selection as often as anywhere.
+		terrainTool.Active
 }
 
 // translateGizmoMouseDown starts an axis drag if the click grabbed an arm.

@@ -252,7 +252,64 @@ func (bs *decalBuilders) gatherBrushes(lvl *Level, bx *decalBox, lo, hi mgl32.Ve
 				b.clipGeometry(bx, &f.Geometry)
 			}
 		}
+		if ch.Terrain != nil {
+			bs.gatherTerrain(ch, chunkModel, bx, lo, hi)
+		}
 	}
+}
+
+// gatherTerrain clips the chunk's ground under the box. The terrain has no
+// face meshes to hand over, so the cells under the box are written out as one
+// in the layout clipGeometry reads — corners [X,Y,Z,U,V] and smooth normals —
+// and clipped in the chunk's space, on the chunk's own piece: a decal on the
+// ground rides with its chunk, and streams out with it, like one on a wall.
+func (bs *decalBuilders) gatherTerrain(ch *Chunk, model mgl32.Mat4, bx *decalBox, lo, hi mgl32.Vec3) {
+	t := ch.Terrain
+	// The box's corners carried into the chunk, for the cells to take.
+	inv := model.Inv()
+	llo := mgl32.Vec3{float32(math.Inf(1)), float32(math.Inf(1)), float32(math.Inf(1))}
+	lhi := llo.Mul(-1)
+	for i := 0; i < 8; i++ {
+		c := lo
+		if i&1 != 0 {
+			c[0] = hi[0]
+		}
+		if i&2 != 0 {
+			c[1] = hi[1]
+		}
+		if i&4 != 0 {
+			c[2] = hi[2]
+		}
+		p := inv.Mul4x1(c.Vec4(1)).Vec3()
+		for k := 0; k < 3; k++ {
+			llo[k] = min(llo[k], p[k])
+			lhi[k] = max(lhi[k], p[k])
+		}
+	}
+	x0, z0, x1, z1, ok := t.CellRange(llo, lhi)
+	if !ok {
+		return
+	}
+	var g gfx.Geometry
+	for z := z0; z <= z1; z++ {
+		for x := x0; x <= x1; x++ {
+			if t.IsHole(x, z) {
+				continue
+			}
+			for _, tri := range t.CellCorners(x, z) {
+				for _, c := range tri {
+					p := t.Vertex(c[0], c[1])
+					n := t.SmoothNormal(c[0], c[1])
+					g.Vertices = append(g.Vertices, p.X(), p.Y(), p.Z(), 0, 0)
+					g.Normals = append(g.Normals, n.X(), n.Y(), n.Z())
+				}
+			}
+		}
+	}
+	if len(g.Vertices) == 0 {
+		return
+	}
+	bs.for_(decalPieceKey{chunk: ch.ID}, model).clipGeometry(bx, &g)
 }
 
 // gatherStatic clips a compiled level's surfaces, whose vertices are already

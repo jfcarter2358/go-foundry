@@ -604,6 +604,10 @@ func EditorDrawUI() {
 		editorToolbarGroupSep()
 		editorGizmoToolButtons()
 
+		// ---- Group: terrain ----
+		editorToolbarGroupSep()
+		editorTerrainToolbarButton()
+
 		// ---- Group: viewport display ----
 		editorToolbarGroupSep()
 		imgui.SameLine()

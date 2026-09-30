@@ -35,4 +35,5 @@ func InitWorldPasses() {
 	SpriteInit()
 	SkyInit()
 	VolumetricInit()
+	TerrainInit()
 }

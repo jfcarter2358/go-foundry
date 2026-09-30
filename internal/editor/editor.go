@@ -717,7 +717,8 @@ func EditorHandleEvent(event sdl.Event) bool {
 		// stamp is armed on the same terms and takes Escape the same way.
 		if !imgui.CurrentIO().WantCaptureKeyboard() &&
 			(editorBrushHandleKey(t.Keysym.Scancode, sdl.GetModState()&sdl.KMOD_SHIFT != 0) ||
-				editorBrushPlaceHandleKey(t.Keysym.Scancode)) {
+				editorBrushPlaceHandleKey(t.Keysym.Scancode) ||
+				editorTerrainHandleKey(t.Keysym.Scancode)) {
 			return true
 		}
 
@@ -829,6 +830,13 @@ func EditorHandleEvent(event sdl.Event) bool {
 		case sdl.SCANCODE_U:
 			if editorSelKeysActive() {
 				editorToggleUVMode()
+				return true
+			}
+		case sdl.SCANCODE_T:
+			// The terrain tool (editor_terrain.go). T is otherwise unbound.
+			if Editor.Mode == Mode3D && !imgui.CurrentIO().WantCaptureKeyboard() &&
+				sdl.GetModState()&sdl.KMOD_CTRL == 0 {
+				editorToggleTerrainTool()
 				return true
 			}
 		case sdl.SCANCODE_Z:
@@ -999,6 +1007,10 @@ func EditorRender() {
 	// frame shows where the brush is rather than where it was.
 	editorWaypointPreviewTick(dt)
 
+	// The terrain tool finds the ground under the cursor and carries its
+	// stroke on, before the overlays draw its ring there.
+	editorTerrainFrame(float32(dt))
+
 	// --- 3D gizmos (drawn on top of world, depth-tested) ---
 	if Editor.Mode == Mode3D {
 		projView := gfx.Projection.Mul4(gfx.Cam.Matrix)
@@ -1131,6 +1143,10 @@ func EditorLoadLevel(path string) error {
 // editorInstallLevel replaces the current level with one already built from
 // path, and resets everything the editor held that named the old one.
 func editorInstallLevel(newLevel world.Level, path string) {
+	// A stroke on the outgoing level's ground ends with it; its undo entry
+	// goes with the history, which is cleared below.
+	terrainTool.stroking = false
+	terrainTool.strokeTerrain = nil
 
 	// Entity meshes are the one thing in a level that is uploaded per *entity*
 	// rather than per surface, so the outgoing level's have to be released
@@ -1218,6 +1234,12 @@ func editorEndViewportDrag(button sdl.Button) bool {
 	case sdl.ButtonLeft:
 		if editorGizmoDragging() {
 			editorGizmoMouseUp()
+			return true
+		}
+		// A terrain stroke ends wherever the button comes up, the panel
+		// included, or it would go on painting after the author let go.
+		if terrainTool.stroking {
+			editorTerrainEndStroke()
 			return true
 		}
 		return false

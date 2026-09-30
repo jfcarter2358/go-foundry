@@ -70,6 +70,7 @@ var verbs = map[string]verb{
 	"next_weapon": {0, 0, "next_weapon", "cycle weapons forward"},
 	"prev_weapon": {0, 0, "prev_weapon", "cycle weapons back"},
 	"use":         {0, 0, "use", "press interact"},
+	"key":         {2, -1, "key down|up|tap <name>", "press, release, or press and release any key or mouse button by name (Space, F, Left Shift, Mouse Left), for key_down and :key_down:"},
 	"click":       {1, 1, "click <widget>|<screen>:<widget>", "click a widget on a screen that is up"},
 	"cursor":      {1, 1, "cursor <x,y>|center|off", "free the pointer and hold it at a window pixel, as a mouse would; off captures it again"},
 	"tap":         {0, 1, "tap [left|right|middle]", "press and release a mouse button on the world where the cursor is"},
@@ -98,7 +99,7 @@ func Usage() string {
 // the alphabet.
 var verbOrder = []string{
 	"look", "turn", "look_at", "forward", "back", "left", "right", "to", "stop",
-	"crouch", "sprint", "jump", "use", "fire", "aim", "reload", "throw",
+	"crouch", "sprint", "jump", "use", "key", "fire", "aim", "reload", "throw",
 	"weapon", "next_weapon", "prev_weapon", "click", "cursor", "tap", "drag",
 	"wait", "shot", "read", "say", "teleport", "enable", "wake", "kill",
 }
@@ -435,6 +436,25 @@ func (r *Runner) begin(c Cmd) error {
 	case "use":
 		Interact()
 		r.t.Emit("INTERACT", "", "")
+
+	case "key":
+		name := strings.Join(c.Args[1:], " ")
+		in, ok := platform.ParseInput(name)
+		if !ok || !in.Bound() {
+			return fmt.Errorf("%q is no key or mouse button", name)
+		}
+		switch strings.ToLower(c.Args[0]) {
+		case "down":
+			platform.PressKey(in)
+		case "up":
+			platform.ReleaseKey(in)
+		case "tap":
+			platform.PressKey(in)
+			platform.ReleaseKey(in)
+		default:
+			return fmt.Errorf("key takes down, up or tap, not %q", c.Args[0])
+		}
+		r.t.Emit("KEY", strings.ToLower(c.Args[0]), in.Name())
 
 	case "cursor":
 		if c.Args[0] == "off" {

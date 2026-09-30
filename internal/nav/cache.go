@@ -400,6 +400,12 @@ func Signature(lvl *world.Level) uint64 {
 				w(uint32(len(b.Faces[fi].Indices)))
 			}
 		}
+		// A terrain's generation moves on every edit (world.Terrain.Touch),
+		// so it stands in for hashing every height every frame.
+		if t := ch.Terrain; t != nil {
+			w(uint32(t.Generation))
+			w(uint32(t.Generation >> 32))
+		}
 	}
 	return h
 }

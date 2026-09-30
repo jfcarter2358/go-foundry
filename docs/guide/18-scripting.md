@@ -140,6 +140,7 @@ The engine posts these without being asked.
 | `:objective_reached:` `:objective_complete:`, and an objective's Action atom | AI agent and objective volume | `src ref, objective ref` | " |
 | `:cover_taken:` `:cover_lost:` | AI agent | `src ref` | " |
 | any atom a point lists | the object on the path | `animation ref` | …reached a point with that atom in its **Events**, straight after that point's `:waypoint:` |
+| `:key_down:` `:key_up:` | level, player | `key str` (`:key_up:` adds `held float`) | any key or mouse button went down / came up; ask `key_down("Space")`, `key_pressed`, `key_held_time` or `action_down("jump")` any time — see SCRIPTING.md's Keys and buttons |
 | `:pointer_down:` `:pointer_up:` `:pointer_click:` | level, player, and the object under the cursor | `button atom, hit, at` | a mouse button on the world with the cursor free — see [Pointing at the world](#pointing-at-the-world) |
 | `:pointer_enter:` `:pointer_exit:` | level, player, and the object | `hit ref` | the cursor moved onto / off an object |
 | `:pointer_wheel:` | " | `amount float, hit, at` | the wheel turned over the world |

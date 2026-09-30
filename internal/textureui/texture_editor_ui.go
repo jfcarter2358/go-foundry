@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
@@ -80,6 +81,10 @@ var (
 	texEditorNewSizeIdx       int32 = 3 // index into texEditorSizeOptions; 512
 	texEditorShowOpenDialog   bool
 	texEditorShowImportDialog bool
+	texEditorShowConvertAll   bool
+	texEditorConvertNames     []string // what the Convert All prompt will convert
+	texEditorConvertReport    string   // the last run's result, shown in the prompt
+	texEditorConvertLenient   bool     // convert even normal maps that come back far off
 	texEditorShowLayerImport  bool
 	texEditorLayerImportPath  string
 	texEditorLayerImportFind  string
@@ -585,6 +590,7 @@ func drawTextureEditorMenuBar() {
 	drawTexEditorNewDialog()
 	drawTexEditorOpenDialog()
 	drawTexEditorImportDialog()
+	drawTexEditorConvertAllDialog()
 	drawTexEditorSaveAsDialog()
 	drawTexEditorMismatchDialog()
 	drawTexEditorUnsavedDialog()
@@ -603,6 +609,14 @@ func texEditorMenus(ed *texture.TexEditorState) {
 		}
 		if imgui.MenuItem("Import PNG...") {
 			texEditorShowImportDialog = true
+		}
+		if imgui.MenuItem("Convert All PNGs to .ftex...") {
+			texEditorConvertNames = texture.PNGsWithoutFtex()
+			texEditorConvertReport = ""
+			texEditorShowConvertAll = true
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Import every PNG in textures/ that has no .ftex yet and save it\nas one, as Import PNG + Save would, one by one.")
 		}
 		imgui.Separator()
 		if imgui.MenuItemV("Save", "", false, ed != nil) {
@@ -780,6 +794,144 @@ func drawTexEditorImportDialog() {
 			imgui.CloseCurrentPopup()
 		}
 	})
+}
+
+// texEditorConverting is a Convert All run in flight. The conversion runs on
+// its own goroutine — a 2048² normal map takes seconds to rebuild a height
+// field from, and a project can have a hundred — so the dialog polls this
+// each frame for progress and, at the end, the result.
+var texEditorConverting struct {
+	sync.Mutex
+	running     bool
+	done, total int
+	current     string
+	result      *texture.PNGConversion
+}
+
+// drawTexEditorConvertAllDialog confirms File > Convert All PNGs to .ftex,
+// runs it, and shows what happened in the same window.
+func drawTexEditorConvertAllDialog() {
+	imguibackend.WithModalPopup("Convert All PNGs", &texEditorShowConvertAll, func() {
+		c := &texEditorConverting
+		c.Lock()
+		running, done, total, current, result := c.running, c.done, c.total, c.current, c.result
+		c.result = nil
+		c.Unlock()
+		if result != nil {
+			texEditorFinishConvertAll(*result)
+		}
+		if running {
+			imgui.Text(fmt.Sprintf("Converting %s...", current))
+			frac := float32(0)
+			if total > 0 {
+				frac = float32(done) / float32(total)
+			}
+			imgui.ProgressBarV(frac, imgui.Vec2{X: 360, Y: 0}, fmt.Sprintf("%d / %d", done, total))
+			return
+		}
+
+		if texEditorConvertReport != "" {
+			imgui.BeginChildV("##convertreport", imgui.Vec2{X: 520, Y: 260}, true, 0)
+			imgui.Text(texEditorConvertReport)
+			imgui.EndChild()
+			if imgui.Button("Close##convertall") {
+				imgui.CloseCurrentPopup()
+			}
+			return
+		}
+		if len(texEditorConvertNames) == 0 {
+			imgui.Text("Every PNG in textures/ already has an .ftex.")
+			if imgui.Button("Close##convertall") {
+				imgui.CloseCurrentPopup()
+			}
+			return
+		}
+		imgui.Text(fmt.Sprintf("Convert %d PNG(s) in textures/ that have no .ftex:", len(texEditorConvertNames)))
+		imgui.BeginChildV("##convertnames", imgui.Vec2{X: 360, Y: 200}, true, 0)
+		for _, n := range texEditorConvertNames {
+			imgui.Text(n)
+		}
+		imgui.EndChild()
+		imgui.Text("Each is quantised to the current palette, and its PNG is\n" +
+			"rewritten from the .ftex - the original colours are not kept.\n" +
+			"A _normal map beside it becomes the .ftex's bump channel, and is\n" +
+			"rewritten from that.")
+		imgui.Checkbox("Convert normal maps that can't be matched closely", &texEditorConvertLenient)
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip(fmt.Sprintf("An .ftex stores height, so a normal map comes back as the nearest\n"+
+				"surface it could be the slope of. Noisy maps drawn straight into the\n"+
+				"normals come back smoother. Unticked, a texture whose map would be\n"+
+				"more than %d degrees off on average is left as it is.", texture.DefaultMaxNormalError))
+		}
+		if imgui.Button("Convert") {
+			texEditorStartConvertAll()
+		}
+		imgui.SameLine()
+		if imgui.Button("Cancel##convertall") {
+			imgui.CloseCurrentPopup()
+		}
+	})
+}
+
+// texEditorStartConvertAll starts the conversion on its own goroutine. It
+// only touches disk; the reload that follows it needs the GL context, so
+// texEditorFinishConvertAll does that back on the frame loop.
+func texEditorStartConvertAll() {
+	opts := texture.ConvertOptions{MaxNormalError: texture.DefaultMaxNormalError}
+	if texEditorConvertLenient {
+		opts.MaxNormalError = 0
+	}
+	c := &texEditorConverting
+	opts.Progress = func(done, total int, name string) {
+		c.Lock()
+		c.done, c.total, c.current = done, total, name
+		c.Unlock()
+	}
+	c.Lock()
+	c.running, c.done, c.total, c.current = true, 0, len(texEditorConvertNames), ""
+	c.Unlock()
+	go func() {
+		r := texture.ConvertPNGsToFtex(opts)
+		c.Lock()
+		c.running, c.result = false, &r
+		c.Unlock()
+	}()
+}
+
+// texEditorFinishConvertAll reloads textures, so everything wearing one draws
+// what it now is on disk, and writes up the run for the dialog.
+func texEditorFinishConvertAll(r texture.PNGConversion) {
+	// On the frame loop, like Reload Textures: the uploads go to the main GL
+	// context, not this pop-out window's.
+	uiwin.RequestWindowOpen(func() { texture.ReloadTextures() })
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Converted %d texture(s).", len(r.Converted))
+	for _, name := range r.Converted {
+		if e, ok := r.NormalError[name]; ok {
+			fmt.Fprintf(&b, "\n  %s  (normal map within %.1f deg)", name, e)
+		} else {
+			fmt.Fprintf(&b, "\n  %s", name)
+		}
+	}
+	for _, name := range sortedKeys(r.Skipped) {
+		fmt.Fprintf(&b, "\nSkipped %s: %s", name, r.Skipped[name])
+	}
+	for _, name := range sortedKeys(r.Failed) {
+		fmt.Fprintf(&b, "\nFailed %s: %v", name, r.Failed[name])
+		log.Printf("WARNING: convert %s to .ftex: %v", name, r.Failed[name])
+	}
+	texEditorConvertReport = b.String()
+	texEditorStatus(fmt.Sprintf("Converted %d PNG(s) to .ftex", len(r.Converted)))
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // drawTexEditorLayerImportDialog imports an image into the open document's
@@ -1103,7 +1255,9 @@ func drawChannelPanel() {
 
 	strength := d.BumpStrength()
 	imgui.SetNextItemWidth(-1)
-	if imgui.SliderFloat("##bumpstrength", &strength, 0.25, texdoc.MaxBumpStrength) {
+	// Past the slider's range only when an imported normal map put it there;
+	// the range grows to hold it rather than snapping it back on first touch.
+	if imgui.SliderFloat("##bumpstrength", &strength, 0.25, max(texdoc.BumpSliderMax, strength)) {
 		ed.SetBumpStrength(strength)
 	}
 	imgui.Text(fmt.Sprintf("Strength %.2f", d.BumpStrength()))

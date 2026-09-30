@@ -57,6 +57,13 @@ func editorChunkPropertiesSection(lvl *world.Level) {
 	editorPropGroupOpen("Transform##chunktfgrp", func() { editorChunkTransform(ch) })
 	editorPropGroup("Motion##chunkmotiongrp", 0, func() { editorChunkMotion(ch) })
 	editorPropGroup("Carried By##chunkframegrp", 0, func() { editorChunkFrameOwnerRow(lvl, ch) })
+	// Open when the chunk has ground, since then it is most of what the
+	// chunk is.
+	terrainFlags := imgui.TreeNodeFlags(0)
+	if ch.Terrain != nil {
+		terrainFlags = imgui.TreeNodeFlagsDefaultOpen
+	}
+	editorPropGroup("Terrain##chunkterraingrp", terrainFlags, func() { editorChunkTerrain(ch) })
 	editorObjectWaypointsUI(ch)
 	editorScriptDataUI(&ch.ScriptData, "chunk", "This chunk")
 }

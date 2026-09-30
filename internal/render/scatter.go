@@ -431,6 +431,10 @@ func scatterGeometryFingerprint(lvl *world.Level, v *world.Volume) uint64 {
 		}
 		mix(uint64(ci))
 		mix(uint64(len(ch.Brushes)))
+		if ch.Terrain != nil {
+			// Sculpting reshapes the ground without moving the bounds.
+			mix(ch.Terrain.Generation)
+		}
 		for _, f := range []float32{lo.X(), lo.Y(), lo.Z(), hi.X(), hi.Y(), hi.Z()} {
 			mix(uint64(math.Float32bits(f)))
 		}

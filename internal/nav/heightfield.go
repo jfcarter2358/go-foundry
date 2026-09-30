@@ -177,6 +177,76 @@ func gatherSolids(lvl *world.Level) []solid {
 				out = append(out, s)
 			}
 		}
+		if ch.Terrain != nil {
+			out = appendTerrainSolids(out, ch.Terrain, m)
+		}
+	}
+	return out
+}
+
+// terrainPatch is how many terrain cells along each side go into one solid.
+const terrainPatch = 8
+
+// appendTerrainSolids adds a chunk's terrain as solids, one per patch of
+// terrainPatch x terrainPatch cells. rasterise reads a solid as the span from
+// the lowest to the highest point of its faces over each column, so a patch
+// needs no side walls to be solid: its surface triangles give each column's
+// top (and whether it is walkable, from their slope), and a copy of each
+// cell sunk below the patch gives it a bottom. A hole cell contributes
+// neither, and its columns stay open — which is the point of a hole.
+// Patches rather than whole terrains keep the tile cache granular: sculpting
+// one hill re-rasterises the tiles under it, not the whole map.
+func appendTerrainSolids(out []solid, t *world.Terrain, m mgl32.Mat4) []solid {
+	toWorld := func(p mgl32.Vec3) mgl32.Vec3 {
+		r := m.Mul4x1(p.Vec4(1))
+		return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+	}
+	for pz := 0; pz < t.CellsZ; pz += terrainPatch {
+		for px := 0; px < t.CellsX; px += terrainPatch {
+			x1, z1 := min(px+terrainPatch, t.CellsX), min(pz+terrainPatch, t.CellsZ)
+			// The patch's lowest vertex, less a margin, is its underside.
+			bottom := float32(math.Inf(1))
+			for z := pz; z <= z1; z++ {
+				for x := px; x <= x1; x++ {
+					bottom = min32(bottom, t.Height(x, z))
+				}
+			}
+			bottom += t.Origin.Y() - 1
+			s := solid{}
+			first := true
+			add := func(pts []mgl32.Vec3) {
+				for _, p := range pts {
+					if first {
+						s.min, s.max, first = p, p, false
+					} else {
+						s.min = mgl32.Vec3{min32(s.min.X(), p.X()), min32(s.min.Y(), p.Y()), min32(s.min.Z(), p.Z())}
+						s.max = mgl32.Vec3{max32(s.max.X(), p.X()), max32(s.max.Y(), p.Y()), max32(s.max.Z(), p.Z())}
+					}
+				}
+				s.faces = append(s.faces, pts)
+				s.normals = append(s.normals, newellNormal(pts))
+			}
+			for z := pz; z < z1; z++ {
+				for x := px; x < x1; x++ {
+					if t.IsHole(x, z) {
+						continue
+					}
+					for _, tri := range t.CellTriangles(x, z) {
+						add([]mgl32.Vec3{toWorld(tri[0]), toWorld(tri[1]), toWorld(tri[2])})
+					}
+					// The underside, wound to face down.
+					c := func(ix, iz int) mgl32.Vec3 {
+						v := t.Vertex(ix, iz)
+						return toWorld(mgl32.Vec3{v.X(), bottom, v.Z()})
+					}
+					add([]mgl32.Vec3{c(x, z), c(x+1, z), c(x+1, z+1), c(x, z+1)})
+				}
+			}
+			if len(s.faces) > 0 {
+				s.hash = hashSolid(&s)
+				out = append(out, s)
+			}
+		}
 	}
 	return out
 }

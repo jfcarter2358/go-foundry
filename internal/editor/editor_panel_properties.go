@@ -73,6 +73,8 @@ func editorPropertiesSection(lvl *world.Level) {
 	// about the *next* click rather than about anything selected, which is why
 	// it draws whenever the brush has a model — see editor_scenery_panel.go.
 	editorSceneryBrushSection()
+	// The terrain tool's block, on the brush's terms: about the next stroke.
+	editorTerrainToolSection()
 	editorEmitterPropertiesSection()
 	editorSoundPropertiesSection()
 	editorEffectPropertiesSection()

@@ -41,10 +41,17 @@ const (
 // viewing distances without looking embossed.
 const DefaultBumpStrength = 4
 
-// MaxBumpStrength bounds the editor's slider (and anything a hand-edited
-// .ftex could ask for). Past about this the normal is essentially the
-// gradient direction and more strength stops changing the look.
-const MaxBumpStrength = 32
+// BumpSliderMax bounds the editor's strength slider. For painted relief,
+// past about this the normal is essentially the gradient direction and more
+// strength stops changing the look.
+const BumpSliderMax = 32
+
+// MaxBumpStrength bounds what a document may carry (and anything a
+// hand-edited .ftex could ask for). It is well above BumpSliderMax because
+// a height field rebuilt from an imported normal map (HeightFromNormalMap)
+// needs it: a steep map spans far more than the 0..1 a height byte holds, and
+// the strength is what stretches it back.
+const MaxBumpStrength = 128
 
 // emptyBumpLayer is the height-channel counterpart of emptyLayer: all zeroes,
 // which is a perfectly flat surface.

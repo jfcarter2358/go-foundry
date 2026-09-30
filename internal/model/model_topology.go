@@ -22,6 +22,8 @@ package model
 // about would be deleting someone's work.
 
 import (
+	"math"
+
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -469,6 +471,106 @@ func (m *ModelDoc) MergeVerts(verts []int, at mgl32.Vec3) (kept int, edit Topolo
 	edit = TopologyEdit{FaceSrc: src, VertRemap: m.removeVerts(drop)}
 	m.Invalidate()
 	return edit.Vert(keep), edit
+}
+
+// WeldCoincident collapses every set of points sitting on one spot (within
+// CoincidentTol) into a single point, across the whole model, and returns how
+// many points went. It is MergeVerts run on each such set at once: the lowest
+// index of a set survives where it stands, takes the blend of the set's
+// weights, and faces a collapse leaves degenerate are cleaned up the same way.
+//
+// This is the permanent answer to what WithCoincident works around during a
+// drag — a surface stored as parts that only touch — for the meshes where the
+// parts were never meant to come apart.
+func (m *ModelDoc) WeldCoincident() (welded int, edit TopologyEdit) {
+	type cell [3]int32
+	cellOf := func(p mgl32.Vec3) cell {
+		return cell{
+			int32(math.Floor(float64(p.X() / CoincidentTol))),
+			int32(math.Floor(float64(p.Y() / CoincidentTol))),
+			int32(math.Floor(float64(p.Z() / CoincidentTol))),
+		}
+	}
+	// Union-find with the smaller index as root, so a set's survivor is its
+	// lowest index however the pairs were found.
+	root := make([]int, len(m.Verts))
+	for i := range root {
+		root[i] = i
+	}
+	var find func(int) int
+	find = func(v int) int {
+		if root[v] != v {
+			root[v] = find(root[v])
+		}
+		return root[v]
+	}
+	tol2 := float32(CoincidentTol * CoincidentTol)
+	grid := map[cell][]int{}
+	for v, p := range m.Verts {
+		c := cellOf(p)
+		for dx := int32(-1); dx <= 1; dx++ {
+			for dy := int32(-1); dy <= 1; dy++ {
+				for dz := int32(-1); dz <= 1; dz++ {
+					for _, u := range grid[cell{c[0] + dx, c[1] + dy, c[2] + dz}] {
+						if p.Sub(m.Verts[u]).LenSqr() > tol2 {
+							continue
+						}
+						a, b := find(u), find(v)
+						if a > b {
+							a, b = b, a
+						}
+						root[b] = a
+					}
+				}
+			}
+		}
+		grid[c] = append(grid[c], v)
+	}
+
+	into := map[int]int{}
+	sets := map[int][]int{}
+	for v := range m.Verts {
+		if r := find(v); r != v {
+			into[v] = r
+			sets[r] = append(sets[r], v)
+		}
+	}
+	if len(into) == 0 {
+		return 0, TopologyEdit{}
+	}
+
+	m.EnsureWeights()
+	for r, rest := range sets {
+		lists := [][]ModelVertexWeight{m.Weights[r]}
+		for _, v := range rest {
+			lists = append(lists, m.Weights[v])
+		}
+		m.Weights[r] = blendWeights(lists...)
+	}
+
+	before := m.referencedVerts()
+	touched := map[int]bool{}
+	for fi := range m.Faces {
+		f := &m.Faces[fi]
+		for i, v := range f.Verts {
+			if r, ok := into[v]; ok {
+				f.Verts[i] = r
+				touched[fi] = true
+			}
+		}
+	}
+	named := make(map[int]bool, len(into))
+	for v := range into {
+		named[v] = true
+	}
+	src := m.cleanFaces(touched)
+	drop := orphanedVerts(before, m.referencedVerts(), named)
+	for r := range sets {
+		delete(drop, r)
+	}
+	edit = TopologyEdit{FaceSrc: src, VertRemap: m.removeVerts(drop)}
+	m.Invalidate()
+	return len(into), edit
 }
 
 // VertsCentroid is the average position of the given points — where a merge

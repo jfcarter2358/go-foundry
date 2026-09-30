@@ -44,7 +44,7 @@ func SyncDecals(lvl *Level, budget int) {
 	if lvl == nil {
 		return
 	}
-	gen := BrushMeshGeneration()
+	gen := decalWorldGeneration()
 	rebuilt := 0
 	for i := range lvl.Decals {
 		d := &lvl.Decals[i]
@@ -124,7 +124,14 @@ func ReleaseDecals(lvl *Level) {
 
 // decalFingerprint is the current fingerprint of d and the world.
 func decalFingerprint(d *Decal) uint64 {
-	return decalFingerprintAt(d, BrushMeshGeneration())
+	return decalFingerprintAt(d, decalWorldGeneration())
+}
+
+// decalWorldGeneration moves whenever anything a decal projects onto is
+// edited: a brush mesh, or a terrain (a sculpt reshapes the ground a bullet
+// hole lies on as surely as a vertex drag reshapes a wall).
+func decalWorldGeneration() uint64 {
+	return BrushMeshGeneration()*1099511628211 ^ TerrainGeneration()
 }
 
 // decalFingerprintAt is decalFingerprint with the generation passed in, so a

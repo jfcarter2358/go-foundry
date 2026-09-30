@@ -98,6 +98,13 @@ func loadCompiledChunkRange(c *CompiledLevel, level *world.Level, texNeeded map[
 				noteFaceTextures(texNeeded, f)
 			})
 		}
+		if ch.Terrain != nil {
+			for _, tex := range ch.Terrain.Layers {
+				if tex != "" {
+					texNeeded[tex] = true
+				}
+			}
+		}
 		if !ch.Unloaded {
 			for bi := range ch.Brushes {
 				// A compiled chunk's static brushes are drawn out of the

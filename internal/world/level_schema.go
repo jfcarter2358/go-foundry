@@ -476,6 +476,10 @@ type RawChunk struct {
 	// Moves keeps the chunk out of the compile, drawn live, because a script
 	// moves it. See Chunk.Moves.
 	Moves bool `yaml:"moves,omitempty"`
+	// Terrain is the chunk's heightfield ground, if it has one: open land
+	// sculpted and painted in the editor rather than built from brushes. See
+	// RawTerrain.
+	Terrain *RawTerrain `yaml:"terrain,omitempty"`
 }
 
 // TODO(brush migration, Phase 5): RawBiomeSector and RawBiomeBrush lived

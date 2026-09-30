@@ -262,6 +262,7 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "B", Desc: "Toggle the bounding-box view"},
 			{Keys: "V", Desc: "Toggle orbit and fly camera"},
 			{Keys: "F", Desc: "Frame the selection"},
+			{Keys: "T", Desc: "Terrain tool: sculpt, cut holes in and paint chunks' ground"},
 			{Keys: "W / A / S / D", Desc: "Fly the camera (orbit: slide the pivot)"},
 			{Keys: "Space / Left Shift", Desc: "Up / down"},
 			{Keys: "Caps Lock", Desc: "Fly 4x faster while it is on"},
@@ -284,6 +285,18 @@ var keybindSectionTable = []uiwin.KeybindSection{
 			{Keys: "- / =", Desc: "Shrink / grow the ghost"},
 			{Keys: "Esc", Desc: "Put the brush away"},
 			{Keys: "Ctrl+Z", Desc: "Take back the last copy placed"},
+		},
+	},
+	{
+		Title:  "Editor — terrain tool (3D)",
+		Active: func() bool { return editor.Editor.Active && editor.TerrainToolActive() },
+		Binds: []uiwin.Keybind{
+			{Keys: "Hold left button", Desc: "Brush the ground under the cursor; one undo step per stroke"},
+			{Keys: "Shift+hold", Desc: "The opposite mode for this stroke: lower/raise, fill/hole"},
+			{Keys: "1 - 7", Desc: "Raise, Lower, Smooth, Flatten, Paint, Hole, Fill"},
+			{Keys: "[ / ]", Desc: "Brush radius down / up"},
+			{Keys: "- / =", Desc: "Brush strength down / up"},
+			{Keys: "T / Esc", Desc: "Put the tool away"},
 		},
 	},
 	{

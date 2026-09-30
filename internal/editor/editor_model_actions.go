@@ -320,6 +320,30 @@ func modelMergeSelectedPoints(atFirst bool) {
 	modelSetStatus("Merged %d points into one", n)
 }
 
+// modelWeldDuplicatePoints collapses every stack of points sharing one spot
+// into a single point across the whole model (ModelDoc.WeldCoincident), so a
+// mesh built from parts that only touch becomes one connected surface.
+func modelWeldDuplicatePoints() {
+	if modelDoc == nil {
+		return
+	}
+	faces := len(modelDoc.Faces)
+	ModelPushUndo()
+	welded, edit := modelDoc.WeldCoincident()
+	if !edit.Changed() {
+		modelUndoStack.pop()
+		modelSetStatus("No duplicate points to weld")
+		return
+	}
+	modelCarryMeshSelection(edit)
+	modelUVInvalidate()
+	if gone := faces - len(modelDoc.Faces); gone > 0 {
+		modelSetStatus("Welded %d duplicate points; %d faces collapsed to nothing and were removed", welded, gone)
+		return
+	}
+	modelSetStatus("Welded %d duplicate points", welded)
+}
+
 // modelCarryMeshSelection keeps whatever part of the vertex or edge selection
 // an edit left standing, under its new numbering.
 func modelCarryMeshSelection(edit model.TopologyEdit) {

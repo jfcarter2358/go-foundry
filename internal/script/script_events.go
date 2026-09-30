@@ -17,6 +17,7 @@ import (
 	"foundry/internal/ai"
 	"foundry/internal/flang"
 	"foundry/internal/hooks"
+	"foundry/internal/platform"
 	"foundry/internal/ui"
 	"foundry/internal/world"
 
@@ -145,6 +146,8 @@ func ScriptEventsReset() {
 	// A press made on the last level, or a hover over something in it, must
 	// not arrive on this one.
 	resetPointerTrack()
+	// Likewise a key press, though a key still held stays held.
+	platform.AdvanceKeys(0)
 }
 
 // ScriptEventsTick derives and posts one frame's events.
@@ -153,6 +156,7 @@ func ScriptEventsReset() {
 // script_pause.go. The stack's clock advances either way; play time does not.
 func ScriptEventsTick(rt *ScriptRuntime, lvl *world.Level, dt float32) {
 	scriptEvents.stackElapsed += float64(dt)
+	postKeyEvents(rt, lvl, dt, scriptEvents.paused)
 	if scriptEvents.paused {
 		postPausedEvents(rt, dt)
 		return

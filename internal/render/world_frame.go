@@ -143,6 +143,9 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		// And the brush batches with the meshes, before the first pass
 		// reads them. Does nothing unless some brush mesh changed.
 		SyncChunkBatches(lvl)
+		// And the terrain meshes, for the same reason: a sculpt stroke's rows
+		// are uploaded before the shadow pass draws them.
+		SyncTerrainMeshes(lvl)
 
 		// TODO(brush migration, Phase 5): the Water-kind biome sector's
 		// companion water surface was synced here before anything read it
@@ -357,6 +360,14 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 				})
 			brushesDrawn += st.Brushes
 			brushDrawCalls += st.DrawCalls
+		}
+		ProfileEnd()
+
+		// Chunks' heightfield ground (terrain.go), in the opaque pass and
+		// ahead of the scatter so grass lands on its depth.
+		ProfileBegin("terrain")
+		if !o.skip("terrain") {
+			RenderTerrain(lvl, projView, &frustum, shadowFrame)
 		}
 		ProfileEnd()
 

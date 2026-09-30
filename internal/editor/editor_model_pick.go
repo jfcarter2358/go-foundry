@@ -146,6 +146,18 @@ func modelSelectedVerts() []int {
 	}
 }
 
+// modelTransformVerts is the vertex set a move, rotate or scale of the
+// selection moves: the selection plus the vertices stacked on the same spots
+// (ModelDoc.WithCoincident), so dragging a point where two parts meet drags
+// both instead of tearing a hole between them. Only transforms use it — the
+// gizmo origin, merging and mode conversion stay on the selection itself.
+func modelTransformVerts() []int {
+	if modelDoc == nil {
+		return nil
+	}
+	return modelDoc.WithCoincident(modelSelectedVerts())
+}
+
 // modelSelectedMeshVerts is the vertex set the *mesh* selection resolves to,
 // whatever mode is current. The bone panel assigns to this, so switching to
 // Bone mode to pick a bone does not throw away the points being assigned.
@@ -560,7 +572,7 @@ func modelGizmoMouseDown(mx, my int32) bool {
 		modelBoneGizmoCapture()
 		return true
 	}
-	for _, v := range modelSelectedVerts() {
+	for _, v := range modelTransformVerts() {
 		if v >= 0 && v < len(modelDoc.Verts) {
 			modelGizmo.StartVerts[v] = modelDoc.Verts[v]
 		}
@@ -664,7 +676,7 @@ func modelNudgeSelection(axis int, delta float32) {
 		})
 		return
 	}
-	for _, v := range modelSelectedVerts() {
+	for _, v := range modelTransformVerts() {
 		if v >= 0 && v < len(modelDoc.Verts) {
 			modelDoc.SetVertPos(v, axisMoved(modelDoc.Verts[v], axis, delta))
 		}

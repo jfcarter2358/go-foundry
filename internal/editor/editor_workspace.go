@@ -306,6 +306,7 @@ func (w *brushWorkspace) disarmOtherPlacements() {
 		return
 	}
 	editorDisarmBrush()
+	editorDisarmTerrainTool()
 	Editor.EntityPlacementMode = false
 	Editor.PrefabPlacementMode = false
 	Editor.VolumePlacementMode = false

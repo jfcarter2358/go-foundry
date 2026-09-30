@@ -77,6 +77,8 @@ const (
 	pickLight     pickKind = "light"
 	pickScenery   pickKind = "scenery"
 	pickWaypoint  pickKind = "waypoint"
+	// pickTerrain is a chunk's heightfield ground: chunkIdx names the chunk.
+	pickTerrain pickKind = "terrain"
 )
 
 // pickHit is one thing found along a picking ray. Which index fields are
@@ -301,6 +303,18 @@ func pick3DCandidates(sx, sy int32) []pickHit {
 		// vertex buffers (app.go) — carried into world space by this same
 		// matrix there, so picking has to go through it too.
 		model := ch.ModelMatrix()
+
+		// The chunk's ground, through the same cell walk collision's rays
+		// take. Added as a plain hit, not a face: nothing that acts on a
+		// brush face has a face to act on here.
+		if ch.Terrain != nil {
+			inv := model.Inv()
+			lo := inv.Mul4x1(origin.Vec4(1)).Vec3()
+			ld := inv.Mul4x1(dir.Vec4(0)).Vec3()
+			if t, _, hit := ch.Terrain.Raycast(lo, ld, math.MaxFloat32); hit {
+				scene.add(t, pickTerrain, ci, -1)
+			}
+		}
 
 		for bi := range ch.Brushes {
 			m, detail, ok := pickMeshFor(ci, bi, &ch.Brushes[bi])
@@ -834,6 +848,8 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	// stamp's box says the same thing about the next solid.
 	DrawBrushGhostOutline()
 	DrawBrushPlaceGhost()
+	// The terrain brush's ring, on the ground it is about to reshape.
+	drawTerrainBrushRing()
 	RenderEmitterMarkers(ws().level, ws().camPos())
 	RenderSoundMarkers(ws().level, ws().camPos())
 	RenderEffectMarkers(ws().level, ws().camPos())

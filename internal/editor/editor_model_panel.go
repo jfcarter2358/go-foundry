@@ -396,6 +396,15 @@ func modelMeshSection() {
 	if imgui.IsItemHovered() {
 		imgui.SetTooltip("Catmull-Clark: one level over the whole mesh.\nThe surface moves — it gets rounder each time.")
 	}
+	imgui.SameLine()
+	if imgui.Button("Weld Duplicate Points##modelweld") {
+		modelWeldDuplicatePoints()
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Collapse every set of points sharing one spot into a single point,\n" +
+			"so parts that only touch become one connected surface.\n" +
+			"Faces left with no area are removed.")
+	}
 
 	// Only the checkbox sets every face: the crease angle is shown with it
 	// unticked too now, and dragging it must not clear the faces' own flags.

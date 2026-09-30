@@ -182,6 +182,18 @@ func pushOutOfChunkBrushes(chunk *world.Chunk, pos mgl32.Vec3, radius, halfHeigh
 	}
 	body := Cylinder{C: out, Half: mgl32.Vec3{radius, halfHeight, radius}, Rot: mgl32.Ident4()}
 	bestFloorCos := float32(0)
+	// The ground first (terrain.go), so the brushes resolve the body where
+	// the ground has left it: a rock brush sitting on a hillside pushes a
+	// body off itself, not back into the slope.
+	if chunk.Terrain != nil {
+		var f bool
+		out, f = pushOutOfTerrain(chunk.Terrain, out, radius, halfHeight)
+		if f {
+			hitFloor = true
+			bestFloorCos = 1
+		}
+		body.C = out
+	}
 	boxes := brushBoxesFor(chunk)
 	if boxes == nil {
 		return

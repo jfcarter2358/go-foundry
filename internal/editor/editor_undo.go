@@ -138,6 +138,9 @@ func EditorCanRedo() bool { return levelRedoStack.len() > 0 }
 // EditorUndo restores the most recently pushed snapshot, moving the current
 // state onto the redo stack.
 func EditorUndo() {
+	// A stroke still being painted is finished first, so its own entry is
+	// the one this undoes rather than one beneath it.
+	editorTerrainEndStroke()
 	if inPlaySession() {
 		return
 	}
@@ -153,6 +156,7 @@ func EditorUndo() {
 
 // EditorRedo re-applies the most recently undone snapshot.
 func EditorRedo() {
+	editorTerrainEndStroke()
 	if inPlaySession() {
 		return
 	}

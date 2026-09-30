@@ -88,6 +88,19 @@ func loadRawChunk(rc world.RawChunk) (world.Chunk, map[string]bool, error) {
 		chunk.Brushes = append(chunk.Brushes, b)
 	}
 
+	terrain, err := world.TerrainFromRaw(rc.Terrain)
+	if err != nil {
+		return world.Chunk{}, nil, fmt.Errorf("chunk %q: %w", rc.ID, err)
+	}
+	chunk.Terrain = terrain
+	if terrain != nil {
+		for _, tex := range terrain.Layers {
+			if tex != "" {
+				texNeeded[tex] = true
+			}
+		}
+	}
+
 	// See Chunk.Unloaded above.
 	if !chunk.Unloaded {
 		for bi := range chunk.Brushes {

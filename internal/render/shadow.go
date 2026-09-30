@@ -853,6 +853,12 @@ func renderSceneShadowLayers(level *world.Level, prog uint32, skin *gfx.SkinUnif
 			break
 		}
 		chunk := &level.Chunks[ci]
+		// Terrain first, and ahead of the compiled skip below: the compiler
+		// never bakes a terrain, so a compiled chunk's ground is live
+		// geometry that casts from here like any other (terrain.go).
+		if terrainDrawable(chunk) {
+			shadowChunkTerrain(chunk, cull, modelUniform, &current)
+		}
 		// A compiled chunk cast above, out of the compiled list — except for
 		// its dynamic brushes, which the compiler left out of the bake because
 		// they move and which are therefore still live geometry here. Same

@@ -456,6 +456,9 @@ func Run() {
 			platform.KeyStates = noKeys(len(platform.KeyStates))
 			platform.MouseButtons = 0
 		}
+		// A release the UI or the console took still lets go of the key as
+		// far as scripts are concerned.
+		platform.SettleKeys(platform.KeyStates, platform.MouseButtons)
 
 		// Point the F1 reference at the focused window before anything draws.
 		devUpdateFocus()

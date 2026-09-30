@@ -58,6 +58,30 @@ func FitSeal(lvl *world.Level) *world.Seal {
 			add(p)
 			return true
 		})
+		// Terrain is never baked, but it is the ground the level's entities
+		// stand on: a box fitted to the brushes alone would leave a field of
+		// enemies on the hills outside it, and a strict compile refusing them.
+		for ci := range lvl.Chunks {
+			ch := &lvl.Chunks[ci]
+			if ch.Terrain == nil || !Bakes(ch) {
+				continue
+			}
+			tlo, thi := ch.Terrain.LocalBounds()
+			m := ch.ModelMatrix()
+			for i := 0; i < 8; i++ {
+				c := tlo
+				if i&1 != 0 {
+					c[0] = thi[0]
+				}
+				if i&2 != 0 {
+					c[1] = thi[1]
+				}
+				if i&4 != 0 {
+					c[2] = thi[2]
+				}
+				add(m.Mul4x1(c.Vec4(1)).Vec3())
+			}
+		}
 		// A spawn aboard a vehicle is in the vehicle's coordinates, which say
 		// nothing about where it is in the level.
 		if lvl.Spawn != nil && lvl.Spawn.Frame == "" {

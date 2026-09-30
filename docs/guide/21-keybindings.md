@@ -75,6 +75,7 @@ keeps `W` `A` `S` `D`.
 | `B` | bounding boxes |
 | `V` | orbit / fly camera |
 | `F` | frame the selection |
+| `T` | terrain tool — see [Terrain](30-terrain.md) |
 | `W` `A` `S` `D` | fly the camera (orbit: slide the pivot) |
 | `Space` / `Left Shift` | up / down |
 | Right-drag / middle-drag | look around, or orbit the pivot |
@@ -211,6 +212,17 @@ Armed from `Add... > Brush` or the view's right-click menu.
 | `-` / `=` | shrink / grow |
 | `Ctrl+Z` | take back the last copy placed |
 | `Esc` | put the brush away |
+
+## Editor — terrain tool
+
+| | |
+| --- | --- |
+| Hold left button | brush the ground under the cursor; one undo step per stroke |
+| `Shift`+hold | the opposite mode for this stroke: lower/raise, fill/hole |
+| `1` – `7` | Raise, Lower, Smooth, Flatten, Paint, Hole, Fill |
+| `[` / `]` | radius down / up |
+| `-` / `=` | strength down / up |
+| `T` / `Esc` | put the tool away |
 
 ## Model editor
 

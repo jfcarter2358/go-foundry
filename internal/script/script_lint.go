@@ -55,6 +55,7 @@ var scriptEventAtoms = []string{
 	"collide", "interact", "anim_start", "anim_end",
 	"mount", "dismount", "portal_seal", "waypoint", "waypoints_end",
 	"click", "hover", "unhover", "change", "submit", "cancel", "shown", "hidden", "bound",
+	"key_down", "key_up",
 }
 
 // linter carries what the checks share: the level, its index, and the lazily

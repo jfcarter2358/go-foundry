@@ -68,8 +68,14 @@ nothing sharing its corners is dragged along.
 
 In the **Mesh** section: **Smooth Subdivide** is Catmull-Clark over the whole
 mesh — the surface gets rounder each time, and it renumbers everything so your
-selection is dropped. There is also a whole-mesh smooth toggle with a crease
-angle.
+selection is dropped. **Weld Duplicate Points** collapses every set of points
+sharing one spot into a single point, so a mesh built from parts that only
+touch (or imported with its seams split) becomes one connected surface; any
+face left with no area is removed. It is one undo step. You rarely *need* it
+just to move things — a move, rotate or scale already drags the points stacked
+under the selection along with it — but after a weld those points are one
+point for extrude, merge and dissolve too. There is also a whole-mesh smooth
+toggle with a crease angle.
 
 ## UVs
 

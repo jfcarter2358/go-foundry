@@ -223,6 +223,19 @@ func (q *GroundQuery) SurfaceUnder(wx, topY, wz, maxDrop float32) Surface {
 				best = Surface{Height: topY - t, Normal: n.Normalize(), Found: true}
 			}
 		}
+
+		// The chunk's terrain answers the column with one cell lookup. The
+		// column's parameter is carried through the placement's scale exactly
+		// as the faces' is: localDir is the world's down, in here.
+		if tr := ch.Terrain; tr != nil && localDir.Y() < 0 {
+			if h, n, ok := tr.HeightAt(localOrigin.X(), localOrigin.Z()); ok {
+				t := (h - localOrigin.Y()) / localDir.Y()
+				if t >= 0 && t <= maxDrop && t < bestT {
+					bestT = t
+					best = Surface{Height: topY - t, Normal: ch.LocalToPlacementDirection(n).Normalize(), Found: true}
+				}
+			}
+		}
 	}
 	return best
 }

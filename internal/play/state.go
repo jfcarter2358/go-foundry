@@ -98,6 +98,8 @@ func hitKind(k collision.RayHitKind) string {
 		return "volume"
 	case collision.RayHitScenery:
 		return "scenery"
+	case collision.RayHitTerrain:
+		return "terrain"
 	}
 	return "brush"
 }

@@ -45,6 +45,8 @@ var worldVerbs = []string{
 	"show_screen", "hide_screen", "screen", "widget", "focus", "load_level",
 	"quit_game",
 	"bind_key", "binding_name", "reset_bindings",
+	"key_down", "key_pressed", "key_released", "key_held_time", "keys_down",
+	"action_down", "action_pressed", "action_released", "action_held_time",
 	"setting", "set_setting",
 	"save_game", "load_game", "save_info", "latest_save", "delete_save",
 	"checkpoint", "retry", "restart_level",

@@ -123,6 +123,11 @@ type Chunk struct {
 	// drawn live like a vehicle's interior. Authored; see compile.Bakes.
 	Moves bool
 
+	// Terrain is the chunk's heightfield ground, or nil. It is chunk-local
+	// like the brushes, drawn, collided with and baked into navigation beside
+	// them, and never goes through CSG: see terrain.go.
+	Terrain *Terrain
+
 	// Unloaded is runtime-only (never serialized, never cloned): whether the
 	// chunk's geometry has actually been released. It trails the flags by up
 	// to a frame, because writing a flag may happen anywhere while freeing
@@ -264,6 +269,7 @@ func (ch *Chunk) Clone(newID, idSuffix string) Chunk {
 		UnloadWhenDisabled: ch.UnloadWhenDisabled,
 		Streamed:           ch.Streamed,
 		Moves:              ch.Moves,
+		Terrain:            ch.Terrain.Clone(),
 	}
 
 	cp.Brushes = make([]Brush, len(ch.Brushes))
@@ -295,7 +301,7 @@ func FindChunkByID(lvl *Level, id string) *Chunk {
 // stale — geometry added outside the original bounds then gets
 // frustum-culled along with the rest of the chunk even when it's on screen.
 func (ch *Chunk) RecomputeBounds() {
-	if len(ch.Brushes) == 0 {
+	if len(ch.Brushes) == 0 && ch.Terrain == nil {
 		return
 	}
 	first := true
@@ -318,6 +324,9 @@ func (ch *Chunk) RecomputeBounds() {
 
 	for bi := range ch.Brushes {
 		extend(ch.Brushes[bi].LocalAABB())
+	}
+	if ch.Terrain != nil {
+		extend(ch.Terrain.LocalBounds())
 	}
 }
 

@@ -183,6 +183,9 @@ func entityGeometryUnderfoot(ch *world.Chunk, p mgl32.Vec3) bool {
 		return false
 	}
 	origin := chunkLocal(ch, p)
+	if terrainBelow(ch.Terrain, origin) {
+		return true
+	}
 	down := ch.PlacementToLocalDirection(mgl32.Vec3{0, -1, 0})
 	for bi := range ch.Brushes {
 		b := &ch.Brushes[bi]
