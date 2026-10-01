@@ -15,7 +15,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -46,6 +46,10 @@ func RenderScenery(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, m
 	if lvl == nil {
 		return
 	}
+	if sceneryInstancing && len(lvl.Scenery) > 0 {
+		DebugStats.Scenery = renderSceneryInstanced(lvl, cull, draw)
+		return
+	}
 	for i := range lvl.Scenery {
 		s := &lvl.Scenery[i]
 		if !s.HasGeometry() || !SceneryInFrustum(s, cull) {
@@ -72,6 +76,12 @@ func RenderScenery(lvl *world.Level, cull *Frustum, draw func(g *gfx.Geometry, m
 // barrel's transform.
 func RenderSceneryShadow(lvl *world.Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum) {
 	if lvl == nil || len(lvl.Scenery) == 0 {
+		return
+	}
+	if sceneryInstancing {
+		// The instanced draw never touches modelUniform, so the identity
+		// the walker left there stays put.
+		renderSceneryShadowInstanced(lvl, prog, skin, cull)
 		return
 	}
 	drewAny := false

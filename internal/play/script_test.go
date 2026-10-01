@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"foundry/internal/hooks"
+	"foundry/internal/render"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -142,5 +143,40 @@ func TestAFinishedRunIsHoldingNothing(t *testing.T) {
 	}
 	if in := r.Tick(1.0 / 60); in.Intent.Len() != 0 {
 		t.Errorf("still walking after the script ended: %v", in.Intent)
+	}
+}
+
+// A script's `view` is the shots that follow it: lighting-only draws through
+// the GI debug switch, wireframe through render's own, and a name that is not
+// a view fails the parse rather than a normal picture being taken anyway.
+func TestViewSwitchesTheFrameForTheShotsAfterIt(t *testing.T) {
+	f := newTarget(t)
+	t.Cleanup(func() { _, _ = render.SetView("normal") })
+	if _, err := Parse("view"); err == nil {
+		t.Error("view with no name parsed")
+	}
+	cmds, err := Parse("view lighting; shot a; view wireframe; shot b; view normal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := New(f, cmds)
+	for i := 0; i < 10 && !r.Done(); i++ {
+		r.Tick(1.0 / 60)
+		if f.shots == 1 && render.GIDebug != render.GIDebugLighting {
+			t.Errorf("the first shot was not taken in the lighting view: %s", render.ViewName())
+		}
+	}
+	if !r.Done() || f.shots != 2 {
+		t.Fatalf("done %v with %d shots; log %q", r.Done(), f.shots, f.log)
+	}
+	if render.ViewName() != "normal" || render.ForceWireframe {
+		t.Errorf("view normal left the frame in %s", render.ViewName())
+	}
+	if !strings.Contains(strings.Join(f.log, "\n"), "VIEW wireframe") {
+		t.Errorf("the switch was not logged: %q", f.log)
+	}
+
+	if _, err := Parse("view lighting; view sepia"); err == nil {
+		t.Error("an unknown view parsed — it would be found out mid-run, after the walk")
 	}
 }

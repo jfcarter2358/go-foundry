@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // biome_shadow_vert.glsl — directional-cascade depth stage for the biome
 // scatter. Paired with shadow_frag.glsl.

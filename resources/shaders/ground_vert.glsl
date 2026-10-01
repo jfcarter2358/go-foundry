@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // ground_vert.glsl — conforming ground-patch mesh underneath a painted biome
 // sector (see biome_ground.go). Geometry is fully baked on the CPU, chunk-local

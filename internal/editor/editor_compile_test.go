@@ -9,13 +9,16 @@ package editor
 
 import (
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"foundry/internal/levelio"
 	"foundry/internal/testenv"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
+	"github.com/veandco/go-sdl2/sdl"
 )
 
 // previewLevel is a sealed room plus a chunk the compiler will not bake, so the
@@ -148,5 +151,49 @@ func TestCompilingFromTheEditorWritesBesideTheLevel(t *testing.T) {
 	}
 	if _, err := os.Stat(levelio.CompiledPath(Editor.SavePath)); err != nil {
 		t.Errorf("no artefact beside the level: %v", err)
+	}
+}
+
+// The Build menu's compile runs off the main thread: while it does the editor
+// keeps input away from the level, and the frame after it finishes the
+// artefact is on disk, the stages it went through were heard, and the status
+// line says how it went.
+func TestTheBackgroundCompileReportsStagesAndFinishes(t *testing.T) {
+	withPreviewLevel(t)
+	Editor.SavePath = t.TempDir() + "/room.yaml"
+
+	editorBeginCompile(compileToFile)
+	if !EditorCompiling() {
+		t.Fatal("the compile did not start")
+	}
+	if !EditorCompileSwallowsInput(sdl.KeyboardEvent{Type: sdl.KEYDOWN}) {
+		t.Error("a key press reached the editor while the compile was reading the level")
+	}
+	if EditorCompileSwallowsInput(sdl.KeyboardEvent{Type: sdl.KEYUP}) {
+		t.Error("a key release was swallowed, which would leave the key stuck down")
+	}
+	deadline := time.Now().Add(time.Minute)
+	for EditorCompiling() {
+		if time.Now().After(deadline) {
+			t.Fatal("the compile never finished")
+		}
+		time.Sleep(5 * time.Millisecond)
+		editorStepCompile()
+	}
+
+	if _, err := os.Stat(levelio.CompiledPath(Editor.SavePath)); err != nil {
+		t.Errorf("no artefact beside the level: %v", err)
+	}
+	editorCompileJob.mu.Lock()
+	stages := len(editorCompileJob.stages)
+	editorCompileJob.mu.Unlock()
+	if stages < 4 {
+		t.Errorf("heard %d stages, want at least CSG, BSP, visibility and light", stages)
+	}
+	if !strings.HasPrefix(Editor.StatusMsg, "Compiled to room.fbsp") {
+		t.Errorf("status line says %q", Editor.StatusMsg)
+	}
+	if EditorCompileSwallowsInput(sdl.KeyboardEvent{Type: sdl.KEYDOWN}) {
+		t.Error("input is still swallowed after the compile finished")
 	}
 }

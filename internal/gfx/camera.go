@@ -4,7 +4,7 @@ import (
 	"foundry/internal/platform"
 	"math"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -179,7 +179,9 @@ func HandleInputScaled(keyStates []uint8, scale float32) {
 //
 // Look keys are applied directly — a rotation is not a displacement, and
 // nothing downstream wants to defer it — and Cam.Direction is refreshed before
-// the basis is built so a turn takes effect on the same frame it was made.
+// the basis is built so a turn takes effect on the same frame it was made. The
+// look stick is not read here: it turns by how far it is pushed, with its own
+// curve and aim assist, in app/pad_look.go.
 //
 // The returned vector is in the camera's own yaw-relative basis with WorldUp as
 // its vertical, which is world space while the viewer is standing on the world.
@@ -208,18 +210,12 @@ func moveIntent(keyStates []uint8, b *platform.BindingTable, freeFly bool) mgl32
 	uMove := float32(0.0)
 	rMove := float32(0.0)
 
-	if b.Held(platform.ActMoveForward, keyStates) {
-		fMove += moveSpeed
-	}
-	if b.Held(platform.ActMoveLeft, keyStates) {
-		rMove += moveSpeed
-	}
-	if b.Held(platform.ActMoveBack, keyStates) {
-		fMove -= moveSpeed
-	}
-	if b.Held(platform.ActMoveRight, keyStates) {
-		rMove -= moveSpeed
-	}
+	// How far each way, not just whether: a key is all the way and a stick is
+	// as far as it is pushed, so half a stick walks at half speed. A stick's
+	// four directions come off one radial dead zone, so pushed diagonally it
+	// is no faster than pushed straight.
+	fMove += moveSpeed * (b.Value(platform.ActMoveForward, keyStates) - b.Value(platform.ActMoveBack, keyStates))
+	rMove += moveSpeed * (b.Value(platform.ActMoveLeft, keyStates) - b.Value(platform.ActMoveRight, keyStates))
 	if b.Held(platform.ActJump, keyStates) {
 		if freeFly {
 			uMove += moveSpeed // free-fly up
@@ -231,16 +227,16 @@ func moveIntent(keyStates []uint8, b *platform.BindingTable, freeFly bool) mgl32
 			uMove -= moveSpeed // free-fly down, on the sprint key
 		}
 	}
-	if b.Held(platform.ActLookLeft, keyStates) {
+	if b.KeyHeld(platform.ActLookLeft, keyStates) {
 		Cam.Yaw -= rotSpeed
 	}
-	if b.Held(platform.ActLookRight, keyStates) {
+	if b.KeyHeld(platform.ActLookRight, keyStates) {
 		Cam.Yaw += rotSpeed
 	}
-	if b.Held(platform.ActLookUp, keyStates) {
+	if b.KeyHeld(platform.ActLookUp, keyStates) {
 		Cam.Pitch += rotSpeed
 	}
-	if b.Held(platform.ActLookDown, keyStates) {
+	if b.KeyHeld(platform.ActLookDown, keyStates) {
 		Cam.Pitch -= rotSpeed
 	}
 

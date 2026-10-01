@@ -28,6 +28,11 @@ package app
 //	          the end of the first pose's warm-up to the end of the run
 //	shots     a directory: the last frame of each pose is saved there as
 //	          pose_<n>.png, so a run shows what it measured
+//	gi_debug  a live GI debug view (lighting, probes, field), as the console's
+//	          gi_debug sets it, so a run's pictures show what GI sees
+//	menus     answer: a modal screen that comes up is answered with its
+//	          initial_focus, as `foundry play` does, so a level that opens on
+//	          a menu is measured playing rather than paused behind it
 
 import (
 	"fmt"
@@ -44,12 +49,14 @@ import (
 
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/hooks"
 	"foundry/internal/levelio"
 	"foundry/internal/platform"
 	"foundry/internal/render"
+	"foundry/internal/ui"
 	"foundry/internal/world"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -70,6 +77,7 @@ type benchConfig struct {
 	hide     map[string]bool
 	cpuprof  string
 	shots    string
+	answer   bool
 }
 
 var bench struct {
@@ -83,12 +91,15 @@ var bench struct {
 	counts benchCounts
 	report strings.Builder
 	prof   *os.File
+	// answered is the modal screens menus=answer has clicked through.
+	answered map[string]bool
 }
 
 // benchCounts is the overlay's scene counters, summed over the measured frames.
 type benchCounts struct {
 	staticDrawn, brushCalls, brushes, chunks, sprites, particles, spriteDraws, volumeDraws, scenery int
 	pointShadows, pointShadowRenders                                                                int
+	giBuilt, giPending, giTraced                                                                    int
 }
 
 // benchParse reads FOUNDRY_BENCH. ok is false when it is unset.
@@ -119,6 +130,14 @@ func benchParse() (benchConfig, bool, error) {
 			c.cpuprof = v
 		case "shots":
 			c.shots = v
+		case "menus":
+			c.answer = v == "answer"
+		case "gi_debug":
+			m, ok := render.ParseGIDebugMode(v)
+			if !ok {
+				return c, true, fmt.Errorf("gi_debug %q: want off, lighting, probes or field", v)
+			}
+			render.GIDebug = m
 		case "size":
 			w, h, _ := strings.Cut(v, "x")
 			wi, _ := strconv.Atoi(w)
@@ -231,6 +250,17 @@ func benchPlaceCamera() {
 	if !bench.on || bench.pose >= len(bench.cfg.poses) {
 		return
 	}
+	if bench.cfg.answer {
+		for _, sc := range ui.Game.Screens() {
+			if sc.Modal && sc.InitialFocus != "" && !bench.answered[sc.ID] {
+				if bench.answered == nil {
+					bench.answered = map[string]bool{}
+				}
+				bench.answered[sc.ID] = true
+				hooks.RecordUIEvent(hooks.UIEvent{Atom: "click", Screen: sc.ID, Widget: sc.InitialFocus})
+			}
+		}
+	}
 	p := bench.cfg.poses[bench.pose]
 	if p.spawn {
 		return
@@ -283,6 +313,10 @@ func benchEndFrame() {
 		c.scenery += s.Scenery
 		c.pointShadows += s.PointShadows
 		c.pointShadowRenders += s.PointShadowRenders
+		g := render.GIStatsLast
+		c.giBuilt += g.BricksBuilt
+		c.giPending += g.BricksPending
+		c.giTraced += g.ProbesTraced
 	}
 	if bench.frame < cfg.warm+cfg.frames {
 		return
@@ -328,6 +362,8 @@ func benchWritePose() {
 		per(c.staticDrawn), per(c.brushes), per(c.brushCalls), per(c.chunks), per(c.scenery),
 		per(c.sprites), per(c.particles), per(c.spriteDraws), per(c.volumeDraws))
 	fmt.Fprintf(r, "point shadows re-rendered %.2f of %.0f a frame\n", per(c.pointShadowRenders), per(c.pointShadows))
+	fmt.Fprintf(r, "gi  bricks built %.0f, still waiting %.0f; probes traced %.0f a frame\n",
+		per(c.giBuilt), per(c.giPending), per(c.giTraced))
 	fmt.Fprintf(r, "%-34s %9s %9s %9s %9s\n", "section", "cpu avg", "cpu max", "gpu avg", "gpu max")
 	for _, s := range render.ProfileSamples() {
 		fmt.Fprintf(r, "%-34s %9.2f %9.2f %9.2f %9.2f\n",

@@ -33,6 +33,7 @@ import (
 
 	"foundry/internal/claude"
 	"foundry/internal/fileutil"
+	"foundry/internal/render"
 	"foundry/internal/world"
 )
 
@@ -148,13 +149,27 @@ func claudeEditorTools() []claude.Tool {
 			Description: "A screenshot of the editor's 3D viewport as it is right now. Use it to " +
 				"check what something actually looks like after you change it, and to answer " +
 				"questions about what is on screen. Move the editor camera first if you need a " +
-				"different angle — ask the user, this tool does not move it.",
-			Run: func(json.RawMessage) (claude.ToolResult, error) {
-				png, err := claudeRequestShot()
-				if err != nil {
-					return claude.ToolResult{}, err
+				"different angle — ask the user, this tool does not move it. `view` draws this " +
+				"one picture in a debug view and then puts the author's view back: `lighting` is " +
+				"the light alone on white surfaces (where a room is dark, where a shadow falls, " +
+				"what a light reaches, with the textures out of the way), `probes` and `field` " +
+				"are live GI's probes and distance field, `wireframe` the geometry as lines.",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"view": map[string]any{
+						"type":        "string",
+						"enum":        anySlice(render.ViewNames()),
+						"description": "The debug view to draw this picture in. Omit for the view the editor is in.",
+					},
+				},
+			},
+			Run: func(args json.RawMessage) (claude.ToolResult, error) {
+				var a struct {
+					View string `json:"view"`
 				}
-				return claude.ToolResult{Image: png, ImageMIME: "image/png"}, nil
+				_ = json.Unmarshal(args, &a)
+				return claudeViewportShot(a.View)
 			},
 		},
 		{

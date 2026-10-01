@@ -311,22 +311,37 @@ in the bake. Where that matters, make the light dynamic.
 - **Navigation:** each column of solid blocks is its own piece, so caves stay
   open and editing re-bakes only the tiles nearby.
 
-Foliage is built once per section, when it first comes into range and again
-only when something it depends on changes. It is never built per frame. It is
-then drawn from static buffers:
-- each kind of plant thins out evenly toward the edge of its draw distance and
-  fades rather than pops;
-- past a short distance each kind switches to a far mesh with a fraction of the
-  triangles;
+Foliage is built once, when it first comes into range and again only when
+something it depends on changes or the camera comes closer than it was built
+for. It is never built per frame. Near the camera it is built per section;
+further out whole clusters of sections are built and drawn as one, holding
+only the plants that distance still shows, so a forest can reach the horizon
+without a draw per section. How it is drawn:
+- each kind of plant thins out with distance, and the plants that are left
+  grow to cover for the ones that went, so a meadow stays a meadow rather than
+  stopping at a line; they fade rather than pop;
+- each kind switches to a far mesh with a fraction of the triangles, then to a
+  far tier: grass, flowers, ferns and reeds to cards showing a whole tuft;
+  trees, shrubs, rocks and bushes to impostors — one card showing the plant
+  from the nearest of 64 directions, baked when the game starts and lit like
+  the real thing;
+- where the ground cover finally stops, the painted ground carries its colour
+  and grain on to the horizon;
+- on graphics cards with compute shaders every plant is tested on the GPU
+  first — against the view, its own distance and whatever hill or wall is in
+  front of it — and only what can be seen is drawn;
 - trees, shrubs, rocks, ferns and fallen wood cast shadows; grass, flowers and
   moss don't.
+
+Trees reach about 1.5 km, shrubs and rocks about 400–500 m, grass and flowers
+about 130 m.
 
 Two player settings control the cost. A settings screen can offer them, and
 both are saved to `graphics.yaml`:
 
 | Setting | |
 | --- | --- |
-| `@level.prop.foliage_distance` | how far foliage is drawn, 0.25 to 2 (default 1). At 0.5 it draws about half as far and costs roughly half as much |
+| `@level.prop.foliage_distance` | how far foliage is drawn, 0.25 to 2 (default 1). At 0.5 it draws about half as far and costs well under half as much |
 | `@level.prop.foliage_shadows` | whether foliage casts shadows (default on) |
 
 The level file stores the blocks and the paint packed and compressed. A

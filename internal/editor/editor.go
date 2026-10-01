@@ -1005,11 +1005,15 @@ func EditorRender() {
 
 	// A waypoint preview moves its brush before anything draws it, so the
 	// frame shows where the brush is rather than where it was.
-	editorWaypointPreviewTick(dt)
+	// Neither runs while a compile is reading the level behind its progress
+	// bar (editor_compile_job.go): both move things in it.
+	if !EditorCompiling() {
+		editorWaypointPreviewTick(dt)
 
-	// The terrain tool finds the ground under the cursor and carries its
-	// stroke on, before the overlays draw its ring there.
-	editorTerrainFrame(float32(dt))
+		// The terrain tool finds the ground under the cursor and carries
+		// its stroke on, before the overlays draw its ring there.
+		editorTerrainFrame(float32(dt))
+	}
 
 	// --- 3D gizmos (drawn on top of world, depth-tested) ---
 	if Editor.Mode == Mode3D {
@@ -1021,11 +1025,13 @@ func EditorRender() {
 	// A level being opened advances before the UI, so the bar drawn this frame
 	// is where the work got to.
 	editorStepLevelLoad()
+	editorStepCompile()
 
 	// --- ImGui UI ---
 	imguibackend.ImGuiNewFrame(dt)
 	EditorDrawUI()
 	editorDrawLevelLoad()
+	editorDrawCompile()
 	// The F3 overlay is drawn here rather than in main.go's non-editor branch
 	// so it is available in every editor mode too — frame time and draw counts
 	// matter most while you are building the thing that costs them.

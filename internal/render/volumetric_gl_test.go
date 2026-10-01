@@ -20,7 +20,7 @@ import (
 	"foundry/internal/world"
 	"testing"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -421,14 +421,14 @@ func TestVolumetricReadsTheDefaultFramebuffersDepthFormat(t *testing.T) {
 	}
 }
 
-const cloudShadowProbeVert = `#version 410
+const cloudShadowProbeVert = `#version 430
 void main() {
     vec2 p = vec2(gl_VertexID == 1 ? 3.0 : -1.0, gl_VertexID == 2 ? 3.0 : -1.0);
     gl_Position = vec4(p, 0.0, 1.0);
 }
 `
 
-const cloudShadowProbeFrag = `#version 410
+const cloudShadowProbeFrag = `#version 430
 uniform vec3 probePos;
 out vec4 outColor;
 void main() {

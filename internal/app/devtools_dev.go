@@ -225,13 +225,18 @@ func devRenderBrushGhost(draw func(g *gfx.Geometry, model mgl32.Mat4, doubleSide
 // GL context current.
 func devDrainWork() {
 	editor.DrainTexEditorRequest()
-	editor.DrainModelReloads()
-	// What Claude asked of the editor, and what its tools changed on disk. Both
-	// belong here for the same reason the reloads above do: they touch level
-	// state and GL objects, with the main context current, between frames.
-	editor.ClaudeRunQueuedTools()
-	editor.ClaudeDrainFileChanges()
-	editor.PollBiomeFiles()
+	// Everything below the texture editor writes the level, and waits while a
+	// compile is reading it on another goroutine.
+	if !editor.EditorCompiling() {
+		editor.DrainModelReloads()
+		// What Claude asked of the editor, and what its tools changed on
+		// disk. Both belong here for the same reason the reloads above do:
+		// they touch level state and GL objects, with the main context
+		// current, between frames.
+		editor.ClaudeRunQueuedTools()
+		editor.ClaudeDrainFileChanges()
+		editor.PollBiomeFiles()
+	}
 	uiwin.DrainWindowOpens()
 }
 
@@ -242,6 +247,11 @@ func devDrainWork() {
 // and every window and a sub-editor cannot eat it; it also swallows the Escape
 // that closes it, so that Escape is not also read as "cancel".
 func devRouteEvent(event sdl.Event) bool {
+	// A compile running behind its progress bar is reading the level; no
+	// window may edit it until it is done.
+	if editor.EditorCompileSwallowsInput(event) {
+		return true
+	}
 	editor.NoteInputEvent(event)
 	if uiwin.KeybindHelpHandleEvent(event) {
 		return true

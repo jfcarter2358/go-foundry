@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // sprite_cube_vert.glsl — point-light cubemap depth stage for sprites.
 //

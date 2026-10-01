@@ -209,8 +209,11 @@ func levelToRaw(level *world.Level, keepPrefabContent bool) (world.RawLevel, err
 	raw.SaveMode = world.SaveModeName(level.SaveMode)
 	raw.Gravity = world.CopyFloatPtr(level.Gravity)
 	raw.ViewDistance = level.ViewDistance
-	if level.LightGrid > 0 || level.LightMinGrid > 0 {
+	if level.LightGrid > 0 || level.LightMinGrid > 0 || level.NoBake {
 		raw.Compile = &world.RawCompile{LightGrid: level.LightGrid, LightMinGrid: level.LightMinGrid}
+		if level.NoBake {
+			raw.Compile.Bake = world.BakeNone
+		}
 	}
 	raw.Lights = lightsToRaw(level.Lights, keepPrefabContent)
 	return raw, nil
@@ -331,6 +334,7 @@ func spawnToRaw(s *world.SpawnPoint) *world.RawSpawn {
 func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
 	wrap, hemi := ls.Global.Wrap, ls.Global.Hemisphere
 	bounces, bounceScale := ls.Global.Bounces, ls.Global.BounceScale
+	gi := ls.Global.GI
 	rl := world.RawLights{
 		Global: world.RawGlobalLight{
 			Color:      world.RawColor{R: ls.Global.Color.X(), G: ls.Global.Color.Y(), B: ls.Global.Color.Z()},
@@ -339,6 +343,8 @@ func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
 			Wrap:       &wrap,
 			Hemisphere: &hemi,
 			Bounce:     &world.RawBounce{Count: &bounces, Scale: &bounceScale},
+			GI: &world.RawGI{Disabled: gi.Disabled, Intensity: &gi.Intensity,
+				ProbeSpacing: &gi.ProbeSpacing, AmbientFloor: &gi.AmbientFloor},
 		},
 	}
 	for _, dl := range ls.Directional {
@@ -363,6 +369,7 @@ func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
 			Disabled:       dl.Disabled,
 			Dynamic:        dl.Dynamic,
 			NoBake:         dl.NoBake,
+			NoGI:           dl.NoGI,
 			BakeExclude:    dl.BakeExclude,
 		})
 	}
@@ -386,6 +393,7 @@ func lightsToRaw(ls world.LightSet, keepPrefabContent bool) world.RawLights {
 			Disabled:       pl.Disabled,
 			Dynamic:        pl.Dynamic,
 			NoBake:         pl.NoBake,
+			NoGI:           pl.NoGI,
 			BakeExclude:    pl.BakeExclude,
 			Attach:         world.AttachToRaw(pl.Attach),
 		})

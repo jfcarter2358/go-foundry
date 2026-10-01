@@ -299,6 +299,48 @@ func editorGlobalLightBody(lvl *world.Level) {
 		imgui.SetTooltip("Multiplies the light each bounce carries. 1 is physical.")
 	}
 
+	// Live GI (render/gi.go): bounce light worked out every frame, in the
+	// viewport as in the game, wherever the player's GI setting is on.
+	imgui.Separator()
+	gi := &g.GI
+	giOn := !gi.Disabled
+	if imgui.Checkbox("Live GI##globalgi", &giOn) {
+		EditorPushUndo()
+		gi.Disabled = !giOn
+		changed = true
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("Bounce light worked out every frame from the lights as they\n" +
+			"are: a dynamic light, a flash or a door opening lights the room\n" +
+			"around it. Replaces the flat ambient, and on a compiled level the\n" +
+			"baked ambient and bounce. Runs at the player's GI quality; off\n" +
+			"here turns it off for this level whatever they choose.")
+	}
+	if giOn {
+		if editorDragFloat("GI Intensity##globalgi", &gi.Intensity, 0, 4, "%.2f") {
+			changed = true
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("Multiplies the bounce light GI finds. 1 is physical.")
+		}
+		if editorDragFloat("Probe Spacing##globalgi", &gi.ProbeSpacing, world.GIProbeSpacingMin, world.GIProbeSpacingMax, "%.2f") {
+			changed = true
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("How far apart the finest GI probes sit, in world units. Smaller\n" +
+				"catches thinner walls and smaller rooms but reaches less far.\n" +
+				"Light leaking through a wall usually means this is too large\n" +
+				"for the wall.")
+		}
+		if editorDragFloat("Ambient Floor##globalgi", &gi.AmbientFloor, 0, 1, "%.2f") {
+			changed = true
+		}
+		if imgui.IsItemHovered() {
+			imgui.SetTooltip("How much of the flat ambient is kept under GI, so a sealed room\n" +
+				"with no light in it is dim rather than black. 0 is physical.")
+		}
+	}
+
 	if changed {
 		world.UploadLights(lvl.Lights)
 	}
@@ -338,6 +380,9 @@ func editorDirLightProperties(lvl *world.Level) {
 			changed = true
 		}
 		if !dl.Dynamic && editorLightNoBakeCheckbox(fmt.Sprintf("dir%d", i), &dl.NoBake) {
+			changed = true
+		}
+		if editorLightNoGICheckbox(fmt.Sprintf("dir%d", i), &dl.NoGI) {
 			changed = true
 		}
 	})
@@ -431,6 +476,9 @@ func editorPointLightProperties(lvl *world.Level) {
 			changed = true
 		}
 		if !pl.Dynamic && editorLightNoBakeCheckbox(fmt.Sprintf("pt%d", i), &pl.NoBake) {
+			changed = true
+		}
+		if editorLightNoGICheckbox(fmt.Sprintf("pt%d", i), &pl.NoGI) {
 			changed = true
 		}
 	})
@@ -564,6 +612,24 @@ func editorLightNoBakeCheckbox(id string, noBake *bool) bool {
 			"live instead of being baked onto whatever it shines on, so it does\n" +
 			"not stay behind after that geometry has gone. A script may switch\n" +
 			"it on and off, and change nothing else.")
+	}
+	return changed
+}
+
+// editorLightNoGICheckbox is a light's no_gi toggle: lit directly, not
+// bounced by live GI.
+func editorLightNoGICheckbox(id string, noGI *bool) bool {
+	on := *noGI
+	changed := false
+	if imgui.Checkbox("Leave out of GI##lightnogi"+id, &on) {
+		EditorPushUndo()
+		*noGI = on
+		changed = true
+	}
+	if imgui.IsItemHovered() {
+		imgui.SetTooltip("The light still lights what it shines on, but nothing it lights\n" +
+			"hands any of it on through live GI. For a fill light that is\n" +
+			"there to light one thing and should not brighten the room.")
 	}
 	return changed
 }

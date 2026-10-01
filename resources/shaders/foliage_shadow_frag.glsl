@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // foliage_shadow_frag.glsl — cascade depth for terrain foliage: a leaf card
 // casts the leaf's shape, not its quad.

@@ -8,7 +8,8 @@ package script
 // arrives between frames, ahead of the UI (app/input.go's
 // captureBindingEvent) — finishes it. The screen hears back through `:bound:`.
 //
-// Slots are 1 and 2, the way weapon slots count from 1.
+// Slots are 1 and 2 for keys and mouse buttons and 3 for the game
+// controller's column, counting from 1 the way weapon slots do.
 
 import (
 	"fmt"
@@ -51,6 +52,17 @@ var bindingVerbs = map[string]scriptVerb{
 			return flang.StrVal(""), err
 		}
 		return flang.StrVal(platform.Bindings[a][slot].Name()), nil
+	},
+
+	// What to SHOW for a binding, where binding_name is what to store or hand
+	// back to key_down: the same for a key, and for a pad input the words on
+	// the player's own pad — "Cross" where binding_name says "Pad A".
+	"binding_label": func(rt *ScriptRuntime, args []flang.Value, pos flang.Pos) (flang.Value, error) {
+		a, slot, err := bindingArgs(rt, args, pos, "binding_label")
+		if err != nil || slot < 0 {
+			return flang.StrVal(""), err
+		}
+		return flang.StrVal(platform.Bindings[a][slot].Label()), nil
 	},
 
 	// The game's own settings (internal/prefs): whatever a settings screen
@@ -137,7 +149,7 @@ var bindingVerbs = map[string]scriptVerb{
 // newer engine renamed should grey out one row, not stop.
 func bindingArgs(rt *ScriptRuntime, args []flang.Value, pos flang.Pos, verb string) (platform.Action, int, error) {
 	if len(args) != 2 {
-		return 0, -1, verbArgErr(verb, "an action name and a slot (1 or 2)")
+		return 0, -1, verbArgErr(verb, "an action name and a slot (1 or 2 for keys, 3 for the pad)")
 	}
 	name, ok := verbStrAt(args, 0)
 	if !ok {
@@ -145,7 +157,7 @@ func bindingArgs(rt *ScriptRuntime, args []flang.Value, pos flang.Pos, verb stri
 	}
 	n, ok := numericValue(args[1])
 	if !ok {
-		return 0, -1, verbArgErr(verb, "a slot number (1 or 2) as its second argument")
+		return 0, -1, verbArgErr(verb, "a slot number (1 to 3) as its second argument")
 	}
 	a, ok := platform.ActionByName(name)
 	if !ok {

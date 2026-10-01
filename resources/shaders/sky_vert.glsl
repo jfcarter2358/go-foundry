@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // sky_vert.glsl — the skybox cube.
 //

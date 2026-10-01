@@ -78,3 +78,50 @@ func TestCaptureTakesPressesOnly(t *testing.T) {
 		t.Error("a press with no capture running was taken")
 	}
 }
+
+func TestPadSettingsAndColumnRoundTrip(t *testing.T) {
+	withPadLook(t)
+	vib, dead, assist := platform.PadVibration, platform.PadDeadZone, platform.AimAssist
+	t.Cleanup(func() { platform.PadVibration, platform.PadDeadZone, platform.AimAssist = vib, dead, assist })
+
+	platform.PadLookSensitivityX, platform.PadLookSensitivityY, platform.PadInvertY = 1.7, 0.6, true
+	platform.PadDeadZone, platform.PadLookCurve, platform.PadVibration, platform.AimAssist = 0.22, 1.4, 0.3, false
+	platform.Bindings.Bind(platform.ActJump, platform.PadSlot, platform.GamepadInput(platform.PadLB))
+	want := platform.Bindings
+
+	data, err := marshalControlSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform.Bindings = platform.DefaultBindings
+	platform.PadLookSensitivityX, platform.PadLookSensitivityY, platform.PadInvertY = 1, 1, false
+	platform.PadDeadZone, platform.PadLookCurve, platform.PadVibration, platform.AimAssist = 0.15, 2, 1, true
+	if err := applyControlSettings(data); err != nil {
+		t.Fatal(err)
+	}
+	if platform.Bindings != want {
+		t.Errorf("pad bindings did not survive the file:\n%s", data)
+	}
+	if platform.PadLookSensitivityX != 1.7 || platform.PadLookSensitivityY != 0.6 || !platform.PadInvertY ||
+		platform.PadDeadZone != 0.22 || platform.PadLookCurve != 1.4 || platform.PadVibration != 0.3 || platform.AimAssist {
+		t.Errorf("pad settings did not survive the file:\n%s", data)
+	}
+}
+
+// A file from before the pad column keeps the default pad layout, and a pad
+// input written into a key slot (or a key into the pad's) is refused.
+func TestOldControlsFileKeepsPadDefaults(t *testing.T) {
+	withLookState(t)
+	withDefaultBindings(t)
+	file := "bindings:\n  jump: [J, \"\"]\n  reload: [Pad X, \"\", T]\n"
+	if err := applyControlSettings([]byte(file)); err != nil {
+		t.Fatal(err)
+	}
+	if got := platform.Bindings[platform.ActJump][platform.PadSlot]; got != platform.GamepadInput(platform.PadA) {
+		t.Errorf("jump's pad slot is %+v, want the default kept", got)
+	}
+	r := platform.Bindings[platform.ActReload]
+	if r[0].Bound() || r[platform.PadSlot].Bound() {
+		t.Errorf("inputs in the wrong column were kept: %+v", r)
+	}
+}

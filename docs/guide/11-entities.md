@@ -406,10 +406,57 @@ aiming down sights is not twitchier than the hip.
 
 The player's keys are saved in the same `controls.yaml`: every gameplay action
 (moving, jumping, firing, the weapon keys, a vehicle's roll and pitch…) has two
-bindings a settings screen can change with `bind_key` — see
-[UI screens](17-ui-screens.md#rebinding-keys). The volume is
+key bindings and one game controller binding a settings screen can change with
+`bind_key` — see [UI screens](17-ui-screens.md#rebinding-keys). The volume is
 `@level.prop.master_volume` (with `music_volume` and `effects_volume` under
 it), saved to `audio.yaml` the same settled way.
+
+### Playing with a game controller
+
+Plug a pad in, before or during play, and it works: the left stick walks and
+drives — as far as it is pushed, so half a stick is half speed — the right stick
+looks, the triggers aim and fire, A jumps, B crouches, a tap of X reloads and
+holding X interacts, Y switches weapon, the left bumper throws (the bumpers
+roll, in a cockpit), the d-pad picks weapons 1–4, the left stick pressed in
+sprints, and Start pauses.
+
+A pad binding is either a press of its button or a hold of it — `Pad X` or
+`Hold Pad X` — and one button can carry one of each. A press with no hold
+sharing its button acts the moment the button goes down. One that shares it
+waits: let go before `pad_hold_time` and the press acts then, as a tap; keep it
+down that long and the hold acts instead, staying down until the release. When
+rebinding the pad column, tap a button to bind its press and hold it to bind the
+hold. `action_down`/`action_pressed` and the rest answer the same way. Under a menu
+the d-pad or left stick moves focus, A presses and B goes back, and the mouse
+cursor hides until the mouse moves again.
+
+The look stick turns at a rate rather than by a distance, through a response
+curve that keeps the top speed but gives the first half of the stick to fine
+aim, and it speeds up after being held hard over for a moment so turning round
+is quick. Aiming down sights slows it the way it slows the mouse. Its settings
+are the player's, saved in `controls.yaml` beside the mouse ones:
+
+| Property | Default | Range | |
+|---|---|---|---|
+| `pad_sensitivity_x`, `pad_sensitivity_y` | 1 | 0.1–5 | turn speed, per axis |
+| `pad_invert_y` | false | | |
+| `pad_dead_zone` | 0.15 | 0–0.5 | how far a stick moves before it counts |
+| `pad_look_curve` | 2 | 1–3 | 1 linear, higher is finer near the centre |
+| `pad_vibration` | 1 | 0–1 | 0 turns rumble off |
+| `pad_hold_time` | 0.4 | 0.15–1.5 | seconds down before a press becomes a hold |
+| `aim_assist` | true | | |
+
+**Aim assist** helps a pad player only — never the mouse — and only onto an
+agent that hunts the player: one whose `ai: targets:` name the player or a tag
+the player carries, or that a script pointed at them. A friendly squad, a body
+whose controller is switched off and anything out of sight behind cover get
+none. Over a target the look stick slows, and while the player steers — moving
+either stick — the view eases toward it, which is what keeps a strafing enemy in
+the sights. Standing still with the sticks at rest it does nothing.
+
+Pads SDL does not recognise can be added with a `gamecontrollerdb.txt` (the
+community SDL_GameControllerDB format) in the project's `resources/`, read at
+startup.
 
 ### The player's script
 

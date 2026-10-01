@@ -19,6 +19,8 @@ package render
 //
 // Must be called with the GL context current, and before the first frame.
 
+import "os"
+
 // InitWorldPasses compiles the programs and uploads the template meshes every
 // world pass needs.
 //
@@ -31,6 +33,10 @@ package render
 // runtime condition worth limping through. SkyInit logs and disables itself
 // instead, because a level without its sky is still a level.
 func InitWorldPasses() {
+	// Scenery instancing (scenery_instanced.go): its buffer belongs to the
+	// context being stood up, so whatever an earlier one left is forgotten.
+	scenery = sceneryInstancer{}
+	sceneryInstancing = os.Getenv("FOUNDRY_SCENERY_INSTANCING") != "0"
 	GrassInit()
 	SpriteInit()
 	SkyInit()

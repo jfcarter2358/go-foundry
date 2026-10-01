@@ -75,3 +75,13 @@ Props draw and cast shadows through the same passes entities do. They are solid
 to the player and to any world-colliding entity, and they stop a
 [hitscan](18-scripting.md) — reporting nothing, since nothing in the language
 addresses a scenery placement by name. The impact point still comes back.
+
+Placements of the same model are drawn together: every visible copy of a
+model's opaque parts goes out in one instanced draw, in the colour pass and in
+each shadow map. So a thousand copies of one rock cost about what a dozen do,
+and a level's scenery cost grows with how many *different* models it uses rather
+than how many it places. A translucent model is the exception. Its copies still
+draw one by one, because blending has to be sorted back to front.
+
+Setting `FOUNDRY_SCENERY_INSTANCING=0` before starting the engine draws every
+placement on its own again, for comparing the two.

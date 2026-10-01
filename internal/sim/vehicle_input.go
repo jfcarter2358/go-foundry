@@ -1,6 +1,6 @@
 package sim
 
-// vehicle_input.go — the keys, when the player is driving.
+// vehicle_input.go — the keys (and the pad's sticks), when the player is driving.
 //
 // The same movement keys that walk a body steer a vehicle; which of the two it reaches
 // depends on whether the player is sitting in a seat that hands over the
@@ -48,37 +48,20 @@ func ReadVehicleControls(v *world.Entity, keys []uint8) {
 	st := v.EnsureVehicleState()
 	c := world.VehicleControls{}
 
-	if platform.ActionHeld(platform.ActMoveForward, keys) {
-		c.Throttle += 1
-	}
-	if platform.ActionHeld(platform.ActMoveBack, keys) {
-		c.Throttle -= 1
-	}
-	if platform.ActionHeld(platform.ActMoveLeft, keys) {
-		c.Steer -= 1
-	}
-	if platform.ActionHeld(platform.ActMoveRight, keys) {
-		c.Steer += 1
-	}
+	// Analog: a stick or trigger steers and throttles as far as it is pushed,
+	// a key all the way.
+	c.Throttle = platform.ActionValue(platform.ActMoveForward, keys) - platform.ActionValue(platform.ActMoveBack, keys)
+	c.Steer = platform.ActionValue(platform.ActMoveRight, keys) - platform.ActionValue(platform.ActMoveLeft, keys)
 	c.Brake = platform.ActionHeld(platform.ActJump, keys)
 
 	switch v.Vehicle.Mode {
 	case world.VehicleAir, world.VehicleSpace:
-		// The roll keys (Q/E by default) roll, and the mouse's own pitch
-		// drives the nose. Reading the camera's pitch rather than a key is
-		// what makes flying feel like aiming rather than like nudging.
-		if platform.ActionHeld(platform.ActRollLeft, keys) {
-			c.Roll -= 1
-		}
-		if platform.ActionHeld(platform.ActRollRight, keys) {
-			c.Roll += 1
-		}
-		if platform.ActionHeld(platform.ActPitchDown, keys) {
-			c.Pitch -= 1
-		}
-		if platform.ActionHeld(platform.ActPitchUp, keys) {
-			c.Pitch += 1
-		}
+		// The roll keys (Q/E, or the bumpers, by default) roll, and the
+		// view's own pitch — the mouse's or the look stick's — drives the
+		// nose. Reading the camera's pitch rather than a key is what makes
+		// flying feel like aiming rather than like nudging.
+		c.Roll = platform.ActionValue(platform.ActRollRight, keys) - platform.ActionValue(platform.ActRollLeft, keys)
+		c.Pitch = platform.ActionValue(platform.ActPitchUp, keys) - platform.ActionValue(platform.ActPitchDown, keys)
 	}
 
 	st.Controls = c

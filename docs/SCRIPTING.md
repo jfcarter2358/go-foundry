@@ -529,7 +529,7 @@ editor's reference panel. The core surface:
 | light | dynamic lights only: `color` `brightness` `cast_shadows` `shadow_strength` · point: `position` `radius` · directional: `yaw` `pitch` · read-only: `dynamic` `attach` `carrier` `waypoints` |
 | biome | `density` `color` · Water only: `water_depth` `water_level` `lakebed` · read-only: `ground_texture` |
 | sound | `position` `enabled` `playing` `loop` `gain` `pitch` `bus` `ref_distance` `max_distance` `rolloff` · read-only: `clip` `sounding` `waypoints` |
-| level | `step_height` `gravity` `player_control` `player_gravity` `player_fly` `camera_fov` `viewmodel_fov` `view_distance` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `master_volume` `music_volume` `effects_volume` `smooth_lighting` `foliage_distance` `foliage_shadows` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` `camera_detached` `camera_position` `camera_yaw` `camera_pitch` `camera_roll` `cursor` · read-only: `load_progress` `load_stage` `dev_build` `camera_direction` `camera_orbit_distance` `look_delta` `cursor_position` `cursor_free` `cursor_over_ui` |
+| level | `step_height` `gravity` `player_control` `player_gravity` `player_fly` `camera_fov` `viewmodel_fov` `view_distance` `mouse_sensitivity` `mouse_smoothing` `mouse_invert_y` `pad_sensitivity_x` `pad_sensitivity_y` `pad_invert_y` `pad_dead_zone` `pad_look_curve` `pad_vibration` `pad_hold_time` `aim_assist` `master_volume` `music_volume` `effects_volume` `smooth_lighting` `gi_quality` `foliage_distance` `foliage_shadows` `paused` `sky` `sky_kind` `sky_cubemap` `sky_zenith` `sky_horizon` `sky_ground` `sky_tint` `sky_intensity` `sky_rotation` `camera_detached` `camera_position` `camera_yaw` `camera_pitch` `camera_roll` `cursor` · read-only: `load_progress` `load_stage` `dev_build` `input_device` `gamepad_type` `gamepad_connected` `camera_direction` `camera_orbit_distance` `look_delta` `cursor_position` `cursor_free` `cursor_over_ui` |
 
 ### Moving a brush
 
@@ -1258,7 +1258,7 @@ The engine posts these without being asked.
 | `:drag_start:` | widget, then its screen | `src ref, pos vec` | A `draggable` widget was pressed and the pointer moved a few pixels with it; `pos` is where the press began, in canvas units |
 | `:drag:` | widget, then its screen | `src ref, pos vec, delta vec` | …and moved on, at most once a frame; `delta` is the travel since the last one |
 | `:drop:` | widget, then its screen | `src ref, onto, pos vec` | …and was let go; `onto` is the widget it landed on, or `null` |
-| `:key_down:` | level, player | `key str` | A key or mouse button went down; `key` is its name (`"Space"`, `"F"`, `"Mouse Left"`). See [Keys and buttons](#keys-and-buttons) |
+| `:key_down:` | level, player | `key str` | A key, mouse button or pad input went down; `key` is its name (`"Space"`, `"F"`, `"Mouse Left"`, `"Pad A"`). See [Keys and buttons](#keys-and-buttons) |
 | `:key_up:` | level, player | `key str, held float` | …and came back up after `held` seconds |
 | `:pointer_down:` / `:pointer_up:` | level, player, and the object under the cursor | `button atom, hit, at` | A mouse button went down / up on the world with the cursor free. See [The pointer](#the-pointer) |
 | `:pointer_click:` | level, player, and the object under the cursor | `button atom, hit, at` | A press and a release on the same thing, with no drag between |
@@ -1517,12 +1517,15 @@ Components are members rather than functions: `v.x`, `v.y`, `v.z`.
 
 **UI** — `show_screen(name)` `hide_screen(screen)` `screen(name)`
 `widget(screen, id)` `focus(widget)` `load_level(name)` `quit_game()`
-`bind_key(action, slot)` `binding_name(action, slot)` `reset_bindings()`
+`bind_key(action, slot)` `binding_name(action, slot)` `binding_label(action, slot)`
+`reset_bindings()`
 
 **Keys** — `key_down(key)` `key_pressed(key)` `key_released(key)`
 `key_held_time(key)` `keys_down()` `action_down(action)` `action_pressed(action)`
-`action_released(action)` `action_held_time(action)` — see
-[Keys and buttons](#keys-and-buttons)
+`action_released(action)` `action_held_time(action)` `action_value(action)`
+`pad_axis(axis)` `rumble(heavy, light, seconds)`
+`rumble_triggers(left, right, seconds)` — see [Keys and buttons](#keys-and-buttons)
+and [Game controllers](#game-controllers)
 
 `spawn` returns a `ref` to the new entity. Entities spawned during play exist only
 for that play session.
@@ -1874,7 +1877,9 @@ keys_down()                  -- ["Left Shift", "W"]: everything held, by name
 ```
 
 A key is named the way `binding_name` spells it — `"W"`, `"Space"`, `"Left
-Shift"`, `"Return"`, `"F"`, `"Mouse Left"`, `"Mouse 4"` — in any case. That is the
+Shift"`, `"Return"`, `"F"`, `"Mouse Left"`, `"Mouse 4"`, or a game controller's
+`"Pad A"`, `"Pad RT"`, `"Pad Left Stick Up"` (see
+[Game controllers](#game-controllers)) — in any case. That is the
 physical key, whatever the player has rebound. For anything a player might want
 on another key, ask about the **action** instead, which follows their layout:
 
@@ -1905,6 +1910,54 @@ def on_charge(:key_up:, "Mouse Left", held float) -> null
 `:key_down:` carries the key's name; `:key_up:` carries it and how long it was
 held. Under `@level.prop.paused` the events are dropped, like every other input
 to the level, but the verbs still answer, so a menu can ask.
+
+### Game controllers
+
+A pad is played through the same actions as the keyboard. Every action has a
+third binding slot that only a pad input goes in, so a pad layout never costs a
+key: `binding_name("jump", 3)` is `"Pad A"`. The pad's inputs are named by
+position, the same on every controller — `"Pad A"` is the south button, which a
+PlayStation pad prints as a cross and a Nintendo pad as B:
+
+```
+Pad A  Pad B  Pad X  Pad Y           south, east, west, north
+Pad LB  Pad RB  Pad LT  Pad RT       bumpers and triggers
+Pad Up  Pad Down  Pad Left  Pad Right   the d-pad
+Pad Left Stick  Pad Right Stick      the sticks pressed in
+Pad Left Stick Up … Pad Right Stick Right   the sticks' four directions
+Pad Back  Pad Start  Pad Guide  Pad Misc  Pad Paddle 1–4  Pad Touchpad
+```
+
+To *show* one, use `binding_label`, which names it the way the player's own pad
+does — `"A"`, `"Cross"` or `"B"` for the same button — and is the same as
+`binding_name` for a key. `@level.prop.input_device` is `"keyboard"` or
+`"gamepad"`, whichever the player last touched, so a prompt can follow them:
+
+```
+slot = 1
+if @level.prop.input_device == "gamepad"
+    slot = 3
+end
+p.prop.text = format("{} to interact", binding_label("interact", slot))
+```
+
+A trigger or a stick direction is down once pushed halfway, so `key_down`,
+`action_pressed` and the rest answer for them as for a key. How far is
+`action_value` (0 to 1, and 1 for a held key — what walking and driving read) or,
+for the physical stick whatever is bound to it, `pad_axis("left_x")`,
+`"left_y"`, `"right_x"`, `"right_y"` (-1 to 1, right and up positive),
+`"left_trigger"`, `"right_trigger"`.
+
+`rumble(heavy, light, seconds)` shakes the pad the player last used — `heavy`
+and `light` are the two motors, 0 to 1 — and `rumble_triggers(left, right,
+seconds)` the triggers on pads that have them. Both are scaled by the player's
+`@level.prop.pad_vibration`, a weaker shake during a stronger one does not cut it
+short, and with no pad plugged in they do nothing, so call them freely. The
+engine rumbles for explosions itself, harder the nearer they go off.
+
+Start opens the pause menu the way Escape does and closes a modal screen; under
+a modal screen the d-pad and the left stick move focus, A presses, and B goes
+back. With no modal screen up the pad is the game's, whatever has focus.
 
 ### The pointer
 

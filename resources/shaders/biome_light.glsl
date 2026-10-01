@@ -249,7 +249,7 @@ float biomeDiffuse(float ndl, bool twoSided) {
 }
 
 vec3 biomeLighting(vec3 worldPos, vec3 normal, float viewDepth, bool receiveShadow, bool twoSided) {
-    vec3 lighting = ambientAt(globalLightColor * globalLightBrightness, normal);
+    vec3 lighting = ambientLight(globalLightColor * globalLightBrightness, worldPos, normal);
 
     for (int i = 0; i < numDirLights; i++) {
         vec3 ldir = -normalize(dirLightDir[i]);

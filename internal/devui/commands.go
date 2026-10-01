@@ -364,6 +364,22 @@ func init() {
 			run:     cmdPause,
 		},
 		{
+			name: "gi_debug", usage: "[off|lighting|probes|field]",
+			summary: "see what live GI sees",
+			detail: []string{
+				"lighting: every surface white, so only the light is left.",
+				"probes: each probe a dot of its own light; red where buried in a wall.",
+				"field: the distance field GI traces against, from the camera.",
+				"With no argument, steps to the next view. `gi_quality` sets the tier.",
+			},
+			run: cmdGIDebug,
+		},
+		{
+			name: "gi_quality", usage: "[off|low|medium|high]",
+			summary: "read or set the player's live GI tier",
+			run:     cmdGIQuality,
+		},
+		{
 			name: "overlay", usage: "[on|off]", summary: "the F3 overlay",
 			run: func(c *cmdCtx) { setSwitch(c, "overlay", &render.DebugOverlayVisible) },
 		},
@@ -825,6 +841,39 @@ func cmdNoclip(c *cmdCtx) {
 	world.SetPlayerFly(want)
 	world.EntityWorldCollisionEnabled = !want
 	printf(kindOK, "noclip %s", onOffWord(want))
+}
+
+func cmdGIDebug(c *cmdCtx) {
+	next := render.GIDebugMode((int(render.GIDebug) + 1) % 4)
+	if a := c.arg(0); a != "" {
+		m, ok := render.ParseGIDebugMode(a)
+		if !ok {
+			printf(kindErr, "gi_debug: %q is not one of off, lighting, probes, field", a)
+			return
+		}
+		next = m
+	}
+	render.GIDebug = next
+	if (next == render.GIDebugProbes || next == render.GIDebugField) && gfx.GIQuality == gfx.GIOff {
+		printf(kindOK, "gi_debug %s (GI is off — `gi_quality medium` to see it)", next)
+		return
+	}
+	printf(kindOK, "gi_debug %s", next)
+}
+
+func cmdGIQuality(c *cmdCtx) {
+	a := c.arg(0)
+	if a == "" {
+		printf(kindOut, "gi_quality %s", gfx.GIQuality)
+		return
+	}
+	q, ok := gfx.ParseGIQuality(a)
+	if !ok {
+		printf(kindErr, "gi_quality: %q is not one of off, low, medium, high", a)
+		return
+	}
+	gfx.SetGIQuality(q)
+	printf(kindOK, "gi_quality %s", q)
 }
 
 func cmdPause(c *cmdCtx) {

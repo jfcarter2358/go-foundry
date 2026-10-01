@@ -9,24 +9,9 @@ import (
 	"math"
 	"strings"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
-
-// boundFramebuffer is the framebuffer being drawn into right now.
-//
-// It exists because every pass here draws into a depth map of its own and then
-// has to put the frame's own target back — and "the frame's own target" is not
-// always the window. A headless renderer (`foundry render`, a play session's
-// screenshot, a GL test) draws into an FBO, and a pass that restored 0 instead
-// sent the entire world pass after it to the window nobody is looking at,
-// leaving the caller's target exactly as empty as it started. The volumetric
-// and cloud-shadow passes already asked rather than assumed; these did not.
-func boundFramebuffer() uint32 {
-	var fb int32
-	gl.GetIntegerv(gl.DRAW_FRAMEBUFFER_BINDING, &fb)
-	return uint32(fb)
-}
 
 // ShadowMapSize is the resolution of one directional cascade layer (square).
 const ShadowMapSize = 2048
@@ -105,19 +90,10 @@ type ShadowState struct {
 	// One array texture rather than a sampler2D per cascade is not a
 	// convenience: MaxDirLights * ShadowCascades separate samplers plus the
 	// point-light cubemaps and the albedo would exceed the 16 fragment texture
-	// units GL 4.1 guarantees. The array costs one unit for all of them.
+	// units GL 4.3 guarantees. The array costs one unit for all of them.
 	CascadeArray  uint32
 	CascadeFBO    uint32
 	CascadeLayers int32
-
-	// LiveCascadeArray is the baked sun's cascades (world.LightSet.BakedSun)
-	// drawn again with everything but the compiled level's static surfaces —
-	// only what the bake never saw. A baked surface reads it to take the sun
-	// back off where an entity or a live chunk shadows it (fragment.glsl,
-	// shadowMapLive); reading the full array instead would lay the cascades'
-	// blockier copy of every baked shadow over the bake's own. Rendered into
-	// through CascadeFBO. Zero until a compiled level with a baked sun needs it.
-	LiveCascadeArray uint32
 
 	// Point light cubemap shadow program
 	CubeProgram      uint32
@@ -251,18 +227,6 @@ func EnsureCascadeArray(layers int32) {
 
 	log.Printf("cascade shadow array allocated (tex=%d, fbo=%d, %dx%d x %d layers)",
 		Shadows.CascadeArray, Shadows.CascadeFBO, ShadowMapSize, ShadowMapSize, layers)
-}
-
-// ensureLiveCascadeArray allocates LiveCascadeArray (one light's cascades) the
-// first time it is wanted, and frees it when want goes false.
-func ensureLiveCascadeArray(want bool) {
-	switch {
-	case want && Shadows.LiveCascadeArray == 0:
-		Shadows.LiveCascadeArray = newCascadeTexture(ShadowCascades)
-	case !want && Shadows.LiveCascadeArray != 0:
-		gl.DeleteTextures(1, &Shadows.LiveCascadeArray)
-		Shadows.LiveCascadeArray = 0
-	}
 }
 
 // newCascadeTexture is a comparison-sampled depth array of layers layers.
@@ -415,10 +379,12 @@ type DirShadow struct {
 type ShadowFrame struct {
 	Splits [ShadowCascades]float32 // view-space distance where each cascade ends
 	Lights []DirShadow             // parallel to LightSet.Directional
-	// LiveDrawn says LiveCascadeArray was drawn this frame, for directional
-	// light LiveSun (the baked sun). A zero frame has neither.
-	LiveDrawn bool
-	LiveSun   int
+	// BakedSunCast says directional light BakedSun is a compiled level's
+	// baked sun (world.LightSet.BakedSun) and its cascades were drawn this
+	// frame, so baked surfaces re-shadow their share of it by them
+	// (fragment.glsl, bakedSunLight). A zero frame has neither.
+	BakedSunCast bool
+	BakedSun     int
 }
 
 // newShadowFrame returns a frame with every light marked as non-casting, so the
@@ -593,17 +559,17 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 	if shadowCount == 0 || Shadows.CascadeArray == 0 {
 		return frame
 	}
-	// A compiled level's baked surfaces carry the sun's share and need its
-	// live-only cascades to take it back off (see LiveCascadeArray).
-	liveSun := -1
+	// A compiled level's baked surfaces carry the sun's share, and swap it
+	// for the sun these cascades shadow (see ShadowFrame.BakedSun).
 	if level != nil && level.Static != nil {
-		liveSun = lights.BakedSun()
+		if s := lights.BakedSun(); s >= 0 && s < numDir {
+			frame.BakedSunCast, frame.BakedSun = true, s
+		}
 	}
-	ensureLiveCascadeArray(liveSun >= 0)
 
 	gl.UseProgram(Shadows.Program)
-	var prevViewport [4]int32
-	gl.GetIntegerv(gl.VIEWPORT, &prevViewport[0])
+	// Known, not asked: see frame_target.go.
+	prevViewport := boundViewport()
 	prevFBO := boundFramebuffer()
 	gl.Viewport(0, 0, ShadowMapSize, ShadowMapSize)
 	gl.Disable(gl.CULL_FACE)
@@ -653,20 +619,6 @@ func RenderShadowPass(lights world.LightSet, level *world.Level, view, projectio
 			ProfileBegin("foliage")
 			RenderFoliageDirShadow(level, lsm, c, &cull)
 			ProfileEnd()
-
-			// The same cascade again with only what the bake never saw.
-			if i == liveSun {
-				ProfileBegin("live")
-				gl.FramebufferTextureLayer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,
-					Shadows.LiveCascadeArray, 0, int32(c))
-				gl.Clear(gl.DEPTH_BUFFER_BIT)
-				renderSceneShadowLayers(level, Shadows.Program, &gfx.ShadowSkinUniforms, Shadows.ModelUniform, &cull, shadowLiveLayers)
-				RenderSpriteDirShadow(level, lsm, dl.Direction, gfx.Cam.Position, &cull)
-				RenderScatterDirShadow(level, lsm, c, frame.Splits[c], gfx.Cam.Position, BiomeWindTime, &cull)
-				RenderFoliageDirShadow(level, lsm, c, &cull)
-				ProfileEnd()
-				frame.LiveDrawn, frame.LiveSun = true, i
-			}
 			layer++
 		}
 	}
@@ -695,8 +647,8 @@ func RenderPointShadowPass(lights world.LightSet, level *world.Level) {
 	}
 
 	gl.UseProgram(Shadows.CubeProgram)
-	var prevViewport [4]int32
-	gl.GetIntegerv(gl.VIEWPORT, &prevViewport[0])
+	// Known, not asked: see frame_target.go.
+	prevViewport := boundViewport()
 	prevFBO := boundFramebuffer()
 	gl.Viewport(0, 0, PointShadowMapSize, PointShadowMapSize)
 	gl.Disable(gl.CULL_FACE)
@@ -813,8 +765,7 @@ func renderSceneShadow(level *world.Level, prog uint32, skin *gfx.SkinUniforms, 
 // sprites and scatter are drawn by the passes themselves and count as moving.
 //
 // The world's half is itself two: a compiled level's baked static surfaces,
-// and the chunks still drawn live. shadowLiveLayers is everything but the
-// first — what the bake never saw (LiveCascadeArray).
+// and the chunks still drawn live.
 type shadowLayers uint8
 
 const (
@@ -823,7 +774,6 @@ const (
 	shadowMovingLayer
 	shadowStaticLayer = shadowCompiledLayer | shadowChunkLayer
 	shadowAllLayers   = shadowStaticLayer | shadowMovingLayer
-	shadowLiveLayers  = shadowChunkLayer | shadowMovingLayer
 )
 
 func renderSceneShadowLayers(level *world.Level, prog uint32, skin *gfx.SkinUniforms, modelUniform int32, cull *Frustum, layers shadowLayers) {
@@ -928,10 +878,6 @@ func drawGeometryShadow(g *gfx.Geometry, prog uint32, skin *gfx.SkinUniforms) {
 // All directional shadows share it; point-light cubemaps start after it.
 const CascadeTexUnit = 1
 
-// LiveCascadeTexUnit holds LiveCascadeArray. Past the point cubemaps (2-9),
-// the blend textures (10, 11), the normal map (12) and the clouds (13).
-const LiveCascadeTexUnit = 14
-
 // UploadShadowUniforms sends directional shadow data to the main shader.
 func UploadShadowUniforms(lights world.LightSet, frame ShadowFrame) {
 	UploadShadowUniformsTo(gfx.Program, lights, frame)
@@ -956,18 +902,11 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 	gl.BindTexture(gl.TEXTURE_2D_ARRAY, Shadows.CascadeArray)
 	gl.Uniform1i(uniformLoc("shadowMapArray\x00"), CascadeTexUnit)
 
-	// The baked sun's live-only cascades. Bound whether or not there are any,
-	// for the reason above — the full array stands in, never read, since
-	// bakedSunLight is -1 then.
-	live, sun := Shadows.LiveCascadeArray, int32(-1)
-	if live != 0 && frame.LiveDrawn {
-		sun = int32(frame.LiveSun)
-	} else {
-		live = Shadows.CascadeArray
+	// Which light's baked share the cascades re-shadow; -1 for none.
+	sun := int32(-1)
+	if frame.BakedSunCast {
+		sun = int32(frame.BakedSun)
 	}
-	gl.ActiveTexture(gl.TEXTURE0 + LiveCascadeTexUnit)
-	gl.BindTexture(gl.TEXTURE_2D_ARRAY, live)
-	gl.Uniform1i(uniformLoc("shadowMapLive\x00"), LiveCascadeTexUnit)
 	gl.Uniform1i(uniformLoc("bakedSunLight\x00"), sun)
 
 	for i := 0; i < world.MaxDirLights; i++ {
@@ -1006,8 +945,10 @@ func UploadShadowUniformsTo(prog uint32, lights world.LightSet, frame ShadowFram
 		}
 	}
 	// The clouds' shadow rides here because every program that can read it
-	// already makes this call — see cloud_shadow.go.
+	// already makes this call — see cloud_shadow.go. So does live GI, for the
+	// same reason (gi.go).
 	uploadCloudShadowTo(prog)
+	uploadGITo(prog)
 	gl.ActiveTexture(gl.TEXTURE0)
 }
 

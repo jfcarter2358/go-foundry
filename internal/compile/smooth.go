@@ -100,5 +100,6 @@ func barycentric(p, a, b, c mgl32.Vec3) (u, v, w float32, ok bool) {
 // under it: none of them is parallel to Points any more.
 func (f *Face) dropLight() {
 	f.Light, f.SmoothLight, f.BackLight, f.SmoothBackLight = nil, nil, nil, nil
+	f.Indirect, f.SmoothIndirect, f.BackIndirect, f.SmoothBackIndirect = nil, nil, nil, nil
 	f.SunShare, f.BackSunShare = nil, nil
 }

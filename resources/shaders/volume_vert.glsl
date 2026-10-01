@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // volume_vert.glsl — the geometry every volumetric program draws, with no
 // vertex buffer behind it.

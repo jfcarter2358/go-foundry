@@ -12,7 +12,7 @@ import (
 	"foundry/internal/gltest"
 	"foundry/internal/world"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -265,4 +265,112 @@ func TestAPaintedBiomeShowsItsGroundTexture(t *testing.T) {
 	tr.Touch()
 	c = centre(p.frame())
 	nearlyByte(t, "green", c[1], 1.0)
+}
+
+// paintedForest is a flat field painted forest over its whole top.
+func paintedForest(t *testing.T, x0 float32, size int) *world.Terrain {
+	t.Helper()
+	tr := world.NewTerrain(mgl32.Vec3{x0, -2, -float32(size) / 2}, 1, size, 6, size)
+	tr.Generate(world.TerrainFill{Height: 2, Top: 1, Under: 1, Deep: 1})
+	tr.Biomes = []world.TerrainBiome{{Preset: "forest"}}
+	for z := 0; z < size; z++ {
+		for x := 0; x < size; x++ {
+			tr.SetPaint(tr.FaceKey(x, 1, z, world.FaceYPos), 1)
+		}
+	}
+	return tr
+}
+
+func differing(a, b []uint8) int {
+	n := 0
+	for i := 0; i+3 < len(a); i += 4 {
+		d := 0
+		for k := 0; k < 3; k++ {
+			v := int(a[i+k]) - int(b[i+k])
+			if v < 0 {
+				v = -v
+			}
+			d = max(d, v)
+		}
+		if d > 24 {
+			n++
+		}
+	}
+	return n
+}
+
+// Every impostor shape is baked, and its views hold a plant: some of every
+// layer's texels are covered.
+func TestFoliageImpostorsAreBaked(t *testing.T) {
+	newTerrainProbe(t, flatTerrain())
+	im := foliage.imp
+	if im.layers == 0 || im.tex[0] == 0 {
+		t.Fatal("no impostors were baked")
+	}
+	side := impGrid * impCell
+	px := make([]uint8, side*side*4*im.layers)
+	gl.BindTexture(gl.TEXTURE_2D_ARRAY, im.tex[0])
+	gl.GetTexImage(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(&px[0]))
+	gl.BindTexture(gl.TEXTURE_2D_ARRAY, 0)
+	for l := 0; l < im.layers; l++ {
+		covered := 0
+		for i := 0; i < side*side; i++ {
+			if px[(l*side*side+i)*4+3] > 127 {
+				covered++
+			}
+		}
+		if covered < side*side/100 {
+			t.Errorf("impostor layer %d is nearly empty (%d texels covered)", l, covered)
+		}
+	}
+}
+
+// A forest far past its trees' mesh range is still drawn — as impostors —
+// rather than leaving the ground bare.
+func TestADistantForestIsDrawn(t *testing.T) {
+	tr := paintedForest(t, 150, 96)
+	p := newTerrainProbe(t, tr)
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45), 1, 0.1, 2000)
+	gfx.Cam.Position = mgl32.Vec3{0, 6, 0}
+	gfx.Cam.Direction = mgl32.Vec3{1, -0.02, 0}.Normalize()
+	gfx.UpdateCamMatrix()
+	grown := p.frame()
+	saved := tr.Paint
+	tr.Paint = nil
+	tr.Touch()
+	bare := p.frame()
+	tr.Paint = saved
+	tr.Touch()
+	if n := differing(grown, bare); n < len(bare)/4/50 {
+		t.Fatalf("a forest 150-250 units off draws almost nothing (%d pixels differ)", n)
+	}
+}
+
+// The GPU cull draws what the CPU path draws: the same field, both ways,
+// agrees but for the meshes each picks near its tier boundaries.
+func TestTheGPUCullAgreesWithTheCPUPath(t *testing.T) {
+	tr := paintedForest(t, -24, 48)
+	p := newTerrainProbe(t, tr)
+	if !foliage.gpu.ok {
+		t.Skip("this driver has no compute shaders or indirect draws")
+	}
+	gfx.Projection = mgl32.Perspective(mgl32.DegToRad(45), 1, 0.1, 1000)
+	gfx.Cam.Position = mgl32.Vec3{-40, 8, 0}
+	gfx.Cam.Direction = mgl32.Vec3{1, -0.1, 0}.Normalize()
+	gfx.UpdateCamMatrix()
+	t.Cleanup(func() { FoliageGPUCull = true })
+	FoliageGPUCull = false
+	cpu := p.frame()
+	FoliageGPUCull = true
+	gpu := p.frame()
+	tr.Paint = nil
+	tr.Touch()
+	bare := p.frame()
+	grown := differing(cpu, bare)
+	if grown < len(bare)/4/20 {
+		t.Fatalf("the CPU path drew almost nothing (%d pixels)", grown)
+	}
+	if n := differing(cpu, gpu); n > grown/4 {
+		t.Fatalf("the GPU cull differs from the CPU path in %d pixels of the %d the foliage covers", n, grown)
+	}
 }

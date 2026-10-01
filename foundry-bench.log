@@ -1,40 +1,41 @@
-14:39:24 [foundry] scanned 38 textures
-14:39:24 [foundry] material conveyor.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/conveyor.fmat.fmat: no such file or directory
-14:39:24 [foundry] material deck_tiled.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/deck_tiled.fmat.fmat: no such file or directory
-14:39:24 [foundry] material ember.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/ember.fmat.fmat: no such file or directory
-14:39:24 [foundry] material fireball.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/fireball.fmat.fmat: no such file or directory
-14:39:24 [foundry] material flipbook.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/flipbook.fmat.fmat: no such file or directory
-14:39:24 [foundry] material fog_bank.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/fog_bank.fmat.fmat: no such file or directory
-14:39:24 [foundry] material foliage.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/foliage.fmat.fmat: no such file or directory
-14:39:24 [foundry] material foliage_sprite.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/foliage_sprite.fmat.fmat: no such file or directory
-14:39:24 [foundry] material glass.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/glass.fmat.fmat: no such file or directory
-14:39:24 [foundry] material glow_sprite.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/glow_sprite.fmat.fmat: no such file or directory
-14:39:24 [foundry] material hologram.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/hologram.fmat.fmat: no such file or directory
-14:39:24 [foundry] material mossy_rock.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/mossy_rock.fmat.fmat: no such file or directory
-14:39:24 [foundry] material poster.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/poster.fmat.fmat: no such file or directory
-14:39:24 [foundry] material sky_canyon.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_canyon.fmat.fmat: no such file or directory
-14:39:24 [foundry] material sky_day.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_day.fmat.fmat: no such file or directory
-14:39:24 [foundry] material sky_overcast.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_overcast.fmat.fmat: no such file or directory
-14:39:24 [foundry] material sky_space.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_space.fmat.fmat: no such file or directory
-14:39:24 [foundry] material smoke.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/smoke.fmat.fmat: no such file or directory
-14:39:24 [foundry] material unlit.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/unlit.fmat.fmat: no such file or directory
-14:39:24 [foundry] material water.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/water.fmat.fmat: no such file or directory
-14:39:24 [foundry] material water_rough.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/water_rough.fmat.fmat: no such file or directory
-14:39:24 [foundry] loaded 0 materials
-14:39:24 [foundry] executable directory: /home/jfcarter2358/personal/code/main/foundry
-14:39:24 [foundry] project: /home/jfcarter2358/personal/code/main/foundry (beside the executable)
-14:39:24 [foundry] resources directory: /home/jfcarter2358/personal/code/main/foundry/resources
-14:39:24 [foundry] audio: 48000 Hz stereo, 10 ms chunks, 60 ms target
-14:39:24 [foundry] OpenGL version : 4.2 (Compatibility Profile) Mesa 23.2.1-1ubuntu3.1~22.04.4
-14:39:24 [foundry] GLSL version   : 4.20
-14:39:24 [foundry] GPU renderer   : D3D12 (NVIDIA GeForce GTX 1070)
-14:39:24 [foundry] multisampling: 8 samples granted (of 8 requested)
-14:39:24 [foundry] WARNING: sdl.GLSetSwapInterval(1): That operation is not supported — vsync is not ours to set on this driver
-14:39:24 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/resources/shaders/vertex.glsl (4450 bytes)
-14:39:24 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/resources/shaders/fragment.glsl (30098 bytes)
-14:39:24 [foundry] texture filtering: mipmaps on, anisotropic 16x (driver max 16x)
-14:39:24 [foundry] --- vertex shader source ---
-#version 410
+10:53:37 [foundry] scanned 56 textures
+10:53:37 [foundry] material conveyor.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/conveyor.fmat.fmat: no such file or directory
+10:53:37 [foundry] material deck_tiled.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/deck_tiled.fmat.fmat: no such file or directory
+10:53:37 [foundry] material ember.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/ember.fmat.fmat: no such file or directory
+10:53:37 [foundry] material fireball.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/fireball.fmat.fmat: no such file or directory
+10:53:37 [foundry] material flipbook.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/flipbook.fmat.fmat: no such file or directory
+10:53:37 [foundry] material fog_bank.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/fog_bank.fmat.fmat: no such file or directory
+10:53:37 [foundry] material foliage.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/foliage.fmat.fmat: no such file or directory
+10:53:37 [foundry] material foliage_sprite.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/foliage_sprite.fmat.fmat: no such file or directory
+10:53:37 [foundry] material glass.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/glass.fmat.fmat: no such file or directory
+10:53:37 [foundry] material glow_sprite.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/glow_sprite.fmat.fmat: no such file or directory
+10:53:37 [foundry] material hologram.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/hologram.fmat.fmat: no such file or directory
+10:53:37 [foundry] material mossy_rock.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/mossy_rock.fmat.fmat: no such file or directory
+10:53:37 [foundry] material poster.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/poster.fmat.fmat: no such file or directory
+10:53:37 [foundry] material sky_canyon.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_canyon.fmat.fmat: no such file or directory
+10:53:37 [foundry] material sky_day.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_day.fmat.fmat: no such file or directory
+10:53:37 [foundry] material sky_overcast.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_overcast.fmat.fmat: no such file or directory
+10:53:37 [foundry] material sky_space.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/sky_space.fmat.fmat: no such file or directory
+10:53:37 [foundry] material smoke.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/smoke.fmat.fmat: no such file or directory
+10:53:37 [foundry] material unlit.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/unlit.fmat.fmat: no such file or directory
+10:53:37 [foundry] material water.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/water.fmat.fmat: no such file or directory
+10:53:37 [foundry] material water_rough.fmat: open /home/jfcarter2358/personal/code/main/foundry/resources/materials/water_rough.fmat.fmat: no such file or directory
+10:53:37 [foundry] loaded 0 materials
+10:53:37 [foundry] loaded 18 biome files
+10:53:37 [foundry] executable directory: /home/jfcarter2358/personal/code/main/foundry
+10:53:37 [foundry] project: /home/jfcarter2358/personal/code/main/foundry (beside the executable)
+10:53:37 [foundry] resources directory: /home/jfcarter2358/personal/code/main/foundry/resources
+10:53:37 [foundry] audio: 48000 Hz stereo, 10 ms chunks, 60 ms target
+10:53:37 [foundry] OpenGL version : 4.6 (Core Profile) Mesa 26.2.3 - kisak-mesa PPA
+10:53:37 [foundry] GLSL version   : 4.60
+10:53:37 [foundry] GPU renderer   : llvmpipe (LLVM 21.1.8, 256 bits)
+10:53:37 [foundry] multisampling: 8 samples granted (of 8 requested)
+10:53:37 [foundry] WARNING: sdl.GLSetSwapInterval(1): That operation is not supported — vsync is not ours to set on this driver
+10:53:37 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/resources/shaders/vertex.glsl (4450 bytes)
+10:53:37 [foundry] shader file OK: /home/jfcarter2358/personal/code/main/foundry/resources/shaders/fragment.glsl (30098 bytes)
+10:53:37 [foundry] texture filtering: mipmaps on, anisotropic 16x (driver max 16x)
+10:53:37 [foundry] --- vertex shader source ---
+#version 430
 
 // skin_common.glsl — GPU linear blend skinning, shared by every pass that draws
 // an animated entity.
@@ -225,9 +226,9 @@ void main() {
     gl_Position = projection * viewPos;
 }
 ---
-14:39:24 [foundry] vertex shader compiled OK
-14:39:24 [foundry] --- fragment shader source ---
-#version 410
+10:53:37 [foundry] vertex shader compiled OK
+10:53:37 [foundry] --- fragment shader source ---
+#version 430
 
 // light_model.glsl — how light falls across a surface, for every pass that
 // lights one.
@@ -1235,215 +1236,17 @@ void main() {
     outputColor = vec4(surface, finalAlpha);
 }
 ---
-14:39:24 [foundry] fragment shader compiled OK
-14:39:24 [foundry] dir shadow program linked OK (id=6)
-14:39:24 [foundry] cube shadow program linked OK (id=9)
-14:39:24 [foundry] dummy cubemap created (id=1)
-14:39:25 [foundry] shader program linked OK (id=3)
-14:39:25 [foundry] starting with blank level
-14:39:25 [foundry] level loaded: 0 chunk(s), 0 dir light(s), 0 point light(s)
-14:39:25 [foundry] uploading lights: global=1, directional=0, point=0
-14:39:25 [foundry] light uniforms uploaded
-14:39:25 [foundry] startup complete — entering game loop
-14:39:25 [foundry] uploading lights: global=1, directional=1, point=0
-14:39:25 [foundry] light uniforms uploaded
-14:39:25 [foundry] WARNING: sdl.GLSetSwapInterval(0): That operation is not supported — vsync is not ours to set on this driver
-14:39:26 [foundry] cascade shadow array allocated (tex=12, fbo=1, 2048x2048 x 3 layers)
-14:39:48 [foundry] bench: report written to /tmp/claude-1000/-home-jfcarter2358-personal-code-main-foundry/1e28956e-d69a-4122-9161-0ebc6a87044f/scratchpad/bench_final_on.txt
-bench zz_terrain_preview_smooth (yaml) — load 0.0s, 1600x900, MSAA 8x
-
-=== pose -40,3.7,-38,0.82,-0.12
-frame  avg 20.85 ms (48.0 fps)  p50 20.72  p95 22.39  max 25.77
-scene  static 0  brushes 0 in 0 calls  chunks 1  scenery 0  sprites 0 (0 particles, 0 draws)  volume marches 0.0
-point shadows re-rendered 0.00 of 0 a frame
-section                              cpu avg   cpu max   gpu avg   gpu max
-frame                                   4.20      6.82      7.97      9.57
-  update                                0.35      0.63      0.18      0.19
-    player input                        0.00      0.00      0.01      0.02
-    player & vehicles                   0.12      0.28      0.01      0.02
-    ai                                  0.00      0.00      0.01      0.01
-    entity update                       0.00      0.00      0.01      0.01
-    frames & waypoints                  0.01      0.02      0.01      0.01
-    emitters                            0.00      0.00      0.01      0.01
-    effects                             0.00      0.00      0.01      0.01
-    decals                              0.00      0.00      0.01      0.02
-    sound                               0.00      0.03      0.01      0.01
-    sky                                 0.00      0.00      0.01      0.02
-    ui tick                             0.00      0.00      0.01      0.01
-    scripts                             0.04      0.14      0.01      0.01
-    debug stats                         0.13      0.23      0.01      0.02
-    drains                              0.00      0.02      0.01      0.01
-  shadows: sun                          1.37      2.36      0.88      1.88
-    compiled                            0.00      0.00      0.02      0.03
-    chunks                              0.23      0.43      0.24      0.97
-    entities                            0.00      0.00      0.02      0.05
-    scenery                             0.00      0.00      0.02      0.05
-    sprites                             0.00      0.00      0.02      0.39
-    scatter                             0.00      0.00      0.05      0.83
-    foliage                             1.04      1.76      0.24      0.68
-  shadows: clouds                       0.00      0.00      0.01      0.01
-  shadows: point                        0.00      0.00      0.01      0.02
-  clear                                 0.16      1.14      0.06      0.07
-  world: compiled                       0.00      0.00      0.01      0.02
-  world: chunks                         0.00      0.01      0.01      0.01
-  terrain                               0.10      0.25      1.66      3.18
-  entities                              0.00      0.00      0.01      0.02
-  scenery                               0.00      0.00      0.01      0.03
-  foliage                               2.10      2.98      4.81      6.32
-  scatter                               0.00      0.00      0.01      0.01
-  sprites: cutout                       0.00      0.00      0.01      0.01
-  decals                                0.00      0.00      0.01      0.01
-  sky                                   0.02      0.05      0.06      0.39
-  transparent                           0.00      0.00      0.01      0.92
-  volumetrics                           0.00      0.00      0.01      0.50
-  sprites: blended                      0.00      0.00      0.01      0.34
-  viewmodel                             0.00      0.00      0.01      0.03
-  ui                                    0.00      0.00      0.01      0.03
-swap                                   16.54     19.01     12.91     17.85
-
-=== pose -45,15.7,-45,0.78,-0.4
-frame  avg 18.02 ms (55.5 fps)  p50 17.96  p95 19.11  max 19.65
-scene  static 0  brushes 0 in 0 calls  chunks 1  scenery 0  sprites 0 (0 particles, 0 draws)  volume marches 0.0
-point shadows re-rendered 0.00 of 0 a frame
-section                              cpu avg   cpu max   gpu avg   gpu max
-frame                                   3.71      4.87      5.91      7.65
-  update                                0.35      0.62      0.18      0.19
-    player input                        0.00      0.00      0.01      0.02
-    player & vehicles                   0.12      0.36      0.01      0.01
-    ai                                  0.00      0.00      0.01      0.01
-    entity update                       0.00      0.00      0.01      0.01
-    frames & waypoints                  0.01      0.02      0.01      0.01
-    emitters                            0.00      0.00      0.01      0.01
-    effects                             0.00      0.00      0.01      0.01
-    decals                              0.00      0.00      0.01      0.01
-    sound                               0.00      0.01      0.01      0.02
-    sky                                 0.00      0.00      0.01      0.01
-    ui tick                             0.00      0.00      0.01      0.02
-    scripts                             0.03      0.11      0.01      0.02
-    debug stats                         0.12      0.24      0.01      0.01
-    drains                              0.00      0.01      0.01      0.01
-  shadows: sun                          1.17      1.89      0.87      2.00
-    compiled                            0.00      0.00      0.02      0.03
-    chunks                              0.22      0.47      0.24      0.93
-    entities                            0.00      0.00      0.02      0.93
-    scenery                             0.00      0.00      0.02      0.36
-    sprites                             0.00      0.02      0.02      0.37
-    scatter                             0.00      0.00      0.03      0.53
-    foliage                             0.86      1.42      0.28      1.27
-  shadows: clouds                       0.00      0.01      0.01      0.02
-  shadows: point                        0.00      0.00      0.01      0.02
-  clear                                 0.18      1.25      0.06      0.06
-  world: compiled                       0.00      0.00      0.01      0.01
-  world: chunks                         0.00      0.02      0.01      0.02
-  terrain                               0.10      0.24      2.62      3.97
-  entities                              0.00      0.00      0.01      0.03
-  scenery                               0.00      0.00      0.01      0.02
-  foliage                               1.79      2.67      1.89      3.00
-  scatter                               0.00      0.01      0.01      0.03
-  sprites: cutout                       0.00      0.00      0.01      0.01
-  decals                                0.00      0.00      0.01      0.01
-  sky                                   0.02      0.07      0.04      0.05
-  transparent                           0.00      0.00      0.01      0.03
-  volumetrics                           0.00      0.04      0.01      0.05
-  sprites: blended                      0.00      0.00      0.01      0.03
-  viewmodel                             0.00      0.00      0.01      0.03
-  ui                                    0.00      0.00      0.01      0.97
-swap                                   14.16     15.71     12.12     13.82
-
-=== pose 10,4.7,-40,1.1,-0.15
-frame  avg 19.94 ms (50.1 fps)  p50 19.86  p95 21.33  max 24.28
-scene  static 0  brushes 0 in 0 calls  chunks 1  scenery 0  sprites 0 (0 particles, 0 draws)  volume marches 0.0
-point shadows re-rendered 0.00 of 0 a frame
-section                              cpu avg   cpu max   gpu avg   gpu max
-frame                                   3.85      5.67      7.22      8.73
-  update                                0.37      0.86      0.18      0.19
-    player input                        0.00      0.05      0.01      0.01
-    player & vehicles                   0.12      0.24      0.01      0.02
-    ai                                  0.00      0.00      0.01      0.01
-    entity update                       0.00      0.00      0.01      0.02
-    frames & waypoints                  0.01      0.02      0.01      0.02
-    emitters                            0.00      0.00      0.01      0.02
-    effects                             0.00      0.00      0.01      0.02
-    decals                              0.00      0.00      0.01      0.02
-    sound                               0.00      0.01      0.01      0.01
-    sky                                 0.00      0.00      0.01      0.01
-    ui tick                             0.00      0.00      0.01      0.01
-    scripts                             0.05      0.14      0.01      0.02
-    debug stats                         0.13      0.60      0.01      0.01
-    drains                              0.00      0.01      0.01      0.01
-  shadows: sun                          1.79      3.12      1.07      1.95
-    compiled                            0.00      0.00      0.02      0.03
-    chunks                              0.23      0.37      0.25      0.27
-    entities                            0.00      0.00      0.02      0.03
-    scenery                             0.00      0.00      0.03      1.00
-    sprites                             0.00      0.03      0.07      1.05
-    scatter                             0.00      0.00      0.02      0.54
-    foliage                             1.45      2.64      0.41      1.31
-  shadows: clouds                       0.00      0.02      0.01      0.02
-  shadows: point                        0.00      0.00      0.01      0.01
-  clear                                 0.10      0.58      0.07      0.85
-  world: compiled                       0.00      0.00      0.01      0.54
-  world: chunks                         0.00      0.03      0.01      0.55
-  terrain                               0.09      0.19      1.64      2.85
-  entities                              0.00      0.00      0.01      0.02
-  scenery                               0.00      0.00      0.01      0.37
-  foliage                               1.37      2.13      3.88      5.45
-  scatter                               0.00      0.01      0.01      0.35
-  sprites: cutout                       0.00      0.00      0.01      0.36
-  decals                                0.00      0.00      0.01      0.03
-  sky                                   0.02      0.06      0.06      0.65
-  transparent                           0.00      0.00      0.01      0.02
-  volumetrics                           0.00      0.01      0.01      0.03
-  sprites: blended                      0.00      0.00      0.01      0.02
-  viewmodel                             0.00      0.00      0.01      0.02
-  ui                                    0.00      0.00      0.01      0.01
-swap                                   15.95     18.40     12.74     16.74
-
-=== pose -4,3,-6,0.9,0
-frame  avg 19.90 ms (50.2 fps)  p50 19.88  p95 21.22  max 21.76
-scene  static 0  brushes 0 in 0 calls  chunks 1  scenery 0  sprites 0 (0 particles, 0 draws)  volume marches 0.0
-point shadows re-rendered 0.00 of 0 a frame
-section                              cpu avg   cpu max   gpu avg   gpu max
-frame                                   3.69      4.67      7.35      8.78
-  update                                0.35      0.48      0.18      0.19
-    player input                        0.00      0.09      0.01      0.01
-    player & vehicles                   0.12      0.25      0.01      0.01
-    ai                                  0.00      0.00      0.01      0.02
-    entity update                       0.00      0.01      0.01      0.01
-    frames & waypoints                  0.01      0.05      0.01      0.01
-    emitters                            0.00      0.00      0.01      0.01
-    effects                             0.00      0.00      0.01      0.01
-    decals                              0.00      0.00      0.01      0.01
-    sound                               0.00      0.01      0.01      0.01
-    sky                                 0.00      0.00      0.01      0.02
-    ui tick                             0.00      0.00      0.01      0.02
-    scripts                             0.04      0.11      0.01      0.01
-    debug stats                         0.13      0.21      0.01      0.01
-    drains                              0.01      0.04      0.01      0.01
-  shadows: sun                          1.87      2.67      1.06      2.09
-    compiled                            0.00      0.00      0.02      0.03
-    chunks                              0.24      0.52      0.26      0.28
-    entities                            0.00      0.00      0.02      0.38
-    scenery                             0.00      0.00      0.07      0.97
-    sprites                             0.00      0.01      0.02      0.03
-    scatter                             0.00      0.00      0.02      0.03
-    foliage                             1.53      2.32      0.43      1.32
-  shadows: clouds                       0.00      0.00      0.01      0.02
-  shadows: point                        0.00      0.01      0.01      0.02
-  clear                                 0.10      0.15      0.06      0.39
-  world: compiled                       0.00      0.00      0.02      0.55
-  world: chunks                         0.00      0.02      0.03      0.37
-  terrain                               0.09      0.16      1.40      2.47
-  entities                              0.00      0.00      0.01      0.37
-  scenery                               0.00      0.07      0.01      0.03
-  foliage                               1.17      1.85      4.17      5.75
-  scatter                               0.00      0.01      0.01      0.02
-  sprites: cutout                       0.00      0.00      0.01      0.02
-  decals                                0.00      0.00      0.01      0.02
-  sky                                   0.02      0.04      0.06      0.07
-  transparent                           0.00      0.02      0.01      0.01
-  volumetrics                           0.00      0.00      0.01      0.03
-  sprites: blended                      0.00      0.00      0.01      0.03
-  viewmodel                             0.00      0.00      0.01      0.37
-  ui                                    0.00      0.00      0.01      0.79
-swap                                   16.09     17.80     12.48     14.49
+10:53:37 [foundry] fragment shader compiled OK
+10:53:37 [foundry] dir shadow program linked OK (id=6)
+10:53:37 [foundry] cube shadow program linked OK (id=9)
+10:53:37 [foundry] dummy cubemap created (id=1)
+10:53:39 [foundry] shader program linked OK (id=3)
+10:53:39 [foundry] starting with blank level
+10:53:39 [foundry] level loaded: 0 chunk(s), 0 dir light(s), 0 point light(s)
+10:53:39 [foundry] uploading lights: global=1, directional=0, point=0
+10:53:39 [foundry] light uniforms uploaded
+10:53:39 [foundry] startup complete — entering game loop
+10:53:39 [foundry] uploading lights: global=1, directional=1, point=0
+10:53:39 [foundry] light uniforms uploaded
+10:53:39 [foundry] WARNING: sdl.GLSetSwapInterval(0): That operation is not supported — vsync is not ours to set on this driver
+10:53:40 [foundry] cascade shadow array allocated (tex=15, fbo=1, 2048x2048 x 3 layers)

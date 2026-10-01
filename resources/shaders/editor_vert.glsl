@@ -1,4 +1,4 @@
-#version 410
+#version 430
 uniform mat4 ProjMtx;
 in vec2 Position;
 in vec2 UV;

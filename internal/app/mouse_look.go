@@ -86,17 +86,24 @@ func applyMouseLook(dt float32) {
 	if platform.MouseInvertY {
 		y = -y
 	}
+	turnView(x*speed, -y*speed)
+}
+
+// turnView turns the player's view by yaw and pitch radians — the mouse's
+// share this frame, or the look stick's (pad_look.go).
+func turnView(yaw, pitch float64) {
 	// The same turn, in degrees, for a script (`@level.prop.look_delta`).
 	// With the camera detached this is ALL the motion does: the script camera
 	// is the script's to turn, and the player's own look stays where it was
-	// for when the view is handed back.
-	gfx.LookDelta = mgl32.Vec2{float32(x * speed * 180 / math.Pi), float32(-y * speed * 180 / math.Pi)}
+	// for when the view is handed back. Added to, since the mouse and the
+	// stick can both turn in one frame.
+	gfx.LookDelta = gfx.LookDelta.Add(mgl32.Vec2{float32(yaw * 180 / math.Pi), float32(pitch * 180 / math.Pi)})
 	if gfx.CameraDetached() {
 		return
 	}
-	gfx.Cam.Yaw += float32(x * speed)
-	gfx.Cam.Pitch -= float32(y * speed)
-	gfx.AbsorbRecoilPitch(-float32(y * speed))
+	gfx.Cam.Yaw += float32(yaw)
+	gfx.Cam.Pitch += float32(pitch)
+	gfx.AbsorbRecoilPitch(float32(pitch))
 	if gfx.Cam.Pitch > gfx.MaxPitch {
 		gfx.Cam.Pitch = gfx.MaxPitch
 	}

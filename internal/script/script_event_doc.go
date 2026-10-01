@@ -160,7 +160,7 @@ var eventDocs = []EventDoc{
 	{":finished:", "widget, then its screen", "src ref",
 		"A video widget reached the end of its clip. Never fires for a looping one, which has no end to reach."},
 	{":bound:", "widget or screen that called bind_key", "src ref, action str, slot int",
-		"The press bind_key was listening for arrived — bound, cleared with Backspace or cancelled with Escape. Read binding_name to see which."},
+		"The press bind_key was listening for arrived — bound, cleared with Backspace (or the pad's Back) or cancelled with Escape (or the pad's Start). Read binding_name to see which."},
 	{":cancel:", "screen", "—",
 		"Escape was pressed while this screen was the topmost modal one. The screen closes either way."},
 	{":shown:", "screen", "—",

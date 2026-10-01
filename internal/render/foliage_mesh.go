@@ -3,9 +3,13 @@ package render
 // foliage_mesh.go — the meshes foliage is drawn with, built in code.
 //
 // Every shape (world.FoliageShape) has world.FoliageVariants variants, each
-// built at two levels of detail: near, and a far one with a fraction of the
-// triangles for the distance where the eye can no longer count blades. All of
-// them live in one vertex buffer, laid out foliageVertexFloats per vertex:
+// built at three levels of detail: near, a far one with a fraction of the
+// triangles for the distance where the eye can no longer count blades, and
+// for ground cover a clump — two or three crossed cards each showing a whole
+// tuft (buildClump), for the distance where even the far mesh's blades are
+// under a pixel. (Shapes whose far tier is an impostor, and those with none,
+// repeat their far mesh there; it is never drawn.) All of them live in one
+// vertex buffer, laid out foliageVertexFloats per vertex:
 //
 //	position (3)  in the plant's own frame: y up its growth axis, unit scale
 //	normal (3)    the shading normal — a tree's leaf cards take the normal of
@@ -45,7 +49,7 @@ const (
 )
 
 // foliageLODs is how many levels of detail each variant is built at.
-const foliageLODs = 2
+const foliageLODs = 3
 
 type fvert struct {
 	p, n       mgl32.Vec3
@@ -1297,8 +1301,46 @@ func (m *fmesh) iceChunk(c, size, lean mgl32.Vec3, seed uint32, sub int) {
 	}, nil)
 }
 
+// buildClump is ground cover's far tier: k cards crossed about the growth
+// axis, each halfW either side of it and h tall, showing tile. They shade as
+// the ground does (their normal is up), as a tuft this far off is a patch of
+// the meadow, not a thing standing on it.
+func buildClump(variant, k int, halfW, h float32, tile, part int, sway float32) []float32 {
+	m := &fmesh{}
+	turn := float32(variant) * 0.7
+	for i := 0; i < k; i++ {
+		a := turn + float32(i)*math.Pi/float32(k)
+		// A little darker than a blade: a tuft's inside is in its own shade,
+		// and the card shows the whole tuft, inside and all.
+		m.card(mgl32.Vec3{}, yawDir(a).Mul(halfW), yUp.Mul(h), tile, part, yUp, 0, sway, 0.85)
+	}
+	return m.v
+}
+
 // buildFoliageTemplate builds one shape's variant at one level of detail.
 func buildFoliageTemplate(shape world.FoliageShape, variant, lod int) []float32 {
+	if lod == 2 {
+		switch shape {
+		case world.FoliageGrass:
+			return buildClump(variant, 2, 0.34, 0.55, tileGrassClump, partLeaf, 0.6)
+		case world.FoliageTallGrass:
+			return buildClump(variant, 2, 0.6, 1.25, tileTallGrassClump, partLeaf, 0.8)
+		case world.FoliageFlower:
+			m := buildClump(variant, 2, 0.24, 0.45, tileGrassClump, partLeaf, 0.6)
+			return append(m, buildClump(variant+1, 2, 0.24, 0.7, tileFlowerDots, partAccentCard, 0.6)...)
+		case world.FoliageReed:
+			return buildClump(variant, 2, 0.42, 1.9, tileReedClump, partLeaf, 0.4)
+		case world.FoliageFern:
+			m := &fmesh{}
+			for i := 0; i < 3; i++ {
+				d := yawDir(float32(variant)*0.9 + float32(i)*2*math.Pi/3)
+				up := d.Mul(0.55).Add(yUp.Mul(0.5)).Normalize().Mul(0.82)
+				m.card(mgl32.Vec3{}, d.Cross(yUp).Normalize().Mul(0.22), up, tileFern, partLeaf, yUp, 0, 0.5, 1)
+			}
+			return m.v
+		}
+		lod = 1
+	}
 	switch shape {
 	case world.FoliageGrass:
 		return buildGrass(variant, lod)

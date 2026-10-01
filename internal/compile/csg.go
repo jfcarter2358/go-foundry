@@ -138,12 +138,26 @@ type Face struct {
 	BackLight       []mgl32.Vec3
 	SmoothBackLight []mgl32.Vec3
 
+	// Indirect is the part of Light that did not come straight from a static
+	// light — the ambient term plus every bounce — and SmoothIndirect,
+	// BackIndirect and SmoothBackIndirect the same for the other three
+	// answers, each parallel to its own. Already included in the answer it
+	// belongs to: a renderer that lights the indirect part another way (live
+	// GI, render/gi.go) takes this back off first, and one that does not
+	// ignores it.
+	Indirect           []mgl32.Vec3
+	SmoothIndirect     []mgl32.Vec3
+	BackIndirect       []mgl32.Vec3
+	SmoothBackIndirect []mgl32.Vec3
+
 	// SunShare is how much of the baked sun (world.LightSet.BakedSun) each
-	// point kept after the bake's own shadow, 0 to 1, parallel to Points;
-	// BackSunShare the same for a double-sided face's far side. The renderer
-	// scales the sun's unshadowed light by it and takes that back off wherever
-	// something the bake never saw — an entity, a chunk switched on later —
-	// shadows the point live. Nil with no baked sun.
+	// point kept after the bake's own shadow, 0 to 1, parallel to Points, or
+	// -1 where the sun was not baked into the point's chunk at all
+	// (BakeExclude); BackSunShare the same for a double-sided face's far side.
+	// The renderer takes the sun's unshadowed light times this back off and,
+	// wherever its shadow cascades reach, puts the sun back shadowed by them
+	// instead: the bake's shadow is a per-vertex ramp a grid step wide, the
+	// cascades' a per-pixel edge. Nil with no baked sun.
 	SunShare     []float32
 	BackSunShare []float32
 

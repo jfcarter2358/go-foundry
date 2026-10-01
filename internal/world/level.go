@@ -41,6 +41,11 @@ type Level struct {
 	// world units, where it asks for one; 0 leaves the compiler's default.
 	// See RawCompile and compile.Compile.
 	LightGrid, LightMinGrid float32
+	// NoBake ships the level compiled but unlit by the baker: CSG, BSP,
+	// visibility and sealing still run, the light stage does not, and every
+	// static surface is lit live — with GI where the player has it on (render/
+	// gi.go), with the flat ambient where not. See RawCompile.Bake.
+	NoBake bool
 	// Volumes are the level's scriptable regions (volume.go).
 	Volumes []Volume
 	// Entities are the level's placed dynamic objects (entity.go). They live on

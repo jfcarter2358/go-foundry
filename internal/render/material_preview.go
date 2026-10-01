@@ -25,7 +25,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -108,6 +108,9 @@ func PrepareWorldProgramForPreview(prog uint32, view, proj mgl32.Mat4, camPos mg
 	// silhouette is judged on screen rather than fed to alpha-to-coverage.
 	gl.Uniform1i(loc("bakedLight\x00"), 0)
 	gl.Uniform1i(loc("bakedSunLight\x00"), -1)
+	// Nor bounced: the sphere is in a booth, not in the level GI traced.
+	disableGITo(prog)
+	gl.UseProgram(prog)
 	gl.Uniform1i(loc("alphaSharpen\x00"), 0)
 	gfx.ApplySkinUniforms(&previewSkinUniforms, prog, nil)
 }

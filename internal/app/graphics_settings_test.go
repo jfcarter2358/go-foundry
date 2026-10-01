@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 
 	"foundry/internal/gfx"
@@ -33,5 +34,40 @@ func TestSmoothLightingRoundTripsThroughGraphicsFile(t *testing.T) {
 	}
 	if !gfx.SmoothLighting {
 		t.Error("a file without smooth_lighting turned it off")
+	}
+}
+
+// The GI tier survives the file once chosen; one the engine picked by GPU is
+// not written, so it is picked again on the next machine.
+func TestGIQualityRoundTripsOnlyOnceChosen(t *testing.T) {
+	prevQ, prevChosen := gfx.GIQuality, gfx.GIQualityChosen
+	t.Cleanup(func() {
+		gfx.GIQuality, gfx.GIQualityChosen, gfx.GraphicsSettingsChanged = prevQ, prevChosen, false
+	})
+
+	gfx.GIQuality, gfx.GIQualityChosen = gfx.GIMedium, false
+	data, err := marshalGraphicsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "gi_quality") {
+		t.Errorf("a tier nobody chose was saved:\n%s", data)
+	}
+
+	gfx.SetGIQuality(gfx.GILow)
+	data, err = marshalGraphicsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gfx.GIQuality, gfx.GIQualityChosen = gfx.GIHigh, false
+	if err := applyGraphicsSettings(data); err != nil {
+		t.Fatal(err)
+	}
+	if gfx.GIQuality != gfx.GILow || !gfx.GIQualityChosen {
+		t.Errorf("came back as %v (chosen %v) from:\n%s", gfx.GIQuality, gfx.GIQualityChosen, data)
+	}
+	gfx.PickDefaultGIQuality("llvmpipe (LLVM 21.1.8, 256 bits)")
+	if gfx.GIQuality != gfx.GILow {
+		t.Error("the GPU pick overrode a saved choice")
 	}
 }

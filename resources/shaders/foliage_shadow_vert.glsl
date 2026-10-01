@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // foliage_shadow_vert.glsl — cascade depth stage for terrain foliage.
 // Placement is foliage_common.glsl, the colour pass's own, so the shadow

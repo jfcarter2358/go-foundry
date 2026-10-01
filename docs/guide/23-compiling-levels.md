@@ -55,6 +55,30 @@ one number.
 **Any edit turns it off.** A preview is a picture of the level as it was when it
 was built, and an edit is the moment it stops being one.
 
+## Shipping without a bake
+
+**Build > Lighting** chooses what the Lighting pass does:
+
+| | |
+| --- | --- |
+| **Full bake** | the default. Static lights, the ambient and the bounce are baked onto the surfaces. |
+| **No bake (GI only)** | the Lighting pass is skipped. The level ships lit live, as the editor shows it, with [live GI](07-lighting.md#live-gi) for its bounce light. |
+
+The choice is saved in the level file (`compile: {bake: none}`), so
+`foundrycompile` and a release build make the same one. With no bake:
+
+- Compiles are faster: the light bake is usually the slowest pass.
+- Every light counts against the live limits (4 directional, 8 point), not
+  just the dynamic ones. Lights past the limit are not drawn. Choosing No bake
+  and compiling both warn when a level is over.
+- A player with live GI off sees the flat ambient and no bounce at all.
+- Every light is live, so every shadow-casting light renders its shadow map
+  every frame. That is usually the bigger cost; see
+  [Shadow cost](07-lighting.md#shadow-cost).
+
+A `.fbsp` from before live GI is refused at load with a message to recompile:
+the lighting data in it changed shape.
+
 ## What actually uses it
 
 Nothing, while you are editing. Play in the editor evaluates the brushes live,
@@ -249,7 +273,10 @@ canyon: faces 172 -> 891, 96 nodes, 121 cells (58 solid, 58 void, 5 interior),
   means sharper shadows and more geometry). Where a shadow edge crosses a face,
   the compiler cuts that face finer, down to `-min-grid` (default 1 unit; `0`
   turns it off). Each vertex near an edge averages a small patch of rays, so a
-  diagonal edge comes out as a smooth line, not a staircase.
+  diagonal edge comes out as a smooth line, not a staircase. Within the shadow range the
+  baked sun's shadow is replaced by the live one anyway (see
+  [Lighting](07-lighting.md#the-suns-shadow-on-baked-geometry)), so these
+  settings matter for the other static lights and for the distance.
 
   A level can choose its own spacing, and then gets it however it is compiled —
   the editor's Compile button, the release build, or `foundrycompile` — because

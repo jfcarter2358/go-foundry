@@ -26,7 +26,7 @@ import (
 	"log"
 	"path/filepath"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -240,7 +240,7 @@ func RenderSky(lvl *world.Level) {
 	// that follows sorting against the world rather than against the far plane.
 	// The test itself stays on — it is what makes this pass cost only the
 	// pixels the world did not cover.
-	cullWas := gl.IsEnabled(gl.CULL_FACE)
+	cullWas := currentGLState().cull
 	gl.Disable(gl.CULL_FACE) // the cube is seen from the inside
 	gl.DepthMask(false)
 

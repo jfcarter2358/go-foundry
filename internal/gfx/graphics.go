@@ -15,7 +15,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -135,7 +135,7 @@ var (
 // differently-typed sampler to the same unit, which is invalid and silently
 // breaks every draw through this program. 10/11 sit safely past all of them
 // (NormalMapUnit takes 12 and render.CloudShadowTexUnit 13), still well inside
-// GL 4.1's guaranteed minimum of 16 texture image units.
+// GL 4.3's guaranteed minimum of 16 texture image units.
 const (
 	BlendTexUnit  = 10
 	BlendMaskUnit = 11
@@ -269,8 +269,11 @@ func LoadProgram(VertexShaderPath, FragmentShaderPath string) error {
 
 func CompileShader(source string, shaderType uint32) (uint32, error) {
 	typeName := "vertex"
-	if shaderType == gl.FRAGMENT_SHADER {
+	switch shaderType {
+	case gl.FRAGMENT_SHADER:
 		typeName = "fragment"
+	case gl.COMPUTE_SHADER:
+		typeName = "compute"
 	}
 
 	shader := gl.CreateShader(shaderType)

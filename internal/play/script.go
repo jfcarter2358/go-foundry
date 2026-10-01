@@ -26,6 +26,7 @@ import (
 
 	"foundry/internal/hooks"
 	"foundry/internal/platform"
+	"foundry/internal/render"
 	"foundry/internal/sim"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -70,7 +71,7 @@ var verbs = map[string]verb{
 	"next_weapon": {0, 0, "next_weapon", "cycle weapons forward"},
 	"prev_weapon": {0, 0, "prev_weapon", "cycle weapons back"},
 	"use":         {0, 0, "use", "press interact"},
-	"key":         {2, -1, "key down|up|tap <name>", "press, release, or press and release any key or mouse button by name (Space, F, Left Shift, Mouse Left), for key_down and :key_down:"},
+	"key":         {2, -1, "key down|up|tap <name>", "press, release, or press and release any key, mouse button or pad input by name (Space, F, Left Shift, Mouse Left, Pad A, Pad RT), for key_down and :key_down:"},
 	"click":       {1, 1, "click <widget>|<screen>:<widget>", "click a widget on a screen that is up"},
 	"cursor":      {1, 1, "cursor <x,y>|center|off", "free the pointer and hold it at a window pixel, as a mouse would; off captures it again"},
 	"tap":         {0, 1, "tap [left|right|middle]", "press and release a mouse button on the world where the cursor is"},
@@ -82,6 +83,7 @@ var verbs = map[string]verb{
 	"read":        {1, 1, "read <path>", "report one value: player.position, <id>.attr.health, hud:ammo.text …"},
 	"say":         {1, -1, "say <text>", "put a note in the log, to mark what a run was testing"},
 	"shot":        {0, 1, "shot [name.png]", "take a screenshot"},
+	"view":        {1, 1, "view <normal|lighting|probes|field|wireframe>", "draw the shots that follow in a debug view: lighting is the light alone on white surfaces"},
 }
 
 // Usage is the command list, for a tool's help and for an error message.
@@ -101,7 +103,7 @@ var verbOrder = []string{
 	"look", "turn", "look_at", "forward", "back", "left", "right", "to", "stop",
 	"crouch", "sprint", "jump", "use", "key", "fire", "aim", "reload", "throw",
 	"weapon", "next_weapon", "prev_weapon", "click", "cursor", "tap", "drag",
-	"wait", "shot", "read", "say", "teleport", "enable", "wake", "kill",
+	"wait", "shot", "view", "read", "say", "teleport", "enable", "wake", "kill",
 }
 
 // Parse reads a script and checks every command before any of it runs: a typo
@@ -127,6 +129,9 @@ func Parse(text string) ([]Cmd, error) {
 			}
 			if len(c.Args) < v.min || (v.max >= 0 && len(c.Args) > v.max) {
 				return nil, fmt.Errorf("line %d: %s", c.Line, v.usage)
+			}
+			if c.Verb == "view" && !render.IsView(c.Args[0]) {
+				return nil, fmt.Errorf("line %d: %q is not a view: one of %s", c.Line, c.Args[0], strings.Join(render.ViewNames(), ", "))
 			}
 			// `say` keeps its whole line, spaces and all.
 			if c.Verb == "say" {
@@ -441,7 +446,7 @@ func (r *Runner) begin(c Cmd) error {
 		name := strings.Join(c.Args[1:], " ")
 		in, ok := platform.ParseInput(name)
 		if !ok || !in.Bound() {
-			return fmt.Errorf("%q is no key or mouse button", name)
+			return fmt.Errorf("%q is no key, mouse button or pad input", name)
 		}
 		switch strings.ToLower(c.Args[0]) {
 		case "down":
@@ -545,6 +550,13 @@ func (r *Runner) begin(c Cmd) error {
 		r.t.Emit("READ", c.Args[0], r.t.Read(c.Args[0]))
 	case "say":
 		r.t.Emit("SAY", "", c.Args[0])
+
+	case "view":
+		note, err := render.SetView(c.Args[0])
+		if err != nil {
+			return err
+		}
+		r.t.Emit("VIEW", render.ViewName(), note)
 
 	case "shot":
 		name := ""

@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 uniform sampler2D tex;
 uniform float alpha; // per-geometry alpha multiplier (default 1.0)
@@ -96,13 +96,13 @@ uniform vec3  camPos;
 uniform int   bakedLight;
 // bakedSunLight is the directional light whose share of a baked surface's
 // light is carried per vertex (fragBakedLight.w; world.LightSet.BakedSun), or
-// -1. shadowMapLive holds that light's cascades drawn with only what the bake
-// never saw — entities, sprites, chunks drawn live — so a baked surface can
-// take the sun back off where one of those shadows it, without the world's
-// own geometry landing a second, blockier copy of the shadow the bake already
-// has.
+// -1. Within its cascades' reach a baked surface takes that share back off and
+// lights itself with the sun shadowed by the cascades instead — exactly what
+// an uncompiled level does — because the bake's shadow is a per-vertex ramp a
+// grid step wide, which washes a small caster's shadow out to nothing beside a
+// face its own normal turns dark at full resolution. Past the cascades the
+// bake's sun stands: it is the only shadow there is out there.
 uniform int   bakedSunLight;
-uniform sampler2DArrayShadow shadowMapLive;
 
 // Global ambient light
 
@@ -170,9 +170,12 @@ in vec3 fragNormal;
 // guaranteed budget of 60.
 in float fragViewDepth;
 // The compiled level's baked lighting, interpolated across the triangle: xyz
-// the colour, w the baked sun's share (bakedSunLight). Junk unless bakedLight
-// is set — see the uniform.
+// the colour, w the baked sun's share (bakedSunLight; -1 where the sun was not
+// baked into this surface at all). Junk unless bakedLight is set — see the
+// uniform.
 in vec4 fragBakedLight;
+// The part of fragBakedLight.rgb that is ambient and bounce (vertex.glsl).
+in vec3 fragBakedIndirect;
 
 out vec4 outputColor;
 
@@ -266,9 +269,18 @@ float sampleCascade(sampler2DArrayShadow map, int matIdx, int layer, vec3 normal
     return 1.0 - lit / 25.0;
 }
 
-// calcDirShadowIn is calcDirShadow against a given map, whose cascades for
-// this light start at layerBase (-1: none).
-float calcDirShadowIn(sampler2DArrayShadow map, int layerBase, int lightIdx, vec3 normal, vec3 lightDir) {
+// dirShadowReach is how far the cascades can be believed at this fragment: 1
+// within their range, falling to 0 over the fade at its end and 0 beyond.
+float dirShadowReach() {
+    float maxDist = cascadeSplit[SHADOW_CASCADES - 1];
+    float fadeBegin = maxDist * (1.0 - SHADOW_FADE_FRACTION);
+    return 1.0 - clamp((fragViewDepth - fadeBegin) / max(maxDist - fadeBegin, 1e-4), 0.0, 1.0);
+}
+
+// calcDirShadowUnfaded is the cascades' shadow at this fragment for light
+// lightIdx, whose cascades in the array start at layerBase (-1: none), before
+// the fade at the end of their range.
+float calcDirShadowUnfaded(int layerBase, int lightIdx, vec3 normal, vec3 lightDir) {
     if (layerBase < 0) {
         return 0.0;
     }
@@ -285,13 +297,13 @@ float calcDirShadowIn(sampler2DArrayShadow map, int layerBase, int lightIdx, vec
     }
 
     int matBase = lightIdx * SHADOW_CASCADES;
-    float shadow = sampleCascade(map, matBase + c, layerBase + c, normal, lightDir);
+    float shadow = sampleCascade(shadowMapArray, matBase + c, layerBase + c, normal, lightDir);
     if (shadow < 0.0) {
         // A fragment at the corner of a slice can sit just outside its own
         // cascade's box; the next one out always contains it.
         if (c + 1 < SHADOW_CASCADES) {
             c += 1;
-            shadow = sampleCascade(map, matBase + c, layerBase + c, normal, lightDir);
+            shadow = sampleCascade(shadowMapArray, matBase + c, layerBase + c, normal, lightDir);
         }
         if (shadow < 0.0) {
             return 0.0;
@@ -304,26 +316,21 @@ float calcDirShadowIn(sampler2DArrayShadow map, int layerBase, int lightIdx, vec
     float span = max(cascadeSplit[c] - prev, 1e-4);
     float t = (fragViewDepth - prev) / span;
     if (c + 1 < SHADOW_CASCADES && t > 1.0 - SHADOW_CASCADE_BLEND) {
-        float next = sampleCascade(map, matBase + c + 1, layerBase + c + 1, normal, lightDir);
+        float next = sampleCascade(shadowMapArray, matBase + c + 1, layerBase + c + 1, normal, lightDir);
         if (next >= 0.0) {
             shadow = mix(shadow, next, (t - (1.0 - SHADOW_CASCADE_BLEND)) / SHADOW_CASCADE_BLEND);
         }
     }
-
-    // Fade the shadow term out approaching the range limit, so the boundary
-    // isn't a hard line across the ground.
-    float maxDist = cascadeSplit[SHADOW_CASCADES - 1];
-    float fadeBegin = maxDist * (1.0 - SHADOW_FADE_FRACTION);
-    shadow *= 1.0 - clamp((fragViewDepth - fadeBegin) / max(maxDist - fadeBegin, 1e-4), 0.0, 1.0);
 
     return shadow;
 }
 
 // Cascaded directional shadow lookup: pick the tightest cascade covering this
 // fragment, cross-fade into the next at the split, and fade out entirely as the
-// shadow range runs out.
+// shadow range runs out, so the boundary isn't a hard line across the ground.
 float calcDirShadow(int lightIdx, vec3 normal, vec3 lightDir) {
-    return calcDirShadowIn(shadowMapArray, dirLightShadowLayer[lightIdx], lightIdx, normal, lightDir);
+    return calcDirShadowUnfaded(dirLightShadowLayer[lightIdx], lightIdx, normal, lightDir)
+        * dirShadowReach();
 }
 
 // Sample offsets for soft point light shadows (20 directions).
@@ -524,17 +531,35 @@ void main() {
         // the sun the map follows is dynamic: then none of the baked answer is
         // its light, and its own term below takes the shadow in full.
         lighting = fragBakedLight.rgb;
-        // The baked sun, taken back off where something the bake never saw
-        // shadows it live: its unshadowed light here, times the share of it
-        // the bake kept, times how much of that the live-only map covers.
-        if (bakedSunLight >= 0 && fragBakedLight.w > 0.0) {
+        // Live GI replaces the ambient and the bounce the bake folded in
+        // (fragBakedIndirect is exactly that part), and keeps the static
+        // lights' own direct light. See render/gi.go.
+        if (giEnabled != 0) {
+            lighting = max(lighting - fragBakedIndirect, vec3(0.0))
+                + ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal);
+        }
+        // The baked sun, re-shadowed by the cascades where they reach (see
+        // bakedSunLight). What the bake put in comes off: the sun's unshadowed
+        // light on the unbumped normal the bake lit with, times the share it
+        // kept. What goes on is the sun as an uncompiled level has it: on the
+        // bumped normal, so a normal map shows in the sunlight, times what the
+        // cascades keep — and they hold everything that casts, the compiled
+        // world, entities and chunks drawn live, so this is the whole of the
+        // sun's shadow, crisp. Where they fade out, the bake's share stands.
+        if (bakedSunLight >= 0 && fragBakedLight.w >= 0.0) {
             int s = bakedSunLight;
             vec3 ldir = -normalize(dirLightDir[s]);
+            float baked = lightWrapTerm(dot(geoNormal, ldir));
             float diff = lightWrapTerm(dot(normal, ldir));
-            if (diff > 0.0) {
-                float live = calcDirShadowIn(shadowMapLive, 0, s, geoNormal, ldir);
-                vec3 sun = dirLightColor[s] * dirLightBrightness[s] * diff;
-                lighting = max(lighting - sun * fragBakedLight.w * live * dirLightShadowStrength[s], vec3(0.0));
+            if (baked > 0.0 || diff > 0.0) {
+                float kept = fragBakedLight.w;
+                float reach = dirShadowReach();
+                if (reach > 0.0) {
+                    float shadow = calcDirShadowUnfaded(dirLightShadowLayer[s], s, geoNormal, ldir);
+                    kept = mix(kept, 1.0 - shadow * dirLightShadowStrength[s], reach);
+                }
+                vec3 sun = dirLightColor[s] * dirLightBrightness[s];
+                lighting = max(lighting + sun * (diff * kept - baked * fragBakedLight.w), vec3(0.0));
             }
         }
         if (dirLightDynamic[clamp(cloudShadowLight, 0, MAX_DIR_LIGHTS - 1)] == 0) {
@@ -553,7 +578,7 @@ void main() {
         }
     } else {
         // Every light, static or dynamic, on anything that was not baked.
-        lighting = ambientAt(globalLightColor * globalLightBrightness, normal);
+        lighting = ambientLight(globalLightColor * globalLightBrightness, fragWorldPos, normal);
         for (int i = 0; i < numDirLights; i++) {
             lighting += dirLightContrib(i, normal, geoNormal);
         }
@@ -589,6 +614,11 @@ void main() {
     if (finalAlpha < 0.001) discard;
 
     vec3 surface = unlit != 0 ? texColor.rgb : texColor.rgb * clamp(lighting, 0.0, 1.0);
+    // The GI debug view (gi_debug): the light alone, as if every surface
+    // were white, so what GI adds can be told from what the textures are.
+    if (giDebug == 1 && unlit == 0) {
+        surface = clamp(lighting, 0.0, 1.0);
+    }
 
     if (isWater != 0) {
         vec3 viewDir = normalize(camPos - fragWorldPos);

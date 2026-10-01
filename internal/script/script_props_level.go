@@ -320,6 +320,149 @@ func levelProps() map[string]propAccess {
 			Doc: "whether moving the mouse up looks down; saved for every level and session",
 		},
 
+		// The player's game controller settings, saved beside the mouse ones.
+		"pad_sensitivity_x": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(platform.PadLookSensitivityX), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("pad_sensitivity_x", "float", v)
+				}
+				platform.PadLookSensitivityX = clampFloat32(float32(f), platform.MinPadSensitivity, platform.MaxPadSensitivity)
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "how fast the look stick turns the view left and right, a multiplier (1 by default, 0.1–5); saved for every level and session",
+		},
+		"pad_sensitivity_y": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(platform.PadLookSensitivityY), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("pad_sensitivity_y", "float", v)
+				}
+				platform.PadLookSensitivityY = clampFloat32(float32(f), platform.MinPadSensitivity, platform.MaxPadSensitivity)
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "how fast the look stick turns the view up and down, a multiplier (1 by default, 0.1–5); saved for every level and session",
+		},
+		"pad_invert_y": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(platform.PadInvertY), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("pad_invert_y", "bool", v)
+				}
+				platform.PadInvertY = b
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "whether pushing the look stick up looks down; saved for every level and session",
+		},
+		"pad_dead_zone": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(platform.PadDeadZone), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("pad_dead_zone", "float", v)
+				}
+				platform.PadDeadZone = clampFloat32(float32(f), 0, platform.MaxPadDeadZone)
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "how far a stick moves before it counts, as a fraction of its travel (0.15 by default, 0–0.5); saved for every level and session",
+		},
+		"pad_look_curve": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(platform.PadLookCurve), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("pad_look_curve", "float", v)
+				}
+				platform.PadLookCurve = clampFloat32(float32(f), platform.MinPadLookCurve, platform.MaxPadLookCurve)
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "the look stick's response curve, an exponent on its travel: 1 is linear, higher gives finer aim near the centre (2 by default, 1–3); saved for every level and session",
+		},
+		"pad_vibration": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(platform.PadVibration), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("pad_vibration", "float", v)
+				}
+				platform.PadVibration = clampFloat32(float32(f), 0, 1)
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "how strongly the pad rumbles, 0 (off) to 1 (1 by default); saved for every level and session",
+		},
+		"pad_hold_time": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.FloatVal(platform.PadHoldTime), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				f, ok := numericValue(v)
+				if !ok {
+					return propErr("pad_hold_time", "float", v)
+				}
+				platform.PadHoldTime = clampFloat32(float32(f), platform.MinPadHoldTime, platform.MaxPadHoldTime)
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "seconds a pad button must stay down to count as holding it (\"Hold Pad X\") rather than pressing it (0.4 by default, 0.15–1.5); saved for every level and session",
+		},
+		"aim_assist": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(platform.AimAssist), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				b, ok := toBool(v)
+				if !ok {
+					return propErr("aim_assist", "bool", v)
+				}
+				platform.AimAssist = b
+				platform.ControlSettingsChanged = true
+				return nil
+			},
+			Doc: "whether the look stick slows over an enemy and eases onto one — a pad player only, never the mouse (on by default); saved for every level and session",
+		},
+		"input_device": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				if platform.LastDevice == platform.DevicePad {
+					return flang.StrVal("gamepad"), true
+				}
+				return flang.StrVal("keyboard"), true
+			},
+			Doc: "what the player last played with: \"keyboard\" (and mouse) or \"gamepad\" — for showing the right binding, with binding_label",
+		},
+		"gamepad_type": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.StrVal(platform.ActivePadFamily().String()), true
+			},
+			Doc: "whose buttons the pad last used wears: \"xbox\", \"playstation\" or \"nintendo\" (anything else reads as xbox), or \"\" with none plugged in",
+		},
+		"gamepad_connected": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.BoolVal(platform.PadConnected()), true
+			},
+			Doc: "whether any game controller is plugged in",
+		},
+
 		// The player's volume, the same three gains the editor's audio settings
 		// write. Player settings like the mouse ones above: saved to audio.yaml
 		// once a change has settled (app/controls_settings.go).
@@ -402,6 +545,26 @@ func levelProps() map[string]propAccess {
 				return nil
 			},
 			Doc: "how far painted terrain foliage is drawn, as a multiple of its natural distances, 0.25 to 2 (1 by default); lower is faster; saved for every level and session",
+		},
+		// The player's live GI tier (gfx.GIQuality), saved to graphics.yaml
+		// like smooth_lighting.
+		"gi_quality": {
+			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {
+				return flang.StrVal(gfx.GIQuality.String()), true
+			},
+			Set: func(_ *refCache, _ flang.RefVal, v flang.Value) error {
+				s, ok := v.(flang.StrVal)
+				if !ok {
+					return propErr("gi_quality", "string", v)
+				}
+				q, ok := gfx.ParseGIQuality(string(s))
+				if !ok {
+					return propErr("gi_quality", "off, low, medium or high", v)
+				}
+				gfx.SetGIQuality(q)
+				return nil
+			},
+			Doc: "the player's live global illumination quality: \"off\", \"low\", \"medium\" or \"high\" — bounce light worked out every frame from the lights as they are; off is the flat ambient and the baked bounce; picked by GPU until set, then saved for every level and session",
 		},
 		"foliage_shadows": {
 			Get: func(*refCache, flang.RefVal) (flang.Value, bool) {

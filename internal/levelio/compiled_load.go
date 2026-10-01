@@ -182,8 +182,8 @@ func buildStaticRange(c *CompiledLevel, level *world.Level, from, count int) (in
 		// No buffers of its own: the renderer batches a compiled level's
 		// surfaces per source chunk and material (render/static_batch.go).
 		g.CPUOnly = true
-		g.VertexLight = bakedLightRows(f, f.Light, f.BackLight, len(verts))
-		g.VertexLightSmooth = bakedLightRows(f, f.SmoothLight, f.SmoothBackLight, len(verts))
+		g.VertexLight = bakedLightRows(f, f.Light, f.BackLight, f.Indirect, f.BackIndirect, len(verts))
+		g.VertexLightSmooth = bakedLightRows(f, f.SmoothLight, f.SmoothBackLight, f.SmoothIndirect, f.SmoothBackIndirect, len(verts))
 		// The face's own smoothed normals, interpolated from its source face
 		// (compile/smooth.go). A flat face has none, and shades from the facet
 		// the way a flat face would anyway.
@@ -236,15 +236,23 @@ func noteCompiledFaceTextures(texNeeded map[string]bool, f *compile.Face) {
 // gets none rather than a guess: the shader's flag is set from whether the
 // buffer exists, so "no baked light" cleanly means "light it the ordinary way".
 //
-// Each row is the colour and then the baked sun's share (Face.SunShare) — 0,
-// "take nothing back off", for a face without one or a file baked before
-// faces had it.
-func bakedLightRows(f *compile.Face, front, back []mgl32.Vec3, n int) [][]float32 {
+// Each row is gfx.LightStride floats: the colour, the baked sun's share
+// (Face.SunShare) — -1, "the bake's sun is not to be touched", for a face
+// without one — and
+// the indirect part of the colour (Face.Indirect), which live GI takes back off
+// before adding its own. A face with no indirect list carries zero there.
+func bakedLightRows(f *compile.Face, front, back, indFront, indBack []mgl32.Vec3, n int) [][]float32 {
 	if len(front) == 0 || len(front) != len(f.Points) {
 		return nil
 	}
 	if len(back) != len(front) {
 		back = front // a file baked before faces had a far side
+	}
+	if len(indFront) != len(front) {
+		indFront = nil
+	}
+	if len(indBack) != len(front) {
+		indBack = indFront
 	}
 	shareFront, shareBack := f.SunShare, f.BackSunShare
 	if len(shareFront) != len(front) {
@@ -256,15 +264,19 @@ func bakedLightRows(f *compile.Face, front, back []mgl32.Vec3, n int) [][]float3
 	out := make([][]float32, n)
 	for i := range out {
 		k := i % len(front)
-		l, share := front[k], shareFront
+		l, share, ind := front[k], shareFront, indFront
 		if i >= len(front) {
-			l, share = back[k], shareBack
+			l, share, ind = back[k], shareBack, indBack
 		}
-		var sun float32
+		sun := float32(-1)
 		if share != nil {
 			sun = share[k]
 		}
-		out[i] = []float32{l.X(), l.Y(), l.Z(), sun}
+		var in mgl32.Vec3
+		if ind != nil {
+			in = ind[k]
+		}
+		out[i] = []float32{l.X(), l.Y(), l.Z(), sun, in.X(), in.Y(), in.Z()}
 	}
 	return out
 }

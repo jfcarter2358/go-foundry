@@ -47,6 +47,7 @@ package compile
 // than a new pattern of noise.
 
 import (
+	"fmt"
 	"math"
 	"runtime"
 	"slices"
@@ -106,7 +107,8 @@ func (b *baker) bounce(direct []faceSamples, bounces int) []faceSamples {
 	for pass := 1; pass <= bounces; pass++ {
 		final := pass == bounces
 		next := make([]faceSamples, len(t.Faces))
-		parallelFor(len(t.Faces), func(fi int) {
+		stage := fmt.Sprintf("Light: bounce %d of %d", pass, bounces)
+		b.progress.parallelFor(stage, len(t.Faces), func(fi int) {
 			f := &t.Faces[fi]
 			for k := 0; k < numKinds; k++ {
 				if !final && k != kindFront && k != kindBack {

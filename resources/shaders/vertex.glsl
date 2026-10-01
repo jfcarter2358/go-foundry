@@ -1,8 +1,15 @@
-#version 410
+#version 430
 
 uniform mat4 projection;
 uniform mat4 camera;
 uniform mat4 model;
+
+// Instanced drawing (render/scenery_instanced.go): many placements of one mesh
+// in one draw, each carrying its model matrix as a per-instance attribute in
+// locations 7-10. Off — the zero an unwritten uniform holds — every draw reads
+// `model` as it always has, and the attribute is never looked at.
+uniform int instanced;
+layout(location = 7) in mat4 instanceModel;
 
 // Water animation. isWater gates the whole path; time is seconds since start.
 uniform int   isWater;
@@ -45,6 +52,10 @@ layout(location = 2) in vec3 vertNormal;
 // attribute reads a driver default, not zero.
 // xyz is the baked colour; w the baked sun's share (see fragment.glsl).
 layout(location = 5) in vec4 vertLight;
+// The part of vertLight.xyz that is ambient and bounce rather than a static
+// light's own (compile.Face.Indirect): what live GI takes back off before
+// adding its own. Read from the same buffer as vertLight, under the same gate.
+layout(location = 6) in vec3 vertLightIndirect;
 
 out vec2 fragTexCoord;
 out vec3 fragWorldPos;
@@ -53,6 +64,7 @@ out vec3 fragNormal;
 out float fragViewDepth;
 // The baked value, passed through and interpolated across the triangle.
 out vec4 fragBakedLight;
+out vec3 fragBakedIndirect;
 
 // Sum of three travelling sine waves at different headings, so the surface
 // never reads as a single repeating ripple. Driven by world XZ, which keeps
@@ -81,10 +93,12 @@ void main() {
     }
     fragTexCoord = uv + uvOffset;
     fragBakedLight = vertLight;
+    fragBakedIndirect = vertLightIndirect;
     // skinPosition is the identity unless this draw call set `skinned`
     // (skin_common.glsl), so every static surface takes the same path it always
     // did.
-    vec4 worldPos = model * skinPosition(vert);
+    mat4 M = instanced != 0 ? instanceModel : model;
+    vec4 worldPos = M * skinPosition(vert);
 
     // Vertical displacement only, so worldPos.xz still carries the undisplaced
     // surface coordinate the fragment stage needs to re-derive the normal.
@@ -99,7 +113,7 @@ void main() {
     // paid for on smoothed surfaces.
     fragNormal = vec3(0.0);
     if (smoothShading != 0) {
-        fragNormal = transpose(inverse(mat3(model))) * skinNormal(vertNormal);
+        fragNormal = transpose(inverse(mat3(M))) * skinNormal(vertNormal);
     }
 
     vec4 viewPos = camera * worldPos;

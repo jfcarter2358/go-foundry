@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // volume_frag.glsl — one volumetric draw: a cloud volume, the sky's cloud
 // deck, or a local draw — particle blobs and/or an explosion effect, marched

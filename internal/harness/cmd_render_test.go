@@ -3,7 +3,7 @@ package harness
 // cmd_render_test.go — the pictures, drawn for real.
 //
 // The model half needs nothing but a CPU and runs everywhere. The screen half
-// needs a display and a GL 4.1 driver, so it is opt-in the same way every other
+// needs a display and a GL 4.3 driver, so it is opt-in the same way every other
 // drawing test in the engine is (FOUNDRY_GL_TEST=1) — and it is worth having
 // opt-in rather than not at all, because the mistake it catches is one that
 // leaves a perfectly plausible image: a screen whose glyphs never reached the
@@ -60,7 +60,7 @@ func TestRenderModelTakesFlagsAfterThePath(t *testing.T) {
 
 func TestRenderScreenDrawsItsText(t *testing.T) {
 	if os.Getenv("FOUNDRY_GL_TEST") == "" {
-		t.Skip("set FOUNDRY_GL_TEST=1 to run (needs a display and a GL 4.1 driver)")
+		t.Skip("set FOUNDRY_GL_TEST=1 to run (needs a display and a GL 4.3 driver)")
 	}
 	root := testenv.RepoRoot(t)
 	dst := filepath.Join(t.TempDir(), "menu.png")

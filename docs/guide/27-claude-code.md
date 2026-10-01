@@ -98,7 +98,12 @@ level loads — so "does this key exist" and "is there a texture called this" ar
 exactly the questions worth answering from inside the engine rather than by
 guessing from the files.
 
-The viewport tool shows what is on screen, so point the camera at the thing you
+The viewport tool shows what is on screen, and can draw that one picture in a
+debug view — `lighting` (the light alone on white surfaces), `probes`, `field`
+or `wireframe` — putting your view back afterwards. So "is this corridor too
+dark?" gets a lighting-only look with the textures out of the way. A **play**
+script's `view` command does the same for its shots, and `play_stop` restores
+the view you had. Point the camera at the thing you
 are asking about — or name a context volume and ask Claude to look at it, which
 is the one thing that moves the camera for you.
 

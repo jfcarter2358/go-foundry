@@ -37,7 +37,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // TextureAnisotropyCap bounds how many anisotropic samples we ask for even on

@@ -24,7 +24,7 @@ package render
 // Off, every call is a bool test.
 
 import (
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // ProfileEnabled turns the profiler on. The F3 overlay and the benchmark turn

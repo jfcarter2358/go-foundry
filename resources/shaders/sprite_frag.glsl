@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // sprite_frag.glsl — colour-pass fragment stage for the instanced sprite pass.
 //
@@ -50,6 +50,7 @@ void main() {
     float a    = texel.a * fragColor.a;
 
     if (lit != 0) {
+        rgb = giDebugAlbedo(rgb);
         rgb *= biomeLighting(fragWorldPos, normalize(fragNormal),
                              biomeViewDepth(fragWorldPos), receiveShadows != 0, true);
     }

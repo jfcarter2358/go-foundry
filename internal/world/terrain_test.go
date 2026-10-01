@@ -355,6 +355,50 @@ func TestFoliageGrowsAndIsDeterministic(t *testing.T) {
 	})
 }
 
+// A build with a rank cut is the full build with the cut ranks left out:
+// every plant it keeps stands exactly where the full build put it, and a
+// shape cut to 0 is not placed at all. The renderer builds distant ground
+// this way and relies on the two agreeing.
+func TestFoliageRankCutIsASubsetOfTheFullBuild(t *testing.T) {
+	tr := paintedMeadow(false)
+	s := tr.Sections()[0]
+	full := tr.BuildFoliage(s)
+	cut := tr.BuildFoliageFor(s, func(sh FoliageShape) float32 {
+		if sh == FoliageGrass {
+			return 0
+		}
+		return 0.3
+	})
+	want := map[[2]int][]FoliageInstance{}
+	for _, b := range full.Batches {
+		for _, in := range b.Instances {
+			if b.Shape != FoliageGrass && in.Rank < 0.3 {
+				k := [2]int{int(b.Shape), b.Variant}
+				want[k] = append(want[k], in)
+			}
+		}
+	}
+	got := 0
+	for _, b := range cut.Batches {
+		if b.Shape == FoliageGrass {
+			t.Fatal("a shape cut to 0 was placed")
+		}
+		w := want[[2]int{int(b.Shape), b.Variant}]
+		if len(w) != len(b.Instances) {
+			t.Fatalf("%v variant %d: cut build has %d, full build below the cut %d", b.Shape, b.Variant, len(b.Instances), len(w))
+		}
+		for i := range w {
+			if w[i] != b.Instances[i] {
+				t.Fatalf("%v: the cut build placed a plant differently", b.Shape)
+			}
+		}
+		got += len(b.Instances)
+	}
+	if got == 0 || got >= full.Count/2 {
+		t.Fatalf("cut build kept %d of %d", got, full.Count)
+	}
+}
+
 // Ground plants grow on ground, not out of the side of a wall; and nothing
 // grows on bare faces.
 func TestFoliageRespectsSurfaceAndPaint(t *testing.T) {

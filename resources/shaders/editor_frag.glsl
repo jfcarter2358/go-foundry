@@ -1,4 +1,4 @@
-#version 410
+#version 430
 uniform sampler2D Texture;
 in vec2 Frag_UV;
 in vec4 Frag_Color;

@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // terrain_frag.glsl — shading for a chunk's block terrain.
 //
@@ -208,6 +208,20 @@ void main() {
         k *= smoothstep(0.35, 0.75, albedoNormal.y);
         float luma = dot(albedo, vec3(0.299, 0.587, 0.114));
         vec3 tint = vCover.rgb * (0.55 + 0.9 * luma);
+        // Far off, the meadow's own grain: tufts too far to draw still leave
+        // the ground mottled light and dark at about their spacing, and
+        // drier and lusher drifts across it, so the tint does not read as a
+        // painted board where the foliage thins out. The fine term fades as
+        // its cells shrink toward a pixel, before it can shimmer.
+        float px = length(fwidth(vWorldPos.xz));
+        float fine = 1.0 - smoothstep(0.4, 1.4, px);
+        float tuft = mix(0.5, tNoise(vWorldPos.xz * 0.95) * 0.6 + tNoise(vWorldPos.xz * 2.9) * 0.4, fine);
+        float clump = tNoise(vWorldPos.xz * 0.21 + 5.0);
+        float drift = tNoise(vWorldPos.xz * 0.05 + 31.0);
+        vec3 grain = tint * (0.8 + 0.28 * tuft + 0.16 * clump);
+        grain = mix(grain, grain * vec3(1.16, 1.05, 0.74), smoothstep(0.5, 0.85, drift) * 0.6);
+        grain = mix(grain, grain * vec3(0.86, 0.98, 0.86), smoothstep(0.5, 0.15, drift) * 0.5);
+        tint = mix(tint, grain, far);
         albedo = mix(albedo, tint, k);
     }
 
@@ -220,7 +234,7 @@ void main() {
     vec3 geoN = gl_FrontFacing ? faceNormal : -faceNormal;
     vec3 shadowAt = vWorldPos + geoN * (0.03 + vViewDepth * 0.0025);
     vec3 lighting = biomeLighting(shadowAt, normal, vViewDepth, receiveShadows != 0, false);
-    vec3 color = albedo * clamp(lighting, 0.0, 1.0);
+    vec3 color = giDebugAlbedo(albedo) * clamp(lighting, 0.0, 1.0);
     color = applyFog(color, vWorldPos);
     outputColor = vec4(color, 1.0);
 }

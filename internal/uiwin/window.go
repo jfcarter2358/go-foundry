@@ -23,7 +23,7 @@ import (
 	"foundry/internal/uidraw"
 	"log"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
 )

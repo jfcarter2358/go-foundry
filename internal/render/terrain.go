@@ -36,7 +36,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -299,8 +299,9 @@ func terrainDrawable(ch *world.Chunk) bool {
 }
 
 // TerrainCoverFar is the distance at which a painted biome's ground tint
-// reaches its full strength — about where its grass has thinned out.
-const TerrainCoverFar = 55
+// reaches its full strength — about where its grass, thinned and grown to
+// cover for the thinning (render/foliage.go), can no longer keep up.
+const TerrainCoverFar = 90
 
 // RenderTerrain draws every enabled chunk's terrain in the opaque pass. It
 // uses its own program and puts the world program back when done. Returns the

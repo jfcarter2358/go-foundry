@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // sky_frag.glsl — what the skybox cube is filled with.
 //

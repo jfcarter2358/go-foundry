@@ -1,9 +1,9 @@
 package imguibackend
 
-// ImGui SDL2 + OpenGL 4.1 backend for the Foundry level editor.
+// ImGui SDL2 + OpenGL 4.3 backend for the Foundry level editor.
 //
 // Platform backend  : translates SDL2 events → imgui IO
-// Renderer backend  : uploads imgui draw data to OpenGL 4.1
+// Renderer backend  : uploads imgui draw data to OpenGL 4.3
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"foundry/internal/platform"
 	"unsafe"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"
@@ -232,7 +232,7 @@ func ImGuiRender() {
 
 func imguiCreateDeviceObjects() {
 	// Build shader
-	vertSrc := "#version 410\n" +
+	vertSrc := "#version 430\n" +
 		"uniform mat4 ProjMtx;\n" +
 		"in vec2 Position;\n" +
 		"in vec2 UV;\n" +
@@ -243,7 +243,7 @@ func imguiCreateDeviceObjects() {
 		"  Frag_UV = UV; Frag_Color = Color;\n" +
 		"  gl_Position = ProjMtx * vec4(Position.xy, 0, 1);\n" +
 		"}\n"
-	fragSrc := "#version 410\n" +
+	fragSrc := "#version 430\n" +
 		"uniform sampler2D Texture;\n" +
 		"in vec2 Frag_UV;\n" +
 		"in vec4 Frag_Color;\n" +
@@ -335,23 +335,9 @@ func ImguiRenderDrawData(drawData imgui.DrawData, vao, vbo, ebo uint32) {
 		return
 	}
 
-	// Save GL state
-	var lastProgram int32
-	gl.GetIntegerv(gl.CURRENT_PROGRAM, &lastProgram)
-	var lastTex int32
-	gl.GetIntegerv(gl.TEXTURE_BINDING_2D, &lastTex)
-	var lastVAO int32
-	gl.GetIntegerv(gl.VERTEX_ARRAY_BINDING, &lastVAO)
-	var lastArrayBuf int32
-	gl.GetIntegerv(gl.ARRAY_BUFFER_BINDING, &lastArrayBuf)
-	var lastScissorBox [4]int32
-	gl.GetIntegerv(gl.SCISSOR_BOX, &lastScissorBox[0])
-	var lastViewport [4]int32
-	gl.GetIntegerv(gl.VIEWPORT, &lastViewport[0])
-	cullFaceEnabled := gl.IsEnabled(gl.CULL_FACE)
-	blendEnabled := gl.IsEnabled(gl.BLEND)
-	depthTestEnabled := gl.IsEnabled(gl.DEPTH_TEST)
-	scissorEnabled := gl.IsEnabled(gl.SCISSOR_TEST)
+	// Save GL state: as the frame loop declared it when it knows, since
+	// asking GL stalls on the GPU (gfx/known_gl_state.go).
+	was := gfx.CurrentGLState()
 
 	// Setup render state
 	gl.Enable(gl.BLEND)
@@ -441,30 +427,5 @@ func ImguiRenderDrawData(drawData imgui.DrawData, vao, vbo, ebo uint32) {
 	}
 
 	// Restore GL state
-	gl.UseProgram(uint32(lastProgram))
-	gl.BindTexture(gl.TEXTURE_2D, uint32(lastTex))
-	gl.BindVertexArray(uint32(lastVAO))
-	gl.BindBuffer(gl.ARRAY_BUFFER, uint32(lastArrayBuf))
-	gl.Scissor(lastScissorBox[0], lastScissorBox[1], lastScissorBox[2], lastScissorBox[3])
-	gl.Viewport(lastViewport[0], lastViewport[1], lastViewport[2], lastViewport[3])
-	if blendEnabled {
-		gl.Enable(gl.BLEND)
-	} else {
-		gl.Disable(gl.BLEND)
-	}
-	if cullFaceEnabled {
-		gl.Enable(gl.CULL_FACE)
-	} else {
-		gl.Disable(gl.CULL_FACE)
-	}
-	if depthTestEnabled {
-		gl.Enable(gl.DEPTH_TEST)
-	} else {
-		gl.Disable(gl.DEPTH_TEST)
-	}
-	if scissorEnabled {
-		gl.Enable(gl.SCISSOR_TEST)
-	} else {
-		gl.Disable(gl.SCISSOR_TEST)
-	}
+	was.Restore()
 }

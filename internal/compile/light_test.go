@@ -274,8 +274,10 @@ func TestBakeExcludeSkipsOnlyTheNamedChunk(t *testing.T) {
 		{ID: "ground", Brushes: []world.Brush{boxFromTo("floor", mgl32.Vec3{-10, -1, -10}, mgl32.Vec3{10, 0, 10})}},
 		{ID: "hangar", Brushes: []world.Brush{boxFromTo("floor", mgl32.Vec3{-10, -1, 20}, mgl32.Vec3{10, 0, 40})}},
 	}}
+	// Casting, so it is the baked sun and the faces carry its share; nothing
+	// stands over either floor to shadow it.
 	sun := world.DirectionalLight{Yaw: 0, Pitch: -90, Color: mgl32.Vec3{1, 1, 1}, Brightness: 1,
-		BakeExclude: []string{"hangar"}}
+		CastShadows: true, ShadowStrength: 1, BakeExclude: []string{"hangar"}}
 	sun.SyncDirection()
 	lvl.Lights = world.LightSet{
 		Global:      world.GlobalLight{Color: mgl32.Vec3{1, 1, 1}, Brightness: 0.1},
@@ -300,6 +302,15 @@ func TestBakeExcludeSkipsOnlyTheNamedChunk(t *testing.T) {
 	}
 	if got := hangar.Light[0].X(); bsp.Abs(got-0.1) > 1e-4 {
 		t.Fatalf("hangar (excluded) baked %v, want only the 0.1 ambient", got)
+	}
+	// The renderer swaps a baked share for the sun its cascades shadow, so an
+	// excluded chunk's share must not read as "the sun is shadowed here" (0):
+	// that would light the hangar with a sun the author kept out of it.
+	if got := ground.SunShare[0]; got != 1 {
+		t.Errorf("ground's sun share %v, want 1 (all of it kept)", got)
+	}
+	if got := hangar.SunShare[0]; got != -1 {
+		t.Errorf("hangar's sun share %v, want -1 (not baked here at all)", got)
 	}
 }
 

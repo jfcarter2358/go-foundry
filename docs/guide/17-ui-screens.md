@@ -289,9 +289,11 @@ dragged, so a settings slider is left unbound: its script copies the setting in
 on `:shown:` (`widget(@self, "sens").prop.value = @level.prop.mouse_sensitivity`)
 and writes it back on `:change:`. The engine persists the mouse settings, the
 key bindings, the volume (`@level.prop.master_volume`), Smooth Lighting
-(`@level.prop.smooth_lighting`, a toggle) and the foliage settings
+(`@level.prop.smooth_lighting`, a toggle), live GI (`@level.prop.gi_quality`,
+one of `"off"`, `"low"`, `"medium"`, `"high"`; see
+[Lighting](07-lighting.md#live-gi)) and the foliage settings
 (`@level.prop.foliage_distance`, 0.25 to 2, and `@level.prop.foliage_shadows`,
-a toggle — both saved to `graphics.yaml`) itself — see
+a toggle — all saved to `graphics.yaml`) itself — see
 [Entities](11-entities.md#mouse-look-and-the-players-settings) — so the screen
 needs no Save button, and leaving with Escape keeps what was set.
 
@@ -301,8 +303,10 @@ pointer and the arrow keys alike.
 
 ### Rebinding keys
 
-Every gameplay action has two binding slots, 1 and 2. A button for one calls
-`bind_key`, and the player's next key or mouse button press becomes the binding:
+Every gameplay action has two key binding slots, 1 and 2, and a third for a
+game controller. A button for one calls `bind_key`, and the player's next press
+of the right kind becomes the binding — a key or mouse button for 1 and 2, a pad
+button, trigger or stick direction for 3:
 
 ```
 on_click(:click:, src ref) when src.id == "jump_1"
@@ -316,8 +320,16 @@ end
 ```
 
 The press is taken before the UI or the game sees it, so the key being bound
-does not also act. Escape cancels and Backspace clears the slot; `F1`–`F12`,
-`~`, `0`, `8` and `9` belong to the engine and are ignored. `:bound:` arrives
+does not also act. Escape (or the pad's Start) cancels and Backspace (or the
+pad's Back) clears the slot; `F1`–`F12`, `~`, `0`, `8` and `9`, and the pad's
+Start, Back and Guide, belong to the engine and are ignored, as is a press of
+the wrong kind for the slot. Label a pad slot's button with
+`binding_label(action, 3)` rather than `binding_name`: it says `"Cross"` on a
+PlayStation pad where the name is `"Pad A"`. In slot 3 a tap binds the
+button's press and holding it for `@level.prop.pad_hold_time` binds the hold
+(`"Hold Pad X"`, labelled `"Hold Square"`), so one button can be reload on a tap
+and interact on a hold — a hold never takes a press off another action, nor a
+press a hold. `:bound:` arrives
 however it ended, at the screen or widget that called `bind_key`. A key bound
 to one action comes off any other action live at the same moment, so redraw
 every label, not just the one clicked. A vehicle's keys and the on-foot ones
@@ -328,6 +340,10 @@ The actions are `move_forward` `move_back` `move_left` `move_right` `jump`
 `look_up` `look_down` `look_left` `look_right` `sprint` `crouch` `interact`
 `primary_fire` `secondary_fire` `reload` `throw` `next_weapon` `prev_weapon`
 `weapon_1`–`weapon_5` `roll_left` `roll_right` `pitch_up` `pitch_down`.
+
+The pad's own settings — look sensitivity, invert, dead zone, curve, vibration,
+hold time and aim assist — are `@level.prop.pad_*` and `aim_assist`, persisted like the
+mouse's; see [Entities](11-entities.md#playing-with-a-game-controller).
 
 ### The game's own settings
 

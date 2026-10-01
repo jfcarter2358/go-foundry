@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // foliage_vert.glsl — colour-pass vertex stage for terrain foliage
 // (render/foliage.go). Placement is foliage_common.glsl; this stage lights.
@@ -21,6 +21,7 @@ out vec3 vColor;
 out vec2 vUV;
 flat out int vPart;
 out float vFade;
+out vec2 vXfade;
 out vec3 vWorldPos;
 
 void main() {
@@ -30,6 +31,7 @@ void main() {
         vUV = vec2(0.0);
         vPart = 0;
         vFade = 0.0;
+        vXfade = vec2(0.0);
         vWorldPos = vec3(0.0);
         return;
     }
@@ -52,6 +54,8 @@ void main() {
     // does not read its own footprint in the depth map.
     vec3 lightAt = fWorldPos + fUp * 0.06;
     vec3 lighting = biomeLighting(lightAt, n, viewDepth, receiveShadows != 0, thin);
+    base = giDebugAlbedo(base);
+    tone = giDebug == 1 ? 1.0 : tone;
     vec3 col = base * tone * clamp(lighting, 0.0, 1.2);
 
     if (thin) {
@@ -67,6 +71,7 @@ void main() {
     vUV = aUV;
     vPart = part;
     vFade = fFade;
+    vXfade = fXfade;
     vWorldPos = fWorldPos;
     gl_Position = projView * vec4(fWorldPos, 1.0);
 }

@@ -169,11 +169,12 @@ func (p camPose) write() {
 // Rig is the one script camera.
 var Rig CameraRig
 
-// LookDelta is this frame's mouse look, in degrees: X the turn to the right,
-// Y the turn upward. Written by the frame loop from the same motion that turns
-// the player's view — with sensitivity, smoothing and invert-Y already applied
-// — and ALSO written while the camera is detached, when that motion turns
-// nothing: which is how a script drives an orbit camera from the mouse.
+// LookDelta is this frame's mouse and look-stick look, in degrees: X the turn
+// to the right, Y the turn upward. Written by the frame loop from the same
+// motion that turns the player's view — with sensitivity, smoothing, the
+// stick's curve and invert-Y already applied — and ALSO written while the
+// camera is detached, when that motion turns nothing: which is how a script
+// drives an orbit camera from the mouse or a pad.
 var LookDelta mgl32.Vec2
 
 // ResetCameraRig gives the view back to the player at once and forgets every

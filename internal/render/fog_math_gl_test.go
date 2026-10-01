@@ -25,18 +25,18 @@ import (
 	"math"
 	"testing"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-const fogProbeVert = `#version 410
+const fogProbeVert = `#version 430
 layout(location = 0) in vec2 aPos;
 void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 `
 
 // A white surface, so the value read back IS 1 - fogFactor when the fog colour
 // is black. Nothing else is in the way.
-const fogProbeFrag = `#version 410
+const fogProbeFrag = `#version 430
 uniform vec3 probePos;
 uniform int  probeAdditive;
 out vec4 outColor;

@@ -191,6 +191,12 @@ func DebugOverlayLines() []DebugLine {
 		line("Decals:       %d drawn", DebugStats.Decals)
 	}
 	line("Point shadows: %d re-rendered of %d", DebugStats.PointShadowRenders, DebugStats.PointShadows)
+	if s := GIStatsLast; s.Active {
+		line("GI:           %s, %d sources, %d probes traced", s.Tier, s.Sources, s.ProbesTraced)
+		line("GI field:     %d bricks built / %d waiting", s.BricksBuilt, s.BricksPending)
+	} else {
+		line("GI:           off")
+	}
 	out = append(out, debugRule)
 
 	// The editor flies a free camera and leaves PlayerEntity parked wherever

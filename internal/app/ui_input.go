@@ -4,9 +4,9 @@ package app
 //
 // The translation lives here rather than in internal/ui so that package never
 // learns which device asked. A gamepad's d-pad and a keyboard's arrows both
-// become ui.DirUp; its south button and Enter both become Activate. Adding
-// controller support later is a case in this file and no change at all in the
-// UI itself.
+// become ui.DirUp; its south button and Enter both become Activate. The pad's
+// half is gamepad_input.go's uiHandlePad, and needed no change in the UI
+// itself.
 //
 // Ordering in the event loop matters and is stated at the call site: this runs
 // after the secondary-window router, so an editor window still owns its own
@@ -19,6 +19,7 @@ import (
 	"log"
 
 	"foundry/internal/gfx"
+	"foundry/internal/platform"
 	"foundry/internal/ui"
 
 	"github.com/veandco/go-sdl2/sdl"
@@ -172,11 +173,39 @@ func uiApplyCursor() {
 	// the player's eyes — a strategy view, a build mode — with no screen up
 	// to ask on its behalf.
 	want := !devActive() && (ui.Game.WantsCursor() || devui.Open() || hooks.ScriptWantsCursor)
-	if want == uiCursorReleased {
+	if want != uiCursorReleased {
+		uiCursorReleased = want
+		gfx.SetMouseLock(!want && !devActive())
+		// SetMouseLock has just shown or hidden the cursor itself.
+		uiCursorHidden = false
+	}
+	uiHideCursorForPad()
+}
+
+// uiCursorHidden is whether a released cursor has been hidden because the
+// player is on a pad.
+var uiCursorHidden bool
+
+// uiHideCursorForPad hides a menu's cursor while the player drives it with a
+// pad, and shows it again when they touch the mouse or keyboard
+// (noteKeyboardMouse). A pointer parked over one button while the d-pad moves
+// focus to another reads as two selections. The developer console keeps its
+// cursor: it is typed into, not navigated.
+func uiHideCursorForPad() {
+	if !uiCursorReleased {
+		uiCursorHidden = false
 		return
 	}
-	uiCursorReleased = want
-	gfx.SetMouseLock(!want && !devActive())
+	hide := platform.LastDevice == platform.DevicePad && !devui.Open() && !devActive()
+	if hide == uiCursorHidden {
+		return
+	}
+	uiCursorHidden = hide
+	if hide {
+		sdl.ShowCursor(sdl.DISABLE)
+	} else {
+		sdl.ShowCursor(sdl.ENABLE)
+	}
 }
 
 // ---------- the pointer, at the world ----------

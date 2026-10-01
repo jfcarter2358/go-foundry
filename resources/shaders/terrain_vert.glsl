@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // terrain_vert.glsl — a chunk's block terrain (render/terrain.go).
 //

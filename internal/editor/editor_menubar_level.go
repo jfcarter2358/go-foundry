@@ -5,10 +5,15 @@ package editor
 // other editor.
 
 import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"foundry/internal/gfx"
 	"foundry/internal/levelio"
+	"foundry/internal/render"
 	"foundry/internal/uiwin"
 	"foundry/internal/world"
-	"path/filepath"
 
 	imgui "github.com/inkyblackness/imgui-go/v4"
 )
@@ -91,6 +96,38 @@ func editorLevelViewMenu() {
 		editorSetFlyCam(!flying)
 	}
 	editorMenuTooltip(editorCameraTooltip(flying))
+	editorLiveGIMenu()
+	imgui.EndMenu()
+}
+
+// editorLiveGIMenu is the viewport's GI quality — the player setting, so the
+// editor shows what a player at that tier would — and GI's debug views.
+func editorLiveGIMenu() {
+	if !imgui.BeginMenu("Live GI") {
+		return
+	}
+	for i, name := range gfx.GIQualityNames() {
+		q := gfx.GIQualityLevel(i)
+		if imgui.MenuItemV(strings.ToUpper(name[:1])+name[1:]+"##giq", "", gfx.GIQuality == q, true) {
+			gfx.SetGIQuality(q)
+		}
+	}
+	editorMenuTooltip("Live bounce light, at the tier a player picks in the game's\n" +
+		"settings. Off is the flat ambient (and, on a compiled level,\n" +
+		"the baked bounce).")
+	imgui.Separator()
+	for _, m := range []render.GIDebugMode{render.GIDebugOff, render.GIDebugLighting, render.GIDebugProbes, render.GIDebugField} {
+		label := map[render.GIDebugMode]string{
+			render.GIDebugOff: "Normal view", render.GIDebugLighting: "Lighting only",
+			render.GIDebugProbes: "Probes", render.GIDebugField: "Distance field",
+		}[m]
+		if imgui.MenuItemV(label+"##gidbg", "", render.GIDebug == m, true) {
+			render.GIDebug = m
+		}
+	}
+	editorMenuTooltip("What GI sees: the light alone on white surfaces, each probe\n" +
+		"as a dot of its own light (red where buried in a wall), or the\n" +
+		"distance field it traces against.")
 	imgui.EndMenu()
 }
 
@@ -100,21 +137,17 @@ func editorLevelBuildMenu() {
 	if !imgui.BeginMenu("Build") {
 		return
 	}
-	if imgui.MenuItem("Compile") {
-		msg, err := EditorCompileLevel()
-		if err != nil {
-			editorSetStatus("Compile failed: %v", err)
-		} else {
-			editorSetStatus("%s", msg)
-		}
+	if imgui.MenuItemV("Compile", "", false, !EditorCompiling()) {
+		editorBeginCompile(compileToFile)
 	}
 	editorMenuTooltip("Build the level's BSP, visibility and baked lighting,\n" +
 		"and write it beside the level file. Reports leaks.")
+	editorLevelLightingMenu()
 
 	// The numbers Compile prints say whether the level is sealed; only the
 	// eye catches a seam or a surface CSG should not have taken, and without
 	// this the first sight of a compiled level is the shipped build.
-	if imgui.MenuItemV("Preview Compiled", "", EditorPreviewingCompiled(), true) {
+	if imgui.MenuItemV("Preview Compiled", "", EditorPreviewingCompiled(), !EditorCompiling()) {
 		editorTogglePreviewCompiled()
 	}
 	editorMenuTooltip("Draw the level the way a release build would:\n" +
@@ -134,10 +167,73 @@ func editorLevelBuildMenu() {
 	imgui.EndMenu()
 }
 
+// editorLevelLightingMenu is what Compile does about light: bake it, or ship
+// the level lit live (Level.NoBake).
+func editorLevelLightingMenu() {
+	lvl := Editor.level
+	if lvl == nil || !imgui.BeginMenu("Lighting") {
+		return
+	}
+	if imgui.MenuItemV("Full bake", "", !lvl.NoBake, true) && lvl.NoBake {
+		editorSetNoBake(lvl, false)
+	}
+	editorMenuTooltip("Bake every static light, the ambient and its bounce into the\n" +
+		"surfaces. Lit the same on every machine; GI, where the player\n" +
+		"has it on, replaces the baked ambient and bounce.")
+	if imgui.MenuItemV("No bake (GI only)", "", lvl.NoBake, true) && !lvl.NoBake {
+		editorSetNoBake(lvl, true)
+	}
+	editorMenuTooltip("Skip the light bake: the level ships lit live, as the editor\n" +
+		"shows it. Bounce light comes from GI alone, so a player with GI\n" +
+		"off sees the flat ambient. Every light counts against the live\n" +
+		"limits (4 directional, 8 point). Compiles faster.")
+	imgui.EndMenu()
+}
+
+// editorSetNoBake switches the level's bake, as an undoable edit, and warns
+// when an unbaked level has more lights than can be lit live at once.
+func editorSetNoBake(lvl *world.Level, on bool) {
+	EditorPushUndo()
+	lvl.NoBake = on
+	dropCompiledPreview()
+	if !on {
+		editorSetStatus("Lighting: full bake")
+		return
+	}
+	if w := noBakeLightWarning(lvl.Lights); w != "" {
+		editorSetStatus("Lighting: no bake — %s", w)
+		return
+	}
+	editorSetStatus("Lighting: no bake — the level ships lit live, with GI")
+}
+
+// noBakeLightWarning names what an unbaked level loses to the live light
+// limits: lights past world.MaxDirLights / MaxPointLights are not drawn.
+func noBakeLightWarning(ls world.LightSet) string {
+	var parts []string
+	if n := len(ls.Directional); n > world.MaxDirLights {
+		parts = append(parts, fmt.Sprintf("%d directional lights, %d are lit", n, world.MaxDirLights))
+	}
+	if n := len(ls.Points); n > world.MaxPointLights {
+		parts = append(parts, fmt.Sprintf("%d point lights, %d are lit", n, world.MaxPointLights))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "over the live light limit: " + strings.Join(parts, "; ")
+}
+
 // editorTogglePreviewCompiled flips the compiled preview and reports how it
 // went on the status line.
+//
+// Turning it on is a compile, so that runs behind the progress bar and reports
+// when it finishes.
 func editorTogglePreviewCompiled() {
-	msg, err := EditorSetCompiledPreview(!EditorPreviewingCompiled())
+	if !EditorPreviewingCompiled() {
+		editorBeginCompile(compileToPreview)
+		return
+	}
+	msg, err := EditorSetCompiledPreview(false)
 	if err != nil {
 		editorSetStatus("Preview failed: %v", err)
 	} else {

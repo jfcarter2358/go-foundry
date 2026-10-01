@@ -50,7 +50,9 @@ Things to know:
 
 - **It only exists in a compiled level.** You see it in Preview and in a
   release build. It is not visible in the editor viewport or in a dev build,
-  because those light everything live. Use Preview to judge it.
+  because those light everything live. Use Preview to judge it. With
+  [live GI](#live-gi) on, GI replaces the baked bounce. This bounce is what a
+  player with GI off sees.
 - **Only baked surfaces take part.** Walls, floors and brushes in a compiled
   level both receive bounce light and pass it on. Entities, models, dynamic
   brushes and anything else lit live do neither. Dynamic lights are not
@@ -68,6 +70,69 @@ Things to know:
   looks washed out once bounce is on, lower the Global Light's brightness.
 - **Each bounce costs about as much compile time as the first.** One bounce
   added about 15% to level1's compile.
+
+### Live GI
+
+Live GI works bounce light out every frame from the lights as they are now.
+A dynamic light, an explosion flash or a door swinging open lights the room
+around it. An entity walking from daylight into a corridor darkens with its
+surroundings. The bake can do neither: it only knows the static lights, and
+only as they were at compile time.
+
+Where it is on, live GI replaces two things:
+
+- the flat ambient, everywhere: entities, models, terrain, foliage, sprites,
+  and uncompiled levels in the editor
+- the baked ambient and bounce, on a compiled level's surfaces. The bake keeps
+  the static lights' own direct light, and GI supplies the rest.
+
+Whether GI runs at all is the **player's** choice: `gi_quality` in their
+graphics settings (`off`, `low`, `medium`, `high`; see
+[UI screens](17-ui-screens.md#a-settings-screen)). A player who has never
+chosen gets Medium on a discrete NVIDIA or AMD card and Off on anything else.
+Off is exactly the lighting there was before GI. The editor's
+**View > Live GI** menu sets the tier for the viewport.
+
+The level's side is under the Global Light, below Bounce:
+
+| Field | |
+| --- | --- |
+| Live GI | off turns GI off for this level, whatever the player has chosen |
+| GI Intensity | multiplies the bounce light GI finds. 1 is physical. Default 1 |
+| Probe Spacing | how far apart the finest probes sit, in world units. Smaller catches thinner walls and smaller rooms but reaches less far. 0.5 to 16, default 2 |
+| Ambient Floor | how much of the flat ambient is kept under GI, so a sealed room with no light in it is dim rather than black. 0 to 1, default 0 |
+
+In the level file these are `gi: {disabled, intensity, probe_spacing,
+ambient_floor}` under `lights: global:`. Each directional and point light also
+has **Leave out of GI** (`no_gi: true`). The light still lights what it shines
+on, but nothing it lights passes any of it on. Use it for a fill light that is
+there to light one thing.
+
+Things to know:
+
+- **The sky comes in through openings.** A sealed room with no light in it is
+  black under GI, where the flat ambient used to light it. A room with a
+  doorway is lit through the doorway. If an interior goes darker than you want,
+  add a light or raise Ambient Floor.
+- **What GI sees.** It traces against a coarse copy of the level: brushes as
+  their solid hulls (a detail mesh counts as its hull), block terrain, and
+  entity models that are opaque, not unlit and not skinned. Characters,
+  foliage, sprites, particles, water and glass do not block or bounce GI
+  light, but they are lit by it.
+- **Thin walls can leak.** GI's probes sit on a grid, and a wall much thinner
+  than the probe spacing can let light through to the far side. If it does,
+  lower Probe Spacing or thicken the wall.
+- **It settles over a few frames.** Big changes, such as a flash, show at once.
+  Small ones, such as a light sliding along, follow over a fraction of a
+  second. A level is warmed up before its first frame, so it does not open
+  dark.
+- **It reaches about 100 units.** Probes and the copy of the level are centred
+  on the camera. Past their reach, surfaces take the light of the probes at the
+  edge, so a distant shadow is lit like a near one rather than by the flat
+  ambient. Expect it to be roughly right rather than exact out there.
+- **Its cost is set per frame, not per level.** It is about the same in a
+  small room or a big valley; see [Testing and debugging](19-testing-and-debugging.md#live-gi)
+  for the overlay rows and the debug views.
 
 ## Directional lights
 
@@ -154,16 +219,24 @@ turns off, a sun that sets.
 
 The global ambient light has no switch. It is always baked.
 
-### Live shadows on baked geometry
+### The sun's shadow on baked geometry
 
-A baked wall or floor still takes shadows from things the bake never saw: an
-entity, a soldier, a dropship, or a chunk switched on after the level loads,
-such as a wall a script swaps in or out. This works for one light, the **baked
-sun**: the first directional light that is static, casts shadows and is on.
-Each baked vertex remembers how much of that sun it received, and the renderer
-removes that share where such an object's shadow falls. The world's own
-shadows come from the bake alone. Other static lights get no live shadows on
-baked geometry.
+One light gets its shadow on baked geometry live, the same as in the editor:
+the **baked sun**, which is the first directional light that is static, casts
+shadows and is on. The bake stores sunlight per vertex, so its shadow edges
+blur across about a grid step. A crate's shadow would wash out next to a face
+its own angle turns dark. So each baked vertex also remembers how much of the
+sun it received. Within the shadow range (300 units from the camera), the
+renderer swaps that share for the sun shadowed by the live shadow maps. Those
+hold everything that casts: the level itself, entities, soldiers, a dropship,
+and chunks switched on after load. The result is a sharp edge that matches
+editor play. The sun also picks up a surface's normal map, as it does live. Further out, the baked shadow fades in and takes over, so distant
+cliffs still shade the valley below them.
+
+The sun's bounce and the ambient stay baked (or come from live GI when it is
+on), and other static lights keep their baked shadows. Chunks the sun is
+excluded from (below) are left alone: the swap never puts the sun back where
+its author kept it out.
 
 Nothing is baked until a level is compiled, so in the editor and in a dev build
 both kinds light live and look identical. What differs is only what a script

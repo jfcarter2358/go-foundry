@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // ground_frag.glsl — textured shading for the biome ground patch.
 //
@@ -69,7 +69,7 @@ void main() {
     vec4 tc = texture(tex, vUV);
 
     vec3 lighting = biomeLighting(vWorldPos, n, vViewDepth, receiveShadows != 0, false);
-    vec3 color = tc.rgb * clamp(lighting, 0.0, 1.0);
+    vec3 color = giDebugAlbedo(tc.rgb) * clamp(lighting, 0.0, 1.0);
     // The same fog the structural floor under this patch takes — see fog.glsl.
     // It has to be the same call, not a matching one: the patch INTERSECTS
     // that floor, so anywhere both are visible a difference in fade shows up

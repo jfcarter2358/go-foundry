@@ -6,12 +6,11 @@ package gfx
 // sample tileable noise volumes built by internal/noise3d, and a volume is the
 // only form that noise can take: a 2D texture cannot be marched through.
 //
-// GL 4.1 core has had 3D textures all along; what it lacks is compute, which is
-// why the noise is generated on the CPU and uploaded once rather than evaluated
-// on the GPU.
+// The noise is generated on the CPU and uploaded once: this predates the GL 4.3
+// requirement, when the engine had no compute to evaluate it on the GPU with.
 
 import (
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // UploadTexture3D uploads a size³ volume of one or two unsigned-byte channels

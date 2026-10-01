@@ -6,7 +6,7 @@ import (
 	"log"
 	"math"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -31,6 +31,12 @@ type GlobalLight struct {
 	Wrap       float32
 	Hemisphere float32
 
+	// GI is the level's live global illumination (render/gi.go): bounce light
+	// worked out every frame from the lights as they are, in place of the
+	// flat ambient and the bake's own bounce. Whether it runs at all is the
+	// player's (gfx.GIQuality); this is what the level asks of it when it does.
+	GI GISettings
+
 	// Bounces is how many times the light bake carries light on from one
 	// surface to the next (compile/bounce.go): 0 bakes direct light only, 1
 	// lets a sunlit floor light the wall beside it, 2 lets that wall light the
@@ -42,6 +48,35 @@ type GlobalLight struct {
 	Bounces     int
 	BounceScale float32
 }
+
+// GISettings is a level's live GI. The zero value is not what a loaded level
+// gets: levelio fills DefaultGISettings first, as it does Wrap's default.
+type GISettings struct {
+	// Disabled turns GI off for this level whatever the player's setting:
+	// the flat ambient and the bake's bounce, as before GI existed.
+	Disabled bool
+	// Intensity multiplies the bounce light GI finds. 1 is physical.
+	Intensity float32
+	// ProbeSpacing is how far apart the finest probes sit, in world units;
+	// each coarser cascade doubles it. Finer catches thinner walls and
+	// smaller rooms, at the cost of covering less ground.
+	ProbeSpacing float32
+	// AmbientFloor is how much of the flat ambient is kept under GI, 0 to 1:
+	// a minimum, so a sealed room with no light in it is dim rather than
+	// black.
+	AmbientFloor float32
+}
+
+// DefaultGISettings is what a level that says nothing about GI gets.
+func DefaultGISettings() GISettings {
+	return GISettings{Intensity: 1, ProbeSpacing: 2}
+}
+
+// GIProbeSpacingMin and GIProbeSpacingMax bound GISettings.ProbeSpacing.
+const (
+	GIProbeSpacingMin = float32(0.5)
+	GIProbeSpacingMax = float32(16)
+)
 
 // DefaultLightWrap and DefaultAmbientHemisphere are what a level that never set
 // Wrap or Hemisphere gets (levelio's loader).
@@ -125,6 +160,7 @@ type DirectionalLight struct {
 	Disabled       bool    // switched off; see GlobalLight.EffectiveBrightness
 	Dynamic        bool    // lit live rather than baked; see the note on PointLight.Dynamic
 	NoBake         bool    // static, but left out of the bake; see the note on PointLight.NoBake
+	NoGI           bool    // lights directly but is not bounced by live GI; see PointLight.NoGI
 
 	// BakeExclude is chunk IDs this light's bake skips: it still shines on
 	// them live (fragment.glsl reads every enabled light regardless of this
@@ -240,6 +276,12 @@ type PointLight struct {
 	// Switching it is allowed where nothing else is because nothing of it is in
 	// the vertices: off is off on the walls as well as the props.
 	NoBake bool
+
+	// NoGI leaves the light out of live GI (render/gi.go): it still lights
+	// what it shines on, but nothing it lights hands any of it on. For a fill
+	// light that is there to light one thing and should not brighten the room
+	// around it. Live GI only — the bake's bounce does not read it.
+	NoGI bool
 
 	// Attach names what the light rides — a frame, an entity, or a bone inside
 	// one of its models: a lantern in a hand, a headlight on a truck. Set,

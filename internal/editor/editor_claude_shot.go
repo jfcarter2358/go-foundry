@@ -22,9 +22,11 @@ import (
 	"sync"
 	"time"
 
+	"foundry/internal/claude"
 	"foundry/internal/platform"
+	"foundry/internal/render"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // claudeShotTimeout is how long a tool waits for a frame to be drawn. The editor
@@ -132,4 +134,45 @@ func claudeDownscale(src *image.NRGBA, maxW int) image.Image {
 		}
 	}
 	return dst
+}
+
+// claudeViewportShot is the viewport tool: the next frame's pixels, drawn in
+// a debug view if one is named. The view is switched for that one frame and
+// put back after, whatever happened in between — a tool call that left the
+// author's editor in lighting-only would be a change nobody asked for.
+func claudeViewportShot(view string) (claude.ToolResult, error) {
+	var note string
+	if view != "" {
+		type set struct {
+			prev, note string
+			err        error
+		}
+		r, err := onMainThread(func() set {
+			prev := render.ViewName()
+			n, err := render.SetView(view)
+			return set{prev, n, err}
+		})
+		if err != nil {
+			return claude.ToolResult{}, err
+		}
+		if r.err != nil {
+			return claude.ToolResult{}, r.err
+		}
+		note = r.note
+		defer onMainThread(func() bool { _, _ = render.SetView(r.prev); return true })
+	}
+	png, err := claudeRequestShot()
+	if err != nil {
+		return claude.ToolResult{}, err
+	}
+	return claude.ToolResult{Text: note, Image: png, ImageMIME: "image/png"}, nil
+}
+
+// anySlice is a []string as the []any a JSON schema's enum is written in.
+func anySlice(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
 }

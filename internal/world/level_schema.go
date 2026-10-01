@@ -548,6 +548,17 @@ type RawGlobalLight struct {
 	// Bounce is the light bake's inter-reflection — see GlobalLight.Bounces.
 	// Absent gets the defaults; `count: 0` switches it off.
 	Bounce *RawBounce `yaml:"bounce,omitempty"`
+	// GI is the level's live global illumination — see GlobalLight.GI.
+	// Absent gets the defaults.
+	GI *RawGI `yaml:"gi,omitempty"`
+}
+
+// RawGI is GlobalLight.GI. Pointers so a deliberate 0 survives a round trip.
+type RawGI struct {
+	Disabled     bool     `yaml:"disabled,omitempty"`      // GI off for this level, whatever the player's setting
+	Intensity    *float32 `yaml:"intensity,omitempty"`     // multiplies the bounce light; default 1
+	ProbeSpacing *float32 `yaml:"probe_spacing,omitempty"` // finest probe spacing in world units, 0.5 to 16; default 2
+	AmbientFloor *float32 `yaml:"ambient_floor,omitempty"` // share of the flat ambient kept under GI, 0 to 1; default 0
 }
 
 // RawBounce is GlobalLight.Bounces/BounceScale. Pointers for the same reason
@@ -579,6 +590,7 @@ type RawDirLight struct {
 	Disabled       bool     `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
 	Dynamic        bool     `yaml:"dynamic,omitempty"`  // lit live, not baked; see PointLight.Dynamic
 	NoBake         bool     `yaml:"no_bake,omitempty"`  // static, not baked; see PointLight.NoBake
+	NoGI           bool     `yaml:"no_gi,omitempty"`    // lights directly but not bounced by live GI; see PointLight.NoGI
 	// BakeExclude is chunk IDs this light's bake skips, while it still lights
 	// them live. See DirectionalLight.BakeExclude.
 	BakeExclude []string `yaml:"bake_exclude,omitempty"`
@@ -601,6 +613,7 @@ type RawPointLight struct {
 	Disabled       bool     `yaml:"disabled,omitempty"` // see RawGlobalLight.Disabled
 	Dynamic        bool     `yaml:"dynamic,omitempty"`  // lit live, not baked; see PointLight.Dynamic
 	NoBake         bool     `yaml:"no_bake,omitempty"`  // static, not baked; see PointLight.NoBake
+	NoGI           bool     `yaml:"no_gi,omitempty"`    // lights directly but not bounced by live GI; see PointLight.NoGI
 	// BakeExclude is chunk IDs this light's bake skips, while it still lights
 	// them live. See DirectionalLight.BakeExclude.
 	BakeExclude []string   `yaml:"bake_exclude,omitempty"`
@@ -753,7 +766,19 @@ type RawCompile struct {
 	// LightMinGrid is the finest spacing the bake refines to where a shadow
 	// edge crosses a face.
 	LightMinGrid float32 `yaml:"light_min_grid,omitempty"`
+	// Bake is what the light stage does: "" or "full" bakes every static
+	// light, its ambient and its bounce into the surfaces; "none" skips the
+	// bake, so the level is lit live (GI and every light) in a release build
+	// as it is in the editor. Every light then counts against the live
+	// lighting limits (4 directional, 8 point).
+	Bake string `yaml:"bake,omitempty"`
 }
+
+// The values RawCompile.Bake takes.
+const (
+	BakeFull = "full"
+	BakeNone = "none"
+)
 
 type RawLevel struct {
 	Chunks []RawChunk `yaml:"chunks"`

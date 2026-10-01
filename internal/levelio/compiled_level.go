@@ -104,7 +104,18 @@ const CompiledExt = ".fbsp"
 // their smoothed normals and a bake per side and per shading (compile.Face's
 // SmoothPoly/SmoothCorner, SmoothLight, BackLight). A version-4 file would
 // load lit by abs(N·L) and could not follow the Smooth Lighting setting.
-const CompiledVersion = 5
+//
+// 6: faces carry the indirect part of their bake (compile.Face.Indirect and its
+// siblings), which live GI takes back off before adding its own. A version-5
+// file would load with none, and every surface would count its baked ambient
+// and bounce twice with GI on — so it is refused, and recompiled.
+//
+// 7: a face's sun share (compile.Face.SunShare) is -1 where the sun was not
+// baked into its chunk (bake_exclude), where it used to be 0 — which now reads
+// as "the bake shadowed the sun here", and the renderer puts the sun back
+// wherever its cascades see the point lit. A version-6 file would light every
+// excluded chunk with the sun its author kept out of it.
+const CompiledVersion = 7
 
 // compiledMagic is the first thing in the file, so that a truncated or
 // unrelated file is rejected as such rather than as a gob decode failure

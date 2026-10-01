@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 func TestModelShadersCompile(t *testing.T) {
@@ -82,7 +82,7 @@ func TestModelShadersCompile(t *testing.T) {
 // the Go side expects them.
 //
 // The bone-array uniform is the one worth proving at runtime: MAX_BONES is
-// chosen against GL 4.1's *guaranteed* vertex uniform budget, and a driver that
+// chosen against GL 4.3's *guaranteed* vertex uniform budget, and a driver that
 // could not fit it would fail to link here rather than silently at the moment
 // someone loads a rigged model.
 func TestSkinnedShadersCompileAndLink(t *testing.T) {

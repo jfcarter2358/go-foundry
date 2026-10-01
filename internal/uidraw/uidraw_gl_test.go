@@ -12,7 +12,7 @@ import (
 	"foundry/internal/ui"
 	"foundry/internal/uifont"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // TestProgramLinksAndDraws is the smoke test go build cannot be: the shader

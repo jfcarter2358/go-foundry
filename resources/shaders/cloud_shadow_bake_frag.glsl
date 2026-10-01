@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // cloud_shadow_bake_frag.glsl — the cloud shadow map, one texel at a time.
 //

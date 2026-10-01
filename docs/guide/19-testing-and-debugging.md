@@ -60,6 +60,11 @@ not the scene's. `F12` turns the wait off, and the frame rate that comes back is
 the one you can actually compare between two versions of a level. Nothing else
 caps the loop, so expect it to run hot while it is off.
 
+The frame section times each pass on the CPU and the GPU. When the GPU is the
+slower of the two, the CPU waits for it in one row, `gpu wait`, after `swap`. A
+large `gpu wait` means the GPU column is the one to read: look there for the pass
+to cut, not at the CPU times.
+
 ## Engine switches
 
 These are engine-wide, not level data, and they do not save with the level. They
@@ -81,6 +86,29 @@ something that should be solid is not.
 
 Shadow cost switches (`F5`–`F9`) are covered in [Scatter](06-scatter.md) and
 [Lighting](07-lighting.md).
+
+## Live GI
+
+[Live GI](07-lighting.md#live-gi) adds two rows to the `F3` overlay: its tier,
+how many sources its copy of the level was built from and how many probes it
+traced, then how many bricks of that copy it rebuilt this frame and how many
+are still waiting. A large "waiting" count that does not shrink means something
+is changing every frame, such as a moving entity or a moving frame. The
+profiler (`F3`, the frame section) times it as `gi: field` and `gi: probes`.
+
+The developer console, and **View > Live GI** in the editor, can show what GI
+sees:
+
+| `gi_debug` | |
+| --- | --- |
+| `lighting` | every surface drawn white, so only the light is left |
+| `probes` | each probe as a dot of its own light; red where it is buried in a wall |
+| `field` | the distance field GI traces against, from the camera |
+| `off` | back to normal |
+
+`gi_quality off|low|medium|high` sets the tier. Light leaking through a wall
+shows as lit probes on the dark side in the `probes` view, and as a gap in
+the wall in the `field` view.
 
 ## Debugging the shipped build
 
@@ -245,6 +273,7 @@ The commands are one per line or separated by `;`, and a comment is `//` (not
 | `use`, `click <widget>` | interact, and a button on a screen that is up |
 | `cursor <x,y>\|center\|off`, `tap [button]`, `drag <x,y> [s] [button]` | free the pointer at a window pixel, click the world there, drag it somewhere |
 | `wait <s>`, `say <text>`, `read <path>`, `shot [name.png]` | the run itself |
+| `view normal\|lighting\|probes\|field\|wireframe` | the debug view the shots after it are drawn in |
 | `teleport`, `enable`, `wake #tag`, `kill #tag` | skipping the parts a short run cannot reach |
 
 Every one of them goes through the engine's own front door — the same
@@ -311,11 +340,29 @@ expectation did not hold. The same file runs from a Go test
 pose maths — `-pose clip:seconds`, `-view front|back|left|right|top|iso`,
 `-frame cx,cy,cz,span` to zoom in on a helmet, `-texture` to check a repaint
 landed where the geometry is. `render screen` and `render viewmodel` draw through
-the real UI and viewmodel passes and so need a display and a GL 4.1 driver.
+the real UI and viewmodel passes and so need a display and a GL 4.3 driver.
 
 The world itself is drawn by `foundry play` (`shot`), through `render.DrawWorld`
 — the same call `app.Run` makes, so a headless picture is the frame the game
 would have drawn, HUD and viewmodel included, minus the editor's own markers.
+`-gi off|low|medium|high` fixes the live GI tier. Without it the tier is picked
+by GPU, as a new player's is, so the same script can draw differently on two
+machines.
+
+`-view` draws the pictures in one of the editor's debug views, and a script's
+`view` command switches mid-run, so one script can photograph the same spot both
+ways:
+
+```
+foundry play run -level level1 -script 'look 90 -10; shot lit; view lighting; shot light-only'
+```
+
+| view | what it draws |
+| --- | --- |
+| `normal` | the frame a player sees |
+| `lighting` | the light alone, every surface white: where it is dark, where a shadow lands, what a light reaches. Works with GI off too |
+| `probes`, `field` | live GI's probes and its distance field — nothing while GI is off, so pair them with `-gi medium` |
+| `wireframe` | the geometry as lines, the filled passes (scatter, sky, decals, volumetrics, sprites) left out |
 
 ### From a test
 

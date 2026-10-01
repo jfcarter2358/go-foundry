@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // sprite_shadow_vert.glsl — directional (cascade) depth stage for sprites.
 //

@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // volume_depth_frag.glsl — the scene's depth, as distances, at the volume
 // target's resolution.

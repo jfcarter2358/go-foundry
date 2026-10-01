@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // model_frag.glsl — flat headlight shading for the model editor.
 //

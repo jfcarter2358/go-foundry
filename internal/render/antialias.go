@@ -36,7 +36,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -208,7 +208,8 @@ func setMultisampleGLState() {
 // "cover this many samples" — the two interpretations compound, and a
 // half-transparent surface would come out at a quarter strength.
 func SetAlphaToCoverage(on bool) {
-	if on && AntiAliasEnabled && AntiAliasGrantedSamples > 0 {
+	alphaToCoverageOn = on && AntiAliasEnabled && AntiAliasGrantedSamples > 0
+	if alphaToCoverageOn {
 		gl.Enable(gl.SAMPLE_ALPHA_TO_COVERAGE)
 	} else {
 		gl.Disable(gl.SAMPLE_ALPHA_TO_COVERAGE)

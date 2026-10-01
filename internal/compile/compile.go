@@ -39,6 +39,8 @@ type Options struct {
 	// SkipLight leaves every face's Light nil, for a compile that only wants
 	// the geometry and visibility.
 	SkipLight bool
+	// Progress, when set, hears each step as it is taken — see progress.go.
+	Progress Progress
 }
 
 // DefaultOptions is the compile a level ships with.
@@ -171,16 +173,23 @@ func Compile(lvl *world.Level, opt Options) (*Result, error) {
 	if lvl != nil && lvl.LightMinGrid > 0 {
 		opt.Light.MinGridStep = lvl.LightMinGrid
 	}
+	p := opt.Progress
+	p.report("Cutting brushes (CSG)", 0)
 	faces, clips, err := csg(lvl)
 	if err != nil {
 		return nil, err
 	}
+	p.report("Building the BSP", 0)
 	tree := BuildBSP(faces)
+	p.report("Computing visibility", 0)
 	portals, vis := ComputeVisibility(tree)
-	if !opt.SkipLight {
-		BakeLight(tree, lvl, opt.Light)
+	// A level that ships unbaked (Level.NoBake) is lit live in every build, so
+	// its faces leave here with no light and load onto the live path.
+	if !opt.SkipLight && (lvl == nil || !lvl.NoBake) {
+		bakeLight(tree, lvl, opt.Light, p)
 	}
 
+	p.report("Checking for leaks", 0)
 	r := &Result{Tree: tree, Portals: portals, Vis: vis}
 	r.Stats = gatherStats(lvl, r, sourceFaceCount(lvl))
 	r.Stats.StreamedClips = clips

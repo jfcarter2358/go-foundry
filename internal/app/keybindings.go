@@ -244,6 +244,21 @@ var keybindSectionTable = []uiwin.KeybindSection{
 		},
 	},
 	{
+		Title:  "Gamepad",
+		Active: func() bool { return !editor.Editor.Active },
+		Binds: []uiwin.Keybind{
+			{Keys: "Settings screen", Desc: "Every button here but Start is a default a player can rebind (bind_key slot 3)"},
+			{Keys: "Left stick", Desc: "Move / throttle and steer, as far as it is pushed; pressed in: sprint"},
+			{Keys: "Right stick", Desc: "Look (rate, curve, sensitivity, aim assist — @level.prop.pad_*)"},
+			{Keys: "RT / LT", Desc: "Primary / secondary fire"},
+			{Keys: "A / B / X / Y", Desc: "Jump (brake) / crouch / interact / next weapon"},
+			{Keys: "RB / LB", Desc: "Reload / throw on foot; roll right / left in the air"},
+			{Keys: "D-pad", Desc: "Weapons 1–4 (up, right, down, left)"},
+			{Keys: "Start", Desc: "Pause menu; closes a menu, as Escape does"},
+			{Keys: "In a menu", Desc: "D-pad or left stick moves focus, A presses, B goes back"},
+		},
+	},
+	{
 		Title:  "Editor — any mode",
 		Active: func() bool { return editor.Editor.Active },
 		Binds: []uiwin.Keybind{

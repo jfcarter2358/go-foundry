@@ -25,7 +25,7 @@ import (
 	"log"
 	"math"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -113,12 +113,10 @@ func RenderCloudShadowMap(lvl *world.Level, camPos mgl32.Vec3) {
 	cloudShadow.matrix = bias.Mul4(lvp)
 	cloudShadow.light = int32(sunIdx)
 
-	var vp [4]int32
-	gl.GetIntegerv(gl.VIEWPORT, &vp[0])
-	var boundFBO int32
-	gl.GetIntegerv(gl.DRAW_FRAMEBUFFER_BINDING, &boundFBO)
-	state := saveVolumeGLState()
-	defer state.restore(uint32(boundFBO), vp)
+	vp := boundViewport()
+	boundFBO := boundFramebuffer()
+	state := currentGLState()
+	defer state.restore(boundFBO, vp)
 
 	gl.BindFramebuffer(gl.FRAMEBUFFER, cloudShadow.fbo)
 	gl.Viewport(0, 0, size, size)
@@ -202,6 +200,11 @@ func ensureCloudShadowTarget(size int32) bool {
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	// Put back whatever was bound: the pass reads the frame's target after
+	// this, and on the frame that made the map it used to read this one —
+	// and hand the rest of that frame to the cloud shadow.
+	prev := boundFramebuffer()
+	defer gl.BindFramebuffer(gl.FRAMEBUFFER, prev)
 	gl.GenFramebuffers(1, &cloudShadow.fbo)
 	gl.BindFramebuffer(gl.FRAMEBUFFER, cloudShadow.fbo)
 	gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, cloudShadow.tex, 0)

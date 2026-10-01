@@ -21,6 +21,11 @@ package platform
 //
 // Headless runs (internal/play) have no snapshot and never settle; they press
 // and release through the same two calls.
+//
+// A hold input ("Hold Pad X") is never pressed itself: it is its plain input
+// asked about with PadHoldTime taken off — down once the button has been down
+// that long, pressed on the tick it got there, released when a button held at
+// least that long comes up.
 
 import (
 	"sort"
@@ -50,23 +55,30 @@ type keyTrack struct {
 	// pressed and released are the inputs that went down or up in the edges
 	// the last AdvanceKeys took. A tap is in both, and not in held.
 	pressed, released map[Input]bool
-	clock             float64
+	// releasedHeld is how long each input in released had been down.
+	releasedHeld map[Input]float64
+	clock        float64
+	// lastDt is the last tick's length, which a hold's "pressed" is measured
+	// against.
+	lastDt float64
 }
 
 var tracked = newKeyTrack()
 
 func newKeyTrack() keyTrack {
 	return keyTrack{
-		live:     map[Input]bool{},
-		held:     map[Input]float64{},
-		pressed:  map[Input]bool{},
-		released: map[Input]bool{},
+		live:         map[Input]bool{},
+		held:         map[Input]float64{},
+		pressed:      map[Input]bool{},
+		released:     map[Input]bool{},
+		releasedHeld: map[Input]float64{},
 	}
 }
 
 // PressKey records an input going down. Pressing one already down does
 // nothing.
 func PressKey(in Input) {
+	in = in.Plain()
 	if !in.Bound() || tracked.live[in] {
 		return
 	}
@@ -77,6 +89,7 @@ func PressKey(in Input) {
 // ReleaseKey records an input coming up. Releasing one that is not down does
 // nothing.
 func ReleaseKey(in Input) {
+	in = in.Plain()
 	if !tracked.live[in] {
 		return
 	}
@@ -84,7 +97,8 @@ func ReleaseKey(in Input) {
 	tracked.pending = append(tracked.pending, KeyEdge{In: in})
 }
 
-// SettleKeys releases every input the frame's snapshot says is up.
+// SettleKeys releases every input the frame's snapshot says is up — the
+// pad's included, from its own snapshot (PollPads).
 func SettleKeys(keyStates []uint8, buttons sdl.ButtonMask) {
 	for in := range tracked.live {
 		if !inputDown(in, keyStates, buttons) {
@@ -95,6 +109,8 @@ func SettleKeys(keyStates []uint8, buttons sdl.ButtonMask) {
 
 func inputDown(in Input, keyStates []uint8, buttons sdl.ButtonMask) bool {
 	switch {
+	case in.Pad != 0:
+		return PadHeld(in.Pad)
 	case in.Mouse != 0:
 		return buttons&(1<<(in.Mouse-1)) != 0
 	case in.Key != 0:
@@ -108,8 +124,10 @@ func inputDown(in Input, keyStates []uint8, buttons sdl.ButtonMask) bool {
 // input's time starts at 0 on the tick it went down and grows by dt a tick.
 func AdvanceKeys(dt float64) []KeyEdge {
 	tracked.clock += dt
+	tracked.lastDt = dt
 	clear(tracked.pressed)
 	clear(tracked.released)
+	clear(tracked.releasedHeld)
 	edges := tracked.pending
 	tracked.pending = nil
 	for i, e := range edges {
@@ -123,6 +141,7 @@ func AdvanceKeys(dt float64) []KeyEdge {
 		}
 		delete(tracked.held, e.In)
 		tracked.released[e.In] = true
+		tracked.releasedHeld[e.In] = edges[i].Held
 	}
 	return edges
 }
@@ -130,25 +149,50 @@ func AdvanceKeys(dt float64) []KeyEdge {
 // ResetKeys forgets everything: nothing is down, nothing is pending.
 func ResetKeys() { tracked = newKeyTrack() }
 
-// KeyDown reports whether an input is down as of the last tick.
-func KeyDown(in Input) bool {
-	_, ok := tracked.held[in]
-	return ok
+// keyState is what the ticks say about one input. tap asks for a pad press
+// that shares its input with a hold the way gameplay sees it (pad_hold.go):
+// pressed and released together on the tick the button came up short of
+// PadHoldTime, and never down.
+type keyState struct {
+	down, pressed, released bool
+	held                    float64
 }
+
+func stateOf(in Input, tap bool) keyState {
+	base := in.Plain()
+	since, down := tracked.held[base]
+	held := 0.0
+	if down {
+		held = tracked.clock - since
+	}
+	hold := float64(PadHoldTime)
+	switch {
+	case in.Hold:
+		st := keyState{down: down && held >= hold}
+		st.pressed = st.down && held-tracked.lastDt < hold
+		st.released = tracked.released[base] && tracked.releasedHeld[base] >= hold
+		if st.down {
+			st.held = held - hold
+		}
+		return st
+	case tap:
+		t := tracked.released[base] && tracked.releasedHeld[base] < hold
+		return keyState{pressed: t, released: t}
+	}
+	return keyState{down: down, pressed: tracked.pressed[base], released: tracked.released[base], held: held}
+}
+
+// KeyDown reports whether an input is down as of the last tick.
+func KeyDown(in Input) bool { return stateOf(in, false).down }
 
 // KeyPressed and KeyReleased report whether an input went down, or came up,
 // between the last two ticks.
-func KeyPressed(in Input) bool  { return tracked.pressed[in] }
-func KeyReleased(in Input) bool { return tracked.released[in] }
+func KeyPressed(in Input) bool  { return stateOf(in, false).pressed }
+func KeyReleased(in Input) bool { return stateOf(in, false).released }
 
 // KeyHeldTime is how long an input has been down, in seconds; 0 when it is up.
-func KeyHeldTime(in Input) float64 {
-	since, ok := tracked.held[in]
-	if !ok {
-		return 0
-	}
-	return tracked.clock - since
-}
+// For a hold, the time since it became one.
+func KeyHeldTime(in Input) float64 { return stateOf(in, false).held }
 
 // KeysDown lists every input that is down, by name.
 func KeysDown() []Input {
@@ -163,32 +207,37 @@ func KeysDown() []Input {
 // ActionDown, ActionPressed, ActionReleased and ActionHeldTime are the same
 // questions about an action, on the player's layout: down when any of its
 // inputs is, pressed when any went down, released when one came up and none is
-// left down, and held for as long as the longest-held one.
+// left down, and held for as long as the longest-held one. A pad press that
+// shares its button with a hold answers as a tap (stateOf).
 func ActionDown(a Action) bool {
-	return anyInput(a, KeyDown)
+	return anyInput(a, func(s keyState) bool { return s.down })
 }
 
 func ActionPressed(a Action) bool {
-	return anyInput(a, KeyPressed)
+	return anyInput(a, func(s keyState) bool { return s.pressed })
 }
 
 func ActionReleased(a Action) bool {
-	return anyInput(a, KeyReleased) && !ActionDown(a)
+	return anyInput(a, func(s keyState) bool { return s.released }) && !ActionDown(a)
 }
 
 func ActionHeldTime(a Action) float64 {
 	best := 0.0
 	for _, in := range Bindings[a] {
 		if in.Bound() {
-			best = max(best, KeyHeldTime(in))
+			best = max(best, actionInputState(in).held)
 		}
 	}
 	return best
 }
 
-func anyInput(a Action, f func(Input) bool) bool {
+func actionInputState(in Input) keyState {
+	return stateOf(in, in.Pad != PadNone && !in.Hold && Bindings.HasHold(in.Pad))
+}
+
+func anyInput(a Action, f func(keyState) bool) bool {
 	for _, in := range Bindings[a] {
-		if in.Bound() && f(in) {
+		if in.Bound() && f(actionInputState(in)) {
 			return true
 		}
 	}

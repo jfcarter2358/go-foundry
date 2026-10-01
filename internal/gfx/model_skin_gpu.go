@@ -19,7 +19,7 @@ import (
 	"foundry/internal/fileutil"
 	"sync"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -115,11 +115,11 @@ var (
 )
 
 // MaxSkinBones caps an armature's size, because the runtime uploads the bone
-// palette as a plain mat4 array uniform and GL 4.1 guarantees only 1024 vertex
+// palette as a plain mat4 array uniform and GL 4.3 guarantees only 1024 vertex
 // uniform components. 48 mat4 is 768 of them, leaving room for the matrices and
 // wave parameters vertex.glsl already carries. It must match MAX_BONES in
 // resources/shaders/skin_common.glsl — model_shader_gl_test.go pins the pair.
 //
-// A std140 uniform block is the way past it if a model ever needs more: GL 4.1
+// A std140 uniform block is the way past it if a model ever needs more: GL 4.3
 // guarantees 16 KB per block, which is 256 matrices.
 const MaxSkinBones = 48

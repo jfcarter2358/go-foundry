@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // biome_cube_vert.glsl — point-light (cubemap) depth stage for the biome
 // scatter. Outputs the placed world position for shadow_cube_frag.glsl's

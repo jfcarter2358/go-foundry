@@ -35,7 +35,7 @@ import (
 // be current on only one thread at a time, so nothing here may call
 // t.Parallel().
 
-// Context makes the test binary's GL 4.1 context current on this test's thread,
+// Context makes the test binary's GL 4.3 context current on this test's thread,
 // creating it on first use — or skips the test when the opt-in env var is unset.
 //
 // Nothing is torn down on the way out: a Go test does not necessarily run on
@@ -45,7 +45,7 @@ import (
 func Context(t *testing.T) {
 	t.Helper()
 	if os.Getenv("FOUNDRY_GL_TEST") == "" {
-		t.Skip("set FOUNDRY_GL_TEST=1 to run (needs a display and a GL 4.1 driver)")
+		t.Skip("set FOUNDRY_GL_TEST=1 to run (needs a display and a GL 4.3 driver)")
 	}
 	// Acquire locks this goroutine's thread for the rest of the test, so nothing
 	// it does afterwards can be rescheduled onto a thread the context is not

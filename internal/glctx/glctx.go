@@ -17,7 +17,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/veandco/go-sdl2/sdl"
 )
 
@@ -36,9 +36,7 @@ func create(w, h int32) {
 		err = fmt.Errorf("sdl.Init: %w", e)
 		return
 	}
-	_ = sdl.GLSetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
-	_ = sdl.GLSetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 1)
-	_ = sdl.GLSetAttribute(sdl.GL_CONTEXT_PROFILE_MASK, sdl.GL_CONTEXT_PROFILE_CORE)
+	RequestCoreProfile()
 
 	win, err = sdl.CreateWindow("foundry (offscreen)", sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED,
 		w, h, sdl.WINDOW_OPENGL|sdl.WINDOW_HIDDEN)
@@ -50,7 +48,10 @@ func create(w, h int32) {
 	}
 	// Loads the function pointers into package globals, so it is a
 	// once-per-process call rather than a once-per-context one.
-	err = gl.Init()
+	if err = gl.Init(); err != nil {
+		return
+	}
+	err = CheckVersion()
 }
 
 // Acquire creates the process's offscreen context if it does not exist yet and

@@ -1,6 +1,7 @@
 package app
 
-// controls_settings.go — the player's mouse settings and key bindings, on disk.
+// controls_settings.go — the player's mouse and pad settings and their
+// bindings, on disk.
 //
 // The same arrangement as audio/audio_settings.go, for the same reason: a
 // player who turns their sensitivity down expects it to stay down. The file is
@@ -36,9 +37,22 @@ type rawControls struct {
 	MouseSensitivity *float32 `yaml:"mouse_sensitivity,omitempty"`
 	MouseSmoothing   *float32 `yaml:"mouse_smoothing,omitempty"`
 	MouseInvertY     *bool    `yaml:"mouse_invert_y,omitempty"`
+
+	PadSensitivityX *float32 `yaml:"pad_sensitivity_x,omitempty"`
+	PadSensitivityY *float32 `yaml:"pad_sensitivity_y,omitempty"`
+	PadInvertY      *bool    `yaml:"pad_invert_y,omitempty"`
+	PadDeadZone     *float32 `yaml:"pad_dead_zone,omitempty"`
+	PadLookCurve    *float32 `yaml:"pad_look_curve,omitempty"`
+	PadVibration    *float32 `yaml:"pad_vibration,omitempty"`
+	PadHoldTime     *float32 `yaml:"pad_hold_time,omitempty"`
+	AimAssist       *bool    `yaml:"aim_assist,omitempty"`
+
 	// Bindings maps an action's name to its slots' input names
-	// (platform.Input.Name), "" for an empty slot. An action the file does
-	// not name keeps its default, so a new action reaches an old file.
+	// (platform.Input.Name), "" for an empty slot: the two key slots, then the
+	// pad's. An action the file does not name keeps its default, so a new
+	// action reaches an old file — and a slot it does not list keeps its
+	// default too, so a file from before the pad column gets the default pad
+	// layout rather than none.
 	Bindings map[string][]string `yaml:"bindings,omitempty"`
 }
 
@@ -71,13 +85,37 @@ func applyControlSettings(data []byte) error {
 	if raw.MouseInvertY != nil {
 		platform.MouseInvertY = *raw.MouseInvertY
 	}
+	if raw.PadSensitivityX != nil {
+		platform.PadLookSensitivityX = clampF(*raw.PadSensitivityX, platform.MinPadSensitivity, platform.MaxPadSensitivity)
+	}
+	if raw.PadSensitivityY != nil {
+		platform.PadLookSensitivityY = clampF(*raw.PadSensitivityY, platform.MinPadSensitivity, platform.MaxPadSensitivity)
+	}
+	if raw.PadInvertY != nil {
+		platform.PadInvertY = *raw.PadInvertY
+	}
+	if raw.PadDeadZone != nil {
+		platform.PadDeadZone = clampF(*raw.PadDeadZone, 0, platform.MaxPadDeadZone)
+	}
+	if raw.PadLookCurve != nil {
+		platform.PadLookCurve = clampF(*raw.PadLookCurve, platform.MinPadLookCurve, platform.MaxPadLookCurve)
+	}
+	if raw.PadVibration != nil {
+		platform.PadVibration = clamp01(*raw.PadVibration)
+	}
+	if raw.PadHoldTime != nil {
+		platform.PadHoldTime = clampF(*raw.PadHoldTime, platform.MinPadHoldTime, platform.MaxPadHoldTime)
+	}
+	if raw.AimAssist != nil {
+		platform.AimAssist = *raw.AimAssist
+	}
 	for name, slots := range raw.Bindings {
 		a, ok := platform.ActionByName(name)
 		if !ok {
 			log.Printf("controls: %s: no action named %q (ignored)", controlsFileName, name)
 			continue
 		}
-		var row [platform.BindingSlots]platform.Input
+		row := platform.Bindings[a]
 		for i, n := range slots {
 			if i >= platform.BindingSlots {
 				break
@@ -85,6 +123,12 @@ func applyControlSettings(data []byte) error {
 			in, ok := platform.ParseInput(n)
 			if !ok {
 				log.Printf("controls: %s: %s: no key or button named %q (left unbound)", controlsFileName, name, n)
+				row[i] = platform.Input{}
+				continue
+			}
+			if in.Bound() && in.IsPad() != (i == platform.PadSlot) {
+				log.Printf("controls: %s: %s: %q cannot go in slot %d (left unbound)", controlsFileName, name, n, i+1)
+				row[i] = platform.Input{}
 				continue
 			}
 			row[i] = in
@@ -96,6 +140,9 @@ func applyControlSettings(data []byte) error {
 
 func marshalControlSettings() ([]byte, error) {
 	sens, smooth, inv := platform.MouseSensitivity, platform.MouseSmoothing, platform.MouseInvertY
+	psx, psy, pinv := platform.PadLookSensitivityX, platform.PadLookSensitivityY, platform.PadInvertY
+	dead, curve, vib, assist := platform.PadDeadZone, platform.PadLookCurve, platform.PadVibration, platform.AimAssist
+	hold := platform.PadHoldTime
 	bindings := make(map[string][]string, platform.ActionCount)
 	for a, row := range platform.Bindings {
 		names := make([]string, len(row))
@@ -104,7 +151,12 @@ func marshalControlSettings() ([]byte, error) {
 		}
 		bindings[platform.Actions[a].Name] = names
 	}
-	return yaml.Marshal(rawControls{MouseSensitivity: &sens, MouseSmoothing: &smooth, MouseInvertY: &inv, Bindings: bindings})
+	return yaml.Marshal(rawControls{
+		MouseSensitivity: &sens, MouseSmoothing: &smooth, MouseInvertY: &inv,
+		PadSensitivityX: &psx, PadSensitivityY: &psy, PadInvertY: &pinv,
+		PadDeadZone: &dead, PadLookCurve: &curve, PadVibration: &vib, PadHoldTime: &hold, AimAssist: &assist,
+		Bindings: bindings,
+	})
 }
 
 // settledSave writes a settings file once a change to it has been left alone
@@ -166,3 +218,5 @@ func saveSettingsWhenSettled(dt float32) {
 		}
 	}
 }
+
+func clampF(v, lo, hi float32) float32 { return min(max(v, lo), hi) }

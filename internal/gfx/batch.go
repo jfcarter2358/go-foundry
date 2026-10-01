@@ -14,7 +14,7 @@ package gfx
 // normals at 2), so every program that draws a Geometry draws a Batch.
 
 import (
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -111,10 +111,10 @@ func (b *Batch) Upload(verts, normals, light []float32) {
 		}
 		gl.BindBuffer(gl.ARRAY_BUFFER, b.Lbo)
 		gl.BufferData(gl.ARRAY_BUFFER, len(light)*4, gl.Ptr(light), gl.STATIC_DRAW)
-		gl.EnableVertexAttribArray(AttribLight)
-		gl.VertexAttribPointerWithOffset(AttribLight, LightStride, gl.FLOAT, false, LightStride*4, 0)
+		BindLightLayout()
 	} else if b.Lbo != 0 {
 		gl.DisableVertexAttribArray(AttribLight)
+		gl.DisableVertexAttribArray(AttribLightIndirect)
 		gl.DeleteBuffers(1, &b.Lbo)
 		b.Lbo = 0
 	}

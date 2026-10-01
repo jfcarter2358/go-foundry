@@ -1,4 +1,4 @@
-#version 410
+#version 430
 uniform mat4 projection;
 uniform mat4 view;
 in vec3 vert;

@@ -40,7 +40,7 @@ import (
 	"foundry/internal/uidraw"
 	"foundry/internal/world"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -142,7 +142,7 @@ func renderScreen(root string, args []string, out io.Writer) int {
 	}
 
 	if err := glctx.Acquire(int32(w), int32(h)); err != nil {
-		fmt.Fprintf(out, "no GL context (%v) — a screen render needs a display and a GL 4.1 driver\n", err)
+		fmt.Fprintf(out, "no GL context (%v) — a screen render needs a display and a GL 4.3 driver\n", err)
 		return 1
 	}
 	defer glctx.Release()
@@ -215,7 +215,7 @@ func renderViewmodel(root string, args []string, out io.Writer) int {
 	}
 
 	if err := glctx.Acquire(int32(w), int32(h)); err != nil {
-		fmt.Fprintf(out, "no GL context (%v) — a viewmodel render needs a display and a GL 4.1 driver\n", err)
+		fmt.Fprintf(out, "no GL context (%v) — a viewmodel render needs a display and a GL 4.3 driver\n", err)
 		return 1
 	}
 	defer glctx.Release()

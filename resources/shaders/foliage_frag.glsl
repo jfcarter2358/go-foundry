@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // foliage_frag.glsl — terrain foliage's fragments (render/foliage.go).
 //
@@ -8,12 +8,16 @@
 // cut is antialiased — the alpha is sharpened to a ramp about a pixel wide,
 // the width coverage can resolve; without it, it is a plain one-half test.
 // An instance fading out at the end of its range is dissolved with an
-// ordered dither rather than blended, so nothing needs sorting.
+// ordered dither rather than blended, so nothing needs sorting. So is one
+// handing over to its next tier (near mesh, far mesh, clump card or
+// impostor): the outgoing tier keeps the dither cells under its weight and
+// the incoming one the rest, so the two together cover every pixel once.
 
 in vec3 vColor;
 in vec2 vUV;
 flat in int vPart;
 in float vFade;
+in vec2 vXfade;
 in vec3 vWorldPos;
 
 uniform sampler2D atlas;
@@ -29,6 +33,10 @@ float bayer4(vec2 p) {
 
 void main() {
     if (vFade < 1.0 && vFade < bayer4(gl_FragCoord.xy)) {
+        discard;
+    }
+    float x = bayer4(gl_FragCoord.xy + vec2(1.0, 2.0));
+    if (x < 1.0 - vXfade.x || x >= vXfade.y) {
         discard;
     }
     vec3 c = vColor;

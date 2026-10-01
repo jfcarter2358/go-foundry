@@ -29,7 +29,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 
 	"foundry/internal/fileutil"
 )
@@ -45,7 +45,7 @@ const NormalMapSuffix = fileutil.NormalMapSuffix
 // NormalMapUnit is the texture image unit a normal map binds to. Unit 0 is
 // the albedo, 1 the shadow cascade array, 2..9 the point-light cubemaps, and
 // 10/11 the blend pair — see the note above BlendTexUnit in graphics.go. 12 is
-// the next one free, still inside GL 4.1's guaranteed 16.
+// the next one free, still inside GL 4.3's guaranteed 16.
 const NormalMapUnit = 12
 
 // normalMapped is the set of albedo names known to have a normal map loaded

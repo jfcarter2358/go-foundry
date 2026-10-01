@@ -39,57 +39,120 @@ import (
 
 	"foundry/internal/compile"
 	"foundry/internal/levelio"
+	"foundry/internal/world"
 )
+
+// compileKind is what a compile is for: the artefact on disk, or the preview.
+type compileKind int
+
+const (
+	compileToFile compileKind = iota
+	compileToPreview
+)
+
+// compileOutput is what the half of a compile that may run off the main
+// thread (editorCompileRun) hands to the half that may not
+// (editorCompileFinish).
+type compileOutput struct {
+	c   *levelio.CompiledLevel
+	out string // the .fbsp written, for compileToFile
+	err error
+}
 
 // EditorCompileLevel compiles the open level and writes the artefact beside it.
 //
 // The status line gets a summary; the log gets the leaks, one per line, because
 // each of them names a place to go and look and the status line is one line.
+//
+// It holds the frame until it is done; the Build menu runs the same two halves
+// behind a progress bar instead (editorBeginCompile).
 func EditorCompileLevel() (string, error) {
-	lvl := Editor.level
-	if lvl == nil {
-		return "", fmt.Errorf("no level open")
-	}
-	c, err := editorCompile(lvl)
-	if err != nil {
-		return "", err
-	}
-	out := levelio.CompiledPath(Editor.SavePath)
-	if err := levelio.SaveCompiledLevel(c, out); err != nil {
-		return "", err
-	}
-	reportCompile(filepath.Base(out), &c.Stats)
-
-	msg := fmt.Sprintf("Compiled to %s — %d cells, %.1f visible on average",
-		filepath.Base(out), c.Stats.InteriorLeaves, c.Stats.AvgVisibleLeaves)
-	if n := len(c.Stats.Leaks); n > 0 {
-		// Named on the status line rather than only in the log, because a
-		// leaked level compiles to something that looks fine until it is
-		// played: the geometry is all there, and only the culling is wrong.
-		msg = fmt.Sprintf("Compiled to %s, but the level LEAKS in %d place(s) — see the log",
-			filepath.Base(out), n)
-	}
-	return msg, nil
+	return editorCompileNow(compileToFile)
 }
 
 // EditorSetCompiledPreview turns the compiled view on or off.
 func EditorSetCompiledPreview(on bool) (string, error) {
-	lvl := Editor.level
-	if lvl == nil {
+	if Editor.level == nil {
 		return "", fmt.Errorf("no level open")
 	}
 	if !on {
 		dropCompiledPreview()
 		return "Preview off — showing the brushes again", nil
 	}
+	return editorCompileNow(compileToPreview)
+}
 
-	// Compiled fresh every time rather than reusing the .fbsp on disk: the
-	// point is to look at what the level IS, and the file may be older than the
-	// edits.
-	c, err := editorCompile(lvl)
-	if err != nil {
-		return "", err
+// editorCompileNow is both halves of a compile, one after the other.
+func editorCompileNow(kind compileKind) (string, error) {
+	lvl := Editor.level
+	if lvl == nil {
+		return "", fmt.Errorf("no level open")
 	}
+	var res compileOutput
+	// As authored: a point light held on a path would otherwise be baked
+	// where the preview had it.
+	withWaypointPreviewAtRest(func() { res = editorCompileRun(lvl, kind, Editor.SavePath, nil) })
+	return editorCompileFinish(lvl, kind, res)
+}
+
+// editorCompileRun is the slow half of a compile: everything that only reads
+// the level, plus writing the file. Safe off the main thread as long as nothing
+// edits lvl meanwhile — which is what the progress modal is for.
+//
+// Compiled fresh every time, preview included, rather than reusing the .fbsp
+// on disk: the point is to look at what the level IS, and the file may be
+// older than the edits.
+func editorCompileRun(lvl *world.Level, kind compileKind, savePath string, p compile.Progress) compileOutput {
+	opt := compile.DefaultOptions()
+	opt.Progress = p
+	c, err := levelio.CompileLevel(lvl, opt)
+	if err != nil {
+		return compileOutput{err: err}
+	}
+	res := compileOutput{c: c}
+	if kind == compileToFile {
+		res.out = levelio.CompiledPath(savePath)
+		if p != nil {
+			p("Writing "+filepath.Base(res.out), 0)
+		}
+		res.err = levelio.SaveCompiledLevel(c, res.out)
+	}
+	return res
+}
+
+// editorCompileFinish is the main-thread half: the report, and for a preview
+// the GL upload and handing the result to the level.
+func editorCompileFinish(lvl *world.Level, kind compileKind, res compileOutput) (string, error) {
+	if res.err != nil {
+		return "", res.err
+	}
+	c := res.c
+	if kind == compileToPreview {
+		return editorInstallPreview(lvl, c)
+	}
+
+	base := filepath.Base(res.out)
+	reportCompile(base, &c.Stats)
+	if lvl.NoBake {
+		log.Printf("compiled %s: lighting not baked (Build > Lighting > No bake) — lit live, with GI", base)
+		if w := noBakeLightWarning(lvl.Lights); w != "" {
+			log.Printf("WARNING: %s", w)
+		}
+	}
+
+	msg := fmt.Sprintf("Compiled to %s — %d cells, %.1f visible on average",
+		base, c.Stats.InteriorLeaves, c.Stats.AvgVisibleLeaves)
+	if n := len(c.Stats.Leaks); n > 0 {
+		// Named on the status line rather than only in the log, because a
+		// leaked level compiles to something that looks fine until it is
+		// played: the geometry is all there, and only the culling is wrong.
+		msg = fmt.Sprintf("Compiled to %s, but the level LEAKS in %d place(s) — see the log", base, n)
+	}
+	return msg, nil
+}
+
+// editorInstallPreview puts a compile up as the compiled view.
+func editorInstallPreview(lvl *world.Level, c *levelio.CompiledLevel) (string, error) {
 	static, err := levelio.StaticGeometryFrom(c)
 	if err != nil {
 		return "", err

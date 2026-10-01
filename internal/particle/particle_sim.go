@@ -8,10 +8,10 @@ package particle
 // a function of the pool size an author set, which is the only way a particle
 // budget means anything.
 //
-// WHY THE CPU. The engine targets GL 4.1 core, which has no compute shaders and
-// no SSBOs, so the alternatives were transform feedback — which puts the state
-// somewhere neither collision, nor a script, nor a debugger can read it — or
-// this. Simulating here costs a per-frame walk and an instance buffer upload,
+// WHY THE CPU. This was written when the engine targeted GL 4.1 core, with no
+// compute shaders or SSBOs; it is 4.3 now, so a compute simulation is open to
+// it, at the price of state that collision, a script and a debugger can no
+// longer read. Simulating here costs a per-frame walk and an instance buffer upload,
 // and buys particles that can bounce off the floor and be asked where they are.
 // At the pool sizes an effect actually uses, that walk is not the frame's
 // problem; the fill rate of the quads is.

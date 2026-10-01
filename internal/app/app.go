@@ -1,12 +1,14 @@
 package app
 
 import (
+	"fmt"
 	"foundry/internal/ai"
 	"foundry/internal/audio"
 	"foundry/internal/collision"
 	"foundry/internal/devui"
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/glctx"
 	"foundry/internal/hooks"
 	"foundry/internal/levelio"
 	"foundry/internal/particle"
@@ -26,7 +28,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -179,6 +181,8 @@ func Run() {
 	}
 	projectOpened(fileutil.ProjectPath)
 
+	// Before Init, or the controllers open with SDL's label-ordered buttons.
+	configurePadHints()
 	if err = sdl.Init(sdl.INIT_EVERYTHING); err != nil {
 		log.Fatalf("sdl.Init: %v", err)
 	}
@@ -206,6 +210,10 @@ func Run() {
 	loadControlSettings()
 	loadGraphicsSettings()
 
+	// Every context from here on — this window's and the UI windows' that
+	// share it — is a core-profile one at the engine's required version.
+	glctx.RequestCoreProfile()
+
 	// Creates the window and its GL context together, at the highest MSAA
 	// sample count the platform actually accepts — the multisample buffer is
 	// part of the pixel format, so it has to be settled here and can't change
@@ -214,7 +222,7 @@ func Run() {
 	platform.Window, platform.Context, err = render.CreateAntiAliasedWindow(platform.WinTitle, platform.WinWidth, platform.WinHeight,
 		sdl.WINDOW_OPENGL|sdl.WINDOW_RESIZABLE)
 	if err != nil {
-		log.Fatalf("CreateAntiAliasedWindow: %v", err)
+		fatalGL(fmt.Errorf("could not create an OpenGL %d.%d window: %w", glctx.MajorVersion, glctx.MinorVersion, err))
 	}
 	defer platform.Window.Destroy()
 	defer sdl.GLDeleteContext(platform.Context)
@@ -236,12 +244,14 @@ func Run() {
 	devSetMainWindowID(mainWindowID)
 
 	if err = gl.Init(); err != nil {
-		log.Fatalf("gl.Init: %v", err)
+		fatalGL(fmt.Errorf("gl.Init: %w", err))
+	}
+	if err = glctx.CheckVersion(); err != nil {
+		fatalGL(err)
 	}
 
-	// [SCENARIO 2 & 3] Log the OpenGL and GLSL versions so we know exactly what
-	// the driver exposes.  A version < 4.1 will reject #version 410 shaders and
-	// dFdx/dFdy may be unsupported on some older/integrated drivers.
+	// Log the OpenGL and GLSL versions so we know exactly what the driver
+	// exposes.
 	log.Printf("OpenGL version : %s", gl.GoStr(gl.GetString(gl.VERSION)))
 	log.Printf("GLSL version   : %s", gl.GoStr(gl.GetString(gl.SHADING_LANGUAGE_VERSION)))
 	log.Printf("GPU renderer   : %s", gl.GoStr(gl.GetString(gl.RENDERER)))
@@ -388,6 +398,8 @@ func Run() {
 	sdl.PumpEvents()
 	for e := sdl.PollEvent(); e != nil; e = sdl.PollEvent() {
 	}
+	// The drain took the controllers' "added" events with it.
+	startPads()
 	platform.LastFrameTick = sdl.GetTicks()
 
 	for platform.Running {
@@ -413,6 +425,12 @@ func Run() {
 
 		// --- Process events first so mouse rotation is applied before movement ---
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
+			// A controller plugged in or pulled out: nothing else wants the
+			// event, and whichever handler ran first might drop it.
+			if padDeviceEvent(event) {
+				continue
+			}
+			noteKeyboardMouse(event)
 			// The keybinding reference answers to F1 from every mode and every
 			// window — ahead of the routing below, so a secondary window's own
 			// handler can't eat F1 first — and swallows the Escape that closes
@@ -464,6 +482,10 @@ func Run() {
 			platform.KeyStates = noKeys(len(platform.KeyStates))
 			platform.MouseButtons = 0
 		}
+		// The pads, read as a snapshot beside the keyboard's, and their
+		// presses routed the way the key events above were — see
+		// gamepad_input.go. Before SettleKeys, which reads the pad's half.
+		pollPadInput(platform.DeltaTime)
 		// A release the UI or the console took still lets go of the key as
 		// far as scripts are concerned.
 		platform.SettleKeys(platform.KeyStates, platform.MouseButtons)
@@ -534,6 +556,8 @@ func Run() {
 			// so the move below walks the way the player is now facing.
 			if platform.PlayerControlEnabled {
 				applyMouseLook(platform.DeltaTime)
+				// The look stick, and aim assist with it — pad_look.go.
+				applyPadLook(platform.DeltaTime)
 				// A shot's kick (the `recoil` verb) turns the view the same
 				// way, before the move reads where the player faces.
 				if gfx.ApplyRecoil(platform.DeltaTime) {
@@ -555,9 +579,13 @@ func Run() {
 
 		render.ProfileEnd() // player input
 		// Motion banked while the view could not turn must not arrive later.
+		// Nor does a pad keep shaking under a menu or in the editor.
 		if devActive() || gamePaused {
 			dropMouseLook()
 			gfx.ResetRecoil()
+			platform.StopRumble()
+		} else {
+			rumbleForExplosions(&level)
 		}
 
 		// Video players whose widget went away last frame are closed here, at
@@ -659,6 +687,7 @@ func Run() {
 		// headless play session draw the same picture this frame does rather
 		// than a second copy of it. The clock is the one every animated thing
 		// in the frame is integrated against.
+		frameViewport := [4]int32{0, 0, platform.WinWidth, platform.WinHeight}
 		render.DrawWorld(&level, render.WorldDraw{
 			Now:        float64(now) / 1000.0,
 			Editor:     devActive(),
@@ -666,6 +695,9 @@ func Run() {
 			Skip:       benchSkips,
 			Markers:    devRenderMarkers,
 			BrushGhost: devRenderBrushGhost,
+			// The window, at the viewport RefreshWindowSize set: declared
+			// so no pass has to ask (render/frame_target.go).
+			Target: &render.FrameTarget{Viewport: frameViewport},
 		})
 
 		// --- Runtime UI ---
@@ -674,6 +706,12 @@ func Run() {
 		// not run there: what is on screen in the editor is the level, not the
 		// game.
 		render.ProfileBegin("ui")
+		// What DrawWorld left GL in, said so the screen-space passes below
+		// restore it without asking (gfx/known_gl_state.go). Not with the
+		// editor up: its own frame draws in between.
+		if !devActive() {
+			gfx.KnownGLState = gfx.AfterWorldGLState(frameViewport)
+		}
 		if !devActive() {
 			// One pass per screen, bottom to top. Each has its own canvas and
 			// therefore its own scale, so they cannot share a projection.
@@ -700,6 +738,7 @@ func Run() {
 		// them at all. Last, and over everything: an overlay the game's HUD
 		// could cover would be no use on the frame that mattered.
 		devui.Render(&gameUIList, platform.WinWidth, platform.WinHeight)
+		gfx.KnownGLState = nil
 		render.ProfileEnd() // ui
 		render.ProfileEnd() // frame
 
@@ -712,6 +751,11 @@ func Run() {
 		render.ProfileBegin("swap")
 		platform.Window.GLSwap()
 		render.ProfileEnd()
+		// A GPU-bound frame's wait, here and named, rather than inside
+		// whichever pass the driver's queue filled up in (render/frame_pace.go).
+		render.ProfileBegin("gpu wait")
+		render.PaceFrame()
+		render.ProfileEnd()
 
 		// Secondary windows (texture editor, etc.) render last, each in its
 		// own GL/imgui context, restoring the main ones before the next
@@ -720,4 +764,14 @@ func Run() {
 
 		benchEndFrame()
 	}
+}
+
+// fatalGL ends startup over a GL context the engine cannot run on. A release
+// build has no console to log to, so the reason goes in a message box too.
+func fatalGL(err error) {
+	log.Printf("FATAL: %v", err)
+	_ = sdl.ShowSimpleMessageBox(sdl.MESSAGEBOX_ERROR, platform.WinTitle,
+		fmt.Sprintf("%v\n\nUpdate your graphics driver, or run on a GPU that supports OpenGL %d.%d.",
+			err, glctx.MajorVersion, glctx.MinorVersion), nil)
+	os.Exit(1)
 }

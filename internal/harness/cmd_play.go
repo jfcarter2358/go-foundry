@@ -42,7 +42,9 @@ import (
 	"sync"
 	"time"
 
+	"foundry/internal/gfx"
 	"foundry/internal/play"
+	"foundry/internal/render"
 )
 
 // PlayCommand is the verb: `foundry play`.
@@ -115,6 +117,8 @@ type playFlags struct {
 	watch   *string
 	enable  *string
 	seconds *float64
+	gi      *string
+	view    *string
 }
 
 func playFlagSet(name, root string, out io.Writer) *playFlags {
@@ -127,7 +131,7 @@ func playFlagSet(name, root string, out io.Writer) *playFlags {
 	p.compiled = fs.Bool("compiled", false, "load the level's .fbsp, as a release build does, instead of its .yaml")
 	p.god = fs.Bool("god", false, "keep the player alive: health held far over anything one tick can take. "+
 		"Off by default — a play test is worth less when the thing being tested cannot hurt you, and it shows in the HUD")
-	p.draw = fs.Bool("draw", true, "take pictures: needs a display and a GL 4.1 driver. -draw=false plays blind")
+	p.draw = fs.Bool("draw", true, "take pictures: needs a display and a GL 4.3 driver. -draw=false plays blind")
 	p.hz = fs.Float64("hz", 60, "tick rate. A run is deterministic in it")
 	p.size = fs.String("size", "1280x720", "the size of the pictures, and the window the HUD is laid out against")
 	p.shots = fs.String("shots", "", "where pictures go (default: a foundry-play folder in the temporary directory)")
@@ -135,6 +139,9 @@ func playFlagSet(name, root string, out io.Writer) *playFlags {
 	p.watch = fs.String("watch", "", "comma-separated things to report whenever they change")
 	p.enable = fs.String("enable", "", "chunks/volumes to switch on before play, comma separated")
 	p.seconds = fs.Float64("seconds", 0, "let the level run this long before the script starts — time for a level's own opening to play out")
+	p.gi = fs.String("gi", "", "live GI tier for the pictures: off, low, medium or high (default: picked by GPU, as a new player's is)")
+	p.view = fs.String("view", "normal", "the debug view pictures are drawn in: normal, lighting (the light alone, on white surfaces), "+
+		"probes, field or wireframe. A script's `view` command changes it mid-run")
 	return p
 }
 
@@ -147,6 +154,20 @@ func (p *playFlags) open(out io.Writer, onEvent func(Event)) (*Session, error) {
 	w, h, err := parseSize(*p.size)
 	if err != nil {
 		return nil, err
+	}
+	if *p.gi != "" {
+		q, ok := gfx.ParseGIQuality(*p.gi)
+		if !ok {
+			return nil, fmt.Errorf("-gi %q: want off, low, medium or high", *p.gi)
+		}
+		gfx.GIQuality, gfx.GIQualityChosen = q, true
+	}
+	note, err := render.SetView(*p.view)
+	if err != nil {
+		return nil, fmt.Errorf("-view: %w", err)
+	}
+	if note != "" {
+		fmt.Fprintf(out, "note: -view %s: %s\n", *p.view, note)
 	}
 	s, err := Open(Options{
 		Resources: *p.res,

@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // volume_composite_frag.glsl — the volume target, put over the frame.
 //

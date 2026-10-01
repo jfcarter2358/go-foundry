@@ -20,7 +20,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // The depth-only programs behind the shadow maps. Vars rather than constants
@@ -43,6 +43,9 @@ func StandUpWorld(w, h int32) error {
 	// See texture_filter.go for why mipmapping is the half of anti-aliasing
 	// MSAA cannot do.
 	gfx.InitTextureFiltering()
+	// Live GI's tier for a player who has never chosen one, by GPU: on a
+	// discrete card, off on an integrated one (gfx.PickDefaultGIQuality).
+	gfx.PickDefaultGIQuality(gl.GoStr(gl.GetString(gl.RENDERER)))
 
 	gl.Enable(gl.DEPTH_TEST)
 	gl.ClearColor(0.2, 0.2, 0.3, 1.0)
@@ -143,6 +146,9 @@ func StandUpWorldUniforms() {
 	// case, so nothing that does not set it changes.
 	gfx.SurfaceBlendUniform = gl.GetUniformLocation(gfx.Program, gl.Str("surfaceBlend\x00"))
 	gl.Uniform1i(gfx.SurfaceBlendUniform, 0)
+
+	gfx.InstancedUniform = gl.GetUniformLocation(gfx.Program, gl.Str("instanced\x00"))
+	gl.Uniform1i(gfx.InstancedUniform, 0) // default: the model matrix is the `model` uniform
 
 	gfx.AlphaSharpenUniform = gl.GetUniformLocation(gfx.Program, gl.Str("alphaSharpen\x00"))
 	gl.Uniform1i(gfx.AlphaSharpenUniform, 0) // default: off; the opaque pass turns it on

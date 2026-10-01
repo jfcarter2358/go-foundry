@@ -97,3 +97,51 @@ end`)
 		t.Error("reset_bindings did not restore the defaults")
 	}
 }
+
+// The pad's column, its travel and its settings, as a settings screen and a
+// game script see them.
+func TestPadVerbsAndProps(t *testing.T) {
+	withPlayerSettings(t)
+	sens := platform.PadLookSensitivityX
+	t.Cleanup(func() {
+		platform.PadLookSensitivityX = sens
+		platform.BlankPad()
+	})
+	root := withTempScriptDir(t)
+	withUIStack(t)
+	var v [platform.PadInputCount]float32
+	v[platform.PadLSUp] = 0.4
+	platform.SetPadValues(v)
+
+	path := writeScript(t, root, "l.flang", `def on_spawn(:spawn:) -> null
+    @level.prop.pad_sensitivity_x = 9
+    @self.attr.name = binding_name("jump", 3)
+    @self.attr.label = binding_label("jump", 3)
+    @self.attr.forward = action_value("move_forward")
+    @self.attr.left_y = pad_axis("left_y")
+    @self.attr.device = @level.prop.input_device
+    rumble(1, 1, 0.5)
+end`)
+	lvl := tickTestLevel(t)
+	b := &lvl.Chunks[0].Brushes[0]
+	b.Script = path
+	runTicks(t, lvl, 2)
+
+	str := func(name string) string { a, _ := b.Attr(name); return a.S }
+	num := func(name string) float64 { a, _ := b.Attr(name); return a.F }
+	if str("name") != "Pad A" || str("label") != "A" {
+		t.Errorf("jump's pad slot reads %q / %q", str("name"), str("label"))
+	}
+	if f := num("forward"); f < 0.39 || f > 0.41 {
+		t.Errorf("action_value(move_forward) = %v, want the stick's 0.4", f)
+	}
+	if f := num("left_y"); f < 0.39 || f > 0.41 {
+		t.Errorf("pad_axis(left_y) = %v", f)
+	}
+	if str("device") != "keyboard" && str("device") != "gamepad" {
+		t.Errorf("input_device = %q", str("device"))
+	}
+	if platform.PadLookSensitivityX != platform.MaxPadSensitivity || !platform.ControlSettingsChanged {
+		t.Errorf("pad_sensitivity_x = %v, want clamped to %v and saved", platform.PadLookSensitivityX, platform.MaxPadSensitivity)
+	}
+}

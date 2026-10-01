@@ -14,7 +14,7 @@ import (
 	"image/png"
 	"os"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // Target is somewhere to draw that is not a window.

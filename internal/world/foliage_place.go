@@ -105,18 +105,34 @@ type foliageBuild struct {
 	sky            map[int]float32
 	topLo, topSpan float32
 	byKey          map[[2]int]*FoliageBatch
+	cut            FoliageRankCut
 }
+
+// FoliageRankCut is, per shape, the highest rank a build keeps: an instance
+// whose Rank is at or above it is left out, and a shape whose cut is 0 is not
+// placed at all. Everything placed is placed exactly where a full build puts
+// it — a cut build is the full build with some instances missing — so a
+// renderer can build distant ground with only the ranks its distance still
+// draws and fill in the rest when the camera comes closer.
+type FoliageRankCut func(FoliageShape) float32
 
 // BuildFoliage places the foliage growing on section s's painted faces.
 // Main thread only (it reads the surface).
 func (t *Terrain) BuildFoliage(s *TerrainSection) *FoliageSection {
+	return t.BuildFoliageFor(s, nil)
+}
+
+// BuildFoliageFor is BuildFoliage keeping only what cut admits (nil: all).
+// The rank is known from the candidate's hash alone, so a candidate the cut
+// rejects costs a hash, not the ecology.
+func (t *Terrain) BuildFoliageFor(s *TerrainSection, cut FoliageRankCut) *FoliageSection {
 	out := &FoliageSection{}
 	inf := float32(math.Inf(1))
 	out.Lo, out.Hi = mgl32.Vec3{inf, inf, inf}, mgl32.Vec3{-inf, -inf, -inf}
 	if len(t.Paint) == 0 || len(t.Biomes) == 0 || s.Empty() {
 		return out
 	}
-	b := &foliageBuild{t: t, sky: map[int]float32{}, byKey: map[[2]int]*FoliageBatch{}}
+	b := &foliageBuild{t: t, sky: map[int]float32{}, byKey: map[[2]int]*FoliageBatch{}, cut: cut}
 	b.topLo, b.topSpan = t.surfaceRange()
 	for fi := range s.Faces {
 		f := &s.Faces[fi]
@@ -354,6 +370,12 @@ func (b *foliageBuild) face(f *TerrainFace, out *FoliageSection) {
 		if amount <= 0 {
 			continue
 		}
+		rankCut := float32(1)
+		if b.cut != nil {
+			if rankCut = b.cut(sp.Shape); rankCut <= 0 {
+				continue
+			}
+		}
 		spacing := sp.Spacing / float32(math.Sqrt(float64(density*amount))) / t.BlockSize
 		spacing = max(spacing, 0.08)
 		sseed := HashInts(seed, si, d, plane)
@@ -362,6 +384,9 @@ func (b *foliageBuild) face(f *TerrainFace, out *FoliageSection) {
 		for i := i0; i <= i1; i++ {
 			for j := j0; j <= j1; j++ {
 				h := HashInts(sseed, i, j)
+				if rankCut < 1 && foliageRank(h) >= rankCut {
+					continue
+				}
 				cu := (float32(i) + Unit(h)) * spacing
 				cv := (float32(j) + Unit(Hash32(h^0x68bc))) * spacing
 				if cu < bu || cu >= bu+1 || cv < bv || cv >= bv+1 {
@@ -458,6 +483,9 @@ func (b *foliageBuild) suitability(sp *FoliageSpecies, e *foliageFaceEnv, surf F
 	return s
 }
 
+// foliageRank is the rank of the candidate hashed h.
+func foliageRank(h uint32) float32 { return Unit(Hash32(h ^ 0x4a4c)) }
+
 func (b *foliageBuild) emit(sp *FoliageSpecies, si int, f *TerrainFace, p, n mgl32.Vec3, surf FoliageSurface, suit float32, h uint32, tint mgl32.Vec3, seed uint32, out *FoliageSection, up mgl32.Vec3) {
 	r := func(k uint32) float32 { return Unit(Hash32(h ^ k)) }
 	variant := 0
@@ -535,7 +563,7 @@ func (b *foliageBuild) emit(sp *FoliageSpecies, si int, f *TerrainFace, p, n mgl
 	}
 	bt.Instances = append(bt.Instances, FoliageInstance{
 		Pos: pos, Up: axis, Yaw: r(0x9a3) * 2 * math.Pi, Scale: scale,
-		Color: col, Accent: accent, Rank: r(0x4a4c),
+		Color: col, Accent: accent, Rank: foliageRank(h),
 	})
 	ext := FoliageExtent[sp.Shape]
 	reach := max(ext[0], ext[1]) * scale

@@ -74,7 +74,7 @@ type Options struct {
 	// Draw turns the pictures on. A drawing session makes an offscreen GL
 	// context, loads the level with its meshes and textures on the GPU rather
 	// than headlessly, and answers Shot with a .png of what the player can
-	// see. It needs a display and a GL 4.1 driver; without Draw a session is
+	// see. It needs a display and a GL 4.3 driver; without Draw a session is
 	// blind and needs neither.
 	//
 	// It also pins the goroutine that opened it: see shot.go.

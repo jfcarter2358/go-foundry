@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // model_vert.glsl — the model editor's own vertex shader.
 //

@@ -17,7 +17,6 @@ package editor
 // saved mid-preview is not a sprite moved for good.
 
 import (
-	"foundry/internal/compile"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
 	"foundry/internal/hooks"
@@ -390,19 +389,25 @@ func addWaypointAnimationFromObject(t waypointTarget) {
 // brush or a chunk needs no lending — its placement is written straight into
 // its own authored fields, never borrowed — so only the other kinds are.
 func withWaypointPreviewAtRest(fn func()) {
+	defer waypointPreviewToRest()()
+	fn()
+}
+
+// waypointPreviewToRest puts the preview's object back where it was authored
+// and returns what poses it again — withWaypointPreviewAtRest for work that
+// outlasts a call, like a compile running behind a progress bar.
+func waypointPreviewToRest() (repose func()) {
 	p := &Editor.WaypointPreview
 	var f world.WaypointFollower
 	if p.Posed && p.Target.Kind != hooks.WaypointBrush && p.Target.Kind != hooks.WaypointChunk {
 		f = world.FindWaypointFollower(Editor.level, p.Target.Kind, p.Target.ID)
 	}
 	if f == nil {
-		fn()
-		return
+		return func() {}
 	}
 	posed := world.CaptureWaypointRest(f)
 	world.RestoreWaypointRest(f, p.rest)
-	defer world.RestoreWaypointRest(f, posed)
-	fn()
+	return func() { world.RestoreWaypointRest(f, posed) }
 }
 
 // editorLevelToRaw is levelio.LevelToRaw for the open level, as authored.
@@ -421,14 +426,4 @@ func editorSaveLevel(lvl *world.Level, path string) error {
 		levelMarkSaved()
 	}
 	return err
-}
-
-// editorCompile is levelio.CompileLevel with the default options, as authored:
-// a point light held on a path would otherwise be baked where the preview had
-// it.
-func editorCompile(lvl *world.Level) (*levelio.CompiledLevel, error) {
-	var c *levelio.CompiledLevel
-	var err error
-	withWaypointPreviewAtRest(func() { c, err = levelio.CompileLevel(lvl, compile.DefaultOptions()) })
-	return c, err
 }

@@ -35,7 +35,7 @@ import (
 	"foundry/internal/uidraw"
 	"foundry/internal/world"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // standUpDrawing makes the offscreen context and everything that draws through
@@ -45,7 +45,7 @@ import (
 func (s *Session) standUpDrawing() error {
 	w, h := int32(s.opts.ShotW), int32(s.opts.ShotH)
 	if err := glctx.Acquire(w, h); err != nil {
-		return fmt.Errorf("no GL context (%v) — drawing needs a display and a GL 4.1 driver; "+
+		return fmt.Errorf("no GL context (%v) — drawing needs a display and a GL 4.3 driver; "+
 			"run without -draw to play with no pictures", err)
 	}
 	// The window the projection and the UI layout are measured against. There
@@ -112,17 +112,20 @@ func (s *Session) Shot(name string) (string, error) {
 	uidraw.SyncFontAtlases()
 	gfx.DrainTextureUploads()
 
-	render.DrawWorld(s.Level, render.WorldDraw{Now: s.T})
+	render.DrawWorld(s.Level, render.WorldDraw{Now: s.T, Target: &render.FrameTarget{
+		FBO: s.target.FBO, Viewport: [4]int32{0, 0, int32(s.opts.ShotW), int32(s.opts.ShotH)}}})
 
 	// The game's own screens over it, bottom to top, exactly as app.Run draws
 	// them. Twice, for the glyphs: the first pass is what discovers which
 	// characters this HUD needs, and a character seen for the first time draws
 	// as a box until its page has been baked and uploaded.
 	var list uidraw.List
+	gfx.KnownGLState = gfx.AfterWorldGLState([4]int32{0, 0, int32(s.opts.ShotW), int32(s.opts.ShotH)})
 	s.drawScreens(&list)
 	uidraw.SyncFontAtlases()
 	gfx.DrainTextureUploads()
 	s.drawScreens(&list)
+	gfx.KnownGLState = nil
 
 	img := s.target.Image()
 	s.target.Unbind()

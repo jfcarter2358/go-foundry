@@ -9,7 +9,7 @@ import (
 	"foundry/internal/uidraw"
 	"foundry/internal/uifont"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // devui_gl_test.go — the console and the overlay drawn through a real context.

@@ -28,7 +28,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -81,6 +81,11 @@ type WorldDraw struct {
 	// Skip reports a pass a benchmark was asked to leave out, by the names
 	// ProfileBegin uses. nil draws everything.
 	Skip func(pass string) bool
+	// Target is the framebuffer and viewport the frame draws into. Declared,
+	// the passes read it (and the GL state convention in frame_target.go)
+	// instead of asking GL, which stalls the CPU on the GPU every time; nil,
+	// they ask.
+	Target *FrameTarget
 	// Markers and BrushGhost draw the editor's own overlays, and are the
 	// editor reaching into the frame rather than the other way round: this
 	// package is compiled into a release build, which has no editor at all.
@@ -111,6 +116,12 @@ func (o WorldDraw) brushGhost(draw func(g *gfx.Geometry, model mgl32.Mat4, doubl
 // this; nothing here moves either, because a frame that drew from a camera it
 // had adjusted itself would be a frame nothing else could reproduce.
 func DrawWorld(lvl *world.Level, o WorldDraw) {
+	if ForceWireframe {
+		o.Wireframe = true
+	}
+	beginFrameTarget(o.Target)
+	defer endFrameTarget()
+
 	// Per-frame water shader inputs: animation clock and the view position
 	// the fresnel/specular terms are measured against.
 	gl.UseProgram(gfx.Program)
@@ -180,6 +191,14 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 		ProfileBegin("shadows: clouds")
 		if !o.skip("shadows: clouds") {
 			RenderCloudShadowMap(lvl, gfx.Cam.Position)
+		}
+		ProfileEnd()
+		// Live GI (gi.go): the distance field and the probes, before any
+		// program's lighting uniforms go up — UploadShadowUniformsTo hands
+		// every one of them what this leaves.
+		ProfileBegin("gi")
+		if !o.skip("gi") {
+			UpdateGI(lvl, o)
 		}
 		ProfileEnd()
 		UploadShadowUniforms(lvl.Lights, shadowFrame)
@@ -556,6 +575,12 @@ func DrawWorld(lvl *world.Level, o WorldDraw) {
 			ProfileBegin("viewmodel")
 			RenderViewmodel()
 			ProfileEnd()
+		}
+
+		// GI's drawn debug views (`gi_debug probes|field`), over the world
+		// and under the viewmodel's hands.
+		if GIDebug != GIDebugOff {
+			drawGIDebug()
 		}
 
 		// Back to filled triangles before the editor overlays and ImGui the

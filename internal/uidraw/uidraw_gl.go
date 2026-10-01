@@ -22,7 +22,7 @@ import (
 	"foundry/internal/uifont"
 	"foundry/internal/video"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -61,7 +61,7 @@ func Init() error {
 		return nil
 	}
 
-	vertSrc := "#version 410\n" +
+	vertSrc := "#version 430\n" +
 		"uniform mat4 ProjMtx;\n" +
 		"in vec2 Position;\n" +
 		"in vec2 UV;\n" +
@@ -72,7 +72,7 @@ func Init() error {
 		"  Frag_UV = UV; Frag_Color = Color;\n" +
 		"  gl_Position = ProjMtx * vec4(Position.xy, 0, 1);\n" +
 		"}\n"
-	fragSrc := "#version 410\n" +
+	fragSrc := "#version 430\n" +
 		"uniform sampler2D Texture;\n" +
 		"in vec2 Frag_UV;\n" +
 		"in vec4 Frag_Color;\n" +
@@ -159,21 +159,10 @@ func Render(l *List, fbW, fbH int32, scale float32) {
 		return
 	}
 
-	var lastProgram, lastTex, lastVAO, lastArrayBuf, lastElemBuf int32
-	gl.GetIntegerv(gl.CURRENT_PROGRAM, &lastProgram)
-	gl.GetIntegerv(gl.TEXTURE_BINDING_2D, &lastTex)
-	gl.GetIntegerv(gl.VERTEX_ARRAY_BINDING, &lastVAO)
-	gl.GetIntegerv(gl.ARRAY_BUFFER_BINDING, &lastArrayBuf)
-	gl.GetIntegerv(gl.ELEMENT_ARRAY_BUFFER_BINDING, &lastElemBuf)
-	var lastScissor, lastViewport [4]int32
-	gl.GetIntegerv(gl.SCISSOR_BOX, &lastScissor[0])
-	gl.GetIntegerv(gl.VIEWPORT, &lastViewport[0])
-	cullWas := gl.IsEnabled(gl.CULL_FACE)
-	blendWas := gl.IsEnabled(gl.BLEND)
-	depthWas := gl.IsEnabled(gl.DEPTH_TEST)
-	scissorWas := gl.IsEnabled(gl.SCISSOR_TEST)
-	var depthMaskWas bool
-	gl.GetBooleanv(gl.DEPTH_WRITEMASK, &depthMaskWas)
+	// What to hand back: declared by the frame loop when it knows, since
+	// asking GL stalls on the GPU (gfx/known_gl_state.go).
+	was := gfx.CurrentGLState()
+	defer was.Restore()
 
 	gl.Enable(gl.BLEND)
 	gl.BlendEquation(gl.FUNC_ADD)
@@ -229,18 +218,6 @@ func Render(l *List, fbW, fbH int32, scale float32) {
 			uintptr(cmd.IdxOffset*bytesPerIndex))
 	}
 
-	gl.UseProgram(uint32(lastProgram))
-	gl.BindTexture(gl.TEXTURE_2D, uint32(lastTex))
-	gl.BindVertexArray(uint32(lastVAO))
-	gl.BindBuffer(gl.ARRAY_BUFFER, uint32(lastArrayBuf))
-	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, uint32(lastElemBuf))
-	gl.Scissor(lastScissor[0], lastScissor[1], lastScissor[2], lastScissor[3])
-	gl.Viewport(lastViewport[0], lastViewport[1], lastViewport[2], lastViewport[3])
-	setEnabled(gl.CULL_FACE, cullWas)
-	setEnabled(gl.BLEND, blendWas)
-	setEnabled(gl.DEPTH_TEST, depthWas)
-	setEnabled(gl.SCISSOR_TEST, scissorWas)
-	gl.DepthMask(depthMaskWas)
 }
 
 // setScissor converts a clip rect from canvas units to the scissor box, which
@@ -256,14 +233,6 @@ func setScissor(clip ui.Rect, scale float32, fbH int32) bool {
 	}
 	gl.Scissor(x, fbH-(y+h), w, h)
 	return true
-}
-
-func setEnabled(cap uint32, on bool) {
-	if on {
-		gl.Enable(cap)
-	} else {
-		gl.Disable(cap)
-	}
 }
 
 // Delete releases the GL objects. Called on shutdown; the per-window override

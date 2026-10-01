@@ -211,6 +211,19 @@ func rawToLightSet(rl world.RawLights) world.LightSet {
 		Hemisphere:  world.DefaultAmbientHemisphere,
 		Bounces:     world.DefaultBounces,
 		BounceScale: world.DefaultBounceScale,
+		GI:          world.DefaultGISettings(),
+	}
+	if g := rl.Global.GI; g != nil {
+		ls.Global.GI.Disabled = g.Disabled
+		if g.Intensity != nil {
+			ls.Global.GI.Intensity = max(*g.Intensity, 0)
+		}
+		if g.ProbeSpacing != nil {
+			ls.Global.GI.ProbeSpacing = min(max(*g.ProbeSpacing, world.GIProbeSpacingMin), world.GIProbeSpacingMax)
+		}
+		if g.AmbientFloor != nil {
+			ls.Global.GI.AmbientFloor = min(max(*g.AmbientFloor, 0), 1)
+		}
 	}
 	if rl.Global.Wrap != nil {
 		ls.Global.Wrap = *rl.Global.Wrap
@@ -242,6 +255,7 @@ func rawToLightSet(rl world.RawLights) world.LightSet {
 			Disabled:       rd.Disabled,
 			Dynamic:        rd.Dynamic,
 			NoBake:         rd.NoBake,
+			NoGI:           rd.NoGI,
 			BakeExclude:    rd.BakeExclude,
 		}
 		// Angles are authoritative when present; otherwise derive them from the
@@ -293,6 +307,7 @@ func PointLightFromRaw(rp world.RawPointLight) world.PointLight {
 		// cannot be baked — so attached is dynamic, whatever the file says.
 		Dynamic:     rp.Dynamic || !attach.IsZero(),
 		NoBake:      rp.NoBake,
+		NoGI:        rp.NoGI,
 		BakeExclude: rp.BakeExclude,
 		Attach:      attach,
 	}
@@ -367,6 +382,7 @@ func loadLevelObjects(raw world.RawLevel, level *world.Level, texNeeded map[stri
 	level.ViewDistance = raw.ViewDistance
 	if raw.Compile != nil {
 		level.LightGrid, level.LightMinGrid = raw.Compile.LightGrid, raw.Compile.LightMinGrid
+		level.NoBake = raw.Compile.Bake == world.BakeNone
 	}
 
 	world.ResolveLevelIDCollisions(level.Chunks)

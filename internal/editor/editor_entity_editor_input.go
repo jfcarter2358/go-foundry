@@ -31,7 +31,7 @@ import (
 
 	"foundry/internal/gizmo"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 	imgui "github.com/inkyblackness/imgui-go/v4"
 	"github.com/veandco/go-sdl2/sdl"

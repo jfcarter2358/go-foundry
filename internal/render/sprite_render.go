@@ -14,7 +14,7 @@ package render
 // it is, but it can only express placement that is a pure function of position
 // and seed — it cannot carry state that something simulated. So this pass
 // streams a real instance buffer, with glVertexAttribDivisor, which GL 3.3
-// added and the engine's 4.1 core target has had all along.
+// added and the engine's GL target has had all along.
 //
 // Buffer handling is gizmo.GizmoFlush's: one STREAM_DRAW buffer, orphaned with
 // a nil BufferData and refilled each frame, so the driver never stalls waiting
@@ -34,7 +34,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 

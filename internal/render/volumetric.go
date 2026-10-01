@@ -56,7 +56,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -247,6 +247,11 @@ type VolumeTargets struct {
 	srcInternal        int32
 	srcHasDepth        bool
 	copyFailed, warned bool
+	// copyChecked: the copy into this depth texture from this source has
+	// been seen to work once. Asking GL whether it did (glGetError) stalls
+	// the frame on the GPU — see frame_target.go — and the answer cannot
+	// change until one of the two does.
+	copyChecked bool
 
 	// The march target and its distances.
 	lowFBO, lowColor  uint32
@@ -355,12 +360,13 @@ func (t *VolumeTargets) ensure(w, h, scale int32, src uint32) bool {
 	if !t.srcKnown || t.srcFBO != src {
 		t.srcFBO, t.srcKnown = src, true
 		t.srcInternal, t.srcHasDepth = sourceDepthFormat(src)
-		t.copyFailed, t.warned = false, false
+		t.copyFailed, t.warned, t.copyChecked = false, false, false
 	}
 
 	if t.depthTex == 0 || t.depthW != w || t.depthH != h || t.depthInternal != t.srcInternal {
 		t.deleteDepth()
 		t.depthW, t.depthH, t.depthInternal = w, h, t.srcInternal
+		t.copyChecked = false
 		format, xtype, attach := depthUpload(t.srcInternal)
 		gl.GenTextures(1, &t.depthTex)
 		gl.BindTexture(gl.TEXTURE_2D, t.depthTex)
@@ -431,10 +437,16 @@ func (t *VolumeTargets) copyDepth(vx, vy, w, h int32) {
 		gl.ClearBufferfv(gl.DEPTH, 0, &[]float32{1}[0])
 		return
 	}
+	if t.copyChecked {
+		gl.BindFramebuffer(gl.READ_FRAMEBUFFER, t.srcFBO)
+		gl.BlitFramebuffer(vx, vy, vx+w, vy+h, 0, 0, w, h, gl.DEPTH_BUFFER_BIT, gl.NEAREST)
+		return
+	}
 	for i := 0; i < 16 && gl.GetError() != gl.NO_ERROR; i++ {
 	}
 	gl.BindFramebuffer(gl.READ_FRAMEBUFFER, t.srcFBO)
 	gl.BlitFramebuffer(vx, vy, vx+w, vy+h, 0, 0, w, h, gl.DEPTH_BUFFER_BIT, gl.NEAREST)
+	t.copyChecked = true
 	if err := gl.GetError(); err != gl.NO_ERROR {
 		t.copyFailed = true
 		if !t.warned {
@@ -964,11 +976,8 @@ func DrawVolumeParticlePreview(t *VolumeTargets, systems []*particle.System, pro
 // renderVolumeDraws is the four steps, with every piece of GL state it touches
 // put back on the way out.
 func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4, camPos mgl32.Vec3, light volumeLight, uploadScene func(prog uint32)) {
-	var vp [4]int32
-	gl.GetIntegerv(gl.VIEWPORT, &vp[0])
-	var boundFBO int32
-	gl.GetIntegerv(gl.DRAW_FRAMEBUFFER_BINDING, &boundFBO)
-	src := uint32(boundFBO)
+	vp := boundViewport()
+	src := boundFramebuffer()
 	w, h := vp[2], vp[3]
 	if w <= 0 || h <= 0 {
 		return
@@ -978,7 +987,7 @@ func renderVolumeDraws(t *VolumeTargets, draws []volumeDraw, projView mgl32.Mat4
 		scale = 2
 	}
 
-	state := saveVolumeGLState()
+	state := currentGLState()
 	defer state.restore(src, vp)
 
 	if !t.ensure(w, h, scale, src) {

@@ -26,7 +26,7 @@ import (
 	"math"
 	"math/rand"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -48,6 +48,12 @@ const (
 	tileSeed           // a seed head / flower spike
 	tileMoss           // a fuzzy, irregular patch of moss
 	tilePalm           // a palm frond: a rib combed with long, narrow leaflets
+	// The far tier's clump cards (foliage_mesh.go buildClump): a whole tuft
+	// on one card, for the distance where a blade is under a pixel.
+	tileGrassClump     // a tuft of short blades
+	tileTallGrassClump // taller, laxer blades with seed heads
+	tileFlowerDots     // flower heads scattered over a tuft's height
+	tileReedClump      // upright straps with dark catkins
 )
 
 // tileUV maps (u, v) in [0,1]^2 across tile i to atlas coordinates, inset
@@ -305,6 +311,49 @@ func drawTile(tile int) *atlasCanvas {
 				a := math.Pi/2 + side*rf(0.55, 0.75)
 				c.leaf(n/2, y, a, math.Max(l, 4), rf(1.8, 2.6), rf(0.75, 1))
 			}
+		}
+	case tileGrassClump, tileTallGrassClump, tileReedClump:
+		blades, hLo, hHi, lean, w0 := 70, 0.35, 0.95, 0.35, 2.4
+		switch tile {
+		case tileTallGrassClump:
+			blades, hLo, hHi, lean, w0 = 55, 0.5, 0.97, 0.5, 2.0
+		case tileReedClump:
+			blades, hLo, hHi, lean, w0 = 30, 0.55, 0.97, 0.12, 3.2
+		}
+		// Back to front, the back ones darker, as the inside of a tuft is.
+		for i := 0; i < blades; i++ {
+			depth := float64(i) / float64(blades)
+			x := rf(10, n-10)
+			h := n * rf(hLo, hHi)
+			bend := rf(-lean, lean) * h
+			// A little fuller in the middle than at the edges — only a
+			// little, or a grown tuft far off reads as a round bush.
+			h *= 1 - 0.2*math.Pow(math.Abs(x-n/2)/(n/2), 2)
+			const segs = 4
+			px, py := x, 0.0
+			for k := 1; k <= segs; k++ {
+				t := float64(k) / segs
+				nx, ny := x+bend*t*t, h*t
+				tone := (0.45 + 0.55*t) * (0.7 + 0.3*depth)
+				c.line(px, py, nx, ny, w0*(1-0.75*t)+0.5, tone)
+				px, py = nx, ny
+			}
+			if tile == tileTallGrassClump && r.Float64() < 0.3 {
+				c.ellipse(px, py-4, 2.2, 6, math.Pi/2+bend/h, rf(0.85, 1.05))
+			}
+			if tile == tileReedClump && r.Float64() < 0.35 {
+				c.ellipse(px, py-h*0.12, 2.8, 8, math.Pi/2, 0.22)
+			}
+		}
+	case tileFlowerDots:
+		for i := 0; i < 16; i++ {
+			x, y := rf(14, n-14), n*rf(0.45, 0.92)
+			rr := rf(4, 7)
+			for k := 0; k < 6; k++ {
+				a := float64(k)/6*2*math.Pi + rf(-0.2, 0.2)
+				c.ellipse(x+math.Cos(a)*rr*0.8, y+math.Sin(a)*rr*0.8, rr*0.7, rr*0.4, a, rf(0.85, 1))
+			}
+			c.ellipse(x, y, rr*0.35, rr*0.35, 0, 0.35)
 		}
 	case tileSeed:
 		c.line(n/2, 0, n/2, n*0.9, 1.2, 0.6)

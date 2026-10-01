@@ -16,7 +16,7 @@ package gfx
 // first.
 
 import (
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 var uniformLocs = map[uint32]map[string]int32{}

@@ -23,7 +23,7 @@ import (
 	"foundry/internal/gizmo"
 	"log"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 

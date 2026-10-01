@@ -25,7 +25,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/world"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // BiomeShadowSettings gates how much of the shadow pipeline the biome passes

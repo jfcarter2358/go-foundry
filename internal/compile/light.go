@@ -79,6 +79,7 @@ package compile
 // exactly this check.
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -135,11 +136,15 @@ func DefaultLightOptions() LightOptions {
 // renumbers them, so anything holding face indices from before the call is
 // stale afterwards. That is why this runs after visibility, which cares about
 // cells rather than about which face is which.
-func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) {
+func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) { bakeLight(t, lvl, opt, nil) }
+
+// bakeLight is BakeLight, telling p how far it has got.
+func bakeLight(t *BSPTree, lvl *world.Level, opt LightOptions, p Progress) {
+	p.report("Light: cutting faces on the grid", 0)
 	if opt.GridStep > 0 {
 		t.SubdivideFaces(opt.GridStep)
 	}
-	b := &baker{tree: t, opt: opt}
+	b := &baker{tree: t, opt: opt, progress: p}
 	if lvl != nil {
 		b.lights = lvl.Lights
 		b.seal = lvl.Seal
@@ -147,6 +152,7 @@ func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) {
 	b.sun = b.lights.BakedSun()
 	b.groupLights()
 	b.bvh = buildFaceBVH(t, opt.GridStep > 0)
+	p.report("Light: indexing shadow casters", 0)
 	b.solids = newSolidIndex(lvl)
 	// The segment a shadow ray covers for a directional light, which has no
 	// position to aim at: far enough to leave the world box from anywhere
@@ -154,6 +160,7 @@ func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) {
 	b.reach = t.Hi.Sub(t.Lo).Len() + 1
 	b.softRadius = opt.GridStep
 	if opt.GridStep > 0 && opt.MinGridStep > 0 && opt.MinGridStep < opt.GridStep {
+		p.report("Light: refining shadow edges", 0)
 		b.refineShadowEdges(opt.GridStep, opt.MinGridStep)
 		b.bvh = buildFaceBVH(t, true)
 		b.softRadius = opt.MinGridStep
@@ -163,7 +170,7 @@ func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) {
 	// bounce has had its turn, because what a bounce may carry into a chunk
 	// depends on which lights were allowed there in the first place.
 	direct := make([]faceSamples, len(t.Faces))
-	parallelFor(len(t.Faces), func(fi int) {
+	p.parallelFor(fmt.Sprintf("Light: direct (%d faces)", len(t.Faces)), len(t.Faces), func(fi int) {
 		f := &t.Faces[fi]
 		f.dropLight()
 		direct[fi] = b.directFace(fi)
@@ -173,6 +180,7 @@ func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) {
 	if bounces := min(b.lights.Global.Bounces, world.MaxBounces); bounces > 0 {
 		total = b.bounce(direct, bounces)
 	}
+	p.report("Light: summing", 0)
 	for fi := range t.Faces {
 		f := &t.Faces[fi]
 		fs := &total[fi]
@@ -181,7 +189,44 @@ func BakeLight(t *BSPTree, lvl *world.Level, opt LightOptions) {
 		f.SmoothLight = fs.sum(kindSmoothFront, b.groups())
 		f.SmoothBackLight = fs.sum(kindSmoothBack, b.groups())
 		f.SunShare, f.BackSunShare = direct[fi].sun[0], direct[fi].sun[1]
+
+		smooth := f.VertexNormals()
+		f.Indirect = b.indirect(f, smooth, kindFront, f.Light, &direct[fi])
+		f.BackIndirect = b.indirect(f, smooth, kindBack, f.BackLight, &direct[fi])
+		f.SmoothIndirect = b.indirect(f, smooth, kindSmoothFront, f.SmoothLight, &direct[fi])
+		f.SmoothBackIndirect = b.indirect(f, smooth, kindSmoothBack, f.SmoothBackLight, &direct[fi])
 	}
+}
+
+// indirect is the part of answer k (total, already summed) that live GI
+// replaces: the ambient term plus whatever the bounce added — everything but
+// the static lights' own direct light. The ambient is worked out again rather
+// than kept from the direct pass, where it is folded into group 0 with the
+// lights that have no exclusions; it is the same AmbientAt of the same normal,
+// so the subtraction leaves exactly the lights.
+func (b *baker) indirect(f *Face, smooth []mgl32.Vec3, k int, total []mgl32.Vec3, direct *faceSamples) []mgl32.Vec3 {
+	if total == nil {
+		return nil
+	}
+	normals, side, ok := kindFrame(f, smooth, k)
+	if !ok {
+		return nil
+	}
+	lit := direct.sum(k, b.groups())
+	out := make([]mgl32.Vec3, len(total))
+	for i := range out {
+		n := f.Plane.N
+		if normals != nil {
+			n = normals[i]
+		}
+		v := total[i].Add(b.lights.Global.AmbientAt(n.Mul(side)))
+		if i < len(lit) {
+			v = v.Sub(lit[i])
+		}
+		// The bounce never takes light away, so a negative is float noise.
+		out[i] = mgl32.Vec3{max(v.X(), 0), max(v.Y(), 0), max(v.Z(), 0)}
+	}
+	return out
 }
 
 // The four answers a face can carry — Face.Light, SmoothLight, BackLight and
@@ -285,10 +330,12 @@ func (b *baker) directFace(fi int) faceSamples {
 }
 
 type baker struct {
-	tree   *BSPTree
-	lights world.LightSet
-	opt    LightOptions
-	reach  float32
+	// progress hears the bake's steps; nil for a bake nobody is watching.
+	progress Progress
+	tree     *BSPTree
+	lights   world.LightSet
+	opt      LightOptions
+	reach    float32
 	// bvh is the drawn, opaque faces every shadow ray is tested against —
 	// see "Shadow rays test faces" in the file comment.
 	bvh *faceBVH
@@ -365,8 +412,9 @@ func (b *baker) groupAllowedIn(g int, chunk string) bool {
 // against — see DirectionalLight.BakeExclude.
 //
 // It returns the baked sun's share (Face.SunShare): what fraction of the sun's
-// unshadowed light this point was given, 0 where the sun was not baked into
-// it at all.
+// unshadowed light this point was given — 0 where it faces away — or -1 where
+// the sun was left out of this chunk's bake (BakeExclude), which the renderer
+// must not mistake for a point the sun's shadow covers.
 func (b *baker) sample(p, n mgl32.Vec3, pr *shadowProbe, chunk string, out []mgl32.Vec3) (sunShare float32) {
 	g := b.lights.Global
 	out[0] = out[0].Add(g.AmbientAt(n))
@@ -375,6 +423,9 @@ func (b *baker) sample(p, n mgl32.Vec3, pr *shadowProbe, chunk string, out []mgl
 		dl := &b.lights.Directional[i]
 		bright := dl.EffectiveBrightness()
 		if bright <= 0 || dl.LitLive() || slices.Contains(dl.BakeExclude, chunk) {
+			if i == b.sun {
+				sunShare = -1
+			}
 			continue
 		}
 		d := dl.Direction

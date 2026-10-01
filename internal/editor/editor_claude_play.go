@@ -35,6 +35,7 @@ import (
 	"foundry/internal/gfx"
 	"foundry/internal/harness"
 	"foundry/internal/play"
+	"foundry/internal/render"
 	"foundry/internal/sim"
 	"foundry/internal/world"
 )
@@ -57,6 +58,10 @@ var claudePlay struct {
 	// is stamped with: one tool call's report should read as later than the
 	// last one's.
 	started time.Time
+	// view is the debug view the author had when Play was pressed. A script's
+	// `view` lasts the run and play_stop puts this back, so the author is not
+	// left looking at a lighting-only editor they never asked for.
+	view string
 }
 
 // claudePlayTarget is the editor as something a play script can drive: the open
@@ -266,6 +271,7 @@ func claudePlayEnter() string {
 		EditorToggle()
 		claudePlay.mu.Lock()
 		claudePlay.started = time.Now()
+		claudePlay.view = render.ViewName()
 		claudePlay.mu.Unlock()
 	}
 	gfx.SetMouseLock(false)
@@ -277,9 +283,14 @@ func claudePlayLeave() string {
 	claudePlay.mu.Lock()
 	r := claudePlay.runner
 	claudePlay.runner = nil
+	view := claudePlay.view
+	claudePlay.view = ""
 	claudePlay.mu.Unlock()
 	if r != nil {
 		r.Stop()
+	}
+	if view != "" {
+		_, _ = render.SetView(view)
 	}
 	if Editor.Active {
 		return "the editor is not playing"

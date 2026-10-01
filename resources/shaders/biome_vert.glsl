@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // biome_vert.glsl — color-pass vertex stage for the GPU-scattered biome pass.
 //
@@ -88,7 +88,7 @@ void main() {
         // underneath, so a blade and the ground it stands on agree.
         vec3 lightPos = worldPos + vec3(0.0, BIOME_FOLIAGE_SHADOW_LIFT, 0.0);
         vec3 lighting = biomeLighting(lightPos, worldNormal, vViewDepth, receiveShadows != 0, true);
-        vColor = bBaseColor * clamp(lighting, 0.0, 1.0) * bAO;
+        vColor = giDebugAlbedo(bBaseColor) * clamp(lighting, 0.0, 1.0) * bAO;
         vBaseColor = vec3(0.0);
     }
 

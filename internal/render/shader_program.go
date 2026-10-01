@@ -17,7 +17,7 @@ import (
 
 	"foundry/internal/gfx"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 )
 
 // progUniforms wraps a GL program with a lazy uniform-location cache.

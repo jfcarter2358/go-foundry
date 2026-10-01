@@ -9,7 +9,12 @@ package platform
 // they are handled; ReservedKey keeps a binding from landing on one of them,
 // where a single press would do two things.
 //
-// Each action has two slots, so crouch can keep both C and Left Ctrl. The
+// Each action has two keyboard-and-mouse slots, so crouch can keep both C and
+// Left Ctrl, and a third that only a game controller's buttons and sticks go
+// in (PadSlot) — its own column, so a pad layout never costs a key one. A pad
+// binding is either a press of its input or a hold of it (Input.Hold), and one
+// button can carry both — reload on a tap of X, interact on holding it; see
+// pad_hold.go for how the two are told apart. The
 // editor's fly camera reads DefaultBindings rather than Bindings: a player's
 // layout is theirs, and the editor's keybinding reference describes WASD.
 //
@@ -59,8 +64,13 @@ const (
 	ActionCount
 )
 
-// BindingSlots is how many inputs one action can answer to.
-const BindingSlots = 2
+// BindingSlots is how many inputs one action can answer to: KeySlots of
+// keyboard and mouse, then the pad's.
+const (
+	KeySlots     = 2
+	PadSlot      = KeySlots
+	BindingSlots = KeySlots + 1
+)
 
 // ActionContext says when an action is live, which is what decides whether two
 // actions may share an input: on foot and in a vehicle's seat never both.
@@ -122,18 +132,57 @@ func ActionByName(name string) (Action, bool) {
 	return 0, false
 }
 
-// Input is one key or one mouse button. The zero value is "unbound".
+// Input is one key, one mouse button or one game controller input (a button,
+// a trigger or a stick direction — see gamepad.go). The zero value is
+// "unbound".
+//
+// Hold makes a pad input answer only once it has been down PadHoldTime, so
+// "Hold Pad X" and "Pad X" are two inputs and two actions can have one each.
+// It is never set on a key or a mouse button.
 type Input struct {
 	Key   sdl.Scancode
 	Mouse sdl.Button // sdl.ButtonLeft and friends; 0 for a key
+	Pad   PadInput
+	Hold  bool
 }
 
-// KeyInput and MouseInput build an Input.
+// KeyInput, MouseInput and GamepadInput build an Input.
 func KeyInput(sc sdl.Scancode) Input { return Input{Key: sc} }
 func MouseInput(b sdl.Button) Input  { return Input{Mouse: b} }
+func GamepadInput(p PadInput) Input  { return Input{Pad: p} }
+
+// HoldInput is a pad input held for PadHoldTime, rather than pressed.
+func HoldInput(p PadInput) Input { return Input{Pad: p, Hold: true} }
+
+// Plain is the input without Hold: the physical key, button or stick
+// direction, which is what goes down and comes up.
+func (in Input) Plain() Input {
+	in.Hold = false
+	return in
+}
+
+// holdPrefix starts a hold input's name and label.
+const holdPrefix = "Hold "
 
 // Bound reports whether the input names anything.
-func (in Input) Bound() bool { return in.Key != 0 || in.Mouse != 0 }
+func (in Input) Bound() bool { return in.Key != 0 || in.Mouse != 0 || in.Pad != 0 }
+
+// IsPad reports whether the input is a game controller's, which is what
+// decides which column of the binding table it may go in.
+func (in Input) IsPad() bool { return in.Pad != 0 }
+
+// Label is what a player is shown for the input: Name for a key or a mouse
+// button, and for a pad input the words printed on the pad in their hands
+// (PadLabel) — "Cross" rather than "Pad A" on a PlayStation pad.
+func (in Input) Label() string {
+	if in.Pad != 0 {
+		if in.Hold {
+			return holdPrefix + PadLabel(in.Pad, ActivePadFamily())
+		}
+		return PadLabel(in.Pad, ActivePadFamily())
+	}
+	return in.Name()
+}
 
 var mouseNames = map[sdl.Button]string{
 	sdl.ButtonLeft:   "Mouse Left",
@@ -143,11 +192,16 @@ var mouseNames = map[sdl.Button]string{
 	sdl.ButtonX2:     "Mouse 5",
 }
 
-// Name is what a settings screen shows and controls.yaml stores: SDL's own
-// scancode name, which is stable across layouts, or "Mouse Left" and so on.
-// Unbound is the empty string.
+// Name is what controls.yaml stores and key_down takes: SDL's own scancode
+// name, which is stable across layouts, "Mouse Left" and so on, or a pad
+// input's positional name ("Pad A", "Pad Right Stick Up"), with "Hold " in
+// front of a hold ("Hold Pad X"). Unbound is the empty string.
 func (in Input) Name() string {
 	switch {
+	case in.Pad != 0 && in.Hold:
+		return holdPrefix + PadName(in.Pad)
+	case in.Pad != 0:
+		return PadName(in.Pad)
 	case in.Mouse != 0:
 		if n, ok := mouseNames[in.Mouse]; ok {
 			return n
@@ -165,6 +219,16 @@ func ParseInput(name string) (Input, bool) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Input{}, true
+	}
+	if len(name) > len(holdPrefix) && strings.EqualFold(name[:len(holdPrefix)], holdPrefix) {
+		// Only a pad input can be held.
+		if p, ok := ParsePad(strings.TrimSpace(name[len(holdPrefix):])); ok {
+			return HoldInput(p), true
+		}
+		return Input{}, false
+	}
+	if p, ok := ParsePad(name); ok {
+		return GamepadInput(p), true
 	}
 	for b, n := range mouseNames {
 		if strings.EqualFold(n, name) {
@@ -194,7 +258,7 @@ func keys(sc ...sdl.Scancode) [BindingSlots]Input {
 
 // DefaultBindings is the layout the engine ships with, and the one the editor's
 // fly camera always uses.
-var DefaultBindings = BindingTable{
+var DefaultBindings = withPadDefaults(BindingTable{
 	ActMoveForward:   keys(sdl.SCANCODE_W),
 	ActMoveBack:      keys(sdl.SCANCODE_S),
 	ActMoveLeft:      keys(sdl.SCANCODE_A),
@@ -222,6 +286,54 @@ var DefaultBindings = BindingTable{
 	ActRollRight:     keys(sdl.SCANCODE_E),
 	ActPitchUp:       keys(sdl.SCANCODE_LCTRL),
 	ActPitchDown:     keys(sdl.SCANCODE_LSHIFT),
+})
+
+// defaultPad is each action's controller binding, the familiar shooter
+// layout: left stick walks and right stick looks, the triggers aim and fire,
+// the left bumper throws on foot and the bumpers roll in a cockpit. X reloads
+// on a tap and interacts on a hold (defaultPadHolds) — interact is live in a
+// seat too (it is how a driver stands up), so it could not share a bumper with
+// a roll anyway. Pitch is unbound: in the air the look stick's pitch already
+// flies the nose (sim.ReadVehicleControls).
+var defaultPad = [ActionCount]PadInput{
+	ActMoveForward:   PadLSUp,
+	ActMoveBack:      PadLSDown,
+	ActMoveLeft:      PadLSLeft,
+	ActMoveRight:     PadLSRight,
+	ActJump:          PadA,
+	ActLookUp:        PadRSUp,
+	ActLookDown:      PadRSDown,
+	ActLookLeft:      PadRSLeft,
+	ActLookRight:     PadRSRight,
+	ActSprint:        PadLeftStick,
+	ActCrouch:        PadB,
+	ActInteract:      PadX,
+	ActPrimaryFire:   PadRT,
+	ActSecondaryFire: PadLT,
+	ActReload:        PadX,
+	ActThrow:         PadLB,
+	ActNextWeapon:    PadY,
+	ActWeapon1:       PadDPadUp,
+	ActWeapon2:       PadDPadRight,
+	ActWeapon3:       PadDPadDown,
+	ActWeapon4:       PadDPadLeft,
+	ActRollLeft:      PadLB,
+	ActRollRight:     PadRB,
+}
+
+// defaultPadHolds are the actions whose default pad binding is a hold of it.
+var defaultPadHolds = [...]Action{ActInteract}
+
+func withPadDefaults(t BindingTable) BindingTable {
+	for a, p := range defaultPad {
+		if p != PadNone {
+			t[a][PadSlot] = GamepadInput(p)
+		}
+	}
+	for _, a := range defaultPadHolds {
+		t[a][PadSlot] = HoldInput(defaultPad[a])
+	}
+	return t
 }
 
 // Bindings is the player's layout, which gameplay input reads.
@@ -232,9 +344,23 @@ var Bindings = DefaultBindings
 var MouseButtons sdl.ButtonMask
 
 // Held reports whether any of an action's inputs is down in this frame's
-// snapshot.
+// snapshot — a key, a mouse button, or its pad input pushed past
+// PadPressThreshold (and down for PadHoldTime, for a hold). A press that
+// shares its pad input with a hold is never held: it is a tap, which fires on
+// the release (pad_hold.go), so it has no level to read.
 func (t *BindingTable) Held(a Action, keyStates []uint8) bool {
-	for _, in := range t[a] {
+	if t.KeyHeld(a, keyStates) {
+		return true
+	}
+	in := t[a][PadSlot]
+	return t.padLive(in) && PadHeld(in.Pad)
+}
+
+// KeyHeld is Held for the keyboard and mouse slots alone. The look keys turn
+// the view at a fixed rate and the look stick by how far it is pushed, so the
+// arrow-key path reads only this one.
+func (t *BindingTable) KeyHeld(a Action, keyStates []uint8) bool {
+	for _, in := range t[a][:KeySlots] {
 		switch {
 		case in.Mouse != 0:
 			if MouseButtons&(1<<(in.Mouse-1)) != 0 {
@@ -247,6 +373,54 @@ func (t *BindingTable) Held(a Action, keyStates []uint8) bool {
 		}
 	}
 	return false
+}
+
+// PadValue is how far the action's pad input is pushed, 0 to 1 — 0 for a hold
+// not yet held long enough, and for a tap (Held).
+func (t *BindingTable) PadValue(a Action) float32 {
+	in := t[a][PadSlot]
+	if !t.padLive(in) {
+		return 0
+	}
+	return PadValue(in.Pad)
+}
+
+// padLive reports whether a pad binding reads as its input's level right now:
+// a press does unless a hold shares its input, and a hold once held long
+// enough.
+func (t *BindingTable) padLive(in Input) bool {
+	switch {
+	case in.Pad == PadNone:
+		return false
+	case in.Hold:
+		return PadHoldReached(in.Pad)
+	}
+	return !t.HasHold(in.Pad)
+}
+
+// HasHold reports whether any action is bound to holding a pad input, which
+// turns the input's presses into taps.
+func (t *BindingTable) HasHold(p PadInput) bool {
+	if p == PadNone {
+		return false
+	}
+	h := HoldInput(p)
+	for a := range t {
+		if t[a][PadSlot] == h {
+			return true
+		}
+	}
+	return false
+}
+
+// Value is how far an action is pushed, 0 to 1: all the way for a held key or
+// button, the travel for a stick or trigger. Movement and driving read this, so
+// a stick pushed halfway walks at half speed.
+func (t *BindingTable) Value(a Action, keyStates []uint8) float32 {
+	if t.KeyHeld(a, keyStates) {
+		return 1
+	}
+	return t.PadValue(a)
 }
 
 // ActionsFor lists the actions an input triggers, in action order.
@@ -269,6 +443,9 @@ func (t *BindingTable) ActionsFor(in Input) []Action {
 // ActionHeld is Held on the player's layout.
 func ActionHeld(a Action, keyStates []uint8) bool { return Bindings.Held(a, keyStates) }
 
+// ActionValue is Value on the player's layout.
+func ActionValue(a Action, keyStates []uint8) float32 { return Bindings.Value(a, keyStates) }
+
 // contextsOverlap reports whether two actions can be live at the same moment.
 func contextsOverlap(a, b ActionContext) bool {
 	return a == CtxAlways || b == CtxAlways || a == b
@@ -277,9 +454,14 @@ func contextsOverlap(a, b ActionContext) bool {
 // Bind puts an input in one slot of an action, and takes it off any other
 // action that could be live at the same time — so pressing a key never does two
 // things, while Q can still be both "next weapon" on foot and "roll left" in a
-// cockpit. Binding the zero Input clears the slot.
+// cockpit. Binding the zero Input clears the slot. A pad input goes only in
+// PadSlot and a key or mouse button only in the others; one offered to the
+// wrong column is refused.
 func (t *BindingTable) Bind(a Action, slot int, in Input) {
 	if a < 0 || a >= ActionCount || slot < 0 || slot >= BindingSlots {
+		return
+	}
+	if in.Bound() && in.IsPad() != (slot == PadSlot) {
 		return
 	}
 	if in.Bound() {
@@ -309,6 +491,13 @@ func ReservedKey(sc sdl.Scancode) bool {
 	return sc >= sdl.SCANCODE_F1 && sc <= sdl.SCANCODE_F12
 }
 
+// ReservedPad is ReservedKey for a controller: Start is the pause menu (the
+// pad's Escape) and cancels a rebind, Back clears one (its Backspace), and
+// Guide belongs to the operating system.
+func ReservedPad(p PadInput) bool {
+	return p == PadStart || p == PadBack || p == PadGuide
+}
+
 // ---------- listening for a new binding ----------
 
 // bindCapture is a rebind waiting for the player's next press.
@@ -317,6 +506,9 @@ type bindCapture struct {
 	action Action
 	slot   int
 	done   func()
+	// padDown is a pad input pressed for the pad slot, which is bound when it
+	// either comes up (a press) or stays down PadHoldTime (a hold).
+	padDown PadInput
 }
 
 var capture bindCapture
@@ -350,11 +542,35 @@ func BindingCaptureActive() bool { return capture.active }
 // whether it was taken — a taken press must go no further, or the key the
 // player just bound would also act (or Escape would also close the menu).
 //
-// Escape cancels, Backspace and Delete clear the slot, a reserved key is
-// swallowed and ignored, and anything else is bound.
+// Escape or the pad's Start cancels, Backspace, Delete or the pad's Back clear
+// the slot, a reserved key is swallowed and ignored, and anything else is bound
+// — if it belongs in the slot's column. A pad input waits to be let go of
+// (CapturePadReleased, binding the press) or held (CapturePadHeld, binding the
+// hold), which is how a player picks between the two. A key pressed while the pad slot is
+// listening (or a pad button while a key slot is) is swallowed, so a player
+// can still back out with whichever they are holding.
 func CaptureBindingInput(in Input) bool {
 	if !capture.active {
 		return false
+	}
+	if in.IsPad() {
+		switch in.Pad {
+		case PadStart:
+			EndBindingCapture()
+			return true
+		case PadBack:
+			if capture.slot == PadSlot {
+				Bindings.Bind(capture.action, capture.slot, Input{})
+				ControlSettingsChanged = true
+			}
+			EndBindingCapture()
+			return true
+		}
+		if ReservedPad(in.Pad) || capture.slot != PadSlot {
+			return true
+		}
+		capture.padDown = in.Pad
+		return true
 	}
 	if in.Mouse == 0 {
 		switch in.Key {
@@ -370,6 +586,31 @@ func CaptureBindingInput(in Input) bool {
 		if ReservedKey(in.Key) {
 			return true
 		}
+	}
+	if capture.slot == PadSlot {
+		return true
+	}
+	Bindings.Bind(capture.action, capture.slot, in)
+	ControlSettingsChanged = true
+	EndBindingCapture()
+	return true
+}
+
+// CapturePadReleased finishes a capture waiting on a pad input that came up
+// before it was held: the press is bound. It reports whether it did.
+func CapturePadReleased(p PadInput) bool {
+	return finishPadCapture(p, GamepadInput(p))
+}
+
+// CapturePadHeld finishes a capture waiting on a pad input that has now been
+// held PadHoldTime: the hold is bound. It reports whether it did.
+func CapturePadHeld(p PadInput) bool {
+	return finishPadCapture(p, HoldInput(p))
+}
+
+func finishPadCapture(p PadInput, in Input) bool {
+	if !capture.active || p == PadNone || capture.padDown != p {
+		return false
 	}
 	Bindings.Bind(capture.action, capture.slot, in)
 	ControlSettingsChanged = true

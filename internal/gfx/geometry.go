@@ -10,7 +10,7 @@ import (
 	"foundry/internal/geom"
 	"foundry/internal/material"
 
-	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/gl/v4.3-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
 
@@ -378,8 +378,7 @@ func (g *Geometry) Load(vertices [][]float32, indices []int, texture string, pos
 		gl.GenBuffers(1, &g.Lbo)
 		gl.BindBuffer(gl.ARRAY_BUFFER, g.Lbo)
 		gl.BufferData(gl.ARRAY_BUFFER, len(light)*4, gl.Ptr(light), gl.STATIC_DRAW)
-		gl.EnableVertexAttribArray(AttribLight)
-		gl.VertexAttribPointerWithOffset(AttribLight, LightStride, gl.FLOAT, false, LightStride*4, 0)
+		BindLightLayout()
 	}
 
 	return nil
@@ -396,7 +395,19 @@ const (
 	AttribBoneIdx  = 3
 	AttribBoneWt   = 4
 	AttribLight    = 5
+	// AttribLightIndirect is the same baked-light buffer read again from its
+	// fifth float: the indirect part of the colour (see LightStride).
+	AttribLightIndirect = 6
 )
+
+// BindLightLayout points the two baked-light attributes at the LightStride
+// record in the ARRAY_BUFFER currently bound, in the VAO currently bound.
+func BindLightLayout() {
+	gl.EnableVertexAttribArray(AttribLight)
+	gl.VertexAttribPointerWithOffset(AttribLight, 4, gl.FLOAT, false, LightStride*4, 0)
+	gl.EnableVertexAttribArray(AttribLightIndirect)
+	gl.VertexAttribPointerWithOffset(AttribLightIndirect, 3, gl.FLOAT, false, LightStride*4, 4*4)
+}
 
 // BindVertexLayout points attributes 0 and 1 at the 5-float [X,Y,Z,U,V] record
 // in the ARRAY_BUFFER currently bound, in the VAO currently bound.
@@ -439,25 +450,27 @@ func (g *Geometry) BakedLightData() []float32 {
 
 // LightStride is the floats per vertex of baked light: the colour, then the
 // baked sun's share (compile.Face.SunShare), which the fragment stage scales
-// the sun's light by to take back off what a live shadow covers.
-const LightStride = 4
+// the sun's light by to take back off what a live shadow covers, then the
+// indirect part of the colour (compile.Face.Indirect), which live GI takes
+// back off before adding its own (render/gi.go).
+const LightStride = 7
 
 // deindexLight lays baked-light rows out per corner, as deindexVec3 does
-// normals, LightStride floats each. A row of three — a colour with no share,
-// as a test builds one — gets a share of 0: nothing to take back off.
+// normals, LightStride floats each. A shorter row — a colour with no share, or
+// a colour and share with no indirect part, as a test builds one — is padded
+// with zeros: nothing to take back off.
 func deindexLight(rows [][]float32, indices []int) []float32 {
 	if len(rows) == 0 {
 		return nil
 	}
 	out := make([]float32, 0, len(indices)*LightStride)
+	var pad [LightStride]float32
 	for _, idx := range indices {
-		switch {
-		case idx < len(rows) && len(rows[idx]) == LightStride:
+		if idx < len(rows) && len(rows[idx]) >= 3 && len(rows[idx]) <= LightStride {
 			out = append(out, rows[idx]...)
-		case idx < len(rows) && len(rows[idx]) == 3:
-			out = append(out, rows[idx][0], rows[idx][1], rows[idx][2], 0)
-		default:
-			out = append(out, 0, 0, 0, 0) // see deindexVec3
+			out = append(out, pad[:LightStride-len(rows[idx])]...)
+		} else {
+			out = append(out, pad[:]...) // see deindexVec3
 		}
 	}
 	return out
@@ -623,6 +636,53 @@ func (g Geometry) DrawWithTransform(model mgl32.Mat4) {
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
 	gl.DrawArrays(gl.TRIANGLES, 0, int32(len(g.Vertices)/5))
+}
+
+// AttribInstanceModel is the first of the four locations (7..10) an instanced
+// draw's per-instance model matrix takes — vertex.glsl's instanceModel.
+const AttribInstanceModel = 7
+
+// InstancedUniform is the world program's `instanced` location: 1 while a
+// draw takes its model matrices from AttribInstanceModel rather than `model`.
+var InstancedUniform int32
+
+// AttachInstanceMatrices points vao's instance-matrix attributes at buf: one
+// column-major mat4 per instance, advancing once per instance. The VAO keeps
+// the buffer's name, so buf may be refilled with BufferData without coming
+// back here.
+func AttachInstanceMatrices(vao, buf uint32) {
+	gl.BindVertexArray(vao)
+	gl.BindBuffer(gl.ARRAY_BUFFER, buf)
+	for i := uint32(0); i < 4; i++ {
+		loc := AttribInstanceModel + i
+		gl.EnableVertexAttribArray(loc)
+		gl.VertexAttribPointerWithOffset(loc, 4, gl.FLOAT, false, 64, uintptr(i*16))
+		gl.VertexAttribDivisor(loc, 1)
+	}
+	gl.BindVertexArray(0)
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+}
+
+// DrawInstanced draws count copies of the geometry through the world program,
+// each with its own model matrix: instances first..first+count of the buffer
+// AttachInstanceMatrices gave this geometry's VAO. Every other piece of state
+// is DrawWithTransform's, so an instanced prop looks exactly like one drawn
+// alone.
+func (g Geometry) DrawInstanced(first, count int) {
+	if len(g.Vertices) == 0 || count <= 0 {
+		return
+	}
+	st := g.SurfaceState()
+	gl.UseProgram(Program)
+	gl.Uniform1i(InstancedUniform, 1)
+	gl.Uniform1i(BakedLightUniform, g.BakedLightFlag())
+	st.Apply()
+	ApplySkinUniforms(&worldSkinUniforms, Program, nil)
+	gl.BindVertexArray(g.Vao)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, Textures[st.Texture])
+	gl.DrawArraysInstancedBaseInstance(gl.TRIANGLES, 0, int32(len(g.Vertices)/5), int32(count), uint32(first))
+	gl.Uniform1i(InstancedUniform, 0)
 }
 
 // DrawLinesWithTransform renders the geometry as a line list rather than as

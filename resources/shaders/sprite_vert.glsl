@@ -1,4 +1,4 @@
-#version 410
+#version 430
 
 // sprite_vert.glsl — colour-pass vertex stage for the instanced sprite pass.
 //
