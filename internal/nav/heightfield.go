@@ -37,6 +37,7 @@ import (
 	"math"
 	"sort"
 
+	"foundry/internal/meshcollide"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -112,6 +113,11 @@ type solid struct {
 	max     mgl32.Vec3
 	// hash identifies the solid's world-space shape, for the tile cache.
 	hash uint64
+	// closed marks a watertight mesh (a cooked Nanite mesh in the mesh mode
+	// whose collision cut has no open edge): one solid for the whole mesh,
+	// and its spans are found by parity rather than by min and max, because
+	// a closed mesh need not be convex — see paritySpans.
+	closed bool
 }
 
 // Solids gathers the level geometry navigation is built against: every solid,
@@ -179,6 +185,91 @@ func gatherSolids(lvl *world.Level) []solid {
 		}
 		if ch.Terrain != nil {
 			out = appendTerrainSolids(out, ch.Terrain, m)
+		}
+	}
+	return appendScenerySolids(out, lvl)
+}
+
+// appendScenerySolids adds the solid props that collide as themselves — a
+// cooked Nanite mesh in the hulls or mesh mode (docs/nanite/PHASE_2b.md) —
+// in world space, so an agent is routed round a rock and up a cliff by the
+// same shape collision stops it at.
+//
+// A hull is a convex solid, which is exactly what a brush is to rasterise:
+// one solid, its faces the hull's triangles. The mesh mode is two cases. A
+// watertight mesh is one solid whose spans are found by parity
+// (paritySpans), because a brush's lowest-to-highest span would fill in the
+// space under an overhang. An open mesh is a sheet with no inside, and
+// becomes one solid per triangle — terrain's reason for one per run — each
+// floor from above.
+//
+// Box-mode props stay out, as scenery always has: an agent meets a crate at
+// collision and re-paths.
+func appendScenerySolids(out []solid, lvl *world.Level) []solid {
+	for si := range lvl.Scenery {
+		sc := &lvl.Scenery[si]
+		mode := sc.CollisionMode()
+		if mode != meshcollide.ModeHulls && mode != meshcollide.ModeMesh {
+			continue
+		}
+		d := sc.CollisionData()
+		m := sc.ModelMatrix()
+		toWorld := func(p mgl32.Vec3) mgl32.Vec3 {
+			r := m.Mul4x1(p.Vec4(1))
+			return mgl32.Vec3{r.X(), r.Y(), r.Z()}
+		}
+		add := func(s *solid, pts []mgl32.Vec3, up bool) {
+			n := newellNormal(pts)
+			if up && n.Y() < 0 {
+				n = n.Mul(-1)
+			}
+			// s.min/s.max start at one of the solid's own points.
+			for _, p := range pts {
+				s.min = mgl32.Vec3{min32(s.min.X(), p.X()), min32(s.min.Y(), p.Y()), min32(s.min.Z(), p.Z())}
+				s.max = mgl32.Vec3{max32(s.max.X(), p.X()), max32(s.max.Y(), p.Y()), max32(s.max.Z(), p.Z())}
+			}
+			s.faces = append(s.faces, pts)
+			s.normals = append(s.normals, n)
+		}
+		// A mirroring placement turns the winding inside out.
+		flip := m.Mat3().Det() < 0
+		tri := func(a, b, c mgl32.Vec3) []mgl32.Vec3 {
+			if flip {
+				return []mgl32.Vec3{toWorld(a), toWorld(c), toWorld(b)}
+			}
+			return []mgl32.Vec3{toWorld(a), toWorld(b), toWorld(c)}
+		}
+		if mode == meshcollide.ModeHulls {
+			for hi := range d.Hulls {
+				h := &d.Hulls[hi]
+				s := solid{min: toWorld(h.Pts[0]), max: toWorld(h.Pts[0])}
+				for k := 0; k+2 < len(h.Tris); k += 3 {
+					add(&s, tri(h.Pts[h.Tris[k]], h.Pts[h.Tris[k+1]], h.Pts[h.Tris[k+2]]), false)
+				}
+				s.hash = hashSolid(&s)
+				out = append(out, s)
+			}
+			continue
+		}
+		if d.OpenEdges == 0 && d.NonManifold == 0 {
+			// Watertight: one solid, its spans by parity.
+			first := toWorld(d.Dequantize(d.Tris[0]))
+			s := solid{min: first, max: first, closed: true}
+			for t := 0; t < d.TriangleCount(); t++ {
+				ix := d.Tris[3*t : 3*t+3]
+				add(&s, tri(d.Dequantize(ix[0]), d.Dequantize(ix[1]), d.Dequantize(ix[2])), false)
+			}
+			s.hash = hashSolid(&s)
+			out = append(out, s)
+			continue
+		}
+		for t := 0; t < d.TriangleCount(); t++ {
+			ix := d.Tris[3*t : 3*t+3]
+			pts := tri(d.Dequantize(ix[0]), d.Dequantize(ix[1]), d.Dequantize(ix[2]))
+			s := solid{min: pts[0], max: pts[0]}
+			add(&s, pts, true)
+			s.hash = hashSolid(&s)
+			out = append(out, s)
 		}
 	}
 	return out
@@ -298,6 +389,7 @@ func rasterise(solids []solid, origin mgl32.Vec2, cell float32, w, d int, maxSlo
 
 	// Per-solid scratch covering the solid's own footprint.
 	var accMin, accMax, accNY []float32
+	var closedHits [][]faceRange
 	var clipA, clipB []mgl32.Vec3
 	var edgeBuf []edge2D
 
@@ -313,6 +405,12 @@ func rasterise(solids []solid, origin mgl32.Vec2, cell float32, w, d int, maxSlo
 		accMin, accMax, accNY = accMin[:n], accMax[:n], accNY[:n]
 		for k := 0; k < n; k++ {
 			accMin[k], accMax[k], accNY[k] = float32(math.Inf(1)), float32(math.Inf(-1)), -2
+		}
+		if s.closed {
+			if cap(closedHits) < n {
+				closedHits = make([][]faceRange, n)
+			}
+			closedHits = closedHits[:n]
 		}
 
 		for fi, face := range s.faces {
@@ -346,19 +444,51 @@ func rasterise(solids []solid, origin mgl32.Vec2, cell float32, w, d int, maxSlo
 					ax, az := x0+edgeEps*cell, z0+edgeEps*cell
 					bx, bz := x0+cell-edgeEps*cell, z0+cell-edgeEps*cell
 					k := (i - i0) + (j-j0)*fw
+					// A closed solid keeps each face's own range in the
+					// column, for the parity walk below; anything else
+					// folds it into the column's one span.
+					fy := faceRange{lo: float32(math.Inf(1)), hi: float32(math.Inf(-1)), ny: ny}
+					put := func(y float32) {
+						if s.closed {
+							fy.lo, fy.hi = min32(fy.lo, y), max32(fy.hi, y)
+						} else {
+							accumulate(accMin, accMax, accNY, k, y, ny)
+						}
+					}
 					if flat && insideEdges(edges, ax, az) && insideEdges(edges, bx, az) &&
 						insideEdges(edges, ax, bz) && insideEdges(edges, bx, bz) {
 						for _, c := range [4][2]float32{{ax, az}, {bx, az}, {ax, bz}, {bx, bz}} {
-							accumulate(accMin, accMax, accNY, k, (planeD-n.X()*c[0]-n.Z()*c[1])/ny, ny)
+							put((planeD - n.X()*c[0] - n.Z()*c[1]) / ny)
 						}
-						continue
+					} else {
+						clipA = clipPolyToRect(face, ax, az, bx, bz, clipA[:0], &clipB)
+						for _, p := range clipA {
+							put(p.Y())
+						}
 					}
-					clipA = clipPolyToRect(face, ax, az, bx, bz, clipA[:0], &clipB)
-					for _, p := range clipA {
-						accumulate(accMin, accMax, accNY, k, p.Y(), ny)
+					if s.closed && fy.lo <= fy.hi {
+						closedHits[k] = append(closedHits[k], fy)
 					}
 				}
 			}
+		}
+
+		if s.closed {
+			for j := 0; j < fd; j++ {
+				for i := 0; i < fw; i++ {
+					k := i + j*fw
+					if len(closedHits[k]) == 0 {
+						continue
+					}
+					c := (i + i0) + (j+j0)*h.W
+					for _, sp := range paritySpans(closedHits[k], maxSlopeCos) {
+						recs = append(recs, rec{span: sp, next: head[c]})
+						head[c] = int32(len(recs) - 1)
+					}
+					closedHits[k] = closedHits[k][:0]
+				}
+			}
+			continue
 		}
 
 		for j := 0; j < fd; j++ {
@@ -412,6 +542,78 @@ func rasterise(solids []solid, origin mgl32.Vec2, cell float32, w, d int, maxSlo
 	}
 	h.colStart[cols] = int32(len(h.spans))
 	return h
+}
+
+// faceRange is one face of a closed solid over one column: the Y range it
+// covers there, and which way it faces.
+type faceRange struct {
+	lo, hi, ny float32
+}
+
+// paritySpans is a closed solid's spans over one column, from the faces that
+// cross it. A brush is convex, so its one span is from its lowest face to its
+// highest; a closed mesh is not — a mesa with a cave, a rock arch — so the
+// column is walked upward instead: a face looking down is where the solid
+// starts, a face looking up is where it ends, and the top of each run is
+// floor if its face is shallow enough to stand on. Neighbouring faces of one
+// surface (several triangles of a floor in one column) are taken as one
+// crossing, and a steep face — a cliff within the column — is a span of its
+// own, standing in whatever it is part of.
+func paritySpans(hits []faceRange, maxSlopeCos float32) []span {
+	const steep = 0.2
+	const join = 0.05
+	var out []span
+	var level []faceRange
+	for _, h := range hits {
+		if abs32(h.ny) < steep {
+			out = append(out, span{min: h.lo, max: h.hi})
+			continue
+		}
+		level = append(level, h)
+	}
+	sort.Slice(level, func(a, b int) bool { return level[a].lo+level[a].hi < level[b].lo+level[b].hi })
+	// One crossing per surface: same facing, touching ranges.
+	var cross []faceRange
+	for _, h := range level {
+		if n := len(cross); n > 0 && (cross[n-1].ny > 0) == (h.ny > 0) && h.lo <= cross[n-1].hi+join {
+			c := &cross[n-1]
+			c.lo, c.hi = min32(c.lo, h.lo), max32(c.hi, h.hi)
+			if h.ny > 0 {
+				c.ny = min32(c.ny, h.ny) // the steeper of a surface's faces decides
+			}
+			continue
+		}
+		cross = append(cross, h)
+	}
+	depth := 0
+	var start float32
+	for _, c := range cross {
+		if c.ny < 0 {
+			if depth == 0 {
+				start = c.lo
+			}
+			depth++
+			continue
+		}
+		if depth == 0 {
+			// A top with no bottom under it in this column: a sheet.
+			out = append(out, span{min: c.lo, max: c.hi, walkable: c.ny >= maxSlopeCos})
+			continue
+		}
+		depth--
+		if depth == 0 {
+			out = append(out, span{min: start, max: c.hi, walkable: c.ny >= maxSlopeCos})
+		}
+	}
+	if depth > 0 {
+		// A bottom with no top over it: solid to the highest thing here.
+		top := start
+		for _, h := range hits {
+			top = max32(top, h.hi)
+		}
+		out = append(out, span{min: start, max: top})
+	}
+	return out
 }
 
 // accumulate folds one point of a face clipped to column k into that column's

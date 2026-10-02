@@ -20,7 +20,8 @@ package harness
 // by name at the moment it is called, so nothing before then would notice.
 //
 // It exits non-zero on any problem, which is what makes it usable from a
-// generator's own build step.
+// generator's own build step. Warnings — a prop's collision worth a second
+// look (checkSceneryCollision) — are printed and do not fail it.
 
 import (
 	"errors"
@@ -92,6 +93,7 @@ func CheckMain(root string, args []string, out io.Writer) int {
 			name, len(l.Chunks), len(l.Entities), len(l.Volumes),
 			len(l.Lights.Points)+len(l.Lights.Directional), len(l.Sounds), len(l.Emitters), len(l.Decals))
 		bad += checkDecals(out, name, &lvl)
+		checkSceneryCollision(out, &lvl)
 	}
 
 	// Every screen too.
@@ -183,6 +185,45 @@ func CheckMain(root string, args []string, out io.Writer) int {
 	}
 	fmt.Fprintln(out, "\nall clear")
 	return 0
+}
+
+// checkSceneryCollision prints a warning for each prop whose collision is
+// worth a second look (world.SceneryCollisionWarnings): a solid prop that
+// collides as nothing, and a cooked mesh whose hulls hit a cap or fill in
+// behind an open side. Warnings, not problems: the level plays, and the
+// author may well mean it. A warning about a mesh is the same for every
+// placement of it in the same mode, so a field of two hundred rocks is one
+// line naming the first and counting the rest.
+func checkSceneryCollision(out io.Writer, lvl *world.Level) int {
+	type group struct {
+		first, model, mode, text string
+		n                        int
+	}
+	var order []string
+	groups := map[string]*group{}
+	for i := range lvl.Scenery {
+		s := &lvl.Scenery[i]
+		mode := s.CollisionMode().String()
+		for _, w := range world.SceneryCollisionWarnings(s) {
+			key := s.Model + "\x00" + mode + "\x00" + w
+			g := groups[key]
+			if g == nil {
+				g = &group{first: s.ID, model: s.Model, mode: mode, text: w}
+				groups[key] = g
+				order = append(order, key)
+			}
+			g.n++
+		}
+	}
+	for _, key := range order {
+		g := groups[key]
+		who := "scenery " + g.first
+		if g.n > 1 {
+			who = fmt.Sprintf("scenery %s and %d more placements", g.first, g.n-1)
+		}
+		fmt.Fprintf(out, "  WARNING %s (%s, collision %s): %s\n", who, g.model, g.mode, g.text)
+	}
+	return len(order)
 }
 
 // checkDecals reports every decal that projects onto nothing, and returns how

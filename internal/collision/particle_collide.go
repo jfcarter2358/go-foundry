@@ -65,6 +65,13 @@ func ParticleCollide(lvl *world.Level, from, to mgl32.Vec3, r float32) (pos, nor
 			found, hitPoint, hitNormal = true, p, n
 		}
 	}
+	// And the solid props in the column, in their collision modes
+	// (scenery_mesh.go): a spark lands on a cooked rock where a boot would.
+	if p, n, ok := probeScenery(lvl, from, to, descending); ok {
+		if !found || (descending && p.Y() > hitPoint.Y()) || (!descending && p.Y() < hitPoint.Y()) {
+			found, hitPoint, hitNormal = true, p, n
+		}
+	}
 	if !found {
 		return to, mgl32.Vec3{}, false
 	}

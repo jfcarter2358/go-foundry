@@ -57,6 +57,45 @@ type Manifest struct {
 	StartLevel string `yaml:"start_level"`
 
 	Window Window `yaml:"window,omitempty"`
+
+	// Nanite holds the project's settings for cooking Nanite meshes.
+	Nanite Nanite `yaml:"nanite,omitempty"`
+}
+
+// Nanite is game.yaml's nanite block: project-wide settings a cook of every
+// mesh uses (internal/nanitecook reads it through ReadNanite). Zero fields
+// take the cook's defaults.
+type Nanite struct {
+	// CollisionError is the world-space error, in metres, of the cut a
+	// cooked mesh collides with (docs/nanite/PHASE_2b.md). Default 0.03.
+	CollisionError float32 `yaml:"collision_error,omitempty"`
+	// CollisionMaxHulls and CollisionMaxHullVerts cap the convex
+	// decomposition. Defaults 16 and 128.
+	CollisionMaxHulls     int `yaml:"collision_max_hulls,omitempty"`
+	CollisionMaxHullVerts int `yaml:"collision_max_hull_verts,omitempty"`
+	// CollisionAutoSize is the largest placement, in metres, the auto mode
+	// gives hulls; anything bigger collides as a mesh. Default 4.
+	CollisionAutoSize float32 `yaml:"collision_auto_size,omitempty"`
+}
+
+// ReadNanite reads only the nanite block of the manifest at path — leniently,
+// so a cook in a project whose manifest is incomplete (no start level yet)
+// still finds its settings. A missing file is the zero block.
+func ReadNanite(path string) (Nanite, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Nanite{}, nil
+		}
+		return Nanite{}, err
+	}
+	var doc struct {
+		Nanite Nanite `yaml:"nanite"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return Nanite{}, fmt.Errorf("%s: %w", FileName, err)
+	}
+	return doc.Nanite, nil
 }
 
 // Default is what a manifest field means when the file does not set it.

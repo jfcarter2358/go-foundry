@@ -32,6 +32,7 @@ import (
 	"foundry/internal/script"
 	"foundry/internal/ui"
 	"foundry/internal/world"
+	"time"
 
 	"github.com/go-gl/mathgl/mgl32"
 )
@@ -285,6 +286,7 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 	}
 	render.ProfileBegin("entity update")
 	collision.EntityUpdate(lvl, entityDT, g.Play(), world.PlayerEntity)
+	reportSceneryCollision()
 	render.ProfileEnd()
 	// The player's own viewmodel is not in level.Entities (see entity.go), so
 	// EntityUpdate's walk never reaches it. Ticked on the same entityDT —
@@ -452,4 +454,26 @@ func Step(lvl *world.Level, dt float32, g Gates, in Input) {
 		hasPlayer := world.PlayerEntity != nil
 		gfx.StepCameraRig(camDT, g.Play() && hasPlayer, hasPlayer)
 	}
+}
+
+// reportSceneryCollision hands the frame's prop-collision numbers to the F3
+// overlay: the CPU its queries took this frame — the player's move, the AI's
+// rays and the entity pass all ask, so the time is summed where it happens
+// (collision.TakeSceneryStats) and shown as rows under "entity update" — and
+// the props by mode with how many cooked meshes are resident. Timing is on
+// only while the profiler is.
+func reportSceneryCollision() {
+	collision.ProfileScenery = render.ProfileEnabled
+	if !render.ProfileEnabled && !render.DebugOverlayVisible {
+		return
+	}
+	st := collision.TakeSceneryStats()
+	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+	render.ProfileAddCPU("props: resolve", ms(st.ResolveTime))
+	render.ProfileAddCPU("props: rays", ms(st.RayTime))
+	render.ProfileAddCPU("props: particles", ms(st.ParticleTime))
+	render.ProfileAddCPU("props: index", ms(st.BuildTime))
+	render.DebugStats.CollisionBox, render.DebugStats.CollisionHulls, render.DebugStats.CollisionMesh = st.Box, st.Hulls, st.Mesh
+	render.DebugStats.CollisionResident = st.Resident
+	render.DebugStats.CollisionResidentKB = float32(st.ResidentBytes) / 1024
 }

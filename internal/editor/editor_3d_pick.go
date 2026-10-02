@@ -870,6 +870,8 @@ func editorRenderInteractiveOverlays(projView mgl32.Mat4, withVertexHandles bool
 	drawSelectedSpriteOutline(ws().camPos())
 	drawSelectedDecalOutline()
 	drawSelectedSceneryOutline()
+	// What the selected prop collides as, when Show collision is on.
+	drawSelectedSceneryCollision()
 	// The brush's footprint ring, on the same terms: it says where the next
 	// stamp lands, which is exactly the thing the panel cannot show. The brush
 	// stamp's box says the same thing about the next solid.

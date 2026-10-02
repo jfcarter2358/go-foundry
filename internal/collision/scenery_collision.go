@@ -22,6 +22,7 @@ package collision
 // kept in step with the originals by hand.
 
 import (
+	"foundry/internal/meshcollide"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -56,7 +57,13 @@ func sceneryProxy(s *world.Scenery) (world.Entity, bool) {
 }
 
 // ResolveSceneryCollisions pushes every body that resolves against the world
-// out of every solid prop, and reports the indices of the entities it moved.
+// out of every solid prop in the box mode, and reports the indices of the
+// entities it moved. A cooked mesh in the hulls or mesh mode is not here: it
+// is part of the resolve chain a body runs as it moves (scenery_mesh.go).
+//
+// The props come from the placement broadphase (scenery_index.go), so a body
+// is tested against the few whose boxes its own box reaches rather than
+// every prop in the level.
 //
 // Only bodies in world space take part. A prop is authored in world
 // coordinates and an entity riding a vehicle describes itself in that vehicle's
@@ -66,20 +73,38 @@ func ResolveSceneryCollisions(lvl *world.Level, player *world.Entity) []int {
 	if lvl == nil || len(lvl.Scenery) == 0 || !world.EntityWorldCollisionEnabled {
 		return nil
 	}
-
-	// The props first, once: building a proxy is cheap but it is not free, and
-	// the loop below visits every one of them per body.
-	proxies := make([]world.Entity, 0, len(lvl.Scenery))
-	for i := range lvl.Scenery {
-		if p, ok := sceneryProxy(&lvl.Scenery[i]); ok {
-			proxies = append(proxies, p)
-		}
-	}
-	if len(proxies) == 0 {
+	ix := sceneryIndexFor(lvl)
+	if ix == nil || ix.byMode[meshcollide.ModeBox] == 0 {
 		return nil
 	}
+	start := profStart()
+	defer profStop(start, &sceneryStats.resolveTime)
 
-	moved := map[int]bool{}
+	// against resolves one body against the box-mode props its box reaches.
+	// The proxy is immovable, so only the first result is ever true.
+	against := func(e *world.Entity) bool {
+		lo, hi, ok := e.CollisionAABB()
+		if !ok {
+			return false
+		}
+		moved := false
+		var near [16]*sceneryEntry
+		cand := near[:0]
+		ix.overlapping(lo, hi, func(se *sceneryEntry) bool {
+			if se.mode == meshcollide.ModeBox {
+				cand = append(cand, se)
+			}
+			return true
+		})
+		for _, se := range cand {
+			if mv, _ := resolveEntityOverlap(e, &se.proxy); mv {
+				moved = true
+			}
+		}
+		return moved
+	}
+
+	var out []int
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]
 		// CollidesWithWorld rather than CollidesWithEntities — see the file
@@ -88,12 +113,8 @@ func ResolveSceneryCollisions(lvl *world.Level, player *world.Entity) []int {
 		if e.Frame != "" || !e.CollidesWithWorld() || !e.HasBounds() {
 			continue
 		}
-		for pi := range proxies {
-			// Only the first result is ever true: the proxy is immovable, so
-			// the whole separation goes to the entity.
-			if mv, _ := resolveEntityOverlap(e, &proxies[pi]); mv {
-				moved[i] = true
-			}
+		if against(e) {
+			out = append(out, i)
 		}
 	}
 
@@ -101,16 +122,7 @@ func ResolveSceneryCollisions(lvl *world.Level, player *world.Entity) []int {
 	// construction (the main loop's own path, not the flag), so it resolves
 	// against the level's furniture too.
 	if player != nil && player.Frame == "" && player.HasBounds() {
-		for pi := range proxies {
-			resolveEntityOverlap(player, &proxies[pi])
-		}
-	}
-
-	out := make([]int, 0, len(moved))
-	for i := range lvl.Entities {
-		if moved[i] {
-			out = append(out, i)
-		}
+		against(player)
 	}
 	return out
 }

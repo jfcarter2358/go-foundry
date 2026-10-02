@@ -209,7 +209,10 @@ Run them from the project directory, or point `-root` at it.
 `#tag` are resolved for real — it is what catches a script naming something that
 is not there, and a script writing a property the engine will refuse. Every
 `.fui` is loaded too. It exits non-zero on any problem, which is what makes it
-usable from a generator's own build step.
+usable from a generator's own build step. It also prints **warnings**, which do
+not fail it: a prop whose [collision](14-scenery-brush.md#nanite-collision) is
+worth a second look (hulls cut short by the hull cap, hulls of a mesh with open
+edges, a solid prop that collides as nothing), one line per mesh.
 
 **`ai check`** is the same question asked of a decision tree (`.fai`): does it
 compile, does every link point at a node, does every field parse, is anything

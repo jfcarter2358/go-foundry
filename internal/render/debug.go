@@ -54,6 +54,12 @@ var DebugStats struct {
 	// NaniteTriangles is the triangles the camera's GPU cull drew, counted
 	// only while FOUNDRY_NANITE_STATS=1 (it reads the commands back).
 	NaniteTriangles int
+	// The props' collision (collision/scenery_index.go): solid placements by
+	// the mode they collide in, and how many cooked meshes have their
+	// collision decoded because a body or a ray came near.
+	CollisionBox, CollisionHulls, CollisionMesh int
+	CollisionResident                           int
+	CollisionResidentKB                         float32
 	// The sprite pass. Particles is how many quads the emitters put up this
 	// frame and SpriteDraws how many draw calls that took — the two numbers an
 	// author needs together, because one large batch and a thousand tiny ones
@@ -194,6 +200,11 @@ func DebugOverlayLines() []DebugLine {
 	line("Sprites:      %d quads / %d particles / %d draws",
 		DebugStats.Sprites, DebugStats.Particles, DebugStats.SpriteDraws)
 	line("Scenery:      %d drawn", DebugStats.Scenery)
+	if DebugStats.CollisionHulls > 0 || DebugStats.CollisionMesh > 0 {
+		line("Prop collision: %d box / %d hulls / %d mesh, %d meshes resident (%.0f KB)",
+			DebugStats.CollisionBox, DebugStats.CollisionHulls, DebugStats.CollisionMesh,
+			DebugStats.CollisionResident, DebugStats.CollisionResidentKB)
+	}
 	if DebugStats.NaniteClusters > 0 || DebugStats.NaniteInstances > 0 {
 		line("Nanite:       %d placements, %d clusters to the GPU cull", DebugStats.NaniteInstances, DebugStats.NaniteClusters)
 		if NaniteStats {

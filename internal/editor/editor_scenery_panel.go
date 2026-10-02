@@ -227,25 +227,6 @@ func editorSceneryTransform(s *world.Scenery) {
 	}
 }
 
-// editorSceneryCollision draws the one flag, and says what the volume behind it
-// actually is — a prop's bounds are read off its model rather than authored, so
-// there is nothing here to edit and everything to explain.
-func editorSceneryCollision(s *world.Scenery) {
-	if imgui.Checkbox("Solid##scsolid", &s.Solid) {
-		EditorPushUndo()
-	}
-	if imgui.IsItemHovered() {
-		imgui.SetTooltip("Stops the player and any entity that collides with\nthe world. Switch off for grass and decals.")
-	}
-	if !s.HasBounds() {
-		editorTextMutedWrapped("No volume: the model is flat on an axis, or has not loaded. Nothing will collide with this.")
-		return
-	}
-	h := s.BoundHalfExtents()
-	editorTextMutedWrapped(fmt.Sprintf("Box from the model: %.2f x %.2f x %.2f",
-		h.X()*2, h.Y()*2, h.Z()*2))
-}
-
 // editorSceneryActions draws the whole-object buttons.
 func editorSceneryActions(s *world.Scenery) {
 	if imgui.Button("Duplicate##scdup") {

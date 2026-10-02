@@ -127,6 +127,9 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (res PlayerMov
 	// moving ship work: none of the arithmetic changes, only the space it is
 	// expressed in.
 	frame := lvl.Frames.FrameFor(p)
+	// The player moves before the entities do, so it starts the placement
+	// broadphase's tick too (scenery_index.go).
+	Epoch()
 
 	// A seated occupant is constrained, not simulated. Pinning every frame
 	// rather than once on sitting down is what keeps them in the chair while
@@ -238,6 +241,13 @@ func MovePlayer(p *world.Entity, lvl *world.Level, mv PlayerMove) (res PlayerMov
 		// walked into only if its floor was flush with the ground outside.
 		resolve := func(pos mgl32.Vec3) (mgl32.Vec3, bool, bool) {
 			pos, hitFloor, hitCeiling := pushOutOfChunksBrushes(chunks, pos, radius, p.BoundHalfY)
+			// Cooked meshes in the hulls and mesh modes (scenery_mesh.go),
+			// for a body in world space.
+			if frame.IsWorld() {
+				var sf, sc bool
+				pos, sf, sc = pushOutOfScenery(lvl, pos, radius, p.BoundHalfY)
+				hitFloor, hitCeiling = hitFloor || sf, hitCeiling || sc
+			}
 			out, eFloor, eCeiling := resolveAgainstEntityBrushes(
 				lvl, p, frame, pos, radius, p.BoundHalfY)
 			return out, hitFloor || eFloor, hitCeiling || eCeiling

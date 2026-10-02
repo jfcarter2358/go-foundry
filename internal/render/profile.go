@@ -193,6 +193,33 @@ func ProfileEnd() {
 	s.used[prof.slot] = n + 1
 }
 
+// ProfileAddCPU adds ms of CPU time to a row named name under the open
+// section, with no GPU half: work that is not one contiguous span of the
+// frame — the scenery collision's queries, spread through the player's move,
+// the AI and the entity pass — measured where it happens and reported here
+// as one total. A row that is only ever added to reads zero on the GPU.
+func ProfileAddCPU(name string, ms float64) {
+	if !ProfileEnabled {
+		return
+	}
+	if prof.byName == nil {
+		prof.byName = map[profKey]int{}
+	}
+	key := profKey{parent: -1, name: name}
+	if n := len(prof.stack); n > 0 {
+		key.parent = prof.stack[n-1]
+	}
+	i, ok := prof.byName[key]
+	if !ok {
+		i = len(prof.sections)
+		prof.byName[key] = i
+		prof.sections = append(prof.sections, &profSection{name: name, depth: len(prof.stack)})
+	}
+	s := prof.sections[i]
+	s.seen = prof.frame
+	s.cpuFrame += ms
+}
+
 // ProfileSamples is every section seen so far, in first-seen order. A section
 // that has not run for a second's worth of frames reads as zero rather than as
 // the last thing it measured.

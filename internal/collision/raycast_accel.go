@@ -765,13 +765,8 @@ func LineBlocked(lvl *world.Level, from, to mgl32.Vec3, ignore map[string]bool) 
 	if q.hit {
 		return true
 	}
-	limit := dist
-	for i := range lvl.Scenery {
-		if t, ok := sceneryHit(&lvl.Scenery[i], from, dir, limit, ignore); ok && t <= limit {
-			return true
-		}
-	}
-	return false
+	_, _, _, hit := sceneryRayNearest(lvl, from, dir, dist, ignore, true)
+	return hit
 }
 
 // ---------- bodies ----------
@@ -793,37 +788,6 @@ func sphereReaches(origin, dir, centre mgl32.Vec3, radius, tMax float32) bool {
 // maxColumnScale is the largest factor a matrix stretches any axis by.
 func maxColumnScale(m mgl32.Mat4) float32 {
 	return maxf32(m.Col(0).Vec3().Len(), maxf32(m.Col(1).Vec3().Len(), m.Col(2).Vec3().Len()))
-}
-
-// sceneryHit tests one prop as a blocker, through the same proxy box a body is
-// stopped by.
-func sceneryHit(s *world.Scenery, origin, dir mgl32.Vec3, tMax float32, ignore map[string]bool) (float32, bool) {
-	if !s.Solid || !s.HasBounds() || (len(ignore) > 0 && ignore[s.ID]) {
-		return 0, false
-	}
-	// A sphere about the placement's origin wide enough for the box at any
-	// turn: the distance to the box's centre, which a rotation cannot change,
-	// plus the box's own half-diagonal. No matrix, no sine.
-	// Summed rather than square-rooted: the sum of a vector's components'
-	// sizes is never less than its length, so the sphere stays wide enough.
-	sc := s.EffectiveScale()
-	c := s.LocalMin.Add(s.LocalMax).Mul(0.5)
-	h := s.LocalMax.Sub(s.LocalMin).Mul(0.5)
-	var reach float32
-	for i := 0; i < 3; i++ {
-		k := absf(sc[i])
-		reach += (absf(c[i]) + h[i]) * k
-	}
-	if !sphereReaches(origin, dir, s.Position, reach*1.001+1e-4, tMax) {
-		return 0, false
-	}
-	proxy, ok := sceneryProxy(s)
-	if !ok {
-		return 0, false
-	}
-	m := mgl32.Translate3D(proxy.Position.X(), proxy.Position.Y(), proxy.Position.Z()).
-		Mul4(world.EulerMatrixYXZ(proxy.Rotation))
-	return rayBounds(origin, dir, m, proxy.BoundHalfExtents(), proxy.BoundingKind)
 }
 
 func absf(v float32) float32 {

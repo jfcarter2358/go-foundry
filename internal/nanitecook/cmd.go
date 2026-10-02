@@ -100,7 +100,7 @@ func cookMain(root string, args []string, out io.Writer) int {
 	failed := 0
 	for _, src := range sources {
 		start := time.Now()
-		res, err := CookFile(src, *dest, *force, Options{})
+		res, err := CookFile(src, *dest, *force, ProjectOptions())
 		if err != nil {
 			fmt.Fprintf(out, "%s: %v\n", src, err)
 			failed++
@@ -147,8 +147,12 @@ func Describe(m *nanite.Mesh) string {
 		sdf = fmt.Sprintf("SDF %d³", m.SDF.N)
 	}
 	size := m.Hi.Sub(m.Lo)
-	return fmt.Sprintf("%d triangles, %d vertices, %d clusters over %d LOD levels, fallback %d triangles, %s, size %.2f x %.2f x %.2f, slots [%s]",
-		m.TriangleCount(), m.VertexCount(), len(m.Clusters), m.Levels, len(m.Fallback)/3, sdf, size[0], size[1], size[2], strings.Join(slots, " "))
+	coll := "no collision"
+	if c := m.Collision; c != nil {
+		coll = fmt.Sprintf("collision %d triangles / %d hulls", c.TriangleCount(), len(c.Hulls))
+	}
+	return fmt.Sprintf("%d triangles, %d vertices, %d clusters over %d LOD levels, fallback %d triangles, %s, %s, size %.2f x %.2f x %.2f, slots [%s]",
+		m.TriangleCount(), m.VertexCount(), len(m.Clusters), m.Levels, len(m.Fallback)/3, sdf, coll, size[0], size[1], size[2], strings.Join(slots, " "))
 }
 
 func inspectMain(root string, args []string, out io.Writer) int {
@@ -196,6 +200,17 @@ func inspectMain(root string, args []string, out io.Writer) int {
 	}
 	fmt.Fprintf(out, "LOD tree: %d nodes, %d leaves; fallback cut at error %.4g: %d triangles\n",
 		len(m.Nodes), m.Leaves, m.FallbackError, len(m.Fallback)/3)
+	if c := m.Collision; c != nil {
+		cs := c.Settings
+		fmt.Fprintf(out, "collision: cut at error %.3g: %d of %d triangles kept (%d degenerate dropped, %d corners welded), %d vertices, %d tree nodes, %d open edges, %d non-manifold; %.1f KB\n",
+			cs.Error, c.TriangleCount(), c.SourceTriangles, c.Degenerate, c.Welded, c.VertexCount(), len(c.Nodes), c.OpenEdges, c.NonManifold, float64(c.Bytes())/1024)
+		verts := 0
+		for i := range c.Hulls {
+			verts += len(c.Hulls[i].Pts)
+		}
+		fmt.Fprintf(out, "hulls: %d (cap %d%s), %d vertices (cap %d a hull, %d capped), worst concavity %.3g; mode %s (auto: hulls up to %.3g across)\n",
+			len(c.Hulls), cs.MaxHulls, map[bool]string{true: ", HIT", false: ""}[c.HullCapHit], verts, cs.MaxHullVerts, c.VertCapped, c.Concavity, cs.Mode, cs.AutoSize)
+	}
 	for si, s := range m.Slots {
 		fmt.Fprintf(out, "slot %d %q: texture %q, clusters %d..%d (%d at full detail), double-sided %v\n",
 			si, s.Name, s.Texture, s.First, s.First+s.Count, s.BaseCount, s.DoubleSided)

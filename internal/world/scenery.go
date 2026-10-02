@@ -30,6 +30,7 @@ import (
 	"foundry/internal/fileutil"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/meshcollide"
 	"foundry/internal/nanite"
 	"log"
 
@@ -62,6 +63,12 @@ type Scenery struct {
 	// mostly to be walked around.
 	Solid bool
 
+	// Collision overrides how a cooked mesh collides (docs/nanite/PHASE_2b.md):
+	// auto — the mesh's own choice, hulls for a placement under its auto size
+	// and mesh above it — box, hulls, mesh or none. A model that is not
+	// cooked has no hulls or mesh to offer and always collides as its box.
+	Collision meshcollide.Mode
+
 	// ---------- runtime, never authored and never saved ----------
 
 	// Submeshes is the uploaded mesh, in model space — the draw carries
@@ -90,6 +97,12 @@ type Scenery struct {
 // (their cooked pool uploaded as an ordinary indexed mesh), which is the A/B
 // switch. Read when a placement loads.
 var NaniteMeshes = gfx.EnvFlag("FOUNDRY_NANITE_MESHES", true)
+
+// NaniteCollision is whether a cooked mesh may collide as its own shape —
+// its hulls or its collision cut (docs/nanite/PHASE_2b.md). On by default;
+// FOUNDRY_NANITE_COLLISION=0 puts every prop back on its bounding box, as
+// before the cook carried collision, for comparing the two.
+var NaniteCollision = gfx.EnvFlag("FOUNDRY_NANITE_COLLISION", true)
 
 // NaniteGPUAvailable reports whether the renderer can draw a cooked mesh
 // through the GPU cull. Set by internal/render, which owns the answer (it
@@ -223,6 +236,79 @@ func pickExtent(cond bool, a, b float32) float32 {
 		return a
 	}
 	return b
+}
+
+// ---------- collision ----------
+
+// CollisionData is the cooked mesh's collision, or nil for a model that is
+// not cooked.
+func (s *Scenery) CollisionData() *meshcollide.Data {
+	if s.Nanite == nil {
+		return nil
+	}
+	return s.Nanite.Collision
+}
+
+// CollisionSize is the placement's largest extent: what auto weighs against
+// the mesh's auto size.
+func (s *Scenery) CollisionSize() float32 {
+	h := s.BoundHalfExtents()
+	return 2 * max(h.X(), h.Y(), h.Z())
+}
+
+// CollisionMode is how this placement collides, resolved: none when it is
+// not solid, box for a model with no cooked collision (or a mode the cook
+// cannot serve), and otherwise the override or the mesh's choice by size.
+// A box needs a volume; the mesh mode does not, so a cooked sheet — a
+// ground patch flat on one axis — collides as itself where its box could
+// not.
+func (s *Scenery) CollisionMode() meshcollide.Mode {
+	if !s.Solid || s.Collision == meshcollide.ModeNone {
+		return meshcollide.ModeNone
+	}
+	m := meshcollide.ModeBox
+	if d := s.CollisionData(); d != nil && NaniteCollision {
+		m = d.Resolve(s.Collision, s.CollisionSize())
+	}
+	if m == meshcollide.ModeBox && !s.HasBounds() {
+		return meshcollide.ModeNone
+	}
+	return m
+}
+
+// SceneryCollisionWarnings is what is worth fixing about a prop's collision:
+// what `foundry check` prints, and the editor's Collision group with it. A
+// solid prop that collides as nothing; and, in the hulls mode, a
+// decomposition the hull cap cut short, hulls capped to fewer points than
+// keep them near the surface, and hulls of a mesh with open edges, which
+// fill in the space behind its open side.
+func SceneryCollisionWarnings(s *Scenery) []string {
+	var out []string
+	mode := s.CollisionMode()
+	if s.Solid && mode == meshcollide.ModeNone {
+		if s.Collision == meshcollide.ModeNone {
+			out = append(out, "solid, but its collision mode is none: nothing stops at it")
+		} else {
+			out = append(out, "solid, but it has no volume to collide with")
+		}
+	}
+	d := s.CollisionData()
+	if d == nil || mode != meshcollide.ModeHulls {
+		return out
+	}
+	set := d.Settings.Resolved()
+	if d.HullCapHit {
+		out = append(out, fmt.Sprintf("the convex decomposition stopped at the hull cap (%d): its hulls bridge hollows up to %.2f m deep (game.yaml nanite.collision_max_hulls, or the mesh mode)",
+			set.MaxHulls, d.Concavity))
+	}
+	if d.VertCapped > 0 && d.VertCapError > set.Concavity {
+		out = append(out, fmt.Sprintf("%d hulls were capped to %d points, which moved their surface up to %.2f m (game.yaml nanite.collision_max_hull_verts)",
+			d.VertCapped, set.MaxHullVerts, d.VertCapError))
+	}
+	if d.OpenEdges > 0 {
+		out = append(out, fmt.Sprintf("its mesh has %d open edges, and hulls fill in behind an open side: the mesh mode follows the surface", d.OpenEdges))
+	}
+	return out
 }
 
 // ---------- loading ----------
@@ -420,7 +506,19 @@ func SceneryFromRaw(r RawScenery) Scenery {
 		Scale:     vec3FromRawPtr(r.Scale, mgl32.Vec3{1, 1, 1}),
 		Solid:     BoolDefault(r.Solid, true),
 		Materials: copyStringMap(r.Materials),
+		Collision: collisionModeFromRaw(r.ID, r.Collision),
 	}
+}
+
+// collisionModeFromRaw reads a placement's collision: key. A value that is
+// not a mode is logged and read as auto — a level should not refuse to open
+// over a typo in one prop.
+func collisionModeFromRaw(id, v string) meshcollide.Mode {
+	m, ok := meshcollide.ParseMode(v)
+	if !ok {
+		log.Printf("scenery %s: collision %q is not one of %v; using auto", id, v, meshcollide.ModeNames())
+	}
+	return m
 }
 
 func copyStringMap(m map[string]string) map[string]string {
@@ -446,6 +544,9 @@ func SceneryToRaw(s *Scenery) RawScenery {
 		Solid:    BoolPtrIfFalse(s.Solid),
 
 		Materials: copyStringMap(s.Materials),
+	}
+	if s.Collision != meshcollide.ModeAuto {
+		r.Collision = s.Collision.String()
 	}
 	if sc := s.EffectiveScale(); sc != (mgl32.Vec3{1, 1, 1}) {
 		r.Scale = &RawVec3{X: sc.X(), Y: sc.Y(), Z: sc.Z()}

@@ -28,6 +28,11 @@ package nanitecook
 //     and the fallback mesh: one cut of the DAG at a middle level's error.
 //  5. Bound it, and bake its distance grid for GI from the fallback mesh at
 //     a resolution sized to the mesh (sdfResolution).
+//  6. Its collision (internal/meshcollide): the DAG cut at a fixed
+//     world-space error (Options.Collision.Error, a few centimetres), cleaned,
+//     quantised and put under a tree for the mesh mode, and split into convex
+//     hulls for the hulls mode. The settings are folded into the source hash,
+//     so a project that changes them (game.yaml's nanite block) re-cooks.
 
 import (
 	"crypto/sha256"
@@ -41,8 +46,10 @@ import (
 
 	"foundry/internal/cluster"
 	"foundry/internal/fileutil"
+	"foundry/internal/game"
 	"foundry/internal/geom"
 	"foundry/internal/gfx"
+	"foundry/internal/meshcollide"
 	"foundry/internal/meshsdf"
 	"foundry/internal/model"
 	"foundry/internal/nanite"
@@ -65,6 +72,26 @@ type Options struct {
 	NormalWeight, UVWeight float32
 	// GroupSize is the DAG's clusters per group; 0 takes the default.
 	GroupSize int
+	// Collision is the collision cook's settings; zero fields take
+	// meshcollide's defaults. ProjectOptions fills them from game.yaml.
+	Collision meshcollide.Settings
+}
+
+// ProjectOptions is the options a cook in the current project uses: the
+// defaults, with game.yaml's nanite block over them. A manifest that cannot
+// be read is the defaults — a cook should not fail for a typo in the window
+// block.
+func ProjectOptions() Options {
+	n, err := game.ReadNanite(game.Path())
+	if err != nil {
+		return Options{}
+	}
+	return Options{Collision: meshcollide.Settings{
+		Error:        n.CollisionError,
+		MaxHulls:     n.CollisionMaxHulls,
+		MaxHullVerts: n.CollisionMaxHullVerts,
+		AutoSize:     n.CollisionAutoSize,
+	}}
 }
 
 // The default attribute weights (Options.NormalWeight, UVWeight). Chosen
@@ -227,13 +254,19 @@ func fromDoc(doc *model.ModelDoc) *source {
 	return src
 }
 
-// HashSource is the hash a cook of the given files would carry: CookVersion,
-// then each file's name and bytes.
-func HashSource(files []string) ([32]byte, error) {
+// HashSource is the hash a cook of the given files with opt would carry:
+// CookVersion, the collision settings (resolved, so the defaults spelled out
+// and left implicit hash alike), then each file's name and bytes.
+func HashSource(files []string, opt Options) ([32]byte, error) {
 	h := sha256.New()
 	var b [8]byte
 	binary.LittleEndian.PutUint64(b[:], nanite.CookVersion)
 	h.Write(b[:])
+	cs := opt.Collision.Resolved()
+	for _, f := range []float32{cs.Error, float32(cs.MaxHulls), float32(cs.MaxHullVerts), cs.Concavity, cs.ConcavityRel, cs.AutoSize, float32(cs.Mode)} {
+		binary.LittleEndian.PutUint32(b[:4], math.Float32bits(f))
+		h.Write(b[:4])
+	}
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
@@ -259,7 +292,7 @@ func Cook(path string, opt Options) (*nanite.Mesh, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	if m.SourceHash, err = HashSource(src.files); err != nil {
+	if m.SourceHash, err = HashSource(src.files, opt); err != nil {
 		return nil, err
 	}
 	m.Source = fileutil.RelAssetPath(path)
@@ -396,7 +429,38 @@ func cookSource(src *source, opt Options) (*nanite.Mesh, error) {
 	}
 	ext := m.Hi.Sub(m.Lo)
 	m.SDF = meshsdf.Bake(tris, sdfResolution(max(ext[0], ext[1], ext[2]), opt.SDFCell))
+
+	coll, err := cookCollision(m, opt.Collision)
+	if err != nil {
+		return nil, fmt.Errorf("collision: %w", err)
+	}
+	m.Collision = coll
 	return m, m.Validate()
+}
+
+// cookCollision builds a mesh's collision: the DAG cut at the collision
+// error over every slot (each triangle tagged with its slot), handed to
+// meshcollide to clean, tree and decompose.
+func cookCollision(m *nanite.Mesh, s meshcollide.Settings) (*meshcollide.Data, error) {
+	s = s.Resolved()
+	var idx []uint32
+	var tags []uint8
+	names := make([]string, 0, len(m.Slots))
+	for si := range m.Slots {
+		sl := &m.Slots[si]
+		names = append(names, sl.Name)
+		for ci := sl.First; ci < sl.First+sl.Count; ci++ {
+			c := &m.Clusters[ci]
+			if !c.Selected(s.Error) {
+				continue
+			}
+			idx = append(idx, m.Indices[3*c.TriFirst:3*(c.TriFirst+c.TriCount)]...)
+			for t := uint32(0); t < c.TriCount; t++ {
+				tags = append(tags, uint8(min(si, 255)))
+			}
+		}
+	}
+	return meshcollide.Build(meshcollide.Input{Positions: m.Vertices, Stride: 5, Indices: idx, TriTags: tags, TagNames: names}, s)
 }
 
 // attrWeights is the simplification's weights for the pool's U, V and the
@@ -446,7 +510,7 @@ func CookFile(source, out string, force bool, opt Options) (CookResult, error) {
 	}
 	res := CookResult{Out: out}
 	if !force {
-		if fresh, _ := UpToDate(source, out); fresh {
+		if fresh, _ := UpToDateWith(source, out, opt); fresh {
 			res.Skipped = true
 			return res, nil
 		}
@@ -462,9 +526,15 @@ func CookFile(source, out string, force bool, opt Options) (CookResult, error) {
 	return res, nil
 }
 
-// UpToDate reports whether out is a cook of source as it is now: the same
-// format version, and the hash of the source's files matches.
+// UpToDate reports whether out is a cook of source as it is now, with the
+// project's options (ProjectOptions): the same format version, and the hash
+// of the source's files and the settings matches.
 func UpToDate(source, out string) (bool, error) {
+	return UpToDateWith(source, out, ProjectOptions())
+}
+
+// UpToDateWith is UpToDate for a cook with opt.
+func UpToDateWith(source, out string, opt Options) (bool, error) {
 	v, have, err := nanite.ReadHeader(out)
 	if err != nil || v != nanite.FileVersion {
 		return false, err
@@ -473,7 +543,7 @@ func UpToDate(source, out string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	want, err := HashSource(files)
+	want, err := HashSource(files, opt)
 	if err != nil {
 		return false, err
 	}

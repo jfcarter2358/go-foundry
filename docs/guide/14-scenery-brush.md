@@ -54,7 +54,9 @@ started earlier.
 | **Reload** | re-read the model from disk after editing it |
 
 Collision bounds are the model's own box, carried through the placement. There is
-nothing to dial in — a prop dropped at an angle is solid at that angle.
+nothing to dial in — a prop dropped at an angle is solid at that angle. A cooked
+Nanite mesh can collide as its own shape instead: see
+[Nanite collision](#nanite-collision).
 
 The panel says when the mesh is flat or would not load, in which case it collides
 with nothing.
@@ -124,9 +126,54 @@ one texture picker per material slot. A slot's picker overrides that slot's
 texture on this prop only — the same rock in moss or in snow without a second
 cook. In the level file the overrides are `materials: {stone: granite}`.
 
-Collision is the mesh's bounding box, as for any prop. A cooked mesh draws
-opaque: a slot whose texture has soft alpha is not sorted the way a classic
-model's translucent parts are.
+A cooked mesh draws opaque: a slot whose texture has soft alpha is not sorted
+the way a classic model's translucent parts are.
 
 `FOUNDRY_NANITE_MESHES=0` draws cooked props the classic way, for comparison;
 `FOUNDRY_NANITE_LOD=0` keeps the GPU path but draws every prop at full detail.
+
+## Nanite collision
+
+A cooked mesh collides as its own shape, not its box. The cook keeps a
+**collision cut**: the mesh simplified until it is 3 cm off the drawn surface
+(bumps a foot could never feel are gone, the shape a body walks on is not),
+welded, and split into up to 16 **convex hulls**. A prop picks how it collides
+in its panel's **Collision** group, or with `collision:` in the level file:
+
+| Mode | Collides as | Right for |
+| --- | --- | --- |
+| `auto` (the default) | `hulls` for a prop up to 4 m across, `mesh` for anything bigger | most props |
+| `box` | the model's box, turned with the prop — how props always collided | a crate |
+| `hulls` | the convex hulls, resolved exactly as brushes are | a rock a body walks round |
+| `mesh` | the collision cut's triangles, probed like [terrain](30-terrain.md) | a cliff, a hillside, an arch |
+| `none` | nothing | |
+
+A prop in `hulls` or `mesh` is part of the same resolve the player and walkers
+run against brushes, so they step up onto it, stand on its top, slide along
+its sides and cannot climb a face steeper than a floor. Hitscans stop at the
+same shape, particles land on it, and [AI](24-ai.md) navigation walks over and
+round it — a watertight mesh's inside is solid to navigation, an open one is a
+sheet. `box` props are resolved as they always were.
+
+Hulls are cheap but bridge a hollow: a hull of a mesh with a hole in it, or of
+an open sheet, fills the space behind. `mesh` follows the surface exactly and
+costs more per body near it. Turn on **Show collision** in the group to draw
+what a body meets over the selected prop. The group says what the cook made and
+warns, as `foundry check` does, about a decomposition the hull cap cut short,
+hulls of a mesh with open edges, and a solid prop that collides as nothing.
+
+The cook's settings are project-wide, in `game.yaml`:
+
+```yaml
+nanite:
+  collision_error: 0.03         # metres off the drawn surface
+  collision_max_hulls: 16
+  collision_max_hull_verts: 128
+  collision_auto_size: 4        # metres: auto's hulls/mesh split
+```
+
+Changing them re-cooks every mesh at its next cook. The `F3` profiler shows
+the props' collision as `props: resolve`, `props: rays`, `props: particles` and
+`props: index` under `entity update`, and the overlay counts props by mode and
+how many meshes have their collision decoded (only those a body or a ray has
+come near lately are).

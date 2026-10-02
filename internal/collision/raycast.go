@@ -369,23 +369,19 @@ func appendVolumeHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f 
 	return out
 }
 
-// appendSceneryHits tests the solid props. It goes through sceneryProxy so that
-// a prop stops a shot in exactly the box it stops a body in — the alternative
-// is a second reading of "solid" that drifts from the resolver's. A prop blocks,
-// so each hit lowers the limit the rest are tested within.
+// appendSceneryHits tests the solid props, through the placement broadphase
+// (scenery_index.go), each in its collision mode: the box a body stops at,
+// or a cooked mesh's hulls or triangles (scenery_mesh.go) — so a prop stops
+// a shot exactly where it stops a body. A prop blocks, so only the nearest
+// can matter, and it lowers the limit everything else is tested within.
 func appendSceneryHits(out []RayHit, lvl *world.Level, origin, dir mgl32.Vec3, f RayFilter, limit float32) ([]RayHit, float32) {
-	for i := range lvl.Scenery {
-		s := &lvl.Scenery[i]
-		t, hit := sceneryHit(s, origin, dir, limit, f.Ignore)
-		if !hit || t > limit {
-			continue
-		}
-		limit = t
-		out = append(out, RayHit{
-			Kind: RayHitScenery, ID: s.ID, T: t, Point: origin.Add(dir.Mul(t)),
-		})
+	i, t, _, ok := sceneryRayNearest(lvl, origin, dir, limit, f.Ignore, false)
+	if !ok || t > limit {
+		return out, limit
 	}
-	return out, limit
+	return append(out, RayHit{
+		Kind: RayHitScenery, ID: lvl.Scenery[i].ID, T: t, Point: origin.Add(dir.Mul(t)),
+	}), t
 }
 
 // ---------- geometry ----------

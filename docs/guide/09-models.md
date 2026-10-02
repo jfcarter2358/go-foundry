@@ -152,10 +152,13 @@ Simplifying keeps where two groups meet exactly where it was, so any mix of
 levels joins without a crack, and it weighs the normals and UVs as well as the
 shape, so a coarser level does not smear the shading. It also keeps one middle
 level, the **fallback** mesh, for the editor's picking, and bakes the distance
-field for live GI from that. It records a hash of the source, so a cook of an
-unchanged source is skipped and a changed one is redone. `foundry nanite
+field for live GI from that. It keeps the mesh's **collision** too — a cut of it
+3 cm off the drawn surface, and that cut split into convex hulls (see
+[Nanite collision](14-scenery-brush.md#nanite-collision)). It records a hash
+of the source and the collision settings, so a cook of an unchanged source is
+skipped and a changed one is redone. `foundry nanite
 inspect` lists the levels: how many triangles each holds and how far it strays
-from the full detail.
+from the full detail — and the collision cut and hulls.
 
 A `.fmdl` or `.obj` can be cooked too: on a scenery prop that uses one, the
 **Nanite** group's **Cook and use** button cooks it beside itself and points the

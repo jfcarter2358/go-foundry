@@ -361,3 +361,67 @@ func Translate(s Shape, d mgl32.Vec3) Shape {
 	}
 	return s
 }
+
+// ---------- compound ----------
+
+// Compound is a solid made of several convex parts: a cooked Nanite mesh's
+// hulls under one placement (scenery_mesh.go), each a ConvexHull carrying
+// the placement's matrix as its Xform, so a part's support is its farthest
+// transformed vertex.
+//
+// It is deliberately not a Shape. A union of convex solids is not convex,
+// and GJK handed one would answer for its hull — the very bridge over a
+// rock's hollow the decomposition exists to remove. So every query takes it
+// a part at a time: overlap is any part's, penetration the deepest part's,
+// a sweep the earliest contact over the parts.
+type Compound struct {
+	Parts []Shape
+}
+
+// Overlap reports whether a overlaps any part.
+func (c Compound) Overlap(a Shape) bool {
+	for _, p := range c.Parts {
+		if Overlap(a, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// Penetration is the deepest of a's penetrations into the parts: the normal
+// points from a toward the part, as Penetration's does.
+func (c Compound) Penetration(a Shape) (n mgl32.Vec3, depth float32, ok bool) {
+	for _, p := range c.Parts {
+		if pn, pd, pok := Penetration(a, p); pok && pd > depth {
+			n, depth, ok = pn, pd, true
+		}
+	}
+	return
+}
+
+// AABB is the box round every part.
+func (c Compound) AABB() (lo, hi mgl32.Vec3, ok bool) {
+	for i, p := range c.Parts {
+		plo, phi := ShapeAABB(p)
+		if i == 0 {
+			lo, hi = plo, phi
+			continue
+		}
+		for k := 0; k < 3; k++ {
+			lo[k], hi[k] = min(lo[k], plo[k]), max(hi[k], phi[k])
+		}
+	}
+	return lo, hi, len(c.Parts) > 0
+}
+
+// SweepHitCompound is SweepHit against a compound: the earliest fraction of
+// motion at which a touches any part.
+func SweepHitCompound(a Shape, c Compound, motion mgl32.Vec3) (t float32, hit bool) {
+	t = 1
+	for _, p := range c.Parts {
+		if pt, ph := SweepHit(a, p, motion); ph && pt < t {
+			t, hit = pt, true
+		}
+	}
+	return t, hit
+}

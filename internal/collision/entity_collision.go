@@ -143,6 +143,13 @@ func resolveEntityWorld(lvl *world.Level, e *world.Entity, oldPos mgl32.Vec3) bo
 			// another entity's solid may still be in the way, so the pass
 			// below runs either way.
 			p, f, c := pushOutOfChunksBrushes(chunks, p, radius, h.Y())
+			// Cooked meshes' hulls and triangles, in world space only — see
+			// scenery_mesh.go. Box-mode props are ResolveSceneryCollisions'.
+			if frame.IsWorld() {
+				var sf, sc bool
+				p, sf, sc = pushOutOfScenery(lvl, p, radius, h.Y())
+				f, c = f || sf, c || sc
+			}
 			// Every other entity's own brushes, which are in their own frames
 			// and so are in none of this one's chunks. See entity_brushes.go.
 			out, ef, ec := resolveAgainstEntityBrushes(lvl, e, frame, p, radius, h.Y())

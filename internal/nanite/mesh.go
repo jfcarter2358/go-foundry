@@ -6,8 +6,10 @@
 // (docs/nanite/PHASE_1.md); Phase 2 (docs/nanite/PHASE_2.md) made the clusters
 // a DAG — every level of detail down to a root, the tree over it the GPU's
 // LOD selection walks, and a fixed coarse cut (the FALLBACK mesh) for the
-// CPU's uses. Later phases add collision data and paging to the same file,
-// behind its version number.
+// CPU's uses. Phase 2b (docs/nanite/PHASE_2b.md) added the mesh's COLLISION
+// (internal/meshcollide): a fixed cut of the DAG at a few centimetres'
+// error, cleaned and put under a tree, and the convex hulls it decomposes
+// into. Paging comes later, behind the version number.
 //
 // A scenery placement whose model is a .fnm is drawn by the GPU-driven
 // cluster cull (render/nanite_scenery.go): every placement of every cooked
@@ -50,6 +52,7 @@ import (
 
 	"foundry/internal/cluster"
 	"foundry/internal/fileutil"
+	"foundry/internal/meshcollide"
 	"foundry/internal/meshsdf"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -60,12 +63,13 @@ const Ext = ".fnm"
 
 // FileVersion is the cooked format's version, in every file's header. A file
 // of another version is refused and must be re-cooked. 2: the cluster DAG.
-const FileVersion = 2
+// 3: collision.
+const FileVersion = 3
 
 // CookVersion is folded into every source hash, so a change to how a cook is
 // made — not just to what is stored — re-cooks every mesh. Bump it whenever
 // the same source would now cook differently.
-const CookVersion = 3
+const CookVersion = 4
 
 const magic = "FNM\x00"
 
@@ -144,6 +148,12 @@ type Mesh struct {
 	// SDF is the mesh's signed distance grid, for GI. Nil for a mesh too thin
 	// to have one.
 	SDF *meshsdf.Grid
+
+	// Collision is what a placement collides with in the hulls and mesh
+	// modes (internal/meshcollide): the DAG cut at Collision.Settings.Error,
+	// in the mesh's own space, and its convex decomposition. Nil only for a
+	// mesh with no triangles.
+	Collision *meshcollide.Data
 
 	// Triangles is how many the source had (degenerates and all).
 	Triangles int
@@ -245,6 +255,11 @@ func (m *Mesh) Validate() error {
 	}
 	if g := m.SDF; g != nil && len(g.Data) != g.N*g.N*g.N {
 		return fmt.Errorf("SDF holds %d of %d voxels", len(g.Data), g.N*g.N*g.N)
+	}
+	if c := m.Collision; c != nil {
+		if err := c.Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

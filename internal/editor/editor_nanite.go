@@ -63,7 +63,7 @@ func editorCookAllNanite() {
 	cooked, fresh, failed := 0, 0, 0
 	var firstErr error
 	for _, src := range sources {
-		res, err := nanitecook.CookFile(src, "", false, nanitecook.Options{})
+		res, err := nanitecook.CookFile(src, "", false, nanitecook.ProjectOptions())
 		switch {
 		case err != nil:
 			failed++
@@ -111,7 +111,7 @@ func editorSceneryNanite(s *world.Scenery) {
 		case !fresh:
 			editorTextMutedWrapped("Cooked from " + m.Source + " — which has changed since")
 			if imgui.Button("Re-cook##screcook") {
-				if _, err := nanitecook.CookFile(fileutil.ResolveAssetPath(m.Source), fileutil.ResolveAssetPath(s.Model), true, nanitecook.Options{}); err != nil {
+				if _, err := nanitecook.CookFile(fileutil.ResolveAssetPath(m.Source), fileutil.ResolveAssetPath(s.Model), true, nanitecook.ProjectOptions()); err != nil {
 					editorSetStatus("Nanite: %v", err)
 				} else {
 					editorSceneryReload(s)
@@ -145,7 +145,7 @@ func editorSceneryNanite(s *world.Scenery) {
 // editorCookSceneryModel cooks s's model and points s at the cooked file.
 func editorCookSceneryModel(s *world.Scenery) {
 	src := fileutil.ResolveAssetPath(s.Model)
-	res, err := nanitecook.CookFile(src, "", false, nanitecook.Options{})
+	res, err := nanitecook.CookFile(src, "", false, nanitecook.ProjectOptions())
 	if err != nil {
 		editorSetStatus("Nanite: %v", err)
 		return

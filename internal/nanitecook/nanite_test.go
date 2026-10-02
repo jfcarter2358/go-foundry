@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"foundry/internal/cluster"
+	"foundry/internal/fileutil"
 	"foundry/internal/gfx"
+	"foundry/internal/meshcollide"
 	"foundry/internal/model"
 	"foundry/internal/nanite"
 	"foundry/internal/testenv"
@@ -344,4 +346,114 @@ func TestCookBuildsTheDAGAndTheFallback(t *testing.T) {
 		}
 	}
 	t.Logf("%d levels, %d clusters, fallback %d triangles at error %.4g", m.Levels, len(m.Clusters), fb, m.FallbackError)
+}
+
+// A cook builds the mesh's collision (docs/nanite/PHASE_2b.md): the DAG cut
+// at the collision error — fewer triangles than the full detail on a mesh
+// whose bumps are under it, and closed, because the cut of a closed DAG is —
+// each triangle tagged with its slot, a tree over it, and hulls that hold the
+// surface. It survives the file, and its settings are part of the hash.
+func TestCookBuildsTheCollision(t *testing.T) {
+	dir := t.TempDir()
+	src := writeSampleGLB(t, dir, 5) // 20,480 triangles
+	m, err := Cook(src, Options{Collision: meshcollide.Settings{Error: 0.08}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := m.Collision
+	if c == nil {
+		t.Fatal("no collision")
+	}
+	if c.TriangleCount() == 0 || c.TriangleCount() >= m.TriangleCount() {
+		t.Fatalf("collision keeps %d of %d triangles", c.TriangleCount(), m.TriangleCount())
+	}
+	if c.OpenEdges != 0 || c.NonManifold != 0 {
+		t.Errorf("the collision cut of a closed rock has %d open and %d non-manifold edges", c.OpenEdges, c.NonManifold)
+	}
+	if len(c.TagNames) != 2 || c.TagNames[0] != "stone" || c.TagNames[1] != "moss" {
+		t.Errorf("tag names %v", c.TagNames)
+	}
+	tagged := map[uint8]int{}
+	for _, tg := range c.Tags {
+		tagged[tg]++
+	}
+	if tagged[0] == 0 || tagged[1] == 0 {
+		t.Errorf("both slots should tag triangles: %v", tagged)
+	}
+	if len(c.Hulls) == 0 {
+		t.Fatal("no hulls")
+	}
+	// Every collision vertex is inside some hull, within what the
+	// decomposition says it left out: the concavity of a piece it stopped
+	// splitting, and how far a capped hull strays.
+	r := meshcollide.NewResident(c)
+	slack := c.Concavity + c.VertCapError + 1e-4
+	for _, p := range r.Pos {
+		in := false
+		for hi := range c.Hulls {
+			h := &c.Hulls[hi]
+			inside := true
+			for _, pl := range h.Planes {
+				if (mgl32.Vec3{pl[0], pl[1], pl[2]}).Dot(p)-pl[3] > slack {
+					inside = false
+					break
+				}
+			}
+			if inside {
+				in = true
+				break
+			}
+		}
+		if !in {
+			t.Fatalf("collision vertex %v is in no hull", p)
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := m.Encode(&buf); err != nil {
+		t.Fatal(err)
+	}
+	got, err := nanite.Decode(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Collision == nil || got.Collision.TriangleCount() != c.TriangleCount() || len(got.Collision.Hulls) != len(c.Hulls) ||
+		len(got.Collision.Nodes) != len(c.Nodes) || got.Collision.Settings != c.Settings {
+		t.Fatal("the collision did not survive the file")
+	}
+
+	// The settings are in the hash: a cook with others is not up to date.
+	if _, err := CookFile(src, "", true, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	out := CookedPath(src)
+	if fresh, _ := UpToDateWith(src, out, Options{}); !fresh {
+		t.Fatal("a cook is not up to date with its own options")
+	}
+	if fresh, _ := UpToDateWith(src, out, Options{Collision: meshcollide.Settings{Error: 0.2}}); fresh {
+		t.Fatal("a cook with another collision error reads as up to date")
+	}
+	if fresh, _ := UpToDateWith(src, out, Options{Collision: meshcollide.Settings{Error: meshcollide.DefaultError}}); !fresh {
+		t.Fatal("the default error spelled out should hash as the default")
+	}
+}
+
+// ProjectOptions reads game.yaml's nanite block, and a project without one
+// cooks with the defaults.
+func TestProjectOptionsReadTheManifest(t *testing.T) {
+	dir := t.TempDir()
+	prev := fileutil.ResourcesPath
+	fileutil.ResourcesPath = dir
+	t.Cleanup(func() { fileutil.ResourcesPath = prev })
+	if o := ProjectOptions(); o.Collision != (meshcollide.Settings{}) {
+		t.Fatalf("no manifest: %+v", o.Collision)
+	}
+	yml := "title: x\nnanite:\n  collision_error: 0.05\n  collision_max_hulls: 4\n  collision_auto_size: 9\n"
+	if err := os.WriteFile(filepath.Join(dir, "game.yaml"), []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := ProjectOptions()
+	if o.Collision.Error != 0.05 || o.Collision.MaxHulls != 4 || o.Collision.AutoSize != 9 {
+		t.Fatalf("read %+v", o.Collision)
+	}
 }

@@ -68,6 +68,11 @@ func EntityUpdate(lvl *world.Level, dt float32, motion bool, player *world.Entit
 		return
 	}
 	animFrame++
+	// A new tick for the placement broadphase: its first query checks the
+	// scenery for edits, and a cooked mesh no body has come near for a while
+	// is let go (scenery_index.go).
+	Epoch()
+	residentTick()
 	viewer := gfx.Cam.Position
 	for i := range lvl.Entities {
 		e := &lvl.Entities[i]

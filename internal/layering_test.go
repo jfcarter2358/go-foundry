@@ -93,11 +93,14 @@ var upward = map[string][]string{
 	// textures, and must not link OpenGL to do it. The cook, which imports
 	// through model and welds through gfx, is nanitecook, above them — and
 	// below the world and everything that draws one, which only ever read
-	// the cooked file.
-	"cluster":    {"gfx", "model", "world", "render", "editor", "app", "uiwin"},
-	"meshsdf":    {"gfx", "model", "world", "render", "editor", "app", "uiwin"},
-	"nanite":     {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin"},
-	"nanitecook": {"world", "levelio", "render", "editor", "app", "uiwin"},
+	// the cooked file. meshcollide is the collision a cooked mesh carries
+	// (its cut, tree and hulls): pure CPU like the rest, and below
+	// collision and nav, which resolve and rasterise it.
+	"cluster":     {"gfx", "model", "world", "render", "editor", "app", "uiwin"},
+	"meshcollide": {"gfx", "model", "nanite", "nanitecook", "world", "collision", "nav", "render", "editor", "app", "uiwin"},
+	"meshsdf":     {"gfx", "model", "world", "render", "editor", "app", "uiwin"},
+	"nanite":      {"gfx", "model", "nanitecook", "world", "render", "editor", "app", "uiwin"},
+	"nanitecook":  {"world", "levelio", "render", "editor", "app", "uiwin"},
 	// glext is GL extension detection and the readback wrappers that work
 	// round a driver (glext/readback.go): above the GL binding, below
 	// everything that draws.

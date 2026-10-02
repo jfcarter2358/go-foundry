@@ -18,6 +18,7 @@ import (
 	"math"
 	"sync"
 
+	"foundry/internal/meshcollide"
 	"foundry/internal/world"
 
 	"github.com/go-gl/mathgl/mgl32"
@@ -405,6 +406,34 @@ func Signature(lvl *world.Level) uint64 {
 		if t := ch.Terrain; t != nil {
 			w(uint32(t.Generation))
 			w(uint32(t.Generation >> 32))
+		}
+	}
+	// The props navigation rasterises (appendScenerySolids): their mode,
+	// their cooked collision and where they are.
+	for si := range lvl.Scenery {
+		sc := &lvl.Scenery[si]
+		mode := sc.CollisionMode()
+		if mode != meshcollide.ModeHulls && mode != meshcollide.ModeMesh {
+			continue
+		}
+		w(uint32(si))
+		w(uint32(mode))
+		d := sc.CollisionData()
+		w(uint32(d.TriangleCount()))
+		w(uint32(len(d.Hulls)))
+		for _, v := range [6]float32{d.Lo.X(), d.Lo.Y(), d.Lo.Z(), d.Hi.X(), d.Hi.Y(), d.Hi.Z()} {
+			w(math.Float32bits(v))
+		}
+		// The matrix's inputs rather than the matrix: this runs every frame
+		// over every such prop, and ModelMatrix is six sines and cosines a
+		// placement where these are nine loads.
+		sx := sc.EffectiveScale()
+		for _, v := range [9]float32{
+			sc.Position.X(), sc.Position.Y(), sc.Position.Z(),
+			sc.Rotation.X(), sc.Rotation.Y(), sc.Rotation.Z(),
+			sx.X(), sx.Y(), sx.Z(),
+		} {
+			w(math.Float32bits(v))
 		}
 	}
 	return h

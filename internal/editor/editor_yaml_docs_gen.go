@@ -9,8 +9,12 @@ package editor
 // yamlFieldDocs is each level-file key's documentation, keyed "pkg.Type.key".
 var yamlFieldDocs = map[string]string{
 	"game.Manifest.data_dir":                  "DataDir overrides the per-user data directory's name. Worth setting when the title contains punctuation, or when it may change between releases: renaming the title should not silently orphan everyone's settings.",
+	"game.Manifest.nanite":                    "Nanite holds the project's settings for cooking Nanite meshes.",
 	"game.Manifest.start_level":               "StartLevel is the level, by name, that the game boots into. Required — there is nothing else for a release build to do.",
 	"game.Manifest.title":                     "Title names the window, the installer, and — unless DataDir overrides it — the per-user directory settings and saves are written to.",
+	"game.Nanite.collision_auto_size":         "CollisionAutoSize is the largest placement, in metres, the auto mode gives hulls; anything bigger collides as a mesh. Default 4.",
+	"game.Nanite.collision_error":             "CollisionError is the world-space error, in metres, of the cut a cooked mesh collides with (docs/nanite/PHASE_2b.md). Default 0.03.",
+	"game.Nanite.collision_max_hulls":         "CollisionMaxHulls and CollisionMaxHullVerts cap the convex decomposition. Defaults 16 and 128.",
 	"world.RawAI.on_target":                   "chase (default) | watch | ignore | fight",
 	"world.RawAI.order":                       "sequence (default) | nearest | random",
 	"world.RawBounce.count":                   "bounces baked, 0 to 4; default 1",
@@ -151,6 +155,7 @@ var yamlFieldDocs = map[string]string{
 	"world.RawPrefabInstance.frame":           "Frame is the vehicle the instance rides, absent for the world.",
 	"world.RawPrefabInstance.rotation":        "radians about Y",
 	"world.RawPrefabInstance.scale":           "0 = 1",
+	"world.RawScenery.collision":              "Collision is how a cooked Nanite mesh collides: auto (absent), box, hulls, mesh or none. Any other model collides as its box.",
 	"world.RawScenery.materials":              "Materials overrides a cooked Nanite mesh's (.fnm) material slots, slot name to texture: `materials: {stone: granite, moss: snow}`.",
 	"world.RawScenery.model":                  "Model is the mesh file, install-relative: \"models/barrel.fmdl\".",
 	"world.RawScenery.scale":                  "Scale is a pointer so an unwritten key means {1,1,1} rather than collapsing the model to nothing.",

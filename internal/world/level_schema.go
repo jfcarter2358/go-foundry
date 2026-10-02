@@ -255,6 +255,9 @@ type RawScenery struct {
 	// Materials overrides a cooked Nanite mesh's (.fnm) material slots, slot
 	// name to texture: `materials: {stone: granite, moss: snow}`.
 	Materials map[string]string `yaml:"materials,omitempty"`
+	// Collision is how a cooked Nanite mesh collides: auto (absent), box,
+	// hulls, mesh or none. Any other model collides as its box.
+	Collision string `yaml:"collision,omitempty"`
 }
 
 // RawDecal is the YAML representation of a projected decal (decal.go) — a
